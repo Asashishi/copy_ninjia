@@ -256,7 +256,7 @@ export async function handleCopyCommand(
   // 头像复制放在后台执行，不阻塞主消息处理：state.isCopying 已经写入，
   // 复读逻辑立即生效；即使头像抓取失败或耗时很久，也不会卡住后续消息的复读。
   void (async (): Promise<void> => {
-    const photoUpdated: boolean = await copyUserProfilePhoto(targetUser.id, !!targetUser.isChannel);
+    const photoUpdated: boolean = await copyUserProfilePhoto(targetUser.id, !!targetUser.isChannel, targetUser.username);
 
     let resultText: string = `嘿嘿，${targetLabel} 的脸已经被本天才偷走啦，杂鱼♡`;
     if (!photoUpdated) {

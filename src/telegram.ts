@@ -23,17 +23,75 @@ const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
 
 /**
  * 下载某用户（或频道）的头像，并上传设置为本机器人的头像。
+ * 优先走 Bot API；若多次尝试都失败且目标有公开 username，则退而爬取
+ * t.me/<username> 公开主页上展示的头像作为兜底（见 fetchAvatarFromWebProfile）。
  * @param targetId 目标用户或频道 ID。
  * @param isChannel 目标是否为频道（频道要通过 getChat 而非 getUserProfilePhotos 获取头像）。
+ * @param username 目标的公开 username（不带 @），用于 t.me 主页爬取兜底；没有则跳过兜底。
  * @returns 成功时 resolve 为 true，否则为 false。
  */
-export async function copyUserProfilePhoto(targetId: number, isChannel: boolean = false): Promise<boolean> {
+export async function copyUserProfilePhoto(targetId: number, isChannel: boolean = false, username?: string): Promise<boolean> {
   for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
     const success: boolean = await attemptCopyUserProfilePhoto(targetId, isChannel);
     if (success) return true;
     console.error(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
   }
+
+  if (username) {
+    console.error(`Falling back to t.me web profile scrape for @${username}`);
+    const imgBuffer: Uint8Array | null = await fetchAvatarFromWebProfile(username);
+    if (imgBuffer) {
+      try {
+        await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
+        return true;
+      } catch (error: unknown) {
+        console.error("Error setting profile photo from web fallback:", error);
+      }
+    }
+  }
   return false;
+}
+
+/**
+ * 兜底机制：从 t.me/<username> 公开主页爬取头像图片。
+ * 有公开 username 的用户/频道，其 t.me 主页会以
+ * `<img class="tgme_page_photo_image" src="https://cdn….telesco.pe/file/….jpg">`
+ * 的形式直接暴露头像 CDN 链接，无需鉴权即可抓取——即使 Bot API 因隐私设置等
+ * 原因拿不到头像，这里往往仍能拿到。
+ * @param username 目标的公开 username（不带 @）。
+ * @returns 头像图片字节，页面无头像或抓取失败时返回 null。
+ */
+export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8Array | null> {
+  try {
+    const pageRes: Response = await fetch(`https://t.me/${encodeURIComponent(username)}`, {
+      signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS),
+    });
+    if (!pageRes.ok) {
+      console.error(`Failed to fetch t.me profile page for @${username}: ${pageRes.status}`);
+      return null;
+    }
+    const html: string = await pageRes.text();
+
+    // 先定位头像的 <img> 标签再取 src，兼容属性顺序变化；没设公开头像的
+    // 主页根本没有这个标签，此时直接放弃兜底。
+    const imgTagMatch = html.match(/<img[^>]*class="[^"]*tgme_page_photo_image[^"]*"[^>]*>/);
+    const srcMatch = imgTagMatch?.[0].match(/src="([^"]+)"/);
+    const photoUrl: string | undefined = srcMatch?.[1];
+    if (!photoUrl || !photoUrl.startsWith("https://")) {
+      console.error(`No profile photo found on t.me page for @${username}`);
+      return null;
+    }
+
+    const imgRes: Response = await fetch(photoUrl, { signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
+    if (!imgRes.ok) {
+      console.error(`Failed to download avatar from ${photoUrl}: ${imgRes.status}`);
+      return null;
+    }
+    return new Uint8Array(await imgRes.arrayBuffer());
+  } catch (error: unknown) {
+    console.error(`Error scraping t.me profile photo for @${username}:`, error);
+    return null;
+  }
 }
 
 async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean): Promise<boolean> {
