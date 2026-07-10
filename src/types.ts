@@ -1,8 +1,7 @@
 /**
- * Cached user or channel information, keyed by lowercase username in the
- * in-memory users map. `username` is optional: a target resolved by replying
- * to one of their messages (see resolveReplyTarget) may not have a public
- * username at all, and is never stored in the username-keyed map.
+ * 缓存的用户或频道信息，在内存中的 users map 里以小写 username 为键。`username`
+ * 是可选的：通过回复某人消息解析出的目标（见 resolveReplyTarget）可能根本没有
+ * 公开 username，这种情况下也不会被存入以 username 为键的 map。
  */
 export interface CachedUser {
   id: number;
@@ -13,10 +12,10 @@ export interface CachedUser {
   isChannel?: boolean;
 }
 
-/** Text transform applied to the copy target's plain-text messages before echoing them back. */
+/** 在复读复制目标的纯文本消息前对其应用的文本变换。 */
 export type CopyMode = "reverse" | "nya" | "ja";
 
-/** Persistent state of the bot. */
+/** 机器人的持久化状态。 */
 export interface BotState {
   copiedUserId: number | null;
   isCopying: boolean;
@@ -26,22 +25,22 @@ export interface BotState {
   copyMode?: CopyMode;
 }
 
-/** Schema of users.json: the cooldown timestamp and the currently active copy target. */
+/** users.json 的结构：冷却时间戳和当前正在被复制的目标。 */
 export interface UsersFileSchema {
   lastCopyTime: number;
   copiedUser: CachedUser | null;
 }
 
 /**
- * Tracks a new group member who hasn't yet sent the join-verification code.
- * In-memory only (see src/joinVerification.ts) — doesn't survive a restart.
+ * 追踪一位尚未发送入群验证口令的新成员。仅存于内存中（见 src/joinVerification.ts）
+ * ——不会在重启后保留。
  */
 export interface PendingVerification {
   chatId: number;
   userId: number;
-  /** Display label captured at join time, used in the kick announcement (the join/reminder messages that named them get deleted). */
+  /** 入群时捕获的展示用标签，用于踢人公告（提到 TA 的入群公告/提醒消息届时会被删除）。 */
   label: string;
-  /** Message IDs to delete if the window expires: the join announcement, the reminder, and anything the user sent while pending. */
+  /** 验证窗口过期时要删除的消息 ID：入群公告、提醒消息、以及验证期间 TA 发的所有消息。 */
   messageIds: number[];
   timeout: ReturnType<typeof setTimeout>;
 }

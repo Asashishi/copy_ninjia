@@ -4,12 +4,12 @@ import type { CachedUser, PendingVerification } from "./types";
 import { sendMessage, deleteMessage, deleteMessageAfter, kickChatMember, joinVerificationApi, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
 import { formatUserLabel } from "./userLabel";
 
-/** The exact text a new member must send within VERIFICATION_TIMEOUT_MS to avoid being kicked. */
+/** 新成员必须在 VERIFICATION_TIMEOUT_MS 内发送的精确文本，否则会被踢出。 */
 const VERIFICATION_CODE: string = "purrvox";
 const VERIFICATION_TIMEOUT_MS: number = 1 * 60 * 1000;
 
-// In-memory only, per the ask — no persistence across restarts. Keyed by
-// "chatId:userId" so the same person is tracked independently per group.
+// 仅存于内存中，符合需求——不会在重启后保留。以 "chatId:userId" 为键，
+// 这样同一个人在不同群里会被独立追踪。
 const pendingVerifications: Map<string, PendingVerification> = new Map();
 
 function verificationKey(chatId: number, userId: number): string {
@@ -21,7 +21,7 @@ function memberLabel(member: any): string {
   return formatUserLabel(cachedShape);
 }
 
-/** Whether a ChatMember is actually present in the chat (as opposed to having left/been kicked). */
+/** 某个 ChatMember 是否实际还在聊天中（相对于已离开/已被踢出而言）。 */
 function isActiveChatMember(member: ChatMember): boolean {
   if (member.status === "left" || member.status === "kicked") return false;
   if (member.status === "restricted") return member.is_member;
@@ -29,12 +29,10 @@ function isActiveChatMember(member: ChatMember): boolean {
 }
 
 /**
- * Deletes every message tracked for a pending verification (join
- * announcement if any, the bot's reminder, and anything the user sent while
- * pending), kicks them from the chat, and posts a notice about it — the join
- * announcement/reminder that named them are gone by this point, so the
- * notice is the only trace left of who got removed and why.
- * Runs when the 1-minute window expires without the correct code.
+ * 删除某个待验证成员被追踪的所有消息（如果有的话，包括入群公告、机器人的
+ * 提醒消息，以及 TA 在等待期间发送的任何内容），将其踢出聊天，并发布一条通知
+ * ——此时提到过 TA 的入群公告/提醒消息都已被删除，这条通知是关于谁被移除、
+ * 为何被移除的唯一痕迹。在 1 分钟窗口到期、仍未收到正确口令时执行。
  */
 async function expireVerification(chatId: number, userId: number): Promise<void> {
   const key: string = verificationKey(chatId, userId);
@@ -53,15 +51,13 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
 }
 
 /**
- * Starts (or, if already pending, augments) a verification window for a
- * newly-joined member. Idempotent by design: both the `chat_member` update
- * and the `new_chat_members` service message (when the group doesn't hide
- * join messages) can independently trigger this for the same join, and
- * whichever arrives second should just contribute its message ID rather than
- * restart the timer / send a second reminder.
- * @param chatId The chat the member joined.
- * @param member The joining user (id/username/first_name), never a bot.
- * @param announcementMessageId The `new_chat_members` service message's ID, if this call was triggered by that message (used for later deletion).
+ * 为新加入的成员启动（如果已在等待中则补充）一个验证窗口。设计上是幂等的：
+ * `chat_member` 更新和 `new_chat_members` 服务消息（群组未隐藏入群消息时）
+ * 可能针对同一次入群各自独立触发本函数，后到达的那一次应该只是补充其消息 ID，
+ * 而不是重启计时器/再发一次提醒。
+ * @param chatId 成员加入的聊天。
+ * @param member 新加入的用户（id/username/first_name），一定不是机器人。
+ * @param announcementMessageId 若本次调用是由 `new_chat_members` 服务消息触发，则为该消息的 ID（用于之后删除）。
  */
 async function ensureVerificationStarted(chatId: number, member: any, announcementMessageId?: number): Promise<void> {
   if (member.is_bot) return; // 机器人（包括本天才自己）不需要验证
@@ -96,7 +92,7 @@ async function ensureVerificationStarted(chatId: number, member: any, announceme
   }
 }
 
-/** Cancels a pending verification without touching messages — used when the member is already gone. */
+/** 取消一个待验证记录，但不处理消息——用于该成员已经离开的情况。 */
 function cancelVerification(chatId: number, userId: number): void {
   const key: string = verificationKey(chatId, userId);
   const pending = pendingVerifications.get(key);
@@ -107,11 +103,10 @@ function cancelVerification(chatId: number, userId: number): void {
 }
 
 /**
- * Handles `chat_member` updates: the authoritative, always-delivered signal
- * for join/leave (unlike the `new_chat_members`/`left_chat_member` service
- * messages, which stop being sent entirely if the group has "hide join/leave
- * messages" enabled). Requires the bot to be a chat admin to receive these
- * for members other than itself — which it already needs to be, to ban/delete.
+ * 处理 `chat_member` 更新：这是权威且始终会送达的入群/离群信号（不同于
+ * `new_chat_members`/`left_chat_member` 服务消息——一旦群组开启了"隐藏入群/
+ * 离群消息"，这些服务消息就完全不会再发送）。要接收非机器人自身成员的这类
+ * 更新，需要机器人是群管理员——而封禁/删除消息本来也需要这个权限。
  */
 export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const update = ctx.chatMember;
@@ -132,10 +127,10 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
 }
 
 /**
- * Tracks a pending member's message for later deletion, and checks whether it
- * is the verification code — if so, verification succeeds immediately.
- * @returns true if the message was the successful verification code (caller
- * should stop further processing of it, e.g. not echo/copy it).
+ * 追踪某个待验证成员的消息以便之后删除，并检查它是否为验证口令——如果是，
+ * 验证立即通过。
+ * @returns 若该消息就是验证成功的口令，返回 true（调用方此时应停止对其做进一步
+ * 处理，例如不要复读/复制它）。
  */
 async function trackPendingMessage(message: any): Promise<boolean> {
   const userId: number | undefined = message.from?.id;
@@ -157,15 +152,12 @@ async function trackPendingMessage(message: any): Promise<boolean> {
 }
 
 /**
- * Entry point wired into the generic message handler: opportunistically picks
- * up the `new_chat_members`/`left_chat_member` service messages (when the
- * group doesn't hide them, so their message IDs can be tracked/cleaned up
- * too), and tracks pending-user messages while checking for the verification
- * code. Join/leave detection itself is driven by handleChatMemberUpdate,
- * which — unlike these service messages — always fires.
- * @returns true if the message was fully handled here and the caller should
- * skip its own processing (join/leave announcements and successful
- * verification codes); false to let the message flow through normally.
+ * 接入通用消息处理器的入口函数：在群组未隐藏 `new_chat_members`/
+ * `left_chat_member` 服务消息时顺带捕获它们（以便这些消息的 ID 也能被
+ * 追踪/清理），同时追踪待验证用户的消息并检查验证口令。入群/离群本身的检测
+ * 由 handleChatMemberUpdate 驱动——与这些服务消息不同，它总是会触发。
+ * @returns 若消息在此已被完全处理、调用方应跳过自身处理逻辑（入群/离群公告，
+ * 以及验证成功的口令），返回 true；否则返回 false，让消息正常继续流转。
  */
 export async function handleGroupJoinVerification(message: any): Promise<boolean> {
   if (message.new_chat_members && message.new_chat_members.length > 0) {

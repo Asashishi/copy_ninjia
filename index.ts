@@ -5,7 +5,7 @@ import { handleChatMemberUpdate } from "./src/joinVerification";
 import type { BotState, CachedUser, UsersFileSchema } from "./src/types";
 
 /**
- * Wires up the update handler and starts grammY's long-polling loop.
+ * 注册各类更新处理器，并启动 grammY 的长轮询循环。
  */
 async function main(): Promise<void> {
   await acquireSingleInstanceLock();

@@ -2,10 +2,9 @@ import type { CopyMode } from "./types";
 import { translateToJapanese } from "./translate";
 
 /**
- * Reverses a string by Unicode extended grapheme clusters (falls back to code
- * points if Intl.Segmenter isn't available), so emoji / surrogate pairs /
- * combining marks don't get split apart into garbled mojibake.
- * @param text The text to reverse.
+ * 按 Unicode 扩展字形簇（grapheme cluster）反转字符串（若 Intl.Segmenter 不可用则
+ * 退化为按码点反转），避免 emoji / 代理对 / 组合符号被拆散导致乱码。
+ * @param text 待反转的文本。
  */
 function reverseText(text: string): string {
   try {
@@ -20,24 +19,21 @@ function reverseText(text: string): string {
 const NYA_SUFFIX: string = "喵~";
 
 /**
- * Appends " 喵~" (with a leading half-width space) to text that doesn't
- * already end with 喵~. Caller is responsible for the security gate (see
- * isPlainText in handleIncomingMessage) — this only ever runs on messages
- * that already passed that check, and the result is still sent through
- * sendMessage() with no parse_mode.
- * @param text The text to append the suffix to.
+ * 给尚未以 喵~ 结尾的文本追加 " 喵~"（前面带一个半角空格）。安全校验由调用方负责
+ * （见 handleIncomingMessage 中的 isPlainText）——本函数只会在已通过该校验的消息上
+ * 运行，且结果仍会通过不带 parse_mode 的 sendMessage() 发送。
+ * @param text 待追加后缀的文本。
  */
 function appendNyaSuffix(text: string): string {
   return text.endsWith(NYA_SUFFIX) ? text : text + " " + NYA_SUFFIX;
 }
 
 /**
- * Applies the active copy mode's text transform to a plain-text message.
- * Returns null when there's no mode, or the transform itself failed (e.g. the
- * "ja" translation call errored) — the caller should fall back to forwarding
- * the message as-is via copyMessage() instead of dropping it.
- * @param text The plain-text message to transform.
- * @param mode The active copy mode, if any.
+ * 对纯文本消息应用当前激活的 copy mode 文本变换。
+ * 没有模式、或变换本身失败（比如 "ja" 翻译调用报错）时返回 null——调用方此时应
+ * 退化为通过 copyMessage() 原样转发消息，而不是直接丢弃它。
+ * @param text 待变换的纯文本消息。
+ * @param mode 当前激活的 copy mode（如果有）。
  */
 export async function applyCopyModeTransform(text: string, mode: CopyMode | undefined): Promise<string | null> {
   switch (mode) {
@@ -53,9 +49,9 @@ export async function applyCopyModeTransform(text: string, mode: CopyMode | unde
 }
 
 /**
- * Describes a copy mode's effect for the /*_copy start message, e.g.
- * "，之后 TA 说的纯文字都会被本天才倒过来念". Returns "" when there's no mode.
- * @param mode The copy mode being started.
+ * 为 /*_copy 的启动提示语描述该 copy mode 的效果，例如
+ * "，之后 TA 说的纯文字都会被本天才倒过来念"。没有模式时返回 ""。
+ * @param mode 即将启动的 copy mode。
  */
 export function describeCopyModeEffect(mode: CopyMode | undefined): string {
   switch (mode) {

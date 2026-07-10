@@ -3,16 +3,16 @@ import { v3 as GoogleTranslate } from "@google-cloud/translate";
 
 const GOOGLE_AUTH_FILE_PATH: string = join(import.meta.dir, "..", "g-auth.json");
 
-// Google Cloud Translation - Advanced (v3) client, authenticated via the
-// service account key at g-auth.json — used by copyMode "ja" to translate the
-// copy target's plain-text messages into Japanese before echoing them back.
+// Google Cloud Translation - Advanced (v3) 客户端，通过 g-auth.json 里的服务账号
+// 密钥完成鉴权——供 copyMode "ja" 使用，用于在复读复制目标的纯文本消息前
+// 先将其翻译成日语。
 const translateClient: GoogleTranslate.TranslationServiceClient = new GoogleTranslate.TranslationServiceClient({
   keyFilename: GOOGLE_AUTH_FILE_PATH,
 });
 
-// v3 requests are scoped to "projects/{project}/locations/{location}"; the
-// project is derived from the service account credentials on first use and
-// cached since it never changes for the lifetime of the process.
+// v3 请求作用域限定在 "projects/{project}/locations/{location}" 下；project
+// 在首次使用时从服务账号凭据中解析得到，并做缓存——因为它在进程生命周期内
+// 不会变化。
 let translateParent: string | null = null;
 
 async function getTranslateParent(): Promise<string> {
@@ -24,10 +24,9 @@ async function getTranslateParent(): Promise<string> {
 }
 
 /**
- * Translates text into Japanese via the Google Cloud Translation API.
- * Returns null on failure so the caller can fall back to an untranslated copy
- * instead of dropping the message entirely.
- * @param text The text to translate.
+ * 通过 Google Cloud Translation API 将文本翻译成日语。
+ * 失败时返回 null，让调用方可以退化为发送未翻译的原文，而不是直接丢弃消息。
+ * @param text 待翻译的文本。
  */
 export async function translateToJapanese(text: string): Promise<string | null> {
   try {

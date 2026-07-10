@@ -7,13 +7,12 @@ import { BOT_TOKEN } from "./config";
 export const bot: Bot = new Bot(BOT_TOKEN);
 
 /**
- * Separate API client used only by the join-verification flow
- * (joinVerification.ts), which can burst many send/delete/kick calls into the
- * same chat within seconds — a wave of simultaneous joins, or a spammer's
- * whole message backlog getting deleted on kick. Throttled to Telegram's
- * per-chat/global limits and auto-retried on 429s so those bursts queue and
- * survive instead of silently failing. Kept off the shared `bot.api` client
- * so it doesn't add latency/queuing to normal command replies elsewhere.
+ * 专供入群验证流程（joinVerification.ts）使用的独立 API 客户端。该流程可能在
+ * 几秒内向同一个群突发大量 send/delete/kick 调用——比如一波人同时入群，或者
+ * 踢人时要把某个刷屏者的所有消息全部删掉。这里做了限流以符合 Telegram 的
+ * 单聊天/全局限制，并在遇到 429 时自动重试，让这些突发请求排队等待而不是
+ * 静默失败。与共享的 `bot.api` 客户端分开，避免给其他地方的普通指令回复
+ * 增加延迟或排队。
  */
 export const joinVerificationApi: Api = new Api(BOT_TOKEN);
 joinVerificationApi.config.use(apiThrottler());
@@ -23,10 +22,10 @@ const AVATAR_FETCH_TIMEOUT_MS: number = 15000;
 const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
 
 /**
- * Downloads a user's (or channel's) profile photo and uploads it as the bot's profile photo.
- * @param targetId The target user or channel ID.
- * @param isChannel Whether the target is a channel (channels expose their avatar via getChat, not getUserProfilePhotos).
- * @returns A promise resolving to true if successful, false otherwise.
+ * 下载某用户（或频道）的头像，并上传设置为本机器人的头像。
+ * @param targetId 目标用户或频道 ID。
+ * @param isChannel 目标是否为频道（频道要通过 getChat 而非 getUserProfilePhotos 获取头像）。
+ * @returns 成功时 resolve 为 true，否则为 false。
  */
 export async function copyUserProfilePhoto(targetId: number, isChannel: boolean = false): Promise<boolean> {
   for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
@@ -90,16 +89,15 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
 }
 
 /**
- * Sends a text message to a specific Telegram chat.
- * IMPORTANT: never pass a parse_mode here. The text can originate from an
- * untrusted user (and is echoed back verbatim/reversed), so leaving parse_mode
- * unset makes Telegram treat it as inert plain text — no HTML/MarkdownV2
- * entities are parsed, which closes off markup/link injection.
- * @param chatId The target chat ID.
- * @param text The message text.
- * @param replyToMessageId Optional message ID to reply to.
- * @param api The API client to send through (defaults to the shared, unthrottled `bot.api`).
- * @returns The sent message's ID, or undefined if sending failed.
+ * 向指定 Telegram 聊天发送文本消息。
+ * 重要：这里绝不能传 parse_mode。文本内容可能来自不受信任的用户（原样或反转后被
+ * 复读回去），不设置 parse_mode 会让 Telegram 把它当作纯文本处理——不解析任何
+ * HTML/MarkdownV2 实体，从而杜绝了格式/链接注入的可能。
+ * @param chatId 目标聊天 ID。
+ * @param text 消息文本。
+ * @param replyToMessageId 可选，要回复的消息 ID。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @returns 发送成功时返回该消息的 ID，失败则返回 undefined。
  */
 export async function sendMessage(chatId: number, text: string, replyToMessageId?: number, api: Api = bot.api): Promise<number | undefined> {
   try {
@@ -120,11 +118,11 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
 }
 
 /**
- * Deletes a message. Used to scrub a join-verification attempt (reminder +
- * whatever the user sent) when they fail to verify in time.
- * @param chatId The chat containing the message.
- * @param messageId The message to delete.
- * @param api The API client to send through (defaults to the shared, unthrottled `bot.api`).
+ * 删除一条消息。用于在用户未能及时通过入群验证时，清理相关痕迹
+ * （提醒消息 + TA 期间发送的内容）。
+ * @param chatId 消息所在的聊天。
+ * @param messageId 要删除的消息。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
  */
 export async function deleteMessage(chatId: number, messageId: number, api: Api = bot.api): Promise<void> {
   try {
@@ -138,16 +136,16 @@ export async function deleteMessage(chatId: number, messageId: number, api: Api 
   }
 }
 
-/** How long a kick announcement stays visible before it's cleaned up automatically. */
+/** 踢人公告在被自动清理前保持可见的时长。 */
 export const KICK_NOTICE_AUTO_DELETE_MS: number = 30 * 1000;
 
 /**
- * Schedules a message for deletion after a delay. Fire-and-forget — used for
- * kick announcements, which should self-clean instead of lingering in the chat.
- * @param chatId The chat containing the message.
- * @param messageId The message to delete.
- * @param delayMs Milliseconds to wait before deleting.
- * @param api The API client to send through (defaults to the shared, unthrottled `bot.api`).
+ * 安排一条消息在延迟后被删除。触发即忘（fire-and-forget）——用于踢人公告，
+ * 这类消息应当自行清理而不是一直留在聊天里。
+ * @param chatId 消息所在的聊天。
+ * @param messageId 要删除的消息。
+ * @param delayMs 删除前等待的毫秒数。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
  */
 export function deleteMessageAfter(chatId: number, messageId: number, delayMs: number, api: Api = bot.api): void {
   setTimeout(() => {
@@ -156,12 +154,11 @@ export function deleteMessageAfter(chatId: number, messageId: number, delayMs: n
 }
 
 /**
- * Removes a member from a chat without permanently banning them: a ban
- * immediately followed by an unban, so they're free to rejoin later if
- * invited again. Requires the bot to be an admin with ban rights.
- * @param chatId The chat to remove the member from.
- * @param userId The member to remove.
- * @param api The API client to send through (defaults to the shared, unthrottled `bot.api`).
+ * 将某成员移出聊天但不永久封禁：先封禁再立刻解封，这样 TA 之后若再次被邀请
+ * 仍可自由加入。需要机器人是拥有封禁权限的管理员。
+ * @param chatId 要移出成员的聊天。
+ * @param userId 要移除的成员。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
  */
 export async function kickChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<void> {
   try {
@@ -177,17 +174,17 @@ export async function kickChatMember(chatId: number, userId: number, api: Api = 
 }
 
 /**
- * Copies (repeats) a specific message into the target chat.
- * @param chatId The target chat ID.
- * @param fromChatId The source chat ID.
- * @param messageId The ID of the message to copy.
+ * 将指定消息复制（复读）到目标聊天。
+ * @param chatId 目标聊天 ID。
+ * @param fromChatId 源聊天 ID。
+ * @param messageId 要复制的消息 ID。
  */
 export async function copyMessage(chatId: number, fromChatId: number, messageId: number): Promise<void> {
   try {
     await bot.api.copyMessage(chatId, fromChatId, messageId);
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
-      // Telegram 的错误详情（比如权限不足）都在 description 里，比只看 HTTP 状态更有用
+      // Telegram 的错误详情（比如权限不足）都在 description 里，比只看 HTTP 状态更有用。
       console.error(`Failed to copy message: ${error.error_code} ${error.description}`);
     } else {
       console.error("Error copying message:", error);
@@ -196,10 +193,10 @@ export async function copyMessage(chatId: number, fromChatId: number, messageId:
 }
 
 /**
- * Sets (or clears, if `reactions` is empty) the bot's own emoji reaction on a message.
- * @param chatId The target chat ID.
- * @param messageId The message to react to.
- * @param reactions The emoji reactions to apply (empty array removes the bot's reaction).
+ * 设置（或在 `reactions` 为空时清除）本机器人对某条消息的 emoji 表情回应。
+ * @param chatId 目标聊天 ID。
+ * @param messageId 要回应的消息。
+ * @param reactions 要应用的 emoji 回应（空数组表示移除机器人的回应）。
  */
 export async function setReaction(chatId: number, messageId: number, reactions: ReactionTypeEmoji[]): Promise<void> {
   try {

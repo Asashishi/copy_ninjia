@@ -1,10 +1,10 @@
 import type { CachedUser } from "./types";
 
 /**
- * Human-readable label for a cached user/channel in reply texts. Falls back to
- * first_name/title when the target has no public @username — e.g. one
- * resolved by replying to their message instead of via the username cache.
- * @param user The user/channel to label.
+ * 生成用于回复文本中的、人类可读的用户/频道标签。当目标没有公开 @username 时
+ * （例如是通过回复其消息而非 username 缓存解析出来的）退化为使用
+ * first_name/title。
+ * @param user 要生成标签的用户/频道。
  */
 export function formatUserLabel(user: CachedUser): string {
   if (user.username) return `@${user.username}`;

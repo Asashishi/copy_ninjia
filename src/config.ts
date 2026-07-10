@@ -1,7 +1,6 @@
 /**
- * Central place for values that must not be hardcoded in source: secrets and
- * per-deployment settings. Populated from environment variables (Bun loads
- * `.env` automatically), never from a checked-in default.
+ * 集中存放不应硬编码在源码里的值：密钥和每次部署都不同的配置。
+ * 从环境变量读取（Bun 会自动加载 `.env`），绝不使用写死在代码里的默认值。
  */
 
 function requireEnv(name: string): string {
@@ -14,5 +13,5 @@ function requireEnv(name: string): string {
 
 export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 
-/** The only user ID exempt from the /copy cooldown and allowed to use /kick. */
+/** 唯一免受 /copy 冷却限制、且可以使用 /kick 的用户 ID。 */
 export const PRIVILEGED_USER_ID: number = Number(requireEnv("PRIVILEGED_USER_ID"));

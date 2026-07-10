@@ -9,11 +9,10 @@ import { handleGroupJoinVerification } from "./joinVerification";
 import { PRIVILEGED_USER_ID } from "./config";
 
 /**
- * Resolves the CachedUser-shaped identity of a message's sender: a real
- * Telegram user (`from`), or a channel identity via `sender_chat` / a bare
- * `channel_post` (which has no `sender_chat`, the post's own `chat` *is* the
- * channel). Used both to populate the username cache and to resolve a /copy
- * target directly from a replied-to message.
+ * 解析出一条消息发送者的 CachedUser 形态身份：可能是真实 Telegram 用户
+ * （`from`），也可能是通过 `sender_chat` 或纯粹的 `channel_post`（这种情况下
+ * 没有 `sender_chat`，帖子自身的 `chat` 就是该频道）体现的频道身份。既用于
+ * 填充 username 缓存，也用于直接从被回复的消息中解析出 /copy 目标。
  */
 function resolveSenderIdentity(message: any): CachedUser | undefined {
   const fromUser: any = message.from;
@@ -39,11 +38,11 @@ function resolveSenderIdentity(message: any): CachedUser | undefined {
 }
 
 /**
- * Learns/refreshes a sender's cache entry (real Telegram user, or a channel
- * identity via sender_chat / channel_post), so a later /copy @username can find them.
- * Senders without a public username are never cached here (the map is keyed
- * by username) but can still be targeted via resolveReplyTarget.
- * @returns The resolved sender id (channel id if sent as a channel identity, otherwise user id).
+ * 记录/刷新某个发送者的缓存条目（真实 Telegram 用户，或通过 sender_chat /
+ * channel_post 体现的频道身份），以便之后 /copy @username 能找到 TA。没有公开
+ * username 的发送者不会被缓存在这里（该 map 以 username 为键），但仍可以通过
+ * resolveReplyTarget 被定位为目标。
+ * @returns 解析出的发送者 id（若以频道身份发送则为频道 id，否则为用户 id）。
  */
 export function cacheSender(message: any, users: Record<string, CachedUser>): number | undefined {
   const identity = resolveSenderIdentity(message);
@@ -66,10 +65,9 @@ export function cacheSender(message: any, users: Record<string, CachedUser>): nu
 }
 
 /**
- * Resolves a /copy command's target from the message it replies to, so users
- * without a public @username (or whom the bot hasn't cached yet, e.g. because
- * privacy mode hid their earlier messages) can still be targeted, as long as
- * one of their messages is being replied to.
+ * 从 /copy 指令所回复的消息中解析出目标，这样即使对方没有公开 @username（或者
+ * 机器人还没缓存过 TA，比如因为 privacy mode 屏蔽了 TA 之前的消息），只要能回复到
+ * TA 的一条消息，依然可以将其设为目标。
  */
 export function resolveReplyTarget(message: any): CachedUser | undefined {
   const repliedMessage: any = message.reply_to_message;
@@ -78,8 +76,8 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
 }
 
 /**
- * Handles every incoming message/channel_post: refreshes the sender cache, and
- * repeats it back into the same chat if it comes from the currently copied target.
+ * 处理每一条收到的 message/channel_post：刷新发送者缓存，如果消息来自当前
+ * 正在被复制的目标，则将其复读回同一个聊天。
  */
 export async function handleIncomingMessage(
   ctx: Context,
@@ -127,8 +125,8 @@ export async function handleIncomingMessage(
 }
 
 /**
- * Handles message_reaction updates: mirrors the copy target's emoji reaction
- * onto the same message (and clears it again if the target removes theirs).
+ * 处理 message_reaction 更新：把复制目标的 emoji 表情回应同步到同一条消息上
+ * （如果目标移除了自己的回应，也会跟着清除）。
  * 自定义 emoji / 付费反应不跟着复制——bot 不一定有权限使用同一个自定义表情。
  */
 export async function handleReaction(ctx: Context, state: BotState): Promise<void> {
@@ -145,14 +143,12 @@ export async function handleReaction(ctx: Context, state: BotState): Promise<voi
 }
 
 /**
- * Handles the /copy, /r_copy, /nya_copy and /ja_copy commands. The target can
- * be given either as a @username argument (requires the bot to have already
- * cached that user from an earlier message) or, preferentially, by replying
- * to one of the target's messages — which also works for users with no
- * public username, or whom the bot never got to observe directly.
- * @param mode Text transform to apply to the target's plain-text messages:
- * "reverse" mirrors them backwards, "nya" appends 喵~, "ja" translates them
- * into Japanese, undefined forwards as-is.
+ * 处理 /copy、/r_copy、/nya_copy 和 /ja_copy 指令。目标既可以通过 @username
+ * 参数指定（要求机器人此前已从某条消息中缓存过该用户），也可以（优先）通过回复
+ * 目标的一条消息来指定——这种方式对没有公开 username、或机器人从未直接观察到的
+ * 用户同样有效。
+ * @param mode 对目标纯文本消息应用的文本变换："reverse" 将其反过来念，
+ * "nya" 追加 喵~，"ja" 翻译成日语，undefined 表示原样转发。
  */
 export async function handleCopyCommand(
   ctx: CommandContext<Context>,
@@ -170,7 +166,7 @@ export async function handleCopyCommand(
   const isExempted: boolean = !!fromUser && fromUser.id === PRIVILEGED_USER_ID;
   if (!isExempted && state.lastCopyTime) {
     const elapsed: number = Date.now() - state.lastCopyTime;
-    const cooldown: number = 5 * 60 * 1000; // 5 minutes in milliseconds
+    const cooldown: number = 5 * 60 * 1000; // 5 分钟，单位毫秒
     if (elapsed < cooldown) {
       const remainingMs: number = cooldown - elapsed;
       const remainingMinutes: number = Math.floor(remainingMs / 60000);
@@ -216,7 +212,7 @@ export async function handleCopyCommand(
     return;
   }
 
-  // Check if already copying a user to enforce "only copy one person at a time"
+  // 检查是否已经在复制这个目标——保证"同一时间只能复制一个人"
   if (state.isCopying && state.copiedUserId !== null) {
     if (state.copiedUserId === targetUser.id) {
       const replyText: string = `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`;
@@ -225,7 +221,7 @@ export async function handleCopyCommand(
     }
   }
 
-  // Check if already copying another user to prevent simultaneous copies
+  // 检查是否已经在复制另一个目标，避免同时复制多人
   if (state.isCopying && state.copiedUserId !== null) {
     const replyText: string = `本天才手上已经有猎物啦，想换人的话先 /stop 呀，笨蛋♡`;
     await sendMessage(chatId, replyText, messageId);
@@ -269,7 +265,7 @@ export async function handleCopyCommand(
 }
 
 /**
- * Handles the /stop command.
+ * 处理 /stop 指令。
  */
 export async function handleStopCommand(ctx: CommandContext<Context>, state: BotState): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -296,9 +292,8 @@ export async function handleStopCommand(ctx: CommandContext<Context>, state: Bot
 }
 
 /**
- * Handles the /kick command: reply to a target's message with /kick to remove
- * them from the chat. Gated to PRIVILEGED_USER_ID — anyone else who tries
- * gets mocked instead of the command actually running.
+ * 处理 /kick 指令：回复目标的一条消息并发送 /kick，即可将其移出聊天。仅限
+ * PRIVILEGED_USER_ID 使用——其他任何人尝试都只会被嘲讽，指令本身不会执行。
  */
 export async function handleKickCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
