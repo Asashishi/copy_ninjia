@@ -3,10 +3,17 @@ import type { ChatMember } from "@grammyjs/types";
 import type { CachedUser, PendingVerification } from "./types";
 import { sendMessage, deleteMessage, deleteMessageAfter, kickChatMember, joinVerificationApi, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
 import { formatUserLabel } from "./userLabel";
+import { isLockedDown, recordJoin } from "./antiRaid";
 
 /** 新成员必须在 VERIFICATION_TIMEOUT_MS 内发送的精确文本，否则会被踢出。 */
 const VERIFICATION_CODE: string = "purrvox";
 const VERIFICATION_TIMEOUT_MS: number = 1 * 60 * 1000;
+/**
+ * 私密模式下直接踢人的占位记录存活时长：只是给 chat_member 更新和
+ * new_chat_members 服务消息（针对同一次入群各自触发）留出去重窗口，
+ * 不是真的验证超时，所以远比 VERIFICATION_TIMEOUT_MS 短。
+ */
+const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
 
 // 仅存于内存中，符合需求——不会在重启后保留。以 "chatId:userId" 为键，
 // 这样同一个人在不同群里会被独立追踪。
@@ -65,7 +72,50 @@ async function ensureVerificationStarted(chatId: number, member: any, announceme
   const key: string = verificationKey(chatId, member.id);
   const existing = pendingVerifications.get(key);
   if (existing) {
-    if (announcementMessageId !== undefined) existing.messageIds.push(announcementMessageId);
+    if (announcementMessageId !== undefined) {
+      if (existing.kicked) {
+        // 这个人已经在私密模式下被直接踢出了，这条才姗姗来迟的入群公告/服务
+        // 消息也顺手清理掉，不需要留着等占位记录自然过期。
+        await deleteMessage(chatId, announcementMessageId, joinVerificationApi);
+      } else {
+        existing.messageIds.push(announcementMessageId);
+      }
+    }
+    return;
+  }
+
+  // 反防刷群统计：只在真正新建待验证记录时计数一次，chat_member 更新和
+  // new_chat_members 服务消息若针对同一次入群各自触发本函数，不会被重复计数。
+  recordJoin(chatId);
+
+  // 群聊当前处于反防刷群触发的私密模式：这波入群高峰大概率还在持续，新成员
+  // 大概率也是刷量的一部分，跳过质询流程直接踢出（kickChatMember 只是踢出、
+  // 不封禁，以防误杀正常用户，之后仍可正常申请加入）。
+  if (isLockedDown(chatId)) {
+    // 占位记录：chat_member 更新和 new_chat_members 服务消息可能针对同一次
+    // 入群各自触发本函数，必须在任何 await 之前同步插入，防止后到达的那次
+    // 因为查不到 existing 而重新 recordJoin/重新踢一次。
+    pendingVerifications.set(key, {
+      chatId,
+      userId: member.id,
+      label: memberLabel(member),
+      messageIds: [],
+      timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
+      kicked: true,
+    });
+
+    // 删除公告 + 踢人不等待完成就返回：grammY 对同一批 update 是严格顺序处理的
+    // （见 handleUpdates 里 "handle updates sequentially" 的注释），如果这里
+    // await 网络请求，刷屏入群的后续 update 会被卡在队列里排队等这一次踢人
+    // 走完，拖慢整批处理速度。
+    void (async (): Promise<void> => {
+      if (announcementMessageId !== undefined) {
+        await deleteMessage(chatId, announcementMessageId, joinVerificationApi);
+      }
+      await kickChatMember(chatId, member.id, joinVerificationApi);
+    })().catch((error: unknown) => {
+      console.error("Error kicking member during anti-raid lockdown:", error);
+    });
     return;
   }
 
@@ -82,14 +132,30 @@ async function ensureVerificationStarted(chatId: number, member: any, announceme
   };
   pendingVerifications.set(key, pending);
 
+  // 提醒消息同样不等待发送完成：入群提醒会经过限流的 joinVerificationApi，
+  // 在真实刷群场景下，若这里 await，同一批入群 update 会被严格顺序处理的
+  // grammY 卡住逐个排队等发消息，可能导致 15 秒的反防刷群计数窗口在真正数满
+  // 阈值之前就先重置——刷群反而检测不到。发送结果异步回填 messageIds 即可，
+  // 不影响后续到期清理。
   const reminderText: string =
     `喂，${memberLabel(member)}，新来的杂鱼给本天才听好了，` +
     `1 分钟内发一句 "${VERIFICATION_CODE}" 证明你不是机器人，` +
     `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
-  const reminderMessageId: number | undefined = await sendMessage(chatId, reminderText, undefined, joinVerificationApi);
-  if (reminderMessageId !== undefined) {
-    pending.messageIds.push(reminderMessageId);
-  }
+  void sendMessage(chatId, reminderText, undefined, joinVerificationApi)
+    .then((reminderMessageId: number | undefined) => {
+      if (reminderMessageId === undefined) return;
+      if (pendingVerifications.get(key) === pending) {
+        pending.messageIds.push(reminderMessageId);
+      } else {
+        // 限流排队太久，提醒消息落地时验证已经结束了（过期清理/通过/中途离群）。
+        // 过期清理已经删完了该成员的所有痕迹，这条迟到的提醒不删的话会永远留在
+        // 聊天里点名一个早已被踢走的人，所以直接删掉。
+        void deleteMessage(chatId, reminderMessageId, joinVerificationApi);
+      }
+    })
+    .catch((error: unknown) => {
+      console.error("Error sending join verification reminder:", error);
+    });
 }
 
 /** 取消一个待验证记录，但不处理消息——用于该成员已经离开的情况。 */
@@ -138,7 +204,8 @@ async function trackPendingMessage(message: any): Promise<boolean> {
 
   const key: string = verificationKey(message.chat.id, userId);
   const pending = pendingVerifications.get(key);
-  if (!pending) return false;
+  // kicked 为 true 时这只是私密模式踢人后的去重占位，不是真的在等验证口令。
+  if (!pending || pending.kicked) return false;
 
   pending.messageIds.push(message.message_id);
 

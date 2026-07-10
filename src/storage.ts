@@ -1,5 +1,5 @@
 import { join } from "path";
-import type { BotState, UsersFileSchema } from "./types";
+import type { ChatState, ChatStateFileSchema, UsersFileSchema } from "./types";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
 
@@ -37,7 +37,7 @@ export async function acquireSingleInstanceLock(): Promise<void> {
 }
 
 /**
- * 从 JSON 文件加载包含冷却时间和当前复制目标的 users 数据。
+ * 从 JSON 文件加载各群聊的冷却时间和当前复制目标（按 chatId 分别保存）。
  * @returns resolve 为 UsersFileSchema 的 promise。
  */
 export async function loadUsersFile(): Promise<UsersFileSchema> {
@@ -46,17 +46,14 @@ export async function loadUsersFile(): Promise<UsersFileSchema> {
     if (await file.exists()) {
       const text: string = await file.text();
       const parsed: any = JSON.parse(text);
-      if (parsed && typeof parsed.lastCopyTime === "number") {
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return parsed as UsersFileSchema;
       }
     }
   } catch (error: unknown) {
     console.error("Failed to load users file:", error);
   }
-  return {
-    lastCopyTime: 0,
-    copiedUser: null,
-  };
+  return {};
 }
 
 /**
@@ -72,35 +69,69 @@ export async function saveUsersFile(data: UsersFileSchema): Promise<void> {
 }
 
 /**
- * 从持久化的 JSON 文件加载机器人的状态。
- * @returns resolve 为当前 BotState 的 promise。
+ * 从持久化的 JSON 文件加载各群聊各自的状态。
+ * @returns resolve 为 Map<chatId, ChatState> 的 promise（机器人可能同时在多个群
+ * 里运行，各群的复制目标/冷却时间互相独立）。
  */
-export async function loadState(): Promise<BotState> {
+export async function loadState(): Promise<Map<number, ChatState>> {
   try {
     const file = Bun.file(STATE_FILE_PATH);
     if (await file.exists()) {
       const text: string = await file.text();
-      return JSON.parse(text) as BotState;
+      const parsed: ChatStateFileSchema = JSON.parse(text);
+      const chatStates: Map<number, ChatState> = new Map();
+      for (const [chatIdStr, chatState] of Object.entries(parsed)) {
+        chatStates.set(Number(chatIdStr), chatState);
+      }
+      return chatStates;
     }
   } catch (error: unknown) {
     console.error("Failed to load state:", error);
   }
-  return {
-    copiedUserId: null,
-    isCopying: false,
-    lastCopiedUserId: null,
-    lastCopyTime: 0,
-  };
+  return new Map();
 }
 
 /**
- * 将机器人的状态持久化保存到 JSON 文件。
- * @param state 当前的 BotState。
+ * 将各群聊各自的状态持久化保存到 JSON 文件。
+ * @param chatStates 当前 Map<chatId, ChatState>。
  */
-export async function saveState(state: BotState): Promise<void> {
+export async function saveState(chatStates: Map<number, ChatState>): Promise<void> {
   try {
-    await Bun.write(STATE_FILE_PATH, JSON.stringify(state, null, 2));
+    const serializable: ChatStateFileSchema = {};
+    for (const [chatId, chatState] of chatStates) {
+      serializable[String(chatId)] = chatState;
+    }
+    await Bun.write(STATE_FILE_PATH, JSON.stringify(serializable, null, 2));
   } catch (error: unknown) {
     console.error("Failed to save state:", error);
   }
+}
+
+/**
+ * 默认（空）的群聊状态，用于本群从未使用过复制功能时的只读查询。
+ * 冻结它：这个对象在所有没有状态的群之间共享，若有调用方误对它赋值，
+ * 会静默污染所有这些群的查询结果——冻结后误写会直接抛错暴露问题。
+ */
+const DEFAULT_CHAT_STATE: Readonly<ChatState> = Object.freeze({ copiedUserId: null, isCopying: false });
+
+/**
+ * 只读地取某个群聊的状态，不存在时返回共享的默认状态（不会插入到 Map 里）。
+ * 供仅需要读取的场景使用（比如判断是否要复读某条消息），避免机器人所在的
+ * 每个群、每条消息都往 Map 里塞一个从未用过 /copy 的空条目。
+ */
+export function getChatState(chatStates: Map<number, ChatState>, chatId: number): ChatState {
+  return chatStates.get(chatId) ?? DEFAULT_CHAT_STATE;
+}
+
+/**
+ * 取某个群聊的状态，不存在则创建一份默认状态并插入 Map。供需要修改状态的场景
+ * 使用（比如 /copy、/stop），确保拿到的是可以直接写入、且后续会被持久化的对象。
+ */
+export function getOrCreateChatState(chatStates: Map<number, ChatState>, chatId: number): ChatState {
+  let chatState = chatStates.get(chatId);
+  if (!chatState) {
+    chatState = { copiedUserId: null, isCopying: false };
+    chatStates.set(chatId, chatState);
+  }
+  return chatState;
 }

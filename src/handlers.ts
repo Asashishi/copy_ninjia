@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
-import type { BotState, CachedUser, CopyMode } from "./types";
-import { saveState, saveUsersFile } from "./storage";
+import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "./types";
+import { getChatState, getOrCreateChatState, saveState, saveUsersFile } from "./storage";
 import { sendMessage, copyMessage, setReaction, copyUserProfilePhoto, kickChatMember, deleteMessageAfter, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
 import { applyCopyModeTransform, describeCopyModeEffect } from "./copyModes";
 import { formatUserLabel } from "./userLabel";
@@ -82,7 +82,7 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
 export async function handleIncomingMessage(
   ctx: Context,
   users: Record<string, CachedUser>,
-  state: BotState
+  chatStates: Map<number, ChatState>
 ): Promise<void> {
   const message: any = ctx.msg;
   if (!message) return;
@@ -93,6 +93,7 @@ export async function handleIncomingMessage(
 
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message, users);
+  const state: ChatState = getChatState(chatStates, chatId);
 
   // 检查是否需要复读当前目标（用户或频道皮套）的消息
   if (state.isCopying && state.copiedUserId && senderId === state.copiedUserId) {
@@ -129,10 +130,11 @@ export async function handleIncomingMessage(
  * （如果目标移除了自己的回应，也会跟着清除）。
  * 自定义 emoji / 付费反应不跟着复制——bot 不一定有权限使用同一个自定义表情。
  */
-export async function handleReaction(ctx: Context, state: BotState): Promise<void> {
+export async function handleReaction(ctx: Context, chatStates: Map<number, ChatState>): Promise<void> {
   const reaction = ctx.messageReaction;
   if (!reaction) return;
 
+  const state: ChatState = getChatState(chatStates, reaction.chat.id);
   const reactorId: number | undefined = reaction.actor_chat ? reaction.actor_chat.id : reaction.user?.id;
   if (!state.isCopying || !state.copiedUserId || reactorId !== state.copiedUserId) return;
 
@@ -153,12 +155,14 @@ export async function handleReaction(ctx: Context, state: BotState): Promise<voi
 export async function handleCopyCommand(
   ctx: CommandContext<Context>,
   users: Record<string, CachedUser>,
-  state: BotState,
+  chatStates: Map<number, ChatState>,
+  usersFileData: UsersFileSchema,
   mode?: CopyMode
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const fromUser = ctx.from;
+  const state: ChatState = getOrCreateChatState(chatStates, chatId);
 
   // 全局共享一份 lastCopyTime 冷却时钟：只要不是白名单用户触发，任何 copy 类
   // 命令（不管是换目标、重复同一个目标，还是回复消息触发）一律先查时间，
@@ -235,13 +239,14 @@ export async function handleCopyCommand(
   state.copyMode = mode;
   state.lastCopiedUserId = targetUser.id;
   state.lastCopyTime = Date.now();
-  await saveState(state);
+  await saveState(chatStates);
 
-  // 同步更新并保存到 users.json
-  await saveUsersFile({
+  // 同步更新并保存到 users.json（仅更新本群聊自己的条目，不影响其他群聊）
+  usersFileData[String(chatId)] = {
     lastCopyTime: state.lastCopyTime || 0,
     copiedUser: targetUser,
-  });
+  };
+  await saveUsersFile(usersFileData);
 
   // 发送过渡反馈
   const targetLabel: string = formatUserLabel(targetUser);
@@ -267,9 +272,14 @@ export async function handleCopyCommand(
 /**
  * 处理 /stop 指令。
  */
-export async function handleStopCommand(ctx: CommandContext<Context>, state: BotState): Promise<void> {
+export async function handleStopCommand(
+  ctx: CommandContext<Context>,
+  chatStates: Map<number, ChatState>,
+  usersFileData: UsersFileSchema
+): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
+  const state: ChatState = getOrCreateChatState(chatStates, chatId);
 
   if (!state.isCopying) {
     await sendMessage(chatId, `本天才现在什么杂鱼都没盯着呢，笨蛋要 /stop 什么呀♡`, messageId);
@@ -280,13 +290,14 @@ export async function handleStopCommand(ctx: CommandContext<Context>, state: Bot
   state.copiedUserId = null;
   state.copiedIsChannel = false;
   state.copyMode = undefined;
-  await saveState(state);
+  await saveState(chatStates);
 
-  // 同步更新并保存到 users.json，将当前 copiedUser 置为 null
-  await saveUsersFile({
+  // 同步更新并保存到 users.json（仅更新本群聊自己的条目），将当前 copiedUser 置为 null
+  usersFileData[String(chatId)] = {
     lastCopyTime: state.lastCopyTime || 0,
     copiedUser: null,
-  });
+  };
+  await saveUsersFile(usersFileData);
 
   await sendMessage(chatId, `哼，不玩了，本天才先歇一下~杂鱼♡`, messageId);
 }
