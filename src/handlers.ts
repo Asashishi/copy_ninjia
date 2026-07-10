@@ -76,7 +76,7 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
 }
 
 /** 没有复读对象时，随机复读一条新消息的概率。 */
-const RANDOM_ECHO_PROBABILITY: number = 1 / 10;
+const RANDOM_ECHO_PROBABILITY: number = 1 / 100;
 
 /** 随机复读时的模式池：undefined 表示原样复读，其余对应各 /*_copy 的文本变换。 */
 const RANDOM_ECHO_MODES: (CopyMode | undefined)[] = [undefined, "reverse", "nya", "ja"];
