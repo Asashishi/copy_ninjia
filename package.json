@@ -1,0 +1,16 @@
+{
+  "name": "copy_ninjia",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@google-cloud/translate": "^9.4.2",
+    "grammy": "^1.44.0"
+  }
+}
