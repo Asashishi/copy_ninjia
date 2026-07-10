@@ -2,7 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
 import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "./types";
 import { getChatState, getOrCreateChatState, saveState, saveUsersFile } from "./storage";
-import { sendMessage, copyMessage, setReaction, copyUserProfilePhoto, kickChatMember, deleteMessageAfter, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
+import { sendMessage, copyMessage, setReaction, copyUserProfilePhoto, banChatMember, deleteMessageAfter, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
 import { applyCopyModeTransform, describeCopyModeEffect } from "./copyModes";
 import { formatUserLabel } from "./userLabel";
 import { handleGroupJoinVerification } from "./joinVerification";
@@ -303,8 +303,10 @@ export async function handleStopCommand(
 }
 
 /**
- * 处理 /kick 指令：回复目标的一条消息并发送 /kick，即可将其移出聊天。仅限
- * PRIVILEGED_USER_ID 使用——其他任何人尝试都只会被嘲讽，指令本身不会执行。
+ * 处理 /kick 指令：回复目标的一条消息并发送 /kick，即可将其移出聊天并永久封禁
+ * （与入群验证/反刷群的自动踢出不同——那些踢而不 ban 以防误杀，这里是管理员的
+ * 手动判断，直接封死）。仅限 PRIVILEGED_USER_ID 使用——其他任何人尝试都只会
+ * 被嘲讽，指令本身不会执行。
  */
 export async function handleKickCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -333,10 +335,10 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  await kickChatMember(chatId, targetUser.id);
+  await banChatMember(chatId, targetUser.id);
 
   const targetLabel: string = formatUserLabel(targetUser);
-  const noticeMessageId: number | undefined = await sendMessage(chatId, `哼，${targetLabel} 被本天才一脚踢出去啦，杂鱼别想回来了♡`, messageId);
+  const noticeMessageId: number | undefined = await sendMessage(chatId, `哼，${targetLabel} 被本天才一脚踢出去还上了黑名单，杂鱼永远别想回来了♡`, messageId);
   if (noticeMessageId !== undefined) {
     deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS);
   }

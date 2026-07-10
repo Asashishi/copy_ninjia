@@ -155,7 +155,8 @@ export function deleteMessageAfter(chatId: number, messageId: number, delayMs: n
 
 /**
  * 将某成员移出聊天但不永久封禁：先封禁再立刻解封，这样 TA 之后若再次被邀请
- * 仍可自由加入。需要机器人是拥有封禁权限的管理员。
+ * 仍可自由加入。用于入群验证超时和反刷群的自动踢出——这些是自动触发的，
+ * 不封禁以防误杀。需要机器人是拥有封禁权限的管理员。
  * @param chatId 要移出成员的聊天。
  * @param userId 要移除的成员。
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
@@ -169,6 +170,26 @@ export async function kickChatMember(chatId: number, userId: number, api: Api = 
       console.error(`Failed to kick chat member: ${error.error_code} ${error.description}`);
     } else {
       console.error("Error kicking chat member:", error);
+    }
+  }
+}
+
+/**
+ * 将某成员移出聊天并永久封禁（不解封，TA 无法再自行加入或被普通成员邀请回来）。
+ * 用于 /kick 命令——那是管理员的手动判断，与自动踢出不同，要的就是封死。
+ * 需要机器人是拥有封禁权限的管理员。
+ * @param chatId 要封禁成员的聊天。
+ * @param userId 要封禁的成员。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ */
+export async function banChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<void> {
+  try {
+    await api.banChatMember(chatId, userId);
+  } catch (error: unknown) {
+    if (error instanceof GrammyError) {
+      console.error(`Failed to ban chat member: ${error.error_code} ${error.description}`);
+    } else {
+      console.error("Error banning chat member:", error);
     }
   }
 }
