@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import type { ChatMember } from "@grammyjs/types";
 import type { CachedUser, PendingVerification } from "./types";
-import { sendMessage, deleteMessage, deleteMessageAfter, kickChatMember, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
+import { sendMessage, deleteMessage, deleteMessageAfter, kickChatMember, joinVerificationApi, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
 import { formatUserLabel } from "./userLabel";
 
 /** The exact text a new member must send within VERIFICATION_TIMEOUT_MS to avoid being kicked. */
@@ -43,12 +43,12 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
   pendingVerifications.delete(key);
 
   for (const messageId of pending.messageIds) {
-    await deleteMessage(chatId, messageId);
+    await deleteMessage(chatId, messageId, joinVerificationApi);
   }
-  await kickChatMember(chatId, userId);
-  const noticeMessageId: number | undefined = await sendMessage(chatId, `啧，${pending.label} 磨磨蹭蹭 1 分钟都交不出口令，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`);
+  await kickChatMember(chatId, userId, joinVerificationApi);
+  const noticeMessageId: number | undefined = await sendMessage(chatId, `啧，${pending.label} 磨磨蹭蹭 1 分钟都交不出口令，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`, undefined, joinVerificationApi);
   if (noticeMessageId !== undefined) {
-    deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS);
+    deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
   }
 }
 
@@ -90,7 +90,7 @@ async function ensureVerificationStarted(chatId: number, member: any, announceme
     `喂，${memberLabel(member)}，新来的杂鱼给本天才听好了，` +
     `1 分钟内发一句 "${VERIFICATION_CODE}" 证明你不是机器人，` +
     `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
-  const reminderMessageId: number | undefined = await sendMessage(chatId, reminderText);
+  const reminderMessageId: number | undefined = await sendMessage(chatId, reminderText, undefined, joinVerificationApi);
   if (reminderMessageId !== undefined) {
     pending.messageIds.push(reminderMessageId);
   }
@@ -152,7 +152,7 @@ async function trackPendingMessage(message: any): Promise<boolean> {
 
   clearTimeout(pending.timeout);
   pendingVerifications.delete(key);
-  await sendMessage(message.chat.id, `哼，算你机灵，${memberLabel(message.from)} 通过验证啦，欢迎杂鱼入群~♡`);
+  await sendMessage(message.chat.id, `哼，算你机灵，${memberLabel(message.from)} 通过验证啦，欢迎杂鱼入群~♡`, undefined, joinVerificationApi);
   return true;
 }
 

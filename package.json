@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@google-cloud/translate": "^9.4.2",
+    "@grammyjs/auto-retry": "^2.0.2",
+    "@grammyjs/transformer-throttler": "^1.2.1",
     "grammy": "^1.44.0"
   }
 }

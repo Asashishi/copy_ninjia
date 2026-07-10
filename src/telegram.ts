@@ -1,8 +1,23 @@
-import { Bot, GrammyError, InputFile } from "grammy";
+import { Api, Bot, GrammyError, InputFile } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
+import { apiThrottler } from "@grammyjs/transformer-throttler";
+import { autoRetry } from "@grammyjs/auto-retry";
 import { BOT_TOKEN } from "./config";
 
 export const bot: Bot = new Bot(BOT_TOKEN);
+
+/**
+ * Separate API client used only by the join-verification flow
+ * (joinVerification.ts), which can burst many send/delete/kick calls into the
+ * same chat within seconds — a wave of simultaneous joins, or a spammer's
+ * whole message backlog getting deleted on kick. Throttled to Telegram's
+ * per-chat/global limits and auto-retried on 429s so those bursts queue and
+ * survive instead of silently failing. Kept off the shared `bot.api` client
+ * so it doesn't add latency/queuing to normal command replies elsewhere.
+ */
+export const joinVerificationApi: Api = new Api(BOT_TOKEN);
+joinVerificationApi.config.use(apiThrottler());
+joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 5 }));
 
 const AVATAR_FETCH_TIMEOUT_MS: number = 15000;
 const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
@@ -83,11 +98,12 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
  * @param chatId The target chat ID.
  * @param text The message text.
  * @param replyToMessageId Optional message ID to reply to.
+ * @param api The API client to send through (defaults to the shared, unthrottled `bot.api`).
  * @returns The sent message's ID, or undefined if sending failed.
  */
-export async function sendMessage(chatId: number, text: string, replyToMessageId?: number): Promise<number | undefined> {
+export async function sendMessage(chatId: number, text: string, replyToMessageId?: number, api: Api = bot.api): Promise<number | undefined> {
   try {
-    const sent = await bot.api.sendMessage(
+    const sent = await api.sendMessage(
       chatId,
       text,
       replyToMessageId ? { reply_parameters: { message_id: replyToMessageId } } : undefined
@@ -108,10 +124,11 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
  * whatever the user sent) when they fail to verify in time.
  * @param chatId The chat containing the message.
  * @param messageId The message to delete.
+ * @param api The API client to send through (defaults to the shared, unthrottled `bot.api`).
  */
-export async function deleteMessage(chatId: number, messageId: number): Promise<void> {
+export async function deleteMessage(chatId: number, messageId: number, api: Api = bot.api): Promise<void> {
   try {
-    await bot.api.deleteMessage(chatId, messageId);
+    await api.deleteMessage(chatId, messageId);
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
       console.error(`Failed to delete message: ${error.error_code} ${error.description}`);
@@ -130,10 +147,11 @@ export const KICK_NOTICE_AUTO_DELETE_MS: number = 30 * 1000;
  * @param chatId The chat containing the message.
  * @param messageId The message to delete.
  * @param delayMs Milliseconds to wait before deleting.
+ * @param api The API client to send through (defaults to the shared, unthrottled `bot.api`).
  */
-export function deleteMessageAfter(chatId: number, messageId: number, delayMs: number): void {
+export function deleteMessageAfter(chatId: number, messageId: number, delayMs: number, api: Api = bot.api): void {
   setTimeout(() => {
-    void deleteMessage(chatId, messageId);
+    void deleteMessage(chatId, messageId, api);
   }, delayMs);
 }
 
@@ -143,11 +161,12 @@ export function deleteMessageAfter(chatId: number, messageId: number, delayMs: n
  * invited again. Requires the bot to be an admin with ban rights.
  * @param chatId The chat to remove the member from.
  * @param userId The member to remove.
+ * @param api The API client to send through (defaults to the shared, unthrottled `bot.api`).
  */
-export async function kickChatMember(chatId: number, userId: number): Promise<void> {
+export async function kickChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<void> {
   try {
-    await bot.api.banChatMember(chatId, userId);
-    await bot.api.unbanChatMember(chatId, userId, { only_if_banned: true });
+    await api.banChatMember(chatId, userId);
+    await api.unbanChatMember(chatId, userId, { only_if_banned: true });
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
       console.error(`Failed to kick chat member: ${error.error_code} ${error.description}`);
