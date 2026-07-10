@@ -239,16 +239,43 @@ export async function kickChatMember(chatId: number, userId: number, api: Api = 
  * @param chatId 要封禁成员的聊天。
  * @param userId 要封禁的成员。
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @returns 封禁是否成功——/kick 的战报要靠它区分真踢出和假成功。
  */
-export async function banChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<void> {
+export async function banChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   try {
     await api.banChatMember(chatId, userId);
+    return true;
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
       console.error(`Failed to ban chat member: ${error.error_code} ${error.description}`);
     } else {
       console.error("Error banning chat member:", error);
     }
+    return false;
+  }
+}
+
+/**
+ * 封禁一个以频道身份（sender_chat）在本聊天发言的频道马甲，使其无法再发消息。
+ * banChatMember 只接受用户 id，对频道马甲必须走这个接口；Telegram 不向 bot
+ * 暴露马甲背后的真人，所以这已经是能做到的最彻底的"踢频道"。
+ * 需要机器人是拥有封禁权限的管理员。
+ * @param chatId 要封禁频道马甲的聊天。
+ * @param senderChatId 要封禁的频道 id（`-100…` 形式）。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @returns 封禁是否成功——/kick 的战报要靠它区分真踢出和假成功。
+ */
+export async function banChatSenderChat(chatId: number, senderChatId: number, api: Api = bot.api): Promise<boolean> {
+  try {
+    await api.banChatSenderChat(chatId, senderChatId);
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof GrammyError) {
+      console.error(`Failed to ban sender chat: ${error.error_code} ${error.description}`);
+    } else {
+      console.error("Error banning sender chat:", error);
+    }
+    return false;
   }
 }
 
