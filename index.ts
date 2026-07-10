@@ -69,7 +69,7 @@ async function main(): Promise<void> {
       { command: "nya_copy", description: "复制并在复读末尾加上喵~" },
       { command: "ja_copy", description: "复制并把复读翻译成日语" },
       { command: "stop", description: "停止当前的复制" },
-      { command: "kick", description: "踢出并封禁：/kick @username 或回复 TA 的消息（仅主人可用）" },
+      { command: "kick", description: "踢出群聊并封禁（仅主人可用）" },
     ]);
   } catch (error: unknown) {
     console.error("Failed to register bot commands menu:", error);
