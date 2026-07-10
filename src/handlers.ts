@@ -343,12 +343,13 @@ export async function handleStopCommand(
 }
 
 /**
- * 处理 /kick 指令：回复目标的一条消息并发送 /kick，即可将其移出聊天并永久封禁
- * （与入群验证/反刷群的自动踢出不同——那些踢而不 ban 以防误杀，这里是管理员的
- * 手动判断，直接封死）。仅限 PRIVILEGED_USER_ID 使用——其他任何人尝试都只会
- * 被嘲讽，指令本身不会执行。
+ * 处理 /kick 指令：将目标移出聊天并永久封禁（与入群验证/反刷群的自动踢出
+ * 不同——那些踢而不 ban 以防误杀，这里是管理员的手动判断，直接封死）。
+ * 目标解析和 /copy 一致：回复目标的一条消息优先，也可以用 /kick @username
+ * 指定（要求本机器人此前缓存过该用户）。仅限 PRIVILEGED_USER_ID 使用——
+ * 其他任何人尝试都只会被嘲讽，指令本身不会执行。
  */
-export async function handleKickCommand(ctx: CommandContext<Context>): Promise<void> {
+export async function handleKickCommand(ctx: CommandContext<Context>, users: Record<string, CachedUser>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const fromUser = ctx.from;
@@ -362,9 +363,24 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  const targetUser: CachedUser | undefined = resolveReplyTarget(ctx.msg as any);
+  // 回复目标的消息优先于参数里的 @username（理由同 /copy：没有公开 username
+  // 或没被缓存过的目标只能靠回复锁定）。
+  let targetUser: CachedUser | undefined = resolveReplyTarget(ctx.msg as any);
+  let rawUsername: string | undefined;
+
   if (!targetUser) {
-    const replyText: string = `笨蛋，要 /kick 人就回复 TA 的一条消息呀，本天才可不会读心术♡`;
+    const usernameMatch = ctx.match.trim().match(/^@?([a-zA-Z0-9_]+)/);
+    if (!usernameMatch) {
+      const replyText: string = `笨蛋，要么 /kick @username，要么回复 TA 的一条消息再 /kick，本天才可不会读心术♡`;
+      await sendMessage(chatId, replyText, messageId);
+      return;
+    }
+    rawUsername = usernameMatch[1]!;
+    targetUser = users[rawUsername.toLowerCase()];
+  }
+
+  if (!targetUser) {
+    const replyText: string = `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /kick 吧♡`;
     await sendMessage(chatId, replyText, messageId);
     return;
   }

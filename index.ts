@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "nya"));
   bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "ja"));
   bot.command("stop", (ctx) => handleStopCommand(ctx, chatStates, usersData));
-  bot.command("kick", (ctx) => handleKickCommand(ctx));
+  bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users, chatStates));
   bot.on("message_reaction", (ctx) => handleReaction(ctx, chatStates));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
       { command: "nya_copy", description: "复制并在复读末尾加上喵~" },
       { command: "ja_copy", description: "复制并把复读翻译成日语" },
       { command: "stop", description: "停止当前的复制" },
-      { command: "kick", description: "回复某人的消息将 TA 踢出并封禁（仅主人可用）" },
+      { command: "kick", description: "踢出并封禁：/kick @username 或回复 TA 的消息（仅主人可用）" },
     ]);
   } catch (error: unknown) {
     console.error("Failed to register bot commands menu:", error);
