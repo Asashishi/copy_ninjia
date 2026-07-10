@@ -59,6 +59,22 @@ async function main(): Promise<void> {
     console.error(`Unhandled error while handling update ${err.ctx.update.update_id}:`, err.error);
   });
 
+  // 向 Telegram 注册命令列表，让聊天框输入 / 时弹出命令菜单。默认作用域即可
+  // 覆盖群聊和私聊；注册失败不影响命令本身工作（只是没有菜单提示），所以
+  // 不让它阻断启动。
+  try {
+    await bot.api.setMyCommands([
+      { command: "copy", description: "复制某人：/copy @username 或回复 TA 的消息" },
+      { command: "r_copy", description: "复制并反转复读的文字" },
+      { command: "nya_copy", description: "复制并在复读末尾加上喵~" },
+      { command: "ja_copy", description: "复制并把复读翻译成日语" },
+      { command: "stop", description: "停止当前的复制" },
+      { command: "kick", description: "回复某人的消息将 TA 踢出并封禁（仅主人可用）" },
+    ]);
+  } catch (error: unknown) {
+    console.error("Failed to register bot commands menu:", error);
+  }
+
   const stopBot = (): void => {
     void bot.stop();
   };
