@@ -75,9 +75,64 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
   return resolveSenderIdentity(repliedMessage);
 }
 
+/** 没有复读对象时，随机复读一条新消息的概率。 */
+const RANDOM_ECHO_PROBABILITY: number = 1 / 10;
+
+/** 随机复读时的模式池：undefined 表示原样复读，其余对应各 /*_copy 的文本变换。 */
+const RANDOM_ECHO_MODES: (CopyMode | undefined)[] = [undefined, "reverse", "nya", "ja"];
+
 /**
- * 处理每一条收到的 message/channel_post：刷新发送者缓存，如果消息来自当前
- * 正在被复制的目标，则将其复读回同一个聊天。
+ * 将一条消息复读回它所在的聊天，并按给定模式做文本变换。
+ * @param mode 要应用的文本变换（undefined 表示原样复读）。
+ */
+async function echoMessage(chatId: number, message: any, mode: CopyMode | undefined): Promise<void> {
+  const text: string = message.text || "";
+  // 不复读指令消息，防止指令无限解析
+  if (text.startsWith("/")) return;
+
+  // 安全校验：只对"纯文本"消息本身做变换（有 text、无 entities、非媒体）；
+  // 带格式/链接/@提及的消息一旦被反转或拼接后缀，会破坏 entity 的偏移量，
+  // 可能被用来伪造看似正常、实际指向别处的链接/提及，所以这类消息以及
+  // 非文本消息一律走原样 copyMessage，不做任何文本变换。
+  const isPlainText: boolean =
+    typeof message.text === "string" &&
+    (!message.entities || message.entities.length === 0);
+
+  const transformed: string | null = isPlainText
+    ? await applyCopyModeTransform(message.text, mode)
+    : null;
+
+  if (transformed !== null) {
+    // 变换后的文本只当作纯文本发送（sendMessage 不带 parse_mode），不会被
+    // Telegram 当作 HTML/Markdown 解析，也就不存在把用户输入拼进富文本
+    // 导致的格式/链接注入问题。
+    await sendMessage(chatId, transformed);
+  } else {
+    // 无变换模式、非纯文本消息、或变换本身失败（如翻译出错）都退化为原样转发。
+    await copyMessage(chatId, chatId, message.message_id);
+  }
+}
+
+/**
+ * 判断一条消息是否有可以被 copyMessage 复制的实际内容。随机复读要靠它过滤掉
+ * 置顶提示、成员变动之类的服务消息——对这类消息调用 copyMessage 必然报错。
+ * （被 /copy 锁定的目标不走这个过滤：TA 的消息本就该尽数复读，个别复制失败
+ * 记日志即可。）
+ */
+function hasCopyableContent(message: any): boolean {
+  return !!(
+    message.text || message.caption || message.photo || message.sticker ||
+    message.animation || message.video || message.video_note || message.audio ||
+    message.voice || message.document || message.dice || message.contact ||
+    message.location || message.venue || message.poll || message.story
+  );
+}
+
+/**
+ * 处理每一条收到的 message/channel_post：刷新发送者缓存。如果消息来自当前
+ * 正在被复制的目标，则将其复读回同一个聊天；如果本群当前没有复制目标，则以
+ * RANDOM_ECHO_PROBABILITY 的概率随机挑一种模式复读这条消息（东一榔头西一棒子
+ * 地刷存在感）。
  */
 export async function handleIncomingMessage(
   ctx: Context,
@@ -97,31 +152,16 @@ export async function handleIncomingMessage(
 
   // 检查是否需要复读当前目标（用户或频道皮套）的消息
   if (state.isCopying && state.copiedUserId && senderId === state.copiedUserId) {
-    const text: string = message.text || "";
-    // 不复读指令消息，防止指令无限解析
-    if (!text.startsWith("/")) {
-      // 安全校验：只对"纯文本"消息本身做变换（有 text、无 entities、非媒体）；
-      // 带格式/链接/@提及的消息一旦被反转或拼接后缀，会破坏 entity 的偏移量，
-      // 可能被用来伪造看似正常、实际指向别处的链接/提及，所以这类消息以及
-      // 非文本消息一律走原样 copyMessage，不做任何文本变换。
-      const isPlainText: boolean =
-        typeof message.text === "string" &&
-        (!message.entities || message.entities.length === 0);
+    await echoMessage(chatId, message, state.copyMode);
+    return;
+  }
 
-      const transformed: string | null = isPlainText
-        ? await applyCopyModeTransform(message.text, state.copyMode)
-        : null;
-
-      if (transformed !== null) {
-        // 变换后的文本只当作纯文本发送（sendMessage 不带 parse_mode），不会被
-        // Telegram 当作 HTML/Markdown 解析，也就不存在把用户输入拼进富文本
-        // 导致的格式/链接注入问题。
-        await sendMessage(chatId, transformed);
-      } else {
-        // 无变换模式、非纯文本消息、或变换本身失败（如翻译出错）都退化为原样转发。
-        await copyMessage(chatId, chatId, message.message_id);
-      }
-    }
+  // 没有复读对象时的随机复读。无需担心和其他机器人形成复读循环：Telegram
+  // 保证机器人收不到其他机器人发的消息（官方为防止 bot 互相触发死循环的设计），
+  // 自己发的消息也不会作为更新推送回来。
+  if (!state.isCopying && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
+    const mode: CopyMode | undefined = RANDOM_ECHO_MODES[Math.floor(Math.random() * RANDOM_ECHO_MODES.length)];
+    await echoMessage(chatId, message, mode);
   }
 }
 
