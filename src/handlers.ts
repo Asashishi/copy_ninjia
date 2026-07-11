@@ -169,7 +169,9 @@ export async function handleIncomingMessage(
   // 说法，同时挡住「洗刷刷澡堂子见」这种字面撞上的误伤（洗、泡、澡三字
   // 简繁同形，冲凉的繁体是沖涼）。只对短消息（≤15 字）触发，避免长文里
   // 偶然带出也被打扰。
-  if (!state.isCopying && typeof message.text === "string" && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
+  // 以 / 开头的是指令（未注册的、或发给其他机器人的指令不会被 bot.command
+  // 拦截，会落到这里），与 echoMessage 的「不复读指令消息」保持一致，不触发。
+  if (!state.isCopying && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
     await sendMessage(chatId, "看看", message.message_id);
     return;
   }
@@ -220,7 +222,7 @@ export function handleReaction(ctx: Context, chatStates: Map<number, ChatState>)
     toApply = [];
   }
 
-  enqueueReaction(reaction.chat.id, reaction.message_id, toApply, reaction.date);
+  enqueueReaction(reaction.chat.id, reaction.message_id, toApply, ctx.update.update_id, reaction.date);
 }
 
 /**

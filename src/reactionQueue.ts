@@ -14,6 +14,8 @@ interface ReactionTask {
   chatId: number;
   messageId: number;
   reactions: CopyableReaction[];
+  /** 产生本任务的更新的 update_id，用于覆盖旧任务前判断新旧。 */
+  updateId: number;
   /** 目标点下反应的时刻（message_reaction 更新的 date 字段，Unix 秒）。 */
   reactedAtUnix: number;
   /** 本任务入队的时刻（毫秒时间戳），用于统计队列内耗时。 */
@@ -46,11 +48,19 @@ const consumingChats: Set<number> = new Set();
  * @param chatId 目标聊天 ID。
  * @param messageId 要回应的消息。
  * @param reactions 要应用的反应（最多 1 个——机器人无 Premium，一条消息只能设一个反应）。
+ * @param updateId 产生本次调用的更新的 update_id（单调递增），用于新旧判断。
  * @param reactedAtUnix 目标点下反应的时刻（message_reaction 更新的 date 字段），用于延迟统计。
  */
-export function enqueueReaction(chatId: number, messageId: number, reactions: CopyableReaction[], reactedAtUnix: number): void {
+export function enqueueReaction(chatId: number, messageId: number, reactions: CopyableReaction[], updateId: number, reactedAtUnix: number): void {
   const key: string = `${chatId}:${messageId}`;
-  if (!pendingTasks.has(key)) {
+  const existing: ReactionTask | undefined = pendingTasks.get(key);
+  if (existing) {
+    // reaction 更新是无约束并发处理的，入队顺序不保证等于真实顺序；date 只有
+    // 秒级精度，这里用单调递增的 update_id 判断新旧，旧状态不许覆盖新状态。
+    if (updateId < existing.updateId) {
+      return;
+    }
+  } else {
     let order: string[] | undefined = chatQueues.get(chatId);
     if (!order) {
       order = [];
@@ -58,7 +68,7 @@ export function enqueueReaction(chatId: number, messageId: number, reactions: Co
     }
     order.push(key);
   }
-  pendingTasks.set(key, { chatId, messageId, reactions, reactedAtUnix, enqueuedAtMs: Date.now() });
+  pendingTasks.set(key, { chatId, messageId, reactions, updateId, reactedAtUnix, enqueuedAtMs: Date.now() });
   if (!consumingChats.has(chatId)) {
     void consumeChatQueue(chatId);
   }
