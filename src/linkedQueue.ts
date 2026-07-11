@@ -41,6 +41,11 @@ export class LinkedQueue<T> {
     return node.value;
   }
 
+  /** 查看队首元素但不出队;队列为空时返回 undefined。 */
+  peek(): T | undefined {
+    return this.head ? this.head.value : undefined;
+  }
+
   /** 取队尾最近的 n 个元素,保持入队顺序;n 大于队列长度时返回全部。 */
   last(n: number): T[] {
     const skip: number = Math.max(0, this.count - n);

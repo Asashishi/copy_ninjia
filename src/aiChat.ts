@@ -37,6 +37,18 @@ const AI_REPLY_COOLDOWN_MS: number = 1_500;
 /** 各群聊上一次 AI 回复的触发时刻（毫秒时间戳），用于冷却判断。 */
 const lastReplyTimes: Map<number, number> = new Map();
 
+/**
+ * 全局限频：滚动 60 秒窗口内所有群合计最多触发多少次 AI 回复。
+ * 每群冷却只能挡单群连点，多个群同时被刷时依然会线性放大 API 调用量，
+ * 这道全局闸把总量兜住。只在入口计一次数——一次触发内的「连发多条
+ * 短消息」属于同一次回复，不重复计数。超限的触发直接静默丢弃。
+ */
+const RATE_LIMIT_WINDOW_MS: number = 60_000;
+const RATE_LIMIT_MAX_TRIGGERS: number = 35;
+
+/** 窗口内每次触发的时刻（毫秒时间戳），队首最旧，过期即出队。 */
+const triggerTimes: LinkedQueue<number> = new LinkedQueue<number>();
+
 /** 缓存里的一条消息：发言人 id + 名字（拆开存，好让模型按 id 而非重名区分身份）+ 文本。 */
 interface BufferedMessage {
   id: number;
@@ -223,13 +235,24 @@ function sleep(ms: number): Promise<void> {
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
  */
 export function generateAndSendReply(chatId: number, replyToMessageId: number, repliedBotText?: string): void {
-  // 每群 5 秒冷却：在发起任何异步工作之前同步判定并占位，这样冷却窗口内的
+  // 每群冷却：在发起任何异步工作之前同步判定并占位，这样冷却窗口内的
   // 并发触发（包括 100% 命中的回复/@ 触发）都会在烧到 API 之前被丢弃。
   const now: number = Date.now();
   if (now - (lastReplyTimes.get(chatId) ?? 0) < AI_REPLY_COOLDOWN_MS) {
     return;
   }
+
+  // 全局每分钟限频：先把窗口外的旧触发挤掉，再看余量。两道闸都过了才
+  // 一起落账，避免被拒的触发白白占用冷却/配额。
+  while (triggerTimes.size > 0 && now - triggerTimes.peek()! >= RATE_LIMIT_WINDOW_MS) {
+    triggerTimes.shift();
+  }
+  if (triggerTimes.size >= RATE_LIMIT_MAX_TRIGGERS) {
+    return;
+  }
+
   lastReplyTimes.set(chatId, now);
+  triggerTimes.push(now);
 
   const splitMode: boolean = Math.random() < SPLIT_REPLY_PROBABILITY;
 
