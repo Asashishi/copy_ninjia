@@ -13,5 +13,15 @@ function requireEnv(name: string): string {
 
 export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 
-/** 唯一免受 /copy 冷却限制、且可以使用 /kick 的用户 ID。 */
-export const PRIVILEGED_USER_ID: number = Number(requireEnv("PRIVILEGED_USER_ID"));
+/** 免受 /copy 冷却限制、且可以使用 /kick 的用户 ID 白名单（逗号分割）。 */
+export const PRIVILEGED_USERS_ID: number[] = requireEnv("PRIVILEGED_USERS_ID")
+  .split(",")
+  .map((part: string) => part.trim())
+  .filter((part: string) => part.length > 0)
+  .map((part: string) => {
+    const id: number = Number(part);
+    if (!Number.isInteger(id)) {
+      throw new Error(`Invalid user ID in PRIVILEGED_USERS_ID: "${part}" (see .env.example)`);
+    }
+    return id;
+  });

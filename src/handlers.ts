@@ -6,7 +6,7 @@ import { enqueueReaction, type CopyableReaction } from "./reactionQueue";
 import { applyCopyModeTransform, describeCopyModeEffect } from "./copyModes";
 import { formatUserLabel } from "./userLabel";
 import { handleGroupJoinVerification } from "./joinVerification";
-import { PRIVILEGED_USER_ID } from "./config";
+import { PRIVILEGED_USERS_ID } from "./config";
 
 /**
  * 解析出一条消息发送者的 CachedUser 形态身份：可能是真实 Telegram 用户
@@ -248,7 +248,7 @@ export async function handleCopyCommand(
   // 全局共享一份 lastCopyTime 冷却时钟：只要不是白名单用户触发，任何 copy 类
   // 命令（不管是换目标、重复同一个目标，还是回复消息触发）一律先查时间，
   // 不再区分"是不是在换目标"——冷却没到直接拦，比之前只在切换目标时才检查更简单可靠。
-  const isExempted: boolean = !!fromUser && fromUser.id === PRIVILEGED_USER_ID;
+  const isExempted: boolean = !!fromUser && PRIVILEGED_USERS_ID.includes(fromUser.id);
   if (!isExempted && state.lastCopyTime) {
     const elapsed: number = Date.now() - state.lastCopyTime;
     const cooldown: number = 5 * 60 * 1000; // 5 分钟，单位毫秒
@@ -388,15 +388,15 @@ export async function handleStopCommand(
  * 不同——那些踢而不 ban 以防误杀，这里是管理员的手动判断，直接封死）。
  * 目标解析和 /copy 一致：回复目标的一条消息优先，也可以用 /kick @username
  * 指定（要求本机器人此前缓存过该用户）。目标若是频道马甲（sender_chat），
- * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限 PRIVILEGED_USER_ID
- * 使用——其他任何人尝试都只会被嘲讽，指令本身不会执行。
+ * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限 PRIVILEGED_USERS_ID
+ * 白名单内的用户使用——其他任何人尝试都只会被嘲讽，指令本身不会执行。
  */
 export async function handleKickCommand(ctx: CommandContext<Context>, users: Record<string, CachedUser>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const fromUser = ctx.from;
 
-  if (!fromUser || fromUser.id !== PRIVILEGED_USER_ID) {
+  if (!fromUser || !PRIVILEGED_USERS_ID.includes(fromUser.id)) {
     const mockerLabel: string = fromUser
       ? formatUserLabel({ id: fromUser.id, username: fromUser.username, first_name: fromUser.first_name })
       : "哪个杂鱼";
