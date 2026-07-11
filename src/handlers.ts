@@ -7,6 +7,7 @@ import { applyCopyModeTransform, describeCopyModeEffect } from "./copyModes";
 import { formatUserLabel } from "./userLabel";
 import { handleGroupJoinVerification } from "./joinVerification";
 import { PRIVILEGED_USERS_ID } from "./config";
+import { recordChatMessage, generateAndSendReply, AI_REPLY_PROBABILITY } from "./aiChat";
 
 /**
  * 解析出一条消息发送者的 CachedUser 形态身份：可能是真实 Telegram 用户
@@ -73,6 +74,42 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
   const repliedMessage: any = message.reply_to_message;
   if (!repliedMessage) return undefined;
   return resolveSenderIdentity(repliedMessage);
+}
+
+/**
+ * 解析一条消息发言人喂给 AI 上下文所需的身份三元组：id + first_name + last_name。
+ * 刻意把 id 和名字分开存（而非拼成一个昵称字符串），好让模型按 id 区分同名的人。
+ * 频道马甲/频道帖没有 first_name/last_name，退化为用 title 当 firstName。
+ */
+function resolveSpeaker(message: any): { id: number; firstName: string; lastName: string } {
+  const fromUser: any = message.from;
+  const senderChat: any = message.sender_chat || (message.chat.type === "channel" ? message.chat : undefined);
+  if (senderChat) {
+    return { id: senderChat.id, firstName: senderChat.title ?? "某频道", lastName: "" };
+  }
+  if (fromUser) {
+    return { id: fromUser.id, firstName: fromUser.first_name ?? "", lastName: fromUser.last_name ?? "" };
+  }
+  return { id: 0, firstName: "某杂鱼", lastName: "" };
+}
+
+/**
+ * 判断一条消息的文本里是否 @ 了机器人自己。走 entities 里的 "mention" 类型
+ * （@username 形式），按 offset/length 截出实际文本再跟机器人的 username 比对，
+ * 不用简单的字符串 includes——避免把「@somebody_else_bot」这种子串误判成命中。
+ */
+function isBotMentioned(message: any, botUsername: string | undefined): boolean {
+  if (!botUsername || typeof message.text !== "string") return false;
+  const entities: any[] | undefined = message.entities;
+  if (!entities) return false;
+  const target: string = `@${botUsername}`.toLowerCase();
+  for (const entity of entities) {
+    if (entity.type === "mention") {
+      const mentionText: string = message.text.substring(entity.offset, entity.offset + entity.length);
+      if (mentionText.toLowerCase() === target) return true;
+    }
+  }
+  return false;
 }
 
 /** 没有复读对象时，随机复读一条新消息的概率。 */
@@ -161,6 +198,29 @@ export async function handleIncomingMessage(
   if (state.isCopying && state.copiedUserId && senderId === state.copiedUserId) {
     await echoMessage(chatId, message, state.copyMode);
     return;
+  }
+
+  // AI 相关逻辑仅在「群聊」且「没有复制对象」时进行：私聊消息不触发（机器人在
+  // 私聊里没有群聊上下文，也不该在 DM 里自动搭话）；复制期间机器人正忙着复读
+  // 目标，既不攒对话缓存也不触发 AI 回复，免得跟复读抢戏。
+  const isPrivateChat: boolean = message.chat.type === "private";
+  const messageText: string | undefined = typeof message.text === "string" ? message.text : undefined;
+  if (!isPrivateChat && !state.isCopying && messageText && !messageText.startsWith("/")) {
+    // 把带文本的普通消息滚动记入本群的 AI 对话缓存（Bot API 无法拉历史，只能
+    // 边收边攒最近 75 条）。指令消息（/ 开头）已在上面排除。
+    const speaker = resolveSpeaker(message);
+    recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, messageText);
+
+    // AI 闲聊回复：用户回复机器人、或者消息里 @ 了机器人 → 必回；否则普通发言
+    // 按 AI_REPLY_PROBABILITY 概率触发。命中后就不再走下面的洗澡/随机复读，
+    // 免得一条消息既被 AI 回又被复读。
+    const repliedTo: any = message.reply_to_message;
+    const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
+    const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
+    if (isReplyToBot || isMentioned || Math.random() < AI_REPLY_PROBABILITY) {
+      generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined);
+      return;
+    }
   }
 
   // 没有复读对象时，有人说到洗澡/泡澡/冲凉就回一句「看看」，简繁体都认。

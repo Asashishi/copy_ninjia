@@ -68,6 +68,17 @@ async function main(): Promise<void> {
     return ctx.chat ? [String(ctx.chat.id)] : [];
   }));
 
+  // 私聊里不触发任何命令（/copy /r_copy /nya_copy /ja_copy /stop /kick）：这些
+  // 指令都是围绕群聊状态设计的（复读目标、群内踢人），私聊语境下没有意义，也
+  // 免得被人在 DM 里瞎捣鼓。放在命令处理器注册之前，直接吞掉这类更新，不再
+  // 往下传给任何处理器。
+  bot.use((ctx, next) => {
+    if (ctx.chat?.type === "private" && ctx.message?.text?.startsWith("/")) {
+      return;
+    }
+    return next();
+  });
+
   // 命令处理器要注册在通用消息处理器之前：匹配到命令时 grammY 不会再往下传给它。
   bot.command("copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData));
   bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "reverse"));
@@ -89,11 +100,11 @@ async function main(): Promise<void> {
   try {
     await bot.api.setMyCommands([
       { command: "copy", description: "复读" },
-      { command: "r_copy", description: "复读反转字" },
+      { command: "r_copy", description: "复读并反转文本" },
       { command: "nya_copy", description: "复读并加喵~" },
       { command: "ja_copy", description: "复读并翻译为日语" },
       { command: "stop", description: "停止当前的复读" },
-      { command: "kick", description: "踢出群聊并封禁（仅主人可用）" },
+      { command: "kick", description: "踢出群聊并封禁（仅白名单用户可用）" },
     ]);
   } catch (error: unknown) {
     console.error("Failed to register bot commands menu:", error);
