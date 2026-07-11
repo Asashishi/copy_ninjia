@@ -6,8 +6,8 @@ import { formatUserLabel } from "./userLabel";
 import { isLockedDown, recordJoin } from "./antiRaid";
 
 /** 新成员必须在 VERIFICATION_TIMEOUT_MS 内发送的精确文本，否则会被踢出。 */
-const VERIFICATION_CODE: string = "purrvox";
-const VERIFICATION_TIMEOUT_MS: number = 1 * 60 * 1000;
+const VERIFICATION_CODE: string = "我是新人，别搞！";
+const VERIFICATION_TIMEOUT_MS: number = 90 * 1000;
 /**
  * 私密模式下直接踢人的占位记录存活时长：只是给 chat_member 更新和
  * new_chat_members 服务消息（针对同一次入群各自触发）留出去重窗口，
@@ -39,7 +39,7 @@ function isActiveChatMember(member: ChatMember): boolean {
  * 删除某个待验证成员被追踪的所有消息（如果有的话，包括入群公告、机器人的
  * 提醒消息，以及 TA 在等待期间发送的任何内容），将其踢出聊天，并发布一条通知
  * ——此时提到过 TA 的入群公告/提醒消息都已被删除，这条通知是关于谁被移除、
- * 为何被移除的唯一痕迹。在 1 分钟窗口到期、仍未收到正确口令时执行。
+ * 为何被移除的唯一痕迹。在 1 分 30 秒窗口到期、仍未收到正确口令时执行。
  */
 async function expireVerification(chatId: number, userId: number): Promise<void> {
   const key: string = verificationKey(chatId, userId);
@@ -51,7 +51,7 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
     await deleteMessage(chatId, messageId, joinVerificationApi);
   }
   await kickChatMember(chatId, userId, joinVerificationApi);
-  const noticeMessageId: number | undefined = await sendMessage(chatId, `啧，${pending.label} 磨磨蹭蹭 1 分钟都交不出口令，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`, undefined, joinVerificationApi);
+  const noticeMessageId: number | undefined = await sendMessage(chatId, `啧，${pending.label} 磨磨蹭蹭 1分30秒 都交不出口令，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`, undefined, joinVerificationApi);
   if (noticeMessageId !== undefined) {
     deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
   }
@@ -139,7 +139,7 @@ async function ensureVerificationStarted(chatId: number, member: any, announceme
   // 不影响后续到期清理。
   const reminderText: string =
     `喂，${memberLabel(member)}，新来的杂鱼给本天才听好了，` +
-    `1 分钟内发一句 "${VERIFICATION_CODE}" 证明你不是机器人，` +
+    `1分30秒内发一句 "${VERIFICATION_CODE}" 证明你不是机器人，` +
     `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
   void sendMessage(chatId, reminderText, undefined, joinVerificationApi)
     .then((reminderMessageId: number | undefined) => {
