@@ -1,15 +1,72 @@
 # copy_ninjia
 
-To install dependencies:
+一个基于 [grammY](https://grammy.dev/) 的 Telegram 群聊复读机机器人：锁定某个用户/频道后逐条复读其消息，支持文本反转、加喵~后缀、日语翻译三种复读变体，并附带入群验证、反刷群私密模式、AI 闲聊等群管理功能。
+
+## 功能特性
+
+- **复读（Copy）**：通过 `/copy`（回复目标消息，或 `/copy @username`）锁定某个用户或频道，之后 TA 发的每条消息都会被机器人复读一遍。
+  - `/copy` — 原样复读
+  - `/r_copy` — 复读并按字形簇反转文本
+  - `/nya_copy` — 复读并在文本末尾追加 " 喵~"
+  - `/ja_copy` — 复读并翻译为日语（基于 Google Cloud Translate）
+  - `/stop` — 停止当前复读
+  - `/kick` — 将目标移出群聊并永久封禁（仅白名单用户可用）
+- **消息反应同步**：复读目标消息收到的 reaction 会同步复制到复读出来的消息上。
+- **入群验证**：新成员需在限定时间内发送指定验证文本，否则自动踢出。
+- **反刷群（Anti-Raid）**：短时间内入群人数超过阈值时，自动临时开启私密模式（禁止普通成员拉人），到期后恢复原权限。
+- **AI 闲聊**：基于 DeepSeek API 和自定义人设（`prompt/persona.txt`），概率性地在群里生成闲聊回复。
+- **多群独立状态**：每个群聊的复读目标、冷却时间等状态互相独立，重启后从 `state.json` / `users.json` 恢复。
+
+## 环境要求
+
+- [Bun](https://bun.com) 运行时
+- Telegram Bot Token（通过 [@BotFather](https://t.me/BotFather) 获取）
+- DeepSeek API Key（用于 AI 闲聊功能）
+- Google Cloud 服务账号凭据（用于 `/ja_copy` 日语翻译功能，`g-auth.json`）
+
+## 安装
 
 ```bash
 bun install
 ```
 
-To run:
+## 配置
+
+复制 `.env.example` 为 `.env`，并填写以下变量：
+
+| 变量名 | 说明 |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token |
+| `PRIVILEGED_USERS_ID` | 白名单用户 ID，多个用逗号分割（可免受 `/copy` 冷却限制、使用 `/kick`） |
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥，供 AI 闲聊功能使用 |
+
+日语翻译功能还需要将 Google Cloud 服务账号密钥文件放置为项目根目录下的 `g-auth.json`（已加入 `.gitignore`，不会被提交）。
+
+## 运行
 
 ```bash
 bun run index.ts
 ```
 
-This project was created using `bun init` in bun v1.3.14. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+## 项目结构
+
+```
+index.ts               # 入口：注册命令/更新处理器，启动 grammY runner
+src/
+  telegram.ts           # Telegram Bot API 封装与限流
+  handlers.ts           # 复读/踢人等命令与消息处理逻辑
+  copyModes.ts           # 反转 / 喵~ / 日语翻译等复读文本变换
+  translate.ts           # Google Cloud Translate 封装
+  joinVerification.ts    # 入群验证逻辑
+  antiRaid.ts             # 反刷群私密模式
+  aiChat.ts               # AI 闲聊回复（DeepSeek）
+  reactionQueue.ts        # 消息反应同步队列
+  linkedQueue.ts          # 通用链式队列
+  storage.ts              # 状态持久化（state.json / users.json）
+  userLabel.ts            # 用户显示名格式化
+  config.ts               # 环境变量读取
+  types.ts                # 共享类型定义
+prompt/persona.txt       # AI 闲聊人设文本
+```
+
+本项目基于 `bun init`（Bun v1.3.14）创建。
