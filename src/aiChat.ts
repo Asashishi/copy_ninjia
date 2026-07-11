@@ -132,7 +132,7 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
         ],
         stream: false,
         temperature: 1.2,
-        max_tokens: 1024,
+        max_tokens: 4096,
       }),
       signal: controller.signal,
     });
