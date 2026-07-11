@@ -12,7 +12,7 @@ import { sendMessage } from "./telegram";
 
 const DEEPSEEK_API_URL: string = "https://api.deepseek.com/chat/completions";
 const DEEPSEEK_MODEL: string = "deepseek-v4-flash";
-const REQUEST_TIMEOUT_MS: number = 30_000;
+const REQUEST_TIMEOUT_MS: number = 60_000;
 
 const PERSONA_PATH: string = join(import.meta.dir, "..", "prompt", "persona.txt");
 const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
@@ -32,7 +32,7 @@ const SPLIT_REPLY_MAX_PARTS: number = 5;
  * 无上限的，没有这道闸的话，恶意用户循环回复 bot 就能形成「一条消息 = 一次
  * API 调用 + 一条群消息」的刷屏/烧钱放大链。冷却内命中的触发直接静默丢弃。
  */
-const AI_REPLY_COOLDOWN_MS: number = 5_000;
+const AI_REPLY_COOLDOWN_MS: number = 1_500;
 
 /** 各群聊上一次 AI 回复的触发时刻（毫秒时间戳），用于冷却判断。 */
 const lastReplyTimes: Map<number, number> = new Map();
