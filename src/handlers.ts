@@ -1,8 +1,8 @@
 import type { CommandContext, Context } from "grammy";
-import type { ReactionTypeEmoji } from "@grammyjs/types";
 import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "./types";
 import { getChatState, getOrCreateChatState, saveState, saveUsersFile } from "./storage";
-import { sendMessage, copyMessage, setReaction, copyUserProfilePhoto, banChatMember, banChatSenderChat, deleteMessageAfter, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
+import { sendMessage, copyMessage, copyUserProfilePhoto, banChatMember, banChatSenderChat, deleteMessageAfter, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
+import { enqueueReaction, type CopyableReaction } from "./reactionQueue";
 import { applyCopyModeTransform, describeCopyModeEffect } from "./copyModes";
 import { formatUserLabel } from "./userLabel";
 import { handleGroupJoinVerification } from "./joinVerification";
@@ -82,6 +82,13 @@ const RANDOM_ECHO_PROBABILITY: number = 1 / 100;
 const RANDOM_ECHO_MODES: (CopyMode | undefined)[] = [undefined, "reverse", "nya", "ja"];
 
 /**
+ * 「说到洗澡就回看看」的触发词：洗澡 / 泡澡（中间可插最多 4 个白名单里的
+ * 助词/修饰字，白名单挡「洗刷刷澡堂子见」这类字面撞上的误伤）以及冲凉
+ * （繁体沖涼，中间可插「个/個/了」等）。
+ */
+const BATH_TRIGGER_PATTERN: RegExp = /[洗泡][个個了完一热熱水冷好]{0,4}澡|[冲沖][个個了完一]{0,2}[凉涼]/;
+
+/**
  * 将一条消息复读回它所在的聊天，并按给定模式做文本变换。
  * @param mode 要应用的文本变换（undefined 表示原样复读）。
  */
@@ -156,6 +163,17 @@ export async function handleIncomingMessage(
     return;
   }
 
+  // 没有复读对象时，有人说到洗澡/泡澡/冲凉就回一句「看看」，简繁体都认。
+  // 「洗/泡」和「澡」之间只允许插入白名单里的助词/修饰字（最多 4 个），
+  // 覆盖「洗个澡 / 洗個澡 / 洗了个澡 / 洗完澡 / 洗一个热水澡 / 泡个澡」这类
+  // 说法，同时挡住「洗刷刷澡堂子见」这种字面撞上的误伤（洗、泡、澡三字
+  // 简繁同形，冲凉的繁体是沖涼）。只对短消息（≤15 字）触发，避免长文里
+  // 偶然带出也被打扰。
+  if (!state.isCopying && typeof message.text === "string" && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
+    await sendMessage(chatId, "看看", message.message_id);
+    return;
+  }
+
   // 没有复读对象时的随机复读。无需担心和其他机器人形成复读循环：Telegram
   // 保证机器人收不到其他机器人发的消息（官方为防止 bot 互相触发死循环的设计），
   // 自己发的消息也不会作为更新推送回来。
@@ -166,11 +184,12 @@ export async function handleIncomingMessage(
 }
 
 /**
- * 处理 message_reaction 更新：把复制目标的 emoji 表情回应同步到同一条消息上
- * （如果目标移除了自己的回应，也会跟着清除）。
- * 自定义 emoji / 付费反应不跟着复制——bot 不一定有权限使用同一个自定义表情。
+ * 处理 message_reaction 更新：把复制目标的表情回应（普通 emoji 和自定义
+ * emoji 都支持）同步到同一条消息上；目标移除了自己的回应时也会跟着清除。
+ * 实际的 setMessageReaction 调用走 reactionQueue（429 重试、同消息合并、
+ * 按 chat 隔离限流等待），这里只做过滤和入队，不阻塞更新处理。
  */
-export async function handleReaction(ctx: Context, chatStates: Map<number, ChatState>): Promise<void> {
+export function handleReaction(ctx: Context, chatStates: Map<number, ChatState>): void {
   const reaction = ctx.messageReaction;
   if (!reaction) return;
 
@@ -178,10 +197,30 @@ export async function handleReaction(ctx: Context, chatStates: Map<number, ChatS
   const reactorId: number | undefined = reaction.actor_chat ? reaction.actor_chat.id : reaction.user?.id;
   if (!state.isCopying || !state.copiedUserId || reactorId !== state.copiedUserId) return;
 
-  const emojiReactions: ReactionTypeEmoji[] = reaction.new_reaction.filter(
-    (r): r is ReactionTypeEmoji => r.type === "emoji"
-  );
-  await setReaction(reaction.chat.id, reaction.message_id, emojiReactions);
+  // grammY 的 ctx.reactions() 已把 old/new 的差量按类型分组算好（付费反应被
+  // 单独归类，而机器人本来也设不了它，天然排除）。机器人没有 Premium，一条
+  // 消息只能设 1 个反应；目标（若是 Premium 用户）却可能同时点了 2~3 个：
+  // 优先跟随本次新增的那个，没有新增（比如只是取消了其中一个）就退回仍点着
+  // 的第一个；全空表示目标清掉了可复制的反应，跟着清除。
+  const { emoji, emojiAdded, emojiRemoved, customEmoji, customEmojiAdded, customEmojiRemoved } = ctx.reactions();
+  let toApply: CopyableReaction[];
+  if (emojiAdded.length > 0) {
+    toApply = [{ type: "emoji", emoji: emojiAdded[0]! }];
+  } else if (customEmojiAdded.length > 0) {
+    toApply = [{ type: "custom_emoji", custom_emoji_id: customEmojiAdded[0]! }];
+  } else if (emoji.length > 0) {
+    toApply = [{ type: "emoji", emoji: emoji[0]! }];
+  } else if (customEmoji.length > 0) {
+    toApply = [{ type: "custom_emoji", custom_emoji_id: customEmoji[0]! }];
+  } else if (emojiRemoved.length === 0 && customEmojiRemoved.length === 0) {
+    // 这次变化不涉及任何可复制的反应（比如目标只点了个付费反应）：机器人
+    // 既没有要设的也没有要清的，不值得为此花一次 API 调用。
+    return;
+  } else {
+    toApply = [];
+  }
+
+  enqueueReaction(reaction.chat.id, reaction.message_id, toApply, reaction.date);
 }
 
 /**

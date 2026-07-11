@@ -1,5 +1,4 @@
 import { Api, Bot, GrammyError, InputFile } from "grammy";
-import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { BOT_TOKEN } from "./config";
@@ -294,24 +293,6 @@ export async function copyMessage(chatId: number, fromChatId: number, messageId:
       console.error(`Failed to copy message: ${error.error_code} ${error.description}`);
     } else {
       console.error("Error copying message:", error);
-    }
-  }
-}
-
-/**
- * 设置（或在 `reactions` 为空时清除）本机器人对某条消息的 emoji 表情回应。
- * @param chatId 目标聊天 ID。
- * @param messageId 要回应的消息。
- * @param reactions 要应用的 emoji 回应（空数组表示移除机器人的回应）。
- */
-export async function setReaction(chatId: number, messageId: number, reactions: ReactionTypeEmoji[]): Promise<void> {
-  try {
-    await bot.api.setMessageReaction(chatId, messageId, reactions);
-  } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      console.error(`Failed to set message reaction: ${error.error_code} ${error.description}`);
-    } else {
-      console.error("Error setting message reaction:", error);
     }
   }
 }

@@ -7,6 +7,7 @@
       "dependencies": {
         "@google-cloud/translate": "^9.4.2",
         "@grammyjs/auto-retry": "^2.0.2",
+        "@grammyjs/runner": "^2.0.3",
         "@grammyjs/transformer-throttler": "^1.2.1",
         "grammy": "^1.44.0",
       },
@@ -28,6 +29,8 @@
     "@google-cloud/translate": ["@google-cloud/translate@9.4.2", "", { "dependencies": { "@google-cloud/common": "^6.0.0", "@google-cloud/promisify": "^5.0.0", "arrify": "^2.0.0", "extend": "^3.0.2", "google-gax": "^5.0.0", "is-html": "^2.0.0" } }, "sha512-evN00jJr1PfStM0+4OQhZH4LEW8NhIF1VJUMDf3f93KGR0HptNd94a/KVpeqxrVTkCYOdXP39x52wWVcxoHmwQ=="],
 
     "@grammyjs/auto-retry": ["@grammyjs/auto-retry@2.0.2", "", { "dependencies": { "debug": "^4.3.4" }, "peerDependencies": { "grammy": "^1.10.0" } }, "sha512-b4A4p5jlYDiQtW0c0FXYe11WMkYoiW+5rvOaDMCOk1h7Pu2SDl7B7gmFF8cthWCx2+M2nWLOsBxAgbBG4kKWYg=="],
+
+    "@grammyjs/runner": ["@grammyjs/runner@2.0.3", "", { "dependencies": { "abort-controller": "^3.0.0" }, "peerDependencies": { "grammy": "^1.13.1" } }, "sha512-nckmTs1dPWfVQteK9cxqxzE+0m1VRvluLWB8UgFzsjg62w3qthPJt0TYtJBEdG7OedvfQq4vnFAyE6iaMkR42A=="],
 
     "@grammyjs/transformer-throttler": ["@grammyjs/transformer-throttler@1.2.1", "", { "dependencies": { "bottleneck": "^2.0.0" }, "peerDependencies": { "grammy": "^1.0.0" } }, "sha512-CpWB0F3rJdUiKsq7826QhQsxbZi4wqfz1ccKX+fr+AOC+o8K7ZvS+wqX0suSu1QCsyUq2MDpNiKhyL2ZOJUS4w=="],
 

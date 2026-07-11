@@ -56,16 +56,35 @@ export async function loadUsersFile(): Promise<UsersFileSchema> {
   return {};
 }
 
+// runner 并发处理不同群的更新后，两个群可能同时触发 saveState/saveUsersFile。
+// Bun.write 是「截断再写」，并发写同一个文件会产生撕裂的 JSON，因此所有持久化
+// 写入挂到同一条 promise 链上串行执行（无论上一次成败都继续下一次）。
+let persistChain: Promise<void> = Promise.resolve();
+
+/**
+ * 串行排队写入一份 JSON 文件。调用方必须先把数据同步序列化成字符串再传进来，
+ * 这样落盘的一定是调用时刻的状态快照——若把序列化推迟到队列执行时，共享数据
+ * 可能已被并发的处理器改过。
+ * @param label 用于错误日志的文件描述。
+ */
+function persistJson(filePath: string, json: string, label: string): Promise<void> {
+  const write = async (): Promise<void> => {
+    try {
+      await Bun.write(filePath, json);
+    } catch (error: unknown) {
+      console.error(`Failed to save ${label}:`, error);
+    }
+  };
+  persistChain = persistChain.then(write, write);
+  return persistChain;
+}
+
 /**
  * 将 users 数据持久化保存到 JSON 文件。
  * @param data UsersFileSchema 数据。
  */
 export async function saveUsersFile(data: UsersFileSchema): Promise<void> {
-  try {
-    await Bun.write(USERS_FILE_PATH, JSON.stringify(data, null, 2));
-  } catch (error: unknown) {
-    console.error("Failed to save users file:", error);
-  }
+  await persistJson(USERS_FILE_PATH, JSON.stringify(data, null, 2), "users file");
 }
 
 /**
@@ -96,15 +115,11 @@ export async function loadState(): Promise<Map<number, ChatState>> {
  * @param chatStates 当前 Map<chatId, ChatState>。
  */
 export async function saveState(chatStates: Map<number, ChatState>): Promise<void> {
-  try {
-    const serializable: ChatStateFileSchema = {};
-    for (const [chatId, chatState] of chatStates) {
-      serializable[String(chatId)] = chatState;
-    }
-    await Bun.write(STATE_FILE_PATH, JSON.stringify(serializable, null, 2));
-  } catch (error: unknown) {
-    console.error("Failed to save state:", error);
+  const serializable: ChatStateFileSchema = {};
+  for (const [chatId, chatState] of chatStates) {
+    serializable[String(chatId)] = chatState;
   }
+  await persistJson(STATE_FILE_PATH, JSON.stringify(serializable, null, 2), "state");
 }
 
 /**

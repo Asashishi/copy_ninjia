@@ -1,3 +1,4 @@
+import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
 import { handleCopyCommand, handleIncomingMessage, handleKickCommand, handleReaction, handleStopCommand } from "./src/handlers";
@@ -44,6 +45,29 @@ async function main(): Promise<void> {
   }
   await saveState(chatStates);
 
+  // 追踪已进入处理的最大 update_id。内建 bot.stop() 停机时会用它向 Telegram
+  // 做一次空 getUpdates 确认 offset，而 runner.stop() 只中止拉取、不做确认——
+  // 不补上的话，每次重启都会把停机前最后一批已处理的更新重放一遍（重复复读、
+  // 重复回复）。确认动作在 main 末尾、runner 完全停止后执行。
+  let lastSeenUpdateId: number = 0;
+  bot.use((ctx, next) => {
+    if (ctx.update.update_id > lastSeenUpdateId) {
+      lastSeenUpdateId = ctx.update.update_id;
+    }
+    return next();
+  });
+
+  // runner 会并发处理更新，必须用 sequentialize 约束顺序：消息/命令/成员变动
+  // 按 chat 串行——复读消息的先后顺序、入群验证对每个群状态的修改都依赖这一点。
+  // message_reaction 更新则不排队（返回空约束）：反应同步走 reactionQueue 自己
+  // 的串行队列，且同一条消息的多次变化会合并成最新状态，天然不怕并发；让它
+  // 绕开 chat 车道，目标刷屏被复读（ja 模式还要过一次翻译）时反应同步才不会
+  // 跟着排队变慢。
+  bot.use(sequentialize((ctx) => {
+    if (ctx.messageReaction) return [];
+    return ctx.chat ? [String(ctx.chat.id)] : [];
+  }));
+
   // 命令处理器要注册在通用消息处理器之前：匹配到命令时 grammY 不会再往下传给它。
   bot.command("copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData));
   bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "reverse"));
@@ -64,38 +88,57 @@ async function main(): Promise<void> {
   // 不让它阻断启动。
   try {
     await bot.api.setMyCommands([
-      { command: "copy", description: "复制某人：/copy @username 或回复 TA 的消息" },
-      { command: "r_copy", description: "复制并反转复读的文字" },
-      { command: "nya_copy", description: "复制并在复读末尾加上喵~" },
-      { command: "ja_copy", description: "复制并把复读翻译成日语" },
-      { command: "stop", description: "停止当前的复制" },
+      { command: "copy", description: "复读" },
+      { command: "r_copy", description: "复读反转字" },
+      { command: "nya_copy", description: "复读并加喵~" },
+      { command: "ja_copy", description: "复读并翻译为日语" },
+      { command: "stop", description: "停止当前的复读" },
       { command: "kick", description: "踢出群聊并封禁（仅主人可用）" },
     ]);
   } catch (error: unknown) {
     console.error("Failed to register bot commands menu:", error);
   }
 
-  const stopBot = (): void => {
-    void bot.stop();
-  };
-  process.once("SIGINT", stopBot);
-  process.once("SIGTERM", stopBot);
-
   // message_reaction / chat_member 默认不在 Telegram 的隐式更新集合里，必须显式
   // 声明才能收到；一旦显式声明，就必须把 message/channel_post 也列进来，否则
   // 它们反而会被排除。chat_member 是入群验证功能能收到"谁加入了群"的关键——
   // 群里如果开了"隐藏加入/离开提示"，new_chat_members 服务消息根本不会产生，
   // 只有 chat_member 这个更新类型不受影响，始终会推送。
-  await bot.start({
-    allowed_updates: ["message", "channel_post", "message_reaction", "chat_member"],
-    onStart: (botInfo) => {
-      const copyingChats: number = Array.from(chatStates.values()).filter((s) => s.isCopying).length;
-      console.log(
-        `Bot started as @${botInfo.username}. ` +
-        `Restored state for ${chatStates.size} chat(s), ${copyingChats} currently copying.`
-      );
+  // 用 @grammyjs/runner 代替 bot.start()：内建轮询对所有更新全局串行，一条
+  // 消息的处理（复读、翻译）会卡住后面的 reaction 更新；runner 按上面的
+  // sequentialize 约束并发处理。
+  await bot.init();
+  const copyingChats: number = Array.from(chatStates.values()).filter((s) => s.isCopying).length;
+  console.log(
+    `Bot started as @${bot.botInfo.username}. ` +
+    `Restored state for ${chatStates.size} chat(s), ${copyingChats} currently copying.`
+  );
+
+  const runner: RunnerHandle = run(bot, {
+    runner: {
+      fetch: {
+        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member"],
+      },
     },
   });
+
+  const stopBot = (): void => {
+    void runner.stop();
+  };
+  process.once("SIGINT", stopBot);
+  process.once("SIGTERM", stopBot);
+
+  await runner.task();
+
+  // 与内建 bot.stop() 的停机行为对齐：用已处理的最大 update_id 做一次空
+  // getUpdates，告知 Telegram 这批更新已消费，重启后不再重放。
+  if (lastSeenUpdateId > 0) {
+    try {
+      await bot.api.getUpdates({ offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 });
+    } catch (error: unknown) {
+      console.error("Failed to confirm update offset on shutdown:", error);
+    }
+  }
 }
 
 main().catch((err: unknown) => {
