@@ -38,16 +38,16 @@ const AI_REPLY_COOLDOWN_MS: number = 1_500;
 const lastReplyTimes: Map<number, number> = new Map();
 
 /**
- * 全局限频：滚动 60 秒窗口内所有群合计最多触发多少次 AI 回复。
- * 每群冷却只能挡单群连点，多个群同时被刷时依然会线性放大 API 调用量，
- * 这道全局闸把总量兜住。只在入口计一次数——一次触发内的「连发多条
- * 短消息」属于同一次回复，不重复计数。超限的触发直接静默丢弃。
+ * 分群限频：单个群滚动 60 秒窗口内最多触发多少次 AI 回复。每群冷却只
+ * 限制相邻两次的间隔（1.5 秒冷却下一分钟仍可达 40 次），这道闸给单群
+ * 的总量再兜一层。只在入口计一次数——一次触发内的「连发多条短消息」
+ * 属于同一次回复，不重复计数。超限的触发直接静默丢弃。
  */
 const RATE_LIMIT_WINDOW_MS: number = 60_000;
 const RATE_LIMIT_MAX_TRIGGERS: number = 35;
 
-/** 窗口内每次触发的时刻（毫秒时间戳），队首最旧，过期即出队。 */
-const triggerTimes: LinkedQueue<number> = new LinkedQueue<number>();
+/** 各群窗口内每次触发的时刻（毫秒时间戳），队首最旧，过期即出队。 */
+const triggerTimes: Map<number, LinkedQueue<number>> = new Map();
 
 /** 缓存里的一条消息：发言人 id + 名字（拆开存，好让模型按 id 而非重名区分身份）+ 文本。 */
 interface BufferedMessage {
@@ -242,17 +242,22 @@ export function generateAndSendReply(chatId: number, replyToMessageId: number, r
     return;
   }
 
-  // 全局每分钟限频：先把窗口外的旧触发挤掉，再看余量。两道闸都过了才
+  // 本群每分钟限频：先把窗口外的旧触发挤掉，再看余量。两道闸都过了才
   // 一起落账，避免被拒的触发白白占用冷却/配额。
-  while (triggerTimes.size > 0 && now - triggerTimes.peek()! >= RATE_LIMIT_WINDOW_MS) {
-    triggerTimes.shift();
+  let times: LinkedQueue<number> | undefined = triggerTimes.get(chatId);
+  if (!times) {
+    times = new LinkedQueue<number>();
+    triggerTimes.set(chatId, times);
   }
-  if (triggerTimes.size >= RATE_LIMIT_MAX_TRIGGERS) {
+  while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_WINDOW_MS) {
+    times.shift();
+  }
+  if (times.size >= RATE_LIMIT_MAX_TRIGGERS) {
     return;
   }
 
   lastReplyTimes.set(chatId, now);
-  triggerTimes.push(now);
+  times.push(now);
 
   const splitMode: boolean = Math.random() < SPLIT_REPLY_PROBABILITY;
 
