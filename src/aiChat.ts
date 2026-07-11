@@ -21,7 +21,7 @@ const BUFFER_SIZE: number = 75;
 /** 生成回复时，从缓存里取最近多少条作为上下文喂给模型。 */
 const CONTEXT_SIZE: number = 50;
 /** 没有其它触发条件时，普通发言触发一次 AI 回复的概率。 */
-export const AI_REPLY_PROBABILITY: number = 1 / 3;
+export const AI_REPLY_PROBABILITY: number = 1 / 4;
 /**
  * 同一群聊两次 AI 回复之间的最短间隔。回复机器人 / @ 机器人是 100% 触发且
  * 无上限的，没有这道闸的话，恶意用户循环回复 bot 就能形成「一条消息 = 一次
@@ -132,7 +132,7 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
         ],
         stream: false,
         temperature: 1.2,
-        max_tokens: 200,
+        max_tokens: 1024,
       }),
       signal: controller.signal,
     });
