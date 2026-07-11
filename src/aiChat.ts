@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEEPSEEK_API_KEY } from "./config";
+import { LinkedQueue } from "./linkedQueue";
 import { sendMessage } from "./telegram";
 
 /**
@@ -45,7 +46,7 @@ interface BufferedMessage {
 }
 
 /** 各群聊各自的滚动消息缓存，仅存于内存（重启即清空，本功能不做持久记忆）。 */
-const chatBuffers: Map<number, BufferedMessage[]> = new Map();
+const chatBuffers: Map<number, LinkedQueue<BufferedMessage>> = new Map();
 
 /**
  * 把要写进转录的文本压成单行：所有空白串（含换行）折叠为一个空格。
@@ -69,14 +70,14 @@ function sanitizeInline(raw: string): string {
 export function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, text: string): void {
   const sanitized: string = sanitizeInline(text);
   if (!sanitized) return;
-  let buf: BufferedMessage[] | undefined = chatBuffers.get(chatId);
+  let buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf) {
-    buf = [];
+    buf = new LinkedQueue<BufferedMessage>();
     chatBuffers.set(chatId, buf);
   }
   buf.push({ id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
-  if (buf.length > BUFFER_SIZE) {
-    buf.splice(0, buf.length - BUFFER_SIZE);
+  while (buf.size > BUFFER_SIZE) {
+    buf.shift();
   }
 }
 
@@ -95,10 +96,10 @@ function formatLine(m: BufferedMessage): string {
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
 function buildUserContent(chatId: number, splitMode: boolean, repliedBotText?: string): string | null {
-  const buf: BufferedMessage[] | undefined = chatBuffers.get(chatId);
-  if (!buf || buf.length === 0) return null;
+  const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
+  if (!buf || buf.size === 0) return null;
 
-  const recent: BufferedMessage[] = buf.slice(-CONTEXT_SIZE);
+  const recent: BufferedMessage[] = buf.last(CONTEXT_SIZE);
   const lines: string[] = recent.map(formatLine);
   if (repliedBotText) {
     // 同样压成单行：这段文本虽是机器人自己说过的话，保持转录「一行一条」的

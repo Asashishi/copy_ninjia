@@ -1,6 +1,7 @@
 import { GrammyError } from "grammy";
 import type { ReactionTypeCustomEmoji, ReactionTypeEmoji } from "@grammyjs/types";
 import { bot } from "./telegram";
+import { LinkedQueue } from "./linkedQueue";
 
 /**
  * 机器人能跟着复制的反应类型。付费（paid）反应 Bot API 不允许机器人设置，
@@ -36,10 +37,10 @@ const MAX_ATTEMPTS: number = 3;
  *    被限流只暂停该群自己的消费循环，不头部阻塞其他群的反应同步。
  *
  * pendingTasks 里始终是某条消息「最新」想要的反应状态（键为 chatId:messageId），
- * chatQueues 里各 chat 的数组只记录本群内各消息首次入队的先后顺序。
+ * chatQueues 里各 chat 的队列只记录本群内各消息首次入队的先后顺序。
  */
 const pendingTasks: Map<string, ReactionTask> = new Map();
-const chatQueues: Map<number, string[]> = new Map();
+const chatQueues: Map<number, LinkedQueue<string>> = new Map();
 const consumingChats: Set<number> = new Set();
 
 /**
@@ -61,9 +62,9 @@ export function enqueueReaction(chatId: number, messageId: number, reactions: Co
       return;
     }
   } else {
-    let order: string[] | undefined = chatQueues.get(chatId);
+    let order: LinkedQueue<string> | undefined = chatQueues.get(chatId);
     if (!order) {
-      order = [];
+      order = new LinkedQueue<string>();
       chatQueues.set(chatId, order);
     }
     order.push(key);
@@ -77,8 +78,8 @@ export function enqueueReaction(chatId: number, messageId: number, reactions: Co
 async function consumeChatQueue(chatId: number): Promise<void> {
   consumingChats.add(chatId);
   try {
-    const order: string[] | undefined = chatQueues.get(chatId);
-    while (order && order.length > 0) {
+    const order: LinkedQueue<string> | undefined = chatQueues.get(chatId);
+    while (order && order.size > 0) {
       const key: string = order.shift()!;
       const task: ReactionTask | undefined = pendingTasks.get(key);
       pendingTasks.delete(key);
@@ -88,8 +89,8 @@ async function consumeChatQueue(chatId: number): Promise<void> {
     }
   } finally {
     consumingChats.delete(chatId);
-    const order: string[] | undefined = chatQueues.get(chatId);
-    if (order && order.length === 0) {
+    const order: LinkedQueue<string> | undefined = chatQueues.get(chatId);
+    if (order && order.size === 0) {
       chatQueues.delete(chatId);
     }
   }
