@@ -22,6 +22,10 @@ const BUFFER_SIZE: number = 75;
 const CONTEXT_SIZE: number = 50;
 /** 没有其它触发条件时，普通发言触发一次 AI 回复的概率。 */
 export const AI_REPLY_PROBABILITY: number = 1 / 4;
+/** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
+const SPLIT_REPLY_PROBABILITY: number = 1 / 3;
+/** 连发模式下最多发几条，防止模型话痨刷屏。 */
+const SPLIT_REPLY_MAX_PARTS: number = 5;
 /**
  * 同一群聊两次 AI 回复之间的最短间隔。回复机器人 / @ 机器人是 100% 触发且
  * 无上限的，没有这道闸的话，恶意用户循环回复 bot 就能形成「一条消息 = 一次
@@ -85,11 +89,12 @@ function formatLine(m: BufferedMessage): string {
 /**
  * 把某群的滚动缓存里最近 CONTEXT_SIZE 条拼装成给模型的用户消息内容。
  * @param chatId 群聊 ID。
+ * @param splitMode 是否要求模型把回复拆成多条短消息（一行一条）连发。
  * @param repliedBotText 若本次是「用户回复了机器人」，传入被回复的那条机器人消息文本，
  *   作为上下文（机器人自己发的消息不会作为更新推送回来，不在缓存里）。
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
-function buildUserContent(chatId: number, repliedBotText?: string): string | null {
+function buildUserContent(chatId: number, splitMode: boolean, repliedBotText?: string): string | null {
   const buf: BufferedMessage[] | undefined = chatBuffers.get(chatId);
   if (!buf || buf.length === 0) return null;
 
@@ -101,10 +106,15 @@ function buildUserContent(chatId: number, repliedBotText?: string): string | nul
     lines.push(`（你刚才说过：${sanitizeInline(repliedBotText)}）`);
   }
 
+  const replyInstruction: string = splitMode
+    ? `请针对最新这条消息，以你的人设回复，并把回复拆成 2 到 ${SPLIT_REPLY_MAX_PARTS} 条连贯的短消息——就像真人打字时想到哪发到哪、一句接一句连发那样，每条一行、语义上前后衔接（比如先反应、再吐槽、再补一刀）。只输出这几行消息本身，一行一条，不要编号、解释、前缀、引号、代码块或「[id:...]」这类标记。`
+    : "请针对最新这条消息，以你的人设回复一到两句话，自然接住话题。只输出你要发到群里的那句话本身，不要任何解释、前缀、引号、代码块或「[id:...]」这类标记。";
+
   return (
     "以下是本群最近的聊天记录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息。\n\n" +
     lines.join("\n") +
-    "\n\n请针对最新这条消息，以你的人设回复一到两句话，自然接住话题。只输出你要发到群里的那句话本身，不要任何解释、前缀、引号、代码块或「[id:...]」这类标记。"
+    "\n\n" +
+    replyInstruction
   );
 }
 
@@ -179,7 +189,34 @@ function cleanReply(raw: string): string | null {
 }
 
 /**
- * 生成并发送一条 AI 回复。整个过程 fire-and-forget，不阻塞消息处理主流程。
+ * 把连发模式下模型的输出按行拆成若干条待发送的短消息。
+ * 空行丢弃，超出上限的行合并进最后一条，防止刷屏。
+ */
+function splitReplyParts(reply: string): string[] {
+  const lines: string[] = reply
+    .split("\n")
+    .map((line: string) => line.trim())
+    .filter((line: string) => !!line);
+  if (lines.length <= SPLIT_REPLY_MAX_PARTS) return lines;
+  return [...lines.slice(0, SPLIT_REPLY_MAX_PARTS - 1), lines.slice(SPLIT_REPLY_MAX_PARTS - 1).join(" ")];
+}
+
+/** 模拟真人打字的间隔：按下一条消息的长度估一个停顿，并加上限。 */
+function typingDelayMs(nextPart: string): number {
+  const base: number = 600 + nextPart.length * 55;
+  const jitter: number = Math.random() * 400;
+  return Math.min(base + jitter, 3_500);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 生成并发送 AI 回复。整个过程 fire-and-forget，不阻塞消息处理主流程。
+ * 以 SPLIT_REPLY_PROBABILITY 概率采用「连发多条短消息」形式：让模型按行输出
+ * 几条前后衔接的短句，逐条带打字间隔发出（仅第一条引用触发消息）；
+ * 其余情况仍是普通的单条回复。
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID，回复时引用它。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
@@ -193,13 +230,23 @@ export function generateAndSendReply(chatId: number, replyToMessageId: number, r
   }
   lastReplyTimes.set(chatId, now);
 
+  const splitMode: boolean = Math.random() < SPLIT_REPLY_PROBABILITY;
+
   void (async (): Promise<void> => {
-    const userContent: string | null = buildUserContent(chatId, repliedBotText);
+    const userContent: string | null = buildUserContent(chatId, splitMode, repliedBotText);
     if (!userContent) return;
 
     const reply: string | null = await callDeepSeek(userContent);
-    if (reply) {
-      await sendMessage(chatId, reply, replyToMessageId);
+    if (!reply) return;
+
+    // 单条模式下模型偶尔也会换行，此时不该按行拆——原样整条发出。
+    const parts: string[] = splitMode ? splitReplyParts(reply) : [reply];
+    for (let i: number = 0; i < parts.length; i++) {
+      const part: string = parts[i]!;
+      await sendMessage(chatId, part, i === 0 ? replyToMessageId : undefined);
+      if (i < parts.length - 1) {
+        await sleep(typingDelayMs(parts[i + 1]!));
+      }
     }
   })().catch((error: unknown) => {
     console.error("Error in AI reply task:", error);
