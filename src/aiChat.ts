@@ -22,6 +22,15 @@ const BUFFER_SIZE: number = 75;
 const CONTEXT_SIZE: number = 50;
 /** 没有其它触发条件时，普通发言触发一次 AI 回复的概率。 */
 export const AI_REPLY_PROBABILITY: number = 1 / 3;
+/**
+ * 同一群聊两次 AI 回复之间的最短间隔。回复机器人 / @ 机器人是 100% 触发且
+ * 无上限的，没有这道闸的话，恶意用户循环回复 bot 就能形成「一条消息 = 一次
+ * API 调用 + 一条群消息」的刷屏/烧钱放大链。冷却内命中的触发直接静默丢弃。
+ */
+const AI_REPLY_COOLDOWN_MS: number = 5_000;
+
+/** 各群聊上一次 AI 回复的触发时刻（毫秒时间戳），用于冷却判断。 */
+const lastReplyTimes: Map<number, number> = new Map();
 
 /** 缓存里的一条消息：发言人 id + 名字（拆开存，好让模型按 id 而非重名区分身份）+ 文本。 */
 interface BufferedMessage {
@@ -35,7 +44,18 @@ interface BufferedMessage {
 const chatBuffers: Map<number, BufferedMessage[]> = new Map();
 
 /**
+ * 把要写进转录的文本压成单行：所有空白串（含换行）折叠为一个空格。
+ * 这是防转录注入的关键——转录按「一行 = 一条消息」拼装，若用户消息或
+ * 自己改的昵称里带换行，就能伪造出「[id:x] 某人：……」的假发言行，
+ * 给别人栽赃。折叠换行后一条消息永远只占一行，该向量彻底失效。
+ */
+function sanitizeInline(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+/**
  * 记录一条群消息到该群的滚动缓存，供之后拼装成对话上下文喂给模型。
+ * 文本与昵称都会被压成单行（见 sanitizeInline，防转录注入）。
  * @param chatId 群聊 ID。
  * @param id 发言人 id（真实用户 id，或频道马甲/频道帖的频道 id）。
  * @param firstName 发言人 first_name（频道则是 title）。
@@ -43,14 +63,14 @@ const chatBuffers: Map<number, BufferedMessage[]> = new Map();
  * @param text 消息文本。
  */
 export function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, text: string): void {
-  const trimmed: string = text.trim();
-  if (!trimmed) return;
+  const sanitized: string = sanitizeInline(text);
+  if (!sanitized) return;
   let buf: BufferedMessage[] | undefined = chatBuffers.get(chatId);
   if (!buf) {
     buf = [];
     chatBuffers.set(chatId, buf);
   }
-  buf.push({ id, firstName, lastName, text: trimmed });
+  buf.push({ id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
   if (buf.length > BUFFER_SIZE) {
     buf.splice(0, buf.length - BUFFER_SIZE);
   }
@@ -76,7 +96,9 @@ function buildUserContent(chatId: number, repliedBotText?: string): string | nul
   const recent: BufferedMessage[] = buf.slice(-CONTEXT_SIZE);
   const lines: string[] = recent.map(formatLine);
   if (repliedBotText) {
-    lines.push(`（你刚才说过：${repliedBotText.trim()}）`);
+    // 同样压成单行：这段文本虽是机器人自己说过的话，保持转录「一行一条」的
+    // 结构不变即可杜绝任何多行伪造的可能。
+    lines.push(`（你刚才说过：${sanitizeInline(repliedBotText)}）`);
   }
 
   return (
@@ -163,6 +185,14 @@ function cleanReply(raw: string): string | null {
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
  */
 export function generateAndSendReply(chatId: number, replyToMessageId: number, repliedBotText?: string): void {
+  // 每群 5 秒冷却：在发起任何异步工作之前同步判定并占位，这样冷却窗口内的
+  // 并发触发（包括 100% 命中的回复/@ 触发）都会在烧到 API 之前被丢弃。
+  const now: number = Date.now();
+  if (now - (lastReplyTimes.get(chatId) ?? 0) < AI_REPLY_COOLDOWN_MS) {
+    return;
+  }
+  lastReplyTimes.set(chatId, now);
+
   void (async (): Promise<void> => {
     const userContent: string | null = buildUserContent(chatId, repliedBotText);
     if (!userContent) return;

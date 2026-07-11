@@ -7,6 +7,8 @@ const JOIN_WINDOW_MS: number = 15 * 1000;
 const JOIN_THRESHOLD: number = 150;
 /** 私密模式（禁止普通成员拉人）持续时长。 */
 const LOCKDOWN_MS: number = 5 * 60 * 1000;
+/** 解除私密模式的 API 调用失败后，重试前的等待时长。 */
+const RESTORE_RETRY_MS: number = 30 * 1000;
 
 interface JoinWindow {
   count: number;
@@ -107,12 +109,31 @@ export function isLockedDown(chatId: number): boolean {
   return activeLockdowns.has(chatId);
 }
 
-/** 私密模式到期后，恢复群组原本的默认权限。 */
+/**
+ * 私密模式到期后，恢复群组原本的默认权限。
+ * 恢复调用成功之前绝不能把 lockdown 记录从 map 里删掉：否则一旦
+ * setChatPermissions 失败（网络抖动、429 等），记录没了、无人重试，
+ * 群的 can_invite_users 就永久卡在 false，只能等管理员发现后手动救。
+ * 失败时保留记录并安排稍后重试；重试期间 isLockedDown 仍为 true，
+ * 与「权限实际仍被限制着」的事实一致。
+ */
 async function restoreChat(chatId: number): Promise<void> {
   const lockdown = activeLockdowns.get(chatId);
   if (!lockdown) return;
-  activeLockdowns.delete(chatId);
 
-  await joinVerificationApi.setChatPermissions(chatId, lockdown.originalPermissions);
+  try {
+    await joinVerificationApi.setChatPermissions(chatId, lockdown.originalPermissions);
+  } catch (error: unknown) {
+    console.error(`Failed to restore chat permissions for ${chatId}, retrying in ${RESTORE_RETRY_MS / 1000}s:`, error);
+    clearTimeout(lockdown.restoreTimeout);
+    lockdown.restoreTimeout = setTimeout(() => {
+      void restoreChat(chatId).catch((retryError: unknown) => {
+        console.error("Error restoring chat permissions after anti-raid lockdown:", retryError);
+      });
+    }, RESTORE_RETRY_MS);
+    return;
+  }
+
+  activeLockdowns.delete(chatId);
   await sendMessage(chatId, `5 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`, undefined, joinVerificationApi);
 }

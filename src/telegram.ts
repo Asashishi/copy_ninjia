@@ -132,7 +132,8 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
     const downloadUrl: string = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
     const imgRes: Response = await fetch(downloadUrl, { signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
     if (!imgRes.ok) {
-      console.error(`Failed to download file from ${downloadUrl}`);
+      // 只记录 file_path，绝不能把完整 downloadUrl 打进日志——URL 里嵌着 bot token。
+      console.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
       return false;
     }
     const imgBuffer: Uint8Array = new Uint8Array(await imgRes.arrayBuffer());
