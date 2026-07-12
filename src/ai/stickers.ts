@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Sticker } from "@grammyjs/types";
-import { logger } from "../logger";
+import { logger } from "../infra/logger";
 import { sendSticker } from "../infra/telegram";
 import { describeStickerForContext, getAllStickers, matchCandidateEmojis, pickRandom } from "./stickerSets";
 import { STICKERS_CONFIG_PATH } from "../consts/paths";

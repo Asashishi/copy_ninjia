@@ -1,4 +1,4 @@
-import { logger, relayLogMessage } from "./logger";
+import { logger, relayLogMessage } from "./infra/logger";
 import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage, ForwardedLog } from "./types";
 
 /**

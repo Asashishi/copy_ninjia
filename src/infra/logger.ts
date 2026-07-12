@@ -12,8 +12,8 @@
  * 的 onmessage）调用 relayLogMessage 转投唯一的落盘线程。
  */
 
-import { pendingFlushes } from "./cache/logger";
-import type { FlushReply, FlushRequest, ForwardedLog, LogLevel, LogMessage } from "./types";
+import { pendingFlushes } from "../cache/logger";
+import type { FlushReply, FlushRequest, ForwardedLog, LogLevel, LogMessage } from "../types";
 
 declare var self: Worker;
 
@@ -34,7 +34,7 @@ let diskWorkerRestartTimestamps: number[] = [];
 let diskWorker: Worker | null = isMainThread ? createDiskWorker() : null;
 
 function createDiskWorker(): Worker {
-  const w: Worker = new Worker(new URL("./workers/loggerWorker.ts", import.meta.url).href);
+  const w: Worker = new Worker(new URL("../workers/loggerWorker.ts", import.meta.url).href);
   w.unref();
   w.onmessage = (event: MessageEvent<FlushReply>) => {
     const resolve = pendingFlushes.get(event.data.flushedId);

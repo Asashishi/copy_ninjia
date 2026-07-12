@@ -1,4 +1,4 @@
-import { logger } from "../logger";
+import { logger } from "../infra/logger";
 import { readFileSync } from "node:fs";
 import { DEEPSEEK_API_KEY } from "../infra/config";
 import { LinkedQueue } from "../libs/linkedQueue";

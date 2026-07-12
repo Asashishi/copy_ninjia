@@ -1,4 +1,4 @@
-import { logger } from "../logger";
+import { logger } from "./logger";
 import { Api, Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { apiThrottler } from "@grammyjs/transformer-throttler";

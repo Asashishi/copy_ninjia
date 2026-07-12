@@ -1,4 +1,4 @@
-import { logger, relayLogMessage } from "./logger";
+import { logger, relayLogMessage } from "./infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember } from "@grammyjs/types";
 import { lockedChats } from "./cache/antiRaid";

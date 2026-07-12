@@ -1,4 +1,4 @@
-import { logger } from "../logger";
+import { logger } from "../infra/logger";
 import {
   CACHE_TTL_MS,
   REQUEST_TIMEOUT_MS,

@@ -1,5 +1,5 @@
 import type { Sticker, StickerSet } from "@grammyjs/types";
-import { logger } from "../logger";
+import { logger } from "../infra/logger";
 import { bot } from "../infra/telegram";
 import { failedPacks, stickerSetCache } from "../cache/stickerSets";
 

@@ -27,6 +27,7 @@
 
 ## 环境要求
 
+- 推荐服务器配置：4 核 CPU / 2GB 内存及以上（机器人主线程 + AI 闲聊/入群守卫/日志落盘三个 Worker 线程常驻，多群高并发场景下建议按此配置起步）
 - [Bun](https://bun.com) 运行时
 - Telegram Bot Token（通过 [@BotFather](https://t.me/BotFather) 获取）
 - DeepSeek API Key（用于 AI 闲聊功能）
@@ -62,7 +63,6 @@ bun run index.ts
 index.ts               # 入口：注册命令/更新处理器，启动 grammY runner
 src/
   aiChat.ts             # AI 闲聊入口（主线程侧代理，向 AI Worker 投递事件）
-  logger.ts             # 统一日志门面（主线程侧调度，error 级经 Worker 落盘）
   antiRaid.ts           # 入群守卫入口（主线程侧代理：入群验证 + 反刷群私密模式）
   auto.ts               # 自动流程入口（src/auto/ 各处理器的统一出口）
   commands.ts           # 指令处理入口（src/commands/ 各处理器的统一出口）
@@ -79,6 +79,7 @@ src/
     antiRaidWorker.ts      # 入群守卫 Worker 线程（验证窗口、超时踢人、私密模式）
     loggerWorker.ts        # 日志落盘 Worker 线程
   infra/                # 基础设施
+    logger.ts              # 统一日志门面（error 级经 Worker 落盘）
     telegram.ts            # Telegram Bot API 封装与限流
     storage.ts             # 状态持久化（state.json / users.json）
     config.ts              # 密钥与部署配置（从环境变量读取）

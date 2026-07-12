@@ -1,4 +1,4 @@
-import { logger } from "../logger";
+import { logger } from "../infra/logger";
 import { InlineKeyboard } from "grammy";
 import {
   sendMessage,

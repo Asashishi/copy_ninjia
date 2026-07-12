@@ -1,4 +1,4 @@
-import { flushLogs, logger } from "./src/logger";
+import { flushLogs, logger } from "./src/infra/logger";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/infra/storage";

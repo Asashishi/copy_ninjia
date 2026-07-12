@@ -1,4 +1,4 @@
-import { logger } from "../logger";
+import { logger } from "../infra/logger";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "../types";
 import { getOrCreateChatState, saveState, saveUsersFile } from "../infra/storage";

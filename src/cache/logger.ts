@@ -1,4 +1,4 @@
-/** 日志门面（src/logger.ts）的内存状态。 */
+/** 日志门面（src/infra/logger.ts）的内存状态。 */
 
 /**
  * flushLogs 的回执路由：flushId → resolve。只在主线程（拥有落盘 Worker 的

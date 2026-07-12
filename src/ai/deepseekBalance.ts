@@ -1,4 +1,4 @@
-import { logger } from "../logger";
+import { logger } from "../infra/logger";
 import { DEEPSEEK_API_KEY } from "../infra/config";
 import { CACHE_TTL_MS, DEEPSEEK_BALANCE_API_URL, REQUEST_TIMEOUT_MS } from "../consts/deepseekBalance";
 import { balanceCache } from "../cache/deepseekBalance";

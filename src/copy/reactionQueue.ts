@@ -1,4 +1,4 @@
-import { logger } from "../logger";
+import { logger } from "../infra/logger";
 import { GrammyError } from "grammy";
 import { bot } from "../infra/telegram";
 import { LinkedQueue } from "../libs/linkedQueue";
