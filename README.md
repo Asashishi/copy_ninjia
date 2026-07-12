@@ -66,11 +66,12 @@ src/
   translate.ts           # Google Cloud Translate 封装
   joinVerification.ts    # 入群验证逻辑
   antiRaid.ts             # 反刷群私密模式
-  aiChat.ts               # AI 闲聊回复（DeepSeek，支持 function calling）
+  aiChat.ts               # AI 闲聊入口（主线程侧代理，向 AI Worker 投递事件）
+  aiChatWorker.ts          # AI 闲聊流水线 Worker 线程（限频、DeepSeek 调用、发送）
   stickers.ts             # AI 回复后概率跟发应景贴纸（白名单见 config/stickers.json）
   reactions.ts            # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）
   stickerSets.ts          # 贴纸包拉取缓存 + 情绪关键词匹配等公共积木
-  tools/                  # 供 aiChat.ts 调用的 AI 工具
+  tools/                  # 供 aiChatWorker.ts 调用的 AI 工具
     index.ts               # 工具定义清单 + 按名分发执行
     time.ts                 # 查当前时间（东京时区）
     weather.ts               # 查东京今日天气（Open-Meteo，1 小时缓存）

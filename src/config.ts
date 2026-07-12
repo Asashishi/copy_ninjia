@@ -13,7 +13,7 @@ function requireEnv(name: string): string {
 
 export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 
-/** DeepSeek API 密钥，供 AI 闲聊回复功能（src/aiChat.ts）调用。 */
+/** DeepSeek API 密钥，供 AI 闲聊回复功能（src/aiChatWorker.ts）调用。 */
 export const DEEPSEEK_API_KEY: string = requireEnv("DEEPSEEK_API_KEY");
 
 /** 免受 /copy 冷却限制、且可以使用 /kick 的用户 ID 白名单（逗号分割）。 */

@@ -4,6 +4,7 @@ import { bot } from "./src/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
 import { handleBalanceCommand, handleCopyCommand, handleIncomingMessage, handleKickCommand, handleReaction, handleStopCommand } from "./src/handlers";
 import { handleChatMemberUpdate } from "./src/joinVerification";
+import { initAiChat } from "./src/aiChat";
 import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";
 
 /**
@@ -122,6 +123,10 @@ async function main(): Promise<void> {
   // 消息的处理（复读、翻译）会卡住后面的 reaction 更新；runner 按上面的
   // sequentialize 约束并发处理。
   await bot.init();
+  // 把机器人自己的账号身份注入 AI Worker：bot.init() 拿到 botInfo 之后、
+  // runner 开始投喂更新之前注入，postMessage 的 FIFO 保证这条 init 消息
+  // 先于一切「记录/触发」事件到达 Worker。
+  initAiChat(bot.botInfo);
   const copyingChats: number = Array.from(chatStates.values()).filter((s) => s.isCopying).length;
   logger.log(
     `Bot started as @${bot.botInfo.username}. ` +
