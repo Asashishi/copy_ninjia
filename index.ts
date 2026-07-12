@@ -1,4 +1,4 @@
-import { logger } from "./src/logger";
+import { flushLogs, logger } from "./src/logger";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
@@ -153,6 +153,11 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  logger.error("Unhandled error in bot main runner:", err);
-});
+main()
+  .catch((err: unknown) => {
+    logger.error("Unhandled error in bot main runner:", err);
+  })
+  .finally(() => flushLogs());
+// 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才
+// 结束，此时把日志线程 buffer 里的存货（最长滞留一分钟）强制落盘，停机
+// 尾段产生的 error（如 offset 确认失败）也能收进去。崩溃路径同样覆盖。

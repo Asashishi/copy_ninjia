@@ -14,10 +14,54 @@ export interface LogMessage {
   args: unknown[];
 }
 
+/** 发给 worker 的落盘指令：要求立即 flush 内存 buffer 并回执。 */
+export interface FlushRequest {
+  flushId: number;
+}
+
+/** worker 完成 flush 后的回执。 */
+export interface FlushReply {
+  flushedId: number;
+}
+
 // Worker 在模块加载时启动一次。unref 让它不阻止进程退出：bot 主循环
 // 结束后进程照常退出，不会被空闲的日志线程挂住。
 const worker: Worker = new Worker(new URL("./loggerWorker.ts", import.meta.url).href);
 worker.unref();
+
+// flushLogs 的回执路由：flushId → resolve。postMessage 按 FIFO 送达，
+// flush 指令一定在它之前的日志消息都入队后才被处理，回执即代表已落盘。
+let nextFlushId: number = 1;
+const pendingFlushes: Map<number, () => void> = new Map();
+
+worker.onmessage = (event: MessageEvent<FlushReply>) => {
+  const resolve = pendingFlushes.get(event.data.flushedId);
+  if (resolve) {
+    pendingFlushes.delete(event.data.flushedId);
+    resolve();
+  }
+};
+
+/**
+ * 要求日志线程立即把内存 buffer 落盘，并等待完成。用于进程退出前的
+ * 最后一刷，保证停留在 buffer 里（最长一分钟）的日志不随进程丢失。
+ * 带超时兜底：worker 异常时停机流程最多被拖住 timeoutMs，不会挂死。
+ */
+export function flushLogs(timeoutMs: number = 3000): Promise<void> {
+  return new Promise((resolve) => {
+    const id: number = nextFlushId++;
+    const timer = setTimeout(() => {
+      pendingFlushes.delete(id);
+      resolve();
+    }, timeoutMs);
+    pendingFlushes.set(id, () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    const request: FlushRequest = { flushId: id };
+    worker.postMessage(request);
+  });
+}
 
 /**
  * 把任意日志参数转成可 JSON 序列化的值。Error（含 GrammyError 等子类）
