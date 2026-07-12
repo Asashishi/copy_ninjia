@@ -79,6 +79,10 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
   return resolveSenderIdentity(repliedMessage);
 }
 
+/** 记录各用户上一次被 AI 随机回复的时刻（基于 id 和姓名拼接作为 key），冷却 15s */
+const userRandomReplyTimes: Map<string, number> = new Map();
+const USER_RANDOM_REPLY_COOLDOWN_MS: number = 15_000;
+
 /**
  * 解析一条消息发言人喂给 AI 上下文所需的身份三元组：id + first_name + last_name。
  * 刻意把 id 和名字分开存（而非拼成一个昵称字符串），好让模型按 id 区分同名的人。
@@ -220,10 +224,25 @@ export async function handleIncomingMessage(
     const repliedTo: any = message.reply_to_message;
     const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
-    if (isReplyToBot || isMentioned || Math.random() < AI_REPLY_PROBABILITY) {
-      // 既不是回复机器人也不是 @ 机器人，说明这次是纯按概率命中的随机搭话——
-      // 不挂 Telegram 回复引用，让 aiChat 改用「点名称呼」的形式接话。
-      const isRandomTrigger: boolean = !isReplyToBot && !isMentioned;
+
+    let shouldTrigger: boolean = false;
+    let isRandomTrigger: boolean = false;
+
+    if (isReplyToBot || isMentioned) {
+      shouldTrigger = true;
+    } else if (Math.random() < AI_REPLY_PROBABILITY) {
+      const speaker = resolveSpeaker(message);
+      const speakerKey: string = `${speaker.id}_${speaker.firstName}_${speaker.lastName}`;
+      const now: number = Date.now();
+      const lastTime: number = userRandomReplyTimes.get(speakerKey) ?? 0;
+      if (now - lastTime >= USER_RANDOM_REPLY_COOLDOWN_MS) {
+        userRandomReplyTimes.set(speakerKey, now);
+        isRandomTrigger = true;
+        shouldTrigger = true;
+      }
+    }
+
+    if (shouldTrigger) {
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
       return;
     }
