@@ -2,7 +2,7 @@ import { flushLogs, logger } from "./src/logger";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
-import { handleBalanceCommand, handleCopyCommand, handleIncomingMessage, handleKickCommand, handleReaction, handleStopCommand } from "./src/handlers";
+import { handleBalanceCommand, handleCopyCommand, handleIncomingMessage, handleKickCommand, handleQuietCommand, handleReaction, handleStopCommand } from "./src/handlers";
 import { handleChatMemberUpdate } from "./src/joinVerification";
 import { initAiChat } from "./src/aiChat";
 import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";
@@ -70,10 +70,10 @@ async function main(): Promise<void> {
     return ctx.chat ? [String(ctx.chat.id)] : [];
   }));
 
-  // 私聊里不触发任何命令（/copy /r_copy /nya_copy /ja_copy /stop /kick）：这些
-  // 指令都是围绕群聊状态设计的（复读目标、群内踢人），私聊语境下没有意义，也
-  // 免得被人在 DM 里瞎捣鼓。放在命令处理器注册之前，直接吞掉这类更新，不再
-  // 往下传给任何处理器。
+  // 私聊里不触发任何命令（/copy 系、/stop /kick /balance /quiet 等全部）：这些
+  // 指令都是围绕群聊状态设计的（复读目标、群内踢人、群内静默），私聊语境下
+  // 没有意义，也免得被人在 DM 里瞎捣鼓。放在命令处理器注册之前，直接吞掉
+  // 这类更新，不再往下传给任何处理器。
   bot.use((ctx, next) => {
     if (ctx.chat?.type === "private" && ctx.message?.text?.startsWith("/")) {
       return;
@@ -89,6 +89,7 @@ async function main(): Promise<void> {
   bot.command("stop", (ctx) => handleStopCommand(ctx, chatStates, usersData));
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.command("balance", (ctx) => handleBalanceCommand(ctx));
+  bot.command("quiet", (ctx) => handleQuietCommand(ctx, chatStates));
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users, chatStates));
   bot.on("message_reaction", (ctx) => handleReaction(ctx, chatStates));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
@@ -109,6 +110,7 @@ async function main(): Promise<void> {
       { command: "stop", description: "停止当前的复读" },
       { command: "kick", description: "踢出群聊并封禁（仅白名单用户可用）" },
       { command: "balance", description: "查询 DeepSeek 账户余额" },
+      { command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" },
     ]);
   } catch (error: unknown) {
     logger.error("Failed to register bot commands menu:", error);

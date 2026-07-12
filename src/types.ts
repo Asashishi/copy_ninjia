@@ -27,6 +27,11 @@ export interface ChatState {
   lastCopyTime?: number;
   copiedIsChannel?: boolean;
   copyMode?: CopyMode;
+  /**
+   * /quiet 静默期的截止时间戳（ms）。在此之前机器人不主动刷存在感（AI 随机
+   * 插话、随机复读等）；被动触发（回复/@机器人）和指令不受影响。
+   */
+  quietUntil?: number;
 }
 
 /** state.json 的结构：以 chatId（字符串）为键，分别保存各群聊各自的 ChatState。 */

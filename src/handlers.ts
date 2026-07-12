@@ -79,19 +79,21 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
   return resolveSenderIdentity(repliedMessage);
 }
 
-/** 记录各用户上一次被 AI 随机回复的时刻（基于 id 和姓名拼接作为 key）。 */
+/** 记录各用户上一次被 AI 随机回复的时刻（以 chatId + 用户 id + 姓名拼接作为 key）。 */
 const userRandomReplyTimes: Map<string, number> = new Map();
 
-/** 同一用户两次被 AI 随机回复之间的最短间隔。 */
+/** 同一群里同一用户两次被 AI 随机回复之间的最短间隔。 */
 const USER_RANDOM_REPLY_COOLDOWN_MS: number = 90_000;
 
 /**
  * 尝试为某个发言人占用一次「AI 随机回复」的名额：若 TA 仍在冷却期内则返回
- * false；否则记录本次触发时刻并返回 true。记录会在冷却期满后自动从 Map 中
- * 清理（仅当期间没有更新的记录覆盖它），避免长期运行下的内存泄漏。
+ * false；否则记录本次触发时刻并返回 true。冷却按「群 × 用户」独立计算——
+ * key 里拼了 chatId，同一个人在 A 群触发过不影响 TA 在 B 群被随机回复。
+ * 记录会在冷却期满后自动从 Map 中清理（仅当期间没有更新的记录覆盖它），
+ * 避免长期运行下的内存泄漏。
  */
-function tryClaimUserRandomReply(speaker: { id: number; firstName: string; lastName: string }): boolean {
-  const key: string = `${speaker.id}_${speaker.firstName}_${speaker.lastName}`;
+function tryClaimUserRandomReply(chatId: number, speaker: { id: number; firstName: string; lastName: string }): boolean {
+  const key: string = `${chatId}_${speaker.id}_${speaker.firstName}_${speaker.lastName}`;
   const now: number = Date.now();
   const lastTime: number = userRandomReplyTimes.get(key) ?? 0;
   if (now - lastTime < USER_RANDOM_REPLY_COOLDOWN_MS) return false;
@@ -229,6 +231,10 @@ export async function handleIncomingMessage(
     return;
   }
 
+  // /quiet 静默期内暂停一切主动刷存在感的行为（AI 随机插话、洗澡「看看」、
+  // 随机复读），只保留被动触发（回复机器人 / @ 机器人）和指令。
+  const isQuiet: boolean = (state.quietUntil ?? 0) > Date.now();
+
   // AI 相关逻辑仅在「群聊」且「没有复制对象」时进行：私聊消息不触发（机器人在
   // 私聊里没有群聊上下文，也不该在 DM 里自动搭话）；复制期间机器人正忙着复读
   // 目标，既不攒对话缓存也不触发 AI 回复，免得跟复读抢戏。
@@ -248,9 +254,9 @@ export async function handleIncomingMessage(
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
 
     const isRandomTrigger: boolean =
-      !isReplyToBot && !isMentioned &&
+      !isReplyToBot && !isMentioned && !isQuiet &&
       Math.random() < AI_REPLY_PROBABILITY &&
-      tryClaimUserRandomReply(speaker);
+      tryClaimUserRandomReply(chatId, speaker);
 
     if (isReplyToBot || isMentioned || isRandomTrigger) {
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
@@ -272,7 +278,7 @@ export async function handleIncomingMessage(
   // 偶然带出也被打扰。
   // 以 / 开头的是指令（未注册的、或发给其他机器人的指令不会被 bot.command
   // 拦截，会落到这里），与 echoMessage 的「不复读指令消息」保持一致，不触发。
-  if (!state.isCopying && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
+  if (!state.isCopying && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
     await sendMessage(chatId, "看看", message.message_id);
     return;
   }
@@ -280,7 +286,7 @@ export async function handleIncomingMessage(
   // 没有复读对象时的随机复读。无需担心和其他机器人形成复读循环：Telegram
   // 保证机器人收不到其他机器人发的消息（官方为防止 bot 互相触发死循环的设计），
   // 自己发的消息也不会作为更新推送回来。
-  if (!state.isCopying && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
+  if (!state.isCopying && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
     const mode: CopyMode | undefined = RANDOM_ECHO_MODES[Math.floor(Math.random() * RANDOM_ECHO_MODES.length)];
     await echoMessage(chatId, message, mode);
   }
@@ -482,6 +488,43 @@ export async function handleStopCommand(
   await saveUsersFile(usersFileData);
 
   await sendMessage(chatId, `哼，不玩了，本天才先歇一下~杂鱼♡`, messageId);
+}
+
+/** /quiet 静默时长：默认值与上下限（分钟）。 */
+const QUIET_DEFAULT_MINUTES: number = 3;
+const QUIET_MIN_MINUTES: number = 1;
+const QUIET_MAX_MINUTES: number = 15;
+
+/**
+ * 处理 /quiet 指令：让机器人在本群安静一段时间——期间不触发 AI 随机插话、
+ * 洗澡「看看」和随机复读这些主动刷存在感的行为；回复机器人 / @ 机器人的
+ * AI 必回、各类指令、以及 /copy 锁定目标的复读均不受影响（对话缓存也照常
+ * 攒，静默结束后 AI 不缺上下文）。时长参数为分钟数，缺省 3 分钟，超出
+ * 1~15 的范围会被收敛到边界；静默期内重复使用会以新时长重新计时。
+ */
+export async function handleQuietCommand(
+  ctx: CommandContext<Context>,
+  chatStates: Map<number, ChatState>
+): Promise<void> {
+  const chatId: number = ctx.chat.id;
+  const messageId: number | undefined = ctx.msgId;
+
+  const arg: string = ctx.match.trim();
+  let minutes: number = QUIET_DEFAULT_MINUTES;
+  if (arg) {
+    const parsed: number = Number(arg);
+    if (!Number.isFinite(parsed)) {
+      await sendMessage(chatId, `笨蛋，/quiet 后面要接分钟数（${QUIET_MIN_MINUTES}~${QUIET_MAX_MINUTES}），不填就是 ${QUIET_DEFAULT_MINUTES} 分钟♡`, messageId);
+      return;
+    }
+    minutes = Math.min(QUIET_MAX_MINUTES, Math.max(QUIET_MIN_MINUTES, Math.round(parsed)));
+  }
+
+  const state: ChatState = getOrCreateChatState(chatStates, chatId);
+  state.quietUntil = Date.now() + minutes * 60_000;
+  await saveState(chatStates);
+
+  await sendMessage(chatId, `哼，本天才就赏你们 ${minutes} 分钟清净，不主动插话也不复读。想本天才了就回复或 @ 我，杂鱼♡`, messageId);
 }
 
 /**
