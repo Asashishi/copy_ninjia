@@ -79,9 +79,31 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
   return resolveSenderIdentity(repliedMessage);
 }
 
-/** 记录各用户上一次被 AI 随机回复的时刻（基于 id 和姓名拼接作为 key），冷却 15s */
+/** 记录各用户上一次被 AI 随机回复的时刻（基于 id 和姓名拼接作为 key）。 */
 const userRandomReplyTimes: Map<string, number> = new Map();
-const USER_RANDOM_REPLY_COOLDOWN_MS: number = 15_000;
+
+/** 同一用户两次被 AI 随机回复之间的最短间隔。 */
+const USER_RANDOM_REPLY_COOLDOWN_MS: number = 90_000;
+
+/**
+ * 尝试为某个发言人占用一次「AI 随机回复」的名额：若 TA 仍在冷却期内则返回
+ * false；否则记录本次触发时刻并返回 true。记录会在冷却期满后自动从 Map 中
+ * 清理（仅当期间没有更新的记录覆盖它），避免长期运行下的内存泄漏。
+ */
+function tryClaimUserRandomReply(speaker: { id: number; firstName: string; lastName: string }): boolean {
+  const key: string = `${speaker.id}_${speaker.firstName}_${speaker.lastName}`;
+  const now: number = Date.now();
+  const lastTime: number = userRandomReplyTimes.get(key) ?? 0;
+  if (now - lastTime < USER_RANDOM_REPLY_COOLDOWN_MS) return false;
+
+  userRandomReplyTimes.set(key, now);
+  setTimeout(() => {
+    if (userRandomReplyTimes.get(key) === now) {
+      userRandomReplyTimes.delete(key);
+    }
+  }, USER_RANDOM_REPLY_COOLDOWN_MS).unref();
+  return true;
+}
 
 /**
  * 解析一条消息发言人喂给 AI 上下文所需的身份三元组：id + first_name + last_name。
@@ -225,30 +247,12 @@ export async function handleIncomingMessage(
     const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
 
-    let shouldTrigger: boolean = false;
-    let isRandomTrigger: boolean = false;
+    const isRandomTrigger: boolean =
+      !isReplyToBot && !isMentioned &&
+      Math.random() < AI_REPLY_PROBABILITY &&
+      tryClaimUserRandomReply(speaker);
 
-    if (isReplyToBot || isMentioned) {
-      shouldTrigger = true;
-    } else if (Math.random() < AI_REPLY_PROBABILITY) {
-      const speaker = resolveSpeaker(message);
-      const speakerKey: string = `${speaker.id}_${speaker.firstName}_${speaker.lastName}`;
-      const now: number = Date.now();
-      const lastTime: number = userRandomReplyTimes.get(speakerKey) ?? 0;
-      if (now - lastTime >= USER_RANDOM_REPLY_COOLDOWN_MS) {
-        userRandomReplyTimes.set(speakerKey, now);
-        isRandomTrigger = true;
-        shouldTrigger = true;
-        // 15s 后如果该用户的冷却记录仍是当前这次，则将其从 Map 中删除，防止内存泄漏
-        setTimeout(() => {
-          if (userRandomReplyTimes.get(speakerKey) === now) {
-            userRandomReplyTimes.delete(speakerKey);
-          }
-        }, USER_RANDOM_REPLY_COOLDOWN_MS).unref();
-      }
-    }
-
-    if (shouldTrigger) {
+    if (isReplyToBot || isMentioned || isRandomTrigger) {
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
       return;
     }
