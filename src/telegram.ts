@@ -1,5 +1,6 @@
 import { logger } from "./logger";
 import { Api, Bot, GrammyError, InputFile } from "grammy";
+import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { BOT_TOKEN } from "./config";
@@ -173,6 +174,47 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
       logger.error("Error sending message:", error);
     }
     return undefined;
+  }
+}
+
+/**
+ * 向指定 Telegram 聊天发送一枚贴纸（按 file_id 引用，无需重新上传文件）。
+ * @param chatId 目标聊天 ID。
+ * @param fileId 贴纸的 file_id（来自 getStickerSet 返回的贴纸集合）。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ */
+export async function sendSticker(chatId: number, fileId: string, api: Api = bot.api): Promise<void> {
+  try {
+    await api.sendSticker(chatId, fileId);
+  } catch (error: unknown) {
+    if (error instanceof GrammyError) {
+      logger.error(`Failed to send sticker: ${error.error_code} ${error.description}`);
+    } else {
+      logger.error("Error sending sticker:", error);
+    }
+  }
+}
+
+/**
+ * 给指定消息设置一个标准 emoji 反应（会覆盖机器人在该消息上原有的反应）。
+ * 注意：emoji 只能是 Telegram 文档里列出的固定反应表情集合之一——bot 不能
+ * 给消息设置任意 emoji，也不能设置消息上原本不存在的自定义表情反应
+ * （两者都会被 Bot API 拒绝，报 REACTION_INVALID）。
+ * @param chatId 消息所在的聊天。
+ * @param messageId 要设置反应的消息。
+ * @param emoji 标准反应 emoji（须在 Telegram 允许的反应表情集合内——调用方
+ *   自行保证，这里只做类型断言，不做运行时校验）。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ */
+export async function setMessageReaction(chatId: number, messageId: number, emoji: string, api: Api = bot.api): Promise<void> {
+  try {
+    await api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }]);
+  } catch (error: unknown) {
+    if (error instanceof GrammyError) {
+      logger.error(`Failed to set message reaction: ${error.error_code} ${error.description}`);
+    } else {
+      logger.error("Error setting message reaction:", error);
+    }
   }
 }
 

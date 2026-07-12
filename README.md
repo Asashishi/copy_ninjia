@@ -16,6 +16,9 @@
 - **反刷群（Anti-Raid）**：短时间内入群人数超过阈值时，自动临时开启私密模式（禁止普通成员拉人），到期后恢复原权限。
 - **AI 闲聊**：基于 DeepSeek API 和自定义人设（`prompt/persona.txt`），概率性地在群里生成闲聊回复；回复机器人或 @ 机器人时必回，纯按概率命中的随机搭话则不挂 Telegram 回复引用，改为在文字里点名称呼触发者。
   - 内置基础工具（`src/tools/`）供模型按需调用：查当前时间（东京时区）、查东京今日天气（Open-Meteo，1 小时缓存）。时间类问题会把真实时间直接注入上下文，保证不瞎编。
+  - 分群三重限频：1.5 秒冷却 + 每分钟最多 45 次 + 每 5 分钟最多 150 次（滑动窗口），超限的触发静默丢弃，防止恶意刷屏烧穿 API 配额。
+- **应景贴纸**：每次 AI 回复后，按概率（默认 1/2）从白名单贴纸包里挑一枚跟发。按回复文本命中的情绪关键词匹配贴纸的 emoji 元数据来做到「应景」，没命中就随机挑。白名单、概率、关键词映射见 `config/stickers.json`，改配置不需要碰代码。
+- **应景反应**：AI 回复触发时（含随机搭话），按概率（默认 1/3）给触发消息扣一个应景的 emoji 反应，情绪匹配逻辑同上。emoji 限于 Telegram 允许 bot 设置的固定反应表情集合，配置见 `config/reactions.json`。
 - **`/balance`**：查询当前 DeepSeek API Key 绑定账号的余额，结果缓存 30 秒，避免连续查询触发接口限流。
 - **多群独立状态**：每个群聊的复读目标、冷却时间等状态互相独立，重启后从 `state.json` / `users.json` 恢复。
 
@@ -62,6 +65,9 @@ src/
   joinVerification.ts    # 入群验证逻辑
   antiRaid.ts             # 反刷群私密模式
   aiChat.ts               # AI 闲聊回复（DeepSeek，支持 function calling）
+  stickers.ts             # AI 回复后概率跟发应景贴纸（白名单见 config/stickers.json）
+  reactions.ts            # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）
+  stickerSets.ts          # 贴纸包拉取缓存 + 情绪关键词匹配等公共积木
   tools/                  # 供 aiChat.ts 调用的 AI 工具
     index.ts               # 工具定义清单 + 按名分发执行
     time.ts                 # 查当前时间（东京时区）
@@ -76,6 +82,9 @@ src/
   config.ts               # 环境变量读取
   types.ts                # 共享类型定义
 prompt/persona.txt       # AI 闲聊人设文本
+config/
+  stickers.json           # 应景贴纸配置：贴纸包白名单、触发概率、情绪关键词映射
+  reactions.json          # 应景反应配置：触发概率、情绪关键词 -> 反应 emoji 映射
 ```
 
 本项目基于 `bun init`（Bun v1.3.14）创建。

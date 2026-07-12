@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEEPSEEK_API_KEY } from "./config";
 import { LinkedQueue } from "./linkedQueue";
+import { maybeAddReaction } from "./reactions";
+import { maybeSendStickerReply } from "./stickers";
 import { sendMessage } from "./telegram";
 import { TOOL_DEFINITIONS, callTool } from "./tools";
 import { getCurrentTime } from "./tools/time";
@@ -41,16 +43,23 @@ const AI_REPLY_COOLDOWN_MS: number = 1_500;
 const lastReplyTimes: Map<number, number> = new Map();
 
 /**
- * 分群限频：单个群滚动 60 秒窗口内最多触发多少次 AI 回复。每群冷却只
- * 限制相邻两次的间隔（1.5 秒冷却下一分钟仍可达 40 次），这道闸给单群
- * 的总量再兜一层。只在入口计一次数——一次触发内的「连发多条短消息」
- * 属于同一次回复，不重复计数。超限的触发直接静默丢弃。
+ * 分群限频：单个群滚动窗口内最多触发多少次 AI 回复。每群冷却只限制相邻
+ * 两次的间隔（1.5 秒冷却下一分钟仍可达 40 次），这两道滑动窗口给单群的
+ * 总量再兜两层——1 分钟窗口挡住短时爆发，5 分钟窗口再挡住那种卡着 1 分钟
+ * 窗口边界反复刷、绕开短窗口上限的持续刷屏。两道闸中任意一道打满，触发
+ * 就直接静默丢弃（黑洞），等对应窗口里旧时刻滑出窗口腾出名额才恢复，不是
+ * 硬性定时重置。只在入口计一次数——一次触发内的「连发多条短消息」属于
+ * 同一次回复，不重复计数。
  */
 const RATE_LIMIT_WINDOW_MS: number = 60_000;
-const RATE_LIMIT_MAX_TRIGGERS: number = 35;
+const RATE_LIMIT_MAX_TRIGGERS: number = 45;
+const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
+const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
 
-/** 各群窗口内每次触发的时刻（毫秒时间戳），队首最旧，过期即出队。 */
+/** 各群 1 分钟窗口内每次触发的时刻（毫秒时间戳），队首最旧，过期即出队。 */
 const triggerTimes: Map<number, LinkedQueue<number>> = new Map();
+/** 各群 5 分钟窗口内每次触发的时刻（毫秒时间戳），队首最旧，过期即出队。 */
+const longTriggerTimes: Map<number, LinkedQueue<number>> = new Map();
 
 /** 缓存里的一条消息：发言人 id + 名字（拆开存，好让模型按 id 而非重名区分身份）+ 文本。 */
 interface BufferedMessage {
@@ -337,8 +346,9 @@ export function generateAndSendReply(
     return;
   }
 
-  // 本群每分钟限频：先把窗口外的旧触发挤掉，再看余量。两道闸都过了才
-  // 一起落账，避免被拒的触发白白占用冷却/配额。
+  // 本群 1 分钟 / 5 分钟双重限频：先把各自窗口外的旧触发挤掉，再看余量。
+  // 三道闸（冷却 + 两个滑动窗口）都过了才一起落账，避免被拒的触发白白
+  // 占用冷却/配额。
   let times: LinkedQueue<number> | undefined = triggerTimes.get(chatId);
   if (!times) {
     times = new LinkedQueue<number>();
@@ -351,8 +361,21 @@ export function generateAndSendReply(
     return;
   }
 
+  let longTimes: LinkedQueue<number> | undefined = longTriggerTimes.get(chatId);
+  if (!longTimes) {
+    longTimes = new LinkedQueue<number>();
+    longTriggerTimes.set(chatId, longTimes);
+  }
+  while (longTimes.size > 0 && now - longTimes.peek()! >= RATE_LIMIT_LONG_WINDOW_MS) {
+    longTimes.shift();
+  }
+  if (longTimes.size >= RATE_LIMIT_LONG_MAX_TRIGGERS) {
+    return;
+  }
+
   lastReplyTimes.set(chatId, now);
   times.push(now);
+  longTimes.push(now);
 
   const splitMode: boolean = Math.random() < SPLIT_REPLY_PROBABILITY;
 
@@ -369,6 +392,11 @@ export function generateAndSendReply(
     const reply: string | null = await callDeepSeek(userContent);
     if (!reply) return;
 
+    // 回复刚生成就先按配置概率给触发消息扣一个应景的标准 emoji 反应（见
+    // src/reactions.ts）——放在发送循环之前，连发模式的打字间隔（可能累计
+    // 十来秒）才不会把反应也拖到最后，更像真人「先点个反应再慢慢打字」。
+    maybeAddReaction(chatId, replyToMessageId, reply);
+
     // 单条模式下模型偶尔也会换行，此时不该按行拆——原样整条发出。
     const parts: string[] = splitMode ? splitReplyParts(reply) : [reply];
     for (let i: number = 0; i < parts.length; i++) {
@@ -381,6 +409,9 @@ export function generateAndSendReply(
         await sleep(typingDelayMs(parts[i + 1]!));
       }
     }
+
+    // 每次 AI 回复（含随机搭话）后，按配置概率附带发一枚应景的白名单贴纸，见 src/stickers.ts。
+    maybeSendStickerReply(chatId, reply);
   })().catch((error: unknown) => {
     logger.error("Error in AI reply task:", error);
   });
