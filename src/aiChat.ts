@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { DEEPSEEK_API_KEY } from "./config";
 import { LinkedQueue } from "./linkedQueue";
 import { sendMessage } from "./telegram";
+import { TOOL_DEFINITIONS, callTool } from "./tools";
+import { getCurrentTime } from "./tools/time";
 
 /**
  * AI 闲聊回复：把本群最近的对话记录喂给 DeepSeek（OpenAI 兼容的 /chat/completions
@@ -94,21 +96,41 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
   }
 }
 
+/** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
+function displayName(m: BufferedMessage): string {
+  return [m.firstName, m.lastName].filter((p: string) => !!p).join(" ").trim() || "某杂鱼";
+}
+
 /** 把一条缓存消息格式化成喂给模型的一行：标出 id，避免重名混淆身份。 */
 function formatLine(m: BufferedMessage): string {
-  const name: string = [m.firstName, m.lastName].filter((p: string) => !!p).join(" ").trim() || "某杂鱼";
-  return `[id:${m.id}] ${name}：${m.text}`;
+  return `[id:${m.id}] ${displayName(m)}：${m.text}`;
+}
+
+/** buildUserContent 的可选附加上下文，按需组合，见各字段说明。 */
+interface UserContentOptions {
+  /** 是否要求模型把回复拆成多条短消息（一行一条）连发。 */
+  splitMode: boolean;
+  /** 若本次是「用户回复了机器人」，被回复的那条机器人消息文本，作为上下文
+   *  （机器人自己发的消息不会作为更新推送回来，不在缓存里）。 */
+  repliedBotText?: string;
+  /** 若本次是随机触发（见 generateAndSendReply 的 isRandomTrigger），触发者的
+   *  显示名——这种情况下回复不会用 Telegram 的「回复」关联到原消息，要求模型
+   *  改为在文字里点名称呼对方。 */
+  addressee?: string;
+  /** 若最新消息在问时间/日期（见 isTimeRelatedQuery），预先查好的真实当前时间
+   *  文本，直接喂给模型当已知事实用，不经由 function calling 让模型自己查——
+   *  该模型的「思考模式」不支持强制指定 tool_choice（会 400），只能靠这种
+   *  直接注入上下文的方式保证不瞎编。 */
+  timeContext?: string;
 }
 
 /**
  * 把某群的滚动缓存里最近 CONTEXT_SIZE 条拼装成给模型的用户消息内容。
  * @param chatId 群聊 ID。
- * @param splitMode 是否要求模型把回复拆成多条短消息（一行一条）连发。
- * @param repliedBotText 若本次是「用户回复了机器人」，传入被回复的那条机器人消息文本，
- *   作为上下文（机器人自己发的消息不会作为更新推送回来，不在缓存里）。
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
-function buildUserContent(chatId: number, splitMode: boolean, repliedBotText?: string): string | null {
+function buildUserContent(chatId: number, options: UserContentOptions): string | null {
+  const { splitMode, repliedBotText, addressee, timeContext } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
@@ -119,10 +141,20 @@ function buildUserContent(chatId: number, splitMode: boolean, repliedBotText?: s
     // 结构不变即可杜绝任何多行伪造的可能。
     lines.push(`（你刚才说过：${sanitizeInline(repliedBotText)}）`);
   }
+  if (timeContext) {
+    lines.push(`（提示：现在的实际时间是 ${timeContext}，如果最新消息在问时间/日期，请直接如实告知这个值，不要编造）`);
+  }
+
+  // 随机触发时这条回复不会挂 Telegram 的回复引用，得让模型自己在文字里点名，
+  // 别人才看得出是在接谁的话。全名太长（比如中间夹着 last name）念出来生硬，
+  // 交给模型自己判断——名字短就整个用，长就挑其中自然的一部分当称呼。
+  const addressInstruction: string = addressee
+    ? `这条回复不会以「回复」形式关联到最新那条消息，所以开头要先点名称呼对方（TA 的名字是「${addressee}」，比如「${addressee}，……」；如果这个名字比较长念着别扭，可以自己判断截取其中简短自然的一部分来称呼，不必照抄全名），让人一眼看出你在接谁的话。`
+    : "";
 
   const replyInstruction: string = splitMode
-    ? `请针对最新这条消息，以你的人设回复，并把回复拆成 2 到 ${SPLIT_REPLY_MAX_PARTS} 条连贯的短消息——就像真人打字时想到哪发到哪、一句接一句连发那样，每条一行、语义上前后衔接（比如先反应、再吐槽、再补一刀）。只输出这几行消息本身，一行一条，不要编号、解释、前缀、引号、代码块或「[id:...]」这类标记。`
-    : "请针对最新这条消息，以你的人设回复一到两句话，自然接住话题。只输出你要发到群里的那句话本身，不要任何解释、前缀、引号、代码块或「[id:...]」这类标记。";
+    ? `请针对最新这条消息，以你的人设回复，并把回复拆成 2 到 ${SPLIT_REPLY_MAX_PARTS} 条连贯的短消息——就像真人打字时想到哪发到哪、一句接一句连发那样，每条一行、语义上前后衔接（比如先反应、再吐槽、再补一刀）。${addressInstruction}只输出这几行消息本身，一行一条，不要编号、解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`
+    : `请针对最新这条消息，以你的人设回复一到两句话，自然接住话题。${addressInstruction}只输出你要发到群里的那句话本身，不要任何解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`;
 
   return (
     "以下是本群最近的聊天记录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。\n\n" +
@@ -132,49 +164,103 @@ function buildUserContent(chatId: number, splitMode: boolean, repliedBotText?: s
   );
 }
 
+/** 触发这次回复的最新一条缓存消息；缓存为空时返回 undefined。 */
+function getLatestMessage(chatId: number): BufferedMessage | undefined {
+  const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
+  return buf?.last(1)[0];
+}
+
 /**
- * 调用 DeepSeek 的 /chat/completions 接口生成一条回复。
+ * 判断一条消息是否在问时间/日期。命中时会把真实当前时间直接注入 prompt
+ * （见 UserContentOptions.timeContext），而不是交给模型自己判断要不要查——
+ * auto 模式下模型经常瞎编时间而不调用工具，命中率太低。
+ */
+const TIME_INTENT_PATTERN: RegExp =
+  /现在几点|几点了|几点钟|现在.{0,4}时间|当前时间|今天.{0,3}[几号日]|几月几[号日]|星期几|周几|报时|what\s*time|current\s*time/i;
+
+function isTimeRelatedQuery(text: string): boolean {
+  return TIME_INTENT_PATTERN.test(text);
+}
+
+/**
+ * 一次工具调用往返最多允许几轮（模型要工具结果 -> 喂回去 -> 模型可能再要
+ * 下一个工具……）。给个上限防止模型陷入死循环反复要工具，烧穿 API 配额。
+ */
+const MAX_TOOL_ROUNDS: number = 3;
+
+/**
+ * 调用 DeepSeek 的 /chat/completions 接口生成一条回复。支持 function
+ * calling：模型可以要求先执行 src/tools 里的工具（目前是查东京天气），
+ * 工具结果喂回去后再继续生成，直到给出最终文本或达到轮数上限。
+ * 注意：tools 只能用默认的 auto tool_choice——这个模型开着「思考模式」，
+ * 强制指定某个具体函数（tool_choice: {type:"function",...}）会被 API
+ * 直接 400 拒绝（"Thinking mode does not support this tool_choice"）。
+ * 查时间不走这条路，见 isTimeRelatedQuery + UserContentOptions.timeContext。
  * @param userContent buildUserContent 拼好的对话上下文。
  * @returns 清洗后的回复文本；请求失败、超时或空输出时返回 null。
  */
 async function callDeepSeek(userContent: string): Promise<string | null> {
-  const controller: AbortController = new AbortController();
-  const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const messages: any[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    { role: "user", content: userContent },
+  ];
 
-  try {
-    const response: Response = await fetch(DEEPSEEK_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-      },
-      body: JSON.stringify({
+  for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const controller: AbortController = new AbortController();
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    let message: any;
+    try {
+      const body: Record<string, unknown> = {
         model: DEEPSEEK_MODEL,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userContent },
-        ],
+        messages,
+        tools: TOOL_DEFINITIONS,
         stream: false,
         temperature: 1.2,
         max_tokens: 4096,
-      }),
-      signal: controller.signal,
-    });
+      };
 
-    if (!response.ok) {
-      logger.error(`DeepSeek API error: ${response.status} ${await response.text()}`);
+      const response: Response = await fetch(DEEPSEEK_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        logger.error(`DeepSeek API error: ${response.status} ${await response.text()}`);
+        return null;
+      }
+
+      const data: any = await response.json();
+      message = data?.choices?.[0]?.message;
+    } catch (error: unknown) {
+      logger.error("Error calling DeepSeek API:", error);
       return null;
+    } finally {
+      clearTimeout(timer);
     }
 
-    const data: any = await response.json();
-    const content: string | undefined = data?.choices?.[0]?.message?.content;
+    if (!message) return null;
+
+    const toolCalls: any[] | undefined = message.tool_calls;
+    if (Array.isArray(toolCalls) && toolCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
+      messages.push(message);
+      for (const call of toolCalls) {
+        const result: string = await callTool(call?.function?.name);
+        messages.push({ role: "tool", tool_call_id: call.id, content: result });
+      }
+      continue;
+    }
+
+    const content: string | undefined = message.content;
     return content ? cleanReply(content) : null;
-  } catch (error: unknown) {
-    logger.error("Error calling DeepSeek API:", error);
-    return null;
-  } finally {
-    clearTimeout(timer);
   }
+
+  return null;
 }
 
 /**
@@ -232,10 +318,18 @@ function sleep(ms: number): Promise<void> {
  * 几条前后衔接的短句，逐条带打字间隔发出（仅第一条引用触发消息）；
  * 其余情况仍是普通的单条回复。
  * @param chatId 目标群聊。
- * @param replyToMessageId 触发这次回复的消息 ID，回复时引用它。
+ * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
+ * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机搭话。
+ *   这种情况不使用 Telegram 的回复引用（不去 @ 或挂起原消息），改为让模型
+ *   在文字里直接点名称呼触发者，更像真人「指名道姓」地插句嘴而非正式回帖。
  */
-export function generateAndSendReply(chatId: number, replyToMessageId: number, repliedBotText?: string): void {
+export function generateAndSendReply(
+  chatId: number,
+  replyToMessageId: number,
+  repliedBotText?: string,
+  isRandomTrigger: boolean = false
+): void {
   // 每群冷却：在发起任何异步工作之前同步判定并占位，这样冷却窗口内的
   // 并发触发（包括 100% 命中的回复/@ 触发）都会在烧到 API 之前被丢弃。
   const now: number = Date.now();
@@ -263,7 +357,13 @@ export function generateAndSendReply(chatId: number, replyToMessageId: number, r
   const splitMode: boolean = Math.random() < SPLIT_REPLY_PROBABILITY;
 
   void (async (): Promise<void> => {
-    const userContent: string | null = buildUserContent(chatId, splitMode, repliedBotText);
+    const latestMessage: BufferedMessage | undefined = getLatestMessage(chatId);
+    const addressee: string | undefined = isRandomTrigger && latestMessage ? displayName(latestMessage) : undefined;
+    const timeContext: string | undefined = isTimeRelatedQuery(latestMessage?.text ?? "")
+      ? `${getCurrentTime().formatted}（东京时间 UTC+9）`
+      : undefined;
+
+    const userContent: string | null = buildUserContent(chatId, { splitMode, repliedBotText, addressee, timeContext });
     if (!userContent) return;
 
     const reply: string | null = await callDeepSeek(userContent);
@@ -273,7 +373,10 @@ export function generateAndSendReply(chatId: number, replyToMessageId: number, r
     const parts: string[] = splitMode ? splitReplyParts(reply) : [reply];
     for (let i: number = 0; i < parts.length; i++) {
       const part: string = parts[i]!;
-      await sendMessage(chatId, part, i === 0 ? replyToMessageId : undefined);
+      // 随机触发不挂 Telegram 回复引用，靠模型在文字里点名（见 addressee）；
+      // 回复/@ 触发照旧引用第一条。
+      const quoteId: number | undefined = !isRandomTrigger && i === 0 ? replyToMessageId : undefined;
+      await sendMessage(chatId, part, quoteId);
       if (i < parts.length - 1) {
         await sleep(typingDelayMs(parts[i + 1]!));
       }

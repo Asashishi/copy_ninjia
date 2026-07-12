@@ -219,7 +219,10 @@ export async function handleIncomingMessage(
     const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
     if (isReplyToBot || isMentioned || Math.random() < AI_REPLY_PROBABILITY) {
-      generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined);
+      // 既不是回复机器人也不是 @ 机器人，说明这次是纯按概率命中的随机搭话——
+      // 不挂 Telegram 回复引用，让 aiChat 改用「点名称呼」的形式接话。
+      const isRandomTrigger: boolean = !isReplyToBot && !isMentioned;
+      generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
       return;
     }
   }
