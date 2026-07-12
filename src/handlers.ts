@@ -6,7 +6,7 @@ import { sendMessage, copyMessage, copyUserProfilePhoto, banChatMember, banChatS
 import { enqueueReaction } from "./reactionQueue";
 import { applyCopyModeTransform, describeCopyModeEffect } from "./copyModes";
 import { formatUserLabel } from "./userLabel";
-import { handleGroupJoinVerification } from "./joinVerification";
+import { handleGroupJoinVerification } from "./antiRaid";
 import { PRIVILEGED_USERS_ID } from "./config";
 import { recordChatMessage, generateAndSendReply } from "./aiChat";
 import { AI_REPLY_PROBABILITY } from "./consts/aiChat";
@@ -211,9 +211,9 @@ export async function handleIncomingMessage(
   const message: any = ctx.msg;
   if (!message) return;
 
-  // 入群验证：新成员加入提醒、验证口令、以及验证期间消息的追踪都在这里处理；
-  // 处理完入群公告本身，或者验证口令刚好通过，就不需要再走后面的复读逻辑了。
-  if (await handleGroupJoinVerification(message)) return;
+  // 入群守卫：入群公告、离群、以及验证期间消息的追踪事件都在这里投递给
+  // 守卫 Worker；入群公告本身已被完全处理，不需要再走后面的复读逻辑。
+  if (handleGroupJoinVerification(message)) return;
 
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message, users);

@@ -3,7 +3,7 @@ import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
 import { handleBalanceCommand, handleCopyCommand, handleIncomingMessage, handleKickCommand, handleQuietCommand, handleReaction, handleStopCommand, handleUnquietCommand } from "./src/handlers";
-import { handleChatMemberUpdate, handleVerificationCallback } from "./src/joinVerification";
+import { handleChatMemberUpdate, handleVerificationCallback } from "./src/antiRaid";
 import { initAiChat } from "./src/aiChat";
 import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";
 

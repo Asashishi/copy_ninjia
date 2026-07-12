@@ -9,7 +9,8 @@ import { AVATAR_FETCH_MAX_ATTEMPTS, AVATAR_FETCH_TIMEOUT_MS } from "./consts/tel
 export const bot: Bot = new Bot(BOT_TOKEN);
 
 /**
- * 专供入群验证流程（joinVerification.ts）使用的独立 API 客户端。该流程可能在
+ * 专供入群守卫流程（workers/antiRaidWorker.ts，主线程侧代理为 antiRaid.ts）
+ * 使用的独立 API 客户端。该流程可能在
  * 几秒内向同一个群突发大量 send/delete/kick 调用——比如一波人同时入群，或者
  * 踢人时要把某个刷屏者的所有消息全部删掉。这里做了限流以符合 Telegram 的
  * 单聊天/全局限制，并在遇到 429 时自动重试，让这些突发请求排队等待而不是
@@ -172,25 +173,6 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
       logger.error("Error sending message:", error);
     }
     return undefined;
-  }
-}
-
-/**
- * 摘掉某条消息上的内联键盘（不改动消息文本）。用于入群验证通过后，把提醒
- * 消息上的验证按钮去掉，防止验证通过后还能重复点击。
- * @param chatId 消息所在的聊天。
- * @param messageId 要摘掉键盘的消息。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
- */
-export async function clearInlineKeyboard(chatId: number, messageId: number, api: Api = bot.api): Promise<void> {
-  try {
-    await api.editMessageReplyMarkup(chatId, messageId);
-  } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to clear inline keyboard: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error clearing inline keyboard:", error);
-    }
   }
 }
 

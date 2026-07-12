@@ -65,14 +65,14 @@ src/
   handlers.ts           # 复读/踢人/余额查询等命令与消息处理逻辑
   copyModes.ts           # 反转 / 喵~ / 日语翻译等复读文本变换
   translate.ts           # Google Cloud Translate 封装
-  joinVerification.ts    # 入群验证逻辑
-  antiRaid.ts             # 反刷群私密模式
+  antiRaid.ts             # 入群守卫入口（主线程侧代理：入群验证 + 反刷群私密模式）
   aiChat.ts               # AI 闲聊入口（主线程侧代理，向 AI Worker 投递事件）
   stickers.ts             # AI 回复后概率跟发应景贴纸（白名单见 config/stickers.json）
   reactions.ts            # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）
   stickerSets.ts          # 贴纸包拉取缓存 + 情绪关键词匹配等公共积木
   workers/                # 独立的工作子线程
     aiChatWorker.ts          # AI 闲聊流水线 Worker 线程（限频、DeepSeek 调用、发送）
+    antiRaidWorker.ts         # 入群守卫 Worker 线程（验证窗口、超时踢人、私密模式）
     loggerWorker.ts           # 日志落盘 Worker 线程
   tools/                  # 供 aiChatWorker.ts 调用的 AI 工具
     index.ts               # 工具定义清单 + 按名分发执行

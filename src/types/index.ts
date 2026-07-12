@@ -3,7 +3,6 @@
  * 这里只做汇总重导出，其它模块统一从 "./types"（或 "../types"）取用。
  */
 export * from "./chatState";
-export * from "./joinVerification";
 export * from "./reactionQueue";
 export * from "./logger";
 export * from "./deepseekBalance";
