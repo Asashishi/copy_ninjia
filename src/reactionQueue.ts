@@ -1,7 +1,7 @@
 import { logger } from "./logger";
 import { GrammyError } from "grammy";
 import { bot } from "./telegram";
-import { LinkedQueue } from "./linkedQueue";
+import { LinkedQueue } from "./libs/linkedQueue";
 import { MAX_ATTEMPTS } from "./consts/reactionQueue";
 import { chatQueues, consumingChats, pendingTasks } from "./cache/reactionQueue";
 import type { CopyableReaction, ReactionTask } from "./types";

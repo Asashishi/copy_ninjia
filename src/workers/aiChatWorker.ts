@@ -1,7 +1,7 @@
 import { logger } from "../logger";
 import { readFileSync } from "node:fs";
 import { DEEPSEEK_API_KEY } from "../config";
-import { LinkedQueue } from "../linkedQueue";
+import { LinkedQueue } from "../libs/linkedQueue";
 import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_REPLY_COOLDOWN_MS,

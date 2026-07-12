@@ -1,4 +1,4 @@
-import type { LinkedQueue } from "../linkedQueue";
+import type { LinkedQueue } from "../libs/linkedQueue";
 import type { BufferedMessage } from "../types";
 
 /**

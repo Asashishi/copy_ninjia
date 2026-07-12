@@ -80,7 +80,8 @@ src/
     weather.ts               # 查东京今日天气（Open-Meteo，1 小时缓存）
   deepseekBalance.ts       # 查询 DeepSeek 账户余额（30 秒缓存），供 /balance 使用
   reactionQueue.ts        # 消息反应同步队列
-  linkedQueue.ts          # 通用链式队列
+  libs/                   # 算法与依赖目录
+    linkedQueue.ts        # 通用链式队列
   storage.ts              # 状态持久化（state.json / users.json）
   userLabel.ts            # 用户显示名格式化
   logger.ts                # 统一日志门面，error 级别经 Worker 线程按日落盘
