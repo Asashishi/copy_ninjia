@@ -239,6 +239,12 @@ export async function handleIncomingMessage(
         userRandomReplyTimes.set(speakerKey, now);
         isRandomTrigger = true;
         shouldTrigger = true;
+        // 15s 后如果该用户的冷却记录仍是当前这次，则将其从 Map 中删除，防止内存泄漏
+        setTimeout(() => {
+          if (userRandomReplyTimes.get(speakerKey) === now) {
+            userRandomReplyTimes.delete(speakerKey);
+          }
+        }, USER_RANDOM_REPLY_COOLDOWN_MS).unref();
       }
     }
 
