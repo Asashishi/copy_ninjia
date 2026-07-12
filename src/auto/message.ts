@@ -3,7 +3,6 @@ import type { CachedUser, ChatState, CopyMode } from "../types";
 import { getChatState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
-import { handleGroupJoinVerification } from "../antiRaid";
 import { cacheSender } from "../users/senderIdentity";
 import { recordChatMessage, generateAndSendReply } from "../aiChat";
 import { AI_REPLY_PROBABILITY } from "../consts/aiChat";
@@ -17,9 +16,11 @@ import { userRandomReplyTimes } from "../cache/auto";
 import { describeStickerForContext } from "../ai/stickerSets";
 
 /**
- * 消息自动流水线：每一条 message/channel_post 更新都从这里过——入群守卫
- * 事件投递、复制目标的复读、AI 对话缓存与触发、洗澡「看看」、随机复读。
- * 与 src/commands 下的显式命令不同，这里的行为都是机器人自己看时机触发的。
+ * 消息自动流水线：复制目标的复读、AI 对话缓存与触发、洗澡「看看」、随机
+ * 复读。与 src/commands 下的显式命令不同，这里的行为都是机器人自己看时机
+ * 触发的。（入群守卫的事件投递不在这里——它以中间件形式挂在 index.ts 的
+ * 命令处理器之前，否则命令消息会漏追踪；入群公告也在那里就被吞掉，到不了
+ * 本流水线。）
  */
 
 /**
@@ -140,10 +141,6 @@ export async function handleIncomingMessage(
 ): Promise<void> {
   const message: any = ctx.msg;
   if (!message) return;
-
-  // 入群守卫：入群公告、离群、以及验证期间消息的追踪事件都在这里投递给
-  // 守卫 Worker；入群公告本身已被完全处理，不需要再走后面的复读逻辑。
-  if (handleGroupJoinVerification(message)) return;
 
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message, users);

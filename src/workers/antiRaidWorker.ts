@@ -97,17 +97,44 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
  * @param chatId 成员加入的聊天。
  * @param member 新加入的用户（id/username/first_name），主线程已过滤掉机器人。
  * @param announcementMessageId 若本次投递由 `new_chat_members` 服务消息触发，则为该消息的 ID（用于之后删除）。
+ * @param exempt 若为 true，该成员以管理员/群主身份入群（chat_member 路径可见身份），免验证。
  */
-function ensureVerificationStarted(chatId: number, member: AntiRaidMember, announcementMessageId?: number): void {
+function ensureVerificationStarted(chatId: number, member: AntiRaidMember, announcementMessageId?: number, exempt?: boolean): void {
   const key: string = verificationKey(chatId, member.id);
   const existing = pendingVerifications.get(key);
+
+  if (exempt) {
+    // 管理员/群主入群（典型如群主退群重进），不需要验证。new_chat_members
+    // 服务消息不带身份信息，若它先到、已经开了真实验证窗口，在这里撤销并
+    // 删掉提醒消息（提醒若还在限流队列里没落地，回填回调查不到记录会自删）；
+    // 否则留一个豁免占位，防止稍后到达的服务消息重新开一个验证窗口。
+    // TA 的入群公告不删、发言不追踪——这是合法成员。
+    if (existing) {
+      if (existing.kicked || existing.exempt) return;
+      clearTimeout(existing.timeout);
+      pendingVerifications.delete(key);
+      if (existing.reminderMessageId !== undefined) {
+        void deleteMessage(chatId, existing.reminderMessageId, joinVerificationApi);
+      }
+    }
+    pendingVerifications.set(key, {
+      chatId,
+      userId: member.id,
+      label: memberLabel(member),
+      messageIds: [],
+      timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
+      exempt: true,
+    });
+    return;
+  }
+
   if (existing) {
     if (announcementMessageId !== undefined) {
       if (existing.kicked) {
         // 这个人已经在私密模式下被直接踢出了，这条才姗姗来迟的入群公告/服务
         // 消息也顺手清理掉，不需要留着等占位记录自然过期。
         void deleteMessage(chatId, announcementMessageId, joinVerificationApi);
-      } else {
+      } else if (!existing.exempt) {
         existing.messageIds.push(announcementMessageId);
       }
     }
@@ -200,8 +227,9 @@ function cancelVerification(chatId: number, userId: number): void {
 function trackPendingMessage(chatId: number, userId: number, messageId: number): void {
   const key: string = verificationKey(chatId, userId);
   const pending = pendingVerifications.get(key);
-  // kicked 为 true 时这只是私密模式踢人后的去重占位，不是真的在等验证。
-  if (!pending || pending.kicked) return;
+  // kicked/exempt 为 true 时这只是去重占位（私密模式踢人后 / 管理员豁免），
+  // 不是真的在等验证。
+  if (!pending || pending.kicked || pending.exempt) return;
 
   pending.messageIds.push(messageId);
 }
@@ -225,7 +253,7 @@ async function handleVerificationCallback(msg: VerifyCallbackMessage): Promise<v
 
   const key: string = verificationKey(msg.chatId, msg.targetUserId);
   const pending = pendingVerifications.get(key);
-  if (!pending || pending.kicked) {
+  if (!pending || pending.kicked || pending.exempt) {
     await answerCallbackQuery(msg.callbackQueryId, "验证已经失效啦，再试试重新进群吧", true, joinVerificationApi);
     return;
   }
@@ -257,21 +285,31 @@ function scheduleRestore(chatId: number, delayMs: number): ReturnType<typeof set
 
 /**
  * 记录一次已确认的新成员加入（由 ensureVerificationStarted 在去重后调用）。
- * 若 15 秒窗口内的入群人数超过阈值，则触发临时私密模式。
+ * 滑动窗口：最近 JOIN_WINDOW_MS 内的入群人数超过阈值即触发临时私密模式——
+ * 不用「首次入群起算、到点整体清零」的固定桶，是为了防住横跨桶边界的刷群
+ * （前桶尾 + 后桶头各塞半个阈值，固定桶永远数不满）。
  */
 function recordJoin(chatId: number): void {
+  const now: number = Date.now();
   let window = joinWindows.get(chatId);
   if (!window) {
-    window = {
-      count: 0,
-      resetTimeout: setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS),
-    };
+    window = { timestamps: [], resetTimeout: setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS) };
     joinWindows.set(chatId, window);
+  } else {
+    // 清理计时器在每次入群时重置：它到期即意味着窗口静默满 JOIN_WINDOW_MS，
+    // 届时所有时间戳都已过期，整个条目可以安全删除。
+    clearTimeout(window.resetTimeout);
+    window.resetTimeout = setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS);
   }
 
-  window.count += 1;
-  if (window.count > JOIN_THRESHOLD) {
-    void triggerLockdown(chatId, window.count).catch((error: unknown) => {
+  const cutoff: number = now - JOIN_WINDOW_MS;
+  while (window.timestamps.length > 0 && window.timestamps[0]! <= cutoff) {
+    window.timestamps.shift();
+  }
+  window.timestamps.push(now);
+
+  if (window.timestamps.length > JOIN_THRESHOLD) {
+    void triggerLockdown(chatId, window.timestamps.length).catch((error: unknown) => {
       logger.error("Error triggering anti-raid lockdown:", error);
     });
   }
@@ -317,7 +355,7 @@ async function triggerLockdown(chatId: number, joinCount: number): Promise<void>
 
   await sendMessage(
     chatId,
-    `哼，15 秒内冲进来了 ${joinCount} 个杂鱼，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 5 分钟压压惊♡`,
+    `哼，${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${joinCount} 个杂鱼，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`,
     undefined,
     joinVerificationApi
   );
@@ -346,7 +384,7 @@ async function restoreChat(chatId: number): Promise<void> {
 
   activeLockdowns.delete(chatId);
   self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
-  await sendMessage(chatId, `5 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`, undefined, joinVerificationApi);
+  await sendMessage(chatId, `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`, undefined, joinVerificationApi);
 }
 
 /**
@@ -369,7 +407,7 @@ self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
   const msg: AntiRaidWorkerMessage = event.data;
   switch (msg.type) {
     case "join":
-      ensureVerificationStarted(msg.chatId, msg.member, msg.announcementMessageId);
+      ensureVerificationStarted(msg.chatId, msg.member, msg.announcementMessageId, msg.exempt);
       break;
     case "left":
       cancelVerification(msg.chatId, msg.userId);

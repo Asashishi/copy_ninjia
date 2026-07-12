@@ -18,10 +18,14 @@ export const WELCOME_AUTO_DELETE_MS: number = 30 * 1000;
 
 // —— 反刷群私密模式 ——
 
-/** 计数窗口时长：15 秒内入群人数若超过阈值，视为疑似拉人头刷群。 */
-export const JOIN_WINDOW_MS: number = 15 * 1000;
-/** 15 秒窗口内触发私密模式的入群人数阈值。 */
-export const JOIN_THRESHOLD: number = 150;
+/** 滑动计数窗口时长：最近这么长时间内的入群数超过阈值，视为疑似拉人头刷群。 */
+export const JOIN_WINDOW_MS: number = 60 * 1000;
+/**
+ * 滑动窗口内触发私密模式的入群人数阈值。60 秒 30 人（0.5 人/秒）：正常群
+ * 极少一分钟涌入 30 个新人，而真实刷群通常远快于此——旧值 150 人/15 秒
+ * 要求持续 10 人/秒，实际刷群到不了，形同虚设。
+ */
+export const JOIN_THRESHOLD: number = 30;
 /** 私密模式（禁止普通成员拉人）持续时长。 */
 export const LOCKDOWN_MS: number = 5 * 60 * 1000;
 /** 解除私密模式的 API 调用失败后，重试前的等待时长。 */

@@ -11,6 +11,8 @@ export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 export const STATE_FILE_PATH: string = join(PROJECT_ROOT, "state.json");
 export const USERS_FILE_PATH: string = join(PROJECT_ROOT, "users.json");
 export const LOCK_FILE_PATH: string = join(PROJECT_ROOT, "bot.lock");
+/** 反刷群私密模式的持久化：进程重启后据此恢复解锁计时，不让群权限卡死。 */
+export const LOCKDOWNS_FILE_PATH: string = join(PROJECT_ROOT, "lockdowns.json");
 
 /** AI 闲聊人设文本（修改人设不需要碰代码）。 */
 export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.txt");

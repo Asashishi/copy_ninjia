@@ -1,6 +1,7 @@
 import { logger } from "./logger";
+import type { ChatPermissions } from "@grammyjs/types";
 import type { ChatState, ChatStateFileSchema, UsersFileSchema } from "../types";
-import { LOCK_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "../consts/paths";
+import { LOCK_FILE_PATH, LOCKDOWNS_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 
 function isProcessAlive(pid: number): boolean {
@@ -115,6 +116,41 @@ export async function saveState(chatStates: Map<number, ChatState>): Promise<voi
     serializable[String(chatId)] = chatState;
   }
   await persistJson(STATE_FILE_PATH, JSON.stringify(serializable, null, 2), "state");
+}
+
+/**
+ * 加载持久化的反刷群私密模式记录（chatId -> 锁定前的原始权限）。
+ * 进程重启后由 initAntiRaid() 重放给守卫 Worker 接管——权限限制已实际
+ * 落在群上，不重放就永远无人解锁（见 src/antiRaid.ts）。
+ */
+export async function loadLockdowns(): Promise<Map<number, ChatPermissions>> {
+  try {
+    const file = Bun.file(LOCKDOWNS_FILE_PATH);
+    if (await file.exists()) {
+      const parsed: any = JSON.parse(await file.text());
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const lockdowns: Map<number, ChatPermissions> = new Map();
+        for (const [chatIdStr, permissions] of Object.entries(parsed)) {
+          lockdowns.set(Number(chatIdStr), permissions as ChatPermissions);
+        }
+        return lockdowns;
+      }
+    }
+  } catch (error: unknown) {
+    logger.error("Failed to load lockdowns file:", error);
+  }
+  return new Map();
+}
+
+/**
+ * 持久化当前生效中的私密模式镜像（每次 lockdown/unlock 事件后全量覆写）。
+ */
+export async function saveLockdowns(lockedChats: Map<number, ChatPermissions>): Promise<void> {
+  const serializable: Record<string, ChatPermissions> = {};
+  for (const [chatId, permissions] of lockedChats) {
+    serializable[String(chatId)] = permissions;
+  }
+  await persistJson(LOCKDOWNS_FILE_PATH, JSON.stringify(serializable, null, 2), "lockdowns file");
 }
 
 /**

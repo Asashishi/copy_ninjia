@@ -4,7 +4,7 @@ import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/infra/storage";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleQuietCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
-import { handleChatMemberUpdate, handleVerificationCallback } from "./src/antiRaid";
+import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { initAiChat } from "./src/aiChat";
 import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";
 
@@ -82,6 +82,15 @@ async function main(): Promise<void> {
     return next();
   });
 
+  // 入群守卫的消息投递必须挂在命令处理器之前：命令处理器匹配到命令后不再
+  // 往下传，若放在其后（或放在 handleIncomingMessage 里），待验证用户发的
+  // 命令消息就不会被追踪，超时踢人时清理不掉。返回 true 表示这是入群公告、
+  // 已被守卫完全处理，直接吞掉，不再触发命令/复读/AI。
+  bot.on("message", (ctx, next) => {
+    if (handleGroupJoinVerification(ctx.message)) return;
+    return next();
+  });
+
   // 命令处理器要注册在通用消息处理器之前：匹配到命令时 grammY 不会再往下传给它。
   bot.command("copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData));
   bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "reverse"));
@@ -134,6 +143,9 @@ async function main(): Promise<void> {
   // runner 开始投喂更新之前注入，postMessage 的 FIFO 保证这条 init 消息
   // 先于一切「记录/触发」事件到达 Worker。
   initAiChat(bot.botInfo);
+  // 接管上次进程退出时仍在生效的反刷群私密模式（lockdowns.json）：同样要
+  // 赶在 runner 投喂更新之前 adopt 给守卫 Worker，让它重排解锁计时。
+  await initAntiRaid();
   const copyingChats: number = Array.from(chatStates.values()).filter((s) => s.isCopying).length;
   logger.log(
     `Bot started as @${bot.botInfo.username}. ` +
