@@ -1,8 +1,8 @@
-import { logger } from "./logger";
+import { logger } from "../logger";
 import { readFileSync } from "node:fs";
-import { DEEPSEEK_API_KEY } from "./config";
-import { LinkedQueue } from "./linkedQueue";
-import { PERSONA_PATH } from "./consts/paths";
+import { DEEPSEEK_API_KEY } from "../config";
+import { LinkedQueue } from "../linkedQueue";
+import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_REPLY_COOLDOWN_MS,
   BUFFER_SIZE,
@@ -19,15 +19,15 @@ import {
   SPLIT_REPLY_MAX_PARTS,
   SPLIT_REPLY_PROBABILITY,
   TIME_INTENT_PATTERN,
-} from "./consts/aiChat";
-import { chatBuffers, lastReplyTimes, longTriggerTimes, rateLimitNoticeTimes, triggerTimes } from "./cache/aiChatWorker";
-import type { BufferedMessage } from "./types";
-import { maybeAddReaction } from "./reactions";
-import { maybeSendStickerReply } from "./stickers";
-import { sendMessage } from "./telegram";
-import { TOOL_DEFINITIONS, callTool } from "./tools";
-import { getCurrentTime } from "./tools/time";
-import type { AiBotInfo, AiChatWorkerMessage } from "./types";
+} from "../consts/aiChat";
+import { chatBuffers, lastReplyTimes, longTriggerTimes, rateLimitNoticeTimes, triggerTimes } from "../cache/aiChatWorker";
+import type { BufferedMessage } from "../types";
+import { maybeAddReaction } from "../reactions";
+import { maybeSendStickerReply } from "../stickers";
+import { sendMessage } from "../telegram";
+import { TOOL_DEFINITIONS, callTool } from "../tools";
+import { getCurrentTime } from "../tools/time";
+import type { AiBotInfo, AiChatWorkerMessage } from "../types";
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（handlers.ts → aiChat.ts 代理）

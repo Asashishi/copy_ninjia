@@ -33,7 +33,7 @@ let lastInit: AiInitMessage | null = null;
 let worker: Worker | null = createWorker();
 
 function createWorker(): Worker {
-  const w: Worker = new Worker(new URL("./aiChatWorker.ts", import.meta.url).href);
+  const w: Worker = new Worker(new URL("./workers/aiChatWorker.ts", import.meta.url).href);
   w.unref();
   // Worker 线程里的 logger 处于转发模式（见 logger.ts 模块头注释）：error
   // 日志包着 ForwardedLog 信封回传，这里转投主线程唯一的落盘线程。

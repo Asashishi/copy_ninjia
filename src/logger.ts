@@ -34,7 +34,7 @@ let diskWorkerRestartTimestamps: number[] = [];
 let diskWorker: Worker | null = isMainThread ? createDiskWorker() : null;
 
 function createDiskWorker(): Worker {
-  const w: Worker = new Worker(new URL("./loggerWorker.ts", import.meta.url).href);
+  const w: Worker = new Worker(new URL("./workers/loggerWorker.ts", import.meta.url).href);
   w.unref();
   w.onmessage = (event: MessageEvent<FlushReply>) => {
     const resolve = pendingFlushes.get(event.data.flushedId);

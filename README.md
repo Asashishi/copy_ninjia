@@ -68,10 +68,12 @@ src/
   joinVerification.ts    # 入群验证逻辑
   antiRaid.ts             # 反刷群私密模式
   aiChat.ts               # AI 闲聊入口（主线程侧代理，向 AI Worker 投递事件）
-  aiChatWorker.ts          # AI 闲聊流水线 Worker 线程（限频、DeepSeek 调用、发送）
   stickers.ts             # AI 回复后概率跟发应景贴纸（白名单见 config/stickers.json）
   reactions.ts            # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）
   stickerSets.ts          # 贴纸包拉取缓存 + 情绪关键词匹配等公共积木
+  workers/                # 独立的工作子线程
+    aiChatWorker.ts          # AI 闲聊流水线 Worker 线程（限频、DeepSeek 调用、发送）
+    loggerWorker.ts           # 日志落盘 Worker 线程
   tools/                  # 供 aiChatWorker.ts 调用的 AI 工具
     index.ts               # 工具定义清单 + 按名分发执行
     time.ts                 # 查当前时间（东京时区）
@@ -82,7 +84,6 @@ src/
   storage.ts              # 状态持久化（state.json / users.json）
   userLabel.ts            # 用户显示名格式化
   logger.ts                # 统一日志门面，error 级别经 Worker 线程按日落盘
-  loggerWorker.ts           # 日志落盘 Worker 线程
   config.ts               # 环境变量读取
   types.ts                # 共享类型定义
   consts/                 # 调参常量集中地（按来源模块分文件；paths.ts 统一定义所有文件/目录路径）
