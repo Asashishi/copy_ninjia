@@ -1,4 +1,4 @@
-import type { TokyoWeatherResult } from "../tools/weather";
+import type { TokyoWeatherResult } from "../types";
 
 /**
  * 东京天气工具（src/tools/weather.ts）的内存缓存：仅存最近一次成功结果及其

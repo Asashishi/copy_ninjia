@@ -2,22 +2,11 @@ import { logger } from "./logger";
 import { DEEPSEEK_API_KEY } from "./config";
 import { CACHE_TTL_MS, DEEPSEEK_BALANCE_API_URL, REQUEST_TIMEOUT_MS } from "./consts/deepseekBalance";
 import { balanceCache } from "./cache/deepseekBalance";
+import type { DeepSeekBalanceResponse } from "./types";
 
 /**
  * 查询 DeepSeek 账户余额，供 /balance 命令使用。
  */
-
-export interface DeepSeekBalanceInfo {
-  currency: string;
-  total_balance: string;
-  granted_balance: string;
-  topped_up_balance: string;
-}
-
-export interface DeepSeekBalanceResponse {
-  is_available: boolean;
-  balance_infos: DeepSeekBalanceInfo[];
-}
 
 /**
  * 请求失败、超时或返回数据格式不对时返回 null，由调用方决定如何降级。

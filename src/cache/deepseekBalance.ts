@@ -1,4 +1,4 @@
-import type { DeepSeekBalanceResponse } from "../deepseekBalance";
+import type { DeepSeekBalanceResponse } from "../types";
 
 /**
  * DeepSeek 余额查询（src/deepseekBalance.ts）的内存缓存：仅存最近一次成功

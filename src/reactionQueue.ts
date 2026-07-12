@@ -1,18 +1,10 @@
 import { logger } from "./logger";
 import { GrammyError } from "grammy";
-import type { ReactionTypeCustomEmoji, ReactionTypeEmoji } from "@grammyjs/types";
 import { bot } from "./telegram";
 import { LinkedQueue } from "./linkedQueue";
 import { MAX_ATTEMPTS } from "./consts/reactionQueue";
-import { chatQueues, consumingChats, pendingTasks, type ReactionTask } from "./cache/reactionQueue";
-
-/**
- * 机器人能跟着复制的反应类型。付费（paid）反应 Bot API 不允许机器人设置，
- * 在入队前就应被过滤掉。自定义 emoji 反应可以复制：Bot API 允许机器人使用
- * 「已存在于该消息上」的自定义表情，而我们复制的正是目标刚点在同一条消息
- * 上的反应，天然满足这个条件。
- */
-export type CopyableReaction = ReactionTypeEmoji | ReactionTypeCustomEmoji;
+import { chatQueues, consumingChats, pendingTasks } from "./cache/reactionQueue";
+import type { CopyableReaction, ReactionTask } from "./types";
 
 /**
  * 反应同步的可靠性保障层。经实测确认，复制反应的延迟大头在 Telegram 生成并

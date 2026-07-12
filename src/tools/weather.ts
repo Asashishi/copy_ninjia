@@ -8,6 +8,7 @@ import {
   WEATHER_CODE_DESCRIPTIONS,
 } from "../consts/weather";
 import { weatherCache } from "../cache/weather";
+import type { TokyoWeatherResult } from "../types";
 
 /**
  * AI 工具:获取东京今天的天气。用 Open-Meteo 的免费公开端点——不需要
@@ -16,14 +17,6 @@ import { weatherCache } from "../cache/weather";
 
 function describeWeatherCode(code: number): string {
   return WEATHER_CODE_DESCRIPTIONS[code] ?? `未知天气现象（代码 ${code}）`;
-}
-
-export interface TokyoWeatherResult {
-  currentTemperatureC: number;
-  currentCondition: string;
-  todayMaxC: number;
-  todayMinC: number;
-  todayCondition: string;
 }
 
 /**

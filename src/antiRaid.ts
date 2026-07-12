@@ -1,7 +1,8 @@
 import { logger } from "./logger";
 import { sendMessage, joinVerificationApi } from "./telegram";
 import { JOIN_THRESHOLD, JOIN_WINDOW_MS, LOCKDOWN_MS, RESTORE_RETRY_MS } from "./consts/antiRaid";
-import { activeLockdowns, joinWindows, type Lockdown } from "./cache/antiRaid";
+import { activeLockdowns, joinWindows } from "./cache/antiRaid";
+import type { Lockdown } from "./types";
 
 /**
  * 记录一次已确认的新成员加入。由 joinVerification.ts 在去重后调用，因此同一次

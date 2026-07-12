@@ -14,7 +14,7 @@
 
 import { join } from "path";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "fs";
-import type { FlushReply, FlushRequest, LogMessage } from "./logger";
+import type { FlushReply, FlushRequest, LogMessage } from "./types";
 import { LOGS_DIR } from "./consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "./consts/logger";
 

@@ -20,13 +20,14 @@ import {
   SPLIT_REPLY_PROBABILITY,
   TIME_INTENT_PATTERN,
 } from "./consts/aiChat";
-import { chatBuffers, lastReplyTimes, longTriggerTimes, rateLimitNoticeTimes, triggerTimes, type BufferedMessage } from "./cache/aiChatWorker";
+import { chatBuffers, lastReplyTimes, longTriggerTimes, rateLimitNoticeTimes, triggerTimes } from "./cache/aiChatWorker";
+import type { BufferedMessage } from "./types";
 import { maybeAddReaction } from "./reactions";
 import { maybeSendStickerReply } from "./stickers";
 import { sendMessage } from "./telegram";
 import { TOOL_DEFINITIONS, callTool } from "./tools";
 import { getCurrentTime } from "./tools/time";
-import type { AiBotInfo, AiChatWorkerMessage } from "./aiChat";
+import type { AiBotInfo, AiChatWorkerMessage } from "./types";
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（handlers.ts → aiChat.ts 代理）

@@ -1,24 +1,12 @@
 import { getCurrentTime } from "./time";
 import { getTokyoWeather } from "./weather";
+import type { ToolDefinition } from "../types";
 
 /**
  * 供 aiChatWorker.ts 走 DeepSeek 的 function calling 接口调用的工具集合。
  * 每个工具都无入参、无副作用，出错时返回描述性的 JSON 字符串而不是
  * 抛错——模型收到工具结果后自己决定怎么向用户措辞。
  */
-
-export interface ToolDefinition {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters: {
-      type: "object";
-      properties: Record<string, unknown>;
-      required: string[];
-    };
-  };
-}
 
 /** 工具名常量，供 aiChatWorker.ts 强制指定 tool_choice 时引用，避免魔法字符串两处漂移。 */
 export const GET_CURRENT_TIME_TOOL: string = "get_current_time";

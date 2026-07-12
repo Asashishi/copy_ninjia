@@ -1,9 +1,9 @@
 import { logger } from "./logger";
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "./types";
+import type { CachedUser, ChatState, CopyableReaction, CopyMode, DeepSeekBalanceResponse, UsersFileSchema } from "./types";
 import { getChatState, getOrCreateChatState, saveState, saveUsersFile } from "./storage";
 import { sendMessage, copyMessage, copyUserProfilePhoto, banChatMember, banChatSenderChat, deleteMessageAfter } from "./telegram";
-import { enqueueReaction, type CopyableReaction } from "./reactionQueue";
+import { enqueueReaction } from "./reactionQueue";
 import { applyCopyModeTransform, describeCopyModeEffect } from "./copyModes";
 import { formatUserLabel } from "./userLabel";
 import { handleGroupJoinVerification } from "./joinVerification";
@@ -23,7 +23,7 @@ import {
 } from "./consts/handlers";
 import { userRandomReplyTimes } from "./cache/handlers";
 import { describeStickerForContext } from "./stickerSets";
-import { fetchDeepSeekBalance, type DeepSeekBalanceResponse } from "./deepseekBalance";
+import { fetchDeepSeekBalance } from "./deepseekBalance";
 
 /**
  * 解析出一条消息发送者的 CachedUser 形态身份：可能是真实 Telegram 用户

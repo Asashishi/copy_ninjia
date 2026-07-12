@@ -1,18 +1,11 @@
 import type { LinkedQueue } from "../linkedQueue";
+import type { BufferedMessage } from "../types";
 
 /**
  * AI 闲聊流水线（src/aiChatWorker.ts）的内存状态。本模块只被 Worker 线程
  * import，所有状态都存活在该线程内；仅存于内存，重启即清空（本功能不做
  * 持久记忆）。
  */
-
-/** 缓存里的一条消息：发言人 id + 名字（拆开存，好让模型按 id 而非重名区分身份）+ 文本。 */
-export interface BufferedMessage {
-  id: number;
-  firstName: string;
-  lastName: string;
-  text: string;
-}
 
 /** 各群聊上一次 AI 回复的触发时刻（毫秒时间戳），用于冷却判断。 */
 export const lastReplyTimes: Map<number, number> = new Map();
