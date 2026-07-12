@@ -9,6 +9,8 @@ export interface PendingVerification {
   label: string;
   /** 验证窗口过期时要删除的消息 ID：入群公告、提醒消息、以及验证期间 TA 发的所有消息。 */
   messageIds: number[];
+  /** 带验证按钮的提醒消息 ID，验证通过后要把按钮摘掉，防止重复点击。 */
+  reminderMessageId?: number;
   timeout: ReturnType<typeof setTimeout>;
   /**
    * 若为 true，说明这不是真正在等待验证口令的记录，而是反防刷群私密模式下

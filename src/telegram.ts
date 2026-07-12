@@ -1,5 +1,5 @@
 import { logger } from "./logger";
-import { Api, Bot, GrammyError, InputFile } from "grammy";
+import { Api, Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
@@ -155,15 +155,15 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
  * @param text 消息文本。
  * @param replyToMessageId 可选，要回复的消息 ID。
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param keyboard 可选，附带的内联键盘（如入群验证按钮）。
  * @returns 发送成功时返回该消息的 ID，失败则返回 undefined。
  */
-export async function sendMessage(chatId: number, text: string, replyToMessageId?: number, api: Api = bot.api): Promise<number | undefined> {
+export async function sendMessage(chatId: number, text: string, replyToMessageId?: number, api: Api = bot.api, keyboard?: InlineKeyboard): Promise<number | undefined> {
   try {
-    const sent = await api.sendMessage(
-      chatId,
-      text,
-      replyToMessageId ? { reply_parameters: { message_id: replyToMessageId } } : undefined
-    );
+    const sent = await api.sendMessage(chatId, text, {
+      ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId } } : {}),
+      ...(keyboard ? { reply_markup: keyboard } : {}),
+    });
     return sent.message_id;
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
@@ -172,6 +172,45 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
       logger.error("Error sending message:", error);
     }
     return undefined;
+  }
+}
+
+/**
+ * 摘掉某条消息上的内联键盘（不改动消息文本）。用于入群验证通过后，把提醒
+ * 消息上的验证按钮去掉，防止验证通过后还能重复点击。
+ * @param chatId 消息所在的聊天。
+ * @param messageId 要摘掉键盘的消息。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ */
+export async function clearInlineKeyboard(chatId: number, messageId: number, api: Api = bot.api): Promise<void> {
+  try {
+    await api.editMessageReplyMarkup(chatId, messageId);
+  } catch (error: unknown) {
+    if (error instanceof GrammyError) {
+      logger.error(`Failed to clear inline keyboard: ${error.error_code} ${error.description}`);
+    } else {
+      logger.error("Error clearing inline keyboard:", error);
+    }
+  }
+}
+
+/**
+ * 应答一次 callback_query（内联按钮点击），消除客户端按钮上的加载态，
+ * 可选地弹出一个提示气泡/弹窗。
+ * @param callbackQueryId 要应答的 callback_query ID。
+ * @param text 可选，提示文本。
+ * @param showAlert 是否以弹窗（而非一闪而过的 toast）形式展示提示文本。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ */
+export async function answerCallbackQuery(callbackQueryId: string, text?: string, showAlert: boolean = false, api: Api = bot.api): Promise<void> {
+  try {
+    await api.answerCallbackQuery(callbackQueryId, { text, show_alert: showAlert });
+  } catch (error: unknown) {
+    if (error instanceof GrammyError) {
+      logger.error(`Failed to answer callback query: ${error.error_code} ${error.description}`);
+    } else {
+      logger.error("Error answering callback query:", error);
+    }
   }
 }
 

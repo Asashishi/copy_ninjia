@@ -3,7 +3,7 @@ import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
 import { handleBalanceCommand, handleCopyCommand, handleIncomingMessage, handleKickCommand, handleQuietCommand, handleReaction, handleStopCommand, handleUnquietCommand } from "./src/handlers";
-import { handleChatMemberUpdate } from "./src/joinVerification";
+import { handleChatMemberUpdate, handleVerificationCallback } from "./src/joinVerification";
 import { initAiChat } from "./src/aiChat";
 import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";
 
@@ -94,6 +94,7 @@ async function main(): Promise<void> {
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users, chatStates));
   bot.on("message_reaction", (ctx) => handleReaction(ctx, chatStates));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
+  bot.on("callback_query:data", (ctx) => handleVerificationCallback(ctx));
 
   bot.catch((err) => {
     logger.error(`Unhandled error while handling update ${err.ctx.update.update_id}:`, err.error);
@@ -118,11 +119,12 @@ async function main(): Promise<void> {
     logger.error("Failed to register bot commands menu:", error);
   }
 
-  // message_reaction / chat_member 默认不在 Telegram 的隐式更新集合里，必须显式
-  // 声明才能收到；一旦显式声明，就必须把 message/channel_post 也列进来，否则
-  // 它们反而会被排除。chat_member 是入群验证功能能收到"谁加入了群"的关键——
-  // 群里如果开了"隐藏加入/离开提示"，new_chat_members 服务消息根本不会产生，
-  // 只有 chat_member 这个更新类型不受影响，始终会推送。
+  // message_reaction / chat_member / callback_query 默认不在 Telegram 的隐式更新
+  // 集合里，必须显式声明才能收到；一旦显式声明，就必须把 message/channel_post
+  // 也列进来，否则它们反而会被排除。chat_member 是入群验证功能能收到"谁加入了
+  // 群"的关键——群里如果开了"隐藏加入/离开提示"，new_chat_members 服务消息
+  // 根本不会产生，只有 chat_member 这个更新类型不受影响，始终会推送；
+  // callback_query 则是入群验证按钮点击的信号来源。
   // 用 @grammyjs/runner 代替 bot.start()：内建轮询对所有更新全局串行，一条
   // 消息的处理（复读、翻译）会卡住后面的 reaction 更新；runner 按上面的
   // sequentialize 约束并发处理。
@@ -140,7 +142,7 @@ async function main(): Promise<void> {
   const runner: RunnerHandle = run(bot, {
     runner: {
       fetch: {
-        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member"],
+        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member", "callback_query"],
       },
     },
   });
