@@ -1,3 +1,4 @@
+import { logger } from "./src/logger";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
@@ -91,7 +92,7 @@ async function main(): Promise<void> {
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
 
   bot.catch((err) => {
-    console.error(`Unhandled error while handling update ${err.ctx.update.update_id}:`, err.error);
+    logger.error(`Unhandled error while handling update ${err.ctx.update.update_id}:`, err.error);
   });
 
   // 向 Telegram 注册命令列表，让聊天框输入 / 时弹出命令菜单。默认作用域即可
@@ -107,7 +108,7 @@ async function main(): Promise<void> {
       { command: "kick", description: "踢出群聊并封禁（仅白名单用户可用）" },
     ]);
   } catch (error: unknown) {
-    console.error("Failed to register bot commands menu:", error);
+    logger.error("Failed to register bot commands menu:", error);
   }
 
   // message_reaction / chat_member 默认不在 Telegram 的隐式更新集合里，必须显式
@@ -120,7 +121,7 @@ async function main(): Promise<void> {
   // sequentialize 约束并发处理。
   await bot.init();
   const copyingChats: number = Array.from(chatStates.values()).filter((s) => s.isCopying).length;
-  console.log(
+  logger.log(
     `Bot started as @${bot.botInfo.username}. ` +
     `Restored state for ${chatStates.size} chat(s), ${copyingChats} currently copying.`
   );
@@ -147,11 +148,11 @@ async function main(): Promise<void> {
     try {
       await bot.api.getUpdates({ offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 });
     } catch (error: unknown) {
-      console.error("Failed to confirm update offset on shutdown:", error);
+      logger.error("Failed to confirm update offset on shutdown:", error);
     }
   }
 }
 
 main().catch((err: unknown) => {
-  console.error("Unhandled error in bot main runner:", err);
+  logger.error("Unhandled error in bot main runner:", err);
 });

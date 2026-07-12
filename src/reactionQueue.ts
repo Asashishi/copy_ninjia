@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import { GrammyError } from "grammy";
 import type { ReactionTypeCustomEmoji, ReactionTypeEmoji } from "@grammyjs/types";
 import { bot } from "./telegram";
@@ -105,7 +106,7 @@ async function applyReaction(key: string, task: ReactionTask): Promise<void> {
       // 本地时钟减 Telegram 服务器时间，轻微时钟偏差可能出现负数，夹到 0。
       const nowMs: number = Date.now();
       const deliveryMs: number = Math.max(0, task.enqueuedAtMs - task.reactedAtUnix * 1000);
-      console.log(
+      logger.log(
         `Reaction synced (chat ${task.chatId}, msg ${task.messageId}): ` +
         `delivery ${(deliveryMs / 1000).toFixed(1)}s, queue ${((nowMs - task.enqueuedAtMs) / 1000).toFixed(1)}s`
       );
@@ -113,7 +114,7 @@ async function applyReaction(key: string, task: ReactionTask): Promise<void> {
     } catch (error: unknown) {
       if (error instanceof GrammyError && error.error_code === 429 && attempt < MAX_ATTEMPTS) {
         const retryAfterSeconds: number = error.parameters.retry_after ?? 3;
-        console.warn(
+        logger.warn(
           `setMessageReaction rate limited (chat ${task.chatId}, msg ${task.messageId}), ` +
           `waiting ${retryAfterSeconds}s before retry ${attempt + 1}/${MAX_ATTEMPTS}`
         );
@@ -128,9 +129,9 @@ async function applyReaction(key: string, task: ReactionTask): Promise<void> {
       if (error instanceof GrammyError) {
         // 目标点完立刻取消时，自定义表情不再「存在于消息上」，这里会收到
         // 400；属于正常竞态，记录后放弃即可，不影响后续任务。
-        console.error(`Failed to set message reaction: ${error.error_code} ${error.description}`);
+        logger.error(`Failed to set message reaction: ${error.error_code} ${error.description}`);
       } else {
-        console.error("Error setting message reaction:", error);
+        logger.error("Error setting message reaction:", error);
       }
       return;
     }

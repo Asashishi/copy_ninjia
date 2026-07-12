@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import { join } from "path";
 import type { ChatState, ChatStateFileSchema, UsersFileSchema } from "./types";
 
@@ -26,7 +27,7 @@ export async function acquireSingleInstanceLock(): Promise<void> {
   if (await lockFile.exists()) {
     const existingPid: number = parseInt((await lockFile.text()).trim(), 10);
     if (!Number.isNaN(existingPid) && isProcessAlive(existingPid)) {
-      console.error(
+      logger.error(
         `另一个 bot 实例 (pid=${existingPid}) 已经在运行，拒绝启动第二个实例——` +
         `多个实例同时轮询会导致同一条消息被重复回复。`
       );
@@ -51,7 +52,7 @@ export async function loadUsersFile(): Promise<UsersFileSchema> {
       }
     }
   } catch (error: unknown) {
-    console.error("Failed to load users file:", error);
+    logger.error("Failed to load users file:", error);
   }
   return {};
 }
@@ -72,7 +73,7 @@ function persistJson(filePath: string, json: string, label: string): Promise<voi
     try {
       await Bun.write(filePath, json);
     } catch (error: unknown) {
-      console.error(`Failed to save ${label}:`, error);
+      logger.error(`Failed to save ${label}:`, error);
     }
   };
   persistChain = persistChain.then(write, write);
@@ -105,7 +106,7 @@ export async function loadState(): Promise<Map<number, ChatState>> {
       return chatStates;
     }
   } catch (error: unknown) {
-    console.error("Failed to load state:", error);
+    logger.error("Failed to load state:", error);
   }
   return new Map();
 }

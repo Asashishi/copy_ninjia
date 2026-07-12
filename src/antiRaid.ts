@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import type { ChatPermissions } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "./telegram";
 
@@ -46,7 +47,7 @@ export function recordJoin(chatId: number): void {
   window.count += 1;
   if (window.count > JOIN_THRESHOLD) {
     void triggerLockdown(chatId, window.count).catch((error: unknown) => {
-      console.error("Error triggering anti-raid lockdown:", error);
+      logger.error("Error triggering anti-raid lockdown:", error);
     });
   }
 }
@@ -62,7 +63,7 @@ async function triggerLockdown(chatId: number, joinCount: number): Promise<void>
     clearTimeout(existing.restoreTimeout);
     existing.restoreTimeout = setTimeout(() => {
       void restoreChat(chatId).catch((error: unknown) => {
-        console.error("Error restoring chat permissions after anti-raid lockdown:", error);
+        logger.error("Error restoring chat permissions after anti-raid lockdown:", error);
       });
     }, LOCKDOWN_MS);
     return;
@@ -76,7 +77,7 @@ async function triggerLockdown(chatId: number, joinCount: number): Promise<void>
     originalPermissions: {},
     restoreTimeout: setTimeout(() => {
       void restoreChat(chatId).catch((error: unknown) => {
-        console.error("Error restoring chat permissions after anti-raid lockdown:", error);
+        logger.error("Error restoring chat permissions after anti-raid lockdown:", error);
       });
     }, LOCKDOWN_MS),
   };
@@ -124,11 +125,11 @@ async function restoreChat(chatId: number): Promise<void> {
   try {
     await joinVerificationApi.setChatPermissions(chatId, lockdown.originalPermissions);
   } catch (error: unknown) {
-    console.error(`Failed to restore chat permissions for ${chatId}, retrying in ${RESTORE_RETRY_MS / 1000}s:`, error);
+    logger.error(`Failed to restore chat permissions for ${chatId}, retrying in ${RESTORE_RETRY_MS / 1000}s:`, error);
     clearTimeout(lockdown.restoreTimeout);
     lockdown.restoreTimeout = setTimeout(() => {
       void restoreChat(chatId).catch((retryError: unknown) => {
-        console.error("Error restoring chat permissions after anti-raid lockdown:", retryError);
+        logger.error("Error restoring chat permissions after anti-raid lockdown:", retryError);
       });
     }, RESTORE_RETRY_MS);
     return;

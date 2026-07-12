@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import type { Context } from "grammy";
 import type { ChatMember } from "@grammyjs/types";
 import type { CachedUser, PendingVerification } from "./types";
@@ -114,7 +115,7 @@ async function ensureVerificationStarted(chatId: number, member: any, announceme
       }
       await kickChatMember(chatId, member.id, joinVerificationApi);
     })().catch((error: unknown) => {
-      console.error("Error kicking member during anti-raid lockdown:", error);
+      logger.error("Error kicking member during anti-raid lockdown:", error);
     });
     return;
   }
@@ -126,7 +127,7 @@ async function ensureVerificationStarted(chatId: number, member: any, announceme
     messageIds: announcementMessageId !== undefined ? [announcementMessageId] : [],
     timeout: setTimeout(() => {
       void expireVerification(chatId, member.id).catch((error: unknown) => {
-        console.error("Error expiring join verification:", error);
+        logger.error("Error expiring join verification:", error);
       });
     }, VERIFICATION_TIMEOUT_MS),
   };
@@ -154,7 +155,7 @@ async function ensureVerificationStarted(chatId: number, member: any, announceme
       }
     })
     .catch((error: unknown) => {
-      console.error("Error sending join verification reminder:", error);
+      logger.error("Error sending join verification reminder:", error);
     });
 }
 

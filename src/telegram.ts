@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import { Api, Bot, GrammyError, InputFile } from "grammy";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
@@ -33,18 +34,18 @@ export async function copyUserProfilePhoto(targetId: number, isChannel: boolean 
   for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
     const success: boolean = await attemptCopyUserProfilePhoto(targetId, isChannel);
     if (success) return true;
-    console.error(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
+    logger.error(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
   }
 
   if (username) {
-    console.error(`Falling back to t.me web profile scrape for @${username}`);
+    logger.error(`Falling back to t.me web profile scrape for @${username}`);
     const imgBuffer: Uint8Array | null = await fetchAvatarFromWebProfile(username);
     if (imgBuffer) {
       try {
         await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
         return true;
       } catch (error: unknown) {
-        console.error("Error setting profile photo from web fallback:", error);
+        logger.error("Error setting profile photo from web fallback:", error);
       }
     }
   }
@@ -66,7 +67,7 @@ export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8
       signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS),
     });
     if (!pageRes.ok) {
-      console.error(`Failed to fetch t.me profile page for @${username}: ${pageRes.status}`);
+      logger.error(`Failed to fetch t.me profile page for @${username}: ${pageRes.status}`);
       return null;
     }
     const html: string = await pageRes.text();
@@ -77,18 +78,18 @@ export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8
     const srcMatch = imgTagMatch?.[0].match(/src="([^"]+)"/);
     const photoUrl: string | undefined = srcMatch?.[1];
     if (!photoUrl || !photoUrl.startsWith("https://")) {
-      console.error(`No profile photo found on t.me page for @${username}`);
+      logger.error(`No profile photo found on t.me page for @${username}`);
       return null;
     }
 
     const imgRes: Response = await fetch(photoUrl, { signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
     if (!imgRes.ok) {
-      console.error(`Failed to download avatar from ${photoUrl}: ${imgRes.status}`);
+      logger.error(`Failed to download avatar from ${photoUrl}: ${imgRes.status}`);
       return null;
     }
     return new Uint8Array(await imgRes.arrayBuffer());
   } catch (error: unknown) {
-    console.error(`Error scraping t.me profile photo for @${username}:`, error);
+    logger.error(`Error scraping t.me profile photo for @${username}:`, error);
     return null;
   }
 }
@@ -133,7 +134,7 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
     const imgRes: Response = await fetch(downloadUrl, { signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
     if (!imgRes.ok) {
       // 只记录 file_path，绝不能把完整 downloadUrl 打进日志——URL 里嵌着 bot token。
-      console.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
+      logger.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
       return false;
     }
     const imgBuffer: Uint8Array = new Uint8Array(await imgRes.arrayBuffer());
@@ -141,7 +142,7 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
     await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
     return true;
   } catch (error: unknown) {
-    console.error("Error copying user profile photo:", error);
+    logger.error("Error copying user profile photo:", error);
     return false;
   }
 }
@@ -167,9 +168,9 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
     return sent.message_id;
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
-      console.error(`Failed to send message: ${error.error_code} ${error.description}`);
+      logger.error(`Failed to send message: ${error.error_code} ${error.description}`);
     } else {
-      console.error("Error sending message:", error);
+      logger.error("Error sending message:", error);
     }
     return undefined;
   }
@@ -187,9 +188,9 @@ export async function deleteMessage(chatId: number, messageId: number, api: Api 
     await api.deleteMessage(chatId, messageId);
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
-      console.error(`Failed to delete message: ${error.error_code} ${error.description}`);
+      logger.error(`Failed to delete message: ${error.error_code} ${error.description}`);
     } else {
-      console.error("Error deleting message:", error);
+      logger.error("Error deleting message:", error);
     }
   }
 }
@@ -225,9 +226,9 @@ export async function kickChatMember(chatId: number, userId: number, api: Api = 
     await api.unbanChatMember(chatId, userId, { only_if_banned: true });
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
-      console.error(`Failed to kick chat member: ${error.error_code} ${error.description}`);
+      logger.error(`Failed to kick chat member: ${error.error_code} ${error.description}`);
     } else {
-      console.error("Error kicking chat member:", error);
+      logger.error("Error kicking chat member:", error);
     }
   }
 }
@@ -247,9 +248,9 @@ export async function banChatMember(chatId: number, userId: number, api: Api = b
     return true;
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
-      console.error(`Failed to ban chat member: ${error.error_code} ${error.description}`);
+      logger.error(`Failed to ban chat member: ${error.error_code} ${error.description}`);
     } else {
-      console.error("Error banning chat member:", error);
+      logger.error("Error banning chat member:", error);
     }
     return false;
   }
@@ -271,9 +272,9 @@ export async function banChatSenderChat(chatId: number, senderChatId: number, ap
     return true;
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
-      console.error(`Failed to ban sender chat: ${error.error_code} ${error.description}`);
+      logger.error(`Failed to ban sender chat: ${error.error_code} ${error.description}`);
     } else {
-      console.error("Error banning sender chat:", error);
+      logger.error("Error banning sender chat:", error);
     }
     return false;
   }
@@ -291,9 +292,9 @@ export async function copyMessage(chatId: number, fromChatId: number, messageId:
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
       // Telegram 的错误详情（比如权限不足）都在 description 里，比只看 HTTP 状态更有用。
-      console.error(`Failed to copy message: ${error.error_code} ${error.description}`);
+      logger.error(`Failed to copy message: ${error.error_code} ${error.description}`);
     } else {
-      console.error("Error copying message:", error);
+      logger.error("Error copying message:", error);
     }
   }
 }

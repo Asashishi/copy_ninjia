@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import { join } from "path";
 import { v3 as GoogleTranslate } from "@google-cloud/translate";
 
@@ -39,7 +40,7 @@ export async function translateToJapanese(text: string): Promise<string | null> 
     });
     return response.translations?.[0]?.translatedText ?? null;
   } catch (error: unknown) {
-    console.error("Error translating text to Japanese:", error);
+    logger.error("Error translating text to Japanese:", error);
     return null;
   }
 }

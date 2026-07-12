@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "./types";
 import { getChatState, getOrCreateChatState, saveState, saveUsersFile } from "./storage";
@@ -406,7 +407,7 @@ export async function handleCopyCommand(
 
     await sendMessage(chatId, resultText);
   })().catch((error: unknown) => {
-    console.error("Error in background avatar copy task:", error);
+    logger.error("Error in background avatar copy task:", error);
   });
 }
 

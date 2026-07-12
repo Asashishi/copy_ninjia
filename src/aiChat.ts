@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEEPSEEK_API_KEY } from "./config";
@@ -161,7 +162,7 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
     });
 
     if (!response.ok) {
-      console.error(`DeepSeek API error: ${response.status} ${await response.text()}`);
+      logger.error(`DeepSeek API error: ${response.status} ${await response.text()}`);
       return null;
     }
 
@@ -169,7 +170,7 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
     const content: string | undefined = data?.choices?.[0]?.message?.content;
     return content ? cleanReply(content) : null;
   } catch (error: unknown) {
-    console.error("Error calling DeepSeek API:", error);
+    logger.error("Error calling DeepSeek API:", error);
     return null;
   } finally {
     clearTimeout(timer);
@@ -278,6 +279,6 @@ export function generateAndSendReply(chatId: number, replyToMessageId: number, r
       }
     }
   })().catch((error: unknown) => {
-    console.error("Error in AI reply task:", error);
+    logger.error("Error in AI reply task:", error);
   });
 }
