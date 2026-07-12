@@ -29,7 +29,9 @@ const DAY_FILE_PATTERN: RegExp = /^(\d{4}-\d{2}-\d{2})\.json$/;
 interface LogRecord {
   level: string;
   message: string;
-  args: unknown[];
+  /** 原始参数列表。当它相对 message 没有任何额外信息（单个字符串参数，
+   *  message 就是它本身）时省略不写，见 onmessage 里的判断。 */
+  args?: unknown[];
 }
 
 function pad(n: number, width: number = 2): string {
@@ -190,13 +192,17 @@ self.onmessage = (event: MessageEvent<LogMessage | FlushRequest>) => {
     self.postMessage(reply);
     return;
   }
-  const record: LogRecord = {
-    level: msg.level,
-    message: msg.args
-      .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
-      .join(" "),
-    args: msg.args,
-  };
+  const message: string = msg.args
+    .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
+    .join(" ");
+  const record: LogRecord = { level: msg.level, message };
+  // message 本就是把 args 逐个字符串化拼出来的：调用方只传一个字符串时
+  // （本仓库最常见的写法）两者逐字相同，再存一份 args 纯属重复；只有
+  // 多参数或非字符串参数（如展开后的 Error 对象，堆栈只存在于 args 里）
+  // 时 args 才有额外信息，才值得落盘。
+  if (!(msg.args.length === 1 && msg.args[0] === message)) {
+    record.args = msg.args;
+  }
   buffer.push({
     day: dayKey(msg.timestamp),
     text: serializeEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
