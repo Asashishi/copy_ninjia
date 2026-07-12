@@ -17,28 +17,62 @@ import type { FlushReply, FlushRequest, ForwardedLog, LogLevel, LogMessage } fro
 
 declare var self: Worker;
 
-// 落盘 Worker 只在主线程、模块加载时启动一次；Worker 线程里为 null，
-// 走转发模式。unref 让它不阻止进程退出：bot 主循环结束后进程照常退出，
-// 不会被空闲的日志线程挂住。
-const diskWorker: Worker | null = Bun.isMainThread
-  ? new Worker(new URL("./loggerWorker.ts", import.meta.url).href)
-  : null;
-diskWorker?.unref();
+// 是否运行在主线程：诊断 diskWorker 为 null 到底是「没启动过（转发模式）」
+// 还是「启动过但自愈耗尽放弃了」，两种情况 emit() 里的兜底行为不一样。
+const isMainThread: boolean = Bun.isMainThread;
 
-// flushLogs 的回执 id 分配（路由表见 cache/logger.ts 的 pendingFlushes）。
-// postMessage 按 FIFO 送达，flush 指令一定在它之前的日志消息都入队后才被
-// 处理，回执即代表已落盘。
-let nextFlushId: number = 1;
+// 落盘 Worker 崩溃自愈的节流：短时间内反复崩溃（多半是代码本身有 bug，
+// 重启也没用）就放弃自愈，只保留控制台输出，避免陷入无限重启烧 CPU；
+// 崩溃很稀疏（相隔够久）则不受影响，每次都正常重启。
+const DISK_WORKER_MAX_RESTARTS: number = 5;
+const DISK_WORKER_RESTART_WINDOW_MS: number = 60_000;
+let diskWorkerRestartTimestamps: number[] = [];
 
-if (diskWorker) {
-  diskWorker.onmessage = (event: MessageEvent<FlushReply>) => {
+// 落盘 Worker 只在主线程启动；Worker 线程里始终为 null，走转发模式（见
+// emit）。unref 让它不阻止进程退出：bot 主循环结束后进程照常退出，不会
+// 被空闲的日志线程挂住。
+let diskWorker: Worker | null = isMainThread ? createDiskWorker() : null;
+
+function createDiskWorker(): Worker {
+  const w: Worker = new Worker(new URL("./loggerWorker.ts", import.meta.url).href);
+  w.unref();
+  w.onmessage = (event: MessageEvent<FlushReply>) => {
     const resolve = pendingFlushes.get(event.data.flushedId);
     if (resolve) {
       pendingFlushes.delete(event.data.flushedId);
       resolve();
     }
   };
+  w.onerror = (event: ErrorEvent) => {
+    // 落盘线程自己出错时不能再指望它把这条日志落盘，直接走控制台，
+    // 避免自己给自己转发出一场递归。Bun 里 Worker 内部一旦抛出未捕获异常
+    // （同步或 async 均如此，已实测验证）就会直接终止该 Worker 线程，这里
+    // 不需要（实际上也没法）再手动 terminate，直接换一个新实例顶上即可；
+    // diskWorker 换成 null 的分支同理会被下面 emit() 里的判空接住，不会
+    // 对着一个已终止的 Worker 继续 postMessage。
+    console.error("[logger] 落盘 Worker 出错：", event.message || event.error || event);
+    const now: number = Date.now();
+    diskWorkerRestartTimestamps = diskWorkerRestartTimestamps.filter(
+      (t) => now - t < DISK_WORKER_RESTART_WINDOW_MS
+    );
+    if (diskWorkerRestartTimestamps.length >= DISK_WORKER_MAX_RESTARTS) {
+      console.error(
+        `[logger] 落盘 Worker 在 ${DISK_WORKER_RESTART_WINDOW_MS / 1000} 秒内已重启 ` +
+        `${DISK_WORKER_MAX_RESTARTS} 次，放弃自愈——日志此后只保留在控制台，直到进程重启。`
+      );
+      diskWorker = null;
+      return;
+    }
+    diskWorkerRestartTimestamps.push(now);
+    diskWorker = createDiskWorker();
+  };
+  return w;
 }
+
+// flushLogs 的回执 id 分配（路由表见 cache/logger.ts 的 pendingFlushes）。
+// postMessage 按 FIFO 送达，flush 指令一定在它之前的日志消息都入队后才被
+// 处理，回执即代表已落盘。
+let nextFlushId: number = 1;
 
 /**
  * 把其它 Worker 线程转发来的 error 日志转投落盘线程。仅主线程调用——
@@ -55,7 +89,8 @@ export function relayLogMessage(message: LogMessage): void {
  * Worker 线程里没有本地落盘 buffer（日志都已转发出去），直接完成。
  */
 export function flushLogs(timeoutMs: number = 3000): Promise<void> {
-  if (!diskWorker) return Promise.resolve();
+  const worker: Worker | null = diskWorker;
+  if (!worker) return Promise.resolve();
   return new Promise((resolve) => {
     const id: number = nextFlushId++;
     const timer = setTimeout(() => {
@@ -67,7 +102,7 @@ export function flushLogs(timeoutMs: number = 3000): Promise<void> {
       resolve();
     });
     const request: FlushRequest = { flushId: id };
-    diskWorker.postMessage(request);
+    worker.postMessage(request);
   });
 }
 
@@ -109,10 +144,12 @@ function emit(level: LogLevel, args: unknown[]): void {
     };
     if (diskWorker) {
       diskWorker.postMessage(message);
-    } else {
+    } else if (!isMainThread) {
       // 转发模式（本模块运行在某个 Worker 线程里）：发回主线程转投落盘线程。
       self.postMessage({ __log: message } satisfies ForwardedLog);
     }
+    // 主线程但 diskWorker 为 null：自愈已放弃，前面的 console[level] 已经
+    // 输出过，这里无需（也不能）再往哪儿转发。
   }
 }
 

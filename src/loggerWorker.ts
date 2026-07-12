@@ -13,7 +13,7 @@
  */
 
 import { join } from "path";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from "fs";
 import type { FlushReply, FlushRequest, LogMessage } from "./types";
 import { LOGS_DIR } from "./consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "./consts/logger";
@@ -86,28 +86,67 @@ let current: DayFileState | null = null;
 /**
  * 打开（或接管）某天的文件并校验其可追加性。文件不存在或为空对象视作
  * 空文件；内容合法但结尾形态不符（比如被人手动编辑过）就按标准格式重写
- * 一次；解析失败（上次写入中断等）则放弃旧内容从头开始，和旧实现一致。
+ * 一次；解析失败（断电等原因导致结尾写了一半）先尝试 repairTruncated
+ * 裁掉末尾残片修复，实在修不好才放弃旧内容从头开始。size 一律以
+ * fs.statSync 读到的物理文件大小为准，不信任内存里算出来的字节数。
  */
 function openDay(day: string): DayFileState {
   const path: string = dayPath(day);
   const state: DayFileState = { day, size: 0, empty: true };
   if (!existsSync(path)) return state;
+  const content: string = readFileSync(path, "utf8");
   try {
-    const content: string = readFileSync(path, "utf8");
     const parsed: unknown = JSON.parse(content);
     if (parsed === null || typeof parsed !== "object" || Object.keys(parsed).length === 0) return state;
-    if (content.endsWith("\n}")) {
-      state.size = Buffer.byteLength(content);
-    } else {
-      const canonical: string = JSON.stringify(parsed, null, 2);
-      writeFileSync(path, canonical);
-      state.size = Buffer.byteLength(canonical);
+    if (!content.endsWith("\n}")) {
+      writeFileSync(path, JSON.stringify(parsed, null, 2));
     }
+    state.size = statSync(path).size;
+    state.empty = false;
+    return state;
+  } catch {
+    // 解析失败，尝试修复后再决定是否放弃。
+  }
+  const repaired: string | null = repairTruncated(content);
+  if (repaired === null) return state;
+  try {
+    writeFileSync(path, repaired);
+    state.size = statSync(path).size;
     state.empty = false;
   } catch {
-    // 文件损坏就从空文件重新开始，不让日志线程崩掉。
+    // 写回修复内容也失败，只能从空文件重新开始，不让日志线程崩掉。
   }
   return state;
+}
+
+/**
+ * 修复被截断的日志文件：先试着直接补一个「\n}」收尾（只是丢了最后的
+ * 收尾括号这种最常见情况）；不行的话，从末尾往前找最后一行完整的
+ * 「  },」（某条记录的收尾且后面还有别的记录），裁掉它之后的乱码残片，
+ * 去掉这行的逗号再补上「\n}」。两种都拼不出合法 JSON 就返回 null，
+ * 交给调用方从空文件重新开始。
+ */
+function repairTruncated(content: string): string | null {
+  const withClosingBrace: string = `${content}\n}`;
+  try {
+    JSON.parse(withClosingBrace);
+    return withClosingBrace;
+  } catch {
+    // 继续尝试裁掉末尾残片。
+  }
+  const lines: string[] = content.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i] !== "  },") continue;
+    lines[i] = "  }";
+    const candidate: string = `${lines.slice(0, i + 1).join("\n")}\n}`;
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // 这一行也不构成合法边界（理论上不该发生），继续往前找。
+    }
+  }
+  return null;
 }
 
 /** 把一批已序列化的条目追加到某天的文件末尾（覆写结尾的「\n}」）。 */
