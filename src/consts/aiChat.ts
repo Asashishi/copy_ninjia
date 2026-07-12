@@ -7,7 +7,7 @@
  * 没有其它触发条件时，普通发言触发一次 AI 回复的概率。掷骰子决定是否触发
  * 属于主线程的调度逻辑（见 src/auto/message.ts），Worker 只执行已触发的回复。
  */
-export const AI_REPLY_PROBABILITY: number = 1 / 4;
+export const AI_REPLY_PROBABILITY: number = 1 / 5;
 
 export const DEEPSEEK_API_URL: string = "https://api.deepseek.com/chat/completions";
 export const DEEPSEEK_MODEL: string = "deepseek-v4-flash";
