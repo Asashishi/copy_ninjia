@@ -9,6 +9,7 @@ import { formatUserLabel } from "./userLabel";
 import { handleGroupJoinVerification } from "./joinVerification";
 import { PRIVILEGED_USERS_ID } from "./config";
 import { recordChatMessage, generateAndSendReply, AI_REPLY_PROBABILITY } from "./aiChat";
+import { describeStickerForContext } from "./stickerSets";
 import { fetchDeepSeekBalance, type DeepSeekBalanceResponse } from "./deepseekBalance";
 
 /**
@@ -226,6 +227,12 @@ export async function handleIncomingMessage(
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
       return;
     }
+  } else if (!isPrivateChat && !state.isCopying && message.sticker) {
+    // 贴纸消息没有文本，但其元数据（情绪 emoji、所属贴纸包）对 AI 理解群里的
+    // 情绪走向有参考价值：以描述行记入对话缓存，只当上下文，不触发 AI 回复；
+    // 也不 return——后面的随机复读本来就对贴纸生效，行为保持不变。
+    const speaker = resolveSpeaker(message);
+    recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, describeStickerForContext(message.sticker));
   }
 
   // 没有复读对象时，有人说到洗澡/泡澡/冲凉就回一句「看看」，简繁体都认。

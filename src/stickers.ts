@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Sticker } from "@grammyjs/types";
 import { logger } from "./logger";
 import { sendSticker } from "./telegram";
-import { getAllStickers, matchCandidateEmojis, pickRandom } from "./stickerSets";
+import { describeStickerForContext, getAllStickers, matchCandidateEmojis, pickRandom } from "./stickerSets";
 
 /**
  * AI 回复贴纸包：每次 AI 回复（含随机搭话）后，有一定概率从白名单贴纸包里挑一枚
@@ -49,15 +49,22 @@ async function pickSticker(contextText: string): Promise<Sticker | null> {
  * 拉取失败时静默跳过。
  * @param chatId 目标聊天 ID。
  * @param contextText 用于匹配情绪/挑选应景贴纸的文本（通常是本次 AI 回复的原文）。
+ * @param onSent 贴纸确认发送成功后的回调，参数是这枚贴纸的上下文描述行
+ *   （见 describeStickerForContext）——调用方用它把贴纸自录进 AI 对话缓存。
+ *   用回调而不是让本模块直接调 aiChat 的 recordChatMessage，是为了避免
+ *   stickers.ts 和 aiChat.ts 互相 import 形成循环依赖。
  */
-export function maybeSendStickerReply(chatId: number, contextText: string): void {
+export function maybeSendStickerReply(chatId: number, contextText: string, onSent?: (stickerDescription: string) => void): void {
   if (config.packs.length === 0) return;
   if (Math.random() >= config.replyStickerProbability) return;
 
   void (async (): Promise<void> => {
     const sticker: Sticker | null = await pickSticker(contextText);
     if (!sticker) return;
-    await sendSticker(chatId, sticker.file_id);
+    const sent: boolean = await sendSticker(chatId, sticker.file_id);
+    if (sent && onSent) {
+      onSent(describeStickerForContext(sticker));
+    }
   })().catch((error: unknown) => {
     logger.error("Error in sticker reply task:", error);
   });

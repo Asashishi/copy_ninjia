@@ -182,16 +182,19 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
  * @param chatId 目标聊天 ID。
  * @param fileId 贴纸的 file_id（来自 getStickerSet 返回的贴纸集合）。
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @returns 发送是否成功——调用方靠它决定要不要把这枚贴纸自录进 AI 对话缓存。
  */
-export async function sendSticker(chatId: number, fileId: string, api: Api = bot.api): Promise<void> {
+export async function sendSticker(chatId: number, fileId: string, api: Api = bot.api): Promise<boolean> {
   try {
     await api.sendSticker(chatId, fileId);
+    return true;
   } catch (error: unknown) {
     if (error instanceof GrammyError) {
       logger.error(`Failed to send sticker: ${error.error_code} ${error.description}`);
     } else {
       logger.error("Error sending sticker:", error);
     }
+    return false;
   }
 }
 

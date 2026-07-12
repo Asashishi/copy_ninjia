@@ -52,3 +52,16 @@ export function pickRandom<T>(items: T[]): T | undefined {
   if (items.length === 0) return undefined;
   return items[Math.floor(Math.random() * items.length)];
 }
+
+/**
+ * 把一枚贴纸描述成 AI 对话缓存里的一行文本，带上模型能参考的元数据：
+ * 贴纸的情绪 emoji 和所属贴纸包名。两者都可能缺失（无 emoji 的贴纸、
+ * 不属于任何包的贴纸），按有什么写什么。群友发的贴纸和机器人自己发的
+ * 贴纸都用这个格式记录。
+ */
+export function describeStickerForContext(sticker: { emoji?: string; set_name?: string }): string {
+  const parts: string[] = [];
+  if (sticker.emoji) parts.push(`情绪含义 ${sticker.emoji}`);
+  if (sticker.set_name) parts.push(`来自贴纸包「${sticker.set_name}」`);
+  return parts.length > 0 ? `（发了一枚贴纸：${parts.join("，")}）` : "（发了一枚贴纸）";
+}

@@ -5,7 +5,7 @@ import { DEEPSEEK_API_KEY } from "./config";
 import { LinkedQueue } from "./linkedQueue";
 import { maybeAddReaction } from "./reactions";
 import { maybeSendStickerReply } from "./stickers";
-import { sendMessage } from "./telegram";
+import { bot, sendMessage } from "./telegram";
 import { TOOL_DEFINITIONS, callTool } from "./tools";
 import { getCurrentTime } from "./tools/time";
 
@@ -24,8 +24,8 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
 
 /** 每个群聊在内存里保留的最近消息条数（Bot API 无法拉历史，只能自己滚动缓存）。 */
 const BUFFER_SIZE: number = 75;
-/** 生成回复时，从缓存里取最近多少条作为上下文喂给模型。 */
-const CONTEXT_SIZE: number = 50;
+/** 生成回复时，从缓存里取最近多少条作为上下文喂给模型（与 BUFFER_SIZE 相等即整个缓存全喂）。 */
+const CONTEXT_SIZE: number = 75;
 /** 没有其它触发条件时，普通发言触发一次 AI 回复的概率。 */
 export const AI_REPLY_PROBABILITY: number = 1 / 4;
 /** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
@@ -165,8 +165,19 @@ function buildUserContent(chatId: number, options: UserContentOptions): string |
     ? `请针对最新这条消息，以你的人设回复，并把回复拆成 2 到 ${SPLIT_REPLY_MAX_PARTS} 条连贯的短消息——就像真人打字时想到哪发到哪、一句接一句连发那样，每条一行、语义上前后衔接（比如先反应、再吐槽、再补一刀）。${addressInstruction}只输出这几行消息本身，一行一条，不要编号、解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`
     : `请针对最新这条消息，以你的人设回复一到两句话，自然接住话题。${addressInstruction}只输出你要发到群里的那句话本身，不要任何解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`;
 
+  // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
+  // 回复你的消息、以及标着你自己 id 的行（见发送后的 recordChatMessage 自录）
+  // 都要能认出来是你自己，不能当成第三个人。username/id 从 bot.botInfo 动态
+  // 取（bot.init() 之后可用，而本函数只会在启动完成后被调用），不写死在代码里。
+  const selfIdentity: string =
+    `你在这个群里的 Telegram 账号是 @${bot.botInfo.username}（[id:${bot.botInfo.id}]）：` +
+    `记录里标着这个 id 的行是你自己之前说过的话，别把它们当成别人的发言；` +
+    `消息里 @ 这个用户名、或回复你的消息，都是在跟你说话。`;
+
   return (
-    "以下是本群最近的聊天记录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。\n\n" +
+    "以下是本群最近的聊天记录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
+    selfIdentity +
+    "\n\n" +
     lines.join("\n") +
     "\n\n" +
     replyInstruction
@@ -404,14 +415,24 @@ export function generateAndSendReply(
       // 随机触发不挂 Telegram 回复引用，靠模型在文字里点名（见 addressee）；
       // 回复/@ 触发照旧引用第一条。
       const quoteId: number | undefined = !isRandomTrigger && i === 0 ? replyToMessageId : undefined;
-      await sendMessage(chatId, part, quoteId);
+      const sentMessageId: number | undefined = await sendMessage(chatId, part, quoteId);
+      // 自己发出去的消息 Telegram 不会作为更新推送回来，不自录的话转录里
+      // 永远缺自己那半边对话。录入后配合 buildUserContent 里的 selfIdentity
+      // 说明，模型才能在上下文中认出自己说过什么。发送失败的不录。
+      if (sentMessageId !== undefined) {
+        recordChatMessage(chatId, bot.botInfo.id, bot.botInfo.first_name, "", part);
+      }
       if (i < parts.length - 1) {
         await sleep(typingDelayMs(parts[i + 1]!));
       }
     }
 
-    // 每次 AI 回复（含随机搭话）后，按配置概率附带发一枚应景的白名单贴纸，见 src/stickers.ts。
-    maybeSendStickerReply(chatId, reply);
+    // 每次 AI 回复（含随机搭话）后，按配置概率附带发一枚应景的白名单贴纸，
+    // 见 src/stickers.ts；发成功的贴纸同样以描述行自录进对话缓存，让模型
+    // 知道自己刚发过什么贴纸。
+    maybeSendStickerReply(chatId, reply, (stickerDescription: string) => {
+      recordChatMessage(chatId, bot.botInfo.id, bot.botInfo.first_name, "", stickerDescription);
+    });
   })().catch((error: unknown) => {
     logger.error("Error in AI reply task:", error);
   });
