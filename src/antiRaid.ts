@@ -167,7 +167,7 @@ export function handleChatMemberUpdate(ctx: Context): void {
     // 收到豁免后会将其撤销。
     const status: string = update.new_chat_member.status;
     const exempt: boolean = status === "administrator" || status === "creator";
-    post({ type: "join", chatId, member: pickMember(user), exempt });
+    post({ type: "join", chatId, member: pickMember(user), exempt, actorId: update.from.id });
   } else if (wasActive && !isActive) {
     post({ type: "left", chatId, userId: user.id });
   }
@@ -192,7 +192,7 @@ export function handleGroupJoinVerification(message: any): boolean {
   if (message.new_chat_members && message.new_chat_members.length > 0) {
     for (const member of message.new_chat_members) {
       if (member.is_bot) continue; // 机器人（包括本天才自己）不需要验证
-      post({ type: "join", chatId: message.chat.id, member: pickMember(member), announcementMessageId: message.message_id });
+      post({ type: "join", chatId: message.chat.id, member: pickMember(member), announcementMessageId: message.message_id, actorId: message.from?.id });
     }
     return true;
   }

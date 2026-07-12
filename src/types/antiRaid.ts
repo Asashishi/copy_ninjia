@@ -65,6 +65,8 @@ export interface NewMemberMessage {
    * chat_member 路径能看到身份），免验证、不计入刷群统计、私密模式下也不踢。
    */
   exempt?: boolean;
+  /** 触发该入群事件的操作者 ID。 */
+  actorId?: number;
 }
 
 /** 主线程 -> Worker：某成员离开了群聊（取消其待验证记录）。 */

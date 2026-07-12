@@ -99,7 +99,13 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
  * @param announcementMessageId 若本次投递由 `new_chat_members` 服务消息触发，则为该消息的 ID（用于之后删除）。
  * @param exempt 若为 true，该成员以管理员/群主身份入群（chat_member 路径可见身份），免验证。
  */
-function ensureVerificationStarted(chatId: number, member: AntiRaidMember, announcementMessageId?: number, exempt?: boolean): void {
+function ensureVerificationStarted(
+  chatId: number,
+  member: AntiRaidMember,
+  announcementMessageId?: number,
+  exempt?: boolean,
+  actorId?: number
+): void {
   const key: string = verificationKey(chatId, member.id);
   const existing = pendingVerifications.get(key);
 
@@ -185,6 +191,39 @@ function ensureVerificationStarted(chatId: number, member: AntiRaidMember, annou
     }, VERIFICATION_TIMEOUT_MS),
   };
   pendingVerifications.set(key, pending);
+
+  // 若是他人邀请/拉入群（操作者 actorId 存在且不为被加入者本人），则后台异步校验操作者是否为管理员，以实现管理员拉人免验证。
+  if (actorId !== undefined && actorId !== member.id) {
+    void (async (): Promise<void> => {
+      try {
+        const actor = await joinVerificationApi.getChatMember(chatId, actorId);
+        const isAdmin = actor.status === "administrator" || actor.status === "creator";
+        if (isAdmin) {
+          const current = pendingVerifications.get(key);
+          // 仅在当前验证记录未被其他事件（如离群、点击通过等）更改时进行撤销
+          if (current === pending) {
+            clearTimeout(pending.timeout);
+            pendingVerifications.delete(key);
+            // 撤销已发送的验证按钮提醒消息
+            if (pending.reminderMessageId !== undefined) {
+              void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
+            }
+            // 插入免验证占位记录，防止后续并发事件（如服务消息）重复触发验证
+            pendingVerifications.set(key, {
+              chatId,
+              userId: member.id,
+              label: memberLabel(member),
+              messageIds: [],
+              timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
+              exempt: true,
+            });
+          }
+        }
+      } catch (error: unknown) {
+        logger.error(`Error checking if actor ${actorId} is admin in chat ${chatId}:`, error);
+      }
+    })();
+  }
 
   // 提醒消息不等待发送完成：它经过限流的 joinVerificationApi，真实刷群
   // 场景下若在这里 await，同一波入群投递会逐个排队等发消息，可能导致
@@ -407,7 +446,7 @@ self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
   const msg: AntiRaidWorkerMessage = event.data;
   switch (msg.type) {
     case "join":
-      ensureVerificationStarted(msg.chatId, msg.member, msg.announcementMessageId, msg.exempt);
+      ensureVerificationStarted(msg.chatId, msg.member, msg.announcementMessageId, msg.exempt, msg.actorId);
       break;
     case "left":
       cancelVerification(msg.chatId, msg.userId);
