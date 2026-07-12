@@ -14,7 +14,9 @@
 - **消息反应同步**：复读目标消息收到的 reaction 会同步复制到复读出来的消息上。
 - **入群验证**：新成员需在限定时间内发送指定验证文本，否则自动踢出。
 - **反刷群（Anti-Raid）**：短时间内入群人数超过阈值时，自动临时开启私密模式（禁止普通成员拉人），到期后恢复原权限。
-- **AI 闲聊**：基于 DeepSeek API 和自定义人设（`prompt/persona.txt`），概率性地在群里生成闲聊回复。
+- **AI 闲聊**：基于 DeepSeek API 和自定义人设（`prompt/persona.txt`），概率性地在群里生成闲聊回复；回复机器人或 @ 机器人时必回，纯按概率命中的随机搭话则不挂 Telegram 回复引用，改为在文字里点名称呼触发者。
+  - 内置基础工具（`src/tools/`）供模型按需调用：查当前时间（东京时区）、查东京今日天气（Open-Meteo，1 小时缓存）。时间类问题会把真实时间直接注入上下文，保证不瞎编。
+- **`/balance`**：查询当前 DeepSeek API Key 绑定账号的余额，结果缓存 30 秒，避免连续查询触发接口限流。
 - **多群独立状态**：每个群聊的复读目标、冷却时间等状态互相独立，重启后从 `state.json` / `users.json` 恢复。
 
 ## 环境要求
@@ -54,16 +56,23 @@ bun run index.ts
 index.ts               # 入口：注册命令/更新处理器，启动 grammY runner
 src/
   telegram.ts           # Telegram Bot API 封装与限流
-  handlers.ts           # 复读/踢人等命令与消息处理逻辑
+  handlers.ts           # 复读/踢人/余额查询等命令与消息处理逻辑
   copyModes.ts           # 反转 / 喵~ / 日语翻译等复读文本变换
   translate.ts           # Google Cloud Translate 封装
   joinVerification.ts    # 入群验证逻辑
   antiRaid.ts             # 反刷群私密模式
-  aiChat.ts               # AI 闲聊回复（DeepSeek）
+  aiChat.ts               # AI 闲聊回复（DeepSeek，支持 function calling）
+  tools/                  # 供 aiChat.ts 调用的 AI 工具
+    index.ts               # 工具定义清单 + 按名分发执行
+    time.ts                 # 查当前时间（东京时区）
+    weather.ts               # 查东京今日天气（Open-Meteo，1 小时缓存）
+  deepseekBalance.ts       # 查询 DeepSeek 账户余额（30 秒缓存），供 /balance 使用
   reactionQueue.ts        # 消息反应同步队列
   linkedQueue.ts          # 通用链式队列
   storage.ts              # 状态持久化（state.json / users.json）
   userLabel.ts            # 用户显示名格式化
+  logger.ts                # 统一日志门面，error 级别经 Worker 线程按日落盘
+  loggerWorker.ts           # 日志落盘 Worker 线程
   config.ts               # 环境变量读取
   types.ts                # 共享类型定义
 prompt/persona.txt       # AI 闲聊人设文本

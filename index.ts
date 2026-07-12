@@ -2,7 +2,7 @@ import { flushLogs, logger } from "./src/logger";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
-import { handleCopyCommand, handleIncomingMessage, handleKickCommand, handleReaction, handleStopCommand } from "./src/handlers";
+import { handleBalanceCommand, handleCopyCommand, handleIncomingMessage, handleKickCommand, handleReaction, handleStopCommand } from "./src/handlers";
 import { handleChatMemberUpdate } from "./src/joinVerification";
 import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";
 
@@ -87,6 +87,7 @@ async function main(): Promise<void> {
   bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "ja"));
   bot.command("stop", (ctx) => handleStopCommand(ctx, chatStates, usersData));
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
+  bot.command("balance", (ctx) => handleBalanceCommand(ctx));
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users, chatStates));
   bot.on("message_reaction", (ctx) => handleReaction(ctx, chatStates));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
@@ -106,6 +107,7 @@ async function main(): Promise<void> {
       { command: "ja_copy", description: "复读并翻译为日语" },
       { command: "stop", description: "停止当前的复读" },
       { command: "kick", description: "踢出群聊并封禁（仅白名单用户可用）" },
+      { command: "balance", description: "查询 DeepSeek 账户余额" },
     ]);
   } catch (error: unknown) {
     logger.error("Failed to register bot commands menu:", error);
