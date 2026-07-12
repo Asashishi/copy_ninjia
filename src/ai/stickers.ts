@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import type { Sticker } from "@grammyjs/types";
-import { logger } from "./logger";
-import { sendSticker } from "./telegram";
+import { logger } from "../logger";
+import { sendSticker } from "../infra/telegram";
 import { describeStickerForContext, getAllStickers, matchCandidateEmojis, pickRandom } from "./stickerSets";
-import { STICKERS_CONFIG_PATH } from "./consts/paths";
+import { STICKERS_CONFIG_PATH } from "../consts/paths";
 
 /**
  * AI 回复贴纸包：每次 AI 回复（含随机搭话）后，有一定概率从白名单贴纸包里挑一枚

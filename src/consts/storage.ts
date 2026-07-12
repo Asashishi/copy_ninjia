@@ -1,6 +1,6 @@
 import type { ChatState } from "../types";
 
-/** 状态持久化（src/storage.ts）的常量。文件路径见 paths.ts。 */
+/** 状态持久化（src/infra/storage.ts）的常量。文件路径见 paths.ts。 */
 
 /**
  * 默认（空）的群聊状态，用于本群从未使用过复制功能时的只读查询。

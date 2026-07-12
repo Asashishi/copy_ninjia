@@ -1,6 +1,6 @@
 import { logger } from "../logger";
 import { readFileSync } from "node:fs";
-import { DEEPSEEK_API_KEY } from "../config";
+import { DEEPSEEK_API_KEY } from "../infra/config";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { PERSONA_PATH } from "../consts/paths";
 import {
@@ -22,15 +22,15 @@ import {
 } from "../consts/aiChat";
 import { chatBuffers, lastReplyTimes, longTriggerTimes, rateLimitNoticeTimes, triggerTimes } from "../cache/aiChatWorker";
 import type { BufferedMessage } from "../types";
-import { maybeAddReaction } from "../reactions";
-import { maybeSendStickerReply } from "../stickers";
-import { sendMessage } from "../telegram";
+import { maybeAddReaction } from "../ai/reactions";
+import { maybeSendStickerReply } from "../ai/stickers";
+import { sendMessage } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../tools";
 import { getCurrentTime } from "../tools/time";
 import type { AiBotInfo, AiChatWorkerMessage } from "../types";
 
 /**
- * AI 闲聊流水线线程（Bun Worker）。主线程（handlers.ts → aiChat.ts 代理）
+ * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
  * 只做事件投递，重活全在这里：滚动对话缓存、冷却与双滑动窗口限频、拼装
  * 上下文、调 DeepSeek（含 function calling 往返）、连发消息、消息反应与
  * 贴纸跟发。发往 Telegram 的调用不回主线程绕路——本线程 import telegram.ts
@@ -402,7 +402,7 @@ function generateAndSendReply(
     if (!reply) return;
 
     // 回复刚生成就先按配置概率给触发消息扣一个应景的标准 emoji 反应（见
-    // src/reactions.ts）——放在发送循环之前，连发模式的打字间隔（可能累计
+    // src/ai/reactions.ts）——放在发送循环之前，连发模式的打字间隔（可能累计
     // 十来秒）才不会把反应也拖到最后，更像真人「先点个反应再慢慢打字」。
     maybeAddReaction(chatId, replyToMessageId, reply);
 
@@ -426,7 +426,7 @@ function generateAndSendReply(
     }
 
     // 每次 AI 回复（含随机搭话）后，按配置概率附带发一枚应景的白名单贴纸，
-    // 见 src/stickers.ts；发成功的贴纸同样以描述行自录进对话缓存，让模型
+    // 见 src/ai/stickers.ts；发成功的贴纸同样以描述行自录进对话缓存，让模型
     // 知道自己刚发过什么贴纸。
     maybeSendStickerReply(chatId, reply, (stickerDescription: string) => {
       recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);

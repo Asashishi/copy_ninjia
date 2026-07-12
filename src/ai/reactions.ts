@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { logger } from "./logger";
-import { setMessageReaction } from "./telegram";
+import { logger } from "../logger";
+import { setMessageReaction } from "../infra/telegram";
 import { matchCandidateEmojis, pickRandom } from "./stickerSets";
-import { REACTIONS_CONFIG_PATH } from "./consts/paths";
+import { REACTIONS_CONFIG_PATH } from "../consts/paths";
 
 /**
  * AI 回复消息反应：AI 回复（含随机搭话）触发时，有一定概率给触发这次回复的

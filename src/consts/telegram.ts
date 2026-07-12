@@ -1,4 +1,4 @@
-/** Telegram API 封装（src/telegram.ts）的调参常量。 */
+/** Telegram API 封装（src/infra/telegram.ts）的调参常量。 */
 
 // 抓取目标头像（Bot API / t.me 主页兜底）的超时与重试次数。
 export const AVATAR_FETCH_TIMEOUT_MS: number = 15000;

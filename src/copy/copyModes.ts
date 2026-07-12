@@ -1,6 +1,6 @@
-import type { CopyMode } from "./types";
+import type { CopyMode } from "../types";
 import { translateToJapanese } from "./translate";
-import { NYA_SUFFIX } from "./consts/copyModes";
+import { NYA_SUFFIX } from "../consts/copyModes";
 
 /**
  * 按 Unicode 扩展字形簇（grapheme cluster）反转字符串（若 Intl.Segmenter 不可用则

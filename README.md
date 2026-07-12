@@ -61,38 +61,48 @@ bun run index.ts
 ```
 index.ts               # 入口：注册命令/更新处理器，启动 grammY runner
 src/
-  telegram.ts           # Telegram Bot API 封装与限流
-  handlers.ts           # 复读/踢人/余额查询等命令与消息处理逻辑
-  copyModes.ts           # 反转 / 喵~ / 日语翻译等复读文本变换
-  translate.ts           # Google Cloud Translate 封装
-  antiRaid.ts             # 入群守卫入口（主线程侧代理：入群验证 + 反刷群私密模式）
-  aiChat.ts               # AI 闲聊入口（主线程侧代理，向 AI Worker 投递事件）
-  stickers.ts             # AI 回复后概率跟发应景贴纸（白名单见 config/stickers.json）
-  reactions.ts            # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）
-  stickerSets.ts          # 贴纸包拉取缓存 + 情绪关键词匹配等公共积木
-  workers/                # 独立的工作子线程
-    aiChatWorker.ts          # AI 闲聊流水线 Worker 线程（限频、DeepSeek 调用、发送）
-    antiRaidWorker.ts         # 入群守卫 Worker 线程（验证窗口、超时踢人、私密模式）
-    loggerWorker.ts           # 日志落盘 Worker 线程
-  tools/                  # 供 aiChatWorker.ts 调用的 AI 工具
+  aiChat.ts             # AI 闲聊入口（主线程侧代理，向 AI Worker 投递事件）
+  logger.ts             # 统一日志门面（主线程侧调度，error 级经 Worker 落盘）
+  antiRaid.ts           # 入群守卫入口（主线程侧代理：入群验证 + 反刷群私密模式）
+  auto.ts               # 自动流程入口（src/auto/ 各处理器的统一出口）
+  commands.ts           # 指令处理入口（src/commands/ 各处理器的统一出口）
+  auto/                 # 自动流程：机器人自己看时机触发的行为
+    message.ts             # 消息自动流水线（复读目标、AI 记录/触发、洗澡「看看」、随机复读）
+    reactionSync.ts        # 同步复制目标的表情反应
+  commands/             # 显式指令处理
+    copy.ts                # /copy 系列与 /stop_copy
+    quiet.ts               # /quiet 与 /unquiet
+    kick.ts                # /kick（白名单限定，踢出并封禁）
+    balance.ts             # /balance 查询 DeepSeek 余额
+  workers/              # 独立的工作子线程
+    aiChatWorker.ts        # AI 闲聊流水线 Worker 线程（限频、DeepSeek 调用、发送）
+    antiRaidWorker.ts      # 入群守卫 Worker 线程（验证窗口、超时踢人、私密模式）
+    loggerWorker.ts        # 日志落盘 Worker 线程
+  infra/                # 基础设施
+    telegram.ts            # Telegram Bot API 封装与限流
+    storage.ts             # 状态持久化（state.json / users.json）
+    config.ts              # 密钥与部署配置（从环境变量读取）
+  ai/                   # AI 回复流水线的配套积木
+    reactions.ts           # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）
+    stickers.ts            # AI 回复后概率跟发应景贴纸（白名单见 config/stickers.json）
+    stickerSets.ts         # 贴纸包拉取缓存 + 情绪关键词匹配等公共积木
+    deepseekBalance.ts     # 查询 DeepSeek 账户余额（30 秒缓存），供 /balance 使用
+  copy/                 # 复读功能的配套积木
+    copyModes.ts           # 反转 / 喵~ / 日语翻译等复读文本变换
+    translate.ts           # Google Cloud Translate 封装
+    reactionQueue.ts       # 消息反应同步队列
+  users/                # 用户身份
+    senderIdentity.ts      # 消息发送者身份解析与 username 缓存
+    userLabel.ts           # 用户/频道的人类可读标签
+  tools/                # 供 aiChatWorker.ts 调用的 AI 工具
     index.ts               # 工具定义清单 + 按名分发执行
-    time.ts                 # 查当前时间（东京时区）
-    weather.ts               # 查东京今日天气（Open-Meteo，1 小时缓存）
-  deepseekBalance.ts       # 查询 DeepSeek 账户余额（30 秒缓存），供 /balance 使用
-  reactionQueue.ts        # 消息反应同步队列
-  libs/                   # 算法与依赖目录
-    linkedQueue.ts        # 通用链式队列
-  storage.ts              # 状态持久化（state.json / users.json）
-  userLabel.ts            # 用户显示名格式化
-  logger.ts                # 统一日志门面，error 级别经 Worker 线程按日落盘
-  config.ts               # 环境变量读取
-  types.ts                # 共享类型定义
-  consts/                 # 调参常量集中地（按来源模块分文件；paths.ts 统一定义所有文件/目录路径）
-  cache/                  # 内存状态集中地（各模块的 Map/Set 与 TTL 缓存，按来源模块分文件）
-prompt/persona.txt       # AI 闲聊人设文本
-config/
-  stickers.json           # 应景贴纸配置：贴纸包白名单、触发概率、情绪关键词映射
-  reactions.json          # 应景反应配置：触发概率、情绪关键词 -> 反应 emoji 映射
+    time.ts                # 查当前时间（东京时区）
+    weather.ts             # 查东京今日天气（Open-Meteo，1 小时缓存）
+  libs/                 # 通用算法积木
+    linkedQueue.ts         # 通用链式队列
+  consts/               # 各模块的调参常量（同名对应其所服务的模块）
+  cache/                # 各模块的内存状态/缓存（同名对应其所服务的模块）
+  types/                # 全项目共享类型（types/index.ts 统一重导出）
 ```
 
 本项目基于 `bun init`（Bun v1.3.14）创建。

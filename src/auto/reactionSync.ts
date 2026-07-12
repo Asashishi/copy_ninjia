@@ -1,0 +1,44 @@
+import type { Context } from "grammy";
+import type { ChatState, CopyableReaction } from "../types";
+import { getChatState } from "../infra/storage";
+import { enqueueReaction } from "../copy/reactionQueue";
+
+/**
+ * 处理 message_reaction 更新：把复制目标的表情回应（普通 emoji 和自定义
+ * emoji 都支持）同步到同一条消息上；目标移除了自己的回应时也会跟着清除。
+ * 实际的 setMessageReaction 调用走 reactionQueue（429 重试、同消息合并、
+ * 按 chat 隔离限流等待），这里只做过滤和入队，不阻塞更新处理。
+ */
+export function handleReaction(ctx: Context, chatStates: Map<number, ChatState>): void {
+  const reaction = ctx.messageReaction;
+  if (!reaction) return;
+
+  const state: ChatState = getChatState(chatStates, reaction.chat.id);
+  const reactorId: number | undefined = reaction.actor_chat ? reaction.actor_chat.id : reaction.user?.id;
+  if (!state.isCopying || !state.copiedUserId || reactorId !== state.copiedUserId) return;
+
+  // grammY 的 ctx.reactions() 已把 old/new 的差量按类型分组算好（付费反应被
+  // 单独归类，而机器人本来也设不了它，天然排除）。机器人没有 Premium，一条
+  // 消息只能设 1 个反应；目标（若是 Premium 用户）却可能同时点了 2~3 个：
+  // 优先跟随本次新增的那个，没有新增（比如只是取消了其中一个）就退回仍点着
+  // 的第一个；全空表示目标清掉了可复制的反应，跟着清除。
+  const { emoji, emojiAdded, emojiRemoved, customEmoji, customEmojiAdded, customEmojiRemoved } = ctx.reactions();
+  let toApply: CopyableReaction[];
+  if (emojiAdded.length > 0) {
+    toApply = [{ type: "emoji", emoji: emojiAdded[0]! }];
+  } else if (customEmojiAdded.length > 0) {
+    toApply = [{ type: "custom_emoji", custom_emoji_id: customEmojiAdded[0]! }];
+  } else if (emoji.length > 0) {
+    toApply = [{ type: "emoji", emoji: emoji[0]! }];
+  } else if (customEmoji.length > 0) {
+    toApply = [{ type: "custom_emoji", custom_emoji_id: customEmoji[0]! }];
+  } else if (emojiRemoved.length === 0 && customEmojiRemoved.length === 0) {
+    // 这次变化不涉及任何可复制的反应（比如目标只点了个付费反应）：机器人
+    // 既没有要设的也没有要清的，不值得为此花一次 API 调用。
+    return;
+  } else {
+    toApply = [];
+  }
+
+  enqueueReaction(reaction.chat.id, reaction.message_id, toApply, ctx.update.update_id, reaction.date);
+}

@@ -1,8 +1,8 @@
-import { logger } from "./logger";
-import { DEEPSEEK_API_KEY } from "./config";
-import { CACHE_TTL_MS, DEEPSEEK_BALANCE_API_URL, REQUEST_TIMEOUT_MS } from "./consts/deepseekBalance";
-import { balanceCache } from "./cache/deepseekBalance";
-import type { DeepSeekBalanceResponse } from "./types";
+import { logger } from "../logger";
+import { DEEPSEEK_API_KEY } from "../infra/config";
+import { CACHE_TTL_MS, DEEPSEEK_BALANCE_API_URL, REQUEST_TIMEOUT_MS } from "../consts/deepseekBalance";
+import { balanceCache } from "../cache/deepseekBalance";
+import type { DeepSeekBalanceResponse } from "../types";
 
 /**
  * 查询 DeepSeek 账户余额，供 /balance 命令使用。

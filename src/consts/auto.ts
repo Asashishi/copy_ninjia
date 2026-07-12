@@ -1,12 +1,9 @@
 import type { CopyMode } from "../types";
 
-/** 复读/命令处理（src/handlers.ts）的调参常量。 */
+/** 消息自动流水线（src/auto）的调参常量。 */
 
 /** 同一群里同一用户两次被 AI 随机回复之间的最短间隔。 */
 export const USER_RANDOM_REPLY_COOLDOWN_MS: number = 90_000;
-
-/** copy 类命令的公共冷却时长（白名单用户豁免，见 handleCopyCommand）。 */
-export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
 
 /** 没有复读对象时，随机复读一条新消息的概率。 */
 export const RANDOM_ECHO_PROBABILITY: number = 1 / 100;
@@ -20,8 +17,3 @@ export const RANDOM_ECHO_MODES: (CopyMode | undefined)[] = [undefined, "reverse"
  * （繁体沖涼，中间可插「个/個/了」等）。
  */
 export const BATH_TRIGGER_PATTERN: RegExp = /[洗泡][个個了完一热熱水冷好]{0,4}澡|[冲沖][个個了完一]{0,2}[凉涼]/;
-
-// /quiet 静默时长：默认值与上下限（分钟）。
-export const QUIET_DEFAULT_MINUTES: number = 3;
-export const QUIET_MIN_MINUTES: number = 1;
-export const QUIET_MAX_MINUTES: number = 15;

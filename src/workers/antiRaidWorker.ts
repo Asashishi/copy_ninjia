@@ -7,8 +7,8 @@ import {
   kickChatMember,
   answerCallbackQuery,
   joinVerificationApi,
-} from "../telegram";
-import { formatUserLabel } from "../userLabel";
+} from "../infra/telegram";
+import { formatUserLabel } from "../users/userLabel";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import {
   JOIN_THRESHOLD,
@@ -35,7 +35,7 @@ import type {
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
- * 主线程（handlers.ts / index.ts → antiRaid.ts 代理）只做事件投递，所有
+ * 主线程（src/auto/message.ts / index.ts → antiRaid.ts 代理）只做事件投递，所有
  * 状态与实际工作都在这里：验证窗口的建立/去重/超时踢人、验证按钮的应答、
  * 入群计数窗口、触发/延长私密模式、私密模式期间的删公告 + 踢人、到期
  * 恢复权限与失败重试。发往 Telegram 的调用不回主线程绕路——本线程

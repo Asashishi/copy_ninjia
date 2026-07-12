@@ -1,4 +1,4 @@
-import type { CachedUser } from "./types";
+import type { CachedUser } from "../types";
 
 /**
  * 生成用于回复文本中的、人类可读的用户/频道标签。当目标没有公开 @username 时

@@ -1,11 +1,11 @@
 /**
- * AI 闲聊的调参常量。AI_REPLY_PROBABILITY 由主线程（handlers.ts）的触发
+ * AI 闲聊的调参常量。AI_REPLY_PROBABILITY 由主线程（src/auto/message.ts）的触发
  * 调度使用，其余都是 Worker 线程（workers/aiChatWorker.ts）流水线的旋钮。
  */
 
 /**
  * 没有其它触发条件时，普通发言触发一次 AI 回复的概率。掷骰子决定是否触发
- * 属于主线程的调度逻辑（见 handlers.ts），Worker 只执行已触发的回复。
+ * 属于主线程的调度逻辑（见 src/auto/message.ts），Worker 只执行已触发的回复。
  */
 export const AI_REPLY_PROBABILITY: number = 1 / 4;
 

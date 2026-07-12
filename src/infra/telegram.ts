@@ -1,10 +1,10 @@
-import { logger } from "./logger";
+import { logger } from "../logger";
 import { Api, Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { BOT_TOKEN } from "./config";
-import { AVATAR_FETCH_MAX_ATTEMPTS, AVATAR_FETCH_TIMEOUT_MS } from "./consts/telegram";
+import { AVATAR_FETCH_MAX_ATTEMPTS, AVATAR_FETCH_TIMEOUT_MS } from "../consts/telegram";
 
 export const bot: Bot = new Bot(BOT_TOKEN);
 

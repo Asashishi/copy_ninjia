@@ -1,13 +1,13 @@
 import type { Sticker, StickerSet } from "@grammyjs/types";
-import { logger } from "./logger";
-import { bot } from "./telegram";
-import { failedPacks, stickerSetCache } from "./cache/stickerSets";
+import { logger } from "../logger";
+import { bot } from "../infra/telegram";
+import { failedPacks, stickerSetCache } from "../cache/stickerSets";
 
 /**
  * 「按情绪关键词挑一枚应景 emoji/贴纸」的公共积木：白名单贴纸包的拉取与
  * 缓存（getAllStickers，按 pack short name 调 getStickerSet）、文本关键词
  * 到候选 emoji 的匹配（matchCandidateEmojis）、均匀随机挑选（pickRandom）。
- * src/stickers.ts（回复贴纸）三样都用；src/reactions.ts（消息反应）只用
+ * src/ai/stickers.ts（回复贴纸）三样都用；src/ai/reactions.ts（消息反应）只用
  * 后两样——它最终设的是标准 emoji 反应，不涉及贴纸包。
  */
 

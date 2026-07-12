@@ -1,7 +1,7 @@
-import { logger } from "./logger";
-import type { ChatState, ChatStateFileSchema, UsersFileSchema } from "./types";
-import { LOCK_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "./consts/paths";
-import { DEFAULT_CHAT_STATE } from "./consts/storage";
+import { logger } from "../logger";
+import type { ChatState, ChatStateFileSchema, UsersFileSchema } from "../types";
+import { LOCK_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "../consts/paths";
+import { DEFAULT_CHAT_STATE } from "../consts/storage";
 
 function isProcessAlive(pid: number): boolean {
   try {

@@ -1,4 +1,4 @@
-/** DeepSeek 余额查询（src/deepseekBalance.ts）的调参常量。 */
+/** DeepSeek 余额查询（src/ai/deepseekBalance.ts）的调参常量。 */
 
 export const DEEPSEEK_BALANCE_API_URL: string = "https://api.deepseek.com/user/balance";
 export const REQUEST_TIMEOUT_MS: number = 10_000;

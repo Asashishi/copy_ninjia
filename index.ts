@@ -1,8 +1,9 @@
 import { flushLogs, logger } from "./src/logger";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
-import { bot } from "./src/telegram";
-import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/storage";
-import { handleBalanceCommand, handleCopyCommand, handleIncomingMessage, handleKickCommand, handleQuietCommand, handleReaction, handleStopCommand, handleUnquietCommand } from "./src/handlers";
+import { bot } from "./src/infra/telegram";
+import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/infra/storage";
+import { handleIncomingMessage, handleReaction } from "./src/auto";
+import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleQuietCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleVerificationCallback } from "./src/antiRaid";
 import { initAiChat } from "./src/aiChat";
 import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";

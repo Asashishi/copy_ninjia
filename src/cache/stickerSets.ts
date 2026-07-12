@@ -1,6 +1,6 @@
 import type { StickerSet } from "@grammyjs/types";
 
-/** 贴纸包公共积木（src/stickerSets.ts）的内存缓存。 */
+/** 贴纸包公共积木（src/ai/stickerSets.ts）的内存缓存。 */
 
 /** 各包的贴纸集合缓存（进程内，重启即刷新——包内容本就极少变动）。 */
 export const stickerSetCache: Map<string, StickerSet> = new Map();

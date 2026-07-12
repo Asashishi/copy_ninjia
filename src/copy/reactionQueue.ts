@@ -1,10 +1,10 @@
-import { logger } from "./logger";
+import { logger } from "../logger";
 import { GrammyError } from "grammy";
-import { bot } from "./telegram";
-import { LinkedQueue } from "./libs/linkedQueue";
-import { MAX_ATTEMPTS } from "./consts/reactionQueue";
-import { chatQueues, consumingChats, pendingTasks } from "./cache/reactionQueue";
-import type { CopyableReaction, ReactionTask } from "./types";
+import { bot } from "../infra/telegram";
+import { LinkedQueue } from "../libs/linkedQueue";
+import { MAX_ATTEMPTS } from "../consts/reactionQueue";
+import { chatQueues, consumingChats, pendingTasks } from "../cache/reactionQueue";
+import type { CopyableReaction, ReactionTask } from "../types";
 
 /**
  * 反应同步的可靠性保障层。经实测确认，复制反应的延迟大头在 Telegram 生成并
