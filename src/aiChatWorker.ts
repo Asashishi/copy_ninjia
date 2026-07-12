@@ -191,8 +191,11 @@ function isTimeRelatedQuery(text: string): boolean {
  * @returns 清洗后的回复文本；请求失败、超时或空输出时返回 null。
  */
 async function callDeepSeek(userContent: string): Promise<string | null> {
+  // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
+  // 线程常驻、一跑就是几天，缓存的时间会很快过期。
+  const systemPrompt: string = `${SYSTEM_PROMPT}\n\n当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。`;
   const messages: any[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
   ];
 
