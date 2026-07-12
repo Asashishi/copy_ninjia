@@ -408,7 +408,7 @@ export async function handleCopyCommand(
 
   // 检查是否已经在复制另一个目标，避免同时复制多人
   if (state.isCopying && state.copiedUserId !== null) {
-    const replyText: string = `本天才手上已经有猎物啦，想换人的话先 /stop 呀，笨蛋♡`;
+    const replyText: string = `本天才手上已经有猎物啦，想换人的话先 /stop_copy 呀，笨蛋♡`;
     await sendMessage(chatId, replyText, messageId);
     return;
   }
@@ -451,7 +451,7 @@ export async function handleCopyCommand(
 }
 
 /**
- * 处理 /stop 指令。
+ * 处理 /stop_copy 指令。
  */
 export async function handleStopCommand(
   ctx: CommandContext<Context>,
@@ -463,7 +463,7 @@ export async function handleStopCommand(
   const state: ChatState = getOrCreateChatState(chatStates, chatId);
 
   if (!state.isCopying) {
-    await sendMessage(chatId, `本天才现在什么杂鱼都没盯着呢，笨蛋要 /stop 什么呀♡`, messageId);
+    await sendMessage(chatId, `本天才现在什么杂鱼都没盯着呢，笨蛋要 /stop_copy 什么呀♡`, messageId);
     return;
   }
 

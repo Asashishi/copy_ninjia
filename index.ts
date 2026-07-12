@@ -28,7 +28,7 @@ async function main(): Promise<void> {
 
   // 逐个群聊同步状态，以防 state.json 损坏或与 users.json 不一致。
   // 注意：lastCopiedUserId 不能从 usersData 派生——users.json 的 copiedUser 在
-  // /stop 后就是 null，若照抄会把冷却计时的目标 ID 冲掉（/stop 后 copiedUser
+  // /stop_copy 后就是 null，若照抄会把冷却计时的目标 ID 冲掉（/stop_copy 后 copiedUser
   // 变 null 但冷却本该继续针对上一个目标生效），冷却机制就在下次重启后失效了。
   // state.json 里的 lastCopiedUserId 由 loadState() 读入即可，无需在这里覆盖。
   for (const [chatIdStr, entry] of Object.entries(usersData)) {
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
     return ctx.chat ? [String(ctx.chat.id)] : [];
   }));
 
-  // 私聊里不触发任何命令（/copy 系、/stop /kick /balance /quiet 等全部）：这些
+  // 私聊里不触发任何命令（/copy 系、/stop_copy /kick /balance /quiet 等全部）：这些
   // 指令都是围绕群聊状态设计的（复读目标、群内踢人、群内静默），私聊语境下
   // 没有意义，也免得被人在 DM 里瞎捣鼓。放在命令处理器注册之前，直接吞掉
   // 这类更新，不再往下传给任何处理器。
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
   bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "reverse"));
   bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "nya"));
   bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "ja"));
-  bot.command("stop", (ctx) => handleStopCommand(ctx, chatStates, usersData));
+  bot.command("stop_copy", (ctx) => handleStopCommand(ctx, chatStates, usersData));
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.command("balance", (ctx) => handleBalanceCommand(ctx));
   bot.command("quiet", (ctx) => handleQuietCommand(ctx, chatStates));
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
       { command: "r_copy", description: "复读并反转文本" },
       { command: "nya_copy", description: "复读并加喵~" },
       { command: "ja_copy", description: "复读并翻译为日语" },
-      { command: "stop", description: "停止当前的复读" },
+      { command: "stop_copy", description: "停止当前的复读" },
       { command: "kick", description: "踢出群聊并封禁（仅白名单用户可用）" },
       { command: "balance", description: "查询 DeepSeek 账户余额" },
       { command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" },

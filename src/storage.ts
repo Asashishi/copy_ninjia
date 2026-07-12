@@ -128,7 +128,7 @@ export function getChatState(chatStates: Map<number, ChatState>, chatId: number)
 
 /**
  * 取某个群聊的状态，不存在则创建一份默认状态并插入 Map。供需要修改状态的场景
- * 使用（比如 /copy、/stop），确保拿到的是可以直接写入、且后续会被持久化的对象。
+ * 使用（比如 /copy、/stop_copy），确保拿到的是可以直接写入、且后续会被持久化的对象。
  */
 export function getOrCreateChatState(chatStates: Map<number, ChatState>, chatId: number): ChatState {
   let chatState = chatStates.get(chatId);
