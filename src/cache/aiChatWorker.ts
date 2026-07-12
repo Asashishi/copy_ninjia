@@ -2,7 +2,7 @@ import type { LinkedQueue } from "../libs/linkedQueue";
 import type { BufferedMessage } from "../types";
 
 /**
- * AI 闲聊流水线（src/aiChatWorker.ts）的内存状态。本模块只被 Worker 线程
+ * AI 闲聊流水线（src/workers/aiChatWorker.ts）的内存状态。本模块只被 Worker 线程
  * import，所有状态都存活在该线程内；仅存于内存，重启即清空（本功能不做
  * 持久记忆）。
  */

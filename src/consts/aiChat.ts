@@ -1,6 +1,6 @@
 /**
  * AI 闲聊的调参常量。AI_REPLY_PROBABILITY 由主线程（handlers.ts）的触发
- * 调度使用，其余都是 Worker 线程（aiChatWorker.ts）流水线的旋钮。
+ * 调度使用，其余都是 Worker 线程（workers/aiChatWorker.ts）流水线的旋钮。
  */
 
 /**
@@ -44,7 +44,7 @@ export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
 export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
 
 /**
- * 触发被限频黑洞丢弃时会明确回一句「你们太快了」（见 aiChatWorker.ts 的
+ * 触发被限频黑洞丢弃时会明确回一句「你们太快了」（见 workers/aiChatWorker.ts 的
  * notifyRateLimited），这是该提示自身的冷却：同一个群在这段时间内至多提示
  * 一次，防止提示本身在刷屏场景下变成新的刷屏放大器。
  */
@@ -52,7 +52,7 @@ export const RATE_LIMIT_NOTICE_COOLDOWN_MS: number = 60_000;
 
 /**
  * 判断一条消息是否在问时间/日期。命中时会把真实当前时间直接注入 prompt
- * （见 aiChatWorker.ts 的 UserContentOptions.timeContext），而不是交给模型
+ * （见 workers/aiChatWorker.ts 的 UserContentOptions.timeContext），而不是交给模型
  * 自己判断要不要查——auto 模式下模型经常瞎编时间而不调用工具，命中率太低。
  */
 export const TIME_INTENT_PATTERN: RegExp =

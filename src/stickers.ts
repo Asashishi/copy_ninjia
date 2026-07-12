@@ -51,7 +51,7 @@ async function pickSticker(contextText: string): Promise<Sticker | null> {
  * @param onSent 贴纸确认发送成功后的回调，参数是这枚贴纸的上下文描述行
  *   （见 describeStickerForContext）——调用方用它把贴纸自录进 AI 对话缓存。
  *   用回调而不是让本模块直接调 aiChat 的 recordChatMessage，是为了避免
- *   stickers.ts 和 aiChatWorker.ts 互相 import 形成循环依赖。
+ *   stickers.ts 和 workers/aiChatWorker.ts 互相 import 形成循环依赖。
  */
 export function maybeSendStickerReply(chatId: number, contextText: string, onSent?: (stickerDescription: string) => void): void {
   if (config.packs.length === 0) return;

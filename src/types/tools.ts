@@ -1,4 +1,4 @@
-/** 供 aiChatWorker.ts 走 DeepSeek 的 function calling 接口调用的工具定义结构。 */
+/** 供 workers/aiChatWorker.ts 走 DeepSeek 的 function calling 接口调用的工具定义结构。 */
 export interface ToolDefinition {
   type: "function";
   function: {

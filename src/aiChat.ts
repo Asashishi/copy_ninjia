@@ -4,7 +4,7 @@ import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage, ForwardedLog } from
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、冷却与
  * 限频、拼装上下文、调 DeepSeek（含 function calling 往返）、连发消息、
- * 消息反应、贴纸跟发——全部在独立的 Bun Worker（src/aiChatWorker.ts）里
+ * 消息反应、贴纸跟发——全部在独立的 Bun Worker（src/workers/aiChatWorker.ts）里
  * 执行；主线程只把「记录一条群消息」「触发一次回复」两类事件投递过去，
  * 让 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
