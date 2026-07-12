@@ -15,16 +15,10 @@
 import { join } from "path";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync, writeSync } from "fs";
 import type { FlushReply, FlushRequest, LogMessage } from "./logger";
+import { LOGS_DIR } from "./consts/paths";
+import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "./consts/logger";
 
 declare var self: Worker;
-
-const LOGS_DIR: string = join(import.meta.dir, "..", "logs");
-const RETENTION_DAYS: number = 3;
-
-const FLUSH_MAX_ENTRIES: number = 150;
-const FLUSH_INTERVAL_MS: number = 60_000;
-
-const DAY_FILE_PATTERN: RegExp = /^(\d{4}-\d{2}-\d{2})\.json$/;
 
 interface LogRecord {
   level: string;

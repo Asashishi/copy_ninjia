@@ -1,8 +1,26 @@
 import { logger } from "./logger";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { DEEPSEEK_API_KEY } from "./config";
 import { LinkedQueue } from "./linkedQueue";
+import { PERSONA_PATH } from "./consts/paths";
+import {
+  AI_REPLY_COOLDOWN_MS,
+  BUFFER_SIZE,
+  CONTEXT_SIZE,
+  DEEPSEEK_API_URL,
+  DEEPSEEK_MODEL,
+  MAX_TOOL_ROUNDS,
+  RATE_LIMIT_LONG_MAX_TRIGGERS,
+  RATE_LIMIT_LONG_WINDOW_MS,
+  RATE_LIMIT_MAX_TRIGGERS,
+  RATE_LIMIT_NOTICE_COOLDOWN_MS,
+  RATE_LIMIT_WINDOW_MS,
+  REQUEST_TIMEOUT_MS,
+  SPLIT_REPLY_MAX_PARTS,
+  SPLIT_REPLY_PROBABILITY,
+  TIME_INTENT_PATTERN,
+} from "./consts/aiChat";
+import { chatBuffers, lastReplyTimes, longTriggerTimes, rateLimitNoticeTimes, triggerTimes, type BufferedMessage } from "./cache/aiChatWorker";
 import { maybeAddReaction } from "./reactions";
 import { maybeSendStickerReply } from "./stickers";
 import { sendMessage } from "./telegram";
@@ -27,60 +45,7 @@ import type { AiBotInfo, AiChatWorkerMessage } from "./aiChat";
 
 declare var self: Worker;
 
-const DEEPSEEK_API_URL: string = "https://api.deepseek.com/chat/completions";
-const DEEPSEEK_MODEL: string = "deepseek-v4-flash";
-const REQUEST_TIMEOUT_MS: number = 60_000;
-
-const PERSONA_PATH: string = join(import.meta.dir, "..", "prompt", "persona.txt");
 const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
-
-/** 每个群聊在内存里保留的最近消息条数（Bot API 无法拉历史，只能自己滚动缓存）。 */
-const BUFFER_SIZE: number = 75;
-/** 生成回复时，从缓存里取最近多少条作为上下文喂给模型（与 BUFFER_SIZE 相等即整个缓存全喂）。 */
-const CONTEXT_SIZE: number = 75;
-/** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
-const SPLIT_REPLY_PROBABILITY: number = 1 / 3;
-/** 连发模式下最多发几条，防止模型话痨刷屏。 */
-const SPLIT_REPLY_MAX_PARTS: number = 5;
-/**
- * 同一群聊两次 AI 回复之间的最短间隔。回复机器人 / @ 机器人是 100% 触发且
- * 无上限的，没有这道闸的话，恶意用户循环回复 bot 就能形成「一条消息 = 一次
- * API 调用 + 一条群消息」的刷屏/烧钱放大链。冷却内命中的触发直接静默丢弃。
- */
-const AI_REPLY_COOLDOWN_MS: number = 500;
-
-/** 各群聊上一次 AI 回复的触发时刻（毫秒时间戳），用于冷却判断。 */
-const lastReplyTimes: Map<number, number> = new Map();
-
-/**
- * 分群限频：单个群滚动窗口内最多触发多少次 AI 回复。每群冷却只限制相邻
- * 两次的间隔（1.5 秒冷却下一分钟仍可达 40 次），这两道滑动窗口给单群的
- * 总量再兜两层——1 分钟窗口挡住短时爆发，5 分钟窗口再挡住那种卡着 1 分钟
- * 窗口边界反复刷、绕开短窗口上限的持续刷屏。两道闸中任意一道打满，触发
- * 就直接静默丢弃（黑洞），等对应窗口里旧时刻滑出窗口腾出名额才恢复，不是
- * 硬性定时重置。只在入口计一次数——一次触发内的「连发多条短消息」属于
- * 同一次回复，不重复计数。
- */
-const RATE_LIMIT_WINDOW_MS: number = 60_000;
-const RATE_LIMIT_MAX_TRIGGERS: number = 45;
-const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
-const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
-
-/** 各群 1 分钟窗口内每次触发的时刻（毫秒时间戳），队首最旧，过期即出队。 */
-const triggerTimes: Map<number, LinkedQueue<number>> = new Map();
-/** 各群 5 分钟窗口内每次触发的时刻（毫秒时间戳），队首最旧，过期即出队。 */
-const longTriggerTimes: Map<number, LinkedQueue<number>> = new Map();
-
-/** 缓存里的一条消息：发言人 id + 名字（拆开存，好让模型按 id 而非重名区分身份）+ 文本。 */
-interface BufferedMessage {
-  id: number;
-  firstName: string;
-  lastName: string;
-  text: string;
-}
-
-/** 各群聊各自的滚动消息缓存，仅存于内存（重启即清空，本功能不做持久记忆）。 */
-const chatBuffers: Map<number, LinkedQueue<BufferedMessage>> = new Map();
 
 /**
  * 机器人自己的账号身份，由主线程在 bot.init() 之后经 init 消息注入
@@ -208,23 +173,10 @@ function getLatestMessage(chatId: number): BufferedMessage | undefined {
   return buf?.last(1)[0];
 }
 
-/**
- * 判断一条消息是否在问时间/日期。命中时会把真实当前时间直接注入 prompt
- * （见 UserContentOptions.timeContext），而不是交给模型自己判断要不要查——
- * auto 模式下模型经常瞎编时间而不调用工具，命中率太低。
- */
-const TIME_INTENT_PATTERN: RegExp =
-  /现在几点|几点了|几点钟|现在.{0,4}时间|当前时间|今天.{0,3}[几号日]|几月几[号日]|星期几|周几|报时|what\s*time|current\s*time/i;
-
+/** 是否在问时间/日期（见 consts/aiChat.ts 的 TIME_INTENT_PATTERN 注释）。 */
 function isTimeRelatedQuery(text: string): boolean {
   return TIME_INTENT_PATTERN.test(text);
 }
-
-/**
- * 一次工具调用往返最多允许几轮（模型要工具结果 -> 喂回去 -> 模型可能再要
- * 下一个工具……）。给个上限防止模型陷入死循环反复要工具，烧穿 API 配额。
- */
-const MAX_TOOL_ROUNDS: number = 3;
 
 /**
  * 调用 DeepSeek 的 /chat/completions 接口生成一条回复。支持 function
@@ -351,6 +303,19 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * 限频黑洞的明确反馈：触发被滑动窗口丢弃时回一句「你们太快了」，而不是
+ * 静默失踪让群友以为机器人坏了。提示自身带独立冷却（每群至多一分钟一条，
+ * 见 RATE_LIMIT_NOTICE_COOLDOWN_MS），刷屏场景下不会跟着刷。0.5 秒冷却的
+ * 丢弃不提示——那只是相邻两次触发的间隔闸，正常聊天就会碰到，提示反而吵。
+ */
+function notifyRateLimited(chatId: number, now: number): void {
+  const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
+  if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
+  rateLimitNoticeTimes.set(chatId, now);
+  void sendMessage(chatId, "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡");
+}
+
+/**
  * 生成并发送 AI 回复。整个过程 fire-and-forget，不阻塞本线程的消息分发
  * （限频判定是同步的，其余都在异步任务里跑）。
  * 以 SPLIT_REPLY_PROBABILITY 概率采用「连发多条短消息」形式：让模型按行输出
@@ -396,6 +361,7 @@ function generateAndSendReply(
     times.shift();
   }
   if (times.size >= RATE_LIMIT_MAX_TRIGGERS) {
+    notifyRateLimited(chatId, now);
     return;
   }
 
@@ -408,6 +374,7 @@ function generateAndSendReply(
     longTimes.shift();
   }
   if (longTimes.size >= RATE_LIMIT_LONG_MAX_TRIGGERS) {
+    notifyRateLimited(chatId, now);
     return;
   }
 

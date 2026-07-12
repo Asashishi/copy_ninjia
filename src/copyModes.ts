@@ -1,5 +1,6 @@
 import type { CopyMode } from "./types";
 import { translateToJapanese } from "./translate";
+import { NYA_SUFFIX } from "./consts/copyModes";
 
 /**
  * 按 Unicode 扩展字形簇（grapheme cluster）反转字符串（若 Intl.Segmenter 不可用则
@@ -15,8 +16,6 @@ function reverseText(text: string): string {
     return Array.from(text).reverse().join("");
   }
 }
-
-const NYA_SUFFIX: string = "喵~";
 
 /**
  * 给尚未以 喵~ 结尾的文本追加 " 喵~"（前面带一个半角空格）。安全校验由调用方负责

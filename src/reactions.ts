@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { logger } from "./logger";
 import { setMessageReaction } from "./telegram";
 import { matchCandidateEmojis, pickRandom } from "./stickerSets";
+import { REACTIONS_CONFIG_PATH } from "./consts/paths";
 
 /**
  * AI 回复消息反应：AI 回复（含随机搭话）触发时，有一定概率给触发这次回复的
@@ -23,8 +23,7 @@ interface ReactionConfig {
   emotionKeywords: Record<string, string[]>;
 }
 
-const CONFIG_PATH: string = join(import.meta.dir, "..", "config", "reactions.json");
-const config: ReactionConfig = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+const config: ReactionConfig = JSON.parse(readFileSync(REACTIONS_CONFIG_PATH, "utf8"));
 const allEmojis: string[] = Object.keys(config.emotionKeywords);
 
 /**

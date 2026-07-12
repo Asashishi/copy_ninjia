@@ -12,6 +12,8 @@
  * 的 onmessage）调用 relayLogMessage 转投唯一的落盘线程。
  */
 
+import { pendingFlushes } from "./cache/logger";
+
 export type LogLevel = "log" | "info" | "warn" | "error";
 
 /** 发给 worker 的消息结构：毫秒时间戳 + 级别 + 已序列化的参数列表。 */
@@ -46,10 +48,10 @@ const diskWorker: Worker | null = Bun.isMainThread
   : null;
 diskWorker?.unref();
 
-// flushLogs 的回执路由：flushId → resolve。postMessage 按 FIFO 送达，
-// flush 指令一定在它之前的日志消息都入队后才被处理，回执即代表已落盘。
+// flushLogs 的回执 id 分配（路由表见 cache/logger.ts 的 pendingFlushes）。
+// postMessage 按 FIFO 送达，flush 指令一定在它之前的日志消息都入队后才被
+// 处理，回执即代表已落盘。
 let nextFlushId: number = 1;
-const pendingFlushes: Map<number, () => void> = new Map();
 
 if (diskWorker) {
   diskWorker.onmessage = (event: MessageEvent<FlushReply>) => {

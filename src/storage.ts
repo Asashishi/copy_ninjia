@@ -1,13 +1,7 @@
 import { logger } from "./logger";
-import { join } from "path";
 import type { ChatState, ChatStateFileSchema, UsersFileSchema } from "./types";
-
-const PROJECT_ROOT: string = join(import.meta.dir, "..");
-
-// 项目目录内用于持久化的各文件路径
-const USERS_FILE_PATH: string = join(PROJECT_ROOT, "users.json");
-const STATE_FILE_PATH: string = join(PROJECT_ROOT, "state.json");
-const LOCK_FILE_PATH: string = join(PROJECT_ROOT, "bot.lock");
+import { LOCK_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "./consts/paths";
+import { DEFAULT_CHAT_STATE } from "./consts/storage";
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -122,13 +116,6 @@ export async function saveState(chatStates: Map<number, ChatState>): Promise<voi
   }
   await persistJson(STATE_FILE_PATH, JSON.stringify(serializable, null, 2), "state");
 }
-
-/**
- * 默认（空）的群聊状态，用于本群从未使用过复制功能时的只读查询。
- * 冻结它：这个对象在所有没有状态的群之间共享，若有调用方误对它赋值，
- * 会静默污染所有这些群的查询结果——冻结后误写会直接抛错暴露问题。
- */
-const DEFAULT_CHAT_STATE: Readonly<ChatState> = Object.freeze({ copiedUserId: null, isCopying: false });
 
 /**
  * 只读地取某个群聊的状态，不存在时返回共享的默认状态（不会插入到 Map 里）。

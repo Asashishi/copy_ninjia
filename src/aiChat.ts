@@ -9,12 +9,6 @@ import { relayLogMessage, type ForwardedLog } from "./logger";
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
  */
 
-/**
- * 没有其它触发条件时，普通发言触发一次 AI 回复的概率。掷骰子决定是否触发
- * 属于主线程的调度逻辑（见 handlers.ts），Worker 只执行已触发的回复。
- */
-export const AI_REPLY_PROBABILITY: number = 1 / 4;
-
 /** Worker 侧自我认知所需的机器人账号身份（bot.init() 之后才可得，见 initAiChat）。 */
 export interface AiBotInfo {
   id: number;

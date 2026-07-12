@@ -1,33 +1,7 @@
 import { logger } from "./logger";
-import type { ChatPermissions } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "./telegram";
-
-/** 计数窗口时长：15 秒内入群人数若超过阈值，视为疑似拉人头刷群。 */
-const JOIN_WINDOW_MS: number = 15 * 1000;
-/** 15 秒窗口内触发私密模式的入群人数阈值。 */
-const JOIN_THRESHOLD: number = 150;
-/** 私密模式（禁止普通成员拉人）持续时长。 */
-const LOCKDOWN_MS: number = 5 * 60 * 1000;
-/** 解除私密模式的 API 调用失败后，重试前的等待时长。 */
-const RESTORE_RETRY_MS: number = 30 * 1000;
-
-interface JoinWindow {
-  count: number;
-  resetTimeout: ReturnType<typeof setTimeout>;
-}
-
-interface Lockdown {
-  /**
-   * 触发私密模式前的原始默认权限，用于到期后精确恢复——而不是简单把
-   * can_invite_users 设回 true，避免覆盖管理员本来就设置的其他限制。
-   */
-  originalPermissions: ChatPermissions;
-  restoreTimeout: ReturnType<typeof setTimeout>;
-}
-
-// 均仅存于内存中，符合需求——计数窗口和私密模式状态都不需要在重启后保留。
-const joinWindows: Map<number, JoinWindow> = new Map();
-const activeLockdowns: Map<number, Lockdown> = new Map();
+import { JOIN_THRESHOLD, JOIN_WINDOW_MS, LOCKDOWN_MS, RESTORE_RETRY_MS } from "./consts/antiRaid";
+import { activeLockdowns, joinWindows, type Lockdown } from "./cache/antiRaid";
 
 /**
  * 记录一次已确认的新成员加入。由 joinVerification.ts 在去重后调用，因此同一次

@@ -2,13 +2,26 @@ import { logger } from "./logger";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "./types";
 import { getChatState, getOrCreateChatState, saveState, saveUsersFile } from "./storage";
-import { sendMessage, copyMessage, copyUserProfilePhoto, banChatMember, banChatSenderChat, deleteMessageAfter, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
+import { sendMessage, copyMessage, copyUserProfilePhoto, banChatMember, banChatSenderChat, deleteMessageAfter } from "./telegram";
 import { enqueueReaction, type CopyableReaction } from "./reactionQueue";
 import { applyCopyModeTransform, describeCopyModeEffect } from "./copyModes";
 import { formatUserLabel } from "./userLabel";
 import { handleGroupJoinVerification } from "./joinVerification";
 import { PRIVILEGED_USERS_ID } from "./config";
-import { recordChatMessage, generateAndSendReply, AI_REPLY_PROBABILITY } from "./aiChat";
+import { recordChatMessage, generateAndSendReply } from "./aiChat";
+import { AI_REPLY_PROBABILITY } from "./consts/aiChat";
+import { KICK_NOTICE_AUTO_DELETE_MS } from "./consts/telegram";
+import {
+  BATH_TRIGGER_PATTERN,
+  COPY_COOLDOWN_MS,
+  QUIET_DEFAULT_MINUTES,
+  QUIET_MAX_MINUTES,
+  QUIET_MIN_MINUTES,
+  RANDOM_ECHO_MODES,
+  RANDOM_ECHO_PROBABILITY,
+  USER_RANDOM_REPLY_COOLDOWN_MS,
+} from "./consts/handlers";
+import { userRandomReplyTimes } from "./cache/handlers";
 import { describeStickerForContext } from "./stickerSets";
 import { fetchDeepSeekBalance, type DeepSeekBalanceResponse } from "./deepseekBalance";
 
@@ -79,12 +92,6 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
   return resolveSenderIdentity(repliedMessage);
 }
 
-/** 记录各用户上一次被 AI 随机回复的时刻（以 chatId + 用户 id + 姓名拼接作为 key）。 */
-const userRandomReplyTimes: Map<string, number> = new Map();
-
-/** 同一群里同一用户两次被 AI 随机回复之间的最短间隔。 */
-const USER_RANDOM_REPLY_COOLDOWN_MS: number = 90_000;
-
 /**
  * 尝试为某个发言人占用一次「AI 随机回复」的名额：若 TA 仍在冷却期内则返回
  * false；否则记录本次触发时刻并返回 true。冷却按「群 × 用户」独立计算——
@@ -142,19 +149,6 @@ function isBotMentioned(message: any, botUsername: string | undefined): boolean 
   }
   return false;
 }
-
-/** 没有复读对象时，随机复读一条新消息的概率。 */
-const RANDOM_ECHO_PROBABILITY: number = 1 / 100;
-
-/** 随机复读时的模式池：undefined 表示原样复读，其余对应各 /*_copy 的文本变换。 */
-const RANDOM_ECHO_MODES: (CopyMode | undefined)[] = [undefined, "reverse", "nya", "ja"];
-
-/**
- * 「说到洗澡就回看看」的触发词：洗澡 / 泡澡（中间可插最多 4 个白名单里的
- * 助词/修饰字，白名单挡「洗刷刷澡堂子见」这类字面撞上的误伤）以及冲凉
- * （繁体沖涼，中间可插「个/個/了」等）。
- */
-const BATH_TRIGGER_PATTERN: RegExp = /[洗泡][个個了完一热熱水冷好]{0,4}澡|[冲沖][个個了完一]{0,2}[凉涼]/;
 
 /**
  * 将一条消息复读回它所在的聊天，并按给定模式做文本变换。
@@ -358,9 +352,8 @@ export async function handleCopyCommand(
   const isExempted: boolean = !!fromUser && PRIVILEGED_USERS_ID.includes(fromUser.id);
   if (!isExempted && state.lastCopyTime) {
     const elapsed: number = Date.now() - state.lastCopyTime;
-    const cooldown: number = 5 * 60 * 1000; // 5 分钟，单位毫秒
-    if (elapsed < cooldown) {
-      const remainingMs: number = cooldown - elapsed;
+    if (elapsed < COPY_COOLDOWN_MS) {
+      const remainingMs: number = COPY_COOLDOWN_MS - elapsed;
       const remainingMinutes: number = Math.floor(remainingMs / 60000);
       const remainingSeconds: number = Math.ceil((remainingMs % 60000) / 1000);
       const timeStr: string = remainingMinutes > 0
@@ -490,17 +483,13 @@ export async function handleStopCommand(
   await sendMessage(chatId, `哼，不玩了，本天才先歇一下~杂鱼♡`, messageId);
 }
 
-/** /quiet 静默时长：默认值与上下限（分钟）。 */
-const QUIET_DEFAULT_MINUTES: number = 3;
-const QUIET_MIN_MINUTES: number = 1;
-const QUIET_MAX_MINUTES: number = 15;
-
 /**
  * 处理 /quiet 指令：让机器人在本群安静一段时间——期间不触发 AI 随机插话、
  * 洗澡「看看」和随机复读这些主动刷存在感的行为；回复机器人 / @ 机器人的
  * AI 必回、各类指令、以及 /copy 锁定目标的复读均不受影响（对话缓存也照常
  * 攒，静默结束后 AI 不缺上下文）。时长参数为分钟数，缺省 3 分钟，超出
- * 1~15 的范围会被收敛到边界；静默期内重复使用会以新时长重新计时。
+ * 1~15 的范围会被收敛到边界；静默期内不允许重复使用（不能续时/重新计时），
+ * 想提前解除或重设时长要先 /unquiet。
  */
 export async function handleQuietCommand(
   ctx: CommandContext<Context>,
@@ -508,6 +497,13 @@ export async function handleQuietCommand(
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
+
+  const quietUntil: number = getChatState(chatStates, chatId).quietUntil ?? 0;
+  if (quietUntil > Date.now()) {
+    const remainingMinutes: number = Math.ceil((quietUntil - Date.now()) / 60_000);
+    await sendMessage(chatId, `本天才已经在闭嘴了呀（还剩约 ${remainingMinutes} 分钟），一个静默没结束不许再叠，想重来就先 /unquiet，笨蛋♡`, messageId);
+    return;
+  }
 
   const arg: string = ctx.match.trim();
   let minutes: number = QUIET_DEFAULT_MINUTES;
@@ -525,6 +521,31 @@ export async function handleQuietCommand(
   await saveState(chatStates);
 
   await sendMessage(chatId, `哼，本天才就赏你们 ${minutes} 分钟清净，不主动插话也不复读。想本天才了就回复或 @ 我，杂鱼♡`, messageId);
+}
+
+/**
+ * 处理 /unquiet 指令：提前解除 /quiet 静默。本群没在静默中时只嘲讽一句，
+ * 不改任何状态。
+ */
+export async function handleUnquietCommand(
+  ctx: CommandContext<Context>,
+  chatStates: Map<number, ChatState>
+): Promise<void> {
+  const chatId: number = ctx.chat.id;
+  const messageId: number | undefined = ctx.msgId;
+
+  const state: ChatState = getChatState(chatStates, chatId);
+  if ((state.quietUntil ?? 0) <= Date.now()) {
+    await sendMessage(chatId, `本天才本来就没在闭嘴呀，笨蛋要 /unquiet 什么呢♡`, messageId);
+    return;
+  }
+
+  // 静默生效中说明 /quiet 写过状态，getChatState 拿到的一定是 Map 里的真实
+  // 条目（不是共享的冻结默认值），直接改它即可。
+  state.quietUntil = undefined;
+  await saveState(chatStates);
+
+  await sendMessage(chatId, `哼，这么快就受不了没有本天才的日子啦？静默解除，杂鱼们做好被吵的准备吧♡`, messageId);
 }
 
 /**

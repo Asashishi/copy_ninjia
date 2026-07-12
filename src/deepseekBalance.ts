@@ -1,18 +1,11 @@
 import { logger } from "./logger";
 import { DEEPSEEK_API_KEY } from "./config";
+import { CACHE_TTL_MS, DEEPSEEK_BALANCE_API_URL, REQUEST_TIMEOUT_MS } from "./consts/deepseekBalance";
+import { balanceCache } from "./cache/deepseekBalance";
 
 /**
  * 查询 DeepSeek 账户余额，供 /balance 命令使用。
  */
-
-const DEEPSEEK_BALANCE_API_URL: string = "https://api.deepseek.com/user/balance";
-const REQUEST_TIMEOUT_MS: number = 10_000;
-
-/** 余额缓存有效期：30 秒内的重复查询直接复用，避免多人连续 /balance 把接口打到 429。 */
-const CACHE_TTL_MS: number = 30_000;
-
-let cachedResult: DeepSeekBalanceResponse | null = null;
-let cachedAt: number = 0;
 
 export interface DeepSeekBalanceInfo {
   currency: string;
@@ -31,8 +24,8 @@ export interface DeepSeekBalanceResponse {
  * 命中缓存（30 秒内）时直接返回缓存值，不发请求。
  */
 export async function fetchDeepSeekBalance(): Promise<DeepSeekBalanceResponse | null> {
-  if (cachedResult && Date.now() - cachedAt < CACHE_TTL_MS) {
-    return cachedResult;
+  if (balanceCache.result && Date.now() - balanceCache.at < CACHE_TTL_MS) {
+    return balanceCache.result;
   }
 
   const controller: AbortController = new AbortController();
@@ -60,8 +53,8 @@ export async function fetchDeepSeekBalance(): Promise<DeepSeekBalanceResponse | 
       is_available: !!data.is_available,
       balance_infos: data.balance_infos,
     };
-    cachedResult = result;
-    cachedAt = Date.now();
+    balanceCache.result = result;
+    balanceCache.at = Date.now();
     return result;
   } catch (error: unknown) {
     logger.error("Error calling DeepSeek balance API:", error);

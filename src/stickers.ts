@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Sticker } from "@grammyjs/types";
 import { logger } from "./logger";
 import { sendSticker } from "./telegram";
 import { describeStickerForContext, getAllStickers, matchCandidateEmojis, pickRandom } from "./stickerSets";
+import { STICKERS_CONFIG_PATH } from "./consts/paths";
 
 /**
  * AI 回复贴纸包：每次 AI 回复（含随机搭话）后，有一定概率从白名单贴纸包里挑一枚
@@ -21,8 +21,7 @@ interface StickerConfig {
   emotionKeywords: Record<string, string[]>;
 }
 
-const CONFIG_PATH: string = join(import.meta.dir, "..", "config", "stickers.json");
-const config: StickerConfig = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+const config: StickerConfig = JSON.parse(readFileSync(STICKERS_CONFIG_PATH, "utf8"));
 
 /**
  * 按回复文本挑一枚「应景」的贴纸：优先在候选 emoji（见 matchCandidateEmojis）命中的

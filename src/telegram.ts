@@ -4,6 +4,7 @@ import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { BOT_TOKEN } from "./config";
+import { AVATAR_FETCH_MAX_ATTEMPTS, AVATAR_FETCH_TIMEOUT_MS } from "./consts/telegram";
 
 export const bot: Bot = new Bot(BOT_TOKEN);
 
@@ -18,9 +19,6 @@ export const bot: Bot = new Bot(BOT_TOKEN);
 export const joinVerificationApi: Api = new Api(BOT_TOKEN);
 joinVerificationApi.config.use(apiThrottler());
 joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 5 }));
-
-const AVATAR_FETCH_TIMEOUT_MS: number = 15000;
-const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
 
 /**
  * 下载某用户（或频道）的头像，并上传设置为本机器人的头像。
@@ -239,9 +237,6 @@ export async function deleteMessage(chatId: number, messageId: number, api: Api 
     }
   }
 }
-
-/** 踢人公告在被自动清理前保持可见的时长。 */
-export const KICK_NOTICE_AUTO_DELETE_MS: number = 30 * 1000;
 
 /**
  * 安排一条消息在延迟后被删除。触发即忘（fire-and-forget）——用于踢人公告，

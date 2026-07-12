@@ -2,23 +2,12 @@ import { logger } from "./logger";
 import type { Context } from "grammy";
 import type { ChatMember } from "@grammyjs/types";
 import type { CachedUser, PendingVerification } from "./types";
-import { sendMessage, deleteMessage, deleteMessageAfter, kickChatMember, joinVerificationApi, KICK_NOTICE_AUTO_DELETE_MS } from "./telegram";
+import { sendMessage, deleteMessage, deleteMessageAfter, kickChatMember, joinVerificationApi } from "./telegram";
 import { formatUserLabel } from "./userLabel";
 import { isLockedDown, recordJoin } from "./antiRaid";
-
-/** 新成员必须在 VERIFICATION_TIMEOUT_MS 内发送的精确文本，否则会被踢出。 */
-const VERIFICATION_CODE: string = "我是新人，别搞！";
-const VERIFICATION_TIMEOUT_MS: number = 90 * 1000;
-/**
- * 私密模式下直接踢人的占位记录存活时长：只是给 chat_member 更新和
- * new_chat_members 服务消息（针对同一次入群各自触发）留出去重窗口，
- * 不是真的验证超时，所以远比 VERIFICATION_TIMEOUT_MS 短。
- */
-const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
-
-// 仅存于内存中，符合需求——不会在重启后保留。以 "chatId:userId" 为键，
-// 这样同一个人在不同群里会被独立追踪。
-const pendingVerifications: Map<string, PendingVerification> = new Map();
+import { KICK_NOTICE_AUTO_DELETE_MS } from "./consts/telegram";
+import { LOCKDOWN_KICK_DEDUPE_MS, VERIFICATION_CODE, VERIFICATION_TIMEOUT_MS } from "./consts/joinVerification";
+import { pendingVerifications } from "./cache/joinVerification";
 
 function verificationKey(chatId: number, userId: number): string {
   return `${chatId}:${userId}`;

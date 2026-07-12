@@ -1,6 +1,7 @@
 import type { Sticker, StickerSet } from "@grammyjs/types";
 import { logger } from "./logger";
 import { bot } from "./telegram";
+import { failedPacks, stickerSetCache } from "./cache/stickerSets";
 
 /**
  * 「按情绪关键词挑一枚应景 emoji/贴纸」的公共积木：白名单贴纸包的拉取与
@@ -9,11 +10,6 @@ import { bot } from "./telegram";
  * src/stickers.ts（回复贴纸）三样都用；src/reactions.ts（消息反应）只用
  * 后两样——它最终设的是标准 emoji 反应，不涉及贴纸包。
  */
-
-/** 各包的贴纸集合缓存（进程内，重启即刷新——包内容本就极少变动）。 */
-const stickerSetCache: Map<string, StickerSet> = new Map();
-/** 已知拉取失败的包，避免每次触发都重复打一次必失败的请求。 */
-const failedPacks: Set<string> = new Set();
 
 async function getStickerSet(packName: string): Promise<StickerSet | null> {
   const cached: StickerSet | undefined = stickerSetCache.get(packName);

@@ -3,6 +3,8 @@ import { GrammyError } from "grammy";
 import type { ReactionTypeCustomEmoji, ReactionTypeEmoji } from "@grammyjs/types";
 import { bot } from "./telegram";
 import { LinkedQueue } from "./linkedQueue";
+import { MAX_ATTEMPTS } from "./consts/reactionQueue";
+import { chatQueues, consumingChats, pendingTasks, type ReactionTask } from "./cache/reactionQueue";
 
 /**
  * 机器人能跟着复制的反应类型。付费（paid）反应 Bot API 不允许机器人设置，
@@ -11,21 +13,6 @@ import { LinkedQueue } from "./linkedQueue";
  * 上的反应，天然满足这个条件。
  */
 export type CopyableReaction = ReactionTypeEmoji | ReactionTypeCustomEmoji;
-
-interface ReactionTask {
-  chatId: number;
-  messageId: number;
-  reactions: CopyableReaction[];
-  /** 产生本任务的更新的 update_id，用于覆盖旧任务前判断新旧。 */
-  updateId: number;
-  /** 目标点下反应的时刻（message_reaction 更新的 date 字段，Unix 秒）。 */
-  reactedAtUnix: number;
-  /** 本任务入队的时刻（毫秒时间戳），用于统计队列内耗时。 */
-  enqueuedAtMs: number;
-}
-
-/** 单个任务遇到 429 限流时的最大重试次数，防止极端限流下队列被一个任务卡死。 */
-const MAX_ATTEMPTS: number = 3;
 
 /**
  * 反应同步的可靠性保障层。经实测确认，复制反应的延迟大头在 Telegram 生成并
@@ -37,12 +24,8 @@ const MAX_ATTEMPTS: number = 3;
  * 3. 队列按 chat 拆分：限流（及其 retry_after）基本是按 chat 生效的，一个群
  *    被限流只暂停该群自己的消费循环，不头部阻塞其他群的反应同步。
  *
- * pendingTasks 里始终是某条消息「最新」想要的反应状态（键为 chatId:messageId），
- * chatQueues 里各 chat 的队列只记录本群内各消息首次入队的先后顺序。
+ * 队列状态（pendingTasks / chatQueues / consumingChats）见 cache/reactionQueue.ts。
  */
-const pendingTasks: Map<string, ReactionTask> = new Map();
-const chatQueues: Map<number, LinkedQueue<string>> = new Map();
-const consumingChats: Set<number> = new Set();
 
 /**
  * 把「将某条消息上的机器人反应设置为 reactions」这一任务入队（空数组表示

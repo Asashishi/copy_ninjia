@@ -1,8 +1,6 @@
 import { logger } from "./logger";
-import { join } from "path";
 import { v3 as GoogleTranslate } from "@google-cloud/translate";
-
-const GOOGLE_AUTH_FILE_PATH: string = join(import.meta.dir, "..", "g-auth.json");
+import { GOOGLE_AUTH_FILE_PATH } from "./consts/paths";
 
 // Google Cloud Translation - Advanced (v3) 客户端，通过 g-auth.json 里的服务账号
 // 密钥完成鉴权——供 copyMode "ja" 使用，用于在复读复制目标的纯文本消息前
