@@ -82,11 +82,9 @@ export const TIME_INTENT_PATTERN: RegExp =
 export const MAX_TOOL_ROUNDS: number = 3;
 
 /**
- * 「正在输入…」状态的重发间隔（每次在此区间内随机取值），仅用于覆盖耗时
- * 不可控的 DeepSeek 生成阶段（见 workers/aiChatWorker.ts 的
- * startTypingHeartbeat）。Telegram 该状态约 5 秒后自动过期，需要在过期前
- * 重发才能持续显示；连发多条消息之间的停顿单次封顶不超过这个过期时间，
- * 改由发送循环逐次显式补一次，不走这个定时器。
+ * 「正在输入…」状态的重发间隔，仅用于覆盖耗时不可控的 DeepSeek 生成阶段
+ * （见 workers/aiChatWorker.ts 的 startTypingHeartbeat）。Telegram 该状态约
+ * 5 秒后自动过期，需要在过期前重发才能持续显示；连发多条消息之间的停顿
+ * 单次封顶不超过这个过期时间，改由发送循环逐次显式补一次，不走这个定时器。
  */
-export const TYPING_ACTION_INTERVAL_MIN_MS: number = 1_500;
-export const TYPING_ACTION_INTERVAL_MAX_MS: number = 4_000;
+export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
