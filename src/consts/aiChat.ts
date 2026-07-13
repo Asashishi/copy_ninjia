@@ -35,7 +35,7 @@ export const MAX_SUMMARY_ROUNDS: number = 7;
 /** 单条摘要的硬性长度上限（字符），防摘要模型话痨撑爆回复上下文。 */
 export const SUMMARY_MAX_CHARS: number = 600;
 /** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
-export const SPLIT_REPLY_PROBABILITY: number = 1 / 3;
+export const SPLIT_REPLY_PROBABILITY: number = 1 / 4;
 /** 连发模式下最多发几条，防止模型话痨刷屏。 */
 export const SPLIT_REPLY_MAX_PARTS: number = 5;
 /**
