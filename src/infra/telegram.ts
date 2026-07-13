@@ -177,6 +177,31 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
 }
 
 /**
+ * 发送一次「正在输入…」聊天状态，用于在生成 AI 回复期间模拟真人打字。
+ * 该状态在 Telegram 客户端约 5 秒后自动过期，也会在本聊天收到 bot 的下一条
+ * 消息时自动清除——因此调用方无需显式关闭，只需在生成/发送耗时较长时
+ * 周期性重发以维持显示（见 workers/aiChatWorker.ts 的 startTypingHeartbeat）。
+ * @param chatId 目标聊天 ID。
+ * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @returns 是否发送成功——调用方靠它判断要不要放弃继续重发（见
+ *   startTypingHeartbeat：失败多半意味着该聊天已不可达，没必要每隔几秒
+ *   重试一个大概率会持续失败的操作）。
+ */
+export async function sendTypingAction(chatId: number, api: Api = bot.api): Promise<boolean> {
+  try {
+    await api.sendChatAction(chatId, "typing");
+    return true;
+  } catch (error: unknown) {
+    if (error instanceof GrammyError) {
+      logger.error(`Failed to send typing action: ${error.error_code} ${error.description}`);
+    } else {
+      logger.error("Error sending typing action:", error);
+    }
+    return false;
+  }
+}
+
+/**
  * 应答一次 callback_query（内联按钮点击），消除客户端按钮上的加载态，
  * 可选地弹出一个提示气泡/弹窗。
  * @param callbackQueryId 要应答的 callback_query ID。
