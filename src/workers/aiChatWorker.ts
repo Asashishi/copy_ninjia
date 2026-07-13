@@ -20,7 +20,8 @@ import {
   SPLIT_REPLY_PROBABILITY,
   SUMMARY_MAX_CHARS,
   TIME_INTENT_PATTERN,
-  TYPING_ACTION_INTERVAL_MS,
+  TYPING_ACTION_INTERVAL_MAX_MS,
+  TYPING_ACTION_INTERVAL_MIN_MS,
   VERBATIM_CONTEXT_MAX,
 } from "../consts/aiChat";
 import {
@@ -268,7 +269,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
     : "";
 
   const replyInstruction: string = splitMode
-    ? `请针对最新这条消息，以你的人设回复，并把回复拆成 2 到 ${SPLIT_REPLY_MAX_PARTS} 条连贯的短消息——就像真人打字时想到哪发到哪、一句接一句连发那样，每条一行、语义上前后衔接（比如先反应、再吐槽、再补一刀）。${addressInstruction}只输出这几行消息本身，一行一条，不要编号、解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`
+    ? `请针对最新这条消息，以你的人设回复，并把回复拆成 2 到 ${SPLIT_REPLY_MAX_PARTS} 条连贯的短消息——就像真人打字时想到哪发到哪、一句接一句连发那样，每条一行、语义上前后衔接（比如先反应、再吐槽、再补一刀）。默认拆成 2~3 条就够了，只有真的意犹未尽、还有话要补时，才用到 4~${SPLIT_REPLY_MAX_PARTS} 条，不要为了凑数硬拆。${addressInstruction}只输出这几行消息本身，一行一条，不要编号、解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`
     : `请针对最新这条消息，以你的人设回复一到两句话，自然接住话题。${addressInstruction}只输出你要发到群里的那句话本身，不要任何解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`;
 
   // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
@@ -448,13 +449,23 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** chatId -> 该群当前共享的「正在输入…」重发定时器，见 startTypingHeartbeat。 */
-const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number }> = new Map();
+const typingHeartbeats: Map<number, { timer: ReturnType<typeof setTimeout>; refCount: number }> = new Map();
+
+/** 取 [TYPING_ACTION_INTERVAL_MIN_MS, TYPING_ACTION_INTERVAL_MAX_MS] 内的随机重发间隔。 */
+function randomTypingIntervalMs(): number {
+  return (
+    TYPING_ACTION_INTERVAL_MIN_MS +
+    Math.random() * (TYPING_ACTION_INTERVAL_MAX_MS - TYPING_ACTION_INTERVAL_MIN_MS)
+  );
+}
 
 /**
  * 在 DeepSeek 生成阶段（耗时不可控，最长可达 REQUEST_TIMEOUT_MS）持续显示
- * 「正在输入…」：立即发一次，此后每隔 TYPING_ACTION_INTERVAL_MS 重发防止过期。
- * 只覆盖生成阶段——连发多条消息之间的停顿单次封顶不超过 Telegram 状态的
- * 过期时间，改由发送循环每次发送后显式补一次 sendTypingAction（见
+ * 「正在输入…」：立即发一次，此后每隔随机的
+ * [TYPING_ACTION_INTERVAL_MIN_MS, TYPING_ACTION_INTERVAL_MAX_MS] 毫秒重发一次
+ * 防止过期（用 setTimeout 递归而非 setInterval，因为每次间隔都要重新取随机
+ * 值）。只覆盖生成阶段——连发多条消息之间的停顿单次封顶不超过 Telegram 状态
+ * 的过期时间，改由发送循环每次发送后显式补一次 sendTypingAction（见
  * generateAndSendReply），不需要为此另开定时器。
  *
  * 同一 chatId 的并发调用（每群冷却仅 AI_REPLY_COOLDOWN_MS，并不保证互斥，
@@ -469,19 +480,24 @@ const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; ref
 function startTypingHeartbeat(chatId: number): () => void {
   let entry = typingHeartbeats.get(chatId);
   if (!entry) {
-    const timer: ReturnType<typeof setInterval> = setInterval(() => {
-      void sendTypingAction(chatId).then((ok: boolean) => {
-        if (ok) return;
-        // 按 timer 身份核对而非只按 chatId 查表：这次失败可能来自已经停止的
-        // 上一代心跳（该 tick 发出时它还活着，回包却晚到了），此时表里
-        // 早被换成同一 chatId 的新一代心跳，绝不能把新的也带着清掉。
-        const current = typingHeartbeats.get(chatId);
-        if (current && current.timer === timer) {
-          clearInterval(current.timer);
-          typingHeartbeats.delete(chatId);
-        }
-      });
-    }, TYPING_ACTION_INTERVAL_MS);
+    const scheduleTick = (): ReturnType<typeof setTimeout> => {
+      const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+        void sendTypingAction(chatId).then((ok: boolean) => {
+          // 按 timer 身份核对而非只按 chatId 查表：这次失败可能来自已经停止的
+          // 上一代心跳（该 tick 发出时它还活着，回包却晚到了），此时表里
+          // 早被换成同一 chatId 的新一代心跳，绝不能把新的也带着清掉。
+          const current = typingHeartbeats.get(chatId);
+          if (!current || current.timer !== timer) return;
+          if (!ok) {
+            typingHeartbeats.delete(chatId);
+            return;
+          }
+          current.timer = scheduleTick();
+        });
+      }, randomTypingIntervalMs());
+      return timer;
+    };
+    const timer: ReturnType<typeof setTimeout> = scheduleTick();
     entry = { timer, refCount: 0 };
     typingHeartbeats.set(chatId, entry);
     void sendTypingAction(chatId);
@@ -495,7 +511,7 @@ function startTypingHeartbeat(chatId: number): () => void {
     const current = typingHeartbeats.get(chatId);
     if (!current) return; // 已经因重发失败被提前清掉
     if (--current.refCount <= 0) {
-      clearInterval(current.timer);
+      clearTimeout(current.timer);
       typingHeartbeats.delete(chatId);
     }
   };
