@@ -186,9 +186,7 @@ function ensureVerificationStarted(
       if (existing.kicked || existing.exempt) return;
       clearTimeout(existing.timeout);
       pendingVerifications.delete(key);
-      if (existing.reminderMessageId !== undefined) {
-        void deleteMessage(chatId, existing.reminderMessageId, joinVerificationApi);
-      }
+      deletePendingReminders(chatId, existing);
     }
     pendingVerifications.set(key, {
       chatId,
@@ -281,10 +279,8 @@ function ensureVerificationStarted(
           if (current === pending) {
             clearTimeout(pending.timeout);
             pendingVerifications.delete(key);
-            // 撤销已发送的验证按钮提醒消息
-            if (pending.reminderMessageId !== undefined) {
-              void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
-            }
+            // 撤销已发送的验证提醒消息（原始 + 回复式补发）
+            deletePendingReminders(chatId, pending);
             // 插入免验证占位记录，防止后续并发事件（如服务消息）重复触发验证
             pendingVerifications.set(key, {
               chatId,
@@ -301,6 +297,11 @@ function ensureVerificationStarted(
       }
     })();
   }
+
+  // 评论先到的入群在上面消费 recentComment 时已补发过锚定评论的提醒，
+  // 原始独立提醒不必再发——发出去也会因 reminderSuperseded 在落地时被
+  // 立即自删，白占两次限流配额，还会在群里闪一下。
+  if (pending.reminderSuperseded) return;
 
   // 提醒消息不等待发送完成：它经过限流的 joinVerificationApi，真实刷群
   // 场景下若在这里 await，同一波入群投递会逐个排队等发消息，可能导致
@@ -452,6 +453,22 @@ function resendReminderReplyingTo(chatId: number, userId: number, targetMessageI
 }
 
 /**
+ * 删除某待验证记录名下已落地的提醒消息：原始独立提醒与回复式补发提醒
+ * （若有）。原提醒被取代（reminderSuperseded）后 reminderMessageId 已置空、
+ * 活着的是 replyReminderMessageId，所有撤销验证的路径都必须两个一起删，
+ * 否则带按钮的提醒会成为孤儿永远留在群里。还没落地的不用管——其回填
+ * 回调发现验证记录已被替换/删除时会自删。
+ */
+function deletePendingReminders(chatId: number, pending: PendingVerification): void {
+  if (pending.reminderMessageId !== undefined) {
+    void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
+  }
+  if (pending.replyReminderMessageId !== undefined) {
+    void deleteMessage(chatId, pending.replyReminderMessageId, joinVerificationApi);
+  }
+}
+
+/**
  * 在频道评论区留言的成员免验证：在关联频道的帖子下留言本身就是真人操作
  * （Telegram 正因这次留言才把 TA 自动拉进讨论群），不需要再点按钮自证——
  * 而且 TA 人在频道那侧的评论界面，多半根本看不到群里的验证按钮，硬要求
@@ -465,9 +482,7 @@ function passVerificationForChannelComment(chatId: number, userId: number): void
   if (!pending || pending.kicked || pending.exempt) return;
 
   clearTimeout(pending.timeout);
-  if (pending.reminderMessageId !== undefined) {
-    void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
-  }
+  deletePendingReminders(chatId, pending);
   // 覆盖为豁免占位（同管理员拉人免验证）：提醒消息若还在限流队列里没落地，
   // 其回填回调查到记录已被替换，会把迟到的提醒自删。
   pendingVerifications.set(key, {
@@ -531,14 +546,13 @@ function handleTrackedMessage(msg: TrackedChatMessage): void {
       passVerificationForChannelComment(msg.chatId, msg.userId);
       return;
     }
-    resendReminderReplyingTo(msg.chatId, msg.userId, msg.messageId, true);
-    trackPendingMessage(msg.chatId, msg.userId, msg.messageId);
-    return;
   }
 
+  // 楼中楼回复不豁免、普通发言更不豁免：消息照常落进追踪，且待验证成员
+  // 开口即把验证提醒补发为回复 TA 消息的形式（楼中楼进评论线程并重置
+  // 计时，普通发言只改锚），原独立提醒随之删除。
   trackPendingMessage(msg.chatId, msg.userId, msg.messageId);
-  // 待验证成员在群里正常发言（不是评论区活动）：改锚验证提醒、删除原提醒。
-  resendReminderReplyingTo(msg.chatId, msg.userId, msg.messageId, false);
+  resendReminderReplyingTo(msg.chatId, msg.userId, msg.messageId, inCommentThread);
 }
 
 /**
