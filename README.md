@@ -9,6 +9,7 @@
   - `/r_copy` — 复读并按字形簇反转文本
   - `/nya_copy` — 复读并在文本末尾追加 " 喵~"
   - `/ja_copy` — 复读并翻译为日语（基于 Google Cloud Translate）
+  - `/steal_icon` — 只把目标的头像偷来设为机器人头像，不开启复读（目标指定方式与 `/copy` 一致，共用 copy 类命令冷却）
   - `/stop_copy` — 停止当前复读
   - `/kick` — 将目标移出群聊并永久封禁（仅白名单用户可用）
 - **消息反应同步**：复读目标消息收到的 reaction 会同步复制到复读出来的消息上。
@@ -71,6 +72,8 @@ src/
     reactionSync.ts        # 同步复制目标的表情反应
   commands/             # 显式指令处理
     copy.ts                # /copy 系列与 /stop_copy
+    copyShared.ts          # copy 类命令的公共零件（冷却检查、目标解析、后台偷头像）
+    stealIcon.ts           # /steal_icon 只偷头像不复读
     quiet.ts               # /quiet 与 /unquiet
     kick.ts                # /kick（白名单限定，踢出并封禁）
     balance.ts             # /balance 查询 DeepSeek 余额

@@ -1,13 +1,10 @@
-import { logger } from "../infra/logger";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "../types";
 import { getOrCreateChatState, saveState, saveUsersFile } from "../infra/storage";
-import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
+import { sendMessage } from "../infra/telegram";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
-import { resolveReplyTarget } from "../users/senderIdentity";
-import { PRIVILEGED_USERS_ID } from "../infra/config";
-import { COPY_COOLDOWN_MS } from "../consts/commands";
+import { rejectIfOnCopyCooldown, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
 
 /**
  * 处理 /copy、/r_copy、/nya_copy 和 /ja_copy 指令。目标既可以通过 @username
@@ -29,56 +26,10 @@ export async function handleCopyCommand(
   const fromUser = ctx.from;
   const state: ChatState = getOrCreateChatState(chatStates, chatId);
 
-  // 全局共享一份 lastCopyTime 冷却时钟：只要不是白名单用户触发，任何 copy 类
-  // 命令（不管是换目标、重复同一个目标，还是回复消息触发）一律先查时间，
-  // 不再区分"是不是在换目标"——冷却没到直接拦，比之前只在切换目标时才检查更简单可靠。
-  const isExempted: boolean = !!fromUser && PRIVILEGED_USERS_ID.includes(fromUser.id);
-  if (!isExempted && state.lastCopyTime) {
-    const elapsed: number = Date.now() - state.lastCopyTime;
-    if (elapsed < COPY_COOLDOWN_MS) {
-      const remainingMs: number = COPY_COOLDOWN_MS - elapsed;
-      const remainingMinutes: number = Math.floor(remainingMs / 60000);
-      const remainingSeconds: number = Math.ceil((remainingMs % 60000) / 1000);
-      const timeStr: string = remainingMinutes > 0
-        ? `${remainingMinutes} 分 ${remainingSeconds} 秒`
-        : `${remainingSeconds} 秒`;
-      const replyText: string = `急什么呀笨蛋，还要等 ${timeStr} 才能用 copy 类命令哦，乖乖等着吧♡`;
-      await sendMessage(chatId, replyText, messageId);
-      return;
-    }
-  }
+  if (await rejectIfOnCopyCooldown(state, fromUser, chatId, messageId)) return;
 
-  // 回复目标的消息来 /copy 优先于参数里的 @username：这样即使对方没有公开
-  // username、或者本天才还没缓存过 TA（比如 privacy mode 没关导致漏听），
-  // 只要能回复到 TA 发的一条消息就能直接锁定目标。
-  const replyTarget: CachedUser | undefined = resolveReplyTarget(ctx.msg as any);
-
-  let targetUser: CachedUser | undefined = replyTarget;
-  let rawUsername: string | undefined;
-
-  if (!targetUser) {
-    const usernameMatch = ctx.match.trim().match(/^@?([a-zA-Z0-9_]+)/);
-    if (!usernameMatch) {
-      const replyText: string = `笨蛋，要么 /copy @username，要么直接回复 TA 的一条消息再 /copy，本天才总得知道杂鱼是谁吧♡`;
-      await sendMessage(chatId, replyText, messageId);
-      return;
-    }
-    rawUsername = usernameMatch[1]!;
-    targetUser = users[rawUsername.toLowerCase()];
-  }
-
-  if (!targetUser) {
-    const replyText: string = `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 /copy 呀♡`;
-    await sendMessage(chatId, replyText, messageId);
-    return;
-  }
-
-  // 不能把本天才自己设成复制目标，否则复读会自己套自己没完没了
-  if (targetUser.id === ctx.me.id) {
-    const replyText: string = `笨蛋，本天才怎么可能盯上自己呀♡`;
-    await sendMessage(chatId, replyText, messageId);
-    return;
-  }
+  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, users, "/copy");
+  if (!targetUser) return;
 
   // 检查是否已经在复制这个目标——保证"同一时间只能复制一个人"
   if (state.isCopying && state.copiedUserId !== null) {
@@ -117,20 +68,13 @@ export async function handleCopyCommand(
   const startText: string = `正在把 ${targetLabel} 的脸皮扒下来当本天才的头像哦${describeCopyModeEffect(mode)}，杂鱼乖乖等一下~♡`;
   await sendMessage(chatId, startText, messageId);
 
-  // 头像复制放在后台执行，不阻塞主消息处理：state.isCopying 已经写入，
-  // 复读逻辑立即生效；即使头像抓取失败或耗时很久，也不会卡住后续消息的复读。
-  void (async (): Promise<void> => {
-    const photoUpdated: boolean = await copyUserProfilePhoto(targetUser.id, !!targetUser.isChannel, targetUser.username);
-
-    let resultText: string = `嘿嘿，${targetLabel} 的脸已经被本天才偷走啦，杂鱼♡`;
-    if (!photoUpdated) {
-      resultText = `啧，修改头像失败了呢（可能是 TA 没设置公开头像，或者本天才换头像太频繁被限流了）。不过没关系，本天才依然要开始疯狂复读 ${targetLabel} 的消息啦，杂鱼♡`;
-    }
-
-    await sendMessage(chatId, resultText);
-  })().catch((error: unknown) => {
-    logger.error("Error in background avatar copy task:", error);
-  });
+  // 头像复制放在后台执行：state.isCopying 已经写入，复读逻辑立即生效。
+  stealAvatarInBackground(
+    chatId,
+    targetUser,
+    `嘿嘿，${targetLabel} 的脸已经被本天才偷走啦，杂鱼♡`,
+    `啧，修改头像失败了呢（可能是 TA 没设置公开头像，或者本天才换头像太频繁被限流了）。不过没关系，本天才依然要开始疯狂复读 ${targetLabel} 的消息啦，杂鱼♡`
+  );
 }
 
 /**

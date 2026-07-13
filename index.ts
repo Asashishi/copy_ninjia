@@ -3,7 +3,7 @@ import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/infra/storage";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleQuietCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
+import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { initAiChat } from "./src/aiChat";
 import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";
@@ -96,6 +96,7 @@ async function main(): Promise<void> {
   bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "reverse"));
   bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "nya"));
   bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "ja"));
+  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx, users, chatStates, usersData));
   bot.command("stop_copy", (ctx) => handleStopCommand(ctx, chatStates, usersData));
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.command("balance", (ctx) => handleBalanceCommand(ctx));
@@ -119,6 +120,7 @@ async function main(): Promise<void> {
       { command: "r_copy", description: "复读并反转文本" },
       { command: "nya_copy", description: "复读并加喵~" },
       { command: "ja_copy", description: "复读并翻译为日语" },
+      { command: "steal_icon", description: "只偷头像，不复读" },
       { command: "stop_copy", description: "停止当前的复读" },
       { command: "kick", description: "踢出群聊并封禁（仅白名单用户可用）" },
       { command: "balance", description: "查询 DeepSeek 账户余额" },

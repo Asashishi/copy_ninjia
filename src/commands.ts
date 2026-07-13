@@ -3,6 +3,7 @@
  * 这里接线，不直接触及内部模块。
  */
 export { handleCopyCommand, handleStopCommand } from "./commands/copy";
+export { handleStealIconCommand } from "./commands/stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./commands/quiet";
 export { handleKickCommand } from "./commands/kick";
 export { handleBalanceCommand } from "./commands/balance";
