@@ -5,10 +5,11 @@ import { LinkedQueue } from "../libs/linkedQueue";
 import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_REPLY_COOLDOWN_MS,
-  BUFFER_SIZE,
-  CONTEXT_SIZE,
+  COMPACT_BATCH_SIZE,
   DEEPSEEK_API_URL,
   DEEPSEEK_MODEL,
+  HOT_CONTEXT_SIZE,
+  MAX_SUMMARY_ROUNDS,
   MAX_TOOL_ROUNDS,
   RATE_LIMIT_LONG_MAX_TRIGGERS,
   RATE_LIMIT_LONG_WINDOW_MS,
@@ -18,9 +19,18 @@ import {
   REQUEST_TIMEOUT_MS,
   SPLIT_REPLY_MAX_PARTS,
   SPLIT_REPLY_PROBABILITY,
+  SUMMARY_MAX_CHARS,
   TIME_INTENT_PATTERN,
 } from "../consts/aiChat";
-import { chatBuffers, lastReplyTimes, longTriggerTimes, rateLimitNoticeTimes, triggerTimes } from "../cache/aiChatWorker";
+import {
+  chatBuffers,
+  chatSummaries,
+  compactionChains,
+  lastReplyTimes,
+  longTriggerTimes,
+  rateLimitNoticeTimes,
+  triggerTimes,
+} from "../cache/aiChatWorker";
 import type { BufferedMessage } from "../types";
 import { maybeAddReaction } from "../ai/reactions";
 import { maybeSendStickerReply } from "../ai/stickers";
@@ -42,6 +52,12 @@ import type { AiBotInfo, AiChatWorkerMessage } from "../types";
  * AI 闲聊回复本体：把本群最近的对话记录喂给 DeepSeek（OpenAI 兼容的
  * /chat/completions 接口），生成一条人设化回复。人设文本存放在仓库根目录
  * 的 prompt/persona.txt，修改人设不需要碰代码。
+ *
+ * 中期记忆：逐字缓存只保留热上下文（HOT_CONTEXT_SIZE，热 50 + 镜像 50），
+ * 每积满 COMPACT_BATCH_SIZE 条超出的冷消息就摘出最旧一批，异步交给
+ * DeepSeek 压缩成一条摘要（summarizeBatch），每群滚动保留最多
+ * MAX_SUMMARY_ROUNDS 轮（4 轮 × 50 条 ≈ 200 条冷历史）。拼上下文时摘要
+ * 作为背景段落放在逐字记录之前，模型因此能记住约 300 条跨度的对话。
  */
 
 declare var self: Worker;
@@ -83,9 +99,90 @@ function recordChatMessage(chatId: number, id: number, firstName: string, lastNa
     chatBuffers.set(chatId, buf);
   }
   buf.push({ id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
-  while (buf.size > BUFFER_SIZE) {
-    buf.shift();
+  // 超出热上下文的冷消息积满一批就触发一轮压缩：同步摘出最旧一批（缓存
+  // 立刻回到 HOT_CONTEXT_SIZE 条，占用有硬上界），摘要生成则是异步的——
+  // 即使 AI 总结失败，这批消息也已出队，只是那段中期记忆缺失，不回灌。
+  if (buf.size >= HOT_CONTEXT_SIZE + COMPACT_BATCH_SIZE) {
+    const batch: BufferedMessage[] = [];
+    while (batch.length < COMPACT_BATCH_SIZE) {
+      const oldest: BufferedMessage | undefined = buf.shift();
+      if (!oldest) break;
+      batch.push(oldest);
+    }
+    scheduleCompaction(chatId, batch);
   }
+}
+
+/**
+ * 把一轮待压缩的冷消息挂到该群的压缩串行链上。链保证摘要严格按时间顺序
+ * 入队——洪峰下第二轮压缩可能在第一轮的网络调用返回前就触发，不串行的话
+ * 摘要会乱序。compactBatch 自身兜错，链永不 reject。
+ */
+function scheduleCompaction(chatId: number, batch: BufferedMessage[]): void {
+  const prev: Promise<void> = compactionChains.get(chatId) ?? Promise.resolve();
+  compactionChains.set(chatId, prev.then(() => compactBatch(chatId, batch)));
+}
+
+/** 执行一轮压缩：AI 总结一批冷消息并把摘要滚入该群的中期记忆队列。 */
+async function compactBatch(chatId: number, batch: BufferedMessage[]): Promise<void> {
+  try {
+    const summary: string | null = await summarizeBatch(batch);
+    if (!summary) {
+      logger.error(`AI 压缩失败：chat ${chatId} 的 ${batch.length} 条冷消息未生成摘要，这段中期记忆缺失。`);
+      return;
+    }
+    let queue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
+    if (!queue) {
+      queue = new LinkedQueue<string>();
+      chatSummaries.set(chatId, queue);
+    }
+    queue.push(summary);
+    while (queue.size > MAX_SUMMARY_ROUNDS) {
+      queue.shift();
+    }
+  } catch (error: unknown) {
+    logger.error("Error in chat compaction task:", error);
+  }
+}
+
+/**
+ * 调 DeepSeek 把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
+ * 人设、不带工具），产出压成单行并截断——摘要虽是模型生成的，但源头是
+ * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
+ */
+async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> {
+  const selfNote: string = botInfo
+    ? `注意：[id:${botInfo.id}] 是群里的聊天机器人「${botInfo.first_name}」本人的发言，摘要里请以「${botInfo.first_name}」称呼它。\n\n`
+    : "";
+  const message: any = await requestCompletion({
+    model: DEEPSEEK_MODEL,
+    messages: [
+      {
+        role: "system",
+        content:
+          "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份。" +
+          "请把这段记录压缩成一段简洁的摘要，保留：聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
+          "只输出摘要正文本身（一段话，200 字以内），不要任何前缀、解释、列表符号或代码块。",
+      },
+      { role: "user", content: selfNote + batch.map(formatLine).join("\n") },
+    ],
+    stream: false,
+    temperature: 0.6,
+    max_tokens: 512,
+  });
+  const content: string | undefined = message?.content;
+  if (!content) return null;
+  const sanitized: string = sanitizeInline(content);
+  if (!sanitized) return null;
+  if (sanitized.length <= SUMMARY_MAX_CHARS) return sanitized;
+  let truncated: string = sanitized.slice(0, SUMMARY_MAX_CHARS);
+  // slice 按 UTF-16 码元截断，若恰好切在代理对中间（emoji 等），去掉孤立的
+  // 高位代理，免得一个乱码字符混进之后每次回复的 prompt。
+  const lastCode: number = truncated.charCodeAt(truncated.length - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
 }
 
 /** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
@@ -117,7 +214,9 @@ interface UserContentOptions {
 }
 
 /**
- * 把某群的滚动缓存里最近 CONTEXT_SIZE 条拼装成给模型的用户消息内容。
+ * 把某群的对话上下文拼装成给模型的用户消息内容：先是中期记忆摘要段
+ * （若有，最多 MAX_SUMMARY_ROUNDS 轮，从旧到新），再是逐字聊天记录
+ * （整个缓存，100 ~ 149 条，见 HOT_CONTEXT_SIZE 的注释）。
  * @param chatId 群聊 ID。
  * @param selfInfo 机器人自己的账号身份（见 botInfo），用于转录里的自我认知。
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
@@ -127,7 +226,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
-  const recent: BufferedMessage[] = buf.last(CONTEXT_SIZE);
+  const recent: BufferedMessage[] = buf.last(HOT_CONTEXT_SIZE + COMPACT_BATCH_SIZE);
   const lines: string[] = recent.map(formatLine);
   if (repliedBotText) {
     // 同样压成单行：这段文本虽是机器人自己说过的话，保持转录「一行一条」的
@@ -158,10 +257,23 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
     `记录里标着这个 id 的行是你自己之前说过的话，别把它们当成别人的发言；` +
     `消息里 @ 这个用户名、或回复你的消息，都是在跟你说话。`;
 
+  // 中期记忆段：更早的冷历史被压缩成的摘要（每轮 50 条，从旧到新），放在
+  // 逐字记录之前作为背景。摘要入队时已压成单行（见 summarizeBatch），
+  // 「一行一条」的防伪造结构在这一段同样成立。
+  const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
+  const summaries: string[] = summaryQueue ? summaryQueue.last(MAX_SUMMARY_ROUNDS) : [];
+  const summaryBlock: string =
+    summaries.length > 0
+      ? "在下方聊天记录之前，更早的对话已被压缩成如下摘要（按时间从旧到新），是你对这个群的中期记忆——延续话题、称呼和梗时可以参考；摘要与下方逐字记录冲突时，以逐字记录为准：\n" +
+        summaries.map((s: string, i: number) => `${i + 1}. ${s}`).join("\n") +
+        "\n\n"
+      : "";
+
   return (
     "以下是本群最近的聊天记录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
     selfIdentity +
     "\n\n" +
+    summaryBlock +
     lines.join("\n") +
     "\n\n" +
     replyInstruction
@@ -177,6 +289,41 @@ function getLatestMessage(chatId: number): BufferedMessage | undefined {
 /** 是否在问时间/日期（见 consts/aiChat.ts 的 TIME_INTENT_PATTERN 注释）。 */
 function isTimeRelatedQuery(text: string): boolean {
   return TIME_INTENT_PATTERN.test(text);
+}
+
+/**
+ * DeepSeek /chat/completions 的底层收发：带超时、错误统一记日志。回复
+ * 流水线（callDeepSeek 的工具往返循环）与冷消息压缩（summarizeBatch）共用。
+ * @param body 完整请求体（model/messages/tools 等由调用方拼好）。
+ * @returns choices[0].message；请求失败、超时或响应异常时返回 null。
+ */
+async function requestCompletion(body: Record<string, unknown>): Promise<any | null> {
+  const controller: AbortController = new AbortController();
+  const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response: Response = await fetch(DEEPSEEK_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      logger.error(`DeepSeek API error: ${response.status} ${await response.text()}`);
+      return null;
+    }
+
+    const data: any = await response.json();
+    return data?.choices?.[0]?.message ?? null;
+  } catch (error: unknown) {
+    logger.error("Error calling DeepSeek API:", error);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -200,44 +347,14 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
   ];
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const controller: AbortController = new AbortController();
-    const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-    let message: any;
-    try {
-      const body: Record<string, unknown> = {
-        model: DEEPSEEK_MODEL,
-        messages,
-        tools: TOOL_DEFINITIONS,
-        stream: false,
-        temperature: 1.2,
-        max_tokens: 4096,
-      };
-
-      const response: Response = await fetch(DEEPSEEK_API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        logger.error(`DeepSeek API error: ${response.status} ${await response.text()}`);
-        return null;
-      }
-
-      const data: any = await response.json();
-      message = data?.choices?.[0]?.message;
-    } catch (error: unknown) {
-      logger.error("Error calling DeepSeek API:", error);
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
-
+    const message: any = await requestCompletion({
+      model: DEEPSEEK_MODEL,
+      messages,
+      tools: TOOL_DEFINITIONS,
+      stream: false,
+      temperature: 1.2,
+      max_tokens: 4096,
+    });
     if (!message) return null;
 
     const toolCalls: any[] | undefined = message.tool_calls;

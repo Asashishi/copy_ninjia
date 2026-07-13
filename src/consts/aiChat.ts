@@ -13,10 +13,29 @@ export const DEEPSEEK_API_URL: string = "https://api.deepseek.com/chat/completio
 export const DEEPSEEK_MODEL: string = "deepseek-v4-flash";
 export const REQUEST_TIMEOUT_MS: number = 60_000;
 
-/** 每个群聊在内存里保留的最近消息条数（Bot API 无法拉历史，只能自己滚动缓存）。 */
-export const BUFFER_SIZE: number = 75;
-/** 生成回复时，从缓存里取最近多少条作为上下文喂给模型（与 BUFFER_SIZE 相等即整个缓存全喂）。 */
-export const CONTEXT_SIZE: number = 75;
+/**
+ * 热上下文条数：喂给模型的逐字聊天记录的下限（热窗口 50 + 镜像窗口 50）。
+ * 缓存超过此数的部分是「等待压缩」的存量，也一并喂给模型——逐字上下文
+ * 实际在 100 ~ 149 条之间浮动。注意被摘出压缩的那批在摘要生成期间（一次
+ * DeepSeek 调用，通常几秒）短暂地既不在逐字上下文也不在摘要里；压缩失败
+ * 则该段记忆永久缺失（刻意不回灌，见 recordChatMessage 的注释）。
+ * （Bot API 无法拉历史，缓存只能边收边攒。）
+ */
+export const HOT_CONTEXT_SIZE: number = 100;
+/**
+ * 每累积满这么多条超出热上下文的新消息，就触发一轮压缩：把缓存最旧的
+ * 这一批摘出来，交给模型 AI 总结成一条摘要（见 workers/aiChatWorker.ts 的
+ * summarizeBatch），作为该群的中期记忆。
+ */
+export const COMPACT_BATCH_SIZE: number = 50;
+/**
+ * 每群最多保留几轮压缩摘要，新一轮生成时超出就滑动移除最旧一轮。
+ * 4 轮 × 每轮 50 条 = 相当于 200 条冷历史的中期记忆；加上逐字热上下文，
+ * 模型可感知的对话跨度约 300 条。
+ */
+export const MAX_SUMMARY_ROUNDS: number = 4;
+/** 单条摘要的硬性长度上限（字符），防摘要模型话痨撑爆回复上下文。 */
+export const SUMMARY_MAX_CHARS: number = 600;
 /** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
 export const SPLIT_REPLY_PROBABILITY: number = 1 / 3;
 /** 连发模式下最多发几条，防止模型话痨刷屏。 */
