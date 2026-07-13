@@ -4,6 +4,7 @@ import type { CachedUser, ChatState } from "../types";
 import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
+import { formatMinSec } from "../libs/time";
 import { resolveCommandTarget } from "./targetResolution";
 
 /**
@@ -29,13 +30,7 @@ export async function rejectIfOnCopyCooldown(
   const elapsed: number = Date.now() - state.lastCopyTime;
   if (elapsed >= COPY_COOLDOWN_MS) return false;
 
-  const remainingMs: number = COPY_COOLDOWN_MS - elapsed;
-  const remainingMinutes: number = Math.floor(remainingMs / 60000);
-  const remainingSeconds: number = Math.ceil((remainingMs % 60000) / 1000);
-  const timeStr: string = remainingMinutes > 0
-    ? `${remainingMinutes} 分 ${remainingSeconds} 秒`
-    : `${remainingSeconds} 秒`;
-  await sendMessage(chatId, `急什么呀笨蛋，还要等 ${timeStr} 才能用 copy 类命令哦，乖乖等着吧♡`, messageId);
+  await sendMessage(chatId, `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`, messageId);
   return true;
 }
 

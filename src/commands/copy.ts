@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState, CopyMode, UsersFileSchema } from "../types";
-import { getOrCreateChatState, saveState, saveUsersFile } from "../infra/storage";
+import { getOrCreateChatState, saveChatUsersEntry, saveState } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
@@ -31,18 +31,12 @@ export async function handleCopyCommand(
   const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, users, "/copy");
   if (!targetUser) return;
 
-  // 检查是否已经在复制这个目标——保证"同一时间只能复制一个人"
+  // 已经在复读时不接新目标——保证"同一时间只能复制一个人"，重复点同一个
+  // 目标和想换人分别嘲讽。
   if (state.isCopying && state.copiedUserId !== null) {
-    if (state.copiedUserId === targetUser.id) {
-      const replyText: string = `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`;
-      await sendMessage(chatId, replyText, messageId);
-      return;
-    }
-  }
-
-  // 检查是否已经在复制另一个目标，避免同时复制多人
-  if (state.isCopying && state.copiedUserId !== null) {
-    const replyText: string = `本天才手上已经有猎物啦，想换人的话先 /stop_copy 呀，笨蛋♡`;
+    const replyText: string = state.copiedUserId === targetUser.id
+      ? `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`
+      : `本天才手上已经有猎物啦，想换人的话先 /stop_copy 呀，笨蛋♡`;
     await sendMessage(chatId, replyText, messageId);
     return;
   }
@@ -57,11 +51,7 @@ export async function handleCopyCommand(
   await saveState(chatStates);
 
   // 同步更新并保存到 users.json（仅更新本群聊自己的条目，不影响其他群聊）
-  usersFileData[String(chatId)] = {
-    lastCopyTime: state.lastCopyTime || 0,
-    copiedUser: targetUser,
-  };
-  await saveUsersFile(usersFileData);
+  await saveChatUsersEntry(usersFileData, chatId, state.lastCopyTime, targetUser);
 
   // 发送过渡反馈
   const targetLabel: string = formatUserLabel(targetUser);
@@ -101,11 +91,7 @@ export async function handleStopCommand(
   await saveState(chatStates);
 
   // 同步更新并保存到 users.json（仅更新本群聊自己的条目），将当前 copiedUser 置为 null
-  usersFileData[String(chatId)] = {
-    lastCopyTime: state.lastCopyTime || 0,
-    copiedUser: null,
-  };
-  await saveUsersFile(usersFileData);
+  await saveChatUsersEntry(usersFileData, chatId, state.lastCopyTime, null);
 
   await sendMessage(chatId, `哼，不玩了，本天才先歇一下~杂鱼♡`, messageId);
 }

@@ -1,7 +1,5 @@
-import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "./consts/workerSupervisor";
-import { logger, relayLogMessage } from "./infra/logger";
-import { createRestartThrottle } from "./libs/workerSupervisor";
-import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage, ForwardedLog } from "./types";
+import { superviseWorker } from "./libs/supervisedWorker";
+import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage } from "./types";
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、冷却与
@@ -10,64 +8,24 @@ import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage, ForwardedLog } from
  * 执行；主线程只把「记录一条群消息」「触发一次回复」两类事件投递过去，
  * 让 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
+ *
+ * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
  */
-
-// Worker 崩溃自愈的节流，逻辑与 logger.ts 的落盘 Worker 一致：短时间内
-// 反复崩溃就放弃自愈（多半是代码本身有 bug，重启也没用），只是安静地
-// 丢弃后续消息，不让 AI 闲聊功能的崩溃循环拖累主线程；崩溃很稀疏则每次
-// 都正常重启。参数与阈值定义见 consts/workerSupervisor.ts。
-const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
 
 // 重启后新 Worker 不知道机器人自己的账号身份，需要重放最近一次 init 消息
 // （见 initAiChat）；重启发生在 initAiChat 调用之前的话就没有可重放的，
 // 新 Worker 等本来就该来的那次 initAiChat 调用即可。
 let lastInit: AiInitMessage | null = null;
 
-// Worker 在模块加载时启动一次。unref 让它不阻止进程退出——停机时在途的
-// AI 回复任务随之丢弃，与旧实现（主线程里 fire-and-forget 的 promise 随
-// 进程退出丢弃）行为一致。为 null 代表自愈已放弃（见 onerror 里的兜底
-// 分支），post() 此时安静地丢弃消息，不能再对着一个已终止的 Worker
-// postMessage——Bun 对已终止的 Worker 调用 postMessage 会同步抛
-// InvalidStateError，recordChatMessage 又是每条群消息都会调用一次，不
-// 判空的话放弃自愈后反而变成每条消息都抛未捕获异常。
-let worker: Worker | null = createWorker();
-
-function createWorker(): Worker {
-  const w: Worker = new Worker(new URL("./workers/aiChatWorker.ts", import.meta.url).href);
-  w.unref();
-  // Worker 线程里的 logger 处于转发模式（见 logger.ts 模块头注释）：error
-  // 日志包着 ForwardedLog 信封回传，这里转投主线程唯一的落盘线程。
-  w.onmessage = (event: MessageEvent<ForwardedLog>) => {
-    if (event.data && typeof event.data === "object" && "__log" in event.data) {
-      relayLogMessage(event.data.__log);
-    }
-  };
-  w.onerror = (event: ErrorEvent) => {
-    logger.error("AI Worker errored, restarting:", event.message || event.error || event);
-    // Bun 里 Worker 内部一旦抛出未捕获异常（同步或 async 均如此，已实测
-    // 验证）就会直接终止该 Worker 线程，因此这里不需要（实际上也没法）
-    // 再手动 terminate，直接换一个新实例顶上即可。
-    if (restartThrottle.shouldGiveUp()) {
-      logger.error(
-        `AI Worker restarted ${WORKER_MAX_RESTARTS} times within ${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
-        `AI chat feature will silently stay disabled until the process restarts.`
-      );
-      worker = null;
-      return;
-    }
-    const next: Worker = createWorker();
-    worker = next;
-    // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
-    if (lastInit) {
-      next.postMessage(lastInit);
-    }
-  };
-  return w;
-}
-
-function post(message: AiChatWorkerMessage): void {
-  worker?.postMessage(message);
-}
+const { post } = superviseWorker<AiChatWorkerMessage>({
+  url: new URL("./workers/aiChatWorker.ts", import.meta.url).href,
+  label: "AI Worker",
+  giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
+  // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
+  onRespawn: (postToNext) => {
+    if (lastInit) postToNext(lastInit);
+  },
+});
 
 /**
  * 把机器人自己的账号身份注入 AI Worker。须在 bot.init() 之后、runner 开始

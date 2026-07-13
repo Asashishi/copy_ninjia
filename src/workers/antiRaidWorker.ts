@@ -116,6 +116,30 @@ function applyAdminChange(chatId: number, userId: number, isAdmin: boolean): voi
 // —— 入群验证 ——
 
 /**
+ * 写入一个去重占位记录：不是真的在等验证，只是给同一次入群的另一路投递
+ * （chat_member 更新 / new_chat_members 服务消息）留出 LOCKDOWN_KICK_DEDUPE_MS
+ * 的去重窗口，到期自删。exempt（管理员拉人/身份入群、频道评论豁免）防止
+ * 后到的那一路重新开验证窗口；kicked（私密模式下已直接踢出）防止重复
+ * 计数/重复踢人。
+ */
+function setDedupePlaceholder(
+  key: string,
+  chatId: number,
+  userId: number,
+  label: string,
+  flags: { exempt?: boolean; kicked?: boolean }
+): void {
+  pendingVerifications.set(key, {
+    chatId,
+    userId,
+    label,
+    messageIds: [],
+    timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
+    ...flags,
+  });
+}
+
+/**
  * 删除某个待验证成员被追踪的所有消息（如果有的话，包括入群公告、机器人的
  * 提醒消息，以及 TA 在等待期间发送的任何内容），将其踢出聊天，并发布一条通知
  * ——此时提到过 TA 的入群公告/提醒消息都已被删除，这条通知是关于谁被移除、
@@ -189,14 +213,7 @@ function ensureVerificationStarted(
       pendingVerifications.delete(key);
       deletePendingReminders(chatId, existing);
     }
-    pendingVerifications.set(key, {
-      chatId,
-      userId: member.id,
-      label: memberLabel(member),
-      messageIds: [],
-      timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
-      exempt: true,
-    });
+    setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { exempt: true });
     // 直接回复频道帖免验证：回帖本身就是真人操作，虽然不点验证按钮，
     // 也照样在帖子底下弹一条欢迎消息，让 TA 在频道侧能看到。
     if (exemptViaChannelComment && recentComment) {
@@ -232,14 +249,7 @@ function ensureVerificationStarted(
   if (activeLockdowns.has(chatId) && !recentComment) {
     // 占位记录：必须在任何网络请求之前同步插入，防止同一次入群的另一路
     // 投递因为查不到 existing 而重新 recordJoin/重新踢一次。
-    pendingVerifications.set(key, {
-      chatId,
-      userId: member.id,
-      label: memberLabel(member),
-      messageIds: [],
-      timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
-      kicked: true,
-    });
+    setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { kicked: true });
 
     void (async (): Promise<void> => {
       if (announcementMessageId !== undefined) {
@@ -288,14 +298,7 @@ function ensureVerificationStarted(
             // 撤销已发送的验证提醒消息（原始 + 回复式补发）
             deletePendingReminders(chatId, pending);
             // 插入免验证占位记录，防止后续并发事件（如服务消息）重复触发验证
-            pendingVerifications.set(key, {
-              chatId,
-              userId: member.id,
-              label: memberLabel(member),
-              messageIds: [],
-              timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
-              exempt: true,
-            });
+            setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { exempt: true });
           }
         }
       } catch (error: unknown) {
@@ -508,14 +511,7 @@ function passVerificationForChannelComment(chatId: number, userId: number, messa
   deletePendingReminders(chatId, pending);
   // 覆盖为豁免占位（同管理员拉人免验证）：提醒消息若还在限流队列里没落地，
   // 其回填回调查到记录已被替换，会把迟到的提醒自删。
-  pendingVerifications.set(key, {
-    chatId,
-    userId,
-    label: pending.label,
-    messageIds: [],
-    timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
-    exempt: true,
-  });
+  setDedupePlaceholder(key, chatId, userId, pending.label, { exempt: true });
   sendChannelCommentWelcome(chatId, pending.label, messageId);
 }
 
@@ -686,6 +682,7 @@ async function triggerLockdown(chatId: number, joinCount: number): Promise<void>
   const placeholder: Lockdown = {
     originalPermissions: {},
     restoreTimeout: scheduleRestore(chatId, LOCKDOWN_MS),
+    permissionsApplied: false,
   };
   activeLockdowns.set(chatId, placeholder);
 
@@ -693,6 +690,13 @@ async function triggerLockdown(chatId: number, joinCount: number): Promise<void>
     const chat = await joinVerificationApi.getChat(chatId);
     placeholder.originalPermissions = ("permissions" in chat && chat.permissions) || {};
     await joinVerificationApi.setChatPermissions(chatId, { ...placeholder.originalPermissions, can_invite_users: false });
+    placeholder.permissionsApplied = true;
+    // 限制此刻才真正落地：真实刷群下上面两个调用可能在限流队列里排了几分钟，
+    // 占位期的 5 分钟计时可能已耗尽（restoreChat 正以 RESTORE_RETRY_MS 的短
+    // 间隔轮询等着）。从生效时刻重新起算满额 LOCKDOWN_MS，不然锁定可能在
+    // 落地后 30 秒内就被那个轮询解除。
+    clearTimeout(placeholder.restoreTimeout);
+    placeholder.restoreTimeout = scheduleRestore(chatId, LOCKDOWN_MS);
   } catch (error: unknown) {
     clearTimeout(placeholder.restoreTimeout);
     activeLockdowns.delete(chatId);
@@ -723,6 +727,16 @@ async function restoreChat(chatId: number): Promise<void> {
   const lockdown = activeLockdowns.get(chatId);
   if (!lockdown) return;
 
+  // 还在 triggerLockdown 的占位阶段（真实刷群下 getChat/setChatPermissions
+  // 可能在限流队列里排队数分钟，甚至比 LOCKDOWN_MS 还久）：限制根本没落地，
+  // originalPermissions 还是空对象，绝不能拿去"恢复"——那会把全群权限清零。
+  // 稍后重试，等 triggerLockdown 完成（置位 permissionsApplied）或失败自删。
+  if (!lockdown.permissionsApplied) {
+    clearTimeout(lockdown.restoreTimeout);
+    lockdown.restoreTimeout = scheduleRestore(chatId, RESTORE_RETRY_MS);
+    return;
+  }
+
   try {
     await joinVerificationApi.setChatPermissions(chatId, lockdown.originalPermissions);
   } catch (error: unknown) {
@@ -746,9 +760,12 @@ async function restoreChat(chatId: number): Promise<void> {
 function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
   for (const { chatId, originalPermissions } of lockdowns) {
     if (activeLockdowns.has(chatId)) continue;
+    // 镜像里只会出现权限已实际落地的私密模式（lockdown 事件在
+    // setChatPermissions 成功后才发），接管的记录直接视为已生效。
     activeLockdowns.set(chatId, {
       originalPermissions,
       restoreTimeout: scheduleRestore(chatId, LOCKDOWN_MS),
+      permissionsApplied: true,
     });
   }
 }

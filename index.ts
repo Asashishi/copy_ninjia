@@ -34,11 +34,21 @@ async function main(): Promise<void> {
   // state.json 里的 lastCopiedUserId 由 loadState() 读入即可，无需在这里覆盖。
   for (const [chatIdStr, entry] of Object.entries(usersData)) {
     const chatId: number = Number(chatIdStr);
+    // state.json 里本来有没有这个群的条目：有就信它的 isCopying（两个文件
+    // 分两次落盘，/stop_copy 可能只写成了 state.json——此时 users.json 里
+    // 残留的 copiedUser 是陈旧值，绝不能据此把已停掉的复读复活）；没有
+    // （state.json 损坏丢失）才用 users.json 的 copiedUser 推导复读状态，
+    // 不然会停在「有目标但不复读」的中间态（copyMode 无从恢复，退化为
+    // 原样复读）。
+    const hadStateEntry: boolean = chatStates.has(chatId);
     const state: ChatState = getOrCreateChatState(chatStates, chatId);
     state.lastCopyTime = entry.lastCopyTime;
     if (entry.copiedUser) {
       state.copiedUserId = entry.copiedUser.id;
       state.copiedIsChannel = !!entry.copiedUser.isChannel;
+      if (!hadStateEntry) {
+        state.isCopying = true;
+      }
     } else {
       state.copiedUserId = null;
       state.isCopying = false;
@@ -163,7 +173,9 @@ async function main(): Promise<void> {
   });
 
   const stopBot = (): void => {
-    void runner.stop();
+    runner.stop().catch((error: unknown) => {
+      logger.error("Error stopping runner:", error);
+    });
   };
   process.once("SIGINT", stopBot);
   process.once("SIGTERM", stopBot);
@@ -184,6 +196,9 @@ async function main(): Promise<void> {
 main()
   .catch((err: unknown) => {
     logger.error("Unhandled error in bot main runner:", err);
+    // 以非零码退出：不设的话进程会以 0 正常退出，systemd 配 Restart=on-failure
+    // 时启动期的致命错误（状态文件损坏等）就不会触发自动重启。
+    process.exitCode = 1;
   })
   .finally(() => flushLogs());
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才

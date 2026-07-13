@@ -14,6 +14,17 @@ export const DEEPSEEK_MODEL: string = "deepseek-v4-pro";
 export const REQUEST_TIMEOUT_MS: number = 60_000;
 
 /**
+ * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。该模型开着
+ * 「思考模式」，思考内容也计入 max_tokens（usage 的 reasoning_tokens 属于
+ * completion_tokens，实测确认）：上限给小了，额度会在思考阶段就被烧光——
+ * 请求返回 200 但 finish_reason=length、content 为空，表现为静默失败。
+ * 压缩任务曾因 768 的旧上限反复空手而归。max_tokens 只是封顶，按实际用量
+ * 计费，放大上限不增加正常请求的开销。
+ */
+export const REPLY_MAX_TOKENS: number = 8192;
+export const SUMMARY_MAX_TOKENS: number = 4096;
+
+/**
  * 压缩块大小 = 热窗口大小 = 镜像窗口大小。逐字缓存由两个块组成：「热」是
  * 正在累积的最新一块，「镜像」是上一轮攒满时已提交 AI 压缩的那一块——
  * 镜像在自己的摘要生成期间仍整块留在逐字上下文里，等下一块攒满轮换时才

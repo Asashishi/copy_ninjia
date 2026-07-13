@@ -28,11 +28,12 @@ import { pickRandom } from "../libs/random";
  * 尝试为某个发言人占用一次「AI 随机回复」的名额：若 TA 仍在冷却期内则返回
  * false；否则记录本次触发时刻并返回 true。冷却按「群 × 用户」独立计算——
  * key 里拼了 chatId，同一个人在 A 群触发过不影响 TA 在 B 群被随机回复。
+ * key 只用 id、不掺昵称：昵称随时可改，掺进去改个名就能重置冷却。
  * 记录会在冷却期满后自动从 Map 中清理（仅当期间没有更新的记录覆盖它），
  * 避免长期运行下的内存泄漏。
  */
-function tryClaimUserRandomReply(chatId: number, speaker: { id: number; firstName: string; lastName: string }): boolean {
-  const key: string = `${chatId}_${speaker.id}_${speaker.firstName}_${speaker.lastName}`;
+function tryClaimUserRandomReply(chatId: number, speakerId: number): boolean {
+  const key: string = `${chatId}_${speakerId}`;
   const now: number = Date.now();
   const lastTime: number = userRandomReplyTimes.get(key) ?? 0;
   if (now - lastTime < USER_RANDOM_REPLY_COOLDOWN_MS) return false;
@@ -178,7 +179,7 @@ export async function handleIncomingMessage(
     const isRandomTrigger: boolean =
       !isReplyToBot && !isMentioned && !isQuiet &&
       Math.random() < AI_REPLY_PROBABILITY &&
-      tryClaimUserRandomReply(chatId, speaker);
+      tryClaimUserRandomReply(chatId, speaker.id);
 
     if (isReplyToBot || isMentioned || isRandomTrigger) {
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
@@ -200,15 +201,16 @@ export async function handleIncomingMessage(
   // 偶然带出也被打扰。
   // 以 / 开头的是指令（未注册的、或发给其他机器人的指令不会被 bot.command
   // 拦截，会落到这里），与 echoMessage 的「不复读指令消息」保持一致，不触发。
-  if (!state.isCopying && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
+  // 私聊不触发——与 AI 随机插话同理，这些刷存在感的行为都是群聊语境的。
+  if (!isPrivateChat && !state.isCopying && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
     await sendMessage(chatId, "看看", message.message_id);
     return;
   }
 
-  // 没有复读对象时的随机复读。无需担心和其他机器人形成复读循环：Telegram
-  // 保证机器人收不到其他机器人发的消息（官方为防止 bot 互相触发死循环的设计），
-  // 自己发的消息也不会作为更新推送回来。
-  if (!state.isCopying && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
+  // 没有复读对象时的随机复读（私聊不触发，同上）。无需担心和其他机器人形成
+  // 复读循环：Telegram 保证机器人收不到其他机器人发的消息（官方为防止 bot
+  // 互相触发死循环的设计），自己发的消息也不会作为更新推送回来。
+  if (!isPrivateChat && !state.isCopying && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
     const mode: CopyMode | undefined = pickRandom(RANDOM_ECHO_MODES);
     await echoMessage(chatId, message, mode);
   }

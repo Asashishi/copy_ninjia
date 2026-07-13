@@ -62,6 +62,13 @@ export interface Lockdown {
    */
   originalPermissions: ChatPermissions;
   restoreTimeout: ReturnType<typeof setTimeout>;
+  /**
+   * 限制是否已实际落在群上（triggerLockdown 的 setChatPermissions 成功、
+   * originalPermissions 已是取到的真实权限）。false 说明还是占位阶段——
+   * 此时 originalPermissions 是空对象 {}，restoreChat 绝不能拿它去恢复：
+   * setChatPermissions 会把省略的字段全部当 false，等于把全群禁言。
+   */
+  permissionsApplied: boolean;
 }
 
 /** 某群「是否有关联频道」的缓存条目（Worker 线程内存状态），用于评论区判定的按群开关。 */

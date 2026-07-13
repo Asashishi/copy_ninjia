@@ -1,6 +1,6 @@
 import { logger } from "../infra/logger";
 import { GrammyError } from "grammy";
-import { bot } from "../infra/telegram";
+import { bot, logApiError } from "../infra/telegram";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { sleep } from "../libs/sleep";
 import { MAX_ATTEMPTS } from "../consts/reactionQueue";
@@ -48,7 +48,12 @@ export function enqueueReaction(chatId: number, messageId: number, reactions: Co
   }
   pendingTasks.set(key, { chatId, messageId, reactions, updateId, reactedAtUnix, enqueuedAtMs: Date.now() });
   if (!consumingChats.has(chatId)) {
-    void consumeChatQueue(chatId);
+    // applyReaction 内部全捕获，正常不会 reject；这层 catch 只是防御——万一
+    // 将来漏出异常，finally 已保证 consumingChats 清理，这里别让它变成
+    // unhandled rejection。
+    consumeChatQueue(chatId).catch((error: unknown) => {
+      logger.error("Error in reaction queue consumer:", error);
+    });
   }
 }
 
@@ -102,13 +107,9 @@ async function applyReaction(key: string, task: ReactionTask): Promise<void> {
         }
         continue;
       }
-      if (error instanceof GrammyError) {
-        // 目标点完立刻取消时，自定义表情不再「存在于消息上」，这里会收到
-        // 400；属于正常竞态，记录后放弃即可，不影响后续任务。
-        logger.error(`Failed to set message reaction: ${error.error_code} ${error.description}`);
-      } else {
-        logger.error("Error setting message reaction:", error);
-      }
+      // 目标点完立刻取消时，自定义表情不再「存在于消息上」，这里会收到
+      // 400；属于正常竞态，记录后放弃即可，不影响后续任务。
+      logApiError("set message reaction", error);
       return;
     }
   }

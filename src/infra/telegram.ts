@@ -9,6 +9,21 @@ import { AVATAR_FETCH_MAX_ATTEMPTS, AVATAR_FETCH_TIMEOUT_MS } from "../consts/te
 export const bot: Bot = new Bot(BOT_TOKEN);
 
 /**
+ * 统一记录一次 Telegram API 调用失败。GrammyError 的错误详情（比如权限
+ * 不足）都在 description 里，比只看 HTTP 状态更有用，展开记录；其余异常
+ * 原样记录。本文件的各封装共用，也供绕过封装直接调 bot.api 的地方
+ * （如 reactionQueue）使用。
+ * @param action 失败的动作，用于日志文案（如 "send message"）。
+ */
+export function logApiError(action: string, error: unknown): void {
+  if (error instanceof GrammyError) {
+    logger.error(`Failed to ${action}: ${error.error_code} ${error.description}`);
+  } else {
+    logger.error(`Error trying to ${action}:`, error);
+  }
+}
+
+/**
  * 专供入群守卫流程（workers/antiRaidWorker.ts，主线程侧代理为 antiRaid.ts）
  * 使用的独立 API 客户端。该流程可能在
  * 几秒内向同一个群突发大量 send/delete/kick 调用——比如一波人同时入群，或者
@@ -183,11 +198,7 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
     });
     return sent.message_id;
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to send message: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error sending message:", error);
-    }
+    logApiError("send message", error);
     return undefined;
   }
 }
@@ -208,11 +219,7 @@ export async function sendTypingAction(chatId: number, api: Api = bot.api): Prom
     await api.sendChatAction(chatId, "typing");
     return true;
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to send typing action: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error sending typing action:", error);
-    }
+    logApiError("send typing action", error);
     return false;
   }
 }
@@ -229,11 +236,7 @@ export async function answerCallbackQuery(callbackQueryId: string, text?: string
   try {
     await api.answerCallbackQuery(callbackQueryId, { text, show_alert: showAlert });
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to answer callback query: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error answering callback query:", error);
-    }
+    logApiError("answer callback query", error);
   }
 }
 
@@ -249,11 +252,7 @@ export async function sendSticker(chatId: number, fileId: string, api: Api = bot
     await api.sendSticker(chatId, fileId);
     return true;
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to send sticker: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error sending sticker:", error);
-    }
+    logApiError("send sticker", error);
     return false;
   }
 }
@@ -273,11 +272,7 @@ export async function setMessageReaction(chatId: number, messageId: number, emoj
   try {
     await api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }]);
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to set message reaction: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error setting message reaction:", error);
-    }
+    logApiError("set message reaction", error);
   }
 }
 
@@ -292,11 +287,7 @@ export async function deleteMessage(chatId: number, messageId: number, api: Api 
   try {
     await api.deleteMessage(chatId, messageId);
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to delete message: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error deleting message:", error);
-    }
+    logApiError("delete message", error);
   }
 }
 
@@ -309,9 +300,10 @@ export async function deleteMessage(chatId: number, messageId: number, api: Api 
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
  */
 export function deleteMessageAfter(chatId: number, messageId: number, delayMs: number, api: Api = bot.api): void {
+  // unref：这只是清理美化，不值得为它拖住进程停机（停机后消息留着就留着）。
   setTimeout(() => {
     void deleteMessage(chatId, messageId, api);
-  }, delayMs);
+  }, delayMs).unref();
 }
 
 /**
@@ -327,11 +319,9 @@ export async function kickChatMember(chatId: number, userId: number, api: Api = 
     await api.banChatMember(chatId, userId);
     await api.unbanChatMember(chatId, userId, { only_if_banned: true });
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to kick chat member: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error kicking chat member:", error);
-    }
+    // 带上群/用户 id：踢人失败多半是机器人在该群缺封禁权限，不点名群号的话
+    // 没法知道该去哪个群补权限。
+    logApiError(`kick chat member (chat ${chatId}, user ${userId})`, error);
   }
 }
 
@@ -349,11 +339,7 @@ export async function banChatMember(chatId: number, userId: number, api: Api = b
     await api.banChatMember(chatId, userId);
     return true;
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to ban chat member: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error banning chat member:", error);
-    }
+    logApiError(`ban chat member (chat ${chatId}, user ${userId})`, error);
     return false;
   }
 }
@@ -373,11 +359,7 @@ export async function banChatSenderChat(chatId: number, senderChatId: number, ap
     await api.banChatSenderChat(chatId, senderChatId);
     return true;
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      logger.error(`Failed to ban sender chat: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error banning sender chat:", error);
-    }
+    logApiError(`ban sender chat (chat ${chatId}, sender chat ${senderChatId})`, error);
     return false;
   }
 }
@@ -392,11 +374,6 @@ export async function copyMessage(chatId: number, fromChatId: number, messageId:
   try {
     await bot.api.copyMessage(chatId, fromChatId, messageId);
   } catch (error: unknown) {
-    if (error instanceof GrammyError) {
-      // Telegram 的错误详情（比如权限不足）都在 description 里，比只看 HTTP 状态更有用。
-      logger.error(`Failed to copy message: ${error.error_code} ${error.description}`);
-    } else {
-      logger.error("Error copying message:", error);
-    }
+    logApiError("copy message", error);
   }
 }

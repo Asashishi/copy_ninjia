@@ -1,12 +1,11 @@
-import { logger, relayLogMessage } from "./infra/logger";
+import { logger } from "./infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember, ChatPermissions } from "@grammyjs/types";
 import { lockedChats } from "./cache/antiRaid";
 import { loadLockdowns, saveLockdowns } from "./infra/storage";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
-import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "./consts/workerSupervisor";
-import { createRestartThrottle } from "./libs/workerSupervisor";
-import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, ForwardedLog } from "./types";
+import { superviseWorker } from "./libs/supervisedWorker";
+import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "./types";
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
@@ -22,71 +21,48 @@ import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRa
  * 一概不读它，只用于两条恢复路径的 adopt 重放：Worker 崩溃重启后交给
  * 新 Worker，以及（经 lockdowns.json 持久化、由 initAntiRaid 加载）
  * 整个进程重启后交回——权限限制已实际落在群上，不重放就永远无人解锁。
+ *
+ * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
+ * 停机时未完成的验证窗口随线程丢弃（残留按钮点了会得到「已失效」应答）；
+ * 未到期的私密模式则已持久化在 lockdowns.json 里，下次启动重放接管。
  */
 
-// Worker 崩溃自愈的节流，逻辑与 aiChat.ts 一致：短时间内反复崩溃就放弃
-// 自愈（多半是代码本身有 bug，重启也没用），只是安静地丢弃后续消息；
-// 崩溃很稀疏则每次都正常重启。参数与阈值定义见 consts/workerSupervisor.ts。
-const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
+/** 把镜像里仍在生效的私密模式打包成 adopt 消息（两条恢复路径共用）。 */
+function buildAdoptMessage(): AdoptLockdownsMessage {
+  return {
+    type: "adopt",
+    lockdowns: [...lockedChats].map(([chatId, originalPermissions]) => ({ chatId, originalPermissions })),
+  };
+}
 
-// Worker 在模块加载时启动一次。unref 让它不阻止进程退出——停机时未完成的
-// 验证窗口随之丢弃（残留按钮点了会得到「已失效」应答）；未到期的私密模式
-// 则已持久化在 lockdowns.json 里，下次启动由 initAntiRaid 重放接管。
-// 为 null 代表自愈已放弃，post() 此时安静地丢弃消息——
-// 不能再对着一个已终止的 Worker postMessage（Bun 会同步抛 InvalidStateError）。
-let worker: Worker | null = createWorker();
-
-function createWorker(): Worker {
-  const w: Worker = new Worker(new URL("./workers/antiRaidWorker.ts", import.meta.url).href);
-  w.unref();
-  w.onmessage = (event: MessageEvent<ForwardedLog | AntiRaidWorkerEvent>) => {
-    const data = event.data;
-    if (data && typeof data === "object" && "__log" in data) {
-      // Worker 线程里的 logger 处于转发模式（见 logger.ts 模块头注释）：
-      // error 日志包着 ForwardedLog 信封回传，这里转投主线程唯一的落盘线程。
-      relayLogMessage(data.__log);
-      return;
-    }
-    switch (data.type) {
+const { post } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
+  url: new URL("./workers/antiRaidWorker.ts", import.meta.url).href,
+  label: "Anti-raid guard Worker",
+  giveUpConsequence: "join verification and anti-raid features will silently stay disabled until the process restarts.",
+  // Worker 回报的 lockdown/unlock 事件：维护主线程镜像并持久化。
+  onEvent: (event) => {
+    switch (event.type) {
       case "lockdown":
-        lockedChats.set(data.chatId, data.originalPermissions);
+        lockedChats.set(event.chatId, event.originalPermissions);
         void saveLockdowns(lockedChats);
         break;
       case "unlock":
-        lockedChats.delete(data.chatId);
+        lockedChats.delete(event.chatId);
         void saveLockdowns(lockedChats);
         break;
     }
-  };
-  w.onerror = (event: ErrorEvent) => {
-    logger.error("Anti-raid guard Worker errored, restarting:", event.message || event.error || event);
-    // Bun 里 Worker 内部一旦抛出未捕获异常就会直接终止该 Worker 线程（见
-    // aiChat.ts 同款注释），这里不需要再手动 terminate，直接换新实例顶上。
-    if (restartThrottle.shouldGiveUp()) {
-      logger.error(
-        `Anti-raid guard Worker restarted ${WORKER_MAX_RESTARTS} times within ${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
-        `join verification and anti-raid features will silently stay disabled until the process restarts.`
-      );
-      abandonLockdowns();
-      worker = null;
-      return;
-    }
-    const next: Worker = createWorker();
-    worker = next;
-    // 崩溃的 Worker 带走了恢复计时器，但权限限制已实际落在群上；把镜像里
-    // 仍在生效的私密模式重放给新 Worker 接管，重新计时、到期恢复。FIFO
-    // 保证 adopt 先于此后的一切投递到达。待验证记录随旧线程丢失，无从重放
-    // ——残留的验证按钮点了会得到「已失效」应答，重新进群即可。
+  },
+  // 崩溃的 Worker 带走了恢复计时器，但权限限制已实际落在群上；把镜像里
+  // 仍在生效的私密模式重放给新 Worker 接管，重新计时、到期恢复。FIFO
+  // 保证 adopt 先于此后的一切投递到达。待验证记录随旧线程丢失，无从重放
+  // ——残留的验证按钮点了会得到「已失效」应答，重新进群即可。
+  onRespawn: (postToNext) => {
     if (lockedChats.size > 0) {
-      const adopt: AdoptLockdownsMessage = {
-        type: "adopt",
-        lockdowns: [...lockedChats].map(([chatId, originalPermissions]) => ({ chatId, originalPermissions })),
-      };
-      next.postMessage(adopt);
+      postToNext(buildAdoptMessage());
     }
-  };
-  return w;
-}
+  },
+  onGiveUp: () => abandonLockdowns(),
+});
 
 /**
  * 自愈放弃后，镜像里还挂着的私密模式已无人恢复。主线程只做投递不碰
@@ -117,15 +93,8 @@ export async function initAntiRaid(): Promise<void> {
   for (const [chatId, originalPermissions] of persisted) {
     lockedChats.set(chatId, originalPermissions);
   }
-  post({
-    type: "adopt",
-    lockdowns: [...persisted].map(([chatId, originalPermissions]) => ({ chatId, originalPermissions })),
-  });
+  post(buildAdoptMessage());
   logger.log(`接管上次进程退出时仍在生效的私密模式：${[...persisted.keys()].join(", ")}`);
-}
-
-function post(message: AntiRaidWorkerMessage): void {
-  worker?.postMessage(message);
 }
 
 /** 从 grammY 的 User 对象里摘出投递给 Worker 的最小身份字段。 */

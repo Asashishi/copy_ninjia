@@ -17,10 +17,12 @@ import {
   RATE_LIMIT_MAX_TRIGGERS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   RATE_LIMIT_WINDOW_MS,
+  REPLY_MAX_TOKENS,
   REQUEST_TIMEOUT_MS,
   SPLIT_REPLY_MAX_PARTS,
   SPLIT_REPLY_PROBABILITY,
   SUMMARY_MAX_CHARS,
+  SUMMARY_MAX_TOKENS,
   TIME_INTENT_PATTERN,
   TYPING_ACTION_INTERVAL_MS,
   TYPING_DELAY_BASE_MS,
@@ -67,8 +69,8 @@ import type { AiBotInfo, AiChatWorkerMessage } from "../types";
  * 滑出逐字区、其摘要从待晋升区晋升进中期记忆；刚攒满的一块成为新镜像并
  * 提交 DeepSeek 压缩（summarizeBatch）——镜像在压缩期间仍整块留在上下文
  * 里，摘要就绪后先存 pendingSummaries，等下一轮轮换才接棒。每群滚动保留
- * 最多 MAX_SUMMARY_ROUNDS 轮摘要（4 轮 × 50 条 ≈ 200 条冷历史），拼上下
- * 文时放在逐字记录之前，模型可感知约 250 ~ 300 条跨度的对话。
+ * 最多 MAX_SUMMARY_ROUNDS 轮摘要（7 轮 × 50 条 ≈ 350 条冷历史），拼上下
+ * 文时放在逐字记录之前，模型可感知约 400 ~ 450 条跨度的对话。
  */
 
 declare var self: Worker;
@@ -90,6 +92,21 @@ let botInfo: AiBotInfo | null = null;
  */
 function sanitizeInline(raw: string): string {
   return raw.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * 把文本截断到 maxChars 个 UTF-16 码元以内。slice 可能恰好切在代理对中间
+ * （emoji 等），此时去掉孤立的高位代理——孤立代理不是合法字符，混进消息
+ * 可能被 Telegram 拒收，混进 prompt 则是每次请求都带着的乱码。
+ */
+function truncateInline(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  let truncated: string = text.slice(0, maxChars);
+  const lastCode: number = truncated.charCodeAt(truncated.length - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated;
 }
 
 /**
@@ -198,21 +215,13 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
     ],
     stream: false,
     temperature: 0.6,
-    max_tokens: 768,
+    max_tokens: SUMMARY_MAX_TOKENS,
   });
   const content: string | undefined = message?.content;
   if (!content) return null;
   const sanitized: string = sanitizeInline(content);
   if (!sanitized) return null;
-  if (sanitized.length <= SUMMARY_MAX_CHARS) return sanitized;
-  let truncated: string = sanitized.slice(0, SUMMARY_MAX_CHARS);
-  // slice 按 UTF-16 码元截断，若恰好切在代理对中间（emoji 等），去掉孤立的
-  // 高位代理，免得一个乱码字符混进之后每次回复的 prompt。
-  const lastCode: number = truncated.charCodeAt(truncated.length - 1);
-  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
-    truncated = truncated.slice(0, -1);
-  }
-  return truncated;
+  return truncateInline(sanitized, SUMMARY_MAX_CHARS);
 }
 
 /** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
@@ -342,7 +351,17 @@ async function requestCompletion(body: Record<string, unknown>): Promise<any | n
     REQUEST_TIMEOUT_MS,
     "DeepSeek API"
   );
-  return data?.choices?.[0]?.message ?? null;
+  const choice: any = data?.choices?.[0];
+  // 思考模式下思考内容计入 max_tokens：额度在思考阶段被烧光时，请求是
+  // 200 但 content 为空（finish_reason=length）。不点名记下来的话，上层
+  // 只能看到「没产出」，查不到原因（见 REPLY_MAX_TOKENS 的注释）。
+  if (choice?.finish_reason === "length" && !choice?.message?.content) {
+    logger.error(
+      `DeepSeek API exhausted max_tokens=${body.max_tokens} before producing content ` +
+      `(reasoning_tokens=${data?.usage?.completion_tokens_details?.reasoning_tokens ?? "?"}).`
+    );
+  }
+  return choice?.message ?? null;
 }
 
 /**
@@ -372,7 +391,7 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
       tools: TOOL_DEFINITIONS,
       stream: false,
       temperature: 1.2,
-      max_tokens: 4096,
+      max_tokens: REPLY_MAX_TOKENS,
     });
     if (!message) return null;
 
@@ -415,7 +434,7 @@ function cleanReply(raw: string): string | null {
   }
 
   if (!text) return null;
-  return text.length > TELEGRAM_MESSAGE_MAX_CHARS ? text.slice(0, TELEGRAM_MESSAGE_MAX_CHARS) : text;
+  return truncateInline(text, TELEGRAM_MESSAGE_MAX_CHARS);
 }
 
 /**

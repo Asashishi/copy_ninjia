@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState, UsersFileSchema } from "../types";
-import { getOrCreateChatState, saveState, saveUsersFile } from "../infra/storage";
+import { getOrCreateChatState, saveChatUsersEntry, saveState } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { rejectIfOnCopyCooldown, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
@@ -30,11 +30,7 @@ export async function handleStealIconCommand(
   // 偷头像不影响正在进行的复读（没有复读时该字段本来就是 null）。
   state.lastCopyTime = Date.now();
   await saveState(chatStates);
-  usersFileData[String(chatId)] = {
-    lastCopyTime: state.lastCopyTime,
-    copiedUser: usersFileData[String(chatId)]?.copiedUser ?? null,
-  };
-  await saveUsersFile(usersFileData);
+  await saveChatUsersEntry(usersFileData, chatId, state.lastCopyTime, usersFileData[String(chatId)]?.copiedUser ?? null);
 
   const targetLabel: string = formatUserLabel(targetUser);
   await sendMessage(chatId, `收到收到，本天才这就去把 ${targetLabel} 的脸皮扒下来戴上，杂鱼稍安勿躁~♡`, messageId);

@@ -1,6 +1,6 @@
 import { logger } from "./logger";
 import type { ChatPermissions } from "@grammyjs/types";
-import type { ChatState, ChatStateFileSchema, UsersFileSchema } from "../types";
+import type { CachedUser, ChatState, ChatStateFileSchema, UsersFileSchema } from "../types";
 import { LOCK_FILE_PATH, LOCKDOWNS_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 
@@ -76,11 +76,28 @@ function persistJson(filePath: string, json: string, label: string): Promise<voi
 }
 
 /**
- * 将 users 数据持久化保存到 JSON 文件。
+ * 将 users 数据持久化保存到 JSON 文件。仅供本文件的 saveChatUsersEntry
+ * 使用——外部的写路径统一走后者。
  * @param data UsersFileSchema 数据。
  */
-export async function saveUsersFile(data: UsersFileSchema): Promise<void> {
+async function saveUsersFile(data: UsersFileSchema): Promise<void> {
   await persistJson(USERS_FILE_PATH, JSON.stringify(data, null, 2), "users file");
+}
+
+/**
+ * 更新 users.json 里某一个群的条目（冷却时间戳 + 当前复制目标）并整体持久化。
+ * copy 类命令共用的收尾动作——只动本群自己的键，不影响其他群。
+ * @param copiedUser 本群当前的复制目标；没有复读（/stop_copy 后、/steal_icon
+ *   不触碰复读）时为 null。
+ */
+export async function saveChatUsersEntry(
+  data: UsersFileSchema,
+  chatId: number,
+  lastCopyTime: number | undefined,
+  copiedUser: CachedUser | null
+): Promise<void> {
+  data[String(chatId)] = { lastCopyTime: lastCopyTime ?? 0, copiedUser };
+  await saveUsersFile(data);
 }
 
 /**
