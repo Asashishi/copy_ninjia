@@ -21,17 +21,23 @@ export const WELCOME_AUTO_DELETE_MS: number = 30 * 1000;
  * 所以可以放心地长。
  */
 export const ADMIN_CACHE_TTL_MS: number = 60 * 60 * 1000;
+/**
+ * 「评论区留言 → 自动拉群」两个事件的关联窗口：评论消息和 chat_member
+ * 入群更新由同一个动作触发、到达顺序不保证，评论先到时暂存这么久等
+ * 入群更新来消费。实际间隔是毫秒级，取分钟级只是给限流/网络抖动留余量。
+ */
+export const COMMENT_JOIN_CORRELATE_MS: number = 2 * 60 * 1000;
 
 // —— 反刷群私密模式 ——
 
 /** 滑动计数窗口时长：最近这么长时间内的入群数超过阈值，视为疑似拉人头刷群。 */
 export const JOIN_WINDOW_MS: number = 60 * 1000;
 /**
- * 滑动窗口内触发私密模式的入群人数阈值。60 秒 30 人（0.5 人/秒）：正常群
- * 极少一分钟涌入 30 个新人，而真实刷群通常远快于此——旧值 150 人/15 秒
+ * 滑动窗口内触发私密模式的入群人数阈值。60 秒 45 人（0.75 人/秒）：正常群
+ * 极少一分钟涌入 45 个新人，而真实刷群通常远快于此——旧值 150 人/15 秒
  * 要求持续 10 人/秒，实际刷群到不了，形同虚设。
  */
-export const JOIN_THRESHOLD: number = 30;
+export const JOIN_THRESHOLD: number = 45;
 /** 私密模式（禁止普通成员拉人）持续时长。 */
 export const LOCKDOWN_MS: number = 5 * 60 * 1000;
 /** 解除私密模式的 API 调用失败后，重试前的等待时长。 */
