@@ -28,10 +28,10 @@ export const COMPACT_BATCH_SIZE: number = 50;
 export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;
 /**
  * 每群最多保留几轮压缩摘要，新一轮晋升时超出就滑动移除最旧一轮。
- * 4 轮 × 每轮 50 条 = 相当于 200 条冷历史的中期记忆；加上逐字区的
- * 50 ~ 100 条，模型可感知的对话跨度约 250 ~ 300 条。
+ * 7 轮 × 每轮 50 条 = 相当于 350 条冷历史的中期记忆；加上逐字区的
+ * 50 ~ 100 条，模型可感知的对话跨度约 400 ~ 450 条。
  */
-export const MAX_SUMMARY_ROUNDS: number = 4;
+export const MAX_SUMMARY_ROUNDS: number = 7;
 /** 单条摘要的硬性长度上限（字符），防摘要模型话痨撑爆回复上下文。 */
 export const SUMMARY_MAX_CHARS: number = 600;
 /** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
