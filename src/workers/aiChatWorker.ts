@@ -2,6 +2,8 @@ import { logger } from "../infra/logger";
 import { readFileSync } from "node:fs";
 import { DEEPSEEK_API_KEY } from "../infra/config";
 import { LinkedQueue } from "../libs/linkedQueue";
+import { fetchJsonWithTimeout } from "../libs/httpFetch";
+import { sleep } from "../libs/sleep";
 import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_REPLY_COOLDOWN_MS,
@@ -21,8 +23,13 @@ import {
   SUMMARY_MAX_CHARS,
   TIME_INTENT_PATTERN,
   TYPING_ACTION_INTERVAL_MS,
+  TYPING_DELAY_BASE_MS,
+  TYPING_DELAY_JITTER_MS,
+  TYPING_DELAY_MAX_MS,
+  TYPING_DELAY_PER_CHAR_MS,
   VERBATIM_CONTEXT_MAX,
 } from "../consts/aiChat";
+import { TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import {
   chatBuffers,
   chatSummaries,
@@ -322,32 +329,20 @@ function isTimeRelatedQuery(text: string): boolean {
  * @returns choices[0].message；请求失败、超时或响应异常时返回 null。
  */
 async function requestCompletion(body: Record<string, unknown>): Promise<any | null> {
-  const controller: AbortController = new AbortController();
-  const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response: Response = await fetch(DEEPSEEK_API_URL, {
+  const data: any = await fetchJsonWithTimeout(
+    DEEPSEEK_API_URL,
+    {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
       },
       body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      logger.error(`DeepSeek API error: ${response.status} ${await response.text()}`);
-      return null;
-    }
-
-    const data: any = await response.json();
-    return data?.choices?.[0]?.message ?? null;
-  } catch (error: unknown) {
-    logger.error("Error calling DeepSeek API:", error);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+    },
+    REQUEST_TIMEOUT_MS,
+    "DeepSeek API"
+  );
+  return data?.choices?.[0]?.message ?? null;
 }
 
 /**
@@ -420,7 +415,7 @@ function cleanReply(raw: string): string | null {
   }
 
   if (!text) return null;
-  return text.length > 4096 ? text.slice(0, 4096) : text;
+  return text.length > TELEGRAM_MESSAGE_MAX_CHARS ? text.slice(0, TELEGRAM_MESSAGE_MAX_CHARS) : text;
 }
 
 /**
@@ -438,13 +433,9 @@ function splitReplyParts(reply: string): string[] {
 
 /** 模拟真人打字的间隔：按下一条消息的长度估一个停顿，并加上限。 */
 function typingDelayMs(nextPart: string): number {
-  const base: number = 600 + nextPart.length * 55;
-  const jitter: number = Math.random() * 400;
-  return Math.min(base + jitter, 3_500);
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const base: number = TYPING_DELAY_BASE_MS + nextPart.length * TYPING_DELAY_PER_CHAR_MS;
+  const jitter: number = Math.random() * TYPING_DELAY_JITTER_MS;
+  return Math.min(base + jitter, TYPING_DELAY_MAX_MS);
 }
 
 /** chatId -> 该群当前共享的「正在输入…」重发定时器，见 startTypingHeartbeat。 */

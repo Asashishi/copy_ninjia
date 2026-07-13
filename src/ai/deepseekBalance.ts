@@ -2,6 +2,7 @@ import { logger } from "../infra/logger";
 import { DEEPSEEK_API_KEY } from "../infra/config";
 import { CACHE_TTL_MS, DEEPSEEK_BALANCE_API_URL, REQUEST_TIMEOUT_MS } from "../consts/deepseekBalance";
 import { balanceCache } from "../cache/deepseekBalance";
+import { fetchJsonWithTimeout } from "../libs/httpFetch";
 import type { DeepSeekBalanceResponse } from "../types";
 
 /**
@@ -17,38 +18,24 @@ export async function fetchDeepSeekBalance(): Promise<DeepSeekBalanceResponse | 
     return balanceCache.result;
   }
 
-  const controller: AbortController = new AbortController();
-  const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const data: any = await fetchJsonWithTimeout(
+    DEEPSEEK_BALANCE_API_URL,
+    { method: "GET", headers: { Authorization: `Bearer ${DEEPSEEK_API_KEY}` } },
+    REQUEST_TIMEOUT_MS,
+    "DeepSeek balance API"
+  );
+  if (data === null) return null;
 
-  try {
-    const response: Response = await fetch(DEEPSEEK_BALANCE_API_URL, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      logger.error(`DeepSeek balance API error: ${response.status} ${await response.text()}`);
-      return null;
-    }
-
-    const data: any = await response.json();
-    if (!Array.isArray(data?.balance_infos)) {
-      logger.error("DeepSeek balance API returned unexpected shape:", data);
-      return null;
-    }
-
-    const result: DeepSeekBalanceResponse = {
-      is_available: !!data.is_available,
-      balance_infos: data.balance_infos,
-    };
-    balanceCache.result = result;
-    balanceCache.at = Date.now();
-    return result;
-  } catch (error: unknown) {
-    logger.error("Error calling DeepSeek balance API:", error);
+  if (!Array.isArray(data?.balance_infos)) {
+    logger.error("DeepSeek balance API returned unexpected shape:", data);
     return null;
-  } finally {
-    clearTimeout(timer);
   }
+
+  const result: DeepSeekBalanceResponse = {
+    is_available: !!data.is_available,
+    balance_infos: data.balance_infos,
+  };
+  balanceCache.result = result;
+  balanceCache.at = Date.now();
+  return result;
 }

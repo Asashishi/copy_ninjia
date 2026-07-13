@@ -6,3 +6,6 @@ export const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
 
 /** 踢人公告在被自动清理前保持可见的时长。 */
 export const KICK_NOTICE_AUTO_DELETE_MS: number = 30 * 1000;
+
+/** Telegram 文本消息的硬性长度上限（字符），超出会被 Bot API 拒绝。 */
+export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;

@@ -13,6 +13,8 @@
  */
 
 import { pendingFlushes } from "../cache/logger";
+import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
+import { createRestartThrottle } from "../libs/workerSupervisor";
 import type { FlushReply, FlushRequest, ForwardedLog, LogLevel, LogMessage } from "../types";
 
 declare var self: Worker;
@@ -21,12 +23,9 @@ declare var self: Worker;
 // 还是「启动过但自愈耗尽放弃了」，两种情况 emit() 里的兜底行为不一样。
 const isMainThread: boolean = Bun.isMainThread;
 
-// 落盘 Worker 崩溃自愈的节流：短时间内反复崩溃（多半是代码本身有 bug，
-// 重启也没用）就放弃自愈，只保留控制台输出，避免陷入无限重启烧 CPU；
-// 崩溃很稀疏（相隔够久）则不受影响，每次都正常重启。
-const DISK_WORKER_MAX_RESTARTS: number = 5;
-const DISK_WORKER_RESTART_WINDOW_MS: number = 60_000;
-let diskWorkerRestartTimestamps: number[] = [];
+// 落盘 Worker 崩溃自愈的节流，避免陷入无限重启烧 CPU；耗尽后只保留控制台
+// 输出。参数与阈值定义见 consts/workerSupervisor.ts。
+const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
 
 // 落盘 Worker 只在主线程启动；Worker 线程里始终为 null，走转发模式（见
 // emit）。unref 让它不阻止进程退出：bot 主循环结束后进程照常退出，不会
@@ -51,19 +50,14 @@ function createDiskWorker(): Worker {
     // diskWorker 换成 null 的分支同理会被下面 emit() 里的判空接住，不会
     // 对着一个已终止的 Worker 继续 postMessage。
     console.error("[logger] persistence Worker errored:", event.message || event.error || event);
-    const now: number = Date.now();
-    diskWorkerRestartTimestamps = diskWorkerRestartTimestamps.filter(
-      (t) => now - t < DISK_WORKER_RESTART_WINDOW_MS
-    );
-    if (diskWorkerRestartTimestamps.length >= DISK_WORKER_MAX_RESTARTS) {
+    if (restartThrottle.shouldGiveUp()) {
       console.error(
-        `[logger] persistence Worker restarted ${DISK_WORKER_MAX_RESTARTS} times within ` +
-        `${DISK_WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — logs will only stay in the console until the process restarts.`
+        `[logger] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +
+        `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — logs will only stay in the console until the process restarts.`
       );
       diskWorker = null;
       return;
     }
-    diskWorkerRestartTimestamps.push(now);
     diskWorker = createDiskWorker();
   };
   return w;

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { logger } from "../infra/logger";
 import { setMessageReaction } from "../infra/telegram";
-import { matchCandidateEmojis, pickRandom } from "./stickerSets";
+import { matchCandidateEmojis } from "./stickerSets";
+import { pickRandom } from "../libs/random";
 import { REACTIONS_CONFIG_PATH } from "../consts/paths";
 
 /**

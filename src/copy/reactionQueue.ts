@@ -2,6 +2,7 @@ import { logger } from "../infra/logger";
 import { GrammyError } from "grammy";
 import { bot } from "../infra/telegram";
 import { LinkedQueue } from "../libs/linkedQueue";
+import { sleep } from "../libs/sleep";
 import { MAX_ATTEMPTS } from "../consts/reactionQueue";
 import { chatQueues, consumingChats, pendingTasks } from "../cache/reactionQueue";
 import type { CopyableReaction, ReactionTask } from "../types";
@@ -93,7 +94,7 @@ async function applyReaction(key: string, task: ReactionTask): Promise<void> {
           `setMessageReaction rate limited (chat ${task.chatId}, msg ${task.messageId}), ` +
           `waiting ${retryAfterSeconds}s before retry ${attempt + 1}/${MAX_ATTEMPTS}`
         );
-        await new Promise<void>((resolve) => setTimeout(resolve, retryAfterSeconds * 1000));
+        await sleep(retryAfterSeconds * 1000);
         // 等待期间这条消息可能有了更新的反应状态（pendingTasks 里重新出现了
         // 同一个键）：放弃重试过期状态，让消费循环稍后直接应用新状态。
         if (pendingTasks.has(key)) {

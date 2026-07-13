@@ -2,9 +2,9 @@ import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types";
 import { sendMessage, banChatMember, banChatSenderChat, deleteMessageAfter } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
-import { resolveReplyTarget } from "../users/senderIdentity";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
+import { resolveCommandTarget } from "./targetResolution";
 
 /**
  * 处理 /kick 指令：将目标移出聊天并永久封禁（与入群验证/反刷群的自动踢出
@@ -28,33 +28,14 @@ export async function handleKickCommand(ctx: CommandContext<Context>, users: Rec
     return;
   }
 
-  // 回复目标的消息优先于参数里的 @username（理由同 /copy：没有公开 username
-  // 或没被缓存过的目标只能靠回复锁定）。
-  let targetUser: CachedUser | undefined = resolveReplyTarget(ctx.msg as any);
-  let rawUsername: string | undefined;
-
-  if (!targetUser) {
-    const usernameMatch = ctx.match.trim().match(/^@?([a-zA-Z0-9_]+)/);
-    if (!usernameMatch) {
-      const replyText: string = `笨蛋，要么 /kick @username，要么回复 TA 的一条消息再 /kick，本天才可不会读心术♡`;
-      await sendMessage(chatId, replyText, messageId);
-      return;
-    }
-    rawUsername = usernameMatch[1]!;
-    targetUser = users[rawUsername.toLowerCase()];
-  }
-
-  if (!targetUser) {
-    const replyText: string = `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /kick 吧♡`;
-    await sendMessage(chatId, replyText, messageId);
-    return;
-  }
-
-  if (targetUser.id === ctx.me.id) {
-    const replyText: string = `笨蛋，本天才才不会把自己踢出去呢♡`;
-    await sendMessage(chatId, replyText, messageId);
-    return;
-  }
+  // 目标解析同 /copy：回复目标的消息优先于参数里的 @username（没有公开
+  // username 或没被缓存过的目标只能靠回复锁定），见 targetResolution.ts。
+  const targetUser: CachedUser | undefined = await resolveCommandTarget(ctx, users, {
+    missingTarget: `笨蛋，要么 /kick @username，要么回复 TA 的一条消息再 /kick，本天才可不会读心术♡`,
+    unknownUsername: (rawUsername: string) => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /kick 吧♡`,
+    selfTarget: `笨蛋，本天才才不会把自己踢出去呢♡`,
+  });
+  if (!targetUser) return;
 
   // 频道马甲（sender_chat）没有可 ban 的用户 id，banChatMember 对它必然报错，
   // 要走 banChatSenderChat 封掉这个频道身份在本群的发言权。

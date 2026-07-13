@@ -8,6 +8,7 @@ import {
   WEATHER_CODE_DESCRIPTIONS,
 } from "../consts/weather";
 import { weatherCache } from "../cache/weather";
+import { fetchJsonWithTimeout } from "../libs/httpFetch";
 import type { TokyoWeatherResult } from "../types";
 
 /**
@@ -28,9 +29,6 @@ export async function getTokyoWeather(): Promise<TokyoWeatherResult | null> {
     return weatherCache.result;
   }
 
-  const controller: AbortController = new AbortController();
-  const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   const url: URL = new URL(WEATHER_API_URL);
   url.searchParams.set("latitude", String(TOKYO_LATITUDE));
   url.searchParams.set("longitude", String(TOKYO_LONGITUDE));
@@ -38,45 +36,34 @@ export async function getTokyoWeather(): Promise<TokyoWeatherResult | null> {
   url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,weather_code");
   url.searchParams.set("timezone", "Asia/Tokyo");
 
-  try {
-    const response: Response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) {
-      logger.error(`Open-Meteo API error: ${response.status} ${await response.text()}`);
-      return null;
-    }
+  const data: any = await fetchJsonWithTimeout(url, {}, REQUEST_TIMEOUT_MS, "Open-Meteo API");
+  if (data === null) return null;
 
-    const data: any = await response.json();
-    const currentTemperatureC: unknown = data?.current?.temperature_2m;
-    const currentCode: unknown = data?.current?.weather_code;
-    const todayMaxC: unknown = data?.daily?.temperature_2m_max?.[0];
-    const todayMinC: unknown = data?.daily?.temperature_2m_min?.[0];
-    const todayCode: unknown = data?.daily?.weather_code?.[0];
+  const currentTemperatureC: unknown = data?.current?.temperature_2m;
+  const currentCode: unknown = data?.current?.weather_code;
+  const todayMaxC: unknown = data?.daily?.temperature_2m_max?.[0];
+  const todayMinC: unknown = data?.daily?.temperature_2m_min?.[0];
+  const todayCode: unknown = data?.daily?.weather_code?.[0];
 
-    if (
-      typeof currentTemperatureC !== "number" ||
-      typeof currentCode !== "number" ||
-      typeof todayMaxC !== "number" ||
-      typeof todayMinC !== "number" ||
-      typeof todayCode !== "number"
-    ) {
-      logger.error("Open-Meteo API returned unexpected shape:", data);
-      return null;
-    }
-
-    const result: TokyoWeatherResult = {
-      currentTemperatureC,
-      currentCondition: describeWeatherCode(currentCode),
-      todayMaxC,
-      todayMinC,
-      todayCondition: describeWeatherCode(todayCode),
-    };
-    weatherCache.result = result;
-    weatherCache.at = Date.now();
-    return result;
-  } catch (error: unknown) {
-    logger.error("Error calling Open-Meteo API:", error);
+  if (
+    typeof currentTemperatureC !== "number" ||
+    typeof currentCode !== "number" ||
+    typeof todayMaxC !== "number" ||
+    typeof todayMinC !== "number" ||
+    typeof todayCode !== "number"
+  ) {
+    logger.error("Open-Meteo API returned unexpected shape:", data);
     return null;
-  } finally {
-    clearTimeout(timer);
   }
+
+  const result: TokyoWeatherResult = {
+    currentTemperatureC,
+    currentCondition: describeWeatherCode(currentCode),
+    todayMaxC,
+    todayMinC,
+    todayCondition: describeWeatherCode(todayCode),
+  };
+  weatherCache.result = result;
+  weatherCache.at = Date.now();
+  return result;
 }

@@ -1,4 +1,6 @@
+import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "./consts/workerSupervisor";
 import { logger, relayLogMessage } from "./infra/logger";
+import { createRestartThrottle } from "./libs/workerSupervisor";
 import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage, ForwardedLog } from "./types";
 
 /**
@@ -13,10 +15,8 @@ import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage, ForwardedLog } from
 // Worker 崩溃自愈的节流，逻辑与 logger.ts 的落盘 Worker 一致：短时间内
 // 反复崩溃就放弃自愈（多半是代码本身有 bug，重启也没用），只是安静地
 // 丢弃后续消息，不让 AI 闲聊功能的崩溃循环拖累主线程；崩溃很稀疏则每次
-// 都正常重启。
-const MAX_RESTARTS: number = 5;
-const RESTART_WINDOW_MS: number = 60_000;
-let restartTimestamps: number[] = [];
+// 都正常重启。参数与阈值定义见 consts/workerSupervisor.ts。
+const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
 
 // 重启后新 Worker 不知道机器人自己的账号身份，需要重放最近一次 init 消息
 // （见 initAiChat）；重启发生在 initAiChat 调用之前的话就没有可重放的，
@@ -47,17 +47,14 @@ function createWorker(): Worker {
     // Bun 里 Worker 内部一旦抛出未捕获异常（同步或 async 均如此，已实测
     // 验证）就会直接终止该 Worker 线程，因此这里不需要（实际上也没法）
     // 再手动 terminate，直接换一个新实例顶上即可。
-    const now: number = Date.now();
-    restartTimestamps = restartTimestamps.filter((t) => now - t < RESTART_WINDOW_MS);
-    if (restartTimestamps.length >= MAX_RESTARTS) {
+    if (restartThrottle.shouldGiveUp()) {
       logger.error(
-        `AI Worker restarted ${MAX_RESTARTS} times within ${RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
+        `AI Worker restarted ${WORKER_MAX_RESTARTS} times within ${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
         `AI chat feature will silently stay disabled until the process restarts.`
       );
       worker = null;
       return;
     }
-    restartTimestamps.push(now);
     const next: Worker = createWorker();
     worker = next;
     // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。

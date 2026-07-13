@@ -2,9 +2,9 @@ import { logger } from "../infra/logger";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState } from "../types";
 import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
-import { resolveReplyTarget } from "../users/senderIdentity";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
+import { resolveCommandTarget } from "./targetResolution";
 
 /**
  * copy 类命令（/copy 系与 /steal_icon）的公共零件：共享冷却检查、
@@ -52,38 +52,12 @@ export async function resolveCopyCommandTarget(
   users: Record<string, CachedUser>,
   commandName: string
 ): Promise<CachedUser | undefined> {
-  const chatId: number = ctx.chat.id;
-  const messageId: number | undefined = ctx.msgId;
-
-  const replyTarget: CachedUser | undefined = resolveReplyTarget(ctx.msg as any);
-
-  let targetUser: CachedUser | undefined = replyTarget;
-  let rawUsername: string | undefined;
-
-  if (!targetUser) {
-    const usernameMatch = ctx.match.trim().match(/^@?([a-zA-Z0-9_]+)/);
-    if (!usernameMatch) {
-      const replyText: string = `笨蛋，要么 ${commandName} @username，要么直接回复 TA 的一条消息再 ${commandName}，本天才总得知道杂鱼是谁吧♡`;
-      await sendMessage(chatId, replyText, messageId);
-      return undefined;
-    }
-    rawUsername = usernameMatch[1]!;
-    targetUser = users[rawUsername.toLowerCase()];
-  }
-
-  if (!targetUser) {
-    const replyText: string = `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 ${commandName} 呀♡`;
-    await sendMessage(chatId, replyText, messageId);
-    return undefined;
-  }
-
-  // 不能把本天才自己设成目标：复制会自己套自己没完没了，偷自己的头像也没有意义
-  if (targetUser.id === ctx.me.id) {
-    await sendMessage(chatId, `笨蛋，本天才怎么可能盯上自己呀♡`, messageId);
-    return undefined;
-  }
-
-  return targetUser;
+  return resolveCommandTarget(ctx, users, {
+    missingTarget: `笨蛋，要么 ${commandName} @username，要么直接回复 TA 的一条消息再 ${commandName}，本天才总得知道杂鱼是谁吧♡`,
+    unknownUsername: (rawUsername: string) =>
+      `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 ${commandName} 呀♡`,
+    selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
+  });
 }
 
 /**

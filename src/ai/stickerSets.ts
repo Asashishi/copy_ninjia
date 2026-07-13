@@ -6,9 +6,10 @@ import { failedPacks, stickerSetCache } from "../cache/stickerSets";
 /**
  * 「按情绪关键词挑一枚应景 emoji/贴纸」的公共积木：白名单贴纸包的拉取与
  * 缓存（getAllStickers，按 pack short name 调 getStickerSet）、文本关键词
- * 到候选 emoji 的匹配（matchCandidateEmojis）、均匀随机挑选（pickRandom）。
- * src/ai/stickers.ts（回复贴纸）三样都用；src/ai/reactions.ts（消息反应）只用
- * 后两样——它最终设的是标准 emoji 反应，不涉及贴纸包。
+ * 到候选 emoji 的匹配（matchCandidateEmojis）。均匀随机挑选见 libs/random.ts
+ * 的 pickRandom（通用工具，不是贴纸领域专属，调用方直接从那里 import）。
+ * src/ai/stickers.ts（回复贴纸）都用；src/ai/reactions.ts（消息反应）只用
+ * matchCandidateEmojis——它最终设的是标准 emoji 反应，不涉及贴纸包。
  */
 
 async function getStickerSet(packName: string): Promise<StickerSet | null> {
@@ -42,11 +43,6 @@ export function matchCandidateEmojis(emotionKeywords: Record<string, string[]>, 
     }
   }
   return candidates;
-}
-
-export function pickRandom<T>(items: T[]): T | undefined {
-  if (items.length === 0) return undefined;
-  return items[Math.floor(Math.random() * items.length)];
 }
 
 /**

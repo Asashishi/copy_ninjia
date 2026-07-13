@@ -14,6 +14,7 @@ import {
 } from "../consts/auto";
 import { userRandomReplyTimes } from "../cache/auto";
 import { describeStickerForContext } from "../ai/stickerSets";
+import { pickRandom } from "../libs/random";
 
 /**
  * 消息自动流水线：复制目标的复读、AI 对话缓存与触发、洗澡「看看」、随机
@@ -208,7 +209,7 @@ export async function handleIncomingMessage(
   // 保证机器人收不到其他机器人发的消息（官方为防止 bot 互相触发死循环的设计），
   // 自己发的消息也不会作为更新推送回来。
   if (!state.isCopying && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
-    const mode: CopyMode | undefined = RANDOM_ECHO_MODES[Math.floor(Math.random() * RANDOM_ECHO_MODES.length)];
+    const mode: CopyMode | undefined = pickRandom(RANDOM_ECHO_MODES);
     await echoMessage(chatId, message, mode);
   }
 }

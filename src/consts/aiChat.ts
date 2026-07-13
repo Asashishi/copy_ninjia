@@ -39,6 +39,14 @@ export const SPLIT_REPLY_PROBABILITY: number = 1 / 4;
 /** 连发模式下最多发几条，防止模型话痨刷屏。 */
 export const SPLIT_REPLY_MAX_PARTS: number = 5;
 /**
+ * 连发模式下模拟真人打字间隔（见 workers/aiChatWorker.ts 的 typingDelayMs）：
+ * 基础停顿 + 按下一条消息长度线性增加 + 随机抖动，再统一封顶。
+ */
+export const TYPING_DELAY_BASE_MS: number = 600;
+export const TYPING_DELAY_PER_CHAR_MS: number = 55;
+export const TYPING_DELAY_JITTER_MS: number = 400;
+export const TYPING_DELAY_MAX_MS: number = 3_500;
+/**
  * 同一群聊两次 AI 回复之间的最短间隔。回复机器人 / @ 机器人是 100% 触发且
  * 无上限的，没有这道闸的话，恶意用户循环回复 bot 就能形成「一条消息 = 一次
  * API 调用 + 一条群消息」的刷屏/烧钱放大链。冷却内命中的触发直接静默丢弃。

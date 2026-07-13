@@ -9,6 +9,7 @@ import {
   joinVerificationApi,
 } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
+import { formatMinSec } from "../libs/time";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import {
@@ -127,7 +128,7 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
     await deleteMessage(chatId, messageId, joinVerificationApi);
   }
   await kickChatMember(chatId, userId, joinVerificationApi);
-  const noticeMessageId: number | undefined = await sendMessage(chatId, `啧，${pending.label} 磨磨蹭蹭 1分30秒 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`, undefined, joinVerificationApi);
+  const noticeMessageId: number | undefined = await sendMessage(chatId, `啧，${pending.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`, undefined, joinVerificationApi);
   if (noticeMessageId !== undefined) {
     deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
   }
@@ -286,7 +287,7 @@ function ensureVerificationStarted(
   // 不到。发送结果异步回填 messageIds 即可，不影响后续到期清理。
   const reminderText: string =
     `喂，${memberLabel(member)}，新来的杂鱼给本天才听好了，` +
-    `1分30秒内点下面的按钮证明你不是机器人，` +
+    `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
     `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
   const verifyKeyboard: InlineKeyboard = new InlineKeyboard().text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${member.id}`);
   void sendMessage(chatId, reminderText, undefined, joinVerificationApi, verifyKeyboard)

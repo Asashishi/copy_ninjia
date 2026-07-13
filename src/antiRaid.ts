@@ -4,6 +4,8 @@ import type { ChatMember, ChatPermissions } from "@grammyjs/types";
 import { lockedChats } from "./cache/antiRaid";
 import { loadLockdowns, saveLockdowns } from "./infra/storage";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
+import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "./consts/workerSupervisor";
+import { createRestartThrottle } from "./libs/workerSupervisor";
 import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, ForwardedLog } from "./types";
 
 /**
@@ -24,10 +26,8 @@ import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRa
 
 // Worker 崩溃自愈的节流，逻辑与 aiChat.ts 一致：短时间内反复崩溃就放弃
 // 自愈（多半是代码本身有 bug，重启也没用），只是安静地丢弃后续消息；
-// 崩溃很稀疏则每次都正常重启。
-const MAX_RESTARTS: number = 5;
-const RESTART_WINDOW_MS: number = 60_000;
-let restartTimestamps: number[] = [];
+// 崩溃很稀疏则每次都正常重启。参数与阈值定义见 consts/workerSupervisor.ts。
+const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
 
 // Worker 在模块加载时启动一次。unref 让它不阻止进程退出——停机时未完成的
 // 验证窗口随之丢弃（残留按钮点了会得到「已失效」应答）；未到期的私密模式
@@ -62,18 +62,15 @@ function createWorker(): Worker {
     logger.error("Anti-raid guard Worker errored, restarting:", event.message || event.error || event);
     // Bun 里 Worker 内部一旦抛出未捕获异常就会直接终止该 Worker 线程（见
     // aiChat.ts 同款注释），这里不需要再手动 terminate，直接换新实例顶上。
-    const now: number = Date.now();
-    restartTimestamps = restartTimestamps.filter((t) => now - t < RESTART_WINDOW_MS);
-    if (restartTimestamps.length >= MAX_RESTARTS) {
+    if (restartThrottle.shouldGiveUp()) {
       logger.error(
-        `Anti-raid guard Worker restarted ${MAX_RESTARTS} times within ${RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
+        `Anti-raid guard Worker restarted ${WORKER_MAX_RESTARTS} times within ${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
         `join verification and anti-raid features will silently stay disabled until the process restarts.`
       );
       abandonLockdowns();
       worker = null;
       return;
     }
-    restartTimestamps.push(now);
     const next: Worker = createWorker();
     worker = next;
     // 崩溃的 Worker 带走了恢复计时器，但权限限制已实际落在群上；把镜像里
