@@ -208,7 +208,17 @@ export function handleGroupJoinVerification(message: any): boolean {
 
   const userId: number | undefined = message.from?.id;
   if (userId !== undefined) {
-    post({ type: "message", chatId: message.chat.id, userId, messageId: message.message_id });
+    // 附带频道评论区的识别线索：在关联频道的帖子下留言的人会被 Telegram
+    // 自动拉进讨论群，这是真人操作，Worker 据此免除验证（直接回复频道帖）
+    // 或把验证提醒追发到 TA 的回复下（楼中楼）。
+    post({
+      type: "message",
+      chatId: message.chat.id,
+      userId,
+      messageId: message.message_id,
+      repliesToChannelPost: message.reply_to_message?.is_automatic_forward === true,
+      isThreadReply: message.message_thread_id !== undefined,
+    });
   }
   return false;
 }

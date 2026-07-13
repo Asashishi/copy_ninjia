@@ -14,6 +14,7 @@ import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import {
   ADMIN_CACHE_TTL_MS,
+  COMMENT_JOIN_CORRELATE_MS,
   JOIN_THRESHOLD,
   JOIN_WINDOW_MS,
   LOCKDOWN_KICK_DEDUPE_MS,
@@ -24,7 +25,7 @@ import {
   VERIFY_CALLBACK_PREFIX,
   WELCOME_AUTO_DELETE_MS,
 } from "../consts/antiRaid";
-import { activeLockdowns, chatAdmins, joinWindows, pendingVerifications } from "../cache/antiRaidWorker";
+import { activeLockdowns, chatAdmins, joinWindows, pendingVerifications, recentChannelComments } from "../cache/antiRaidWorker";
 import type {
   AdoptableLockdown,
   AntiRaidMember,
@@ -32,6 +33,7 @@ import type {
   Lockdown,
   LockdownEvent,
   PendingVerification,
+  TrackedChatMessage,
   UnlockEvent,
   VerifyCallbackMessage,
 } from "../types";
@@ -164,6 +166,15 @@ function ensureVerificationStarted(
     exempt = PRIVILEGED_USERS_ID.includes(actorId) || freshAdminIds(chatId)?.has(actorId) === true;
   }
 
+  // TA 刚在频道评论区发过言（留言先于本次 chat_member 更新到达，见
+  // handleTrackedMessage 的暂存）：这次入群正是那条留言触发的自动拉群。
+  // 直接回复频道帖的是确证的真人评论，直接豁免、连验证按钮都不闪；
+  // 楼中楼回复无法确证线程根，走下方的正常验证 + 追发提醒到 TA 的回复下。
+  const recentComment = takeRecentComment(chatId, member.id);
+  if (!exempt && recentComment?.repliesToChannelPost === true) {
+    exempt = true;
+  }
+
   if (exempt) {
     // 管理员/群主入群（典型如群主退群重进），不需要验证。new_chat_members
     // 服务消息不带身份信息，若它先到、已经开了真实验证窗口，在这里撤销并
@@ -210,8 +221,10 @@ function ensureVerificationStarted(
 
   // 群聊当前处于反防刷群触发的私密模式：这波入群高峰大概率还在持续，新成员
   // 大概率也是刷量的一部分，跳过质询流程直接踢出（kickChatMember 只是踢出、
-  // 不封禁，以防误杀正常用户，之后仍可正常申请加入）。
-  if (activeLockdowns.has(chatId)) {
+  // 不封禁，以防误杀正常用户，之后仍可正常申请加入）。评论区进来的人
+  // （recentComment 有暂存，楼中楼回复）例外：不无脑秒踢，走下方的正常
+  // 验证 + 追发提醒，不点按钮再踢不迟。
+  if (activeLockdowns.has(chatId) && !recentComment) {
     // 占位记录：必须在任何网络请求之前同步插入，防止同一次入群的另一路
     // 投递因为查不到 existing 而重新 recordJoin/重新踢一次。
     pendingVerifications.set(key, {
@@ -246,6 +259,13 @@ function ensureVerificationStarted(
     }, VERIFICATION_TIMEOUT_MS),
   };
   pendingVerifications.set(key, pending);
+
+  // 楼中楼回复先到、入群更新后到：把验证提醒追发到 TA 的回复下（频道侧
+  // 看得到按钮），回复本身也补进追踪，验证超时的话一并清理。
+  if (recentComment !== undefined) {
+    pending.messageIds.push(recentComment.messageId);
+    sendReminderIntoCommentThread(chatId, member.id, recentComment.messageId);
+  }
 
   // 他人拉入群但上面的同步快路径没命中（管理员表缓存没拉取过/已过期）：
   // 异步全量拉取管理员表兜底——既回答了「拉人者是不是管理员」，也顺手把
@@ -329,6 +349,133 @@ function trackPendingMessage(chatId: number, userId: number, messageId: number):
   pending.messageIds.push(messageId);
 }
 
+// —— 频道评论区入群的特殊处理 ——
+
+/**
+ * 待验证成员发了线程内的回复（楼中楼）：TA 很可能是从频道评论区留言被
+ * 自动拉进群的，人在频道侧的留言界面，群里的验证提醒看不到。楼中楼无法
+ * 确证线程根就是频道帖（Bot API 不能按 ID 反查消息），所以不像直接回复
+ * 频道帖那样豁免，而是把带按钮的验证提醒作为 TA 那条回复的回复再发一份
+ * ——评论线程双向同步，按钮会出现在频道侧——并重置验证计时，给 TA
+ * 完整的窗口去点。不点照样超时踢人，消息也照常追踪清理。
+ */
+function sendReminderIntoCommentThread(chatId: number, userId: number, commentMessageId: number): void {
+  const key: string = verificationKey(chatId, userId);
+  const pending = pendingVerifications.get(key);
+  if (!pending || pending.kicked || pending.exempt || pending.threadReminderRequested) return;
+  pending.threadReminderRequested = true;
+
+  clearTimeout(pending.timeout);
+  pending.timeout = setTimeout(() => {
+    void expireVerification(chatId, userId).catch((error: unknown) => {
+      logger.error("Error expiring join verification:", error);
+    });
+  }, VERIFICATION_TIMEOUT_MS);
+
+  const reminderText: string =
+    `喂，${pending.label}，本天才瞧见你在评论区冒泡了。新来的杂鱼规矩要懂：` +
+    `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
+    `不然留言全删、人也一脚踢出去哦♡`;
+  const verifyKeyboard: InlineKeyboard = new InlineKeyboard().text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${userId}`);
+  void sendMessage(chatId, reminderText, commentMessageId, joinVerificationApi, verifyKeyboard)
+    .then((reminderMessageId: number | undefined) => {
+      if (reminderMessageId === undefined) return;
+      if (pendingVerifications.get(key) === pending) {
+        pending.messageIds.push(reminderMessageId);
+        pending.threadReminderMessageId = reminderMessageId;
+      } else {
+        // 限流排队太久，落地时验证已结束（通过/过期/离群），迟到的提醒自删。
+        void deleteMessage(chatId, reminderMessageId, joinVerificationApi);
+      }
+    })
+    .catch((error: unknown) => {
+      logger.error("Error sending comment-thread verification reminder:", error);
+    });
+}
+
+/**
+ * 在频道评论区留言的成员免验证：在关联频道的帖子下留言本身就是真人操作
+ * （Telegram 正因这次留言才把 TA 自动拉进讨论群），不需要再点按钮自证——
+ * 而且 TA 人在频道那侧的评论界面，多半根本看不到群里的验证按钮，硬要求
+ * 只会把真人误踢。撤销验证窗口、删掉带按钮的提醒消息，并留一个豁免占位
+ * 给可能迟到的 new_chat_members 服务消息去重。TA 已发的消息一概不删——
+ * 那是合法的评论。
+ */
+function passVerificationForChannelComment(chatId: number, userId: number): void {
+  const key: string = verificationKey(chatId, userId);
+  const pending = pendingVerifications.get(key);
+  if (!pending || pending.kicked || pending.exempt) return;
+
+  clearTimeout(pending.timeout);
+  if (pending.reminderMessageId !== undefined) {
+    void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
+  }
+  // 覆盖为豁免占位（同管理员拉人免验证）：提醒消息若还在限流队列里没落地，
+  // 其回填回调查到记录已被替换，会把迟到的提醒自删。
+  pendingVerifications.set(key, {
+    chatId,
+    userId,
+    label: pending.label,
+    messageIds: [],
+    timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
+    exempt: true,
+  });
+}
+
+/**
+ * 暂存一条「发言者当前没有待验证记录」的评论区留言/线程回复，等这条留言
+ * 触发的自动拉群（chat_member 更新可能后到）来消费。同一人连发多条只留
+ * 最新的；直接回复频道帖的标记一旦出现就保持（豁免的确证不被后续楼中楼
+ * 回复降级）。
+ */
+function rememberRecentComment(chatId: number, userId: number, messageId: number, repliesToChannelPost: boolean): void {
+  const key: string = verificationKey(chatId, userId);
+  const existing = recentChannelComments.get(key);
+  if (existing) clearTimeout(existing.cleanup);
+  recentChannelComments.set(key, {
+    messageId,
+    repliesToChannelPost: repliesToChannelPost || existing?.repliesToChannelPost === true,
+    cleanup: setTimeout(() => recentChannelComments.delete(key), COMMENT_JOIN_CORRELATE_MS),
+  });
+}
+
+/** 消费（取出并删除）某人最近暂存的评论区留言，没有则返回 undefined。 */
+function takeRecentComment(chatId: number, userId: number): { messageId: number; repliesToChannelPost: boolean } | undefined {
+  const key: string = verificationKey(chatId, userId);
+  const entry = recentChannelComments.get(key);
+  if (!entry) return undefined;
+  clearTimeout(entry.cleanup);
+  recentChannelComments.delete(key);
+  return { messageId: entry.messageId, repliesToChannelPost: entry.repliesToChannelPost };
+}
+
+/**
+ * 处理一条普通群消息投递：先识别关联频道的评论区活动，再交给消息追踪。
+ * 判定完全无状态，只看消息自带的两个信号：直接回复频道帖（确证的评论区
+ * 留言）→ 免验证放行；线程内的回复（楼中楼，无法确证线程根是频道帖）→
+ * 不豁免，把验证提醒追发到 TA 的回复下让频道侧能看到按钮。两者若先于
+ * 入群更新到达（顺序不保证），先暂存、入群时消费。
+ */
+function handleTrackedMessage(msg: TrackedChatMessage): void {
+  if (msg.repliesToChannelPost || msg.isThreadReply) {
+    const hasPending: boolean = pendingVerifications.has(verificationKey(msg.chatId, msg.userId));
+    if (!hasPending) {
+      // 这条留言若正触发自动拉群，其 chat_member 更新可能还没到（两个事件
+      // 的到达顺序不保证）：暂存，入群时由 ensureVerificationStarted 消费。
+      rememberRecentComment(msg.chatId, msg.userId, msg.messageId, msg.repliesToChannelPost === true);
+      return;
+    }
+    if (msg.repliesToChannelPost) {
+      passVerificationForChannelComment(msg.chatId, msg.userId);
+      return;
+    }
+    sendReminderIntoCommentThread(msg.chatId, msg.userId, msg.messageId);
+    // 不 return：楼中楼回复不豁免，消息本身照常落进追踪，验证超时一并清理。
+  }
+
+  trackPendingMessage(msg.chatId, msg.userId, msg.messageId);
+}
+
 /**
  * 处理入群验证按钮的点击。只有验证记录对应的那个新成员本人点击才算数——
  * 别人点了会得到一个提示气泡，不会帮 TA 通过验证，防止群友手滑帮僵尸端
@@ -360,6 +507,9 @@ async function handleVerificationCallback(msg: VerifyCallbackMessage): Promise<v
   await answerCallbackQuery(msg.callbackQueryId, "验证通过啦～", false, joinVerificationApi);
   if (pending.reminderMessageId !== undefined) {
     await deleteMessage(msg.chatId, pending.reminderMessageId, joinVerificationApi);
+  }
+  if (pending.threadReminderMessageId !== undefined) {
+    await deleteMessage(msg.chatId, pending.threadReminderMessageId, joinVerificationApi);
   }
   const welcomeMessageId: number | undefined = await sendMessage(msg.chatId, `哼，算你机灵，${memberLabel(msg.from)} 通过验证啦，欢迎杂鱼入群~♡`, undefined, joinVerificationApi);
   if (welcomeMessageId !== undefined) {
@@ -508,7 +658,7 @@ self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
       cancelVerification(msg.chatId, msg.userId);
       break;
     case "message":
-      trackPendingMessage(msg.chatId, msg.userId, msg.messageId);
+      handleTrackedMessage(msg);
       break;
     case "callback":
       void handleVerificationCallback(msg).catch((error: unknown) => {

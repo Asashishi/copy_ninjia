@@ -13,6 +13,14 @@ export interface PendingVerification {
   messageIds: number[];
   /** 带验证按钮的提醒消息 ID，验证通过后要把这条消息删掉。 */
   reminderMessageId?: number;
+  /**
+   * 追发到频道评论线程里的验证提醒消息 ID（TA 以楼中楼回复入群时，群里的
+   * 提醒 TA 看不到，要回复到 TA 的评论下、让按钮出现在频道侧的留言界面里），
+   * 验证通过后同样要删掉。
+   */
+  threadReminderMessageId?: number;
+  /** 是否已向评论线程追发过验证提醒——TA 连发多条回复也只追发一次。 */
+  threadReminderRequested?: boolean;
   timeout: ReturnType<typeof setTimeout>;
   /**
    * 若为 true，说明这不是真正在等待验证的记录，而是反防刷群私密模式下
@@ -94,6 +102,17 @@ export interface TrackedChatMessage {
   chatId: number;
   userId: number;
   messageId: number;
+  /**
+   * 该消息是否直接回复了一条自动转发的频道帖（即在评论区对帖子本身留言）。
+   * 这是确证的评论区活动——留言者是被这条留言自动拉进群的真人。
+   */
+  repliesToChannelPost?: boolean;
+  /**
+   * 该消息是否为线程内的回复（带 message_thread_id）。评论区的楼中楼回复
+   * 都带；但 Bot API 无法按 ID 反查线程根，无法确证线程根就是频道帖，
+   * 所以这个信号只用于「把验证提醒追发到 TA 的回复下」，不用于豁免。
+   */
+  isThreadReply?: boolean;
 }
 
 /** 主线程 -> Worker：入群验证按钮被点击（callback_query）。 */
