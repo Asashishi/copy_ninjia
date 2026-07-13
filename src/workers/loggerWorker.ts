@@ -181,7 +181,7 @@ function writeDay(day: string, texts: string[]): void {
     // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
     // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。
     current = null;
-    console.error("[loggerWorker] 落盘失败：", err);
+    console.error("[loggerWorker] flush to disk failed:", err);
   }
 }
 

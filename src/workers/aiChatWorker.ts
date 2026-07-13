@@ -144,7 +144,7 @@ async function rotateCompaction(chatId: number, mirrorBatch: BufferedMessage[], 
     } else {
       // 失败刻意不回灌不重试：镜像原文此刻还在逐字区，要到下一轮滑出时
       // 这段中期记忆才真正缺失。
-      logger.error(`AI 压缩失败：chat ${chatId} 的 ${mirrorBatch.length} 条镜像消息未生成摘要，滑出后这段中期记忆将缺失。`);
+      logger.error(`AI compaction failed: chat ${chatId}'s ${mirrorBatch.length} mirrored messages produced no summary; mid-term memory for this window will be missing once it slides out.`);
     }
   } catch (error: unknown) {
     logger.error("Error in chat compaction task:", error);

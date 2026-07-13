@@ -50,15 +50,15 @@ function createDiskWorker(): Worker {
     // 不需要（实际上也没法）再手动 terminate，直接换一个新实例顶上即可；
     // diskWorker 换成 null 的分支同理会被下面 emit() 里的判空接住，不会
     // 对着一个已终止的 Worker 继续 postMessage。
-    console.error("[logger] 落盘 Worker 出错：", event.message || event.error || event);
+    console.error("[logger] persistence Worker errored:", event.message || event.error || event);
     const now: number = Date.now();
     diskWorkerRestartTimestamps = diskWorkerRestartTimestamps.filter(
       (t) => now - t < DISK_WORKER_RESTART_WINDOW_MS
     );
     if (diskWorkerRestartTimestamps.length >= DISK_WORKER_MAX_RESTARTS) {
       console.error(
-        `[logger] 落盘 Worker 在 ${DISK_WORKER_RESTART_WINDOW_MS / 1000} 秒内已重启 ` +
-        `${DISK_WORKER_MAX_RESTARTS} 次，放弃自愈——日志此后只保留在控制台，直到进程重启。`
+        `[logger] persistence Worker restarted ${DISK_WORKER_MAX_RESTARTS} times within ` +
+        `${DISK_WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — logs will only stay in the console until the process restarts.`
       );
       diskWorker = null;
       return;

@@ -59,15 +59,15 @@ function createWorker(): Worker {
     }
   };
   w.onerror = (event: ErrorEvent) => {
-    logger.error("入群守卫 Worker 出错，准备重启：", event.message || event.error || event);
+    logger.error("Anti-raid guard Worker errored, restarting:", event.message || event.error || event);
     // Bun 里 Worker 内部一旦抛出未捕获异常就会直接终止该 Worker 线程（见
     // aiChat.ts 同款注释），这里不需要再手动 terminate，直接换新实例顶上。
     const now: number = Date.now();
     restartTimestamps = restartTimestamps.filter((t) => now - t < RESTART_WINDOW_MS);
     if (restartTimestamps.length >= MAX_RESTARTS) {
       logger.error(
-        `入群守卫 Worker 在 ${RESTART_WINDOW_MS / 1000} 秒内已重启 ${MAX_RESTARTS} 次，放弃自愈——` +
-        `入群验证与反刷群功能此后静默失效，直到进程重启。`
+        `Anti-raid guard Worker restarted ${MAX_RESTARTS} times within ${RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
+        `join verification and anti-raid features will silently stay disabled until the process restarts.`
       );
       abandonLockdowns();
       worker = null;

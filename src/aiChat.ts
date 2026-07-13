@@ -43,7 +43,7 @@ function createWorker(): Worker {
     }
   };
   w.onerror = (event: ErrorEvent) => {
-    logger.error("AI Worker 出错，准备重启：", event.message || event.error || event);
+    logger.error("AI Worker errored, restarting:", event.message || event.error || event);
     // Bun 里 Worker 内部一旦抛出未捕获异常（同步或 async 均如此，已实测
     // 验证）就会直接终止该 Worker 线程，因此这里不需要（实际上也没法）
     // 再手动 terminate，直接换一个新实例顶上即可。
@@ -51,8 +51,8 @@ function createWorker(): Worker {
     restartTimestamps = restartTimestamps.filter((t) => now - t < RESTART_WINDOW_MS);
     if (restartTimestamps.length >= MAX_RESTARTS) {
       logger.error(
-        `AI Worker 在 ${RESTART_WINDOW_MS / 1000} 秒内已重启 ${MAX_RESTARTS} 次，放弃自愈——` +
-        `AI 闲聊功能此后静默失效，直到进程重启。`
+        `AI Worker restarted ${MAX_RESTARTS} times within ${RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
+        `AI chat feature will silently stay disabled until the process restarts.`
       );
       worker = null;
       return;
