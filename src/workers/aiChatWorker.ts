@@ -190,7 +190,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
     ],
     stream: false,
     temperature: 0.6,
-    max_tokens: 512,
+    max_tokens: 768,
   });
   const content: string | undefined = message?.content;
   if (!content) return null;
@@ -376,7 +376,7 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
       tools: TOOL_DEFINITIONS,
       stream: false,
       temperature: 1.2,
-      max_tokens: 4096,
+      max_tokens: 2048,
     });
     if (!message) return null;
 
