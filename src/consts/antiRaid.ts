@@ -22,6 +22,11 @@ export const WELCOME_AUTO_DELETE_MS: number = 30 * 1000;
  */
 export const ADMIN_CACHE_TTL_MS: number = 60 * 60 * 1000;
 /**
+ * 「本群是否有关联频道」缓存的过期时长。关联/解绑频道是极罕见的管理操作，
+ * 缓存过期只是兜底，可以放心地长。
+ */
+export const LINKED_CHANNEL_TTL_MS: number = 60 * 60 * 1000;
+/**
  * 「评论区留言 → 自动拉群」两个事件的关联窗口：评论消息和 chat_member
  * 入群更新由同一个动作触发、到达顺序不保证，评论先到时暂存这么久等
  * 入群更新来消费。实际间隔是毫秒级，取分钟级只是给限流/网络抖动留余量。

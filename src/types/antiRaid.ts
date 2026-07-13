@@ -14,13 +14,18 @@ export interface PendingVerification {
   /** 带验证按钮的提醒消息 ID，验证通过后要把这条消息删掉。 */
   reminderMessageId?: number;
   /**
-   * 追发到频道评论线程里的验证提醒消息 ID（TA 以楼中楼回复入群时，群里的
-   * 提醒 TA 看不到，要回复到 TA 的评论下、让按钮出现在频道侧的留言界面里），
-   * 验证通过后同样要删掉。
+   * 以「回复 TA 的消息」形式补发的验证提醒的消息 ID（楼中楼回复时追发到
+   * 评论线程里让频道侧可见，群内正常发言时改锚到发言下戳中 TA），验证
+   * 通过后同样要删掉。
    */
-  threadReminderMessageId?: number;
-  /** 是否已向评论线程追发过验证提醒——TA 连发多条回复也只追发一次。 */
-  threadReminderRequested?: boolean;
+  replyReminderMessageId?: number;
+  /** 是否已补发过回复式验证提醒——TA 连发多条消息也只补发一次。 */
+  replyReminderRequested?: boolean;
+  /**
+   * 原始提醒（reminderMessageId）是否已被回复式提醒取代并删除：置位后，
+   * 若原始提醒还在限流队列里没落地，落地时的回填回调会将其直接自删。
+   */
+  reminderSuperseded?: boolean;
   timeout: ReturnType<typeof setTimeout>;
   /**
    * 若为 true，说明这不是真正在等待验证的记录，而是反防刷群私密模式下
@@ -52,6 +57,14 @@ export interface Lockdown {
    */
   originalPermissions: ChatPermissions;
   restoreTimeout: ReturnType<typeof setTimeout>;
+}
+
+/** 某群「是否有关联频道」的缓存条目（Worker 线程内存状态），用于评论区判定的按群开关。 */
+export interface LinkedChannelCache {
+  /** getChat 结果里是否带 linked_chat_id（即本群是不是频道的讨论群）。 */
+  hasLinked: boolean;
+  /** 拉取落地的时刻，超过 LINKED_CHANNEL_TTL_MS 视为过期，下次需要时重新拉取。 */
+  fetchedAt: number;
 }
 
 /** 某群管理员表的缓存条目（Worker 线程内存状态），用于管理员拉人免验证的同步判定。 */
