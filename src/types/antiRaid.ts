@@ -46,6 +46,14 @@ export interface Lockdown {
   restoreTimeout: ReturnType<typeof setTimeout>;
 }
 
+/** 某群管理员表的缓存条目（Worker 线程内存状态），用于管理员拉人免验证的同步判定。 */
+export interface ChatAdminCache {
+  /** 群管理员 + 群主的用户 ID 集合，管理员任免事件（adminsChanged）到达时原地增删。 */
+  adminIds: Set<number>;
+  /** 全量拉取落地的时刻，超过 ADMIN_CACHE_TTL_MS 视为过期，下次需要时重新全量拉取。 */
+  fetchedAt: number;
+}
+
 /** 主线程投递给入群守卫 Worker 的成员身份（生成展示标签所需的最小字段）。 */
 export interface AntiRaidMember {
   id: number;
@@ -116,12 +124,26 @@ export interface AdoptLockdownsMessage {
   lockdowns: AdoptableLockdown[];
 }
 
+/**
+ * 主线程 -> Worker：某成员的管理员身份发生了变化（任免、管理员入群/离群）。
+ * 管理员任免本身就以 chat_member 更新送达，借此让 Worker 侧的管理员表缓存
+ * 近乎实时，TTL 只是兜底。
+ */
+export interface AdminsChangedMessage {
+  type: "adminsChanged";
+  chatId: number;
+  userId: number;
+  /** 变化后的身份是否为管理员/群主。 */
+  isAdmin: boolean;
+}
+
 export type AntiRaidWorkerMessage =
   | NewMemberMessage
   | MemberLeftMessage
   | TrackedChatMessage
   | VerifyCallbackMessage
-  | AdoptLockdownsMessage;
+  | AdoptLockdownsMessage
+  | AdminsChangedMessage;
 
 /** Worker -> 主线程：某群的私密模式已实际生效（setChatPermissions 成功）。 */
 export interface LockdownEvent {

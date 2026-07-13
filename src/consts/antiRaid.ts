@@ -15,6 +15,12 @@ export const VERIFICATION_TIMEOUT_MS: number = 90 * 1000;
 export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
 /** 验证通过后的欢迎消息在被自动清理前保持可见的时长。 */
 export const WELCOME_AUTO_DELETE_MS: number = 30 * 1000;
+/**
+ * 管理员表缓存（管理员拉人免验证的同步判定依据）的过期时长。管理员任免
+ * 事件会实时增删缓存，这个 TTL 只是兜底（比如错过更新的极端情况），
+ * 所以可以放心地长。
+ */
+export const ADMIN_CACHE_TTL_MS: number = 60 * 60 * 1000;
 
 // —— 反刷群私密模式 ——
 

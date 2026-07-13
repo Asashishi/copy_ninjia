@@ -10,7 +10,9 @@ import {
 } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
+import { PRIVILEGED_USERS_ID } from "../infra/config";
 import {
+  ADMIN_CACHE_TTL_MS,
   JOIN_THRESHOLD,
   JOIN_WINDOW_MS,
   LOCKDOWN_KICK_DEDUPE_MS,
@@ -21,7 +23,7 @@ import {
   VERIFY_CALLBACK_PREFIX,
   WELCOME_AUTO_DELETE_MS,
 } from "../consts/antiRaid";
-import { activeLockdowns, joinWindows, pendingVerifications } from "../cache/antiRaidWorker";
+import { activeLockdowns, chatAdmins, joinWindows, pendingVerifications } from "../cache/antiRaidWorker";
 import type {
   AdoptableLockdown,
   AntiRaidMember,
@@ -61,6 +63,50 @@ function verificationKey(chatId: number, userId: number): string {
 
 function memberLabel(member: AntiRaidMember): string {
   return formatUserLabel({ id: member.id, username: member.username, first_name: member.first_name });
+}
+
+// —— 管理员表（管理员拉人免验证的判定依据） ——
+
+/** 未过期的某群管理员 ID 集合；没拉取过或已过期则返回 undefined，让调用方走异步兜底。 */
+function freshAdminIds(chatId: number): Set<number> | undefined {
+  const cached = chatAdmins.get(chatId);
+  if (!cached || Date.now() - cached.fetchedAt > ADMIN_CACHE_TTL_MS) return undefined;
+  return cached.adminIds;
+}
+
+// 进行中的全量拉取，按 chatId 去重：管理员短时间内连拉多人时只发一次
+// getChatAdministrators，后续的入群共享同一个结果。
+const adminFetches: Map<number, Promise<Set<number>>> = new Map();
+
+/** 全量拉取某群的管理员表并落缓存（带进行中去重）。 */
+function fetchAdminIds(chatId: number): Promise<Set<number>> {
+  let inFlight = adminFetches.get(chatId);
+  if (!inFlight) {
+    inFlight = joinVerificationApi
+      .getChatAdministrators(chatId)
+      .then((admins) => {
+        const adminIds: Set<number> = new Set(admins.map((admin) => admin.user.id));
+        chatAdmins.set(chatId, { adminIds, fetchedAt: Date.now() });
+        return adminIds;
+      })
+      .finally(() => adminFetches.delete(chatId));
+    adminFetches.set(chatId, inFlight);
+  }
+  return inFlight;
+}
+
+/**
+ * 应用一条管理员任免事件（主线程从 chat_member 更新里提取）。只增删已有的
+ * 缓存条目——还没按需拉取过的群没有条目可改，之后的首次全量拉取天然是最新的。
+ */
+function applyAdminChange(chatId: number, userId: number, isAdmin: boolean): void {
+  const cached = chatAdmins.get(chatId);
+  if (!cached) return;
+  if (isAdmin) {
+    cached.adminIds.add(userId);
+  } else {
+    cached.adminIds.delete(userId);
+  }
 }
 
 // —— 入群验证 ——
@@ -108,6 +154,14 @@ function ensureVerificationStarted(
 ): void {
   const key: string = verificationKey(chatId, member.id);
   const existing = pendingVerifications.get(key);
+
+  // 管理员拉人免验证的同步快路径：拉人者在特权白名单里，或命中未过期的
+  // 管理员表缓存，则等同于管理员身份入群的豁免。特意放在私密模式分支之前
+  // ——私密模式期间普通成员本就被禁止拉人，管理员拉进来的人应照常放行。
+  // 缓存没拉取过/已过期时这里不命中，落到下方的异步兜底去全量拉取。
+  if (!exempt && actorId !== undefined && actorId !== member.id) {
+    exempt = PRIVILEGED_USERS_ID.includes(actorId) || freshAdminIds(chatId)?.has(actorId) === true;
+  }
 
   if (exempt) {
     // 管理员/群主入群（典型如群主退群重进），不需要验证。new_chat_members
@@ -192,13 +246,14 @@ function ensureVerificationStarted(
   };
   pendingVerifications.set(key, pending);
 
-  // 若是他人邀请/拉入群（操作者 actorId 存在且不为被加入者本人），则后台异步校验操作者是否为管理员，以实现管理员拉人免验证。
+  // 他人拉入群但上面的同步快路径没命中（管理员表缓存没拉取过/已过期）：
+  // 异步全量拉取管理员表兜底——既回答了「拉人者是不是管理员」，也顺手把
+  // 缓存补热，同群的下一次管理员拉人就能走同步快路径、不再闪验证按钮。
   if (actorId !== undefined && actorId !== member.id) {
     void (async (): Promise<void> => {
       try {
-        const actor = await joinVerificationApi.getChatMember(chatId, actorId);
-        const isAdmin = actor.status === "administrator" || actor.status === "creator";
-        if (isAdmin) {
+        const adminIds: Set<number> = await fetchAdminIds(chatId);
+        if (adminIds.has(actorId)) {
           const current = pendingVerifications.get(key);
           // 仅在当前验证记录未被其他事件（如离群、点击通过等）更改时进行撤销
           if (current === pending) {
@@ -220,7 +275,7 @@ function ensureVerificationStarted(
           }
         }
       } catch (error: unknown) {
-        logger.error(`Error checking if actor ${actorId} is admin in chat ${chatId}:`, error);
+        logger.error(`Error fetching chat admins for admin-invite exemption in chat ${chatId}:`, error);
       }
     })();
   }
@@ -461,6 +516,9 @@ self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
       break;
     case "adopt":
       adoptLockdowns(msg.lockdowns);
+      break;
+    case "adminsChanged":
+      applyAdminChange(msg.chatId, msg.userId, msg.isAdmin);
       break;
   }
 };

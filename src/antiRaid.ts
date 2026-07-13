@@ -160,14 +160,21 @@ export function handleChatMemberUpdate(ctx: Context): void {
   const wasActive: boolean = isActiveChatMember(update.old_chat_member);
   const isActive: boolean = isActiveChatMember(update.new_chat_member);
 
+  // 管理员任免（含管理员入群/离群）同样以 chat_member 更新送达：同步给
+  // Worker 侧的管理员表缓存，让「管理员拉人免验证」的同步判定近乎实时，
+  // 缓存 TTL 只是兜底。FIFO 保证它先于随后的 join/left 投递生效。
+  const wasAdmin: boolean = update.old_chat_member.status === "administrator" || update.old_chat_member.status === "creator";
+  const isAdmin: boolean = update.new_chat_member.status === "administrator" || update.new_chat_member.status === "creator";
+  if (wasAdmin !== isAdmin) {
+    post({ type: "adminsChanged", chatId, userId: user.id, isAdmin });
+  }
+
   if (!wasActive && isActive) {
     // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径
     // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
     // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker
     // 收到豁免后会将其撤销。
-    const status: string = update.new_chat_member.status;
-    const exempt: boolean = status === "administrator" || status === "creator";
-    post({ type: "join", chatId, member: pickMember(user), exempt, actorId: update.from.id });
+    post({ type: "join", chatId, member: pickMember(user), exempt: isAdmin, actorId: update.from.id });
   } else if (wasActive && !isActive) {
     post({ type: "left", chatId, userId: user.id });
   }

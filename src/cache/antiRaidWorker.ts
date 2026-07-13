@@ -1,4 +1,4 @@
-import type { JoinWindow, Lockdown, PendingVerification } from "../types";
+import type { ChatAdminCache, JoinWindow, Lockdown, PendingVerification } from "../types";
 
 /**
  * 入群守卫流水线（src/workers/antiRaidWorker.ts）的内存状态。
@@ -10,3 +10,5 @@ import type { JoinWindow, Lockdown, PendingVerification } from "../types";
 export const pendingVerifications: Map<string, PendingVerification> = new Map();
 export const joinWindows: Map<number, JoinWindow> = new Map();
 export const activeLockdowns: Map<number, Lockdown> = new Map();
+/** 按需拉取的各群管理员表，供「管理员拉人免验证」同步判定；丢了只是缓存，重新拉即可。 */
+export const chatAdmins: Map<number, ChatAdminCache> = new Map();
