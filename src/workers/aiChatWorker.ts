@@ -8,7 +8,6 @@ import {
   COMPACT_BATCH_SIZE,
   DEEPSEEK_API_URL,
   DEEPSEEK_MODEL,
-  HOT_CONTEXT_SIZE,
   MAX_SUMMARY_ROUNDS,
   MAX_TOOL_ROUNDS,
   RATE_LIMIT_LONG_MAX_TRIGGERS,
@@ -21,6 +20,7 @@ import {
   SPLIT_REPLY_PROBABILITY,
   SUMMARY_MAX_CHARS,
   TIME_INTENT_PATTERN,
+  VERBATIM_CONTEXT_MAX,
 } from "../consts/aiChat";
 import {
   chatBuffers,
@@ -28,6 +28,7 @@ import {
   compactionChains,
   lastReplyTimes,
   longTriggerTimes,
+  pendingSummaries,
   rateLimitNoticeTimes,
   triggerTimes,
 } from "../cache/aiChatWorker";
@@ -53,11 +54,13 @@ import type { AiBotInfo, AiChatWorkerMessage } from "../types";
  * /chat/completions 接口），生成一条人设化回复。人设文本存放在仓库根目录
  * 的 prompt/persona.txt，修改人设不需要碰代码。
  *
- * 中期记忆：逐字缓存只保留热上下文（HOT_CONTEXT_SIZE，热 50 + 镜像 50），
- * 每积满 COMPACT_BATCH_SIZE 条超出的冷消息就摘出最旧一批，异步交给
- * DeepSeek 压缩成一条摘要（summarizeBatch），每群滚动保留最多
- * MAX_SUMMARY_ROUNDS 轮（4 轮 × 50 条 ≈ 200 条冷历史）。拼上下文时摘要
- * 作为背景段落放在逐字记录之前，模型因此能记住约 300 条跨度的对话。
+ * 中期记忆：逐字缓存由「镜像 50 + 热 50」两块组成（见 consts/aiChat.ts 的
+ * COMPACT_BATCH_SIZE）。每攒满一块轮换一次（recordChatMessage）：旧镜像
+ * 滑出逐字区、其摘要从待晋升区晋升进中期记忆；刚攒满的一块成为新镜像并
+ * 提交 DeepSeek 压缩（summarizeBatch）——镜像在压缩期间仍整块留在上下文
+ * 里，摘要就绪后先存 pendingSummaries，等下一轮轮换才接棒。每群滚动保留
+ * 最多 MAX_SUMMARY_ROUNDS 轮摘要（4 轮 × 50 条 ≈ 200 条冷历史），拼上下
+ * 文时放在逐字记录之前，模型可感知约 250 ~ 300 条跨度的对话。
  */
 
 declare var self: Worker;
@@ -99,49 +102,68 @@ function recordChatMessage(chatId: number, id: number, firstName: string, lastNa
     chatBuffers.set(chatId, buf);
   }
   buf.push({ id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
-  // 超出热上下文的冷消息积满一批就触发一轮压缩：同步摘出最旧一批（缓存
-  // 立刻回到 HOT_CONTEXT_SIZE 条，占用有硬上界），摘要生成则是异步的——
-  // 即使 AI 总结失败，这批消息也已出队，只是那段中期记忆缺失，不回灌。
-  if (buf.size >= HOT_CONTEXT_SIZE + COMPACT_BATCH_SIZE) {
-    const batch: BufferedMessage[] = [];
-    while (batch.length < COMPACT_BATCH_SIZE) {
-      const oldest: BufferedMessage | undefined = buf.shift();
-      if (!oldest) break;
-      batch.push(oldest);
+  // 滑动轮换：每攒满一块 COMPACT_BATCH_SIZE 条就转一轮——旧镜像（上一轮
+  // 攒满时已提交压缩，摘要多半早已就绪）滑出逐字区，其摘要由链上任务晋升
+  // 进中期记忆；刚攒满的这块整体成为新镜像并提交 AI 压缩。镜像在压缩期间
+  // 仍整块留在逐字上下文里，正常情况下不存在「已滑出但摘要未就绪」的失忆
+  // 窗口。push 每次只 +1，且轮换把 size 收回 COMPACT_BATCH_SIZE 后 push
+  // 不会再撞上下面第二个判等，两个 === 各自恰好在块边界命中一次。
+  if (buf.size === VERBATIM_CONTEXT_MAX) {
+    for (let i: number = 0; i < COMPACT_BATCH_SIZE; i++) {
+      buf.shift();
     }
-    scheduleCompaction(chatId, batch);
+    scheduleRotation(chatId, buf.last(COMPACT_BATCH_SIZE), true);
+  } else if (buf.size === COMPACT_BATCH_SIZE) {
+    // 本群的第一块刚攒满：成为首个镜像，只提交压缩，还没有可晋升的旧摘要。
+    scheduleRotation(chatId, buf.last(COMPACT_BATCH_SIZE), false);
   }
 }
 
 /**
- * 把一轮待压缩的冷消息挂到该群的压缩串行链上。链保证摘要严格按时间顺序
- * 入队——洪峰下第二轮压缩可能在第一轮的网络调用返回前就触发，不串行的话
- * 摘要会乱序。compactBatch 自身兜错，链永不 reject。
+ * 把一轮「晋升旧摘要 + 压缩新镜像」挂到该群的轮换串行链上。链保证时序：
+ * 洪峰下第 N+1 轮可能在第 N 轮的压缩调用返回前就到来，串行执行才能保证
+ * 晋升到手的一定是上一轮的结果、摘要严格按时间顺序入队。rotateCompaction
+ * 自身兜错，链永不 reject。
+ * @param mirrorBatch 刚攒满、成为新镜像的一块消息（快照，之后缓存继续滚动不影响它）。
+ * @param promoteFirst 本轮是否有旧镜像滑出（首轮没有），有则先晋升其摘要。
  */
-function scheduleCompaction(chatId: number, batch: BufferedMessage[]): void {
+function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean): void {
   const prev: Promise<void> = compactionChains.get(chatId) ?? Promise.resolve();
-  compactionChains.set(chatId, prev.then(() => compactBatch(chatId, batch)));
+  compactionChains.set(chatId, prev.then(() => rotateCompaction(chatId, mirrorBatch, promoteFirst)));
 }
 
-/** 执行一轮压缩：AI 总结一批冷消息并把摘要滚入该群的中期记忆队列。 */
-async function compactBatch(chatId: number, batch: BufferedMessage[]): Promise<void> {
+/** 执行一轮轮换：先晋升上一轮镜像的摘要（若有），再 AI 压缩新镜像存为待晋升。 */
+async function rotateCompaction(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean): Promise<void> {
   try {
-    const summary: string | null = await summarizeBatch(batch);
-    if (!summary) {
-      logger.error(`AI 压缩失败：chat ${chatId} 的 ${batch.length} 条冷消息未生成摘要，这段中期记忆缺失。`);
-      return;
+    if (promoteFirst) {
+      promotePendingSummary(chatId);
     }
-    let queue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
-    if (!queue) {
-      queue = new LinkedQueue<string>();
-      chatSummaries.set(chatId, queue);
-    }
-    queue.push(summary);
-    while (queue.size > MAX_SUMMARY_ROUNDS) {
-      queue.shift();
+    const summary: string | null = await summarizeBatch(mirrorBatch);
+    if (summary) {
+      pendingSummaries.set(chatId, summary);
+    } else {
+      // 失败刻意不回灌不重试：镜像原文此刻还在逐字区，要到下一轮滑出时
+      // 这段中期记忆才真正缺失。
+      logger.error(`AI 压缩失败：chat ${chatId} 的 ${mirrorBatch.length} 条镜像消息未生成摘要，滑出后这段中期记忆将缺失。`);
     }
   } catch (error: unknown) {
     logger.error("Error in chat compaction task:", error);
+  }
+}
+
+/** 把上一轮镜像的摘要（其原文刚滑出逐字区）晋升进该群的中期记忆队列。 */
+function promotePendingSummary(chatId: number): void {
+  const pending: string | undefined = pendingSummaries.get(chatId);
+  pendingSummaries.delete(chatId);
+  if (!pending) return; // 上一轮压缩失败：无可晋升项，失败当时已记过日志。
+  let queue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
+  if (!queue) {
+    queue = new LinkedQueue<string>();
+    chatSummaries.set(chatId, queue);
+  }
+  queue.push(pending);
+  while (queue.size > MAX_SUMMARY_ROUNDS) {
+    queue.shift();
   }
 }
 
@@ -216,7 +238,7 @@ interface UserContentOptions {
 /**
  * 把某群的对话上下文拼装成给模型的用户消息内容：先是中期记忆摘要段
  * （若有，最多 MAX_SUMMARY_ROUNDS 轮，从旧到新），再是逐字聊天记录
- * （整个缓存，100 ~ 149 条，见 HOT_CONTEXT_SIZE 的注释）。
+ * （整个缓存 = 镜像 + 热，50 ~ 100 条，见 COMPACT_BATCH_SIZE 的注释）。
  * @param chatId 群聊 ID。
  * @param selfInfo 机器人自己的账号身份（见 botInfo），用于转录里的自我认知。
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
@@ -226,7 +248,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
-  const recent: BufferedMessage[] = buf.last(HOT_CONTEXT_SIZE + COMPACT_BATCH_SIZE);
+  const recent: BufferedMessage[] = buf.last(VERBATIM_CONTEXT_MAX);
   const lines: string[] = recent.map(formatLine);
   if (repliedBotText) {
     // 同样压成单行：这段文本虽是机器人自己说过的话，保持转录「一行一条」的

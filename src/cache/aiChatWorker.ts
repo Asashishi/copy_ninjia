@@ -22,15 +22,23 @@ export const longTriggerTimes: Map<number, LinkedQueue<number>> = new Map();
 export const chatBuffers: Map<number, LinkedQueue<BufferedMessage>> = new Map();
 
 /**
- * 各群的中期记忆：滑出热上下文的冷消息按每 50 条一轮被 AI 压缩成摘要，
+ * 各群的中期记忆：滑出逐字区的冷消息按每 50 条一轮被 AI 压缩成摘要，
  * 存在这里（队首最旧），最多保留 MAX_SUMMARY_ROUNDS 轮，超出滑动移除。
  * 拼装回复上下文时整队摘要会作为背景段落喂给模型。
  */
 export const chatSummaries: Map<number, LinkedQueue<string>> = new Map();
 
 /**
- * 各群压缩任务的串行链（尾部 promise）。压缩要过一次 DeepSeek 网络调用，
- * 消息洪峰下同一群可能背靠背触发两轮压缩，靠把新一轮 then 在上一轮之后，
- * 保证摘要严格按时间顺序入队（链上的任务自身兜错，链永不 reject）。
+ * 各群「待晋升」的镜像摘要：镜像块的 AI 压缩结果先存这里，等该块滑出
+ * 逐字区（下一轮轮换）才晋升进 chatSummaries——镜像原文还在上下文里时，
+ * 它的摘要不重复喂给模型。压缩失败则本轮无待晋升项，晋升时该段记忆缺失。
+ */
+export const pendingSummaries: Map<number, string> = new Map();
+
+/**
+ * 各群轮换任务的串行链（尾部 promise）。每轮任务 = 晋升上一轮镜像的摘要
+ * + 压缩新镜像（一次 DeepSeek 网络调用）。消息洪峰下同一群可能背靠背
+ * 轮换两轮，靠把新一轮 then 在上一轮之后，保证晋升的一定是上一轮的结果、
+ * 摘要严格按时间顺序入队（链上的任务自身兜错，链永不 reject）。
  */
 export const compactionChains: Map<number, Promise<void>> = new Map();
