@@ -106,22 +106,38 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       }
       fileId = chat.photo.big_file_id;
     } else {
-      // 获取用户当前选中的头像（offset=0 即为用户当前正在使用的那张头像）
-      const photos = await bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: 1 });
-      if (photos.total_count === 0) {
-        return false;
-      }
+      // 注意：getUserProfilePhotos 的 offset=0 并不一定是用户当前正在使用的头像——
+      // 用户可能切换回了历史头像中的某一张，此时它在 photos 数组里的位置会靠后。
+      // 真正代表“当前使用中”的头像，是 getChat 返回的 chat.photo.big_file_unique_id，
+      // 所以要用它去匹配 getUserProfilePhotos 历史记录里对应的那一组尺寸，
+      // 才能拿到可下载的 file_id（big_file_unique_id 本身不能直接用于下载）。
+      const chat = await bot.api.getChat(targetId);
+      const activeUniqueId: string | undefined = chat.photo?.big_file_unique_id;
 
-      const photoSizes = photos.photos[0];
-      if (!photoSizes || photoSizes.length === 0) {
+      const photos = await bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: 100 });
+      if (photos.total_count === 0) {
         return false;
       }
 
       // 按照 Telegram API 约定，同一张头像的多个尺寸按分辨率从小到大排列，
       // 因此数组最后一个元素即为分辨率最高（原图）的版本；不要用 file_size 比较，
       // 因为 file_size 是可选字段，缺失时会导致误选到缩略图。
-      const largestPhoto = photoSizes[photoSizes.length - 1]!;
-      fileId = largestPhoto.file_id;
+      // big_file_unique_id 对应的正是最大尺寸版本，所以要拿每组最后一个元素的
+      // file_unique_id 去和它比较。
+      const matchedPhoto = activeUniqueId
+        ? photos.photos.find((sizes) => sizes.length > 0 && sizes[sizes.length - 1]!.file_unique_id === activeUniqueId)?.at(-1)
+        : undefined;
+
+      // 没匹配到（用户没有 chat.photo，或历史超过 limit=100 翻页没覆盖到）就直接
+      // 判失败，绝不能偷偷用最新一组顶替——那样会把错的头像悄悄冒充成功。这里老实
+      // 返回 false，让外层 copyUserProfilePhoto 的重试循环用尽后，正常触发
+      // 更靠谱的 t.me 网页爬虫兜底（见 fetchAvatarFromWebProfile，它直接读页面上
+      // 展示的当前头像，天然准确）。
+      if (!matchedPhoto) {
+        return false;
+      }
+
+      fileId = matchedPhoto.file_id;
     }
 
     const file = await bot.api.getFile(fileId);
