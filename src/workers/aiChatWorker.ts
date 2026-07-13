@@ -372,7 +372,7 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
       tools: TOOL_DEFINITIONS,
       stream: false,
       temperature: 1.2,
-      max_tokens: 2048,
+      max_tokens: 4096,
     });
     if (!message) return null;
 
