@@ -172,7 +172,8 @@ function ensureVerificationStarted(
   // 直接回复频道帖的是确证的真人评论，直接豁免、连验证按钮都不闪；
   // 楼中楼回复无法确证线程根，走下方的正常验证 + 追发提醒到 TA 的回复下。
   const recentComment = takeRecentComment(chatId, member.id);
-  if (!exempt && recentComment?.repliesToChannelPost === true) {
+  const exemptViaChannelComment: boolean = !exempt && recentComment?.repliesToChannelPost === true;
+  if (exemptViaChannelComment) {
     exempt = true;
   }
 
@@ -196,6 +197,11 @@ function ensureVerificationStarted(
       timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
       exempt: true,
     });
+    // 直接回复频道帖免验证：回帖本身就是真人操作，虽然不点验证按钮，
+    // 也照样在帖子底下弹一条欢迎消息，让 TA 在频道侧能看到。
+    if (exemptViaChannelComment && recentComment) {
+      sendChannelCommentWelcome(chatId, memberLabel(member), recentComment.messageId);
+    }
     return;
   }
 
@@ -469,14 +475,31 @@ function deletePendingReminders(chatId: number, pending: PendingVerification): v
 }
 
 /**
+ * 直接回复频道帖免验证时，在帖子底下（回复 TA 那条评论）补一条欢迎消息，
+ * WELCOME_AUTO_DELETE_MS 后自动清理——不点验证按钮的豁免路径原本没有
+ * 任何反馈，TA 完全不知道自己已经通过，补上这条能在频道侧看到的欢迎。
+ */
+function sendChannelCommentWelcome(chatId: number, label: string, anchorMessageId: number): void {
+  void sendMessage(chatId, `哼，${label} 老实巴交在帖子底下冒个泡，本天才大发慈悲免了你的验证，欢迎杂鱼入群~♡`, anchorMessageId, joinVerificationApi)
+    .then((welcomeMessageId: number | undefined) => {
+      if (welcomeMessageId !== undefined) {
+        deleteMessageAfter(chatId, welcomeMessageId, WELCOME_AUTO_DELETE_MS, joinVerificationApi);
+      }
+    })
+    .catch((error: unknown) => {
+      logger.error("Error sending channel-comment welcome message:", error);
+    });
+}
+
+/**
  * 在频道评论区留言的成员免验证：在关联频道的帖子下留言本身就是真人操作
  * （Telegram 正因这次留言才把 TA 自动拉进讨论群），不需要再点按钮自证——
  * 而且 TA 人在频道那侧的评论界面，多半根本看不到群里的验证按钮，硬要求
  * 只会把真人误踢。撤销验证窗口、删掉带按钮的提醒消息，并留一个豁免占位
  * 给可能迟到的 new_chat_members 服务消息去重。TA 已发的消息一概不删——
- * 那是合法的评论。
+ * 那是合法的评论；另外在这条评论下补一条欢迎消息，让 TA 知道已经放行。
  */
-function passVerificationForChannelComment(chatId: number, userId: number): void {
+function passVerificationForChannelComment(chatId: number, userId: number, messageId: number): void {
   const key: string = verificationKey(chatId, userId);
   const pending = pendingVerifications.get(key);
   if (!pending || pending.kicked || pending.exempt) return;
@@ -493,6 +516,7 @@ function passVerificationForChannelComment(chatId: number, userId: number): void
     timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
     exempt: true,
   });
+  sendChannelCommentWelcome(chatId, pending.label, messageId);
 }
 
 /**
@@ -543,7 +567,7 @@ function handleTrackedMessage(msg: TrackedChatMessage): void {
       return;
     }
     if (msg.repliesToChannelPost) {
-      passVerificationForChannelComment(msg.chatId, msg.userId);
+      passVerificationForChannelComment(msg.chatId, msg.userId, msg.messageId);
       return;
     }
   }
