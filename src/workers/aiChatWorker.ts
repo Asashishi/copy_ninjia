@@ -279,9 +279,10 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
     `记录里标着这个 id 的行是你自己之前说过的话，别把它们当成别人的发言；` +
     `消息里 @ 这个用户名、或回复你的消息，都是在跟你说话。`;
 
-  // 中期记忆段：更早的冷历史被压缩成的摘要（每轮 50 条，从旧到新），放在
-  // 逐字记录之前作为背景。摘要入队时已压成单行（见 summarizeBatch），
-  // 「一行一条」的防伪造结构在这一段同样成立。
+  // 中期记忆段：更早的冷历史被压缩成的摘要（每轮 50 条，从旧到新），带着
+  // 自己的声明句放在整段上下文最前面——转录的声明句则紧贴逐字记录，两段
+  // 各自声明、界线分明，摘要行不会被误当成聊天记录的一部分。摘要入队时
+  // 已压成单行（见 summarizeBatch），「一行一条」的防伪造结构同样成立。
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
   const summaries: string[] = summaryQueue ? summaryQueue.last(MAX_SUMMARY_ROUNDS) : [];
   const summaryBlock: string =
@@ -292,10 +293,10 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
       : "";
 
   return (
+    summaryBlock +
     "以下是本群最近的聊天记录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
     selfIdentity +
     "\n\n" +
-    summaryBlock +
     lines.join("\n") +
     "\n\n" +
     replyInstruction
