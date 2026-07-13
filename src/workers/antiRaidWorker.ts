@@ -388,18 +388,31 @@ function chatHasLinkedChannel(chatId: number): boolean {
  * - 评论区的楼中楼回复（inCommentThread=true）：TA 很可能是从频道评论区
  *   留言被自动拉进群的，人在频道侧看不到群里的提醒。楼中楼无法确证线程
  *   根就是频道帖（Bot API 不能按 ID 反查消息），所以不豁免，而是追发到
- *   评论线程里（双向同步，按钮在频道侧可见可点）并重置验证计时；原提醒
- *   保留，群内照旧可见。
+ *   评论线程里（双向同步，按钮在频道侧可见可点）并重置验证计时。
  * - 群里正常发言（inCommentThread=false）：TA 都开口说话了还没点按钮，
  *   多半压根没注意到原提醒——改锚到 TA 的发言下（回复会给 TA 推通知），
- *   原提醒删除，计时不重置。
- * 两个场景都不放水：不点照样超时踢人，消息照常追踪清理。
+ *   计时不重置。
+ * 两个场景都会立刻删除原来那条入群时弹出的独立提醒（补发的这条取代它），
+ * 也都不放水：不点照样超时踢人，消息照常追踪清理。
  */
 function resendReminderReplyingTo(chatId: number, userId: number, targetMessageId: number, inCommentThread: boolean): void {
   const key: string = verificationKey(chatId, userId);
   const pending = pendingVerifications.get(key);
   if (!pending || pending.kicked || pending.exempt || pending.replyReminderRequested) return;
   pending.replyReminderRequested = true;
+
+  // 原提醒被取代，立刻删除。定位按人不按时间：走的是 chatId:userId 键下
+  // pending 记录里存的 reminderMessageId，删的必然是 TA 自己的那条提醒。
+  // 已落地的直接删（顺手从待清理列表去掉，免得过期清理时再对它多打一次
+  // 注定失败的删除调用）；还在限流队列里没落地的，由回填回调按
+  // reminderSuperseded 标记自删。
+  pending.reminderSuperseded = true;
+  if (pending.reminderMessageId !== undefined) {
+    const reminderIndex: number = pending.messageIds.indexOf(pending.reminderMessageId);
+    if (reminderIndex >= 0) pending.messageIds.splice(reminderIndex, 1);
+    void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
+    pending.reminderMessageId = undefined;
+  }
 
   let reminderText: string;
   if (inCommentThread) {
@@ -414,16 +427,6 @@ function resendReminderReplyingTo(chatId: number, userId: number, targetMessageI
       `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
       `不然留言全删、人也一脚踢出去哦♡`;
   } else {
-    // 原提醒被取代：已落地的直接删掉（顺手从待清理列表去掉，免得过期清理
-    // 时再对它多打一次注定失败的删除调用）；还在限流队列里没落地的，由
-    // 回填回调按 reminderSuperseded 标记自删。
-    pending.reminderSuperseded = true;
-    if (pending.reminderMessageId !== undefined) {
-      const reminderIndex: number = pending.messageIds.indexOf(pending.reminderMessageId);
-      if (reminderIndex >= 0) pending.messageIds.splice(reminderIndex, 1);
-      void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
-      pending.reminderMessageId = undefined;
-    }
     reminderText =
       `喂，${pending.label}，话都说上了，下面的验证按钮倒是点一下啊杂鱼。` +
       `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
