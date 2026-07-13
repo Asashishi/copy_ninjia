@@ -10,7 +10,7 @@
 export const AI_REPLY_PROBABILITY: number = 1 / 5;
 
 export const DEEPSEEK_API_URL: string = "https://api.deepseek.com/chat/completions";
-export const DEEPSEEK_MODEL: string = "deepseek-v4-flash";
+export const DEEPSEEK_MODEL: string = "deepseek-v4-pro";
 export const REQUEST_TIMEOUT_MS: number = 60_000;
 
 /**
