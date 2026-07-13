@@ -400,6 +400,8 @@ function resendReminderReplyingTo(chatId: number, userId: number, targetMessageI
   const pending = pendingVerifications.get(key);
   if (!pending || pending.kicked || pending.exempt || pending.replyReminderRequested) return;
   pending.replyReminderRequested = true;
+  // 之后的欢迎消息也回复同一条消息，楼中楼场景下才能同样落进评论线程。
+  pending.welcomeAnchorMessageId = targetMessageId;
 
   // 原提醒被取代，立刻删除。定位按人不按时间：走的是 chatId:userId 键下
   // pending 记录里存的 reminderMessageId，删的必然是 TA 自己的那条提醒。
@@ -574,7 +576,9 @@ async function handleVerificationCallback(msg: VerifyCallbackMessage): Promise<v
   if (pending.replyReminderMessageId !== undefined) {
     await deleteMessage(msg.chatId, pending.replyReminderMessageId, joinVerificationApi);
   }
-  const welcomeMessageId: number | undefined = await sendMessage(msg.chatId, `哼，算你机灵，${memberLabel(msg.from)} 通过验证啦，欢迎杂鱼入群~♡`, undefined, joinVerificationApi);
+  // 欢迎消息回复补发提醒锚定的那条消息（若有）：楼中楼场景下随之落进
+  // 评论线程，TA 在频道侧也能看到；普通验证（没补发过提醒）则照旧平发。
+  const welcomeMessageId: number | undefined = await sendMessage(msg.chatId, `哼，算你机灵，${memberLabel(msg.from)} 通过验证啦，欢迎杂鱼入群~♡`, pending.welcomeAnchorMessageId, joinVerificationApi);
   if (welcomeMessageId !== undefined) {
     deleteMessageAfter(msg.chatId, welcomeMessageId, WELCOME_AUTO_DELETE_MS, joinVerificationApi);
   }

@@ -22,6 +22,11 @@ export interface PendingVerification {
   /** 是否已补发过回复式验证提醒——TA 连发多条消息也只补发一次。 */
   replyReminderRequested?: boolean;
   /**
+   * 回复式提醒锚定的那条消息（TA 的评论/发言）的 ID。验证通过后的欢迎
+   * 消息也回复它——楼中楼场景下欢迎消息因此落进评论线程，频道侧可见。
+   */
+  welcomeAnchorMessageId?: number;
+  /**
    * 原始提醒（reminderMessageId）是否已被回复式提醒取代并删除：置位后，
    * 若原始提醒还在限流队列里没落地，落地时的回填回调会将其直接自删。
    */
