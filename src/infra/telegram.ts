@@ -80,7 +80,8 @@ export async function copyUserProfilePhoto(targetId: number, isChannel: boolean 
         await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
         return true;
       } catch (error: unknown) {
-        logger.error("Error setting profile photo from web fallback:", error);
+        // 同 copyUserProfilePhoto 的 catch：payload 带着图片字节，不能原样落盘。
+        logApiError("set profile photo from web fallback", error);
       }
     }
   } else {
@@ -207,8 +208,10 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
     await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
     return "ok";
   } catch (error: unknown) {
-    // 网络抖动、限流（429）等异常路径都值得重试。
-    logger.error("Error copying user profile photo:", error);
+    // 网络抖动、限流（429）等异常路径都值得重试。必须走 logApiError 而不能把
+    // 原始错误直接落盘：GrammyError 的 payload 里挂着整张头像的原始字节，
+    // logger 展开可枚举属性时会把它序列化成数 MB 的数字键对象刷爆日志。
+    logApiError("copy user profile photo", error);
     return "transient-failure";
   }
 }
