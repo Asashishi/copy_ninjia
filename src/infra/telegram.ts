@@ -380,6 +380,28 @@ export async function banChatMember(chatId: number, userId: number, api: Api = b
 }
 
 /**
+ * 查询某用户此刻是否为指定聊天的当前成员（含被限制发言的成员，不含已离开
+ * /已被踢的历史成员）。用于 /kick 在真正封禁前区分「TA 现在就在这个群，这
+ * 是把 TA 踢出去」和「TA 根本没加入过/已经不在了，这只是提前拉黑」——两者
+ * 战报文案不同，不能笼统都说成"踢出去"。
+ * 查询失败（网络错误、机器人权限不足等）一律按「不是成员」处理（fail
+ * closed）：宁可战报文案偏保守地说成"提前拉黑"，也不要在没查清楚的情况下
+ * 声称把人从 TA 可能根本不在的群里踢了出去。
+ * @param chatId 要查询的聊天。
+ * @param userId 要查询的用户。
+ * @param api 用于查询的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ */
+export async function isChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
+  try {
+    const member = await api.getChatMember(chatId, userId);
+    return member.status === "creator" || member.status === "administrator" || member.status === "member" || member.status === "restricted";
+  } catch (error: unknown) {
+    logApiError(`check chat membership (chat ${chatId}, user ${userId})`, error);
+    return false;
+  }
+}
+
+/**
  * 封禁一个以频道身份（sender_chat）在本聊天发言的频道马甲，使其无法再发消息。
  * banChatMember 只接受用户 id，对频道马甲必须走这个接口；Telegram 不向 bot
  * 暴露马甲背后的真人，所以这已经是能做到的最彻底的"踢频道"。

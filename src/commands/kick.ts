@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types";
-import { sendMessage, banChatMember, banChatSenderChat, deleteMessageAfter } from "../infra/telegram";
+import { sendMessage, banChatMember, banChatSenderChat, isChatMember, deleteMessageAfter } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
@@ -9,10 +9,12 @@ import { isBotAdminIn } from "../infra/botAdmin";
 import { getAllChatStates } from "../infra/storage";
 
 /**
- * 处理 /kick 指令：将目标在所有「机器人是管理员」的群里同时踢出并永久封禁
- * （与入群验证/反刷群的自动踢出不同——那些踢而不 ban 以防误杀，这里是管理
- * 员的手动判断，直接全网封死；封禁对还没加入的群同样生效，目标之后也进不
- * 去）。群清单来自各群 ChatState.botIsAdmin（见 infra/botAdmin.ts）。机器人
+ * 处理 /kick 指令：将目标在所有「机器人是管理员」的群里同时封禁（与入群
+ * 验证/反刷群的自动踢出不同——那些踢而不 ban 以防误杀，这里是管理员的手动
+ * 判断，直接全网封死）。封禁对还没加入的群同样生效，目标之后也进不去，
+ * 但那终究不是「踢」——战报文案按目标此刻是否在场分别措辞（isChatMember）：
+ * 真在场的算踢出去，压根没进过的群只算提前拉黑。群清单来自各群
+ * ChatState.botIsAdmin（见 infra/botAdmin.ts）。机器人
  * 在发起命令的这个群里不是管理员时，本群自然踢不了，但对其它管理的群的
  * 连坐封禁照常执行，只在回复里说明本群没踢；一个管理的群都没有才整体拒绝。
  * 目标解析和 /copy 一致：回复目标的一条消息优先，也可以用 /kick @username
@@ -64,18 +66,29 @@ export async function handleKickCommand(ctx: CommandContext<Context>, users: Rec
     return;
   }
 
-  let bannedCount: number = 0;
+  // 频道马甲（sender_chat）没有「成员」这个概念，banChatSenderChat 本来就
+  // 只是拉黑发言权，不存在「把它踢出去」一说，一律算封禁，不查成员状态。
+  let kickedCount: number = 0;
+  let preBannedCount: number = 0;
   for (const targetChatId of targetChatIds) {
-    // 频道马甲（sender_chat）没有可 ban 的用户 id，banChatMember 对它必然
-    // 报错，要走 banChatSenderChat 封掉这个频道身份的发言权。
-    const banned: boolean = targetUser.isChannel
-      ? await banChatSenderChat(targetChatId, targetUser.id)
-      : await banChatMember(targetChatId, targetUser.id);
-    if (banned) bannedCount++;
+    if (targetUser.isChannel) {
+      if (await banChatSenderChat(targetChatId, targetUser.id)) preBannedCount++;
+      continue;
+    }
+    // 先查目标此刻是否在这个群里，再决定战报里算「踢出去」还是「提前拉黑」——
+    // banChatMember 本身对两种情况效果一样（都会加入封禁名单），只是文案不能
+    // 把「根本没进过的群」也说成踢出去了。
+    const wasMember: boolean = await isChatMember(targetChatId, targetUser.id);
+    const banned: boolean = await banChatMember(targetChatId, targetUser.id);
+    if (banned) {
+      if (wasMember) kickedCount++;
+      else preBannedCount++;
+    }
     // 个别群失败（比如管理员身份记录已过时、缺封禁权限）不中断其余群：
     // banChatMember/banChatSenderChat 内部已带群号记了日志，够排查。
   }
 
+  const bannedCount: number = kickedCount + preBannedCount;
   if (bannedCount === 0) {
     const replyText: string = `呜……${targetLabel} 居然一个群都踢不动，是本天才没有封禁权限吧？杂鱼管理员快去检查♡`;
     await sendMessage(chatId, replyText, messageId);
@@ -86,9 +99,14 @@ export async function handleKickCommand(ctx: CommandContext<Context>, users: Rec
   const notAdminHereNote: string = isAdminHere ? "" : `本天才在这个群不是管理员、这里踢不动 TA，不过——`;
   const failedCount: number = targetChatIds.length - bannedCount;
   const failedNote: string = failedCount > 0 ? `（还有 ${failedCount} 个群没踢动，杂鱼管理员快去检查权限）` : "";
+  // 「踢出去」和「提前拉黑」是两码事，不能笼统混成一句——真在群里的才叫踢，
+  // 压根没进过的群只是被抢先拉黑，战报要分开说清楚。
+  const kickedNote: string = kickedCount > 0 ? `从 ${kickedCount} 个群一脚踢出去还上了黑名单` : "";
+  const preBannedNote: string = preBannedCount > 0 ? `在 ${preBannedCount} 个群提前拉黑（根本没让 TA 进去过）` : "";
+  const actionNote: string = [kickedNote, preBannedNote].filter(Boolean).join("，");
   const noticeMessageId: number | undefined = await sendMessage(
     chatId,
-    `${notAdminHereNote}哼，${targetLabel} 被本天才从 ${bannedCount} 个群一脚踢出去还上了黑名单${failedNote}，杂鱼永远别想回来了♡`,
+    `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}，杂鱼永远别想回来了♡`,
     messageId
   );
   if (noticeMessageId !== undefined) {
