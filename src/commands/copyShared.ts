@@ -14,8 +14,9 @@ import { resolveCommandTarget } from "./targetResolution";
  */
 
 /** claimCopyCooldownOrReject 的返回值：拒绝时只有 rejected；放行时附带占用前
- * 的旧时间戳，供调用方在这次尝试最终没有真正开始复制时用 releaseCopyCooldownClaim 回滚。 */
-type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCopyTime: number | undefined };
+ * 的旧时间戳与本次占用写入的时间戳，供调用方在这次尝试最终没有真正开始复制时
+ * 用 releaseCopyCooldownClaim 回滚。 */
+type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCopyTime: number | undefined; claimedAt: number };
 
 /**
  * copy 类命令的公共冷却检查 + 原子占用。全局共享一份 lastCopyTime 冷却时钟
@@ -47,17 +48,23 @@ export async function claimCopyCooldownOrReject(
   }
 
   const previousLastCopyTime: number | undefined = globalCopyState.lastCopyTime;
-  globalCopyState.lastCopyTime = Date.now();
-  return { rejected: false, previousLastCopyTime };
+  const claimedAt: number = Date.now();
+  globalCopyState.lastCopyTime = claimedAt;
+  return { rejected: false, previousLastCopyTime, claimedAt };
 }
 
 /**
  * 撤销 claimCopyCooldownOrReject 占用的冷却槽——用于这次尝试最终确认不会
  * 真正触发复制的时候（解析目标失败、已经在复读别人等），避免无效尝试白白
- * 消耗掉全局冷却。
+ * 消耗掉全局冷却。只在冷却槽仍是本次占用写入的值时才回滚：占用与回滚之间
+ * 隔着 await（发提示消息等），期间白名单用户（豁免冷却检查）可能已在别的群
+ * 成功占用并触发复制，无条件回滚会把 TA 的占用抹掉、让全局冷却凭空消失。
  */
-export function releaseCopyCooldownClaim(claim: { previousLastCopyTime: number | undefined }): void {
-  getGlobalCopyState().lastCopyTime = claim.previousLastCopyTime;
+export function releaseCopyCooldownClaim(claim: { previousLastCopyTime: number | undefined; claimedAt: number }): void {
+  const globalCopyState = getGlobalCopyState();
+  if (globalCopyState.lastCopyTime === claim.claimedAt) {
+    globalCopyState.lastCopyTime = claim.previousLastCopyTime;
+  }
 }
 
 /**
