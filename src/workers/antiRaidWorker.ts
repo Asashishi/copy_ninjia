@@ -132,7 +132,7 @@ function setDedupePlaceholder(
   chatId: number,
   userId: number,
   label: string,
-  flags: { exempt?: boolean; kicked?: boolean }
+  flags: { exempt?: boolean; kicked?: boolean; isBot?: boolean }
 ): void {
   pendingVerifications.set(key, {
     chatId,
@@ -160,7 +160,10 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
     await deleteMessage(chatId, messageId, joinVerificationApi);
   }
   await kickChatMember(chatId, userId, joinVerificationApi);
-  const noticeMessageId: number | undefined = await sendMessage(chatId, `啧，${pending.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`, undefined, joinVerificationApi);
+  const noticeText: string = pending.isBot
+    ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${pending.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
+    : `啧，${pending.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
+  const noticeMessageId: number | undefined = await sendMessage(chatId, noticeText, undefined, joinVerificationApi);
   if (noticeMessageId !== undefined) {
     deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
   }
@@ -174,7 +177,8 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
  * 同步落地，网络请求一律 fire-and-forget——消息按 FIFO 逐条处理，同一波
  * 刷屏入群的后续投递不会被某一次踢人/发消息的网络往返卡住。
  * @param chatId 成员加入的聊天。
- * @param member 新加入的用户（id/username/first_name），主线程已过滤掉机器人。
+ * @param member 新加入的用户（id/username/first_name/isBot），主线程只过滤掉本机器人自身；
+ *   其他机器人照常走验证，由白名单用户代点按钮作保（见 handleVerificationCallback）。
  * @param announcementMessageId 若本次投递由 `new_chat_members` 服务消息触发，则为该消息的 ID（用于之后删除）。
  * @param exempt 若为 true，该成员以管理员/群主身份入群（chat_member 路径可见身份），免验证。
  */
@@ -218,7 +222,7 @@ function ensureVerificationStarted(
       pendingVerifications.delete(key);
       deletePendingReminders(chatId, existing);
     }
-    setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { exempt: true });
+    setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { exempt: true, isBot: member.isBot });
     // 直接回复频道帖免验证：回帖本身就是真人操作，虽然不点验证按钮，
     // 也照样在帖子底下弹一条欢迎消息，让 TA 在频道侧能看到。
     if (exemptViaChannelComment && recentComment) {
@@ -254,7 +258,7 @@ function ensureVerificationStarted(
   if (activeLockdowns.has(chatId) && !recentComment) {
     // 占位记录：必须在任何网络请求之前同步插入，防止同一次入群的另一路
     // 投递因为查不到 existing 而重新 recordJoin/重新踢一次。
-    setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { kicked: true });
+    setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { kicked: true, isBot: member.isBot });
 
     void (async (): Promise<void> => {
       if (announcementMessageId !== undefined) {
@@ -271,6 +275,7 @@ function ensureVerificationStarted(
     chatId,
     userId: member.id,
     label: memberLabel(member),
+    isBot: member.isBot,
     messageIds: announcementMessageId !== undefined ? [announcementMessageId] : [],
     timeout: setTimeout(() => {
       void expireVerification(chatId, member.id).catch((error: unknown) => {
@@ -303,7 +308,7 @@ function ensureVerificationStarted(
             // 撤销已发送的验证提醒消息（原始 + 回复式补发）
             deletePendingReminders(chatId, pending);
             // 插入免验证占位记录，防止后续并发事件（如服务消息）重复触发验证
-            setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { exempt: true });
+            setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { exempt: true, isBot: member.isBot });
           }
         }
       } catch (error: unknown) {
@@ -321,10 +326,15 @@ function ensureVerificationStarted(
   // 场景下若在这里 await，同一波入群投递会逐个排队等发消息，可能导致
   // 15 秒的反防刷群计数窗口在真正数满阈值之前就先重置——刷群反而检测
   // 不到。发送结果异步回填 messageIds 即可，不影响后续到期清理。
-  const reminderText: string =
-    `喂，${memberLabel(member)}，新来的杂鱼给本天才听好了，` +
-    `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
-    `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
+  // 机器人看不到这条提醒也点不了按钮（Bot API 不向机器人投递其他机器人的
+  // 消息），提醒是说给群里的白名单用户听的：得有人代它点按钮作保。
+  const reminderText: string = member.isBot
+    ? `哦？谁把 ${memberLabel(member)} 这个机器人拎进来的？铁疙瘩自己可点不了按钮——` +
+      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内得有白名单大人帮它点下面的按钮作保，` +
+      `不然本天才就把这个来路不明的铁皮杂鱼扔出去哦♡`
+    : `喂，${memberLabel(member)}，新来的杂鱼给本天才听好了，` +
+      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
+      `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
   const verifyKeyboard: InlineKeyboard = new InlineKeyboard().text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${member.id}`);
   void sendMessage(chatId, reminderText, undefined, joinVerificationApi, verifyKeyboard)
     .then((reminderMessageId: number | undefined) => {
@@ -580,8 +590,10 @@ function handleTrackedMessage(msg: TrackedChatMessage): void {
 /**
  * 处理入群验证按钮的点击。只有验证记录对应的那个新成员本人点击才算数——
  * 别人点了会得到一个提示气泡，不会帮 TA 通过验证，防止群友手滑帮僵尸端
- * 点开验证。验证通过后：删除带按钮的验证提醒消息，发一条欢迎消息并在
- * WELCOME_AUTO_DELETE_MS 后自动清理，不在聊天里留下长期痕迹。
+ * 点开验证。唯一例外：待验证的是个机器人时（机器人永远点不了按钮），
+ * PRIVILEGED_USERS_ID 白名单用户可以代它点击作保。验证通过后：删除带
+ * 按钮的验证提醒消息，发一条欢迎消息并在 WELCOME_AUTO_DELETE_MS 后自动
+ * 清理，不在聊天里留下长期痕迹。
  */
 async function handleVerificationCallback(msg: VerifyCallbackMessage): Promise<void> {
   if (msg.chatId === undefined) {
@@ -589,13 +601,20 @@ async function handleVerificationCallback(msg: VerifyCallbackMessage): Promise<v
     return;
   }
 
-  if (msg.from.id !== msg.targetUserId) {
-    await answerCallbackQuery(msg.callbackQueryId, "这不是你的验证按钮哦，杂鱼别乱点～", true, joinVerificationApi);
-    return;
-  }
-
   const key: string = verificationKey(msg.chatId, msg.targetUserId);
   const pending = pendingVerifications.get(key);
+
+  if (msg.from.id !== msg.targetUserId) {
+    const vouchingForBot: boolean = pending?.isBot === true && PRIVILEGED_USERS_ID.includes(msg.from.id);
+    if (!vouchingForBot) {
+      const rejectText: string = pending?.isBot === true
+        ? "帮机器人作保是白名单大人的特权，杂鱼别乱点～"
+        : "这不是你的验证按钮哦，杂鱼别乱点～";
+      await answerCallbackQuery(msg.callbackQueryId, rejectText, true, joinVerificationApi);
+      return;
+    }
+  }
+
   if (!pending || pending.kicked || pending.exempt) {
     await answerCallbackQuery(msg.callbackQueryId, "验证已经失效啦，再试试重新进群吧", true, joinVerificationApi);
     return;
@@ -614,7 +633,12 @@ async function handleVerificationCallback(msg: VerifyCallbackMessage): Promise<v
   }
   // 欢迎消息回复补发提醒锚定的那条消息（若有）：楼中楼场景下随之落进
   // 评论线程，TA 在频道侧也能看到；普通验证（没补发过提醒）则照旧平发。
-  const welcomeMessageId: number | undefined = await sendMessage(msg.chatId, `哼，算你机灵，${memberLabel(msg.from)} 通过验证啦，欢迎杂鱼入群~♡`, pending.welcomeAnchorMessageId, joinVerificationApi);
+  // 机器人是白名单用户代点通过的，msg.from 是作保人而非被验证者，欢迎语
+  // 里两个都要点名。
+  const welcomeText: string = msg.from.id !== msg.targetUserId
+    ? `哼，既然 ${memberLabel(msg.from)} 大人愿意为机器人 ${pending.label} 作保，本天才就勉为其难放这个铁疙瘩进来啦~♡`
+    : `哼，算你机灵，${memberLabel(msg.from)} 通过验证啦，欢迎杂鱼入群~♡`;
+  const welcomeMessageId: number | undefined = await sendMessage(msg.chatId, welcomeText, pending.welcomeAnchorMessageId, joinVerificationApi);
   if (welcomeMessageId !== undefined) {
     deleteMessageAfter(msg.chatId, welcomeMessageId, WELCOME_AUTO_DELETE_MS, joinVerificationApi);
   }

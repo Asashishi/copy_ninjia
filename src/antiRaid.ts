@@ -105,8 +105,8 @@ export function initAntiRaid(): void {
 }
 
 /** 从 grammY 的 User 对象里摘出投递给 Worker 的最小身份字段。 */
-function pickMember(user: { id: number; username?: string; first_name?: string }): AntiRaidMember {
-  return { id: user.id, username: user.username, first_name: user.first_name };
+function pickMember(user: { id: number; username?: string; first_name?: string; is_bot?: boolean }): AntiRaidMember {
+  return { id: user.id, username: user.username, first_name: user.first_name, isBot: user.is_bot === true };
 }
 
 /** 某个 ChatMember 是否实际还在聊天中（相对于已离开/已被踢出而言）。 */
@@ -133,7 +133,10 @@ export function handleChatMemberUpdate(ctx: Context): void {
   markBotAdminObserved(chatId);
 
   const user = update.new_chat_member.user;
-  if (user.is_bot) return; // 机器人（包括本天才自己）不需要验证
+  // 机器人不再豁免——僵尸 bot 也会被批量拉进群刷屏，照常走验证（由白名单
+  // 用户代点按钮作保）。只有本天才自己例外：自己的成员变动本来走
+  // my_chat_member，这里只是防御性兜底。
+  if (user.id === ctx.me.id) return;
   const wasActive: boolean = isActiveChatMember(update.old_chat_member);
   const isActive: boolean = isActiveChatMember(update.new_chat_member);
 
@@ -169,7 +172,7 @@ export function handleChatMemberUpdate(ctx: Context): void {
  * @returns 若消息在此已被完全处理、调用方应跳过后续处理逻辑（入群公告），
  * 返回 true；否则返回 false，让消息正常继续流转。
  */
-export async function handleGroupJoinVerification(message: any): Promise<boolean> {
+export async function handleGroupJoinVerification(message: any, botId: number): Promise<boolean> {
   // 验证只发生在群聊里，私聊消息不必跨线程投递去查一次注定落空的 Map。
   if (message.chat?.type === "private") return false;
 
@@ -183,7 +186,9 @@ export async function handleGroupJoinVerification(message: any): Promise<boolean
 
   if (message.new_chat_members && message.new_chat_members.length > 0) {
     for (const member of message.new_chat_members) {
-      if (member.is_bot) continue; // 机器人（包括本天才自己）不需要验证
+      // 机器人不再豁免（走白名单用户代点验证的流程），只跳过本天才自己
+      // ——自己既不能验证自己，也不该被自己踢出去。
+      if (member.id === botId) continue;
       post({ type: "join", chatId: message.chat.id, member: pickMember(member), announcementMessageId: message.message_id, actorId: message.from?.id });
     }
     return true;

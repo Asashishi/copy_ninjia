@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   // 命令消息就不会被追踪，超时踢人时清理不掉。返回 true 表示这是入群公告、
   // 已被守卫完全处理，直接吞掉，不再触发命令/复读/AI。
   bot.on("message", async (ctx, next) => {
-    if (await handleGroupJoinVerification(ctx.message)) return;
+    if (await handleGroupJoinVerification(ctx.message, ctx.me.id)) return;
     return next();
   });
 

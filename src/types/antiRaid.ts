@@ -9,6 +9,12 @@ export interface PendingVerification {
   userId: number;
   /** 入群时捕获的展示用标签，用于踢人公告（提到 TA 的入群公告/提醒消息届时会被删除）。 */
   label: string;
+  /**
+   * 待验证的是不是一个机器人。机器人既看不到验证提醒也点不了按钮
+   * （Bot API 不向机器人投递其他机器人的消息/按钮），验证只能由
+   * PRIVILEGED_USERS_ID 白名单用户代为点击作保，提醒/超时文案也单独措辞。
+   */
+  isBot?: boolean;
   /** 验证窗口过期时要删除的消息 ID：入群公告、提醒消息、以及验证期间 TA 发的所有消息。 */
   messageIds: number[];
   /** 带验证按钮的提醒消息 ID，验证通过后要把这条消息删掉。 */
@@ -92,9 +98,11 @@ export interface AntiRaidMember {
   id: number;
   username?: string;
   first_name?: string;
+  /** 是不是机器人（本机器人自身不投递）。机器人入群走白名单用户代点验证的流程。 */
+  isBot?: boolean;
 }
 
-/** 主线程 -> Worker：一位（非机器人的）新成员加入了群聊。 */
+/** 主线程 -> Worker：一位新成员（真人或机器人，但不含本机器人自身）加入了群聊。 */
 export interface NewMemberMessage {
   type: "join";
   chatId: number;
