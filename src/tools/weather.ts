@@ -22,7 +22,7 @@ function describeWeatherCode(code: number): string {
 
 /**
  * 请求失败、超时或返回数据格式不对时返回 null，由调用方决定如何降级。
- * 命中缓存（1 小时内）时直接返回缓存值，不发请求。
+ * 命中缓存时直接返回缓存值，不发请求（有效期见 CACHE_TTL_MS）。
  */
 export async function getTokyoWeather(): Promise<TokyoWeatherResult | null> {
   if (weatherCache.result && Date.now() - weatherCache.at < CACHE_TTL_MS) {

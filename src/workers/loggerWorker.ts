@@ -1,6 +1,6 @@
 /**
- * 日志落盘线程（Bun Worker）。接收 logger.ts 发来的 error 日志，先进入
- * 内存 buffer，攒满 FLUSH_MAX_ENTRIES 条、距首条入队 FLUSH_INTERVAL_MS、
+ * 日志落盘线程（Bun Worker）。接收 logger.ts 发来的 error 日志，先进入内存
+ * buffer，达到阈值（见 consts/logger.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS）
  * 或收到主线程的 flush 指令（进程退出前的最后一刷）时批量落盘到
  * logs/YYYY-MM-DD.json：文件内容是一个 JSON 对象，键为
  * 「本地日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），值为该条日志的
@@ -8,8 +8,9 @@
  *
  * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写，
  * 而是覆写文件结尾的「\n}」两个字节、按位置追加，写入量只与本批条数
- * 有关，与文件大小无关。仅保留最近 3 天（今天及之前两天）的文件，跨天
- * 时自动清理过期文件。日期按系统本地时区划分（本机已设为 Asia/Tokyo）。
+ * 有关，与文件大小无关。仅保留 RETENTION_DAYS 天内的文件（见
+ * consts/logger.ts），跨天时自动清理过期文件。日期按系统本地时区划分
+ * （本机已设为 Asia/Tokyo）。
  */
 
 import { join } from "path";

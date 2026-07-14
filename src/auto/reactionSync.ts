@@ -19,10 +19,10 @@ export function handleReaction(ctx: Context): void {
   if (!activeCopy || reactorId !== activeCopy.copiedUser.id) return;
 
   // grammY 的 ctx.reactions() 已把 old/new 的差量按类型分组算好（付费反应被
-  // 单独归类，而机器人本来也设不了它，天然排除）。机器人没有 Premium，一条
-  // 消息只能设 1 个反应；目标（若是 Premium 用户）却可能同时点了 2~3 个：
-  // 优先跟随本次新增的那个，没有新增（比如只是取消了其中一个）就退回仍点着
-  // 的第一个；全空表示目标清掉了可复制的反应，跟着清除。
+  // 单独归类，天然排除——原因见 CopyableReaction 类型注释）。机器人没有
+  // Premium，一条消息只能设 1 个反应；目标（若是 Premium 用户）却可能同时
+  // 点了 2~3 个：优先跟随本次新增的那个，没有新增（比如只是取消了其中一个）
+  // 就退回仍点着的第一个；全空表示目标清掉了可复制的反应，跟着清除。
   const { emoji, emojiAdded, emojiRemoved, customEmoji, customEmojiAdded, customEmojiRemoved } = ctx.reactions();
   let toApply: CopyableReaction[];
   if (emojiAdded.length > 0) {

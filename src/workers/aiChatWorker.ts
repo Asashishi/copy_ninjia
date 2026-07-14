@@ -67,13 +67,8 @@ import type { AiBotInfo, AiChatWorkerMessage } from "../types";
  * /chat/completions 接口），生成一条人设化回复。人设文本存放在仓库根目录
  * 的 prompt/persona.txt，修改人设不需要碰代码。
  *
- * 中期记忆：逐字缓存由「镜像 50 + 热 50」两块组成（见 consts/aiChat.ts 的
- * COMPACT_BATCH_SIZE）。每攒满一块轮换一次（recordChatMessage）：旧镜像
- * 滑出逐字区、其摘要从待晋升区晋升进中期记忆；刚攒满的一块成为新镜像并
- * 提交 DeepSeek 压缩（summarizeBatch）——镜像在压缩期间仍整块留在上下文
- * 里，摘要就绪后先存 pendingSummaries，等下一轮轮换才接棒。每群滚动保留
- * 最多 MAX_SUMMARY_ROUNDS 轮摘要（7 轮 × 50 条 ≈ 350 条冷历史），拼上下
- * 文时放在逐字记录之前，模型可感知约 400 ~ 450 条跨度的对话。
+ * 中期记忆：镜像/热块轮换机制见 consts/aiChat.ts 的 COMPACT_BATCH_SIZE 注释；
+ * 轮换本身由 recordChatMessage/scheduleRotation/rotateCompaction 实现。
  */
 
 declare var self: Worker;
@@ -130,12 +125,9 @@ function recordChatMessage(chatId: number, id: number, firstName: string, lastNa
     chatBuffers.set(chatId, buf);
   }
   buf.push({ id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
-  // 滑动轮换：每攒满一块 COMPACT_BATCH_SIZE 条就转一轮——旧镜像（上一轮
-  // 攒满时已提交压缩，摘要多半早已就绪）滑出逐字区，其摘要由链上任务晋升
-  // 进中期记忆；刚攒满的这块整体成为新镜像并提交 AI 压缩。镜像在压缩期间
-  // 仍整块留在逐字上下文里，正常情况下不存在「已滑出但摘要未就绪」的失忆
-  // 窗口。push 每次只 +1，且轮换把 size 收回 COMPACT_BATCH_SIZE 后 push
-  // 不会再撞上下面第二个判等，两个 === 各自恰好在块边界命中一次。
+  // 轮换机制见 COMPACT_BATCH_SIZE 注释。push 每次只 +1，且轮换把 size 收回
+  // COMPACT_BATCH_SIZE 后 push 不会再撞上下面第二个判等，两个 === 各自恰好
+  // 在块边界命中一次。
   if (buf.size === VERBATIM_CONTEXT_MAX) {
     for (let i: number = 0; i < COMPACT_BATCH_SIZE; i++) {
       buf.shift();
@@ -249,9 +241,8 @@ interface UserContentOptions {
    *  改为在文字里点名称呼对方。 */
   addressee?: string;
   /** 若最新消息在问时间/日期（见 isTimeRelatedQuery），预先查好的真实当前时间
-   *  文本，直接喂给模型当已知事实用，不经由 function calling 让模型自己查——
-   *  该模型的「思考模式」不支持强制指定 tool_choice（会 400），只能靠这种
-   *  直接注入上下文的方式保证不瞎编。 */
+   *  文本，直接喂给模型当已知事实用，不走 function calling（原因见 callDeepSeek
+   *  的 tool_choice 注释）。 */
   timeContext?: string;
 }
 
@@ -355,9 +346,8 @@ async function requestCompletion(body: Record<string, unknown>): Promise<any | n
     "DeepSeek API"
   );
   const choice: any = data?.choices?.[0];
-  // 思考模式下思考内容计入 max_tokens：额度在思考阶段被烧光时，请求是
-  // 200 但 content 为空（finish_reason=length）。不点名记下来的话，上层
-  // 只能看到「没产出」，查不到原因（见 REPLY_MAX_TOKENS 的注释）。
+  // 静默失败（200 但 content 为空）的成因见 REPLY_MAX_TOKENS 的注释；这里
+  // 点名记下来，否则上层只能看到「没产出」，查不到原因。
   if (choice?.finish_reason === "length" && !choice?.message?.content) {
     logger.error(
       `DeepSeek API exhausted max_tokens=${body.max_tokens} before producing content ` +

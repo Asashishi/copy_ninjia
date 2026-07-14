@@ -11,9 +11,9 @@ import type { ForwardedLog } from "../types";
  * - Worker 崩溃时按节流重建：Bun 里 Worker 内部一旦抛出未捕获异常（同步或
  *   async 均如此，已实测验证）就会直接终止该 Worker 线程，不需要（实际上
  *   也没法）手动 terminate，直接换新实例顶上，并经 onRespawn 重放必要状态；
- * - 短时间内反复崩溃（多半是代码本身有 bug，重启也没用）则放弃自愈：此后
- *   post() 安静地丢弃消息——不能再对已终止的 Worker postMessage（Bun 会
- *   同步抛 InvalidStateError）。
+ * - 放弃自愈的节流阈值/理由见 consts/workerSupervisor.ts；放弃后 post() 安静
+ *   地丢弃消息——不能再对已终止的 Worker postMessage（Bun 会同步抛
+ *   InvalidStateError）。
  */
 export interface SupervisedWorkerOptions<TMessage, TEvent> {
   /** Worker 脚本的 URL（new URL("...", import.meta.url).href）。 */

@@ -196,10 +196,7 @@ export async function loadState(): Promise<void> {
   }
 }
 
-/**
- * 把内存状态全量序列化并持久化到 state.json。状态只有本模块这一份，
- * 无需调用方传任何东西；没有任何有效字段的群条目不落盘，保持文件干净。
- */
+/** 把内存状态全量序列化并持久化到 state.json；没有任何有效字段的群条目不落盘，保持文件干净。 */
 export async function saveState(): Promise<void> {
   const chats: Record<string, ChatState> = {};
   for (const [chatId, chatState] of chatStates) {

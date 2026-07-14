@@ -36,8 +36,7 @@ export async function handleKickCommand(ctx: CommandContext<Context>, users: Rec
     return;
   }
 
-  // 本群的管理员身份只决定封禁清单里有没有本群、以及回复里要不要说明
-  // 「本群踢不动」——不再一票否决：其它管理的群照样连坐封禁。
+  // 语义见函数顶部说明（本群非管理员不影响其它群连坐）。
   const isAdminHere: boolean = await isBotAdminIn(chatId);
 
   // 目标解析同 /copy：回复目标的消息优先于参数里的 @username（没有公开
@@ -99,8 +98,7 @@ export async function handleKickCommand(ctx: CommandContext<Context>, users: Rec
   const notAdminHereNote: string = isAdminHere ? "" : `本天才在这个群不是管理员、这里踢不动 TA，不过——`;
   const failedCount: number = targetChatIds.length - bannedCount;
   const failedNote: string = failedCount > 0 ? `（还有 ${failedCount} 个群没踢动，杂鱼管理员快去检查权限）` : "";
-  // 「踢出去」和「提前拉黑」是两码事，不能笼统混成一句——真在群里的才叫踢，
-  // 压根没进过的群只是被抢先拉黑，战报要分开说清楚。
+  // 踢出去/提前拉黑文案区分见函数顶部说明。
   const kickedNote: string = kickedCount > 0 ? `从 ${kickedCount} 个群一脚踢出去还上了黑名单` : "";
   const preBannedNote: string = preBannedCount > 0 ? `在 ${preBannedCount} 个群提前拉黑（根本没让 TA 进去过）` : "";
   const actionNote: string = [kickedNote, preBannedNote].filter(Boolean).join("，");

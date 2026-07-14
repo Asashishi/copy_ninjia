@@ -36,10 +36,9 @@ function resolveSenderIdentity(message: any): CachedUser | undefined {
 }
 
 /**
- * 记录/刷新某个发送者的缓存条目（真实 Telegram 用户，或通过 sender_chat /
- * channel_post 体现的频道身份），以便之后 /copy @username 能找到 TA。没有公开
- * username 的发送者不会被缓存在这里（该 map 以 username 为键），但仍可以通过
- * resolveReplyTarget 被定位为目标。
+ * 记录/刷新某个发送者的缓存条目（两类身份见上方 resolveSenderIdentity），
+ * 以便之后 /copy @username 能找到 TA。没有公开 username 的发送者不入 map
+ * （见 CachedUser 注释），但仍可经 resolveReplyTarget 定位。
  * @returns 解析出的发送者 id（若以频道身份发送则为频道 id，否则为用户 id）。
  */
 export function cacheSender(message: any, users: Record<string, CachedUser>): number | undefined {

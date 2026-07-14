@@ -47,7 +47,7 @@ export async function handleCopyCommand(
     return;
   }
 
-  // 开始进行复制模式：目标全局唯一，复读只发生在发起的这个群里。
+  // 开始复制模式（不变量见函数顶部 JSDoc）。
   globalCopy.copiedUser = targetUser;
   globalCopy.copyMode = mode;
   globalCopy.copyChatId = chatId;

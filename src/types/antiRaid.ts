@@ -44,11 +44,7 @@ export interface PendingVerification {
    */
   invitedBy?: number;
   timeout: ReturnType<typeof setTimeout>;
-  /**
-   * 若为 true，说明这不是真正在等待验证的记录，而是反防刷群私密模式下
-   * 直接踢人后留下的短期占位——用于给 chat_member 更新和 new_chat_members
-   * 服务消息（针对同一次入群各自触发）去重，避免重复计数/重复踢人。
-   */
+  /** 占位标记：私密模式下已直接踢出，用途见 LOCKDOWN_KICK_DEDUPE_MS（consts/antiRaid.ts）。 */
   kicked?: boolean;
   /**
    * 若为 true，这是管理员/群主入群（只有 chat_member 更新携带身份）留下的

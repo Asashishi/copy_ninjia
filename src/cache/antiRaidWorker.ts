@@ -16,11 +16,9 @@ export const chatAdmins: Map<number, ChatAdminCache> = new Map();
 export const linkedChannels: Map<number, LinkedChannelCache> = new Map();
 /**
  * 最近发过评论区留言/线程回复、但当时本群没有 TA 的待验证记录的用户
- * （"chatId:userId" → 该消息的 messageId 及是否直接回复频道帖）。用于
- * 「评论先到、入群更新后到」的乱序补偿：评论触发的自动拉群，其
- * chat_member 更新可能晚于评论消息到达，入群时从这里消费——直接回复
- * 频道帖的按豁免处理，楼中楼回复的把验证提醒追发到 TA 的回复下。
- * 条目在 COMMENT_JOIN_CORRELATE_MS 后自动清理。
+ * （"chatId:userId" → 该消息的 messageId 及是否直接回复频道帖）。关联窗口
+ * 由来见 COMMENT_JOIN_CORRELATE_MS；消费逻辑见 ensureVerificationStarted：
+ * 直接回复频道帖的按豁免处理，楼中楼回复的把验证提醒追发到 TA 的回复下。
  */
 export const recentChannelComments: Map<string, { messageId: number; repliesToChannelPost: boolean; cleanup: ReturnType<typeof setTimeout> }> = new Map();
 /** 进行中的全量管理员拉取，按 chatId 去重：短时间内连拉多人只发一次请求，结果共享。 */

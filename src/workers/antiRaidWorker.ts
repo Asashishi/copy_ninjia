@@ -62,10 +62,9 @@ import type {
  * 同步落地的，同一批投递里越过阈值的那次入群，紧随其后的入群立刻就会
  * 走「直接踢出」分支，没有跨线程的镜像延迟。
  *
- * 私密模式的生效/解除以 lockdown/unlock 事件回报主线程——主线程据此维护
- * 各群的 ChatState.lockdown 记录（infra/storage.ts，随 state.json 持久化），
- * 在本线程崩溃重启后用 adopt 消息交还给新实例接管（待验证记录则随线程
- * 丢失：残留的验证按钮点了会得到「已失效」应答，重新进群即可）。
+ * lockdown/unlock 事件回报主线程用于持久化 + Worker 崩溃后的 adopt 重放，
+ * 机制见 antiRaid.ts（待验证记录则随线程丢失：残留的验证按钮点了会得到
+ * 「已失效」应答，重新进群即可）。
  */
 
 declare var self: Worker;
@@ -121,11 +120,9 @@ function applyAdminChange(chatId: number, userId: number, isAdmin: boolean): voi
 // —— 入群验证 ——
 
 /**
- * 写入一个去重占位记录：不是真的在等验证，只是给同一次入群的另一路投递
- * （chat_member 更新 / new_chat_members 服务消息）留出 LOCKDOWN_KICK_DEDUPE_MS
- * 的去重窗口，到期自删。exempt（管理员拉人/身份入群、频道评论豁免）防止
- * 后到的那一路重新开验证窗口；kicked（私密模式下已直接踢出）防止重复
- * 计数/重复踢人。
+ * 写入一个去重占位记录（窗口时长/用途见 LOCKDOWN_KICK_DEDUPE_MS）：
+ * exempt（管理员拉人/身份入群、频道评论豁免）防止后到的那一路重新开验证
+ * 窗口；kicked（私密模式下已直接踢出）防止重复计数/重复踢人。
  */
 function setDedupePlaceholder(
   key: string,
@@ -852,10 +849,9 @@ async function restoreChat(chatId: number): Promise<void> {
 }
 
 /**
- * 接管上一个（已崩溃的）Worker 留下的私密模式：内存状态随线程一起没了，
- * 但权限限制已实际落在群上，必须重新排恢复计时，否则永远无人解锁。
- * 计时从满额 LOCKDOWN_MS 重新起算——崩溃前已过去多久无从得知，宁可多锁
- * 一会儿也不能不解锁。
+ * 接管上一个（已崩溃的）Worker 留下的私密模式（背景见 antiRaid.ts 的
+ * onRespawn 注释）。计时从满额 LOCKDOWN_MS 重新起算——崩溃前已过去多久
+ * 无从得知，宁可多锁一会儿也不能不解锁。
  */
 function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
   for (const { chatId, originalPermissions } of lockdowns) {

@@ -25,9 +25,9 @@ import type { CopyableReaction, ReactionTask } from "../types";
  * 清除反应）。同一条消息已有未消费任务时只覆盖其内容，不重复排队。
  * @param chatId 目标聊天 ID。
  * @param messageId 要回应的消息。
- * @param reactions 要应用的反应（最多 1 个——机器人无 Premium，一条消息只能设一个反应）。
+ * @param reactions 要应用的反应（数组最多 1 个，见 handleReaction 中的选择逻辑）。
  * @param updateId 产生本次调用的更新的 update_id（单调递增），用于新旧判断。
- * @param reactedAtUnix 目标点下反应的时刻（message_reaction 更新的 date 字段），用于延迟统计。
+ * @param reactedAtUnix 目标点下反应的时刻（见 ReactionTask.reactedAtUnix），用于延迟统计。
  */
 export function enqueueReaction(chatId: number, messageId: number, reactions: CopyableReaction[], updateId: number, reactedAtUnix: number): void {
   const key: string = `${chatId}:${messageId}`;

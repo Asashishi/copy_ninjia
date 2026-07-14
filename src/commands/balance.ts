@@ -17,10 +17,7 @@ function formatBalanceMessage(data: DeepSeekBalanceResponse): string {
   return `本天才的 DeepSeek 钱包情况，杂鱼看好了♡\n${lines.join("\n")}\n${availability}`;
 }
 
-/**
- * 处理 /balance 指令：查询当前 DeepSeek API Key 绑定账号的余额。查询结果在
- * src/ai/deepseekBalance.ts 里缓存 30 秒，多人连续查也不会把接口打到 429。
- */
+/** 处理 /balance 指令：查询当前 DeepSeek API Key 绑定账号的余额（缓存策略见 consts/deepseekBalance.ts 的 CACHE_TTL_MS）。 */
 export async function handleBalanceCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;

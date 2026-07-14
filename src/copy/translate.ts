@@ -11,8 +11,7 @@ const translateClient: GoogleTranslate.TranslationServiceClient = new GoogleTran
 });
 
 // v3 请求作用域限定在 "projects/{project}/locations/{location}" 下；project
-// 在首次使用时从服务账号凭据中解析得到，并做缓存（见 cache/translate.ts）——
-// 因为它在进程生命周期内不会变化。
+// 解析与缓存见 getTranslateParent（缓存原因见 cache/translate.ts）。
 async function getTranslateParent(): Promise<string> {
   if (!translateParentCache.parent) {
     const projectId: string = await translateClient.getProjectId();

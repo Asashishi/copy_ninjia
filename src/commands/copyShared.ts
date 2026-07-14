@@ -68,10 +68,9 @@ export function releaseCopyCooldownClaim(claim: { previousLastCopyTime: number |
 }
 
 /**
- * 解析 copy 类命令的目标用户/频道。回复目标的消息优先于参数里的 @username：
- * 这样即使对方没有公开 username、或者本天才还没缓存过 TA（比如 privacy mode
- * 没关导致漏听），只要能回复到 TA 发的一条消息就能直接锁定目标。解析失败
- * （没给目标、@username 没缓存、目标是机器人自己）时反馈已发送。
+ * copy 类命令的目标解析，见 targetResolution.ts 的 resolveCommandTarget（回复
+ * 优先于 @username）。解析失败（没给目标、@username 没缓存、目标是机器人
+ * 自己）时反馈已发送。
  * @param commandName 触发的命令名（如 "/copy"、"/steal_icon"），用于错误提示文案。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
  */

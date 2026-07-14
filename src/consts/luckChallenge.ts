@@ -13,13 +13,12 @@ export const LUCK_TIERS: LuckTier[] = [
   { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercent: 10 },
 ];
 
-/** 全局频率限制：每分钟最多 30 次内联查询应答，不分群、不分用户合并计数——
- * 内联查询会随着用户每敲一个字符就触发一次，是这个功能自己的用量上限
- * （每分钟最多回应 30 次），不是 telegram.ts 里 joinVerificationApi 用的
- * apiThrottler 那种"排队+自动重试"的 Telegram API 限流——那个解决的是不
- * 撞 Telegram 传输层限速的问题，超额了会排队晚点发；这里要的是超额了立刻
- * 拒绝并让用户知道，排队对一个几秒内就该有结果的内联查询没有意义。用滑动
- * 窗口（数组记录时间戳，定期把窗口外的旧记录甩掉）判断，超限就不再往下算。 */
+/**
+ * 全局滑动窗口限流：每分钟最多 30 次内联查询应答，不分群、不分用户合并
+ * 计数——内联查询会随用户每敲一个字符就触发一次。超额立即拒绝而非排队
+ * （不同于 telegram.ts 的 apiThrottler，那是排队+重试），因为排队对一个
+ * 几秒内就该有结果的内联查询没有意义。
+ */
 export const RATE_LIMIT_MAX_CALLS_PER_MINUTE: number = 30;
 export const RATE_LIMIT_WINDOW_MS: number = 60_000;
 

@@ -69,7 +69,7 @@ function getOrDrawLuckTier(userId: number, text: string | undefined): LuckTier {
   return tier;
 }
 
-/** 由吉凶档查表得出行大运/倒大霉概率，取数字大的那一个（同档查出来的结果固定不变）。 */
+/** 取行大运/倒大霉里数字大的那个，语义见 LuckTier.fortunePercent。 */
 function pickDominantProbability(tier: LuckTier): { label: string; percent: number } {
   const misfortunePercent: number = 100 - tier.fortunePercent;
   const isFortuneHigher: boolean = tier.fortunePercent >= misfortunePercent;

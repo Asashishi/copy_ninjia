@@ -86,8 +86,7 @@ async function main(): Promise<void> {
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users));
   bot.on("message_reaction", (ctx) => handleReaction(ctx));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
-  // 机器人自己被任免管理员/移出群聊的信号，维护各群 ChatState.botIsAdmin
-  // （入群守卫与 /kick 的权限门控、「/kick 全群生效」的群清单来源）。
+  // 维护 ChatState.botIsAdmin（见该字段注释）。
   bot.on("my_chat_member", (ctx) => handleMyChatMemberUpdate(ctx));
   bot.on("callback_query:data", (ctx) => handleVerificationCallback(ctx));
   // /luck_challenge 仅通过内联模式触发（@本机器人 [文本]），没有对应的
@@ -174,8 +173,7 @@ async function main(): Promise<void> {
 
   await runner.task();
 
-  // 与内建 bot.stop() 的停机行为对齐：用已处理的最大 update_id 做一次空
-  // getUpdates，告知 Telegram 这批更新已消费，重启后不再重放。
+  // 兑现上面 lastSeenUpdateId 声明处的承诺：确认 offset，避免重启重放。
   if (lastSeenUpdateId > 0) {
     try {
       await bot.api.getUpdates({ offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 });
