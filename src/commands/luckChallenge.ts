@@ -2,7 +2,15 @@ import type { Context } from "grammy";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
 import type { InlineQueryResultArticle } from "@grammyjs/types";
 import { formatUserLabel } from "../users/userLabel";
-import { FORTUNE_THUMBNAIL_URL, PROBABILITY_THUMBNAIL_URL } from "../consts/luckChallenge";
+import {
+  FORTUNE_THUMBNAIL_URL,
+  LUCK_TIERS,
+  PROBABILITY_THUMBNAIL_URL,
+  RATE_LIMIT_MAX_CALLS_PER_MINUTE,
+  RATE_LIMIT_WINDOW_MS,
+} from "../consts/luckChallenge";
+import { dailyLuckCache, luckCacheState, recentCallTimestamps } from "../cache/luckChallenge";
+import type { LuckTier } from "../types";
 
 /**
  * 抽今日运势，仅通过 Telegram 内联模式触发：在任意聊天框里
@@ -29,39 +37,14 @@ import { FORTUNE_THUMBNAIL_URL, PROBABILITY_THUMBNAIL_URL } from "../consts/luck
  * 即丢——这只是个图一乐的功能，没必要为它多写一个持久化文件。
  */
 
-interface LuckTier {
-  label: string;
-  /** 占 1~100 的份额（百分比），全表之和必须是 100，用于抽签本身。 */
-  weight: number;
-  comment: string;
-  /** 落在这一档时，行大运（大吉）概率；倒大霉（大凶）概率 = 100 - fortunePercent。
-   * 按吉凶结果查表得出，不再随机，同一档每次查到的都一样，天然满足「固定」。 */
-  fortunePercent: number;
-}
-
-/** 吉凶概率表：越靠两端（大吉/大凶）越稀有，中间几档更常见，仿传统抽签。 */
-const LUCK_TIERS: LuckTier[] = [
-  { label: "大吉", weight: 7, comment: "简直要飞升啦，杂鱼要不要蹭蹭本天才的欧气～♡", fortunePercent: 90 },
-  { label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercent: 75 },
-  { label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercent: 60 },
-  { label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦♡", fortunePercent: 50 },
-  { label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercent: 40 },
-  { label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercent: 25 },
-  { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercent: 10 },
-];
-
-/** 每日结果缓存：cacheDayKey 记录当前缓存对应的东京时间日期，跟今天不一致就整体清空重开。 */
-let cacheDayKey: string = "";
-const dailyLuckCache: Map<string, LuckTier> = new Map();
-
 function getTokyoDateKey(date: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
 function ensureCacheFreshForToday(): void {
   const todayKey: string = getTokyoDateKey();
-  if (todayKey !== cacheDayKey) {
-    cacheDayKey = todayKey;
+  if (todayKey !== luckCacheState.dayKey) {
+    luckCacheState.dayKey = todayKey;
     dailyLuckCache.clear();
   }
 }
@@ -125,19 +108,9 @@ function buildProbabilityResult(tier: LuckTier, userLabel: string): InlineQueryR
   }).text(`你好，${userLabel}\n汝今天${label}概率是 ${percent}%`);
 }
 
-/** 全局频率限制：每分钟最多 30 次内联查询应答，不分群、不分用户合并计数——
- * 内联查询会随着用户每敲一个字符就触发一次，是这个功能自己的用量上限
- * （每分钟最多回应 30 次），不是 telegram.ts 里 joinVerificationApi 用的
- * apiThrottler 那种"排队+自动重试"的 Telegram API 限流——那个解决的是不
- * 撞 Telegram 传输层限速的问题，超额了会排队晚点发；这里要的是超额了立刻
- * 拒绝并让用户知道（见下面的 buildRateLimitedResult），排队对一个几秒内就
- * 该有结果的内联查询没有意义。用滑动窗口（数组记录时间戳，定期把 60 秒外的
- * 旧记录甩掉）判断，超限就不再往下算，回一条提示结果而不是留空——留空的话
- * 内联结果列表里什么都不显示，用户根本看不出是限流还是机器人挂了。 */
-const RATE_LIMIT_MAX_CALLS_PER_MINUTE: number = 30;
-const RATE_LIMIT_WINDOW_MS: number = 60_000;
-const recentCallTimestamps: number[] = [];
-
+/** 全局频率限制（见 consts/luckChallenge.ts 的注释）：超限就不再往下算，
+ * 回一条提示结果而不是留空——留空的话内联结果列表里什么都不显示，用户
+ * 根本看不出是限流还是机器人挂了。 */
 function tryConsumeRateLimit(): boolean {
   const now: number = Date.now();
   const cutoff: number = now - RATE_LIMIT_WINDOW_MS;

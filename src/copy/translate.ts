@@ -1,6 +1,7 @@
 import { logger } from "../infra/logger";
 import { v3 as GoogleTranslate } from "@google-cloud/translate";
 import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
+import { translateParentCache } from "../cache/translate";
 
 // Google Cloud Translation - Advanced (v3) 客户端，通过 g-auth.json 里的服务账号
 // 密钥完成鉴权——供 copyMode "ja" 使用，用于在复读复制目标的纯文本消息前
@@ -10,16 +11,14 @@ const translateClient: GoogleTranslate.TranslationServiceClient = new GoogleTran
 });
 
 // v3 请求作用域限定在 "projects/{project}/locations/{location}" 下；project
-// 在首次使用时从服务账号凭据中解析得到，并做缓存——因为它在进程生命周期内
-// 不会变化。
-let translateParent: string | null = null;
-
+// 在首次使用时从服务账号凭据中解析得到，并做缓存（见 cache/translate.ts）——
+// 因为它在进程生命周期内不会变化。
 async function getTranslateParent(): Promise<string> {
-  if (!translateParent) {
+  if (!translateParentCache.parent) {
     const projectId: string = await translateClient.getProjectId();
-    translateParent = `projects/${projectId}/locations/global`;
+    translateParentCache.parent = `projects/${projectId}/locations/global`;
   }
-  return translateParent;
+  return translateParentCache.parent;
 }
 
 /**

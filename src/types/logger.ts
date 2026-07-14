@@ -21,3 +21,10 @@ export interface FlushReply {
 export interface ForwardedLog {
   __log: LogMessage;
 }
+
+/** 当前追加目标日志文件的状态：字节大小用于定位结尾的「\n}」（见 workers/loggerWorker.ts）。 */
+export interface DayFileState {
+  day: string;
+  size: number;
+  empty: boolean;
+}

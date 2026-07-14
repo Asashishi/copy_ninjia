@@ -17,3 +17,6 @@ export const RANDOM_ECHO_MODES: (CopyMode | undefined)[] = [undefined, "reverse"
  * （繁体沖涼，中间可插「个/個/了」等）。
  */
 export const BATH_TRIGGER_PATTERN: RegExp = /[洗泡][个個了完一热熱水冷好]{0,4}澡|[冲沖][个個了完一]{0,2}[凉涼]/;
+
+/** 「说到洗澡就回看看」只对短消息生效（字符数 ≤ 此值），避免长文里偶然带出也被打扰。 */
+export const BATH_TRIGGER_MAX_MESSAGE_LENGTH: number = 15;

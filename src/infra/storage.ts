@@ -4,6 +4,7 @@ import type { ChatPermissions } from "@grammyjs/types";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
 import { LOCK_FILE_PATH, STATE_FILE_PATH } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
+import { persistChainState } from "../cache/storage";
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -62,8 +63,7 @@ export function getAllChatStates(): ReadonlyMap<number, ChatState> {
 
 // runner 并发处理不同群的更新后，两个群可能同时触发 saveState。
 // 并发写同一个文件会产生撕裂的 JSON，因此所有持久化写入挂到同一条 promise
-// 链上串行执行（无论上一次成败都继续下一次）。
-let persistChain: Promise<void> = Promise.resolve();
+// 链上串行执行（无论上一次成败都继续下一次，见 cache/storage.ts）。
 
 /**
  * 串行排队写入 state.json。调用方必须先把状态同步序列化成字符串再传进来，
@@ -85,8 +85,8 @@ function persistStateJson(json: string): Promise<void> {
       logger.error("Failed to save state:", error);
     }
   };
-  persistChain = persistChain.then(write, write);
-  return persistChain;
+  persistChainState.chain = persistChainState.chain.then(write, write);
+  return persistChainState.chain;
 }
 
 // ChatState 的字段白名单：loadState() 里各群条目的重建直接由它驱动（只挑

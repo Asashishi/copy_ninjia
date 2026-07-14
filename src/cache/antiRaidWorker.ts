@@ -23,3 +23,7 @@ export const linkedChannels: Map<number, LinkedChannelCache> = new Map();
  * 条目在 COMMENT_JOIN_CORRELATE_MS 后自动清理。
  */
 export const recentChannelComments: Map<string, { messageId: number; repliesToChannelPost: boolean; cleanup: ReturnType<typeof setTimeout> }> = new Map();
+/** 进行中的全量管理员拉取，按 chatId 去重：短时间内连拉多人只发一次请求，结果共享。 */
+export const adminFetches: Map<number, Promise<Set<number>>> = new Map();
+/** 进行中的关联频道信息拉取，按 chatId 去重（同 adminFetches 的思路）。 */
+export const linkedChannelFetches: Map<number, Promise<void>> = new Map();

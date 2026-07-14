@@ -26,7 +26,16 @@ import {
   VERIFY_CALLBACK_PREFIX,
   WELCOME_AUTO_DELETE_MS,
 } from "../consts/antiRaid";
-import { activeLockdowns, chatAdmins, joinWindows, linkedChannels, pendingVerifications, recentChannelComments } from "../cache/antiRaidWorker";
+import {
+  activeLockdowns,
+  adminFetches,
+  chatAdmins,
+  joinWindows,
+  linkedChannelFetches,
+  linkedChannels,
+  pendingVerifications,
+  recentChannelComments,
+} from "../cache/antiRaidWorker";
 import type {
   AdoptableLockdown,
   AntiRaidMember,
@@ -78,11 +87,7 @@ function freshAdminIds(chatId: number): Set<number> | undefined {
   return cached.adminIds;
 }
 
-// 进行中的全量拉取，按 chatId 去重：管理员短时间内连拉多人时只发一次
-// getChatAdministrators，后续的入群共享同一个结果。
-const adminFetches: Map<number, Promise<Set<number>>> = new Map();
-
-/** 全量拉取某群的管理员表并落缓存（带进行中去重）。 */
+/** 全量拉取某群的管理员表并落缓存（带进行中去重，见 adminFetches）。 */
 function fetchAdminIds(chatId: number): Promise<Set<number>> {
   let inFlight = adminFetches.get(chatId);
   if (!inFlight) {
@@ -363,9 +368,6 @@ function trackPendingMessage(chatId: number, userId: number, messageId: number):
 }
 
 // —— 频道评论区入群的特殊处理 ——
-
-// 进行中的关联频道信息拉取，按 chatId 去重（同 adminFetches 的思路）。
-const linkedChannelFetches: Map<number, Promise<void>> = new Map();
 
 /**
  * 本群有没有关联频道（getChat 的 linked_chat_id），带 TTL 缓存 + 进行中

@@ -18,11 +18,13 @@ import {
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   RATE_LIMIT_WINDOW_MS,
   REPLY_MAX_TOKENS,
+  REPLY_TEMPERATURE,
   REQUEST_TIMEOUT_MS,
   SPLIT_REPLY_MAX_PARTS,
   SPLIT_REPLY_PROBABILITY,
   SUMMARY_MAX_CHARS,
   SUMMARY_MAX_TOKENS,
+  SUMMARY_TEMPERATURE,
   TIME_INTENT_PATTERN,
   TYPING_ACTION_INTERVAL_MS,
   TYPING_DELAY_BASE_MS,
@@ -41,6 +43,7 @@ import {
   pendingSummaries,
   rateLimitNoticeTimes,
   triggerTimes,
+  typingHeartbeats,
 } from "../cache/aiChatWorker";
 import type { BufferedMessage } from "../types";
 import { maybeAddReaction } from "../ai/reactions";
@@ -214,7 +217,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
       { role: "user", content: selfNote + batch.map(formatLine).join("\n") },
     ],
     stream: false,
-    temperature: 0.6,
+    temperature: SUMMARY_TEMPERATURE,
     max_tokens: SUMMARY_MAX_TOKENS,
   });
   const content: string | undefined = message?.content;
@@ -390,7 +393,7 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
       messages,
       tools: TOOL_DEFINITIONS,
       stream: false,
-      temperature: 1.2,
+      temperature: REPLY_TEMPERATURE,
       max_tokens: REPLY_MAX_TOKENS,
     });
     if (!message) return null;
@@ -456,9 +459,6 @@ function typingDelayMs(nextPart: string): number {
   const jitter: number = Math.random() * TYPING_DELAY_JITTER_MS;
   return Math.min(base + jitter, TYPING_DELAY_MAX_MS);
 }
-
-/** chatId -> 该群当前共享的「正在输入…」重发定时器，见 startTypingHeartbeat。 */
-const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number }> = new Map();
 
 /**
  * 在 DeepSeek 生成阶段（耗时不可控，最长可达 REQUEST_TIMEOUT_MS）持续显示

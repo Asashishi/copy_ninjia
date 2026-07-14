@@ -11,3 +11,4 @@ export * from "./aiChat";
 export * from "./aiChatWorker";
 export * from "./antiRaid";
 export * from "./tools";
+export * from "./luckChallenge";

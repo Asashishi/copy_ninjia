@@ -42,3 +42,6 @@ export const pendingSummaries: Map<number, string> = new Map();
  * 摘要严格按时间顺序入队（链上的任务自身兜错，链永不 reject）。
  */
 export const compactionChains: Map<number, Promise<void>> = new Map();
+
+/** chatId -> 该群当前共享的「正在输入…」重发定时器（见 startTypingHeartbeat）。 */
+export const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number }> = new Map();

@@ -7,6 +7,7 @@ import { cacheSender } from "../users/senderIdentity";
 import { recordChatMessage, generateAndSendReply } from "../aiChat";
 import { AI_REPLY_PROBABILITY } from "../consts/aiChat";
 import {
+  BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
   RANDOM_ECHO_MODES,
   RANDOM_ECHO_PROBABILITY,
@@ -206,7 +207,7 @@ export async function handleIncomingMessage(
   // 以 / 开头的是指令（未注册的、或发给其他机器人的指令不会被 bot.command
   // 拦截，会落到这里），与 echoMessage 的「不复读指令消息」保持一致，不触发。
   // 私聊不触发——与 AI 随机插话同理，这些刷存在感的行为都是群聊语境的。
-  if (!isPrivateChat && !activeCopy && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
+  if (!isPrivateChat && !activeCopy && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= BATH_TRIGGER_MAX_MESSAGE_LENGTH && BATH_TRIGGER_PATTERN.test(message.text)) {
     await sendMessage(chatId, "看看", message.message_id);
     return;
   }

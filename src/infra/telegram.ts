@@ -4,7 +4,12 @@ import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { BOT_TOKEN } from "./config";
-import { AVATAR_FETCH_MAX_ATTEMPTS, AVATAR_FETCH_TIMEOUT_MS } from "../consts/telegram";
+import {
+  AVATAR_FETCH_MAX_ATTEMPTS,
+  AVATAR_FETCH_TIMEOUT_MS,
+  JOIN_API_MAX_RETRY_ATTEMPTS,
+  JOIN_API_MAX_RETRY_DELAY_SECONDS,
+} from "../consts/telegram";
 
 export const bot: Bot = new Bot(BOT_TOKEN);
 
@@ -34,7 +39,7 @@ export function logApiError(action: string, error: unknown): void {
  */
 export const joinVerificationApi: Api = new Api(BOT_TOKEN);
 joinVerificationApi.config.use(apiThrottler());
-joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 5 }));
+joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: JOIN_API_MAX_RETRY_ATTEMPTS, maxDelaySeconds: JOIN_API_MAX_RETRY_DELAY_SECONDS }));
 
 /**
  * 拼出某个 file_path 对应的 Bot API 文件下载直链。这条 URL 本身嵌着

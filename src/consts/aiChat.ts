@@ -24,6 +24,11 @@ export const REQUEST_TIMEOUT_MS: number = 60_000;
 export const REPLY_MAX_TOKENS: number = 8192;
 export const SUMMARY_MAX_TOKENS: number = 4096;
 
+/** 冷消息压缩的生成温度：偏低，换取更忠实原文的摘要而非自由发挥。 */
+export const SUMMARY_TEMPERATURE: number = 0.6;
+/** 回复生成的生成温度：偏高，换取更贴合人设的活人感发挥。 */
+export const REPLY_TEMPERATURE: number = 1.2;
+
 /**
  * 压缩块大小 = 热窗口大小 = 镜像窗口大小。逐字缓存由两个块组成：「热」是
  * 正在累积的最新一块，「镜像」是上一轮攒满时已提交 AI 压缩的那一块——

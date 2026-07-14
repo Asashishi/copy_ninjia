@@ -14,9 +14,10 @@
 
 import { join } from "path";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from "fs";
-import type { FlushReply, FlushRequest, LogMessage } from "../types";
+import type { DayFileState, FlushReply, FlushRequest, LogMessage } from "../types";
 import { LOGS_DIR } from "../consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../consts/logger";
+import { flushBuffer, loggerFileState } from "../cache/loggerWorker";
 
 declare var self: Worker;
 
@@ -73,15 +74,6 @@ function cleanupOldLogs(): void {
     }
   }
 }
-
-/** 当前追加目标文件的状态：字节大小用于定位结尾的「\n}」。 */
-interface DayFileState {
-  day: string;
-  size: number;
-  empty: boolean;
-}
-
-let current: DayFileState | null = null;
 
 /**
  * 打开（或接管）某天的文件并校验其可追加性。文件不存在或为空对象视作
@@ -172,32 +164,27 @@ function appendChunk(state: DayFileState, chunk: string): void {
 function writeDay(day: string, texts: string[]): void {
   if (texts.length === 0) return;
   try {
-    if (current === null || current.day !== day) {
-      current = openDay(day);
+    if (loggerFileState.current === null || loggerFileState.current.day !== day) {
+      loggerFileState.current = openDay(day);
       cleanupOldLogs();
     }
-    appendChunk(current, texts.join(",\n"));
+    appendChunk(loggerFileState.current, texts.join(",\n"));
   } catch (err) {
     // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
     // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。
-    current = null;
+    loggerFileState.current = null;
     console.error("[loggerWorker] flush to disk failed:", err);
   }
 }
 
-// 内存 buffer：onmessage 只做序列化后入队，满 FLUSH_MAX_ENTRIES 条立即
-// 落盘，否则由首条入队时启动的定时器在 FLUSH_INTERVAL_MS 后统一落盘。
-let buffer: { day: string; text: string }[] = [];
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
 function flush(): void {
-  if (flushTimer !== null) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
+  if (flushBuffer.timer !== null) {
+    clearTimeout(flushBuffer.timer);
+    flushBuffer.timer = null;
   }
-  if (buffer.length === 0) return;
-  const entries = buffer;
-  buffer = [];
+  if (flushBuffer.entries.length === 0) return;
+  const entries = flushBuffer.entries;
+  flushBuffer.entries = [];
   // 按天分组落盘（保持顺序），只有跨天瞬间的那批会拆成两组。
   let day: string = entries[0]!.day;
   let texts: string[] = [];
@@ -236,13 +223,13 @@ self.onmessage = (event: MessageEvent<LogMessage | FlushRequest>) => {
   if (!(msg.args.length === 1 && msg.args[0] === message)) {
     record.args = msg.args;
   }
-  buffer.push({
+  flushBuffer.entries.push({
     day: dayKey(msg.timestamp),
     text: serializeEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
-  if (buffer.length >= FLUSH_MAX_ENTRIES) {
+  if (flushBuffer.entries.length >= FLUSH_MAX_ENTRIES) {
     flush();
-  } else if (flushTimer === null) {
-    flushTimer = setTimeout(flush, FLUSH_INTERVAL_MS);
+  } else if (flushBuffer.timer === null) {
+    flushBuffer.timer = setTimeout(flush, FLUSH_INTERVAL_MS);
   }
 };
