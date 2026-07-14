@@ -101,7 +101,7 @@ export function initAntiRaid(): void {
   if (adopt.lockdowns.length === 0) return;
 
   post(adopt);
-  logger.log(`接管上次进程退出时仍在生效的私密模式：${adopt.lockdowns.map((l) => l.chatId).join(", ")}`);
+  logger.log(`Adopted lockdowns still active from previous process exit: ${adopt.lockdowns.map((l) => l.chatId).join(", ")}`);
 }
 
 /** 从 grammY 的 User 对象里摘出投递给 Worker 的最小身份字段。 */

@@ -38,9 +38,9 @@ export async function callTool(name: string): Promise<string> {
       return JSON.stringify(getCurrentTime());
     case GET_TOKYO_WEATHER_TOOL: {
       const result = await getTokyoWeather();
-      return JSON.stringify(result ?? { error: "天气数据获取失败" });
+      return JSON.stringify(result ?? { error: "Failed to fetch weather data" });
     }
     default:
-      return JSON.stringify({ error: `未知工具: ${name}` });
+      return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
 }
