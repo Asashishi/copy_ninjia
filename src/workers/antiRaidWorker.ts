@@ -251,7 +251,9 @@ function ensureVerificationStarted(
   // 管理员拉人免验证的同步快路径：拉人者在特权白名单里，或命中未过期的
   // 管理员表缓存，则等同于管理员身份入群的豁免。特意放在私密模式分支之前
   // ——私密模式期间普通成员本就被禁止拉人，管理员拉进来的人应照常放行。
-  // 缓存没拉取过/已过期时这里不命中，落到下方的异步兜底去全量拉取。
+  // 缓存没拉取过/已过期时这里不命中：正常模式落到下方的异步兜底去全量
+  // 拉取；私密模式下没有兜底、直接秒踢，靠触发/接管锁定时的缓存预热保证
+  // 锁定期内这里有据可查。
   if (!exempt && actorId !== undefined && actorId !== member.id) {
     exempt = PRIVILEGED_USERS_ID.includes(actorId) || freshAdminIds(chatId)?.has(actorId) === true;
   }
@@ -315,15 +317,15 @@ function ensureVerificationStarted(
   recordJoin(chatId);
 
   // 群聊当前处于反防刷群触发的私密模式：这波入群高峰大概率还在持续，新成员
-  // 大概率也是刷量的一部分，跳过质询流程直接踢出（kickChatMember 只是踢出、
-  // 不封禁，以防误杀正常用户，之后仍可正常申请加入）。两类例外不无脑秒踢、
-  // 走下方的正常验证（不点按钮再踢不迟）：评论区进来的人（recentComment 有
-  // 暂存，楼中楼回复）；以及被他人拉进来的（actorId 不是本人）——私密模式
-  // 本就禁止普通成员拉人，能拉进来的多半是管理员，只是管理员表缓存冷的时候
-  // 上方同步快路径没命中，秒踢会把异步兜底（下方的 fetchAdminIds 撤销验证）
-  // 的机会一并掐掉，误杀管理员拉的人。
+  // 大概率也是刷量的一部分，跳过质询流程直接踢出、不开任何验证窗口
+  // （kickChatMember 只是踢出、不封禁，以防误杀正常用户，之后仍可正常申请
+  // 加入）。管理员拉人只认上方同步快路径的缓存判定——触发/接管私密模式时
+  // 已预热管理员表（见 triggerLockdown / adoptLockdowns），锁定期远短于缓存
+  // TTL，同步判定始终有据可查；评论区楼中楼、缓存没命中的被拉入成员也一律
+  // 秒踢，不再开验证窗口走异步兜底——锁定期内宁可错踢（只踢不封、可重进），
+  // 不给刷子留 90 秒窗口。
   const invitedByOther: boolean = actorId !== undefined && actorId !== member.id;
-  if (activeLockdowns.has(chatId) && !recentComment && !invitedByOther) {
+  if (activeLockdowns.has(chatId)) {
     // 占位记录：必须在任何网络请求之前同步插入，防止同一次入群的另一路
     // 投递因为查不到 existing 而重新 recordJoin/重新踢一次。
     setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { kicked: true, isBot: member.isBot });
@@ -331,6 +333,10 @@ function ensureVerificationStarted(
     void (async (): Promise<void> => {
       if (announcementMessageId !== undefined) {
         await deleteMessage(chatId, announcementMessageId, joinVerificationApi);
+      }
+      // 楼中楼评论触发的自动入群也被秒踢：TA 那条评论按刷群痕迹一并清理。
+      if (recentComment !== undefined) {
+        await deleteMessage(chatId, recentComment.messageId, joinVerificationApi);
       }
       await kickChatMember(chatId, member.id, joinVerificationApi);
     })().catch((error: unknown) => {
@@ -752,6 +758,15 @@ function recordJoin(chatId: number): void {
  * 则只延长恢复计时，不重复调用 setChatPermissions 或重复发通知。
  */
 async function triggerLockdown(chatId: number, joinCount: number): Promise<void> {
+  // 预热管理员表：锁定期内「管理员拉人免验证」只认同步缓存判定（其余一律
+  // 秒踢，不开验证窗口），缓存冷/过期就趁现在拉热。持续刷群会反复触发到
+  // 这里，缓存过期后也能被重新拉热；fetchAdminIds 自带在途去重，不会打爆。
+  if (freshAdminIds(chatId) === undefined) {
+    void fetchAdminIds(chatId).catch((error: unknown) => {
+      logger.error(`Error prefetching chat admins for lockdown in chat ${chatId}:`, error);
+    });
+  }
+
   const existing = activeLockdowns.get(chatId);
   if (existing) {
     clearTimeout(existing.restoreTimeout);
@@ -845,6 +860,11 @@ async function restoreChat(chatId: number): Promise<void> {
 function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
   for (const { chatId, originalPermissions } of lockdowns) {
     if (activeLockdowns.has(chatId)) continue;
+    // Worker 重启后管理员表缓存是空的，而锁定期内管理员拉人只认同步缓存
+    // 判定：接管时同样预热一次。
+    void fetchAdminIds(chatId).catch((error: unknown) => {
+      logger.error(`Error prefetching chat admins for adopted lockdown in chat ${chatId}:`, error);
+    });
     // 镜像里只会出现权限已实际落地的私密模式（lockdown 事件在
     // setChatPermissions 成功后才发），接管的记录直接视为已生效。
     activeLockdowns.set(chatId, {
