@@ -1,5 +1,6 @@
 import { flushLogs, logger } from "./src/infra/logger";
 import { GrammyError } from "grammy";
+import type { ChatPermissions } from "@grammyjs/types";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, loadState } from "./src/infra/storage";
@@ -17,9 +18,14 @@ async function main(): Promise<void> {
 
   // 机器人可能同时在多个群里运行，每个群各自独立的复制状态（含当前复制
   // 目标 copiedUser）存在 Map<chatId, ChatState> 里，互不影响；copy 类命令
-  // 的冷却时钟是全局的（跨所有群共用一份），不按群分别保存。两者合并存在
-  // 同一个 state.json 里，一次读取拿到。
-  const { chatStates, globalCopyState }: { chatStates: Map<number, ChatState>; globalCopyState: GlobalCopyState } = await loadState();
+  // 的冷却时钟是全局的（跨所有群共用一份），不按群分别保存；lockdowns 是
+  // 反刷群私密模式当前生效中的镜像。三者合并存在同一个 state.json 里，一次
+  // 读取拿到。
+  const {
+    chatStates,
+    globalCopyState,
+    lockdowns,
+  }: { chatStates: Map<number, ChatState>; globalCopyState: GlobalCopyState; lockdowns: Map<number, ChatPermissions> } = await loadState();
 
   // 恢复内存中的临时 users 缓存，包含所有群里目前正在被 copy 的用户/频道，
   // 直接从 chatStates 派生——copiedUser 本身就是 state.json 里的字段，
@@ -145,9 +151,10 @@ async function main(): Promise<void> {
   // runner 开始投喂更新之前注入，postMessage 的 FIFO 保证这条 init 消息
   // 先于一切「记录/触发」事件到达 Worker。
   initAiChat(bot.botInfo);
-  // 接管上次进程退出时仍在生效的反刷群私密模式（lockdowns.json）：同样要
-  // 赶在 runner 投喂更新之前 adopt 给守卫 Worker，让它重排解锁计时。
-  await initAntiRaid();
+  // 接管上次进程退出时仍在生效的反刷群私密模式（state.json 的 lockdowns
+  // 部分，已随上面的 loadState() 一次性读出）：同样要赶在 runner 投喂更新
+  // 之前 adopt 给守卫 Worker，让它重排解锁计时。
+  await initAntiRaid(lockdowns);
   const copyingChats: number = Array.from(chatStates.values()).filter((s) => s.copiedUser !== null).length;
   logger.log(
     `Bot started as @${bot.botInfo.username}. ` +

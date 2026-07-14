@@ -1,3 +1,5 @@
+import type { ChatPermissions } from "@grammyjs/types";
+
 /**
  * 缓存的用户或频道信息，在内存中的 users map 里以小写 username 为键。`username`
  * 是可选的：通过回复某人消息解析出的目标（见 resolveReplyTarget）可能根本没有
@@ -45,11 +47,15 @@ export interface GlobalCopyState {
 
 /**
  * state.json 的整体结构：chats 以 chatId（字符串）为键分别保存各群聊各自的
- * ChatState；globalCopy 是所有群共用的那一份 copy 类命令冷却时钟。两者本来
- * 分属"按群"和"全局"两种不同的维度，但都只有这一份、都不需要按群拆文件，
- * 合并进同一个文件能少一次磁盘 I/O，也不用再操心多个文件之间的写入顺序。
+ * ChatState；globalCopy 是所有群共用的那一份 copy 类命令冷却时钟；lockdowns
+ * 是反刷群私密模式当前生效中的镜像（chatId -> 锁定前的原始权限，见
+ * src/antiRaid.ts）。三者维度各不相同（按群 / 全局 / 按群），但都只有这一份，
+ * 合并进同一个文件能少几次磁盘 I/O，也不用再操心多个文件之间的写入顺序。
+ * 三者各自独立写入（见 storage.ts 的 saveState / saveLockdowns），互不清空
+ * 对方的数据。
  */
 export interface StateFileSchema {
   chats: Record<string, ChatState>;
   globalCopy: GlobalCopyState;
+  lockdowns: Record<string, ChatPermissions>;
 }

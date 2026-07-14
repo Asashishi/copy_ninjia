@@ -2,7 +2,7 @@ import { logger } from "./infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember, ChatPermissions } from "@grammyjs/types";
 import { lockedChats } from "./cache/antiRaid";
-import { loadLockdowns, saveLockdowns } from "./infra/storage";
+import { saveLockdowns } from "./infra/storage";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
 import { superviseWorker } from "./libs/supervisedWorker";
 import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "./types";
@@ -19,12 +19,12 @@ import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRa
  *
  * 主线程唯一持有的状态是私密模式镜像（cache/antiRaid.ts），业务判定
  * 一概不读它，只用于两条恢复路径的 adopt 重放：Worker 崩溃重启后交给
- * 新 Worker，以及（经 lockdowns.json 持久化、由 initAntiRaid 加载）
- * 整个进程重启后交回——权限限制已实际落在群上，不重放就永远无人解锁。
+ * 新 Worker，以及（经 state.json 持久化、由 initAntiRaid 加载）整个进程
+ * 重启后交回——权限限制已实际落在群上，不重放就永远无人解锁。
  *
  * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
  * 停机时未完成的验证窗口随线程丢弃（残留按钮点了会得到「已失效」应答）；
- * 未到期的私密模式则已持久化在 lockdowns.json 里，下次启动重放接管。
+ * 未到期的私密模式则已持久化在 state.json 里，下次启动重放接管。
  */
 
 /** 把镜像里仍在生效的私密模式打包成 adopt 消息（两条恢复路径共用）。 */
@@ -67,7 +67,7 @@ const { post } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
 /**
  * 自愈放弃后，镜像里还挂着的私密模式已无人恢复。主线程只做投递不碰
  * Telegram API，救不了这些群的权限，只能清掉镜像并在日志里点名。
- * lockdowns.json 里的记录特意不清：重启进程后 initAntiRaid 会重放给
+ * state.json 里的记录特意不清：重启进程后 initAntiRaid 会重放给
  * 新 Worker，自动把权限恢复回去；不重启就只能由管理员手动恢复。
  */
 function abandonLockdowns(): void {
@@ -81,13 +81,13 @@ function abandonLockdowns(): void {
 }
 
 /**
- * 启动时的私密模式接管：加载 lockdowns.json 里进程上次退出时仍在生效的
- * 私密模式，填充镜像并 adopt 给 Worker 重新排恢复计时。必须在 runner 开始
+ * 启动时的私密模式接管：传入 state.json 里进程上次退出时仍在生效的私密
+ * 模式（由 index.ts 经 loadState() 一次性读出，避免这里再读一次同一个
+ * 文件），填充镜像并 adopt 给 Worker 重新排恢复计时。必须在 runner 开始
  * 投喂更新之前 await 完成——FIFO 保证 adopt 先于一切新事件到达，Worker 侧
  * 「私密模式下直接踢人」的判断对随后涌入的入群立即生效。
  */
-export async function initAntiRaid(): Promise<void> {
-  const persisted: Map<number, ChatPermissions> = await loadLockdowns();
+export async function initAntiRaid(persisted: Map<number, ChatPermissions>): Promise<void> {
   if (persisted.size === 0) return;
 
   for (const [chatId, originalPermissions] of persisted) {

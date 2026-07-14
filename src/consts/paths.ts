@@ -8,13 +8,12 @@ import { join } from "node:path";
 export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 
 // 持久化文件：各群复读状态（含复制目标）+ copy 类命令的全局冷却时钟（所有群
-// 共用一份，不按群分别计时）/ 单实例锁。两者虽然一个按群一个全局，但都只有
-// 这一份、都不需要拆文件，合并存在同一个 state.json 里（结构见
-// types/chatState.ts 的 StateFileSchema）。
+// 共用一份，不按群分别计时）+ 反刷群私密模式镜像（进程重启后据此恢复解锁
+// 计时，不让群权限卡死）/ 单实例锁。三者维度各不相同，但都只有这一份、都不
+// 需要拆文件，合并存在同一个 state.json 里（结构见 types/chatState.ts 的
+// StateFileSchema）。
 export const STATE_FILE_PATH: string = join(PROJECT_ROOT, "state.json");
 export const LOCK_FILE_PATH: string = join(PROJECT_ROOT, "bot.lock");
-/** 反刷群私密模式的持久化：进程重启后据此恢复解锁计时，不让群权限卡死。 */
-export const LOCKDOWNS_FILE_PATH: string = join(PROJECT_ROOT, "lockdowns.json");
 
 /** AI 闲聊人设文本（修改人设不需要碰代码）。 */
 export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.txt");
