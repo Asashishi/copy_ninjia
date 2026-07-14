@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { CachedUser, ChatState, CopyMode } from "../types";
-import { getChatState } from "../infra/storage";
+import { getActiveCopyIn, getChatState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
 import { cacheSender } from "../users/senderIdentity";
@@ -132,25 +132,29 @@ function hasCopyableContent(message: any): boolean {
 
 /**
  * 处理每一条收到的 message/channel_post：刷新发送者缓存。如果消息来自当前
- * 正在被复制的目标，则将其复读回同一个聊天；如果本群当前没有复制目标，则以
- * RANDOM_ECHO_PROBABILITY 的概率随机挑一种模式复读这条消息（东一榔头西一棒子
- * 地刷存在感）。
+ * 正在被复制的目标、且发生在发起 /copy 的那个群里，则将其复读回同一个聊天；
+ * 如果本群当前没有复读进行中，则以 RANDOM_ECHO_PROBABILITY 的概率随机挑一种
+ * 模式复读这条消息（东一榔头西一棒子地刷存在感）。
  */
 export async function handleIncomingMessage(
   ctx: Context,
-  users: Record<string, CachedUser>,
-  chatStates: Map<number, ChatState>
+  users: Record<string, CachedUser>
 ): Promise<void> {
   const message: any = ctx.msg;
   if (!message) return;
 
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message, users);
-  const state: ChatState = getChatState(chatStates, chatId);
+  const state: ChatState = getChatState(chatId);
+
+  // 复读目标全局唯一，但复读只发生在发起 /copy 的那个群里（判定统一走
+  // getActiveCopyIn）——同一个目标在别的群发言不复读，别的群的 AI 闲聊/
+  // 随机复读也不因此被抑制。
+  const activeCopy = getActiveCopyIn(chatId);
 
   // 检查是否需要复读当前目标（用户或频道皮套）的消息
-  if (state.copiedUser && senderId === state.copiedUser.id) {
-    await echoMessage(chatId, message, state.copyMode);
+  if (activeCopy && senderId === activeCopy.copiedUser.id) {
+    await echoMessage(chatId, message, activeCopy.copyMode);
     return;
   }
 
@@ -163,7 +167,7 @@ export async function handleIncomingMessage(
   // 目标，既不攒对话缓存也不触发 AI 回复，免得跟复读抢戏。
   const isPrivateChat: boolean = message.chat.type === "private";
   const messageText: string | undefined = typeof message.text === "string" ? message.text : undefined;
-  if (!isPrivateChat && !state.copiedUser && messageText && !messageText.startsWith("/")) {
+  if (!isPrivateChat && !activeCopy && messageText && !messageText.startsWith("/")) {
     // 把带文本的普通消息滚动记入本群的 AI 对话缓存（Bot API 无法拉历史，只能
     // 边收边攒最近 75 条）。指令消息（/ 开头）已在上面排除。
     const speaker = resolveSpeaker(message);
@@ -185,7 +189,7 @@ export async function handleIncomingMessage(
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
       return;
     }
-  } else if (!isPrivateChat && !state.copiedUser && message.sticker) {
+  } else if (!isPrivateChat && !activeCopy && message.sticker) {
     // 贴纸消息没有文本，但其元数据（情绪 emoji、所属贴纸包）对 AI 理解群里的
     // 情绪走向有参考价值：以描述行记入对话缓存，只当上下文，不触发 AI 回复；
     // 也不 return——后面的随机复读本来就对贴纸生效，行为保持不变。
@@ -202,7 +206,7 @@ export async function handleIncomingMessage(
   // 以 / 开头的是指令（未注册的、或发给其他机器人的指令不会被 bot.command
   // 拦截，会落到这里），与 echoMessage 的「不复读指令消息」保持一致，不触发。
   // 私聊不触发——与 AI 随机插话同理，这些刷存在感的行为都是群聊语境的。
-  if (!isPrivateChat && !state.copiedUser && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
+  if (!isPrivateChat && !activeCopy && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
     await sendMessage(chatId, "看看", message.message_id);
     return;
   }
@@ -210,7 +214,7 @@ export async function handleIncomingMessage(
   // 没有复读对象时的随机复读（私聊不触发，同上）。无需担心和其他机器人形成
   // 复读循环：Telegram 保证机器人收不到其他机器人发的消息（官方为防止 bot
   // 互相触发死循环的设计），自己发的消息也不会作为更新推送回来。
-  if (!isPrivateChat && !state.copiedUser && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
+  if (!isPrivateChat && !activeCopy && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
     const mode: CopyMode | undefined = pickRandom(RANDOM_ECHO_MODES);
     await echoMessage(chatId, message, mode);
   }

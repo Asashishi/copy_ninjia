@@ -1,8 +1,7 @@
 import { logger } from "./infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember, ChatPermissions } from "@grammyjs/types";
-import { lockedChats } from "./cache/antiRaid";
-import { saveLockdowns } from "./infra/storage";
+import { getAllChatStates, getOrCreateChatState, saveState } from "./infra/storage";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
 import { superviseWorker } from "./libs/supervisedWorker";
 import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "./types";
@@ -17,84 +16,91 @@ import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRa
  * 同一次入群「先 join、后 message/callback」的先后顺序在 Worker 侧
  * 保持不变。
  *
- * 主线程唯一持有的状态是私密模式镜像（cache/antiRaid.ts），业务判定
- * 一概不读它，只用于两条恢复路径的 adopt 重放：Worker 崩溃重启后交给
- * 新 Worker，以及（经 state.json 持久化、由 initAntiRaid 加载）整个进程
- * 重启后交回——权限限制已实际落在群上，不重放就永远无人解锁。
+ * 主线程唯一持有的私密模式状态是各群 ChatState.lockdown 字段（storage.ts
+ * 持有、随 state.json 持久化），业务判定一概不读它，只用于两条恢复路径的
+ * adopt 重放：Worker 崩溃重启后交给新 Worker，以及整个进程重启后由
+ * initAntiRaid 交回——权限限制已实际落在群上，不重放就永远无人解锁。
  *
  * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
  * 停机时未完成的验证窗口随线程丢弃（残留按钮点了会得到「已失效」应答）；
  * 未到期的私密模式则已持久化在 state.json 里，下次启动重放接管。
  */
 
-/** 把镜像里仍在生效的私密模式打包成 adopt 消息（两条恢复路径共用）。 */
+/** 收集当前仍在生效的私密模式（chatId -> 锁定前的原始权限）。 */
+function collectActiveLockdowns(): { chatId: number; originalPermissions: ChatPermissions }[] {
+  const lockdowns: { chatId: number; originalPermissions: ChatPermissions }[] = [];
+  for (const [chatId, chatState] of getAllChatStates()) {
+    if (chatState.lockdown) {
+      lockdowns.push({ chatId, originalPermissions: chatState.lockdown });
+    }
+  }
+  return lockdowns;
+}
+
+/** 把仍在生效的私密模式打包成 adopt 消息（两条恢复路径共用）。 */
 function buildAdoptMessage(): AdoptLockdownsMessage {
-  return {
-    type: "adopt",
-    lockdowns: [...lockedChats].map(([chatId, originalPermissions]) => ({ chatId, originalPermissions })),
-  };
+  return { type: "adopt", lockdowns: collectActiveLockdowns() };
 }
 
 const { post } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
   url: new URL("./workers/antiRaidWorker.ts", import.meta.url).href,
   label: "Anti-raid guard Worker",
   giveUpConsequence: "join verification and anti-raid features will silently stay disabled until the process restarts.",
-  // Worker 回报的 lockdown/unlock 事件：维护主线程镜像并持久化。
+  // Worker 回报的 lockdown/unlock 事件：写入对应群的 ChatState.lockdown
+  // 并持久化（storage.ts 持有状态，落盘时全量写 state.json）。
   onEvent: (event) => {
     switch (event.type) {
       case "lockdown":
-        lockedChats.set(event.chatId, event.originalPermissions);
-        void saveLockdowns(lockedChats);
+        getOrCreateChatState(event.chatId).lockdown = event.originalPermissions;
+        void saveState();
         break;
       case "unlock":
-        lockedChats.delete(event.chatId);
-        void saveLockdowns(lockedChats);
+        delete getOrCreateChatState(event.chatId).lockdown;
+        void saveState();
         break;
     }
   },
-  // 崩溃的 Worker 带走了恢复计时器，但权限限制已实际落在群上；把镜像里
-  // 仍在生效的私密模式重放给新 Worker 接管，重新计时、到期恢复。FIFO
-  // 保证 adopt 先于此后的一切投递到达。待验证记录随旧线程丢失，无从重放
-  // ——残留的验证按钮点了会得到「已失效」应答，重新进群即可。
+  // 崩溃的 Worker 带走了恢复计时器，但权限限制已实际落在群上；把仍在生效
+  // 的私密模式重放给新 Worker 接管，重新计时、到期恢复。FIFO 保证 adopt
+  // 先于此后的一切投递到达。待验证记录随旧线程丢失，无从重放——残留的
+  // 验证按钮点了会得到「已失效」应答，重新进群即可。
   onRespawn: (postToNext) => {
-    if (lockedChats.size > 0) {
-      postToNext(buildAdoptMessage());
+    const adopt: AdoptLockdownsMessage = buildAdoptMessage();
+    if (adopt.lockdowns.length > 0) {
+      postToNext(adopt);
     }
   },
   onGiveUp: () => abandonLockdowns(),
 });
 
 /**
- * 自愈放弃后，镜像里还挂着的私密模式已无人恢复。主线程只做投递不碰
- * Telegram API，救不了这些群的权限，只能清掉镜像并在日志里点名。
- * state.json 里的记录特意不清：重启进程后 initAntiRaid 会重放给
- * 新 Worker，自动把权限恢复回去；不重启就只能由管理员手动恢复。
+ * 自愈放弃后，还挂着的私密模式已无人恢复。主线程只做投递不碰 Telegram API，
+ * 救不了这些群的权限，只能在日志里点名。ChatState.lockdown 特意不清：
+ * 重启进程后 initAntiRaid 会重放给新 Worker，自动把权限恢复回去；不重启
+ * 就只能由管理员手动恢复（自愈已放弃，进程内不会再有人读这份记录）。
  */
 function abandonLockdowns(): void {
-  if (lockedChats.size === 0) return;
+  const abandoned = collectActiveLockdowns();
+  if (abandoned.length === 0) return;
   logger.error(
-    `以下群聊的私密模式已无人解除，请重启机器人进程（会自动恢复群权限），` +
-    `或由管理员手动恢复（允许成员邀请新人）：` +
-    [...lockedChats.keys()].join(", ")
+    `Nobody is left to lift lockdown mode for these chats; restart the bot process (it restores permissions automatically) ` +
+    `or have an admin re-enable member invites manually: ` +
+    abandoned.map((l) => l.chatId).join(", ")
   );
-  lockedChats.clear();
 }
 
 /**
- * 启动时的私密模式接管：传入 state.json 里进程上次退出时仍在生效的私密
- * 模式（由 index.ts 经 loadState() 一次性读出，避免这里再读一次同一个
- * 文件），填充镜像并 adopt 给 Worker 重新排恢复计时。必须在 runner 开始
- * 投喂更新之前 await 完成——FIFO 保证 adopt 先于一切新事件到达，Worker 侧
- * 「私密模式下直接踢人」的判断对随后涌入的入群立即生效。
+ * 启动时的私密模式接管：把 state.json 里进程上次退出时仍在生效的私密模式
+ * （已随 loadState() 载入各群 ChatState.lockdown）adopt 给 Worker 重新排
+ * 恢复计时。必须在 runner 开始投喂更新之前调用——FIFO 保证 adopt 先于一切
+ * 新事件到达，Worker 侧「私密模式下直接踢人」的判断对随后涌入的入群立即生效。
  */
-export async function initAntiRaid(persisted: Map<number, ChatPermissions>): Promise<void> {
-  if (persisted.size === 0) return;
+export function initAntiRaid(): void {
+  const adopt: AdoptLockdownsMessage = buildAdoptMessage();
+  if (adopt.lockdowns.length === 0) return;
 
-  for (const [chatId, originalPermissions] of persisted) {
-    lockedChats.set(chatId, originalPermissions);
-  }
-  post(buildAdoptMessage());
-  logger.log(`接管上次进程退出时仍在生效的私密模式：${[...persisted.keys()].join(", ")}`);
+  post(adopt);
+  logger.log(`接管上次进程退出时仍在生效的私密模式：${adopt.lockdowns.map((l) => l.chatId).join(", ")}`);
 }
 
 /** 从 grammY 的 User 对象里摘出投递给 Worker 的最小身份字段。 */

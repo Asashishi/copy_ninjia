@@ -1,21 +1,22 @@
 import type { Context } from "grammy";
-import type { ChatState, CopyableReaction } from "../types";
-import { getChatState } from "../infra/storage";
+import type { CopyableReaction } from "../types";
+import { getActiveCopyIn } from "../infra/storage";
 import { enqueueReaction } from "../copy/reactionQueue";
 
 /**
  * 处理 message_reaction 更新：把复制目标的表情回应（普通 emoji 和自定义
  * emoji 都支持）同步到同一条消息上；目标移除了自己的回应时也会跟着清除。
+ * 与复读一致，只在发起 /copy 的那个群里同步（判定统一走 getActiveCopyIn）。
  * 实际的 setMessageReaction 调用走 reactionQueue（429 重试、同消息合并、
  * 按 chat 隔离限流等待），这里只做过滤和入队，不阻塞更新处理。
  */
-export function handleReaction(ctx: Context, chatStates: Map<number, ChatState>): void {
+export function handleReaction(ctx: Context): void {
   const reaction = ctx.messageReaction;
   if (!reaction) return;
 
-  const state: ChatState = getChatState(chatStates, reaction.chat.id);
+  const activeCopy = getActiveCopyIn(reaction.chat.id);
   const reactorId: number | undefined = reaction.actor_chat ? reaction.actor_chat.id : reaction.user?.id;
-  if (!state.copiedUser || reactorId !== state.copiedUser.id) return;
+  if (!activeCopy || reactorId !== activeCopy.copiedUser.id) return;
 
   // grammY 的 ctx.reactions() 已把 old/new 的差量按类型分组算好（付费反应被
   // 单独归类，而机器人本来也设不了它，天然排除）。机器人没有 Premium，一条

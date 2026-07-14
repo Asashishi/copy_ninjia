@@ -59,9 +59,12 @@ export function buildFileDownloadUrl(filePath: string): string {
  */
 export async function copyUserProfilePhoto(targetId: number, isChannel: boolean = false, username?: string): Promise<boolean> {
   for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
-    const success: boolean = await attemptCopyUserProfilePhoto(targetId, isChannel);
-    if (success) return true;
+    const result: AvatarCopyAttemptResult = await attemptCopyUserProfilePhoto(targetId, isChannel);
+    if (result === "ok") return true;
     logger.error(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
+    // 确定性失败（对方没有可见头像之类）重试也不会有不同结果：白白多打
+    // 两轮 API、把同一条错误日志刷三遍，直接跳去网页爬取兜底。
+    if (result === "permanent-failure") break;
   }
 
   if (username) {
@@ -75,6 +78,11 @@ export async function copyUserProfilePhoto(targetId: number, isChannel: boolean 
         logger.error("Error setting profile photo from web fallback:", error);
       }
     }
+  } else {
+    // 没有公开 username 就没有 t.me/<username> 主页可爬，兜底本来就不可能，
+    // 但必须留下这行日志——否则从日志上看只有几次失败的尝试，完全看不出
+    // 兜底为什么没触发。
+    logger.error(`Skipping t.me web profile scrape fallback: ${isChannel ? "channel" : "user"} ${targetId} has no public username`);
   }
   return false;
 }
@@ -121,7 +129,10 @@ export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8
   }
 }
 
-async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean): Promise<boolean> {
+/** 单次头像复制尝试的结果：区分「重试可能成功」和「重试注定同样失败」。 */
+type AvatarCopyAttemptResult = "ok" | "transient-failure" | "permanent-failure";
+
+async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean): Promise<AvatarCopyAttemptResult> {
   try {
     let fileId: string;
 
@@ -129,7 +140,8 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       // 频道没有 getUserProfilePhotos，只能通过 getChat 的 photo 字段拿头像（只有大小两档，无需再挑最大尺寸）
       const chat = await bot.api.getChat(targetId);
       if (!chat.photo) {
-        return false;
+        logger.error(`Channel ${targetId} has no chat photo visible to the bot`);
+        return "permanent-failure";
       }
       fileId = chat.photo.big_file_id;
     } else {
@@ -143,7 +155,10 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
 
       const photos = await bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: 100 });
       if (photos.total_count === 0) {
-        return false;
+        // 拿不到任何头像：可能确实没设头像，也可能是隐私设置对非联系人隐藏
+        // 了头像——两种情况 Bot API 无从区分。
+        logger.error(`User ${targetId} has no profile photos visible to the bot (privacy settings or no avatar)`);
+        return "permanent-failure";
       }
 
       // 按照 Telegram API 约定，同一张头像的多个尺寸按分辨率从小到大排列，
@@ -161,7 +176,8 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       // 更靠谱的 t.me 网页爬虫兜底（见 fetchAvatarFromWebProfile，它直接读页面上
       // 展示的当前头像，天然准确）。
       if (!matchedPhoto) {
-        return false;
+        logger.error(`Active avatar of user ${targetId} not found among their visible profile photos (no chat.photo, or history beyond first 100)`);
+        return "permanent-failure";
       }
 
       fileId = matchedPhoto.file_id;
@@ -169,7 +185,8 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
 
     const file = await bot.api.getFile(fileId);
     if (!file.file_path) {
-      return false;
+      logger.error(`getFile for target ${targetId}'s avatar returned no file_path`);
+      return "permanent-failure";
     }
 
     // 下载文件内容（grammY 没有内置下载封装，仍需自己 fetch 原始字节）
@@ -178,15 +195,16 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
     if (!imgRes.ok) {
       // 只记录 file_path，绝不能把完整 downloadUrl 打进日志——URL 里嵌着 bot token。
       logger.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
-      return false;
+      return "transient-failure";
     }
     const imgBuffer: Uint8Array = new Uint8Array(await imgRes.arrayBuffer());
 
     await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
-    return true;
+    return "ok";
   } catch (error: unknown) {
+    // 网络抖动、限流（429）等异常路径都值得重试。
     logger.error("Error copying user profile photo:", error);
-    return false;
+    return "transient-failure";
   }
 }
 

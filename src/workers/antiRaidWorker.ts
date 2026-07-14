@@ -54,9 +54,9 @@ import type {
  * 走「直接踢出」分支，没有跨线程的镜像延迟。
  *
  * 私密模式的生效/解除以 lockdown/unlock 事件回报主线程——主线程据此维护
- * 一份镜像（cache/antiRaid.ts），在本线程崩溃重启后用 adopt 消息交还给
- * 新实例接管（待验证记录则随线程丢失：残留的验证按钮点了会得到「已失效」
- * 应答，重新进群即可）。
+ * 各群的 ChatState.lockdown 记录（infra/storage.ts，随 state.json 持久化），
+ * 在本线程崩溃重启后用 adopt 消息交还给新实例接管（待验证记录则随线程
+ * 丢失：残留的验证按钮点了会得到「已失效」应答，重新进群即可）。
  */
 
 declare var self: Worker;

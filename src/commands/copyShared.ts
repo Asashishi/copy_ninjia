@@ -1,6 +1,7 @@
 import { logger } from "../infra/logger";
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser, GlobalCopyState } from "../types";
+import type { CachedUser } from "../types";
+import { getGlobalCopyState } from "../infra/storage";
 import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
@@ -31,11 +32,11 @@ type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCop
  * 继续，并需要在放弃这次尝试时把返回值传给 releaseCopyCooldownClaim 回滚。
  */
 export async function claimCopyCooldownOrReject(
-  globalCopyState: GlobalCopyState,
   fromUser: { id: number } | undefined,
   chatId: number,
   messageId: number | undefined
 ): Promise<CopyCooldownClaim> {
+  const globalCopyState = getGlobalCopyState();
   const isExempted: boolean = !!fromUser && PRIVILEGED_USERS_ID.includes(fromUser.id);
   if (!isExempted && globalCopyState.lastCopyTime) {
     const elapsed: number = Date.now() - globalCopyState.lastCopyTime;
@@ -55,8 +56,8 @@ export async function claimCopyCooldownOrReject(
  * 真正触发复制的时候（解析目标失败、已经在复读别人等），避免无效尝试白白
  * 消耗掉全局冷却。
  */
-export function releaseCopyCooldownClaim(globalCopyState: GlobalCopyState, claim: { previousLastCopyTime: number | undefined }): void {
-  globalCopyState.lastCopyTime = claim.previousLastCopyTime;
+export function releaseCopyCooldownClaim(claim: { previousLastCopyTime: number | undefined }): void {
+  getGlobalCopyState().lastCopyTime = claim.previousLastCopyTime;
 }
 
 /**
