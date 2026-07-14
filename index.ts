@@ -1,9 +1,10 @@
 import { flushLogs, logger } from "./src/infra/logger";
+import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getOrCreateChatState, loadGlobalCopyState, loadState, loadUsersFile, saveState } from "./src/infra/storage";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
+import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { initAiChat } from "./src/aiChat";
 import type { CachedUser, ChatState, GlobalCopyState, UsersFileSchema } from "./src/types";
@@ -114,9 +115,22 @@ async function main(): Promise<void> {
   bot.on("message_reaction", (ctx) => handleReaction(ctx, chatStates));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
   bot.on("callback_query:data", (ctx) => handleVerificationCallback(ctx));
+  // /luck_challenge 仅通过内联模式触发（@本机器人 [文本]），没有对应的
+  // 斜杠命令。这个入口需要先在 BotFather 里给机器人开启 Inline Mode，
+  // 否则 Telegram 根本不会把 inline_query 更新发过来。
+  bot.on("inline_query", (ctx) => handleLuckChallengeInlineQuery(ctx));
 
   bot.catch((err) => {
-    logger.error(`Unhandled error while handling update ${err.ctx.update.update_id}:`, err.error);
+    // GrammyError 会把调用失败时的完整请求体原样挂在 .payload 上；logger 对
+    // Error 是展开它的可枚举属性再落盘的，如果这里把 err.error 整个传进去，
+    // payload 里任何带 token 的字段（比如 /luck_challenge 内联结果里的头像
+    // 缩略图 URL，本身就嵌着 BOT_TOKEN）都会被原样写进日志文件。只取
+    // error_code/description，不让 payload 有机会流入日志。
+    if (err.error instanceof GrammyError) {
+      logger.error(`Unhandled error while handling update ${err.ctx.update.update_id}: ${err.error.error_code} ${err.error.description}`);
+    } else {
+      logger.error(`Unhandled error while handling update ${err.ctx.update.update_id}:`, err.error);
+    }
   });
 
   // 向 Telegram 注册命令列表，让聊天框输入 / 时弹出命令菜单。默认作用域即可
@@ -139,12 +153,16 @@ async function main(): Promise<void> {
     logger.error("Failed to register bot commands menu:", error);
   }
 
-  // message_reaction / chat_member / callback_query 默认不在 Telegram 的隐式更新
-  // 集合里，必须显式声明才能收到；一旦显式声明，就必须把 message/channel_post
-  // 也列进来，否则它们反而会被排除。chat_member 是入群验证功能能收到"谁加入了
-  // 群"的关键——群里如果开了"隐藏加入/离开提示"，new_chat_members 服务消息
-  // 根本不会产生，只有 chat_member 这个更新类型不受影响，始终会推送；
-  // callback_query 则是入群验证按钮点击的信号来源。
+  // 下面这个 allowed_updates 是完全自定义的一份列表，会整体替换 Telegram 的
+  // 默认订阅集合，而不是在默认集合上追加——所以哪怕某个更新类型本来就在
+  // 默认集合里，只要不在这份列表里就照样收不到，message/channel_post 必须
+  // 跟着一起列进来，否则反而会被排除。message_reaction / chat_member 默认
+  // 确实不在隐式集合里，必须显式声明才能收到。chat_member 是入群验证功能能
+  // 收到"谁加入了群"的关键——群里如果开了"隐藏加入/离开提示"，new_chat_members
+  // 服务消息根本不会产生，只有 chat_member 这个更新类型不受影响，始终会推送；
+  // callback_query 是入群验证按钮点击的信号来源；inline_query 是
+  // `@本机器人 ...` 内联模式（/luck_challenge）的信号来源（还需要在
+  // BotFather 里手动开启该开关，光加这里不够）。
   // 用 @grammyjs/runner 代替 bot.start()：内建轮询对所有更新全局串行，一条
   // 消息的处理（复读、翻译）会卡住后面的 reaction 更新；runner 按上面的
   // sequentialize 约束并发处理。
@@ -165,7 +183,7 @@ async function main(): Promise<void> {
   const runner: RunnerHandle = run(bot, {
     runner: {
       fetch: {
-        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member", "callback_query"],
+        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member", "callback_query", "inline_query"],
       },
     },
   });

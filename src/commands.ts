@@ -7,3 +7,4 @@ export { handleStealIconCommand } from "./commands/stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./commands/quiet";
 export { handleKickCommand } from "./commands/kick";
 export { handleBalanceCommand } from "./commands/balance";
+export { handleLuckChallengeInlineQuery } from "./commands/luckChallenge";

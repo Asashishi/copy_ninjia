@@ -37,6 +37,18 @@ joinVerificationApi.config.use(apiThrottler());
 joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 5 }));
 
 /**
+ * 拼出某个 file_path 对应的 Bot API 文件下载直链。这条 URL 本身嵌着
+ * BOT_TOKEN——调用方绝不能把完整返回值打进日志（只记录 filePath 是安全的），
+ * 也要留意任何把它原样传给 Telegram 的地方（比如内联查询结果的
+ * thumbnail_url）：一旦对应的 API 调用出错，错误对象上可能会带着这个 URL，
+ * 经过日志的 Error 序列化就可能把 token 写进日志文件。
+ * @param filePath getFile 返回的 file_path。
+ */
+export function buildFileDownloadUrl(filePath: string): string {
+  return `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+}
+
+/**
  * 下载某用户（或频道）的头像，并上传设置为本机器人的头像。
  * 优先走 Bot API；若多次尝试都失败且目标有公开 username，则退而爬取
  * t.me/<username> 公开主页上展示的头像作为兜底（见 fetchAvatarFromWebProfile）。
@@ -78,11 +90,11 @@ export async function copyUserProfilePhoto(targetId: number, isChannel: boolean 
  */
 export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8Array | null> {
   try {
-    const pageRes: Response = await fetch(`https://t.me/${encodeURIComponent(username)}`, {
+    const pageRes: Response = await fetch(`https://telegram.me/${encodeURIComponent(username)}`, {
       signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS),
     });
     if (!pageRes.ok) {
-      logger.error(`Failed to fetch t.me profile page for @${username}: ${pageRes.status}`);
+      logger.error(`Failed to fetch telegram.me profile page for @${username}: ${pageRes.status}`);
       return null;
     }
     const html: string = await pageRes.text();
@@ -161,7 +173,7 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
     }
 
     // 下载文件内容（grammY 没有内置下载封装，仍需自己 fetch 原始字节）
-    const downloadUrl: string = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+    const downloadUrl: string = buildFileDownloadUrl(file.file_path);
     const imgRes: Response = await fetch(downloadUrl, { signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
     if (!imgRes.ok) {
       // 只记录 file_path，绝不能把完整 downloadUrl 打进日志——URL 里嵌着 bot token。
