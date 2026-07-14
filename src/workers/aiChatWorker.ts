@@ -498,12 +498,17 @@ function startTypingHeartbeat(chatId: number): () => void {
   }
   entry.refCount++;
 
+  // 闭包捕获本次拿到的 entry 本体：停止时若表里已换成同一 chatId 的新一代
+  // 心跳（本代先因重发失败被清、随后又有新调用开了新的），绝不能把新一代的
+  // 引用计数减掉/定时器清掉——和上面重发失败路径按 timer 身份核对是同一个
+  // 道理。
+  const acquired = entry;
   let released: boolean = false;
   return () => {
     if (released) return;
     released = true;
     const current = typingHeartbeats.get(chatId);
-    if (!current) return; // 已经因重发失败被提前清掉
+    if (current !== acquired) return; // 本代已因重发失败被提前清掉（表里为空或已是新一代）
     if (--current.refCount <= 0) {
       clearInterval(current.timer);
       typingHeartbeats.delete(chatId);
