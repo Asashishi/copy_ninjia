@@ -252,10 +252,14 @@ function ensureVerificationStarted(
 
   // 群聊当前处于反防刷群触发的私密模式：这波入群高峰大概率还在持续，新成员
   // 大概率也是刷量的一部分，跳过质询流程直接踢出（kickChatMember 只是踢出、
-  // 不封禁，以防误杀正常用户，之后仍可正常申请加入）。评论区进来的人
-  // （recentComment 有暂存，楼中楼回复）例外：不无脑秒踢，走下方的正常
-  // 验证 + 追发提醒，不点按钮再踢不迟。
-  if (activeLockdowns.has(chatId) && !recentComment) {
+  // 不封禁，以防误杀正常用户，之后仍可正常申请加入）。两类例外不无脑秒踢、
+  // 走下方的正常验证（不点按钮再踢不迟）：评论区进来的人（recentComment 有
+  // 暂存，楼中楼回复）；以及被他人拉进来的（actorId 不是本人）——私密模式
+  // 本就禁止普通成员拉人，能拉进来的多半是管理员，只是管理员表缓存冷的时候
+  // 上方同步快路径没命中，秒踢会把异步兜底（下方的 fetchAdminIds 撤销验证）
+  // 的机会一并掐掉，误杀管理员拉的人。
+  const invitedByOther: boolean = actorId !== undefined && actorId !== member.id;
+  if (activeLockdowns.has(chatId) && !recentComment && !invitedByOther) {
     // 占位记录：必须在任何网络请求之前同步插入，防止同一次入群的另一路
     // 投递因为查不到 existing 而重新 recordJoin/重新踢一次。
     setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { kicked: true, isBot: member.isBot });
