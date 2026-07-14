@@ -360,13 +360,21 @@ function ensureVerificationStarted(
     });
 }
 
-/** 取消一个待验证记录，但不处理消息——用于该成员已经离开的情况。 */
+/**
+ * 取消一个待验证记录——用于该成员已经离开的情况。TA 的入群公告/发言不动
+ * （人都走了，不值得再刷一串删除调用），但带验证按钮的提醒必须删掉：
+ * 不删就成了永远指向「已失效」的孤儿按钮，长期留在群里。
+ */
 function cancelVerification(chatId: number, userId: number): void {
   const key: string = verificationKey(chatId, userId);
   const pending = pendingVerifications.get(key);
   if (pending) {
     clearTimeout(pending.timeout);
     pendingVerifications.delete(key);
+    // kicked/exempt 占位没有提醒可删；还没落地的提醒由其回填回调自删。
+    if (!pending.kicked && !pending.exempt) {
+      deletePendingReminders(chatId, pending);
+    }
   }
 }
 
