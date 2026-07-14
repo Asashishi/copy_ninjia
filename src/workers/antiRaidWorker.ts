@@ -156,6 +156,33 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
   if (!pending) return; // 已通过验证，或已经因为中途退群等原因被清理掉了
   pendingVerifications.delete(key);
 
+  // 管理员拉人的异步豁免可能到期了还没落定（管理员表拉取在限流队列里排队，
+  // 或重试后仍然失败）：踢人前最后核对一次拉人者身份。缓存热直接判；缓存
+  // 冷就等一次全量拉取（与在途请求自动合并）。等待期间记录已被删除，迟到
+  // 的撤销回调/按钮点击都会因查不到记录而安全放弃。
+  if (pending.invitedBy !== undefined) {
+    const inviterId: number = pending.invitedBy;
+    const cachedAdmins: Set<number> | undefined = freshAdminIds(chatId);
+    let inviterIsAdmin: boolean = cachedAdmins?.has(inviterId) === true;
+    if (cachedAdmins === undefined) {
+      try {
+        inviterIsAdmin = (await fetchAdminIds(chatId)).has(inviterId);
+      } catch (error: unknown) {
+        logger.error(`Error rechecking admin-invite exemption before expiring verification in chat ${chatId}:`, error);
+      }
+    }
+    if (inviterIsAdmin) {
+      // 拉人者确是管理员：按豁免收尾——只删带按钮的提醒，入群公告和 TA 的
+      // 发言都留下（这是合法成员），也不发踢人通知。等待期间若有新投递重开
+      // 了记录，不去覆盖它。
+      deletePendingReminders(chatId, pending);
+      if (!pendingVerifications.has(key)) {
+        setDedupePlaceholder(key, chatId, userId, pending.label, { exempt: true, isBot: pending.isBot });
+      }
+      return;
+    }
+  }
+
   for (const messageId of pending.messageIds) {
     await deleteMessage(chatId, messageId, joinVerificationApi);
   }
@@ -167,6 +194,35 @@ async function expireVerification(chatId: number, userId: number): Promise<void>
   if (noticeMessageId !== undefined) {
     deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
   }
+}
+
+/**
+ * 给一条真实的待验证记录挂载「拉人者是不是管理员」的异步核查：全量拉取
+ * 管理员表（顺手把缓存补热），确认是管理员则撤销验证窗口。首路投递创建
+ * 记录时挂载；第二路投递若也带着拉人者（两路的到达顺序和 actor 都不保证
+ * 一致）就再挂一次——fetchAdminIds 自带进行中去重，重复挂载只是对同一
+ * 结果多检查一遍，先撤销者生效，后到的发现记录已被替换即放弃。
+ */
+function scheduleAdminInviteExemption(key: string, pending: PendingVerification, actorId: number): void {
+  void (async (): Promise<void> => {
+    try {
+      const adminIds: Set<number> = await fetchAdminIds(pending.chatId);
+      if (adminIds.has(actorId)) {
+        const current = pendingVerifications.get(key);
+        // 仅在当前验证记录未被其他事件（如离群、点击通过等）更改时进行撤销
+        if (current === pending) {
+          clearTimeout(pending.timeout);
+          pendingVerifications.delete(key);
+          // 撤销已发送的验证提醒消息（原始 + 回复式补发）
+          deletePendingReminders(pending.chatId, pending);
+          // 插入免验证占位记录，防止后续并发事件（如服务消息）重复触发验证
+          setDedupePlaceholder(key, pending.chatId, pending.userId, pending.label, { exempt: true, isBot: pending.isBot });
+        }
+      }
+    } catch (error: unknown) {
+      logger.error(`Error fetching chat admins for admin-invite exemption in chat ${pending.chatId}:`, error);
+    }
+  })();
 }
 
 /**
@@ -241,6 +297,14 @@ function ensureVerificationStarted(
         existing.messageIds.push(announcementMessageId);
       }
     }
+    // 两路投递的到达顺序与携带的 actor 都不保证一致（比如缺 from 的服务
+    // 消息先到、没能挂上核查）：本路带着拉人者而验证窗口还开着时，给它
+    // 补挂管理员核查，否则这条 return 会把异步豁免的机会掐掉。缓存热时
+    // 不必挂——上方同步快路径刚查过，没命中就是真不是管理员。
+    if (actorId !== undefined && actorId !== member.id && !existing.kicked && !existing.exempt && freshAdminIds(chatId) === undefined) {
+      existing.invitedBy ??= actorId;
+      scheduleAdminInviteExemption(key, existing, actorId);
+    }
     return;
   }
 
@@ -280,6 +344,7 @@ function ensureVerificationStarted(
     userId: member.id,
     label: memberLabel(member),
     isBot: member.isBot,
+    invitedBy: invitedByOther ? actorId : undefined,
     messageIds: announcementMessageId !== undefined ? [announcementMessageId] : [],
     timeout: setTimeout(() => {
       void expireVerification(chatId, member.id).catch((error: unknown) => {
@@ -300,25 +365,7 @@ function ensureVerificationStarted(
   // 异步全量拉取管理员表兜底——既回答了「拉人者是不是管理员」，也顺手把
   // 缓存补热，同群的下一次管理员拉人就能走同步快路径、不再闪验证按钮。
   if (actorId !== undefined && actorId !== member.id) {
-    void (async (): Promise<void> => {
-      try {
-        const adminIds: Set<number> = await fetchAdminIds(chatId);
-        if (adminIds.has(actorId)) {
-          const current = pendingVerifications.get(key);
-          // 仅在当前验证记录未被其他事件（如离群、点击通过等）更改时进行撤销
-          if (current === pending) {
-            clearTimeout(pending.timeout);
-            pendingVerifications.delete(key);
-            // 撤销已发送的验证提醒消息（原始 + 回复式补发）
-            deletePendingReminders(chatId, pending);
-            // 插入免验证占位记录，防止后续并发事件（如服务消息）重复触发验证
-            setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { exempt: true, isBot: member.isBot });
-          }
-        }
-      } catch (error: unknown) {
-        logger.error(`Error fetching chat admins for admin-invite exemption in chat ${chatId}:`, error);
-      }
-    })();
+    scheduleAdminInviteExemption(key, pending, actorId);
   }
 
   // 评论先到的入群在上面消费 recentComment 时已补发过锚定评论的提醒，

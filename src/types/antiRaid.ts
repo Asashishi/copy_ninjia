@@ -37,6 +37,12 @@ export interface PendingVerification {
    * 若原始提醒还在限流队列里没落地，落地时的回填回调会将其直接自删。
    */
   reminderSuperseded?: boolean;
+  /**
+   * 若本次入群是被他人拉进来的，记录拉人者的 userId。用于验证到期时的
+   * 最后核对：异步的「拉人者是不是管理员」核查可能到期了还没落定
+   * （管理员表拉取在限流队列里排队/重试失败），踢人前按它再确认一次。
+   */
+  invitedBy?: number;
   timeout: ReturnType<typeof setTimeout>;
   /**
    * 若为 true，说明这不是真正在等待验证的记录，而是反防刷群私密模式下
