@@ -1,9 +1,8 @@
 import type { Context } from "grammy";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
 import type { InlineQueryResultArticle } from "@grammyjs/types";
-import { logger } from "../infra/logger";
-import { bot, buildFileDownloadUrl } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
+import { FORTUNE_THUMBNAIL_URL, PROBABILITY_THUMBNAIL_URL } from "../consts/luckChallenge";
 
 /**
  * 抽今日运势，仅通过 Telegram 内联模式触发：在任意聊天框里
@@ -94,25 +93,6 @@ function pickDominantProbability(tier: LuckTier): { label: string; percent: numb
   return isFortuneHigher ? { label: "行大运", percent: tier.fortunePercent } : { label: "倒大霉", percent: misfortunePercent };
 }
 
-/** 内联结果列表里每条结果左边的缩略图。缓存结果：undefined 表示还没取过，
- * null 表示取过但失败/机器人没设头像——两种都不用再重复请求。临时借用机器人
- * 自己的头像占位，等拿到专门的配图后把这个函数换成固定 URL 常量即可。 */
-let cachedThumbnailUrl: string | null | undefined;
-
-async function getLuckThumbnailUrl(): Promise<string | undefined> {
-  if (cachedThumbnailUrl !== undefined) return cachedThumbnailUrl ?? undefined;
-  try {
-    const photos = await bot.api.getUserProfilePhotos(bot.botInfo.id, { limit: 1 });
-    const fileId: string | undefined = photos.photos[0]?.[0]?.file_id;
-    const filePath: string | undefined = fileId ? (await bot.api.getFile(fileId)).file_path : undefined;
-    cachedThumbnailUrl = filePath ? buildFileDownloadUrl(filePath) : null;
-  } catch (error: unknown) {
-    logger.error("Failed to fetch bot avatar for luck inline thumbnail:", error);
-    cachedThumbnailUrl = null;
-  }
-  return cachedThumbnailUrl ?? undefined;
-}
-
 /** "我也试试"（原地重开一次内联搜索）+ 可选"同款问题"（原样复用同一段文本，
  * 方便别人测一模一样的所求事项）+ "转发"（挑一个聊天分享同一次内联搜索）。 */
 function buildRetryKeyboard(text: string | undefined): InlineKeyboard {
@@ -125,23 +105,23 @@ function buildRetryKeyboard(text: string | undefined): InlineKeyboard {
   return keyboard;
 }
 
-function buildFortuneResult(tier: LuckTier, userLabel: string, text: string | undefined, thumbnailUrl: string | undefined): InlineQueryResultArticle {
+function buildFortuneResult(tier: LuckTier, userLabel: string, text: string | undefined): InlineQueryResultArticle {
   const bodyText: string = text
     ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${tier.label}\n${tier.comment}`
     : `你好，${userLabel}\n汝的今日运势: ${tier.label}\n${tier.comment}`;
   return InlineQueryResultBuilder.article(text ? "luck-fortune-text" : "luck-fortune", "未卜先知", {
     description: text ? `所求事项：${text}` : "测测你今天的运势",
     reply_markup: buildRetryKeyboard(text),
-    thumbnail_url: thumbnailUrl,
+    thumbnail_url: FORTUNE_THUMBNAIL_URL,
   }).text(bodyText);
 }
 
-function buildProbabilityResult(tier: LuckTier, userLabel: string, thumbnailUrl: string | undefined): InlineQueryResultArticle {
+function buildProbabilityResult(tier: LuckTier, userLabel: string): InlineQueryResultArticle {
   const { label, percent } = pickDominantProbability(tier);
   return InlineQueryResultBuilder.article("luck-probability", "概率论！", {
     description: "看看你今天行大运/倒大霉的概率",
     reply_markup: buildRetryKeyboard(undefined),
-    thumbnail_url: thumbnailUrl,
+    thumbnail_url: PROBABILITY_THUMBNAIL_URL,
   }).text(`你好，${userLabel}\n汝今天${label}概率是 ${percent}%`);
 }
 
@@ -195,14 +175,13 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
   const fromUser = inlineQuery.from;
   const userLabel: string = formatUserLabel({ id: fromUser.id, username: fromUser.username, first_name: fromUser.first_name });
   const text: string = inlineQuery.query.trim();
-  const thumbnailUrl: string | undefined = await getLuckThumbnailUrl();
 
   // 不带文本时"未卜先知"和"概率论"两个结果说的是同一份吉凶，这里只抽一次、
   // 两处复用，避免重复查表/重复经过每日缓存逻辑。
   const tier: LuckTier = getOrDrawLuckTier(fromUser.id, text || undefined);
   const results: InlineQueryResultArticle[] = text
-    ? [buildFortuneResult(tier, userLabel, text, thumbnailUrl)]
-    : [buildFortuneResult(tier, userLabel, undefined, thumbnailUrl), buildProbabilityResult(tier, userLabel, thumbnailUrl)];
+    ? [buildFortuneResult(tier, userLabel, text)]
+    : [buildFortuneResult(tier, userLabel, undefined), buildProbabilityResult(tier, userLabel)];
 
   await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
 }
