@@ -394,7 +394,9 @@ export async function banChatMember(chatId: number, userId: number, api: Api = b
 export async function isChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   try {
     const member = await api.getChatMember(chatId, userId);
-    return member.status === "creator" || member.status === "administrator" || member.status === "member" || member.status === "restricted";
+    // restricted 状态会在人离开后仍保留到限制到期，是否在群要看 is_member。
+    if (member.status === "restricted") return member.is_member;
+    return member.status === "creator" || member.status === "administrator" || member.status === "member";
   } catch (error: unknown) {
     logApiError(`check chat membership (chat ${chatId}, user ${userId})`, error);
     return false;
