@@ -19,12 +19,14 @@ export type CopyMode = "reverse" | "nya" | "ja";
  * 单个群聊的复制状态（复制目标等）。机器人可能同时在多个群里运行，
  * 每个群各自独立维护一份，互不影响——见 storage.ts 中 Map<chatId, ChatState>
  * 的用法。copy 类命令的冷却时间不在这里——见 GlobalCopyState，所有群共用一份。
+ *
+ * 是否在复读、复读目标是不是频道皮套，都由 copiedUser 是否非 null 及其
+ * isChannel 字段推出，不再单独存 isCopying/copiedUserId/copiedIsChannel 这些
+ * 本该跟 copiedUser 保持同步、实际却要靠约定维护一致的冗余字段。
  */
 export interface ChatState {
-  copiedUserId: number | null;
-  isCopying: boolean;
-  lastCopiedUserId?: number | null;
-  copiedIsChannel?: boolean;
+  /** 本群当前正在复读的目标；null 表示没有用 /copy 类命令锁定任何人。 */
+  copiedUser: CachedUser | null;
   copyMode?: CopyMode;
   /**
    * /quiet 静默期的截止时间戳（ms）。在此之前机器人不主动刷存在感（AI 随机
@@ -35,14 +37,6 @@ export interface ChatState {
 
 /** state.json 的结构：以 chatId（字符串）为键，分别保存各群聊各自的 ChatState。 */
 export type ChatStateFileSchema = Record<string, ChatState>;
-
-/** users.json 中单个群聊的记录：该群当前正在被复制的目标。 */
-export interface ChatUsersEntry {
-  copiedUser: CachedUser | null;
-}
-
-/** users.json 的结构：以 chatId（字符串）为键，分别保存各群聊各自的记录。 */
-export type UsersFileSchema = Record<string, ChatUsersEntry>;
 
 /**
  * copy 类命令的全局冷却状态：所有群共用同一份时钟（消耗的是机器人自己头像这

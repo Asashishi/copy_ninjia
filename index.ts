@@ -2,12 +2,12 @@ import { flushLogs, logger } from "./src/infra/logger";
 import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
-import { acquireSingleInstanceLock, getOrCreateChatState, loadGlobalCopyState, loadState, loadUsersFile, saveState } from "./src/infra/storage";
+import { acquireSingleInstanceLock, loadGlobalCopyState, loadState } from "./src/infra/storage";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { initAiChat } from "./src/aiChat";
-import type { CachedUser, ChatState, GlobalCopyState, UsersFileSchema } from "./src/types";
+import type { CachedUser, ChatState, GlobalCopyState } from "./src/types";
 
 /**
  * 注册各类更新处理器，并启动 grammY 的长轮询循环。
@@ -15,47 +15,21 @@ import type { CachedUser, ChatState, GlobalCopyState, UsersFileSchema } from "./
 async function main(): Promise<void> {
   await acquireSingleInstanceLock();
 
-  // 机器人可能同时在多个群里运行，每个群各自独立的复制状态存在
-  // Map<chatId, ChatState> 里，互不影响。
-  const usersData: UsersFileSchema = await loadUsersFile();
+  // 机器人可能同时在多个群里运行，每个群各自独立的复制状态（含当前复制
+  // 目标 copiedUser）存在 Map<chatId, ChatState> 里，互不影响。
   const chatStates: Map<number, ChatState> = await loadState();
   // copy 类命令的冷却时钟是全局的（跨所有群共用一份），不再按群分别保存。
   const globalCopyState: GlobalCopyState = await loadGlobalCopyState();
 
-  // 恢复内存中的临时 users 缓存，包含所有群里目前正在被 copy 的用户/频道
+  // 恢复内存中的临时 users 缓存，包含所有群里目前正在被 copy 的用户/频道，
+  // 直接从 chatStates 派生——copiedUser 本身就是 state.json 里的字段，
+  // 不需要再从另一份文件读入合并，也就没有两份文件互相不一致的问题。
   const users: Record<string, CachedUser> = {};
-  for (const entry of Object.values(usersData)) {
-    if (entry.copiedUser && entry.copiedUser.username) {
-      users[entry.copiedUser.username.toLowerCase()] = entry.copiedUser;
+  for (const state of chatStates.values()) {
+    if (state.copiedUser?.username) {
+      users[state.copiedUser.username.toLowerCase()] = state.copiedUser;
     }
   }
-
-  // 逐个群聊同步状态，以防 state.json 损坏或与 users.json 不一致。
-  // state.json 里的 lastCopiedUserId 由 loadState() 读入即可，无需在这里覆盖。
-  for (const [chatIdStr, entry] of Object.entries(usersData)) {
-    const chatId: number = Number(chatIdStr);
-    // state.json 里本来有没有这个群的条目：有就信它的 isCopying（两个文件
-    // 分两次落盘，/stop_copy 可能只写成了 state.json——此时 users.json 里
-    // 残留的 copiedUser 是陈旧值，绝不能据此把已停掉的复读复活）；没有
-    // （state.json 损坏丢失）才用 users.json 的 copiedUser 推导复读状态，
-    // 不然会停在「有目标但不复读」的中间态（copyMode 无从恢复，退化为
-    // 原样复读）。
-    const hadStateEntry: boolean = chatStates.has(chatId);
-    const state: ChatState = getOrCreateChatState(chatStates, chatId);
-    if (entry.copiedUser) {
-      state.copiedUserId = entry.copiedUser.id;
-      state.copiedIsChannel = !!entry.copiedUser.isChannel;
-      if (!hadStateEntry) {
-        state.isCopying = true;
-      }
-    } else {
-      state.copiedUserId = null;
-      state.isCopying = false;
-      state.copiedIsChannel = false;
-      state.copyMode = undefined;
-    }
-  }
-  await saveState(chatStates);
 
   // 追踪已进入处理的最大 update_id。内建 bot.stop() 停机时会用它向 Telegram
   // 做一次空 getUpdates 确认 offset，而 runner.stop() 只中止拉取、不做确认——
@@ -101,12 +75,12 @@ async function main(): Promise<void> {
   });
 
   // 命令处理器要注册在通用消息处理器之前：匹配到命令时 grammY 不会再往下传给它。
-  bot.command("copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, globalCopyState));
-  bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, globalCopyState, "reverse"));
-  bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, globalCopyState, "nya"));
-  bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, globalCopyState, "ja"));
-  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx, users, usersData, globalCopyState));
-  bot.command("stop_copy", (ctx) => handleStopCommand(ctx, chatStates, usersData));
+  bot.command("copy", (ctx) => handleCopyCommand(ctx, users, chatStates, globalCopyState));
+  bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, globalCopyState, "reverse"));
+  bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, globalCopyState, "nya"));
+  bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, globalCopyState, "ja"));
+  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx, users, globalCopyState));
+  bot.command("stop_copy", (ctx) => handleStopCommand(ctx, chatStates));
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.command("balance", (ctx) => handleBalanceCommand(ctx));
   bot.command("quiet", (ctx) => handleQuietCommand(ctx, chatStates));
@@ -174,7 +148,7 @@ async function main(): Promise<void> {
   // 接管上次进程退出时仍在生效的反刷群私密模式（lockdowns.json）：同样要
   // 赶在 runner 投喂更新之前 adopt 给守卫 Worker，让它重排解锁计时。
   await initAntiRaid();
-  const copyingChats: number = Array.from(chatStates.values()).filter((s) => s.isCopying).length;
+  const copyingChats: number = Array.from(chatStates.values()).filter((s) => s.copiedUser !== null).length;
   logger.log(
     `Bot started as @${bot.botInfo.username}. ` +
     `Restored state for ${chatStates.size} chat(s), ${copyingChats} currently copying.`

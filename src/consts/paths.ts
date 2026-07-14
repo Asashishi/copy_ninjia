@@ -7,9 +7,8 @@ import { join } from "node:path";
  */
 export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 
-// 持久化文件：各群复读状态 / 复制目标 / 单实例锁。
+// 持久化文件：各群复读状态（含复制目标）/ 单实例锁。
 export const STATE_FILE_PATH: string = join(PROJECT_ROOT, "state.json");
-export const USERS_FILE_PATH: string = join(PROJECT_ROOT, "users.json");
 export const LOCK_FILE_PATH: string = join(PROJECT_ROOT, "bot.lock");
 /** copy 类命令的全局冷却时钟：所有群共用一份，不再按群分别计时。 */
 export const COOLDOWN_FILE_PATH: string = join(PROJECT_ROOT, "copyCooldown.json");

@@ -1,7 +1,7 @@
 import { logger } from "./logger";
 import type { ChatPermissions } from "@grammyjs/types";
-import type { CachedUser, ChatState, ChatStateFileSchema, GlobalCopyState, UsersFileSchema } from "../types";
-import { COOLDOWN_FILE_PATH, LOCK_FILE_PATH, LOCKDOWNS_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "../consts/paths";
+import type { ChatState, ChatStateFileSchema, GlobalCopyState } from "../types";
+import { COOLDOWN_FILE_PATH, LOCK_FILE_PATH, LOCKDOWNS_FILE_PATH, STATE_FILE_PATH } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 
 function isProcessAlive(pid: number): boolean {
@@ -32,27 +32,7 @@ export async function acquireSingleInstanceLock(): Promise<void> {
   await Bun.write(LOCK_FILE_PATH, String(process.pid));
 }
 
-/**
- * 从 JSON 文件加载各群聊当前的复制目标（按 chatId 分别保存）。
- * @returns resolve 为 UsersFileSchema 的 promise。
- */
-export async function loadUsersFile(): Promise<UsersFileSchema> {
-  try {
-    const file = Bun.file(USERS_FILE_PATH);
-    if (await file.exists()) {
-      const text: string = await file.text();
-      const parsed: any = JSON.parse(text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as UsersFileSchema;
-      }
-    }
-  } catch (error: unknown) {
-    logger.error("Failed to load users file:", error);
-  }
-  return {};
-}
-
-// runner 并发处理不同群的更新后，两个群可能同时触发 saveState/saveUsersFile。
+// runner 并发处理不同群的更新后，两个群可能同时触发 saveState。
 // Bun.write 是「截断再写」，并发写同一个文件会产生撕裂的 JSON，因此所有持久化
 // 写入挂到同一条 promise 链上串行执行（无论上一次成败都继续下一次）。
 let persistChain: Promise<void> = Promise.resolve();
@@ -73,30 +53,6 @@ function persistJson(filePath: string, json: string, label: string): Promise<voi
   };
   persistChain = persistChain.then(write, write);
   return persistChain;
-}
-
-/**
- * 将 users 数据持久化保存到 JSON 文件。仅供本文件的 saveChatUsersEntry
- * 使用——外部的写路径统一走后者。
- * @param data UsersFileSchema 数据。
- */
-async function saveUsersFile(data: UsersFileSchema): Promise<void> {
-  await persistJson(USERS_FILE_PATH, JSON.stringify(data, null, 2), "users file");
-}
-
-/**
- * 更新 users.json 里某一个群的条目（当前复制目标）并整体持久化。
- * copy 类命令共用的收尾动作——只动本群自己的键，不影响其他群。
- * @param copiedUser 本群当前的复制目标；没有复读（/stop_copy 后、/steal_icon
- *   不触碰复读）时为 null。
- */
-export async function saveChatUsersEntry(
-  data: UsersFileSchema,
-  chatId: number,
-  copiedUser: CachedUser | null
-): Promise<void> {
-  data[String(chatId)] = { copiedUser };
-  await saveUsersFile(data);
 }
 
 /**
@@ -126,6 +82,10 @@ export async function saveGlobalCopyState(state: GlobalCopyState): Promise<void>
 
 /**
  * 从持久化的 JSON 文件加载各群聊各自的状态。
+ * 逐字段重建而不是把解析结果直接当 ChatState 用：这样字段一旦从类型里删掉，
+ * 磁盘上的旧值会在下一次 loadState → saveState 的往返中自动被甩掉，不会
+ * 像 lastCopyTime 曾经那样，因为存量文件里还带着而一直被原样读出、原样存回、
+ * 永远清不掉。
  * @returns resolve 为 Map<chatId, ChatState> 的 promise（机器人可能同时在多个群
  * 里运行，各群的复制目标/冷却时间互相独立）。
  */
@@ -134,10 +94,14 @@ export async function loadState(): Promise<Map<number, ChatState>> {
     const file = Bun.file(STATE_FILE_PATH);
     if (await file.exists()) {
       const text: string = await file.text();
-      const parsed: ChatStateFileSchema = JSON.parse(text);
+      const parsed: Record<string, any> = JSON.parse(text);
       const chatStates: Map<number, ChatState> = new Map();
-      for (const [chatIdStr, chatState] of Object.entries(parsed)) {
-        chatStates.set(Number(chatIdStr), chatState);
+      for (const [chatIdStr, raw] of Object.entries(parsed)) {
+        chatStates.set(Number(chatIdStr), {
+          copiedUser: raw?.copiedUser ?? null,
+          copyMode: raw?.copyMode,
+          quietUntil: raw?.quietUntil,
+        });
       }
       return chatStates;
     }
@@ -210,7 +174,7 @@ export function getChatState(chatStates: Map<number, ChatState>, chatId: number)
 export function getOrCreateChatState(chatStates: Map<number, ChatState>, chatId: number): ChatState {
   let chatState = chatStates.get(chatId);
   if (!chatState) {
-    chatState = { copiedUserId: null, isCopying: false };
+    chatState = { copiedUser: null };
     chatStates.set(chatId, chatState);
   }
   return chatState;

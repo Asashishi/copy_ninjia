@@ -32,7 +32,7 @@
   - 需要先在 [@BotFather](https://t.me/BotFather) 为机器人开启 Inline Mode 才能使用。
 - **`/balance`**：查询当前 DeepSeek API Key 绑定账号的余额，结果缓存 30 秒，避免连续查询触发接口限流。
 - **`/quiet`**：让机器人在本群安静一段时间（`/quiet [分钟数]`，1~15，缺省 3 分钟），期间不触发 AI 随机搭话、随机复读等主动行为；回复/@ 机器人的必回和各类指令不受影响。静默期内不允许重复 `/quiet` 叠加，用 **`/unquiet`** 提前解除。
-- **多群独立状态**：每个群聊的复读目标、冷却时间等状态互相独立，重启后从 `state.json` / `users.json` 恢复。
+- **多群独立状态**：每个群聊的复读目标、静默时间等状态互相独立，重启后从 `state.json` 恢复。
 
 ## 环境要求
 
@@ -94,7 +94,7 @@ src/
   infra/                # 基础设施
     logger.ts              # 统一日志门面（error 级经 Worker 落盘）
     telegram.ts            # Telegram Bot API 封装与限流
-    storage.ts             # 状态持久化（state.json / users.json / lockdowns.json）
+    storage.ts             # 状态持久化（state.json / lockdowns.json）
     config.ts              # 密钥与部署配置（从环境变量读取）
   ai/                   # AI 回复流水线的配套积木
     reactions.ts           # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）

@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser, ChatState, CopyMode, GlobalCopyState, UsersFileSchema } from "../types";
-import { getOrCreateChatState, saveChatUsersEntry, saveGlobalCopyState, saveState } from "../infra/storage";
+import type { CachedUser, ChatState, CopyMode, GlobalCopyState } from "../types";
+import { getOrCreateChatState, saveGlobalCopyState, saveState } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
@@ -18,7 +18,6 @@ export async function handleCopyCommand(
   ctx: CommandContext<Context>,
   users: Record<string, CachedUser>,
   chatStates: Map<number, ChatState>,
-  usersFileData: UsersFileSchema,
   globalCopyState: GlobalCopyState,
   mode?: CopyMode
 ): Promise<void> {
@@ -38,9 +37,9 @@ export async function handleCopyCommand(
 
   // 已经在复读时不接新目标——保证"同一时间只能复制一个人"，重复点同一个
   // 目标和想换人分别嘲讽。
-  if (state.isCopying && state.copiedUserId !== null) {
+  if (state.copiedUser !== null) {
     releaseCopyCooldownClaim(globalCopyState, cooldownClaim);
-    const replyText: string = state.copiedUserId === targetUser.id
+    const replyText: string = state.copiedUser.id === targetUser.id
       ? `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`
       : `本天才手上已经有猎物啦，想换人的话先 /stop_copy 呀，笨蛋♡`;
     await sendMessage(chatId, replyText, messageId);
@@ -48,25 +47,19 @@ export async function handleCopyCommand(
   }
 
   // 开始进行复制模式
-  state.isCopying = true;
-  state.copiedUserId = targetUser.id;
-  state.copiedIsChannel = !!targetUser.isChannel;
+  state.copiedUser = targetUser;
   state.copyMode = mode;
-  state.lastCopiedUserId = targetUser.id;
   await saveState(chatStates);
 
   // 全局冷却时钟已经在 claimCopyCooldownOrReject 里原子占用，这里落盘即可。
   await saveGlobalCopyState(globalCopyState);
-
-  // 同步更新并保存到 users.json（仅更新本群聊自己的条目，不影响其他群聊）
-  await saveChatUsersEntry(usersFileData, chatId, targetUser);
 
   // 发送过渡反馈
   const targetLabel: string = formatUserLabel(targetUser);
   const startText: string = `正在把 ${targetLabel} 的脸皮扒下来当本天才的头像哦${describeCopyModeEffect(mode)}，杂鱼乖乖等一下~♡`;
   await sendMessage(chatId, startText, messageId);
 
-  // 头像复制放在后台执行：state.isCopying 已经写入，复读逻辑立即生效。
+  // 头像复制放在后台执行：state.copiedUser 已经写入，复读逻辑立即生效。
   stealAvatarInBackground(
     chatId,
     targetUser,
@@ -80,26 +73,20 @@ export async function handleCopyCommand(
  */
 export async function handleStopCommand(
   ctx: CommandContext<Context>,
-  chatStates: Map<number, ChatState>,
-  usersFileData: UsersFileSchema
+  chatStates: Map<number, ChatState>
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const state: ChatState = getOrCreateChatState(chatStates, chatId);
 
-  if (!state.isCopying) {
+  if (!state.copiedUser) {
     await sendMessage(chatId, `本天才现在什么杂鱼都没盯着呢，笨蛋要 /stop_copy 什么呀♡`, messageId);
     return;
   }
 
-  state.isCopying = false;
-  state.copiedUserId = null;
-  state.copiedIsChannel = false;
+  state.copiedUser = null;
   state.copyMode = undefined;
   await saveState(chatStates);
-
-  // 同步更新并保存到 users.json（仅更新本群聊自己的条目），将当前 copiedUser 置为 null
-  await saveChatUsersEntry(usersFileData, chatId, null);
 
   await sendMessage(chatId, `哼，不玩了，本天才先歇一下~杂鱼♡`, messageId);
 }

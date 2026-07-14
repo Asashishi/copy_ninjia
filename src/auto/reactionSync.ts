@@ -15,7 +15,7 @@ export function handleReaction(ctx: Context, chatStates: Map<number, ChatState>)
 
   const state: ChatState = getChatState(chatStates, reaction.chat.id);
   const reactorId: number | undefined = reaction.actor_chat ? reaction.actor_chat.id : reaction.user?.id;
-  if (!state.isCopying || !state.copiedUserId || reactorId !== state.copiedUserId) return;
+  if (!state.copiedUser || reactorId !== state.copiedUser.id) return;
 
   // grammY 的 ctx.reactions() 已把 old/new 的差量按类型分组算好（付费反应被
   // 单独归类，而机器人本来也设不了它，天然排除）。机器人没有 Premium，一条

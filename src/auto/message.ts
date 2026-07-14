@@ -149,7 +149,7 @@ export async function handleIncomingMessage(
   const state: ChatState = getChatState(chatStates, chatId);
 
   // 检查是否需要复读当前目标（用户或频道皮套）的消息
-  if (state.isCopying && state.copiedUserId && senderId === state.copiedUserId) {
+  if (state.copiedUser && senderId === state.copiedUser.id) {
     await echoMessage(chatId, message, state.copyMode);
     return;
   }
@@ -163,7 +163,7 @@ export async function handleIncomingMessage(
   // 目标，既不攒对话缓存也不触发 AI 回复，免得跟复读抢戏。
   const isPrivateChat: boolean = message.chat.type === "private";
   const messageText: string | undefined = typeof message.text === "string" ? message.text : undefined;
-  if (!isPrivateChat && !state.isCopying && messageText && !messageText.startsWith("/")) {
+  if (!isPrivateChat && !state.copiedUser && messageText && !messageText.startsWith("/")) {
     // 把带文本的普通消息滚动记入本群的 AI 对话缓存（Bot API 无法拉历史，只能
     // 边收边攒最近 75 条）。指令消息（/ 开头）已在上面排除。
     const speaker = resolveSpeaker(message);
@@ -185,7 +185,7 @@ export async function handleIncomingMessage(
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
       return;
     }
-  } else if (!isPrivateChat && !state.isCopying && message.sticker) {
+  } else if (!isPrivateChat && !state.copiedUser && message.sticker) {
     // 贴纸消息没有文本，但其元数据（情绪 emoji、所属贴纸包）对 AI 理解群里的
     // 情绪走向有参考价值：以描述行记入对话缓存，只当上下文，不触发 AI 回复；
     // 也不 return——后面的随机复读本来就对贴纸生效，行为保持不变。
@@ -202,7 +202,7 @@ export async function handleIncomingMessage(
   // 以 / 开头的是指令（未注册的、或发给其他机器人的指令不会被 bot.command
   // 拦截，会落到这里），与 echoMessage 的「不复读指令消息」保持一致，不触发。
   // 私聊不触发——与 AI 随机插话同理，这些刷存在感的行为都是群聊语境的。
-  if (!isPrivateChat && !state.isCopying && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
+  if (!isPrivateChat && !state.copiedUser && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= 15 && BATH_TRIGGER_PATTERN.test(message.text)) {
     await sendMessage(chatId, "看看", message.message_id);
     return;
   }
@@ -210,7 +210,7 @@ export async function handleIncomingMessage(
   // 没有复读对象时的随机复读（私聊不触发，同上）。无需担心和其他机器人形成
   // 复读循环：Telegram 保证机器人收不到其他机器人发的消息（官方为防止 bot
   // 互相触发死循环的设计），自己发的消息也不会作为更新推送回来。
-  if (!isPrivateChat && !state.isCopying && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
+  if (!isPrivateChat && !state.copiedUser && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
     const mode: CopyMode | undefined = pickRandom(RANDOM_ECHO_MODES);
     await echoMessage(chatId, message, mode);
   }

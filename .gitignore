@@ -42,6 +42,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # runtime state (regenerated on start, not source)
 bot.lock
 state.json
-users.json
 lockdowns.json
 copyCooldown.json
