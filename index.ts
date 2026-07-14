@@ -6,6 +6,7 @@ import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadSt
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
+import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { initAiChat } from "./src/aiChat";
 import type { CachedUser } from "./src/types";
 
@@ -66,8 +67,8 @@ async function main(): Promise<void> {
   // 往下传，若放在其后（或放在 handleIncomingMessage 里），待验证用户发的
   // 命令消息就不会被追踪，超时踢人时清理不掉。返回 true 表示这是入群公告、
   // 已被守卫完全处理，直接吞掉，不再触发命令/复读/AI。
-  bot.on("message", (ctx, next) => {
-    if (handleGroupJoinVerification(ctx.message)) return;
+  bot.on("message", async (ctx, next) => {
+    if (await handleGroupJoinVerification(ctx.message)) return;
     return next();
   });
 
@@ -85,6 +86,9 @@ async function main(): Promise<void> {
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users));
   bot.on("message_reaction", (ctx) => handleReaction(ctx));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
+  // 机器人自己被任免管理员/移出群聊的信号，维护各群 ChatState.botIsAdmin
+  // （入群守卫与 /kick 的权限门控、「/kick 全群生效」的群清单来源）。
+  bot.on("my_chat_member", (ctx) => handleMyChatMemberUpdate(ctx));
   bot.on("callback_query:data", (ctx) => handleVerificationCallback(ctx));
   // /luck_challenge 仅通过内联模式触发（@本机器人 [文本]），没有对应的
   // 斜杠命令。这个入口需要先在 BotFather 里给机器人开启 Inline Mode，
@@ -115,7 +119,7 @@ async function main(): Promise<void> {
       { command: "ja_copy", description: "复读并翻译为日语" },
       { command: "stop_copy", description: "停止当前的复读" },
       { command: "steal_icon", description: "偷取目标头像作为 bot 头像" },
-      { command: "kick", description: "踢出群聊并封禁（仅白名单用户可用）" },
+      { command: "kick", description: "在所有本天才管理的群里踢出并封禁（仅白名单用户可用）" },
       { command: "balance", description: "查询 DeepSeek 账户余额" },
       { command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" },
       { command: "unquiet", description: "提前解除 /quiet 静默" },
@@ -155,7 +159,7 @@ async function main(): Promise<void> {
   const runner: RunnerHandle = run(bot, {
     runner: {
       fetch: {
-        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member", "callback_query", "inline_query"],
+        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member", "my_chat_member", "callback_query", "inline_query"],
       },
     },
   });

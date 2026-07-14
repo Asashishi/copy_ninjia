@@ -95,7 +95,7 @@ function persistStateJson(json: string): Promise<void> {
 // 的 lastCopyTime 那样，重建漏了某个字段还一直悄悄漏读/漏写。
 // （GlobalCopyState 没有对应白名单：它的重建带逐字段校验，见 loadState 内，
 // 新增字段时需要手动去那里补校验逻辑。）
-const CHAT_STATE_FIELD_WHITELIST: Record<keyof ChatState, true> = { quietUntil: true, lockdown: true };
+const CHAT_STATE_FIELD_WHITELIST: Record<keyof ChatState, true> = { quietUntil: true, lockdown: true, isUseAIChat: true, botIsAdmin: true };
 
 /** 全局复读目标的三个字段永远一起写：只设其中一部分会造成「全局占着复读
  * 槽位、却没有任何群在复读」的卡死状态（/copy 处处被拒、复读无处发生）。 */

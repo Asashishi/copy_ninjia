@@ -34,6 +34,20 @@ export interface ChatState {
    * Worker 重排解锁计时，见 src/antiRaid.ts）；不在私密模式时无此字段。
    */
   lockdown?: ChatPermissions;
+  /**
+   * 本群是否启用 AI 闲聊功能（对话缓存、随机插话、回复/@ 机器人触发的回复）。
+   * 缺省视为启用；在 state.json 里手动配置为 false 可按群关闭。机器人运行
+   * 期间只在启动 loadState() 时读一次文件，手改后需要重启才生效（运行中
+   * saveState() 的全量落盘会原样保留这个字段）。
+   */
+  isUseAIChat?: boolean;
+  /**
+   * 机器人自己在本群是否为管理员。由 my_chat_member 更新近实时维护，未知时
+   * 按需 getChatMember 现查回填（见 src/infra/botAdmin.ts）。这是入群守卫和
+   * /kick 的权限门控依据，也是「/kick 在所有管理员群同步生效」的群清单来源
+   * ——Bot API 无法枚举机器人所在的群，只能这样记下来。
+   */
+  botIsAdmin?: boolean;
 }
 
 /**

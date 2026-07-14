@@ -2,6 +2,7 @@ import { logger } from "./infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember, ChatPermissions } from "@grammyjs/types";
 import { getAllChatStates, getOrCreateChatState, saveState } from "./infra/storage";
+import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
 import { superviseWorker } from "./libs/supervisedWorker";
 import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "./types";
@@ -125,10 +126,14 @@ export function handleChatMemberUpdate(ctx: Context): void {
   const update = ctx.chatMember;
   if (!update) return;
 
+  const chatId: number = update.chat.id;
+  // 能收到别人的 chat_member 更新，本身就证明机器人此刻是本群管理员——
+  // 顺手记录（见 botAdmin.ts），这条路径无需（也不能）做非管理员门控：
+  // 不是管理员时这类更新根本不会送达。
+  markBotAdminObserved(chatId);
+
   const user = update.new_chat_member.user;
   if (user.is_bot) return; // 机器人（包括本天才自己）不需要验证
-
-  const chatId: number = update.chat.id;
   const wasActive: boolean = isActiveChatMember(update.old_chat_member);
   const isActive: boolean = isActiveChatMember(update.new_chat_member);
 
@@ -164,9 +169,17 @@ export function handleChatMemberUpdate(ctx: Context): void {
  * @returns 若消息在此已被完全处理、调用方应跳过后续处理逻辑（入群公告），
  * 返回 true；否则返回 false，让消息正常继续流转。
  */
-export function handleGroupJoinVerification(message: any): boolean {
+export async function handleGroupJoinVerification(message: any): Promise<boolean> {
   // 验证只发生在群聊里，私聊消息不必跨线程投递去查一次注定落空的 Map。
   if (message.chat?.type === "private") return false;
+
+  // 机器人不是本群管理员时整个入群守卫不启动：踢人/删消息都做不了，投递
+  // 过去只会让 Worker 开一堆注定失败的验证窗口、刷一堆权限报错。已有身份
+  // 记录时这个判定是同步的（不打 API），只有从未记录过的群会现查一次。
+  // 入群公告照样吞掉（服务消息本来就不该流进复读/AI 流水线），只是不投递。
+  if (!(await isBotAdminIn(message.chat.id))) {
+    return !!(message.new_chat_members && message.new_chat_members.length > 0);
+  }
 
   if (message.new_chat_members && message.new_chat_members.length > 0) {
     for (const member of message.new_chat_members) {

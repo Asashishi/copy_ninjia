@@ -163,12 +163,17 @@ export async function handleIncomingMessage(
   // 随机复读），只保留被动触发（回复机器人 / @ 机器人）和指令。
   const isQuiet: boolean = (state.quietUntil ?? 0) > Date.now();
 
+  // 本群的 AI 闲聊开关（state.json 里按群配置 isUseAIChat，见 ChatState）：
+  // 缺省启用，显式配成 false 才关。关掉的群连对话缓存都不攒（攒了也没有
+  // 会消费它的回复流水线），回复/@ 机器人也不再回。
+  const aiChatEnabled: boolean = state.isUseAIChat !== false;
+
   // AI 相关逻辑仅在「群聊」且「没有复制对象」时进行：私聊消息不触发（机器人在
   // 私聊里没有群聊上下文，也不该在 DM 里自动搭话）；复制期间机器人正忙着复读
   // 目标，既不攒对话缓存也不触发 AI 回复，免得跟复读抢戏。
   const isPrivateChat: boolean = message.chat.type === "private";
   const messageText: string | undefined = typeof message.text === "string" ? message.text : undefined;
-  if (!isPrivateChat && !activeCopy && messageText && !messageText.startsWith("/")) {
+  if (!isPrivateChat && !activeCopy && aiChatEnabled && messageText && !messageText.startsWith("/")) {
     // 把带文本的普通消息滚动记入本群的 AI 对话缓存（Bot API 无法拉历史，只能
     // 边收边攒最近 75 条）。指令消息（/ 开头）已在上面排除。
     const speaker = resolveSpeaker(message);
@@ -190,7 +195,7 @@ export async function handleIncomingMessage(
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
       return;
     }
-  } else if (!isPrivateChat && !activeCopy && message.sticker) {
+  } else if (!isPrivateChat && !activeCopy && aiChatEnabled && message.sticker) {
     // 贴纸消息没有文本，但其元数据（情绪 emoji、所属贴纸包）对 AI 理解群里的
     // 情绪走向有参考价值：以描述行记入对话缓存，只当上下文，不触发 AI 回复；
     // 也不 return——后面的随机复读本来就对贴纸生效，行为保持不变。
