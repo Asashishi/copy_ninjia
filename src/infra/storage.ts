@@ -1,7 +1,7 @@
 import { logger } from "./logger";
 import type { ChatPermissions } from "@grammyjs/types";
-import type { ChatState, ChatStateFileSchema, GlobalCopyState } from "../types";
-import { COOLDOWN_FILE_PATH, LOCK_FILE_PATH, LOCKDOWNS_FILE_PATH, STATE_FILE_PATH } from "../consts/paths";
+import type { ChatState, GlobalCopyState, StateFileSchema } from "../types";
+import { LOCK_FILE_PATH, LOCKDOWNS_FILE_PATH, STATE_FILE_PATH } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 
 function isProcessAlive(pid: number): boolean {
@@ -56,69 +56,54 @@ function persistJson(filePath: string, json: string, label: string): Promise<voi
 }
 
 /**
- * 加载 copy 类命令的全局冷却时钟（所有群共用一份）。
+ * 从持久化的 JSON 文件加载「各群聊各自的状态」+「copy 类命令的全局冷却
+ * 时钟」——两者虽然一个按群一个全局，但都只有这一份，合并存在同一个
+ * state.json 里（结构见 StateFileSchema），不必为了这份全局数据单开一个
+ * 只有一个字段的文件。
+ *
+ * chats 部分逐字段重建而不是把解析结果直接当 ChatState 用：这样字段一旦从
+ * 类型里删掉，磁盘上的旧值会在下一次 loadState → saveState 的往返中自动被
+ * 甩掉，不会像 lastCopyTime 曾经那样，因为存量文件里还带着而一直被原样读出、
+ * 原样存回、永远清不掉。
+ * @returns 各群 ChatState 的 Map（机器人可能同时在多个群里运行，各群的
+ * 复制目标互相独立）+ 全局冷却状态。
  */
-export async function loadGlobalCopyState(): Promise<GlobalCopyState> {
-  try {
-    const file = Bun.file(COOLDOWN_FILE_PATH);
-    if (await file.exists()) {
-      const parsed: any = JSON.parse(await file.text());
-      if (parsed && typeof parsed === "object" && typeof parsed.lastCopyTime === "number") {
-        return { lastCopyTime: parsed.lastCopyTime };
-      }
-    }
-  } catch (error: unknown) {
-    logger.error("Failed to load copy cooldown file:", error);
-  }
-  return {};
-}
-
-/**
- * 持久化 copy 类命令的全局冷却时钟。
- */
-export async function saveGlobalCopyState(state: GlobalCopyState): Promise<void> {
-  await persistJson(COOLDOWN_FILE_PATH, JSON.stringify(state, null, 2), "copy cooldown file");
-}
-
-/**
- * 从持久化的 JSON 文件加载各群聊各自的状态。
- * 逐字段重建而不是把解析结果直接当 ChatState 用：这样字段一旦从类型里删掉，
- * 磁盘上的旧值会在下一次 loadState → saveState 的往返中自动被甩掉，不会
- * 像 lastCopyTime 曾经那样，因为存量文件里还带着而一直被原样读出、原样存回、
- * 永远清不掉。
- * @returns resolve 为 Map<chatId, ChatState> 的 promise（机器人可能同时在多个群
- * 里运行，各群的复制目标/冷却时间互相独立）。
- */
-export async function loadState(): Promise<Map<number, ChatState>> {
+export async function loadState(): Promise<{ chatStates: Map<number, ChatState>; globalCopyState: GlobalCopyState }> {
   try {
     const file = Bun.file(STATE_FILE_PATH);
     if (await file.exists()) {
       const text: string = await file.text();
-      const parsed: Record<string, any> = JSON.parse(text);
+      const parsed: Partial<StateFileSchema> = JSON.parse(text);
       const chatStates: Map<number, ChatState> = new Map();
-      for (const [chatIdStr, raw] of Object.entries(parsed)) {
+      for (const [chatIdStr, raw] of Object.entries(parsed.chats ?? {})) {
         chatStates.set(Number(chatIdStr), {
-          copiedUser: raw?.copiedUser ?? null,
-          copyMode: raw?.copyMode,
-          quietUntil: raw?.quietUntil,
+          copiedUser: (raw as any)?.copiedUser ?? null,
+          copyMode: (raw as any)?.copyMode,
+          quietUntil: (raw as any)?.quietUntil,
         });
       }
-      return chatStates;
+      const globalCopyState: GlobalCopyState =
+        typeof parsed.globalCopy?.lastCopyTime === "number" ? { lastCopyTime: parsed.globalCopy.lastCopyTime } : {};
+      return { chatStates, globalCopyState };
     }
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
   }
-  return new Map();
+  return { chatStates: new Map(), globalCopyState: {} };
 }
 
 /**
- * 将各群聊各自的状态持久化保存到 JSON 文件。
+ * 将「各群聊各自的状态」和「copy 类命令的全局冷却时钟」一起持久化到同一个
+ * JSON 文件。两者必须一起传、一起写：这是同一个文件的完整快照，只传其中
+ * 一半会把另一半的最新值覆盖丢——调用方永远持有两者的最新引用（都是同一份
+ * 内存对象，不是快照拷贝），所以传自己手上现有的那份即可，不需要现读。
  * @param chatStates 当前 Map<chatId, ChatState>。
+ * @param globalCopyState 当前全局冷却状态。
  */
-export async function saveState(chatStates: Map<number, ChatState>): Promise<void> {
-  const serializable: ChatStateFileSchema = {};
+export async function saveState(chatStates: Map<number, ChatState>, globalCopyState: GlobalCopyState): Promise<void> {
+  const serializable: StateFileSchema = { chats: {}, globalCopy: globalCopyState };
   for (const [chatId, chatState] of chatStates) {
-    serializable[String(chatId)] = chatState;
+    serializable.chats[String(chatId)] = chatState;
   }
   await persistJson(STATE_FILE_PATH, JSON.stringify(serializable, null, 2), "state");
 }

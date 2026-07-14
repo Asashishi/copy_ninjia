@@ -43,4 +43,3 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 bot.lock
 state.json
 lockdowns.json
-copyCooldown.json

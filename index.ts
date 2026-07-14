@@ -2,7 +2,7 @@ import { flushLogs, logger } from "./src/infra/logger";
 import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
-import { acquireSingleInstanceLock, loadGlobalCopyState, loadState } from "./src/infra/storage";
+import { acquireSingleInstanceLock, loadState } from "./src/infra/storage";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
@@ -16,10 +16,10 @@ async function main(): Promise<void> {
   await acquireSingleInstanceLock();
 
   // 机器人可能同时在多个群里运行，每个群各自独立的复制状态（含当前复制
-  // 目标 copiedUser）存在 Map<chatId, ChatState> 里，互不影响。
-  const chatStates: Map<number, ChatState> = await loadState();
-  // copy 类命令的冷却时钟是全局的（跨所有群共用一份），不再按群分别保存。
-  const globalCopyState: GlobalCopyState = await loadGlobalCopyState();
+  // 目标 copiedUser）存在 Map<chatId, ChatState> 里，互不影响；copy 类命令
+  // 的冷却时钟是全局的（跨所有群共用一份），不按群分别保存。两者合并存在
+  // 同一个 state.json 里，一次读取拿到。
+  const { chatStates, globalCopyState }: { chatStates: Map<number, ChatState>; globalCopyState: GlobalCopyState } = await loadState();
 
   // 恢复内存中的临时 users 缓存，包含所有群里目前正在被 copy 的用户/频道，
   // 直接从 chatStates 派生——copiedUser 本身就是 state.json 里的字段，
@@ -79,12 +79,12 @@ async function main(): Promise<void> {
   bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, globalCopyState, "reverse"));
   bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, globalCopyState, "nya"));
   bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, globalCopyState, "ja"));
-  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx, users, globalCopyState));
-  bot.command("stop_copy", (ctx) => handleStopCommand(ctx, chatStates));
+  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx, users, chatStates, globalCopyState));
+  bot.command("stop_copy", (ctx) => handleStopCommand(ctx, chatStates, globalCopyState));
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.command("balance", (ctx) => handleBalanceCommand(ctx));
-  bot.command("quiet", (ctx) => handleQuietCommand(ctx, chatStates));
-  bot.command("unquiet", (ctx) => handleUnquietCommand(ctx, chatStates));
+  bot.command("quiet", (ctx) => handleQuietCommand(ctx, chatStates, globalCopyState));
+  bot.command("unquiet", (ctx) => handleUnquietCommand(ctx, chatStates, globalCopyState));
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users, chatStates));
   bot.on("message_reaction", (ctx) => handleReaction(ctx, chatStates));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));

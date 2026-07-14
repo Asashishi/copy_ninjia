@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState } from "../types";
-import { getOrCreateChatState, saveGlobalCopyState, saveState } from "../infra/storage";
+import { getOrCreateChatState, saveState } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
@@ -49,10 +49,9 @@ export async function handleCopyCommand(
   // 开始进行复制模式
   state.copiedUser = targetUser;
   state.copyMode = mode;
-  await saveState(chatStates);
-
-  // 全局冷却时钟已经在 claimCopyCooldownOrReject 里原子占用，这里落盘即可。
-  await saveGlobalCopyState(globalCopyState);
+  // 全局冷却时钟已经在 claimCopyCooldownOrReject 里原子占用，这里跟 chatStates
+  // 一起落盘即可——两者存在同一个 state.json 里，一次写入两份都保存。
+  await saveState(chatStates, globalCopyState);
 
   // 发送过渡反馈
   const targetLabel: string = formatUserLabel(targetUser);
@@ -69,11 +68,14 @@ export async function handleCopyCommand(
 }
 
 /**
- * 处理 /stop_copy 指令。
+ * 处理 /stop_copy 指令。globalCopyState 本身在这里不变，只是 saveState 要求
+ * chatStates 和它一起传（同一个 state.json，一次写入两部分都保存，不能只传
+ * 半份把另一半覆盖丢）。
  */
 export async function handleStopCommand(
   ctx: CommandContext<Context>,
-  chatStates: Map<number, ChatState>
+  chatStates: Map<number, ChatState>,
+  globalCopyState: GlobalCopyState
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
@@ -86,7 +88,7 @@ export async function handleStopCommand(
 
   state.copiedUser = null;
   state.copyMode = undefined;
-  await saveState(chatStates);
+  await saveState(chatStates, globalCopyState);
 
   await sendMessage(chatId, `哼，不玩了，本天才先歇一下~杂鱼♡`, messageId);
 }

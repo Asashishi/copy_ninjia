@@ -35,13 +35,21 @@ export interface ChatState {
   quietUntil?: number;
 }
 
-/** state.json 的结构：以 chatId（字符串）为键，分别保存各群聊各自的 ChatState。 */
-export type ChatStateFileSchema = Record<string, ChatState>;
-
 /**
  * copy 类命令的全局冷却状态：所有群共用同一份时钟（消耗的是机器人自己头像这
- * 一份全局资源，不该按群分别计时），持久化于 copyCooldown.json。
+ * 一份全局资源，不该按群分别计时）。
  */
 export interface GlobalCopyState {
   lastCopyTime?: number;
+}
+
+/**
+ * state.json 的整体结构：chats 以 chatId（字符串）为键分别保存各群聊各自的
+ * ChatState；globalCopy 是所有群共用的那一份 copy 类命令冷却时钟。两者本来
+ * 分属"按群"和"全局"两种不同的维度，但都只有这一份、都不需要按群拆文件，
+ * 合并进同一个文件能少一次磁盘 I/O，也不用再操心多个文件之间的写入顺序。
+ */
+export interface StateFileSchema {
+  chats: Record<string, ChatState>;
+  globalCopy: GlobalCopyState;
 }
