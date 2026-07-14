@@ -1,7 +1,7 @@
 import { logger } from "./logger";
 import type { ChatPermissions } from "@grammyjs/types";
-import type { CachedUser, ChatState, ChatStateFileSchema, UsersFileSchema } from "../types";
-import { LOCK_FILE_PATH, LOCKDOWNS_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "../consts/paths";
+import type { CachedUser, ChatState, ChatStateFileSchema, GlobalCopyState, UsersFileSchema } from "../types";
+import { COOLDOWN_FILE_PATH, LOCK_FILE_PATH, LOCKDOWNS_FILE_PATH, STATE_FILE_PATH, USERS_FILE_PATH } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 
 function isProcessAlive(pid: number): boolean {
@@ -33,7 +33,7 @@ export async function acquireSingleInstanceLock(): Promise<void> {
 }
 
 /**
- * 从 JSON 文件加载各群聊的冷却时间和当前复制目标（按 chatId 分别保存）。
+ * 从 JSON 文件加载各群聊当前的复制目标（按 chatId 分别保存）。
  * @returns resolve 为 UsersFileSchema 的 promise。
  */
 export async function loadUsersFile(): Promise<UsersFileSchema> {
@@ -85,7 +85,7 @@ async function saveUsersFile(data: UsersFileSchema): Promise<void> {
 }
 
 /**
- * 更新 users.json 里某一个群的条目（冷却时间戳 + 当前复制目标）并整体持久化。
+ * 更新 users.json 里某一个群的条目（当前复制目标）并整体持久化。
  * copy 类命令共用的收尾动作——只动本群自己的键，不影响其他群。
  * @param copiedUser 本群当前的复制目标；没有复读（/stop_copy 后、/steal_icon
  *   不触碰复读）时为 null。
@@ -93,11 +93,35 @@ async function saveUsersFile(data: UsersFileSchema): Promise<void> {
 export async function saveChatUsersEntry(
   data: UsersFileSchema,
   chatId: number,
-  lastCopyTime: number | undefined,
   copiedUser: CachedUser | null
 ): Promise<void> {
-  data[String(chatId)] = { lastCopyTime: lastCopyTime ?? 0, copiedUser };
+  data[String(chatId)] = { copiedUser };
   await saveUsersFile(data);
+}
+
+/**
+ * 加载 copy 类命令的全局冷却时钟（所有群共用一份）。
+ */
+export async function loadGlobalCopyState(): Promise<GlobalCopyState> {
+  try {
+    const file = Bun.file(COOLDOWN_FILE_PATH);
+    if (await file.exists()) {
+      const parsed: any = JSON.parse(await file.text());
+      if (parsed && typeof parsed === "object" && typeof parsed.lastCopyTime === "number") {
+        return { lastCopyTime: parsed.lastCopyTime };
+      }
+    }
+  } catch (error: unknown) {
+    logger.error("Failed to load copy cooldown file:", error);
+  }
+  return {};
+}
+
+/**
+ * 持久化 copy 类命令的全局冷却时钟。
+ */
+export async function saveGlobalCopyState(state: GlobalCopyState): Promise<void> {
+  await persistJson(COOLDOWN_FILE_PATH, JSON.stringify(state, null, 2), "copy cooldown file");
 }
 
 /**

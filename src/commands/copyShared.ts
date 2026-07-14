@@ -1,6 +1,6 @@
 import { logger } from "../infra/logger";
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser, ChatState } from "../types";
+import type { CachedUser, GlobalCopyState } from "../types";
 import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
@@ -12,26 +12,51 @@ import { resolveCommandTarget } from "./targetResolution";
  * 目标解析（回复消息优先于 @username 参数）、后台偷头像任务。
  */
 
+/** claimCopyCooldownOrReject 的返回值：拒绝时只有 rejected；放行时附带占用前
+ * 的旧时间戳，供调用方在这次尝试最终没有真正开始复制时用 releaseCopyCooldownClaim 回滚。 */
+type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCopyTime: number | undefined };
+
 /**
- * copy 类命令的公共冷却检查。全局共享一份 lastCopyTime 冷却时钟：只要不是
- * 白名单用户触发，任何 copy 类命令（不管是换目标、重复同一个目标，还是回复
- * 消息触发）一律先查时间——冷却没到就发提示拦下。
- * @returns 若仍在冷却中（提示已发送，调用方应直接返回）为 true，否则为 false。
+ * copy 类命令的公共冷却检查 + 原子占用。全局共享一份 lastCopyTime 冷却时钟
+ * （跨所有群，不再按群分别计时——消耗的是机器人自己头像这一份全局资源）。
+ *
+ * 检查通过后会在同一个同步执行栈里立刻写入 globalCopyState.lastCopyTime 占住
+ * 冷却槽，中间不经过任何 await：grammY 按群并发处理更新（不同群互不排队，见
+ * index.ts 的 sequentialize），若"检查"和"占用"分成两步、中间跨了 await，
+ * 两个几乎同时抵达的不同群命令就可能都读到"未冷却"从而一起放行，全局冷却
+ * 形同虚设。调用方后续如果发现这次尝试并不会真正触发复制（解析目标失败、
+ * 已经在复读别人等），必须调用 releaseCopyCooldownClaim 撤销占用，否则无效
+ * 尝试也会白白消耗掉全局冷却，殃及所有群。
+ * @returns rejected 为 true 时提示已发送，调用方应直接返回；否则调用方可以
+ * 继续，并需要在放弃这次尝试时把返回值传给 releaseCopyCooldownClaim 回滚。
  */
-export async function rejectIfOnCopyCooldown(
-  state: ChatState,
+export async function claimCopyCooldownOrReject(
+  globalCopyState: GlobalCopyState,
   fromUser: { id: number } | undefined,
   chatId: number,
   messageId: number | undefined
-): Promise<boolean> {
+): Promise<CopyCooldownClaim> {
   const isExempted: boolean = !!fromUser && PRIVILEGED_USERS_ID.includes(fromUser.id);
-  if (isExempted || !state.lastCopyTime) return false;
+  if (!isExempted && globalCopyState.lastCopyTime) {
+    const elapsed: number = Date.now() - globalCopyState.lastCopyTime;
+    if (elapsed < COPY_COOLDOWN_MS) {
+      await sendMessage(chatId, `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`, messageId);
+      return { rejected: true };
+    }
+  }
 
-  const elapsed: number = Date.now() - state.lastCopyTime;
-  if (elapsed >= COPY_COOLDOWN_MS) return false;
+  const previousLastCopyTime: number | undefined = globalCopyState.lastCopyTime;
+  globalCopyState.lastCopyTime = Date.now();
+  return { rejected: false, previousLastCopyTime };
+}
 
-  await sendMessage(chatId, `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`, messageId);
-  return true;
+/**
+ * 撤销 claimCopyCooldownOrReject 占用的冷却槽——用于这次尝试最终确认不会
+ * 真正触发复制的时候（解析目标失败、已经在复读别人等），避免无效尝试白白
+ * 消耗掉全局冷却。
+ */
+export function releaseCopyCooldownClaim(globalCopyState: GlobalCopyState, claim: { previousLastCopyTime: number | undefined }): void {
+  globalCopyState.lastCopyTime = claim.previousLastCopyTime;
 }
 
 /**

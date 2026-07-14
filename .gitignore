@@ -44,3 +44,4 @@ bot.lock
 state.json
 users.json
 lockdowns.json
+copyCooldown.json

@@ -1,12 +1,12 @@
 import { flushLogs, logger } from "./src/infra/logger";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
-import { acquireSingleInstanceLock, getOrCreateChatState, loadState, loadUsersFile, saveState } from "./src/infra/storage";
+import { acquireSingleInstanceLock, getOrCreateChatState, loadGlobalCopyState, loadState, loadUsersFile, saveState } from "./src/infra/storage";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { handleBalanceCommand, handleCopyCommand, handleKickCommand, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { initAiChat } from "./src/aiChat";
-import type { CachedUser, ChatState, UsersFileSchema } from "./src/types";
+import type { CachedUser, ChatState, GlobalCopyState, UsersFileSchema } from "./src/types";
 
 /**
  * 注册各类更新处理器，并启动 grammY 的长轮询循环。
@@ -18,6 +18,8 @@ async function main(): Promise<void> {
   // Map<chatId, ChatState> 里，互不影响。
   const usersData: UsersFileSchema = await loadUsersFile();
   const chatStates: Map<number, ChatState> = await loadState();
+  // copy 类命令的冷却时钟是全局的（跨所有群共用一份），不再按群分别保存。
+  const globalCopyState: GlobalCopyState = await loadGlobalCopyState();
 
   // 恢复内存中的临时 users 缓存，包含所有群里目前正在被 copy 的用户/频道
   const users: Record<string, CachedUser> = {};
@@ -28,9 +30,6 @@ async function main(): Promise<void> {
   }
 
   // 逐个群聊同步状态，以防 state.json 损坏或与 users.json 不一致。
-  // 注意：lastCopiedUserId 不能从 usersData 派生——users.json 的 copiedUser 在
-  // /stop_copy 后就是 null，若照抄会把冷却计时的目标 ID 冲掉（/stop_copy 后 copiedUser
-  // 变 null 但冷却本该继续针对上一个目标生效），冷却机制就在下次重启后失效了。
   // state.json 里的 lastCopiedUserId 由 loadState() 读入即可，无需在这里覆盖。
   for (const [chatIdStr, entry] of Object.entries(usersData)) {
     const chatId: number = Number(chatIdStr);
@@ -42,7 +41,6 @@ async function main(): Promise<void> {
     // 原样复读）。
     const hadStateEntry: boolean = chatStates.has(chatId);
     const state: ChatState = getOrCreateChatState(chatStates, chatId);
-    state.lastCopyTime = entry.lastCopyTime;
     if (entry.copiedUser) {
       state.copiedUserId = entry.copiedUser.id;
       state.copiedIsChannel = !!entry.copiedUser.isChannel;
@@ -102,11 +100,11 @@ async function main(): Promise<void> {
   });
 
   // 命令处理器要注册在通用消息处理器之前：匹配到命令时 grammY 不会再往下传给它。
-  bot.command("copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData));
-  bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "reverse"));
-  bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "nya"));
-  bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, "ja"));
-  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx, users, chatStates, usersData));
+  bot.command("copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, globalCopyState));
+  bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, globalCopyState, "reverse"));
+  bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, globalCopyState, "nya"));
+  bot.command("ja_copy", (ctx) => handleCopyCommand(ctx, users, chatStates, usersData, globalCopyState, "ja"));
+  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx, users, usersData, globalCopyState));
   bot.command("stop_copy", (ctx) => handleStopCommand(ctx, chatStates, usersData));
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.command("balance", (ctx) => handleBalanceCommand(ctx));
