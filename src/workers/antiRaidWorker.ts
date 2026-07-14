@@ -485,7 +485,7 @@ function deletePendingReminders(chatId: number, pending: PendingVerification): v
  * 任何反馈，TA 完全不知道自己已经通过，补上这条能在频道侧看到的欢迎。
  */
 function sendChannelCommentWelcome(chatId: number, label: string, anchorMessageId: number): void {
-  void sendMessage(chatId, `哼，${label} 老实巴交在帖子底下冒个泡，本天才大发慈悲免了你的验证，欢迎杂鱼入群~♡`, anchorMessageId, joinVerificationApi)
+  void sendMessage(chatId, `哼，${label} 老实巴交的在帖子底下冒个了泡，本天才大发慈悲免了你的验证，欢迎杂鱼入群~♡`, anchorMessageId, joinVerificationApi)
     .then((welcomeMessageId: number | undefined) => {
       if (welcomeMessageId !== undefined) {
         deleteMessageAfter(chatId, welcomeMessageId, WELCOME_AUTO_DELETE_MS, joinVerificationApi);
