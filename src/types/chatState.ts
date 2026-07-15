@@ -36,9 +36,8 @@ export interface ChatState {
   lockdown?: ChatPermissions;
   /**
    * 本群是否启用 AI 闲聊功能（对话缓存、随机插话、回复/@ 机器人触发的回复）。
-   * 缺省视为启用；在 state.json 里手动配置为 false 可按群关闭。机器人运行
-   * 期间只在启动 loadState() 时读一次文件，手改后需要重启才生效（运行中
-   * saveState() 的全量落盘会原样保留这个字段）。
+   * 缺省视为禁用，需通过 /ai_chat enable 显式开启（仅 AI_CHAT_ADMIN_USER_ID
+   * 本人可用该指令，见 commands/aiChat.ts）。
    */
   isUseAIChat?: boolean;
   /**

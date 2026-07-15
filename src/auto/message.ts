@@ -198,9 +198,9 @@ export async function handleIncomingMessage(
   const isQuiet: boolean = (state.quietUntil ?? 0) > Date.now();
 
   // 本群的 AI 闲聊开关（state.json 里按群配置 isUseAIChat，见 ChatState）：
-  // 缺省启用，显式配成 false 才关。关掉的群连对话缓存都不攒（攒了也没有
-  // 会消费它的回复流水线），回复/@ 机器人也不再回。
-  const aiChatEnabled: boolean = state.isUseAIChat !== false;
+  // 缺省关闭，需群管理员通过 /ai_chat enable 显式开启。关闭的群连对话缓存都
+  // 不攒（攒了也没有会消费它的回复流水线），回复/@ 机器人也不再回。
+  const aiChatEnabled: boolean = state.isUseAIChat === true;
 
   // AI 相关逻辑仅在「群聊」且「没有复制对象」时进行：私聊消息不触发（机器人在
   // 私聊里没有群聊上下文，也不该在 DM 里自动搭话）；复制期间机器人正忙着复读

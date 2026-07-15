@@ -6,5 +6,6 @@ export { handleCopyCommand, handleStopCommand } from "./commands/copy";
 export { handleStealIconCommand } from "./commands/stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./commands/quiet";
 export { handleKickCommand } from "./commands/kick";
+export { handleAiChatCommand } from "./commands/aiChat";
 export { handleBalanceCommand } from "./commands/balance";
 export { handleLuckChallengeInlineQuery } from "./commands/luckChallenge";
