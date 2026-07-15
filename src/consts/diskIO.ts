@@ -20,7 +20,7 @@ export const DAY_FILE_PATTERN: RegExp = /^(\d{4}-\d{2}-\d{2})\.json$/;
 // 域各自独立计数/计时（缓冲区、定时器互不共享），只是复用同一组阈值。
 
 export const FLUSH_MAX_ENTRIES: number = 300;
-export const FLUSH_INTERVAL_MS: number = 60_000;
+export const FLUSH_INTERVAL_MS: number = 30_000;
 
 // ---- AI 记忆快照 ----
 

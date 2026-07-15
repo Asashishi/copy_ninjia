@@ -252,7 +252,7 @@ main()
   .finally(() => flushAllToDisk(2000, 3000));
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才
 // 结束，此时把 aiChatWorker/diskIOWorker 里的存货（AI 记忆最长滞留
-// 30 秒 + 10 秒、运势最长滞留 10 秒、日志最长滞留一分钟）强制落盘，停机
+// 30 秒 + 10 秒、运势和日志最长滞留 30 秒）强制落盘，停机
 // 尾段产生的 error（如 offset 确认失败）也能收进去。硬崩（kill -9/OOM/
 // 断电）走不到这里——那正是定时写窗口 + 原子 rename + 启动修复兜底的场景，
 // 丢失量有上界，接受。
