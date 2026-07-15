@@ -13,7 +13,7 @@ export const AI_REPLY_PROBABILITY: number = 1 / 5;
  *  web_search 等服务端工具只在 responses 上提供）。 */
 export const XAI_RESPONSES_API_URL: string = "https://api.x.ai/v1/responses";
 export const XAI_MODEL: string = "grok-4.3";
-export const REQUEST_TIMEOUT_MS: number = 60_000;
+export const REQUEST_TIMEOUT_MS: number = 90_000;
 
 /**
  * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。grok-4.3 是
@@ -68,7 +68,7 @@ export const AI_SNAPSHOT_INTERVAL_MS: number = 30_000;
  */
 export const AI_MEMORY_HYDRATE_BUFFER_MAX: number = VERBATIM_CONTEXT_MAX - 1;
 /** 单条摘要的硬性长度上限（字符），防摘要模型话痨撑爆回复上下文。 */
-export const SUMMARY_MAX_CHARS: number = 600;
+export const SUMMARY_MAX_CHARS: number = 500;
 /** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
 export const SPLIT_REPLY_PROBABILITY: number = 1 / 4;
 /** 连发模式下最多发几条，防止模型话痨刷屏。 */
@@ -122,7 +122,7 @@ export const TIME_INTENT_PATTERN: RegExp =
  * 一次工具调用往返最多允许几轮（模型要工具结果 -> 喂回去 -> 模型可能再要
  * 下一个工具……）。给个上限防止模型陷入死循环反复要工具，烧穿 API 配额。
  */
-export const MAX_TOOL_ROUNDS: number = 3;
+export const MAX_TOOL_ROUNDS: number = 5;
 
 /** 「正在输入…」状态的重发间隔，机制见 workers/aiChatWorker.ts 的 startTypingHeartbeat。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
