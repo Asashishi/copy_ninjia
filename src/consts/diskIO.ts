@@ -22,10 +22,13 @@ export const DAY_FILE_PATTERN: RegExp = /^(\d{4}-\d{2}-\d{2})\.json$/;
 export const AI_MEMORY_FILE_PATTERN: RegExp = /^(-?\d+)\.json$/;
 
 /**
- * dirty 群的 AI 记忆快照 / dirty 的运势缓存，定时批量落盘的间隔。没有条数
- * 阈值——快照本身已在 aiChatWorker 侧按 AI_SNAPSHOT_INTERVAL_MS 节流（见
- * consts/aiChat.ts），到这里频率天然有界；运势写入量同样极小（一分钟全局
- * 限 30 次抽签）。
+ * dirty 群的 AI 记忆快照 / 待追加的运势条目，定时批量落盘的间隔。没有条数
+ * 阈值——AI 记忆快照本身已在 aiChatWorker 侧按 AI_SNAPSHOT_INTERVAL_MS 节流
+ * （见 consts/aiChat.ts），到这里频率天然有界，且整份覆盖写的开销不随
+ * 条数增长（快照有固定上限，见 snapshotFiles.ts 模块头注释）；运势条目
+ * 一天下来可能积攒不少（不像日志按次数/字节数分批），但落盘走的是按位置
+ * 追加（见 appendOnlyDayFile.ts），单次 flush 的开销只跟这个 10 秒窗口内
+ * 新增的条数有关，不随当天已攒的总量增长，所以同样不需要额外的条数阈值。
  */
 export const SNAPSHOT_FLUSH_INTERVAL_MS: number = 10_000;
 

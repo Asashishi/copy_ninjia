@@ -66,10 +66,17 @@ export interface LuckDrawRecord {
   fortunePercent: number;
 }
 
-/** 当天的运势缓存：内存态（entries 是 Map）。落盘态 entries 是普通对象，见 LuckDayFile。 */
+/** 当天的运势缓存：内存态（entries 是 Map）。落盘态是同形状的扁平对象，见 LuckDayFile。 */
 export interface LuckDayCache {
   day: string;
   entries: Map<string, LuckDrawRecord>;
+}
+
+/** 追加写入某天文件时，一条尚未落盘的新记录（去重后才会进入这个缓冲，
+ * 见 workers/diskIOWorker.ts 处理 luckDraw 消息）。 */
+export interface LuckPendingEntry {
+  key: string;
+  record: LuckDrawRecord;
 }
 
 /** diskIOWorker -> 主线程：启动恢复读盘完成。 */
@@ -87,7 +94,8 @@ export interface DiskFlushReply {
 
 export type DiskIOReply = LoadedReply | DiskFlushReply;
 
-/** 当前追加目标日志文件的状态：字节大小用于定位结尾的「\n}」（见 workers/diskIO/logFiles.ts）。 */
+/** 当前追加目标文件（日志或每日运势）的状态：字节大小用于定位结尾的
+ * 「\n}」，供按位置追加，见 workers/diskIO/appendOnlyDayFile.ts。 */
 export interface DayFileState {
   day: string;
   size: number;
@@ -95,14 +103,12 @@ export interface DayFileState {
 }
 
 /**
- * memory/luck/YYYY-MM-DD.json 的落盘结构：entries 的 value 是 LuckDrawRecord
- * （label + fortunePercent），加载时按 LUCK_TIERS 反查 label 还原成 LuckTier 对象，
- * fortunePercent 原样带回、不重新滚动。version 2：新增 fortunePercent 字段（version 1
- * 时 entries 的 value 是纯 label 字符串，结构不兼容；见 workers/diskIO/snapshotFiles.ts
- * 的 recoverLuckDay 按对象结构校验，旧格式条目会被判定不匹配而丢弃，当天重抽，
- * 不做迁移——运势文件本就跨天即删，代价可忽略）。
+ * memory/luck/YYYY-MM-DD.json 的落盘结构：顶层直接就是 entries 本身（key ->
+ * LuckDrawRecord），不再套一层 version/entries 包装——文件按位置追加写入
+ * （见 workers/diskIO/appendOnlyDayFile.ts），顶层必须是扁平对象。加载时
+ * 按 LUCK_TIERS 反查 label 还原成 LuckTier 对象，fortunePercent 原样带回、
+ * 不重新滚动，见 workers/diskIO/snapshotFiles.ts 的 recoverLuckDay；结构不
+ * 匹配（含历史上 version 1/2 包装格式的残留文件）的条目按对象结构校验
+ * 丢弃、当天重抽，不做迁移——运势文件本就跨天即删，代价可忽略。
  */
-export interface LuckDayFile {
-  version: 2;
-  entries: Record<string, LuckDrawRecord>;
-}
+export type LuckDayFile = Record<string, LuckDrawRecord>;

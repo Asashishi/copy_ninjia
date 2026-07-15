@@ -1,19 +1,30 @@
 /**
- * memory/ai/ 与 memory/luck/ 的原子写、启动恢复读取与结构校验。被
- * diskIOWorker.ts 调用；本文件不持有任何状态，纯函数式的读写辅助。
+ * memory/ai/ 与 memory/luck/ 的启动恢复读取、结构校验与落盘。被
+ * diskIOWorker.ts 调用；本文件不持有任何状态，纯函数式的读写辅助——文件
+ * 当前的 DayFileState/待写缓冲由调用方在 cache/diskIOWorker.ts 里持有，
+ * 按参数传进来。
  *
- * 写入一律先写 <file>.tmp 再 rename：rename 在同一文件系统内是原子操作，
- * 进程如果在这中间被杀（OOM/断电/容器被回收），目标文件要么是写入前的
- * 旧内容，要么是写入后的新内容，不会停在半截的撕裂 JSON（同 infra/storage.ts
- * persistStateJson 的原子性理由）。
+ * AI 记忆快照是整份覆盖写：先写 <file>.tmp 再 rename，rename 在同一文件
+ * 系统内是原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），目标
+ * 文件要么是写入前的旧内容，要么是写入后的新内容，不会停在半截的撕裂
+ * JSON（同 infra/storage.ts persistStateJson 的原子性理由）——快照本身
+ * 有固定上限（AI_MEMORY_HYDRATE_BUFFER_MAX/MAX_SUMMARY_ROUNDS），整份
+ * 重写的开销不随时间增长，没有必要为它换成追加写。
+ *
+ * 每日运势改成了按位置追加写（见 appendLuckEntries）：entries 只增不改，
+ * 一天下来可能攒到不少条，整份重写的开销会随条数线性增长，值得换成只写
+ * 增量的追加机制，见 appendOnlyDayFile.ts 的模块头注释；换来的代价是单次
+ * 追加不再是"要么全新要么全旧"的原子操作，靠追加机制自带的截断修复兜底
+ * 断电风险（与日志文件同一套机制，那边已经这样跑了很久）。
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AiMemorySnapshot, BufferedMessage, LuckDayCache, LuckDayFile, LuckDrawRecord } from "../../types";
+import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types";
 import { AI_MEMORY_DIR, LUCK_MEMORY_DIR } from "../../consts/paths";
 import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
+import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 function atomicWriteJson(path: string, value: unknown): void {
   const tmpPath: string = `${path}.tmp`;
@@ -114,8 +125,12 @@ export function cleanupStaleLuckFiles(todayKey: string): void {
 }
 
 /**
- * 启动恢复：建目录、清 *.tmp 残留、删除所有非今天的日期文件，只关心今天
- * 那份（不存在则返回 null）。今天那份解析失败同样隔离为 .corrupt。
+ * 启动恢复：建目录、清 *.tmp 残留（历史遗留——整份覆盖写时代产生的残留；
+ * 现在的追加写不再产生 .tmp，这里继续清一次，防御旧版本升级上来时残留
+ * 未清的情况）、删除所有非今天的日期文件，只关心今天那份（不存在则返回
+ * null）。今天那份解析失败（真正损坏，而不是可修复的截断——截断修复已经
+ * 在本次运行第一次 openDayFile 时做过一轮，这里读到的要么是完整文件、
+ * 要么已经被修过）就隔离为 .corrupt。
  */
 export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
@@ -137,24 +152,33 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   if (!parsed || typeof parsed !== "object") return null;
   const raw: any = parsed;
   const entries: Map<string, LuckDrawRecord> = new Map();
-  if (raw.entries && typeof raw.entries === "object") {
-    for (const [key, value] of Object.entries(raw.entries)) {
-      // entries 里结构不对的条目丢弃（结构性校验，不假设未来档位表长什么样）；
-      // version 1 遗留的纯字符串 label 同样落在这里，被判定不匹配而丢弃，见
-      // types/diskIO.ts 的 LuckDayFile 注释。
-      if (!value || typeof value !== "object") continue;
-      const v: any = value;
-      if (typeof v.label === "string" && typeof v.fortunePercent === "number") {
-        entries.set(key, { label: v.label, fortunePercent: v.fortunePercent });
-      }
+  for (const [key, value] of Object.entries(raw)) {
+    // entries 里结构不对的条目丢弃（结构性校验，不假设未来档位表长什么样）；
+    // 历史上 version 1/2 包装格式（顶层是 {version, entries} 而不是扁平
+    // 对象）的残留文件同样落在这里，被判定不匹配而丢弃，当天重抽，见
+    // types/diskIO.ts 的 LuckDayFile 注释。
+    if (!value || typeof value !== "object") continue;
+    const v: any = value;
+    if (typeof v.label === "string" && typeof v.fortunePercent === "number") {
+      entries.set(key, { label: v.label, fortunePercent: v.fortunePercent });
     }
   }
   return { day: todayKey, entries };
 }
 
-/** 整日整份覆盖写入（tmp + rename 原子落盘）。目录重建的理由同 writeAiMemoryFile。 */
-export function writeLuckDayFile(day: string, entries: Map<string, LuckDrawRecord>): void {
+/**
+ * 把一批新确认的运势条目追加到当天文件末尾（按位置追加，不整文件重写，
+ * 机制见 appendOnlyDayFile.ts）。fileState 由调用方（diskIOWorker.ts 的
+ * luckFileState）持有并传入：为 null 或 day 对不上（本次运行第一次写、或
+ * 刚跨天）时，先探测/接管一次对应日期的文件。pending 为空是防御性早退——
+ * 调用方按 dirty 判断只在非空时才会调用，这里不该真的走到。
+ */
+export function appendLuckEntries(day: string, fileState: { current: DayFileState | null }, pending: LuckPendingEntry[]): void {
+  if (pending.length === 0) return;
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
-  const payload: LuckDayFile = { version: 2, entries: Object.fromEntries(entries) };
-  atomicWriteJson(join(LUCK_MEMORY_DIR, `${day}.json`), payload);
+  if (fileState.current === null || fileState.current.day !== day) {
+    fileState.current = openDayFile(LUCK_MEMORY_DIR, day);
+  }
+  const chunk: string = pending.map((entry) => serializeDayFileEntry(entry.key, entry.record)).join(",\n");
+  appendToDayFile(LUCK_MEMORY_DIR, fileState.current, chunk);
 }

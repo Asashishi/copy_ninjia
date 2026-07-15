@@ -6,21 +6,23 @@
  * 值为该条日志的内容对象，与 JSON.stringify(entries, null, 2) 的输出逐字节
  * 一致。
  *
- * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写，
- * 而是覆写文件结尾的「\n}」两个字节、按位置追加，写入量只与本批条数
- * 有关，与文件大小无关。仅保留 RETENTION_DAYS 天内的文件（见
- * consts/diskIO.ts），跨天时自动清理过期文件。日期按系统本地时区划分
- * （本机已设为 Asia/Tokyo）。
+ * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写——具体的
+ * 按位置追加/损坏修复机制见 diskIO/appendOnlyDayFile.ts（与每日运势共用）。
+ * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO.ts），跨天时自动清理
+ * 过期文件。日期按系统本地时区划分（本机已设为 Asia/Tokyo）。
  *
- * 本文件从原 src/workers/loggerWorker.ts 原样搬迁而来，逻辑无变化。
+ * 本文件从原 src/workers/loggerWorker.ts 搬迁而来，落盘机制后续抽成了
+ * diskIO/appendOnlyDayFile.ts，本文件自身的日志领域逻辑（buffer/阈值/
+ * 保留期）无变化。
  */
 
+import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
-import type { DayFileState, LogMessage } from "../../types";
+import type { LogMessage } from "../../types";
 import { LOGS_DIR } from "../../consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO";
 import { flushBuffer, loggerFileState } from "../../cache/diskIOWorker";
+import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 interface LogRecord {
   level: string;
@@ -48,19 +50,6 @@ function dayKey(timestamp: number): string {
   return formatDateTime(timestamp).slice(0, 10);
 }
 
-function dayPath(day: string): string {
-  return join(LOGS_DIR, `${day}.json`);
-}
-
-/**
- * 把单条日志序列化成顶层对象里的一段文本（含 2 空格缩进、不含前后逗号），
- * 与 JSON.stringify(整个对象, null, 2) 中该条目的形态完全一致。实现上借
- * 单条目对象的 stringify 结果，掐掉外层的「{\n」和「\n}」。
- */
-function serializeEntry(key: string, record: LogRecord): string {
-  return JSON.stringify({ [key]: record }, null, 2).slice(2, -2);
-}
-
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
 function cleanupOldLogs(): void {
   const oldestKept: string = dayKey(Date.now() - (RETENTION_DAYS - 1) * 24 * 60 * 60 * 1000);
@@ -76,100 +65,14 @@ function cleanupOldLogs(): void {
   }
 }
 
-/**
- * 打开（或接管）某天的文件并校验其可追加性。文件不存在或为空对象视作
- * 空文件；内容合法但结尾形态不符（比如被人手动编辑过）就按标准格式重写
- * 一次；解析失败（断电等原因导致结尾写了一半）先尝试 repairTruncated
- * 裁掉末尾残片修复，实在修不好才放弃旧内容从头开始。size 一律以
- * fs.statSync 读到的物理文件大小为准，不信任内存里算出来的字节数。
- */
-function openDay(day: string): DayFileState {
-  const path: string = dayPath(day);
-  const state: DayFileState = { day, size: 0, empty: true };
-  if (!existsSync(path)) return state;
-  const content: string = readFileSync(path, "utf8");
-  try {
-    const parsed: unknown = JSON.parse(content);
-    if (parsed === null || typeof parsed !== "object" || Object.keys(parsed).length === 0) return state;
-    if (!content.endsWith("\n}")) {
-      writeFileSync(path, JSON.stringify(parsed, null, 2));
-    }
-    state.size = statSync(path).size;
-    state.empty = false;
-    return state;
-  } catch {
-    // 解析失败，尝试修复后再决定是否放弃。
-  }
-  const repaired: string | null = repairTruncated(content);
-  if (repaired === null) return state;
-  try {
-    writeFileSync(path, repaired);
-    state.size = statSync(path).size;
-    state.empty = false;
-  } catch {
-    // 写回修复内容也失败，只能从空文件重新开始，不让日志线程崩掉。
-  }
-  return state;
-}
-
-/**
- * 修复被截断的日志文件：先试着直接补一个「\n}」收尾（只是丢了最后的
- * 收尾括号这种最常见情况）；不行的话，从末尾往前找最后一行完整的
- * 「  },」（某条记录的收尾且后面还有别的记录），裁掉它之后的乱码残片，
- * 去掉这行的逗号再补上「\n}」。两种都拼不出合法 JSON 就返回 null，
- * 交给调用方从空文件重新开始。
- */
-function repairTruncated(content: string): string | null {
-  const withClosingBrace: string = `${content}\n}`;
-  try {
-    JSON.parse(withClosingBrace);
-    return withClosingBrace;
-  } catch {
-    // 继续尝试裁掉末尾残片。
-  }
-  const lines: string[] = content.split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i] !== "  },") continue;
-    lines[i] = "  }";
-    const candidate: string = `${lines.slice(0, i + 1).join("\n")}\n}`;
-    try {
-      JSON.parse(candidate);
-      return candidate;
-    } catch {
-      // 这一行也不构成合法边界（理论上不该发生），继续往前找。
-    }
-  }
-  return null;
-}
-
-/** 把一批已序列化的条目追加到某天的文件末尾（覆写结尾的「\n}」）。 */
-function appendChunk(state: DayFileState, chunk: string): void {
-  const path: string = dayPath(state.day);
-  if (state.empty) {
-    const content: string = `{\n${chunk}\n}`;
-    writeFileSync(path, content);
-    state.size = Buffer.byteLength(content);
-    state.empty = false;
-    return;
-  }
-  const data: string = `,\n${chunk}\n}`;
-  const fd: number = openSync(path, "r+");
-  try {
-    writeSync(fd, data, state.size - 2, "utf8");
-  } finally {
-    closeSync(fd);
-  }
-  state.size = state.size - 2 + Buffer.byteLength(data);
-}
-
 function writeDay(day: string, texts: string[]): void {
   if (texts.length === 0) return;
   try {
     if (loggerFileState.current === null || loggerFileState.current.day !== day) {
-      loggerFileState.current = openDay(day);
+      loggerFileState.current = openDayFile(LOGS_DIR, day);
       cleanupOldLogs();
     }
-    appendChunk(loggerFileState.current, texts.join(",\n"));
+    appendToDayFile(LOGS_DIR, loggerFileState.current, texts.join(",\n"));
   } catch (err) {
     // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
     // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。
@@ -222,7 +125,7 @@ export function handleLogMessage(msg: LogMessage): void {
   }
   flushBuffer.entries.push({
     day: dayKey(msg.timestamp),
-    text: serializeEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
+    text: serializeDayFileEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
   if (flushBuffer.entries.length >= FLUSH_MAX_ENTRIES) {
     flushLogBuffer();

@@ -8,8 +8,9 @@
  * 三合一，改名 diskIOWorker。
  *
  * 本文件只做消息路由、统一 flush 调度、启动恢复编排；具体逻辑分别在
- * diskIO/logFiles.ts（日志，原样搬迁自 loggerWorker.ts）与
- * diskIO/snapshotFiles.ts（AI 记忆 + 运势的原子写与启动恢复）。
+ * diskIO/logFiles.ts（日志）与 diskIO/snapshotFiles.ts（AI 记忆的整份
+ * 覆盖写 + 运势的按位置追加写 + 两者的启动恢复），两者共用的追加/损坏
+ * 修复字节机制在 diskIO/appendOnlyDayFile.ts。
  *
  * 原则：磁盘只在启动恢复（load）时被读一次；此后缓存（cache/diskIOWorker.ts）
  * 是唯一事实源，写是「缓存 -> 磁盘」的单向定时同步。本线程自身的内部错误
@@ -19,12 +20,12 @@
 
 import { mkdirSync } from "node:fs";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
-import { cleanupStaleLuckFiles, recoverAiMemories, recoverLuckDay, writeAiMemoryFile, writeLuckDayFile } from "./diskIO/snapshotFiles";
+import { appendLuckEntries, cleanupStaleLuckFiles, recoverAiMemories, recoverLuckDay, writeAiMemoryFile } from "./diskIO/snapshotFiles";
 import { AI_MEMORY_DIR, LOGS_DIR, LUCK_MEMORY_DIR } from "../consts/paths";
 import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
 import { getTokyoDateKey } from "../libs/time";
-import { aiMemoryCache, dirtyChats, luckWorkerCache, snapshotFlushState } from "../cache/diskIOWorker";
-import type { DiskFlushReply, DiskIOMessage, LoadedReply } from "../types";
+import { aiMemoryCache, dirtyChats, luckFileState, luckPendingAppends, luckWorkerCache, snapshotFlushState } from "../cache/diskIOWorker";
+import type { DiskFlushReply, DiskIOMessage, LoadedReply, LuckDrawRecord } from "../types";
 
 declare var self: Worker;
 
@@ -39,7 +40,8 @@ function scheduleSnapshotFlush(): void {
   }, SNAPSHOT_FLUSH_INTERVAL_MS);
 }
 
-/** 把 dirty 的 AI 记忆快照与 dirty 的运势缓存写盘；单条/单份写失败保留 dirty，下轮重试。 */
+/** 把 dirty 的 AI 记忆快照整份写盘、把运势待追加缓冲追加写盘；失败的那一份
+ *  保留待重试状态（dirtyChats 不摘除 / luckPendingAppends 不清空），下轮重试。 */
 function flushSnapshots(): void {
   for (const chatId of dirtyChats) {
     const snapshot = aiMemoryCache.get(chatId);
@@ -56,14 +58,14 @@ function flushSnapshots(): void {
     }
   }
 
-  if (luckWorkerCache.dirty && luckWorkerCache.current) {
-    const { day, entries } = luckWorkerCache.current;
+  if (luckPendingAppends.length > 0 && luckWorkerCache.current) {
+    const day: string = luckWorkerCache.current.day;
     try {
-      writeLuckDayFile(day, entries);
+      appendLuckEntries(day, luckFileState, luckPendingAppends);
       cleanupStaleLuckFiles(day);
-      luckWorkerCache.dirty = false;
+      luckPendingAppends.length = 0;
     } catch (error) {
-      console.error(`[diskIOWorker] failed to write luck snapshot for ${day}:`, error);
+      console.error(`[diskIOWorker] failed to append luck entries for ${day}:`, error);
     }
   }
 }
@@ -120,17 +122,29 @@ self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
       dirtyChats.add(msg.chatId);
       scheduleSnapshotFlush();
       break;
-    case "luckDraw":
-      // 跨天检查放在写路径上：day 与当前缓存不一致就视为跨天——旧 day 的
-      // 缓存直接丢弃（已是昨日黄花，无需落盘）、换新 day 重建；下一次
-      // flush 落盘时 cleanupStaleLuckFiles 会顺带删除非当日文件。
+    case "luckDraw": {
+      // 跨天检查放在消息入口：day 与当前已知缓存不一致就视为跨天——旧 day
+      // 已知的 key 集合、待追加缓冲、文件追加状态全部丢弃重建（旧 day 已是
+      // 昨日黄花，不会再有消息带着旧 day 补写它的文件）；下一次 flush 落盘
+      // 时 cleanupStaleLuckFiles 会顺带删除非当日文件。
       if (luckWorkerCache.current === null || luckWorkerCache.current.day !== msg.day) {
         luckWorkerCache.current = { day: msg.day, entries: new Map() };
+        luckPendingAppends.length = 0;
+        luckFileState.current = null;
       }
-      luckWorkerCache.current.entries.set(msg.key, { label: msg.label, fortunePercent: msg.fortunePercent });
-      luckWorkerCache.dirty = true;
+      // 去重：这个 key 今天已经见过（磁盘恢复带回的，或本次运行期间已经
+      // 追加过的）就不再重复写——尤其是本 Worker 崩溃重建后，主线程会把
+      // dailyLuckCache 全量重放一遍（见 infra/diskIO.ts 的
+      // onDiskIORespawn），其中多数 key 其实已经在崩溃前成功落盘、也已经
+      // 被这次重建的 handleLoad 读回 entries 里，不去重就会在文件里追加出
+      // 重复 key（JSON.parse 只认最后一次出现，不会炸，但白占地方）。
+      if (luckWorkerCache.current.entries.has(msg.key)) break;
+      const record: LuckDrawRecord = { label: msg.label, fortunePercent: msg.fortunePercent };
+      luckWorkerCache.current.entries.set(msg.key, record);
+      luckPendingAppends.push({ key: msg.key, record });
       scheduleSnapshotFlush();
       break;
+    }
     case "load":
       handleLoad();
       break;
