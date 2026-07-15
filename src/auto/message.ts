@@ -5,6 +5,7 @@ import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
 import { cacheSender } from "../users/senderIdentity";
 import { recordChatMessage, generateAndSendReply } from "../aiChat";
+import { confirmLuckDraw } from "../commands";
 import { AI_REPLY_PROBABILITY } from "../consts/aiChat";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
@@ -213,7 +214,10 @@ function hasCopyableContent(message: any): boolean {
  *
  * 最前面依次过两道门，命中任一道都不再往下走：
  * - via_bot 指向自己：内联结果消息（如 /luck_challenge），自录入 AI 对话
- *   缓存后直接返回，见 recordSelfInlineResult。
+ *   缓存后直接返回，见 recordSelfInlineResult；同时这也是运势抽签唯一的
+ *   「真的发出去了」信号，顺带调用 confirmLuckDraw 把对应的抽签结果从
+ *   pending 转正、落盘，见 commands/luckChallenge.ts 的注释——用户只是打字
+ *   预览、没选中任何结果就不会走到这里，不会被当成测过运势。
  * - isBotOwnMessage：机器人自己发出消息的原样回弹（频道自回环），整条跳过、
  *   连记忆都不留。
  */
@@ -225,6 +229,7 @@ export async function handleIncomingMessage(
   if (!message) return;
   if (message.via_bot?.id === ctx.me.id) {
     recordSelfInlineResult(message, ctx.me.id, ctx.me.first_name);
+    confirmLuckDraw(message.from?.id, message.text);
     return;
   }
   if (isBotOwnMessage(message, ctx.me.id)) return;

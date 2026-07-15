@@ -9,7 +9,7 @@ import {
   RATE_LIMIT_MAX_CALLS_PER_MINUTE,
   RATE_LIMIT_WINDOW_MS,
 } from "../consts/luckChallenge";
-import { dailyLuckCache, luckCacheState, recentCallTimestamps } from "../cache/luckChallenge";
+import { dailyLuckCache, luckCacheState, pendingLuckDraws, pendingLuckRenderIndex, recentCallTimestamps } from "../cache/luckChallenge";
 import { logger } from "../infra/logger";
 import { onDiskIORespawn, postDiskIO } from "../infra/diskIO";
 import { getTokyoDateKey } from "../libs/time";
@@ -39,10 +39,17 @@ import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
  *
  * 运势结果按「用户 ID (+ 文本)」缓存，同一天同一把 key 只抽一次，抽到什么
  * 一天内都不会变；不带文本和带文本是两把不同的 key，互不影响。缓存活在
- * 主线程内存里，每天在东京时间零点自然过期（下一次请求触发清空）；新抽到
- * 的结果（吉凶档 label + 浮动出的 fortunePercent，见 LuckDraw）同时经
- * postDiskIO 转投 diskIOWorker 落盘（memory/luck/YYYY-MM-DD.json，按东京
- * 日期一个文件），重启后由 restoreLuckCache 灌回，当天结果不因重启改变；
+ * 主线程内存里，每天在东京时间零点自然过期（下一次请求触发清空）。
+ *
+ * inline_query 只是"预览"——Telegram 在用户打字过程中会持续推送 inline_query
+ * （每敲一下都可能触发一次），用户可能压根没打算测运势、只是消息恰好以
+ * @本机器人 开头（比如单纯想 @ 机器人说句话），或者打到一半改主意删掉了。
+ * 所以 getOrDrawLuck 在这里抽到的结果只进 pendingLuckDraws（见
+ * cache/luckChallenge.ts），不落盘、也不算"今天测过"；真正被用户选中、
+ * Telegram 把结果以 via_bot 消息形式发出来（唯一能确认"这条真的发出去了"的
+ * 信号，见 auto/message.ts）时，才由 confirmLuckDraw 转正写入 dailyLuckCache
+ * 并经 postDiskIO 转投 diskIOWorker 落盘（memory/luck/YYYY-MM-DD.json，按
+ * 东京日期一个文件），重启后由 restoreLuckCache 灌回，当天结果不因重启改变；
  * 过期文件在写入时发现跨天就删，见 workers/diskIOWorker.ts。
  */
 
@@ -51,7 +58,16 @@ function ensureCacheFreshForToday(): void {
   if (todayKey !== luckCacheState.dayKey) {
     luckCacheState.dayKey = todayKey;
     dailyLuckCache.clear();
+    pendingLuckDraws.clear();
+    pendingLuckRenderIndex.clear();
   }
+}
+
+/** 抽签结果的缓存 key：带文本时按「用户 ID:文本」区分所求事项，不带文本时
+ * 就是纯用户 ID（当天的默认运势）。dailyLuckCache/pendingLuckDraws 共用这一
+ * 套 key 规则，抽出来单独提取避免两处各写一份、改一处忘了另一处。 */
+function luckCacheKey(userId: number, text: string | undefined): string {
+  return text ? `${userId}:${text}` : String(userId);
 }
 
 function drawLuckTier(roll: number): LuckTier {
@@ -64,28 +80,68 @@ function drawLuckTier(roll: number): LuckTier {
 }
 
 /** 在 tier.fortunePercentRange [min, max] 内均匀浮动出本次抽签的行大运具体
- * 数值（%），保留两位小数；只在抽到新结果时滚动一次，随 tier 一起进日缓存/
- * 落盘（见 LuckDraw、getOrDrawLuck），同一天同一 key 之后重复查询取到的
- * 都是这同一个数，不会每次查询都重新浮动。 */
+ * 数值（%），保留两位小数；只在抽到新结果时滚动一次，随 tier 一起先进
+ * pendingLuckDraws、确认后再进日缓存/落盘（见 LuckDraw、getOrDrawLuck、
+ * confirmLuckDraw），同一天同一 key 之后重复查询取到的都是这同一个数，
+ * 不会每次查询都重新浮动。 */
 function rollFortunePercent([min, max]: [number, number]): number {
   const raw: number = min + Math.random() * (max - min);
   return Math.round(raw * 100) / 100;
 }
 
+/** 预览阶段取（或抽）一次结果：优先复用已确认的 dailyLuckCache，其次复用
+ * 还没确认的 pendingLuckDraws（同一天重复打字预览同一把 key 时看到的数字
+ * 保持一致，不会每敲一次键就重新滚一次），都没有才真的抽一把——但只存进
+ * pendingLuckDraws，不落盘。是否转正见 confirmLuckDraw。 */
 function getOrDrawLuck(userId: number, text: string | undefined): LuckDraw {
   ensureCacheFreshForToday();
-  const cacheKey: string = text ? `${userId}:${text}` : String(userId);
-  const cached: LuckDraw | undefined = dailyLuckCache.get(cacheKey);
-  if (cached) return cached;
+  const cacheKey: string = luckCacheKey(userId, text);
+  const confirmed: LuckDraw | undefined = dailyLuckCache.get(cacheKey);
+  if (confirmed) return confirmed;
+  const pending: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
+  if (pending) return pending;
 
   const tier: LuckTier = drawLuckTier(Math.floor(Math.random() * 100) + 1);
   const fortunePercent: number = rollFortunePercent(tier.fortunePercentRange);
   const draw: LuckDraw = { tier, fortunePercent };
-  dailyLuckCache.set(cacheKey, draw);
-  // 新抽到的结果才需要落盘（缓存命中不必重发一次一模一样的数据）。
-  // day 用刚校准过的 luckCacheState.dayKey，与本次缓存写入用的是同一个"今天"。
-  postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key: cacheKey, label: tier.label, fortunePercent });
+  pendingLuckDraws.set(cacheKey, draw);
   return draw;
+}
+
+/** 登记"这段渲染出的消息原文，对应哪一把抽签 key"，供 confirmLuckDraw 反查。
+ * 每次预览（哪怕命中缓存）都会重新登记一遍，重复登记同一对 key/文本是
+ * 廉价的幂等覆盖，不需要额外去重。已经转正的 key 不再登记——没有必要，
+ * confirmLuckDraw 对已转正的 key 本来就是空操作，省一次 Map 写入。 */
+function registerPendingRendering(userId: number, cacheKey: string, renderedText: string): void {
+  if (dailyLuckCache.has(cacheKey)) return;
+  pendingLuckRenderIndex.set(`${userId} ${renderedText}`, cacheKey);
+}
+
+/**
+ * via_bot 消息真的送达时（见 auto/message.ts 的 handleIncomingMessage）调用：
+ * 说明用户真的选中了某条内联结果并发了出去，这才是「真的触发了一次运势
+ * 测试」。用消息原文反查 pendingLuckRenderIndex 找到对应的 cacheKey 与
+ * pendingLuckDraws 里的抽签结果，转存进 dailyLuckCache 并经 postDiskIO 落盘；
+ * 查无匹配（消息不是运势结果、或进程恰好在预览和选中之间重启导致内存态
+ * 丢失）什么都不做——宁可当天该 key 之后被重新抽一次，也不要凭空落盘一条
+ * 用户从未真正确认过的记录。
+ */
+export function confirmLuckDraw(userId: number | undefined, messageText: string | undefined): void {
+  if (typeof userId !== "number" || typeof messageText !== "string") return;
+  ensureCacheFreshForToday();
+
+  const renderKey: string = `${userId} ${messageText}`;
+  const cacheKey: string | undefined = pendingLuckRenderIndex.get(renderKey);
+  if (!cacheKey) return;
+  pendingLuckRenderIndex.delete(renderKey);
+
+  const draw: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
+  pendingLuckDraws.delete(cacheKey);
+  if (!draw || dailyLuckCache.has(cacheKey)) return;
+
+  dailyLuckCache.set(cacheKey, draw);
+  // day 用刚校准过的 luckCacheState.dayKey，与本次缓存写入用的是同一个"今天"。
+  postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key: cacheKey, label: draw.tier.label, fortunePercent: draw.fortunePercent });
 }
 
 // diskIOWorker 崩溃重建后，把当天缓存整份重发给它：dailyLuckCache 本来就
@@ -155,10 +211,11 @@ function buildRetryKeyboard(text: string | undefined): InlineKeyboard {
   return keyboard;
 }
 
-function buildFortuneResult(draw: LuckDraw, userLabel: string, text: string | undefined): InlineQueryResultArticle {
+function buildFortuneResult(draw: LuckDraw, userId: number, userLabel: string, text: string | undefined): InlineQueryResultArticle {
   const bodyText: string = text
     ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${draw.tier.label}\n${draw.tier.comment}`
     : `你好，${userLabel}\n汝的今日运势: ${draw.tier.label}\n${draw.tier.comment}`;
+  registerPendingRendering(userId, luckCacheKey(userId, text), bodyText);
   return InlineQueryResultBuilder.article(text ? "luck-fortune-text" : "luck-fortune", "未卜先知", {
     description: text ? `所求事项：${text}` : "测测你今天的运势",
     reply_markup: buildRetryKeyboard(text),
@@ -168,13 +225,15 @@ function buildFortuneResult(draw: LuckDraw, userLabel: string, text: string | un
 
 /** 概率数字固定展示两位小数（toFixed(2)），即便滚动结果恰好落在整数或一位小数上也补齐，
  * 避免同一档不同次抽签的展示位数忽多忽少。 */
-function buildProbabilityResult(draw: LuckDraw, userLabel: string): InlineQueryResultArticle {
+function buildProbabilityResult(draw: LuckDraw, userId: number, userLabel: string): InlineQueryResultArticle {
   const { label, percent } = pickDominantProbability(draw);
+  const bodyText: string = `你好，${userLabel}\n汝今天${label}概率是 ${percent.toFixed(2)}%`;
+  registerPendingRendering(userId, luckCacheKey(userId, undefined), bodyText);
   return InlineQueryResultBuilder.article("luck-probability", "概率论！", {
     description: "看看你今天行大运/倒大霉的概率",
     reply_markup: buildRetryKeyboard(undefined),
     thumbnail_url: PROBABILITY_THUMBNAIL_URL,
-  }).text(`你好，${userLabel}\n汝今天${label}概率是 ${percent.toFixed(2)}%`);
+  }).text(bodyText);
 }
 
 /** 全局频率限制（见 consts/luckChallenge.ts 的注释）：超限就不再往下算，
@@ -222,8 +281,8 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
   // 两处复用，避免重复查表/重复经过每日缓存逻辑。
   const draw: LuckDraw = getOrDrawLuck(fromUser.id, text || undefined);
   const results: InlineQueryResultArticle[] = text
-    ? [buildFortuneResult(draw, userLabel, text)]
-    : [buildFortuneResult(draw, userLabel, undefined), buildProbabilityResult(draw, userLabel)];
+    ? [buildFortuneResult(draw, fromUser.id, userLabel, text)]
+    : [buildFortuneResult(draw, fromUser.id, userLabel, undefined), buildProbabilityResult(draw, fromUser.id, userLabel)];
 
   await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
 }
