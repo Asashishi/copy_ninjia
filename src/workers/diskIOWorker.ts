@@ -20,7 +20,7 @@
 import { mkdirSync } from "node:fs";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import { recoverAiMemories, writeAiMemoryFile } from "./diskIO/snapshotFiles";
-import { AI_MEMORY_DIR, LOGS_DIR } from "../consts/paths";
+import { LOGS_DIR, MEMORY_DIR } from "../consts/paths";
 import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
 import { aiMemoryCache, dirtyChats, snapshotFlushState } from "../cache/diskIOWorker";
 import type { DiskFlushReply, DiskIOMessage, LoadedReply } from "../types";
@@ -71,14 +71,14 @@ function flushAll(): void {
 
 /**
  * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
- * 建目录、扫描解析校验 memory/ai，先灌进自己的缓存，再把缓存内容作为
+ * 建目录、扫描解析校验 memory/，先灌进自己的缓存，再把缓存内容作为
  * loaded 回执发给主线程。失败不让整个 Worker 崩掉——尽量用已恢复到的部分
  * 继续，回执照发。
  */
 function handleLoad(): void {
   try {
     mkdirSync(LOGS_DIR, { recursive: true });
-    mkdirSync(AI_MEMORY_DIR, { recursive: true });
+    mkdirSync(MEMORY_DIR, { recursive: true });
 
     for (const [chatId, snapshot] of recoverAiMemories()) {
       aiMemoryCache.set(chatId, snapshot);

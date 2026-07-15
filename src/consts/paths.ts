@@ -24,12 +24,11 @@ export const REACTIONS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "react
 export const LOGS_DIR: string = join(PROJECT_ROOT, "logs");
 
 /**
- * memory/ 落盘目录：AI 记忆快照（ai/ 下按 chatId 一个文件），由
+ * memory/ 落盘目录：AI 记忆快照（按 chatId 一个 <chatId>.json），由
  * diskIOWorker 落盘，见 src/workers/diskIOWorker.ts。不进 git，与 logs/
  * 同级对待（隐私提示见 memory/PLAN.md §7：AI 记忆快照含群聊逐字明文）。
  */
 export const MEMORY_DIR: string = join(PROJECT_ROOT, "memory");
-export const AI_MEMORY_DIR: string = join(MEMORY_DIR, "ai");
 
 /** Google Cloud 服务账号密钥（/ja_copy 日语翻译用，已进 .gitignore）。 */
 export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");

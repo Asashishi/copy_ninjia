@@ -1,5 +1,5 @@
 /**
- * memory/ai/ 的启动恢复读取、结构校验与落盘。被 diskIOWorker.ts 调用；
+ * memory/ 的启动恢复读取、结构校验与落盘。被 diskIOWorker.ts 调用；
  * 本文件不持有任何状态，纯函数式的读写辅助。
  *
  * AI 记忆快照是整份覆盖写：先写 <file>.tmp 再 rename，rename 在同一文件
@@ -13,7 +13,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AiMemorySnapshot, BufferedMessage } from "../../types";
-import { AI_MEMORY_DIR } from "../../consts/paths";
+import { MEMORY_DIR } from "../../consts/paths";
 import { AI_MEMORY_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
 
@@ -62,15 +62,15 @@ function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
 }
 
 /**
- * 启动恢复：建目录、清 memory/ai/ 下的 *.tmp 残留（上次写一半的残留；
+ * 启动恢复：建目录、清 memory/ 下的 *.tmp 残留（上次写一半的残留；
  * rename 原子性保证正式文件永远完好），校验/重建每个群的快照。文件名
  * 不是整数（chatId）的跳过；JSON.parse 失败的隔离为 .corrupt 并记日志。
  */
 export function recoverAiMemories(): Map<number, AiMemorySnapshot> {
-  mkdirSync(AI_MEMORY_DIR, { recursive: true });
+  mkdirSync(MEMORY_DIR, { recursive: true });
   const result: Map<number, AiMemorySnapshot> = new Map();
-  for (const name of readdirSync(AI_MEMORY_DIR)) {
-    const path: string = join(AI_MEMORY_DIR, name);
+  for (const name of readdirSync(MEMORY_DIR)) {
+    const path: string = join(MEMORY_DIR, name);
     if (name.endsWith(".tmp")) {
       tryUnlink(path);
       continue;
@@ -98,6 +98,6 @@ export function recoverAiMemories(): Map<number, AiMemorySnapshot> {
  * 一旦目录消失，写入会持续 ENOENT 失败且没有谁会重新把它建回来。
  */
 export function writeAiMemoryFile(chatId: number, snapshot: AiMemorySnapshot): void {
-  mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  atomicWriteJson(join(AI_MEMORY_DIR, `${chatId}.json`), snapshot);
+  mkdirSync(MEMORY_DIR, { recursive: true });
+  atomicWriteJson(join(MEMORY_DIR, `${chatId}.json`), snapshot);
 }
