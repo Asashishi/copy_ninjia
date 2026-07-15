@@ -155,6 +155,19 @@ function recordSelfInlineResult(message: any, botId: number, botFirstName: strin
 }
 
 /**
+ * ja 模式在本群被关闭（`/ja_copy disable`）时，退化为原样复读而非硬跳过整条
+ * 复读——只是不再调用翻译，复读本身照常发生。`/ja_copy` 指令入口自己已经
+ * 单独拒绝（见 commands/copy.ts），这里覆盖的是另外两处会绕过指令入口直接
+ * 用到 "ja" 模式的路径：沿用中的 /ja_copy 复读会话（disable 只改开关，不会
+ * 主动打断正在进行的会话）、以及随机复读抽中 "ja" 的情形——两处都不经过
+ * copy.ts 的入口检查，之前会无视这个开关继续调用翻译 API。
+ */
+function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefined): CopyMode | undefined {
+  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled === false) return undefined;
+  return mode;
+}
+
+/**
  * 将一条消息复读回它所在的聊天，并按给定模式做文本变换。
  * @param mode 要应用的文本变换（undefined 表示原样复读）。
  * @returns 实际发出去的文本（变换后的文本，或原样复读时的原文），供调用方
@@ -245,7 +258,7 @@ export async function handleIncomingMessage(
 
   // 检查是否需要复读当前目标（用户或频道皮套）的消息
   if (activeCopy && senderId === activeCopy.copiedUser.id) {
-    await echoMessage(chatId, message, activeCopy.copyMode);
+    await echoMessage(chatId, message, resolveEffectiveCopyMode(chatId, activeCopy.copyMode));
     return;
   }
 
@@ -320,7 +333,7 @@ export async function handleIncomingMessage(
   // 互相触发死循环的设计）；普通群消息里自己发的也不会作为更新推送回来，
   // 频道场景的例外由 isBotOwnMessage 挡住（见其注释）。
   if (!isPrivateChat && !activeCopy && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
-    const mode: CopyMode | undefined = pickRandom(RANDOM_ECHO_MODES);
+    const mode: CopyMode | undefined = resolveEffectiveCopyMode(chatId, pickRandom(RANDOM_ECHO_MODES));
     const echoedText: string | undefined = await echoMessage(chatId, message, mode);
     // 同上，自录复读出去的文本（纯媒体复读没有文本可录，保持沉默）。
     if (aiChatEnabled && echoedText !== undefined) {

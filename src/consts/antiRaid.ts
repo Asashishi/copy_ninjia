@@ -13,6 +13,14 @@ export const VERIFICATION_TIMEOUT_MS: number = 90 * 1000;
  * 不是真的验证超时，所以远比 VERIFICATION_TIMEOUT_MS 短。
  */
 export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
+/**
+ * 私密模式秒踢占位遇到新 join 事件时，用来判断"这是同一次物理入群的另一条
+ * 投递（chat_member 更新 + 服务消息，间隔实测毫秒级）"还是"TA 真的重新
+ * 申请了入群"（kickChatMember 踢完立即解封，本就能立刻重进）的分界线。
+ * 远小于 LOCKDOWN_KICK_DEDUPE_MS——那个是占位整体存活时长，这个只区分
+ * 同一次入群的两条腿，见 states/verification.ts 的 handleJoin。
+ */
+export const KICKED_REJOIN_GRACE_MS: number = 5 * 1000;
 /** 验证通过后的欢迎消息在被自动清理前保持可见的时长。 */
 export const WELCOME_AUTO_DELETE_MS: number = 30 * 1000;
 /**

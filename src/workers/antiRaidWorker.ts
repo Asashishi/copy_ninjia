@@ -445,6 +445,7 @@ function handleJoin(msg: NewMemberMessage): void {
     adminCacheFresh: freshAdminIds(chatId) !== undefined,
     lockdownActive: false,
     recentComment: takeRecentComment(chatId, member.id),
+    now: Date.now(),
   };
   if (joinCreatesNewRecord(entryState, event)) {
     recordJoin(chatId);

@@ -127,16 +127,21 @@ export function handleChatMemberUpdate(ctx: Context): void {
   if (!update) return;
 
   const chatId: number = update.chat.id;
+  const user = update.new_chat_member.user;
+  // 自身的成员变动本来走 my_chat_member；这条排除必须放在最前面——万一
+  // Telegram 真的也为机器人自己送来一条 chat_member（比如这次恰好就是自己
+  // 被撤管理员），排在下面 markBotAdminObserved 之后会被误判：那条推理
+  // （"收到别人的 chat_member 就证明自己此刻是管理员"）建立在"这是关于
+  // 别人的更新"之上，套在这条报告自己被撤权的更新上会得出恰好相反的结论。
+  if (user.id === ctx.me.id) return;
+
   // 能收到别人的 chat_member 更新，本身就证明机器人此刻是本群管理员——
   // 顺手记录（见 botAdmin.ts），这条路径无需（也不能）做非管理员门控：
   // 不是管理员时这类更新根本不会送达。
   markBotAdminObserved(chatId);
 
-  const user = update.new_chat_member.user;
   // 机器人不再豁免——僵尸 bot 也会被批量拉进群刷屏，照常走验证（由白名单
-  // 用户代点按钮作保）。只有本天才自己例外：自己的成员变动本来走
-  // my_chat_member，这里只是防御性兜底。
-  if (user.id === ctx.me.id) return;
+  // 用户代点按钮作保）。
   const wasActive: boolean = isActiveChatMember(update.old_chat_member);
   const isActive: boolean = isActiveChatMember(update.new_chat_member);
 

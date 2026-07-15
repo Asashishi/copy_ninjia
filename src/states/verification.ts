@@ -1,3 +1,5 @@
+import { KICKED_REJOIN_GRACE_MS } from "../consts/antiRaid";
+
 /**
  * 入群验证生命周期的显式状态机（纯逻辑，不做任何 I/O、不持有计时器）。
  * 状态按 (chatId, userId) 归属，由 workers/antiRaidWorker.ts 持有并解释执行：
@@ -66,6 +68,9 @@ export interface KickedState {
   kind: "kicked";
   label: string;
   isBot: boolean;
+  /** 本占位创建（踢出）时的时刻，用于在新 join 事件到达时区分"同一次入群的
+   * 另一条投递"与"真的重新入群"，见 KICKED_REJOIN_GRACE_MS。 */
+  kickedAt: number;
 }
 
 export type VerificationState = PendingState | ExemptState | KickedState;
@@ -105,6 +110,9 @@ export interface JoinEvent {
   lockdownActive: boolean;
   /** 本次入群前暂存的评论区留言（Worker 已从暂存区消费，无论本转移用不用都不退回）。 */
   recentComment?: RecentComment;
+  /** 解释器观测到本次投递的时刻，供区分"kicked 占位遇到的新 join 是同一次
+   * 入群的另一条腿，还是真的重新入群"，见 KICKED_REJOIN_GRACE_MS。 */
+  now: number;
 }
 
 export type VerificationEvent =
@@ -207,6 +215,15 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
         state.messageIds.push(event.announcementMessageId);
       }
     }
+    if (state.kind === "kicked" && event.now - state.kickedAt > KICKED_REJOIN_GRACE_MS) {
+      // 距上次踢出已经超过"两路投递同一次入群"的合理误差范围，说明这是
+      // TA 真的重新申请了入群（kickChatMember 踢完立即解封，本就能立刻
+      // 重进）——不是同一次物理入群的第二条投递，得补一次真正的踢人效果。
+      // 返回新对象而非原地改字段：解释器按对象同一性判断要不要换计时器，
+      // 这里就是要换——让这次新入群拥有自己完整的一份去重窗口，覆盖它
+      // 自己两条投递之间的间隔，而不是共用旧占位所剩无几的窗口。
+      return { next: { kind: "kicked", label: state.label, isBot: state.isBot, kickedAt: event.now }, effects: [...effects, { kind: "kickMember" }] };
+    }
     // 两路投递携带的 actor 不保证一致：本路带着拉人者而验证窗口还开着时补挂
     // 异步核查。缓存热时不必挂——resolveJoinExemption 的同步快路径刚查过，
     // 没命中就是真不是管理员。
@@ -226,7 +243,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     // 楼中楼评论触发的自动入群也被秒踢：那条评论按刷群痕迹一并清理。
     if (event.recentComment !== undefined) effects.push({ kind: "deleteMessage", messageId: event.recentComment.messageId });
     effects.push({ kind: "kickMember" });
-    return { next: { kind: "kicked", label: event.label, isBot: event.isBot }, effects };
+    return { next: { kind: "kicked", label: event.label, isBot: event.isBot, kickedAt: event.now }, effects };
   }
 
   const pending: PendingState = {
@@ -355,7 +372,15 @@ function handleTimeoutInviterVerdict(
   state: VerificationState | undefined,
   event: { inviterIsAdmin: boolean; snapshot: ExpelSnapshot }
 ): VerificationTransition {
-  if (!event.inviterIsAdmin) return { next: state, effects: [{ kind: "expel", snapshot: event.snapshot }] };
+  if (!event.inviterIsAdmin) {
+    // 终核等待期间若有新投递重开了记录（比如这段时间里 TA 退群又重新进群），
+    // 说明这份踢人结论已经过期——不能无条件执行 expel，否则会把当前占着
+    // 这个 key 的全新合法状态连坐踢掉（这份新记录本身没被替换过，只是踢人
+    // 副作用不认代际）。只清理旧快照里可能还挂着的提醒，新记录原样保留、
+    // 不重启计时，对称于下方"拉人者确是管理员"分支的处理方式。
+    if (state === undefined) return { next: undefined, effects: [{ kind: "expel", snapshot: event.snapshot }] };
+    return { next: state, effects: [remindersOf(event.snapshot)] };
+  }
   // 拉人者确是管理员：按豁免收尾——只删带按钮的提醒，入群公告和 TA 的发言
   // 都留下（合法成员），也不发踢人通知。终核等待期间若有新投递重开了记录，
   // 不去覆盖它。

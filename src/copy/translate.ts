@@ -34,7 +34,11 @@ export async function translateToJapanese(text: string): Promise<string | null> 
       mimeType: "text/plain",
       targetLanguageCode: "ja",
     });
-    return response.translations?.[0]?.translatedText ?? null;
+    // 空字符串和 null/undefined 同等对待：调用方靠 null 判断"翻译失败，退化
+    // 发原文"，空字符串若被当成"翻译成功"会尝试发一条空消息，被 Telegram
+    // 拒绝，消息就此静默丢失，而不是像真正失败时那样原样转发。
+    const translated: string | null | undefined = response.translations?.[0]?.translatedText;
+    return translated ? translated : null;
   } catch (error: unknown) {
     logger.error("Error translating text to Japanese:", error);
     return null;

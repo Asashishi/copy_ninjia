@@ -359,11 +359,20 @@ export function deleteMessageAfter(chatId: number, messageId: number, delayMs: n
 export async function kickChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<void> {
   try {
     await api.banChatMember(chatId, userId);
-    await api.unbanChatMember(chatId, userId, { only_if_banned: true });
   } catch (error: unknown) {
     // 带上群/用户 id：踢人失败多半是机器人在该群缺封禁权限，不点名群号的话
     // 没法知道该去哪个群补权限。
     logApiError(`kick chat member (chat ${chatId}, user ${userId})`, error);
+    return;
+  }
+  try {
+    await api.unbanChatMember(chatId, userId, { only_if_banned: true });
+  } catch (error: unknown) {
+    // 封禁本身已经生效，只是解封失败：TA 被卡在永久封禁名单里，而不只是
+    // 踢出——比上面那种"根本没踢成"严重得多（那种情形 TA 还在群里，无害），
+    // 必须单独报错，不能和封禁失败混在一条日志里，否则运维看不出这次需要
+    // 去手动解封。
+    logApiError(`unban after kick (chat ${chatId}, user ${userId}) — ban succeeded but unban failed, user is now stuck banned instead of merely kicked`, error);
   }
 }
 
