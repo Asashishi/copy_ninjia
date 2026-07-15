@@ -3,7 +3,8 @@ import { flushDiskIO, loadPersistedData, type LoadedData } from "./src/infra/dis
 import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
-import { acquireSingleInstanceLock, getAllChatStates, getChatState, getGlobalCopyState, loadState } from "./src/infra/storage";
+import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState } from "./src/infra/storage";
+import { shouldPassInitGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { handleAiChatCommand, handleBalanceCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
@@ -47,22 +48,15 @@ async function main(): Promise<void> {
     return next();
   });
 
-  // isInit 网关：见 ChatState.isInit 注释。Bot API 长轮询没有「取消订阅某个
-  // 群」的机制，Telegram 仍会把机器人所在所有群的更新推给这个进程；未通过
-  // /init enable 初始化的群，整条处理链在这里终止——只做一次 Map 查找就丢弃，
-  // 不再往下走 sequentialize、入群验证、指令匹配、AI 调用等任何开销，是应用
-  // 层面能做到的最接近「不监听」的效果，避免被拉进大量群时被拖垮。放在最
-  // 前端（甚至先于 sequentialize），未初始化群的每条更新成本降到最低。放行
-  // 的更新：my_chat_member（机器人自身成员变更，botAdmin.ts 记账用，与本群
-  // 是否初始化无关）、私聊（isInit 只按「群」设计，私聊命令另有过滤器）、以及
-  // /init 指令本身（否则永远没法首次初始化）。
-  bot.use((ctx, next) => {
-    if (ctx.myChatMember) return next();
-    if (!ctx.chat || ctx.chat.type === "private") return next();
-    if (getChatState(ctx.chat.id).isInit === true) return next();
-    if (/^\/init(@\S+)?(\s|$)/.test(ctx.message?.text ?? "")) return next();
-    return;
-  });
+  // isInit 网关：见 ChatState.isInit 注释、判断逻辑见 src/infra/updateGate.ts
+  // 的 shouldPassInitGate（含放行哪些更新的完整说明）。Bot API 长轮询没有
+  // 「取消订阅某个群」的机制，Telegram 仍会把机器人所在所有群的更新推给这个
+  // 进程；未通过 /init enable 初始化的群，整条处理链在这里终止——只做一次
+  // Map 查找就丢弃，不再往下走 sequentialize、入群验证、指令匹配、AI 调用等
+  // 任何开销，是应用层面能做到的最接近「不监听」的效果，避免被拉进大量群时
+  // 被拖垮。放在最前端（甚至先于 sequentialize），未初始化群的每条更新成本
+  // 降到最低。
+  bot.use((ctx, next) => (shouldPassInitGate(ctx) ? next() : undefined));
 
   // runner 会并发处理更新，必须用 sequentialize 约束顺序：消息/命令/成员变动
   // 按 chat 串行——复读消息的先后顺序、入群验证对每个群状态的修改都依赖这一点。

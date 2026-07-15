@@ -5,7 +5,7 @@ import {
   type JoinEvent,
   type PendingState,
   type VerificationState,
-} from "./verification";
+} from "../../src/states/verification";
 
 /** 造一个 join 事件，默认是「自主入群、无豁免、无锁定」，用覆盖项表达各场景。 */
 function joinEvent(overrides: Partial<JoinEvent> = {}): JoinEvent {
