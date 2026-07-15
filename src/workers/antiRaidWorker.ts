@@ -1,5 +1,6 @@
 import { logger } from "../infra/logger";
 import { InlineKeyboard } from "grammy";
+import type { ChatPermissions } from "@grammyjs/types";
 import {
   sendMessage,
   deleteMessage,
@@ -20,50 +21,67 @@ import {
   LINKED_CHANNEL_TTL_MS,
   LOCKDOWN_KICK_DEDUPE_MS,
   LOCKDOWN_MS,
-  RESTORE_RETRY_MS,
   VERIFICATION_BUTTON_TEXT,
   VERIFICATION_TIMEOUT_MS,
   VERIFY_CALLBACK_PREFIX,
   WELCOME_AUTO_DELETE_MS,
 } from "../consts/antiRaid";
 import {
-  activeLockdowns,
   adminFetches,
   chatAdmins,
   joinWindows,
   linkedChannelFetches,
   linkedChannels,
-  pendingVerifications,
+  lockdownEntries,
   recentChannelComments,
+  verificationEntries,
 } from "../cache/antiRaidWorker";
 import type {
   AdoptableLockdown,
   AntiRaidMember,
   AntiRaidWorkerMessage,
-  Lockdown,
   LockdownEvent,
-  PendingVerification,
+  NewMemberMessage,
   TrackedChatMessage,
   UnlockEvent,
   VerifyCallbackMessage,
 } from "../types";
+import {
+  joinCreatesNewRecord,
+  transitionVerification,
+  type ExpelSnapshot,
+  type JoinEvent,
+  type VerificationEffect,
+  type VerificationEvent,
+  type VerificationState,
+} from "../states/verification";
+import {
+  transitionLockdown,
+  type LockdownEffect,
+  type LockdownMachineEvent,
+} from "../states/lockdown";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
- * 主线程（src/auto/message.ts / index.ts → antiRaid.ts 代理）只做事件投递，所有
- * 状态与实际工作都在这里：验证窗口的建立/去重/超时踢人、验证按钮的应答、
- * 入群计数窗口、触发/延长私密模式、私密模式期间的删公告 + 踢人、到期
- * 恢复权限与失败重试。发往 Telegram 的调用不回主线程绕路——本线程
- * import telegram.ts 时会得到自己独立的 grammY Api 客户端（用带限流 +
- * 429 自动重试的 joinVerificationApi，突发的删/踢/发在这里排队，不占用
- * 主线程共享客户端）。error 日志经 logger.ts 的转发模式回传主线程统一落盘。
+ * 主线程（src/auto/message.ts / index.ts → antiRaid.ts 代理）只做事件投递。
  *
- * 验证与反刷群共用状态，因此天然一致：recordJoin 触发私密模式的占位是
- * 同步落地的，同一批投递里越过阈值的那次入群，紧随其后的入群立刻就会
- * 走「直接踢出」分支，没有跨线程的镜像延迟。
+ * 本文件是两台状态机（src/states/verification.ts / lockdown.ts）的
+ * 解释器：把每条投递翻译成状态机事件、同步落下一状态、管理计时器、把
+ * 返回的副作用列表逐个执行。所有「哪些标志组合走哪条分支」的判定都在
+ * 状态机的纯转移函数里，这里只剩 I/O 与线程胶水。关键约定：
+ * - dispatch 里状态更替是同步的，副作用（网络请求）一律事后执行——消息
+ *   按 FIFO 逐条处理，同一波刷屏入群的后续投递不会被网络往返卡住，
+ *   越过阈值那次入群触发的私密模式占位对同批后续入群立即生效。
+ * - 异步回调（提醒落地回填、管理员核查）以「状态对象同一性」识别过期：
+ *   状态一旦被替换/删除，捕获的旧引用对不上，回调自动放弃。
+ *
+ * 发往 Telegram 的调用不回主线程绕路——本线程 import telegram.ts 时会得到
+ * 自己独立的 grammY Api 客户端（用带限流 + 429 自动重试的 joinVerificationApi，
+ * 突发的删/踢/发在这里排队，不占用主线程共享客户端）。error 日志经 logger.ts
+ * 的转发模式回传主线程统一落盘。
  *
  * lockdown/unlock 事件回报主线程用于持久化 + Worker 崩溃后的 adopt 重放，
- * 机制见 antiRaid.ts（待验证记录则随线程丢失：残留的验证按钮点了会得到
+ * 机制见 antiRaid.ts（验证状态则随线程丢失：残留的验证按钮点了会得到
  * 「已失效」应答，重新进群即可）。
  */
 
@@ -117,329 +135,34 @@ function applyAdminChange(chatId: number, userId: number, isAdmin: boolean): voi
   }
 }
 
-// —— 入群验证 ——
+// —— 频道评论区留言的暂存（评论先到、入群更新后到时的关联缓冲） ——
 
 /**
- * 写入一个去重占位记录（窗口时长/用途见 LOCKDOWN_KICK_DEDUPE_MS）：
- * exempt（管理员拉人/身份入群、频道评论豁免）防止后到的那一路重新开验证
- * 窗口；kicked（私密模式下已直接踢出）防止重复计数/重复踢人。
+ * 暂存一条「发言者当前没有验证状态记录」的评论区留言/线程回复，等这条留言
+ * 触发的自动拉群（chat_member 更新可能后到）来消费。同一人连发多条只留
+ * 最新的；直接回复频道帖的标记一旦出现就保持（豁免的确证不被后续楼中楼
+ * 回复降级）。
  */
-function setDedupePlaceholder(
-  key: string,
-  chatId: number,
-  userId: number,
-  label: string,
-  flags: { exempt?: boolean; kicked?: boolean; isBot?: boolean }
-): void {
-  pendingVerifications.set(key, {
-    chatId,
-    userId,
-    label,
-    messageIds: [],
-    timeout: setTimeout(() => pendingVerifications.delete(key), LOCKDOWN_KICK_DEDUPE_MS),
-    ...flags,
+function rememberRecentComment(chatId: number, userId: number, messageId: number, repliesToChannelPost: boolean): void {
+  const key: string = verificationKey(chatId, userId);
+  const existing = recentChannelComments.get(key);
+  if (existing) clearTimeout(existing.cleanup);
+  recentChannelComments.set(key, {
+    messageId,
+    repliesToChannelPost: repliesToChannelPost || existing?.repliesToChannelPost === true,
+    cleanup: setTimeout(() => recentChannelComments.delete(key), COMMENT_JOIN_CORRELATE_MS),
   });
 }
 
-/**
- * 删除某个待验证成员被追踪的所有消息（如果有的话，包括入群公告、机器人的
- * 提醒消息，以及 TA 在等待期间发送的任何内容），将其踢出聊天，并发布一条通知
- * ——此时提到过 TA 的入群公告/提醒消息都已被删除，这条通知是关于谁被移除、
- * 为何被移除的唯一痕迹。在 1 分 30 秒窗口到期、仍未点击验证按钮时执行。
- */
-async function expireVerification(chatId: number, userId: number): Promise<void> {
+/** 消费（取出并删除）某人最近暂存的评论区留言，没有则返回 undefined。 */
+function takeRecentComment(chatId: number, userId: number): { messageId: number; repliesToChannelPost: boolean } | undefined {
   const key: string = verificationKey(chatId, userId);
-  const pending = pendingVerifications.get(key);
-  if (!pending) return; // 已通过验证，或已经因为中途退群等原因被清理掉了
-  pendingVerifications.delete(key);
-
-  // 管理员拉人的异步豁免可能到期了还没落定（管理员表拉取在限流队列里排队，
-  // 或重试后仍然失败）：踢人前最后核对一次拉人者身份。缓存热直接判；缓存
-  // 冷就等一次全量拉取（与在途请求自动合并）。等待期间记录已被删除，迟到
-  // 的撤销回调/按钮点击都会因查不到记录而安全放弃。
-  if (pending.invitedBy !== undefined) {
-    const inviterId: number = pending.invitedBy;
-    const cachedAdmins: Set<number> | undefined = freshAdminIds(chatId);
-    let inviterIsAdmin: boolean = cachedAdmins?.has(inviterId) === true;
-    if (cachedAdmins === undefined) {
-      try {
-        inviterIsAdmin = (await fetchAdminIds(chatId)).has(inviterId);
-      } catch (error: unknown) {
-        logger.error(`Error rechecking admin-invite exemption before expiring verification in chat ${chatId}:`, error);
-      }
-    }
-    if (inviterIsAdmin) {
-      // 拉人者确是管理员：按豁免收尾——只删带按钮的提醒，入群公告和 TA 的
-      // 发言都留下（这是合法成员），也不发踢人通知。等待期间若有新投递重开
-      // 了记录，不去覆盖它。
-      deletePendingReminders(chatId, pending);
-      if (!pendingVerifications.has(key)) {
-        setDedupePlaceholder(key, chatId, userId, pending.label, { exempt: true, isBot: pending.isBot });
-      }
-      return;
-    }
-  }
-
-  for (const messageId of pending.messageIds) {
-    await deleteMessage(chatId, messageId, joinVerificationApi);
-  }
-  await kickChatMember(chatId, userId, joinVerificationApi);
-  const noticeText: string = pending.isBot
-    ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${pending.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
-    : `啧，${pending.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
-  const noticeMessageId: number | undefined = await sendMessage(chatId, noticeText, undefined, joinVerificationApi);
-  if (noticeMessageId !== undefined) {
-    deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
-  }
+  const entry = recentChannelComments.get(key);
+  if (!entry) return undefined;
+  clearTimeout(entry.cleanup);
+  recentChannelComments.delete(key);
+  return { messageId: entry.messageId, repliesToChannelPost: entry.repliesToChannelPost };
 }
-
-/**
- * 给一条真实的待验证记录挂载「拉人者是不是管理员」的异步核查：全量拉取
- * 管理员表（顺手把缓存补热），确认是管理员则撤销验证窗口。首路投递创建
- * 记录时挂载；第二路投递若也带着拉人者（两路的到达顺序和 actor 都不保证
- * 一致）就再挂一次——fetchAdminIds 自带进行中去重，重复挂载只是对同一
- * 结果多检查一遍，先撤销者生效，后到的发现记录已被替换即放弃。
- */
-function scheduleAdminInviteExemption(key: string, pending: PendingVerification, actorId: number): void {
-  void (async (): Promise<void> => {
-    try {
-      const adminIds: Set<number> = await fetchAdminIds(pending.chatId);
-      if (adminIds.has(actorId)) {
-        const current = pendingVerifications.get(key);
-        // 仅在当前验证记录未被其他事件（如离群、点击通过等）更改时进行撤销
-        if (current === pending) {
-          clearTimeout(pending.timeout);
-          pendingVerifications.delete(key);
-          // 撤销已发送的验证提醒消息（原始 + 回复式补发）
-          deletePendingReminders(pending.chatId, pending);
-          // 插入免验证占位记录，防止后续并发事件（如服务消息）重复触发验证
-          setDedupePlaceholder(key, pending.chatId, pending.userId, pending.label, { exempt: true, isBot: pending.isBot });
-        }
-      }
-    } catch (error: unknown) {
-      logger.error(`Error fetching chat admins for admin-invite exemption in chat ${pending.chatId}:`, error);
-    }
-  })();
-}
-
-/**
- * 为新加入的成员启动（如果已在等待中则补充）一个验证窗口。设计上是幂等的：
- * `chat_member` 更新和 `new_chat_members` 服务消息（群组未隐藏入群消息时）
- * 可能针对同一次入群各自独立触发一次投递，后到达的那一次应该只是补充其
- * 消息 ID，而不是重启计时器/再发一次提醒。本函数是同步的：状态占位全部
- * 同步落地，网络请求一律 fire-and-forget——消息按 FIFO 逐条处理，同一波
- * 刷屏入群的后续投递不会被某一次踢人/发消息的网络往返卡住。
- * @param chatId 成员加入的聊天。
- * @param member 新加入的用户（id/username/first_name/isBot），主线程只过滤掉本机器人自身；
- *   其他机器人照常走验证，由白名单用户代点按钮作保（见 handleVerificationCallback）。
- * @param announcementMessageId 若本次投递由 `new_chat_members` 服务消息触发，则为该消息的 ID（用于之后删除）。
- * @param exempt 若为 true，该成员以管理员/群主身份入群（chat_member 路径可见身份），免验证。
- */
-function ensureVerificationStarted(
-  chatId: number,
-  member: AntiRaidMember,
-  announcementMessageId?: number,
-  exempt?: boolean,
-  actorId?: number
-): void {
-  const key: string = verificationKey(chatId, member.id);
-  const existing = pendingVerifications.get(key);
-
-  // 管理员拉人免验证的同步快路径：拉人者在特权白名单里，或命中未过期的
-  // 管理员表缓存，则等同于管理员身份入群的豁免。特意放在私密模式分支之前
-  // ——私密模式期间普通成员本就被禁止拉人，管理员拉进来的人应照常放行。
-  // 缓存没拉取过/已过期时这里不命中：正常模式落到下方的异步兜底去全量
-  // 拉取；私密模式下没有兜底、直接秒踢，靠触发/接管锁定时的缓存预热保证
-  // 锁定期内这里有据可查。
-  if (!exempt && actorId !== undefined && actorId !== member.id) {
-    exempt = PRIVILEGED_USERS_ID.includes(actorId) || freshAdminIds(chatId)?.has(actorId) === true;
-  }
-
-  // TA 刚在频道评论区发过言（留言先于本次 chat_member 更新到达，见
-  // handleTrackedMessage 的暂存）：这次入群正是那条留言触发的自动拉群。
-  // 直接回复频道帖的是确证的真人评论，直接豁免、连验证按钮都不闪；
-  // 楼中楼回复无法确证线程根，走下方的正常验证 + 追发提醒到 TA 的回复下。
-  const recentComment = takeRecentComment(chatId, member.id);
-  const exemptViaChannelComment: boolean = !exempt && recentComment?.repliesToChannelPost === true;
-  if (exemptViaChannelComment) {
-    exempt = true;
-  }
-
-  if (exempt) {
-    // 管理员/群主入群（典型如群主退群重进），不需要验证。new_chat_members
-    // 服务消息不带身份信息，若它先到、已经开了真实验证窗口，在这里撤销并
-    // 删掉提醒消息（提醒若还在限流队列里没落地，回填回调查不到记录会自删）；
-    // 否则留一个豁免占位，防止稍后到达的服务消息重新开一个验证窗口。
-    // TA 的入群公告不删、发言不追踪——这是合法成员。
-    if (existing) {
-      if (existing.kicked || existing.exempt) return;
-      clearTimeout(existing.timeout);
-      pendingVerifications.delete(key);
-      deletePendingReminders(chatId, existing);
-    }
-    setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { exempt: true, isBot: member.isBot });
-    // 直接回复频道帖免验证：回帖本身就是真人操作，虽然不点验证按钮，
-    // 也照样在帖子底下弹一条欢迎消息，让 TA 在频道侧能看到。
-    if (exemptViaChannelComment && recentComment) {
-      sendChannelCommentWelcome(chatId, memberLabel(member), recentComment.messageId);
-    }
-    return;
-  }
-
-  if (existing) {
-    if (announcementMessageId !== undefined) {
-      if (existing.kicked) {
-        // 这个人已经在私密模式下被直接踢出了，这条才姗姗来迟的入群公告/服务
-        // 消息也顺手清理掉，不需要留着等占位记录自然过期。
-        void deleteMessage(chatId, announcementMessageId, joinVerificationApi);
-      } else if (!existing.exempt) {
-        existing.messageIds.push(announcementMessageId);
-      }
-    }
-    // 两路投递的到达顺序与携带的 actor 都不保证一致（比如缺 from 的服务
-    // 消息先到、没能挂上核查）：本路带着拉人者而验证窗口还开着时，给它
-    // 补挂管理员核查，否则这条 return 会把异步豁免的机会掐掉。缓存热时
-    // 不必挂——上方同步快路径刚查过，没命中就是真不是管理员。
-    if (actorId !== undefined && actorId !== member.id && !existing.kicked && !existing.exempt && freshAdminIds(chatId) === undefined) {
-      existing.invitedBy ??= actorId;
-      scheduleAdminInviteExemption(key, existing, actorId);
-    }
-    return;
-  }
-
-  // 反防刷群统计：只在真正新建待验证记录时计数一次，chat_member 更新和
-  // new_chat_members 服务消息若针对同一次入群各自触发投递，不会被重复计数。
-  // 越过阈值时 triggerLockdown 的占位是同步落地的（见其注释），所以紧接着
-  // 的 activeLockdowns 判断对这一次入群本身就已生效。
-  recordJoin(chatId);
-
-  // 群聊当前处于反防刷群触发的私密模式：这波入群高峰大概率还在持续，新成员
-  // 大概率也是刷量的一部分，跳过质询流程直接踢出、不开任何验证窗口
-  // （kickChatMember 只是踢出、不封禁，以防误杀正常用户，之后仍可正常申请
-  // 加入）。管理员拉人只认上方同步快路径的缓存判定——触发/接管私密模式时
-  // 已预热管理员表（见 triggerLockdown / adoptLockdowns），锁定期远短于缓存
-  // TTL，同步判定始终有据可查；评论区楼中楼、缓存没命中的被拉入成员也一律
-  // 秒踢，不再开验证窗口走异步兜底——锁定期内宁可错踢（只踢不封、可重进），
-  // 不给刷子留 90 秒窗口。
-  const invitedByOther: boolean = actorId !== undefined && actorId !== member.id;
-  if (activeLockdowns.has(chatId)) {
-    // 占位记录：必须在任何网络请求之前同步插入，防止同一次入群的另一路
-    // 投递因为查不到 existing 而重新 recordJoin/重新踢一次。
-    setDedupePlaceholder(key, chatId, member.id, memberLabel(member), { kicked: true, isBot: member.isBot });
-
-    void (async (): Promise<void> => {
-      if (announcementMessageId !== undefined) {
-        await deleteMessage(chatId, announcementMessageId, joinVerificationApi);
-      }
-      // 楼中楼评论触发的自动入群也被秒踢：TA 那条评论按刷群痕迹一并清理。
-      if (recentComment !== undefined) {
-        await deleteMessage(chatId, recentComment.messageId, joinVerificationApi);
-      }
-      await kickChatMember(chatId, member.id, joinVerificationApi);
-    })().catch((error: unknown) => {
-      logger.error("Error kicking member during anti-raid lockdown:", error);
-    });
-    return;
-  }
-
-  const pending: PendingVerification = {
-    chatId,
-    userId: member.id,
-    label: memberLabel(member),
-    isBot: member.isBot,
-    invitedBy: invitedByOther ? actorId : undefined,
-    messageIds: announcementMessageId !== undefined ? [announcementMessageId] : [],
-    timeout: setTimeout(() => {
-      void expireVerification(chatId, member.id).catch((error: unknown) => {
-        logger.error("Error expiring join verification:", error);
-      });
-    }, VERIFICATION_TIMEOUT_MS),
-  };
-  pendingVerifications.set(key, pending);
-
-  // 楼中楼回复先到、入群更新后到：把验证提醒追发到 TA 的回复下（频道侧
-  // 看得到按钮），回复本身也补进追踪，验证超时的话一并清理。
-  if (recentComment !== undefined) {
-    pending.messageIds.push(recentComment.messageId);
-    resendReminderReplyingTo(chatId, member.id, recentComment.messageId, true);
-  }
-
-  // 他人拉入群但上面的同步快路径没命中（管理员表缓存没拉取过/已过期）：
-  // 异步全量拉取管理员表兜底——既回答了「拉人者是不是管理员」，也顺手把
-  // 缓存补热，同群的下一次管理员拉人就能走同步快路径、不再闪验证按钮。
-  if (actorId !== undefined && actorId !== member.id) {
-    scheduleAdminInviteExemption(key, pending, actorId);
-  }
-
-  // 评论先到的入群在上面消费 recentComment 时已补发过锚定评论的提醒，
-  // 原始独立提醒不必再发——发出去也会因 reminderSuperseded 在落地时被
-  // 立即自删，白占两次限流配额，还会在群里闪一下。
-  if (pending.reminderSuperseded) return;
-
-  // 提醒消息不等待发送完成：它经过限流的 joinVerificationApi，真实刷群
-  // 场景下若在这里 await，同一波入群投递会逐个排队等发消息，可能导致
-  // 15 秒的反防刷群计数窗口在真正数满阈值之前就先重置——刷群反而检测
-  // 不到。发送结果异步回填 messageIds 即可，不影响后续到期清理。
-  // 机器人看不到这条提醒也点不了按钮（Bot API 不向机器人投递其他机器人的
-  // 消息），提醒是说给群里的白名单用户听的：得有人代它点按钮作保。
-  const reminderText: string = member.isBot
-    ? `哦？谁把 ${memberLabel(member)} 这个机器人拎进来的？铁疙瘩自己可点不了按钮——` +
-      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内得有白名单大人帮它点下面的按钮作保，` +
-      `不然本天才就把这个来路不明的铁皮杂鱼扔出去哦♡`
-    : `喂，${memberLabel(member)}，新来的杂鱼给本天才听好了，` +
-      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
-      `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
-  const verifyKeyboard: InlineKeyboard = new InlineKeyboard().text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${member.id}`);
-  void sendMessage(chatId, reminderText, undefined, joinVerificationApi, verifyKeyboard)
-    .then((reminderMessageId: number | undefined) => {
-      if (reminderMessageId === undefined) return;
-      // reminderSuperseded：这条原始提醒还没落地就已被回复式提醒取代
-      //（TA 抢先开口说话了），落地即自删。
-      if (pendingVerifications.get(key) === pending && !pending.reminderSuperseded) {
-        pending.messageIds.push(reminderMessageId);
-        pending.reminderMessageId = reminderMessageId;
-      } else {
-        // 限流排队太久，提醒消息落地时验证已经结束了（过期清理/通过/中途离群）。
-        // 无论哪种结局，这条迟到的提醒不删的话都会永远留在聊天里，所以直接删掉
-        // （验证通过的场景下，带按钮的验证信息本来也是要删除的）。
-        void deleteMessage(chatId, reminderMessageId, joinVerificationApi);
-      }
-    })
-    .catch((error: unknown) => {
-      logger.error("Error sending join verification reminder:", error);
-    });
-}
-
-/**
- * 取消一个待验证记录——用于该成员已经离开的情况。TA 的入群公告/发言不动
- * （人都走了，不值得再刷一串删除调用），但带验证按钮的提醒必须删掉：
- * 不删就成了永远指向「已失效」的孤儿按钮，长期留在群里。
- */
-function cancelVerification(chatId: number, userId: number): void {
-  const key: string = verificationKey(chatId, userId);
-  const pending = pendingVerifications.get(key);
-  if (pending) {
-    clearTimeout(pending.timeout);
-    pendingVerifications.delete(key);
-    // kicked/exempt 占位没有提醒可删；还没落地的提醒由其回填回调自删。
-    if (!pending.kicked && !pending.exempt) {
-      deletePendingReminders(chatId, pending);
-    }
-  }
-}
-
-/** 追踪某个待验证成员发送的消息，以便验证超时被踢出时能把这些痕迹一并清理掉。 */
-function trackPendingMessage(chatId: number, userId: number, messageId: number): void {
-  const key: string = verificationKey(chatId, userId);
-  const pending = pendingVerifications.get(key);
-  // kicked/exempt 为 true 时这只是去重占位（私密模式踢人后 / 管理员豁免），
-  // 不是真的在等验证。
-  if (!pending || pending.kicked || pending.exempt) return;
-
-  pending.messageIds.push(messageId);
-}
-
-// —— 频道评论区入群的特殊处理 ——
 
 /**
  * 本群有没有关联频道（getChat 的 linked_chat_id），带 TTL 缓存 + 进行中
@@ -467,261 +190,424 @@ function chatHasLinkedChannel(chatId: number): boolean {
   return cached ? cached.hasLinked : true;
 }
 
+// —— 验证状态机解释器 ——
+
+/** pending 起验证超时计时，exempt/kicked 起去重窗口计时（到期事件回投状态机）。 */
+function startVerificationTimer(chatId: number, userId: number, state: VerificationState): ReturnType<typeof setTimeout> {
+  if (state.kind === "pending") {
+    return setTimeout(() => dispatchVerification(chatId, userId, { type: "verifyTimeout" }), VERIFICATION_TIMEOUT_MS);
+  }
+  return setTimeout(() => dispatchVerification(chatId, userId, { type: "dedupeExpired" }), LOCKDOWN_KICK_DEDUPE_MS);
+}
+
 /**
- * 把带验证按钮的提醒以「回复 TA 那条消息」的形式补发一份。两个场景共用：
- * - 评论区的楼中楼回复（inCommentThread=true）：TA 很可能是从频道评论区
- *   留言被自动拉进群的，人在频道侧看不到群里的提醒。楼中楼无法确证线程
- *   根就是频道帖（Bot API 不能按 ID 反查消息），所以不豁免，而是追发到
- *   评论线程里（双向同步，按钮在频道侧可见可点）并重置验证计时。
- * - 群里正常发言（inCommentThread=false）：TA 都开口说话了还没点按钮，
- *   多半压根没注意到原提醒——改锚到 TA 的发言下（回复会给 TA 推通知），
- *   计时不重置。
- * 两个场景都会立刻删除原来那条入群时弹出的独立提醒（补发的这条取代它），
- * 也都不放水：不点照样超时踢人，消息照常追踪清理。
+ * 把一个事件喂给某成员的验证状态机并落地结果。状态更替（含计时器换挡）
+ * 在返回前同步完成；副作用异步执行、不阻塞后续投递。
  */
-function resendReminderReplyingTo(chatId: number, userId: number, targetMessageId: number, inCommentThread: boolean): void {
+function dispatchVerification(chatId: number, userId: number, event: VerificationEvent): void {
   const key: string = verificationKey(chatId, userId);
-  const pending = pendingVerifications.get(key);
-  if (!pending || pending.kicked || pending.exempt || pending.replyReminderRequested) return;
-  pending.replyReminderRequested = true;
-  // 之后的欢迎消息也回复同一条消息，楼中楼场景下才能同样落进评论线程。
-  pending.welcomeAnchorMessageId = targetMessageId;
-
-  // 原提醒被取代，立刻删除。定位按人不按时间：走的是 chatId:userId 键下
-  // pending 记录里存的 reminderMessageId，删的必然是 TA 自己的那条提醒。
-  // 已落地的直接删（顺手从待清理列表去掉，免得过期清理时再对它多打一次
-  // 注定失败的删除调用）；还在限流队列里没落地的，由回填回调按
-  // reminderSuperseded 标记自删。
-  pending.reminderSuperseded = true;
-  if (pending.reminderMessageId !== undefined) {
-    const reminderIndex: number = pending.messageIds.indexOf(pending.reminderMessageId);
-    if (reminderIndex >= 0) pending.messageIds.splice(reminderIndex, 1);
-    void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
-    pending.reminderMessageId = undefined;
+  const entry = verificationEntries.get(key);
+  const { next, effects } = transitionVerification(entry?.state, event);
+  if (next !== entry?.state) {
+    if (entry) clearTimeout(entry.timer);
+    if (next === undefined) {
+      verificationEntries.delete(key);
+    } else {
+      verificationEntries.set(key, { state: next, timer: startVerificationTimer(chatId, userId, next) });
+    }
   }
-
-  let reminderText: string;
-  if (inCommentThread) {
-    clearTimeout(pending.timeout);
-    pending.timeout = setTimeout(() => {
-      void expireVerification(chatId, userId).catch((error: unknown) => {
-        logger.error("Error expiring join verification:", error);
-      });
-    }, VERIFICATION_TIMEOUT_MS);
-    reminderText =
-      `喂，${pending.label}，本天才瞧见你在评论区冒泡了。新来的杂鱼规矩要懂：` +
-      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
-      `不然留言全删、人也一脚踢出去哦♡`;
-  } else {
-    reminderText =
-      `喂，${pending.label}，话都说上了，下面的验证按钮倒是点一下啊杂鱼。` +
-      `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
+  if (effects.length > 0) {
+    void runVerificationEffects(chatId, userId, effects).catch((error: unknown) => {
+      logger.error("Error running join verification effects:", error);
+    });
   }
+}
 
+/** 按序执行一次转移返回的副作用（同一列表内先删后踢再通知的顺序有意义）。 */
+async function runVerificationEffects(chatId: number, userId: number, effects: VerificationEffect[]): Promise<void> {
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case "deleteMessage":
+        await deleteMessage(chatId, effect.messageId, joinVerificationApi);
+        break;
+      case "kickMember":
+        await kickChatMember(chatId, userId, joinVerificationApi);
+        break;
+      case "deleteReminders":
+        if (effect.reminderMessageId !== undefined) await deleteMessage(chatId, effect.reminderMessageId, joinVerificationApi);
+        if (effect.replyReminderMessageId !== undefined) await deleteMessage(chatId, effect.replyReminderMessageId, joinVerificationApi);
+        break;
+      case "expel":
+        await expelMember(chatId, userId, effect.snapshot);
+        break;
+      case "recheckInviter":
+        await recheckInviterThenSettle(chatId, userId, effect.inviterId, effect.snapshot);
+        break;
+      case "sendReminder":
+        sendVerificationReminder(chatId, userId, effect.label, effect.isBot);
+        break;
+      case "sendReplyReminder":
+        sendReplyReminder(chatId, userId, effect.label, effect.targetMessageId, effect.inCommentThread);
+        break;
+      case "sendWelcome": {
+        const welcomeText: string =
+          effect.variant === "channelComment"
+            ? `哼，${effect.targetLabel} 老实巴交的在帖子底下冒个了泡，本天才大发慈悲免了你的验证，欢迎杂鱼入群~♡`
+            : effect.variant === "vouchedBot"
+              ? `哼，既然 ${effect.fromLabel} 大人愿意为机器人 ${effect.targetLabel} 作保，本天才就勉为其难放这个铁疙瘩进来啦~♡`
+              : `哼，算你机灵，${effect.fromLabel} 通过验证啦，欢迎杂鱼入群~♡`;
+        const welcomeMessageId: number | undefined = await sendMessage(chatId, welcomeText, effect.anchorMessageId, joinVerificationApi);
+        if (welcomeMessageId !== undefined) {
+          deleteMessageAfter(chatId, welcomeMessageId, WELCOME_AUTO_DELETE_MS, joinVerificationApi);
+        }
+        break;
+      }
+      case "answerCallback": {
+        const replyText: string | undefined =
+          effect.reply === "ok"
+            ? "验证通过啦～"
+            : effect.reply === "invalid"
+              ? "验证已经失效啦，再试试重新进群吧"
+              : effect.reply === "notYourBotButton"
+                ? "帮机器人作保是白名单大人的特权，杂鱼别乱点～"
+                : "这不是你的验证按钮哦，杂鱼别乱点～";
+        await answerCallbackQuery(effect.callbackQueryId, replyText, effect.reply !== "ok", joinVerificationApi);
+        break;
+      }
+      case "startAdminCheck":
+        startAdminCheck(chatId, userId, effect.actorId);
+        break;
+      case "restartVerifyTimer": {
+        const entry = verificationEntries.get(verificationKey(chatId, userId));
+        if (entry && entry.state.kind === "pending") {
+          clearTimeout(entry.timer);
+          entry.timer = startVerificationTimer(chatId, userId, entry.state);
+        }
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * 两种验证提醒（原始独立 / 回复式补发）共用的发送管线：发送前若捕获到的
+ * 状态已经不是 pending（未验证前被踢、离群、豁免、已通过……），说明这条
+ * 提醒的前提已经不成立，直接放弃发送——不然会给已经不需要验证的成员或
+ * 全群甩出一条过期的「限时验证否则踢出」威胁。
+ * 发送本身不等待完成：它经过限流的 joinVerificationApi，真实刷群场景下若
+ * 在这里 await，同一波入群投递会逐个排队等发消息，可能导致 15 秒的反防
+ * 刷群计数窗口在真正数满阈值之前就先重置——刷群反而检测不到。发送结果以
+ * reminderLanded 事件异步回填；落地时状态已被替换/删除（限流排队太久，
+ * 验证已经结束）则直接自删，迟到的提醒不删的话会永远留在聊天里。
+ * 调用方必须在状态转移的同一 tick 内同步调用（不能排在被 await 的效果
+ * 之后）：这里捕获的 captured 快照才等于转移刚落下的那个状态，落地时的
+ * 同一性比对才有意义，也不会被交错到达的其他投递抢先替换/删除状态。
+ */
+function sendReminderMessage(
+  chatId: number,
+  userId: number,
+  reminderKind: "original" | "reply",
+  text: string,
+  replyToMessageId: number | undefined
+): void {
+  const key: string = verificationKey(chatId, userId);
+  const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
+  if (captured === undefined || captured.kind !== "pending") return;
   const verifyKeyboard: InlineKeyboard = new InlineKeyboard().text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${userId}`);
-  void sendMessage(chatId, reminderText, targetMessageId, joinVerificationApi, verifyKeyboard)
+  void sendMessage(chatId, text, replyToMessageId, joinVerificationApi, verifyKeyboard)
     .then((reminderMessageId: number | undefined) => {
       if (reminderMessageId === undefined) return;
-      if (pendingVerifications.get(key) === pending) {
-        pending.messageIds.push(reminderMessageId);
-        pending.replyReminderMessageId = reminderMessageId;
+      if (verificationEntries.get(key)?.state === captured) {
+        dispatchVerification(chatId, userId, { type: "reminderLanded", reminderKind, messageId: reminderMessageId });
       } else {
-        // 限流排队太久，落地时验证已结束（通过/过期/离群），迟到的提醒自删。
         void deleteMessage(chatId, reminderMessageId, joinVerificationApi);
       }
     })
     .catch((error: unknown) => {
-      logger.error("Error sending follow-up verification reminder:", error);
+      logger.error(`Error sending ${reminderKind} join verification reminder:`, error);
     });
 }
 
 /**
- * 删除某待验证记录名下已落地的提醒消息：原始独立提醒与回复式补发提醒
- * （若有）。原提醒被取代（reminderSuperseded）后 reminderMessageId 已置空、
- * 活着的是 replyReminderMessageId，所有撤销验证的路径都必须两个一起删，
- * 否则带按钮的提醒会成为孤儿永远留在群里。还没落地的不用管——其回填
- * 回调发现验证记录已被替换/删除时会自删。
+ * 发送原始独立提醒（带验证按钮）。机器人看不到这条提醒也点不了按钮
+ * （Bot API 不向机器人投递其他机器人的消息），提醒是说给群里的白名单
+ * 用户听的：得有人代它点按钮作保。
  */
-function deletePendingReminders(chatId: number, pending: PendingVerification): void {
-  if (pending.reminderMessageId !== undefined) {
-    void deleteMessage(chatId, pending.reminderMessageId, joinVerificationApi);
-  }
-  if (pending.replyReminderMessageId !== undefined) {
-    void deleteMessage(chatId, pending.replyReminderMessageId, joinVerificationApi);
-  }
+function sendVerificationReminder(chatId: number, userId: number, label: string, isBot: boolean): void {
+  const reminderText: string = isBot
+    ? `哦？谁把 ${label} 这个机器人拎进来的？铁疙瘩自己可点不了按钮——` +
+      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内得有白名单大人帮它点下面的按钮作保，` +
+      `不然本天才就把这个来路不明的铁皮杂鱼扔出去哦♡`
+    : `喂，${label}，新来的杂鱼给本天才听好了，` +
+      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
+      `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
+  sendReminderMessage(chatId, userId, "original", reminderText, undefined);
 }
 
 /**
- * 直接回复频道帖免验证时，在帖子底下（回复 TA 那条评论）补一条欢迎消息，
- * WELCOME_AUTO_DELETE_MS 后自动清理——不点验证按钮的豁免路径原本没有
- * 任何反馈，TA 完全不知道自己已经通过，补上这条能在频道侧看到的欢迎。
+ * 把带验证按钮的提醒以「回复 TA 那条消息」的形式补发一份（楼中楼场景按钮
+ * 在频道侧可见可点，普通发言场景回复会给 TA 推通知）。
  */
-function sendChannelCommentWelcome(chatId: number, label: string, anchorMessageId: number): void {
-  void sendMessage(chatId, `哼，${label} 老实巴交的在帖子底下冒个了泡，本天才大发慈悲免了你的验证，欢迎杂鱼入群~♡`, anchorMessageId, joinVerificationApi)
-    .then((welcomeMessageId: number | undefined) => {
-      if (welcomeMessageId !== undefined) {
-        deleteMessageAfter(chatId, welcomeMessageId, WELCOME_AUTO_DELETE_MS, joinVerificationApi);
+function sendReplyReminder(chatId: number, userId: number, label: string, targetMessageId: number, inCommentThread: boolean): void {
+  const reminderText: string = inCommentThread
+    ? `喂，${label}，本天才瞧见你在评论区冒泡了。新来的杂鱼规矩要懂：` +
+      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
+      `不然留言全删、人也一脚踢出去哦♡`
+    : `喂，${label}，话都说上了，下面的验证按钮倒是点一下啊杂鱼。` +
+      `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
+  sendReminderMessage(chatId, userId, "reply", reminderText, targetMessageId);
+}
+
+/**
+ * 发起「拉人者是不是管理员」的异步核查：全量拉取管理员表（顺手把缓存补热），
+ * 确认是管理员则把 adminCheckResolved 回投状态机撤销验证窗口。fetchAdminIds
+ * 自带进行中去重，两路投递重复挂载只是对同一结果多检查一遍，先撤销者生效，
+ * 后到的发现状态对象已被替换即放弃。
+ */
+function startAdminCheck(chatId: number, userId: number, actorId: number): void {
+  const key: string = verificationKey(chatId, userId);
+  const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
+  if (captured === undefined || captured.kind !== "pending") return;
+  void fetchAdminIds(chatId)
+    .then((adminIds: Set<number>) => {
+      if (!adminIds.has(actorId)) return;
+      // 仅在验证状态未被其他事件（如离群、点击通过等）更改时进行撤销
+      if (verificationEntries.get(key)?.state === captured) {
+        dispatchVerification(chatId, userId, { type: "adminCheckResolved" });
       }
     })
     .catch((error: unknown) => {
-      logger.error("Error sending channel-comment welcome message:", error);
+      logger.error(`Error fetching chat admins for admin-invite exemption in chat ${chatId}:`, error);
     });
 }
 
 /**
- * 在频道评论区留言的成员免验证：在关联频道的帖子下留言本身就是真人操作
- * （Telegram 正因这次留言才把 TA 自动拉进讨论群），不需要再点按钮自证——
- * 而且 TA 人在频道那侧的评论界面，多半根本看不到群里的验证按钮，硬要求
- * 只会把真人误踢。撤销验证窗口、删掉带按钮的提醒消息，并留一个豁免占位
- * 给可能迟到的 new_chat_members 服务消息去重。TA 已发的消息一概不删——
- * 那是合法的评论；另外在这条评论下补一条欢迎消息，让 TA 知道已经放行。
+ * 超时踢人前对拉人者身份的最后核对：缓存热直接判；缓存冷就等一次全量拉取
+ * （与在途请求自动合并）。此刻验证状态已被删除，迟到的撤销回调/按钮点击都会
+ * 因查不到记录而安全放弃；核对结果以 timeoutInviterVerdict 回投收尾。
  */
-function passVerificationForChannelComment(chatId: number, userId: number, messageId: number): void {
-  const key: string = verificationKey(chatId, userId);
-  const pending = pendingVerifications.get(key);
-  if (!pending || pending.kicked || pending.exempt) return;
-
-  clearTimeout(pending.timeout);
-  deletePendingReminders(chatId, pending);
-  // 覆盖为豁免占位（同管理员拉人免验证）：提醒消息若还在限流队列里没落地，
-  // 其回填回调查到记录已被替换，会把迟到的提醒自删。
-  setDedupePlaceholder(key, chatId, userId, pending.label, { exempt: true });
-  sendChannelCommentWelcome(chatId, pending.label, messageId);
+async function recheckInviterThenSettle(chatId: number, userId: number, inviterId: number, snapshot: ExpelSnapshot): Promise<void> {
+  const cachedAdmins: Set<number> | undefined = freshAdminIds(chatId);
+  let inviterIsAdmin: boolean = cachedAdmins?.has(inviterId) === true;
+  if (cachedAdmins === undefined) {
+    try {
+      inviterIsAdmin = (await fetchAdminIds(chatId)).has(inviterId);
+    } catch (error: unknown) {
+      logger.error(`Error rechecking admin-invite exemption before expiring verification in chat ${chatId}:`, error);
+    }
+  }
+  dispatchVerification(chatId, userId, { type: "timeoutInviterVerdict", inviterIsAdmin, snapshot });
 }
 
 /**
- * 暂存一条「发言者当前没有待验证记录」的评论区留言/线程回复，等这条留言
- * 触发的自动拉群（chat_member 更新可能后到）来消费。同一人连发多条只留
- * 最新的；直接回复频道帖的标记一旦出现就保持（豁免的确证不被后续楼中楼
- * 回复降级）。
+ * 超时未验证的最终收尾：删除被追踪的所有消息（入群公告、提醒、TA 等待期间
+ * 发送的任何内容），将其踢出聊天，并发布一条通知——此时提到过 TA 的消息都
+ * 已被删除，这条通知是关于谁被移除、为何被移除的唯一痕迹。
  */
-function rememberRecentComment(chatId: number, userId: number, messageId: number, repliesToChannelPost: boolean): void {
-  const key: string = verificationKey(chatId, userId);
-  const existing = recentChannelComments.get(key);
-  if (existing) clearTimeout(existing.cleanup);
-  recentChannelComments.set(key, {
-    messageId,
-    repliesToChannelPost: repliesToChannelPost || existing?.repliesToChannelPost === true,
-    cleanup: setTimeout(() => recentChannelComments.delete(key), COMMENT_JOIN_CORRELATE_MS),
-  });
+async function expelMember(chatId: number, userId: number, snapshot: ExpelSnapshot): Promise<void> {
+  for (const messageId of snapshot.messageIds) {
+    await deleteMessage(chatId, messageId, joinVerificationApi);
+  }
+  await kickChatMember(chatId, userId, joinVerificationApi);
+  const noticeText: string = snapshot.isBot
+    ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
+    : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
+  const noticeMessageId: number | undefined = await sendMessage(chatId, noticeText, undefined, joinVerificationApi);
+  if (noticeMessageId !== undefined) {
+    deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
+  }
 }
 
-/** 消费（取出并删除）某人最近暂存的评论区留言，没有则返回 undefined。 */
-function takeRecentComment(chatId: number, userId: number): { messageId: number; repliesToChannelPost: boolean } | undefined {
-  const key: string = verificationKey(chatId, userId);
-  const entry = recentChannelComments.get(key);
-  if (!entry) return undefined;
-  clearTimeout(entry.cleanup);
-  recentChannelComments.delete(key);
-  return { messageId: entry.messageId, repliesToChannelPost: entry.repliesToChannelPost };
+// —— 投递 → 验证状态机事件的翻译 ——
+
+/**
+ * 处理一条入群投递：预计算状态机需要的同步判定输入（豁免来源、管理员缓存
+ * 冷热、暂存的评论），按 joinCreatesNewRecord 决定是否计入刷群统计——
+ * recordJoin 可能同步触发私密模式，lockdownActive 必须在它之后取值，越过
+ * 阈值的那次入群自己才会被秒踢——然后交给状态机。
+ */
+function handleJoin(msg: NewMemberMessage): void {
+  const { chatId, member } = msg;
+  const entryState: VerificationState | undefined = verificationEntries.get(verificationKey(chatId, member.id))?.state;
+  const invitedByOther: boolean = msg.actorId !== undefined && msg.actorId !== member.id;
+  const event: JoinEvent = {
+    type: "join",
+    memberId: member.id,
+    label: memberLabel(member),
+    isBot: member.isBot === true,
+    announcementMessageId: msg.announcementMessageId,
+    actorId: msg.actorId,
+    identityExempt: msg.exempt === true,
+    // 管理员拉人免验证的同步快路径：拉人者在特权白名单里，或命中未过期的
+    // 管理员表缓存。私密模式期间只认这条同步判定（触发/接管锁定时已预热
+    // 缓存），没命中的一律秒踢，不给刷子留验证窗口。
+    actorSyncExempt: invitedByOther && (PRIVILEGED_USERS_ID.includes(msg.actorId!) || freshAdminIds(chatId)?.has(msg.actorId!) === true),
+    adminCacheFresh: freshAdminIds(chatId) !== undefined,
+    lockdownActive: false,
+    recentComment: takeRecentComment(chatId, member.id),
+  };
+  if (joinCreatesNewRecord(entryState, event)) {
+    recordJoin(chatId);
+  }
+  event.lockdownActive = lockdownEntries.has(chatId);
+  dispatchVerification(chatId, member.id, event);
 }
 
 /**
- * 处理一条普通群消息投递：先识别关联频道的评论区活动，再交给消息追踪。
- * 判定只看消息自带信号（外加按群的关联频道开关）：直接回复频道帖（确证
- * 的评论区留言）→ 免验证放行；有关联频道的群里的线程内回复（楼中楼，
- * 无法确证线程根是频道帖）→ 不豁免，把验证提醒追发到 TA 的回复下让频道
- * 侧能看到按钮。两者若先于入群更新到达（顺序不保证），先暂存、入群时
- * 消费。其余消息照常追踪，且待验证成员开口说话时把验证提醒改锚到 TA 的
- * 发言下、删除原提醒。
+ * 处理一条普通群消息投递：先识别关联频道的评论区活动。评论区留言/楼中楼
+ * 回复若先于入群更新到达（两个事件的到达顺序不保证），先暂存、入群时消费；
+ * 已有验证状态的交给状态机（直接回复频道帖 → 豁免；其余 → 追踪 + 提醒改锚）。
  */
 function handleTrackedMessage(msg: TrackedChatMessage): void {
   const inCommentThread: boolean =
     msg.repliesToChannelPost === true ||
     (msg.isThreadReply === true && chatHasLinkedChannel(msg.chatId));
-  if (inCommentThread) {
-    if (!pendingVerifications.has(verificationKey(msg.chatId, msg.userId))) {
-      // 这条留言若正触发自动拉群，其 chat_member 更新可能还没到（两个事件
-      // 的到达顺序不保证）：暂存，入群时由 ensureVerificationStarted 消费。
-      rememberRecentComment(msg.chatId, msg.userId, msg.messageId, msg.repliesToChannelPost === true);
-      return;
-    }
-    if (msg.repliesToChannelPost) {
-      passVerificationForChannelComment(msg.chatId, msg.userId, msg.messageId);
-      return;
-    }
+  if (inCommentThread && !verificationEntries.has(verificationKey(msg.chatId, msg.userId))) {
+    rememberRecentComment(msg.chatId, msg.userId, msg.messageId, msg.repliesToChannelPost === true);
+    return;
   }
-
-  // 楼中楼回复不豁免、普通发言更不豁免：消息照常落进追踪，且待验证成员
-  // 开口即把验证提醒补发为回复 TA 消息的形式（楼中楼进评论线程并重置
-  // 计时，普通发言只改锚），原独立提醒随之删除。
-  trackPendingMessage(msg.chatId, msg.userId, msg.messageId);
-  resendReminderReplyingTo(msg.chatId, msg.userId, msg.messageId, inCommentThread);
+  dispatchVerification(msg.chatId, msg.userId, {
+    type: "trackedMessage",
+    messageId: msg.messageId,
+    inCommentThread,
+    repliesToChannelPost: msg.repliesToChannelPost === true,
+  });
 }
 
-/**
- * 处理入群验证按钮的点击。只有验证记录对应的那个新成员本人点击才算数——
- * 别人点了会得到一个提示气泡，不会帮 TA 通过验证，防止群友手滑帮僵尸端
- * 点开验证。唯一例外：待验证的是个机器人时（机器人永远点不了按钮），
- * PRIVILEGED_USERS_ID 白名单用户可以代它点击作保。验证通过后：删除带
- * 按钮的验证提醒消息，发一条欢迎消息并在 WELCOME_AUTO_DELETE_MS 后自动
- * 清理，不在聊天里留下长期痕迹。
- */
-async function handleVerificationCallback(msg: VerifyCallbackMessage): Promise<void> {
+/** 处理入群验证按钮的点击：翻译成 callback 事件（谁点的、有没有代点资格）交给状态机。 */
+function handleVerificationCallback(msg: VerifyCallbackMessage): void {
   if (msg.chatId === undefined) {
-    await answerCallbackQuery(msg.callbackQueryId, undefined, false, joinVerificationApi);
+    void answerCallbackQuery(msg.callbackQueryId, undefined, false, joinVerificationApi).catch((error: unknown) => {
+      logger.error("Error answering join verification callback:", error);
+    });
     return;
   }
-
-  const key: string = verificationKey(msg.chatId, msg.targetUserId);
-  const pending = pendingVerifications.get(key);
-
-  if (msg.from.id !== msg.targetUserId) {
-    const vouchingForBot: boolean = pending?.isBot === true && PRIVILEGED_USERS_ID.includes(msg.from.id);
-    if (!vouchingForBot) {
-      const rejectText: string = pending?.isBot === true
-        ? "帮机器人作保是白名单大人的特权，杂鱼别乱点～"
-        : "这不是你的验证按钮哦，杂鱼别乱点～";
-      await answerCallbackQuery(msg.callbackQueryId, rejectText, true, joinVerificationApi);
-      return;
-    }
-  }
-
-  if (!pending || pending.kicked || pending.exempt) {
-    await answerCallbackQuery(msg.callbackQueryId, "验证已经失效啦，再试试重新进群吧", true, joinVerificationApi);
-    return;
-  }
-
-  // 状态在任何 await 之前同步清掉：重复点击/并发点击的后到者会走上面的
-  // 「已失效」分支，不会重复发欢迎消息。
-  clearTimeout(pending.timeout);
-  pendingVerifications.delete(key);
-  await answerCallbackQuery(msg.callbackQueryId, "验证通过啦～", false, joinVerificationApi);
-  if (pending.reminderMessageId !== undefined) {
-    await deleteMessage(msg.chatId, pending.reminderMessageId, joinVerificationApi);
-  }
-  if (pending.replyReminderMessageId !== undefined) {
-    await deleteMessage(msg.chatId, pending.replyReminderMessageId, joinVerificationApi);
-  }
-  // 欢迎消息回复补发提醒锚定的那条消息（若有）：楼中楼场景下随之落进
-  // 评论线程，TA 在频道侧也能看到；普通验证（没补发过提醒）则照旧平发。
-  // 机器人是白名单用户代点通过的，msg.from 是作保人而非被验证者，欢迎语
-  // 里两个都要点名。
-  const welcomeText: string = msg.from.id !== msg.targetUserId
-    ? `哼，既然 ${memberLabel(msg.from)} 大人愿意为机器人 ${pending.label} 作保，本天才就勉为其难放这个铁疙瘩进来啦~♡`
-    : `哼，算你机灵，${memberLabel(msg.from)} 通过验证啦，欢迎杂鱼入群~♡`;
-  const welcomeMessageId: number | undefined = await sendMessage(msg.chatId, welcomeText, pending.welcomeAnchorMessageId, joinVerificationApi);
-  if (welcomeMessageId !== undefined) {
-    deleteMessageAfter(msg.chatId, welcomeMessageId, WELCOME_AUTO_DELETE_MS, joinVerificationApi);
-  }
+  dispatchVerification(msg.chatId, msg.targetUserId, {
+    type: "callback",
+    callbackQueryId: msg.callbackQueryId,
+    isSelf: msg.from.id === msg.targetUserId,
+    fromIsPrivileged: PRIVILEGED_USERS_ID.includes(msg.from.id),
+    fromLabel: memberLabel(msg.from),
+  });
 }
 
-// —— 反刷群私密模式 ——
+// —— 私密模式状态机解释器 ——
 
-/** 安排一次到期恢复（或失败重试），返回可被 clearTimeout 的计时器。 */
-function scheduleRestore(chatId: number, delayMs: number): ReturnType<typeof setTimeout> {
-  return setTimeout(() => {
-    void restoreChat(chatId).catch((error: unknown) => {
-      logger.error("Error restoring chat permissions after anti-raid lockdown:", error);
-    });
-  }, delayMs);
+/**
+ * 把一个事件喂给某群的私密模式状态机并落地结果。thresholdExceeded 的占位
+ * 同步生效——recordJoin 调用本函数后，同一批投递里紧随其后的入群立刻就能
+ * 在 handleJoin 里看到 lockdownEntries 有记录。
+ */
+function dispatchLockdown(chatId: number, event: LockdownMachineEvent): void {
+  const entry = lockdownEntries.get(chatId);
+  const { next, effects } = transitionLockdown(entry?.state, event);
+  if (next !== entry?.state) {
+    if (next === undefined) {
+      if (entry) {
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        lockdownEntries.delete(chatId);
+      }
+    } else if (entry) {
+      entry.state = next;
+    } else {
+      lockdownEntries.set(chatId, { state: next, timer: undefined });
+    }
+  }
+  runLockdownEffects(chatId, effects);
+}
+
+/** 执行一次私密模式转移返回的副作用（网络请求 fire-and-forget，结果以事件回投）。 */
+function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case "prefetchAdmins":
+        if (!effect.onlyIfCold || freshAdminIds(chatId) === undefined) {
+          void fetchAdminIds(chatId).catch((error: unknown) => {
+            logger.error(`Error prefetching chat admins for lockdown in chat ${chatId}:`, error);
+          });
+        }
+        break;
+      case "scheduleRestore": {
+        const entry = lockdownEntries.get(chatId);
+        if (!entry) break;
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        entry.timer = setTimeout(() => dispatchLockdown(chatId, { type: "restoreTimerFired" }), effect.delayMs);
+        break;
+      }
+      case "beginApply":
+        beginApplyLockdown(chatId, effect.joinCount);
+        break;
+      case "beginRestore":
+        beginRestoreLockdown(chatId, effect.originalPermissions);
+        break;
+      case "reportLockdown":
+        // 权限已实际落地才回报——镜像里只该出现真正生效了的私密模式，adopt
+        // 重放时「恢复原始权限」才不会把从未改过权限的群改坏。
+        self.postMessage({ type: "lockdown", chatId, originalPermissions: effect.originalPermissions } satisfies LockdownEvent);
+        break;
+      case "reportUnlock":
+        self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
+        break;
+      case "announceLockdown":
+        void sendMessage(
+          chatId,
+          `哼，${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${effect.joinCount} 个杂鱼，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`,
+          undefined,
+          joinVerificationApi
+        );
+        break;
+      case "announceUnlock":
+        void sendMessage(chatId, `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`, undefined, joinVerificationApi);
+        break;
+    }
+  }
 }
 
 /**
- * 记录一次已确认的新成员加入（由 ensureVerificationStarted 在去重后调用）。
- * 滑动窗口：最近 JOIN_WINDOW_MS 内的入群人数超过阈值即触发临时私密模式——
- * 不用「首次入群起算、到点整体清零」的固定桶，是为了防住横跨桶边界的刷群
- * （前桶尾 + 后桶头各塞半个阈值，固定桶永远数不满）。
+ * 异步执行加锁：取当前默认权限、把 can_invite_users 关掉，结果以 applyResult
+ * 回投。真实刷群下这两个调用可能在限流队列里排几分钟，期间占位状态挡住
+ * 重复触发（见状态机注释）。
+ */
+function beginApplyLockdown(chatId: number, joinCount: number): void {
+  void (async (): Promise<void> => {
+    try {
+      const chat = await joinVerificationApi.getChat(chatId);
+      if (!("permissions" in chat) || !chat.permissions) {
+        // permissions 字段对群/超级群实际总会返回，缺失多半是异常响应——
+        // 放弃这次锁定（入群验证的逐个踢人仍在兜底），也不能拿 {} 当"原始
+        // 权限"存进 ACTIVE：到期恢复会把所有省略字段当 false，整群被永久禁言。
+        logger.error(`Chat ${chatId} getChat response missing permissions field, skipping anti-raid lockdown`);
+        dispatchLockdown(chatId, { type: "applyResult", ok: false });
+        return;
+      }
+      const originalPermissions: ChatPermissions = chat.permissions;
+      await joinVerificationApi.setChatPermissions(chatId, { ...originalPermissions, can_invite_users: false });
+      dispatchLockdown(chatId, { type: "applyResult", ok: true, originalPermissions, joinCount });
+    } catch (error: unknown) {
+      logger.error("Error triggering anti-raid lockdown:", error);
+      dispatchLockdown(chatId, { type: "applyResult", ok: false });
+    }
+  })();
+}
+
+/** 异步恢复群组原本的默认权限，结果以 restoreResult 回投（失败由状态机安排重试）。 */
+function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissions): void {
+  void (async (): Promise<void> => {
+    try {
+      await joinVerificationApi.setChatPermissions(chatId, originalPermissions);
+      dispatchLockdown(chatId, { type: "restoreResult", ok: true });
+    } catch (error: unknown) {
+      logger.error(`Failed to restore chat permissions for ${chatId}, retrying shortly:`, error);
+      dispatchLockdown(chatId, { type: "restoreResult", ok: false });
+    }
+  })();
+}
+
+/**
+ * 记录一次已确认的新成员加入（由 handleJoin 按 joinCreatesNewRecord 去重后
+ * 调用）。滑动窗口：最近 JOIN_WINDOW_MS 内的入群人数超过阈值即触发临时
+ * 私密模式——不用「首次入群起算、到点整体清零」的固定桶，是为了防住横跨
+ * 桶边界的刷群（前桶尾 + 后桶头各塞半个阈值，固定桶永远数不满）。
  */
 function recordJoin(chatId: number): void {
   const now: number = Date.now();
@@ -743,131 +629,14 @@ function recordJoin(chatId: number): void {
   window.timestamps.push(now);
 
   if (window.timestamps.length > JOIN_THRESHOLD) {
-    void triggerLockdown(chatId, window.timestamps.length).catch((error: unknown) => {
-      logger.error("Error triggering anti-raid lockdown:", error);
-    });
+    dispatchLockdown(chatId, { type: "thresholdExceeded", joinCount: window.timestamps.length });
   }
 }
 
-/**
- * 禁止群内普通成员拉人（将默认权限中的 can_invite_users 设为 false），
- * LOCKDOWN_MS 后自动恢复原始权限。若群已处于私密模式（说明入群高峰仍在持续），
- * 则只延长恢复计时，不重复调用 setChatPermissions 或重复发通知。
- */
-async function triggerLockdown(chatId: number, joinCount: number): Promise<void> {
-  // 预热管理员表：锁定期内「管理员拉人免验证」只认同步缓存判定（其余一律
-  // 秒踢，不开验证窗口），缓存冷/过期就趁现在拉热。持续刷群会反复触发到
-  // 这里，缓存过期后也能被重新拉热；fetchAdminIds 自带在途去重，不会打爆。
-  if (freshAdminIds(chatId) === undefined) {
-    void fetchAdminIds(chatId).catch((error: unknown) => {
-      logger.error(`Error prefetching chat admins for lockdown in chat ${chatId}:`, error);
-    });
-  }
-
-  const existing = activeLockdowns.get(chatId);
-  if (existing) {
-    clearTimeout(existing.restoreTimeout);
-    existing.restoreTimeout = scheduleRestore(chatId, LOCKDOWN_MS);
-    return;
-  }
-
-  // 先同步占位再发起网络请求：recordJoin 对本函数是 fire-and-forget 调用，
-  // 同一波入群高峰里，getChat/setChatPermissions 落地前可能已有好几次触发
-  // 都跑到这里——若不先占位，它们都会看到"尚未加锁"，导致重复调用 API，
-  // 且各自的 restoreTimeout 会互相覆盖，可能让锁定提前解除。同步占位还让
-  // ensureVerificationStarted 里的 activeLockdowns 判断对同一批入群立即生效。
-  const placeholder: Lockdown = {
-    originalPermissions: {},
-    restoreTimeout: scheduleRestore(chatId, LOCKDOWN_MS),
-    permissionsApplied: false,
-  };
-  activeLockdowns.set(chatId, placeholder);
-
-  try {
-    const chat = await joinVerificationApi.getChat(chatId);
-    placeholder.originalPermissions = ("permissions" in chat && chat.permissions) || {};
-    await joinVerificationApi.setChatPermissions(chatId, { ...placeholder.originalPermissions, can_invite_users: false });
-    placeholder.permissionsApplied = true;
-    // 限制此刻才真正落地：真实刷群下上面两个调用可能在限流队列里排了几分钟，
-    // 占位期的 5 分钟计时可能已耗尽（restoreChat 正以 RESTORE_RETRY_MS 的短
-    // 间隔轮询等着）。从生效时刻重新起算满额 LOCKDOWN_MS，不然锁定可能在
-    // 落地后 30 秒内就被那个轮询解除。
-    clearTimeout(placeholder.restoreTimeout);
-    placeholder.restoreTimeout = scheduleRestore(chatId, LOCKDOWN_MS);
-  } catch (error: unknown) {
-    clearTimeout(placeholder.restoreTimeout);
-    activeLockdowns.delete(chatId);
-    throw error;
-  }
-
-  // 权限已实际落地，此刻才向主线程回报——镜像里只该出现真正生效了的私密
-  // 模式，adopt 重放时「恢复原始权限」才不会把从未改过权限的群改坏。
-  self.postMessage({ type: "lockdown", chatId, originalPermissions: placeholder.originalPermissions } satisfies LockdownEvent);
-
-  await sendMessage(
-    chatId,
-    `哼，${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${joinCount} 个杂鱼，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`,
-    undefined,
-    joinVerificationApi
-  );
-}
-
-/**
- * 私密模式到期后，恢复群组原本的默认权限。
- * 恢复调用成功之前绝不能把 lockdown 记录从 map 里删掉：否则一旦
- * setChatPermissions 失败（网络抖动、429 等），记录没了、无人重试，
- * 群的 can_invite_users 就永久卡在 false，只能等管理员发现后手动救。
- * 失败时保留记录并安排稍后重试；重试期间私密模式仍然生效（unlock 事件
- * 也尚未发出），与「权限实际仍被限制着」的事实一致。
- */
-async function restoreChat(chatId: number): Promise<void> {
-  const lockdown = activeLockdowns.get(chatId);
-  if (!lockdown) return;
-
-  // 还在 triggerLockdown 的占位阶段（真实刷群下 getChat/setChatPermissions
-  // 可能在限流队列里排队数分钟，甚至比 LOCKDOWN_MS 还久）：限制根本没落地，
-  // originalPermissions 还是空对象，绝不能拿去"恢复"——那会把全群权限清零。
-  // 稍后重试，等 triggerLockdown 完成（置位 permissionsApplied）或失败自删。
-  if (!lockdown.permissionsApplied) {
-    clearTimeout(lockdown.restoreTimeout);
-    lockdown.restoreTimeout = scheduleRestore(chatId, RESTORE_RETRY_MS);
-    return;
-  }
-
-  try {
-    await joinVerificationApi.setChatPermissions(chatId, lockdown.originalPermissions);
-  } catch (error: unknown) {
-    logger.error(`Failed to restore chat permissions for ${chatId}, retrying in ${RESTORE_RETRY_MS / 1000}s:`, error);
-    clearTimeout(lockdown.restoreTimeout);
-    lockdown.restoreTimeout = scheduleRestore(chatId, RESTORE_RETRY_MS);
-    return;
-  }
-
-  activeLockdowns.delete(chatId);
-  self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
-  await sendMessage(chatId, `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`, undefined, joinVerificationApi);
-}
-
-/**
- * 接管上一个（已崩溃的）Worker 留下的私密模式（背景见 antiRaid.ts 的
- * onRespawn 注释）。计时从满额 LOCKDOWN_MS 重新起算——崩溃前已过去多久
- * 无从得知，宁可多锁一会儿也不能不解锁。
- */
+/** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid.ts）。 */
 function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
   for (const { chatId, originalPermissions } of lockdowns) {
-    if (activeLockdowns.has(chatId)) continue;
-    // Worker 重启后管理员表缓存是空的，而锁定期内管理员拉人只认同步缓存
-    // 判定：接管时同样预热一次。
-    void fetchAdminIds(chatId).catch((error: unknown) => {
-      logger.error(`Error prefetching chat admins for adopted lockdown in chat ${chatId}:`, error);
-    });
-    // 镜像里只会出现权限已实际落地的私密模式（lockdown 事件在
-    // setChatPermissions 成功后才发），接管的记录直接视为已生效。
-    activeLockdowns.set(chatId, {
-      originalPermissions,
-      restoreTimeout: scheduleRestore(chatId, LOCKDOWN_MS),
-      permissionsApplied: true,
-    });
+    dispatchLockdown(chatId, { type: "adopt", originalPermissions });
   }
 }
 
@@ -875,18 +644,16 @@ self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
   const msg: AntiRaidWorkerMessage = event.data;
   switch (msg.type) {
     case "join":
-      ensureVerificationStarted(msg.chatId, msg.member, msg.announcementMessageId, msg.exempt, msg.actorId);
+      handleJoin(msg);
       break;
     case "left":
-      cancelVerification(msg.chatId, msg.userId);
+      dispatchVerification(msg.chatId, msg.userId, { type: "left" });
       break;
     case "message":
       handleTrackedMessage(msg);
       break;
     case "callback":
-      void handleVerificationCallback(msg).catch((error: unknown) => {
-        logger.error("Error handling join verification callback:", error);
-      });
+      handleVerificationCallback(msg);
       break;
     case "adopt":
       adoptLockdowns(msg.lockdowns);

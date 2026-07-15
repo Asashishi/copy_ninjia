@@ -16,6 +16,7 @@ import {
 import { userRandomReplyTimes } from "../cache/auto";
 import { describeStickerForContext } from "../ai/stickerSets";
 import { pickRandom } from "../libs/random";
+import { isSelfSent } from "../infra/selfSentTracker";
 
 /**
  * 消息自动流水线：复制目标的复读、AI 对话缓存与触发、洗澡「看看」、随机
@@ -85,13 +86,40 @@ function isBotMentioned(message: any, botUsername: string | undefined): boolean 
 }
 
 /**
+ * 判断一条更新是不是机器人自己造成的，命中就要整条跳过自动流水线（不记入
+ * AI 对话缓存、不触发 AI 回复、不随机复读、不洗澡触发），否则会被自己的
+ * 内容再触发一轮，自说自话。两条独立的识别路径：
+ * - 内联结果消息：用户选中 /luckChallenge 的内联结果后，消息以用户本人
+ *   身份发出，但带 via_bot 标记指向本机器人——内容是机器人生成的，不是
+ *   真实对话，不该被当成新话题喂给 AI 或触发随机复读。
+ * - 机器人自己发出的消息回弹：普通群消息 Telegram 不会推回给发送者自己，
+ *   但机器人在自己管理的频道发帖时，channel_post 更新不区分发帖者，会
+ *   原样推回来；转发进关联讨论组的自动转发副本同理（forward_origin 指回
+ *   原帖，is_automatic_forward 标记这是频道→讨论组的自动转发而非用户手动
+ *   转发）。这两种回弹都靠 infra/selfSentTracker.ts 的登记表识别——机器人
+ *   发送时（无论主线程还是哪个 Worker）都会把 chatId/messageId 登记进去，
+ *   见 infra/telegram.ts 的 sendMessage/copyMessage/sendSticker 与
+ *   aiChat.ts 对 Worker "sent" 事件的转登记。
+ */
+function isBotOwnMessage(message: any, botId: number): boolean {
+  if (message.via_bot?.id === botId) return true;
+  if (isSelfSent(message.chat.id, message.message_id)) return true;
+  const origin: any = message.forward_origin;
+  if (message.is_automatic_forward === true && origin?.type === "channel" && isSelfSent(origin.chat.id, origin.message_id)) return true;
+  return false;
+}
+
+/**
  * 将一条消息复读回它所在的聊天，并按给定模式做文本变换。
  * @param mode 要应用的文本变换（undefined 表示原样复读）。
+ * @returns 实际发出去的文本（变换后的文本，或原样复读时的原文），供调用方
+ *   决定要不要自录进 AI 对话缓存（见两处调用点：/copy 锁定目标期间故意不录，
+ *   随机复读会录）；纯媒体消息（没有 text）或发送失败则返回 undefined。
  */
-async function echoMessage(chatId: number, message: any, mode: CopyMode | undefined): Promise<void> {
+async function echoMessage(chatId: number, message: any, mode: CopyMode | undefined): Promise<string | undefined> {
   const text: string = message.text || "";
   // 不复读指令消息，防止指令无限解析
-  if (text.startsWith("/")) return;
+  if (text.startsWith("/")) return undefined;
 
   // 安全校验：只对"纯文本"消息本身做变换（有 text、无 entities、非媒体）；
   // 带格式/链接/@提及的消息一旦被反转或拼接后缀，会破坏 entity 的偏移量，
@@ -109,11 +137,13 @@ async function echoMessage(chatId: number, message: any, mode: CopyMode | undefi
     // 变换后的文本只当作纯文本发送（sendMessage 不带 parse_mode），不会被
     // Telegram 当作 HTML/Markdown 解析，也就不存在把用户输入拼进富文本
     // 导致的格式/链接注入问题。
-    await sendMessage(chatId, transformed);
-  } else {
-    // 无变换模式、非纯文本消息、或变换本身失败（如翻译出错）都退化为原样转发。
-    await copyMessage(chatId, chatId, message.message_id);
+    const sentMessageId: number | undefined = await sendMessage(chatId, transformed);
+    return sentMessageId !== undefined ? transformed : undefined;
   }
+
+  // 无变换模式、非纯文本消息、或变换本身失败（如翻译出错）都退化为原样转发。
+  const copiedMessageId: number | undefined = await copyMessage(chatId, chatId, message.message_id);
+  return copiedMessageId !== undefined && typeof message.text === "string" ? message.text : undefined;
 }
 
 /**
@@ -136,6 +166,9 @@ function hasCopyableContent(message: any): boolean {
  * 正在被复制的目标、且发生在发起 /copy 的那个群里，则将其复读回同一个聊天；
  * 如果本群当前没有复读进行中，则以 RANDOM_ECHO_PROBABILITY 的概率随机挑一种
  * 模式复读这条消息（东一榔头西一棒子地刷存在感）。
+ *
+ * 最前面先过 isBotOwnMessage 这道门：机器人自己造成的更新（内联结果、
+ * 频道自回环）整条跳过，不进入下面任何一步。
  */
 export async function handleIncomingMessage(
   ctx: Context,
@@ -143,6 +176,7 @@ export async function handleIncomingMessage(
 ): Promise<void> {
   const message: any = ctx.msg;
   if (!message) return;
+  if (isBotOwnMessage(message, ctx.me.id)) return;
 
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message, users);
@@ -209,15 +243,28 @@ export async function handleIncomingMessage(
   // echoMessage 的「不复读指令消息」保持一致，不触发。私聊不触发——与 AI
   // 随机插话同理，这些刷存在感的行为都是群聊语境的。
   if (!isPrivateChat && !activeCopy && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= BATH_TRIGGER_MAX_MESSAGE_LENGTH && BATH_TRIGGER_PATTERN.test(message.text)) {
-    await sendMessage(chatId, "看看", message.message_id);
+    const sentMessageId: number | undefined = await sendMessage(chatId, "看看", message.message_id);
+    // 自录进 AI 对话缓存，让模型知道自己刚说过这句——不然它凭空多出一句
+    // 不知道是谁说的「看看」，后续被问起时接不上。isBotOwnMessage 那道门
+    // 只挡自己消息的回弹（频道自回环）重新触发，记忆本身还是要留的
+    // （短期进滚动缓存，随批次轮换自然被压缩进中期摘要，见
+    // aiChatWorker.ts 的 recordChatMessage/scheduleRotation）。
+    if (aiChatEnabled && sentMessageId !== undefined) {
+      recordChatMessage(chatId, ctx.me.id, ctx.me.first_name, "", "看看");
+    }
     return;
   }
 
   // 没有复读对象时的随机复读（私聊不触发，同上）。无需担心和其他机器人形成
   // 复读循环：Telegram 保证机器人收不到其他机器人发的消息（官方为防止 bot
-  // 互相触发死循环的设计），自己发的消息也不会作为更新推送回来。
+  // 互相触发死循环的设计）；普通群消息里自己发的也不会作为更新推送回来，
+  // 频道场景的例外由 isBotOwnMessage 挡住（见其注释）。
   if (!isPrivateChat && !activeCopy && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
     const mode: CopyMode | undefined = pickRandom(RANDOM_ECHO_MODES);
-    await echoMessage(chatId, message, mode);
+    const echoedText: string | undefined = await echoMessage(chatId, message, mode);
+    // 同上，自录复读出去的文本（纯媒体复读没有文本可录，保持沉默）。
+    if (aiChatEnabled && echoedText !== undefined) {
+      recordChatMessage(chatId, ctx.me.id, ctx.me.first_name, "", echoedText);
+    }
   }
 }

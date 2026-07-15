@@ -50,20 +50,22 @@ async function pickSticker(contextText: string): Promise<Sticker | null> {
  * @param chatId 目标聊天 ID。
  * @param contextText 用于匹配情绪/挑选应景贴纸的文本（通常是本次 AI 回复的原文）。
  * @param onSent 贴纸确认发送成功后的回调，参数是这枚贴纸的上下文描述行
- *   （见 describeStickerForContext）——调用方用它把贴纸自录进 AI 对话缓存。
- *   用回调而不是让本模块直接调 aiChat 的 recordChatMessage，是为了避免
- *   stickers.ts 和 workers/aiChatWorker.ts 互相 import 形成循环依赖。
+ *   （见 describeStickerForContext）与发出去那条消息的 ID——调用方用描述行
+ *   把贴纸自录进 AI 对话缓存，用消息 ID 报回主线程登记自发消息（防频道
+ *   自回环，见 infra/selfSentTracker.ts）。用回调而不是让本模块直接调
+ *   aiChat 的 recordChatMessage，是为了避免 stickers.ts 和
+ *   workers/aiChatWorker.ts 互相 import 形成循环依赖。
  */
-export function maybeSendStickerReply(chatId: number, contextText: string, onSent?: (stickerDescription: string) => void): void {
+export function maybeSendStickerReply(chatId: number, contextText: string, onSent?: (stickerDescription: string, messageId: number) => void): void {
   if (config.packs.length === 0) return;
   if (Math.random() >= config.replyStickerProbability) return;
 
   void (async (): Promise<void> => {
     const sticker: Sticker | null = await pickSticker(contextText);
     if (!sticker) return;
-    const sent: boolean = await sendSticker(chatId, sticker.file_id);
-    if (sent && onSent) {
-      onSent(describeStickerForContext(sticker));
+    const sentMessageId: number | undefined = await sendSticker(chatId, sticker.file_id);
+    if (sentMessageId !== undefined && onSent) {
+      onSent(describeStickerForContext(sticker), sentMessageId);
     }
   })().catch((error: unknown) => {
     logger.error("Error in sticker reply task:", error);

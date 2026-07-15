@@ -10,6 +10,7 @@ import {
   JOIN_API_MAX_RETRY_ATTEMPTS,
   JOIN_API_MAX_RETRY_DELAY_SECONDS,
 } from "../consts/telegram";
+import { markSelfSent } from "./selfSentTracker";
 
 export const bot: Bot = new Bot(BOT_TOKEN);
 
@@ -234,6 +235,7 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
       ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId } } : {}),
       ...(keyboard ? { reply_markup: keyboard } : {}),
     });
+    markSelfSent(chatId, sent.message_id);
     return sent.message_id;
   } catch (error: unknown) {
     logApiError("send message", error);
@@ -283,15 +285,17 @@ export async function answerCallbackQuery(callbackQueryId: string, text?: string
  * @param chatId 目标聊天 ID。
  * @param fileId 贴纸的 file_id（来自 getStickerSet 返回的贴纸集合）。
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
- * @returns 发送是否成功——调用方靠它决定要不要把这枚贴纸自录进 AI 对话缓存。
+ * @returns 发送成功时返回该消息的 ID（调用方可用它判断要不要把这枚贴纸自录
+ *   进 AI 对话缓存、报回主线程登记自发消息），失败则返回 undefined。
  */
-export async function sendSticker(chatId: number, fileId: string, api: Api = bot.api): Promise<boolean> {
+export async function sendSticker(chatId: number, fileId: string, api: Api = bot.api): Promise<number | undefined> {
   try {
-    await api.sendSticker(chatId, fileId);
-    return true;
+    const sent = await api.sendSticker(chatId, fileId);
+    markSelfSent(chatId, sent.message_id);
+    return sent.message_id;
   } catch (error: unknown) {
     logApiError("send sticker", error);
-    return false;
+    return undefined;
   }
 }
 
@@ -431,11 +435,15 @@ export async function banChatSenderChat(chatId: number, senderChatId: number, ap
  * @param chatId 目标聊天 ID。
  * @param fromChatId 源聊天 ID。
  * @param messageId 要复制的消息 ID。
+ * @returns 发送成功时返回复制出来那条新消息的 ID，失败则返回 undefined。
  */
-export async function copyMessage(chatId: number, fromChatId: number, messageId: number): Promise<void> {
+export async function copyMessage(chatId: number, fromChatId: number, messageId: number): Promise<number | undefined> {
   try {
-    await bot.api.copyMessage(chatId, fromChatId, messageId);
+    const copied = await bot.api.copyMessage(chatId, fromChatId, messageId);
+    markSelfSent(chatId, copied.message_id);
+    return copied.message_id;
   } catch (error: unknown) {
     logApiError("copy message", error);
+    return undefined;
   }
 }

@@ -1,5 +1,6 @@
 import { superviseWorker } from "./libs/supervisedWorker";
-import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage } from "./types";
+import { markSelfSent } from "./infra/selfSentTracker";
+import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "./types";
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、冷却与
@@ -17,10 +18,19 @@ import type { AiBotInfo, AiChatWorkerMessage, AiInitMessage } from "./types";
 // 新 Worker 等本来就该来的那次 initAiChat 调用即可。
 let lastInit: AiInitMessage | null = null;
 
-const { post } = superviseWorker<AiChatWorkerMessage>({
+const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
   url: new URL("./workers/aiChatWorker.ts", import.meta.url).href,
   label: "AI Worker",
   giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
+  // Worker 报回它刚发出的消息：登记进自发消息表，供自动流水线识别频道
+  // 自回环（见 infra/selfSentTracker.ts）。
+  onEvent: (event) => {
+    switch (event.type) {
+      case "sent":
+        markSelfSent(event.chatId, event.messageId);
+        break;
+    }
+  },
   // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
   onRespawn: (postToNext) => {
     if (lastInit) postToNext(lastInit);

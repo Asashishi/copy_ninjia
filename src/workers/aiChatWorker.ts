@@ -51,7 +51,7 @@ import { maybeSendStickerReply } from "../ai/stickers";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../tools";
 import { getCurrentTime } from "../tools/time";
-import type { AiBotInfo, AiChatWorkerMessage } from "../types";
+import type { AiBotInfo, AiChatWorkerMessage, AiSentMessage } from "../types";
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
@@ -516,7 +516,14 @@ function notifyRateLimited(chatId: number, now: number): void {
   const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
   if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
   rateLimitNoticeTimes.set(chatId, now);
-  void sendMessage(chatId, "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡");
+  void sendMessage(chatId, "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡").then((sentMessageId: number | undefined) => {
+    // 跟其他两处发送一样报回主线程登记自发消息（见 generateAndSendReply 的
+    // sendMessage/maybeSendStickerReply 调用）：这条提示同样可能落在频道，
+    // 漏报的话频道自回环会被当成新内容，触发一轮不必要的 AI 回复/随机复读。
+    if (sentMessageId !== undefined) {
+      self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
+    }
+  });
 }
 
 /**
@@ -624,11 +631,16 @@ function generateAndSendReply(
       // 回复/@ 触发照旧引用第一条。
       const quoteId: number | undefined = !isRandomTrigger && i === 0 ? replyToMessageId : undefined;
       const sentMessageId: number | undefined = await sendMessage(chatId, part, quoteId);
-      // 自己发出去的消息 Telegram 不会作为更新推送回来，不自录的话转录里
-      // 永远缺自己那半边对话。录入后配合 buildUserContent 里的 selfIdentity
-      // 说明，模型才能在上下文中认出自己说过什么。发送失败的不录。
+      // 普通群聊天 Telegram 不会把自己发出去的消息作为更新推送回来，不自录
+      // 的话转录里永远缺自己那半边对话。录入后配合 buildUserContent 里的
+      // selfIdentity 说明，模型才能在上下文中认出自己说过什么。发送失败的不录。
       if (sentMessageId !== undefined) {
         recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", part);
+        // 频道帖是例外：Telegram 会把 channel_post 更新原样推回来，不分是
+        // 谁发的。报回主线程登记进自发消息表，供自动流水线识别出这是自己
+        // 刚发的、整体跳过，不然会被自己的随机回复再触发一轮（见
+        // auto/message.ts 的 isBotOwnMessage）。
+        self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
       }
       if (i < parts.length - 1) {
         // sendMessage 刚发出的那条会让 Telegram 清掉「正在输入…」状态（见
@@ -643,8 +655,9 @@ function generateAndSendReply(
     // 每次 AI 回复（含随机搭话）后，按配置概率附带发一枚应景的白名单贴纸，
     // 见 src/ai/stickers.ts；发成功的贴纸同样以描述行自录进对话缓存，让模型
     // 知道自己刚发过什么贴纸。
-    maybeSendStickerReply(chatId, reply, (stickerDescription: string) => {
+    maybeSendStickerReply(chatId, reply, (stickerDescription: string, stickerMessageId: number) => {
       recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
+      self.postMessage({ type: "sent", chatId, messageId: stickerMessageId } satisfies AiSentMessage);
     });
   })().catch((error: unknown) => {
     logger.error("Error in AI reply task:", error);

@@ -13,3 +13,10 @@ export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;
 /** joinVerificationApi 遇到 429 时的自动重试参数（配合 apiThrottler 排队使用）。 */
 export const JOIN_API_MAX_RETRY_ATTEMPTS: number = 3;
 export const JOIN_API_MAX_RETRY_DELAY_SECONDS: number = 5;
+
+/**
+ * 自发消息登记表（见 infra/selfSentTracker.ts）的存活时长：只需覆盖「发送 →
+ * 更新原样弹回」的往返时间（频道帖自回环、转发进关联讨论组的副本），
+ * 未被命中的登记项到期自动清理，不值得长期占内存。
+ */
+export const SELF_SENT_MESSAGE_TTL_MS: number = 15_000;

@@ -1,82 +1,11 @@
 import type { ChatPermissions } from "@grammyjs/types";
 
-/**
- * 追踪一位尚未通过入群验证的新成员。仅存于 Worker 线程内存中
- * （见 src/workers/antiRaidWorker.ts）——不会在重启后保留。
- */
-export interface PendingVerification {
-  chatId: number;
-  userId: number;
-  /** 入群时捕获的展示用标签，用于踢人公告（提到 TA 的入群公告/提醒消息届时会被删除）。 */
-  label: string;
-  /**
-   * 待验证的是不是一个机器人。机器人既看不到验证提醒也点不了按钮
-   * （Bot API 不向机器人投递其他机器人的消息/按钮），验证只能由
-   * PRIVILEGED_USERS_ID 白名单用户代为点击作保，提醒/超时文案也单独措辞。
-   */
-  isBot?: boolean;
-  /** 验证窗口过期时要删除的消息 ID：入群公告、提醒消息、以及验证期间 TA 发的所有消息。 */
-  messageIds: number[];
-  /** 带验证按钮的提醒消息 ID，验证通过后要把这条消息删掉。 */
-  reminderMessageId?: number;
-  /**
-   * 以「回复 TA 的消息」形式补发的验证提醒的消息 ID（楼中楼回复时追发到
-   * 评论线程里让频道侧可见，群内正常发言时改锚到发言下戳中 TA），验证
-   * 通过后同样要删掉。
-   */
-  replyReminderMessageId?: number;
-  /** 是否已补发过回复式验证提醒——TA 连发多条消息也只补发一次。 */
-  replyReminderRequested?: boolean;
-  /**
-   * 回复式提醒锚定的那条消息（TA 的评论/发言）的 ID。验证通过后的欢迎
-   * 消息也回复它——楼中楼场景下欢迎消息因此落进评论线程，频道侧可见。
-   */
-  welcomeAnchorMessageId?: number;
-  /**
-   * 原始提醒（reminderMessageId）是否已被回复式提醒取代并删除：置位后，
-   * 若原始提醒还在限流队列里没落地，落地时的回填回调会将其直接自删。
-   */
-  reminderSuperseded?: boolean;
-  /**
-   * 若本次入群是被他人拉进来的，记录拉人者的 userId。用于验证到期时的
-   * 最后核对：异步的「拉人者是不是管理员」核查可能到期了还没落定
-   * （管理员表拉取在限流队列里排队/重试失败），踢人前按它再确认一次。
-   */
-  invitedBy?: number;
-  timeout: ReturnType<typeof setTimeout>;
-  /** 占位标记：私密模式下已直接踢出，用途见 LOCKDOWN_KICK_DEDUPE_MS（consts/antiRaid.ts）。 */
-  kicked?: boolean;
-  /**
-   * 若为 true，这是管理员/群主入群（只有 chat_member 更新携带身份）留下的
-   * 豁免占位——管理员不需要验证，占位只用于给稍后可能到达的 new_chat_members
-   * 服务消息去重，防止它重新开一个验证窗口。
-   */
-  exempt?: boolean;
-}
-
 /** 反刷群的入群滑动计数窗口（Worker 线程内存状态）。 */
 export interface JoinWindow {
   /** 最近 JOIN_WINDOW_MS 内每次入群的毫秒时间戳（升序），每次记录时修剪过期项。 */
   timestamps: number[];
   /** 窗口静默满 JOIN_WINDOW_MS 后清理整个条目的计时器，每次入群重置。 */
   resetTimeout: ReturnType<typeof setTimeout>;
-}
-
-/** 一次生效中的反刷群私密模式（Worker 线程内存状态）。 */
-export interface Lockdown {
-  /**
-   * 触发私密模式前的原始默认权限，用于到期后精确恢复——而不是简单把
-   * can_invite_users 设回 true，避免覆盖管理员本来就设置的其他限制。
-   */
-  originalPermissions: ChatPermissions;
-  restoreTimeout: ReturnType<typeof setTimeout>;
-  /**
-   * 限制是否已实际落在群上（triggerLockdown 的 setChatPermissions 成功、
-   * originalPermissions 已是取到的真实权限）。false 说明还是占位阶段——
-   * 此时 originalPermissions 是空对象 {}，restoreChat 绝不能拿它去恢复：
-   * setChatPermissions 会把省略的字段全部当 false，等于把全群禁言。
-   */
-  permissionsApplied: boolean;
 }
 
 /** 某群「是否有关联频道」的缓存条目（Worker 线程内存状态），用于评论区判定的按群开关。 */
