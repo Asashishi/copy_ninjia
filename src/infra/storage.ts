@@ -95,7 +95,7 @@ function persistStateJson(json: string): Promise<void> {
 // 的 lastCopyTime 那样，重建漏了某个字段还一直悄悄漏读/漏写。
 // （GlobalCopyState 没有对应白名单：它的重建带逐字段校验，见 loadState 内，
 // 新增字段时需要手动去那里补校验逻辑。）
-const CHAT_STATE_FIELD_WHITELIST: Record<keyof ChatState, true> = { quietUntil: true, lockdown: true, isUseAIChat: true, isJATranslationEnabled: true, botIsAdmin: true };
+const CHAT_STATE_FIELD_WHITELIST: Record<keyof ChatState, true> = { quietUntil: true, lockdown: true, isUseAIChat: true, isJATranslationEnabled: true, isInit: true, botIsAdmin: true };
 
 /** 全局复读目标的三个字段永远一起写：只设其中一部分会造成「全局占着复读
  * 槽位、却没有任何群在复读」的卡死状态（/copy 处处被拒、复读无处发生）。 */
@@ -171,6 +171,11 @@ export async function loadState(): Promise<void> {
         for (const key of Object.keys(CHAT_STATE_FIELD_WHITELIST) as (keyof ChatState)[]) {
           if (entry[key] !== undefined) (chatState as any)[key] = entry[key];
         }
+        // 迁移：isInit 是新引入的网关字段，state.json 里已有条目的群此前
+        // 一直在正常被处理，缺省网关生效前的旧存量不该被当成"未初始化"
+        // 直接吞掉更新——只有 state.json 里从未出现过、全新拉群的群才会
+        // 保持 isInit undefined，需要显式 /init enable。
+        if (chatState.isInit === undefined) chatState.isInit = true;
         chatStates.set(chatId, chatState);
         // 旧格式迁移：按群维护的复读目标提升为全局的。全局同一时刻只有一个
         // 目标，多个群同时在复读时只保留最先遇到的，其余的记日志后丢弃——

@@ -42,11 +42,24 @@ export interface ChatState {
   isUseAIChat?: boolean;
   /**
    * 本群 /ja_copy 的日语翻译功能是否启用。缺省视为启用，可通过
-   * /ja_trans disable 关闭（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
-   * commands/jaTrans.ts）。与 isUseAIChat 相反，判断时要用 !== false
+   * /ja_copy disable 关闭（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
+   * commands/jaCopy.ts）。与 isUseAIChat 相反，判断时要用 !== false
    * 而非 === true，未设置时才会落在"启用"这一侧。
    */
   isJATranslationEnabled?: boolean;
+  /**
+   * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化（false），
+   * 需通过 /init enable 显式开启（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
+   * commands/init.ts）。state.json 里已有条目的群（此前一直在正常运行）在
+   * loadState() 里会被迁移为 true，只有全新拉群才会真的落在未初始化这一侧
+   * ——见 storage.ts loadState() 内的迁移逻辑。未初始化的群，其更新在
+   * index.ts 最前端的网关中间件
+   * 处直接丢弃（除 /init 本身和机器人自身的 my_chat_member 更新外），不进入
+   * 入群验证、指令匹配、AI 调用等任何后续处理——Bot API 长轮询没有「取消
+   * 订阅某个群」的机制，这是应用层面能做到的最接近「不监听」的效果，避免
+   * 被拉进大量群时被拖垮。
+   */
+  isInit?: boolean;
   /**
    * 机器人自己在本群是否为管理员。由 my_chat_member 更新近实时维护，未知时
    * 按需 getChatMember 现查回填（见 src/infra/botAdmin.ts）。这是入群守卫和

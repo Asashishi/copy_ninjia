@@ -29,7 +29,7 @@ export const PRIVILEGED_USERS_ID: number[] = requireEnv("PRIVILEGED_USERS_ID")
     return id;
   });
 
-/** 唯一可使用 /ai_chat、/ja_trans enable|disable 的用户 ID——独立一批权限，不走 PRIVILEGED_USERS_ID 白名单。 */
+/** 唯一可使用 /ai_chat、/ja_copy enable|disable、/init enable|disable 的用户 ID——独立一批权限，不走 PRIVILEGED_USERS_ID 白名单。 */
 export const SUPER_ADMIN_USER_ID: number = (() => {
   const raw: string = requireEnv("SUPER_ADMIN_USER_ID");
   const id: number = Number(raw);
