@@ -127,7 +127,7 @@ self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
       if (luckWorkerCache.current === null || luckWorkerCache.current.day !== msg.day) {
         luckWorkerCache.current = { day: msg.day, entries: new Map() };
       }
-      luckWorkerCache.current.entries.set(msg.key, msg.label);
+      luckWorkerCache.current.entries.set(msg.key, { label: msg.label, fortunePercent: msg.fortunePercent });
       luckWorkerCache.dirty = true;
       scheduleSnapshotFlush();
       break;

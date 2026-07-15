@@ -10,7 +10,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AiMemorySnapshot, BufferedMessage, LuckDayCache, LuckDayFile } from "../../types";
+import type { AiMemorySnapshot, BufferedMessage, LuckDayCache, LuckDayFile, LuckDrawRecord } from "../../types";
 import { AI_MEMORY_DIR, LUCK_MEMORY_DIR } from "../../consts/paths";
 import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
@@ -136,19 +136,25 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   }
   if (!parsed || typeof parsed !== "object") return null;
   const raw: any = parsed;
-  const entries: Map<string, string> = new Map();
+  const entries: Map<string, LuckDrawRecord> = new Map();
   if (raw.entries && typeof raw.entries === "object") {
     for (const [key, value] of Object.entries(raw.entries)) {
-      // entries 里非字符串值丢弃（结构性校验，不假设未来档位表还是字符串 label）。
-      if (typeof value === "string") entries.set(key, value);
+      // entries 里结构不对的条目丢弃（结构性校验，不假设未来档位表长什么样）；
+      // version 1 遗留的纯字符串 label 同样落在这里，被判定不匹配而丢弃，见
+      // types/diskIO.ts 的 LuckDayFile 注释。
+      if (!value || typeof value !== "object") continue;
+      const v: any = value;
+      if (typeof v.label === "string" && typeof v.fortunePercent === "number") {
+        entries.set(key, { label: v.label, fortunePercent: v.fortunePercent });
+      }
     }
   }
   return { day: todayKey, entries };
 }
 
 /** 整日整份覆盖写入（tmp + rename 原子落盘）。目录重建的理由同 writeAiMemoryFile。 */
-export function writeLuckDayFile(day: string, entries: Map<string, string>): void {
+export function writeLuckDayFile(day: string, entries: Map<string, LuckDrawRecord>): void {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
-  const payload: LuckDayFile = { version: 1, entries: Object.fromEntries(entries) };
+  const payload: LuckDayFile = { version: 2, entries: Object.fromEntries(entries) };
   atomicWriteJson(join(LUCK_MEMORY_DIR, `${day}.json`), payload);
 }

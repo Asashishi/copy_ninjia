@@ -27,8 +27,9 @@ export const dirtyChats: Set<number> = new Set();
 
 // ---- 每日运势 ----
 
-/** 当日运势缓存：day 与 entries（key -> LuckTier.label）。跨天时整体丢弃重建
- *  （旧 day 已是昨日黄花，无需落盘），见 workers/diskIOWorker.ts 处理 luckDraw 消息。 */
+/** 当日运势缓存：day 与 entries（key -> LuckDrawRecord，即 label + fortunePercent）。
+ *  跨天时整体丢弃重建（旧 day 已是昨日黄花，无需落盘），见 workers/diskIOWorker.ts
+ *  处理 luckDraw 消息。 */
 export const luckWorkerCache: { current: LuckDayCache | null; dirty: boolean } = {
   current: null,
   dirty: false,

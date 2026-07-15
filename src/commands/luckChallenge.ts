@@ -13,7 +13,7 @@ import { dailyLuckCache, luckCacheState, recentCallTimestamps } from "../cache/l
 import { logger } from "../infra/logger";
 import { onDiskIORespawn, postDiskIO } from "../infra/diskIO";
 import { getTokyoDateKey } from "../libs/time";
-import type { LuckDayCache, LuckTier } from "../types";
+import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
 
 /**
  * 抽今日运势，仅通过 Telegram 内联模式触发：在任意聊天框里
@@ -28,18 +28,22 @@ import type { LuckDayCache, LuckTier } from "../types";
  *
  * 「查看概率」（不带文本时的第二个结果）显示的不是一张固定给所有人看的
  * 总表，而是查询者今天实际抽到的那个吉凶档对应的行大运（大吉）/ 倒大霉
- * （大凶）概率里数字大的那一个——按档查表得出，该档定了这个数字就定了，
- * 同样"固定"；不重复显示吉凶本身（那是"未卜先知"结果的职责）。还没测过
- * 吉凶就顺带自动测一次（复用同一份缓存，不会跟后续单独测吉凶的结果对不上）。
+ * （大凶）概率里数字大的那一个——具体数值不再是查表就得的定值，而是抽签时
+ * 在该档的 fortunePercentRange 区间内浮动出的随机值（两位小数，见
+ * rollFortunePercent），但一旦抽出就连同吉凶档一起进日缓存/落盘，同一天
+ * 同一把 key 无论重复查询多少次、进程重启多少回，看到的都是同一个数；不
+ * 重复显示吉凶本身（那是"未卜先知"结果的职责）。还没测过吉凶就顺带自动
+ * 测一次（复用同一份缓存，不会跟后续单独测吉凶的结果对不上）。
  *
  * 带文本的查询（把文本当"所求事项"）只测吉凶，不算、也不显示概率。
  *
  * 运势结果按「用户 ID (+ 文本)」缓存，同一天同一把 key 只抽一次，抽到什么
  * 一天内都不会变；不带文本和带文本是两把不同的 key，互不影响。缓存活在
  * 主线程内存里，每天在东京时间零点自然过期（下一次请求触发清空）；新抽到
- * 的结果同时经 postDiskIO 转投 diskIOWorker 落盘（memory/luck/YYYY-MM-DD.json，
- * 按东京日期一个文件），重启后由 restoreLuckCache 灌回，当天结果不因重启
- * 改变；过期文件在写入时发现跨天就删，见 workers/diskIOWorker.ts。
+ * 的结果（吉凶档 label + 浮动出的 fortunePercent，见 LuckDraw）同时经
+ * postDiskIO 转投 diskIOWorker 落盘（memory/luck/YYYY-MM-DD.json，按东京
+ * 日期一个文件），重启后由 restoreLuckCache 灌回，当天结果不因重启改变；
+ * 过期文件在写入时发现跨天就删，见 workers/diskIOWorker.ts。
  */
 
 function ensureCacheFreshForToday(): void {
@@ -59,18 +63,29 @@ function drawLuckTier(roll: number): LuckTier {
   return LUCK_TIERS[LUCK_TIERS.length - 1]!;
 }
 
-function getOrDrawLuckTier(userId: number, text: string | undefined): LuckTier {
+/** 在 tier.fortunePercentRange [min, max] 内均匀浮动出本次抽签的行大运具体
+ * 数值（%），保留两位小数；只在抽到新结果时滚动一次，随 tier 一起进日缓存/
+ * 落盘（见 LuckDraw、getOrDrawLuck），同一天同一 key 之后重复查询取到的
+ * 都是这同一个数，不会每次查询都重新浮动。 */
+function rollFortunePercent([min, max]: [number, number]): number {
+  const raw: number = min + Math.random() * (max - min);
+  return Math.round(raw * 100) / 100;
+}
+
+function getOrDrawLuck(userId: number, text: string | undefined): LuckDraw {
   ensureCacheFreshForToday();
   const cacheKey: string = text ? `${userId}:${text}` : String(userId);
-  const cached: LuckTier | undefined = dailyLuckCache.get(cacheKey);
+  const cached: LuckDraw | undefined = dailyLuckCache.get(cacheKey);
   if (cached) return cached;
 
   const tier: LuckTier = drawLuckTier(Math.floor(Math.random() * 100) + 1);
-  dailyLuckCache.set(cacheKey, tier);
+  const fortunePercent: number = rollFortunePercent(tier.fortunePercentRange);
+  const draw: LuckDraw = { tier, fortunePercent };
+  dailyLuckCache.set(cacheKey, draw);
   // 新抽到的结果才需要落盘（缓存命中不必重发一次一模一样的数据）。
   // day 用刚校准过的 luckCacheState.dayKey，与本次缓存写入用的是同一个"今天"。
-  postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key: cacheKey, label: tier.label });
-  return tier;
+  postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key: cacheKey, label: tier.label, fortunePercent });
+  return draw;
 }
 
 // diskIOWorker 崩溃重建后，把当天缓存整份重发给它：dailyLuckCache 本来就
@@ -83,8 +98,8 @@ function getOrDrawLuckTier(userId: number, text: string | undefined): LuckTier {
 onDiskIORespawn(() => {
   ensureCacheFreshForToday();
   if (dailyLuckCache.size === 0) return;
-  for (const [key, tier] of dailyLuckCache) {
-    postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key, label: tier.label });
+  for (const [key, draw] of dailyLuckCache) {
+    postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key, label: draw.tier.label, fortunePercent: draw.fortunePercent });
   }
 });
 
@@ -93,8 +108,11 @@ onDiskIORespawn(() => {
  * 不一致就整体丢弃——只在东京日期跨天在诊断窗口内发生时才会出现，此时
  * 这份缓存已经是昨天的，没有接管的价值。按 LUCK_TIERS 反查 label 还原成
  * LuckTier 对象，查不到（未来改了档位表）就丢弃该条并记日志，让用户当天
- * 重抽，不硬造对象。必须在 runner 开始投喂 inline_query 之前调用（见
- * index.ts），否则会出现「今天已抽过却又抽出新结果」。
+ * 重抽，不硬造对象；fortunePercent 原样带回、不重新滚动，但要落在该 tier
+ * 当前的 fortunePercentRange 内才收——区间若也在这之间被改过，落盘的旧值
+ * 可能已经不在新区间里，同样丢弃该条记日志，语义与 label 查不到时一致。
+ * 必须在 runner 开始投喂 inline_query 之前调用（见 index.ts），否则会出现
+ * 「今天已抽过却又抽出新结果」。
  */
 export function restoreLuckCache(loaded: LuckDayCache | null): void {
   if (!loaded) return;
@@ -102,21 +120,27 @@ export function restoreLuckCache(loaded: LuckDayCache | null): void {
   if (loaded.day !== todayKey) return;
 
   luckCacheState.dayKey = todayKey;
-  for (const [key, label] of loaded.entries) {
-    const tier: LuckTier | undefined = LUCK_TIERS.find((t) => t.label === label);
+  for (const [key, record] of loaded.entries) {
+    const tier: LuckTier | undefined = LUCK_TIERS.find((t) => t.label === record.label);
     if (!tier) {
-      logger.error(`Restored luck entry "${key}" has label "${label}" that no longer matches any LUCK_TIERS entry; dropping it, the user will redraw today.`);
+      logger.error(`Restored luck entry "${key}" has label "${record.label}" that no longer matches any LUCK_TIERS entry; dropping it, the user will redraw today.`);
       continue;
     }
-    dailyLuckCache.set(key, tier);
+    const [min, max] = tier.fortunePercentRange;
+    if (record.fortunePercent < min || record.fortunePercent > max) {
+      logger.error(`Restored luck entry "${key}" has fortunePercent ${record.fortunePercent} outside tier "${record.label}"'s current range [${min}, ${max}]; dropping it, the user will redraw today.`);
+      continue;
+    }
+    dailyLuckCache.set(key, { tier, fortunePercent: record.fortunePercent });
   }
 }
 
-/** 取行大运/倒大霉里数字大的那个，语义见 LuckTier.fortunePercent。 */
-function pickDominantProbability(tier: LuckTier): { label: string; percent: number } {
-  const misfortunePercent: number = 100 - tier.fortunePercent;
-  const isFortuneHigher: boolean = tier.fortunePercent >= misfortunePercent;
-  return isFortuneHigher ? { label: "行大运", percent: tier.fortunePercent } : { label: "倒大霉", percent: misfortunePercent };
+/** 取行大运/倒大霉里数字大的那个，语义见 LuckDraw.fortunePercent。100 减法后
+ * 重新四舍五入到两位小数，避免浮点减法在两位小数上产生的尾数误差。 */
+function pickDominantProbability(draw: LuckDraw): { label: string; percent: number } {
+  const misfortunePercent: number = Math.round((100 - draw.fortunePercent) * 100) / 100;
+  const isFortuneHigher: boolean = draw.fortunePercent >= misfortunePercent;
+  return isFortuneHigher ? { label: "行大运", percent: draw.fortunePercent } : { label: "倒大霉", percent: misfortunePercent };
 }
 
 /** "我也试试"（原地重开一次内联搜索）+ 可选"同款问题"（原样复用同一段文本，
@@ -131,10 +155,10 @@ function buildRetryKeyboard(text: string | undefined): InlineKeyboard {
   return keyboard;
 }
 
-function buildFortuneResult(tier: LuckTier, userLabel: string, text: string | undefined): InlineQueryResultArticle {
+function buildFortuneResult(draw: LuckDraw, userLabel: string, text: string | undefined): InlineQueryResultArticle {
   const bodyText: string = text
-    ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${tier.label}\n${tier.comment}`
-    : `你好，${userLabel}\n汝的今日运势: ${tier.label}\n${tier.comment}`;
+    ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${draw.tier.label}\n${draw.tier.comment}`
+    : `你好，${userLabel}\n汝的今日运势: ${draw.tier.label}\n${draw.tier.comment}`;
   return InlineQueryResultBuilder.article(text ? "luck-fortune-text" : "luck-fortune", "未卜先知", {
     description: text ? `所求事项：${text}` : "测测你今天的运势",
     reply_markup: buildRetryKeyboard(text),
@@ -142,13 +166,15 @@ function buildFortuneResult(tier: LuckTier, userLabel: string, text: string | un
   }).text(bodyText);
 }
 
-function buildProbabilityResult(tier: LuckTier, userLabel: string): InlineQueryResultArticle {
-  const { label, percent } = pickDominantProbability(tier);
+/** 概率数字固定展示两位小数（toFixed(2)），即便滚动结果恰好落在整数或一位小数上也补齐，
+ * 避免同一档不同次抽签的展示位数忽多忽少。 */
+function buildProbabilityResult(draw: LuckDraw, userLabel: string): InlineQueryResultArticle {
+  const { label, percent } = pickDominantProbability(draw);
   return InlineQueryResultBuilder.article("luck-probability", "概率论！", {
     description: "看看你今天行大运/倒大霉的概率",
     reply_markup: buildRetryKeyboard(undefined),
     thumbnail_url: PROBABILITY_THUMBNAIL_URL,
-  }).text(`你好，${userLabel}\n汝今天${label}概率是 ${percent}%`);
+  }).text(`你好，${userLabel}\n汝今天${label}概率是 ${percent.toFixed(2)}%`);
 }
 
 /** 全局频率限制（见 consts/luckChallenge.ts 的注释）：超限就不再往下算，
@@ -194,10 +220,10 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
 
   // 不带文本时"未卜先知"和"概率论"两个结果说的是同一份吉凶，这里只抽一次、
   // 两处复用，避免重复查表/重复经过每日缓存逻辑。
-  const tier: LuckTier = getOrDrawLuckTier(fromUser.id, text || undefined);
+  const draw: LuckDraw = getOrDrawLuck(fromUser.id, text || undefined);
   const results: InlineQueryResultArticle[] = text
-    ? [buildFortuneResult(tier, userLabel, text)]
-    : [buildFortuneResult(tier, userLabel, undefined), buildProbabilityResult(tier, userLabel)];
+    ? [buildFortuneResult(draw, userLabel, text)]
+    : [buildFortuneResult(draw, userLabel, undefined), buildProbabilityResult(draw, userLabel)];
 
   await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
 }

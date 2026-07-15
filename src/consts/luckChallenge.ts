@@ -2,15 +2,22 @@ import type { LuckTier } from "../types";
 
 /** /luck_challenge 内联抽签（src/commands/luckChallenge.ts）的调参常量。 */
 
-/** 吉凶概率表：越靠两端（大吉/大凶）越稀有，中间几档更常见，仿传统抽签。 */
+/**
+ * 吉凶概率表：越靠两端（大吉/大凶）越稀有，中间几档更常见，仿传统抽签。
+ * fortunePercentRange 是行大运概率的浮动区间（闭区间，%），每次抽到新结果时
+ * 都在区间内重新滚动一次，不再是查表就唯一确定的固定值（见
+ * commands/luckChallenge.ts 的 rollFortunePercent）。区间两两不重叠、按档递减，
+ * 唯独「尚可」横跨 50（45~55）——半吉半凶的档位，行大运/倒大霉谁占上风本就该
+ * 各半，浮动出来偶尔翻面是应有之义。
+ */
 export const LUCK_TIERS: LuckTier[] = [
-  { label: "大吉", weight: 7, comment: "简直要飞升啦，本天才要蹭蹭杂鱼的欧气～♡", fortunePercent: 90 },
-  { label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercent: 75 },
-  { label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercent: 60 },
-  { label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercent: 50 },
-  { label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercent: 40 },
-  { label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercent: 25 },
-  { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercent: 10 },
+  { label: "大吉", weight: 7, comment: "简直要飞升啦，本天才要蹭蹭杂鱼的欧气～♡", fortunePercentRange: [88, 97] },
+  { label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercentRange: [72, 82] },
+  { label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercentRange: [58, 67] },
+  { label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercentRange: [45, 55] },
+  { label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercentRange: [33, 42] },
+  { label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercentRange: [18, 28] },
+  { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: [3, 12] },
 ];
 
 /**
