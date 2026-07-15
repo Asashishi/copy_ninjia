@@ -117,6 +117,52 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(cache.dailyLuckCache.has("888")).toBe(true);
   });
 
+  test("chosen_inline_result 主路：机器人不在场的聊天里选中也能确认落盘", async () => {
+    const ctx = makeInlineCtx(999, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+
+    // Telegram 直推的选中回执：带真实 uid 与查询词，与结果发到哪个聊天无关
+    luckChallenge.handleLuckChosenInlineResult({
+      chosenInlineResult: { result_id: "luck-fortune", from: { id: 999 }, query: "" },
+    } as any);
+
+    expect(postDiskIOMock).toHaveBeenCalledTimes(1);
+    expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "999" });
+  });
+
+  test("chosen_inline_result：带所求事项的选中按「uid:文本」key 确认", async () => {
+    const ctx = makeInlineCtx(1000, "今天买彩票吗");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+
+    luckChallenge.handleLuckChosenInlineResult({
+      chosenInlineResult: { result_id: "luck-fortune-text", from: { id: 1000 }, query: "今天买彩票吗" },
+    } as any);
+
+    expect(postDiskIOMock).toHaveBeenCalledTimes(1);
+    expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "1000:今天买彩票吗" });
+  });
+
+  test("chosen_inline_result 与 via_bot 兜底先后到达：只落盘一次（幂等）", async () => {
+    const ctx = makeInlineCtx(1001, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+    const body: string = bodyTextOf(ctx.results[0]);
+
+    luckChallenge.handleLuckChosenInlineResult({
+      chosenInlineResult: { result_id: "luck-fortune", from: { id: 1001 }, query: "" },
+    } as any);
+    luckChallenge.confirmLuckDraw(body);
+
+    expect(postDiskIOMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("chosen_inline_result：选中限流提示不占今日缓存、不落盘", async () => {
+    luckChallenge.handleLuckChosenInlineResult({
+      chosenInlineResult: { result_id: "luck-rate-limited", from: { id: 1002 }, query: "" },
+    } as any);
+    expect(postDiskIOMock).not.toHaveBeenCalled();
+    expect(cache.dailyLuckCache.size).toBe(0);
+  });
+
   test("只预览不选中：不落盘（confirmLuckDraw 从未被调用）", async () => {
     const ctx = makeInlineCtx(444, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);

@@ -6,7 +6,7 @@ import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState } from "./src/infra/storage";
 import { shouldPassInitGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
+import { handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { flushAiMemory, hydrateAiMemory, initAiChat } from "./src/aiChat";
@@ -111,6 +111,10 @@ async function main(): Promise<void> {
   // 斜杠命令。这个入口需要先在 BotFather 里给机器人开启 Inline Mode，
   // 否则 Telegram 根本不会把 inline_query 更新发过来。
   bot.on("inline_query", (ctx) => handleLuckChallengeInlineQuery(ctx));
+  // 抽签确认主路：用户在任意聊天选中内联结果时 Telegram 直推的回执，
+  // 不依赖机器人在那个聊天在场（需在 BotFather 开 /setinlinefeedback），
+  // 见 commands/luckChallenge.ts 的 handleLuckChosenInlineResult。
+  bot.on("chosen_inline_result", (ctx) => handleLuckChosenInlineResult(ctx));
 
   bot.catch((err) => {
     // GrammyError 会把调用失败时的完整请求体原样挂在 .payload 上；logger 对
@@ -155,7 +159,9 @@ async function main(): Promise<void> {
   // 服务消息根本不会产生，只有 chat_member 这个更新类型不受影响，始终会推送；
   // callback_query 是入群验证按钮点击的信号来源；inline_query 是
   // `@本机器人 ...` 内联模式（/luck_challenge）的信号来源（还需要在
-  // BotFather 里手动开启该开关，光加这里不够）。
+  // BotFather 里手动开启 Inline Mode，光加这里不够）；chosen_inline_result
+  // 是抽签确认落盘的主信号（同样要在 BotFather 用 /setinlinefeedback 开启，
+  // 建议 100%，否则 Telegram 不发这类更新，确认只剩 via_bot 兜底路）。
   // 用 @grammyjs/runner 代替 bot.start()：内建轮询对所有更新全局串行，一条
   // 消息的处理（复读、翻译）会卡住后面的 reaction 更新；runner 按上面的
   // sequentialize 约束并发处理。
@@ -184,7 +190,7 @@ async function main(): Promise<void> {
   const runner: RunnerHandle = run(bot, {
     runner: {
       fetch: {
-        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member", "my_chat_member", "callback_query", "inline_query"],
+        allowed_updates: ["message", "channel_post", "message_reaction", "chat_member", "my_chat_member", "callback_query", "inline_query", "chosen_inline_result"],
       },
     },
   });

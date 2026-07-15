@@ -45,12 +45,20 @@ import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
  * （每敲一下都可能触发一次），用户可能压根没打算测运势、只是消息恰好以
  * @本机器人 开头（比如单纯想 @ 机器人说句话），或者打到一半改主意删掉了。
  * 所以 getOrDrawLuck 在这里抽到的结果只进 pendingLuckDraws（见
- * cache/luckChallenge.ts），不落盘、也不算"今天测过"；真正被用户选中、
- * Telegram 把结果以 via_bot 消息形式发出来（唯一能确认"这条真的发出去了"的
- * 信号，见 auto/message.ts）时，才由 confirmLuckDraw 转正写入 dailyLuckCache
- * 并经 postDiskIO 转投 diskIOWorker 落盘（memory/luck/YYYY-MM-DD.json，按
- * 东京日期一个文件），重启后由 restoreLuckCache 灌回，当天结果不因重启改变；
- * 过期文件在写入时发现跨天就删，见 workers/diskIOWorker.ts。
+ * cache/luckChallenge.ts），不落盘、也不算"今天测过"；真正被用户选中后才
+ * 转正写入 dailyLuckCache 并经 postDiskIO 转投 diskIOWorker 落盘
+ * （memory/luck/YYYY-MM-DD.json，按东京日期一个文件），重启后由
+ * restoreLuckCache 灌回，当天结果不因重启改变；过期文件在写入时发现跨天
+ * 就删，见 workers/diskIO/luckFiles.ts。
+ *
+ * 「被选中」的确认信号有两路，命中任意一路即转正（幂等，重复到达无害）：
+ * - chosen_inline_result 更新（主路，见 handleLuckChosenInlineResult）：
+ *   用户选中结果时 Telegram 直接推给机器人，带真实 uid 和查询词，与结果
+ *   发到哪个聊天无关——机器人不在场的群/私聊里抽的签也能确认落盘。需要
+ *   在 BotFather 用 /setinlinefeedback 开启（建议 100%），否则收不到。
+ * - via_bot 消息回流（兜底，见 auto/message.ts 与 confirmLuckDraw）：只
+ *   覆盖机器人收得到消息的聊天，靠渲染文本认领（马甲/匿名身份发出的消息
+ *   from 不是真人，带不回 uid）。
  */
 
 function ensureCacheFreshForToday(): void {
@@ -120,16 +128,52 @@ function registerPendingRendering(cacheKey: string, renderedText: string): void 
 }
 
 /**
- * via_bot 消息真的送达时（见 auto/message.ts 的 handleIncomingMessage）调用：
- * 说明用户真的选中了某条内联结果并发了出去，这才是「真的触发了一次运势
- * 测试」。用消息原文反查 pendingLuckRenderIndex 找到对应的 cacheKey 与
- * pendingLuckDraws 里的抽签结果，转存进 dailyLuckCache 并经 postDiskIO 落盘。
- * 只认文本、不看消息的 from——用户以频道马甲/匿名管理员身份发出时 from
- * 已被 Telegram 换成马甲，不含真实 uid（见 pendingLuckRenderIndex 注释）；
- * 身份结算依然以 inline 侧登记的 cacheKey（真实 uid）为准，「只能测自己的」
- * 语义不变。查无匹配（消息不是运势结果、或进程恰好在预览和选中之间重启
- * 导致内存态丢失）什么都不做——宁可当天该 key 之后被重新抽一次，也不要
+ * 把一把待确认的抽签转正：pendingLuckDraws -> dailyLuckCache -> postDiskIO
+ * 落盘。两路确认信号（chosen_inline_result / via_bot 文本认领）共用；幂等，
+ * 已转正或查无 pending（消息不是运势结果、或进程恰好在预览和选中之间重启
+ * 导致内存态丢失）都什么都不做——宁可当天该 key 之后被重新抽一次，也不要
  * 凭空落盘一条用户从未真正确认过的记录。
+ */
+function promotePendingDraw(cacheKey: string): void {
+  const draw: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
+  pendingLuckDraws.delete(cacheKey);
+  if (!draw || dailyLuckCache.has(cacheKey)) return;
+
+  dailyLuckCache.set(cacheKey, draw);
+  // day 用刚校准过的 luckCacheState.dayKey，与本次缓存写入用的是同一个"今天"。
+  postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key: cacheKey, label: draw.tier.label, fortunePercent: draw.fortunePercent });
+}
+
+/**
+ * 确认主路：chosen_inline_result 更新（挂在 index.ts 的 chosen_inline_result
+ * 上）。用户在任何聊天里选中内联结果，Telegram 都会把这个更新直接推给
+ * 机器人——带选中者的真实 uid、result_id 和查询词，不依赖机器人在那个
+ * 聊天里收得到消息，也没有马甲身份的问题（选择动作永远来自真人账号）。
+ * cacheKey 直接由 uid + 查询词重建，与预览侧 getOrDrawLuck 的口径一致。
+ * 前提：BotFather 里 /setinlinefeedback 已开启，否则 Telegram 根本不发这
+ * 类更新（此时只剩 via_bot 兜底路，见模块头注释）。
+ */
+export function handleLuckChosenInlineResult(ctx: Context): void {
+  const chosen = ctx.chosenInlineResult;
+  if (!chosen) return;
+  // 限流提示不是抽签结果，选中它不该在今日缓存里占坑。
+  if (chosen.result_id === "luck-rate-limited") return;
+  ensureCacheFreshForToday();
+
+  const text: string = chosen.query.trim();
+  // 「未卜先知」带文本时按「所求事项」区分 key；「概率论」只在无文本时提供，
+  // 与无文本的「未卜先知」共用同一把 key（同一份吉凶），口径同 luckCacheKey。
+  const cacheKey: string = luckCacheKey(chosen.from.id, chosen.result_id === "luck-fortune-text" ? text || undefined : undefined);
+  promotePendingDraw(cacheKey);
+}
+
+/**
+ * 确认兜底路：via_bot 消息真的送达时（见 auto/message.ts 的
+ * handleIncomingMessage）调用。用消息原文反查 pendingLuckRenderIndex 找到
+ * 对应的 cacheKey。只认文本、不看消息的 from——用户以频道马甲/匿名管理员
+ * 身份发出时 from 已被 Telegram 换成马甲，不含真实 uid（见
+ * pendingLuckRenderIndex 注释）；身份结算依然以 inline 侧登记的 cacheKey
+ * （真实 uid）为准，「只能测自己的」语义不变。
  */
 export function confirmLuckDraw(messageText: string | undefined): void {
   if (typeof messageText !== "string") return;
@@ -138,14 +182,7 @@ export function confirmLuckDraw(messageText: string | undefined): void {
   const cacheKey: string | undefined = pendingLuckRenderIndex.get(messageText);
   if (!cacheKey) return;
   pendingLuckRenderIndex.delete(messageText);
-
-  const draw: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
-  pendingLuckDraws.delete(cacheKey);
-  if (!draw || dailyLuckCache.has(cacheKey)) return;
-
-  dailyLuckCache.set(cacheKey, draw);
-  // day 用刚校准过的 luckCacheState.dayKey，与本次缓存写入用的是同一个"今天"。
-  postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key: cacheKey, label: draw.tier.label, fortunePercent: draw.fortunePercent });
+  promotePendingDraw(cacheKey);
 }
 
 // diskIOWorker 崩溃重建后，把当天缓存整份重发给它：dailyLuckCache 本来就

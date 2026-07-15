@@ -12,11 +12,11 @@ export const AI_REPLY_PROBABILITY: number = 1 / 5;
 /** xAI 的 responses 接口（chat completions 在 xAI 已是 legacy，内置
  *  web_search 等服务端工具只在 responses 上提供）。 */
 export const XAI_RESPONSES_API_URL: string = "https://api.x.ai/v1/responses";
-export const XAI_MODEL: string = "grok-4.3";
+export const XAI_MODEL: string = "grok-4.5";
 export const REQUEST_TIMEOUT_MS: number = 90_000;
 
 /**
- * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。grok-4.3 是
+ * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。grok-4.5 是
  * 推理模型，思考内容也计入 max_output_tokens（usage 的
  * output_tokens_details.reasoning_tokens，实测确认）：上限给小了，额度会在
  * 思考阶段就被烧光——请求返回 200 但 status=incomplete、正文为空，表现为
