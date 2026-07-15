@@ -22,27 +22,28 @@ import { mkdirSync } from "node:fs";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import { appendLuckEntries, cleanupStaleLuckFiles, recoverAiMemories, recoverLuckDay, writeAiMemoryFile } from "./diskIO/snapshotFiles";
 import { AI_MEMORY_DIR, LOGS_DIR, LUCK_MEMORY_DIR } from "../consts/paths";
-import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
+import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
 import { getTokyoDateKey } from "../libs/time";
-import { aiMemoryCache, dirtyChats, luckFileState, luckPendingAppends, luckWorkerCache, snapshotFlushState } from "../cache/diskIOWorker";
+import { aiMemoryCache, dirtyChats, luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache, snapshotFlushState } from "../cache/diskIOWorker";
 import type { DiskFlushReply, DiskIOMessage, LoadedReply, LuckDrawRecord } from "../types";
 
 declare var self: Worker;
 
 initLogFiles();
 
-/** 按需启动快照（AI 记忆 + 运势）的定时落盘；已有定时器在跑就不重复排。 */
+/** 按需启动 AI 记忆快照的定时落盘；已有定时器在跑就不重复排。运势有自己
+ *  独立的窗口（见 scheduleLuckFlush），不再共用这一条。 */
 function scheduleSnapshotFlush(): void {
   if (snapshotFlushState.timer !== null) return;
   snapshotFlushState.timer = setTimeout(() => {
     snapshotFlushState.timer = null;
-    flushSnapshots();
+    flushAiMemory();
   }, SNAPSHOT_FLUSH_INTERVAL_MS);
 }
 
-/** 把 dirty 的 AI 记忆快照整份写盘、把运势待追加缓冲追加写盘；失败的那一份
- *  保留待重试状态（dirtyChats 不摘除 / luckPendingAppends 不清空），下轮重试。 */
-function flushSnapshots(): void {
+/** 把 dirty 的 AI 记忆快照整份写盘；单份写失败保留 dirty（不从 dirtyChats
+ *  摘除），下轮重试。 */
+function flushAiMemory(): void {
   for (const chatId of dirtyChats) {
     const snapshot = aiMemoryCache.get(chatId);
     if (!snapshot) {
@@ -57,27 +58,51 @@ function flushSnapshots(): void {
       console.error(`[diskIOWorker] failed to write AI memory snapshot for chat ${chatId}:`, error);
     }
   }
+}
 
-  if (luckPendingAppends.length > 0 && luckWorkerCache.current) {
-    const day: string = luckWorkerCache.current.day;
-    try {
-      appendLuckEntries(day, luckFileState, luckPendingAppends);
-      cleanupStaleLuckFiles(day);
-      luckPendingAppends.length = 0;
-    } catch (error) {
-      console.error(`[diskIOWorker] failed to append luck entries for ${day}:`, error);
-    }
+/** 按需启动运势追加缓冲的定时落盘；已有定时器在跑就不重复排。条数达到
+ *  FLUSH_MAX_ENTRIES 时不经过这个定时器，由调用方直接调 flushLuckAppends
+ *  立即落盘——逻辑与 diskIO/logFiles.ts 的 handleLogMessage/flushLogBuffer
+ *  完全对称，运势和日志现在共用同一套"条数或时间"窗口阈值（见
+ *  consts/diskIO.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS），只是缓冲区、
+ *  定时器、落盘目标各自独立，互不影响。 */
+function scheduleLuckFlush(): void {
+  if (luckFlushTimer.timer !== null) return;
+  luckFlushTimer.timer = setTimeout(() => {
+    luckFlushTimer.timer = null;
+    flushLuckAppends();
+  }, FLUSH_INTERVAL_MS);
+}
+
+/** 把运势待追加缓冲追加写盘（先清掉可能挂起的定时器，避免它日后再触发一次
+ *  空落盘）；失败保留 pending（luckPendingAppends 不清空），下轮重试。 */
+function flushLuckAppends(): void {
+  if (luckFlushTimer.timer !== null) {
+    clearTimeout(luckFlushTimer.timer);
+    luckFlushTimer.timer = null;
+  }
+  if (luckPendingAppends.length === 0 || !luckWorkerCache.current) return;
+  const day: string = luckWorkerCache.current.day;
+  try {
+    appendLuckEntries(day, luckFileState, luckPendingAppends);
+    cleanupStaleLuckFiles(day);
+    luckPendingAppends.length = 0;
+  } catch (error) {
+    console.error(`[diskIOWorker] failed to append luck entries for ${day}:`, error);
   }
 }
 
-/** 统一 flush：三类 dirty 数据全部立即落盘（进程退出前的最后一刷）。 */
+/** 统一 flush：日志缓冲、AI 记忆快照、运势追加缓冲全部立即落盘（进程退出前
+ *  的最后一刷，各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
+ *  该刷的都立即刷）。 */
 function flushAll(): void {
   flushLogBuffer();
   if (snapshotFlushState.timer !== null) {
     clearTimeout(snapshotFlushState.timer);
     snapshotFlushState.timer = null;
   }
-  flushSnapshots();
+  flushAiMemory();
+  flushLuckAppends();
 }
 
 /**
@@ -142,7 +167,11 @@ self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
       const record: LuckDrawRecord = { label: msg.label, fortunePercent: msg.fortunePercent };
       luckWorkerCache.current.entries.set(msg.key, record);
       luckPendingAppends.push({ key: msg.key, record });
-      scheduleSnapshotFlush();
+      if (luckPendingAppends.length >= FLUSH_MAX_ENTRIES) {
+        flushLuckAppends();
+      } else {
+        scheduleLuckFlush();
+      }
       break;
     }
     case "load":

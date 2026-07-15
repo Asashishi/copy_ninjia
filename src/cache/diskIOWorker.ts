@@ -46,7 +46,13 @@ export const luckPendingAppends: LuckPendingEntry[] = [];
  *  日期的文件）；机制与 loggerFileState 相同，见 appendOnlyDayFile.ts。 */
 export const luckFileState: { current: DayFileState | null } = { current: null };
 
-// ---- AI 记忆 / 运势共用的定时落盘 ----
+/** 运势追加缓冲的定时落盘句柄，见 workers/diskIOWorker.ts 的
+ *  scheduleLuckFlush——独立于下面 AI 记忆的 snapshotFlushState，条数/时间
+ *  阈值也不一样（见 consts/diskIO.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS），
+ *  两条互不影响。 */
+export const luckFlushTimer: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
 
-/** 快照（AI 记忆 + 运势）的定时落盘句柄，见 workers/diskIOWorker.ts 的 scheduleSnapshotFlush。 */
+// ---- AI 记忆的定时落盘 ----
+
+/** AI 记忆快照的定时落盘句柄，见 workers/diskIOWorker.ts 的 scheduleSnapshotFlush。 */
 export const snapshotFlushState: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
