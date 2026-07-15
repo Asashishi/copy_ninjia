@@ -6,7 +6,7 @@ import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState } from "./src/infra/storage";
 import { shouldPassInitGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { handleAiChatCommand, handleBalanceCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
+import { handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { flushAiMemory, hydrateAiMemory, initAiChat } from "./src/aiChat";
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     return ctx.chat ? [String(ctx.chat.id)] : [];
   }));
 
-  // 私聊里不触发任何命令（/copy 系、/stop_copy /kick /balance /quiet 等全部）：这些
+  // 私聊里不触发任何命令（/copy 系、/stop_copy /kick /quiet 等全部）：这些
   // 指令都是围绕群聊状态设计的（复读目标、群内踢人、群内静默），私聊语境下
   // 没有意义，也免得被人在 DM 里瞎捣鼓。放在命令处理器注册之前，直接吞掉
   // 这类更新，不再往下传给任何处理器。
@@ -99,7 +99,6 @@ async function main(): Promise<void> {
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.command("ai_chat", (ctx) => handleAiChatCommand(ctx));
   bot.command("init", (ctx) => handleInitCommand(ctx));
-  bot.command("balance", (ctx) => handleBalanceCommand(ctx));
   bot.command("quiet", (ctx) => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx) => handleUnquietCommand(ctx));
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users));
@@ -140,7 +139,6 @@ async function main(): Promise<void> {
       { command: "kick", description: "在所有本天才管理的群里踢出并封禁（仅白名单用户可用）" },
       { command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" },
       { command: "init", description: "开关本群的机器人监听/初始化，enable/disable（仅限定用户可用）" },
-      { command: "balance", description: "AI 余额查询说明（xAI 不提供查询接口）" },
       { command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" },
       { command: "unquiet", description: "提前解除 /quiet 静默" },
     ]);
