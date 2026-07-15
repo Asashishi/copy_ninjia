@@ -86,27 +86,71 @@ function isBotMentioned(message: any, botUsername: string | undefined): boolean 
 }
 
 /**
- * 判断一条更新是不是机器人自己造成的，命中就要整条跳过自动流水线（不记入
- * AI 对话缓存、不触发 AI 回复、不随机复读、不洗澡触发），否则会被自己的
- * 内容再触发一轮，自说自话。两条独立的识别路径：
- * - 内联结果消息：用户选中 /luckChallenge 的内联结果后，消息以用户本人
- *   身份发出，但带 via_bot 标记指向本机器人——内容是机器人生成的，不是
- *   真实对话，不该被当成新话题喂给 AI 或触发随机复读。
- * - 机器人自己发出的消息回弹：普通群消息 Telegram 不会推回给发送者自己，
- *   但机器人在自己管理的频道发帖时，channel_post 更新不区分发帖者，会
- *   原样推回来；转发进关联讨论组的自动转发副本同理（forward_origin 指回
- *   原帖，is_automatic_forward 标记这是频道→讨论组的自动转发而非用户手动
- *   转发）。这两种回弹都靠 infra/selfSentTracker.ts 的登记表识别——机器人
- *   发送时（无论主线程还是哪个 Worker）都会把 chatId/messageId 登记进去，
- *   见 infra/telegram.ts 的 sendMessage/copyMessage/sendSticker 与
- *   aiChat.ts 对 Worker "sent" 事件的转登记。
+ * 判断一条消息的文本里是否 @ 了机器人自己以外的某个用户。逻辑与 isBotMentioned
+ * 对称（同样只认 entities 里的 "mention" 类型），排除掉的那一个就是机器人自己：
+ * 消息里 @ 别人，大概率是在跟那个人说话，不是在给机器人递话头，随机搭话
+ * 贸然插进去会很突兀，所以只用来抑制 isRandomTrigger（见下方调用点），不影响
+ * 「回复机器人」「@ 机器人」这两条本就明确指向机器人的必回路径——这两种
+ * 情况即便消息里同时 @ 了别人，机器人被叫到也该照常回。
+ */
+function mentionsOtherUser(message: any, botUsername: string | undefined): boolean {
+  if (typeof message.text !== "string") return false;
+  const entities: any[] | undefined = message.entities;
+  if (!entities) return false;
+  const botTarget: string | undefined = botUsername ? `@${botUsername}`.toLowerCase() : undefined;
+  for (const entity of entities) {
+    if (entity.type === "mention") {
+      const mentionText: string = message.text.substring(entity.offset, entity.offset + entity.length).toLowerCase();
+      if (mentionText !== botTarget) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 判断一条更新是不是机器人自己发出的消息原样回弹，命中就要整条跳过自动
+ * 流水线（不记入 AI 对话缓存、不触发 AI 回复、不随机复读、不洗澡触发），
+ * 否则会被自己的内容再触发一轮，自说自话。
+ *
+ * 内联结果消息（如 /luck_challenge 的 via_bot 消息）不走这里，是更早一步
+ * 单独识别、单独处理的，见 handleIncomingMessage 顶部与 recordSelfInlineResult：
+ * 那类消息虽然也是机器人生成的内容，但要自录入 AI 对话缓存（让模型知道
+ * 自己刚说过这句话），只是不该触发主动行为，语义和这里的「纯回弹去重」
+ * 不同，不能合并成一条 true/false。
+ *
+ * 普通群消息 Telegram 不会推回给发送者自己，但机器人在自己管理的频道发帖
+ * 时，channel_post 更新不区分发帖者，会原样推回来；转发进关联讨论组的
+ * 自动转发副本同理（forward_origin 指回原帖，is_automatic_forward 标记这是
+ * 频道→讨论组的自动转发而非用户手动转发）。这两种回弹都靠
+ * infra/selfSentTracker.ts 的登记表识别——机器人发送时（无论主线程还是哪个
+ * Worker）都会把 chatId/messageId 登记进去，见 infra/telegram.ts 的
+ * sendMessage/copyMessage/sendSticker 与 aiChat.ts 对 Worker "sent" 事件的
+ * 转登记。
  */
 function isBotOwnMessage(message: any, botId: number): boolean {
-  if (message.via_bot?.id === botId) return true;
   if (isSelfSent(message.chat.id, message.message_id)) return true;
   const origin: any = message.forward_origin;
   if (message.is_automatic_forward === true && origin?.type === "channel" && isSelfSent(origin.chat.id, origin.message_id)) return true;
   return false;
+}
+
+/**
+ * 内联结果消息（如 /luck_challenge 抽到的运势/概率文本）的自录：用 botId/
+ * botFirstName 当发言人、lastName 留空，与「看看」/随机复读的自录手法一致
+ * （见 handleIncomingMessage 底部两处 recordChatMessage 调用），让 AI 认得出
+ * 这是自己刚说过的话，被问起时能接上，而不是凭空冒出一句不知道是谁说的
+ * 运势结果。gate 条件对齐其它记录点：私聊、复制目标进行中、本群未开 AI
+ * 闲聊都不录；调用方拿到后无论是否录成都会直接 return，不触发下面任何
+ * 主动行为（不复读、不触发 AI 回复、不洗澡）——这部分行为本就靠
+ * isBotOwnMessage 之前的提前返回保证，这里只负责「要不要留个记忆」。
+ */
+function recordSelfInlineResult(message: any, botId: number, botFirstName: string): void {
+  if (message.chat.type === "private") return;
+  if (typeof message.text !== "string") return;
+  const chatId: number = message.chat.id;
+  if (getActiveCopyIn(chatId)) return;
+  if (getChatState(chatId).isUseAIChat !== true) return;
+  recordChatMessage(chatId, botId, botFirstName, "", message.text);
 }
 
 /**
@@ -167,8 +211,11 @@ function hasCopyableContent(message: any): boolean {
  * 如果本群当前没有复读进行中，则以 RANDOM_ECHO_PROBABILITY 的概率随机挑一种
  * 模式复读这条消息（东一榔头西一棒子地刷存在感）。
  *
- * 最前面先过 isBotOwnMessage 这道门：机器人自己造成的更新（内联结果、
- * 频道自回环）整条跳过，不进入下面任何一步。
+ * 最前面依次过两道门，命中任一道都不再往下走：
+ * - via_bot 指向自己：内联结果消息（如 /luck_challenge），自录入 AI 对话
+ *   缓存后直接返回，见 recordSelfInlineResult。
+ * - isBotOwnMessage：机器人自己发出消息的原样回弹（频道自回环），整条跳过、
+ *   连记忆都不留。
  */
 export async function handleIncomingMessage(
   ctx: Context,
@@ -176,6 +223,10 @@ export async function handleIncomingMessage(
 ): Promise<void> {
   const message: any = ctx.msg;
   if (!message) return;
+  if (message.via_bot?.id === ctx.me.id) {
+    recordSelfInlineResult(message, ctx.me.id, ctx.me.first_name);
+    return;
+  }
   if (isBotOwnMessage(message, ctx.me.id)) return;
 
   const chatId: number = message.chat.id;
@@ -220,8 +271,12 @@ export async function handleIncomingMessage(
     const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
 
+    // 消息里 @ 了别人（非机器人自己）时不参与随机搭话的概率判定——见
+    // mentionsOtherUser 注释；不影响上面 isReplyToBot/isMentioned 这两条
+    // 本就明确指向机器人的必回路径。
     const isRandomTrigger: boolean =
       !isReplyToBot && !isMentioned && !isQuiet &&
+      !mentionsOtherUser(message, ctx.me.username) &&
       Math.random() < AI_REPLY_PROBABILITY &&
       tryClaimUserRandomReply(chatId, speaker.id);
 
