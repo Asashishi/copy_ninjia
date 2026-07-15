@@ -139,9 +139,10 @@ export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 // ---- 图片读图（群里有人发图 -> 占位入缓存 -> 异步解析替换占位）----
 // 流程见 workers/aiChatWorker.ts 的 recordChatImage 与 ai/imageDescription.ts。
 
-/** 图片刚入缓存、描述还没解析出来时的占位文本（解析失败也回退到纯「[图片]」）。 */
+/** 图片刚入缓存、描述还没解析出来时的占位文本；解析失败则回填为失败说明，
+ *  明确告诉模型这行没有可用的图片内容、别把它当话题接。 */
 export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
-export const IMAGE_FALLBACK_PLACEHOLDER: string = "[图片]";
+export const IMAGE_FALLBACK_PLACEHOLDER: string = "[图片：解析失败，请无视此消息]";
 
 /** 喂给视觉模型的描述指令：产出一行简短中文描述，供转录上下文引用。 */
 export const IMAGE_DESCRIPTION_PROMPT: string =
