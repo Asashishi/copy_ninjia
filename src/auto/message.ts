@@ -5,9 +5,8 @@ import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
 import { cacheSender } from "../users/senderIdentity";
 import { recordChatMessage, recordChatImage, generateAndSendReply } from "../aiChat";
-import { IMAGE_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
 import { confirmLuckDraw } from "../commands";
-import { AI_REPLY_PROBABILITY } from "../consts/aiChat";
+import { AI_IMAGE_COMMENT_PROBABILITY, AI_REPLY_PROBABILITY, IMAGE_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
@@ -329,12 +328,18 @@ export async function handleIncomingMessage(
   } else if (!isPrivateChat && !activeCopy && aiChatEnabled && Array.isArray(message.photo) && message.photo.length > 0) {
     // 图片消息同样没有 text（配文在 caption 里），交给 AI Worker 先占位入
     // 缓存、异步解析出描述后原位回填（见 aiChat.ts 的 recordChatImage）。
-    // 与贴纸同定位：只当上下文，不触发 AI 回复，也不 return——后面的随机
-    // 复读对图片本来就生效，行为保持不变。相册（一次发多张）是多条相邻
-    // 消息各带一张图，自然逐条走到这里，各自占位、各自解析。
+    // 基线与贴纸同定位：只当上下文，不触发 AI 回复，也不 return——后面的
+    // 随机复读对图片本来就生效，行为保持不变。相册（一次发多张）是多条
+    // 相邻消息各带一张图，自然逐条走到这里，各自占位、各自解析。
+    // 例外：按 AI_IMAGE_COMMENT_PROBABILITY 掷中时，解析完成后 AI 会回复
+    // 那条图片消息评价图片。掷骰在这里（主线程调度逻辑，与
+    // AI_REPLY_PROBABILITY 同一分工），顺带套用 /quiet 静默与「群 × 用户」
+    // 随机回复冷却——评图本质上也是主动搭话，别对同一个人短时间连评。
     const speaker = resolveSpeaker(message);
     const caption: string = typeof message.caption === "string" ? message.caption : "";
-    recordChatImage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption, pickPhotoFileId(message.photo));
+    const commentOnResolve: boolean =
+      !isQuiet && Math.random() < AI_IMAGE_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+    recordChatImage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption, pickPhotoFileId(message.photo), message.message_id, commentOnResolve);
   }
 
   // 没有复读对象时，说到洗澡/泡澡/冲凉就回一句「看看」（触发词规则见

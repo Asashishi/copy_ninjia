@@ -36,6 +36,11 @@ export interface AiRecordImageMessage {
   caption: string;
   /** 已按大小挑好档位的 photo file_id（见 auto/message.ts 的 pickPhotoFileId）。 */
   fileId: string;
+  /** 这条图片消息本身的 message_id，评图回复要用它挂 Telegram 回复引用。 */
+  messageId: number;
+  /** 主线程已掷中「解析完成后评价这张图」（概率见 AI_IMAGE_COMMENT_PROBABILITY，
+   * 已照顾 /quiet 与随机回复冷却）；Worker 在描述解析成功时执行评图回复。 */
+  commentOnResolve: boolean;
 }
 
 /** 主线程 -> Worker：触发一次 AI 回复（冷却/限频判定也在 Worker 侧做）。 */

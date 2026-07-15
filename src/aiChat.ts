@@ -145,13 +145,17 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
 
 /**
  * 记录一条图片消息：Worker 侧先以占位文本入缓存、异步解析图片后原位回填
- * 描述（见 workers/aiChatWorker.ts 的 recordChatImage）。只记上下文，不触发
- * 回复——与贴纸的处理定位一致。
+ * 描述（见 workers/aiChatWorker.ts 的 recordChatImage）。默认只记上下文、
+ * 不触发回复（与贴纸的处理定位一致）；commentOnResolve 为 true（主线程按
+ * AI_IMAGE_COMMENT_PROBABILITY 掷中）时，解析成功后会以「回复那条图片
+ * 消息」的形式发一条针对图片内容的评价。
  * @param caption 图片自带的配文（没有则传空串）。
  * @param fileId 已挑好尺寸档位的 photo file_id。
+ * @param messageId 图片消息的 message_id（评图回复挂引用用）。
+ * @param commentOnResolve 是否在解析成功后评价这张图。
  */
-export function recordChatImage(chatId: number, id: number, firstName: string, lastName: string, caption: string, fileId: string): void {
-  post({ type: "recordImage", chatId, senderId: id, firstName, lastName, caption, fileId });
+export function recordChatImage(chatId: number, id: number, firstName: string, lastName: string, caption: string, fileId: string, messageId: number, commentOnResolve: boolean): void {
+  post({ type: "recordImage", chatId, senderId: id, firstName, lastName, caption, fileId, messageId, commentOnResolve });
 }
 
 /**

@@ -9,6 +9,15 @@
  */
 export const AI_REPLY_PROBABILITY: number = 1 / 5;
 
+/**
+ * 群友发图时，AI 在图片解析完成后主动回复那条图片消息、评价图片内容的
+ * 概率。掷骰子同样在主线程（照顾 /quiet 状态与随机回复冷却，见
+ * src/auto/message.ts 的图片分支）；命中后由 Worker 在描述解析成功时执行
+ * （解析失败没内容可评，静默放弃），见 workers/aiChatWorker.ts 的
+ * recordChatImage。
+ */
+export const AI_IMAGE_COMMENT_PROBABILITY: number = 1 / 15;
+
 /** xAI 的 responses 接口（chat completions 在 xAI 已是 legacy，内置
  *  web_search 等服务端工具只在 responses 上提供）。 */
 export const XAI_RESPONSES_API_URL: string = "https://api.x.ai/v1/responses";
