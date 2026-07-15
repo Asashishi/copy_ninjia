@@ -36,10 +36,17 @@ export interface ChatState {
   lockdown?: ChatPermissions;
   /**
    * 本群是否启用 AI 闲聊功能（对话缓存、随机插话、回复/@ 机器人触发的回复）。
-   * 缺省视为禁用，需通过 /ai_chat enable 显式开启（仅 AI_CHAT_ADMIN_USER_ID
+   * 缺省视为禁用，需通过 /ai_chat enable 显式开启（仅 SUPER_ADMIN_USER_ID
    * 本人可用该指令，见 commands/aiChat.ts）。
    */
   isUseAIChat?: boolean;
+  /**
+   * 本群 /ja_copy 的日语翻译功能是否启用。缺省视为启用，可通过
+   * /ja_trans disable 关闭（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
+   * commands/jaTrans.ts）。与 isUseAIChat 相反，判断时要用 !== false
+   * 而非 === true，未设置时才会落在"启用"这一侧。
+   */
+  isJATranslationEnabled?: boolean;
   /**
    * 机器人自己在本群是否为管理员。由 my_chat_member 更新近实时维护，未知时
    * 按需 getChatMember 现查回填（见 src/infra/botAdmin.ts）。这是入群守卫和

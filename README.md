@@ -35,8 +35,9 @@
   - 需要先在 [@BotFather](https://t.me/BotFather) 为机器人开启 Inline Mode 才能使用。
 - **`/balance`**：查询当前 DeepSeek API Key 绑定账号的余额，结果缓存 30 秒，避免连续查询触发接口限流。
 - **`/quiet`**：让机器人在本群安静一段时间（`/quiet [分钟数]`，1~15，缺省 3 分钟），期间不触发 AI 随机搭话、随机复读等主动行为；回复/@ 机器人的必回和各类指令不受影响。静默期内不允许重复 `/quiet` 叠加，用 **`/unquiet`** 提前解除。
-- **`/ai_chat enable|disable`**：按群开关 AI 闲聊功能（缺省禁用）。仅限定用户（`AI_CHAT_ADMIN_USER_ID` 环境变量，不走 `PRIVILEGED_USERS_ID` 白名单）可用，其他人使用无效。
-- **状态持久化**：静默时间、反刷群私密模式、AI 闲聊开关、机器人管理员身份记录按群独立维护；复读目标和 copy 类命令的冷却时钟全局共用一份。全部状态启动时从 `state.json` 一次性读入内存，之后只在内存中交互，每次变更走异步串行队列全量覆写回文件（先写临时文件再原子 rename，进程被杀也不会留下半截 JSON），重启后自动恢复。
+- **`/ai_chat enable|disable`**：按群开关 AI 闲聊功能（缺省禁用）。仅限定用户（`SUPER_ADMIN_USER_ID` 环境变量，不走 `PRIVILEGED_USERS_ID` 白名单）可用，其他人使用无效。
+- **`/ja_trans enable|disable`**：按群开关 `/ja_copy` 的日语翻译功能（缺省启用）。权限同上，仅 `SUPER_ADMIN_USER_ID` 可用；关闭后本群 `/ja_copy` 会被拒绝。
+- **状态持久化**：静默时间、反刷群私密模式、AI 闲聊开关、日语翻译开关、机器人管理员身份记录按群独立维护；复读目标和 copy 类命令的冷却时钟全局共用一份。全部状态启动时从 `state.json` 一次性读入内存，之后只在内存中交互，每次变更走异步串行队列全量覆写回文件（先写临时文件再原子 rename，进程被杀也不会留下半截 JSON），重启后自动恢复。
 
 ## 环境要求
 
@@ -60,7 +61,7 @@ bun install
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token |
 | `PRIVILEGED_USERS_ID` | 白名单用户 ID，多个用逗号分割（可免受 `/copy` 冷却限制、使用 `/kick`） |
-| `AI_CHAT_ADMIN_USER_ID` | 唯一可使用 `/ai_chat enable\|disable` 的用户 ID |
+| `SUPER_ADMIN_USER_ID` | 唯一可使用 `/ai_chat`、`/ja_trans` 的 `enable\|disable` 的用户 ID |
 | `DEEPSEEK_API_KEY` | DeepSeek API 密钥，供 AI 闲聊功能使用 |
 
 日语翻译功能还需要将 Google Cloud 服务账号密钥文件放置为项目根目录下的 `g-auth.json`（已加入 `.gitignore`，不会被提交）。

@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types";
-import { getGlobalCopyState, saveState } from "../infra/storage";
+import { getChatState, getGlobalCopyState, saveState } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
@@ -26,6 +26,13 @@ export async function handleCopyCommand(
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const globalCopy: GlobalCopyState = getGlobalCopyState();
+
+  // isJATranslationEnabled 缺省视为启用（未设置时才走"启用"这一侧），只有
+  // 显式 /ja_trans disable 过的群才会拒绝 /ja_copy，见 ChatState 该字段注释。
+  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled === false) {
+    await sendMessage(chatId, `本天才在这个群的日语翻译功能被关掉啦，杂鱼去找管理员 /ja_trans enable 一下吧♡`, messageId);
+    return;
+  }
 
   const cooldownClaim = await claimCopyCooldownOrReject(ctx.from, chatId, messageId);
   if (cooldownClaim.rejected) return;

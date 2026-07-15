@@ -4,7 +4,7 @@ import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState } from "./src/infra/storage";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { handleAiChatCommand, handleBalanceCommand, handleCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
+import { handleAiChatCommand, handleBalanceCommand, handleCopyCommand, handleJaTransCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { initAiChat } from "./src/aiChat";
@@ -81,6 +81,7 @@ async function main(): Promise<void> {
   bot.command("stop_copy", (ctx) => handleStopCommand(ctx));
   bot.command("kick", (ctx) => handleKickCommand(ctx, users));
   bot.command("ai_chat", (ctx) => handleAiChatCommand(ctx));
+  bot.command("ja_trans", (ctx) => handleJaTransCommand(ctx));
   bot.command("balance", (ctx) => handleBalanceCommand(ctx));
   bot.command("quiet", (ctx) => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx) => handleUnquietCommand(ctx));
@@ -121,6 +122,7 @@ async function main(): Promise<void> {
       { command: "steal_icon", description: "偷取目标头像作为 bot 头像" },
       { command: "kick", description: "在所有本天才管理的群里踢出并封禁（仅白名单用户可用）" },
       { command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" },
+      { command: "ja_trans", description: "开关本群 /ja_copy 日语翻译功能，enable/disable（仅限定用户可用）" },
       { command: "balance", description: "查询 DeepSeek 账户余额" },
       { command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" },
       { command: "unquiet", description: "提前解除 /quiet 静默" },
