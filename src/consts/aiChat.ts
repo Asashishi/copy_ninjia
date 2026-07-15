@@ -22,7 +22,7 @@ export const REQUEST_TIMEOUT_MS: number = 60_000;
  * 计费，放大上限不增加正常请求的开销。
  */
 export const REPLY_MAX_TOKENS: number = 8192;
-export const SUMMARY_MAX_TOKENS: number = 4096;
+export const SUMMARY_MAX_TOKENS: number = 8192;
 
 /** 冷消息压缩的生成温度：偏低，换取更忠实原文的摘要而非自由发挥。 */
 export const SUMMARY_TEMPERATURE: number = 0.6;
