@@ -73,7 +73,7 @@ export interface LuckDayCache {
 }
 
 /** 追加写入某天文件时，一条尚未落盘的新记录（去重后才会进入这个缓冲，
- * 见 workers/diskIOWorker.ts 处理 luckDraw 消息）。 */
+ * 见 workers/diskIO/luckFiles.ts 的 handleLuckDrawMessage）。 */
 export interface LuckPendingEntry {
   key: string;
   record: LuckDrawRecord;

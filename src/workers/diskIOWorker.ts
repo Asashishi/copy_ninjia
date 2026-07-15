@@ -8,9 +8,10 @@
  * 三合一，改名 diskIOWorker。
  *
  * 本文件只做消息路由、统一 flush 调度、启动恢复编排；具体逻辑分别在
- * diskIO/logFiles.ts（日志）与 diskIO/snapshotFiles.ts（AI 记忆的整份
- * 覆盖写 + 运势的按位置追加写 + 两者的启动恢复），两者共用的追加/损坏
- * 修复字节机制在 diskIO/appendOnlyDayFile.ts。
+ * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/luckFiles.ts（运势的缓冲/
+ * 追加）与 diskIO/snapshotFiles.ts（AI 记忆的整份覆盖写 + 运势的追加纯函数
+ * + 两者的启动恢复），日志/运势共用的按位置追加/损坏修复字节机制在
+ * diskIO/appendOnlyDayFile.ts。
  *
  * 原则：磁盘只在启动恢复（load）时被读一次；此后缓存（cache/diskIOWorker.ts）
  * 是唯一事实源，写是「缓存 -> 磁盘」的单向定时同步。本线程自身的内部错误
@@ -20,19 +21,20 @@
 
 import { mkdirSync } from "node:fs";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
-import { appendLuckEntries, cleanupStaleLuckFiles, recoverAiMemories, recoverLuckDay, writeAiMemoryFile } from "./diskIO/snapshotFiles";
+import { flushLuckAppends, handleLuckDrawMessage } from "./diskIO/luckFiles";
+import { recoverAiMemories, recoverLuckDay, writeAiMemoryFile } from "./diskIO/snapshotFiles";
 import { AI_MEMORY_DIR, LOGS_DIR, LUCK_MEMORY_DIR } from "../consts/paths";
-import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
+import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
 import { getTokyoDateKey } from "../libs/time";
-import { aiMemoryCache, dirtyChats, luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache, snapshotFlushState } from "../cache/diskIOWorker";
-import type { DiskFlushReply, DiskIOMessage, LoadedReply, LuckDrawRecord } from "../types";
+import { aiMemoryCache, dirtyChats, luckWorkerCache, snapshotFlushState } from "../cache/diskIOWorker";
+import type { DiskFlushReply, DiskIOMessage, LoadedReply } from "../types";
 
 declare var self: Worker;
 
 initLogFiles();
 
 /** 按需启动 AI 记忆快照的定时落盘；已有定时器在跑就不重复排。运势有自己
- *  独立的窗口（见 scheduleLuckFlush），不再共用这一条。 */
+ *  独立的窗口（见 diskIO/luckFiles.ts），不再共用这一条。 */
 function scheduleSnapshotFlush(): void {
   if (snapshotFlushState.timer !== null) return;
   snapshotFlushState.timer = setTimeout(() => {
@@ -57,38 +59,6 @@ function flushAiMemory(): void {
     } catch (error) {
       console.error(`[diskIOWorker] failed to write AI memory snapshot for chat ${chatId}:`, error);
     }
-  }
-}
-
-/** 按需启动运势追加缓冲的定时落盘；已有定时器在跑就不重复排。条数达到
- *  FLUSH_MAX_ENTRIES 时不经过这个定时器，由调用方直接调 flushLuckAppends
- *  立即落盘——逻辑与 diskIO/logFiles.ts 的 handleLogMessage/flushLogBuffer
- *  完全对称，运势和日志现在共用同一套"条数或时间"窗口阈值（见
- *  consts/diskIO.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS），只是缓冲区、
- *  定时器、落盘目标各自独立，互不影响。 */
-function scheduleLuckFlush(): void {
-  if (luckFlushTimer.timer !== null) return;
-  luckFlushTimer.timer = setTimeout(() => {
-    luckFlushTimer.timer = null;
-    flushLuckAppends();
-  }, FLUSH_INTERVAL_MS);
-}
-
-/** 把运势待追加缓冲追加写盘（先清掉可能挂起的定时器，避免它日后再触发一次
- *  空落盘）；失败保留 pending（luckPendingAppends 不清空），下轮重试。 */
-function flushLuckAppends(): void {
-  if (luckFlushTimer.timer !== null) {
-    clearTimeout(luckFlushTimer.timer);
-    luckFlushTimer.timer = null;
-  }
-  if (luckPendingAppends.length === 0 || !luckWorkerCache.current) return;
-  const day: string = luckWorkerCache.current.day;
-  try {
-    appendLuckEntries(day, luckFileState, luckPendingAppends);
-    cleanupStaleLuckFiles(day);
-    luckPendingAppends.length = 0;
-  } catch (error) {
-    console.error(`[diskIOWorker] failed to append luck entries for ${day}:`, error);
   }
 }
 
@@ -147,33 +117,9 @@ self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
       dirtyChats.add(msg.chatId);
       scheduleSnapshotFlush();
       break;
-    case "luckDraw": {
-      // 跨天检查放在消息入口：day 与当前已知缓存不一致就视为跨天——旧 day
-      // 已知的 key 集合、待追加缓冲、文件追加状态全部丢弃重建（旧 day 已是
-      // 昨日黄花，不会再有消息带着旧 day 补写它的文件）；下一次 flush 落盘
-      // 时 cleanupStaleLuckFiles 会顺带删除非当日文件。
-      if (luckWorkerCache.current === null || luckWorkerCache.current.day !== msg.day) {
-        luckWorkerCache.current = { day: msg.day, entries: new Map() };
-        luckPendingAppends.length = 0;
-        luckFileState.current = null;
-      }
-      // 去重：这个 key 今天已经见过（磁盘恢复带回的，或本次运行期间已经
-      // 追加过的）就不再重复写——尤其是本 Worker 崩溃重建后，主线程会把
-      // dailyLuckCache 全量重放一遍（见 infra/diskIO.ts 的
-      // onDiskIORespawn），其中多数 key 其实已经在崩溃前成功落盘、也已经
-      // 被这次重建的 handleLoad 读回 entries 里，不去重就会在文件里追加出
-      // 重复 key（JSON.parse 只认最后一次出现，不会炸，但白占地方）。
-      if (luckWorkerCache.current.entries.has(msg.key)) break;
-      const record: LuckDrawRecord = { label: msg.label, fortunePercent: msg.fortunePercent };
-      luckWorkerCache.current.entries.set(msg.key, record);
-      luckPendingAppends.push({ key: msg.key, record });
-      if (luckPendingAppends.length >= FLUSH_MAX_ENTRIES) {
-        flushLuckAppends();
-      } else {
-        scheduleLuckFlush();
-      }
+    case "luckDraw":
+      handleLuckDrawMessage(msg);
       break;
-    }
     case "load":
       handleLoad();
       break;

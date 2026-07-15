@@ -28,12 +28,13 @@ export const dirtyChats: Set<number> = new Set();
 // ---- 每日运势 ----
 
 /** 当日已知的运势结果：day + entries（key -> LuckDrawRecord）。含义是"今天
- *  见过的全部 key"，不区分是刚从磁盘恢复的、还是本次运行期间新确认落盘
- *  的——唯一用途是去重（luckDraw 消息到达时判断是不是新 key）和启动时的
- *  LoadedReply，不再是落盘时的数据源（落盘只追加 luckPendingAppends 里还
- *  没写出去的那一小撮，见 workers/diskIO/snapshotFiles.ts 的
- *  appendLuckEntries）。跨天时整体丢弃重建（旧 day 已是昨日黄花），见
- *  workers/diskIOWorker.ts 处理 luckDraw 消息。 */
+ *  见过的全部 key 及其最新值"，不区分是刚从磁盘恢复的、还是本次运行期间
+ *  新确认落盘的——唯一用途是去重（luckDraw 消息到达时判断 key+值是否与
+ *  已知记录完全一致，见 workers/diskIO/luckFiles.ts 的 handleLuckDrawMessage）
+ *  和启动时的 LoadedReply，不再是落盘时的数据源（落盘只追加
+ *  luckPendingAppends 里还没写出去的那一小撮，见 workers/diskIO/
+ *  snapshotFiles.ts 的 appendLuckEntries）。跨天时整体丢弃重建（旧 day
+ *  已是昨日黄花），见 handleLuckDrawMessage。 */
 export const luckWorkerCache: { current: LuckDayCache | null } = { current: null };
 
 /** 尚未追加进磁盘文件的运势新条目：已经过 luckWorkerCache 去重，只有真正
@@ -46,7 +47,7 @@ export const luckPendingAppends: LuckPendingEntry[] = [];
  *  日期的文件）；机制与 loggerFileState 相同，见 appendOnlyDayFile.ts。 */
 export const luckFileState: { current: DayFileState | null } = { current: null };
 
-/** 运势追加缓冲的定时落盘句柄，见 workers/diskIOWorker.ts 的
+/** 运势追加缓冲的定时落盘句柄，见 workers/diskIO/luckFiles.ts 的
  *  scheduleLuckFlush——独立于下面 AI 记忆的 snapshotFlushState，条数/时间
  *  阈值也不一样（见 consts/diskIO.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS），
  *  两条互不影响。 */
