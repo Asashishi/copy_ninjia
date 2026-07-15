@@ -21,7 +21,7 @@ export const AI_IMAGE_COMMENT_PROBABILITY: number = 1 / 15;
 /** xAI 的 responses 接口（chat completions 在 xAI 已是 legacy，内置
  *  web_search 等服务端工具只在 responses 上提供）。 */
 export const XAI_RESPONSES_API_URL: string = "https://api.x.ai/v1/responses";
-export const XAI_MODEL: string = "grok-4.5";
+export const XAI_MODEL: string = "grok-4.3";
 export const REQUEST_TIMEOUT_MS: number = 90_000;
 
 /**
