@@ -23,6 +23,21 @@ export interface AiRecordMessage {
   text: string;
 }
 
+/** 主线程 -> Worker：把一条图片消息记入滚动缓存——先占位、异步解析出描述后
+ * 原位回填，见 workers/aiChatWorker.ts 的 recordChatImage。相册是多条消息
+ * 各带一张图，天然逐条投递。 */
+export interface AiRecordImageMessage {
+  type: "recordImage";
+  chatId: number;
+  senderId: number;
+  firstName: string;
+  lastName: string;
+  /** 图片自带的配文（没有则空串），跟在描述/占位标签后入转录行。 */
+  caption: string;
+  /** 已按大小挑好档位的 photo file_id（见 auto/message.ts 的 pickPhotoFileId）。 */
+  fileId: string;
+}
+
 /** 主线程 -> Worker：触发一次 AI 回复（冷却/限频判定也在 Worker 侧做）。 */
 export interface AiTriggerMessage {
   type: "trigger";
@@ -66,7 +81,7 @@ export interface AiFlushMemoryMessage {
   flushId: number;
 }
 
-export type AiChatWorkerMessage = AiInitMessage | AiRecordMessage | AiTriggerMessage | AiHydrateMessage | AiFlushMemoryMessage;
+export type AiChatWorkerMessage = AiInitMessage | AiRecordMessage | AiRecordImageMessage | AiTriggerMessage | AiHydrateMessage | AiFlushMemoryMessage;
 
 /**
  * Worker -> 主线程：一条消息已经发出去了（AI 回复或跟发的贴纸）。Worker

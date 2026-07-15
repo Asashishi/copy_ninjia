@@ -4,8 +4,9 @@ import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
 import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, AiMemorySnapshot } from "./types";
 
 /**
- * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、冷却与
- * 限频、拼装上下文、调 DeepSeek（含 function calling 往返）、连发消息、
+ * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片
+ * 占位与异步描述、冷却与限频、拼装上下文、调 Grok（含 function calling
+ * 往返与内置 web_search）、连发消息、
  * 消息反应、贴纸跟发——全部在独立的 Bun Worker（src/workers/aiChatWorker.ts）里
  * 执行；主线程只把「记录一条群消息」「触发一次回复」两类事件投递过去，
  * 让 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
@@ -140,6 +141,17 @@ export function flushAiMemory(timeoutMs: number = 2000): Promise<void> {
  */
 export function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, text: string): void {
   post({ type: "record", chatId, senderId: id, firstName, lastName, text });
+}
+
+/**
+ * 记录一条图片消息：Worker 侧先以占位文本入缓存、异步解析图片后原位回填
+ * 描述（见 workers/aiChatWorker.ts 的 recordChatImage）。只记上下文，不触发
+ * 回复——与贴纸的处理定位一致。
+ * @param caption 图片自带的配文（没有则传空串）。
+ * @param fileId 已挑好尺寸档位的 photo file_id。
+ */
+export function recordChatImage(chatId: number, id: number, firstName: string, lastName: string, caption: string, fileId: string): void {
+  post({ type: "recordImage", chatId, senderId: id, firstName, lastName, caption, fileId });
 }
 
 /**

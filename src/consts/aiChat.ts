@@ -9,17 +9,19 @@
  */
 export const AI_REPLY_PROBABILITY: number = 1 / 5;
 
-export const DEEPSEEK_API_URL: string = "https://api.deepseek.com/chat/completions";
-export const DEEPSEEK_MODEL: string = "deepseek-v4-pro";
+/** xAI 的 responses 接口（chat completions 在 xAI 已是 legacy，内置
+ *  web_search 等服务端工具只在 responses 上提供）。 */
+export const XAI_RESPONSES_API_URL: string = "https://api.x.ai/v1/responses";
+export const XAI_MODEL: string = "grok-4.3";
 export const REQUEST_TIMEOUT_MS: number = 60_000;
 
 /**
- * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。该模型开着
- * 「思考模式」，思考内容也计入 max_tokens（usage 的 reasoning_tokens 属于
- * completion_tokens，实测确认）：上限给小了，额度会在思考阶段就被烧光——
- * 请求返回 200 但 finish_reason=length、content 为空，表现为静默失败。
- * 压缩任务曾因 768 的旧上限反复空手而归。max_tokens 只是封顶，按实际用量
- * 计费，放大上限不增加正常请求的开销。
+ * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。grok-4.3 是
+ * 推理模型，思考内容也计入 max_output_tokens（usage 的
+ * output_tokens_details.reasoning_tokens，实测确认）：上限给小了，额度会在
+ * 思考阶段就被烧光——请求返回 200 但 status=incomplete、正文为空，表现为
+ * 静默失败（DeepSeek 时代压缩任务曾因 768 的旧上限反复空手而归，同一坑）。
+ * max_output_tokens 只是封顶，按实际用量计费，放大上限不增加正常请求的开销。
  */
 export const REPLY_MAX_TOKENS: number = 8192;
 export const SUMMARY_MAX_TOKENS: number = 8192;
@@ -124,3 +126,26 @@ export const MAX_TOOL_ROUNDS: number = 3;
 
 /** 「正在输入…」状态的重发间隔，机制见 workers/aiChatWorker.ts 的 startTypingHeartbeat。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
+
+// ---- 图片读图（群里有人发图 -> 占位入缓存 -> 异步解析替换占位）----
+// 流程见 workers/aiChatWorker.ts 的 recordChatImage 与 ai/imageDescription.ts。
+
+/** 图片刚入缓存、描述还没解析出来时的占位文本（解析失败也回退到纯「[图片]」）。 */
+export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
+export const IMAGE_FALLBACK_PLACEHOLDER: string = "[图片]";
+
+/** 喂给视觉模型的描述指令：产出一行简短中文描述，供转录上下文引用。 */
+export const IMAGE_DESCRIPTION_PROMPT: string =
+  "这是中文群聊里有人发的一张图片。请用中文简要描述它：是什么内容、图里有什么文字、想表达什么；" +
+  "若是表情包/梗图/截图，请点出其中的文字要点和情绪。不超过 120 字，只输出描述本身，不要任何前缀、解释或引号。";
+
+/** 图片描述的输出 token 上限：描述本身很短，但推理模型的思考也计入（同
+ *  REPLY_MAX_TOKENS 注释），要给足余量。 */
+export const IMAGE_DESCRIPTION_MAX_TOKENS: number = 4096;
+/** 图片描述入缓存前的硬性长度上限（字符），防模型话痨撑爆转录行。 */
+export const IMAGE_DESCRIPTION_MAX_CHARS: number = 200;
+/** 从 Telegram 下载图片文件的超时。 */
+export const IMAGE_DOWNLOAD_TIMEOUT_MS: number = 20_000;
+/** 图片下载大小上限：挑尺寸时跳过超过它的档位（xAI 收 base64 后限 20MiB，
+ *  Telegram photo 压缩后远小于此，这只是防御性护栏）。 */
+export const IMAGE_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;

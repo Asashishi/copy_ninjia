@@ -6,7 +6,6 @@ export * from "./cache";
 export * from "./chatState";
 export * from "./reactionQueue";
 export * from "./diskIO";
-export * from "./deepseekBalance";
 export * from "./aiChat";
 export * from "./aiChatWorker";
 export * from "./antiRaid";

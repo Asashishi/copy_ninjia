@@ -1,17 +1,16 @@
 import { logger } from "../infra/logger";
 import { readFileSync } from "node:fs";
-import { DEEPSEEK_API_KEY } from "../infra/config";
 import { LinkedQueue } from "../libs/linkedQueue";
-import { fetchJsonWithTimeout } from "../libs/httpFetch";
 import { sleep } from "../libs/sleep";
+import { sanitizeInline, truncateInline } from "../libs/text";
 import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   AI_REPLY_COOLDOWN_MS,
   AI_SNAPSHOT_INTERVAL_MS,
   COMPACT_BATCH_SIZE,
-  DEEPSEEK_API_URL,
-  DEEPSEEK_MODEL,
+  IMAGE_FALLBACK_PLACEHOLDER,
+  IMAGE_PENDING_PLACEHOLDER,
   MAX_SUMMARY_ROUNDS,
   MAX_TOOL_ROUNDS,
   RATE_LIMIT_LONG_MAX_TRIGGERS,
@@ -21,7 +20,6 @@ import {
   RATE_LIMIT_WINDOW_MS,
   REPLY_MAX_TOKENS,
   REPLY_TEMPERATURE,
-  REQUEST_TIMEOUT_MS,
   SPLIT_REPLY_MAX_PARTS,
   SPLIT_REPLY_PROBABILITY,
   SUMMARY_MAX_CHARS,
@@ -34,6 +32,7 @@ import {
   TYPING_DELAY_MAX_MS,
   TYPING_DELAY_PER_CHAR_MS,
   VERBATIM_CONTEXT_MAX,
+  XAI_MODEL,
 } from "../consts/aiChat";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import {
@@ -48,9 +47,11 @@ import {
   triggerTimes,
   typingHeartbeats,
 } from "../cache/aiChatWorker";
-import type { BufferedMessage } from "../types";
+import type { BufferedMessage, XaiRequestTool } from "../types";
 import { maybeAddReaction } from "../ai/reactions";
 import { maybeSendStickerReply } from "../ai/stickers";
+import { describeImage } from "../ai/imageDescription";
+import { extractFunctionCalls, extractOutputText, requestXaiResponse } from "../ai/xai";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../tools";
 import { getCurrentTime } from "../tools/time";
@@ -58,17 +59,18 @@ import type { AiBotInfo, AiChatWorkerMessage, AiMemoryEvent, AiMemoryFlushedEven
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
- * 只做事件投递，重活全在这里：滚动对话缓存、冷却与双滑动窗口限频、拼装
- * 上下文、调 DeepSeek（含 function calling 往返）、连发消息、消息反应与
- * 贴纸跟发。发往 Telegram 的调用不回主线程绕路——本线程 import telegram.ts
- * 时会得到自己独立的 grammY Api 客户端（那个 Bot 实例只用其 bot.api 发请求，
- * 从不 init/轮询；机器人自己的账号身份改由主线程在 bot.init() 后经 init
- * 消息注入，见下方 botInfo）。error 日志经 logger.ts 的转发模式回传主线程
- * 统一落盘。
+ * 只做事件投递，重活全在这里：滚动对话缓存、图片占位与异步描述回填、冷却
+ * 与双滑动窗口限频、拼装上下文、调 Grok（含 function calling 往返与内置
+ * web_search）、连发消息、消息反应与贴纸跟发。发往 Telegram 的调用不回
+ * 主线程绕路——本线程 import telegram.ts 时会得到自己独立的 grammY Api
+ * 客户端（那个 Bot 实例只用其 bot.api 发请求，从不 init/轮询；机器人自己
+ * 的账号身份改由主线程在 bot.init() 后经 init 消息注入，见下方 botInfo）。
+ * error 日志经 logger.ts 的转发模式回传主线程统一落盘。
  *
- * AI 闲聊回复本体：把本群最近的对话记录喂给 DeepSeek（OpenAI 兼容的
- * /chat/completions 接口），生成一条人设化回复。人设文本存放在仓库根目录
- * 的 prompt/persona.txt，修改人设不需要碰代码。
+ * AI 闲聊回复本体：把本群最近的对话记录喂给 xAI 的 grok（/v1/responses
+ * 接口，收发细节见 ai/xai.ts），生成一条人设化回复；模型可自主使用内置的
+ * web_search 服务端工具联网查证。人设文本存放在仓库根目录的
+ * prompt/persona.txt，修改人设不需要碰代码。
  *
  * 中期记忆：镜像/热块轮换机制见 consts/aiChat.ts 的 COMPACT_BATCH_SIZE 注释；
  * 轮换本身由 recordChatMessage/scheduleRotation/rotateCompaction 实现。
@@ -86,28 +88,30 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
 let botInfo: AiBotInfo | null = null;
 
 /**
- * 把要写进转录的文本压成单行：所有空白串（含换行）折叠为一个空格。
- * 这是防转录注入的关键——转录按「一行 = 一条消息」拼装，若用户消息或
- * 自己改的昵称里带换行，就能伪造出「[id:x] 某人：……」的假发言行，
- * 给别人栽赃。折叠换行后一条消息永远只占一行，该向量彻底失效。
+ * 把一条已清洗好的缓存条目压进该群的滚动缓存，并按块边界触发轮换。
+ * recordChatMessage / recordChatImage 共用——后者需要拿住条目对象的引用
+ * 以便异步回填描述，所以入队和构造条目分开。
  */
-function sanitizeInline(raw: string): string {
-  return raw.replace(/\s+/g, " ").trim();
-}
-
-/**
- * 把文本截断到 maxChars 个 UTF-16 码元以内。slice 可能恰好切在代理对中间
- * （emoji 等），此时去掉孤立的高位代理——孤立代理不是合法字符，混进消息
- * 可能被 Telegram 拒收，混进 prompt 则是每次请求都带着的乱码。
- */
-function truncateInline(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  let truncated: string = text.slice(0, maxChars);
-  const lastCode: number = truncated.charCodeAt(truncated.length - 1);
-  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
-    truncated = truncated.slice(0, -1);
+function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
+  let buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
+  if (!buf) {
+    buf = new LinkedQueue<BufferedMessage>();
+    chatBuffers.set(chatId, buf);
   }
-  return truncated;
+  buf.push(entry);
+  dirtyMemoryChats.add(chatId);
+  // 轮换机制见 COMPACT_BATCH_SIZE 注释。push 每次只 +1，且轮换把 size 收回
+  // COMPACT_BATCH_SIZE 后 push 不会再撞上下面第二个判等，两个 === 各自恰好
+  // 在块边界命中一次。
+  if (buf.size === VERBATIM_CONTEXT_MAX) {
+    for (let i: number = 0; i < COMPACT_BATCH_SIZE; i++) {
+      buf.shift();
+    }
+    scheduleRotation(chatId, buf.last(COMPACT_BATCH_SIZE), true);
+  } else if (buf.size === COMPACT_BATCH_SIZE) {
+    // 本群的第一块刚攒满：成为首个镜像，只提交压缩，还没有可晋升的旧摘要。
+    scheduleRotation(chatId, buf.last(COMPACT_BATCH_SIZE), false);
+  }
 }
 
 /**
@@ -122,25 +126,41 @@ function truncateInline(text: string, maxChars: number): string {
 function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, text: string): void {
   const sanitized: string = sanitizeInline(text);
   if (!sanitized) return;
-  let buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
-  if (!buf) {
-    buf = new LinkedQueue<BufferedMessage>();
-    chatBuffers.set(chatId, buf);
-  }
-  buf.push({ id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
-  dirtyMemoryChats.add(chatId);
-  // 轮换机制见 COMPACT_BATCH_SIZE 注释。push 每次只 +1，且轮换把 size 收回
-  // COMPACT_BATCH_SIZE 后 push 不会再撞上下面第二个判等，两个 === 各自恰好
-  // 在块边界命中一次。
-  if (buf.size === VERBATIM_CONTEXT_MAX) {
-    for (let i: number = 0; i < COMPACT_BATCH_SIZE; i++) {
-      buf.shift();
-    }
-    scheduleRotation(chatId, buf.last(COMPACT_BATCH_SIZE), true);
-  } else if (buf.size === COMPACT_BATCH_SIZE) {
-    // 本群的第一块刚攒满：成为首个镜像，只提交压缩，还没有可晋升的旧摘要。
-    scheduleRotation(chatId, buf.last(COMPACT_BATCH_SIZE), false);
-  }
+  pushBufferedMessage(chatId, { id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
+}
+
+/** 图片转录行：描述/占位标签在前，图片自带的 caption（若有）跟在后面。 */
+function composeImageText(tag: string, sanitizedCaption: string): string {
+  return sanitizedCaption ? `${tag} ${sanitizedCaption}` : tag;
+}
+
+/**
+ * 记录一条图片消息：先以占位文本立即入缓存（保住它在对话时序里的位置），
+ * 再异步下载/解析图片，解析完直接改写同一个条目对象的 text 字段回填描述。
+ * 改写对象而不是回队列里找：条目引用一直攥在手里，即便这期间缓存滚动、
+ * 该条目已被 scheduleRotation 快照进镜像批次（快照数组存的也是同一批对象
+ * 引用），只要压缩调用还没把它序列化出去，回填一样能生效；已经被压缩/
+ * 滑出的极端情形，摘要里留下的就是占位文本，可接受。解析失败回退为纯
+ * 「[图片]」，至少留下"这里有一张图"的痕迹。
+ *
+ * 相册（一次发多张图）在 Telegram 侧本来就是多条相邻消息、各带一张图，
+ * 天然逐条走这里，互不影响；每条图片消息各自占位、各自异步解析。
+ */
+function recordChatImage(chatId: number, senderId: number, firstName: string, lastName: string, caption: string, fileId: string): void {
+  const sanitizedCaption: string = sanitizeInline(caption);
+  const entry: BufferedMessage = {
+    id: senderId,
+    firstName: sanitizeInline(firstName),
+    lastName: sanitizeInline(lastName),
+    text: composeImageText(IMAGE_PENDING_PLACEHOLDER, sanitizedCaption),
+  };
+  pushBufferedMessage(chatId, entry);
+  // describeImage 内部兜住一切异常只返回 null，这条异步链不会 reject。
+  void describeImage(fileId).then((description: string | null) => {
+    entry.text = composeImageText(description ? `[图片：${description}]` : IMAGE_FALLBACK_PLACEHOLDER, sanitizedCaption);
+    // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
+    dirtyMemoryChats.add(chatId);
+  });
 }
 
 /**
@@ -255,7 +275,7 @@ function hydrateMemories(memories: Map<number, AiMemorySnapshot>): void {
 }
 
 /**
- * 调 DeepSeek 把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
+ * 调 Grok 把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
  * 人设、不带工具），产出压成单行并截断——摘要虽是模型生成的，但源头是
  * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
  */
@@ -263,25 +283,26 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
   const selfNote: string = botInfo
     ? `注意：[id:${botInfo.id}] 是群里的聊天机器人「${botInfo.first_name}」本人的发言，摘要里请以「${botInfo.first_name}」称呼它。\n\n`
     : "";
-  const message: any = await requestCompletion({
-    model: DEEPSEEK_MODEL,
-    messages: [
-      {
-        role: "system",
-        content:
-          "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份。" +
-          "请把这段记录压缩成一段简洁的摘要，保留：聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
-          "严格控制篇幅：摘要正文不得超过 500 字，不要展开细节、不要逐条复述，只挑最要紧的信息压缩成一段话。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。",
-      },
-      { role: "user", content: selfNote + batch.map(formatLine).join("\n") },
-    ],
-    stream: false,
-    temperature: SUMMARY_TEMPERATURE,
-    max_tokens: SUMMARY_MAX_TOKENS,
-  });
-  const content: string | undefined = message?.content;
-  if (!content) return null;
-  const sanitized: string = sanitizeInline(content);
+  const data: any = await requestXaiResponse(
+    {
+      model: XAI_MODEL,
+      input: [
+        {
+          role: "system",
+          content:
+            "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份。" +
+            "请把这段记录压缩成一段简洁的摘要，保留：聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
+            "严格控制篇幅：摘要正文不得超过 500 字，不要展开细节、不要逐条复述，只挑最要紧的信息压缩成一段话。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。",
+        },
+        { role: "user", content: selfNote + batch.map(formatLine).join("\n") },
+      ],
+      temperature: SUMMARY_TEMPERATURE,
+      max_output_tokens: SUMMARY_MAX_TOKENS,
+    },
+    "xAI summarize API"
+  );
+  if (!data) return null;
+  const sanitized: string = sanitizeInline(extractOutputText(data));
   if (!sanitized) return null;
   return truncateInline(sanitized, SUMMARY_MAX_CHARS);
 }
@@ -308,7 +329,7 @@ interface UserContentOptions {
    *  改为在文字里点名称呼对方。 */
   addressee?: string;
   /** 若最新消息在问时间/日期（见 isTimeRelatedQuery），预先查好的真实当前时间
-   *  文本，直接喂给模型当已知事实用，不走 function calling（原因见 callDeepSeek
+   *  文本，直接喂给模型当已知事实用，不走 function calling（原因见 callGrok
    *  的 tool_choice 注释）。 */
   timeContext?: string;
 }
@@ -393,79 +414,51 @@ function isTimeRelatedQuery(text: string): boolean {
 }
 
 /**
- * DeepSeek /chat/completions 的底层收发：带超时、错误统一记日志。回复
- * 流水线（callDeepSeek 的工具往返循环）与冷消息压缩（summarizeBatch）共用。
- * @param body 完整请求体（model/messages/tools 等由调用方拼好）。
- * @returns choices[0].message；请求失败、超时或响应异常时返回 null。
- */
-async function requestCompletion(body: Record<string, unknown>): Promise<any | null> {
-  const data: any = await fetchJsonWithTimeout(
-    DEEPSEEK_API_URL,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-      },
-      body: JSON.stringify(body),
-    },
-    REQUEST_TIMEOUT_MS,
-    "DeepSeek API"
-  );
-  const choice: any = data?.choices?.[0];
-  // 静默失败（200 但 content 为空）的成因见 REPLY_MAX_TOKENS 的注释；这里
-  // 点名记下来，否则上层只能看到「没产出」，查不到原因。
-  if (choice?.finish_reason === "length" && !choice?.message?.content) {
-    logger.error(
-      `DeepSeek API exhausted max_tokens=${body.max_tokens} before producing content ` +
-      `(reasoning_tokens=${data?.usage?.completion_tokens_details?.reasoning_tokens ?? "?"}).`
-    );
-  }
-  return choice?.message ?? null;
-}
-
-/**
- * 调用 DeepSeek 的 /chat/completions 接口生成一条回复。支持 function
- * calling：模型可以要求先执行 src/tools 里的工具（目前是查东京天气），
- * 工具结果喂回去后再继续生成，直到给出最终文本或达到轮数上限。
- * 注意：tools 只能用默认的 auto tool_choice——这个模型开着「思考模式」，
- * 强制指定某个具体函数（tool_choice: {type:"function",...}）会被 API
- * 直接 400 拒绝（"Thinking mode does not support this tool_choice"）。
- * 查时间不走这条路，见 isTimeRelatedQuery + UserContentOptions.timeContext。
+ * 调用 xAI 的 /v1/responses 接口生成一条回复（收发与响应解析在 ai/xai.ts）。
+ * tools 带两类：内置的 web_search（xAI 服务器侧自动执行，模型自主决定
+ * 要不要联网查证，结果直接体现在最终文本里）+ src/tools 里的自定义函数
+ * （目前是查时间/东京天气）。自定义函数由模型以 function_call 抛回来，
+ * 执行后把上一轮的全部 output 成员原样接回 input、附上 function_call_output
+ * 再续跑（推理模型的 reasoning 成员也要一并带回，缺了会丢思考上下文），
+ * 直到给出最终文本或达到轮数上限。
+ * 查时间不依赖这条路，见 isTimeRelatedQuery + UserContentOptions.timeContext。
  * @param userContent buildUserContent 拼好的对话上下文。
  * @returns 清洗后的回复文本；请求失败、超时或空输出时返回 null。
  */
-async function callDeepSeek(userContent: string): Promise<string | null> {
+async function callGrok(userContent: string): Promise<string | null> {
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPrompt: string = `${SYSTEM_PROMPT}\n\n当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。`;
-  const messages: any[] = [
+  const input: any[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
   ];
+  const tools: XaiRequestTool[] = [{ type: "web_search" }, ...TOOL_DEFINITIONS];
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const message: any = await requestCompletion({
-      model: DEEPSEEK_MODEL,
-      messages,
-      tools: TOOL_DEFINITIONS,
-      stream: false,
-      temperature: REPLY_TEMPERATURE,
-      max_tokens: REPLY_MAX_TOKENS,
-    });
-    if (!message) return null;
+    const data: any = await requestXaiResponse(
+      {
+        model: XAI_MODEL,
+        input,
+        tools,
+        temperature: REPLY_TEMPERATURE,
+        max_output_tokens: REPLY_MAX_TOKENS,
+      },
+      "xAI API"
+    );
+    if (!data) return null;
 
-    const toolCalls: any[] | undefined = message.tool_calls;
-    if (Array.isArray(toolCalls) && toolCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
-      messages.push(message);
-      for (const call of toolCalls) {
-        const result: string = await callTool(call?.function?.name);
-        messages.push({ role: "tool", tool_call_id: call.id, content: result });
+    const functionCalls: any[] = extractFunctionCalls(data);
+    if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
+      input.push(...(Array.isArray(data.output) ? data.output : []));
+      for (const call of functionCalls) {
+        const result: string = await callTool(call?.name);
+        input.push({ type: "function_call_output", call_id: call.call_id, output: result });
       }
       continue;
     }
 
-    const content: string | undefined = message.content;
+    const content: string = extractOutputText(data);
     return content ? cleanReply(content) : null;
   }
 
@@ -473,11 +466,13 @@ async function callDeepSeek(userContent: string): Promise<string | null> {
 }
 
 /**
- * 清洗模型的原始输出，得到可直接发送的纯回复文本：去掉首尾空白、包裹的代码块
- * 围栏和成对引号，并截断到 Telegram 单条消息上限。空则返回 null。
+ * 清洗模型的原始输出，得到可直接发送的纯回复文本：去掉 web_search 附带的
+ * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
+ * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
+ * 空则返回 null。
  */
 function cleanReply(raw: string): string | null {
-  let text: string = raw.trim();
+  let text: string = raw.replace(/\[\[\d+\]\]\([^)\s]*\)/g, "").trim();
   if (!text) return null;
 
   const fenceMatch = text.match(/^```[a-zA-Z]*\n?([\s\S]*?)\n?```$/);
@@ -518,7 +513,7 @@ function typingDelayMs(nextPart: string): number {
 }
 
 /**
- * 在 DeepSeek 生成阶段（耗时不可控，最长可达 REQUEST_TIMEOUT_MS）持续显示
+ * 在 Grok 生成阶段（耗时不可控，最长可达 REQUEST_TIMEOUT_MS）持续显示
  * 「正在输入…」：立即发一次，此后每隔 TYPING_ACTION_INTERVAL_MS 重发防止过期。
  * 只覆盖生成阶段——连发多条消息之间的停顿单次封顶不超过 Telegram 状态的
  * 过期时间，改由发送循环每次发送后显式补一次 sendTypingAction（见
@@ -678,13 +673,13 @@ function generateAndSendReply(
     if (!userContent) return;
 
     // 生成阶段（耗时不可控）用持续重发的心跳显示「正在输入…」，见
-    // startTypingHeartbeat；try/finally 保证即使 callDeepSeek 抛异常，
+    // startTypingHeartbeat；try/finally 保证即使 callGrok 抛异常，
     // 心跳也一定会被停掉。生成结束后（无论成败）就不再需要它——发送阶段
     // 各段之间的停顿改由下面的发送循环逐次显式补一次，见那里的注释。
     const stopTyping: () => void = startTypingHeartbeat(chatId);
     let reply: string | null;
     try {
-      reply = await callDeepSeek(userContent);
+      reply = await callGrok(userContent);
     } finally {
       stopTyping();
     }
@@ -744,6 +739,9 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
       break;
     case "record":
       recordChatMessage(msg.chatId, msg.senderId, msg.firstName, msg.lastName, msg.text);
+      break;
+    case "recordImage":
+      recordChatImage(msg.chatId, msg.senderId, msg.firstName, msg.lastName, msg.caption, msg.fileId);
       break;
     case "trigger":
       generateAndSendReply(msg.chatId, msg.replyToMessageId, msg.repliedBotText, msg.isRandomTrigger);

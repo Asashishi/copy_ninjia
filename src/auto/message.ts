@@ -4,7 +4,8 @@ import { getActiveCopyIn, getChatState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
 import { cacheSender } from "../users/senderIdentity";
-import { recordChatMessage, generateAndSendReply } from "../aiChat";
+import { recordChatMessage, recordChatImage, generateAndSendReply } from "../aiChat";
+import { IMAGE_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
 import { confirmLuckDraw } from "../commands";
 import { AI_REPLY_PROBABILITY } from "../consts/aiChat";
 import {
@@ -152,6 +153,21 @@ function recordSelfInlineResult(message: any, botId: number, botFirstName: strin
   if (getActiveCopyIn(chatId)) return;
   if (getChatState(chatId).isUseAIChat !== true) return;
   recordChatMessage(chatId, botId, botFirstName, "", message.text);
+}
+
+/**
+ * 从一条图片消息的 photo 尺寸档位（Telegram 按分辨率从小到大排列）里挑给
+ * 视觉模型用的那一档：从最大往下找第一个不超过下载上限的（file_size 是
+ * 可选字段，缺失按可用对待——photo 是 Telegram 压缩过的 jpeg，实际很少
+ * 超限，上限只是防御性护栏）；都超限就退回最小档，交给下载侧的大小检查
+ * 兜底（见 ai/imageDescription.ts）。
+ */
+function pickPhotoFileId(sizes: any[]): string {
+  for (let i = sizes.length - 1; i >= 0; i--) {
+    const size: any = sizes[i];
+    if (!size.file_size || size.file_size <= IMAGE_MAX_DOWNLOAD_BYTES) return size.file_id;
+  }
+  return sizes[0].file_id;
 }
 
 /**
@@ -308,6 +324,15 @@ export async function handleIncomingMessage(
     // 也不 return——后面的随机复读本来就对贴纸生效，行为保持不变。
     const speaker = resolveSpeaker(message);
     recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, describeStickerForContext(message.sticker));
+  } else if (!isPrivateChat && !activeCopy && aiChatEnabled && Array.isArray(message.photo) && message.photo.length > 0) {
+    // 图片消息同样没有 text（配文在 caption 里），交给 AI Worker 先占位入
+    // 缓存、异步解析出描述后原位回填（见 aiChat.ts 的 recordChatImage）。
+    // 与贴纸同定位：只当上下文，不触发 AI 回复，也不 return——后面的随机
+    // 复读对图片本来就生效，行为保持不变。相册（一次发多张）是多条相邻
+    // 消息各带一张图，自然逐条走到这里，各自占位、各自解析。
+    const speaker = resolveSpeaker(message);
+    const caption: string = typeof message.caption === "string" ? message.caption : "";
+    recordChatImage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption, pickPhotoFileId(message.photo));
   }
 
   // 没有复读对象时，说到洗澡/泡澡/冲凉就回一句「看看」（触发词规则见
