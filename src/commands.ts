@@ -10,4 +10,4 @@ export { handleAiChatCommand } from "./commands/aiChat";
 export { handleJaCopyCommand } from "./commands/jaCopy";
 export { handleInitCommand } from "./commands/init";
 export { handleBalanceCommand } from "./commands/balance";
-export { handleLuckChallengeInlineQuery } from "./commands/luckChallenge";
+export { handleLuckChallengeInlineQuery, restoreLuckCache } from "./commands/luckChallenge";

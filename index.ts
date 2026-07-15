@@ -1,13 +1,14 @@
-import { flushLogs, logger } from "./src/infra/logger";
+import { logger } from "./src/infra/logger";
+import { flushDiskIO, loadPersistedData, type LoadedData } from "./src/infra/diskIO";
 import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getAllChatStates, getChatState, getGlobalCopyState, loadState } from "./src/infra/storage";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { handleAiChatCommand, handleBalanceCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
+import { handleAiChatCommand, handleBalanceCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
-import { initAiChat } from "./src/aiChat";
+import { flushAiMemory, hydrateAiMemory, initAiChat } from "./src/aiChat";
 import type { CachedUser } from "./src/types";
 
 /**
@@ -20,6 +21,11 @@ async function main(): Promise<void> {
   // 这里只触发从 state.json 的一次性加载；各处理器直接从 storage 读写，
   // 不再层层传引用。
   await loadState();
+
+  // AI 记忆快照 + 每日运势缓存由 diskIOWorker 落盘，这里触发一次启动恢复
+  // 并等待回执（带超时，见 loadPersistedData）。灌回操作在 initAiChat /
+  // initAntiRaid 之后才做（见下方），这里先只是把数据请回来。
+  const loaded: LoadedData = await loadPersistedData();
 
   // 恢复内存中的临时 users 缓存：目前正在被 copy 的用户/频道（全局唯一）
   // 直接从全局复读状态派生，不需要再从另一份文件读入合并。
@@ -166,6 +172,13 @@ async function main(): Promise<void> {
   // runner 开始投喂更新之前注入，postMessage 的 FIFO 保证这条 init 消息
   // 先于一切「记录/触发」事件到达 Worker。
   initAiChat(bot.botInfo);
+  // 紧随 init 之后灌回持久化的 AI 记忆快照，FIFO 保证先于一切 record/trigger
+  // 到达 Worker（见 aiChat.ts 的 hydrateAiMemory）。
+  hydrateAiMemory(loaded.aiMemories);
+  // 接管当日运势缓存（day 对不上今天则整体丢弃，见 restoreLuckCache）：
+  // dailyLuckCache 是主线程同步读写的，必须赶在 runner 开始投喂
+  // inline_query 之前灌好，否则会出现「今天已抽过却又抽出新结果」。
+  restoreLuckCache(loaded.luckDay);
   // 接管上次进程退出时仍在生效的反刷群私密模式（各群 ChatState.lockdown，
   // 已随上面的 loadState() 一次性读出）：同样要赶在 runner 投喂更新之前
   // adopt 给守卫 Worker，让它重排解锁计时。
@@ -204,6 +217,31 @@ async function main(): Promise<void> {
   }
 }
 
+/**
+ * 尽力跑一遍完整的落盘链：先让 aiChatWorker 把 dirty 记忆快照吐给主线程
+ * （转投 diskIOWorker），再让 diskIOWorker 把三类 dirty 数据（日志/AI 记忆/
+ * 运势）全部落盘。①②两步必须顺序执行，不能并发——AI 记忆要先经过主线程
+ * 中转落进 diskIOWorker 的缓存，flush 才有东西可落；调换顺序或并发跑，
+ * flush 可能抢在记忆转投完成之前执行，白白丢掉这一份增量。
+ */
+async function flushAllToDisk(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number): Promise<void> {
+  await flushAiMemory(aiMemoryTimeoutMs); // ①
+  await flushDiskIO(diskIOTimeoutMs); // ②
+}
+
+// 可选加固：uncaughtException / unhandledRejection 默认会直接崩溃进程、
+// 不走下面 main().finally() 的正常落盘链。这里兜底捕获，记日志后尽力跑
+// 一遍同样的 flush 链（短超时，避免进程被一次异常的清理流程拖住太久），
+// 再退出——退出码非零，systemd 配 Restart=on-failure 时会照常自动重启。
+process.on("uncaughtException", (error: unknown) => {
+  logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
+  void flushAllToDisk(1000, 1000).finally(() => process.exit(1));
+});
+process.on("unhandledRejection", (reason: unknown) => {
+  logger.error("Unhandled rejection, attempting a best-effort flush before exit:", reason);
+  void flushAllToDisk(1000, 1000).finally(() => process.exit(1));
+});
+
 main()
   .catch((err: unknown) => {
     logger.error("Unhandled error in bot main runner:", err);
@@ -211,7 +249,10 @@ main()
     // 时启动期的致命错误（状态文件损坏等）就不会触发自动重启。
     process.exitCode = 1;
   })
-  .finally(() => flushLogs());
+  .finally(() => flushAllToDisk(2000, 3000));
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才
-// 结束，此时把日志线程 buffer 里的存货（最长滞留一分钟）强制落盘，停机
-// 尾段产生的 error（如 offset 确认失败）也能收进去。崩溃路径同样覆盖。
+// 结束，此时把 aiChatWorker/diskIOWorker 里的存货（AI 记忆最长滞留
+// 30 秒 + 10 秒、运势最长滞留 10 秒、日志最长滞留一分钟）强制落盘，停机
+// 尾段产生的 error（如 offset 确认失败）也能收进去。硬崩（kill -9/OOM/
+// 断电）走不到这里——那正是定时写窗口 + 原子 rename + 启动修复兜底的场景，
+// 丢失量有上界，接受。

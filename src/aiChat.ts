@@ -1,6 +1,7 @@
 import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
-import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "./types";
+import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
+import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, AiMemorySnapshot } from "./types";
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、冷却与
@@ -11,6 +12,12 @@ import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage }
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
  *
  * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
+ *
+ * AI 记忆持久化：aiChatWorker 定期把各群 dirty 的记忆快照（滚动缓存 + 中期
+ * 摘要）上报到这里（memory 事件），本模块存一份镜像（latestAiMemories）后
+ * 转投 diskIOWorker 落盘。这份镜像同时是双向崩溃重放的唯一来源：aiChatWorker
+ * 崩溃重启后凭它重放 hydrate（下方 onRespawn），diskIOWorker 崩溃重启后
+ * 凭它重发落盘（下方 onDiskIORespawn），两条路径互不依赖。
  */
 
 // 重启后新 Worker 不知道机器人自己的账号身份，需要重放最近一次 init 消息
@@ -18,23 +25,54 @@ import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage }
 // 新 Worker 等本来就该来的那次 initAiChat 调用即可。
 let lastInit: AiInitMessage | null = null;
 
+/** 各群最新的 AI 记忆快照镜像，见上方模块头注「AI 记忆持久化」。 */
+const latestAiMemories: Map<number, AiMemorySnapshot> = new Map();
+
+/** flushAiMemory 的回执路由：flushId -> resolve（握手样式同 infra/diskIO.ts 的 pendingFlushes）。 */
+const pendingMemoryFlushes: Map<number, () => void> = new Map();
+
 const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
   url: new URL("./workers/aiChatWorker.ts", import.meta.url).href,
   label: "AI Worker",
   giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
-  // Worker 报回它刚发出的消息：登记进自发消息表，供自动流水线识别频道
-  // 自回环（见 infra/selfSentTracker.ts）。
   onEvent: (event) => {
     switch (event.type) {
       case "sent":
+        // Worker 报回它刚发出的消息：登记进自发消息表，供自动流水线识别
+        // 频道自回环（见 infra/selfSentTracker.ts）。
         markSelfSent(event.chatId, event.messageId);
         break;
+      case "memory":
+        latestAiMemories.set(event.chatId, event.snapshot);
+        postDiskIO({ type: "aiMemory", chatId: event.chatId, snapshot: event.snapshot });
+        break;
+      case "memoryFlushed": {
+        const resolve = pendingMemoryFlushes.get(event.flushId);
+        if (resolve) {
+          pendingMemoryFlushes.delete(event.flushId);
+          resolve();
+        }
+        break;
+      }
     }
   },
-  // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
   onRespawn: (postToNext) => {
+    // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
     if (lastInit) postToNext(lastInit);
+    // 记忆镜像同样要重放：新 Worker 内存全空，凭上一实例上报过的最新快照
+    // 补齐（见模块头注）。
+    if (latestAiMemories.size > 0) {
+      postToNext({ type: "hydrate", memories: latestAiMemories });
+    }
   },
+});
+
+// diskIOWorker 崩溃重建后，把当前记忆镜像整份重发给它，补齐上一次成功
+// 落盘之后的增量（见 infra/diskIO.ts 的 onDiskIORespawn 注释）。
+onDiskIORespawn(() => {
+  for (const [chatId, snapshot] of latestAiMemories) {
+    postDiskIO({ type: "aiMemory", chatId, snapshot });
+  }
 });
 
 /**
@@ -51,6 +89,44 @@ export function initAiChat(botInfo: AiBotInfo): void {
   };
   lastInit = message;
   post(message);
+}
+
+/**
+ * 启动时把 diskIOWorker 落盘恢复出的 AI 记忆快照灌回来：先存一份镜像
+ * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
+ * initAiChat 之后、runner 开始投喂更新之前调用（见 index.ts），FIFO 保证
+ * hydrate 消息先于一切 record/trigger 到达。
+ */
+export function hydrateAiMemory(memories: Map<number, AiMemorySnapshot>): void {
+  for (const [chatId, snapshot] of memories) {
+    latestAiMemories.set(chatId, snapshot);
+  }
+  if (memories.size > 0) {
+    post({ type: "hydrate", memories });
+  }
+}
+
+let nextMemoryFlushId: number = 1;
+
+/**
+ * 要求 aiChatWorker 立即把所有 dirty 群的记忆快照上报（进而转投 diskIOWorker
+ * 落盘），并等待完成。用于进程退出前的最后一刷（握手样式同 infra/diskIO.ts
+ * 的 flushDiskIO）。带超时兜底：Worker 异常时停机流程最多被拖住 timeoutMs，
+ * 不会挂死。
+ */
+export function flushAiMemory(timeoutMs: number = 2000): Promise<void> {
+  return new Promise((resolve) => {
+    const id: number = nextMemoryFlushId++;
+    const timer = setTimeout(() => {
+      pendingMemoryFlushes.delete(id);
+      resolve();
+    }, timeoutMs);
+    pendingMemoryFlushes.set(id, () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    post({ type: "flushMemory", flushId: id });
+  });
 }
 
 /**

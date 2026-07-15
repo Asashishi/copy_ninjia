@@ -48,6 +48,23 @@ export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;
  * 50 ~ 100 条，模型可感知的对话跨度约 400 ~ 450 条。
  */
 export const MAX_SUMMARY_ROUNDS: number = 7;
+
+/**
+ * 各群 dirty 的 AI 记忆快照（滚动缓存 + 中期摘要）上报给主线程（进而落盘）
+ * 的节奏，见 workers/aiChatWorker.ts 的 flushDirtyMemories。硬崩（kill -9/
+ * OOM）时这段间隔即记忆丢失的上界。
+ */
+export const AI_SNAPSHOT_INTERVAL_MS: number = 30_000;
+
+/**
+ * hydrate（进程重启/本 Worker 崩溃重建后灌回持久化记忆）时，buffer 最多
+ * 恢复这么多条（VERBATIM_CONTEXT_MAX - 1）。recordChatMessage 靠严格等值
+ * `size === VERBATIM_CONTEXT_MAX` 触发轮换：若恰好灌回整 100 条，下一次
+ * push 后 size 变 101，会永远错过这个判等，缓存无界增长。diskIOWorker 落盘前
+ * 的结构性重建（workers/diskIO/snapshotFiles.ts）复用同一上限做同样的截断，
+ * 两处双保险。
+ */
+export const AI_MEMORY_HYDRATE_BUFFER_MAX: number = VERBATIM_CONTEXT_MAX - 1;
 /** 单条摘要的硬性长度上限（字符），防摘要模型话痨撑爆回复上下文。 */
 export const SUMMARY_MAX_CHARS: number = 600;
 /** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */

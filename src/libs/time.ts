@@ -11,3 +11,12 @@ export function formatMinSec(ms: number): string {
   if (seconds === 0) return `${minutes}分钟`;
   return `${minutes}分${seconds}秒`;
 }
+
+/**
+ * 毫秒时间戳（缺省当前时刻）对应的东京时区日期串（YYYY-MM-DD）。
+ * /luck_challenge 的每日缓存与 diskIOWorker 的运势落盘（按东京日期分文件）
+ * 共用同一个日期划分，见 commands/luckChallenge.ts、workers/diskIOWorker.ts。
+ */
+export function getTokyoDateKey(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}

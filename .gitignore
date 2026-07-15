@@ -18,6 +18,9 @@ logs
 _.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
+# AI memory snapshots + daily luck cache (diskIOWorker, same privacy tier as logs)
+memory
+
 # dotenv environment variable files
 .env
 .env.development.local

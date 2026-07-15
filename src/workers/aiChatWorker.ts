@@ -6,7 +6,9 @@ import { fetchJsonWithTimeout } from "../libs/httpFetch";
 import { sleep } from "../libs/sleep";
 import { PERSONA_PATH } from "../consts/paths";
 import {
+  AI_MEMORY_HYDRATE_BUFFER_MAX,
   AI_REPLY_COOLDOWN_MS,
+  AI_SNAPSHOT_INTERVAL_MS,
   COMPACT_BATCH_SIZE,
   DEEPSEEK_API_URL,
   DEEPSEEK_MODEL,
@@ -38,6 +40,7 @@ import {
   chatBuffers,
   chatSummaries,
   compactionChains,
+  dirtyMemoryChats,
   lastReplyTimes,
   longTriggerTimes,
   pendingSummaries,
@@ -51,7 +54,7 @@ import { maybeSendStickerReply } from "../ai/stickers";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../tools";
 import { getCurrentTime } from "../tools/time";
-import type { AiBotInfo, AiChatWorkerMessage, AiSentMessage } from "../types";
+import type { AiBotInfo, AiChatWorkerMessage, AiMemoryEvent, AiMemoryFlushedEvent, AiMemorySnapshot, AiSentMessage } from "../types";
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
@@ -125,6 +128,7 @@ function recordChatMessage(chatId: number, id: number, firstName: string, lastNa
     chatBuffers.set(chatId, buf);
   }
   buf.push({ id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
+  dirtyMemoryChats.add(chatId);
   // 轮换机制见 COMPACT_BATCH_SIZE 注释。push 每次只 +1，且轮换把 size 收回
   // COMPACT_BATCH_SIZE 后 push 不会再撞上下面第二个判等，两个 === 各自恰好
   // 在块边界命中一次。
@@ -161,6 +165,7 @@ async function rotateCompaction(chatId: number, mirrorBatch: BufferedMessage[], 
     const summary: string | null = await summarizeBatch(mirrorBatch);
     if (summary) {
       pendingSummaries.set(chatId, summary);
+      dirtyMemoryChats.add(chatId);
     } else {
       // 失败刻意不回灌不重试：镜像原文此刻还在逐字区，要到下一轮滑出时
       // 这段中期记忆才真正缺失。
@@ -184,6 +189,68 @@ function promotePendingSummary(chatId: number): void {
   queue.push(pending);
   while (queue.size > MAX_SUMMARY_ROUNDS) {
     queue.shift();
+  }
+  dirtyMemoryChats.add(chatId);
+}
+
+/** 把某群当前的滚动缓存 + 中期摘要 + 待晋升摘要序列化成一份可落盘的快照。 */
+function buildMemorySnapshot(chatId: number): AiMemorySnapshot {
+  const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
+  const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
+  return {
+    version: 1,
+    buffer: buf ? buf.last(buf.size) : [],
+    summaries: summaryQueue ? summaryQueue.last(summaryQueue.size) : [],
+    pendingSummary: pendingSummaries.get(chatId) ?? null,
+    savedAt: Date.now(),
+  };
+}
+
+/**
+ * 把所有 dirty 群的记忆快照 post 给主线程（进而转投 diskIOWorker 落盘），
+ * 随后清空 dirty 标记。定时调用（见文件底部的 setInterval）以及
+ * flushMemory（退出前最后一刷）共用。
+ */
+function flushDirtyMemories(): void {
+  if (dirtyMemoryChats.size === 0) return;
+  for (const chatId of dirtyMemoryChats) {
+    self.postMessage({ type: "memory", chatId, snapshot: buildMemorySnapshot(chatId) } satisfies AiMemoryEvent);
+  }
+  dirtyMemoryChats.clear();
+}
+
+/**
+ * 启动时（或本 Worker 崩溃重启后）灌入持久化的记忆快照。只对内存里还没有
+ * 数据的群生效——重启后本来就全空，天然成立，不会覆盖掉刚收到的新消息。
+ *
+ * buffer 只恢复最新 AI_MEMORY_HYDRATE_BUFFER_MAX（= VERBATIM_CONTEXT_MAX - 1）
+ * 条：recordChatMessage 靠严格等值 `size === VERBATIM_CONTEXT_MAX` 触发轮换，
+ * 若恰好灌回整 100 条，下一次 push 后 size 变 101，会永远错过这个判等，
+ * 缓存无界增长。`=== COMPACT_BATCH_SIZE` 分支对恢复后 size ≥ 50 的群不再
+ * 触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块摘要粒度
+ * 略有漂移，可接受，不为此复刻轮换状态机。
+ */
+function hydrateMemories(memories: Map<number, AiMemorySnapshot>): void {
+  for (const [chatId, snapshot] of memories) {
+    if (chatBuffers.has(chatId)) continue;
+
+    const buf: LinkedQueue<BufferedMessage> = new LinkedQueue<BufferedMessage>();
+    for (const message of snapshot.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)) {
+      buf.push(message);
+    }
+    if (buf.size > 0) chatBuffers.set(chatId, buf);
+
+    if (snapshot.summaries.length > 0) {
+      const queue: LinkedQueue<string> = new LinkedQueue<string>();
+      for (const summary of snapshot.summaries.slice(-MAX_SUMMARY_ROUNDS)) {
+        queue.push(summary);
+      }
+      chatSummaries.set(chatId, queue);
+    }
+
+    if (snapshot.pendingSummary) {
+      pendingSummaries.set(chatId, snapshot.pendingSummary);
+    }
   }
 }
 
@@ -681,5 +748,17 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
     case "trigger":
       generateAndSendReply(msg.chatId, msg.replyToMessageId, msg.repliedBotText, msg.isRandomTrigger);
       break;
+    case "hydrate":
+      hydrateMemories(msg.memories);
+      break;
+    case "flushMemory":
+      flushDirtyMemories();
+      self.postMessage({ type: "memoryFlushed", flushId: msg.flushId } satisfies AiMemoryFlushedEvent);
+      break;
   }
 };
+
+// dirty 群的记忆快照定时上报给主线程（进而落盘），见 consts/aiChat.ts 的
+// AI_SNAPSHOT_INTERVAL_MS 注释。Worker 线程活到进程退出为止，不需要
+// 引用计数/按需启停，无条目时 flushDirtyMemories 直接空转返回。
+setInterval(flushDirtyMemories, AI_SNAPSHOT_INTERVAL_MS);

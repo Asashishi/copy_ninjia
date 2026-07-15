@@ -45,3 +45,10 @@ export const compactionChains: Map<number, Promise<void>> = new Map();
 
 /** chatId -> 该群当前共享的「正在输入…」重发定时器（见 startTypingHeartbeat）。 */
 export const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number }> = new Map();
+
+/**
+ * 自上次上报记忆快照后有变更（recordChatMessage/promotePendingSummary/
+ * rotateCompaction 三处标记）、待上报给主线程落盘的群，见
+ * flushDirtyMemories。上报后清空。
+ */
+export const dirtyMemoryChats: Set<number> = new Set();

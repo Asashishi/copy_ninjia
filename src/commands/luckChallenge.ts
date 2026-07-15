@@ -10,7 +10,10 @@ import {
   RATE_LIMIT_WINDOW_MS,
 } from "../consts/luckChallenge";
 import { dailyLuckCache, luckCacheState, recentCallTimestamps } from "../cache/luckChallenge";
-import type { LuckTier } from "../types";
+import { logger } from "../infra/logger";
+import { onDiskIORespawn, postDiskIO } from "../infra/diskIO";
+import { getTokyoDateKey } from "../libs/time";
+import type { LuckDayCache, LuckTier } from "../types";
 
 /**
  * 抽今日运势，仅通过 Telegram 内联模式触发：在任意聊天框里
@@ -32,14 +35,12 @@ import type { LuckTier } from "../types";
  * 带文本的查询（把文本当"所求事项"）只测吉凶，不算、也不显示概率。
  *
  * 运势结果按「用户 ID (+ 文本)」缓存，同一天同一把 key 只抽一次，抽到什么
- * 一天内都不会变；不带文本和带文本是两把不同的 key，互不影响。缓存只存在
- * 内存里，每天在东京时间零点自然过期（下一次请求触发清空），不落盘、重启
- * 即丢——这只是个图一乐的功能，没必要为它多写一个持久化文件。
+ * 一天内都不会变；不带文本和带文本是两把不同的 key，互不影响。缓存活在
+ * 主线程内存里，每天在东京时间零点自然过期（下一次请求触发清空）；新抽到
+ * 的结果同时经 postDiskIO 转投 diskIOWorker 落盘（memory/luck/YYYY-MM-DD.json，
+ * 按东京日期一个文件），重启后由 restoreLuckCache 灌回，当天结果不因重启
+ * 改变；过期文件在写入时发现跨天就删，见 workers/diskIOWorker.ts。
  */
-
-function getTokyoDateKey(date: Date = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
-}
 
 function ensureCacheFreshForToday(): void {
   const todayKey: string = getTokyoDateKey();
@@ -66,7 +67,49 @@ function getOrDrawLuckTier(userId: number, text: string | undefined): LuckTier {
 
   const tier: LuckTier = drawLuckTier(Math.floor(Math.random() * 100) + 1);
   dailyLuckCache.set(cacheKey, tier);
+  // 新抽到的结果才需要落盘（缓存命中不必重发一次一模一样的数据）。
+  // day 用刚校准过的 luckCacheState.dayKey，与本次缓存写入用的是同一个"今天"。
+  postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key: cacheKey, label: tier.label });
   return tier;
+}
+
+// diskIOWorker 崩溃重建后，把当天缓存整份重发给它：dailyLuckCache 本来就
+// 活在主线程，不需要另设镜像，直接拿它当重放源即可（见 infra/diskIO.ts
+// 的 onDiskIORespawn 注释）。先校准一次「今天」：这份镜像只在真的有请求
+// 进来时才会惰性刷新（见 ensureCacheFreshForToday），若崩溃恰好发生在
+// 跨天之后、当天第一次请求之前，镜像里可能还留着昨天的 dayKey/条目——
+// 不校准就会把过期数据当成"今天"重发给新实例，污染它刚从磁盘正确恢复出
+// 的今天状态。
+onDiskIORespawn(() => {
+  ensureCacheFreshForToday();
+  if (dailyLuckCache.size === 0) return;
+  for (const [key, tier] of dailyLuckCache) {
+    postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key, label: tier.label });
+  }
+});
+
+/**
+ * 启动时接管 diskIOWorker load 回执里的当日运势缓存。day 与今天（东京时区）
+ * 不一致就整体丢弃——只在东京日期跨天在诊断窗口内发生时才会出现，此时
+ * 这份缓存已经是昨天的，没有接管的价值。按 LUCK_TIERS 反查 label 还原成
+ * LuckTier 对象，查不到（未来改了档位表）就丢弃该条并记日志，让用户当天
+ * 重抽，不硬造对象。必须在 runner 开始投喂 inline_query 之前调用（见
+ * index.ts），否则会出现「今天已抽过却又抽出新结果」。
+ */
+export function restoreLuckCache(loaded: LuckDayCache | null): void {
+  if (!loaded) return;
+  const todayKey: string = getTokyoDateKey();
+  if (loaded.day !== todayKey) return;
+
+  luckCacheState.dayKey = todayKey;
+  for (const [key, label] of loaded.entries) {
+    const tier: LuckTier | undefined = LUCK_TIERS.find((t) => t.label === label);
+    if (!tier) {
+      logger.error(`Restored luck entry "${key}" has label "${label}" that no longer matches any LUCK_TIERS entry; dropping it, the user will redraw today.`);
+      continue;
+    }
+    dailyLuckCache.set(key, tier);
+  }
 }
 
 /** 取行大运/倒大霉里数字大的那个，语义见 LuckTier.fortunePercent。 */

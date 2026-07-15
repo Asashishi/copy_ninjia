@@ -1,32 +1,32 @@
 /**
- * 日志落盘线程（Bun Worker）。接收 logger.ts 发来的 error 日志，先进入内存
- * buffer，达到阈值（见 consts/logger.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS）
- * 或收到主线程的 flush 指令（进程退出前的最后一刷）时批量落盘到
- * logs/YYYY-MM-DD.json：文件内容是一个 JSON 对象，键为
- * 「本地日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），值为该条日志的
- * 内容对象，与 JSON.stringify(entries, null, 2) 的输出逐字节一致。
+ * 日志落盘逻辑：接收 diskIOWorker.ts 路由来的日志消息，先进入内存 buffer，
+ * 达到阈值（见 consts/diskIO.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS）或
+ * 收到统一 flush 指令时批量落盘到 logs/YYYY-MM-DD.json：文件内容是一个
+ * JSON 对象，键为「本地日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），
+ * 值为该条日志的内容对象，与 JSON.stringify(entries, null, 2) 的输出逐字节
+ * 一致。
  *
  * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写，
  * 而是覆写文件结尾的「\n}」两个字节、按位置追加，写入量只与本批条数
  * 有关，与文件大小无关。仅保留 RETENTION_DAYS 天内的文件（见
- * consts/logger.ts），跨天时自动清理过期文件。日期按系统本地时区划分
+ * consts/diskIO.ts），跨天时自动清理过期文件。日期按系统本地时区划分
  * （本机已设为 Asia/Tokyo）。
+ *
+ * 本文件从原 src/workers/loggerWorker.ts 原样搬迁而来，逻辑无变化。
  */
 
-import { join } from "path";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from "fs";
-import type { DayFileState, FlushReply, FlushRequest, LogMessage } from "../types";
-import { LOGS_DIR } from "../consts/paths";
-import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../consts/logger";
-import { flushBuffer, loggerFileState } from "../cache/loggerWorker";
-
-declare var self: Worker;
+import { join } from "node:path";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import type { DayFileState, LogMessage } from "../../types";
+import { LOGS_DIR } from "../../consts/paths";
+import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO";
+import { flushBuffer, loggerFileState } from "../../cache/diskIOWorker";
 
 interface LogRecord {
   level: string;
   message: string;
   /** 原始参数列表。当它相对 message 没有任何额外信息（单个字符串参数，
-   *  message 就是它本身）时省略不写，见 onmessage 里的判断。 */
+   *  message 就是它本身）时省略不写，见 handleLogMessage 里的判断。 */
   args?: unknown[];
 }
 
@@ -174,11 +174,18 @@ function writeDay(day: string, texts: string[]): void {
     // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
     // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。
     loggerFileState.current = null;
-    console.error("[loggerWorker] flush to disk failed:", err);
+    console.error("[diskIOWorker] flush to disk failed:", err);
   }
 }
 
-function flush(): void {
+/** 目录初始化 + 首次清理，由 diskIOWorker.ts 在模块加载时调用一次。 */
+export function initLogFiles(): void {
+  mkdirSync(LOGS_DIR, { recursive: true });
+  cleanupOldLogs();
+}
+
+/** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */
+export function flushLogBuffer(): void {
   if (flushBuffer.timer !== null) {
     clearTimeout(flushBuffer.timer);
     flushBuffer.timer = null;
@@ -200,19 +207,8 @@ function flush(): void {
   writeDay(day, texts);
 }
 
-mkdirSync(LOGS_DIR, { recursive: true });
-cleanupOldLogs();
-
-self.onmessage = (event: MessageEvent<LogMessage | FlushRequest>) => {
-  const msg: LogMessage | FlushRequest = event.data;
-  // 落盘指令（进程退出前的最后一刷）：立即 flush 并回执。消息按 FIFO
-  // 处理，此前收到的日志此刻都已在 buffer 里，flush 完即全部落盘。
-  if ("flushId" in msg) {
-    flush();
-    const reply: FlushReply = { flushedId: msg.flushId };
-    self.postMessage(reply);
-    return;
-  }
+/** 处理一条日志消息：入内存 buffer，达到阈值立即落盘，否则按需启动定时器。 */
+export function handleLogMessage(msg: LogMessage): void {
   const message: string = msg.args
     .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
     .join(" ");
@@ -229,8 +225,8 @@ self.onmessage = (event: MessageEvent<LogMessage | FlushRequest>) => {
     text: serializeEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
   if (flushBuffer.entries.length >= FLUSH_MAX_ENTRIES) {
-    flush();
+    flushLogBuffer();
   } else if (flushBuffer.timer === null) {
-    flushBuffer.timer = setTimeout(flush, FLUSH_INTERVAL_MS);
+    flushBuffer.timer = setTimeout(flushLogBuffer, FLUSH_INTERVAL_MS);
   }
-};
+}

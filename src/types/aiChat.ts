@@ -1,3 +1,5 @@
+import type { BufferedMessage } from "./aiChatWorker";
+
 /** Worker 侧自我认知所需的机器人账号身份（bot.init() 之后才可得，见 initAiChat）。 */
 export interface AiBotInfo {
   id: number;
@@ -30,7 +32,41 @@ export interface AiTriggerMessage {
   isRandomTrigger: boolean;
 }
 
-export type AiChatWorkerMessage = AiInitMessage | AiRecordMessage | AiTriggerMessage;
+/**
+ * 某个群的 AI 记忆快照：滚动缓存 + 中期摘要队列，落盘结构见
+ * memory/ai/<chatId>.json（src/workers/diskIO/snapshotFiles.ts）。由
+ * aiChatWorker 定期序列化 dirty 群上报（见 workers/aiChatWorker.ts 的
+ * flushDirtyMemories），经主线程 aiChat.ts 转投 diskIOWorker 落盘。
+ */
+export interface AiMemorySnapshot {
+  version: 1;
+  /** 逐字滚动缓存，上限见 consts/aiChat.ts 的 VERBATIM_CONTEXT_MAX。 */
+  buffer: BufferedMessage[];
+  /** 中期记忆队列，从旧到新，上限见 consts/aiChat.ts 的 MAX_SUMMARY_ROUNDS。 */
+  summaries: string[];
+  /** 待晋升的镜像摘要；无则为 null。 */
+  pendingSummary: string | null;
+  /** 快照生成时刻（毫秒时间戳），排查用。 */
+  savedAt: number;
+}
+
+/**
+ * 主线程 -> Worker：启动时（或本 Worker 崩溃重启后）灌入持久化的记忆快照。
+ * 必须紧跟在 init 之后、任何 record/trigger 之前送达（FIFO 保证顺序）。
+ * 只对内存里还没有数据的群生效——重启后本来就全空，天然成立。
+ */
+export interface AiHydrateMessage {
+  type: "hydrate";
+  memories: Map<number, AiMemorySnapshot>;
+}
+
+/** 主线程 -> Worker：退出前最后一刷，立即把所有 dirty 群的快照 post 出去，随后回执。 */
+export interface AiFlushMemoryMessage {
+  type: "flushMemory";
+  flushId: number;
+}
+
+export type AiChatWorkerMessage = AiInitMessage | AiRecordMessage | AiTriggerMessage | AiHydrateMessage | AiFlushMemoryMessage;
 
 /**
  * Worker -> 主线程：一条消息已经发出去了（AI 回复或跟发的贴纸）。Worker
@@ -44,4 +80,17 @@ export interface AiSentMessage {
   messageId: number;
 }
 
-export type AiChatWorkerEvent = AiSentMessage;
+/** Worker -> 主线程：一个群的记忆快照（dirty 群定时上报，或 flushMemory 触发的即时上报）。 */
+export interface AiMemoryEvent {
+  type: "memory";
+  chatId: number;
+  snapshot: AiMemorySnapshot;
+}
+
+/** Worker -> 主线程：flushMemory 已完成（所有 dirty 群快照都已 post 出）。 */
+export interface AiMemoryFlushedEvent {
+  type: "memoryFlushed";
+  flushId: number;
+}
+
+export type AiChatWorkerEvent = AiSentMessage | AiMemoryEvent | AiMemoryFlushedEvent;
