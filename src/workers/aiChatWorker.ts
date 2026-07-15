@@ -516,12 +516,17 @@ function notifyRateLimited(chatId: number, now: number): void {
   const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
   if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
   rateLimitNoticeTimes.set(chatId, now);
-  void sendMessage(chatId, "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡").then((sentMessageId: number | undefined) => {
-    // 跟其他两处发送一样报回主线程登记自发消息（见 generateAndSendReply 的
+  const noticeText: string = "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡";
+  void sendMessage(chatId, noticeText).then((sentMessageId: number | undefined) => {
+    if (sentMessageId === undefined) return;
+    // 跟其他三处发送一样报回主线程登记自发消息（见 generateAndSendReply 的
     // sendMessage/maybeSendStickerReply 调用）：这条提示同样可能落在频道，
     // 漏报的话频道自回环会被当成新内容，触发一轮不必要的 AI 回复/随机复读。
-    if (sentMessageId !== undefined) {
-      self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
+    self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
+    // 也自录进对话缓存——这条提示同样是机器人在群里说的话，不留痕的话
+    // 模型不知道自己刚说过「太快了接不过来」，被追问时接不上。
+    if (botInfo) {
+      recordChatMessage(chatId, botInfo.id, botInfo.first_name, "", noticeText);
     }
   });
 }
