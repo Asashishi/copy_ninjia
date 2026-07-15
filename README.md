@@ -19,9 +19,10 @@
   - **频道评论区感知**：关联频道的帖子下留言会被 Telegram 自动拉进讨论群，人在频道侧看不到群里的验证按钮。直接回复频道帖（确证的真人评论）直接免验证；楼中楼回复无法确证线程根，不豁免，改为把验证提醒追发到 TA 的回复下（评论线程双向同步，按钮在频道侧可见可点）并重置计时。留言与入群更新的到达顺序不保证，先到的留言会暂存 2 分钟等入群时消费。判定无状态（只看 `is_automatic_forward` / `message_thread_id`），并按群缓存「是否有关联频道」作开关，普通群的回复链不会误触发。
   - **提醒触达**：待验证成员一旦在群里开口发言，验证提醒会改锚成回复 TA 发言的形式（回复会推通知）；无论哪种补发，原来那条独立提醒都会立刻删除，同一时刻群里只有一条。验证通过的欢迎消息回复到同一条消息下，楼中楼场景随之落进评论线程。
 - **反刷群（Anti-Raid）**：采用滑动窗口算法检测刷群行为，最近 60 秒内入群人数超过 45 人时，自动临时开启私密模式（禁止普通成员拉人），到期后自动恢复原权限；私密模式期间的新入群一律直接踢出、不开验证窗口（只踢不封，可重新申请加入）；管理员拉人凭管理员表缓存同步放行（触发/接管私密模式时会预热缓存），管理员/群主身份入群、直接回复频道帖的确证真人评论也照常豁免（免验证且不计入刷群统计）。私密模式状态持久化在 `state.json` 里，在进程重启后能自动接管并重排恢复计时，避免群权限被永久锁定。
-- **AI 闲聊**：基于 DeepSeek API 和自定义人设（`prompt/persona.txt`），概率性地在群里生成闲聊回复；回复机器人或 @ 机器人时必回，纯按概率命中的随机搭话则不挂 Telegram 回复引用，改为在文字里点名称呼触发者。按群配置 `isUseAIChat`（`ChatState`，随 `state.json` 持久化），**缺省禁用**，需通过 `/ai_chat enable`（对应 `/ai_chat disable` 关闭）显式开启；该指令仅限定用户可用，其他人使用无效。关闭的群既不攒对话缓存也不触发任何 AI 回复。
-  - 内置基础工具（`src/tools/`）供模型按需调用：查当前时间（东京时区）、查东京今日天气（Open-Meteo，1 小时缓存）。时间类问题会把真实时间直接注入上下文，保证不瞎编。
-  - 上下文由本群滚动缓存拼装：逐字区 50~100 条最新消息 + 最多 7 轮 DeepSeek 压缩摘要（约 350 条冷历史），模型可感知约 400~450 条跨度的对话；机器人发出的回复、跟发的贴纸、随机复读出去的文本、洗澡触发的「看看」都会自录入缓存并随批次轮换自然压缩进中期摘要，并在提示词中注明自己的账号（@username + id），能在上下文中认出自己说过的话、以及谁在 @ 或回复自己。各群 dirty 的记忆快照定期落盘到 `memory/ai/`（进程重启/意外崩溃后自动恢复，丢失量有上界），目录不进 git，按日志同等隐私等级对待。
+- **AI 闲聊**：基于 xAI Grok（`grok-4.3`，走 `/v1/responses` 接口）和自定义人设（`prompt/persona.md`），概率性地在群里生成闲聊回复；回复机器人或 @ 机器人时必回，纯按概率命中的随机搭话则不挂 Telegram 回复引用，改为在文字里点名称呼触发者。按群配置 `isUseAIChat`（`ChatState`，随 `state.json` 持久化），**缺省禁用**，需通过 `/ai_chat enable`（对应 `/ai_chat disable` 关闭）显式开启；该指令仅限定用户可用，其他人使用无效。关闭的群既不攒对话缓存也不触发任何 AI 回复。
+  - 开启 xAI 内置的 **web_search** 服务端工具：模型自主决定何时联网查证，搜索在 xAI 服务器侧自动执行；回复里附带的行内引用标记会在发送前剥掉。另有基础函数工具（`src/tools/`）供模型按需调用：查当前时间（东京时区）、查东京今日天气（Open-Meteo，1 小时缓存）。时间类问题会把真实时间直接注入上下文，保证不瞎编。
+  - 上下文由本群滚动缓存拼装：逐字区 50~100 条最新消息 + 最多 7 轮 AI 压缩摘要（约 350 条冷历史），模型可感知约 400~450 条跨度的对话；机器人发出的回复、跟发的贴纸、随机复读出去的文本、洗澡触发的「看看」都会自录入缓存并随批次轮换自然压缩进中期摘要，并在提示词中注明自己的账号（@username + id），能在上下文中认出自己说过的话、以及谁在 @ 或回复自己。各群 dirty 的记忆快照定期落盘到 `memory/ai/`（进程重启/意外崩溃后自动恢复，丢失量有上界），目录不进 git，按日志同等隐私等级对待。
+  - **读图**：群友发的图片会先以「[图片：识别中]」占位记入上下文（保住时序位置），随后异步下载并喂给 grok 视觉输入，解析出一行中文描述后原位回填（失败回退为纯「[图片]」）；相册多图逐条各自占位、各自解析。图片配文跟在描述后面一并入上下文。与贴纸同定位：只当上下文，不触发回复。
   - 群友发的贴纸以元数据描述行（情绪 emoji、所属贴纸包）记入上下文，供模型参考情绪走向，不触发回复。
   - 分群三重限频：0.5 秒冷却 + 每分钟最多 45 次 + 每 5 分钟最多 150 次（滑动窗口），超限的触发直接丢弃，防止恶意刷屏烧穿 API 配额；滑动窗口打满时会明确回一句「你们太快了……」（提示本身每群每分钟至多一条，不会跟着刷屏）。
   - **不会自己触发自己**：机器人发到自己管理的频道里的消息，Telegram 会把 `channel_post` 更新（以及转发进关联讨论组的自动转发副本）原样推回来，不区分是谁发的；内联模式抽签结果也带着 `via_bot` 标记。机器人识别出这两类「自己造成的」更新后会整条跳过自动流水线（不重复记入对话缓存、不触发随机回复/随机复读/洗澡触发），避免自说自话的循环，见 `src/infra/selfSentTracker.ts`。
@@ -33,18 +34,17 @@
   - 结果消息自带「我也试试」「转发」按钮，方便旁观者原地重新发起查询或分享到别的聊天。
   - 全局限频每分钟最多应答 30 次内联查询（不分群、不分用户合计），超限时回一条提示而非静默不回。
   - 需要先在 [@BotFather](https://t.me/BotFather) 为机器人开启 Inline Mode 才能使用。
-- **`/balance`**：查询当前 DeepSeek API Key 绑定账号的余额，结果缓存 30 秒，避免连续查询触发接口限流。
 - **`/quiet`**：让机器人在本群安静一段时间（`/quiet [分钟数]`，1~15，缺省 3 分钟），期间不触发 AI 随机搭话、随机复读等主动行为；回复/@ 机器人的必回和各类指令不受影响。静默期内不允许重复 `/quiet` 叠加，用 **`/unquiet`** 提前解除。
 - **`/ai_chat enable|disable`**：按群开关 AI 闲聊功能（缺省禁用）。仅限定用户（`SUPER_ADMIN_USER_ID` 环境变量，不走 `PRIVILEGED_USERS_ID` 白名单）可用，其他人使用无效。
 - **`/ja_trans enable|disable`**：按群开关 `/ja_copy` 的日语翻译功能（缺省启用）。权限同上，仅 `SUPER_ADMIN_USER_ID` 可用；关闭后本群 `/ja_copy` 会被拒绝。
-- **状态持久化**：静默时间、反刷群私密模式、AI 闲聊开关、日语翻译开关、机器人管理员身份记录按群独立维护；复读目标和 copy 类命令的冷却时钟全局共用一份。全部状态启动时从 `state.json` 一次性读入内存，之后只在内存中交互，每次变更走异步串行队列全量覆写回文件（先写临时文件再原子 rename，进程被杀也不会留下半截 JSON），重启后自动恢复。AI 记忆快照与每日运势缓存走独立的 `memory/` 目录（同样是内存缓存 + 定时批量落盘 + 原子写），由统一的磁盘 IO 线程（diskIOWorker）落盘，与 `logs/`、`memory/` 均不进 git。
+- **状态持久化**：静默时间、反刷群私密模式、AI 闲聊开关、日语翻译开关、机器人管理员身份记录按群独立维护；复读目标和 copy 类命令的冷却时钟全局共用一份。全部状态启动时从 `state.json` 一次性读入内存，之后只在内存中交互，每次变更走异步串行队列全量覆写回文件（先写临时文件再原子 rename，进程被杀也不会留下半截 JSON），重启后自动恢复。AI 记忆快照与每日运势缓存走独立的 `memory/` 目录（内存缓存 + 条数/时间双阈值批量落盘；AI 记忆整份原子写，运势与日志按位置追加写 + 启动时截断修复），由统一的磁盘 IO 线程（diskIOWorker）落盘，`logs/`、`memory/` 均不进 git。
 
 ## 环境要求
 
 - 推荐服务器配置：4 核 CPU / 2GB 内存及以上（机器人主线程 + AI 闲聊/入群守卫/磁盘 IO（日志 + AI 记忆 + 每日运势统一落盘）三个 Worker 线程常驻，多群（建议一个bot实例不要同时处理超过15个群以上的信息）高并发场景下建议按此配置起步）
 - [Bun](https://bun.com) 运行时
 - Telegram Bot Token（通过 [@BotFather](https://t.me/BotFather) 获取）
-- DeepSeek API Key（用于 AI 闲聊功能）
+- xAI API Key（用于 AI 闲聊/读图功能，[console.x.ai](https://console.x.ai) 获取）
 - Google Cloud 服务账号凭据（用于 `/ja_copy` 日语翻译功能，`g-auth.json`）
 
 ## 安装
@@ -62,7 +62,7 @@ bun install
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token |
 | `PRIVILEGED_USERS_ID` | 白名单用户 ID，多个用逗号分割（可免受 `/copy` 冷却限制、使用 `/kick`） |
 | `SUPER_ADMIN_USER_ID` | 唯一可使用 `/ai_chat`、`/ja_trans` 的 `enable\|disable` 的用户 ID |
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥，供 AI 闲聊功能使用 |
+| `XAI_API_KEY` | xAI (Grok) API 密钥，供 AI 闲聊/读图功能使用 |
 
 日语翻译功能还需要将 Google Cloud 服务账号密钥文件放置为项目根目录下的 `g-auth.json`（已加入 `.gitignore`，不会被提交）。
 
@@ -92,15 +92,16 @@ src/
     quiet.ts               # /quiet 与 /unquiet
     kick.ts                # /kick（白名单限定，在所有管理员群同时踢出并封禁）
     aiChat.ts               # /ai_chat enable|disable（限定用户，按群开关 AI 闲聊）
-    balance.ts             # /balance 查询 DeepSeek 余额
     luckChallenge.ts       # /luck_challenge 内联模式抽签（吉凶 + 行大运/倒大霉概率）
   workers/              # 独立的工作子线程
-    aiChatWorker.ts        # AI 闲聊流水线 Worker 线程（限频、DeepSeek 调用、发送、记忆快照定期上报）
+    aiChatWorker.ts        # AI 闲聊流水线 Worker 线程（限频、Grok 调用、读图占位/回填、发送、记忆快照定期上报）
     antiRaidWorker.ts      # 入群守卫 Worker 线程（src/states/ 两台状态机的解释器：翻译投递、落状态、跑副作用）
-    diskIOWorker.ts        # 磁盘 IO Worker 线程入口：日志 + AI 记忆快照 + 每日运势统一落盘（消息路由、flush 调度、启动恢复编排）
+    diskIOWorker.ts        # 磁盘 IO Worker 线程入口：日志 + AI 记忆快照 + 每日运势统一落盘（消息路由、统一 flush、启动恢复编排）
     diskIO/                # diskIOWorker.ts 的具体落盘逻辑
-      logFiles.ts            # 日志文件的读写/修复/清理（原 loggerWorker.ts 逻辑原样搬迁）
-      snapshotFiles.ts       # AI 记忆快照 + 每日运势的原子写（tmp+rename）、启动恢复读取与结构校验
+      logFiles.ts            # 日志文件的缓冲/追加/保留期清理
+      luckFiles.ts           # 每日运势的缓冲/追加调度（条数/时间双阈值窗口）
+      snapshotFiles.ts       # AI 记忆快照的原子写（tmp+rename）+ 运势追加纯函数 + 两者的启动恢复与结构校验
+      appendOnlyDayFile.ts   # 日志/运势共用的「按天文件、按位置追加」与损坏修复字节机制
   states/               # 入群验证 + 反刷群私密模式的纯状态机（无 I/O，同步转移函数 + 副作用描述）
     verification.ts        # 入群验证生命周期状态机
     lockdown.ts             # 反刷群私密模式生命周期状态机
@@ -108,15 +109,17 @@ src/
     logger.ts              # 统一日志门面（error 级经 diskIO.ts 投递）
     diskIO.ts              # 磁盘 IO Worker 的主线程侧宿主（创建/自愈、flush/load 握手、postDiskIO 投递句柄）
     telegram.ts            # Telegram Bot API 封装与限流
+    updateGate.ts          # isInit 网关判断（未初始化群的更新在入口整条丢弃）
     selfSentTracker.ts     # 登记机器人刚发出的消息，供自动流水线识别「频道自回环」并整体跳过
     storage.ts             # 状态持久化（state.json）
     config.ts              # 密钥与部署配置（从环境变量读取）
     botAdmin.ts            # 追踪机器人自身在各群的管理员身份，供入群守卫与 /kick 门控
   ai/                   # AI 回复流水线的配套积木
+    xai.ts                 # xAI /v1/responses 的底层收发与响应解析（回复/摘要/读图共用）
+    imageDescription.ts    # 群聊图片的下载与视觉描述（供读图占位回填）
     reactions.ts           # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）
     stickers.ts            # AI 回复后概率跟发应景贴纸（白名单见 config/stickers.json）
     stickerSets.ts         # 贴纸包拉取缓存 + 情绪关键词匹配等公共积木
-    deepseekBalance.ts     # 查询 DeepSeek 账户余额（30 秒缓存），供 /balance 使用
   copy/                 # 复读功能的配套积木
     copyModes.ts           # 反转 / 喵~ / 日语翻译等复读文本变换
     translate.ts           # Google Cloud Translate 封装
@@ -133,12 +136,14 @@ src/
     supervisedWorker.ts    # 业务 Worker 的启动/崩溃自愈/日志转投骨架（aiChat.ts、antiRaid.ts 共用）
     workerSupervisor.ts    # Worker 崩溃重启的节流器（滑动窗口内超限即放弃自愈）
     httpFetch.ts           # 带超时与统一报错的 JSON API 请求封装
-    time.ts                # 毫秒数转中文时长文案（如 "1分30秒"）
+    text.ts                # 转录文本清洗（压单行防注入、按码元截断）
+    time.ts                # 毫秒数转中文时长文案（如 "1分30秒"）+ 东京日期串
     random.ts              # 从数组中均匀随机挑一项
     sleep.ts               # Promise 化的 sleep
   consts/               # 各模块的调参常量（同名对应其所服务的模块）
   cache/                # 各模块的内存状态/缓存（同名对应其所服务的模块）
   types/                # 全项目共享类型（types/index.ts 统一重导出）
+test/                   # 单元测试（bun test），目录结构与 src/ 对应
 ```
 
 本项目基于 `bun init`（Bun v1.3.14）创建。
