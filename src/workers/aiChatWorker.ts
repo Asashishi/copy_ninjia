@@ -70,7 +70,7 @@ import type { AiBotInfo, AiChatWorkerMessage, AiMemoryEvent, AiMemoryFlushedEven
  * AI 闲聊回复本体：把本群最近的对话记录喂给 xAI 的 grok（/v1/responses
  * 接口，收发细节见 ai/xai.ts），生成一条人设化回复；模型可自主使用内置的
  * web_search 服务端工具联网查证。人设文本存放在仓库根目录的
- * prompt/persona.txt，修改人设不需要碰代码。
+ * prompt/persona.md，修改人设不需要碰代码。
  *
  * 中期记忆：镜像/热块轮换机制见 consts/aiChat.ts 的 COMPACT_BATCH_SIZE 注释；
  * 轮换本身由 recordChatMessage/scheduleRotation/rotateCompaction 实现。

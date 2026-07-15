@@ -13,8 +13,8 @@ export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 export const STATE_FILE_PATH: string = join(PROJECT_ROOT, "state.json");
 export const LOCK_FILE_PATH: string = join(PROJECT_ROOT, "bot.lock");
 
-/** AI 闲聊人设文本（修改人设不需要碰代码）。 */
-export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.txt");
+/** AI 闲聊人设文本（Markdown，修改人设不需要碰代码）。 */
+export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
 
 // 应景贴纸 / 应景反应的配置文件（白名单、概率、情绪关键词映射）。
 export const STICKERS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "stickers.json");
