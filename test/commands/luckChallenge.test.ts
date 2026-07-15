@@ -52,7 +52,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(ctx.results.length).toBe(2);
 
     const fortuneBody: string = bodyTextOf(ctx.results[0]);
-    luckChallenge.confirmLuckDraw(111, fortuneBody);
+    luckChallenge.confirmLuckDraw(fortuneBody);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     const msg: any = postDiskIOMock.mock.calls[0]![0];
@@ -65,7 +65,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const ctx = makeInlineCtx(222, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     const probabilityBody: string = bodyTextOf(ctx.results[1]);
-    luckChallenge.confirmLuckDraw(222, probabilityBody);
+    luckChallenge.confirmLuckDraw(probabilityBody);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "222" });
@@ -77,7 +77,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(ctx.results.length).toBe(1);
 
     const body: string = bodyTextOf(ctx.results[0]);
-    luckChallenge.confirmLuckDraw(333, body);
+    luckChallenge.confirmLuckDraw(body);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "333:今天适合表白吗" });
@@ -86,19 +86,35 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("同一天多个不同 key（多用户 / 同用户不同所求事项）各自独立落盘一次", async () => {
     const ctxA = makeInlineCtx(1, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctxA as any);
-    luckChallenge.confirmLuckDraw(1, bodyTextOf(ctxA.results[0]));
+    luckChallenge.confirmLuckDraw(bodyTextOf(ctxA.results[0]));
 
     const ctxB = makeInlineCtx(2, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctxB as any);
-    luckChallenge.confirmLuckDraw(2, bodyTextOf(ctxB.results[0]));
+    luckChallenge.confirmLuckDraw(bodyTextOf(ctxB.results[0]));
 
     const ctxC = makeInlineCtx(1, "工作运");
     await luckChallenge.handleLuckChallengeInlineQuery(ctxC as any);
-    luckChallenge.confirmLuckDraw(1, bodyTextOf(ctxC.results[0]));
+    luckChallenge.confirmLuckDraw(bodyTextOf(ctxC.results[0]));
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(3);
     const keys: string[] = postDiskIOMock.mock.calls.map((c: any) => c[0].key);
     expect(new Set(keys)).toEqual(new Set(["1", "2", "1:工作运"]));
+  });
+
+  test("以频道马甲/匿名管理员身份发出（消息 from 带不回真实 uid）：仍能按文本认领落盘", async () => {
+    // 回归线上事故：inline 预览永远是真人账号发起，但用户以马甲身份把结果
+    // 发进群时，via_bot 消息的 from 被 Telegram 换成 Channel_Bot/匿名马甲，
+    // 旧实现的 `${userId} ${文本}` 索引永远查不上——确认只能靠文本本身。
+    const ctx = makeInlineCtx(888, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+    const body: string = bodyTextOf(ctx.results[0]);
+
+    // 调用方（auto/message.ts）只把消息文本传进来，不含（也拿不到）真实 uid
+    luckChallenge.confirmLuckDraw(body);
+
+    expect(postDiskIOMock).toHaveBeenCalledTimes(1);
+    expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "888" });
+    expect(cache.dailyLuckCache.has("888")).toBe(true);
   });
 
   test("只预览不选中：不落盘（confirmLuckDraw 从未被调用）", async () => {
@@ -112,9 +128,9 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const ctx = makeInlineCtx(555, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     const body: string = bodyTextOf(ctx.results[0]);
-    luckChallenge.confirmLuckDraw(555, body);
-    luckChallenge.confirmLuckDraw(555, body);
-    luckChallenge.confirmLuckDraw(555, body);
+    luckChallenge.confirmLuckDraw(body);
+    luckChallenge.confirmLuckDraw(body);
+    luckChallenge.confirmLuckDraw(body);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
   });
@@ -122,14 +138,14 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("重新预览同一把 key 后再选中：同一天不会二次落盘/二次滚动", async () => {
     const ctx1 = makeInlineCtx(666, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx1 as any);
-    luckChallenge.confirmLuckDraw(666, bodyTextOf(ctx1.results[0]));
+    luckChallenge.confirmLuckDraw(bodyTextOf(ctx1.results[0]));
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
 
     // 已确认之后用户又 @机器人 打了一遍字（重新触发 inline_query 预览）
     const ctx2 = makeInlineCtx(666, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx2 as any);
     expect(bodyTextOf(ctx2.results[0])).toBe(bodyTextOf(ctx1.results[0]));
-    luckChallenge.confirmLuckDraw(666, bodyTextOf(ctx2.results[0]));
+    luckChallenge.confirmLuckDraw(bodyTextOf(ctx2.results[0]));
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
   });

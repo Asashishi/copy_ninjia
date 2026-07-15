@@ -258,7 +258,9 @@ export async function handleIncomingMessage(
   if (!message) return;
   if (message.via_bot?.id === ctx.me.id) {
     recordSelfInlineResult(message, ctx.me.id, ctx.me.first_name);
-    confirmLuckDraw(message.from?.id, message.text);
+    // 只传文本不传 from——马甲/匿名身份发出的内联结果 from 不是真人，
+    // 认领只能靠文本，见 commands/luckChallenge.ts 的 confirmLuckDraw。
+    confirmLuckDraw(message.text);
     return;
   }
   if (isBotOwnMessage(message, ctx.me.id)) return;

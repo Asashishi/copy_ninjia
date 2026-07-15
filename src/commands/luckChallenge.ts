@@ -109,31 +109,35 @@ function getOrDrawLuck(userId: number, text: string | undefined): LuckDraw {
 }
 
 /** 登记"这段渲染出的消息原文，对应哪一把抽签 key"，供 confirmLuckDraw 反查。
+ * 索引只按文本、不掺 userId——马甲/匿名身份发出的 via_bot 消息带不回真实
+ * uid，理由见 cache/luckChallenge.ts 的 pendingLuckRenderIndex 注释。
  * 每次预览（哪怕命中缓存）都会重新登记一遍，重复登记同一对 key/文本是
  * 廉价的幂等覆盖，不需要额外去重。已经转正的 key 不再登记——没有必要，
  * confirmLuckDraw 对已转正的 key 本来就是空操作，省一次 Map 写入。 */
-function registerPendingRendering(userId: number, cacheKey: string, renderedText: string): void {
+function registerPendingRendering(cacheKey: string, renderedText: string): void {
   if (dailyLuckCache.has(cacheKey)) return;
-  pendingLuckRenderIndex.set(`${userId} ${renderedText}`, cacheKey);
+  pendingLuckRenderIndex.set(renderedText, cacheKey);
 }
 
 /**
  * via_bot 消息真的送达时（见 auto/message.ts 的 handleIncomingMessage）调用：
  * 说明用户真的选中了某条内联结果并发了出去，这才是「真的触发了一次运势
  * 测试」。用消息原文反查 pendingLuckRenderIndex 找到对应的 cacheKey 与
- * pendingLuckDraws 里的抽签结果，转存进 dailyLuckCache 并经 postDiskIO 落盘；
- * 查无匹配（消息不是运势结果、或进程恰好在预览和选中之间重启导致内存态
- * 丢失）什么都不做——宁可当天该 key 之后被重新抽一次，也不要凭空落盘一条
- * 用户从未真正确认过的记录。
+ * pendingLuckDraws 里的抽签结果，转存进 dailyLuckCache 并经 postDiskIO 落盘。
+ * 只认文本、不看消息的 from——用户以频道马甲/匿名管理员身份发出时 from
+ * 已被 Telegram 换成马甲，不含真实 uid（见 pendingLuckRenderIndex 注释）；
+ * 身份结算依然以 inline 侧登记的 cacheKey（真实 uid）为准，「只能测自己的」
+ * 语义不变。查无匹配（消息不是运势结果、或进程恰好在预览和选中之间重启
+ * 导致内存态丢失）什么都不做——宁可当天该 key 之后被重新抽一次，也不要
+ * 凭空落盘一条用户从未真正确认过的记录。
  */
-export function confirmLuckDraw(userId: number | undefined, messageText: string | undefined): void {
-  if (typeof userId !== "number" || typeof messageText !== "string") return;
+export function confirmLuckDraw(messageText: string | undefined): void {
+  if (typeof messageText !== "string") return;
   ensureCacheFreshForToday();
 
-  const renderKey: string = `${userId} ${messageText}`;
-  const cacheKey: string | undefined = pendingLuckRenderIndex.get(renderKey);
+  const cacheKey: string | undefined = pendingLuckRenderIndex.get(messageText);
   if (!cacheKey) return;
-  pendingLuckRenderIndex.delete(renderKey);
+  pendingLuckRenderIndex.delete(messageText);
 
   const draw: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
   pendingLuckDraws.delete(cacheKey);
@@ -215,7 +219,7 @@ function buildFortuneResult(draw: LuckDraw, userId: number, userLabel: string, t
   const bodyText: string = text
     ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${draw.tier.label}\n${draw.tier.comment}`
     : `你好，${userLabel}\n汝的今日运势: ${draw.tier.label}\n${draw.tier.comment}`;
-  registerPendingRendering(userId, luckCacheKey(userId, text), bodyText);
+  registerPendingRendering(luckCacheKey(userId, text), bodyText);
   return InlineQueryResultBuilder.article(text ? "luck-fortune-text" : "luck-fortune", "未卜先知", {
     description: text ? `所求事项：${text}` : "测测你今天的运势",
     reply_markup: buildRetryKeyboard(text),
@@ -228,7 +232,7 @@ function buildFortuneResult(draw: LuckDraw, userId: number, userLabel: string, t
 function buildProbabilityResult(draw: LuckDraw, userId: number, userLabel: string): InlineQueryResultArticle {
   const { label, percent } = pickDominantProbability(draw);
   const bodyText: string = `你好，${userLabel}\n汝今天${label}概率是 ${percent.toFixed(2)}%`;
-  registerPendingRendering(userId, luckCacheKey(userId, undefined), bodyText);
+  registerPendingRendering(luckCacheKey(userId, undefined), bodyText);
   return InlineQueryResultBuilder.article("luck-probability", "概率论！", {
     description: "看看你今天行大运/倒大霉的概率",
     reply_markup: buildRetryKeyboard(undefined),
