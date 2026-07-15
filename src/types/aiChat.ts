@@ -34,8 +34,11 @@ export interface AiRecordImageMessage {
   lastName: string;
   /** 图片自带的配文（没有则空串），跟在描述/占位标签后入转录行。 */
   caption: string;
-  /** 已按大小挑好档位的 photo file_id（见 auto/message.ts 的 pickPhotoFileId）。 */
+  /** 已按大小挑好档位的 photo file_id（见 auto/message.ts 的 pickPhotoFile）。 */
   fileId: string;
+  /** 同一档位的 file_unique_id：同图重发 file_id 会变、它恒定，是描述去重
+   * 缓存的键（见 ai/imageDescription.ts 的 descriptionCache）。 */
+  fileUniqueId: string;
   /** 这条图片消息本身的 message_id，评图回复要用它挂 Telegram 回复引用。 */
   messageId: number;
   /** 主线程已掷中「解析完成后评价这张图」（概率见 AI_IMAGE_COMMENT_PROBABILITY，

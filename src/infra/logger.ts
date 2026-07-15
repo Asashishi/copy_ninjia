@@ -6,7 +6,7 @@
  *
  * 本模块可能同时被主线程和其它 Bun Worker（如 aiChatWorker）import。落盘
  * 线程（diskIOWorker）的创建、自愈、flush/load 握手统一由 infra/diskIO.ts
- * 管理——该 Worker 同时也是 AI 记忆/每日运势快照的落盘线程，只由主线程
+ * 管理——该 Worker 同时也是 AI 记忆快照的落盘线程，只由主线程
  * 启动这一个（若每个线程都自建落盘线程，多个实例按字节偏移并发追加同一个
  * 日志文件会互相踩踏写坏文件）。这里只是门面：主线程下 error 日志经
  * relayLogMessage 转投给它；Worker 线程里的 logger 处于「转发模式」：

@@ -5,7 +5,6 @@ import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
 import { cacheSender } from "../users/senderIdentity";
 import { recordChatMessage, recordChatImage, generateAndSendReply } from "../aiChat";
-import { confirmLuckDraw } from "../commands";
 import { AI_IMAGE_COMMENT_PROBABILITY, AI_REPLY_PROBABILITY, IMAGE_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
@@ -159,14 +158,18 @@ function recordSelfInlineResult(message: any, botId: number, botFirstName: strin
  * 视觉模型用的那一档：从最大往下找第一个不超过下载上限的（file_size 是
  * 可选字段，缺失按可用对待——photo 是 Telegram 压缩过的 jpeg，实际很少
  * 超限，上限只是防御性护栏）；都超限就退回最小档，交给下载侧的大小检查
- * 兜底（见 ai/imageDescription.ts）。
+ * 兜底（见 ai/imageDescription.ts）。file_id 用来下载，file_unique_id 是
+ * 同图重发时恒定的去重键（见 ai/imageDescription.ts 的 descriptionCache），
+ * 两个 id 必须取自同一档位才对得上号。
  */
-function pickPhotoFileId(sizes: any[]): string {
+function pickPhotoFile(sizes: any[]): { fileId: string; fileUniqueId: string } {
   for (let i = sizes.length - 1; i >= 0; i--) {
     const size: any = sizes[i];
-    if (!size.file_size || size.file_size <= IMAGE_MAX_DOWNLOAD_BYTES) return size.file_id;
+    if (!size.file_size || size.file_size <= IMAGE_MAX_DOWNLOAD_BYTES) {
+      return { fileId: size.file_id, fileUniqueId: size.file_unique_id };
+    }
   }
-  return sizes[0].file_id;
+  return { fileId: sizes[0].file_id, fileUniqueId: sizes[0].file_unique_id };
 }
 
 /**
@@ -242,10 +245,10 @@ function hasCopyableContent(message: any): boolean {
  *
  * 最前面依次过两道门，命中任一道都不再往下走：
  * - via_bot 指向自己：内联结果消息（如 /luck_challenge），自录入 AI 对话
- *   缓存后直接返回，见 recordSelfInlineResult；同时这也是运势抽签唯一的
- *   「真的发出去了」信号，顺带调用 confirmLuckDraw 把对应的抽签结果从
- *   pending 转正、落盘，见 commands/luckChallenge.ts 的注释——用户只是打字
- *   预览、没选中任何结果就不会走到这里，不会被当成测过运势。
+ *   缓存后直接返回，见 recordSelfInlineResult。（运势抽签的确认落盘不在
+ *   这里做——文本认领挂在 index.ts 的 isInit 网关之前，不然转发进未 /init
+ *   群的结果副本根本到不了本函数，见 commands/luckChallenge.ts 的
+ *   confirmLuckDraw。）
  * - isBotOwnMessage：机器人自己发出消息的原样回弹（频道自回环），整条跳过、
  *   连记忆都不留。
  */
@@ -257,9 +260,6 @@ export async function handleIncomingMessage(
   if (!message) return;
   if (message.via_bot?.id === ctx.me.id) {
     recordSelfInlineResult(message, ctx.me.id, ctx.me.first_name);
-    // 只传文本不传 from——马甲/匿名身份发出的内联结果 from 不是真人，
-    // 认领只能靠文本，见 commands/luckChallenge.ts 的 confirmLuckDraw。
-    confirmLuckDraw(message.text);
     return;
   }
   if (isBotOwnMessage(message, ctx.me.id)) return;
@@ -339,7 +339,8 @@ export async function handleIncomingMessage(
     const caption: string = typeof message.caption === "string" ? message.caption : "";
     const commentOnResolve: boolean =
       !isQuiet && Math.random() < AI_IMAGE_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
-    recordChatImage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption, pickPhotoFileId(message.photo), message.message_id, commentOnResolve);
+    const photoFile = pickPhotoFile(message.photo);
+    recordChatImage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption, photoFile.fileId, photoFile.fileUniqueId, message.message_id, commentOnResolve);
   }
 
   // 没有复读对象时，说到洗澡/泡澡/冲凉就回一句「看看」（触发词规则见

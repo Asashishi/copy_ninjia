@@ -7,7 +7,7 @@
  * 一致。
  *
  * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写——具体的
- * 按位置追加/损坏修复机制见 diskIO/appendOnlyDayFile.ts（与每日运势共用）。
+ * 按位置追加/损坏修复机制见 diskIO/appendOnlyDayFile.ts。
  * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO.ts），跨天时自动清理
  * 过期文件。日期按系统本地时区划分（本机已设为 Asia/Tokyo）。
  *

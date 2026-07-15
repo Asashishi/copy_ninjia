@@ -156,6 +156,10 @@ export const IMAGE_DESCRIPTION_MAX_TOKENS: number = 4096;
 export const IMAGE_DESCRIPTION_MAX_CHARS: number = 200;
 /** 从 Telegram 下载图片文件的超时。 */
 export const IMAGE_DOWNLOAD_TIMEOUT_MS: number = 20_000;
+/** 图片描述缓存（按 file_unique_id 去重，见 ai/imageDescription.ts）的条目
+ *  上限，超出按插入顺序淘汰最旧的。同一张梗图被反复刷屏时不再重复下载/
+ *  解析，转录里也不会出现同图多份措辞各异的描述。 */
+export const IMAGE_DESCRIPTION_CACHE_MAX: number = 500;
 /** 图片下载大小上限：挑尺寸时跳过超过它的档位（xAI 收 base64 后限 20MiB，
  *  Telegram photo 压缩后远小于此，这只是防御性护栏）。 */
 export const IMAGE_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;

@@ -160,8 +160,9 @@ function recordChatImage(msg: AiRecordImageMessage): void {
     text: composeImageText(IMAGE_PENDING_PLACEHOLDER, sanitizedCaption),
   };
   pushBufferedMessage(msg.chatId, entry);
-  // describeImage 内部兜住一切异常只返回 null，这条异步链不会 reject。
-  void describeImage(msg.fileId).then((description: string | null) => {
+  // describeImage 内部兜住一切异常只返回 null，这条异步链不会 reject；
+  // 同图重发/刷屏由它按 file_unique_id 去重，不重复下载解析。
+  void describeImage(msg.fileId, msg.fileUniqueId).then((description: string | null) => {
     entry.text = composeImageText(description ? `[图片：${description}]` : IMAGE_FALLBACK_PLACEHOLDER, sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
     dirtyMemoryChats.add(msg.chatId);

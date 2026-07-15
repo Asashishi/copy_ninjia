@@ -6,7 +6,7 @@ import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState } from "./src/infra/storage";
 import { shouldPassInitGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
+import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { flushAiMemory, hydrateAiMemory, initAiChat } from "./src/aiChat";
@@ -23,9 +23,9 @@ async function main(): Promise<void> {
   // 不再层层传引用。
   await loadState();
 
-  // AI 记忆快照 + 每日运势缓存由 diskIOWorker 落盘，这里触发一次启动恢复
-  // 并等待回执（带超时，见 loadPersistedData）。灌回操作在 initAiChat /
-  // initAntiRaid 之后才做（见下方），这里先只是把数据请回来。
+  // AI 记忆快照由 diskIOWorker 落盘，这里触发一次启动恢复并等待回执
+  // （带超时，见 loadPersistedData）。灌回操作在 initAiChat / initAntiRaid
+  // 之后才做（见下方），这里先只是把数据请回来。
   const loaded: LoadedData = await loadPersistedData();
 
   // 恢复内存中的临时 users 缓存：目前正在被 copy 的用户/频道（全局唯一）
@@ -48,14 +48,27 @@ async function main(): Promise<void> {
     return next();
   });
 
+  // 运势抽签「结果消息现身」的兜底确认（主路是下面的 chosen_inline_result）：
+  // 只要机器人在任何聊天里看见一条文本恰好是某把待确认抽签的渲染原文，就
+  // 说明那条结果确实被发出去过，认领转正（纯内存，见 commands/
+  // luckChallenge.ts 模块头——刻意不落盘）。刻意不要求 via_bot——转发副本
+  // 不带 via_bot（不相干的人把结果转发进机器人在场的陌生群、或转发到机器
+  // 人自己的私聊，都该算数），所以也必须挂在 isInit 网关之前，未 /init 的
+  // 群里现身的副本才认领得到。confirmLuckDraw 幂等、只做一次 Map 查找，
+  // 每条更新多付的成本可忽略；认领完更新照常往下走，去留仍由网关决定。
+  bot.use((ctx, next) => {
+    confirmLuckDraw(ctx.msg?.text);
+    return next();
+  });
+
   // isInit 网关：见 ChatState.isInit 注释、判断逻辑见 src/infra/updateGate.ts
   // 的 shouldPassInitGate（含放行哪些更新的完整说明）。Bot API 长轮询没有
   // 「取消订阅某个群」的机制，Telegram 仍会把机器人所在所有群的更新推给这个
   // 进程；未通过 /init enable 初始化的群，整条处理链在这里终止——只做一次
   // Map 查找就丢弃，不再往下走 sequentialize、入群验证、指令匹配、AI 调用等
   // 任何开销，是应用层面能做到的最接近「不监听」的效果，避免被拉进大量群时
-  // 被拖垮。放在最前端（甚至先于 sequentialize），未初始化群的每条更新成本
-  // 降到最低。
+  // 被拖垮。放在最前端（先于 sequentialize，仅次于上面的运势认领——那一步
+  // 必须看见未初始化群的消息），未初始化群的每条更新成本降到最低。
   bot.use((ctx, next) => (shouldPassInitGate(ctx) ? next() : undefined));
 
   // runner 会并发处理更新，必须用 sequentialize 约束顺序：消息/命令/成员变动
@@ -160,8 +173,8 @@ async function main(): Promise<void> {
   // callback_query 是入群验证按钮点击的信号来源；inline_query 是
   // `@本机器人 ...` 内联模式（/luck_challenge）的信号来源（还需要在
   // BotFather 里手动开启 Inline Mode，光加这里不够）；chosen_inline_result
-  // 是抽签确认落盘的主信号（同样要在 BotFather 用 /setinlinefeedback 开启，
-  // 建议 100%，否则 Telegram 不发这类更新，确认只剩 via_bot 兜底路）。
+  // 是抽签确认的主信号（同样要在 BotFather 用 /setinlinefeedback 开启，
+  // 建议 100%，否则 Telegram 不发这类更新，确认只剩文本认领兜底路）。
   // 用 @grammyjs/runner 代替 bot.start()：内建轮询对所有更新全局串行，一条
   // 消息的处理（复读、翻译）会卡住后面的 reaction 更新；runner 按上面的
   // sequentialize 约束并发处理。
@@ -173,10 +186,6 @@ async function main(): Promise<void> {
   // 紧随 init 之后灌回持久化的 AI 记忆快照，FIFO 保证先于一切 record/trigger
   // 到达 Worker（见 aiChat.ts 的 hydrateAiMemory）。
   hydrateAiMemory(loaded.aiMemories);
-  // 接管当日运势缓存（day 对不上今天则整体丢弃，见 restoreLuckCache）：
-  // dailyLuckCache 是主线程同步读写的，必须赶在 runner 开始投喂
-  // inline_query 之前灌好，否则会出现「今天已抽过却又抽出新结果」。
-  restoreLuckCache(loaded.luckDay);
   // 接管上次进程退出时仍在生效的反刷群私密模式（各群 ChatState.lockdown，
   // 已随上面的 loadState() 一次性读出）：同样要赶在 runner 投喂更新之前
   // adopt 给守卫 Worker，让它重排解锁计时。
@@ -217,8 +226,8 @@ async function main(): Promise<void> {
 
 /**
  * 尽力跑一遍完整的落盘链：先让 aiChatWorker 把 dirty 记忆快照吐给主线程
- * （转投 diskIOWorker），再让 diskIOWorker 把三类 dirty 数据（日志/AI 记忆/
- * 运势）全部落盘。①②两步必须顺序执行，不能并发——AI 记忆要先经过主线程
+ * （转投 diskIOWorker），再让 diskIOWorker 把两类 dirty 数据（日志/AI 记忆）
+ * 全部落盘。①②两步必须顺序执行，不能并发——AI 记忆要先经过主线程
  * 中转落进 diskIOWorker 的缓存，flush 才有东西可落；调换顺序或并发跑，
  * flush 可能抢在记忆转投完成之前执行，白白丢掉这一份增量。
  */
@@ -250,7 +259,7 @@ main()
   .finally(() => flushAllToDisk(2000, 3000));
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才
 // 结束，此时把 aiChatWorker/diskIOWorker 里的存货（AI 记忆最长滞留
-// 30 秒 + 10 秒、运势和日志最长滞留 30 秒）强制落盘，停机
+// 30 秒 + 10 秒、日志最长滞留 30 秒）强制落盘，停机
 // 尾段产生的 error（如 offset 确认失败）也能收进去。硬崩（kill -9/OOM/
 // 断电）走不到这里——那正是定时写窗口 + 原子 rename + 启动修复兜底的场景，
 // 丢失量有上界，接受。

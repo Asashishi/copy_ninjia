@@ -151,11 +151,12 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
  * 消息」的形式发一条针对图片内容的评价。
  * @param caption 图片自带的配文（没有则传空串）。
  * @param fileId 已挑好尺寸档位的 photo file_id。
+ * @param fileUniqueId 同一档位的 file_unique_id（描述去重缓存的键）。
  * @param messageId 图片消息的 message_id（评图回复挂引用用）。
  * @param commentOnResolve 是否在解析成功后评价这张图。
  */
-export function recordChatImage(chatId: number, id: number, firstName: string, lastName: string, caption: string, fileId: string, messageId: number, commentOnResolve: boolean): void {
-  post({ type: "recordImage", chatId, senderId: id, firstName, lastName, caption, fileId, messageId, commentOnResolve });
+export function recordChatImage(chatId: number, id: number, firstName: string, lastName: string, caption: string, fileId: string, fileUniqueId: string, messageId: number, commentOnResolve: boolean): void {
+  post({ type: "recordImage", chatId, senderId: id, firstName, lastName, caption, fileId, fileUniqueId, messageId, commentOnResolve });
 }
 
 /**

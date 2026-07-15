@@ -2,10 +2,10 @@
  * 通用的"按天 JSON 对象文件、末尾追加"落盘机制：文件内容始终是一个顶层
  * JSON 对象 { "key1": value1, "key2": value2, ... }，新增条目不整文件重写，
  * 而是覆写文件结尾的「\n}」两字节、按位置追加，写入量只与本批条数有关，
- * 与文件大小无关。原是 loggerWorker.ts 专属逻辑，现抽成通用机制，供
- * diskIO/logFiles.ts（日志）与 diskIO/snapshotFiles.ts（每日运势）共用；
- * 调用方各自负责 key/value 怎么序列化、多久 flush 一次、保留策略等领域
- * 逻辑，这里只管字节层面的打开/探测/追加/损坏修复。
+ * 与文件大小无关。原是 loggerWorker.ts 专属逻辑，现抽成通用机制（当前
+ * 调用方只剩 diskIO/logFiles.ts 的日志落盘）；调用方各自负责 key/value
+ * 怎么序列化、多久 flush 一次、保留策略等领域逻辑，这里只管字节层面的
+ * 打开/探测/追加/损坏修复。
  */
 
 import { closeSync, existsSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
