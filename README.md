@@ -41,7 +41,7 @@
 
 ## 环境要求
 
-- 推荐服务器配置：4 核 CPU / 2GB 内存及以上（机器人主线程 + AI 闲聊/入群守卫/磁盘 IO（日志 + AI 记忆 + 每日运势统一落盘）三个 Worker 线程常驻，多群高并发场景下建议按此配置起步）
+- 推荐服务器配置：4 核 CPU / 2GB 内存及以上（机器人主线程 + AI 闲聊/入群守卫/磁盘 IO（日志 + AI 记忆 + 每日运势统一落盘）三个 Worker 线程常驻，多群（建议一个bot实例不要同时处理超过15个群以上的信息）高并发场景下建议按此配置起步）
 - [Bun](https://bun.com) 运行时
 - Telegram Bot Token（通过 [@BotFather](https://t.me/BotFather) 获取）
 - DeepSeek API Key（用于 AI 闲聊功能）
