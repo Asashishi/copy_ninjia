@@ -98,8 +98,8 @@ export const SUMMARY_MAX_CHARS: number = 500;
  */
 export const SUMMARY_SYSTEM_PROMPT: string =
   "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份。" +
-  "请把这段记录压缩成一段简洁的摘要，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
-  `严格控制篇幅：摘要正文不得超过 ${SUMMARY_MAX_CHARS} 字，不要展开细节、不要逐条复述，只挑最要紧的信息压缩成一段话。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。`;
+  "请把这段记录压缩成一段简洁的摘要，只挑最要紧的信息，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
+  `摘要正文不得超过 ${SUMMARY_MAX_CHARS} 字，不要展开细节、不要逐条复述。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。`;
 
 /**
  * callGemini 系统提示词里，紧跟在现查的「当前实际时间」句子之后的静态指令
@@ -209,10 +209,19 @@ export const ANIMATION_FALLBACK_PLACEHOLDER: string = "[GIF：解析失败，请
  *  各写各的（文案 120、截断 200），模型没能精确遵循字数指令时实际入库描述
  *  可以接近文档承诺上限的两倍。 */
 export const IMAGE_DESCRIPTION_MAX_CHARS: number = 120;
+
+/** 三份媒体描述 prompt 共用的收尾（字数上限 + 只输出描述本身的格式要求），
+ *  免得同一段要求在图片/贴纸/GIF 三处各抄一遍、措辞各改各的漂移。措辞统一
+ *  用「不要用引号把整段描述包起来」而非「不要引号」——贴纸描述里本来就
+ *  要求把抄录的画面文字放进「」，笼统禁引号会跟它打架。 */
+function descriptionOutputRule(maxChars: number): string {
+  return `不超过 ${maxChars} 字，只输出描述本身，不要任何前缀或解释，也不要用引号把整段描述包起来。`;
+}
+
 /** 喂给视觉模型的描述指令：产出一行简短中文描述，供转录上下文引用。 */
 export const IMAGE_DESCRIPTION_PROMPT: string =
   "这是中文群聊里有人发的一张图片。请用中文简要描述它：是什么内容、图里有什么文字、想表达什么；" +
-  `若是表情包/梗图/截图，请点出其中的文字要点和情绪。不超过 ${IMAGE_DESCRIPTION_MAX_CHARS} 字，只输出描述本身，不要任何前缀、解释或引号。`;
+  `若是表情包/梗图/截图，请点出梗点和情绪。${descriptionOutputRule(IMAGE_DESCRIPTION_MAX_CHARS)}`;
 
 /**
  * 贴纸/GIF 描述的字数上限——比图片短：贴纸/GIF 本身信息密度低（一个画面
@@ -234,13 +243,13 @@ export const STICKER_DESCRIPTION_PROMPT: string =
   "代码和英文报错本身不要抄，用一句话概括是什么（如「一段 Rust 借用检查报错的代码」）即可，" +
   "别让抄录挤掉画面描述。" +
   "抄录之后，再简述角色/形象是谁或什么、动作表情、整体想表达的情绪或语气。" +
-  `不超过 ${SHORT_MEDIA_DESCRIPTION_MAX_CHARS} 字，只输出描述本身，不要任何前缀、解释，也不要用引号把整段描述包起来。`;
+  descriptionOutputRule(SHORT_MEDIA_DESCRIPTION_MAX_CHARS);
 /** 喂给视觉模型描述一个 GIF 封面帧的指令：没有抽帧能力（无 ffmpeg），只能
  *  分析 Telegram 自带的缩略图，提示词点明这一点，避免模型把只看到第一帧
  *  的内容说成是整个动图。 */
 export const ANIMATION_DESCRIPTION_PROMPT: string =
   "这是中文群聊里发的一个动图（GIF）的封面帧画面（不是完整动图，只是第一帧）。请用中文简要描述这一帧看到的内容、" +
-  `画面里的文字（如有）、大致想表达的情绪或梗。不超过 ${SHORT_MEDIA_DESCRIPTION_MAX_CHARS} 字，只输出描述本身，不要任何前缀、解释或引号。`;
+  `画面里的文字（如有）、大致想表达的情绪或梗。${descriptionOutputRule(SHORT_MEDIA_DESCRIPTION_MAX_CHARS)}`;
 
 /** 媒体描述的输出 token 上限：描述本身很短，但推理模型的思考也计入（同
  *  REPLY_MAX_TOKENS 注释），要给足余量。图片/贴纸/GIF 共用。 */
@@ -287,8 +296,8 @@ export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成
 
 /**
  * view_sticker_pack 工具描述的固定前缀，后面动态拼接当次可选贴纸包的编号
- * 清单（每包一行「编号. 「包名」（N 枚）：整包简介」），见 ai/stickers.ts 的
- * buildViewStickerPackToolDefinition。
+ * 清单（每包一行「编号. 「包名」（N 枚）：整包简介」），见 ai/tools/stickers.ts
+ * 的 buildViewStickerPackToolDefinition。
  */
 export const VIEW_STICKER_PACK_TOOL_INSTRUCTION: string =
   "发贴纸的第一步：查看某个贴纸包内每枚贴纸的具体描述清单。发贴纸是你说话方式的一部分，" +
@@ -302,8 +311,8 @@ export const VIEW_STICKER_PACK_TOOL_INSTRUCTION: string =
  */
 export const SEND_STICKER_TOOL_INSTRUCTION: string =
   "从某个贴纸包里发送一枚贴纸到群里。必须先用 view_sticker_pack 查看过那个包的贴纸清单，" +
-  `再按清单里的编号发送。每轮回复最多发 ${MAX_STICKERS_PER_REPLY} 枚贴纸——要么不发，` +
-  "要么只发最应景的那一枚。";
+  `再按清单里的编号发送。每轮回复最多发 ${MAX_STICKERS_PER_REPLY} 枚——选最应景的那枚，` +
+  "没有合适的就不发。";
 
 /**
  * send_message 工具的描述：发言本身也是工具，模型自己决定发一条还是像真人
@@ -333,12 +342,13 @@ export const ADD_REACTION_TOOL_INSTRUCTION: string =
  * buildUserContent 拼在回复指令末尾的行动说明：发言/贴纸/反应全部工具化，
  * 用不用、什么顺序由模型自己决定，见 workers/aiChatWorker.ts；动作总量的
  * 「通常 1~3、硬顶 MAX_ACTIONS_PER_REPLY」在执行侧强制，这里只做引导。
+ * 各工具的具体用法不在这里复述——同一次请求里每个工具自己的 description
+ * 已经写清（见上方各 *_TOOL_INSTRUCTION），这里只放跨工具的全局规则：
+ * 动作预算、允许沉默、结束方式。
  */
 export const REPLY_ACTION_INSTRUCTION: string =
-  "你的所有动作都只能通过工具完成：说话用 send_message（想连发就多调用几次，一次一条短句；" +
-  "要不要以「回复」形式挂在触发消息上由它的 reply_to_trigger 参数决定）；配应景贴纸先用 " +
-  "view_sticker_pack 看包内清单、再用 send_sticker 发送；想给触发消息扣个表情反应就用 " +
-  "add_reaction。做不做、先做哪个、做几样都由你自己决定——判断此刻不值得出声时，也可以一个" +
-  "动作都不做、直接结束，沉默同样是符合人设的选择。一轮回复通常 1~3 个动作（发消息、发贴纸、" +
-  `扣反应都算在内），最多绝不超过 ${MAX_ACTIONS_PER_REPLY} 个——宁缺毋滥，别刷屏。` +
-  "全部动作完成后直接结束，不要再输出任何正文——正文不会被发到群里。";
+  "你的所有动作（说话 send_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +
+  "add_reaction）都只能通过工具完成，用法见各工具说明。做不做、先做哪个、做几样都由你自己决定" +
+  "——判断此刻不值得出声时，也可以一个动作都不做、直接结束，沉默同样是符合人设的选择。" +
+  `一轮回复通常 1~3 个动作，最多绝不超过 ${MAX_ACTIONS_PER_REPLY} 个——宁缺毋滥，别刷屏。` +
+  "全部动作完成后直接结束，不要再输出任何正文。";
