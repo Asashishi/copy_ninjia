@@ -188,8 +188,8 @@ export const IMAGE_DESCRIPTION_MAX_CHARS: number = 200;
 /**
  * 贴纸/GIF 描述的字数上限——比图片短：贴纸/GIF 本身信息密度低（一个画面
  * 梗+一句文字居多），这份描述还要兼顾另一个消费方（ai/stickerCatalog.ts
- * 的目录：机器人自己挑贴纸要发时读的清单，条目太长会把选择调用的输入撑得
- * 很臃肿），75 字足够说清画面角色/动作/文字/情绪。
+ * 的目录：拼进 send_sticker 工具描述里的编号清单，条目太长会把每次请求的
+ * 系统提示词撑得很臃肿），75 字足够说清画面角色/动作/文字/情绪。
  */
 export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 75;
 /** 喂给视觉模型描述一枚贴纸的指令：群友发的贴纸、机器人自己贴纸目录的
@@ -222,18 +222,16 @@ export const MEDIA_DESCRIPTION_CACHE_TTL_MS: number = 60 * 60 * 1000;
  *  20MiB，Telegram 压缩后的 photo/贴纸/缩略图远小于此，这只是防御性护栏）。 */
 export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
 
-// ---- 应景贴纸挑选（机器人回复后按目录描述挑一枚贴纸跟发）----
-// 目录生成/持久化见 ai/stickerCatalog.ts；挑选调用见 ai/stickers.ts。
+// ---- 应景贴纸（send_sticker 工具：模型在生成回复的同一次对话里自己决定
+// 要不要配一枚贴纸、配哪一枚）----
+// 目录生成/持久化见 ai/stickerCatalog.ts；工具定义/执行见 ai/stickers.ts。
 
-/** 挑选调用的系统提示词：给模型一份贴纸目录（编号 + emoji + 画面描述）和
- *  即将发出的回复文本，要求挑一枚最应景的贴纸编号；找不到合适的允许弃权
- *  （NONE），弃权/解析失败时 stickers.ts 会回退到原有的关键词匹配。 */
-export const STICKER_SELECTION_SYSTEM_PROMPT: string =
-  "你在帮一个中文群聊机器人挑选要跟发的贴纸。你会收到这条回复的文本，以及一份可选贴纸的编号清单" +
-  "（每行格式为「编号. emoji 画面描述」）。请选出与这条回复的语气/情绪/内容最贴切、最「应景」的一枚，" +
-  "只输出它的编号数字；如果清单里没有一枚合适，只输出 NONE。不要输出任何其他内容、解释或标点。";
-/** 挑选调用的输出 token 上限：只需要输出一个编号或 NONE，给小额度防止推理
- *  模型的思考阶段把额度烧空（同 REPLY_MAX_TOKENS 注释的坑）。 */
-export const STICKER_SELECTION_MAX_TOKENS: number = 1024;
-/** 挑选调用的生成温度：偏低，减少编号幻觉/文不对题的选择。 */
-export const STICKER_SELECTION_TEMPERATURE: number = 0.3;
+/**
+ * send_sticker 工具描述的固定前缀，后面动态拼接当次可选贴纸的编号清单
+ * （见 ai/stickers.ts 的 buildSendStickerToolDefinition）。没有强制要求
+ * 每次都调用——清单里找不到合适的就不调用，模型自行判断。
+ */
+export const SEND_STICKER_TOOL_INSTRUCTION: string =
+  "如果配一枚贴纸能让这条回复更生动/更贴切，就调用这个工具发送一枚；没有哪一枚特别合适、" +
+  "或者这条回复本身已经够了，就不要调用，不必每次回复都配。只能从下面这份编号清单里选" +
+  "（每行「编号. emoji 画面描述」），index 参数填清单里的编号：\n";

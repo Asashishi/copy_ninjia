@@ -4,10 +4,16 @@ import type { ToolDefinition } from "../types";
 
 /**
  * 供 workers/aiChatWorker.ts 走 xAI /v1/responses 的 function calling 接口
- * 调用的工具集合。每个工具都无入参、无副作用，出错时返回描述性的 JSON
- * 字符串而不是抛错——模型收到工具结果后自己决定怎么向用户措辞。
+ * 调用的静态工具集合。每个工具都无入参、无副作用（纯查询），出错时返回
+ * 描述性的 JSON 字符串而不是抛错——模型收到工具结果后自己决定怎么向用户
+ * 措辞。
  * （查时间不是工具：当前时间默认拼进每次请求的系统提示词，转录行也自带
- * 每条消息的发送时间，见 workers/aiChatWorker.ts 的 callGrok/formatLine。）
+ * 每条消息的发送时间，见 libs/time.ts 的 getCurrentTime、
+ * workers/aiChatWorker.ts 的 callGrok/formatLine。）
+ * send_sticker 工具不在这份静态清单里——它有副作用（真的发一条 Telegram
+ * 消息）、需要 chatId，且可选贴纸清单随目录内容变化、要按次请求现组装，
+ * 由 workers/aiChatWorker.ts 的 callGrok 单独拼进 tools 数组、单独分发执行，
+ * 见 ai/stickers.ts。
  */
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [

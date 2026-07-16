@@ -9,13 +9,8 @@ import { STICKERS_CONFIG_PATH } from "../consts/paths";
  * stickers.ts -> stickerCatalog.ts 方向凑成 import 环。
  */
 export interface StickerConfig {
-  /** AI 每次回复后，额外触发一次贴纸发送的概率（0~1）。 */
-  replyStickerProbability: number;
   /** 贴纸包白名单，取值为 t.me/addstickers/<name> 里的 <name>（贴纸集合的 short name）。 */
   packs: string[];
-  /** 情绪 -> 关键词：模型按目录描述选贴纸失败/弃权时的兜底匹配表，见
-   *  ai/stickers.ts 的 pickStickerByKeywords。 */
-  emotionKeywords: Record<string, string[]>;
 }
 
 export const stickerConfig: StickerConfig = JSON.parse(readFileSync(STICKERS_CONFIG_PATH, "utf8"));

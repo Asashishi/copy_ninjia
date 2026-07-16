@@ -2,7 +2,7 @@ import { logger } from "../infra/logger";
 import { readFileSync } from "node:fs";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { sleep } from "../libs/sleep";
-import { formatTokyoTime } from "../libs/time";
+import { formatTokyoTime, getCurrentTime } from "../libs/time";
 import { sanitizeInline, truncateInline } from "../libs/text";
 import { PERSONA_PATH } from "../consts/paths";
 import {
@@ -57,14 +57,14 @@ import {
 } from "../cache/aiChatWorker";
 import type { BufferedMessage, MediaKind, XaiRequestTool } from "../types";
 import { maybeAddReaction } from "../ai/reactions";
-import { maybeSendStickerReply } from "../ai/stickers";
+import { buildSendStickerToolDefinition, buildStickerCandidates, sendStickerTool, type StickerCandidate } from "../ai/stickers";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
 import { extractFunctionCalls, extractOutputText, requestXaiResponse } from "../ai/xai";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../tools";
-import { getCurrentTime } from "../tools/time";
+import { SEND_STICKER_TOOL } from "../consts/tools";
 import type {
   AiBotInfo,
   AiChatWorkerMessage,
@@ -547,18 +547,24 @@ function getLatestMessage(chatId: number): BufferedMessage | undefined {
 
 /**
  * 调用 xAI 的 /v1/responses 接口生成一条回复（收发与响应解析在 ai/xai.ts）。
- * tools 带两类：内置的 web_search（xAI 服务器侧自动执行，模型自主决定
- * 要不要联网查证，结果直接体现在最终文本里）+ src/tools 里的自定义函数
- * （目前是查东京天气）。自定义函数由模型以 function_call 抛回来，
- * 执行后把上一轮的全部 output 成员原样接回 input、附上 function_call_output
- * 再续跑（推理模型的 reasoning 成员也要一并带回，缺了会丢思考上下文），
- * 直到给出最终文本或达到轮数上限。
+ * tools 带三类：内置的 web_search（xAI 服务器侧自动执行，模型自主决定
+ * 要不要联网查证，结果直接体现在最终文本里）+ src/tools 里的静态自定义
+ * 函数（目前是查东京天气）+ 按次请求现组装的 send_sticker（贴纸候选清单
+ * 随目录内容变化，见 ai/stickers.ts）。自定义函数由模型以 function_call
+ * 抛回来，执行后把上一轮的全部 output 成员原样接回 input、附上
+ * function_call_output 再续跑（推理模型的 reasoning 成员也要一并带回，
+ * 缺了会丢思考上下文），直到给出最终文本或达到轮数上限。send_sticker 的
+ * 执行有副作用（真的发一条贴纸消息），成功后经 onStickerSent 回调交给
+ * 调用方自录记忆/登记自发消息，其余工具仍走 src/tools 的纯查询式分发。
  * 查时间不走工具：当前时间默认拼进每次请求的系统提示词（见下方），转录行
  * 也自带每条消息的发送时间（见 formatLine），模型不需要判断要不要查。
+ * @param chatId 目标群聊——send_sticker 工具需要它来实际发送贴纸。
  * @param userContent buildUserContent 拼好的对话上下文。
+ * @param onStickerSent send_sticker 工具调用发送成功后的回调（描述行 +
+ *   消息 ID），语义与 ai/stickers.ts 的 sendStickerTool 的 onSent 参数一致。
  * @returns 清洗后的回复文本；请求失败、超时或空输出时返回 null。
  */
-async function callGrok(userContent: string): Promise<string | null> {
+async function callGrok(chatId: number, userContent: string, onStickerSent: (stickerDescription: string, messageId: number) => void): Promise<string | null> {
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
@@ -566,7 +572,13 @@ async function callGrok(userContent: string): Promise<string | null> {
     { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
   ];
-  const tools: XaiRequestTool[] = [{ type: "web_search" }, ...TOOL_DEFINITIONS];
+
+  // 候选清单只在本次调用开始时组装一次：send_sticker 工具描述里的编号
+  // 顺序、参数校验范围，都必须对应这同一份数组，不能在后面的轮次里重新
+  // 拉取（万一目录期间被后台更新，编号就对不上号了）。
+  const stickerCandidates: StickerCandidate[] = await buildStickerCandidates();
+  const stickerToolDefinition = buildSendStickerToolDefinition(stickerCandidates);
+  const tools: XaiRequestTool[] = [{ type: "web_search" }, ...TOOL_DEFINITIONS, ...(stickerToolDefinition ? [stickerToolDefinition] : [])];
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const data: any = await requestXaiResponse(
@@ -585,7 +597,10 @@ async function callGrok(userContent: string): Promise<string | null> {
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
       input.push(...(Array.isArray(data.output) ? data.output : []));
       for (const call of functionCalls) {
-        const result: string = await callTool(call?.name);
+        const result: string =
+          call?.name === SEND_STICKER_TOOL
+            ? await sendStickerTool(chatId, stickerCandidates, call.arguments ?? "{}", onStickerSent)
+            : await callTool(call?.name);
         input.push({ type: "function_call_output", call_id: call.call_id, output: result });
       }
       continue;
@@ -713,9 +728,10 @@ function notifyRateLimited(chatId: number, now: number): void {
   rateLimitNoticeTimes.set(chatId, now);
   void sendMessage(chatId, RATE_LIMIT_NOTICE_TEXT).then((sentMessageId: number | undefined) => {
     if (sentMessageId === undefined) return;
-    // 跟其他三处发送一样报回主线程登记自发消息（见 generateAndSendReply 的
-    // sendMessage/maybeSendStickerReply 调用）：这条提示同样可能落在频道，
-    // 漏报的话频道自回环会被当成新内容，触发一轮不必要的 AI 回复/随机复读。
+    // 跟其他几处发送一样报回主线程登记自发消息（见 generateAndSendReply 的
+    // sendMessage 调用、callGrok 的 onStickerSent 回调）：这条提示同样可能
+    // 落在频道，漏报的话频道自回环会被当成新内容，触发一轮不必要的 AI
+    // 回复/随机复读。
     self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
     // 也自录进对话缓存——这条提示同样是机器人在群里说的话，不留痕的话
     // 模型不知道自己刚说过「太快了接不过来」，被追问时接不上。
@@ -807,6 +823,15 @@ function generateAndSendReply(
     const userContent: string | null = buildUserContent(chatId, selfInfo, { splitMode, repliedBotText, addressee, mediaComment });
     if (!userContent) return;
 
+    // send_sticker 工具调用成功后的回调：贴纸自身没有文本可挂在回复消息
+    // 里，靠这份描述行自录进对话缓存，让模型知道自己刚发过什么贴纸；消息
+    // ID 报回主线程登记自发消息（防频道自回环，同下方普通回复文本发送后
+    // 的登记同一道理）。
+    const onStickerSent = (stickerDescription: string, stickerMessageId: number): void => {
+      recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
+      self.postMessage({ type: "sent", chatId, messageId: stickerMessageId } satisfies AiSentMessage);
+    };
+
     // 生成阶段（耗时不可控）用持续重发的心跳显示「正在输入…」，见
     // startTypingHeartbeat；try/finally 保证即使 callGrok 抛异常，
     // 心跳也一定会被停掉。生成结束后（无论成败）就不再需要它——发送阶段
@@ -814,7 +839,7 @@ function generateAndSendReply(
     const stopTyping: () => void = startTypingHeartbeat(chatId);
     let reply: string | null;
     try {
-      reply = await callGrok(userContent);
+      reply = await callGrok(chatId, userContent, onStickerSent);
     } finally {
       stopTyping();
     }
@@ -853,14 +878,6 @@ function generateAndSendReply(
         await sleep(typingDelayMs(parts[i + 1]!));
       }
     }
-
-    // 每次 AI 回复（含随机搭话）后，按配置概率附带发一枚应景的白名单贴纸，
-    // 见 src/ai/stickers.ts；发成功的贴纸同样以描述行自录进对话缓存，让模型
-    // 知道自己刚发过什么贴纸。
-    maybeSendStickerReply(chatId, reply, (stickerDescription: string, stickerMessageId: number) => {
-      recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
-      self.postMessage({ type: "sent", chatId, messageId: stickerMessageId } satisfies AiSentMessage);
-    });
   })().catch((error: unknown) => {
     logger.error("Error in AI reply task:", error);
   });

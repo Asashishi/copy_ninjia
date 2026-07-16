@@ -28,9 +28,3 @@ export interface TokyoWeatherResult {
   todayMinC: number;
   todayCondition: string;
 }
-
-export interface CurrentTimeResult {
-  iso: string;
-  timezone: string;
-  formatted: string;
-}
