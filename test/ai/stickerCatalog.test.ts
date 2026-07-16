@@ -42,8 +42,10 @@ function sticker(fileUniqueId: string, emoji: string): any {
   return { file_id: `id-${fileUniqueId}`, file_unique_id: fileUniqueId, emoji, is_animated: false, is_video: false };
 }
 
-function persisted(pack: string, entries: Record<string, { emoji: string; description: string }>, summary: string | null = null): Map<string, any> {
-  return new Map([[pack, { version: 1, entries, summary, savedAt: 0 }]]);
+/** 快照在管线上以序列化 JSON 文本流转（见 types/aiChat.ts），hydrate 吃的
+ *  是 pack -> JSON 字符串。 */
+function persisted(pack: string, entries: Record<string, { emoji: string; description: string }>, summary: string | null = null): Map<string, string> {
+  return new Map([[pack, JSON.stringify({ version: 1, entries, summary, savedAt: 0 })]]);
 }
 
 describe("ai/stickerCatalog generatePackCatalog 对账", () => {

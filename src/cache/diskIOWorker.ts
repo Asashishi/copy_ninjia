@@ -1,4 +1,4 @@
-import type { AiMemorySnapshot, DayFileState, LuckDayCache, LuckPendingEntry, StickerCatalogSnapshot } from "../types";
+import type { DayFileState, LuckDayCache, LuckPendingEntry } from "../types";
 
 /**
  * 磁盘 IO 线程（src/workers/diskIOWorker.ts）的内存状态：日志、AI 记忆、
@@ -20,15 +20,18 @@ export const flushBuffer: { entries: { day: string; text: string }[]; timer: Ret
 
 // ---- AI 记忆 ----
 
-/** 各群最新的 AI 记忆快照（覆盖式 upsert）。 */
-export const aiMemoryCache: Map<number, AiMemorySnapshot> = new Map();
+/** 各群最新的 AI 记忆快照（覆盖式 upsert）。值是序列化 JSON 文本——源头
+ *  已 stringify、落盘原样写文件，这里不解析回结构（见 types/aiChat.ts 的
+ *  AiMemoryEvent.snapshot）。 */
+export const aiMemoryCache: Map<number, string> = new Map();
 /** 自上次落盘后有更新、待写入磁盘的群。 */
 export const dirtyChats: Set<number> = new Set();
 
 // ---- 贴纸目录 ----
 
-/** 各白名单贴纸包最新的目录快照（覆盖式 upsert），键为 pack short name。 */
-export const stickerCatalogCache: Map<string, StickerCatalogSnapshot> = new Map();
+/** 各白名单贴纸包最新的目录快照（覆盖式 upsert），键为 pack short name，
+ *  值同为序列化 JSON 文本。 */
+export const stickerCatalogCache: Map<string, string> = new Map();
 /** 自上次落盘后有更新、待写入磁盘的贴纸包。与 dirtyChats 共用同一条定时
  *  落盘窗口（见 workers/diskIOWorker.ts 的 scheduleSnapshotFlush）。 */
 export const dirtyStickerPacks: Set<string> = new Set();

@@ -17,8 +17,17 @@ mock.module("../../../src/consts/paths", () => ({ ...realPaths, STICKER_MEMORY_D
 const { recoverStickerCatalogs, writeStickerCatalogFile } = await import("../../../src/workers/diskIO/snapshotFiles");
 import type { StickerCatalogSnapshot } from "../../../src/types";
 
-function snapshot(description: string): StickerCatalogSnapshot {
-  return { version: 1, entries: { "file-uid-1": { emoji: "😂", description } }, summary: "一包搞笑猫猫贴纸", savedAt: 1700000000000 };
+/** 快照在管线上以序列化 JSON 文本流转（见 types/aiChat.ts 的
+ *  AiStickerCatalogEvent.snapshot），写入接口也吃字符串。 */
+function snapshot(description: string): string {
+  const value: StickerCatalogSnapshot = { version: 1, entries: { "file-uid-1": { emoji: "😂", description } }, summary: "一包搞笑猫猫贴纸", savedAt: 1700000000000 };
+  return JSON.stringify(value, null, 2);
+}
+
+/** recover 的返回值同为 JSON 文本，断言内容前解析回结构。 */
+function parseRecovered(result: Map<string, string>, pack: string): StickerCatalogSnapshot | undefined {
+  const json: string | undefined = result.get(pack);
+  return json === undefined ? undefined : (JSON.parse(json) as StickerCatalogSnapshot);
 }
 
 beforeEach(() => {
@@ -30,16 +39,16 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     writeStickerCatalogFile("pack_a", snapshot("一只猫大笑"));
     const result = recoverStickerCatalogs(["pack_a", "pack_b"]);
     expect(result.size).toBe(1);
-    expect(result.get("pack_a")?.entries["file-uid-1"]?.description).toBe("一只猫大笑");
-    expect(result.get("pack_a")?.summary).toBe("一包搞笑猫猫贴纸");
+    expect(parseRecovered(result, "pack_a")?.entries["file-uid-1"]?.description).toBe("一只猫大笑");
+    expect(parseRecovered(result, "pack_a")?.summary).toBe("一包搞笑猫猫贴纸");
   });
 
   test("旧格式文件（没有 summary 字段）恢复为 summary null，等下次对账补生成", () => {
     mkdirSync(stickerDir, { recursive: true });
     writeFileSync(join(stickerDir, "pack_a.json"), JSON.stringify({ version: 1, entries: { "file-uid-1": { emoji: "😂", description: "旧条目" } }, savedAt: 0 }));
     const result = recoverStickerCatalogs(["pack_a"]);
-    expect(result.get("pack_a")?.summary).toBeNull();
-    expect(result.get("pack_a")?.entries["file-uid-1"]?.description).toBe("旧条目");
+    expect(parseRecovered(result, "pack_a")?.summary).toBeNull();
+    expect(parseRecovered(result, "pack_a")?.entries["file-uid-1"]?.description).toBe("旧条目");
   });
 
   test("白名单已经不包含的包视为孤儿：不载入内存，且磁盘文件被删除", () => {

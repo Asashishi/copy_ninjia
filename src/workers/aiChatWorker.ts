@@ -335,17 +335,23 @@ function promotePendingSummary(chatId: number): void {
   dirtyMemoryChats.add(chatId);
 }
 
-/** 把某群当前的滚动缓存 + 中期摘要 + 待晋升摘要序列化成一份可落盘的快照。 */
-function buildMemorySnapshot(chatId: number): AiMemorySnapshot {
+/** 把某群当前的滚动缓存 + 中期摘要 + 待晋升摘要序列化成一份可落盘的快照
+ *  JSON 文本。stringify 只在这里做一次：此后「Worker -> 主线程 ->
+ *  diskIOWorker」两跳 postMessage 克隆的都是字符串（近乎 memcpy，对象图
+ *  则要走两次深克隆），落盘端原样写文件、不再重复序列化（见
+ *  types/aiChat.ts 的 AiMemoryEvent.snapshot）。缩进固定 2 空格，与磁盘
+ *  文件历史格式逐字节一致。 */
+function buildMemorySnapshot(chatId: number): string {
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
-  return {
+  const snapshot: AiMemorySnapshot = {
     version: 1,
     buffer: buf ? buf.last(buf.size) : [],
     summaries: summaryQueue ? summaryQueue.last(summaryQueue.size) : [],
     pendingSummary: pendingSummaries.get(chatId) ?? null,
     savedAt: Date.now(),
   };
+  return JSON.stringify(snapshot, null, 2);
 }
 
 /**
@@ -372,9 +378,21 @@ function flushDirtyMemories(): void {
  * 触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块摘要粒度
  * 略有漂移，可接受，不为此复刻轮换状态机。
  */
-function hydrateMemories(memories: Map<number, AiMemorySnapshot>): void {
-  for (const [chatId, snapshot] of memories) {
+function hydrateMemories(memories: Map<number, string>): void {
+  for (const [chatId, snapshotJson] of memories) {
     if (chatBuffers.has(chatId)) continue;
+
+    // 快照全程以序列化 JSON 文本流转（见 types/aiChat.ts），这里是整条
+    // 管线唯一的解析点。文本只出自 buildMemorySnapshot 的 stringify 或
+    // 启动恢复时逐字段重建后的重新 stringify，形状可信；解析失败按防御
+    // 性丢弃处理，不让一份坏快照拦下其余群的恢复。
+    let snapshot: AiMemorySnapshot;
+    try {
+      snapshot = JSON.parse(snapshotJson) as AiMemorySnapshot;
+    } catch (error: unknown) {
+      logger.error(`Failed to parse hydrated AI memory snapshot for chat ${chatId}, skipping it:`, error);
+      continue;
+    }
 
     const buf: LinkedQueue<BufferedMessage> = new LinkedQueue<BufferedMessage>();
     for (const message of snapshot.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)) {

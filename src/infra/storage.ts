@@ -145,15 +145,24 @@ export function getAllChatStates(): ReadonlyMap<number, ChatState> {
  * 这样落盘的一定是调用时刻的状态快照——若把序列化推迟到队列执行时，共享状态
  * 可能已被并发的处理器改过。
  *
- * 先写临时文件、再 rename 到目标路径：rename 在同一文件系统内是原子操作，
- * 进程如果在这中间被杀（OOM/断电/容器被回收），目标文件要么是写入前的旧内容，
- * 要么是写入后的新内容，不会停在半截的撕裂 JSON——不然重启后 loadState()
- * 解析失败，会把这份文件聚合的所有数据一次性清空。
+ * 先写临时文件、fsync、再 rename 到目标路径：rename 在同一文件系统内是
+ * 原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），目标文件要么是
+ * 写入前的旧内容，要么是写入后的新内容，不会停在半截的撕裂 JSON——不然
+ * 重启后 loadState() 解析失败，会把这份文件聚合的所有数据一次性清空。
+ * rename 前的 fsync 不能省：它保证数据块先于改名落到磁盘，否则断电时
+ * rename 可能已提交而数据还在页缓存里，目标文件变成空文件/半截内容——
+ * 恰好是这套机制要防的事（进程被杀不经过这个风险，只有断电经过）。
  */
 const stateWriter = createLatestValueRunner<string>(async (json: string): Promise<void> => {
   try {
     const tmpPath: string = `${STATE_FILE_PATH}${TMP_FILE_SUFFIX}`;
-    await Bun.write(tmpPath, json);
+    const handle = await open(tmpPath, "w");
+    try {
+      await handle.writeFile(json);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(tmpPath, STATE_FILE_PATH);
   } catch (error: unknown) {
     logger.error("Failed to save state:", error);

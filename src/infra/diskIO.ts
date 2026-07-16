@@ -22,7 +22,6 @@ import { createRestartThrottle } from "../libs/workerSupervisor";
 import { LOAD_TIMEOUT_MS } from "../consts/diskIO";
 import type {
   AiMemoryDiskMessage,
-  AiMemorySnapshot,
   DiskFlushRequest,
   DiskIOReply,
   LoadRequest,
@@ -32,7 +31,6 @@ import type {
   LuckDayCache,
   LuckDrawDiskMessage,
   StickerCatalogDiskMessage,
-  StickerCatalogSnapshot,
 } from "../types";
 
 const isMainThread: boolean = Bun.isMainThread;
@@ -135,9 +133,12 @@ export function postDiskIO(message: AiMemoryDiskMessage | StickerCatalogDiskMess
   diskIOWorker?.postMessage(message);
 }
 
+/** 两张快照表的值是序列化 JSON 文本（与消息协议同形态，见 types/aiChat.ts
+ *  的 AiMemoryEvent.snapshot），hydrate 链路直接透传，解析发生在 aiChatWorker
+ *  侧的灌入点。 */
 export interface LoadedData {
-  aiMemories: Map<number, AiMemorySnapshot>;
-  stickerCatalogs: Map<string, StickerCatalogSnapshot>;
+  aiMemories: Map<number, string>;
+  stickerCatalogs: Map<string, string>;
   luckDay: LuckDayCache | null;
 }
 

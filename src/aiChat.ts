@@ -2,7 +2,7 @@ import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
 import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes } from "./cache/aiChat";
-import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, AiMemorySnapshot, MediaKind, StickerCatalogSnapshot } from "./types";
+import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, MediaKind } from "./types";
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
@@ -104,7 +104,7 @@ export function initAiChat(botInfo: AiBotInfo): void {
  * initAiChat 之后、runner 开始投喂更新之前调用（见 index.ts），FIFO 保证
  * hydrate 消息先于一切 record/trigger 到达。
  */
-export function hydrateAiMemory(memories: Map<number, AiMemorySnapshot>): void {
+export function hydrateAiMemory(memories: Map<number, string>): void {
   for (const [chatId, snapshot] of memories) {
     latestAiMemories.set(chatId, snapshot);
   }
@@ -120,7 +120,7 @@ export function hydrateAiMemory(memories: Map<number, AiMemorySnapshot>): void {
  * 这条消息紧跟在 init 之后，让 ensureStickerCatalogs 的 diff 生成看到已
  * 恢复的条目、不重复调视觉模型。
  */
-export function hydrateStickerCatalog(catalogs: Map<string, StickerCatalogSnapshot>): void {
+export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
   for (const [pack, snapshot] of catalogs) {
     latestStickerCatalogs.set(pack, snapshot);
   }

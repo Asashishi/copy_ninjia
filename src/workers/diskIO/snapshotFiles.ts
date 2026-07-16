@@ -4,12 +4,13 @@
  * 当前的 DayFileState/待写缓冲由调用方在 cache/diskIOWorker.ts 里持有，
  * 按参数传进来。
  *
- * AI 记忆快照是整份覆盖写：先写 <file>.tmp 再 rename，rename 在同一文件
- * 系统内是原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），目标
- * 文件要么是写入前的旧内容，要么是写入后的新内容，不会停在半截的撕裂
- * JSON（同 infra/storage.ts persistStateJson 的原子性理由）——快照本身
- * 有固定上限（AI_MEMORY_HYDRATE_BUFFER_MAX/MAX_SUMMARY_ROUNDS），整份
- * 重写的开销不随时间增长，没有必要为它换成追加写。
+ * AI 记忆快照是整份覆盖写：先写 <file>.tmp、fsync、再 rename，rename 在
+ * 同一文件系统内是原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），
+ * 目标文件要么是写入前的旧内容，要么是写入后的新内容，不会停在半截的撕裂
+ * JSON（同 infra/storage.ts persistStateJson 的原子性理由，fsync 的必要性
+ * 见 atomicWriteText 注释）——快照本身有固定上限
+ * （AI_MEMORY_HYDRATE_BUFFER_MAX/MAX_SUMMARY_ROUNDS），整份重写的开销
+ * 不随时间增长，没有必要为它换成追加写。
  *
  * 每日运势是按位置追加写（见 appendLuckEntries）：entries 只增不改，
  * 一天下来可能攒到不少条，整份重写的开销会随条数线性增长，值得换成只写
@@ -18,7 +19,7 @@
  * 断电风险（与日志文件同一套机制，那边已经这样跑了很久）。
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry, StickerCatalogEntry, StickerCatalogSnapshot } from "../../types";
 import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
@@ -27,9 +28,22 @@ import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/a
 import { formatTokyoTime } from "../../libs/time";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
-function atomicWriteJson(path: string, value: unknown): void {
+/**
+ * tmp + fsync + rename 的原子覆盖写。rename 前的 fsync 不能省：rename 只
+ * 保证目录项切换原子，不保证数据块已落盘——断电时改名可能已提交而数据还
+ * 在页缓存里，目标文件变成空文件/半截内容，恰好是这套机制要防的事（进程
+ * 被杀不经过这个风险，只有断电经过）。content 是快照序列化好的 JSON 文本，
+ * 序列化在源头（aiChatWorker 侧）只做一次，这里原样写入。
+ */
+function atomicWriteText(path: string, content: string): void {
   const tmpPath: string = `${path}${TMP_FILE_SUFFIX}`;
-  writeFileSync(tmpPath, JSON.stringify(value, null, 2));
+  const fd: number = openSync(tmpPath, "w");
+  try {
+    writeFileSync(fd, content);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(tmpPath, path);
 }
 
@@ -99,10 +113,13 @@ function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
  * 启动恢复：建目录、清 memory/ai/ 下的 *.tmp 残留（上次写一半的残留；
  * rename 原子性保证正式文件永远完好），校验/重建每个群的快照。文件名
  * 不是整数（chatId）的跳过；JSON.parse 失败的隔离为 .corrupt 并记日志。
+ * 返回值与消息协议同形态——重建通过的快照重新 stringify 成 JSON 文本
+ * （逐字段重建会甩掉未知字段/裁掉超限条目，不能把磁盘原文原样透传），
+ * 直接可灌缓存/回 LoadedReply。每包一次的重新序列化只发生在启动时。
  */
-export function recoverAiMemories(): Map<number, AiMemorySnapshot> {
+export function recoverAiMemories(): Map<number, string> {
   mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  const result: Map<number, AiMemorySnapshot> = new Map();
+  const result: Map<number, string> = new Map();
   for (const name of readdirSync(AI_MEMORY_DIR)) {
     const path: string = join(AI_MEMORY_DIR, name);
     if (name.endsWith(TMP_FILE_SUFFIX)) {
@@ -120,20 +137,21 @@ export function recoverAiMemories(): Map<number, AiMemorySnapshot> {
       continue;
     }
     const snapshot: AiMemorySnapshot | null = rebuildAiMemorySnapshot(parsed);
-    if (snapshot) result.set(Number(match[1]), snapshot);
+    if (snapshot) result.set(Number(match[1]), JSON.stringify(snapshot, null, 2));
   }
   return result;
 }
 
 /**
- * 覆盖式写入某群的 AI 记忆快照（tmp + rename 原子落盘）。目录正常总已由
+ * 覆盖式写入某群的 AI 记忆快照（tmp + fsync + rename 原子落盘）。
+ * snapshotJson 是源头序列化好的 JSON 文本，原样写入。目录正常总已由
  * recoverAiMemories（启动恢复）建好；这里仍重建一次（recursive 下已存在
  * 时是廉价的空操作）防御外部干预（比如运行期间该目录被手动删除）——否则
  * 一旦目录消失，写入会持续 ENOENT 失败且没有谁会重新把它建回来。
  */
-export function writeAiMemoryFile(chatId: number, snapshot: AiMemorySnapshot): void {
+export function writeAiMemoryFile(chatId: number, snapshotJson: string): void {
   mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  atomicWriteJson(join(AI_MEMORY_DIR, `${chatId}.json`), snapshot);
+  atomicWriteText(join(AI_MEMORY_DIR, `${chatId}.json`), snapshotJson);
 }
 
 function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
@@ -169,10 +187,10 @@ function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot 
  * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
  *   ai/stickerConfig.ts），用于判定哪些持久化文件已经是孤儿。
  */
-export function recoverStickerCatalogs(activePacks: string[]): Map<string, StickerCatalogSnapshot> {
+export function recoverStickerCatalogs(activePacks: string[]): Map<string, string> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
   const activePackSet: Set<string> = new Set(activePacks);
-  const result: Map<string, StickerCatalogSnapshot> = new Map();
+  const result: Map<string, string> = new Map();
   for (const name of readdirSync(STICKER_MEMORY_DIR)) {
     const path: string = join(STICKER_MEMORY_DIR, name);
     if (name.endsWith(TMP_FILE_SUFFIX)) {
@@ -196,16 +214,17 @@ export function recoverStickerCatalogs(activePacks: string[]): Map<string, Stick
       continue;
     }
     const snapshot: StickerCatalogSnapshot | null = rebuildStickerCatalogSnapshot(parsed);
-    if (snapshot) result.set(pack, snapshot);
+    if (snapshot) result.set(pack, JSON.stringify(snapshot, null, 2));
   }
   return result;
 }
 
-/** 覆盖式写入某个白名单贴纸包的目录快照（tmp + rename 原子落盘），机制与
- *  writeAiMemoryFile 完全一致。 */
-export function writeStickerCatalogFile(pack: string, snapshot: StickerCatalogSnapshot): void {
+/** 覆盖式写入某个白名单贴纸包的目录快照（tmp + fsync + rename 原子落盘），
+ *  机制与 writeAiMemoryFile 完全一致，snapshotJson 同为源头序列化好的
+ *  JSON 文本。 */
+export function writeStickerCatalogFile(pack: string, snapshotJson: string): void {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
-  atomicWriteJson(join(STICKER_MEMORY_DIR, `${pack}.json`), snapshot);
+  atomicWriteText(join(STICKER_MEMORY_DIR, `${pack}.json`), snapshotJson);
 }
 
 /**

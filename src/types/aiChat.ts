@@ -87,10 +87,13 @@ export interface StickerCatalogSnapshot {
  * 主线程 -> Worker：启动时（或本 Worker 崩溃重启后）灌入持久化的贴纸目录。
  * 必须紧跟在 init 之后送达（FIFO），让 ensureStickerCatalogs 的 diff 生成
  * 能看到已恢复的条目、不重复调视觉模型。只对内存里还没有数据的包生效。
+ * 值是 StickerCatalogSnapshot 的序列化 JSON（快照在整条管线上以字符串
+ * 形态流转，理由见 AiMemoryEvent.snapshot），由 hydrateStickerCatalogs
+ * 解析回结构。
  */
 export interface AiHydrateStickerCatalogMessage {
   type: "hydrateStickerCatalog";
-  catalogs: Map<string, StickerCatalogSnapshot>;
+  catalogs: Map<string, string>;
 }
 
 /** 主线程 -> Worker：触发一次 AI 回复（冷却/限频判定也在 Worker 侧做）。 */
@@ -126,10 +129,12 @@ export interface AiMemorySnapshot {
  * 主线程 -> Worker：启动时（或本 Worker 崩溃重启后）灌入持久化的记忆快照。
  * 必须紧跟在 init 之后、任何 record/trigger 之前送达（FIFO 保证顺序）。
  * 只对内存里还没有数据的群生效——重启后本来就全空，天然成立。
+ * 值是 AiMemorySnapshot 的序列化 JSON（见 AiMemoryEvent.snapshot），由
+ * hydrateMemories 解析回结构。
  */
 export interface AiHydrateMessage {
   type: "hydrate";
-  memories: Map<number, AiMemorySnapshot>;
+  memories: Map<number, string>;
 }
 
 /** 主线程 -> Worker：退出前最后一刷，立即把所有 dirty 群的快照 post 出去，随后回执。 */
@@ -159,11 +164,18 @@ export interface AiSentMessage {
   messageId: number;
 }
 
-/** Worker -> 主线程：一个群的记忆快照（dirty 群定时上报，或 flushMemory 触发的即时上报）。 */
+/** Worker -> 主线程：一个群的记忆快照（dirty 群定时上报，或 flushMemory
+ * 触发的即时上报）。snapshot 是 AiMemorySnapshot 在源头（Worker 侧
+ * buildMemorySnapshot）一次性 stringify 出的 JSON 文本，此后全程以字符串
+ * 流转：postMessage 克隆字符串近乎 memcpy（对象图则要走两跳深克隆——
+ * Worker -> 主线程 -> diskIOWorker），落盘端直接原样写文件、零重复序列化；
+ * 只有启动/崩溃重放的 hydrate 才解析一次。缩进固定 2 空格，与磁盘上
+ * memory/ai/<chatId>.json 的历史格式逐字节一致。
+ */
 export interface AiMemoryEvent {
   type: "memory";
   chatId: number;
-  snapshot: AiMemorySnapshot;
+  snapshot: string;
 }
 
 /** Worker -> 主线程：flushMemory 已完成（所有 dirty 群快照都已 post 出）。 */
@@ -174,11 +186,12 @@ export interface AiMemoryFlushedEvent {
 
 /** Worker -> 主线程：一个白名单贴纸包的目录快照（dirty 包定时上报，或
  * flushMemory 触发的即时上报，见 ai/stickerCatalog.ts 的
- * flushDirtyStickerCatalogs）。 */
+ * flushDirtyStickerCatalogs）。snapshot 是 StickerCatalogSnapshot 序列化后
+ * 的 JSON 文本，理由与格式约定同 AiMemoryEvent.snapshot。 */
 export interface AiStickerCatalogEvent {
   type: "stickerCatalog";
   pack: string;
-  snapshot: StickerCatalogSnapshot;
+  snapshot: string;
 }
 
 export type AiChatWorkerEvent = AiSentMessage | AiMemoryEvent | AiMemoryFlushedEvent | AiStickerCatalogEvent;

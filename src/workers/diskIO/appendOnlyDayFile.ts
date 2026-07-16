@@ -9,11 +9,18 @@
  * 打开/探测/追加/损坏修复。
  */
 
-import { closeSync, existsSync, openSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DayFileState } from "../../types";
 import { TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO";
+
+// serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出是多行形态
+// （indent 为 0 时输出单行，掐头去尾会切进内容本身）；启动即断言，不让
+// 一次误改常量静默产出坏文件。
+if (DAY_FILE_JSON_INDENT < 1) {
+  throw new Error("DAY_FILE_JSON_INDENT must be >= 1: serializeDayFileEntry relies on multi-line JSON.stringify output");
+}
 
 /** repairTruncated 用来识别"一条完整记录的收尾行"，必须与 openDayFile/
  *  serializeDayFileEntry 的 JSON.stringify 缩进宽度保持一致，见
@@ -21,14 +28,21 @@ import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO";
 const ENTRY_LINE_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
 
 /**
- * 整份文件重写用：tmp + rename（同文件系统内原子操作），避免这类维护性重写
- * 被杀一半留下撕裂 JSON（同 snapshotFiles.ts atomicWriteJson 的理由）。只用
- * 在 openDayFile 的两处维护性重写上——真正的热路径 appendToDayFile 仍是
- * 位置写，其非原子性是刻意的性能取舍，靠 repairTruncated 兜底，见下方注释。
+ * 整份文件重写用：tmp + fsync + rename（同文件系统内原子操作），避免这类
+ * 维护性重写被杀一半留下撕裂 JSON（同 snapshotFiles.ts atomicWriteText 的
+ * 理由，fsync 的必要性见其注释）。只用在 openDayFile 的两处维护性重写上——
+ * 真正的热路径 appendToDayFile 仍是位置写，其非原子性是刻意的性能取舍，
+ * 靠 repairTruncated 兜底，见下方注释。
  */
 function atomicRewrite(path: string, content: string): void {
   const tmpPath: string = `${path}${TMP_FILE_SUFFIX}`;
-  writeFileSync(tmpPath, content);
+  const fd: number = openSync(tmpPath, "w");
+  try {
+    writeFileSync(fd, content);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(tmpPath, path);
 }
 

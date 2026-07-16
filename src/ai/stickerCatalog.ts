@@ -51,10 +51,21 @@ function getPackMap(pack: string): Map<string, StickerCatalogEntry> {
 }
 
 /** 启动时（或本 Worker 崩溃重启后）灌入持久化的贴纸目录。只对内存里还没
- *  有数据的包生效——重启后本来就全空，天然成立，不会覆盖掉刚生成的条目。 */
-export function hydrateStickerCatalogs(snapshots: Map<string, StickerCatalogSnapshot>): void {
-  for (const [pack, snapshot] of snapshots) {
+ *  有数据的包生效——重启后本来就全空，天然成立，不会覆盖掉刚生成的条目。
+ *  快照全程以序列化 JSON 文本流转（见 types/aiChat.ts 的
+ *  AiStickerCatalogEvent.snapshot），这里是整条管线唯一的解析点；文本只
+ *  出自 buildSnapshot 的 stringify 或启动恢复时逐字段重建后的重新
+ *  stringify，形状可信，解析失败按防御性丢弃处理。 */
+export function hydrateStickerCatalogs(snapshots: Map<string, string>): void {
+  for (const [pack, snapshotJson] of snapshots) {
     if (catalogs.has(pack)) continue;
+    let snapshot: StickerCatalogSnapshot;
+    try {
+      snapshot = JSON.parse(snapshotJson) as StickerCatalogSnapshot;
+    } catch (error: unknown) {
+      logger.error(`Failed to parse hydrated sticker catalog snapshot for pack "${pack}", skipping it:`, error);
+      continue;
+    }
     catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
     // Worker 重启前或极端 FIFO 竞态下，同一 ID 可能曾以普通群贴纸身份进入
     // 临时缓存；常驻目录恢复后立即移除临时副本，保证只有一个权威来源。
@@ -80,8 +91,12 @@ export function getCatalogEntry(fileUniqueId: string): StickerCatalogEntry | und
   return undefined;
 }
 
-function buildSnapshot(pack: string): StickerCatalogSnapshot {
-  return { version: 1, entries: Object.fromEntries(getPackMap(pack)), summary: packSummaries.get(pack) ?? null, savedAt: Date.now() };
+/** 把一个包的目录序列化成可落盘的快照 JSON 文本。stringify 只在这里做
+ *  一次，此后全程以字符串流转（理由与格式约定同 workers/aiChatWorker.ts
+ *  的 buildMemorySnapshot）。 */
+function buildSnapshot(pack: string): string {
+  const snapshot: StickerCatalogSnapshot = { version: 1, entries: Object.fromEntries(getPackMap(pack)), summary: packSummaries.get(pack) ?? null, savedAt: Date.now() };
+  return JSON.stringify(snapshot, null, 2);
 }
 
 /** 把所有 dirty 包的目录快照上报出去（进而经主线程转投 diskIOWorker 落盘），

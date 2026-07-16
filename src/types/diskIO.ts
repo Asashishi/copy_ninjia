@@ -1,8 +1,8 @@
-import type { AiMemorySnapshot, StickerCatalogSnapshot } from "./aiChat";
-
 /**
  * 磁盘 IO 线程（src/workers/diskIOWorker.ts）统一的消息协议与快照类型：
- * 日志、AI 记忆快照、每日运势快照三类落盘共用同一个 Worker。
+ * 日志、AI 记忆快照、每日运势快照三类落盘共用同一个 Worker。快照的结构
+ * 类型（AiMemorySnapshot/StickerCatalogSnapshot）见 types/aiChat.ts——
+ * 消息里只带它们序列化后的 JSON 文本。
  */
 
 export type LogLevel = "log" | "info" | "warn" | "error";
@@ -24,18 +24,21 @@ export interface LogEnvelope extends LogMessage {
   type: "log";
 }
 
-/** 主线程 -> diskIOWorker：覆盖式写入某群的 AI 记忆快照。 */
+/** 主线程 -> diskIOWorker：覆盖式写入某群的 AI 记忆快照。snapshot 是
+ * AiMemorySnapshot 序列化后的 JSON 文本（源头一次 stringify、全程字符串
+ * 流转，见 types/aiChat.ts 的 AiMemoryEvent.snapshot），落盘端原样写文件。 */
 export interface AiMemoryDiskMessage {
   type: "aiMemory";
   chatId: number;
-  snapshot: AiMemorySnapshot;
+  snapshot: string;
 }
 
-/** 主线程 -> diskIOWorker：覆盖式写入某个白名单贴纸包的目录快照。 */
+/** 主线程 -> diskIOWorker：覆盖式写入某个白名单贴纸包的目录快照。snapshot
+ * 是 StickerCatalogSnapshot 序列化后的 JSON 文本，机制同 AiMemoryDiskMessage。 */
 export interface StickerCatalogDiskMessage {
   type: "stickerCatalog";
   pack: string;
-  snapshot: StickerCatalogSnapshot;
+  snapshot: string;
 }
 
 /** 主线程 -> diskIOWorker：一次抽签结果的增量写入。 */
@@ -86,11 +89,13 @@ export interface LuckPendingEntry {
   record: LuckDrawRecord;
 }
 
-/** diskIOWorker -> 主线程：启动恢复读盘完成。 */
+/** diskIOWorker -> 主线程：启动恢复读盘完成。两张快照表的值与增量写入
+ * 消息同形态——序列化 JSON 文本（恢复时逐字段重建校验后重新 stringify，
+ * 见 workers/diskIO/snapshotFiles.ts），供 hydrate 链路直接透传。 */
 export interface LoadedReply {
   type: "loaded";
-  aiMemories: Map<number, AiMemorySnapshot>;
-  stickerCatalogs: Map<string, StickerCatalogSnapshot>;
+  aiMemories: Map<number, string>;
+  stickerCatalogs: Map<string, string>;
   luckDay: LuckDayCache | null;
 }
 

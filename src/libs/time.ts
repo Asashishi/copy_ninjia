@@ -12,13 +12,23 @@ export function formatMinSec(ms: number): string {
   return `${minutes}分${seconds}秒`;
 }
 
+/** getTokyoDateKey 的格式器：模块加载时构造一次复用（Intl.DateTimeFormat
+ *  的构造远贵于 format 调用本身，同下方 TOKYO_TIME_FORMATTER 的理由）——
+ *  日志落盘按条调用它算文件名日期，不能每条日志都重新构造一个格式器。 */
+const TOKYO_DATE_KEY_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 /**
  * 毫秒时间戳（缺省当前时刻）对应的东京时区日期串（YYYY-MM-DD）。
  * /luck_challenge 的每日缓存与 diskIOWorker 的运势落盘（按东京日期分文件）
  * 共用同一个日期划分，见 commands/luckChallenge.ts、workers/diskIOWorker.ts。
  */
 export function getTokyoDateKey(date: Date = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  return TOKYO_DATE_KEY_FORMATTER.format(date);
 }
 
 /** formatTokyoTime 的格式器：模块加载时构造一次复用（Intl.DateTimeFormat
@@ -49,6 +59,14 @@ export interface CurrentTimeResult {
   formatted: string;
 }
 
+/** getCurrentTime 的格式器：模块加载时构造一次复用（理由同上）——每次
+ *  Gemini 请求拼系统提示词都会调它，构造开销不该按请求付。 */
+const TOKYO_FULL_TIME_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Tokyo",
+  dateStyle: "full",
+  timeStyle: "medium",
+});
+
 /**
  * 获取当前时间。统一用东京时区（UTC+9），与天气工具及群里日常报时口径
  * 保持一致。不是 function calling 工具——当前时间默认拼进每次 Gemini 请求的
@@ -57,15 +75,9 @@ export interface CurrentTimeResult {
  */
 export function getCurrentTime(): CurrentTimeResult {
   const now: Date = new Date();
-  const formatted: string = new Intl.DateTimeFormat("zh-CN", {
-    timeZone: "Asia/Tokyo",
-    dateStyle: "full",
-    timeStyle: "medium",
-  }).format(now);
-
   return {
     iso: now.toISOString(),
     timezone: "Asia/Tokyo",
-    formatted,
+    formatted: TOKYO_FULL_TIME_FORMATTER.format(now),
   };
 }

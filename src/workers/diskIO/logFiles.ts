@@ -31,8 +31,9 @@ import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnl
 interface LogRecord {
   level: string;
   message: string;
-  /** 原始参数列表。当它相对 message 没有任何额外信息（单个字符串参数，
-   *  message 就是它本身）时省略不写，见 handleLogMessage 里的判断。 */
+  /** 原始参数列表。只在存在非字符串参数（展开后的 Error 对象等结构化数据）
+   *  时落盘；纯字符串参数已逐字进了 message，再存一份 args 纯属重复，见
+   *  handleLogMessage 里的判断。 */
   args?: unknown[];
 }
 
@@ -151,15 +152,18 @@ export function flushLogBuffer(): void {
 
 /** 处理一条日志消息：入内存 buffer，达到阈值立即落盘，否则按需启动定时器。 */
 export function handleLogMessage(msg: LogMessage): void {
-  const message: string = msg.args
-    .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
-    .join(" ");
-  const record: LogRecord = { level: msg.level, message };
-  // message 本就是把 args 逐个字符串化拼出来的：调用方只传一个字符串时
-  // （本仓库最常见的写法）两者逐字相同，再存一份 args 纯属重复；只有
-  // 多参数或非字符串参数（如展开后的 Error 对象，堆栈只存在于 args 里）
-  // 时 args 才有额外信息，才值得落盘。
-  if (!(msg.args.length === 1 && msg.args[0] === message)) {
+  // message 只拼字符串参数；非字符串参数（展开后的 Error 对象等）只存进
+  // args，不再 stringify 一份嵌进 message——那样同一份数据会在一条记录里
+  // 落两次盘（message 里一次、args 里一次），错误堆栈这种大块头尤其浪费。
+  // 全是字符串参数时 message 已含全部信息，args 整个省略。
+  const stringArgs: string[] = [];
+  let hasStructuredArgs: boolean = false;
+  for (const arg of msg.args) {
+    if (typeof arg === "string") stringArgs.push(arg);
+    else hasStructuredArgs = true;
+  }
+  const record: LogRecord = { level: msg.level, message: stringArgs.join(" ") };
+  if (hasStructuredArgs) {
     record.args = msg.args;
   }
   flushBuffer.entries.push({
