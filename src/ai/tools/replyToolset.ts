@@ -1,0 +1,274 @@
+import { sendMessage, sendTypingAction, setMessageReaction } from "../../infra/telegram";
+import { sleep } from "../../libs/sleep";
+import { truncateInline } from "../../libs/text";
+import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
+import {
+  ADD_REACTION_TOOL_INSTRUCTION,
+  MAX_ACTIONS_PER_REPLY,
+  MAX_REACTIONS_PER_REPLY,
+  SEND_MESSAGE_TOOL_INSTRUCTION,
+  TYPING_DELAY_BASE_MS,
+  TYPING_DELAY_JITTER_MS,
+  TYPING_DELAY_MAX_MS,
+  TYPING_DELAY_PER_CHAR_MS,
+} from "../../consts/aiChat";
+import { ADD_REACTION_TOOL, SEND_MESSAGE_TOOL, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
+import { REACTION_EMOJIS } from "../reactions";
+import {
+  buildSendStickerToolDefinition,
+  buildStickerPackMenu,
+  buildViewStickerPackToolDefinition,
+  createStickerRoundState,
+  sendStickerTool,
+  viewStickerPackTool,
+  type StickerPackCandidate,
+  type StickerRoundState,
+} from "./stickers";
+import type { ToolDefinition } from "../../types";
+
+/**
+ * 一轮 AI 回复的「行动工具集」：发言（send_message）、消息反应
+ * （add_reaction）、两层应景贴纸（view_sticker_pack / send_sticker，见
+ * 同目录 stickers.ts）。模型在同一次 function calling 对话里自主决定做
+ * 哪几样、什么顺序——发言不再是「最终文本」，而是和贴纸/反应平级的工具
+ * 动作；要不要以「回复」形式挂在触发消息上也由模型按条决定
+ * （send_message 的 reply_to_trigger 参数）。
+ *
+ * 每轮回复经 createReplyToolset 新建一份工具集：贴纸菜单在此刻组装一次
+ * （工具描述里的编号和执行时校验的必须是同一份，见 stickers.ts 模块头
+ * 注），各工具的限额也挂在这份闭包状态上——动作总量（消息 + 贴纸 + 反应
+ * 合计，硬顶 MAX_ACTIONS_PER_REPLY）在 execute 入口统一把关，贴纸枚数与
+ * 去重、反应次数再各自设分项上限。执行结果一律是喂回模型的 JSON 字符串
+ * ——被限额/校验拒绝时模型能从 error 字段知道动作没做成。
+ */
+
+export interface ReplyToolContext {
+  chatId: number;
+  /** 触发这次回复的消息 ID：add_reaction 的目标；send_message 带
+   *  reply_to_trigger: true 时的回复引用目标。 */
+  replyToMessageId: number;
+  /** 每条消息发送成功后的回调（清洗后的文本 + 消息 ID），供调用方自录
+   *  记忆/登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。 */
+  onMessageSent: (text: string, messageId: number) => void;
+  /** 贴纸发送成功后的回调，语义同 stickers.ts 的 sendStickerTool 的 onSent。 */
+  onStickerSent: (stickerDescription: string, messageId: number) => void;
+}
+
+export interface ReplyToolset {
+  /** 本轮可用的行动工具定义，拼进请求的 functionDeclarations。 */
+  definitions: ToolDefinition[];
+  /** 这个名字是否属于本工具集（区别于 src/tools/ 的静态查询工具）。 */
+  has(name: string): boolean;
+  /** 执行一次工具调用，返回喂回模型的 JSON 字符串。 */
+  execute(name: string, argumentsJson: string): Promise<string>;
+  /** 本轮已成功发出的消息条数——调用方靠它判断模型是否「说过话」，
+   *  决定要不要把最终正文兜底发出（见 workers/aiChatWorker.ts）。 */
+  messagesSent(): number;
+}
+
+/**
+ * 清洗模型给出的消息文本，得到可直接发送的纯文本：去掉联网搜索可能附带的
+ * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
+ * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
+ * 空则返回 null。send_message 工具的每条文本、以及模型不走工具时的最终
+ * 正文兜底（见 workers/aiChatWorker.ts）都过这一道。
+ */
+export function cleanReply(raw: string): string | null {
+  // URL 部分故意不排除 `)`：链接本身带括号很常见（如维基百科的消歧义链接
+  // .../Foo_(bar)），排除 `)` 会让匹配在 URL 内部就截停。但也不能简单放开
+  // 成贪婪的 `[^\s]+`（曾经的实现）：中文正文经常整行没有任何空白字符，
+  // 贪婪匹配会一路吃到本行最后一个 `)` 才回溯停下，把引用标记之后、这个
+  // 无关 `)` 之前的大段正文一并吞掉。改成「非括号非空白字符，或者一对不
+  // 含嵌套的平衡括号」重复一次以上：维基百科式的 .../Foo_(bar) 能作为一个
+  // 平衡括号整体吃掉，而遇到与 URL 无关的孤立 `)`（前面没有配对的 `(`）时
+  // 无法再继续匹配，会在引用标记自己的收尾括号处停下，不会越界。
+  let text: string = raw.replace(/\[\[\d+\]\]\((?:[^\s()]|\([^\s()]*\))+\)/g, "").trim();
+  if (!text) return null;
+
+  const fenceMatch = text.match(/^```[a-zA-Z]*\n?([\s\S]*?)\n?```$/);
+  if (fenceMatch && fenceMatch[1] !== undefined) {
+    text = fenceMatch[1].trim();
+  }
+
+  if (text.length >= 2) {
+    const first: string = text[0]!;
+    const last: string = text[text.length - 1]!;
+    if ((first === '"' && last === '"') || (first === "「" && last === "」") || (first === "“" && last === "”")) {
+      text = text.slice(1, -1).trim();
+    }
+  }
+
+  if (!text) return null;
+  return truncateInline(text, TELEGRAM_MESSAGE_MAX_CHARS);
+}
+
+/** 模拟真人打字的间隔：按下一条消息的长度估一个停顿，并加上限。 */
+function typingDelayMs(nextPart: string): number {
+  const base: number = TYPING_DELAY_BASE_MS + nextPart.length * TYPING_DELAY_PER_CHAR_MS;
+  const jitter: number = Math.random() * TYPING_DELAY_JITTER_MS;
+  return Math.min(base + jitter, TYPING_DELAY_MAX_MS);
+}
+
+function buildSendMessageToolDefinition(): ToolDefinition {
+  return {
+    name: SEND_MESSAGE_TOOL,
+    description: SEND_MESSAGE_TOOL_INSTRUCTION,
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "要发到群里的消息文本。" },
+        reply_to_trigger: { type: "boolean", description: "是否以「回复」形式挂在触发你这次回复的那条消息上；省略视为 false。" },
+      },
+      required: ["text"],
+    },
+  };
+}
+
+/**
+ * 文本是否是「纯 emoji 消息」：至少含一个图形 emoji，且除 emoji 本体/emoji
+ * 组件（肤色、变体选择符、ZWJ 等）/空白外没有任何其它字符。这类消息被
+ * send_message 拒绝——机器人不直接发表情，能直接发的画面表达只有贴纸，
+ * 对消息表态用 add_reaction。导出仅为可测试性。
+ */
+export function isEmojiOnly(text: string): boolean {
+  return /\p{Extended_Pictographic}/u.test(text) && /^[\p{Extended_Pictographic}\p{Emoji_Component}\s]+$/u.test(text);
+}
+
+/** REACTION_EMOJIS 为空（配置被清空）时返回 null，不提供这个工具。 */
+function buildAddReactionToolDefinition(): ToolDefinition | null {
+  if (REACTION_EMOJIS.length === 0) return null;
+  return {
+    name: ADD_REACTION_TOOL,
+    description: ADD_REACTION_TOOL_INSTRUCTION + REACTION_EMOJIS.join(" "),
+    parameters: {
+      type: "object",
+      properties: {
+        emoji: { type: "string", description: "要扣的反应 emoji，必须是清单里列出的其中一个。" },
+      },
+      required: ["emoji"],
+    },
+  };
+}
+
+/** 从参数 JSON 里解析出一个非空字符串字段；解析失败/缺失/类型不对返回 null。 */
+function parseStringField(argumentsJson: string, field: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argumentsJson);
+  } catch {
+    return null;
+  }
+  const value: unknown = (parsed as Record<string, unknown> | null)?.[field];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+/** 从参数 JSON 里解析出一个布尔字段；解析失败/缺失/类型不对一律按 false 处理
+ *  （reply_to_trigger 是可选参数，缺省即「不挂回复引用」）。 */
+function parseBooleanField(argumentsJson: string, field: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argumentsJson);
+  } catch {
+    return false;
+  }
+  return (parsed as Record<string, unknown> | null)?.[field] === true;
+}
+
+/** 会真正落地一个群内可见动作的工具（发消息/发贴纸/扣反应），共同受
+ *  MAX_ACTIONS_PER_REPLY 的总量硬顶约束；view_sticker_pack 只是查询，
+ *  不占动作名额。 */
+const ACTION_TOOLS: Set<string> = new Set([SEND_MESSAGE_TOOL, ADD_REACTION_TOOL, SEND_STICKER_TOOL]);
+
+/** 组装一轮回复的行动工具集（贴纸菜单在此刻拉取/组装一次），见模块头注。 */
+export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {
+  const menu: StickerPackCandidate[] = await buildStickerPackMenu();
+  const stickerState: StickerRoundState = createStickerRoundState();
+  let messageCount: number = 0;
+  let reactionCount: number = 0;
+  let actionsUsed: number = 0;
+
+  const viewDefinition: ToolDefinition | null = buildViewStickerPackToolDefinition(menu);
+  const sendStickerDefinition: ToolDefinition | null = buildSendStickerToolDefinition(menu);
+  const addReactionDefinition: ToolDefinition | null = buildAddReactionToolDefinition();
+  const definitions: ToolDefinition[] = [
+    buildSendMessageToolDefinition(),
+    ...(addReactionDefinition ? [addReactionDefinition] : []),
+    ...(viewDefinition ? [viewDefinition] : []),
+    ...(sendStickerDefinition ? [sendStickerDefinition] : []),
+  ];
+  const names: Set<string> = new Set(definitions.map((d: ToolDefinition) => d.name));
+
+  async function executeSendMessage(argumentsJson: string): Promise<string> {
+    const raw: string | null = parseStringField(argumentsJson, "text");
+    if (raw === null) return JSON.stringify({ error: "Invalid or empty text" });
+    const text: string | null = cleanReply(raw);
+    if (!text) return JSON.stringify({ error: "Invalid or empty text" });
+    if (isEmojiOnly(text)) {
+      return JSON.stringify({ error: "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead" });
+    }
+
+    // 第二条起模拟真人打字：上一条发出会清掉「正在输入…」状态，先补发一次
+    // 再按本条长度停顿（单次停顿封顶在 Telegram 状态过期时间内，见
+    // TYPING_DELAY_MAX_MS，不需要定时重发）。
+    if (messageCount > 0) {
+      void sendTypingAction(ctx.chatId);
+      await sleep(typingDelayMs(text));
+    }
+    const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
+    const sentMessageId: number | undefined = await sendMessage(ctx.chatId, text, replyToTrigger ? ctx.replyToMessageId : undefined);
+    if (sentMessageId === undefined) return JSON.stringify({ error: "Failed to send message" });
+
+    messageCount++;
+    ctx.onMessageSent(text, sentMessageId);
+    return JSON.stringify({ success: true });
+  }
+
+  function executeAddReaction(argumentsJson: string): string {
+    const emoji: string | null = parseStringField(argumentsJson, "emoji");
+    if (emoji === null || !REACTION_EMOJIS.includes(emoji)) return JSON.stringify({ error: "Invalid reaction emoji: pick one from the list" });
+    if (reactionCount >= MAX_REACTIONS_PER_REPLY) {
+      return JSON.stringify({ error: `Reaction limit reached: at most ${MAX_REACTIONS_PER_REPLY} reaction per reply` });
+    }
+    reactionCount++;
+    // setMessageReaction 内部兜住一切异常（失败已记日志），fire-and-forget。
+    void setMessageReaction(ctx.chatId, ctx.replyToMessageId, emoji);
+    return JSON.stringify({ success: true });
+  }
+
+  async function dispatch(name: string, argumentsJson: string): Promise<string> {
+    switch (name) {
+      case SEND_MESSAGE_TOOL:
+        return executeSendMessage(argumentsJson);
+      case ADD_REACTION_TOOL:
+        return executeAddReaction(argumentsJson);
+      case VIEW_STICKER_PACK_TOOL:
+        return viewStickerPackTool(ctx.chatId, menu, argumentsJson, stickerState);
+      case SEND_STICKER_TOOL:
+        return sendStickerTool(ctx.chatId, menu, argumentsJson, stickerState, ctx.onStickerSent);
+      default:
+        return JSON.stringify({ error: `Unknown tool: ${name}` });
+    }
+  }
+
+  return {
+    definitions,
+    has: (name: string): boolean => names.has(name),
+    execute: async (name: string, argumentsJson: string): Promise<string> => {
+      // 动作总量硬顶在入口统一把关（成功才计数——被参数校验/分项限额拒绝
+      // 或发送失败的调用不白白烧名额），view_sticker_pack 等查询不受限。
+      if (ACTION_TOOLS.has(name) && actionsUsed >= MAX_ACTIONS_PER_REPLY) {
+        return JSON.stringify({ error: `Action limit reached: at most ${MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions) per reply` });
+      }
+      const result: string = await dispatch(name, argumentsJson);
+      if (ACTION_TOOLS.has(name)) {
+        try {
+          if ((JSON.parse(result) as { success?: boolean })?.success) actionsUsed++;
+        } catch {
+          // 工具结果都是本模块自己拼的 JSON，解析不会失败；防御性兜底。
+        }
+      }
+      return result;
+    },
+    messagesSent: (): number => messageCount,
+  };
+}

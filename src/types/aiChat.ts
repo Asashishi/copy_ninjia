@@ -49,8 +49,9 @@ export interface AiRecordMediaMessage {
   /** 这条消息本身的 message_id，评图/评贴纸/评 GIF 回复要用它挂 Telegram
    * 回复引用。 */
   messageId: number;
-  /** 主线程已掷中「解析完成后评价这份媒体」（概率见 AI_MEDIA_COMMENT_PROBABILITY，
-   * 已照顾 /quiet 与随机回复冷却）；Worker 在描述解析成功时执行评价回复。 */
+  /** 主线程已掷中「解析完成后评价这份媒体」（概率见 AI_REPLY_PROBABILITY，
+   * 与文字随机搭话共用同一个概率，已照顾 /quiet 与随机回复冷却）；Worker
+   * 在描述解析成功时执行评价回复。 */
   commentOnResolve: boolean;
   /** kind === "sticker" 时视觉解析失败的兜底文本（现有元数据行，见
    * ai/stickerSets.ts 的 describeStickerForContext）——即便解析失败也不
@@ -74,6 +75,10 @@ export interface StickerCatalogEntry {
 export interface StickerCatalogSnapshot {
   version: 1;
   entries: Record<string, StickerCatalogEntry>;
+  /** AI 生成的整包简介（≤200 字，见 consts/aiChat.ts 的
+   * STICKER_PACK_SUMMARY_MAX_CHARS），供两层贴纸工具的第一层挑包；还没生成
+   * 出来（含旧格式文件恢复）为 null，下次对账时会补生成。 */
+  summary: string | null;
   savedAt: number;
 }
 
@@ -93,6 +98,8 @@ export interface AiTriggerMessage {
   chatId: number;
   replyToMessageId: number;
   repliedBotText?: string;
+  /** 是否是随机插话触发：模型自主决定接不接话、挂不挂回复引用，允许沉默
+   *  （见 workers/aiChatWorker.ts 的 generateAndSendReply）。 */
   isRandomTrigger: boolean;
 }
 

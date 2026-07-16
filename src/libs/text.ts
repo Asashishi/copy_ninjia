@@ -27,3 +27,29 @@ export function truncateInline(text: string, maxChars: number): string {
   }
   return truncated;
 }
+
+/**
+ * 截断到 maxChars 以内，但尽量收在子句边界上，不把句子从中间剁断——
+ * 模型生成的描述/简介超出字数限制时用这个（曾经用 truncateInline 硬切，
+ * memory/stickers/ 里留下过大量「……以戏谑的口」式断在半句的条目）。
+ * 规则：先硬切到 maxChars；若切点内能找到句末标点（。！？…～♡），收到
+ * 最后一个句末标点为止（含标点）；否则找最后一个子句分隔符（，、；：）
+ * 收到它之前（丢掉悬空的分隔符）。边界位置过于靠前（不足上限一半，收完
+ * 只剩个开头）时放弃找边界，退回硬切——宁可断句也不丢大半内容。
+ */
+export function truncateAtClauseBoundary(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const hardCut: string = truncateInline(text, maxChars);
+  const minKeep: number = Math.floor(maxChars / 2);
+
+  let lastSentenceEnd: number = -1;
+  let lastClauseBreak: number = -1;
+  for (let i = 0; i < hardCut.length; i++) {
+    const ch: string = hardCut[i]!;
+    if ("。！？…～♡".includes(ch)) lastSentenceEnd = i;
+    else if ("，、；：".includes(ch)) lastClauseBreak = i;
+  }
+  if (lastSentenceEnd + 1 >= minKeep) return hardCut.slice(0, lastSentenceEnd + 1);
+  if (lastClauseBreak >= minKeep) return hardCut.slice(0, lastClauseBreak);
+  return hardCut;
+}

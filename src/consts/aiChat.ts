@@ -4,19 +4,15 @@
  */
 
 /**
- * 没有其它触发条件时，普通发言触发一次 AI 回复的概率。掷骰子决定是否触发
- * 属于主线程的调度逻辑（见 src/auto/message.ts），Worker 只执行已触发的回复。
+ * AI 主动搭话的统一概率：没有其它触发条件时，普通发言触发一次随机回复；
+ * 群友发图片/贴纸/GIF 时，触发「解析完成后回复那条消息、评价媒体内容」
+ * ——文字消息与三种媒体共用这同一个概率（不是各自独立掷骰，曾经文字
+ * 1/5、媒体 1/8 两套，现已合并）。掷骰子决定是否触发属于主线程的调度
+ * 逻辑（照顾 /quiet 状态与随机回复冷却，见 src/auto/message.ts），Worker
+ * 只执行已触发的回复；媒体评价由 Worker 在描述解析成功时执行（解析失败
+ * 没内容可评，静默放弃），见 workers/aiChatWorker.ts 的 recordChatMedia。
  */
-export const AI_REPLY_PROBABILITY: number = 1 / 5;
-
-/**
- * 群友发图片/贴纸/GIF 时，AI 在解析完成后主动回复那条消息、评价媒体内容的
- * 概率——三种媒体共用同一个概率预算（不是各自独立掷骰）。掷骰子在主线程
- * （照顾 /quiet 状态与随机回复冷却，见 src/auto/message.ts 的媒体分支）；
- * 命中后由 Worker 在描述解析成功时执行（解析失败没内容可评，静默放弃），
- * 见 workers/aiChatWorker.ts 的 recordChatMedia。
- */
-export const AI_MEDIA_COMMENT_PROBABILITY: number = 1 / 8;
+export const AI_REPLY_PROBABILITY: number = 1 / 7;
 
 /** 闲聊回复生成（callGemini）用的模型——人设发挥、工具调用都在这条链路上。
  *  三条链路统一用 gemini-3.1-flash-lite（内置 googleSearch 与自定义函数
@@ -122,12 +118,24 @@ export const TIME_AWARENESS_INSTRUCTION: string =
  */
 export const WEB_SEARCH_INSTRUCTION: string =
   "你内置了实时联网搜索能力：遇到时效性强（新闻、价格、比分、榜单、版本号、事件进展等）、你没有把握、或对方明确要求查证的问题，主动搜索确认清楚了再回答，别懒得查就瞎编或者甩锅拒答。搜完该怎么损怎么损、该怎么骄傲怎么骄傲，别在回复里暴露自己刚查过——装作本来就知道。";
-/** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
-export const SPLIT_REPLY_PROBABILITY: number = 1 / 4;
-/** 连发模式下最多发几条，防止模型话痨刷屏。 */
-export const SPLIT_REPLY_MAX_PARTS: number = 5;
+/** 一轮回复的动作总数硬顶：发消息、发贴纸、扣反应全都算在内（提示词里
+ *  引导「通常 1~3 个动作」，这是极端情况也不许突破的上限），超额的调用在
+ *  执行侧直接拒绝，见 ai/tools/replyToolset.ts。 */
+export const MAX_ACTIONS_PER_REPLY: number = 5;
+/** 一轮回复里 send_sticker 工具最多发几枚贴纸：要么不发、要么只发一枚，
+ *  超额的调用在执行侧直接拒绝，见 ai/tools/stickers.ts 的 sendStickerTool。 */
+export const MAX_STICKERS_PER_REPLY: number = 1;
+/** 一轮回复里 add_reaction 工具最多扣几个 emoji 反应。 */
+export const MAX_REACTIONS_PER_REPLY: number = 1;
 /**
- * 连发模式下模拟真人打字间隔（见 workers/aiChatWorker.ts 的 typingDelayMs）：
+ * view_sticker_pack 执行时上报「正在选择贴纸」聊天状态（choose_sticker，
+ * 与「正在输入」同一个机制）后的停顿：基础 + 随机抖动，合计 1.5~3 秒，
+ * 模拟真人翻贴纸面板挑贴纸的节奏，见 ai/tools/stickers.ts。
+ */
+export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
+export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 1_500;
+/**
+ * 连发多条消息时模拟真人打字间隔（见 ai/tools/replyToolset.ts 的 typingDelayMs）：
  * 基础停顿 + 按下一条消息长度线性增加 + 随机抖动，再统一封顶。
  */
 export const TYPING_DELAY_BASE_MS: number = 600;
@@ -168,8 +176,10 @@ export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的
 /**
  * 一次工具调用往返最多允许几轮（模型要工具结果 -> 喂回去 -> 模型可能再要
  * 下一个工具……）。给个上限防止模型陷入死循环反复要工具，烧穿 API 配额。
+ * 发言/贴纸/反应全部工具化之后，一轮正常回复就要吃掉好几轮往返（看包 ->
+ * 发贴纸 -> 连发几条消息……），上限按此放宽；同一轮响应里的并行调用只算一轮。
  */
-export const MAX_TOOL_ROUNDS: number = 5;
+export const MAX_TOOL_ROUNDS: number = 15;
 
 /** 「正在输入…」状态的重发间隔，机制见 workers/aiChatWorker.ts 的 startTypingHeartbeat。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
@@ -206,16 +216,25 @@ export const IMAGE_DESCRIPTION_PROMPT: string =
 
 /**
  * 贴纸/GIF 描述的字数上限——比图片短：贴纸/GIF 本身信息密度低（一个画面
- * 梗+一句文字居多），这份描述还要兼顾另一个消费方（ai/stickerCatalog.ts
- * 的目录：拼进 send_sticker 工具描述里的编号清单，条目太长会把每次请求的
- * 系统提示词撑得很臃肿），75 字足够说清画面角色/动作/文字/情绪。
+ * 梗+一句文字居多）。这份描述的另一个消费方是贴纸目录（ai/stickerCatalog.ts），
+ * 两层贴纸工具下目录条目只在 view_sticker_pack 的返回结果里按需出现、不再
+ * 拼进每次请求的工具描述（旧单层方案的 75 字紧箍随之作废），100 字给
+ * 「原样抄录画面文字 + 简述画面情绪」留够空间。
  */
-export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 75;
+export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 100;
 /** 喂给视觉模型描述一枚贴纸的指令：群友发的贴纸、机器人自己贴纸目录的
- *  生成（见 ai/stickerCatalog.ts）共用同一份措辞，保证两处描述风格一致。 */
+ *  生成（见 ai/stickerCatalog.ts）共用同一份措辞，保证两处描述风格一致。
+ *  画面文字要求一字不差原样抄录、放在最前——文字梗贴纸（如 ur_dumb 整包）
+ *  的含义全在文字上，转述/意译一个词含义就漂了。 */
 export const STICKER_DESCRIPTION_PROMPT: string =
-  "这是中文群聊场景用到的一枚贴纸（表情包）。请用中文简要描述画面：角色/形象是谁或什么、动作和表情、" +
-  `画面里的文字（如有）、整体想表达的情绪或语气。不超过 ${SHORT_MEDIA_DESCRIPTION_MAX_CHARS} 字，只输出描述本身，不要任何前缀、解释或引号。`;
+  "这是中文群聊场景用到的一枚贴纸（表情包）。请用中文描述它，最优先的任务是把画面里出现的文字" +
+  "一字不差地原样抄录出来、放进「」里（中英文、品牌名、代码符号都照抄，不要改写、意译或省略——" +
+  "文字是这类贴纸的灵魂，抄错一个字含义就变了；画面没有文字才可以不提）。" +
+  "例外：若画面里是大段代码或长文，只原样抄录其中承载梗点的关键短句——优先抄中文的吐槽/标语/结论，" +
+  "代码和英文报错本身不要抄，用一句话概括是什么（如「一段 Rust 借用检查报错的代码」）即可，" +
+  "别让抄录挤掉画面描述。" +
+  "抄录之后，再简述角色/形象是谁或什么、动作表情、整体想表达的情绪或语气。" +
+  `不超过 ${SHORT_MEDIA_DESCRIPTION_MAX_CHARS} 字，只输出描述本身，不要任何前缀、解释，也不要用引号把整段描述包起来。`;
 /** 喂给视觉模型描述一个 GIF 封面帧的指令：没有抽帧能力（无 ffmpeg），只能
  *  分析 Telegram 自带的缩略图，提示词点明这一点，避免模型把只看到第一帧
  *  的内容说成是整个动图。 */
@@ -242,18 +261,84 @@ export const MEDIA_DESCRIPTION_CACHE_TTL_MS: number = 60 * 60 * 1000;
  *  这只是防御性护栏）。 */
 export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
 
-// ---- 应景贴纸（send_sticker 工具：模型在生成回复的同一次对话里自己决定
-// 要不要配一枚贴纸、配哪一枚）----
-// 目录生成/持久化见 ai/stickerCatalog.ts；工具定义/执行见 ai/stickers.ts。
+// ---- 应景贴纸（两层工具：view_sticker_pack 先按整包简介挑包、看包内清单，
+// send_sticker 再按清单编号发送；模型在生成回复的同一次对话里自主决定）----
+// 目录/整包简介的生成与持久化见 ai/stickerCatalog.ts；工具定义/执行见
+// ai/tools/stickers.ts；按次回复的组装与限额状态见 ai/tools/replyToolset.ts。
+
+/** 整包简介的字数上限：一层工具描述里每个包一条，供模型决定进哪个包细看。 */
+export const STICKER_PACK_SUMMARY_MAX_CHARS: number = 200;
+/** 整包简介生成的输出 token 上限（思考也计入，同 REPLY_MAX_TOKENS 注释）。 */
+export const STICKER_PACK_SUMMARY_MAX_TOKENS: number = 4096;
+/** 喂给模型生成整包简介的指令：输入是包内每枚贴纸的画面描述（行首带贴纸
+ *  自带的情绪 emoji，如有），见 ai/stickerCatalog.ts 的 summarizePack。
+ *  简介是两层贴纸工具第一层「挑包」的唯一依据，措辞要求写成精准导览而非
+ *  泛泛概括：点名角色、引用核心梗/固定句式、枚举式列全情绪场景，明令禁止
+ *  「适合日常聊天」这类对挑包毫无区分度的空话。 */
+export const STICKER_PACK_SUMMARY_PROMPT: string =
+  "以下是一个 Telegram 贴纸包里每枚贴纸的画面描述（每行一条，行首可能带这枚贴纸自带的情绪 emoji）。" +
+  "请用中文为这一整个贴纸包写一段精准的导览简介，读者是要「按情绪/梗挑贴纸」的人，看完简介就能判断该不该进这个包找。必须具体写清：" +
+  "主要角色/形象（叫得出名字就点名）；整体画风；包的核心梗或反复出现的文字句式（有固定模板就原样引用）；" +
+  "涵盖哪些情绪和场景——用「嘲讽、得意、撒娇、无语……」这样的枚举尽量列全，不要泛泛说「多种情绪」。" +
+  "不写空话套话（比如「适合日常聊天使用」这种没有区分度的话一律不要）。" +
+  `必须写成一段连贯的话，严禁分点、换行或任何 Markdown 记号（*、**、#、- 等）。不超过 ${STICKER_PACK_SUMMARY_MAX_CHARS} 字——超字会被截断，请把角色、核心梗和情绪清单放在前半段说完。只输出简介本身，不要任何前缀或解释。`;
+/** 目录里还没生成出整包简介时，一层清单里的占位文案。 */
+export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成中，可进包内查看具体贴纸）";
 
 /**
- * send_sticker 工具描述的固定前缀，后面动态拼接当次可选贴纸的编号清单
- * （见 ai/stickers.ts 的 buildSendStickerToolDefinition）。措辞把默认答案
- * 直接定为「发」——每次回复都先扫一遍清单挑最搭的一枚，气氛沾边即可、
- * 不等绝配；只有清单里确实一枚都完全不沾边时才允许跳过。
+ * view_sticker_pack 工具描述的固定前缀，后面动态拼接当次可选贴纸包的编号
+ * 清单（每包一行「编号. 「包名」（N 枚）：整包简介」），见 ai/stickers.ts 的
+ * buildViewStickerPackToolDefinition。
+ */
+export const VIEW_STICKER_PACK_TOOL_INSTRUCTION: string =
+  "发贴纸的第一步：查看某个贴纸包内每枚贴纸的具体描述清单。发贴纸是你说话方式的一部分，" +
+  "情绪、语气对上了就该顺手配一枚。先按下面的整包简介挑一个最可能有应景贴纸的包，调用本工具" +
+  "拿到包内清单，再用 send_sticker 按清单编号发送。pack_index 填包的编号：\n";
+
+/**
+ * send_sticker 工具的描述（两层选择的第二层）。必须先用 view_sticker_pack
+ * 看过对应包的清单才能发（执行侧强制，见 ai/tools/stickers.ts 的
+ * sendStickerTool）；每轮回复的枚数上限也在执行侧强制。
  */
 export const SEND_STICKER_TOOL_INSTRUCTION: string =
-  "发贴纸是你说话方式的一部分，像标点一样常用。每次回复前先扫一眼下面的清单，默认就该配一枚：" +
-  "挑跟这条回复的情绪、语气或内容最搭的那枚调用本工具发出来，气氛对上就行，不用等「绝配」，" +
-  "宁可发一枚七分贴的也别因为挑剔而不发。只有清单里确实一枚都完全不沾边时，才允许这条回复" +
-  "不带贴纸。只能从下面这份编号清单里选（每行「编号. emoji 画面描述」），index 参数填清单里的编号：\n";
+  "从某个贴纸包里发送一枚贴纸到群里。必须先用 view_sticker_pack 查看过那个包的贴纸清单，" +
+  `再按清单里的编号发送。每轮回复最多发 ${MAX_STICKERS_PER_REPLY} 枚贴纸——要么不发，` +
+  "要么只发最应景的那一枚。";
+
+/**
+ * send_message 工具的描述：发言本身也是工具，模型自己决定发一条还是像真人
+ * 打字那样连发几条短句（连发的打字间隔由执行侧模拟），也自己决定要不要以
+ * 「回复」形式挂在触发消息上（reply_to_trigger 参数），见
+ * ai/tools/replyToolset.ts。
+ */
+export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
+  "把一条文字消息发到群里。这是你说话的唯一方式——要说的每句话都必须经本工具发送，" +
+  "工具之外直接输出的正文不会被任何人看到。想连发几条短句就多调用几次（像真人打字那样" +
+  "一句接一句）。text 就是发到群里的原话：不要任何解释、编号、引号、代码块或「[id:...]」" +
+  "这类标记；不允许发纯 emoji 表情的消息——想用画面/表情达意就发贴纸（send_sticker），" +
+  "想对触发消息表个态就扣反应（add_reaction）。reply_to_trigger 填 true 时这条消息会以" +
+  "「回复」形式挂在触发你这次回复的那条消息上，挂不挂由你判断（对方明确在跟你说话、或" +
+  "群里消息多怕别人看不出你在回谁时，建议挂上）。";
+
+/**
+ * add_reaction 工具描述的固定前缀，后面动态拼接允许的 emoji 清单（来自
+ * config/reactions.json 的 key 集合，须落在 Telegram 允许的标准反应集合内，
+ * 见 ai/reactions.ts）。
+ */
+export const ADD_REACTION_TOOL_INSTRUCTION: string =
+  "给触发这次回复的那条消息扣一个 emoji 表情反应（贴在消息角落的那种）。心情到了就扣一个，" +
+  `每轮回复最多 ${MAX_REACTIONS_PER_REPLY} 次。emoji 只能从下面这份清单里选：\n`;
+
+/**
+ * buildUserContent 拼在回复指令末尾的行动说明：发言/贴纸/反应全部工具化，
+ * 用不用、什么顺序由模型自己决定，见 workers/aiChatWorker.ts；动作总量的
+ * 「通常 1~3、硬顶 MAX_ACTIONS_PER_REPLY」在执行侧强制，这里只做引导。
+ */
+export const REPLY_ACTION_INSTRUCTION: string =
+  "你的所有动作都只能通过工具完成：说话用 send_message（想连发就多调用几次，一次一条短句；" +
+  "要不要以「回复」形式挂在触发消息上由它的 reply_to_trigger 参数决定）；配应景贴纸先用 " +
+  "view_sticker_pack 看包内清单、再用 send_sticker 发送；想给触发消息扣个表情反应就用 " +
+  "add_reaction。做不做、先做哪个、做几样都由你自己决定——判断此刻不值得出声时，也可以一个" +
+  "动作都不做、直接结束，沉默同样是符合人设的选择。一轮回复通常 1~3 个动作（发消息、发贴纸、" +
+  `扣反应都算在内），最多绝不超过 ${MAX_ACTIONS_PER_REPLY} 个——宁缺毋滥，别刷屏。` +
+  "全部动作完成后直接结束，不要再输出任何正文——正文不会被发到群里。";

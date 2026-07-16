@@ -18,7 +18,7 @@ const { recoverStickerCatalogs, writeStickerCatalogFile } = await import("../../
 import type { StickerCatalogSnapshot } from "../../../src/types";
 
 function snapshot(description: string): StickerCatalogSnapshot {
-  return { version: 1, entries: { "file-uid-1": { emoji: "😂", description } }, savedAt: 1700000000000 };
+  return { version: 1, entries: { "file-uid-1": { emoji: "😂", description } }, summary: "一包搞笑猫猫贴纸", savedAt: 1700000000000 };
 }
 
 beforeEach(() => {
@@ -26,11 +26,20 @@ beforeEach(() => {
 });
 
 describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", () => {
-  test("白名单里的包正常恢复", () => {
+  test("白名单里的包正常恢复（含整包简介）", () => {
     writeStickerCatalogFile("pack_a", snapshot("一只猫大笑"));
     const result = recoverStickerCatalogs(["pack_a", "pack_b"]);
     expect(result.size).toBe(1);
     expect(result.get("pack_a")?.entries["file-uid-1"]?.description).toBe("一只猫大笑");
+    expect(result.get("pack_a")?.summary).toBe("一包搞笑猫猫贴纸");
+  });
+
+  test("旧格式文件（没有 summary 字段）恢复为 summary null，等下次对账补生成", () => {
+    mkdirSync(stickerDir, { recursive: true });
+    writeFileSync(join(stickerDir, "pack_a.json"), JSON.stringify({ version: 1, entries: { "file-uid-1": { emoji: "😂", description: "旧条目" } }, savedAt: 0 }));
+    const result = recoverStickerCatalogs(["pack_a"]);
+    expect(result.get("pack_a")?.summary).toBeNull();
+    expect(result.get("pack_a")?.entries["file-uid-1"]?.description).toBe("旧条目");
   });
 
   test("白名单已经不包含的包视为孤儿：不载入内存，且磁盘文件被删除", () => {

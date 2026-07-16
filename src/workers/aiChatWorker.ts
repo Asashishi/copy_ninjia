@@ -1,7 +1,6 @@
 import { logger } from "../infra/logger";
 import { readFileSync } from "node:fs";
 import { LinkedQueue } from "../libs/linkedQueue";
-import { sleep } from "../libs/sleep";
 import { formatTokyoTime, getCurrentTime } from "../libs/time";
 import { sanitizeInline, truncateInline } from "../libs/text";
 import { PERSONA_PATH } from "../consts/paths";
@@ -22,10 +21,9 @@ import {
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   RATE_LIMIT_NOTICE_TEXT,
   RATE_LIMIT_WINDOW_MS,
+  REPLY_ACTION_INSTRUCTION,
   REPLY_MAX_TOKENS,
   REPLY_TEMPERATURE,
-  SPLIT_REPLY_MAX_PARTS,
-  SPLIT_REPLY_PROBABILITY,
   STICKER_PENDING_PLACEHOLDER,
   SUMMARY_MAX_CHARS,
   SUMMARY_MAX_TOKENS,
@@ -33,17 +31,12 @@ import {
   SUMMARY_TEMPERATURE,
   TIME_AWARENESS_INSTRUCTION,
   TYPING_ACTION_INTERVAL_MS,
-  TYPING_DELAY_BASE_MS,
-  TYPING_DELAY_JITTER_MS,
-  TYPING_DELAY_MAX_MS,
-  TYPING_DELAY_PER_CHAR_MS,
   GEMINI_REPLY_MODEL,
   GEMINI_SUMMARY_MODEL,
   VERBATIM_CONTEXT_MAX,
   WEB_SEARCH_INSTRUCTION,
 } from "../consts/aiChat";
 import { FALLBACK_SPEAKER_NAME } from "../consts/auto";
-import { TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import {
   botInfoState,
   chatBuffers,
@@ -58,15 +51,14 @@ import {
   typingHeartbeats,
 } from "../cache/aiChatWorker";
 import type { BufferedMessage, GeminiRequestTool, MediaKind, ToolDefinition } from "../types";
-import { maybeAddReaction } from "../ai/reactions";
-import { buildSendStickerToolDefinition, buildStickerCandidates, sendStickerTool, type StickerCandidate } from "../ai/stickers";
+import { createReplyToolset, type ReplyToolContext, type ReplyToolset } from "../ai/tools/replyToolset";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
 import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse } from "../ai/gemini";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
-import { TOOL_DEFINITIONS, callTool } from "../tools";
-import { SEND_STICKER_TOOL } from "../consts/tools";
+import { TOOL_DEFINITIONS, callTool } from "../ai/tools";
+import { SEND_MESSAGE_TOOL } from "../consts/tools";
 import type {
   AiBotInfo,
   AiChatWorkerMessage,
@@ -82,7 +74,10 @@ import type {
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
  * 只做事件投递，重活全在这里：滚动对话缓存、图片/贴纸/GIF 占位与异步描述
  * 回填、冷却与双滑动窗口限频、拼装上下文、调 Gemini（含 function calling 往返
- * 与内置 googleSearch）、连发消息、消息反应与贴纸跟发。发往 Telegram 的调用不回
+ * 与内置 googleSearch）。发言/消息反应/应景贴纸全部工具化（send_message /
+ * add_reaction / view_sticker_pack + send_sticker，见 ai/tools/replyToolset.ts）：
+ * 模型在同一次对话里自主决定做哪几样、什么顺序，本文件只负责组装工具集、
+ * 分发调用与最终正文的兜底发送。发往 Telegram 的调用不回
  * 主线程绕路——本线程 import telegram.ts 时会得到自己独立的 grammY Api
  * 客户端（那个 Bot 实例只用其 bot.api 发请求，从不 init/轮询；机器人自己
  * 的账号身份改由主线程在 bot.init() 后经 init 消息注入，见 cache/aiChatWorker.ts
@@ -446,15 +441,13 @@ function mediaTagHintFor(kind: MediaKind): string {
 
 /** buildUserContent 的可选附加上下文，按需组合，见各字段说明。 */
 interface UserContentOptions {
-  /** 是否要求模型把回复拆成多条短消息（一行一条）连发。 */
-  splitMode: boolean;
   /** 若本次是「用户回复了机器人」，被回复的那条机器人消息文本，作为上下文
    *  （机器人自己发的消息不会作为更新推送回来，不在缓存里）。 */
   repliedBotText?: string;
-  /** 若本次是随机触发（见 generateAndSendReply 的 isRandomTrigger），触发者的
-   *  显示名——这种情况下回复不会用 Telegram 的「回复」关联到原消息，要求模型
-   *  改为在文字里点名称呼对方。 */
-  addressee?: string;
+  /** 是否是随机插话触发（见 generateAndSendReply 的 isRandomTrigger）：
+   *  没有人在叫机器人，模型自主决定接不接话、怎么接（挂不挂 reply_to_trigger、
+   *  要不要称呼对方都由它判断），也允许什么都不做保持沉默。 */
+  isRandomTrigger: boolean;
   /** 若本次是「解析完图片/贴纸/GIF 后评价它」触发（见 recordChatMedia），
    *  发送人与描述——回复指令改为针对这份媒体发表评价，替代默认的「接住
    *  最新消息」。 */
@@ -470,7 +463,7 @@ interface UserContentOptions {
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
 function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserContentOptions): string | null {
-  const { splitMode, repliedBotText, addressee, mediaComment } = options;
+  const { repliedBotText, isRandomTrigger, mediaComment } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
@@ -482,21 +475,20 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
     lines.push(`（你刚才说过：${sanitizeInline(repliedBotText)}）`);
   }
 
-  // 随机触发时这条回复不会挂 Telegram 的回复引用，得让模型自己在文字里点名，
-  // 别人才看得出是在接谁的话。全名太长（比如中间夹着 last name）念出来生硬，
-  // 交给模型自己判断——名字短就整个用，长就挑其中自然的一部分当称呼。
-  const addressInstruction: string = addressee
-    ? `这条回复不会以「回复」形式关联到最新那条消息，所以开头要先点名称呼对方（TA 的名字是「${addressee}」，比如「${addressee}，……」；如果这个名字比较长念着别扭，可以自己判断截取其中简短自然的一部分来称呼，不必照抄全名），让人一眼看出你在接谁的话。`
-    : "";
-
-  // 评价触发：不是「接住最新消息」，而是针对刚解析完的那份图片/贴纸/GIF
-  // 发表评价——这条回复会以 Telegram「回复」形式挂在那条消息上，谁都看得出
-  // 在评哪一条。
+  // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
+  // 发言/贴纸/反应全部工具化，做什么、什么顺序由模型自己决定（见
+  // ai/tools/replyToolset.ts）。
+  // - 媒体评价：针对刚解析完的那份图片/贴纸/GIF 发表评价，要求挂回复引用；
+  //   实在无话可评也允许沉默。
+  // - 随机插话：没有人在叫机器人，接不接、怎么接（挂不挂 reply_to_trigger、
+  //   要不要称呼对方）全由模型自主判断——触发者是谁转录最后一行本来就写着，
+  //   不再单独喂名字、不再强制点名。
+  // - 回复/@ 触发：对方明确在跟机器人说话，别已读不回，建议第一条挂引用。
   const replyInstruction: string = mediaComment
-    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。你的这条回复会以「回复」形式挂在那条消息上。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。只输出你要发到群里的那句话本身，不要任何解释、前缀、引号、代码块或「[id:...]」这类标记。`
-    : splitMode
-    ? `请针对最新这条消息，以你的人设回复，并把回复拆成 2 到 ${SPLIT_REPLY_MAX_PARTS} 条连贯的短消息——就像真人打字时想到哪发到哪、一句接一句连发那样，每条一行、语义上前后衔接（比如先反应、再吐槽、再补一刀）。默认拆成 2~3 条就够了，只有真的意犹未尽、还有话要补时，才用到 4~${SPLIT_REPLY_MAX_PARTS} 条，不要为了凑数硬拆。${addressInstruction}只输出这几行消息本身，一行一条，不要编号、解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`
-    : `请针对最新这条消息，以你的人设回复一到两句话，自然接住话题。${addressInstruction}只输出你要发到群里的那句话本身，不要任何解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`;
+    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；实在觉得无话可评，也可以什么都不做。${REPLY_ACTION_INSTRUCTION}`
+    : isRandomTrigger
+    ? `群里最新这条消息并没有人在叫你——只是你自己刷到了，要不要插一嘴完全由你判断：值得接就以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；话题跟你无关、没什么好说的，就什么都不做直接结束，别硬聊。${REPLY_ACTION_INSTRUCTION}`
+    : `请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`;
 
   // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
   // 回复你的消息、以及标着你自己 id 的行（见发送后的 recordChatMessage 自录）
@@ -531,43 +523,31 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   );
 }
 
-/** 触发这次回复的最新一条缓存消息；缓存为空时返回 undefined。 */
-function getLatestMessage(chatId: number): BufferedMessage | undefined {
-  const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
-  return buf?.last(1)[0];
-}
-
 /**
- * 调用 Gemini 的 generateContent 接口生成一条回复（收发与响应解析在
+ * 调用 Gemini 的 generateContent 接口跑完一轮回复对话（收发与响应解析在
  * ai/gemini.ts）。tools 带三类：内置的 googleSearch（Google 服务器侧自动
- * 执行，模型自主决定要不要联网查证，结果直接体现在最终文本里）+ src/tools
- * 里的静态自定义函数（目前是查东京天气）+ 按次请求现组装的 send_sticker
- * （贴纸候选清单随目录内容变化，见 ai/stickers.ts）。自定义函数由模型以
- * functionCall part 抛回来，执行后把上一轮模型的整个 content 原样接回
- * contents、附上 functionResponse 再续跑（content 里的 thought signature
- * 也要一并带回，缺了会丢思考上下文），直到给出最终文本或达到轮数上限。
- * send_sticker 的执行有副作用（真的发一条贴纸消息），成功后经 onStickerSent
- * 回调交给调用方自录记忆/登记自发消息，其余工具仍走 src/tools 的纯查询式
- * 分发。查时间不走工具：当前时间默认拼进每次请求的系统提示词（见下方），
- * 转录行也自带每条消息的发送时间（见 formatLine），模型不需要判断要不要查。
- * @param chatId 目标群聊——send_sticker 工具需要它来实际发送贴纸。
+ * 执行，模型自主决定要不要联网查证）+ src/tools 里的静态自定义函数（目前
+ * 是查东京天气）+ 按次回复现组装的行动工具集（发言/反应/两层贴纸，见
+ * ai/tools/replyToolset.ts——发消息、发贴纸这些副作用动作都在工具执行时当场发生，
+ * 不再等最终文本）。自定义函数由模型以 functionCall part 抛回来，执行后把
+ * 上一轮模型的整个 content 原样接回 contents、附上 functionResponse 再续跑
+ * （content 里的 thought signature 也要一并带回，缺了会丢思考上下文），
+ * 直到模型不再要工具或达到轮数上限。查时间不走工具：当前时间默认拼进每次
+ * 请求的系统提示词（见下方），转录行也自带每条消息的发送时间（见 formatLine）。
  * @param userContent buildUserContent 拼好的对话上下文。
- * @param onStickerSent send_sticker 工具调用发送成功后的回调（描述行 +
- *   消息 ID），语义与 ai/stickers.ts 的 sendStickerTool 的 onSent 参数一致。
- * @returns 清洗后的回复文本；请求失败、超时或空输出时返回 null。
+ * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
+ *   副作用（发消息/贴纸/反应）都发生在它内部。
+ * @returns 模型最后一轮的正文文本（正常情况下模型已通过工具把话说完、正文
+ *   为空）；请求失败、超时、被 token 上限腰斩或空输出时返回 null。调用方
+ *   只在模型一条消息都没发出去时才把它当兜底回复用。
  */
-async function callGemini(chatId: number, userContent: string, onStickerSent: (stickerDescription: string, messageId: number) => void): Promise<string | null> {
+async function callGemini(userContent: string, toolset: ReplyToolset): Promise<string | null> {
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
   const contents: any[] = [{ role: "user", parts: [{ text: userContent }] }];
 
-  // 候选清单只在本次调用开始时组装一次：send_sticker 工具描述里的编号
-  // 顺序、参数校验范围，都必须对应这同一份数组，不能在后面的轮次里重新
-  // 拉取（万一目录期间被后台更新，编号就对不上号了）。
-  const stickerCandidates: StickerCandidate[] = await buildStickerCandidates();
-  const stickerToolDefinition = buildSendStickerToolDefinition(stickerCandidates);
-  const functionDeclarations: ToolDefinition[] = [...TOOL_DEFINITIONS, ...(stickerToolDefinition ? [stickerToolDefinition] : [])];
+  const functionDeclarations: ToolDefinition[] = [...TOOL_DEFINITIONS, ...toolset.definitions];
   const tools: GeminiRequestTool[] = [{ googleSearch: {} }, { functionDeclarations }];
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -596,15 +576,15 @@ async function callGemini(chatId: number, userContent: string, onStickerSent: (s
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
       // 模型这一轮的 content 原样接回（缺了 thought signature 会丢思考
       // 上下文），随后所有函数结果合并成一个 user turn 的 functionResponse
-      // parts 喂回去。
+      // parts 喂回去。同一轮的多个调用按序执行——模型并行抛出「先发言后
+      // 贴纸」时，落地顺序与它给出的顺序一致。
       contents.push(data.candidates[0].content);
       const responseParts: any[] = [];
       for (const call of functionCalls) {
-        const result: string =
-          call?.name === SEND_STICKER_TOOL
-            ? await sendStickerTool(chatId, stickerCandidates, JSON.stringify(call.args ?? {}), onStickerSent)
-            : await callTool(call?.name);
-        // 工具实现返回的都是 JSON 字符串（见 src/tools 与 ai/stickers.ts），
+        const result: string = toolset.has(call?.name)
+          ? await toolset.execute(call.name, JSON.stringify(call.args ?? {}))
+          : await callTool(call?.name);
+        // 工具实现返回的都是 JSON 字符串（见 src/ai/tools），
         // functionResponse.response 要求对象，解析回来直接挂上。
         responseParts.push({ functionResponse: { id: call.id, name: call.name, response: JSON.parse(result) } });
       }
@@ -612,72 +592,15 @@ async function callGemini(chatId: number, userContent: string, onStickerSent: (s
       continue;
     }
 
-    // 写到一半被 maxOutputTokens 腰斩的半句话，宁可这轮不回，也不把断掉的
-    // 句子发到群里——真人不会发一半句子就没下文，见 ai/gemini.ts 的
+    // 写到一半被 maxOutputTokens 腰斩的半句话，宁可不要，也不把断掉的句子
+    // 当兜底回复发到群里——真人不会发一半句子就没下文，见 ai/gemini.ts 的
     // isTruncatedByTokenLimit。googleSearch 命中时尤其容易撞进这种情况。
     if (isTruncatedByTokenLimit(data)) return null;
 
-    const content: string = extractOutputText(data);
-    return content ? cleanReply(content) : null;
+    return extractOutputText(data) || null;
   }
 
   return null;
-}
-
-/**
- * 清洗模型的原始输出，得到可直接发送的纯回复文本：去掉联网搜索可能附带的
- * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
- * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
- * 空则返回 null。仅为可测试性而导出（见文件头同类导出的理由）；生产代码
- * 路径统一走 callGemini 内部调用。
- */
-export function cleanReply(raw: string): string | null {
-  // URL 部分故意不排除 `)`：链接本身带括号很常见（如维基百科的消歧义链接
-  // .../Foo_(bar)），排除 `)` 会让匹配在 URL 内部就截停。但也不能简单放开
-  // 成贪婪的 `[^\s]+`（曾经的实现）：中文正文经常整行没有任何空白字符，
-  // 贪婪匹配会一路吃到本行最后一个 `)` 才回溯停下，把引用标记之后、这个
-  // 无关 `)` 之前的大段正文一并吞掉。改成「非括号非空白字符，或者一对不
-  // 含嵌套的平衡括号」重复一次以上：维基百科式的 .../Foo_(bar) 能作为一个
-  // 平衡括号整体吃掉，而遇到与 URL 无关的孤立 `)`（前面没有配对的 `(`）时
-  // 无法再继续匹配，会在引用标记自己的收尾括号处停下，不会越界。
-  let text: string = raw.replace(/\[\[\d+\]\]\((?:[^\s()]|\([^\s()]*\))+\)/g, "").trim();
-  if (!text) return null;
-
-  const fenceMatch = text.match(/^```[a-zA-Z]*\n?([\s\S]*?)\n?```$/);
-  if (fenceMatch && fenceMatch[1] !== undefined) {
-    text = fenceMatch[1].trim();
-  }
-
-  if (text.length >= 2) {
-    const first: string = text[0]!;
-    const last: string = text[text.length - 1]!;
-    if ((first === '"' && last === '"') || (first === "「" && last === "」") || (first === "“" && last === "”")) {
-      text = text.slice(1, -1).trim();
-    }
-  }
-
-  if (!text) return null;
-  return truncateInline(text, TELEGRAM_MESSAGE_MAX_CHARS);
-}
-
-/**
- * 把连发模式下模型的输出按行拆成若干条待发送的短消息。
- * 空行丢弃，超出上限的行合并进最后一条，防止刷屏。
- */
-function splitReplyParts(reply: string): string[] {
-  const lines: string[] = reply
-    .split("\n")
-    .map((line: string) => line.trim())
-    .filter((line: string) => !!line);
-  if (lines.length <= SPLIT_REPLY_MAX_PARTS) return lines;
-  return [...lines.slice(0, SPLIT_REPLY_MAX_PARTS - 1), lines.slice(SPLIT_REPLY_MAX_PARTS - 1).join(" ")];
-}
-
-/** 模拟真人打字的间隔：按下一条消息的长度估一个停顿，并加上限。 */
-function typingDelayMs(nextPart: string): number {
-  const base: number = TYPING_DELAY_BASE_MS + nextPart.length * TYPING_DELAY_PER_CHAR_MS;
-  const jitter: number = Math.random() * TYPING_DELAY_JITTER_MS;
-  return Math.min(base + jitter, TYPING_DELAY_MAX_MS);
 }
 
 /**
@@ -762,17 +685,19 @@ function notifyRateLimited(chatId: number, now: number): void {
 }
 
 /**
- * 生成并发送 AI 回复。整个过程 fire-and-forget，不阻塞本线程的消息分发
+ * 生成并执行一轮 AI 回复。整个过程 fire-and-forget，不阻塞本线程的消息分发
  * （限频判定是同步的，其余都在异步任务里跑）。
- * 以 SPLIT_REPLY_PROBABILITY 概率采用「连发多条短消息」形式：让模型按行输出
- * 几条前后衔接的短句，逐条带打字间隔发出（仅第一条引用触发消息）；
- * 其余情况仍是普通的单条回复。
+ * 发言/贴纸/反应全部工具化（见 ai/tools/replyToolset.ts）：回不回、发单条还是
+ * 像真人那样连发几条短句、配不配贴纸、扣不扣反应、挂不挂回复引用，都由模型
+ * 在工具对话里自主决定，副作用在工具执行时当场发生；这里只组装工具集与回调，
+ * 外加对「对方明确在跟机器人说话」的直接触发保留一道正文兜底（见函数尾注释）。
  * @param chatId 目标群聊。
- * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
+ * @param replyToMessageId 触发这次回复的消息 ID：add_reaction 的目标；模型给
+ *   send_message 传 reply_to_trigger: true 时的回复引用目标。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
- * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机搭话。
- *   这种情况不使用 Telegram 的回复引用（不去 @ 或挂起原消息），改为让模型
- *   在文字里直接点名称呼触发者，更像真人「指名道姓」地插句嘴而非正式回帖。
+ * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机插话。
+ *   这种情况完全交给模型自主：接不接话、怎么接（挂不挂引用、要不要称呼对方）
+ *   都由它判断，允许什么都不做保持沉默——所以也不做正文兜底。
  * @param mediaComment 若是「解析完图片/贴纸/GIF 后评价它」触发（见
  *   recordChatMedia），发送人与描述——回复指令改为评价，回复引用挂在那条
  *   媒体消息上（replyToMessageId 即那条消息）；冷却/双滑动窗口限频照常
@@ -833,70 +758,49 @@ function generateAndSendReply(
   times.push(now);
   longTimes.push(now);
 
-  // 评价回复固定单条：它是对一份媒体的一句点评，拆成连发既不自然也没必要。
-  const splitMode: boolean = mediaComment ? false : Math.random() < SPLIT_REPLY_PROBABILITY;
-
   void (async (): Promise<void> => {
-    const latestMessage: BufferedMessage | undefined = getLatestMessage(chatId);
-    const addressee: string | undefined = isRandomTrigger && latestMessage ? displayName(latestMessage) : undefined;
-
-    const userContent: string | null = buildUserContent(chatId, selfInfo, { splitMode, repliedBotText, addressee, mediaComment });
+    const userContent: string | null = buildUserContent(chatId, selfInfo, { repliedBotText, isRandomTrigger, mediaComment });
     if (!userContent) return;
 
-    // send_sticker 工具调用成功后的回调：贴纸自身没有文本可挂在回复消息
-    // 里，靠这份描述行自录进对话缓存，让模型知道自己刚发过什么贴纸；消息
-    // ID 报回主线程登记自发消息（防频道自回环，同下方普通回复文本发送后
-    // 的登记同一道理）。
-    const onStickerSent = (stickerDescription: string, stickerMessageId: number): void => {
-      recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
-      self.postMessage({ type: "sent", chatId, messageId: stickerMessageId } satisfies AiSentMessage);
+    // 工具执行成功后的回调：发出去的每条消息/贴纸描述行都自录进对话缓存
+    // （普通群聊天 Telegram 不会把自己发出去的消息作为更新推送回来，不自录
+    // 的话转录里永远缺自己那半边对话；配合 buildUserContent 里的 selfIdentity
+    // 说明，模型才能在上下文中认出自己说过什么），消息 ID 报回主线程登记
+    // 自发消息（频道帖例外：channel_post 更新会原样推回来，登记后自动流水线
+    // 才能识别出是自己刚发的、整体跳过，见 auto/message.ts 的 isBotOwnMessage）。
+    const ctx: ReplyToolContext = {
+      chatId,
+      replyToMessageId,
+      onMessageSent: (text: string, messageId: number): void => {
+        recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", text);
+        self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+      },
+      onStickerSent: (stickerDescription: string, messageId: number): void => {
+        recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
+        self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+      },
     };
+    const toolset: ReplyToolset = await createReplyToolset(ctx);
 
-    // 生成阶段（耗时不可控）用持续重发的心跳显示「正在输入…」，见
-    // startTypingHeartbeat；try/finally 保证即使 callGemini 抛异常，
-    // 心跳也一定会被停掉。生成结束后（无论成败）就不再需要它——发送阶段
-    // 各段之间的停顿改由下面的发送循环逐次显式补一次，见那里的注释。
+    // 整个工具对话期间（生成耗时不可控，发送也发生在工具执行里）用持续
+    // 重发的心跳显示「正在输入…」，见 startTypingHeartbeat；try/finally
+    // 保证即使 callGemini 抛异常，心跳也一定会被停掉。
     const stopTyping: () => void = startTypingHeartbeat(chatId);
-    let reply: string | null;
+    let finalText: string | null;
     try {
-      reply = await callGemini(chatId, userContent, onStickerSent);
+      finalText = await callGemini(userContent, toolset);
     } finally {
       stopTyping();
     }
-    if (!reply) return;
 
-    // 回复刚生成就先按配置概率给触发消息扣一个应景的标准 emoji 反应（见
-    // src/ai/reactions.ts）——放在发送循环之前，连发模式的打字间隔（可能累计
-    // 十来秒）才不会把反应也拖到最后，更像真人「先点个反应再慢慢打字」。
-    maybeAddReaction(chatId, replyToMessageId, reply);
-
-    // 单条模式下模型偶尔也会换行，此时不该按行拆——原样整条发出。
-    const parts: string[] = splitMode ? splitReplyParts(reply) : [reply];
-    for (let i: number = 0; i < parts.length; i++) {
-      const part: string = parts[i]!;
-      // 随机触发不挂 Telegram 回复引用，靠模型在文字里点名（见 addressee）；
-      // 回复/@ 触发照旧引用第一条。
-      const quoteId: number | undefined = !isRandomTrigger && i === 0 ? replyToMessageId : undefined;
-      const sentMessageId: number | undefined = await sendMessage(chatId, part, quoteId);
-      // 普通群聊天 Telegram 不会把自己发出去的消息作为更新推送回来，不自录
-      // 的话转录里永远缺自己那半边对话。录入后配合 buildUserContent 里的
-      // selfIdentity 说明，模型才能在上下文中认出自己说过什么。发送失败的不录。
-      if (sentMessageId !== undefined) {
-        recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", part);
-        // 频道帖是例外：Telegram 会把 channel_post 更新原样推回来，不分是
-        // 谁发的。报回主线程登记进自发消息表，供自动流水线识别出这是自己
-        // 刚发的、整体跳过，不然会被自己的随机回复再触发一轮（见
-        // auto/message.ts 的 isBotOwnMessage）。
-        self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
-      }
-      if (i < parts.length - 1) {
-        // sendMessage 刚发出的那条会让 Telegram 清掉「正在输入…」状态（见
-        // sendTypingAction 的注释），这里补发一次让下一段开始前重新显示。
-        // 单次调用即可覆盖整个停顿——typingDelayMs 封顶在 Telegram 状态的
-        // 过期时间内，不需要像生成阶段那样定时重发。
-        void sendTypingAction(chatId);
-        await sleep(typingDelayMs(parts[i + 1]!));
-      }
+    // 正文兜底只保留给「对方明确在跟机器人说话」的直接触发（回复/@）：模型
+    // 没用 send_message、却把话写在了最终正文里时，别让对方干等——走同一条
+    // 工具执行路径发出去（清洗、自录、登记全都复用），并挂上回复引用。
+    // 随机插话与媒体评价不兜底：那两种场景已授权模型保持沉默，正文里的零星
+    // 文字更可能是「这条不接了」之类不该上屏的自言自语，发出去反而是事故。
+    // 已经发过消息也不再管正文。
+    if (finalText && !isRandomTrigger && !mediaComment && toolset.messagesSent() === 0) {
+      await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
     }
   })().catch((error: unknown) => {
     logger.error("Error in AI reply task:", error);

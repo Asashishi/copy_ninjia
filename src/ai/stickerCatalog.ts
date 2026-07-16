@@ -2,13 +2,24 @@ import { logger } from "../infra/logger";
 import type { Sticker, StickerSet } from "@grammyjs/types";
 import { getStickerSet, pickStickerVisionSource } from "./stickerSets";
 import { describeMedia } from "./imageDescription";
-import { catalogs, dirtyPacks, failedEntries, generatingPacks } from "../cache/stickerCatalog";
+import { extractOutputText, requestGeminiResponse } from "./gemini";
+import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
+import { catalogs, dirtyPacks, failedEntries, generatingPacks, packSummaries } from "../cache/stickerCatalog";
+import {
+  GEMINI_SUMMARY_MODEL,
+  STICKER_PACK_SUMMARY_MAX_CHARS,
+  STICKER_PACK_SUMMARY_MAX_TOKENS,
+  STICKER_PACK_SUMMARY_PROMPT,
+  SUMMARY_TEMPERATURE,
+} from "../consts/aiChat";
 import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot } from "../types";
 
 /**
  * 机器人自己要发的贴纸（config/stickers.json 白名单包）的画面描述目录：
- * file_unique_id -> { emoji, description }。让 ai/stickers.ts 挑贴纸时能
- * 按「画面实际是什么」而非「作者随手标的 emoji」来判断应景与否。
+ * file_unique_id -> { emoji, description }，外加一条整包简介（≤200 字，
+ * 见 summarizePack）。让 ai/stickers.ts 挑贴纸时能按「画面实际是什么」而非
+ * 「作者随手标的 emoji」来判断应景与否；整包简介供两层贴纸工具的第一层
+ * （view_sticker_pack）挑包。
  *
  * 生成 + 每次启动的对账：Worker 收到 init 消息后台启动（见
  * ensureStickerCatalogs），对每个包现查一次线上贴纸集合，与持久化目录
@@ -43,7 +54,13 @@ export function hydrateStickerCatalogs(snapshots: Map<string, StickerCatalogSnap
   for (const [pack, snapshot] of snapshots) {
     if (catalogs.has(pack)) continue;
     catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
+    if (snapshot.summary) packSummaries.set(pack, snapshot.summary);
   }
+}
+
+/** 某个白名单包的整包简介；还没生成出来（或生成失败）返回 undefined。 */
+export function getPackSummary(pack: string): string | undefined {
+  return packSummaries.get(pack);
 }
 
 /** 按贴纸自身的 file_unique_id 跨包合并查找目录条目——群聊里群友发的贴纸
@@ -57,7 +74,7 @@ export function getCatalogEntry(fileUniqueId: string): StickerCatalogEntry | und
 }
 
 function buildSnapshot(pack: string): StickerCatalogSnapshot {
-  return { version: 1, entries: Object.fromEntries(getPackMap(pack)), savedAt: Date.now() };
+  return { version: 1, entries: Object.fromEntries(getPackMap(pack)), summary: packSummaries.get(pack) ?? null, savedAt: Date.now() };
 }
 
 /** 把所有 dirty 包的目录快照上报出去（进而经主线程转投 diskIOWorker 落盘），
@@ -107,9 +124,11 @@ export async function generatePackCatalog(pack: string): Promise<void> {
 
     const map: Map<string, StickerCatalogEntry> = getPackMap(pack);
     const liveIds: Set<string> = new Set(set.stickers.map((sticker: Sticker) => sticker.file_unique_id));
+    let entriesChanged: boolean = false;
     for (const fileUniqueId of map.keys()) {
       if (!liveIds.has(fileUniqueId)) {
         map.delete(fileUniqueId);
+        entriesChanged = true;
         dirtyPacks.add(pack);
       }
     }
@@ -128,9 +147,54 @@ export async function generatePackCatalog(pack: string): Promise<void> {
         continue;
       }
       map.set(sticker.file_unique_id, { emoji: sticker.emoji ?? "", description });
+      entriesChanged = true;
       dirtyPacks.add(pack);
+    }
+
+    // 整包简介：包内容有增删（简介可能过时）或者还没有简介（首次生成/旧格式
+    // 文件恢复/上次生成失败）时（重）生成一条。失败不重试也不清掉旧简介——
+    // 略过时的简介好过没有，下次启动对账再补。
+    if (map.size > 0 && (entriesChanged || !packSummaries.has(pack))) {
+      const summary: string | null = await summarizePack(set.title, [...map.values()].map(formatEntryForSummary));
+      if (summary) {
+        packSummaries.set(pack, summary);
+        dirtyPacks.add(pack);
+      } else {
+        logger.error(`Failed to generate pack summary for sticker pack "${pack}"; layer-1 sticker tool will show a placeholder until next reconcile.`);
+      }
     }
   } catch (error: unknown) {
     logger.error(`Error reconciling sticker catalog for pack "${pack}":`, error);
   }
+}
+
+/** 目录条目转喂给整包简介模型的一行：情绪 emoji 元数据（如有）在前、画面
+ *  描述在后——emoji 是作者标注的情绪意图，能帮总结模型把情绪清单列得更准。 */
+function formatEntryForSummary(entry: StickerCatalogEntry): string {
+  return entry.emoji ? `${entry.emoji} ${entry.description}` : entry.description;
+}
+
+/**
+ * 调 Gemini 把一个包内全部贴纸的画面描述（带情绪 emoji 元数据）压缩成一条
+ * 整包简介（≤200 字，供两层贴纸工具的第一层挑包用，措辞要求见
+ * STICKER_PACK_SUMMARY_PROMPT）。走与冷消息压缩相同的中性总结模型；
+ * 产出压成单行并按子句边界截断。失败返回 null（已由 requestGeminiResponse 记日志）。
+ */
+async function summarizePack(title: string, descriptions: string[]): Promise<string | null> {
+  const data: any = await requestGeminiResponse(
+    {
+      model: GEMINI_SUMMARY_MODEL,
+      contents: [{ role: "user", parts: [{ text: `贴纸包「${title}」内每枚贴纸的画面描述：\n${descriptions.join("\n")}` }] }],
+      config: {
+        systemInstruction: STICKER_PACK_SUMMARY_PROMPT,
+        temperature: SUMMARY_TEMPERATURE,
+        maxOutputTokens: STICKER_PACK_SUMMARY_MAX_TOKENS,
+      },
+    },
+    "Gemini sticker pack summary API"
+  );
+  if (!data) return null;
+  const sanitized: string = sanitizeInline(extractOutputText(data));
+  if (!sanitized) return null;
+  return truncateAtClauseBoundary(sanitized, STICKER_PACK_SUMMARY_MAX_CHARS);
 }

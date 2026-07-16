@@ -129,7 +129,9 @@ function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
 }
 
 /** 逐字段白名单重建（对齐 rebuildAiMemorySnapshot），未知字段自然甩掉；
- *  entries 里结构不对的条目丢弃（当前进程会把它当缺失重新生成，不做迁移）。 */
+ *  entries 里结构不对的条目丢弃（当前进程会把它当缺失重新生成，不做迁移）。
+ *  summary（整包简介）缺失/类型不对时置 null——旧格式文件恢复后由
+ *  ai/stickerCatalog.ts 的下一次对账补生成。 */
 function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot | null {
   if (!parsed || typeof parsed !== "object") return null;
   const raw: any = parsed;
@@ -139,8 +141,9 @@ function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot 
       if (isStickerCatalogEntry(value)) entries[fileUniqueId] = value;
     }
   }
+  const summary: string | null = typeof raw.summary === "string" ? raw.summary : null;
   const savedAt: number = typeof raw.savedAt === "number" ? raw.savedAt : Date.now();
-  return { version: 1, entries, savedAt };
+  return { version: 1, entries, summary, savedAt };
 }
 
 /**

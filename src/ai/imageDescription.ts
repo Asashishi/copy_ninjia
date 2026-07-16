@@ -13,7 +13,7 @@
 import { logger } from "../infra/logger";
 import { bot, buildFileDownloadUrl } from "../infra/telegram";
 import { extractOutputText, requestGeminiResponse } from "./gemini";
-import { sanitizeInline, truncateInline } from "../libs/text";
+import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
 import { prepareVisionImage, type VisionImage } from "../libs/image";
 import { descriptionCache } from "../cache/imageDescription";
 import {
@@ -144,7 +144,9 @@ async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<s
     if (!data) return null;
     const description: string = sanitizeInline(extractOutputText(data));
     if (!description) return null;
-    return truncateInline(description, maxCharsFor(kind));
+    // 模型超限时收在子句边界而不是硬切——memory/stickers/ 里曾大批量出现
+    // 「……以戏谑的口」式断在半句的目录条目，就是硬切造成的。
+    return truncateAtClauseBoundary(description, maxCharsFor(kind));
   } catch (error: unknown) {
     logger.error(`Error describing chat media (kind=${kind}):`, error);
     return null;

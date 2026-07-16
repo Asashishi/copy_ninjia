@@ -1,4 +1,4 @@
-import { logger } from "../infra/logger";
+import { logger } from "../../infra/logger";
 import {
   CACHE_TTL_MS,
   REQUEST_TIMEOUT_MS,
@@ -6,10 +6,10 @@ import {
   TOKYO_LONGITUDE,
   WEATHER_API_URL,
   WEATHER_CODE_DESCRIPTIONS,
-} from "../consts/weather";
-import { weatherCache } from "../cache/weather";
-import { fetchJsonWithTimeout } from "../libs/httpFetch";
-import type { TokyoWeatherResult } from "../types";
+} from "../../consts/weather";
+import { weatherCache } from "../../cache/weather";
+import { fetchJsonWithTimeout } from "../../libs/httpFetch";
+import type { TokyoWeatherResult } from "../../types";
 
 /**
  * AI 工具:获取东京今天的天气。用 Open-Meteo 的免费公开端点——不需要

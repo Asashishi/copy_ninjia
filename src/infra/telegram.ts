@@ -272,6 +272,20 @@ export async function sendTypingAction(chatId: number, api: Api = bot.api): Prom
 }
 
 /**
+ * 发送一次「正在选择贴纸…」聊天状态（choose_sticker），机制与
+ * sendTypingAction 完全相同（约 5 秒自动过期、bot 下一条消息发出时清除），
+ * 用于 AI 翻看贴纸包清单时模拟真人挑贴纸的状态，见 ai/tools/stickers.ts。
+ * fire-and-forget：失败只记日志，没有需要调用方处理的返回值。
+ */
+export async function sendChooseStickerAction(chatId: number, api: Api = bot.api): Promise<void> {
+  try {
+    await api.sendChatAction(chatId, "choose_sticker");
+  } catch (error: unknown) {
+    logApiError("send choose sticker action", error);
+  }
+}
+
+/**
  * 应答一次 callback_query（内联按钮点击），消除客户端按钮上的加载态，
  * 可选地弹出一个提示气泡/弹窗。
  * @param callbackQueryId 要应答的 callback_query ID。

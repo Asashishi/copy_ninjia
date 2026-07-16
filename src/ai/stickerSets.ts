@@ -4,15 +4,11 @@ import { bot } from "../infra/telegram";
 import { failedPacks, stickerSetCache } from "../cache/stickerSets";
 
 /**
- * 贴纸领域的公共积木：白名单贴纸包的拉取与缓存（getAllStickers，按 pack
- * short name 调 getStickerSet）、文本关键词到候选 emoji 的匹配
- * （matchCandidateEmojis）、贴纸转描述行（describeStickerForContext）、
- * 挑选视觉解析素材来源（pickStickerVisionSource）。均匀随机挑选见
- * libs/random.ts 的 pickRandom（通用工具，不是贴纸领域专属，调用方直接从
- * 那里 import）。
- * src/ai/stickers.ts（回复贴纸挑选）、src/ai/stickerCatalog.ts（贴纸目录
- * 生成）都用；src/ai/reactions.ts（消息反应）只用 matchCandidateEmojis——
- * 它最终设的是标准 emoji 反应，不涉及贴纸包。
+ * 贴纸领域的公共积木：白名单贴纸包的拉取与缓存（getStickerSet，按 pack
+ * short name）、贴纸转描述行（describeStickerForContext）、挑选视觉解析
+ * 素材来源（pickStickerVisionSource）。
+ * src/ai/stickers.ts（两层贴纸工具）、src/ai/stickerCatalog.ts（贴纸目录
+ * 生成）都用。
  */
 
 /** 拉取（或复用缓存）单个包的贴纸集合；失败返回 null（而非空集合），供
@@ -34,12 +30,6 @@ export async function getStickerSet(packName: string): Promise<StickerSet | null
   }
 }
 
-/** 并发拉取（或复用缓存）白名单里所有包，汇总成一个贴纸列表。 */
-export async function getAllStickers(packs: string[]): Promise<Sticker[]> {
-  const sets: (StickerSet | null)[] = await Promise.all(packs.map(getStickerSet));
-  return sets.flatMap((set: StickerSet | null) => set?.stickers ?? []);
-}
-
 /**
  * 选出一枚贴纸用于视觉解析的下载素材：静态贴纸（is_animated/is_video 均为
  * false）本体就是 webp 图片，直接下载；动态贴纸（tgs，Lottie 矢量动画）和
@@ -56,17 +46,6 @@ export function pickStickerVisionSource(sticker: Sticker): { fileId: string; fil
   const downloadFileId: string | undefined = !sticker.is_animated && !sticker.is_video ? sticker.file_id : sticker.thumbnail?.file_id;
   if (!downloadFileId) return null;
   return { fileId: downloadFileId, fileUniqueId: sticker.file_unique_id };
-}
-
-/** 根据文本命中的关键词，找出「应景」的候选 emoji 集合；未命中任何关键词则返回空集合。 */
-export function matchCandidateEmojis(emotionKeywords: Record<string, string[]>, text: string): Set<string> {
-  const candidates: Set<string> = new Set();
-  for (const [emoji, keywords] of Object.entries(emotionKeywords)) {
-    if (keywords.some((keyword: string) => text.includes(keyword))) {
-      candidates.add(emoji);
-    }
-  }
-  return candidates;
 }
 
 /**

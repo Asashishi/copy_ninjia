@@ -11,20 +11,7 @@ mock.module("../../src/infra/diskIO", () => ({
   relayLogMessage: mock((..._args: unknown[]): void => {}),
 }));
 
-const { describeStickerForContext, matchCandidateEmojis, pickStickerVisionSource } = await import("../../src/ai/stickerSets");
-
-describe("ai/stickerSets matchCandidateEmojis", () => {
-  const emotionKeywords = { "😂": ["哈哈", "笑死"], "😭": ["哭", "呜呜"] };
-
-  test("命中一个或多个关键词时返回对应候选 emoji 集合", () => {
-    expect(matchCandidateEmojis(emotionKeywords, "笑死我了哈哈")).toEqual(new Set(["😂"]));
-    expect(matchCandidateEmojis(emotionKeywords, "哭死了呜呜")).toEqual(new Set(["😭"]));
-  });
-
-  test("未命中任何关键词返回空集合", () => {
-    expect(matchCandidateEmojis(emotionKeywords, "今天天气不错")).toEqual(new Set());
-  });
-});
+const { describeStickerForContext, pickStickerVisionSource } = await import("../../src/ai/stickerSets");
 
 describe("ai/stickerSets describeStickerForContext", () => {
   test("emoji + 包名都有时按顺序拼接", () => {

@@ -5,7 +5,7 @@ import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
 import { cacheSender } from "../users/senderIdentity";
 import { recordChatMessage, recordChatMedia, generateAndSendReply } from "../aiChat";
-import { AI_MEDIA_COMMENT_PROBABILITY, AI_REPLY_PROBABILITY, MEDIA_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
+import { AI_REPLY_PROBABILITY, MEDIA_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
@@ -323,13 +323,17 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   const messageText: string | undefined = typeof message.text === "string" ? message.text : undefined;
   if (!isPrivateChat && !activeCopy && aiChatEnabled && messageText && !messageText.startsWith("/")) {
     // 把带文本的普通消息滚动记入本群的 AI 对话缓存（Bot API 无法拉历史，只能
-    // 边收边攒最近 75 条）。指令消息（/ 开头）已在上面排除。
+    // 边收边攒，上限见 consts/aiChat.ts 的 VERBATIM_CONTEXT_MAX）。指令消息
+    // （/ 开头）已在上面排除。
     const speaker = resolveSpeaker(message);
     recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, messageText);
 
-    // AI 闲聊回复：用户回复机器人、或者消息里 @ 了机器人 → 必回；否则普通发言
-    // 按 AI_REPLY_PROBABILITY 概率触发。命中后就不再走下面的洗澡/随机复读，
-    // 免得一条消息既被 AI 回又被复读。
+    // AI 闲聊回复：用户回复机器人、或者消息里 @ 了机器人 → 必然触发；否则
+    // 普通发言按 AI_REPLY_PROBABILITY 概率触发。这里的掷骰只决定「给不给
+    // 模型一次机会」——随机触发命中后回不回、怎么回由模型在 Worker 侧自主
+    // 决定，允许什么都不做保持沉默（见 workers/aiChatWorker.ts 的
+    // generateAndSendReply）。命中后就不再走下面的洗澡/随机复读，免得一条
+    // 消息既被 AI 回又被复读。
     const repliedTo: any = message.reply_to_message;
     const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
@@ -363,13 +367,13 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     if (!visionSource) {
       recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, fallbackText);
     } else {
-      // 例外：按 AI_MEDIA_COMMENT_PROBABILITY 掷中时，解析完成后 AI 会回复
-      // 那条贴纸消息评价它——图片/贴纸/GIF 共用同一份评价概率预算（不是
-      // 各自独立掷骰），掷骰在这里（主线程调度逻辑，与 AI_REPLY_PROBABILITY
-      // 同一分工），顺带套用 /quiet 静默与「群 × 用户」随机回复冷却——评价
-      // 本质上也是主动搭话，别对同一个人短时间连评。
+      // 例外：按 AI_REPLY_PROBABILITY 掷中时，解析完成后 AI 会回复那条贴纸
+      // 消息评价它——文字随机搭话与图片/贴纸/GIF 评价共用同一个概率（不是
+      // 各自独立掷骰），掷骰在这里（主线程调度逻辑），顺带套用 /quiet 静默
+      // 与「群 × 用户」随机回复冷却——评价本质上也是主动搭话，别对同一个
+      // 人短时间连评。
       const commentOnResolve: boolean =
-        !isQuiet && Math.random() < AI_MEDIA_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+        !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
       recordChatMedia(
         "sticker",
         chatId,
@@ -393,7 +397,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const speaker = resolveSpeaker(message);
     const caption: string = typeof message.caption === "string" ? message.caption : "";
     const commentOnResolve: boolean =
-      !isQuiet && Math.random() < AI_MEDIA_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+      !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
     recordChatMedia("photo", chatId, speaker.id, speaker.firstName, speaker.lastName, caption, photoFile.fileId, photoFile.fileUniqueId, message.message_id, commentOnResolve);
   } else if (!isPrivateChat && !activeCopy && aiChatEnabled && message.animation) {
@@ -408,7 +412,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption ? `[GIF] ${caption}` : "[GIF]");
     } else {
       const commentOnResolve: boolean =
-        !isQuiet && Math.random() < AI_MEDIA_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+        !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
       recordChatMedia("animation", chatId, speaker.id, speaker.firstName, speaker.lastName, caption, visionSource.fileId, visionSource.fileUniqueId, message.message_id, commentOnResolve);
     }
   }

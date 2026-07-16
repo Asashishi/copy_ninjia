@@ -7,8 +7,9 @@ import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
  * 贴纸/GIF 占位与异步描述、冷却与限频、拼装上下文、调 Gemini（含 function
- * calling 往返与内置 web_search）、连发消息、消息反应、贴纸跟发、白名单
- * 贴纸目录生成——全部在独立的 Bun Worker（src/workers/aiChatWorker.ts）里
+ * calling 往返与内置 web_search）、工具化的发言/消息反应/两层应景贴纸
+ * （见 src/ai/tools/replyToolset.ts）、白名单贴纸目录与整包简介生成——全部在独立
+ * 的 Bun Worker（src/workers/aiChatWorker.ts）里
  * 执行；主线程只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
  * 让 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
@@ -168,8 +169,8 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
  * 记录一条图片/贴纸/GIF 消息：Worker 侧先以占位文本入缓存、异步解析媒体
  * 后原位回填描述（见 workers/aiChatWorker.ts 的 recordChatMedia）。默认
  * 只记上下文、不触发回复；commentOnResolve 为 true（主线程按
- * AI_MEDIA_COMMENT_PROBABILITY 掷中）时，解析成功后会以「回复那条消息」
- * 的形式发一条针对内容的评价。
+ * AI_REPLY_PROBABILITY 掷中，与文字随机搭话共用同一个概率）时，解析成功
+ * 后会以「回复那条消息」的形式发一条针对内容的评价。
  * @param kind 媒体类型：photo/sticker/animation，决定占位符/视觉提示词。
  * @param caption 媒体自带的配文（没有则传空串）。
  * @param fileId 要下载的 file_id（图片是已挑好档位的 photo file_id；贴纸/
@@ -204,8 +205,9 @@ export function recordChatMedia(
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
- * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机搭话
- *   （这种情况不挂 Telegram 回复引用，改为让模型在文字里点名称呼触发者）。
+ * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机插话
+ *   （这种情况完全交给模型自主：接不接话、挂不挂回复引用都由它判断，也
+ *   允许什么都不做保持沉默，见 workers/aiChatWorker.ts 的 generateAndSendReply）。
  */
 export function generateAndSendReply(
   chatId: number,

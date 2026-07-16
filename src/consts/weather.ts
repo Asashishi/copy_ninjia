@@ -1,4 +1,4 @@
-/** 东京天气工具（src/tools/weather.ts）的调参常量。 */
+/** 东京天气工具（src/ai/tools/weather.ts）的调参常量。 */
 
 export const TOKYO_LATITUDE: number = 35.6895;
 export const TOKYO_LONGITUDE: number = 139.6917;

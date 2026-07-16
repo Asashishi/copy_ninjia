@@ -1,5 +1,39 @@
-import { describe, expect, test } from "bun:test";
-import { cleanReply } from "../../src/workers/aiChatWorker";
+import { describe, expect, mock, test } from "bun:test";
+
+/**
+ * ai/replyTools.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者在
+ * 模块顶层就会 `new Worker(...)`：单测里绝不能让它真的跑起来（理由同
+ * test/commands/luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
+ * 本文件只测 cleanReply 纯函数；工具集的贴纸分支逻辑在 test/ai/stickers.test.ts，
+ * 发送/反应分支依赖真实 Telegram 调用，由手动验证覆盖。
+ */
+mock.module("../../src/infra/diskIO", () => ({
+  postDiskIO: mock((..._args: unknown[]): void => {}),
+  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
+  relayLogMessage: mock((..._args: unknown[]): void => {}),
+}));
+
+const { cleanReply, isEmojiOnly } = await import("../../src/ai/tools/replyToolset");
+
+describe("isEmojiOnly", () => {
+  test("纯 emoji（含多枚、空白、肤色/ZWJ 组合）判为 true", () => {
+    expect(isEmojiOnly("😂")).toBe(true);
+    expect(isEmojiOnly("😂😂 🤣")).toBe(true);
+    expect(isEmojiOnly("👍🏻")).toBe(true);
+    expect(isEmojiOnly("👨‍👩‍👧")).toBe(true);
+  });
+
+  test("带任何正文文字的消息判为 false", () => {
+    expect(isEmojiOnly("笑死😂")).toBe(false);
+    expect(isEmojiOnly("哈哈哈")).toBe(false);
+    expect(isEmojiOnly("w😂w")).toBe(false);
+  });
+
+  test("纯数字/标点不含图形 emoji，判为 false（数字属于 emoji 组件，不能误伤）", () => {
+    expect(isEmojiOnly("233")).toBe(false);
+    expect(isEmojiOnly("？？？")).toBe(false);
+  });
+});
 
 describe("cleanReply", () => {
   test("剥离行内引用标记，不吞掉标记之后无关括号包裹的正文（回归：过匹配曾把整段正文误删）", () => {

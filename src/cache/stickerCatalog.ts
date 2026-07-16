@@ -5,6 +5,10 @@ import type { StickerCatalogEntry } from "../types";
 /** pack short name -> (贴纸自身 file_unique_id -> 目录条目)。 */
 export const catalogs: Map<string, Map<string, StickerCatalogEntry>> = new Map();
 
+/** pack short name -> AI 生成的整包简介（≤200 字），供两层贴纸工具的第一层
+ *  挑包；生成/重生成时机见 src/ai/stickerCatalog.ts 的 generatePackCatalog。 */
+export const packSummaries: Map<string, string> = new Map();
+
 /** 自上次上报后有更新、待上报给主线程落盘的包。 */
 export const dirtyPacks: Set<string> = new Set();
 
