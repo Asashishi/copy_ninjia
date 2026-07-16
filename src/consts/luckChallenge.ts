@@ -11,7 +11,7 @@ import type { LuckTier } from "../types";
  * 各半，浮动出来偶尔翻面是应有之义。
  */
 export const LUCK_TIERS: LuckTier[] = [
-  { label: "大吉", weight: 7, comment: "简直要飞升啦，本天才要蹭蹭杂鱼的欧气～♡", fortunePercentRange: [88, 97] },
+  { label: "大吉", weight: 7, comment: "简直要飞升啦，杂鱼快让本天才蹭蹭欧气～♡", fortunePercentRange: [88, 97] },
   { label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercentRange: [72, 82] },
   { label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercentRange: [58, 67] },
   { label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercentRange: [45, 55] },
