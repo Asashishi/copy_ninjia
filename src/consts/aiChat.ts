@@ -25,7 +25,7 @@ export const XAI_MODEL: string = "grok-4.3";
 export const REQUEST_TIMEOUT_MS: number = 90_000;
 
 /**
- * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。grok-4.5 是
+ * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。XAI_MODEL 是
  * 推理模型，思考内容也计入 max_output_tokens（usage 的
  * output_tokens_details.reasoning_tokens，实测确认）：上限给小了，额度会在
  * 思考阶段就被烧光——请求返回 200 但 status=incomplete、正文为空，表现为
@@ -78,6 +78,35 @@ export const AI_SNAPSHOT_INTERVAL_MS: number = 30_000;
 export const AI_MEMORY_HYDRATE_BUFFER_MAX: number = VERBATIM_CONTEXT_MAX - 1;
 /** 单条摘要的硬性长度上限（字符），防摘要模型话痨撑爆回复上下文。 */
 export const SUMMARY_MAX_CHARS: number = 500;
+
+/**
+ * 冷消息压缩用的中性总结系统提示词（不带人设、不带工具），见
+ * workers/aiChatWorker.ts 的 summarizeBatch。字数上限直接引用
+ * SUMMARY_MAX_CHARS，避免文案里的数字和 truncateInline 真正生效的截断值
+ * 各改各的漂移。
+ */
+export const SUMMARY_SYSTEM_PROMPT: string =
+  "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份。" +
+  "请把这段记录压缩成一段简洁的摘要，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
+  `严格控制篇幅：摘要正文不得超过 ${SUMMARY_MAX_CHARS} 字，不要展开细节、不要逐条复述，只挑最要紧的信息压缩成一段话。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。`;
+
+/**
+ * callGrok 系统提示词里，紧跟在现查的「当前实际时间」句子之后的静态指令
+ * （时间句本身不能预先算好存成字面量：Worker 线程常驻，缓存的时间会很快
+ * 过期，须现查，见 workers/aiChatWorker.ts 的 currentTimeSentence）。
+ */
+export const TIME_AWARENESS_INSTRUCTION: string =
+  "聊天记录每行行首方括号里是那条消息的发送时间，回答时间/日期相关的问题、或判断某句话是多久之前说的，都以这些真实时间为准，不要编造。";
+
+/**
+ * 鼓励模型主动用内置 web_search 工具核实信息，而不是瞎编或一味嘴硬拒答，
+ * 见 workers/aiChatWorker.ts 的 callGrok（tools 数组里的 { type: "web_search" }）。
+ * 搜索由 xAI 服务器侧自动执行，结果直接体现在最终文本里，不需要额外处理。
+ * persona.md「绝对不编造事实」一节配套调整过：真查不到/查了没意义才傲慢
+ * 回绝，能查的先查证。
+ */
+export const WEB_SEARCH_INSTRUCTION: string =
+  "你内置了实时联网搜索能力：遇到时效性强（新闻、价格、比分、榜单、版本号、事件进展等）、你没有把握、或对方明确要求查证的问题，主动搜索确认清楚了再回答，别懒得查就瞎编或者甩锅拒答。搜完该怎么损怎么损、该怎么骄傲怎么骄傲，别在回复里暴露自己刚查过——装作本来就知道。";
 /** 触发回复后，采用「连发多条短消息」形式（而非单条）的概率。 */
 export const SPLIT_REPLY_PROBABILITY: number = 1 / 4;
 /** 连发模式下最多发几条，防止模型话痨刷屏。 */
@@ -118,6 +147,8 @@ export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
  * 一次，防止提示本身在刷屏场景下变成新的刷屏放大器。
  */
 export const RATE_LIMIT_NOTICE_COOLDOWN_MS: number = 60_000;
+/** 限频黑洞的固定提示文案，见 workers/aiChatWorker.ts 的 notifyRateLimited。 */
+export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡";
 
 /**
  * 一次工具调用往返最多允许几轮（模型要工具结果 -> 喂回去 -> 模型可能再要
@@ -152,6 +183,9 @@ export const IMAGE_DOWNLOAD_TIMEOUT_MS: number = 20_000;
  *  上限，超出按插入顺序淘汰最旧的。同一张梗图被反复刷屏时不再重复下载/
  *  解析，转录里也不会出现同图多份措辞各异的描述。 */
 export const IMAGE_DESCRIPTION_CACHE_MAX: number = 500;
+/** 图片描述缓存条目的存活时间：超过上限个数靠插入序淘汰，超过这个时长则不管
+ *  size 是否超限都主动清掉，双保险避免低流量长期运行下缓存无限期占内存。 */
+export const IMAGE_DESCRIPTION_CACHE_TTL_MS: number = 60 * 60 * 1000;
 /** 图片下载大小上限：挑尺寸时跳过超过它的档位（xAI 收 base64 后限 20MiB，
  *  Telegram photo 压缩后远小于此，这只是防御性护栏）。 */
 export const IMAGE_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;

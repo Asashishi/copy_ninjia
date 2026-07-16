@@ -1,6 +1,6 @@
 /** 命令处理（src/commands）的调参常量。 */
 
-/** copy 类命令的公共冷却时长（白名单用户豁免，见 handleCopyCommand）。 */
+/** copy 类命令的公共冷却时长（白名单用户豁免，见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
 export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
 
 /**

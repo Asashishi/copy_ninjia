@@ -30,6 +30,13 @@ export interface LockdownEntry {
 export const verificationEntries: Map<string, VerificationEntry> = new Map();
 export const joinWindows: Map<number, JoinWindow> = new Map();
 export const lockdownEntries: Map<number, LockdownEntry> = new Map();
+/**
+ * 私密模式加锁/恢复/纠偏三类 setChatPermissions 调用按 chatId 串行化的链，
+ * 保证同一个群的这些调用严格按 dispatch 顺序一个个落地在 Telegram 上，不会
+ * 因为各自独立的网络往返乱序，让后发起的调用抢在先发起的调用之前完成，见
+ * workers/antiRaidWorker.ts 的 runLockdownApiCall。
+ */
+export const lockdownApiChains: Map<number, Promise<void>> = new Map();
 /** 按需拉取的各群管理员表，供「管理员拉人免验证」同步判定；丢了只是缓存，重新拉即可。 */
 export const chatAdmins: Map<number, ChatAdminCache> = new Map();
 /** 按需拉取的各群「是否有关联频道」，评论区判定的按群开关；丢了只是缓存，重新拉即可。 */

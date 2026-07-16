@@ -8,6 +8,7 @@ import {
   PROBABILITY_THUMBNAIL_URL,
   RATE_LIMIT_MAX_CALLS_PER_MINUTE,
   RATE_LIMIT_WINDOW_MS,
+  SAME_QUESTION_LABEL_MAX_LEN,
 } from "../consts/luckChallenge";
 import { dailyLuckCache, luckCacheState, pendingLuckDraws, pendingLuckRenderIndex, recentCallTimestamps } from "../cache/luckChallenge";
 import { logger } from "../infra/logger";
@@ -251,7 +252,7 @@ function pickDominantProbability(draw: LuckDraw): { label: string; percent: numb
 function buildRetryKeyboard(text: string | undefined): InlineKeyboard {
   const keyboard: InlineKeyboard = new InlineKeyboard().switchInlineCurrent("我也试试", "");
   if (text) {
-    const sameQuestionLabel: string = text.length > 20 ? `${text.slice(0, 20)}…` : text;
+    const sameQuestionLabel: string = text.length > SAME_QUESTION_LABEL_MAX_LEN ? `${text.slice(0, SAME_QUESTION_LABEL_MAX_LEN)}…` : text;
     keyboard.switchInlineCurrent(sameQuestionLabel, text);
   }
   keyboard.row().switchInline("转发", text ?? "");
@@ -301,8 +302,8 @@ function tryConsumeRateLimit(): boolean {
  * 也只是把这句嘲讽发出去，不会触发任何抽签逻辑。 */
 function buildRateLimitedResult(): InlineQueryResultArticle {
   return InlineQueryResultBuilder.article("luck-rate-limited", "太快啦，本天才应付不过来～", {
-    description: "本天才每分钟最多接 30 次，杂鱼先歇会儿再来吧",
-  }).text("笨蛋，问太快啦，本天才每分钟最多接 30 次，杂鱼先歇会儿再来吧♡");
+    description: `本天才每分钟最多接 ${RATE_LIMIT_MAX_CALLS_PER_MINUTE} 次，杂鱼先歇会儿再来吧`,
+  }).text(`笨蛋，问太快啦，本天才每分钟最多接 ${RATE_LIMIT_MAX_CALLS_PER_MINUTE} 次，杂鱼先歇会儿再来吧♡`);
 }
 
 /**

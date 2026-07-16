@@ -3,14 +3,15 @@ import { GrammyError } from "grammy";
 import { bot, logApiError } from "../infra/telegram";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { sleep } from "../libs/sleep";
-import { MAX_ATTEMPTS } from "../consts/reactionQueue";
+import { DEFAULT_RETRY_AFTER_SECONDS, MAX_ATTEMPTS } from "../consts/reactionQueue";
 import { chatQueues, consumingChats, pendingTasks } from "../cache/reactionQueue";
 import type { CopyableReaction, ReactionTask } from "../types";
 
 /**
  * 反应同步的可靠性保障层。经实测确认，复制反应的延迟大头在 Telegram 生成并
  * 投递 message_reaction 更新（日志里的 delivery），队列本身的耗时（queue）
- * 只是一次 HTTP 往返，因此这一层不为提速，只为三个保障：
+ * 正常情况下只是一次 HTTP 往返，429 限流下会叠加 retry_after 的等待——因此
+ * 这一层不为提速，只为三个保障：
  * 1. 同一条消息的多次反应变化（点了又取消、换了个表情）以 chatId:messageId
  *    为键合并，只保留最新状态，消除乱序写回过期反应的竞态。
  * 2. 429 限流按 retry_after 等待后重试，而不是直接丢弃。
@@ -94,7 +95,7 @@ async function applyReaction(key: string, task: ReactionTask): Promise<void> {
       return;
     } catch (error: unknown) {
       if (error instanceof GrammyError && error.error_code === 429 && attempt < MAX_ATTEMPTS) {
-        const retryAfterSeconds: number = error.parameters.retry_after ?? 3;
+        const retryAfterSeconds: number = error.parameters.retry_after ?? DEFAULT_RETRY_AFTER_SECONDS;
         logger.warn(
           `setMessageReaction rate limited (chat ${task.chatId}, msg ${task.messageId}), ` +
           `waiting ${retryAfterSeconds}s before retry ${attempt + 1}/${MAX_ATTEMPTS}`

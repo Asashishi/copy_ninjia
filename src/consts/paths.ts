@@ -35,3 +35,13 @@ export const LUCK_MEMORY_DIR: string = join(MEMORY_DIR, "luck");
 
 /** Google Cloud 服务账号密钥（/ja_copy 日语翻译用，已进 .gitignore）。 */
 export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");
+
+/**
+ * 原子重写（写 tmp、rename 覆盖目标路径）与损坏文件隔离共用的后缀，全项目
+ * 落盘统一复用，见 infra/storage.ts 的 persistStateJson、
+ * workers/diskIO/snapshotFiles.ts 的 atomicWriteJson/quarantine、
+ * workers/diskIO/appendOnlyDayFile.ts 的 atomicRewrite。
+ */
+export const TMP_FILE_SUFFIX: string = ".tmp";
+/** 解析失败、隔离保留供排查的损坏文件后缀（不参与正常读取/清理，永久保留）。 */
+export const CORRUPT_FILE_SUFFIX: string = ".corrupt";

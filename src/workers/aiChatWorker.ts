@@ -18,6 +18,7 @@ import {
   RATE_LIMIT_LONG_WINDOW_MS,
   RATE_LIMIT_MAX_TRIGGERS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
+  RATE_LIMIT_NOTICE_TEXT,
   RATE_LIMIT_WINDOW_MS,
   REPLY_MAX_TOKENS,
   REPLY_TEMPERATURE,
@@ -25,15 +26,19 @@ import {
   SPLIT_REPLY_PROBABILITY,
   SUMMARY_MAX_CHARS,
   SUMMARY_MAX_TOKENS,
+  SUMMARY_SYSTEM_PROMPT,
   SUMMARY_TEMPERATURE,
+  TIME_AWARENESS_INSTRUCTION,
   TYPING_ACTION_INTERVAL_MS,
   TYPING_DELAY_BASE_MS,
   TYPING_DELAY_JITTER_MS,
   TYPING_DELAY_MAX_MS,
   TYPING_DELAY_PER_CHAR_MS,
   VERBATIM_CONTEXT_MAX,
+  WEB_SEARCH_INSTRUCTION,
   XAI_MODEL,
 } from "../consts/aiChat";
+import { FALLBACK_SPEAKER_NAME } from "../consts/auto";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import {
   chatBuffers,
@@ -86,6 +91,16 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
  * 一切 record/trigger 到达）。转录里的自我认知和自录都靠它。
  */
 let botInfo: AiBotInfo | null = null;
+
+/**
+ * 「当前实际时间：...（东京时间 UTC+9）。」——callGrok 的系统提示词与
+ * summarizeBatch 的摘要提示词共用同一句措辞，提成函数只为保证两处文案
+ * 一致，不是抽成常量：时间本身必须现查，不能预先算好存成字面量（Worker
+ * 线程常驻、一跑就是几天，缓存的时间会很快过期）。
+ */
+function currentTimeSentence(): string {
+  return `当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。`;
+}
 
 /**
  * 把一条已清洗好的缓存条目压进该群的滚动缓存，并按块边界触发轮换。
@@ -299,11 +314,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
       input: [
         {
           role: "system",
-          content:
-            `当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。` +
-            "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份。" +
-            "请把这段记录压缩成一段简洁的摘要，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
-            "严格控制篇幅：摘要正文不得超过 500 字，不要展开细节、不要逐条复述，只挑最要紧的信息压缩成一段话。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。",
+          content: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
         },
         { role: "user", content: selfNote + batch.map(formatLine).join("\n") },
       ],
@@ -320,7 +331,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
 
 /** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
 function displayName(m: BufferedMessage): string {
-  return [m.firstName, m.lastName].filter((p: string) => !!p).join(" ").trim() || "某杂鱼";
+  return [m.firstName, m.lastName].filter((p: string) => !!p).join(" ").trim() || FALLBACK_SPEAKER_NAME;
 }
 
 /** 把一条缓存消息格式化成喂给模型的一行：先是发送时间（记录时已格式化好
@@ -444,7 +455,7 @@ function getLatestMessage(chatId: number): BufferedMessage | undefined {
 async function callGrok(userContent: string): Promise<string | null> {
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
-  const systemPrompt: string = `${SYSTEM_PROMPT}\n\n当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。聊天记录每行行首方括号里是那条消息的发送时间，回答时间/日期相关的问题、或判断某句话是多久之前说的，都以这些真实时间为准，不要编造。`;
+  const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
   const input: any[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
@@ -594,8 +605,7 @@ function notifyRateLimited(chatId: number, now: number): void {
   const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
   if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
   rateLimitNoticeTimes.set(chatId, now);
-  const noticeText: string = "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡";
-  void sendMessage(chatId, noticeText).then((sentMessageId: number | undefined) => {
+  void sendMessage(chatId, RATE_LIMIT_NOTICE_TEXT).then((sentMessageId: number | undefined) => {
     if (sentMessageId === undefined) return;
     // 跟其他三处发送一样报回主线程登记自发消息（见 generateAndSendReply 的
     // sendMessage/maybeSendStickerReply 调用）：这条提示同样可能落在频道，
@@ -604,7 +614,7 @@ function notifyRateLimited(chatId: number, now: number): void {
     // 也自录进对话缓存——这条提示同样是机器人在群里说的话，不留痕的话
     // 模型不知道自己刚说过「太快了接不过来」，被追问时接不上。
     if (botInfo) {
-      recordChatMessage(chatId, botInfo.id, botInfo.first_name, "", noticeText);
+      recordChatMessage(chatId, botInfo.id, botInfo.first_name, "", RATE_LIMIT_NOTICE_TEXT);
     }
   });
 }

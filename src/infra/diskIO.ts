@@ -71,6 +71,18 @@ function createDiskIOWorker(): Worker {
     // （同步或 async 均如此，已实测验证）就会直接终止该 Worker 线程，这里
     // 不需要（实际上也没法）再手动 terminate，直接换一个新实例顶上即可。
     console.error("[diskIO] persistence Worker errored:", event.message || event.error || event);
+    if (pendingFlushes.size > 0) {
+      // 崩溃这一刻若正好卡着 flushDiskIO 的等待：旧实例内存里的 dirty 数据
+      // （上次成功落盘之后攒下的增量）随线程一起没了，新实例读不到、也补不
+      // 回来——不能让 flushDiskIO 的调用方（进程退出前的最后一刷）误以为
+      // 超时=已落盘。这里立即结算这些 flush（而不是干等 timeoutMs 到期），
+      // 并把"这次 flush 实际落空"打进日志，与上面的崩溃日志对齐时间点。
+      console.error(
+        `[diskIO] ${pendingFlushes.size} pending flush(es) lost — persistence Worker crashed mid-flush, their buffered data was not written to disk.`
+      );
+      for (const resolve of pendingFlushes.values()) resolve();
+      pendingFlushes.clear();
+    }
     if (restartThrottle.shouldGiveUp()) {
       console.error(
         `[diskIO] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +
@@ -153,7 +165,10 @@ let nextFlushId: number = 1;
 /**
  * 要求 diskIOWorker 立即把三类 dirty 数据（日志/AI 记忆/运势）全部落盘，
  * 并等待完成。用于进程退出前的最后一刷（替代原 flushLogs）。带超时兜底：
- * Worker 异常时停机流程最多被拖住 timeoutMs，不会挂死。
+ * Worker 异常时停机流程最多被拖住 timeoutMs，不会挂死。resolve 只代表
+ * "等待已结束"，不保证数据真落了盘——Worker 若恰好在这次 flush 期间崩溃，
+ * onerror 会提前结算这次等待并单独记一条"flush 落空"的日志（见上方
+ * createDiskIOWorker），调用方无需（也没法）区分，只按尽力而为对待。
  */
 export function flushDiskIO(timeoutMs: number = 3000): Promise<void> {
   const worker: Worker | null = diskIOWorker;

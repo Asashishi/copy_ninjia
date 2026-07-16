@@ -21,14 +21,14 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types";
-import { AI_MEMORY_DIR, LUCK_MEMORY_DIR } from "../../consts/paths";
+import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
 import { formatTokyoTime } from "../../libs/time";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 function atomicWriteJson(path: string, value: unknown): void {
-  const tmpPath: string = `${path}.tmp`;
+  const tmpPath: string = `${path}${TMP_FILE_SUFFIX}`;
   writeFileSync(tmpPath, JSON.stringify(value, null, 2));
   renameSync(tmpPath, path);
 }
@@ -44,7 +44,7 @@ function tryUnlink(path: string): void {
 /** 解析失败的文件重命名隔离，不静默删除——留排查线索（对齐 loadState 的做法）。 */
 function quarantine(path: string): void {
   try {
-    renameSync(path, `${path}.corrupt`);
+    renameSync(path, `${path}${CORRUPT_FILE_SUFFIX}`);
   } catch (error) {
     console.error(`[diskIOWorker] failed to quarantine ${path}:`, error);
   }
@@ -91,7 +91,7 @@ export function recoverAiMemories(): Map<number, AiMemorySnapshot> {
   const result: Map<number, AiMemorySnapshot> = new Map();
   for (const name of readdirSync(AI_MEMORY_DIR)) {
     const path: string = join(AI_MEMORY_DIR, name);
-    if (name.endsWith(".tmp")) {
+    if (name.endsWith(TMP_FILE_SUFFIX)) {
       tryUnlink(path);
       continue;
     }
@@ -145,7 +145,7 @@ export function cleanupStaleLuckFiles(todayKey: string): void {
 export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
   for (const name of readdirSync(LUCK_MEMORY_DIR)) {
-    if (name.endsWith(".tmp")) tryUnlink(join(LUCK_MEMORY_DIR, name));
+    if (name.endsWith(TMP_FILE_SUFFIX)) tryUnlink(join(LUCK_MEMORY_DIR, name));
   }
   cleanupStaleLuckFiles(todayKey);
 

@@ -71,6 +71,12 @@ export function markBotAdminObserved(chatId: number): void {
  * 的群现查一次 getChatMember 并回填（带在途去重，同群并发判定共享同一次
  * 请求）。现查失败按「不是管理员」处理（fail closed：门控宁可漏跑一次守卫
  * /拒一次 /kick，也不带着没权限的身份硬跑），且不落盘——下次照常重查。
+ *
+ * 现查在途期间，若 my_chat_member/chat_member 的权威信号（本文件顶部注释
+ * 的路径 1/2）先一步落地：本地事件处理顺序不保证跟 Telegram 内部时序完全
+ * 一致，这次现查的响应可能反映的是权威信号到达前的旧快照——回填前重新读
+ * 一次当前值，非 undefined 就说明权威信号已经赢了，直接采用它（不用现查
+ * 结果覆盖状态，也把它作为这次调用的返回值，保证跟落盘的状态一致）。
  */
 export async function isBotAdminIn(chatId: number): Promise<boolean> {
   const known: boolean | undefined = getChatState(chatId).botIsAdmin;
@@ -81,6 +87,8 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
     inFlight = bot.api
       .getChatMember(chatId, bot.botInfo.id)
       .then((member) => {
+        const currentKnown: boolean | undefined = getChatState(chatId).botIsAdmin;
+        if (currentKnown !== undefined) return currentKnown;
         const isAdmin: boolean = member.status === "administrator";
         recordBotAdminStatus(chatId, isAdmin);
         return isAdmin;

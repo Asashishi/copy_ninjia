@@ -1,6 +1,7 @@
 import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
+import { latestAiMemories, pendingMemoryFlushes } from "./cache/aiChat";
 import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, AiMemorySnapshot } from "./types";
 
 /**
@@ -25,12 +26,6 @@ import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, 
 // （见 initAiChat）；重启发生在 initAiChat 调用之前的话就没有可重放的，
 // 新 Worker 等本来就该来的那次 initAiChat 调用即可。
 let lastInit: AiInitMessage | null = null;
-
-/** 各群最新的 AI 记忆快照镜像，见上方模块头注「AI 记忆持久化」。 */
-const latestAiMemories: Map<number, AiMemorySnapshot> = new Map();
-
-/** flushAiMemory 的回执路由：flushId -> resolve（握手样式同 infra/diskIO.ts 的 pendingFlushes）。 */
-const pendingMemoryFlushes: Map<number, () => void> = new Map();
 
 const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
   url: new URL("./workers/aiChatWorker.ts", import.meta.url).href,

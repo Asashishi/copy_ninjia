@@ -23,10 +23,14 @@ import { LOCKDOWN_MS, RESTORE_RETRY_MS } from "../consts/antiRaid";
  * 会把省略的字段全部当 false，等于把全群禁言——只能按短间隔轮询等落地。
  *
  * 恢复调用在途期间若新峰值把状态从 RESTORING 推回 ACTIVE（倒计时给满）：
- * 稍后到达的 restoreResult 按其真实结果处理——成功仍会解除锁定（权限确实
- * 已经恢复了，记录必须跟着删，否则镜像与真实权限脱节；延长的那个计时器
- * 随记录一起清掉）；失败则忽略（那次尝试对应的是旧的 RESTORING，权限从
- * 未恢复过，ACTIVE 与其满额计时器原样保留，到期自然再次尝试）。
+ * 稍后到达的 restoreResult 按其真实结果处理——
+ *   - 失败：忽略（那次尝试对应的是旧的 RESTORING，权限从未恢复过，ACTIVE
+ *     与其满额计时器原样保留，到期自然再次尝试）；
+ *   - 成功：权限确实已经被这次旧尝试恢复成「未限制」了，但当前意图仍是
+ *     ACTIVE（新峰值要求继续锁定）——不能当成解锁处理，否则镜像/公告都会
+ *     跟真实权限脱节；必须原地补一次限制（reapplyRestriction，用状态里
+ *     已有的 originalPermissions 直接 setChatPermissions，不必再走一次
+ *     getChat），状态与计时器都不变。
  */
 
 export type LockdownState =
@@ -54,6 +58,9 @@ export type LockdownEffect =
   | { kind: "scheduleRestore"; delayMs: number }
   /** 异步恢复原始权限，结果以 restoreResult 回投。 */
   | { kind: "beginRestore"; originalPermissions: ChatPermissions }
+  /** 用状态里已有的 originalPermissions 直接补一次限制，跳过 getChat（见
+   *  restoreResult 里"迟到的旧恢复成功、但当前仍应保持 ACTIVE"分支）。 */
+  | { kind: "reapplyRestriction"; originalPermissions: ChatPermissions }
   /** 回报主线程写入 ChatState.lockdown 镜像并持久化（只该出现真正生效了的锁定）。 */
   | { kind: "reportLockdown"; originalPermissions: ChatPermissions }
   | { kind: "reportUnlock" }
@@ -117,7 +124,15 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
     }
     case "restoreResult": {
       if (state === undefined || state.kind === "applying") return { next: state, effects: [] };
-      if (event.ok) return { next: undefined, effects: [{ kind: "reportUnlock" }, { kind: "announceUnlock" }] };
+      if (event.ok) {
+        if (state.kind === "active") {
+          // 迟到的旧恢复尝试成功了：真实权限刚被这次旧尝试恢复成「未限制」，
+          // 但新峰值已经要求继续锁定（见类头注释）——原地补一次限制，
+          // 状态/计时器都不动，不当成解锁处理。
+          return { next: state, effects: [{ kind: "reapplyRestriction", originalPermissions: state.originalPermissions }] };
+        }
+        return { next: undefined, effects: [{ kind: "reportUnlock" }, { kind: "announceUnlock" }] };
+      }
       if (state.kind === "active") {
         // 这次失败回执对应的是旧的恢复尝试：它在途期间新峰值已把状态从
         // RESTORING 推回 ACTIVE 并给满新倒计时（见 thresholdExceeded）。

@@ -20,3 +20,10 @@ export const BATH_TRIGGER_PATTERN: RegExp = /[洗泡][个個了完一热熱水�
 
 /** 「说到洗澡就回看看」只对短消息生效（字符数 ≤ 此值），避免长文里偶然带出也被打扰。 */
 export const BATH_TRIGGER_MAX_MESSAGE_LENGTH: number = 15;
+
+/** 「说到洗澡就回看看」的固定回复文本：发送与自录进 AI 对话缓存共用同一个常量，避免两处字面量各改各的漂移。 */
+export const BATH_TRIGGER_REPLY_TEXT: string = "看看";
+
+/** resolveSpeaker 解析发言人身份时的兜底展示名：频道马甲缺 title、以及既非频道也非真实用户（理论不可达的防御分支）时使用。 */
+export const FALLBACK_CHANNEL_NAME: string = "某频道";
+export const FALLBACK_SPEAKER_NAME: string = "某杂鱼";

@@ -9,9 +9,22 @@
  * 打开/探测/追加/损坏修复。
  */
 
-import { closeSync, existsSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DayFileState } from "../../types";
+import { TMP_FILE_SUFFIX } from "../../consts/paths";
+
+/**
+ * 整份文件重写用：tmp + rename（同文件系统内原子操作），避免这类维护性重写
+ * 被杀一半留下撕裂 JSON（同 snapshotFiles.ts atomicWriteJson 的理由）。只用
+ * 在 openDayFile 的两处维护性重写上——真正的热路径 appendToDayFile 仍是
+ * 位置写，其非原子性是刻意的性能取舍，靠 repairTruncated 兜底，见下方注释。
+ */
+function atomicRewrite(path: string, content: string): void {
+  const tmpPath: string = `${path}${TMP_FILE_SUFFIX}`;
+  writeFileSync(tmpPath, content);
+  renameSync(tmpPath, path);
+}
 
 /**
  * 打开（或接管）某天的文件并校验其可追加性。文件不存在或为空对象视作
@@ -29,7 +42,7 @@ export function openDayFile(dir: string, day: string): DayFileState {
     const parsed: unknown = JSON.parse(content);
     if (parsed === null || typeof parsed !== "object" || Object.keys(parsed).length === 0) return state;
     if (!content.endsWith("\n}")) {
-      writeFileSync(path, JSON.stringify(parsed, null, 2));
+      atomicRewrite(path, JSON.stringify(parsed, null, 2));
     }
     state.size = statSync(path).size;
     state.empty = false;
@@ -40,7 +53,7 @@ export function openDayFile(dir: string, day: string): DayFileState {
   const repaired: string | null = repairTruncated(content);
   if (repaired === null) return state;
   try {
-    writeFileSync(path, repaired);
+    atomicRewrite(path, repaired);
     state.size = statSync(path).size;
     state.empty = false;
   } catch {

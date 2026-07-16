@@ -1,4 +1,5 @@
 import { SELF_SENT_MESSAGE_TTL_MS } from "../consts/telegram";
+import { sentMessages } from "../cache/selfSentTracker";
 
 /**
  * 登记「机器人自己刚发出的消息」，供自动流水线（src/auto/message.ts）识别
@@ -13,8 +14,6 @@ import { SELF_SENT_MESSAGE_TTL_MS } from "../consts/telegram";
  * 认出来，得由 Worker 经 postMessage 把 chatId/messageId 报回主线程，主线程
  * 收到后再调用这里的 markSelfSent（见 aiChat.ts 的 onEvent）。
  */
-
-const sentMessages: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
 function key(chatId: number, messageId: number): string {
   return `${chatId}:${messageId}`;

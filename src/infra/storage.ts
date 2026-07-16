@@ -2,7 +2,7 @@ import { rename } from "node:fs/promises";
 import { logger } from "./logger";
 import type { ChatPermissions } from "@grammyjs/types";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
-import { LOCK_FILE_PATH, STATE_FILE_PATH } from "../consts/paths";
+import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 import { persistChainState } from "../cache/storage";
 
@@ -78,7 +78,7 @@ export function getAllChatStates(): ReadonlyMap<number, ChatState> {
 function persistStateJson(json: string): Promise<void> {
   const write = async (): Promise<void> => {
     try {
-      const tmpPath: string = `${STATE_FILE_PATH}.tmp`;
+      const tmpPath: string = `${STATE_FILE_PATH}${TMP_FILE_SUFFIX}`;
       await Bun.write(tmpPath, json);
       await rename(tmpPath, STATE_FILE_PATH);
     } catch (error: unknown) {

@@ -11,8 +11,10 @@ import { logger } from "../infra/logger";
 import { bot, buildFileDownloadUrl } from "../infra/telegram";
 import { extractOutputText, requestXaiResponse } from "./xai";
 import { sanitizeInline, truncateInline } from "../libs/text";
+import { descriptionCache } from "../cache/imageDescription";
 import {
   IMAGE_DESCRIPTION_CACHE_MAX,
+  IMAGE_DESCRIPTION_CACHE_TTL_MS,
   IMAGE_DESCRIPTION_MAX_CHARS,
   IMAGE_DESCRIPTION_MAX_TOKENS,
   IMAGE_DESCRIPTION_PROMPT,
@@ -20,17 +22,6 @@ import {
   IMAGE_MAX_DOWNLOAD_BYTES,
   XAI_MODEL,
 } from "../consts/aiChat";
-
-/**
- * 图片描述缓存：按 file_unique_id 去重。同一张图片无论被谁、在哪个聊天、
- * 重发多少次，Telegram 给的 file_id 都可能不同，但 file_unique_id 恒定——
- * 不用自己下载算 hash，Telegram 已经替我们算好了（file_unique_id 不能用于
- * 下载，所以下载仍要 file_id）。值存 Promise 而不是结果：同一张图短时间被
- * 刷屏时，第二条起直接挂在首条的在途解析上，连并发的重复下载/API 调用也
- * 合并掉。解析失败（resolve 为 null）就把条目摘掉，下次这张图重发时重试，
- * 不把一次偶发失败钉死成永久失败。
- */
-const descriptionCache: Map<string, Promise<string | null>> = new Map();
 
 /**
  * 下载并描述一张图片（带 file_unique_id 去重缓存，见 descriptionCache）。
@@ -53,6 +44,14 @@ export function describeImage(fileId: string, fileUniqueId: string): Promise<str
   if (descriptionCache.size > IMAGE_DESCRIPTION_CACHE_MAX) {
     descriptionCache.delete(descriptionCache.keys().next().value!);
   }
+  // 双保险：低流量长期运行下，条目数可能一直摸不到 IMAGE_DESCRIPTION_CACHE_MAX
+  // 却又长期占着内存不放，TTL 到期主动清掉。按引用而非按 key 删——期间这张图
+  // 若已因解析失败被摘掉、又被新请求重新插入了一份新 pending，不能把新的错删。
+  setTimeout(() => {
+    if (descriptionCache.get(fileUniqueId) === pending) {
+      descriptionCache.delete(fileUniqueId);
+    }
+  }, IMAGE_DESCRIPTION_CACHE_TTL_MS).unref();
   return pending;
 }
 

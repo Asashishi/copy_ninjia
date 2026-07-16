@@ -77,10 +77,11 @@ describe("到期恢复", () => {
     expect(effects).toEqual([{ kind: "scheduleRestore", delayMs: RESTORE_RETRY_MS }]);
   });
 
-  test("恢复在途期间被新峰值推回 ACTIVE，成功回执仍解除锁定（保留的旧语义）", () => {
-    const { next, effects } = transitionLockdown({ kind: "active", originalPermissions: PERMS }, { type: "restoreResult", ok: true });
-    expect(next).toBeUndefined();
-    expect(effects).toEqual([{ kind: "reportUnlock" }, { kind: "announceUnlock" }]);
+  test("恢复在途期间被新峰值推回 ACTIVE，迟到的成功回执原地补一次限制而非解锁", () => {
+    const state: LockdownState = { kind: "active", originalPermissions: PERMS };
+    const { next, effects } = transitionLockdown(state, { type: "restoreResult", ok: true });
+    expect(next).toBe(state);
+    expect(effects).toEqual([{ kind: "reapplyRestriction", originalPermissions: PERMS }]);
   });
 
   test("恢复在途期间被新峰值推回 ACTIVE，迟到的失败回执被忽略（权限从未恢复过，别打断刚延长的倒计时）", () => {

@@ -32,6 +32,7 @@ import {
   joinWindows,
   linkedChannelFetches,
   linkedChannels,
+  lockdownApiChains,
   lockdownEntries,
   recentChannelComments,
   verificationEntries,
@@ -295,7 +296,7 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
  * 提醒的前提已经不成立，直接放弃发送——不然会给已经不需要验证的成员或
  * 全群甩出一条过期的「限时验证否则踢出」威胁。
  * 发送本身不等待完成：它经过限流的 joinVerificationApi，真实刷群场景下若
- * 在这里 await，同一波入群投递会逐个排队等发消息，可能导致 15 秒的反防
+ * 在这里 await，同一波入群投递会逐个排队等发消息，可能导致 60 秒的反防
  * 刷群计数窗口在真正数满阈值之前就先重置——刷群反而检测不到。发送结果以
  * reminderLanded 事件异步回填；落地时状态已被替换/删除（限流排队太久，
  * 验证已经结束）则直接自删，迟到的提醒不删的话会永远留在聊天里。
@@ -541,6 +542,9 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
       case "beginRestore":
         beginRestoreLockdown(chatId, effect.originalPermissions);
         break;
+      case "reapplyRestriction":
+        reapplyLockdownRestriction(chatId, effect.originalPermissions);
+        break;
       case "reportLockdown":
         // 权限已实际落地才回报——镜像里只该出现真正生效了的私密模式，adopt
         // 重放时「恢复原始权限」才不会把从未改过权限的群改坏。
@@ -564,13 +568,31 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
   }
 }
 
+/** 私密模式加锁/纠偏共用：在原始权限基础上关掉 can_invite_users，其余字段原样保留。 */
+function restrictedPermissions(originalPermissions: ChatPermissions): ChatPermissions {
+  return { ...originalPermissions, can_invite_users: false };
+}
+
+/**
+ * 把一次私密模式相关的 setChatPermissions 调用（加锁/恢复/纠偏）挂到该群的
+ * 串行链上：保证这三类调用严格按 dispatch 顺序一个个执行完，不会因为各自
+ * 独立发起的网络往返乱序，让后发起的调用比先发起的调用更早/更晚落地在
+ * Telegram 上（比如纠偏的加锁比它之后才发起的解锁更晚生效，两者都是各自
+ * 独立的 fire-and-forget 调用时就可能发生，见 states/lockdown.ts
+ * restoreResult 分支的类头注释）。task 自身兜错，链永不 reject。
+ */
+function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
+  const prev: Promise<void> = lockdownApiChains.get(chatId) ?? Promise.resolve();
+  lockdownApiChains.set(chatId, prev.then(task, task));
+}
+
 /**
  * 异步执行加锁：取当前默认权限、把 can_invite_users 关掉，结果以 applyResult
  * 回投。真实刷群下这两个调用可能在限流队列里排几分钟，期间占位状态挡住
  * 重复触发（见状态机注释）。
  */
 function beginApplyLockdown(chatId: number, joinCount: number): void {
-  void (async (): Promise<void> => {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
       const chat = await joinVerificationApi.getChat(chatId);
       if (!("permissions" in chat) || !chat.permissions) {
@@ -582,18 +604,18 @@ function beginApplyLockdown(chatId: number, joinCount: number): void {
         return;
       }
       const originalPermissions: ChatPermissions = chat.permissions;
-      await joinVerificationApi.setChatPermissions(chatId, { ...originalPermissions, can_invite_users: false });
+      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(originalPermissions));
       dispatchLockdown(chatId, { type: "applyResult", ok: true, originalPermissions, joinCount });
     } catch (error: unknown) {
       logger.error("Error triggering anti-raid lockdown:", error);
       dispatchLockdown(chatId, { type: "applyResult", ok: false });
     }
-  })();
+  });
 }
 
 /** 异步恢复群组原本的默认权限，结果以 restoreResult 回投（失败由状态机安排重试）。 */
 function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissions): void {
-  void (async (): Promise<void> => {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
       await joinVerificationApi.setChatPermissions(chatId, originalPermissions);
       dispatchLockdown(chatId, { type: "restoreResult", ok: true });
@@ -601,7 +623,25 @@ function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissio
       logger.error(`Failed to restore chat permissions for ${chatId}, retrying shortly:`, error);
       dispatchLockdown(chatId, { type: "restoreResult", ok: false });
     }
-  })();
+  });
+}
+
+/**
+ * 迟到的旧 beginRestore 成功回执撞上新峰值重新给满的 ACTIVE 时用来纠偏：
+ * 原始权限已经在状态里，直接 setChatPermissions 补一次限制，不必再 getChat。
+ * 结果不回投状态机——不改变当前 ACTIVE 状态，失败只记日志（best-effort：
+ * ACTIVE 到期后自然会走一次常规 beginRestore，届时若权限意外仍是开放的，
+ * 后续峰值触发的 thresholdExceeded 也会在下次滑窗超限时重新收紧）。挂在同一
+ * 条 runLockdownApiCall 串行链上，保证不会比它之后才发起的一次恢复更晚落地。
+ */
+function reapplyLockdownRestriction(chatId: number, originalPermissions: ChatPermissions): void {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
+    try {
+      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(originalPermissions));
+    } catch (error: unknown) {
+      logger.error(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded:`, error);
+    }
+  });
 }
 
 /**

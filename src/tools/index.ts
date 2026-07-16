@@ -1,4 +1,5 @@
 import { getTokyoWeather } from "./weather";
+import { GET_TOKYO_WEATHER_TOOL } from "../consts/tools";
 import type { ToolDefinition } from "../types";
 
 /**
@@ -8,9 +9,6 @@ import type { ToolDefinition } from "../types";
  * （查时间不是工具：当前时间默认拼进每次请求的系统提示词，转录行也自带
  * 每条消息的发送时间，见 workers/aiChatWorker.ts 的 callGrok/formatLine。）
  */
-
-/** 工具名常量，避免魔法字符串两处漂移。 */
-export const GET_TOKYO_WEATHER_TOOL: string = "get_tokyo_weather";
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {

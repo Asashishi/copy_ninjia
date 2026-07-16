@@ -9,6 +9,9 @@ import { AI_IMAGE_COMMENT_PROBABILITY, AI_REPLY_PROBABILITY, IMAGE_MAX_DOWNLOAD_
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
+  BATH_TRIGGER_REPLY_TEXT,
+  FALLBACK_CHANNEL_NAME,
+  FALLBACK_SPEAKER_NAME,
   RANDOM_ECHO_MODES,
   RANDOM_ECHO_PROBABILITY,
   USER_RANDOM_REPLY_COOLDOWN_MS,
@@ -58,12 +61,12 @@ function resolveSpeaker(message: any): { id: number; firstName: string; lastName
   const fromUser: any = message.from;
   const senderChat: any = message.sender_chat || (message.chat.type === "channel" ? message.chat : undefined);
   if (senderChat) {
-    return { id: senderChat.id, firstName: senderChat.title ?? "某频道", lastName: "" };
+    return { id: senderChat.id, firstName: senderChat.title ?? FALLBACK_CHANNEL_NAME, lastName: "" };
   }
   if (fromUser) {
     return { id: fromUser.id, firstName: fromUser.first_name ?? "", lastName: fromUser.last_name ?? "" };
   }
-  return { id: 0, firstName: "某杂鱼", lastName: "" };
+  return { id: 0, firstName: FALLBACK_SPEAKER_NAME, lastName: "" };
 }
 
 /**
@@ -94,10 +97,10 @@ function isBotMentioned(message: any, botUsername: string | undefined): boolean 
  * 情况即便消息里同时 @ 了别人，机器人被叫到也该照常回。
  */
 function mentionsOtherUser(message: any, botUsername: string | undefined): boolean {
-  if (typeof message.text !== "string") return false;
+  if (!botUsername || typeof message.text !== "string") return false;
   const entities: any[] | undefined = message.entities;
   if (!entities) return false;
-  const botTarget: string | undefined = botUsername ? `@${botUsername}`.toLowerCase() : undefined;
+  const botTarget: string = `@${botUsername}`.toLowerCase();
   for (const entity of entities) {
     if (entity.type === "mention") {
       const mentionText: string = message.text.substring(entity.offset, entity.offset + entity.length).toLowerCase();
@@ -349,14 +352,14 @@ export async function handleIncomingMessage(
   // echoMessage 的「不复读指令消息」保持一致，不触发。私聊不触发——与 AI
   // 随机插话同理，这些刷存在感的行为都是群聊语境的。
   if (!isPrivateChat && !activeCopy && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= BATH_TRIGGER_MAX_MESSAGE_LENGTH && BATH_TRIGGER_PATTERN.test(message.text)) {
-    const sentMessageId: number | undefined = await sendMessage(chatId, "看看", message.message_id);
+    const sentMessageId: number | undefined = await sendMessage(chatId, BATH_TRIGGER_REPLY_TEXT, message.message_id);
     // 自录进 AI 对话缓存，让模型知道自己刚说过这句——不然它凭空多出一句
     // 不知道是谁说的「看看」，后续被问起时接不上。isBotOwnMessage 那道门
     // 只挡自己消息的回弹（频道自回环）重新触发，记忆本身还是要留的
     // （短期进滚动缓存，随批次轮换自然被压缩进中期摘要，见
     // aiChatWorker.ts 的 recordChatMessage/scheduleRotation）。
     if (aiChatEnabled && sentMessageId !== undefined) {
-      recordChatMessage(chatId, ctx.me.id, ctx.me.first_name, "", "看看");
+      recordChatMessage(chatId, ctx.me.id, ctx.me.first_name, "", BATH_TRIGGER_REPLY_TEXT);
     }
     return;
   }

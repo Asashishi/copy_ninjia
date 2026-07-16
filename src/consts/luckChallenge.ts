@@ -20,6 +20,14 @@ export const LUCK_TIERS: LuckTier[] = [
   { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: [3, 12] },
 ];
 
+// weight 必须凑满 100（drawLuckTier 按 1~100 掷骰累加匹配）：凑不满 100，
+// 最后一档会因兜底 return 吃到多余权重；超过 100，末尾档位会被挤到摇不出——
+// 加载期直接炸掉，不留一个只有注释约束、没人真正校验的隐性契约。
+const luckTierWeightSum: number = LUCK_TIERS.reduce((sum, tier) => sum + tier.weight, 0);
+if (luckTierWeightSum !== 100) {
+  throw new Error(`LUCK_TIERS weights must sum to 100, got ${luckTierWeightSum}`);
+}
+
 /**
  * 全局滑动窗口限流：每分钟最多 30 次内联查询应答，不分群、不分用户合并
  * 计数——内联查询会随用户每敲一个字符就触发一次。超额立即拒绝而非排队
@@ -39,3 +47,6 @@ export const RATE_LIMIT_WINDOW_MS: number = 60_000;
  */
 export const FORTUNE_THUMBNAIL_URL: string = "https://drive.google.com/uc?export=view&id=1o4wCIRE3XGSI7-MjXYWfvcPgR3QjClk-";
 export const PROBABILITY_THUMBNAIL_URL: string = "https://drive.google.com/uc?export=view&id=1o4wCIRE3XGSI7-MjXYWfvcPgR3QjClk-";
+
+/** "同款问题"按钮上展示的所求事项摘要，超过这个字符数就截断加省略号。 */
+export const SAME_QUESTION_LABEL_MAX_LEN: number = 20;

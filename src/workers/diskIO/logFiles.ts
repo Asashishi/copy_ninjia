@@ -19,7 +19,7 @@
 import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types";
-import { LOGS_DIR } from "../../consts/paths";
+import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO";
 import { flushBuffer, loggerFileState } from "../../cache/diskIOWorker";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
@@ -48,6 +48,25 @@ function formatDateTime(timestamp: number): string {
 /** 毫秒时间戳 → 本地时区的日期串（YYYY-MM-DD），用作日志文件名。 */
 function dayKey(timestamp: number): string {
   return formatDateTime(timestamp).slice(0, 10);
+}
+
+/**
+ * 清掉 LOGS_DIR 下残留的 *.tmp：openDayFile 的维护性重写（appendOnlyDayFile.ts
+ * 的 atomicRewrite）走 tmp + rename，正常情况 rename 后 tmp 不会留下；只有
+ * 进程恰好在 writeFileSync 与 renameSync 之间被杀、或 rename 本身失败（磁盘
+ * 满等）才会留下孤儿文件。DAY_FILE_PATTERN 只匹配 <day>.json，不匹配
+ * <day>.json.tmp，保留期清理天然覆盖不到，得单独扫一遍删掉——对齐
+ * snapshotFiles.ts 的 recoverAiMemories/recoverLuckDay 同样的清理。
+ */
+function cleanupStaleTmpFiles(): void {
+  for (const name of readdirSync(LOGS_DIR)) {
+    if (!name.endsWith(TMP_FILE_SUFFIX)) continue;
+    try {
+      unlinkSync(join(LOGS_DIR, name));
+    } catch {
+      // 删除失败（权限问题等）不影响主流程，下次启动同样的清理还会再试一次。
+    }
+  }
 }
 
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
@@ -84,6 +103,7 @@ function writeDay(day: string, texts: string[]): void {
 /** 目录初始化 + 首次清理，由 diskIOWorker.ts 在模块加载时调用一次。 */
 export function initLogFiles(): void {
   mkdirSync(LOGS_DIR, { recursive: true });
+  cleanupStaleTmpFiles();
   cleanupOldLogs();
 }
 
