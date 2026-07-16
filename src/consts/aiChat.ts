@@ -18,10 +18,18 @@ export const AI_REPLY_PROBABILITY: number = 1 / 5;
  */
 export const AI_MEDIA_COMMENT_PROBABILITY: number = 1 / 8;
 
-/** xAI 的 responses 接口（chat completions 在 xAI 已是 legacy，内置
- *  web_search 等服务端工具只在 responses 上提供）。 */
-export const XAI_RESPONSES_API_URL: string = "https://api.x.ai/v1/responses";
+/**
+ * xAI API 的 base URL，喂给 openai SDK 的 baseURL（见 ai/xai.ts）——用的是
+ * xAI 的 responses 接口（chat completions 在 xAI 已是 legacy，内置
+ * web_search 等服务端工具只在 responses 上提供；已用官方 openai SDK 的
+ * client.responses.create 实测确认 web_search + 自定义函数可以混用同一次
+ * 请求，行为与直接打原始 REST 接口一致）。
+ */
+export const XAI_BASE_URL: string = "https://api.x.ai/v1";
 export const XAI_MODEL: string = "grok-4.3";
+/** 单次请求的超时（openai SDK 的 per-attempt timeout；SDK 默认对瞬时失败
+ *  自动重试几次，每次重试各自套用这个超时预算，不是所有重试共享一个
+ *  90 秒硬顶——这是比手写 fetch 更强的地方，瞬时的 5xx/连接错误能自愈）。 */
 export const REQUEST_TIMEOUT_MS: number = 90_000;
 
 /**
@@ -228,10 +236,13 @@ export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
 
 /**
  * send_sticker 工具描述的固定前缀，后面动态拼接当次可选贴纸的编号清单
- * （见 ai/stickers.ts 的 buildSendStickerToolDefinition）。没有强制要求
- * 每次都调用——清单里找不到合适的就不调用，模型自行判断。
+ * （见 ai/stickers.ts 的 buildSendStickerToolDefinition）。措辞刻意往「多用」
+ * 那侧偏——不强制每条回复都配，但只要清单里有能沾上边的就鼓励积极发，
+ * 别端着、别过度挑剔「绝配」才出手；只有清单里确实一枚都对不上号时才
+ * 不调用。
  */
 export const SEND_STICKER_TOOL_INSTRUCTION: string =
-  "如果配一枚贴纸能让这条回复更生动/更贴切，就调用这个工具发送一枚；没有哪一枚特别合适、" +
-  "或者这条回复本身已经够了，就不要调用，不必每次回复都配。只能从下面这份编号清单里选" +
-  "（每行「编号. emoji 画面描述」），index 参数填清单里的编号：\n";
+  "发贴纸是你很日常的聊天习惯，别端着——只要清单里有一枚能贴上这条回复的情绪、语气或内容，" +
+  "哪怕不是完全精准的绝配，也应该积极调用这个工具发出来，让对话更热闹生动；只有清单里真的" +
+  "一枚都沾不上边时才不调用。只能从下面这份编号清单里选（每行「编号. emoji 画面描述」），" +
+  "index 参数填清单里的编号：\n";

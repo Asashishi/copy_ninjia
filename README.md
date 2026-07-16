@@ -114,7 +114,7 @@ src/
     config.ts              # 密钥与部署配置（从环境变量读取）
     botAdmin.ts            # 追踪机器人自身在各群的管理员身份，供入群守卫与 /kick 门控
   ai/                   # AI 回复流水线的配套积木
-    xai.ts                 # xAI /v1/responses 的底层收发与响应解析（回复/摘要/读图共用）
+    xai.ts                 # xAI /v1/responses 的底层收发（走官方 openai SDK 的 client.responses.create）与响应解析（回复/摘要/读图共用）
     imageDescription.ts    # 图片/贴纸/GIF 的下载、按需转码与视觉描述（供读图/读贴纸/读 GIF 占位回填、贴纸目录生成）
     reactions.ts           # AI 回复触发时概率给触发消息扣应景 emoji 反应（config/reactions.json）
     stickers.ts            # 应景贴纸做成 send_sticker 工具：候选清单组装、工具定义、执行发送（白名单见 config/stickers.json）
