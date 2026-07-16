@@ -163,7 +163,7 @@ function recordSelfInlineResult(message: Message, botId: number, botFirstName: s
  * 可选字段，缺失按可用对待——photo 是 Telegram 压缩过的 jpeg，实际很少
  * 超限，上限只是防御性护栏）；都超限就退回最小档，交给下载侧的大小检查
  * 兜底（见 ai/imageDescription.ts）。file_id 用来下载，file_unique_id 是
- * 同图重发时恒定的去重键（见 ai/imageDescription.ts 的 descriptionCache），
+ * 同图重发时恒定的去重键（见 ai/imageDescription.ts 的临时描述缓存），
  * 两个 id 必须取自同一档位才对得上号。
  */
 function pickPhotoFile(sizes: PhotoSize[]): { fileId: string; fileUniqueId: string } {

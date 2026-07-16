@@ -15,7 +15,7 @@ import { bot, buildFileDownloadUrl } from "../infra/telegram";
 import { extractOutputText, requestGeminiResponse } from "./gemini";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
 import { prepareVisionImage, type VisionImage } from "../libs/image";
-import { descriptionCache } from "../cache/imageDescription";
+import { transientDescriptionCache } from "../cache/imageDescription";
 import {
   ANIMATION_DESCRIPTION_PROMPT,
   IMAGE_DESCRIPTION_MAX_CHARS,
@@ -51,9 +51,11 @@ function maxCharsFor(kind: MediaKind): number {
 }
 
 /**
- * 下载并描述一份媒体（带 file_unique_id 去重缓存，见 descriptionCache）。
- * 图片/贴纸/GIF 共用同一份缓存——键空间不冲突（file_unique_id 本就是
- * Telegram 全局唯一），且同一份媒体不会同时是两种类型。
+ * 下载并描述一份未命中本地贴纸目录的媒体（带 file_unique_id 临时去重
+ * 缓存，见 transientDescriptionCache）。图片、GIF 与非白名单贴纸共用这份
+ * 500 项 / 1 小时缓存——键空间不冲突（file_unique_id 本就是 Telegram
+ * 全局唯一），且同一份媒体不会同时是两种类型。白名单贴纸由调用方先查
+ * stickerCatalog 的常驻目录，不会走到这里。
  * @param kind 媒体类型，决定用哪份视觉提示词与描述长度上限。
  * @param fileId 要下载的 Telegram file_id：图片是本体；贴纸是本体（静态）
  *   或缩略图（动态/视频，见 ai/stickerSets.ts 的 pickStickerVisionSource）；
@@ -64,7 +66,7 @@ function maxCharsFor(kind: MediaKind): number {
  * @returns 压成单行、截断后的中文描述；下载/转码/解析任一步失败则 null。
  */
 export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: string): Promise<string | null> {
-  const cached: Promise<string | null> | undefined = descriptionCache.get(fileUniqueId);
+  const cached: Promise<string | null> | undefined = transientDescriptionCache.get(fileUniqueId);
   if (cached) return cached;
 
   const pending: Promise<string | null> = describeMediaUncached(kind, fileId).then((description: string | null) => {
@@ -73,27 +75,36 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
     // 一份新 pending，此时这里必须认得出"当前占着这个 key 的不是自己"，
     // 不能把新插入的那份连锅端掉（否则新请求的合并会落空，还会误删一份
     // 可能已经解析成功、本该继续留在缓存里的有效结果）。
-    if (description === null && descriptionCache.get(fileUniqueId) === pending) {
-      descriptionCache.delete(fileUniqueId);
+    if (description === null && transientDescriptionCache.get(fileUniqueId) === pending) {
+      transientDescriptionCache.delete(fileUniqueId);
     }
     return description;
   });
-  descriptionCache.set(fileUniqueId, pending);
+  transientDescriptionCache.set(fileUniqueId, pending);
   // 超上限就淘汰最早插入的条目（Map 迭代顺序即插入顺序），不搞真 LRU——
   // 热门媒体重发不刷新位置，靠上限本身足够大兜底。
-  if (descriptionCache.size > MEDIA_DESCRIPTION_CACHE_MAX) {
-    descriptionCache.delete(descriptionCache.keys().next().value!);
+  if (transientDescriptionCache.size > MEDIA_DESCRIPTION_CACHE_MAX) {
+    transientDescriptionCache.delete(transientDescriptionCache.keys().next().value!);
   }
   // 双保险：低流量长期运行下，条目数可能一直摸不到 MEDIA_DESCRIPTION_CACHE_MAX
   // 却又长期占着内存不放，TTL 到期主动清掉。按引用而非按 key 删——期间这份
   // 媒体若已因解析失败被摘掉、又被新请求重新插入了一份新 pending，不能把
   // 新的错删。
   setTimeout(() => {
-    if (descriptionCache.get(fileUniqueId) === pending) {
-      descriptionCache.delete(fileUniqueId);
+    if (transientDescriptionCache.get(fileUniqueId) === pending) {
+      transientDescriptionCache.delete(fileUniqueId);
     }
   }, MEDIA_DESCRIPTION_CACHE_TTL_MS).unref();
   return pending;
+}
+
+/**
+ * 为白名单贴纸目录生成一条常驻描述。目录自身负责按 file_unique_id 去重、
+ * 持久化和线上变更对账，因此这里刻意绕过 500 项 / 1 小时临时缓存；成功后
+ * 调用方会立即写入 stickerCatalog，消息记录随后可直接命中常驻目录。
+ */
+export function describeMediaForStickerCatalog(fileId: string): Promise<string | null> {
+  return describeMediaUncached("sticker", fileId);
 }
 
 async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<string | null> {

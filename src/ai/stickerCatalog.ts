@@ -2,10 +2,11 @@ import { logger } from "../infra/logger";
 import type { Sticker, StickerSet } from "@grammyjs/types";
 import type { GenerateContentResponse } from "@google/genai";
 import { getStickerSet, pickStickerVisionSource } from "./stickerSets";
-import { describeMedia } from "./imageDescription";
+import { describeMediaForStickerCatalog } from "./imageDescription";
 import { extractOutputText, requestGeminiResponse } from "./gemini";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
 import { catalogs, dirtyPacks, failedEntries, generatingPacks, packSummaries } from "../cache/stickerCatalog";
+import { transientDescriptionCache } from "../cache/imageDescription";
 import {
   GEMINI_SUMMARY_MODEL,
   STICKER_PACK_SUMMARY_MAX_CHARS,
@@ -55,6 +56,11 @@ export function hydrateStickerCatalogs(snapshots: Map<string, StickerCatalogSnap
   for (const [pack, snapshot] of snapshots) {
     if (catalogs.has(pack)) continue;
     catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
+    // Worker 重启前或极端 FIFO 竞态下，同一 ID 可能曾以普通群贴纸身份进入
+    // 临时缓存；常驻目录恢复后立即移除临时副本，保证只有一个权威来源。
+    for (const fileUniqueId of Object.keys(snapshot.entries)) {
+      transientDescriptionCache.delete(fileUniqueId);
+    }
     if (snapshot.summary) packSummaries.set(pack, snapshot.summary);
   }
 }
@@ -129,6 +135,9 @@ export async function generatePackCatalog(pack: string): Promise<void> {
     for (const fileUniqueId of map.keys()) {
       if (!liveIds.has(fileUniqueId)) {
         map.delete(fileUniqueId);
+        // 对账删除必须同时清掉这枚贴纸可能在目录生成前留下的临时描述，
+        // 否则消息记录紧接着可能从 1 小时 TTL 缓存读回已经失效的旧值。
+        transientDescriptionCache.delete(fileUniqueId);
         entriesChanged = true;
         dirtyPacks.add(pack);
       }
@@ -142,12 +151,15 @@ export async function generatePackCatalog(pack: string): Promise<void> {
         failedEntries.add(sticker.file_unique_id);
         continue;
       }
-      const description: string | null = await describeMedia("sticker", source.fileId, source.fileUniqueId);
+      // 白名单目录是常驻权威缓存，不把新条目再塞进 500 项 / 1 小时的临时
+      // 媒体缓存；否则既挤占临时额度，也可能在对账删除后短暂读到旧描述。
+      const description: string | null = await describeMediaForStickerCatalog(source.fileId);
       if (!description) {
         failedEntries.add(sticker.file_unique_id);
         continue;
       }
       map.set(sticker.file_unique_id, { emoji: sticker.emoji ?? "", description });
+      transientDescriptionCache.delete(sticker.file_unique_id);
       entriesChanged = true;
       dirtyPacks.add(pack);
     }

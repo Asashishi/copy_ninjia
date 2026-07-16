@@ -194,9 +194,10 @@ export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 
 // ---- 媒体读图（群里有人发图片/贴纸/GIF -> 占位入缓存 -> 异步解析替换占位）----
 // 流程见 workers/aiChatWorker.ts 的 recordChatMedia 与 ai/imageDescription.ts 的
-// describeMedia；三种媒体共用下载/缓存机制，各自的占位符、prompt、描述长度
-// 上限分开定义。贴纸/GIF 的素材来源不总是 jpg/png（webp 贴纸本体、GIF 的
-// mp4 走缩略图），统一先经 libs/image.ts 嗅探格式并按需转码。
+// describeMedia；三种媒体共用下载机制，只有未命中 memory/stickers/ 常驻
+// 目录的媒体才共用临时缓存，各自的占位符、prompt、描述长度上限分开定义。
+// 贴纸/GIF 的素材来源不总是 jpg/png（webp 贴纸本体、GIF 的 mp4 走缩略图），
+// 统一先经 libs/image.ts 嗅探格式并按需转码。
 
 /** 图片刚入缓存、描述还没解析出来时的占位文本；解析失败则回填为失败说明，
  *  明确告诉模型这行没有可用的图片内容、别把它当话题接。 */
@@ -264,14 +265,15 @@ export const ANIMATION_DESCRIPTION_PROMPT: string =
 export const MEDIA_DESCRIPTION_MAX_TOKENS: number = 4096;
 /** 从 Telegram 下载媒体文件（图片本体、贴纸本体/缩略图、GIF 缩略图）的超时。 */
 export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 20_000;
-/** 媒体描述缓存（按 file_unique_id 去重，见 ai/imageDescription.ts）的条目
- *  上限，超出按插入顺序淘汰最旧的。同一张梗图/贴纸/GIF 被反复刷屏时不再
- *  重复下载/解析，转录里也不会出现同一份媒体多份措辞各异的描述。图片/
- *  贴纸/GIF 共用同一个缓存（键空间不冲突：file_unique_id 本就是 Telegram
- *  全局唯一）。 */
+/** 未命中 memory/stickers/ 常驻目录的媒体描述临时缓存（按 file_unique_id
+ *  去重，见 ai/imageDescription.ts）条目上限，超出按插入顺序淘汰最旧的。
+ * 同一张梗图/非白名单贴纸/GIF 被反复刷屏时不再重复下载/解析，转录里也
+ * 不会出现同一份媒体多份措辞各异的描述。三类临时结果共用一个缓存（键空间
+ * 不冲突：file_unique_id 本就是 Telegram 全局唯一）。 */
 export const MEDIA_DESCRIPTION_CACHE_MAX: number = 500;
-/** 媒体描述缓存条目的存活时间：超过上限个数靠插入序淘汰，超过这个时长则不管
- *  size 是否超限都主动清掉，双保险避免低流量长期运行下缓存无限期占内存。 */
+/** 临时媒体描述缓存条目的存活时间：超过上限个数靠插入序淘汰，超过这个时长
+ * 则不管 size 是否超限都主动清掉。白名单贴纸描述由 stickerCatalog 常驻，
+ * 不使用此 TTL。 */
 export const MEDIA_DESCRIPTION_CACHE_TTL_MS: number = 60 * 60 * 1000;
 /** 媒体下载大小上限：挑尺寸/素材来源时跳过超过它的档位（Gemini 对 inline
  *  图片的整个请求体限 20MB，Telegram 压缩后的 photo/贴纸/缩略图远小于此，

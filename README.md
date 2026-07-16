@@ -76,7 +76,7 @@ Telegram update
 - 工具：内置 `googleSearch`，自定义东京天气，以及 `send_message`、`add_reaction`、`view_sticker_pack`、`send_sticker`。
 - 时间：每次请求注入东京当前时间，每条转录消息保留记录时刻。
 - 记忆：50～100 条逐字消息，加最多 7 × 50 条冷历史摘要，总跨度约 400～450 条。
-- 多模态：图片描述最多 120 字，贴纸/GIF 最多 100 字；500 项共享去重缓存，1 小时 TTL。
+- 多模态：图片描述最多 120 字，贴纸/GIF 最多 100 字；未命中本地贴纸目录的媒体共享 500 项去重缓存，TTL 为 1 小时。`memory/stickers/` 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录。
 - 压缩背压：每群最多保留 4 个压缩任务，API 长时间变慢时有界降级，不无限堆积消息批次。
 
 人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)。
@@ -206,7 +206,7 @@ bun run start     # 启动长轮询
 | --- | --- | --- |
 | 群状态 / copy 状态 / 锁定镜像 | `state.json` | 只保留“在写 + 最新待写”两份快照，临时文件 + 原子 rename |
 | AI 群聊记忆 | `memory/ai/` | 每群独立快照，30 秒周期 + 停机 flush |
-| 贴纸描述目录 | `memory/stickers/` | 每包独立原子快照，启动时与线上贴纸包对账 |
+| 贴纸描述目录 | `memory/stickers/` | 每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用 |
 | 今日运势 | `memory/luck/` | 按东京日期增量追加，启动时修复尾部截断 |
 | error 日志 | `logs/` | Disk I/O Worker 统一批量追加 |
 

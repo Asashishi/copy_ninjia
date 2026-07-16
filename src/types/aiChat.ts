@@ -43,8 +43,9 @@ export interface AiRecordMediaMessage {
    * ai/stickerSets.ts 的 pickStickerVisionSource、auto/message.ts 的
    * animation 分支），素材选择已在主线程完成。 */
   fileId: string;
-  /** 描述去重缓存的键：图片用同档位的 file_unique_id；贴纸/GIF 固定用媒体
-   * 自身（而非缩略图）的 file_unique_id，见 describeMedia 的参数注释。 */
+  /** 描述查找/临时去重缓存的键：图片用同档位的 file_unique_id；贴纸/GIF
+   * 固定用媒体自身（而非缩略图）的 file_unique_id。白名单贴纸先用它命中
+   * 常驻 stickerCatalog，未命中才作为 describeMedia 的临时缓存键。 */
   fileUniqueId: string;
   /** 这条消息本身的 message_id，评图/评贴纸/评 GIF 回复要用它挂 Telegram
    * 回复引用。 */

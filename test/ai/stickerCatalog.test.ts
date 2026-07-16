@@ -18,6 +18,7 @@ mock.module("../../src/infra/diskIO", () => ({
 
 const getStickerSetMock = mock(async (_pack: string): Promise<any> => null);
 const describeMediaMock = mock(async (..._args: unknown[]): Promise<string | null> => null);
+const describeMediaForStickerCatalogMock = mock(async (..._args: unknown[]): Promise<string | null> => null);
 // 整包简介生成：默认返回一条固定简介文本，可按用例改写/断言调用次数。
 const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<any> => ({
   candidates: [{ content: { parts: [{ text: "一包默认简介" }] } }],
@@ -29,11 +30,13 @@ mock.module("../../src/ai/stickerSets", () => ({
 }));
 mock.module("../../src/ai/imageDescription", () => ({
   describeMedia: describeMediaMock,
+  describeMediaForStickerCatalog: describeMediaForStickerCatalogMock,
 }));
 const realGemini = await import("../../src/ai/gemini");
 mock.module("../../src/ai/gemini", () => ({ ...realGemini, requestGeminiResponse: requestGeminiResponseMock }));
 
 const { generatePackCatalog, getCatalogEntry, getPackSummary, hydrateStickerCatalogs } = await import("../../src/ai/stickerCatalog");
+const { transientDescriptionCache } = await import("../../src/cache/imageDescription");
 
 function sticker(fileUniqueId: string, emoji: string): any {
   return { file_id: `id-${fileUniqueId}`, file_unique_id: fileUniqueId, emoji, is_animated: false, is_video: false };
@@ -45,25 +48,31 @@ function persisted(pack: string, entries: Record<string, { emoji: string; descri
 
 describe("ai/stickerCatalog generatePackCatalog 对账", () => {
   test("线上有、目录没有的补：生成描述并写入，随后生成整包简介", async () => {
+    transientDescriptionCache.set("new-uid", Promise.resolve("临时旧描述"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "新包", stickers: [sticker("new-uid", "😂")] }));
-    describeMediaMock.mockImplementationOnce(async () => "一只猫大笑");
+    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "一只猫大笑");
     requestGeminiResponseMock.mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "一包猫猫表情" }] } }] }));
 
     await generatePackCatalog("pack_add");
 
     expect(getCatalogEntry("new-uid")).toEqual({ emoji: "😂", description: "一只猫大笑" });
     expect(getPackSummary("pack_add")).toBe("一包猫猫表情");
+    expect(describeMediaForStickerCatalogMock).toHaveBeenCalledWith("id-new-uid");
+    expect(describeMediaMock).not.toHaveBeenCalled();
+    expect(transientDescriptionCache.has("new-uid")).toBe(false);
   });
 
   test("目录有、线上已经没有的剪：不再出现在线上列表的条目被删除", async () => {
     hydrateStickerCatalogs(persisted("pack_prune", { "stale-uid": { emoji: "😭", description: "已经不存在的贴纸" } }));
     expect(getCatalogEntry("stale-uid")).toBeDefined();
+    transientDescriptionCache.set("stale-uid", Promise.resolve("不应复活的旧描述"));
 
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "空包", stickers: [] })); // 线上这个包已经没有贴纸了
 
     await generatePackCatalog("pack_prune");
 
     expect(getCatalogEntry("stale-uid")).toBeUndefined();
+    expect(transientDescriptionCache.has("stale-uid")).toBe(false);
   });
 
   test("查线上失败（getStickerSet 返回 null）：不补也不剪，保留现状", async () => {
@@ -81,11 +90,11 @@ describe("ai/stickerCatalog generatePackCatalog 对账", () => {
   test("同一枚贴纸已有描述则不重复生成（不调用 describeMedia）", async () => {
     hydrateStickerCatalogs(persisted("pack_skip", { "existing-uid": { emoji: "👍", description: "已经生成过" } }, "已有简介"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "老包", stickers: [sticker("existing-uid", "👍")] }));
-    describeMediaMock.mockClear();
+    describeMediaForStickerCatalogMock.mockClear();
 
     await generatePackCatalog("pack_skip");
 
-    expect(describeMediaMock).not.toHaveBeenCalled();
+    expect(describeMediaForStickerCatalogMock).not.toHaveBeenCalled();
     expect(getCatalogEntry("existing-uid")).toEqual({ emoji: "👍", description: "已经生成过" });
   });
 
@@ -114,7 +123,7 @@ describe("ai/stickerCatalog generatePackCatalog 对账", () => {
     hydrateStickerCatalogs(persisted("pack_summary_fail", { "uid-c": { emoji: "👍", description: "描述C" } }, "旧简介仍在"));
     // 包内容有变化（新增一枚），简介要重生成，但这次生成失败。
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "变动包", stickers: [sticker("uid-c", "👍"), sticker("uid-d", "😂")] }));
-    describeMediaMock.mockImplementationOnce(async () => "新贴纸描述");
+    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "新贴纸描述");
     requestGeminiResponseMock.mockImplementationOnce(async () => null);
 
     await generatePackCatalog("pack_summary_fail");
