@@ -1,16 +1,18 @@
-import { rename } from "node:fs/promises";
+import { link, open, rename, unlink } from "node:fs/promises";
 import { logger } from "./logger";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, LockdownRecord, StateFileSchema } from "../types";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
-import { persistChainState } from "../cache/storage";
+import { createLatestValueRunner } from "../libs/latestValueRunner";
+import { copyModeValue, finiteNumber, isRecord, rebuildCachedUser, rebuildChatState, rebuildLockdown } from "../storage/stateCodec";
 
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    // EPERM 表示进程存在、只是当前用户无权向它发信号，不能当成 stale 锁。
+    return isErrno(error, "EPERM");
   }
 }
 
@@ -19,18 +21,92 @@ function isProcessAlive(pid: number): boolean {
  * 各自独立地处理（并回复）同一批 Telegram 更新，表现为回复重复/不一致。
  */
 export async function acquireSingleInstanceLock(): Promise<void> {
-  const lockFile = Bun.file(LOCK_FILE_PATH);
-  if (await lockFile.exists()) {
-    const existingPid: number = parseInt((await lockFile.text()).trim(), 10);
-    if (!Number.isNaN(existingPid) && isProcessAlive(existingPid)) {
-      logger.error(
-        `Another bot instance (pid=${existingPid}) is already running; refusing to start a second one — ` +
-        `two instances polling with the same token would answer the same updates twice.`
-      );
-      process.exit(1);
-    }
+  // 候选文件先完整写好，再通过 hard-link 原子发布为正式锁；正式路径永远不
+  // 会短暂暴露一个尚未写入 PID 的空文件。
+  const candidatePath: string = `${LOCK_FILE_PATH}.candidate.${process.pid}.${crypto.randomUUID()}`;
+  const handle = await open(candidatePath, "wx");
+  try {
+    await handle.writeFile(String(process.pid));
+  } finally {
+    await handle.close();
   }
-  await Bun.write(LOCK_FILE_PATH, String(process.pid));
+
+  try {
+    for (;;) {
+      try {
+        // link 的目标路径存在性检查与创建是同一个内核操作：并发启动只有一个
+        // 候选能发布成功。成功后删候选名，正式锁仍指向同一份完整内容。
+        await link(candidatePath, LOCK_FILE_PATH);
+        return;
+      } catch (error: unknown) {
+        if (!isErrno(error, "EEXIST")) throw error;
+      }
+
+      let existingPid: number;
+      try {
+        existingPid = parseInt((await Bun.file(LOCK_FILE_PATH).text()).trim(), 10);
+      } catch (error: unknown) {
+        // 另一个竞争者可能刚完成 stale 锁回收；重新观察即可。
+        if (isErrno(error, "ENOENT")) continue;
+        throw error;
+      }
+      if (!Number.isNaN(existingPid) && isProcessAlive(existingPid)) {
+        throw new Error(
+          `Another bot instance (pid=${existingPid}) is already running; refusing to start a second one — ` +
+          `two instances polling with the same token would answer the same updates twice.`
+        );
+      }
+
+      // stale 锁回收本身也必须互斥。否则两个启动者都读到旧 PID 后，较慢者可能
+      // 删掉较快者刚发布的新锁。独占 recovery 文件保证只有一个进程能重检、
+      // 删除并接管；竞争者直接失败，稍后重启即可。
+      const recoveryPath: string = `${LOCK_FILE_PATH}.recovery`;
+      let recoveryHandle: Awaited<ReturnType<typeof open>>;
+      try {
+        recoveryHandle = await open(recoveryPath, "wx");
+      } catch (error: unknown) {
+        if (isErrno(error, "EEXIST")) {
+          throw new Error("Another process is recovering a stale bot.lock; retry startup shortly.");
+        }
+        throw error;
+      }
+
+      try {
+        await recoveryHandle.writeFile(String(process.pid));
+        // 获得回收权后重新读取，不能沿用取得回收权之前观察到的 PID。
+        let currentPid: number;
+        try {
+          currentPid = parseInt((await Bun.file(LOCK_FILE_PATH).text()).trim(), 10);
+        } catch (error: unknown) {
+          if (isErrno(error, "ENOENT")) continue;
+          throw error;
+        }
+        if (!Number.isNaN(currentPid) && isProcessAlive(currentPid)) {
+          throw new Error(`Another bot instance (pid=${currentPid}) acquired the lock during recovery.`);
+        }
+        await unlink(LOCK_FILE_PATH);
+      } finally {
+        await recoveryHandle.close();
+        await unlink(recoveryPath).catch(() => undefined);
+      }
+    }
+  } finally {
+    await unlink(candidatePath).catch(() => undefined);
+  }
+}
+
+/** 正常停机时只释放属于当前 PID 的锁；硬崩留下的锁由下次启动回收。 */
+export async function releaseSingleInstanceLock(): Promise<void> {
+  try {
+    const ownerPid: number = parseInt((await Bun.file(LOCK_FILE_PATH).text()).trim(), 10);
+    if (ownerPid === process.pid) await unlink(LOCK_FILE_PATH);
+  } catch (error: unknown) {
+    if (!isErrno(error, "ENOENT")) logger.error("Failed to release bot instance lock:", error);
+  }
+}
+
+function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === code;
 }
 
 // 内存中唯一的一份持久化状态，本模块独占持有：各群独立状态 + copy 类功能的
@@ -60,9 +136,9 @@ export function getAllChatStates(): ReadonlyMap<number, ChatState> {
   return chatStates;
 }
 
-// runner 并发处理不同群的更新后，两个群可能同时触发 saveState。
-// 并发写同一个文件会产生撕裂的 JSON，因此所有持久化写入挂到同一条 promise
-// 链上串行执行（无论上一次成败都继续下一次，见 cache/storage.ts）。
+// runner 并发处理不同群的更新后，两个群可能同时触发 saveState。写入必须
+// 串行，但不能为每次变化都无限排队：写入期间只保留最新快照，中间快照没有
+// 落盘价值。调度器因此最多持有「在写 + 待写」两份 JSON。
 
 /**
  * 串行排队写入 state.json。调用方必须先把状态同步序列化成字符串再传进来，
@@ -74,27 +150,19 @@ export function getAllChatStates(): ReadonlyMap<number, ChatState> {
  * 要么是写入后的新内容，不会停在半截的撕裂 JSON——不然重启后 loadState()
  * 解析失败，会把这份文件聚合的所有数据一次性清空。
  */
-function persistStateJson(json: string): Promise<void> {
-  const write = async (): Promise<void> => {
-    try {
-      const tmpPath: string = `${STATE_FILE_PATH}${TMP_FILE_SUFFIX}`;
-      await Bun.write(tmpPath, json);
-      await rename(tmpPath, STATE_FILE_PATH);
-    } catch (error: unknown) {
-      logger.error("Failed to save state:", error);
-    }
-  };
-  persistChainState.chain = persistChainState.chain.then(write, write);
-  return persistChainState.chain;
-}
+const stateWriter = createLatestValueRunner<string>(async (json: string): Promise<void> => {
+  try {
+    const tmpPath: string = `${STATE_FILE_PATH}${TMP_FILE_SUFFIX}`;
+    await Bun.write(tmpPath, json);
+    await rename(tmpPath, STATE_FILE_PATH);
+  } catch (error: unknown) {
+    logger.error("Failed to save state:", error);
+  }
+});
 
-// ChatState 的字段白名单：loadState() 里各群条目的重建直接由它驱动（只挑
-// 这里列出的键），所以 ChatState 新增字段时这个 Record<keyof ChatState, true>
-// 字面量会因为缺键编译报错，补上键的同时重建逻辑就自动跟上了——不会像过去
-// 的 lastCopyTime 那样，重建漏了某个字段还一直悄悄漏读/漏写。
-// （GlobalCopyState 没有对应白名单：它的重建带逐字段校验，见 loadState 内，
-// 新增字段时需要手动去那里补校验逻辑。）
-const CHAT_STATE_FIELD_WHITELIST: Record<keyof ChatState, true> = { quietUntil: true, lockdown: true, isUseAIChat: true, isJATranslationEnabled: true, isInit: true, botIsAdmin: true };
+function persistStateJson(json: string): Promise<void> {
+  return stateWriter.push(json);
+}
 
 /** 全局复读目标的三个字段永远一起写：只设其中一部分会造成「全局占着复读
  * 槽位、却没有任何群在复读」的卡死状态（/copy 处处被拒、复读无处发生）。 */
@@ -133,11 +201,11 @@ export async function loadState(): Promise<void> {
     let rawGlobalCopy: unknown;
     let rawLegacyLockdowns: unknown;
 
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    if (isRecord(parsed)) {
       if ("chats" in parsed) {
-        rawChats = (parsed as any).chats;
-        rawGlobalCopy = (parsed as any).globalCopy;
-        rawLegacyLockdowns = (parsed as any).lockdowns;
+        rawChats = parsed.chats;
+        rawGlobalCopy = parsed.globalCopy;
+        rawLegacyLockdowns = parsed.lockdowns;
       } else {
         // 最老的扁平格式：顶层本身就是 chats 那部分。
         rawChats = parsed;
@@ -147,12 +215,14 @@ export async function loadState(): Promise<void> {
       return;
     }
 
-    if (rawGlobalCopy && typeof rawGlobalCopy === "object") {
-      const g: any = rawGlobalCopy;
-      if (typeof g.lastCopyTime === "number") globalCopyState.lastCopyTime = g.lastCopyTime;
-      if (g.copiedUser && typeof g.copyChatId === "number") {
-        adoptCopyTarget(g.copiedUser, g.copyMode, g.copyChatId);
-      } else if (g.copiedUser) {
+    if (isRecord(rawGlobalCopy)) {
+      const lastCopyTime: number | undefined = finiteNumber(rawGlobalCopy.lastCopyTime);
+      if (lastCopyTime !== undefined) globalCopyState.lastCopyTime = lastCopyTime;
+      const copiedUser: CachedUser | null = rebuildCachedUser(rawGlobalCopy.copiedUser);
+      const copyChatId: number | undefined = finiteNumber(rawGlobalCopy.copyChatId);
+      if (copiedUser && copyChatId !== undefined && Number.isSafeInteger(copyChatId)) {
+        adoptCopyTarget(copiedUser, copyModeValue(rawGlobalCopy.copyMode), copyChatId);
+      } else if (rawGlobalCopy.copiedUser) {
         // 有目标却没有有效的发起群 id（手改文件/中间版本写坏）：这种目标
         // 在任何群都不会被复读，却会让所有群的 /copy 都被「已有猎物」拒绝，
         // 直接丢弃并留日志，不让进程带着卡死的全局槽位启动。
@@ -160,16 +230,13 @@ export async function loadState(): Promise<void> {
       }
     }
 
-    if (rawChats && typeof rawChats === "object" && !Array.isArray(rawChats)) {
+    if (isRecord(rawChats)) {
       for (const [chatIdStr, raw] of Object.entries(rawChats)) {
         const chatId: number = Number(chatIdStr);
-        const entry: any = raw ?? {};
-        // 重建由字段白名单驱动：新增 ChatState 字段时补全白名单键即可，
-        // 这里不用改（见 CHAT_STATE_FIELD_WHITELIST 的注释）。
-        const chatState: ChatState = {};
-        for (const key of Object.keys(CHAT_STATE_FIELD_WHITELIST) as (keyof ChatState)[]) {
-          if (entry[key] !== undefined) (chatState as any)[key] = entry[key];
-        }
+        if (!Number.isSafeInteger(chatId) || chatId === 0) continue;
+        const entry: Record<string, unknown> = isRecord(raw) ? raw : {};
+        const chatState: ChatState | null = rebuildChatState(entry, Date.now());
+        if (!chatState) continue;
         // 迁移：isInit 是新引入的网关字段，state.json 里已有条目的群此前
         // 一直在正常被处理，缺省网关生效前的旧存量不该被当成"未初始化"
         // 直接吞掉更新——只有 state.json 里从未出现过、全新拉群的群才会
@@ -179,9 +246,10 @@ export async function loadState(): Promise<void> {
         // 旧格式迁移：按群维护的复读目标提升为全局的。全局同一时刻只有一个
         // 目标，多个群同时在复读时只保留最先遇到的，其余的记日志后丢弃——
         // 不能一声不吭，被丢的那个群升级重启后复读凭空消失，得留排查线索。
-        if (entry.copiedUser) {
+        const legacyCopiedUser: CachedUser | null = rebuildCachedUser(entry.copiedUser);
+        if (legacyCopiedUser) {
           if (globalCopyState.copiedUser === null) {
-            adoptCopyTarget(entry.copiedUser, entry.copyMode, chatId);
+            adoptCopyTarget(legacyCopiedUser, copyModeValue(entry.copyMode), chatId);
           } else {
             logger.error(`Dropped legacy per-chat copy target of chat ${chatId} during migration: the single global copy slot is already taken`);
           }
@@ -190,14 +258,14 @@ export async function loadState(): Promise<void> {
     }
 
     // 旧格式迁移：顶层 lockdowns 移入对应群的 chats[id].lockdown。这个最老
-    // 的格式里 lockdown 就只是裸的 ChatPermissions，从来没有过期时刻这个
-    // 概念——写成不带 expiresAt 包装的旧形态（对 LockdownRecord 而言类型
-    // 不对，用 unknown 中转显式表达"这是故意的旧形状"），下游
-    // src/antiRaid.ts 的 toAdoptableLockdown 认得出这种形状并退化为满额
-    // 时长处理，语义上与这条迁移路径引入之初的行为一致。
-    if (rawLegacyLockdowns && typeof rawLegacyLockdowns === "object" && !Array.isArray(rawLegacyLockdowns)) {
+    // 的格式只有裸 ChatPermissions、没有到期时刻；加载时立即包装成严格的
+    // LockdownRecord，并从此刻重新给一轮满额时长。
+    if (isRecord(rawLegacyLockdowns)) {
       for (const [chatIdStr, permissions] of Object.entries(rawLegacyLockdowns)) {
-        getOrCreateChatState(Number(chatIdStr)).lockdown = permissions as unknown as LockdownRecord;
+        const chatId: number = Number(chatIdStr);
+        if (!Number.isSafeInteger(chatId) || chatId === 0) continue;
+        const lockdown: LockdownRecord | undefined = rebuildLockdown(permissions, Date.now());
+        if (lockdown) getOrCreateChatState(chatId).lockdown = lockdown;
       }
     }
   } catch (error: unknown) {

@@ -3,8 +3,8 @@ import type { AiBotInfo, BufferedMessage } from "../types";
 
 /**
  * AI 闲聊流水线（src/workers/aiChatWorker.ts）的内存状态。本模块只被 Worker 线程
- * import，所有状态都存活在该线程内；仅存于内存，重启即清空（本功能不做
- * 持久记忆）。
+ * import，所有状态都存活在该线程内；滚动记忆会定期上报主线程落盘，其余
+ * 限频、任务链与心跳等运行时状态在 Worker 重启时清空。
  */
 
 /** 机器人自己的账号身份，由主线程 bot.init() 之后经 init 消息注入（见
@@ -47,6 +47,11 @@ export const pendingSummaries: Map<number, string> = new Map();
  * 摘要严格按时间顺序入队（链上的任务自身兜错，链永不 reject）。
  */
 export const compactionChains: Map<number, Promise<void>> = new Map();
+/** 各群压缩任务的执行中 + 排队中数量；完成后归零并删除。 */
+export const compactionPendingCounts: Map<number, number> = new Map();
+
+/** 正在生成回复的群。同一群只允许一轮在途，防止旧请求晚到后倒序发言。 */
+export const activeReplyChats: Set<number> = new Set();
 
 /** chatId -> 该群当前共享的「正在输入…」重发定时器（见 startTypingHeartbeat）。 */
 export const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number }> = new Map();

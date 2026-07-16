@@ -36,14 +36,22 @@ export async function getTokyoWeather(): Promise<TokyoWeatherResult | null> {
   url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,weather_code");
   url.searchParams.set("timezone", "Asia/Tokyo");
 
-  const data: any = await fetchJsonWithTimeout(url, {}, REQUEST_TIMEOUT_MS, "Open-Meteo API");
+  const data: unknown = await fetchJsonWithTimeout(url, {}, REQUEST_TIMEOUT_MS, "Open-Meteo API");
   if (data === null) return null;
 
-  const currentTemperatureC: unknown = data?.current?.temperature_2m;
-  const currentCode: unknown = data?.current?.weather_code;
-  const todayMaxC: unknown = data?.daily?.temperature_2m_max?.[0];
-  const todayMinC: unknown = data?.daily?.temperature_2m_min?.[0];
-  const todayCode: unknown = data?.daily?.weather_code?.[0];
+  const record: Record<string, unknown> = typeof data === "object" && data !== null && !Array.isArray(data) ? data as Record<string, unknown> : {};
+  const current: Record<string, unknown> = typeof record.current === "object" && record.current !== null && !Array.isArray(record.current)
+    ? record.current as Record<string, unknown>
+    : {};
+  const daily: Record<string, unknown> = typeof record.daily === "object" && record.daily !== null && !Array.isArray(record.daily)
+    ? record.daily as Record<string, unknown>
+    : {};
+  const first = (value: unknown): unknown => Array.isArray(value) ? value[0] : undefined;
+  const currentTemperatureC: unknown = current.temperature_2m;
+  const currentCode: unknown = current.weather_code;
+  const todayMaxC: unknown = first(daily.temperature_2m_max);
+  const todayMinC: unknown = first(daily.temperature_2m_min);
+  const todayCode: unknown = first(daily.weather_code);
 
   if (
     typeof currentTemperatureC !== "number" ||

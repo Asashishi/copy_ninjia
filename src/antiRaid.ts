@@ -1,11 +1,12 @@
 import { logger } from "./infra/logger";
 import type { Context } from "grammy";
-import type { ChatMember, ChatPermissions } from "@grammyjs/types";
+import type { ChatMember, Message } from "@grammyjs/types";
 import { getAllChatStates, getOrCreateChatState, saveState } from "./infra/storage";
+import { answerCallbackQuery } from "./infra/telegram";
 import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
 import { LOCKDOWN_MS, VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
 import { superviseWorker } from "./libs/supervisedWorker";
-import type { AdoptableLockdown, AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "./types";
+import type { AdoptableLockdown, AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, LockdownRecord } from "./types";
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
@@ -28,20 +29,11 @@ import type { AdoptableLockdown, AdoptLockdownsMessage, AntiRaidMember, AntiRaid
  */
 
 /**
- * 把一条持久化的私密模式记录换算成可 adopt 的形态：真实剩余时长 = expiresAt
- * - 此刻，夹到不为负。兼容部署本次修复之前落盘的旧格式——那时 ChatState.lockdown
- * 字段本身就是 ChatPermissions，没有 expiresAt 包装（loadState() 按字段
- * 白名单从 JSON 里原样拷出来，不会做类型意义上的校验，磁盘上是什么形状就
- * 是什么形状）；这类数据退化为满额时长，语义与修复前一致，只是不再受益于
- * 按真实剩余时长重排计时，下一次真正触发的私密模式会以新格式重新落盘。
+ * 把一条已由 loadState 校验/迁移过的私密模式记录换算成可 adopt 的形态：
+ * 真实剩余时长 = expiresAt - 此刻，夹到不为负。
  */
-function toAdoptableLockdown(chatId: number, record: unknown, now: number): AdoptableLockdown {
-  if (record && typeof record === "object" && "originalPermissions" in record) {
-    const { originalPermissions, expiresAt } = record as { originalPermissions: ChatPermissions; expiresAt: unknown };
-    const remainingMs: number = typeof expiresAt === "number" ? Math.max(0, expiresAt - now) : LOCKDOWN_MS;
-    return { chatId, originalPermissions, remainingMs };
-  }
-  return { chatId, originalPermissions: record as ChatPermissions, remainingMs: LOCKDOWN_MS };
+function toAdoptableLockdown(chatId: number, record: LockdownRecord, now: number): AdoptableLockdown {
+  return { chatId, originalPermissions: record.originalPermissions, remainingMs: Math.max(0, record.expiresAt - now) };
 }
 
 /** 收集当前仍在生效的私密模式，换算出各自的真实剩余时长。 */
@@ -202,7 +194,7 @@ export function handleChatMemberUpdate(ctx: Context): void {
  * @returns 若消息在此已被完全处理、调用方应跳过后续处理逻辑（入群公告），
  * 返回 true；否则返回 false，让消息正常继续流转。
  */
-export async function handleGroupJoinVerification(message: any, botId: number): Promise<boolean> {
+export async function handleGroupJoinVerification(message: Message, botId: number): Promise<boolean> {
   // 验证只发生在群聊里，私聊消息不必跨线程投递去查一次注定落空的 Map。
   if (message.chat?.type === "private") return false;
 
@@ -255,11 +247,19 @@ export function handleVerificationCallback(ctx: Context): void {
   const data: string | undefined = query?.data;
   if (!query || !data || !data.startsWith(VERIFY_CALLBACK_PREFIX)) return;
 
+  const targetUserId: number = Number(data.slice(VERIFY_CALLBACK_PREFIX.length));
+  // callback_data 属于外部输入：前缀匹配不代表后半段一定是合法整数。NaN 若
+  // 进入 Worker 会生成 "chatId:NaN" 状态键，按钮只会永远转圈且留下脏状态。
+  if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
+    void answerCallbackQuery(query.id, "验证请求无效", true);
+    return;
+  }
+
   post({
     type: "callback",
     callbackQueryId: query.id,
     chatId: query.message?.chat.id,
-    targetUserId: Number(data.slice(VERIFY_CALLBACK_PREFIX.length)),
+    targetUserId,
     from: pickMember(query.from),
   });
 }

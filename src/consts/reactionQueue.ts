@@ -5,5 +5,7 @@
  * 次），防止极端限流下队列被一个任务卡死。
  */
 export const MAX_ATTEMPTS: number = 3;
+/** 单群最多积压的不同消息反应任务；429/网络停顿时防止队列无限持有更新。 */
+export const MAX_PENDING_TASKS_PER_CHAT: number = 500;
 /** Telegram 429 响应缺失 retry_after 字段时的兜底等待秒数。 */
 export const DEFAULT_RETRY_AFTER_SECONDS: number = 3;

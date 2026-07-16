@@ -11,10 +11,13 @@ import {
 } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { formatMinSec } from "../libs/time";
+import { setBoundedMapValue } from "../libs/boundedMap";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import {
   ADMIN_CACHE_TTL_MS,
+  ANTI_RAID_CACHE_SWEEP_INTERVAL_MS,
+  ANTI_RAID_CHAT_CACHE_MAX,
   COMMENT_JOIN_CORRELATE_MS,
   JOIN_THRESHOLD,
   JOIN_WINDOW_MS,
@@ -137,8 +140,14 @@ function fetchAdminIds(chatId: number): Promise<Set<number>> {
           }
           pendingAdminChangesDuringFetch.delete(chatId);
         }
-        chatAdmins.set(chatId, { adminIds, fetchedAt: Date.now() });
+        setBoundedMapValue(chatAdmins, chatId, { adminIds, fetchedAt: Date.now() }, ANTI_RAID_CHAT_CACHE_MAX);
         return adminIds;
+      })
+      .catch((error: unknown) => {
+        // 没有成功的全量快照就没有可重放增量的基底。下次拉取会取得更新的
+        // 权威快照；继续留着只会让失败过的群永久占住这张 Map。
+        pendingAdminChangesDuringFetch.delete(chatId);
+        throw error;
       })
       .finally(() => adminFetches.delete(chatId));
     adminFetches.set(chatId, inFlight);
@@ -214,7 +223,12 @@ function chatHasLinkedChannel(chatId: number): boolean {
     const inFlight: Promise<void> = joinVerificationApi
       .getChat(chatId)
       .then((chat) => {
-        linkedChannels.set(chatId, { hasLinked: "linked_chat_id" in chat && chat.linked_chat_id !== undefined, fetchedAt: Date.now() });
+        setBoundedMapValue(
+          linkedChannels,
+          chatId,
+          { hasLinked: "linked_chat_id" in chat && chat.linked_chat_id !== undefined, fetchedAt: Date.now() },
+          ANTI_RAID_CHAT_CACHE_MAX
+        );
       })
       .catch((error: unknown) => {
         logger.error(`Error fetching linked channel info for chat ${chatId}:`, error);
@@ -624,7 +638,16 @@ function restrictedPermissions(originalPermissions: ChatPermissions): ChatPermis
  */
 function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
   const prev: Promise<void> = lockdownApiChains.get(chatId) ?? Promise.resolve();
-  lockdownApiChains.set(chatId, prev.then(task, task));
+  const next: Promise<void> = prev.then(task, task);
+  lockdownApiChains.set(chatId, next);
+  void next.then(
+    () => {
+      if (lockdownApiChains.get(chatId) === next) lockdownApiChains.delete(chatId);
+    },
+    () => {
+      if (lockdownApiChains.get(chatId) === next) lockdownApiChains.delete(chatId);
+    }
+  );
 }
 
 /**
@@ -745,3 +768,14 @@ self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
       break;
   }
 };
+
+/** TTL 判断不能代替删除：只“视为过期”仍会让 Map 按历史群数永久增长。 */
+setInterval(() => {
+  const now: number = Date.now();
+  for (const [chatId, cached] of chatAdmins) {
+    if (now - cached.fetchedAt > ADMIN_CACHE_TTL_MS && !adminFetches.has(chatId)) chatAdmins.delete(chatId);
+  }
+  for (const [chatId, cached] of linkedChannels) {
+    if (now - cached.fetchedAt > LINKED_CHANNEL_TTL_MS && !linkedChannelFetches.has(chatId)) linkedChannels.delete(chatId);
+  }
+}, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS).unref();

@@ -30,7 +30,7 @@ import type { StickerCatalogEntry, ToolDefinition } from "../../types";
  * 之前的单层方案把全部贴纸的描述一次性塞进工具描述，包一多每次请求的
  * 提示词都被撑爆；两层方案默认只带每包一行简介，包内清单按需查看。
  *
- * 工具定义仍是按次回复现组装的（不进 src/tools/ 的静态清单）：菜单会随
+ * 工具定义仍是按次回复现组装的（不进 src/ai/tools/index.ts 的静态清单）：菜单会随
  * 目录内容变化，且模型选中的编号要和组装工具描述时用的同一份菜单对应，
  * 两处必须共享 buildStickerPackMenu() 同一次调用的产出。
  */

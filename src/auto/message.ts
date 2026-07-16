@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import type { Animation, Message, PhotoSize } from "@grammyjs/types";
 import type { ChatState, CopyMode } from "../types";
 import { getActiveCopyIn, getChatState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
@@ -57,11 +58,11 @@ function tryClaimUserRandomReply(chatId: number, speakerId: number): boolean {
  * 刻意把 id 和名字分开存（而非拼成一个昵称字符串），好让模型按 id 区分同名的人。
  * 频道马甲/频道帖没有 first_name/last_name，退化为用 title 当 firstName。
  */
-function resolveSpeaker(message: any): { id: number; firstName: string; lastName: string } {
-  const fromUser: any = message.from;
-  const senderChat: any = message.sender_chat || (message.chat.type === "channel" ? message.chat : undefined);
+function resolveSpeaker(message: Message): { id: number; firstName: string; lastName: string } {
+  const fromUser = message.from;
+  const senderChat = message.sender_chat ?? (message.chat.type === "channel" ? message.chat : undefined);
   if (senderChat) {
-    return { id: senderChat.id, firstName: senderChat.title ?? FALLBACK_CHANNEL_NAME, lastName: "" };
+    return { id: senderChat.id, firstName: ("title" in senderChat ? senderChat.title : undefined) ?? FALLBACK_CHANNEL_NAME, lastName: "" };
   }
   if (fromUser) {
     return { id: fromUser.id, firstName: fromUser.first_name ?? "", lastName: fromUser.last_name ?? "" };
@@ -74,9 +75,9 @@ function resolveSpeaker(message: any): { id: number; firstName: string; lastName
  * （@username 形式），按 offset/length 截出实际文本再跟机器人的 username 比对，
  * 不用简单的字符串 includes——避免把「@somebody_else_bot」这种子串误判成命中。
  */
-function isBotMentioned(message: any, botUsername: string | undefined): boolean {
+function isBotMentioned(message: Message, botUsername: string | undefined): boolean {
   if (!botUsername || typeof message.text !== "string") return false;
-  const entities: any[] | undefined = message.entities;
+  const entities = message.entities;
   if (!entities) return false;
   const target: string = `@${botUsername}`.toLowerCase();
   for (const entity of entities) {
@@ -96,9 +97,9 @@ function isBotMentioned(message: any, botUsername: string | undefined): boolean 
  * 「回复机器人」「@ 机器人」这两条本就明确指向机器人的必回路径——这两种
  * 情况即便消息里同时 @ 了别人，机器人被叫到也该照常回。
  */
-function mentionsOtherUser(message: any, botUsername: string | undefined): boolean {
+function mentionsOtherUser(message: Message, botUsername: string | undefined): boolean {
   if (!botUsername || typeof message.text !== "string") return false;
-  const entities: any[] | undefined = message.entities;
+  const entities = message.entities;
   if (!entities) return false;
   const botTarget: string = `@${botUsername}`.toLowerCase();
   for (const entity of entities) {
@@ -130,9 +131,9 @@ function mentionsOtherUser(message: any, botUsername: string | undefined): boole
  * sendMessage/copyMessage/sendSticker 与 aiChat.ts 对 Worker "sent" 事件的
  * 转登记。
  */
-function isBotOwnMessage(message: any, botId: number): boolean {
+function isBotOwnMessage(message: Message): boolean {
   if (isSelfSent(message.chat.id, message.message_id)) return true;
-  const origin: any = message.forward_origin;
+  const origin = message.forward_origin;
   if (message.is_automatic_forward === true && origin?.type === "channel" && isSelfSent(origin.chat.id, origin.message_id)) return true;
   return false;
 }
@@ -147,7 +148,7 @@ function isBotOwnMessage(message: any, botId: number): boolean {
  * 主动行为（不复读、不触发 AI 回复、不洗澡）——这部分行为本就靠
  * isBotOwnMessage 之前的提前返回保证，这里只负责「要不要留个记忆」。
  */
-function recordSelfInlineResult(message: any, botId: number, botFirstName: string): void {
+function recordSelfInlineResult(message: Message, botId: number, botFirstName: string): void {
   if (message.chat.type === "private") return;
   if (typeof message.text !== "string") return;
   const chatId: number = message.chat.id;
@@ -165,14 +166,14 @@ function recordSelfInlineResult(message: any, botId: number, botFirstName: strin
  * 同图重发时恒定的去重键（见 ai/imageDescription.ts 的 descriptionCache），
  * 两个 id 必须取自同一档位才对得上号。
  */
-function pickPhotoFile(sizes: any[]): { fileId: string; fileUniqueId: string } {
+function pickPhotoFile(sizes: PhotoSize[]): { fileId: string; fileUniqueId: string } {
   for (let i = sizes.length - 1; i >= 0; i--) {
-    const size: any = sizes[i];
+    const size: PhotoSize = sizes[i]!;
     if (!size.file_size || size.file_size <= MEDIA_MAX_DOWNLOAD_BYTES) {
       return { fileId: size.file_id, fileUniqueId: size.file_unique_id };
     }
   }
-  return { fileId: sizes[0].file_id, fileUniqueId: sizes[0].file_unique_id };
+  return { fileId: sizes[0]!.file_id, fileUniqueId: sizes[0]!.file_unique_id };
 }
 
 /**
@@ -183,7 +184,7 @@ function pickPhotoFile(sizes: any[]): { fileId: string; fileUniqueId: string } {
  * 的 pickStickerVisionSource 同一道理：与实际下载来源解耦，保证同一个 GIF
  * 无论何时重发都记在同一个缓存键下）。
  */
-function pickAnimationVisionSource(animation: any): { fileId: string; fileUniqueId: string } | null {
+function pickAnimationVisionSource(animation: Animation): { fileId: string; fileUniqueId: string } | null {
   const thumbnailFileId: string | undefined = animation.thumbnail?.file_id;
   if (!thumbnailFileId) return null;
   return { fileId: thumbnailFileId, fileUniqueId: animation.file_unique_id };
@@ -213,7 +214,7 @@ function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefined): C
  *   随机复读会录）；纯媒体消息（没有 text）、发送失败、或复读在等待期间
  *   已经失效则返回 undefined。
  */
-async function echoMessage(chatId: number, message: any, mode: CopyMode | undefined, expectedTargetId?: number): Promise<string | undefined> {
+async function echoMessage(chatId: number, message: Message, mode: CopyMode | undefined, expectedTargetId?: number): Promise<string | undefined> {
   const text: string = message.text || "";
   // 不复读指令消息，防止指令无限解析
   if (text.startsWith("/")) return undefined;
@@ -222,12 +223,14 @@ async function echoMessage(chatId: number, message: any, mode: CopyMode | undefi
   // 带格式/链接/@提及的消息一旦被反转或拼接后缀，会破坏 entity 的偏移量，
   // 可能被用来伪造看似正常、实际指向别处的链接/提及，所以这类消息以及
   // 非文本消息一律走原样 copyMessage，不做任何文本变换。
-  const isPlainText: boolean =
+  const plainText: string | undefined =
     typeof message.text === "string" &&
-    (!message.entities || message.entities.length === 0);
+    (!message.entities || message.entities.length === 0)
+      ? message.text
+      : undefined;
 
-  const transformed: string | null = isPlainText
-    ? await applyCopyModeTransform(message.text, mode)
+  const transformed: string | null = plainText !== undefined
+    ? await applyCopyModeTransform(plainText, mode)
     : null;
 
   // globalCopyState 是跨群共享的全局状态，不受 index.ts 里按 chat 分道的
@@ -259,7 +262,7 @@ async function echoMessage(chatId: number, message: any, mode: CopyMode | undefi
  * （被 /copy 锁定的目标不走这个过滤：TA 的消息本就该尽数复读，个别复制失败
  * 记日志即可。）
  */
-function hasCopyableContent(message: any): boolean {
+function hasCopyableContent(message: Message): boolean {
   return !!(
     message.text || message.caption || message.photo || message.sticker ||
     message.animation || message.video || message.video_note || message.audio ||
@@ -284,13 +287,13 @@ function hasCopyableContent(message: any): boolean {
  *   连记忆都不留。
  */
 export async function handleIncomingMessage(ctx: Context): Promise<void> {
-  const message: any = ctx.msg;
+  const message: Message | undefined = ctx.msg;
   if (!message) return;
   if (message.via_bot?.id === ctx.me.id) {
     recordSelfInlineResult(message, ctx.me.id, ctx.me.first_name);
     return;
   }
-  if (isBotOwnMessage(message, ctx.me.id)) return;
+  if (isBotOwnMessage(message)) return;
 
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message);
@@ -334,7 +337,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // 决定，允许什么都不做保持沉默（见 workers/aiChatWorker.ts 的
     // generateAndSendReply）。命中后就不再走下面的洗澡/随机复读，免得一条
     // 消息既被 AI 回又被复读。
-    const repliedTo: any = message.reply_to_message;
+    const repliedTo: Message | undefined = message.reply_to_message;
     const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
 
@@ -348,7 +351,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       tryClaimUserRandomReply(chatId, speaker.id);
 
     if (isReplyToBot || isMentioned || isRandomTrigger) {
-      generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo.text : undefined, isRandomTrigger);
+      generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo?.text : undefined, isRandomTrigger);
       return;
     }
   } else if (!isPrivateChat && !activeCopy && aiChatEnabled && message.sticker) {

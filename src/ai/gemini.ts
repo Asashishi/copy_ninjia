@@ -22,6 +22,7 @@
  */
 
 import { ApiError, GoogleGenAI } from "@google/genai";
+import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
 import { logger } from "../infra/logger";
 import { GEMINI_API_KEY } from "../infra/config";
 import { REQUEST_TIMEOUT_MS } from "../consts/aiChat";
@@ -37,15 +38,14 @@ const client: GoogleGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY, httpOption
  * 日志）；finishReason=MAX_TOKENS 的静默失败（多半是输出/思考把
  * maxOutputTokens 烧光，见 consts/aiChat.ts 的 REPLY_MAX_TOKENS 注释）点名
  * 记下来，否则上层只能看到「没产出」，查不到原因。
- * @param body 完整请求体（model/contents/config 等由调用方拼好）。contents/
- *   config 的形状按 Gemini API 文档拼，整体按 any 传，不较真 SDK 的类型
- *   （与旧 xAI 时代同一取舍：请求体是纯数据，测试夹具也能直接复用）。
+ * @param body 完整请求体（model/contents/config 等由调用方拼好），直接使用
+ *   官方 SDK 的 GenerateContentParameters，SDK 升级造成的字段漂移会在编译期暴露。
  * @param errorLabel 出现在错误日志里的调用名，用于区分是哪条流水线出的错。
  */
-export async function requestGeminiResponse(body: Record<string, unknown>, errorLabel: string): Promise<any | null> {
-  let data: any;
+export async function requestGeminiResponse(body: GenerateContentParameters, errorLabel: string): Promise<GenerateContentResponse | null> {
+  let data: GenerateContentResponse;
   try {
-    data = await client.models.generateContent(body as any);
+    data = await client.models.generateContent(body);
   } catch (error: unknown) {
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
@@ -65,7 +65,7 @@ export async function requestGeminiResponse(body: Record<string, unknown>, error
       `${errorLabel} response was truncated by maxOutputTokens ` +
       `(hasPartialText=${!!extractOutputText(data)}, ` +
       `thoughts_tokens=${data.usageMetadata?.thoughtsTokenCount ?? "?"}, ` +
-      `max_output_tokens=${(body.config as Record<string, unknown> | undefined)?.maxOutputTokens ?? "?"}).`
+      `max_output_tokens=${body.config?.maxOutputTokens ?? "?"}).`
     );
   }
   return data;
@@ -77,19 +77,35 @@ export async function requestGeminiResponse(body: Record<string, unknown>, error
  * finishReason，比如安全拦截，那种没有「差一点写完」的错觉，上层按空文本
  * 处理即可）。调用方据此决定：与其把半句话发到群里，不如这轮直接放弃。
  */
-export function isTruncatedByTokenLimit(data: any): boolean {
-  return data?.candidates?.[0]?.finishReason === "MAX_TOKENS";
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function firstCandidate(data: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(data) || !Array.isArray(data.candidates)) return undefined;
+  const candidate: unknown = data.candidates[0];
+  return isRecord(candidate) ? candidate : undefined;
+}
+
+function responseParts(data: unknown): unknown[] {
+  const content: unknown = firstCandidate(data)?.content;
+  if (!isRecord(content) || !Array.isArray(content.parts)) return [];
+  return content.parts;
+}
+
+export function isTruncatedByTokenLimit(data: unknown): boolean {
+  return firstCandidate(data)?.finishReason === "MAX_TOKENS";
 }
 
 /** 拼出响应里的最终文本：首个候选 content.parts 中所有非思考的 text 段按序
  *  连接；没有则为空串。SDK 的响应对象本身带一个 text 便捷属性，效果一样，
  *  这里仍手写遍历——纯函数，不依赖 SDK 响应类的具体实现，测试用的手搭
  *  fixture 也能直接跑。 */
-export function extractOutputText(data: any): string {
+export function extractOutputText(data: unknown): string {
   const parts: string[] = [];
-  for (const part of data?.candidates?.[0]?.content?.parts ?? []) {
-    if (part?.thought) continue;
-    if (typeof part?.text === "string") {
+  for (const part of responseParts(data)) {
+    if (!isRecord(part) || part.thought === true) continue;
+    if (typeof part.text === "string") {
       parts.push(part.text);
     }
   }
@@ -99,7 +115,23 @@ export function extractOutputText(data: any): string {
 /** 取出响应里所有待执行的自定义函数调用（内置服务端工具如 googleSearch
  *  不在此列，它们已在 Google 侧执行完）。返回的是 parts 里的 functionCall
  *  对象本身（id/name/args）。 */
-export function extractFunctionCalls(data: any): any[] {
-  const parts: any[] = data?.candidates?.[0]?.content?.parts ?? [];
-  return parts.filter((part: any) => part?.functionCall).map((part: any) => part.functionCall);
+export interface ExtractedFunctionCall {
+  id?: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export function extractFunctionCalls(data: unknown): ExtractedFunctionCall[] {
+  const calls: ExtractedFunctionCall[] = [];
+  for (const part of responseParts(data)) {
+    if (!isRecord(part) || !isRecord(part.functionCall)) continue;
+    const call: Record<string, unknown> = part.functionCall;
+    if (typeof call.name !== "string") continue;
+    calls.push({
+      id: typeof call.id === "string" ? call.id : undefined,
+      name: call.name,
+      args: isRecord(call.args) ? call.args : {},
+    });
+  }
+  return calls;
 }

@@ -1,4 +1,5 @@
 import type { CachedUser } from "../types";
+import type { Message } from "@grammyjs/types";
 import { userCache } from "../cache/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
 
@@ -15,15 +16,15 @@ import { USER_CACHE_MAX } from "../consts/senderIdentity";
  * 没有 `sender_chat`，帖子自身的 `chat` 就是该频道）体现的频道身份。既用于
  * 填充 username 缓存，也用于直接从被回复的消息中解析出 /copy 目标。
  */
-function resolveSenderIdentity(message: any): CachedUser | undefined {
-  const fromUser: any = message.from;
-  const senderChat: any = message.sender_chat || (message.chat.type === "channel" ? message.chat : undefined);
+function resolveSenderIdentity(message: Message): CachedUser | undefined {
+  const fromUser = message.from;
+  const senderChat = message.sender_chat ?? (message.chat.type === "channel" ? message.chat : undefined);
 
   if (senderChat) {
     return {
       id: senderChat.id,
-      username: senderChat.username,
-      title: senderChat.title,
+      username: "username" in senderChat ? senderChat.username : undefined,
+      title: "title" in senderChat ? senderChat.title : undefined,
       isChannel: true,
     };
   } else if (fromUser) {
@@ -44,7 +45,7 @@ function resolveSenderIdentity(message: any): CachedUser | undefined {
  * （见 CachedUser 注释），但仍可经 resolveReplyTarget 定位。
  * @returns 解析出的发送者 id（若以频道身份发送则为频道 id，否则为用户 id）。
  */
-export function cacheSender(message: any): number | undefined {
+export function cacheSender(message: Message): number | undefined {
   const identity = resolveSenderIdentity(message);
   if (!identity) return undefined;
 
@@ -78,8 +79,8 @@ export function cacheSender(message: any): number | undefined {
  * 机器人还没缓存过 TA，比如因为 privacy mode 屏蔽了 TA 之前的消息），只要能回复到
  * TA 的一条消息，依然可以将其设为目标。
  */
-export function resolveReplyTarget(message: any): CachedUser | undefined {
-  const repliedMessage: any = message.reply_to_message;
+export function resolveReplyTarget(message: Message): CachedUser | undefined {
+  const repliedMessage: Message | undefined = message.reply_to_message;
   if (!repliedMessage) return undefined;
   return resolveSenderIdentity(repliedMessage);
 }

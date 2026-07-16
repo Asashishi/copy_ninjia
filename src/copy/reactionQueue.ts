@@ -3,7 +3,7 @@ import { GrammyError } from "grammy";
 import { bot, logApiError } from "../infra/telegram";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { sleep } from "../libs/sleep";
-import { DEFAULT_RETRY_AFTER_SECONDS, MAX_ATTEMPTS } from "../consts/reactionQueue";
+import { DEFAULT_RETRY_AFTER_SECONDS, MAX_ATTEMPTS, MAX_PENDING_TASKS_PER_CHAT } from "../consts/reactionQueue";
 import { chatQueues, consumingChats, pendingTasks } from "../cache/reactionQueue";
 import type { CopyableReaction, ReactionTask } from "../types";
 
@@ -44,6 +44,13 @@ export function enqueueReaction(chatId: number, messageId: number, reactions: Co
     if (!order) {
       order = new LinkedQueue<string>();
       chatQueues.set(chatId, order);
+    }
+    // Telegram 429 或网络停顿期间，目标可以继续在不同消息上刷反应。每个 key
+    // 都永久排队会让内存随刷屏量增长；达到硬顶时丢最旧的未开始任务，优先
+    // 保留较新的用户动作。当前正在处理的 key 已从 order 取出，不会被误删。
+    if (order.size >= MAX_PENDING_TASKS_PER_CHAT) {
+      const droppedKey: string | undefined = order.shift();
+      if (droppedKey !== undefined) pendingTasks.delete(droppedKey);
     }
     order.push(key);
   }

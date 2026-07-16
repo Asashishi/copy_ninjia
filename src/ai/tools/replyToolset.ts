@@ -57,7 +57,7 @@ export interface ReplyToolContext {
 export interface ReplyToolset {
   /** 本轮可用的行动工具定义，拼进请求的 functionDeclarations。 */
   definitions: ToolDefinition[];
-  /** 这个名字是否属于本工具集（区别于 src/tools/ 的静态查询工具）。 */
+  /** 这个名字是否属于本工具集（区别于 src/ai/tools/index.ts 的静态查询工具）。 */
   has(name: string): boolean;
   /** 执行一次工具调用，返回喂回模型的 JSON 字符串。 */
   execute(name: string, argumentsJson: string): Promise<string>;

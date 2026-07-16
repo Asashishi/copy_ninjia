@@ -68,6 +68,8 @@ function createDiskIOWorker(): Worker {
     }
   };
   w.onerror = (event: ErrorEvent) => {
+    // 已替换旧实例的迟到/重复错误不能再启动第二条并行重建链。
+    if (diskIOWorker !== w) return;
     // 落盘线程自己出错时不能再指望它把这条日志落盘，直接走控制台，避免
     // 自己给自己转发出一场递归。Bun 里 Worker 内部一旦抛出未捕获异常
     // （同步或 async 均如此，已实测验证）就会直接终止该 Worker 线程，这里

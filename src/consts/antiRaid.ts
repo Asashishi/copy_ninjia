@@ -34,6 +34,10 @@ export const ADMIN_CACHE_TTL_MS: number = 60 * 60 * 1000;
  * 缓存过期只是兜底，可以放心地长。
  */
 export const LINKED_CHANNEL_TTL_MS: number = 60 * 60 * 1000;
+/** 管理员表/关联频道缓存最多保留的群数；过期条目还会被周期清理。 */
+export const ANTI_RAID_CHAT_CACHE_MAX: number = 500;
+/** 清理已过期管理员表与关联频道缓存的周期。 */
+export const ANTI_RAID_CACHE_SWEEP_INTERVAL_MS: number = 5 * 60 * 1000;
 /**
  * 「评论区留言 → 自动拉群」两个事件的关联窗口：评论消息和 chat_member
  * 入群更新由同一个动作触发、到达顺序不保证，评论先到时暂存这么久等

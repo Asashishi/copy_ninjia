@@ -12,7 +12,7 @@ export async function fetchJsonWithTimeout(
   init: RequestInit,
   timeoutMs: number,
   errorLabel: string
-): Promise<any | null> {
+): Promise<unknown | null> {
   const controller: AbortController = new AbortController();
   const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), timeoutMs);
   try {

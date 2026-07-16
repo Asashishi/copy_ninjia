@@ -39,6 +39,7 @@ export function superviseWorker<TMessage, TEvent = never>(
   options: SupervisedWorkerOptions<TMessage, TEvent>
 ): { post: (message: TMessage) => void } {
   const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
+  let worker: Worker | null = null;
 
   function createWorker(): Worker {
     const w: Worker = new Worker(options.url);
@@ -52,6 +53,8 @@ export function superviseWorker<TMessage, TEvent = never>(
       options.onEvent?.(data as TEvent);
     };
     w.onerror = (event: ErrorEvent) => {
+      // 已被替换的旧实例若迟到/重复上报错误，不得再次创建一条平行自愈链。
+      if (worker !== w) return;
       logger.error(`${options.label} errored, restarting:`, event.message || event.error || event);
       if (restartThrottle.shouldGiveUp()) {
         logger.error(
@@ -69,7 +72,7 @@ export function superviseWorker<TMessage, TEvent = never>(
     return w;
   }
 
-  let worker: Worker | null = createWorker();
+  worker = createWorker();
 
   return {
     post: (message: TMessage): void => {

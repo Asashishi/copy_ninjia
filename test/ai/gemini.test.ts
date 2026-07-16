@@ -47,9 +47,9 @@ describe("ai/gemini 响应解析", () => {
   test("extractFunctionCalls：只取带 functionCall 的 part，返回 functionCall 对象本身", () => {
     const calls = extractFunctionCalls(RESPONSE_FIXTURE);
     expect(calls.length).toBe(1);
-    expect(calls[0].id).toBe("call-abc-0");
-    expect(calls[0].name).toBe("get_current_time");
-    expect(calls[0].args).toEqual({});
+    expect(calls[0]!.id).toBe("call-abc-0");
+    expect(calls[0]!.name).toBe("get_current_time");
+    expect(calls[0]!.args).toEqual({});
   });
 
   test("extractFunctionCalls：无调用时返回空数组", () => {

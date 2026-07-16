@@ -72,6 +72,14 @@ export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;
 export const MAX_SUMMARY_ROUNDS: number = 7;
 
 /**
+ * 单群允许同时处于「执行中 + 排队中」的冷消息压缩任务数。群消息可能远快于
+ * 一次 Gemini 请求；不设上限时，每满 50 条就保留一整批消息和一个 Promise
+ * 闭包，API 变慢/故障期间会无限增长。超出的批次放弃压缩（逐字滚动缓存仍
+ * 有硬上限），以有界降级换取进程存活。
+ */
+export const COMPACTION_MAX_PENDING_PER_CHAT: number = 4;
+
+/**
  * 各群 dirty 的 AI 记忆快照（滚动缓存 + 中期摘要）上报给主线程（进而落盘）
  * 的节奏，见 workers/aiChatWorker.ts 的 flushDirtyMemories。硬崩（kill -9/
  * OOM）时这段间隔即记忆丢失的上界。

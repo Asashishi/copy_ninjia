@@ -28,7 +28,7 @@ export const LOGS_DIR: string = join(PROJECT_ROOT, "logs");
  * 运势缓存（luck/ 下按东京日期一个文件，只留当天）、白名单贴纸包的目录快照
  * （stickers/ 下按 pack short name 一个 <pack>.json，见 ai/stickerCatalog.ts），
  * 均由 diskIOWorker 落盘，见 src/workers/diskIOWorker.ts。不进 git，与
- * logs/ 同级对待（隐私提示见 memory/PLAN.md §7：AI 记忆快照含群聊逐字明文）。
+ * logs/ 同级对待；AI 记忆快照含群聊逐字明文，部署时应按敏感数据保护。
  */
 export const MEMORY_DIR: string = join(PROJECT_ROOT, "memory");
 export const AI_MEMORY_DIR: string = join(MEMORY_DIR, "ai");

@@ -1,5 +1,6 @@
 import { logger } from "../infra/logger";
 import { readFileSync } from "node:fs";
+import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool } from "@google/genai";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { formatTokyoTime, getCurrentTime } from "../libs/time";
 import { sanitizeInline, truncateInline } from "../libs/text";
@@ -11,6 +12,7 @@ import {
   ANIMATION_FALLBACK_PLACEHOLDER,
   ANIMATION_PENDING_PLACEHOLDER,
   COMPACT_BATCH_SIZE,
+  COMPACTION_MAX_PENDING_PER_CHAT,
   IMAGE_FALLBACK_PLACEHOLDER,
   IMAGE_PENDING_PLACEHOLDER,
   MAX_SUMMARY_ROUNDS,
@@ -38,10 +40,12 @@ import {
 } from "../consts/aiChat";
 import { FALLBACK_SPEAKER_NAME } from "../consts/auto";
 import {
+  activeReplyChats,
   botInfoState,
   chatBuffers,
   chatSummaries,
   compactionChains,
+  compactionPendingCounts,
   dirtyMemoryChats,
   lastReplyTimes,
   longTriggerTimes,
@@ -50,12 +54,12 @@ import {
   triggerTimes,
   typingHeartbeats,
 } from "../cache/aiChatWorker";
-import type { BufferedMessage, GeminiRequestTool, MediaKind, ToolDefinition } from "../types";
+import type { BufferedMessage, MediaKind, ToolDefinition } from "../types";
 import { createReplyToolset, type ReplyToolContext, type ReplyToolset } from "../ai/tools/replyToolset";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
-import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse } from "../ai/gemini";
+import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse, type ExtractedFunctionCall } from "../ai/gemini";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../ai/tools";
 import { SEND_MESSAGE_TOOL } from "../consts/tools";
@@ -265,8 +269,33 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
  * @param promoteFirst 本轮是否有旧镜像滑出（首轮没有），有则先晋升其摘要。
  */
 function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean): void {
+  const pendingCount: number = compactionPendingCounts.get(chatId) ?? 0;
+  if (pendingCount >= COMPACTION_MAX_PENDING_PER_CHAT) {
+    logger.error(
+      `AI compaction backlog reached ${COMPACTION_MAX_PENDING_PER_CHAT} tasks for chat ${chatId}; ` +
+      `dropping one ${mirrorBatch.length}-message batch to keep memory bounded.`
+    );
+    return;
+  }
+
   const prev: Promise<void> = compactionChains.get(chatId) ?? Promise.resolve();
-  compactionChains.set(chatId, prev.then(() => rotateCompaction(chatId, mirrorBatch, promoteFirst)));
+  const next: Promise<void> = prev.then(() => rotateCompaction(chatId, mirrorBatch, promoteFirst));
+  compactionPendingCounts.set(chatId, pendingCount + 1);
+  compactionChains.set(chatId, next);
+  void next.then(
+    () => finishCompactionTask(chatId, next),
+    () => finishCompactionTask(chatId, next)
+  );
+}
+
+/** 完成任务后释放计数；只有当前链尾本人完成时才删除链，不能误删后继任务。 */
+function finishCompactionTask(chatId: number, completed: Promise<void>): void {
+  const remaining: number = Math.max(0, (compactionPendingCounts.get(chatId) ?? 1) - 1);
+  if (remaining === 0) compactionPendingCounts.delete(chatId);
+  else compactionPendingCounts.set(chatId, remaining);
+  if (compactionChains.get(chatId) === completed) {
+    compactionChains.delete(chatId);
+  }
 }
 
 /** 执行一轮轮换：先晋升上一轮镜像的摘要（若有），再 AI 压缩新镜像存为待晋升。 */
@@ -376,7 +405,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
   const selfNote: string = botInfoState.current
     ? `注意：[id:${botInfoState.current.id}] 是群里的聊天机器人「${botInfoState.current.first_name}」本人的发言，摘要里请以「${botInfoState.current.first_name}」称呼它。\n\n`
     : "";
-  const data: any = await requestGeminiResponse(
+  const data: GenerateContentResponse | null = await requestGeminiResponse(
     {
       model: GEMINI_SUMMARY_MODEL,
       contents: [{ role: "user", parts: [{ text: selfNote + batch.map(formatLine).join("\n") }] }],
@@ -526,7 +555,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
 /**
  * 调用 Gemini 的 generateContent 接口跑完一轮回复对话（收发与响应解析在
  * ai/gemini.ts）。tools 带三类：内置的 googleSearch（Google 服务器侧自动
- * 执行，模型自主决定要不要联网查证）+ src/tools 里的静态自定义函数（目前
+ * 执行，模型自主决定要不要联网查证）+ src/ai/tools 里的静态自定义函数（目前
  * 是查东京天气）+ 按次回复现组装的行动工具集（发言/反应/两层贴纸，见
  * ai/tools/replyToolset.ts——发消息、发贴纸这些副作用动作都在工具执行时当场发生，
  * 不再等最终文本）。自定义函数由模型以 functionCall part 抛回来，执行后把
@@ -545,13 +574,18 @@ async function callGemini(userContent: string, toolset: ReplyToolset): Promise<s
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
-  const contents: any[] = [{ role: "user", parts: [{ text: userContent }] }];
+  const contents: Content[] = [{ role: "user", parts: [{ text: userContent }] }];
 
   const functionDeclarations: ToolDefinition[] = [...TOOL_DEFINITIONS, ...toolset.definitions];
-  const tools: GeminiRequestTool[] = [{ googleSearch: {} }, { functionDeclarations }];
+  const sdkDeclarations: FunctionDeclaration[] = functionDeclarations.map((definition: ToolDefinition) => ({
+    name: definition.name,
+    description: definition.description,
+    parametersJsonSchema: definition.parameters,
+  }));
+  const tools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: sdkDeclarations }];
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const data: any = await requestGeminiResponse(
+    const data: GenerateContentResponse | null = await requestGeminiResponse(
       {
         model: GEMINI_REPLY_MODEL,
         contents,
@@ -572,18 +606,20 @@ async function callGemini(userContent: string, toolset: ReplyToolset): Promise<s
     );
     if (!data) return null;
 
-    const functionCalls: any[] = extractFunctionCalls(data);
+    const functionCalls: ExtractedFunctionCall[] = extractFunctionCalls(data);
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
       // 模型这一轮的 content 原样接回（缺了 thought signature 会丢思考
       // 上下文），随后所有函数结果合并成一个 user turn 的 functionResponse
       // parts 喂回去。同一轮的多个调用按序执行——模型并行抛出「先发言后
       // 贴纸」时，落地顺序与它给出的顺序一致。
-      contents.push(data.candidates[0].content);
-      const responseParts: any[] = [];
+      const modelContent: Content | undefined = data.candidates?.[0]?.content;
+      if (!modelContent) return null;
+      contents.push(modelContent);
+      const responseParts: Part[] = [];
       for (const call of functionCalls) {
-        const result: string = toolset.has(call?.name)
+        const result: string = toolset.has(call.name)
           ? await toolset.execute(call.name, JSON.stringify(call.args ?? {}))
-          : await callTool(call?.name);
+          : await callTool(call.name);
         // 工具实现返回的都是 JSON 字符串（见 src/ai/tools），
         // functionResponse.response 要求对象，解析回来直接挂上。
         responseParts.push({ functionResponse: { id: call.id, name: call.name, response: JSON.parse(result) } });
@@ -716,6 +752,10 @@ function generateAndSendReply(
     logger.error("aiChatWorker received trigger before init message; dropping.");
     return;
   }
+  // 同一群只跑一轮工具对话。Gemini 请求可持续几十秒；若只靠 0.5 秒冷却，
+  // 后发请求可能先结束并先发消息，旧请求随后再按过时上下文补发，工具副作用
+  // 也会倒序。这里同步占位，媒体评价/随机插话/回复触发统一受控。
+  if (activeReplyChats.has(chatId)) return;
   const selfInfo: AiBotInfo = botInfoState.current;
 
   // 每群冷却：在发起任何异步工作之前同步判定并占位，这样冷却窗口内的
@@ -757,10 +797,12 @@ function generateAndSendReply(
   lastReplyTimes.set(chatId, now);
   times.push(now);
   longTimes.push(now);
+  activeReplyChats.add(chatId);
 
   void (async (): Promise<void> => {
-    const userContent: string | null = buildUserContent(chatId, selfInfo, { repliedBotText, isRandomTrigger, mediaComment });
-    if (!userContent) return;
+    try {
+      const userContent: string | null = buildUserContent(chatId, selfInfo, { repliedBotText, isRandomTrigger, mediaComment });
+      if (!userContent) return;
 
     // 工具执行成功后的回调：发出去的每条消息/贴纸描述行都自录进对话缓存
     // （普通群聊天 Telegram 不会把自己发出去的消息作为更新推送回来，不自录
@@ -768,39 +810,37 @@ function generateAndSendReply(
     // 说明，模型才能在上下文中认出自己说过什么），消息 ID 报回主线程登记
     // 自发消息（频道帖例外：channel_post 更新会原样推回来，登记后自动流水线
     // 才能识别出是自己刚发的、整体跳过，见 auto/message.ts 的 isBotOwnMessage）。
-    const ctx: ReplyToolContext = {
-      chatId,
-      replyToMessageId,
-      onMessageSent: (text: string, messageId: number): void => {
-        recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", text);
-        self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-      },
-      onStickerSent: (stickerDescription: string, messageId: number): void => {
-        recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
-        self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-      },
-    };
-    const toolset: ReplyToolset = await createReplyToolset(ctx);
+      const ctx: ReplyToolContext = {
+        chatId,
+        replyToMessageId,
+        onMessageSent: (text: string, messageId: number): void => {
+          recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", text);
+          self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+        },
+        onStickerSent: (stickerDescription: string, messageId: number): void => {
+          recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
+          self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+        },
+      };
+      const toolset: ReplyToolset = await createReplyToolset(ctx);
 
     // 整个工具对话期间（生成耗时不可控，发送也发生在工具执行里）用持续
     // 重发的心跳显示「正在输入…」，见 startTypingHeartbeat；try/finally
     // 保证即使 callGemini 抛异常，心跳也一定会被停掉。
-    const stopTyping: () => void = startTypingHeartbeat(chatId);
-    let finalText: string | null;
-    try {
-      finalText = await callGemini(userContent, toolset);
-    } finally {
-      stopTyping();
-    }
+      const stopTyping: () => void = startTypingHeartbeat(chatId);
+      let finalText: string | null;
+      try {
+        finalText = await callGemini(userContent, toolset);
+      } finally {
+        stopTyping();
+      }
 
-    // 正文兜底只保留给「对方明确在跟机器人说话」的直接触发（回复/@）：模型
-    // 没用 send_message、却把话写在了最终正文里时，别让对方干等——走同一条
-    // 工具执行路径发出去（清洗、自录、登记全都复用），并挂上回复引用。
-    // 随机插话与媒体评价不兜底：那两种场景已授权模型保持沉默，正文里的零星
-    // 文字更可能是「这条不接了」之类不该上屏的自言自语，发出去反而是事故。
-    // 已经发过消息也不再管正文。
-    if (finalText && !isRandomTrigger && !mediaComment && toolset.messagesSent() === 0) {
-      await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
+      // 正文兜底只保留给「对方明确在跟机器人说话」的直接触发（回复/@）。
+      if (finalText && !isRandomTrigger && !mediaComment && toolset.messagesSent() === 0) {
+        await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
+      }
+    } finally {
+      activeReplyChats.delete(chatId);
     }
   })().catch((error: unknown) => {
     logger.error("Error in AI reply task:", error);
@@ -845,6 +885,21 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
 // consts/aiChat.ts 的 AI_SNAPSHOT_INTERVAL_MS 注释。Worker 线程活到进程
 // 退出为止，不需要引用计数/按需启停，无条目时两个 flush 都直接空转返回。
 setInterval(() => {
+  const now: number = Date.now();
+  for (const [chatId, times] of triggerTimes) {
+    while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_WINDOW_MS) times.shift();
+    if (times.size === 0) triggerTimes.delete(chatId);
+  }
+  for (const [chatId, times] of longTriggerTimes) {
+    while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_LONG_WINDOW_MS) times.shift();
+    if (times.size === 0) longTriggerTimes.delete(chatId);
+  }
+  for (const [chatId, at] of lastReplyTimes) {
+    if (now - at >= RATE_LIMIT_LONG_WINDOW_MS && !activeReplyChats.has(chatId)) lastReplyTimes.delete(chatId);
+  }
+  for (const [chatId, at] of rateLimitNoticeTimes) {
+    if (now - at >= RATE_LIMIT_NOTICE_COOLDOWN_MS) rateLimitNoticeTimes.delete(chatId);
+  }
   flushDirtyMemories();
   flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
 }, AI_SNAPSHOT_INTERVAL_MS);

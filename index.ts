@@ -3,7 +3,7 @@ import { flushDiskIO, loadPersistedData, type LoadedData } from "./src/infra/dis
 import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
-import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState } from "./src/infra/storage";
+import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState, releaseSingleInstanceLock } from "./src/infra/storage";
 import { shouldPassInitGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
@@ -265,7 +265,10 @@ main()
     // 时启动期的致命错误（状态文件损坏等）就不会触发自动重启。
     process.exitCode = 1;
   })
-  .finally(() => flushAllToDisk(2000, 3000));
+  .finally(async () => {
+    await flushAllToDisk(2000, 3000);
+    await releaseSingleInstanceLock();
+  });
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才
 // 结束，此时把 aiChatWorker/diskIOWorker 里的存货（AI 记忆最长滞留
 // 30 秒 + 10 秒、运势和日志最长滞留 30 秒）强制落盘，停机

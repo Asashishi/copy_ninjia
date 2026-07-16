@@ -28,7 +28,7 @@ export async function resolveCommandTarget(
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
 
-  let targetUser: CachedUser | undefined = resolveReplyTarget(ctx.msg as any);
+  let targetUser: CachedUser | undefined = resolveReplyTarget(ctx.msg);
   let rawUsername: string | undefined;
 
   if (!targetUser) {

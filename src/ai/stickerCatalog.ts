@@ -1,5 +1,6 @@
 import { logger } from "../infra/logger";
 import type { Sticker, StickerSet } from "@grammyjs/types";
+import type { GenerateContentResponse } from "@google/genai";
 import { getStickerSet, pickStickerVisionSource } from "./stickerSets";
 import { describeMedia } from "./imageDescription";
 import { extractOutputText, requestGeminiResponse } from "./gemini";
@@ -181,7 +182,7 @@ function formatEntryForSummary(entry: StickerCatalogEntry): string {
  * 产出压成单行并按子句边界截断。失败返回 null（已由 requestGeminiResponse 记日志）。
  */
 async function summarizePack(title: string, descriptions: string[]): Promise<string | null> {
-  const data: any = await requestGeminiResponse(
+  const data: GenerateContentResponse | null = await requestGeminiResponse(
     {
       model: GEMINI_SUMMARY_MODEL,
       contents: [{ role: "user", parts: [{ text: `贴纸包「${title}」内每枚贴纸的画面描述：\n${descriptions.join("\n")}` }] }],

@@ -59,7 +59,7 @@ export interface AiRecordMediaMessage {
   stickerFallbackText?: string;
 }
 
-/** 单枚贴纸的目录条目：emoji 元数据 + AI 生成的画面描述（≤75 字，见
+/** 单枚贴纸的目录条目：emoji 元数据 + AI 生成的画面描述（≤100 字，见
  * consts/aiChat.ts 的 SHORT_MEDIA_DESCRIPTION_MAX_CHARS）。 */
 export interface StickerCatalogEntry {
   emoji: string;

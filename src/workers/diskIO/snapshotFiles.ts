@@ -50,26 +50,40 @@ function quarantine(path: string): void {
   }
 }
 
-function isBufferedMessage(value: unknown): value is BufferedMessage {
-  if (!value || typeof value !== "object") return false;
-  const v: any = value;
-  return typeof v.id === "number" && typeof v.firstName === "string" && typeof v.lastName === "string" && typeof v.text === "string";
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+interface PersistedBufferedMessage {
+  id: number;
+  firstName: string;
+  lastName: string;
+  text: string;
+  at?: unknown;
+}
+
+function isBufferedMessage(value: unknown): value is PersistedBufferedMessage {
+  return isRecord(value) &&
+    typeof value.id === "number" && Number.isFinite(value.id) &&
+    typeof value.firstName === "string" &&
+    typeof value.lastName === "string" &&
+    typeof value.text === "string";
 }
 
 /** 缓存条目逐字段重建：at 是后加的字段，正常形态是格式化好的东京时间串
  *  （见 types/aiChatWorker.ts）；曾短暂落盘过毫秒数形态，就地转成同一格式；
  *  更早的旧文件没有该字段，补空串（时间未知，转录行会省略时间前缀，见
  *  workers/aiChatWorker.ts 的 formatLine）。 */
-function rebuildBufferedMessage(v: BufferedMessage): BufferedMessage {
-  const rawAt: unknown = (v as any).at;
+function rebuildBufferedMessage(v: PersistedBufferedMessage): BufferedMessage {
+  const rawAt: unknown = v.at;
   const at: string = typeof rawAt === "string" ? rawAt : typeof rawAt === "number" && rawAt > 0 ? formatTokyoTime(rawAt) : "";
   return { id: v.id, firstName: v.firstName, lastName: v.lastName, text: v.text, at };
 }
 
 /** 逐字段白名单重建（对齐 infra/storage.ts loadState 的做法），未知字段自然甩掉。 */
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
-  if (!parsed || typeof parsed !== "object") return null;
-  const raw: any = parsed;
+  if (!isRecord(parsed)) return null;
+  const raw: Record<string, unknown> = parsed;
   const buffer: BufferedMessage[] = Array.isArray(raw.buffer)
     ? raw.buffer.filter(isBufferedMessage).map(rebuildBufferedMessage).slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)
     : [];
@@ -123,9 +137,7 @@ export function writeAiMemoryFile(chatId: number, snapshot: AiMemorySnapshot): v
 }
 
 function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
-  if (!value || typeof value !== "object") return false;
-  const v: any = value;
-  return typeof v.emoji === "string" && typeof v.description === "string";
+  return isRecord(value) && typeof value.emoji === "string" && typeof value.description === "string";
 }
 
 /** 逐字段白名单重建（对齐 rebuildAiMemorySnapshot），未知字段自然甩掉；
@@ -133,10 +145,10 @@ function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
  *  summary（整包简介）缺失/类型不对时置 null——旧格式文件恢复后由
  *  ai/stickerCatalog.ts 的下一次对账补生成。 */
 function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot | null {
-  if (!parsed || typeof parsed !== "object") return null;
-  const raw: any = parsed;
+  if (!isRecord(parsed)) return null;
+  const raw: Record<string, unknown> = parsed;
   const entries: Record<string, StickerCatalogEntry> = {};
-  if (raw.entries && typeof raw.entries === "object") {
+  if (isRecord(raw.entries)) {
     for (const [fileUniqueId, value] of Object.entries(raw.entries)) {
       if (isStickerCatalogEntry(value)) entries[fileUniqueId] = value;
     }
@@ -233,16 +245,15 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
     console.error(`[diskIOWorker] luck file ${todayKey}.json failed to parse, quarantined as .corrupt:`, error);
     return null;
   }
-  if (!parsed || typeof parsed !== "object") return null;
-  const raw: any = parsed;
+  if (!isRecord(parsed)) return null;
+  const raw: Record<string, unknown> = parsed;
   const entries: Map<string, LuckDrawRecord> = new Map();
   for (const [key, value] of Object.entries(raw)) {
     // entries 里结构不对的条目丢弃（结构性校验，不假设未来档位表长什么样），
     // 当天重抽，见 types/diskIO.ts 的 LuckDayFile 注释。
-    if (!value || typeof value !== "object") continue;
-    const v: any = value;
-    if (typeof v.label === "string" && typeof v.fortunePercent === "number") {
-      entries.set(key, { label: v.label, fortunePercent: v.fortunePercent });
+    if (!isRecord(value)) continue;
+    if (typeof value.label === "string" && typeof value.fortunePercent === "number" && Number.isFinite(value.fortunePercent)) {
+      entries.set(key, { label: value.label, fortunePercent: value.fortunePercent });
     }
   }
   return { day: todayKey, entries };

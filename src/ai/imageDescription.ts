@@ -30,6 +30,7 @@ import {
   STICKER_DESCRIPTION_PROMPT,
 } from "../consts/aiChat";
 import type { MediaKind } from "../types";
+import type { GenerateContentResponse } from "@google/genai";
 
 /** 按媒体类型选喂给视觉模型的描述指令，三者风格/侧重点不同。 */
 function promptFor(kind: MediaKind): string {
@@ -125,7 +126,7 @@ async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<s
       logger.error(`Chat media (kind=${kind}) is an unsupported/unrecognized image format: ${file.file_path}`);
       return null;
     }
-    const data: any = await requestGeminiResponse(
+    const data: GenerateContentResponse | null = await requestGeminiResponse(
       {
         model: GEMINI_MEDIA_MODEL,
         contents: [
