@@ -39,7 +39,8 @@ import {
   TYPING_DELAY_PER_CHAR_MS,
   VERBATIM_CONTEXT_MAX,
   WEB_SEARCH_INSTRUCTION,
-  XAI_MODEL,
+  XAI_REPLY_MODEL,
+  XAI_SUMMARY_MODEL,
 } from "../consts/aiChat";
 import { FALLBACK_SPEAKER_NAME } from "../consts/auto";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
@@ -382,7 +383,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
     : "";
   const data: any = await requestXaiResponse(
     {
-      model: XAI_MODEL,
+      model: XAI_SUMMARY_MODEL,
       input: [
         {
           role: "system",
@@ -577,7 +578,7 @@ async function callGrok(chatId: number, userContent: string, onStickerSent: (sti
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
     const data: any = await requestXaiResponse(
       {
-        model: XAI_MODEL,
+        model: XAI_REPLY_MODEL,
         input,
         tools,
         temperature: REPLY_TEMPERATURE,

@@ -27,7 +27,7 @@ import {
   MEDIA_MAX_DOWNLOAD_BYTES,
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
   STICKER_DESCRIPTION_PROMPT,
-  XAI_MODEL,
+  XAI_MEDIA_MODEL,
 } from "../consts/aiChat";
 import type { MediaKind } from "../types";
 
@@ -129,7 +129,7 @@ async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<s
 
     const data: any = await requestXaiResponse(
       {
-        model: XAI_MODEL,
+        model: XAI_MEDIA_MODEL,
         input: [
           {
             role: "user",

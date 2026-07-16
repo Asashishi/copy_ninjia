@@ -26,15 +26,21 @@ export const AI_MEDIA_COMMENT_PROBABILITY: number = 1 / 8;
  * 请求，行为与直接打原始 REST 接口一致）。
  */
 export const XAI_BASE_URL: string = "https://api.x.ai/v1";
-export const XAI_MODEL: string = "grok-4.3";
+/** 闲聊回复生成（callGrok）用的模型——人设发挥、工具调用都在这条链路上，
+ *  给最新旗舰版本。 */
+export const XAI_REPLY_MODEL: string = "grok-4.5";
+/** 冷消息压缩（summarizeBatch）用的模型——中性总结任务，不需要追新版本。 */
+export const XAI_SUMMARY_MODEL: string = "grok-4.3";
+/** 媒体（图片/贴纸/GIF）描述（describeMediaUncached）用的视觉模型。 */
+export const XAI_MEDIA_MODEL: string = "grok-4.3";
 /** 单次请求的超时（openai SDK 的 per-attempt timeout；SDK 默认对瞬时失败
  *  自动重试几次，每次重试各自套用这个超时预算，不是所有重试共享一个
  *  90 秒硬顶——这是比手写 fetch 更强的地方，瞬时的 5xx/连接错误能自愈）。 */
 export const REQUEST_TIMEOUT_MS: number = 90_000;
 
 /**
- * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。XAI_MODEL 是
- * 推理模型，思考内容也计入 max_output_tokens（usage 的
+ * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。XAI_REPLY_MODEL
+ * 与 XAI_SUMMARY_MODEL 都是推理模型，思考内容也计入 max_output_tokens（usage 的
  * output_tokens_details.reasoning_tokens，实测确认）：上限给小了，额度会在
  * 思考阶段就被烧光——请求返回 200 但 status=incomplete、正文为空，表现为
  * 静默失败（DeepSeek 时代压缩任务曾因 768 的旧上限反复空手而归，同一坑）。
