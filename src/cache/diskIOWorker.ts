@@ -1,4 +1,4 @@
-import type { AiMemorySnapshot, DayFileState, LuckDayCache, LuckPendingEntry } from "../types";
+import type { AiMemorySnapshot, DayFileState, LuckDayCache, LuckPendingEntry, StickerCatalogSnapshot } from "../types";
 
 /**
  * 磁盘 IO 线程（src/workers/diskIOWorker.ts）的内存状态：日志、AI 记忆、
@@ -24,6 +24,14 @@ export const flushBuffer: { entries: { day: string; text: string }[]; timer: Ret
 export const aiMemoryCache: Map<number, AiMemorySnapshot> = new Map();
 /** 自上次落盘后有更新、待写入磁盘的群。 */
 export const dirtyChats: Set<number> = new Set();
+
+// ---- 贴纸目录 ----
+
+/** 各白名单贴纸包最新的目录快照（覆盖式 upsert），键为 pack short name。 */
+export const stickerCatalogCache: Map<string, StickerCatalogSnapshot> = new Map();
+/** 自上次落盘后有更新、待写入磁盘的贴纸包。与 dirtyChats 共用同一条定时
+ *  落盘窗口（见 workers/diskIOWorker.ts 的 scheduleSnapshotFlush）。 */
+export const dirtyStickerPacks: Set<string> = new Set();
 
 // ---- 每日运势 ----
 

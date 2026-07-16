@@ -9,7 +9,7 @@ import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
-import { flushAiMemory, hydrateAiMemory, initAiChat } from "./src/aiChat";
+import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } from "./src/aiChat";
 import type { CachedUser } from "./src/types";
 
 /**
@@ -186,6 +186,10 @@ async function main(): Promise<void> {
   // 紧随 init 之后灌回持久化的 AI 记忆快照，FIFO 保证先于一切 record/trigger
   // 到达 Worker（见 aiChat.ts 的 hydrateAiMemory）。
   hydrateAiMemory(loaded.aiMemories);
+  // 同样紧随 init 之后灌回持久化的白名单贴纸目录，让 Worker 收到 init 后
+  // 台启动的目录生成能看到已恢复的条目、不重复调视觉模型（见 aiChat.ts 的
+  // hydrateStickerCatalog）。
+  hydrateStickerCatalog(loaded.stickerCatalogs);
   // 接管当日运势缓存（day 对不上今天则整体丢弃，见 restoreLuckCache）：
   // dailyLuckCache 是主线程同步读写的，必须赶在 runner 开始投喂
   // inline_query 之前灌好，否则会出现「今天已抽过却又抽出新结果」。

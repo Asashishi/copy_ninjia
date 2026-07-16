@@ -1,22 +1,23 @@
 import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
-import { latestAiMemories, pendingMemoryFlushes } from "./cache/aiChat";
-import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, AiMemorySnapshot } from "./types";
+import { latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes } from "./cache/aiChat";
+import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, AiMemorySnapshot, MediaKind, StickerCatalogSnapshot } from "./types";
 
 /**
- * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片
- * 占位与异步描述、冷却与限频、拼装上下文、调 Grok（含 function calling
- * 往返与内置 web_search）、连发消息、
- * 消息反应、贴纸跟发——全部在独立的 Bun Worker（src/workers/aiChatWorker.ts）里
- * 执行；主线程只把「记录一条群消息」「触发一次回复」两类事件投递过去，
+ * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
+ * 贴纸/GIF 占位与异步描述、冷却与限频、拼装上下文、调 Grok（含 function
+ * calling 往返与内置 web_search）、连发消息、消息反应、贴纸跟发、白名单
+ * 贴纸目录生成——全部在独立的 Bun Worker（src/workers/aiChatWorker.ts）里
+ * 执行；主线程只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
  * 让 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
  *
  * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
  *
  * AI 记忆持久化：aiChatWorker 定期把各群 dirty 的记忆快照（滚动缓存 + 中期
- * 摘要）上报到这里（memory 事件），本模块存一份镜像（latestAiMemories）后
+ * 摘要）、各白名单贴纸包 dirty 的目录快照上报到这里（memory / stickerCatalog
+ * 事件），本模块各存一份镜像（latestAiMemories / latestStickerCatalogs）后
  * 转投 diskIOWorker 落盘。这份镜像同时是双向崩溃重放的唯一来源：aiChatWorker
  * 崩溃重启后凭它重放 hydrate（下方 onRespawn），diskIOWorker 崩溃重启后
  * 凭它重发落盘（下方 onDiskIORespawn），两条路径互不依赖。
@@ -42,6 +43,10 @@ const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
         latestAiMemories.set(event.chatId, event.snapshot);
         postDiskIO({ type: "aiMemory", chatId: event.chatId, snapshot: event.snapshot });
         break;
+      case "stickerCatalog":
+        latestStickerCatalogs.set(event.pack, event.snapshot);
+        postDiskIO({ type: "stickerCatalog", pack: event.pack, snapshot: event.snapshot });
+        break;
       case "memoryFlushed": {
         const resolve = pendingMemoryFlushes.get(event.flushId);
         if (resolve) {
@@ -60,14 +65,22 @@ const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
     if (latestAiMemories.size > 0) {
       postToNext({ type: "hydrate", memories: latestAiMemories });
     }
+    // 贴纸目录镜像同理：新 Worker 的 init 处理会重新 ensureStickerCatalogs，
+    // 若不先灌回已生成的条目会白白重新调一遍视觉模型。
+    if (latestStickerCatalogs.size > 0) {
+      postToNext({ type: "hydrateStickerCatalog", catalogs: latestStickerCatalogs });
+    }
   },
 });
 
-// diskIOWorker 崩溃重建后，把当前记忆镜像整份重发给它，补齐上一次成功
-// 落盘之后的增量（见 infra/diskIO.ts 的 onDiskIORespawn 注释）。
+// diskIOWorker 崩溃重建后，把当前记忆/贴纸目录镜像整份重发给它，补齐上
+// 一次成功落盘之后的增量（见 infra/diskIO.ts 的 onDiskIORespawn 注释）。
 onDiskIORespawn(() => {
   for (const [chatId, snapshot] of latestAiMemories) {
     postDiskIO({ type: "aiMemory", chatId, snapshot });
+  }
+  for (const [pack, snapshot] of latestStickerCatalogs) {
+    postDiskIO({ type: "stickerCatalog", pack, snapshot });
   }
 });
 
@@ -102,13 +115,29 @@ export function hydrateAiMemory(memories: Map<number, AiMemorySnapshot>): void {
   }
 }
 
+/**
+ * 启动时把 diskIOWorker 落盘恢复出的白名单贴纸目录灌回来：先存一份镜像
+ * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
+ * initAiChat 之后、runner 开始投喂更新之前调用（见 index.ts）——FIFO 保证
+ * 这条消息紧跟在 init 之后，让 ensureStickerCatalogs 的 diff 生成看到已
+ * 恢复的条目、不重复调视觉模型。
+ */
+export function hydrateStickerCatalog(catalogs: Map<string, StickerCatalogSnapshot>): void {
+  for (const [pack, snapshot] of catalogs) {
+    latestStickerCatalogs.set(pack, snapshot);
+  }
+  if (catalogs.size > 0) {
+    post({ type: "hydrateStickerCatalog", catalogs });
+  }
+}
+
 let nextMemoryFlushId: number = 1;
 
 /**
- * 要求 aiChatWorker 立即把所有 dirty 群的记忆快照上报（进而转投 diskIOWorker
- * 落盘），并等待完成。用于进程退出前的最后一刷（握手样式同 infra/diskIO.ts
- * 的 flushDiskIO）。带超时兜底：Worker 异常时停机流程最多被拖住 timeoutMs，
- * 不会挂死。
+ * 要求 aiChatWorker 立即把所有 dirty 群的记忆快照、dirty 的贴纸目录上报
+ * （进而转投 diskIOWorker 落盘），并等待完成。用于进程退出前的最后一刷
+ * （握手样式同 infra/diskIO.ts 的 flushDiskIO）。带超时兜底：Worker 异常时
+ * 停机流程最多被拖住 timeoutMs，不会挂死。
  */
 export function flushAiMemory(timeoutMs: number = 2000): Promise<void> {
   return new Promise((resolve) => {
@@ -139,19 +168,37 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
 }
 
 /**
- * 记录一条图片消息：Worker 侧先以占位文本入缓存、异步解析图片后原位回填
- * 描述（见 workers/aiChatWorker.ts 的 recordChatImage）。默认只记上下文、
- * 不触发回复（与贴纸的处理定位一致）；commentOnResolve 为 true（主线程按
- * AI_IMAGE_COMMENT_PROBABILITY 掷中）时，解析成功后会以「回复那条图片
- * 消息」的形式发一条针对图片内容的评价。
- * @param caption 图片自带的配文（没有则传空串）。
- * @param fileId 已挑好尺寸档位的 photo file_id。
- * @param fileUniqueId 同一档位的 file_unique_id（描述去重缓存的键）。
- * @param messageId 图片消息的 message_id（评图回复挂引用用）。
- * @param commentOnResolve 是否在解析成功后评价这张图。
+ * 记录一条图片/贴纸/GIF 消息：Worker 侧先以占位文本入缓存、异步解析媒体
+ * 后原位回填描述（见 workers/aiChatWorker.ts 的 recordChatMedia）。默认
+ * 只记上下文、不触发回复；commentOnResolve 为 true（主线程按
+ * AI_MEDIA_COMMENT_PROBABILITY 掷中）时，解析成功后会以「回复那条消息」
+ * 的形式发一条针对内容的评价。
+ * @param kind 媒体类型：photo/sticker/animation，决定占位符/视觉提示词。
+ * @param caption 媒体自带的配文（没有则传空串）。
+ * @param fileId 要下载的 file_id（图片是已挑好档位的 photo file_id；贴纸/
+ *   GIF 是本体或缩略图，见 auto/message.ts 的素材选择）。
+ * @param fileUniqueId 描述去重缓存的键（贴纸/GIF 固定用媒体自身的
+ *   file_unique_id，见 workers/aiChatWorker.ts 的 recordChatMedia 参数注释）。
+ * @param messageId 这条消息的 message_id（评价回复挂引用用）。
+ * @param commentOnResolve 是否在解析成功后评价这份媒体。
+ * @param stickerFallbackText kind 为 "sticker" 时解析失败的兜底文本（现有
+ *   元数据行，见 ai/stickerSets.ts 的 describeStickerForContext）；其余
+ *   kind 不传。
  */
-export function recordChatImage(chatId: number, id: number, firstName: string, lastName: string, caption: string, fileId: string, fileUniqueId: string, messageId: number, commentOnResolve: boolean): void {
-  post({ type: "recordImage", chatId, senderId: id, firstName, lastName, caption, fileId, fileUniqueId, messageId, commentOnResolve });
+export function recordChatMedia(
+  kind: MediaKind,
+  chatId: number,
+  id: number,
+  firstName: string,
+  lastName: string,
+  caption: string,
+  fileId: string,
+  fileUniqueId: string,
+  messageId: number,
+  commentOnResolve: boolean,
+  stickerFallbackText?: string
+): void {
+  post({ type: "recordMedia", kind, chatId, senderId: id, firstName, lastName, caption, fileId, fileUniqueId, messageId, commentOnResolve, stickerFallbackText });
 }
 
 /**

@@ -20,9 +20,9 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types";
-import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
-import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN } from "../../consts/diskIO";
+import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry, StickerCatalogEntry, StickerCatalogSnapshot } from "../../types";
+import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
+import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
 import { formatTokyoTime } from "../../libs/time";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
@@ -120,6 +120,77 @@ export function recoverAiMemories(): Map<number, AiMemorySnapshot> {
 export function writeAiMemoryFile(chatId: number, snapshot: AiMemorySnapshot): void {
   mkdirSync(AI_MEMORY_DIR, { recursive: true });
   atomicWriteJson(join(AI_MEMORY_DIR, `${chatId}.json`), snapshot);
+}
+
+function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
+  if (!value || typeof value !== "object") return false;
+  const v: any = value;
+  return typeof v.emoji === "string" && typeof v.description === "string";
+}
+
+/** 逐字段白名单重建（对齐 rebuildAiMemorySnapshot），未知字段自然甩掉；
+ *  entries 里结构不对的条目丢弃（当前进程会把它当缺失重新生成，不做迁移）。 */
+function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const raw: any = parsed;
+  const entries: Record<string, StickerCatalogEntry> = {};
+  if (raw.entries && typeof raw.entries === "object") {
+    for (const [fileUniqueId, value] of Object.entries(raw.entries)) {
+      if (isStickerCatalogEntry(value)) entries[fileUniqueId] = value;
+    }
+  }
+  const savedAt: number = typeof raw.savedAt === "number" ? raw.savedAt : Date.now();
+  return { version: 1, entries, savedAt };
+}
+
+/**
+ * 启动恢复：建目录、清 memory/stickers/ 下的 *.tmp 残留，校验/重建每个
+ * 白名单贴纸包的目录快照。机制与 recoverAiMemories 基本一致（tmp+rename
+ * 原子写、解析失败隔离为 .corrupt），只是文件名形态不同（pack short name
+ * 而非 chatId）；多一步 activePacks 对账——config/stickers.json 的白名单
+ * 已经不包含的包，其持久化文件视为孤儿，直接删除、不载入内存，既不再占
+ * 磁盘空间，也不会让 ai/stickerCatalog.ts 的 getCatalogEntry 继续拿一个
+ * 已下架包的旧描述去匹配群友发的贴纸。
+ * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
+ *   ai/stickerConfig.ts），用于判定哪些持久化文件已经是孤儿。
+ */
+export function recoverStickerCatalogs(activePacks: string[]): Map<string, StickerCatalogSnapshot> {
+  mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
+  const activePackSet: Set<string> = new Set(activePacks);
+  const result: Map<string, StickerCatalogSnapshot> = new Map();
+  for (const name of readdirSync(STICKER_MEMORY_DIR)) {
+    const path: string = join(STICKER_MEMORY_DIR, name);
+    if (name.endsWith(TMP_FILE_SUFFIX)) {
+      tryUnlink(path);
+      continue;
+    }
+    const match = STICKER_CATALOG_FILE_PATTERN.exec(name);
+    if (!match) continue; // 非 <pack>.json 形态（含 .corrupt 隔离文件），跳过不动
+    const pack: string = match[1]!;
+    if (!activePackSet.has(pack)) {
+      // 白名单已经不包含这个包：孤儿文件，清掉，不进 result（不载入内存）。
+      tryUnlink(path);
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(path, "utf8"));
+    } catch (error) {
+      quarantine(path);
+      console.error(`[diskIOWorker] sticker catalog file ${name} failed to parse, quarantined as .corrupt:`, error);
+      continue;
+    }
+    const snapshot: StickerCatalogSnapshot | null = rebuildStickerCatalogSnapshot(parsed);
+    if (snapshot) result.set(pack, snapshot);
+  }
+  return result;
+}
+
+/** 覆盖式写入某个白名单贴纸包的目录快照（tmp + rename 原子落盘），机制与
+ *  writeAiMemoryFile 完全一致。 */
+export function writeStickerCatalogFile(pack: string, snapshot: StickerCatalogSnapshot): void {
+  mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
+  atomicWriteJson(join(STICKER_MEMORY_DIR, `${pack}.json`), snapshot);
 }
 
 /**

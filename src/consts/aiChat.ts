@@ -10,13 +10,13 @@
 export const AI_REPLY_PROBABILITY: number = 1 / 5;
 
 /**
- * 群友发图时，AI 在图片解析完成后主动回复那条图片消息、评价图片内容的
- * 概率。掷骰子同样在主线程（照顾 /quiet 状态与随机回复冷却，见
- * src/auto/message.ts 的图片分支）；命中后由 Worker 在描述解析成功时执行
- * （解析失败没内容可评，静默放弃），见 workers/aiChatWorker.ts 的
- * recordChatImage。
+ * 群友发图片/贴纸/GIF 时，AI 在解析完成后主动回复那条消息、评价媒体内容的
+ * 概率——三种媒体共用同一个概率预算（不是各自独立掷骰）。掷骰子在主线程
+ * （照顾 /quiet 状态与随机回复冷却，见 src/auto/message.ts 的媒体分支）；
+ * 命中后由 Worker 在描述解析成功时执行（解析失败没内容可评，静默放弃），
+ * 见 workers/aiChatWorker.ts 的 recordChatMedia。
  */
-export const AI_IMAGE_COMMENT_PROBABILITY: number = 1 / 15;
+export const AI_MEDIA_COMMENT_PROBABILITY: number = 1 / 8;
 
 /** xAI 的 responses 接口（chat completions 在 xAI 已是 legacy，内置
  *  web_search 等服务端工具只在 responses 上提供）。 */
@@ -159,33 +159,81 @@ export const MAX_TOOL_ROUNDS: number = 5;
 /** 「正在输入…」状态的重发间隔，机制见 workers/aiChatWorker.ts 的 startTypingHeartbeat。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 
-// ---- 图片读图（群里有人发图 -> 占位入缓存 -> 异步解析替换占位）----
-// 流程见 workers/aiChatWorker.ts 的 recordChatImage 与 ai/imageDescription.ts。
+// ---- 媒体读图（群里有人发图片/贴纸/GIF -> 占位入缓存 -> 异步解析替换占位）----
+// 流程见 workers/aiChatWorker.ts 的 recordChatMedia 与 ai/imageDescription.ts 的
+// describeMedia；三种媒体共用下载/缓存机制，各自的占位符、prompt、描述长度
+// 上限分开定义。贴纸/GIF 的素材来源不总是 jpg/png（webp 贴纸本体、GIF 的
+// mp4 走缩略图），统一先经 libs/image.ts 嗅探格式并按需转码。
 
 /** 图片刚入缓存、描述还没解析出来时的占位文本；解析失败则回填为失败说明，
  *  明确告诉模型这行没有可用的图片内容、别把它当话题接。 */
 export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
 export const IMAGE_FALLBACK_PLACEHOLDER: string = "[图片：解析失败，请无视此消息]";
+/** 贴纸的占位文本；解析失败时不用通用失败说明，而是退回原有的元数据行
+ *  （情绪 emoji + 所属贴纸包，见 ai/stickerSets.ts 的 describeStickerForContext）
+ *  ——即便视觉解析失败也不损失现状已有的信息，见 workers/aiChatWorker.ts 的
+ *  recordChatMedia。 */
+export const STICKER_PENDING_PLACEHOLDER: string = "[贴纸：识别中]";
+/** GIF 的占位/失败文本，与图片同款措辞。 */
+export const ANIMATION_PENDING_PLACEHOLDER: string = "[GIF：识别中]";
+export const ANIMATION_FALLBACK_PLACEHOLDER: string = "[GIF：解析失败，请无视此消息]";
 
 /** 喂给视觉模型的描述指令：产出一行简短中文描述，供转录上下文引用。 */
 export const IMAGE_DESCRIPTION_PROMPT: string =
   "这是中文群聊里有人发的一张图片。请用中文简要描述它：是什么内容、图里有什么文字、想表达什么；" +
   "若是表情包/梗图/截图，请点出其中的文字要点和情绪。不超过 120 字，只输出描述本身，不要任何前缀、解释或引号。";
-
-/** 图片描述的输出 token 上限：描述本身很短，但推理模型的思考也计入（同
- *  REPLY_MAX_TOKENS 注释），要给足余量。 */
-export const IMAGE_DESCRIPTION_MAX_TOKENS: number = 4096;
 /** 图片描述入缓存前的硬性长度上限（字符），防模型话痨撑爆转录行。 */
 export const IMAGE_DESCRIPTION_MAX_CHARS: number = 200;
-/** 从 Telegram 下载图片文件的超时。 */
-export const IMAGE_DOWNLOAD_TIMEOUT_MS: number = 20_000;
-/** 图片描述缓存（按 file_unique_id 去重，见 ai/imageDescription.ts）的条目
- *  上限，超出按插入顺序淘汰最旧的。同一张梗图被反复刷屏时不再重复下载/
- *  解析，转录里也不会出现同图多份措辞各异的描述。 */
-export const IMAGE_DESCRIPTION_CACHE_MAX: number = 500;
-/** 图片描述缓存条目的存活时间：超过上限个数靠插入序淘汰，超过这个时长则不管
+
+/**
+ * 贴纸/GIF 描述的字数上限——比图片短：贴纸/GIF 本身信息密度低（一个画面
+ * 梗+一句文字居多），这份描述还要兼顾另一个消费方（ai/stickerCatalog.ts
+ * 的目录：机器人自己挑贴纸要发时读的清单，条目太长会把选择调用的输入撑得
+ * 很臃肿），75 字足够说清画面角色/动作/文字/情绪。
+ */
+export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 75;
+/** 喂给视觉模型描述一枚贴纸的指令：群友发的贴纸、机器人自己贴纸目录的
+ *  生成（见 ai/stickerCatalog.ts）共用同一份措辞，保证两处描述风格一致。 */
+export const STICKER_DESCRIPTION_PROMPT: string =
+  "这是中文群聊场景用到的一枚贴纸（表情包）。请用中文简要描述画面：角色/形象是谁或什么、动作和表情、" +
+  `画面里的文字（如有）、整体想表达的情绪或语气。不超过 ${SHORT_MEDIA_DESCRIPTION_MAX_CHARS} 字，只输出描述本身，不要任何前缀、解释或引号。`;
+/** 喂给视觉模型描述一个 GIF 封面帧的指令：没有抽帧能力（无 ffmpeg），只能
+ *  分析 Telegram 自带的缩略图，提示词点明这一点，避免模型把只看到第一帧
+ *  的内容说成是整个动图。 */
+export const ANIMATION_DESCRIPTION_PROMPT: string =
+  "这是中文群聊里发的一个动图（GIF）的封面帧画面（不是完整动图，只是第一帧）。请用中文简要描述这一帧看到的内容、" +
+  `画面里的文字（如有）、大致想表达的情绪或梗。不超过 ${SHORT_MEDIA_DESCRIPTION_MAX_CHARS} 字，只输出描述本身，不要任何前缀、解释或引号。`;
+
+/** 媒体描述的输出 token 上限：描述本身很短，但推理模型的思考也计入（同
+ *  REPLY_MAX_TOKENS 注释），要给足余量。图片/贴纸/GIF 共用。 */
+export const MEDIA_DESCRIPTION_MAX_TOKENS: number = 4096;
+/** 从 Telegram 下载媒体文件（图片本体、贴纸本体/缩略图、GIF 缩略图）的超时。 */
+export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 20_000;
+/** 媒体描述缓存（按 file_unique_id 去重，见 ai/imageDescription.ts）的条目
+ *  上限，超出按插入顺序淘汰最旧的。同一张梗图/贴纸/GIF 被反复刷屏时不再
+ *  重复下载/解析，转录里也不会出现同一份媒体多份措辞各异的描述。图片/
+ *  贴纸/GIF 共用同一个缓存（键空间不冲突：file_unique_id 本就是 Telegram
+ *  全局唯一）。 */
+export const MEDIA_DESCRIPTION_CACHE_MAX: number = 500;
+/** 媒体描述缓存条目的存活时间：超过上限个数靠插入序淘汰，超过这个时长则不管
  *  size 是否超限都主动清掉，双保险避免低流量长期运行下缓存无限期占内存。 */
-export const IMAGE_DESCRIPTION_CACHE_TTL_MS: number = 60 * 60 * 1000;
-/** 图片下载大小上限：挑尺寸时跳过超过它的档位（xAI 收 base64 后限 20MiB，
- *  Telegram photo 压缩后远小于此，这只是防御性护栏）。 */
-export const IMAGE_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
+export const MEDIA_DESCRIPTION_CACHE_TTL_MS: number = 60 * 60 * 1000;
+/** 媒体下载大小上限：挑尺寸/素材来源时跳过超过它的档位（xAI 收 base64 后限
+ *  20MiB，Telegram 压缩后的 photo/贴纸/缩略图远小于此，这只是防御性护栏）。 */
+export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
+
+// ---- 应景贴纸挑选（机器人回复后按目录描述挑一枚贴纸跟发）----
+// 目录生成/持久化见 ai/stickerCatalog.ts；挑选调用见 ai/stickers.ts。
+
+/** 挑选调用的系统提示词：给模型一份贴纸目录（编号 + emoji + 画面描述）和
+ *  即将发出的回复文本，要求挑一枚最应景的贴纸编号；找不到合适的允许弃权
+ *  （NONE），弃权/解析失败时 stickers.ts 会回退到原有的关键词匹配。 */
+export const STICKER_SELECTION_SYSTEM_PROMPT: string =
+  "你在帮一个中文群聊机器人挑选要跟发的贴纸。你会收到这条回复的文本，以及一份可选贴纸的编号清单" +
+  "（每行格式为「编号. emoji 画面描述」）。请选出与这条回复的语气/情绪/内容最贴切、最「应景」的一枚，" +
+  "只输出它的编号数字；如果清单里没有一枚合适，只输出 NONE。不要输出任何其他内容、解释或标点。";
+/** 挑选调用的输出 token 上限：只需要输出一个编号或 NONE，给小额度防止推理
+ *  模型的思考阶段把额度烧空（同 REPLY_MAX_TOKENS 注释的坑）。 */
+export const STICKER_SELECTION_MAX_TOKENS: number = 1024;
+/** 挑选调用的生成温度：偏低，减少编号幻觉/文不对题的选择。 */
+export const STICKER_SELECTION_TEMPERATURE: number = 0.3;

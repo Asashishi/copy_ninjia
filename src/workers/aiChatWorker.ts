@@ -9,6 +9,8 @@ import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   AI_REPLY_COOLDOWN_MS,
   AI_SNAPSHOT_INTERVAL_MS,
+  ANIMATION_FALLBACK_PLACEHOLDER,
+  ANIMATION_PENDING_PLACEHOLDER,
   COMPACT_BATCH_SIZE,
   IMAGE_FALLBACK_PLACEHOLDER,
   IMAGE_PENDING_PLACEHOLDER,
@@ -24,6 +26,7 @@ import {
   REPLY_TEMPERATURE,
   SPLIT_REPLY_MAX_PARTS,
   SPLIT_REPLY_PROBABILITY,
+  STICKER_PENDING_PLACEHOLDER,
   SUMMARY_MAX_CHARS,
   SUMMARY_MAX_TOKENS,
   SUMMARY_SYSTEM_PROMPT,
@@ -52,21 +55,32 @@ import {
   triggerTimes,
   typingHeartbeats,
 } from "../cache/aiChatWorker";
-import type { BufferedMessage, XaiRequestTool } from "../types";
+import type { BufferedMessage, MediaKind, XaiRequestTool } from "../types";
 import { maybeAddReaction } from "../ai/reactions";
 import { maybeSendStickerReply } from "../ai/stickers";
-import { describeImage } from "../ai/imageDescription";
+import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
+import { stickerConfig } from "../ai/stickerConfig";
+import { describeMedia } from "../ai/imageDescription";
 import { extractFunctionCalls, extractOutputText, requestXaiResponse } from "../ai/xai";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../tools";
 import { getCurrentTime } from "../tools/time";
-import type { AiBotInfo, AiChatWorkerMessage, AiMemoryEvent, AiMemoryFlushedEvent, AiMemorySnapshot, AiRecordImageMessage, AiSentMessage } from "../types";
+import type {
+  AiBotInfo,
+  AiChatWorkerMessage,
+  AiMemoryEvent,
+  AiMemoryFlushedEvent,
+  AiMemorySnapshot,
+  AiRecordMediaMessage,
+  AiSentMessage,
+  AiStickerCatalogEvent,
+} from "../types";
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
- * 只做事件投递，重活全在这里：滚动对话缓存、图片占位与异步描述回填、冷却
- * 与双滑动窗口限频、拼装上下文、调 Grok（含 function calling 往返与内置
- * web_search）、连发消息、消息反应与贴纸跟发。发往 Telegram 的调用不回
+ * 只做事件投递，重活全在这里：滚动对话缓存、图片/贴纸/GIF 占位与异步描述
+ * 回填、冷却与双滑动窗口限频、拼装上下文、调 Grok（含 function calling 往返
+ * 与内置 web_search）、连发消息、消息反应与贴纸跟发。发往 Telegram 的调用不回
  * 主线程绕路——本线程 import telegram.ts 时会得到自己独立的 grammY Api
  * 客户端（那个 Bot 实例只用其 bot.api 发请求，从不 init/轮询；机器人自己
  * 的账号身份改由主线程在 bot.init() 后经 init 消息注入，见下方 botInfo）。
@@ -79,6 +93,11 @@ import type { AiBotInfo, AiChatWorkerMessage, AiMemoryEvent, AiMemoryFlushedEven
  *
  * 中期记忆：镜像/热块轮换机制见 consts/aiChat.ts 的 COMPACT_BATCH_SIZE 注释；
  * 轮换本身由 recordChatMessage/scheduleRotation/rotateCompaction 实现。
+ *
+ * 贴纸目录：白名单贴纸包（机器人自己要发的那些）的画面描述目录由
+ * ai/stickerCatalog.ts 生成/持久化，init 消息到达时后台启动生成（见
+ * ensureStickerCatalogs），与本文件的 dirty 记忆快照共用同一条上报/落盘
+ * 节奏（见文件底部的 setInterval 与 flushMemory 分支）。
  */
 
 declare var self: Worker;
@@ -104,7 +123,7 @@ function currentTimeSentence(): string {
 
 /**
  * 把一条已清洗好的缓存条目压进该群的滚动缓存，并按块边界触发轮换。
- * recordChatMessage / recordChatImage 共用——后者需要拿住条目对象的引用
+ * recordChatMessage / recordChatMedia 共用——后者需要拿住条目对象的引用
  * 以便异步回填描述，所以入队和构造条目分开。
  */
 function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
@@ -144,46 +163,105 @@ function recordChatMessage(chatId: number, id: number, firstName: string, lastNa
   pushBufferedMessage(chatId, { id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized, at: formatTokyoTime(Date.now()) });
 }
 
-/** 图片转录行：描述/占位标签在前，图片自带的 caption（若有）跟在后面。 */
-function composeImageText(tag: string, sanitizedCaption: string): string {
+/** 媒体转录行：描述/占位标签在前，媒体自带的 caption（若有）跟在后面
+ *  （贴纸没有 caption，恒为空串，等价于直接返回标签本身）。 */
+function composeMediaText(tag: string, sanitizedCaption: string): string {
   return sanitizedCaption ? `${tag} ${sanitizedCaption}` : tag;
 }
 
+/** 媒体刚入缓存、描述还没解析出来时的占位文本，按类型区分措辞。 */
+function pendingPlaceholderFor(kind: MediaKind): string {
+  switch (kind) {
+    case "sticker":
+      return STICKER_PENDING_PLACEHOLDER;
+    case "animation":
+      return ANIMATION_PENDING_PLACEHOLDER;
+    default:
+      return IMAGE_PENDING_PLACEHOLDER;
+  }
+}
+
+/** 解析成功后回填的描述标签，按类型区分措辞。 */
+function resolvedTagFor(kind: MediaKind, description: string): string {
+  switch (kind) {
+    case "sticker":
+      return `[贴纸：${description}]`;
+    case "animation":
+      return `[GIF：${description}]`;
+    default:
+      return `[图片：${description}]`;
+  }
+}
+
+/** 解析失败时回填的兜底文本：贴纸退回原有的元数据行（不丢失 emoji/包名
+ *  信息，见 ai/stickerSets.ts 的 describeStickerForContext），图片/GIF 用
+ *  通用的失败说明。 */
+function fallbackTextFor(kind: MediaKind, msg: AiRecordMediaMessage): string {
+  if (kind === "sticker") return msg.stickerFallbackText ?? IMAGE_FALLBACK_PLACEHOLDER;
+  if (kind === "animation") return ANIMATION_FALLBACK_PLACEHOLDER;
+  return IMAGE_FALLBACK_PLACEHOLDER;
+}
+
 /**
- * 记录一条图片消息：先以占位文本立即入缓存（保住它在对话时序里的位置），
- * 再异步下载/解析图片，解析完直接改写同一个条目对象的 text 字段回填描述。
- * 改写对象而不是回队列里找：条目引用一直攥在手里，即便这期间缓存滚动、
- * 该条目已被 scheduleRotation 快照进镜像批次（快照数组存的也是同一批对象
- * 引用），只要压缩调用还没把它序列化出去，回填一样能生效；已经被压缩/
- * 滑出的极端情形，摘要里留下的就是占位文本，可接受。解析失败回填为
- * 「[图片：解析失败，请无视此消息]」，明确告诉模型这行没有可用内容。
+ * 记录一条图片/贴纸/GIF 消息：先以占位文本立即入缓存（保住它在对话时序里
+ * 的位置），再异步下载/解析媒体，解析完直接改写同一个条目对象的 text
+ * 字段回填描述。改写对象而不是回队列里找：条目引用一直攥在手里，即便这
+ * 期间缓存滚动、该条目已被 scheduleRotation 快照进镜像批次（快照数组存的
+ * 也是同一批对象引用），只要压缩调用还没把它序列化出去，回填一样能生效；
+ * 已经被压缩/滑出的极端情形，摘要里留下的就是占位文本，可接受。解析失败
+ * 回填为兜底文本（见 fallbackTextFor），明确告诉模型这行没有可用内容
+ * （贴纸例外，退回元数据行仍是可用信息）。
  *
- * 主线程掷中评图（msg.commentOnResolve，概率/quiet/冷却都在那边把过关）
- * 且描述解析成功时，紧接着以「回复那条图片消息」的形式发一条针对图片
- * 内容的评价（见 generateAndSendReply 的 imageComment）——回填先于触发，
+ * 贴纸额外走一条捷径：若这枚贴纸恰好来自白名单包、目录里已经有现成描述
+ * （见 ai/stickerCatalog.ts 的 getCatalogEntry），直接一步到位写入描述，
+ * 跳过占位与异步解析——群友发的贴纸不少概率命中机器人自己也在用的白名单
+ * 包，省一次视觉调用。
+ *
+ * 主线程掷中评价（msg.commentOnResolve，概率/quiet/冷却都在那边把过关）
+ * 且描述解析成功时，紧接着以「回复那条消息」的形式发一条针对这份媒体
+ * 内容的评价（见 generateAndSendReply 的 mediaComment）——回填先于触发，
  * 模型拼上下文时看到的已是描述而非占位。解析失败没内容可评，静默放弃。
  *
  * 相册（一次发多张图）在 Telegram 侧本来就是多条相邻消息、各带一张图，
- * 天然逐条走这里，互不影响；每条图片消息各自占位、各自异步解析。
+ * 天然逐条走这里，互不影响；每条媒体消息各自占位、各自异步解析。
  */
-function recordChatImage(msg: AiRecordImageMessage): void {
+function recordChatMedia(msg: AiRecordMediaMessage): void {
   const sanitizedCaption: string = sanitizeInline(msg.caption);
+
+  if (msg.kind === "sticker") {
+    const catalogEntry = getCatalogEntry(msg.fileUniqueId);
+    if (catalogEntry) {
+      const entry: BufferedMessage = {
+        id: msg.senderId,
+        firstName: sanitizeInline(msg.firstName),
+        lastName: sanitizeInline(msg.lastName),
+        text: composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption),
+        at: formatTokyoTime(Date.now()),
+      };
+      pushBufferedMessage(msg.chatId, entry);
+      if (msg.commentOnResolve) {
+        generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: "sticker", senderName: displayName(entry), description: catalogEntry.description });
+      }
+      return;
+    }
+  }
+
   const entry: BufferedMessage = {
     id: msg.senderId,
     firstName: sanitizeInline(msg.firstName),
     lastName: sanitizeInline(msg.lastName),
-    text: composeImageText(IMAGE_PENDING_PLACEHOLDER, sanitizedCaption),
+    text: composeMediaText(pendingPlaceholderFor(msg.kind), sanitizedCaption),
     at: formatTokyoTime(Date.now()),
   };
   pushBufferedMessage(msg.chatId, entry);
-  // describeImage 内部兜住一切异常只返回 null，这条异步链不会 reject；
-  // 同图重发/刷屏由它按 file_unique_id 去重，不重复下载解析。
-  void describeImage(msg.fileId, msg.fileUniqueId).then((description: string | null) => {
-    entry.text = composeImageText(description ? `[图片：${description}]` : IMAGE_FALLBACK_PLACEHOLDER, sanitizedCaption);
+  // describeMedia 内部兜住一切异常只返回 null，这条异步链不会 reject；
+  // 同一份媒体重发/刷屏由它按 file_unique_id 去重，不重复下载解析。
+  void describeMedia(msg.kind, msg.fileId, msg.fileUniqueId).then((description: string | null) => {
+    entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
     dirtyMemoryChats.add(msg.chatId);
     if (msg.commentOnResolve && description) {
-      generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { senderName: displayName(entry), description });
+      generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: msg.kind, senderName: displayName(entry), description });
     }
   });
 }
@@ -342,10 +420,36 @@ function formatLine(m: BufferedMessage): string {
   return `${timePrefix}[id:${m.id}] ${displayName(m)}：${m.text}`;
 }
 
-/** 评图触发的附加上下文：发图人显示名 + 解析出的图片描述，见 recordChatImage。 */
-interface ImageCommentContext {
+/** 评价触发的附加上下文：发送人显示名 + 解析出的描述 + 媒体类型，见
+ *  recordChatMedia。kind 决定拼进提示词的措辞（"一张图片"/"一枚贴纸"/
+ *  "一个 GIF"）。 */
+interface MediaCommentContext {
+  kind: MediaKind;
   senderName: string;
   description: string;
+}
+
+/** 按媒体类型给出提示词里要用的名词短语与转录行标签，见 replyInstruction
+ *  的拼装。 */
+function mediaNounFor(kind: MediaKind): string {
+  switch (kind) {
+    case "sticker":
+      return "一枚贴纸";
+    case "animation":
+      return "一个 GIF（动图）";
+    default:
+      return "一张图片";
+  }
+}
+function mediaTagHintFor(kind: MediaKind): string {
+  switch (kind) {
+    case "sticker":
+      return "[贴纸：…]";
+    case "animation":
+      return "[GIF：…]";
+    default:
+      return "[图片：…]";
+  }
 }
 
 /** buildUserContent 的可选附加上下文，按需组合，见各字段说明。 */
@@ -359,9 +463,10 @@ interface UserContentOptions {
    *  显示名——这种情况下回复不会用 Telegram 的「回复」关联到原消息，要求模型
    *  改为在文字里点名称呼对方。 */
   addressee?: string;
-  /** 若本次是「解析完图片后评价图片」触发（见 recordChatImage），发图人与
-   *  图片描述——回复指令改为针对这张图发表评价，替代默认的「接住最新消息」。 */
-  imageComment?: ImageCommentContext;
+  /** 若本次是「解析完图片/贴纸/GIF 后评价它」触发（见 recordChatMedia），
+   *  发送人与描述——回复指令改为针对这份媒体发表评价，替代默认的「接住
+   *  最新消息」。 */
+  mediaComment?: MediaCommentContext;
 }
 
 /**
@@ -373,7 +478,7 @@ interface UserContentOptions {
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
 function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserContentOptions): string | null {
-  const { splitMode, repliedBotText, addressee, imageComment } = options;
+  const { splitMode, repliedBotText, addressee, mediaComment } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
@@ -392,10 +497,11 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
     ? `这条回复不会以「回复」形式关联到最新那条消息，所以开头要先点名称呼对方（TA 的名字是「${addressee}」，比如「${addressee}，……」；如果这个名字比较长念着别扭，可以自己判断截取其中简短自然的一部分来称呼，不必照抄全名），让人一眼看出你在接谁的话。`
     : "";
 
-  // 评图触发：不是「接住最新消息」，而是针对刚解析完的那张图发表评价——
-  // 这条回复会以 Telegram「回复」形式挂在图片消息上，谁都看得出在评哪张图。
-  const replyInstruction: string = imageComment
-    ? `刚才 ${imageComment.senderName} 在群里发了一张图片，图片内容是：「${imageComment.description}」（聊天记录里对应「[图片：…]」那行）。你的这条回复会以「回复」形式挂在那张图片上。请以你的人设，针对这张图片本身发表一两句评价/吐槽/调侃——评图片里的内容本身，自然一点，不要机械复述图片描述，也不要提"描述"两个字。只输出你要发到群里的那句话本身，不要任何解释、前缀、引号、代码块或「[id:...]」这类标记。`
+  // 评价触发：不是「接住最新消息」，而是针对刚解析完的那份图片/贴纸/GIF
+  // 发表评价——这条回复会以 Telegram「回复」形式挂在那条消息上，谁都看得出
+  // 在评哪一条。
+  const replyInstruction: string = mediaComment
+    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。你的这条回复会以「回复」形式挂在那条消息上。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。只输出你要发到群里的那句话本身，不要任何解释、前缀、引号、代码块或「[id:...]」这类标记。`
     : splitMode
     ? `请针对最新这条消息，以你的人设回复，并把回复拆成 2 到 ${SPLIT_REPLY_MAX_PARTS} 条连贯的短消息——就像真人打字时想到哪发到哪、一句接一句连发那样，每条一行、语义上前后衔接（比如先反应、再吐槽、再补一刀）。默认拆成 2~3 条就够了，只有真的意犹未尽、还有话要补时，才用到 4~${SPLIT_REPLY_MAX_PARTS} 条，不要为了凑数硬拆。${addressInstruction}只输出这几行消息本身，一行一条，不要编号、解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`
     : `请针对最新这条消息，以你的人设回复一到两句话，自然接住话题。${addressInstruction}只输出你要发到群里的那句话本身，不要任何解释、（称呼除外的）前缀、引号、代码块或「[id:...]」这类标记。`;
@@ -631,17 +737,17 @@ function notifyRateLimited(chatId: number, now: number): void {
  * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机搭话。
  *   这种情况不使用 Telegram 的回复引用（不去 @ 或挂起原消息），改为让模型
  *   在文字里直接点名称呼触发者，更像真人「指名道姓」地插句嘴而非正式回帖。
- * @param imageComment 若是「解析完图片后评价图片」触发（见 recordChatImage），
- *   发图人与图片描述——回复指令改为评图，回复引用挂在图片消息上
- *   （replyToMessageId 即那条图片消息）；冷却/双滑动窗口限频照常适用，
- *   评图触发同样占限频名额。
+ * @param mediaComment 若是「解析完图片/贴纸/GIF 后评价它」触发（见
+ *   recordChatMedia），发送人与描述——回复指令改为评价，回复引用挂在那条
+ *   媒体消息上（replyToMessageId 即那条消息）；冷却/双滑动窗口限频照常
+ *   适用，评价触发同样占限频名额。
  */
 function generateAndSendReply(
   chatId: number,
   replyToMessageId: number,
   repliedBotText: string | undefined,
   isRandomTrigger: boolean,
-  imageComment?: ImageCommentContext
+  mediaComment?: MediaCommentContext
 ): void {
   // init 消息在 index.ts 里先于 runner 启动送出，FIFO 保证它先到；走到这里
   // 说明编排被改坏了，丢弃触发并留痕，别让流水线在缺身份的情况下硬跑。
@@ -691,14 +797,14 @@ function generateAndSendReply(
   times.push(now);
   longTimes.push(now);
 
-  // 评图回复固定单条：它是对一张图的一句点评，拆成连发既不自然也没必要。
-  const splitMode: boolean = imageComment ? false : Math.random() < SPLIT_REPLY_PROBABILITY;
+  // 评价回复固定单条：它是对一份媒体的一句点评，拆成连发既不自然也没必要。
+  const splitMode: boolean = mediaComment ? false : Math.random() < SPLIT_REPLY_PROBABILITY;
 
   void (async (): Promise<void> => {
     const latestMessage: BufferedMessage | undefined = getLatestMessage(chatId);
     const addressee: string | undefined = isRandomTrigger && latestMessage ? displayName(latestMessage) : undefined;
 
-    const userContent: string | null = buildUserContent(chatId, selfInfo, { splitMode, repliedBotText, addressee, imageComment });
+    const userContent: string | null = buildUserContent(chatId, selfInfo, { splitMode, repliedBotText, addressee, mediaComment });
     if (!userContent) return;
 
     // 生成阶段（耗时不可控）用持续重发的心跳显示「正在输入…」，见
@@ -765,12 +871,17 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
   switch (msg.type) {
     case "init":
       botInfo = msg.botInfo;
+      // 白名单贴纸包的目录生成后台启动，不阻塞后续 record/trigger 的处理，
+      // 见 ai/stickerCatalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
+      // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
+      // 的条目再继续 diff（见该函数注释）。
+      ensureStickerCatalogs(stickerConfig.packs);
       break;
     case "record":
       recordChatMessage(msg.chatId, msg.senderId, msg.firstName, msg.lastName, msg.text);
       break;
-    case "recordImage":
-      recordChatImage(msg);
+    case "recordMedia":
+      recordChatMedia(msg);
       break;
     case "trigger":
       generateAndSendReply(msg.chatId, msg.replyToMessageId, msg.repliedBotText, msg.isRandomTrigger);
@@ -778,14 +889,21 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
     case "hydrate":
       hydrateMemories(msg.memories);
       break;
+    case "hydrateStickerCatalog":
+      hydrateStickerCatalogs(msg.catalogs);
+      break;
     case "flushMemory":
       flushDirtyMemories();
+      flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
       self.postMessage({ type: "memoryFlushed", flushId: msg.flushId } satisfies AiMemoryFlushedEvent);
       break;
   }
 };
 
-// dirty 群的记忆快照定时上报给主线程（进而落盘），见 consts/aiChat.ts 的
-// AI_SNAPSHOT_INTERVAL_MS 注释。Worker 线程活到进程退出为止，不需要
-// 引用计数/按需启停，无条目时 flushDirtyMemories 直接空转返回。
-setInterval(flushDirtyMemories, AI_SNAPSHOT_INTERVAL_MS);
+// dirty 群的记忆快照 + dirty 的贴纸目录定时上报给主线程（进而落盘），见
+// consts/aiChat.ts 的 AI_SNAPSHOT_INTERVAL_MS 注释。Worker 线程活到进程
+// 退出为止，不需要引用计数/按需启停，无条目时两个 flush 都直接空转返回。
+setInterval(() => {
+  flushDirtyMemories();
+  flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
+}, AI_SNAPSHOT_INTERVAL_MS);

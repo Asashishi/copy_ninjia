@@ -1,4 +1,5 @@
 import type { BufferedMessage } from "./aiChatWorker";
+import type { MediaKind } from "./media";
 
 /** Worker 侧自我认知所需的机器人账号身份（bot.init() 之后才可得，见 initAiChat）。 */
 export interface AiBotInfo {
@@ -23,27 +24,67 @@ export interface AiRecordMessage {
   text: string;
 }
 
-/** 主线程 -> Worker：把一条图片消息记入滚动缓存——先占位、异步解析出描述后
- * 原位回填，见 workers/aiChatWorker.ts 的 recordChatImage。相册是多条消息
- * 各带一张图，天然逐条投递。 */
-export interface AiRecordImageMessage {
-  type: "recordImage";
+/** 主线程 -> Worker：把一条图片/贴纸/GIF 消息记入滚动缓存——先占位、异步
+ * 解析出描述后原位回填，见 workers/aiChatWorker.ts 的 recordChatMedia。
+ * 相册是多条消息各带一张图，天然逐条投递。 */
+export interface AiRecordMediaMessage {
+  type: "recordMedia";
+  /** 媒体类型，决定占位符/视觉提示词/描述长度上限，见 ai/imageDescription.ts
+   * 的 describeMedia。 */
+  kind: MediaKind;
   chatId: number;
   senderId: number;
   firstName: string;
   lastName: string;
-  /** 图片自带的配文（没有则空串），跟在描述/占位标签后入转录行。 */
+  /** 媒体自带的配文（没有则空串），跟在描述/占位标签后入转录行。 */
   caption: string;
-  /** 已按大小挑好档位的 photo file_id（见 auto/message.ts 的 pickPhotoFile）。 */
+  /** 要下载的 Telegram file_id：图片是已按大小挑好档位的 photo file_id
+   * （见 auto/message.ts 的 pickPhotoFile）；贴纸/GIF 是本体或缩略图（见
+   * ai/stickerSets.ts 的 pickStickerVisionSource、auto/message.ts 的
+   * animation 分支），素材选择已在主线程完成。 */
   fileId: string;
-  /** 同一档位的 file_unique_id：同图重发 file_id 会变、它恒定，是描述去重
-   * 缓存的键（见 ai/imageDescription.ts 的 descriptionCache）。 */
+  /** 描述去重缓存的键：图片用同档位的 file_unique_id；贴纸/GIF 固定用媒体
+   * 自身（而非缩略图）的 file_unique_id，见 describeMedia 的参数注释。 */
   fileUniqueId: string;
-  /** 这条图片消息本身的 message_id，评图回复要用它挂 Telegram 回复引用。 */
+  /** 这条消息本身的 message_id，评图/评贴纸/评 GIF 回复要用它挂 Telegram
+   * 回复引用。 */
   messageId: number;
-  /** 主线程已掷中「解析完成后评价这张图」（概率见 AI_IMAGE_COMMENT_PROBABILITY，
-   * 已照顾 /quiet 与随机回复冷却）；Worker 在描述解析成功时执行评图回复。 */
+  /** 主线程已掷中「解析完成后评价这份媒体」（概率见 AI_MEDIA_COMMENT_PROBABILITY，
+   * 已照顾 /quiet 与随机回复冷却）；Worker 在描述解析成功时执行评价回复。 */
   commentOnResolve: boolean;
+  /** kind === "sticker" 时视觉解析失败的兜底文本（现有元数据行，见
+   * ai/stickerSets.ts 的 describeStickerForContext）——即便解析失败也不
+   * 丢失贴纸自带的 emoji/包名信息；其余 kind 不传。 */
+  stickerFallbackText?: string;
+}
+
+/** 单枚贴纸的目录条目：emoji 元数据 + AI 生成的画面描述（≤75 字，见
+ * consts/aiChat.ts 的 SHORT_MEDIA_DESCRIPTION_MAX_CHARS）。 */
+export interface StickerCatalogEntry {
+  emoji: string;
+  description: string;
+}
+
+/**
+ * 某个白名单贴纸包的目录快照：贴纸自身 file_unique_id -> 目录条目。落盘
+ * 结构见 memory/stickers/<pack>.json（src/workers/diskIO/snapshotFiles.ts）。
+ * 由 ai/stickerCatalog.ts 在 Worker 侧生成、aiChatWorker.ts 定期上报 dirty
+ * 包，经主线程 aiChat.ts 转投 diskIOWorker 落盘。
+ */
+export interface StickerCatalogSnapshot {
+  version: 1;
+  entries: Record<string, StickerCatalogEntry>;
+  savedAt: number;
+}
+
+/**
+ * 主线程 -> Worker：启动时（或本 Worker 崩溃重启后）灌入持久化的贴纸目录。
+ * 必须紧跟在 init 之后送达（FIFO），让 ensureStickerCatalogs 的 diff 生成
+ * 能看到已恢复的条目、不重复调视觉模型。只对内存里还没有数据的包生效。
+ */
+export interface AiHydrateStickerCatalogMessage {
+  type: "hydrateStickerCatalog";
+  catalogs: Map<string, StickerCatalogSnapshot>;
 }
 
 /** 主线程 -> Worker：触发一次 AI 回复（冷却/限频判定也在 Worker 侧做）。 */
@@ -89,7 +130,14 @@ export interface AiFlushMemoryMessage {
   flushId: number;
 }
 
-export type AiChatWorkerMessage = AiInitMessage | AiRecordMessage | AiRecordImageMessage | AiTriggerMessage | AiHydrateMessage | AiFlushMemoryMessage;
+export type AiChatWorkerMessage =
+  | AiInitMessage
+  | AiRecordMessage
+  | AiRecordMediaMessage
+  | AiTriggerMessage
+  | AiHydrateMessage
+  | AiHydrateStickerCatalogMessage
+  | AiFlushMemoryMessage;
 
 /**
  * Worker -> 主线程：一条消息已经发出去了（AI 回复或跟发的贴纸）。Worker
@@ -116,4 +164,13 @@ export interface AiMemoryFlushedEvent {
   flushId: number;
 }
 
-export type AiChatWorkerEvent = AiSentMessage | AiMemoryEvent | AiMemoryFlushedEvent;
+/** Worker -> 主线程：一个白名单贴纸包的目录快照（dirty 包定时上报，或
+ * flushMemory 触发的即时上报，见 ai/stickerCatalog.ts 的
+ * flushDirtyStickerCatalogs）。 */
+export interface AiStickerCatalogEvent {
+  type: "stickerCatalog";
+  pack: string;
+  snapshot: StickerCatalogSnapshot;
+}
+
+export type AiChatWorkerEvent = AiSentMessage | AiMemoryEvent | AiMemoryFlushedEvent | AiStickerCatalogEvent;

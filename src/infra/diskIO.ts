@@ -31,6 +31,8 @@ import type {
   LogMessage,
   LuckDayCache,
   LuckDrawDiskMessage,
+  StickerCatalogDiskMessage,
+  StickerCatalogSnapshot,
 } from "../types";
 
 const isMainThread: boolean = Bun.isMainThread;
@@ -125,13 +127,15 @@ export function relayLogMessage(message: LogMessage): void {
   diskIOWorker?.postMessage({ type: "log", ...message } satisfies LogEnvelope);
 }
 
-/** 主线程 -> diskIOWorker：AI 记忆快照的覆盖式写入 / 单次抽签结果的增量写入。 */
-export function postDiskIO(message: AiMemoryDiskMessage | LuckDrawDiskMessage): void {
+/** 主线程 -> diskIOWorker：AI 记忆快照 / 贴纸目录的覆盖式写入，或单次抽签
+ *  结果的增量写入。 */
+export function postDiskIO(message: AiMemoryDiskMessage | StickerCatalogDiskMessage | LuckDrawDiskMessage): void {
   diskIOWorker?.postMessage(message);
 }
 
 export interface LoadedData {
   aiMemories: Map<number, AiMemorySnapshot>;
+  stickerCatalogs: Map<string, StickerCatalogSnapshot>;
   luckDay: LuckDayCache | null;
 }
 
@@ -143,17 +147,17 @@ export interface LoadedData {
  */
 export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<LoadedData> {
   const worker: Worker | null = diskIOWorker;
-  const empty: LoadedData = { aiMemories: new Map(), luckDay: null };
+  const empty: LoadedData = { aiMemories: new Map(), stickerCatalogs: new Map(), luckDay: null };
   if (!worker) return Promise.resolve(empty);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pendingLoad.resolve = null;
-      console.error(`[diskIO] load handshake timed out after ${timeoutMs}ms; starting with empty AI memory/luck state.`);
+      console.error(`[diskIO] load handshake timed out after ${timeoutMs}ms; starting with empty AI memory/sticker catalog/luck state.`);
       resolve(empty);
     }, timeoutMs);
     pendingLoad.resolve = (reply: LoadedReply): void => {
       clearTimeout(timer);
-      resolve({ aiMemories: reply.aiMemories, luckDay: reply.luckDay });
+      resolve({ aiMemories: reply.aiMemories, stickerCatalogs: reply.stickerCatalogs, luckDay: reply.luckDay });
     };
     const request: LoadRequest = { type: "load" };
     worker.postMessage(request);

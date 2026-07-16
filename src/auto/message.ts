@@ -4,8 +4,8 @@ import { getActiveCopyIn, getChatState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
 import { cacheSender } from "../users/senderIdentity";
-import { recordChatMessage, recordChatImage, generateAndSendReply } from "../aiChat";
-import { AI_IMAGE_COMMENT_PROBABILITY, AI_REPLY_PROBABILITY, IMAGE_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
+import { recordChatMessage, recordChatMedia, generateAndSendReply } from "../aiChat";
+import { AI_MEDIA_COMMENT_PROBABILITY, AI_REPLY_PROBABILITY, MEDIA_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
@@ -17,7 +17,7 @@ import {
   USER_RANDOM_REPLY_COOLDOWN_MS,
 } from "../consts/auto";
 import { userRandomReplyTimes } from "../cache/auto";
-import { describeStickerForContext } from "../ai/stickerSets";
+import { describeStickerForContext, pickStickerVisionSource } from "../ai/stickerSets";
 import { pickRandom } from "../libs/random";
 import { isSelfSent } from "../infra/selfSentTracker";
 
@@ -168,11 +168,25 @@ function recordSelfInlineResult(message: any, botId: number, botFirstName: strin
 function pickPhotoFile(sizes: any[]): { fileId: string; fileUniqueId: string } {
   for (let i = sizes.length - 1; i >= 0; i--) {
     const size: any = sizes[i];
-    if (!size.file_size || size.file_size <= IMAGE_MAX_DOWNLOAD_BYTES) {
+    if (!size.file_size || size.file_size <= MEDIA_MAX_DOWNLOAD_BYTES) {
       return { fileId: size.file_id, fileUniqueId: size.file_unique_id };
     }
   }
   return { fileId: sizes[0].file_id, fileUniqueId: sizes[0].file_unique_id };
+}
+
+/**
+ * 选出一个 GIF（Telegram animation，实际多为 mp4）用于视觉解析的下载素材：
+ * 本项目没有视频解码/抽帧能力，只能分析 Telegram 自带的缩略图（通常是
+ * jpg，封面帧画面）；没有缩略图（罕见）则放弃视觉解析，返回 null。返回的
+ * fileUniqueId 恒为 animation 自身的 file_unique_id（同 ai/stickerSets.ts
+ * 的 pickStickerVisionSource 同一道理：与实际下载来源解耦，保证同一个 GIF
+ * 无论何时重发都记在同一个缓存键下）。
+ */
+function pickAnimationVisionSource(animation: any): { fileId: string; fileUniqueId: string } | null {
+  const thumbnailFileId: string | undefined = animation.thumbnail?.file_id;
+  if (!thumbnailFileId) return null;
+  return { fileId: thumbnailFileId, fileUniqueId: animation.file_unique_id };
 }
 
 /**
@@ -323,27 +337,69 @@ export async function handleIncomingMessage(
       return;
     }
   } else if (!isPrivateChat && !activeCopy && aiChatEnabled && message.sticker) {
-    // 贴纸消息没有文本，但其元数据（情绪 emoji、所属贴纸包）对 AI 理解群里的
-    // 情绪走向有参考价值：以描述行记入对话缓存，只当上下文，不触发 AI 回复；
-    // 也不 return——后面的随机复读本来就对贴纸生效，行为保持不变。
+    // 贴纸消息没有文本：先备好现有的元数据兜底行（情绪 emoji、所属贴纸包，
+    // 见 ai/stickerSets.ts 的 describeStickerForContext），再看有没有可用的
+    // 视觉解析素材（静态贴纸下载本体；动态/视频贴纸没有可解码的本体，改用
+    // 缩略图；两者都没有则放弃视觉，见 pickStickerVisionSource）。没有素材
+    // 就直接记兜底行；有素材则交给 AI Worker 走占位/异步解析管线（见
+    // aiChat.ts 的 recordChatMedia），解析成功原位回填画面描述，失败回填
+    // 同一份兜底行，都不损失现状已有信息。只当上下文，不触发 AI 回复（评价
+    // 例外见下方 commentOnResolve），也不 return——后面的随机复读本来就对
+    // 贴纸生效，行为保持不变。
     const speaker = resolveSpeaker(message);
-    recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, describeStickerForContext(message.sticker));
+    const fallbackText: string = describeStickerForContext(message.sticker);
+    const visionSource = pickStickerVisionSource(message.sticker);
+    if (!visionSource) {
+      recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, fallbackText);
+    } else {
+      // 例外：按 AI_MEDIA_COMMENT_PROBABILITY 掷中时，解析完成后 AI 会回复
+      // 那条贴纸消息评价它——图片/贴纸/GIF 共用同一份评价概率预算（不是
+      // 各自独立掷骰），掷骰在这里（主线程调度逻辑，与 AI_REPLY_PROBABILITY
+      // 同一分工），顺带套用 /quiet 静默与「群 × 用户」随机回复冷却——评价
+      // 本质上也是主动搭话，别对同一个人短时间连评。
+      const commentOnResolve: boolean =
+        !isQuiet && Math.random() < AI_MEDIA_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+      recordChatMedia(
+        "sticker",
+        chatId,
+        speaker.id,
+        speaker.firstName,
+        speaker.lastName,
+        "",
+        visionSource.fileId,
+        visionSource.fileUniqueId,
+        message.message_id,
+        commentOnResolve,
+        fallbackText
+      );
+    }
   } else if (!isPrivateChat && !activeCopy && aiChatEnabled && Array.isArray(message.photo) && message.photo.length > 0) {
     // 图片消息同样没有 text（配文在 caption 里），交给 AI Worker 先占位入
-    // 缓存、异步解析出描述后原位回填（见 aiChat.ts 的 recordChatImage）。
-    // 基线与贴纸同定位：只当上下文，不触发 AI 回复，也不 return——后面的
-    // 随机复读对图片本来就生效，行为保持不变。相册（一次发多张）是多条
-    // 相邻消息各带一张图，自然逐条走到这里，各自占位、各自解析。
-    // 例外：按 AI_IMAGE_COMMENT_PROBABILITY 掷中时，解析完成后 AI 会回复
-    // 那条图片消息评价图片。掷骰在这里（主线程调度逻辑，与
-    // AI_REPLY_PROBABILITY 同一分工），顺带套用 /quiet 静默与「群 × 用户」
-    // 随机回复冷却——评图本质上也是主动搭话，别对同一个人短时间连评。
+    // 缓存、异步解析出描述后原位回填（见 aiChat.ts 的 recordChatMedia）。
+    // 基线与贴纸/GIF 同定位：只当上下文，不触发 AI 回复，也不 return——
+    // 后面的随机复读对图片本来就生效，行为保持不变。相册（一次发多张）是
+    // 多条相邻消息各带一张图，自然逐条走到这里，各自占位、各自解析。
     const speaker = resolveSpeaker(message);
     const caption: string = typeof message.caption === "string" ? message.caption : "";
     const commentOnResolve: boolean =
-      !isQuiet && Math.random() < AI_IMAGE_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+      !isQuiet && Math.random() < AI_MEDIA_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
-    recordChatImage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption, photoFile.fileId, photoFile.fileUniqueId, message.message_id, commentOnResolve);
+    recordChatMedia("photo", chatId, speaker.id, speaker.firstName, speaker.lastName, caption, photoFile.fileId, photoFile.fileUniqueId, message.message_id, commentOnResolve);
+  } else if (!isPrivateChat && !activeCopy && aiChatEnabled && message.animation) {
+    // GIF（Telegram animation，实际多为 mp4）：本项目没有视频解码/抽帧能力，
+    // 只能分析 Telegram 自带的缩略图（封面帧，见 pickAnimationVisionSource）。
+    // 有缩略图就走占位/异步解析管线（同图片/贴纸）；没有缩略图（罕见）就
+    // 只记一条占位纯文本，不触发解析、也不参与评价掷骰。
+    const speaker = resolveSpeaker(message);
+    const caption: string = typeof message.caption === "string" ? message.caption : "";
+    const visionSource = pickAnimationVisionSource(message.animation);
+    if (!visionSource) {
+      recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption ? `[GIF] ${caption}` : "[GIF]");
+    } else {
+      const commentOnResolve: boolean =
+        !isQuiet && Math.random() < AI_MEDIA_COMMENT_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+      recordChatMedia("animation", chatId, speaker.id, speaker.firstName, speaker.lastName, caption, visionSource.fileId, visionSource.fileUniqueId, message.message_id, commentOnResolve);
+    }
   }
 
   // 没有复读对象时，说到洗澡/泡澡/冲凉就回一句「看看」（触发词规则见

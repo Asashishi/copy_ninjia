@@ -1,4 +1,4 @@
-import type { AiMemorySnapshot } from "./aiChat";
+import type { AiMemorySnapshot, StickerCatalogSnapshot } from "./aiChat";
 
 /**
  * 磁盘 IO 线程（src/workers/diskIOWorker.ts）统一的消息协议与快照类型：
@@ -31,6 +31,13 @@ export interface AiMemoryDiskMessage {
   snapshot: AiMemorySnapshot;
 }
 
+/** 主线程 -> diskIOWorker：覆盖式写入某个白名单贴纸包的目录快照。 */
+export interface StickerCatalogDiskMessage {
+  type: "stickerCatalog";
+  pack: string;
+  snapshot: StickerCatalogSnapshot;
+}
+
 /** 主线程 -> diskIOWorker：一次抽签结果的增量写入。 */
 export interface LuckDrawDiskMessage {
   type: "luckDraw";
@@ -56,7 +63,7 @@ export interface DiskFlushRequest {
   flushId: number;
 }
 
-export type DiskIOMessage = LogEnvelope | AiMemoryDiskMessage | LuckDrawDiskMessage | LoadRequest | DiskFlushRequest;
+export type DiskIOMessage = LogEnvelope | AiMemoryDiskMessage | StickerCatalogDiskMessage | LuckDrawDiskMessage | LoadRequest | DiskFlushRequest;
 
 /** 单条抽签结果的落盘/缓存形状：吉凶档 label + 该次浮动出的行大运概率。
  * fortunePercent 不再能从 label 反查得出（tier 的概率是区间浮动的，见
@@ -83,6 +90,7 @@ export interface LuckPendingEntry {
 export interface LoadedReply {
   type: "loaded";
   aiMemories: Map<number, AiMemorySnapshot>;
+  stickerCatalogs: Map<string, StickerCatalogSnapshot>;
   luckDay: LuckDayCache | null;
 }
 

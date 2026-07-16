@@ -27,6 +27,14 @@ export const FLUSH_INTERVAL_MS: number = 30_000;
 /** AI 记忆快照文件名形态（<chatId>.json，chatId 为整数，可为负）。 */
 export const AI_MEMORY_FILE_PATTERN: RegExp = /^(-?\d+)\.json$/;
 
+// ---- 贴纸目录 ----
+// 落盘/恢复机制与 AI 记忆快照完全一致（整份覆盖写 + tmp/rename 原子性），
+// 共用同一条定时落盘窗口（SNAPSHOT_FLUSH_INTERVAL_MS），见
+// workers/diskIOWorker.ts 的 flushSnapshots。
+
+/** 贴纸目录文件名形态（<pack>.json，pack 是贴纸集合的 short name）。 */
+export const STICKER_CATALOG_FILE_PATTERN: RegExp = /^(.+)\.json$/;
+
 /**
  * dirty 群的 AI 记忆快照，定时批量落盘的间隔。没有条数阈值——快照本身已在
  * aiChatWorker 侧按 AI_SNAPSHOT_INTERVAL_MS 节流（见 consts/aiChat.ts），
