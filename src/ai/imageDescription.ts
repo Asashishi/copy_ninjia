@@ -1,7 +1,7 @@
 /**
  * 群聊媒体（图片/贴纸/GIF）的异步描述：下载 Telegram 文件，按需转码成
- * xAI 视觉接口能收的 jpg/png（见 libs/image.ts），喂给 grok 的视觉输入，
- * 产出一行简短中文描述，供 workers/aiChatWorker.ts 的 recordChatMedia 把
+ * 视觉接口通吃的 jpg/png（见 libs/image.ts），喂给 Gemini 的视觉输入
+ * （inlineData），产出一行简短中文描述，供 workers/aiChatWorker.ts 的 recordChatMedia 把
  * 对话缓存里的占位文本替换掉，也供 ai/stickerCatalog.ts 生成机器人自己
  * 贴纸目录的描述条目。跑在 AI Worker 线程里（调用方就是它）。
  *
@@ -12,7 +12,7 @@
 
 import { logger } from "../infra/logger";
 import { bot, buildFileDownloadUrl } from "../infra/telegram";
-import { extractOutputText, requestXaiResponse } from "./xai";
+import { extractOutputText, requestGeminiResponse } from "./gemini";
 import { sanitizeInline, truncateInline } from "../libs/text";
 import { prepareVisionImage, type VisionImage } from "../libs/image";
 import { descriptionCache } from "../cache/imageDescription";
@@ -26,8 +26,8 @@ import {
   MEDIA_DOWNLOAD_TIMEOUT_MS,
   MEDIA_MAX_DOWNLOAD_BYTES,
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
+  GEMINI_MEDIA_MODEL,
   STICKER_DESCRIPTION_PROMPT,
-  XAI_MEDIA_MODEL,
 } from "../consts/aiChat";
 import type { MediaKind } from "../types";
 
@@ -125,23 +125,21 @@ async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<s
       logger.error(`Chat media (kind=${kind}) is an unsupported/unrecognized image format: ${file.file_path}`);
       return null;
     }
-    const dataUri: string = `data:${image.mime};base64,${image.bytes.toString("base64")}`;
-
-    const data: any = await requestXaiResponse(
+    const data: any = await requestGeminiResponse(
       {
-        model: XAI_MEDIA_MODEL,
-        input: [
+        model: GEMINI_MEDIA_MODEL,
+        contents: [
           {
             role: "user",
-            content: [
-              { type: "input_image", image_url: dataUri, detail: "high" },
-              { type: "input_text", text: promptFor(kind) },
+            parts: [
+              { inlineData: { mimeType: image.mime, data: image.bytes.toString("base64") } },
+              { text: promptFor(kind) },
             ],
           },
         ],
-        max_output_tokens: MEDIA_DESCRIPTION_MAX_TOKENS,
+        config: { maxOutputTokens: MEDIA_DESCRIPTION_MAX_TOKENS },
       },
-      "xAI image understanding API"
+      "Gemini image understanding API"
     );
     if (!data) return null;
     const description: string = sanitizeInline(extractOutputText(data));

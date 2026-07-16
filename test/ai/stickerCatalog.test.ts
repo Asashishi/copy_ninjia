@@ -7,7 +7,7 @@ import { describe, expect, mock, test } from "bun:test";
  * ai/stickerSets.ts（真实拉取贴纸集合）与 ai/imageDescription.ts（真实
  * 调视觉模型）也一并 mock 掉，换成测试可控的假实现——本文件只关心
  * generatePackCatalog 的对账逻辑（补/剪/失败时按兵不动），不关心真实网络
- * 调用是否成功（那部分由手动跑过的真实 xAI 调用验证过）。
+ * 调用是否成功（那部分由手动跑过的真实模型调用验证过）。
  */
 mock.module("../../src/infra/diskIO", () => ({
   postDiskIO: mock((..._args: unknown[]): void => {}),

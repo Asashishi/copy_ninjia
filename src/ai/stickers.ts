@@ -19,7 +19,7 @@ import type { StickerCatalogEntry, ToolDefinition } from "../types";
  * 工具定义是按次请求现组装的（不进 src/tools/ 的静态清单）：候选清单会
  * 随目录内容变化，且模型选中的编号要和组装工具描述时用的同一份候选数组
  * 对应，两处必须共享 buildStickerCandidates() 同一次调用的产出，见
- * workers/aiChatWorker.ts 的 callGrok。
+ * workers/aiChatWorker.ts 的 callGemini。
  */
 
 export interface StickerCandidate {
@@ -54,7 +54,6 @@ export function buildSendStickerToolDefinition(candidates: StickerCandidate[]): 
 
   const listText: string = candidates.map((c: StickerCandidate, i: number) => `${i + 1}. ${c.emoji || "（无 emoji）"} ${c.description}`).join("\n");
   return {
-    type: "function",
     name: SEND_STICKER_TOOL,
     description: SEND_STICKER_TOOL_INSTRUCTION + listText,
     parameters: {
@@ -85,9 +84,10 @@ export function parseStickerToolIndex(argumentsJson: string, candidateCount: num
 
 /**
  * 执行一次 send_sticker 工具调用：解析参数里的编号、发送对应贴纸。
- * @param candidates 必须是同一次 callGrok 调用里 buildStickerCandidates
+ * @param candidates 必须是同一次 callGemini 调用里 buildStickerCandidates
  *   产出的那份数组（与组装工具描述时用的编号一一对应，见模块头注）。
- * @param argumentsJson 模型给的参数（JSON 字符串），期望形如 `{"index": 3}`。
+ * @param argumentsJson 模型给的参数（Gemini 的 functionCall.args 对象经
+ *   JSON.stringify 后的字符串，见 callGemini），期望形如 `{"index": 3}`。
  * @param onSent 发送成功后的回调（描述行 + 消息 ID），供调用方自录记忆/
  *   登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。
  * @returns 喂回模型的结果字符串（成功/失败的简短说明，供模型决定后续

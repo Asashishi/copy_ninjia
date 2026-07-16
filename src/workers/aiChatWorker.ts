@@ -37,10 +37,10 @@ import {
   TYPING_DELAY_JITTER_MS,
   TYPING_DELAY_MAX_MS,
   TYPING_DELAY_PER_CHAR_MS,
+  GEMINI_REPLY_MODEL,
+  GEMINI_SUMMARY_MODEL,
   VERBATIM_CONTEXT_MAX,
   WEB_SEARCH_INSTRUCTION,
-  XAI_REPLY_MODEL,
-  XAI_SUMMARY_MODEL,
 } from "../consts/aiChat";
 import { FALLBACK_SPEAKER_NAME } from "../consts/auto";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
@@ -57,13 +57,13 @@ import {
   triggerTimes,
   typingHeartbeats,
 } from "../cache/aiChatWorker";
-import type { BufferedMessage, MediaKind, XaiRequestTool } from "../types";
+import type { BufferedMessage, GeminiRequestTool, MediaKind, ToolDefinition } from "../types";
 import { maybeAddReaction } from "../ai/reactions";
 import { buildSendStickerToolDefinition, buildStickerCandidates, sendStickerTool, type StickerCandidate } from "../ai/stickers";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
-import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestXaiResponse } from "../ai/xai";
+import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse } from "../ai/gemini";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../tools";
 import { SEND_STICKER_TOOL } from "../consts/tools";
@@ -81,17 +81,17 @@ import type {
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
  * 只做事件投递，重活全在这里：滚动对话缓存、图片/贴纸/GIF 占位与异步描述
- * 回填、冷却与双滑动窗口限频、拼装上下文、调 Grok（含 function calling 往返
- * 与内置 web_search）、连发消息、消息反应与贴纸跟发。发往 Telegram 的调用不回
+ * 回填、冷却与双滑动窗口限频、拼装上下文、调 Gemini（含 function calling 往返
+ * 与内置 googleSearch）、连发消息、消息反应与贴纸跟发。发往 Telegram 的调用不回
  * 主线程绕路——本线程 import telegram.ts 时会得到自己独立的 grammY Api
  * 客户端（那个 Bot 实例只用其 bot.api 发请求，从不 init/轮询；机器人自己
  * 的账号身份改由主线程在 bot.init() 后经 init 消息注入，见 cache/aiChatWorker.ts
  * 的 botInfoState）。error 日志经 logger.ts 的转发模式回传主线程统一落盘。
  *
- * AI 闲聊回复本体：把本群最近的对话记录喂给 xAI 的 grok（/v1/responses
- * 接口，收发细节见 ai/xai.ts），生成一条人设化回复；模型可自主使用内置的
- * web_search 服务端工具联网查证。人设文本存放在仓库根目录的
- * prompt/persona.md，修改人设不需要碰代码。
+ * AI 闲聊回复本体：把本群最近的对话记录喂给 Google 的 Gemini
+ * （generateContent 接口，收发细节见 ai/gemini.ts），生成一条人设化回复；
+ * 模型可自主使用内置的 googleSearch 服务端工具联网查证。人设文本存放在
+ * 仓库根目录的 prompt/persona.md，修改人设不需要碰代码。
  *
  * 中期记忆：镜像/热块轮换机制见 consts/aiChat.ts 的 COMPACT_BATCH_SIZE 注释；
  * 轮换本身由 recordChatMessage/scheduleRotation/rotateCompaction 实现。
@@ -107,7 +107,7 @@ declare var self: Worker;
 const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
 
 /**
- * 「当前实际时间：...（东京时间 UTC+9）。」——callGrok 的系统提示词与
+ * 「当前实际时间：...（东京时间 UTC+9）。」——callGemini 的系统提示词与
  * summarizeBatch 的摘要提示词共用同一句措辞，提成函数只为保证两处文案
  * 一致，不是抽成常量：时间本身必须现查，不能预先算好存成字面量（Worker
  * 线程常驻、一跑就是几天，缓存的时间会很快过期）。
@@ -373,7 +373,7 @@ function hydrateMemories(memories: Map<number, AiMemorySnapshot>): void {
 }
 
 /**
- * 调 Grok 把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
+ * 调 Gemini 把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
  * 人设、不带工具），产出压成单行并截断——摘要虽是模型生成的，但源头是
  * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
  */
@@ -381,20 +381,17 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
   const selfNote: string = botInfoState.current
     ? `注意：[id:${botInfoState.current.id}] 是群里的聊天机器人「${botInfoState.current.first_name}」本人的发言，摘要里请以「${botInfoState.current.first_name}」称呼它。\n\n`
     : "";
-  const data: any = await requestXaiResponse(
+  const data: any = await requestGeminiResponse(
     {
-      model: XAI_SUMMARY_MODEL,
-      input: [
-        {
-          role: "system",
-          content: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
-        },
-        { role: "user", content: selfNote + batch.map(formatLine).join("\n") },
-      ],
-      temperature: SUMMARY_TEMPERATURE,
-      max_output_tokens: SUMMARY_MAX_TOKENS,
+      model: GEMINI_SUMMARY_MODEL,
+      contents: [{ role: "user", parts: [{ text: selfNote + batch.map(formatLine).join("\n") }] }],
+      config: {
+        systemInstruction: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
+        temperature: SUMMARY_TEMPERATURE,
+        maxOutputTokens: SUMMARY_MAX_TOKENS,
+      },
     },
-    "xAI summarize API"
+    "Gemini summarize API"
   );
   if (!data) return null;
   const sanitized: string = sanitizeInline(extractOutputText(data));
@@ -541,69 +538,83 @@ function getLatestMessage(chatId: number): BufferedMessage | undefined {
 }
 
 /**
- * 调用 xAI 的 /v1/responses 接口生成一条回复（收发与响应解析在 ai/xai.ts）。
- * tools 带三类：内置的 web_search（xAI 服务器侧自动执行，模型自主决定
- * 要不要联网查证，结果直接体现在最终文本里）+ src/tools 里的静态自定义
- * 函数（目前是查东京天气）+ 按次请求现组装的 send_sticker（贴纸候选清单
- * 随目录内容变化，见 ai/stickers.ts）。自定义函数由模型以 function_call
- * 抛回来，执行后把上一轮的全部 output 成员原样接回 input、附上
- * function_call_output 再续跑（推理模型的 reasoning 成员也要一并带回，
- * 缺了会丢思考上下文），直到给出最终文本或达到轮数上限。send_sticker 的
- * 执行有副作用（真的发一条贴纸消息），成功后经 onStickerSent 回调交给
- * 调用方自录记忆/登记自发消息，其余工具仍走 src/tools 的纯查询式分发。
- * 查时间不走工具：当前时间默认拼进每次请求的系统提示词（见下方），转录行
- * 也自带每条消息的发送时间（见 formatLine），模型不需要判断要不要查。
+ * 调用 Gemini 的 generateContent 接口生成一条回复（收发与响应解析在
+ * ai/gemini.ts）。tools 带三类：内置的 googleSearch（Google 服务器侧自动
+ * 执行，模型自主决定要不要联网查证，结果直接体现在最终文本里）+ src/tools
+ * 里的静态自定义函数（目前是查东京天气）+ 按次请求现组装的 send_sticker
+ * （贴纸候选清单随目录内容变化，见 ai/stickers.ts）。自定义函数由模型以
+ * functionCall part 抛回来，执行后把上一轮模型的整个 content 原样接回
+ * contents、附上 functionResponse 再续跑（content 里的 thought signature
+ * 也要一并带回，缺了会丢思考上下文），直到给出最终文本或达到轮数上限。
+ * send_sticker 的执行有副作用（真的发一条贴纸消息），成功后经 onStickerSent
+ * 回调交给调用方自录记忆/登记自发消息，其余工具仍走 src/tools 的纯查询式
+ * 分发。查时间不走工具：当前时间默认拼进每次请求的系统提示词（见下方），
+ * 转录行也自带每条消息的发送时间（见 formatLine），模型不需要判断要不要查。
  * @param chatId 目标群聊——send_sticker 工具需要它来实际发送贴纸。
  * @param userContent buildUserContent 拼好的对话上下文。
  * @param onStickerSent send_sticker 工具调用发送成功后的回调（描述行 +
  *   消息 ID），语义与 ai/stickers.ts 的 sendStickerTool 的 onSent 参数一致。
  * @returns 清洗后的回复文本；请求失败、超时或空输出时返回 null。
  */
-async function callGrok(chatId: number, userContent: string, onStickerSent: (stickerDescription: string, messageId: number) => void): Promise<string | null> {
+async function callGemini(chatId: number, userContent: string, onStickerSent: (stickerDescription: string, messageId: number) => void): Promise<string | null> {
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
-  const input: any[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userContent },
-  ];
+  const contents: any[] = [{ role: "user", parts: [{ text: userContent }] }];
 
   // 候选清单只在本次调用开始时组装一次：send_sticker 工具描述里的编号
   // 顺序、参数校验范围，都必须对应这同一份数组，不能在后面的轮次里重新
   // 拉取（万一目录期间被后台更新，编号就对不上号了）。
   const stickerCandidates: StickerCandidate[] = await buildStickerCandidates();
   const stickerToolDefinition = buildSendStickerToolDefinition(stickerCandidates);
-  const tools: XaiRequestTool[] = [{ type: "web_search" }, ...TOOL_DEFINITIONS, ...(stickerToolDefinition ? [stickerToolDefinition] : [])];
+  const functionDeclarations: ToolDefinition[] = [...TOOL_DEFINITIONS, ...(stickerToolDefinition ? [stickerToolDefinition] : [])];
+  const tools: GeminiRequestTool[] = [{ googleSearch: {} }, { functionDeclarations }];
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
-    const data: any = await requestXaiResponse(
+    const data: any = await requestGeminiResponse(
       {
-        model: XAI_REPLY_MODEL,
-        input,
-        tools,
-        temperature: REPLY_TEMPERATURE,
-        max_output_tokens: REPLY_MAX_TOKENS,
+        model: GEMINI_REPLY_MODEL,
+        contents,
+        config: {
+          systemInstruction: systemPrompt,
+          tools,
+          // 内置 googleSearch 与自定义函数混用同一次请求时 API 硬性要求开
+          // 这个开关（不开直接 400）。开了之后服务端工具的执行记录会以
+          // toolCall/toolResponse part 的形式混进 content——它们不是
+          // functionCall part，extractFunctionCalls 不会误当成待执行的
+          // 自定义函数；多轮往返时随整个 content 原样接回即可（实测确认）。
+          toolConfig: { includeServerSideToolInvocations: true },
+          temperature: REPLY_TEMPERATURE,
+          maxOutputTokens: REPLY_MAX_TOKENS,
+        },
       },
-      "xAI API"
+      "Gemini API"
     );
     if (!data) return null;
 
     const functionCalls: any[] = extractFunctionCalls(data);
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
-      input.push(...(Array.isArray(data.output) ? data.output : []));
+      // 模型这一轮的 content 原样接回（缺了 thought signature 会丢思考
+      // 上下文），随后所有函数结果合并成一个 user turn 的 functionResponse
+      // parts 喂回去。
+      contents.push(data.candidates[0].content);
+      const responseParts: any[] = [];
       for (const call of functionCalls) {
         const result: string =
           call?.name === SEND_STICKER_TOOL
-            ? await sendStickerTool(chatId, stickerCandidates, call.arguments ?? "{}", onStickerSent)
+            ? await sendStickerTool(chatId, stickerCandidates, JSON.stringify(call.args ?? {}), onStickerSent)
             : await callTool(call?.name);
-        input.push({ type: "function_call_output", call_id: call.call_id, output: result });
+        // 工具实现返回的都是 JSON 字符串（见 src/tools 与 ai/stickers.ts），
+        // functionResponse.response 要求对象，解析回来直接挂上。
+        responseParts.push({ functionResponse: { id: call.id, name: call.name, response: JSON.parse(result) } });
       }
+      contents.push({ role: "user", parts: responseParts });
       continue;
     }
 
-    // 写到一半被 max_output_tokens 腰斩的半句话，宁可这轮不回，也不把断掉的
-    // 句子发到群里——真人不会发一半句子就没下文，见 ai/xai.ts 的
-    // isTruncatedByTokenLimit。web_search 命中时尤其容易撞进这种情况。
+    // 写到一半被 maxOutputTokens 腰斩的半句话，宁可这轮不回，也不把断掉的
+    // 句子发到群里——真人不会发一半句子就没下文，见 ai/gemini.ts 的
+    // isTruncatedByTokenLimit。googleSearch 命中时尤其容易撞进这种情况。
     if (isTruncatedByTokenLimit(data)) return null;
 
     const content: string = extractOutputText(data);
@@ -614,11 +625,11 @@ async function callGrok(chatId: number, userContent: string, onStickerSent: (sti
 }
 
 /**
- * 清洗模型的原始输出，得到可直接发送的纯回复文本：去掉 web_search 附带的
+ * 清洗模型的原始输出，得到可直接发送的纯回复文本：去掉联网搜索可能附带的
  * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
  * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
  * 空则返回 null。仅为可测试性而导出（见文件头同类导出的理由）；生产代码
- * 路径统一走 callGrok 内部调用。
+ * 路径统一走 callGemini 内部调用。
  */
 export function cleanReply(raw: string): string | null {
   // URL 部分故意不排除 `)`：链接本身带括号很常见（如维基百科的消歧义链接
@@ -670,7 +681,7 @@ function typingDelayMs(nextPart: string): number {
 }
 
 /**
- * 在 Grok 生成阶段（耗时不可控，最长可达 REQUEST_TIMEOUT_MS）持续显示
+ * 在 Gemini 生成阶段（耗时不可控，最长可达 REQUEST_TIMEOUT_MS）持续显示
  * 「正在输入…」：立即发一次，此后每隔 TYPING_ACTION_INTERVAL_MS 重发防止过期。
  * 只覆盖生成阶段——连发多条消息之间的停顿单次封顶不超过 Telegram 状态的
  * 过期时间，改由发送循环每次发送后显式补一次 sendTypingAction（见
@@ -738,7 +749,7 @@ function notifyRateLimited(chatId: number, now: number): void {
   void sendMessage(chatId, RATE_LIMIT_NOTICE_TEXT).then((sentMessageId: number | undefined) => {
     if (sentMessageId === undefined) return;
     // 跟其他几处发送一样报回主线程登记自发消息（见 generateAndSendReply 的
-    // sendMessage 调用、callGrok 的 onStickerSent 回调）：这条提示同样可能
+    // sendMessage 调用、callGemini 的 onStickerSent 回调）：这条提示同样可能
     // 落在频道，漏报的话频道自回环会被当成新内容，触发一轮不必要的 AI
     // 回复/随机复读。
     self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
@@ -842,13 +853,13 @@ function generateAndSendReply(
     };
 
     // 生成阶段（耗时不可控）用持续重发的心跳显示「正在输入…」，见
-    // startTypingHeartbeat；try/finally 保证即使 callGrok 抛异常，
+    // startTypingHeartbeat；try/finally 保证即使 callGemini 抛异常，
     // 心跳也一定会被停掉。生成结束后（无论成败）就不再需要它——发送阶段
     // 各段之间的停顿改由下面的发送循环逐次显式补一次，见那里的注释。
     const stopTyping: () => void = startTypingHeartbeat(chatId);
     let reply: string | null;
     try {
-      reply = await callGrok(chatId, userContent, onStickerSent);
+      reply = await callGemini(chatId, userContent, onStickerSent);
     } finally {
       stopTyping();
     }

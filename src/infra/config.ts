@@ -13,8 +13,8 @@ function requireEnv(name: string): string {
 
 export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 
-/** xAI (Grok) API 密钥，供 AI 闲聊回复/图片理解功能（src/workers/aiChatWorker.ts、src/ai/）调用。 */
-export const XAI_API_KEY: string = requireEnv("XAI_API_KEY");
+/** Google Gemini API 密钥，供 AI 闲聊回复/图片理解功能（src/workers/aiChatWorker.ts、src/ai/）调用。 */
+export const GEMINI_API_KEY: string = requireEnv("GEMINI_API_KEY");
 
 /** 免受 /copy 冷却限制、且可以使用 /kick 的用户 ID 白名单（逗号分割）。 */
 export const PRIVILEGED_USERS_ID: number[] = requireEnv("PRIVILEGED_USERS_ID")

@@ -18,39 +18,33 @@ export const AI_REPLY_PROBABILITY: number = 1 / 5;
  */
 export const AI_MEDIA_COMMENT_PROBABILITY: number = 1 / 8;
 
-/**
- * xAI API 的 base URL，喂给 openai SDK 的 baseURL（见 ai/xai.ts）——用的是
- * xAI 的 responses 接口（chat completions 在 xAI 已是 legacy，内置
- * web_search 等服务端工具只在 responses 上提供；已用官方 openai SDK 的
- * client.responses.create 实测确认 web_search + 自定义函数可以混用同一次
- * 请求，行为与直接打原始 REST 接口一致）。
- */
-export const XAI_BASE_URL: string = "https://api.x.ai/v1";
-/** 闲聊回复生成（callGrok）用的模型——人设发挥、工具调用都在这条链路上，
- *  给最新旗舰版本。 */
-export const XAI_REPLY_MODEL: string = "grok-4.5";
-/** 冷消息压缩（summarizeBatch）用的模型——中性总结任务，不需要追新版本。 */
-export const XAI_SUMMARY_MODEL: string = "grok-4.3";
+/** 闲聊回复生成（callGemini）用的模型——人设发挥、工具调用都在这条链路上。
+ *  三条链路统一用 gemini-3.1-flash-lite（内置 googleSearch 与自定义函数
+ *  可以混用同一次请求、支持视觉输入与多轮函数调用往返，收发见 ai/gemini.ts）。 */
+export const GEMINI_REPLY_MODEL: string = "gemini-3.1-flash-lite";
+/** 冷消息压缩（summarizeBatch）用的模型——中性总结任务。 */
+export const GEMINI_SUMMARY_MODEL: string = "gemini-3.1-flash-lite";
 /** 媒体（图片/贴纸/GIF）描述（describeMediaUncached）用的视觉模型。 */
-export const XAI_MEDIA_MODEL: string = "grok-4.3";
-/** 单次请求的超时（openai SDK 的 per-attempt timeout；SDK 默认对瞬时失败
- *  自动重试几次，每次重试各自套用这个超时预算，不是所有重试共享一个
- *  90 秒硬顶——这是比手写 fetch 更强的地方，瞬时的 5xx/连接错误能自愈）。 */
+export const GEMINI_MEDIA_MODEL: string = "gemini-3.1-flash-lite";
+/** 单次请求的超时（@google/genai SDK 的 httpOptions.timeout，per-attempt；
+ *  SDK 默认对瞬时失败（网络错误/5xx/429）自动重试几次，每次重试各自套用
+ *  这个超时预算，不是所有重试共享一个 90 秒硬顶——这是比手写 fetch 更强
+ *  的地方，瞬时的 5xx/连接错误能自愈）。 */
 export const REQUEST_TIMEOUT_MS: number = 90_000;
 
 /**
- * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。XAI_REPLY_MODEL
- * 与 XAI_SUMMARY_MODEL 都是推理模型，思考内容也计入 max_output_tokens（usage 的
- * output_tokens_details.reasoning_tokens，实测确认）：上限给小了，额度会在
- * 思考阶段就被烧光——请求返回 200 但 status=incomplete、正文为空，表现为
- * 静默失败（DeepSeek 时代压缩任务曾因 768 的旧上限反复空手而归，同一坑）。
- * max_output_tokens 只是封顶，按实际用量计费，放大上限不增加正常请求的开销。
+ * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。Gemini 的
+ * 思考内容也计入 maxOutputTokens（usageMetadata 的 thoughtsTokenCount）：
+ * 上限给小了，额度会在思考阶段就被烧光——请求返回 200 但 finishReason=
+ * MAX_TOKENS、正文为空，表现为静默失败（DeepSeek 时代压缩任务曾因 768 的
+ * 旧上限反复空手而归，同一坑）。
+ * maxOutputTokens 只是封顶，按实际用量计费，放大上限不增加正常请求的开销。
  *
  * REPLY_MAX_TOKENS 给得比 SUMMARY_MAX_TOKENS 更宽松：回复流水线挂了
- * web_search，命中搜索的那些请求要在 reasoning 预算里多担一层「决定要不要
- * 搜、消化搜索结果、整理带引用的正文」的开销，比纯聊天更容易顶到旧上限，
- * 表现为回复写到一半戛然而止（见 ai/xai.ts 的 isTruncatedByTokenLimit，
- * 命中时 callGrok 直接放弃这轮，不把断句发出去——但预算给够从源头上更该
+ * googleSearch，命中搜索的那些请求要在思考预算里多担一层「决定要不要
+ * 搜、消化搜索结果、整理正文」的开销，比纯聊天更容易顶到旧上限，
+ * 表现为回复写到一半戛然而止（见 ai/gemini.ts 的 isTruncatedByTokenLimit，
+ * 命中时 callGemini 直接放弃这轮，不把断句发出去——但预算给够从源头上更该
  * 优先，被动放弃只是兜底）。
  */
 export const REPLY_MAX_TOKENS: number = 24_576;
@@ -112,7 +106,7 @@ export const SUMMARY_SYSTEM_PROMPT: string =
   `严格控制篇幅：摘要正文不得超过 ${SUMMARY_MAX_CHARS} 字，不要展开细节、不要逐条复述，只挑最要紧的信息压缩成一段话。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。`;
 
 /**
- * callGrok 系统提示词里，紧跟在现查的「当前实际时间」句子之后的静态指令
+ * callGemini 系统提示词里，紧跟在现查的「当前实际时间」句子之后的静态指令
  * （时间句本身不能预先算好存成字面量：Worker 线程常驻，缓存的时间会很快
  * 过期，须现查，见 workers/aiChatWorker.ts 的 currentTimeSentence）。
  */
@@ -120,9 +114,9 @@ export const TIME_AWARENESS_INSTRUCTION: string =
   "聊天记录每行行首方括号里是那条消息的发送时间，回答时间/日期相关的问题、或判断某句话是多久之前说的，都以这些真实时间为准，不要编造。";
 
 /**
- * 鼓励模型主动用内置 web_search 工具核实信息，而不是瞎编或一味嘴硬拒答，
- * 见 workers/aiChatWorker.ts 的 callGrok（tools 数组里的 { type: "web_search" }）。
- * 搜索由 xAI 服务器侧自动执行，结果直接体现在最终文本里，不需要额外处理。
+ * 鼓励模型主动用内置 googleSearch 工具核实信息，而不是瞎编或一味嘴硬拒答，
+ * 见 workers/aiChatWorker.ts 的 callGemini（tools 数组里的 { googleSearch: {} }）。
+ * 搜索由 Google 服务器侧自动执行，结果直接体现在最终文本里，不需要额外处理。
  * persona.md「绝对不编造事实」一节配套调整过：真查不到/查了没意义才傲慢
  * 回绝，能查的先查证。
  */
@@ -243,8 +237,9 @@ export const MEDIA_DESCRIPTION_CACHE_MAX: number = 500;
 /** 媒体描述缓存条目的存活时间：超过上限个数靠插入序淘汰，超过这个时长则不管
  *  size 是否超限都主动清掉，双保险避免低流量长期运行下缓存无限期占内存。 */
 export const MEDIA_DESCRIPTION_CACHE_TTL_MS: number = 60 * 60 * 1000;
-/** 媒体下载大小上限：挑尺寸/素材来源时跳过超过它的档位（xAI 收 base64 后限
- *  20MiB，Telegram 压缩后的 photo/贴纸/缩略图远小于此，这只是防御性护栏）。 */
+/** 媒体下载大小上限：挑尺寸/素材来源时跳过超过它的档位（Gemini 对 inline
+ *  图片的整个请求体限 20MB，Telegram 压缩后的 photo/贴纸/缩略图远小于此，
+ *  这只是防御性护栏）。 */
 export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
 
 // ---- 应景贴纸（send_sticker 工具：模型在生成回复的同一次对话里自己决定

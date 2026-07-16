@@ -13,7 +13,7 @@ import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot
  * 生成 + 每次启动的对账：Worker 收到 init 消息后台启动（见
  * ensureStickerCatalogs），对每个包现查一次线上贴纸集合，与持久化目录
  * 双向对比——线上有、目录没有的补（串行逐枚调视觉模型生成，不并发轰
- * xAI）；目录有、线上已经没有的剪掉（贴纸被移出包/包被整理过，留着只会
+ * Gemini）；目录有、线上已经没有的剪掉（贴纸被移出包/包被整理过，留着只会
  * 让 getCatalogEntry 对一枚发不出去的贴纸给出「有效」描述）。查线上失败
  * 时整包跳过、不补也不剪，保留现状等下次启动重试——不能把「拉取失败」
  * 误判成「包被清空了」进而把好端端的目录铲掉。
@@ -73,7 +73,7 @@ export function flushDirtyStickerCatalogs(post: (event: AiStickerCatalogEvent) =
 
 /**
  * 后台生成/对账白名单各包的贴纸目录：现查一次线上贴纸集合，双向比对
- * persisted 目录——缺的补（串行逐枚调视觉模型生成，避免并发轰炸 xAI）、
+ * persisted 目录——缺的补（串行逐枚调视觉模型生成，避免并发轰炸 Gemini）、
  * 多余的剪（见 generatePackCatalog）。fire-and-forget，调用方（Worker 收到
  * init 消息时）不等待；同一个包已在对账/生成中则跳过，重复调用（如 Worker
  * 崩溃重启后重放 init）天然幂等。

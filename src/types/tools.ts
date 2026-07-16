@@ -1,8 +1,7 @@
-/** 供 workers/aiChatWorker.ts 走 xAI /v1/responses 接口调用的自定义函数工具
- * 定义结构。responses API 用的是扁平形态（name/description/parameters 直接
- * 挂在顶层），不是 chat completions 时代嵌在 function 字段里的旧形态。 */
+/** 供 workers/aiChatWorker.ts 走 Gemini generateContent 接口调用的自定义函数
+ * 声明结构（tools 数组成员 functionDeclarations 里的一项），字段即
+ * name/description/parameters（OpenAPI 子集 schema）。 */
 export interface ToolDefinition {
-  type: "function";
   name: string;
   description: string;
   parameters: {
@@ -12,14 +11,20 @@ export interface ToolDefinition {
   };
 }
 
-/** xAI 内置的服务端工具（联网搜索）：只声明类型，执行在 xAI 服务器侧自动
- * 完成，不会像自定义函数那样把 function_call 抛回来要结果。 */
-export interface WebSearchToolDefinition {
-  type: "web_search";
+/** Google 内置的服务端工具（联网搜索）：只声明存在，执行在 Google 服务器侧
+ * 自动完成，不会像自定义函数那样把 functionCall 抛回来要结果。 */
+export interface GoogleSearchToolDefinition {
+  googleSearch: Record<string, never>;
 }
 
-/** 一次 /v1/responses 请求的 tools 数组成员：自定义函数 + 内置服务端工具混用。 */
-export type XaiRequestTool = ToolDefinition | WebSearchToolDefinition;
+/** 自定义函数声明在一次请求 tools 数组里的挂载形态：一组声明包在
+ * functionDeclarations 字段下。 */
+export interface FunctionDeclarationsTool {
+  functionDeclarations: ToolDefinition[];
+}
+
+/** 一次 generateContent 请求的 tools 数组成员：自定义函数 + 内置服务端工具混用。 */
+export type GeminiRequestTool = FunctionDeclarationsTool | GoogleSearchToolDefinition;
 
 export interface TokyoWeatherResult {
   currentTemperatureC: number;

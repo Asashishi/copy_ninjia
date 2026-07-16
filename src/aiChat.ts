@@ -6,7 +6,7 @@ import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, 
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
- * 贴纸/GIF 占位与异步描述、冷却与限频、拼装上下文、调 Grok（含 function
+ * 贴纸/GIF 占位与异步描述、冷却与限频、拼装上下文、调 Gemini（含 function
  * calling 往返与内置 web_search）、连发消息、消息反应、贴纸跟发、白名单
  * 贴纸目录生成——全部在独立的 Bun Worker（src/workers/aiChatWorker.ts）里
  * 执行；主线程只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
