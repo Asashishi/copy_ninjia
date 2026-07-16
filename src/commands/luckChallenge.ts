@@ -10,8 +10,10 @@ import {
   RATE_LIMIT_WINDOW_MS,
 } from "../consts/luckChallenge";
 import { dailyLuckCache, luckCacheState, pendingLuckDraws, pendingLuckRenderIndex, recentCallTimestamps } from "../cache/luckChallenge";
+import { logger } from "../infra/logger";
+import { onDiskIORespawn, postDiskIO } from "../infra/diskIO";
 import { getTokyoDateKey } from "../libs/time";
-import type { LuckDraw, LuckTier } from "../types";
+import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
 
 /**
  * 抽今日运势，仅通过 Telegram 内联模式触发：在任意聊天框里
@@ -43,15 +45,17 @@ import type { LuckDraw, LuckTier } from "../types";
  * （每敲一下都可能触发一次），用户可能压根没打算测运势、只是消息恰好以
  * @本机器人 开头（比如单纯想 @ 机器人说句话），或者打到一半改主意删掉了。
  * 所以 getOrDrawLuck 在这里抽到的结果只进 pendingLuckDraws（见
- * cache/luckChallenge.ts），不算"今天测过"；真正被用户选中后才转正写入
- * dailyLuckCache。整套状态只活在内存里，刻意不落盘：一天一换的数据，
- * 进程重启丢了就当天重抽一次，代价可忽略，不值得为它维护一条持久化链路
- * （曾经落盘到 memory/luck/，已移除；memory/ 只留 AI 记忆）。
+ * cache/luckChallenge.ts），不落盘、也不算"今天测过"；真正被用户选中后才
+ * 转正写入 dailyLuckCache 并经 postDiskIO 转投 diskIOWorker 落盘
+ * （memory/luck/YYYY-MM-DD.json，按东京日期一个文件、只留当天，落盘机制
+ * 与日志同一套按位置追加/截断修复，见 workers/diskIO/luckFiles.ts），重启
+ * 后由 restoreLuckCache 灌回，当天结果不因重启改变；过期文件在写入时发现
+ * 跨天就删。
  *
  * 「被选中」的确认信号有两路，命中任意一路即转正（幂等，重复到达无害）：
  * - chosen_inline_result 更新（主路，见 handleLuckChosenInlineResult）：
  *   用户选中结果时 Telegram 直接推给机器人，带真实 uid 和查询词，与结果
- *   发到哪个聊天无关——机器人不在场的群/私聊里抽的签也能确认。需要
+ *   发到哪个聊天无关——机器人不在场的群/私聊里抽的签也能确认落盘。需要
  *   在 BotFather 用 /setinlinefeedback 开启（建议 100%），否则收不到。
  * - 结果消息现身（兜底，挂在 index.ts 的 isInit 网关之前，见
  *   confirmLuckDraw）：机器人在任何聊天里（含未 /init 的群、机器人自己的
@@ -88,7 +92,7 @@ function drawLuckTier(roll: number): LuckTier {
 
 /** 在 tier.fortunePercentRange [min, max] 内均匀浮动出本次抽签的行大运具体
  * 数值（%），保留两位小数；只在抽到新结果时滚动一次，随 tier 一起先进
- * pendingLuckDraws、确认后再进日缓存（见 LuckDraw、getOrDrawLuck、
+ * pendingLuckDraws、确认后再进日缓存/落盘（见 LuckDraw、getOrDrawLuck、
  * confirmLuckDraw），同一天同一 key 之后重复查询取到的都是这同一个数，
  * 不会每次查询都重新浮动。 */
 function rollFortunePercent([min, max]: [number, number]): number {
@@ -127,11 +131,11 @@ function registerPendingRendering(cacheKey: string, renderedText: string): void 
 }
 
 /**
- * 把一把待确认的抽签转正：pendingLuckDraws -> dailyLuckCache（纯内存，
- * 见模块头注释——刻意不落盘）。两路确认信号（chosen_inline_result /
- * 文本认领）共用；幂等，已转正或查无 pending（消息不是运势结果、或进程
- * 恰好在预览和选中之间重启导致内存态丢失）都什么都不做——宁可当天该 key
- * 之后被重新抽一次，也不要凭空转正一条用户从未真正确认过的记录。
+ * 把一把待确认的抽签转正：pendingLuckDraws -> dailyLuckCache -> postDiskIO
+ * 落盘。两路确认信号（chosen_inline_result / 文本认领）共用；幂等，
+ * 已转正或查无 pending（消息不是运势结果、或进程恰好在预览和选中之间重启
+ * 导致内存态丢失）都什么都不做——宁可当天该 key 之后被重新抽一次，也不要
+ * 凭空落盘一条用户从未真正确认过的记录。
  */
 function promotePendingDraw(cacheKey: string): void {
   const draw: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
@@ -139,6 +143,8 @@ function promotePendingDraw(cacheKey: string): void {
   if (!draw || dailyLuckCache.has(cacheKey)) return;
 
   dailyLuckCache.set(cacheKey, draw);
+  // day 用刚校准过的 luckCacheState.dayKey，与本次缓存写入用的是同一个"今天"。
+  postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key: cacheKey, label: draw.tier.label, fortunePercent: draw.fortunePercent });
 }
 
 /**
@@ -183,6 +189,53 @@ export function confirmLuckDraw(messageText: string | undefined): void {
   if (!cacheKey) return;
   pendingLuckRenderIndex.delete(messageText);
   promotePendingDraw(cacheKey);
+}
+
+// diskIOWorker 崩溃重建后，把当天缓存整份重发给它：dailyLuckCache 本来就
+// 活在主线程，不需要另设镜像，直接拿它当重放源即可（见 infra/diskIO.ts
+// 的 onDiskIORespawn 注释）。先校准一次「今天」：这份镜像只在真的有请求
+// 进来时才会惰性刷新（见 ensureCacheFreshForToday），若崩溃恰好发生在
+// 跨天之后、当天第一次请求之前，镜像里可能还留着昨天的 dayKey/条目——
+// 不校准就会把过期数据当成"今天"重发给新实例，污染它刚从磁盘正确恢复出
+// 的今天状态。
+onDiskIORespawn(() => {
+  ensureCacheFreshForToday();
+  if (dailyLuckCache.size === 0) return;
+  for (const [key, draw] of dailyLuckCache) {
+    postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key, label: draw.tier.label, fortunePercent: draw.fortunePercent });
+  }
+});
+
+/**
+ * 启动时接管 diskIOWorker load 回执里的当日运势缓存。day 与今天（东京时区）
+ * 不一致就整体丢弃——只在东京日期跨天在诊断窗口内发生时才会出现，此时
+ * 这份缓存已经是昨天的，没有接管的价值。按 LUCK_TIERS 反查 label 还原成
+ * LuckTier 对象，查不到（未来改了档位表）就丢弃该条并记日志，让用户当天
+ * 重抽，不硬造对象；fortunePercent 原样带回、不重新滚动，但要落在该 tier
+ * 当前的 fortunePercentRange 内才收——区间若也在这之间被改过，落盘的旧值
+ * 可能已经不在新区间里，同样丢弃该条记日志，语义与 label 查不到时一致。
+ * 必须在 runner 开始投喂 inline_query 之前调用（见 index.ts），否则会出现
+ * 「今天已抽过却又抽出新结果」。
+ */
+export function restoreLuckCache(loaded: LuckDayCache | null): void {
+  if (!loaded) return;
+  const todayKey: string = getTokyoDateKey();
+  if (loaded.day !== todayKey) return;
+
+  luckCacheState.dayKey = todayKey;
+  for (const [key, record] of loaded.entries) {
+    const tier: LuckTier | undefined = LUCK_TIERS.find((t) => t.label === record.label);
+    if (!tier) {
+      logger.error(`Restored luck entry "${key}" has label "${record.label}" that no longer matches any LUCK_TIERS entry; dropping it, the user will redraw today.`);
+      continue;
+    }
+    const [min, max] = tier.fortunePercentRange;
+    if (record.fortunePercent < min || record.fortunePercent > max) {
+      logger.error(`Restored luck entry "${key}" has fortunePercent ${record.fortunePercent} outside tier "${record.label}"'s current range [${min}, ${max}]; dropping it, the user will redraw today.`);
+      continue;
+    }
+    dailyLuckCache.set(key, { tier, fortunePercent: record.fortunePercent });
+  }
 }
 
 /** 取行大运/倒大霉里数字大的那个，语义见 LuckDraw.fortunePercent。100 减法后

@@ -2,6 +2,7 @@ import { logger } from "../infra/logger";
 import { readFileSync } from "node:fs";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { sleep } from "../libs/sleep";
+import { formatTokyoTime } from "../libs/time";
 import { sanitizeInline, truncateInline } from "../libs/text";
 import { PERSONA_PATH } from "../consts/paths";
 import {
@@ -125,7 +126,7 @@ function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
 function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, text: string): void {
   const sanitized: string = sanitizeInline(text);
   if (!sanitized) return;
-  pushBufferedMessage(chatId, { id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized, at: Date.now() });
+  pushBufferedMessage(chatId, { id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized, at: formatTokyoTime(Date.now()) });
 }
 
 /** 图片转录行：描述/占位标签在前，图片自带的 caption（若有）跟在后面。 */
@@ -157,7 +158,7 @@ function recordChatImage(msg: AiRecordImageMessage): void {
     firstName: sanitizeInline(msg.firstName),
     lastName: sanitizeInline(msg.lastName),
     text: composeImageText(IMAGE_PENDING_PLACEHOLDER, sanitizedCaption),
-    at: Date.now(),
+    at: formatTokyoTime(Date.now()),
   };
   pushBufferedMessage(msg.chatId, entry);
   // describeImage 内部兜住一切异常只返回 null，这条异步链不会 reject；
@@ -300,7 +301,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
           role: "system",
           content:
             `当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。` +
-            "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份。" +
+            "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份。" +
             "请把这段记录压缩成一段简洁的摘要，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
             "严格控制篇幅：摘要正文不得超过 500 字，不要展开细节、不要逐条复述，只挑最要紧的信息压缩成一段话。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。",
         },
@@ -322,21 +323,11 @@ function displayName(m: BufferedMessage): string {
   return [m.firstName, m.lastName].filter((p: string) => !!p).join(" ").trim() || "某杂鱼";
 }
 
-/** 转录行时间前缀的格式器：东京时间（UTC+9），形如「2026/07/16 21:35」。 */
-const LINE_TIME_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Tokyo",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
-/** 把一条缓存消息格式化成喂给模型的一行：先是发送时间（at 为 0 的旧条目
- *  时间未知，省略前缀），再标出 id 避免重名混淆身份。 */
+/** 把一条缓存消息格式化成喂给模型的一行：先是发送时间（记录时已格式化好
+ *  的字符串，直接拼；at 为空串的旧条目时间未知，省略前缀），再标出 id
+ *  避免重名混淆身份。 */
 function formatLine(m: BufferedMessage): string {
-  const timePrefix: string = m.at ? `[${LINE_TIME_FORMATTER.format(m.at)}] ` : "";
+  const timePrefix: string = m.at ? `[${m.at}] ` : "";
   return `${timePrefix}[id:${m.id}] ${displayName(m)}：${m.text}`;
 }
 
@@ -422,7 +413,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
 
   return (
     summaryBlock +
-    "以下是本群最近的聊天记录，每行格式为「[年/月/日 时:分] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间 UTC+9，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
+    "以下是本群最近的聊天记录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间 UTC+9，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
     selfIdentity +
     "\n\n" +
     lines.join("\n") +

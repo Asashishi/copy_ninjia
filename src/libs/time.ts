@@ -20,3 +20,25 @@ export function formatMinSec(ms: number): string {
 export function getTokyoDateKey(date: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
+
+/** formatTokyoTime 的格式器：模块加载时构造一次复用（Intl.DateTimeFormat
+ *  的构造远贵于 format 调用本身）。 */
+const TOKYO_TIME_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+/**
+ * 毫秒时间戳 → 东京时区的「2026/07/16 21:35:04」。AI 对话缓存条目
+ * （BufferedMessage.at）在记录时格式化一次、直接以此形态落盘/入转录行，
+ * 模型可直接读，之后拼上下文不再有任何格式化开销。
+ */
+export function formatTokyoTime(timestampMs: number): string {
+  return TOKYO_TIME_FORMATTER.format(timestampMs);
+}

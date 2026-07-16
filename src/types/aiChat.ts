@@ -57,7 +57,7 @@ export interface AiTriggerMessage {
 
 /**
  * 某个群的 AI 记忆快照：滚动缓存 + 中期摘要队列，落盘结构见
- * memory/<chatId>.json（src/workers/diskIO/snapshotFiles.ts）。由
+ * memory/ai/<chatId>.json（src/workers/diskIO/snapshotFiles.ts）。由
  * aiChatWorker 定期序列化 dirty 群上报（见 workers/aiChatWorker.ts 的
  * flushDirtyMemories），经主线程 aiChat.ts 转投 diskIOWorker 落盘。
  */

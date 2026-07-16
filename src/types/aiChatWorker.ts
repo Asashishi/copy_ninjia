@@ -4,8 +4,10 @@ export interface BufferedMessage {
   firstName: string;
   lastName: string;
   text: string;
-  /** 记录时刻（毫秒时间戳），转录行会带上它让模型知道每句话说于何时。
-   *  加此字段之前落盘的旧条目恢复时补 0（见 workers/diskIO/snapshotFiles.ts），
-   *  0 表示「时间未知」，转录行省略时间前缀。 */
-  at: number;
+  /** 记录时刻，东京时区的「2026/07/16 21:35:04」（见 libs/time.ts 的
+   *  formatTokyoTime）——记录时格式化一次，落盘/转录行直接用，模型可直读，
+   *  之后拼上下文零格式化开销。加此字段之前落盘的旧条目恢复时补空串
+   *  （时间未知，转录行省略时间前缀）；短暂存在过的毫秒数形态在恢复时
+   *  就地转成本格式（见 workers/diskIO/snapshotFiles.ts）。 */
+  at: string;
 }

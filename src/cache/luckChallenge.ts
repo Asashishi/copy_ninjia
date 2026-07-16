@@ -4,8 +4,9 @@ import type { LuckDraw } from "../types";
 
 /** 每日结果缓存：dayKey 记录当前缓存对应的东京时间日期，跟今天不一致就整体清空重开。
  * 只存"已确认"的抽签结果——即用户真的把它选中发了出来（chosen_inline_result
- * 或文本认领，见 commands/luckChallenge.ts）。纯内存、刻意不落盘：一天一换
- * 的数据，进程重启丢了就当天重抽，见 commands/luckChallenge.ts 模块头注释。 */
+ * 或文本认领，见 commands/luckChallenge.ts）。确认时同步经 postDiskIO 落盘到
+ * memory/luck/（只留当天一份文件），重启由 restoreLuckCache 灌回，见
+ * commands/luckChallenge.ts 模块头注释。 */
 export const luckCacheState: { dayKey: string } = { dayKey: "" };
 export const dailyLuckCache: Map<string, LuckDraw> = new Map();
 

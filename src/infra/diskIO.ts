@@ -1,12 +1,13 @@
 /**
- * 进程唯一的磁盘 IO 线程宿主（主线程侧）：统一承载日志落盘与 AI 记忆快照
- * ——由 diskIOWorker（原 loggerWorker）在单一 Worker 线程里串行执行，
- * 避免多个落盘线程并发写坏文件（见 infra/logger.ts 模块头注「唯一落盘
- * 线程」的定位）。
+ * 进程唯一的磁盘 IO 线程宿主（主线程侧）：统一承载日志落盘、AI 记忆快照、
+ * 每日运势快照——由 diskIOWorker（原 loggerWorker）在单一 Worker 线程里
+ * 串行执行，避免多个落盘线程并发写坏文件（见 infra/logger.ts 模块头注
+ * 「唯一落盘线程」的定位）。
  *
  * Worker 拥有权、崩溃自愈的重启节流、flush/load 握手全部收在这里；
  * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
- * aiChat.ts（AI 记忆）经 postDiskIO 投递快照写入。
+ * aiChat.ts（AI 记忆）与 commands/luckChallenge.ts（每日运势）经 postDiskIO
+ * 投递各自的增量写入。
  *
  * 本模块自身的错误一律 console.error（journal 兜底）——它就是落盘终点，
  * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是
@@ -28,12 +29,14 @@ import type {
   LoadedReply,
   LogEnvelope,
   LogMessage,
+  LuckDayCache,
+  LuckDrawDiskMessage,
 } from "../types";
 
 const isMainThread: boolean = Bun.isMainThread;
 
 // 落盘 Worker 崩溃自愈的节流，避免陷入无限重启烧 CPU；耗尽后只保留控制台
-// 输出（两类持久化都停，功能本身不受影响，只是不再落盘）。
+// 输出（三类持久化都停，功能本身不受影响，只是不再落盘）。
 const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
 
 // 落盘 Worker 只在主线程启动；Worker 线程里始终为 null，走转发模式（见
@@ -71,7 +74,7 @@ function createDiskIOWorker(): Worker {
     if (restartThrottle.shouldGiveUp()) {
       console.error(
         `[diskIO] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +
-        `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — logs and AI memory ` +
+        `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — logs, AI memory and daily luck draws ` +
         `will only stay in memory (no disk persistence) until the process restarts.`
       );
       diskIOWorker = null;
@@ -82,9 +85,10 @@ function createDiskIOWorker(): Worker {
     // 崩溃重建后的第一层恢复：新实例缓存全空，先自己读一次盘拿到最后一次
     // 成功落盘的状态。
     next.postMessage({ type: "load" } satisfies LoadRequest);
-    // 第二层恢复：把落盘间隔内的增量补齐，由登记的镜像重放负责——
-    // aiChat.ts 重发 latestAiMemories。两层叠加，load 先到（FIFO），重放
-    // 消息随后落在新实例已经热好的缓存之上，损失为零或接近零。
+    // 第二层恢复：把落盘间隔内的增量补齐，由各自登记的镜像重放负责——
+    // aiChat.ts 重发 latestAiMemories、commands/luckChallenge.ts 重发
+    // dailyLuckCache 当天全量。两层叠加，load 先到（FIFO），重放消息随后
+    // 落在新实例已经热好的缓存之上，损失为零或接近零。
     for (const listener of respawnListeners) {
       listener();
     }
@@ -96,8 +100,9 @@ const respawnListeners: (() => void)[] = [];
 
 /**
  * 注册一个回调：diskIOWorker 崩溃重建后调用，用于把主线程侧的镜像（AI 记忆
- * 的 latestAiMemories）重新投递给新实例，补齐上一次成功落盘之后的增量。
- * 落盘 Worker 是唯一的单例，登记一个回调即可，不需要通用的发布订阅机制。
+ * 的 latestAiMemories、运势的 dailyLuckCache）重新投递给新实例，补齐上一次
+ * 成功落盘之后的增量。落盘 Worker 是唯一的单例，AI 记忆与运势两个领域各自
+ * 登记一个回调即可，不需要通用的发布订阅机制。
  */
 export function onDiskIORespawn(callback: () => void): void {
   respawnListeners.push(callback);
@@ -108,33 +113,35 @@ export function relayLogMessage(message: LogMessage): void {
   diskIOWorker?.postMessage({ type: "log", ...message } satisfies LogEnvelope);
 }
 
-/** 主线程 -> diskIOWorker：AI 记忆快照的覆盖式写入。 */
-export function postDiskIO(message: AiMemoryDiskMessage): void {
+/** 主线程 -> diskIOWorker：AI 记忆快照的覆盖式写入 / 单次抽签结果的增量写入。 */
+export function postDiskIO(message: AiMemoryDiskMessage | LuckDrawDiskMessage): void {
   diskIOWorker?.postMessage(message);
 }
 
 export interface LoadedData {
   aiMemories: Map<number, AiMemorySnapshot>;
+  luckDay: LuckDayCache | null;
 }
 
 /**
  * 启动恢复：向 diskIOWorker 请求上一次成功落盘的全部状态，带超时兜底。
- * 必须在 runner 开始投喂更新之前调用并等待完成（见 index.ts）。
+ * 必须在 runner 开始投喂更新之前调用并等待完成（见 index.ts）——尤其是
+ * 运势缓存，主线程同步读写，晚灌会出现「今天已抽过却又抽出新结果」。
  * 超时或 Worker 不存在（自愈已放弃）时返回空数据，不阻塞 bot 启动。
  */
 export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<LoadedData> {
   const worker: Worker | null = diskIOWorker;
-  const empty: LoadedData = { aiMemories: new Map() };
+  const empty: LoadedData = { aiMemories: new Map(), luckDay: null };
   if (!worker) return Promise.resolve(empty);
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       pendingLoad.resolve = null;
-      console.error(`[diskIO] load handshake timed out after ${timeoutMs}ms; starting with empty AI memory state.`);
+      console.error(`[diskIO] load handshake timed out after ${timeoutMs}ms; starting with empty AI memory/luck state.`);
       resolve(empty);
     }, timeoutMs);
     pendingLoad.resolve = (reply: LoadedReply): void => {
       clearTimeout(timer);
-      resolve({ aiMemories: reply.aiMemories });
+      resolve({ aiMemories: reply.aiMemories, luckDay: reply.luckDay });
     };
     const request: LoadRequest = { type: "load" };
     worker.postMessage(request);
@@ -144,7 +151,7 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
 let nextFlushId: number = 1;
 
 /**
- * 要求 diskIOWorker 立即把两类 dirty 数据（日志/AI 记忆）全部落盘，
+ * 要求 diskIOWorker 立即把三类 dirty 数据（日志/AI 记忆/运势）全部落盘，
  * 并等待完成。用于进程退出前的最后一刷（替代原 flushLogs）。带超时兜底：
  * Worker 异常时停机流程最多被拖住 timeoutMs，不会挂死。
  */

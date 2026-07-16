@@ -1,6 +1,8 @@
 /**
- * memory/ 的启动恢复读取、结构校验与落盘。被 diskIOWorker.ts 调用；
- * 本文件不持有任何状态，纯函数式的读写辅助。
+ * memory/ai/ 与 memory/luck/ 的启动恢复读取、结构校验与落盘。被
+ * diskIOWorker.ts 调用；本文件不持有任何状态，纯函数式的读写辅助——文件
+ * 当前的 DayFileState/待写缓冲由调用方在 cache/diskIOWorker.ts 里持有，
+ * 按参数传进来。
  *
  * AI 记忆快照是整份覆盖写：先写 <file>.tmp 再 rename，rename 在同一文件
  * 系统内是原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），目标
@@ -8,14 +10,22 @@
  * JSON（同 infra/storage.ts persistStateJson 的原子性理由）——快照本身
  * 有固定上限（AI_MEMORY_HYDRATE_BUFFER_MAX/MAX_SUMMARY_ROUNDS），整份
  * 重写的开销不随时间增长，没有必要为它换成追加写。
+ *
+ * 每日运势是按位置追加写（见 appendLuckEntries）：entries 只增不改，
+ * 一天下来可能攒到不少条，整份重写的开销会随条数线性增长，值得换成只写
+ * 增量的追加机制，见 appendOnlyDayFile.ts 的模块头注释；换来的代价是单次
+ * 追加不再是"要么全新要么全旧"的原子操作，靠追加机制自带的截断修复兜底
+ * 断电风险（与日志文件同一套机制，那边已经这样跑了很久）。
  */
 
-import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AiMemorySnapshot, BufferedMessage } from "../../types";
-import { MEMORY_DIR } from "../../consts/paths";
-import { AI_MEMORY_FILE_PATTERN } from "../../consts/diskIO";
+import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types";
+import { AI_MEMORY_DIR, LUCK_MEMORY_DIR } from "../../consts/paths";
+import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
+import { formatTokyoTime } from "../../libs/time";
+import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 function atomicWriteJson(path: string, value: unknown): void {
   const tmpPath: string = `${path}.tmp`;
@@ -46,10 +56,14 @@ function isBufferedMessage(value: unknown): value is BufferedMessage {
   return typeof v.id === "number" && typeof v.firstName === "string" && typeof v.lastName === "string" && typeof v.text === "string";
 }
 
-/** 缓存条目逐字段重建：at 是后加的字段，旧文件里没有的补 0（时间未知，
- *  转录行会省略时间前缀，见 workers/aiChatWorker.ts 的 formatLine）。 */
+/** 缓存条目逐字段重建：at 是后加的字段，正常形态是格式化好的东京时间串
+ *  （见 types/aiChatWorker.ts）；曾短暂落盘过毫秒数形态，就地转成同一格式；
+ *  更早的旧文件没有该字段，补空串（时间未知，转录行会省略时间前缀，见
+ *  workers/aiChatWorker.ts 的 formatLine）。 */
 function rebuildBufferedMessage(v: BufferedMessage): BufferedMessage {
-  return { id: v.id, firstName: v.firstName, lastName: v.lastName, text: v.text, at: typeof (v as any).at === "number" ? (v as any).at : 0 };
+  const rawAt: unknown = (v as any).at;
+  const at: string = typeof rawAt === "string" ? rawAt : typeof rawAt === "number" && rawAt > 0 ? formatTokyoTime(rawAt) : "";
+  return { id: v.id, firstName: v.firstName, lastName: v.lastName, text: v.text, at };
 }
 
 /** 逐字段白名单重建（对齐 infra/storage.ts loadState 的做法），未知字段自然甩掉。 */
@@ -68,15 +82,15 @@ function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
 }
 
 /**
- * 启动恢复：建目录、清 memory/ 下的 *.tmp 残留（上次写一半的残留；
+ * 启动恢复：建目录、清 memory/ai/ 下的 *.tmp 残留（上次写一半的残留；
  * rename 原子性保证正式文件永远完好），校验/重建每个群的快照。文件名
  * 不是整数（chatId）的跳过；JSON.parse 失败的隔离为 .corrupt 并记日志。
  */
 export function recoverAiMemories(): Map<number, AiMemorySnapshot> {
-  mkdirSync(MEMORY_DIR, { recursive: true });
+  mkdirSync(AI_MEMORY_DIR, { recursive: true });
   const result: Map<number, AiMemorySnapshot> = new Map();
-  for (const name of readdirSync(MEMORY_DIR)) {
-    const path: string = join(MEMORY_DIR, name);
+  for (const name of readdirSync(AI_MEMORY_DIR)) {
+    const path: string = join(AI_MEMORY_DIR, name);
     if (name.endsWith(".tmp")) {
       tryUnlink(path);
       continue;
@@ -104,6 +118,75 @@ export function recoverAiMemories(): Map<number, AiMemorySnapshot> {
  * 一旦目录消失，写入会持续 ENOENT 失败且没有谁会重新把它建回来。
  */
 export function writeAiMemoryFile(chatId: number, snapshot: AiMemorySnapshot): void {
-  mkdirSync(MEMORY_DIR, { recursive: true });
-  atomicWriteJson(join(MEMORY_DIR, `${chatId}.json`), snapshot);
+  mkdirSync(AI_MEMORY_DIR, { recursive: true });
+  atomicWriteJson(join(AI_MEMORY_DIR, `${chatId}.json`), snapshot);
+}
+
+/**
+ * 删除 memory/luck/ 下所有非 todayKey 的 YYYY-MM-DD.json（只存一天，过期
+ * 即删）。.corrupt 隔离文件不匹配这个模式，不受影响，永久保留供排查。
+ */
+export function cleanupStaleLuckFiles(todayKey: string): void {
+  for (const name of readdirSync(LUCK_MEMORY_DIR)) {
+    const match = DAY_FILE_PATTERN.exec(name);
+    if (match && match[1] !== todayKey) {
+      tryUnlink(join(LUCK_MEMORY_DIR, name));
+    }
+  }
+}
+
+/**
+ * 启动恢复：建目录、清 *.tmp 残留（防御性——追加写不产生 .tmp，清一次
+ * 挡住外部干预留下的残留）、删除所有非今天的日期文件，只关心今天那份
+ * （不存在则返回 null）。今天那份解析失败（真正损坏，而不是可修复的截断
+ * ——截断修复已经在本次运行第一次 openDayFile 时做过一轮，这里读到的
+ * 要么是完整文件、要么已经被修过）就隔离为 .corrupt。
+ */
+export function recoverLuckDay(todayKey: string): LuckDayCache | null {
+  mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
+  for (const name of readdirSync(LUCK_MEMORY_DIR)) {
+    if (name.endsWith(".tmp")) tryUnlink(join(LUCK_MEMORY_DIR, name));
+  }
+  cleanupStaleLuckFiles(todayKey);
+
+  const todayPath: string = join(LUCK_MEMORY_DIR, `${todayKey}.json`);
+  if (!existsSync(todayPath)) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(todayPath, "utf8"));
+  } catch (error) {
+    quarantine(todayPath);
+    console.error(`[diskIOWorker] luck file ${todayKey}.json failed to parse, quarantined as .corrupt:`, error);
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const raw: any = parsed;
+  const entries: Map<string, LuckDrawRecord> = new Map();
+  for (const [key, value] of Object.entries(raw)) {
+    // entries 里结构不对的条目丢弃（结构性校验，不假设未来档位表长什么样），
+    // 当天重抽，见 types/diskIO.ts 的 LuckDayFile 注释。
+    if (!value || typeof value !== "object") continue;
+    const v: any = value;
+    if (typeof v.label === "string" && typeof v.fortunePercent === "number") {
+      entries.set(key, { label: v.label, fortunePercent: v.fortunePercent });
+    }
+  }
+  return { day: todayKey, entries };
+}
+
+/**
+ * 把一批新确认的运势条目追加到当天文件末尾（按位置追加，不整文件重写，
+ * 机制见 appendOnlyDayFile.ts）。fileState 由调用方（cache/diskIOWorker.ts
+ * 的 luckFileState）持有并传入：为 null 或 day 对不上（本次运行第一次写、
+ * 或刚跨天）时，先探测/接管一次对应日期的文件。pending 为空是防御性早退
+ * ——调用方按 dirty 判断只在非空时才会调用，这里不该真的走到。
+ */
+export function appendLuckEntries(day: string, fileState: { current: DayFileState | null }, pending: LuckPendingEntry[]): void {
+  if (pending.length === 0) return;
+  mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
+  if (fileState.current === null || fileState.current.day !== day) {
+    fileState.current = openDayFile(LUCK_MEMORY_DIR, day);
+  }
+  const chunk: string = pending.map((entry) => serializeDayFileEntry(entry.key, entry.record)).join(",\n");
+  appendToDayFile(LUCK_MEMORY_DIR, fileState.current, chunk);
 }
