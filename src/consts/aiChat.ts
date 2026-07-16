@@ -39,8 +39,15 @@ export const REQUEST_TIMEOUT_MS: number = 90_000;
  * 思考阶段就被烧光——请求返回 200 但 status=incomplete、正文为空，表现为
  * 静默失败（DeepSeek 时代压缩任务曾因 768 的旧上限反复空手而归，同一坑）。
  * max_output_tokens 只是封顶，按实际用量计费，放大上限不增加正常请求的开销。
+ *
+ * REPLY_MAX_TOKENS 给得比 SUMMARY_MAX_TOKENS 更宽松：回复流水线挂了
+ * web_search，命中搜索的那些请求要在 reasoning 预算里多担一层「决定要不要
+ * 搜、消化搜索结果、整理带引用的正文」的开销，比纯聊天更容易顶到旧上限，
+ * 表现为回复写到一半戛然而止（见 ai/xai.ts 的 isTruncatedByTokenLimit，
+ * 命中时 callGrok 直接放弃这轮，不把断句发出去——但预算给够从源头上更该
+ * 优先，被动放弃只是兜底）。
  */
-export const REPLY_MAX_TOKENS: number = 8192;
+export const REPLY_MAX_TOKENS: number = 24_576;
 export const SUMMARY_MAX_TOKENS: number = 8192;
 
 /** 冷消息压缩的生成温度：偏低，换取更忠实原文的摘要而非自由发挥。 */

@@ -61,7 +61,7 @@ import { buildSendStickerToolDefinition, buildStickerCandidates, sendStickerTool
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
-import { extractFunctionCalls, extractOutputText, requestXaiResponse } from "../ai/xai";
+import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestXaiResponse } from "../ai/xai";
 import { sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../tools";
 import { SEND_STICKER_TOOL } from "../consts/tools";
@@ -606,6 +606,11 @@ async function callGrok(chatId: number, userContent: string, onStickerSent: (sti
       continue;
     }
 
+    // 写到一半被 max_output_tokens 腰斩的半句话，宁可这轮不回，也不把断掉的
+    // 句子发到群里——真人不会发一半句子就没下文，见 ai/xai.ts 的
+    // isTruncatedByTokenLimit。web_search 命中时尤其容易撞进这种情况。
+    if (isTruncatedByTokenLimit(data)) return null;
+
     const content: string = extractOutputText(data);
     return content ? cleanReply(content) : null;
   }
@@ -620,7 +625,12 @@ async function callGrok(chatId: number, userContent: string, onStickerSent: (sti
  * 空则返回 null。
  */
 function cleanReply(raw: string): string | null {
-  let text: string = raw.replace(/\[\[\d+\]\]\([^)\s]*\)/g, "").trim();
+  // URL 部分故意不排除 `)`：链接本身带括号很常见（如维基百科的消歧义链接
+  // .../Foo_(bar)），排除 `)` 会让匹配在 URL 内部就截停，链接自己的右括号
+  // 和引用标记外层的右括号都留在正文里，读起来像话说到一半被打断。贪婪
+  // `[^\s]+` 配合回溯天然找到「最靠右的那个 `)`」，即引用标记真正的收尾，
+  // 内部括号也能正确整体吞掉。
+  let text: string = raw.replace(/\[\[\d+\]\]\([^\s]+\)/g, "").trim();
   if (!text) return null;
 
   const fenceMatch = text.match(/^```[a-zA-Z]*\n?([\s\S]*?)\n?```$/);

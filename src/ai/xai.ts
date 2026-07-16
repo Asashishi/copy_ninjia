@@ -60,15 +60,32 @@ export async function requestXaiResponse(body: Record<string, unknown>, errorLab
     return null;
   }
 
-  if (data.status === "incomplete" && !extractOutputText(data)) {
+  if (data.status === "incomplete") {
+    // 以前只在「没有任何正文」时才记日志——但 max_output_tokens 被烧光同样
+    // 会在「已经写出半句话」时打断生成，此时 extractOutputText 非空、
+    // 上层照样会把这半句话当正常回复发出去，观感上就是消息突然断掉。
+    // web_search 命中时尤其容易撞进这种情况（搜索+引用比纯聊天更吃
+    // reasoning 预算，见 consts/aiChat.ts 的 REPLY_MAX_TOKENS 注释），所以
+    // 不管有没有部分正文都记一条，方便观测这类「中途夭折」的频率。
     logger.error(
-      `${errorLabel} returned an incomplete response with no output text ` +
+      `${errorLabel} returned an incomplete response ` +
       `(reason: ${data.incomplete_details?.reason ?? "unknown"}, ` +
+      `hasPartialText=${!!extractOutputText(data)}, ` +
       `reasoning_tokens=${data.usage?.output_tokens_details?.reasoning_tokens ?? "?"}, ` +
       `max_output_tokens=${body.max_output_tokens ?? "?"}).`
     );
   }
   return data;
+}
+
+/**
+ * 响应是否因为撞上 max_output_tokens 而被腰斩——这类响应即便带着部分正文，
+ * 也是写到一半戛然而止，不该当成正常回复发出去（区别于其它 incomplete
+ * 原因，比如内容审核拦截，那种没有「差一点写完」的错觉，上层按空文本
+ * 处理即可）。调用方据此决定：与其把半句话发到群里，不如这轮直接放弃。
+ */
+export function isTruncatedByTokenLimit(data: any): boolean {
+  return data?.status === "incomplete" && data?.incomplete_details?.reason === "max_output_tokens";
 }
 
 /** 拼出响应里的最终文本：所有 message 成员的 output_text 段按序连接；没有则为空串。
