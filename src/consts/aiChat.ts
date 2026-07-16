@@ -120,14 +120,6 @@ export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
 export const RATE_LIMIT_NOTICE_COOLDOWN_MS: number = 60_000;
 
 /**
- * 判断一条消息是否在问时间/日期。命中时会把真实当前时间直接注入 prompt
- * （见 workers/aiChatWorker.ts 的 UserContentOptions.timeContext），而不是交给模型
- * 自己判断要不要查——auto 模式下模型经常瞎编时间而不调用工具，命中率太低。
- */
-export const TIME_INTENT_PATTERN: RegExp =
-  /现在几点|几点了|几点钟|现在.{0,4}时间|当前时间|今天.{0,3}[几号日]|几月几[号日]|星期几|周几|报时|what\s*time|current\s*time/i;
-
-/**
  * 一次工具调用往返最多允许几轮（模型要工具结果 -> 喂回去 -> 模型可能再要
  * 下一个工具……）。给个上限防止模型陷入死循环反复要工具，烧穿 API 配额。
  */

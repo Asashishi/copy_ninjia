@@ -25,7 +25,6 @@ import {
   SUMMARY_MAX_CHARS,
   SUMMARY_MAX_TOKENS,
   SUMMARY_TEMPERATURE,
-  TIME_INTENT_PATTERN,
   TYPING_ACTION_INTERVAL_MS,
   TYPING_DELAY_BASE_MS,
   TYPING_DELAY_JITTER_MS,
@@ -126,7 +125,7 @@ function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
 function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, text: string): void {
   const sanitized: string = sanitizeInline(text);
   if (!sanitized) return;
-  pushBufferedMessage(chatId, { id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized });
+  pushBufferedMessage(chatId, { id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized, at: Date.now() });
 }
 
 /** 图片转录行：描述/占位标签在前，图片自带的 caption（若有）跟在后面。 */
@@ -158,6 +157,7 @@ function recordChatImage(msg: AiRecordImageMessage): void {
     firstName: sanitizeInline(msg.firstName),
     lastName: sanitizeInline(msg.lastName),
     text: composeImageText(IMAGE_PENDING_PLACEHOLDER, sanitizedCaption),
+    at: Date.now(),
   };
   pushBufferedMessage(msg.chatId, entry);
   // describeImage 内部兜住一切异常只返回 null，这条异步链不会 reject；
@@ -299,8 +299,9 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
         {
           role: "system",
           content:
-            "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份。" +
-            "请把这段记录压缩成一段简洁的摘要，保留：聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
+            `当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。` +
+            "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份。" +
+            "请把这段记录压缩成一段简洁的摘要，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
             "严格控制篇幅：摘要正文不得超过 500 字，不要展开细节、不要逐条复述，只挑最要紧的信息压缩成一段话。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。",
         },
         { role: "user", content: selfNote + batch.map(formatLine).join("\n") },
@@ -321,9 +322,22 @@ function displayName(m: BufferedMessage): string {
   return [m.firstName, m.lastName].filter((p: string) => !!p).join(" ").trim() || "某杂鱼";
 }
 
-/** 把一条缓存消息格式化成喂给模型的一行：标出 id，避免重名混淆身份。 */
+/** 转录行时间前缀的格式器：东京时间（UTC+9），形如「2026/07/16 21:35」。 */
+const LINE_TIME_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** 把一条缓存消息格式化成喂给模型的一行：先是发送时间（at 为 0 的旧条目
+ *  时间未知，省略前缀），再标出 id 避免重名混淆身份。 */
 function formatLine(m: BufferedMessage): string {
-  return `[id:${m.id}] ${displayName(m)}：${m.text}`;
+  const timePrefix: string = m.at ? `[${LINE_TIME_FORMATTER.format(m.at)}] ` : "";
+  return `${timePrefix}[id:${m.id}] ${displayName(m)}：${m.text}`;
 }
 
 /** 评图触发的附加上下文：发图人显示名 + 解析出的图片描述，见 recordChatImage。 */
@@ -343,9 +357,6 @@ interface UserContentOptions {
    *  显示名——这种情况下回复不会用 Telegram 的「回复」关联到原消息，要求模型
    *  改为在文字里点名称呼对方。 */
   addressee?: string;
-  /** 若最新消息在问时间/日期（见 isTimeRelatedQuery），预先查好的真实当前时间
-   *  文本，直接喂给模型当已知事实用，不走 function calling。 */
-  timeContext?: string;
   /** 若本次是「解析完图片后评价图片」触发（见 recordChatImage），发图人与
    *  图片描述——回复指令改为针对这张图发表评价，替代默认的「接住最新消息」。 */
   imageComment?: ImageCommentContext;
@@ -360,7 +371,7 @@ interface UserContentOptions {
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
 function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserContentOptions): string | null {
-  const { splitMode, repliedBotText, addressee, timeContext, imageComment } = options;
+  const { splitMode, repliedBotText, addressee, imageComment } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
@@ -370,9 +381,6 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
     // 同样压成单行：这段文本虽是机器人自己说过的话，保持转录「一行一条」的
     // 结构不变即可杜绝任何多行伪造的可能。
     lines.push(`（你刚才说过：${sanitizeInline(repliedBotText)}）`);
-  }
-  if (timeContext) {
-    lines.push(`（提示：现在的实际时间是 ${timeContext}，如果最新消息在问时间/日期，请直接如实告知这个值，不要编造）`);
   }
 
   // 随机触发时这条回复不会挂 Telegram 的回复引用，得让模型自己在文字里点名，
@@ -414,7 +422,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
 
   return (
     summaryBlock +
-    "以下是本群最近的聊天记录，每行格式为「[id:用户ID] 名字：内容」，同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
+    "以下是本群最近的聊天记录，每行格式为「[年/月/日 时:分] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间 UTC+9，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
     selfIdentity +
     "\n\n" +
     lines.join("\n") +
@@ -429,27 +437,23 @@ function getLatestMessage(chatId: number): BufferedMessage | undefined {
   return buf?.last(1)[0];
 }
 
-/** 是否在问时间/日期（见 consts/aiChat.ts 的 TIME_INTENT_PATTERN 注释）。 */
-function isTimeRelatedQuery(text: string): boolean {
-  return TIME_INTENT_PATTERN.test(text);
-}
-
 /**
  * 调用 xAI 的 /v1/responses 接口生成一条回复（收发与响应解析在 ai/xai.ts）。
  * tools 带两类：内置的 web_search（xAI 服务器侧自动执行，模型自主决定
  * 要不要联网查证，结果直接体现在最终文本里）+ src/tools 里的自定义函数
- * （目前是查时间/东京天气）。自定义函数由模型以 function_call 抛回来，
+ * （目前是查东京天气）。自定义函数由模型以 function_call 抛回来，
  * 执行后把上一轮的全部 output 成员原样接回 input、附上 function_call_output
  * 再续跑（推理模型的 reasoning 成员也要一并带回，缺了会丢思考上下文），
  * 直到给出最终文本或达到轮数上限。
- * 查时间不依赖这条路，见 isTimeRelatedQuery + UserContentOptions.timeContext。
+ * 查时间不走工具：当前时间默认拼进每次请求的系统提示词（见下方），转录行
+ * 也自带每条消息的发送时间（见 formatLine），模型不需要判断要不要查。
  * @param userContent buildUserContent 拼好的对话上下文。
  * @returns 清洗后的回复文本；请求失败、超时或空输出时返回 null。
  */
 async function callGrok(userContent: string): Promise<string | null> {
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
-  const systemPrompt: string = `${SYSTEM_PROMPT}\n\n当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。`;
+  const systemPrompt: string = `${SYSTEM_PROMPT}\n\n当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。聊天记录每行行首方括号里是那条消息的发送时间，回答时间/日期相关的问题、或判断某句话是多久之前说的，都以这些真实时间为准，不要编造。`;
   const input: any[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
@@ -692,13 +696,8 @@ function generateAndSendReply(
   void (async (): Promise<void> => {
     const latestMessage: BufferedMessage | undefined = getLatestMessage(chatId);
     const addressee: string | undefined = isRandomTrigger && latestMessage ? displayName(latestMessage) : undefined;
-    // 评图不看「最新消息」——触发它的是图片解析完成，最新消息可能早已换了
-    // 话题，时间注入在这条路上没有意义。
-    const timeContext: string | undefined = !imageComment && isTimeRelatedQuery(latestMessage?.text ?? "")
-      ? `${getCurrentTime().formatted}（东京时间 UTC+9）`
-      : undefined;
 
-    const userContent: string | null = buildUserContent(chatId, selfInfo, { splitMode, repliedBotText, addressee, timeContext, imageComment });
+    const userContent: string | null = buildUserContent(chatId, selfInfo, { splitMode, repliedBotText, addressee, imageComment });
     if (!userContent) return;
 
     // 生成阶段（耗时不可控）用持续重发的心跳显示「正在输入…」，见

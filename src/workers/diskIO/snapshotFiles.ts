@@ -46,12 +46,18 @@ function isBufferedMessage(value: unknown): value is BufferedMessage {
   return typeof v.id === "number" && typeof v.firstName === "string" && typeof v.lastName === "string" && typeof v.text === "string";
 }
 
+/** 缓存条目逐字段重建：at 是后加的字段，旧文件里没有的补 0（时间未知，
+ *  转录行会省略时间前缀，见 workers/aiChatWorker.ts 的 formatLine）。 */
+function rebuildBufferedMessage(v: BufferedMessage): BufferedMessage {
+  return { id: v.id, firstName: v.firstName, lastName: v.lastName, text: v.text, at: typeof (v as any).at === "number" ? (v as any).at : 0 };
+}
+
 /** 逐字段白名单重建（对齐 infra/storage.ts loadState 的做法），未知字段自然甩掉。 */
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
   if (!parsed || typeof parsed !== "object") return null;
   const raw: any = parsed;
   const buffer: BufferedMessage[] = Array.isArray(raw.buffer)
-    ? raw.buffer.filter(isBufferedMessage).slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)
+    ? raw.buffer.filter(isBufferedMessage).map(rebuildBufferedMessage).slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)
     : [];
   const summaries: string[] = Array.isArray(raw.summaries)
     ? raw.summaries.filter((s: unknown): s is string => typeof s === "string").slice(-MAX_SUMMARY_ROUNDS)
