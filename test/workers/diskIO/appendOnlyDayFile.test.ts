@@ -143,4 +143,30 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     appendToDayFile(dir, recovered, serializeDayFileEntry("C", { label: "尚可", fortunePercent: 50 }));
     expect((readDay("2026-07-16") as any).C).toEqual({ label: "尚可", fortunePercent: 50 });
   });
+
+  test("截断修复：断电截断发生在第一条记录写入之前（文件只剩一个 \"{\"），修复出的空对象要被正确判成 empty，" +
+    "否则下一次追加会误判成「非空、按位置追加」写出非法 JSON（回归：曾导致这条记录永久丢失的级联损坏）", () => {
+    const path = join(dir, "2026-07-16.json");
+    require("node:fs").writeFileSync(path, "{");
+
+    const recovered: DayFileState = openDayFile(dir, "2026-07-16");
+    expect(recovered.empty).toBe(true);
+    expect(readDay("2026-07-16")).toEqual({});
+
+    // 关键回归点：empty 被正确置位后，下一次追加应走「整份覆写」分支，
+    // 产出合法 JSON；修复前 empty 被错误置为 false，这里会在 3 字节文件的
+    // 中间按位置写入，产出打头带逗号的非法 JSON。
+    appendToDayFile(dir, recovered, serializeDayFileEntry("111", { label: "大吉", fortunePercent: 90.12 }));
+    expect(readDay("2026-07-16")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+
+    // 再模拟一次重启，确认新记录在磁盘上是完整、可正常再次解析的合法 JSON
+    // （而不是修复前那样：产出的坏文件在下次启动时会被判定修复失败并放弃）。
+    const state3: DayFileState = openDayFile(dir, "2026-07-16");
+    expect(state3.empty).toBe(false);
+    appendToDayFile(dir, state3, serializeDayFileEntry("222", { label: "小吉", fortunePercent: 60 }));
+    expect(readDay("2026-07-16")).toEqual({
+      "111": { label: "大吉", fortunePercent: 90.12 },
+      "222": { label: "小吉", fortunePercent: 60 },
+    });
+  });
 });

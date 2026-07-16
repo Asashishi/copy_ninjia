@@ -36,6 +36,16 @@ export const AI_MEMORY_FILE_PATTERN: RegExp = /^(-?\d+)\.json$/;
 export const STICKER_CATALOG_FILE_PATTERN: RegExp = /^(.+)\.json$/;
 
 /**
+ * 按天文件（workers/diskIO/appendOnlyDayFile.ts）序列化时统一使用的 JSON
+ * 缩进宽度。三处强耦合，必须永远一致：openDayFile 的维护性整份重写、
+ * serializeDayFileEntry 的单条目序列化、repairTruncated 按这个缩进宽度
+ * 识别"一条完整记录的收尾行"。单独改其中一处会让 repairTruncated 的行
+ * 边界识别失效——断电截断的场景会从"能修复"静默退化成"直接放弃、从空
+ * 文件重开"，扩大数据丢失范围。
+ */
+export const DAY_FILE_JSON_INDENT: number = 2;
+
+/**
  * dirty 群的 AI 记忆快照，定时批量落盘的间隔。没有条数阈值——快照本身已在
  * aiChatWorker 侧按 AI_SNAPSHOT_INTERVAL_MS 节流（见 consts/aiChat.ts），
  * 到这里频率天然有界，且整份覆盖写的开销不随条数增长（快照有固定上限，

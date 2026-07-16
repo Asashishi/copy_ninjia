@@ -2,6 +2,7 @@ import { logger } from "../infra/logger";
 import type { Sticker, StickerSet } from "@grammyjs/types";
 import { getStickerSet, pickStickerVisionSource } from "./stickerSets";
 import { describeMedia } from "./imageDescription";
+import { catalogs, dirtyPacks, failedEntries, generatingPacks } from "../cache/stickerCatalog";
 import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot } from "../types";
 
 /**
@@ -22,16 +23,10 @@ import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot
  * hydrateStickerCatalogs 灌回、已有描述的贴纸不重新生成。整包级别的对账
  * （白名单里整个移除了某个包）不在这里——那是启动读盘时的事，见
  * workers/diskIO/snapshotFiles.ts 的 recoverStickerCatalogs。
+ *
+ * 内存态（catalogs/dirtyPacks/failedEntries/generatingPacks）见
+ * cache/stickerCatalog.ts。
  */
-
-/** 内存态：pack short name -> (贴纸自身 file_unique_id -> 目录条目)。 */
-const catalogs: Map<string, Map<string, StickerCatalogEntry>> = new Map();
-/** 自上次上报后有更新、待上报给主线程落盘的包。 */
-const dirtyPacks: Set<string> = new Set();
-/** 已知生成失败的贴纸（file_unique_id），本进程内不重试（重启后再试）。 */
-const failedEntries: Set<string> = new Set();
-/** 正在后台生成中的包，防止 init 消息重放（Worker 崩溃重启）时重复发起。 */
-const generatingPacks: Set<string> = new Set();
 
 function getPackMap(pack: string): Map<string, StickerCatalogEntry> {
   let map: Map<string, StickerCatalogEntry> | undefined = catalogs.get(pack);

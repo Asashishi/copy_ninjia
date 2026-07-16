@@ -10,6 +10,7 @@ import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitComm
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } from "./src/aiChat";
+import { seedSenderCache } from "./src/users/senderIdentity";
 import type { CachedUser } from "./src/types";
 
 /**
@@ -28,12 +29,12 @@ async function main(): Promise<void> {
   // initAntiRaid 之后才做（见下方），这里先只是把数据请回来。
   const loaded: LoadedData = await loadPersistedData();
 
-  // 恢复内存中的临时 users 缓存：目前正在被 copy 的用户/频道（全局唯一）
-  // 直接从全局复读状态派生，不需要再从另一份文件读入合并。
-  const users: Record<string, CachedUser> = {};
+  // 目前正在被 copy 的用户/频道（全局唯一）直接从全局复读状态派生，预热进
+  // 发送者身份缓存（见 users/senderIdentity.ts 的 seedSenderCache），让进程
+  // 重启后立刻能用 /copy @username 重新指到 TA，不必等 TA 再发一条消息刷新缓存。
   const restoredCopiedUser: CachedUser | null = getGlobalCopyState().copiedUser;
-  if (restoredCopiedUser?.username) {
-    users[restoredCopiedUser.username.toLowerCase()] = restoredCopiedUser;
+  if (restoredCopiedUser) {
+    seedSenderCache(restoredCopiedUser);
   }
 
   // 追踪已进入处理的最大 update_id。内建 bot.stop() 停机时会用它向 Telegram
@@ -103,18 +104,18 @@ async function main(): Promise<void> {
   });
 
   // 命令处理器要注册在通用消息处理器之前：匹配到命令时 grammY 不会再往下传给它。
-  bot.command("copy", (ctx) => handleCopyCommand(ctx, users));
-  bot.command("r_copy", (ctx) => handleCopyCommand(ctx, users, "reverse"));
-  bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, users, "nya"));
-  bot.command("ja_copy", (ctx) => handleJaCopyCommand(ctx, users));
-  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx, users));
+  bot.command("copy", (ctx) => handleCopyCommand(ctx));
+  bot.command("r_copy", (ctx) => handleCopyCommand(ctx, "reverse"));
+  bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, "nya"));
+  bot.command("ja_copy", (ctx) => handleJaCopyCommand(ctx));
+  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx));
   bot.command("stop_copy", (ctx) => handleStopCommand(ctx));
-  bot.command("kick", (ctx) => handleKickCommand(ctx, users));
+  bot.command("kick", (ctx) => handleKickCommand(ctx));
   bot.command("ai_chat", (ctx) => handleAiChatCommand(ctx));
   bot.command("init", (ctx) => handleInitCommand(ctx));
   bot.command("quiet", (ctx) => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx) => handleUnquietCommand(ctx));
-  bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx, users));
+  bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx));
   bot.on("message_reaction", (ctx) => handleReaction(ctx));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
   // 维护 ChatState.botIsAdmin（见该字段注释）。

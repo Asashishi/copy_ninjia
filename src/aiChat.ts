@@ -1,7 +1,7 @@
 import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
-import { latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes } from "./cache/aiChat";
+import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes } from "./cache/aiChat";
 import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, AiMemorySnapshot, MediaKind, StickerCatalogSnapshot } from "./types";
 
 /**
@@ -22,11 +22,6 @@ import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, 
  * 崩溃重启后凭它重放 hydrate（下方 onRespawn），diskIOWorker 崩溃重启后
  * 凭它重发落盘（下方 onDiskIORespawn），两条路径互不依赖。
  */
-
-// 重启后新 Worker 不知道机器人自己的账号身份，需要重放最近一次 init 消息
-// （见 initAiChat）；重启发生在 initAiChat 调用之前的话就没有可重放的，
-// 新 Worker 等本来就该来的那次 initAiChat 调用即可。
-let lastInit: AiInitMessage | null = null;
 
 const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
   url: new URL("./workers/aiChatWorker.ts", import.meta.url).href,
@@ -59,7 +54,9 @@ const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
   },
   onRespawn: (postToNext) => {
     // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
-    if (lastInit) postToNext(lastInit);
+    // 重启发生在 initAiChat 调用之前的话 lastInitState.current 仍是 null，
+    // 没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
+    if (lastInitState.current) postToNext(lastInitState.current);
     // 记忆镜像同样要重放：新 Worker 内存全空，凭上一实例上报过的最新快照
     // 补齐（见模块头注）。
     if (latestAiMemories.size > 0) {
@@ -88,7 +85,7 @@ onDiskIORespawn(() => {
  * 把机器人自己的账号身份注入 AI Worker。须在 bot.init() 之后、runner 开始
  * 投喂更新之前调用一次（见 index.ts）——FIFO 保证 init 消息先于一切
  * record/trigger 到达。Worker 靠它在转录里认出自己并自录自己发的消息。
- * 顺带记一份 lastInit：Worker 崩溃重启后要重放这条消息，新 Worker 才能
+ * 顺带记一份 lastInitState：Worker 崩溃重启后要重放这条消息，新 Worker 才能
  * 重新认出自己。
  */
 export function initAiChat(botInfo: AiBotInfo): void {
@@ -96,7 +93,7 @@ export function initAiChat(botInfo: AiBotInfo): void {
     type: "init",
     botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
   };
-  lastInit = message;
+  lastInitState.current = message;
   post(message);
 }
 

@@ -9,7 +9,10 @@
  * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写——具体的
  * 按位置追加/损坏修复机制见 diskIO/appendOnlyDayFile.ts。
  * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO.ts），跨天时自动清理
- * 过期文件。日期按系统本地时区划分（本机已设为 Asia/Tokyo）。
+ * 过期文件。日期显式按东京时区划分（同 libs/time.ts 的 getTokyoDateKey，
+ * 与运势/AI 记忆两个同进程内子系统口径一致），不依赖部署机器自身的系统
+ * 时区设置——不然一旦部署环境时区漂移，三类落盘数据会在同一次事故里表现
+ * 不一致（其余两类原本就显式用东京时区计算）。
  *
  * 本文件从原 src/workers/loggerWorker.ts 搬迁而来，落盘机制后续抽成了
  * diskIO/appendOnlyDayFile.ts，本文件自身的日志领域逻辑（buffer/阈值/
@@ -22,6 +25,7 @@ import type { LogMessage } from "../../types";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO";
 import { flushBuffer, loggerFileState } from "../../cache/diskIOWorker";
+import { getTokyoDateKey } from "../../libs/time";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 interface LogRecord {
@@ -32,22 +36,37 @@ interface LogRecord {
   args?: unknown[];
 }
 
-function pad(n: number, width: number = 2): string {
-  return String(n).padStart(width, "0");
-}
+/** 东京时区、含毫秒的日期时间格式器（模块加载时构造一次复用，同 libs/time.ts
+ *  的 TOKYO_TIME_FORMATTER 一个道理）。libs/time.ts 的 formatTokyoTime 没有
+ *  毫秒精度、分隔符也不同（"/" 而非 "-"），日志 key 需要毫秒来对齐同一秒内
+ *  多条日志的先后顺序，所以这里单独维护一份，不复用它。 */
+const TOKYO_DATETIME_MS_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  fractionalSecondDigits: 3,
+  hour12: false,
+});
 
-/** 毫秒时间戳 → 本地时区的「YYYY-MM-DD HH:mm:ss.SSS」。 */
+/** 毫秒时间戳 → 东京时区的「YYYY-MM-DD HH:mm:ss.SSS」，用作落盘日志条目的
+ *  key（人类可读部分；同一毫秒内的多条日志靠后缀的 UUID 区分，见
+ *  handleLogMessage）。用 formatToParts 手工拼接，不依赖某个 locale 恰好
+ *  输出这个分隔符形态。 */
 function formatDateTime(timestamp: number): string {
-  const d: Date = new Date(timestamp);
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`
-  );
+  const parts: Record<string, string> = {};
+  for (const part of TOKYO_DATETIME_MS_FORMATTER.formatToParts(timestamp)) {
+    if (part.type !== "literal") parts[part.type] = part.value;
+  }
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond}`;
 }
 
-/** 毫秒时间戳 → 本地时区的日期串（YYYY-MM-DD），用作日志文件名。 */
+/** 毫秒时间戳 → 东京时区的日期串（YYYY-MM-DD），用作日志文件名与保留期阈值计算。 */
 function dayKey(timestamp: number): string {
-  return formatDateTime(timestamp).slice(0, 10);
+  return getTokyoDateKey(new Date(timestamp));
 }
 
 /**

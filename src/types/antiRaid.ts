@@ -95,6 +95,14 @@ export interface VerifyCallbackMessage {
 export interface AdoptableLockdown {
   chatId: number;
   originalPermissions: ChatPermissions;
+  /**
+   * 距离应当恢复原始权限还剩多久（ms，已按 Math.max(0, ...) 夹到不为负）
+   * ——由主线程根据持久化的 LockdownRecord.expiresAt 与当前时刻算出，见
+   * src/antiRaid.ts 的 collectActiveLockdowns。部署本次修复之前落盘的旧格式
+   * 数据没有 expiresAt，退化为满额时长，语义与修复前一致（只是不再受益于
+   * 按真实剩余时长重排计时）。
+   */
+  remainingMs: number;
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser, ChatState } from "../types";
+import type { ChatState } from "../types";
 import { getOrCreateChatState, saveState } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { handleCopyCommand } from "./copy";
@@ -13,16 +13,13 @@ import { resolveSuperAdminToggleArg } from "./superAdminToggle";
  * 仅 SUPER_ADMIN_USER_ID 本人可用，不走 PRIVILEGED_USERS_ID 白名单——与
  * /ai_chat /init 共用同一批权限。
  */
-export async function handleJaCopyCommand(
-  ctx: CommandContext<Context>,
-  users: Record<string, CachedUser>
-): Promise<void> {
+export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise<void> {
   // 只有字面量 enable/disable 才是开关指令；空参数、@username、回复目标等
   // 一律当普通 /ja_copy 处理，转发给 handleCopyCommand 自行解析目标——否则
   // @username 这种非回复的指定目标语法会被误吞进下面的开关分支。
   const arg: string = ctx.match.trim().toLowerCase();
   if (arg !== "enable" && arg !== "disable") {
-    await handleCopyCommand(ctx, users, "ja");
+    await handleCopyCommand(ctx, "ja");
     return;
   }
 

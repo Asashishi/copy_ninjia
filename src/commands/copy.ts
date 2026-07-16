@@ -20,7 +20,6 @@ import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommand
  */
 export async function handleCopyCommand(
   ctx: CommandContext<Context>,
-  users: Record<string, CachedUser>,
   mode?: CopyMode
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -37,7 +36,7 @@ export async function handleCopyCommand(
   const cooldownClaim = await claimCopyCooldownOrReject(ctx.from, chatId, messageId);
   if (cooldownClaim.rejected) return;
 
-  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, users, "/copy");
+  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, "/copy");
   if (!targetUser) {
     releaseCopyCooldownClaim(cooldownClaim);
     return;

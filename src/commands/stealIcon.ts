@@ -12,17 +12,14 @@ import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommand
  * 冷却就形同虚设。不触碰复读状态：正在复读谁、用什么模式都保持原样，偷头像
  * 只是顺手换张脸。
  */
-export async function handleStealIconCommand(
-  ctx: CommandContext<Context>,
-  users: Record<string, CachedUser>
-): Promise<void> {
+export async function handleStealIconCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
 
   const cooldownClaim = await claimCopyCooldownOrReject(ctx.from, chatId, messageId);
   if (cooldownClaim.rejected) return;
 
-  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, users, "/steal_icon");
+  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, "/steal_icon");
   if (!targetUser) {
     releaseCopyCooldownClaim(cooldownClaim);
     return;

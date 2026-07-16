@@ -1,6 +1,18 @@
 import type { ChatPermissions } from "@grammyjs/types";
 
 /**
+ * 反刷群私密模式生效中时持久化的记录：不仅要有恢复用的原始权限，还要有
+ * 到期该恢复的绝对时间戳——否则进程/Worker 重启后无法知道"崩溃前已经锁了
+ * 多久"，只能无条件重新计满一整轮，可能把一次快到期的锁定意外延长到接近
+ * 两倍时长。见 src/antiRaid.ts 的 collectActiveLockdowns/onEvent。
+ */
+export interface LockdownRecord {
+  originalPermissions: ChatPermissions;
+  /** 私密模式到期应恢复原始权限的绝对时间戳（ms）。 */
+  expiresAt: number;
+}
+
+/**
  * 缓存的用户或频道信息，在内存中的 users map 里以小写 username 为键。`username`
  * 是可选的：通过回复某人消息解析出的目标（见 resolveReplyTarget）可能根本没有
  * 公开 username，这种情况下也不会被存入以 username 为键的 map。
@@ -30,10 +42,10 @@ export interface ChatState {
    */
   quietUntil?: number;
   /**
-   * 反刷群私密模式生效中时，锁定前的原始群权限（进程重启后据此重放给守卫
-   * Worker 重排解锁计时，见 src/antiRaid.ts）；不在私密模式时无此字段。
+   * 反刷群私密模式生效中时的记录（进程重启后据此重放给守卫 Worker、按真实
+   * 剩余时长重排解锁计时，见 src/antiRaid.ts）；不在私密模式时无此字段。
    */
-  lockdown?: ChatPermissions;
+  lockdown?: LockdownRecord;
   /**
    * 本群是否启用 AI 闲聊功能（对话缓存、随机插话、回复/@ 机器人触发的回复）。
    * 缺省视为禁用，需通过 /ai_chat enable 显式开启（仅 SUPER_ADMIN_USER_ID

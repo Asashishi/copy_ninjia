@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import type { CachedUser, ChatState, CopyMode } from "../types";
+import type { ChatState, CopyMode } from "../types";
 import { getActiveCopyIn, getChatState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
 import { applyCopyModeTransform } from "../copy/copyModes";
@@ -205,11 +205,15 @@ function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefined): C
 /**
  * 将一条消息复读回它所在的聊天，并按给定模式做文本变换。
  * @param mode 要应用的文本变换（undefined 表示原样复读）。
+ * @param expectedTargetId 若这是在复读某个锁定目标（而非无目标时的随机复读），
+ *   传入该目标的 id：翻译等待期间会重新核对复读是否仍然有效，见函数体注释；
+ *   无目标的随机复读不传，跳过这层核对（本就没有"目标"这个不变量要维护）。
  * @returns 实际发出去的文本（变换后的文本，或原样复读时的原文），供调用方
  *   决定要不要自录进 AI 对话缓存（见两处调用点：/copy 锁定目标期间故意不录，
- *   随机复读会录）；纯媒体消息（没有 text）或发送失败则返回 undefined。
+ *   随机复读会录）；纯媒体消息（没有 text）、发送失败、或复读在等待期间
+ *   已经失效则返回 undefined。
  */
-async function echoMessage(chatId: number, message: any, mode: CopyMode | undefined): Promise<string | undefined> {
+async function echoMessage(chatId: number, message: any, mode: CopyMode | undefined, expectedTargetId?: number): Promise<string | undefined> {
   const text: string = message.text || "";
   // 不复读指令消息，防止指令无限解析
   if (text.startsWith("/")) return undefined;
@@ -225,6 +229,16 @@ async function echoMessage(chatId: number, message: any, mode: CopyMode | undefi
   const transformed: string | null = isPlainText
     ? await applyCopyModeTransform(message.text, mode)
     : null;
+
+  // globalCopyState 是跨群共享的全局状态，不受 index.ts 里按 chat 分道的
+  // sequentialize 保护：/stop_copy 在任何群都能停（见 commands/copy.ts），
+  // 完全可能在上面的翻译等待期间从另一个群并发跑完并清空目标。这里用
+  // 调用方传入的 expectedTargetId 重新核对一次，避免出现"用户在别的群已经
+  // 收到复读已停止的确认，这个群却还是补发了一条复读"的场景；无目标的
+  // 随机复读不传 expectedTargetId，天然跳过。
+  if (expectedTargetId !== undefined && getActiveCopyIn(chatId)?.copiedUser.id !== expectedTargetId) {
+    return undefined;
+  }
 
   if (transformed !== null) {
     // 变换后的文本只当作纯文本发送（sendMessage 不带 parse_mode），不会被
@@ -269,10 +283,7 @@ function hasCopyableContent(message: any): boolean {
  * - isBotOwnMessage：机器人自己发出消息的原样回弹（频道自回环），整条跳过、
  *   连记忆都不留。
  */
-export async function handleIncomingMessage(
-  ctx: Context,
-  users: Record<string, CachedUser>
-): Promise<void> {
+export async function handleIncomingMessage(ctx: Context): Promise<void> {
   const message: any = ctx.msg;
   if (!message) return;
   if (message.via_bot?.id === ctx.me.id) {
@@ -282,7 +293,7 @@ export async function handleIncomingMessage(
   if (isBotOwnMessage(message, ctx.me.id)) return;
 
   const chatId: number = message.chat.id;
-  const senderId: number | undefined = cacheSender(message, users);
+  const senderId: number | undefined = cacheSender(message);
   const state: ChatState = getChatState(chatId);
 
   // 复读目标全局唯一，但复读只发生在发起 /copy 的那个群里（判定统一走
@@ -292,7 +303,7 @@ export async function handleIncomingMessage(
 
   // 检查是否需要复读当前目标（用户或频道皮套）的消息
   if (activeCopy && senderId === activeCopy.copiedUser.id) {
-    await echoMessage(chatId, message, resolveEffectiveCopyMode(chatId, activeCopy.copyMode));
+    await echoMessage(chatId, message, resolveEffectiveCopyMode(chatId, activeCopy.copyMode), activeCopy.copiedUser.id);
     return;
   }
 

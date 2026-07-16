@@ -46,8 +46,12 @@ export type LockdownMachineEvent =
   | { type: "restoreTimerFired" }
   /** beginRestore 副作用的回执。 */
   | { type: "restoreResult"; ok: boolean }
-  /** Worker 崩溃重启 / 进程重启后接管仍在生效的私密模式（权限已实际落在群上）。 */
-  | { type: "adopt"; originalPermissions: ChatPermissions };
+  /**
+   * Worker 崩溃重启 / 进程重启后接管仍在生效的私密模式（权限已实际落在群上）。
+   * remainingMs 由调用方（主线程 src/antiRaid.ts）根据持久化的 expiresAt 与
+   * 当前时刻算出，按真实剩余时长重排恢复计时，而不是无条件重新计满一整轮。
+   */
+  | { type: "adopt"; originalPermissions: ChatPermissions; remainingMs: number };
 
 export type LockdownEffect =
   /** 预热管理员表：锁定期内「管理员拉人免验证」只认同步缓存判定。 */
@@ -147,13 +151,15 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
     }
     case "adopt": {
       if (state !== undefined) return { next: state, effects: [] };
-      // 崩溃前已过去多久无从得知，计时满额重开——宁可多锁一会儿也不能不解锁。
+      // 按调用方算好的真实剩余时长重排计时（持久化记录带着 expiresAt，见
+      // LockdownRecord），而不是无条件重新计满一整轮——不然一次快到期的
+      // 锁定可能因为一次进程重启/Worker 自愈被意外延长到接近两倍时长。
       // 接管的记录直接视为已生效：镜像里只会出现权限已实际落地的私密模式。
       return {
         next: { kind: "active", originalPermissions: event.originalPermissions },
         effects: [
           { kind: "prefetchAdmins", onlyIfCold: false },
-          { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
+          { kind: "scheduleRestore", delayMs: event.remainingMs },
         ],
       };
     }

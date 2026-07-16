@@ -76,10 +76,9 @@ export function releaseCopyCooldownClaim(claim: { previousLastCopyTime: number |
  */
 export async function resolveCopyCommandTarget(
   ctx: CommandContext<Context>,
-  users: Record<string, CachedUser>,
   commandName: string
 ): Promise<CachedUser | undefined> {
-  return resolveCommandTarget(ctx, users, {
+  return resolveCommandTarget(ctx, {
     missingTarget: `笨蛋，要么 ${commandName} @username，要么直接回复 TA 的一条消息再 ${commandName}，本天才总得知道杂鱼是谁吧♡`,
     unknownUsername: (rawUsername: string) =>
       `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 ${commandName} 呀♡`,

@@ -3,9 +3,9 @@ import type { Context } from "grammy";
 import type { ChatMember, ChatPermissions } from "@grammyjs/types";
 import { getAllChatStates, getOrCreateChatState, saveState } from "./infra/storage";
 import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
-import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
+import { LOCKDOWN_MS, VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
 import { superviseWorker } from "./libs/supervisedWorker";
-import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "./types";
+import type { AdoptableLockdown, AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "./types";
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
@@ -27,12 +27,30 @@ import type { AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRa
  * 未到期的私密模式则已持久化在 state.json 里，下次启动重放接管。
  */
 
-/** 收集当前仍在生效的私密模式（chatId -> 锁定前的原始权限）。 */
-function collectActiveLockdowns(): { chatId: number; originalPermissions: ChatPermissions }[] {
-  const lockdowns: { chatId: number; originalPermissions: ChatPermissions }[] = [];
+/**
+ * 把一条持久化的私密模式记录换算成可 adopt 的形态：真实剩余时长 = expiresAt
+ * - 此刻，夹到不为负。兼容部署本次修复之前落盘的旧格式——那时 ChatState.lockdown
+ * 字段本身就是 ChatPermissions，没有 expiresAt 包装（loadState() 按字段
+ * 白名单从 JSON 里原样拷出来，不会做类型意义上的校验，磁盘上是什么形状就
+ * 是什么形状）；这类数据退化为满额时长，语义与修复前一致，只是不再受益于
+ * 按真实剩余时长重排计时，下一次真正触发的私密模式会以新格式重新落盘。
+ */
+function toAdoptableLockdown(chatId: number, record: unknown, now: number): AdoptableLockdown {
+  if (record && typeof record === "object" && "originalPermissions" in record) {
+    const { originalPermissions, expiresAt } = record as { originalPermissions: ChatPermissions; expiresAt: unknown };
+    const remainingMs: number = typeof expiresAt === "number" ? Math.max(0, expiresAt - now) : LOCKDOWN_MS;
+    return { chatId, originalPermissions, remainingMs };
+  }
+  return { chatId, originalPermissions: record as ChatPermissions, remainingMs: LOCKDOWN_MS };
+}
+
+/** 收集当前仍在生效的私密模式，换算出各自的真实剩余时长。 */
+function collectActiveLockdowns(): AdoptableLockdown[] {
+  const lockdowns: AdoptableLockdown[] = [];
+  const now: number = Date.now();
   for (const [chatId, chatState] of getAllChatStates()) {
     if (chatState.lockdown) {
-      lockdowns.push({ chatId, originalPermissions: chatState.lockdown });
+      lockdowns.push(toAdoptableLockdown(chatId, chatState.lockdown, now));
     }
   }
   return lockdowns;
@@ -52,7 +70,14 @@ const { post } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
   onEvent: (event) => {
     switch (event.type) {
       case "lockdown":
-        getOrCreateChatState(event.chatId).lockdown = event.originalPermissions;
+        // 权限真正落地的时刻就是现在（Worker 里 setChatPermissions 成功后
+        // 立即 postMessage，postMessage 本身近乎瞬时）：expiresAt 记下来，
+        // 供下次进程/Worker 重启时算出真实剩余时长重排计时，见
+        // collectActiveLockdowns。
+        getOrCreateChatState(event.chatId).lockdown = {
+          originalPermissions: event.originalPermissions,
+          expiresAt: Date.now() + LOCKDOWN_MS,
+        };
         void saveState();
         break;
       case "unlock":

@@ -67,7 +67,14 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
   if (cached) return cached;
 
   const pending: Promise<string | null> = describeMediaUncached(kind, fileId).then((description: string | null) => {
-    if (description === null) descriptionCache.delete(fileUniqueId);
+    // 按引用而非按 key 删——与下面 TTL 清理同样的理由：这份 pending 在解析
+    // 期间可能已经因为超过 500 条上限被淘汰、又被新的并发请求重新插入了
+    // 一份新 pending，此时这里必须认得出"当前占着这个 key 的不是自己"，
+    // 不能把新插入的那份连锅端掉（否则新请求的合并会落空，还会误删一份
+    // 可能已经解析成功、本该继续留在缓存里的有效结果）。
+    if (description === null && descriptionCache.get(fileUniqueId) === pending) {
+      descriptionCache.delete(fileUniqueId);
+    }
     return description;
   });
   descriptionCache.set(fileUniqueId, pending);

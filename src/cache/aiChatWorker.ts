@@ -1,11 +1,16 @@
 import type { LinkedQueue } from "../libs/linkedQueue";
-import type { BufferedMessage } from "../types";
+import type { AiBotInfo, BufferedMessage } from "../types";
 
 /**
  * AI 闲聊流水线（src/workers/aiChatWorker.ts）的内存状态。本模块只被 Worker 线程
  * import，所有状态都存活在该线程内；仅存于内存，重启即清空（本功能不做
  * 持久记忆）。
  */
+
+/** 机器人自己的账号身份，由主线程 bot.init() 之后经 init 消息注入（见
+ *  workers/aiChatWorker.ts 的 self.onmessage "init" 分支）；本 Worker 重建
+ *  之前始终为 null。 */
+export const botInfoState: { current: AiBotInfo | null } = { current: null };
 
 /** 各群聊上一次 AI 回复的触发时刻（毫秒时间戳），用于冷却判断。 */
 export const lastReplyTimes: Map<number, number> = new Map();

@@ -193,12 +193,16 @@ export const STICKER_PENDING_PLACEHOLDER: string = "[贴纸：识别中]";
 export const ANIMATION_PENDING_PLACEHOLDER: string = "[GIF：识别中]";
 export const ANIMATION_FALLBACK_PLACEHOLDER: string = "[GIF：解析失败，请无视此消息]";
 
+/** 图片描述的字数上限：prompt 文案与入缓存前的硬性截断共用同一个常量
+ *  （同下方贴纸/GIF 的 SHORT_MEDIA_DESCRIPTION_MAX_CHARS 一个道理），避免
+ *  文案里的数字和 truncateInline 真正生效的截断值各改各的漂移——曾经这里
+ *  各写各的（文案 120、截断 200），模型没能精确遵循字数指令时实际入库描述
+ *  可以接近文档承诺上限的两倍。 */
+export const IMAGE_DESCRIPTION_MAX_CHARS: number = 120;
 /** 喂给视觉模型的描述指令：产出一行简短中文描述，供转录上下文引用。 */
 export const IMAGE_DESCRIPTION_PROMPT: string =
   "这是中文群聊里有人发的一张图片。请用中文简要描述它：是什么内容、图里有什么文字、想表达什么；" +
-  "若是表情包/梗图/截图，请点出其中的文字要点和情绪。不超过 120 字，只输出描述本身，不要任何前缀、解释或引号。";
-/** 图片描述入缓存前的硬性长度上限（字符），防模型话痨撑爆转录行。 */
-export const IMAGE_DESCRIPTION_MAX_CHARS: number = 200;
+  `若是表情包/梗图/截图，请点出其中的文字要点和情绪。不超过 ${IMAGE_DESCRIPTION_MAX_CHARS} 字，只输出描述本身，不要任何前缀、解释或引号。`;
 
 /**
  * 贴纸/GIF 描述的字数上限——比图片短：贴纸/GIF 本身信息密度低（一个画面

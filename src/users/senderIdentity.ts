@@ -1,9 +1,12 @@
 import type { CachedUser } from "../types";
+import { userCache } from "../cache/senderIdentity";
+import { USER_CACHE_MAX } from "../consts/senderIdentity";
 
 /**
  * 消息发送者的身份解析与缓存。自动流程（src/auto/message.ts 靠 cacheSender
  * 刷新 username 缓存）和命令处理（src/commands 下的 /copy、/kick 靠
- * resolveReplyTarget 从被回复的消息定位目标）共用这一份逻辑。
+ * resolveReplyTarget 从被回复的消息定位目标，靠 resolveUsernameTarget 按
+ * @username 定位目标）共用这一份逻辑。缓存状态见 cache/senderIdentity.ts。
  */
 
 /**
@@ -37,24 +40,33 @@ function resolveSenderIdentity(message: any): CachedUser | undefined {
 
 /**
  * 记录/刷新某个发送者的缓存条目（两类身份见上方 resolveSenderIdentity），
- * 以便之后 /copy @username 能找到 TA。没有公开 username 的发送者不入 map
+ * 以便之后 /copy @username 能找到 TA。没有公开 username 的发送者不入缓存
  * （见 CachedUser 注释），但仍可经 resolveReplyTarget 定位。
  * @returns 解析出的发送者 id（若以频道身份发送则为频道 id，否则为用户 id）。
  */
-export function cacheSender(message: any, users: Record<string, CachedUser>): number | undefined {
+export function cacheSender(message: any): number | undefined {
   const identity = resolveSenderIdentity(message);
   if (!identity) return undefined;
 
   if (identity.username) {
     const lowerUsername: string = identity.username.toLowerCase();
-    const cached = users[lowerUsername];
+    const cached = userCache.get(lowerUsername);
     const isStale = !cached ||
       cached.id !== identity.id ||
       cached.title !== identity.title ||
       cached.first_name !== identity.first_name ||
       cached.last_name !== identity.last_name;
     if (isStale) {
-      users[lowerUsername] = identity;
+      // 只有真正的新 key（此前未见过这个 username）才会让缓存条数增长，
+      // 才需要检查上限——同一 username 的信息更新（isStale 但 cached 存在）
+      // 只是覆写既有条目，不占用新名额。
+      if (!cached && userCache.size >= USER_CACHE_MAX) {
+        // 超上限就淘汰最早插入的条目（Map 迭代顺序即插入顺序），不搞真
+        // LRU——活跃用户反复发言不刷新位置，靠上限本身足够大兜底，见
+        // consts/senderIdentity.ts 的 USER_CACHE_MAX 注释。
+        userCache.delete(userCache.keys().next().value!);
+      }
+      userCache.set(lowerUsername, identity);
     }
   }
 
@@ -70,4 +82,21 @@ export function resolveReplyTarget(message: any): CachedUser | undefined {
   const repliedMessage: any = message.reply_to_message;
   if (!repliedMessage) return undefined;
   return resolveSenderIdentity(repliedMessage);
+}
+
+/** 按 @username 参数（不带 @，大小写不敏感）在缓存里查找目标，供
+ *  /copy、/kick 等命令解析 @username 形式的目标，见
+ *  commands/targetResolution.ts 的 resolveCommandTarget。 */
+export function resolveUsernameTarget(username: string): CachedUser | undefined {
+  return userCache.get(username.toLowerCase());
+}
+
+/**
+ * 启动时把某个已知身份（当前正在被复读的目标，见 infra/storage.ts 的
+ * GlobalCopyState）预热进缓存，让进程重启后立刻能用 /copy @username 重新
+ * 指到 TA，不必等 TA 再发一条消息刷新缓存。见 index.ts 的 main()。
+ */
+export function seedSenderCache(user: CachedUser): void {
+  if (!user.username) return;
+  userCache.set(user.username.toLowerCase(), user);
 }

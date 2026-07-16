@@ -22,7 +22,7 @@ import { getAllChatStates } from "../infra/storage";
  * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限 PRIVILEGED_USERS_ID
  * 白名单内的用户使用——其他任何人尝试都只会被嘲讽，指令本身不会执行。
  */
-export async function handleKickCommand(ctx: CommandContext<Context>, users: Record<string, CachedUser>): Promise<void> {
+export async function handleKickCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const fromUser = ctx.from;
@@ -41,7 +41,7 @@ export async function handleKickCommand(ctx: CommandContext<Context>, users: Rec
 
   // 目标解析同 /copy：回复目标的消息优先于参数里的 @username（没有公开
   // username 或没被缓存过的目标只能靠回复锁定），见 targetResolution.ts。
-  const targetUser: CachedUser | undefined = await resolveCommandTarget(ctx, users, {
+  const targetUser: CachedUser | undefined = await resolveCommandTarget(ctx, {
     missingTarget: `笨蛋，要么 /kick @username，要么回复 TA 的一条消息再 /kick，本天才可不会读心术♡`,
     unknownUsername: (rawUsername: string) => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /kick 吧♡`,
     selfTarget: `笨蛋，本天才才不会把自己踢出去呢♡`,

@@ -1,7 +1,6 @@
 import { rename } from "node:fs/promises";
 import { logger } from "./logger";
-import type { ChatPermissions } from "@grammyjs/types";
-import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
+import type { CachedUser, ChatState, CopyMode, GlobalCopyState, LockdownRecord, StateFileSchema } from "../types";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 import { persistChainState } from "../cache/storage";
@@ -190,10 +189,15 @@ export async function loadState(): Promise<void> {
       }
     }
 
-    // 旧格式迁移：顶层 lockdowns 移入对应群的 chats[id].lockdown。
+    // 旧格式迁移：顶层 lockdowns 移入对应群的 chats[id].lockdown。这个最老
+    // 的格式里 lockdown 就只是裸的 ChatPermissions，从来没有过期时刻这个
+    // 概念——写成不带 expiresAt 包装的旧形态（对 LockdownRecord 而言类型
+    // 不对，用 unknown 中转显式表达"这是故意的旧形状"），下游
+    // src/antiRaid.ts 的 toAdoptableLockdown 认得出这种形状并退化为满额
+    // 时长处理，语义上与这条迁移路径引入之初的行为一致。
     if (rawLegacyLockdowns && typeof rawLegacyLockdowns === "object" && !Array.isArray(rawLegacyLockdowns)) {
       for (const [chatIdStr, permissions] of Object.entries(rawLegacyLockdowns)) {
-        getOrCreateChatState(Number(chatIdStr)).lockdown = permissions as ChatPermissions;
+        getOrCreateChatState(Number(chatIdStr)).lockdown = permissions as unknown as LockdownRecord;
       }
     }
   } catch (error: unknown) {

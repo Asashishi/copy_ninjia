@@ -50,3 +50,13 @@ export const PROBABILITY_THUMBNAIL_URL: string = "https://drive.google.com/uc?ex
 
 /** "同款问题"按钮上展示的所求事项摘要，超过这个字符数就截断加省略号。 */
 export const SAME_QUESTION_LABEL_MAX_LEN: number = 20;
+
+/**
+ * pendingLuckDraws / pendingLuckRenderIndex（见 cache/luckChallenge.ts）各自
+ * 的条目上限，超出按插入顺序淘汰最旧的（同 ai/imageDescription.ts 的
+ * descriptionCache 一个道理）。这两个 Map 记的是"预览阶段抽到、但还没被
+ * 用户选中确认"的结果——inline_query 是打字即触发的预览，用户每敲一个字符
+ * 都可能新增一条从未被选中过的 key，只有到东京零点跨天才会整体清空
+ * （见 ensureCacheFreshForToday），单日内没有其它清理时机；需要一个真正
+ * 生效的上限防止忙碌的一天里被打字预览堆到很大。 */
+export const PENDING_LUCK_CACHE_MAX: number = 5000;

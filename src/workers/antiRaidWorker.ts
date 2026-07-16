@@ -105,6 +105,19 @@ function freshAdminIds(chatId: number): Set<number> | undefined {
   return cached.adminIds;
 }
 
+/**
+ * 一次全量拉取（fetchAdminIds）进行中期间到达的管理员增量变化：chatId ->
+ * (userId -> isAdmin)，落地时（无论此刻有没有已有缓存条目）都会记一份在
+ * 这里，全量拉取的结果落地后立即在新快照基础上重放、再清空，见 fetchAdminIds
+ * 与 applyAdminChange。避免"迟到的全量快照 resolve 时直接整份覆盖缓存"
+ * 把拉取在途期间已经发生的、更新的增量变化悄悄冲掉——尤其是缓存此刻还
+ * 完全没有条目（第一次拉取还没落地）的情形：不缓冲的话 applyAdminChange
+ * 会因为 !cached 直接静默丢弃这次变化，且不像有缓存条目时那样能事后从
+ * 「原地增删」里看出丢了什么，只能等到 ADMIN_CACHE_TTL_MS（1 小时）后
+ * 下一次全量刷新才纠正。
+ */
+const pendingAdminChangesDuringFetch: Map<number, Map<number, boolean>> = new Map();
+
 /** 全量拉取某群的管理员表并落缓存（带进行中去重，见 adminFetches）。 */
 function fetchAdminIds(chatId: number): Promise<Set<number>> {
   let inFlight = adminFetches.get(chatId);
@@ -113,6 +126,17 @@ function fetchAdminIds(chatId: number): Promise<Set<number>> {
       .getChatAdministrators(chatId)
       .then((admins) => {
         const adminIds: Set<number> = new Set(admins.map((admin) => admin.user.id));
+        // 拉取在途期间到达的增量变化比这份快照更新（chat_member 更新是
+        // 近实时的权威信号），重放在其上，不能被这次 resolve 覆盖掉——见
+        // pendingAdminChangesDuringFetch 注释。
+        const pending = pendingAdminChangesDuringFetch.get(chatId);
+        if (pending) {
+          for (const [userId, isAdmin] of pending) {
+            if (isAdmin) adminIds.add(userId);
+            else adminIds.delete(userId);
+          }
+          pendingAdminChangesDuringFetch.delete(chatId);
+        }
         chatAdmins.set(chatId, { adminIds, fetchedAt: Date.now() });
         return adminIds;
       })
@@ -123,10 +147,20 @@ function fetchAdminIds(chatId: number): Promise<Set<number>> {
 }
 
 /**
- * 应用一条管理员任免事件（主线程从 chat_member 更新里提取）。只增删已有的
+ * 应用一条管理员任免事件（主线程从 chat_member 更新里提取）。原地增删已有的
  * 缓存条目——还没按需拉取过的群没有条目可改，之后的首次全量拉取天然是最新的。
+ * 若此刻恰好有一次全量拉取在途，额外把这次变化记进 pendingAdminChangesDuringFetch，
+ * 由 fetchAdminIds 的 resolve 回调重放，避免被迟到的快照覆盖/漏收（见其注释）。
  */
 function applyAdminChange(chatId: number, userId: number, isAdmin: boolean): void {
+  if (adminFetches.has(chatId)) {
+    let pending = pendingAdminChangesDuringFetch.get(chatId);
+    if (!pending) {
+      pending = new Map();
+      pendingAdminChangesDuringFetch.set(chatId, pending);
+    }
+    pending.set(userId, isAdmin);
+  }
   const cached = chatAdmins.get(chatId);
   if (!cached) return;
   if (isAdmin) {
@@ -277,6 +311,13 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
       }
       case "startAdminCheck":
         startAdminCheck(chatId, userId, effect.actorId);
+        break;
+      case "logStaleKickedExemption":
+        logger.warn(
+          `Member ${effect.label} (chat ${chatId}, user ${userId}) was already kicked (anti-raid lockdown or the join-dedupe window) ` +
+          `when exemption proof (admin/whitelist identity) arrived; the kick cannot be undone automatically — ` +
+          `an admin may need to manually re-invite them if this was a false positive.`
+        );
         break;
       case "restartVerifyTimer": {
         const entry = verificationEntries.get(verificationKey(chatId, userId));
@@ -676,8 +717,8 @@ function recordJoin(chatId: number): void {
 
 /** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid.ts）。 */
 function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
-  for (const { chatId, originalPermissions } of lockdowns) {
-    dispatchLockdown(chatId, { type: "adopt", originalPermissions });
+  for (const { chatId, originalPermissions, remainingMs } of lockdowns) {
+    dispatchLockdown(chatId, { type: "adopt", originalPermissions, remainingMs });
   }
 }
 

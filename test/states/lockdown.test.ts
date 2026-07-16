@@ -93,18 +93,27 @@ describe("到期恢复", () => {
 });
 
 describe("adopt 接管", () => {
-  test("INACTIVE + adopt → 直接视为已生效的 ACTIVE，无条件预热缓存 + 满额计时", () => {
-    const { next, effects } = transitionLockdown(undefined, { type: "adopt", originalPermissions: PERMS });
+  test("INACTIVE + adopt → 直接视为已生效的 ACTIVE，无条件预热缓存 + 按调用方算好的真实剩余时长重排计时（回归：曾无条件重开满额，快到期的锁定会被意外延长）", () => {
+    const remainingMs = 42_000; // 模拟"锁定只剩 42 秒就该恢复"，而非满额的 LOCKDOWN_MS
+    const { next, effects } = transitionLockdown(undefined, { type: "adopt", originalPermissions: PERMS, remainingMs });
     expect(next).toEqual({ kind: "active", originalPermissions: PERMS });
     expect(effects).toEqual([
       { kind: "prefetchAdmins", onlyIfCold: false },
-      { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
+      { kind: "scheduleRestore", delayMs: remainingMs },
+    ]);
+  });
+
+  test("剩余时长恰好算出 0（崩溃期间已经过期）→ 立即安排恢复，不无谓多等", () => {
+    const { effects } = transitionLockdown(undefined, { type: "adopt", originalPermissions: PERMS, remainingMs: 0 });
+    expect(effects).toEqual([
+      { kind: "prefetchAdmins", onlyIfCold: false },
+      { kind: "scheduleRestore", delayMs: 0 },
     ]);
   });
 
   test("已有记录时 adopt 幂等跳过", () => {
     const state: LockdownState = { kind: "active", originalPermissions: PERMS };
-    const { next, effects } = transitionLockdown(state, { type: "adopt", originalPermissions: {} });
+    const { next, effects } = transitionLockdown(state, { type: "adopt", originalPermissions: {}, remainingMs: LOCKDOWN_MS });
     expect(next).toBe(state);
     expect(effects).toEqual([]);
   });

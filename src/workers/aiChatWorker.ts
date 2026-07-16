@@ -44,6 +44,7 @@ import {
 import { FALLBACK_SPEAKER_NAME } from "../consts/auto";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import {
+  botInfoState,
   chatBuffers,
   chatSummaries,
   compactionChains,
@@ -83,8 +84,8 @@ import type {
  * 与内置 web_search）、连发消息、消息反应与贴纸跟发。发往 Telegram 的调用不回
  * 主线程绕路——本线程 import telegram.ts 时会得到自己独立的 grammY Api
  * 客户端（那个 Bot 实例只用其 bot.api 发请求，从不 init/轮询；机器人自己
- * 的账号身份改由主线程在 bot.init() 后经 init 消息注入，见下方 botInfo）。
- * error 日志经 logger.ts 的转发模式回传主线程统一落盘。
+ * 的账号身份改由主线程在 bot.init() 后经 init 消息注入，见 cache/aiChatWorker.ts
+ * 的 botInfoState）。error 日志经 logger.ts 的转发模式回传主线程统一落盘。
  *
  * AI 闲聊回复本体：把本群最近的对话记录喂给 xAI 的 grok（/v1/responses
  * 接口，收发细节见 ai/xai.ts），生成一条人设化回复；模型可自主使用内置的
@@ -103,13 +104,6 @@ import type {
 declare var self: Worker;
 
 const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
-
-/**
- * 机器人自己的账号身份，由主线程在 bot.init() 之后经 init 消息注入
- * （index.ts 在 runner 启动前注入，postMessage 按 FIFO 送达，保证先于
- * 一切 record/trigger 到达）。转录里的自我认知和自录都靠它。
- */
-let botInfo: AiBotInfo | null = null;
 
 /**
  * 「当前实际时间：...（东京时间 UTC+9）。」——callGrok 的系统提示词与
@@ -383,8 +377,8 @@ function hydrateMemories(memories: Map<number, AiMemorySnapshot>): void {
  * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
  */
 async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> {
-  const selfNote: string = botInfo
-    ? `注意：[id:${botInfo.id}] 是群里的聊天机器人「${botInfo.first_name}」本人的发言，摘要里请以「${botInfo.first_name}」称呼它。\n\n`
+  const selfNote: string = botInfoState.current
+    ? `注意：[id:${botInfoState.current.id}] 是群里的聊天机器人「${botInfoState.current.first_name}」本人的发言，摘要里请以「${botInfoState.current.first_name}」称呼它。\n\n`
     : "";
   const data: any = await requestXaiResponse(
     {
@@ -474,7 +468,7 @@ interface UserContentOptions {
  * （若有，最多 MAX_SUMMARY_ROUNDS 轮，从旧到新），再是逐字聊天记录
  * （整个缓存 = 镜像 + 热，50 ~ 100 条，见 COMPACT_BATCH_SIZE 的注释）。
  * @param chatId 群聊 ID。
- * @param selfInfo 机器人自己的账号身份（见 botInfo），用于转录里的自我认知。
+ * @param selfInfo 机器人自己的账号身份（见 cache/aiChatWorker.ts 的 botInfoState），用于转录里的自我认知。
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
 function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserContentOptions): string | null {
@@ -509,7 +503,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
   // 回复你的消息、以及标着你自己 id 的行（见发送后的 recordChatMessage 自录）
   // 都要能认出来是你自己，不能当成第三个人。username/id 来自主线程在
-  // bot.init() 之后注入的 init 消息（见 botInfo），不写死在代码里。
+  // bot.init() 之后注入的 init 消息（见 cache/aiChatWorker.ts 的 botInfoState），不写死在代码里。
   const selfIdentity: string =
     `你在这个群里的 Telegram 账号是 @${selfInfo.username}（[id:${selfInfo.id}]）：` +
     `记录里标着这个 id 的行是你自己之前说过的话，别把它们当成别人的发言；` +
@@ -622,15 +616,19 @@ async function callGrok(chatId: number, userContent: string, onStickerSent: (sti
  * 清洗模型的原始输出，得到可直接发送的纯回复文本：去掉 web_search 附带的
  * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
  * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
- * 空则返回 null。
+ * 空则返回 null。仅为可测试性而导出（见文件头同类导出的理由）；生产代码
+ * 路径统一走 callGrok 内部调用。
  */
-function cleanReply(raw: string): string | null {
+export function cleanReply(raw: string): string | null {
   // URL 部分故意不排除 `)`：链接本身带括号很常见（如维基百科的消歧义链接
-  // .../Foo_(bar)），排除 `)` 会让匹配在 URL 内部就截停，链接自己的右括号
-  // 和引用标记外层的右括号都留在正文里，读起来像话说到一半被打断。贪婪
-  // `[^\s]+` 配合回溯天然找到「最靠右的那个 `)`」，即引用标记真正的收尾，
-  // 内部括号也能正确整体吞掉。
-  let text: string = raw.replace(/\[\[\d+\]\]\([^\s]+\)/g, "").trim();
+  // .../Foo_(bar)），排除 `)` 会让匹配在 URL 内部就截停。但也不能简单放开
+  // 成贪婪的 `[^\s]+`（曾经的实现）：中文正文经常整行没有任何空白字符，
+  // 贪婪匹配会一路吃到本行最后一个 `)` 才回溯停下，把引用标记之后、这个
+  // 无关 `)` 之前的大段正文一并吞掉。改成「非括号非空白字符，或者一对不
+  // 含嵌套的平衡括号」重复一次以上：维基百科式的 .../Foo_(bar) 能作为一个
+  // 平衡括号整体吃掉，而遇到与 URL 无关的孤立 `)`（前面没有配对的 `(`）时
+  // 无法再继续匹配，会在引用标记自己的收尾括号处停下，不会越界。
+  let text: string = raw.replace(/\[\[\d+\]\]\((?:[^\s()]|\([^\s()]*\))+\)/g, "").trim();
   if (!text) return null;
 
   const fenceMatch = text.match(/^```[a-zA-Z]*\n?([\s\S]*?)\n?```$/);
@@ -745,8 +743,8 @@ function notifyRateLimited(chatId: number, now: number): void {
     self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
     // 也自录进对话缓存——这条提示同样是机器人在群里说的话，不留痕的话
     // 模型不知道自己刚说过「太快了接不过来」，被追问时接不上。
-    if (botInfo) {
-      recordChatMessage(chatId, botInfo.id, botInfo.first_name, "", RATE_LIMIT_NOTICE_TEXT);
+    if (botInfoState.current) {
+      recordChatMessage(chatId, botInfoState.current.id, botInfoState.current.first_name, "", RATE_LIMIT_NOTICE_TEXT);
     }
   });
 }
@@ -777,11 +775,11 @@ function generateAndSendReply(
 ): void {
   // init 消息在 index.ts 里先于 runner 启动送出，FIFO 保证它先到；走到这里
   // 说明编排被改坏了，丢弃触发并留痕，别让流水线在缺身份的情况下硬跑。
-  if (!botInfo) {
+  if (!botInfoState.current) {
     logger.error("aiChatWorker received trigger before init message; dropping.");
     return;
   }
-  const selfInfo: AiBotInfo = botInfo;
+  const selfInfo: AiBotInfo = botInfoState.current;
 
   // 每群冷却：在发起任何异步工作之前同步判定并占位，这样冷却窗口内的
   // 并发触发（包括 100% 命中的回复/@ 触发）都会在烧到 API 之前被丢弃。
@@ -897,7 +895,7 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
   const msg: AiChatWorkerMessage = event.data;
   switch (msg.type) {
     case "init":
-      botInfo = msg.botInfo;
+      botInfoState.current = msg.botInfo;
       // 白名单贴纸包的目录生成后台启动，不阻塞后续 record/trigger 的处理，
       // 见 ai/stickerCatalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复

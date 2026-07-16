@@ -1,6 +1,10 @@
-import type { AiMemorySnapshot, StickerCatalogSnapshot } from "../types";
+import type { AiInitMessage, AiMemorySnapshot, StickerCatalogSnapshot } from "../types";
 
 /** AI 闲聊主线程侧代理（src/aiChat.ts）的内存状态。 */
+
+/** 最近一次注入 AI Worker 的 init 消息，供 Worker 崩溃重启后重放（新 Worker
+ *  不知道机器人自己的账号身份），见 aiChat.ts 的 initAiChat/onRespawn。 */
+export const lastInitState: { current: AiInitMessage | null } = { current: null };
 
 /** 各群最新的 AI 记忆快照镜像，见 aiChat.ts 模块头注「AI 记忆持久化」。 */
 export const latestAiMemories: Map<number, AiMemorySnapshot> = new Map();

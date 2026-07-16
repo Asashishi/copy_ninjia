@@ -5,14 +5,22 @@ import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { BOT_TOKEN } from "./config";
 import {
+  API_RETRY_MAX_ATTEMPTS,
+  API_RETRY_MAX_DELAY_SECONDS,
   AVATAR_FETCH_MAX_ATTEMPTS,
   AVATAR_FETCH_TIMEOUT_MS,
-  JOIN_API_MAX_RETRY_ATTEMPTS,
-  JOIN_API_MAX_RETRY_DELAY_SECONDS,
+  USER_PROFILE_PHOTOS_LIMIT,
 } from "../consts/telegram";
 import { markSelfSent } from "./selfSentTracker";
 
 export const bot: Bot = new Bot(BOT_TOKEN);
+// 全仓共享的默认客户端也要限流+自动重试：AI 闲聊回复（触发频率最高、最
+// 具突发性的发送路径，多个群同时命中随机回复/概率评价时可能在同一秒扎堆
+// 发起请求）、复读、/luck_challenge 等都经它发送，此前只有下面的
+// joinVerificationApi（入群验证专用）有这层保护，稳态高并发下这条默认路径
+// 撞上 429 只会静默丢消息（见 sendMessage 等封装的 catch 分支）。
+bot.api.config.use(apiThrottler());
+bot.api.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
 
 /**
  * 统一记录一次 Telegram API 调用失败。GrammyError 的错误详情（比如权限
@@ -31,16 +39,15 @@ export function logApiError(action: string, error: unknown): void {
 
 /**
  * 专供入群守卫流程（workers/antiRaidWorker.ts，主线程侧代理为 antiRaid.ts）
- * 使用的独立 API 客户端。该流程可能在
- * 几秒内向同一个群突发大量 send/delete/kick 调用——比如一波人同时入群，或者
- * 踢人时要把某个刷屏者的所有消息全部删掉。这里做了限流以符合 Telegram 的
- * 单聊天/全局限制，并在遇到 429 时自动重试，让这些突发请求排队等待而不是
- * 静默失败。与共享的 `bot.api` 客户端分开，避免给其他地方的普通指令回复
- * 增加延迟或排队。
+ * 使用的独立 API 客户端。该流程可能在几秒内向同一个群突发大量
+ * send/delete/kick 调用——比如一波人同时入群，或者踢人时要把某个刷屏者的
+ * 所有消息全部删掉，比默认的 `bot.api` 更容易短时间内扎堆。限流/重试参数
+ * 与上面的 `bot.api` 相同，只是各自独立排队——分开成两个客户端实例，避免
+ * 入群验证的突发流量与其他地方的普通指令回复互相抢占排队名额、增加延迟。
  */
 export const joinVerificationApi: Api = new Api(BOT_TOKEN);
 joinVerificationApi.config.use(apiThrottler());
-joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: JOIN_API_MAX_RETRY_ATTEMPTS, maxDelaySeconds: JOIN_API_MAX_RETRY_DELAY_SECONDS }));
+joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
 
 /**
  * 拼出某个 file_path 对应的 Bot API 文件下载直链。这条 URL 本身嵌着
@@ -160,7 +167,7 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       const chat = await bot.api.getChat(targetId);
       const activeUniqueId: string | undefined = chat.photo?.big_file_unique_id;
 
-      const photos = await bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: 100 });
+      const photos = await bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT });
       if (photos.total_count === 0) {
         // 拿不到任何头像：可能确实没设头像，也可能是隐私设置对非联系人隐藏
         // 了头像——两种情况 Bot API 无从区分。

@@ -142,6 +142,10 @@ export type VerificationEffect =
   | { kind: "deleteReminders"; reminderMessageId?: number; replyReminderMessageId?: number }
   /** 发起「拉人者是不是管理员」的异步全量核查，确认则回投 adminCheckResolved。 */
   | { kind: "startAdminCheck"; actorId: number }
+  /** 已经是 KICKED 占位（踢的动作已实际执行）时又收到确凿的豁免证明——
+   *  Telegram 没有"撤销踢出"这回事，占位本身不动，只留一条日志方便管理员
+   *  事后手动把人拉回来，见 handleJoin 里 exempt 分支对 kicked 占位的处理。 */
+  | { kind: "logStaleKickedExemption"; label: string }
   /** 超时后的拉人者身份终核（缓存热直接判、冷则等一次全量拉取），结果以 timeoutInviterVerdict 回投。 */
   | { kind: "recheckInviter"; inviterId: number; snapshot: ExpelSnapshot }
   /** 删除快照里的全部追踪消息、踢人、发踢人通知（超时未验证的最终收尾）。 */
@@ -190,8 +194,16 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
   const invitedByOther: boolean = event.actorId !== undefined && event.actorId !== event.memberId;
 
   if (exempt) {
-    // 已有占位（豁免/已踢）时不动它，也不刷新其去重计时——与旧实现一致。
-    if (state?.kind === "exempt" || state?.kind === "kicked") return { next: state, effects: [] };
+    // 已有豁免占位时不动它，也不刷新其去重计时——与旧实现一致。
+    if (state?.kind === "exempt") return { next: state, effects: [] };
+    if (state?.kind === "kicked") {
+      // 已经踢出去了（私密模式秒踢，或超时踢人后 KICKED_REJOIN_GRACE_MS 去重
+      // 窗口内的另一路投递），但这次事件带着确凿的豁免证明（比如姗姗来迟的
+      // 管理员身份证明）——踢的动作已经执行完毕，Telegram 没有"撤销踢出"
+      // 这回事，占位本身仍不动、去重语义不变，唯一能做的是留一条日志，方便
+      // 管理员发现后手动把人重新拉回来。
+      return { next: state, effects: [{ kind: "logStaleKickedExemption", label: event.label }] };
+    }
     const effects: VerificationEffect[] = [];
     // 服务消息那一路先到、已开了真实验证窗口：撤销并删提醒（还在限流队列
     // 里没落地的提醒由回填回调自删）。TA 的入群公告不删、发言不追踪——合法成员。

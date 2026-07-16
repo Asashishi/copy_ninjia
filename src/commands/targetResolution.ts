@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types";
 import { sendMessage } from "../infra/telegram";
-import { resolveReplyTarget } from "../users/senderIdentity";
+import { resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
 import { USERNAME_ARG_PATTERN } from "../consts/commands";
 
 /** 目标解析失败时按场景发送的提示文案，由调用方（各命令）定制措辞。 */
@@ -23,7 +23,6 @@ export interface CommandTargetMessages {
  */
 export async function resolveCommandTarget(
   ctx: CommandContext<Context>,
-  users: Record<string, CachedUser>,
   messages: CommandTargetMessages
 ): Promise<CachedUser | undefined> {
   const chatId: number = ctx.chat.id;
@@ -39,7 +38,7 @@ export async function resolveCommandTarget(
       return undefined;
     }
     rawUsername = usernameMatch[1]!;
-    targetUser = users[rawUsername.toLowerCase()];
+    targetUser = resolveUsernameTarget(rawUsername);
   }
 
   if (!targetUser) {

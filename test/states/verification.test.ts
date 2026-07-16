@@ -155,8 +155,15 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
     expect(effects).toEqual([{ kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: 31 }]);
   });
 
-  test("豁免入群撞上已有占位 → 保持原占位不动", () => {
+  test("豁免入群撞上已有 KICKED 占位 → 保持占位不动（踢已执行、无法撤销），只留一条日志方便人工纠正", () => {
     const state = kickedState();
+    const { next, effects } = transitionVerification(state, joinEvent({ identityExempt: true }));
+    expect(next).toBe(state);
+    expect(effects).toEqual([{ kind: "logStaleKickedExemption", label: "杂鱼A" }]);
+  });
+
+  test("豁免入群撞上已有 EXEMPT 占位 → 保持占位不动，无需额外日志（本就已经豁免，没有被误踢）", () => {
+    const state: VerificationState = { kind: "exempt", label: "杂鱼A", isBot: false };
     const { next, effects } = transitionVerification(state, joinEvent({ identityExempt: true }));
     expect(next).toBe(state);
     expect(effects).toEqual([]);

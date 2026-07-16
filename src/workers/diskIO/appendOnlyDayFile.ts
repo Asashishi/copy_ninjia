@@ -13,6 +13,12 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, statSync, wr
 import { join } from "node:path";
 import type { DayFileState } from "../../types";
 import { TMP_FILE_SUFFIX } from "../../consts/paths";
+import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO";
+
+/** repairTruncated 用来识别"一条完整记录的收尾行"，必须与 openDayFile/
+ *  serializeDayFileEntry 的 JSON.stringify 缩进宽度保持一致，见
+ *  DAY_FILE_JSON_INDENT 注释。 */
+const ENTRY_LINE_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
 
 /**
  * 整份文件重写用：tmp + rename（同文件系统内原子操作），避免这类维护性重写
@@ -42,7 +48,7 @@ export function openDayFile(dir: string, day: string): DayFileState {
     const parsed: unknown = JSON.parse(content);
     if (parsed === null || typeof parsed !== "object" || Object.keys(parsed).length === 0) return state;
     if (!content.endsWith("\n}")) {
-      atomicRewrite(path, JSON.stringify(parsed, null, 2));
+      atomicRewrite(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT));
     }
     state.size = statSync(path).size;
     state.empty = false;
@@ -53,9 +59,20 @@ export function openDayFile(dir: string, day: string): DayFileState {
   const repaired: string | null = repairTruncated(content);
   if (repaired === null) return state;
   try {
+    // 与上面"解析成功"分支同样的空对象判断不能漏掉：文件若恰好在写入
+    // 第一条记录之前被杀（物理内容只有一个 "{"），repairTruncated 补一个
+    // 收尾括号就能修复成语义为空的 "{}"——如果这里不做同样的检查、无条件
+    // 标 empty:false，下一次追加会误判成"非空、按位置追加"，从这份只有
+    // 几字节的文件中间写入，产出打头带逗号的非法 JSON；这个坏文件下次
+    // 重启又会因为找不到 `${ENTRY_LINE_INDENT}},` 这样的行边界而修复失败
+    // 被放弃（物理文件却不会被清空），直到再下一次追加触发 writeFileSync
+    // 整份覆写，才把这段本可挽救的数据永久冲掉。
+    const repairedParsed: unknown = JSON.parse(repaired);
+    const repairedIsEmpty: boolean =
+      repairedParsed !== null && typeof repairedParsed === "object" && Object.keys(repairedParsed).length === 0;
     atomicRewrite(path, repaired);
     state.size = statSync(path).size;
-    state.empty = false;
+    state.empty = repairedIsEmpty;
   } catch {
     // 写回修复内容也失败，只能从空文件重新开始，不让调用方崩掉。
   }
@@ -78,9 +95,10 @@ function repairTruncated(content: string): string | null {
     // 继续尝试裁掉末尾残片。
   }
   const lines: string[] = content.split("\n");
+  const entryClosingLine: string = `${ENTRY_LINE_INDENT}}`;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i] !== "  },") continue;
-    lines[i] = "  }";
+    if (lines[i] !== `${entryClosingLine},`) continue;
+    lines[i] = entryClosingLine;
     const candidate: string = `${lines.slice(0, i + 1).join("\n")}\n}`;
     try {
       JSON.parse(candidate);
@@ -113,10 +131,12 @@ export function appendToDayFile(dir: string, state: DayFileState, chunk: string)
 }
 
 /**
- * 把单条记录序列化成顶层对象里的一段文本（含 2 空格缩进、不含前后逗号），
- * 与 JSON.stringify(整个对象, null, 2) 中该条目的形态完全一致。实现上借
- * 单条目对象的 stringify 结果，掐掉外层的「{\n」和「\n}」。
+ * 把单条记录序列化成顶层对象里的一段文本（含 DAY_FILE_JSON_INDENT 缩进、
+ * 不含前后逗号），与 JSON.stringify(整个对象, null, DAY_FILE_JSON_INDENT)
+ * 中该条目的形态完全一致。实现上借单条目对象的 stringify 结果，掐掉外层的
+ * 「{\n」和「\n}」——这两处各固定 2 个字符（左花括号+换行、换行+右花括号），
+ * 与缩进宽度本身无关，缩进改多宽这里都不用跟着变。
  */
 export function serializeDayFileEntry(key: string, value: unknown): string {
-  return JSON.stringify({ [key]: value }, null, 2).slice(2, -2);
+  return JSON.stringify({ [key]: value }, null, DAY_FILE_JSON_INDENT).slice(2, -2);
 }

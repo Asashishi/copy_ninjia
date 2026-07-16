@@ -5,6 +5,7 @@ import { formatUserLabel } from "../users/userLabel";
 import {
   FORTUNE_THUMBNAIL_URL,
   LUCK_TIERS,
+  PENDING_LUCK_CACHE_MAX,
   PROBABILITY_THUMBNAIL_URL,
   RATE_LIMIT_MAX_CALLS_PER_MINUTE,
   RATE_LIMIT_WINDOW_MS,
@@ -116,6 +117,11 @@ function getOrDrawLuck(userId: number, text: string | undefined): LuckDraw {
   const tier: LuckTier = drawLuckTier(Math.floor(Math.random() * 100) + 1);
   const fortunePercent: number = rollFortunePercent(tier.fortunePercentRange);
   const draw: LuckDraw = { tier, fortunePercent };
+  // 走到这里 cacheKey 一定是新 key（上面已经查过 dailyLuckCache/pendingLuckDraws
+  // 都没有），这次 set 必然让条数 +1，需要检查上限——见 PENDING_LUCK_CACHE_MAX 注释。
+  if (pendingLuckDraws.size >= PENDING_LUCK_CACHE_MAX) {
+    pendingLuckDraws.delete(pendingLuckDraws.keys().next().value!);
+  }
   pendingLuckDraws.set(cacheKey, draw);
   return draw;
 }
@@ -128,6 +134,12 @@ function getOrDrawLuck(userId: number, text: string | undefined): LuckDraw {
  * confirmLuckDraw 对已转正的 key 本来就是空操作，省一次 Map 写入。 */
 function registerPendingRendering(cacheKey: string, renderedText: string): void {
   if (dailyLuckCache.has(cacheKey)) return;
+  // 只有真正的新 key（此前没登记过这段渲染原文）才会让条数增长，才需要
+  // 检查上限——同一 cacheKey 重复预览产出相同的 renderedText，是对已有 key
+  // 的幂等覆盖，见函数头注释。
+  if (!pendingLuckRenderIndex.has(renderedText) && pendingLuckRenderIndex.size >= PENDING_LUCK_CACHE_MAX) {
+    pendingLuckRenderIndex.delete(pendingLuckRenderIndex.keys().next().value!);
+  }
   pendingLuckRenderIndex.set(renderedText, cacheKey);
 }
 
