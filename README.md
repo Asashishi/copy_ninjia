@@ -1,8 +1,14 @@
 <div align="center">
 
+<a href="https://t.me/copy_ninjia_bot">
+  <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="128" alt="Copy Ninjia Bot 当前头像">
+</a>
+
 # 🥷 Copy Ninjia
 
 ### 会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人
+
+由 **Asashishi** 与 **Claude Code**、**Codex**、**Antigravity** 共同开发
 
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=000)](https://bun.sh/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=fff)](https://www.typescriptlang.org/)
