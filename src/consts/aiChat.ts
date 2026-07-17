@@ -425,7 +425,7 @@ export const DELETE_OWN_MESSAGE_TOOL_INSTRUCTION: string =
   "请重新用 send_message 发正确内容。";
 
 /** 代码侧决定一条可手滑消息是否真的发错。模型只提供候选 typo_text，不决定概率。 */
-export const AI_TEXT_TYPO_PROBABILITY: number = 0.27;
+export const AI_TEXT_TYPO_PROBABILITY: number = 0.35;
 /** 发错后代码侧决定修正方式：快速补字为高概率，撤回重发为中概率，剩余假装没发现。 */
 export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.65;
 export const TYPO_RECALL_CORRECTION_PROBABILITY: number = 0.25;
