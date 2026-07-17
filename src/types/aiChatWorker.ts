@@ -11,12 +11,15 @@ export type ChatActionPhase = "typing" | "choose_sticker" | "idle";
 
 /** 心跳挡位的切换句柄，经 ReplyToolContext 传给行动工具集（见
  *  ai/tools/replyToolset.ts）：切到非 idle 挡会立即补发一次对应状态（切换
- *  当口就可见，不等下一个重发 tick），此后由心跳按间隔维持；本轮心跳已
- *  停止后调用是无害的空操作。 */
+ *  当口就可见，不等下一个重发 tick；同一挡位在重发间隔内刚发过则节流跳过，
+ *  状态本就还亮着），此后由心跳按间隔维持。非 idle 挡按轮记归属：切 idle
+ *  只对本轮持有的挡位生效，不会掐灭并发轮还亮着的窗口；本轮心跳已停止后
+ *  调用是无害的空操作。 */
 export interface ChatActionControl {
-  /** 当前挡位；本轮心跳已停止（或因连续失败被移除）时恒为 "idle"。
-   *  send_sticker 靠它判断选择状态是否被中途的消息打断过，被打断则在发送
-   *  前重新拉起一段「正在选择贴纸…」（见 ai/tools/stickers.ts）。 */
+  /** 本轮持有的挡位；本轮心跳已停止（或因连续失败被移除）、或挡位已被
+   *  并发轮盖掉时恒为 "idle"。send_sticker 靠它判断选择状态是否被中途的
+   *  消息或并发轮打断过，被打断则在发送前重新拉起一段「正在选择贴纸…」
+   *  （见 ai/tools/stickers.ts）。 */
   current(): ChatActionPhase;
   set(phase: ChatActionPhase): void;
   /** 等本代所有已发出的聊天状态请求落定。发消息/贴纸前先 set("idle") 再
@@ -33,6 +36,28 @@ export interface ChatActionHeartbeatEntry {
   timer: ReturnType<typeof setInterval>;
   refCount: number;
   action: ChatActionPhase;
+  /** 当前非 idle 挡位的持有轮标记（每个 startChatActionHeartbeat 句柄一份）：
+   *  只有持有轮的 set("idle") 能收挡，持有轮 stop 时挡位随之收回——不然
+   *  并发轮还在跑时，先结束那轮留下的「正在选择贴纸…」会被心跳一直重发
+   *  维持到最后一轮结束。idle 挡时为 null。 */
+  owner: object | null;
+  /** 状态请求的串行链：所有发送（切挡补发 + 定时重发）按入队顺序逐个执行，
+   *  执行时才重读当下挡位——并发切挡时排队的旧请求自动坍缩成最新挡位或
+   *  直接跳过，请求逐个到达 Telegram，不会乱序把旧状态盖回新状态之上。 */
+  sendChain: Promise<void>;
+  /** 链上是否已有一发「排队未执行」的请求。排队那发执行时才重读挡位，
+   *  天然代表它入队之后到来的所有请求：发送挂起期间的重复请求（连续几个
+   *  tick）合并进它，不再排成一列、恢复后背靠背连发同一状态。 */
+  pendingSend: boolean;
+  /** 排队那发执行时是否允许重复状态节流：切挡补发可节流；tick 的强制刷新
+   *  合并进来时降级为必发——节流掉 tick 会在状态过期边缘掐出闪断。 */
+  pendingSendDeduplicate: boolean;
+  /** 最近一次真正发出的状态挡位与时刻，切挡补发据此对重复状态节流（见
+   *  ai/chatActionHeartbeat.ts 的 pumpChatAction）；挡位收回 idle 时重置为
+   *  "idle"——上一条消息已把聊天状态清掉，下一段窗口的第一发不能被误判
+   *  为重复而跳过。 */
+  lastSentPhase: ChatActionPhase;
+  lastSentAt: number;
   inflight: Set<Promise<unknown>>;
   consecutiveFailures: number;
 }

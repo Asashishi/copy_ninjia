@@ -186,8 +186,9 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     // 输入…」窗口：心跳在生成/思考期间停在 idle 挡不亮状态，群友看到的
     // 输入状态一定以一条真实消息落地收尾，不会亮了半天却等不来内容。
     // 停顿按本条长度伸缩、统一封顶（见 TYPING_DELAY_MAX_MS）；窗口可长于
-    // Telegram 约 5 秒的状态过期时间，切挡时的即时补发起头，其后由心跳的
-    // 4 秒 tick 重发接力，整段停顿显示连续。
+    // Telegram 约 5 秒的状态过期时间，切挡时的即时补发起头（同挡位在节流
+    // 窗口内刚成功发过则跳过——状态本就还亮着），其后由心跳的 4 秒 tick
+    // 重发接力，整段停顿显示连续。
     ctx.chatAction.set("typing");
     await sleep(typingDelayMs(text));
     // 发送前切 idle 并等在途状态请求落定：消息本身会清掉聊天状态，任何比

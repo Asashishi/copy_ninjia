@@ -230,8 +230,10 @@ export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的
  */
 export const MAX_TOOL_ROUNDS: number = 15;
 
-/** 聊天状态（正在输入…/正在选择贴纸…）的心跳重发间隔，机制见
- *  ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat。 */
+/** 聊天状态（正在输入…/正在选择贴纸…）的心跳重发间隔，须小于 Telegram
+ *  约 5 秒的状态过期时间；同时兼作切挡补发的重复状态节流窗口——同一挡位
+ *  在这段时间内刚成功发过就不再补发，机制见 ai/chatActionHeartbeat.ts 的
+ *  pumpChatAction。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 
 /** 聊天状态请求连续失败多少次后才停止本轮心跳。单次失败可能只是瞬时网络

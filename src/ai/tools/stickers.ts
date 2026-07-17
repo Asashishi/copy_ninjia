@@ -182,9 +182,9 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
  * 执行一次 send_sticker 工具调用：校验编号与本轮限额（必须先看过包清单、
  * 每轮最多 MAX_STICKERS_PER_REPLY 枚、绝不重复同一枚），通过后发送贴纸。
  * 正常链路里 view_sticker_pack 已把挡位切到「正在选择贴纸…」并维持到现在；
- * 若挡位中途被 send_message 的输入窗口打断（current 已不在 choose_sticker
- * 挡），先重新拉起选择状态并停顿一下，保证贴纸落地前群友总能看到一段
- * 「正在选择贴纸…」，而不是凭空蹦出一枚贴纸。
+ * 若挡位中途被 send_message 的输入窗口或并发轮打断（current 已不在
+ * choose_sticker 挡），先重新拉起选择状态并停顿一下，保证贴纸落地前群友
+ * 总能看到一段「正在选择贴纸…」，而不是凭空蹦出一枚贴纸。
  * 真正发送之前把聊天状态心跳切到 idle 并等在途状态请求落定
  * （settle）：贴纸消息本身会清掉「正在选择贴纸…」，但比贴纸晚落地的状态
  * 请求会把它重新盖回去白挂 5 秒——切挡拦住新 tick，settle 拦住在途的那发。
