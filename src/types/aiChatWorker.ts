@@ -43,6 +43,23 @@ export interface ChatActionHeartbeatControl extends ChatActionControl {
   stop(): Promise<void>;
 }
 
+/** 同群串行闸在途期间排队等待补跑的直接触发（回复/@ 机器人，见
+ *  workers/aiChatWorker.ts 的 generateAndSendReply）。随机插话与媒体评价
+ *  不入队——没人在等那条回复，错过时机再补反而突兀——所以队列里恒为
+ *  直接触发，不需要 isRandomTrigger/mediaComment 字段。 */
+export interface QueuedReplyTrigger {
+  /** 触发这次回复的消息 ID，出队补跑时仍用它挂回复引用。 */
+  replyToMessageId: number;
+  /** 若是「用户回复机器人」触发，被回复的机器人消息文本。 */
+  repliedBotText?: string;
+  /** 触发消息本身的发言人显示名 + 正文快照（截断），入队当口从缓存尾部
+   *  取（主线程先 record 后 trigger，FIFO 保证尾部就是触发消息）。补跑时
+   *  转录尾部早已被新消息和机器人自己的回复盖过，回复指令靠这份快照点名
+   *  要回的具体消息，不能再说「最新这条」。 */
+  senderName: string;
+  text: string;
+}
+
 /** 缓存里的一条消息：发言人 id + 名字 + 可选公开 username（拆开存，好让
  * 模型按 id 区分重名，并把正文里的 @username 对回具体的人）+ 文本 + 记录时刻。 */
 export interface BufferedMessage {

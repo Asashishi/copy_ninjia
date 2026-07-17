@@ -239,7 +239,10 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
 export async function sendMessage(chatId: number, text: string, replyToMessageId?: number, api: Api = bot.api, keyboard?: InlineKeyboard): Promise<number | undefined> {
   try {
     const sent = await api.sendMessage(chatId, text, {
-      ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId } } : {}),
+      // allow_sending_without_reply：被引用的消息可能已被删除（尤其 AI 回复
+      // 排队补跑时，触发消息在等待期间被撤回/清理），此时宁可不挂引用也要
+      // 把话发出去，不能整条静默失踪。
+      ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
       ...(keyboard ? { reply_markup: keyboard } : {}),
     });
     markSelfSent(chatId, sent.message_id);

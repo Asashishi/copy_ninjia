@@ -169,16 +169,27 @@ export const TYPING_DELAY_MAX_MS: number = 7_500;
  * 分群限频：单个群 5 分钟滚动窗口内最多触发多少次 AI 回复。回复/@ 机器人
  * 是 100% 触发，这道闸兜住「循环回复 bot」形成的「一条消息 = 一次 API
  * 调用 + 一条群消息」刷屏/烧钱放大链的总量。短时爆发不单设闸：同群同时
- * 只跑一轮工具对话（activeReplyChats 同步占位，一轮本身要跑几秒到几十
- * 秒，在途期间的并发触发直接丢弃），节奏天然被串行压着——曾经的 0.5 秒
- * 冷却和 1 分钟窗口两道细闸因此几乎从不命中，已移除。窗口打满即丢弃
- * （黑洞，只回一句带独立冷却的「你们太快了」提示，见下方
+ * 只跑一轮工具对话（activeReplyChats 同步占位，在途期间随机触发丢弃、
+ * 直接触发排队等补跑，见下方 REPLY_TRIGGER_QUEUE_MAX），节奏天然被串行
+ * 压着。窗口打满即丢弃（黑洞，只回一句带独立冷却的「你们太快了」提示，见下方
  * RATE_LIMIT_NOTICE_COOLDOWN_MS），等窗口里旧时刻滑出腾出名额才恢复，
- * 不是硬性定时重置。只在入口计一次数——一次触发内的「连发多条短消息」
- * 属于同一次回复，不重复计数。
+ * 不是硬性定时重置。只在触发真正启动一轮时计一次数——排队等待不占配额，
+ * 一次触发内的「连发多条短消息」属于同一次回复，也不重复计数。
  */
 export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
 export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
+
+/**
+ * 同群串行闸的等候队列上限。一轮工具对话在途期间到来的直接触发（回复/@
+ * 机器人——真人在等回复的交互）不丢弃，入队等当前轮结束后按先来后到
+ * 逐个补跑；打满后的新触发才丢弃，并给「你们太快了」提示（自带冷却，
+ * 见 RATE_LIMIT_NOTICE_COOLDOWN_MS）。随机插话/媒体评价仍是在途即丢：
+ * 没人在等那条回复，错过时机再补反而突兀。
+ */
+export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
+/** 排队触发快照（QueuedReplyTrigger.text）的截断上限：补跑的回复指令里
+ *  要原文引用触发消息，防超长消息把提示词撑爆。 */
+export const QUEUED_TRIGGER_SNIPPET_MAX_CHARS: number = 200;
 
 /**
  * 触发被限频黑洞丢弃时会明确回一句「你们太快了」（见 workers/aiChatWorker.ts 的

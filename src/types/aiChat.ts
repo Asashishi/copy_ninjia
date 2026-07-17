@@ -147,6 +147,14 @@ export interface AiFlushMemoryMessage {
   flushId: number;
 }
 
+/** 主线程 -> Worker：清空某群串行闸的等候队列。/ai_chat disable 时投递：
+ *  主线程停止投喂新触发只拦得住之后的，已排队的触发不清会在关闭后继续
+ *  补跑发言（在途的一轮无法中断，自然跑完，可接受）。 */
+export interface AiClearReplyQueueMessage {
+  type: "clearReplyQueue";
+  chatId: number;
+}
+
 export type AiChatWorkerMessage =
   | AiInitMessage
   | AiRecordMessage
@@ -154,7 +162,8 @@ export type AiChatWorkerMessage =
   | AiTriggerMessage
   | AiHydrateMessage
   | AiHydrateStickerCatalogMessage
-  | AiFlushMemoryMessage;
+  | AiFlushMemoryMessage
+  | AiClearReplyQueueMessage;
 
 /**
  * Worker -> 主线程：一条消息已经发出去了（AI 回复或跟发的贴纸）。Worker

@@ -1,5 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types";
+import { clearAiReplyQueue } from "../aiChat";
 import { getOrCreateChatState, saveState } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
@@ -20,6 +21,9 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   const messageId: number | undefined = ctx.msgId;
   const state: ChatState = getOrCreateChatState(chatId);
   state.isUseAIChat = arg === "enable";
+  // 关闭时同步清掉 Worker 侧已排队的触发：主线程停止投喂只拦得住之后的，
+  // 不清的话队列会在关闭后继续补跑发言好几轮（见 aiChat.ts 的 clearAiReplyQueue）。
+  if (arg === "disable") clearAiReplyQueue(chatId);
   await saveState();
 
   const replyText: string = arg === "enable"

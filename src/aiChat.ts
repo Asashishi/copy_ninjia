@@ -203,8 +203,10 @@ export function recordChatMedia(
 }
 
 /**
- * 触发一次 AI 回复：把触发事件投递给 Worker，由它做同群串行占位与限频
- * 判定并执行完整的生成与发送流程。fire-and-forget，主线程不等待任何结果。
+ * 触发一次 AI 回复：把触发事件投递给 Worker，由它做同群串行占位（在途
+ * 期间的回复/@ 触发排队等当前轮结束后补跑，随机触发丢弃，见
+ * workers/aiChatWorker.ts 的 generateAndSendReply）与限频判定并执行完整的
+ * 生成与发送流程。fire-and-forget，主线程不等待任何结果。
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
@@ -219,4 +221,13 @@ export function generateAndSendReply(
   isRandomTrigger: boolean = false
 ): void {
   post({ type: "trigger", chatId, replyToMessageId, repliedBotText, isRandomTrigger });
+}
+
+/**
+ * 清空某群在 Worker 侧的回复等候队列。/ai_chat disable 时调用：主线程停止
+ * 投喂新触发只拦得住之后的，已排队的触发不清会在关闭后继续补跑发言好几轮
+ * （在途的一轮无法中断，自然跑完，可接受）。
+ */
+export function clearAiReplyQueue(chatId: number): void {
+  post({ type: "clearReplyQueue", chatId });
 }

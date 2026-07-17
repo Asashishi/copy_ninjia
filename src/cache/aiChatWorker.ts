@@ -1,5 +1,5 @@
 import type { LinkedQueue } from "../libs/linkedQueue";
-import type { AiBotInfo, BufferedMessage, ChatActionHeartbeatEntry } from "../types";
+import type { AiBotInfo, BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../types";
 
 /**
  * AI 闲聊流水线（src/workers/aiChatWorker.ts）的内存状态。本模块只被 Worker 线程
@@ -47,6 +47,17 @@ export const compactionPendingCounts: Map<number, number> = new Map();
 
 /** 正在生成回复的群。同一群只允许一轮在途，防止旧请求晚到后倒序发言。 */
 export const activeReplyChats: Set<number> = new Set();
+
+/** 各群排队等待补跑的直接触发（回复/@，队首最旧）。串行闸在途期间这类
+ *  交互不丢弃，攒在这里等当前轮结束后先来后到逐个补跑（见
+ *  workers/aiChatWorker.ts 的 drainReplyQueue）；上限
+ *  REPLY_TRIGGER_QUEUE_MAX，打满才丢。队列随 Worker 重启清空。 */
+export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> = new Map();
+
+/** 等候队列打满、欠着一句「你们太快了」提示的群。溢出只会发生在一轮
+ *  在途期间，提示压到该轮结束、下一轮启动之前再发（见 drainReplyQueue），
+ *  不打断机器人自己正在连发的短句。 */
+export const pendingOverflowNotices: Set<number> = new Set();
 
 /** chatId -> 该群当前共享的聊天状态心跳（重发定时器 + 当前挡位 + 全部尚未
  * 完成的状态请求，见 ai/chatActionHeartbeat.ts）。Set 防止相邻 tick 与即时
