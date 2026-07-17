@@ -459,17 +459,25 @@ async function recheckInviterThenSettle(chatId: number, userId: number, inviterI
  * 超时未验证的最终收尾：删除被追踪的所有消息（入群公告、提醒、TA 等待期间
  * 发送的任何内容），将其踢出聊天，并发布一条通知——此时提到过 TA 的消息都
  * 已被删除，这条通知是关于谁被移除、为何被移除的唯一痕迹。
+ * 踢人失败（典型是机器人缺封禁权限）时通知照发但如实说没踢动，且不自动
+ * 删除——人还在群里，宣布"已踢出"就是当众撒谎。
  */
 async function expelMember(chatId: number, userId: number, snapshot: ExpelSnapshot): Promise<void> {
   for (const messageId of snapshot.messageIds) {
     await deleteMessage(chatId, messageId, joinVerificationApi);
   }
-  await kickChatMember(chatId, userId, joinVerificationApi);
-  const noticeText: string = snapshot.isBot
+  const kicked: boolean = await kickChatMember(chatId, userId, joinVerificationApi);
+  // 踢没踢动要老实说：缺封禁权限时人还留在群里，照旧宣布"已踢出"就是
+  // 当众撒谎，管理员也不会意识到该去补机器人权限。
+  const noticeText: string = !kicked
+    ? `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
+    : snapshot.isBot
     ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
     : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
   const noticeMessageId: number | undefined = await sendMessage(chatId, noticeText, undefined, joinVerificationApi);
-  if (noticeMessageId !== undefined) {
+  // 没踢动的战报不自动删：它是要管理员去补权限的行动提示，30 秒就消失的话
+  // 多半没人看见，权限缺口会一直留着。
+  if (noticeMessageId !== undefined && kicked) {
     deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
   }
 }

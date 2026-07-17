@@ -370,30 +370,29 @@ export function deleteMessageAfter(chatId: number, messageId: number, delayMs: n
 }
 
 /**
- * 将某成员移出聊天但不永久封禁：先封禁再立刻解封，这样 TA 之后若再次被邀请
- * 仍可自由加入。用于入群验证超时和反刷群的自动踢出——这些是自动触发的，
- * 不封禁以防误杀。需要机器人是拥有封禁权限的管理员。
+ * 将某成员移出聊天但不永久封禁：单次 unbanChatMember 完成。Bot API 保证
+ * 这个调用（不带 only_if_banned）之后「该用户不是聊天成员、且可以自由再
+ * 加入」——对在群成员的效果就是踢出且不进封禁名单；带上 only_if_banned
+ * 反而会退化成「仅对已封禁者生效」的纯解封，踢不动在群成员。之前的实现
+ * 是先 banChatMember 再 unbanChatMember 两次请求，存在「封禁成功、解封
+ * 失败，人被卡在封禁名单里」的中间态；单请求天然原子，没有这个失败窗口。
+ * 用于入群验证超时和反刷群的自动踢出——这些是自动触发的，不封禁以防误杀。
+ * 需要机器人是拥有封禁权限的管理员。
  * @param chatId 要移出成员的聊天。
  * @param userId 要移除的成员。
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @returns 踢出是否成功——超时踢人的战报要靠它区分真踢出和没踢动（缺权限时
+ *          不能对着还在群里的人宣布"已踢出"）。
  */
-export async function kickChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<void> {
+export async function kickChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   try {
-    await api.banChatMember(chatId, userId);
+    await api.unbanChatMember(chatId, userId);
+    return true;
   } catch (error: unknown) {
     // 带上群/用户 id：踢人失败多半是机器人在该群缺封禁权限，不点名群号的话
     // 没法知道该去哪个群补权限。
     logApiError(`kick chat member (chat ${chatId}, user ${userId})`, error);
-    return;
-  }
-  try {
-    await api.unbanChatMember(chatId, userId, { only_if_banned: true });
-  } catch (error: unknown) {
-    // 封禁本身已经生效，只是解封失败：TA 被卡在永久封禁名单里，而不只是
-    // 踢出——比上面那种"根本没踢成"严重得多（那种情形 TA 还在群里，无害），
-    // 必须单独报错，不能和封禁失败混在一条日志里，否则运维看不出这次需要
-    // 去手动解封。
-    logApiError(`unban after kick (chat ${chatId}, user ${userId}) — ban succeeded but unban failed, user is now stuck banned instead of merely kicked`, error);
+    return false;
   }
 }
 

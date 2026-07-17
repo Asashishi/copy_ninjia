@@ -229,7 +229,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     }
     if (state.kind === "kicked" && event.now - state.kickedAt > KICKED_REJOIN_GRACE_MS) {
       // 距上次踢出已经超过"两路投递同一次入群"的合理误差范围，说明这是
-      // TA 真的重新申请了入群（kickChatMember 踢完立即解封，本就能立刻
+      // TA 真的重新申请了入群（kickChatMember 只踢不封，本就能立刻
       // 重进）——不是同一次物理入群的第二条投递，得补一次真正的踢人效果。
       // 返回新对象而非原地改字段：解释器按对象同一性判断要不要换计时器，
       // 这里就是要换——让这次新入群拥有自己完整的一份去重窗口，覆盖它

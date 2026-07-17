@@ -16,7 +16,7 @@ export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
 /**
  * 私密模式秒踢占位遇到新 join 事件时，用来判断"这是同一次物理入群的另一条
  * 投递（chat_member 更新 + 服务消息，间隔实测毫秒级）"还是"TA 真的重新
- * 申请了入群"（kickChatMember 踢完立即解封，本就能立刻重进）的分界线。
+ * 申请了入群"（kickChatMember 只踢不封，本就能立刻重进）的分界线。
  * 远小于 LOCKDOWN_KICK_DEDUPE_MS——那个是占位整体存活时长，这个只区分
  * 同一次入群的两条腿，见 states/verification.ts 的 handleJoin。
  */
