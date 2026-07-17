@@ -332,6 +332,13 @@ export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
 // 目录/整包简介的生成与持久化见 ai/stickerCatalog.ts；工具定义/执行见
 // ai/tools/stickers.ts；按次回复的组装与限额状态见 ai/tools/replyToolset.ts。
 
+/** 贴纸目录单次 AI 调用（逐枚视觉解析、整包简介）失败后的退避重试间隔：
+ *  第 N 次失败等第 N 项后再试，用完仍失败才放弃（解析失败的贴纸进
+ *  failedEntries 本进程内不再试、简介失败保留旧值，都等下次启动对账重建）。
+ *  底下 SDK 对网络错误/5xx/429 已有单次调用内的快速重试（见 ai/gemini.ts），
+ *  这里兜的是它放弃之后更长的抖动。 */
+export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000, 120_000];
+
 /** 整包简介的字数上限：一层工具描述里每个包一条，供模型决定进哪个包细看。 */
 export const STICKER_PACK_SUMMARY_MAX_CHARS: number = 200;
 /** 整包简介生成的输出 token 上限（思考也计入，同 REPLY_MAX_TOKENS 注释）。 */

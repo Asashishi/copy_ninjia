@@ -32,6 +32,9 @@ mock.module("../../src/ai/imageDescription", () => ({
   describeMedia: describeMediaMock,
   describeMediaForStickerCatalog: describeMediaForStickerCatalogMock,
 }));
+// 单次调用失败会按 STICKER_CATALOG_RETRY_DELAYS_MS 退避重试；测试里把
+// 睡眠打成即时返回，失败用例才不会真等几分钟。
+mock.module("../../src/libs/sleep", () => ({ sleep: mock(async (_ms: number): Promise<void> => {}) }));
 const realGemini = await import("../../src/ai/gemini");
 mock.module("../../src/ai/gemini", () => ({ ...realGemini, requestGeminiResponse: requestGeminiResponseMock }));
 
@@ -121,16 +124,39 @@ describe("ai/stickerCatalog generatePackCatalog 对账", () => {
     expect(getPackSummary("pack_summary_backfill")).toBe("补出来的简介");
   });
 
-  test("简介生成失败：保留旧简介，不清掉", async () => {
+  test("简介生成失败且退避重试用尽（1 + 3 次）：保留旧简介，不清掉", async () => {
     hydrateStickerCatalogs(persisted("pack_summary_fail", { "uid-c": { emoji: "👍", description: "描述C" } }, "旧简介仍在"));
-    // 包内容有变化（新增一枚），简介要重生成，但这次生成失败。
+    // 包内容有变化（新增一枚），简介要重生成，但首次和三次重试全部失败。
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "变动包", stickers: [sticker("uid-c", "👍"), sticker("uid-d", "😂")] }));
     describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "新贴纸描述");
-    requestGeminiResponseMock.mockImplementationOnce(async () => null);
+    requestGeminiResponseMock.mockClear();
+    requestGeminiResponseMock
+      .mockImplementationOnce(async () => null)
+      .mockImplementationOnce(async () => null)
+      .mockImplementationOnce(async () => null)
+      .mockImplementationOnce(async () => null);
 
     await generatePackCatalog("pack_summary_fail");
 
     expect(getCatalogEntry("uid-d")).toEqual({ emoji: "😂", description: "新贴纸描述" });
+    expect(requestGeminiResponseMock).toHaveBeenCalledTimes(4);
     expect(getPackSummary("pack_summary_fail")).toBe("旧简介仍在");
+  });
+
+  test("单枚解析与简介生成瞬时失败：退避重试内成功即正常写入", async () => {
+    getStickerSetMock.mockImplementationOnce(async () => ({ title: "抖动包", stickers: [sticker("retry-uid", "😂")] }));
+    describeMediaForStickerCatalogMock.mockClear();
+    describeMediaForStickerCatalogMock
+      .mockImplementationOnce(async () => null)
+      .mockImplementationOnce(async () => "第二次成功的描述");
+    requestGeminiResponseMock
+      .mockImplementationOnce(async () => null)
+      .mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "重试出的简介" }] } }] }));
+
+    await generatePackCatalog("pack_retry");
+
+    expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(2);
+    expect(getCatalogEntry("retry-uid")).toEqual({ emoji: "😂", description: "第二次成功的描述" });
+    expect(getPackSummary("pack_retry")).toBe("重试出的简介");
   });
 });

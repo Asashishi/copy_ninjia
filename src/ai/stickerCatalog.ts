@@ -5,10 +5,12 @@ import { getStickerSet, pickStickerVisionSource } from "./stickerSets";
 import { describeMediaForStickerCatalog } from "./imageDescription";
 import { extractOutputText, requestGeminiResponse } from "./gemini";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
+import { sleep } from "../libs/sleep";
 import { catalogs, dirtyPacks, failedEntries, generatingPacks, packSummaries } from "../cache/stickerCatalog";
 import { transientDescriptionCache } from "../cache/imageDescription";
 import {
   GEMINI_SUMMARY_MODEL,
+  STICKER_CATALOG_RETRY_DELAYS_MS,
   STICKER_PACK_SUMMARY_MAX_CHARS,
   STICKER_PACK_SUMMARY_MAX_TOKENS,
   STICKER_PACK_SUMMARY_PROMPT,
@@ -26,7 +28,7 @@ import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot
  * 生成 + 每次启动的对账：Worker 收到 init 消息后台启动（见
  * ensureStickerCatalogs），对每个包现查一次线上贴纸集合，与持久化目录
  * 双向对比——线上有、目录没有的补（串行逐枚调视觉模型生成，不并发轰
- * Gemini）；目录有、线上已经没有的剪掉（贴纸被移出包/包被整理过，留着只会
+ * Gemini，单次失败退避重试，见 callWithRetry）；目录有、线上已经没有的剪掉（贴纸被移出包/包被整理过，留着只会
  * 让 getCatalogEntry 对一枚发不出去的贴纸给出「有效」描述）。查线上失败
  * 时整包跳过、不补也不剪，保留现状等下次启动重试——不能把「拉取失败」
  * 误判成「包被清空了」进而把好端端的目录铲掉。
@@ -40,6 +42,21 @@ import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot
  * 内存态（catalogs/dirtyPacks/failedEntries/generatingPacks）见
  * cache/stickerCatalog.ts。
  */
+
+/** 跑一次贴纸目录的 AI 调用（逐枚视觉解析/整包简介），失败按
+ *  STICKER_CATALOG_RETRY_DELAYS_MS 退避重试，间隔用完仍失败返回 null，
+ *  由调用方按各自的放弃策略收尾。label 只进英文错误日志，用于定位是
+ *  哪个包/哪枚贴纸在抖。 */
+async function callWithRetry(label: string, call: () => Promise<string | null>): Promise<string | null> {
+  for (let attempt: number = 0; ; attempt++) {
+    const result: string | null = await call();
+    if (result) return result;
+    if (attempt >= STICKER_CATALOG_RETRY_DELAYS_MS.length) return null;
+    const delayMs: number = STICKER_CATALOG_RETRY_DELAYS_MS[attempt]!;
+    logger.error(`${label} attempt ${attempt + 1} failed; retrying in ${delayMs} ms.`);
+    await sleep(delayMs);
+  }
+}
 
 function getPackMap(pack: string): Map<string, StickerCatalogEntry> {
   let map: Map<string, StickerCatalogEntry> | undefined = catalogs.get(pack);
@@ -168,7 +185,10 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       }
       // 白名单目录是常驻权威缓存，不把新条目再塞进 500 项 / 1 小时的临时
       // 媒体缓存；否则既挤占临时额度，也可能在对账删除后短暂读到旧描述。
-      const description: string | null = await describeMediaForStickerCatalog(source.fileId);
+      const description: string | null = await callWithRetry(
+        `Sticker catalog description (pack "${pack}", sticker ${sticker.file_unique_id})`,
+        () => describeMediaForStickerCatalog(source.fileId)
+      );
       if (!description) {
         failedEntries.add(sticker.file_unique_id);
         continue;
@@ -180,15 +200,18 @@ export async function generatePackCatalog(pack: string): Promise<void> {
     }
 
     // 整包简介：包内容有增删（简介可能过时）或者还没有简介（首次生成/上次
-    // 生成失败）时（重）生成一条。失败不重试也不清掉旧简介——
+    // 生成失败）时（重）生成一条。退避重试用完仍失败则不清掉旧简介——
     // 略过时的简介好过没有，下次启动对账再补。
     if (map.size > 0 && (entriesChanged || !packSummaries.has(pack))) {
-      const summary: string | null = await summarizePack(set.title, [...map.values()].map(formatEntryForSummary));
+      const summary: string | null = await callWithRetry(
+        `Sticker pack summary (pack "${pack}")`,
+        () => summarizePack(set.title, [...map.values()].map(formatEntryForSummary))
+      );
       if (summary) {
         packSummaries.set(pack, summary);
         dirtyPacks.add(pack);
       } else {
-        logger.error(`Failed to generate pack summary for sticker pack "${pack}"; layer-1 sticker tool will show a placeholder until next reconcile.`);
+        logger.error(`Failed to generate pack summary for sticker pack "${pack}" after retries; layer-1 sticker tool will show a placeholder until next reconcile.`);
       }
     }
   } catch (error: unknown) {
