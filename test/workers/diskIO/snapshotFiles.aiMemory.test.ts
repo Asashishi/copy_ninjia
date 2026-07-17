@@ -2,6 +2,7 @@ import { beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MAX_SUMMARY_ROUNDS } from "../../../src/consts/aiChat";
 
 // 与既有单测同样的手法:先把 AI_MEMORY_DIR 重定向到临时目录再 import,
 // 绝不能碰项目真实的 memory/ai/(线上 bot 正在用)。
@@ -85,4 +86,15 @@ test("username 若存在则必须为字符串", () => {
   }));
 
   expect(recoverAiMemories().size).toBe(0);
+});
+
+test("恢复时只保留配置数量的最新冷摘要", () => {
+  const summaries: string[] = Array.from({ length: MAX_SUMMARY_ROUNDS + 2 }, (_, index: number) => `摘要${index + 1}`);
+  writeFileSync(join(aiDir, "-100128.json"), JSON.stringify({
+    ...currentSnapshot,
+    summaries,
+  }));
+
+  const recovered = recoverAiMemories();
+  expect(JSON.parse(recovered.get(-100128)!).summaries).toEqual(summaries.slice(-MAX_SUMMARY_ROUNDS));
 });

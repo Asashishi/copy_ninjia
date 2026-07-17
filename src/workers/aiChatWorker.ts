@@ -4,7 +4,12 @@ import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool 
 import { LinkedQueue } from "../libs/linkedQueue";
 import { formatTokyoTime, getCurrentTime } from "../libs/time";
 import { sanitizeInline, truncateInline } from "../libs/text";
-import { displayBufferedMessageName, formatBufferedMessageLine } from "../ai/chatTranscript";
+import {
+  buildColdMemoryBlock,
+  buildTieredVerbatimTranscript,
+  displayBufferedMessageName,
+  formatBufferedMessageLine,
+} from "../ai/chatTranscript";
 import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
@@ -12,6 +17,7 @@ import {
   AI_SNAPSHOT_INTERVAL_MS,
   ANIMATION_FALLBACK_PLACEHOLDER,
   ANIMATION_PENDING_PLACEHOLDER,
+  CHAT_MEMORY_PRIORITY_INSTRUCTION,
   COMPACT_BATCH_SIZE,
   COMPACTION_MAX_PENDING_PER_CHAT,
   IMAGE_FALLBACK_PLACEHOLDER,
@@ -505,9 +511,10 @@ interface UserContentOptions {
 }
 
 /**
- * 把某群的对话上下文拼装成给模型的用户消息内容：先是中期记忆摘要段
- * （若有，最多 MAX_SUMMARY_ROUNDS 轮，从旧到新），再是逐字聊天记录
- * （整个缓存 = 镜像 + 热，50 ~ 100 条，见 COMPACT_BATCH_SIZE 的注释）。
+ * 把某群的对话上下文拼装成给模型的用户消息内容：先声明记忆优先级，再放
+ * 冷记忆摘要段（若有，最多 MAX_SUMMARY_ROUNDS 轮，从旧到新），最后把逐字
+ * 缓存拆成「较早原文」与「最新 COMPACT_BATCH_SIZE 条最热记忆」两层；
+ * 越热越靠近回复指令。
  * @param chatId 群聊 ID。
  * @param selfInfo 机器人自己的账号身份（见 cache/aiChatWorker.ts 的 botInfoState），用于转录里的自我认知。
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
@@ -518,11 +525,12 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   if (!buf || buf.size === 0) return null;
 
   const recent: BufferedMessage[] = buf.last(VERBATIM_CONTEXT_MAX);
-  const lines: string[] = recent.map(formatBufferedMessageLine);
+  const transcript: string = buildTieredVerbatimTranscript(recent);
+  const trailingContext: string[] = [];
   if (repliedBotText) {
     // 同样压成单行：这段文本虽是机器人自己说过的话，保持转录「一行一条」的
     // 结构不变即可杜绝任何多行伪造的可能。
-    lines.push(`（你刚才说过：${sanitizeInline(repliedBotText)}）`);
+    trailingContext.push(`（你刚才说过：${sanitizeInline(repliedBotText)}）`);
   }
 
   // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
@@ -549,25 +557,25 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
     `记录里标着这个 id 的行是你自己之前说过的话，别把它们当成别人的发言；` +
     `消息里 @ 这个用户名、或回复你的消息，都是在跟你说话。`;
 
-  // 中期记忆段：更早的冷历史被压缩成的摘要（每轮 50 条，从旧到新），带着
-  // 自己的声明句放在整段上下文最前面——转录的声明句则紧贴逐字记录，两段
-  // 各自声明、界线分明，摘要行不会被误当成聊天记录的一部分。摘要入队时
-  // 已压成单行（见 summarizeBatch），「一行一条」的防伪造结构同样成立。
+  // 冷记忆段：更早的历史按每轮 COMPACT_BATCH_SIZE 条压缩成摘要（从旧到
+  // 新），作为必须结合理解的长期背景，只在判断当前状态时低于较新的逐字
+  // 记录；摘要行不会被误当成逐字聊天记录。摘要入队时已压成单行（见
+  // summarizeBatch），「一行一条」的防伪造结构同样成立。
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
   const summaries: string[] = summaryQueue ? summaryQueue.last(MAX_SUMMARY_ROUNDS) : [];
-  const summaryBlock: string =
-    summaries.length > 0
-      ? "在下方聊天记录之前，更早的对话已被压缩成如下摘要（按时间从旧到新），是你对这个群的中期记忆——延续话题、称呼和梗时可以参考；摘要与下方逐字记录冲突时，以逐字记录为准：\n" +
-        summaries.map((s: string, i: number) => `${i + 1}. ${s}`).join("\n") +
-        "\n\n"
-      : "";
+  const summaryBlock: string = buildColdMemoryBlock(summaries);
+  const trailingBlock: string = trailingContext.length > 0
+    ? "\n\n【回复引用补充】\n" + trailingContext.join("\n")
+    : "";
 
   return (
-    summaryBlock +
-    "以下是本群最近的聊天记录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] [username:@公开用户名] 名字：内容」，其中 username 标记仅在发言人有公开用户名时出现。行首方括号里是那条消息的发送时间（东京时间 UTC+9）；同名的人以 id 区分，正文里出现的 @用户名则用 username 标记映射回具体的人。最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
+    CHAT_MEMORY_PRIORITY_INSTRUCTION +
+    "\n" +
     selfIdentity +
     "\n\n" +
-    lines.join("\n") +
+    summaryBlock +
+    transcript +
+    trailingBlock +
     "\n\n" +
     replyInstruction
   );

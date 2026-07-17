@@ -66,10 +66,18 @@ export const COMPACT_BATCH_SIZE: number = 50;
 export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;
 /**
  * 每群最多保留几轮压缩摘要，新一轮晋升时超出就滑动移除最旧一轮。
- * 7 轮 × 每轮 50 条 = 相当于 350 条冷历史的中期记忆；加上逐字区的
- * 50 ~ 100 条，模型可感知的对话跨度约 400 ~ 450 条。
+ * 冷记忆跨度 = MAX_SUMMARY_ROUNDS × COMPACT_BATCH_SIZE；再加上最多两个
+ * COMPACT_BATCH_SIZE 逐字块，构成模型可感知的完整对话跨度。
  */
-export const MAX_SUMMARY_ROUNDS: number = 7;
+export const MAX_SUMMARY_ROUNDS: number = 5;
+
+/**
+ * 回复上下文最前面的记忆优先级声明。具体的冷摘要/较早逐字记录/最热逐字
+ * 记录分块由 ai/chatTranscript.ts 动态拼装；这里仅保存不随消息变化的规则。
+ */
+export const CHAT_MEMORY_PRIORITY_INSTRUCTION: string =
+  "以下是按重要程度分层的本群聊天记忆。热记忆是判断当前情况的重要标准；冷记忆也必须纳入理解，用来把握长期话题、人物关系和前因后果，只是判断当前状态时权重较低。" +
+  "请按标注的优先级正确识别情况，不要编造、不要张冠李戴。";
 
 /**
  * 单群允许同时处于「执行中 + 排队中」的冷消息压缩任务数。群消息可能远快于
