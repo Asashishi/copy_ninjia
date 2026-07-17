@@ -164,8 +164,7 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
   if (intent === null) return JSON.stringify({ error: `Invalid intent: provide a concrete non-empty intent within ${STICKER_INTENT_MAX_CHARS} characters` });
 
   // 切挡立即补发一次 choose_sticker，之后由心跳按间隔重发维持（间隔小于
-  // 约 5 秒的状态过期时间，显示连续）——心跳自己就在这一挡上，不再有
-  // 「typing 心跳盖掉选择状态」的竞争，曾经的每秒补发循环随之退役。
+  // 约 5 秒的状态过期时间，显示连续）。
   chatAction.set("choose_sticker");
   await sleep(STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS);
 
