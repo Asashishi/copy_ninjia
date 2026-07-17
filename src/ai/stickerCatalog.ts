@@ -168,7 +168,9 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       if (!liveIds.has(fileUniqueId)) {
         map.delete(fileUniqueId);
         // 对账删除必须同时清掉这枚贴纸可能在目录生成前留下的临时描述，
-        // 否则消息记录紧接着可能从 1 小时 TTL 缓存读回已经失效的旧值。
+        // 否则消息记录紧接着可能从临时 LRU 缓存读回已经失效的旧值——现行
+        // 缓存没有 TTL（见 cache/imageDescription.ts），不删会一直错到被
+        // 容量淘汰为止。
         transientDescriptionCache.delete(fileUniqueId);
         entriesChanged = true;
         dirtyPacks.add(pack);
@@ -183,8 +185,9 @@ export async function generatePackCatalog(pack: string): Promise<void> {
         failedEntries.add(sticker.file_unique_id);
         continue;
       }
-      // 白名单目录是常驻权威缓存，不把新条目再塞进 500 项 / 1 小时的临时
-      // 媒体缓存；否则既挤占临时额度，也可能在对账删除后短暂读到旧描述。
+      // 白名单目录是常驻权威缓存，不把新条目再塞进 MEDIA_DESCRIPTION_CACHE_MAX
+      // 项的临时 LRU 媒体缓存；否则既挤占临时额度，也可能在对账删除后短暂
+      // 读到旧描述。
       const description: string | null = await callWithRetry(
         `Sticker catalog description (pack "${pack}", sticker ${sticker.file_unique_id})`,
         () => describeMediaForStickerCatalog(source.fileId)
