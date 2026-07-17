@@ -146,16 +146,16 @@ export const MAX_REACTIONS_PER_REPLY: number = 1;
 /**
  * view_sticker_pack 执行时把聊天状态心跳切到「正在选择贴纸」挡
  * （choose_sticker，与「正在输入」同一个机制）后的停顿：基础 + 随机抖动，
- * 合计 1~3.5 秒，模拟真人翻贴纸面板挑贴纸的节奏，见 ai/tools/stickers.ts。
+ * 合计 1.5~5 秒，模拟真人翻贴纸面板挑贴纸的节奏，见 ai/tools/stickers.ts。
  * 群友实际看到的选择时长还要更长：这一挡保持到贴纸真正发出为止，模型
  * 挑选贴纸那轮往返的耗时也计入其中。
  */
-export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_000;
-export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 2_500;
+export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
+export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 /**
  * 每条消息临发前「正在输入…」状态窗口的时长（见 ai/tools/replyToolset.ts 的
  * typingDelayMs）：基础停顿 + 按本条消息长度线性增加 + 随机抖动，再统一
- * 封顶，合计约束在 1~7.5 秒（约 119 字起顶到上限）。生成/思考期间不亮
+ * 封顶，合计约束在 1.5~7.5 秒（约 110 字起顶到上限）。生成/思考期间不亮
  * 状态，输入状态只在这段有界窗口里显示、并一定以本条消息落地收尾。窗口
  * 允许长于 Telegram 约 5 秒的状态过期时间：切挡时即时补发第一发，之后由
  * 心跳按 TYPING_ACTION_INTERVAL_MS（4 秒，小于过期时间）的间隔重发接力，

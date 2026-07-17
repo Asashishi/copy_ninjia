@@ -148,7 +148,7 @@ export function parseStickerIntent(argumentsJson: string): string | null {
 /**
  * 执行一次 view_sticker_pack 工具调用：校验包编号和表达意图、按包保存
  * 本轮最新意图，返回意图及包内贴纸的编号清单。合法调用会把聊天状态心跳切到
- * 「正在选择贴纸…」挡并停顿 1~3.5 秒（见 STICKER_CHOOSE_DELAY_BASE_MS），
+ * 「正在选择贴纸…」挡并停顿 1.5~5 秒（见 STICKER_CHOOSE_DELAY_BASE_MS），
  * 模拟真人翻贴纸面板的节奏；这一挡不随停顿结束切回——保持到贴纸真正发出
  * （或模型转头发消息/本轮结束）为止，模型挑选贴纸那轮往返的耗时也计入
  * 群友可见的「选择贴纸」时长。非法编号立即报错、不装样子。

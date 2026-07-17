@@ -17,7 +17,7 @@ mock.module("../../src/infra/diskIO", () => ({
 const realTelegram = await import("../../src/infra/telegram");
 const sendStickerMock = mock(async (_chatId: number, _fileId: string): Promise<number | undefined> => 12345);
 mock.module("../../src/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
-// view_sticker_pack 会为模拟真人翻贴纸面板停顿 1~3.5 秒，单测里直接跳过。
+// view_sticker_pack 会为模拟真人翻贴纸面板停顿 1.5~5 秒，单测里直接跳过。
 mock.module("../../src/libs/sleep", () => ({ sleep: async (_ms: number): Promise<void> => {} }));
 
 const {
