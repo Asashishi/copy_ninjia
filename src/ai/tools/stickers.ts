@@ -153,7 +153,7 @@ export function parseStickerIntent(argumentsJson: string): string | null {
  * （或模型转头发消息/本轮结束）为止，模型挑选贴纸那轮往返的耗时也计入
  * 群友可见的「选择贴纸」时长。非法编号立即报错、不装样子。
  * @param chatAction 本轮聊天状态心跳的挡位切换句柄（见
- *   workers/aiChatWorker.ts 的 startChatActionHeartbeat）。
+ *   ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）。
  * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单。
  * @returns 喂回模型的结果 JSON 字符串（包名 + 编号清单，或错误说明）。
  */
@@ -187,7 +187,7 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
  * 请求会把它重新盖回去白挂 5 秒——切挡拦住新 tick，settle 拦住在途的那发。
  * 校验被拒不切挡：什么都没发出去，模型多半会纠正参数重试，选择状态照旧维持。
  * @param chatAction 本轮聊天状态心跳的挡位切换句柄（见
- *   workers/aiChatWorker.ts 的 startChatActionHeartbeat）。
+ *   ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）。
  * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单
  *   （与组装工具描述/一层清单时用的编号一一对应，见模块头注）。
  * @param onSent 发送成功后的回调（描述行 + 消息 ID），供调用方自录记忆/

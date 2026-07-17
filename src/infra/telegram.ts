@@ -254,12 +254,11 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
  * 发送一次「正在输入…」聊天状态，用于在生成 AI 回复期间模拟真人打字。
  * 该状态在 Telegram 客户端约 5 秒后自动过期，也会在本聊天收到 bot 的下一条
  * 消息时自动清除——因此调用方无需显式关闭，只需在生成/发送耗时较长时
- * 周期性重发以维持显示（见 workers/aiChatWorker.ts 的 startChatActionHeartbeat）。
+ * 周期性重发以维持显示（见 ai/chatActionHeartbeat.ts）。
  * @param chatId 目标聊天 ID。
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
- * @returns 是否发送成功——调用方靠它判断要不要放弃继续重发（见
- *   startChatActionHeartbeat：失败多半意味着该聊天已不可达，没必要每隔几秒
- *   重试一个大概率会持续失败的操作）。
+ * @returns 是否发送成功——聊天状态心跳据此累计连续失败次数；单次失败继续
+ *   尝试，达到阈值才对大概率不可达的聊天止损。
  */
 export async function sendTypingAction(chatId: number, api: Api = bot.api): Promise<boolean> {
   try {
@@ -275,15 +274,17 @@ export async function sendTypingAction(chatId: number, api: Api = bot.api): Prom
  * 发送一次「正在选择贴纸…」聊天状态（choose_sticker），机制与
  * sendTypingAction 完全相同（约 5 秒自动过期、bot 下一条消息发出时清除），
  * 用于 AI 挑贴纸期间模拟真人翻贴纸面板的状态——聊天状态心跳切到
- * choose_sticker 挡时由它维持显示（见 workers/aiChatWorker.ts 的
- * startChatActionHeartbeat 与 ai/tools/stickers.ts 的 viewStickerPackTool）。
- * fire-and-forget：失败只记日志，没有需要调用方处理的返回值。
+ * choose_sticker 挡时由它维持显示（见 ai/chatActionHeartbeat.ts 与
+ * ai/tools/stickers.ts 的 viewStickerPackTool）。
+ * @returns 是否发送成功，供聊天状态心跳累计连续失败次数并决定是否止损。
  */
-export async function sendChooseStickerAction(chatId: number, api: Api = bot.api): Promise<void> {
+export async function sendChooseStickerAction(chatId: number, api: Api = bot.api): Promise<boolean> {
   try {
     await api.sendChatAction(chatId, "choose_sticker");
+    return true;
   } catch (error: unknown) {
     logApiError("send choose sticker action", error);
+    return false;
   }
 }
 

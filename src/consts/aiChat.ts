@@ -200,8 +200,13 @@ export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的
 export const MAX_TOOL_ROUNDS: number = 15;
 
 /** 聊天状态（正在输入…/正在选择贴纸…）的心跳重发间隔，机制见
- *  workers/aiChatWorker.ts 的 startChatActionHeartbeat。 */
+ *  ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
+
+/** 聊天状态请求连续失败多少次后才停止本轮心跳。单次失败可能只是瞬时网络
+ *  波动，立即永久停表会让整轮后续的「正在输入/选择贴纸…」无故中断；连续
+ *  失败达到阈值时再止损，避免对不可达聊天无限重试。 */
+export const CHAT_ACTION_MAX_CONSECUTIVE_FAILURES: number = 3;
 
 // ---- 媒体读图（群里有人发图片/贴纸/GIF -> 占位入缓存 -> 异步解析替换占位）----
 // 流程见 workers/aiChatWorker.ts 的 recordChatMedia 与 ai/imageDescription.ts 的

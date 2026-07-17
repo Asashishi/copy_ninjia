@@ -39,7 +39,6 @@ import {
   SUMMARY_SYSTEM_PROMPT,
   SUMMARY_TEMPERATURE,
   TIME_AWARENESS_INSTRUCTION,
-  TYPING_ACTION_INTERVAL_MS,
   GEMINI_REPLY_MODEL,
   GEMINI_SUMMARY_MODEL,
   VERBATIM_CONTEXT_MAX,
@@ -58,18 +57,17 @@ import {
   pendingSummaries,
   rateLimitNoticeTimes,
   triggerTimes,
-  typingHeartbeats,
 } from "../cache/aiChatWorker";
-import type { BufferedMessage, ChatActionControl, ChatActionPhase, MediaKind, ToolDefinition } from "../types";
+import type { BufferedMessage, MediaKind, ToolDefinition } from "../types";
 import { createReplyToolset } from "../ai/tools/replyToolset";
+import { startChatActionHeartbeat } from "../ai/chatActionHeartbeat";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
 import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse } from "../ai/gemini";
-import { sendChooseStickerAction, sendMessage, sendTypingAction } from "../infra/telegram";
+import { sendMessage } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../ai/tools";
 import { SEND_MESSAGE_TOOL } from "../consts/tools";
-import { settleInflight, trackInflight } from "../libs/inflight";
 import type {
   AiBotInfo,
   AiChatWorkerMessage,
@@ -670,107 +668,6 @@ async function callGemini(userContent: string, toolset: ReplyToolset): Promise<s
 }
 
 /**
- * 在整轮工具对话期间（生成耗时不可控，最长可达 REQUEST_TIMEOUT_MS）维持
- * 聊天状态显示的心跳：立即发一次「正在输入…」，此后每隔
- * TYPING_ACTION_INTERVAL_MS 按当前挡位重发防止过期（约 5 秒自动过期）。
- * 挡位由工具执行侧经 ChatActionControl 切换（见 ai/tools/replyToolset.ts）：
- * - typing：默认挡，生成阶段显示「正在输入…」；
- * - choose_sticker：view_sticker_pack 起、到贴纸真正发出前，显示「正在选择
- *   贴纸…」——模型挑贴纸那轮往返也计入群友可见的选择时长；
- * - idle：发送侧在消息/贴纸真正发出前切入并 settle（等在途状态请求落定，
- *   见 ChatActionControl.settle），保证状态请求绝不落在消息之后把状态重新
- *   盖回去。发出的消息本身会清掉聊天状态，模型若已说完，心跳再盖回
- *   「正在输入…」会让群友对着假状态白等几秒；若还要连发，发送侧会在停顿
- *   前自行切回 typing（见 executeSendMessage）。
- *
- * 同一 chatId 的并发调用（每群冷却仅 AI_REPLY_COOLDOWN_MS，并不保证互斥，
- * 见 generateAndSendReply 的限频注释）共享同一个定时器，用引用计数管理，
- * 避免各自开一个定时器把「正在输入…」的调用量成倍放大。
- *
- * 一旦某次 typing 重发失败（多半是被踢出群、无权限或该操作单独被限流），
- * 当场停掉这个 chatId 的定时器并清除条目，不再对着大概率会持续失败的目标
- * 每隔几秒重试一次；choose_sticker 挡只在贴纸选择期间短暂存在，发送失败
- * 只记日志（见 sendChooseStickerAction），止损统一交给 typing 挡的失败路径。
- * @returns 挡位切换句柄 + 停止函数：stop 后本次占用的引用计数减一，归零时
- *   才真正清定时器；停止后再调 set 是无害的空操作。
- */
-/** 记录一发状态请求直至它真正 settle；按 promise 本体删除，互不覆盖。 */
-function trackChatActionRequest(entry: { inflight: Set<Promise<unknown>> }, request: Promise<unknown>): void {
-  void trackInflight(entry.inflight, request);
-}
-
-function startChatActionHeartbeat(chatId: number): ChatActionControl & { stop(): void } {
-  let entry = typingHeartbeats.get(chatId);
-  if (!entry) {
-    const timer: ReturnType<typeof setInterval> = setInterval(() => {
-      // 按 timer 身份取当前挡位：表里可能已换成同一 chatId 的新一代心跳
-      // （本代刚被清、晚到的 tick 还在跑），旧 timer 不该替新一代发状态。
-      const live = typingHeartbeats.get(chatId);
-      if (!live || live.timer !== timer) return;
-      if (live.action === "idle") return;
-      // 每次状态请求都记录在途 promise：发消息/贴纸前靠 settle() 等它落定，
-      // 保证迟到的状态请求不会盖在刚发出的消息后面（见 ChatActionControl.settle）。
-      if (live.action === "choose_sticker") {
-        trackChatActionRequest(live, sendChooseStickerAction(chatId));
-        return;
-      }
-      trackChatActionRequest(live, sendTypingAction(chatId).then((ok: boolean) => {
-        if (ok) return;
-        // 按 timer 身份核对而非只按 chatId 查表：这次失败可能来自已经停止的
-        // 上一代心跳（该 tick 发出时它还活着，回包却晚到了），此时表里
-        // 早被换成同一 chatId 的新一代心跳，绝不能把新的也带着清掉。
-        const current = typingHeartbeats.get(chatId);
-        if (current && current.timer === timer) {
-          clearInterval(current.timer);
-          typingHeartbeats.delete(chatId);
-        }
-      }));
-    }, TYPING_ACTION_INTERVAL_MS);
-    entry = { timer, refCount: 0, action: "typing", inflight: new Set() };
-    typingHeartbeats.set(chatId, entry);
-    trackChatActionRequest(entry, sendTypingAction(chatId));
-  }
-  entry.refCount++;
-  // 复用已有心跳时把挡位归位到默认的 typing：上一持有者可能停在 idle/
-  // choose_sticker（activeReplyChats 保证同群单轮在途，实践中不会走到，
-  // 防御性兜底）。
-  entry.action = "typing";
-
-  // 闭包捕获本次拿到的 entry 本体：停止/切挡时若表里已换成同一 chatId 的
-  // 新一代心跳（本代先因重发失败被清、随后又有新调用开了新的），绝不能动
-  // 新一代的引用计数/定时器/挡位——和上面重发失败路径按 timer 身份核对是
-  // 同一个道理。
-  const acquired = entry;
-  let released: boolean = false;
-  return {
-    set: (phase: ChatActionPhase): void => {
-      if (released || typingHeartbeats.get(chatId) !== acquired) return;
-      acquired.action = phase;
-      // 切到非 idle 挡立即补发一次，状态在切换当口就可见，不等下一个 tick。
-      if (phase === "typing") trackChatActionRequest(acquired, sendTypingAction(chatId));
-      else if (phase === "choose_sticker") trackChatActionRequest(acquired, sendChooseStickerAction(chatId));
-    },
-    settle: async (): Promise<void> => {
-      if (released || typingHeartbeats.get(chatId) !== acquired) return;
-      // set("idle") 与本次 await 之间不会再有 tick 入队；同时等齐此前所有
-      // 请求，避免较早但更慢的一发在消息发送后才完成、重新盖回假状态。
-      // sendTypingAction/sendChooseStickerAction 内部兜错，这里不会 reject。
-      await settleInflight(acquired.inflight);
-    },
-    stop: (): void => {
-      if (released) return;
-      released = true;
-      const current = typingHeartbeats.get(chatId);
-      if (current !== acquired) return; // 本代已因重发失败被提前清掉（表里为空或已是新一代）
-      if (--current.refCount <= 0) {
-        clearInterval(current.timer);
-        typingHeartbeats.delete(chatId);
-      }
-    },
-  };
-}
-
-/**
  * 限频黑洞的明确反馈：触发被滑动窗口丢弃时回一句「你们太快了」，而不是
  * 静默失踪让群友以为机器人坏了。提示自身带独立冷却（每群至多一分钟一条，
  * 见 RATE_LIMIT_NOTICE_COOLDOWN_MS），刷屏场景下不会跟着刷。0.5 秒冷却的
@@ -915,7 +812,9 @@ function generateAndSendReply(
           await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
         }
       } finally {
-        heartbeat.stop();
+        // 先停表再等本代所有在途状态请求落定，避免异常中断时仍有迟到请求
+        // 在任务结束后重新显示「正在输入/选择贴纸…」。
+        await heartbeat.stop();
       }
     } finally {
       activeReplyChats.delete(chatId);
