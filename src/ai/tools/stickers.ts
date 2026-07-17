@@ -1,4 +1,4 @@
-import type { Sticker, StickerSet } from "@grammyjs/types";
+import type { StickerSet } from "@grammyjs/types";
 import { sendSticker } from "../../infra/telegram";
 import { sleep } from "../../libs/sleep";
 import { describeStickerForContext, getStickerSet } from "../stickerSets";
@@ -13,7 +13,7 @@ import {
   VIEW_STICKER_PACK_TOOL_INSTRUCTION,
 } from "../../consts/aiChat";
 import { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
-import type { ChatActionControl, StickerCatalogEntry, ToolDefinition } from "../../types";
+import type { ChatActionControl, StickerCandidate, StickerCatalogEntry, StickerPackCandidate, StickerRoundState, ToolDefinition } from "../../types";
 
 /**
  * 应景贴纸的两层选择工具：
@@ -34,29 +34,6 @@ import type { ChatActionControl, StickerCatalogEntry, ToolDefinition } from "../
  * 目录内容变化，且模型选中的编号要和组装工具描述时用的同一份菜单对应，
  * 两处必须共享 buildStickerPackMenu() 同一次调用的产出。
  */
-
-export interface StickerCandidate {
-  sticker: Sticker;
-  emoji: string;
-  description: string;
-}
-
-/** 一个可选贴纸包：short name、展示标题、整包简介、包内已有描述的贴纸。 */
-export interface StickerPackCandidate {
-  pack: string;
-  title: string;
-  summary: string;
-  stickers: StickerCandidate[];
-}
-
-/** 一轮回复内贴纸工具的限额状态，随 ReplyToolset 新建（见 ai/replyTools.ts）。 */
-export interface StickerRoundState {
-  /** 本轮已用 view_sticker_pack 看过清单的包编号（1-based）。 */
-  viewedPacks: Set<number>;
-  /** 本轮已发出的贴纸 file_unique_id——既是限额计数，也在上限放宽到 1 枚
-   *  以上时防止重复发同一枚。 */
-  sentStickerUids: Set<string>;
-}
 
 export function createStickerRoundState(): StickerRoundState {
   return { viewedPacks: new Set(), sentStickerUids: new Set() };

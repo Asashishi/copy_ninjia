@@ -55,11 +55,11 @@ import {
   typingHeartbeats,
 } from "../cache/aiChatWorker";
 import type { BufferedMessage, ChatActionControl, ChatActionPhase, MediaKind, ToolDefinition } from "../types";
-import { createReplyToolset, type ReplyToolContext, type ReplyToolset } from "../ai/tools/replyToolset";
+import { createReplyToolset } from "../ai/tools/replyToolset";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
-import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse, type ExtractedFunctionCall } from "../ai/gemini";
+import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse } from "../ai/gemini";
 import { sendChooseStickerAction, sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../ai/tools";
 import { SEND_MESSAGE_TOOL } from "../consts/tools";
@@ -72,6 +72,9 @@ import type {
   AiRecordMediaMessage,
   AiSentMessage,
   AiStickerCatalogEvent,
+  ExtractedFunctionCall,
+  ReplyToolContext,
+  ReplyToolset,
 } from "../types";
 
 /**

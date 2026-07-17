@@ -26,6 +26,7 @@ import type { GenerateContentParameters, GenerateContentResponse } from "@google
 import { logger } from "../infra/logger";
 import { GEMINI_API_KEY } from "../infra/config";
 import { REQUEST_TIMEOUT_MS } from "../consts/aiChat";
+import type { ExtractedFunctionCall } from "../types";
 
 /** 进程内唯一的 Gemini 客户端实例（timeout 是每次请求/每次重试各自的预算，
  *  不是所有重试共享一个硬顶，见 consts/aiChat.ts 的 REQUEST_TIMEOUT_MS 注释）。
@@ -115,12 +116,6 @@ export function extractOutputText(data: unknown): string {
 /** 取出响应里所有待执行的自定义函数调用（内置服务端工具如 googleSearch
  *  不在此列，它们已在 Google 侧执行完）。返回的是 parts 里的 functionCall
  *  对象本身（id/name/args）。 */
-export interface ExtractedFunctionCall {
-  id?: string;
-  name: string;
-  args: Record<string, unknown>;
-}
-
 export function extractFunctionCalls(data: unknown): ExtractedFunctionCall[] {
   const calls: ExtractedFunctionCall[] = [];
   for (const part of responseParts(data)) {

@@ -1,3 +1,6 @@
+import type { Sticker } from "@grammyjs/types";
+import type { ToolDefinition } from "./tools";
+
 /** 聊天状态心跳的挡位（见 workers/aiChatWorker.ts 的 startChatActionHeartbeat）：
  *  typing =「正在输入…」；choose_sticker =「正在选择贴纸…」（view_sticker_pack
  *  起、到贴纸真正发出前）；idle = 暂停重发——已有消息/贴纸落地，发出的消息
@@ -29,4 +32,63 @@ export interface BufferedMessage {
    *  （时间未知，转录行省略时间前缀）；短暂存在过的毫秒数形态在恢复时
    *  就地转成本格式（见 workers/diskIO/snapshotFiles.ts）。 */
   at: string;
+}
+
+/** 一轮 AI 回复的行动工具集所需的外部上下文（见 ai/tools/replyToolset.ts 的
+ *  createReplyToolset）。 */
+export interface ReplyToolContext {
+  chatId: number;
+  /** 触发这次回复的消息 ID：add_reaction 的目标；send_message 带
+   *  reply_to_trigger: true 时的回复引用目标。 */
+  replyToMessageId: number;
+  /** 本轮聊天状态心跳的挡位切换句柄（typing / choose_sticker / idle，见
+   *  workers/aiChatWorker.ts 的 startChatActionHeartbeat）：消息/贴纸落地后
+   *  切 idle 让状态随消息一起消失、连发停顿前切回 typing、翻贴纸包起切
+   *  choose_sticker。 */
+  chatAction: ChatActionControl;
+  /** 每条消息发送成功后的回调（清洗后的文本 + 消息 ID），供调用方自录
+   *  记忆/登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。 */
+  onMessageSent: (text: string, messageId: number) => void;
+  /** 贴纸发送成功后的回调，语义同 ai/tools/stickers.ts 的 sendStickerTool 的 onSent。 */
+  onStickerSent: (stickerDescription: string, messageId: number) => void;
+}
+
+/** 一轮 AI 回复的行动工具集（发言/消息反应/两层应景贴纸），见
+ *  ai/tools/replyToolset.ts 的 createReplyToolset。 */
+export interface ReplyToolset {
+  /** 本轮可用的行动工具定义，拼进请求的 functionDeclarations。 */
+  definitions: ToolDefinition[];
+  /** 这个名字是否属于本工具集（区别于 src/ai/tools/index.ts 的静态查询工具）。 */
+  has(name: string): boolean;
+  /** 执行一次工具调用，返回喂回模型的 JSON 字符串。 */
+  execute(name: string, argumentsJson: string): Promise<string>;
+  /** 本轮已成功发出的消息条数——调用方靠它判断模型是否「说过话」，
+   *  决定要不要把最终正文兜底发出（见 workers/aiChatWorker.ts）。 */
+  messagesSent(): number;
+}
+
+/** 一层候选贴纸：本体 + emoji 元数据 + AI 生成的画面描述，见
+ *  ai/tools/stickers.ts 的 buildStickerPackMenu。 */
+export interface StickerCandidate {
+  sticker: Sticker;
+  emoji: string;
+  description: string;
+}
+
+/** 一个可选贴纸包：short name、展示标题、整包简介、包内已有描述的贴纸。 */
+export interface StickerPackCandidate {
+  pack: string;
+  title: string;
+  summary: string;
+  stickers: StickerCandidate[];
+}
+
+/** 一轮回复内贴纸工具的限额状态，随 ReplyToolset 新建（见
+ *  ai/tools/replyToolset.ts 的 createReplyToolset）。 */
+export interface StickerRoundState {
+  /** 本轮已用 view_sticker_pack 看过清单的包编号（1-based）。 */
+  viewedPacks: Set<number>;
+  /** 本轮已发出的贴纸 file_unique_id——既是限额计数，也在上限放宽到 1 枚
+   *  以上时防止重复发同一枚。 */
+  sentStickerUids: Set<string>;
 }
