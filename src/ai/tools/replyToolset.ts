@@ -140,7 +140,7 @@ function buildSendMessageToolDefinition(): ToolDefinition {
         text: { type: "string", description: "要发到群里的消息文本。" },
         reply_to_trigger: { type: "boolean", description: "是否以「回复」形式挂在触发你这次回复的那条消息上；省略视为 false。" },
         typo_text: { type: "string", description: "可选：同一句话的手滑版本，只能把 text 里的一个已有字替换成另一个字；长度必须和 text 完全一致，不能多打、少打、重复字或改动两处。是否真的发送这个版本由执行侧按概率决定；省略则不会自动制造错字。" },
-        typo_correction_text: { type: "string", description: "可选：typo_text 里唯一错掉的那个字的正确写法，用于执行侧掷中快速补发时发送。只写这一个正确字，不要写完整句子；执行侧也会从 text 自动校验/推导。" },
+        typo_correction_text: { type: "string", description: "可选：typo_text 里唯一被替换位置的正确字，用于执行侧掷中快速补发时发送。只写这一个字；即使错在一个词里面，也不要写整个正确词或完整句。执行侧会从 text 自动校验/推导，并只发送这个单字。" },
       },
       required: ["text"],
     },
@@ -272,10 +272,8 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
 
     const rawTypoText: string | null = parseStringField(argumentsJson, "typo_text");
     const typoText: string | null = rawTypoText ? cleanReply(rawTypoText) : null;
-    const rawTypoCorrectionText: string | null = parseStringField(argumentsJson, "typo_correction_text");
-    const typoCorrectionText: string | null = rawTypoCorrectionText ? cleanReply(rawTypoCorrectionText) : null;
     const typoDiff: SingleCharacterSubstitution | null = typoText ? findSingleCharacterSubstitution(text, typoText) : null;
-    const effectiveTypoCorrectionText: string | null = typoDiff ? (typoCorrectionText === typoDiff.expected ? typoCorrectionText : typoDiff.expected) : null;
+    const effectiveTypoCorrectionText: string | null = typoDiff?.expected ?? null;
     const remainingActions: number = MAX_ACTIONS_PER_REPLY - actionsUsed;
     const shouldUseTypo: boolean =
       !!typoText &&

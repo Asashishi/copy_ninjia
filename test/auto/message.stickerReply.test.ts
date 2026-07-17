@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
-/** 「拿贴纸回复机器人」的触发判定（见 src/auto/message.ts 的贴纸分支）：
- * 有视觉素材时经 recordChatMedia 带 replyToBot 走「先试缓存、解析完成再
- * 回答」的必回管线；没有素材时记完兜底行直接按回复机器人触发。storage
- * mock 里 quietUntil 恒为将来时刻——必回路径与文字回复/@ 一致地无视
- * /quiet，正好顺带验证这一点。 */
+/** 「拿媒体直接叫机器人」的触发判定（见 src/auto/message.ts 的媒体分支）：
+ * 有视觉素材时经 recordChatMedia 带 directTrigger 走「先试缓存、解析完成再
+ * 回答」的必回管线；没有素材时记完兜底行直接触发。storage mock 里
+ * quietUntil 恒为将来时刻——必回路径与文字回复/@ 一致地无视 /quiet，正好
+ * 顺带验证这一点。 */
 
 const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 const recordChatMediaMock = mock((..._args: unknown[]): void => {});
@@ -60,14 +60,14 @@ const botReply = {
   text: "机器人之前说的话",
 };
 
-describe("拿贴纸回复机器人", () => {
+describe("媒体直接叫机器人", () => {
   beforeEach(() => {
     recordChatMessageMock.mockClear();
     recordChatMediaMock.mockClear();
     generateAndSendReplyMock.mockClear();
   });
 
-  test("静态贴纸回复机器人：recordChatMedia 带上 replyToBot 与被回复文本，不掷评价骰", async () => {
+  test("静态贴纸回复机器人：recordChatMedia 带上 directTrigger 与被回复文本，不掷评价骰", async () => {
     await handleIncomingMessage({
       me: botInfo,
       msg: {
@@ -85,7 +85,7 @@ describe("拿贴纸回复机器人", () => {
       "sticker", -100800, 123, "Alice", "Tester", "alice_dev", "",
       "st-file", "st-uid", 11, false,
       "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
-      { repliedBotText: "机器人之前说的话" }
+      { reason: "reply", repliedBotText: "机器人之前说的话" }
     );
     // 触发在 Worker 侧等描述就绪后才发生，主线程不直接 trigger。
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -111,7 +111,7 @@ describe("拿贴纸回复机器人", () => {
     expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 12, "机器人之前说的话");
   });
 
-  test("贴纸回复的不是机器人：不带 replyToBot，也不触发回复", async () => {
+  test("贴纸回复的不是机器人：不带 directTrigger，也不触发回复", async () => {
     await handleIncomingMessage({
       me: botInfo,
       msg: {
@@ -130,6 +130,28 @@ describe("拿贴纸回复机器人", () => {
       "st-file", "st-uid", 13, false,
       "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       undefined
+    );
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
+  test("图片 caption 里 @ 机器人：recordChatMedia 带 mention directTrigger，静默期也必回", async () => {
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 14,
+        date: 1,
+        chat,
+        from: alice,
+        caption: "看看这个 @test_bot",
+        caption_entities: [{ type: "mention", offset: 5, length: 9 }],
+        photo: [{ file_id: "photo-file", file_unique_id: "photo-uid", width: 640, height: 480 }],
+      },
+    } as any);
+
+    expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
+    expect(recordChatMediaMock).toHaveBeenCalledWith(
+      "photo", -100800, 123, "Alice", "Tester", "alice_dev", "看看这个 @test_bot",
+      "photo-file", "photo-uid", 14, false, undefined, { reason: "mention" }
     );
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });

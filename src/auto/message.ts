@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import type { Animation, Message, PhotoSize } from "@grammyjs/types";
+import type { Animation, Message, MessageEntity, PhotoSize } from "@grammyjs/types";
 import type { ChatState, CopyMode } from "../types";
 import { getActiveCopyIn, getActiveProxySendTarget, getChatState, getOrCreateChatState, saveState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
@@ -83,14 +83,24 @@ function resolveSpeaker(message: Message): { id: number; firstName: string; last
  * （@username 形式），按 offset/length 截出实际文本再跟机器人的 username 比对，
  * 不用简单的字符串 includes——避免把「@somebody_else_bot」这种子串误判成命中。
  */
+function messageEntitySource(message: Message): { text: string; entities: MessageEntity[] } | null {
+  if (typeof message.text === "string" && message.entities) {
+    return { text: message.text, entities: message.entities };
+  }
+  if (typeof message.caption === "string" && message.caption_entities) {
+    return { text: message.caption, entities: message.caption_entities };
+  }
+  return null;
+}
+
 function isBotMentioned(message: Message, botUsername: string | undefined): boolean {
-  if (!botUsername || typeof message.text !== "string") return false;
-  const entities = message.entities;
-  if (!entities) return false;
+  if (!botUsername) return false;
+  const source = messageEntitySource(message);
+  if (!source) return false;
   const target: string = `@${botUsername}`.toLowerCase();
-  for (const entity of entities) {
+  for (const entity of source.entities) {
     if (entity.type === "mention") {
-      const mentionText: string = message.text.substring(entity.offset, entity.offset + entity.length);
+      const mentionText: string = source.text.substring(entity.offset, entity.offset + entity.length);
       if (mentionText.toLowerCase() === target) return true;
     }
   }
@@ -106,13 +116,13 @@ function isBotMentioned(message: Message, botUsername: string | undefined): bool
  * 情况即便消息里同时 @ 了别人，机器人被叫到也该照常回。
  */
 function mentionsOtherUser(message: Message, botUsername: string | undefined): boolean {
-  if (!botUsername || typeof message.text !== "string") return false;
-  const entities = message.entities;
-  if (!entities) return false;
+  if (!botUsername) return false;
+  const source = messageEntitySource(message);
+  if (!source) return false;
   const botTarget: string = `@${botUsername}`.toLowerCase();
-  for (const entity of entities) {
+  for (const entity of source.entities) {
     if (entity.type === "mention") {
-      const mentionText: string = message.text.substring(entity.offset, entity.offset + entity.length).toLowerCase();
+      const mentionText: string = source.text.substring(entity.offset, entity.offset + entity.length).toLowerCase();
       if (mentionText !== botTarget) return true;
     }
   }
@@ -353,6 +363,13 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 机器人同样是明确在跟机器人说话，不能因为消息没有 text 就识别不到。
   const repliedTo: Message | undefined = message.reply_to_message;
   const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
+  const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
+  const hasOtherMention: boolean = mentionsOtherUser(message, ctx.me.username);
+  const directMediaTrigger: { reason: "reply" | "mention"; repliedBotText?: string } | undefined = isReplyToBot
+    ? { reason: "reply", repliedBotText: repliedTo?.text }
+    : isMentioned
+    ? { reason: "mention" }
+    : undefined;
   if (!activeCopy && aiChatEnabled && messageText && !messageText.startsWith("/")) {
     // 把带文本的普通消息滚动记入本群的 AI 对话缓存（Bot API 无法拉历史，只能
     // 边收边攒，上限见 consts/aiChat.ts 的 VERBATIM_CONTEXT_MAX）。指令消息
@@ -366,14 +383,12 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // 贴纸/扣反应都算）、不允许沉默（见 workers/aiChatWorker.ts 的
     // generateAndSendReply）。命中后就不再走下面的洗澡/随机复读，免得一条
     // 消息既被 AI 回又被复读。
-    const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
-
     // 消息里 @ 了别人（非机器人自己）时不参与随机搭话的概率判定——见
     // mentionsOtherUser 注释；不影响上面 isReplyToBot/isMentioned 这两条
     // 本就明确指向机器人的必回路径。
     const isRandomTrigger: boolean =
       !isReplyToBot && !isMentioned && !isQuiet &&
-      !mentionsOtherUser(message, ctx.me.username) &&
+      !hasOtherMention &&
       Math.random() < AI_REPLY_PROBABILITY &&
       tryClaimUserRandomReply(chatId, speaker.id);
 
@@ -390,18 +405,18 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // aiChat.ts 的 recordChatMedia），解析成功原位回填画面描述，失败回填
     // 同一份兜底行，都不损失现状已有信息。基线只当上下文、不触发 AI 回复，
     // 也不 return——后面的随机复读本来就对贴纸生效，行为保持不变。两个
-    // 例外：拿贴纸回复机器人是明确在跟机器人说话，必触发回复（replyToBot，
-    // Worker 侧先试常驻目录/描述缓存，未命中等解析完成再回答）；随机评价见
-    // 下方 commentOnResolve。
+    // 例外：拿贴纸明确跟机器人说话（回复机器人，或 caption 里 @ 机器人）时
+    // 必触发回复（directMediaTrigger，Worker 侧先试常驻目录/描述缓存，未命中
+    // 等解析完成再回答）；随机评价见下方 commentOnResolve。
     const speaker = resolveSpeaker(message);
     const fallbackText: string = describeStickerForContext(message.sticker);
     const visionSource = pickStickerVisionSource(message.sticker);
     if (!visionSource) {
       recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, fallbackText);
-      // 没有视觉素材也要认得「拿贴纸回复机器人」：兜底行刚记到缓存尾部，
-      // 元数据（emoji/包名）就是全部可用信息，直接按回复机器人触发。
-      if (isReplyToBot) {
-        generateAndSendReply(chatId, message.message_id, repliedTo?.text);
+      // 没有视觉素材也要认得「明确在跟机器人说话」：兜底行刚记到缓存尾部，
+      // 元数据（emoji/包名）就是全部可用信息，直接触发回复。
+      if (directMediaTrigger) {
+        generateAndSendReply(chatId, message.message_id, directMediaTrigger.repliedBotText);
         return;
       }
     } else {
@@ -412,7 +427,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       // 人短时间连评。回复机器人时不掷骰（必回，与文字路径一致地无视
       // /quiet、不占随机冷却），两者互斥。
       const commentOnResolve: boolean =
-        !isReplyToBot && !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+        !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
       recordChatMedia(
         "sticker",
         chatId,
@@ -426,23 +441,23 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
         message.message_id,
         commentOnResolve,
         fallbackText,
-        isReplyToBot ? { repliedBotText: repliedTo?.text } : undefined
+        directMediaTrigger
       );
       // 与文字路径的必回触发同语义：这条贴纸已经注定引来一条 AI 回复，
       // 不再参与下面的随机复读，免得一条消息既被回又被复读。
-      if (isReplyToBot) return;
+      if (directMediaTrigger) return;
     }
   } else if (!activeCopy && aiChatEnabled && Array.isArray(message.photo) && message.photo.length > 0) {
     // 图片消息同样没有 text（配文在 caption 里），交给 AI Worker 先占位入
     // 缓存、异步解析出描述后原位回填（见 aiChat.ts 的 recordChatMedia）。
     // 基线与贴纸/GIF 同定位：只当上下文，不触发 AI 回复，也不 return——
     // 后面的随机复读对图片本来就生效，行为保持不变。拿图片回复机器人则
-    // 必触发（replyToBot，同贴纸分支）。相册（一次发多张）是
+    // 必触发（directMediaTrigger，同贴纸分支）。相册（一次发多张）是
     // 多条相邻消息各带一张图，自然逐条走到这里，各自占位、各自解析。
     const speaker = resolveSpeaker(message);
     const caption: string = typeof message.caption === "string" ? message.caption : "";
     const commentOnResolve: boolean =
-      !isReplyToBot && !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+      !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
     recordChatMedia(
       "photo",
@@ -457,9 +472,9 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       message.message_id,
       commentOnResolve,
       undefined,
-      isReplyToBot ? { repliedBotText: repliedTo?.text } : undefined
+      directMediaTrigger
     );
-    if (isReplyToBot) return;
+    if (directMediaTrigger) return;
   } else if (!activeCopy && aiChatEnabled && message.animation) {
     // GIF（Telegram animation，实际多为 mp4）：本项目没有视频解码/抽帧能力，
     // 只能分析 Telegram 自带的缩略图（封面帧，见 pickAnimationVisionSource）。
@@ -470,14 +485,14 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const visionSource = pickAnimationVisionSource(message.animation);
     if (!visionSource) {
       recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, caption ? `[GIF] ${caption}` : "[GIF]");
-      // 同贴纸分支：没有解析素材也要认得「拿 GIF 回复机器人」。
-      if (isReplyToBot) {
-        generateAndSendReply(chatId, message.message_id, repliedTo?.text);
+      // 同贴纸分支：没有解析素材也要认得「明确在跟机器人说话」。
+      if (directMediaTrigger) {
+        generateAndSendReply(chatId, message.message_id, directMediaTrigger.repliedBotText);
         return;
       }
     } else {
       const commentOnResolve: boolean =
-        !isReplyToBot && !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+        !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
       recordChatMedia(
         "animation",
         chatId,
@@ -491,9 +506,9 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
         message.message_id,
         commentOnResolve,
         undefined,
-        isReplyToBot ? { repliedBotText: repliedTo?.text } : undefined
+        directMediaTrigger
       );
-      if (isReplyToBot) return;
+      if (directMediaTrigger) return;
     }
   }
 

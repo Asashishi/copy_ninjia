@@ -184,9 +184,10 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
  * @param stickerFallbackText kind 为 "sticker" 时解析失败的兜底文本（现有
  *   元数据行，见 ai/stickerSets.ts 的 describeStickerForContext）；其余
  *   kind 不传。
- * @param replyToBot 这份媒体是在「回复机器人」：描述就绪（命中缓存或解析
- *   完成，失败用兜底文本）后必触发一次直接回复，语义见
- *   AiRecordMediaMessage.replyToBot；与 commentOnResolve 互斥。
+ * @param directTrigger 这份媒体是在明确跟机器人说话（回复机器人，或 caption
+ *   里 @ 机器人）：描述就绪（命中缓存或解析完成，失败用兜底文本）后必触发
+ *   一次直接回复，语义见 AiRecordMediaMessage.directTrigger；与
+ *   commentOnResolve 互斥。
  */
 export function recordChatMedia(
   kind: MediaKind,
@@ -201,9 +202,9 @@ export function recordChatMedia(
   messageId: number,
   commentOnResolve: boolean,
   stickerFallbackText?: string,
-  replyToBot?: { repliedBotText?: string }
+  directTrigger?: { reason: "reply" | "mention"; repliedBotText?: string }
 ): void {
-  post({ type: "recordMedia", kind, chatId, senderId: id, firstName, lastName, username, caption, fileId, fileUniqueId, messageId, commentOnResolve, stickerFallbackText, replyToBot });
+  post({ type: "recordMedia", kind, chatId, senderId: id, firstName, lastName, username, caption, fileId, fileUniqueId, messageId, commentOnResolve, stickerFallbackText, directTrigger });
 }
 
 /**

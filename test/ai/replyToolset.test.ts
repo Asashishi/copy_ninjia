@@ -1,11 +1,11 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 /**
  * ai/replyTools.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者在
  * 模块顶层就会 `new Worker(...)`：单测里绝不能让它真的跑起来（理由同
  * test/commands/luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
- * 本文件只测 cleanReply 纯函数；工具集的贴纸分支逻辑在 test/ai/stickers.test.ts，
- * 发送/反应分支依赖真实 Telegram 调用，由手动验证覆盖。
+ * 贴纸分支逻辑在 test/ai/stickers.test.ts 覆盖；本文件只补文字清洗、错字
+ * diff 与 send_message 的错字补发回归。
  */
 mock.module("../../src/infra/diskIO", () => ({
   postDiskIO: mock((..._args: unknown[]): void => {}),
@@ -13,7 +13,43 @@ mock.module("../../src/infra/diskIO", () => ({
   relayLogMessage: mock((..._args: unknown[]): void => {}),
 }));
 
-const { cleanReply, findSingleCharacterSubstitution, isEmojiOnly } = await import("../../src/ai/tools/replyToolset");
+let nextMessageId: number = 100;
+const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
+const deleteMessageMock = mock(async (..._args: unknown[]): Promise<boolean> => true);
+const setMessageReactionMock = mock((..._args: unknown[]): void => {});
+const sendStickerMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
+const sleepMock = mock(async (..._args: unknown[]): Promise<void> => {});
+
+mock.module("../../src/infra/telegram", () => ({
+  bot: { api: { getStickerSet: mock(async (): Promise<null> => null), getFile: mock(async (): Promise<null> => null) } },
+  buildFileDownloadUrl: mock((_filePath: string): string => "https://example.invalid/file"),
+  sendMessage: sendMessageMock,
+  deleteMessage: deleteMessageMock,
+  setMessageReaction: setMessageReactionMock,
+  sendChooseStickerAction: mock(async (): Promise<boolean> => true),
+  sendTypingAction: mock(async (): Promise<boolean> => true),
+  sendSticker: sendStickerMock,
+}));
+
+mock.module("../../src/libs/sleep", () => ({
+  sleep: sleepMock,
+}));
+
+mock.module("../../src/ai/stickerConfig", () => ({
+  stickerConfig: { packs: [] },
+}));
+
+const { SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
+const { cleanReply, createReplyToolset, findSingleCharacterSubstitution, isEmojiOnly } = await import("../../src/ai/tools/replyToolset");
+
+beforeEach(() => {
+  nextMessageId = 100;
+  sendMessageMock.mockClear();
+  deleteMessageMock.mockClear();
+  setMessageReactionMock.mockClear();
+  sendStickerMock.mockClear();
+  sleepMock.mockClear();
+});
 
 describe("isEmojiOnly", () => {
   test("纯 emoji（含多枚、空白、肤色/ZWJ 组合）判为 true", () => {
@@ -82,5 +118,46 @@ describe("findSingleCharacterSubstitution", () => {
     expect(findSingleCharacterSubstitution("笨蛋", "笨蛋蛋")).toBeNull();
     expect(findSingleCharacterSubstitution("笨蛋", "本旦")).toBeNull();
     expect(findSingleCharacterSubstitution("笨蛋", "笨蛋")).toBeNull();
+  });
+});
+
+describe("send_message typo correction", () => {
+  test("快速补发只发送唯一错字对应的正确字，不接受模型给的整词", async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      const onMessageSent = mock((..._args: unknown[]): void => {});
+      const toolset = await createReplyToolset({
+        chatId: -100800,
+        replyToMessageId: 10,
+        chatAction: {
+          current: () => "idle",
+          set: mock((..._args: unknown[]): void => {}),
+          settle: mock(async (): Promise<void> => {}),
+        },
+        stickerLock: {
+          tryAcquire: () => true,
+          release: () => {},
+        },
+        onMessageSent,
+        onStickerSent: mock((..._args: unknown[]): void => {}),
+      });
+
+      const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "天气",
+        typo_text: "天汽",
+        typo_correction_text: "天气",
+      })));
+
+      expect(result.success).toBe(true);
+      expect(result.typo.mode).toBe("quick");
+      expect(sendMessageMock).toHaveBeenCalledTimes(2);
+      expect(sendMessageMock).toHaveBeenNthCalledWith(1, -100800, "天汽", undefined);
+      expect(sendMessageMock).toHaveBeenNthCalledWith(2, -100800, "气", undefined);
+      expect(onMessageSent).toHaveBeenNthCalledWith(1, "天汽", 100);
+      expect(onMessageSent).toHaveBeenNthCalledWith(2, "气", 101);
+    } finally {
+      Math.random = originalRandom;
+    }
   });
 });

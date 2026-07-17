@@ -409,6 +409,7 @@ export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "这条消息确实发错或多发了，只能用 delete_own_message 撤回这个 message_id。text 永远写正确完整内容；" +
   "适合手滑的普通短句可以额外提供 typo_text（手滑版本）和 typo_correction_text（快速补发用的正确字），" +
   "但 typo_text 只能把 text 里的一个已有字替换成另一个字：长度必须完全一致，不能多打、少打、重复字或改动两处；" +
+  "typo_correction_text 只写唯一被替换位置的正确字，即使错在一个词里面也不要写整个正确词或完整句；" +
   "是否真的发错、如何修正、等多久都由执行侧自动控制。";
 
 /**
@@ -425,10 +426,10 @@ export const DELETE_OWN_MESSAGE_TOOL_INSTRUCTION: string =
 
 /** 代码侧决定一条可手滑消息是否真的发错。模型只提供候选 typo_text，不决定概率。 */
 export const AI_TEXT_TYPO_PROBABILITY: number = 0.27;
-/** 发错后代码侧决定修正方式：快速补字/词为高概率，撤回重发为中概率，剩余假装没发现。 */
+/** 发错后代码侧决定修正方式：快速补字为高概率，撤回重发为中概率，剩余假装没发现。 */
 export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.65;
 export const TYPO_RECALL_CORRECTION_PROBABILITY: number = 0.25;
-/** 快速补字/词的执行侧延迟窗口：0.5s-1s。 */
+/** 快速补字的执行侧延迟窗口：0.5s-1s。 */
 export const TYPO_QUICK_CORRECTION_MIN_MS: number = 500;
 export const TYPO_QUICK_CORRECTION_MAX_MS: number = 1_000;
 /** 撤回重发路径里，真正删掉错误消息前的执行侧延迟窗口：数秒后再发现。 */
@@ -462,7 +463,7 @@ export const REPLY_ACTION_INSTRUCTION: string =
   "撤回消息只是修正错误，不算完成回应。" +
   "为了更像真人，适合手滑的普通短句可以给 send_message 同时提供正确 text、带一个错别字的 typo_text、以及快速补发用的 typo_correction_text；" +
   "text 永远写正确完整内容；typo_text 只能把 text 里的一个已有字替换成另一个字，长度必须完全一致，绝对不要多打、少打、重复字，" +
-  "不要改坏链接、@用户名、数字、代码、专有名词或事实关键字。" +
-  "是否真的发送 typo_text、发错后是快速补字/词、撤回重发、还是假装没发现，概率和等待时间都由执行侧控制，你不要自己选择概率分支，也不要为了等时间额外输出内容。" +
+  "不要改坏链接、@用户名、数字、代码、专有名词或事实关键字；typo_correction_text 只写唯一被替换位置的正确字，哪怕错在一个词里也不要写整个正确词。" +
+  "是否真的发送 typo_text、发错后是快速补字、撤回重发、还是假装没发现，概率和等待时间都由执行侧控制，你不要自己选择概率分支，也不要为了等时间额外输出内容。" +
   `一轮回复通常 1~3 个动作，可以 3-5 个动作，绝对不要超过 ${MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
   "全部动作完成后直接结束，不要再输出任何正文。";

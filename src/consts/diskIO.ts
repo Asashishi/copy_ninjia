@@ -56,5 +56,5 @@ export const SNAPSHOT_FLUSH_INTERVAL_MS: number = 10_000;
 
 // ---- 启动 load 握手 ----
 
-/** 主线程等待 diskIOWorker 完成启动恢复（load）的超时；超时按空数据继续，不拦 bot 启动。 */
+/** 主线程等待 diskIOWorker 完成启动恢复（load）的超时；超时拒绝启动，避免用空状态覆盖旧持久化数据。 */
 export const LOAD_TIMEOUT_MS: number = 5_000;

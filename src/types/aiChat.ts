@@ -62,13 +62,15 @@ export interface AiRecordMediaMessage {
    * ai/stickerSets.ts 的 describeStickerForContext）——即便解析失败也不
    * 丢失贴纸自带的 emoji/包名信息；其余 kind 不传。 */
   stickerFallbackText?: string;
-  /** 这份媒体是在「回复机器人」（见 auto/message.ts）：描述就绪后必触发
-   * 一次直接回复——先试常驻贴纸目录/临时描述缓存，未命中就等异步解析完成
-   * 再触发，解析失败也用兜底文本回，真人在等回应、不能静默失踪。不掷概率、
-   * 不受 /quiet 影响，与 commentOnResolve 互斥（主线程只会设其一）。 */
-  replyToBot?: {
+  /** 这份媒体是在明确跟机器人说话（回复机器人，或 caption 里 @ 机器人）：
+   * 描述就绪后必触发一次直接回复——先试常驻贴纸目录/临时描述缓存，未命中
+   * 就等异步解析完成再触发，解析失败也用兜底文本回，真人在等回应、不能
+   * 静默失踪。不掷概率、不受 /quiet 影响，与 commentOnResolve 互斥（主线程
+   * 只会设其一）。 */
+  directTrigger?: {
+    reason: "reply" | "mention";
     /** 被回复的那条机器人消息文本（机器人消息不在缓存里）；机器人那条
-     * 若是贴纸等非文本消息则缺省。 */
+     * 若是贴纸等非文本消息、或本次是 @ 提及时则缺省。 */
     repliedBotText?: string;
   };
 }

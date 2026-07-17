@@ -246,10 +246,10 @@ function replyFallbackDescriptionFor(msg: AiRecordMediaMessage): string {
  * 内容的评价（见 generateAndSendReply 的 mediaComment）——回填先于触发，
  * 模型拼上下文时看到的已是描述而非占位。解析失败没内容可评，静默放弃。
  *
- * msg.replyToBot（用户拿这份媒体在回复机器人，见 auto/message.ts）则是
- * 必触发：白名单目录命中时立即回；未命中等 describeMedia（内部自带
- * file_unique_id 描述缓存）解析完成再回；解析失败也用兜底文本回——真人
- * 在等回应，评价那套「失败静默放弃」在这里就是被投诉的「已读不回」。
+ * msg.directTrigger（用户拿这份媒体回复机器人，或 caption 里 @ 机器人，见
+ * auto/message.ts）则是必触发：白名单目录命中时立即回；未命中等 describeMedia
+ * （内部自带 file_unique_id 描述缓存）解析完成再回；解析失败也用兜底文本回
+ * ——真人在等回应，评价那套「失败静默放弃」在这里就是被投诉的「已读不回」。
  *
  * 相册（一次发多张图）在 Telegram 侧本来就是多条相邻消息、各带一张图，
  * 天然逐条走这里，互不影响；每条媒体消息各自占位、各自异步解析。
@@ -269,12 +269,12 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
         at: formatTokyoTime(Date.now()),
       };
       pushBufferedMessage(msg.chatId, entry);
-      if (msg.replyToBot) {
-        generateAndSendReply(msg.chatId, msg.messageId, msg.replyToBot.repliedBotText, false, {
+      if (msg.directTrigger) {
+        generateAndSendReply(msg.chatId, msg.messageId, msg.directTrigger.repliedBotText, false, {
           kind: "sticker",
           senderName: displayBufferedMessageName(entry),
           description: catalogEntry.description,
-          isReplyToBot: true,
+          directTriggerReason: msg.directTrigger.reason,
         });
       } else if (msg.commentOnResolve) {
         generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: "sticker", senderName: displayBufferedMessageName(entry), description: catalogEntry.description });
@@ -299,14 +299,14 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
     dirtyMemoryChats.add(msg.chatId);
-    if (msg.replyToBot) {
+    if (msg.directTrigger) {
       // 回填先于触发（同评价），模型拼上下文时看到的已是描述；解析失败
       // 退回兜底文本照样触发——回应可以含糊，失踪不行。
-      generateAndSendReply(msg.chatId, msg.messageId, msg.replyToBot.repliedBotText, false, {
+      generateAndSendReply(msg.chatId, msg.messageId, msg.directTrigger.repliedBotText, false, {
         kind: msg.kind,
         senderName: displayBufferedMessageName(entry),
         description: description ?? replyFallbackDescriptionFor(msg),
-        isReplyToBot: true,
+        directTriggerReason: msg.directTrigger.reason,
       });
     } else if (msg.commentOnResolve && description) {
       generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: msg.kind, senderName: displayBufferedMessageName(entry), description });
@@ -520,10 +520,10 @@ interface MediaCommentContext {
   kind: MediaKind;
   senderName: string;
   description: string;
-  /** 用户是拿这份媒体在「回复机器人」（见 AiRecordMediaMessage.replyToBot）：
-   *  回复指令改为必回语气（对方明确在跟机器人说话，不许已读不回），并发闸
-   *  打满时按直接触发排队补跑而非丢弃。 */
-  isReplyToBot?: boolean;
+  /** 用户是拿这份媒体明确在跟机器人说话（回复机器人，或 caption 里 @ 机器人）：
+   *  回复指令改为必回语气（不许已读不回），并发闸打满时按直接触发排队补跑
+   *  而非丢弃。 */
+  directTriggerReason?: "reply" | "mention";
 }
 
 /** 按媒体类型给出提示词里要用的名词短语与转录行标签，见 replyInstruction
@@ -596,9 +596,10 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
   // 发言/贴纸/反应全部工具化，做什么、什么顺序由模型自己决定（见
   // ai/tools/replyToolset.ts）。
-  // - 拿媒体回复机器人：对方用贴纸/图片/GIF 明确在回机器人的话（见
-  //   MediaCommentContext 的 isReplyToBot），语气同回复/@ 触发——别已读
-  //   不回；描述可能是解析结果也可能是元数据兜底，模型按有什么接什么。
+  // - 拿媒体直接叫机器人：对方用贴纸/图片/GIF 回复机器人，或在 caption 里
+  //   @ 机器人（见 MediaCommentContext 的 directTriggerReason），语气同
+  //   回复/@ 触发——别已读不回；描述可能是解析结果也可能是元数据兜底，模型
+  //   按有什么接什么。
   // - 媒体评价：针对刚解析完的那份图片/贴纸/GIF 发表评价，要求挂回复引用；
   //   评不出花来就简短一句、或至少扣个表情反应，不允许沉默。
   // - 排队补跑：点名回复入队时快照下来的那条具体消息（此刻转录尾部早已
@@ -610,8 +611,10 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   //   扣个表情反应也行；触发者是谁转录最后一行本来就写着，不再单独喂名字、
   //   不再强制点名。
   // - 回复/@ 触发：对方明确在跟机器人说话，别已读不回，建议第一条挂引用。
-  const replyInstruction: string = mediaComment?.isReplyToBot
+  const replyInstruction: string = mediaComment?.directTriggerReason === "reply"
     ? `刚才 ${mediaComment.senderName} 用${mediaNounFor(mediaComment.kind)}回复了你上一条消息，内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
+    : mediaComment?.directTriggerReason === "mention"
+    ? `刚才 ${mediaComment.senderName} 发了${mediaNounFor(mediaComment.kind)}并在配文里 @ 了你，内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
     : mediaComment
     ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
     : queuedTrigger
@@ -787,7 +790,7 @@ function notifyRateLimited(chatId: number, now: number): void {
  * @param mediaComment 若是「解析完图片/贴纸/GIF 后评价它」触发（见
  *   recordChatMedia），发送人与描述——回复指令改为评价，回复引用挂在那条
  *   媒体消息上（replyToMessageId 即那条消息）；5 分钟窗口限频照常适用，
- *   评价触发同样占限频名额。isReplyToBot 为 true 时是「拿媒体回复机器人」
+ *   评价触发同样占限频名额。directTriggerReason 存在时是「媒体直接叫机器人」
  *   的必回触发：指令改为回复语气，并发闸打满时排队而非丢弃。
  */
 function generateAndSendReply(
@@ -812,9 +815,9 @@ function generateAndSendReply(
   // 并发闸同时就是短时爆发的天然节流（见 consts/aiChat.ts 的
   // RATE_LIMIT_LONG_WINDOW_MS 注释）。
   if ((activeReplyCounts.get(chatId) ?? 0) >= REPLY_ROUND_MAX_CONCURRENT) {
-    // 拿媒体回复机器人（mediaComment.isReplyToBot）和文字回复/@ 一样是真人
+    // 媒体直接叫机器人（mediaComment.directTriggerReason）和文字回复/@ 一样是真人
     // 在等的直接触发，照常排队补跑；随机插话/随机媒体评价才直接丢弃。
-    if (isRandomTrigger || (mediaComment && !mediaComment.isReplyToBot)) return;
+    if (isRandomTrigger || (mediaComment && !mediaComment.directTriggerReason)) return;
     enqueueReplyTrigger(chatId, replyToMessageId, repliedBotText, mediaComment);
     return;
   }
@@ -826,8 +829,8 @@ function generateAndSendReply(
  * 腾出后补跑。队列打满则丢弃，并记下欠一句「你们太快了」提示——被丢的是
  * 真人在等的交互，明确反馈好过静默失踪；提示压到某轮收尾时再发（见
  * drainReplyQueue），至少不在刚收尾那轮连发短句的当口插进去打断它。
- * @param mediaTrigger 拿媒体回复机器人的触发（见 MediaCommentContext 的
- *   isReplyToBot）：媒体解析是异步的，触发时转录尾部未必还是那条媒体消息，
+ * @param mediaTrigger 媒体直接叫机器人的触发（见 MediaCommentContext 的
+ *   directTriggerReason）：媒体解析是异步的，触发时转录尾部未必还是那条媒体消息，
  *   不能拿尾部当快照，改用解析出的发送人与描述。
  */
 function enqueueReplyTrigger(chatId: number, replyToMessageId: number, repliedBotText: string | undefined, mediaTrigger?: MediaCommentContext): void {
