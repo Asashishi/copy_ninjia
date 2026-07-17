@@ -1,5 +1,6 @@
 import { logger } from "../infra/logger";
 import { readFileSync } from "node:fs";
+import { sleep } from "../libs/sleep";
 import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool } from "@google/genai";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { formatTokyoTime, getCurrentTime } from "../libs/time";
@@ -29,6 +30,7 @@ import {
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   RATE_LIMIT_NOTICE_TEXT,
   REPLY_TRIGGER_QUEUE_MAX,
+  SUMMARY_RETRY_DELAYS_MS,
   REPLY_ACTION_INSTRUCTION,
   REPLY_MAX_TOKENS,
   REPLY_TEMPERATURE,
@@ -323,17 +325,35 @@ async function rotateCompaction(chatId: number, mirrorBatch: BufferedMessage[], 
     if (promoteFirst) {
       promotePendingSummary(chatId);
     }
-    const summary: string | null = await summarizeBatch(mirrorBatch);
+    const summary: string | null = await summarizeBatchWithRetry(chatId, mirrorBatch);
     if (summary) {
       pendingSummaries.set(chatId, summary);
       dirtyMemoryChats.add(chatId);
     } else {
-      // 失败刻意不回灌不重试：镜像原文此刻还在逐字区，要到下一轮滑出时
-      // 这段中期记忆才真正缺失。
-      logger.error(`AI compaction failed: chat ${chatId}'s ${mirrorBatch.length} mirrored messages produced no summary; mid-term memory for this window will be missing once it slides out.`);
+      // 重试全败才放弃，且不回灌：镜像原文此刻还在逐字区，要到下一轮
+      // 滑出时这段中期记忆才真正缺失。
+      logger.error(`AI compaction failed: chat ${chatId}'s ${mirrorBatch.length} mirrored messages produced no summary after ${SUMMARY_RETRY_DELAYS_MS.length + 1} attempts; mid-term memory for this window will be missing once it slides out.`);
     }
   } catch (error: unknown) {
     logger.error("Error in chat compaction task:", error);
+  }
+}
+
+/**
+ * 带退避重试的镜像压缩：summarizeBatch 失败（返回 null）按
+ * SUMMARY_RETRY_DELAYS_MS 逐次等待后重试，全败返回 null。这类失败多为
+ * 瞬时（网络抖动/临时超载，重启后同一批就能压成功），跨请求重试通常能
+ * 救回；重试期间镜像原文仍在逐字区，等得起。本函数在该群的轮换串行链上
+ * 执行，等待只顺延本群后续轮换，不阻塞消息分发。
+ */
+async function summarizeBatchWithRetry(chatId: number, batch: BufferedMessage[]): Promise<string | null> {
+  for (let attempt: number = 0; ; attempt++) {
+    const summary: string | null = await summarizeBatch(batch);
+    if (summary) return summary;
+    if (attempt >= SUMMARY_RETRY_DELAYS_MS.length) return null;
+    const delayMs: number = SUMMARY_RETRY_DELAYS_MS[attempt]!;
+    logger.error(`AI compaction attempt ${attempt + 1} produced no summary for chat ${chatId}; retrying in ${delayMs} ms.`);
+    await sleep(delayMs);
   }
 }
 

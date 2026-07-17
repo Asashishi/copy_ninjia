@@ -37,7 +37,8 @@ export const pendingSummaries: Map<number, string> = new Map();
 
 /**
  * 各群轮换任务的串行链（尾部 promise）。每轮任务 = 晋升上一轮镜像的摘要
- * + 压缩新镜像（一次 Gemini 网络调用）。消息洪峰下同一群可能背靠背
+ * + 压缩新镜像（一到几次 Gemini 网络调用，失败退避重试，见
+ * consts/aiChat.ts 的 SUMMARY_RETRY_DELAYS_MS）。消息洪峰下同一群可能背靠背
  * 轮换两轮，靠把新一轮 then 在上一轮之后，保证晋升的一定是上一轮的结果、
  * 摘要严格按时间顺序入队（链上的任务自身兜错，链永不 reject）。
  */

@@ -48,6 +48,16 @@ export const SUMMARY_MAX_TOKENS: number = 8192;
 
 /** 冷消息压缩的生成温度：偏低，换取更忠实原文的摘要而非自由发挥。 */
 export const SUMMARY_TEMPERATURE: number = 0.6;
+
+/**
+ * 镜像压缩失败后的重试退避序列（毫秒）：首次失败等 15 秒再试，再失败等
+ * 60 秒试最后一次，全败才放弃。实测这类失败多为瞬时（网络抖动/临时超载，
+ * 重启后同一批就能压成功），SDK 内建重试只兜请求内的快速瞬断，跨请求的
+ * 短暂故障靠这里兜。放弃后该段中期记忆缺失（见 workers/aiChatWorker.ts
+ * 的 rotateCompaction）。重试期间本群轮换链顺延，积压由
+ * COMPACTION_MAX_PENDING_PER_CHAT 兜底，洪峰下超额批次照旧丢弃。
+ */
+export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 /** 回复生成的生成温度：偏高，换取更贴合人设的活人感发挥。 */
 export const REPLY_TEMPERATURE: number = 1.2;
 
