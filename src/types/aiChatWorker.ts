@@ -146,8 +146,9 @@ export interface ReplyToolset {
   has(name: string): boolean;
   /** 执行一次工具调用，返回喂回模型的 JSON 字符串。 */
   execute(name: string, argumentsJson: string): Promise<string>;
-  /** 本轮已成功发出的消息条数——调用方靠它判断模型是否「说过话」，
-   *  决定要不要把最终正文兜底发出（见 workers/aiChatWorker.ts）。 */
+  /** 本轮仍可见的文字消息条数（成功撤回的消息会扣回去）——调用方靠它判断
+   *  模型是否真的「说过话」，决定要不要把最终正文兜底发出
+   *  （见 workers/aiChatWorker.ts）。 */
   messagesSent(): number;
 }
 

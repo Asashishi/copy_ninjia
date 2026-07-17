@@ -1,18 +1,26 @@
-import { sendMessage, setMessageReaction } from "../../infra/telegram";
+import { deleteMessage, sendMessage, setMessageReaction } from "../../infra/telegram";
 import { sleep } from "../../libs/sleep";
 import { truncateInline } from "../../libs/text";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
 import {
   ADD_REACTION_TOOL_INSTRUCTION,
+  AI_TEXT_TYPO_PROBABILITY,
+  DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
   MAX_ACTIONS_PER_REPLY,
   MAX_REACTIONS_PER_REPLY,
   SEND_MESSAGE_TOOL_INSTRUCTION,
+  TYPO_QUICK_CORRECTION_MAX_MS,
+  TYPO_QUICK_CORRECTION_MIN_MS,
+  TYPO_QUICK_CORRECTION_PROBABILITY,
+  TYPO_RECALL_CORRECTION_PROBABILITY,
+  TYPO_RECALL_DELETE_MAX_MS,
+  TYPO_RECALL_DELETE_MIN_MS,
   TYPING_DELAY_BASE_MS,
   TYPING_DELAY_JITTER_MS,
   TYPING_DELAY_MAX_MS,
   TYPING_DELAY_PER_CHAR_MS,
 } from "../../consts/aiChat";
-import { ADD_REACTION_TOOL, SEND_MESSAGE_TOOL, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
+import { ADD_REACTION_TOOL, DELETE_OWN_MESSAGE_TOOL, SEND_MESSAGE_TOOL, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
 import { REACTION_EMOJIS } from "../reactions";
 import {
   buildSendStickerToolDefinition,
@@ -24,19 +32,22 @@ import {
 } from "./stickers";
 import type { ReplyToolContext, ReplyToolset, StickerPackCandidate, StickerRoundState, ToolDefinition } from "../../types";
 
+type TypoCorrectionMode = "quick" | "recall" | "ignore";
+
 /**
- * 一轮 AI 回复的「行动工具集」：发言（send_message）、消息反应
- * （add_reaction）、两层应景贴纸（view_sticker_pack / send_sticker，见
- * 同目录 stickers.ts）。模型在同一次 function calling 对话里自主决定做
+ * 一轮 AI 回复的「行动工具集」：发言（send_message）、撤回自己本轮刚发的
+ * 文字消息（delete_own_message）、消息反应（add_reaction）、两层应景贴纸
+ * （view_sticker_pack / send_sticker，见同目录 stickers.ts）。模型在同一次
+ * function calling 对话里自主决定做
  * 哪几样、什么顺序——发言不再是「最终文本」，而是和贴纸/反应平级的工具
  * 动作；要不要以「回复」形式挂在触发消息上也由模型按条决定
  * （send_message 的 reply_to_trigger 参数）。
  *
  * 每轮回复经 createReplyToolset 新建一份工具集：贴纸菜单在此刻组装一次
  * （工具描述里的编号和执行时校验的必须是同一份，见 stickers.ts 模块头
- * 注），各工具的限额也挂在这份闭包状态上——动作总量（消息 + 贴纸 + 反应
- * 合计，硬顶 MAX_ACTIONS_PER_REPLY）在 execute 入口统一把关，贴纸枚数与
- * 去重、反应次数再各自设分项上限。执行结果一律是喂回模型的 JSON 字符串
+ * 注），各工具的限额也挂在这份闭包状态上——动作总量（消息 + 撤回 + 贴纸 +
+ * 反应合计，硬顶 MAX_ACTIONS_PER_REPLY）在 execute 入口统一把关，贴纸枚数
+ * 与去重、反应次数再各自设分项上限。执行结果一律是喂回模型的 JSON 字符串
  * ——被限额/校验拒绝时模型能从 error 字段知道动作没做成。
  */
 
@@ -84,6 +95,17 @@ function typingDelayMs(nextPart: string): number {
   return Math.min(base + jitter, TYPING_DELAY_MAX_MS);
 }
 
+function randomDelayMs(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+function pickTypoCorrectionMode(): TypoCorrectionMode {
+  const roll: number = Math.random();
+  if (roll < TYPO_QUICK_CORRECTION_PROBABILITY) return "quick";
+  if (roll < TYPO_QUICK_CORRECTION_PROBABILITY + TYPO_RECALL_CORRECTION_PROBABILITY) return "recall";
+  return "ignore";
+}
+
 function buildSendMessageToolDefinition(): ToolDefinition {
   return {
     name: SEND_MESSAGE_TOOL,
@@ -93,8 +115,24 @@ function buildSendMessageToolDefinition(): ToolDefinition {
       properties: {
         text: { type: "string", description: "要发到群里的消息文本。" },
         reply_to_trigger: { type: "boolean", description: "是否以「回复」形式挂在触发你这次回复的那条消息上；省略视为 false。" },
+        typo_text: { type: "string", description: "可选：同一句话的手滑版本，最多只带一个错别字/错词。是否真的发送这个版本由执行侧按概率决定；省略则不会自动制造错字。" },
+        typo_correction_text: { type: "string", description: "可选：typo_text 里错掉的那个字或词的正确写法，用于执行侧掷中快速补发时发送。只写正确字/词，不要写完整句子。" },
       },
       required: ["text"],
+    },
+  };
+}
+
+function buildDeleteOwnMessageToolDefinition(): ToolDefinition {
+  return {
+    name: DELETE_OWN_MESSAGE_TOOL,
+    description: DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
+    parameters: {
+      type: "object",
+      properties: {
+        message_id: { type: "integer", description: "要撤回的消息 ID，必须来自本轮 send_message 成功结果返回的 message_id。" },
+      },
+      required: ["message_id"],
     },
   };
 }
@@ -149,10 +187,22 @@ function parseBooleanField(argumentsJson: string, field: string): boolean {
   return (parsed as Record<string, unknown> | null)?.[field] === true;
 }
 
-/** 会真正落地一个群内可见动作的工具（发消息/发贴纸/扣反应），共同受
+/** 从参数 JSON 里解析出一个正整数；解析失败/缺失/类型不对返回 null。 */
+function parsePositiveIntegerField(argumentsJson: string, field: string): number | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argumentsJson);
+  } catch {
+    return null;
+  }
+  const value: unknown = (parsed as Record<string, unknown> | null)?.[field];
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/** 会真正落地一个群内动作的工具（发消息/撤回/发贴纸/扣反应），共同受
  *  MAX_ACTIONS_PER_REPLY 的总量硬顶约束；view_sticker_pack 只是查询，
  *  不占动作名额。 */
-const ACTION_TOOLS: Set<string> = new Set([SEND_MESSAGE_TOOL, ADD_REACTION_TOOL, SEND_STICKER_TOOL]);
+const ACTION_TOOLS: Set<string> = new Set([SEND_MESSAGE_TOOL, DELETE_OWN_MESSAGE_TOOL, ADD_REACTION_TOOL, SEND_STICKER_TOOL]);
 
 /** 组装一轮回复的行动工具集（贴纸菜单在此刻拉取/组装一次），见模块头注。 */
 export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {
@@ -161,17 +211,31 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   let messageCount: number = 0;
   let reactionCount: number = 0;
   let actionsUsed: number = 0;
+  const deletableMessageIds: Set<number> = new Set();
 
   const viewDefinition: ToolDefinition | null = buildViewStickerPackToolDefinition(menu);
   const sendStickerDefinition: ToolDefinition | null = buildSendStickerToolDefinition(menu);
   const addReactionDefinition: ToolDefinition | null = buildAddReactionToolDefinition();
   const definitions: ToolDefinition[] = [
     buildSendMessageToolDefinition(),
+    buildDeleteOwnMessageToolDefinition(),
     ...(addReactionDefinition ? [addReactionDefinition] : []),
     ...(viewDefinition ? [viewDefinition] : []),
     ...(sendStickerDefinition ? [sendStickerDefinition] : []),
   ];
   const names: Set<string> = new Set(definitions.map((d: ToolDefinition) => d.name));
+
+  function recordSentMessage(text: string, messageId: number): void {
+    messageCount++;
+    deletableMessageIds.add(messageId);
+    ctx.onMessageSent(text, messageId);
+  }
+
+  async function sendDirectMessage(text: string, replyToMessageId?: number): Promise<number | undefined> {
+    const sentMessageId: number | undefined = await sendMessage(ctx.chatId, text, replyToMessageId);
+    if (sentMessageId !== undefined) recordSentMessage(text, sentMessageId);
+    return sentMessageId;
+  }
 
   async function executeSendMessage(argumentsJson: string): Promise<string> {
     const raw: string | null = parseStringField(argumentsJson, "text");
@@ -182,7 +246,21 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       return JSON.stringify({ error: "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead" });
     }
 
-    // 每条消息（含第一条与连发的后续条）临发前都拉起一段有界的「正在
+    const rawTypoText: string | null = parseStringField(argumentsJson, "typo_text");
+    const typoText: string | null = rawTypoText ? cleanReply(rawTypoText) : null;
+    const rawTypoCorrectionText: string | null = parseStringField(argumentsJson, "typo_correction_text");
+    const typoCorrectionText: string | null = rawTypoCorrectionText ? cleanReply(rawTypoCorrectionText) : null;
+    const remainingActions: number = MAX_ACTIONS_PER_REPLY - actionsUsed;
+    const shouldUseTypo: boolean =
+      !!typoText &&
+      typoText !== text &&
+      !isEmojiOnly(typoText) &&
+      remainingActions >= 3 &&
+      Math.random() < AI_TEXT_TYPO_PROBABILITY;
+    const typoMode: TypoCorrectionMode | null = shouldUseTypo ? pickTypoCorrectionMode() : null;
+    const textToSend: string = shouldUseTypo ? typoText! : text;
+
+    // 每条普通消息（含第一条与连发的后续条）临发前都拉起一段有界的「正在
     // 输入…」窗口：心跳在生成/思考期间停在 idle 挡不亮状态，群友看到的
     // 输入状态一定以一条真实消息落地收尾，不会亮了半天却等不来内容。
     // 停顿按本条长度伸缩、统一封顶（见 TYPING_DELAY_MAX_MS）；窗口可长于
@@ -190,14 +268,15 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     // 窗口内刚成功发过则跳过——状态本就还亮着），其后由心跳的 4 秒 tick
     // 重发接力，整段停顿显示连续。
     ctx.chatAction.set("typing");
-    await sleep(typingDelayMs(text));
+    await sleep(typingDelayMs(textToSend));
     // 发送前切 idle 并等在途状态请求落定：消息本身会清掉聊天状态，任何比
     // 消息晚落地的「正在输入…」都会重新盖上去白挂 5 秒。真人按下发送键时
     // 打字状态同样消失，发送 RTT 这一瞬没有状态是符合观感的。
     ctx.chatAction.set("idle");
     await ctx.chatAction.settle();
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
-    const sentMessageId: number | undefined = await sendMessage(ctx.chatId, text, replyToTrigger ? ctx.replyToMessageId : undefined);
+    const replyToMessageId: number | undefined = replyToTrigger ? ctx.replyToMessageId : undefined;
+    const sentMessageId: number | undefined = await sendMessage(ctx.chatId, textToSend, replyToMessageId);
     if (sentMessageId === undefined) {
       // 发送失败不把挡位续回 typing：思考期本就不亮状态，模型若重试/改口，
       // 重发路径会自己开一段新窗口；若就此放弃，续上的状态只会变成一段
@@ -205,8 +284,50 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       return JSON.stringify({ error: "Failed to send message" });
     }
 
-    messageCount++;
-    ctx.onMessageSent(text, sentMessageId);
+    let actionsUsedByTool: number = 1;
+    let visibleMessageId: number = sentMessageId;
+    recordSentMessage(textToSend, sentMessageId);
+
+    if (shouldUseTypo && typoMode === "quick" && typoCorrectionText && !isEmojiOnly(typoCorrectionText)) {
+      await sleep(randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS));
+      const correctionMessageId: number | undefined = await sendDirectMessage(typoCorrectionText);
+      if (correctionMessageId !== undefined) {
+        actionsUsedByTool++;
+        return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, typo: { mode: "quick", correction_message_id: correctionMessageId } });
+      }
+    }
+
+    if (shouldUseTypo && typoMode === "recall") {
+      await sleep(randomDelayMs(TYPO_RECALL_DELETE_MIN_MS, TYPO_RECALL_DELETE_MAX_MS));
+      const deleted: boolean = await deleteMessage(ctx.chatId, sentMessageId);
+      if (deleted) {
+        actionsUsedByTool++;
+        deletableMessageIds.delete(sentMessageId);
+        messageCount = Math.max(0, messageCount - 1);
+        const correctedMessageId: number | undefined = await sendDirectMessage(text, replyToMessageId);
+        if (correctedMessageId === undefined) {
+          return JSON.stringify({ error: "Failed to send corrected message", actions_used: actionsUsedByTool });
+        }
+        actionsUsedByTool++;
+        visibleMessageId = correctedMessageId;
+        return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, typo: { mode: "recall", deleted_message_id: sentMessageId } });
+      }
+    }
+
+    return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, ...(shouldUseTypo ? { typo: { mode: "ignore" } } : {}) });
+  }
+
+  async function executeDeleteOwnMessage(argumentsJson: string): Promise<string> {
+    const messageId: number | null = parsePositiveIntegerField(argumentsJson, "message_id");
+    if (messageId === null) return JSON.stringify({ error: "Invalid message_id" });
+    if (!deletableMessageIds.has(messageId)) {
+      return JSON.stringify({ error: "Message is not deletable in this reply: only message_id values returned by this round's send_message can be deleted" });
+    }
+    await sleep(randomDelayMs(TYPO_RECALL_DELETE_MIN_MS, TYPO_RECALL_DELETE_MAX_MS));
+    const deleted: boolean = await deleteMessage(ctx.chatId, messageId);
+    if (!deleted) return JSON.stringify({ error: "Failed to delete message" });
+    deletableMessageIds.delete(messageId);
+    messageCount = Math.max(0, messageCount - 1);
     return JSON.stringify({ success: true });
   }
 
@@ -226,6 +347,8 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     switch (name) {
       case SEND_MESSAGE_TOOL:
         return executeSendMessage(argumentsJson);
+      case DELETE_OWN_MESSAGE_TOOL:
+        return executeDeleteOwnMessage(argumentsJson);
       case ADD_REACTION_TOOL:
         return executeAddReaction(argumentsJson);
       case VIEW_STICKER_PACK_TOOL:
@@ -247,12 +370,17 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       // 动作总量硬顶在入口统一把关（成功才计数——被参数校验/分项限额拒绝
       // 或发送失败的调用不白白烧名额），view_sticker_pack 等查询不受限。
       if (ACTION_TOOLS.has(name) && actionsUsed >= MAX_ACTIONS_PER_REPLY) {
-        return JSON.stringify({ error: `Action limit reached: at most ${MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions) per reply` });
+        return JSON.stringify({ error: `Action limit reached: at most ${MAX_ACTIONS_PER_REPLY} actions (messages + deletes + stickers + reactions) per reply` });
       }
       const result: string = await dispatch(name, argumentsJson);
       if (ACTION_TOOLS.has(name)) {
         try {
-          if ((JSON.parse(result) as { success?: boolean })?.success) actionsUsed++;
+          const parsed = JSON.parse(result) as { success?: boolean; actions_used?: unknown };
+          if (typeof parsed.actions_used === "number" && Number.isFinite(parsed.actions_used) && parsed.actions_used > 0) {
+            actionsUsed += Math.floor(parsed.actions_used);
+          } else if (parsed.success) {
+            actionsUsed++;
+          }
         } catch {
           // 工具结果都是本模块自己拼的 JSON，解析不会失败；防御性兜底。
         }

@@ -404,12 +404,15 @@ export async function setMessageReaction(chatId: number, messageId: number, emoj
  * @param chatId 消息所在的聊天。
  * @param messageId 要删除的消息。
  * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @returns 删除成功返回 true，失败返回 false。
  */
-export async function deleteMessage(chatId: number, messageId: number, api: Api = bot.api): Promise<void> {
+export async function deleteMessage(chatId: number, messageId: number, api: Api = bot.api): Promise<boolean> {
   try {
     await api.deleteMessage(chatId, messageId);
+    return true;
   } catch (error: unknown) {
     logApiError("delete message", error);
+    return false;
   }
 }
 

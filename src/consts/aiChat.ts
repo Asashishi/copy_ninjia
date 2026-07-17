@@ -148,10 +148,10 @@ export const TIME_AWARENESS_INSTRUCTION: string =
  */
 export const WEB_SEARCH_INSTRUCTION: string =
   "你内置了实时联网搜索能力：遇到时效性强（新闻、价格、比分、榜单、版本号、事件进展等）、你没有把握、或对方明确要求查证的问题，主动搜索确认清楚了再回答，别懒得查就瞎编或者甩锅拒答。搜完该怎么损怎么损、该怎么骄傲怎么骄傲，别在回复里暴露自己刚查过——装作本来就知道。";
-/** 一轮回复的动作总数硬顶：发消息、发贴纸、扣反应全都算在内（提示词里
- *  引导「通常 1~3 个动作」，这是极端情况也不许突破的上限），超额的调用在
- *  执行侧直接拒绝，见 ai/tools/replyToolset.ts。 */
-export const MAX_ACTIONS_PER_REPLY: number = 7;
+/** 一轮回复的动作总数硬顶：发消息、撤回、发贴纸、扣反应全都算在内（提示词里
+ *  引导「通常 1~3 个动作，可以 3-5 个动作」，这是极端情况也不许突破的上限），
+ *  超额的调用在执行侧直接拒绝，见 ai/tools/replyToolset.ts。 */
+export const MAX_ACTIONS_PER_REPLY: number = 8;
 /** 一轮回复里 send_sticker 工具最多发几枚贴纸：要么不发、要么只发一枚，
  *  超额的调用在执行侧直接拒绝，见 ai/tools/stickers.ts 的 sendStickerTool。 */
 export const MAX_STICKERS_PER_REPLY: number = 1;
@@ -225,10 +225,10 @@ export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的
 /**
  * 一次工具调用往返最多允许几轮（模型要工具结果 -> 喂回去 -> 模型可能再要
  * 下一个工具……）。给个上限防止模型陷入死循环反复要工具，烧穿 API 配额。
- * 发言/贴纸/反应全部工具化之后，一轮正常回复就要吃掉好几轮往返（看包 ->
- * 发贴纸 -> 连发几条消息……），上限按此放宽；同一轮响应里的并行调用只算一轮。
+ * 发言/贴纸/反应/撤回全部工具化之后，一轮正常回复就要吃掉好几轮往返（看包 ->
+ * 发贴纸 -> 连发几条消息 -> 偶尔撤回改口……），上限按此放宽；同一轮响应里的并行调用只算一轮。
  */
-export const MAX_TOOL_ROUNDS: number = 15;
+export const MAX_TOOL_ROUNDS: number = 25;
 
 /** 聊天状态（正在输入…/正在选择贴纸…）的心跳重发间隔，须小于 Telegram
  *  约 5 秒的状态过期时间；同时兼作切挡补发的重复状态节流窗口——同一挡位
@@ -405,7 +405,34 @@ export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "这类标记；不允许发纯 emoji 表情的消息——想用画面/表情达意就发贴纸（send_sticker），" +
   "想对触发消息表个态就扣反应（add_reaction）。reply_to_trigger 填 true 时这条消息会以" +
   "「回复」形式挂在触发你这次回复的那条消息上，挂不挂由你判断（对方明确在跟你说话、或" +
-  "群里消息多怕别人看不出你在回谁时，建议挂上）。";
+  "群里消息多怕别人看不出你在回谁时，建议挂上）。工具成功时会返回 message_id，之后若你发现" +
+  "这条消息确实发错或多发了，只能用 delete_own_message 撤回这个 message_id。text 永远写正确完整内容；" +
+  "适合手滑的普通短句可以额外提供 typo_text（带一个错别字/错词的版本）和 typo_correction_text（快速补发用的正确字/词），" +
+  "是否真的发错、如何修正、等多久都由执行侧自动控制。";
+
+/**
+ * delete_own_message 工具描述：这是给模型主动修正自己本轮发错/多发消息用的
+ * 安全撤回口，只接受本轮 send_message 返回过的 message_id，执行侧不允许
+ * 碰别人消息或历史消息。
+ */
+export const DELETE_OWN_MESSAGE_TOOL_INSTRUCTION: string =
+  "撤回你自己在本轮回复里刚刚用 send_message 发出的某一条文字消息。message_id 必须来自 " +
+  "send_message 成功结果里返回的 message_id；不能删除别人的消息、触发消息、历史消息或贴纸。" +
+  "只在你确实发错字、说错内容、或多发了一条时使用；具体撤回等待时间由执行侧自动控制，" +
+  "不要为了等时间额外输出内容。撤回本身不算回应，撤回后如果还需要表达意思，" +
+  "请重新用 send_message 发正确内容。";
+
+/** 代码侧决定一条可手滑消息是否真的发错。模型只提供候选 typo_text，不决定概率。 */
+export const AI_TEXT_TYPO_PROBABILITY: number = 0.27;
+/** 发错后代码侧决定修正方式：快速补字/词为高概率，撤回重发为中概率，剩余假装没发现。 */
+export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.65;
+export const TYPO_RECALL_CORRECTION_PROBABILITY: number = 0.25;
+/** 快速补字/词的执行侧延迟窗口：0.5s-1s。 */
+export const TYPO_QUICK_CORRECTION_MIN_MS: number = 500;
+export const TYPO_QUICK_CORRECTION_MAX_MS: number = 1_000;
+/** 撤回重发路径里，真正删掉错误消息前的执行侧延迟窗口：数秒后再发现。 */
+export const TYPO_RECALL_DELETE_MIN_MS: number = 2_000;
+export const TYPO_RECALL_DELETE_MAX_MS: number = 5_000;
 
 /**
  * add_reaction 工具描述的固定前缀，后面动态拼接允许的 emoji 清单（来自
@@ -419,7 +446,7 @@ export const ADD_REACTION_TOOL_INSTRUCTION: string =
 /**
  * buildUserContent 拼在回复指令末尾的行动说明：发言/贴纸/反应全部工具化，
  * 先做哪个、做几样由模型自己决定，见 workers/aiChatWorker.ts；动作总量的
- * 「通常 1~3、硬顶 MAX_ACTIONS_PER_REPLY」在执行侧强制，这里只做引导。
+ * 「通常 1~3、可以 3-5、硬顶 MAX_ACTIONS_PER_REPLY」在执行侧强制，这里只做引导。
  * 各工具的具体用法不在这里复述——同一次请求里每个工具自己的 description
  * 已经写清（见上方各 *_TOOL_INSTRUCTION），这里只放跨工具的全局规则：
  * 动作预算、必须回应（不允许整轮沉默——说话/贴纸/扣反应都算回应，执行侧
@@ -427,9 +454,13 @@ export const ADD_REACTION_TOOL_INSTRUCTION: string =
  * 结束方式。
  */
 export const REPLY_ACTION_INSTRUCTION: string =
-  "你的所有动作（说话 send_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +
+  "你的所有动作（说话 send_message、撤回自己本轮刚发错/多发的消息 delete_own_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +
   "add_reaction）都只能通过工具完成，用法见各工具说明。先做哪个、做几样由你自己决定，" +
   "但不允许整轮保持沉默：每轮至少要落地一个群友看得见的动作——说一句话（一句简短的也行）、" +
-  "发一枚应景贴纸，或者给触发消息扣一个表情反应，三样任选，不能一个动作都不做就结束。" +
-  `一轮回复通常 1~3 个动作，少数 3-5 个动作，最多绝不超过 ${MAX_ACTIONS_PER_REPLY} 个——够意思就收，别刷屏。` +
+  "发一枚应景贴纸，或者给触发消息扣一个表情反应，三样任选，不能一个动作都不做就结束；" +
+  "撤回消息只是修正错误，不算完成回应。" +
+  "为了更像真人，适合手滑的普通短句可以给 send_message 同时提供正确 text、带一个错别字/错词的 typo_text、以及快速补发用的 typo_correction_text；" +
+  "text 永远写正确完整内容，typo_text 最多只错一个字/词，不要改坏链接、@用户名、数字、代码、专有名词或事实关键字。" +
+  "是否真的发送 typo_text、发错后是快速补字/词、撤回重发、还是假装没发现，概率和等待时间都由执行侧控制，你不要自己选择概率分支，也不要为了等时间额外输出内容。" +
+  `一轮回复通常 1~3 个动作，可以 3-5 个动作，绝对不要超过 ${MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
   "全部动作完成后直接结束，不要再输出任何正文。";
