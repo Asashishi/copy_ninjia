@@ -54,9 +54,11 @@ function viewedState(): any {
 }
 
 /** 聊天状态心跳挡位句柄的假实现（见 types/aiChatWorker.ts 的
- *  ChatActionControl），只记录 set 调用供断言，settle 立即落定。 */
-function chatActionMock(): any {
-  return { set: mock((_phase: string): void => {}), settle: mock(async (): Promise<void> => {}) };
+ *  ChatActionControl），只记录 set 调用供断言，settle 立即落定。current 默认
+ *  报告 choose_sticker（模拟 view 过包、选择状态未被打断的正常链路），传
+ *  "idle" 可模拟挡位已被中途的消息打断。 */
+function chatActionMock(phase: string = "choose_sticker"): any {
+  return { current: (): string => phase, set: mock((_phase: string): void => {}), settle: mock(async (): Promise<void> => {}) };
 }
 
 describe("ai/stickers parseIndexField", () => {
@@ -195,11 +197,27 @@ describe("ai/stickers sendStickerTool", () => {
 
     expect(sendStickerMock).toHaveBeenCalledWith(123, "a2");
     expect(result).toBe(JSON.stringify({ success: true }));
+    // 选择状态自 view 起一直维持着（current 报告 choose_sticker），发送前
+    // 不需要重新拉起，只切 idle 等在途请求落定。
+    expect(chatAction.set).not.toHaveBeenCalledWith("choose_sticker");
     expect(chatAction.set).toHaveBeenCalledWith("idle");
     expect(chatAction.settle).toHaveBeenCalled();
     expect(recorded).not.toBeNull();
     expect(recorded![1]).toBe(999);
     expect(recorded![0]).toContain("一只猫哭泣");
+  });
+
+  test("选择状态被中途的消息打断（current 非 choose_sticker）时，发送前重新拉起再切 idle", async () => {
+    sendStickerMock.mockClear();
+    sendStickerMock.mockImplementationOnce(async () => 999);
+    const chatAction = chatActionMock("idle");
+
+    const result = await sendStickerTool(chatAction, 123, MENU, '{"pack_index": 1, "sticker_index": 2}', viewedState(), () => {});
+
+    expect(result).toBe(JSON.stringify({ success: true }));
+    expect(chatAction.set.mock.calls.map((call: unknown[]) => call[0])).toEqual(["choose_sticker", "idle"]);
+    expect(chatAction.settle).toHaveBeenCalled();
+    expect(sendStickerMock).toHaveBeenCalledWith(123, "a2");
   });
 
   test("同一轮最多发 1 枚，第二枚被限额拒绝（跨包同样计数）", async () => {
@@ -212,7 +230,7 @@ describe("ai/stickers sendStickerTool", () => {
     expect(sendStickerMock).toHaveBeenCalledTimes(1);
   });
 
-  test("Telegram 发送失败（sendSticker 返回 undefined）时不回调 onSent、不计入限额、挡位续回选择贴纸", async () => {
+  test("Telegram 发送失败（sendSticker 返回 undefined）时不回调 onSent、不计入限额、挡位停在 idle 不续回", async () => {
     sendStickerMock.mockClear();
     sendStickerMock.mockImplementationOnce(async () => undefined);
     const chatAction = chatActionMock();
@@ -226,6 +244,8 @@ describe("ai/stickers sendStickerTool", () => {
     expect(result).toBe(JSON.stringify({ error: "Failed to send sticker" }));
     expect(called).toBe(false);
     expect(state.sentStickerUids.size).toBe(0);
-    expect(chatAction.set).toHaveBeenLastCalledWith("choose_sticker");
+    // 失败不把挡位续回选择贴纸：模型重试时发送路径会自己重新拉起，就此
+    // 放弃时也不留下等不来贴纸的状态。
+    expect(chatAction.set).toHaveBeenLastCalledWith("idle");
   });
 });

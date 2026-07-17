@@ -182,7 +182,11 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
 /**
  * 执行一次 send_sticker 工具调用：校验编号与本轮限额（必须先看过包清单、
  * 每轮最多 MAX_STICKERS_PER_REPLY 枚、绝不重复同一枚），通过后发送贴纸。
- * 校验通过、真正发送之前把聊天状态心跳切到 idle 并等在途状态请求落定
+ * 正常链路里 view_sticker_pack 已把挡位切到「正在选择贴纸…」并维持到现在；
+ * 若挡位中途被 send_message 的输入窗口打断（current 已不在 choose_sticker
+ * 挡），先重新拉起选择状态并停顿一下，保证贴纸落地前群友总能看到一段
+ * 「正在选择贴纸…」，而不是凭空蹦出一枚贴纸。
+ * 真正发送之前把聊天状态心跳切到 idle 并等在途状态请求落定
  * （settle）：贴纸消息本身会清掉「正在选择贴纸…」，但比贴纸晚落地的状态
  * 请求会把它重新盖回去白挂 5 秒——切挡拦住新 tick，settle 拦住在途的那发。
  * 校验被拒不切挡：什么都没发出去，模型多半会纠正参数重试，选择状态照旧维持。
@@ -222,13 +226,17 @@ export async function sendStickerTool(
     return JSON.stringify({ error: "Duplicate sticker: already sent this exact sticker in this reply, pick a different one" });
   }
 
+  if (chatAction.current() !== "choose_sticker") {
+    chatAction.set("choose_sticker");
+    await sleep(STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS);
+  }
   chatAction.set("idle");
   await chatAction.settle();
   const sentMessageId: number | undefined = await sendSticker(chatId, candidate.sticker.file_id);
   if (sentMessageId === undefined) {
-    // 没发出去（没有消息去清状态），把选择状态续上：模型多半会换一枚重试
-    // 或改口发消息，两条路都会自行接管挡位。
-    chatAction.set("choose_sticker");
+    // 发送失败不把挡位续回选择贴纸：模型若换一枚重试，发送路径会自己重新
+    // 拉起选择状态；若就此改口/放弃，续上的状态只会变成一段等不来贴纸的
+    // 遗留。
     return JSON.stringify({ error: "Failed to send sticker" });
   }
 

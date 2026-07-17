@@ -45,9 +45,15 @@ function requestChatAction(
 }
 
 /**
- * 在整轮 AI 工具对话期间维持聊天状态：默认立即显示「正在输入…」，随后按
- * typing / choose_sticker / idle 当前挡位定时刷新。发送消息或贴纸前，调用方
- * 先切 idle 再 settle，确保所有较早的状态请求都先于消息落定。
+ * 在整轮 AI 工具对话期间提供聊天状态的挡位心跳：从 idle 挡起步——生成/
+ * 思考期间不亮任何状态，「正在输入/选择贴纸…」只在具体动作临发前由工具
+ * 执行路径拉起有界窗口（见 ai/tools/replyToolset.ts 与 stickers.ts 的挡位
+ * 切换）。模型完全可能整轮沉默（随机插话不接话/只扣反应），全程亮着的
+ * 打字状态最后等不来任何消息，就是群友看到的「假输入」遗留。切到非 idle
+ * 挡会立即补发一次对应状态，此后由定时器按间隔重发维持（choose_sticker
+ * 挡要跨越模型挑贴纸的整个往返，可远超单次状态约 5 秒的过期时间）。
+ * 发送消息或贴纸前，调用方先切 idle 再 settle，确保所有较早的状态请求都
+ * 先于消息落定。
  *
  * settle/stop 故意不依赖 Map 中仍存在本条目：连续失败可能先把条目移除，但
  * 本代其他请求仍可能在途；若此时直接返回，它们就会在消息之后迟到并重新盖
@@ -58,7 +64,6 @@ export function startChatActionHeartbeat(
   dependencies: ChatActionHeartbeatDependencies = DEFAULT_DEPENDENCIES
 ): ChatActionHeartbeatControl {
   let entry: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
-  const reused: boolean = !!entry;
   if (!entry) {
     const timer: ReturnType<typeof setInterval> = setInterval(() => {
       const live: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
@@ -68,24 +73,23 @@ export function startChatActionHeartbeat(
     entry = {
       timer,
       refCount: 0,
-      action: "typing",
+      action: "idle",
       inflight: new Set(),
       consecutiveFailures: 0,
     };
     dependencies.entries.set(chatId, entry);
   }
 
-  entry.refCount++;
-  entry.action = "typing";
-  requestChatAction(chatId, entry, "typing", dependencies);
-
   // 当前 activeReplyChats 会保证同群只有一轮在途；refCount 仍作为防御性保护
-  // 保留。复用时也立即补发 typing，避免上一持有者停在其他挡位而要等下个 tick。
-  if (reused) entry.consecutiveFailures = 0;
+  // 保留。复用时挡位与失败计数一并归零，上一持有者的残留挡位不跨轮延续。
+  entry.refCount++;
+  entry.action = "idle";
+  entry.consecutiveFailures = 0;
 
   const acquired: ChatActionHeartbeatEntry = entry;
   let released: boolean = false;
   return {
+    current: (): ChatActionPhase => (released || dependencies.entries.get(chatId) !== acquired ? "idle" : acquired.action),
     set: (phase: ChatActionPhase): void => {
       if (released || dependencies.entries.get(chatId) !== acquired) return;
       acquired.action = phase;

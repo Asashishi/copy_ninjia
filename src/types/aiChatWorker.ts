@@ -2,9 +2,11 @@ import type { Sticker } from "@grammyjs/types";
 import type { ToolDefinition } from "./tools";
 
 /** 聊天状态心跳的挡位（见 ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）：
- *  typing =「正在输入…」；choose_sticker =「正在选择贴纸…」（view_sticker_pack
- *  起、到贴纸真正发出前）；idle = 暂停重发——已有消息/贴纸落地，发出的消息
- *  本身已把聊天状态清掉，模型若已说完，再盖回「正在输入…」只会让群友白等。 */
+ *  typing =「正在输入…」（每条消息临发前的有界窗口，见 replyToolset.ts）；
+ *  choose_sticker =「正在选择贴纸…」（view_sticker_pack 起、到贴纸真正发出
+ *  前）；idle = 不发状态——生成/思考期间的默认挡，也是消息/贴纸落地前的
+ *  切换目标：发出的消息本身会把聊天状态清掉，模型若已说完，再盖回
+ *  「正在输入…」只会让群友白等。 */
 export type ChatActionPhase = "typing" | "choose_sticker" | "idle";
 
 /** 心跳挡位的切换句柄，经 ReplyToolContext 传给行动工具集（见
@@ -12,6 +14,10 @@ export type ChatActionPhase = "typing" | "choose_sticker" | "idle";
  *  当口就可见，不等下一个重发 tick），此后由心跳按间隔维持；本轮心跳已
  *  停止后调用是无害的空操作。 */
 export interface ChatActionControl {
+  /** 当前挡位；本轮心跳已停止（或因连续失败被移除）时恒为 "idle"。
+   *  send_sticker 靠它判断选择状态是否被中途的消息打断过，被打断则在发送
+   *  前重新拉起一段「正在选择贴纸…」（见 ai/tools/stickers.ts）。 */
+  current(): ChatActionPhase;
   set(phase: ChatActionPhase): void;
   /** 等本代所有已发出的聊天状态请求落定。发消息/贴纸前先 set("idle") 再
    *  await settle()：光切挡只是不再发新状态，拦不住已在网络在途的那一发——
@@ -63,9 +69,9 @@ export interface ReplyToolContext {
    *  reply_to_trigger: true 时的回复引用目标。 */
   replyToMessageId: number;
   /** 本轮聊天状态心跳的挡位切换句柄（typing / choose_sticker / idle，见
-   *  ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）：消息/贴纸落地后
-   *  切 idle 让状态随消息一起消失、连发停顿前切回 typing、翻贴纸包起切
-   *  choose_sticker。 */
+   *  ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）：每条消息临发前
+   *  拉起有界的 typing 窗口、发送前切 idle 让状态随消息一起消失、翻贴纸包
+   *  起切 choose_sticker 并维持到贴纸发出。 */
   chatAction: ChatActionControl;
   /** 每条消息发送成功后的回调（清洗后的文本 + 消息 ID），供调用方自录
    *  记忆/登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。 */

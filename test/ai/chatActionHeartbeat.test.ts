@@ -35,16 +35,23 @@ function dependencies(
 }
 
 describe("chatActionHeartbeat", () => {
-  test("切换挡位时立即发送对应状态，idle 后 settle 等齐在途请求", async () => {
+  test("心跳从 idle 起步不发状态；切换挡位时立即发送对应状态，idle 后 settle 等齐在途请求", async () => {
     const choose = deferred<boolean>();
     const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
     const sendChooseSticker = mock((_chatId: number): Promise<boolean> => choose.promise);
     const deps = dependencies(sendTyping, sendChooseSticker);
     const heartbeat = startChatActionHeartbeat(123, deps);
 
+    expect(heartbeat.current()).toBe("idle");
+    expect(sendTyping).not.toHaveBeenCalled();
+    expect(sendChooseSticker).not.toHaveBeenCalled();
+
+    heartbeat.set("typing");
     expect(sendTyping).toHaveBeenCalledWith(123);
+    expect(heartbeat.current()).toBe("typing");
     heartbeat.set("choose_sticker");
     expect(sendChooseSticker).toHaveBeenCalledWith(123);
+    expect(heartbeat.current()).toBe("choose_sticker");
     heartbeat.set("idle");
 
     let settled: boolean = false;
@@ -58,6 +65,7 @@ describe("chatActionHeartbeat", () => {
     await waiting;
     await heartbeat.stop();
     expect(deps.entries.size).toBe(0);
+    expect(heartbeat.current()).toBe("idle");
   });
 
   test("条目因失败被移除后，发送前 settle 仍等待本代其他请求，防止消息后迟到", async () => {
@@ -65,6 +73,7 @@ describe("chatActionHeartbeat", () => {
     const choose = deferred<boolean>();
     const deps = dependencies(() => typing.promise, () => choose.promise, 1);
     const heartbeat = startChatActionHeartbeat(456, deps);
+    heartbeat.set("typing");
     heartbeat.set("choose_sticker");
 
     typing.resolve(false);
@@ -89,6 +98,7 @@ describe("chatActionHeartbeat", () => {
     const typing = deferred<boolean>();
     const deps = dependencies(() => typing.promise, async () => true);
     const heartbeat = startChatActionHeartbeat(789, deps);
+    heartbeat.set("typing");
 
     let stopped: boolean = false;
     const stopping = heartbeat.stop().then(() => {
@@ -108,6 +118,7 @@ describe("chatActionHeartbeat", () => {
     const deps = dependencies(sendTyping, async () => true, 3);
     const heartbeat = startChatActionHeartbeat(321, deps);
 
+    heartbeat.set("typing");
     await Promise.resolve();
     expect(deps.entries.has(321)).toBe(true);
     heartbeat.set("typing");
@@ -116,6 +127,7 @@ describe("chatActionHeartbeat", () => {
     heartbeat.set("typing");
     await Promise.resolve();
     expect(deps.entries.has(321)).toBe(false);
+    expect(heartbeat.current()).toBe("idle");
 
     await heartbeat.stop();
   });

@@ -776,11 +776,13 @@ function generateAndSendReply(
       const userContent: string | null = buildUserContent(chatId, selfInfo, { repliedBotText, isRandomTrigger, mediaComment });
       if (!userContent) return;
 
-    // 整个工具对话期间（生成耗时不可控，发送也发生在工具执行里）用持续
-    // 重发的心跳维持聊天状态，先于工具集启动——组装贴纸菜单可能要拉包
-    // （网络调用），这段时间也该显示「正在输入…」；挡位切换见
-    // startChatActionHeartbeat 头注。try/finally 保证即使 createReplyToolset/
-    // callGemini 抛异常，心跳也一定会被停掉。
+    // 心跳的生命周期覆盖整轮工具对话（生成耗时不可控，发送也发生在工具
+    // 执行里），但从 idle 挡起步：生成/思考期间不亮状态，「正在输入/选择
+    // 贴纸…」只在具体动作临发前由工具执行路径拉起有界窗口（见
+    // ai/tools/replyToolset.ts 与 stickers.ts）——模型整轮沉默（随机插话
+    // 不接话/只扣反应）时全程无感，不会留下等不来消息的假输入状态。
+    // try/finally 保证即使 createReplyToolset/callGemini 抛异常，心跳也
+    // 一定会被停掉。
       const heartbeat = startChatActionHeartbeat(chatId);
       try {
     // 工具执行成功后的回调：发出去的每条消息/贴纸描述行都自录进对话缓存
@@ -806,8 +808,8 @@ function generateAndSendReply(
         const finalText: string | null = await callGemini(userContent, toolset);
 
         // 正文兜底只保留给「对方明确在跟机器人说话」的直接触发（回复/@）。
-        // 放在心跳停止之前：兜底发送同样受益于「正在输入…」显示，发出后
-        // executeSendMessage 会照常把心跳切到 idle。
+        // 放在心跳停止之前：兜底走同一条 send_message 工具路径，照样有临发
+        // 前的「正在输入…」窗口，发出后挡位随之切回 idle。
         if (finalText && !isRandomTrigger && !mediaComment && toolset.messagesSent() === 0) {
           await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
         }

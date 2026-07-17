@@ -153,13 +153,16 @@ export const MAX_REACTIONS_PER_REPLY: number = 1;
 export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_000;
 export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 2_500;
 /**
- * 连发多条消息时模拟真人打字间隔（见 ai/tools/replyToolset.ts 的 typingDelayMs）：
- * 基础停顿 + 按下一条消息长度线性增加 + 随机抖动，再统一封顶。
+ * 每条消息临发前「正在输入…」状态窗口的时长（见 ai/tools/replyToolset.ts 的
+ * typingDelayMs）：基础停顿 + 按本条消息长度线性增加 + 随机抖动，再统一
+ * 封顶，合计约束在 0.75~2 秒。生成/思考期间不亮状态，输入状态只在这段
+ * 有界窗口里显示、并一定以本条消息落地收尾——窗口上限必须明显小于
+ * Telegram 约 5 秒的状态过期时间，切挡时的即时补发才足以覆盖整段停顿。
  */
-export const TYPING_DELAY_BASE_MS: number = 600;
+export const TYPING_DELAY_BASE_MS: number = 750;
 export const TYPING_DELAY_PER_CHAR_MS: number = 55;
 export const TYPING_DELAY_JITTER_MS: number = 400;
-export const TYPING_DELAY_MAX_MS: number = 3_500;
+export const TYPING_DELAY_MAX_MS: number = 2_000;
 /**
  * 同一群聊两次 AI 回复之间的最短间隔。回复机器人 / @ 机器人是 100% 触发且
  * 无上限的，没有这道闸的话，恶意用户循环回复 bot 就能形成「一条消息 = 一次

@@ -76,7 +76,8 @@ export function cleanReply(raw: string): string | null {
   return truncateInline(text, TELEGRAM_MESSAGE_MAX_CHARS);
 }
 
-/** 模拟真人打字的间隔：按下一条消息的长度估一个停顿，并加上限。 */
+/** 每条消息临发前「正在输入…」窗口的时长（0.75~2 秒）：按本条消息的长度
+ *  估一个停顿加随机抖动，再统一封顶，见 consts/aiChat.ts 的 TYPING_DELAY_*。 */
 function typingDelayMs(nextPart: string): number {
   const base: number = TYPING_DELAY_BASE_MS + nextPart.length * TYPING_DELAY_PER_CHAR_MS;
   const jitter: number = Math.random() * TYPING_DELAY_JITTER_MS;
@@ -181,26 +182,24 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       return JSON.stringify({ error: "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead" });
     }
 
-    // 第二条起模拟真人打字：上一条发出已清掉「正在输入…」状态（心跳也随之
-    // 切到 idle 挡），先切回 typing 补上状态再按本条长度停顿（单次停顿封顶
-    // 在 Telegram 状态过期时间内，见 TYPING_DELAY_MAX_MS，切挡时的即时补发
-    // 足以覆盖整段停顿）。
-    if (messageCount > 0) {
-      ctx.chatAction.set("typing");
-      await sleep(typingDelayMs(text));
-    }
-    // 发送前就切 idle 并等在途状态请求落定：消息本身会清掉聊天状态，模型若
-    // 已说完，任何比消息晚落地的「正在输入…」都会重新盖上去白挂 5 秒；若还
-    // 要连发，上面的切回 typing 会接手。真人按下发送键时打字状态同样消失，
-    // 发送 RTT 这一瞬没有状态是符合观感的。
+    // 每条消息（含第一条与连发的后续条）临发前都拉起一段有界的「正在
+    // 输入…」窗口：心跳在生成/思考期间停在 idle 挡不亮状态，群友看到的
+    // 输入状态一定以一条真实消息落地收尾，不会亮了半天却等不来内容。
+    // 停顿按本条长度伸缩、封顶在 Telegram 状态过期时间内（见
+    // TYPING_DELAY_MAX_MS），切挡时的即时补发足以覆盖整段停顿。
+    ctx.chatAction.set("typing");
+    await sleep(typingDelayMs(text));
+    // 发送前切 idle 并等在途状态请求落定：消息本身会清掉聊天状态，任何比
+    // 消息晚落地的「正在输入…」都会重新盖上去白挂 5 秒。真人按下发送键时
+    // 打字状态同样消失，发送 RTT 这一瞬没有状态是符合观感的。
     ctx.chatAction.set("idle");
     await ctx.chatAction.settle();
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
     const sentMessageId: number | undefined = await sendMessage(ctx.chatId, text, replyToTrigger ? ctx.replyToMessageId : undefined);
     if (sentMessageId === undefined) {
-      // 没发出去（没有消息去清状态），把生成阶段的默认挡位续上，模型多半
-      // 还会重试或改口，别让后续生成对群友静默。
-      ctx.chatAction.set("typing");
+      // 发送失败不把挡位续回 typing：思考期本就不亮状态，模型若重试/改口，
+      // 重发路径会自己开一段新窗口；若就此放弃，续上的状态只会变成一段
+      // 等不来消息的遗留。
       return JSON.stringify({ error: "Failed to send message" });
     }
 
