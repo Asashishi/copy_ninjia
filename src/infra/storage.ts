@@ -136,6 +136,22 @@ export function getAllChatStates(): ReadonlyMap<number, ChatState> {
   return chatStates;
 }
 
+/**
+ * 当前处于 /send 中转目标的群 chatId；没有会话生效则 undefined。
+ * ChatState.isUseProxySend 挂在目标群自己的状态上（键本身就是目标群
+ * chatId，不必再另存一份），同一时刻全局只允许一个群处于该状态
+ * （commands/send.ts 的 handleSendCommand 保证，同 GlobalCopyState「全局
+ * 只有一个复读目标」的单例约束），扫一遍已知群即可定位——群数量很小
+ * （README：单实例建议控制在约 15 个活跃群以内），没必要为这维护一份
+ * 反向索引。
+ */
+export function getActiveProxySendTarget(): number | undefined {
+  for (const [chatId, chatState] of chatStates) {
+    if (chatState.isUseProxySend === true) return chatId;
+  }
+  return undefined;
+}
+
 // runner 并发处理不同群的更新后，两个群可能同时触发 saveState。写入必须
 // 串行，但不能为每次变化都无限排队：写入期间只保留最新快照，中间快照没有
 // 落盘价值。调度器因此最多持有「在写 + 待写」两份 JSON。

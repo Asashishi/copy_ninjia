@@ -104,21 +104,30 @@ describe("shouldPassPrivateCommandGate", () => {
     expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
   });
 
-  test("回归用例：这个私聊正在 /send 中转中，/ 开头的消息也要放行，" +
-    "否则 auto/message.ts 的转发分支永远收不到——中转承诺转发任何消息", () => {
-    const chatId = 4;
-    getOrCreateChatState(chatId).isUseProxySend = true;
-    const ctx = fakeCtx({ chat: { id: chatId, type: "private" }, message: { text: "/home/user/looks-like-a-command" } });
-    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+  test("回归用例：有 /send 中转会话在跑（isUseProxySend 挂在目标群自己的状态上），" +
+    "私聊里 / 开头的消息也要放行，否则 auto/message.ts 的转发分支永远收不到" +
+    "——中转承诺转发任何消息", () => {
+    // getActiveProxySendTarget 是全局扫描，不像 shouldPassInitGate 那样只看
+    // 单个 chatId：这里设的 true 若不清掉，会污染同进程里跑在它之后的其它
+    // 测试（包括其它测试文件——bun test 默认同进程共享 infra/storage 的
+    // 模块级 chatStates），务必 finally 里清回去。
+    const targetChatId = -1004444444444;
+    getOrCreateChatState(targetChatId).isUseProxySend = true;
+    try {
+      const ctx = fakeCtx({ chat: { id: 4, type: "private" }, message: { text: "/home/user/looks-like-a-command" } });
+      expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+    } finally {
+      getOrCreateChatState(targetChatId).isUseProxySend = false;
+    }
   });
 
-  test("中转会话已经 finish（isUseProxySend 变回 false）后，/ 开头消息重新被拦下", () => {
-    const chatId = 5;
-    getOrCreateChatState(chatId).isUseProxySend = true;
-    const ctx = fakeCtx({ chat: { id: chatId, type: "private" }, message: { text: "/whatever" } });
+  test("中转会话已经 finish（目标群的 isUseProxySend 变回 false）后，/ 开头消息重新被拦下", () => {
+    const targetChatId = -1005555555555;
+    getOrCreateChatState(targetChatId).isUseProxySend = true;
+    const ctx = fakeCtx({ chat: { id: 5, type: "private" }, message: { text: "/whatever" } });
     expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
 
-    getOrCreateChatState(chatId).isUseProxySend = false;
+    getOrCreateChatState(targetChatId).isUseProxySend = false;
     expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
   });
 });

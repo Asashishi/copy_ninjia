@@ -86,23 +86,18 @@ export interface ChatState {
    */
   title?: string;
   /**
-   * /send 中转会话是否在本聊天（发起会话的那个私聊，chatId 即超管本人的用户
-   * id）生效：true 表示这个私聊里往后发的每条消息都会被同步转发进
-   * proxySendTargetChatId 指向的群，直到 /send finish 关闭。随 state.json
+   * 本群是否是当前 /send 中转会话的目标：true 表示超管私聊（固定是
+   * SUPER_ADMIN_USER_ID 的 DM）里往后发的每条消息都会被同步转发进本群，
+   * 直到 /send finish 关闭。挂在目标群自己的 ChatState 上而不是发起会话的
+   * 私聊上——键本身就是目标群 chatId，不需要再另存一份 id，也就没有「两个
+   * 字段该一起变却不一致」这类问题；同一时刻全局只允许一个群处于该状态
+   * （见 infra/storage.ts 的 getActiveProxySendTarget）。随 state.json
    * 持久化而非只存内存，是刻意的——这是超管手动开启、可能会开着挂一段时间
    * 的操作，机器人中途重启（部署/崩溃重启）不该悄悄把这轮中转弄丢：那样
    * 超管会继续对着私聊发消息、以为还在转发，实际早已石沉大海。见
    * commands/send.ts 的 handleSendCommand、auto/message.ts 对本字段的消费。
    */
   isUseProxySend?: boolean;
-  /**
-   * isUseProxySend 为 true 时，消息要转发进的目标群 chatId；否则无意义。
-   * 这两个字段本该是一个不可分的整体（要么一起有效、要么都不算数），写入侧
-   * （commands/send.ts）也确实永远同开同关；state.json 落盘/读盘仍是两个
-   * 独立字段，两者不一致的防线在解码层，见 storage/stateCodec.ts 的
-   * rebuildProxySend。
-   */
-  proxySendTargetChatId?: number;
 }
 
 /**

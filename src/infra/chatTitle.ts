@@ -48,11 +48,7 @@ export function recordChatTitleFromChat(chat: Chat): void {
  * 并发发起全部请求即可，不需要自己再实现一层排队。
  */
 export async function refreshAllChatTitles(): Promise<void> {
-  // chatStates 里现在不只有群：/send 中转会话把状态挂在发起会话的私聊自己
-  // 的 ChatState 上（见 commands/send.ts），那不是群，getChat 也白打。群/
-  // 超级群/频道 id 恒为负数、私聊 id 恒为正数，是 Telegram 的 id 空间约定，
-  // 先按符号筛掉非群条目，不必对着私聊多打一次 API。
-  const chatIds: number[] = [...getAllChatStates().keys()].filter((chatId: number): boolean => chatId < 0);
+  const chatIds: number[] = [...getAllChatStates().keys()];
   await Promise.all(chatIds.map(async (chatId: number): Promise<void> => {
     try {
       const chat = await bot.api.getChat(chatId);

@@ -92,27 +92,8 @@ export function rebuildLockdown(value: unknown, now: number): LockdownRecord | u
   return legacyPermissions ? { originalPermissions: legacyPermissions, expiresAt: now + LOCKDOWN_MS } : undefined;
 }
 
-/**
- * isUseProxySend 与 proxySendTargetChatId 是一对必须一起有效的字段——写入侧
- * （commands/send.ts）永远同开同关，但两者在磁盘上仍是各自独立的 JSON
- * 字段，手改文件/半截落盘都可能把这对关系拆散。这里按整体校验而非各自
- * 独立解码：isUseProxySend 为 true 却配不出一个合法的目标 chatId 时，整体
- * 当成"没开"处理——宁可让超管发现会话没了、重新 /send 一次，也不能让
- * auto/message.ts 的转发分支因为目标缺失静默不转发，而 isUseProxySend
- * 却仍显示"在转发中"误导超管。
- */
-function rebuildProxySend(value: Record<string, unknown>): { isUseProxySend: boolean | undefined; proxySendTargetChatId: number | undefined } {
-  const targetChatId: number | undefined = finiteNumber(value.proxySendTargetChatId);
-  const flag: boolean | undefined = booleanValue(value.isUseProxySend);
-  if (flag !== true) return { isUseProxySend: flag, proxySendTargetChatId: undefined };
-  return targetChatId === undefined
-    ? { isUseProxySend: undefined, proxySendTargetChatId: undefined }
-    : { isUseProxySend: true, proxySendTargetChatId: targetChatId };
-}
-
 export function rebuildChatState(value: unknown, now: number): ChatState | null {
   if (!isRecord(value)) return null;
-  const proxySend = rebuildProxySend(value);
   return {
     quietUntil: finiteNumber(value.quietUntil),
     lockdown: rebuildLockdown(value.lockdown, now),
@@ -121,8 +102,7 @@ export function rebuildChatState(value: unknown, now: number): ChatState | null 
     isInit: booleanValue(value.isInit),
     botIsAdmin: booleanValue(value.botIsAdmin),
     title: optionalString(value, "title"),
-    isUseProxySend: proxySend.isUseProxySend,
-    proxySendTargetChatId: proxySend.proxySendTargetChatId,
+    isUseProxySend: booleanValue(value.isUseProxySend),
   };
 }
 

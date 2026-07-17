@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import type { Animation, Message, PhotoSize } from "@grammyjs/types";
 import type { ChatState, CopyMode } from "../types";
-import { getActiveCopyIn, getChatState, saveState } from "../infra/storage";
+import { getActiveCopyIn, getActiveProxySendTarget, getChatState, getOrCreateChatState, saveState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
 import { recordChatTitleFromChat } from "../infra/chatTitle";
 import { applyCopyModeTransform } from "../copy/copyModes";
@@ -317,23 +317,21 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
 
   // 私聊消息不参与下面任何群聊向的自动行为（AI 闲聊/看看触发/随机复读，
   // 机器人在私聊里没有群聊上下文，也不该在 DM 里自动搭话）；唯一的例外是
-  // /send 中转会话（isUseProxySend，见 commands/send.ts、ChatState 该字段
-  // 注释）：这个私聊如果正在中转中，把消息原样转发进目标群一次。/send 命令
-  // 本身走 index.ts 的 bot.command 单独处理，不会走到这里；这里处理的都是
-  // 中转期间发的其余消息。
+  // /send 中转会话（ChatState.isUseProxySend，挂在目标群自己的状态上，见
+  // commands/send.ts、infra/storage.ts 的 getActiveProxySendTarget）：如果
+  // 当前有会话在跑，把消息原样转发进目标群一次。/send 命令本身走 index.ts
+  // 的 bot.command 单独处理，不会走到这里；这里处理的都是中转期间发的其余
+  // 消息。
   if (message.chat.type === "private") {
-    if (state.isUseProxySend === true && state.proxySendTargetChatId !== undefined) {
-      const targetChatId: number = state.proxySendTargetChatId;
+    const targetChatId: number | undefined = getActiveProxySendTarget();
+    if (targetChatId !== undefined) {
       const copiedMessageId: number | undefined = await copyMessage(targetChatId, chatId, message.message_id);
       if (copiedMessageId === undefined) {
         // 转发失败（机器人被踢出目标群/丢了发言权限等，copyMessage 内部已
         // 记过日志）：不能让中转继续悄悄吞掉后续消息、超管却还以为在正常
         // 转发——直接关掉这轮会话并如实告知，逼超管确认目标群状态后重新
-        // /send，好过无限期静默丢消息。isUseProxySend 刚判过是 true，说明
-        // state 是 Map 里的真实条目（不是共享的冻结默认值，道理同
-        // commands/quiet.ts 的 handleUnquietCommand），可以直接改。
-        state.isUseProxySend = false;
-        state.proxySendTargetChatId = undefined;
+        // /send，好过无限期静默丢消息。
+        getOrCreateChatState(targetChatId).isUseProxySend = false;
         await saveState();
         await sendMessage(chatId, `转发到 ${targetChatId} 失败了，本天才先把这轮中转停掉了，检查一下再 /send 重新开吧♡`);
       }

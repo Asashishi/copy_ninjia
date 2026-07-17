@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import { getChatState } from "./storage";
+import { getActiveProxySendTarget, getChatState } from "./storage";
 
 /**
  * isInit 网关的判断逻辑，从 index.ts 的 bot.use 内联箭头函数里抽出来，纯
@@ -30,14 +30,15 @@ export function isSendCommandText(text: string): boolean {
 /**
  * 私聊指令网关的判断逻辑，从 index.ts 的 bot.use 内联箭头函数里抽出来，纯
  * 是为了能被单测覆盖——行为与原来完全一致，见 index.ts 调用处的完整注释
- * （私聊里的 / 开头文本一律拦下，两处例外：/send 指令本身；这个私聊正处于
- * /send 中转会话中时放行全部消息，好让 handleIncomingMessage 的转发分支
- * 收得到）。
+ * （私聊里的 / 开头文本一律拦下，两处例外：/send 指令本身；有 /send 中转
+ * 会话在跑时放行全部消息，好让 handleIncomingMessage 的转发分支收得到）。
+ * 会话是否在跑走全局的 getActiveProxySendTarget（不针对某个 chatId 查）——
+ * 唯一能让这里判到 private 的账号本就只有发起过会话的超管本人，两者等价。
  */
 export function shouldPassPrivateCommandGate(ctx: Context): boolean {
   const text: string | undefined = ctx.message?.text;
   if (ctx.chat?.type !== "private" || !text?.startsWith("/") || isSendCommandText(text)) {
     return true;
   }
-  return getChatState(ctx.chat.id).isUseProxySend === true;
+  return getActiveProxySendTarget() !== undefined;
 }

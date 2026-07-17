@@ -1,6 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { ChatState } from "../types";
-import { getChatState, getOrCreateChatState, saveState } from "../infra/storage";
+import { getActiveProxySendTarget, getOrCreateChatState, saveState } from "../infra/storage";
 import { bot, logApiError, sendMessage } from "../infra/telegram";
 import { isSuperAdmin } from "./superAdminToggle";
 
@@ -17,12 +16,12 @@ import { isSuperAdmin } from "./superAdminToggle";
  * /send <群组id> 开启一轮中转：此后这个私聊里发的每条消息（任意类型，走
  * copyMessage 原样复制发到目标群一次，不带「转发自」标记，见
  * src/auto/message.ts 对 ChatState.isUseProxySend 的消费）都会被同步转发进
- * 该群，直到 /send finish 结束这轮中转。中转状态记在这个私聊自己的
- * ChatState（isUseProxySend + proxySendTargetChatId）里，随 state.json
- * 持久化——机器人中途重启不会丢掉正在进行的中转，见 ChatState.isUseProxySend
- * 注释。开启前会先 getChat 探一次目标是否可达（机器人是否在场/id 有没有
- * 打错），挡掉「确认成功、实际每条消息都转发失败」的场景；中转期间目标
- * 变得不可达（如机器人被踢出目标群）由 auto/message.ts 兜底检测并终止。
+ * 该群，直到 /send finish 结束这轮中转。中转状态挂在目标群自己的
+ * ChatState.isUseProxySend 上（不是这个私聊自己的状态，见该字段注释），
+ * 随 state.json 持久化——机器人中途重启不会丢掉正在进行的中转。开启前会先
+ * getChat 探一次目标是否可达（机器人是否在场/id 有没有打错），挡掉「确认
+ * 成功、实际每条消息都转发失败」的场景；中转期间目标变得不可达（如机器人
+ * 被踢出目标群）由 auto/message.ts 兜底检测并终止。
  */
 export async function handleSendCommand(ctx: CommandContext<Context>): Promise<void> {
   // 群里打出这个指令不作任何回应——不确认它存在，也不用嘲讽文案暴露它。
@@ -37,15 +36,14 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   if (!isSuperAdmin(ctx.from)) return;
 
   const arg: string = ctx.match.trim();
+  const activeTargetChatId: number | undefined = getActiveProxySendTarget();
 
   if (arg.toLowerCase() === "finish") {
-    if (getChatState(chatId).isUseProxySend !== true) {
+    if (activeTargetChatId === undefined) {
       await sendMessage(chatId, `现在又没在转发，是想 finish 什么呀♡`, messageId);
       return;
     }
-    const state: ChatState = getOrCreateChatState(chatId);
-    state.isUseProxySend = false;
-    state.proxySendTargetChatId = undefined;
+    getOrCreateChatState(activeTargetChatId).isUseProxySend = false;
     await saveState();
     await sendMessage(chatId, `好啦，不转发了♡`, messageId);
     return;
@@ -57,9 +55,8 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  const existing: ChatState = getChatState(chatId);
-  if (existing.isUseProxySend === true) {
-    await sendMessage(chatId, `已经在转发到 ${existing.proxySendTargetChatId} 了，先 /send finish 呀♡`, messageId);
+  if (activeTargetChatId !== undefined) {
+    await sendMessage(chatId, `已经在转发到 ${activeTargetChatId} 了，先 /send finish 呀♡`, messageId);
     return;
   }
 
@@ -74,9 +71,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  const state: ChatState = getOrCreateChatState(chatId);
-  state.isUseProxySend = true;
-  state.proxySendTargetChatId = targetChatId;
+  getOrCreateChatState(targetChatId).isUseProxySend = true;
   await saveState();
   await sendMessage(chatId, `好，现在这里发的消息本天才都会转发进 ${targetChatId}，说完了记得 /send finish♡`, messageId);
 }
