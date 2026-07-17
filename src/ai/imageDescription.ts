@@ -20,8 +20,6 @@ import {
   ANIMATION_DESCRIPTION_PROMPT,
   IMAGE_DESCRIPTION_MAX_CHARS,
   IMAGE_DESCRIPTION_PROMPT,
-  MEDIA_DESCRIPTION_CACHE_MAX,
-  MEDIA_DESCRIPTION_CACHE_TTL_MS,
   MEDIA_DESCRIPTION_MAX_TOKENS,
   MEDIA_DOWNLOAD_TIMEOUT_MS,
   MEDIA_MAX_DOWNLOAD_BYTES,
@@ -53,9 +51,9 @@ function maxCharsFor(kind: MediaKind): number {
 /**
  * 下载并描述一份未命中本地贴纸目录的媒体（带 file_unique_id 临时去重
  * 缓存，见 transientDescriptionCache）。图片、GIF 与非白名单贴纸共用这份
- * 500 项 / 1 小时缓存——键空间不冲突（file_unique_id 本就是 Telegram
- * 全局唯一），且同一份媒体不会同时是两种类型。白名单贴纸由调用方先查
- * stickerCatalog 的常驻目录，不会走到这里。
+ * MEDIA_DESCRIPTION_CACHE_MAX 项的 LRU 缓存——键空间不冲突（file_unique_id
+ * 本就是 Telegram 全局唯一），且同一份媒体不会同时是两种类型。白名单贴纸
+ * 由调用方先查 stickerCatalog 的常驻目录，不会走到这里。
  * @param kind 媒体类型，决定用哪份视觉提示词与描述长度上限。
  * @param fileId 要下载的 Telegram file_id：图片是本体；贴纸是本体（静态）
  *   或缩略图（动态/视频，见 ai/stickerSets.ts 的 pickStickerVisionSource）；
@@ -70,38 +68,28 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
   if (cached) return cached;
 
   const pending: Promise<string | null> = describeMediaUncached(kind, fileId).then((description: string | null) => {
-    // 按引用而非按 key 删——与下面 TTL 清理同样的理由：这份 pending 在解析
-    // 期间可能已经因为超过 500 条上限被淘汰、又被新的并发请求重新插入了
-    // 一份新 pending，此时这里必须认得出"当前占着这个 key 的不是自己"，
-    // 不能把新插入的那份连锅端掉（否则新请求的合并会落空，还会误删一份
-    // 可能已经解析成功、本该继续留在缓存里的有效结果）。
-    if (description === null && transientDescriptionCache.get(fileUniqueId) === pending) {
+    // 按引用而非按 key 删，用 peek 而不是 get——不能让这次内部核对被当成
+    // 一次真实访问去刷新淘汰顺位。这份 pending 在解析期间可能已经因为超过
+    // 容量上限被淘汰、又被新的并发请求重新插入了一份新 pending，此时这里
+    // 必须认得出"当前占着这个 key 的不是自己"，不能把新插入的那份连锅
+    // 端掉（否则新请求的合并会落空，还会误删一份可能已经解析成功、本该
+    // 继续留在缓存里的有效结果）。
+    if (description === null && transientDescriptionCache.peek(fileUniqueId) === pending) {
       transientDescriptionCache.delete(fileUniqueId);
     }
     return description;
   });
+  // 写入即满足容量上限的淘汰（超容量删最久未使用的一个），见
+  // cache/imageDescription.ts 的 LruCache 用法。
   transientDescriptionCache.set(fileUniqueId, pending);
-  // 超上限就淘汰最早插入的条目（Map 迭代顺序即插入顺序），不搞真 LRU——
-  // 热门媒体重发不刷新位置，靠上限本身足够大兜底。
-  if (transientDescriptionCache.size > MEDIA_DESCRIPTION_CACHE_MAX) {
-    transientDescriptionCache.delete(transientDescriptionCache.keys().next().value!);
-  }
-  // 双保险：低流量长期运行下，条目数可能一直摸不到 MEDIA_DESCRIPTION_CACHE_MAX
-  // 却又长期占着内存不放，TTL 到期主动清掉。按引用而非按 key 删——期间这份
-  // 媒体若已因解析失败被摘掉、又被新请求重新插入了一份新 pending，不能把
-  // 新的错删。
-  setTimeout(() => {
-    if (transientDescriptionCache.get(fileUniqueId) === pending) {
-      transientDescriptionCache.delete(fileUniqueId);
-    }
-  }, MEDIA_DESCRIPTION_CACHE_TTL_MS).unref();
   return pending;
 }
 
 /**
  * 为白名单贴纸目录生成一条常驻描述。目录自身负责按 file_unique_id 去重、
- * 持久化和线上变更对账，因此这里刻意绕过 500 项 / 1 小时临时缓存；成功后
- * 调用方会立即写入 stickerCatalog，消息记录随后可直接命中常驻目录。
+ * 持久化和线上变更对账，因此这里刻意绕过 transientDescriptionCache 临时
+ * 缓存；成功后调用方会立即写入 stickerCatalog，消息记录随后可直接命中
+ * 常驻目录。
  */
 export function describeMediaForStickerCatalog(fileId: string): Promise<string | null> {
   return describeMediaUncached("sticker", fileId);

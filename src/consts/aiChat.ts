@@ -269,15 +269,12 @@ export const MEDIA_DESCRIPTION_MAX_TOKENS: number = 4096;
 /** 从 Telegram 下载媒体文件（图片本体、贴纸本体/缩略图、GIF 缩略图）的超时。 */
 export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 20_000;
 /** 未命中 memory/stickers/ 常驻目录的媒体描述临时缓存（按 file_unique_id
- *  去重，见 ai/imageDescription.ts）条目上限，超出按插入顺序淘汰最旧的。
- * 同一张梗图/非白名单贴纸/GIF 被反复刷屏时不再重复下载/解析，转录里也
- * 不会出现同一份媒体多份措辞各异的描述。三类临时结果共用一个缓存（键空间
- * 不冲突：file_unique_id 本就是 Telegram 全局唯一）。 */
-export const MEDIA_DESCRIPTION_CACHE_MAX: number = 500;
-/** 临时媒体描述缓存条目的存活时间：超过上限个数靠插入序淘汰，超过这个时长
- * 则不管 size 是否超限都主动清掉。白名单贴纸描述由 stickerCatalog 常驻，
- * 不使用此 TTL。 */
-export const MEDIA_DESCRIPTION_CACHE_TTL_MS: number = 60 * 60 * 1000;
+ *  去重，见 ai/imageDescription.ts）条目上限，超出淘汰最久未使用的一个
+ * （LRU，见 libs/lruCache.ts）。同一张梗图/非白名单贴纸/GIF 被反复刷屏时
+ * 不再重复下载/解析，转录里也不会出现同一份媒体多份措辞各异的描述。三类
+ * 临时结果共用一个缓存（键空间不冲突：file_unique_id 本就是 Telegram
+ * 全局唯一）。 */
+export const MEDIA_DESCRIPTION_CACHE_MAX: number = 1500;
 /** 媒体下载大小上限：挑尺寸/素材来源时跳过超过它的档位（Gemini 对 inline
  *  图片的整个请求体限 20MB，Telegram 压缩后的 photo/贴纸/缩略图远小于此，
  *  这只是防御性护栏）。 */
