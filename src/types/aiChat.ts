@@ -115,8 +115,9 @@ export interface AiTriggerMessage {
   chatId: number;
   replyToMessageId: number;
   repliedBotText?: string;
-  /** 是否是随机插话触发：模型自主决定接不接话、挂不挂回复引用，允许沉默
-   *  （见 workers/aiChatWorker.ts 的 generateAndSendReply）。 */
+  /** 是否是随机插话触发：怎么接、挂不挂回复引用由模型判断，但必须回应
+   *  （说话/贴纸/扣反应都算）、不允许沉默（见 workers/aiChatWorker.ts 的
+   *  generateAndSendReply）。 */
   isRandomTrigger: boolean;
 }
 

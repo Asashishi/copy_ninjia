@@ -361,9 +361,9 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, messageText);
 
     // AI 闲聊回复：用户回复机器人、或者消息里 @ 了机器人 → 必然触发；否则
-    // 普通发言按 AI_REPLY_PROBABILITY 概率触发。这里的掷骰只决定「给不给
-    // 模型一次机会」——随机触发命中后回不回、怎么回由模型在 Worker 侧自主
-    // 决定，允许什么都不做保持沉默（见 workers/aiChatWorker.ts 的
+    // 普通发言按 AI_REPLY_PROBABILITY 概率触发。「插不插话」的闸门就是这里
+    // 的掷骰——命中后怎么回由模型在 Worker 侧自主决定，但必须回应（说话/
+    // 贴纸/扣反应都算）、不允许沉默（见 workers/aiChatWorker.ts 的
     // generateAndSendReply）。命中后就不再走下面的洗澡/随机复读，免得一条
     // 消息既被 AI 回又被复读。
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);

@@ -215,8 +215,9 @@ export function recordChatMedia(
  * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
  * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机插话
- *   （这种情况完全交给模型自主：接不接话、挂不挂回复引用都由它判断，也
- *   允许什么都不做保持沉默，见 workers/aiChatWorker.ts 的 generateAndSendReply）。
+ *   （怎么接、挂不挂回复引用由模型判断，但必须回应——说话/贴纸/扣反应
+ *   都算，不允许沉默；「插不插话」的闸门在触发概率那一层，见
+ *   workers/aiChatWorker.ts 的 generateAndSendReply）。
  */
 export function generateAndSendReply(
   chatId: number,

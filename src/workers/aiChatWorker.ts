@@ -555,16 +555,18 @@ interface UserContentOptions {
    *  （机器人自己发的消息不会作为更新推送回来，不在缓存里）。 */
   repliedBotText?: string;
   /** 是否是随机插话触发（见 generateAndSendReply 的 isRandomTrigger）：
-   *  没有人在叫机器人，模型自主决定接不接话、怎么接（挂不挂 reply_to_trigger、
-   *  要不要称呼对方都由它判断），也允许什么都不做保持沉默。 */
+   *  没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、要不要称呼对方）
+   *  由模型自主判断，但必须回应（说话/贴纸/扣反应都算）、不允许沉默——
+   *  「插不插话」的闸门在触发概率那一层，命中了就要留下点动静。 */
   isRandomTrigger: boolean;
   /** 若本次是「解析完图片/贴纸/GIF 后评价它」触发（见 recordChatMedia），
    *  发送人与描述——回复指令改为针对这份媒体发表评价，替代默认的「接住
    *  最新消息」。 */
   mediaComment?: MediaCommentContext;
   /** 若本次是排队补跑的直接触发（见 drainReplyQueue），入队时的触发消息
-   *  快照——回复指令改为点名回复那条具体消息（此刻它已不在转录尾部），
-   *  并允许模型在自己后来的发言已覆盖它时保持沉默。 */
+   *  快照——回复指令改为点名回复那条具体消息（此刻它已不在转录尾部）；
+   *  自己后来的发言已覆盖过它时换个说法简短接一句、或至少扣个反应，
+   *  不允许沉默。 */
   queuedTrigger?: QueuedReplyTrigger;
 }
 
@@ -598,22 +600,24 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   //   MediaCommentContext 的 isReplyToBot），语气同回复/@ 触发——别已读
   //   不回；描述可能是解析结果也可能是元数据兜底，模型按有什么接什么。
   // - 媒体评价：针对刚解析完的那份图片/贴纸/GIF 发表评价，要求挂回复引用；
-  //   实在无话可评也允许沉默。
+  //   评不出花来就简短一句、或至少扣个表情反应，不允许沉默。
   // - 排队补跑：点名回复入队时快照下来的那条具体消息（此刻转录尾部早已
   //   是别的消息，不能说「最新这条」）；上一轮的回复可能已顺带覆盖它，
-  //   允许模型判断后保持沉默，别机械地逐条硬回。
-  // - 随机插话：没有人在叫机器人，接不接、怎么接（挂不挂 reply_to_trigger、
-  //   要不要称呼对方）全由模型自主判断——触发者是谁转录最后一行本来就写着，
-  //   不再单独喂名字、不再强制点名。
+  //   覆盖过就换个说法简短接一句、或至少扣个表情反应表示看到了，不允许
+  //   沉默、也别原样重复自己说过的话。
+  // - 随机插话：没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、要不要
+  //   称呼对方）由模型自主判断，但必须留下回应——一句吐槽或感想，实在没话
+  //   扣个表情反应也行；触发者是谁转录最后一行本来就写着，不再单独喂名字、
+  //   不再强制点名。
   // - 回复/@ 触发：对方明确在跟机器人说话，别已读不回，建议第一条挂引用。
   const replyInstruction: string = mediaComment?.isReplyToBot
     ? `刚才 ${mediaComment.senderName} 用${mediaNounFor(mediaComment.kind)}回复了你上一条消息，内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
     : mediaComment
-    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；实在觉得无话可评，也可以什么都不做。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
     : queuedTrigger
-    ? `刚才你忙着回别的消息的时候，${queuedTrigger.senderName || "有人"} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」，在聊天记录里能找到对应那行），这条是排队等到现在才轮到处理的。如果这条还值得回，请针对 TA 那条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了再回反而奇怪，就什么都不做，别硬回也别重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才你忙着回别的消息的时候，${queuedTrigger.senderName || "有人"} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」，在聊天记录里能找到对应那行），这条是排队等到现在才轮到处理的。请针对 TA 那条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，就换个说法简短接一句、或至少给 TA 那条消息扣个表情反应表示看到了，别原样重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
     : isRandomTrigger
-    ? `群里最新这条消息并没有人在叫你——只是你自己刷到了，要不要插一嘴完全由你判断：值得接就以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；话题跟你无关、没什么好说的，就什么都不做直接结束，别硬聊。${REPLY_ACTION_INSTRUCTION}`
+    ? `群里最新这条消息并没有人在叫你——只是你自己刷到了，想插一嘴：请以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；哪怕话题跟你关系不大，也要留下点回应——一句吐槽或感想都行，实在没话就扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
     : `请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`;
 
   // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
@@ -766,17 +770,20 @@ function notifyRateLimited(chatId: number, now: number): void {
 /**
  * 生成并执行一轮 AI 回复。整个过程 fire-and-forget，不阻塞本线程的消息分发
  * （限频判定是同步的，其余都在异步任务里跑）。
- * 发言/贴纸/反应全部工具化（见 ai/tools/replyToolset.ts）：回不回、发单条还是
- * 像真人那样连发几条短句、配不配贴纸、扣不扣反应、挂不挂回复引用，都由模型
- * 在工具对话里自主决定，副作用在工具执行时当场发生；这里只组装工具集与回调，
- * 外加对「对方明确在跟机器人说话」的直接触发保留一道正文兜底（见函数尾注释）。
+ * 发言/贴纸/反应全部工具化（见 ai/tools/replyToolset.ts）：发单条还是像真人
+ * 那样连发几条短句、配不配贴纸、扣不扣反应、挂不挂回复引用，都由模型在工具
+ * 对话里自主决定——但不允许整轮沉默，每轮至少留下一个群友看得见的动作
+ * （说话/贴纸/扣反应任选，见 consts/aiChat.ts 的 REPLY_ACTION_INSTRUCTION）。
+ * 副作用在工具执行时当场发生；这里只组装工具集与回调，外加一道对所有触发
+ * 类型生效的正文兜底（见 startReplyRound 尾注释）。
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID：add_reaction 的目标；模型给
  *   send_message 传 reply_to_trigger: true 时的回复引用目标。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
  * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机插话。
- *   这种情况完全交给模型自主：接不接话、怎么接（挂不挂引用、要不要称呼对方）
- *   都由它判断，允许什么都不做保持沉默——所以也不做正文兜底。
+ *   怎么接（挂不挂引用、要不要称呼对方）由模型自主判断，但必须回应
+ *   （说话/贴纸/扣反应都算）——「插不插话」的闸门在触发概率那一层，
+ *   命中了就要留下点动静。
  * @param mediaComment 若是「解析完图片/贴纸/GIF 后评价它」触发（见
  *   recordChatMedia），发送人与描述——回复指令改为评价，回复引用挂在那条
  *   媒体消息上（replyToMessageId 即那条消息）；5 分钟窗口限频照常适用，
@@ -880,9 +887,11 @@ function drainReplyQueue(chatId: number): void {
  * 的生成与发送流程；结束后释放占位并补跑等候队列（见 drainReplyQueue）。
  * 参数语义同 generateAndSendReply。
  * @param queuedTrigger 若本轮是排队补跑（见 drainReplyQueue），入队时的
- *   触发消息快照——回复指令改为点名那条具体消息，且允许沉默、不做正文
- *   兜底（先跑的轮可能已顺带回应过它）。被限频闸丢弃时不占位、不落账，
- *   drainReplyQueue 的循环条件靠计数未增长感知并继续放下一个。
+ *   触发消息快照——回复指令改为点名那条具体消息；先跑的轮已顺带回应过它
+ *   时换个说法简短接一句、或至少扣个反应，不允许沉默，正文兜底照常生效。
+ *   被限频闸丢弃时
+ *   不占位、不落账，drainReplyQueue 的循环条件靠计数未增长感知并继续放下
+ *   一个。
  */
 function startReplyRound(
   chatId: number,
@@ -928,10 +937,10 @@ function startReplyRound(
     // 心跳的生命周期覆盖整轮工具对话（生成耗时不可控，发送也发生在工具
     // 执行里），但从 idle 挡起步：生成/思考期间不亮状态，「正在输入/选择
     // 贴纸…」只在具体动作临发前由工具执行路径拉起有界窗口（见
-    // ai/tools/replyToolset.ts 与 stickers.ts）——模型整轮沉默（随机插话
-    // 不接话/只扣反应）时全程无感，不会留下等不来消息的假输入状态。
-    // try/finally 保证即使 createReplyToolset/callGemini 抛异常，心跳也
-    // 一定会被停掉。
+    // ai/tools/replyToolset.ts 与 stickers.ts）——只扣反应的轮（合规回应，
+    // 反应不拉起任何状态窗口）和违背指令零产出的轮都不发消息，全程无感，
+    // 不会留下等不来消息的假输入状态。try/finally 保证即使
+    // createReplyToolset/callGemini 抛异常，心跳也一定会被停掉。
       const heartbeat = startChatActionHeartbeat(chatId);
       try {
     // 工具执行成功后的回调：发出去的每条消息/贴纸描述行都自录进对话缓存
@@ -957,14 +966,17 @@ function startReplyRound(
         const toolset: ReplyToolset = await createReplyToolset(ctx);
         const finalText: string | null = await callGemini(userContent, toolset);
 
-        // 正文兜底只保留给「对方明确在跟机器人说话」的即时直接触发——文字
-        // 回复/@，以及拿媒体回复机器人（mediaComment.isReplyToBot）；随机
-        // 插话/随机媒体评价允许沉默，不兜底。排队补跑也不兜底：那条指令明确
-        // 允许模型判断后沉默，硬把最后一轮正文发出去会把「决定不回」变成
-        // 「重复自己」。放在心跳停止之前：兜底走同一条 send_message 工具
-        // 路径，照样有临发前的「正在输入…」窗口，发出后挡位随之切回 idle。
-        if (finalText && !isRandomTrigger && (!mediaComment || mediaComment.isReplyToBot) && !queuedTrigger && toolset.messagesSent() === 0) {
-          await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
+        // 正文兜底，所有触发类型一视同仁：指令已不允许模型整轮沉默（见
+        // REPLY_ACTION_INSTRUCTION），若它没走 send_message 工具、把话留在
+        // 了最终正文里，就把正文当那句话发出去。只发贴纸/只扣反应的轮正文
+        // 通常为空（两者都算合规回应），不会被硬塞一句重复出声；正文也空
+        // 又什么动作都没做的轮没东西可兜，只能接受（执行侧无中生有不了）。
+        // 放在心跳停止之前：兜底走同一条 send_message 工具路径，照样有临
+        // 发前的「正在输入…」窗口，发出后挡位随之切回 idle。随机插话不挂
+        // 回复引用（没有人在叫它，突然引用显得刻意），其余触发都挂在触发
+        // 消息上点名回谁。
+        if (finalText && toolset.messagesSent() === 0) {
+          await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
         }
       } finally {
         // 先停表再等本代所有在途状态请求落定，避免异常中断时仍有迟到请求

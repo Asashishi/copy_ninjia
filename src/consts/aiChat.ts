@@ -418,15 +418,18 @@ export const ADD_REACTION_TOOL_INSTRUCTION: string =
 
 /**
  * buildUserContent 拼在回复指令末尾的行动说明：发言/贴纸/反应全部工具化，
- * 用不用、什么顺序由模型自己决定，见 workers/aiChatWorker.ts；动作总量的
+ * 先做哪个、做几样由模型自己决定，见 workers/aiChatWorker.ts；动作总量的
  * 「通常 1~3、硬顶 MAX_ACTIONS_PER_REPLY」在执行侧强制，这里只做引导。
  * 各工具的具体用法不在这里复述——同一次请求里每个工具自己的 description
  * 已经写清（见上方各 *_TOOL_INSTRUCTION），这里只放跨工具的全局规则：
- * 动作预算、允许沉默、结束方式。
+ * 动作预算、必须回应（不允许整轮沉默——说话/贴纸/扣反应都算回应，执行侧
+ * 另有正文兜底，见 workers/aiChatWorker.ts 的 startReplyRound 尾部）、
+ * 结束方式。
  */
 export const REPLY_ACTION_INSTRUCTION: string =
   "你的所有动作（说话 send_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +
-  "add_reaction）都只能通过工具完成，用法见各工具说明。做不做、先做哪个、做几样都由你自己决定" +
-  "——判断此刻不值得出声时，也可以一个动作都不做、直接结束，沉默同样是符合人设的选择。" +
-  `一轮回复通常 1~3 个动作，最多绝不超过 ${MAX_ACTIONS_PER_REPLY} 个——宁缺毋滥，别刷屏。` +
+  "add_reaction）都只能通过工具完成，用法见各工具说明。先做哪个、做几样由你自己决定，" +
+  "但不允许整轮保持沉默：每轮至少要落地一个群友看得见的动作——说一句话（一句简短的也行）、" +
+  "发一枚应景贴纸，或者给触发消息扣一个表情反应，三样任选，不能一个动作都不做就结束。" +
+  `一轮回复通常 1~3 个动作，少数 3-5 个动作，最多绝不超过 ${MAX_ACTIONS_PER_REPLY} 个——够意思就收，别刷屏。` +
   "全部动作完成后直接结束，不要再输出任何正文。";

@@ -78,8 +78,10 @@ export function pumpChatAction(chatId: number, entry: ChatActionHeartbeatEntry, 
  * 在整轮 AI 工具对话期间提供聊天状态的挡位心跳：从 idle 挡起步——生成/
  * 思考期间不亮任何状态，「正在输入/选择贴纸…」只在具体动作临发前由工具
  * 执行路径拉起有界窗口（见 ai/tools/replyToolset.ts 与 stickers.ts 的挡位
- * 切换）。模型完全可能整轮沉默（随机插话不接话/只扣反应），全程亮着的
- * 打字状态最后等不来任何消息，就是群友看到的「假输入」遗留。切到非 idle
+ * 切换）。指令虽已要求每轮必须回应（见 consts/aiChat.ts 的
+ * REPLY_ACTION_INSTRUCTION），只扣反应的轮本就不发消息，模型也仍可能违背
+ * 指令整轮零产出——这两种轮里全程亮着的打字状态最后等不来任何消息，就是
+ * 群友看到的「假输入」遗留。切到非 idle
  * 挡会立即补发一次对应状态（同挡位在间隔内刚发过则节流跳过），此后由
  * 定时器按间隔重发维持（choose_sticker 挡要跨越模型挑贴纸的整个往返，
  * 长消息的 typing 窗口也可长达 7.5 秒，都可能超过单次状态约 5 秒的过期
