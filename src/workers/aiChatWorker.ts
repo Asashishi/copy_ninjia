@@ -4,6 +4,7 @@ import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool 
 import { LinkedQueue } from "../libs/linkedQueue";
 import { formatTokyoTime, getCurrentTime } from "../libs/time";
 import { sanitizeInline, truncateInline } from "../libs/text";
+import { displayBufferedMessageName, formatBufferedMessageLine } from "../ai/chatTranscript";
 import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
@@ -38,7 +39,6 @@ import {
   VERBATIM_CONTEXT_MAX,
   WEB_SEARCH_INSTRUCTION,
 } from "../consts/aiChat";
-import { FALLBACK_SPEAKER_NAME } from "../consts/auto";
 import {
   activeReplyChats,
   botInfoState,
@@ -153,12 +153,21 @@ function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
  * @param id 发言人 id（真实用户 id，或频道马甲/频道帖的频道 id）。
  * @param firstName 发言人 first_name（频道则是 title）。
  * @param lastName 发言人 last_name（频道则为空）。
+ * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param text 消息文本。
  */
-function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, text: string): void {
+function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, username: string | undefined, text: string): void {
   const sanitized: string = sanitizeInline(text);
   if (!sanitized) return;
-  pushBufferedMessage(chatId, { id, firstName: sanitizeInline(firstName), lastName: sanitizeInline(lastName), text: sanitized, at: formatTokyoTime(Date.now()) });
+  const sanitizedUsername: string = sanitizeInline(username ?? "").replace(/^@+/, "");
+  pushBufferedMessage(chatId, {
+    id,
+    firstName: sanitizeInline(firstName),
+    lastName: sanitizeInline(lastName),
+    ...(sanitizedUsername ? { username: sanitizedUsername } : {}),
+    text: sanitized,
+    at: formatTokyoTime(Date.now()),
+  });
 }
 
 /** 媒体转录行：描述/占位标签在前，媒体自带的 caption（若有）跟在后面
@@ -233,12 +242,13 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
         id: msg.senderId,
         firstName: sanitizeInline(msg.firstName),
         lastName: sanitizeInline(msg.lastName),
+        ...(msg.username ? { username: sanitizeInline(msg.username).replace(/^@+/, "") } : {}),
         text: composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption),
         at: formatTokyoTime(Date.now()),
       };
       pushBufferedMessage(msg.chatId, entry);
       if (msg.commentOnResolve) {
-        generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: "sticker", senderName: displayName(entry), description: catalogEntry.description });
+        generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: "sticker", senderName: displayBufferedMessageName(entry), description: catalogEntry.description });
       }
       return;
     }
@@ -248,6 +258,7 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
     id: msg.senderId,
     firstName: sanitizeInline(msg.firstName),
     lastName: sanitizeInline(msg.lastName),
+    ...(msg.username ? { username: sanitizeInline(msg.username).replace(/^@+/, "") } : {}),
     text: composeMediaText(pendingPlaceholderFor(msg.kind), sanitizedCaption),
     at: formatTokyoTime(Date.now()),
   };
@@ -260,7 +271,7 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
     dirtyMemoryChats.add(msg.chatId);
     if (msg.commentOnResolve && description) {
-      generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: msg.kind, senderName: displayName(entry), description });
+      generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: msg.kind, senderName: displayBufferedMessageName(entry), description });
     }
   });
 }
@@ -431,7 +442,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
   const data: GenerateContentResponse | null = await requestGeminiResponse(
     {
       model: GEMINI_SUMMARY_MODEL,
-      contents: [{ role: "user", parts: [{ text: selfNote + batch.map(formatLine).join("\n") }] }],
+      contents: [{ role: "user", parts: [{ text: selfNote + batch.map(formatBufferedMessageLine).join("\n") }] }],
       config: {
         systemInstruction: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
         temperature: SUMMARY_TEMPERATURE,
@@ -444,17 +455,6 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
   const sanitized: string = sanitizeInline(extractOutputText(data));
   if (!sanitized) return null;
   return truncateInline(sanitized, SUMMARY_MAX_CHARS);
-}
-
-/** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
-function displayName(m: BufferedMessage): string {
-  return [m.firstName, m.lastName].filter((p: string) => !!p).join(" ").trim() || FALLBACK_SPEAKER_NAME;
-}
-
-/** 把一条缓存消息格式化成喂给模型的一行：先拼记录时已格式化好的发送时间，
- * 再标出 id 避免重名混淆身份。 */
-function formatLine(m: BufferedMessage): string {
-  return `[${m.at}] [id:${m.id}] ${displayName(m)}：${m.text}`;
 }
 
 /** 评价触发的附加上下文：发送人显示名 + 解析出的描述 + 媒体类型，见
@@ -518,7 +518,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   if (!buf || buf.size === 0) return null;
 
   const recent: BufferedMessage[] = buf.last(VERBATIM_CONTEXT_MAX);
-  const lines: string[] = recent.map(formatLine);
+  const lines: string[] = recent.map(formatBufferedMessageLine);
   if (repliedBotText) {
     // 同样压成单行：这段文本虽是机器人自己说过的话，保持转录「一行一条」的
     // 结构不变即可杜绝任何多行伪造的可能。
@@ -564,7 +564,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
 
   return (
     summaryBlock +
-    "以下是本群最近的聊天记录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间 UTC+9），同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
+    "以下是本群最近的聊天记录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] [username:@公开用户名] 名字：内容」，其中 username 标记仅在发言人有公开用户名时出现。行首方括号里是那条消息的发送时间（东京时间 UTC+9）；同名的人以 id 区分，正文里出现的 @用户名则用 username 标记映射回具体的人。最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
     selfIdentity +
     "\n\n" +
     lines.join("\n") +
@@ -583,7 +583,8 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
  * 上一轮模型的整个 content 原样接回 contents、附上 functionResponse 再续跑
  * （content 里的 thought signature 也要一并带回，缺了会丢思考上下文），
  * 直到模型不再要工具或达到轮数上限。查时间不走工具：当前时间默认拼进每次
- * 请求的系统提示词（见下方），转录行也自带每条消息的发送时间（见 formatLine）。
+ * 请求的系统提示词（见下方），转录行也自带每条消息的发送时间（见
+ * ai/chatTranscript.ts 的 formatBufferedMessageLine）。
  * @param userContent buildUserContent 拼好的对话上下文。
  * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
  *   副作用（发消息/贴纸/反应）都发生在它内部。
@@ -781,7 +782,7 @@ function notifyRateLimited(chatId: number, now: number): void {
     // 也自录进对话缓存——这条提示同样是机器人在群里说的话，不留痕的话
     // 模型不知道自己刚说过「太快了接不过来」，被追问时接不上。
     if (botInfoState.current) {
-      recordChatMessage(chatId, botInfoState.current.id, botInfoState.current.first_name, "", RATE_LIMIT_NOTICE_TEXT);
+      recordChatMessage(chatId, botInfoState.current.id, botInfoState.current.first_name, "", botInfoState.current.username, RATE_LIMIT_NOTICE_TEXT);
     }
   });
 }
@@ -888,11 +889,11 @@ function generateAndSendReply(
           replyToMessageId,
           chatAction: heartbeat,
           onMessageSent: (text: string, messageId: number): void => {
-            recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", text);
+            recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, text);
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
           },
           onStickerSent: (stickerDescription: string, messageId: number): void => {
-            recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
+            recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, stickerDescription);
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
           },
         };
@@ -928,7 +929,7 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
       ensureStickerCatalogs(stickerConfig.packs);
       break;
     case "record":
-      recordChatMessage(msg.chatId, msg.senderId, msg.firstName, msg.lastName, msg.text);
+      recordChatMessage(msg.chatId, msg.senderId, msg.firstName, msg.lastName, msg.username, msg.text);
       break;
     case "recordMedia":
       recordChatMedia(msg);

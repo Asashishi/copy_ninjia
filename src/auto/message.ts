@@ -56,18 +56,24 @@ function tryClaimUserRandomReply(chatId: number, speakerId: number): boolean {
 }
 
 /**
- * 解析一条消息发言人喂给 AI 上下文所需的身份三元组：id + first_name + last_name。
- * 刻意把 id 和名字分开存（而非拼成一个昵称字符串），好让模型按 id 区分同名的人。
+ * 解析一条消息发言人喂给 AI 上下文所需的身份：id + first_name + last_name +
+ * 可选公开 username。刻意分开存（而非拼成一个昵称字符串），好让模型按 id
+ * 区分同名的人，并把消息正文里的 @username 对回具体的人。
  * 频道马甲/频道帖没有 first_name/last_name，退化为用 title 当 firstName。
  */
-function resolveSpeaker(message: Message): { id: number; firstName: string; lastName: string } {
+function resolveSpeaker(message: Message): { id: number; firstName: string; lastName: string; username?: string } {
   const fromUser = message.from;
   const senderChat = message.sender_chat ?? (message.chat.type === "channel" ? message.chat : undefined);
   if (senderChat) {
-    return { id: senderChat.id, firstName: ("title" in senderChat ? senderChat.title : undefined) ?? FALLBACK_CHANNEL_NAME, lastName: "" };
+    return {
+      id: senderChat.id,
+      firstName: ("title" in senderChat ? senderChat.title : undefined) ?? FALLBACK_CHANNEL_NAME,
+      lastName: "",
+      username: senderChat.username,
+    };
   }
   if (fromUser) {
-    return { id: fromUser.id, firstName: fromUser.first_name ?? "", lastName: fromUser.last_name ?? "" };
+    return { id: fromUser.id, firstName: fromUser.first_name ?? "", lastName: fromUser.last_name ?? "", username: fromUser.username };
   }
   return { id: 0, firstName: FALLBACK_SPEAKER_NAME, lastName: "" };
 }
@@ -150,13 +156,13 @@ function isBotOwnMessage(message: Message): boolean {
  * 主动行为（不复读、不触发 AI 回复、不洗澡）——这部分行为本就靠
  * isBotOwnMessage 之前的提前返回保证，这里只负责「要不要留个记忆」。
  */
-function recordSelfInlineResult(message: Message, botId: number, botFirstName: string): void {
+function recordSelfInlineResult(message: Message, botId: number, botFirstName: string, botUsername: string): void {
   if (message.chat.type === "private") return;
   if (typeof message.text !== "string") return;
   const chatId: number = message.chat.id;
   if (getActiveCopyIn(chatId)) return;
   if (getChatState(chatId).isUseAIChat !== true) return;
-  recordChatMessage(chatId, botId, botFirstName, "", message.text);
+  recordChatMessage(chatId, botId, botFirstName, "", botUsername, message.text);
 }
 
 /**
@@ -296,7 +302,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 提供最新群名，不必等它们判定完。
   recordChatTitleFromChat(message.chat);
   if (message.via_bot?.id === ctx.me.id) {
-    recordSelfInlineResult(message, ctx.me.id, ctx.me.first_name);
+    recordSelfInlineResult(message, ctx.me.id, ctx.me.first_name, ctx.me.username);
     return;
   }
   if (isBotOwnMessage(message)) return;
@@ -359,7 +365,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // 边收边攒，上限见 consts/aiChat.ts 的 VERBATIM_CONTEXT_MAX）。指令消息
     // （/ 开头）已在上面排除。
     const speaker = resolveSpeaker(message);
-    recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, messageText);
+    recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, messageText);
 
     // AI 闲聊回复：用户回复机器人、或者消息里 @ 了机器人 → 必然触发；否则
     // 普通发言按 AI_REPLY_PROBABILITY 概率触发。这里的掷骰只决定「给不给
@@ -398,7 +404,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const fallbackText: string = describeStickerForContext(message.sticker);
     const visionSource = pickStickerVisionSource(message.sticker);
     if (!visionSource) {
-      recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, fallbackText);
+      recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, fallbackText);
     } else {
       // 例外：按 AI_REPLY_PROBABILITY 掷中时，解析完成后 AI 会回复那条贴纸
       // 消息评价它——文字随机搭话与图片/贴纸/GIF 评价共用同一个概率（不是
@@ -413,6 +419,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
         speaker.id,
         speaker.firstName,
         speaker.lastName,
+        speaker.username,
         "",
         visionSource.fileId,
         visionSource.fileUniqueId,
@@ -432,7 +439,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const commentOnResolve: boolean =
       !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
-    recordChatMedia("photo", chatId, speaker.id, speaker.firstName, speaker.lastName, caption, photoFile.fileId, photoFile.fileUniqueId, message.message_id, commentOnResolve);
+    recordChatMedia("photo", chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, caption, photoFile.fileId, photoFile.fileUniqueId, message.message_id, commentOnResolve);
   } else if (!activeCopy && aiChatEnabled && message.animation) {
     // GIF（Telegram animation，实际多为 mp4）：本项目没有视频解码/抽帧能力，
     // 只能分析 Telegram 自带的缩略图（封面帧，见 pickAnimationVisionSource）。
@@ -442,11 +449,11 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const caption: string = typeof message.caption === "string" ? message.caption : "";
     const visionSource = pickAnimationVisionSource(message.animation);
     if (!visionSource) {
-      recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, caption ? `[GIF] ${caption}` : "[GIF]");
+      recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, caption ? `[GIF] ${caption}` : "[GIF]");
     } else {
       const commentOnResolve: boolean =
         !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
-      recordChatMedia("animation", chatId, speaker.id, speaker.firstName, speaker.lastName, caption, visionSource.fileId, visionSource.fileUniqueId, message.message_id, commentOnResolve);
+      recordChatMedia("animation", chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, caption, visionSource.fileId, visionSource.fileUniqueId, message.message_id, commentOnResolve);
     }
   }
 
@@ -463,7 +470,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // （短期进滚动缓存，随批次轮换自然被压缩进中期摘要，见
     // aiChatWorker.ts 的 recordChatMessage/scheduleRotation）。
     if (aiChatEnabled && sentMessageId !== undefined) {
-      recordChatMessage(chatId, ctx.me.id, ctx.me.first_name, "", BATH_TRIGGER_REPLY_TEXT);
+      recordChatMessage(chatId, ctx.me.id, ctx.me.first_name, "", ctx.me.username, BATH_TRIGGER_REPLY_TEXT);
     }
     return;
   }
@@ -477,7 +484,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const echoedText: string | undefined = await echoMessage(chatId, message, mode);
     // 同上，自录复读出去的文本（纯媒体复读没有文本可录，保持沉默）。
     if (aiChatEnabled && echoedText !== undefined) {
-      recordChatMessage(chatId, ctx.me.id, ctx.me.first_name, "", echoedText);
+      recordChatMessage(chatId, ctx.me.id, ctx.me.first_name, "", ctx.me.username, echoedText);
     }
   }
 }

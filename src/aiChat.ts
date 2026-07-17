@@ -159,10 +159,11 @@ export function flushAiMemory(timeoutMs: number = 2000): Promise<void> {
  * @param id 发言人 id（真实用户 id，或频道马甲/频道帖的频道 id）。
  * @param firstName 发言人 first_name（频道则是 title）。
  * @param lastName 发言人 last_name（频道则为空）。
+ * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param text 消息文本。
  */
-export function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, text: string): void {
-  post({ type: "record", chatId, senderId: id, firstName, lastName, text });
+export function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, username: string | undefined, text: string): void {
+  post({ type: "record", chatId, senderId: id, firstName, lastName, username, text });
 }
 
 /**
@@ -172,6 +173,7 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
  * AI_REPLY_PROBABILITY 掷中，与文字随机搭话共用同一个概率）时，解析成功
  * 后会以「回复那条消息」的形式发一条针对内容的评价。
  * @param kind 媒体类型：photo/sticker/animation，决定占位符/视觉提示词。
+ * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param caption 媒体自带的配文（没有则传空串）。
  * @param fileId 要下载的 file_id（图片是已挑好档位的 photo file_id；贴纸/
  *   GIF 是本体或缩略图，见 auto/message.ts 的素材选择）。
@@ -189,6 +191,7 @@ export function recordChatMedia(
   id: number,
   firstName: string,
   lastName: string,
+  username: string | undefined,
   caption: string,
   fileId: string,
   fileUniqueId: string,
@@ -196,7 +199,7 @@ export function recordChatMedia(
   commentOnResolve: boolean,
   stickerFallbackText?: string
 ): void {
-  post({ type: "recordMedia", kind, chatId, senderId: id, firstName, lastName, caption, fileId, fileUniqueId, messageId, commentOnResolve, stickerFallbackText });
+  post({ type: "recordMedia", kind, chatId, senderId: id, firstName, lastName, username, caption, fileId, fileUniqueId, messageId, commentOnResolve, stickerFallbackText });
 }
 
 /**

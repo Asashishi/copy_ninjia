@@ -21,6 +21,8 @@ export interface AiRecordMessage {
   senderId: number;
   firstName: string;
   lastName: string;
+  /** Telegram 公开 username（不含 @）；没有公开 username 时省略。 */
+  username?: string;
   text: string;
 }
 
@@ -36,6 +38,8 @@ export interface AiRecordMediaMessage {
   senderId: number;
   firstName: string;
   lastName: string;
+  /** Telegram 公开 username（不含 @）；没有公开 username 时省略。 */
+  username?: string;
   /** 媒体自带的配文（没有则空串），跟在描述/占位标签后入转录行。 */
   caption: string;
   /** 要下载的 Telegram file_id：图片是已按大小挑好档位的 photo file_id

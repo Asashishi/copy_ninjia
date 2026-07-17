@@ -20,11 +20,15 @@ export interface ChatActionControl {
   settle(): Promise<void>;
 }
 
-/** 缓存里的一条消息：发言人 id + 名字（拆开存，好让模型按 id 而非重名区分身份）+ 文本 + 记录时刻。 */
+/** 缓存里的一条消息：发言人 id + 名字 + 可选公开 username（拆开存，好让
+ * 模型按 id 区分重名，并把正文里的 @username 对回具体的人）+ 文本 + 记录时刻。 */
 export interface BufferedMessage {
   id: number;
   firstName: string;
   lastName: string;
+  /** Telegram 公开 username（不含 @）。可选以兼容尚无此字段的旧快照，也
+   * 因为用户/频道本来就可能没有公开 username。 */
+  username?: string;
   text: string;
   /** 记录时刻，东京时区的「2026/07/16 21:35:04」（见 libs/time.ts 的
    *  formatTokyoTime）——记录时格式化一次，落盘/转录行直接用，模型可直读，

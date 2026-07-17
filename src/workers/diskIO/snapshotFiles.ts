@@ -72,11 +72,13 @@ function isBufferedMessage(value: unknown): value is BufferedMessage {
     typeof value.id === "number" && Number.isFinite(value.id) &&
     typeof value.firstName === "string" &&
     typeof value.lastName === "string" &&
+    (value.username === undefined || typeof value.username === "string") &&
     typeof value.text === "string" &&
     typeof value.at === "string";
 }
 
-/** 只接受当前 version=1 的完整结构；版本变更由部署前手工迁移。 */
+/** 只接受当前 version=1 的完整结构；username 是向后兼容的可选扩展，旧条目
+ * 没有它也合法，不需要改版本或迁移旧文件。其余版本变更由部署前手工迁移。 */
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;

@@ -29,7 +29,7 @@ beforeEach(() => {
   mkdirSync(aiDir, { recursive: true });
 });
 
-test("当前 version=1 AI 记忆文件恢复内容无损,回写字节级一致", () => {
+test("旧版无 username 的 version=1 AI 记忆仍恢复无损,回写字节级一致", () => {
   writeFileSync(join(aiDir, "-100123.json"), currentBytes);
 
   const recovered = recoverAiMemories();
@@ -42,6 +42,27 @@ test("当前 version=1 AI 记忆文件恢复内容无损,回写字节级一致",
   expect(readFileSync(join(aiDir, "-100123.json"), "utf8")).toBe(currentBytes);
 });
 
+test("新版可选 username 会随 version=1 AI 记忆恢复并回写", () => {
+  const snapshotWithUsername = {
+    ...currentSnapshot,
+    buffer: [
+      { ...currentSnapshot.buffer[0]!, username: "taro_dev" },
+      currentSnapshot.buffer[1]!,
+    ],
+  };
+  const bytes: string = JSON.stringify(snapshotWithUsername, null, 2);
+  writeFileSync(join(aiDir, "-100126.json"), bytes);
+
+  const recovered = recoverAiMemories();
+  expect(recovered.size).toBe(1);
+  const json = recovered.get(-100126)!;
+  expect(JSON.parse(json)).toEqual(snapshotWithUsername);
+  expect(json).toBe(bytes);
+
+  writeAiMemoryFile(-100126, json);
+  expect(readFileSync(join(aiDir, "-100126.json"), "utf8")).toBe(bytes);
+});
+
 test("缺少当前必填字段或时间仍是旧数值形态时不自动迁移", () => {
   writeFileSync(join(aiDir, "-100124.json"), JSON.stringify({
     ...currentSnapshot,
@@ -52,6 +73,15 @@ test("缺少当前必填字段或时间仍是旧数值形态时不自动迁移",
     buffer: [],
     summaries: [],
     pendingSummary: null,
+  }));
+
+  expect(recoverAiMemories().size).toBe(0);
+});
+
+test("username 若存在则必须为字符串", () => {
+  writeFileSync(join(aiDir, "-100127.json"), JSON.stringify({
+    ...currentSnapshot,
+    buffer: [{ ...currentSnapshot.buffer[0]!, username: 123 }],
   }));
 
   expect(recoverAiMemories().size).toBe(0);
