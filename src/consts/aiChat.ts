@@ -166,24 +166,17 @@ export const TYPING_DELAY_PER_CHAR_MS: number = 55;
 export const TYPING_DELAY_JITTER_MS: number = 400;
 export const TYPING_DELAY_MAX_MS: number = 7_500;
 /**
- * 同一群聊两次 AI 回复之间的最短间隔。回复机器人 / @ 机器人是 100% 触发且
- * 无上限的，没有这道闸的话，恶意用户循环回复 bot 就能形成「一条消息 = 一次
- * API 调用 + 一条群消息」的刷屏/烧钱放大链。冷却内命中的触发直接静默丢弃。
+ * 分群限频：单个群 5 分钟滚动窗口内最多触发多少次 AI 回复。回复/@ 机器人
+ * 是 100% 触发，这道闸兜住「循环回复 bot」形成的「一条消息 = 一次 API
+ * 调用 + 一条群消息」刷屏/烧钱放大链的总量。短时爆发不单设闸：同群同时
+ * 只跑一轮工具对话（activeReplyChats 同步占位，一轮本身要跑几秒到几十
+ * 秒，在途期间的并发触发直接丢弃），节奏天然被串行压着——曾经的 0.5 秒
+ * 冷却和 1 分钟窗口两道细闸因此几乎从不命中，已移除。窗口打满即丢弃
+ * （黑洞，只回一句带独立冷却的「你们太快了」提示，见下方
+ * RATE_LIMIT_NOTICE_COOLDOWN_MS），等窗口里旧时刻滑出腾出名额才恢复，
+ * 不是硬性定时重置。只在入口计一次数——一次触发内的「连发多条短消息」
+ * 属于同一次回复，不重复计数。
  */
-export const AI_REPLY_COOLDOWN_MS: number = 500;
-
-/**
- * 分群限频：单个群滚动窗口内最多触发多少次 AI 回复。每群冷却只限制相邻
- * 两次的间隔（0.5 秒冷却下一分钟仍可达 120 次），这两道滑动窗口给单群的
- * 总量再兜两层——1 分钟窗口挡住短时爆发，5 分钟窗口再挡住那种卡着 1 分钟
- * 窗口边界反复刷、绕开短窗口上限的持续刷屏。两道闸中任意一道打满，触发
- * 就直接丢弃（黑洞，只回一句带独立冷却的「你们太快了」提示，见下方
- * RATE_LIMIT_NOTICE_COOLDOWN_MS），等对应窗口里旧时刻滑出窗口腾出名额才
- * 恢复，不是硬性定时重置。只在入口计一次数——一次触发内的「连发多条
- * 短消息」属于同一次回复，不重复计数。
- */
-export const RATE_LIMIT_WINDOW_MS: number = 60_000;
-export const RATE_LIMIT_MAX_TRIGGERS: number = 45;
 export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
 export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
 

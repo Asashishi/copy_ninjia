@@ -13,7 +13,6 @@ import {
 import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
-  AI_REPLY_COOLDOWN_MS,
   AI_SNAPSHOT_INTERVAL_MS,
   ANIMATION_FALLBACK_PLACEHOLDER,
   ANIMATION_PENDING_PLACEHOLDER,
@@ -26,10 +25,8 @@ import {
   MAX_TOOL_ROUNDS,
   RATE_LIMIT_LONG_MAX_TRIGGERS,
   RATE_LIMIT_LONG_WINDOW_MS,
-  RATE_LIMIT_MAX_TRIGGERS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   RATE_LIMIT_NOTICE_TEXT,
-  RATE_LIMIT_WINDOW_MS,
   REPLY_ACTION_INSTRUCTION,
   REPLY_MAX_TOKENS,
   REPLY_TEMPERATURE,
@@ -52,11 +49,9 @@ import {
   compactionChains,
   compactionPendingCounts,
   dirtyMemoryChats,
-  lastReplyTimes,
   longTriggerTimes,
   pendingSummaries,
   rateLimitNoticeTimes,
-  triggerTimes,
 } from "../cache/aiChatWorker";
 import type { BufferedMessage, MediaKind, ToolDefinition } from "../types";
 import { createReplyToolset } from "../ai/tools/replyToolset";
@@ -85,7 +80,7 @@ import type {
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
  * 只做事件投递，重活全在这里：滚动对话缓存、图片/贴纸/GIF 占位与异步描述
- * 回填、冷却与双滑动窗口限频、拼装上下文、调 Gemini（含 function calling 往返
+ * 回填、5 分钟滑动窗口限频、拼装上下文、调 Gemini（含 function calling 往返
  * 与内置 googleSearch）。发言/消息反应/应景贴纸全部工具化（send_message /
  * add_reaction / view_sticker_pack + send_sticker，见 ai/tools/replyToolset.ts）：
  * 模型在同一次对话里自主决定做哪几样、什么顺序，本文件只负责组装工具集、
@@ -670,8 +665,9 @@ async function callGemini(userContent: string, toolset: ReplyToolset): Promise<s
 /**
  * 限频黑洞的明确反馈：触发被滑动窗口丢弃时回一句「你们太快了」，而不是
  * 静默失踪让群友以为机器人坏了。提示自身带独立冷却（每群至多一分钟一条，
- * 见 RATE_LIMIT_NOTICE_COOLDOWN_MS），刷屏场景下不会跟着刷。0.5 秒冷却的
- * 丢弃不提示——那只是相邻两次触发的间隔闸，正常聊天就会碰到，提示反而吵。
+ * 见 RATE_LIMIT_NOTICE_COOLDOWN_MS），刷屏场景下不会跟着刷。同群已有一轮
+ * 在途（activeReplyChats）的丢弃不提示——那只是同群串行闸，正常聊天就会
+ * 碰到，提示反而吵。
  */
 function notifyRateLimited(chatId: number, now: number): void {
   const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
@@ -708,8 +704,8 @@ function notifyRateLimited(chatId: number, now: number): void {
  *   都由它判断，允许什么都不做保持沉默——所以也不做正文兜底。
  * @param mediaComment 若是「解析完图片/贴纸/GIF 后评价它」触发（见
  *   recordChatMedia），发送人与描述——回复指令改为评价，回复引用挂在那条
- *   媒体消息上（replyToMessageId 即那条消息）；冷却/双滑动窗口限频照常
- *   适用，评价触发同样占限频名额。
+ *   媒体消息上（replyToMessageId 即那条消息）；5 分钟窗口限频照常适用，
+ *   评价触发同样占限频名额。
  */
 function generateAndSendReply(
   chatId: number,
@@ -724,35 +720,18 @@ function generateAndSendReply(
     logger.error("aiChatWorker received trigger before init message; dropping.");
     return;
   }
-  // 同一群只跑一轮工具对话。Gemini 请求可持续几十秒；若只靠 0.5 秒冷却，
-  // 后发请求可能先结束并先发消息，旧请求随后再按过时上下文补发，工具副作用
-  // 也会倒序。这里同步占位，媒体评价/随机插话/回复触发统一受控。
+  // 同一群只跑一轮工具对话。Gemini 请求可持续几十秒；并发跑的话后发请求
+  // 可能先结束并先发消息，旧请求随后再按过时上下文补发，工具副作用也会
+  // 倒序。这里同步占位，媒体评价/随机插话/回复触发统一受控；在途期间的
+  // 并发触发直接丢弃、不入队。这道串行闸同时就是短时爆发的天然节流——
+  // 曾经的 0.5 秒冷却和 1 分钟窗口因此几乎从不命中，已移除（见
+  // consts/aiChat.ts 的 RATE_LIMIT_LONG_WINDOW_MS 注释）。
   if (activeReplyChats.has(chatId)) return;
   const selfInfo: AiBotInfo = botInfoState.current;
 
-  // 每群冷却：在发起任何异步工作之前同步判定并占位，这样冷却窗口内的
-  // 并发触发（包括 100% 命中的回复/@ 触发）都会在烧到 API 之前被丢弃。
+  // 本群 5 分钟滑动窗口限频：先把窗口外的旧触发挤掉，再看余量。占位闸和
+  // 限频闸都过了才落账，避免被拒的触发白白占用配额。
   const now: number = Date.now();
-  if (now - (lastReplyTimes.get(chatId) ?? 0) < AI_REPLY_COOLDOWN_MS) {
-    return;
-  }
-
-  // 本群 1 分钟 / 5 分钟双重限频：先把各自窗口外的旧触发挤掉，再看余量。
-  // 三道闸（冷却 + 两个滑动窗口）都过了才一起落账，避免被拒的触发白白
-  // 占用冷却/配额。
-  let times: LinkedQueue<number> | undefined = triggerTimes.get(chatId);
-  if (!times) {
-    times = new LinkedQueue<number>();
-    triggerTimes.set(chatId, times);
-  }
-  while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_WINDOW_MS) {
-    times.shift();
-  }
-  if (times.size >= RATE_LIMIT_MAX_TRIGGERS) {
-    notifyRateLimited(chatId, now);
-    return;
-  }
-
   let longTimes: LinkedQueue<number> | undefined = longTriggerTimes.get(chatId);
   if (!longTimes) {
     longTimes = new LinkedQueue<number>();
@@ -766,8 +745,6 @@ function generateAndSendReply(
     return;
   }
 
-  lastReplyTimes.set(chatId, now);
-  times.push(now);
   longTimes.push(now);
   activeReplyChats.add(chatId);
 
@@ -865,16 +842,9 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
 // 退出为止，不需要引用计数/按需启停，无条目时两个 flush 都直接空转返回。
 setInterval(() => {
   const now: number = Date.now();
-  for (const [chatId, times] of triggerTimes) {
-    while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_WINDOW_MS) times.shift();
-    if (times.size === 0) triggerTimes.delete(chatId);
-  }
   for (const [chatId, times] of longTriggerTimes) {
     while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_LONG_WINDOW_MS) times.shift();
     if (times.size === 0) longTriggerTimes.delete(chatId);
-  }
-  for (const [chatId, at] of lastReplyTimes) {
-    if (now - at >= RATE_LIMIT_LONG_WINDOW_MS && !activeReplyChats.has(chatId)) lastReplyTimes.delete(chatId);
   }
   for (const [chatId, at] of rateLimitNoticeTimes) {
     if (now - at >= RATE_LIMIT_NOTICE_COOLDOWN_MS) rateLimitNoticeTimes.delete(chatId);

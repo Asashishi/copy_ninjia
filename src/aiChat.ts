@@ -6,7 +6,7 @@ import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, 
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
- * 贴纸/GIF 占位与异步描述、冷却与限频、拼装上下文、调 Gemini（含 function
+ * 贴纸/GIF 占位与异步描述、限频、拼装上下文、调 Gemini（含 function
  * calling 往返与内置 web_search）、工具化的发言/消息反应/两层应景贴纸
  * （见 src/ai/tools/replyToolset.ts）、白名单贴纸目录与整包简介生成——全部在独立
  * 的 Bun Worker（src/workers/aiChatWorker.ts）里
@@ -203,8 +203,8 @@ export function recordChatMedia(
 }
 
 /**
- * 触发一次 AI 回复：把触发事件投递给 Worker，由它做冷却/限频判定并执行
- * 完整的生成与发送流程。fire-and-forget，主线程不等待任何结果。
+ * 触发一次 AI 回复：把触发事件投递给 Worker，由它做同群串行占位与限频
+ * 判定并执行完整的生成与发送流程。fire-and-forget，主线程不等待任何结果。
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。

@@ -100,7 +100,7 @@ export interface AiHydrateStickerCatalogMessage {
   catalogs: Map<string, string>;
 }
 
-/** 主线程 -> Worker：触发一次 AI 回复（冷却/限频判定也在 Worker 侧做）。 */
+/** 主线程 -> Worker：触发一次 AI 回复（同群串行占位与限频判定都在 Worker 侧做）。 */
 export interface AiTriggerMessage {
   type: "trigger";
   chatId: number;
