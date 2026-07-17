@@ -318,6 +318,13 @@ export const STICKER_PACK_SUMMARY_PROMPT: string =
   `必须写成一段连贯的话，严禁分点、换行或任何 Markdown 记号（*、**、#、- 等）。不超过 ${STICKER_PACK_SUMMARY_MAX_CHARS} 字——超字会被截断，请把角色、核心梗和情绪清单放在前半段说完。只输出简介本身，不要任何前缀或解释。`;
 /** 目录里还没生成出整包简介时，一层清单里的占位文案。 */
 export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成中，可进包内查看具体贴纸）";
+/** 查看贴纸包时声明的表达意图字数上限：只保留一条简短决策标准，避免模型
+ *  把大段推理塞进工具参数和后续工具结果。 */
+export const STICKER_INTENT_MAX_CHARS: number = 80;
+/** view_sticker_pack 返回包内清单时附带的选择约束：与模型刚声明的 intent
+ * 一起进入下一轮工具上下文，防止浏览具体贴纸后为了有趣而偏离原目标。 */
+export const STICKER_INTENT_SELECTION_INSTRUCTION: string =
+  "严格按 intent 选择最合适的贴纸；没有符合意图的贴纸就不要发送。";
 
 /**
  * view_sticker_pack 工具描述的固定前缀，后面动态拼接当次可选贴纸包的编号
@@ -326,8 +333,9 @@ export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成
  */
 export const VIEW_STICKER_PACK_TOOL_INSTRUCTION: string =
   "发贴纸的第一步：查看某个贴纸包内每枚贴纸的具体描述清单。发贴纸是你说话方式的一部分，" +
-  "情绪、语气对上了就该顺手配一枚。先按下面的整包简介挑一个最可能有应景贴纸的包，调用本工具" +
-  "拿到包内清单，再用 send_sticker 按清单编号发送。pack_index 填包的编号：\n";
+  "情绪、语气对上了就该顺手配一枚。调用前先明确这枚贴纸要产生的回复效果，以及需要避免传达的语气；" +
+  "没有明确意图时不要为了发贴纸而查看贴纸包。再按下面的整包简介挑一个最可能有应景贴纸的包，调用本工具" +
+  "拿到包内清单后始终按声明的意图选择，没有合适的就不发。pack_index 填包的编号：\n";
 
 /**
  * send_sticker 工具的描述（两层选择的第二层）。必须先用 view_sticker_pack

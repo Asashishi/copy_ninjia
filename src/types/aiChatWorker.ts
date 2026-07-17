@@ -90,8 +90,9 @@ export interface StickerPackCandidate {
 /** 一轮回复内贴纸工具的限额状态，随 ReplyToolset 新建（见
  *  ai/tools/replyToolset.ts 的 createReplyToolset）。 */
 export interface StickerRoundState {
-  /** 本轮已用 view_sticker_pack 看过清单的包编号（1-based）。 */
-  viewedPacks: Set<number>;
+  /** 本轮用 view_sticker_pack 查看各包清单时声明的表达意图，键是包编号
+   *  （1-based）。重复查看同一个包时以最新意图为准。 */
+  viewedPackIntents: Map<number, string>;
   /** 本轮已发出的贴纸 file_unique_id——既是限额计数，也在上限放宽到 1 枚
    *  以上时防止重复发同一枚。 */
   sentStickerUids: Set<string>;

@@ -25,10 +25,12 @@ const {
   buildViewStickerPackToolDefinition,
   createStickerRoundState,
   parseIndexField,
+  parseStickerIntent,
   sendStickerTool,
   viewStickerPackTool,
 } = await import("../../src/ai/tools/stickers");
 const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../src/consts/tools");
+const { STICKER_INTENT_MAX_CHARS } = await import("../../src/consts/aiChat");
 
 function candidate(fileId: string, emoji: string, description: string): any {
   return { sticker: { file_id: fileId, file_unique_id: `${fileId}-uid`, emoji }, emoji, description };
@@ -46,8 +48,8 @@ const MENU: any[] = [
 /** 已看过 MENU 里所有包的限额状态，省得每个发送用例都先走一遍 view。 */
 function viewedState(): any {
   const state = createStickerRoundState();
-  state.viewedPacks.add(1);
-  state.viewedPacks.add(2);
+  state.viewedPackIntents.set(1, "用哭泣贴纸表达委屈，但不要显得真生气");
+  state.viewedPackIntents.set(2, "用撒娇回应对方，但不要过分亲密");
   return state;
 }
 
@@ -82,6 +84,19 @@ describe("ai/stickers parseIndexField", () => {
   });
 });
 
+describe("ai/stickers parseStickerIntent", () => {
+  test("规范空白后返回非空意图", () => {
+    expect(parseStickerIntent('{"intent":"  表达无语，  但不要显得生气\\n"}')).toBe("表达无语， 但不要显得生气");
+  });
+
+  test("缺失、类型错误、空文本或超长时返回 null", () => {
+    expect(parseStickerIntent("{}")).toBeNull();
+    expect(parseStickerIntent('{"intent":123}')).toBeNull();
+    expect(parseStickerIntent('{"intent":"   "}')).toBeNull();
+    expect(parseStickerIntent(JSON.stringify({ intent: "意".repeat(STICKER_INTENT_MAX_CHARS + 1) }))).toBeNull();
+  });
+});
+
 describe("ai/stickers 工具定义组装", () => {
   test("菜单为空时两层工具都不提供（返回 null）", () => {
     expect(buildViewStickerPackToolDefinition([])).toBeNull();
@@ -93,7 +108,8 @@ describe("ai/stickers 工具定义组装", () => {
     expect(def?.name).toBe(VIEW_STICKER_PACK_TOOL);
     expect(def?.description).toContain("1. 「猫猫包」（2 枚）：一包搞笑猫猫");
     expect(def?.description).toContain("2. 「狗狗包」（1 枚）：一包卖萌狗狗");
-    expect(def?.parameters.required).toEqual(["pack_index"]);
+    expect(def?.parameters.required).toEqual(["pack_index", "intent"]);
+    expect((def?.parameters.properties.intent as { maxLength?: number }).maxLength).toBe(STICKER_INTENT_MAX_CHARS);
   });
 
   test("send_sticker 需要包编号 + 贴纸编号两个参数", () => {
@@ -104,30 +120,47 @@ describe("ai/stickers 工具定义组装", () => {
 });
 
 describe("ai/stickers viewStickerPackTool", () => {
-  test("合法编号返回包内贴纸的编号清单，标记包为已看过，并把心跳切到「正在选择贴纸」挡", async () => {
+  test("合法调用返回意图和包内清单，按包记录意图，并把心跳切到「正在选择贴纸」挡", async () => {
     const chatAction = chatActionMock();
     const state = createStickerRoundState();
-    const result = JSON.parse(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1}', state));
+    const result = JSON.parse(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1, "intent":"表达被逗笑，但不要显得在嘲讽对方"}', state));
     expect(result.pack).toBe("猫猫包");
+    expect(result.intent).toBe("表达被逗笑，但不要显得在嘲讽对方");
+    expect(result.selection_instruction).toContain("严格按 intent");
     expect(result.stickers).toContain("1. 😂 一只猫大笑");
     expect(result.stickers).toContain("2. 😭 一只猫哭泣");
-    expect(state.viewedPacks.has(1)).toBe(true);
+    expect(state.viewedPackIntents.get(1)).toBe("表达被逗笑，但不要显得在嘲讽对方");
     expect(chatAction.set).toHaveBeenCalledWith("choose_sticker");
   });
 
   test("没有 emoji 的贴纸用占位文案，不留空", async () => {
     const state = createStickerRoundState();
     const menu = [pack("p", "包", "简介", [candidate("x1", "", "一个没有 emoji 的贴纸")])];
-    const result = JSON.parse(await viewStickerPackTool(chatActionMock(), menu, '{"pack_index": 1}', state));
+    const result = JSON.parse(await viewStickerPackTool(chatActionMock(), menu, '{"pack_index": 1, "intent":"表达疑惑，但不要带攻击性"}', state));
     expect(result.stickers).toContain("1. （无 emoji） 一个没有 emoji 的贴纸");
   });
 
   test("编号非法返回错误，不标记任何包、不切换聊天状态挡位", async () => {
     const chatAction = chatActionMock();
     const state = createStickerRoundState();
-    expect(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 99}', state)).toBe(JSON.stringify({ error: "Invalid pack_index" }));
-    expect(state.viewedPacks.size).toBe(0);
+    expect(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 99, "intent":"表达疑惑，但不要带攻击性"}', state)).toBe(JSON.stringify({ error: "Invalid pack_index" }));
+    expect(state.viewedPackIntents.size).toBe(0);
     expect(chatAction.set).not.toHaveBeenCalled();
+  });
+
+  test("意图缺失或无效时拒绝查看，不标记包、不切换聊天状态挡位", async () => {
+    const chatAction = chatActionMock();
+    const state = createStickerRoundState();
+    expect(JSON.parse(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1}', state)).error).toContain("Invalid intent");
+    expect(state.viewedPackIntents.size).toBe(0);
+    expect(chatAction.set).not.toHaveBeenCalled();
+  });
+
+  test("重复查看同一个包时以最新意图为准", async () => {
+    const state = createStickerRoundState();
+    await viewStickerPackTool(chatActionMock(), MENU, '{"pack_index": 1, "intent":"表达惊讶，但不要显得害怕"}', state);
+    await viewStickerPackTool(chatActionMock(), MENU, '{"pack_index": 1, "intent":"改为表达好笑，但不要嘲讽对方"}', state);
+    expect(state.viewedPackIntents.get(1)).toBe("改为表达好笑，但不要嘲讽对方");
   });
 });
 
@@ -144,7 +177,7 @@ describe("ai/stickers sendStickerTool", () => {
   test("没先 view 过对应的包时拒绝发送", async () => {
     sendStickerMock.mockClear();
     const state = createStickerRoundState();
-    state.viewedPacks.add(2); // 只看过 2 号包
+    state.viewedPackIntents.set(2, "表达撒娇，但不要过分亲密"); // 只看过 2 号包
     const result = JSON.parse(await sendStickerTool(chatActionMock(), 123, MENU, '{"pack_index": 1, "sticker_index": 1}', state, () => {}));
     expect(result.error).toContain("not viewed");
     expect(sendStickerMock).not.toHaveBeenCalled();
