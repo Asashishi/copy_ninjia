@@ -3,6 +3,7 @@ import { flushDiskIO, loadPersistedData, type LoadedData } from "./src/infra/dis
 import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
+import { BOT_TOKEN } from "./src/infra/config";
 import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState, releaseSingleInstanceLock } from "./src/infra/storage";
 import { shouldPassInitGate, shouldPassPrivateCommandGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
@@ -18,7 +19,7 @@ import type { CachedUser } from "./src/types";
  * 注册各类更新处理器，并启动 grammY 的长轮询循环。
  */
 async function main(): Promise<void> {
-  await acquireSingleInstanceLock();
+  await acquireSingleInstanceLock(BOT_TOKEN);
 
   // 全部持久化状态（各群独立状态 + 全局复读状态）由 storage.ts 独占持有，
   // 这里只触发从 state.json 的一次性加载；各处理器直接从 storage 读写，
@@ -281,7 +282,7 @@ main()
   })
   .finally(async () => {
     await flushAllToDisk(2000, 3000);
-    await releaseSingleInstanceLock();
+    await releaseSingleInstanceLock(BOT_TOKEN);
   });
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才
 // 结束，此时把 aiChatWorker/diskIOWorker 里的存货（AI 记忆最长滞留

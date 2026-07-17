@@ -228,9 +228,9 @@ export function cleanupStaleLuckFiles(todayKey: string): void {
 /**
  * 启动恢复：建目录、清 *.tmp 残留（防御性——追加写不产生 .tmp，清一次
  * 挡住外部干预留下的残留）、删除所有非今天的日期文件，只关心今天那份
- * （不存在则返回 null）。今天那份解析失败（真正损坏，而不是可修复的截断
- * ——截断修复已经在本次运行第一次 openDayFile 时做过一轮，这里读到的
- * 要么是完整文件、要么已经被修过）就隔离为 .corrupt。
+ * （不存在则返回 null）。读取前必须先经 openDayFile 校验/修复：启动恢复
+ * 本身就是本次运行第一次碰这份文件，不能假设追加路径已经先打开过它。
+ * 修复后仍解析失败才视为真正损坏并隔离为 .corrupt。
  */
 export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
@@ -243,6 +243,7 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   if (!existsSync(todayPath)) return null;
   let parsed: unknown;
   try {
+    openDayFile(LUCK_MEMORY_DIR, todayKey);
     parsed = JSON.parse(readFileSync(todayPath, "utf8"));
   } catch (error) {
     quarantine(todayPath);

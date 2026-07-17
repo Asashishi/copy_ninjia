@@ -1,4 +1,5 @@
 import { link, open, rename, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { logger } from "./logger";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
@@ -17,13 +18,26 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * 确保同一时间只有一个机器人实例在轮询。用同一个 token 跑两个实例会导致两者
- * 各自独立地处理（并回复）同一批 Telegram 更新，表现为回复重复/不一致。
+ * token 不得出现在文件名/日志里；用完整 SHA-256 指纹把锁按 bot 身份分域。
+ * Telegram bot token 自身有高熵 secret，摘要无法用于恢复 token；完整 256 bit
+ * 也避免人为截短后引入不必要的碰撞概率。
  */
-export async function acquireSingleInstanceLock(): Promise<void> {
+export function getSingleInstanceLockPath(botToken: string, baseLockPath: string = LOCK_FILE_PATH): string {
+  if (botToken.length === 0) throw new Error("Cannot derive a bot instance lock from an empty token");
+  const tokenFingerprint: string = createHash("sha256").update(botToken, "utf8").digest("hex");
+  return `${baseLockPath}.${tokenFingerprint}`;
+}
+
+/**
+ * 确保同一个 token 同一时间只有一个机器人实例在轮询。相同 token 跑两个实例
+ * 会各自处理（并回复）同一批 Telegram 更新；不同 token 使用不同摘要后缀，
+ * 不会仅因为共用程序目录就在这道锁上互相阻塞。
+ */
+export async function acquireSingleInstanceLock(botToken: string, baseLockPath: string = LOCK_FILE_PATH): Promise<void> {
+  const lockFilePath: string = getSingleInstanceLockPath(botToken, baseLockPath);
   // 候选文件先完整写好，再通过 hard-link 原子发布为正式锁；正式路径永远不
   // 会短暂暴露一个尚未写入 PID 的空文件。
-  const candidatePath: string = `${LOCK_FILE_PATH}.candidate.${process.pid}.${crypto.randomUUID()}`;
+  const candidatePath: string = `${lockFilePath}.candidate.${process.pid}.${crypto.randomUUID()}`;
   const handle = await open(candidatePath, "wx");
   try {
     await handle.writeFile(String(process.pid));
@@ -36,7 +50,7 @@ export async function acquireSingleInstanceLock(): Promise<void> {
       try {
         // link 的目标路径存在性检查与创建是同一个内核操作：并发启动只有一个
         // 候选能发布成功。成功后删候选名，正式锁仍指向同一份完整内容。
-        await link(candidatePath, LOCK_FILE_PATH);
+        await link(candidatePath, lockFilePath);
         return;
       } catch (error: unknown) {
         if (!isErrno(error, "EEXIST")) throw error;
@@ -44,7 +58,7 @@ export async function acquireSingleInstanceLock(): Promise<void> {
 
       let existingPid: number;
       try {
-        existingPid = parseInt((await Bun.file(LOCK_FILE_PATH).text()).trim(), 10);
+        existingPid = parseInt((await Bun.file(lockFilePath).text()).trim(), 10);
       } catch (error: unknown) {
         // 另一个竞争者可能刚完成 stale 锁回收；重新观察即可。
         if (isErrno(error, "ENOENT")) continue;
@@ -58,25 +72,42 @@ export async function acquireSingleInstanceLock(): Promise<void> {
       }
 
       // stale 锁回收本身也必须互斥。否则两个启动者都读到旧 PID 后，较慢者可能
-      // 删掉较快者刚发布的新锁。独占 recovery 文件保证只有一个进程能重检、
-      // 删除并接管；竞争者直接失败，稍后重启即可。
-      const recoveryPath: string = `${LOCK_FILE_PATH}.recovery`;
-      let recoveryHandle: Awaited<ReturnType<typeof open>>;
-      try {
-        recoveryHandle = await open(recoveryPath, "wx");
-      } catch (error: unknown) {
-        if (isErrno(error, "EEXIST")) {
-          throw new Error("Another process is recovering a stale bot.lock; retry startup shortly.");
+      // 删掉较快者刚发布的新锁。recovery 也用已经完整写好 PID 的候选文件做
+      // hard-link 原子发布，避免竞争者看见一个刚 open、尚未写 PID 的空文件。
+      // 若上一次启动恰好死在回收期间，recovery 会残留；先检查其中 PID，仍
+      // 存活就拒绝，已退出/内容无效则清掉并重新竞争，避免以后永久无法启动。
+      const recoveryPath: string = `${lockFilePath}.recovery`;
+      for (;;) {
+        try {
+          await link(candidatePath, recoveryPath);
+          break;
+        } catch (error: unknown) {
+          if (!isErrno(error, "EEXIST")) throw error;
         }
-        throw error;
+
+        let recoveryPid: number;
+        try {
+          recoveryPid = Number((await Bun.file(recoveryPath).text()).trim());
+        } catch (error: unknown) {
+          // 对方可能刚好完成回收并删除 recovery，重新竞争即可。
+          if (isErrno(error, "ENOENT")) continue;
+          throw error;
+        }
+        if (Number.isSafeInteger(recoveryPid) && recoveryPid > 0 && isProcessAlive(recoveryPid)) {
+          throw new Error(`Another process (pid=${recoveryPid}) is recovering a stale bot.lock; retry startup shortly.`);
+        }
+        try {
+          await unlink(recoveryPath);
+        } catch (error: unknown) {
+          if (!isErrno(error, "ENOENT")) throw error;
+        }
       }
 
       try {
-        await recoveryHandle.writeFile(String(process.pid));
         // 获得回收权后重新读取，不能沿用取得回收权之前观察到的 PID。
         let currentPid: number;
         try {
-          currentPid = parseInt((await Bun.file(LOCK_FILE_PATH).text()).trim(), 10);
+          currentPid = parseInt((await Bun.file(lockFilePath).text()).trim(), 10);
         } catch (error: unknown) {
           if (isErrno(error, "ENOENT")) continue;
           throw error;
@@ -84,9 +115,8 @@ export async function acquireSingleInstanceLock(): Promise<void> {
         if (!Number.isNaN(currentPid) && isProcessAlive(currentPid)) {
           throw new Error(`Another bot instance (pid=${currentPid}) acquired the lock during recovery.`);
         }
-        await unlink(LOCK_FILE_PATH);
+        await unlink(lockFilePath);
       } finally {
-        await recoveryHandle.close();
         await unlink(recoveryPath).catch(() => undefined);
       }
     }
@@ -96,10 +126,11 @@ export async function acquireSingleInstanceLock(): Promise<void> {
 }
 
 /** 正常停机时只释放属于当前 PID 的锁；硬崩留下的锁由下次启动回收。 */
-export async function releaseSingleInstanceLock(): Promise<void> {
+export async function releaseSingleInstanceLock(botToken: string, baseLockPath: string = LOCK_FILE_PATH): Promise<void> {
+  const lockFilePath: string = getSingleInstanceLockPath(botToken, baseLockPath);
   try {
-    const ownerPid: number = parseInt((await Bun.file(LOCK_FILE_PATH).text()).trim(), 10);
-    if (ownerPid === process.pid) await unlink(LOCK_FILE_PATH);
+    const ownerPid: number = parseInt((await Bun.file(lockFilePath).text()).trim(), 10);
+    if (ownerPid === process.pid) await unlink(lockFilePath);
   } catch (error: unknown) {
     if (!isErrno(error, "ENOENT")) logger.error("Failed to release bot instance lock:", error);
   }

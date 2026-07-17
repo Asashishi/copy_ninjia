@@ -91,6 +91,17 @@ describe("handleSendCommand", () => {
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
   });
 
+  test("可达的私人用户或频道也拒绝作为中转目标，避免私聊泄露", async () => {
+    for (const type of ["private", "channel"]) {
+      getChatMock.mockImplementationOnce(async (): Promise<any> => ({ id: 123, type, first_name: "Not a group" }));
+      await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "123"));
+    }
+    expect(saveStateMock).not.toHaveBeenCalled();
+    expect(chatStates.size).toBe(0);
+    expect(logApiErrorMock).not.toHaveBeenCalled();
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+  });
+
   test("合法且可达的群组 id 开启会话并落盘（状态挂在目标群自己的 chatId 下）；重复调用被拒绝、不换目标", async () => {
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100123"));
     expect(getChatMock).toHaveBeenCalledTimes(1);

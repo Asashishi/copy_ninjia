@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -81,6 +81,24 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(readDayFile()).toEqual({ "111": { label: "小凶", fortunePercent: 39.99 } });
     const recovered = recoverLuckDay(DAY);
     expect(recovered?.entries.get("111")).toEqual({ label: "小凶", fortunePercent: 39.99 });
+  });
+
+  test("启动恢复先修复追加中断留下的尾部截断，保留此前完整运势", () => {
+    mkdirSync(luckDir, { recursive: true });
+    writeFileSync(join(luckDir, `${DAY}.json`), `{
+  "111": {
+    "label": "大吉",
+    "fortunePercent": 90.12
+  },
+  "222": {
+    "label": "写到一半`);
+
+    const recovered = recoverLuckDay(DAY);
+
+    expect(recovered?.entries.get("111")).toEqual({ label: "大吉", fortunePercent: 90.12 });
+    expect(recovered?.entries.has("222")).toBe(false);
+    expect(readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
+    expect(existsSync(join(luckDir, `${DAY}.json.corrupt`))).toBe(false);
   });
 
   test("追加失败：缓冲保留、定时器重排、文件探测状态重置；故障排除后重试成功且不丢条目", () => {

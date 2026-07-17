@@ -6,6 +6,7 @@ import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
+import { createSerialTaskRunner } from "../libs/serialTaskRunner";
 import { resolveCommandTarget } from "./targetResolution";
 
 /**
@@ -17,6 +18,14 @@ import { resolveCommandTarget } from "./targetResolution";
  * 的旧时间戳与本次占用写入的时间戳，供调用方在这次尝试最终没有真正开始复制时
  * 用 releaseCopyCooldownClaim 回滚。 */
 type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCopyTime: number | undefined; claimedAt: number };
+
+// 机器人头像是全局唯一资源。白名单用户不受冷却限制，可能快速连续触发多次
+// /copy 或 /steal_icon；按触发顺序串行执行，确保较早的慢请求不可能在较新的
+// 请求成功后才落地，把头像覆盖回旧目标。链始终自行兜错，后续任务不会因
+// 前一个任务失败而被永久跳过。
+const avatarUpdateRunner = createSerialTaskRunner((error: unknown): void => {
+  logger.error("Error in background avatar steal task:", error);
+});
 
 /**
  * copy 类命令的公共冷却检查 + 原子占用。全局共享一份 lastCopyTime 冷却时钟
@@ -94,10 +103,8 @@ export async function resolveCopyCommandTarget(
  * @param failureText 头像更换失败时发送的文本。
  */
 export function stealAvatarInBackground(chatId: number, target: CachedUser, successText: string, failureText: string): void {
-  void (async (): Promise<void> => {
+  avatarUpdateRunner.run(async (): Promise<void> => {
     const photoUpdated: boolean = await copyUserProfilePhoto(target.id, !!target.isChannel, target.username);
     await sendMessage(chatId, photoUpdated ? successText : failureText);
-  })().catch((error: unknown) => {
-    logger.error("Error in background avatar steal task:", error);
   });
 }

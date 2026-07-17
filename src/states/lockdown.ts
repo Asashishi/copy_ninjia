@@ -87,6 +87,13 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
           { kind: "prefetchAdmins", onlyIfCold: true },
           { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
         ];
+        // APPLYING 尚未真正限制权限、也还没有可持久化的原始权限；成功落地
+        // 时 applyResult 会从那一刻重新给满并写镜像。ACTIVE/RESTORING 则已
+        // 有持久化记录，再次超阈值必须同步刷新主线程的 expiresAt，否则
+        // Worker/进程在续期后重启会按旧截止时间提前解锁。
+        if (state.kind !== "applying") {
+          effects.push({ kind: "reportLockdown", originalPermissions: state.originalPermissions });
+        }
         const next: LockdownState = state.kind === "restoring" ? { kind: "active", originalPermissions: state.originalPermissions } : state;
         return { next, effects };
       }

@@ -64,7 +64,11 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   // 这里照样能"成功"开启会话，之后每条消息在 copyMessage 那步才悄悄失败
   // （见 auto/message.ts），超管却已经收到了成功提示，会一直被蒙在鼓里。
   try {
-    await bot.api.getChat(targetChatId);
+    const targetChat = await bot.api.getChat(targetChatId);
+    if (targetChat.type !== "group" && targetChat.type !== "supergroup") {
+      await sendMessage(chatId, `只能转发进群组呀，${targetChatId} 不是群组，检查一下 id♡`, messageId);
+      return;
+    }
   } catch (error: unknown) {
     logApiError(`resolve /send target chat ${targetChatId}`, error);
     await sendMessage(chatId, `连不上 ${targetChatId} 这个聊天呀，检查一下 id 对不对、本天才是不是已经在那边了♡`, messageId);

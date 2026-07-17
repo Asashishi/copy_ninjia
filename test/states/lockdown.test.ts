@@ -15,20 +15,35 @@ describe("触发与占位", () => {
     ]);
   });
 
-  test("已在锁定中再次超阈值 → 只延长计时，不重复加锁/发通知", () => {
-    for (const state of [{ kind: "applying" }, { kind: "active", originalPermissions: PERMS }] as LockdownState[]) {
-      const { next, effects } = transitionLockdown(state, { type: "thresholdExceeded", joinCount: 50 });
-      expect(next).toBe(state);
-      expect(effects).toEqual([
-        { kind: "prefetchAdmins", onlyIfCold: true },
-        { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
-      ]);
-    }
+  test("APPLYING 中再次超阈值 → 只延长 Worker 计时，等真正落地时再持久化", () => {
+    const state: LockdownState = { kind: "applying" };
+    const { next, effects } = transitionLockdown(state, { type: "thresholdExceeded", joinCount: 50 });
+    expect(next).toBe(state);
+    expect(effects).toEqual([
+      { kind: "prefetchAdmins", onlyIfCold: true },
+      { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
+    ]);
   });
 
-  test("RESTORING 期间再次超阈值 → 回到 ACTIVE 常规倒计时", () => {
-    const { next } = transitionLockdown({ kind: "restoring", originalPermissions: PERMS }, { type: "thresholdExceeded", joinCount: 50 });
+  test("ACTIVE 中再次超阈值 → 延长计时并刷新持久化截止时间，不重复加锁/发通知", () => {
+    const state: LockdownState = { kind: "active", originalPermissions: PERMS };
+    const { next, effects } = transitionLockdown(state, { type: "thresholdExceeded", joinCount: 50 });
+    expect(next).toBe(state);
+    expect(effects).toEqual([
+      { kind: "prefetchAdmins", onlyIfCold: true },
+      { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
+      { kind: "reportLockdown", originalPermissions: PERMS },
+    ]);
+  });
+
+  test("RESTORING 期间再次超阈值 → 回到 ACTIVE，刷新计时与持久化截止时间", () => {
+    const { next, effects } = transitionLockdown({ kind: "restoring", originalPermissions: PERMS }, { type: "thresholdExceeded", joinCount: 50 });
     expect(next).toEqual({ kind: "active", originalPermissions: PERMS });
+    expect(effects).toEqual([
+      { kind: "prefetchAdmins", onlyIfCold: true },
+      { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
+      { kind: "reportLockdown", originalPermissions: PERMS },
+    ]);
   });
 });
 
