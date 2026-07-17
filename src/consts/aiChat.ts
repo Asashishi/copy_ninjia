@@ -43,7 +43,7 @@ export const REQUEST_TIMEOUT_MS: number = 90_000;
  * 命中时 callGemini 直接放弃这轮，不把断句发出去——但预算给够从源头上更该
  * 优先，被动放弃只是兜底）。
  */
-export const REPLY_MAX_TOKENS: number = 24_576;
+export const REPLY_MAX_TOKENS: number = 49_152;
 export const SUMMARY_MAX_TOKENS: number = 8192;
 
 /** 冷消息压缩的生成温度：偏低，换取更忠实原文的摘要而非自由发挥。 */
