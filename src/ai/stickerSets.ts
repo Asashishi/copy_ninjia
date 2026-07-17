@@ -2,6 +2,11 @@ import type { Sticker, StickerSet } from "@grammyjs/types";
 import { logger } from "../infra/logger";
 import { bot } from "../infra/telegram";
 import { failedPacks, stickerSetCache } from "../cache/stickerSets";
+import { STICKER_SET_FAILURE_RETRY_MS } from "../consts/aiChat";
+
+interface StickerSetApi {
+  getStickerSet(packName: string): Promise<StickerSet>;
+}
 
 /**
  * 贴纸领域的公共积木：白名单贴纸包的拉取与缓存（getStickerSet，按 pack
@@ -14,18 +19,23 @@ import { failedPacks, stickerSetCache } from "../cache/stickerSets";
 /** 拉取（或复用缓存）单个包的贴纸集合；失败返回 null（而非空集合），供
  *  调用方区分「拉取失败」与「包确实没有贴纸」——见 ai/stickerCatalog.ts
  *  的 generatePackCatalog，剪枝逻辑必须能分辨这两种情况。 */
-export async function getStickerSet(packName: string): Promise<StickerSet | null> {
+export async function getStickerSet(packName: string, api: StickerSetApi = bot.api): Promise<StickerSet | null> {
   const cached: StickerSet | undefined = stickerSetCache.get(packName);
   if (cached) return cached;
-  if (failedPacks.has(packName)) return null;
+  const retryAt: number | undefined = failedPacks.get(packName);
+  if (retryAt !== undefined) {
+    if (Date.now() < retryAt) return null;
+    failedPacks.delete(packName);
+  }
 
   try {
-    const set: StickerSet = await bot.api.getStickerSet(packName);
+    const set: StickerSet = await api.getStickerSet(packName);
     stickerSetCache.set(packName, set);
+    failedPacks.delete(packName);
     return set;
   } catch (error: unknown) {
     logger.error(`Failed to fetch sticker set "${packName}":`, error);
-    failedPacks.add(packName);
+    failedPacks.set(packName, Date.now() + STICKER_SET_FAILURE_RETRY_MS);
     return null;
   }
 }

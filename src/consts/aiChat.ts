@@ -28,6 +28,10 @@ export const GEMINI_MEDIA_MODEL: string = "gemini-3.1-flash-lite";
  *  的地方，瞬时的 5xx/连接错误能自愈）。 */
 export const REQUEST_TIMEOUT_MS: number = 150_000;
 
+/** getStickerSet 失败后的短期负缓存：避免 Telegram 故障期间每轮 AI 回复都
+ * 重打同一包，同时让瞬时错误在本进程内自动恢复，不必等到重启。 */
+export const STICKER_SET_FAILURE_RETRY_MS: number = 60_000;
+
 /**
  * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。Gemini 的
  * 思考内容也计入 maxOutputTokens（usageMetadata 的 thoughtsTokenCount）：

@@ -11,7 +11,8 @@ mock.module("../../src/infra/diskIO", () => ({
   relayLogMessage: mock((..._args: unknown[]): void => {}),
 }));
 
-const { describeStickerForContext, pickStickerVisionSource } = await import("../../src/ai/stickerSets");
+const { describeStickerForContext, getStickerSet, pickStickerVisionSource } = await import("../../src/ai/stickerSets");
+const { failedPacks, stickerSetCache } = await import("../../src/cache/stickerSets");
 
 describe("ai/stickerSets describeStickerForContext", () => {
   test("emoji + 包名都有时按顺序拼接", () => {
@@ -64,5 +65,40 @@ describe("ai/stickerSets pickStickerVisionSource", () => {
   test("动态/视频贴纸没有缩略图时放弃视觉解析，返回 null", () => {
     const sticker: any = { file_id: "body-id", file_unique_id: "sticker-uid", is_animated: true, is_video: false };
     expect(pickStickerVisionSource(sticker)).toBeNull();
+  });
+});
+
+describe("ai/stickerSets getStickerSet 失败恢复", () => {
+  test("瞬时失败只在负缓存窗口内拦截，过期后同一进程会重新请求并恢复", async () => {
+    const pack = "retryable_pack";
+    const expected: any = { name: pack, title: "Retryable", sticker_type: "regular", stickers: [] };
+    let calls = 0;
+    const api = {
+      getStickerSet: mock(async (): Promise<any> => {
+        calls++;
+        if (calls === 1) throw new Error("temporary network failure");
+        return expected;
+      }),
+    };
+
+    try {
+      expect(await getStickerSet(pack, api)).toBeNull();
+      expect(calls).toBe(1);
+      expect(failedPacks.get(pack)).toBeGreaterThan(Date.now());
+
+      // 负缓存仍有效时不重复轰 Telegram。
+      expect(await getStickerSet(pack, api)).toBeNull();
+      expect(calls).toBe(1);
+
+      // 模拟窗口到期：无需重启进程即可重新请求并转为正缓存。
+      failedPacks.set(pack, Date.now() - 1);
+      expect(await getStickerSet(pack, api)).toBe(expected);
+      expect(calls).toBe(2);
+      expect(failedPacks.has(pack)).toBe(false);
+      expect(stickerSetCache.get(pack)).toBe(expected);
+    } finally {
+      failedPacks.delete(pack);
+      stickerSetCache.delete(pack);
+    }
   });
 });

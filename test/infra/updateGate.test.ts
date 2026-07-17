@@ -41,8 +41,24 @@ describe("shouldPassInitGate", () => {
 
   test("未初始化的群 + /init 指令本身：放行（否则永远没法首次初始化）", () => {
     const chatId = -1001111111112;
-    const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text: "/init enable" } });
+    const ctx = fakeCtx({
+      chat: { id: chatId, type: "supergroup" },
+      from: { id: SUPER_ADMIN_USER_ID },
+      message: { text: "/init enable" },
+    });
     expect(shouldPassInitGate(ctx)).toBe(true);
+  });
+
+  test("未初始化群只放行超管发给当前机器人的 /init，外部用户和其它 bot 后缀都拦下", () => {
+    const chatId = -1001111111116;
+    const base = { chat: { id: chatId, type: "supergroup" }, from: { id: SUPER_ADMIN_USER_ID } };
+    expect(shouldPassInitGate(fakeCtx({ ...base, message: { text: "/init@Test_Bot enable" } }))).toBe(true);
+    expect(shouldPassInitGate(fakeCtx({ ...base, message: { text: "/init@other_bot enable" } }))).toBe(false);
+    expect(shouldPassInitGate(fakeCtx({
+      chat: base.chat,
+      from: { id: SUPER_ADMIN_USER_ID + 1 },
+      message: { text: "/init enable" },
+    }))).toBe(false);
   });
 
   test("已 /init 过的群 + 普通消息：放行", () => {

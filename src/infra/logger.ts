@@ -17,6 +17,7 @@
 
 import { relayLogMessage } from "./diskIO";
 import type { ForwardedLog, LogLevel, LogMessage } from "../types";
+import { redactSecretsInText } from "../libs/redaction";
 
 declare var self: Worker;
 
@@ -30,18 +31,28 @@ const isMainThread: boolean = Bun.isMainThread;
  * 失败（循环引用等）则退化为字符串。
  */
 function serializeArg(arg: unknown): unknown {
+  let serializable: unknown;
   if (arg instanceof Error) {
-    return {
+    serializable = {
       name: arg.name,
       message: arg.message,
       stack: arg.stack,
       ...JSON.parse(safeStringify({ ...arg })),
     };
+  } else if (arg === null || typeof arg !== "object") {
+    serializable = arg;
+  } else {
+    serializable = JSON.parse(safeStringify(arg));
   }
-  if (arg === null || typeof arg !== "object") {
-    return arg;
-  }
-  return JSON.parse(safeStringify(arg));
+
+  // Bun 的 fetch 网络异常会把完整请求 URL 放进 Error 的可枚举 path 字段；
+  // Telegram 文件下载 URL 内嵌 BOT_TOKEN。先序列化成稳定 JSON，再对整份
+  // 文本做值级脱敏，确保 message/stack/path/cause 任一位置都不会漏。
+  const secrets: string[] = [
+    process.env.TELEGRAM_BOT_TOKEN ?? "",
+    process.env.GEMINI_API_KEY ?? "",
+  ];
+  return JSON.parse(redactSecretsInText(safeStringify(serializable), secrets));
 }
 
 function safeStringify(value: unknown): string {
@@ -53,12 +64,15 @@ function safeStringify(value: unknown): string {
 }
 
 function emit(level: LogLevel, args: unknown[]): void {
-  console[level](...args);
+  const serializedArgs: unknown[] = args.map(serializeArg);
+  // 所有控制台级别都可能被 journal 长期保存，统一输出脱敏后的参数；不能
+  // 只保护 error 的 JSON 文件而让 info/warn 中未来新增的敏感值原样泄露。
+  console[level](...serializedArgs);
   if (level !== "error") return;
   const message: LogMessage = {
     timestamp: Date.now(),
     level,
-    args: args.map(serializeArg),
+    args: serializedArgs,
   };
   if (isMainThread) {
     relayLogMessage(message);

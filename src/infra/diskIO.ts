@@ -146,17 +146,19 @@ export interface LoadedData {
  * 启动恢复：向 diskIOWorker 请求上一次成功落盘的全部状态，带超时兜底。
  * 必须在 runner 开始投喂更新之前调用并等待完成（见 index.ts）——尤其是
  * 运势缓存，主线程同步读写，晚灌会出现「今天已抽过却又抽出新结果」。
- * 超时或 Worker 不存在（自愈已放弃）时返回空数据，不阻塞 bot 启动。
+ * 超时或 Worker 不存在时拒绝启动。持久化恢复不能降级为空状态继续：迟到的
+ * load 回执不会再被主线程接管，后续新快照会覆盖磁盘上的旧记忆，造成静默
+ * 数据丢失；交给 index.ts 的 main().catch 以非零码退出并由进程管理器重试。
  */
 export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<LoadedData> {
   const worker: Worker | null = diskIOWorker;
-  const empty: LoadedData = { aiMemories: new Map(), stickerCatalogs: new Map(), luckDay: null };
-  if (!worker) return Promise.resolve(empty);
-  return new Promise((resolve) => {
+  if (!worker) {
+    return Promise.reject(new Error("Persistence Worker is unavailable; refusing to start with empty persisted state."));
+  }
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingLoad.resolve = null;
-      console.error(`[diskIO] load handshake timed out after ${timeoutMs}ms; starting with empty AI memory/sticker catalog/luck state.`);
-      resolve(empty);
+      reject(new Error(`[diskIO] load handshake timed out after ${timeoutMs}ms; refusing to start with empty persisted state.`));
     }, timeoutMs);
     pendingLoad.resolve = (reply: LoadedReply): void => {
       clearTimeout(timer);

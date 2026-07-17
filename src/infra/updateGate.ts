@@ -13,7 +13,14 @@ export function shouldPassInitGate(ctx: Context): boolean {
   if (!ctx.chat || ctx.chat.type === "private") return true;
   if (ctx.msg?.via_bot?.id === ctx.me.id) return true;
   if (getChatState(ctx.chat.id).isInit === true) return true;
-  if (/^\/init(@\S+)?(\s|$)/.test(ctx.message?.text ?? "")) return true;
+  // 未初始化群的低成本网关必须在进入 sequentialize/入群守卫之前完成权限
+  // 与目标 bot 校验。否则任意用户可用 /init（甚至 /init@OtherBot）反复触发
+  // 管理员 API 查询；真正的命令处理器虽会拒绝权限，却已经太晚。
+  if (ctx.from?.id !== SUPER_ADMIN_USER_ID) return false;
+  const text: string = ctx.message?.text ?? "";
+  const firstToken: string = text.split(/\s/, 1)[0]?.toLowerCase() ?? "";
+  const ownCommand: string = `/init@${ctx.me.username.toLowerCase()}`;
+  if (firstToken === "/init" || firstToken === ownCommand) return true;
   return false;
 }
 
