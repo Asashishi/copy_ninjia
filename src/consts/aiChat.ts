@@ -136,12 +136,14 @@ export const MAX_STICKERS_PER_REPLY: number = 1;
 /** 一轮回复里 add_reaction 工具最多扣几个 emoji 反应。 */
 export const MAX_REACTIONS_PER_REPLY: number = 1;
 /**
- * view_sticker_pack 执行时上报「正在选择贴纸」聊天状态（choose_sticker，
- * 与「正在输入」同一个机制）后的停顿：基础 + 随机抖动，合计 1.5~3 秒，
- * 模拟真人翻贴纸面板挑贴纸的节奏，见 ai/tools/stickers.ts。
+ * view_sticker_pack 执行时把聊天状态心跳切到「正在选择贴纸」挡
+ * （choose_sticker，与「正在输入」同一个机制）后的停顿：基础 + 随机抖动，
+ * 合计 1~3.5 秒，模拟真人翻贴纸面板挑贴纸的节奏，见 ai/tools/stickers.ts。
+ * 群友实际看到的选择时长还要更长：这一挡保持到贴纸真正发出为止，模型
+ * 挑选贴纸那轮往返的耗时也计入其中。
  */
-export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
-export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 1_500;
+export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_000;
+export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 2_500;
 /**
  * 连发多条消息时模拟真人打字间隔（见 ai/tools/replyToolset.ts 的 typingDelayMs）：
  * 基础停顿 + 按下一条消息长度线性增加 + 随机抖动，再统一封顶。
@@ -189,7 +191,8 @@ export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的
  */
 export const MAX_TOOL_ROUNDS: number = 15;
 
-/** 「正在输入…」状态的重发间隔，机制见 workers/aiChatWorker.ts 的 startTypingHeartbeat。 */
+/** 聊天状态（正在输入…/正在选择贴纸…）的心跳重发间隔，机制见
+ *  workers/aiChatWorker.ts 的 startChatActionHeartbeat。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 
 // ---- 媒体读图（群里有人发图片/贴纸/GIF -> 占位入缓存 -> 异步解析替换占位）----

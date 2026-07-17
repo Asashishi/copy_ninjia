@@ -54,13 +54,13 @@ import {
   triggerTimes,
   typingHeartbeats,
 } from "../cache/aiChatWorker";
-import type { BufferedMessage, MediaKind, ToolDefinition } from "../types";
+import type { BufferedMessage, ChatActionControl, ChatActionPhase, MediaKind, ToolDefinition } from "../types";
 import { createReplyToolset, type ReplyToolContext, type ReplyToolset } from "../ai/tools/replyToolset";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
 import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse, type ExtractedFunctionCall } from "../ai/gemini";
-import { sendMessage, sendTypingAction } from "../infra/telegram";
+import { sendChooseStickerAction, sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../ai/tools";
 import { SEND_MESSAGE_TOOL } from "../consts/tools";
 import type {
@@ -658,26 +658,46 @@ async function callGemini(userContent: string, toolset: ReplyToolset): Promise<s
 }
 
 /**
- * 在 Gemini 生成阶段（耗时不可控，最长可达 REQUEST_TIMEOUT_MS）持续显示
- * 「正在输入…」：立即发一次，此后每隔 TYPING_ACTION_INTERVAL_MS 重发防止过期。
- * 只覆盖生成阶段——连发多条消息之间的停顿单次封顶不超过 Telegram 状态的
- * 过期时间，改由发送循环每次发送后显式补一次 sendTypingAction（见
- * generateAndSendReply），不需要为此另开定时器。
+ * 在整轮工具对话期间（生成耗时不可控，最长可达 REQUEST_TIMEOUT_MS）维持
+ * 聊天状态显示的心跳：立即发一次「正在输入…」，此后每隔
+ * TYPING_ACTION_INTERVAL_MS 按当前挡位重发防止过期（约 5 秒自动过期）。
+ * 挡位由工具执行侧经 ChatActionControl 切换（见 ai/tools/replyToolset.ts）：
+ * - typing：默认挡，生成阶段显示「正在输入…」；
+ * - choose_sticker：view_sticker_pack 起、到贴纸真正发出前，显示「正在选择
+ *   贴纸…」——模型挑贴纸那轮往返也计入群友可见的选择时长；
+ * - idle：发送侧在消息/贴纸真正发出前切入并 settle（等在途状态请求落定，
+ *   见 ChatActionControl.settle），保证状态请求绝不落在消息之后把状态重新
+ *   盖回去。发出的消息本身会清掉聊天状态，模型若已说完，心跳再盖回
+ *   「正在输入…」会让群友对着假状态白等几秒；若还要连发，发送侧会在停顿
+ *   前自行切回 typing（见 executeSendMessage）。
  *
  * 同一 chatId 的并发调用（每群冷却仅 AI_REPLY_COOLDOWN_MS，并不保证互斥，
  * 见 generateAndSendReply 的限频注释）共享同一个定时器，用引用计数管理，
  * 避免各自开一个定时器把「正在输入…」的调用量成倍放大。
  *
- * 一旦某次重发失败（多半是被踢出群、无权限或该操作单独被限流），当场停掉
- * 这个 chatId 的定时器并清除条目，不再对着大概率会持续失败的目标每隔几秒
- * 重试一次。
- * @returns 停止函数：调用后本次占用的引用计数减一，归零时才真正清定时器。
+ * 一旦某次 typing 重发失败（多半是被踢出群、无权限或该操作单独被限流），
+ * 当场停掉这个 chatId 的定时器并清除条目，不再对着大概率会持续失败的目标
+ * 每隔几秒重试一次；choose_sticker 挡只在贴纸选择期间短暂存在，发送失败
+ * 只记日志（见 sendChooseStickerAction），止损统一交给 typing 挡的失败路径。
+ * @returns 挡位切换句柄 + 停止函数：stop 后本次占用的引用计数减一，归零时
+ *   才真正清定时器；停止后再调 set 是无害的空操作。
  */
-function startTypingHeartbeat(chatId: number): () => void {
+function startChatActionHeartbeat(chatId: number): ChatActionControl & { stop(): void } {
   let entry = typingHeartbeats.get(chatId);
   if (!entry) {
     const timer: ReturnType<typeof setInterval> = setInterval(() => {
-      void sendTypingAction(chatId).then((ok: boolean) => {
+      // 按 timer 身份取当前挡位：表里可能已换成同一 chatId 的新一代心跳
+      // （本代刚被清、晚到的 tick 还在跑），旧 timer 不该替新一代发状态。
+      const live = typingHeartbeats.get(chatId);
+      if (!live || live.timer !== timer) return;
+      if (live.action === "idle") return;
+      // 每次状态请求都记录在途 promise：发消息/贴纸前靠 settle() 等它落定，
+      // 保证迟到的状态请求不会盖在刚发出的消息后面（见 ChatActionControl.settle）。
+      if (live.action === "choose_sticker") {
+        live.inflight = sendChooseStickerAction(chatId);
+        return;
+      }
+      live.inflight = sendTypingAction(chatId).then((ok: boolean) => {
         if (ok) return;
         // 按 timer 身份核对而非只按 chatId 查表：这次失败可能来自已经停止的
         // 上一代心跳（该 tick 发出时它还活着，回包却晚到了），此时表里
@@ -689,27 +709,47 @@ function startTypingHeartbeat(chatId: number): () => void {
         }
       });
     }, TYPING_ACTION_INTERVAL_MS);
-    entry = { timer, refCount: 0 };
+    entry = { timer, refCount: 0, action: "typing", inflight: Promise.resolve() };
     typingHeartbeats.set(chatId, entry);
-    void sendTypingAction(chatId);
+    entry.inflight = sendTypingAction(chatId);
   }
   entry.refCount++;
+  // 复用已有心跳时把挡位归位到默认的 typing：上一持有者可能停在 idle/
+  // choose_sticker（activeReplyChats 保证同群单轮在途，实践中不会走到，
+  // 防御性兜底）。
+  entry.action = "typing";
 
-  // 闭包捕获本次拿到的 entry 本体：停止时若表里已换成同一 chatId 的新一代
-  // 心跳（本代先因重发失败被清、随后又有新调用开了新的），绝不能把新一代的
-  // 引用计数减掉/定时器清掉——和上面重发失败路径按 timer 身份核对是同一个
-  // 道理。
+  // 闭包捕获本次拿到的 entry 本体：停止/切挡时若表里已换成同一 chatId 的
+  // 新一代心跳（本代先因重发失败被清、随后又有新调用开了新的），绝不能动
+  // 新一代的引用计数/定时器/挡位——和上面重发失败路径按 timer 身份核对是
+  // 同一个道理。
   const acquired = entry;
   let released: boolean = false;
-  return () => {
-    if (released) return;
-    released = true;
-    const current = typingHeartbeats.get(chatId);
-    if (current !== acquired) return; // 本代已因重发失败被提前清掉（表里为空或已是新一代）
-    if (--current.refCount <= 0) {
-      clearInterval(current.timer);
-      typingHeartbeats.delete(chatId);
-    }
+  return {
+    set: (phase: ChatActionPhase): void => {
+      if (released || typingHeartbeats.get(chatId) !== acquired) return;
+      acquired.action = phase;
+      // 切到非 idle 挡立即补发一次，状态在切换当口就可见，不等下一个 tick。
+      if (phase === "typing") acquired.inflight = sendTypingAction(chatId);
+      else if (phase === "choose_sticker") acquired.inflight = sendChooseStickerAction(chatId);
+    },
+    settle: async (): Promise<void> => {
+      if (released || typingHeartbeats.get(chatId) !== acquired) return;
+      // 只等最近一发：状态请求最密也就 set 的即时补发 + 相邻 tick，前一发
+      // 到这时早已落地；sendTypingAction/sendChooseStickerAction 内部兜错，
+      // 这里不会 reject。
+      await acquired.inflight;
+    },
+    stop: (): void => {
+      if (released) return;
+      released = true;
+      const current = typingHeartbeats.get(chatId);
+      if (current !== acquired) return; // 本代已因重发失败被提前清掉（表里为空或已是新一代）
+      if (--current.refCount <= 0) {
+        clearInterval(current.timer);
+        typingHeartbeats.delete(chatId);
+      }
+    },
   };
 }
 
@@ -822,40 +862,43 @@ function generateAndSendReply(
       const userContent: string | null = buildUserContent(chatId, selfInfo, { repliedBotText, isRandomTrigger, mediaComment });
       if (!userContent) return;
 
+    // 整个工具对话期间（生成耗时不可控，发送也发生在工具执行里）用持续
+    // 重发的心跳维持聊天状态，先于工具集启动——组装贴纸菜单可能要拉包
+    // （网络调用），这段时间也该显示「正在输入…」；挡位切换见
+    // startChatActionHeartbeat 头注。try/finally 保证即使 createReplyToolset/
+    // callGemini 抛异常，心跳也一定会被停掉。
+      const heartbeat = startChatActionHeartbeat(chatId);
+      try {
     // 工具执行成功后的回调：发出去的每条消息/贴纸描述行都自录进对话缓存
     // （普通群聊天 Telegram 不会把自己发出去的消息作为更新推送回来，不自录
     // 的话转录里永远缺自己那半边对话；配合 buildUserContent 里的 selfIdentity
     // 说明，模型才能在上下文中认出自己说过什么），消息 ID 报回主线程登记
     // 自发消息（频道帖例外：channel_post 更新会原样推回来，登记后自动流水线
     // 才能识别出是自己刚发的、整体跳过，见 auto/message.ts 的 isBotOwnMessage）。
-      const ctx: ReplyToolContext = {
-        chatId,
-        replyToMessageId,
-        onMessageSent: (text: string, messageId: number): void => {
-          recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", text);
-          self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-        },
-        onStickerSent: (stickerDescription: string, messageId: number): void => {
-          recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
-          self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-        },
-      };
-      const toolset: ReplyToolset = await createReplyToolset(ctx);
+        const ctx: ReplyToolContext = {
+          chatId,
+          replyToMessageId,
+          chatAction: heartbeat,
+          onMessageSent: (text: string, messageId: number): void => {
+            recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", text);
+            self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+          },
+          onStickerSent: (stickerDescription: string, messageId: number): void => {
+            recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", stickerDescription);
+            self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+          },
+        };
+        const toolset: ReplyToolset = await createReplyToolset(ctx);
+        const finalText: string | null = await callGemini(userContent, toolset);
 
-    // 整个工具对话期间（生成耗时不可控，发送也发生在工具执行里）用持续
-    // 重发的心跳显示「正在输入…」，见 startTypingHeartbeat；try/finally
-    // 保证即使 callGemini 抛异常，心跳也一定会被停掉。
-      const stopTyping: () => void = startTypingHeartbeat(chatId);
-      let finalText: string | null;
-      try {
-        finalText = await callGemini(userContent, toolset);
+        // 正文兜底只保留给「对方明确在跟机器人说话」的直接触发（回复/@）。
+        // 放在心跳停止之前：兜底发送同样受益于「正在输入…」显示，发出后
+        // executeSendMessage 会照常把心跳切到 idle。
+        if (finalText && !isRandomTrigger && !mediaComment && toolset.messagesSent() === 0) {
+          await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
+        }
       } finally {
-        stopTyping();
-      }
-
-      // 正文兜底只保留给「对方明确在跟机器人说话」的直接触发（回复/@）。
-      if (finalText && !isRandomTrigger && !mediaComment && toolset.messagesSent() === 0) {
-        await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
+        heartbeat.stop();
       }
     } finally {
       activeReplyChats.delete(chatId);

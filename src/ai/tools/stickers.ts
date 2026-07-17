@@ -1,5 +1,5 @@
 import type { Sticker, StickerSet } from "@grammyjs/types";
-import { sendChooseStickerAction, sendSticker } from "../../infra/telegram";
+import { sendSticker } from "../../infra/telegram";
 import { sleep } from "../../libs/sleep";
 import { describeStickerForContext, getStickerSet } from "../stickerSets";
 import { getCatalogEntry, getPackSummary } from "../stickerCatalog";
@@ -13,7 +13,7 @@ import {
   VIEW_STICKER_PACK_TOOL_INSTRUCTION,
 } from "../../consts/aiChat";
 import { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
-import type { StickerCatalogEntry, ToolDefinition } from "../../types";
+import type { ChatActionControl, StickerCatalogEntry, ToolDefinition } from "../../types";
 
 /**
  * 应景贴纸的两层选择工具：
@@ -147,28 +147,25 @@ export function parseIndexField(argumentsJson: string, field: string, max: numbe
 
 /**
  * 执行一次 view_sticker_pack 工具调用：校验包编号、把该包标记为「本轮已
- * 看过清单」，返回包内贴纸的编号清单。合法调用会先上报一次「正在选择
- * 贴纸…」聊天状态并停顿 1.5~3 秒（见 STICKER_CHOOSE_DELAY_BASE_MS），
- * 模拟真人翻贴纸面板的节奏；非法编号立即报错、不装样子。
- * @param chatId 目标群聊——choose_sticker 状态要发到那里。
+ * 看过清单」，返回包内贴纸的编号清单。合法调用会把聊天状态心跳切到
+ * 「正在选择贴纸…」挡并停顿 1~3.5 秒（见 STICKER_CHOOSE_DELAY_BASE_MS），
+ * 模拟真人翻贴纸面板的节奏；这一挡不随停顿结束切回——保持到贴纸真正发出
+ * （或模型转头发消息/本轮结束）为止，模型挑选贴纸那轮往返的耗时也计入
+ * 群友可见的「选择贴纸」时长。非法编号立即报错、不装样子。
+ * @param chatAction 本轮聊天状态心跳的挡位切换句柄（见
+ *   workers/aiChatWorker.ts 的 startChatActionHeartbeat）。
  * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单。
  * @returns 喂回模型的结果 JSON 字符串（包名 + 编号清单，或错误说明）。
  */
-export async function viewStickerPackTool(chatId: number, menu: StickerPackCandidate[], argumentsJson: string, state: StickerRoundState): Promise<string> {
+export async function viewStickerPackTool(chatAction: ChatActionControl, menu: StickerPackCandidate[], argumentsJson: string, state: StickerRoundState): Promise<string> {
   const packIndex: number | null = parseIndexField(argumentsJson, "pack_index", menu.length);
   if (packIndex === null) return JSON.stringify({ error: "Invalid pack_index" });
 
-  // 停顿期间每秒补发一次 choose_sticker：生成阶段的「正在输入…」心跳
-  // （见 workers/aiChatWorker.ts 的 startTypingHeartbeat，4 秒一发）随时可能
-  // 把聊天状态盖回 typing，只发一次的话这个窗口约有一半概率展示的是错的
-  // 状态；1 秒一补保证盖掉后最多 1 秒就换回来。
-  let remaining: number = STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS;
-  while (remaining > 0) {
-    void sendChooseStickerAction(chatId);
-    const step: number = Math.min(1_000, remaining);
-    await sleep(step);
-    remaining -= step;
-  }
+  // 切挡立即补发一次 choose_sticker，之后由心跳按间隔重发维持（间隔小于
+  // 约 5 秒的状态过期时间，显示连续）——心跳自己就在这一挡上，不再有
+  // 「typing 心跳盖掉选择状态」的竞争，曾经的每秒补发循环随之退役。
+  chatAction.set("choose_sticker");
+  await sleep(STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS);
 
   const candidate: StickerPackCandidate = menu[packIndex - 1]!;
   state.viewedPacks.add(packIndex);
@@ -178,6 +175,12 @@ export async function viewStickerPackTool(chatId: number, menu: StickerPackCandi
 /**
  * 执行一次 send_sticker 工具调用：校验编号与本轮限额（必须先看过包清单、
  * 每轮最多 MAX_STICKERS_PER_REPLY 枚、绝不重复同一枚），通过后发送贴纸。
+ * 校验通过、真正发送之前把聊天状态心跳切到 idle 并等在途状态请求落定
+ * （settle）：贴纸消息本身会清掉「正在选择贴纸…」，但比贴纸晚落地的状态
+ * 请求会把它重新盖回去白挂 5 秒——切挡拦住新 tick，settle 拦住在途的那发。
+ * 校验被拒不切挡：什么都没发出去，模型多半会纠正参数重试，选择状态照旧维持。
+ * @param chatAction 本轮聊天状态心跳的挡位切换句柄（见
+ *   workers/aiChatWorker.ts 的 startChatActionHeartbeat）。
  * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单
  *   （与组装工具描述/一层清单时用的编号一一对应，见模块头注）。
  * @param onSent 发送成功后的回调（描述行 + 消息 ID），供调用方自录记忆/
@@ -186,6 +189,7 @@ export async function viewStickerPackTool(chatId: number, menu: StickerPackCandi
  *   后续动作——如被限额拒绝，模型该知道贴纸没发出去）。
  */
 export async function sendStickerTool(
+  chatAction: ChatActionControl,
   chatId: number,
   menu: StickerPackCandidate[],
   argumentsJson: string,
@@ -211,8 +215,15 @@ export async function sendStickerTool(
     return JSON.stringify({ error: "Duplicate sticker: already sent this exact sticker in this reply, pick a different one" });
   }
 
+  chatAction.set("idle");
+  await chatAction.settle();
   const sentMessageId: number | undefined = await sendSticker(chatId, candidate.sticker.file_id);
-  if (sentMessageId === undefined) return JSON.stringify({ error: "Failed to send sticker" });
+  if (sentMessageId === undefined) {
+    // 没发出去（没有消息去清状态），把选择状态续上：模型多半会换一枚重试
+    // 或改口发消息，两条路都会自行接管挡位。
+    chatAction.set("choose_sticker");
+    return JSON.stringify({ error: "Failed to send sticker" });
+  }
 
   state.sentStickerUids.add(candidate.sticker.file_unique_id);
   onSent(describeStickerForContext(candidate.sticker, candidate.description), sentMessageId);

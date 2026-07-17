@@ -1,5 +1,5 @@
 import type { LinkedQueue } from "../libs/linkedQueue";
-import type { AiBotInfo, BufferedMessage } from "../types";
+import type { AiBotInfo, BufferedMessage, ChatActionPhase } from "../types";
 
 /**
  * AI 闲聊流水线（src/workers/aiChatWorker.ts）的内存状态。本模块只被 Worker 线程
@@ -53,8 +53,9 @@ export const compactionPendingCounts: Map<number, number> = new Map();
 /** 正在生成回复的群。同一群只允许一轮在途，防止旧请求晚到后倒序发言。 */
 export const activeReplyChats: Set<number> = new Set();
 
-/** chatId -> 该群当前共享的「正在输入…」重发定时器（见 startTypingHeartbeat）。 */
-export const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number }> = new Map();
+/** chatId -> 该群当前共享的聊天状态心跳（重发定时器 + 当前挡位 + 最近一次
+ *  状态请求的在途 promise，见 startChatActionHeartbeat）。 */
+export const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number; action: ChatActionPhase; inflight: Promise<unknown> }> = new Map();
 
 /**
  * 自上次上报记忆快照后有变更（recordChatMessage/promotePendingSummary/

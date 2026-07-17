@@ -1,4 +1,4 @@
-import { sendMessage, sendTypingAction, setMessageReaction } from "../../infra/telegram";
+import { sendMessage, setMessageReaction } from "../../infra/telegram";
 import { sleep } from "../../libs/sleep";
 import { truncateInline } from "../../libs/text";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
@@ -24,7 +24,7 @@ import {
   type StickerPackCandidate,
   type StickerRoundState,
 } from "./stickers";
-import type { ToolDefinition } from "../../types";
+import type { ChatActionControl, ToolDefinition } from "../../types";
 
 /**
  * 一轮 AI 回复的「行动工具集」：发言（send_message）、消息反应
@@ -47,6 +47,11 @@ export interface ReplyToolContext {
   /** 触发这次回复的消息 ID：add_reaction 的目标；send_message 带
    *  reply_to_trigger: true 时的回复引用目标。 */
   replyToMessageId: number;
+  /** 本轮聊天状态心跳的挡位切换句柄（typing / choose_sticker / idle，见
+   *  workers/aiChatWorker.ts 的 startChatActionHeartbeat）：消息/贴纸落地后
+   *  切 idle 让状态随消息一起消失、连发停顿前切回 typing、翻贴纸包起切
+   *  choose_sticker。 */
+  chatAction: ChatActionControl;
   /** 每条消息发送成功后的回调（清洗后的文本 + 消息 ID），供调用方自录
    *  记忆/登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。 */
   onMessageSent: (text: string, messageId: number) => void;
@@ -207,16 +212,28 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       return JSON.stringify({ error: "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead" });
     }
 
-    // 第二条起模拟真人打字：上一条发出会清掉「正在输入…」状态，先补发一次
-    // 再按本条长度停顿（单次停顿封顶在 Telegram 状态过期时间内，见
-    // TYPING_DELAY_MAX_MS，不需要定时重发）。
+    // 第二条起模拟真人打字：上一条发出已清掉「正在输入…」状态（心跳也随之
+    // 切到 idle 挡），先切回 typing 补上状态再按本条长度停顿（单次停顿封顶
+    // 在 Telegram 状态过期时间内，见 TYPING_DELAY_MAX_MS，切挡时的即时补发
+    // 足以覆盖整段停顿）。
     if (messageCount > 0) {
-      void sendTypingAction(ctx.chatId);
+      ctx.chatAction.set("typing");
       await sleep(typingDelayMs(text));
     }
+    // 发送前就切 idle 并等在途状态请求落定：消息本身会清掉聊天状态，模型若
+    // 已说完，任何比消息晚落地的「正在输入…」都会重新盖上去白挂 5 秒；若还
+    // 要连发，上面的切回 typing 会接手。真人按下发送键时打字状态同样消失，
+    // 发送 RTT 这一瞬没有状态是符合观感的。
+    ctx.chatAction.set("idle");
+    await ctx.chatAction.settle();
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
     const sentMessageId: number | undefined = await sendMessage(ctx.chatId, text, replyToTrigger ? ctx.replyToMessageId : undefined);
-    if (sentMessageId === undefined) return JSON.stringify({ error: "Failed to send message" });
+    if (sentMessageId === undefined) {
+      // 没发出去（没有消息去清状态），把生成阶段的默认挡位续上，模型多半
+      // 还会重试或改口，别让后续生成对群友静默。
+      ctx.chatAction.set("typing");
+      return JSON.stringify({ error: "Failed to send message" });
+    }
 
     messageCount++;
     ctx.onMessageSent(text, sentMessageId);
@@ -242,9 +259,11 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       case ADD_REACTION_TOOL:
         return executeAddReaction(argumentsJson);
       case VIEW_STICKER_PACK_TOOL:
-        return viewStickerPackTool(ctx.chatId, menu, argumentsJson, stickerState);
+        return viewStickerPackTool(ctx.chatAction, menu, argumentsJson, stickerState);
       case SEND_STICKER_TOOL:
-        return sendStickerTool(ctx.chatId, menu, argumentsJson, stickerState, ctx.onStickerSent);
+        // 贴纸发送前的切 idle + settle 在 sendStickerTool 内部做（要卡在参数
+        // 校验通过之后、真正发网络请求之前，道理同 executeSendMessage）。
+        return sendStickerTool(ctx.chatAction, ctx.chatId, menu, argumentsJson, stickerState, ctx.onStickerSent);
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
