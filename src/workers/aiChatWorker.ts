@@ -215,6 +215,15 @@ function fallbackTextFor(kind: MediaKind, msg: AiRecordMediaMessage): string {
   return IMAGE_FALLBACK_PLACEHOLDER;
 }
 
+/** 拿媒体回复机器人但解析失败时，喂给必回指令的内容描述。贴纸退回元数据
+ *  行仍有信息量；图片/GIF 的常规兜底文案写着「请无视此消息」，塞进「别
+ *  已读不回」的指令里自相矛盾（模型可能听话地沉默），换成明说没看清，
+ *  让模型自然回一句「看不清」而不是被指示无视。 */
+function replyFallbackDescriptionFor(msg: AiRecordMediaMessage): string {
+  if (msg.kind === "sticker" && msg.stickerFallbackText) return msg.stickerFallbackText;
+  return "（画面内容没能识别出来，你没看清对方发了什么）";
+}
+
 /**
  * 记录一条图片/贴纸/GIF 消息：先以占位文本立即入缓存（保住它在对话时序里
  * 的位置），再异步下载/解析媒体，解析完直接改写同一个条目对象的 text
@@ -235,6 +244,11 @@ function fallbackTextFor(kind: MediaKind, msg: AiRecordMediaMessage): string {
  * 内容的评价（见 generateAndSendReply 的 mediaComment）——回填先于触发，
  * 模型拼上下文时看到的已是描述而非占位。解析失败没内容可评，静默放弃。
  *
+ * msg.replyToBot（用户拿这份媒体在回复机器人，见 auto/message.ts）则是
+ * 必触发：白名单目录命中时立即回；未命中等 describeMedia（内部自带
+ * file_unique_id 描述缓存）解析完成再回；解析失败也用兜底文本回——真人
+ * 在等回应，评价那套「失败静默放弃」在这里就是被投诉的「已读不回」。
+ *
  * 相册（一次发多张图）在 Telegram 侧本来就是多条相邻消息、各带一张图，
  * 天然逐条走这里，互不影响；每条媒体消息各自占位、各自异步解析。
  */
@@ -253,7 +267,14 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
         at: formatTokyoTime(Date.now()),
       };
       pushBufferedMessage(msg.chatId, entry);
-      if (msg.commentOnResolve) {
+      if (msg.replyToBot) {
+        generateAndSendReply(msg.chatId, msg.messageId, msg.replyToBot.repliedBotText, false, {
+          kind: "sticker",
+          senderName: displayBufferedMessageName(entry),
+          description: catalogEntry.description,
+          isReplyToBot: true,
+        });
+      } else if (msg.commentOnResolve) {
         generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: "sticker", senderName: displayBufferedMessageName(entry), description: catalogEntry.description });
       }
       return;
@@ -276,7 +297,16 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
     dirtyMemoryChats.add(msg.chatId);
-    if (msg.commentOnResolve && description) {
+    if (msg.replyToBot) {
+      // 回填先于触发（同评价），模型拼上下文时看到的已是描述；解析失败
+      // 退回兜底文本照样触发——回应可以含糊，失踪不行。
+      generateAndSendReply(msg.chatId, msg.messageId, msg.replyToBot.repliedBotText, false, {
+        kind: msg.kind,
+        senderName: displayBufferedMessageName(entry),
+        description: description ?? replyFallbackDescriptionFor(msg),
+        isReplyToBot: true,
+      });
+    } else if (msg.commentOnResolve && description) {
       generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: msg.kind, senderName: displayBufferedMessageName(entry), description });
     }
   });
@@ -488,6 +518,10 @@ interface MediaCommentContext {
   kind: MediaKind;
   senderName: string;
   description: string;
+  /** 用户是拿这份媒体在「回复机器人」（见 AiRecordMediaMessage.replyToBot）：
+   *  回复指令改为必回语气（对方明确在跟机器人说话，不许已读不回），并发闸
+   *  打满时按直接触发排队补跑而非丢弃。 */
+  isReplyToBot?: boolean;
 }
 
 /** 按媒体类型给出提示词里要用的名词短语与转录行标签，见 replyInstruction
@@ -558,6 +592,9 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
   // 发言/贴纸/反应全部工具化，做什么、什么顺序由模型自己决定（见
   // ai/tools/replyToolset.ts）。
+  // - 拿媒体回复机器人：对方用贴纸/图片/GIF 明确在回机器人的话（见
+  //   MediaCommentContext 的 isReplyToBot），语气同回复/@ 触发——别已读
+  //   不回；描述可能是解析结果也可能是元数据兜底，模型按有什么接什么。
   // - 媒体评价：针对刚解析完的那份图片/贴纸/GIF 发表评价，要求挂回复引用；
   //   实在无话可评也允许沉默。
   // - 排队补跑：点名回复入队时快照下来的那条具体消息（此刻转录尾部早已
@@ -567,7 +604,9 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   //   要不要称呼对方）全由模型自主判断——触发者是谁转录最后一行本来就写着，
   //   不再单独喂名字、不再强制点名。
   // - 回复/@ 触发：对方明确在跟机器人说话，别已读不回，建议第一条挂引用。
-  const replyInstruction: string = mediaComment
+  const replyInstruction: string = mediaComment?.isReplyToBot
+    ? `刚才 ${mediaComment.senderName} 用${mediaNounFor(mediaComment.kind)}回复了你上一条消息，内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
+    : mediaComment
     ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；实在觉得无话可评，也可以什么都不做。${REPLY_ACTION_INSTRUCTION}`
     : queuedTrigger
     ? `刚才你忙着回别的消息的时候，${queuedTrigger.senderName || "有人"} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」，在聊天记录里能找到对应那行），这条是排队等到现在才轮到处理的。如果这条还值得回，请针对 TA 那条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了再回反而奇怪，就什么都不做，别硬回也别重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
@@ -739,7 +778,8 @@ function notifyRateLimited(chatId: number, now: number): void {
  * @param mediaComment 若是「解析完图片/贴纸/GIF 后评价它」触发（见
  *   recordChatMedia），发送人与描述——回复指令改为评价，回复引用挂在那条
  *   媒体消息上（replyToMessageId 即那条消息）；5 分钟窗口限频照常适用，
- *   评价触发同样占限频名额。
+ *   评价触发同样占限频名额。isReplyToBot 为 true 时是「拿媒体回复机器人」
+ *   的必回触发：指令改为回复语气，并发闸打满时排队而非丢弃。
  */
 function generateAndSendReply(
   chatId: number,
@@ -763,20 +803,25 @@ function generateAndSendReply(
   // 并发闸同时就是短时爆发的天然节流（见 consts/aiChat.ts 的
   // RATE_LIMIT_LONG_WINDOW_MS 注释）。
   if ((activeReplyCounts.get(chatId) ?? 0) >= REPLY_ROUND_MAX_CONCURRENT) {
-    if (isRandomTrigger || mediaComment) return;
-    enqueueReplyTrigger(chatId, replyToMessageId, repliedBotText);
+    // 拿媒体回复机器人（mediaComment.isReplyToBot）和文字回复/@ 一样是真人
+    // 在等的直接触发，照常排队补跑；随机插话/随机媒体评价才直接丢弃。
+    if (isRandomTrigger || (mediaComment && !mediaComment.isReplyToBot)) return;
+    enqueueReplyTrigger(chatId, replyToMessageId, repliedBotText, mediaComment);
     return;
   }
   startReplyRound(chatId, replyToMessageId, repliedBotText, isRandomTrigger, mediaComment);
 }
 
 /**
- * 并发位占满期间到来的直接触发（回复/@）入队，等空位腾出后补跑。队列
- * 打满则丢弃，并记下欠一句「你们太快了」提示——被丢的是真人在等的交互，
- * 明确反馈好过静默失踪；提示压到某轮收尾时再发（见 drainReplyQueue），至少
- * 不在刚收尾那轮连发短句的当口插进去打断它。
+ * 并发位占满期间到来的直接触发（回复/@，或拿媒体回复机器人）入队，等空位
+ * 腾出后补跑。队列打满则丢弃，并记下欠一句「你们太快了」提示——被丢的是
+ * 真人在等的交互，明确反馈好过静默失踪；提示压到某轮收尾时再发（见
+ * drainReplyQueue），至少不在刚收尾那轮连发短句的当口插进去打断它。
+ * @param mediaTrigger 拿媒体回复机器人的触发（见 MediaCommentContext 的
+ *   isReplyToBot）：媒体解析是异步的，触发时转录尾部未必还是那条媒体消息，
+ *   不能拿尾部当快照，改用解析出的发送人与描述。
  */
-function enqueueReplyTrigger(chatId: number, replyToMessageId: number, repliedBotText: string | undefined): void {
+function enqueueReplyTrigger(chatId: number, replyToMessageId: number, repliedBotText: string | undefined, mediaTrigger?: MediaCommentContext): void {
   let queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
   if (!queue) {
     queue = new LinkedQueue<QueuedReplyTrigger>();
@@ -784,6 +829,15 @@ function enqueueReplyTrigger(chatId: number, replyToMessageId: number, repliedBo
   }
   if (queue.size >= REPLY_TRIGGER_QUEUE_MAX) {
     pendingOverflowNotices.add(chatId);
+    return;
+  }
+  if (mediaTrigger) {
+    queue.push({
+      replyToMessageId,
+      repliedBotText,
+      senderName: mediaTrigger.senderName,
+      text: truncateInline(resolvedTagFor(mediaTrigger.kind, mediaTrigger.description), QUEUED_TRIGGER_SNIPPET_MAX_CHARS),
+    });
     return;
   }
   // 触发消息本身刚被 record 过（主线程先 record 后 trigger，FIFO），缓存
@@ -896,12 +950,13 @@ function startReplyRound(
         const toolset: ReplyToolset = await createReplyToolset(ctx);
         const finalText: string | null = await callGemini(userContent, toolset);
 
-        // 正文兜底只保留给「对方明确在跟机器人说话」的即时直接触发（回复/@）。
-        // 排队补跑不兜底：那条指令明确允许模型判断后沉默，硬把最后一轮正文
-        // 发出去会把「决定不回」变成「重复自己」。放在心跳停止之前：兜底走
-        // 同一条 send_message 工具路径，照样有临发前的「正在输入…」窗口，
-        // 发出后挡位随之切回 idle。
-        if (finalText && !isRandomTrigger && !mediaComment && !queuedTrigger && toolset.messagesSent() === 0) {
+        // 正文兜底只保留给「对方明确在跟机器人说话」的即时直接触发——文字
+        // 回复/@，以及拿媒体回复机器人（mediaComment.isReplyToBot）；随机
+        // 插话/随机媒体评价允许沉默，不兜底。排队补跑也不兜底：那条指令明确
+        // 允许模型判断后沉默，硬把最后一轮正文发出去会把「决定不回」变成
+        // 「重复自己」。放在心跳停止之前：兜底走同一条 send_message 工具
+        // 路径，照样有临发前的「正在输入…」窗口，发出后挡位随之切回 idle。
+        if (finalText && !isRandomTrigger && (!mediaComment || mediaComment.isReplyToBot) && !queuedTrigger && toolset.messagesSent() === 0) {
           await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: true }));
         }
       } finally {

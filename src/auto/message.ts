@@ -349,6 +349,10 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   const aiChatEnabled: boolean = state.isUseAIChat === true;
 
   const messageText: string | undefined = typeof message.text === "string" ? message.text : undefined;
+  // 「用户回复机器人」的判定给文本与媒体分支共用：拿贴纸/图片/GIF 回复
+  // 机器人同样是明确在跟机器人说话，不能因为消息没有 text 就识别不到。
+  const repliedTo: Message | undefined = message.reply_to_message;
+  const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
   if (!activeCopy && aiChatEnabled && messageText && !messageText.startsWith("/")) {
     // 把带文本的普通消息滚动记入本群的 AI 对话缓存（Bot API 无法拉历史，只能
     // 边收边攒，上限见 consts/aiChat.ts 的 VERBATIM_CONTEXT_MAX）。指令消息
@@ -362,8 +366,6 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // 决定，允许什么都不做保持沉默（见 workers/aiChatWorker.ts 的
     // generateAndSendReply）。命中后就不再走下面的洗澡/随机复读，免得一条
     // 消息既被 AI 回又被复读。
-    const repliedTo: Message | undefined = message.reply_to_message;
-    const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
     const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
 
     // 消息里 @ 了别人（非机器人自己）时不参与随机搭话的概率判定——见
@@ -386,22 +388,31 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // 缩略图；两者都没有则放弃视觉，见 pickStickerVisionSource）。没有素材
     // 就直接记兜底行；有素材则交给 AI Worker 走占位/异步解析管线（见
     // aiChat.ts 的 recordChatMedia），解析成功原位回填画面描述，失败回填
-    // 同一份兜底行，都不损失现状已有信息。只当上下文，不触发 AI 回复（评价
-    // 例外见下方 commentOnResolve），也不 return——后面的随机复读本来就对
-    // 贴纸生效，行为保持不变。
+    // 同一份兜底行，都不损失现状已有信息。基线只当上下文、不触发 AI 回复，
+    // 也不 return——后面的随机复读本来就对贴纸生效，行为保持不变。两个
+    // 例外：拿贴纸回复机器人是明确在跟机器人说话，必触发回复（replyToBot，
+    // Worker 侧先试常驻目录/描述缓存，未命中等解析完成再回答）；随机评价见
+    // 下方 commentOnResolve。
     const speaker = resolveSpeaker(message);
     const fallbackText: string = describeStickerForContext(message.sticker);
     const visionSource = pickStickerVisionSource(message.sticker);
     if (!visionSource) {
       recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, fallbackText);
+      // 没有视觉素材也要认得「拿贴纸回复机器人」：兜底行刚记到缓存尾部，
+      // 元数据（emoji/包名）就是全部可用信息，直接按回复机器人触发。
+      if (isReplyToBot) {
+        generateAndSendReply(chatId, message.message_id, repliedTo?.text);
+        return;
+      }
     } else {
       // 例外：按 AI_REPLY_PROBABILITY 掷中时，解析完成后 AI 会回复那条贴纸
       // 消息评价它——文字随机搭话与图片/贴纸/GIF 评价共用同一个概率（不是
       // 各自独立掷骰），掷骰在这里（主线程调度逻辑），顺带套用 /quiet 静默
       // 与「群 × 用户」随机回复冷却——评价本质上也是主动搭话，别对同一个
-      // 人短时间连评。
+      // 人短时间连评。回复机器人时不掷骰（必回，与文字路径一致地无视
+      // /quiet、不占随机冷却），两者互斥。
       const commentOnResolve: boolean =
-        !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+        !isReplyToBot && !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
       recordChatMedia(
         "sticker",
         chatId,
@@ -414,21 +425,41 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
         visionSource.fileUniqueId,
         message.message_id,
         commentOnResolve,
-        fallbackText
+        fallbackText,
+        isReplyToBot ? { repliedBotText: repliedTo?.text } : undefined
       );
+      // 与文字路径的必回触发同语义：这条贴纸已经注定引来一条 AI 回复，
+      // 不再参与下面的随机复读，免得一条消息既被回又被复读。
+      if (isReplyToBot) return;
     }
   } else if (!activeCopy && aiChatEnabled && Array.isArray(message.photo) && message.photo.length > 0) {
     // 图片消息同样没有 text（配文在 caption 里），交给 AI Worker 先占位入
     // 缓存、异步解析出描述后原位回填（见 aiChat.ts 的 recordChatMedia）。
     // 基线与贴纸/GIF 同定位：只当上下文，不触发 AI 回复，也不 return——
-    // 后面的随机复读对图片本来就生效，行为保持不变。相册（一次发多张）是
+    // 后面的随机复读对图片本来就生效，行为保持不变。拿图片回复机器人则
+    // 必触发（replyToBot，同贴纸分支）。相册（一次发多张）是
     // 多条相邻消息各带一张图，自然逐条走到这里，各自占位、各自解析。
     const speaker = resolveSpeaker(message);
     const caption: string = typeof message.caption === "string" ? message.caption : "";
     const commentOnResolve: boolean =
-      !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+      !isReplyToBot && !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
-    recordChatMedia("photo", chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, caption, photoFile.fileId, photoFile.fileUniqueId, message.message_id, commentOnResolve);
+    recordChatMedia(
+      "photo",
+      chatId,
+      speaker.id,
+      speaker.firstName,
+      speaker.lastName,
+      speaker.username,
+      caption,
+      photoFile.fileId,
+      photoFile.fileUniqueId,
+      message.message_id,
+      commentOnResolve,
+      undefined,
+      isReplyToBot ? { repliedBotText: repliedTo?.text } : undefined
+    );
+    if (isReplyToBot) return;
   } else if (!activeCopy && aiChatEnabled && message.animation) {
     // GIF（Telegram animation，实际多为 mp4）：本项目没有视频解码/抽帧能力，
     // 只能分析 Telegram 自带的缩略图（封面帧，见 pickAnimationVisionSource）。
@@ -439,10 +470,30 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const visionSource = pickAnimationVisionSource(message.animation);
     if (!visionSource) {
       recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, caption ? `[GIF] ${caption}` : "[GIF]");
+      // 同贴纸分支：没有解析素材也要认得「拿 GIF 回复机器人」。
+      if (isReplyToBot) {
+        generateAndSendReply(chatId, message.message_id, repliedTo?.text);
+        return;
+      }
     } else {
       const commentOnResolve: boolean =
-        !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
-      recordChatMedia("animation", chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, caption, visionSource.fileId, visionSource.fileUniqueId, message.message_id, commentOnResolve);
+        !isReplyToBot && !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
+      recordChatMedia(
+        "animation",
+        chatId,
+        speaker.id,
+        speaker.firstName,
+        speaker.lastName,
+        speaker.username,
+        caption,
+        visionSource.fileId,
+        visionSource.fileUniqueId,
+        message.message_id,
+        commentOnResolve,
+        undefined,
+        isReplyToBot ? { repliedBotText: repliedTo?.text } : undefined
+      );
+      if (isReplyToBot) return;
     }
   }
 

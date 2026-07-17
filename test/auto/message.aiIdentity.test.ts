@@ -85,7 +85,7 @@ describe("AI 缓存发送者 username 传递", () => {
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
     expect(recordChatMediaMock).toHaveBeenCalledWith(
       "photo", -100800, 123, "Alice", "Tester", "alice_dev", "photo caption",
-      "photo-file", "photo-unique", 10, false
+      "photo-file", "photo-unique", 10, false, undefined, undefined
     );
   });
 });
