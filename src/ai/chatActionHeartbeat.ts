@@ -81,11 +81,12 @@ export function startChatActionHeartbeat(
     dependencies.entries.set(chatId, entry);
   }
 
-  // 当前 activeReplyChats 会保证同群只有一轮在途；refCount 仍作为防御性保护
-  // 保留。复用时挡位与失败计数一并归零，上一持有者的残留挡位不跨轮延续。
+  // 同群可能有多轮回复并发（见 consts/aiChat.ts 的 REPLY_ROUND_MAX_CONCURRENT），
+  // 并发轮共用同一份心跳条目：refCount 记持有者数，最后一个 stop 才拆表。
+  // 挡位是全群一份、后写覆盖——新持有者起步不归零挡位，免得把并发轮正在
+  // 亮的「正在输入…」窗口掐灭（新建条目本就从 idle/零失败起步；并发轮互相
+  // 覆盖挡位只是状态显示的瑕疵，接受）。
   entry.refCount++;
-  entry.action = "idle";
-  entry.consecutiveFailures = 0;
 
   const acquired: ChatActionHeartbeatEntry = entry;
   let released: boolean = false;

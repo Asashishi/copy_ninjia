@@ -203,8 +203,8 @@ export function recordChatMedia(
 }
 
 /**
- * 触发一次 AI 回复：把触发事件投递给 Worker，由它做同群串行占位（在途
- * 期间的回复/@ 触发排队等当前轮结束后补跑，随机触发丢弃，见
+ * 触发一次 AI 回复：把触发事件投递给 Worker，由它做同群并发占位（在途
+ * 轮数打满期间的回复/@ 触发排队等空位补跑，随机触发丢弃，见
  * workers/aiChatWorker.ts 的 generateAndSendReply）与限频判定并执行完整的
  * 生成与发送流程。fire-and-forget，主线程不等待任何结果。
  * @param chatId 目标群聊。

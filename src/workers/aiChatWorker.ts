@@ -29,6 +29,7 @@ import {
   RATE_LIMIT_LONG_WINDOW_MS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   RATE_LIMIT_NOTICE_TEXT,
+  REPLY_ROUND_MAX_CONCURRENT,
   REPLY_TRIGGER_QUEUE_MAX,
   SUMMARY_RETRY_DELAYS_MS,
   REPLY_ACTION_INSTRUCTION,
@@ -46,7 +47,7 @@ import {
   WEB_SEARCH_INSTRUCTION,
 } from "../consts/aiChat";
 import {
-  activeReplyChats,
+  activeReplyCounts,
   botInfoState,
   chatBuffers,
   chatSummaries,
@@ -86,7 +87,7 @@ import type {
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
  * 只做事件投递，重活全在这里：滚动对话缓存、图片/贴纸/GIF 占位与异步描述
- * 回填、同群串行与直接触发排队、5 分钟滑动窗口限频、拼装上下文、调 Gemini（含 function calling 往返
+ * 回填、同群并发上限与直接触发排队、5 分钟滑动窗口限频、拼装上下文、调 Gemini（含 function calling 往返
  * 与内置 googleSearch）。发言/消息反应/应景贴纸全部工具化（send_message /
  * add_reaction / view_sticker_pack + send_sticker，见 ai/tools/replyToolset.ts）：
  * 模型在同一次对话里自主决定做哪几样、什么顺序，本文件只负责组装工具集、
@@ -569,7 +570,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
   const replyInstruction: string = mediaComment
     ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；实在觉得无话可评，也可以什么都不做。${REPLY_ACTION_INSTRUCTION}`
     : queuedTrigger
-    ? `刚才你忙着回上一轮的时候，${queuedTrigger.senderName || "有人"} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」，在聊天记录里能找到对应那行），这条是排队等到现在才轮到处理的。如果这条还值得回，请针对 TA 那条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了再回反而奇怪，就什么都不做，别硬回也别重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才你忙着回别的消息的时候，${queuedTrigger.senderName || "有人"} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」，在聊天记录里能找到对应那行），这条是排队等到现在才轮到处理的。如果这条还值得回，请针对 TA 那条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了再回反而奇怪，就什么都不做，别硬回也别重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
     : isRandomTrigger
     ? `群里最新这条消息并没有人在叫你——只是你自己刷到了，要不要插一嘴完全由你判断：值得接就以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；话题跟你无关、没什么好说的，就什么都不做直接结束，别硬聊。${REPLY_ACTION_INSTRUCTION}`
     : `请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`;
@@ -696,10 +697,10 @@ async function callGemini(userContent: string, toolset: ReplyToolset): Promise<s
 }
 
 /**
- * 触发被丢弃时的明确反馈：限频滑动窗口打满、或串行闸等候队列打满时回一句
+ * 触发被丢弃时的明确反馈：限频滑动窗口打满、或并发闸等候队列打满时回一句
  * 「你们太快了」，而不是静默失踪让群友以为机器人坏了。提示自身带独立冷却
  * （每群至多一分钟一条，见 RATE_LIMIT_NOTICE_COOLDOWN_MS），刷屏场景下
- * 不会跟着刷。随机插话/媒体评价在串行闸在途期间的丢弃不提示——没人在等
+ * 不会跟着刷。随机插话/媒体评价在并发位占满期间的丢弃不提示——没人在等
  * 那条回复，提示反而吵。
  */
 function notifyRateLimited(chatId: number, now: number): void {
@@ -753,14 +754,15 @@ function generateAndSendReply(
     logger.error("aiChatWorker received trigger before init message; dropping.");
     return;
   }
-  // 同一群只跑一轮工具对话。Gemini 请求可持续几十秒；并发跑的话后发请求
-  // 可能先结束并先发消息，旧请求随后再按过时上下文补发，工具副作用也会
-  // 倒序。在途期间的并发触发分两类处置：随机插话/媒体评价直接丢弃——
-  // 没人在等那条回复，错过时机再补反而突兀；回复/@ 是真人在等的交互，
-  // 入队等当前轮结束后按先来后到补跑（见 drainReplyQueue），队列打满才丢。
-  // 这道串行闸同时就是短时爆发的天然节流（见 consts/aiChat.ts 的
+  // 同群在途轮数封顶 REPLY_ROUND_MAX_CONCURRENT。Gemini 请求可持续几十秒，
+  // 并发跑意味着后发的轮可能先结束、几轮的发言互相穿插——为了热闹群里
+  // 不让真人干等，这点乱序是有意接受的权衡（见 consts/aiChat.ts 该常量
+  // 注释）。打满期间的触发分两类处置：随机插话/媒体评价直接丢弃——没人
+  // 在等那条回复，错过时机再补反而突兀；回复/@ 是真人在等的交互，入队等
+  // 空位腾出后按先来后到补跑（见 drainReplyQueue），队列打满才丢。这道
+  // 并发闸同时就是短时爆发的天然节流（见 consts/aiChat.ts 的
   // RATE_LIMIT_LONG_WINDOW_MS 注释）。
-  if (activeReplyChats.has(chatId)) {
+  if ((activeReplyCounts.get(chatId) ?? 0) >= REPLY_ROUND_MAX_CONCURRENT) {
     if (isRandomTrigger || mediaComment) return;
     enqueueReplyTrigger(chatId, replyToMessageId, repliedBotText);
     return;
@@ -769,10 +771,10 @@ function generateAndSendReply(
 }
 
 /**
- * 串行闸在途期间到来的直接触发（回复/@）入队，等当前轮结束后补跑。队列
+ * 并发位占满期间到来的直接触发（回复/@）入队，等空位腾出后补跑。队列
  * 打满则丢弃，并记下欠一句「你们太快了」提示——被丢的是真人在等的交互，
- * 明确反馈好过静默失踪；提示压到本轮结束再发（见 drainReplyQueue），不在
- * 机器人自己连发短句的当口插进去打断它。
+ * 明确反馈好过静默失踪；提示压到某轮收尾时再发（见 drainReplyQueue），至少
+ * 不在刚收尾那轮连发短句的当口插进去打断它。
  */
 function enqueueReplyTrigger(chatId: number, replyToMessageId: number, repliedBotText: string | undefined): void {
   let queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
@@ -798,10 +800,11 @@ function enqueueReplyTrigger(chatId: number, replyToMessageId: number, repliedBo
 }
 
 /**
- * 当前轮结束后补跑队列里最旧的直接触发。被限频闸丢弃的不占轮次：丢弃
- * 路径自带提示，继续放下一个，直到真正启动一轮或队列耗尽。补跑轮结束后
- * 自己会再走到这里，队列串行排空。欠着的队列打满提示也在这里补发——
- * 此刻恰好处于两轮之间，不会打断任何在途发言。
+ * 某轮结束腾出空位后，按先来后到补跑队列里的直接触发，直到并发位再次
+ * 占满或队列耗尽。被限频闸丢弃的不占轮次：丢弃路径自带提示，继续放下
+ * 一个。补跑轮结束后自己会再走到这里，队列持续排空。欠着的队列打满提示
+ * 也在这里补发——刚收尾那轮的连发短句已经发完，其余在途轮的发言可能与
+ * 提示穿插，接受（并发本身就放弃了发言不穿插的保证）。
  */
 function drainReplyQueue(chatId: number): void {
   if (pendingOverflowNotices.delete(chatId)) {
@@ -809,21 +812,21 @@ function drainReplyQueue(chatId: number): void {
   }
   const queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
   if (!queue) return;
-  while (queue.size > 0) {
+  while (queue.size > 0 && (activeReplyCounts.get(chatId) ?? 0) < REPLY_ROUND_MAX_CONCURRENT) {
     const next: QueuedReplyTrigger = queue.shift()!;
-    if (startReplyRound(chatId, next.replyToMessageId, next.repliedBotText, false, undefined, next)) break;
+    startReplyRound(chatId, next.replyToMessageId, next.repliedBotText, false, undefined, next);
   }
   if (queue.size === 0) pendingReplyTriggers.delete(chatId);
 }
 
 /**
- * 实际启动一轮回复：过限频闸、占同群串行位、异步执行完整的生成与发送
- * 流程；结束后释放占位并补跑等候队列（见 drainReplyQueue）。参数语义同
- * generateAndSendReply。
+ * 实际启动一轮回复：过限频闸、占同群一个并发位（计数 +1）、异步执行完整
+ * 的生成与发送流程；结束后释放占位并补跑等候队列（见 drainReplyQueue）。
+ * 参数语义同 generateAndSendReply。
  * @param queuedTrigger 若本轮是排队补跑（见 drainReplyQueue），入队时的
  *   触发消息快照——回复指令改为点名那条具体消息，且允许沉默、不做正文
- *   兜底（上一轮可能已顺带回应过它）。
- * @returns 是否真正启动了一轮；false 表示被限频闸丢弃（未占位、未落账）。
+ *   兜底（先跑的轮可能已顺带回应过它）。被限频闸丢弃时不占位、不落账，
+ *   drainReplyQueue 的循环条件靠计数未增长感知并继续放下一个。
  */
 function startReplyRound(
   chatId: number,
@@ -832,11 +835,11 @@ function startReplyRound(
   isRandomTrigger: boolean,
   mediaComment?: MediaCommentContext,
   queuedTrigger?: QueuedReplyTrigger
-): boolean {
+): void {
   // generateAndSendReply 已挡过缺身份的触发；出队补跑路径能走到这里说明
   // init 早已到达（队列只在某轮跑过之后才可能有内容），这里只做类型收窄。
   const selfInfo: AiBotInfo | null = botInfoState.current;
-  if (!selfInfo) return false;
+  if (!selfInfo) return;
 
   // 本群 5 分钟滑动窗口限频：先把窗口外的旧触发挤掉，再看余量。占位闸和
   // 限频闸都过了才落账，避免被拒的触发白白占用配额。
@@ -851,11 +854,11 @@ function startReplyRound(
   }
   if (longTimes.size >= RATE_LIMIT_LONG_MAX_TRIGGERS) {
     notifyRateLimited(chatId, now);
-    return false;
+    return;
   }
 
   longTimes.push(now);
-  activeReplyChats.add(chatId);
+  activeReplyCounts.set(chatId, (activeReplyCounts.get(chatId) ?? 0) + 1);
 
   void (async (): Promise<void> => {
     try {
@@ -907,7 +910,9 @@ function startReplyRound(
         await heartbeat.stop();
       }
     } finally {
-      activeReplyChats.delete(chatId);
+      const remaining: number = (activeReplyCounts.get(chatId) ?? 1) - 1;
+      if (remaining > 0) activeReplyCounts.set(chatId, remaining);
+      else activeReplyCounts.delete(chatId);
       // 先释放占位再补跑：出队的触发经 startReplyRound 重新过限频闸，
       // 排队期间不占限频名额。
       drainReplyQueue(chatId);
@@ -915,7 +920,6 @@ function startReplyRound(
   })().catch((error: unknown) => {
     logger.error("Error in AI reply task:", error);
   });
-  return true;
 }
 
 self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {

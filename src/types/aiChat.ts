@@ -100,7 +100,7 @@ export interface AiHydrateStickerCatalogMessage {
   catalogs: Map<string, string>;
 }
 
-/** 主线程 -> Worker：触发一次 AI 回复（同群串行占位与限频判定都在 Worker 侧做）。 */
+/** 主线程 -> Worker：触发一次 AI 回复（同群并发占位与限频判定都在 Worker 侧做）。 */
 export interface AiTriggerMessage {
   type: "trigger";
   chatId: number;
@@ -147,9 +147,9 @@ export interface AiFlushMemoryMessage {
   flushId: number;
 }
 
-/** 主线程 -> Worker：清空某群串行闸的等候队列。/ai_chat disable 时投递：
+/** 主线程 -> Worker：清空某群并发闸的等候队列。/ai_chat disable 时投递：
  *  主线程停止投喂新触发只拦得住之后的，已排队的触发不清会在关闭后继续
- *  补跑发言（在途的一轮无法中断，自然跑完，可接受）。 */
+ *  补跑发言（在途的几轮无法中断，自然跑完，可接受）。 */
 export interface AiClearReplyQueueMessage {
   type: "clearReplyQueue";
   chatId: number;

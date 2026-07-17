@@ -43,7 +43,7 @@ export interface ChatActionHeartbeatControl extends ChatActionControl {
   stop(): Promise<void>;
 }
 
-/** 同群串行闸在途期间排队等待补跑的直接触发（回复/@ 机器人，见
+/** 同群并发位占满期间排队等待补跑的直接触发（回复/@ 机器人，见
  *  workers/aiChatWorker.ts 的 generateAndSendReply）。随机插话与媒体评价
  *  不入队——没人在等那条回复，错过时机再补反而突兀——所以队列里恒为
  *  直接触发，不需要 isRandomTrigger/mediaComment 字段。 */

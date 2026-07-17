@@ -46,18 +46,20 @@ export const compactionChains: Map<number, Promise<void>> = new Map();
 /** 各群压缩任务的执行中 + 排队中数量；完成后归零并删除。 */
 export const compactionPendingCounts: Map<number, number> = new Map();
 
-/** 正在生成回复的群。同一群只允许一轮在途，防止旧请求晚到后倒序发言。 */
-export const activeReplyChats: Set<number> = new Set();
+/** 各群在途回复轮数（无在途即无键）。同群最多 REPLY_ROUND_MAX_CONCURRENT
+ *  轮工具对话并发；并发轮之间发言可能互相穿插乱序，是不让真人干等换来的
+ *  有意权衡（见 consts/aiChat.ts 该常量注释）。 */
+export const activeReplyCounts: Map<number, number> = new Map();
 
-/** 各群排队等待补跑的直接触发（回复/@，队首最旧）。串行闸在途期间这类
- *  交互不丢弃，攒在这里等当前轮结束后先来后到逐个补跑（见
+/** 各群排队等待补跑的直接触发（回复/@，队首最旧）。并发闸打满期间这类
+ *  交互不丢弃，攒在这里等某轮结束腾出空位后先来后到逐个补跑（见
  *  workers/aiChatWorker.ts 的 drainReplyQueue）；上限
  *  REPLY_TRIGGER_QUEUE_MAX，打满才丢。队列随 Worker 重启清空。 */
 export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> = new Map();
 
-/** 等候队列打满、欠着一句「你们太快了」提示的群。溢出只会发生在一轮
- *  在途期间，提示压到该轮结束、下一轮启动之前再发（见 drainReplyQueue），
- *  不打断机器人自己正在连发的短句。 */
+/** 等候队列打满、欠着一句「你们太快了」提示的群。溢出只会发生在并发位
+ *  占满期间，提示压到某轮结束腾出空位时再发（见 drainReplyQueue），至少
+ *  不打断刚收尾那轮自己连发的短句。 */
 export const pendingOverflowNotices: Set<number> = new Set();
 
 /** chatId -> 该群当前共享的聊天状态心跳（重发定时器 + 当前挡位 + 全部尚未
