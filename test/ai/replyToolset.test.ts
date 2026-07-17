@@ -13,7 +13,7 @@ mock.module("../../src/infra/diskIO", () => ({
   relayLogMessage: mock((..._args: unknown[]): void => {}),
 }));
 
-const { cleanReply, isEmojiOnly } = await import("../../src/ai/tools/replyToolset");
+const { cleanReply, findSingleCharacterSubstitution, isEmojiOnly } = await import("../../src/ai/tools/replyToolset");
 
 describe("isEmojiOnly", () => {
   test("纯 emoji（含多枚、空白、肤色/ZWJ 组合）判为 true", () => {
@@ -67,5 +67,20 @@ describe("cleanReply", () => {
   test("剥掉包裹的代码块围栏与成对引号", () => {
     expect(cleanReply("```\n就这么点内容\n```")).toBe("就这么点内容");
     expect(cleanReply(`"带引号的话"`)).toBe("带引号的话");
+  });
+});
+
+describe("findSingleCharacterSubstitution", () => {
+  test("只接受同长度的一处替换，并返回正确字", () => {
+    expect(findSingleCharacterSubstitution("笨蛋", "笨旦")).toEqual({ expected: "蛋", typo: "旦" });
+    expect(findSingleCharacterSubstitution("看一下", "砍一下")).toEqual({ expected: "看", typo: "砍" });
+  });
+
+  test("拒绝多打、少打、重复字或多处改动", () => {
+    expect(findSingleCharacterSubstitution("笨蛋", "笨蛋笨")).toBeNull();
+    expect(findSingleCharacterSubstitution("笨蛋", "笨")).toBeNull();
+    expect(findSingleCharacterSubstitution("笨蛋", "笨蛋蛋")).toBeNull();
+    expect(findSingleCharacterSubstitution("笨蛋", "本旦")).toBeNull();
+    expect(findSingleCharacterSubstitution("笨蛋", "笨蛋")).toBeNull();
   });
 });

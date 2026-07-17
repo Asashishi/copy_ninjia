@@ -34,6 +34,11 @@ import type { ReplyToolContext, ReplyToolset, StickerPackCandidate, StickerRound
 
 type TypoCorrectionMode = "quick" | "recall" | "ignore";
 
+export interface SingleCharacterSubstitution {
+  readonly expected: string;
+  readonly typo: string;
+}
+
 /**
  * 一轮 AI 回复的「行动工具集」：发言（send_message）、撤回自己本轮刚发的
  * 文字消息（delete_own_message）、消息反应（add_reaction）、两层应景贴纸
@@ -106,6 +111,25 @@ function pickTypoCorrectionMode(): TypoCorrectionMode {
   return "ignore";
 }
 
+export function findSingleCharacterSubstitution(original: string, candidate: string): SingleCharacterSubstitution | null {
+  const originalChars: string[] = Array.from(original);
+  const candidateChars: string[] = Array.from(candidate);
+  if (originalChars.length !== candidateChars.length) return null;
+
+  let diffIndex: number | null = null;
+  for (let i = 0; i < originalChars.length; i++) {
+    if (originalChars[i] === candidateChars[i]) continue;
+    if (diffIndex !== null) return null;
+    diffIndex = i;
+  }
+  if (diffIndex === null) return null;
+
+  const expected: string = originalChars[diffIndex]!;
+  const typo: string = candidateChars[diffIndex]!;
+  if (!expected.trim() || !typo.trim()) return null;
+  return { expected, typo };
+}
+
 function buildSendMessageToolDefinition(): ToolDefinition {
   return {
     name: SEND_MESSAGE_TOOL,
@@ -115,8 +139,8 @@ function buildSendMessageToolDefinition(): ToolDefinition {
       properties: {
         text: { type: "string", description: "要发到群里的消息文本。" },
         reply_to_trigger: { type: "boolean", description: "是否以「回复」形式挂在触发你这次回复的那条消息上；省略视为 false。" },
-        typo_text: { type: "string", description: "可选：同一句话的手滑版本，最多只带一个错别字/错词。是否真的发送这个版本由执行侧按概率决定；省略则不会自动制造错字。" },
-        typo_correction_text: { type: "string", description: "可选：typo_text 里错掉的那个字或词的正确写法，用于执行侧掷中快速补发时发送。只写正确字/词，不要写完整句子。" },
+        typo_text: { type: "string", description: "可选：同一句话的手滑版本，只能把 text 里的一个已有字替换成另一个字；长度必须和 text 完全一致，不能多打、少打、重复字或改动两处。是否真的发送这个版本由执行侧按概率决定；省略则不会自动制造错字。" },
+        typo_correction_text: { type: "string", description: "可选：typo_text 里唯一错掉的那个字的正确写法，用于执行侧掷中快速补发时发送。只写这一个正确字，不要写完整句子；执行侧也会从 text 自动校验/推导。" },
       },
       required: ["text"],
     },
@@ -250,10 +274,12 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     const typoText: string | null = rawTypoText ? cleanReply(rawTypoText) : null;
     const rawTypoCorrectionText: string | null = parseStringField(argumentsJson, "typo_correction_text");
     const typoCorrectionText: string | null = rawTypoCorrectionText ? cleanReply(rawTypoCorrectionText) : null;
+    const typoDiff: SingleCharacterSubstitution | null = typoText ? findSingleCharacterSubstitution(text, typoText) : null;
+    const effectiveTypoCorrectionText: string | null = typoDiff ? (typoCorrectionText === typoDiff.expected ? typoCorrectionText : typoDiff.expected) : null;
     const remainingActions: number = MAX_ACTIONS_PER_REPLY - actionsUsed;
     const shouldUseTypo: boolean =
       !!typoText &&
-      typoText !== text &&
+      typoDiff !== null &&
       !isEmojiOnly(typoText) &&
       remainingActions >= 3 &&
       Math.random() < AI_TEXT_TYPO_PROBABILITY;
@@ -288,9 +314,9 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     let visibleMessageId: number = sentMessageId;
     recordSentMessage(textToSend, sentMessageId);
 
-    if (shouldUseTypo && typoMode === "quick" && typoCorrectionText && !isEmojiOnly(typoCorrectionText)) {
+    if (shouldUseTypo && typoMode === "quick" && effectiveTypoCorrectionText && !isEmojiOnly(effectiveTypoCorrectionText)) {
       await sleep(randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS));
-      const correctionMessageId: number | undefined = await sendDirectMessage(typoCorrectionText);
+      const correctionMessageId: number | undefined = await sendDirectMessage(effectiveTypoCorrectionText);
       if (correctionMessageId !== undefined) {
         actionsUsedByTool++;
         return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, typo: { mode: "quick", correction_message_id: correctionMessageId } });
