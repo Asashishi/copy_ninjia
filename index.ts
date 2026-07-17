@@ -90,19 +90,7 @@ async function main(): Promise<void> {
     return ctx.chat ? [String(ctx.chat.id)] : [];
   }));
 
-  // 私聊里不触发任何命令（/copy 系、/stop_copy /kick /quiet 等全部）：这些
-  // 指令都是围绕群聊状态设计的（复读目标、群内踢人、群内静默），私聊语境下
-  // 没有意义，也免得被人在 DM 里瞎捣鼓。放在命令处理器注册之前，直接吞掉
-  // 这类更新，不再往下传给任何处理器。两处例外（判断逻辑抽到
-  // infra/updateGate.ts 的 shouldPassPrivateCommandGate，纯是为了能被单测
-  // 覆盖，行为不变）：
-  // 1. /send 本身（含 /send@BotUsername 变体）——它是刻意设计成只能私聊触发
-  //    的隐藏指令（不进下面的 setMyCommands 菜单），单独放行，权限/参数校验
-  //    交给 handleSendCommand 自己把关；
-  // 2. 超管本人且当前有 /send 中转会话（ChatState.isUseProxySend）时，放行
-  //    全部消息（含 / 开头的）——中转承诺"超管私聊里发的每条消息都会被转发"
-  //    （见 commands/send.ts 头注），不能因为文本恰好以 / 开头就被这里拦下，
-  //    永远到不了 src/auto/message.ts 的 handleIncomingMessage 里的转发分支。
+  // 私聊命令默认拦截，只放行 /send 入口和活动中转会话；规则集中在 updateGate。
   bot.use((ctx, next) => (shouldPassPrivateCommandGate(ctx) ? next() : undefined));
 
   // 入群守卫的消息投递必须挂在命令处理器之前：命令处理器匹配到命令后不再

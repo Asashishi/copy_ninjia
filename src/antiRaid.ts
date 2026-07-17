@@ -28,10 +28,6 @@ import type { AdoptableLockdown, AdoptLockdownsMessage, AntiRaidMember, AntiRaid
  * 未到期的私密模式则已持久化在 state.json 里，下次启动重放接管。
  */
 
-/**
- * 把一条已由 loadState 校验过的私密模式记录换算成可 adopt 的形态：
- * 真实剩余时长 = expiresAt - 此刻，夹到不为负。
- */
 function toAdoptableLockdown(chatId: number, record: LockdownRecord, now: number): AdoptableLockdown {
   return { chatId, originalPermissions: record.originalPermissions, remainingMs: Math.max(0, record.expiresAt - now) };
 }
@@ -57,15 +53,10 @@ const { post } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
   url: new URL("./workers/antiRaidWorker.ts", import.meta.url).href,
   label: "Anti-raid guard Worker",
   giveUpConsequence: "join verification and anti-raid features will silently stay disabled until the process restarts.",
-  // Worker 回报的 lockdown/unlock 事件：写入对应群的 ChatState.lockdown
-  // 并持久化（storage.ts 持有状态，落盘时全量写 state.json）。
   onEvent: (event) => {
     switch (event.type) {
       case "lockdown":
-        // 权限真正落地的时刻就是现在（Worker 里 setChatPermissions 成功后
-        // 立即 postMessage，postMessage 本身近乎瞬时）：expiresAt 记下来，
-        // 供下次进程/Worker 重启时算出真实剩余时长重排计时，见
-        // collectActiveLockdowns。
+        // 首次落地和锁定续期都走同一事件，统一刷新绝对截止时间。
         getOrCreateChatState(event.chatId).lockdown = {
           originalPermissions: event.originalPermissions,
           expiresAt: Date.now() + LOCKDOWN_MS,

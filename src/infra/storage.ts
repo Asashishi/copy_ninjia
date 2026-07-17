@@ -17,26 +17,71 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-/**
- * token 不得出现在文件名/日志里；用完整 SHA-256 指纹把锁按 bot 身份分域。
- * Telegram bot token 自身有高熵 secret，摘要无法用于恢复 token；完整 256 bit
- * 也避免人为截短后引入不必要的碰撞概率。
- */
-export function getSingleInstanceLockPath(botToken: string, baseLockPath: string = LOCK_FILE_PATH): string {
+export function getBotTokenFingerprint(botToken: string): string {
   if (botToken.length === 0) throw new Error("Cannot derive a bot instance lock from an empty token");
-  const tokenFingerprint: string = createHash("sha256").update(botToken, "utf8").digest("hex");
-  return `${baseLockPath}.${tokenFingerprint}`;
+  return createHash("sha256").update(botToken, "utf8").digest("hex");
 }
 
 /**
- * 确保同一个 token 同一时间只有一个机器人实例在轮询。相同 token 跑两个实例
- * 会各自处理（并回复）同一批 Telegram 更新；不同 token 使用不同摘要后缀，
- * 不会仅因为共用程序目录就在这道锁上互相阻塞。
+ * 锁注册表不变量：bot.lock 的每行是 pid:sha256(token)，所有读改写都在短期
+ * guard 下完成；正式文件用 tmp + fsync + rename 发布。格式异常直接拒绝，
+ * 不做旧格式推断或迁移。README 记录部署和手工处理规则。
  */
-export async function acquireSingleInstanceLock(botToken: string, baseLockPath: string = LOCK_FILE_PATH): Promise<void> {
-  const lockFilePath: string = getSingleInstanceLockPath(botToken, baseLockPath);
-  // 候选文件先完整写好，再通过 hard-link 原子发布为正式锁；正式路径永远不
-  // 会短暂暴露一个尚未写入 PID 的空文件。
+interface BotLockRecord {
+  pid: number;
+  tokenFingerprint: string;
+}
+
+const BOT_LOCK_LINE_PATTERN = /^([1-9]\d*):([0-9a-f]{64})$/;
+
+async function readBotLockRecords(lockFilePath: string): Promise<BotLockRecord[]> {
+  let content: string;
+  try {
+    content = await Bun.file(lockFilePath).text();
+  } catch (error: unknown) {
+    if (isErrno(error, "ENOENT")) return [];
+    throw error;
+  }
+  if (content === "") return [];
+  if (!content.endsWith("\n")) throw new Error(`${lockFilePath} has an invalid lock registry format; repair it manually.`);
+
+  const records: BotLockRecord[] = [];
+  const fingerprints = new Set<string>();
+  for (const line of content.slice(0, -1).split("\n")) {
+    const match = BOT_LOCK_LINE_PATTERN.exec(line);
+    if (!match) throw new Error(`${lockFilePath} has an invalid lock registry format; repair it manually.`);
+    const pid: number = Number(match[1]);
+    const tokenFingerprint: string = match[2]!;
+    if (!Number.isSafeInteger(pid) || fingerprints.has(tokenFingerprint)) {
+      throw new Error(`${lockFilePath} has duplicate or invalid lock records; repair it manually.`);
+    }
+    fingerprints.add(tokenFingerprint);
+    records.push({ pid, tokenFingerprint });
+  }
+  return records;
+}
+
+async function writeBotLockRecords(lockFilePath: string, records: BotLockRecord[]): Promise<void> {
+  if (records.length === 0) {
+    try {
+      await unlink(lockFilePath);
+    } catch (error: unknown) {
+      if (!isErrno(error, "ENOENT")) throw error;
+    }
+    return;
+  }
+  const tmpPath: string = `${lockFilePath}.tmp`;
+  const handle = await open(tmpPath, "w");
+  try {
+    await handle.writeFile(records.map((record) => `${record.pid}:${record.tokenFingerprint}\n`).join(""));
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(tmpPath, lockFilePath);
+}
+
+async function acquirePidFileLock(lockFilePath: string): Promise<void> {
   const candidatePath: string = `${lockFilePath}.candidate.${process.pid}.${crypto.randomUUID()}`;
   const handle = await open(candidatePath, "wx");
   try {
@@ -65,10 +110,7 @@ export async function acquireSingleInstanceLock(botToken: string, baseLockPath: 
         throw error;
       }
       if (!Number.isNaN(existingPid) && isProcessAlive(existingPid)) {
-        throw new Error(
-          `Another bot instance (pid=${existingPid}) is already running; refusing to start a second one — ` +
-          `two instances polling with the same token would answer the same updates twice.`
-        );
+        throw new Error(`Another process (pid=${existingPid}) is updating the bot lock registry; retry startup shortly.`);
       }
 
       // stale 锁回收本身也必须互斥。否则两个启动者都读到旧 PID 后，较慢者可能
@@ -94,7 +136,7 @@ export async function acquireSingleInstanceLock(botToken: string, baseLockPath: 
           throw error;
         }
         if (Number.isSafeInteger(recoveryPid) && recoveryPid > 0 && isProcessAlive(recoveryPid)) {
-          throw new Error(`Another process (pid=${recoveryPid}) is recovering a stale bot.lock; retry startup shortly.`);
+          throw new Error(`Another process (pid=${recoveryPid}) is recovering the bot lock guard; retry startup shortly.`);
         }
         try {
           await unlink(recoveryPath);
@@ -113,7 +155,7 @@ export async function acquireSingleInstanceLock(botToken: string, baseLockPath: 
           throw error;
         }
         if (!Number.isNaN(currentPid) && isProcessAlive(currentPid)) {
-          throw new Error(`Another bot instance (pid=${currentPid}) acquired the lock during recovery.`);
+          throw new Error(`Another process (pid=${currentPid}) acquired the bot lock guard during recovery.`);
         }
         await unlink(lockFilePath);
       } finally {
@@ -125,14 +167,50 @@ export async function acquireSingleInstanceLock(botToken: string, baseLockPath: 
   }
 }
 
-/** 正常停机时只释放属于当前 PID 的锁；硬崩留下的锁由下次启动回收。 */
-export async function releaseSingleInstanceLock(botToken: string, baseLockPath: string = LOCK_FILE_PATH): Promise<void> {
-  const lockFilePath: string = getSingleInstanceLockPath(botToken, baseLockPath);
+async function releasePidFileLock(lockFilePath: string): Promise<void> {
   try {
     const ownerPid: number = parseInt((await Bun.file(lockFilePath).text()).trim(), 10);
     if (ownerPid === process.pid) await unlink(lockFilePath);
   } catch (error: unknown) {
-    if (!isErrno(error, "ENOENT")) logger.error("Failed to release bot instance lock:", error);
+    if (!isErrno(error, "ENOENT")) throw error;
+  }
+}
+
+async function withBotLockGuard<T>(lockFilePath: string, action: () => Promise<T>): Promise<T> {
+  const guardPath: string = `${lockFilePath}.guard`;
+  await acquirePidFileLock(guardPath);
+  try {
+    return await action();
+  } finally {
+    await releasePidFileLock(guardPath);
+  }
+}
+
+export async function acquireSingleInstanceLock(botToken: string, lockFilePath: string = LOCK_FILE_PATH): Promise<void> {
+  const tokenFingerprint: string = getBotTokenFingerprint(botToken);
+  await withBotLockGuard(lockFilePath, async (): Promise<void> => {
+    const activeRecords: BotLockRecord[] = (await readBotLockRecords(lockFilePath))
+      .filter((record) => isProcessAlive(record.pid));
+    const owner: BotLockRecord | undefined = activeRecords.find((record) => record.tokenFingerprint === tokenFingerprint);
+    if (owner) {
+      throw new Error(`Another bot instance (pid=${owner.pid}) is already polling with the same token; refusing to start a duplicate.`);
+    }
+    activeRecords.push({ pid: process.pid, tokenFingerprint });
+    await writeBotLockRecords(lockFilePath, activeRecords);
+  });
+}
+
+export async function releaseSingleInstanceLock(botToken: string, lockFilePath: string = LOCK_FILE_PATH): Promise<void> {
+  const tokenFingerprint: string = getBotTokenFingerprint(botToken);
+  try {
+    await withBotLockGuard(lockFilePath, async (): Promise<void> => {
+      const remaining: BotLockRecord[] = (await readBotLockRecords(lockFilePath)).filter((record) =>
+        isProcessAlive(record.pid) && !(record.pid === process.pid && record.tokenFingerprint === tokenFingerprint)
+      );
+      await writeBotLockRecords(lockFilePath, remaining);
+    });
+  } catch (error: unknown) {
+    logger.error("Failed to release bot instance lock:", error);
   }
 }
 
@@ -167,15 +245,7 @@ export function getAllChatStates(): ReadonlyMap<number, ChatState> {
   return chatStates;
 }
 
-/**
- * 当前处于 /send 中转目标的群 chatId；没有会话生效则 undefined。
- * ChatState.isUseProxySend 挂在目标群自己的状态上（键本身就是目标群
- * chatId，不必再另存一份），同一时刻全局只允许一个群处于该状态
- * （commands/send.ts 的 handleSendCommand 保证，同 GlobalCopyState「全局
- * 只有一个复读目标」的单例约束），扫一遍已知群即可定位——群数量很小
- * （README：单实例建议控制在约 15 个活跃群以内），没必要为这维护一份
- * 反向索引。
- */
+/** 定位唯一的 /send 目标；群数量很小，直接扫描而不维护易失配的反向索引。 */
 export function getActiveProxySendTarget(): number | undefined {
   for (const [chatId, chatState] of chatStates) {
     if (chatState.isUseProxySend === true) return chatId;

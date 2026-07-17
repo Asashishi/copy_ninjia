@@ -1,14 +1,9 @@
 import type { ChatPermissions } from "@grammyjs/types";
 
-/**
- * 反刷群私密模式生效中时持久化的记录：不仅要有恢复用的原始权限，还要有
- * 到期该恢复的绝对时间戳——否则进程/Worker 重启后无法知道"崩溃前已经锁了
- * 多久"，只能无条件重新计满一整轮，可能把一次快到期的锁定意外延长到接近
- * 两倍时长。见 src/antiRaid.ts 的 collectActiveLockdowns/onEvent。
- */
+/** 反刷群锁定的持久化恢复记录。 */
 export interface LockdownRecord {
   originalPermissions: ChatPermissions;
-  /** 私密模式到期应恢复原始权限的绝对时间戳（ms）。 */
+  /** 应恢复原始权限的绝对时间戳（ms）；续期必须同步刷新。 */
   expiresAt: number;
 }
 
@@ -41,10 +36,7 @@ export interface ChatState {
    * 插话、随机复读等）；被动触发（回复/@机器人）和指令不受影响。
    */
   quietUntil?: number;
-  /**
-   * 反刷群私密模式生效中时的记录（进程重启后据此重放给守卫 Worker、按真实
-   * 剩余时长重排解锁计时，见 src/antiRaid.ts）；不在私密模式时无此字段。
-   */
+  /** 当前生效的反刷群锁定；未锁定时无此字段。 */
   lockdown?: LockdownRecord;
   /**
    * 本群是否启用 AI 闲聊功能（对话缓存、随机插话、回复/@ 机器人触发的回复）。
@@ -84,16 +76,8 @@ export interface ChatState {
    */
   title?: string;
   /**
-   * 本群是否是当前 /send 中转会话的目标：true 表示超管私聊（固定是
-   * SUPER_ADMIN_USER_ID 的 DM）里往后发的每条消息都会被同步转发进本群，
-   * 直到 /send finish 关闭。挂在目标群自己的 ChatState 上而不是发起会话的
-   * 私聊上——键本身就是目标群 chatId，不需要再另存一份 id，也就没有「两个
-   * 字段该一起变却不一致」这类问题；同一时刻全局只允许一个群处于该状态
-   * （见 infra/storage.ts 的 getActiveProxySendTarget）。随 state.json
-   * 持久化而非只存内存，是刻意的——这是超管手动开启、可能会开着挂一段时间
-   * 的操作，机器人中途重启（部署/崩溃重启）不该悄悄把这轮中转弄丢：那样
-   * 超管会继续对着私聊发消息、以为还在转发，实际早已石沉大海。见
-   * commands/send.ts 的 handleSendCommand、auto/message.ts 对本字段的消费。
+   * 本群是否为唯一的 /send 中转目标。状态挂在目标群并持久化，避免另存目标
+   * ID 形成双份事实；命令入口负责全局唯一约束。
    */
   isUseProxySend?: boolean;
 }

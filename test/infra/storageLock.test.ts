@@ -3,60 +3,78 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// storage.ts 的 logger 会连接磁盘 Worker；这里测试的只有锁文件协议，日志门面
-// 用空实现隔离，避免单测额外启动后台线程。
 mock.module("../../src/infra/logger", () => ({
   logger: { error: mock((..._args: unknown[]): void => {}) },
 }));
 
-const { acquireSingleInstanceLock, getSingleInstanceLockPath, releaseSingleInstanceLock } = await import("../../src/infra/storage");
-const TOKEN = "123456789:test-secret-a";
+const { acquireSingleInstanceLock, getBotTokenFingerprint, releaseSingleInstanceLock } = await import("../../src/infra/storage");
+const TOKEN_A = "123456789:test-secret-a";
+const TOKEN_B = "987654321:test-secret-b";
 let testDir: string;
-let baseLockPath: string;
+let lockFilePath: string;
 
 beforeEach(() => {
   testDir = mkdtempSync(join(tmpdir(), "storage-lock-test-"));
-  baseLockPath = join(testDir, "bot.lock");
+  lockFilePath = join(testDir, "bot.lock");
 });
 
 afterEach(async () => {
-  await releaseSingleInstanceLock(TOKEN, baseLockPath);
+  await releaseSingleInstanceLock(TOKEN_A, lockFilePath);
+  await releaseSingleInstanceLock(TOKEN_B, lockFilePath);
   rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("single instance lock recovery", () => {
-  test("SHA-256 指纹按 token 分域且不在路径中泄露 token", () => {
-    const firstPath = getSingleInstanceLockPath(TOKEN, baseLockPath);
-    const samePath = getSingleInstanceLockPath(TOKEN, baseLockPath);
-    const otherPath = getSingleInstanceLockPath("987654321:test-secret-b", baseLockPath);
+describe("single instance lock registry", () => {
+  test("bot.lock 每行严格写 pid:sha256(token)，不落盘明文 token", async () => {
+    await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
 
-    expect(firstPath).toBe(samePath);
-    expect(firstPath).not.toBe(otherPath);
-    expect(firstPath).not.toContain(TOKEN);
-    expect(firstPath).toMatch(/^.*bot\.lock\.[0-9a-f]{64}$/);
+    expect(readFileSync(lockFilePath, "utf8")).toBe(`${process.pid}:${getBotTokenFingerprint(TOKEN_A)}\n`);
+    expect(readFileSync(lockFilePath, "utf8")).not.toContain(TOKEN_A);
+    expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
   });
 
-  test("不同 token 可在同一目录分别持有自己的锁", async () => {
-    const otherToken = "987654321:test-secret-b";
-    await acquireSingleInstanceLock(TOKEN, baseLockPath);
-    await acquireSingleInstanceLock(otherToken, baseLockPath);
+  test("不同 token 在同一个 bot.lock 各占一行，释放时只删除自己的记录", async () => {
+    await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
+    await acquireSingleInstanceLock(TOKEN_B, lockFilePath);
 
-    expect(existsSync(getSingleInstanceLockPath(TOKEN, baseLockPath))).toBe(true);
-    expect(existsSync(getSingleInstanceLockPath(otherToken, baseLockPath))).toBe(true);
+    expect(readFileSync(lockFilePath, "utf8")).toBe(
+      `${process.pid}:${getBotTokenFingerprint(TOKEN_A)}\n` +
+      `${process.pid}:${getBotTokenFingerprint(TOKEN_B)}\n`
+    );
 
-    await releaseSingleInstanceLock(otherToken, baseLockPath);
+    await releaseSingleInstanceLock(TOKEN_B, lockFilePath);
+    expect(readFileSync(lockFilePath, "utf8")).toBe(`${process.pid}:${getBotTokenFingerprint(TOKEN_A)}\n`);
   });
 
-  test("回收进程崩溃留下的 stale bot.lock.recovery 后仍能自动启动", async () => {
-    const lockPath = getSingleInstanceLockPath(TOKEN, baseLockPath);
-    // 极大的合法正 PID 在测试环境中应不存在，用它模拟两份启动期崩溃残留。
+  test("相同 token 已有活 owner 时拒绝重复启动", async () => {
+    await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
+    await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath)).rejects.toThrow("same token");
+  });
+
+  test("下一次操作清理崩溃进程留下的死 PID 行", async () => {
     const stalePid = 2_147_483_647;
-    writeFileSync(lockPath, String(stalePid));
-    writeFileSync(`${lockPath}.recovery`, String(stalePid));
+    writeFileSync(lockFilePath, `${stalePid}:${getBotTokenFingerprint(TOKEN_A)}\n`);
 
-    await acquireSingleInstanceLock(TOKEN, baseLockPath);
+    await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
 
-    expect(readFileSync(lockPath, "utf8")).toBe(String(process.pid));
-    expect(existsSync(`${lockPath}.recovery`)).toBe(false);
+    expect(readFileSync(lockFilePath, "utf8")).toBe(`${process.pid}:${getBotTokenFingerprint(TOKEN_A)}\n`);
+  });
+
+  test("guard 回收中再次崩溃留下的 recovery 不会永久阻止启动", async () => {
+    const stalePid = 2_147_483_647;
+    writeFileSync(`${lockFilePath}.guard`, String(stalePid));
+    writeFileSync(`${lockFilePath}.guard.recovery`, String(stalePid));
+
+    await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
+
+    expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
+    expect(existsSync(`${lockFilePath}.guard.recovery`)).toBe(false);
+  });
+
+  test("旧格式或损坏内容直接拒绝，不做自动兼容/迁移", async () => {
+    writeFileSync(lockFilePath, String(process.pid));
+
+    await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath)).rejects.toThrow("repair it manually");
+    expect(readFileSync(lockFilePath, "utf8")).toBe(String(process.pid));
   });
 });

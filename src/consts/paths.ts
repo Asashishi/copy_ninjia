@@ -7,9 +7,7 @@ import { join } from "node:path";
  */
 export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 
-// 持久化文件：各群状态 + copy 类命令的全局冷却时钟 + 反刷群私密模式镜像
-// 合并存在同一个 state.json 里（结构与为何合并见 types/chatState.ts 的
-// StateFileSchema）/ 单实例锁。
+// 持久状态与运行实例注册表；具体 schema/协议由各自的所有者模块定义。
 export const STATE_FILE_PATH: string = join(PROJECT_ROOT, "state.json");
 export const LOCK_FILE_PATH: string = join(PROJECT_ROOT, "bot.lock");
 

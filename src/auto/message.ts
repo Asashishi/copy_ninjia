@@ -322,26 +322,15 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     return;
   }
 
-  // 私聊消息不参与下面任何群聊向的自动行为（AI 闲聊/看看触发/随机复读，
-  // 机器人在私聊里没有群聊上下文，也不该在 DM 里自动搭话）；唯一的例外是
-  // /send 中转会话（ChatState.isUseProxySend，挂在目标群自己的状态上，见
-  // commands/send.ts、infra/storage.ts 的 getActiveProxySendTarget）：如果
-  // 当前有会话在跑，把消息原样转发进目标群一次。/send 命令本身走 index.ts
-  // 的 bot.command 单独处理，不会走到这里；这里处理的都是中转期间发的其余
-  // 消息。
+  // 私聊只消费超管的活动中转会话；其余私聊不进入任何群聊自动行为。
   if (message.chat.type === "private") {
-    // /send 是超管的全局会话，但机器人仍会收到其他用户的普通私聊。必须先
-    // 核对发送者，避免把外部用户的私聊泄露进目标群，也避免他们借此注入
-    // 任意内容。非超管私聊继续按普通私聊静默结束。
+    // 身份校验必须先于查找目标，防止外部私聊泄露或内容注入。
     if (message.from?.id !== SUPER_ADMIN_USER_ID) return;
     const targetChatId: number | undefined = getActiveProxySendTarget();
     if (targetChatId !== undefined) {
       const copiedMessageId: number | undefined = await copyMessage(targetChatId, chatId, message.message_id);
       if (copiedMessageId === undefined) {
-        // 转发失败（机器人被踢出目标群/丢了发言权限等，copyMessage 内部已
-        // 记过日志）：不能让中转继续悄悄吞掉后续消息、超管却还以为在正常
-        // 转发——直接关掉这轮会话并如实告知，逼超管确认目标群状态后重新
-        // /send，好过无限期静默丢消息。
+        // 失败后立即结束会话，避免后续消息被静默吞掉。
         getOrCreateChatState(targetChatId).isUseProxySend = false;
         await saveState();
         await sendMessage(chatId, `转发到 ${targetChatId} 失败了，本天才先把这轮中转停掉了，检查一下再 /send 重新开吧♡`);

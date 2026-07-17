@@ -131,12 +131,8 @@ cp .env.example .env
 
 ### 3. 配置
 
-```dotenv
-TELEGRAM_BOT_TOKEN=123456:telegram-token
-GEMINI_API_KEY=your-gemini-key
-PRIVILEGED_USERS_ID=123456789,987654321
-SUPER_ADMIN_USER_ID=123456789
-```
+按 [`.env.example`](.env.example) 填写 `.env`；所有变量均为必填项。用户 ID
+使用 Telegram 的十进制数字 ID，`PRIVILEGED_USERS_ID` 多项之间用英文逗号分隔。
 
 如需日语翻译，将 Google Cloud 服务账号密钥保存为项目根目录的 `g-auth.json`。`.env` 与 `g-auth.json` 均已加入 `.gitignore`。
 
@@ -210,12 +206,22 @@ bun run start     # 启动长轮询
 | 贴纸描述目录 | `memory/stickers/` | 每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用 |
 | 今日运势 | `memory/luck/` | 按东京日期增量追加，启动时修复尾部截断 |
 | error 日志 | `logs/` | Disk I/O Worker 统一批量追加 |
+| 运行实例 | `bot.lock` | 原子维护的多 Bot 进程注册表 |
 
 `memory/` 含群聊逐字内容，应视为敏感数据；请限制目录权限、备份范围与保留周期。`logs/`、`memory/`、`state.json`、凭据和运行锁均不会提交到 Git。
 
 持久化 schema 变更不在运行时自动迁移。部署包含结构变更的版本前，应先手工迁移 `state.json` 与对应 `memory/` 快照；`state.json` 不符合当前结构时机器人会拒绝启动，避免空状态覆盖原文件。
 
-可靠性护栏包括：官方 SDK 类型边界、外部 JSON 逐字段校验、单实例原子锁、按群 API 串行、Worker 崩溃节流自愈、过期缓存真实删除、反应队列硬顶、媒体缓存 LRU 容量上限，以及磁盘损坏文件隔离。
+`bot.lock` 是严格格式的多 Bot 注册表：不同 token 可以各占一行，相同 token
+重复启动会被拒绝，死 PID 会在下一次启动或退出时清理。更新注册表时短暂出现
+的 `.guard`、`.candidate.*` 和 `.tmp` 是并发保护文件，正常操作结束即删除。
+锁格式不正确时不会自动猜测或迁移，请停掉相关进程后手工处理。
+
+锁按 token 隔离不代表运行数据也已隔离：同一项目目录下的实例仍共享
+`state.json`、`memory/` 与 `logs/`。不同 Bot 需要并行部署时，应使用彼此独立的
+项目/数据目录。
+
+可靠性护栏包括：官方 SDK 类型边界、外部 JSON 逐字段校验、按 token 的实例注册表、按群 API 串行、Worker 崩溃节流自愈、过期缓存真实删除、反应队列硬顶、媒体缓存 LRU 容量上限，以及磁盘损坏文件隔离。
 
 ## 🧪 开发
 
