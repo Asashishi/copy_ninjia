@@ -78,7 +78,7 @@ export interface StickerCatalogSnapshot {
   entries: Record<string, StickerCatalogEntry>;
   /** AI 生成的整包简介（≤200 字，见 consts/aiChat.ts 的
    * STICKER_PACK_SUMMARY_MAX_CHARS），供两层贴纸工具的第一层挑包；还没生成
-   * 出来（含旧格式文件恢复）为 null，下次对账时会补生成。 */
+   * 出来为 null，下次对账时会补生成。 */
   summary: string | null;
   savedAt: number;
 }

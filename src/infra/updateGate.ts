@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import { getActiveProxySendTarget, getChatState } from "./storage";
+import { SUPER_ADMIN_USER_ID } from "./config";
 
 /**
  * isInit 网关的判断逻辑，从 index.ts 的 bot.use 内联箭头函数里抽出来，纯
@@ -32,13 +33,14 @@ export function isSendCommandText(text: string): boolean {
  * 是为了能被单测覆盖——行为与原来完全一致，见 index.ts 调用处的完整注释
  * （私聊里的 / 开头文本一律拦下，两处例外：/send 指令本身；有 /send 中转
  * 会话在跑时放行全部消息，好让 handleIncomingMessage 的转发分支收得到）。
- * 会话是否在跑走全局的 getActiveProxySendTarget（不针对某个 chatId 查）——
- * 唯一能让这里判到 private 的账号本就只有发起过会话的超管本人，两者等价。
+ * 会话是否在跑走全局的 getActiveProxySendTarget（不针对某个 chatId 查），
+ * 同时必须核对私聊发送者就是超管。机器人可能收到任意用户的私聊更新，不能
+ * 因为超管开启了一轮全局会话就把其他用户的命令也放进后续处理器。
  */
 export function shouldPassPrivateCommandGate(ctx: Context): boolean {
   const text: string | undefined = ctx.message?.text;
   if (ctx.chat?.type !== "private" || !text?.startsWith("/") || isSendCommandText(text)) {
     return true;
   }
-  return getActiveProxySendTarget() !== undefined;
+  return ctx.from?.id === SUPER_ADMIN_USER_ID && getActiveProxySendTarget() !== undefined;
 }

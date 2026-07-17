@@ -63,6 +63,7 @@ import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, reque
 import { sendChooseStickerAction, sendMessage, sendTypingAction } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../ai/tools";
 import { SEND_MESSAGE_TOOL } from "../consts/tools";
+import { settleInflight, trackInflight } from "../libs/inflight";
 import type {
   AiBotInfo,
   AiChatWorkerMessage,
@@ -252,7 +253,8 @@ function recordChatMedia(msg: AiRecordMediaMessage): void {
   };
   pushBufferedMessage(msg.chatId, entry);
   // describeMedia 内部兜住一切异常只返回 null，这条异步链不会 reject；
-  // 同一份媒体重发/刷屏由它按 file_unique_id 去重，不重复下载解析。
+  // 同一份媒体按 file_unique_id 去重，不同媒体则经过全局有界执行器，避免
+  // 洪峰同时启动无界的下载、转码和视觉请求。
   void describeMedia(msg.kind, msg.fileId, msg.fileUniqueId).then((description: string | null) => {
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
@@ -449,12 +451,10 @@ function displayName(m: BufferedMessage): string {
   return [m.firstName, m.lastName].filter((p: string) => !!p).join(" ").trim() || FALLBACK_SPEAKER_NAME;
 }
 
-/** 把一条缓存消息格式化成喂给模型的一行：先是发送时间（记录时已格式化好
- *  的字符串，直接拼；at 为空串的旧条目时间未知，省略前缀），再标出 id
- *  避免重名混淆身份。 */
+/** 把一条缓存消息格式化成喂给模型的一行：先拼记录时已格式化好的发送时间，
+ * 再标出 id 避免重名混淆身份。 */
 function formatLine(m: BufferedMessage): string {
-  const timePrefix: string = m.at ? `[${m.at}] ` : "";
-  return `${timePrefix}[id:${m.id}] ${displayName(m)}：${m.text}`;
+  return `[${m.at}] [id:${m.id}] ${displayName(m)}：${m.text}`;
 }
 
 /** 评价触发的附加上下文：发送人显示名 + 解析出的描述 + 媒体类型，见
@@ -564,7 +564,7 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
 
   return (
     summaryBlock +
-    "以下是本群最近的聊天记录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间 UTC+9，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
+    "以下是本群最近的聊天记录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间 UTC+9），同名的人可能是不同的人，请以 id 区分身份，最后一条是最新消息，请正确识别情况（不要编造，不要张冠李戴），并作出符合人设的回应。" +
     selfIdentity +
     "\n\n" +
     lines.join("\n") +
@@ -685,6 +685,11 @@ async function callGemini(userContent: string, toolset: ReplyToolset): Promise<s
  * @returns 挡位切换句柄 + 停止函数：stop 后本次占用的引用计数减一，归零时
  *   才真正清定时器；停止后再调 set 是无害的空操作。
  */
+/** 记录一发状态请求直至它真正 settle；按 promise 本体删除，互不覆盖。 */
+function trackChatActionRequest(entry: { inflight: Set<Promise<unknown>> }, request: Promise<unknown>): void {
+  void trackInflight(entry.inflight, request);
+}
+
 function startChatActionHeartbeat(chatId: number): ChatActionControl & { stop(): void } {
   let entry = typingHeartbeats.get(chatId);
   if (!entry) {
@@ -697,10 +702,10 @@ function startChatActionHeartbeat(chatId: number): ChatActionControl & { stop():
       // 每次状态请求都记录在途 promise：发消息/贴纸前靠 settle() 等它落定，
       // 保证迟到的状态请求不会盖在刚发出的消息后面（见 ChatActionControl.settle）。
       if (live.action === "choose_sticker") {
-        live.inflight = sendChooseStickerAction(chatId);
+        trackChatActionRequest(live, sendChooseStickerAction(chatId));
         return;
       }
-      live.inflight = sendTypingAction(chatId).then((ok: boolean) => {
+      trackChatActionRequest(live, sendTypingAction(chatId).then((ok: boolean) => {
         if (ok) return;
         // 按 timer 身份核对而非只按 chatId 查表：这次失败可能来自已经停止的
         // 上一代心跳（该 tick 发出时它还活着，回包却晚到了），此时表里
@@ -710,11 +715,11 @@ function startChatActionHeartbeat(chatId: number): ChatActionControl & { stop():
           clearInterval(current.timer);
           typingHeartbeats.delete(chatId);
         }
-      });
+      }));
     }, TYPING_ACTION_INTERVAL_MS);
-    entry = { timer, refCount: 0, action: "typing", inflight: Promise.resolve() };
+    entry = { timer, refCount: 0, action: "typing", inflight: new Set() };
     typingHeartbeats.set(chatId, entry);
-    entry.inflight = sendTypingAction(chatId);
+    trackChatActionRequest(entry, sendTypingAction(chatId));
   }
   entry.refCount++;
   // 复用已有心跳时把挡位归位到默认的 typing：上一持有者可能停在 idle/
@@ -733,15 +738,15 @@ function startChatActionHeartbeat(chatId: number): ChatActionControl & { stop():
       if (released || typingHeartbeats.get(chatId) !== acquired) return;
       acquired.action = phase;
       // 切到非 idle 挡立即补发一次，状态在切换当口就可见，不等下一个 tick。
-      if (phase === "typing") acquired.inflight = sendTypingAction(chatId);
-      else if (phase === "choose_sticker") acquired.inflight = sendChooseStickerAction(chatId);
+      if (phase === "typing") trackChatActionRequest(acquired, sendTypingAction(chatId));
+      else if (phase === "choose_sticker") trackChatActionRequest(acquired, sendChooseStickerAction(chatId));
     },
     settle: async (): Promise<void> => {
       if (released || typingHeartbeats.get(chatId) !== acquired) return;
-      // 只等最近一发：状态请求最密也就 set 的即时补发 + 相邻 tick，前一发
-      // 到这时早已落地；sendTypingAction/sendChooseStickerAction 内部兜错，
-      // 这里不会 reject。
-      await acquired.inflight;
+      // set("idle") 与本次 await 之间不会再有 tick 入队；同时等齐此前所有
+      // 请求，避免较早但更慢的一发在消息发送后才完成、重新盖回假状态。
+      // sendTypingAction/sendChooseStickerAction 内部兜错，这里不会 reject。
+      await settleInflight(acquired.inflight);
     },
     stop: (): void => {
       if (released) return;

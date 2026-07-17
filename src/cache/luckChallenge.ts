@@ -17,7 +17,7 @@ export const dailyLuckCache: Map<string, LuckDraw> = new Map();
  * 任何痕迹。key 是 cacheKey（同 dailyLuckCache）。 */
 export const pendingLuckDraws: Map<string, LuckDraw> = new Map();
 
-/** pendingLuckDraws 的反查索引：渲染出的消息原文 → cacheKey。
+/** pendingLuckDraws 的反查索引：渲染出的消息原文 → 所有候选 cacheKey。
  * 结果消息（via_bot 直发或转发副本）到达时能看到的只有最终文本，没有别的
  * 字段能带回是哪次查询产生的，只能靠"文本一模一样"认领，见
  * registerPendingRendering/confirmLuckDraw。
@@ -25,8 +25,10 @@ export const pendingLuckDraws: Map<string, LuckDraw> = new Map();
  * 匿名管理员身份把结果发出来，via_bot 消息的 from 会被 Telegram 整个换成
  * 马甲（Channel_Bot / GroupAnonymousBot），真实 uid 在消息里根本不存在，
  * 掺了 uid 这类用户的抽签就永远认领不上（曾是线上实打实的静默丢单）。
- * 文本里嵌着 userLabel 与两位小数的随机概率值，本身已足够区分不同人的签。 */
-export const pendingLuckRenderIndex: Map<string, string> = new Map();
+ * 文本通常能区分签，但两个同名用户抽到同档结果（或同一所求文本）时可能
+ * 完全相同，因此必须保留全部候选，不能让后一次预览覆盖前一次。兜底确认
+ * 只在候选唯一时生效；歧义项等待 chosen_inline_result 主路消歧。 */
+export const pendingLuckRenderIndex: Map<string, Set<string>> = new Map();
 
 /** 内联查询的全局滑动窗口频率限制：最近一分钟内各次请求的时刻戳。 */
 export const recentCallTimestamps: number[] = [];

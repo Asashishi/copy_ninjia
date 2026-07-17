@@ -75,6 +75,11 @@ function flushSnapshots(): void {
       console.error(`[diskIOWorker] failed to write sticker catalog for pack "${pack}":`, error);
     }
   }
+
+  // 单份写失败时 dirty 标记会保留；本轮定时器在进入 flushSnapshots 前已经
+  // 清空，必须主动排下一轮。否则没有新快照消息时将永远不再尝试，直到停机
+  // flush，期间硬崩会丢掉仍只在内存里的更新。
+  if (dirtyChats.size > 0 || dirtyStickerPacks.size > 0) scheduleSnapshotFlush();
 }
 
 /** 统一 flush：日志缓冲、AI 记忆快照、运势追加缓冲全部立即落盘（进程退出前

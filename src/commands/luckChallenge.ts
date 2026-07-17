@@ -120,27 +120,41 @@ function getOrDrawLuck(userId: number, text: string | undefined): LuckDraw {
   // 走到这里 cacheKey 一定是新 key（上面已经查过 dailyLuckCache/pendingLuckDraws
   // 都没有），这次 set 必然让条数 +1，需要检查上限——见 PENDING_LUCK_CACHE_MAX 注释。
   if (pendingLuckDraws.size >= PENDING_LUCK_CACHE_MAX) {
-    pendingLuckDraws.delete(pendingLuckDraws.keys().next().value!);
+    const evictedKey: string = pendingLuckDraws.keys().next().value!;
+    pendingLuckDraws.delete(evictedKey);
+    removePendingRendering(evictedKey);
   }
   pendingLuckDraws.set(cacheKey, draw);
   return draw;
 }
 
-/** 登记"这段渲染出的消息原文，对应哪一把抽签 key"，供 confirmLuckDraw 反查。
+/** 从全部渲染反查项中移除某个 cacheKey；转正或淘汰时调用。 */
+function removePendingRendering(cacheKey: string): void {
+  for (const [renderedText, cacheKeys] of pendingLuckRenderIndex) {
+    cacheKeys.delete(cacheKey);
+    if (cacheKeys.size === 0) pendingLuckRenderIndex.delete(renderedText);
+  }
+}
+
+/** 登记"这段渲染出的消息原文，对应哪些抽签 key"，供 confirmLuckDraw 反查。
  * 索引只按文本、不掺 userId——马甲/匿名身份发出的 via_bot 消息带不回真实
  * uid，理由见 cache/luckChallenge.ts 的 pendingLuckRenderIndex 注释。
- * 每次预览（哪怕命中缓存）都会重新登记一遍，重复登记同一对 key/文本是
- * 廉价的幂等覆盖，不需要额外去重。已经转正的 key 不再登记——没有必要，
+ * 每次预览（哪怕命中缓存）都会重新登记一遍，Set.add 让同一对 key/文本
+ * 幂等。已经转正的 key 不再登记——没有必要，
  * confirmLuckDraw 对已转正的 key 本来就是空操作，省一次 Map 写入。 */
 function registerPendingRendering(cacheKey: string, renderedText: string): void {
   if (dailyLuckCache.has(cacheKey)) return;
-  // 只有真正的新 key（此前没登记过这段渲染原文）才会让条数增长，才需要
-  // 检查上限——同一 cacheKey 重复预览产出相同的 renderedText，是对已有 key
-  // 的幂等覆盖，见函数头注释。
+  // 容量按不同原文数计算；同文候选收在一个有界 Set 中（候选总数还受
+  // pendingLuckDraws 的同一上限约束）。
   if (!pendingLuckRenderIndex.has(renderedText) && pendingLuckRenderIndex.size >= PENDING_LUCK_CACHE_MAX) {
     pendingLuckRenderIndex.delete(pendingLuckRenderIndex.keys().next().value!);
   }
-  pendingLuckRenderIndex.set(renderedText, cacheKey);
+  let cacheKeys = pendingLuckRenderIndex.get(renderedText);
+  if (!cacheKeys) {
+    cacheKeys = new Set();
+    pendingLuckRenderIndex.set(renderedText, cacheKeys);
+  }
+  cacheKeys.add(cacheKey);
 }
 
 /**
@@ -153,6 +167,7 @@ function registerPendingRendering(cacheKey: string, renderedText: string): void 
 function promotePendingDraw(cacheKey: string): void {
   const draw: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
   pendingLuckDraws.delete(cacheKey);
+  removePendingRendering(cacheKey);
   if (!draw || dailyLuckCache.has(cacheKey)) return;
 
   dailyLuckCache.set(cacheKey, draw);
@@ -198,8 +213,12 @@ export function confirmLuckDraw(messageText: string | undefined): void {
   if (typeof messageText !== "string") return;
   ensureCacheFreshForToday();
 
-  const cacheKey: string | undefined = pendingLuckRenderIndex.get(messageText);
-  if (!cacheKey) return;
+  const cacheKeys: Set<string> | undefined = pendingLuckRenderIndex.get(messageText);
+  // 同一原文可能来自多人的不同签，消息本身又带不回真实 uid。此时宁可等待
+  // chosen_inline_result，也不能猜一个 key 错误转正；主路确认其中一个后会
+  // 从 Set 移除它，余下候选恢复唯一时仍可由后续副本兜底确认。
+  if (!cacheKeys || cacheKeys.size !== 1) return;
+  const cacheKey: string = cacheKeys.values().next().value!;
   pendingLuckRenderIndex.delete(messageText);
   promotePendingDraw(cacheKey);
 }

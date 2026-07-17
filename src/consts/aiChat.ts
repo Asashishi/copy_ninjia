@@ -26,7 +26,7 @@ export const GEMINI_MEDIA_MODEL: string = "gemini-3.1-flash-lite";
  *  SDK 默认对瞬时失败（网络错误/5xx/429）自动重试几次，每次重试各自套用
  *  这个超时预算，不是所有重试共享一个 90 秒硬顶——这是比手写 fetch 更强
  *  的地方，瞬时的 5xx/连接错误能自愈）。 */
-export const REQUEST_TIMEOUT_MS: number = 90_000;
+export const REQUEST_TIMEOUT_MS: number = 150_000;
 
 /**
  * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。Gemini 的
@@ -105,7 +105,7 @@ export const SUMMARY_MAX_CHARS: number = 500;
  * 各改各的漂移。
  */
 export const SUMMARY_SYSTEM_PROMPT: string =
-  "你是一个中文群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间，个别旧记录没有时间前缀），同名的人可能是不同的人，请以 id 区分身份。" +
+  "你是一个群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] 名字：内容」，行首方括号里是那条消息的发送时间（东京时间），同名的人可能是不同的人，请以 id 区分身份。" +
   "请把这段记录压缩成一段简洁的摘要，只挑最要紧的信息，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
   `摘要正文不得超过 ${SUMMARY_MAX_CHARS} 字，不要展开细节、不要逐条复述。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。`;
 
@@ -129,7 +129,7 @@ export const WEB_SEARCH_INSTRUCTION: string =
 /** 一轮回复的动作总数硬顶：发消息、发贴纸、扣反应全都算在内（提示词里
  *  引导「通常 1~3 个动作」，这是极端情况也不许突破的上限），超额的调用在
  *  执行侧直接拒绝，见 ai/tools/replyToolset.ts。 */
-export const MAX_ACTIONS_PER_REPLY: number = 5;
+export const MAX_ACTIONS_PER_REPLY: number = 7;
 /** 一轮回复里 send_sticker 工具最多发几枚贴纸：要么不发、要么只发一枚，
  *  超额的调用在执行侧直接拒绝，见 ai/tools/stickers.ts 的 sendStickerTool。 */
 export const MAX_STICKERS_PER_REPLY: number = 1;
@@ -265,9 +265,9 @@ export const ANIMATION_DESCRIPTION_PROMPT: string =
 
 /** 媒体描述的输出 token 上限：描述本身很短，但推理模型的思考也计入（同
  *  REPLY_MAX_TOKENS 注释），要给足余量。图片/贴纸/GIF 共用。 */
-export const MEDIA_DESCRIPTION_MAX_TOKENS: number = 4096;
+export const MEDIA_DESCRIPTION_MAX_TOKENS: number = 8192;
 /** 从 Telegram 下载媒体文件（图片本体、贴纸本体/缩略图、GIF 缩略图）的超时。 */
-export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 20_000;
+export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
 /** 未命中 memory/stickers/ 常驻目录的媒体描述临时缓存（按 file_unique_id
  *  去重，见 ai/imageDescription.ts）条目上限，超出淘汰最久未使用的一个
  * （LRU，见 libs/lruCache.ts）。同一张梗图/非白名单贴纸/GIF 被反复刷屏时
@@ -275,6 +275,13 @@ export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 20_000;
  * 临时结果共用一个缓存（键空间不冲突：file_unique_id 本就是 Telegram
  * 全局唯一）。 */
 export const MEDIA_DESCRIPTION_CACHE_MAX: number = 1500;
+/** 媒体下载、转码、视觉 API 请求的全局并发上限。群聊媒体与白名单贴纸目录
+ * 共用同一执行器，避免刷入不同 file_unique_id 绕过去重缓存后同时持有大量
+ * 图片/Base64 副本并打爆 API。 */
+export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 25;
+/** 并发槽位占满后最多等待的媒体任务数；再多的请求立即降级为解析失败。
+ * 排队项只持有 file id 等小字段，真正的下载和转码要拿到槽位后才开始。 */
+export const MEDIA_DESCRIPTION_MAX_PENDING: number = 75;
 /** 媒体下载大小上限：挑尺寸/素材来源时跳过超过它的档位（Gemini 对 inline
  *  图片的整个请求体限 20MB，Telegram 压缩后的 photo/贴纸/缩略图远小于此，
  *  这只是防御性护栏）。 */

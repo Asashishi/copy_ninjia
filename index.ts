@@ -98,8 +98,8 @@ async function main(): Promise<void> {
   // 1. /send 本身（含 /send@BotUsername 变体）——它是刻意设计成只能私聊触发
   //    的隐藏指令（不进下面的 setMyCommands 菜单），单独放行，权限/参数校验
   //    交给 handleSendCommand 自己把关；
-  // 2. 这个私聊正处于 /send 中转会话中（ChatState.isUseProxySend）时，放行
-  //    全部消息（含 / 开头的）——中转承诺"这个私聊里发的每条消息都会被转发"
+  // 2. 超管本人且当前有 /send 中转会话（ChatState.isUseProxySend）时，放行
+  //    全部消息（含 / 开头的）——中转承诺"超管私聊里发的每条消息都会被转发"
   //    （见 commands/send.ts 头注），不能因为文本恰好以 / 开头就被这里拦下，
   //    永远到不了 src/auto/message.ts 的 handleIncomingMessage 里的转发分支。
   bot.use((ctx, next) => (shouldPassPrivateCommandGate(ctx) ? next() : undefined));

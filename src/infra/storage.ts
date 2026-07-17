@@ -1,10 +1,10 @@
 import { link, open, rename, unlink } from "node:fs/promises";
 import { logger } from "./logger";
-import type { CachedUser, ChatState, CopyMode, GlobalCopyState, LockdownRecord, StateFileSchema } from "../types";
+import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 import { createLatestValueRunner } from "../libs/latestValueRunner";
-import { copyModeValue, finiteNumber, isRecord, rebuildCachedUser, rebuildChatState, rebuildLockdown } from "../storage/stateCodec";
+import { copyModeValue, finiteNumber, isRecord, rebuildCachedUser, rebuildChatState } from "../storage/stateCodec";
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -199,19 +199,9 @@ function adoptCopyTarget(copiedUser: CachedUser, copyMode: CopyMode | undefined,
 
 /**
  * 从 state.json 加载全部持久化状态，填充本模块持有的内存状态。整个文件由
- * 内存状态全量序列化而来（结构见 StateFileSchema），这里逐字段重建而不是把
- * 解析结果直接当类型用：字段一旦从类型里删掉，磁盘上的旧值会在下一次
- * loadState → saveState 的往返中自动被甩掉，不会因为存量文件里还带着而
- * 一直被原样读出、原样存回、永远清不掉。
- *
- * 兼容两代旧格式：
- * 1. 最老的扁平格式——顶层直接就是 Record<chatId, ChatState>，没有 chats
- *    包装。用有没有 "chats" 键区分（真实 chatId 不可能是字符串 "chats"）。
- * 2. 上一代格式——copiedUser/copyMode 存在各群的 chats[id] 下（当时按群
- *    分别维护复读目标）、私密模式镜像存在顶层 lockdowns 下。迁移规则：
- *    正在复读的群（copiedUser 非 null）提升为全局复读目标（多个群都在复读
- *    时只保留最先遇到的那个，其余丢弃——全局同一时刻只有一个目标）；
- *    lockdowns[id] 移入对应 chats[id].lockdown。
+ * 内存状态全量序列化而来（结构见 StateFileSchema），这里只接受当前结构并
+ * 逐字段校验。持久化 schema 变更由部署前的手工迁移负责，运行时不保留旧版
+ * 自动对齐分支。
  *
  * 顶层形状不是对象时（数组/原始值/损坏）记一条错误日志——不能默默当空状态
  * 处理，那样出问题了完全没有排查线索。
@@ -222,79 +212,35 @@ export async function loadState(): Promise<void> {
     if (!(await file.exists())) return;
 
     const parsed: unknown = JSON.parse(await file.text());
-    let rawChats: unknown;
-    let rawGlobalCopy: unknown;
-    let rawLegacyLockdowns: unknown;
+    if (!isRecord(parsed) || !isRecord(parsed.chats) || !isRecord(parsed.globalCopy)) {
+      throw new Error("state.json does not match the current { chats, globalCopy } schema; migrate it manually before starting the bot");
+    }
+    const rawChats: Record<string, unknown> = parsed.chats;
+    const rawGlobalCopy: Record<string, unknown> = parsed.globalCopy;
 
-    if (isRecord(parsed)) {
-      if ("chats" in parsed) {
-        rawChats = parsed.chats;
-        rawGlobalCopy = parsed.globalCopy;
-        rawLegacyLockdowns = parsed.lockdowns;
-      } else {
-        // 最老的扁平格式：顶层本身就是 chats 那部分。
-        rawChats = parsed;
-      }
-    } else {
-      logger.error("Top level of state.json is not an object (array/primitive/corrupted); ignoring it and starting with empty state");
-      return;
+    const lastCopyTime: number | undefined = finiteNumber(rawGlobalCopy.lastCopyTime);
+    if (lastCopyTime !== undefined) globalCopyState.lastCopyTime = lastCopyTime;
+    const copiedUser: CachedUser | null = rebuildCachedUser(rawGlobalCopy.copiedUser);
+    const copyChatId: number | undefined = finiteNumber(rawGlobalCopy.copyChatId);
+    if (copiedUser && copyChatId !== undefined && Number.isSafeInteger(copyChatId)) {
+      adoptCopyTarget(copiedUser, copyModeValue(rawGlobalCopy.copyMode), copyChatId);
+    } else if (rawGlobalCopy.copiedUser) {
+      // 有目标却没有有效的发起群 id（手改文件/文件损坏）：这种目标在任何群
+      // 都不会被复读，却会卡住全局槽位，直接丢弃并留日志。
+      logger.error("state.json globalCopy has copiedUser but no valid copyChatId; dropping the copy target to avoid a stuck global copy slot");
     }
 
-    if (isRecord(rawGlobalCopy)) {
-      const lastCopyTime: number | undefined = finiteNumber(rawGlobalCopy.lastCopyTime);
-      if (lastCopyTime !== undefined) globalCopyState.lastCopyTime = lastCopyTime;
-      const copiedUser: CachedUser | null = rebuildCachedUser(rawGlobalCopy.copiedUser);
-      const copyChatId: number | undefined = finiteNumber(rawGlobalCopy.copyChatId);
-      if (copiedUser && copyChatId !== undefined && Number.isSafeInteger(copyChatId)) {
-        adoptCopyTarget(copiedUser, copyModeValue(rawGlobalCopy.copyMode), copyChatId);
-      } else if (rawGlobalCopy.copiedUser) {
-        // 有目标却没有有效的发起群 id（手改文件/中间版本写坏）：这种目标
-        // 在任何群都不会被复读，却会让所有群的 /copy 都被「已有猎物」拒绝，
-        // 直接丢弃并留日志，不让进程带着卡死的全局槽位启动。
-        logger.error("state.json globalCopy has copiedUser but no valid copyChatId; dropping the copy target to avoid a stuck global copy slot");
-      }
-    }
-
-    if (isRecord(rawChats)) {
-      for (const [chatIdStr, raw] of Object.entries(rawChats)) {
-        const chatId: number = Number(chatIdStr);
-        if (!Number.isSafeInteger(chatId) || chatId === 0) continue;
-        const entry: Record<string, unknown> = isRecord(raw) ? raw : {};
-        const chatState: ChatState | null = rebuildChatState(entry, Date.now());
-        if (!chatState) continue;
-        // 迁移：isInit 是新引入的网关字段，state.json 里已有条目的群此前
-        // 一直在正常被处理，缺省网关生效前的旧存量不该被当成"未初始化"
-        // 直接吞掉更新——只有 state.json 里从未出现过、全新拉群的群才会
-        // 保持 isInit undefined，需要显式 /init enable。
-        if (chatState.isInit === undefined) chatState.isInit = true;
-        chatStates.set(chatId, chatState);
-        // 旧格式迁移：按群维护的复读目标提升为全局的。全局同一时刻只有一个
-        // 目标，多个群同时在复读时只保留最先遇到的，其余的记日志后丢弃——
-        // 不能一声不吭，被丢的那个群升级重启后复读凭空消失，得留排查线索。
-        const legacyCopiedUser: CachedUser | null = rebuildCachedUser(entry.copiedUser);
-        if (legacyCopiedUser) {
-          if (globalCopyState.copiedUser === null) {
-            adoptCopyTarget(legacyCopiedUser, copyModeValue(entry.copyMode), chatId);
-          } else {
-            logger.error(`Dropped legacy per-chat copy target of chat ${chatId} during migration: the single global copy slot is already taken`);
-          }
-        }
-      }
-    }
-
-    // 旧格式迁移：顶层 lockdowns 移入对应群的 chats[id].lockdown。这个最老
-    // 的格式只有裸 ChatPermissions、没有到期时刻；加载时立即包装成严格的
-    // LockdownRecord，并从此刻重新给一轮满额时长。
-    if (isRecord(rawLegacyLockdowns)) {
-      for (const [chatIdStr, permissions] of Object.entries(rawLegacyLockdowns)) {
-        const chatId: number = Number(chatIdStr);
-        if (!Number.isSafeInteger(chatId) || chatId === 0) continue;
-        const lockdown: LockdownRecord | undefined = rebuildLockdown(permissions, Date.now());
-        if (lockdown) getOrCreateChatState(chatId).lockdown = lockdown;
-      }
+    for (const [chatIdStr, raw] of Object.entries(rawChats)) {
+      const chatId: number = Number(chatIdStr);
+      if (!Number.isSafeInteger(chatId) || chatId === 0) continue;
+      const chatState: ChatState | null = rebuildChatState(raw);
+      if (chatState) chatStates.set(chatId, chatState);
     }
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
+    // 不能带着空状态继续启动：后续任意 saveState 都可能覆盖尚未手工迁移或
+    // 已损坏的文件。让启动失败，修好 state.json 后再重启。
+    throw error;
   }
 }
 

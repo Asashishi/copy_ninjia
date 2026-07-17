@@ -22,6 +22,7 @@ import { userRandomReplyTimes } from "../cache/auto";
 import { describeStickerForContext, pickStickerVisionSource } from "../ai/stickerSets";
 import { pickRandom } from "../libs/random";
 import { isSelfSent } from "../infra/selfSentTracker";
+import { SUPER_ADMIN_USER_ID } from "../infra/config";
 
 /**
  * 消息自动流水线：复制目标的复读、AI 对话缓存与触发、洗澡「看看」、随机
@@ -323,6 +324,10 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 的 bot.command 单独处理，不会走到这里；这里处理的都是中转期间发的其余
   // 消息。
   if (message.chat.type === "private") {
+    // /send 是超管的全局会话，但机器人仍会收到其他用户的普通私聊。必须先
+    // 核对发送者，避免把外部用户的私聊泄露进目标群，也避免他们借此注入
+    // 任意内容。非超管私聊继续按普通私聊静默结束。
+    if (message.from?.id !== SUPER_ADMIN_USER_ID) return;
     const targetChatId: number | undefined = getActiveProxySendTarget();
     if (targetChatId !== undefined) {
       const copiedMessageId: number | undefined = await copyMessage(targetChatId, chatId, message.message_id);

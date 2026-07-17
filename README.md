@@ -192,7 +192,7 @@ bun run start     # 启动长轮询
 | `src/commands/` | 显式命令处理 |
 | `src/auto/` | 自动复读、AI 记录与触发、反应同步 |
 | `src/states/` | 无 I/O 的验证与锁定纯状态机 |
-| `src/storage/` | `state.json` 的纯解码、字段白名单与旧格式迁移 |
+| `src/storage/` | `state.json` 当前 schema 的纯解码与字段白名单 |
 | `src/workers/` | AI、守群、磁盘三个独立 Worker |
 | `src/ai/` | Gemini、视觉、贴纸目录及工具 |
 | `src/infra/` | Telegram、状态、日志、Worker 宿主 |
@@ -212,6 +212,8 @@ bun run start     # 启动长轮询
 | error 日志 | `logs/` | Disk I/O Worker 统一批量追加 |
 
 `memory/` 含群聊逐字内容，应视为敏感数据；请限制目录权限、备份范围与保留周期。`logs/`、`memory/`、`state.json`、凭据和运行锁均不会提交到 Git。
+
+持久化 schema 变更不在运行时自动迁移。部署包含结构变更的版本前，应先手工迁移 `state.json` 与对应 `memory/` 快照；`state.json` 不符合当前结构时机器人会拒绝启动，避免空状态覆盖原文件。
 
 可靠性护栏包括：官方 SDK 类型边界、外部 JSON 逐字段校验、单实例原子锁、按群 API 串行、Worker 崩溃节流自愈、过期缓存真实删除、反应队列硬顶、媒体缓存 LRU 容量上限，以及磁盘损坏文件隔离。
 

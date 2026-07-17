@@ -14,6 +14,7 @@ mock.module("../../src/infra/diskIO", () => ({
 
 const { getOrCreateChatState } = await import("../../src/infra/storage");
 const { isSendCommandText, shouldPassInitGate, shouldPassPrivateCommandGate } = await import("../../src/infra/updateGate");
+const { SUPER_ADMIN_USER_ID } = await import("../../src/infra/config");
 
 const ME = { id: 999, username: "test_bot", first_name: "TestBot" };
 
@@ -104,9 +105,7 @@ describe("shouldPassPrivateCommandGate", () => {
     expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
   });
 
-  test("回归用例：有 /send 中转会话在跑（isUseProxySend 挂在目标群自己的状态上），" +
-    "私聊里 / 开头的消息也要放行，否则 auto/message.ts 的转发分支永远收不到" +
-    "——中转承诺转发任何消息", () => {
+  test("有 /send 中转会话时只放行超管的其它私聊指令，外部用户仍被拦截", () => {
     // getActiveProxySendTarget 是全局扫描，不像 shouldPassInitGate 那样只看
     // 单个 chatId：这里设的 true 若不清掉，会污染同进程里跑在它之后的其它
     // 测试（包括其它测试文件——bun test 默认同进程共享 infra/storage 的
@@ -114,8 +113,18 @@ describe("shouldPassPrivateCommandGate", () => {
     const targetChatId = -1004444444444;
     getOrCreateChatState(targetChatId).isUseProxySend = true;
     try {
-      const ctx = fakeCtx({ chat: { id: 4, type: "private" }, message: { text: "/home/user/looks-like-a-command" } });
-      expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+      const adminCtx = fakeCtx({
+        chat: { id: SUPER_ADMIN_USER_ID, type: "private" },
+        from: { id: SUPER_ADMIN_USER_ID },
+        message: { text: "/home/user/looks-like-a-command" },
+      });
+      const outsiderCtx = fakeCtx({
+        chat: { id: SUPER_ADMIN_USER_ID + 1, type: "private" },
+        from: { id: SUPER_ADMIN_USER_ID + 1 },
+        message: { text: "/stop_copy" },
+      });
+      expect(shouldPassPrivateCommandGate(adminCtx)).toBe(true);
+      expect(shouldPassPrivateCommandGate(outsiderCtx)).toBe(false);
     } finally {
       getOrCreateChatState(targetChatId).isUseProxySend = false;
     }
@@ -124,7 +133,7 @@ describe("shouldPassPrivateCommandGate", () => {
   test("中转会话已经 finish（目标群的 isUseProxySend 变回 false）后，/ 开头消息重新被拦下", () => {
     const targetChatId = -1005555555555;
     getOrCreateChatState(targetChatId).isUseProxySend = true;
-    const ctx = fakeCtx({ chat: { id: 5, type: "private" }, message: { text: "/whatever" } });
+    const ctx = fakeCtx({ chat: { id: SUPER_ADMIN_USER_ID, type: "private" }, from: { id: SUPER_ADMIN_USER_ID }, message: { text: "/whatever" } });
     expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
 
     getOrCreateChatState(targetChatId).isUseProxySend = false;

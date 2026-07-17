@@ -121,6 +121,37 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(cache.dailyLuckCache.has("888")).toBe(true);
   });
 
+  test("两个同名用户渲染出完全相同结果时不覆盖候选，也不错误转正后一次抽签", async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      const first = makeInlineCtx(881, "");
+      const second = makeInlineCtx(882, "");
+      await luckChallenge.handleLuckChallengeInlineQuery(first as any);
+      await luckChallenge.handleLuckChallengeInlineQuery(second as any);
+      const identicalBody: string = bodyTextOf(first.results[0]);
+      expect(bodyTextOf(second.results[0])).toBe(identicalBody);
+      expect(cache.pendingLuckRenderIndex.get(identicalBody)).toEqual(new Set(["881", "882"]));
+
+      // 单靠相同文本无法知道是谁发出，不能像旧单值 Map 那样误转正后写入者。
+      luckChallenge.confirmLuckDraw(identicalBody);
+      expect(postDiskIOMock).not.toHaveBeenCalled();
+      expect(cache.dailyLuckCache.size).toBe(0);
+
+      // chosen_inline_result 可准确确认第一人，并从多候选索引移除；余下唯一
+      // 候选随后仍能由文本兜底确认。
+      luckChallenge.handleLuckChosenInlineResult({
+        chosenInlineResult: { result_id: "luck-fortune", from: { id: 881 }, query: "" },
+      } as any);
+      expect(cache.dailyLuckCache.has("881")).toBe(true);
+      luckChallenge.confirmLuckDraw(identicalBody);
+      expect(cache.dailyLuckCache.has("882")).toBe(true);
+      expect(postDiskIOMock).toHaveBeenCalledTimes(2);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
   test("chosen_inline_result 主路：机器人不在场的聊天里选中也能确认落盘", async () => {
     const ctx = makeInlineCtx(999, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);

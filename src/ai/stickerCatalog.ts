@@ -179,8 +179,8 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       dirtyPacks.add(pack);
     }
 
-    // 整包简介：包内容有增删（简介可能过时）或者还没有简介（首次生成/旧格式
-    // 文件恢复/上次生成失败）时（重）生成一条。失败不重试也不清掉旧简介——
+    // 整包简介：包内容有增删（简介可能过时）或者还没有简介（首次生成/上次
+    // 生成失败）时（重）生成一条。失败不重试也不清掉旧简介——
     // 略过时的简介好过没有，下次启动对账再补。
     if (map.size > 0 && (entriesChanged || !packSummaries.has(pack))) {
       const summary: string | null = await summarizePack(set.title, [...map.values()].map(formatEntryForSummary));

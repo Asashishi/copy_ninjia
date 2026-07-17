@@ -1,5 +1,5 @@
 /**
- * state.json 的纯解码与旧格式迁移。
+ * state.json 当前 schema 的纯解码与字段校验。
  *
  * 本模块不读写文件、不持有运行时状态：只负责把 JSON.parse 产生的 unknown
  * 逐字段收窄成领域类型。Telegram 权限字段白名单属于持久化 schema，而不是
@@ -7,7 +7,6 @@
  */
 
 import type { ChatPermissions } from "@grammyjs/types";
-import { LOCKDOWN_MS } from "../consts/antiRaid";
 import type { CachedUser, ChatState, CopyMode, LockdownRecord } from "../types";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -79,24 +78,19 @@ export function rebuildChatPermissions(value: unknown): ChatPermissions | null {
   return found ? permissions : null;
 }
 
-export function rebuildLockdown(value: unknown, now: number): LockdownRecord | undefined {
+export function rebuildLockdown(value: unknown): LockdownRecord | undefined {
   if (!isRecord(value)) return undefined;
-  if ("originalPermissions" in value) {
-    const permissions: ChatPermissions | null = rebuildChatPermissions(value.originalPermissions);
-    if (!permissions) return undefined;
-    return { originalPermissions: permissions, expiresAt: finiteNumber(value.expiresAt) ?? now + LOCKDOWN_MS };
-  }
-  // 旧格式直接存 ChatPermissions；加载时立即迁成新格式，内存里不再伪装成
-  // LockdownRecord，下一次 saveState 会把迁移结果正式写回磁盘。
-  const legacyPermissions: ChatPermissions | null = rebuildChatPermissions(value);
-  return legacyPermissions ? { originalPermissions: legacyPermissions, expiresAt: now + LOCKDOWN_MS } : undefined;
+  const permissions: ChatPermissions | null = rebuildChatPermissions(value.originalPermissions);
+  const expiresAt: number | undefined = finiteNumber(value.expiresAt);
+  if (!permissions || expiresAt === undefined) return undefined;
+  return { originalPermissions: permissions, expiresAt };
 }
 
-export function rebuildChatState(value: unknown, now: number): ChatState | null {
+export function rebuildChatState(value: unknown): ChatState | null {
   if (!isRecord(value)) return null;
   return {
     quietUntil: finiteNumber(value.quietUntil),
-    lockdown: rebuildLockdown(value.lockdown, now),
+    lockdown: rebuildLockdown(value.lockdown),
     isUseAIChat: booleanValue(value.isUseAIChat),
     isJATranslationEnabled: booleanValue(value.isJATranslationEnabled),
     isInit: booleanValue(value.isInit),

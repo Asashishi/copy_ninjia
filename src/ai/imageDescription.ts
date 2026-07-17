@@ -15,12 +15,15 @@ import { bot, buildFileDownloadUrl } from "../infra/telegram";
 import { extractOutputText, requestGeminiResponse } from "./gemini";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
 import { prepareVisionImage, type VisionImage } from "../libs/image";
+import { createBoundedTaskRunner } from "../libs/boundedTaskRunner";
 import { transientDescriptionCache } from "../cache/imageDescription";
 import {
   ANIMATION_DESCRIPTION_PROMPT,
   IMAGE_DESCRIPTION_MAX_CHARS,
   IMAGE_DESCRIPTION_PROMPT,
   MEDIA_DESCRIPTION_MAX_TOKENS,
+  MEDIA_DESCRIPTION_MAX_CONCURRENCY,
+  MEDIA_DESCRIPTION_MAX_PENDING,
   MEDIA_DOWNLOAD_TIMEOUT_MS,
   MEDIA_MAX_DOWNLOAD_BYTES,
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
@@ -29,6 +32,8 @@ import {
 } from "../consts/aiChat";
 import type { MediaKind } from "../types";
 import type { GenerateContentResponse } from "@google/genai";
+
+const mediaDescriptionRunner = createBoundedTaskRunner(MEDIA_DESCRIPTION_MAX_CONCURRENCY, MEDIA_DESCRIPTION_MAX_PENDING);
 
 /** 按媒体类型选喂给视觉模型的描述指令，三者风格/侧重点不同。 */
 function promptFor(kind: MediaKind): string {
@@ -67,17 +72,20 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
   const cached: Promise<string | null> | undefined = transientDescriptionCache.get(fileUniqueId);
   if (cached) return cached;
 
-  const pending: Promise<string | null> = describeMediaUncached(kind, fileId).then((description: string | null) => {
+  const pending: Promise<string | null> = mediaDescriptionRunner.run(() => describeMediaUncached(kind, fileId)).then((description: string | null | undefined) => {
+    // 执行槽位和等待队列都满时返回 undefined；按普通解析失败降级，不再
+    // 启动下载、转码或视觉 API 请求。
+    const result: string | null = description ?? null;
     // 按引用而非按 key 删，用 peek 而不是 get——不能让这次内部核对被当成
     // 一次真实访问去刷新淘汰顺位。这份 pending 在解析期间可能已经因为超过
     // 容量上限被淘汰、又被新的并发请求重新插入了一份新 pending，此时这里
     // 必须认得出"当前占着这个 key 的不是自己"，不能把新插入的那份连锅
     // 端掉（否则新请求的合并会落空，还会误删一份可能已经解析成功、本该
     // 继续留在缓存里的有效结果）。
-    if (description === null && transientDescriptionCache.peek(fileUniqueId) === pending) {
+    if (result === null && transientDescriptionCache.peek(fileUniqueId) === pending) {
       transientDescriptionCache.delete(fileUniqueId);
     }
-    return description;
+    return result;
   });
   // 写入即满足容量上限的淘汰（超容量删最久未使用的一个），见
   // cache/imageDescription.ts 的 LruCache 用法。
@@ -92,7 +100,7 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
  * 常驻目录。
  */
 export function describeMediaForStickerCatalog(fileId: string): Promise<string | null> {
-  return describeMediaUncached("sticker", fileId);
+  return mediaDescriptionRunner.run(() => describeMediaUncached("sticker", fileId)).then((description) => description ?? null);
 }
 
 async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<string | null> {

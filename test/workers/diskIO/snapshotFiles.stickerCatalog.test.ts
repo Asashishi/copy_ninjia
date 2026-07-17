@@ -43,12 +43,11 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     expect(parseRecovered(result, "pack_a")?.summary).toBe("一包搞笑猫猫贴纸");
   });
 
-  test("旧格式文件（没有 summary 字段）恢复为 summary null，等下次对账补生成", () => {
+  test("缺少当前必填 summary 字段的文件不自动迁移", () => {
     mkdirSync(stickerDir, { recursive: true });
     writeFileSync(join(stickerDir, "pack_a.json"), JSON.stringify({ version: 1, entries: { "file-uid-1": { emoji: "😂", description: "旧条目" } }, savedAt: 0 }));
     const result = recoverStickerCatalogs(["pack_a"]);
-    expect(parseRecovered(result, "pack_a")?.summary).toBeNull();
-    expect(parseRecovered(result, "pack_a")?.entries["file-uid-1"]?.description).toBe("旧条目");
+    expect(result.has("pack_a")).toBe(false);
   });
 
   test("白名单已经不包含的包视为孤儿：不载入内存，且磁盘文件被删除", () => {

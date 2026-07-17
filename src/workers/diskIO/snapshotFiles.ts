@@ -25,7 +25,6 @@ import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, Luc
 import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
-import { formatTokyoTime } from "../../libs/time";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 /**
@@ -68,44 +67,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface PersistedBufferedMessage {
-  id: number;
-  firstName: string;
-  lastName: string;
-  text: string;
-  at?: unknown;
-}
-
-function isBufferedMessage(value: unknown): value is PersistedBufferedMessage {
+function isBufferedMessage(value: unknown): value is BufferedMessage {
   return isRecord(value) &&
     typeof value.id === "number" && Number.isFinite(value.id) &&
     typeof value.firstName === "string" &&
     typeof value.lastName === "string" &&
-    typeof value.text === "string";
+    typeof value.text === "string" &&
+    typeof value.at === "string";
 }
 
-/** 缓存条目逐字段重建：at 是后加的字段，正常形态是格式化好的东京时间串
- *  （见 types/aiChatWorker.ts）；曾短暂落盘过毫秒数形态，就地转成同一格式；
- *  更早的旧文件没有该字段，补空串（时间未知，转录行会省略时间前缀，见
- *  workers/aiChatWorker.ts 的 formatLine）。 */
-function rebuildBufferedMessage(v: PersistedBufferedMessage): BufferedMessage {
-  const rawAt: unknown = v.at;
-  const at: string = typeof rawAt === "string" ? rawAt : typeof rawAt === "number" && rawAt > 0 ? formatTokyoTime(rawAt) : "";
-  return { id: v.id, firstName: v.firstName, lastName: v.lastName, text: v.text, at };
-}
-
-/** 逐字段白名单重建（对齐 infra/storage.ts loadState 的做法），未知字段自然甩掉。 */
+/** 只接受当前 version=1 的完整结构；版本变更由部署前手工迁移。 */
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;
-  const buffer: BufferedMessage[] = Array.isArray(raw.buffer)
-    ? raw.buffer.filter(isBufferedMessage).map(rebuildBufferedMessage).slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)
-    : [];
-  const summaries: string[] = Array.isArray(raw.summaries)
-    ? raw.summaries.filter((s: unknown): s is string => typeof s === "string").slice(-MAX_SUMMARY_ROUNDS)
-    : [];
-  const pendingSummary: string | null = typeof raw.pendingSummary === "string" ? raw.pendingSummary : null;
-  const savedAt: number = typeof raw.savedAt === "number" ? raw.savedAt : Date.now();
+  if (raw.version !== 1 || !Array.isArray(raw.buffer) || !raw.buffer.every(isBufferedMessage)) return null;
+  if (!Array.isArray(raw.summaries) || !raw.summaries.every((s: unknown) => typeof s === "string")) return null;
+  if (raw.pendingSummary !== null && typeof raw.pendingSummary !== "string") return null;
+  if (typeof raw.savedAt !== "number" || !Number.isFinite(raw.savedAt)) return null;
+  const buffer: BufferedMessage[] = raw.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX);
+  const summaries: string[] = raw.summaries.slice(-MAX_SUMMARY_ROUNDS);
+  const pendingSummary: string | null = raw.pendingSummary;
+  const savedAt: number = raw.savedAt;
   return { version: 1, buffer, summaries, pendingSummary, savedAt };
 }
 
@@ -138,6 +120,7 @@ export function recoverAiMemories(): Map<number, string> {
     }
     const snapshot: AiMemorySnapshot | null = rebuildAiMemorySnapshot(parsed);
     if (snapshot) result.set(Number(match[1]), JSON.stringify(snapshot, null, 2));
+    else console.error(`[diskIOWorker] AI memory file ${name} does not match the current version=1 schema; migrate it manually`);
   }
   return result;
 }
@@ -158,21 +141,20 @@ function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
   return isRecord(value) && typeof value.emoji === "string" && typeof value.description === "string";
 }
 
-/** 逐字段白名单重建（对齐 rebuildAiMemorySnapshot），未知字段自然甩掉；
- *  entries 里结构不对的条目丢弃（当前进程会把它当缺失重新生成，不做迁移）。
- *  summary（整包简介）缺失/类型不对时置 null——旧格式文件恢复后由
- *  ai/stickerCatalog.ts 的下一次对账补生成。 */
+/** 只接受当前 version=1 的完整结构；版本变更由部署前手工迁移。 */
 function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;
+  if (raw.version !== 1 || !isRecord(raw.entries)) return null;
+  if (raw.summary !== null && typeof raw.summary !== "string") return null;
+  if (typeof raw.savedAt !== "number" || !Number.isFinite(raw.savedAt)) return null;
   const entries: Record<string, StickerCatalogEntry> = {};
-  if (isRecord(raw.entries)) {
-    for (const [fileUniqueId, value] of Object.entries(raw.entries)) {
-      if (isStickerCatalogEntry(value)) entries[fileUniqueId] = value;
-    }
+  for (const [fileUniqueId, value] of Object.entries(raw.entries)) {
+    if (!isStickerCatalogEntry(value)) return null;
+    entries[fileUniqueId] = value;
   }
-  const summary: string | null = typeof raw.summary === "string" ? raw.summary : null;
-  const savedAt: number = typeof raw.savedAt === "number" ? raw.savedAt : Date.now();
+  const summary: string | null = raw.summary;
+  const savedAt: number = raw.savedAt;
   return { version: 1, entries, summary, savedAt };
 }
 
@@ -215,6 +197,7 @@ export function recoverStickerCatalogs(activePacks: string[]): Map<string, strin
     }
     const snapshot: StickerCatalogSnapshot | null = rebuildStickerCatalogSnapshot(parsed);
     if (snapshot) result.set(pack, JSON.stringify(snapshot, null, 2));
+    else console.error(`[diskIOWorker] sticker catalog file ${name} does not match the current version=1 schema; migrate it manually`);
   }
   return result;
 }

@@ -53,9 +53,10 @@ export const compactionPendingCounts: Map<number, number> = new Map();
 /** 正在生成回复的群。同一群只允许一轮在途，防止旧请求晚到后倒序发言。 */
 export const activeReplyChats: Set<number> = new Set();
 
-/** chatId -> 该群当前共享的聊天状态心跳（重发定时器 + 当前挡位 + 最近一次
- *  状态请求的在途 promise，见 startChatActionHeartbeat）。 */
-export const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number; action: ChatActionPhase; inflight: Promise<unknown> }> = new Map();
+/** chatId -> 该群当前共享的聊天状态心跳（重发定时器 + 当前挡位 + 全部尚未
+ * 完成的状态请求，见 startChatActionHeartbeat）。Set 防止相邻 tick 与即时
+ * 切挡互相覆盖引用，settle 才能等齐所有可能晚到的请求。 */
+export const typingHeartbeats: Map<number, { timer: ReturnType<typeof setInterval>; refCount: number; action: ChatActionPhase; inflight: Set<Promise<unknown>> }> = new Map();
 
 /**
  * 自上次上报记忆快照后有变更（recordChatMessage/promotePendingSummary/

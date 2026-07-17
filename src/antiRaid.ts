@@ -29,7 +29,7 @@ import type { AdoptableLockdown, AdoptLockdownsMessage, AntiRaidMember, AntiRaid
  */
 
 /**
- * 把一条已由 loadState 校验/迁移过的私密模式记录换算成可 adopt 的形态：
+ * 把一条已由 loadState 校验过的私密模式记录换算成可 adopt 的形态：
  * 真实剩余时长 = expiresAt - 此刻，夹到不为负。
  */
 function toAdoptableLockdown(chatId: number, record: LockdownRecord, now: number): AdoptableLockdown {

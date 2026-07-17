@@ -111,9 +111,9 @@ describe("ai/stickerCatalog generatePackCatalog 对账", () => {
     expect(getPackSummary("pack_summary_keep")).toBe("旧简介");
   });
 
-  test("条目没变化但还没有简介（旧格式文件恢复）：补生成简介", async () => {
+  test("条目没变化但还没有简介：补生成简介", async () => {
     hydrateStickerCatalogs(persisted("pack_summary_backfill", { "uid-b": { emoji: "👍", description: "描述B" } }, null));
-    getStickerSetMock.mockImplementationOnce(async () => ({ title: "旧格式包", stickers: [sticker("uid-b", "👍")] }));
+    getStickerSetMock.mockImplementationOnce(async () => ({ title: "待补简介包", stickers: [sticker("uid-b", "👍")] }));
     requestGeminiResponseMock.mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "补出来的简介" }] } }] }));
 
     await generatePackCatalog("pack_summary_backfill");
