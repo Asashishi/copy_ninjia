@@ -1,8 +1,9 @@
 import type { Context } from "grammy";
 import type { Animation, Message, PhotoSize } from "@grammyjs/types";
 import type { ChatState, CopyMode } from "../types";
-import { getActiveCopyIn, getChatState } from "../infra/storage";
+import { getActiveCopyIn, getChatState, saveState } from "../infra/storage";
 import { sendMessage, copyMessage } from "../infra/telegram";
+import { recordChatTitleFromChat } from "../infra/chatTitle";
 import { applyCopyModeTransform } from "../copy/copyModes";
 import { cacheSender } from "../users/senderIdentity";
 import { recordChatMessage, recordChatMedia, generateAndSendReply } from "../aiChat";
@@ -289,6 +290,10 @@ function hasCopyableContent(message: Message): boolean {
 export async function handleIncomingMessage(ctx: Context): Promise<void> {
   const message: Message | undefined = ctx.msg;
   if (!message) return;
+  // 顺手用这条更新自带的 chat.title 刷新群名称记录（零额外 API 开销，见
+  // infra/chatTitle.ts）；与下面自弹回环/复读等判断无关，任何一条更新都能
+  // 提供最新群名，不必等它们判定完。
+  recordChatTitleFromChat(message.chat);
   if (message.via_bot?.id === ctx.me.id) {
     recordSelfInlineResult(message, ctx.me.id, ctx.me.first_name);
     return;
@@ -310,6 +315,32 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     return;
   }
 
+  // 私聊消息不参与下面任何群聊向的自动行为（AI 闲聊/看看触发/随机复读，
+  // 机器人在私聊里没有群聊上下文，也不该在 DM 里自动搭话）；唯一的例外是
+  // /send 中转会话（isUseProxySend，见 commands/send.ts、ChatState 该字段
+  // 注释）：这个私聊如果正在中转中，把消息原样转发进目标群一次。/send 命令
+  // 本身走 index.ts 的 bot.command 单独处理，不会走到这里；这里处理的都是
+  // 中转期间发的其余消息。
+  if (message.chat.type === "private") {
+    if (state.isUseProxySend === true && state.proxySendTargetChatId !== undefined) {
+      const targetChatId: number = state.proxySendTargetChatId;
+      const copiedMessageId: number | undefined = await copyMessage(targetChatId, chatId, message.message_id);
+      if (copiedMessageId === undefined) {
+        // 转发失败（机器人被踢出目标群/丢了发言权限等，copyMessage 内部已
+        // 记过日志）：不能让中转继续悄悄吞掉后续消息、超管却还以为在正常
+        // 转发——直接关掉这轮会话并如实告知，逼超管确认目标群状态后重新
+        // /send，好过无限期静默丢消息。isUseProxySend 刚判过是 true，说明
+        // state 是 Map 里的真实条目（不是共享的冻结默认值，道理同
+        // commands/quiet.ts 的 handleUnquietCommand），可以直接改。
+        state.isUseProxySend = false;
+        state.proxySendTargetChatId = undefined;
+        await saveState();
+        await sendMessage(chatId, `转发到 ${targetChatId} 失败了，本天才先把这轮中转停掉了，检查一下再 /send 重新开吧♡`);
+      }
+    }
+    return;
+  }
+
   // /quiet 静默期内暂停一切主动刷存在感的行为（AI 随机插话、洗澡「看看」、
   // 随机复读），只保留被动触发（回复机器人 / @ 机器人）和指令。
   const isQuiet: boolean = (state.quietUntil ?? 0) > Date.now();
@@ -319,12 +350,8 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 不攒（攒了也没有会消费它的回复流水线），回复/@ 机器人也不再回。
   const aiChatEnabled: boolean = state.isUseAIChat === true;
 
-  // AI 相关逻辑仅在「群聊」且「没有复制对象」时进行：私聊消息不触发（机器人在
-  // 私聊里没有群聊上下文，也不该在 DM 里自动搭话）；复制期间机器人正忙着复读
-  // 目标，既不攒对话缓存也不触发 AI 回复，免得跟复读抢戏。
-  const isPrivateChat: boolean = message.chat.type === "private";
   const messageText: string | undefined = typeof message.text === "string" ? message.text : undefined;
-  if (!isPrivateChat && !activeCopy && aiChatEnabled && messageText && !messageText.startsWith("/")) {
+  if (!activeCopy && aiChatEnabled && messageText && !messageText.startsWith("/")) {
     // 把带文本的普通消息滚动记入本群的 AI 对话缓存（Bot API 无法拉历史，只能
     // 边收边攒，上限见 consts/aiChat.ts 的 VERBATIM_CONTEXT_MAX）。指令消息
     // （/ 开头）已在上面排除。
@@ -354,7 +381,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo?.text : undefined, isRandomTrigger);
       return;
     }
-  } else if (!isPrivateChat && !activeCopy && aiChatEnabled && message.sticker) {
+  } else if (!activeCopy && aiChatEnabled && message.sticker) {
     // 贴纸消息没有文本：先备好现有的元数据兜底行（情绪 emoji、所属贴纸包，
     // 见 ai/stickerSets.ts 的 describeStickerForContext），再看有没有可用的
     // 视觉解析素材（静态贴纸下载本体；动态/视频贴纸没有可解码的本体，改用
@@ -391,7 +418,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
         fallbackText
       );
     }
-  } else if (!isPrivateChat && !activeCopy && aiChatEnabled && Array.isArray(message.photo) && message.photo.length > 0) {
+  } else if (!activeCopy && aiChatEnabled && Array.isArray(message.photo) && message.photo.length > 0) {
     // 图片消息同样没有 text（配文在 caption 里），交给 AI Worker 先占位入
     // 缓存、异步解析出描述后原位回填（见 aiChat.ts 的 recordChatMedia）。
     // 基线与贴纸/GIF 同定位：只当上下文，不触发 AI 回复，也不 return——
@@ -403,7 +430,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       !isQuiet && Math.random() < AI_REPLY_PROBABILITY && tryClaimUserRandomReply(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
     recordChatMedia("photo", chatId, speaker.id, speaker.firstName, speaker.lastName, caption, photoFile.fileId, photoFile.fileUniqueId, message.message_id, commentOnResolve);
-  } else if (!isPrivateChat && !activeCopy && aiChatEnabled && message.animation) {
+  } else if (!activeCopy && aiChatEnabled && message.animation) {
     // GIF（Telegram animation，实际多为 mp4）：本项目没有视频解码/抽帧能力，
     // 只能分析 Telegram 自带的缩略图（封面帧，见 pickAnimationVisionSource）。
     // 有缩略图就走占位/异步解析管线（同图片/贴纸）；没有缩略图（罕见）就
@@ -425,7 +452,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 或发给其他机器人的指令不会被 bot.command 拦截，会落到这里），与
   // echoMessage 的「不复读指令消息」保持一致，不触发。私聊不触发——与 AI
   // 随机插话同理，这些刷存在感的行为都是群聊语境的。
-  if (!isPrivateChat && !activeCopy && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= BATH_TRIGGER_MAX_MESSAGE_LENGTH && BATH_TRIGGER_PATTERN.test(message.text)) {
+  if (!activeCopy && !isQuiet && typeof message.text === "string" && !message.text.startsWith("/") && message.text.length <= BATH_TRIGGER_MAX_MESSAGE_LENGTH && BATH_TRIGGER_PATTERN.test(message.text)) {
     const sentMessageId: number | undefined = await sendMessage(chatId, BATH_TRIGGER_REPLY_TEXT, message.message_id);
     // 自录进 AI 对话缓存，让模型知道自己刚说过这句——不然它凭空多出一句
     // 不知道是谁说的「看看」，后续被问起时接不上。isBotOwnMessage 那道门
@@ -442,7 +469,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 复读循环：Telegram 保证机器人收不到其他机器人发的消息（官方为防止 bot
   // 互相触发死循环的设计）；普通群消息里自己发的也不会作为更新推送回来，
   // 频道场景的例外由 isBotOwnMessage 挡住（见其注释）。
-  if (!isPrivateChat && !activeCopy && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
+  if (!activeCopy && !isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
     const mode: CopyMode | undefined = resolveEffectiveCopyMode(chatId, pickRandom(RANDOM_ECHO_MODES));
     const echoedText: string | undefined = await echoMessage(chatId, message, mode);
     // 同上，自录复读出去的文本（纯媒体复读没有文本可录，保持沉默）。

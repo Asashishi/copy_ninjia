@@ -76,7 +76,7 @@ Telegram update
 - 工具：内置 `googleSearch`，自定义东京天气，以及 `send_message`、`add_reaction`、`view_sticker_pack`、`send_sticker`。
 - 时间：每次请求注入东京当前时间，每条转录消息保留记录时刻。
 - 记忆：50～100 条逐字消息，加最多 7 × 50 条冷历史摘要，总跨度约 400～450 条。
-- 多模态：图片描述最多 120 字，贴纸/GIF 最多 100 字；未命中本地贴纸目录的媒体共享 500 项去重缓存，TTL 为 1 小时。`memory/stickers/` 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录。
+- 多模态：图片描述最多 120 字，贴纸/GIF 最多 100 字；未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。`memory/stickers/` 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录。
 - 压缩背压：每群最多保留 4 个压缩任务，API 长时间变慢时有界降级，不无限堆积消息批次。
 
 人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)。
@@ -106,6 +106,7 @@ Telegram update
 | `/ai_chat enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群 AI 闲聊 |
 | `/ja_copy enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群日语翻译能力 |
 | `/init enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群整个业务处理入口 |
+| `/send <群组id>` `/send finish` | `SUPER_ADMIN_USER_ID`（仅私聊） | 与机器人私聊时开启/结束一轮中转：期间这个私聊发的每条消息都会原样转发进目标群一次。开启前会先探一次目标是否可达，中转期间目标失联会自动终止并告知。中转状态随 `state.json` 持久化，重启不丢；不进 Telegram 命令菜单，群里或非本人触发均无任何反应 |
 
 `/luck_challenge` 不占斜杠命令：在任意聊天输入 `@机器人用户名 [所求事项]` 使用 Inline Mode。需在 BotFather 开启 Inline Mode，并建议通过 `/setinlinefeedback` 开启 100% 结果反馈。
 
@@ -212,7 +213,7 @@ bun run start     # 启动长轮询
 
 `memory/` 含群聊逐字内容，应视为敏感数据；请限制目录权限、备份范围与保留周期。`logs/`、`memory/`、`state.json`、凭据和运行锁均不会提交到 Git。
 
-可靠性护栏包括：官方 SDK 类型边界、外部 JSON 逐字段校验、单实例原子锁、按群 API 串行、Worker 崩溃节流自愈、过期缓存真实删除、反应队列硬顶、媒体缓存容量与 TTL 双保险，以及磁盘损坏文件隔离。
+可靠性护栏包括：官方 SDK 类型边界、外部 JSON 逐字段校验、单实例原子锁、按群 API 串行、Worker 崩溃节流自愈、过期缓存真实删除、反应队列硬顶、媒体缓存 LRU 容量上限，以及磁盘损坏文件隔离。
 
 ## 🧪 开发
 

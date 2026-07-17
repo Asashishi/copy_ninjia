@@ -13,7 +13,7 @@ mock.module("../../src/infra/diskIO", () => ({
 }));
 
 const { getOrCreateChatState } = await import("../../src/infra/storage");
-const { shouldPassInitGate } = await import("../../src/infra/updateGate");
+const { isSendCommandText, shouldPassInitGate, shouldPassPrivateCommandGate } = await import("../../src/infra/updateGate");
 
 const ME = { id: 999, username: "test_bot", first_name: "TestBot" };
 
@@ -70,5 +70,55 @@ describe("shouldPassInitGate", () => {
     });
     ctx.msg = ctx.message;
     expect(shouldPassInitGate(ctx)).toBe(false);
+  });
+});
+
+describe("isSendCommandText", () => {
+  test("匹配 /send 及 /send@BotUsername 变体，不误配前缀相同的其它指令", () => {
+    expect(isSendCommandText("/send")).toBe(true);
+    expect(isSendCommandText("/send -100123")).toBe(true);
+    expect(isSendCommandText("/send@my_bot finish")).toBe(true);
+    expect(isSendCommandText("/sendx")).toBe(false);
+    expect(isSendCommandText("/copy")).toBe(false);
+  });
+});
+
+describe("shouldPassPrivateCommandGate", () => {
+  test("群聊消息：无条件放行（这道网关只管私聊）", () => {
+    const ctx = fakeCtx({ chat: { id: -1, type: "supergroup" }, message: { text: "/copy" } });
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+  });
+
+  test("私聊非指令文本：放行", () => {
+    const ctx = fakeCtx({ chat: { id: 1, type: "private" }, message: { text: "随便聊两句" } });
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+  });
+
+  test("私聊里的 /send 本身：放行，不管这个私聊有没有在中转", () => {
+    const ctx = fakeCtx({ chat: { id: 2, type: "private" }, message: { text: "/send -100123" } });
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+  });
+
+  test("私聊里 /send 以外的指令、且没有在中转：拦下", () => {
+    const ctx = fakeCtx({ chat: { id: 3, type: "private" }, message: { text: "/copy" } });
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
+  });
+
+  test("回归用例：这个私聊正在 /send 中转中，/ 开头的消息也要放行，" +
+    "否则 auto/message.ts 的转发分支永远收不到——中转承诺转发任何消息", () => {
+    const chatId = 4;
+    getOrCreateChatState(chatId).isUseProxySend = true;
+    const ctx = fakeCtx({ chat: { id: chatId, type: "private" }, message: { text: "/home/user/looks-like-a-command" } });
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+  });
+
+  test("中转会话已经 finish（isUseProxySend 变回 false）后，/ 开头消息重新被拦下", () => {
+    const chatId = 5;
+    getOrCreateChatState(chatId).isUseProxySend = true;
+    const ctx = fakeCtx({ chat: { id: chatId, type: "private" }, message: { text: "/whatever" } });
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+
+    getOrCreateChatState(chatId).isUseProxySend = false;
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
   });
 });

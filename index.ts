@@ -4,11 +4,12 @@ import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
 import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState, releaseSingleInstanceLock } from "./src/infra/storage";
-import { shouldPassInitGate } from "./src/infra/updateGate";
+import { shouldPassInitGate, shouldPassPrivateCommandGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
+import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleSendCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
+import { refreshAllChatTitles } from "./src/infra/chatTitle";
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } from "./src/aiChat";
 import { seedSenderCache } from "./src/users/senderIdentity";
 import type { CachedUser } from "./src/types";
@@ -23,6 +24,11 @@ async function main(): Promise<void> {
   // 这里只触发从 state.json 的一次性加载；各处理器直接从 storage 读写，
   // 不再层层传引用。
   await loadState();
+
+  // 启动流程：给 state.json 里已知的每个群现查一次当前群名称并回填（见
+  // infra/chatTitle.ts）——纯粹方便人手动核对/编辑这个文件，不阻塞 bot
+  // 启动主流程，失败只记日志，不影响正常运行。
+  void refreshAllChatTitles();
 
   // AI 记忆快照 + 每日运势缓存由 diskIOWorker 落盘，这里触发一次启动恢复
   // 并等待回执（带超时，见 loadPersistedData）。灌回操作在 initAiChat /
@@ -86,13 +92,17 @@ async function main(): Promise<void> {
   // 私聊里不触发任何命令（/copy 系、/stop_copy /kick /quiet 等全部）：这些
   // 指令都是围绕群聊状态设计的（复读目标、群内踢人、群内静默），私聊语境下
   // 没有意义，也免得被人在 DM 里瞎捣鼓。放在命令处理器注册之前，直接吞掉
-  // 这类更新，不再往下传给任何处理器。
-  bot.use((ctx, next) => {
-    if (ctx.chat?.type === "private" && ctx.message?.text?.startsWith("/")) {
-      return;
-    }
-    return next();
-  });
+  // 这类更新，不再往下传给任何处理器。两处例外（判断逻辑抽到
+  // infra/updateGate.ts 的 shouldPassPrivateCommandGate，纯是为了能被单测
+  // 覆盖，行为不变）：
+  // 1. /send 本身（含 /send@BotUsername 变体）——它是刻意设计成只能私聊触发
+  //    的隐藏指令（不进下面的 setMyCommands 菜单），单独放行，权限/参数校验
+  //    交给 handleSendCommand 自己把关；
+  // 2. 这个私聊正处于 /send 中转会话中（ChatState.isUseProxySend）时，放行
+  //    全部消息（含 / 开头的）——中转承诺"这个私聊里发的每条消息都会被转发"
+  //    （见 commands/send.ts 头注），不能因为文本恰好以 / 开头就被这里拦下，
+  //    永远到不了 src/auto/message.ts 的 handleIncomingMessage 里的转发分支。
+  bot.use((ctx, next) => (shouldPassPrivateCommandGate(ctx) ? next() : undefined));
 
   // 入群守卫的消息投递必须挂在命令处理器之前：命令处理器匹配到命令后不再
   // 往下传，若放在其后（或放在 handleIncomingMessage 里），待验证用户发的
@@ -115,6 +125,10 @@ async function main(): Promise<void> {
   bot.command("init", (ctx) => handleInitCommand(ctx));
   bot.command("quiet", (ctx) => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx) => handleUnquietCommand(ctx));
+  // /send：刻意不放进下面的 setMyCommands 菜单（见 commands/send.ts 头注），
+  // 只能私聊触发、仅 SUPER_ADMIN_USER_ID 本人可用。/send <群组id> 开一轮中转，
+  // 此后这个私聊里发的每条消息都会被同步转发进该群一次，直到 /send finish。
+  bot.command("send", (ctx) => handleSendCommand(ctx));
   bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx));
   bot.on("message_reaction", (ctx) => handleReaction(ctx));
   bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));

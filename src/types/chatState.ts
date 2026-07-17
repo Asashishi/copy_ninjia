@@ -79,6 +79,30 @@ export interface ChatState {
    * ——Bot API 无法枚举机器人所在的群，只能这样记下来。
    */
   botIsAdmin?: boolean;
+  /**
+   * 本群名称，纯粹供人读 state.json 时核对某个 chatId 是哪个群，不参与任何
+   * 业务判断。启动时全量现查一轮回填，此后每条群消息顺手用消息自带的
+   * chat.title 刷新（零额外 API 开销），见 src/infra/chatTitle.ts。
+   */
+  title?: string;
+  /**
+   * /send 中转会话是否在本聊天（发起会话的那个私聊，chatId 即超管本人的用户
+   * id）生效：true 表示这个私聊里往后发的每条消息都会被同步转发进
+   * proxySendTargetChatId 指向的群，直到 /send finish 关闭。随 state.json
+   * 持久化而非只存内存，是刻意的——这是超管手动开启、可能会开着挂一段时间
+   * 的操作，机器人中途重启（部署/崩溃重启）不该悄悄把这轮中转弄丢：那样
+   * 超管会继续对着私聊发消息、以为还在转发，实际早已石沉大海。见
+   * commands/send.ts 的 handleSendCommand、auto/message.ts 对本字段的消费。
+   */
+  isUseProxySend?: boolean;
+  /**
+   * isUseProxySend 为 true 时，消息要转发进的目标群 chatId；否则无意义。
+   * 这两个字段本该是一个不可分的整体（要么一起有效、要么都不算数），写入侧
+   * （commands/send.ts）也确实永远同开同关；state.json 落盘/读盘仍是两个
+   * 独立字段，两者不一致的防线在解码层，见 storage/stateCodec.ts 的
+   * rebuildProxySend。
+   */
+  proxySendTargetChatId?: number;
 }
 
 /**

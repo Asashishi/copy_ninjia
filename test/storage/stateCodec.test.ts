@@ -74,6 +74,39 @@ describe("storage/stateCodec", () => {
     });
   });
 
+  test("ChatState.title 只接收字符串，类型不对丢弃", () => {
+    expect(rebuildChatState({ title: "测试群" }, 0)?.title).toBe("测试群");
+    expect(rebuildChatState({ title: 123 }, 0)?.title).toBeUndefined();
+    expect(rebuildChatState({}, 0)?.title).toBeUndefined();
+  });
+
+  test("ChatState.isUseProxySend/proxySendTargetChatId 类型不对丢弃，供 /send 重启后恢复中转", () => {
+    expect(rebuildChatState({ isUseProxySend: true, proxySendTargetChatId: -100123 }, 0)).toMatchObject({
+      isUseProxySend: true,
+      proxySendTargetChatId: -100123,
+    });
+    expect(rebuildChatState({ isUseProxySend: "yes", proxySendTargetChatId: "not-a-number" }, 0)).toMatchObject({
+      isUseProxySend: undefined,
+      proxySendTargetChatId: undefined,
+    });
+  });
+
+  test("isUseProxySend 为 true 但目标 chatId 缺失/非法时整体判无效，不能半开着恢复", () => {
+    expect(rebuildChatState({ isUseProxySend: true }, 0)).toMatchObject({
+      isUseProxySend: undefined,
+      proxySendTargetChatId: undefined,
+    });
+    expect(rebuildChatState({ isUseProxySend: true, proxySendTargetChatId: "bad" }, 0)).toMatchObject({
+      isUseProxySend: undefined,
+      proxySendTargetChatId: undefined,
+    });
+    // isUseProxySend 明确为 false 时，即便目标字段还留着旧值也不该带出来。
+    expect(rebuildChatState({ isUseProxySend: false, proxySendTargetChatId: -100123 }, 0)).toMatchObject({
+      isUseProxySend: false,
+      proxySendTargetChatId: undefined,
+    });
+  });
+
   test("copy mode 只接受领域联合类型中的值", () => {
     expect(copyModeValue("reverse")).toBe("reverse");
     expect(copyModeValue("nya")).toBe("nya");

@@ -9,4 +9,5 @@ export { handleKickCommand } from "./commands/kick";
 export { handleAiChatCommand } from "./commands/aiChat";
 export { handleJaCopyCommand } from "./commands/jaCopy";
 export { handleInitCommand } from "./commands/init";
+export { handleSendCommand } from "./commands/send";
 export { confirmLuckDraw, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, restoreLuckCache } from "./commands/luckChallenge";
