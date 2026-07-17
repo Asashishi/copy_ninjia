@@ -67,7 +67,8 @@ export function buildFileDownloadUrl(filePath: string): string {
  * t.me/<username> 公开主页上展示的头像作为兜底（见 fetchAvatarFromWebProfile）。
  * @param targetId 目标用户或频道 ID。
  * @param isChannel 目标是否为频道（频道要通过 getChat 而非 getUserProfilePhotos 获取头像）。
- * @param username 目标的公开 username（不带 @），用于 t.me 主页爬取兜底；没有则跳过兜底。
+ * @param username 目标的公开 username（不带 @），用于 t.me 主页爬取兜底；调用方
+ *   没传时会在 Bot API 头像路径失败后再用 getChat 补查一次。
  * @returns 成功时 resolve 为 true，否则为 false。
  */
 export async function copyUserProfilePhoto(targetId: number, isChannel: boolean = false, username?: string): Promise<boolean> {
@@ -80,9 +81,12 @@ export async function copyUserProfilePhoto(targetId: number, isChannel: boolean 
     if (result === "permanent-failure") break;
   }
 
-  if (username) {
-    logger.error(`Falling back to t.me web profile scrape for @${username}`);
-    const imgBuffer: Uint8Array | null = await fetchAvatarFromWebProfile(username);
+  const providedUsername: string | undefined = normalizePublicUsername(username);
+  const lookup: PublicUsernameLookupResult = providedUsername ? { username: providedUsername, failed: false } : await resolvePublicUsernameFromChat(targetId, isChannel);
+  const fallbackUsername: string | undefined = lookup.username;
+  if (fallbackUsername) {
+    logger.error(`Falling back to t.me web profile scrape for @${fallbackUsername}`);
+    const imgBuffer: Uint8Array | null = await fetchAvatarFromWebProfile(fallbackUsername);
     if (imgBuffer) {
       try {
         await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
@@ -93,12 +97,61 @@ export async function copyUserProfilePhoto(targetId: number, isChannel: boolean 
       }
     }
   } else {
-    // 没有公开 username 就没有 t.me/<username> 主页可爬，兜底本来就不可能，
-    // 但必须留下这行日志——否则从日志上看只有几次失败的尝试，完全看不出
-    // 兜底为什么没触发。
-    logger.error(`Skipping t.me web profile scrape fallback: ${isChannel ? "channel" : "user"} ${targetId} has no public username`);
+    // 没有可用 username 就没有 t.me/<username> 主页可爬。若补查 getChat 失败，
+    // 这不等于目标没有公开 username，只说明 Bot API 没让我们通过数字 id
+    // 取到它；日志要避免把“无法确认”说成“确认不存在”。
+    logger.error(
+      lookup.failed
+        ? `Skipping t.me web profile scrape fallback: ${isChannel ? "channel" : "user"} ${targetId} has no public username available from command context, and getChat lookup failed`
+        : `Skipping t.me web profile scrape fallback: ${isChannel ? "channel" : "user"} ${targetId} has no public username available`
+    );
   }
   return false;
+}
+
+interface PublicUsernameLookupResult {
+  username?: string;
+  failed: boolean;
+}
+
+function normalizePublicUsername(username: string | undefined): string | undefined {
+  const normalized: string | undefined = username?.trim().replace(/^@+/, "");
+  return normalized || undefined;
+}
+
+async function resolvePublicUsernameFromChat(targetId: number, isChannel: boolean): Promise<PublicUsernameLookupResult> {
+  try {
+    const chat = await bot.api.getChat(targetId);
+    return { username: extractPublicUsername(chat), failed: false };
+  } catch (error: unknown) {
+    if (error instanceof GrammyError) {
+      if (error.error_code === 403) {
+        logger.error(`Could not check ${isChannel ? "channel" : "user"} ${targetId} public username via getChat: 403 Forbidden (chat is not accessible to the bot)`);
+      } else {
+        logger.error(`Could not check ${isChannel ? "channel" : "user"} ${targetId} public username via getChat: ${error.error_code} ${error.description}`);
+      }
+    } else {
+      logger.error(`Could not check ${isChannel ? "channel" : "user"} ${targetId} public username via getChat:`, error);
+    }
+    return { failed: true };
+  }
+}
+
+function extractPublicUsername(chat: unknown): string | undefined {
+  if (!chat || typeof chat !== "object") return undefined;
+  const maybeChat = chat as { username?: unknown; active_usernames?: unknown };
+  if (typeof maybeChat.username === "string") {
+    const username: string | undefined = normalizePublicUsername(maybeChat.username);
+    if (username) return username;
+  }
+  if (Array.isArray(maybeChat.active_usernames)) {
+    for (const activeUsername of maybeChat.active_usernames) {
+      if (typeof activeUsername !== "string") continue;
+      const username: string | undefined = normalizePublicUsername(activeUsername);
+      if (username) return username;
+    }
+  }
+  return undefined;
 }
 
 /**
