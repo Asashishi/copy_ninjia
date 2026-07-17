@@ -76,7 +76,7 @@ export function cleanReply(raw: string): string | null {
   return truncateInline(text, TELEGRAM_MESSAGE_MAX_CHARS);
 }
 
-/** 每条消息临发前「正在输入…」窗口的时长（0.75~2 秒）：按本条消息的长度
+/** 每条消息临发前「正在输入…」窗口的时长（1~7.5 秒）：按本条消息的长度
  *  估一个停顿加随机抖动，再统一封顶，见 consts/aiChat.ts 的 TYPING_DELAY_*。 */
 function typingDelayMs(nextPart: string): number {
   const base: number = TYPING_DELAY_BASE_MS + nextPart.length * TYPING_DELAY_PER_CHAR_MS;
@@ -185,8 +185,9 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     // 每条消息（含第一条与连发的后续条）临发前都拉起一段有界的「正在
     // 输入…」窗口：心跳在生成/思考期间停在 idle 挡不亮状态，群友看到的
     // 输入状态一定以一条真实消息落地收尾，不会亮了半天却等不来内容。
-    // 停顿按本条长度伸缩、封顶在 Telegram 状态过期时间内（见
-    // TYPING_DELAY_MAX_MS），切挡时的即时补发足以覆盖整段停顿。
+    // 停顿按本条长度伸缩、统一封顶（见 TYPING_DELAY_MAX_MS）；窗口可长于
+    // Telegram 约 5 秒的状态过期时间，切挡时的即时补发起头，其后由心跳的
+    // 4 秒 tick 重发接力，整段停顿显示连续。
     ctx.chatAction.set("typing");
     await sleep(typingDelayMs(text));
     // 发送前切 idle 并等在途状态请求落定：消息本身会清掉聊天状态，任何比
