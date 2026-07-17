@@ -67,6 +67,12 @@ export const pendingOverflowNotices: Set<number> = new Set();
  * 切挡互相覆盖引用，发送前 settle 才能等齐所有可能晚到的请求。 */
 export const typingHeartbeats: Map<number, ChatActionHeartbeatEntry> = new Map();
 
+/** chatId -> 该群当前持有「发贴纸锁」的回复轮令牌（无持有者即无键）。同群
+ *  多轮并发时只有抢到锁的那轮能发贴纸，其余轮的 send_sticker 被拒绝、改用
+ *  文字回应；持锁轮结束时释放（见 ai/stickerSendLock.ts 与
+ *  workers/aiChatWorker.ts 的 startReplyRound）。 */
+export const stickerSendLocks: Map<number, object> = new Map();
+
 /**
  * 自上次上报记忆快照后有变更（recordChatMessage/promotePendingSummary/
  * rotateCompaction 三处标记）、待上报给主线程落盘的群，见

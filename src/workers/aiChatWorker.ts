@@ -63,6 +63,7 @@ import {
 import type { BufferedMessage, MediaKind, QueuedReplyTrigger, ToolDefinition } from "../types";
 import { createReplyToolset } from "../ai/tools/replyToolset";
 import { startChatActionHeartbeat } from "../ai/chatActionHeartbeat";
+import { createStickerSendLock } from "../ai/stickerSendLock";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
@@ -82,6 +83,7 @@ import type {
   ExtractedFunctionCall,
   ReplyToolContext,
   ReplyToolset,
+  StickerSendLockControl,
 } from "../types";
 
 /**
@@ -915,6 +917,10 @@ function startReplyRound(
   activeReplyCounts.set(chatId, (activeReplyCounts.get(chatId) ?? 0) + 1);
 
   void (async (): Promise<void> => {
+    // 本轮的同群发贴纸锁句柄（见 ai/stickerSendLock.ts）：创建不抢占，第一次
+    // send_sticker 走到发送时才抢；并发轮里只有抢到的那轮能发贴纸。外层
+    // finally 兜底释放——锁的持有期严格等于本轮生命周期，异常中断也不遗留。
+    const stickerLock: StickerSendLockControl = createStickerSendLock(chatId);
     try {
       const userContent: string | null = buildUserContent(chatId, selfInfo, { repliedBotText, isRandomTrigger, mediaComment, queuedTrigger });
       if (!userContent) return;
@@ -938,6 +944,7 @@ function startReplyRound(
           chatId,
           replyToMessageId,
           chatAction: heartbeat,
+          stickerLock,
           onMessageSent: (text: string, messageId: number): void => {
             recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, text);
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
@@ -965,6 +972,9 @@ function startReplyRound(
         await heartbeat.stop();
       }
     } finally {
+      // 先还发贴纸锁再释放占位：本轮若持锁，还回去之后并发轮/补跑轮才能
+      // 再发贴纸。
+      stickerLock.release();
       const remaining: number = (activeReplyCounts.get(chatId) ?? 1) - 1;
       if (remaining > 0) activeReplyCounts.set(chatId, remaining);
       else activeReplyCounts.delete(chatId);

@@ -68,6 +68,18 @@ export interface ChatActionHeartbeatControl extends ChatActionControl {
   stop(): Promise<void>;
 }
 
+/** 同群「发贴纸」跨轮互斥锁的本轮句柄（见 ai/stickerSendLock.ts 的
+ *  createStickerSendLock）：并发轮里只有第一个走到 send_sticker 发送的轮能
+ *  抢到锁，其余轮被拒绝、改用文字回应；单轮独占时锁恒空闲，行为不变。 */
+export interface StickerSendLockControl {
+  /** 尝试抢占/确认持有本群的发贴纸锁：空闲即抢占，本轮已持有直接通过
+   *  （发送失败换一枚重试不受影响），被并发轮持有或本句柄已释放则失败。 */
+  tryAcquire(): boolean;
+  /** 释放本轮持有的锁（未持有则只作废句柄，幂等），轮结束时在 finally
+   *  调用，异常中断也不遗留。 */
+  release(): void;
+}
+
 /** 同群并发位占满期间排队等待补跑的直接触发（回复/@ 机器人，见
  *  workers/aiChatWorker.ts 的 generateAndSendReply）。随机插话与媒体评价
  *  不入队——没人在等那条回复，错过时机再补反而突兀——所以队列里恒为
@@ -115,6 +127,9 @@ export interface ReplyToolContext {
    *  拉起有界的 typing 窗口、发送前切 idle 让状态随消息一起消失、翻贴纸包
    *  起切 choose_sticker 并维持到贴纸发出。 */
   chatAction: ChatActionControl;
+  /** 同群「发贴纸」跨轮互斥锁的本轮句柄（见 ai/stickerSendLock.ts）：
+   *  send_sticker 校验通过后、真正发送前 tryAcquire，抢不到则拒绝发送。 */
+  stickerLock: StickerSendLockControl;
   /** 每条消息发送成功后的回调（清洗后的文本 + 消息 ID），供调用方自录
    *  记忆/登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。 */
   onMessageSent: (text: string, messageId: number) => void;

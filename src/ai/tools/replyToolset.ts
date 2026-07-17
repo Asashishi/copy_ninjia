@@ -232,8 +232,9 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
         return viewStickerPackTool(ctx.chatAction, menu, argumentsJson, stickerState);
       case SEND_STICKER_TOOL:
         // 贴纸发送前的切 idle + settle 在 sendStickerTool 内部做（要卡在参数
-        // 校验通过之后、真正发网络请求之前，道理同 executeSendMessage）。
-        return sendStickerTool(ctx.chatAction, ctx.chatId, menu, argumentsJson, stickerState, ctx.onStickerSent);
+        // 校验通过之后、真正发网络请求之前，道理同 executeSendMessage）；
+        // 同群并发轮的发贴纸互斥锁（ctx.stickerLock）也在里面抢。
+        return sendStickerTool(ctx.chatAction, ctx.stickerLock, ctx.chatId, menu, argumentsJson, stickerState, ctx.onStickerSent);
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }

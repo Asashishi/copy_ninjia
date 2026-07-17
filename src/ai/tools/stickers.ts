@@ -15,7 +15,7 @@ import {
   VIEW_STICKER_PACK_TOOL_INSTRUCTION,
 } from "../../consts/aiChat";
 import { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
-import type { ChatActionControl, StickerCandidate, StickerCatalogEntry, StickerPackCandidate, StickerRoundState, ToolDefinition } from "../../types";
+import type { ChatActionControl, StickerCandidate, StickerCatalogEntry, StickerPackCandidate, StickerRoundState, StickerSendLockControl, ToolDefinition } from "../../types";
 
 /**
  * 应景贴纸的两层选择工具：
@@ -27,7 +27,10 @@ import type { ChatActionControl, StickerCandidate, StickerCatalogEntry, StickerP
  * （当前为 1：要么不发、要么只发一枚）、绝不重复同一枚（sentStickerUids 按
  * file_unique_id 强制，上限为 1 时限额先挡住、此规则只在上限放宽时兜底）
  * ——这些限额状态挂在 StickerRoundState 上，每轮回复新建一份（见
- * ai/replyTools.ts）。
+ * ai/replyTools.ts）。轮内限额之外还有一道跨轮互斥：同群并发的几轮回复
+ * 只有第一个走到发送的轮能抢到本群的发贴纸锁（见 ai/stickerSendLock.ts），
+ * 其余轮的 send_sticker 被拒绝、改用文字回应，避免并发轮各发一枚在几秒内
+ * 贴纸刷屏。
  *
  * 之前的单层方案把全部贴纸的描述一次性塞进工具描述，包一多每次请求的
  * 提示词都被撑爆；两层方案默认只带每包一行简介，包内清单按需查看。
@@ -189,8 +192,15 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
  * （settle）：贴纸消息本身会清掉「正在选择贴纸…」，但比贴纸晚落地的状态
  * 请求会把它重新盖回去白挂 5 秒——切挡拦住新 tick，settle 拦住在途的那发。
  * 校验被拒不切挡：什么都没发出去，模型多半会纠正参数重试，选择状态照旧维持。
+ * 校验通过后、发送序列开始前还要抢本群的发贴纸锁（跨轮互斥，见模块头注
+ * 与 ai/stickerSendLock.ts）：被并发轮抢先则拒绝，且这一拒绝是本轮终局的
+ * ——锁要到持锁轮结束才释放，重试也抢不到，所以顺手把本轮的「正在选择
+ * 贴纸…」收回 idle（set("idle") 只收自己持有的挡位），不让群友对着一个
+ * 等不来贴纸的状态白等。
  * @param chatAction 本轮聊天状态心跳的挡位切换句柄（见
  *   ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）。
+ * @param stickerLock 本轮的同群发贴纸锁句柄（见 ai/stickerSendLock.ts 的
+ *   createStickerSendLock）。
  * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单
  *   （与组装工具描述/一层清单时用的编号一一对应，见模块头注）。
  * @param onSent 发送成功后的回调（描述行 + 消息 ID），供调用方自录记忆/
@@ -200,6 +210,7 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
  */
 export async function sendStickerTool(
   chatAction: ChatActionControl,
+  stickerLock: StickerSendLockControl,
   chatId: number,
   menu: StickerPackCandidate[],
   argumentsJson: string,
@@ -223,6 +234,14 @@ export async function sendStickerTool(
   const candidate: StickerCandidate = pack.stickers[stickerIndex - 1]!;
   if (state.sentStickerUids.has(candidate.sticker.file_unique_id)) {
     return JSON.stringify({ error: "Duplicate sticker: already sent this exact sticker in this reply, pick a different one" });
+  }
+
+  // 跨轮互斥（放在全部参数/限额校验之后、发送序列之前）：抢不到锁说明
+  // 并发轮已经/正在发贴纸，本轮直到结束都不可能再抢到——终局拒绝，收回
+  // 本轮的选择挡位，让模型改用文字（见函数头注）。
+  if (!stickerLock.tryAcquire()) {
+    chatAction.set("idle");
+    return JSON.stringify({ error: "Sticker throttled: a concurrent reply in this chat is already sending a sticker; do not retry, reply with text instead" });
   }
 
   if (chatAction.current() !== "choose_sticker") {
