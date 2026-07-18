@@ -63,7 +63,7 @@ describe("shouldPassInitGate", () => {
 
   test("已 /init 过的群 + 普通消息：放行", () => {
     const chatId = -1001111111113;
-    getOrCreateChatState(chatId).isInit = true;
+    getOrCreateChatState(chatId).isInitEnabled = true;
     // bun test 默认同进程共享 infra/storage 的模块级 chatStates（同文件的
     // /send 中转测试也有这条注意事项），务必测完把这个字段清回去，不留给
     // 同进程里跑在它之后的其它测试文件。注意：这里只重置字段、不能用
@@ -75,7 +75,7 @@ describe("shouldPassInitGate", () => {
       const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text: "随便说点什么" } });
       expect(shouldPassInitGate(ctx)).toBe(true);
     } finally {
-      getOrCreateChatState(chatId).isInit = undefined;
+      getOrCreateChatState(chatId).isInitEnabled = undefined;
     }
   });
 
@@ -138,7 +138,7 @@ describe("shouldPassPrivateCommandGate", () => {
     // 测试（包括其它测试文件——bun test 默认同进程共享 infra/storage 的
     // 模块级 chatStates），务必 finally 里清回去。
     const targetChatId = -1004444444444;
-    getOrCreateChatState(targetChatId).isUseProxySend = true;
+    getOrCreateChatState(targetChatId).isProxySendEnabled = true;
     try {
       const adminCtx = fakeCtx({
         chat: { id: SUPER_ADMIN_USER_ID, type: "private" },
@@ -153,17 +153,17 @@ describe("shouldPassPrivateCommandGate", () => {
       expect(shouldPassPrivateCommandGate(adminCtx)).toBe(true);
       expect(shouldPassPrivateCommandGate(outsiderCtx)).toBe(false);
     } finally {
-      getOrCreateChatState(targetChatId).isUseProxySend = false;
+      getOrCreateChatState(targetChatId).isProxySendEnabled = false;
     }
   });
 
-  test("中转会话已经 finish（目标群的 isUseProxySend 变回 false）后，/ 开头消息重新被拦下", () => {
+  test("中转会话已经 finish（目标群的 isProxySendEnabled 变回 false）后，/ 开头消息重新被拦下", () => {
     const targetChatId = -1005555555555;
-    getOrCreateChatState(targetChatId).isUseProxySend = true;
+    getOrCreateChatState(targetChatId).isProxySendEnabled = true;
     const ctx = fakeCtx({ chat: { id: SUPER_ADMIN_USER_ID, type: "private" }, from: { id: SUPER_ADMIN_USER_ID }, message: { text: "/whatever" } });
     expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
 
-    getOrCreateChatState(targetChatId).isUseProxySend = false;
+    getOrCreateChatState(targetChatId).isProxySendEnabled = false;
     expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
   });
 });

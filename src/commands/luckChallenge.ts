@@ -68,7 +68,7 @@ import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
  *   用户选中结果时 Telegram 直接推给机器人，带真实 uid 和查询词，与结果
  *   发到哪个聊天无关——机器人不在场的群/私聊里抽的签也能确认落盘。需要
  *   在 BotFather 用 /setinlinefeedback 开启（建议 100%），否则收不到。
- * - 带签名回执的结果消息现身（兜底，挂在 index.ts 的 isInit 网关之前，见
+ * - 带签名回执的结果消息现身（兜底，挂在 index.ts 的 isInitEnabled 网关之前，见
  *   confirmLuckDraw）：机器人在任何聊天里（含未 /init 的群、机器人自己的
  *   私聊）看见末行带有效随机 nonce + HMAC 的结果就认领——不要求 via_bot，
  *   转发副本也算数。正文不是凭据，无法靠枚举档位文案替别人确认；回执随

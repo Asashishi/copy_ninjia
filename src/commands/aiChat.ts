@@ -6,7 +6,7 @@ import { sendMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 
 /**
- * 处理 /ai_chat enable|disable 指令：按群开关 AI 闲聊功能（见 ChatState.isUseAIChat，
+ * 处理 /ai_chat enable|disable 指令：按群开关 AI 闲聊功能（见 ChatState.isAIChatEnabled，
  * 缺省禁用）。仅 SUPER_ADMIN_USER_ID 本人可用，不走 PRIVILEGED_USERS_ID 白名单——
  * 这是单独一批权限，其他任何人尝试都只会被嘲讽，指令本身不会执行。
  */
@@ -20,7 +20,7 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const state: ChatState = getOrCreateChatState(chatId);
-  state.isUseAIChat = arg === "enable";
+  state.isAIChatEnabled = arg === "enable";
   // 关闭时同步清掉 Worker 侧已排队的触发：主线程停止投喂只拦得住之后的，
   // 递增状态代数并清队列，拦截排队和在途回复的后续副作用。
   if (arg === "disable") invalidateAiChat(chatId, true);

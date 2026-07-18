@@ -15,7 +15,7 @@ mock.module("../../src/infra/storage", () => ({
   clearChatStateField: () => false,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => undefined,
-  getChatState: () => ({ isUseAIChat: true, quietUntil: Number.MAX_SAFE_INTEGER }),
+  getChatState: () => ({ isAIChatEnabled: true, quietUntil: Number.MAX_SAFE_INTEGER }),
   getOrCreateChatState: () => ({}),
   saveStateInBackground: () => {},
 }));

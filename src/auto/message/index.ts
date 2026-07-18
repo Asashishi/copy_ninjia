@@ -105,7 +105,7 @@ function recordSelfInlineResult(message: Message, botId: number, botFirstName: s
   if (typeof message.text !== "string") return;
   const chatId: number = message.chat.id;
   if (getActiveCopyIn(chatId)) return;
-  if (getChatState(chatId).isUseAIChat !== true) return;
+  if (getChatState(chatId).isAIChatEnabled !== true) return;
   recordChatMessage(chatId, botId, botFirstName, "", botUsername, stripLuckReceipt(message.text));
 }
 
@@ -118,7 +118,7 @@ function recordSelfInlineResult(message: Message, botId: number, botFirstName: s
  * 最前面依次过两道门，命中任一道都不再往下走：
  * - via_bot 指向自己：内联结果消息（如 /luck_challenge），自录入 AI 对话
  *   缓存后直接返回，见 recordSelfInlineResult。（运势抽签的确认落盘不在
- *   这里做——签名回执认领挂在 index.ts 的 isInit 网关之前，不然转发进未 /init
+ *   这里做——签名回执认领挂在 index.ts 的 isInitEnabled 网关之前，不然转发进未 /init
  *   群的结果副本根本到不了本函数，见 commands/luckChallenge.ts 的
  *   confirmLuckDraw。）
  * - isBotOwnMessage：机器人自己发出消息的原样回弹（频道自回环），整条跳过、
@@ -161,7 +161,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       const copiedMessageId: number | undefined = await copyMessage(targetChatId, chatId, message.message_id);
       if (copiedMessageId === undefined) {
         // 失败后立即结束会话，避免后续消息被静默吞掉。
-        clearChatStateField(targetChatId, "isUseProxySend");
+        clearChatStateField(targetChatId, "isProxySendEnabled");
         saveStateInBackground("proxy send failed");
         await sendMessage(chatId, `转发到 ${targetChatId} 失败了，本天才先把这轮中转停掉了，检查一下再 /send 重新开吧♡`);
       }
@@ -173,10 +173,10 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 随机复读），只保留被动触发（回复机器人 / @ 机器人）和指令。
   const isQuiet: boolean = (state.quietUntil ?? 0) > Date.now();
 
-  // 本群的 AI 闲聊开关（state.json 里按群配置 isUseAIChat，见 ChatState）：
+  // 本群的 AI 闲聊开关（state.json 里按群配置 isAIChatEnabled，见 ChatState）：
   // 缺省关闭，需群管理员通过 /ai_chat enable 显式开启。关闭的群连对话缓存都
   // 不攒（攒了也没有会消费它的回复流水线），回复/@ 机器人也不再回。
-  const aiChatEnabled: boolean = state.isUseAIChat === true;
+  const aiChatEnabled: boolean = state.isAIChatEnabled === true;
 
   const messageText: string | undefined = typeof message.text === "string" ? message.text : undefined;
   // 「用户回复机器人」的判定给文本与媒体分支共用：拿贴纸/图片/GIF 回复

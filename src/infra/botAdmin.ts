@@ -22,15 +22,15 @@ import { invalidateAiChat } from "../aiChat";
  *    时按需 getChatMember 现查一次并回填（isBotAdminIn）。
  *
  * 三条路径最终都经 recordBotAdminStatus 落盘，而它只认已 /init enable 过
- * 的群：my_chat_member 更新会绕过 index.ts 的 isInit 网关（机器人被拉进
+ * 的群：my_chat_member 更新会绕过 index.ts 的 isInitEnabled 网关（机器人被拉进
  * 任何群，不管有没有人 /init，Telegram 都会推送），若不在这里把关，
  * state.json 就会为「只是被拉进去、从没人管过」的群凭空长出条目。
  */
 
 /**
  * 记录一次确证的管理员身份观测结果，与已知值不同时才写入并落盘。
- * 未初始化的群（isInit !== true）一律不落盘：my_chat_member 更新（机器人
- * 被拉进群/任免管理员）会绕过 index.ts 的 isInit 网关送到这里，若不设防，
+ * 未初始化的群（isInitEnabled !== true）一律不落盘：my_chat_member 更新（机器人
+ * 被拉进群/任免管理员）会绕过 index.ts 的 isInitEnabled 网关送到这里，若不设防，
  * 光是被拉进一个群、还没人 /init enable，state.json 就会凭空多出一条只有
  * botIsAdmin 的记录——先于任何超级管理员操作自己"写"进去了。用 getChatState
  * （只读）判定，不经过 getOrCreateChatState，未初始化的群连内存里的 Map
@@ -39,7 +39,7 @@ import { invalidateAiChat } from "../aiChat";
  * 这里的省略不损失任何信息。
  */
 function recordBotAdminStatus(chatId: number, isAdmin: boolean): void {
-  if (getChatState(chatId).isInit !== true) return;
+  if (getChatState(chatId).isInitEnabled !== true) return;
   const chatState = getOrCreateChatState(chatId);
   if (chatState.botIsAdmin === isAdmin) return;
   chatState.botIsAdmin = isAdmin;

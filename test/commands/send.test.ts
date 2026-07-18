@@ -32,7 +32,7 @@ mock.module("../../src/infra/storage", () => ({
   },
   getActiveProxySendTarget: (): number | undefined => {
     for (const [chatId, state] of chatStates) {
-      if (state.isUseProxySend === true) return chatId;
+      if (state.isProxySendEnabled === true) return chatId;
     }
     return undefined;
   },
@@ -113,17 +113,17 @@ describe("handleSendCommand", () => {
   test("合法且可达的群组 id 开启会话并落盘（状态挂在目标群自己的 chatId 下）；重复调用被拒绝、不换目标", async () => {
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100123"));
     expect(getChatMock).toHaveBeenCalledTimes(1);
-    expect(chatStates.get(-100123)).toEqual({ isUseProxySend: true });
+    expect(chatStates.get(-100123)).toEqual({ isProxySendEnabled: true });
     expect(saveStateInBackgroundMock).toHaveBeenCalledTimes(1);
 
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100456"));
-    expect(chatStates.get(-100123)).toEqual({ isUseProxySend: true });
+    expect(chatStates.get(-100123)).toEqual({ isProxySendEnabled: true });
     expect(chatStates.has(-100456)).toBe(false);
     expect(saveStateInBackgroundMock).toHaveBeenCalledTimes(1); // 被拒绝的这次没有再落盘
     expect(getChatMock).toHaveBeenCalledTimes(1); // 已经在转发就不必再探一次可达性
   });
 
-  test("finish 结束会话并落盘（清掉目标群自己的 isUseProxySend）；没有会话时 finish 只提示、不落盘", async () => {
+  test("finish 结束会话并落盘（清掉目标群自己的 isProxySendEnabled）；没有会话时 finish 只提示、不落盘", async () => {
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "finish"));
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
     expect(saveStateInBackgroundMock).not.toHaveBeenCalled();

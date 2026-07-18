@@ -6,7 +6,7 @@ describe("decodeStateFile", () => {
     expect(decodeStateFile({
       chats: {
         "-1001": {
-          isInit: true,
+          isInitEnabled: true,
           lockdown: {
             originalPermissions: { can_send_messages: true, can_invite_users: false },
             expiresAt: 2_000_000,
@@ -22,12 +22,12 @@ describe("decodeStateFile", () => {
             originalPermissions: { can_send_messages: true, can_invite_users: false },
             expiresAt: 2_000_000,
           },
-          isUseAIChat: undefined,
+          isAIChatEnabled: undefined,
           isJATranslationEnabled: undefined,
-          isInit: true,
+          isInitEnabled: true,
           botIsAdmin: undefined,
           title: undefined,
-          isUseProxySend: undefined,
+          isProxySendEnabled: undefined,
         },
       },
       globalCopy: { copiedUser: null, lastCopyTime: 1_000_000 },
@@ -57,10 +57,19 @@ describe("decodeStateFile", () => {
   test("多个活动中转目标拒绝加载，不能静默选取第一个", () => {
     expect(() => decodeStateFile({
       chats: {
-        "-1001": { isUseProxySend: true },
-        "-1002": { isUseProxySend: true },
+        "-1001": { isProxySendEnabled: true },
+        "-1002": { isProxySendEnabled: true },
       },
       globalCopy: { copiedUser: null },
     })).toThrow("multiple active proxy send targets: -1001, -1002");
+  });
+
+  test("旧版功能开关字段拒绝加载，避免新旧命名混用", () => {
+    for (const legacyField of ["isUseAIChat", "isInit", "isUseProxySend"]) {
+      expect(() => decodeStateFile({
+        chats: { "-1001": { [legacyField]: true } },
+        globalCopy: { copiedUser: null },
+      })).toThrow(`state.chats.-1001.${legacyField}`);
+    }
   });
 });

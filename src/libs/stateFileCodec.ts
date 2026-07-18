@@ -115,18 +115,18 @@ function lockdown(value: unknown, path: string): LockdownRecord {
 function chatState(value: unknown, path: string): ChatState {
   const raw = record(value, path);
   knownKeys(raw, [
-    "quietUntil", "lockdown", "isUseAIChat", "isJATranslationEnabled",
-    "isInit", "botIsAdmin", "title", "isUseProxySend",
+    "quietUntil", "lockdown", "isAIChatEnabled", "isJATranslationEnabled",
+    "isInitEnabled", "botIsAdmin", "title", "isProxySendEnabled",
   ], path);
   return {
     quietUntil: optionalTimestamp(raw, "quietUntil", path),
     lockdown: raw.lockdown === undefined ? undefined : lockdown(raw.lockdown, `${path}.lockdown`),
-    isUseAIChat: optionalBoolean(raw, "isUseAIChat", path),
+    isAIChatEnabled: optionalBoolean(raw, "isAIChatEnabled", path),
     isJATranslationEnabled: optionalBoolean(raw, "isJATranslationEnabled", path),
-    isInit: optionalBoolean(raw, "isInit", path),
+    isInitEnabled: optionalBoolean(raw, "isInitEnabled", path),
     botIsAdmin: optionalBoolean(raw, "botIsAdmin", path),
     title: optionalString(raw, "title", path),
-    isUseProxySend: optionalBoolean(raw, "isUseProxySend", path),
+    isProxySendEnabled: optionalBoolean(raw, "isProxySendEnabled", path),
   };
 }
 
@@ -167,7 +167,7 @@ export function decodeStateFile(value: unknown): StateFileSchema {
     }
     const decodedChatState: ChatState = chatState(value, `state.chats.${chatIdText}`);
     chats[chatIdText] = decodedChatState;
-    if (decodedChatState.isUseProxySend === true) activeProxyChatIds.push(chatId);
+    if (decodedChatState.isProxySendEnabled === true) activeProxyChatIds.push(chatId);
   }
   if (activeProxyChatIds.length > 1) {
     throw new Error(`state.chats has multiple active proxy send targets: ${activeProxyChatIds.join(", ")}`);

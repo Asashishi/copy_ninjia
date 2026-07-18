@@ -281,7 +281,7 @@ export function getAllChatStates(): ReadonlyMap<number, ChatState> {
 /** 定位唯一的 /send 目标；群数量很小，直接扫描而不维护易失配的反向索引。 */
 export function getActiveProxySendTarget(): number | undefined {
   for (const [chatId, chatState] of chatStates) {
-    if (chatState.isUseProxySend === true) return chatId;
+    if (chatState.isProxySendEnabled === true) return chatId;
   }
   return undefined;
 }

@@ -43,7 +43,7 @@ export interface ChatState {
    * 缺省视为禁用，需通过 /ai_chat enable 显式开启（仅 SUPER_ADMIN_USER_ID
    * 本人可用该指令，见 commands/aiChat.ts）。
    */
-  isUseAIChat?: boolean;
+  isAIChatEnabled?: boolean;
   /**
    * 本群 /ja_copy 的日语翻译功能是否启用。缺省视为禁用，需通过
    * /ja_copy enable 显式开启（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
@@ -61,7 +61,7 @@ export interface ChatState {
    * 订阅某个群」的机制，这是应用层面能做到的最接近「不监听」的效果，避免
    * 被拉进大量群时被拖垮。
    */
-  isInit?: boolean;
+  isInitEnabled?: boolean;
   /**
    * 机器人自己在本群是否为管理员。由 my_chat_member 更新近实时维护，未知时
    * 按需 getChatMember 现查回填（见 src/infra/botAdmin.ts）。这是入群守卫和
@@ -79,7 +79,7 @@ export interface ChatState {
    * 本群是否为唯一的 /send 中转目标。状态挂在目标群并持久化，避免另存目标
    * ID 形成双份事实；命令入口负责全局唯一约束。
    */
-  isUseProxySend?: boolean;
+  isProxySendEnabled?: boolean;
 }
 
 /**

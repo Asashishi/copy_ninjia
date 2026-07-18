@@ -18,12 +18,12 @@ import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackgr
 
 /**
  * 记录一次确证的群名称，与已知值不同才写入并落盘（避免高频群消息把这里
- * 变成每条消息都触发一次落盘）。未初始化的群（isInit !== true）不记录，
+ * 变成每条消息都触发一次落盘）。未初始化的群（isInitEnabled !== true）不记录，
  * 理由同 infra/botAdmin.ts 的 recordBotAdminStatus——不能让只是被拉进去、
  * 从没人管过的群凭空在 state.json 里长出条目。
  */
 function recordChatTitle(chatId: number, title: string): void {
-  if (getChatState(chatId).isInit !== true) return;
+  if (getChatState(chatId).isInitEnabled !== true) return;
   const chatState = getOrCreateChatState(chatId);
   if (chatState.title === title) return;
   chatState.title = title;

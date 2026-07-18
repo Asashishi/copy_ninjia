@@ -5,7 +5,7 @@ import { isSuperAdmin } from "./superAdminToggle";
 
 /**
  * 隐藏的超管私聊中转命令；群聊和非超管调用静默拒绝。只接受可达的
- * group/supergroup，持久化位置由 ChatState.isUseProxySend 定义。
+ * group/supergroup，持久化位置由 ChatState.isProxySendEnabled 定义。
  */
 export async function handleSendCommand(ctx: CommandContext<Context>): Promise<void> {
   if (ctx.chat.type !== "private") return;
@@ -23,7 +23,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
       await sendMessage(chatId, `现在又没在转发，是想 finish 什么呀♡`, messageId);
       return;
     }
-    clearChatStateField(activeTargetChatId, "isUseProxySend");
+    clearChatStateField(activeTargetChatId, "isProxySendEnabled");
     saveStateInBackground("send finished");
     await sendMessage(chatId, `好啦，不转发了♡`, messageId);
     return;
@@ -52,7 +52,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  getOrCreateChatState(targetChatId).isUseProxySend = true;
+  getOrCreateChatState(targetChatId).isProxySendEnabled = true;
   saveStateInBackground("send started");
   await sendMessage(chatId, `好，现在这里发的消息本天才都会转发进 ${targetChatId}，说完了记得 /send finish♡`, messageId);
 }
