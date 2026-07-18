@@ -1,5 +1,6 @@
 import {
   closeSync,
+  fchmodSync,
   fsyncSync,
   openSync,
   renameSync,
@@ -75,6 +76,9 @@ export function atomicWriteTextSync(path: string, content: string, mode?: number
   const fd: number = openSync(tmpPath, "wx", mode);
   try {
     writeFileSync(fd, content);
+    // open(2) 的 mode 会被进程 umask 收紧。在临时文件尚未 rename 可见前
+    // 显式设回调用方要求的最终权限，避免目标曾短暂以 0600 出现。
+    if (mode !== undefined) fchmodSync(fd, mode);
     fsyncSync(fd);
   } catch (error: unknown) {
     try {

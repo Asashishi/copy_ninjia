@@ -6,7 +6,7 @@ import { sendMessage, copyMessage } from "../../infra/telegram";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";
 import { cacheSender } from "../../users/senderIdentity";
 import { recordChatMessage, recordChatMedia, generateAndSendReply } from "../../aiChat";
-import { AI_REPLY_PROBABILITY } from "../../consts/aiChat";
+import { AI_REPLY_PROBABILITY_BASE_INITIAL } from "../../consts/aiChat";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
@@ -22,6 +22,7 @@ import { isSelfSent } from "../../infra/selfSentTracker";
 import { SUPER_ADMIN_USER_ID } from "../../infra/config";
 import { stripLuckReceipt } from "../../libs/luckReceipt";
 import { echoMessage, resolveEffectiveCopyMode } from "./echo";
+import { observeGroupMessageForAiReply } from "./aiReplyActivity";
 import {
   hasCopyableContent,
   isBotMentioned,
@@ -140,6 +141,13 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message);
   const state: ChatState = getChatState(chatId);
+  // 群/超级群的当前消息先进一小时滑动活跃度，然后才进入后续
+  // 分支；因此即使正在复读或 AI 当下关闭，机器人已经观察到的群热度
+  // 也不会被漏算。频道帖不是群聊，保持冷启动基线 1/150。
+  const aiReplyProbability: number =
+    message.chat.type === "group" || message.chat.type === "supergroup"
+      ? observeGroupMessageForAiReply(chatId)
+      : 1 / AI_REPLY_PROBABILITY_BASE_INITIAL;
 
   // 复读目标全局唯一，但复读只发生在发起 /copy 的那个群里（判定统一走
   // getActiveCopyIn）——同一个目标在别的群发言不复读，别的群的 AI 闲聊/
@@ -199,7 +207,8 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, messageText);
 
     // AI 闲聊回复：用户回复机器人、或者消息里 @ 了机器人 → 必然触发；否则
-    // 普通发言按 AI_REPLY_PROBABILITY 概率触发。「插不插话」的闸门就是这里
+    // 普通发言按本群近一小时活跃度算出的 aiReplyProbability 触发。
+    // 「插不插话」的闸门就是这里
     // 的掷骰——命中后怎么回由模型在 Worker 侧自主决定，但必须回应（说话/
     // 贴纸/扣反应都算）、不允许沉默（见 workers/aiChatWorker.ts 的
     // generateAndSendReply）。命中后就不再走下面的洗澡/随机复读，免得一条
@@ -210,7 +219,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const isRandomTrigger: boolean =
       !isReplyToBot && !isMentioned && !isQuiet &&
       !hasOtherMention && !repliesToSelf &&
-      Math.random() < AI_REPLY_PROBABILITY;
+      Math.random() < aiReplyProbability;
 
     if (isReplyToBot || isMentioned) {
       generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo?.text : undefined);
@@ -247,7 +256,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
         return;
       }
     } else {
-      // 例外：按 AI_REPLY_PROBABILITY 掷中时，解析完成后 AI 会回复那条贴纸
+      // 例外：按本群动态概率掷中时，解析完成后 AI 会回复那条贴纸
       // 消息评价它——文字随机搭话与图片/贴纸/GIF 评价共用同一个概率（不是
       // 各自独立掷骰），掷骰在这里（主线程调度逻辑），顺带套用 /quiet 静默。
       // 回复机器人时不掷骰（必回，与文字路径一致地无视 /quiet），两者互斥
@@ -256,7 +265,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       // 媒体本身无论是否取得随机名额都照常入缓存当上下文。
       const commentOnResolveCandidate: boolean =
         !directMediaTrigger && !isQuiet && !hasOtherMention && !repliesToSelf &&
-        Math.random() < AI_REPLY_PROBABILITY;
+        Math.random() < aiReplyProbability;
       const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
       recordChatMedia(
         "sticker",
@@ -290,7 +299,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // 必回触发与随机评价互斥；只有随机评价使用 15s 每人冷却，理由同贴纸分支。
     const commentOnResolveCandidate: boolean =
       !directMediaTrigger && !isQuiet && !hasOtherMention && !repliesToSelf &&
-      Math.random() < AI_REPLY_PROBABILITY;
+      Math.random() < aiReplyProbability;
     const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
     recordChatMedia(
@@ -329,7 +338,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       // 必回触发与随机评价互斥；只有随机评价使用 15s 每人冷却。
       const commentOnResolveCandidate: boolean =
         !directMediaTrigger && !isQuiet && !hasOtherMention && !repliesToSelf &&
-        Math.random() < AI_REPLY_PROBABILITY;
+        Math.random() < aiReplyProbability;
       const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
       recordChatMedia(
         "animation",

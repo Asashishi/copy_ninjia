@@ -22,7 +22,13 @@ import {
 import { logger } from "../infra/logger";
 import { ensureLuckReceiptSecret, onDiskIORespawn, postDiskIO } from "../infra/diskIO";
 import { getTokyoDateKey } from "../libs/time";
-import { createLuckReceipt, deriveLuckEntropy, verifyLuckReceipt } from "../libs/luckReceipt";
+import {
+  createLuckReceipt,
+  deriveLuckEntropy,
+  LUCK_RECEIPT_DISPLAY_PREFIX,
+  unwrapLuckReceiptLine,
+  verifyLuckReceipt,
+} from "../libs/luckReceipt";
 import type { LuckDayCache, LuckDraw, LuckReceiptSecret, LuckTier } from "../types";
 
 /**
@@ -184,9 +190,11 @@ function signedResultText(bodyText: string, cacheKey: string): { text: string; r
   const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
   if (!secret) throw new Error("Daily luck receipt secret is not initialized");
   const receipt: string = createLuckReceipt(secret, cacheKey);
+  const displayLine: string = `${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`;
   return {
-    text: `${bodyText}\n${receipt}`,
-    receiptOffset: bodyText.length + 1,
+    text: `${bodyText}\n${displayLine}`,
+    // 「防伪标记: 」始终可见，只把后面的协议载荷标成 spoiler。
+    receiptOffset: bodyText.length + 1 + LUCK_RECEIPT_DISPLAY_PREFIX.length,
     receiptLength: receipt.length,
   };
 }
@@ -240,8 +248,9 @@ export async function confirmLuckDraw(messageText: string | undefined): Promise<
   if (typeof messageText !== "string") return;
   await ensureCacheFreshForToday();
 
-  const receipt: string | undefined = messageText.split("\n").at(-1);
-  if (!receipt) return;
+  const receiptLine: string | undefined = messageText.split("\n").at(-1);
+  if (!receiptLine) return;
+  const receipt: string = unwrapLuckReceiptLine(receiptLine);
   const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
   if (!secret) return;
   const cacheKey: string | undefined = verifyLuckReceipt(receipt, luckCacheState.dayKey, secret);

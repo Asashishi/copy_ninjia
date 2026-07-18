@@ -1,13 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
+import { PERSISTED_FILE_MODE } from "../../consts/diskIO";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import type { LuckReceiptSecret } from "../../types";
 
 const DAY_PATTERN: RegExp = /^\d{4}-\d{2}-\d{2}$/;
 const SECRET_PATTERN: RegExp = /^[A-Za-z0-9_-]{43}$/;
-const SECRET_FILE_MODE: number = 0o600;
 
 export interface LuckSecretFileIO {
   generateKey: () => Buffer;
@@ -42,8 +42,7 @@ function newSecret(day: string, path: string, io: LuckSecretFileIO): LuckReceipt
   const generated: Buffer = io.generateKey();
   if (generated.length !== 32) throw new Error("Luck receipt key generator must return exactly 32 bytes");
   const secret: LuckReceiptSecret = { version: 1, day, key: generated.toString("base64url") };
-  io.writeText(path, `${JSON.stringify(secret, null, 2)}\n`, SECRET_FILE_MODE);
-  io.chmod(path, SECRET_FILE_MODE);
+  io.writeText(path, `${JSON.stringify(secret, null, 2)}\n`, PERSISTED_FILE_MODE);
   return secret;
 }
 
@@ -59,6 +58,7 @@ export function recoverLuckReceiptSecret(
   if (!DAY_PATTERN.test(today)) throw new Error(`Invalid Tokyo day for luck receipt secret: ${today}`);
   mkdirSync(dirname(path), { recursive: true });
   if (!existsSync(path)) return newSecret(today, path, io);
+  if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) io.chmod(path, PERSISTED_FILE_MODE);
 
   let secret: LuckReceiptSecret;
   try {
@@ -70,6 +70,5 @@ export function recoverLuckReceiptSecret(
     throw new Error(`Luck receipt secret file is from future day ${secret.day}; refusing to replace it for ${today}.`);
   }
   if (secret.day < today) return newSecret(today, path, io);
-  io.chmod(path, SECRET_FILE_MODE);
   return secret;
 }

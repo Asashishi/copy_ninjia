@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recoverLuckReceiptSecret, type LuckSecretFileIO } from "../../../src/workers/diskIO/luckSecretFile";
@@ -11,12 +11,23 @@ beforeEach(() => rmSync(path, { recursive: true, force: true }));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("daily luck receipt secret file", () => {
-  test("文件缺失时原子创建，同日重载复用同一密钥并保持 0600", () => {
-    const created = recoverLuckReceiptSecret("2026-07-19", path);
+  test("文件缺失时原子创建，同日重载复用同一密钥并保持普通用户可读的 0644", () => {
+    // 即使生产进程使用严格 umask，rename 前也会 fchmod 成 0644。
+    const previousUmask: number = process.umask(0o077);
+    let created: ReturnType<typeof recoverLuckReceiptSecret>;
+    try {
+      created = recoverLuckReceiptSecret("2026-07-19", path);
+    } finally {
+      process.umask(previousUmask);
+    }
     const loaded = recoverLuckReceiptSecret("2026-07-19", path);
     expect(loaded).toEqual(created);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(created);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(statSync(path).mode & 0o777).toBe(0o644);
+
+    chmodSync(path, 0o600);
+    recoverLuckReceiptSecret("2026-07-19", path);
+    expect(statSync(path).mode & 0o777).toBe(0o644);
   });
 
   test("东京日期前进时生成新密钥并原子替换旧日文件", () => {

@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "no
 import { join } from "node:path";
 import {
   DAY_FILE_JSON_INDENT,
+  PERSISTED_FILE_MODE,
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_COMPACT_ENTRIES,
   VERIFICATION_FILE_MAX_MESSAGE_IDS,
@@ -137,8 +138,12 @@ export function compactVerificationDay(day: string, dir: string = VERIFICATION_M
   mkdirSync(dir, { recursive: true });
   const compacted: Record<string, unknown> = {};
   for (const [key, snapshot] of verificationWorkerCache) compacted[key] = storedSnapshot(snapshot);
-  atomicWriteTextSync(join(dir, `${day}.json`), JSON.stringify(compacted, null, DAY_FILE_JSON_INDENT));
-  verificationFileState.current = openDayFile(dir, day);
+  atomicWriteTextSync(
+    join(dir, `${day}.json`),
+    JSON.stringify(compacted, null, DAY_FILE_JSON_INDENT),
+    PERSISTED_FILE_MODE
+  );
+  verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
   verificationFileState.appendedEntries = 0;
   verificationFileState.appendedBytes = 0;
 }
@@ -157,7 +162,7 @@ export function recoverVerificationDay(
   verificationPendingChanges.clear();
   verificationFileState.appendedEntries = 0;
   verificationFileState.appendedBytes = 0;
-  verificationFileState.current = openDayFile(dir, day);
+  verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
   removeOldVerificationDays(day, dir);
 
   const path: string = join(dir, `${day}.json`);
@@ -328,7 +333,7 @@ export function flushVerificationChanges(
       return;
     }
 
-    appendToDayFile(dir, verificationFileState.current, chunk);
+    appendToDayFile(dir, verificationFileState.current, chunk, PERSISTED_FILE_MODE);
     verificationFileState.appendedEntries += changes.length;
     verificationFileState.appendedBytes += appendedBytes;
     acknowledge(changes, reply);

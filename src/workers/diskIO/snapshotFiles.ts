@@ -19,11 +19,11 @@
  * 断电风险（与日志文件同一套机制，那边已经这样跑了很久）。
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry, StickerCatalogEntry, StickerCatalogSnapshot } from "../../types";
 import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
-import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO";
+import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN, PERSISTED_FILE_MODE, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
@@ -41,6 +41,10 @@ function tryUnlink(path: string): void {
   } catch {
     // 删除失败（权限问题等）不影响主流程，下次同样的清理还会再试一次。
   }
+}
+
+function ensurePersistedFileMode(path: string): void {
+  if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) chmodSync(path, PERSISTED_FILE_MODE);
 }
 
 /** 解析失败的文件重命名隔离，不静默删除——留排查线索（对齐 loadState 的做法）。 */
@@ -101,6 +105,7 @@ export function recoverAiMemories(): Map<number, string> {
     }
     const match = AI_MEMORY_FILE_PATTERN.exec(name);
     if (!match) continue; // 非 <chatId>.json 形态（含 .corrupt 隔离文件），跳过不动
+    ensurePersistedFileMode(path);
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -127,7 +132,7 @@ export function recoverAiMemories(): Map<number, string> {
  */
 export function writeAiMemoryFile(chatId: number, snapshotJson: string): void {
   mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  atomicWriteTextSync(join(AI_MEMORY_DIR, `${chatId}.json`), snapshotJson);
+  atomicWriteTextSync(join(AI_MEMORY_DIR, `${chatId}.json`), snapshotJson, PERSISTED_FILE_MODE);
 }
 
 export function deleteAiMemoryFile(chatId: number): void {
@@ -179,6 +184,7 @@ export function recoverStickerCatalogs(activePacks: readonly string[]): Map<stri
     }
     const match = STICKER_CATALOG_FILE_PATTERN.exec(name);
     if (!match) continue; // 非 <pack>.json 形态（含 .corrupt 隔离文件），跳过不动
+    ensurePersistedFileMode(path);
     const pack: string = match[1]!;
     if (!activePackSet.has(pack)) {
       // 白名单已经不包含这个包：孤儿文件，清掉，不进 result（不载入内存）。
@@ -205,7 +211,7 @@ export function recoverStickerCatalogs(activePacks: readonly string[]): Map<stri
  *  JSON 文本。 */
 export function writeStickerCatalogFile(pack: string, snapshotJson: string): void {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
-  atomicWriteTextSync(join(STICKER_MEMORY_DIR, `${pack}.json`), snapshotJson);
+  atomicWriteTextSync(join(STICKER_MEMORY_DIR, `${pack}.json`), snapshotJson, PERSISTED_FILE_MODE);
 }
 
 /**
@@ -239,7 +245,7 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   if (!existsSync(todayPath)) return null;
   let parsed: unknown;
   try {
-    openDayFile(LUCK_MEMORY_DIR, todayKey);
+    openDayFile(LUCK_MEMORY_DIR, todayKey, PERSISTED_FILE_MODE);
     parsed = JSON.parse(readFileSync(todayPath, "utf8"));
   } catch (error) {
     quarantine(todayPath);
@@ -271,8 +277,8 @@ export function appendLuckEntries(day: string, fileState: { current: DayFileStat
   if (pending.length === 0) return;
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
   if (fileState.current?.day !== day) {
-    fileState.current = openDayFile(LUCK_MEMORY_DIR, day);
+    fileState.current = openDayFile(LUCK_MEMORY_DIR, day, PERSISTED_FILE_MODE);
   }
   const chunk: string = pending.map((entry) => serializeDayFileEntry(entry.key, entry.record)).join(",\n");
-  appendToDayFile(LUCK_MEMORY_DIR, fileState.current, chunk);
+  appendToDayFile(LUCK_MEMORY_DIR, fileState.current, chunk, PERSISTED_FILE_MODE);
 }

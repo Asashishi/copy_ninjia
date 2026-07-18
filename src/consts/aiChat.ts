@@ -1,18 +1,14 @@
-/**
- * AI 闲聊的调参常量。AI_REPLY_PROBABILITY 由主线程（src/auto/message/）的触发
- * 调度使用，其余都是 Worker 线程（workers/aiChatWorker.ts）流水线的旋钮。
- */
-
-/**
- * AI 主动搭话的统一概率：没有其它触发条件时，普通发言触发一次随机回复；
- * 群友发图片/贴纸/GIF 时，触发「解析完成后回复那条消息、评价媒体内容」
- * ——文字消息与三种媒体共用这同一个概率（不是各自独立掷骰，曾经文字
- * 1/5、媒体 1/8 两套，现已合并）。掷骰子决定是否触发属于主线程的调度
- * 逻辑（照顾 /quiet 状态与随机回复冷却，见 src/auto/message/），Worker
- * 只执行已触发的回复；媒体评价由 Worker 在描述解析成功时执行（解析失败
- * 没内容可评，静默放弃），见 workers/aiChat/mediaIngest.ts 的 recordChatMedia。
- */
-export const AI_REPLY_PROBABILITY: number = 1 / 7;
+/** AI 主动搭话按群统计最近一小时活跃度；不落盘，重启后从冷群起步。 */
+export const AI_REPLY_ACTIVITY_WINDOW_MS: number = 60 * 60 * 1000;
+/** 概率为 1 / base；每观察到一条群消息，base 从 150 减 1。 */
+export const AI_REPLY_PROBABILITY_BASE_INITIAL: number = 150;
+/** 最热时封底到 1/15，不再随消息数继续抬高。 */
+export const AI_REPLY_PROBABILITY_BASE_MIN: number = 15;
+/** 达到 1/15 后更旧的时间戳已不影响概率，每群只需保留最新 135 条。 */
+export const AI_REPLY_ACTIVITY_MAX_TIMESTAMPS: number =
+  AI_REPLY_PROBABILITY_BASE_INITIAL - AI_REPLY_PROBABILITY_BASE_MIN;
+/** 防止恶意把机器人拉进大量群后用单条消息撑大活跃度表；超额淘汰最久未活动群。 */
+export const AI_REPLY_ACTIVITY_MAX_CHATS: number = 500;
 
 /** 闲聊回复生成（callGemini）用的模型——人设发挥、工具调用都在这条链路上。
  *  三条链路统一用 gemini-3.1-flash-lite（内置 googleSearch 与自定义函数

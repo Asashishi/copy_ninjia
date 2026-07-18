@@ -181,8 +181,8 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
 /**
  * 记录一条图片/贴纸/GIF 消息：Worker 侧先以占位文本入缓存、异步解析媒体
  * 后原位回填描述（见 workers/aiChatWorker.ts 的 recordChatMedia）。默认
- * 只记上下文、不触发回复；commentOnResolve 为 true（主线程按
- * AI_REPLY_PROBABILITY 掷中，与文字随机搭话共用同一个概率）时，解析成功
+ * 只记上下文、不触发回复；commentOnResolve 为 true（主线程按本群
+ * 近一小时活跃度掷中，与文字随机搭话共用同一个动态概率）时，解析成功
  * 后会以「回复那条消息」的形式发一条针对内容的评价。
  * @param kind 媒体类型：photo/sticker/animation，决定占位符/视觉提示词。
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。

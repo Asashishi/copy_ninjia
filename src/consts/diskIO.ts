@@ -5,6 +5,9 @@
 
 // ---- 日志（原 consts/logger.ts，数值原样保留，行为零变化） ----
 
+/** Disk I/O Worker 创建/接管的 JSON 统一为普通系统用户可读、仅属主可写。 */
+export const PERSISTED_FILE_MODE: number = 0o644;
+
 /** 仅保留最近几天（今天及之前）的日志文件，跨天时自动清理过期文件。 */
 export const RETENTION_DAYS: number = 3;
 

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "../../../src/workers/diskIO/appendOnlyDayFile";
+import { PERSISTED_FILE_MODE } from "../../../src/consts/diskIO";
 import type { DayFileState } from "../../../src/types";
 
 let dir: string;
@@ -20,6 +21,22 @@ function readDay(day: string): unknown {
 }
 
 describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
+  test("新建和接管的按日文件均强制为普通用户可读的 0644", () => {
+    const previousUmask: number = process.umask(0o077);
+    try {
+      const state: DayFileState = openDayFile(dir, "2026-07-16", PERSISTED_FILE_MODE);
+      appendToDayFile(dir, state, serializeDayFileEntry("a", 1), PERSISTED_FILE_MODE);
+    } finally {
+      process.umask(previousUmask);
+    }
+    const path: string = join(dir, "2026-07-16.json");
+    expect(statSync(path).mode & 0o777).toBe(0o644);
+
+    chmodSync(path, 0o600);
+    openDayFile(dir, "2026-07-16", PERSISTED_FILE_MODE);
+    expect(statSync(path).mode & 0o777).toBe(0o644);
+  });
+
   test("文件不存在 -> openDayFile 视为空文件", () => {
     const state: DayFileState = openDayFile(dir, "2026-07-16");
     expect(state).toEqual({ day: "2026-07-16", size: 0, empty: true });

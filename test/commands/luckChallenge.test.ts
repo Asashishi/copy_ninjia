@@ -62,6 +62,9 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(ctx.results.length).toBe(2);
 
     const fortuneBody: string = bodyTextOf(ctx.results[0]);
+    expect(fortuneBody.split("\n").at(-1)?.startsWith("防伪标记: luck:v1:")).toBe(true);
+    const spoiler = ctx.results[0].input_message_content.entities[0];
+    expect(fortuneBody.slice(spoiler.offset, spoiler.offset + spoiler.length).startsWith("luck:v1:")).toBe(true);
     await luckChallenge.confirmLuckDraw(fortuneBody);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
@@ -70,6 +73,17 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(msg.key).toBe("111");
     expect(cache.dailyLuckCache.has("111")).toBe(true);
     expect(cache.pendingLuckDraws.has("111")).toBe(false);
+  });
+
+  test("当日升级前已发出的旧版无「防伪标记」前缀回执仍能确认", async () => {
+    const ctx = makeInlineCtx(112, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+    const lines: string[] = bodyTextOf(ctx.results[0]).split("\n");
+    const prefixedReceipt: string = lines.pop()!;
+    const legacyReceipt: string = prefixedReceipt.slice("防伪标记: ".length);
+
+    await luckChallenge.confirmLuckDraw(`${lines.join("\n")}\n${legacyReceipt}`);
+    expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "112" });
   });
 
   test("不带文本：选中「概率论」结果（同一把 key）也能确认落盘", async () => {
@@ -172,7 +186,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const visibleBody: string = visibleBodyOf(ctx.results[0]);
 
     await luckChallenge.confirmLuckDraw(visibleBody);
-    await luckChallenge.confirmLuckDraw(`${visibleBody}\nluck:v1:${TEST_SECRET.day}:MTIz.${"B".repeat(43)}`);
+    await luckChallenge.confirmLuckDraw(`${visibleBody}\n防伪标记: luck:v1:${TEST_SECRET.day}:MTIz.${"B".repeat(43)}`);
     expect(cache.dailyLuckCache.has("883")).toBe(false);
     expect(postDiskIOMock).not.toHaveBeenCalled();
 

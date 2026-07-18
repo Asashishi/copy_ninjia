@@ -1,3 +1,5 @@
+import type { LinkedQueue } from "../libs/linkedQueue";
+
 /** 消息自动流水线（src/auto）的内存状态。 */
 
 /**
@@ -6,3 +8,15 @@
  * 冷却期满后自动清理。
  */
 export const userReplyTriggerTimes: Map<string, number> = new Map();
+
+export interface AiReplyActivityEntry {
+  /** 只保留足以计算 1/15 下限的最新消息时间戳。 */
+  timestamps: LinkedQueue<number>;
+  lastObservedAt: number;
+}
+
+/** 按群的一小时滑动活跃度；纯内存、Map 顺序同时是 LRU 顺序。 */
+export const aiReplyActivityByChat: Map<number, AiReplyActivityEntry> = new Map();
+
+/** 所有群共用一个到期计时器，不为每群/每消息创建 timer。 */
+export const aiReplyActivitySweepState: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };

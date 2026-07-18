@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { createLuckReceipt, deriveLuckEntropy, LUCK_RECEIPT_MAX_LENGTH, stripLuckReceipt, verifyLuckReceipt } from "../../src/libs/luckReceipt";
+import {
+  createLuckReceipt,
+  deriveLuckEntropy,
+  LUCK_RECEIPT_DISPLAY_PREFIX,
+  LUCK_RECEIPT_MAX_LENGTH,
+  stripLuckReceipt,
+  unwrapLuckReceiptLine,
+  verifyLuckReceipt,
+} from "../../src/libs/luckReceipt";
 import type { LuckReceiptSecret } from "../../src/types";
 
 const DAY = "2026-07-19";
@@ -35,6 +43,9 @@ describe("luck receipt protocol", () => {
   test("stripLuckReceipt 只移除末行的规范自描述回执", () => {
     const receipt: string = createLuckReceipt(SECRET, "123");
     expect(stripLuckReceipt(`可读正文\n${receipt}`)).toBe("可读正文");
+    expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBe("可读正文");
+    expect(unwrapLuckReceiptLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBe(receipt);
+    expect(unwrapLuckReceiptLine(receipt)).toBe(receipt);
     expect(stripLuckReceipt(`正文 ${receipt}`)).toBe(`正文 ${receipt}`);
     expect(stripLuckReceipt("普通正文\nluck:伪造")).toBe("普通正文\nluck:伪造");
   });

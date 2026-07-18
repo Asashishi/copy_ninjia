@@ -4,6 +4,7 @@ import type { LuckReceiptSecret } from "../types";
 const CACHE_KEY_PATTERN: RegExp = /^[1-9]\d{0,15}(?::[a-f0-9]{64})?$/;
 const RECEIPT_PATTERN: RegExp = /^luck:v1:(\d{4}-\d{2}-\d{2}):([A-Za-z0-9_-]{1,120})\.([A-Za-z0-9_-]{43})$/;
 export const LUCK_RECEIPT_MAX_LENGTH: number = 192;
+export const LUCK_RECEIPT_DISPLAY_PREFIX: string = "防伪标记: ";
 
 function secretKey(secret: LuckReceiptSecret): Buffer {
   const key: Buffer = Buffer.from(secret.key, "base64url");
@@ -67,11 +68,18 @@ export function deriveLuckEntropy(secret: LuckReceiptSecret, cacheKey: string): 
     .digest();
 }
 
+/** 结果消息的可见标签不参与 HMAC；旧版无标签回执仍原样返回以便验证。 */
+export function unwrapLuckReceiptLine(line: string): string {
+  return line.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX)
+    ? line.slice(LUCK_RECEIPT_DISPLAY_PREFIX.length)
+    : line;
+}
+
 /** AI 记忆只保留用户可读正文，不把内部签名协议混进群聊转录。 */
 export function stripLuckReceipt(text: string): string {
   const lastLineBreak: number = text.lastIndexOf("\n");
   if (lastLineBreak < 0) return text;
-  const receipt: string = text.slice(lastLineBreak + 1);
+  const receipt: string = unwrapLuckReceiptLine(text.slice(lastLineBreak + 1));
   return receipt.length <= LUCK_RECEIPT_MAX_LENGTH && RECEIPT_PATTERN.test(receipt)
     ? text.slice(0, lastLineBreak)
     : text;

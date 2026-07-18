@@ -10,7 +10,7 @@
  * 打开/探测/追加/损坏修复。
  */
 
-import { closeSync, existsSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DayFileState } from "../../types";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO";
@@ -35,8 +35,8 @@ const ENTRY_LINE_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
  * 真正的热路径 appendToDayFile 仍是位置写，其非原子性是刻意的性能取舍，
  * 靠 repairTruncated 兜底，见下方注释。
  */
-function atomicRewrite(path: string, content: string): void {
-  atomicWriteTextSync(path, content);
+function atomicRewrite(path: string, content: string, mode?: number): void {
+  atomicWriteTextSync(path, content, mode);
 }
 
 /**
@@ -46,16 +46,21 @@ function atomicRewrite(path: string, content: string): void {
  * 裁掉末尾残片修复，实在修不好才放弃旧内容从头开始。size 一律以
  * fs.statSync 读到的物理文件大小为准，不信任内存里算出来的字节数。
  */
-export function openDayFile(dir: string, day: string): DayFileState {
+export function openDayFile(dir: string, day: string, mode?: number): DayFileState {
   const path: string = join(dir, `${day}.json`);
   const state: DayFileState = { day, size: 0, empty: true };
   if (!existsSync(path)) return state;
+  // 调用方显式要求 mode 时，接管旧文件也修正曾被严格 umask
+  // 收紧的权限。日志路径不传 mode，保持原有部署权限策略。
+  // 已经是 0644 时不无条件 chmod：共享部署中文件可能由另一账号
+  // 所有，虽然当前账号可读写，对相同 mode 做 chmod 仍会 EPERM。
+  if (mode !== undefined && (statSync(path).mode & 0o777) !== mode) chmodSync(path, mode);
   const content: string = readFileSync(path, "utf8");
   try {
     const parsed: unknown = JSON.parse(content);
     if (parsed === null || typeof parsed !== "object" || Object.keys(parsed).length === 0) return state;
     if (!content.endsWith("\n}")) {
-      atomicRewrite(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT));
+      atomicRewrite(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT), mode);
     }
     state.size = statSync(path).size;
     state.empty = false;
@@ -77,7 +82,7 @@ export function openDayFile(dir: string, day: string): DayFileState {
     const repairedParsed: unknown = JSON.parse(repaired);
     const repairedIsEmpty: boolean =
       repairedParsed !== null && typeof repairedParsed === "object" && Object.keys(repairedParsed).length === 0;
-    atomicRewrite(path, repaired);
+    atomicRewrite(path, repaired, mode);
     state.size = statSync(path).size;
     state.empty = repairedIsEmpty;
   } catch {
@@ -118,11 +123,13 @@ function repairTruncated(content: string): string | null {
 }
 
 /** 把一段已序列化好的条目文本追加到某天的文件末尾（覆写结尾的「\n}」）。 */
-export function appendToDayFile(dir: string, state: DayFileState, chunk: string): void {
+export function appendToDayFile(dir: string, state: DayFileState, chunk: string, mode?: number): void {
   const path: string = join(dir, `${state.day}.json`);
   if (state.empty) {
     const content: string = `{\n${chunk}\n}`;
-    writeFileSync(path, content);
+    // 首条也走原子替换；传入 mode 时临时文件会在 rename 前
+    // fchmod，不会因进程 umask 而暴露权限不符合要求的目标。
+    atomicRewrite(path, content, mode);
     state.size = Buffer.byteLength(content);
     state.empty = false;
     return;

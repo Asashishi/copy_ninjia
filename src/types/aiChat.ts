@@ -54,8 +54,8 @@ export interface AiRecordMediaMessage {
   /** 这条消息本身的 message_id，评图/评贴纸/评 GIF 回复要用它挂 Telegram
    * 回复引用。 */
   messageId: number;
-  /** 主线程已掷中「解析完成后评价这份媒体」（概率见 AI_REPLY_PROBABILITY，
-   * 与文字随机搭话共用同一个概率，已照顾 /quiet 与随机回复冷却）；Worker
+  /** 主线程已按本群近一小时活跃度掷中「解析完成后评价这份媒体」，
+   * 与文字随机搭话共用同一个动态概率，已照顾 /quiet 与随机回复冷却；Worker
    * 在描述解析成功时执行评价回复。 */
   commentOnResolve: boolean;
   /** kind === "sticker" 时视觉解析失败的兜底文本（现有元数据行，见

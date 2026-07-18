@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
 /** 「拿媒体直接叫机器人」的触发判定（见 src/auto/message/ 的媒体分支）：
  * 有视觉素材时经 recordChatMedia 带 directTrigger 走「先试缓存、解析完成再
@@ -56,6 +56,7 @@ mock.module("../../src/ai/stickerSets", () => ({
 }));
 
 const { handleIncomingMessage } = await import("../../src/auto/message");
+const { clearAiReplyActivity } = await import("../../src/auto/message/aiReplyActivity");
 
 const botInfo = { id: 999999, username: "test_bot", first_name: "TestBot" };
 const chat = { id: -100800, type: "supergroup", title: "Test Group" };
@@ -76,7 +77,10 @@ describe("媒体直接叫机器人", () => {
     copyMessageMock.mockClear();
     quietUntil = Number.MAX_SAFE_INTEGER;
     userReplyTriggerTimes.clear();
+    clearAiReplyActivity();
   });
+
+  afterAll(clearAiReplyActivity);
 
   test("静态贴纸回复机器人：recordChatMedia 带上 directTrigger 与被回复文本，不掷评价骰", async () => {
     await handleIncomingMessage({
@@ -271,6 +275,30 @@ describe("媒体直接叫机器人", () => {
     }
 
     expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 32, undefined, true);
+  });
+
+  test("冷群首条使用 1/149 动态概率，不再沿用旧固定概率", async () => {
+    quietUntil = 0;
+    const originalRandom = Math.random;
+    // 0.01 低于旧固定 1/10，但高于冷群首条 1/149；也恰好不小于 1/100 随机复读。
+    Math.random = () => 0.01;
+    try {
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 37,
+          date: 1,
+          chat,
+          from: alice,
+          text: "冷群的第一句普通话",
+        },
+      } as any);
+    } finally {
+      Math.random = originalRandom;
+    }
+
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+    expect(copyMessageMock).not.toHaveBeenCalled();
   });
 
   test("回复自己发的图片不参与随机 AI 评价", async () => {
