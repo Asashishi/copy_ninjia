@@ -1,0 +1,205 @@
+import { logger } from "../../infra/logger";
+import type { ChatPermissions } from "@grammyjs/types";
+import { sendMessage, joinVerificationApi } from "../../infra/telegram";
+import { JOIN_THRESHOLD, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid";
+import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaidWorker";
+import type { AdoptableLockdown, LockdownEvent, UnlockEvent } from "../../types";
+import { transitionLockdown, type LockdownEffect, type LockdownMachineEvent } from "../../states/lockdown";
+import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
+import { fetchAdminIds, freshAdminIds } from "./adminCache";
+
+declare var self: Worker;
+
+/**
+ * 反刷群私密模式状态机（src/states/lockdown.ts）的解释器：把每条投递翻译成
+ * 状态机事件、同步落下一状态、管理恢复计时器、把返回的副作用列表逐个执行。
+ * thresholdExceeded 的占位同步生效——recordJoin 调用 dispatchLockdown 后，
+ * 同一批投递里紧随其后的入群立刻就能在 verificationRuntime.ts 的 handleJoin
+ * 里看到 lockdownEntries 有记录。lockdown/unlock 事件回报主线程用于持久化 +
+ * Worker 崩溃后的 adopt 重放，机制见 antiRaid.ts；总体架构见
+ * ../antiRaidWorker.ts 模块头。
+ */
+
+function dispatchLockdown(chatId: number, event: LockdownMachineEvent): void {
+  const entry = lockdownEntries.get(chatId);
+  const { next, effects } = transitionLockdown(entry?.state, event);
+  if (next !== entry?.state) {
+    if (next === undefined) {
+      if (entry) {
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        lockdownEntries.delete(chatId);
+      }
+    } else if (entry) {
+      entry.state = next;
+    } else {
+      lockdownEntries.set(chatId, { state: next, timer: undefined });
+    }
+  }
+  runLockdownEffects(chatId, effects);
+}
+
+/** 执行一次私密模式转移返回的副作用（网络请求 fire-and-forget，结果以事件回投）。 */
+function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
+  for (const effect of effects) {
+    switch (effect.kind) {
+      case "prefetchAdmins":
+        if (!effect.onlyIfCold || freshAdminIds(chatId) === undefined) {
+          void fetchAdminIds(chatId).catch((error: unknown) => {
+            logger.error(`Error prefetching chat admins for lockdown in chat ${chatId}:`, error);
+          });
+        }
+        break;
+      case "scheduleRestore": {
+        const entry = lockdownEntries.get(chatId);
+        if (!entry) break;
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        entry.timer = setTimeout(() => dispatchLockdown(chatId, { type: "restoreTimerFired" }), effect.delayMs);
+        break;
+      }
+      case "beginApply":
+        beginApplyLockdown(chatId, effect.joinCount);
+        break;
+      case "beginRestore":
+        beginRestoreLockdown(chatId, effect.originalPermissions);
+        break;
+      case "reapplyRestriction":
+        reapplyLockdownRestriction(chatId, effect.originalPermissions);
+        break;
+      case "reportLockdown":
+        // 权限已实际落地才回报——镜像里只该出现真正生效了的私密模式，adopt
+        // 重放时「恢复原始权限」才不会把从未改过权限的群改坏。
+        self.postMessage({ type: "lockdown", chatId, originalPermissions: effect.originalPermissions } satisfies LockdownEvent);
+        break;
+      case "reportUnlock":
+        self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
+        break;
+      case "announceLockdown":
+        void sendMessage(
+          chatId,
+          `哼，${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${effect.joinCount} 个杂鱼，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`,
+          undefined,
+          joinVerificationApi
+        );
+        break;
+      case "announceUnlock":
+        void sendMessage(chatId, `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`, undefined, joinVerificationApi);
+        break;
+    }
+  }
+}
+
+/** 私密模式加锁/纠偏共用：在原始权限基础上关掉 can_invite_users，其余字段原样保留。 */
+function restrictedPermissions(originalPermissions: ChatPermissions): ChatPermissions {
+  return { ...originalPermissions, can_invite_users: false };
+}
+
+/**
+ * 把一次私密模式相关的 setChatPermissions 调用（加锁/恢复/纠偏）挂到该群的
+ * 串行链上：保证这三类调用严格按 dispatch 顺序一个个执行完，不会因为各自
+ * 独立发起的网络往返乱序，让后发起的调用比先发起的调用更早/更晚落地在
+ * Telegram 上（比如纠偏的加锁比它之后才发起的解锁更晚生效，两者都是各自
+ * 独立的 fire-and-forget 调用时就可能发生，见 states/lockdown.ts
+ * restoreResult 分支的类头注释）。链的机制见 libs/keyedSerialTaskRunner.ts；
+ * task 自身兜错，链永不因此中断。
+ */
+const lockdownApiRunner = createKeyedSerialTaskRunner(lockdownApiChains);
+
+function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
+  void lockdownApiRunner.run(chatId, task);
+}
+
+/**
+ * 异步执行加锁：取当前默认权限、把 can_invite_users 关掉，结果以 applyResult
+ * 回投。真实刷群下这两个调用可能在限流队列里排几分钟，期间占位状态挡住
+ * 重复触发（见状态机注释）。
+ */
+function beginApplyLockdown(chatId: number, joinCount: number): void {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
+    try {
+      const chat = await joinVerificationApi.getChat(chatId);
+      if (!("permissions" in chat) || !chat.permissions) {
+        // permissions 字段对群/超级群实际总会返回，缺失多半是异常响应——
+        // 放弃这次锁定（入群验证的逐个踢人仍在兜底），也不能拿 {} 当"原始
+        // 权限"存进 ACTIVE：到期恢复会把所有省略字段当 false，整群被永久禁言。
+        logger.error(`Chat ${chatId} getChat response missing permissions field, skipping anti-raid lockdown`);
+        dispatchLockdown(chatId, { type: "applyResult", ok: false });
+        return;
+      }
+      const originalPermissions: ChatPermissions = chat.permissions;
+      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(originalPermissions));
+      dispatchLockdown(chatId, { type: "applyResult", ok: true, originalPermissions, joinCount });
+    } catch (error: unknown) {
+      logger.error("Error triggering anti-raid lockdown:", error);
+      dispatchLockdown(chatId, { type: "applyResult", ok: false });
+    }
+  });
+}
+
+/** 异步恢复群组原本的默认权限，结果以 restoreResult 回投（失败由状态机安排重试）。 */
+function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissions): void {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
+    try {
+      await joinVerificationApi.setChatPermissions(chatId, originalPermissions);
+      dispatchLockdown(chatId, { type: "restoreResult", ok: true });
+    } catch (error: unknown) {
+      logger.error(`Failed to restore chat permissions for ${chatId}, retrying shortly:`, error);
+      dispatchLockdown(chatId, { type: "restoreResult", ok: false });
+    }
+  });
+}
+
+/**
+ * 迟到的旧 beginRestore 成功回执撞上新峰值重新给满的 ACTIVE 时用来纠偏：
+ * 原始权限已经在状态里，直接 setChatPermissions 补一次限制，不必再 getChat。
+ * 结果不回投状态机——不改变当前 ACTIVE 状态，失败只记日志（best-effort：
+ * ACTIVE 到期后自然会走一次常规 beginRestore，届时若权限意外仍是开放的，
+ * 后续峰值触发的 thresholdExceeded 也会在下次滑窗超限时重新收紧）。挂在同一
+ * 条 runLockdownApiCall 串行链上，保证不会比它之后才发起的一次恢复更晚落地。
+ */
+function reapplyLockdownRestriction(chatId: number, originalPermissions: ChatPermissions): void {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
+    try {
+      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(originalPermissions));
+    } catch (error: unknown) {
+      logger.error(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded:`, error);
+    }
+  });
+}
+
+/**
+ * 记录一次已确认的新成员加入（由 verificationRuntime.ts 的 handleJoin 按
+ * joinCreatesNewRecord 去重后调用）。滑动窗口：最近 JOIN_WINDOW_MS 内的
+ * 入群人数超过阈值即触发临时私密模式——不用「首次入群起算、到点整体清零」
+ * 的固定桶，是为了防住横跨桶边界的刷群（前桶尾 + 后桶头各塞半个阈值，
+ * 固定桶永远数不满）。
+ */
+export function recordJoin(chatId: number): void {
+  const now: number = Date.now();
+  let window = joinWindows.get(chatId);
+  if (!window) {
+    window = { timestamps: [], resetTimeout: setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS) };
+    joinWindows.set(chatId, window);
+  } else {
+    // 清理计时器在每次入群时重置：它到期即意味着窗口静默满 JOIN_WINDOW_MS，
+    // 届时所有时间戳都已过期，整个条目可以安全删除。
+    clearTimeout(window.resetTimeout);
+    window.resetTimeout = setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS);
+  }
+
+  const cutoff: number = now - JOIN_WINDOW_MS;
+  while (window.timestamps.length > 0 && window.timestamps[0]! <= cutoff) {
+    window.timestamps.shift();
+  }
+  window.timestamps.push(now);
+
+  if (window.timestamps.length > JOIN_THRESHOLD) {
+    dispatchLockdown(chatId, { type: "thresholdExceeded", joinCount: window.timestamps.length });
+  }
+}
+
+/** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid.ts）。 */
+export function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
+  for (const { chatId, originalPermissions, remainingMs } of lockdowns) {
+    dispatchLockdown(chatId, { type: "adopt", originalPermissions, remainingMs });
+  }
+}

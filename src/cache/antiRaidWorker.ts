@@ -34,7 +34,7 @@ export const lockdownEntries: Map<number, LockdownEntry> = new Map();
  * 私密模式加锁/恢复/纠偏三类 setChatPermissions 调用按 chatId 串行化的链，
  * 保证同一个群的这些调用严格按 dispatch 顺序一个个落地在 Telegram 上，不会
  * 因为各自独立的网络往返乱序，让后发起的调用抢在先发起的调用之前完成，见
- * workers/antiRaidWorker.ts 的 runLockdownApiCall。
+ * workers/antiRaid/lockdownRuntime.ts 的 runLockdownApiCall。
  */
 export const lockdownApiChains: Map<number, Promise<void>> = new Map();
 /** 按需拉取的各群管理员表，供「管理员拉人免验证」同步判定；丢了只是缓存，重新拉即可。 */
@@ -52,3 +52,15 @@ export const recentChannelComments: Map<string, { messageId: number; repliesToCh
 export const adminFetches: Map<number, Promise<Set<number>>> = new Map();
 /** 进行中的关联频道信息拉取，按 chatId 去重（同 adminFetches 的思路）。 */
 export const linkedChannelFetches: Map<number, Promise<void>> = new Map();
+/**
+ * 一次全量拉取（antiRaid/adminCache.ts 的 fetchAdminIds）进行中期间到达的
+ * 管理员增量变化：chatId -> (userId -> isAdmin)，落地时（无论此刻有没有
+ * 已有缓存条目）都会记一份在这里，全量拉取的结果落地后立即在新快照基础上
+ * 重放、再清空，见 fetchAdminIds 与 applyAdminChange。避免"迟到的全量快照
+ * resolve 时直接整份覆盖缓存"把拉取在途期间已经发生的、更新的增量变化
+ * 悄悄冲掉——尤其是缓存此刻还完全没有条目（第一次拉取还没落地）的情形：
+ * 不缓冲的话 applyAdminChange 会因为 !cached 直接静默丢弃这次变化，且不像
+ * 有缓存条目时那样能事后从「原地增删」里看出丢了什么，只能等到
+ * ADMIN_CACHE_TTL_MS（1 小时）后下一次全量刷新才纠正。
+ */
+export const pendingAdminChangesDuringFetch: Map<number, Map<number, boolean>> = new Map();
