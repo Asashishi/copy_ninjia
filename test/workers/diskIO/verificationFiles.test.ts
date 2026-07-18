@@ -34,6 +34,7 @@ function snapshot(revision: number, overrides: Partial<VerificationSnapshot> = {
     label: "@pending_user",
     isBot: false,
     messageIds: [10],
+    trackedMessageTimes: [1_000],
     replyReminderRequested: false,
     reminderSuperseded: false,
     joinedAt: 1_000,
@@ -196,5 +197,19 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(join(dir, "notes.json"))).toBeTrue();
     expect(error).toHaveBeenCalledTimes(2);
     error.mockRestore();
+  });
+
+  test("消息窗口随当天快照恢复，旧版缺失字段按空窗口兼容", () => {
+    handleVerificationUpsert({
+      type: "verificationUpsert",
+      record: snapshot(1, { trackedMessageTimes: [10_000, 20_000] }),
+      critical: true,
+    }, receiveReply, dir, DAY_ONE);
+    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.trackedMessageTimes).toEqual([10_000, 20_000]);
+
+    const legacy = snapshot(2);
+    delete legacy.trackedMessageTimes;
+    writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({ "-1001:42": { version: 1, ...legacy } }, null, 2));
+    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.trackedMessageTimes).toBeUndefined();
   });
 });

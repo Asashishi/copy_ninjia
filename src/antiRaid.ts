@@ -116,7 +116,11 @@ function acceptVerificationUpsert(event: VerificationUpsertEvent): void {
   );
   if (snapshot.revision <= latestRevision) return;
   const critical: boolean = !activeVerificationSnapshots.has(key);
-  activeVerificationSnapshots.set(key, { ...snapshot, messageIds: [...snapshot.messageIds] });
+  activeVerificationSnapshots.set(key, {
+    ...snapshot,
+    messageIds: [...snapshot.messageIds],
+    trackedMessageTimes: snapshot.trackedMessageTimes === undefined ? undefined : [...snapshot.trackedMessageTimes],
+  });
   pendingVerificationDeletes.delete(key);
   postDiskIO({ type: "verificationUpsert", record: snapshot, critical });
 }
@@ -198,7 +202,11 @@ export function hydratePendingVerifications(records: Map<string, VerificationSna
   activeVerificationSnapshots.clear();
   pendingVerificationDeletes.clear();
   for (const [key, record] of records) {
-    activeVerificationSnapshots.set(key, { ...record, messageIds: [...record.messageIds] });
+    activeVerificationSnapshots.set(key, {
+      ...record,
+      messageIds: [...record.messageIds],
+      trackedMessageTimes: record.trackedMessageTimes === undefined ? undefined : [...record.trackedMessageTimes],
+    });
   }
 }
 

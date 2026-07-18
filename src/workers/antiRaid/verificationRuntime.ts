@@ -14,6 +14,7 @@ import { KICK_NOTICE_AUTO_DELETE_MS } from "../../consts/telegram";
 import { PRIVILEGED_USERS_ID } from "../../infra/config";
 import {
   LOCKDOWN_KICK_DEDUPE_MS,
+  JOIN_WINDOW_MS,
   VERIFICATION_BUTTON_TEXT,
   VERIFICATION_TIMEOUT_MS,
   VERIFY_CALLBACK_PREFIX,
@@ -104,6 +105,7 @@ function verificationSnapshot(chatId: number, userId: number, state: Verificatio
     label: state.label,
     isBot: state.isBot,
     messageIds: [...state.messageIds],
+    trackedMessageTimes: [...state.trackedMessageTimes],
     invitedBy: state.invitedBy,
     reminderMessageId: state.reminderMessageId,
     replyReminderMessageId: state.replyReminderMessageId,
@@ -156,6 +158,7 @@ export function adoptVerifications(msg: AdoptVerificationsMessage): void {
       label: record.label,
       isBot: record.isBot,
       messageIds: [...record.messageIds],
+      trackedMessageTimes: (record.trackedMessageTimes ?? []).filter((timestamp) => timestamp > now - JOIN_WINDOW_MS),
       invitedBy: record.invitedBy,
       reminderMessageId: record.reminderMessageId,
       replyReminderMessageId: record.replyReminderMessageId,
@@ -190,7 +193,10 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
         if (effect.replyReminderMessageId !== undefined) await deleteMessage(chatId, effect.replyReminderMessageId, joinVerificationApi);
         break;
       case "expel":
-        await expelMember(chatId, userId, effect.snapshot);
+        await expelMember(chatId, userId, effect.snapshot, "timeout");
+        break;
+      case "expelFlood":
+        await expelMember(chatId, userId, effect.snapshot, "flood");
         break;
       case "recheckInviter":
         await recheckInviterThenSettle(chatId, userId, effect.inviterId, effect.snapshot);
@@ -368,18 +374,27 @@ async function recheckInviterThenSettle(chatId: number, userId: number, inviterI
  * 踢人失败（典型是机器人缺封禁权限）时通知照发但如实说没踢动，且不自动
  * 删除——人还在群里，宣布"已踢出"就是当众撒谎。
  */
-async function expelMember(chatId: number, userId: number, snapshot: ExpelSnapshot): Promise<void> {
+async function expelMember(chatId: number, userId: number, snapshot: ExpelSnapshot, reason: "timeout" | "flood"): Promise<void> {
+  // 刷屏处置先踢人，阻止对方在删除排队期间继续制造消息；普通验证超时保留
+  // 既有的先清痕迹后踢人顺序。deleteMessage 自身吞掉单条 API 失败并返回
+  // false，因此一次删除失败不会中断后续清理或通知。
+  let kicked: boolean = false;
+  if (reason === "flood") kicked = await kickChatMember(chatId, userId, joinVerificationApi);
   for (const messageId of snapshot.messageIds) {
     await deleteMessage(chatId, messageId, joinVerificationApi);
   }
-  const kicked: boolean = await kickChatMember(chatId, userId, joinVerificationApi);
+  if (reason === "timeout") kicked = await kickChatMember(chatId, userId, joinVerificationApi);
   // 踢没踢动要老实说：缺封禁权限时人还留在群里，照旧宣布"已踢出"就是
   // 当众撒谎，管理员也不会意识到该去补机器人权限。
   const noticeText: string = !kicked
-    ? `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
-    : snapshot.isBot
-    ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
-    : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
+    ? reason === "flood"
+      ? `啧，${snapshot.label} 没完成验证还在刷屏，本天才想把 TA 踢出去却没踢动……管理员快检查本天才的封禁权限！`
+      : `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
+    : reason === "flood"
+      ? `啧，${snapshot.label} 验证都没过就开始刷屏，本天才已经先把 TA 踢出去、再把痕迹清干净啦♡`
+      : snapshot.isBot
+        ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
+        : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
   const noticeMessageId: number | undefined = await sendMessage(chatId, noticeText, undefined, joinVerificationApi);
   // 没踢动的战报不自动删：它是要管理员去补权限的行动提示，30 秒就消失的话
   // 多半没人看见，权限缺口会一直留着。
@@ -438,7 +453,7 @@ export function handleTrackedMessage(msg: TrackedChatMessage): void {
     msg.repliesToChannelPost === true ||
     (msg.isThreadReply === true && chatHasLinkedChannel(msg.chatId));
   if (inCommentThread && !verificationEntries.has(verificationKey(msg.chatId, msg.userId))) {
-    rememberRecentComment(msg.chatId, msg.userId, msg.messageId, msg.repliesToChannelPost === true);
+    rememberRecentComment(msg.chatId, msg.userId, msg.messageId, msg.repliesToChannelPost === true, Date.now());
     return;
   }
   dispatchVerification(msg.chatId, msg.userId, {

@@ -131,6 +131,8 @@ export interface VerificationSnapshot {
   label: string;
   isBot: boolean;
   messageIds: number[];
+  /** 最近一分钟的待验证成员消息时间戳；旧版当日记录缺失时按空窗口恢复。 */
+  trackedMessageTimes?: number[];
   invitedBy?: number;
   reminderMessageId?: number;
   replyReminderMessageId?: number;

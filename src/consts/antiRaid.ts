@@ -53,12 +53,13 @@ export const VERIFICATION_REVISION_RETENTION_MS: number = 10 * 60 * 1000;
 export const JOIN_WINDOW_MS: number = 60 * 1000;
 /**
  * 滑动窗口内触发私密模式的入群人数上限，超过（第 46 人起）才触发，见
- * workers/antiRaidWorker.ts 的 recordJoin（`length > JOIN_THRESHOLD`）。
+ * workers/antiRaidWorker.ts 的 recordJoin 与待验证成员消息窗口（两者计数器
+ * 独立，只共享这个上限）。第 46 个事件起触发处置。
  * 60 秒 45 人（0.75 人/秒）：正常群极少一分钟涌入这么多新人，而真实刷群
  * 通常远快于此——旧值 150 人/15 秒要求持续 10 人/秒，实际刷群到不了，
  * 形同虚设。
  */
-export const JOIN_THRESHOLD: number = 45;
+export const ANTI_RAID_PER_MINUTE_LIMIT: number = 45;
 /** 私密模式（禁止普通成员拉人）持续时长。 */
 export const LOCKDOWN_MS: number = 5 * 60 * 1000;
 /** 解除私密模式的 API 调用失败后，重试前的等待时长。 */

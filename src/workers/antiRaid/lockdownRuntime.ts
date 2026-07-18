@@ -1,7 +1,7 @@
 import { logger } from "../../infra/logger";
 import type { ChatPermissions } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "../../infra/telegram";
-import { JOIN_THRESHOLD, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid";
+import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid";
 import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaidWorker";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { AdoptableLockdown, LockdownEvent, UnlockEvent } from "../../types";
@@ -192,7 +192,7 @@ export function recordJoin(chatId: number, now: number): void {
   }
   window.timestamps.push(now);
 
-  if (window.timestamps.size > JOIN_THRESHOLD) {
+  if (window.timestamps.size > ANTI_RAID_PER_MINUTE_LIMIT) {
     dispatchLockdown(chatId, { type: "thresholdExceeded", joinCount: window.timestamps.size });
   }
 }

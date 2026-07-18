@@ -16,6 +16,7 @@ import {
   VERIFICATION_FLUSH_MAX_KEYS,
 } from "../../consts/diskIO";
 import { VERIFICATION_MEMORY_DIR } from "../../consts/paths";
+import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../consts/antiRaid";
 import {
   verificationFileState,
   verificationFlushTimer,
@@ -82,6 +83,11 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     !Array.isArray(value.messageIds) ||
     value.messageIds.length > VERIFICATION_FILE_MAX_MESSAGE_IDS ||
     !value.messageIds.every(isPositiveId) ||
+    (value.trackedMessageTimes !== undefined && (
+      !Array.isArray(value.trackedMessageTimes) ||
+      value.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT ||
+      !value.trackedMessageTimes.every(isSafeTimestamp)
+    )) ||
     !isOptionalPositiveId(value.invitedBy) ||
     !isOptionalPositiveId(value.reminderMessageId) ||
     !isOptionalPositiveId(value.replyReminderMessageId) ||
@@ -102,6 +108,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     label: value.label,
     isBot: value.isBot,
     messageIds: [...value.messageIds],
+    trackedMessageTimes: value.trackedMessageTimes === undefined ? undefined : [...value.trackedMessageTimes],
     invitedBy: value.invitedBy,
     reminderMessageId: value.reminderMessageId,
     replyReminderMessageId: value.replyReminderMessageId,
@@ -256,7 +263,11 @@ export function handleVerificationUpsert(
   const current: VerificationSnapshot | undefined = verificationWorkerCache.get(key);
   if (current?.generation === msg.record.generation && current.revision >= msg.record.revision) return;
 
-  const snapshot: VerificationSnapshot = { ...msg.record, messageIds: [...msg.record.messageIds] };
+  const snapshot: VerificationSnapshot = {
+    ...msg.record,
+    messageIds: [...msg.record.messageIds],
+    trackedMessageTimes: msg.record.trackedMessageTimes === undefined ? undefined : [...msg.record.trackedMessageTimes],
+  };
   verificationWorkerCache.set(key, snapshot);
   verificationPendingChanges.set(key, { ...snapshot, value: snapshot });
   if (msg.critical || verificationPendingChanges.size >= VERIFICATION_FLUSH_MAX_KEYS) {

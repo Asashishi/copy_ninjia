@@ -6,7 +6,7 @@ import {
   type PendingState,
   type VerificationState,
 } from "../../src/states/verification";
-import { VERIFICATION_TIMEOUT_MS } from "../../src/consts/antiRaid";
+import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, VERIFICATION_TIMEOUT_MS } from "../../src/consts/antiRaid";
 
 /** 造一个 join 事件，默认是「自主入群、无豁免、无锁定」，用覆盖项表达各场景。 */
 function joinEvent(overrides: Partial<JoinEvent> = {}): JoinEvent {
@@ -39,6 +39,7 @@ function pendingState(overrides: Partial<PendingState> = {}): PendingState {
     joinedAt: 0,
     expiresAt: 120_000,
     ...overrides,
+    trackedMessageTimes: overrides.trackedMessageTimes ?? [],
   };
 }
 
@@ -79,7 +80,7 @@ describe("join：ABSENT 起步", () => {
   });
 
   test("直接回复频道帖的评论先到 → EXEMPT + 频道侧欢迎", () => {
-    const event = joinEvent({ recentComment: { messageId: 55, repliesToChannelPost: true } });
+    const event = joinEvent({ recentComment: { messageId: 55, repliesToChannelPost: true, observedAt: 0 } });
     expect(joinCreatesNewRecord(undefined, event)).toBe(false);
     const { next, effects } = transitionVerification(undefined, event);
     expect(next?.kind).toBe("exempt");
@@ -87,7 +88,7 @@ describe("join：ABSENT 起步", () => {
   });
 
   test("楼中楼评论先到 → PENDING，提醒改为回复评论、不再发原始提醒", () => {
-    const event = joinEvent({ recentComment: { messageId: 56, repliesToChannelPost: false } });
+    const event = joinEvent({ recentComment: { messageId: 56, repliesToChannelPost: false, observedAt: 0 } });
     const { next, effects } = transitionVerification(undefined, event);
     const pending = next as PendingState;
     expect(pending.kind).toBe("pending");
@@ -98,7 +99,7 @@ describe("join：ABSENT 起步", () => {
   });
 
   test("私密模式期间入群 → KICKED，删公告/评论后踢出", () => {
-    const event = joinEvent({ lockdownActive: true, announcementMessageId: 7, recentComment: { messageId: 56, repliesToChannelPost: false } });
+    const event = joinEvent({ lockdownActive: true, announcementMessageId: 7, recentComment: { messageId: 56, repliesToChannelPost: false, observedAt: 0 } });
     expect(joinCreatesNewRecord(undefined, event)).toBe(true); // 秒踢的入群也计入刷群统计
     const { next, effects } = transitionVerification(undefined, event);
     expect(next?.kind).toBe("kicked");
@@ -209,10 +210,59 @@ describe("trackedMessage", () => {
   });
 
   test("直接回复频道帖 → 确证真人，转 EXEMPT + 欢迎，且撤销此前记的那次刷群计数", () => {
-    const state = pendingState({ reminderMessageId: 30 });
+    const state = pendingState({ reminderMessageId: 30, trackedMessageTimes: Array(ANTI_RAID_PER_MINUTE_LIMIT).fill(1_000) });
     const { next, effects } = transitionVerification(state, { type: "trackedMessage", messageId: 42, inCommentThread: true, repliesToChannelPost: true, now: 1_000 });
     expect(next?.kind).toBe("exempt");
     expect(effectKinds(effects)).toEqual(["deleteReminders", "retractJoinCount", "sendWelcome"]);
+    expect(state.trackedMessageTimes).toHaveLength(ANTI_RAID_PER_MINUTE_LIMIT);
+  });
+
+  test("同一分钟第 45 条继续追踪，第 46 条同步终结并进入刷屏提前踢出", () => {
+    const state = pendingState({ replyReminderRequested: true });
+    for (let count = 1; count <= ANTI_RAID_PER_MINUTE_LIMIT; count++) {
+      const result = transitionVerification(state, {
+        type: "trackedMessage",
+        messageId: count,
+        inCommentThread: false,
+        repliesToChannelPost: false,
+        now: 10_000,
+      });
+      expect(result.next).toBe(state);
+      expect(effectKinds(result.effects)).not.toContain("expelFlood");
+    }
+
+    const overflow = transitionVerification(state, {
+      type: "trackedMessage",
+      messageId: ANTI_RAID_PER_MINUTE_LIMIT + 1,
+      inCommentThread: false,
+      repliesToChannelPost: false,
+      now: 10_000,
+    });
+    expect(overflow.next).toBeUndefined();
+    expect(overflow.effects).toEqual([{
+      kind: "expelFlood",
+      snapshot: expect.objectContaining({ messageIds: Array.from({ length: ANTI_RAID_PER_MINUTE_LIMIT + 1 }, (_, index) => index + 1) }),
+    }]);
+  });
+
+  test("窗口修剪一分钟外的旧消息，且不同成员/群各自持有独立计数", () => {
+    const first = pendingState({ replyReminderRequested: true, trackedMessageTimes: [0, 1_000] });
+    transitionVerification(first, {
+      type: "trackedMessage",
+      messageId: 90,
+      inCommentThread: false,
+      repliesToChannelPost: false,
+      now: JOIN_WINDOW_MS,
+    });
+    expect(first.trackedMessageTimes).toEqual([1_000, JOIN_WINDOW_MS]);
+
+    const otherMember = pendingState({ replyReminderRequested: true });
+    const otherChat = pendingState({ replyReminderRequested: true });
+    transitionVerification(otherMember, { type: "trackedMessage", messageId: 91, inCommentThread: false, repliesToChannelPost: false, now: JOIN_WINDOW_MS });
+    transitionVerification(otherChat, { type: "trackedMessage", messageId: 92, inCommentThread: false, repliesToChannelPost: false, now: JOIN_WINDOW_MS });
+    expect(otherMember.trackedMessageTimes).toEqual([JOIN_WINDOW_MS]);
+    expect(otherChat.trackedMessageTimes).toEqual([JOIN_WINDOW_MS]);
+    expect(first.trackedMessageTimes).toHaveLength(2);
   });
 
   test("占位记录（kicked/exempt）不追踪消息", () => {

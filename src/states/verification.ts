@@ -1,4 +1,4 @@
-import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiRaid";
+import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiRaid";
 
 /**
  * 入群验证生命周期的显式状态机（纯逻辑，不做任何 I/O、不持有计时器）。
@@ -29,6 +29,8 @@ import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiR
 /** 早于入群更新到达、被暂存下来的评论区留言（消费逻辑见 join 事件）。 */
 export interface RecentComment {
   messageId: number;
+  /** 收到评论投递的时刻；评论先于 join 到达时仍按真实消息时刻计入窗口。 */
+  observedAt: number;
   /** 是否直接回复频道帖——确证的真人评论区留言，足以豁免验证。 */
   repliesToChannelPost: boolean;
 }
@@ -42,6 +44,8 @@ export interface PendingState {
   isBot: boolean;
   /** 验证超时被踢出时要删除的消息：入群公告、提醒、以及 TA 等待期间发的一切。 */
   messageIds: number[];
+  /** 最近 JOIN_WINDOW_MS 内由该成员发送的消息时间；不含公告与机器人提醒。 */
+  trackedMessageTimes: number[];
   /** 若为被他人拉入群，拉人者的 userId——超时踢人前要对其身份做最后核对。 */
   invitedBy?: number;
   /** 带验证按钮的原始独立提醒的消息 ID（发送成功回填后才有）。 */
@@ -169,6 +173,8 @@ export type VerificationEffect =
   | { kind: "recheckInviter"; inviterId: number; snapshot: ExpelSnapshot }
   /** 删除快照里的全部追踪消息、踢人、发踢人通知（超时未验证的最终收尾）。 */
   | { kind: "expel"; snapshot: ExpelSnapshot }
+  /** 待验证成员一分钟内第 46 条消息触发：先踢人止损，再清理全部已追踪消息。 */
+  | { kind: "expelFlood"; snapshot: ExpelSnapshot }
   /** 楼中楼补发提醒时重置验证倒计时（TA 在频道侧刚看到按钮，重新给满时长）。 */
   | { kind: "restartVerifyTimer" };
 
@@ -296,6 +302,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     label: event.label,
     isBot: event.isBot,
     messageIds: event.announcementMessageId !== undefined ? [event.announcementMessageId] : [],
+    trackedMessageTimes: [],
     invitedBy: invitedByOther ? event.actorId : undefined,
     replyReminderRequested: false,
     reminderSuperseded: false,
@@ -307,6 +314,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     // 楼中楼回复先到、入群更新后到：验证提醒直接以回复 TA 那条评论的形式发
     // （频道侧看得到按钮），原始独立提醒不再发。评论本身补进追踪，超时一并清理。
     pending.messageIds.push(event.recentComment.messageId);
+    pending.trackedMessageTimes.push(event.recentComment.observedAt);
     pending.replyReminderRequested = true;
     pending.reminderSuperseded = true;
     pending.welcomeAnchorMessageId = event.recentComment.messageId;
@@ -341,7 +349,16 @@ function handleTrackedMessage(
     };
   }
 
+  // 频道帖子直属评论在上方先完成豁免，不能进入刷屏计数。其余待验证消息按
+  // 成员自己的滑动窗口统计；第 46 条同步删除状态，迟到事件因查无记录不会
+  // 再产生第二次踢人。messageIds 不截断，确保已制造的痕迹仍全部进入清理。
+  const cutoff: number = event.now - JOIN_WINDOW_MS;
+  state.trackedMessageTimes = state.trackedMessageTimes.filter((timestamp) => timestamp > cutoff);
+  state.trackedMessageTimes.push(event.now);
   state.messageIds.push(event.messageId);
+  if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
+    return { next: undefined, effects: [{ kind: "expelFlood", snapshot: snapshotOf(state) }] };
+  }
   // TA 开口说话了还没点按钮：把提醒补发为回复 TA 消息的形式（只补发一次）。
   if (state.replyReminderRequested) return { next: state, effects: [], snapshotChanged: true };
   state.replyReminderRequested = true;
