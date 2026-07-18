@@ -218,6 +218,62 @@ describe("媒体直接叫机器人", () => {
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
+  test("GIF 回复机器人：只把缩略图交给视觉管线，缓存键仍使用 GIF 唯一 id", async () => {
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 15,
+        date: 1,
+        chat,
+        from: alice,
+        reply_to_message: botReply,
+        caption: "这个动图",
+        animation: {
+          file_id: "gif-body",
+          file_unique_id: "gif-uid",
+          width: 640,
+          height: 360,
+          duration: 2,
+          thumbnail: { file_id: "gif-thumb", file_unique_id: "thumb-uid", width: 320, height: 180 },
+        },
+      },
+    } as any);
+
+    expect(recordChatMediaMock).toHaveBeenCalledWith(
+      "animation", -100800, 123, "Alice", "Tester", "alice_dev", "这个动图",
+      "gif-thumb", "gif-uid", 15, false, undefined,
+      { reason: "reply", repliedBotText: "机器人之前说的话" }
+    );
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
+  test("没有缩略图的 GIF 回复机器人：记录纯文本兜底后直接触发", async () => {
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 16,
+        date: 1,
+        chat,
+        from: alice,
+        reply_to_message: botReply,
+        caption: "看这个",
+        animation: {
+          file_id: "gif-body-only",
+          file_unique_id: "gif-body-only-uid",
+          width: 640,
+          height: 360,
+          duration: 2,
+        },
+      },
+    } as any);
+
+    expect(recordChatMediaMock).not.toHaveBeenCalled();
+    expect(recordChatMessageMock).toHaveBeenCalledWith(
+      -100800, 123, "Alice", "Tester", "alice_dev", "[GIF] 看这个"
+    );
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 16, "机器人之前说的话");
+  });
+
   test("文字回复自己的消息不参与随机 AI 回复", async () => {
     quietUntil = 0;
     const originalRandom = Math.random;
