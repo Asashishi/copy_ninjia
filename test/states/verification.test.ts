@@ -6,6 +6,7 @@ import {
   type PendingState,
   type VerificationState,
 } from "../../src/states/verification";
+import { VERIFICATION_TIMEOUT_MS } from "../../src/consts/antiRaid";
 
 /** 造一个 join 事件，默认是「自主入群、无豁免、无锁定」，用覆盖项表达各场景。 */
 function joinEvent(overrides: Partial<JoinEvent> = {}): JoinEvent {
@@ -36,6 +37,7 @@ function pendingState(overrides: Partial<PendingState> = {}): PendingState {
     replyReminderRequested: false,
     reminderSuperseded: false,
     joinedAt: 0,
+    expiresAt: 120_000,
     ...overrides,
   };
 }
@@ -52,6 +54,7 @@ describe("join：ABSENT 起步", () => {
     expect(next?.kind).toBe("pending");
     expect((next as PendingState).messageIds).toEqual([7]);
     expect((next as PendingState).invitedBy).toBeUndefined();
+    expect((next as PendingState).expiresAt).toBe(VERIFICATION_TIMEOUT_MS);
     expect(effectKinds(effects)).toEqual(["sendReminder"]);
   });
 
@@ -177,7 +180,7 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
 describe("trackedMessage", () => {
   test("待验证成员的普通发言 → 追踪 + 提醒改锚（不重置计时）", () => {
     const state = pendingState({ messageIds: [30], reminderMessageId: 30 });
-    const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 40, inCommentThread: false, repliesToChannelPost: false });
+    const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 40, inCommentThread: false, repliesToChannelPost: false, now: 1_000 });
     expect(state.messageIds).toEqual([40]); // 原提醒 30 已被移出待清理列表
     expect(state.reminderMessageId).toBeUndefined();
     expect(state.reminderSuperseded).toBe(true);
@@ -193,27 +196,28 @@ describe("trackedMessage", () => {
 
   test("楼中楼回复 → 追加重置验证计时", () => {
     const state = pendingState();
-    const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 40, inCommentThread: true, repliesToChannelPost: false });
+    const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 40, inCommentThread: true, repliesToChannelPost: false, now: 1_000 });
     expect(effectKinds(effects)).toEqual(["restartVerifyTimer", "sendReplyReminder"]);
+    expect(state.expiresAt).toBe(1_000 + VERIFICATION_TIMEOUT_MS);
   });
 
   test("连发多条只补发一次回复式提醒", () => {
     const state = pendingState({ replyReminderRequested: true });
-    const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 41, inCommentThread: false, repliesToChannelPost: false });
+    const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 41, inCommentThread: false, repliesToChannelPost: false, now: 1_000 });
     expect(state.messageIds).toEqual([41]);
     expect(effects).toEqual([]);
   });
 
   test("直接回复频道帖 → 确证真人，转 EXEMPT + 欢迎，且撤销此前记的那次刷群计数", () => {
     const state = pendingState({ reminderMessageId: 30 });
-    const { next, effects } = transitionVerification(state, { type: "trackedMessage", messageId: 42, inCommentThread: true, repliesToChannelPost: true });
+    const { next, effects } = transitionVerification(state, { type: "trackedMessage", messageId: 42, inCommentThread: true, repliesToChannelPost: true, now: 1_000 });
     expect(next?.kind).toBe("exempt");
     expect(effectKinds(effects)).toEqual(["deleteReminders", "retractJoinCount", "sendWelcome"]);
   });
 
   test("占位记录（kicked/exempt）不追踪消息", () => {
     const state: VerificationState = { kind: "exempt", label: "杂鱼A", isBot: false };
-    const { next, effects } = transitionVerification(state, { type: "trackedMessage", messageId: 43, inCommentThread: false, repliesToChannelPost: false });
+    const { next, effects } = transitionVerification(state, { type: "trackedMessage", messageId: 43, inCommentThread: false, repliesToChannelPost: false, now: 1_000 });
     expect(next).toBe(state);
     expect(effects).toEqual([]);
   });

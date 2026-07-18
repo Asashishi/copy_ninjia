@@ -1,8 +1,8 @@
-import type { DayFileState, LuckDayCache, LuckPendingEntry } from "../types";
+import type { DayFileState, LuckDayCache, LuckPendingEntry, VerificationFileChange, VerificationSnapshot } from "../types";
 
 /**
  * 磁盘 IO 线程（src/workers/diskIOWorker.ts）的内存状态：日志、AI 记忆、
- * 每日运势三类缓存 + dirty 标记 + 定时器句柄。原则：磁盘只在启动恢复时被
+ * 每日运势和待验证增量缓存 + dirty 标记 + 定时器句柄。原则：磁盘只在启动恢复时被
  * 读一次；此后缓存是唯一事实源——读只读缓存，写是「缓存 -> 磁盘」的单向
  * 定时同步。
  */
@@ -65,6 +65,21 @@ export const luckFileState: { current: DayFileState | null } = { current: null }
  *  阈值也不一样（见 consts/diskIO.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS），
  *  两条互不影响。 */
 export const luckFlushTimer: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
+
+// ---- 待验证成员的当日增量 JSON ----
+
+/** diskIOWorker 当前已知、仍处于 pending 的验证镜像。 */
+export const verificationWorkerCache: Map<string, VerificationSnapshot> = new Map();
+/** 同一 key 在短窗口内只保留最终变化；终结 null 覆盖旧 upsert。 */
+export const verificationPendingChanges: Map<string, VerificationFileChange> = new Map();
+/** 当前东京日期文件的追加位置，以及自最近一次收敛后的历史增量规模。 */
+export const verificationFileState: { current: DayFileState | null; appendedEntries: number; appendedBytes: number } = {
+  current: null,
+  appendedEntries: 0,
+  appendedBytes: 0,
+};
+export const verificationFlushTimer: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
+export const verificationRolloverTimer: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
 
 // ---- AI 记忆的定时落盘 ----
 

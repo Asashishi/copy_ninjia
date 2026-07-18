@@ -19,8 +19,8 @@ import {
   VERIFY_CALLBACK_PREFIX,
   WELCOME_AUTO_DELETE_MS,
 } from "../../consts/antiRaid";
-import { lockdownEntries, verificationEntries } from "../../cache/antiRaidWorker";
-import type { AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerifyCallbackMessage } from "../../types";
+import { lockdownEntries, verificationEntries, verificationGeneration, verificationRevisions } from "../../cache/antiRaidWorker";
+import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types";
 import {
   joinCreatesNewRecord,
   transitionVerification,
@@ -36,6 +36,8 @@ import { rememberRecentComment, takeRecentComment } from "./recentComments";
 import { chatHasLinkedChannel } from "./linkedChannel";
 import { recordJoin, retractJoin } from "./lockdownRuntime";
 
+declare const self: Worker;
+
 /**
  * 入群验证状态机（src/states/verification.ts）的解释器：把每条投递翻译成
  * 状态机事件、同步落下一状态、管理计时器、把返回的副作用列表逐个执行。
@@ -45,8 +47,8 @@ import { recordJoin, retractJoin } from "./lockdownRuntime";
  *   按 FIFO 逐条处理，同一波刷屏入群的后续投递不会被网络往返卡住。
  * - 异步回调（提醒落地回填、管理员核查）以「状态对象同一性」识别过期：
  *   状态一旦被替换/删除，捕获的旧引用对不上，回调自动放弃。
- * 验证状态随线程丢失，不回报主线程持久化（残留的验证按钮点了会得到
- * 「已失效」应答，重新进群即可）；总体架构见 ../antiRaidWorker.ts 模块头。
+ * 每次 pending 纯数据变化都会带 generation/revision 回报主线程更新内存镜像；
+ * Timer 与异步 API 状态只属于本解释器，Worker 重建时按 expiresAt 恢复。
  */
 
 function memberLabel(member: AntiRaidMember): string {
@@ -58,7 +60,10 @@ function memberLabel(member: AntiRaidMember): string {
 /** pending 起验证超时计时，exempt/kicked 起去重窗口计时（到期事件回投状态机）。 */
 function startVerificationTimer(chatId: number, userId: number, state: VerificationState): ReturnType<typeof setTimeout> {
   if (state.kind === "pending") {
-    return setTimeout(() => dispatchVerification(chatId, userId, { type: "verifyTimeout" }), VERIFICATION_TIMEOUT_MS);
+    return setTimeout(
+      () => dispatchVerification(chatId, userId, { type: "verifyTimeout" }),
+      Math.max(0, state.expiresAt - Date.now())
+    );
   }
   return setTimeout(() => dispatchVerification(chatId, userId, { type: "dedupeExpired" }), LOCKDOWN_KICK_DEDUPE_MS);
 }
@@ -70,7 +75,8 @@ function startVerificationTimer(chatId: number, userId: number, state: Verificat
 export function dispatchVerification(chatId: number, userId: number, event: VerificationEvent): void {
   const key: string = verificationKey(chatId, userId);
   const entry = verificationEntries.get(key);
-  const { next, effects } = transitionVerification(entry?.state, event);
+  const previousWasPending: boolean = entry?.state.kind === "pending";
+  const { next, effects, snapshotChanged = false } = transitionVerification(entry?.state, event);
   if (next !== entry?.state) {
     if (entry) clearTimeout(entry.timer);
     if (next === undefined) {
@@ -79,10 +85,93 @@ export function dispatchVerification(chatId: number, userId: number, event: Veri
       verificationEntries.set(key, { state: next, timer: startVerificationTimer(chatId, userId, next) });
     }
   }
+  if (snapshotChanged || next !== entry?.state) {
+    publishVerificationChange(chatId, userId, previousWasPending);
+  }
   if (effects.length > 0) {
     void runVerificationEffects(chatId, userId, effects).catch((error: unknown) => {
       logger.error("Error running join verification effects:", error);
     });
+  }
+}
+
+function verificationSnapshot(chatId: number, userId: number, state: VerificationState & { kind: "pending" }, revision: number): VerificationSnapshot {
+  return {
+    chatId,
+    userId,
+    generation: verificationGeneration.current,
+    revision,
+    label: state.label,
+    isBot: state.isBot,
+    messageIds: [...state.messageIds],
+    invitedBy: state.invitedBy,
+    reminderMessageId: state.reminderMessageId,
+    replyReminderMessageId: state.replyReminderMessageId,
+    replyReminderRequested: state.replyReminderRequested,
+    welcomeAnchorMessageId: state.welcomeAnchorMessageId,
+    reminderSuperseded: state.reminderSuperseded,
+    joinedAt: state.joinedAt,
+    expiresAt: state.expiresAt,
+  };
+}
+
+/** 状态同步落地后，仅在 pending 的纯数据实际变化时发布 upsert/delete。 */
+function publishVerificationChange(chatId: number, userId: number, previousWasPending: boolean): void {
+  if (verificationGeneration.current <= 0) return;
+  const key: string = verificationKey(chatId, userId);
+  const state: VerificationState | undefined = verificationEntries.get(key)?.state;
+  const revision: number = (verificationRevisions.get(key)?.revision ?? 0) + 1;
+  if (state?.kind === "pending") {
+    verificationRevisions.set(key, { revision });
+    self.postMessage({ type: "verificationUpsert", record: verificationSnapshot(chatId, userId, state, revision) } satisfies VerificationUpsertEvent);
+  } else if (previousWasPending) {
+    verificationRevisions.set(key, { revision, retiredAt: Date.now() });
+    self.postMessage({
+      type: "verificationDelete",
+      chatId,
+      userId,
+      generation: verificationGeneration.current,
+      revision,
+    } satisfies VerificationDeleteEvent);
+  }
+}
+
+/** Worker 重建时接管主线程内存镜像；重复 adopt 按 revision 幂等。 */
+export function adoptVerifications(msg: AdoptVerificationsMessage): void {
+  if (msg.generation < verificationGeneration.current) return;
+  if (msg.generation > verificationGeneration.current) {
+    for (const entry of verificationEntries.values()) clearTimeout(entry.timer);
+    verificationEntries.clear();
+    verificationRevisions.clear();
+    verificationGeneration.current = msg.generation;
+  }
+
+  const now: number = Date.now();
+  for (const record of msg.verifications) {
+    const key: string = verificationKey(record.chatId, record.userId);
+    if ((verificationRevisions.get(key)?.revision ?? 0) >= record.revision) continue;
+    verificationRevisions.set(key, { revision: record.revision });
+    const state: VerificationState = {
+      kind: "pending",
+      label: record.label,
+      isBot: record.isBot,
+      messageIds: [...record.messageIds],
+      invitedBy: record.invitedBy,
+      reminderMessageId: record.reminderMessageId,
+      replyReminderMessageId: record.replyReminderMessageId,
+      replyReminderRequested: record.replyReminderRequested,
+      welcomeAnchorMessageId: record.welcomeAnchorMessageId,
+      reminderSuperseded: record.reminderSuperseded,
+      joinedAt: record.joinedAt,
+      expiresAt: record.expiresAt,
+    };
+    verificationEntries.set(key, {
+      state,
+      timer: startVerificationTimer(record.chatId, record.userId, state),
+    });
+    if (record.expiresAt <= now) {
+      dispatchVerification(record.chatId, record.userId, { type: "verifyTimeout" });
+    }
   }
 }
 
@@ -357,6 +446,7 @@ export function handleTrackedMessage(msg: TrackedChatMessage): void {
     messageId: msg.messageId,
     inCommentThread,
     repliesToChannelPost: msg.repliesToChannelPost === true,
+    now: Date.now(),
   });
 }
 

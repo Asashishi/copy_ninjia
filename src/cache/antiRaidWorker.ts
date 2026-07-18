@@ -28,6 +28,10 @@ export interface LockdownEntry {
 
 // 以 "chatId:userId" 为键，这样同一个人在不同群里会被独立追踪。
 export const verificationEntries: Map<string, VerificationEntry> = new Map();
+/** 当前主线程分配的 Worker 代际；0 表示尚未收到 adoptVerifications。 */
+export const verificationGeneration: { current: number } = { current: 0 };
+/** 每个 key 在当前代际内最后使用的 revision；retiredAt 到期后由统一 sweeper 清理。 */
+export const verificationRevisions: Map<string, { revision: number; retiredAt?: number }> = new Map();
 export const joinWindows: Map<number, JoinWindow> = new Map();
 export const lockdownEntries: Map<number, LockdownEntry> = new Map();
 /**

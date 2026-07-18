@@ -25,13 +25,16 @@ export const LOGS_DIR: string = join(PROJECT_ROOT, "logs");
  * memory/ 落盘目录：AI 记忆快照（ai/ 下按 chatId 一个 <chatId>.json）、每日
  * 运势缓存（luck/ 下按东京日期一个文件，只留当天）、白名单贴纸包的目录快照
  * （stickers/ 下按 pack short name 一个 <pack>.json，见 ai/stickerCatalog.ts），
- * 均由 diskIOWorker 落盘，见 src/workers/diskIOWorker.ts。不进 git，与
+ * 以及待验证当日增量（anti-raid/ 下只保留东京当天），均由 diskIOWorker
+ * 落盘，见 src/workers/diskIOWorker.ts。不进 git，与
  * logs/ 同级对待；AI 记忆快照含群聊逐字明文，部署时应按敏感数据保护。
  */
 export const MEMORY_DIR: string = join(PROJECT_ROOT, "memory");
 export const AI_MEMORY_DIR: string = join(MEMORY_DIR, "ai");
 export const LUCK_MEMORY_DIR: string = join(MEMORY_DIR, "luck");
 export const STICKER_MEMORY_DIR: string = join(MEMORY_DIR, "stickers");
+/** Anti-Raid 待验证增量文件目录；按东京日期命名，只保留当天文件。 */
+export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");
 
 /** Google Cloud 服务账号密钥（/ja_copy 日语翻译用，已进 .gitignore）。 */
 export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");

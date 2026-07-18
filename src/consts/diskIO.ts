@@ -1,6 +1,6 @@
 /**
- * 磁盘 IO 线程（src/workers/diskIOWorker.ts）的调参常量：日志、AI 记忆快照、
- * 每日运势快照三类落盘共用同一个 Worker。目录路径见 paths.ts。
+ * 磁盘 IO 线程（src/workers/diskIOWorker.ts）的调参常量：日志、AI/贴纸快照、
+ * 每日运势与待验证增量共用同一个 Worker。目录路径见 paths.ts。
  */
 
 // ---- 日志（原 consts/logger.ts，数值原样保留，行为零变化） ----
@@ -53,6 +53,17 @@ export const DAY_FILE_JSON_INDENT: number = 2;
  * 这一条——它用的是跟日志一样的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS 窗口。
  */
 export const SNAPSHOT_FLUSH_INTERVAL_MS: number = 10_000;
+
+// ---- Anti-Raid 待验证增量 JSON ----
+
+/** 普通消息 ID/提醒回填变化的短合并窗口；创建与终结立即追加。 */
+export const VERIFICATION_FLUSH_INTERVAL_MS: number = 250;
+export const VERIFICATION_FLUSH_MAX_KEYS: number = 100;
+/** 重复历史达到任一阈值前收敛为 active 快照，避免当天文件无限增长。 */
+export const VERIFICATION_FILE_COMPACT_ENTRIES: number = 10_000;
+export const VERIFICATION_FILE_COMPACT_BYTES: number = 4 * 1024 * 1024;
+/** 读取损坏/手工修改文件时的防御上限；运行时消息窗口会另设更小上限。 */
+export const VERIFICATION_FILE_MAX_MESSAGE_IDS: number = 5_000;
 
 // ---- 启动 load 握手 ----
 

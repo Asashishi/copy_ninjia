@@ -3,11 +3,12 @@ import {
   handleTrackedMessage,
   handleVerificationCallback,
   dispatchVerification,
+  adoptVerifications,
 } from "./antiRaid/verificationRuntime";
 import { adoptLockdowns } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
-import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS, LINKED_CHANNEL_TTL_MS } from "../consts/antiRaid";
-import { adminFetches, chatAdmins, linkedChannelFetches, linkedChannels } from "../cache/antiRaidWorker";
+import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } from "../consts/antiRaid";
+import { adminFetches, chatAdmins, linkedChannelFetches, linkedChannels, verificationRevisions } from "../cache/antiRaidWorker";
 import type { AntiRaidWorkerMessage } from "../types";
 
 /**
@@ -31,9 +32,9 @@ import type { AntiRaidWorkerMessage } from "../types";
  * 突发的删/踢/发在这里排队，不占用主线程共享客户端）。error 日志经 logger.ts
  * 的转发模式回传主线程统一落盘。
  *
- * lockdown/unlock 事件回报主线程用于持久化 + Worker 崩溃后的 adopt 重放，
- * 机制见 antiRaid.ts（验证状态则随线程丢失：残留的验证按钮点了会得到
- * 「已失效」应答，重新进群即可）。
+ * lockdown/unlock 与 pending verification 变化都会回报主线程；前者写入
+ * state.json，后者由主线程转投 Disk I/O Worker 的当日增量 JSON。两者都可
+ * 在 Worker 或整个进程重建后 adopt。
  */
 
 declare const self: Worker;
@@ -56,6 +57,9 @@ self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
     case "adopt":
       adoptLockdowns(msg.lockdowns);
       break;
+    case "adoptVerifications":
+      adoptVerifications(msg);
+      break;
     case "adminsChanged":
       applyAdminChange(msg.chatId, msg.userId, msg.isAdmin);
       break;
@@ -70,5 +74,10 @@ setInterval(() => {
   }
   for (const [chatId, cached] of linkedChannels) {
     if (now - cached.fetchedAt > LINKED_CHANNEL_TTL_MS && !linkedChannelFetches.has(chatId)) linkedChannels.delete(chatId);
+  }
+  for (const [key, revision] of verificationRevisions) {
+    if (revision.retiredAt !== undefined && now - revision.retiredAt > VERIFICATION_REVISION_RETENTION_MS) {
+      verificationRevisions.delete(key);
+    }
   }
 }, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS).unref();

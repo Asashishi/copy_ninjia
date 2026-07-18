@@ -8,7 +8,7 @@ import { acquireSingleInstanceLock, cleanupOrphanedTempFiles, flushStateToDisk, 
 import { shouldPassInitGate, shouldPassPrivateCommandGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleSendCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
-import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, initAntiRaid } from "./src/antiRaid";
+import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, hydratePendingVerifications, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { refreshAllChatTitles } from "./src/infra/chatTitle";
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } from "./src/aiChat";
@@ -225,6 +225,9 @@ async function main(): Promise<void> {
   // dailyLuckCache 是主线程同步读写的，必须赶在 runner 开始投喂
   // inline_query 之前灌好，否则会出现「今天已抽过却又抽出新结果」。
   restoreLuckCache(loaded.luckDay);
+  // 当天仍 active 的验证先进入主线程镜像，initAntiRaid 随后的首条 adopt
+  // 按原 expiresAt 恢复剩余计时；已过期记录会立即进入超时处置。
+  hydratePendingVerifications(loaded.verifications);
   // 接管上次进程退出时仍在生效的反刷群私密模式（各群 ChatState.lockdown，
   // 已随上面的 loadState() 一次性读出）：同样要赶在 runner 投喂更新之前
   // adopt 给守卫 Worker，让它重排解锁计时。
@@ -296,8 +299,8 @@ async function waitForRunnerDrain(runner: RunnerHandle, timeoutMs: number = 5000
 
 /**
  * 尽力跑一遍完整的落盘链：先让 aiChatWorker 把 dirty 记忆快照吐给主线程
- * （转投 diskIOWorker），再让 diskIOWorker 把三类 dirty 数据（日志/AI 记忆/
- * 运势）全部落盘，同时把主线程自己持有的 state.json 排空。①②两步必须顺序
+ * （转投 diskIOWorker），再让 diskIOWorker 把日志、AI/贴纸快照、运势与
+ * 待验证增量全部落盘，同时把主线程自己持有的 state.json 排空。①②两步必须顺序
  * 执行，不能并发——AI 记忆要先经过主线程中转落进 diskIOWorker 的缓存，
  * flush 才有东西可落；调换顺序或并发跑，flush 可能抢在记忆转投完成之前
  * 执行，白白丢掉这一份增量。③与①②相互独立（state.json 是主线程自己的

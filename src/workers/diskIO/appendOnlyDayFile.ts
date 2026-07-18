@@ -3,8 +3,9 @@
  * JSON 对象 { "key1": value1, "key2": value2, ... }，新增条目不整文件重写，
  * 而是覆写文件结尾的「\n}」两字节、按位置追加，写入量只与本批条数有关，
  * 与文件大小无关。原是 loggerWorker.ts 专属逻辑，现抽成通用机制，调用方
- * 是 diskIO/logFiles.ts（日志）与 diskIO/snapshotFiles.ts 的
- * appendLuckEntries（每日运势）；调用方各自负责 key/value 怎么序列化、
+ * 是 diskIO/logFiles.ts（日志）、diskIO/snapshotFiles.ts 的
+ * appendLuckEntries（每日运势）与 diskIO/verificationFiles.ts（待验证）；
+ * 调用方各自负责 key/value 怎么序列化、
  * 多久 flush 一次、保留策略等领域逻辑，这里只管字节层面的
  * 打开/探测/追加/损坏修复。
  */

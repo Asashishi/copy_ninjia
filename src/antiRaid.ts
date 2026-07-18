@@ -6,7 +6,9 @@ import { answerCallbackQuery } from "./infra/telegram";
 import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
 import { LOCKDOWN_MS, VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
 import { superviseWorker } from "./libs/supervisedWorker";
-import type { AdoptableLockdown, AdoptLockdownsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, LockdownRecord } from "./types";
+import { onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./infra/diskIO";
+import { activeVerificationSnapshots, pendingVerificationDeletes } from "./cache/antiRaid";
+import type { AdoptableLockdown, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, LockdownRecord, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent } from "./types";
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
@@ -24,9 +26,25 @@ import type { AdoptableLockdown, AdoptLockdownsMessage, AntiRaidMember, AntiRaid
  * initAntiRaid 交回——权限限制已实际落在群上，不重放就永远无人解锁。
  *
  * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
- * 停机时未完成的验证窗口随线程丢弃（残留按钮点了会得到「已失效」应答）；
- * 未到期的私密模式则已持久化在 state.json 里，下次启动重放接管。
+ * 待验证纯数据由主线程镜像并转投唯一 Disk I/O Worker 的当日增量 JSON：
+ * Worker 或整个进程重建后都按 expiresAt 接管。私密模式仍由 state.json 恢复。
  */
+
+let antiRaidGeneration: number = 0;
+let antiRaidInitialized: boolean = false;
+
+function verificationMirrorKey(chatId: number, userId: number): string {
+  return `${chatId}:${userId}`;
+}
+
+function nextAntiRaidGeneration(): number {
+  antiRaidGeneration++;
+  return antiRaidGeneration;
+}
+
+function buildAdoptVerificationsMessage(generation: number): AdoptVerificationsMessage {
+  return { type: "adoptVerifications", generation, verifications: [...activeVerificationSnapshots.values()] };
+}
 
 function toAdoptableLockdown(chatId: number, record: LockdownRecord, now: number): AdoptableLockdown {
   return { chatId, originalPermissions: record.originalPermissions, remainingMs: Math.max(0, record.expiresAt - now) };
@@ -67,19 +85,76 @@ const { init: initAntiRaidWorker, post } = superviseWorker<AntiRaidWorkerMessage
         delete getOrCreateChatState(event.chatId).lockdown;
         saveStateInBackground("anti-raid unlock");
         break;
+      case "verificationUpsert":
+        acceptVerificationUpsert(event);
+        break;
+      case "verificationDelete":
+        acceptVerificationDelete(event);
+        break;
     }
   },
-  // 崩溃的 Worker 带走了恢复计时器，但权限限制已实际落在群上；把仍在生效
-  // 的私密模式重放给新 Worker 接管，重新计时、到期恢复。FIFO 保证 adopt
-  // 先于此后的一切投递到达。待验证记录随旧线程丢失，无从重放——残留的
-  // 验证按钮点了会得到「已失效」应答，重新进群即可。
+  // 崩溃的 Worker 带走了所有计时器；先用主线程待验证镜像重建验证，再把
+  // 仍在生效的私密模式交给新 Worker。FIFO 保证两类 adopt 都先于新投递。
   onRespawn: (postToNext) => {
+    const generation: number = nextAntiRaidGeneration();
+    postToNext(buildAdoptVerificationsMessage(generation));
     const adopt: AdoptLockdownsMessage = buildAdoptMessage();
     if (adopt.lockdowns.length > 0) {
       postToNext(adopt);
     }
   },
   onGiveUp: () => abandonLockdowns(),
+});
+
+function acceptVerificationUpsert(event: VerificationUpsertEvent): void {
+  const snapshot: VerificationSnapshot = event.record;
+  if (snapshot.generation !== antiRaidGeneration) return;
+  const key: string = verificationMirrorKey(snapshot.chatId, snapshot.userId);
+  const latestRevision: number = Math.max(
+    activeVerificationSnapshots.get(key)?.revision ?? 0,
+    pendingVerificationDeletes.get(key)?.revision ?? 0
+  );
+  if (snapshot.revision <= latestRevision) return;
+  const critical: boolean = !activeVerificationSnapshots.has(key);
+  activeVerificationSnapshots.set(key, { ...snapshot, messageIds: [...snapshot.messageIds] });
+  pendingVerificationDeletes.delete(key);
+  postDiskIO({ type: "verificationUpsert", record: snapshot, critical });
+}
+
+function acceptVerificationDelete(event: VerificationDeleteEvent): void {
+  if (event.generation !== antiRaidGeneration) return;
+  const key: string = verificationMirrorKey(event.chatId, event.userId);
+  const current: VerificationSnapshot | undefined = activeVerificationSnapshots.get(key);
+  const pendingRevision: number = pendingVerificationDeletes.get(key)?.revision ?? 0;
+  if ((!current && pendingRevision === 0) || event.revision <= Math.max(current?.revision ?? 0, pendingRevision)) return;
+  activeVerificationSnapshots.delete(key);
+  const deletion = {
+    chatId: event.chatId,
+    userId: event.userId,
+    generation: event.generation,
+    revision: event.revision,
+  };
+  pendingVerificationDeletes.set(key, deletion);
+  postDiskIO({ type: "verificationDelete", ...deletion });
+}
+
+// Disk I/O Worker 重建时，active 与尚未确认的终结变化一起重放；否则旧日
+// 文件里的 active 记录可能在下一次进程启动时复活。
+onDiskIORespawn(() => {
+  for (const record of activeVerificationSnapshots.values()) {
+    postDiskIO({ type: "verificationUpsert", record, critical: true });
+  }
+  for (const deletion of pendingVerificationDeletes.values()) {
+    postDiskIO({ type: "verificationDelete", ...deletion });
+  }
+});
+
+onVerificationPersisted((reply) => {
+  if (!reply.deleted) return;
+  const deletion = pendingVerificationDeletes.get(reply.key);
+  if (deletion?.generation === reply.generation && deletion.revision === reply.revision) {
+    pendingVerificationDeletes.delete(reply.key);
+  }
 });
 
 /**
@@ -105,12 +180,26 @@ function abandonLockdowns(): void {
  * 新事件到达，Worker 侧「私密模式下直接踢人」的判断对随后涌入的入群立即生效。
  */
 export function initAntiRaid(): void {
+  if (antiRaidInitialized) return;
+  antiRaidInitialized = true;
+  const generation: number = nextAntiRaidGeneration();
   initAntiRaidWorker();
+  post(buildAdoptVerificationsMessage(generation));
   const adopt: AdoptLockdownsMessage = buildAdoptMessage();
   if (adopt.lockdowns.length === 0) return;
 
   post(adopt);
   logger.log(`Adopted lockdowns still active from previous process exit: ${adopt.lockdowns.map((l) => l.chatId).join(", ")}`);
+}
+
+/** Disk I/O 启动恢复完成后、Anti-Raid Worker 初始化前灌入主线程镜像。 */
+export function hydratePendingVerifications(records: Map<string, VerificationSnapshot>): void {
+  if (antiRaidInitialized) throw new Error("Pending verifications must be hydrated before Anti-Raid initialization.");
+  activeVerificationSnapshots.clear();
+  pendingVerificationDeletes.clear();
+  for (const [key, record] of records) {
+    activeVerificationSnapshots.set(key, { ...record, messageIds: [...record.messageIds] });
+  }
 }
 
 /** 从 grammY 的 User 对象里摘出投递给 Worker 的最小身份字段。 */

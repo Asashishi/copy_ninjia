@@ -44,6 +44,8 @@ export const ANTI_RAID_CACHE_SWEEP_INTERVAL_MS: number = 5 * 60 * 1000;
  * 入群更新来消费。实际间隔是毫秒级，取分钟级只是给限流/网络抖动留余量。
  */
 export const COMMENT_JOIN_CORRELATE_MS: number = 2 * 60 * 1000;
+/** 终结 revision 为抵御重复 adopt 保留的时间；之后周期清理，避免按历史成员增长。 */
+export const VERIFICATION_REVISION_RETENTION_MS: number = 10 * 60 * 1000;
 
 // —— 反刷群私密模式 ——
 

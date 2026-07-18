@@ -1,17 +1,15 @@
 /**
  * 磁盘 IO 线程（Bun Worker）：进程内所有磁盘 IO 收在这一条线程里串行执行——
- * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包的
- * 目录快照、每日运势缓存四类数据统一由它落盘。日志线程本来就是"唯一落盘
- * 线程"的定位（多实例并发追加同一个文件会互相踩踏写坏），再开一个专门
- * 落盘 AI 记忆/贴纸目录/运势的 Worker 就有两个 IO 线程，违背这个定位；
- * 四类负载都是低频小文件写，合在一条线程串行执行天然免锁。原名
- * loggerWorker，只做日志；现扩展为四合一，改名 diskIOWorker。
+ * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
+ * 目录快照、每日运势缓存与待验证当日增量 JSON 都由进程唯一的统一持久化
+ * Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
+ * 互相踩坏。原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
  *
  * 本文件只做消息路由、统一 flush 调度、启动恢复编排；具体逻辑分别在
  * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/luckFiles.ts（运势的缓冲/
- * 追加）与 diskIO/snapshotFiles.ts（AI 记忆/贴纸目录的整份覆盖写 + 运势的
- * 追加纯函数 + 三者的启动恢复），日志/运势共用的按位置追加/损坏修复字节
- * 机制在 diskIO/appendOnlyDayFile.ts。
+ * 追加）、diskIO/verificationFiles.ts（待验证按日增量）与
+ * diskIO/snapshotFiles.ts（AI 记忆/贴纸目录覆盖写 + 启动恢复）。日志、运势
+ * 和待验证数据共用 appendOnlyDayFile.ts 的按位置追加/截断修复机制。
  *
  * 原则：磁盘只在启动恢复（load）时被读一次；此后缓存（cache/diskIOWorker.ts）
  * 是唯一事实源，写是「缓存 -> 磁盘」的单向定时同步。本线程自身的内部错误
@@ -22,13 +20,14 @@
 import { mkdirSync } from "node:fs";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import { flushLuckAppends, handleLuckDrawMessage } from "./diskIO/luckFiles";
+import { flushVerificationChanges, handleVerificationDelete, handleVerificationUpsert, recoverVerificationDay, scheduleVerificationRollover } from "./diskIO/verificationFiles";
 import { deleteAiMemoryFile, recoverAiMemories, recoverLuckDay, recoverStickerCatalogs, writeAiMemoryFile, writeStickerCatalogFile } from "./diskIO/snapshotFiles";
 import { stickerConfig } from "../ai/stickerConfig";
-import { AI_MEMORY_DIR, LOGS_DIR, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR } from "../consts/paths";
+import { AI_MEMORY_DIR, LOGS_DIR, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, VERIFICATION_MEMORY_DIR } from "../consts/paths";
 import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
 import { getTokyoDateKey } from "../libs/time";
 import { aiMemoryCache, deletedAiMemoryChats, dirtyChats, dirtyStickerPacks, luckWorkerCache, snapshotFlushState, stickerCatalogCache } from "../cache/diskIOWorker";
-import type { DiskFlushReply, DiskIOMessage, LoadedReply } from "../types";
+import type { DiskFlushReply, DiskIOMessage, LoadedReply, VerificationSnapshot } from "../types";
 
 declare const self: Worker;
 
@@ -101,11 +100,13 @@ function flushAll(): void {
   }
   flushSnapshots();
   flushLuckAppends();
+  flushVerificationChanges((reply) => self.postMessage(reply));
 }
 
 /**
  * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
- * 建目录、扫描解析校验 memory/ai/、memory/stickers/ 与 memory/luck/，先灌进
+ * 建目录、扫描解析校验 memory/ai/、memory/stickers/、memory/luck/ 与当天
+ * 待验证增量文件，先灌进
  * 自己的缓存，再把缓存内容作为 loaded 回执发给主线程。任何恢复失败都会在
  * 回执中显式报告；主线程启动握手据此拒绝以部分/空状态继续运行。
  * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
@@ -115,11 +116,13 @@ function flushAll(): void {
  */
 function handleLoad(): void {
   let loadError: string | undefined;
+  let verifications: Map<string, VerificationSnapshot> = new Map();
   try {
     mkdirSync(LOGS_DIR, { recursive: true });
     mkdirSync(AI_MEMORY_DIR, { recursive: true });
     mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
     mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
+    mkdirSync(VERIFICATION_MEMORY_DIR, { recursive: true });
 
     for (const [chatId, snapshot] of recoverAiMemories()) {
       aiMemoryCache.set(chatId, snapshot);
@@ -132,6 +135,8 @@ function handleLoad(): void {
     const todayKey: string = getTokyoDateKey();
     const luckDay = recoverLuckDay(todayKey);
     if (luckDay) luckWorkerCache.current = luckDay;
+    verifications = recoverVerificationDay(todayKey);
+    scheduleVerificationRollover((reply) => self.postMessage(reply));
   } catch (error) {
     loadError = error instanceof Error ? error.message : String(error);
     console.error("[diskIOWorker] startup recovery failed:", error);
@@ -142,6 +147,7 @@ function handleLoad(): void {
     aiMemories: aiMemoryCache,
     stickerCatalogs: stickerCatalogCache,
     luckDay: luckWorkerCache.current,
+    verifications,
     error: loadError,
   };
   self.postMessage(reply);
@@ -184,6 +190,12 @@ self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
       break;
     case "luckDraw":
       handleLuckDrawMessage(msg);
+      break;
+    case "verificationUpsert":
+      handleVerificationUpsert(msg, (reply) => self.postMessage(reply));
+      break;
+    case "verificationDelete":
+      handleVerificationDelete(msg, (reply) => self.postMessage(reply));
       break;
     case "load":
       handleLoad();

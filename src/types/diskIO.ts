@@ -1,6 +1,8 @@
+import type { VerificationSnapshot } from "./antiRaid";
+
 /**
  * 磁盘 IO 线程（src/workers/diskIOWorker.ts）统一的消息协议与快照类型：
- * 日志、AI 记忆快照、每日运势快照三类落盘共用同一个 Worker。快照的结构
+ * 日志、AI/贴纸快照、每日运势与待验证当日增量共用同一个 Worker。快照的结构
  * 类型（AiMemorySnapshot/StickerCatalogSnapshot）见 types/aiChat.ts——
  * 消息里只带它们序列化后的 JSON 文本。
  */
@@ -63,18 +65,53 @@ export interface LuckDrawDiskMessage {
   fortunePercent: number;
 }
 
+/** 主线程 -> diskIOWorker：待验证 active 快照的最新变化。 */
+export interface VerificationUpsertDiskMessage {
+  type: "verificationUpsert";
+  record: VerificationSnapshot;
+  /** 新建验证属于核心状态，绕过普通 250ms 合并窗口。 */
+  critical: boolean;
+}
+
+/** 主线程 -> diskIOWorker：验证终结；当天增量文件追加 null。 */
+export interface VerificationDeleteDiskMessage {
+  type: "verificationDelete";
+  chatId: number;
+  userId: number;
+  generation: number;
+  revision: number;
+}
+
+/** diskIOWorker 短窗口内按 key 合并后的最终变化。 */
+export interface VerificationFileChange {
+  chatId: number;
+  userId: number;
+  generation: number;
+  revision: number;
+  value: VerificationSnapshot | null;
+}
+
 /** 主线程 -> diskIOWorker：启动恢复（也用于本 Worker 崩溃重建后的自动重跑）。 */
 export interface LoadRequest {
   type: "load";
 }
 
-/** 主线程 -> diskIOWorker：三类 dirty 数据全部立即落盘，随后回执。 */
+/** 主线程 -> diskIOWorker：所有 dirty 持久化领域全部立即落盘，随后回执。 */
 export interface DiskFlushRequest {
   type: "flush";
   flushId: number;
 }
 
-export type DiskIOMessage = LogEnvelope | AiMemoryDiskMessage | AiMemoryDeleteDiskMessage | StickerCatalogDiskMessage | LuckDrawDiskMessage | LoadRequest | DiskFlushRequest;
+export type DiskIOMessage =
+  | LogEnvelope
+  | AiMemoryDiskMessage
+  | AiMemoryDeleteDiskMessage
+  | StickerCatalogDiskMessage
+  | LuckDrawDiskMessage
+  | VerificationUpsertDiskMessage
+  | VerificationDeleteDiskMessage
+  | LoadRequest
+  | DiskFlushRequest;
 
 /** 单条抽签结果的落盘/缓存形状：吉凶档 label + 该次浮动出的行大运概率。
  * fortunePercent 不再能从 label 反查得出（tier 的概率是区间浮动的，见
@@ -105,6 +142,7 @@ export interface LoadedReply {
   aiMemories: Map<number, string>;
   stickerCatalogs: Map<string, string>;
   luckDay: LuckDayCache | null;
+  verifications: Map<string, VerificationSnapshot>;
   /** 恢复失败时主线程必须拒绝启动，不能把部分结果当成空状态继续。 */
   error?: string;
 }
@@ -115,7 +153,16 @@ export interface DiskFlushReply {
   flushedId: number;
 }
 
-export type DiskIOReply = LoadedReply | DiskFlushReply;
+/** diskIOWorker -> 主线程：一条验证变化已经进入当天 JSON 文件。 */
+export interface VerificationPersistedReply {
+  type: "verificationPersisted";
+  key: string;
+  generation: number;
+  revision: number;
+  deleted: boolean;
+}
+
+export type DiskIOReply = LoadedReply | DiskFlushReply | VerificationPersistedReply;
 
 /** 当前追加目标文件（日志或每日运势）的状态：字节大小用于定位结尾的
  * 「\n}」，供按位置追加，见 workers/diskIO/appendOnlyDayFile.ts。 */

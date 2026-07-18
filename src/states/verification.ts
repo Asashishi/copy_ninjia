@@ -1,4 +1,4 @@
-import { KICKED_REJOIN_GRACE_MS } from "../consts/antiRaid";
+import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiRaid";
 
 /**
  * 入群验证生命周期的显式状态机（纯逻辑，不做任何 I/O、不持有计时器）。
@@ -59,6 +59,8 @@ export interface PendingState {
    *  找到并移除这一条，不能牵连窗口内其它入群的时间戳，见
    *  workers/antiRaid/lockdownRuntime.ts 的 retractJoin。 */
   joinedAt: number;
+  /** 验证应当结束的绝对毫秒时刻；恢复时据此重建真实剩余时间。 */
+  expiresAt: number;
 }
 
 /** 豁免占位：管理员拉人/身份入群/频道评论确证，不需要验证，只用于给重复投递去重。 */
@@ -125,7 +127,7 @@ export interface JoinEvent {
 export type VerificationEvent =
   | JoinEvent
   | { type: "left" }
-  | { type: "trackedMessage"; messageId: number; inCommentThread: boolean; repliesToChannelPost: boolean }
+  | { type: "trackedMessage"; messageId: number; inCommentThread: boolean; repliesToChannelPost: boolean; now: number }
   | { type: "callback"; callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
   /** 异步管理员核查确认拉人者是管理员（仅在核查发起时的状态对象未被替换时投递）。 */
   | { type: "adminCheckResolved" }
@@ -174,6 +176,8 @@ export interface VerificationTransition {
   /** 下一个状态：undefined = 删除记录；与传入同一对象 = 原地更新（计时器不动）。 */
   next: VerificationState | undefined;
   effects: VerificationEffect[];
+  /** 仅原地修改 pending 时置 true；新对象/删除由解释器通过引用变化识别。 */
+  snapshotChanged?: boolean;
 }
 
 /** 汇总一次入群的全部豁免来源；viaChannelComment 标记豁免是否由频道评论确证（要补欢迎）。 */
@@ -243,12 +247,14 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
   if (state !== undefined) {
     // 同一次入群的另一路投递：只补充，不重启计时器/不再发提醒（幂等）。
     const effects: VerificationEffect[] = [];
+    let snapshotChanged: boolean = false;
     if (event.announcementMessageId !== undefined) {
       if (state.kind === "kicked") {
         // 人已在私密模式下被踢出，姗姗来迟的入群公告顺手清理。
         effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
       } else if (state.kind === "pending") {
         state.messageIds.push(event.announcementMessageId);
+        snapshotChanged = true;
       }
     }
     if (state.kind === "kicked" && event.now - state.kickedAt > KICKED_REJOIN_GRACE_MS) {
@@ -264,10 +270,13 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     // 异步核查。缓存热时不必挂——resolveJoinExemption 的同步快路径刚查过，
     // 没命中就是真不是管理员。
     if (state.kind === "pending" && invitedByOther && !event.adminCacheFresh) {
-      state.invitedBy ??= event.actorId;
+      if (state.invitedBy === undefined) {
+        state.invitedBy = event.actorId;
+        snapshotChanged = true;
+      }
       effects.push({ kind: "startAdminCheck", actorId: event.actorId! });
     }
-    return { next: state, effects };
+    return { next: state, effects, snapshotChanged };
   }
 
   // 全新入群（调用方已按 joinCreatesNewRecord 完成 recordJoin）。
@@ -291,6 +300,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     replyReminderRequested: false,
     reminderSuperseded: false,
     joinedAt: event.now,
+    expiresAt: event.now + VERIFICATION_TIMEOUT_MS,
   };
   const effects: VerificationEffect[] = [];
   if (event.recentComment !== undefined) {
@@ -311,7 +321,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
 
 function handleTrackedMessage(
   state: VerificationState | undefined,
-  event: { messageId: number; inCommentThread: boolean; repliesToChannelPost: boolean }
+  event: { messageId: number; inCommentThread: boolean; repliesToChannelPost: boolean; now: number }
 ): VerificationTransition {
   // 占位记录不是真的在等验证；无记录的消息与验证无关。
   if (state?.kind !== "pending") return { next: state, effects: [] };
@@ -333,7 +343,7 @@ function handleTrackedMessage(
 
   state.messageIds.push(event.messageId);
   // TA 开口说话了还没点按钮：把提醒补发为回复 TA 消息的形式（只补发一次）。
-  if (state.replyReminderRequested) return { next: state, effects: [] };
+  if (state.replyReminderRequested) return { next: state, effects: [], snapshotChanged: true };
   state.replyReminderRequested = true;
   state.welcomeAnchorMessageId = event.messageId;
   state.reminderSuperseded = true;
@@ -341,7 +351,10 @@ function handleTrackedMessage(
   const effects: VerificationEffect[] = [];
   // 楼中楼：TA 在频道侧此刻才看得到按钮，验证计时重新给满；普通发言不重置。
   // 排在列表最前——解释器按序执行且会 await 删除调用，重置不能被限流队列拖后。
-  if (event.inCommentThread) effects.push({ kind: "restartVerifyTimer" });
+  if (event.inCommentThread) {
+    state.expiresAt = event.now + VERIFICATION_TIMEOUT_MS;
+    effects.push({ kind: "restartVerifyTimer" });
+  }
   // 补发提醒排在删旧提醒之前：解释器对 deleteMessage 是 await 的，中间会让出
   // 事件循环，若先执行删除，补发提醒真正发出时可能已经隔了一段时间——其间
   // 状态可能被交错到达的其他投递替换/重建，捕获到错误的记录（回填打进新
@@ -356,7 +369,7 @@ function handleTrackedMessage(
     effects.push({ kind: "deleteMessage", messageId: state.reminderMessageId });
     state.reminderMessageId = undefined;
   }
-  return { next: state, effects };
+  return { next: state, effects, snapshotChanged: true };
 }
 
 function handleCallback(
@@ -449,7 +462,7 @@ function handleReminderLanded(
   state.messageIds.push(event.messageId);
   if (event.reminderKind === "original") state.reminderMessageId = event.messageId;
   else state.replyReminderMessageId = event.messageId;
-  return { next: state, effects: [] };
+  return { next: state, effects: [], snapshotChanged: true };
 }
 
 export function transitionVerification(state: VerificationState | undefined, event: VerificationEvent): VerificationTransition {

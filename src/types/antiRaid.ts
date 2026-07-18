@@ -118,6 +118,37 @@ export interface AdoptLockdownsMessage {
 }
 
 /**
+ * pending 验证的纯数据快照。主线程持有镜像、Disk I/O Worker 按日落盘；
+ * 计时器、Promise 和 API 在途状态由业务 Worker 按 expiresAt 重建。
+ */
+export interface VerificationSnapshot {
+  chatId: number;
+  userId: number;
+  /** 当前 Anti-Raid Worker 代际；主线程据此拒绝旧实例的迟到事件。 */
+  generation: number;
+  /** 同一代际、同一 key 内单调递增的状态修订号。 */
+  revision: number;
+  label: string;
+  isBot: boolean;
+  messageIds: number[];
+  invitedBy?: number;
+  reminderMessageId?: number;
+  replyReminderMessageId?: number;
+  replyReminderRequested: boolean;
+  welcomeAnchorMessageId?: number;
+  reminderSuperseded: boolean;
+  joinedAt: number;
+  expiresAt: number;
+}
+
+/** 主线程 -> Worker：Worker 重建时接管尚未结束的验证。 */
+export interface AdoptVerificationsMessage {
+  type: "adoptVerifications";
+  generation: number;
+  verifications: VerificationSnapshot[];
+}
+
+/**
  * 主线程 -> Worker：某成员的管理员身份发生了变化（任免、管理员入群/离群）。
  * 管理员任免本身就以 chat_member 更新送达，借此让 Worker 侧的管理员表缓存
  * 近乎实时，TTL 只是兜底。
@@ -136,6 +167,7 @@ export type AntiRaidWorkerMessage =
   | TrackedChatMessage
   | VerifyCallbackMessage
   | AdoptLockdownsMessage
+  | AdoptVerificationsMessage
   | AdminsChangedMessage;
 
 /** Worker -> 主线程：某群的私密模式已实际生效（setChatPermissions 成功）。 */
@@ -151,4 +183,19 @@ export interface UnlockEvent {
   chatId: number;
 }
 
-export type AntiRaidWorkerEvent = LockdownEvent | UnlockEvent;
+/** Worker -> 主线程：新增或更新一条仍待验证的纯数据记录。 */
+export interface VerificationUpsertEvent {
+  type: "verificationUpsert";
+  record: VerificationSnapshot;
+}
+
+/** Worker -> 主线程：验证已终结；主线程从内存镜像移除对应快照。 */
+export interface VerificationDeleteEvent {
+  type: "verificationDelete";
+  chatId: number;
+  userId: number;
+  generation: number;
+  revision: number;
+}
+
+export type AntiRaidWorkerEvent = LockdownEvent | UnlockEvent | VerificationUpsertEvent | VerificationDeleteEvent;
