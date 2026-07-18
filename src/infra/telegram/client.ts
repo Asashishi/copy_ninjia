@@ -7,16 +7,28 @@ import { logger } from "../logger";
 
 /** 全仓默认 Telegram 客户端，统一启用节流和瞬时错误重试。 */
 export const bot: Bot = new Bot(BOT_TOKEN);
-bot.api.config.use(apiThrottler());
-bot.api.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
 
 /**
  * 入群守卫使用的独立客户端。它与普通消息发送分开排队，避免一波验证/踢人
  * 请求占满默认客户端，拖慢正常指令与 AI 回复。
  */
 export const joinVerificationApi: Api = new Api(BOT_TOKEN);
-joinVerificationApi.config.use(apiThrottler());
-joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
+
+let telegramClientsInitialized: boolean = false;
+
+/**
+ * 安装会创建 Bottleneck 心跳计时器的节流/重试 transformer。主进程须在取得
+ * bot.lock 后调用；业务 Worker 则在各自启动入口调用。模块导入本身只构造
+ * 尚未联网的客户端，不创建计时器，重复调用幂等。
+ */
+export function initTelegramClients(): void {
+  if (telegramClientsInitialized) return;
+  bot.api.config.use(apiThrottler());
+  bot.api.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
+  joinVerificationApi.config.use(apiThrottler());
+  joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
+  telegramClientsInitialized = true;
+}
 
 /** 统一展开 Telegram API 错误，保留 Bot API 的状态码和 description。 */
 export function logApiError(action: string, error: unknown): void {

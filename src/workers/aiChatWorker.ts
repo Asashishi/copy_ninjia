@@ -7,6 +7,7 @@ import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
 import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiStickerCatalogEvent } from "../types";
+import { initTelegramClients } from "../infra/telegram";
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message/ → aiChat.ts 代理）
@@ -45,8 +46,8 @@ import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiStickerCatalogEvent }
 
 declare const self: Worker;
 
-self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
-  const msg: AiChatWorkerMessage = event.data;
+/** 路由一条主线程消息；独立导出便于验证协议而不启动真实 Worker。 */
+export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
   switch (msg.type) {
     case "init":
       botInfoState.current = msg.botInfo;
@@ -84,13 +85,12 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
       }
       break;
   }
-};
+}
 
 // dirty 群的记忆快照 + dirty 的贴纸目录定时上报给主线程（进而落盘），见
 // consts/aiChat.ts 的 AI_SNAPSHOT_INTERVAL_MS 注释。Worker 线程活到进程
 // 退出为止，不需要引用计数/按需启停，无条目时两个 flush 都直接空转返回。
-setInterval(() => {
-  const now: number = Date.now();
+export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
   for (const [chatId, times] of longTriggerTimes) {
     while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_LONG_WINDOW_MS) times.shift();
     if (times.size === 0) longTriggerTimes.delete(chatId);
@@ -100,9 +100,19 @@ setInterval(() => {
   }
   flushDirtyMemories();
   flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
-}, AI_SNAPSHOT_INTERVAL_MS);
+}
 
-// 东京天气的后台定时刷新（见 ai/weather.ts）：get_tokyo_weather 工具与
-// 心情系统（ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
-// 读不发请求。全进程只应调用一次——重复调用会叠加出多个定时器。
-startWeatherRefreshLoop();
+/** Worker 线程启动入口；主线程导入本模块时不得注册 handler、计时器或网络刷新。 */
+export function startAiChatWorker(): void {
+  initTelegramClients();
+  self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
+    handleAiChatWorkerMessage(event.data);
+  };
+  setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);
+  // 东京天气的后台定时刷新（见 ai/weather.ts）：get_tokyo_weather 工具与
+  // 心情系统（ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
+  // 读不发请求。全进程只应调用一次——重复调用会叠加出多个定时器。
+  startWeatherRefreshLoop();
+}
+
+if (!Bun.isMainThread) startAiChatWorker();

@@ -10,6 +10,7 @@ import { applyAdminChange } from "./antiRaid/adminCache";
 import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } from "../consts/antiRaid";
 import { adminFetches, chatAdmins, linkedChannelFetches, linkedChannels, verificationRevisions } from "../cache/antiRaidWorker";
 import type { AntiRaidWorkerMessage } from "../types";
+import { initTelegramClients } from "../infra/telegram";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
@@ -39,8 +40,8 @@ import type { AntiRaidWorkerMessage } from "../types";
 
 declare const self: Worker;
 
-self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
-  const msg: AntiRaidWorkerMessage = event.data;
+/** 路由一条主线程消息；独立导出便于验证协议而不启动真实 Worker。 */
+export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
   switch (msg.type) {
     case "join":
       handleJoin(msg);
@@ -64,11 +65,10 @@ self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
       applyAdminChange(msg.chatId, msg.userId, msg.isAdmin);
       break;
   }
-};
+}
 
 /** TTL 判断不能代替删除：只“视为过期”仍会让 Map 按历史群数永久增长。 */
-setInterval(() => {
-  const now: number = Date.now();
+export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
   for (const [chatId, cached] of chatAdmins) {
     if (now - cached.fetchedAt > ADMIN_CACHE_TTL_MS && !adminFetches.has(chatId)) chatAdmins.delete(chatId);
   }
@@ -80,4 +80,15 @@ setInterval(() => {
       verificationRevisions.delete(key);
     }
   }
-}, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS).unref();
+}
+
+/** Worker 线程启动入口；主线程导入本模块时不得注册 handler 或 sweeper。 */
+export function startAntiRaidWorker(): void {
+  initTelegramClients();
+  self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
+    handleAntiRaidWorkerMessage(event.data);
+  };
+  setInterval(sweepAntiRaidWorkerCaches, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS).unref();
+}
+
+if (!Bun.isMainThread) startAntiRaidWorker();

@@ -31,8 +31,6 @@ import type { DiskFlushReply, DiskIOMessage, LoadedReply, VerificationSnapshot }
 
 declare const self: Worker;
 
-initLogFiles();
-
 /** 按需启动 AI 记忆快照 + 贴纸目录的定时落盘（两类数据共用同一个定时器，
  *  都是低频小文件覆盖写，没必要各开一条）；已有定时器在跑就不重复排。
  *  运势有自己独立的窗口（见 diskIO/luckFiles.ts），不共用这一条。 */
@@ -153,8 +151,8 @@ function handleLoad(): void {
   self.postMessage(reply);
 }
 
-self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
-  const msg: DiskIOMessage = event.data;
+/** 路由一条主线程消息；独立导出便于验证协议而不初始化真实落盘目录。 */
+export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
   switch (msg.type) {
     case "log":
       handleLogMessage(msg);
@@ -207,4 +205,14 @@ self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
       break;
     }
   }
-};
+}
+
+/** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
+export function startDiskIOWorker(): void {
+  initLogFiles();
+  self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
+    handleDiskIOWorkerMessage(event.data);
+  };
+}
+
+if (!Bun.isMainThread) startDiskIOWorker();

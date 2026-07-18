@@ -2,7 +2,7 @@ import { logger } from "./src/infra/logger";
 import { flushDiskIO, initDiskIO, loadPersistedData, type LoadedData } from "./src/infra/diskIO";
 import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
-import { bot } from "./src/infra/telegram";
+import { bot, initTelegramClients } from "./src/infra/telegram";
 import { BOT_TOKEN } from "./src/infra/config";
 import { acquireSingleInstanceLock, cleanupOrphanedTempFiles, flushStateToDisk, getAllChatStates, getGlobalCopyState, loadState, releaseSingleInstanceLock } from "./src/infra/storage";
 import { shouldPassInitGate, shouldPassPrivateCommandGate } from "./src/infra/updateGate";
@@ -26,7 +26,7 @@ let finalCleanupPromise: Promise<void> | null = null;
 /**
  * 注册各类更新处理器，并启动 grammY 的长轮询循环。
  */
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   // 尽早注册（早于任何 await）：默认 SIGINT/SIGTERM 会立即终止进程，跳过
   // 下面 main().finally() 的优雅 flush 链，还会让单实例锁来不及释放（下次
   // 启动靠 isProcessAlive 探活回收，影响小但仍可避免）。注册后即便信号落在
@@ -46,6 +46,7 @@ async function main(): Promise<void> {
 
   await acquireSingleInstanceLock(BOT_TOKEN);
   lockAcquired = true;
+  initTelegramClients();
   initDiskIO();
   diskIOInitialized = true;
   // 清扫上次崩溃可能残留的 state.json/bot.lock 原子写临时文件（见
@@ -338,25 +339,30 @@ function finalizePersistence(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number,
 // 不走下面 main().finally() 的正常落盘链。这里兜底捕获，记日志后尽力跑
 // 一遍同样的 flush 链（短超时，避免进程被一次异常的清理流程拖住太久），
 // 再退出——退出码非零，systemd 配 Restart=on-failure 时会照常自动重启。
-process.on("uncaughtException", (error: unknown) => {
-  logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
-  void finalizePersistence(1000, 1000, 1000).finally(() => process.exit(1));
-});
-process.on("unhandledRejection", (reason: unknown) => {
-  logger.error("Unhandled rejection, attempting a best-effort flush before exit:", reason);
-  void finalizePersistence(1000, 1000, 1000).finally(() => process.exit(1));
-});
-
-main()
-  .catch((err: unknown) => {
-    logger.error("Unhandled error in bot main runner:", err);
-    // 以非零码退出：不设的话进程会以 0 正常退出，systemd 配 Restart=on-failure
-    // 时启动期的致命错误（状态文件损坏等）就不会触发自动重启。
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await finalizePersistence(2000, 3000, 3000);
+/** 生产入口：只有直接执行 index.ts 才安装进程级 handler 并启动长轮询。 */
+export function runApplication(): Promise<void> {
+  process.on("uncaughtException", (error: unknown) => {
+    logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
+    void finalizePersistence(1000, 1000, 1000).finally(() => process.exit(1));
   });
+  process.on("unhandledRejection", (reason: unknown) => {
+    logger.error("Unhandled rejection, attempting a best-effort flush before exit:", reason);
+    void finalizePersistence(1000, 1000, 1000).finally(() => process.exit(1));
+  });
+
+  return main()
+    .catch((err: unknown) => {
+      logger.error("Unhandled error in bot main runner:", err);
+      // 以非零码退出：不设的话进程会以 0 正常退出，systemd 配 Restart=on-failure
+      // 时启动期的致命错误（状态文件损坏等）就不会触发自动重启。
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await finalizePersistence(2000, 3000, 3000);
+    });
+}
+
+if (import.meta.main) void runApplication();
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才
 // 结束，此时把 aiChatWorker/diskIOWorker 里的存货（AI 记忆最长滞留
 // 30 秒 + 10 秒、运势和日志最长滞留 30 秒）强制落盘，停机

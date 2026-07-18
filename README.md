@@ -147,7 +147,7 @@ Telegram 侧还需要按功能配置：
 ### 4. 启动与检查
 
 ```bash
-bun run check     # TypeScript 严格检查 + 全部测试
+bun run check     # ESLint + TypeScript 严格检查 + 全源码覆盖率测试
 bun run start     # 启动长轮询
 ```
 
@@ -235,7 +235,7 @@ bun test
 bun run check
 ```
 
-项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 还要求函数与行覆盖率均不低于 80%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
+项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母（即使没有其它测试触达），当前过渡门槛为函数 64%、行 68%，补测完成后将恢复到 80%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
 
 ---
 
