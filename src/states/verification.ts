@@ -1,11 +1,24 @@
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
 import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiRaid/verification";
+import type { VerificationEffect, VerificationTransition } from "./verification/effects";
+import type { JoinEvent, VerificationEvent } from "./verification/events";
+import type { ExpelSnapshot, PendingState, VerificationState } from "./verification/state";
+
+export type { VerificationEffect, VerificationTransition } from "./verification/effects";
+export type { JoinEvent, VerificationEvent } from "./verification/events";
+export type {
+  ExemptState,
+  ExpelSnapshot,
+  KickedState,
+  PendingState,
+  RecentComment,
+  VerificationState,
+} from "./verification/state";
 
 /**
- * 入群验证生命周期的显式状态机（纯逻辑，不做任何 I/O、不持有计时器）。
- * 状态按 (chatId, userId) 归属，由 workers/antiRaidWorker.ts 持有并解释执行：
- * Worker 把每条投递翻译成 VerificationEvent 喂给 transitionVerification，
- * 拿到「下一个状态 + 待执行副作用」后自己去落状态、排计时器、打 Telegram API。
+ * 入群验证生命周期的显式状态机（纯逻辑，不做 I/O、不持有计时器）。状态模型、
+ * 输入事件和输出副作用分别位于 verification/*；所有状态转移仍集中在本文件，
+ * 让状态图和跨事件不变量可以在一个位置完整审计。
  *
  * 状态图（ABSENT = Map 里没有这个 key）：
  *
@@ -18,174 +31,10 @@ import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiR
  *   PENDING ──超时（拉人者最终核对是管理员）─────────────────> EXEMPT
  *   EXEMPT/KICKED ──去重窗口到期 / 离群──────────────────────> ABSENT
  *
- * EXEMPT/KICKED 都是「已终结但短暂保留」的去重占位：chat_member 更新与
- * new_chat_members 服务消息会针对同一次入群各自投递一次、到达顺序不保证，
- * 占位防止后到的那一路重新开验证窗口/重复踢人。
- *
- * 同一 kind 内的字段更新会原地修改传入的状态对象并原样返回（next === state），
- * kind 变化才返回新对象——解释器据此判断要不要换计时器，异步回调（提醒回填、
- * 管理员核查）也沿用旧实现的对象同一性判断来识别「状态是否已被替换」。
+ * EXEMPT/KICKED 是 chat_member 与服务消息双路投递之间的短期去重占位。
+ * 同 kind 字段更新原地修改并原样返回；kind 变化才返回新对象，解释器据此管理
+ * 计时器，异步回调也依赖对象同一性拒绝迟到结果。
  */
-
-/** 早于入群更新到达、被暂存下来的评论区留言（消费逻辑见 join 事件）。 */
-export interface RecentComment {
-  messageId: number;
-  /** 收到评论投递的时刻；评论先于 join 到达时仍按真实消息时刻计入窗口。 */
-  observedAt: number;
-  /** 是否直接回复频道帖——确证的真人评论区留言，足以豁免验证。 */
-  repliesToChannelPost: boolean;
-}
-
-/** 正在等待点击验证按钮的成员。字段含义与旧 PendingVerification 一一对应。 */
-export interface PendingState {
-  kind: "pending";
-  /** 入群时捕获的展示用标签，用于踢人公告（提到 TA 的消息届时都已被删除）。 */
-  label: string;
-  /** 是不是机器人——机器人点不了按钮，只能由白名单用户代点作保，文案也单独措辞。 */
-  isBot: boolean;
-  /** 验证超时被踢出时要删除的消息：入群公告、提醒、以及 TA 等待期间发的一切。 */
-  messageIds: number[];
-  /** 最近 JOIN_WINDOW_MS 内由该成员发送的消息时间；不含公告与机器人提醒。 */
-  trackedMessageTimes: number[];
-  /** 若为被他人拉入群，拉人者的 userId——超时踢人前要对其身份做最后核对。 */
-  invitedBy?: number;
-  /** 带验证按钮的原始独立提醒的消息 ID（发送成功回填后才有）。 */
-  reminderMessageId?: number;
-  /** 以「回复 TA 的消息」形式补发的提醒的消息 ID（发送成功回填后才有）。 */
-  replyReminderMessageId?: number;
-  /** 是否已补发过回复式提醒——TA 连发多条消息也只补发一次。 */
-  replyReminderRequested: boolean;
-  /** 回复式提醒锚定的消息 ID，验证通过后的欢迎消息也回复它（楼中楼场景落进评论线程）。 */
-  welcomeAnchorMessageId?: number;
-  /** 原始提醒已被回复式提醒取代：还没落地的原始提醒落地即自删（见 reminderLanded）。 */
-  reminderSuperseded: boolean;
-  /** 创建本记录那次入群的时刻（= JoinEvent.now，与 recordJoin 压进
-   *  刷群滑动窗口的时间戳同一个值）。retractJoinCount 撤销计数时要精确
-   *  找到并移除这一条，不能牵连窗口内其它入群的时间戳，见
-   *  workers/antiRaid/lockdownRuntime.ts 的 retractJoin。 */
-  joinedAt: number;
-  /** 验证应当结束的绝对毫秒时刻；恢复时据此重建真实剩余时间。 */
-  expiresAt: number;
-}
-
-/** 豁免占位：管理员拉人/身份入群/频道评论确证，不需要验证，只用于给重复投递去重。 */
-export interface ExemptState {
-  kind: "exempt";
-  label: string;
-  isBot: boolean;
-}
-
-/** 秒踢占位：私密模式下已直接踢出，防止另一路投递重复计数/重复踢。 */
-export interface KickedState {
-  kind: "kicked";
-  label: string;
-  isBot: boolean;
-  /** 本占位创建（踢出）时的时刻，用于在新 join 事件到达时区分"同一次入群的
-   * 另一条投递"与"真的重新入群"，见 KICKED_REJOIN_GRACE_MS。 */
-  kickedAt: number;
-}
-
-export type VerificationState = PendingState | ExemptState | KickedState;
-
-/**
- * 超时踢人流程的记录快照。verifyTimeout 会立即删除状态（等待期间迟到的
- * 按钮点击要能查无记录而安全失效），但异步的拉人者身份终核与最终的
- * 删消息/踢人还需要这些字段，所以摘出来随事件流转。
- */
-export interface ExpelSnapshot {
-  label: string;
-  isBot: boolean;
-  messageIds: number[];
-  reminderMessageId?: number;
-  replyReminderMessageId?: number;
-  /** 见 PendingState.joinedAt——终核收尾时撤销刷群计数要用到。 */
-  joinedAt: number;
-}
-
-export interface JoinEvent {
-  type: "join";
-  memberId: number;
-  label: string;
-  isBot: boolean;
-  /** 若由 new_chat_members 服务消息触发，该消息的 ID。 */
-  announcementMessageId?: number;
-  /** 触发本次入群的操作者；undefined 或等于 memberId 视为自主入群。 */
-  actorId?: number;
-  /** chat_member 路径可见：入群者本身就是管理员/群主。 */
-  identityExempt: boolean;
-  /** 拉人者在特权白名单里，或命中未过期的管理员缓存（Worker 预计算；自主入群恒为 false）。 */
-  actorSyncExempt: boolean;
-  /** 管理员缓存当前是否未过期——决定要不要给已有记录补挂异步核查。 */
-  adminCacheFresh: boolean;
-  /**
-   * 本群是否处于私密模式。必须在 recordJoin（可能同步触发锁定）之后取值，
-   * 越过阈值的那次入群自己才会被秒踢——调用顺序见 joinCreatesNewRecord。
-   */
-  lockdownActive: boolean;
-  /** 本次入群前暂存的评论区留言（Worker 已从暂存区消费，无论本转移用不用都不退回）。 */
-  recentComment?: RecentComment;
-  /** 解释器观测到本次投递的时刻，供区分"kicked 占位遇到的新 join 是同一次
-   * 入群的另一条腿，还是真的重新入群"，见 KICKED_REJOIN_GRACE_MS。 */
-  now: number;
-}
-
-export type VerificationEvent =
-  | JoinEvent
-  | { type: "left" }
-  | { type: "trackedMessage"; messageId: number; inCommentThread: boolean; repliesToChannelPost: boolean; now: number }
-  | { type: "callback"; callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
-  /** 异步管理员核查确认拉人者是管理员（仅在核查发起时的状态对象未被替换时投递）。 */
-  | { type: "adminCheckResolved" }
-  | { type: "verifyTimeout" }
-  /** 超时踢人前对拉人者身份的最后核对结果（recheckInviter 副作用的回执）。 */
-  | { type: "timeoutInviterVerdict"; inviterIsAdmin: boolean; snapshot: ExpelSnapshot }
-  /** 提醒消息经限流队列落地，回填其消息 ID（仅在状态对象未被替换时投递）。 */
-  | { type: "reminderLanded"; reminderKind: "original" | "reply"; messageId: number }
-  | { type: "dedupeExpired" };
-
-export type VerificationEffect =
-  | { kind: "deleteMessage"; messageId: number }
-  | { kind: "kickMember" }
-  /** 发送原始独立提醒（带验证按钮），落地后以 reminderLanded 回填。 */
-  | { kind: "sendReminder"; label: string; isBot: boolean }
-  /** 以回复 targetMessageId 的形式补发提醒；inCommentThread 时文案不同且要重置验证计时。 */
-  | { kind: "sendReplyReminder"; label: string; targetMessageId: number; inCommentThread: boolean }
-  | { kind: "sendWelcome"; variant: "verified" | "vouchedBot" | "channelComment"; targetLabel: string; fromLabel?: string; anchorMessageId?: number }
-  | { kind: "answerCallback"; callbackQueryId: string; reply: "ok" | "invalid" | "notYourButton" | "notYourBotButton" }
-  /** 删除已落地的提醒消息（撤销验证的各路径共用；还没落地的由回填回调自删）。 */
-  | { kind: "deleteReminders"; reminderMessageId?: number; replyReminderMessageId?: number }
-  /** 发起「拉人者是不是管理员」的异步全量核查，确认则回投 adminCheckResolved。 */
-  | { kind: "startAdminCheck"; actorId: number }
-  /** 已经是 KICKED 占位（踢的动作已实际执行）时又收到确凿的豁免证明——
-   *  Telegram 没有"撤销踢出"这回事，占位本身不动，只留一条日志方便管理员
-   *  事后手动把人拉回来，见 handleJoin 里 exempt 分支对 kicked 占位的处理。 */
-  | { kind: "logStaleKickedExemption"; label: string }
-  /** 撤销一次此前 recordJoin 计入的刷群窗口计数：一条 PENDING 记录（创建时
-   *  必然已被计入，见 joinCreatesNewRecord）事后才被确证豁免（管理员拉人
-   *  异步核查通过、频道评论确证、超时终核确认拉人者是管理员、第二路投递
-   *  带着豁免证明追上来），不该继续占着刷群统计的名额，见
-   *  workers/antiRaid/lockdownRuntime.ts 的 retractJoin。joinedAt 必须精确
-   *  指向创建这条记录那次入群自己的时间戳（PendingState.joinedAt /
-   *  ExpelSnapshot.joinedAt）——按值移除而非无差别 shift 队首，否则可能
-   *  牵连窗口内其它真实入群的计数（该时间戳若已被窗口自然修剪出局，说明
-   *  本就无需撤销，按值移除会正确地找不到、no-op）。 */
-  | { kind: "retractJoinCount"; joinedAt: number }
-  /** 超时后的拉人者身份终核（缓存热直接判、冷则等一次全量拉取），结果以 timeoutInviterVerdict 回投。 */
-  | { kind: "recheckInviter"; inviterId: number; snapshot: ExpelSnapshot }
-  /** 删除快照里的全部追踪消息、踢人、发踢人通知（超时未验证的最终收尾）。 */
-  | { kind: "expel"; snapshot: ExpelSnapshot }
-  /** 待验证成员一分钟内第 46 条消息触发：先踢人止损，再清理全部已追踪消息。 */
-  | { kind: "expelFlood"; snapshot: ExpelSnapshot }
-  /** 楼中楼补发提醒时重置验证倒计时（TA 在频道侧刚看到按钮，重新给满时长）。 */
-  | { kind: "restartVerifyTimer" };
-
-export interface VerificationTransition {
-  /** 下一个状态：undefined = 删除记录；与传入同一对象 = 原地更新（计时器不动）。 */
-  next: VerificationState | undefined;
-  effects: VerificationEffect[];
-  /** 仅原地修改 pending 时置 true；新对象/删除由解释器通过引用变化识别。 */
-  snapshotChanged?: boolean;
-}
 
 /** 汇总一次入群的全部豁免来源；viaChannelComment 标记豁免是否由频道评论确证（要补欢迎）。 */
 function resolveJoinExemption(event: JoinEvent): { exempt: boolean; viaChannelComment: boolean } {
