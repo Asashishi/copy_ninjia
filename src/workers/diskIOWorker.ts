@@ -25,7 +25,7 @@ import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import { flushVerificationChanges, handleVerificationDelete, handleVerificationUpsert, recoverVerificationDay, scheduleVerificationRollover } from "./diskIO/verificationFiles";
 import { deleteAiMemorySnapshot, flushAiMemorySnapshots, hydrateAiMemorySnapshots, markAiMemorySnapshotDirty } from "./diskIO/aiMemoryFiles";
 import { flushStickerCatalogs, hydrateStickerCatalogs, markStickerCatalogSnapshotDirty } from "./diskIO/stickerCatalogFiles";
-import { stickerConfig } from "../ai/stickers/config";
+import { getStickerConfig } from "../config/stickers";
 import { getTokyoDateKey } from "../libs/time";
 import { aiMemoryCache } from "../cache/diskIO/snapshots";
 import { stickerCatalogCache } from "../cache/diskIO/stickers";
@@ -64,7 +64,7 @@ function handleLoad(): void {
   let luckReceiptSecret: LuckReceiptSecret | null = null;
   try {
     hydrateAiMemorySnapshots();
-    hydrateStickerCatalogs(stickerConfig.packs);
+    hydrateStickerCatalogs(getStickerConfig().packs);
     const todayKey: string = getTokyoDateKey();
     hydrateLuckDay(todayKey);
     luckReceiptSecret = recoverLuckReceiptSecret(todayKey);

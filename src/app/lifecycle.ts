@@ -2,6 +2,8 @@ import { run, type RunnerHandle } from "@grammyjs/runner";
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } from "../aiChat";
 import { hydratePendingVerifications, initAntiRaid } from "../antiRaid";
 import { restoreLuckState } from "../commands";
+import { getReactionConfig } from "../config/reactions";
+import { getStickerConfig } from "../config/stickers";
 import {
   AI_MEMORY_FLUSH_TIMEOUT_MS,
   DISK_IO_FLUSH_TIMEOUT_MS,
@@ -95,6 +97,10 @@ export class ApplicationLifecycle {
     await acquireSingleInstanceLock(BOT_TOKEN);
     this.lockAcquired = true;
 
+    // 配置文件属于不可信部署输入：持锁后、启动 Worker/联网前统一校验，失败时
+    // 由 finally 释放实例锁；各 Worker 在自己的 isolate 中复用同一解析器。
+    getStickerConfig();
+    getReactionConfig();
     initTelegramClients();
     initDiskIO();
     this.diskIOInitialized = true;

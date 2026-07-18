@@ -1,19 +1,20 @@
 import { MAX_REACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
 import { setMessageReaction } from "../../../infra/telegram";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
-import { REACTION_EMOJIS } from "../../reactions";
+import { getReactionEmojis } from "../../reactions";
 import { parseStringField } from "../../utils/toolArgs";
 
 export function createAddReactionExecutor(
   ctx: ReplyToolContext
 ): (argumentsJson: string) => string {
+  const reactionEmojis = getReactionEmojis();
   let reactionCount: number = 0;
   return (argumentsJson: string): string => {
     if (!ctx.isActive()) {
       return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
     }
     const emoji: string | null = parseStringField(argumentsJson, "emoji");
-    if (emoji === null || !REACTION_EMOJIS.includes(emoji)) {
+    if (emoji === null || !reactionEmojis.includes(emoji)) {
       return JSON.stringify({ error: "Invalid reaction emoji: pick one from the list" });
     }
     if (reactionCount >= MAX_REACTIONS_PER_REPLY) {

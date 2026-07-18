@@ -10,7 +10,7 @@ import {
   SEND_MESSAGE_TOOL,
 } from "../../../consts/tools";
 import type { ToolDefinition } from "../../../types/tools";
-import { REACTION_EMOJIS } from "../../reactions";
+import { getReactionEmojis } from "../../reactions";
 
 export function buildSendMessageToolDefinition(roundHasTypo: boolean): ToolDefinition {
   const properties: Record<string, unknown> = {
@@ -59,12 +59,13 @@ export function buildDeleteOwnMessageToolDefinition(): ToolDefinition {
   };
 }
 
-/** REACTION_EMOJIS 为空时不向模型提供反应工具。 */
+/** 反应白名单为空时不向模型提供反应工具。 */
 export function buildAddReactionToolDefinition(): ToolDefinition | null {
-  if (REACTION_EMOJIS.length === 0) return null;
+  const reactionEmojis = getReactionEmojis();
+  if (reactionEmojis.length === 0) return null;
   return {
     name: ADD_REACTION_TOOL,
-    description: ADD_REACTION_TOOL_INSTRUCTION + REACTION_EMOJIS.join(" "),
+    description: ADD_REACTION_TOOL_INSTRUCTION + reactionEmojis.join(" "),
     parameters: {
       type: "object",
       properties: {

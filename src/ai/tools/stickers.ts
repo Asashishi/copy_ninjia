@@ -1,7 +1,8 @@
 import type { StickerSet } from "@grammyjs/types";
+import { getStickerConfig } from "../../config/stickers";
 import { sendSticker } from "../../infra/telegram";
 import { sleep } from "../../libs/sleep";
-import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet, stickerConfig } from "../stickers";
+import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
 import { parseIndexField } from "../utils/toolArgs";
 import {
   MAX_STICKERS_PER_REPLY,
@@ -56,7 +57,7 @@ export function createStickerRoundState(): StickerRoundState {
  */
 export async function buildStickerPackMenu(): Promise<StickerPackCandidate[]> {
   const menu: StickerPackCandidate[] = [];
-  for (const pack of stickerConfig.packs) {
+  for (const pack of getStickerConfig().packs) {
     const set: StickerSet | null = await getStickerSet(pack);
     if (!set) continue;
     const stickers: StickerCandidate[] = [];

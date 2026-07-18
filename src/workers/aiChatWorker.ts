@@ -1,5 +1,5 @@
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, hydrateStickerCatalogs } from "../ai/stickers/catalog";
-import { stickerConfig } from "../ai/stickers/config";
+import { getStickerConfig } from "../config/stickers";
 import { startWeatherRefreshLoop } from "../ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState } from "../cache/aiChat/identity";
@@ -57,7 +57,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       // 见 ai/stickers/catalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
       // 的条目再继续 diff（见该函数注释）。
-      ensureStickerCatalogs(stickerConfig.packs);
+      ensureStickerCatalogs(getStickerConfig().packs);
       break;
     case "record":
       recordChatMessage(msg.chatId, msg.senderId, msg.firstName, msg.lastName, msg.username, msg.text);

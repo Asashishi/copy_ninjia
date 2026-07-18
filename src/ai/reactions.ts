@@ -1,9 +1,4 @@
-import { readFileSync } from "node:fs";
-import { REACTIONS_CONFIG_PATH } from "../consts/paths";
-import { parseReactionConfig, type ReactionConfig } from "../libs/runtimeConfig";
-
-export { parseReactionConfig } from "../libs/runtimeConfig";
-export type { ReactionConfig } from "../libs/runtimeConfig";
+import { getReactionConfig } from "../config/reactions";
 
 /**
  * add_reaction 工具的 emoji 白名单，来自 config/reactions.json 的
@@ -15,7 +10,10 @@ export type { ReactionConfig } from "../libs/runtimeConfig";
  * REACTION_INVALID，与是否有 Telegram Premium 无关，是 bot 账号的硬限制）。
  */
 
-const config: ReactionConfig = parseReactionConfig(JSON.parse(readFileSync(REACTIONS_CONFIG_PATH, "utf8")) as unknown);
+let cachedEmojis: readonly string[] | null = null;
 
-/** add_reaction 工具允许的标准反应 emoji 清单。 */
-export const REACTION_EMOJIS: readonly string[] = Object.freeze(Object.keys(config.emotionKeywords));
+/** add_reaction 工具允许的标准反应 emoji；首次业务调用时才读取配置。 */
+export function getReactionEmojis(): readonly string[] {
+  cachedEmojis ??= Object.freeze(Object.keys(getReactionConfig().emotionKeywords));
+  return cachedEmojis;
+}
