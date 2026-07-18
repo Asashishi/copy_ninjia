@@ -1,6 +1,6 @@
 import { logger } from "../../infra/logger";
 import { joinVerificationApi } from "../../infra/telegram";
-import { LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid";
+import { LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid/cache";
 import {
   cacheLinkedChannel,
   getOrCreateLinkedChannelFetch,

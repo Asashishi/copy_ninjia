@@ -1,5 +1,5 @@
 import type { ChatAdminCache } from "../../types";
-import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CHAT_CACHE_MAX } from "../../consts/antiRaid";
+import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CHAT_CACHE_MAX } from "../../consts/antiRaid/cache";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /** 按需拉取的各群管理员表。 */

@@ -1,6 +1,6 @@
 import { verificationKey } from "./keys";
 import { recentChannelComments, type RecentChannelComment } from "../../cache/antiRaid/recentComments";
-import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../consts/antiRaid";
+import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../consts/antiRaid/cache";
 
 /**
  * 频道评论区留言的暂存：评论先到、入群更新后到时的关联缓冲，供

@@ -13,7 +13,7 @@
 import { chmodSync, closeSync, existsSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DayFileState } from "../../types";
-import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO";
+import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 
 // serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出是多行形态

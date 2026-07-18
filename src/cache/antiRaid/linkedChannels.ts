@@ -1,5 +1,5 @@
 import type { LinkedChannelCache } from "../../types";
-import { ANTI_RAID_CHAT_CACHE_MAX, LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid";
+import { ANTI_RAID_CHAT_CACHE_MAX, LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid/cache";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /** 各群是否有关联频道的按需 TTL 缓存。 */

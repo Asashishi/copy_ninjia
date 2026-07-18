@@ -1,5 +1,5 @@
 import type { ChatPermissions } from "@grammyjs/types";
-import { LOCKDOWN_MS, RESTORE_RETRY_MS } from "../consts/antiRaid";
+import { LOCKDOWN_MS, RESTORE_RETRY_MS } from "../consts/antiRaid/lockdown";
 
 /**
  * 反刷群私密模式生命周期的显式状态机（纯逻辑，不做任何 I/O、不持有计时器）。

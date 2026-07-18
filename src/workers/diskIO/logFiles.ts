@@ -1,6 +1,6 @@
 /**
  * 日志落盘逻辑：接收 diskIOWorker.ts 路由来的日志消息，先进入内存 buffer，
- * 达到阈值（见 consts/diskIO.ts 的 FLUSH_MAX_ENTRIES/FLUSH_INTERVAL_MS）或
+ * 达到阈值（见 consts/diskIO/appendOnly.ts）或
  * 收到统一 flush 指令时批量落盘到 logs/YYYY-MM-DD.json：文件内容是一个
  * JSON 对象，键为「本地日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），
  * 值为该条日志的内容对象，与 JSON.stringify(entries, null, 2) 的输出逐字节
@@ -8,7 +8,7 @@
  *
  * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写——具体的
  * 按位置追加/损坏修复机制见 diskIO/appendOnlyDayFile.ts。
- * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO.ts），跨天时自动清理
+ * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO/appendOnly.ts），跨天时自动清理
  * 过期文件。日期显式按东京时区划分（同 libs/time.ts 的 getTokyoDateKey，
  * 与运势/AI 记忆两个同进程内子系统口径一致），不依赖部署机器自身的系统
  * 时区设置——不然一旦部署环境时区漂移，三类落盘数据会在同一次事故里表现
@@ -23,7 +23,7 @@ import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
-import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO";
+import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO/appendOnly";
 import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";

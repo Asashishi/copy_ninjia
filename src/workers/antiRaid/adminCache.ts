@@ -1,5 +1,5 @@
 import { joinVerificationApi } from "../../infra/telegram";
-import { ADMIN_CACHE_TTL_MS } from "../../consts/antiRaid";
+import { ADMIN_CACHE_TTL_MS } from "../../consts/antiRaid/cache";
 import {
   bufferAdminChangeDuringFetch,
   cacheAdminIds,

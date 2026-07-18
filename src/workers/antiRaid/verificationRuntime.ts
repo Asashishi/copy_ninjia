@@ -12,14 +12,14 @@ import { formatUserLabel } from "../../users/userLabel";
 import { formatMinSec } from "../../libs/time";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../../consts/telegram";
 import { PRIVILEGED_USERS_ID } from "../../infra/config";
+import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import {
   LOCKDOWN_KICK_DEDUPE_MS,
-  JOIN_WINDOW_MS,
   VERIFICATION_BUTTON_TEXT,
   VERIFICATION_TIMEOUT_MS,
   VERIFY_CALLBACK_PREFIX,
   WELCOME_AUTO_DELETE_MS,
-} from "../../consts/antiRaid";
+} from "../../consts/antiRaid/verification";
 import { lockdownEntries } from "../../cache/antiRaid/lockdown";
 import { verificationEntries, verificationGeneration, verificationRevisions } from "../../cache/antiRaid/verification";
 import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types";

@@ -7,7 +7,7 @@ import {
 } from "./antiRaid/verificationRuntime";
 import { adoptLockdowns } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
-import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid";
+import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
 import { sweepAdminCache } from "../cache/antiRaid/admins";
 import { sweepLinkedChannelCache } from "../cache/antiRaid/linkedChannels";
 import { sweepVerificationRevisionCache } from "../cache/antiRaid/verification";

@@ -1,4 +1,4 @@
-import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../../consts/diskIO";
+import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../../consts/diskIO/snapshots";
 import {
   aiMemoryCache,
   aiMemoryFlushState,

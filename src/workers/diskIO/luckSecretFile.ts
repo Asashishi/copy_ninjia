@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
-import { PERSISTED_FILE_MODE } from "../../consts/diskIO";
+import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import type { LuckReceiptSecret } from "../../types";
 

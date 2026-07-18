@@ -18,7 +18,7 @@
 import { pendingFlushes, pendingLoad, pendingLuckSecrets } from "../cache/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "../libs/workerSupervisor";
-import { LOAD_TIMEOUT_MS } from "../consts/diskIO";
+import { LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
 import type {
   AiMemoryDiskMessage,
   AiMemoryDeleteDiskMessage,

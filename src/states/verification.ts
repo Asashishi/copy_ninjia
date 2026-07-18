@@ -1,4 +1,5 @@
-import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiRaid";
+import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
+import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiRaid/verification";
 
 /**
  * 入群验证生命周期的显式状态机（纯逻辑，不做任何 I/O、不持有计时器）。

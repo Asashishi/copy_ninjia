@@ -3,7 +3,7 @@
  * 先进内存缓冲（luckPendingAppends），攒满 FLUSH_MAX_ENTRIES 条、或距首条
  * 入队 FLUSH_INTERVAL_MS 时批量追加进 memory/luck/YYYY-MM-DD.json——与
  * diskIO/logFiles.ts 的 handleLogMessage/flushLogBuffer 完全对称，共用同
- * 一组窗口阈值（见 consts/diskIO.ts），只是缓冲区、定时器、落盘目标各自
+ * 一组窗口阈值（见 consts/diskIO/appendOnly.ts），只是缓冲区、定时器、落盘目标各自
  * 独立，互不影响。按位置追加/损坏修复的字节机制见 appendOnlyDayFile.ts，
  * 追加/清理的纯函数在 snapshotFiles.ts；本文件持有的是「什么时候刷、刷
  * 什么」的领域状态调度（状态本体在 cache/diskIO/luck.ts）。
@@ -12,7 +12,7 @@
  * 理由见 workers/diskIOWorker.ts 模块头。
  */
 
-import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../consts/diskIO";
+import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../consts/diskIO/appendOnly";
 import {
   hydrateLuckCache,
   luckFileState,

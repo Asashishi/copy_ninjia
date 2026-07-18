@@ -7,17 +7,17 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
+import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import {
-  DAY_FILE_JSON_INDENT,
-  PERSISTED_FILE_MODE,
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_COMPACT_ENTRIES,
   VERIFICATION_FILE_MAX_MESSAGE_IDS,
   VERIFICATION_FLUSH_INTERVAL_MS,
   VERIFICATION_FLUSH_MAX_KEYS,
-} from "../../consts/diskIO";
+} from "../../consts/diskIO/verification";
 import { VERIFICATION_MEMORY_DIR } from "../../consts/paths";
-import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../consts/antiRaid";
+import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../consts/antiRaid/lockdown";
 import {
   resetVerificationPersistenceCache,
   verificationFileState,
