@@ -4,7 +4,7 @@
 export const TOKYO_LATITUDE: number = 35.6895;
 export const TOKYO_LONGITUDE: number = 139.6917;
 export const WEATHER_API_URL: string = "https://api.open-meteo.com/v1/forecast";
-export const REQUEST_TIMEOUT_MS: number = 10_000;
+export const WEATHER_REQUEST_TIMEOUT_MS: number = 10_000;
 
 /** 后台定时刷新东京天气缓存的间隔：每小时一次，由 ai/weather.ts 的
  *  startWeatherRefreshLoop 发起，是全进程唯一会真正打 Open-Meteo 接口的

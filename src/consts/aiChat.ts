@@ -26,7 +26,7 @@ export const GEMINI_MEDIA_MODEL: string = "gemini-3.1-flash-lite";
  *  SDK 默认对瞬时失败（网络错误/5xx/429）自动重试几次，每次重试各自套用
  *  这个超时预算，不是所有重试共享一个 90 秒硬顶——这是比手写 fetch 更强
  *  的地方，瞬时的 5xx/连接错误能自愈）。 */
-export const REQUEST_TIMEOUT_MS: number = 150_000;
+export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
 
 /** getStickerSet 失败后的短期负缓存：避免 Telegram 故障期间每轮 AI 回复都
  * 重打同一包，同时让瞬时错误在本进程内自动恢复，不必等到重启。 */
@@ -114,6 +114,21 @@ export const AI_MEMORY_HYDRATE_BUFFER_MAX: number = VERBATIM_CONTEXT_MAX - 1;
  * 同步删除主线程镜像与磁盘快照；该群之后再次发言会从空记忆重新建立。
  */
 export const AI_MEMORY_MAX_CHATS: number = 100;
+
+/**
+ * replyGenerations（cache/aiChatWorker.ts）的容量上限。这张表记录各群的
+ * 「代际」计数器，用于让在途异步任务（回复轮次、压缩、媒体描述回填……）
+ * 在群记忆已被淘汰/失效后识别出自己的结果已过期、放弃回填——语义上必须
+ * 排除在 purgeChatMemory 之外（被淘汰的群不能复用旧的低代际，否则在途任务
+ * 会误把自己的过期结果当成有效），但这也意味着每个曾被淘汰/失效过的群都
+ * 会永久留一条 number -> number 记录，随进程存活时间单调增长。这里给它一个
+ * 远大于 AI_MEMORY_MAX_CHATS 的上限（LRU 淘汰，见 libs/lruCache.ts）：读取
+ * 本身会刷新热度，只要一个群的代际检查仍在被某个在途任务读取，就不会被
+ * 淘汰；只有当 2000 个其它群都已被更晚触碰过、且这个群早就没有任何在途
+ * 任务还会来读它时，才会真的被回收——常规运行下不会触发，只兜底真正
+ * 极端的长期运行场景。
+ */
+export const REPLY_GENERATIONS_MAX: number = 2000;
 /** 单条摘要的硬性长度上限（字符），防摘要模型话痨撑爆回复上下文。 */
 export const SUMMARY_MAX_CHARS: number = 500;
 
@@ -326,8 +341,11 @@ export const TYPO_RECALL_DELETE_MAX_MS: number = 15_000;
 
 // ---- 心情系统（各群冷场太久、再冒泡时随机换一种心情，见 ai/mood.ts）----
 // 两个内存缓存（chatMoods/chatLastActivityTimes，见 cache/aiChatWorker.ts）
-// 都不落盘，随 Worker 重启清空——重启后本群第一条消息会被当成「还没抽过
-// 心情」，直接抽一次，这个简化可以接受。
+// 都不落盘，随 Worker 重启清空——重启后从未被 hydrate 过记忆的群，其第一条
+// 消息会被当成「还没抽过心情」，直接抽一次；有记忆快照被 hydrate 回来的群
+// 则由 hydrateMemories 在恢复 chatLastActivityTimes 的同时一并播种心情
+// （见 workers/aiChat/rollingMemory.ts），避免「有活动时间却没心情」的
+// 不变量被打破，不必等到真的沉默够久才补上。
 
 /**
  * 判定「太久没人说话」的空窗阈值区间：每次有新动静时，都在

@@ -22,14 +22,14 @@ import { ApiError, GoogleGenAI } from "@google/genai";
 import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
 import { logger } from "../infra/logger";
 import { GEMINI_API_KEY } from "../infra/config";
-import { REQUEST_TIMEOUT_MS } from "../consts/aiChat";
+import { GEMINI_REQUEST_TIMEOUT_MS } from "../consts/aiChat";
 import { extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
 
 /** 进程内唯一的 Gemini 客户端实例（timeout 是每次请求/每次重试各自的预算，
- *  不是所有重试共享一个硬顶，见 consts/aiChat.ts 的 REQUEST_TIMEOUT_MS 注释）。
+ *  不是所有重试共享一个硬顶，见 consts/aiChat.ts 的 GEMINI_REQUEST_TIMEOUT_MS 注释）。
  *  Worker 线程各自 import 本文件会各自拿到一份独立实例，符合现状——本来
  *  就没有跨线程共享 Gemini 调用状态的需求。 */
-const client: GoogleGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY, httpOptions: { timeout: REQUEST_TIMEOUT_MS } });
+const client: GoogleGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY, httpOptions: { timeout: GEMINI_REQUEST_TIMEOUT_MS } });
 
 /**
  * 调一次 generateContent 接口。请求失败、超时或非 2xx 时返回 null（已记

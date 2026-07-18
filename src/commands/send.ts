@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import { getActiveProxySendTarget, getOrCreateChatState, saveState } from "../infra/storage";
+import { getActiveProxySendTarget, getOrCreateChatState, saveStateInBackground } from "../infra/storage";
 import { bot, logApiError, sendMessage } from "../infra/telegram";
 import { isSuperAdmin } from "./superAdminToggle";
 
@@ -24,7 +24,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
       return;
     }
     getOrCreateChatState(activeTargetChatId).isUseProxySend = false;
-    await saveState();
+    saveStateInBackground("send finished");
     await sendMessage(chatId, `好啦，不转发了♡`, messageId);
     return;
   }
@@ -53,6 +53,6 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   }
 
   getOrCreateChatState(targetChatId).isUseProxySend = true;
-  await saveState();
+  saveStateInBackground("send started");
   await sendMessage(chatId, `好，现在这里发的消息本天才都会转发进 ${targetChatId}，说完了记得 /send finish♡`, messageId);
 }

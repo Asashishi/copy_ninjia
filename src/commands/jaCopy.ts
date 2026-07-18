@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types";
-import { getOrCreateChatState, saveState } from "../infra/storage";
+import { getOrCreateChatState, saveStateInBackground } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { handleCopyCommand } from "./copy";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
@@ -33,7 +33,7 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
   const messageId: number | undefined = ctx.msgId;
   const state: ChatState = getOrCreateChatState(chatId);
   state.isJATranslationEnabled = toggleArg === "enable";
-  await saveState();
+  saveStateInBackground("ja_copy toggled");
 
   const replyText: string = toggleArg === "enable"
     ? `哼，那本天才就赏脸继续在这个群用 /ja_copy 翻译日语吧，杂鱼们好好珍惜♡`

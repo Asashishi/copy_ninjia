@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
 import type { InlineQueryResultArticle } from "@grammyjs/types";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { formatUserLabel } from "../users/userLabel";
 import {
   FORTUNE_THUMBNAIL_URL,
@@ -86,11 +86,23 @@ function ensureCacheFreshForToday(): void {
   }
 }
 
-/** 抽签结果的缓存 key：带文本时按「用户 ID:文本」区分所求事项，不带文本时
- * 就是纯用户 ID（当天的默认运势）。dailyLuckCache/pendingLuckDraws 共用这一
- * 套 key 规则，抽出来单独提取避免两处各写一份、改一处忘了另一处。 */
-function luckCacheKey(userId: number, text: string | undefined): string {
-  return text ? `${userId}:${text}` : String(userId);
+/** 抽签结果的缓存 key：带文本时按「用户 ID:文本摘要」区分所求事项，不带
+ * 文本时就是纯用户 ID（当天的默认运势）。dailyLuckCache/pendingLuckDraws
+ * 共用这一套 key 规则，抽出来单独提取避免两处各写一份、改一处忘了另一处。
+ *
+ * 文本段用 sha256 定长摘要而不是原文本身：内联查询原文可达 ~256 字符，这份
+ * key 既要进内存（dailyLuckCache/pendingLuckDraws/回执双向索引），又要作为
+ * 对象键原样写进磁盘 memory/luck/YYYY-MM-DD.json——原文越长，内存与磁盘
+ * 占用越随之放大，脚本账号只需循环发不同文本的内联查询就能不断膨胀这两处。
+ * 摘要只用于去重/缓存匹配、不参与展示（展示文本一律来自实时 query），
+ * 因此哈希本身不掉安全性，碰撞概率也可忽略。预览侧（getOrDrawLuck/
+ * buildFortuneResult/buildProbabilityResult）与确认侧
+ * （handleLuckChosenInlineResult）都经这一个函数计算 key，天然口径一致。
+ * 导出仅为可测试性（单测需要按同一算法推出预期 key，见
+ * test/commands/luckChallenge.test.ts）。 */
+export function luckCacheKey(userId: number, text: string | undefined): string {
+  if (!text) return String(userId);
+  return `${userId}:${createHash("sha256").update(text, "utf8").digest("hex")}`;
 }
 
 function drawLuckTier(roll: number): LuckTier {

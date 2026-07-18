@@ -34,7 +34,7 @@ import { verificationKey } from "./keys";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { rememberRecentComment, takeRecentComment } from "./recentComments";
 import { chatHasLinkedChannel } from "./linkedChannel";
-import { recordJoin } from "./lockdownRuntime";
+import { recordJoin, retractJoin } from "./lockdownRuntime";
 
 /**
  * 入群验证状态机（src/states/verification.ts）的解释器：把每条投递翻译成
@@ -139,6 +139,9 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
       }
       case "startAdminCheck":
         startAdminCheck(chatId, userId, effect.actorId);
+        break;
+      case "retractJoinCount":
+        retractJoin(chatId, effect.joinedAt);
         break;
       case "logStaleKickedExemption":
         logger.warn(
@@ -326,7 +329,11 @@ export function handleJoin(msg: NewMemberMessage): void {
     now: Date.now(),
   };
   if (joinCreatesNewRecord(entryState, event)) {
-    recordJoin(chatId);
+    // 传入 event.now 而不是让 recordJoin 自己再取一次 Date.now()：这个值
+    // 同时也会存进 PendingState.joinedAt（见 states/verification.ts 的
+    // handleJoin），retractJoin 撤销计数时要按值精确匹配这条时间戳，两处
+    // 若各自现取时间会因几步执行的间隔产生毫秒级偏差，导致按值查找落空。
+    recordJoin(chatId, event.now);
   }
   event.lockdownActive = lockdownEntries.has(chatId);
   dispatchVerification(chatId, member.id, event);

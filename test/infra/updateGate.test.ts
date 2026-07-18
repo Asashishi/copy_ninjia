@@ -64,8 +64,19 @@ describe("shouldPassInitGate", () => {
   test("已 /init 过的群 + 普通消息：放行", () => {
     const chatId = -1001111111113;
     getOrCreateChatState(chatId).isInit = true;
-    const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text: "随便说点什么" } });
-    expect(shouldPassInitGate(ctx)).toBe(true);
+    // bun test 默认同进程共享 infra/storage 的模块级 chatStates（同文件的
+    // /send 中转测试也有这条注意事项），务必测完把这个字段清回去，不留给
+    // 同进程里跑在它之后的其它测试文件。注意：这里只重置字段、不能用
+    // deleteChatState——本文件只 mock 了 infra/diskIO（防的是 logger.ts
+    // 间接把真实 Worker 拉起来），没有 mock infra/storage 本体，
+    // deleteChatState 删除成功时会触发 saveStateInBackground 真的写项目根
+    // 目录下的 state.json，那是这台机器上正在跑的真实 bot 在用的文件。
+    try {
+      const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text: "随便说点什么" } });
+      expect(shouldPassInitGate(ctx)).toBe(true);
+    } finally {
+      getOrCreateChatState(chatId).isInit = undefined;
+    }
   });
 
   test("回归用例：从未 /init 过的群里，/luck_challenge 选中后的 via_bot 确认消息仍要放行，" +

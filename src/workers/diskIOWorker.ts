@@ -162,8 +162,20 @@ self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
     case "deleteAiMemory":
       aiMemoryCache.delete(msg.chatId);
       dirtyChats.delete(msg.chatId);
-      deletedAiMemoryChats.add(msg.chatId);
-      scheduleSnapshotFlush();
+      // 同步立即 unlink（而不是走 dirty 标记 + 定时 flushSnapshots）：删除是
+      // 幂等的，不必等 SNAPSHOT_FLUSH_INTERVAL_MS 的批量窗口。若走批量窗口，
+      // 本线程恰好在窗口内崩溃会导致 deletedAiMemoryChats（易失态）随线程
+      // 丢失，重建后 load 从盘上把仍然存在的文件读回缓存，而主线程侧
+      // onDiskIORespawn 只重放现存镜像、没有「待删」镜像可重放，删除就此
+      // 永久丢失（进程重启时还会被 hydrate 回 AI 上下文）。失败仍保留原有
+      // 的 dirty 标记 + 重试兜底。
+      try {
+        deleteAiMemoryFile(msg.chatId);
+      } catch (error) {
+        console.error(`[diskIOWorker] failed to delete AI memory snapshot for chat ${msg.chatId}:`, error);
+        deletedAiMemoryChats.add(msg.chatId);
+        scheduleSnapshotFlush();
+      }
       break;
     case "stickerCatalog":
       stickerCatalogCache.set(msg.pack, msg.snapshot);

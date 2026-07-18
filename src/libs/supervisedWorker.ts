@@ -46,10 +46,20 @@ export function superviseWorker<TMessage, TEvent = never>(
     w.unref();
     w.onmessage = (event: MessageEvent<unknown>) => {
       const data: unknown = event.data;
+      // __log 转发不受下面的活跃实例守卫约束：它只是把这个 Worker 自己的
+      // error 日志转投落盘线程，不改写任何共享镜像，没有"过期数据覆盖新
+      // 状态"的风险；旧实例崩溃前最后一条自我诊断日志（比如它自己
+      // logger.error 记下的、导致接下来崩溃的原因）仍然值得落盘，不该因为
+      // 它在 onerror 重建之后才被处理就被无差别丢弃。
       if (data && typeof data === "object" && "__log" in data) {
         relayLogMessage((data as ForwardedLog).__log);
         return;
       }
+      // 已被替换的旧实例若有迟到/入队中的业务事件才送达，不能再让它们改写
+      // 当前镜像（同 onerror 的守卫，见下方）——旧 worker 抛异常终止前可能
+      // 已入队一条基于旧快照的事件，若在 onerror 重建之后才被处理，会用
+      // 过期数据覆盖新实例已经重放过的最新状态。
+      if (worker !== w) return;
       options.onEvent?.(data as TEvent);
     };
     w.onerror = (event: ErrorEvent) => {

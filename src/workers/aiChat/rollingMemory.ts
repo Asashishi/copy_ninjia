@@ -2,7 +2,7 @@ import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { formatTokyoTime } from "../../libs/time";
 import { sanitizeInline } from "../../libs/text";
-import { recordActivityAndMaybeRerollMood } from "../../ai/mood";
+import { pickMood, recordActivityAndMaybeRerollMood } from "../../ai/mood";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, AI_MEMORY_MAX_CHATS, COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../consts/aiChat";
 import {
   chatBuffers,
@@ -167,6 +167,13 @@ export function flushDirtyMemories(): void {
  * 缓存无界增长。`=== COMPACT_BATCH_SIZE` 分支对恢复后 size ≥ 50 的群不再
  * 触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块摘要粒度
  * 略有漂移，可接受，不为此复刻轮换状态机。
+ *
+ * 恢复 chatLastActivityTimes 的同时必须顺手播种 chatMoods（见下方 pickMood
+ * 调用）：ai/mood.ts 的 recordActivityAndMaybeRerollMood 靠
+ * lastActivity===undefined 判断"本群第一次有动静、还没抽过心情"，若只恢复
+ * 活动时间不恢复心情，该群在 savedAt 之后不到一个空窗阈值（2~4 小时）内
+ * 再次说话就会被误判成"已经抽过"而跳过播种，提示词缺心情行直到真的沉默
+ * 够久才补上——违反"任何触发都必已 record 过、mood 必已设置"的不变量。
  */
 export function hydrateMemories(memories: Map<number, string>): void {
   const parsedMemories: Array<{ chatId: number; snapshot: AiMemorySnapshot }> = [];
@@ -215,6 +222,10 @@ export function hydrateMemories(memories: Map<number, string>): void {
     }
     if (hasPersistentMemory(chatId)) {
       chatLastActivityTimes.set(chatId, snapshot.savedAt);
+      // 播种心情，与"本群第一次有动静"的路径保持同一份不变量（见上方
+      // 函数头注）；心情本身不落盘，这里跟真实的首条消息一样重新抽一次，
+      // 不尝试恢复重启前的具体心情。
+      chatMoods.set(chatId, pickMood());
     } else {
       self.postMessage({ type: "memoryDeleted", chatId } satisfies AiMemoryDeletedEvent);
     }

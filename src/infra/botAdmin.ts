@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { logger } from "./logger";
 import { bot } from "./telegram";
-import { getChatState, getOrCreateChatState, saveStateInBackground } from "./storage";
+import { deleteChatState, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage";
 import { botAdminFetches } from "../cache/botAdmin";
 import { invalidateAiChat } from "../aiChat";
 
@@ -58,6 +58,11 @@ export function handleMyChatMemberUpdate(ctx: Context): void {
   if (update.chat.type !== "group" && update.chat.type !== "supergroup") return;
   if (update.new_chat_member.status === "left" || update.new_chat_member.status === "kicked") {
     invalidateAiChat(update.chat.id, true);
+    // 机器人已不在这个群里：删除整条持久化状态（见 deleteChatState 注释），
+    // 而不是只把 botIsAdmin 降级为 false——否则该群的 ChatState 条目会随
+    // 「加群又退群」永久留存，内存与 state.json 单调增长。
+    deleteChatState(update.chat.id);
+    return;
   }
   recordBotAdminStatus(update.chat.id, update.new_chat_member.status === "administrator");
 }

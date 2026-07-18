@@ -49,7 +49,11 @@ export function truncateAtClauseBoundary(text: string, maxChars: number): string
     if ("。！？…～♡".includes(ch)) lastSentenceEnd = i;
     else if ("，、；：".includes(ch)) lastClauseBreak = i;
   }
-  if (lastSentenceEnd + 1 >= minKeep) return hardCut.slice(0, lastSentenceEnd + 1);
-  if (lastClauseBreak >= minKeep) return hardCut.slice(0, lastClauseBreak);
+  // 两个 -1 哨兵值都要显式判"确实找到过"：lastSentenceEnd 的判断是
+  // `+1 >= minKeep`，当 minKeep<=0（maxChars<=1）时 -1+1=0 会碰巧满足
+  // 这个条件，把"没找到"误判成"找到了、且在边界内"，slice(0,0) 会丢光
+  // 本该保留的硬切内容。
+  if (lastSentenceEnd >= 0 && lastSentenceEnd + 1 >= minKeep) return hardCut.slice(0, lastSentenceEnd + 1);
+  if (lastClauseBreak >= 0 && lastClauseBreak >= minKeep) return hardCut.slice(0, lastClauseBreak);
   return hardCut;
 }

@@ -51,7 +51,14 @@ export async function atomicWriteText(path: string, content: string): Promise<vo
     await unlink(tmpPath).catch(() => undefined);
     throw error;
   }
-  await handle.close();
+  try {
+    await handle.close();
+  } catch (error: unknown) {
+    // close() 本身失败：不能再假设 tmp 文件完好可用，按失败路径清理，
+    // 不尝试 rename——否则 close 抛错时会跳过下面的清理，留下孤儿 .tmp。
+    await unlink(tmpPath).catch(() => undefined);
+    throw error;
+  }
 
   try {
     await rename(tmpPath, path);
@@ -70,7 +77,12 @@ export function atomicWriteTextSync(path: string, content: string): void {
     writeFileSync(fd, content);
     fsyncSync(fd);
   } catch (error: unknown) {
-    closeSync(fd);
+    try {
+      closeSync(fd);
+    } catch {
+      // closeSync 若也抛错不能让它盖过原始写入错误（下面 throw error 抛的
+      // 仍是 write/fsync 失败），否则会跳过 unlinkSync 清理、留下孤儿 .tmp。
+    }
     try {
       unlinkSync(tmpPath);
     } catch {
@@ -78,7 +90,18 @@ export function atomicWriteTextSync(path: string, content: string): void {
     }
     throw error;
   }
-  closeSync(fd);
+  try {
+    closeSync(fd);
+  } catch (error: unknown) {
+    // close 本身失败：不能再假设 tmp 文件完好可用，按失败路径清理，
+    // 不尝试 rename。
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // 保留原始 close 错误。
+    }
+    throw error;
+  }
 
   try {
     renameSync(tmpPath, path);

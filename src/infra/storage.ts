@@ -1,8 +1,9 @@
-import { link, open, unlink } from "node:fs/promises";
+import { link, open, readdir, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { logger } from "./logger";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
-import { LOCK_FILE_PATH, STATE_FILE_PATH } from "../consts/paths";
+import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 import { createLatestValueRunner } from "../libs/latestValueRunner";
 import { atomicWriteText } from "../libs/atomicFile";
@@ -218,13 +219,44 @@ function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
+/**
+ * 启动时清扫顶层残留的原子写临时文件。state.json/bot.lock 的 tmp+fsync+rename
+ * 写入若崩在 fsync 完成、rename 之前，会在 PROJECT_ROOT 下留一个隐藏的
+ * .<文件名>.<pid>.<uuid>.tmp（见 atomicFile.ts 的 temporaryPath），无人清理，
+ * 跨崩溃累积——memory/ai、memory/luck、memory/stickers、logs 各自的启动恢复
+ * 早就会清自己目录下的 *.tmp（见 workers/diskIO/logFiles.ts、snapshotFiles.ts），
+ * 唯独这两个顶层文件没有对应的清扫。只应在 acquireSingleInstanceLock 成功
+ * 之后调用——此刻已确认没有其它活跃实例在并发写它们，删除是安全的。
+ */
+export async function cleanupOrphanedTempFiles(): Promise<void> {
+  const dir: string = dirname(STATE_FILE_PATH);
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch (error: unknown) {
+    logger.error("Failed to scan project root for orphaned temp files:", error);
+    return;
+  }
+  const prefixes: string[] = [basename(STATE_FILE_PATH), basename(LOCK_FILE_PATH)].map((name) => `.${name}.`);
+  for (const entry of entries) {
+    if (!entry.endsWith(TMP_FILE_SUFFIX) || !prefixes.some((prefix) => entry.startsWith(prefix))) continue;
+    try {
+      await unlink(join(dir, entry));
+    } catch (error: unknown) {
+      if (!isErrno(error, "ENOENT")) logger.error(`Failed to remove orphaned temp file ${entry}:`, error);
+    }
+  }
+}
+
 // 内存中唯一的一份持久化状态，本模块独占持有：各群独立状态 + copy 类功能的
 // 全局状态。调用方一律通过下面的 getter/工具函数读写，不再各自传引用——
 // 状态只有这一份，落盘时全量序列化即可，不存在"只传一半覆盖丢另一半"的问题。
 const chatStates: Map<number, ChatState> = new Map();
 const globalCopyState: GlobalCopyState = { copiedUser: null };
 
-/** copy 类功能的全局状态（复读目标 + 冷却时钟），直接读写字段即可，改完记得 saveState()。 */
+/** copy 类功能的全局状态（复读目标 + 冷却时钟），直接读写字段即可，改完记得
+ *  saveStateInBackground()——命令热路径不要直接 await saveState()，那会让
+ *  用户等双 fsync 才收到回复（性能项 M-6），除非确有必须等落盘成功的理由。 */
 export function getGlobalCopyState(): GlobalCopyState {
   return globalCopyState;
 }
@@ -368,6 +400,39 @@ export function saveStateInBackground(context: string): void {
 }
 
 /**
+ * 进程退出前把 state.json 排空落盘，纳入 index.ts 的 flushAllToDisk 链。
+ * 存在两种待落盘态都要在这里兜住：①有一次 stateWriter 写入正在飞行中
+ * （push 已发起、consume 尚未 resolve）；②上一次写入失败、只排了一个
+ * unref() 的重试计时器（任何退出路径都不会等它，含正常 SIGTERM）。两种
+ * 情况 dirtyStateJson 都非 null，直接把它重新 push 一遍：若①在途，这次
+ * push 只是加入同一条 drain 队列，等在途那次结束后顺带处理；若②只是
+ * 排着定时器，这里改为立即执行、不再等退避延迟。清掉重试计时器避免它在
+ * 落盘完成后又空跑一次。resolve 只代表"尽力等过"，不保证一定成功——单次
+ * 失败会重新排下一轮重试，但这里不再继续等，短超时兜底，不让停机流程
+ * 被一次异常的磁盘故障拖住太久。
+ */
+export function flushStateToDisk(timeoutMs: number = 3000): Promise<void> {
+  if (stateRetryTimer !== null) {
+    clearTimeout(stateRetryTimer);
+    stateRetryTimer = null;
+  }
+  const json: string | null = dirtyStateJson;
+  if (json === null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    stateWriter
+      .push(json)
+      .catch((error: unknown) => {
+        logger.error("Failed to flush state to disk on shutdown:", error);
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+  });
+}
+
+/**
  * 只读地取某个群聊的状态，不存在时返回共享的默认状态（不会插入到 Map 里）。
  * 供仅需要读取的场景使用（比如判断本群是否在静默期），避免机器人所在的
  * 每个群、每条消息都往 Map 里塞一个空条目。
@@ -390,4 +455,18 @@ export function getOrCreateChatState(chatId: number): ChatState {
     chatStates.set(chatId, chatState);
   }
   return chatState;
+}
+
+/**
+ * 机器人被移出/离开某群时删除该群的持久化状态条目——不是降级个别字段，
+ * 整条记录对一个机器人已不在场的群都不再有意义（初始化开关、AI 闲聊、
+ * 静默期、私密模式镜像……），留着只会让内存与 state.json 随「加群又退群」
+ * 单调增长。若机器人之后被重新拉回同一个群，getOrCreateChatState 会照常
+ * 创建一份全新的默认状态，不丢失任何本该保留的信息。只在真的存在条目时
+ * 才落盘，避免为从未被追踪过的群做一次空写。
+ */
+export function deleteChatState(chatId: number): void {
+  if (chatStates.delete(chatId)) {
+    saveStateInBackground(`chat ${chatId} state removed (bot left/kicked)`);
+  }
 }

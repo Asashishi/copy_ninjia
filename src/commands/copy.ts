@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types";
-import { getChatState, getGlobalCopyState, saveState } from "../infra/storage";
+import { getChatState, getGlobalCopyState, saveStateInBackground } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
@@ -57,7 +57,10 @@ export async function handleCopyCommand(
   globalCopy.copiedUser = targetUser;
   globalCopy.copyMode = mode;
   globalCopy.copyChatId = chatId;
-  await saveState();
+  // 落盘不阻塞回消息：命令热路径不必等 saveState 的双 fsync 完成（性能项
+  // M-6）。上面对 globalCopy 的同步写入已经立即生效，落盘只是让它在下次
+  // 重启后依然存在，不影响本次调用后续的复读判定。
+  saveStateInBackground("copy started");
 
   // 发送过渡反馈
   const targetLabel: string = formatUserLabel(targetUser);
@@ -90,7 +93,7 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
   globalCopy.copiedUser = null;
   globalCopy.copyMode = undefined;
   globalCopy.copyChatId = undefined;
-  await saveState();
+  saveStateInBackground("copy stopped");
 
   await sendMessage(chatId, `哼，不玩了，本天才先歇一下~杂鱼♡`, messageId);
 }

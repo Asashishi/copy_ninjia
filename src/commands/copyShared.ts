@@ -1,7 +1,7 @@
 import { logger } from "../infra/logger";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types";
-import { getGlobalCopyState } from "../infra/storage";
+import { getGlobalCopyState, saveStateInBackground } from "../infra/storage";
 import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
@@ -38,6 +38,11 @@ const avatarUpdateRunner = createSerialTaskRunner((error: unknown): void => {
  * 形同虚设。调用方后续如果发现这次尝试并不会真正触发复制（解析目标失败、
  * 已经在复读别人等），必须调用 releaseCopyCooldownClaim 撤销占用，否则无效
  * 尝试也会白白消耗掉全局冷却，殃及所有群。
+ *
+ * 占用当场后台落盘（saveStateInBackground，不 await，不影响上面"同步栈内
+ * 完成占用"的不变量）：若只在真正开始复读时才落盘（旧行为），冷却时钟在
+ * "已认领但还没真正开始复读"的短窗口内只活在内存里，此时崩溃重启会让
+ * 冷却被重置，刚好卡在这个窗口发起的下一次尝试就能绕开冷却限制。
  * @returns rejected 为 true 时提示已发送，调用方应直接返回；否则调用方可以
  * 继续，并需要在放弃这次尝试时把返回值传给 releaseCopyCooldownClaim 回滚。
  */
@@ -59,6 +64,7 @@ export async function claimCopyCooldownOrReject(
   const previousLastCopyTime: number | undefined = globalCopyState.lastCopyTime;
   const claimedAt: number = Date.now();
   globalCopyState.lastCopyTime = claimedAt;
+  saveStateInBackground("copy cooldown claimed");
   return { rejected: false, previousLastCopyTime, claimedAt };
 }
 
@@ -68,11 +74,18 @@ export async function claimCopyCooldownOrReject(
  * 消耗掉全局冷却。只在冷却槽仍是本次占用写入的值时才回滚：占用与回滚之间
  * 隔着 await（发提示消息等），期间白名单用户（豁免冷却检查）可能已在别的群
  * 成功占用并触发复制，无条件回滚会把 TA 的占用抹掉、让全局冷却凭空消失。
+ *
+ * 回滚也要落盘：占用那一步已经把 claimedAt 写进了 state.json（见
+ * claimCopyCooldownOrReject），若这里只回滚内存、不落盘，进程在“占用后已
+ * 回滚、但还没被任何其它事件顺带落盘”的这段窗口内重启，state.json 上留着
+ * 的仍是那个已作废的 claimedAt——重启后每个非白名单用户的下一次 /copy 都
+ * 会被这个本不该存在的冷却错误地拒绝，直到它自然过期。
  */
 export function releaseCopyCooldownClaim(claim: { previousLastCopyTime: number | undefined; claimedAt: number }): void {
   const globalCopyState = getGlobalCopyState();
   if (globalCopyState.lastCopyTime === claim.claimedAt) {
     globalCopyState.lastCopyTime = claim.previousLastCopyTime;
+    saveStateInBackground("copy cooldown released");
   }
 }
 

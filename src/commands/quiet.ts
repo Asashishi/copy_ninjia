@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types";
-import { getChatState, getOrCreateChatState, saveState } from "../infra/storage";
+import { getChatState, getOrCreateChatState, saveStateInBackground } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { QUIET_DEFAULT_MINUTES, QUIET_MAX_MINUTES, QUIET_MIN_MINUTES } from "../consts/commands";
 
@@ -36,7 +36,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
 
   const state: ChatState = getOrCreateChatState(chatId);
   state.quietUntil = Date.now() + minutes * 60_000;
-  await saveState();
+  saveStateInBackground("quiet set");
 
   await sendMessage(chatId, `哼，本天才就赏你们 ${minutes} 分钟清净，不主动插话也不复读。想本天才了就回复或 @ 我，杂鱼♡`, messageId);
 }
@@ -58,7 +58,7 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
   // 静默生效中说明 /quiet 写过状态，getChatState 拿到的一定是 Map 里的真实
   // 条目（不是共享的冻结默认值），直接改它即可。
   state.quietUntil = undefined;
-  await saveState();
+  saveStateInBackground("quiet cleared");
 
   await sendMessage(chatId, `哼，这么快就受不了没有本天才的日子啦？静默解除，杂鱼们做好被吵的准备吧♡`, messageId);
 }

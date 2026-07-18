@@ -1,6 +1,5 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types";
-import { saveState } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
@@ -25,8 +24,8 @@ export async function handleStealIconCommand(ctx: CommandContext<Context>): Prom
     return;
   }
 
-  // 全局冷却时钟已经在 claimCopyCooldownOrReject 里原子占用，这里落盘即可。
-  await saveState();
+  // 全局冷却时钟已经在 claimCopyCooldownOrReject 里原子占用并落盘（见其
+  // saveStateInBackground 调用），这里不需要再落一次。
 
   const targetLabel: string = formatUserLabel(targetUser);
   await sendMessage(chatId, `收到收到，本天才这就去把 ${targetLabel} 的脸皮扒下来戴上，杂鱼稍安勿躁~♡`, messageId);

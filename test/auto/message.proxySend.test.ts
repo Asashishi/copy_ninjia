@@ -16,7 +16,7 @@ mock.module("../../src/infra/storage", () => ({
   getActiveProxySendTarget: () => targetChatId,
   getChatState: () => ({}),
   getOrCreateChatState: () => ({}),
-  saveState: async () => {},
+  saveStateInBackground: () => {},
 }));
 mock.module("../../src/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
 mock.module("../../src/users/senderIdentity", () => ({ cacheSender: (message: any) => message.from?.id }));

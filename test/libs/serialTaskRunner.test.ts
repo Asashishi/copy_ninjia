@@ -59,4 +59,25 @@ describe("createSerialTaskRunner", () => {
     expect(onError).toHaveBeenCalledWith(error);
     expect(completed).toEqual([2]);
   });
+
+  test("回归：onError 自身抛错也不会打断队列，下一个任务仍会执行", async () => {
+    const taskError = new Error("task failed");
+    const onErrorError = new Error("onError itself is broken");
+    const onError = mock((..._args: unknown[]): void => {
+      throw onErrorError;
+    });
+    const runner = createSerialTaskRunner(onError);
+    const completed: number[] = [];
+
+    runner.run(async () => {
+      throw taskError;
+    });
+    runner.run(async () => {
+      completed.push(2);
+    });
+    await Bun.sleep(0);
+
+    expect(onError).toHaveBeenCalledWith(taskError);
+    expect(completed).toEqual([2]);
+  });
 });

@@ -52,7 +52,9 @@ export interface LuckDrawDiskMessage {
   type: "luckDraw";
   /** 抽签发生时刻的东京日期（YYYY-MM-DD），由主线程算好带过来，见 commands/luckChallenge.ts。 */
   day: string;
-  /** 缓存 key："<userId>" 或 "<userId>:<text>"，与 dailyLuckCache 的 key 一致。 */
+  /** 缓存 key："<userId>" 或 "<userId>:<text 的 sha256 十六进制摘要>"，与
+   *  dailyLuckCache 的 key 一致（原文本不直接进 key，见 commands/luckChallenge.ts
+   *  的 luckCacheKey 注释）。 */
   key: string;
   /** LuckTier.label；加载时按 LUCK_TIERS 反查还原 tier 本身（见 commands/luckChallenge.ts 的 restoreLuckCache）。 */
   label: string;

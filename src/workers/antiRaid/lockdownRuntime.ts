@@ -3,6 +3,7 @@ import type { ChatPermissions } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "../../infra/telegram";
 import { JOIN_THRESHOLD, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid";
 import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaidWorker";
+import { LinkedQueue } from "../../libs/linkedQueue";
 import type { AdoptableLockdown, LockdownEvent, UnlockEvent } from "../../types";
 import { transitionLockdown, type LockdownEffect, type LockdownMachineEvent } from "../../states/lockdown";
 import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
@@ -173,11 +174,10 @@ function reapplyLockdownRestriction(chatId: number, originalPermissions: ChatPer
  * 的固定桶，是为了防住横跨桶边界的刷群（前桶尾 + 后桶头各塞半个阈值，
  * 固定桶永远数不满）。
  */
-export function recordJoin(chatId: number): void {
-  const now: number = Date.now();
+export function recordJoin(chatId: number, now: number): void {
   let window = joinWindows.get(chatId);
   if (!window) {
-    window = { timestamps: [], resetTimeout: setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS) };
+    window = { timestamps: new LinkedQueue<number>(), resetTimeout: setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS) };
     joinWindows.set(chatId, window);
   } else {
     // 清理计时器在每次入群时重置：它到期即意味着窗口静默满 JOIN_WINDOW_MS，
@@ -187,14 +187,39 @@ export function recordJoin(chatId: number): void {
   }
 
   const cutoff: number = now - JOIN_WINDOW_MS;
-  while (window.timestamps.length > 0 && window.timestamps[0]! <= cutoff) {
+  while (window.timestamps.size > 0 && window.timestamps.peek()! <= cutoff) {
     window.timestamps.shift();
   }
   window.timestamps.push(now);
 
-  if (window.timestamps.length > JOIN_THRESHOLD) {
-    dispatchLockdown(chatId, { type: "thresholdExceeded", joinCount: window.timestamps.length });
+  if (window.timestamps.size > JOIN_THRESHOLD) {
+    dispatchLockdown(chatId, { type: "thresholdExceeded", joinCount: window.timestamps.size });
   }
+}
+
+/**
+ * 撤销一次此前 recordJoin 计入的入群计数：管理员拉人的异步豁免事后才确认
+ * （见 states/verification.ts 的 adminCheckResolved、handleJoin 的豁免分支、
+ * handleTrackedMessage 的频道评论确证分支、handleTimeoutInviterVerdict 的
+ * "拉人者确是管理员"分支——这四处转移都只在原记录是 pending 时触发，而
+ * pending 记录能存在，必然对应它创建时 joinCreatesNewRecord 判过真、
+ * 已经 recordJoin 过一次，参见各转移函数注释）时调用，避免"同步缓存冷时
+ * 先计数、异步豁免后却不回退计数"让窗口继续凭空占额度、提早触发私密模式。
+ *
+ * joinedAt 必须是创建那条 PENDING 记录时 recordJoin 压进窗口的同一个时间戳
+ * （见 verificationRuntime.ts 的 handleJoin 把 event.now 同时传给 recordJoin
+ * 与状态机），按值精确移除，不能像早期实现那样无差别 shift 队首——
+ * VERIFICATION_TIMEOUT_MS（90s）比 JOIN_WINDOW_MS（60s）长，超时终核这条
+ * 路径触发时，这条 join 自己的时间戳几乎总是已经被期间其它入群的
+ * recordJoin 自然修剪出窗口了；这时无差别 shift 队首会误删窗口内其它人
+ * 仍然合法在场的时间戳，让统计总数比真实入群数更少，反而更难触发本该
+ * 触发的私密模式。按值查找找不到（已被自然修剪，或窗口已整体过期清空）
+ * 就是正确的 no-op——说明这次撤销早就没有意义了。
+ */
+export function retractJoin(chatId: number, joinedAt: number): void {
+  const window = joinWindows.get(chatId);
+  if (!window) return;
+  window.timestamps.removeValue(joinedAt);
 }
 
 /** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid.ts）。 */

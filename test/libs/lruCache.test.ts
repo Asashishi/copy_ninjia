@@ -55,4 +55,15 @@ describe("LruCache", () => {
     expect(() => new LruCache(0)).toThrow(RangeError);
     expect(() => new LruCache(-1)).toThrow(RangeError);
   });
+
+  test("回归：get 命中一个值为 undefined 的键时不当成未命中，且照常续命", () => {
+    const cache = new LruCache<string, number | undefined>(2);
+    cache.set("a", undefined);
+    cache.set("b", 2);
+    expect(cache.has("a")).toBe(true);
+    expect(cache.get("a")).toBeUndefined();
+    cache.set("c", 3); // 容量满，若 "a" 的 get 没有正确续命会被误判成最久未使用而淘汰
+    expect(cache.has("a")).toBe(true);
+    expect(cache.has("b")).toBe(false);
+  });
 });

@@ -1,4 +1,6 @@
 import type { LinkedQueue } from "../libs/linkedQueue";
+import { LruCache } from "../libs/lruCache";
+import { REPLY_GENERATIONS_MAX } from "../consts/aiChat";
 import type { AiBotInfo, BufferedMessage, ChatActionHeartbeatEntry, MoodOption, QueuedReplyTrigger } from "../types";
 
 /**
@@ -12,8 +14,11 @@ import type { AiBotInfo, BufferedMessage, ChatActionHeartbeatEntry, MoodOption, 
  *  之前始终为 null。 */
 export const botInfoState: { current: AiBotInfo | null } = { current: null };
 
-/** 禁用时递增；在途回复只允许在捕获的代数仍为当前值时产生新副作用。 */
-export const replyGenerations: Map<number, number> = new Map();
+/** 禁用/淘汰时递增；在途回复只允许在捕获的代数仍为当前值时产生新副作用。
+ *  刻意排除在 purgeChatMemory 之外——被淘汰的群不能复用旧的低代际。用
+ *  LruCache（读取即刷新热度）而非普通 Map 装它，防止随进程存活时间单调
+ *  增长，见 consts/aiChat.ts 的 REPLY_GENERATIONS_MAX 注释。 */
+export const replyGenerations: LruCache<number, number> = new LruCache(REPLY_GENERATIONS_MAX);
 
 /** 各群上一次发送「限频黑洞」提示的时刻（毫秒时间戳），给提示自身做冷却。 */
 export const rateLimitNoticeTimes: Map<number, number> = new Map();

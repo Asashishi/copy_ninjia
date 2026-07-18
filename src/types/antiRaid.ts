@@ -1,9 +1,13 @@
 import type { ChatPermissions } from "@grammyjs/types";
+import type { LinkedQueue } from "../libs/linkedQueue";
 
 /** 反刷群的入群滑动计数窗口（Worker 线程内存状态）。 */
 export interface JoinWindow {
-  /** 最近 JOIN_WINDOW_MS 内每次入群的毫秒时间戳（升序），每次记录时修剪过期项。 */
-  timestamps: number[];
+  /** 最近 JOIN_WINDOW_MS 内每次入群的毫秒时间戳（队首最旧），每次记录时
+   *  修剪过期项。用 LinkedQueue 而非数组：修剪靠出队队首，数组的 shift()
+   *  要整体挪动剩余元素（O(n)），持续刷群下这份开销会随窗口内条数线性
+   *  放大；链表出队是 O(1)。 */
+  timestamps: LinkedQueue<number>;
   /** 窗口静默满 JOIN_WINDOW_MS 后清理整个条目的计时器，每次入群重置。 */
   resetTimeout: ReturnType<typeof setTimeout>;
 }

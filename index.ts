@@ -4,7 +4,7 @@ import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
 import { BOT_TOKEN } from "./src/infra/config";
-import { acquireSingleInstanceLock, getAllChatStates, getGlobalCopyState, loadState, releaseSingleInstanceLock } from "./src/infra/storage";
+import { acquireSingleInstanceLock, cleanupOrphanedTempFiles, flushStateToDisk, getAllChatStates, getGlobalCopyState, loadState, releaseSingleInstanceLock } from "./src/infra/storage";
 import { shouldPassInitGate, shouldPassPrivateCommandGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
 import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleSendCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
@@ -13,13 +13,35 @@ import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { refreshAllChatTitles } from "./src/infra/chatTitle";
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } from "./src/aiChat";
 import { seedSenderCache } from "./src/users/senderIdentity";
+import { sleep } from "./src/libs/sleep";
 import type { CachedUser } from "./src/types";
 
 /**
  * 注册各类更新处理器，并启动 grammY 的长轮询循环。
  */
 async function main(): Promise<void> {
+  // 尽早注册（早于任何 await）：默认 SIGINT/SIGTERM 会立即终止进程，跳过
+  // 下面 main().finally() 的优雅 flush 链，还会让单实例锁来不及释放（下次
+  // 启动靠 isProcessAlive 探活回收，影响小但仍可避免）。注册后即便信号落在
+  // runner 创建之前的启动步骤（加载状态、连接 Telegram 等）期间，也只是让
+  // 当前步骤照常跑完——runner 一创建好就立即调用 stop()，仍会正常走到下面
+  // 的 flush + 解锁。
+  let runner: RunnerHandle | null = null;
+  let stopRequested: boolean = false;
+  const stopBot = (): void => {
+    stopRequested = true;
+    runner?.stop().catch((error: unknown) => {
+      logger.error("Error stopping runner:", error);
+    });
+  };
+  process.once("SIGINT", stopBot);
+  process.once("SIGTERM", stopBot);
+
   await acquireSingleInstanceLock(BOT_TOKEN);
+  // 清扫上次崩溃可能残留的 state.json/bot.lock 原子写临时文件（见
+  // storage.ts 的 cleanupOrphanedTempFiles 注释）；必须在拿到单实例锁之后
+  // 才能安全做——此刻已确认没有其它活跃实例在并发写这两个文件。
+  await cleanupOrphanedTempFiles();
 
   // 全部持久化状态（各群独立状态 + 全局复读状态）由 storage.ts 独占持有，
   // 这里只触发从 state.json 的一次性加载；各处理器直接从 storage 读写，
@@ -202,23 +224,36 @@ async function main(): Promise<void> {
     (restoredCopiedUser ? `, currently copying ${restoredCopiedUser.id}.` : ".")
   );
 
-  const runner: RunnerHandle = run(bot, {
+  runner = run(bot, {
     runner: {
       fetch: {
         allowed_updates: ["message", "channel_post", "message_reaction", "chat_member", "my_chat_member", "callback_query", "inline_query", "chosen_inline_result"],
       },
     },
   });
-
-  const stopBot = (): void => {
-    runner.stop().catch((error: unknown) => {
-      logger.error("Error stopping runner:", error);
-    });
-  };
-  process.once("SIGINT", stopBot);
-  process.once("SIGTERM", stopBot);
+  // 信号落在这行之前到达时 stopBot 只置了 stopRequested（当时 runner 还是
+  // null，stopBot 里的可选链调用是空操作）；runner 一旦创建好，这里补上
+  // 一次真正的 stop()，不然那次信号就被吞掉，只能靠信号来源方再发一次。
+  if (stopRequested) stopBot();
 
   await runner.task();
+
+  // runner.stop()/runner.task() 只保证不再拉取新更新、拉取循环本身已退出，
+  // 不保证已派发的更新处理完毕——@grammyjs/runner 的并发 sink 是"有空位就
+  // 返回"语义（其 DecayingDeque.add 的 capacity() 与任务是否完成无关，任务
+  // 在独立的 Promise 链上后台跑完才自行从队列摘除），runner.size() 才是
+  // "还有多少个更新在处理中"的唯一信号。不等它归零就确认 offset 的话，一个
+  // id 更小、仍在飞行的更新可能被提前确认掉，其处理结果永久丢失且不会被
+  // Telegram 重投。带超时兜底：万一某个处理器真的卡死不返回，不能让停机
+  // 流程无限期挂住。
+  await waitForRunnerDrain(runner);
+
+  // 落盘必须先于下面的 offset 确认：确认之后 Telegram 不会再重投这批更新，
+  // 若这之前落盘失败/进程被杀，更新产生的副作用（AI 记忆、日志、运势、
+  // 状态变更）就随内存一起丢了、且再也没有机会靠重投更新来补救。下面
+  // main().finally() 里还会再刷一次兜底——两次都没有脏数据时开销可忽略，
+  // 胜在任何提前退出的路径都不会漏刷。
+  await flushAllToDisk(2000, 3000, 3000);
 
   // 兑现上面 lastSeenUpdateId 声明处的承诺：确认 offset，避免重启重放。
   if (lastSeenUpdateId > 0) {
@@ -231,15 +266,43 @@ async function main(): Promise<void> {
 }
 
 /**
+ * 见调用点注释：等 runner.size() 归零（当前无在途更新处理）再返回，带超时
+ * 兜底。size() 是 @grammyjs/runner 暴露的唯一相关信号——它没有提供"已排空"
+ * 的事件或 Promise，只能轮询。
+ */
+async function waitForRunnerDrain(runner: RunnerHandle, timeoutMs: number = 5000): Promise<void> {
+  const deadline: number = Date.now() + timeoutMs;
+  while (runner.size() > 0 && Date.now() < deadline) {
+    await sleep(100);
+  }
+  if (runner.size() > 0) {
+    logger.error(
+      `Shutdown proceeding with ${runner.size()} update(s) still being processed after waiting ${timeoutMs}ms; ` +
+      "their offset confirmation may be premature."
+    );
+  }
+}
+
+/**
  * 尽力跑一遍完整的落盘链：先让 aiChatWorker 把 dirty 记忆快照吐给主线程
  * （转投 diskIOWorker），再让 diskIOWorker 把三类 dirty 数据（日志/AI 记忆/
- * 运势）全部落盘。①②两步必须顺序执行，不能并发——AI 记忆要先经过主线程
- * 中转落进 diskIOWorker 的缓存，flush 才有东西可落；调换顺序或并发跑，
- * flush 可能抢在记忆转投完成之前执行，白白丢掉这一份增量。
+ * 运势）全部落盘，同时把主线程自己持有的 state.json 排空。①②两步必须顺序
+ * 执行，不能并发——AI 记忆要先经过主线程中转落进 diskIOWorker 的缓存，
+ * flush 才有东西可落；调换顺序或并发跑，flush 可能抢在记忆转投完成之前
+ * 执行，白白丢掉这一份增量。③与①②相互独立（state.json 是主线程自己的
+ * 写入器，不经过 diskIOWorker），因此让它与①②这条链并发跑而不是排在
+ * 后面再等——三个超时顺序相加没有正确性收益，只会让每次停机/重启都多
+ * 付出本可以并发掉的等待时间（进程在这整段时间里持有单实例锁、也没有在
+ * 拉取 Telegram 更新）。
  */
-async function flushAllToDisk(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number): Promise<void> {
-  await flushAiMemory(aiMemoryTimeoutMs); // ①
-  await flushDiskIO(diskIOTimeoutMs); // ②
+async function flushAllToDisk(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number, stateTimeoutMs: number): Promise<void> {
+  await Promise.all([
+    (async (): Promise<void> => {
+      await flushAiMemory(aiMemoryTimeoutMs); // ①
+      await flushDiskIO(diskIOTimeoutMs); // ②
+    })(),
+    flushStateToDisk(stateTimeoutMs), // ③
+  ]);
 }
 
 // 可选加固：uncaughtException / unhandledRejection 默认会直接崩溃进程、
@@ -248,11 +311,11 @@ async function flushAllToDisk(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number
 // 再退出——退出码非零，systemd 配 Restart=on-failure 时会照常自动重启。
 process.on("uncaughtException", (error: unknown) => {
   logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
-  void flushAllToDisk(1000, 1000).finally(() => process.exit(1));
+  void flushAllToDisk(1000, 1000, 1000).finally(() => process.exit(1));
 });
 process.on("unhandledRejection", (reason: unknown) => {
   logger.error("Unhandled rejection, attempting a best-effort flush before exit:", reason);
-  void flushAllToDisk(1000, 1000).finally(() => process.exit(1));
+  void flushAllToDisk(1000, 1000, 1000).finally(() => process.exit(1));
 });
 
 main()
@@ -263,7 +326,7 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await flushAllToDisk(2000, 3000);
+    await flushAllToDisk(2000, 3000, 3000);
     await releaseSingleInstanceLock(BOT_TOKEN);
   });
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才

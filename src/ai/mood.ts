@@ -76,7 +76,11 @@ export function computeAdjustedWeight(mood: MoodOption, weather: WeatherBucket |
  * [0, 调整后总权重) 里掷一个连续骰子累加匹配——不再是 LUCK_TIERS 那种
  * 凑满 100 的固定整数区间，因为倍率之后权重不再是整数、总和也不再是 100。
  */
-function pickMood(): MoodOption {
+/** 导出仅供 rollingMemory.ts 的 hydrateMemories 在恢复 chatLastActivityTimes
+ *  的同时一并播种心情用（见其调用点注释：hydrate 场景不经过下面
+ *  recordActivityAndMaybeRerollMood 的"首条消息"分支，必须由调用方顺手补种，
+ *  否则会违反"有活动时间就必有心情"的不变量）。 */
+export function pickMood(): MoodOption {
   const weather: WeatherBucket | null = currentWeatherBucket();
   const time: TimeBucket = classifyTimeBucket(getTokyoHour());
   const weighted: { mood: MoodOption; weight: number }[] = MOOD_OPTIONS.map((mood) => ({

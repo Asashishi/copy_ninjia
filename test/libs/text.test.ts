@@ -24,4 +24,10 @@ describe("libs/text truncateAtClauseBoundary", () => {
     const text: string = "完全没有标点的一大段描述文本一直写一直写一直写";
     expect(truncateAtClauseBoundary(text, 10)).toBe(truncateInline(text, 10));
   });
+
+  test("回归：maxChars=1（minKeep=0）时不因 -1 哨兵值巧合满足边界判断而丢光硬切内容", () => {
+    const text: string = "无标点内容";
+    expect(truncateAtClauseBoundary(text, 1)).toBe(truncateInline(text, 1));
+    expect(truncateAtClauseBoundary(text, 1)).not.toBe("");
+  });
 });

@@ -1,11 +1,11 @@
 import { logger } from "../infra/logger";
 import {
-  REQUEST_TIMEOUT_MS,
   TOKYO_LATITUDE,
   TOKYO_LONGITUDE,
   WEATHER_API_URL,
   WEATHER_CODE_DESCRIPTIONS,
   WEATHER_REFRESH_INTERVAL_MS,
+  WEATHER_REQUEST_TIMEOUT_MS,
 } from "../consts/weather";
 import { weatherCache } from "../cache/weather";
 import { fetchJsonWithTimeout } from "../libs/httpFetch";
@@ -36,7 +36,7 @@ async function refreshTokyoWeather(): Promise<void> {
   url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,weather_code");
   url.searchParams.set("timezone", "Asia/Tokyo");
 
-  const data: unknown = await fetchJsonWithTimeout(url, {}, REQUEST_TIMEOUT_MS, "Open-Meteo API");
+  const data: unknown = await fetchJsonWithTimeout(url, {}, WEATHER_REQUEST_TIMEOUT_MS, "Open-Meteo API");
   if (data === null) return;
 
   const record: Record<string, unknown> = typeof data === "object" && data !== null && !Array.isArray(data) ? data as Record<string, unknown> : {};

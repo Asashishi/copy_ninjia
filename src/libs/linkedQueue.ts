@@ -59,4 +59,31 @@ export class LinkedQueue<T> {
     }
     return out;
   }
+
+  /** 移除队列中第一个与 value 全等（===）的节点，不影响其余元素的相对顺序；
+   *  找不到则什么都不做并返回 false。O(n) 线性扫描——单链表没有 prev 指针，
+   *  移除非队首节点必须从头找起，不像 shift() 那样能 O(1)。用于按值精确
+   *  撤销某次入队（而非无差别地 shift 队首），见 antiRaid 的 recordJoin/
+   *  retractJoin：撤销一次刷群窗口计数时，要撤的必须是那一次入群自己的
+   *  时间戳，不能牵连其它仍在窗口内的入群——若该时间戳已经被自然修剪出局
+   *  （早于窗口的 while 循环清理掉了），说明无需撤销，找不到即返回 false。 */
+  removeValue(value: T): boolean {
+    let prev: QueueNode<T> | null = null;
+    for (let node: QueueNode<T> | null = this.head; node; node = node.next) {
+      if (node.value === value) {
+        if (prev) {
+          prev.next = node.next;
+        } else {
+          this.head = node.next;
+        }
+        if (this.tail === node) {
+          this.tail = prev;
+        }
+        this.count -= 1;
+        return true;
+      }
+      prev = node;
+    }
+    return false;
+  }
 }

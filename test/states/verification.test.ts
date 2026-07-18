@@ -35,6 +35,7 @@ function pendingState(overrides: Partial<PendingState> = {}): PendingState {
     messageIds: [],
     replyReminderRequested: false,
     reminderSuperseded: false,
+    joinedAt: 0,
     ...overrides,
   };
 }
@@ -148,11 +149,14 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
     expect(effects).toEqual([{ kind: "kickMember" }]);
   });
 
-  test("豁免入群撞上已开的验证窗口 → 撤销并删提醒", () => {
-    const state = pendingState({ reminderMessageId: 30, replyReminderMessageId: 31 });
+  test("豁免入群撞上已开的验证窗口 → 撤销并删提醒，且按精确时刻撤销此前记的那次刷群计数", () => {
+    const state = pendingState({ reminderMessageId: 30, replyReminderMessageId: 31, joinedAt: 12_345 });
     const { next, effects } = transitionVerification(state, joinEvent({ identityExempt: true }));
     expect(next?.kind).toBe("exempt");
-    expect(effects).toEqual([{ kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: 31 }]);
+    expect(effects).toEqual([
+      { kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: 31 },
+      { kind: "retractJoinCount", joinedAt: 12_345 },
+    ]);
   });
 
   test("豁免入群撞上已有 KICKED 占位 → 保持占位不动（踢已执行、无法撤销），只留一条日志方便人工纠正", () => {
@@ -200,11 +204,11 @@ describe("trackedMessage", () => {
     expect(effects).toEqual([]);
   });
 
-  test("直接回复频道帖 → 确证真人，转 EXEMPT + 欢迎", () => {
+  test("直接回复频道帖 → 确证真人，转 EXEMPT + 欢迎，且撤销此前记的那次刷群计数", () => {
     const state = pendingState({ reminderMessageId: 30 });
     const { next, effects } = transitionVerification(state, { type: "trackedMessage", messageId: 42, inCommentThread: true, repliesToChannelPost: true });
     expect(next?.kind).toBe("exempt");
-    expect(effectKinds(effects)).toEqual(["deleteReminders", "sendWelcome"]);
+    expect(effectKinds(effects)).toEqual(["deleteReminders", "retractJoinCount", "sendWelcome"]);
   });
 
   test("占位记录（kicked/exempt）不追踪消息", () => {
@@ -262,7 +266,7 @@ describe("超时与拉人者终核", () => {
     const state = pendingState({ messageIds: [1, 2] });
     const { next, effects } = transitionVerification(state, { type: "verifyTimeout" });
     expect(next).toBeUndefined();
-    expect(effects).toEqual([{ kind: "expel", snapshot: { label: "杂鱼A", isBot: false, messageIds: [1, 2], reminderMessageId: undefined, replyReminderMessageId: undefined } }]);
+    expect(effects).toEqual([{ kind: "expel", snapshot: { label: "杂鱼A", isBot: false, messageIds: [1, 2], reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0 } }]);
   });
 
   test("超时且被拉入群 → 立即删记录 + 转终核（迟到的点击将查无记录）", () => {
@@ -272,29 +276,32 @@ describe("超时与拉人者终核", () => {
     expect(effects[0]).toMatchObject({ kind: "recheckInviter", inviterId: 999 });
   });
 
-  test("终核：拉人者确是管理员 → 补豁免占位，只删提醒不踢人", () => {
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: 30, replyReminderMessageId: undefined };
+  test("终核：拉人者确是管理员 → 补豁免占位，只删提醒不踢人，且按精确时刻撤销此前记的那次刷群计数", () => {
+    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 54_321 };
     const { next, effects } = transitionVerification(undefined, { type: "timeoutInviterVerdict", inviterIsAdmin: true, snapshot });
     expect(next?.kind).toBe("exempt");
-    expect(effects).toEqual([{ kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: undefined }]);
+    expect(effects).toEqual([
+      { kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: undefined },
+      { kind: "retractJoinCount", joinedAt: 54_321 },
+    ]);
   });
 
   test("终核：等待期间已有新记录 → 不覆盖它", () => {
     const fresh = pendingState({ label: "重新进群的同一人" });
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [], reminderMessageId: undefined, replyReminderMessageId: undefined };
+    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [], reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0 };
     const { next } = transitionVerification(fresh, { type: "timeoutInviterVerdict", inviterIsAdmin: true, snapshot });
     expect(next).toBe(fresh);
   });
 
   test("终核：拉人者不是管理员 → 收尾踢人", () => {
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: undefined, replyReminderMessageId: undefined };
+    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0 };
     const { effects } = transitionVerification(undefined, { type: "timeoutInviterVerdict", inviterIsAdmin: false, snapshot });
     expect(effects).toEqual([{ kind: "expel", snapshot }]);
   });
 
   test("终核：拉人者不是管理员，但等待期间已有新记录 → 不踢、不覆盖它", () => {
     const fresh = pendingState({ label: "重新进群的同一人" });
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: 30, replyReminderMessageId: undefined };
+    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 0 };
     const { next, effects } = transitionVerification(fresh, { type: "timeoutInviterVerdict", inviterIsAdmin: false, snapshot });
     expect(next).toBe(fresh);
     expect(effectKinds(effects)).not.toContain("expel");
@@ -303,11 +310,14 @@ describe("超时与拉人者终核", () => {
 });
 
 describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
-  test("adminCheckResolved → 转 EXEMPT + 删提醒", () => {
-    const state = pendingState({ reminderMessageId: 30 });
+  test("adminCheckResolved → 转 EXEMPT + 删提醒 + 按精确时刻撤销此前记的那次刷群计数", () => {
+    const state = pendingState({ reminderMessageId: 30, joinedAt: 99_999 });
     const { next, effects } = transitionVerification(state, { type: "adminCheckResolved" });
     expect(next?.kind).toBe("exempt");
-    expect(effects).toEqual([{ kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: undefined }]);
+    expect(effects).toEqual([
+      { kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: undefined },
+      { kind: "retractJoinCount", joinedAt: 99_999 },
+    ]);
   });
 
   test("待验证中途离群 → 删记录 + 只删提醒（公告/发言不动）", () => {

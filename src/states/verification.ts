@@ -54,6 +54,11 @@ export interface PendingState {
   welcomeAnchorMessageId?: number;
   /** 原始提醒已被回复式提醒取代：还没落地的原始提醒落地即自删（见 reminderLanded）。 */
   reminderSuperseded: boolean;
+  /** 创建本记录那次入群的时刻（= JoinEvent.now，与 recordJoin 压进
+   *  刷群滑动窗口的时间戳同一个值）。retractJoinCount 撤销计数时要精确
+   *  找到并移除这一条，不能牵连窗口内其它入群的时间戳，见
+   *  workers/antiRaid/lockdownRuntime.ts 的 retractJoin。 */
+  joinedAt: number;
 }
 
 /** 豁免占位：管理员拉人/身份入群/频道评论确证，不需要验证，只用于给重复投递去重。 */
@@ -86,6 +91,8 @@ export interface ExpelSnapshot {
   messageIds: number[];
   reminderMessageId?: number;
   replyReminderMessageId?: number;
+  /** 见 PendingState.joinedAt——终核收尾时撤销刷群计数要用到。 */
+  joinedAt: number;
 }
 
 export interface JoinEvent {
@@ -146,6 +153,16 @@ export type VerificationEffect =
    *  Telegram 没有"撤销踢出"这回事，占位本身不动，只留一条日志方便管理员
    *  事后手动把人拉回来，见 handleJoin 里 exempt 分支对 kicked 占位的处理。 */
   | { kind: "logStaleKickedExemption"; label: string }
+  /** 撤销一次此前 recordJoin 计入的刷群窗口计数：一条 PENDING 记录（创建时
+   *  必然已被计入，见 joinCreatesNewRecord）事后才被确证豁免（管理员拉人
+   *  异步核查通过、频道评论确证、超时终核确认拉人者是管理员、第二路投递
+   *  带着豁免证明追上来），不该继续占着刷群统计的名额，见
+   *  workers/antiRaid/lockdownRuntime.ts 的 retractJoin。joinedAt 必须精确
+   *  指向创建这条记录那次入群自己的时间戳（PendingState.joinedAt /
+   *  ExpelSnapshot.joinedAt）——按值移除而非无差别 shift 队首，否则可能
+   *  牵连窗口内其它真实入群的计数（该时间戳若已被窗口自然修剪出局，说明
+   *  本就无需撤销，按值移除会正确地找不到、no-op）。 */
+  | { kind: "retractJoinCount"; joinedAt: number }
   /** 超时后的拉人者身份终核（缓存热直接判、冷则等一次全量拉取），结果以 timeoutInviterVerdict 回投。 */
   | { kind: "recheckInviter"; inviterId: number; snapshot: ExpelSnapshot }
   /** 删除快照里的全部追踪消息、踢人、发踢人通知（超时未验证的最终收尾）。 */
@@ -182,6 +199,7 @@ function snapshotOf(state: PendingState): ExpelSnapshot {
     messageIds: state.messageIds,
     reminderMessageId: state.reminderMessageId,
     replyReminderMessageId: state.replyReminderMessageId,
+    joinedAt: state.joinedAt,
   };
 }
 
@@ -207,7 +225,13 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     const effects: VerificationEffect[] = [];
     // 服务消息那一路先到、已开了真实验证窗口：撤销并删提醒（还在限流队列
     // 里没落地的提醒由回填回调自删）。TA 的入群公告不删、发言不追踪——合法成员。
-    if (state !== undefined) effects.push(remindersOf(state));
+    // 这个分支走到这里时 state 只可能是 undefined（此前从未有过记录，纯粹
+    // 首次即豁免，没计过数）或 pending（已创建 PENDING 时必然计过数，见
+    // joinCreatesNewRecord）——exempt/kicked 两种已在上面提前 return。
+    if (state !== undefined) {
+      effects.push(remindersOf(state));
+      effects.push({ kind: "retractJoinCount", joinedAt: state.joinedAt });
+    }
     if (viaChannelComment && event.recentComment !== undefined) {
       // 直接回复频道帖免验证：不点按钮的豁免路径原本没有任何反馈，在帖子
       // 底下补一条欢迎，让 TA 在频道侧知道自己已被放行。
@@ -266,6 +290,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     invitedBy: invitedByOther ? event.actorId : undefined,
     replyReminderRequested: false,
     reminderSuperseded: false,
+    joinedAt: event.now,
   };
   const effects: VerificationEffect[] = [];
   if (event.recentComment !== undefined) {
@@ -293,11 +318,14 @@ function handleTrackedMessage(
 
   if (event.repliesToChannelPost) {
     // 在关联频道的帖子下留言是确证的真人操作，免验证放行。TA 已发的消息
-    // 一概不删（合法评论），在这条评论下补欢迎让 TA 知道已通过。
+    // 一概不删（合法评论），在这条评论下补欢迎让 TA 知道已通过。这里的
+    // state 一定是 pending（函数顶部已排除 undefined/非 pending），创建时
+    // 必然计过数，见 joinCreatesNewRecord，事后确证豁免要撤销那次计数。
     return {
       next: { kind: "exempt", label: state.label, isBot: state.isBot },
       effects: [
         remindersOf(state),
+        { kind: "retractJoinCount", joinedAt: state.joinedAt },
         { kind: "sendWelcome", variant: "channelComment", targetLabel: state.label, anchorMessageId: event.messageId },
       ],
     };
@@ -395,8 +423,11 @@ function handleTimeoutInviterVerdict(
   }
   // 拉人者确是管理员：按豁免收尾——只删带按钮的提醒，入群公告和 TA 的发言
   // 都留下（合法成员），也不发踢人通知。终核等待期间若有新投递重开了记录，
-  // 不去覆盖它。
-  const effects: VerificationEffect[] = [remindersOf(event.snapshot)];
+  // 不去覆盖它。不论 state 此刻是否已被新记录占用，这里终结的都是"原来
+  // 那次入群"的命运——它创建时必然已被计入刷群统计（能走到 verifyTimeout
+  // 才有这次终核），事后确证是管理员就要撤销那次计数，与是否新建 exempt
+  // 占位无关。
+  const effects: VerificationEffect[] = [remindersOf(event.snapshot), { kind: "retractJoinCount", joinedAt: event.snapshot.joinedAt }];
   if (state === undefined) {
     return { next: { kind: "exempt", label: event.snapshot.label, isBot: event.snapshot.isBot }, effects };
   }
@@ -436,7 +467,12 @@ export function transitionVerification(state: VerificationState | undefined, eve
       return handleCallback(state, event);
     case "adminCheckResolved":
       if (state === undefined || state.kind !== "pending") return { next: state, effects: [] };
-      return { next: { kind: "exempt", label: state.label, isBot: state.isBot }, effects: [remindersOf(state)] };
+      // pending 记录创建时必然已被计入刷群统计（见 joinCreatesNewRecord），
+      // 异步管理员核查事后才确证豁免，要撤销那次计数。
+      return {
+        next: { kind: "exempt", label: state.label, isBot: state.isBot },
+        effects: [remindersOf(state), { kind: "retractJoinCount", joinedAt: state.joinedAt }],
+      };
     case "verifyTimeout":
       return handleVerifyTimeout(state);
     case "timeoutInviterVerdict":

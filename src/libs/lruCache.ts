@@ -22,10 +22,13 @@ export class LruCache<K, V> {
     return this.map.has(key);
   }
 
-  /** 读取一个键；命中时顺带把它标记为最近使用。未命中返回 undefined。 */
+  /** 读取一个键；命中时顺带把它标记为最近使用。未命中返回 undefined。
+   *  用 has() 判断命中而非 `value === undefined`：后者会把"存了 undefined
+   *  值的键"误判成未命中，既返回值分不清真假未命中，还会跳过命中本该
+   *  做的热度刷新，让该项永不被 LRU 提升、每次读都像未命中。 */
   get(key: K): V | undefined {
-    const value: V | undefined = this.map.get(key);
-    if (value === undefined) return undefined;
+    if (!this.map.has(key)) return undefined;
+    const value: V = this.map.get(key) as V;
     this.map.delete(key);
     this.map.set(key, value);
     return value;
@@ -50,5 +53,10 @@ export class LruCache<K, V> {
 
   delete(key: K): boolean {
     return this.map.delete(key);
+  }
+
+  /** 清空全部条目（仅供单测重置状态用）。 */
+  clear(): void {
+    this.map.clear();
   }
 }

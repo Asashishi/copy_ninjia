@@ -22,5 +22,5 @@ export const pendingLuckDraws: Map<string, LuckDraw> = new Map();
 export const pendingLuckReceiptByKey: Map<string, string> = new Map();
 export const pendingLuckReceiptIndex: Map<string, string> = new Map();
 
-/** 内联查询的全局滑动窗口频率限制：最近一分钟内各次请求的时刻戳。 */
+/** 内联查询的全局滑动窗口频率限制：最近 RATE_LIMIT_WINDOW_MS（90 秒）内各次请求的时刻戳。 */
 export const recentCallTimestamps: number[] = [];

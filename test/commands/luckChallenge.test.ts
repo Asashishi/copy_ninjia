@@ -86,9 +86,11 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const body: string = bodyTextOf(ctx.results[0]);
     luckChallenge.confirmLuckDraw(body);
 
+    const expectedKey: string = luckChallenge.luckCacheKey(333, "今天适合表白吗");
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
-    expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "333:今天适合表白吗" });
-    expect(cache.dailyLuckCache.has("333:今天适合表白吗")).toBe(true);
+    expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: expectedKey });
+    expect(expectedKey.startsWith("333:")).toBe(true);
+    expect(cache.dailyLuckCache.has(expectedKey)).toBe(true);
   });
 
   test("带文本：同款问题按钮只展示前 4 个字加 ...，但仍携带完整文本", async () => {
@@ -115,9 +117,14 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     luckChallenge.confirmLuckDraw(bodyTextOf(ctxC.results[0]));
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(3);
+    const expectedKeys = new Set([
+      luckChallenge.luckCacheKey(1, undefined),
+      luckChallenge.luckCacheKey(2, undefined),
+      luckChallenge.luckCacheKey(1, "工作运"),
+    ]);
     const keys: string[] = postDiskIOMock.mock.calls.map((c: any) => c[0].key);
-    expect(new Set(keys)).toEqual(new Set(["1", "2", "1:工作运"]));
-    expect(new Set(cache.dailyLuckCache.keys())).toEqual(new Set(["1", "2", "1:工作运"]));
+    expect(new Set(keys)).toEqual(expectedKeys);
+    expect(new Set(cache.dailyLuckCache.keys())).toEqual(expectedKeys);
   });
 
   test("以频道马甲/匿名管理员身份发出（消息 from 带不回真实 uid）：仍能按签名回执认领落盘", async () => {
@@ -197,7 +204,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       chosenInlineResult: { result_id: "luck-fortune-text", from: { id: 1000 }, query: "今天买彩票吗" },
     } as any);
 
-    expect(cache.dailyLuckCache.has("1000:今天买彩票吗")).toBe(true);
+    expect(cache.dailyLuckCache.has(luckChallenge.luckCacheKey(1000, "今天买彩票吗"))).toBe(true);
   });
 
   test("chosen_inline_result 与签名回执兜底先后到达：幂等，只落盘一次", async () => {

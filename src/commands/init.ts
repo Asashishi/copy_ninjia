@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types";
-import { getOrCreateChatState, saveState } from "../infra/storage";
+import { getOrCreateChatState, saveStateInBackground } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 import { invalidateAiChat } from "../aiChat";
@@ -24,7 +24,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   const state: ChatState = getOrCreateChatState(chatId);
   state.isInit = arg === "enable";
   if (arg === "disable") invalidateAiChat(chatId, true);
-  await saveState();
+  saveStateInBackground("init toggled");
 
   const replyText: string = arg === "enable"
     ? `哼，那本天才就大发慈悲开始搭理这个群了，杂鱼们好好珍惜♡`

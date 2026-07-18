@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import type { Message } from "@grammyjs/types";
 import type { ChatState, CopyMode } from "../../types";
-import { getActiveCopyIn, getActiveProxySendTarget, getChatState, getOrCreateChatState, saveState } from "../../infra/storage";
+import { getActiveCopyIn, getActiveProxySendTarget, getChatState, getOrCreateChatState, saveStateInBackground } from "../../infra/storage";
 import { sendMessage, copyMessage } from "../../infra/telegram";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";
 import { cacheSender } from "../../users/senderIdentity";
@@ -162,7 +162,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       if (copiedMessageId === undefined) {
         // 失败后立即结束会话，避免后续消息被静默吞掉。
         getOrCreateChatState(targetChatId).isUseProxySend = false;
-        await saveState();
+        saveStateInBackground("proxy send failed");
         await sendMessage(chatId, `转发到 ${targetChatId} 失败了，本天才先把这轮中转停掉了，检查一下再 /send 重新开吧♡`);
       }
     }
