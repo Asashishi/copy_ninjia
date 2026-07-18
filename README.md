@@ -95,6 +95,7 @@ Telegram update
 - 待验证状态和未过期的消息窗口写入 `memory/anti-raid/YYYY-MM-DD.json`：Worker 或进程重建后按原 `expiresAt` 的剩余时间继续，已过期记录立即处置；只保留东京当天文件。
 - 权限写入按群串行，恢复失败每 30 秒重试；锁定状态写入 `state.json`，进程重启后继续剩余计时。
 - 管理员表与关联频道缓存都有 TTL、500 群硬顶和周期淘汰，不按历史群数永久增长。
+- 最近评论关联缓存只保留 2 分钟、全局最多 5,000 条；复用 Anti-Raid Worker 的唯一周期 sweeper，不为每位成员创建 timer。
 
 ## 🎮 命令与权限
 

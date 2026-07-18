@@ -11,6 +11,7 @@ import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS, LINKED_CHANNEL_T
 import { adminFetches, chatAdmins, linkedChannelFetches, linkedChannels, verificationRevisions } from "../cache/antiRaidWorker";
 import type { AntiRaidWorkerMessage } from "../types";
 import { initTelegramClients } from "../infra/telegram";
+import { sweepRecentComments } from "./antiRaid/recentComments";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
@@ -80,15 +81,30 @@ export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
       verificationRevisions.delete(key);
     }
   }
+  sweepRecentComments(now);
 }
+
+let cacheSweepTimer: ReturnType<typeof setInterval> | null = null;
 
 /** Worker 线程启动入口；主线程导入本模块时不得注册 handler 或 sweeper。 */
 export function startAntiRaidWorker(): void {
+  if (cacheSweepTimer !== null) return;
   initTelegramClients();
   self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
     handleAntiRaidWorkerMessage(event.data);
   };
-  setInterval(sweepAntiRaidWorkerCaches, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS).unref();
+  cacheSweepTimer = setInterval(sweepAntiRaidWorkerCaches, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS);
+  cacheSweepTimer.unref();
+  process.once("exit", stopAntiRaidWorker);
+}
+
+/** 协作式退出时清掉唯一 sweeper；强制 terminate 时整个 Worker isolate 一并销毁。 */
+export function stopAntiRaidWorker(): void {
+  if (cacheSweepTimer === null) return;
+  clearInterval(cacheSweepTimer);
+  cacheSweepTimer = null;
+  self.onmessage = null;
+  process.off("exit", stopAntiRaidWorker);
 }
 
 if (!Bun.isMainThread) startAntiRaidWorker();

@@ -51,7 +51,7 @@ export const linkedChannels: Map<number, LinkedChannelCache> = new Map();
  * 由来见 COMMENT_JOIN_CORRELATE_MS；入群时由 Worker 消费成 join 事件的
  * recentComment 字段，处置逻辑见 states/verification.ts。
  */
-export const recentChannelComments: Map<string, { messageId: number; repliesToChannelPost: boolean; observedAt: number; cleanup: ReturnType<typeof setTimeout> }> = new Map();
+export const recentChannelComments: Map<string, { messageId: number; repliesToChannelPost: boolean; observedAt: number }> = new Map();
 /** 进行中的全量管理员拉取，按 chatId 去重：短时间内连拉多人只发一次请求，结果共享。 */
 export const adminFetches: Map<number, Promise<Set<number>>> = new Map();
 /** 进行中的关联频道信息拉取，按 chatId 去重（同 adminFetches 的思路）。 */
