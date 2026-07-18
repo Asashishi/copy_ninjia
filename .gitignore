@@ -36,8 +36,10 @@ memory
 # IntelliJ based IDEs
 .idea
 
-# Claude Code local settings
+# AI local settings
 .claude
+.agents
+.codex
 
 # Finder (MacOS) folder config
 .DS_Store

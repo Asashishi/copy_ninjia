@@ -1,0 +1,13 @@
+/**
+ * 指令处理入口：src/commands/ 下各 /指令 处理器的统一出口，index.ts 只从
+ * 这里接线，不直接触及内部模块。
+ */
+export { handleCopyCommand, handleStopCommand } from "./copy";
+export { handleStealIconCommand } from "./stealIcon";
+export { handleQuietCommand, handleUnquietCommand } from "./quiet";
+export { handleKickCommand } from "./kick";
+export { handleAiChatCommand } from "./aiChat";
+export { handleJaCopyCommand } from "./jaCopy";
+export { handleInitCommand } from "./init";
+export { handleSendCommand } from "./send";
+export { confirmLuckDraw, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, restoreLuckCache } from "./luckChallenge";
