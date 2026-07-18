@@ -8,3 +8,9 @@ import type { ChatState } from "../types";
  * 会静默污染所有这些群的查询结果——冻结后误写会直接抛错暴露问题。
  */
 export const DEFAULT_CHAT_STATE: Readonly<ChatState> = Object.freeze({});
+
+/** bot.lock 每行的持久化格式：PID + SHA-256 token 指纹。 */
+export const BOT_LOCK_LINE_PATTERN: RegExp = /^([1-9]\d*):([0-9a-f]{64})$/;
+
+/** state.json 后台写入失败后的退避序列；用尽后固定使用最后一档。 */
+export const STATE_SAVE_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 5_000, 30_000];

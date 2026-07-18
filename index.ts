@@ -15,6 +15,14 @@ import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } fro
 import { seedSenderCache } from "./src/users/senderIdentity";
 import { sleep } from "./src/libs/sleep";
 import type { CachedUser } from "./src/types";
+import {
+  AI_MEMORY_FLUSH_TIMEOUT_MS,
+  DISK_IO_FLUSH_TIMEOUT_MS,
+  EMERGENCY_FLUSH_TIMEOUT_MS,
+  RUNNER_DRAIN_POLL_INTERVAL_MS,
+  RUNNER_DRAIN_TIMEOUT_MS,
+  STATE_FLUSH_TIMEOUT_MS,
+} from "./src/consts/lifecycle";
 
 // 共享目录写权限与组件生命周期由入口集中持有。任何清理/异常路径都先检查
 // 这些标志：未取得 bot.lock 的竞争进程只能写 stderr，不能 flush 或解锁。
@@ -268,7 +276,7 @@ export async function main(): Promise<void> {
   // 状态变更）就随内存一起丢了、且再也没有机会靠重投更新来补救。下面
   // main().finally() 里还会再刷一次兜底——两次都没有脏数据时开销可忽略，
   // 胜在任何提前退出的路径都不会漏刷。
-  await flushAllToDisk(2000, 3000, 3000);
+  await flushAllToDisk(AI_MEMORY_FLUSH_TIMEOUT_MS, DISK_IO_FLUSH_TIMEOUT_MS, STATE_FLUSH_TIMEOUT_MS);
 
   // 兑现上面 lastSeenUpdateId 声明处的承诺：确认 offset，避免重启重放。
   if (lastSeenUpdateId > 0) {
@@ -285,10 +293,10 @@ export async function main(): Promise<void> {
  * 兜底。size() 是 @grammyjs/runner 暴露的唯一相关信号——它没有提供"已排空"
  * 的事件或 Promise，只能轮询。
  */
-async function waitForRunnerDrain(runner: RunnerHandle, timeoutMs: number = 5000): Promise<void> {
+async function waitForRunnerDrain(runner: RunnerHandle, timeoutMs: number = RUNNER_DRAIN_TIMEOUT_MS): Promise<void> {
   const deadline: number = Date.now() + timeoutMs;
   while (runner.size() > 0 && Date.now() < deadline) {
-    await sleep(100);
+    await sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
   }
   if (runner.size() > 0) {
     logger.error(
@@ -343,11 +351,13 @@ function finalizePersistence(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number,
 export function runApplication(): Promise<void> {
   process.on("uncaughtException", (error: unknown) => {
     logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
-    void finalizePersistence(1000, 1000, 1000).finally(() => process.exit(1));
+    void finalizePersistence(EMERGENCY_FLUSH_TIMEOUT_MS, EMERGENCY_FLUSH_TIMEOUT_MS, EMERGENCY_FLUSH_TIMEOUT_MS)
+      .finally(() => process.exit(1));
   });
   process.on("unhandledRejection", (reason: unknown) => {
     logger.error("Unhandled rejection, attempting a best-effort flush before exit:", reason);
-    void finalizePersistence(1000, 1000, 1000).finally(() => process.exit(1));
+    void finalizePersistence(EMERGENCY_FLUSH_TIMEOUT_MS, EMERGENCY_FLUSH_TIMEOUT_MS, EMERGENCY_FLUSH_TIMEOUT_MS)
+      .finally(() => process.exit(1));
   });
 
   return main()
@@ -358,7 +368,7 @@ export function runApplication(): Promise<void> {
       process.exitCode = 1;
     })
     .finally(async () => {
-      await finalizePersistence(2000, 3000, 3000);
+      await finalizePersistence(AI_MEMORY_FLUSH_TIMEOUT_MS, DISK_IO_FLUSH_TIMEOUT_MS, STATE_FLUSH_TIMEOUT_MS);
     });
 }
 

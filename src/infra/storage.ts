@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { logger } from "./logger";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
-import { DEFAULT_CHAT_STATE } from "../consts/storage";
+import { BOT_LOCK_LINE_PATTERN, DEFAULT_CHAT_STATE, STATE_SAVE_RETRY_DELAYS_MS } from "../consts/storage";
+import { STATE_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import { createLatestValueRunner } from "../libs/latestValueRunner";
 import { atomicWriteText } from "../libs/atomicFile";
 import { normalizeChatState, normalizeChatStateEntry } from "../libs/chatState";
@@ -35,8 +36,6 @@ interface BotLockRecord {
   pid: number;
   tokenFingerprint: string;
 }
-
-const BOT_LOCK_LINE_PATTERN = /^([1-9]\d*):([0-9a-f]{64})$/;
 
 async function readBotLockRecords(lockFilePath: string): Promise<BotLockRecord[]> {
   let content: string;
@@ -303,7 +302,6 @@ export function getActiveProxySendTarget(): number | undefined {
  * rename 可能已提交而数据还在页缓存里，目标文件变成空文件/半截内容——
  * 恰好是这套机制要防的事（进程被杀不经过这个风险，只有断电经过）。
  */
-const STATE_SAVE_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 5_000, 30_000];
 let dirtyStateJson: string | null = null;
 let stateRetryAttempt: number = 0;
 let stateRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -419,7 +417,7 @@ export function saveStateInBackground(context: string): void {
  * 失败会重新排下一轮重试，但这里不再继续等，短超时兜底，不让停机流程
  * 被一次异常的磁盘故障拖住太久。
  */
-export function flushStateToDisk(timeoutMs: number = 3000): Promise<void> {
+export function flushStateToDisk(timeoutMs: number = STATE_FLUSH_TIMEOUT_MS): Promise<void> {
   if (stateRetryTimer !== null) {
     clearTimeout(stateRetryTimer);
     stateRetryTimer = null;

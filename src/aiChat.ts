@@ -2,6 +2,7 @@ import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
 import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes, purgedAiMemoryChats } from "./cache/aiChat";
+import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "./consts/lifecycle";
 import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, MediaKind } from "./types";
 
 /**
@@ -147,7 +148,7 @@ let nextMemoryFlushId: number = 1;
  * （握手样式同 infra/diskIO.ts 的 flushDiskIO）。带超时兜底：Worker 异常时
  * 停机流程最多被拖住 timeoutMs，不会挂死。
  */
-export function flushAiMemory(timeoutMs: number = 2000): Promise<void> {
+export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): Promise<void> {
   if (lastInitState.current === null) return Promise.resolve();
   return new Promise((resolve) => {
     const id: number = nextMemoryFlushId++;

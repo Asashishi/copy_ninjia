@@ -19,6 +19,7 @@ import { pendingFlushes, pendingLoad, pendingLuckSecrets } from "../cache/diskIO
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "../libs/workerSupervisor";
 import { LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
+import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import type {
   AiMemoryDiskMessage,
   AiMemoryDeleteDiskMessage,
@@ -280,7 +281,7 @@ let nextFlushId: number = 1;
  * onerror 会提前结算这次等待并单独记一条"flush 落空"的日志（见上方
  * createDiskIOWorker），调用方无需（也没法）区分，只按尽力而为对待。
  */
-export function flushDiskIO(timeoutMs: number = 3000): Promise<void> {
+export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<void> {
   const worker: Worker | null = diskIOWorker;
   if (!worker) return Promise.resolve();
   return new Promise((resolve) => {
