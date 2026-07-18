@@ -8,6 +8,8 @@ import { USERNAME_ARG_PATTERN } from "../consts/commands";
 export interface CommandTargetMessages {
   /** 既没有回复消息、也没给 @username 参数。 */
   missingTarget: string;
+  /** 给了非空参数，但它不是一整个合法的 Telegram @username。 */
+  invalidUsername: (rawArgument: string) => string;
   /** 给了 @username，但本天才没缓存过这个人（未曾在群里发言过）。 */
   unknownUsername: (rawUsername: string) => string;
   /** 解析出的目标是机器人自己。 */
@@ -32,9 +34,14 @@ export async function resolveCommandTarget(
   let rawUsername: string | undefined;
 
   if (!targetUser) {
-    const usernameMatch = ctx.match.trim().match(USERNAME_ARG_PATTERN);
-    if (!usernameMatch) {
+    const rawArgument: string = ctx.match.trim();
+    if (rawArgument.length === 0) {
       await sendMessage(chatId, messages.missingTarget, messageId);
+      return undefined;
+    }
+    const usernameMatch = USERNAME_ARG_PATTERN.exec(rawArgument);
+    if (!usernameMatch) {
+      await sendMessage(chatId, messages.invalidUsername(rawArgument), messageId);
       return undefined;
     }
     rawUsername = usernameMatch[1]!;

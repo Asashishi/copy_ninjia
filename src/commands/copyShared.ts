@@ -102,6 +102,8 @@ export async function resolveCopyCommandTarget(
 ): Promise<CachedUser | undefined> {
   return resolveCommandTarget(ctx, {
     missingTarget: `笨蛋，要么 ${commandName} @username，要么直接回复 TA 的一条消息再 ${commandName}，本天才总得知道杂鱼是谁吧♡`,
+    invalidUsername: (rawArgument: string) =>
+      `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 ${commandName} @username，别在后面夹垃圾♡`,
     unknownUsername: (rawUsername: string) =>
       `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 ${commandName} 呀♡`,
     selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,

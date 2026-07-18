@@ -43,6 +43,7 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
   // username 或没被缓存过的目标只能靠回复锁定），见 targetResolution.ts。
   const targetUser: CachedUser | undefined = await resolveCommandTarget(ctx, {
     missingTarget: `笨蛋，要么 /kick @username，要么回复 TA 的一条消息再 /kick，本天才可不会读心术♡`,
+    invalidUsername: (rawArgument: string) => `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，别拿半截参数糊弄本天才♡`,
     unknownUsername: (rawUsername: string) => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /kick 吧♡`,
     selfTarget: `笨蛋，本天才才不会把自己踢出去呢♡`,
   });

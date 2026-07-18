@@ -5,9 +5,14 @@ export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
 
 /**
  * 从命令参数里解析裸 @username（如 "/copy @foo" 的 "@foo"）的正则，
- * 见 commands/targetResolution.ts 的 resolveCommandTarget。
+ * 见 commands/targetResolution.ts 的 resolveCommandTarget。规则与 Telegram
+ * 普通用户名一致：5~32 位、字母开头、只含字母/数字/下划线且不以下划线结尾。
  */
-export const USERNAME_ARG_PATTERN: RegExp = /^@?([a-zA-Z0-9_]+)/;
+export const TELEGRAM_USERNAME_MIN_LENGTH: number = 5;
+export const TELEGRAM_USERNAME_MAX_LENGTH: number = 32;
+export const USERNAME_ARG_PATTERN: RegExp = new RegExp(
+  `^@?([a-zA-Z][a-zA-Z0-9_]{${TELEGRAM_USERNAME_MIN_LENGTH - 2},${TELEGRAM_USERNAME_MAX_LENGTH - 2}}[a-zA-Z0-9])$`
+);
 
 // /quiet 静默时长：默认值与上下限（分钟）。
 export const QUIET_DEFAULT_MINUTES: number = 3;
