@@ -1,8 +1,9 @@
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, hydrateStickerCatalogs } from "../ai/stickers/catalog";
 import { stickerConfig } from "../ai/stickers/config";
 import { startWeatherRefreshLoop } from "../ai/weather";
-import { AI_SNAPSHOT_INTERVAL_MS, RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../consts/aiChat";
-import { botInfoState, longTriggerTimes, rateLimitNoticeTimes } from "../cache/aiChatWorker";
+import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat";
+import { botInfoState } from "../cache/aiChat/identity";
+import { sweepAiChatReplyCache } from "../cache/aiChat/replies";
 import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
@@ -22,7 +23,7 @@ import { initTelegramClients } from "../infra/telegram";
  * 做哪几样、什么顺序。发往 Telegram 的调用不回主线程绕路——本线程 import
  * infra/telegram/ 时会得到自己独立的 grammY Api 客户端（那个 Bot 实例只用其
  * bot.api 发请求，从不 init/轮询；机器人自己的账号身份改由主线程在
- * bot.init() 后经 init 消息注入，见 cache/aiChatWorker.ts 的 botInfoState）。
+ * bot.init() 后经 init 消息注入，见 cache/aiChat/identity.ts 的 botInfoState）。
  * error 日志经 logger.ts 的转发模式回传主线程统一落盘。本文件只剩消息路由、
  * 定时 sweep 与启动编排。
  *
@@ -37,7 +38,7 @@ import { initTelegramClients } from "../infra/telegram";
  *
  * 心情系统：各群冷场太久（几小时量级）再冒泡时，随机换一种心情叠加进
  * 系统提示词，模拟真人聊天号状态会变的感觉，重抽时还按当前东京天气/
- * 时段微调各心情的概率，见 ai/mood.ts；两个内存缓存（cache/aiChatWorker.ts
+ * 时段微调各心情的概率，见 ai/mood.ts；两个内存缓存（cache/aiChat/mood.ts
  * 的 chatMoods/chatLastActivityTimes）都不落盘，随 Worker 重启清空。天气
  * 数据由 ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
  * startWeatherRefreshLoop 调用），get_tokyo_weather 工具与心情系统都只
@@ -91,13 +92,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
 // consts/aiChat.ts 的 AI_SNAPSHOT_INTERVAL_MS 注释。Worker 线程活到进程
 // 退出为止，不需要引用计数/按需启停，无条目时两个 flush 都直接空转返回。
 export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
-  for (const [chatId, times] of longTriggerTimes) {
-    while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_LONG_WINDOW_MS) times.shift();
-    if (times.size === 0) longTriggerTimes.delete(chatId);
-  }
-  for (const [chatId, at] of rateLimitNoticeTimes) {
-    if (now - at >= RATE_LIMIT_NOTICE_COOLDOWN_MS) rateLimitNoticeTimes.delete(chatId);
-  }
+  sweepAiChatReplyCache(now);
   flushDirtyMemories();
   flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
 }

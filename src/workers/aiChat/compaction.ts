@@ -16,15 +16,10 @@ import {
   SUMMARY_TEMPERATURE,
 } from "../../consts/aiChat";
 import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChatPrompts";
-import {
-  botInfoState,
-  chatSummaries,
-  compactionChains,
-  compactionPendingCounts,
-  dirtyMemoryChats,
-  pendingSummaries,
-  replyGenerations,
-} from "../../cache/aiChatWorker";
+import { botInfoState } from "../../cache/aiChat/identity";
+import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/aiChat/memory";
+import { compactionChains, compactionPendingCounts } from "../../cache/aiChat/compaction";
+import { cachedReplyGeneration } from "../../cache/aiChat/replies";
 import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import type { BufferedMessage } from "../../types";
 import { currentTimeSentence } from "./timeSentence";
@@ -47,7 +42,7 @@ const compactionRunner = createKeyedSerialTaskRunner(compactionChains);
  * @param promoteFirst 本轮是否有旧镜像滑出（首轮没有），有则先晋升其摘要。
  */
 export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean): void {
-  const generation: number = replyGenerations.get(chatId) ?? 0;
+  const generation: number = cachedReplyGeneration(chatId);
   const pendingCount: number = compactionPendingCounts.get(chatId) ?? 0;
   if (pendingCount >= COMPACTION_MAX_PENDING_PER_CHAT) {
     logger.error(
@@ -76,12 +71,12 @@ function finishCompactionTask(chatId: number): void {
 /** 执行一轮轮换：先晋升上一轮镜像的摘要（若有），再 AI 压缩新镜像存为待晋升。 */
 async function rotateCompaction(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean, generation: number): Promise<void> {
   try {
-    if ((replyGenerations.get(chatId) ?? 0) !== generation) return;
+    if (cachedReplyGeneration(chatId) !== generation) return;
     if (promoteFirst) {
       promotePendingSummary(chatId);
     }
     const summary: string | null = await summarizeBatchWithRetry(chatId, mirrorBatch);
-    if ((replyGenerations.get(chatId) ?? 0) !== generation) return;
+    if (cachedReplyGeneration(chatId) !== generation) return;
     if (summary) {
       pendingSummaries.set(chatId, summary);
       dirtyMemoryChats.add(chatId);

@@ -5,10 +5,10 @@ import {
 } from "../../consts/aiChat";
 import {
   activeReplyCounts,
-  chatBuffers,
   pendingOverflowNotices,
   pendingReplyTriggers,
-} from "../../cache/aiChatWorker";
+} from "../../cache/aiChat/replies";
+import { chatBuffers } from "../../cache/aiChat/memory";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { truncateInline } from "../../libs/text";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../types";

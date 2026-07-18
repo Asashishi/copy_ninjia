@@ -1,4 +1,4 @@
-import { typingHeartbeats } from "../cache/aiChatWorker";
+import { typingHeartbeats } from "../cache/aiChat/heartbeat";
 import { CHAT_ACTION_MAX_CONSECUTIVE_FAILURES, TYPING_ACTION_INTERVAL_MS } from "../consts/aiChat";
 import { sendChooseStickerAction, sendTypingAction } from "../infra/telegram";
 import { settleInflight, trackInflight } from "../libs/inflight";

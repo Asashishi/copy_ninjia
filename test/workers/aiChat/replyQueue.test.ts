@@ -1,20 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   activeReplyCounts,
-  chatBuffers,
-  pendingOverflowNotices,
   pendingReplyTriggers,
-} from "../../../src/cache/aiChatWorker";
+  resetAiChatReplyCache,
+} from "../../../src/cache/aiChat/replies";
+import { chatBuffers, resetAiChatMemoryCache } from "../../../src/cache/aiChat/memory";
 import { QUEUED_TRIGGER_SNIPPET_MAX_CHARS, REPLY_ROUND_MAX_CONCURRENT } from "../../../src/consts/aiChat";
 import { LinkedQueue } from "../../../src/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../src/types";
 import { drainReplyQueue, pushReplyTrigger, triggerKindFor } from "../../../src/workers/aiChat/replyQueue";
 
 afterEach(() => {
-  activeReplyCounts.clear();
-  chatBuffers.clear();
-  pendingOverflowNotices.clear();
-  pendingReplyTriggers.clear();
+  resetAiChatReplyCache();
+  resetAiChatMemoryCache();
 });
 
 describe("AI 回复触发队列", () => {

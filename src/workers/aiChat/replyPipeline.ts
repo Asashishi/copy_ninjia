@@ -1,4 +1,5 @@
-import { botInfoState, activeReplyCounts, pendingOverflowNotices, pendingReplyTriggers } from "../../cache/aiChatWorker";
+import { botInfoState } from "../../cache/aiChat/identity";
+import { activeReplyCounts, pendingOverflowNotices, pendingReplyTriggers } from "../../cache/aiChat/replies";
 import { logger } from "../../infra/logger";
 import { admitTrigger, type AdmitDecision } from "../../states/replyAdmission";
 import type { QueuedReplyTrigger } from "../../types";

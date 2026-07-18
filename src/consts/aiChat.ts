@@ -108,7 +108,7 @@ export const AI_MEMORY_HYDRATE_BUFFER_MAX: number = VERBATIM_CONTEXT_MAX - 1;
 export const AI_MEMORY_MAX_CHATS: number = 100;
 
 /**
- * replyGenerations（cache/aiChatWorker.ts）的容量上限。这张表记录各群的
+ * replyGenerations（cache/aiChat/replies.ts）的容量上限。这张表记录各群的
  * 「代际」计数器，用于让在途异步任务（回复轮次、压缩、媒体描述回填……）
  * 在群记忆已被淘汰/失效后识别出自己的结果已过期、放弃回填——语义上必须
  * 排除在 purgeChatMemory 之外（被淘汰的群不能复用旧的低代际，否则在途任务
@@ -302,7 +302,7 @@ export const TYPO_RECALL_DELETE_MIN_MS: number = 15_000;
 export const TYPO_RECALL_DELETE_MAX_MS: number = 25_000;
 
 // ---- 心情系统（各群冷场太久、再冒泡时随机换一种心情，见 ai/mood.ts）----
-// 两个内存缓存（chatMoods/chatLastActivityTimes，见 cache/aiChatWorker.ts）
+// 两个内存缓存（chatMoods/chatLastActivityTimes，见 cache/aiChat/mood.ts）
 // 都不落盘，随 Worker 重启清空——重启后从未被 hydrate 过记忆的群，其第一条
 // 消息会被当成「还没抽过心情」，直接抽一次；有记忆快照被 hydrate 回来的群
 // 则由 hydrateMemories 在恢复 chatLastActivityTimes 的同时一并播种心情

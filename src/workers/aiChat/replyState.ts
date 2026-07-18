@@ -3,12 +3,11 @@ import {
   RATE_LIMIT_NOTICE_TEXT,
 } from "../../consts/aiChat";
 import {
-  botInfoState,
-  pendingOverflowNotices,
-  pendingReplyTriggers,
   rateLimitNoticeTimes,
-  replyGenerations,
-} from "../../cache/aiChatWorker";
+  cachedReplyGeneration,
+} from "../../cache/aiChat/replies";
+import { botInfoState } from "../../cache/aiChat/identity";
+import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
 import { sendMessage } from "../../infra/telegram";
 import type { AiSentMessage } from "../../types";
 import { recordChatMessage } from "./rollingMemory";
@@ -16,7 +15,7 @@ import { recordChatMessage } from "./rollingMemory";
 declare const self: Worker;
 
 export function currentReplyGeneration(chatId: number): number {
-  return replyGenerations.get(chatId) ?? 0;
+  return cachedReplyGeneration(chatId);
 }
 
 export function isReplyGenerationCurrent(chatId: number, generation: number): boolean {
@@ -25,9 +24,7 @@ export function isReplyGenerationCurrent(chatId: number, generation: number): bo
 
 /** 使在途回复失效，并丢弃该群尚未开始的排队触发和溢出提示。 */
 export function invalidateChatReplies(chatId: number): void {
-  replyGenerations.set(chatId, currentReplyGeneration(chatId) + 1);
-  pendingReplyTriggers.delete(chatId);
-  pendingOverflowNotices.delete(chatId);
+  invalidateChatRuntimeCache(chatId);
 }
 
 /**

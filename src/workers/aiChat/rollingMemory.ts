@@ -6,15 +6,15 @@ import { pickMood, recordActivityAndMaybeRerollMood } from "../../ai/mood";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, AI_MEMORY_MAX_CHATS, COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../consts/aiChat";
 import {
   chatBuffers,
-  chatLastActivityTimes,
-  chatMoods,
   chatSummaries,
+  chatMemoryIds,
+  clearChatMemoryCache,
   dirtyMemoryChats,
-  pendingOverflowNotices,
-  pendingReplyTriggers,
+  hasChatMemory,
   pendingSummaries,
-  replyGenerations,
-} from "../../cache/aiChatWorker";
+} from "../../cache/aiChat/memory";
+import { chatLastActivityTimes, chatMoods, clearChatMoodCache } from "../../cache/aiChat/mood";
+import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
 import type { AiMemoryDeletedEvent, AiMemoryEvent, AiMemorySnapshot, BufferedMessage } from "../../types";
 import { scheduleRotation } from "./compaction";
 
@@ -37,7 +37,7 @@ declare const self: Worker;
  * push 之前调用——判断的是这条消息到来之前的空窗时长。
  */
 export function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
-  if (!hasPersistentMemory(chatId)) ensureMemoryCapacity(chatId);
+  if (!hasChatMemory(chatId)) ensureMemoryCapacity(chatId);
   recordActivityAndMaybeRerollMood(chatId);
   let buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf) {
@@ -86,28 +86,16 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
 
 /** 删除某群全部可持久化记忆及其衍生运行时状态。 */
 export function purgeChatMemory(chatId: number): void {
-  chatBuffers.delete(chatId);
-  chatSummaries.delete(chatId);
-  pendingSummaries.delete(chatId);
-  dirtyMemoryChats.delete(chatId);
-  chatMoods.delete(chatId);
-  chatLastActivityTimes.delete(chatId);
-}
-
-function hasPersistentMemory(chatId: number): boolean {
-  return chatBuffers.has(chatId) || chatSummaries.has(chatId) || pendingSummaries.has(chatId);
-}
-
-function persistentMemoryChatIds(): Set<number> {
-  return new Set([...chatBuffers.keys(), ...chatSummaries.keys(), ...pendingSummaries.keys()]);
+  clearChatMemoryCache(chatId);
+  clearChatMoodCache(chatId);
 }
 
 /** 为一份新群记忆腾出容量；excludeChatId 永不作为本次淘汰对象。 */
 function ensureMemoryCapacity(excludeChatId: number): void {
-  while (persistentMemoryChatIds().size >= AI_MEMORY_MAX_CHATS) {
+  while (chatMemoryIds().size >= AI_MEMORY_MAX_CHATS) {
     let oldestChatId: number | undefined;
     let oldestActivity: number = Number.POSITIVE_INFINITY;
-    for (const candidate of persistentMemoryChatIds()) {
+    for (const candidate of chatMemoryIds()) {
       if (candidate === excludeChatId) continue;
       const activity: number = chatLastActivityTimes.get(candidate) ?? 0;
       if (activity < oldestActivity) {
@@ -117,9 +105,7 @@ function ensureMemoryCapacity(excludeChatId: number): void {
     }
     if (oldestChatId === undefined) return;
 
-    replyGenerations.set(oldestChatId, (replyGenerations.get(oldestChatId) ?? 0) + 1);
-    pendingReplyTriggers.delete(oldestChatId);
-    pendingOverflowNotices.delete(oldestChatId);
+    invalidateChatRuntimeCache(oldestChatId);
     purgeChatMemory(oldestChatId);
     self.postMessage({ type: "memoryDeleted", chatId: oldestChatId } satisfies AiMemoryDeletedEvent);
   }
@@ -197,8 +183,8 @@ export function hydrateMemories(memories: Map<number, string>): void {
 
   parsedMemories.sort((left, right) => right.snapshot.savedAt - left.snapshot.savedAt);
   for (const { chatId, snapshot } of parsedMemories) {
-    if (hasPersistentMemory(chatId)) continue;
-    if (persistentMemoryChatIds().size >= AI_MEMORY_MAX_CHATS) {
+    if (hasChatMemory(chatId)) continue;
+    if (chatMemoryIds().size >= AI_MEMORY_MAX_CHATS) {
       self.postMessage({ type: "memoryDeleted", chatId } satisfies AiMemoryDeletedEvent);
       continue;
     }
@@ -220,7 +206,7 @@ export function hydrateMemories(memories: Map<number, string>): void {
     if (snapshot.pendingSummary) {
       pendingSummaries.set(chatId, snapshot.pendingSummary);
     }
-    if (hasPersistentMemory(chatId)) {
+    if (hasChatMemory(chatId)) {
       chatLastActivityTimes.set(chatId, snapshot.savedAt);
       // 播种心情，与"本群第一次有动静"的路径保持同一份不变量（见上方
       // 函数头注）；心情本身不落盘，这里跟真实的首条消息一样重新抽一次，

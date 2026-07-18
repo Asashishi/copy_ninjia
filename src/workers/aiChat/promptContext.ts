@@ -6,7 +6,7 @@ import {
   VERBATIM_CONTEXT_MAX,
 } from "../../consts/aiChat";
 import { CHAT_MEMORY_PRIORITY_INSTRUCTION, REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChatPrompts";
-import { chatBuffers, chatSummaries } from "../../cache/aiChatWorker";
+import { chatBuffers, chatSummaries } from "../../cache/aiChat/memory";
 import { resolvedTagFor } from "./mediaText";
 import type { AiBotInfo, BufferedMessage, MediaKind, QueuedReplyTrigger } from "../../types";
 
@@ -76,7 +76,7 @@ interface UserContentOptions {
  * 缓存拆成「较早原文」与「最新 COMPACT_BATCH_SIZE 条最热记忆」两层；
  * 越热越靠近回复指令。
  * @param chatId 群聊 ID。
- * @param selfInfo 机器人自己的账号身份（见 cache/aiChatWorker.ts 的 botInfoState），用于转录里的自我认知。
+ * @param selfInfo 机器人自己的账号身份（见 cache/aiChat/identity.ts 的 botInfoState），用于转录里的自我认知。
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
 export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserContentOptions): string | null {
@@ -126,7 +126,7 @@ export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: U
   // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
   // 回复你的消息、以及标着你自己 id 的行（见发送后的 recordChatMessage 自录）
   // 都要能认出来是你自己，不能当成第三个人。username/id 来自主线程在
-  // bot.init() 之后注入的 init 消息（见 cache/aiChatWorker.ts 的 botInfoState），不写死在代码里。
+  // bot.init() 之后注入的 init 消息（见 cache/aiChat/identity.ts 的 botInfoState），不写死在代码里。
   const selfIdentity: string =
     `你在这个群里的 Telegram 账号是 @${selfInfo.username}（[id:${selfInfo.id}]）：` +
     `记录里标着这个 id 的行是你自己之前说过的话，别把它们当成别人的发言；` +
