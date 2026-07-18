@@ -32,8 +32,8 @@ export const AI_MEMORY_FILE_PATTERN: RegExp = /^(-?\d+)\.json$/;
 
 // ---- 贴纸目录 ----
 // 落盘/恢复机制与 AI 记忆快照完全一致（整份覆盖写 + tmp/rename 原子性），
-// 共用同一条定时落盘窗口（SNAPSHOT_FLUSH_INTERVAL_MS），见
-// workers/diskIOWorker.ts 的 flushSnapshots。
+// 共用同一个时间阈值（SNAPSHOT_FLUSH_INTERVAL_MS），但各自由所属领域持有
+// timer，见 workers/diskIO/aiMemoryFiles.ts 与 stickerCatalogFiles.ts。
 
 /** 贴纸目录文件名形态（<pack>.json，pack 是贴纸集合的 short name）。 */
 export const STICKER_CATALOG_FILE_PATTERN: RegExp = /^(.+)\.json$/;

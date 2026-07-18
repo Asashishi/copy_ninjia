@@ -10,12 +10,10 @@ import {
   recoverVerificationDay,
 } from "../../../src/workers/diskIO/verificationFiles";
 import {
+  resetVerificationPersistenceCache,
   verificationFileState,
-  verificationFlushTimer,
   verificationPendingChanges,
-  verificationRolloverTimer,
-  verificationWorkerCache,
-} from "../../../src/cache/diskIOWorker";
+} from "../../../src/cache/diskIO/verification";
 import type { VerificationPersistedReply, VerificationSnapshot } from "../../../src/types";
 import { VERIFICATION_FILE_COMPACT_BYTES } from "../../../src/consts/diskIO";
 
@@ -50,24 +48,13 @@ const receiveReply = (reply: VerificationPersistedReply): void => {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "verification-day-test-"));
   replies = [];
-  verificationWorkerCache.clear();
-  verificationPendingChanges.clear();
-  verificationFileState.current = null;
-  verificationFileState.appendedEntries = 0;
-  verificationFileState.appendedBytes = 0;
-  if (verificationFlushTimer.timer !== null) clearTimeout(verificationFlushTimer.timer);
-  if (verificationRolloverTimer.timer !== null) clearTimeout(verificationRolloverTimer.timer);
-  verificationFlushTimer.timer = null;
-  verificationRolloverTimer.timer = null;
+  resetVerificationPersistenceCache();
   // 生产中所有业务消息都晚于 diskIOWorker 的 load 握手；测试同样先接管当天。
   recoverVerificationDay(DAY_ONE, dir);
 });
 
 afterEach(() => {
-  if (verificationFlushTimer.timer !== null) clearTimeout(verificationFlushTimer.timer);
-  if (verificationRolloverTimer.timer !== null) clearTimeout(verificationRolloverTimer.timer);
-  verificationFlushTimer.timer = null;
-  verificationRolloverTimer.timer = null;
+  resetVerificationPersistenceCache();
   rmSync(dir, { recursive: true, force: true });
 });
 

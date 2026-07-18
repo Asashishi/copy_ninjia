@@ -15,7 +15,7 @@ mock.module("../../../src/consts/paths", () => ({ ...realPaths, LUCK_MEMORY_DIR:
 
 const { flushLuckAppends, handleLuckDrawMessage } = await import("../../../src/workers/diskIO/luckFiles");
 const { recoverLuckDay } = await import("../../../src/workers/diskIO/snapshotFiles");
-const { luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache } = await import("../../../src/cache/diskIOWorker");
+const { luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache, resetLuckCache } = await import("../../../src/cache/diskIO/luck");
 const { FLUSH_MAX_ENTRIES } = await import("../../../src/consts/diskIO");
 import type { LuckDrawDiskMessage } from "../../../src/types";
 
@@ -29,23 +29,13 @@ function readDayFile(day: string = DAY): Record<string, unknown> {
   return JSON.parse(readFileSync(join(luckDir, `${day}.json`), "utf8"));
 }
 
-function clearTimer(): void {
-  if (luckFlushTimer.timer !== null) {
-    clearTimeout(luckFlushTimer.timer);
-    luckFlushTimer.timer = null;
-  }
-}
-
 beforeEach(() => {
   rmSync(luckDir, { recursive: true, force: true });
-  luckWorkerCache.current = null;
-  luckPendingAppends.length = 0;
-  luckFileState.current = null;
-  clearTimer();
+  resetLuckCache();
 });
 
 afterEach(() => {
-  clearTimer();
+  resetLuckCache();
 });
 
 describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {

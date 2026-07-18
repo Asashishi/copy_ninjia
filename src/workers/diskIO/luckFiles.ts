@@ -6,15 +6,23 @@
  * 一组窗口阈值（见 consts/diskIO.ts），只是缓冲区、定时器、落盘目标各自
  * 独立，互不影响。按位置追加/损坏修复的字节机制见 appendOnlyDayFile.ts，
  * 追加/清理的纯函数在 snapshotFiles.ts；本文件持有的是「什么时候刷、刷
- * 什么」的领域状态调度（状态本体在 cache/diskIOWorker.ts）。
+ * 什么」的领域状态调度（状态本体在 cache/diskIO/luck.ts）。
  *
  * 本文件运行在磁盘 IO 线程里，自身错误一律 console.error（journal 兜底），
  * 理由见 workers/diskIOWorker.ts 模块头。
  */
 
 import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../consts/diskIO";
-import { luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache } from "../../cache/diskIOWorker";
-import { appendLuckEntries, cleanupStaleLuckFiles } from "./snapshotFiles";
+import {
+  hydrateLuckCache,
+  luckFileState,
+  luckFlushTimer,
+  luckPendingAppends,
+  luckWorkerCache,
+  markLuckDirty,
+  startLuckDay,
+} from "../../cache/diskIO/luck";
+import { appendLuckEntries, cleanupStaleLuckFiles, recoverLuckDay } from "./snapshotFiles";
 import type { LuckDrawDiskMessage, LuckDrawRecord } from "../../types";
 
 /** 按需启动运势追加缓冲的定时落盘；已有定时器在跑就不重复排。条数达到
@@ -67,11 +75,9 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
   // 已知的 key 集合、待追加缓冲、文件追加状态全部丢弃重建（旧 day 已是
   // 昨日黄花，不会再有消息带着旧 day 补写它的文件）；下一次 flush 落盘
   // 时 cleanupStaleLuckFiles 会顺带删除非当日文件。
-  if (luckWorkerCache.current?.day !== msg.day) {
-    luckWorkerCache.current = { day: msg.day, entries: new Map() };
-    luckPendingAppends.length = 0;
-    luckFileState.current = null;
-  }
+  const dayCache = luckWorkerCache.current?.day === msg.day
+    ? luckWorkerCache.current
+    : startLuckDay(msg.day);
   // 去重按「key + 值」而不是只看 key：值也一样才算重复（本 Worker 崩溃
   // 重建后主线程会把 dailyLuckCache 全量重放一遍，见 infra/diskIO.ts 的
   // onDiskIORespawn，其中多数条目已经在崩溃前落过盘，不去重会白占地方）。
@@ -80,13 +86,18 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
   // 否则每次重启都会重抽出不同结果。重复 key 追加是安全的——JSON.parse
   // 只认最后一次出现，恢复时天然取到最新值。
   const record: LuckDrawRecord = { label: msg.label, fortunePercent: msg.fortunePercent };
-  const known: LuckDrawRecord | undefined = luckWorkerCache.current.entries.get(msg.key);
+  const known: LuckDrawRecord | undefined = dayCache.entries.get(msg.key);
   if (known?.label === record.label && known.fortunePercent === record.fortunePercent) return;
-  luckWorkerCache.current.entries.set(msg.key, record);
-  luckPendingAppends.push({ key: msg.key, record });
-  if (luckPendingAppends.length >= FLUSH_MAX_ENTRIES) {
+  dayCache.entries.set(msg.key, record);
+  const pendingEntries: number = markLuckDirty({ key: msg.key, record });
+  if (pendingEntries >= FLUSH_MAX_ENTRIES) {
     flushLuckAppends();
   } else {
     scheduleLuckFlush();
   }
+}
+
+/** 启动恢复边界：只读当天文件并以恢复结果整体替换内存 owner。 */
+export function hydrateLuckDay(day: string): void {
+  hydrateLuckCache(recoverLuckDay(day));
 }

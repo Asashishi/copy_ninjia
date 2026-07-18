@@ -19,12 +19,13 @@ import {
 import { VERIFICATION_MEMORY_DIR } from "../../consts/paths";
 import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../consts/antiRaid";
 import {
+  resetVerificationPersistenceCache,
   verificationFileState,
   verificationFlushTimer,
   verificationPendingChanges,
   verificationRolloverTimer,
   verificationWorkerCache,
-} from "../../cache/diskIOWorker";
+} from "../../cache/diskIO/verification";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { getTokyoDateKey } from "../../libs/time";
 import type {
@@ -154,14 +155,7 @@ export function recoverVerificationDay(
   dir: string = VERIFICATION_MEMORY_DIR
 ): Map<string, VerificationSnapshot> {
   mkdirSync(dir, { recursive: true });
-  if (verificationFlushTimer.timer !== null) clearTimeout(verificationFlushTimer.timer);
-  if (verificationRolloverTimer.timer !== null) clearTimeout(verificationRolloverTimer.timer);
-  verificationFlushTimer.timer = null;
-  verificationRolloverTimer.timer = null;
-  verificationWorkerCache.clear();
-  verificationPendingChanges.clear();
-  verificationFileState.appendedEntries = 0;
-  verificationFileState.appendedBytes = 0;
+  resetVerificationPersistenceCache();
   verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
   removeOldVerificationDays(day, dir);
 

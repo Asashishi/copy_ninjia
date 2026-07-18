@@ -24,7 +24,7 @@ import { join } from "node:path";
 import type { LogMessage } from "../../types";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO";
-import { flushBuffer, loggerFileState } from "../../cache/diskIOWorker";
+import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
@@ -122,6 +122,7 @@ function writeDay(day: string, texts: string[]): void {
 
 /** 目录初始化 + 首次清理，由 diskIOWorker.ts 在模块加载时调用一次。 */
 export function initLogFiles(): void {
+  resetLogCache();
   mkdirSync(LOGS_DIR, { recursive: true });
   cleanupStaleTmpFiles();
   cleanupOldLogs();
@@ -166,11 +167,11 @@ export function handleLogMessage(msg: LogMessage): void {
   if (hasStructuredArgs) {
     record.args = msg.args;
   }
-  flushBuffer.entries.push({
+  const bufferedEntries: number = markLogDirty({
     day: dayKey(msg.timestamp),
     text: serializeDayFileEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
-  if (flushBuffer.entries.length >= FLUSH_MAX_ENTRIES) {
+  if (bufferedEntries >= FLUSH_MAX_ENTRIES) {
     flushLogBuffer();
   } else {
     flushBuffer.timer ??= setTimeout(flushLogBuffer, FLUSH_INTERVAL_MS);
