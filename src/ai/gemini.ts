@@ -18,8 +18,8 @@
  * 最终文本里，不会以 functionCall 形式抛回来。
  */
 
-import { ApiError, GoogleGenAI } from "@google/genai";
-import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
+import { ApiError, GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
+import type { GenerateContentParameters, GenerateContentResponse, SafetySetting } from "@google/genai";
 import { logger } from "../infra/logger";
 import { GEMINI_API_KEY } from "../infra/config";
 import { GEMINI_REQUEST_TIMEOUT_MS } from "../consts/aiChat";
@@ -30,6 +30,18 @@ import { abnormalFinishDiagnostic, extractOutputText, isTruncatedByTokenLimit } 
  *  Worker 线程各自 import 本文件会各自拿到一份独立实例，符合现状——本来
  *  就没有跨线程共享 Gemini 调用状态的需求。 */
 const client: GoogleGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY, httpOptions: { timeout: GEMINI_REQUEST_TIMEOUT_MS } });
+
+/**
+ * Google 可调的四类内容过滤统一采用「仅高概率拦截」。这比 BLOCK_NONE 保留
+ * 一层审计，又允许低/中概率的群聊口语、人设吐槽与媒体描述通过。核心伤害
+ * 保护由 Gemini 服务固定执行，不受这些每请求设置影响。
+ */
+const GEMINI_SAFETY_SETTINGS: SafetySetting[] = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+];
 
 /**
  * 调一次 generateContent 接口。请求失败、超时或非 2xx 时返回 null（已记
@@ -43,7 +55,15 @@ const client: GoogleGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY, httpOption
 export async function requestGeminiResponse(body: GenerateContentParameters, errorLabel: string): Promise<GenerateContentResponse | null> {
   let data: GenerateContentResponse;
   try {
-    data = await client.models.generateContent(body);
+    data = await client.models.generateContent({
+      ...body,
+      config: {
+        ...body.config,
+        // 在唯一底层封装覆盖，聊天、压缩、媒体描述和未来调用方不会漏配，
+        // 也不能各自悄悄恢复成更严格或完全关闭的档位。
+        safetySettings: GEMINI_SAFETY_SETTINGS,
+      },
+    });
   } catch (error: unknown) {
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
