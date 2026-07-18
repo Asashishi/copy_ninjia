@@ -314,7 +314,7 @@ function handleTrackedMessage(
   event: { messageId: number; inCommentThread: boolean; repliesToChannelPost: boolean }
 ): VerificationTransition {
   // 占位记录不是真的在等验证；无记录的消息与验证无关。
-  if (state === undefined || state.kind !== "pending") return { next: state, effects: [] };
+  if (state?.kind !== "pending") return { next: state, effects: [] };
 
   if (event.repliesToChannelPost) {
     // 在关联频道的帖子下留言是确证的真人操作，免验证放行。TA 已发的消息
@@ -374,7 +374,7 @@ function handleCallback(
     }
   }
 
-  if (state === undefined || state.kind !== "pending") {
+  if (state?.kind !== "pending") {
     return { next: state, effects: [{ kind: "answerCallback", callbackQueryId: event.callbackQueryId, reply: "invalid" }] };
   }
 
@@ -397,7 +397,7 @@ function handleCallback(
 }
 
 function handleVerifyTimeout(state: VerificationState | undefined): VerificationTransition {
-  if (state === undefined || state.kind !== "pending") return { next: state, effects: [] };
+  if (state?.kind !== "pending") return { next: state, effects: [] };
   const snapshot: ExpelSnapshot = snapshotOf(state);
   // 记录立即删除：终核等待期间迟到的撤销回调/按钮点击都会因查不到记录而安全失效。
   if (state.invitedBy !== undefined) {
@@ -439,7 +439,7 @@ function handleReminderLanded(
   event: { reminderKind: "original" | "reply"; messageId: number }
 ): VerificationTransition {
   // 解释器只在状态对象未被替换时才投递本事件，这里的防御分支正常不可达。
-  if (state === undefined || state.kind !== "pending") {
+  if (state?.kind !== "pending") {
     return { next: state, effects: [{ kind: "deleteMessage", messageId: event.messageId }] };
   }
   if (event.reminderKind === "original" && state.reminderSuperseded) {
@@ -466,7 +466,7 @@ export function transitionVerification(state: VerificationState | undefined, eve
     case "callback":
       return handleCallback(state, event);
     case "adminCheckResolved":
-      if (state === undefined || state.kind !== "pending") return { next: state, effects: [] };
+      if (state?.kind !== "pending") return { next: state, effects: [] };
       // pending 记录创建时必然已被计入刷群统计（见 joinCreatesNewRecord），
       // 异步管理员核查事后才确证豁免，要撤销那次计数。
       return {

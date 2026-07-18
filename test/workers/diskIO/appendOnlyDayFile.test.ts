@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "../../../src/workers/diskIO/appendOnlyDayFile";
@@ -131,7 +131,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     // 模拟断电：整份内容被截断在第二条记录中间（缺收尾的 "\n  }\n}"）
     const truncated: string = full.slice(0, full.indexOf('"B"') + 20);
     const path = join(dir, "2026-07-16.json");
-    require("node:fs").writeFileSync(path, truncated);
+    writeFileSync(path, truncated);
 
     const recovered: DayFileState = openDayFile(dir, "2026-07-16");
     expect(recovered.empty).toBe(false);
@@ -147,7 +147,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
   test("截断修复：断电截断发生在第一条记录写入之前（文件只剩一个 \"{\"），修复出的空对象要被正确判成 empty，" +
     "否则下一次追加会误判成「非空、按位置追加」写出非法 JSON（回归：曾导致这条记录永久丢失的级联损坏）", () => {
     const path = join(dir, "2026-07-16.json");
-    require("node:fs").writeFileSync(path, "{");
+    writeFileSync(path, "{");
 
     const recovered: DayFileState = openDayFile(dir, "2026-07-16");
     expect(recovered.empty).toBe(true);

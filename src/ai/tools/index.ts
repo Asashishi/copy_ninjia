@@ -23,7 +23,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 ];
 
 /** 按名字执行一个工具调用，返回喂回模型的字符串结果。 */
-export async function callTool(name: string): Promise<string> {
+export function callTool(name: string): string {
   switch (name) {
     case GET_TOKYO_WEATHER_TOOL: {
       // 只读现有缓存，不在这里发请求——真正的刷新由 ai/weather.ts 的后台

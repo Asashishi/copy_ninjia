@@ -36,7 +36,7 @@ import type { AntiRaidWorkerMessage } from "../types";
  * 「已失效」应答，重新进群即可）。
  */
 
-declare var self: Worker;
+declare const self: Worker;
 
 self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
   const msg: AntiRaidWorkerMessage = event.data;

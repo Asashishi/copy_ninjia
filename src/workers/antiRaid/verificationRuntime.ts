@@ -152,7 +152,7 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
         break;
       case "restartVerifyTimer": {
         const entry = verificationEntries.get(verificationKey(chatId, userId));
-        if (entry && entry.state.kind === "pending") {
+        if (entry?.state.kind === "pending") {
           clearTimeout(entry.timer);
           entry.timer = startVerificationTimer(chatId, userId, entry.state);
         }
@@ -185,7 +185,7 @@ function sendReminderMessage(
 ): void {
   const key: string = verificationKey(chatId, userId);
   const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
-  if (captured === undefined || captured.kind !== "pending") return;
+  if (captured?.kind !== "pending") return;
   const verifyKeyboard: InlineKeyboard = new InlineKeyboard().text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${userId}`);
   void sendMessage(chatId, text, replyToMessageId, joinVerificationApi, verifyKeyboard)
     .then((reminderMessageId: number | undefined) => {
@@ -240,7 +240,7 @@ function sendReplyReminder(chatId: number, userId: number, label: string, target
 function startAdminCheck(chatId: number, userId: number, actorId: number): void {
   const key: string = verificationKey(chatId, userId);
   const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
-  if (captured === undefined || captured.kind !== "pending") return;
+  if (captured?.kind !== "pending") return;
   void fetchAdminIds(chatId)
     .then((adminIds: Set<number>) => {
       if (!adminIds.has(actorId)) return;

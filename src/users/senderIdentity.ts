@@ -52,8 +52,7 @@ export function cacheSender(message: Message): number | undefined {
   if (identity.username) {
     const lowerUsername: string = identity.username.toLowerCase();
     const cached = userCache.get(lowerUsername);
-    const isStale = !cached ||
-      cached.id !== identity.id ||
+    const isStale = cached?.id !== identity.id ||
       cached.title !== identity.title ||
       cached.first_name !== identity.first_name ||
       cached.last_name !== identity.last_name;

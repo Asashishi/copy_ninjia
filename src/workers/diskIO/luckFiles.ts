@@ -67,7 +67,7 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
   // 已知的 key 集合、待追加缓冲、文件追加状态全部丢弃重建（旧 day 已是
   // 昨日黄花，不会再有消息带着旧 day 补写它的文件）；下一次 flush 落盘
   // 时 cleanupStaleLuckFiles 会顺带删除非当日文件。
-  if (luckWorkerCache.current === null || luckWorkerCache.current.day !== msg.day) {
+  if (luckWorkerCache.current?.day !== msg.day) {
     luckWorkerCache.current = { day: msg.day, entries: new Map() };
     luckPendingAppends.length = 0;
     luckFileState.current = null;
@@ -81,7 +81,7 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
   // 只认最后一次出现，恢复时天然取到最新值。
   const record: LuckDrawRecord = { label: msg.label, fortunePercent: msg.fortunePercent };
   const known: LuckDrawRecord | undefined = luckWorkerCache.current.entries.get(msg.key);
-  if (known && known.label === record.label && known.fortunePercent === record.fortunePercent) return;
+  if (known?.label === record.label && known.fortunePercent === record.fortunePercent) return;
   luckWorkerCache.current.entries.set(msg.key, record);
   luckPendingAppends.push({ key: msg.key, record });
   if (luckPendingAppends.length >= FLUSH_MAX_ENTRIES) {

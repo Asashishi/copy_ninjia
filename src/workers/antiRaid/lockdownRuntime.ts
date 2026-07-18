@@ -9,7 +9,7 @@ import { transitionLockdown, type LockdownEffect, type LockdownMachineEvent } fr
 import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 
-declare var self: Worker;
+declare const self: Worker;
 
 /**
  * 反刷群私密模式状态机（src/states/lockdown.ts）的解释器：把每条投递翻译成

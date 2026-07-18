@@ -30,7 +30,7 @@ import { getTokyoDateKey } from "../libs/time";
 import { aiMemoryCache, deletedAiMemoryChats, dirtyChats, dirtyStickerPacks, luckWorkerCache, snapshotFlushState, stickerCatalogCache } from "../cache/diskIOWorker";
 import type { DiskFlushReply, DiskIOMessage, LoadedReply } from "../types";
 
-declare var self: Worker;
+declare const self: Worker;
 
 initLogFiles();
 

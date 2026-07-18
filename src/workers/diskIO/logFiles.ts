@@ -107,7 +107,7 @@ function cleanupOldLogs(): void {
 function writeDay(day: string, texts: string[]): void {
   if (texts.length === 0) return;
   try {
-    if (loggerFileState.current === null || loggerFileState.current.day !== day) {
+    if (loggerFileState.current?.day !== day) {
       loggerFileState.current = openDayFile(LOGS_DIR, day);
       cleanupOldLogs();
     }
@@ -172,7 +172,7 @@ export function handleLogMessage(msg: LogMessage): void {
   });
   if (flushBuffer.entries.length >= FLUSH_MAX_ENTRIES) {
     flushLogBuffer();
-  } else if (flushBuffer.timer === null) {
-    flushBuffer.timer = setTimeout(flushLogBuffer, FLUSH_INTERVAL_MS);
+  } else {
+    flushBuffer.timer ??= setTimeout(flushLogBuffer, FLUSH_INTERVAL_MS);
   }
 }

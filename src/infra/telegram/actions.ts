@@ -1,4 +1,4 @@
-import { Api, InlineKeyboard } from "grammy";
+import type { Api, InlineKeyboard } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
 import { bot, logApiError } from "./client";

@@ -43,7 +43,7 @@ import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiStickerCatalogEvent }
  * 读现有缓存、不各自发请求。
  */
 
-declare var self: Worker;
+declare const self: Worker;
 
 self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
   const msg: AiChatWorkerMessage = event.data;

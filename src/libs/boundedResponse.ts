@@ -21,9 +21,12 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
     }
   }
 
-  if (!response.body) return { ok: true, bytes: new Uint8Array() };
+  // Bun 的全局 Response.body 当前会退化为 ReadableStream<any>；在这一个
+  // Web API 边界收窄为 fetch 响应实际产出的字节块，避免 any 向下游扩散。
+  const body = response.body as ReadableStream<Uint8Array> | null;
+  if (!body) return { ok: true, bytes: new Uint8Array() };
 
-  const reader = response.body.getReader();
+  const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes: number = 0;
   try {

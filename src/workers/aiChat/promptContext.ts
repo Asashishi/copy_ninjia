@@ -1,4 +1,4 @@
-import { LinkedQueue } from "../../libs/linkedQueue";
+import type { LinkedQueue } from "../../libs/linkedQueue";
 import { sanitizeInline } from "../../libs/text";
 import { buildColdMemoryBlock, buildTieredVerbatimTranscript } from "../../ai/utils/chatTranscript";
 import {

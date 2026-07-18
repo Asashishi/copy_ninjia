@@ -41,9 +41,7 @@ export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>)
   return {
     push(value: T): Promise<void> {
       pending = { value };
-      if (!running) {
-        running = drain();
-      }
+      running ??= drain();
       return running;
     },
   };

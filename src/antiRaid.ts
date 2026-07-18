@@ -236,7 +236,7 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
 export function handleVerificationCallback(ctx: Context): void {
   const query = ctx.callbackQuery;
   const data: string | undefined = query?.data;
-  if (!query || !data || !data.startsWith(VERIFY_CALLBACK_PREFIX)) return;
+  if (!query || !data?.startsWith(VERIFY_CALLBACK_PREFIX)) return;
 
   const targetUserId: number = Number(data.slice(VERIFY_CALLBACK_PREFIX.length));
   // callback_data 属于外部输入：前缀匹配不代表后半段一定是合法整数。NaN 若

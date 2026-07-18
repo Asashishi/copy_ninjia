@@ -47,7 +47,7 @@ export function extractPublicUsername(chat: unknown): string | undefined {
  * 上其它图片或属性顺序变化造成误匹配。
  */
 export function extractAvatarUrlFromProfileHtml(html: string): string | undefined {
-  const imgTagMatch = html.match(/<img[^>]*class="[^"]*tgme_page_photo_image[^"]*"[^>]*>/);
+  const imgTagMatch = /<img[^>]*class="[^"]*tgme_page_photo_image[^"]*"[^>]*>/.exec(html);
   const srcMatch = imgTagMatch?.[0].match(/src="([^"]+)"/);
   const photoUrl: string | undefined = srcMatch?.[1];
   return photoUrl?.startsWith("https://") ? photoUrl : undefined;

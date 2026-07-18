@@ -13,7 +13,7 @@ import { sendMessage } from "../../infra/telegram";
 import type { AiSentMessage } from "../../types";
 import { recordChatMessage } from "./rollingMemory";
 
-declare var self: Worker;
+declare const self: Worker;
 
 export function currentReplyGeneration(chatId: number): number {
   return replyGenerations.get(chatId) ?? 0;

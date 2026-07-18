@@ -11,6 +11,11 @@ export function hasExactKeys(value: Record<string, unknown>, keys: readonly stri
   return actualKeys.length === keys.length && keys.every((key: string) => Object.hasOwn(value, key));
 }
 
+/** 判断未知值是否为只包含非空字符串的数组，并为后续使用保留元素类型。 */
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item: unknown) => typeof item === "string" && item.trim().length > 0);
+}
+
 /** Telegram 用户 ID 必须是十进制正安全整数，拒绝指数、小数和隐式空白。 */
 export function parseTelegramUserId(raw: string, source: string): number {
   if (!/^[1-9]\d*$/.test(raw)) {
@@ -71,7 +76,7 @@ export function parseReactionConfig(value: unknown): ReactionConfig {
 
   const emotionKeywords: Record<string, readonly string[]> = Object.create(null) as Record<string, readonly string[]>;
   for (const [emoji, keywords] of Object.entries(value.emotionKeywords)) {
-    if (!emoji.trim() || !Array.isArray(keywords) || !keywords.every((keyword: unknown) => typeof keyword === "string" && keyword.trim().length > 0)) {
+    if (!emoji.trim() || !isNonEmptyStringArray(keywords)) {
       throw new Error(`Invalid reactions config entry for ${JSON.stringify(emoji)}`);
     }
     emotionKeywords[emoji] = Object.freeze([...keywords]);

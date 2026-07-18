@@ -5,14 +5,20 @@
   "private": true,
   "scripts": {
     "start": "bun run index.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test": "bun test",
     "test:coverage": "bun test --coverage --coverage-reporter=text",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun run test:coverage"
+    "check": "bun run lint && bun run typecheck && bun run test:coverage"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "^5.10.0",
     "@types/bun": "latest",
-    "typescript": "^5"
+    "eslint": "^10.7.0",
+    "typescript": "^5",
+    "typescript-eslint": "^8.64.0"
   },
   "dependencies": {
     "@google-cloud/translate": "^9.4.2",

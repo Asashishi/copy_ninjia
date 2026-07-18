@@ -270,7 +270,7 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
 export function appendLuckEntries(day: string, fileState: { current: DayFileState | null }, pending: LuckPendingEntry[]): void {
   if (pending.length === 0) return;
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
-  if (fileState.current === null || fileState.current.day !== day) {
+  if (fileState.current?.day !== day) {
     fileState.current = openDayFile(LUCK_MEMORY_DIR, day);
   }
   const chunk: string = pending.map((entry) => serializeDayFileEntry(entry.key, entry.record)).join(",\n");

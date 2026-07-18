@@ -18,7 +18,7 @@ export function createBoundedTaskRunner(maxConcurrent: number, maxPending: numbe
   }
 
   let activeCount: number = 0;
-  const pending: Array<() => void> = [];
+  const pending: (() => void)[] = [];
 
   const start = <T>(task: () => Promise<T>): Promise<T> => {
     activeCount++;

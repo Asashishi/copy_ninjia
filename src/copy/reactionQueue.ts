@@ -89,7 +89,7 @@ async function consumeChatQueue(chatId: number): Promise<void> {
   } finally {
     consumingChats.delete(chatId);
     const order: LinkedQueue<string> | undefined = chatQueues.get(chatId);
-    if (order && order.size === 0) {
+    if (order?.size === 0) {
       chatQueues.delete(chatId);
     }
   }

@@ -18,7 +18,7 @@ import {
 import type { AiMemoryDeletedEvent, AiMemoryEvent, AiMemorySnapshot, BufferedMessage } from "../../types";
 import { scheduleRotation } from "./compaction";
 
-declare var self: Worker;
+declare const self: Worker;
 
 /**
  * 各群滚动消息缓存的记录、轮换触发与快照落盘/恢复。轮换机制本身
@@ -176,7 +176,7 @@ export function flushDirtyMemories(): void {
  * 够久才补上——违反"任何触发都必已 record 过、mood 必已设置"的不变量。
  */
 export function hydrateMemories(memories: Map<number, string>): void {
-  const parsedMemories: Array<{ chatId: number; snapshot: AiMemorySnapshot }> = [];
+  const parsedMemories: { chatId: number; snapshot: AiMemorySnapshot }[] = [];
   for (const [chatId, snapshotJson] of memories) {
     if (chatBuffers.has(chatId)) continue;
 

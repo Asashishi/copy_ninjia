@@ -19,7 +19,7 @@ beforeEach(() => {
 });
 
 test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时淘汰最旧群", () => {
-  const memories: Map<number, string> = new Map();
+  const memories = new Map<number, string>();
   for (let index: number = 1; index <= AI_MEMORY_MAX_CHATS + 1; index++) {
     memories.set(-index, JSON.stringify({
       version: 1,
@@ -49,7 +49,7 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
 });
 
 test("回归：hydrate 恢复 chatLastActivityTimes 的同时也播种 chatMoods，不违反“有活动时间就有心情”的不变量", () => {
-  const memories: Map<number, string> = new Map([
+  const memories = new Map<number, string>([
     [-42, JSON.stringify({
       version: 1,
       buffer: [{ id: 1, firstName: "用户", lastName: "", text: "消息", at: "2026/07/18 00:00:00" }],

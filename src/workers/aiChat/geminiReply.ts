@@ -12,6 +12,7 @@ import { currentMoodInstruction } from "../../ai/mood";
 import { requestGeminiResponse } from "../../ai/gemini";
 import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit } from "../../ai/utils/geminiResponse";
 import { callTool } from "../../ai/tools";
+import { isPlainRecord } from "../../libs/runtimeConfig";
 import type { ExtractedFunctionCall, ReplyToolset } from "../../types";
 import { currentTimeSentence } from "./timeSentence";
 
@@ -86,10 +87,12 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
         if (!toolset.isActive()) return null;
         const result: string = toolset.has(call.name)
           ? await toolset.execute(call.name, JSON.stringify(call.args ?? {}))
-          : await callTool(call.name);
+          : callTool(call.name);
         // 工具实现返回的都是 JSON 字符串（见 src/ai/tools），
         // functionResponse.response 要求对象，解析回来直接挂上。
-        responseParts.push({ functionResponse: { id: call.id, name: call.name, response: JSON.parse(result) } });
+        const response: unknown = JSON.parse(result);
+        if (!isPlainRecord(response)) throw new Error(`Tool ${call.name} returned a non-object JSON value`);
+        responseParts.push({ functionResponse: { id: call.id, name: call.name, response } });
       }
       contents.push({ role: "user", parts: responseParts });
       continue;

@@ -19,7 +19,7 @@ import { relayLogMessage } from "./diskIO";
 import type { ForwardedLog, LogLevel, LogMessage } from "../types";
 import { redactSecretsInText } from "../libs/redaction";
 
-declare var self: Worker;
+declare const self: Worker;
 
 // 是否运行在主线程：决定 error 日志是直接转投落盘线程，还是包上信封向上
 // 转发给拥有本 Worker 的主线程模块。

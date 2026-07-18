@@ -101,7 +101,7 @@ export function startChatActionHeartbeat(
   if (!entry) {
     const timer: ReturnType<typeof setInterval> = setInterval(() => {
       const live: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
-      if (!live || live.timer !== timer || live.action === "idle") return;
+      if (live?.timer !== timer || live.action === "idle") return;
       pumpChatAction(chatId, live, false, dependencies);
     }, dependencies.intervalMs);
     entry = {

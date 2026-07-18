@@ -49,7 +49,7 @@ async function readBotLockRecords(lockFilePath: string): Promise<BotLockRecord[]
   if (!content.endsWith("\n")) throw new Error(`${lockFilePath} has an invalid lock registry format; repair it manually.`);
 
   const records: BotLockRecord[] = [];
-  const fingerprints = new Set<string>();
+  const fingerprints: Set<string> = new Set();
   for (const line of content.slice(0, -1).split("\n")) {
     const match = BOT_LOCK_LINE_PATTERN.exec(line);
     if (!match) throw new Error(`${lockFilePath} has an invalid lock registry format; repair it manually.`);

@@ -20,7 +20,7 @@ import { buildUserContent, type MediaCommentContext } from "./promptContext";
 import { currentReplyGeneration, isReplyGenerationCurrent, notifyRateLimited } from "./replyState";
 import { recordChatMessage } from "./rollingMemory";
 
-declare var self: Worker;
+declare const self: Worker;
 
 export interface ReplyRoundRequest {
   chatId: number;
