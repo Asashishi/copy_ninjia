@@ -91,6 +91,16 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(cache.dailyLuckCache.has("333:今天适合表白吗")).toBe(true);
   });
 
+  test("带文本：同款问题按钮只展示前 4 个字加 ...，但仍携带完整文本", async () => {
+    const question = "谷歌没发 3.5 pro 我要死了呜啊啊啊啊";
+    const ctx = makeInlineCtx(8603940412, question);
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+
+    const sameQuestionButton = ctx.results[0]!.reply_markup.inline_keyboard[0]![1]!;
+    expect(sameQuestionButton.text).toBe("谷歌没发...");
+    expect(sameQuestionButton.switch_inline_query_current_chat).toBe(question);
+  });
+
   test("同一天多个不同 key（多用户 / 同用户不同所求事项）各自独立落盘一次", async () => {
     const ctxA = makeInlineCtx(1, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctxA as any);

@@ -47,8 +47,8 @@ export const RATE_LIMIT_WINDOW_MS: number = 90_000;
 export const FORTUNE_THUMBNAIL_URL: string = "https://drive.google.com/uc?export=view&id=1o4wCIRE3XGSI7-MjXYWfvcPgR3QjClk-";
 export const PROBABILITY_THUMBNAIL_URL: string = "https://drive.google.com/uc?export=view&id=1o4wCIRE3XGSI7-MjXYWfvcPgR3QjClk-";
 
-/** "同款问题"按钮上展示的所求事项摘要，超过这个字符数就截断加省略号。 */
-export const SAME_QUESTION_LABEL_MAX_LEN: number = 20;
+/** "同款问题"按钮上展示的所求事项摘要，超过这个字符数就截断并加 "..."。 */
+export const SAME_QUESTION_LABEL_MAX_LEN: number = 4;
 
 /**
  * pendingLuckDraws 与签名回执双向索引（见 cache/luckChallenge.ts）共用

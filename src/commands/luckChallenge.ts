@@ -300,7 +300,9 @@ function pickDominantProbability(draw: LuckDraw): { label: string; percent: numb
 function buildRetryKeyboard(text: string | undefined): InlineKeyboard {
   const keyboard: InlineKeyboard = new InlineKeyboard().switchInlineCurrent("我也试试", "");
   if (text) {
-    const sameQuestionLabel: string = text.length > SAME_QUESTION_LABEL_MAX_LEN ? `${text.slice(0, SAME_QUESTION_LABEL_MAX_LEN)}…` : text;
+    const characters: string[] = Array.from(text);
+    const sameQuestionLabel: string =
+      characters.length > SAME_QUESTION_LABEL_MAX_LEN ? `${characters.slice(0, SAME_QUESTION_LABEL_MAX_LEN).join("")}...` : text;
     keyboard.switchInlineCurrent(sameQuestionLabel, text);
   }
   keyboard.row().switchInline("转发", text ?? "");
