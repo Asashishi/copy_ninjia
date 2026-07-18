@@ -16,7 +16,7 @@ import {
   USER_REPLY_TRIGGER_COOLDOWN_MS,
 } from "../../consts/auto";
 import { userReplyTriggerTimes } from "../../cache/auto";
-import { describeStickerForContext, pickStickerVisionSource } from "../../ai/stickerSets";
+import { describeStickerForContext, pickStickerVisionSource } from "../../ai/stickers/sets";
 import { pickRandom } from "../../libs/random";
 import { isSelfSent } from "../../infra/selfSentTracker";
 import { SUPER_ADMIN_USER_ID } from "../../infra/config";
@@ -233,7 +233,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     }
   } else if (!activeCopy && aiChatEnabled && message.sticker) {
     // 贴纸消息没有文本：先备好现有的元数据兜底行（情绪 emoji、所属贴纸包，
-    // 见 ai/stickerSets.ts 的 describeStickerForContext），再看有没有可用的
+    // 见 ai/stickers/sets.ts 的 describeStickerForContext），再看有没有可用的
     // 视觉解析素材（静态贴纸下载本体；动态/视频贴纸没有可解码的本体，改用
     // 缩略图；两者都没有则放弃视觉，见 pickStickerVisionSource）。没有素材
     // 就直接记兜底行；有素材则交给 AI Worker 走占位/异步解析管线（见

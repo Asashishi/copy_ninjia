@@ -24,10 +24,6 @@ export const GEMINI_MEDIA_MODEL: string = "gemini-3.1-flash-lite";
  *  的地方，瞬时的 5xx/连接错误能自愈）。 */
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
 
-/** getStickerSet 失败后的短期负缓存：避免 Telegram 故障期间每轮 AI 回复都
- * 重打同一包，同时让瞬时错误在本进程内自动恢复，不必等到重启。 */
-export const STICKER_SET_FAILURE_RETRY_MS: number = 60_000;
-
 /**
  * 单次请求的输出 token 上限（回复流水线 / 冷消息压缩各一个）。Gemini 的
  * 思考内容也计入 maxOutputTokens（usageMetadata 的 thoughtsTokenCount）：
@@ -132,20 +128,8 @@ export const SUMMARY_MAX_CHARS: number = 500;
  *  引导「通常 1~3 个动作，可以 3-5 个动作」，这是极端情况也不许突破的上限），
  *  超额的调用在执行侧直接拒绝，见 ai/tools/replyToolset.ts。 */
 export const MAX_ACTIONS_PER_REPLY: number = 8;
-/** 一轮回复里 send_sticker 工具最多发几枚贴纸：要么不发、要么只发一枚，
- *  超额的调用在执行侧直接拒绝，见 ai/tools/stickers.ts 的 sendStickerTool。 */
-export const MAX_STICKERS_PER_REPLY: number = 1;
 /** 一轮回复里 add_reaction 工具最多扣几个 emoji 反应。 */
 export const MAX_REACTIONS_PER_REPLY: number = 1;
-/**
- * view_sticker_pack 执行时把聊天状态心跳切到「正在选择贴纸」挡
- * （choose_sticker，与「正在输入」同一个机制）后的停顿：基础 + 随机抖动，
- * 合计 1.5~5 秒，模拟真人翻贴纸面板挑贴纸的节奏，见 ai/tools/stickers.ts。
- * 群友实际看到的选择时长还要更长：这一挡保持到贴纸真正发出为止，模型
- * 挑选贴纸那轮往返的耗时也计入其中。
- */
-export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
-export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 /**
  * 每条消息临发前「正在输入…」状态窗口的时长（见 ai/tools/replyToolset.ts 的
  * typingDelayMs）：基础停顿 + 按本条消息长度线性增加 + 随机抖动，再统一
@@ -234,7 +218,7 @@ export const CHAT_ACTION_MAX_CONSECUTIVE_FAILURES: number = 3;
 export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
 export const IMAGE_FALLBACK_PLACEHOLDER: string = "[图片：解析失败，请无视此消息]";
 /** 贴纸的占位文本；解析失败时不用通用失败说明，而是退回原有的元数据行
- *  （情绪 emoji + 所属贴纸包，见 ai/stickerSets.ts 的 describeStickerForContext）
+ *  （情绪 emoji + 所属贴纸包，见 ai/stickers/sets.ts 的 describeStickerForContext）
  *  ——即便视觉解析失败也不损失现状已有的信息，见 workers/aiChat/mediaIngest.ts 的
  *  recordChatMedia。 */
 export const STICKER_PENDING_PLACEHOLDER: string = "[贴纸：识别中]";
@@ -251,7 +235,7 @@ export const IMAGE_DESCRIPTION_MAX_CHARS: number = 125;
 
 /**
  * 贴纸/GIF 描述的字数上限——比图片短：贴纸/GIF 本身信息密度低（一个画面
- * 梗+一句文字居多）。这份描述的另一个消费方是贴纸目录（ai/stickerCatalog.ts），
+ * 梗+一句文字居多）。这份描述的另一个消费方是贴纸目录（ai/stickers/catalog.ts），
  * 两层贴纸工具下目录条目只在 view_sticker_pack 的返回结果里按需出现、不再
  * 拼进每次请求的工具描述（旧单层方案的 75 字紧箍随之作废），100 字给
  * 「原样抄录画面文字 + 简述画面情绪」留够空间。
@@ -281,27 +265,6 @@ export const MEDIA_DESCRIPTION_MAX_PENDING: number = 75;
  *  这只是防御性护栏）。 */
 export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
 
-// ---- 应景贴纸（两层工具：view_sticker_pack 先按整包简介挑包、看包内清单，
-// send_sticker 再按清单编号发送；模型在生成回复的同一次对话里自主决定）----
-// 目录/整包简介的生成与持久化见 ai/stickerCatalog.ts；工具定义/执行见
-// ai/tools/stickers.ts；按次回复的组装与限额状态见 ai/tools/replyToolset.ts。
-
-/** 贴纸目录单次 AI 调用（逐枚视觉解析、整包简介）失败后的退避重试间隔：
- *  第 N 次失败等第 N 项后再试，用完仍失败才放弃（解析失败的贴纸进
- *  failedEntries 本进程内不再试、简介失败保留旧值，都等下次启动对账重建）。
- *  底下 SDK 对网络错误/5xx/429 已有单次调用内的快速重试（见 ai/gemini.ts），
- *  这里兜的是它放弃之后更长的抖动。 */
-export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000, 120_000];
-
-/** 整包简介的字数上限：一层工具描述里每个包一条，供模型决定进哪个包细看。 */
-export const STICKER_PACK_SUMMARY_MAX_CHARS: number = 200;
-/** 整包简介生成的输出 token 上限（思考也计入，同 REPLY_MAX_TOKENS 注释）。 */
-export const STICKER_PACK_SUMMARY_MAX_TOKENS: number = 4096;
-/** 目录里还没生成出整包简介时，一层清单里的占位文案。 */
-export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成中，可进包内查看具体贴纸）";
-/** 查看贴纸包时声明的表达意图字数上限：只保留一条简短决策标准，避免模型
- *  把大段推理塞进工具参数和后续工具结果。 */
-export const STICKER_INTENT_MAX_CHARS: number = 80;
 /**
  * 本轮是否走「出错」分支的概率：在 workers/aiChat/replyRound.ts 的 startReplyRound
  * 里，请求模型之前先掷一次骰子决定，结果只在出错分支时才会拼进

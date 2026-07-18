@@ -1,28 +1,26 @@
-import { logger } from "../infra/logger";
+import { logger } from "../../infra/logger";
 import type { Sticker, StickerSet } from "@grammyjs/types";
 import type { GenerateContentResponse } from "@google/genai";
-import { getStickerSet, pickStickerVisionSource } from "./stickerSets";
-import { describeMediaForStickerCatalog } from "./imageDescription";
-import { requestGeminiResponse } from "./gemini";
-import { extractOutputText } from "./utils/geminiResponse";
-import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
-import { sleep } from "../libs/sleep";
-import { catalogs, dirtyPacks, failedEntries, generatingPacks, packSummaries } from "../cache/stickerCatalog";
-import { transientDescriptionCache } from "../cache/imageDescription";
+import { getStickerSet, pickStickerVisionSource } from "./sets";
+import { describeMediaForStickerCatalog } from "../imageDescription";
+import { requestGeminiResponse } from "../gemini";
+import { extractOutputText } from "../utils/geminiResponse";
+import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
+import { sleep } from "../../libs/sleep";
+import { catalogs, dirtyPacks, failedEntries, generatingPacks, packSummaries } from "../../cache/stickers/catalog";
+import { transientDescriptionCache } from "../../cache/imageDescription";
 import {
   GEMINI_SUMMARY_MODEL,
-  STICKER_CATALOG_RETRY_DELAYS_MS,
-  STICKER_PACK_SUMMARY_MAX_CHARS,
-  STICKER_PACK_SUMMARY_MAX_TOKENS,
   SUMMARY_TEMPERATURE,
-} from "../consts/aiChat";
-import { STICKER_PACK_SUMMARY_PROMPT } from "../consts/aiChatPrompts";
-import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot } from "../types";
+} from "../../consts/aiChat";
+import { STICKER_CATALOG_RETRY_DELAYS_MS, STICKER_PACK_SUMMARY_MAX_CHARS, STICKER_PACK_SUMMARY_MAX_TOKENS } from "../../consts/aiChat/stickers";
+import { STICKER_PACK_SUMMARY_PROMPT } from "../../consts/aiChatPrompts";
+import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot } from "../../types";
 
 /**
  * 机器人自己要发的贴纸（config/stickers.json 白名单包）的画面描述目录：
  * file_unique_id -> { emoji, description }，外加一条整包简介（≤200 字，
- * 见 summarizePack）。让 ai/stickers.ts 挑贴纸时能按「画面实际是什么」而非
+ * 见 summarizePack）。让 ai/tools/stickers.ts 挑贴纸时能按「画面实际是什么」而非
  * 「作者随手标的 emoji」来判断应景与否；整包简介供两层贴纸工具的第一层
  * （view_sticker_pack）挑包。
  *
@@ -41,7 +39,8 @@ import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot
  * workers/diskIO/snapshotFiles.ts 的 recoverStickerCatalogs。
  *
  * 内存态（catalogs/dirtyPacks/failedEntries/generatingPacks）见
- * cache/stickerCatalog.ts。
+ * cache/stickers/catalog.ts。本模块是这些原始集合唯一的业务写入方；外部
+ * 调用方只能通过本文件导出的查询、恢复与刷盘函数改变目录生命周期。
  */
 
 /** 跑一次贴纸目录的 AI 调用（逐枚视觉解析/整包简介），失败按
@@ -119,7 +118,7 @@ function buildSnapshot(pack: string): string {
 
 /** 把所有 dirty 包的目录快照上报出去（进而经主线程转投 diskIOWorker 落盘），
  *  随后清空 dirty 标记。用回调而不是直接 self.postMessage，避免本模块跟
- *  worker 全局绑死（同 ai/stickers.ts 用 onSent 回调的理由）。 */
+ *  worker 全局绑死（同 ai/tools/stickers.ts 用 onSent 回调的理由）。 */
 export function flushDirtyStickerCatalogs(post: (event: AiStickerCatalogEvent) => void): void {
   if (dirtyPacks.size === 0) return;
   for (const pack of dirtyPacks) {

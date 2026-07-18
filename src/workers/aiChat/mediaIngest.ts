@@ -1,7 +1,7 @@
 import { formatTokyoTime } from "../../libs/time";
 import { sanitizeInline } from "../../libs/text";
 import { displayBufferedMessageName } from "../../ai/utils/chatTranscript";
-import { getCatalogEntry } from "../../ai/stickerCatalog";
+import { getCatalogEntry } from "../../ai/stickers/catalog";
 import { describeMedia } from "../../ai/imageDescription";
 import { dirtyMemoryChats } from "../../cache/aiChatWorker";
 import type { AiRecordMediaMessage, BufferedMessage } from "../../types";
@@ -20,7 +20,7 @@ import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent 
  * 没有可用内容（贴纸例外，退回元数据行仍是可用信息）。
  *
  * 贴纸额外走一条捷径：若这枚贴纸恰好来自白名单包、目录里已经有现成描述
- * （见 ai/stickerCatalog.ts 的 getCatalogEntry），直接一步到位写入描述，
+ * （见 ai/stickers/catalog.ts 的 getCatalogEntry），直接一步到位写入描述，
  * 跳过占位与异步解析——群友发的贴纸不少概率命中机器人自己也在用的白名单
  * 包，省一次视觉调用。
  *

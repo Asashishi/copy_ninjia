@@ -1,9 +1,7 @@
 import type { StickerSet } from "@grammyjs/types";
 import { sendSticker } from "../../infra/telegram";
 import { sleep } from "../../libs/sleep";
-import { describeStickerForContext, getStickerSet } from "../stickerSets";
-import { getCatalogEntry, getPackSummary } from "../stickerCatalog";
-import { stickerConfig } from "../stickerConfig";
+import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet, stickerConfig } from "../stickers";
 import { parseIndexField } from "../utils/toolArgs";
 import {
   MAX_STICKERS_PER_REPLY,
@@ -11,7 +9,7 @@ import {
   STICKER_CHOOSE_DELAY_JITTER_MS,
   STICKER_INTENT_MAX_CHARS,
   STICKER_PACK_SUMMARY_PENDING,
-} from "../../consts/aiChat";
+} from "../../consts/aiChat/stickers";
 import {
   SEND_STICKER_TOOL_INSTRUCTION,
   STICKER_INTENT_SELECTION_INSTRUCTION,
@@ -23,15 +21,15 @@ import type { ChatActionControl, StickerCandidate, StickerCatalogEntry, StickerP
 /**
  * 应景贴纸的两层选择工具：
  * 一层 view_sticker_pack——工具描述里只列每个白名单包的编号、包名和整包
- * 简介（≤200 字，见 ai/stickerCatalog.ts 的 summarizePack），模型按简介挑
+ * 简介（≤200 字，见 ai/stickers/catalog.ts 的 summarizePack），模型按简介挑
  * 一个包调用，返回包内每枚贴纸的编号清单（emoji + 画面描述）；
  * 二层 send_sticker——按「包编号 + 贴纸编号」真正发送。必须先看过对应包的
  * 清单才能发（viewedPackIntents 强制），每轮回复最多 MAX_STICKERS_PER_REPLY 枚
  * （当前为 1：要么不发、要么只发一枚）、绝不重复同一枚（sentStickerUids 按
  * file_unique_id 强制，上限为 1 时限额先挡住、此规则只在上限放宽时兜底）
  * ——这些限额状态挂在 StickerRoundState 上，每轮回复新建一份（见
- * ai/replyTools.ts）。轮内限额之外还有一道跨轮互斥：同群并发的几轮回复
- * 只有第一个走到发送的轮能抢到本群的发贴纸锁（见 ai/stickerSendLock.ts），
+ * ai/tools/replyToolset.ts）。轮内限额之外还有一道跨轮互斥：同群并发的几轮回复
+ * 只有第一个走到发送的轮能抢到本群的发贴纸锁（见 ai/stickers/sendLock.ts），
  * 其余轮的 send_sticker 被拒绝、改用文字回应，避免并发轮各发一枚在几秒内
  * 贴纸刷屏。
  *
@@ -180,13 +178,13 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
  * 请求会把它重新盖回去白挂 5 秒——切挡拦住新 tick，settle 拦住在途的那发。
  * 校验被拒不切挡：什么都没发出去，模型多半会纠正参数重试，选择状态照旧维持。
  * 校验通过后、发送序列开始前还要抢本群的发贴纸锁（跨轮互斥，见模块头注
- * 与 ai/stickerSendLock.ts）：被并发轮抢先则拒绝，且这一拒绝是本轮终局的
+ * 与 ai/stickers/sendLock.ts）：被并发轮抢先则拒绝，且这一拒绝是本轮终局的
  * ——锁要到持锁轮结束才释放，重试也抢不到，所以顺手把本轮的「正在选择
  * 贴纸…」收回 idle（set("idle") 只收自己持有的挡位），不让群友对着一个
  * 等不来贴纸的状态白等。
  * @param chatAction 本轮聊天状态心跳的挡位切换句柄（见
  *   ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）。
- * @param stickerLock 本轮的同群发贴纸锁句柄（见 ai/stickerSendLock.ts 的
+ * @param stickerLock 本轮的同群发贴纸锁句柄（见 ai/stickers/sendLock.ts 的
  *   createStickerSendLock）。
  * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单
  *   （与组装工具描述/一层清单时用的编号一一对应，见模块头注）。

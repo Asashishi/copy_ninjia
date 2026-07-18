@@ -1,5 +1,5 @@
-import { ensureStickerCatalogs, flushDirtyStickerCatalogs, hydrateStickerCatalogs } from "../ai/stickerCatalog";
-import { stickerConfig } from "../ai/stickerConfig";
+import { ensureStickerCatalogs, flushDirtyStickerCatalogs, hydrateStickerCatalogs } from "../ai/stickers/catalog";
+import { stickerConfig } from "../ai/stickers/config";
 import { startWeatherRefreshLoop } from "../ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS, RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../consts/aiChat";
 import { botInfoState, longTriggerTimes, rateLimitNoticeTimes } from "../cache/aiChatWorker";
@@ -31,7 +31,7 @@ import { initTelegramClients } from "../infra/telegram";
  * aiChat/compaction.ts 的 scheduleRotation/rotateCompaction 实现。
  *
  * 贴纸目录：白名单贴纸包（机器人自己要发的那些）的画面描述目录由
- * ai/stickerCatalog.ts 生成/持久化，init 消息到达时后台启动生成（见
+ * ai/stickers/catalog.ts 生成/持久化，init 消息到达时后台启动生成（见
  * ensureStickerCatalogs），与本文件的 dirty 记忆快照共用同一条上报/落盘
  * 节奏（见文件底部的 setInterval 与 flushMemory 分支）。
  *
@@ -52,7 +52,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
     case "init":
       botInfoState.current = msg.botInfo;
       // 白名单贴纸包的目录生成后台启动，不阻塞后续 record/trigger 的处理，
-      // 见 ai/stickerCatalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
+      // 见 ai/stickers/catalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
       // 的条目再继续 diff（见该函数注释）。
       ensureStickerCatalogs(stickerConfig.packs);

@@ -1,3 +1,7 @@
+import type { StickerConfig } from "../types/stickers";
+
+export type { StickerConfig } from "../types/stickers";
+
 /** 运行时配置的最小结构校验工具。配置文件和环境变量均属于不可信输入。 */
 
 /** 判断未知值是否为可逐字段校验的普通对象。 */
@@ -32,11 +36,6 @@ export function parseTelegramUserId(raw: string, source: string): number {
 export function parseTelegramUserIdList(raw: string, source: string): readonly number[] {
   if (raw.trim() === "") return Object.freeze([]);
   return Object.freeze([...new Set(raw.split(",").map((part: string) => parseTelegramUserId(part.trim(), source)))]);
-}
-
-/** stickers.json 解码后的只读结构。 */
-export interface StickerConfig {
-  readonly packs: readonly string[];
 }
 
 const STICKER_PACK_NAME_PATTERN: RegExp = /^[A-Za-z0-9_]{1,64}$/;

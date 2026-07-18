@@ -1,5 +1,6 @@
 import type { BufferedMessage } from "./aiChatWorker";
 import type { MediaKind } from "./media";
+import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "./stickers";
 
 /** Worker 侧自我认知所需的机器人账号身份（bot.init() 之后才可得，见 initAiChat）。 */
 export interface AiBotInfo {
@@ -44,7 +45,7 @@ export interface AiRecordMediaMessage {
   caption: string;
   /** 要下载的 Telegram file_id：图片是已按大小挑好档位的 photo file_id
    * （见 auto/message/facts.ts 的 pickPhotoFile）；贴纸/GIF 是本体或缩略图（见
-   * ai/stickerSets.ts 的 pickStickerVisionSource、auto/message/facts.ts 的
+   * ai/stickers/sets.ts 的 pickStickerVisionSource、auto/message/facts.ts 的
    * animation 分支），素材选择已在主线程完成。 */
   fileId: string;
   /** 描述查找/临时去重缓存的键：图片用同档位的 file_unique_id；贴纸/GIF
@@ -59,7 +60,7 @@ export interface AiRecordMediaMessage {
    * 在描述解析成功时执行评价回复。 */
   commentOnResolve: boolean;
   /** kind === "sticker" 时视觉解析失败的兜底文本（现有元数据行，见
-   * ai/stickerSets.ts 的 describeStickerForContext）——即便解析失败也不
+   * ai/stickers/sets.ts 的 describeStickerForContext）——即便解析失败也不
    * 丢失贴纸自带的 emoji/包名信息；其余 kind 不传。 */
   stickerFallbackText?: string;
   /** 这份媒体是在明确跟机器人说话（回复机器人，或 caption 里 @ 机器人）：
@@ -73,42 +74,6 @@ export interface AiRecordMediaMessage {
      * 若是贴纸等非文本消息、或本次是 @ 提及时则缺省。 */
     repliedBotText?: string;
   };
-}
-
-/** 单枚贴纸的目录条目：emoji 元数据 + AI 生成的画面描述（≤100 字，见
- * consts/aiChat.ts 的 SHORT_MEDIA_DESCRIPTION_MAX_CHARS）。 */
-export interface StickerCatalogEntry {
-  emoji: string;
-  description: string;
-}
-
-/**
- * 某个白名单贴纸包的目录快照：贴纸自身 file_unique_id -> 目录条目。落盘
- * 结构见 memory/stickers/<pack>.json（src/workers/diskIO/snapshotFiles.ts）。
- * 由 ai/stickerCatalog.ts 在 Worker 侧生成、aiChatWorker.ts 定期上报 dirty
- * 包，经主线程 aiChat.ts 转投 diskIOWorker 落盘。
- */
-export interface StickerCatalogSnapshot {
-  version: 1;
-  entries: Record<string, StickerCatalogEntry>;
-  /** AI 生成的整包简介（≤200 字，见 consts/aiChat.ts 的
-   * STICKER_PACK_SUMMARY_MAX_CHARS），供两层贴纸工具的第一层挑包；还没生成
-   * 出来为 null，下次对账时会补生成。 */
-  summary: string | null;
-  savedAt: number;
-}
-
-/**
- * 主线程 -> Worker：启动时（或本 Worker 崩溃重启后）灌入持久化的贴纸目录。
- * 必须紧跟在 init 之后送达（FIFO），让 ensureStickerCatalogs 的 diff 生成
- * 能看到已恢复的条目、不重复调视觉模型。只对内存里还没有数据的包生效。
- * 值是 StickerCatalogSnapshot 的序列化 JSON（快照在整条管线上以字符串
- * 形态流转，理由见 AiMemoryEvent.snapshot），由 hydrateStickerCatalogs
- * 解析回结构。
- */
-export interface AiHydrateStickerCatalogMessage {
-  type: "hydrateStickerCatalog";
-  catalogs: Map<string, string>;
 }
 
 /** 主线程 -> Worker：触发一次 AI 回复（同群并发占位与限频判定都在 Worker 侧做）。 */
@@ -214,16 +179,6 @@ export interface AiMemoryDeletedEvent {
 export interface AiMemoryFlushedEvent {
   type: "memoryFlushed";
   flushId: number;
-}
-
-/** Worker -> 主线程：一个白名单贴纸包的目录快照（dirty 包定时上报，或
- * flushMemory 触发的即时上报，见 ai/stickerCatalog.ts 的
- * flushDirtyStickerCatalogs）。snapshot 是 StickerCatalogSnapshot 序列化后
- * 的 JSON 文本，理由与格式约定同 AiMemoryEvent.snapshot。 */
-export interface AiStickerCatalogEvent {
-  type: "stickerCatalog";
-  pack: string;
-  snapshot: string;
 }
 
 export type AiChatWorkerEvent = AiSentMessage | AiMemoryEvent | AiMemoryDeletedEvent | AiMemoryFlushedEvent | AiStickerCatalogEvent;

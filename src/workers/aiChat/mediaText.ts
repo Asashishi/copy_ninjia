@@ -41,7 +41,7 @@ export function resolvedTagFor(kind: MediaKind, description: string): string {
 }
 
 /** 解析失败时回填的兜底文本：贴纸退回原有的元数据行（不丢失 emoji/包名
- *  信息，见 ai/stickerSets.ts 的 describeStickerForContext），图片/GIF 用
+ *  信息，见 ai/stickers/sets.ts 的 describeStickerForContext），图片/GIF 用
  *  通用的失败说明。 */
 export function fallbackTextFor(kind: MediaKind, msg: AiRecordMediaMessage): string {
   if (kind === "sticker") return msg.stickerFallbackText ?? IMAGE_FALLBACK_PLACEHOLDER;

@@ -12,3 +12,4 @@ export type * from "./antiRaid";
 export type * from "./tools";
 export type * from "./luckChallenge";
 export type * from "./media";
+export type * from "./stickers";

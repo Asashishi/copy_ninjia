@@ -2,7 +2,7 @@
  * 群聊媒体（图片/贴纸/GIF）的异步描述：下载 Telegram 文件，按需转码成
  * 视觉接口通吃的 jpg/png（见 libs/image.ts），喂给 Gemini 的视觉输入
  * （inlineData），产出一行简短中文描述，供 workers/aiChatWorker.ts 的 recordChatMedia 把
- * 对话缓存里的占位文本替换掉，也供 ai/stickerCatalog.ts 生成机器人自己
+ * 对话缓存里的占位文本替换掉，也供 ai/stickers/catalog.ts 生成机器人自己
  * 贴纸目录的描述条目。跑在 AI Worker 线程里（调用方就是它）。
  *
  * 失败一律返回 null、绝不抛错——调用方按各自的兜底处理（图片退化成
@@ -61,7 +61,7 @@ function maxCharsFor(kind: MediaKind): number {
  * 由调用方先查 stickerCatalog 的常驻目录，不会走到这里。
  * @param kind 媒体类型，决定用哪份视觉提示词与描述长度上限。
  * @param fileId 要下载的 Telegram file_id：图片是本体；贴纸是本体（静态）
- *   或缩略图（动态/视频，见 ai/stickerSets.ts 的 pickStickerVisionSource）；
+ *   或缩略图（动态/视频，见 ai/stickers/sets.ts 的 pickStickerVisionSource）；
  *   GIF 是缩略图（本项目无法解码 mp4/gif 抽帧，只能分析封面帧）。
  * @param fileUniqueId 缓存去重键：图片用同档位的 file_unique_id；贴纸/GIF
  *   固定用媒体自身（而非缩略图）的 file_unique_id，保证同一份贴纸/GIF

@@ -39,7 +39,7 @@ mock.module("../../src/libs/sleep", () => ({
   sleep: sleepMock,
 }));
 
-mock.module("../../src/ai/stickerConfig", () => ({
+mock.module("../../src/ai/stickers/config", () => ({
   stickerConfig: { packs: [] },
 }));
 

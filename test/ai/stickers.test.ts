@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { parseIndexField } from "../../src/ai/utils/toolArgs";
 
 /**
- * ai/stickers.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者在
+ * ai/tools/stickers.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者在
  * 模块顶层就会 `new Worker(...)`：单测里绝不能让它真的跑起来（理由同
  * test/commands/luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
  * infra/telegram 的 sendSticker 也一并 mock 成测试可控的假实现——本文件
@@ -30,8 +30,8 @@ const {
   viewStickerPackTool,
 } = await import("../../src/ai/tools/stickers");
 const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../src/consts/tools");
-const { STICKER_INTENT_MAX_CHARS } = await import("../../src/consts/aiChat");
-const { createStickerSendLock } = await import("../../src/ai/stickerSendLock");
+const { STICKER_INTENT_MAX_CHARS } = await import("../../src/consts/aiChat/stickers");
+const { createStickerSendLock } = await import("../../src/ai/stickers/sendLock");
 
 function candidate(fileId: string, emoji: string, description: string): any {
   return { sticker: { file_id: fileId, file_unique_id: `${fileId}-uid`, emoji }, emoji, description };

@@ -1,20 +1,20 @@
 import { describe, expect, mock, test } from "bun:test";
 
 /**
- * ai/stickerSets.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者
+ * ai/stickers/sets.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者
  * 在模块顶层就会 `new Worker(...)`：单测里绝不能让它真的跑起来（理由同
  * test/commands/luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
  */
-mock.module("../../src/infra/diskIO", () => ({
+mock.module("../../../src/infra/diskIO", () => ({
   postDiskIO: mock((..._args: unknown[]): void => {}),
   onDiskIORespawn: mock((..._args: unknown[]): void => {}),
   relayLogMessage: mock((..._args: unknown[]): void => {}),
 }));
 
-const { describeStickerForContext, getStickerSet, pickStickerVisionSource } = await import("../../src/ai/stickerSets");
-const { failedPacks, stickerSetCache } = await import("../../src/cache/stickerSets");
+const { describeStickerForContext, getStickerSet, pickStickerVisionSource } = await import("../../../src/ai/stickers/sets");
+const { failedPacks, stickerSetCache } = await import("../../../src/cache/stickers/sets");
 
-describe("ai/stickerSets describeStickerForContext", () => {
+describe("ai/stickers/sets describeStickerForContext", () => {
   test("emoji + 包名都有时按顺序拼接", () => {
     expect(describeStickerForContext({ emoji: "😂", set_name: "test_pack" })).toBe("（发了一枚贴纸：情绪含义 😂，来自贴纸包「test_pack」）");
   });
@@ -34,7 +34,7 @@ describe("ai/stickerSets describeStickerForContext", () => {
   });
 });
 
-describe("ai/stickerSets pickStickerVisionSource", () => {
+describe("ai/stickers/sets pickStickerVisionSource", () => {
   test("静态贴纸直接用本体 file_id，file_unique_id 是贴纸自身的", () => {
     const sticker: any = { file_id: "body-id", file_unique_id: "sticker-uid", is_animated: false, is_video: false };
     expect(pickStickerVisionSource(sticker)).toEqual({ fileId: "body-id", fileUniqueId: "sticker-uid" });
@@ -68,7 +68,7 @@ describe("ai/stickerSets pickStickerVisionSource", () => {
   });
 });
 
-describe("ai/stickerSets getStickerSet 失败恢复", () => {
+describe("ai/stickers/sets getStickerSet 失败恢复", () => {
   test("瞬时失败只在负缓存窗口内拦截，过期后同一进程会重新请求并恢复", async () => {
     const pack = "retryable_pack";
     const expected: any = { name: pack, title: "Retryable", sticker_type: "regular", stickers: [] };

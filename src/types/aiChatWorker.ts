@@ -1,6 +1,6 @@
-import type { Sticker } from "@grammyjs/types";
 import type { Tool } from "@google/genai";
 import type { ToolDefinition } from "./tools";
+import type { StickerSendLockControl } from "./stickers";
 
 /** 聊天状态心跳的挡位（见 ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）：
  *  typing =「正在输入…」（每条消息临发前的有界窗口，见 replyToolset.ts）；
@@ -67,18 +67,6 @@ export interface ChatActionHeartbeatEntry {
  *  发出的状态请求全部落定，调用方应在 finally 中 await。 */
 export interface ChatActionHeartbeatControl extends ChatActionControl {
   stop(): Promise<void>;
-}
-
-/** 同群「发贴纸」跨轮互斥锁的本轮句柄（见 ai/stickerSendLock.ts 的
- *  createStickerSendLock）：并发轮里只有第一个走到 send_sticker 发送的轮能
- *  抢到锁，其余轮被拒绝、改用文字回应；单轮独占时锁恒空闲，行为不变。 */
-export interface StickerSendLockControl {
-  /** 尝试抢占/确认持有本群的发贴纸锁：空闲即抢占，本轮已持有直接通过
-   *  （发送失败换一枚重试不受影响），被并发轮持有或本句柄已释放则失败。 */
-  tryAcquire(): boolean;
-  /** 释放本轮持有的锁（未持有则只作废句柄，幂等），轮结束时在 finally
-   *  调用，异常中断也不遗留。 */
-  release(): void;
 }
 
 /** 同群并发位占满期间排队等待补跑的直接触发（回复/@ 机器人，见
@@ -156,7 +144,7 @@ export interface ReplyToolContext {
    *  拉起有界的 typing 窗口、发送前切 idle 让状态随消息一起消失、翻贴纸包
    *  起切 choose_sticker 并维持到贴纸发出。 */
   chatAction: ChatActionControl;
-  /** 同群「发贴纸」跨轮互斥锁的本轮句柄（见 ai/stickerSendLock.ts）：
+  /** 同群「发贴纸」跨轮互斥锁的本轮句柄（见 ai/stickers/sendLock.ts）：
    *  send_sticker 校验通过后、真正发送前 tryAcquire，抢不到则拒绝发送。 */
   stickerLock: StickerSendLockControl;
   /** 本轮是否走「出错」分支：由 workers/aiChat/replyRound.ts 的 startReplyRound
@@ -199,31 +187,4 @@ export interface ReplyToolset {
   actionsUsed(): number;
   /** 是否仍允许本轮继续请求模型或执行新的群内副作用。 */
   isActive(): boolean;
-}
-
-/** 一层候选贴纸：本体 + emoji 元数据 + AI 生成的画面描述，见
- *  ai/tools/stickers.ts 的 buildStickerPackMenu。 */
-export interface StickerCandidate {
-  sticker: Sticker;
-  emoji: string;
-  description: string;
-}
-
-/** 一个可选贴纸包：short name、展示标题、整包简介、包内已有描述的贴纸。 */
-export interface StickerPackCandidate {
-  pack: string;
-  title: string;
-  summary: string;
-  stickers: StickerCandidate[];
-}
-
-/** 一轮回复内贴纸工具的限额状态，随 ReplyToolset 新建（见
- *  ai/tools/replyToolset.ts 的 createReplyToolset）。 */
-export interface StickerRoundState {
-  /** 本轮用 view_sticker_pack 查看各包清单时声明的表达意图，键是包编号
-   *  （1-based）。重复查看同一个包时以最新意图为准。 */
-  viewedPackIntents: Map<number, string>;
-  /** 本轮已发出的贴纸 file_unique_id——既是限额计数，也在上限放宽到 1 枚
-   *  以上时防止重复发同一枚。 */
-  sentStickerUids: Set<string>;
 }

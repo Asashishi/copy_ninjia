@@ -194,7 +194,7 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
  * @param messageId 这条消息的 message_id（评价回复挂引用用）。
  * @param commentOnResolve 是否在解析成功后评价这份媒体。
  * @param stickerFallbackText kind 为 "sticker" 时解析失败的兜底文本（现有
- *   元数据行，见 ai/stickerSets.ts 的 describeStickerForContext）；其余
+ *   元数据行，见 ai/stickers/sets.ts 的 describeStickerForContext）；其余
  *   kind 不传。
  * @param directTrigger 这份媒体是在明确跟机器人说话（回复机器人，或 caption
  *   里 @ 机器人）：描述就绪（命中缓存或解析完成，失败用兜底文本）后必触发

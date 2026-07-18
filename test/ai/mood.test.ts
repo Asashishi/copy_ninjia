@@ -13,7 +13,7 @@ import type { MoodOption } from "../../src/types";
 /**
  * ai/mood.ts 的纯逻辑单测：首次抽取、空窗重抽/维持、群间隔离。所有用例
  * 注入独立 Map，不碰 Worker 全局的 chatMoods/chatLastActivityTimes（同
- * test/ai/stickerSendLock.test.ts 的隔离方式）。抽中哪一档不硬编码具体
+ * test/ai/stickers/sendLock.test.ts 的隔离方式）。抽中哪一档不硬编码具体
  * 心情名——只断言「roll=1 落在权重表第一档」「roll=100 落在最后一档」，
  * MOOD_OPTIONS 内容/顺序/条目数之后再调也不用跟着改这份测试。
  */

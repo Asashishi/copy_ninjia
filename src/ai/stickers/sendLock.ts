@@ -1,5 +1,5 @@
-import { stickerSendLocks } from "../cache/aiChatWorker";
-import type { StickerSendLockControl } from "../types";
+import { stickerSendLocks } from "../../cache/stickers/sendLock";
+import type { StickerSendLockControl } from "../../types";
 
 /**
  * 同群「发贴纸」的跨轮互斥锁。同群最多 REPLY_ROUND_MAX_CONCURRENT 轮回复
@@ -16,7 +16,7 @@ import type { StickerSendLockControl } from "../types";
  */
 
 /** 为一轮回复创建本群发贴纸锁的句柄。locks 可注入仅为单测隔离；生产调用
- *  共享 Worker 内的 stickerSendLocks。 */
+ *  共享 cache/stickers/sendLock.ts 内、随 Worker 重启清空的 stickerSendLocks。 */
 export function createStickerSendLock(chatId: number, locks: Map<number, object> = stickerSendLocks): StickerSendLockControl {
   const token: object = {};
   let released: boolean = false;

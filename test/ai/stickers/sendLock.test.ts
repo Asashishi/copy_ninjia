@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { createStickerSendLock } from "../../src/ai/stickerSendLock";
+import { createStickerSendLock } from "../../../src/ai/stickers/sendLock";
 
 /**
- * ai/stickerSendLock.ts 的纯逻辑单测：锁的抢占/重入/互斥/释放语义。与
+ * ai/stickers/sendLock.ts 的纯逻辑单测：锁的抢占/重入/互斥/释放语义。与
  * send_sticker 执行路径的整合行为（拒绝发送、收回挡位）在
  * test/ai/stickers.test.ts 里覆盖。所有用例注入独立 Map，不碰 Worker 全局
  * 的 stickerSendLocks。
  */
 
-describe("ai/stickerSendLock createStickerSendLock", () => {
+describe("ai/stickers/sendLock createStickerSendLock", () => {
   test("空闲即抢占，本轮已持有重入通过，并发句柄抢不到", () => {
     const locks = new Map<number, object>();
     const first = createStickerSendLock(123, locks);

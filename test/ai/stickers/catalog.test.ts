@@ -1,16 +1,16 @@
 import { describe, expect, mock, test } from "bun:test";
 
 /**
- * ai/stickerCatalog.ts 经 infra/logger -> infra/diskIO，后者在模块顶层就会
+ * ai/stickers/catalog.ts 经 infra/logger -> infra/diskIO，后者在模块顶层就会
  * `new Worker(...)`：单测里绝不能让它真的跑起来（理由同 test/commands/
  * luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
- * ai/stickerSets.ts（真实拉取贴纸集合）、ai/imageDescription.ts（真实调
+ * ai/stickers/sets.ts（真实拉取贴纸集合）、ai/imageDescription.ts（真实调
  * 视觉模型）与 ai/gemini.ts（整包简介生成走的文本模型）也一并 mock 掉，
  * 换成测试可控的假实现——本文件只关心 generatePackCatalog 的对账逻辑
  * （补/剪/失败时按兵不动/整包简介的生成时机），不关心真实网络调用是否
  * 成功（那部分由手动跑过的真实模型调用验证过）。
  */
-mock.module("../../src/infra/diskIO", () => ({
+mock.module("../../../src/infra/diskIO", () => ({
   postDiskIO: mock((..._args: unknown[]): void => {}),
   onDiskIORespawn: mock((..._args: unknown[]): void => {}),
   relayLogMessage: mock((..._args: unknown[]): void => {}),
@@ -24,22 +24,22 @@ const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<any>
   candidates: [{ content: { parts: [{ text: "一包默认简介" }] } }],
 }));
 
-mock.module("../../src/ai/stickerSets", () => ({
+mock.module("../../../src/ai/stickers/sets", () => ({
   getStickerSet: getStickerSetMock,
   pickStickerVisionSource: (sticker: any) => ({ fileId: `${sticker.file_id}`, fileUniqueId: sticker.file_unique_id }),
 }));
-mock.module("../../src/ai/imageDescription", () => ({
+mock.module("../../../src/ai/imageDescription", () => ({
   describeMedia: describeMediaMock,
   describeMediaForStickerCatalog: describeMediaForStickerCatalogMock,
 }));
 // 单次调用失败会按 STICKER_CATALOG_RETRY_DELAYS_MS 退避重试；测试里把
 // 睡眠打成即时返回，失败用例才不会真等几分钟。
-mock.module("../../src/libs/sleep", () => ({ sleep: mock(async (_ms: number): Promise<void> => {}) }));
-const realGemini = await import("../../src/ai/gemini");
-mock.module("../../src/ai/gemini", () => ({ ...realGemini, requestGeminiResponse: requestGeminiResponseMock }));
+mock.module("../../../src/libs/sleep", () => ({ sleep: mock(async (_ms: number): Promise<void> => {}) }));
+const realGemini = await import("../../../src/ai/gemini");
+mock.module("../../../src/ai/gemini", () => ({ ...realGemini, requestGeminiResponse: requestGeminiResponseMock }));
 
-const { generatePackCatalog, getCatalogEntry, getPackSummary, hydrateStickerCatalogs } = await import("../../src/ai/stickerCatalog");
-const { transientDescriptionCache } = await import("../../src/cache/imageDescription");
+const { generatePackCatalog, getCatalogEntry, getPackSummary, hydrateStickerCatalogs } = await import("../../../src/ai/stickers/catalog");
+const { transientDescriptionCache } = await import("../../../src/cache/imageDescription");
 
 function sticker(fileUniqueId: string, emoji: string): any {
   return { file_id: `id-${fileUniqueId}`, file_unique_id: fileUniqueId, emoji, is_animated: false, is_video: false };
@@ -51,7 +51,7 @@ function persisted(pack: string, entries: Record<string, { emoji: string; descri
   return new Map([[pack, JSON.stringify({ version: 1, entries, summary, savedAt: 0 })]]);
 }
 
-describe("ai/stickerCatalog generatePackCatalog 对账", () => {
+describe("ai/stickers/catalog generatePackCatalog 对账", () => {
   test("线上有、目录没有的补：生成描述并写入，随后生成整包简介", async () => {
     transientDescriptionCache.set("new-uid", Promise.resolve("临时旧描述"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "新包", stickers: [sticker("new-uid", "😂")] }));

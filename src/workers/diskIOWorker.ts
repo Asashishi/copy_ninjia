@@ -24,7 +24,7 @@ import { flushLuckAppends, handleLuckDrawMessage } from "./diskIO/luckFiles";
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import { flushVerificationChanges, handleVerificationDelete, handleVerificationUpsert, recoverVerificationDay, scheduleVerificationRollover } from "./diskIO/verificationFiles";
 import { deleteAiMemoryFile, recoverAiMemories, recoverLuckDay, recoverStickerCatalogs, writeAiMemoryFile, writeStickerCatalogFile } from "./diskIO/snapshotFiles";
-import { stickerConfig } from "../ai/stickerConfig";
+import { stickerConfig } from "../ai/stickers/config";
 import { AI_MEMORY_DIR, LOGS_DIR, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, VERIFICATION_MEMORY_DIR } from "../consts/paths";
 import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
 import { getTokyoDateKey } from "../libs/time";
@@ -112,7 +112,7 @@ function flushAll(): void {
  * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
  * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）；
  * 包内部「哪些贴纸还在线上」的对账则在 aiChatWorker 那侧的
- * ai/stickerCatalog.ts 做（需要现查 Telegram，本线程没有 bot.api）。
+ * ai/stickers/catalog.ts 做（需要现查 Telegram，本线程没有 bot.api）。
  */
 function handleLoad(): void {
   let loadError: string | undefined;
