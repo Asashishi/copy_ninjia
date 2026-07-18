@@ -40,9 +40,30 @@ const isMainThread: boolean = Bun.isMainThread;
 // 输出（三类持久化都停，功能本身不受影响，只是不再落盘）。
 const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
 
-// 落盘 Worker 只在主线程启动；Worker 线程里始终为 null，走转发模式（见
-// infra/logger.ts 的 emit）。unref 让它不阻止进程退出。
-let diskIOWorker: Worker | null = isMainThread ? createDiskIOWorker() : null;
+// 落盘 Worker 只能由入口在取得 bot.lock 后显式初始化。模块导入本身不得
+// 创建线程：否则竞争单实例锁失败的第二进程仍会执行 diskIOWorker 顶层的
+// initLogFiles()，提前创建/清扫共享 logs/ 目录。Worker 线程里永远不初始化
+// 本宿主，只使用 logger.ts 的转发模式。
+let diskIOWorker: Worker | null = null;
+let diskIOInitialized: boolean = false;
+
+/**
+ * 在主线程显式启动唯一的落盘 Worker。调用方必须已经取得数据目录的
+ * bot.lock；重复调用幂等，不能借重复初始化绕过崩溃自愈的放弃阈值。
+ */
+export function initDiskIO(): void {
+  if (!isMainThread) {
+    throw new Error("Disk I/O can only be initialized by the main thread.");
+  }
+  if (diskIOInitialized) return;
+  diskIOWorker = createDiskIOWorker();
+  diskIOInitialized = true;
+}
+
+/** 供入口生命周期守卫和无副作用 import 测试查询，不代表 Worker 当前可用。 */
+export function isDiskIOInitialized(): boolean {
+  return diskIOInitialized;
+}
 
 function createDiskIOWorker(): Worker {
   const w: Worker = new Worker(new URL("../workers/diskIOWorker.ts", import.meta.url).href);

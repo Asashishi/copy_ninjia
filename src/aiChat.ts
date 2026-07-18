@@ -24,7 +24,7 @@ import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, 
  * 凭它重发落盘（下方 onDiskIORespawn），两条路径互不依赖。
  */
 
-const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
+const { init: initAiChatWorker, post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
   url: new URL("./workers/aiChatWorker.ts", import.meta.url).href,
   label: "AI Worker",
   giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
@@ -99,6 +99,7 @@ onDiskIORespawn(() => {
  * 重新认出自己。
  */
 export function initAiChat(botInfo: AiBotInfo): void {
+  initAiChatWorker();
   const message: AiInitMessage = {
     type: "init",
     botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
@@ -147,6 +148,7 @@ let nextMemoryFlushId: number = 1;
  * 停机流程最多被拖住 timeoutMs，不会挂死。
  */
 export function flushAiMemory(timeoutMs: number = 2000): Promise<void> {
+  if (lastInitState.current === null) return Promise.resolve();
   return new Promise((resolve) => {
     const id: number = nextMemoryFlushId++;
     const timer = setTimeout(() => {

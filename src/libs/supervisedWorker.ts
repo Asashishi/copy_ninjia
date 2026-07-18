@@ -34,12 +34,23 @@ export interface SupervisedWorkerOptions<TMessage, TEvent> {
   onGiveUp?: () => void;
 }
 
-/** 启动并监督一个业务 Worker，返回投递句柄（自愈放弃后投递被静默丢弃）。 */
+export interface SupervisedWorkerHandle<TMessage> {
+  /** 显式启动 Worker；重复调用幂等。 */
+  init: () => void;
+  /** 只向已初始化且仍可用的 Worker 投递；初始化前与自愈放弃后静默丢弃。 */
+  post: (message: TMessage) => void;
+}
+
+/**
+ * 建立业务 Worker 的监督句柄，但不在模块导入时创建线程。入口完成单实例锁和
+ * 必要的持久化恢复后，由领域 init 显式启动；自愈放弃后投递被静默丢弃。
+ */
 export function superviseWorker<TMessage, TEvent = never>(
   options: SupervisedWorkerOptions<TMessage, TEvent>
-): { post: (message: TMessage) => void } {
+): SupervisedWorkerHandle<TMessage> {
   const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
   let worker: Worker | null = null;
+  let initialized: boolean = false;
 
   function createWorker(): Worker {
     const w: Worker = new Worker(options.url);
@@ -82,9 +93,14 @@ export function superviseWorker<TMessage, TEvent = never>(
     return w;
   }
 
-  worker = createWorker();
+  function init(): void {
+    if (initialized) return;
+    worker = createWorker();
+    initialized = true;
+  }
 
   return {
+    init,
     post: (message: TMessage): void => {
       worker?.postMessage(message);
     },

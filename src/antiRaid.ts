@@ -49,7 +49,7 @@ function buildAdoptMessage(): AdoptLockdownsMessage {
   return { type: "adopt", lockdowns: collectActiveLockdowns() };
 }
 
-const { post } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
+const { init: initAntiRaidWorker, post } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
   url: new URL("./workers/antiRaidWorker.ts", import.meta.url).href,
   label: "Anti-raid guard Worker",
   giveUpConsequence: "join verification and anti-raid features will silently stay disabled until the process restarts.",
@@ -105,6 +105,7 @@ function abandonLockdowns(): void {
  * 新事件到达，Worker 侧「私密模式下直接踢人」的判断对随后涌入的入群立即生效。
  */
 export function initAntiRaid(): void {
+  initAntiRaidWorker();
   const adopt: AdoptLockdownsMessage = buildAdoptMessage();
   if (adopt.lockdowns.length === 0) return;
 

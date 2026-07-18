@@ -1,5 +1,5 @@
 import { logger } from "./src/infra/logger";
-import { flushDiskIO, loadPersistedData, type LoadedData } from "./src/infra/diskIO";
+import { flushDiskIO, initDiskIO, loadPersistedData, type LoadedData } from "./src/infra/diskIO";
 import { GrammyError } from "grammy";
 import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
 import { bot } from "./src/infra/telegram";
@@ -15,6 +15,13 @@ import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } fro
 import { seedSenderCache } from "./src/users/senderIdentity";
 import { sleep } from "./src/libs/sleep";
 import type { CachedUser } from "./src/types";
+
+// 共享目录写权限与组件生命周期由入口集中持有。任何清理/异常路径都先检查
+// 这些标志：未取得 bot.lock 的竞争进程只能写 stderr，不能 flush 或解锁。
+let lockAcquired: boolean = false;
+let diskIOInitialized: boolean = false;
+let aiChatInitialized: boolean = false;
+let finalCleanupPromise: Promise<void> | null = null;
 
 /**
  * 注册各类更新处理器，并启动 grammY 的长轮询循环。
@@ -38,6 +45,9 @@ async function main(): Promise<void> {
   process.once("SIGTERM", stopBot);
 
   await acquireSingleInstanceLock(BOT_TOKEN);
+  lockAcquired = true;
+  initDiskIO();
+  diskIOInitialized = true;
   // 清扫上次崩溃可能残留的 state.json/bot.lock 原子写临时文件（见
   // storage.ts 的 cleanupOrphanedTempFiles 注释）；必须在拿到单实例锁之后
   // 才能安全做——此刻已确认没有其它活跃实例在并发写这两个文件。
@@ -203,6 +213,7 @@ async function main(): Promise<void> {
   // runner 开始投喂更新之前注入，postMessage 的 FIFO 保证这条 init 消息
   // 先于一切「记录/触发」事件到达 Worker。
   initAiChat(bot.botInfo);
+  aiChatInitialized = true;
   // 紧随 init 之后灌回持久化的 AI 记忆快照，FIFO 保证先于一切 record/trigger
   // 到达 Worker（见 aiChat.ts 的 hydrateAiMemory）。
   hydrateAiMemory(loaded.aiMemories);
@@ -296,13 +307,28 @@ async function waitForRunnerDrain(runner: RunnerHandle, timeoutMs: number = 5000
  * 拉取 Telegram 更新）。
  */
 async function flushAllToDisk(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number, stateTimeoutMs: number): Promise<void> {
+  if (!lockAcquired) return;
   await Promise.all([
-    (async (): Promise<void> => {
-      await flushAiMemory(aiMemoryTimeoutMs); // ①
-      await flushDiskIO(diskIOTimeoutMs); // ②
-    })(),
+    diskIOInitialized
+      ? (async (): Promise<void> => {
+        if (aiChatInitialized) await flushAiMemory(aiMemoryTimeoutMs); // ①
+        await flushDiskIO(diskIOTimeoutMs); // ②
+      })()
+      : Promise.resolve(),
     flushStateToDisk(stateTimeoutMs), // ③
   ]);
+}
+
+/** 最终清理全进程只执行一次；只有当前进程持锁时才允许 flush 和解锁。 */
+function finalizePersistence(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number, stateTimeoutMs: number): Promise<void> {
+  finalCleanupPromise ??= (async (): Promise<void> => {
+    if (!lockAcquired) return;
+    await flushAllToDisk(aiMemoryTimeoutMs, diskIOTimeoutMs, stateTimeoutMs);
+    if (!lockAcquired) return;
+    await releaseSingleInstanceLock(BOT_TOKEN);
+    lockAcquired = false;
+  })();
+  return finalCleanupPromise;
 }
 
 // 可选加固：uncaughtException / unhandledRejection 默认会直接崩溃进程、
@@ -311,11 +337,11 @@ async function flushAllToDisk(aiMemoryTimeoutMs: number, diskIOTimeoutMs: number
 // 再退出——退出码非零，systemd 配 Restart=on-failure 时会照常自动重启。
 process.on("uncaughtException", (error: unknown) => {
   logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
-  void flushAllToDisk(1000, 1000, 1000).finally(() => process.exit(1));
+  void finalizePersistence(1000, 1000, 1000).finally(() => process.exit(1));
 });
 process.on("unhandledRejection", (reason: unknown) => {
   logger.error("Unhandled rejection, attempting a best-effort flush before exit:", reason);
-  void flushAllToDisk(1000, 1000, 1000).finally(() => process.exit(1));
+  void finalizePersistence(1000, 1000, 1000).finally(() => process.exit(1));
 });
 
 main()
@@ -326,8 +352,7 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await flushAllToDisk(2000, 3000, 3000);
-    await releaseSingleInstanceLock(BOT_TOKEN);
+    await finalizePersistence(2000, 3000, 3000);
   });
 // 进程退出前的最后一刷：SIGINT/SIGTERM 经 stopBot 停掉 runner 后 main 才
 // 结束，此时把 aiChatWorker/diskIOWorker 里的存货（AI 记忆最长滞留
