@@ -33,6 +33,12 @@ export interface AiMemoryDiskMessage {
   snapshot: string;
 }
 
+/** 主线程 -> diskIOWorker：彻底删除某群 AI 记忆快照。 */
+export interface AiMemoryDeleteDiskMessage {
+  type: "deleteAiMemory";
+  chatId: number;
+}
+
 /** 主线程 -> diskIOWorker：覆盖式写入某个白名单贴纸包的目录快照。snapshot
  * 是 StickerCatalogSnapshot 序列化后的 JSON 文本，机制同 AiMemoryDiskMessage。 */
 export interface StickerCatalogDiskMessage {
@@ -66,7 +72,7 @@ export interface DiskFlushRequest {
   flushId: number;
 }
 
-export type DiskIOMessage = LogEnvelope | AiMemoryDiskMessage | StickerCatalogDiskMessage | LuckDrawDiskMessage | LoadRequest | DiskFlushRequest;
+export type DiskIOMessage = LogEnvelope | AiMemoryDiskMessage | AiMemoryDeleteDiskMessage | StickerCatalogDiskMessage | LuckDrawDiskMessage | LoadRequest | DiskFlushRequest;
 
 /** 单条抽签结果的落盘/缓存形状：吉凶档 label + 该次浮动出的行大运概率。
  * fortunePercent 不再能从 label 反查得出（tier 的概率是区间浮动的，见
@@ -97,6 +103,8 @@ export interface LoadedReply {
   aiMemories: Map<number, string>;
   stickerCatalogs: Map<string, string>;
   luckDay: LuckDayCache | null;
+  /** 恢复失败时主线程必须拒绝启动，不能把部分结果当成空状态继续。 */
+  error?: string;
 }
 
 /** diskIOWorker -> 主线程：flush 已完成。 */

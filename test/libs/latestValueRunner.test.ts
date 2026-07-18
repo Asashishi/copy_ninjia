@@ -44,7 +44,7 @@ describe("createLatestValueRunner", () => {
     expect(consumed).toEqual([undefined]);
   });
 
-  test("一次消费失败也会继续处理期间到达的最新值", async () => {
+  test("旧值失败但期间到达的最新值成功时，以最新持久化结果结算", async () => {
     const consumed: number[] = [];
     const runner = createLatestValueRunner<number>(async (value) => {
       consumed.push(value);
@@ -53,9 +53,20 @@ describe("createLatestValueRunner", () => {
 
     const first = runner.push(1);
     const second = runner.push(2);
-    await expect(first).rejects.toThrow("first write failed");
-    await expect(second).rejects.toThrow("first write failed");
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).resolves.toBeUndefined();
     expect(consumed).toEqual([1, 2]);
+  });
+
+  test("最新值失败时整批 promise 拒绝", async () => {
+    const runner = createLatestValueRunner<number>(async (value) => {
+      if (value === 2) throw new Error("latest write failed");
+    });
+
+    const first = runner.push(1);
+    const second = runner.push(2);
+    await expect(first).rejects.toThrow("latest write failed");
+    await expect(second).rejects.toThrow("latest write failed");
   });
 
   test("排空完成与 promise 结算之间到达的新值不会被搁置", async () => {

@@ -17,6 +17,7 @@ import { extractOutputText } from "./utils/geminiResponse";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
 import { prepareVisionImage, type VisionImage } from "../libs/image";
 import { createBoundedTaskRunner } from "../libs/boundedTaskRunner";
+import { readBoundedResponseBytes, type BoundedResponseResult } from "../libs/boundedResponse";
 import { transientDescriptionCache } from "../cache/imageDescription";
 import {
   ANIMATION_DESCRIPTION_PROMPT,
@@ -120,18 +121,22 @@ async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<s
       logger.error(`Failed to download chat media (kind=${kind}, ${res.status}): ${file.file_path}`);
       return null;
     }
-    const bytes: ArrayBuffer = await res.arrayBuffer();
-    if (bytes.byteLength > MEDIA_MAX_DOWNLOAD_BYTES) {
+    const download: BoundedResponseResult = await readBoundedResponseBytes(res, MEDIA_MAX_DOWNLOAD_BYTES);
+    if (!download.ok) {
       // 调用方已按大小预筛过素材来源，走到这里说明元数据缺失或不实。
-      logger.error(`Chat media (kind=${kind}) too large to describe (${bytes.byteLength} bytes): ${file.file_path}`);
+      logger.error(`Chat media (kind=${kind}) too large to describe (${download.observedBytes} bytes): ${file.file_path}`);
       return null;
     }
 
     // 按魔数嗅探实际格式并按需转码（webp/gif -> png），不依赖 file_path 的
     // 扩展名——贴纸本体/缩略图的扩展名不总是可靠，见 libs/image.ts。
-    const image: VisionImage | null = await prepareVisionImage(Buffer.from(bytes));
+    const image: VisionImage | null = await prepareVisionImage(Buffer.from(download.bytes));
     if (!image) {
       logger.error(`Chat media (kind=${kind}) is an unsupported/unrecognized image format: ${file.file_path}`);
+      return null;
+    }
+    if (image.bytes.byteLength > MEDIA_MAX_DOWNLOAD_BYTES) {
+      logger.error(`Prepared chat media (kind=${kind}) too large to describe (${image.bytes.byteLength} bytes): ${file.file_path}`);
       return null;
     }
     const data: GenerateContentResponse | null = await requestGeminiResponse(

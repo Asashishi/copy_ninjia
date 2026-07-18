@@ -1,13 +1,13 @@
 import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
-import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes } from "./cache/aiChat";
+import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes, purgedAiMemoryChats } from "./cache/aiChat";
 import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, MediaKind } from "./types";
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
  * 贴纸/GIF 占位与异步描述、限频、拼装上下文、调 Gemini（含 function
- * calling 往返与内置 web_search）、工具化的发言/消息反应/两层应景贴纸
+ * calling 往返与内置 googleSearch）、工具化的发言/消息反应/两层应景贴纸
  * （见 src/ai/tools/replyToolset.ts）、白名单贴纸目录与整包简介生成——全部在独立
  * 的 Bun Worker（src/workers/aiChatWorker.ts）里
  * 执行；主线程只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
@@ -36,8 +36,17 @@ const { post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
         markSelfSent(event.chatId, event.messageId);
         break;
       case "memory":
+        if (purgedAiMemoryChats.has(event.chatId)) {
+          postDiskIO({ type: "deleteAiMemory", chatId: event.chatId });
+          break;
+        }
         latestAiMemories.set(event.chatId, event.snapshot);
         postDiskIO({ type: "aiMemory", chatId: event.chatId, snapshot: event.snapshot });
+        break;
+      case "memoryDeleted":
+        latestAiMemories.delete(event.chatId);
+        purgedAiMemoryChats.delete(event.chatId);
+        postDiskIO({ type: "deleteAiMemory", chatId: event.chatId });
         break;
       case "stickerCatalog":
         latestStickerCatalogs.set(event.pack, event.snapshot);
@@ -163,6 +172,7 @@ export function flushAiMemory(timeoutMs: number = 2000): Promise<void> {
  * @param text 消息文本。
  */
 export function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, username: string | undefined, text: string): void {
+  purgedAiMemoryChats.delete(chatId);
   post({ type: "record", chatId, senderId: id, firstName, lastName, username, text });
 }
 
@@ -204,6 +214,7 @@ export function recordChatMedia(
   stickerFallbackText?: string,
   directTrigger?: { reason: "reply" | "mention"; repliedBotText?: string }
 ): void {
+  purgedAiMemoryChats.delete(chatId);
   post({ type: "recordMedia", kind, chatId, senderId: id, firstName, lastName, username, caption, fileId, fileUniqueId, messageId, commentOnResolve, stickerFallbackText, directTrigger });
 }
 
@@ -230,10 +241,14 @@ export function generateAndSendReply(
 }
 
 /**
- * 清空某群在 Worker 侧的回复等候队列。/ai_chat disable 时调用：主线程停止
- * 投喂新触发只拦得住之后的，已排队的触发不清会在关闭后继续补跑发言好几轮
- * （在途的一轮无法中断，自然跑完，可接受）。
+ * 使某群当前回复代数失效并清空等候队列。/ai_chat disable 时调用；在途请求
+ * 返回后也会因代数失配而停止发送和记忆回填。
  */
-export function clearAiReplyQueue(chatId: number): void {
-  post({ type: "clearReplyQueue", chatId });
+export function invalidateAiChat(chatId: number, purgeMemory: boolean): void {
+  if (purgeMemory) {
+    purgedAiMemoryChats.add(chatId);
+    latestAiMemories.delete(chatId);
+    postDiskIO({ type: "deleteAiMemory", chatId });
+  }
+  post({ type: "invalidateChat", chatId, purgeMemory });
 }

@@ -29,13 +29,13 @@ if (luckTierWeightSum !== 100) {
 }
 
 /**
- * 全局滑动窗口限流：每分钟最多 30 次内联查询应答，不分群、不分用户合并
+ * 全局滑动窗口限流：每 90 秒最多 300 次内联查询应答，不分群、不分用户合并
  * 计数——内联查询会随用户每敲一个字符就触发一次。超额立即拒绝而非排队
  * （不同于 telegram.ts 的 apiThrottler，那是排队+重试），因为排队对一个
  * 几秒内就该有结果的内联查询没有意义。
  */
-export const RATE_LIMIT_MAX_CALLS_PER_MINUTE: number = 30;
-export const RATE_LIMIT_WINDOW_MS: number = 60_000;
+export const RATE_LIMIT_MAX_CALLS_PER_WINDOW: number = 300;
+export const RATE_LIMIT_WINDOW_MS: number = 90_000;
 
 /**
  * 「未卜先知」「概率论」两个内联结果当前使用的配图直链。注意 Drive 的普通分享链接
@@ -51,8 +51,8 @@ export const PROBABILITY_THUMBNAIL_URL: string = "https://drive.google.com/uc?ex
 export const SAME_QUESTION_LABEL_MAX_LEN: number = 20;
 
 /**
- * pendingLuckDraws / pendingLuckRenderIndex（见 cache/luckChallenge.ts）各自
- * 的条目上限，超出按插入顺序淘汰最旧的（同 ai/imageDescription.ts 的
+ * pendingLuckDraws 与签名回执双向索引（见 cache/luckChallenge.ts）共用
+ * 这份 key 数量上限，超出按插入顺序淘汰最旧的（同 ai/imageDescription.ts 的
  * descriptionCache 一个道理）。这两个 Map 记的是"预览阶段抽到、但还没被
  * 用户选中确认"的结果——inline_query 是打字即触发的预览，用户每敲一个字符
  * 都可能新增一条从未被选中过的 key，只有到东京零点跨天才会整体清空

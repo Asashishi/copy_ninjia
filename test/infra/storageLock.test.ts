@@ -33,16 +33,9 @@ describe("single instance lock registry", () => {
     expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
   });
 
-  test("不同 token 在同一个 bot.lock 各占一行，释放时只删除自己的记录", async () => {
+  test("不同 token 也不能并发使用同一个数据目录", async () => {
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
-    await acquireSingleInstanceLock(TOKEN_B, lockFilePath);
-
-    expect(readFileSync(lockFilePath, "utf8")).toBe(
-      `${process.pid}:${getBotTokenFingerprint(TOKEN_A)}\n` +
-      `${process.pid}:${getBotTokenFingerprint(TOKEN_B)}\n`
-    );
-
-    await releaseSingleInstanceLock(TOKEN_B, lockFilePath);
+    await expect(acquireSingleInstanceLock(TOKEN_B, lockFilePath)).rejects.toThrow("different token");
     expect(readFileSync(lockFilePath, "utf8")).toBe(`${process.pid}:${getBotTokenFingerprint(TOKEN_A)}\n`);
   });
 

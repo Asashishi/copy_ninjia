@@ -159,12 +159,13 @@ export interface AiFlushMemoryMessage {
   flushId: number;
 }
 
-/** 主线程 -> Worker：清空某群并发闸的等候队列。/ai_chat disable 时投递：
- *  主线程停止投喂新触发只拦得住之后的，已排队的触发不清会在关闭后继续
- *  补跑发言（在途的几轮无法中断，自然跑完，可接受）。 */
-export interface AiClearReplyQueueMessage {
-  type: "clearReplyQueue";
+/** 主线程 -> Worker：使某群当前代数失效并清空等候队列。在途网络请求无法
+ *  物理取消，但响应返回后的发送、工具和记忆回填均受代数检查拦截。 */
+export interface AiInvalidateChatMessage {
+  type: "invalidateChat";
   chatId: number;
+  /** 同时清除内存、主线程镜像及磁盘快照。 */
+  purgeMemory: boolean;
 }
 
 export type AiChatWorkerMessage =
@@ -175,7 +176,7 @@ export type AiChatWorkerMessage =
   | AiHydrateMessage
   | AiHydrateStickerCatalogMessage
   | AiFlushMemoryMessage
-  | AiClearReplyQueueMessage;
+  | AiInvalidateChatMessage;
 
 /**
  * Worker -> 主线程：一条消息已经发出去了（AI 回复或跟发的贴纸）。Worker
@@ -203,6 +204,12 @@ export interface AiMemoryEvent {
   snapshot: string;
 }
 
+/** Worker -> 主线程：某群记忆已因显式禁用或容量淘汰在 Worker 内清除。 */
+export interface AiMemoryDeletedEvent {
+  type: "memoryDeleted";
+  chatId: number;
+}
+
 /** Worker -> 主线程：flushMemory 已完成（所有 dirty 群快照都已 post 出）。 */
 export interface AiMemoryFlushedEvent {
   type: "memoryFlushed";
@@ -219,4 +226,4 @@ export interface AiStickerCatalogEvent {
   snapshot: string;
 }
 
-export type AiChatWorkerEvent = AiSentMessage | AiMemoryEvent | AiMemoryFlushedEvent | AiStickerCatalogEvent;
+export type AiChatWorkerEvent = AiSentMessage | AiMemoryEvent | AiMemoryDeletedEvent | AiMemoryFlushedEvent | AiStickerCatalogEvent;

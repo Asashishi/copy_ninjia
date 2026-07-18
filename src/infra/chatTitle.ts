@@ -1,7 +1,7 @@
 import type { Chat } from "@grammyjs/types";
 import { logger } from "./logger";
 import { bot } from "./telegram";
-import { getAllChatStates, getChatState, getOrCreateChatState, saveState } from "./storage";
+import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage";
 
 /**
  * 各群名称的追踪与持久化（ChatState.title，随 state.json 落盘）。群名称不
@@ -27,7 +27,7 @@ function recordChatTitle(chatId: number, title: string): void {
   const chatState = getOrCreateChatState(chatId);
   if (chatState.title === title) return;
   chatState.title = title;
-  void saveState();
+  saveStateInBackground("chat title refresh");
 }
 
 /**

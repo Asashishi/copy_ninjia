@@ -22,6 +22,7 @@ import { createRestartThrottle } from "../libs/workerSupervisor";
 import { LOAD_TIMEOUT_MS } from "../consts/diskIO";
 import type {
   AiMemoryDiskMessage,
+  AiMemoryDeleteDiskMessage,
   DiskFlushRequest,
   DiskIOReply,
   LoadRequest,
@@ -129,7 +130,7 @@ export function relayLogMessage(message: LogMessage): void {
 
 /** 主线程 -> diskIOWorker：AI 记忆快照 / 贴纸目录的覆盖式写入，或单次抽签
  *  结果的增量写入。 */
-export function postDiskIO(message: AiMemoryDiskMessage | StickerCatalogDiskMessage | LuckDrawDiskMessage): void {
+export function postDiskIO(message: AiMemoryDiskMessage | AiMemoryDeleteDiskMessage | StickerCatalogDiskMessage | LuckDrawDiskMessage): void {
   diskIOWorker?.postMessage(message);
 }
 
@@ -162,6 +163,10 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
     }, timeoutMs);
     pendingLoad.resolve = (reply: LoadedReply): void => {
       clearTimeout(timer);
+      if (reply.error !== undefined) {
+        reject(new Error(`[diskIO] persistence recovery failed: ${reply.error}`));
+        return;
+      }
       resolve({ aiMemories: reply.aiMemories, stickerCatalogs: reply.stickerCatalogs, luckDay: reply.luckDay });
     };
     const request: LoadRequest = { type: "load" };

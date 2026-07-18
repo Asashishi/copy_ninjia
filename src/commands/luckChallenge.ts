@@ -1,20 +1,29 @@
 import type { Context } from "grammy";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
 import type { InlineQueryResultArticle } from "@grammyjs/types";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { formatUserLabel } from "../users/userLabel";
 import {
   FORTUNE_THUMBNAIL_URL,
   LUCK_TIERS,
   PENDING_LUCK_CACHE_MAX,
   PROBABILITY_THUMBNAIL_URL,
-  RATE_LIMIT_MAX_CALLS_PER_MINUTE,
+  RATE_LIMIT_MAX_CALLS_PER_WINDOW,
   RATE_LIMIT_WINDOW_MS,
   SAME_QUESTION_LABEL_MAX_LEN,
 } from "../consts/luckChallenge";
-import { dailyLuckCache, luckCacheState, pendingLuckDraws, pendingLuckRenderIndex, recentCallTimestamps } from "../cache/luckChallenge";
+import {
+  dailyLuckCache,
+  luckCacheState,
+  pendingLuckDraws,
+  pendingLuckReceiptByKey,
+  pendingLuckReceiptIndex,
+  recentCallTimestamps,
+} from "../cache/luckChallenge";
 import { logger } from "../infra/logger";
 import { onDiskIORespawn, postDiskIO } from "../infra/diskIO";
 import { getTokyoDateKey } from "../libs/time";
+import { LUCK_RECEIPT_PATTERN } from "../libs/luckReceipt";
 import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
 
 /**
@@ -59,11 +68,11 @@ import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
  *   用户选中结果时 Telegram 直接推给机器人，带真实 uid 和查询词，与结果
  *   发到哪个聊天无关——机器人不在场的群/私聊里抽的签也能确认落盘。需要
  *   在 BotFather 用 /setinlinefeedback 开启（建议 100%），否则收不到。
- * - 结果消息现身（兜底，挂在 index.ts 的 isInit 网关之前，见
+ * - 带签名回执的结果消息现身（兜底，挂在 index.ts 的 isInit 网关之前，见
  *   confirmLuckDraw）：机器人在任何聊天里（含未 /init 的群、机器人自己的
- *   私聊）看见文本恰好是某把待确认抽签渲染原文的消息就认领——不要求
- *   via_bot，转发副本也算数；靠渲染文本认领（马甲/匿名身份发出的消息
- *   from 不是真人，带不回 uid，转发副本的 from 更是转发者本人）。
+ *   私聊）看见末行带有效随机 nonce + HMAC 的结果就认领——不要求 via_bot，
+ *   转发副本也算数。正文不是凭据，无法靠枚举档位文案替别人确认；回执随
+ *   消息保留，因此也不依赖马甲/匿名身份或转发者的 from。
  */
 
 function ensureCacheFreshForToday(): void {
@@ -72,7 +81,8 @@ function ensureCacheFreshForToday(): void {
     luckCacheState.dayKey = todayKey;
     dailyLuckCache.clear();
     pendingLuckDraws.clear();
-    pendingLuckRenderIndex.clear();
+    pendingLuckReceiptByKey.clear();
+    pendingLuckReceiptIndex.clear();
   }
 }
 
@@ -122,44 +132,54 @@ function getOrDrawLuck(userId: number, text: string | undefined): LuckDraw {
   if (pendingLuckDraws.size >= PENDING_LUCK_CACHE_MAX) {
     const evictedKey: string = pendingLuckDraws.keys().next().value!;
     pendingLuckDraws.delete(evictedKey);
-    removePendingRendering(evictedKey);
+    removePendingReceipt(evictedKey);
   }
   pendingLuckDraws.set(cacheKey, draw);
   return draw;
 }
 
-/** 从全部渲染反查项中移除某个 cacheKey；转正或淘汰时调用。 */
-function removePendingRendering(cacheKey: string): void {
-  for (const [renderedText, cacheKeys] of pendingLuckRenderIndex) {
-    cacheKeys.delete(cacheKey);
-    if (cacheKeys.size === 0) pendingLuckRenderIndex.delete(renderedText);
-  }
+/** 从签名回执双向索引中移除某个 cacheKey；转正或淘汰时调用。 */
+function removePendingReceipt(cacheKey: string): void {
+  const receipt: string | undefined = pendingLuckReceiptByKey.get(cacheKey);
+  if (receipt !== undefined) pendingLuckReceiptIndex.delete(receipt);
+  pendingLuckReceiptByKey.delete(cacheKey);
 }
 
-/** 登记"这段渲染出的消息原文，对应哪些抽签 key"，供 confirmLuckDraw 反查。
- * 索引只按文本、不掺 userId——马甲/匿名身份发出的 via_bot 消息带不回真实
- * uid，理由见 cache/luckChallenge.ts 的 pendingLuckRenderIndex 注释。
- * 每次预览（哪怕命中缓存）都会重新登记一遍，Set.add 让同一对 key/文本
- * 幂等。已经转正的 key 不再登记——没有必要，
- * confirmLuckDraw 对已转正的 key 本来就是空操作，省一次 Map 写入。 */
-function registerPendingRendering(cacheKey: string, renderedText: string): void {
-  if (dailyLuckCache.has(cacheKey)) return;
-  // 容量按不同原文数计算；同文候选收在一个有界 Set 中（候选总数还受
-  // pendingLuckDraws 的同一上限约束）。
-  if (!pendingLuckRenderIndex.has(renderedText) && pendingLuckRenderIndex.size >= PENDING_LUCK_CACHE_MAX) {
-    pendingLuckRenderIndex.delete(pendingLuckRenderIndex.keys().next().value!);
+const LUCK_RECEIPT_SECRET: Buffer = randomBytes(32);
+function signLuckReceipt(cacheKey: string, nonce: string): string {
+  return createHmac("sha256", LUCK_RECEIPT_SECRET)
+    .update(cacheKey)
+    .update("\0")
+    .update(nonce)
+    .digest("base64url")
+    .slice(0, 22);
+}
+
+/** 每个 pending key 复用同一份随机签名回执，避免打字预览反复生成索引。 */
+function registerPendingReceipt(cacheKey: string): string {
+  const existing: string | undefined = pendingLuckReceiptByKey.get(cacheKey);
+  if (existing !== undefined) return existing;
+  const nonce: string = randomBytes(16).toString("base64url");
+  const receipt: string = `luck:${nonce}.${signLuckReceipt(cacheKey, nonce)}`;
+  if (!dailyLuckCache.has(cacheKey)) {
+    pendingLuckReceiptByKey.set(cacheKey, receipt);
+    pendingLuckReceiptIndex.set(receipt, cacheKey);
   }
-  let cacheKeys = pendingLuckRenderIndex.get(renderedText);
-  if (!cacheKeys) {
-    cacheKeys = new Set();
-    pendingLuckRenderIndex.set(renderedText, cacheKeys);
-  }
-  cacheKeys.add(cacheKey);
+  return receipt;
+}
+
+function signedResultText(bodyText: string, cacheKey: string): { text: string; receiptOffset: number; receiptLength: number } {
+  const receipt: string = registerPendingReceipt(cacheKey);
+  return {
+    text: `${bodyText}\n${receipt}`,
+    receiptOffset: bodyText.length + 1,
+    receiptLength: receipt.length,
+  };
 }
 
 /**
  * 把一把待确认的抽签转正：pendingLuckDraws -> dailyLuckCache -> postDiskIO
- * 落盘。两路确认信号（chosen_inline_result / 文本认领）共用；幂等，
+ * 落盘。两路确认信号（chosen_inline_result / 签名回执）共用；幂等，
  * 已转正或查无 pending（消息不是运势结果、或进程恰好在预览和选中之间重启
  * 导致内存态丢失）都什么都不做——宁可当天该 key 之后被重新抽一次，也不要
  * 凭空落盘一条用户从未真正确认过的记录。
@@ -167,7 +187,7 @@ function registerPendingRendering(cacheKey: string, renderedText: string): void 
 function promotePendingDraw(cacheKey: string): void {
   const draw: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
   pendingLuckDraws.delete(cacheKey);
-  removePendingRendering(cacheKey);
+  removePendingReceipt(cacheKey);
   if (!draw || dailyLuckCache.has(cacheKey)) return;
 
   dailyLuckCache.set(cacheKey, draw);
@@ -182,7 +202,7 @@ function promotePendingDraw(cacheKey: string): void {
  * 聊天里收得到消息，也没有马甲身份的问题（选择动作永远来自真人账号）。
  * cacheKey 直接由 uid + 查询词重建，与预览侧 getOrDrawLuck 的口径一致。
  * 前提：BotFather 里 /setinlinefeedback 已开启，否则 Telegram 根本不发这
- * 类更新（此时只剩 via_bot 兜底路，见模块头注释）。
+ * 类更新（此时只剩签名回执兜底路，见模块头注释）。
  */
 export function handleLuckChosenInlineResult(ctx: Context): void {
   const chosen = ctx.chosenInlineResult;
@@ -199,27 +219,24 @@ export function handleLuckChosenInlineResult(ctx: Context): void {
 }
 
 /**
- * 确认兜底路：机器人看得见的任何消息（index.ts 在 isInit 网关之前对每条
- * 更新调用本函数，含未 /init 群和私聊里的转发副本）用原文反查
- * pendingLuckRenderIndex 找到对应的 cacheKey。只认文本、不看消息的 from
- * ——用户以频道马甲/匿名管理员身份发出时 from 已被 Telegram 换成马甲，
- * 不含真实 uid（见 pendingLuckRenderIndex 注释）；转发副本的 from 是转发
- * 者本人，更不能信。渲染原文只有在结果真的被发出去之后才可能被人看到并
- * 原样出现（内联预览列表不展示正文），所以「文本对得上」本身就是「确实
- * 发出去了」的凭据；身份结算依然以 inline 侧登记的 cacheKey（真实 uid）
- * 为准，「只能测自己的」语义不变。
+ * 确认兜底路：从结果消息末行提取随机 nonce + HMAC 回执，先按索引找回
+ * cacheKey，再常量时间验证签名。展示正文不再是凭据，攻击者无法靠枚举七种
+ * 档位文案替别人确认；频道马甲、匿名管理员和转发副本仍能保留这条 spoiler
+ * 回执，因此不依赖消息 from 里的真实 uid。
  */
 export function confirmLuckDraw(messageText: string | undefined): void {
   if (typeof messageText !== "string") return;
   ensureCacheFreshForToday();
 
-  const cacheKeys: Set<string> | undefined = pendingLuckRenderIndex.get(messageText);
-  // 同一原文可能来自多人的不同签，消息本身又带不回真实 uid。此时宁可等待
-  // chosen_inline_result，也不能猜一个 key 错误转正；主路确认其中一个后会
-  // 从 Set 移除它，余下候选恢复唯一时仍可由后续副本兜底确认。
-  if (!cacheKeys || cacheKeys.size !== 1) return;
-  const cacheKey: string = cacheKeys.values().next().value!;
-  pendingLuckRenderIndex.delete(messageText);
+  const receipt: string | undefined = messageText.split("\n").at(-1);
+  if (!receipt) return;
+  const match: RegExpExecArray | null = LUCK_RECEIPT_PATTERN.exec(receipt);
+  if (!match) return;
+  const cacheKey: string | undefined = pendingLuckReceiptIndex.get(receipt);
+  if (!cacheKey) return;
+  const expected: Buffer = Buffer.from(signLuckReceipt(cacheKey, match[1]!));
+  const actual: Buffer = Buffer.from(match[2]!);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return;
   promotePendingDraw(cacheKey);
 }
 
@@ -294,12 +311,14 @@ function buildFortuneResult(draw: LuckDraw, userId: number, userLabel: string, t
   const bodyText: string = text
     ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${draw.tier.label}\n${draw.tier.comment}`
     : `你好，${userLabel}\n汝的今日运势: ${draw.tier.label}\n${draw.tier.comment}`;
-  registerPendingRendering(luckCacheKey(userId, text), bodyText);
+  const signed = signedResultText(bodyText, luckCacheKey(userId, text));
   return InlineQueryResultBuilder.article(text ? "luck-fortune-text" : "luck-fortune", "未卜先知", {
     description: text ? `所求事项：${text}` : "测测你今天的运势",
     reply_markup: buildRetryKeyboard(text),
     thumbnail_url: FORTUNE_THUMBNAIL_URL,
-  }).text(bodyText);
+  }).text(signed.text, {
+    entities: [{ type: "spoiler", offset: signed.receiptOffset, length: signed.receiptLength }],
+  });
 }
 
 /** 概率数字固定展示两位小数（toFixed(2)），即便滚动结果恰好落在整数或一位小数上也补齐，
@@ -307,12 +326,14 @@ function buildFortuneResult(draw: LuckDraw, userId: number, userLabel: string, t
 function buildProbabilityResult(draw: LuckDraw, userId: number, userLabel: string): InlineQueryResultArticle {
   const { label, percent } = pickDominantProbability(draw);
   const bodyText: string = `你好，${userLabel}\n汝今天${label}概率是 ${percent.toFixed(2)}%`;
-  registerPendingRendering(luckCacheKey(userId, undefined), bodyText);
+  const signed = signedResultText(bodyText, luckCacheKey(userId, undefined));
   return InlineQueryResultBuilder.article("luck-probability", "概率论！", {
     description: "看看你今天行大运/倒大霉的概率",
     reply_markup: buildRetryKeyboard(undefined),
     thumbnail_url: PROBABILITY_THUMBNAIL_URL,
-  }).text(bodyText);
+  }).text(signed.text, {
+    entities: [{ type: "spoiler", offset: signed.receiptOffset, length: signed.receiptLength }],
+  });
 }
 
 /** 全局频率限制（见 consts/luckChallenge.ts 的注释）：超限就不再往下算，
@@ -324,7 +345,7 @@ function tryConsumeRateLimit(): boolean {
   while (recentCallTimestamps.length > 0 && recentCallTimestamps[0]! < cutoff) {
     recentCallTimestamps.shift();
   }
-  if (recentCallTimestamps.length >= RATE_LIMIT_MAX_CALLS_PER_MINUTE) return false;
+  if (recentCallTimestamps.length >= RATE_LIMIT_MAX_CALLS_PER_WINDOW) return false;
   recentCallTimestamps.push(now);
   return true;
 }
@@ -332,9 +353,10 @@ function tryConsumeRateLimit(): boolean {
 /** 超过频率限制时的提示：标题/描述在结果列表里不用选中就能看到，选中了
  * 也只是把这句嘲讽发出去，不会触发任何抽签逻辑。 */
 function buildRateLimitedResult(): InlineQueryResultArticle {
+  const windowSeconds: number = RATE_LIMIT_WINDOW_MS / 1000;
   return InlineQueryResultBuilder.article("luck-rate-limited", "太快啦，本天才应付不过来～", {
-    description: `本天才每分钟最多接 ${RATE_LIMIT_MAX_CALLS_PER_MINUTE} 次，杂鱼先歇会儿再来吧`,
-  }).text(`笨蛋，问太快啦，本天才每分钟最多接 ${RATE_LIMIT_MAX_CALLS_PER_MINUTE} 次，杂鱼先歇会儿再来吧♡`);
+    description: `本天才每 ${windowSeconds} 秒最多接 ${RATE_LIMIT_MAX_CALLS_PER_WINDOW} 次，杂鱼先歇会儿再来吧`,
+  }).text(`笨蛋，问太快啦，本天才每 ${windowSeconds} 秒最多接 ${RATE_LIMIT_MAX_CALLS_PER_WINDOW} 次，杂鱼先歇会儿再来吧♡`);
 }
 
 /**

@@ -165,6 +165,8 @@ export interface ReplyToolContext {
    *  当轮的参数 schema 要不要暴露 typo_original_char/typo_replacement_char
    *  字段，execute 内部再据此把关，保证一轮最多只吃掉一次手滑错字。 */
   roundHasTypo: boolean;
+  /** 本轮捕获的群状态代数仍有效时返回 true；禁用会让旧轮次立即失效。 */
+  isActive: () => boolean;
   /** 每条消息发送成功后的回调（清洗后的文本 + 消息 ID），供调用方自录
    *  记忆/登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。 */
   onMessageSent: (text: string, messageId: number) => void;
@@ -179,11 +181,8 @@ export interface ReplyToolset {
    *  与内置 googleSearch，仅供 has()/内部对照使用；拼给 SDK 的完整声明见
    *  下面的 tools）。 */
   definitions: ToolDefinition[];
-  /** 拼给 Gemini SDK 请求的完整 tools 数组：内置 googleSearch（服务端工具，
-   *  模型自主决定要不要联网查证）+ functionDeclarations（src/ai/tools/index.ts
-   *  的静态查询工具清单 + 本轮行动工具定义）。见 ai/tools/replyToolset.ts
-   *  的 createReplyToolset；workers/aiChat/geminiReply.ts 的 callGemini
-   *  直接透传，不再自己组装。 */
+  /** 拼给 SDK 的完整工具声明：真实注册的 googleSearch + 静态查询函数 +
+   *  本轮行动工具。 */
   tools: Tool[];
   /** 这个名字是否属于本工具集（区别于 src/ai/tools/index.ts 的静态查询工具）。 */
   has(name: string): boolean;
@@ -193,6 +192,8 @@ export interface ReplyToolset {
    *  模型是否真的「说过话」，决定要不要把最终正文兜底发出
    *  （见 workers/aiChatWorker.ts）。 */
   messagesSent(): number;
+  /** 是否仍允许本轮继续请求模型或执行新的群内副作用。 */
+  isActive(): boolean;
 }
 
 /** 一层候选贴纸：本体 + emoji 元数据 + AI 生成的画面描述，见

@@ -12,6 +12,9 @@ import type { AiBotInfo, BufferedMessage, ChatActionHeartbeatEntry, MoodOption, 
  *  之前始终为 null。 */
 export const botInfoState: { current: AiBotInfo | null } = { current: null };
 
+/** 禁用时递增；在途回复只允许在捕获的代数仍为当前值时产生新副作用。 */
+export const replyGenerations: Map<number, number> = new Map();
+
 /** 各群上一次发送「限频黑洞」提示的时刻（毫秒时间戳），给提示自身做冷却。 */
 export const rateLimitNoticeTimes: Map<number, number> = new Map();
 

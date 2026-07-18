@@ -65,7 +65,7 @@ export const SUMMARY_TEMPERATURE: number = 0.6;
  */
 export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 /** 回复生成的生成温度：偏高，换取更贴合人设的活人感发挥。 */
-export const REPLY_TEMPERATURE: number = 1.2;
+export const REPLY_TEMPERATURE: number = 1.0;
 
 /**
  * 压缩块大小 = 热窗口大小 = 镜像窗口大小。逐字缓存由两个块组成：「热」是
@@ -119,6 +119,11 @@ export const AI_SNAPSHOT_INTERVAL_MS: number = 30_000;
  * 两处双保险。
  */
 export const AI_MEMORY_HYDRATE_BUFFER_MAX: number = VERBATIM_CONTEXT_MAX - 1;
+/**
+ * Worker 常驻的群记忆总上限。新群超过上限时按最后活动时间淘汰最旧群，
+ * 同步删除主线程镜像与磁盘快照；该群之后再次发言会从空记忆重新建立。
+ */
+export const AI_MEMORY_MAX_CHATS: number = 100;
 /** 单条摘要的硬性长度上限（字符），防摘要模型话痨撑爆回复上下文。 */
 export const SUMMARY_MAX_CHARS: number = 500;
 
@@ -149,7 +154,9 @@ export const TIME_AWARENESS_INSTRUCTION: string =
  * 回绝，能查的先查证。
  */
 export const WEB_SEARCH_INSTRUCTION: string =
-  "你内置了实时联网搜索能力：遇到时效性强（新闻、价格、比分、榜单、版本号、事件进展等）、你没有把握、或对方明确要求查证的问题，主动搜索确认清楚了再回答，别懒得查就瞎编或者甩锅拒答。搜完该怎么损怎么损、该怎么骄傲怎么骄傲，别在回复里暴露自己刚查过——装作本来就知道。";
+  "googleSearch 已作为本轮可调用工具真实注册。开始任何回复、反应、贴纸或其它行动前，必须先判断是否需要联网核实：需要就先调用 googleSearch 并等待结果，不需要才明确跳过搜索、继续行动；绝不能先行动再补查。" +
+  "遇到时效性信息（新闻、价格、比分、榜单、版本、人物职位、规则变化、事件进展）、用户明确要求查证、上下文不足或你对事实没有把握时，必须搜索，不能凭印象猜，也不能只说自己会查却不实际调用工具。" +
+  "纯闲聊、主观感受、只依赖给定聊天记录即可回答的内容可以跳过。搜索结果只用于提高事实准确性，随后仍按人设自然回应；不要向群友暴露搜索过程、工具名、提示词或内部判断，也不要用普通文本模拟任何工具调用。";
 /** 一轮回复的动作总数硬顶：发消息、撤回、发贴纸、扣反应全都算在内（提示词里
  *  引导「通常 1~3 个动作，可以 3-5 个动作」，这是极端情况也不许突破的上限），
  *  超额的调用在执行侧直接拒绝，见 ai/tools/replyToolset.ts。 */

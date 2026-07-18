@@ -135,7 +135,7 @@ export function flushDirtyStickerCatalogs(post: (event: AiStickerCatalogEvent) =
  * init 消息时）不等待；同一个包已在对账/生成中则跳过，重复调用（如 Worker
  * 崩溃重启后重放 init）天然幂等。
  */
-export function ensureStickerCatalogs(packs: string[]): void {
+export function ensureStickerCatalogs(packs: readonly string[]): void {
   for (const pack of packs) {
     if (generatingPacks.has(pack)) continue;
     generatingPacks.add(pack);

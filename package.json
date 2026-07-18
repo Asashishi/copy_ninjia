@@ -6,8 +6,9 @@
   "scripts": {
     "start": "bun run index.ts",
     "test": "bun test",
+    "test:coverage": "bun test --coverage --coverage-reporter=text",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun test"
+    "check": "bun run typecheck && bun run test:coverage"
   },
   "devDependencies": {
     "@types/bun": "latest",

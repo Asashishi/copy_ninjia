@@ -151,11 +151,8 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   ];
   const names: Set<string> = new Set(definitions.map((d: ToolDefinition) => d.name));
 
-  // 拼给 SDK 的完整 tools 数组：内置 googleSearch（服务端工具，Google 侧
-  // 自动执行，模型自主决定要不要联网查证）与自定义函数声明混用同一次请求
-  // 需要 callGemini 开 toolConfig.includeServerSideToolInvocations，见其
-  // 注释；这里只负责组装，不关心那个开关。查询工具清单（TOOL_DEFINITIONS）
-  // 排在本轮行动工具定义之前，顺序与原先在 geminiReply.ts 里组装时一致。
+  // googleSearch 必须真实注册进 SDK tools，单靠提示词提到工具名并不会让
+  // 模型获得搜索能力。它与函数声明混用时 callGemini 会开启服务端工具记录。
   const sdkDeclarations: FunctionDeclaration[] = [...TOOL_DEFINITIONS, ...definitions].map((definition: ToolDefinition) => ({
     name: definition.name,
     description: definition.description,
@@ -169,13 +166,15 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     ctx.onMessageSent(text, messageId);
   }
 
-  async function sendDirectMessage(text: string, replyToMessageId?: number): Promise<number | undefined> {
+  async function sendDirectMessage(text: string, replyToMessageId?: number, allowInactive: boolean = false): Promise<number | undefined> {
+    if (!allowInactive && !ctx.isActive()) return undefined;
     const sentMessageId: number | undefined = await sendMessage(ctx.chatId, text, replyToMessageId);
     if (sentMessageId !== undefined) recordSentMessage(text, sentMessageId);
     return sentMessageId;
   }
 
   async function executeSendMessage(argumentsJson: string): Promise<string> {
+    if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
     const raw: string | null = parseStringField(argumentsJson, "text");
     if (raw === null) return JSON.stringify({ error: "Invalid or empty text" });
     const text: string | null = cleanReply(raw);
@@ -242,6 +241,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     // 打字状态同样消失，发送 RTT 这一瞬没有状态是符合观感的。
     ctx.chatAction.set("idle");
     await ctx.chatAction.settle();
+    if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
     const replyToMessageId: number | undefined = replyToTrigger ? ctx.replyToMessageId : undefined;
     const sentMessageId: number | undefined = await sendMessage(ctx.chatId, textToSend, replyToMessageId);
@@ -258,7 +258,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
 
     if (shouldUseTypo && typoMode === "quick" && effectiveTypoCorrectionText && !isEmojiOnly(effectiveTypoCorrectionText)) {
       await sleep(randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS));
-      const correctionMessageId: number | undefined = await sendDirectMessage(effectiveTypoCorrectionText);
+      const correctionMessageId: number | undefined = await sendDirectMessage(effectiveTypoCorrectionText, undefined, true);
       if (correctionMessageId !== undefined) {
         actionsUsedByTool++;
         return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, typo: { mode: "quick", correction_message_id: correctionMessageId } });
@@ -272,7 +272,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
         actionsUsedByTool++;
         deletableMessageIds.delete(sentMessageId);
         messageCount = Math.max(0, messageCount - 1);
-        const correctedMessageId: number | undefined = await sendDirectMessage(text, replyToMessageId);
+        const correctedMessageId: number | undefined = await sendDirectMessage(text, replyToMessageId, true);
         if (correctedMessageId === undefined) {
           return JSON.stringify({ error: "Failed to send corrected message", actions_used: actionsUsedByTool });
         }
@@ -298,6 +298,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       return JSON.stringify({ error: "Message is not deletable in this reply: only message_id values returned by this round's send_message can be deleted" });
     }
     await sleep(randomDelayMs(TYPO_RECALL_DELETE_MIN_MS, TYPO_RECALL_DELETE_MAX_MS));
+    if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
     const deleted: boolean = await deleteMessage(ctx.chatId, messageId);
     if (!deleted) return JSON.stringify({ error: "Failed to delete message" });
     deletableMessageIds.delete(messageId);
@@ -306,6 +307,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   }
 
   function executeAddReaction(argumentsJson: string): string {
+    if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
     const emoji: string | null = parseStringField(argumentsJson, "emoji");
     if (emoji === null || !REACTION_EMOJIS.includes(emoji)) return JSON.stringify({ error: "Invalid reaction emoji: pick one from the list" });
     if (reactionCount >= MAX_REACTIONS_PER_REPLY) {
@@ -331,7 +333,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
         // 贴纸发送前的切 idle + settle 在 sendStickerTool 内部做（要卡在参数
         // 校验通过之后、真正发网络请求之前，道理同 executeSendMessage）；
         // 同群并发轮的发贴纸互斥锁（ctx.stickerLock）也在里面抢。
-        return sendStickerTool(ctx.chatAction, ctx.stickerLock, ctx.chatId, menu, argumentsJson, stickerState, ctx.onStickerSent);
+        return sendStickerTool(ctx.chatAction, ctx.stickerLock, ctx.chatId, menu, argumentsJson, stickerState, ctx.onStickerSent, ctx.isActive);
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }
@@ -342,6 +344,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     tools,
     has: (name: string): boolean => names.has(name),
     execute: async (name: string, argumentsJson: string): Promise<string> => {
+      if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
       // 动作总量硬顶在入口统一把关（成功才计数——被参数校验/分项限额拒绝
       // 或发送失败的调用不白白烧名额），view_sticker_pack 等查询不受限。
       if (ACTION_TOOLS.has(name) && actionsUsed >= MAX_ACTIONS_PER_REPLY) {
@@ -363,5 +366,6 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       return result;
     },
     messagesSent: (): number => messageCount,
+    isActive: ctx.isActive,
   };
 }

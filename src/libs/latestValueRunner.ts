@@ -14,24 +14,28 @@ export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>)
   let running: Promise<void> | null = null;
 
   const drain = async (): Promise<void> => {
-    let firstError: unknown;
-    let hasError: boolean = false;
+    let latestError: unknown;
+    let latestFailed: boolean = false;
     while (pending !== null) {
       const current: { value: T } = pending;
       pending = null;
       try {
         await consume(current.value);
+        // 中间旧值失败、但更新的值成功时，调用方关心的最新状态已经持久化，
+        // 不应继续把整批 promise 误报为失败。
+        latestError = undefined;
+        latestFailed = false;
       } catch (error: unknown) {
-        // 单次失败不能把期间到达的最新值永久搁在内存里；继续排空后再把
-        // 首个错误交给调用方。
-        if (!hasError) firstError = error;
-        hasError = true;
+        // 单次失败不能把期间到达的最新值永久搁在内存里；继续排空，最终
+        // 只以最新一次实际消费的结果结算。
+        latestError = error;
+        latestFailed = true;
       }
     }
     // 必须在 drain 自己返回前同步清空；若放在 promise.finally，循环结束与
     // finally 执行之间的微任务缝隙会让新 push 误接到已完成的旧 promise。
     running = null;
-    if (hasError) throw firstError;
+    if (latestFailed) throw latestError;
   };
 
   return {

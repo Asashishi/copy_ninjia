@@ -26,6 +26,8 @@ export const flushBuffer: { entries: { day: string; text: string }[]; timer: Ret
 export const aiMemoryCache: Map<number, string> = new Map();
 /** 自上次落盘后有更新、待写入磁盘的群。 */
 export const dirtyChats: Set<number> = new Set();
+/** 等待从磁盘删除的群；失败保留并在下一轮重试。 */
+export const deletedAiMemoryChats: Set<number> = new Set();
 
 // ---- 贴纸目录 ----
 

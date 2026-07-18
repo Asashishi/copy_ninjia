@@ -19,7 +19,7 @@ mock.module("../../src/infra/diskIO", () => ({
 
 const luckChallenge = await import("../../src/commands/luckChallenge");
 const cache = await import("../../src/cache/luckChallenge");
-const { LUCK_TIERS } = await import("../../src/consts/luckChallenge");
+const { LUCK_TIERS, RATE_LIMIT_MAX_CALLS_PER_WINDOW } = await import("../../src/consts/luckChallenge");
 
 function makeInlineCtx(userId: number, query: string) {
   const results: any[] = [];
@@ -36,17 +36,22 @@ function bodyTextOf(result: any): string {
   return result.input_message_content.message_text;
 }
 
+function visibleBodyOf(result: any): string {
+  return bodyTextOf(result).split("\n").slice(0, -1).join("\n");
+}
+
 describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   beforeEach(() => {
     cache.dailyLuckCache.clear();
     cache.pendingLuckDraws.clear();
-    cache.pendingLuckRenderIndex.clear();
+    cache.pendingLuckReceiptByKey.clear();
+    cache.pendingLuckReceiptIndex.clear();
     cache.recentCallTimestamps.length = 0;
     cache.luckCacheState.dayKey = "";
     postDiskIOMock.mockClear();
   });
 
-  test("不带文本：选中「未卜先知」结果 -> confirmLuckDraw 命中 pendingLuckRenderIndex -> 转正并 postDiskIO 落盘", async () => {
+  test("不带文本：带签名回执的结果现身后转正并 postDiskIO 落盘", async () => {
     const ctx = makeInlineCtx(111, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     expect(ctx.results.length).toBe(2);
@@ -105,7 +110,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(new Set(cache.dailyLuckCache.keys())).toEqual(new Set(["1", "2", "1:工作运"]));
   });
 
-  test("以频道马甲/匿名管理员身份发出（消息 from 带不回真实 uid）：仍能按文本认领落盘", async () => {
+  test("以频道马甲/匿名管理员身份发出（消息 from 带不回真实 uid）：仍能按签名回执认领落盘", async () => {
     // 回归线上事故：inline 预览永远是真人账号发起，但用户以马甲身份把结果
     // 发进群时，via_bot 消息的 from 被 Telegram 换成 Channel_Bot/匿名马甲，
     // 旧实现的 `${userId} ${文本}` 索引永远查不上——确认只能靠文本本身。
@@ -121,7 +126,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(cache.dailyLuckCache.has("888")).toBe(true);
   });
 
-  test("两个同名用户渲染出完全相同结果时不覆盖候选，也不错误转正后一次抽签", async () => {
+  test("两个同名用户正文相同时仍有独立签名回执，可分别准确确认", async () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
@@ -129,27 +134,35 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       const second = makeInlineCtx(882, "");
       await luckChallenge.handleLuckChallengeInlineQuery(first as any);
       await luckChallenge.handleLuckChallengeInlineQuery(second as any);
-      const identicalBody: string = bodyTextOf(first.results[0]);
-      expect(bodyTextOf(second.results[0])).toBe(identicalBody);
-      expect(cache.pendingLuckRenderIndex.get(identicalBody)).toEqual(new Set(["881", "882"]));
+      const firstSignedBody: string = bodyTextOf(first.results[0]);
+      const secondSignedBody: string = bodyTextOf(second.results[0]);
+      expect(visibleBodyOf(second.results[0])).toBe(visibleBodyOf(first.results[0]));
+      expect(secondSignedBody).not.toBe(firstSignedBody);
 
-      // 单靠相同文本无法知道是谁发出，不能像旧单值 Map 那样误转正后写入者。
-      luckChallenge.confirmLuckDraw(identicalBody);
-      expect(postDiskIOMock).not.toHaveBeenCalled();
-      expect(cache.dailyLuckCache.size).toBe(0);
-
-      // chosen_inline_result 可准确确认第一人，并从多候选索引移除；余下唯一
-      // 候选随后仍能由文本兜底确认。
-      luckChallenge.handleLuckChosenInlineResult({
-        chosenInlineResult: { result_id: "luck-fortune", from: { id: 881 }, query: "" },
-      } as any);
+      luckChallenge.confirmLuckDraw(firstSignedBody);
       expect(cache.dailyLuckCache.has("881")).toBe(true);
-      luckChallenge.confirmLuckDraw(identicalBody);
+      expect(cache.dailyLuckCache.has("882")).toBe(false);
+      luckChallenge.confirmLuckDraw(secondSignedBody);
       expect(cache.dailyLuckCache.has("882")).toBe(true);
       expect(postDiskIOMock).toHaveBeenCalledTimes(2);
     } finally {
       Math.random = originalRandom;
     }
+  });
+
+  test("展示正文和伪造回执都不能替 pending 抽签确认", async () => {
+    const ctx = makeInlineCtx(883, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+    const signedBody: string = bodyTextOf(ctx.results[0]);
+    const visibleBody: string = visibleBodyOf(ctx.results[0]);
+
+    luckChallenge.confirmLuckDraw(visibleBody);
+    luckChallenge.confirmLuckDraw(`${visibleBody}\nluck:AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB`);
+    expect(cache.dailyLuckCache.has("883")).toBe(false);
+    expect(postDiskIOMock).not.toHaveBeenCalled();
+
+    luckChallenge.confirmLuckDraw(signedBody);
+    expect(cache.dailyLuckCache.has("883")).toBe(true);
   });
 
   test("chosen_inline_result 主路：机器人不在场的聊天里选中也能确认落盘", async () => {
@@ -177,7 +190,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(cache.dailyLuckCache.has("1000:今天买彩票吗")).toBe(true);
   });
 
-  test("chosen_inline_result 与文本认领兜底先后到达：幂等，只落盘一次", async () => {
+  test("chosen_inline_result 与签名回执兜底先后到达：幂等，只落盘一次", async () => {
     const ctx = makeInlineCtx(1001, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     const body: string = bodyTextOf(ctx.results[0]);
@@ -199,6 +212,18 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     } as any);
     expect(postDiskIOMock).not.toHaveBeenCalled();
     expect(cache.dailyLuckCache.size).toBe(0);
+  });
+
+  test("全局滑动窗口放行配置上限次数，下一次返回限流结果", async () => {
+    for (let index: number = 0; index < RATE_LIMIT_MAX_CALLS_PER_WINDOW; index++) {
+      const ctx = makeInlineCtx(10_000 + index, "");
+      await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+      expect(ctx.results[0]?.id).not.toBe("luck-rate-limited");
+    }
+
+    const limitedCtx = makeInlineCtx(20_000, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(limitedCtx as any);
+    expect(limitedCtx.results[0]?.id).toBe("luck-rate-limited");
   });
 
   test("只预览不选中：不算测过、不落盘（confirmLuckDraw 从未被调用）", async () => {
@@ -233,7 +258,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     // 已确认之后用户又 @机器人 打了一遍字（重新触发 inline_query 预览）
     const ctx2 = makeInlineCtx(666, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx2 as any);
-    expect(bodyTextOf(ctx2.results[0])).toBe(bodyTextOf(ctx1.results[0]));
+    expect(visibleBodyOf(ctx2.results[0])).toBe(visibleBodyOf(ctx1.results[0]));
     luckChallenge.confirmLuckDraw(bodyTextOf(ctx2.results[0]));
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);

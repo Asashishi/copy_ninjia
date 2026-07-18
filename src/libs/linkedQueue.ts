@@ -1,6 +1,6 @@
 /**
- * 单向链表实现的 FIFO 队列,供各处滚动窗口/任务队列使用。
- * 数组的 shift() 出队要整体挪动剩余元素(O(n)),链表的出队是 O(1)。
+ * 单向链表实现的 FIFO 队列，供各处滚动窗口/任务队列使用。
+ * 数组的 shift() 出队要整体挪动剩余元素（O(n)），链表出队是 O(1)。
  */
 
 interface QueueNode<T> {
@@ -17,7 +17,7 @@ export class LinkedQueue<T> {
     return this.count;
   }
 
-  /** 入队(追加到队尾)。 */
+  /** 入队（追加到队尾）。 */
   push(value: T): void {
     const node: QueueNode<T> = { value, next: null };
     if (this.tail) {
@@ -29,7 +29,7 @@ export class LinkedQueue<T> {
     this.count += 1;
   }
 
-  /** 出队(移除并返回队首);队列为空时返回 undefined。 */
+  /** 出队（移除并返回队首）；队列为空时返回 undefined。 */
   shift(): T | undefined {
     const node: QueueNode<T> | null = this.head;
     if (!node) return undefined;
@@ -41,12 +41,12 @@ export class LinkedQueue<T> {
     return node.value;
   }
 
-  /** 查看队首元素但不出队;队列为空时返回 undefined。 */
+  /** 查看队首元素但不出队；队列为空时返回 undefined。 */
   peek(): T | undefined {
     return this.head ? this.head.value : undefined;
   }
 
-  /** 取队尾最近的 n 个元素,保持入队顺序;n 大于队列长度时返回全部。 */
+  /** 取队尾最近的 n 个元素，保持入队顺序；n 大于队列长度时返回全部。 */
   last(n: number): T[] {
     const skip: number = Math.max(0, this.count - n);
     const out: T[] = [];

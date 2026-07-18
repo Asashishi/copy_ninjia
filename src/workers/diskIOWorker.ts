@@ -22,12 +22,12 @@
 import { mkdirSync } from "node:fs";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import { flushLuckAppends, handleLuckDrawMessage } from "./diskIO/luckFiles";
-import { recoverAiMemories, recoverLuckDay, recoverStickerCatalogs, writeAiMemoryFile, writeStickerCatalogFile } from "./diskIO/snapshotFiles";
+import { deleteAiMemoryFile, recoverAiMemories, recoverLuckDay, recoverStickerCatalogs, writeAiMemoryFile, writeStickerCatalogFile } from "./diskIO/snapshotFiles";
 import { stickerConfig } from "../ai/stickerConfig";
 import { AI_MEMORY_DIR, LOGS_DIR, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR } from "../consts/paths";
 import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
 import { getTokyoDateKey } from "../libs/time";
-import { aiMemoryCache, dirtyChats, dirtyStickerPacks, luckWorkerCache, snapshotFlushState, stickerCatalogCache } from "../cache/diskIOWorker";
+import { aiMemoryCache, deletedAiMemoryChats, dirtyChats, dirtyStickerPacks, luckWorkerCache, snapshotFlushState, stickerCatalogCache } from "../cache/diskIOWorker";
 import type { DiskFlushReply, DiskIOMessage, LoadedReply } from "../types";
 
 declare var self: Worker;
@@ -48,6 +48,14 @@ function scheduleSnapshotFlush(): void {
 /** 把 dirty 的 AI 记忆快照、dirty 的贴纸目录整份写盘；单份写失败保留 dirty
  *  （不从各自的 dirty 集合摘除），下轮重试。 */
 function flushSnapshots(): void {
+  for (const chatId of deletedAiMemoryChats) {
+    try {
+      deleteAiMemoryFile(chatId);
+      deletedAiMemoryChats.delete(chatId);
+    } catch (error) {
+      console.error(`[diskIOWorker] failed to delete AI memory snapshot for chat ${chatId}:`, error);
+    }
+  }
   for (const chatId of dirtyChats) {
     const snapshot = aiMemoryCache.get(chatId);
     if (!snapshot) {
@@ -79,7 +87,7 @@ function flushSnapshots(): void {
   // 单份写失败时 dirty 标记会保留；本轮定时器在进入 flushSnapshots 前已经
   // 清空，必须主动排下一轮。否则没有新快照消息时将永远不再尝试，直到停机
   // flush，期间硬崩会丢掉仍只在内存里的更新。
-  if (dirtyChats.size > 0 || dirtyStickerPacks.size > 0) scheduleSnapshotFlush();
+  if (deletedAiMemoryChats.size > 0 || dirtyChats.size > 0 || dirtyStickerPacks.size > 0) scheduleSnapshotFlush();
 }
 
 /** 统一 flush：日志缓冲、AI 记忆快照、运势追加缓冲全部立即落盘（进程退出前
@@ -98,14 +106,15 @@ function flushAll(): void {
 /**
  * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
  * 建目录、扫描解析校验 memory/ai/、memory/stickers/ 与 memory/luck/，先灌进
- * 自己的缓存，再把缓存内容作为 loaded 回执发给主线程。失败不让整个 Worker
- * 崩掉——尽量用已恢复到的部分继续，回执照发。
+ * 自己的缓存，再把缓存内容作为 loaded 回执发给主线程。任何恢复失败都会在
+ * 回执中显式报告；主线程启动握手据此拒绝以部分/空状态继续运行。
  * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
  * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）；
  * 包内部「哪些贴纸还在线上」的对账则在 aiChatWorker 那侧的
  * ai/stickerCatalog.ts 做（需要现查 Telegram，本线程没有 bot.api）。
  */
 function handleLoad(): void {
+  let loadError: string | undefined;
   try {
     mkdirSync(LOGS_DIR, { recursive: true });
     mkdirSync(AI_MEMORY_DIR, { recursive: true });
@@ -124,7 +133,8 @@ function handleLoad(): void {
     const luckDay = recoverLuckDay(todayKey);
     if (luckDay) luckWorkerCache.current = luckDay;
   } catch (error) {
-    console.error("[diskIOWorker] startup recovery failed, continuing with whatever was recovered so far:", error);
+    loadError = error instanceof Error ? error.message : String(error);
+    console.error("[diskIOWorker] startup recovery failed:", error);
   }
 
   const reply: LoadedReply = {
@@ -132,6 +142,7 @@ function handleLoad(): void {
     aiMemories: aiMemoryCache,
     stickerCatalogs: stickerCatalogCache,
     luckDay: luckWorkerCache.current,
+    error: loadError,
   };
   self.postMessage(reply);
 }
@@ -143,8 +154,15 @@ self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
       handleLogMessage(msg);
       break;
     case "aiMemory":
+      deletedAiMemoryChats.delete(msg.chatId);
       aiMemoryCache.set(msg.chatId, msg.snapshot);
       dirtyChats.add(msg.chatId);
+      scheduleSnapshotFlush();
+      break;
+    case "deleteAiMemory":
+      aiMemoryCache.delete(msg.chatId);
+      dirtyChats.delete(msg.chatId);
+      deletedAiMemoryChats.add(msg.chatId);
       scheduleSnapshotFlush();
       break;
     case "stickerCatalog":

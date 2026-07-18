@@ -9,9 +9,11 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 const recordChatMediaMock = mock((..._args: unknown[]): void => {});
 const generateAndSendReplyMock = mock((..._args: unknown[]): void => {});
+const copyMessageMock = mock(async (..._args: unknown[]): Promise<undefined> => undefined);
+let quietUntil: number = Number.MAX_SAFE_INTEGER;
 
 mock.module("../../src/infra/telegram", () => ({
-  copyMessage: async (): Promise<undefined> => undefined,
+  copyMessage: copyMessageMock,
   sendMessage: async (): Promise<undefined> => undefined,
   bot: { api: {} },
   buildFileDownloadUrl: () => "",
@@ -20,7 +22,7 @@ mock.module("../../src/infra/telegram", () => ({
 mock.module("../../src/infra/storage", () => ({
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => undefined,
-  getChatState: () => ({ isUseAIChat: true, quietUntil: Number.MAX_SAFE_INTEGER }),
+  getChatState: () => ({ isUseAIChat: true, quietUntil }),
   getOrCreateChatState: () => ({}),
   saveState: async () => {},
 }));
@@ -70,6 +72,8 @@ describe("媒体直接叫机器人", () => {
     recordChatMessageMock.mockClear();
     recordChatMediaMock.mockClear();
     generateAndSendReplyMock.mockClear();
+    copyMessageMock.mockClear();
+    quietUntil = Number.MAX_SAFE_INTEGER;
     userReplyTriggerTimes.clear();
   });
 
@@ -115,6 +119,53 @@ describe("媒体直接叫机器人", () => {
     expect(recordChatMessageMock).toHaveBeenCalledWith(-100800, 123, "Alice", "Tester", "alice_dev", "（发了一枚贴纸：情绪含义 😅）");
     expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
     expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 12, "机器人之前说的话");
+  });
+
+  test("同一用户连续两次直接叫机器人都交给 Worker，不被 15 秒随机冷却吞掉", async () => {
+    for (const messageId of [21, 22]) {
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: messageId,
+          date: 1,
+          chat,
+          from: alice,
+          reply_to_message: botReply,
+          sticker: { file_id: `anim-${messageId}`, file_unique_id: `anim-uid-${messageId}`, width: 512, height: 512, is_animated: true, is_video: false, type: "regular", emoji: "😅" },
+        },
+      } as any);
+    }
+
+    expect(generateAndSendReplyMock).toHaveBeenCalledTimes(2);
+    expect(userReplyTriggerTimes.size).toBe(0);
+  });
+
+  test("随机媒体评价命中后不再落入随机复读", async () => {
+    quietUntil = 0;
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 23,
+          date: 1,
+          chat,
+          from: alice,
+          sticker: { file_id: "st-random", file_unique_id: "st-random-uid", width: 512, height: 512, is_animated: false, is_video: false, type: "regular", emoji: "😂", set_name: "cool_pack" },
+        },
+      } as any);
+    } finally {
+      Math.random = originalRandom;
+    }
+
+    expect(recordChatMediaMock).toHaveBeenCalledWith(
+      "sticker", -100800, 123, "Alice", "Tester", "alice_dev", "",
+      "st-random", "st-random-uid", 23, true,
+      "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
+      undefined
+    );
+    expect(copyMessageMock).not.toHaveBeenCalled();
   });
 
   test("贴纸回复的不是机器人：不带 directTrigger，也不触发回复", async () => {

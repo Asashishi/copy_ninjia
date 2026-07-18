@@ -23,6 +23,7 @@ import { describeStickerForContext, pickStickerVisionSource } from "../ai/sticke
 import { pickRandom } from "../libs/random";
 import { isSelfSent } from "../infra/selfSentTracker";
 import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import { stripLuckReceipt } from "../libs/luckReceipt";
 
 /**
  * 消息自动流水线：复制目标的复读、AI 对话缓存与触发、洗澡「看看」、随机
@@ -33,12 +34,9 @@ import { SUPER_ADMIN_USER_ID } from "../infra/config";
  */
 
 /**
- * 尝试为某个发言人占用一次「AI 自动回复」的名额，覆盖全部触发路径（回复
- * 机器人/@机器人/拿媒体叫机器人的必回路径，以及随机插话/媒体评价——两类
- * 原本各自独立计冷却，后来发现同一个人身上仍可能因为两条路径各占各的
- * 名额而叠出并发轮，遂合并成一道统一的闸，见 USER_REPLY_TRIGGER_COOLDOWN_MS
- * 注释）。若 TA 仍在冷却期内则返回 false；否则记录本次触发时刻并返回
- * true。冷却按「群 × 用户」独立计算——key 里拼了 chatId，同一个人在 A 群
+ * 尝试为某个发言人占用一次「随机 AI 自动回复」名额。明确回复/@ 机器人的
+ * 直接交互不经过这里，统一交给 Worker 的有界直接触发队列，不能被外层冷却
+ * 静默丢弃。冷却按「群 × 用户」独立计算——key 里拼了 chatId，同一个人在 A 群
  * 触发过不影响 TA 在 B 群被回复。key 只用 id、不掺昵称：昵称随时可改，
  * 掺进去改个名就能重置冷却。记录会在冷却期满后自动从 Map 中清理（仅当
  * 期间没有更新的记录覆盖它），避免长期运行下的内存泄漏。
@@ -175,7 +173,7 @@ function recordSelfInlineResult(message: Message, botId: number, botFirstName: s
   const chatId: number = message.chat.id;
   if (getActiveCopyIn(chatId)) return;
   if (getChatState(chatId).isUseAIChat !== true) return;
-  recordChatMessage(chatId, botId, botFirstName, "", botUsername, message.text);
+  recordChatMessage(chatId, botId, botFirstName, "", botUsername, stripLuckReceipt(message.text));
 }
 
 /**
@@ -301,7 +299,7 @@ function hasCopyableContent(message: Message): boolean {
  * 最前面依次过两道门，命中任一道都不再往下走：
  * - via_bot 指向自己：内联结果消息（如 /luck_challenge），自录入 AI 对话
  *   缓存后直接返回，见 recordSelfInlineResult。（运势抽签的确认落盘不在
- *   这里做——文本认领挂在 index.ts 的 isInit 网关之前，不然转发进未 /init
+ *   这里做——签名回执认领挂在 index.ts 的 isInit 网关之前，不然转发进未 /init
  *   群的结果副本根本到不了本函数，见 commands/luckChallenge.ts 的
  *   confirmLuckDraw。）
  * - isBotOwnMessage：机器人自己发出消息的原样回弹（频道自回环），整条跳过、
@@ -394,13 +392,13 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       !hasOtherMention &&
       Math.random() < AI_REPLY_PROBABILITY;
 
-    if (isReplyToBot || isMentioned || isRandomTrigger) {
-      // 同一个人短时间内连续回复/@ 机器人时，每条本会各自独立开一轮回复；
-      // 15s 内只放行一次，避免针对同一个人堆出多轮并发（见
-      // USER_REPLY_TRIGGER_COOLDOWN_MS 注释）。命中即视为已处理，仍不再走
-      // 下面的洗澡/随机复读。
+    if (isReplyToBot || isMentioned) {
+      generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo?.text : undefined);
+      return;
+    }
+    if (isRandomTrigger) {
       if (tryClaimUserReplyTrigger(chatId, speaker.id)) {
-        generateAndSendReply(chatId, message.message_id, isReplyToBot ? repliedTo?.text : undefined, isRandomTrigger);
+        generateAndSendReply(chatId, message.message_id, undefined, true);
       }
       return;
     }
@@ -422,12 +420,10 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     if (!visionSource) {
       recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, fallbackText);
       // 没有视觉素材也要认得「明确在跟机器人说话」：兜底行刚记到缓存尾部，
-      // 元数据（emoji/包名）就是全部可用信息，直接触发回复。同样受 15s
-      // 每人触发冷却约束，理由同文字路径。
+      // 元数据（emoji/包名）就是全部可用信息，直接触发回复；明确交互不受
+      // 随机搭话冷却影响，由 Worker 的有界直接触发队列承接。
       if (directMediaTrigger) {
-        if (tryClaimUserReplyTrigger(chatId, speaker.id)) {
-          generateAndSendReply(chatId, message.message_id, directMediaTrigger.repliedBotText);
-        }
+        generateAndSendReply(chatId, message.message_id, directMediaTrigger.repliedBotText);
         return;
       }
     } else {
@@ -436,11 +432,10 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       // 各自独立掷骰），掷骰在这里（主线程调度逻辑），顺带套用 /quiet 静默。
       // 回复机器人时不掷骰（必回，与文字路径一致地无视 /quiet），两者互斥
       // （commentOnResolveCandidate 要求 !directMediaTrigger）。必回触发与
-      // 随机评价因此至多命中其一，共用同一次 15s 每人触发冷却名额判定；
-      // 命中冷却期时随机评价直接放弃，必回触发降级为普通背景媒体（不传
-      // 直接触发标记给 Worker），媒体本身都仍照常入缓存当上下文。
+      // 随机评价因此至多命中其一；只有随机评价占用 15s 每人冷却名额，
+      // 媒体本身无论是否取得随机名额都照常入缓存当上下文。
       const commentOnResolveCandidate: boolean = !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY;
-      const claimedTrigger: boolean = !!(directMediaTrigger || commentOnResolveCandidate) && tryClaimUserReplyTrigger(chatId, speaker.id);
+      const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
       recordChatMedia(
         "sticker",
         chatId,
@@ -452,14 +447,14 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
         visionSource.fileId,
         visionSource.fileUniqueId,
         message.message_id,
-        commentOnResolveCandidate && claimedTrigger,
+        claimedRandomTrigger,
         fallbackText,
-        directMediaTrigger && claimedTrigger ? directMediaTrigger : undefined
+        directMediaTrigger
       );
-      // 与文字路径的必回触发同语义：这条贴纸已经注定引来一条 AI 回复（或
-      // 已在上面因冷却被有意丢弃），不再参与下面的随机复读，免得一条消息
+      // 与文字路径的必回触发同语义：这条贴纸已经交给 AI 直接回复或随机
+      // 评价判定，不再参与下面的随机复读，免得一条消息
       // 既被回又被复读。
-      if (directMediaTrigger) return;
+      if (directMediaTrigger || commentOnResolveCandidate) return;
     }
   } else if (!activeCopy && aiChatEnabled && Array.isArray(message.photo) && message.photo.length > 0) {
     // 图片消息同样没有 text（配文在 caption 里），交给 AI Worker 先占位入
@@ -470,10 +465,9 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // 多条相邻消息各带一张图，自然逐条走到这里，各自占位、各自解析。
     const speaker = resolveSpeaker(message);
     const caption: string = typeof message.caption === "string" ? message.caption : "";
-    // 必回触发与随机评价互斥、共用同一次 15s 每人触发冷却名额判定，理由同
-    // 贴纸分支。
+    // 必回触发与随机评价互斥；只有随机评价使用 15s 每人冷却，理由同贴纸分支。
     const commentOnResolveCandidate: boolean = !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY;
-    const claimedTrigger: boolean = !!(directMediaTrigger || commentOnResolveCandidate) && tryClaimUserReplyTrigger(chatId, speaker.id);
+    const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
     recordChatMedia(
       "photo",
@@ -486,11 +480,11 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       photoFile.fileId,
       photoFile.fileUniqueId,
       message.message_id,
-      commentOnResolveCandidate && claimedTrigger,
+      claimedRandomTrigger,
       undefined,
-      directMediaTrigger && claimedTrigger ? directMediaTrigger : undefined
+      directMediaTrigger
     );
-    if (directMediaTrigger) return;
+    if (directMediaTrigger || commentOnResolveCandidate) return;
   } else if (!activeCopy && aiChatEnabled && message.animation) {
     // GIF（Telegram animation，实际多为 mp4）：本项目没有视频解码/抽帧能力，
     // 只能分析 Telegram 自带的缩略图（封面帧，见 pickAnimationVisionSource）。
@@ -501,19 +495,16 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const visionSource = pickAnimationVisionSource(message.animation);
     if (!visionSource) {
       recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, caption ? `[GIF] ${caption}` : "[GIF]");
-      // 同贴纸分支：没有解析素材也要认得「明确在跟机器人说话」，同样受 15s
-      // 每人触发冷却约束。
+      // 同贴纸分支：没有解析素材也要认得「明确在跟机器人说话」，直接交给
+      // Worker 的有界直接触发队列。
       if (directMediaTrigger) {
-        if (tryClaimUserReplyTrigger(chatId, speaker.id)) {
-          generateAndSendReply(chatId, message.message_id, directMediaTrigger.repliedBotText);
-        }
+        generateAndSendReply(chatId, message.message_id, directMediaTrigger.repliedBotText);
         return;
       }
     } else {
-      // 必回触发与随机评价互斥、共用同一次 15s 每人触发冷却名额判定，理由
-      // 同贴纸分支。
+      // 必回触发与随机评价互斥；只有随机评价使用 15s 每人冷却。
       const commentOnResolveCandidate: boolean = !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY;
-      const claimedTrigger: boolean = !!(directMediaTrigger || commentOnResolveCandidate) && tryClaimUserReplyTrigger(chatId, speaker.id);
+      const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
       recordChatMedia(
         "animation",
         chatId,
@@ -525,11 +516,11 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
         visionSource.fileId,
         visionSource.fileUniqueId,
         message.message_id,
-        commentOnResolveCandidate && claimedTrigger,
+        claimedRandomTrigger,
         undefined,
-        directMediaTrigger && claimedTrigger ? directMediaTrigger : undefined
+        directMediaTrigger
       );
-      if (directMediaTrigger) return;
+      if (directMediaTrigger || commentOnResolveCandidate) return;
     }
   }
 

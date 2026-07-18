@@ -19,13 +19,14 @@
  * 断电风险（与日志文件同一套机制，那边已经这样跑了很久）。
  */
 
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry, StickerCatalogEntry, StickerCatalogSnapshot } from "../../types";
 import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { AI_MEMORY_FILE_PATTERN, DAY_FILE_PATTERN, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
+import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
 
 /**
  * tmp + fsync + rename 的原子覆盖写。rename 前的 fsync 不能省：rename 只
@@ -34,18 +35,6 @@ import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnl
  * 被杀不经过这个风险，只有断电经过）。content 是快照序列化好的 JSON 文本，
  * 序列化在源头（aiChatWorker 侧）只做一次，这里原样写入。
  */
-function atomicWriteText(path: string, content: string): void {
-  const tmpPath: string = `${path}${TMP_FILE_SUFFIX}`;
-  const fd: number = openSync(tmpPath, "w");
-  try {
-    writeFileSync(fd, content);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(tmpPath, path);
-}
-
 function tryUnlink(path: string): void {
   try {
     unlinkSync(path);
@@ -121,8 +110,10 @@ export function recoverAiMemories(): Map<number, string> {
       continue;
     }
     const snapshot: AiMemorySnapshot | null = rebuildAiMemorySnapshot(parsed);
-    if (snapshot) result.set(Number(match[1]), JSON.stringify(snapshot, null, 2));
-    else console.error(`[diskIOWorker] AI memory file ${name} does not match the current version=1 schema; migrate it manually`);
+    if (!snapshot) {
+      throw new Error(`AI memory file ${name} does not match the current version=1 schema; migrate it manually before starting the bot`);
+    }
+    result.set(Number(match[1]), JSON.stringify(snapshot, null, 2));
   }
   return result;
 }
@@ -136,7 +127,12 @@ export function recoverAiMemories(): Map<number, string> {
  */
 export function writeAiMemoryFile(chatId: number, snapshotJson: string): void {
   mkdirSync(AI_MEMORY_DIR, { recursive: true });
-  atomicWriteText(join(AI_MEMORY_DIR, `${chatId}.json`), snapshotJson);
+  atomicWriteTextSync(join(AI_MEMORY_DIR, `${chatId}.json`), snapshotJson);
+}
+
+export function deleteAiMemoryFile(chatId: number): void {
+  mkdirSync(AI_MEMORY_DIR, { recursive: true });
+  durableUnlinkSync(join(AI_MEMORY_DIR, `${chatId}.json`));
 }
 
 function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
@@ -171,7 +167,7 @@ function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot 
  * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
  *   ai/stickerConfig.ts），用于判定哪些持久化文件已经是孤儿。
  */
-export function recoverStickerCatalogs(activePacks: string[]): Map<string, string> {
+export function recoverStickerCatalogs(activePacks: readonly string[]): Map<string, string> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
   const activePackSet: Set<string> = new Set(activePacks);
   const result: Map<string, string> = new Map();
@@ -209,7 +205,7 @@ export function recoverStickerCatalogs(activePacks: string[]): Map<string, strin
  *  JSON 文本。 */
 export function writeStickerCatalogFile(pack: string, snapshotJson: string): void {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
-  atomicWriteText(join(STICKER_MEMORY_DIR, `${pack}.json`), snapshotJson);
+  atomicWriteTextSync(join(STICKER_MEMORY_DIR, `${pack}.json`), snapshotJson);
 }
 
 /**

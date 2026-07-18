@@ -21,8 +21,10 @@ const deleteMessageMock = mock(async (..._args: unknown[]): Promise<boolean> => 
 const setMessageReactionMock = mock((..._args: unknown[]): void => {});
 const sendStickerMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
 const sleepMock = mock(async (..._args: unknown[]): Promise<void> => {});
+const realTelegram = await import("../../src/infra/telegram");
 
 mock.module("../../src/infra/telegram", () => ({
+  ...realTelegram,
   bot: { api: { getStickerSet: mock(async (): Promise<null> => null), getFile: mock(async (): Promise<null> => null) } },
   buildFileDownloadUrl: mock((_filePath: string): string => "https://example.invalid/file"),
   sendMessage: sendMessageMock,
@@ -51,6 +53,27 @@ beforeEach(() => {
   setMessageReactionMock.mockClear();
   sendStickerMock.mockClear();
   sleepMock.mockClear();
+});
+
+test("工具集真实注册 googleSearch，并同时提供函数行动工具", async () => {
+  const toolset = await createReplyToolset({
+    chatId: -100800,
+    replyToMessageId: 10,
+    chatAction: {
+      current: () => "idle",
+      set: mock((..._args: unknown[]): void => {}),
+      settle: mock(async (): Promise<void> => {}),
+    },
+    stickerLock: { tryAcquire: () => true, release: () => {} },
+    roundHasTypo: false,
+    isActive: () => true,
+    onMessageSent: mock((..._args: unknown[]): void => {}),
+    onStickerSent: mock((..._args: unknown[]): void => {}),
+  });
+
+  expect(toolset.tools).toHaveLength(2);
+  expect(toolset.tools[0]?.googleSearch).toEqual({});
+  expect(toolset.tools[1]?.functionDeclarations?.length).toBeGreaterThan(0);
 });
 
 describe("isEmojiOnly", () => {
@@ -129,6 +152,31 @@ describe("buildCharacterTypo", () => {
 });
 
 describe("send_message typo correction", () => {
+  test("禁用发生在输入停顿期间时不再发出消息", async () => {
+    let active: boolean = true;
+    sleepMock.mockImplementationOnce(async (): Promise<void> => {
+      active = false;
+    });
+    const toolset = await createReplyToolset({
+      chatId: -100800,
+      replyToMessageId: 10,
+      chatAction: {
+        current: () => "idle",
+        set: mock((..._args: unknown[]): void => {}),
+        settle: mock(async (): Promise<void> => {}),
+      },
+      stickerLock: { tryAcquire: () => true, release: () => {} },
+      roundHasTypo: false,
+      isActive: () => active,
+      onMessageSent: mock((..._args: unknown[]): void => {}),
+      onStickerSent: mock((..._args: unknown[]): void => {}),
+    });
+
+    const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "不该发出" })));
+    expect(result.error).toContain("disabled");
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
   test("快速补发只发送唯一错字对应的正确字，不接受模型给的整词", async () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
@@ -147,6 +195,7 @@ describe("send_message typo correction", () => {
           release: () => {},
         },
         roundHasTypo: true,
+        isActive: () => true,
         onMessageSent,
         onStickerSent: mock((..._args: unknown[]): void => {}),
       });
@@ -187,6 +236,7 @@ describe("send_message typo correction", () => {
           release: () => {},
         },
         roundHasTypo: false,
+        isActive: () => true,
         onMessageSent,
         onStickerSent: mock((..._args: unknown[]): void => {}),
       });
@@ -225,6 +275,7 @@ describe("send_message typo correction", () => {
           release: () => {},
         },
         roundHasTypo: true,
+        isActive: () => true,
         onMessageSent: mock((..._args: unknown[]): void => {}),
         onStickerSent: mock((..._args: unknown[]): void => {}),
       });

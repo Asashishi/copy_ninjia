@@ -1,11 +1,12 @@
-import { link, open, rename, unlink } from "node:fs/promises";
+import { link, open, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { logger } from "./logger";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
-import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
+import { LOCK_FILE_PATH, STATE_FILE_PATH } from "../consts/paths";
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 import { createLatestValueRunner } from "../libs/latestValueRunner";
-import { copyModeValue, finiteNumber, isRecord, rebuildCachedUser, rebuildChatState } from "../storage/stateCodec";
+import { atomicWriteText } from "../libs/atomicFile";
+import { decodeStateFile } from "../libs/stateFileCodec";
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -23,8 +24,9 @@ export function getBotTokenFingerprint(botToken: string): string {
 }
 
 /**
- * 锁注册表不变量：bot.lock 的每行是 pid:sha256(token)，所有读改写都在短期
- * guard 下完成；正式文件用 tmp + fsync + rename 发布。格式异常直接拒绝，
+ * 锁注册表不变量：bot.lock 的每行是 pid:sha256(token)，但同一
+ * 数据目录最多只允许一个活跃 PID。所有读改写都在短期 guard 下
+ * 完成；正式文件用 tmp + fsync + rename 发布。格式异常直接拒绝，
  * 不做旧格式推断或迁移。README 记录部署和手工处理规则。
  */
 interface BotLockRecord {
@@ -70,15 +72,10 @@ async function writeBotLockRecords(lockFilePath: string, records: BotLockRecord[
     }
     return;
   }
-  const tmpPath: string = `${lockFilePath}.tmp`;
-  const handle = await open(tmpPath, "w");
-  try {
-    await handle.writeFile(records.map((record) => `${record.pid}:${record.tokenFingerprint}\n`).join(""));
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  await rename(tmpPath, lockFilePath);
+  await atomicWriteText(
+    lockFilePath,
+    records.map((record) => `${record.pid}:${record.tokenFingerprint}\n`).join("")
+  );
 }
 
 async function acquirePidFileLock(lockFilePath: string): Promise<void> {
@@ -191,12 +188,15 @@ export async function acquireSingleInstanceLock(botToken: string, lockFilePath: 
   await withBotLockGuard(lockFilePath, async (): Promise<void> => {
     const activeRecords: BotLockRecord[] = (await readBotLockRecords(lockFilePath))
       .filter((record) => isProcessAlive(record.pid));
-    const owner: BotLockRecord | undefined = activeRecords.find((record) => record.tokenFingerprint === tokenFingerprint);
+    const owner: BotLockRecord | undefined = activeRecords[0];
     if (owner) {
-      throw new Error(`Another bot instance (pid=${owner.pid}) is already polling with the same token; refusing to start a duplicate.`);
+      const tokenScope: string = owner.tokenFingerprint === tokenFingerprint ? "the same token" : "a different token";
+      throw new Error(
+        `Another bot instance (pid=${owner.pid}) is already using this data directory with ${tokenScope}; ` +
+        "refusing concurrent access to shared state."
+      );
     }
-    activeRecords.push({ pid: process.pid, tokenFingerprint });
-    await writeBotLockRecords(lockFilePath, activeRecords);
+    await writeBotLockRecords(lockFilePath, [{ pid: process.pid, tokenFingerprint }]);
   });
 }
 
@@ -265,29 +265,46 @@ export function getActiveProxySendTarget(): number | undefined {
  * 先写临时文件、fsync、再 rename 到目标路径：rename 在同一文件系统内是
  * 原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），目标文件要么是
  * 写入前的旧内容，要么是写入后的新内容，不会停在半截的撕裂 JSON——不然
- * 重启后 loadState() 解析失败，会把这份文件聚合的所有数据一次性清空。
+ * 重启后 loadState() 会因解析失败拒绝启动。
  * rename 前的 fsync 不能省：它保证数据块先于改名落到磁盘，否则断电时
  * rename 可能已提交而数据还在页缓存里，目标文件变成空文件/半截内容——
  * 恰好是这套机制要防的事（进程被杀不经过这个风险，只有断电经过）。
  */
+const STATE_SAVE_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 5_000, 30_000];
+let dirtyStateJson: string | null = null;
+let stateRetryAttempt: number = 0;
+let stateRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
 const stateWriter = createLatestValueRunner<string>(async (json: string): Promise<void> => {
-  try {
-    const tmpPath: string = `${STATE_FILE_PATH}${TMP_FILE_SUFFIX}`;
-    const handle = await open(tmpPath, "w");
-    try {
-      await handle.writeFile(json);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(tmpPath, STATE_FILE_PATH);
-  } catch (error: unknown) {
-    logger.error("Failed to save state:", error);
+  await atomicWriteText(STATE_FILE_PATH, json);
+  if (dirtyStateJson === json) {
+    dirtyStateJson = null;
+    stateRetryAttempt = 0;
   }
 });
 
+function scheduleStateSaveRetry(): void {
+  if (dirtyStateJson === null || stateRetryTimer !== null) return;
+  const delay: number = STATE_SAVE_RETRY_DELAYS_MS[Math.min(stateRetryAttempt, STATE_SAVE_RETRY_DELAYS_MS.length - 1)]!;
+  stateRetryAttempt++;
+  stateRetryTimer = setTimeout(() => {
+    stateRetryTimer = null;
+    const json: string | null = dirtyStateJson;
+    if (json === null) return;
+    void stateWriter.push(json).catch((error: unknown) => {
+      logger.error(`Failed to retry state persistence (attempt ${stateRetryAttempt}):`, error);
+      scheduleStateSaveRetry();
+    });
+  }, delay);
+  stateRetryTimer.unref();
+}
+
 function persistStateJson(json: string): Promise<void> {
-  return stateWriter.push(json);
+  dirtyStateJson = json;
+  return stateWriter.push(json).catch((error: unknown) => {
+    scheduleStateSaveRetry();
+    throw error;
+  });
 }
 
 /** 全局复读目标的三个字段永远一起写：只设其中一部分会造成「全局占着复读
@@ -312,30 +329,16 @@ export async function loadState(): Promise<void> {
     const file = Bun.file(STATE_FILE_PATH);
     if (!(await file.exists())) return;
 
-    const parsed: unknown = JSON.parse(await file.text());
-    if (!isRecord(parsed) || !isRecord(parsed.chats) || !isRecord(parsed.globalCopy)) {
-      throw new Error("state.json does not match the current { chats, globalCopy } schema; migrate it manually before starting the bot");
+    const decoded: StateFileSchema = decodeStateFile(JSON.parse(await file.text()));
+    if (decoded.globalCopy.lastCopyTime !== undefined) {
+      globalCopyState.lastCopyTime = decoded.globalCopy.lastCopyTime;
     }
-    const rawChats: Record<string, unknown> = parsed.chats;
-    const rawGlobalCopy: Record<string, unknown> = parsed.globalCopy;
-
-    const lastCopyTime: number | undefined = finiteNumber(rawGlobalCopy.lastCopyTime);
-    if (lastCopyTime !== undefined) globalCopyState.lastCopyTime = lastCopyTime;
-    const copiedUser: CachedUser | null = rebuildCachedUser(rawGlobalCopy.copiedUser);
-    const copyChatId: number | undefined = finiteNumber(rawGlobalCopy.copyChatId);
-    if (copiedUser && copyChatId !== undefined && Number.isSafeInteger(copyChatId)) {
-      adoptCopyTarget(copiedUser, copyModeValue(rawGlobalCopy.copyMode), copyChatId);
-    } else if (rawGlobalCopy.copiedUser) {
-      // 有目标却没有有效的发起群 id（手改文件/文件损坏）：这种目标在任何群
-      // 都不会被复读，却会卡住全局槽位，直接丢弃并留日志。
-      logger.error("state.json globalCopy has copiedUser but no valid copyChatId; dropping the copy target to avoid a stuck global copy slot");
+    if (decoded.globalCopy.copiedUser !== null) {
+      adoptCopyTarget(decoded.globalCopy.copiedUser, decoded.globalCopy.copyMode, decoded.globalCopy.copyChatId!);
     }
 
-    for (const [chatIdStr, raw] of Object.entries(rawChats)) {
-      const chatId: number = Number(chatIdStr);
-      if (!Number.isSafeInteger(chatId) || chatId === 0) continue;
-      const chatState: ChatState | null = rebuildChatState(raw);
-      if (chatState) chatStates.set(chatId, chatState);
+    for (const [chatIdStr, chatState] of Object.entries(decoded.chats)) {
+      chatStates.set(Number(chatIdStr), chatState);
     }
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
@@ -355,6 +358,13 @@ export async function saveState(): Promise<void> {
   }
   const serializable: StateFileSchema = { chats, globalCopy: globalCopyState };
   await persistStateJson(JSON.stringify(serializable, null, 2));
+}
+
+/** 后台状态刷新统一收口，避免持久化失败变成未处理的 Promise rejection。 */
+export function saveStateInBackground(context: string): void {
+  void saveState().catch((error: unknown) => {
+    logger.error(`Failed to persist background state update (${context}):`, error);
+  });
 }
 
 /**

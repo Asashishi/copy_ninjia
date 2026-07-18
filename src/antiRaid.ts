@@ -1,7 +1,7 @@
 import { logger } from "./infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember, Message } from "@grammyjs/types";
-import { getAllChatStates, getOrCreateChatState, saveState } from "./infra/storage";
+import { getAllChatStates, getOrCreateChatState, saveStateInBackground } from "./infra/storage";
 import { answerCallbackQuery } from "./infra/telegram";
 import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
 import { LOCKDOWN_MS, VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid";
@@ -61,11 +61,11 @@ const { post } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
           originalPermissions: event.originalPermissions,
           expiresAt: Date.now() + LOCKDOWN_MS,
         };
-        void saveState();
+        saveStateInBackground("anti-raid lockdown");
         break;
       case "unlock":
         delete getOrCreateChatState(event.chatId).lockdown;
-        void saveState();
+        saveStateInBackground("anti-raid unlock");
         break;
     }
   },

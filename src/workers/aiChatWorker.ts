@@ -2,10 +2,10 @@ import { ensureStickerCatalogs, flushDirtyStickerCatalogs, hydrateStickerCatalog
 import { stickerConfig } from "../ai/stickerConfig";
 import { startWeatherRefreshLoop } from "../ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS, RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../consts/aiChat";
-import { botInfoState, longTriggerTimes, pendingOverflowNotices, pendingReplyTriggers, rateLimitNoticeTimes } from "../cache/aiChatWorker";
-import { flushDirtyMemories, hydrateMemories, recordChatMessage } from "./aiChat/rollingMemory";
+import { botInfoState, longTriggerTimes, rateLimitNoticeTimes } from "../cache/aiChatWorker";
+import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
-import { generateAndSendReply } from "./aiChat/replyPipeline";
+import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
 import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiStickerCatalogEvent } from "../types";
 
 /**
@@ -76,12 +76,12 @@ self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
       flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
       self.postMessage({ type: "memoryFlushed", flushId: msg.flushId } satisfies AiMemoryFlushedEvent);
       break;
-    case "clearReplyQueue":
-      // /ai_chat disable：已排队的触发不再补跑（在途的一轮无法中断，自然
-      // 跑完）。欠着的队列打满提示一并作废——功能都关了，还提示「太快了」
-      // 反而误导。
-      pendingReplyTriggers.delete(msg.chatId);
-      pendingOverflowNotices.delete(msg.chatId);
+    case "invalidateChat":
+      invalidateChatReplies(msg.chatId);
+      if (msg.purgeMemory) {
+        purgeChatMemory(msg.chatId);
+        self.postMessage({ type: "memoryDeleted", chatId: msg.chatId });
+      }
       break;
   }
 };

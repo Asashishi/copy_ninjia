@@ -3,6 +3,9 @@
 // 抓取目标头像（Bot API / t.me 主页兜底）的超时与重试次数。
 export const AVATAR_FETCH_TIMEOUT_MS: number = 15000;
 export const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
+/** 头像和公开主页分别采用独立硬上限，防止第三方响应导致无界内存占用。 */
+export const AVATAR_MAX_DOWNLOAD_BYTES: number = 10 * 1024 * 1024;
+export const PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES: number = 1024 * 1024;
 /** getUserProfilePhotos 单页最多能返回的张数，Bot API 本身的硬上限。 */
 export const USER_PROFILE_PHOTOS_LIMIT: number = 100;
 

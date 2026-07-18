@@ -6,11 +6,10 @@
  * 收发走官方 @google/genai SDK（Google 现行的统一 GenAI JS SDK）而不是手写
  * fetch：SDK 自带每次请求的超时（httpOptions.timeout）与瞬时失败（网络错误/
  * 5xx/429）的自动重试（默认最多 5 次尝试），比自己维护一份 AbortController
- * 省心。已用真实请求逐项验证过：内置 googleSearch（服务端工具）与自定义
- * 函数声明（客户端工具）能混用同一次请求（需开 toolConfig.
- * includeServerSideToolInvocations，见 callGemini）、视觉输入（inlineData）
- * 能用、多轮函数调用往返也正常（把上一轮模型的整个 content——含 thought
- * signature——原样接回 contents 再附上 functionResponse，见
+ * 省心。回复请求同时注册内置 googleSearch 与自定义函数，并开启
+ * includeServerSideToolInvocations 让搜索记录随 content 接回；视觉输入
+ * （inlineData）与多轮函数调用往返均由同一 SDK 处理。上一轮模型的完整
+ * content（含 thought signature）会原样接回 contents，再附上 functionResponse，见
  * workers/aiChatWorker.ts 的 callGemini）。
  *
  * 响应形状的结构性解析（取正文/函数调用/是否被 token 上限腰斩）是纯函数，

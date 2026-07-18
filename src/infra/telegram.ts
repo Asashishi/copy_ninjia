@@ -7,11 +7,14 @@ import { BOT_TOKEN } from "./config";
 import {
   API_RETRY_MAX_ATTEMPTS,
   API_RETRY_MAX_DELAY_SECONDS,
+  AVATAR_MAX_DOWNLOAD_BYTES,
   AVATAR_FETCH_MAX_ATTEMPTS,
   AVATAR_FETCH_TIMEOUT_MS,
+  PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES,
   USER_PROFILE_PHOTOS_LIMIT,
 } from "../consts/telegram";
 import { markSelfSent } from "./selfSentTracker";
+import { readBoundedResponseBytes, readBoundedResponseText, type BoundedResponseResult } from "../libs/boundedResponse";
 
 export const bot: Bot = new Bot(BOT_TOKEN);
 // 全仓共享的默认客户端也要限流+自动重试：AI 闲聊回复（触发频率最高、最
@@ -172,7 +175,11 @@ export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8
       logger.error(`Failed to fetch telegram.me profile page for @${username}: ${pageRes.status}`);
       return null;
     }
-    const html: string = await pageRes.text();
+    const html: string | null = await readBoundedResponseText(pageRes, PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES);
+    if (html === null) {
+      logger.error(`telegram.me profile page for @${username} exceeded the download limit`);
+      return null;
+    }
 
     // 先定位头像的 <img> 标签再取 src，兼容属性顺序变化；没设公开头像的
     // 主页根本没有这个标签，此时直接放弃兜底。
@@ -189,7 +196,12 @@ export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8
       logger.error(`Failed to download avatar from ${photoUrl}: ${imgRes.status}`);
       return null;
     }
-    return new Uint8Array(await imgRes.arrayBuffer());
+    const download: BoundedResponseResult = await readBoundedResponseBytes(imgRes, AVATAR_MAX_DOWNLOAD_BYTES);
+    if (!download.ok) {
+      logger.error(`Avatar for @${username} exceeded the download limit (${download.observedBytes} bytes)`);
+      return null;
+    }
+    return download.bytes;
   } catch (error: unknown) {
     logger.error(`Error scraping t.me profile photo for @${username}:`, error);
     return null;
@@ -264,7 +276,12 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       logger.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
       return "transient-failure";
     }
-    const imgBuffer: Uint8Array = new Uint8Array(await imgRes.arrayBuffer());
+    const download: BoundedResponseResult = await readBoundedResponseBytes(imgRes, AVATAR_MAX_DOWNLOAD_BYTES);
+    if (!download.ok) {
+      logger.error(`Avatar file exceeded the download limit (${download.observedBytes} bytes): ${file.file_path}`);
+      return "permanent-failure";
+    }
+    const imgBuffer: Uint8Array = download.bytes;
 
     await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
     return "ok";
@@ -285,7 +302,7 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
  * @param chatId 目标聊天 ID。
  * @param text 消息文本。
  * @param replyToMessageId 可选，要回复的消息 ID。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  * @param keyboard 可选，附带的内联键盘（如入群验证按钮）。
  * @returns 发送成功时返回该消息的 ID，失败则返回 undefined。
  */
@@ -312,7 +329,7 @@ export async function sendMessage(chatId: number, text: string, replyToMessageId
  * 消息时自动清除——因此调用方无需显式关闭，只需在生成/发送耗时较长时
  * 周期性重发以维持显示（见 ai/chatActionHeartbeat.ts）。
  * @param chatId 目标聊天 ID。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  * @returns 是否发送成功——聊天状态心跳据此累计连续失败次数；单次失败继续
  *   尝试，达到阈值才对大概率不可达的聊天止损。
  */
@@ -350,7 +367,7 @@ export async function sendChooseStickerAction(chatId: number, api: Api = bot.api
  * @param callbackQueryId 要应答的 callback_query ID。
  * @param text 可选，提示文本。
  * @param showAlert 是否以弹窗（而非一闪而过的 toast）形式展示提示文本。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  */
 export async function answerCallbackQuery(callbackQueryId: string, text?: string, showAlert: boolean = false, api: Api = bot.api): Promise<void> {
   try {
@@ -364,7 +381,7 @@ export async function answerCallbackQuery(callbackQueryId: string, text?: string
  * 向指定 Telegram 聊天发送一枚贴纸（按 file_id 引用，无需重新上传文件）。
  * @param chatId 目标聊天 ID。
  * @param fileId 贴纸的 file_id（来自 getStickerSet 返回的贴纸集合）。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  * @returns 发送成功时返回该消息的 ID（调用方可用它判断要不要把这枚贴纸自录
  *   进 AI 对话缓存、报回主线程登记自发消息），失败则返回 undefined。
  */
@@ -388,7 +405,7 @@ export async function sendSticker(chatId: number, fileId: string, api: Api = bot
  * @param messageId 要设置反应的消息。
  * @param emoji 标准反应 emoji（须在 Telegram 允许的反应表情集合内——调用方
  *   自行保证，这里只做类型断言，不做运行时校验）。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  */
 export async function setMessageReaction(chatId: number, messageId: number, emoji: string, api: Api = bot.api): Promise<void> {
   try {
@@ -403,7 +420,7 @@ export async function setMessageReaction(chatId: number, messageId: number, emoj
  * （提醒消息 + TA 期间发送的内容）。
  * @param chatId 消息所在的聊天。
  * @param messageId 要删除的消息。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  * @returns 删除成功返回 true，失败返回 false。
  */
 export async function deleteMessage(chatId: number, messageId: number, api: Api = bot.api): Promise<boolean> {
@@ -422,7 +439,7 @@ export async function deleteMessage(chatId: number, messageId: number, api: Api 
  * @param chatId 消息所在的聊天。
  * @param messageId 要删除的消息。
  * @param delayMs 删除前等待的毫秒数。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  */
 export function deleteMessageAfter(chatId: number, messageId: number, delayMs: number, api: Api = bot.api): void {
   // unref：这只是清理美化，不值得为它拖住进程停机（停机后消息留着就留着）。
@@ -442,7 +459,7 @@ export function deleteMessageAfter(chatId: number, messageId: number, delayMs: n
  * 需要机器人是拥有封禁权限的管理员。
  * @param chatId 要移出成员的聊天。
  * @param userId 要移除的成员。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  * @returns 踢出是否成功——超时踢人的战报要靠它区分真踢出和没踢动（缺权限时
  *          不能对着还在群里的人宣布"已踢出"）。
  */
@@ -464,7 +481,7 @@ export async function kickChatMember(chatId: number, userId: number, api: Api = 
  * 需要机器人是拥有封禁权限的管理员。
  * @param chatId 要封禁成员的聊天。
  * @param userId 要封禁的成员。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  * @returns 封禁是否成功——/kick 的战报要靠它区分真踢出和假成功。
  */
 export async function banChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
@@ -487,7 +504,7 @@ export async function banChatMember(chatId: number, userId: number, api: Api = b
  * 声称把人从 TA 可能根本不在的群里踢了出去。
  * @param chatId 要查询的聊天。
  * @param userId 要查询的用户。
- * @param api 用于查询的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于查询的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  */
 export async function isChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   try {
@@ -508,7 +525,7 @@ export async function isChatMember(chatId: number, userId: number, api: Api = bo
  * 需要机器人是拥有封禁权限的管理员。
  * @param chatId 要封禁频道马甲的聊天。
  * @param senderChatId 要封禁的频道 id（`-100…` 形式）。
- * @param api 用于发送的 API 客户端（默认使用共享的、不限流的 `bot.api`）。
+ * @param api 用于发送的 API 客户端（默认使用共享且带限流/重试的 `bot.api`）。
  * @returns 封禁是否成功——/kick 的战报要靠它区分真踢出和假成功。
  */
 export async function banChatSenderChat(chatId: number, senderChatId: number, api: Api = bot.api): Promise<boolean> {

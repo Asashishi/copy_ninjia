@@ -200,8 +200,10 @@ export async function sendStickerTool(
   menu: StickerPackCandidate[],
   argumentsJson: string,
   state: StickerRoundState,
-  onSent: (stickerDescription: string, messageId: number) => void
+  onSent: (stickerDescription: string, messageId: number) => void,
+  isActive: () => boolean = (): boolean => true
 ): Promise<string> {
+  if (!isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
   const packIndex: number | null = parseIndexField(argumentsJson, "pack_index", menu.length);
   if (packIndex === null) return JSON.stringify({ error: "Invalid pack_index" });
   const pack: StickerPackCandidate = menu[packIndex - 1]!;
@@ -235,6 +237,7 @@ export async function sendStickerTool(
   }
   chatAction.set("idle");
   await chatAction.settle();
+  if (!isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
   const sentMessageId: number | undefined = await sendSticker(chatId, candidate.sticker.file_id);
   if (sentMessageId === undefined) {
     // 发送失败不把挡位续回选择贴纸：模型若换一枚重试，发送路径会自己重新

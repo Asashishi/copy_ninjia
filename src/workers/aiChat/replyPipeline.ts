@@ -18,6 +18,7 @@ import {
   pendingOverflowNotices,
   pendingReplyTriggers,
   rateLimitNoticeTimes,
+  replyGenerations,
 } from "../../cache/aiChatWorker";
 import { createReplyToolset } from "../../ai/tools/replyToolset";
 import { startChatActionHeartbeat } from "../../ai/chatActionHeartbeat";
@@ -41,6 +42,20 @@ import { admitRound, admitTrigger, type AdmitDecision, type TriggerKind } from "
 
 declare var self: Worker;
 
+export function currentReplyGeneration(chatId: number): number {
+  return replyGenerations.get(chatId) ?? 0;
+}
+
+export function isReplyGenerationCurrent(chatId: number, generation: number): boolean {
+  return currentReplyGeneration(chatId) === generation;
+}
+
+export function invalidateChatReplies(chatId: number): void {
+  replyGenerations.set(chatId, currentReplyGeneration(chatId) + 1);
+  pendingReplyTriggers.delete(chatId);
+  pendingOverflowNotices.delete(chatId);
+}
+
 /**
  * AI 回复的准入控制（并发闸 + 5 分钟滑动窗口限频 + 溢出排队补跑）与生成/
  * 发送编排。准入判定的纯规则收在 states/replyAdmission.ts（admitTrigger/
@@ -60,7 +75,7 @@ declare var self: Worker;
  * 不会跟着刷。随机插话/媒体评价在并发位占满期间的丢弃不提示——没人在等
  * 那条回复，提示反而吵。
  */
-function notifyRateLimited(chatId: number, now: number): void {
+function notifyRateLimited(chatId: number, now: number, generation: number = currentReplyGeneration(chatId)): void {
   const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
   if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
   rateLimitNoticeTimes.set(chatId, now);
@@ -73,7 +88,7 @@ function notifyRateLimited(chatId: number, now: number): void {
     self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
     // 也自录进对话缓存——这条提示同样是机器人在群里说的话，不留痕的话
     // 模型不知道自己刚说过「太快了接不过来」，被追问时接不上。
-    if (botInfoState.current) {
+    if (botInfoState.current && isReplyGenerationCurrent(chatId, generation)) {
       recordChatMessage(chatId, botInfoState.current.id, botInfoState.current.first_name, "", botInfoState.current.username, RATE_LIMIT_NOTICE_TEXT);
     }
   });
@@ -110,6 +125,7 @@ export function generateAndSendReply(
   isRandomTrigger: boolean,
   mediaComment?: MediaCommentContext
 ): void {
+  const generation: number = currentReplyGeneration(chatId);
   // init 消息在 index.ts 里先于 runner 启动送出，FIFO 保证它先到；走到这里
   // 说明编排被改坏了，丢弃触发并留痕，别让流水线在缺身份的情况下硬跑。
   if (!botInfoState.current) {
@@ -131,7 +147,7 @@ export function generateAndSendReply(
   });
   switch (decision.action) {
     case "startRound":
-      startReplyRound(chatId, replyToMessageId, repliedBotText, isRandomTrigger, mediaComment);
+      startReplyRound(chatId, replyToMessageId, repliedBotText, isRandomTrigger, mediaComment, undefined, generation);
       break;
     case "dropSilently":
       break;
@@ -229,8 +245,10 @@ function startReplyRound(
   repliedBotText: string | undefined,
   isRandomTrigger: boolean,
   mediaComment?: MediaCommentContext,
-  queuedTrigger?: QueuedReplyTrigger
+  queuedTrigger?: QueuedReplyTrigger,
+  generation: number = currentReplyGeneration(chatId)
 ): void {
+  if (!isReplyGenerationCurrent(chatId, generation)) return;
   // generateAndSendReply 已挡过缺身份的触发；出队补跑路径能走到这里说明
   // init 早已到达（队列只在某轮跑过之后才可能有内容），这里只做类型收窄。
   const selfInfo: AiBotInfo | null = botInfoState.current;
@@ -249,7 +267,7 @@ function startReplyRound(
     longTimes.shift();
   }
   if (admitRound({ windowCount: longTimes.size }).action === "rateLimited") {
-    notifyRateLimited(chatId, now);
+    notifyRateLimited(chatId, now, generation);
     return;
   }
 
@@ -257,6 +275,7 @@ function startReplyRound(
   activeReplyCounts.set(chatId, (activeReplyCounts.get(chatId) ?? 0) + 1);
 
   void (async (): Promise<void> => {
+    const isActive = (): boolean => isReplyGenerationCurrent(chatId, generation);
     // 本轮的同群发贴纸锁句柄（见 ai/stickerSendLock.ts）：创建不抢占，第一次
     // send_sticker 走到发送时才抢；并发轮里只有抢到的那轮能发贴纸。外层
     // finally 兜底释放——锁的持有期严格等于本轮生命周期，异常中断也不遗留。
@@ -293,13 +312,14 @@ function startReplyRound(
           chatAction: heartbeat,
           stickerLock,
           roundHasTypo,
+          isActive,
           onMessageSent: (text: string, messageId: number): void => {
-            recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, text);
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+            if (isActive()) recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, text);
           },
           onStickerSent: (stickerDescription: string, messageId: number): void => {
-            recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, stickerDescription);
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+            if (isActive()) recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, stickerDescription);
           },
         };
         const toolset: ReplyToolset = await createReplyToolset(ctx);

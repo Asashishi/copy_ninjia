@@ -56,14 +56,8 @@ async function main(): Promise<void> {
     return next();
   });
 
-  // 运势抽签「结果消息现身」的兜底确认（主路是下面的 chosen_inline_result）：
-  // 只要机器人在任何聊天里看见一条文本恰好是某把待确认抽签的渲染原文，就
-  // 说明那条结果确实被发出去过，认领转正并落盘（见 commands/
-  // luckChallenge.ts 模块头）。刻意不要求 via_bot——转发副本
-  // 不带 via_bot（不相干的人把结果转发进机器人在场的陌生群、或转发到机器
-  // 人自己的私聊，都该算数），所以也必须挂在 isInit 网关之前，未 /init 的
-  // 群里现身的副本才认领得到。confirmLuckDraw 幂等、只做一次 Map 查找，
-  // 每条更新多付的成本可忽略；认领完更新照常往下走，去留仍由网关决定。
+  // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
+  // 因此必须在 isInit 网关前检查；正文不参与确认，详见 luckChallenge.ts。
   bot.use((ctx, next) => {
     confirmLuckDraw(ctx.msg?.text);
     return next();
@@ -178,7 +172,7 @@ async function main(): Promise<void> {
   // `@本机器人 ...` 内联模式（/luck_challenge）的信号来源（还需要在
   // BotFather 里手动开启 Inline Mode，光加这里不够）；chosen_inline_result
   // 是抽签确认的主信号（同样要在 BotFather 用 /setinlinefeedback 开启，
-  // 建议 100%，否则 Telegram 不发这类更新，确认只剩文本认领兜底路）。
+  // 建议 100%，否则 Telegram 不发这类更新，确认只剩签名回执兜底路）。
   // 用 @grammyjs/runner 代替 bot.start()：内建轮询对所有更新全局串行，一条
   // 消息的处理（复读、翻译）会卡住后面的 reaction 更新；runner 按上面的
   // sequentialize 约束并发处理。

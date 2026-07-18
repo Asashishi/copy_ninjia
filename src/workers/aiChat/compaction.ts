@@ -23,6 +23,7 @@ import {
   compactionPendingCounts,
   dirtyMemoryChats,
   pendingSummaries,
+  replyGenerations,
 } from "../../cache/aiChatWorker";
 import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import type { BufferedMessage } from "../../types";
@@ -46,6 +47,7 @@ const compactionRunner = createKeyedSerialTaskRunner(compactionChains);
  * @param promoteFirst 本轮是否有旧镜像滑出（首轮没有），有则先晋升其摘要。
  */
 export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean): void {
+  const generation: number = replyGenerations.get(chatId) ?? 0;
   const pendingCount: number = compactionPendingCounts.get(chatId) ?? 0;
   if (pendingCount >= COMPACTION_MAX_PENDING_PER_CHAT) {
     logger.error(
@@ -56,7 +58,7 @@ export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[],
   }
 
   compactionPendingCounts.set(chatId, pendingCount + 1);
-  const next: Promise<void> = compactionRunner.run(chatId, () => rotateCompaction(chatId, mirrorBatch, promoteFirst));
+  const next: Promise<void> = compactionRunner.run(chatId, () => rotateCompaction(chatId, mirrorBatch, promoteFirst, generation));
   void next.then(
     () => finishCompactionTask(chatId),
     () => finishCompactionTask(chatId)
@@ -72,12 +74,14 @@ function finishCompactionTask(chatId: number): void {
 }
 
 /** 执行一轮轮换：先晋升上一轮镜像的摘要（若有），再 AI 压缩新镜像存为待晋升。 */
-async function rotateCompaction(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean): Promise<void> {
+async function rotateCompaction(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean, generation: number): Promise<void> {
   try {
+    if ((replyGenerations.get(chatId) ?? 0) !== generation) return;
     if (promoteFirst) {
       promotePendingSummary(chatId);
     }
     const summary: string | null = await summarizeBatchWithRetry(chatId, mirrorBatch);
+    if ((replyGenerations.get(chatId) ?? 0) !== generation) return;
     if (summary) {
       pendingSummaries.set(chatId, summary);
       dirtyMemoryChats.add(chatId);

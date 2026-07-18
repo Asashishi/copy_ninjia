@@ -47,12 +47,14 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
  *   只在模型一条消息都没发出去时才把它当兜底回复用。
  */
 export async function callGemini(chatId: number, userContent: string, toolset: ReplyToolset): Promise<string | null> {
+  if (!toolset.isActive()) return null;
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentMoodInstruction(chatId)}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
   const contents: Content[] = [{ role: "user", parts: [{ text: userContent }] }];
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    if (!toolset.isActive()) return null;
     const data: GenerateContentResponse | null = await requestGeminiResponse(
       {
         model: GEMINI_REPLY_MODEL,
@@ -60,11 +62,8 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
         config: {
           systemInstruction: systemPrompt,
           tools: toolset.tools,
-          // 内置 googleSearch 与自定义函数混用同一次请求时 API 硬性要求开
-          // 这个开关（不开直接 400）。开了之后服务端工具的执行记录会以
-          // toolCall/toolResponse part 的形式混进 content——它们不是
-          // functionCall part，extractFunctionCalls 不会误当成待执行的
-          // 自定义函数；多轮往返时随整个 content 原样接回即可（实测确认）。
+          // googleSearch 与函数工具混用时必须要求 SDK 把服务端工具调用记录
+          // 接回 content；否则 Gemini API 会拒绝该组合或丢失搜索上下文。
           toolConfig: { includeServerSideToolInvocations: true },
           temperature: REPLY_TEMPERATURE,
           maxOutputTokens: REPLY_MAX_TOKENS,
@@ -72,7 +71,7 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
       },
       "Gemini API"
     );
-    if (!data) return null;
+    if (!toolset.isActive() || !data) return null;
 
     const functionCalls: ExtractedFunctionCall[] = extractFunctionCalls(data);
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
@@ -85,6 +84,7 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
       contents.push(modelContent);
       const responseParts: Part[] = [];
       for (const call of functionCalls) {
+        if (!toolset.isActive()) return null;
         const result: string = toolset.has(call.name)
           ? await toolset.execute(call.name, JSON.stringify(call.args ?? {}))
           : await callTool(call.name);

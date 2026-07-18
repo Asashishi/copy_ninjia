@@ -9,11 +9,11 @@
  * 打开/探测/追加/损坏修复。
  */
 
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DayFileState } from "../../types";
-import { TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO";
+import { atomicWriteTextSync } from "../../libs/atomicFile";
 
 // serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出是多行形态
 // （indent 为 0 时输出单行，掐头去尾会切进内容本身）；启动即断言，不让
@@ -35,15 +35,7 @@ const ENTRY_LINE_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
  * 靠 repairTruncated 兜底，见下方注释。
  */
 function atomicRewrite(path: string, content: string): void {
-  const tmpPath: string = `${path}${TMP_FILE_SUFFIX}`;
-  const fd: number = openSync(tmpPath, "w");
-  try {
-    writeFileSync(fd, content);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  renameSync(tmpPath, path);
+  atomicWriteTextSync(path, content);
 }
 
 /**

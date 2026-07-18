@@ -1,8 +1,9 @@
 import type { Context } from "grammy";
 import { logger } from "./logger";
 import { bot } from "./telegram";
-import { getChatState, getOrCreateChatState, saveState } from "./storage";
+import { getChatState, getOrCreateChatState, saveStateInBackground } from "./storage";
 import { botAdminFetches } from "../cache/botAdmin";
+import { invalidateAiChat } from "../aiChat";
 
 /**
  * 机器人自己在各群的管理员身份追踪。入群守卫（antiRaid）和 /kick 都需要
@@ -42,7 +43,7 @@ function recordBotAdminStatus(chatId: number, isAdmin: boolean): void {
   const chatState = getOrCreateChatState(chatId);
   if (chatState.botIsAdmin === isAdmin) return;
   chatState.botIsAdmin = isAdmin;
-  void saveState();
+  saveStateInBackground("bot admin status refresh");
 }
 
 /**
@@ -55,6 +56,9 @@ export function handleMyChatMemberUpdate(ctx: Context): void {
   if (!update) return;
   // 私聊没有管理员概念，频道里机器人不做任何守卫/踢人，都不记录。
   if (update.chat.type !== "group" && update.chat.type !== "supergroup") return;
+  if (update.new_chat_member.status === "left" || update.new_chat_member.status === "kicked") {
+    invalidateAiChat(update.chat.id, true);
+  }
   recordBotAdminStatus(update.chat.id, update.new_chat_member.status === "administrator");
 }
 

@@ -7,7 +7,7 @@ import { dirtyMemoryChats } from "../../cache/aiChatWorker";
 import type { AiRecordMediaMessage, BufferedMessage } from "../../types";
 import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";
 import { pushBufferedMessage } from "./rollingMemory";
-import { generateAndSendReply } from "./replyPipeline";
+import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent } from "./replyPipeline";
 
 /**
  * 记录一条图片/贴纸/GIF 消息：先以占位文本立即入缓存（保住它在对话时序里
@@ -39,6 +39,7 @@ import { generateAndSendReply } from "./replyPipeline";
  * 天然逐条走这里，互不影响；每条媒体消息各自占位、各自异步解析。
  */
 export function recordChatMedia(msg: AiRecordMediaMessage): void {
+  const generation: number = currentReplyGeneration(msg.chatId);
   const sanitizedCaption: string = sanitizeInline(msg.caption);
 
   if (msg.kind === "sticker") {
@@ -80,6 +81,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
   // 同一份媒体按 file_unique_id 去重，不同媒体则经过全局有界执行器，避免
   // 洪峰同时启动无界的下载、转码和视觉请求。
   void describeMedia(msg.kind, msg.fileId, msg.fileUniqueId).then((description: string | null) => {
+    if (!isReplyGenerationCurrent(msg.chatId, generation)) return;
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
     dirtyMemoryChats.add(msg.chatId);
