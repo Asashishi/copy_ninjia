@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import { clearChatStateField, getActiveProxySendTarget, getOrCreateChatState, saveStateInBackground } from "../infra/storage";
+import { clearChatStateField, getActiveProxySendTarget, getOrCreateChatState, saveStateInBackground } from "../infra/storage/stateStore";
 import { bot, logApiError, sendMessage } from "../infra/telegram";
 import { isSuperAdmin } from "./superAdminToggle";
 

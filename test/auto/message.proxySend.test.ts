@@ -12,7 +12,7 @@ mock.module("../../src/infra/telegram", () => ({
 
 const targetChatId = -1001234567890;
 let chatState: { isJATranslationEnabled?: boolean } = {};
-mock.module("../../src/infra/storage", () => ({
+mock.module("../../src/infra/storage/stateStore", () => ({
   clearChatStateField: () => true,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => targetChatId,

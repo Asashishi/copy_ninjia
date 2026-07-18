@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { CopyableReaction } from "../types/reactionQueue";
-import { getActiveCopyIn } from "../infra/storage";
+import { getActiveCopyIn } from "../infra/storage/stateStore";
 import { enqueueReaction } from "../copy/reactionQueue";
 
 /**

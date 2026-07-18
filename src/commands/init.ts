@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
-import { getOrCreateChatState, saveStateInBackground } from "../infra/storage";
+import { getOrCreateChatState, saveStateInBackground } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 import { invalidateAiChat } from "../aiChat";

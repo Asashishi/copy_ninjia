@@ -20,7 +20,7 @@ let persistedAck: ((reply: VerificationPersistedReply) => void) | undefined;
 mock.module("../../../src/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../src/infra/storage", () => ({
+mock.module("../../../src/infra/storage/stateStore", () => ({
   clearChatStateField: () => true,
   getAllChatStates: (): Map<number, never> => new Map<number, never>(),
   getOrCreateChatState: (): Record<string, never> => ({}),

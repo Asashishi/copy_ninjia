@@ -21,7 +21,7 @@ mock.module("../../src/infra/telegram", () => ({
 
 const chatStates = new Map<number, Record<string, unknown>>();
 const saveStateInBackgroundMock = mock((..._args: unknown[]): void => {});
-mock.module("../../src/infra/storage", () => ({
+mock.module("../../src/infra/storage/stateStore", () => ({
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
     let state = chatStates.get(chatId);
     if (!state) {

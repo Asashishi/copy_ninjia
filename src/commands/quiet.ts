@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
-import { clearChatStateField, getChatState, getOrCreateChatState, saveStateInBackground } from "../infra/storage";
+import { clearChatStateField, getChatState, getOrCreateChatState, saveStateInBackground } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { QUIET_DEFAULT_MINUTES, QUIET_MAX_MINUTES, QUIET_MIN_MINUTES } from "../consts/commands";
 

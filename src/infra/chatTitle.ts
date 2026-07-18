@@ -1,7 +1,7 @@
 import type { Chat } from "@grammyjs/types";
 import { logger } from "./logger";
 import { bot } from "./telegram";
-import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage";
+import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage/stateStore";
 
 /**
  * 各群名称的追踪与持久化（ChatState.title，随 state.json 落盘）。群名称不

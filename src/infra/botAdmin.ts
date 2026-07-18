@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { logger } from "./logger";
 import { bot } from "./telegram";
-import { deleteChatState, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage";
+import { deleteChatState, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage/stateStore";
 import { botAdminFetches } from "../cache/botAdmin";
 import { invalidateAiChat } from "../aiChat";
 

@@ -6,7 +6,7 @@ import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { resolveCommandTarget } from "./targetResolution";
 import { isBotAdminIn } from "../infra/botAdmin";
-import { getAllChatStates } from "../infra/storage";
+import { getAllChatStates } from "../infra/storage/stateStore";
 
 /**
  * 处理 /kick 指令：将目标在所有「机器人是管理员」的群里同时封禁（与入群

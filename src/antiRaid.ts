@@ -1,7 +1,7 @@
 import { logger } from "./infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember, Message } from "@grammyjs/types";
-import { clearChatStateField, getAllChatStates, getOrCreateChatState, saveStateInBackground } from "./infra/storage";
+import { clearChatStateField, getAllChatStates, getOrCreateChatState, saveStateInBackground } from "./infra/storage/stateStore";
 import { answerCallbackQuery } from "./infra/telegram";
 import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
 import { LOCKDOWN_MS } from "./consts/antiRaid/lockdown";

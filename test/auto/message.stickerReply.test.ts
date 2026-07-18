@@ -19,7 +19,7 @@ mock.module("../../src/infra/telegram", () => ({
   buildFileDownloadUrl: () => "",
   logApiError: () => {},
 }));
-mock.module("../../src/infra/storage", () => ({
+mock.module("../../src/infra/storage/stateStore", () => ({
   clearChatStateField: () => false,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => undefined,

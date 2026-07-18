@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import { getActiveProxySendTarget, getChatState } from "./storage";
+import { getActiveProxySendTarget, getChatState } from "./storage/stateStore";
 import { SUPER_ADMIN_USER_ID } from "./config";
 
 /**

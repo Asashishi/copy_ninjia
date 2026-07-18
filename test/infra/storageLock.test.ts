@@ -7,7 +7,7 @@ mock.module("../../src/infra/logger", () => ({
   logger: { error: mock((..._args: unknown[]): void => {}) },
 }));
 
-const { acquireSingleInstanceLock, getBotTokenFingerprint, releaseSingleInstanceLock } = await import("../../src/infra/storage");
+const { acquireSingleInstanceLock, getBotTokenFingerprint, releaseSingleInstanceLock } = await import("../../src/infra/storage/instanceLock");
 const TOKEN_A = "123456789:test-secret-a";
 const TOKEN_B = "987654321:test-secret-b";
 let testDir: string;
