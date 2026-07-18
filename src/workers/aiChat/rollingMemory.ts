@@ -3,7 +3,7 @@ import { LinkedQueue } from "../../libs/linkedQueue";
 import { formatTokyoTime } from "../../libs/time";
 import { sanitizeInline } from "../../libs/text";
 import { pickMood, recordActivityAndMaybeRerollMood } from "../../ai/mood";
-import { AI_MEMORY_HYDRATE_BUFFER_MAX, AI_MEMORY_MAX_CHATS, COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../consts/aiChat";
+import { AI_MEMORY_HYDRATE_BUFFER_MAX, AI_MEMORY_MAX_CHATS, COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../consts/aiChat/memory";
 import {
   chatBuffers,
   chatSummaries,

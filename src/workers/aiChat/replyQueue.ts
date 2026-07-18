@@ -2,7 +2,7 @@ import { displayBufferedMessageName } from "../../ai/utils/chatTranscript";
 import {
   QUEUED_TRIGGER_SNIPPET_MAX_CHARS,
   REPLY_ROUND_MAX_CONCURRENT,
-} from "../../consts/aiChat";
+} from "../../consts/aiChat/rateLimit";
 import {
   activeReplyCounts,
   pendingOverflowNotices,

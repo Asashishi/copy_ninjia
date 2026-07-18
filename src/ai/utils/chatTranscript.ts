@@ -1,6 +1,6 @@
 import type { BufferedMessage } from "../../types";
 import { FALLBACK_SPEAKER_NAME } from "../../consts/auto";
-import { COMPACT_BATCH_SIZE } from "../../consts/aiChat";
+import { COMPACT_BATCH_SIZE } from "../../consts/aiChat/memory";
 
 /** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
 export function displayBufferedMessageName(message: BufferedMessage): string {

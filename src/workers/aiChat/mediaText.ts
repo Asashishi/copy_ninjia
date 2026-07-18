@@ -5,7 +5,7 @@ import {
   IMAGE_FALLBACK_PLACEHOLDER,
   IMAGE_PENDING_PLACEHOLDER,
   STICKER_PENDING_PLACEHOLDER,
-} from "../../consts/aiChat";
+} from "../../consts/aiChat/media";
 
 /** 媒体转录行/占位/回填标签的纯字符串拼装，供 mediaIngest.ts 的
  *  recordChatMedia 与 replyQueue.ts 的 pushReplyTrigger 共用。 */

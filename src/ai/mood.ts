@@ -1,6 +1,6 @@
 import { chatLastActivityTimes, chatMoods } from "../cache/aiChat/mood";
-import { MOOD_IDLE_RESET_MAX_MS, MOOD_IDLE_RESET_MIN_MS } from "../consts/aiChat";
-import { MOOD_OPTIONS } from "../consts/aiChatPrompts";
+import { MOOD_IDLE_RESET_MAX_MS, MOOD_IDLE_RESET_MIN_MS } from "../consts/aiChat/mood";
+import { MOOD_OPTIONS } from "../consts/aiChat/prompts/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../consts/weather";
 import { getTokyoHour } from "../libs/time";
 import { currentTokyoWeather } from "./weather";
@@ -10,7 +10,7 @@ import type { MoodOption, TimeBucket, WeatherBucket } from "../types";
  * 各群「心情」系统：模拟真人聊天号那种「隔了好久没说话，再冒泡时状态
  * 可能不一样了」的感觉，重抽时还会按当前天气/时段微调各心情的抽中概率
  * （大晴天更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等，
- * 具体倍率见 consts/aiChatPrompts.ts 的 MOOD_OPTIONS）。两个内存缓存
+ * 具体倍率见 consts/aiChat/prompts/mood.ts）。两个内存缓存
  * （chatMoods/chatLastActivityTimes，见 cache/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空。
  *

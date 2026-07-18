@@ -1,4 +1,4 @@
-import { TYPO_QUICK_CORRECTION_PROBABILITY, TYPO_RECALL_CORRECTION_PROBABILITY } from "../../consts/aiChat";
+import { TYPO_QUICK_CORRECTION_PROBABILITY, TYPO_RECALL_CORRECTION_PROBABILITY } from "../../consts/aiChat/tools";
 import { isEmojiOnly } from "./replyText";
 
 export type TypoCorrectionMode = "quick" | "recall" | "ignore";

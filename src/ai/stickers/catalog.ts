@@ -12,9 +12,9 @@ import { transientDescriptionCache } from "../../cache/imageDescription";
 import {
   GEMINI_SUMMARY_MODEL,
   SUMMARY_TEMPERATURE,
-} from "../../consts/aiChat";
+} from "../../consts/aiChat/memory";
 import { STICKER_CATALOG_RETRY_DELAYS_MS, STICKER_PACK_SUMMARY_MAX_CHARS, STICKER_PACK_SUMMARY_MAX_TOKENS } from "../../consts/aiChat/stickers";
-import { STICKER_PACK_SUMMARY_PROMPT } from "../../consts/aiChatPrompts";
+import { STICKER_PACK_SUMMARY_PROMPT } from "../../consts/aiChat/prompts/media";
 import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot } from "../../types";
 
 /**

@@ -114,7 +114,7 @@ export type WeatherBucket = "clear" | "cloudy" | "rain" | "snow" | "storm" | "fo
 export type TimeBucket = "lateNight" | "morning" | "daytime" | "evening" | "night";
 
 /**
- * 一种可抽中的心情（见 ai/mood.ts、consts/aiChatPrompts.ts 的 MOOD_OPTIONS）：
+ * 一种可抽中的心情（见 ai/mood.ts、consts/aiChat/prompts/mood.ts）：
  * weight 是「没有天气/时段影响」时抽中概率的份额，全表之和须为 100；
  * instruction 是拼进系统提示词、描述这个心情下人设行为倾向的一段话。
  * weatherMultipliers/timeMultipliers 是可选的权重倍率表：抽取时按当前

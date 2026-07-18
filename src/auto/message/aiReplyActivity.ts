@@ -4,7 +4,7 @@ import {
   AI_REPLY_ACTIVITY_WINDOW_MS,
   AI_REPLY_PROBABILITY_BASE_INITIAL,
   AI_REPLY_PROBABILITY_BASE_MIN,
-} from "../../consts/aiChat";
+} from "../../consts/aiChat/rateLimit";
 import {
   aiReplyActivityByChat,
   aiReplyActivitySweepState,

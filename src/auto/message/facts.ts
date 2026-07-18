@@ -1,5 +1,5 @@
 import type { Animation, Message, MessageEntity, PhotoSize } from "@grammyjs/types";
-import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat";
+import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
 
 /** 一条消息在 AI 转录中使用的发送者身份。 */

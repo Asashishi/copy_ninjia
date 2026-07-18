@@ -1,7 +1,7 @@
 import {
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   RATE_LIMIT_NOTICE_TEXT,
-} from "../../consts/aiChat";
+} from "../../consts/aiChat/rateLimit";
 import {
   rateLimitNoticeTimes,
   cachedReplyGeneration,

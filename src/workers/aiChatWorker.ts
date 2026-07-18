@@ -1,7 +1,7 @@
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, hydrateStickerCatalogs } from "../ai/stickers/catalog";
 import { stickerConfig } from "../ai/stickers/config";
 import { startWeatherRefreshLoop } from "../ai/weather";
-import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat";
+import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState } from "../cache/aiChat/identity";
 import { sweepAiChatReplyCache } from "../cache/aiChat/replies";
 import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage } from "./aiChat/rollingMemory";

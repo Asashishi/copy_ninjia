@@ -6,7 +6,7 @@ import { sendMessage, copyMessage } from "../../infra/telegram";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";
 import { cacheSender } from "../../users/senderIdentity";
 import { recordChatMessage, recordChatMedia, generateAndSendReply } from "../../aiChat";
-import { AI_REPLY_PROBABILITY_BASE_INITIAL } from "../../consts/aiChat";
+import { AI_REPLY_PROBABILITY_BASE_INITIAL } from "../../consts/aiChat/rateLimit";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,

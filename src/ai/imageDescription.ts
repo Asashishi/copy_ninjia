@@ -28,8 +28,8 @@ import {
   MEDIA_DOWNLOAD_TIMEOUT_MS,
   MEDIA_MAX_DOWNLOAD_BYTES,
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
-} from "../consts/aiChat";
-import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../consts/aiChatPrompts";
+} from "../consts/aiChat/media";
+import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../consts/aiChat/prompts/media";
 import type { MediaKind } from "../types";
 import type { GenerateContentResponse } from "@google/genai";
 

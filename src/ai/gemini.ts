@@ -22,7 +22,7 @@ import { ApiError, GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google
 import type { GenerateContentParameters, GenerateContentResponse, SafetySetting } from "@google/genai";
 import { logger } from "../infra/logger";
 import { GEMINI_API_KEY } from "../infra/config";
-import { GEMINI_REQUEST_TIMEOUT_MS } from "../consts/aiChat";
+import { GEMINI_REQUEST_TIMEOUT_MS } from "../consts/aiChat/tools";
 import { abnormalFinishDiagnostic, extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
 
 /** 进程内唯一的 Gemini 客户端实例（timeout 是每次请求/每次重试各自的预算，

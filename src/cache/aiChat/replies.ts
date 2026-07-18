@@ -4,7 +4,7 @@ import {
   RATE_LIMIT_LONG_WINDOW_MS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   REPLY_GENERATIONS_MAX,
-} from "../../consts/aiChat";
+} from "../../consts/aiChat/rateLimit";
 import type { QueuedReplyTrigger } from "../../types";
 
 /** 回复调度的唯一运行时 owner。全部状态不落盘，Worker 重建时清空。代际表

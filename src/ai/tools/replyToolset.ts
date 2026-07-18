@@ -10,13 +10,13 @@ import {
   TYPO_QUICK_CORRECTION_MIN_MS,
   TYPO_RECALL_DELETE_MAX_MS,
   TYPO_RECALL_DELETE_MIN_MS,
-} from "../../consts/aiChat";
+} from "../../consts/aiChat/tools";
 import {
   ADD_REACTION_TOOL_INSTRUCTION,
   DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
   SEND_MESSAGE_TOOL_INSTRUCTION,
   TYPO_SUBSTITUTION_RULE,
-} from "../../consts/aiChatPrompts";
+} from "../../consts/aiChat/prompts/tools";
 import { ADD_REACTION_TOOL, DELETE_OWN_MESSAGE_TOOL, SEND_MESSAGE_TOOL, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
 import { REACTION_EMOJIS } from "../reactions";
 import {

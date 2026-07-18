@@ -14,8 +14,8 @@ import {
   SUMMARY_MAX_TOKENS,
   SUMMARY_RETRY_DELAYS_MS,
   SUMMARY_TEMPERATURE,
-} from "../../consts/aiChat";
-import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChatPrompts";
+} from "../../consts/aiChat/memory";
+import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
 import { botInfoState } from "../../cache/aiChat/identity";
 import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/aiChat/memory";
 import { compactionChains, compactionPendingCounts } from "../../cache/aiChat/compaction";

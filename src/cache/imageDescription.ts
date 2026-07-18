@@ -1,7 +1,7 @@
 /** 非本地贴纸目录媒体描述（src/ai/imageDescription.ts）的临时内存缓存。 */
 
 import { LruCache } from "../libs/lruCache";
-import { MEDIA_DESCRIPTION_CACHE_MAX } from "../consts/aiChat";
+import { MEDIA_DESCRIPTION_CACHE_MAX } from "../consts/aiChat/media";
 
 /**
  * 临时媒体描述缓存：按 file_unique_id 去重。同一份媒体无论被谁、在哪个聊天、

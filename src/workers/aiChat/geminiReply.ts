@@ -6,8 +6,9 @@ import {
   MAX_TOOL_ROUNDS,
   REPLY_MAX_TOKENS,
   REPLY_TEMPERATURE,
-} from "../../consts/aiChat";
-import { TIME_AWARENESS_INSTRUCTION, WEB_SEARCH_INSTRUCTION } from "../../consts/aiChatPrompts";
+} from "../../consts/aiChat/tools";
+import { TIME_AWARENESS_INSTRUCTION } from "../../consts/aiChat/prompts/memory";
+import { WEB_SEARCH_INSTRUCTION } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../ai/mood";
 import { requestGeminiResponse } from "../../ai/gemini";

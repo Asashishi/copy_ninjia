@@ -14,7 +14,7 @@ import {
   SEND_STICKER_TOOL_INSTRUCTION,
   STICKER_INTENT_SELECTION_INSTRUCTION,
   VIEW_STICKER_PACK_TOOL_INSTRUCTION,
-} from "../../consts/aiChatPrompts";
+} from "../../consts/aiChat/prompts/tools";
 import { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
 import type { ChatActionControl, StickerCandidate, StickerCatalogEntry, StickerPackCandidate, StickerRoundState, StickerSendLockControl, ToolDefinition } from "../../types";
 
