@@ -56,7 +56,7 @@ export const activeReplyCounts: Map<number, number> = new Map();
 
 /** 各群排队等待补跑的直接触发（回复/@，队首最旧）。并发闸打满期间这类
  *  交互不丢弃，攒在这里等某轮结束腾出空位后先来后到逐个补跑（见
- *  workers/aiChatWorker.ts 的 drainReplyQueue）；上限
+ *  workers/aiChat/replyQueue.ts 的 drainReplyQueue）；上限
  *  REPLY_TRIGGER_QUEUE_MAX，打满才丢。队列随 Worker 重启清空。 */
 export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> = new Map();
 
@@ -73,7 +73,7 @@ export const typingHeartbeats: Map<number, ChatActionHeartbeatEntry> = new Map()
 /** chatId -> 该群当前持有「发贴纸锁」的回复轮令牌（无持有者即无键）。同群
  *  多轮并发时只有抢到锁的那轮能发贴纸，其余轮的 send_sticker 被拒绝、改用
  *  文字回应；持锁轮结束时释放（见 ai/stickerSendLock.ts 与
- *  workers/aiChatWorker.ts 的 startReplyRound）。 */
+ *  workers/aiChat/replyRound.ts 的 startReplyRound）。 */
 export const stickerSendLocks: Map<number, object> = new Map();
 
 /**

@@ -1,29 +1,36 @@
 import type { Context } from "grammy";
-import type { Animation, Message, MessageEntity, PhotoSize } from "@grammyjs/types";
-import type { ChatState, CopyMode } from "../types";
-import { getActiveCopyIn, getActiveProxySendTarget, getChatState, getOrCreateChatState, saveState } from "../infra/storage";
-import { sendMessage, copyMessage } from "../infra/telegram";
-import { recordChatTitleFromChat } from "../infra/chatTitle";
-import { applyCopyModeTransform } from "../copy/copyModes";
-import { cacheSender } from "../users/senderIdentity";
-import { recordChatMessage, recordChatMedia, generateAndSendReply } from "../aiChat";
-import { AI_REPLY_PROBABILITY, MEDIA_MAX_DOWNLOAD_BYTES } from "../consts/aiChat";
+import type { Message } from "@grammyjs/types";
+import type { ChatState, CopyMode } from "../../types";
+import { getActiveCopyIn, getActiveProxySendTarget, getChatState, getOrCreateChatState, saveState } from "../../infra/storage";
+import { sendMessage, copyMessage } from "../../infra/telegram";
+import { recordChatTitleFromChat } from "../../infra/chatTitle";
+import { cacheSender } from "../../users/senderIdentity";
+import { recordChatMessage, recordChatMedia, generateAndSendReply } from "../../aiChat";
+import { AI_REPLY_PROBABILITY } from "../../consts/aiChat";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
   BATH_TRIGGER_REPLY_TEXT,
-  FALLBACK_CHANNEL_NAME,
-  FALLBACK_SPEAKER_NAME,
   RANDOM_ECHO_MODES,
   RANDOM_ECHO_PROBABILITY,
   USER_REPLY_TRIGGER_COOLDOWN_MS,
-} from "../consts/auto";
-import { userReplyTriggerTimes } from "../cache/auto";
-import { describeStickerForContext, pickStickerVisionSource } from "../ai/stickerSets";
-import { pickRandom } from "../libs/random";
-import { isSelfSent } from "../infra/selfSentTracker";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
-import { stripLuckReceipt } from "../libs/luckReceipt";
+} from "../../consts/auto";
+import { userReplyTriggerTimes } from "../../cache/auto";
+import { describeStickerForContext, pickStickerVisionSource } from "../../ai/stickerSets";
+import { pickRandom } from "../../libs/random";
+import { isSelfSent } from "../../infra/selfSentTracker";
+import { SUPER_ADMIN_USER_ID } from "../../infra/config";
+import { stripLuckReceipt } from "../../libs/luckReceipt";
+import { echoMessage, resolveEffectiveCopyMode } from "./echo";
+import {
+  hasCopyableContent,
+  isBotMentioned,
+  isReplyToSelf,
+  mentionsOtherUser,
+  pickAnimationVisionSource,
+  pickPhotoFile,
+  resolveSpeaker,
+} from "./facts";
 
 /**
  * 消息自动流水线：复制目标的复读、AI 对话缓存与触发、洗澡「看看」、随机
@@ -57,101 +64,6 @@ function tryClaimUserReplyTrigger(chatId: number, speakerId: number): boolean {
 }
 
 /**
- * 解析一条消息发言人喂给 AI 上下文所需的身份：id + first_name + last_name +
- * 可选公开 username。刻意分开存（而非拼成一个昵称字符串），好让模型按 id
- * 区分同名的人，并把消息正文里的 @username 对回具体的人。
- * 频道马甲/频道帖没有 first_name/last_name，退化为用 title 当 firstName。
- */
-function resolveSpeaker(message: Message): { id: number; firstName: string; lastName: string; username?: string } {
-  const fromUser = message.from;
-  const senderChat = message.sender_chat ?? (message.chat.type === "channel" ? message.chat : undefined);
-  if (senderChat) {
-    return {
-      id: senderChat.id,
-      firstName: ("title" in senderChat ? senderChat.title : undefined) ?? FALLBACK_CHANNEL_NAME,
-      lastName: "",
-      username: senderChat.username,
-    };
-  }
-  if (fromUser) {
-    return { id: fromUser.id, firstName: fromUser.first_name ?? "", lastName: fromUser.last_name ?? "", username: fromUser.username };
-  }
-  return { id: 0, firstName: FALLBACK_SPEAKER_NAME, lastName: "" };
-}
-
-/**
- * 判断一条消息的文本里是否 @ 了机器人自己。走 entities 里的 "mention" 类型
- * （@username 形式），按 offset/length 截出实际文本再跟机器人的 username 比对，
- * 不用简单的字符串 includes——避免把「@somebody_else_bot」这种子串误判成命中。
- */
-function messageEntitySource(message: Message): { text: string; entities: MessageEntity[] } | null {
-  if (typeof message.text === "string" && message.entities) {
-    return { text: message.text, entities: message.entities };
-  }
-  if (typeof message.caption === "string" && message.caption_entities) {
-    return { text: message.caption, entities: message.caption_entities };
-  }
-  return null;
-}
-
-function isBotMentioned(message: Message, botUsername: string | undefined): boolean {
-  if (!botUsername) return false;
-  const source = messageEntitySource(message);
-  if (!source) return false;
-  const target: string = `@${botUsername}`.toLowerCase();
-  for (const entity of source.entities) {
-    if (entity.type === "mention") {
-      const mentionText: string = source.text.substring(entity.offset, entity.offset + entity.length);
-      if (mentionText.toLowerCase() === target) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * 判断一条消息是否提及了机器人自己以外的某个用户。除了显式的
- * `@username`（mention），也识别 Telegram 客户端生成的隐藏用户名提及
- * （text_mention），避免后者漏进随机搭话候选。
- *
- * 消息里 @ 别人，大概率是在跟那个人说话，不是在给机器人递话头，随机搭话
- * 贸然插进去会很突兀，所以只用来抑制 isRandomTrigger（见下方调用点），不影响
- * 「回复机器人」「@ 机器人」这两条本就明确指向机器人的必回路径——这两种
- * 情况即便消息里同时 @ 了别人，机器人被叫到也该照常回。
- */
-function mentionsOtherUser(message: Message, botId: number, botUsername: string | undefined): boolean {
-  const source = messageEntitySource(message);
-  if (!source) return false;
-  const botTarget: string | undefined = botUsername ? `@${botUsername}`.toLowerCase() : undefined;
-  for (const entity of source.entities) {
-    if (entity.type === "mention") {
-      const mentionText: string = source.text.substring(entity.offset, entity.offset + entity.length).toLowerCase();
-      if (mentionText !== botTarget) return true;
-    }
-    if (entity.type === "text_mention" && entity.user.id !== botId) return true;
-  }
-  return false;
-}
-
-/**
- * 判断当前消息是否在回复同一个可见发送者先前的消息。优先使用 sender_chat，
- * 这样频道马甲和匿名管理身份按群里实际显示的身份比较；频道帖没有 sender_chat
- * 时以频道本身为发送者。拿不到任一侧身份时不做自回复推断，避免两个缺失值
- * 被误当成同一个人。
- */
-function visibleSenderId(message: Message): number | undefined {
-  return message.sender_chat?.id ??
-    (message.chat.type === "channel" ? message.chat.id : message.from?.id);
-}
-
-function isReplyToSelf(message: Message): boolean {
-  const repliedTo: Message | undefined = message.reply_to_message;
-  if (!repliedTo) return false;
-
-  const senderId: number | undefined = visibleSenderId(message);
-  return senderId !== undefined && senderId === visibleSenderId(repliedTo);
-}
-
-/**
  * 判断一条更新是不是机器人自己发出的消息原样回弹，命中就要整条跳过自动
  * 流水线（不记入 AI 对话缓存、不触发 AI 回复、不随机复读、不洗澡触发），
  * 否则会被自己的内容再触发一轮，自说自话。
@@ -167,7 +79,7 @@ function isReplyToSelf(message: Message): boolean {
  * 自动转发副本同理（forward_origin 指回原帖，is_automatic_forward 标记这是
  * 频道→讨论组的自动转发而非用户手动转发）。这两种回弹都靠
  * infra/selfSentTracker.ts 的登记表识别——机器人发送时（无论主线程还是哪个
- * Worker）都会把 chatId/messageId 登记进去，见 infra/telegram.ts 的
+ * Worker）都会把 chatId/messageId 登记进去，见 infra/telegram/ 的
  * sendMessage/copyMessage/sendSticker 与 aiChat.ts 对 Worker "sent" 事件的
  * 转登记。
  */
@@ -195,120 +107,6 @@ function recordSelfInlineResult(message: Message, botId: number, botFirstName: s
   if (getActiveCopyIn(chatId)) return;
   if (getChatState(chatId).isUseAIChat !== true) return;
   recordChatMessage(chatId, botId, botFirstName, "", botUsername, stripLuckReceipt(message.text));
-}
-
-/**
- * 从一条图片消息的 photo 尺寸档位（Telegram 按分辨率从小到大排列）里挑给
- * 视觉模型用的那一档：从最大往下找第一个不超过下载上限的（file_size 是
- * 可选字段，缺失按可用对待——photo 是 Telegram 压缩过的 jpeg，实际很少
- * 超限，上限只是防御性护栏）；都超限就退回最小档，交给下载侧的大小检查
- * 兜底（见 ai/imageDescription.ts）。file_id 用来下载，file_unique_id 是
- * 同图重发时恒定的去重键（见 ai/imageDescription.ts 的临时描述缓存），
- * 两个 id 必须取自同一档位才对得上号。
- */
-function pickPhotoFile(sizes: PhotoSize[]): { fileId: string; fileUniqueId: string } {
-  for (let i = sizes.length - 1; i >= 0; i--) {
-    const size: PhotoSize = sizes[i]!;
-    if (!size.file_size || size.file_size <= MEDIA_MAX_DOWNLOAD_BYTES) {
-      return { fileId: size.file_id, fileUniqueId: size.file_unique_id };
-    }
-  }
-  return { fileId: sizes[0]!.file_id, fileUniqueId: sizes[0]!.file_unique_id };
-}
-
-/**
- * 选出一个 GIF（Telegram animation，实际多为 mp4）用于视觉解析的下载素材：
- * 本项目没有视频解码/抽帧能力，只能分析 Telegram 自带的缩略图（通常是
- * jpg，封面帧画面）；没有缩略图（罕见）则放弃视觉解析，返回 null。返回的
- * fileUniqueId 恒为 animation 自身的 file_unique_id（同 ai/stickerSets.ts
- * 的 pickStickerVisionSource 同一道理：与实际下载来源解耦，保证同一个 GIF
- * 无论何时重发都记在同一个缓存键下）。
- */
-function pickAnimationVisionSource(animation: Animation): { fileId: string; fileUniqueId: string } | null {
-  const thumbnailFileId: string | undefined = animation.thumbnail?.file_id;
-  if (!thumbnailFileId) return null;
-  return { fileId: thumbnailFileId, fileUniqueId: animation.file_unique_id };
-}
-
-/**
- * ja 模式在本群被关闭（`/ja_copy disable`）时，退化为原样复读而非硬跳过整条
- * 复读——只是不再调用翻译，复读本身照常发生。`/ja_copy` 指令入口自己已经
- * 单独拒绝（见 commands/copy.ts），这里覆盖的是另外两处会绕过指令入口直接
- * 用到 "ja" 模式的路径：沿用中的 /ja_copy 复读会话（disable 只改开关，不会
- * 主动打断正在进行的会话）、以及随机复读抽中 "ja" 的情形——两处都不经过
- * copy.ts 的入口检查，之前会无视这个开关继续调用翻译 API。
- */
-function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefined): CopyMode | undefined {
-  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled === false) return undefined;
-  return mode;
-}
-
-/**
- * 将一条消息复读回它所在的聊天，并按给定模式做文本变换。
- * @param mode 要应用的文本变换（undefined 表示原样复读）。
- * @param expectedTargetId 若这是在复读某个锁定目标（而非无目标时的随机复读），
- *   传入该目标的 id：翻译等待期间会重新核对复读是否仍然有效，见函数体注释；
- *   无目标的随机复读不传，跳过这层核对（本就没有"目标"这个不变量要维护）。
- * @returns 实际发出去的文本（变换后的文本，或原样复读时的原文），供调用方
- *   决定要不要自录进 AI 对话缓存（见两处调用点：/copy 锁定目标期间故意不录，
- *   随机复读会录）；纯媒体消息（没有 text）、发送失败、或复读在等待期间
- *   已经失效则返回 undefined。
- */
-async function echoMessage(chatId: number, message: Message, mode: CopyMode | undefined, expectedTargetId?: number): Promise<string | undefined> {
-  const text: string = message.text || "";
-  // 不复读指令消息，防止指令无限解析
-  if (text.startsWith("/")) return undefined;
-
-  // 安全校验：只对"纯文本"消息本身做变换（有 text、无 entities、非媒体）；
-  // 带格式/链接/@提及的消息一旦被反转或拼接后缀，会破坏 entity 的偏移量，
-  // 可能被用来伪造看似正常、实际指向别处的链接/提及，所以这类消息以及
-  // 非文本消息一律走原样 copyMessage，不做任何文本变换。
-  const plainText: string | undefined =
-    typeof message.text === "string" &&
-    (!message.entities || message.entities.length === 0)
-      ? message.text
-      : undefined;
-
-  const transformed: string | null = plainText !== undefined
-    ? await applyCopyModeTransform(plainText, mode)
-    : null;
-
-  // globalCopyState 是跨群共享的全局状态，不受 index.ts 里按 chat 分道的
-  // sequentialize 保护：/stop_copy 在任何群都能停（见 commands/copy.ts），
-  // 完全可能在上面的翻译等待期间从另一个群并发跑完并清空目标。这里用
-  // 调用方传入的 expectedTargetId 重新核对一次，避免出现"用户在别的群已经
-  // 收到复读已停止的确认，这个群却还是补发了一条复读"的场景；无目标的
-  // 随机复读不传 expectedTargetId，天然跳过。
-  if (expectedTargetId !== undefined && getActiveCopyIn(chatId)?.copiedUser.id !== expectedTargetId) {
-    return undefined;
-  }
-
-  if (transformed !== null) {
-    // 变换后的文本只当作纯文本发送（sendMessage 不带 parse_mode），不会被
-    // Telegram 当作 HTML/Markdown 解析，也就不存在把用户输入拼进富文本
-    // 导致的格式/链接注入问题。
-    const sentMessageId: number | undefined = await sendMessage(chatId, transformed);
-    return sentMessageId !== undefined ? transformed : undefined;
-  }
-
-  // 无变换模式、非纯文本消息、或变换本身失败（如翻译出错）都退化为原样转发。
-  const copiedMessageId: number | undefined = await copyMessage(chatId, chatId, message.message_id);
-  return copiedMessageId !== undefined && typeof message.text === "string" ? message.text : undefined;
-}
-
-/**
- * 判断一条消息是否有可以被 copyMessage 复制的实际内容。随机复读要靠它过滤掉
- * 置顶提示、成员变动之类的服务消息——对这类消息调用 copyMessage 必然报错。
- * （被 /copy 锁定的目标不走这个过滤：TA 的消息本就该尽数复读，个别复制失败
- * 记日志即可。）
- */
-function hasCopyableContent(message: Message): boolean {
-  return !!(
-    message.text || message.caption || message.photo || message.sticker ||
-    message.animation || message.video || message.video_note || message.audio ||
-    message.voice || message.document || message.dice || message.contact ||
-    message.location || message.venue || message.poll || message.story
-  );
 }
 
 /**

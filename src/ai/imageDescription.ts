@@ -111,7 +111,7 @@ async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<s
       return null;
     }
     // 只记录 file_path，绝不能把完整下载 URL 打进日志——URL 里嵌着 bot token
-    // （见 infra/telegram.ts 的 buildFileDownloadUrl 注释）。
+    // （见 infra/telegram/client.ts 的 buildFileDownloadUrl 注释）。
     const res: Response = await fetch(buildFileDownloadUrl(file.file_path), {
       signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS),
     });

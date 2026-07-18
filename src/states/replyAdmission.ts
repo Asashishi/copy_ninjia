@@ -8,15 +8,15 @@ import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER
  * - admitRound：限频闸，真正开一轮前判定（原 startReplyRound 前半段）。
  *
  * 两道闸不是同一个状态对象的两次转移——之间隔着「入队等待补跑」这个
- * 不定时长的中间态（补跑时才会走到 admitRound，见 replyPipeline.ts 的
- * drainReplyQueue），且没有一个有意义的离散状态集合可以枚举（不像
+ * 不定时长的中间态（补跑时才会走到 admitRound，见 replyQueue.ts），且
+ * 没有一个有意义的离散状态集合可以枚举（不像
  * verification/lockdown 那样有 PENDING/ACTIVE 这类需要持久化在 Map 里、
  * 会被后续事件引用的状态），本质是两次独立的阈值判定，各自只吃调用方
  * 算好的标量。因此这里不采用 transition(state, event) 的单机形态，而是
  * 两个独立的纯函数——滑动窗口（longTriggerTimes）、队列
  * （pendingReplyTriggers）、在途计数（activeReplyCounts）、提示冷却
- * （rateLimitNoticeTimes）这些内存容器与计时全部留在解释器
- * （replyPipeline.ts）里，只把已经算好的数字喂进来。
+ * （rateLimitNoticeTimes）这些内存容器与计时留在 replyState/replyQueue/
+ * replyRound 三个运行时模块里，只把已经算好的数字喂进来。
  */
 
 /** 触发的种类，决定并发闸打满时是丢弃还是排队，见 admitTrigger。 */
@@ -40,8 +40,7 @@ export type AdmitDecision =
    *  在等那条回复，提示反而吵。 */
   | { action: "dropSilently" }
   /** 并发已满、是直接触发、但队列也满了：丢弃，且欠一条「太快了」提示
-   *  （提示本身压到某轮收尾腾出空位时再发，见 replyPipeline.ts 的
-   *  drainReplyQueue）。 */
+   *  （提示本身压到某轮收尾腾出空位时再发，见 replyQueue.ts）。 */
   | { action: "enqueueOverflow" };
 
 /**

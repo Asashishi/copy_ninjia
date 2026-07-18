@@ -56,12 +56,12 @@ interface UserContentOptions {
    *  recordChatMedia），发送人与描述——回复指令改为针对这份媒体发表评价，
    *  替代默认的「接住最新消息」。 */
   mediaComment?: MediaCommentContext;
-  /** 若本次是排队补跑的直接触发（见 replyPipeline.ts 的 drainReplyQueue），
+  /** 若本次是排队补跑的直接触发（见 replyQueue.ts 的 drainReplyQueue），
    *  入队时的触发消息快照——回复指令改为点名回复那条具体消息（此刻它已不
    *  在转录尾部）；自己后来的发言已覆盖过它时换个说法简短接一句、或至少
    *  扣个反应，不允许沉默。 */
   queuedTrigger?: QueuedReplyTrigger;
-  /** 本轮是否走「出错」分支：由 replyPipeline.ts 的 startReplyRound 在请求
+  /** 本轮是否走「出错」分支：由 replyRound.ts 的 startReplyRound 在请求
    *  模型之前掷一次骰子决定（见 consts/aiChat.ts 的 AI_TEXT_TYPO_PROBABILITY）。
    *  为 true 时才在回复指令末尾拼上 TYPO_REQUIRED_INSTRUCTION；为 false 时
    *  完全不提错字这回事，两个分支的提示词严格分开。同一个值也传给

@@ -186,7 +186,7 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param caption 媒体自带的配文（没有则传空串）。
  * @param fileId 要下载的 file_id（图片是已挑好档位的 photo file_id；贴纸/
- *   GIF 是本体或缩略图，见 auto/message.ts 的素材选择）。
+ *   GIF 是本体或缩略图，见 auto/message/facts.ts 的素材选择）。
  * @param fileUniqueId 描述去重缓存的键（贴纸/GIF 固定用媒体自身的
  *   file_unique_id，见 workers/aiChatWorker.ts 的 recordChatMedia 参数注释）。
  * @param messageId 这条消息的 message_id（评价回复挂引用用）。
@@ -221,7 +221,7 @@ export function recordChatMedia(
 /**
  * 触发一次 AI 回复：把触发事件投递给 Worker，由它做同群并发占位（在途
  * 轮数打满期间的回复/@ 触发排队等空位补跑，随机触发丢弃，见
- * workers/aiChatWorker.ts 的 generateAndSendReply）与限频判定并执行完整的
+ * workers/aiChat/replyPipeline.ts 的 generateAndSendReply）与限频判定并执行完整的
  * 生成与发送流程。fire-and-forget，主线程不等待任何结果。
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
@@ -229,7 +229,7 @@ export function recordChatMedia(
  * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机插话
  *   （怎么接、挂不挂回复引用由模型判断，但必须回应——说话/贴纸/扣反应
  *   都算，不允许沉默；「插不插话」的闸门在触发概率那一层，见
- *   workers/aiChatWorker.ts 的 generateAndSendReply）。
+ *   workers/aiChat/replyPipeline.ts 的 generateAndSendReply）。
  */
 export function generateAndSendReply(
   chatId: number,

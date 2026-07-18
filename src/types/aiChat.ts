@@ -43,8 +43,8 @@ export interface AiRecordMediaMessage {
   /** 媒体自带的配文（没有则空串），跟在描述/占位标签后入转录行。 */
   caption: string;
   /** 要下载的 Telegram file_id：图片是已按大小挑好档位的 photo file_id
-   * （见 auto/message.ts 的 pickPhotoFile）；贴纸/GIF 是本体或缩略图（见
-   * ai/stickerSets.ts 的 pickStickerVisionSource、auto/message.ts 的
+   * （见 auto/message/facts.ts 的 pickPhotoFile）；贴纸/GIF 是本体或缩略图（见
+   * ai/stickerSets.ts 的 pickStickerVisionSource、auto/message/facts.ts 的
    * animation 分支），素材选择已在主线程完成。 */
   fileId: string;
   /** 描述查找/临时去重缓存的键：图片用同档位的 file_unique_id；贴纸/GIF
@@ -182,7 +182,7 @@ export type AiChatWorkerMessage =
  * Worker -> 主线程：一条消息已经发出去了（AI 回复或跟发的贴纸）。Worker
  * 用的是自己线程内独立的 grammY Api 客户端，主线程的自动流水线认不出
  * 那次发送——报回来让主线程登记进 infra/selfSentTracker.ts，识别出「频道
- * 自回环」并整体跳过，不然会被自己的随机回复再触发一轮（见 auto/message.ts）。
+ * 自回环」并整体跳过，不然会被自己的随机回复再触发一轮（见 auto/message/）。
  */
 export interface AiSentMessage {
   type: "sent";

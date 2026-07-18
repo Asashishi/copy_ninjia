@@ -4,7 +4,7 @@ import { userCache } from "../cache/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
 
 /**
- * 消息发送者的身份解析与缓存。自动流程（src/auto/message.ts 靠 cacheSender
+ * 消息发送者的身份解析与缓存。自动流程（src/auto/message/ 靠 cacheSender
  * 刷新 username 缓存）和命令处理（src/commands 下的 /copy、/kick 靠
  * resolveReplyTarget 从被回复的消息定位目标，靠 resolveUsernameTarget 按
  * @username 定位目标）共用这一份逻辑。缓存状态见 cache/senderIdentity.ts。

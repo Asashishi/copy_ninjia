@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
-/** 「拿媒体直接叫机器人」的触发判定（见 src/auto/message.ts 的媒体分支）：
+/** 「拿媒体直接叫机器人」的触发判定（见 src/auto/message/ 的媒体分支）：
  * 有视觉素材时经 recordChatMedia 带 directTrigger 走「先试缓存、解析完成再
  * 回答」的必回管线；没有素材时记完兜底行直接触发。storage mock 里
  * quietUntil 恒为将来时刻——必回路径与文字回复/@ 一致地无视 /quiet，正好
@@ -36,7 +36,7 @@ mock.module("../../src/aiChat", () => ({
 mock.module("../../src/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
 
 // tryClaimUserReplyTrigger 的 15s 每人触发冷却按真实 Date.now() 计时（见
-// src/auto/message.ts）：本文件多个用例共用同一个 chatId + alice.id 夹具，
+// src/auto/message/）：本文件多个用例共用同一个 chatId + alice.id 夹具，
 // 不清空会导致后面的用例被前一个用例占用的冷却名额挡住、断言失败。
 const { userReplyTriggerTimes } = await import("../../src/cache/auto");
 

@@ -12,7 +12,7 @@ import type { AntiRaidWorkerMessage } from "../types";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
- * 主线程（src/auto/message.ts / index.ts → antiRaid.ts 代理）只做事件投递。
+ * 主线程（src/auto/message/ / index.ts → antiRaid.ts 代理）只做事件投递。
  *
  * 本文件是两台状态机（src/states/verification.ts / lockdown.ts）的解释器
  * 入口：具体解释逻辑分别在 antiRaid/verificationRuntime.ts（入群验证）与
@@ -26,7 +26,7 @@ import type { AntiRaidWorkerMessage } from "../types";
  * - 异步回调（提醒落地回填、管理员核查）以「状态对象同一性」识别过期：
  *   状态一旦被替换/删除，捕获的旧引用对不上，回调自动放弃。
  *
- * 发往 Telegram 的调用不回主线程绕路——本线程 import telegram.ts 时会得到
+ * 发往 Telegram 的调用不回主线程绕路——本线程 import infra/telegram/ 时会得到
  * 自己独立的 grammY Api 客户端（用带限流 + 429 自动重试的 joinVerificationApi，
  * 突发的删/踢/发在这里排队，不占用主线程共享客户端）。error 日志经 logger.ts
  * 的转发模式回传主线程统一落盘。

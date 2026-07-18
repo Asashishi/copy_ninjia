@@ -82,7 +82,7 @@ export interface StickerSendLockControl {
 }
 
 /** 同群并发位占满期间排队等待补跑的直接触发（回复/@ 机器人，见
- *  workers/aiChatWorker.ts 的 generateAndSendReply）。随机插话与媒体评价
+ *  workers/aiChat/replyPipeline.ts 的 generateAndSendReply）。随机插话与媒体评价
  *  不入队——没人在等那条回复，错过时机再补反而突兀——所以队列里恒为
  *  直接触发，不需要 isRandomTrigger/mediaComment 字段。 */
 export interface QueuedReplyTrigger {
@@ -159,7 +159,7 @@ export interface ReplyToolContext {
   /** 同群「发贴纸」跨轮互斥锁的本轮句柄（见 ai/stickerSendLock.ts）：
    *  send_sticker 校验通过后、真正发送前 tryAcquire，抢不到则拒绝发送。 */
   stickerLock: StickerSendLockControl;
-  /** 本轮是否走「出错」分支：由 workers/aiChatWorker.ts 的 startReplyRound
+  /** 本轮是否走「出错」分支：由 workers/aiChat/replyRound.ts 的 startReplyRound
    *  在请求模型之前掷一次骰子决定（见 consts/aiChat.ts 的
    *  AI_TEXT_TYPO_PROBABILITY），createReplyToolset 据此决定 send_message
    *  当轮的参数 schema 要不要暴露 typo_original_char/typo_replacement_char

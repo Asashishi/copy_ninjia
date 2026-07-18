@@ -1,0 +1,48 @@
+import {
+  RATE_LIMIT_NOTICE_COOLDOWN_MS,
+  RATE_LIMIT_NOTICE_TEXT,
+} from "../../consts/aiChat";
+import {
+  botInfoState,
+  pendingOverflowNotices,
+  pendingReplyTriggers,
+  rateLimitNoticeTimes,
+  replyGenerations,
+} from "../../cache/aiChatWorker";
+import { sendMessage } from "../../infra/telegram";
+import type { AiSentMessage } from "../../types";
+import { recordChatMessage } from "./rollingMemory";
+
+declare var self: Worker;
+
+export function currentReplyGeneration(chatId: number): number {
+  return replyGenerations.get(chatId) ?? 0;
+}
+
+export function isReplyGenerationCurrent(chatId: number, generation: number): boolean {
+  return currentReplyGeneration(chatId) === generation;
+}
+
+/** 使在途回复失效，并丢弃该群尚未开始的排队触发和溢出提示。 */
+export function invalidateChatReplies(chatId: number): void {
+  replyGenerations.set(chatId, currentReplyGeneration(chatId) + 1);
+  pendingReplyTriggers.delete(chatId);
+  pendingOverflowNotices.delete(chatId);
+}
+
+/**
+ * 触发被限频或队列溢出时发送明确反馈。提示本身按群冷却，避免刷屏；发送
+ * 成功后与普通 AI 回复一样登记自发消息并写入滚动记忆。
+ */
+export function notifyRateLimited(chatId: number, now: number, generation: number = currentReplyGeneration(chatId)): void {
+  const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
+  if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
+  rateLimitNoticeTimes.set(chatId, now);
+  void sendMessage(chatId, RATE_LIMIT_NOTICE_TEXT).then((sentMessageId: number | undefined) => {
+    if (sentMessageId === undefined) return;
+    self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
+    if (botInfoState.current && isReplyGenerationCurrent(chatId, generation)) {
+      recordChatMessage(chatId, botInfoState.current.id, botInfoState.current.first_name, "", botInfoState.current.username, RATE_LIMIT_NOTICE_TEXT);
+    }
+  });
+}

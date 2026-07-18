@@ -8,7 +8,7 @@ import {
 } from "../../consts/aiChat";
 
 /** 媒体转录行/占位/回填标签的纯字符串拼装，供 mediaIngest.ts 的
- *  recordChatMedia 与 replyPipeline.ts 的 pushReplyTrigger 共用。 */
+ *  recordChatMedia 与 replyQueue.ts 的 pushReplyTrigger 共用。 */
 
 /** 媒体转录行：描述/占位标签在前，媒体自带的 caption（若有）跟在后面
  *  （贴纸没有 caption，恒为空串，等价于直接返回标签本身）。 */

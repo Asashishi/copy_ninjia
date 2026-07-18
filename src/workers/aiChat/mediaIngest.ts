@@ -31,7 +31,7 @@ import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent 
  * 静默放弃。
  *
  * msg.directTrigger（用户拿这份媒体回复机器人，或 caption 里 @ 机器人，见
- * auto/message.ts）则是必触发：白名单目录命中时立即回；未命中等 describeMedia
+ * auto/message/）则是必触发：白名单目录命中时立即回；未命中等 describeMedia
  * （内部自带 file_unique_id 描述缓存）解析完成再回；解析失败也用兜底文本回
  * ——真人在等回应，评价那套「失败静默放弃」在这里就是被投诉的「已读不回」。
  *

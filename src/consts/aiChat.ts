@@ -1,5 +1,5 @@
 /**
- * AI 闲聊的调参常量。AI_REPLY_PROBABILITY 由主线程（src/auto/message.ts）的触发
+ * AI 闲聊的调参常量。AI_REPLY_PROBABILITY 由主线程（src/auto/message/）的触发
  * 调度使用，其余都是 Worker 线程（workers/aiChatWorker.ts）流水线的旋钮。
  */
 
@@ -8,7 +8,7 @@
  * 群友发图片/贴纸/GIF 时，触发「解析完成后回复那条消息、评价媒体内容」
  * ——文字消息与三种媒体共用这同一个概率（不是各自独立掷骰，曾经文字
  * 1/5、媒体 1/8 两套，现已合并）。掷骰子决定是否触发属于主线程的调度
- * 逻辑（照顾 /quiet 状态与随机回复冷却，见 src/auto/message.ts），Worker
+ * 逻辑（照顾 /quiet 状态与随机回复冷却，见 src/auto/message/），Worker
  * 只执行已触发的回复；媒体评价由 Worker 在描述解析成功时执行（解析失败
  * 没内容可评，静默放弃），见 workers/aiChat/mediaIngest.ts 的 recordChatMedia。
  */
@@ -183,12 +183,13 @@ export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 export const QUEUED_TRIGGER_SNIPPET_MAX_CHARS: number = 200;
 
 /**
- * 触发被限频黑洞丢弃时会明确回一句「你们太快了」（见 workers/aiChat/replyPipeline.ts 的
- * notifyRateLimited），这是该提示自身的冷却：同一个群在这段时间内至多提示
- * 一次，防止提示本身在刷屏场景下变成新的刷屏放大器。
+ * 触发被限频黑洞丢弃时会明确回一句「你们太快了」（见
+ * workers/aiChat/replyState.ts 的 notifyRateLimited），这是该提示自身的
+ * 冷却：同一个群在这段时间内至多提示一次，防止提示本身在刷屏场景下
+ * 变成新的刷屏放大器。
  */
 export const RATE_LIMIT_NOTICE_COOLDOWN_MS: number = 60_000;
-/** 限频黑洞的固定提示文案，见 workers/aiChat/replyPipeline.ts 的 notifyRateLimited。 */
+/** 限频黑洞的固定提示文案，见 workers/aiChat/replyState.ts 的 notifyRateLimited。 */
 export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡";
 
 /**
@@ -291,7 +292,7 @@ export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成
  *  把大段推理塞进工具参数和后续工具结果。 */
 export const STICKER_INTENT_MAX_CHARS: number = 80;
 /**
- * 本轮是否走「出错」分支的概率：在 workers/aiChat/replyPipeline.ts 的 startReplyRound
+ * 本轮是否走「出错」分支的概率：在 workers/aiChat/replyRound.ts 的 startReplyRound
  * 里，请求模型之前先掷一次骰子决定，结果只在出错分支时才会拼进
  * aiChatPrompts.ts 的 TYPO_REQUIRED_INSTRUCTION（不出错时这一轮的回复指令、send_message 工具
  * 描述里都不会出现任何跟错字有关的字样——两个分支的提示词严格分开，模型

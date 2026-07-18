@@ -168,7 +168,7 @@ bun run start     # 启动长轮询
 ├── AI Worker
 │   ├─ Gemini 多轮工具调用
 │   ├─ 对话滚动、摘要压缩、视觉理解
-│   └─ 分群冷却、限频与回复单飞
+│   └─ 分群限频、并发闸与溢出排队
 │
 ├── Anti-Raid Worker
 │   ├─ 验证状态机
@@ -187,7 +187,7 @@ bun run start     # 启动长轮询
 | --- | --- |
 | `src/commands/` | 显式命令处理 |
 | `src/auto/` | 自动复读、AI 记录与触发、反应同步 |
-| `src/states/` | 无 I/O 的验证与锁定纯状态机 |
+| `src/states/` | 无 I/O 的验证、锁定状态机与回复准入规则 |
 | `src/libs/` | 原子文件、有界 I/O、严格 schema 解码及通用并发工具 |
 | `src/workers/` | AI、守群、磁盘三个独立 Worker |
 | `src/ai/` | Gemini、视觉、贴纸目录及工具 |

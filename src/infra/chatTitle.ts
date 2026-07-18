@@ -13,7 +13,7 @@ import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackgr
  *    覆盖存量群、以及上次运行期间改过名但没能实时捕捉到的群；
  * 2. 此后每条收到的群消息，其 chat.title 本就随更新一起送达，不用额外
  *    调 API，顺手记录/刷新（recordChatTitleFromChat，见
- *    src/auto/message.ts 的 handleIncomingMessage）。
+ *    src/auto/message/ 的 handleIncomingMessage）。
  */
 
 /**
@@ -44,7 +44,7 @@ export function recordChatTitleFromChat(chat: Chat): void {
  * bot 启动主流程——这纯粹是方便人读 state.json 的锦上添花，慢一点或个别
  * 群查询失败都不影响机器人正常运行，没必要拖住 runner 开始消费更新的时机
  * （见 index.ts 对本函数的调用方式：fire-and-forget）。共享的 bot.api 客户端
- * 自带限流+自动重试（见 infra/telegram.ts 的 apiThrottler/autoRetry），这里
+ * 自带限流+自动重试（见 infra/telegram/client.ts 的 apiThrottler/autoRetry），这里
  * 并发发起全部请求即可，不需要自己再实现一层排队。
  */
 export async function refreshAllChatTitles(): Promise<void> {

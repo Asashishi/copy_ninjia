@@ -9,7 +9,7 @@ import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipel
 import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiStickerCatalogEvent } from "../types";
 
 /**
- * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message.ts → aiChat.ts 代理）
+ * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message/ → aiChat.ts 代理）
  * 只做事件投递，重活分散在 aiChat/ 目录下的内聚模块里：滚动对话缓存与快照
  * 落盘/恢复（aiChat/rollingMemory.ts）、中期记忆轮换压缩（aiChat/compaction.ts）、
  * 图片/贴纸/GIF 占位与异步描述回填（aiChat/mediaIngest.ts）、对话上下文拼装
@@ -19,7 +19,7 @@ import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiStickerCatalogEvent }
  * 应景贴纸全部工具化（send_message / add_reaction / view_sticker_pack +
  * send_sticker，见 ai/tools/replyToolset.ts）：模型在同一次对话里自主决定
  * 做哪几样、什么顺序。发往 Telegram 的调用不回主线程绕路——本线程 import
- * telegram.ts 时会得到自己独立的 grammY Api 客户端（那个 Bot 实例只用其
+ * infra/telegram/ 时会得到自己独立的 grammY Api 客户端（那个 Bot 实例只用其
  * bot.api 发请求，从不 init/轮询；机器人自己的账号身份改由主线程在
  * bot.init() 后经 init 消息注入，见 cache/aiChatWorker.ts 的 botInfoState）。
  * error 日志经 logger.ts 的转发模式回传主线程统一落盘。本文件只剩消息路由、
