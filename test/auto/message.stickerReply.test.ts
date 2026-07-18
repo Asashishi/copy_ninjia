@@ -212,4 +212,147 @@ describe("媒体直接叫机器人", () => {
     );
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
+
+  test("文字回复自己的消息不参与随机 AI 回复", async () => {
+    quietUntil = 0;
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 31,
+          date: 1,
+          chat,
+          from: alice,
+          text: "再补充一句",
+          reply_to_message: {
+            message_id: 30,
+            date: 1,
+            chat,
+            from: alice,
+            text: "我刚才说的",
+          },
+        },
+      } as any);
+    } finally {
+      Math.random = originalRandom;
+    }
+
+    expect(recordChatMessageMock).toHaveBeenCalledWith(-100800, 123, "Alice", "Tester", "alice_dev", "再补充一句");
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
+  test("文字回复别人仍可参与随机 AI 回复", async () => {
+    quietUntil = 0;
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 32,
+          date: 1,
+          chat,
+          from: alice,
+          text: "回复 Bob",
+          reply_to_message: {
+            message_id: 30,
+            date: 1,
+            chat,
+            from: { id: 456, is_bot: false, first_name: "Bob" },
+            text: "Bob 说的话",
+          },
+        },
+      } as any);
+    } finally {
+      Math.random = originalRandom;
+    }
+
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 32, undefined, true);
+  });
+
+  test("回复自己发的图片不参与随机 AI 评价", async () => {
+    quietUntil = 0;
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 35,
+          date: 1,
+          chat,
+          from: alice,
+          caption: "补一张图",
+          reply_to_message: {
+            message_id: 30,
+            date: 1,
+            chat,
+            from: alice,
+            text: "我刚才说的",
+          },
+          photo: [{ file_id: "self-photo", file_unique_id: "self-photo-uid", width: 640, height: 480 }],
+        },
+      } as any);
+    } finally {
+      Math.random = originalRandom;
+    }
+
+    expect(recordChatMediaMock).toHaveBeenCalledWith(
+      "photo", -100800, 123, "Alice", "Tester", "alice_dev", "补一张图",
+      "self-photo", "self-photo-uid", 35, false, undefined, undefined
+    );
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
+  test("@ 其他用户不参与随机 AI 回复，@ 机器人仍走直接触发", async () => {
+    quietUntil = 0;
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 33,
+          date: 1,
+          chat,
+          from: alice,
+          text: "找你 @bob",
+          entities: [{ type: "mention", offset: 3, length: 4 }],
+        },
+      } as any);
+      expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 36,
+          date: 1,
+          chat,
+          from: alice,
+          text: "找 Bob",
+          entities: [{ type: "text_mention", offset: 2, length: 3, user: { id: 456, is_bot: false, first_name: "Bob" } }],
+        },
+      } as any);
+      expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 34,
+          date: 1,
+          chat,
+          from: alice,
+          text: "过来 @test_bot",
+          entities: [{ type: "mention", offset: 3, length: 9 }],
+        },
+      } as any);
+    } finally {
+      Math.random = originalRandom;
+    }
+
+    expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 34, undefined);
+  });
 });

@@ -20,18 +20,16 @@ import { createBoundedTaskRunner } from "../libs/boundedTaskRunner";
 import { readBoundedResponseBytes, type BoundedResponseResult } from "../libs/boundedResponse";
 import { transientDescriptionCache } from "../cache/imageDescription";
 import {
-  ANIMATION_DESCRIPTION_PROMPT,
+  GEMINI_MEDIA_MODEL,
   IMAGE_DESCRIPTION_MAX_CHARS,
-  IMAGE_DESCRIPTION_PROMPT,
   MEDIA_DESCRIPTION_MAX_TOKENS,
   MEDIA_DESCRIPTION_MAX_CONCURRENCY,
   MEDIA_DESCRIPTION_MAX_PENDING,
   MEDIA_DOWNLOAD_TIMEOUT_MS,
   MEDIA_MAX_DOWNLOAD_BYTES,
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
-  GEMINI_MEDIA_MODEL,
-  STICKER_DESCRIPTION_PROMPT,
 } from "../consts/aiChat";
+import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../consts/aiChatPrompts";
 import type { MediaKind } from "../types";
 import type { GenerateContentResponse } from "@google/genai";
 

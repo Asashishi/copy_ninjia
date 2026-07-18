@@ -7,14 +7,16 @@ import { stickerConfig } from "../stickerConfig";
 import { parseIndexField } from "../utils/toolArgs";
 import {
   MAX_STICKERS_PER_REPLY,
-  SEND_STICKER_TOOL_INSTRUCTION,
   STICKER_CHOOSE_DELAY_BASE_MS,
   STICKER_CHOOSE_DELAY_JITTER_MS,
   STICKER_INTENT_MAX_CHARS,
-  STICKER_INTENT_SELECTION_INSTRUCTION,
   STICKER_PACK_SUMMARY_PENDING,
-  VIEW_STICKER_PACK_TOOL_INSTRUCTION,
 } from "../../consts/aiChat";
+import {
+  SEND_STICKER_TOOL_INSTRUCTION,
+  STICKER_INTENT_SELECTION_INSTRUCTION,
+  VIEW_STICKER_PACK_TOOL_INSTRUCTION,
+} from "../../consts/aiChatPrompts";
 import { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
 import type { ChatActionControl, StickerCandidate, StickerCatalogEntry, StickerPackCandidate, StickerRoundState, StickerSendLockControl, ToolDefinition } from "../../types";
 

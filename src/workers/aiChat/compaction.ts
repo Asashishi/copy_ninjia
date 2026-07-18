@@ -13,9 +13,9 @@ import {
   SUMMARY_MAX_CHARS,
   SUMMARY_MAX_TOKENS,
   SUMMARY_RETRY_DELAYS_MS,
-  SUMMARY_SYSTEM_PROMPT,
   SUMMARY_TEMPERATURE,
 } from "../../consts/aiChat";
+import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChatPrompts";
 import {
   botInfoState,
   chatSummaries,

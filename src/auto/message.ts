@@ -109,25 +109,46 @@ function isBotMentioned(message: Message, botUsername: string | undefined): bool
 }
 
 /**
- * 判断一条消息的文本里是否 @ 了机器人自己以外的某个用户。逻辑与 isBotMentioned
- * 对称（同样只认 entities 里的 "mention" 类型），排除掉的那一个就是机器人自己：
+ * 判断一条消息是否提及了机器人自己以外的某个用户。除了显式的
+ * `@username`（mention），也识别 Telegram 客户端生成的隐藏用户名提及
+ * （text_mention），避免后者漏进随机搭话候选。
+ *
  * 消息里 @ 别人，大概率是在跟那个人说话，不是在给机器人递话头，随机搭话
  * 贸然插进去会很突兀，所以只用来抑制 isRandomTrigger（见下方调用点），不影响
  * 「回复机器人」「@ 机器人」这两条本就明确指向机器人的必回路径——这两种
  * 情况即便消息里同时 @ 了别人，机器人被叫到也该照常回。
  */
-function mentionsOtherUser(message: Message, botUsername: string | undefined): boolean {
-  if (!botUsername) return false;
+function mentionsOtherUser(message: Message, botId: number, botUsername: string | undefined): boolean {
   const source = messageEntitySource(message);
   if (!source) return false;
-  const botTarget: string = `@${botUsername}`.toLowerCase();
+  const botTarget: string | undefined = botUsername ? `@${botUsername}`.toLowerCase() : undefined;
   for (const entity of source.entities) {
     if (entity.type === "mention") {
       const mentionText: string = source.text.substring(entity.offset, entity.offset + entity.length).toLowerCase();
       if (mentionText !== botTarget) return true;
     }
+    if (entity.type === "text_mention" && entity.user.id !== botId) return true;
   }
   return false;
+}
+
+/**
+ * 判断当前消息是否在回复同一个可见发送者先前的消息。优先使用 sender_chat，
+ * 这样频道马甲和匿名管理身份按群里实际显示的身份比较；频道帖没有 sender_chat
+ * 时以频道本身为发送者。拿不到任一侧身份时不做自回复推断，避免两个缺失值
+ * 被误当成同一个人。
+ */
+function visibleSenderId(message: Message): number | undefined {
+  return message.sender_chat?.id ??
+    (message.chat.type === "channel" ? message.chat.id : message.from?.id);
+}
+
+function isReplyToSelf(message: Message): boolean {
+  const repliedTo: Message | undefined = message.reply_to_message;
+  if (!repliedTo) return false;
+
+  const senderId: number | undefined = visibleSenderId(message);
+  return senderId !== undefined && senderId === visibleSenderId(repliedTo);
 }
 
 /**
@@ -365,7 +386,8 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   const repliedTo: Message | undefined = message.reply_to_message;
   const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === ctx.me.id;
   const isMentioned: boolean = isBotMentioned(message, ctx.me.username);
-  const hasOtherMention: boolean = mentionsOtherUser(message, ctx.me.username);
+  const hasOtherMention: boolean = mentionsOtherUser(message, ctx.me.id, ctx.me.username);
+  const repliesToSelf: boolean = isReplyToSelf(message);
   const directMediaTrigger: { reason: "reply" | "mention"; repliedBotText?: string } | undefined = isReplyToBot
     ? { reason: "reply", repliedBotText: repliedTo?.text }
     : isMentioned
@@ -384,12 +406,12 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     // 贴纸/扣反应都算）、不允许沉默（见 workers/aiChatWorker.ts 的
     // generateAndSendReply）。命中后就不再走下面的洗澡/随机复读，免得一条
     // 消息既被 AI 回又被复读。
-    // 消息里 @ 了别人（非机器人自己）时不参与随机搭话的概率判定——见
-    // mentionsOtherUser 注释；不影响上面 isReplyToBot/isMentioned 这两条
-    // 本就明确指向机器人的必回路径。
+    // 消息里 @ 了别人（非机器人自己）、或发送者是在回复自己时，不参与
+    // 随机搭话的概率判定——这类消息已有明确交流对象或是在补充自己的话；
+    // 不影响上面 isReplyToBot/isMentioned 两条明确指向机器人的必回路径。
     const isRandomTrigger: boolean =
       !isReplyToBot && !isMentioned && !isQuiet &&
-      !hasOtherMention &&
+      !hasOtherMention && !repliesToSelf &&
       Math.random() < AI_REPLY_PROBABILITY;
 
     if (isReplyToBot || isMentioned) {
@@ -434,7 +456,9 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       // （commentOnResolveCandidate 要求 !directMediaTrigger）。必回触发与
       // 随机评价因此至多命中其一；只有随机评价占用 15s 每人冷却名额，
       // 媒体本身无论是否取得随机名额都照常入缓存当上下文。
-      const commentOnResolveCandidate: boolean = !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY;
+      const commentOnResolveCandidate: boolean =
+        !directMediaTrigger && !isQuiet && !hasOtherMention && !repliesToSelf &&
+        Math.random() < AI_REPLY_PROBABILITY;
       const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
       recordChatMedia(
         "sticker",
@@ -466,7 +490,9 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     const speaker = resolveSpeaker(message);
     const caption: string = typeof message.caption === "string" ? message.caption : "";
     // 必回触发与随机评价互斥；只有随机评价使用 15s 每人冷却，理由同贴纸分支。
-    const commentOnResolveCandidate: boolean = !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY;
+    const commentOnResolveCandidate: boolean =
+      !directMediaTrigger && !isQuiet && !hasOtherMention && !repliesToSelf &&
+      Math.random() < AI_REPLY_PROBABILITY;
     const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
     const photoFile = pickPhotoFile(message.photo);
     recordChatMedia(
@@ -503,7 +529,9 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       }
     } else {
       // 必回触发与随机评价互斥；只有随机评价使用 15s 每人冷却。
-      const commentOnResolveCandidate: boolean = !directMediaTrigger && !isQuiet && !hasOtherMention && Math.random() < AI_REPLY_PROBABILITY;
+      const commentOnResolveCandidate: boolean =
+        !directMediaTrigger && !isQuiet && !hasOtherMention && !repliesToSelf &&
+        Math.random() < AI_REPLY_PROBABILITY;
       const claimedRandomTrigger: boolean = commentOnResolveCandidate && tryClaimUserReplyTrigger(chatId, speaker.id);
       recordChatMedia(
         "animation",

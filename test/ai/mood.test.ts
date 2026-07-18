@@ -6,7 +6,8 @@ import {
   currentMoodInstruction,
   recordActivityAndMaybeRerollMood,
 } from "../../src/ai/mood";
-import { MOOD_IDLE_RESET_MAX_MS, MOOD_OPTIONS } from "../../src/consts/aiChat";
+import { MOOD_IDLE_RESET_MAX_MS } from "../../src/consts/aiChat";
+import { MOOD_OPTIONS } from "../../src/consts/aiChatPrompts";
 import type { MoodOption } from "../../src/types";
 
 /**

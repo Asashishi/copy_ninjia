@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatBufferedMessageLine } from "../../src/ai/utils/chatTranscript";
-import { CHAT_MEMORY_PRIORITY_INSTRUCTION, COMPACT_BATCH_SIZE } from "../../src/consts/aiChat";
+import { COMPACT_BATCH_SIZE } from "../../src/consts/aiChat";
+import { CHAT_MEMORY_PRIORITY_INSTRUCTION } from "../../src/consts/aiChatPrompts";
 import type { BufferedMessage } from "../../src/types";
 
 const legacyMessage: BufferedMessage = {

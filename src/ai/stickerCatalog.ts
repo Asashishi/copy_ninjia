@@ -14,9 +14,9 @@ import {
   STICKER_CATALOG_RETRY_DELAYS_MS,
   STICKER_PACK_SUMMARY_MAX_CHARS,
   STICKER_PACK_SUMMARY_MAX_TOKENS,
-  STICKER_PACK_SUMMARY_PROMPT,
   SUMMARY_TEMPERATURE,
 } from "../consts/aiChat";
+import { STICKER_PACK_SUMMARY_PROMPT } from "../consts/aiChatPrompts";
 import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot } from "../types";
 
 /**

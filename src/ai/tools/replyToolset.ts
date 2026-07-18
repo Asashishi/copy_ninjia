@@ -3,17 +3,19 @@ import { deleteMessage, sendMessage, setMessageReaction } from "../../infra/tele
 import { sleep } from "../../libs/sleep";
 import { TOOL_DEFINITIONS } from "./index";
 import {
-  ADD_REACTION_TOOL_INSTRUCTION,
-  DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
   MAX_ACTIONS_PER_REPLY,
   MAX_REACTIONS_PER_REPLY,
-  SEND_MESSAGE_TOOL_INSTRUCTION,
   TYPO_QUICK_CORRECTION_MAX_MS,
   TYPO_QUICK_CORRECTION_MIN_MS,
   TYPO_RECALL_DELETE_MAX_MS,
   TYPO_RECALL_DELETE_MIN_MS,
-  TYPO_SUBSTITUTION_RULE,
 } from "../../consts/aiChat";
+import {
+  ADD_REACTION_TOOL_INSTRUCTION,
+  DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
+  SEND_MESSAGE_TOOL_INSTRUCTION,
+  TYPO_SUBSTITUTION_RULE,
+} from "../../consts/aiChatPrompts";
 import { ADD_REACTION_TOOL, DELETE_OWN_MESSAGE_TOOL, SEND_MESSAGE_TOOL, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
 import { REACTION_EMOJIS } from "../reactions";
 import {

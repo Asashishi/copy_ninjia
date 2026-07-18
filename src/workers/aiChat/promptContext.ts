@@ -2,12 +2,10 @@ import { LinkedQueue } from "../../libs/linkedQueue";
 import { sanitizeInline } from "../../libs/text";
 import { buildColdMemoryBlock, buildTieredVerbatimTranscript } from "../../ai/utils/chatTranscript";
 import {
-  CHAT_MEMORY_PRIORITY_INSTRUCTION,
   MAX_SUMMARY_ROUNDS,
-  REPLY_ACTION_INSTRUCTION,
-  TYPO_REQUIRED_INSTRUCTION,
   VERBATIM_CONTEXT_MAX,
 } from "../../consts/aiChat";
+import { CHAT_MEMORY_PRIORITY_INSTRUCTION, REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChatPrompts";
 import { chatBuffers, chatSummaries } from "../../cache/aiChatWorker";
 import { resolvedTagFor } from "./mediaText";
 import type { AiBotInfo, BufferedMessage, MediaKind, QueuedReplyTrigger } from "../../types";
@@ -156,7 +154,7 @@ export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: U
     "\n\n" +
     replyInstruction +
     // 不出错的轮次完全不拼这一段——两个分支的提示词严格分开，模型看不到
-    // 「本来可能出错」这件事（见 consts/aiChat.ts 的 TYPO_REQUIRED_INSTRUCTION）。
+    // 「本来可能出错」这件事（见 consts/aiChatPrompts.ts 的 TYPO_REQUIRED_INSTRUCTION）。
     (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "")
   );
 }

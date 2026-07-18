@@ -100,7 +100,7 @@ function notifyRateLimited(chatId: number, now: number, generation: number = cur
  * 发言/贴纸/反应全部工具化（见 ai/tools/replyToolset.ts）：发单条还是像真人
  * 那样连发几条短句、配不配贴纸、扣不扣反应、挂不挂回复引用，都由模型在工具
  * 对话里自主决定——但不允许整轮沉默，每轮至少留下一个群友看得见的动作
- * （说话/贴纸/扣反应任选，见 consts/aiChat.ts 的 REPLY_ACTION_INSTRUCTION）。
+ * （说话/贴纸/扣反应任选，见 consts/aiChatPrompts.ts 的 REPLY_ACTION_INSTRUCTION）。
  * 副作用在工具执行时当场发生；这里只组装工具集与回调，外加一道对所有触发
  * 类型生效的正文兜底（见 startReplyRound 尾注释）。
  * @param chatId 目标群聊。
