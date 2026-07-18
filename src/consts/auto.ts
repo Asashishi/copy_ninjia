@@ -2,8 +2,22 @@ import type { CopyMode } from "../types";
 
 /** 消息自动流水线（src/auto）的调参常量。 */
 
-/** 同一群里同一用户两次被 AI 随机回复之间的最短间隔。 */
-export const USER_RANDOM_REPLY_COOLDOWN_MS: number = 90_000;
+/**
+ * 同一群里同一用户两次触发 AI 自动回复之间的最短间隔，覆盖全部触发路径
+ * （回复机器人/@机器人/拿媒体叫机器人的必回路径，以及随机插话/媒体评价——
+ * 两类原本各自独立计冷却，后来发现同一个人身上仍可能因为两条路径各占各
+ * 的名额而叠出并发轮，遂合并成一道统一的闸）。
+ *
+ * 必回路径原本完全不设冷却：同一个人短时间内连续回复/@ 机器人，每条都会
+ * 独立开一轮回复（同群并发上限见 REPLY_ROUND_MAX_CONCURRENT），多轮并发
+ * 针对同一个人时，各自的聊天状态心跳挡位、发贴纸互斥锁、尤其是错字模拟的
+ * 撤回重发序列（见 consts/aiChat.ts 的 TYPO_RECALL_DELETE_MIN_MS/MAX_MS，
+ * 一条消息发出后有 10~15 秒会被撤回重发）会互相穿插，表现为「消息发出去
+ * 又消失、后续没有下文」——像是被吞掉了。这个冷却按「群 × 用户」占用一个
+ * 名额，同一个人在名额期内的后续触发一律不再开新轮，从根上避免针对同一个
+ * 人出现多轮并发。
+ */
+export const USER_REPLY_TRIGGER_COOLDOWN_MS: number = 15_000;
 
 /** 没有复读对象时，随机复读一条新消息的概率。 */
 export const RANDOM_ECHO_PROBABILITY: number = 1 / 100;

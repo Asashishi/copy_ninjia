@@ -33,6 +33,11 @@ mock.module("../../src/aiChat", () => ({
 }));
 mock.module("../../src/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
 
+// tryClaimUserReplyTrigger 的 15s 每人触发冷却按真实 Date.now() 计时（见
+// src/auto/message.ts）：本文件多个用例共用同一个 chatId + alice.id 夹具，
+// 不清空会导致后面的用例被前一个用例占用的冷却名额挡住、断言失败。
+const { userReplyTriggerTimes } = await import("../../src/cache/auto");
+
 // 全量跑时 test/ai/stickerCatalog.test.ts 会把 pickStickerVisionSource 换成
 // 恒返回素材的桩（bun 的 mock.module 是进程级注册表，跨文件生效），这里按
 // 真实语义重新钉住：静态贴纸下载本体，动态/视频贴纸只有缩略图可用、没有
@@ -65,6 +70,7 @@ describe("媒体直接叫机器人", () => {
     recordChatMessageMock.mockClear();
     recordChatMediaMock.mockClear();
     generateAndSendReplyMock.mockClear();
+    userReplyTriggerTimes.clear();
   });
 
   test("静态贴纸回复机器人：recordChatMedia 带上 directTrigger 与被回复文本，不掷评价骰", async () => {
