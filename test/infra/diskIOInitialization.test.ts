@@ -28,6 +28,11 @@ const luckDraw: LuckDrawDiskMessage = {
   label: "大吉",
   fortunePercent: 99,
 };
+const luckReceiptSecret = {
+  version: 1 as const,
+  day: "2026-07-19",
+  key: Buffer.alloc(32, 7).toString("base64url"),
+};
 
 describe("explicit Worker initialization", () => {
   test("imports are inert; init, handshakes, stale guards, and respawn replay are deterministic", async () => {
@@ -48,12 +53,24 @@ describe("explicit Worker initialization", () => {
         aiMemories: new Map([[1, "memory"]]),
         stickerCatalogs: new Map([["pack", "catalog"]]),
         luckDay: null,
+        luckReceiptSecret,
         verifications: new Map(),
       } } as MessageEvent<DiskIOReply>);
       expect(await loadedPromise).toMatchObject({
         aiMemories: new Map([[1, "memory"]]),
         stickerCatalogs: new Map([["pack", "catalog"]]),
+        luckReceiptSecret,
       });
+
+      const secretPromise = diskIO.ensureLuckReceiptSecret("2026-07-19", 1_000);
+      const secretRequest = first.messages.at(-1)!;
+      expect(secretRequest.type).toBe("ensureLuckSecret");
+      first.onmessage!({ data: {
+        type: "luckSecret",
+        requestId: secretRequest.type === "ensureLuckSecret" ? secretRequest.requestId : -1,
+        secret: luckReceiptSecret,
+      } } as MessageEvent<DiskIOReply>);
+      expect(await secretPromise).toEqual(luckReceiptSecret);
 
       const flushPromise = diskIO.flushDiskIO(1_000);
       const flush = first.messages.at(-1)!;

@@ -7,7 +7,8 @@
  *
  * 本文件只做消息路由、统一 flush 调度、启动恢复编排；具体逻辑分别在
  * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/luckFiles.ts（运势的缓冲/
- * 追加）、diskIO/verificationFiles.ts（待验证按日增量）与
+ * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
+ * diskIO/verificationFiles.ts（待验证按日增量）与
  * diskIO/snapshotFiles.ts（AI 记忆/贴纸目录覆盖写 + 启动恢复）。日志、运势
  * 和待验证数据共用 appendOnlyDayFile.ts 的按位置追加/截断修复机制。
  *
@@ -20,6 +21,7 @@
 import { mkdirSync } from "node:fs";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import { flushLuckAppends, handleLuckDrawMessage } from "./diskIO/luckFiles";
+import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import { flushVerificationChanges, handleVerificationDelete, handleVerificationUpsert, recoverVerificationDay, scheduleVerificationRollover } from "./diskIO/verificationFiles";
 import { deleteAiMemoryFile, recoverAiMemories, recoverLuckDay, recoverStickerCatalogs, writeAiMemoryFile, writeStickerCatalogFile } from "./diskIO/snapshotFiles";
 import { stickerConfig } from "../ai/stickerConfig";
@@ -27,7 +29,7 @@ import { AI_MEMORY_DIR, LOGS_DIR, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, VERIFICAT
 import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../consts/diskIO";
 import { getTokyoDateKey } from "../libs/time";
 import { aiMemoryCache, deletedAiMemoryChats, dirtyChats, dirtyStickerPacks, luckWorkerCache, snapshotFlushState, stickerCatalogCache } from "../cache/diskIOWorker";
-import type { DiskFlushReply, DiskIOMessage, LoadedReply, VerificationSnapshot } from "../types";
+import type { DiskFlushReply, DiskIOMessage, LoadedReply, LuckReceiptSecret, LuckSecretReply, VerificationSnapshot } from "../types";
 
 declare const self: Worker;
 
@@ -103,10 +105,10 @@ function flushAll(): void {
 
 /**
  * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
- * 建目录、扫描解析校验 memory/ai/、memory/stickers/、memory/luck/ 与当天
- * 待验证增量文件，先灌进
- * 自己的缓存，再把缓存内容作为 loaded 回执发给主线程。任何恢复失败都会在
- * 回执中显式报告；主线程启动握手据此拒绝以部分/空状态继续运行。
+ * 建目录、扫描解析校验 memory/ai/、memory/stickers/、memory/luck/（含当天
+ * 回执密钥）与当天待验证增量文件，先灌进自己的缓存，再把缓存内容作为
+ * loaded 回执发给主线程。任何恢复失败都会在回执中显式报告；主线程启动
+ * 握手据此拒绝以部分/空状态继续运行。
  * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
  * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）；
  * 包内部「哪些贴纸还在线上」的对账则在 aiChatWorker 那侧的
@@ -115,6 +117,7 @@ function flushAll(): void {
 function handleLoad(): void {
   let loadError: string | undefined;
   let verifications: Map<string, VerificationSnapshot> = new Map();
+  let luckReceiptSecret: LuckReceiptSecret | null = null;
   try {
     mkdirSync(LOGS_DIR, { recursive: true });
     mkdirSync(AI_MEMORY_DIR, { recursive: true });
@@ -133,6 +136,7 @@ function handleLoad(): void {
     const todayKey: string = getTokyoDateKey();
     const luckDay = recoverLuckDay(todayKey);
     if (luckDay) luckWorkerCache.current = luckDay;
+    luckReceiptSecret = recoverLuckReceiptSecret(todayKey);
     verifications = recoverVerificationDay(todayKey);
     scheduleVerificationRollover((reply) => self.postMessage(reply));
   } catch (error) {
@@ -145,6 +149,7 @@ function handleLoad(): void {
     aiMemories: aiMemoryCache,
     stickerCatalogs: stickerCatalogCache,
     luckDay: luckWorkerCache.current,
+    luckReceiptSecret,
     verifications,
     error: loadError,
   };
@@ -189,6 +194,20 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
     case "luckDraw":
       handleLuckDrawMessage(msg);
       break;
+    case "ensureLuckSecret": {
+      let reply: LuckSecretReply;
+      try {
+        reply = { type: "luckSecret", requestId: msg.requestId, secret: recoverLuckReceiptSecret(msg.day) };
+      } catch (error: unknown) {
+        reply = {
+          type: "luckSecret",
+          requestId: msg.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      self.postMessage(reply);
+      break;
+    }
     case "verificationUpsert":
       handleVerificationUpsert(msg, (reply) => self.postMessage(reply));
       break;

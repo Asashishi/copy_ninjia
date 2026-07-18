@@ -70,9 +70,9 @@ export async function atomicWriteText(path: string, content: string): Promise<vo
 }
 
 /** atomicWriteText 的同步版本，供唯一的磁盘 IO Worker 使用。 */
-export function atomicWriteTextSync(path: string, content: string): void {
+export function atomicWriteTextSync(path: string, content: string, mode?: number): void {
   const tmpPath: string = temporaryPath(path);
-  const fd: number = openSync(tmpPath, "wx");
+  const fd: number = openSync(tmpPath, "wx", mode);
   try {
     writeFileSync(fd, content);
     fsyncSync(fd);

@@ -32,6 +32,8 @@ export const LOGS_DIR: string = join(PROJECT_ROOT, "logs");
 export const MEMORY_DIR: string = join(PROJECT_ROOT, "memory");
 export const AI_MEMORY_DIR: string = join(MEMORY_DIR, "ai");
 export const LUCK_MEMORY_DIR: string = join(MEMORY_DIR, "luck");
+/** 当日运势确定性派生与回执签名共用的敏感密钥文件。 */
+export const LUCK_RECEIPT_SECRET_PATH: string = join(LUCK_MEMORY_DIR, "receipt-secret.json");
 export const STICKER_MEMORY_DIR: string = join(MEMORY_DIR, "stickers");
 /** Anti-Raid 待验证增量文件目录；按东京日期命名，只保留当天文件。 */
 export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");

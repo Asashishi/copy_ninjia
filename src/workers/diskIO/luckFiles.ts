@@ -75,7 +75,7 @@ export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
   // 去重按「key + 值」而不是只看 key：值也一样才算重复（本 Worker 崩溃
   // 重建后主线程会把 dailyLuckCache 全量重放一遍，见 infra/diskIO.ts 的
   // onDiskIORespawn，其中多数条目已经在崩溃前落过盘，不去重会白占地方）。
-  // 只看 key 会挡住合法的同 key 改值：restoreLuckCache 因 LUCK_TIERS 改动
+  // 只看 key 会挡住合法的同 key 改值：restoreLuckState 因 LUCK_TIERS 改动
   // 丢弃磁盘旧记录后用户当天重抽，新结果就是同 key 不同值，必须落盘覆盖，
   // 否则每次重启都会重抽出不同结果。重复 key 追加是安全的——JSON.parse
   // 只认最后一次出现，恢复时天然取到最新值。

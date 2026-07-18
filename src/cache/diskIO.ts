@@ -1,4 +1,4 @@
-import type { LoadedReply } from "../types";
+import type { LoadedReply, LuckReceiptSecret } from "../types";
 
 /** 磁盘 IO 宿主（src/infra/diskIO.ts）的内存状态：主线程侧的 flush/load 回执路由。 */
 
@@ -12,3 +12,10 @@ export const pendingFlushes: Map<number, () => void> = new Map();
  * 内部就已经完成，不需要主线程再做什么）。
  */
 export const pendingLoad: { resolve: ((reply: LoadedReply) => void) | null } = { resolve: null };
+
+/** ensureLuckReceiptSecret 的逐请求等待表。 */
+export const pendingLuckSecrets: Map<number, {
+  resolve: (secret: LuckReceiptSecret) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}> = new Map();

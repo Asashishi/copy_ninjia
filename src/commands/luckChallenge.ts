@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
 import type { InlineQueryResultArticle } from "@grammyjs/types";
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 import { formatUserLabel } from "../users/userLabel";
 import {
   FORTUNE_THUMBNAIL_URL,
@@ -15,16 +15,15 @@ import {
 import {
   dailyLuckCache,
   luckCacheState,
+  luckReceiptSecretState,
   pendingLuckDraws,
-  pendingLuckReceiptByKey,
-  pendingLuckReceiptIndex,
   recentCallTimestamps,
 } from "../cache/luckChallenge";
 import { logger } from "../infra/logger";
-import { onDiskIORespawn, postDiskIO } from "../infra/diskIO";
+import { ensureLuckReceiptSecret, onDiskIORespawn, postDiskIO } from "../infra/diskIO";
 import { getTokyoDateKey } from "../libs/time";
-import { LUCK_RECEIPT_PATTERN } from "../libs/luckReceipt";
-import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
+import { createLuckReceipt, deriveLuckEntropy, verifyLuckReceipt } from "../libs/luckReceipt";
+import type { LuckDayCache, LuckDraw, LuckReceiptSecret, LuckTier } from "../types";
 
 /**
  * 抽今日运势，仅通过 Telegram 内联模式触发：在任意聊天框里
@@ -60,7 +59,7 @@ import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
  * 转正写入 dailyLuckCache 并经 postDiskIO 转投 diskIOWorker 落盘
  * （memory/luck/YYYY-MM-DD.json，按东京日期一个文件、只留当天，落盘机制
  * 与日志同一套按位置追加/截断修复，见 workers/diskIO/luckFiles.ts），重启
- * 后由 restoreLuckCache 灌回，当天结果不因重启改变；过期文件在写入时发现
+ * 后由 restoreLuckState 灌回，当天结果不因重启改变；过期文件在写入时发现
  * 跨天就删。
  *
  * 「被选中」的确认信号有两路，命中任意一路即转正（幂等，重复到达无害）：
@@ -70,19 +69,45 @@ import type { LuckDayCache, LuckDraw, LuckTier } from "../types";
  *   在 BotFather 用 /setinlinefeedback 开启（建议 100%），否则收不到。
  * - 带签名回执的结果消息现身（兜底，挂在 index.ts 的 isInitEnabled 网关之前，见
  *   confirmLuckDraw）：机器人在任何聊天里（含未 /init 的群、机器人自己的
- *   私聊）看见末行带有效随机 nonce + HMAC 的结果就认领——不要求 via_bot，
- *   转发副本也算数。正文不是凭据，无法靠枚举档位文案替别人确认；回执随
- *   消息保留，因此也不依赖马甲/匿名身份或转发者的 from。
+ *   私聊）看见末行带有效「版本 + 日期 + cache key + HMAC」回执的结果就
+ *   认领——不要求 via_bot，转发副本也算数。正文不是凭据，无法靠枚举档位
+ *   文案替别人确认；回执随消息保留，因此也不依赖马甲/匿名身份或转发者的
+ *   from。当天密钥由 diskIOWorker 持久化，预览与确认之间即使重启也能验证。
  */
 
-function ensureCacheFreshForToday(): void {
+let luckDayRefreshPromise: Promise<void> | null = null;
+
+function adoptLuckSecret(secret: LuckReceiptSecret): void {
+  luckReceiptSecretState.current = secret;
+  luckCacheState.dayKey = secret.day;
+  dailyLuckCache.clear();
+  pendingLuckDraws.clear();
+}
+
+async function ensureCacheFreshForToday(): Promise<void> {
   const todayKey: string = getTokyoDateKey();
-  if (todayKey !== luckCacheState.dayKey) {
-    luckCacheState.dayKey = todayKey;
-    dailyLuckCache.clear();
-    pendingLuckDraws.clear();
-    pendingLuckReceiptByKey.clear();
-    pendingLuckReceiptIndex.clear();
+  if (todayKey === luckCacheState.dayKey && luckReceiptSecretState.current?.day === todayKey) return;
+  if (luckDayRefreshPromise !== null) return luckDayRefreshPromise;
+  luckDayRefreshPromise = (async (): Promise<void> => {
+    let requestedDay: string = todayKey;
+    for (;;) {
+      const secret: LuckReceiptSecret = await ensureLuckReceiptSecret(requestedDay);
+      if (secret.day !== requestedDay) {
+        throw new Error(`Disk I/O Worker returned luck secret for ${secret.day}, expected ${requestedDay}`);
+      }
+      // 请求往返恰好跨过东京零点时，继续请求新日，绝不短暂采用昨日密钥。
+      const currentDay: string = getTokyoDateKey();
+      if (currentDay === requestedDay) {
+        adoptLuckSecret(secret);
+        return;
+      }
+      requestedDay = currentDay;
+    }
+  })();
+  try {
+    await luckDayRefreshPromise;
+  } finally {
+    luckDayRefreshPromise = null;
   }
 }
 
@@ -91,7 +116,7 @@ function ensureCacheFreshForToday(): void {
  * 共用这一套 key 规则，抽出来单独提取避免两处各写一份、改一处忘了另一处。
  *
  * 文本段用 sha256 定长摘要而不是原文本身：内联查询原文可达 ~256 字符，这份
- * key 既要进内存（dailyLuckCache/pendingLuckDraws/回执双向索引），又要作为
+ * key 既要进内存（dailyLuckCache/pendingLuckDraws），又要作为
  * 对象键原样写进磁盘 memory/luck/YYYY-MM-DD.json——原文越长，内存与磁盘
  * 占用越随之放大，脚本账号只需循环发不同文本的内联查询就能不断膨胀这两处。
  * 摘要只用于去重/缓存匹配、不参与展示（展示文本一律来自实时 query），
@@ -109,79 +134,56 @@ function drawLuckTier(roll: number): LuckTier {
   let cumulative: number = 0;
   for (const tier of LUCK_TIERS) {
     cumulative += tier.weight;
-    if (roll <= cumulative) return tier;
+    if (roll < cumulative) return tier;
   }
   return LUCK_TIERS[LUCK_TIERS.length - 1]!;
 }
 
-/** 在 tier.fortunePercentRange [min, max] 内均匀浮动出本次抽签的行大运具体
- * 数值（%），保留两位小数；只在抽到新结果时滚动一次，随 tier 一起先进
- * pendingLuckDraws、确认后再进日缓存/落盘（见 LuckDraw、getOrDrawLuck、
- * confirmLuckDraw），同一天同一 key 之后重复查询取到的都是这同一个数，
- * 不会每次查询都重新浮动。 */
-function rollFortunePercent([min, max]: [number, number]): number {
-  const raw: number = min + Math.random() * (max - min);
+/** 在 tier.fortunePercentRange [min, max] 内按日级密钥派生本次抽签的行大运
+ * 具体数值（%），保留两位小数；结果先进入 pendingLuckDraws 性能缓存，确认
+ * 后再进日缓存/落盘（见 LuckDraw、getOrDrawLuck、confirmLuckDraw）。同一天
+ * 同一 key 即使待确认缓存淘汰或进程重启，重新派生的结果也完全相同。 */
+function rollFortunePercent([min, max]: [number, number], fraction: number): number {
+  const raw: number = min + fraction * (max - min);
   return Math.round(raw * 100) / 100;
+}
+
+function deriveLuckDraw(cacheKey: string): LuckDraw {
+  const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
+  if (secret?.day !== luckCacheState.dayKey) throw new Error("Daily luck receipt secret is not initialized");
+  const entropy: Buffer = deriveLuckEntropy(secret, cacheKey);
+  const tierRoll: number = entropy.readUInt32BE(0) / 0x1_0000_0000 * 100;
+  const tier: LuckTier = drawLuckTier(tierRoll);
+  const fraction: number = entropy.readUInt32BE(4) / 0x1_0000_0000;
+  return { tier, fortunePercent: rollFortunePercent(tier.fortunePercentRange, fraction) };
 }
 
 /** 预览阶段取（或抽）一次结果：优先复用已确认的 dailyLuckCache，其次复用
  * 还没确认的 pendingLuckDraws（同一天重复打字预览同一把 key 时看到的数字
- * 保持一致，不会每敲一次键就重新滚一次），都没有才真的抽一把——但只存进
+ * 保持一致），都没有才从当天密钥确定性派生一把——但只存进
  * pendingLuckDraws，不算"今天测过"。是否转正见 confirmLuckDraw。 */
 function getOrDrawLuck(userId: number, text: string | undefined): LuckDraw {
-  ensureCacheFreshForToday();
   const cacheKey: string = luckCacheKey(userId, text);
   const confirmed: LuckDraw | undefined = dailyLuckCache.get(cacheKey);
   if (confirmed) return confirmed;
   const pending: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
   if (pending) return pending;
 
-  const tier: LuckTier = drawLuckTier(Math.floor(Math.random() * 100) + 1);
-  const fortunePercent: number = rollFortunePercent(tier.fortunePercentRange);
-  const draw: LuckDraw = { tier, fortunePercent };
+  const draw: LuckDraw = deriveLuckDraw(cacheKey);
   // 走到这里 cacheKey 一定是新 key（上面已经查过 dailyLuckCache/pendingLuckDraws
   // 都没有），这次 set 必然让条数 +1，需要检查上限——见 PENDING_LUCK_CACHE_MAX 注释。
   if (pendingLuckDraws.size >= PENDING_LUCK_CACHE_MAX) {
     const evictedKey: string = pendingLuckDraws.keys().next().value!;
     pendingLuckDraws.delete(evictedKey);
-    removePendingReceipt(evictedKey);
   }
   pendingLuckDraws.set(cacheKey, draw);
   return draw;
 }
 
-/** 从签名回执双向索引中移除某个 cacheKey；转正或淘汰时调用。 */
-function removePendingReceipt(cacheKey: string): void {
-  const receipt: string | undefined = pendingLuckReceiptByKey.get(cacheKey);
-  if (receipt !== undefined) pendingLuckReceiptIndex.delete(receipt);
-  pendingLuckReceiptByKey.delete(cacheKey);
-}
-
-const LUCK_RECEIPT_SECRET: Buffer = randomBytes(32);
-function signLuckReceipt(cacheKey: string, nonce: string): string {
-  return createHmac("sha256", LUCK_RECEIPT_SECRET)
-    .update(cacheKey)
-    .update("\0")
-    .update(nonce)
-    .digest("base64url")
-    .slice(0, 22);
-}
-
-/** 每个 pending key 复用同一份随机签名回执，避免打字预览反复生成索引。 */
-function registerPendingReceipt(cacheKey: string): string {
-  const existing: string | undefined = pendingLuckReceiptByKey.get(cacheKey);
-  if (existing !== undefined) return existing;
-  const nonce: string = randomBytes(16).toString("base64url");
-  const receipt: string = `luck:${nonce}.${signLuckReceipt(cacheKey, nonce)}`;
-  if (!dailyLuckCache.has(cacheKey)) {
-    pendingLuckReceiptByKey.set(cacheKey, receipt);
-    pendingLuckReceiptIndex.set(receipt, cacheKey);
-  }
-  return receipt;
-}
-
 function signedResultText(bodyText: string, cacheKey: string): { text: string; receiptOffset: number; receiptLength: number } {
-  const receipt: string = registerPendingReceipt(cacheKey);
+  const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
+  if (!secret) throw new Error("Daily luck receipt secret is not initialized");
+  const receipt: string = createLuckReceipt(secret, cacheKey);
   return {
     text: `${bodyText}\n${receipt}`,
     receiptOffset: bodyText.length + 1,
@@ -192,15 +194,13 @@ function signedResultText(bodyText: string, cacheKey: string): { text: string; r
 /**
  * 把一把待确认的抽签转正：pendingLuckDraws -> dailyLuckCache -> postDiskIO
  * 落盘。两路确认信号（chosen_inline_result / 签名回执）共用；幂等，
- * 已转正或查无 pending（消息不是运势结果、或进程恰好在预览和选中之间重启
- * 导致内存态丢失）都什么都不做——宁可当天该 key 之后被重新抽一次，也不要
- * 凭空落盘一条用户从未真正确认过的记录。
+ * 已转正时不重复落盘；pending 因淘汰或重启丢失时，从当天密钥重新派生同一
+ * 结果再转正。只有 chosen_inline_result 或有效签名回执才能走到这里。
  */
 function promotePendingDraw(cacheKey: string): void {
-  const draw: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
+  const draw: LuckDraw = pendingLuckDraws.get(cacheKey) ?? deriveLuckDraw(cacheKey);
   pendingLuckDraws.delete(cacheKey);
-  removePendingReceipt(cacheKey);
-  if (!draw || dailyLuckCache.has(cacheKey)) return;
+  if (dailyLuckCache.has(cacheKey)) return;
 
   dailyLuckCache.set(cacheKey, draw);
   // day 用刚校准过的 luckCacheState.dayKey，与本次缓存写入用的是同一个"今天"。
@@ -216,12 +216,12 @@ function promotePendingDraw(cacheKey: string): void {
  * 前提：BotFather 里 /setinlinefeedback 已开启，否则 Telegram 根本不发这
  * 类更新（此时只剩签名回执兜底路，见模块头注释）。
  */
-export function handleLuckChosenInlineResult(ctx: Context): void {
+export async function handleLuckChosenInlineResult(ctx: Context): Promise<void> {
   const chosen = ctx.chosenInlineResult;
   if (!chosen) return;
   // 限流提示不是抽签结果，选中它不该在今日缓存里占坑。
-  if (chosen.result_id === "luck-rate-limited") return;
-  ensureCacheFreshForToday();
+  if (!["luck-fortune", "luck-fortune-text", "luck-probability"].includes(chosen.result_id)) return;
+  await ensureCacheFreshForToday();
 
   const text: string = chosen.query.trim();
   // 「未卜先知」带文本时按「所求事项」区分 key；「概率论」只在无文本时提供，
@@ -231,24 +231,21 @@ export function handleLuckChosenInlineResult(ctx: Context): void {
 }
 
 /**
- * 确认兜底路：从结果消息末行提取随机 nonce + HMAC 回执，先按索引找回
- * cacheKey，再常量时间验证签名。展示正文不再是凭据，攻击者无法靠枚举七种
- * 档位文案替别人确认；频道马甲、匿名管理员和转发副本仍能保留这条 spoiler
- * 回执，因此不依赖消息 from 里的真实 uid。
+ * 确认兜底路：从结果消息末行提取自描述回执，校验版本/日期/长度后常量时间
+ * 验证完整 HMAC，并直接还原 cacheKey。展示正文不再是凭据，攻击者无法靠
+ * 枚举七种档位文案替别人确认；频道马甲、匿名管理员和转发副本仍能保留这条
+ * spoiler 回执，因此不依赖消息 from 里的真实 uid，也不依赖内存反向索引。
  */
-export function confirmLuckDraw(messageText: string | undefined): void {
+export async function confirmLuckDraw(messageText: string | undefined): Promise<void> {
   if (typeof messageText !== "string") return;
-  ensureCacheFreshForToday();
+  await ensureCacheFreshForToday();
 
   const receipt: string | undefined = messageText.split("\n").at(-1);
   if (!receipt) return;
-  const match: RegExpExecArray | null = LUCK_RECEIPT_PATTERN.exec(receipt);
-  if (!match) return;
-  const cacheKey: string | undefined = pendingLuckReceiptIndex.get(receipt);
+  const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
+  if (!secret) return;
+  const cacheKey: string | undefined = verifyLuckReceipt(receipt, luckCacheState.dayKey, secret);
   if (!cacheKey) return;
-  const expected: Buffer = Buffer.from(signLuckReceipt(cacheKey, match[1]!));
-  const actual: Buffer = Buffer.from(match[2]!);
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return;
   promotePendingDraw(cacheKey);
 }
 
@@ -260,11 +257,13 @@ export function confirmLuckDraw(messageText: string | undefined): void {
 // 不校准就会把过期数据当成"今天"重发给新实例，污染它刚从磁盘正确恢复出
 // 的今天状态。
 onDiskIORespawn(() => {
-  ensureCacheFreshForToday();
-  if (dailyLuckCache.size === 0) return;
-  for (const [key, draw] of dailyLuckCache) {
-    postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key, label: draw.tier.label, fortunePercent: draw.fortunePercent });
-  }
+  void ensureCacheFreshForToday()
+    .then(() => {
+      for (const [key, draw] of dailyLuckCache) {
+        postDiskIO({ type: "luckDraw", day: luckCacheState.dayKey, key, label: draw.tier.label, fortunePercent: draw.fortunePercent });
+      }
+    })
+    .catch((error: unknown) => logger.error("Failed to restore daily luck secret after Disk I/O Worker respawn:", error));
 });
 
 /**
@@ -278,12 +277,15 @@ onDiskIORespawn(() => {
  * 必须在 runner 开始投喂 inline_query 之前调用（见 index.ts），否则会出现
  * 「今天已抽过却又抽出新结果」。
  */
-export function restoreLuckCache(loaded: LuckDayCache | null): void {
-  if (!loaded) return;
+export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache | null): void {
   const todayKey: string = getTokyoDateKey();
+  if (secret.day !== todayKey) {
+    throw new Error(`Loaded luck receipt secret is for ${secret.day}, expected ${todayKey}`);
+  }
+  adoptLuckSecret(secret);
+  if (!loaded) return;
   if (loaded.day !== todayKey) return;
 
-  luckCacheState.dayKey = todayKey;
   for (const [key, record] of loaded.entries) {
     const tier: LuckTier | undefined = LUCK_TIERS.find((t) => t.label === record.label);
     if (!tier) {
@@ -387,6 +389,8 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     await ctx.answerInlineQuery([buildRateLimitedResult()], { cache_time: 1, is_personal: true });
     return;
   }
+
+  await ensureCacheFreshForToday();
 
   const fromUser = inlineQuery.from;
   const userLabel: string = formatUserLabel({ id: fromUser.id, username: fromUser.username, first_name: fromUser.first_name });

@@ -7,7 +7,7 @@ import { BOT_TOKEN } from "./src/infra/config";
 import { acquireSingleInstanceLock, cleanupOrphanedTempFiles, flushStateToDisk, getAllChatStates, getGlobalCopyState, loadState, releaseSingleInstanceLock } from "./src/infra/storage";
 import { shouldPassInitGate, shouldPassPrivateCommandGate } from "./src/infra/updateGate";
 import { handleIncomingMessage, handleReaction } from "./src/auto";
-import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleSendCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckCache } from "./src/commands";
+import { confirmLuckDraw, handleAiChatCommand, handleCopyCommand, handleInitCommand, handleJaCopyCommand, handleKickCommand, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, handleQuietCommand, handleSendCommand, handleStealIconCommand, handleStopCommand, handleUnquietCommand, restoreLuckState } from "./src/commands";
 import { handleChatMemberUpdate, handleGroupJoinVerification, handleVerificationCallback, hydratePendingVerifications, initAntiRaid } from "./src/antiRaid";
 import { handleMyChatMemberUpdate } from "./src/infra/botAdmin";
 import { refreshAllChatTitles } from "./src/infra/chatTitle";
@@ -91,8 +91,8 @@ export async function main(): Promise<void> {
 
   // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
   // 因此必须在 isInit 网关前检查；正文不参与确认，详见 luckChallenge.ts。
-  bot.use((ctx, next) => {
-    confirmLuckDraw(ctx.msg?.text);
+  bot.use(async (ctx, next) => {
+    await confirmLuckDraw(ctx.msg?.text);
     return next();
   });
 
@@ -222,10 +222,10 @@ export async function main(): Promise<void> {
   // 台启动的目录生成能看到已恢复的条目、不重复调视觉模型（见 aiChat.ts 的
   // hydrateStickerCatalog）。
   hydrateStickerCatalog(loaded.stickerCatalogs);
-  // 接管当日运势缓存（day 对不上今天则整体丢弃，见 restoreLuckCache）：
+  // 接管日级回执密钥与当日运势缓存（见 restoreLuckState）：
   // dailyLuckCache 是主线程同步读写的，必须赶在 runner 开始投喂
   // inline_query 之前灌好，否则会出现「今天已抽过却又抽出新结果」。
-  restoreLuckCache(loaded.luckDay);
+  restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
   // 当天仍 active 的验证先进入主线程镜像，initAntiRaid 随后的首条 adopt
   // 按原 expiresAt 恢复剩余计时；已过期记录会立即进入超时处置。
   hydratePendingVerifications(loaded.verifications);

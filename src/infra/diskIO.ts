@@ -15,7 +15,7 @@
  * createDiskWorker 一脉相承。
  */
 
-import { pendingFlushes, pendingLoad } from "../cache/diskIO";
+import { pendingFlushes, pendingLoad, pendingLuckSecrets } from "../cache/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "../libs/workerSupervisor";
 import { LOAD_TIMEOUT_MS } from "../consts/diskIO";
@@ -24,12 +24,14 @@ import type {
   AiMemoryDeleteDiskMessage,
   DiskFlushRequest,
   DiskIOReply,
+  EnsureLuckSecretRequest,
   LoadRequest,
   LoadedReply,
   LogEnvelope,
   LogMessage,
   LuckDayCache,
   LuckDrawDiskMessage,
+  LuckReceiptSecret,
   StickerCatalogDiskMessage,
   VerificationDeleteDiskMessage,
   VerificationPersistedReply,
@@ -86,6 +88,18 @@ function createDiskIOWorker(): Worker {
       }
       return;
     }
+    if (data.type === "luckSecret") {
+      const pending = pendingLuckSecrets.get(data.requestId);
+      if (!pending) return;
+      pendingLuckSecrets.delete(data.requestId);
+      clearTimeout(pending.timer);
+      if (data.error !== undefined || data.secret === undefined) {
+        pending.reject(new Error(data.error ?? "Disk I/O Worker returned no luck receipt secret."));
+      } else {
+        pending.resolve(data.secret);
+      }
+      return;
+    }
     // data.type === "loaded"：崩溃重建后自动重跑的那次 load（见下方 onerror）
     // 没有人专门等待这次回执——Worker 侧缓存的热身在它自己内部已经完成，
     // 主线程这边只在存在挂起的 loadPersistedData() 调用时才需要消费。
@@ -114,6 +128,14 @@ function createDiskIOWorker(): Worker {
       );
       for (const resolve of pendingFlushes.values()) resolve();
       pendingFlushes.clear();
+    }
+    if (pendingLuckSecrets.size > 0) {
+      const error = new Error("Persistence Worker crashed while loading the daily luck receipt secret.");
+      for (const pending of pendingLuckSecrets.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(error);
+      }
+      pendingLuckSecrets.clear();
     }
     if (restartThrottle.shouldGiveUp()) {
       console.error(
@@ -183,6 +205,7 @@ export interface LoadedData {
   aiMemories: Map<number, string>;
   stickerCatalogs: Map<string, string>;
   luckDay: LuckDayCache | null;
+  luckReceiptSecret: LuckReceiptSecret;
   verifications: Map<string, VerificationSnapshot>;
 }
 
@@ -210,15 +233,40 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         reject(new Error(`[diskIO] persistence recovery failed: ${reply.error}`));
         return;
       }
+      if (reply.luckReceiptSecret === null) {
+        reject(new Error("[diskIO] persistence recovery returned no luck receipt secret."));
+        return;
+      }
       resolve({
         aiMemories: reply.aiMemories,
         stickerCatalogs: reply.stickerCatalogs,
         luckDay: reply.luckDay,
+        luckReceiptSecret: reply.luckReceiptSecret,
         verifications: reply.verifications,
       });
     };
     const request: LoadRequest = { type: "load" };
     worker.postMessage(request);
+  });
+}
+
+let nextLuckSecretRequestId: number = 1;
+
+/** 东京日期切换后，经唯一 Disk I/O Worker 原子加载或轮换日级运势密钥。 */
+export function ensureLuckReceiptSecret(
+  day: string,
+  timeoutMs: number = LOAD_TIMEOUT_MS
+): Promise<LuckReceiptSecret> {
+  const worker: Worker | null = diskIOWorker;
+  if (!worker) return Promise.reject(new Error("Persistence Worker is unavailable; cannot rotate luck receipt secret."));
+  const requestId: number = nextLuckSecretRequestId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingLuckSecrets.delete(requestId);
+      reject(new Error(`[diskIO] luck receipt secret request timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    pendingLuckSecrets.set(requestId, { resolve, reject, timer });
+    worker.postMessage({ type: "ensureLuckSecret", requestId, day } satisfies EnsureLuckSecretRequest);
   });
 }
 

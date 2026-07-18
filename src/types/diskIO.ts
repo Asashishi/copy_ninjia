@@ -58,7 +58,7 @@ export interface LuckDrawDiskMessage {
    *  dailyLuckCache 的 key 一致（原文本不直接进 key，见 commands/luckChallenge.ts
    *  的 luckCacheKey 注释）。 */
   key: string;
-  /** LuckTier.label；加载时按 LUCK_TIERS 反查还原 tier 本身（见 commands/luckChallenge.ts 的 restoreLuckCache）。 */
+  /** LuckTier.label；加载时按 LUCK_TIERS 反查还原 tier 本身（见 commands/luckChallenge.ts 的 restoreLuckState）。 */
   label: string;
   /** 该次抽签在 tier.fortunePercentRange 内浮动出的行大运具体数值（%，两位小数）。
    * 不再能从 label 反查得出（区间是浮动的），必须随 label 一起落盘，见 LuckDrawRecord。 */
@@ -96,6 +96,13 @@ export interface LoadRequest {
   type: "load";
 }
 
+/** 主线程跨东京日期后要求唯一 Disk I/O Worker 加载或原子轮换日级密钥。 */
+export interface EnsureLuckSecretRequest {
+  type: "ensureLuckSecret";
+  requestId: number;
+  day: string;
+}
+
 /** 主线程 -> diskIOWorker：所有 dirty 持久化领域全部立即落盘，随后回执。 */
 export interface DiskFlushRequest {
   type: "flush";
@@ -110,6 +117,7 @@ export type DiskIOMessage =
   | LuckDrawDiskMessage
   | VerificationUpsertDiskMessage
   | VerificationDeleteDiskMessage
+  | EnsureLuckSecretRequest
   | LoadRequest
   | DiskFlushRequest;
 
@@ -127,6 +135,13 @@ export interface LuckDayCache {
   entries: Map<string, LuckDrawRecord>;
 }
 
+/** memory/luck/receipt-secret.json 的当前 schema；key 是 32 字节 base64url。 */
+export interface LuckReceiptSecret {
+  version: 1;
+  day: string;
+  key: string;
+}
+
 /** 追加写入某天文件时，一条尚未落盘的新记录（去重后才会进入这个缓冲，
  * 见 workers/diskIO/luckFiles.ts 的 handleLuckDrawMessage）。 */
 export interface LuckPendingEntry {
@@ -142,8 +157,17 @@ export interface LoadedReply {
   aiMemories: Map<number, string>;
   stickerCatalogs: Map<string, string>;
   luckDay: LuckDayCache | null;
+  luckReceiptSecret: LuckReceiptSecret | null;
   verifications: Map<string, VerificationSnapshot>;
   /** 恢复失败时主线程必须拒绝启动，不能把部分结果当成空状态继续。 */
+  error?: string;
+}
+
+/** ensureLuckSecret 的逐请求回执；失败时不返回密钥，主线程不得继续抽签。 */
+export interface LuckSecretReply {
+  type: "luckSecret";
+  requestId: number;
+  secret?: LuckReceiptSecret;
   error?: string;
 }
 
@@ -162,7 +186,7 @@ export interface VerificationPersistedReply {
   deleted: boolean;
 }
 
-export type DiskIOReply = LoadedReply | DiskFlushReply | VerificationPersistedReply;
+export type DiskIOReply = LoadedReply | LuckSecretReply | DiskFlushReply | VerificationPersistedReply;
 
 /** 当前追加目标文件（日志或每日运势）的状态：字节大小用于定位结尾的
  * 「\n}」，供按位置追加，见 workers/diskIO/appendOnlyDayFile.ts。 */

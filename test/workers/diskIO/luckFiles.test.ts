@@ -68,11 +68,11 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(luckPendingAppends.length).toBe(0);
   });
 
-  test("同 key 不同值（restoreLuckCache 丢弃旧记录后当天重抽）必须再次落盘，恢复时取最新值", () => {
+  test("同 key 不同值（restoreLuckState 丢弃旧记录后当天重派生）必须再次落盘，恢复时取最新值", () => {
     handleLuckDrawMessage(luckMsg("111", "大吉", 90.12));
     flushLuckAppends();
 
-    // 模拟 LUCK_TIERS 改动后重启：主线程重抽出同 key 的新结果
+    // 模拟 LUCK_TIERS 改动后重启：主线程为同 key 派生出按新档位表解释的结果
     handleLuckDrawMessage(luckMsg("111", "小凶", 39.99));
     expect(luckPendingAppends.length).toBe(1);
     flushLuckAppends();
