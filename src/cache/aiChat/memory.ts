@@ -1,5 +1,5 @@
 import type { LinkedQueue } from "../../libs/linkedQueue";
-import type { BufferedMessage } from "../../types";
+import type { BufferedMessage } from "../../types/aiChat/memory";
 
 /** 可持久化 AI 记忆的唯一内存 owner；快照恢复/刷盘由 rollingMemory.ts 编排。 */
 export const chatBuffers: Map<number, LinkedQueue<BufferedMessage>> = new Map();

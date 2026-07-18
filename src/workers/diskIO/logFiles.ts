@@ -21,7 +21,7 @@
 
 import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { LogMessage } from "../../types";
+import type { LogMessage } from "../../types/diskIO";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO/appendOnly";
 import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";

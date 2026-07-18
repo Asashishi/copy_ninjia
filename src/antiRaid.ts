@@ -9,7 +9,8 @@ import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid/verification";
 import { superviseWorker } from "./libs/supervisedWorker";
 import { onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./infra/diskIO";
 import { activeVerificationSnapshots, pendingVerificationDeletes } from "./cache/antiRaid";
-import type { AdoptableLockdown, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, LockdownRecord, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent } from "./types";
+import type { AdoptableLockdown, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent } from "./types/antiRaid";
+import type { LockdownRecord } from "./types/chatState";
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑

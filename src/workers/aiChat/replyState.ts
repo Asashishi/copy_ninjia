@@ -9,7 +9,7 @@ import {
 import { botInfoState } from "../../cache/aiChat/identity";
 import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
 import { sendMessage } from "../../infra/telegram";
-import type { AiSentMessage } from "../../types";
+import type { AiSentMessage } from "../../types/aiChat/protocol";
 import { recordChatMessage } from "./rollingMemory";
 
 declare const self: Worker;

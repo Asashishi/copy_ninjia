@@ -1,4 +1,4 @@
-import type { CachedUser } from "../types";
+import type { CachedUser } from "../types/chatState";
 
 /** 发送者身份缓存（src/users/senderIdentity.ts）的内存状态。 */
 

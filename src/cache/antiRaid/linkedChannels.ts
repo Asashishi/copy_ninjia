@@ -1,4 +1,4 @@
-import type { LinkedChannelCache } from "../../types";
+import type { LinkedChannelCache } from "../../types/antiRaid/internal";
 import { ANTI_RAID_CHAT_CACHE_MAX, LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid/cache";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 

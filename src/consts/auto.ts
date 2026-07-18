@@ -1,4 +1,4 @@
-import type { CopyMode } from "../types";
+import type { CopyMode } from "../types/chatState";
 
 /** 消息自动流水线（src/auto）的调参常量。 */
 

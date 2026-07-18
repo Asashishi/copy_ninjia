@@ -14,7 +14,7 @@ import { refreshAllChatTitles } from "./src/infra/chatTitle";
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } from "./src/aiChat";
 import { seedSenderCache } from "./src/users/senderIdentity";
 import { sleep } from "./src/libs/sleep";
-import type { CachedUser } from "./src/types";
+import type { CachedUser } from "./src/types/chatState";
 import {
   AI_MEMORY_FLUSH_TIMEOUT_MS,
   DISK_IO_FLUSH_TIMEOUT_MS,

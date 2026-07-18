@@ -1,4 +1,4 @@
-import type { VerificationSnapshot } from "../types";
+import type { VerificationSnapshot } from "../types/antiRaid";
 
 /** 主线程持有的待验证最新纯数据镜像，供两类 Worker 重建时重放。 */
 export const activeVerificationSnapshots: Map<string, VerificationSnapshot> = new Map();

@@ -23,7 +23,8 @@ import {
   startLuckDay,
 } from "../../cache/diskIO/luck";
 import { appendLuckEntries, cleanupStaleLuckFiles, recoverLuckDay } from "./snapshotFiles";
-import type { LuckDrawDiskMessage, LuckDrawRecord } from "../../types";
+import type { LuckDrawDiskMessage } from "../../types/diskIO";
+import type { LuckDrawRecord } from "../../types/diskIO/storage";
 
 /** 按需启动运势追加缓冲的定时落盘；已有定时器在跑就不重复排。条数达到
  *  FLUSH_MAX_ENTRIES 时不经过这个定时器，由 handleLuckDrawMessage 直接调

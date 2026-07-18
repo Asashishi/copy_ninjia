@@ -1,5 +1,5 @@
 import type { ChatPermissions } from "@grammyjs/types";
-import type { CachedUser, ChatState, CopyMode, GlobalCopyState, LockdownRecord, StateFileSchema } from "../types";
+import type { CachedUser, ChatState, CopyMode, GlobalCopyState, LockdownRecord, StateFileSchema } from "../types/chatState";
 
 /**
  * state.json 当前 schema 的纯解码器。本模块不执行 I/O；所有持久化字段都从

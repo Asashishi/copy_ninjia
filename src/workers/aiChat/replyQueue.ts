@@ -11,7 +11,8 @@ import {
 import { chatBuffers } from "../../cache/aiChat/memory";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { truncateInline } from "../../libs/text";
-import type { BufferedMessage, QueuedReplyTrigger } from "../../types";
+import type { BufferedMessage } from "../../types/aiChat/memory";
+import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import type { TriggerKind } from "../../states/replyAdmission";
 import type { MediaCommentContext } from "./promptContext";
 import { resolvedTagFor } from "./mediaText";

@@ -1,4 +1,5 @@
-import type { AiRecordMediaMessage, MediaKind } from "../../types";
+import type { AiRecordMediaMessage } from "../../types/aiChat/protocol";
+import type { MediaKind } from "../../types/media";
 import {
   ANIMATION_FALLBACK_PLACEHOLDER,
   ANIMATION_PENDING_PLACEHOLDER,

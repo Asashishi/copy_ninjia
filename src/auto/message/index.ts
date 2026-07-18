@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { Message } from "@grammyjs/types";
-import type { ChatState, CopyMode } from "../../types";
+import type { ChatState, CopyMode } from "../../types/chatState";
 import { clearChatStateField, getActiveCopyIn, getActiveProxySendTarget, getChatState, saveStateInBackground } from "../../infra/storage";
 import { sendMessage, copyMessage } from "../../infra/telegram";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";

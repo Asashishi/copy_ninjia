@@ -15,7 +15,8 @@ import {
 } from "../../consts/aiChat/memory";
 import { STICKER_CATALOG_RETRY_DELAYS_MS, STICKER_PACK_SUMMARY_MAX_CHARS, STICKER_PACK_SUMMARY_MAX_TOKENS } from "../../consts/aiChat/stickers";
 import { STICKER_PACK_SUMMARY_PROMPT } from "../../consts/aiChat/prompts/media";
-import type { AiStickerCatalogEvent, StickerCatalogEntry, StickerCatalogSnapshot } from "../../types";
+import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../types/stickers/catalog";
+import type { AiStickerCatalogEvent } from "../../types/stickers/protocol";
 
 /**
  * 机器人自己要发的贴纸（config/stickers.json 白名单包）的画面描述目录：

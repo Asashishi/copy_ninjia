@@ -1,4 +1,5 @@
-import type { LoadedReply, LuckReceiptSecret } from "../types";
+import type { LoadedReply } from "../types/diskIO";
+import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 /** 磁盘 IO 宿主（src/infra/diskIO.ts）的内存状态：主线程侧的 flush/load 回执路由。 */
 

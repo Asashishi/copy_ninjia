@@ -1,5 +1,5 @@
 import type { LinkedQueue } from "../libs/linkedQueue";
-import type { ReactionTask } from "../types";
+import type { ReactionTask } from "../types/reactionQueue";
 
 /**
  * 反应同步队列（src/copy/reactionQueue.ts）的内存状态。

@@ -1,4 +1,4 @@
-import type { AiBotInfo } from "../../types";
+import type { AiBotInfo } from "../../types/aiChat/protocol";
 
 /** Worker 自身账号身份：主线程 init 后注入，Worker 重建时回到 null。 */
 export const botInfoState: { current: AiBotInfo | null } = { current: null };

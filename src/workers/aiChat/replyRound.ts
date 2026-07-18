@@ -9,14 +9,9 @@ import { SEND_MESSAGE_TOOL } from "../../consts/tools";
 import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { admitRound } from "../../states/replyAdmission";
-import type {
-  AiBotInfo,
-  AiSentMessage,
-  QueuedReplyTrigger,
-  ReplyToolContext,
-  ReplyToolset,
-  StickerSendLockControl,
-} from "../../types";
+import type { AiBotInfo, AiSentMessage } from "../../types/aiChat/protocol";
+import type { QueuedReplyTrigger, ReplyToolContext, ReplyToolset } from "../../types/aiChat/replies";
+import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { callGemini } from "./geminiReply";
 import { buildUserContent, type MediaCommentContext } from "./promptContext";
 import { currentReplyGeneration, isReplyGenerationCurrent, notifyRateLimited } from "./replyState";

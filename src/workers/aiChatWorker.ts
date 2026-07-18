@@ -7,7 +7,8 @@ import { sweepAiChatReplyCache } from "../cache/aiChat/replies";
 import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
-import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiStickerCatalogEvent } from "../types";
+import type { AiChatWorkerMessage, AiMemoryFlushedEvent } from "../types/aiChat/protocol";
+import type { AiStickerCatalogEvent } from "../types/stickers/protocol";
 import { initTelegramClients } from "../infra/telegram";
 
 /**

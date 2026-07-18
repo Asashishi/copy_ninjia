@@ -21,7 +21,9 @@
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { AiMemorySnapshot, BufferedMessage, DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry, StickerCatalogEntry, StickerCatalogSnapshot } from "../../types";
+import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
+import type { DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types/diskIO/storage";
+import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../types/stickers/catalog";
 import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";

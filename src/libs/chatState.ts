@@ -1,4 +1,4 @@
-import type { ChatState } from "../types";
+import type { ChatState } from "../types/chatState";
 
 /**
  * 把单群状态收敛到唯一的持久化表示。布尔开关统一只保存偏离缺省值的状态：

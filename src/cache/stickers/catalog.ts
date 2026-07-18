@@ -1,4 +1,4 @@
-import type { StickerCatalogEntry } from "../../types";
+import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 
 /** 白名单贴纸包画面描述目录（src/ai/stickers/catalog.ts）的权威内存状态。
  * 仅 ai/stickers/catalog.ts 直接读写；其它领域不得绕过其公开生命周期 API。

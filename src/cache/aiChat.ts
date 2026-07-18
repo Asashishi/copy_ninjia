@@ -1,4 +1,4 @@
-import type { AiInitMessage } from "../types";
+import type { AiInitMessage } from "../types/aiChat/protocol";
 
 /** AI 闲聊主线程侧代理（src/aiChat.ts）的内存状态。 */
 

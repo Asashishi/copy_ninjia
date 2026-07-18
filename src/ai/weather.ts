@@ -9,7 +9,7 @@ import {
 } from "../consts/weather";
 import { weatherCache } from "../cache/weather";
 import { fetchJsonWithTimeout } from "../libs/httpFetch";
-import type { TokyoWeatherResult } from "../types";
+import type { TokyoWeatherResult } from "../types/tools";
 
 /**
  * 东京天气：唯一的数据来源与刷新入口。get_tokyo_weather 工具（见

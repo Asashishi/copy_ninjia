@@ -29,7 +29,8 @@ import {
   unwrapLuckReceiptLine,
   verifyLuckReceipt,
 } from "../libs/luckReceipt";
-import type { LuckDayCache, LuckDraw, LuckReceiptSecret, LuckTier } from "../types";
+import type { LuckDayCache, LuckReceiptSecret } from "../types/diskIO/storage";
+import type { LuckDraw, LuckTier } from "../types/luckChallenge";
 
 /**
  * 抽今日运势，仅通过 Telegram 内联模式触发：在任意聊天框里

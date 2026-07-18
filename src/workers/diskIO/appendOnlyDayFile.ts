@@ -12,7 +12,7 @@
 
 import { chmodSync, closeSync, existsSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { DayFileState } from "../../types";
+import type { DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 

@@ -1,4 +1,4 @@
-import type { ChatState } from "../types";
+import type { ChatState } from "../types/chatState";
 
 /** 状态持久化（src/infra/storage.ts）的常量。文件路径见 paths.ts。 */
 

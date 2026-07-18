@@ -2,7 +2,7 @@ import { link, open, readdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { logger } from "./logger";
-import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types";
+import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../types/chatState";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/paths";
 import { BOT_LOCK_LINE_PATTERN, DEFAULT_CHAT_STATE, STATE_SAVE_RETRY_DELAYS_MS } from "../consts/storage";
 import { STATE_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";

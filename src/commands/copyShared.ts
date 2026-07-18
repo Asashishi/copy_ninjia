@@ -1,6 +1,6 @@
 import { logger } from "../infra/logger";
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser } from "../types";
+import type { CachedUser } from "../types/chatState";
 import { getGlobalCopyState, saveStateInBackground } from "../infra/storage";
 import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
 import { PRIVILEGED_USERS_ID } from "../infra/config";

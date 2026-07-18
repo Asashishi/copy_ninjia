@@ -1,4 +1,6 @@
 import type { VerificationSnapshot } from "./antiRaid";
+import type { LuckDayCache, LuckReceiptSecret } from "./diskIO/storage";
+export type * from "./diskIO/storage";
 
 /**
  * 磁盘 IO 线程（src/workers/diskIOWorker.ts）统一的消息协议与快照类型：
@@ -121,34 +123,6 @@ export type DiskIOMessage =
   | LoadRequest
   | DiskFlushRequest;
 
-/** 单条抽签结果的落盘/缓存形状：吉凶档 label + 该次浮动出的行大运概率。
- * fortunePercent 不再能从 label 反查得出（tier 的概率是区间浮动的，见
- * LuckTier.fortunePercentRange），必须两个字段一起存、一起载入。 */
-export interface LuckDrawRecord {
-  label: string;
-  fortunePercent: number;
-}
-
-/** 当天的运势缓存：内存态（entries 是 Map）。落盘态是同形状的扁平对象，见 LuckDayFile。 */
-export interface LuckDayCache {
-  day: string;
-  entries: Map<string, LuckDrawRecord>;
-}
-
-/** memory/luck/receipt-secret.json 的当前 schema；key 是 32 字节 base64url。 */
-export interface LuckReceiptSecret {
-  version: 1;
-  day: string;
-  key: string;
-}
-
-/** 追加写入某天文件时，一条尚未落盘的新记录（去重后才会进入这个缓冲，
- * 见 workers/diskIO/luckFiles.ts 的 handleLuckDrawMessage）。 */
-export interface LuckPendingEntry {
-  key: string;
-  record: LuckDrawRecord;
-}
-
 /** diskIOWorker -> 主线程：启动恢复读盘完成。两张快照表的值与增量写入
  * 消息同形态——序列化 JSON 文本（恢复时逐字段重建校验后重新 stringify，
  * 见 workers/diskIO/snapshotFiles.ts），供 hydrate 链路直接透传。 */
@@ -187,22 +161,3 @@ export interface VerificationPersistedReply {
 }
 
 export type DiskIOReply = LoadedReply | LuckSecretReply | DiskFlushReply | VerificationPersistedReply;
-
-/** 当前追加目标文件（日志或每日运势）的状态：字节大小用于定位结尾的
- * 「\n}」，供按位置追加，见 workers/diskIO/appendOnlyDayFile.ts。 */
-export interface DayFileState {
-  day: string;
-  size: number;
-  empty: boolean;
-}
-
-/**
- * memory/luck/YYYY-MM-DD.json 的落盘结构：顶层直接就是 entries 本身（key ->
- * LuckDrawRecord），不套 version/entries 包装——文件按位置追加写入
- * （见 workers/diskIO/appendOnlyDayFile.ts），顶层必须是扁平对象。加载时
- * 按 LUCK_TIERS 反查 label 还原成 LuckTier 对象，fortunePercent 原样带回、
- * 不重新滚动，见 workers/diskIO/snapshotFiles.ts 的 recoverLuckDay；结构不
- * 匹配的条目按对象结构校验丢弃、当天重抽，不做迁移——运势文件本就跨天
- * 即删，代价可忽略。
- */
-export type LuckDayFile = Record<string, LuckDrawRecord>;

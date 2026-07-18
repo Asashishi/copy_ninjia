@@ -16,7 +16,10 @@ import {
   VIEW_STICKER_PACK_TOOL_INSTRUCTION,
 } from "../../consts/aiChat/prompts/tools";
 import { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
-import type { ChatActionControl, StickerCandidate, StickerCatalogEntry, StickerPackCandidate, StickerRoundState, StickerSendLockControl, ToolDefinition } from "../../types";
+import type { ChatActionControl } from "../../types/aiChat/chatAction";
+import type { StickerCatalogEntry } from "../../types/stickers/catalog";
+import type { StickerCandidate, StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../../types/stickers/tools";
+import type { ToolDefinition } from "../../types/tools";
 
 /**
  * 应景贴纸的两层选择工具：

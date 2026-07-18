@@ -15,7 +15,8 @@ import { requestGeminiResponse } from "../../ai/gemini";
 import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit } from "../../ai/utils/geminiResponse";
 import { callTool } from "../../ai/tools";
 import { isPlainRecord } from "../../libs/runtimeConfig";
-import type { ExtractedFunctionCall, ReplyToolset } from "../../types";
+import type { ReplyToolset } from "../../types/aiChat/replies";
+import type { ExtractedFunctionCall } from "../../types/tools";
 import { currentTimeSentence } from "./timeSentence";
 
 /** 人设文本存放在仓库根目录的 prompt/persona.md，修改人设不需要碰代码。

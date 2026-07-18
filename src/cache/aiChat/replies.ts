@@ -5,7 +5,7 @@ import {
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
   REPLY_GENERATIONS_MAX,
 } from "../../consts/aiChat/rateLimit";
-import type { QueuedReplyTrigger } from "../../types";
+import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 
 /** 回复调度的唯一运行时 owner。全部状态不落盘，Worker 重建时清空。代际表
  * 使用有界 LRU；窗口队列、提示冷却和待处理队列都按群主动清理。 */

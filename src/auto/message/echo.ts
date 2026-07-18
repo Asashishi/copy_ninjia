@@ -1,5 +1,5 @@
 import type { Message } from "@grammyjs/types";
-import type { CopyMode } from "../../types";
+import type { CopyMode } from "../../types/chatState";
 import { getActiveCopyIn, getChatState } from "../../infra/storage";
 import { copyMessage, sendMessage } from "../../infra/telegram";
 import { applyCopyModeTransform } from "../../copy/copyModes";

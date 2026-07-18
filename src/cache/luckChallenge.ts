@@ -1,4 +1,5 @@
-import type { LuckDraw, LuckReceiptSecret } from "../types";
+import type { LuckReceiptSecret } from "../types/diskIO/storage";
+import type { LuckDraw } from "../types/luckChallenge";
 
 /** 抽签命令（src/commands/luckChallenge.ts）的内存状态。 */
 

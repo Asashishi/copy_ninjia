@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser } from "../types";
+import type { CachedUser } from "../types/chatState";
 import { sendMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";

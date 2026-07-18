@@ -1,5 +1,5 @@
 import { stickerSendLocks } from "../../cache/stickers/sendLock";
-import type { StickerSendLockControl } from "../../types";
+import type { StickerSendLockControl } from "../../types/stickers/tools";
 
 /**
  * 同群「发贴纸」的跨轮互斥锁。同群最多 REPLY_ROUND_MAX_CONCURRENT 轮回复

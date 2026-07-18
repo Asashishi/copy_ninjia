@@ -31,7 +31,9 @@ import { cleanReply, isEmojiOnly } from "../utils/replyText";
 import { buildCharacterTypo, pickTypoCorrectionMode, type CharacterTypo, type TypoCorrectionMode } from "../utils/typo";
 import { randomDelayMs, typingDelayMs } from "../utils/timing";
 import { parseBooleanField, parsePositiveIntegerField, parseStringField } from "../utils/toolArgs";
-import type { ReplyToolContext, ReplyToolset, StickerPackCandidate, StickerRoundState, ToolDefinition } from "../../types";
+import type { ReplyToolContext, ReplyToolset } from "../../types/aiChat/replies";
+import type { StickerPackCandidate, StickerRoundState } from "../../types/stickers/tools";
+import type { ToolDefinition } from "../../types/tools";
 
 /**
  * 一轮 AI 回复的「行动工具集」：发言（send_message）、撤回自己本轮刚发的

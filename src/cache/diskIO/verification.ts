@@ -1,4 +1,6 @@
-import type { DayFileState, VerificationFileChange, VerificationSnapshot } from "../../types";
+import type { VerificationSnapshot } from "../../types/antiRaid";
+import type { VerificationFileChange } from "../../types/diskIO";
+import type { DayFileState } from "../../types/diskIO/storage";
 
 /** 待验证按日 append JSON 的 active 镜像、增量、文件游标及两个 timer。 */
 export const verificationWorkerCache: Map<string, VerificationSnapshot> = new Map();

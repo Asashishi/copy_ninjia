@@ -9,7 +9,10 @@ import { CHAT_MEMORY_PRIORITY_INSTRUCTION } from "../../consts/aiChat/prompts/me
 import { REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/aiChat/memory";
 import { resolvedTagFor } from "./mediaText";
-import type { AiBotInfo, BufferedMessage, MediaKind, QueuedReplyTrigger } from "../../types";
+import type { BufferedMessage } from "../../types/aiChat/memory";
+import type { AiBotInfo } from "../../types/aiChat/protocol";
+import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
+import type { MediaKind } from "../../types/media";
 
 /** 评价触发的附加上下文：发送人显示名 + 解析出的描述 + 媒体类型，见
  *  mediaIngest.ts 的 recordChatMedia。kind 决定拼进提示词的措辞（"一张图片"/

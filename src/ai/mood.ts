@@ -4,7 +4,7 @@ import { MOOD_OPTIONS } from "../consts/aiChat/prompts/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../consts/weather";
 import { getTokyoHour } from "../libs/time";
 import { currentTokyoWeather } from "./weather";
-import type { MoodOption, TimeBucket, WeatherBucket } from "../types";
+import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood";
 
 /**
  * 各群「心情」系统：模拟真人聊天号那种「隔了好久没说话，再冒泡时状态

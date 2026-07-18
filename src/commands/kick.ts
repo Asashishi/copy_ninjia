@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser } from "../types";
+import type { CachedUser } from "../types/chatState";
 import { sendMessage, banChatMember, banChatSenderChat, isChatMember, deleteMessageAfter } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { PRIVILEGED_USERS_ID } from "../infra/config";

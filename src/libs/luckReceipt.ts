@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { LuckReceiptSecret } from "../types";
+import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 const CACHE_KEY_PATTERN: RegExp = /^[1-9]\d{0,15}(?::[a-f0-9]{64})?$/;
 const RECEIPT_PATTERN: RegExp = /^luck:v1:(\d{4}-\d{2}-\d{2}):([A-Za-z0-9_-]{1,120})\.([A-Za-z0-9_-]{43})$/;

@@ -30,15 +30,14 @@ import type {
   LoadedReply,
   LogEnvelope,
   LogMessage,
-  LuckDayCache,
   LuckDrawDiskMessage,
-  LuckReceiptSecret,
   StickerCatalogDiskMessage,
   VerificationDeleteDiskMessage,
   VerificationPersistedReply,
-  VerificationSnapshot,
   VerificationUpsertDiskMessage,
-} from "../types";
+} from "../types/diskIO";
+import type { VerificationSnapshot } from "../types/antiRaid";
+import type { LuckDayCache, LuckReceiptSecret } from "../types/diskIO/storage";
 
 const isMainThread: boolean = Bun.isMainThread;
 

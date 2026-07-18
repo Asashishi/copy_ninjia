@@ -1,4 +1,4 @@
-import type { LuckTier } from "../types";
+import type { LuckTier } from "../types/luckChallenge";
 
 /** /luck_challenge 内联抽签（src/commands/luckChallenge.ts）的调参常量。 */
 

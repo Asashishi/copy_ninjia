@@ -2,7 +2,7 @@ import { typingHeartbeats } from "../cache/aiChat/heartbeat";
 import { CHAT_ACTION_MAX_CONSECUTIVE_FAILURES, TYPING_ACTION_INTERVAL_MS } from "../consts/aiChat/tools";
 import { sendChooseStickerAction, sendTypingAction } from "../infra/telegram";
 import { settleInflight, trackInflight } from "../libs/inflight";
-import type { ChatActionHeartbeatControl, ChatActionHeartbeatEntry, ChatActionPhase } from "../types";
+import type { ChatActionHeartbeatControl, ChatActionHeartbeatEntry, ChatActionPhase } from "../types/aiChat/chatAction";
 
 /** 依赖可注入只为让心跳的并发/失败时序能用确定性的单测覆盖；生产调用使用
  *  下方默认值，仍共享 Worker 内的 typingHeartbeats。 */

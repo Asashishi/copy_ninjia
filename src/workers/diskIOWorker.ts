@@ -30,7 +30,9 @@ import { getTokyoDateKey } from "../libs/time";
 import { aiMemoryCache } from "../cache/diskIO/snapshots";
 import { stickerCatalogCache } from "../cache/diskIO/stickers";
 import { luckWorkerCache } from "../cache/diskIO/luck";
-import type { DiskFlushReply, DiskIOMessage, LoadedReply, LuckReceiptSecret, LuckSecretReply, VerificationSnapshot } from "../types";
+import type { VerificationSnapshot } from "../types/antiRaid";
+import type { DiskFlushReply, DiskIOMessage, LoadedReply, LuckSecretReply } from "../types/diskIO";
+import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 declare const self: Worker;
 

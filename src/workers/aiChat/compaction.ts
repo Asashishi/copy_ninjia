@@ -21,7 +21,7 @@ import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/a
 import { compactionChains, compactionPendingCounts } from "../../cache/aiChat/compaction";
 import { cachedReplyGeneration } from "../../cache/aiChat/replies";
 import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
-import type { BufferedMessage } from "../../types";
+import type { BufferedMessage } from "../../types/aiChat/memory";
 import { currentTimeSentence } from "./timeSentence";
 
 /**

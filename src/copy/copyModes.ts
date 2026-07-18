@@ -1,4 +1,4 @@
-import type { CopyMode } from "../types";
+import type { CopyMode } from "../types/chatState";
 import { translateToJapanese } from "./translate";
 import { NYA_SUFFIX } from "../consts/copyModes";
 

@@ -1,4 +1,4 @@
-import type { ChatAdminCache } from "../../types";
+import type { ChatAdminCache } from "../../types/antiRaid/internal";
 import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CHAT_CACHE_MAX } from "../../consts/antiRaid/cache";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 

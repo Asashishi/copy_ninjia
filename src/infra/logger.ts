@@ -17,7 +17,7 @@
  */
 
 import { relayLogMessage } from "./diskIO";
-import type { ForwardedLog, LogLevel, LogMessage } from "../types";
+import type { ForwardedLog, LogLevel, LogMessage } from "../types/diskIO";
 import { redactSecretsInText } from "../libs/redaction";
 
 declare const self: Worker;

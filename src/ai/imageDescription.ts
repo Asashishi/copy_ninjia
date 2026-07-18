@@ -30,7 +30,7 @@ import {
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
 } from "../consts/aiChat/media";
 import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../consts/aiChat/prompts/media";
-import type { MediaKind } from "../types";
+import type { MediaKind } from "../types/media";
 import type { GenerateContentResponse } from "@google/genai";
 
 const mediaDescriptionRunner = createBoundedTaskRunner(MEDIA_DESCRIPTION_MAX_CONCURRENCY, MEDIA_DESCRIPTION_MAX_PENDING);

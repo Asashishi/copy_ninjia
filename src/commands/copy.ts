@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser, CopyMode, GlobalCopyState } from "../types";
+import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
 import { getChatState, getGlobalCopyState, saveStateInBackground } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { describeCopyModeEffect } from "../copy/copyModes";

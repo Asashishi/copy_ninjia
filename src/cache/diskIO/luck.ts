@@ -1,4 +1,4 @@
-import type { DayFileState, LuckDayCache, LuckPendingEntry } from "../../types";
+import type { DayFileState, LuckDayCache, LuckPendingEntry } from "../../types/diskIO/storage";
 
 /** 当日已知结果、待追加条目、文件游标及 flush timer 的唯一 owner。 */
 export const luckWorkerCache: { current: LuckDayCache | null } = { current: null };

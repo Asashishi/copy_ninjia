@@ -2,7 +2,7 @@ import { logger } from "../infra/logger";
 import { relayLogMessage } from "../infra/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "./workerSupervisor";
-import type { ForwardedLog } from "../types";
+import type { ForwardedLog } from "../types/diskIO";
 
 /**
  * 可自愈的业务 Worker 宿主（主线程侧），aiChat.ts 与 antiRaid.ts 共用的骨架：

@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { ChatState } from "../types";
+import type { ChatState } from "../types/chatState";
 import { getOrCreateChatState, saveStateInBackground } from "../infra/storage";
 import { sendMessage } from "../infra/telegram";
 import { handleCopyCommand } from "./copy";

@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
-import type { LuckReceiptSecret } from "../../types";
+import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 
 const DAY_PATTERN: RegExp = /^\d{4}-\d{2}-\d{2}$/;
 const SECRET_PATTERN: RegExp = /^[A-Za-z0-9_-]{43}$/;

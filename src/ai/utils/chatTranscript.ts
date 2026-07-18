@@ -1,4 +1,4 @@
-import type { BufferedMessage } from "../../types";
+import type { BufferedMessage } from "../../types/aiChat/memory";
 import { FALLBACK_SPEAKER_NAME } from "../../consts/auto";
 import { COMPACT_BATCH_SIZE } from "../../consts/aiChat/memory";
 

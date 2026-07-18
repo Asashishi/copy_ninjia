@@ -32,9 +32,9 @@ import type {
   VerificationDeleteDiskMessage,
   VerificationFileChange,
   VerificationPersistedReply,
-  VerificationSnapshot,
   VerificationUpsertDiskMessage,
-} from "../../types";
+} from "../../types/diskIO";
+import type { VerificationSnapshot } from "../../types/antiRaid";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 type ReplySink = (reply: VerificationPersistedReply) => void;

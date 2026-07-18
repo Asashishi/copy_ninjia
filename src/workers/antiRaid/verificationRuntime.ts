@@ -22,7 +22,7 @@ import {
 } from "../../consts/antiRaid/verification";
 import { lockdownEntries } from "../../cache/antiRaid/lockdown";
 import { verificationEntries, verificationGeneration, verificationRevisions } from "../../cache/antiRaid/verification";
-import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types";
+import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types/antiRaid";
 import {
   joinCreatesNewRecord,
   transitionVerification,

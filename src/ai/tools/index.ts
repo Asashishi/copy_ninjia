@@ -1,6 +1,6 @@
 import { currentTokyoWeather } from "../weather";
 import { GET_TOKYO_WEATHER_TOOL } from "../../consts/tools";
-import type { ToolDefinition } from "../../types";
+import type { ToolDefinition } from "../../types/tools";
 
 /**
  * AI 回复流水线的工具目录（src/ai/tools/）。本文件是其中「静态查询工具」的

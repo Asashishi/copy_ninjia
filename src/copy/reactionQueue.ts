@@ -5,7 +5,7 @@ import { LinkedQueue } from "../libs/linkedQueue";
 import { sleep } from "../libs/sleep";
 import { DEFAULT_RETRY_AFTER_SECONDS, MAX_ATTEMPTS, MAX_PENDING_TASKS_PER_CHAT } from "../consts/reactionQueue";
 import { chatQueues, consumingChats, pendingTasks } from "../cache/reactionQueue";
-import type { CopyableReaction, ReactionTask } from "../types";
+import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
 
 /**
  * 反应同步的可靠性保障层。经实测确认，复制反应的延迟大头在 Telegram 生成并

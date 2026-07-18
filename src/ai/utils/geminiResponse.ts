@@ -1,4 +1,4 @@
-import type { ExtractedFunctionCall } from "../../types";
+import type { ExtractedFunctionCall } from "../../types/tools";
 
 /**
  * Gemini generateContent 响应形状的纯解析层：不做任何网络请求，只负责从

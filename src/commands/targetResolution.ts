@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser } from "../types";
+import type { CachedUser } from "../types/chatState";
 import { sendMessage } from "../infra/telegram";
 import { resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
 import { USERNAME_ARG_PATTERN } from "../consts/commands";

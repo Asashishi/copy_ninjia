@@ -15,7 +15,8 @@ import {
 } from "../../cache/aiChat/memory";
 import { chatLastActivityTimes, chatMoods, clearChatMoodCache } from "../../cache/aiChat/mood";
 import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
-import type { AiMemoryDeletedEvent, AiMemoryEvent, AiMemorySnapshot, BufferedMessage } from "../../types";
+import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
+import type { AiMemoryDeletedEvent, AiMemoryEvent } from "../../types/aiChat/protocol";
 import { scheduleRotation } from "./compaction";
 
 declare const self: Worker;

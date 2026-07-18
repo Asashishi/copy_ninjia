@@ -3,7 +3,8 @@ import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
 import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes, purgedAiMemoryChats } from "./cache/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "./consts/lifecycle";
-import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage, MediaKind } from "./types";
+import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "./types/aiChat/protocol";
+import type { MediaKind } from "./types/media";
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/

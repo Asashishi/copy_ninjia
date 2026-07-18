@@ -1,4 +1,4 @@
-import type { MoodOption } from "../../../types";
+import type { MoodOption } from "../../../types/aiChat/mood";
 
 export const MOOD_OPTIONS: MoodOption[] = [
   {

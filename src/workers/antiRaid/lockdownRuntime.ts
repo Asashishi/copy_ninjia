@@ -4,7 +4,7 @@ import { sendMessage, joinVerificationApi } from "../../infra/telegram";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
 import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaid/lockdown";
 import { LinkedQueue } from "../../libs/linkedQueue";
-import type { AdoptableLockdown, LockdownEvent, UnlockEvent } from "../../types";
+import type { AdoptableLockdown, LockdownEvent, UnlockEvent } from "../../types/antiRaid";
 import { transitionLockdown, type LockdownEffect, type LockdownMachineEvent } from "../../states/lockdown";
 import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";

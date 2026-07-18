@@ -1,32 +1,5 @@
 import type { ChatPermissions } from "@grammyjs/types";
-import type { LinkedQueue } from "../libs/linkedQueue";
-
-/** 反刷群的入群滑动计数窗口（Worker 线程内存状态）。 */
-export interface JoinWindow {
-  /** 最近 JOIN_WINDOW_MS 内每次入群的毫秒时间戳（队首最旧），每次记录时
-   *  修剪过期项。用 LinkedQueue 而非数组：修剪靠出队队首，数组的 shift()
-   *  要整体挪动剩余元素（O(n)），持续刷群下这份开销会随窗口内条数线性
-   *  放大；链表出队是 O(1)。 */
-  timestamps: LinkedQueue<number>;
-  /** 窗口静默满 JOIN_WINDOW_MS 后清理整个条目的计时器，每次入群重置。 */
-  resetTimeout: ReturnType<typeof setTimeout>;
-}
-
-/** 某群「是否有关联频道」的缓存条目（Worker 线程内存状态），用于评论区判定的按群开关。 */
-export interface LinkedChannelCache {
-  /** getChat 结果里是否带 linked_chat_id（即本群是不是频道的讨论群）。 */
-  hasLinked: boolean;
-  /** 拉取落地的时刻，超过 LINKED_CHANNEL_TTL_MS 视为过期，下次需要时重新拉取。 */
-  fetchedAt: number;
-}
-
-/** 某群管理员表的缓存条目（Worker 线程内存状态），用于管理员拉人免验证的同步判定。 */
-export interface ChatAdminCache {
-  /** 群管理员 + 群主的用户 ID 集合，管理员任免事件（adminsChanged）到达时原地增删。 */
-  adminIds: Set<number>;
-  /** 全量拉取落地的时刻，超过 ADMIN_CACHE_TTL_MS 视为过期，下次需要时重新全量拉取。 */
-  fetchedAt: number;
-}
+export type * from "./antiRaid/internal";
 
 /** 主线程投递给入群守卫 Worker 的成员身份（生成展示标签所需的最小字段）。 */
 export interface AntiRaidMember {

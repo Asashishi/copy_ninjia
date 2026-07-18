@@ -1,4 +1,4 @@
-import type { DayFileState } from "../../types";
+import type { DayFileState } from "../../types/diskIO/storage";
 
 export interface BufferedLogEntry {
   day: string;
