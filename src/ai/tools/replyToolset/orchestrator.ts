@@ -1,0 +1,133 @@
+import type { FunctionDeclaration, Tool } from "@google/genai";
+import { MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
+import {
+  ADD_REACTION_TOOL,
+  DELETE_OWN_MESSAGE_TOOL,
+  SEND_MESSAGE_TOOL,
+  SEND_STICKER_TOOL,
+  VIEW_STICKER_PACK_TOOL,
+} from "../../../consts/tools";
+import type { ReplyToolContext, ReplyToolset } from "../../../types/aiChat/replies";
+import type { StickerPackCandidate, StickerRoundState } from "../../../types/stickers/tools";
+import type { ToolDefinition } from "../../../types/tools";
+import { TOOL_DEFINITIONS } from "../index";
+import {
+  buildSendStickerToolDefinition,
+  buildStickerPackMenu,
+  buildViewStickerPackToolDefinition,
+  createStickerRoundState,
+  sendStickerTool,
+  viewStickerPackTool,
+} from "../stickers";
+import { createDeleteOwnMessageExecutor } from "./deleteMessage";
+import {
+  buildAddReactionToolDefinition,
+  buildDeleteOwnMessageToolDefinition,
+  buildSendMessageToolDefinition,
+} from "./definitions";
+import { createRoundMessageState } from "./messageState";
+import { createAddReactionExecutor } from "./reaction";
+import { createSendMessageExecutor } from "./sendMessage";
+
+const ACTION_TOOLS: Set<string> = new Set([
+  SEND_MESSAGE_TOOL,
+  DELETE_OWN_MESSAGE_TOOL,
+  ADD_REACTION_TOOL,
+  SEND_STICKER_TOOL,
+]);
+
+/** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
+export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {
+  const menu: StickerPackCandidate[] = await buildStickerPackMenu();
+  const stickerState: StickerRoundState = createStickerRoundState();
+  const messageState = createRoundMessageState();
+  let actionsUsed: number = 0;
+
+  const viewDefinition: ToolDefinition | null = buildViewStickerPackToolDefinition(menu);
+  const sendStickerDefinition: ToolDefinition | null = buildSendStickerToolDefinition(menu);
+  const addReactionDefinition: ToolDefinition | null = buildAddReactionToolDefinition();
+  const definitions: ToolDefinition[] = [
+    buildSendMessageToolDefinition(ctx.roundHasTypo),
+    buildDeleteOwnMessageToolDefinition(),
+    ...(addReactionDefinition ? [addReactionDefinition] : []),
+    ...(viewDefinition ? [viewDefinition] : []),
+    ...(sendStickerDefinition ? [sendStickerDefinition] : []),
+  ];
+  const names: Set<string> = new Set(definitions.map((definition) => definition.name));
+  const sdkDeclarations: FunctionDeclaration[] = [...TOOL_DEFINITIONS, ...definitions].map(
+    (definition: ToolDefinition): FunctionDeclaration => ({
+      name: definition.name,
+      description: definition.description,
+      parametersJsonSchema: definition.parameters,
+    })
+  );
+  const tools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: sdkDeclarations }];
+
+  const executeSendMessage = createSendMessageExecutor(ctx, messageState, () => actionsUsed);
+  const executeDeleteOwnMessage = createDeleteOwnMessageExecutor(ctx, messageState);
+  const executeAddReaction = createAddReactionExecutor(ctx);
+
+  async function dispatch(name: string, argumentsJson: string): Promise<string> {
+    switch (name) {
+      case SEND_MESSAGE_TOOL:
+        return executeSendMessage(argumentsJson);
+      case DELETE_OWN_MESSAGE_TOOL:
+        return executeDeleteOwnMessage(argumentsJson);
+      case ADD_REACTION_TOOL:
+        return executeAddReaction(argumentsJson);
+      case VIEW_STICKER_PACK_TOOL:
+        return viewStickerPackTool(ctx.chatAction, menu, argumentsJson, stickerState);
+      case SEND_STICKER_TOOL:
+        return sendStickerTool(
+          ctx.chatAction,
+          ctx.stickerLock,
+          ctx.chatId,
+          menu,
+          argumentsJson,
+          stickerState,
+          ctx.onStickerSent,
+          ctx.isActive
+        );
+      default:
+        return JSON.stringify({ error: `Unknown tool: ${name}` });
+    }
+  }
+
+  return {
+    definitions,
+    tools,
+    has: (name: string): boolean => names.has(name),
+    execute: async (name: string, argumentsJson: string): Promise<string> => {
+      if (!ctx.isActive()) {
+        return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+      }
+      if (ACTION_TOOLS.has(name) && actionsUsed >= MAX_ACTIONS_PER_REPLY) {
+        return JSON.stringify({
+          error: `Action limit reached: at most ${MAX_ACTIONS_PER_REPLY} actions (messages + deletes + stickers + reactions) per reply`,
+        });
+      }
+
+      const result: string = await dispatch(name, argumentsJson);
+      if (ACTION_TOOLS.has(name)) {
+        try {
+          const parsed = JSON.parse(result) as { success?: boolean; actions_used?: unknown };
+          if (
+            typeof parsed.actions_used === "number" &&
+            Number.isFinite(parsed.actions_used) &&
+            parsed.actions_used > 0
+          ) {
+            actionsUsed += Math.floor(parsed.actions_used);
+          } else if (parsed.success) {
+            actionsUsed++;
+          }
+        } catch {
+          // 所有领域执行器都返回本地生成的 JSON；这里只做防御性兜底。
+        }
+      }
+      return result;
+    },
+    messagesSent: (): number => messageState.messageCount,
+    actionsUsed: (): number => actionsUsed,
+    isActive: ctx.isActive,
+  };
+}
