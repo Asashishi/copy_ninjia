@@ -22,7 +22,7 @@ mock.module("../../../src/infra/telegram", () => ({
 }));
 
 const runtime = await import("../../../src/workers/antiRaid/verificationRuntime");
-const { verificationEntries } = await import("../../../src/cache/antiRaidWorker");
+const { verificationEntries } = await import("../../../src/cache/antiRaid/verification");
 
 function record(userId: number, expiresAt: number): VerificationSnapshot {
   return {

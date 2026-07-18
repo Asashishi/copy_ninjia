@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../../src/consts/antiRaid";
-import { recentChannelComments } from "../../../src/cache/antiRaidWorker";
+import { recentChannelComments } from "../../../src/cache/antiRaid/recentComments";
 import { rememberRecentComment, sweepRecentComments, takeRecentComment } from "../../../src/workers/antiRaid/recentComments";
 
 beforeEach(() => recentChannelComments.clear());

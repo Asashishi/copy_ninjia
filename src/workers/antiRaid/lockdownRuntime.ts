@@ -2,7 +2,7 @@ import { logger } from "../../infra/logger";
 import type { ChatPermissions } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "../../infra/telegram";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid";
-import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaidWorker";
+import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaid/lockdown";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { AdoptableLockdown, LockdownEvent, UnlockEvent } from "../../types";
 import { transitionLockdown, type LockdownEffect, type LockdownMachineEvent } from "../../states/lockdown";

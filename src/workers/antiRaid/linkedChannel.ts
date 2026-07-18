@@ -1,8 +1,11 @@
 import { logger } from "../../infra/logger";
 import { joinVerificationApi } from "../../infra/telegram";
-import { setBoundedMapValue } from "../../libs/boundedMap";
-import { ANTI_RAID_CHAT_CACHE_MAX, LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid";
-import { linkedChannelFetches, linkedChannels } from "../../cache/antiRaidWorker";
+import { LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid";
+import {
+  cacheLinkedChannel,
+  getOrCreateLinkedChannelFetch,
+  linkedChannels,
+} from "../../cache/antiRaid/linkedChannels";
 
 /**
  * 本群有没有关联频道（getChat 的 linked_chat_id），带 TTL 缓存 + 进行中
@@ -15,22 +18,15 @@ import { linkedChannelFetches, linkedChannels } from "../../cache/antiRaidWorker
 export function chatHasLinkedChannel(chatId: number): boolean {
   const cached = linkedChannels.get(chatId);
   if (cached && Date.now() - cached.fetchedAt <= LINKED_CHANNEL_TTL_MS) return cached.hasLinked;
-  if (!linkedChannelFetches.has(chatId)) {
-    const inFlight: Promise<void> = joinVerificationApi
+  void getOrCreateLinkedChannelFetch(chatId, () =>
+    joinVerificationApi
       .getChat(chatId)
       .then((chat) => {
-        setBoundedMapValue(
-          linkedChannels,
-          chatId,
-          { hasLinked: "linked_chat_id" in chat && chat.linked_chat_id !== undefined, fetchedAt: Date.now() },
-          ANTI_RAID_CHAT_CACHE_MAX
-        );
+        cacheLinkedChannel(chatId, "linked_chat_id" in chat && chat.linked_chat_id !== undefined);
       })
       .catch((error: unknown) => {
         logger.error(`Error fetching linked channel info for chat ${chatId}:`, error);
       })
-      .finally(() => linkedChannelFetches.delete(chatId));
-    linkedChannelFetches.set(chatId, inFlight);
-  }
+  );
   return cached ? cached.hasLinked : true;
 }

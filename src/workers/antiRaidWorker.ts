@@ -7,8 +7,10 @@ import {
 } from "./antiRaid/verificationRuntime";
 import { adoptLockdowns } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
-import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } from "../consts/antiRaid";
-import { adminFetches, chatAdmins, linkedChannelFetches, linkedChannels, verificationRevisions } from "../cache/antiRaidWorker";
+import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid";
+import { sweepAdminCache } from "../cache/antiRaid/admins";
+import { sweepLinkedChannelCache } from "../cache/antiRaid/linkedChannels";
+import { sweepVerificationRevisionCache } from "../cache/antiRaid/verification";
 import type { AntiRaidWorkerMessage } from "../types";
 import { initTelegramClients } from "../infra/telegram";
 import { sweepRecentComments } from "./antiRaid/recentComments";
@@ -19,9 +21,8 @@ import { sweepRecentComments } from "./antiRaid/recentComments";
  *
  * 本文件是两台状态机（src/states/verification.ts / lockdown.ts）的解释器
  * 入口：具体解释逻辑分别在 antiRaid/verificationRuntime.ts（入群验证）与
- * antiRaid/lockdownRuntime.ts（私密模式），管理员表缓存在
- * antiRaid/adminCache.ts，频道评论区暂存在 antiRaid/recentComments.ts，
- * 关联频道判定在 antiRaid/linkedChannel.ts。本文件只剩消息路由与缓存 sweep。
+ * antiRaid/lockdownRuntime.ts（私密模式）；五类状态各自由 cache/antiRaid/
+ * 下的领域模块持有。本文件只剩消息路由与缓存 sweep 调度。
  * 关键约定（详见各 runtime 模块头）：
  * - dispatch 里状态更替是同步的，副作用（网络请求）一律事后执行——消息
  *   按 FIFO 逐条处理，同一波刷屏入群的后续投递不会被网络往返卡住，
@@ -70,17 +71,9 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
 
 /** TTL 判断不能代替删除：只“视为过期”仍会让 Map 按历史群数永久增长。 */
 export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
-  for (const [chatId, cached] of chatAdmins) {
-    if (now - cached.fetchedAt > ADMIN_CACHE_TTL_MS && !adminFetches.has(chatId)) chatAdmins.delete(chatId);
-  }
-  for (const [chatId, cached] of linkedChannels) {
-    if (now - cached.fetchedAt > LINKED_CHANNEL_TTL_MS && !linkedChannelFetches.has(chatId)) linkedChannels.delete(chatId);
-  }
-  for (const [key, revision] of verificationRevisions) {
-    if (revision.retiredAt !== undefined && now - revision.retiredAt > VERIFICATION_REVISION_RETENTION_MS) {
-      verificationRevisions.delete(key);
-    }
-  }
+  sweepAdminCache(now);
+  sweepLinkedChannelCache(now);
+  sweepVerificationRevisionCache(now);
   sweepRecentComments(now);
 }
 

@@ -20,7 +20,8 @@ import {
   VERIFY_CALLBACK_PREFIX,
   WELCOME_AUTO_DELETE_MS,
 } from "../../consts/antiRaid";
-import { lockdownEntries, verificationEntries, verificationGeneration, verificationRevisions } from "../../cache/antiRaidWorker";
+import { lockdownEntries } from "../../cache/antiRaid/lockdown";
+import { verificationEntries, verificationGeneration, verificationRevisions } from "../../cache/antiRaid/verification";
 import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types";
 import {
   joinCreatesNewRecord,

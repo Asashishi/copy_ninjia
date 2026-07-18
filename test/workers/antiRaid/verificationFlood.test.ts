@@ -31,7 +31,7 @@ mock.module("../../../src/infra/telegram", () => ({
 }));
 
 const runtime = await import("../../../src/workers/antiRaid/verificationRuntime");
-const { verificationEntries } = await import("../../../src/cache/antiRaidWorker");
+const { verificationEntries } = await import("../../../src/cache/antiRaid/verification");
 
 describe("Anti-Raid pending-member flood handling", () => {
   test("第 46 条先踢后清理，单条删除失败不中断，迟到消息不重复处置", async () => {

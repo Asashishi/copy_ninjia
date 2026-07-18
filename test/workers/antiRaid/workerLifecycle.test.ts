@@ -27,10 +27,12 @@ const worker = await import("../../../src/workers/antiRaidWorker");
 const {
   adminFetches,
   chatAdmins,
+} = await import("../../../src/cache/antiRaid/admins");
+const {
   linkedChannelFetches,
   linkedChannels,
-  verificationRevisions,
-} = await import("../../../src/cache/antiRaidWorker");
+} = await import("../../../src/cache/antiRaid/linkedChannels");
+const { verificationRevisions } = await import("../../../src/cache/antiRaid/verification");
 const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } = await import("../../../src/consts/antiRaid");
 
 beforeEach(() => {

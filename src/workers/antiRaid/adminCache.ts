@@ -1,7 +1,13 @@
-import { setBoundedMapValue } from "../../libs/boundedMap";
 import { joinVerificationApi } from "../../infra/telegram";
-import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CHAT_CACHE_MAX } from "../../consts/antiRaid";
-import { adminFetches, chatAdmins, pendingAdminChangesDuringFetch } from "../../cache/antiRaidWorker";
+import { ADMIN_CACHE_TTL_MS } from "../../consts/antiRaid";
+import {
+  bufferAdminChangeDuringFetch,
+  cacheAdminIds,
+  chatAdmins,
+  discardPendingAdminChanges,
+  getOrCreateAdminFetch,
+  takePendingAdminChanges,
+} from "../../cache/antiRaid/admins";
 
 /**
  * 各群管理员表缓存：按需全量拉取 + TTL 缓存 + 拉取在途期间到达的增量变化
@@ -19,36 +25,31 @@ export function freshAdminIds(chatId: number): Set<number> | undefined {
 
 /** 全量拉取某群的管理员表并落缓存（带进行中去重，见 adminFetches）。 */
 export function fetchAdminIds(chatId: number): Promise<Set<number>> {
-  let inFlight = adminFetches.get(chatId);
-  if (!inFlight) {
-    inFlight = joinVerificationApi
+  return getOrCreateAdminFetch(chatId, () =>
+    joinVerificationApi
       .getChatAdministrators(chatId)
       .then((admins) => {
         const adminIds: Set<number> = new Set(admins.map((admin) => admin.user.id));
         // 拉取在途期间到达的增量变化比这份快照更新（chat_member 更新是
         // 近实时的权威信号），重放在其上，不能被这次 resolve 覆盖掉——见
         // pendingAdminChangesDuringFetch 注释。
-        const pending = pendingAdminChangesDuringFetch.get(chatId);
+        const pending = takePendingAdminChanges(chatId);
         if (pending) {
           for (const [userId, isAdmin] of pending) {
             if (isAdmin) adminIds.add(userId);
             else adminIds.delete(userId);
           }
-          pendingAdminChangesDuringFetch.delete(chatId);
         }
-        setBoundedMapValue(chatAdmins, chatId, { adminIds, fetchedAt: Date.now() }, ANTI_RAID_CHAT_CACHE_MAX);
+        cacheAdminIds(chatId, adminIds);
         return adminIds;
       })
       .catch((error: unknown) => {
         // 没有成功的全量快照就没有可重放增量的基底。下次拉取会取得更新的
         // 权威快照；继续留着只会让失败过的群永久占住这张 Map。
-        pendingAdminChangesDuringFetch.delete(chatId);
+        discardPendingAdminChanges(chatId);
         throw error;
       })
-      .finally(() => adminFetches.delete(chatId));
-    adminFetches.set(chatId, inFlight);
-  }
-  return inFlight;
+  );
 }
 
 /**
@@ -58,14 +59,7 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
  * 由 fetchAdminIds 的 resolve 回调重放，避免被迟到的快照覆盖/漏收（见其注释）。
  */
 export function applyAdminChange(chatId: number, userId: number, isAdmin: boolean): void {
-  if (adminFetches.has(chatId)) {
-    let pending = pendingAdminChangesDuringFetch.get(chatId);
-    if (!pending) {
-      pending = new Map();
-      pendingAdminChangesDuringFetch.set(chatId, pending);
-    }
-    pending.set(userId, isAdmin);
-  }
+  bufferAdminChangeDuringFetch(chatId, userId, isAdmin);
   const cached = chatAdmins.get(chatId);
   if (!cached) return;
   if (isAdmin) {
