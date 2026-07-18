@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://t.me/copy_ninjia_bot">
-  <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="128" alt="Copy Ninjia Bot 当前头像">
+  <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="128" height="128" alt="Copy Ninjia Bot 当前头像" style="border-radius: 50%; object-fit: cover; object-position: center;">
 </a>
 
 # 🥷 Copy Ninjia
@@ -10,10 +10,10 @@
 
 由 **Asashishi** 与 **Claude Code**、**Codex**、**Antigravity** 共同开发
 
-[![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=000)](https://bun.sh/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=fff)](https://www.typescriptlang.org/)
-[![grammY](https://img.shields.io/badge/Telegram-grammY-26a5e4?logo=telegram&logoColor=fff)](https://grammy.dev/)
-[![Gemini](https://img.shields.io/badge/AI-Gemini_3.1_Flash_Lite-8e75ff?logo=google&logoColor=fff)](https://ai.google.dev/)
+[![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=000000&labelColor=ffffff)](https://bun.sh/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=3178c6&labelColor=ffffff)](https://www.typescriptlang.org/)
+[![grammY](https://img.shields.io/badge/Telegram-grammY-26a5e4?logo=telegram&logoColor=26a5e4&labelColor=ffffff)](https://grammy.dev/)
+[![Gemini](https://img.shields.io/badge/AI-Gemini_3.1_Flash_Lite-8e75ff?logo=googlegemini&logoColor=8e75ff&labelColor=ffffff)](https://ai.google.dev/)
 
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
 
