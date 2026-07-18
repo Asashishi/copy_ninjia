@@ -40,7 +40,7 @@ mock.module("../../src/ai/stickerConfig", () => ({
 }));
 
 const { SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
-const { cleanReply, createReplyToolset, findSingleCharacterSubstitution, isEmojiOnly } = await import("../../src/ai/tools/replyToolset");
+const { buildCharacterTypo, cleanReply, createReplyToolset, isEmojiOnly } = await import("../../src/ai/tools/replyToolset");
 
 beforeEach(() => {
   nextMessageId = 100;
@@ -106,18 +106,23 @@ describe("cleanReply", () => {
   });
 });
 
-describe("findSingleCharacterSubstitution", () => {
-  test("只接受同长度的一处替换，并返回正确字", () => {
-    expect(findSingleCharacterSubstitution("笨蛋", "笨旦")).toEqual({ expected: "蛋", typo: "旦" });
-    expect(findSingleCharacterSubstitution("看一下", "砍一下")).toEqual({ expected: "看", typo: "砍" });
+describe("buildCharacterTypo", () => {
+  test("原字在 text 里存在时，替换出对应的错字版本", () => {
+    expect(buildCharacterTypo("笨蛋", "蛋", "旦")).toEqual({ typoText: "笨旦", expected: "蛋", typo: "旦" });
+    expect(buildCharacterTypo("看一下", "看", "砍")).toEqual({ typoText: "砍一下", expected: "看", typo: "砍" });
   });
 
-  test("拒绝多打、少打、重复字或多处改动", () => {
-    expect(findSingleCharacterSubstitution("笨蛋", "笨蛋笨")).toBeNull();
-    expect(findSingleCharacterSubstitution("笨蛋", "笨")).toBeNull();
-    expect(findSingleCharacterSubstitution("笨蛋", "笨蛋蛋")).toBeNull();
-    expect(findSingleCharacterSubstitution("笨蛋", "本旦")).toBeNull();
-    expect(findSingleCharacterSubstitution("笨蛋", "笨蛋")).toBeNull();
+  test("拒绝多字段、原字不在 text 里、或两字相同（模型主动选择不出错）", () => {
+    expect(buildCharacterTypo("笨蛋", "笨蛋", "旦")).toBeNull();
+    expect(buildCharacterTypo("笨蛋", "蛋", "旦丹")).toBeNull();
+    expect(buildCharacterTypo("笨蛋", "本", "旦")).toBeNull();
+    expect(buildCharacterTypo("笨蛋", "蛋", "蛋")).toBeNull();
+  });
+
+  test("原字或错字是 emoji 时拒绝", () => {
+    expect(buildCharacterTypo("笨蛋😂", "蛋", "旦")).toEqual({ typoText: "笨旦😂", expected: "蛋", typo: "旦" });
+    expect(buildCharacterTypo("笨蛋😂", "😂", "😅")).toBeNull();
+    expect(buildCharacterTypo("笨蛋", "蛋", "😅")).toBeNull();
   });
 });
 
@@ -139,14 +144,15 @@ describe("send_message typo correction", () => {
           tryAcquire: () => true,
           release: () => {},
         },
+        roundHasTypo: true,
         onMessageSent,
         onStickerSent: mock((..._args: unknown[]): void => {}),
       });
 
       const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
-        typo_text: "天汽",
-        typo_correction_text: "天气",
+        typo_original_char: "气",
+        typo_replacement_char: "汽",
       })));
 
       expect(result.success).toBe(true);
@@ -156,6 +162,85 @@ describe("send_message typo correction", () => {
       expect(sendMessageMock).toHaveBeenNthCalledWith(2, -100800, "气", undefined);
       expect(onMessageSent).toHaveBeenNthCalledWith(1, "天汽", 100);
       expect(onMessageSent).toHaveBeenNthCalledWith(2, "气", 101);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("本轮未抽中出错分支时，即使模型提供 typo_original_char/typo_replacement_char 也原样发送正确文本，不制造错字", async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      const onMessageSent = mock((..._args: unknown[]): void => {});
+      const toolset = await createReplyToolset({
+        chatId: -100800,
+        replyToMessageId: 10,
+        chatAction: {
+          current: () => "idle",
+          set: mock((..._args: unknown[]): void => {}),
+          settle: mock(async (): Promise<void> => {}),
+        },
+        stickerLock: {
+          tryAcquire: () => true,
+          release: () => {},
+        },
+        roundHasTypo: false,
+        onMessageSent,
+        onStickerSent: mock((..._args: unknown[]): void => {}),
+      });
+
+      const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "天气",
+        typo_original_char: "气",
+        typo_replacement_char: "汽",
+      })));
+
+      expect(result.success).toBe(true);
+      expect(result.typo).toBeUndefined();
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageMock).toHaveBeenNthCalledWith(1, -100800, "天气", undefined);
+      expect(onMessageSent).toHaveBeenCalledTimes(1);
+      expect(onMessageSent).toHaveBeenNthCalledWith(1, "天气", 100);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("同一轮内第二次带错字候选的调用不再采纳，只吃一次手滑", async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      const toolset = await createReplyToolset({
+        chatId: -100800,
+        replyToMessageId: 10,
+        chatAction: {
+          current: () => "idle",
+          set: mock((..._args: unknown[]): void => {}),
+          settle: mock(async (): Promise<void> => {}),
+        },
+        stickerLock: {
+          tryAcquire: () => true,
+          release: () => {},
+        },
+        roundHasTypo: true,
+        onMessageSent: mock((..._args: unknown[]): void => {}),
+        onStickerSent: mock((..._args: unknown[]): void => {}),
+      });
+
+      const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "天气",
+        typo_original_char: "气",
+        typo_replacement_char: "汽",
+      })));
+      const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "还好吧",
+        typo_original_char: "好",
+        typo_replacement_char: "号",
+      })));
+
+      expect(first.typo?.mode).toBe("quick");
+      expect(second.typo).toBeUndefined();
+      expect(sendMessageMock).toHaveBeenNthCalledWith(3, -100800, "还好吧", undefined);
     } finally {
       Math.random = originalRandom;
     }

@@ -406,11 +406,7 @@ export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "想对触发消息表个态就扣反应（add_reaction）。reply_to_trigger 填 true 时这条消息会以" +
   "「回复」形式挂在触发你这次回复的那条消息上，挂不挂由你判断（对方明确在跟你说话、或" +
   "群里消息多怕别人看不出你在回谁时，建议挂上）。工具成功时会返回 message_id，之后若你发现" +
-  "这条消息确实发错或多发了，只能用 delete_own_message 撤回这个 message_id。text 永远写正确完整内容；" +
-  "适合手滑的普通短句可以额外提供 typo_text（手滑版本）和 typo_correction_text（快速补发用的正确字），" +
-  "但 typo_text 只能把 text 里的一个已有字替换成另一个字：长度必须完全一致，不能多打、少打、重复字或改动两处；" +
-  "typo_correction_text 只写唯一被替换位置的正确字，即使错在一个词里面也不要写整个正确词或完整句；" +
-  "是否真的发错、如何修正、等多久都由执行侧自动控制。";
+  "这条消息确实发错或多发了，只能用 delete_own_message 撤回这个 message_id。text 永远写正确完整内容。";
 
 /**
  * delete_own_message 工具描述：这是给模型主动修正自己本轮发错/多发消息用的
@@ -424,17 +420,72 @@ export const DELETE_OWN_MESSAGE_TOOL_INSTRUCTION: string =
   "不要为了等时间额外输出内容。撤回本身不算回应，撤回后如果还需要表达意思，" +
   "请重新用 send_message 发正确内容。";
 
-/** 代码侧决定一条可手滑消息是否真的发错。模型只提供候选 typo_text，不决定概率。 */
-export const AI_TEXT_TYPO_PROBABILITY: number = 0.35;
-/** 发错后代码侧决定修正方式：快速补字为高概率，撤回重发为中概率，剩余假装没发现。 */
-export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.65;
-export const TYPO_RECALL_CORRECTION_PROBABILITY: number = 0.25;
-/** 快速补字的执行侧延迟窗口：0.5s-1s。 */
-export const TYPO_QUICK_CORRECTION_MIN_MS: number = 500;
-export const TYPO_QUICK_CORRECTION_MAX_MS: number = 1_000;
-/** 撤回重发路径里，真正删掉错误消息前的执行侧延迟窗口：数秒后再发现。 */
-export const TYPO_RECALL_DELETE_MIN_MS: number = 2_000;
-export const TYPO_RECALL_DELETE_MAX_MS: number = 5_000;
+/**
+ * 本轮是否走「出错」分支的概率：在 workers/aiChatWorker.ts 的 startReplyRound
+ * 里，请求模型之前先掷一次骰子决定，结果只在出错分支时才会拼进
+ * TYPO_REQUIRED_INSTRUCTION（不出错时这一轮的回复指令、send_message 工具
+ * 描述里都不会出现任何跟错字有关的字样——两个分支的提示词严格分开，模型
+ * 看不到「本来可能出错」这件事），并同步反映在 send_message 工具当轮的
+ * 参数 schema 里：出错分支才会暴露 typo_original_char/typo_replacement_char
+ * 字段（见 ai/tools/replyToolset.ts 的 buildSendMessageToolDefinition），
+ * 模型不再自行判断「要不要主动提供候选」。旧版没有这道先掷骰子的关卡，
+ * 实际出错频率取决于模型自己愿不愿意在文案里附带候选字段这个不可控变量，
+ * 这个数字形同虚设；这版把出错与否完全收回代码侧决定，这个数值才等于
+ * 实际出错概率。
+ */
+export const AI_TEXT_TYPO_PROBABILITY: number = 0.31;
+/** 出错分支里，发错之后如何收场也完全由代码侧按概率决定，模型不参与、
+ *  也不知情：快速补字概率最高，撤回重发次之，剩下的概率假装没发现——
+ *  真人手滑也不是每次都会自己纠正，保留这个分支才够真实。三者之和为 1，
+ *  pickTypoCorrectionMode 按顺序落区间，落不进前两个区间即为「假装没
+ *  发现」。 */
+export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.57;
+export const TYPO_RECALL_CORRECTION_PROBABILITY: number = 0.33;
+/** 快速补字的执行侧延迟窗口：5s-7.5s——真人发现自己手滑到反应过来补一个字，
+ *  不会快到半秒就反应过来。 */
+export const TYPO_QUICK_CORRECTION_MIN_MS: number = 5_000;
+export const TYPO_QUICK_CORRECTION_MAX_MS: number = 7_500;
+/** 撤回重发路径里，真正删掉错误消息前的执行侧延迟窗口：10s-15s，比快速
+ *  补字更慢——撤回是更重的动作（意识到错得离谱、决定整条撤回重发），
+ *  比顺手补一个字要多犹豫一会儿才会真的动手删。这个延迟窗口同时也是
+ *  delete_own_message 工具（模型主动撤回自己发错/多发的消息）共用的
+ *  执行侧延迟，见 ai/tools/replyToolset.ts 的 executeDeleteOwnMessage。 */
+export const TYPO_RECALL_DELETE_MIN_MS: number = 10_000;
+export const TYPO_RECALL_DELETE_MAX_MS: number = 15_000;
+
+/** 手滑错字的字符替换逻辑：send_message 当轮 typo_replacement_char 字段的
+ *  说明（见 ai/tools/replyToolset.ts 的 buildSendMessageToolDefinition）与
+ *  下方 TYPO_REQUIRED_INSTRUCTION 共用这份措辞，避免各改各的漂移。只允许
+ *  「像真人手滑」的三类替换，明令禁止毫无关联的错字。 */
+export const TYPO_SUBSTITUTION_RULE: string =
+  "替换的那个字只能是形近字（写法相似，如「己/已/巳」「未/末」）、音近字（同音或读音相近，如平翘舌不分、n/l 不分）、" +
+  "或键盘/拼音输入法候选位置相邻的字，三选一，绝对不要换成和原字形音都无关的字；不能改坏链接、@用户名、数字、代码、专有名词或事实关键字，也不能是 emoji。";
+
+/**
+ * 本轮抽中「出错」分支时，拼在回复指令末尾的强制要求（见
+ * workers/aiChatWorker.ts 的 buildUserContent）——只有这个分支才会拼上
+ * 这段文字，不出错的轮次完全不提错字这回事。模型只需要给 typo_original_char
+ * （从 text 里原样抄一个字）和 typo_replacement_char（要换成的错字）这两个
+ * 孤立单字，执行侧自己在 text 里做替换构造出错字版本（见
+ * ai/tools/replyToolset.ts 的 buildCharacterTypo）——不再要求模型重新打一遍
+ * 整句话去 diff：生产实录显示，对较长的句子，模型经常复现走样（27 字的
+ * 句子给出的「错字版本」只有 2 个字），导致长度校验直接拒绝、整轮吃不到
+ * 一次错字，这是概率拉满仍不稳定出错的根因。要不要纠正、怎么纠正、等多久
+ * 都是执行侧按概率处理的黑箱，模型既不决定也不知情；动作下限从平时的 1
+ * 提到 3~4——错字本身加上执行侧可能产生的纠正动作已经占去一部分，再加上
+ * 正常对话内容，一轮回复才不会显得单薄。字符替换逻辑见
+ * TYPO_SUBSTITUTION_RULE。两个字段这一轮在 schema 里都是必填字段——纯靠
+ * 文字「要求」模型主动附带可选字段并不可靠，实测模型经常直接省略；改成
+ * schema 强制后，不想在某条消息上出错就把两个字段填成同一个字（会被安全
+ * 判定为「没有差异」而忽略，不会误伤）。
+ */
+export const TYPO_REQUIRED_INSTRUCTION: string =
+  "【本轮手滑】这一轮抽中了「出错」：这一轮 send_message 的 typo_original_char 和 typo_replacement_char 是必填字段。" +
+  "挑一条自然的短句，从 text 里原样抄一个已有字填进 typo_original_char（只写这一个字，不要写整句话），再把它要被换成的" +
+  `错字填进 typo_replacement_char（同样只写一个字，${TYPO_SUBSTITUTION_RULE}）——执行侧会自动把这个字在 text 里替换掉，` +
+  "你不用重新打一遍整句话。其余不想出错的消息，两个字段填成同一个字（哪个字都行）即可，不会产生错字。错字发出去之后" +
+  "要不要纠正、怎么纠正、等多久，都由执行侧按概率自动处理（也可能假装没发现），你不用管、也不用为此多说话。这一轮请" +
+  "确保总共至少 3-4 个动作（可能含执行侧自动产生的纠正动作），不要发完这一条带错字的消息就草草收尾。";
 
 /**
  * add_reaction 工具描述的固定前缀，后面动态拼接允许的 emoji 清单（来自
@@ -461,9 +512,5 @@ export const REPLY_ACTION_INSTRUCTION: string =
   "但不允许整轮保持沉默：每轮至少要落地一个群友看得见的动作——说一句话（一句简短的也行）、" +
   "发一枚应景贴纸，或者给触发消息扣一个表情反应，三样任选，不能一个动作都不做就结束；" +
   "撤回消息只是修正错误，不算完成回应。" +
-  "为了更像真人，适合手滑的普通短句可以给 send_message 同时提供正确 text、带一个错别字的 typo_text、以及快速补发用的 typo_correction_text；" +
-  "text 永远写正确完整内容；typo_text 只能把 text 里的一个已有字替换成另一个字，长度必须完全一致，绝对不要多打、少打、重复字，" +
-  "不要改坏链接、@用户名、数字、代码、专有名词或事实关键字；typo_correction_text 只写唯一被替换位置的正确字，哪怕错在一个词里也不要写整个正确词。" +
-  "是否真的发送 typo_text、发错后是快速补字、撤回重发、还是假装没发现，概率和等待时间都由执行侧控制，你不要自己选择概率分支，也不要为了等时间额外输出内容。" +
-  `一轮回复通常 1~3 个动作，可以 3-5 个动作，绝对不要超过 ${MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
+  `一轮回复通常 1~3 个动作，可以 3~5 个动作，绝对不要超过 ${MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
   "全部动作完成后直接结束，不要再输出任何正文。";

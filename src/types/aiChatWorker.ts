@@ -130,6 +130,12 @@ export interface ReplyToolContext {
   /** 同群「发贴纸」跨轮互斥锁的本轮句柄（见 ai/stickerSendLock.ts）：
    *  send_sticker 校验通过后、真正发送前 tryAcquire，抢不到则拒绝发送。 */
   stickerLock: StickerSendLockControl;
+  /** 本轮是否走「出错」分支：由 workers/aiChatWorker.ts 的 startReplyRound
+   *  在请求模型之前掷一次骰子决定（见 consts/aiChat.ts 的
+   *  AI_TEXT_TYPO_PROBABILITY），createReplyToolset 据此决定 send_message
+   *  当轮的参数 schema 要不要暴露 typo_original_char/typo_replacement_char
+   *  字段，execute 内部再据此把关，保证一轮最多只吃掉一次手滑错字。 */
+  roundHasTypo: boolean;
   /** 每条消息发送成功后的回调（清洗后的文本 + 消息 ID），供调用方自录
    *  记忆/登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。 */
   onMessageSent: (text: string, messageId: number) => void;

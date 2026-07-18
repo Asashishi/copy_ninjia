@@ -15,6 +15,7 @@ import { PERSONA_PATH } from "../consts/paths";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   AI_SNAPSHOT_INTERVAL_MS,
+  AI_TEXT_TYPO_PROBABILITY,
   ANIMATION_FALLBACK_PLACEHOLDER,
   ANIMATION_PENDING_PLACEHOLDER,
   CHAT_MEMORY_PRIORITY_INSTRUCTION,
@@ -41,6 +42,7 @@ import {
   SUMMARY_SYSTEM_PROMPT,
   SUMMARY_TEMPERATURE,
   TIME_AWARENESS_INSTRUCTION,
+  TYPO_REQUIRED_INSTRUCTION,
   GEMINI_REPLY_MODEL,
   GEMINI_SUMMARY_MODEL,
   VERBATIM_CONTEXT_MAX,
@@ -568,6 +570,13 @@ interface UserContentOptions {
    *  自己后来的发言已覆盖过它时换个说法简短接一句、或至少扣个反应，
    *  不允许沉默。 */
   queuedTrigger?: QueuedReplyTrigger;
+  /** 本轮是否走「出错」分支：由 startReplyRound 在请求模型之前掷一次骰子
+   *  决定（见 consts/aiChat.ts 的 AI_TEXT_TYPO_PROBABILITY）。为 true 时才
+   *  在回复指令末尾拼上 TYPO_REQUIRED_INSTRUCTION；为 false 时完全不提
+   *  错字这回事，两个分支的提示词严格分开。同一个值也传给
+   *  createReplyToolset（ReplyToolContext.roundHasTypo），两处必须用同一次
+   *  掷骰结果。 */
+  roundHasTypo: boolean;
 }
 
 /**
@@ -580,7 +589,7 @@ interface UserContentOptions {
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
 function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserContentOptions): string | null {
-  const { repliedBotText, isRandomTrigger, mediaComment, queuedTrigger } = options;
+  const { repliedBotText, isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
@@ -652,7 +661,10 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
     transcript +
     trailingBlock +
     "\n\n" +
-    replyInstruction
+    replyInstruction +
+    // 不出错的轮次完全不拼这一段——两个分支的提示词严格分开，模型看不到
+    // 「本来可能出错」这件事（见 consts/aiChat.ts 的 TYPO_REQUIRED_INSTRUCTION）。
+    (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "")
   );
 }
 
@@ -933,8 +945,15 @@ function startReplyRound(
     // send_sticker 走到发送时才抢；并发轮里只有抢到的那轮能发贴纸。外层
     // finally 兜底释放——锁的持有期严格等于本轮生命周期，异常中断也不遗留。
     const stickerLock: StickerSendLockControl = createStickerSendLock(chatId);
+    // 本轮是否出错，在请求模型之前先掷一次骰子决定（而不是让模型自己判断
+    // 要不要提供候选）：结果同时喂给 buildUserContent（决定要不要拼
+    // TYPO_REQUIRED_INSTRUCTION——不出错就完全不提）和 createReplyToolset
+    // （决定 send_message 当轮 schema 要不要暴露 typo_original_char/
+    // typo_replacement_char 字段），两处必须用同一个值，这个概率数字才
+    // 等于实际出错概率，见 consts/aiChat.ts 的 AI_TEXT_TYPO_PROBABILITY。
+    const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
     try {
-      const userContent: string | null = buildUserContent(chatId, selfInfo, { repliedBotText, isRandomTrigger, mediaComment, queuedTrigger });
+      const userContent: string | null = buildUserContent(chatId, selfInfo, { repliedBotText, isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo });
       if (!userContent) return;
 
     // 心跳的生命周期覆盖整轮工具对话（生成耗时不可控，发送也发生在工具
@@ -957,6 +976,7 @@ function startReplyRound(
           replyToMessageId,
           chatAction: heartbeat,
           stickerLock,
+          roundHasTypo,
           onMessageSent: (text: string, messageId: number): void => {
             recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, text);
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);

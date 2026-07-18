@@ -4,7 +4,6 @@ import { truncateInline } from "../../libs/text";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
 import {
   ADD_REACTION_TOOL_INSTRUCTION,
-  AI_TEXT_TYPO_PROBABILITY,
   DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
   MAX_ACTIONS_PER_REPLY,
   MAX_REACTIONS_PER_REPLY,
@@ -15,6 +14,7 @@ import {
   TYPO_RECALL_CORRECTION_PROBABILITY,
   TYPO_RECALL_DELETE_MAX_MS,
   TYPO_RECALL_DELETE_MIN_MS,
+  TYPO_SUBSTITUTION_RULE,
   TYPING_DELAY_BASE_MS,
   TYPING_DELAY_JITTER_MS,
   TYPING_DELAY_MAX_MS,
@@ -34,7 +34,8 @@ import type { ReplyToolContext, ReplyToolset, StickerPackCandidate, StickerRound
 
 type TypoCorrectionMode = "quick" | "recall" | "ignore";
 
-export interface SingleCharacterSubstitution {
+export interface CharacterTypo {
+  readonly typoText: string;
   readonly expected: string;
   readonly typo: string;
 }
@@ -104,6 +105,9 @@ function randomDelayMs(min: number, max: number): number {
   return min + Math.random() * (max - min);
 }
 
+/** 出错分支里修正方式由代码侧按概率决定，模型不参与（见 consts/aiChat.ts
+ *  的 TYPO_QUICK_CORRECTION_PROBABILITY 注释）：落不进快速补字/撤回重发
+ *  两个区间的剩余概率即「假装没发现」。 */
 function pickTypoCorrectionMode(): TypoCorrectionMode {
   const roll: number = Math.random();
   if (roll < TYPO_QUICK_CORRECTION_PROBABILITY) return "quick";
@@ -111,38 +115,77 @@ function pickTypoCorrectionMode(): TypoCorrectionMode {
   return "ignore";
 }
 
-export function findSingleCharacterSubstitution(original: string, candidate: string): SingleCharacterSubstitution | null {
-  const originalChars: string[] = Array.from(original);
-  const candidateChars: string[] = Array.from(candidate);
-  if (originalChars.length !== candidateChars.length) return null;
+/**
+ * 把 originalChar 在 text 里的第一个出现位置换成 replacementChar，构造出
+ * 错字版本的整句话。不再要求模型把整句话重新打一遍、再靠 diff 两个模型
+ * 各自生成的完整字符串来验证只有一处差异——那种方式在长句子上很容易因为
+ * 模型自己复现走样而被误判失败（生产实录：27 字的句子模型给出的「错字
+ * 版本」只有 2 个字，长度校验直接拒绝，导致概率拉满整轮也吃不到一次
+ * 错字）。改成只问模型要「原字」「错字」这两个孤立单字，替换在结构上
+ * 必然只有一处、必然和 text 等长，不再依赖模型的长句复现保真度。
+ * @returns 两个字长度不为 1、彼此相同、含空白、含 emoji，或 originalChar
+ *   压根不在 text 里时返回 null。
+ */
+export function buildCharacterTypo(text: string, originalChar: string, replacementChar: string): CharacterTypo | null {
+  const originalChars: string[] = Array.from(originalChar);
+  const replacementChars: string[] = Array.from(replacementChar);
+  if (originalChars.length !== 1 || replacementChars.length !== 1) return null;
 
-  let diffIndex: number | null = null;
-  for (let i = 0; i < originalChars.length; i++) {
-    if (originalChars[i] === candidateChars[i]) continue;
-    if (diffIndex !== null) return null;
-    diffIndex = i;
-  }
-  if (diffIndex === null) return null;
-
-  const expected: string = originalChars[diffIndex]!;
-  const typo: string = candidateChars[diffIndex]!;
+  const expected: string = originalChars[0]!;
+  const typo: string = replacementChars[0]!;
+  if (expected === typo) return null;
   if (!expected.trim() || !typo.trim()) return null;
-  return { expected, typo };
+  // 换成的字（以及被换掉的原字）本身不能是 emoji。
+  if (isEmojiOnly(expected) || isEmojiOnly(typo)) return null;
+
+  const textChars: string[] = Array.from(text);
+  const index: number = textChars.indexOf(expected);
+  if (index === -1) return null;
+
+  textChars[index] = typo;
+  return { typoText: textChars.join(""), expected, typo };
 }
 
-function buildSendMessageToolDefinition(): ToolDefinition {
+/**
+ * send_message 的参数 schema 按本轮是否抽中「出错」分支（ctx.roundHasTypo，
+ * 见 consts/aiChat.ts 的 AI_TEXT_TYPO_PROBABILITY）动态组装：只有出错分支
+ * 才暴露 typo_original_char/typo_replacement_char——不出错的轮次里模型的
+ * 可用参数里根本不存在这两个字段，不必靠文字指令去说服模型「别用」。
+ * 模型只需要给两个孤立单字（原字 + 错字），执行侧自己在 text 里做替换
+ * 构造出错字版本（见下方 buildCharacterTypo）——不问模型重新打一遍整句话，
+ * 避免长句子复现走样导致的误判失败。
+ */
+function buildSendMessageToolDefinition(roundHasTypo: boolean): ToolDefinition {
+  const properties: Record<string, unknown> = {
+    text: { type: "string", description: "要发到群里的消息文本。" },
+    reply_to_trigger: { type: "boolean", description: "是否以「回复」形式挂在触发你这次回复的那条消息上；省略视为 false。" },
+  };
+  const required: string[] = ["text"];
+  if (roundHasTypo) {
+    properties.typo_original_char = {
+      type: "string",
+      description:
+        "本轮每次调用都必须提供：从 text 里原样抄一个已有字，只写这一个字（不要多写、不要写整句话）。" +
+        "如果不想在这条消息上出错，就随便填 text 里的一个字，并让 typo_replacement_char 填成一模一样的字（会被安全" +
+        "忽略，不会产生错字）。",
+    };
+    properties.typo_replacement_char = {
+      type: "string",
+      description: `typo_original_char 要被换成的那个错字，只写这一个字，不要写整句话。${TYPO_SUBSTITUTION_RULE}`,
+    };
+    // 标成 required 而非仅在文案里要求：optional 字段模型经常直接跳过，
+    // 靠自然语言指令单方面「保证」出错，实测并不可靠。这里用 schema
+    // 硬约束换取真正的强制——不想出错的消息就把两个字段填成同一个字，
+    // buildCharacterTypo 会因为两字相同而安全拒绝，不会误伤。
+    required.push("typo_original_char", "typo_replacement_char");
+  }
   return {
     name: SEND_MESSAGE_TOOL,
     description: SEND_MESSAGE_TOOL_INSTRUCTION,
     parameters: {
       type: "object",
-      properties: {
-        text: { type: "string", description: "要发到群里的消息文本。" },
-        reply_to_trigger: { type: "boolean", description: "是否以「回复」形式挂在触发你这次回复的那条消息上；省略视为 false。" },
-        typo_text: { type: "string", description: "可选：同一句话的手滑版本，只能把 text 里的一个已有字替换成另一个字；长度必须和 text 完全一致，不能多打、少打、重复字或改动两处。是否真的发送这个版本由执行侧按概率决定；省略则不会自动制造错字。" },
-        typo_correction_text: { type: "string", description: "可选：typo_text 里唯一被替换位置的正确字，用于执行侧掷中快速补发时发送。只写这一个字；即使错在一个词里面，也不要写整个正确词或完整句。执行侧会从 text 自动校验/推导，并只发送这个单字。" },
-      },
-      required: ["text"],
+      properties,
+      required,
     },
   };
 }
@@ -235,13 +278,17 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   let messageCount: number = 0;
   let reactionCount: number = 0;
   let actionsUsed: number = 0;
+  // 本轮出错分支最多吃掉一次手滑错字：即使模型在同一轮多条 send_message
+  // 里都附带了原字/错字候选，第一次有效的候选之后就不再采纳，避免一轮
+  // 回复里出现两次「打错-纠正」。
+  let typoUsedThisRound: boolean = false;
   const deletableMessageIds: Set<number> = new Set();
 
   const viewDefinition: ToolDefinition | null = buildViewStickerPackToolDefinition(menu);
   const sendStickerDefinition: ToolDefinition | null = buildSendStickerToolDefinition(menu);
   const addReactionDefinition: ToolDefinition | null = buildAddReactionToolDefinition();
   const definitions: ToolDefinition[] = [
-    buildSendMessageToolDefinition(),
+    buildSendMessageToolDefinition(ctx.roundHasTypo),
     buildDeleteOwnMessageToolDefinition(),
     ...(addReactionDefinition ? [addReactionDefinition] : []),
     ...(viewDefinition ? [viewDefinition] : []),
@@ -270,17 +317,47 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       return JSON.stringify({ error: "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead" });
     }
 
-    const rawTypoText: string | null = parseStringField(argumentsJson, "typo_text");
-    const typoText: string | null = rawTypoText ? cleanReply(rawTypoText) : null;
-    const typoDiff: SingleCharacterSubstitution | null = typoText ? findSingleCharacterSubstitution(text, typoText) : null;
-    const effectiveTypoCorrectionText: string | null = typoDiff?.expected ?? null;
+    // 只问模型要两个孤立单字（原字 + 错字），执行侧自己在 text 里做替换
+    // 构造出错字版本（见 buildCharacterTypo 模块头注：不再要求模型重新
+    // 打一遍整句话去 diff，避免长句复现走样导致的误判失败）。
+    const rawOriginalChar: string | null = parseStringField(argumentsJson, "typo_original_char");
+    const rawReplacementChar: string | null = parseStringField(argumentsJson, "typo_replacement_char");
+    const originalChar: string | null = rawOriginalChar ? rawOriginalChar.trim() : null;
+    const replacementChar: string | null = rawReplacementChar ? rawReplacementChar.trim() : null;
+    const characterTypo: CharacterTypo | null =
+      originalChar && replacementChar ? buildCharacterTypo(text, originalChar, replacementChar) : null;
+    const typoText: string | null = characterTypo?.typoText ?? null;
+    const effectiveTypoCorrectionText: string | null = characterTypo?.expected ?? null;
     const remainingActions: number = MAX_ACTIONS_PER_REPLY - actionsUsed;
+    // 出错与否在本轮开始前已经掷过骰子（ctx.roundHasTypo，见
+    // consts/aiChat.ts 的 AI_TEXT_TYPO_PROBABILITY），这里不再二次抽签；
+    // typoAlreadyUsed 拍下本次判定之前的状态（供下面拒绝原因诊断用），
+    // typoUsedThisRound 保证即使 schema 允许、模型在同一轮多条消息里都带
+    // 了候选，也只采纳第一个合法候选。
+    const typoAlreadyUsed: boolean = typoUsedThisRound;
     const shouldUseTypo: boolean =
-      !!typoText &&
-      typoDiff !== null &&
-      !isEmojiOnly(typoText) &&
-      remainingActions >= 3 &&
-      Math.random() < AI_TEXT_TYPO_PROBABILITY;
+      ctx.roundHasTypo &&
+      !typoAlreadyUsed &&
+      characterTypo !== null &&
+      !isEmojiOnly(typoText!) &&
+      remainingActions >= 3;
+    if (shouldUseTypo) typoUsedThisRound = true;
+    // 诊断信号：本轮要求出错、模型也确实提交了一对不同的原字/错字
+    // （两字相同是模型主动选择「这条不出错」，不算尝试失败），但因为某种
+    // 原因没被采纳时，把原因喂回模型——旧版这里完全静默成功，模型不知道
+    // 自己的候选被判定无效，也就无从在同一轮的下一条消息里改正，这是
+    // 「概率拉满仍然不稳定出错」的一个重要成因。
+    const typoAttempted: boolean = ctx.roundHasTypo && !!originalChar && !!replacementChar && originalChar !== replacementChar;
+    const typoRejectedReason: string | null =
+      typoAttempted && !shouldUseTypo
+        ? typoAlreadyUsed
+          ? "already used the one allowed typo this round; this message will send as-is"
+          : characterTypo === null
+          ? "typo_original_char/typo_replacement_char were rejected: each must be exactly one character, differ from each other, not be emoji, and typo_original_char must actually appear in text"
+          : isEmojiOnly(typoText!)
+          ? "typo candidate was rejected: the resulting message would be emoji-only"
+          : "typo candidate was rejected: not enough remaining action budget this round"
+        : null;
     const typoMode: TypoCorrectionMode | null = shouldUseTypo ? pickTypoCorrectionMode() : null;
     const textToSend: string = shouldUseTypo ? typoText! : text;
 
@@ -338,7 +415,13 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       }
     }
 
-    return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, ...(shouldUseTypo ? { typo: { mode: "ignore" } } : {}) });
+    return JSON.stringify({
+      success: true,
+      message_id: visibleMessageId,
+      actions_used: actionsUsedByTool,
+      ...(shouldUseTypo ? { typo: { mode: "ignore" } } : {}),
+      ...(typoRejectedReason ? { typo_rejected: typoRejectedReason } : {}),
+    });
   }
 
   async function executeDeleteOwnMessage(argumentsJson: string): Promise<string> {
