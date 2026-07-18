@@ -97,7 +97,9 @@ export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "想对触发消息表个态就扣反应（add_reaction）。reply_to_trigger 填 true 时这条消息会以" +
   "「回复」形式挂在触发你这次回复的那条消息上，挂不挂由你判断（对方明确在跟你说话、或" +
   "群里消息多怕别人看不出你在回谁时，建议挂上）。工具成功时会返回 message_id，之后若你发现" +
-  "这条消息确实发错或多发了，只能用 delete_own_message 撤回这个 message_id。text 永远写正确完整内容。";
+  "这条消息确实发错或多发了，只能用 delete_own_message 撤回这个 message_id。text 永远写正确完整内容。" +
+  "同一轮里已经发过的话绝不要原样再发一遍——内容完全相同的调用会被执行侧直接拒绝；" +
+  "错字的纠正/重发也都由执行侧自动完成，不需要你补发。";
 
 /** delete_own_message 工具描述。 */
 export const DELETE_OWN_MESSAGE_TOOL_INSTRUCTION: string =
@@ -118,8 +120,10 @@ export const TYPO_REQUIRED_INSTRUCTION: string =
   "挑一条自然的短句，从 text 里原样抄一个已有字填进 typo_original_char（只写这一个字，不要写整句话），再把它要被换成的" +
   `错字填进 typo_replacement_char（同样只写一个字，${TYPO_SUBSTITUTION_RULE}）——执行侧会自动把这个字在 text 里替换掉，` +
   "你不用重新打一遍整句话。其余不想出错的消息，两个字段填成同一个字（哪个字都行）即可，不会产生错字。错字发出去之后" +
-  "要不要纠正、怎么纠正、等多久，都由执行侧按概率自动处理（也可能假装没发现），你不用管、也不用为此多说话。这一轮请" +
-  "确保总共至少 3-4 个动作（可能含执行侧自动产生的纠正动作），不要发完这一条带错字的消息就草草收尾。";
+  "要不要纠正、怎么纠正、等多久，都由执行侧按概率自动处理（也可能假装没发现），你不用管、也不用为此多说话——" +
+  "绝对不要自己补发纠正、也不要把同一句话的正确版本再发一遍（内容相同的消息会被执行侧拒绝）。这一轮请" +
+  "确保总共至少 3-4 个动作（可能含执行侧自动产生的纠正动作），不要发完这一条带错字的消息就草草收尾；" +
+  "凑动作要用新的句子、贴纸或表情反应，不能靠重复说过的话凑数。";
 
 /** add_reaction 工具描述的固定前缀。 */
 export const ADD_REACTION_TOOL_INSTRUCTION: string =

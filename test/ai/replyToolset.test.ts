@@ -43,7 +43,7 @@ mock.module("../../src/ai/stickerConfig", () => ({
   stickerConfig: { packs: [] },
 }));
 
-const { SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
+const { SEND_MESSAGE_TOOL, DELETE_OWN_MESSAGE_TOOL } = await import("../../src/consts/tools");
 const { createReplyToolset } = await import("../../src/ai/tools/replyToolset");
 
 beforeEach(() => {
@@ -208,6 +208,9 @@ describe("send_message typo correction", () => {
 
       expect(result.success).toBe(true);
       expect(result.typo.mode).toBe("quick");
+      expect(result.typo.correction).toBe("scheduled");
+      // 纠正是预约的后台动作，不阻塞工具返回；冲刷一轮事件循环后落地。
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
       expect(sendMessageMock).toHaveBeenNthCalledWith(1, -100800, "天汽", undefined);
       expect(sendMessageMock).toHaveBeenNthCalledWith(2, -100800, "气", undefined);
@@ -285,6 +288,8 @@ describe("send_message typo correction", () => {
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
+      // 冲刷预约的纠正落地，保证下面调用序号确定。
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
         text: "还好吧",
         typo_original_char: "好",
@@ -297,5 +302,126 @@ describe("send_message typo correction", () => {
     } finally {
       Math.random = originalRandom;
     }
+  });
+});
+
+describe("send_message 重复消息去重", () => {
+  function buildContext(roundHasTypo: boolean) {
+    return {
+      chatId: -100800,
+      replyToMessageId: 10,
+      chatAction: {
+        current: () => "idle" as const,
+        set: mock((..._args: unknown[]): void => {}),
+        settle: mock(async (): Promise<void> => {}),
+      },
+      stickerLock: { tryAcquire: () => true, release: () => {} },
+      roundHasTypo,
+      isActive: () => true,
+      onMessageSent: mock((..._args: unknown[]): void => {}),
+      onStickerSent: mock((..._args: unknown[]): void => {}),
+    };
+  }
+
+  test("同一轮内容完全相同的第二次调用被拒绝，不重复发送", async () => {
+    const toolset = await createReplyToolset(buildContext(false));
+
+    const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
+    const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
+
+    expect(first.success).toBe(true);
+    expect(second.error).toContain("identical message");
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("错字轮按本意文本判重：可见消息是错字版本，重发同一句正确原文仍被拒绝", async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      const toolset = await createReplyToolset(buildContext(true));
+
+      const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "天气",
+        typo_original_char: "气",
+        typo_replacement_char: "汽",
+      })));
+      // 冲刷预约的纠正落地，让下面的发送计数确定。
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "天气",
+        typo_original_char: "气",
+        typo_replacement_char: "汽",
+      })));
+
+      // 快速补字：可见消息是「天汽」+ 纠正字「气」，本意文本「天气」已登记。
+      expect(first.typo?.mode).toBe("quick");
+      expect(second.error).toContain("identical message");
+      expect(sendMessageMock).toHaveBeenCalledTimes(2);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("快速补字的纠正单字也参与判重，模型再发同一个字被拒绝", async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      const toolset = await createReplyToolset(buildContext(true));
+
+      await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "天气",
+        typo_original_char: "气",
+        typo_replacement_char: "汽",
+      }));
+      // 不冲刷、立刻重发纠正字：纠正可能仍在预约中，靠 pendingCorrectionText
+      // 的预占也要能拒绝（预约与落地两种时序结果一致）。
+      const duplicateCorrection = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
+
+      expect(duplicateCorrection.error).toContain("identical message");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sendMessageMock).toHaveBeenCalledTimes(2);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("撤回重发预约后台执行：不阻塞本轮、判重条目连续，撤回后自动补发正确原文", async () => {
+    const originalRandom = Math.random;
+    // pickTypoCorrectionMode：0.57 <= 0.6 < 0.90 → recall（撤回重发）。
+    Math.random = () => 0.6;
+    try {
+      const toolset = await createReplyToolset(buildContext(true));
+
+      const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "天气",
+        typo_original_char: "气",
+        typo_replacement_char: "汽",
+      })));
+      expect(first.typo?.mode).toBe("recall");
+      expect(first.typo?.correction).toBe("scheduled");
+
+      // 无论预约的撤回重发此刻是否已生效，重发同一句话都要被拒绝：
+      // 旧判重条目保持到重发消息落地才移除，中间没有空窗。
+      const dup = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "天气" })));
+      expect(dup.error).toContain("identical message");
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(deleteMessageMock).toHaveBeenCalledWith(-100800, 100);
+      expect(sendMessageMock).toHaveBeenLastCalledWith(-100800, "天气", undefined);
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("delete_own_message 撤回后重发同一句话放行（合法的撤回重发）", async () => {
+    const toolset = await createReplyToolset(buildContext(false));
+
+    const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
+    const deletion = JSON.parse(await toolset.execute(DELETE_OWN_MESSAGE_TOOL, JSON.stringify({ message_id: first.message_id })));
+    const resend = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
+
+    expect(deletion.success).toBe(true);
+    expect(resend.success).toBe(true);
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
   });
 });

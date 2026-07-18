@@ -47,8 +47,8 @@ export const STICKER_SET_FAILURE_RETRY_MS: number = 60_000;
  * 命中时 callGemini 直接放弃这轮，不把断句发出去——但预算给够从源头上更该
  * 优先，被动放弃只是兜底）。
  */
-export const REPLY_MAX_TOKENS: number = 49_152;
-export const SUMMARY_MAX_TOKENS: number = 8192;
+export const REPLY_MAX_TOKENS: number = 65_536;
+export const SUMMARY_MAX_TOKENS: number = 32_768;
 
 /** 冷消息压缩的生成温度：偏低，换取更忠实原文的摘要而非自由发挥。 */
 export const SUMMARY_TEMPERATURE: number = 0.6;
@@ -213,7 +213,7 @@ export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的
  * 发言/贴纸/反应/撤回全部工具化之后，一轮正常回复就要吃掉好几轮往返（看包 ->
  * 发贴纸 -> 连发几条消息 -> 偶尔撤回改口……），上限按此放宽；同一轮响应里的并行调用只算一轮。
  */
-export const MAX_TOOL_ROUNDS: number = 25;
+export const MAX_TOOL_ROUNDS: number = 35;
 
 /** 聊天状态（正在输入…/正在选择贴纸…）的心跳重发间隔，须小于 Telegram
  *  约 5 秒的状态过期时间；同时兼作切挡补发的重复状态节流窗口——同一挡位
@@ -251,7 +251,7 @@ export const ANIMATION_FALLBACK_PLACEHOLDER: string = "[GIF：解析失败，请
  *  文案里的数字和 truncateInline 真正生效的截断值各改各的漂移——曾经这里
  *  各写各的（文案 120、截断 200），模型没能精确遵循字数指令时实际入库描述
  *  可以接近文档承诺上限的两倍。 */
-export const IMAGE_DESCRIPTION_MAX_CHARS: number = 120;
+export const IMAGE_DESCRIPTION_MAX_CHARS: number = 125;
 
 /**
  * 贴纸/GIF 描述的字数上限——比图片短：贴纸/GIF 本身信息密度低（一个画面
@@ -276,7 +276,7 @@ export const MEDIA_DESCRIPTION_CACHE_MAX: number = 1500;
 /** 媒体下载、转码、视觉 API 请求的全局并发上限。群聊媒体与白名单贴纸目录
  * 共用同一执行器，避免刷入不同 file_unique_id 绕过去重缓存后同时持有大量
  * 图片/Base64 副本并打爆 API。 */
-export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 25;
+export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 35;
 /** 并发槽位占满后最多等待的媒体任务数；再多的请求立即降级为解析失败。
  * 排队项只持有 file id 等小字段，真正的下载和转码要拿到槽位后才开始。 */
 export const MEDIA_DESCRIPTION_MAX_PENDING: number = 75;
@@ -328,16 +328,19 @@ export const AI_TEXT_TYPO_PROBABILITY: number = 0.15;
 export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.57;
 export const TYPO_RECALL_CORRECTION_PROBABILITY: number = 0.33;
 /** 快速补字的执行侧延迟窗口：5s-7.5s——真人发现自己手滑到反应过来补一个字，
- *  不会快到半秒就反应过来。 */
+ *  不会快到半秒就反应过来。延迟不阻塞本轮：错字消息发出即预约后台补发，
+ *  模型的后续动作照常先走，纠正字经常落在后续消息之后（更像真人）。 */
 export const TYPO_QUICK_CORRECTION_MIN_MS: number = 5_000;
 export const TYPO_QUICK_CORRECTION_MAX_MS: number = 7_500;
-/** 撤回重发路径里，真正删掉错误消息前的执行侧延迟窗口：10s-15s，比快速
+/** 撤回重发路径里，真正删掉错误消息前的执行侧延迟窗口：15s-25s，比快速
  *  补字更慢——撤回是更重的动作（意识到错得离谱、决定整条撤回重发），
- *  比顺手补一个字要多犹豫一会儿才会真的动手删。这个延迟窗口同时也是
- *  delete_own_message 工具（模型主动撤回自己发错/多发的消息）共用的
- *  执行侧延迟，见 ai/tools/replyToolset.ts 的 executeDeleteOwnMessage。 */
-export const TYPO_RECALL_DELETE_MIN_MS: number = 10_000;
-export const TYPO_RECALL_DELETE_MAX_MS: number = 15_000;
+ *  比顺手补一个字要多犹豫一会儿才会真的动手删。错字路径的撤回重发同样
+ *  不阻塞本轮（预约后台执行，见 TYPO_QUICK_CORRECTION_MIN_MS 注释）；
+ *  这个延迟窗口同时也是 delete_own_message 工具（模型主动撤回自己发错/
+ *  多发的消息）共用的执行侧延迟——那条路径是模型自己的动作、要拿到成败
+ *  结果，保持串行等待，见 ai/tools/replyToolset.ts 的 executeDeleteOwnMessage。 */
+export const TYPO_RECALL_DELETE_MIN_MS: number = 15_000;
+export const TYPO_RECALL_DELETE_MAX_MS: number = 25_000;
 
 // ---- 心情系统（各群冷场太久、再冒泡时随机换一种心情，见 ai/mood.ts）----
 // 两个内存缓存（chatMoods/chatLastActivityTimes，见 cache/aiChatWorker.ts）

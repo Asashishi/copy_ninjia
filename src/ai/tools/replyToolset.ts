@@ -1,4 +1,5 @@
 import type { FunctionDeclaration, Tool } from "@google/genai";
+import { logger } from "../../infra/logger";
 import { deleteMessage, sendMessage, setMessageReaction } from "../../infra/telegram";
 import { sleep } from "../../libs/sleep";
 import { TOOL_DEFINITIONS } from "./index";
@@ -140,6 +141,24 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   // 回复里出现两次「打错-纠正」。
   let typoUsedThisRound: boolean = false;
   const deletableMessageIds: Set<number> = new Set();
+  // 本轮仍可见消息的「本意文本」（messageId -> 模型给的正确原文；错字轮记
+  // 的是掺错字之前的 text，快速补字的纠正消息记它自己的单字）：send_message
+  // 靠它拒绝与已发消息内容完全相同的重复调用——错字自动纠正/重发之后模型
+  // 再把同一句话发一遍，群里就是肉眼可见的复读。撤回（错字撤回重发的执行
+  // 侧删除、或模型主动 delete_own_message）会移除对应条目：撤回后重发同一
+  // 句话是合法的「撤回重发」，不算重复。
+  const sentCanonicalTexts: Map<number, string> = new Map();
+  // 已预约、尚未发出的快速补字纠正字：预约即占进判重，堵住「纠正还没落地、
+  // 模型自己先把那个字发了」的空窗；纠正真正发出后转入 sentCanonicalTexts。
+  let pendingCorrectionText: string | null = null;
+
+  function isDuplicateOfSentMessage(text: string): boolean {
+    if (pendingCorrectionText === text) return true;
+    for (const sentText of sentCanonicalTexts.values()) {
+      if (sentText === text) return true;
+    }
+    return false;
+  }
 
   const viewDefinition: ToolDefinition | null = buildViewStickerPackToolDefinition(menu);
   const sendStickerDefinition: ToolDefinition | null = buildSendStickerToolDefinition(menu);
@@ -183,6 +202,9 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     if (!text) return JSON.stringify({ error: "Invalid or empty text" });
     if (isEmojiOnly(text)) {
       return JSON.stringify({ error: "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead" });
+    }
+    if (isDuplicateOfSentMessage(text)) {
+      return JSON.stringify({ error: "An identical message was already sent in this round; do not repeat yourself. Say something new, or use add_reaction / send_sticker instead" });
     }
 
     // 只问模型要两个孤立单字（原字 + 错字），执行侧自己在 text 里做替换
@@ -255,33 +277,47 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     }
 
     let actionsUsedByTool: number = 1;
-    let visibleMessageId: number = sentMessageId;
+    const visibleMessageId: number = sentMessageId;
     recordSentMessage(textToSend, sentMessageId);
+    sentCanonicalTexts.set(sentMessageId, text);
 
+    // 错字纠正不阻塞本轮：真人手滑后会继续打后面的话，过几秒才回头补救，
+    // 纠正因此经常落在自己后续消息之后。这里只预约（预扣动作额度 + 占进
+    // 判重）并立刻返回，让模型的下一个动作先走；延迟发送在后台执行。
     if (shouldUseTypo && typoMode === "quick" && effectiveTypoCorrectionText && !isEmojiOnly(effectiveTypoCorrectionText)) {
-      await sleep(randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS));
-      const correctionMessageId: number | undefined = await sendDirectMessage(effectiveTypoCorrectionText, undefined, true);
-      if (correctionMessageId !== undefined) {
-        actionsUsedByTool++;
-        return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, typo: { mode: "quick", correction_message_id: correctionMessageId } });
-      }
+      const correctionText: string = effectiveTypoCorrectionText;
+      actionsUsedByTool++;
+      pendingCorrectionText = correctionText;
+      void (async (): Promise<void> => {
+        await sleep(randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS));
+        const correctionMessageId: number | undefined = await sendDirectMessage(correctionText, undefined, true);
+        if (correctionMessageId !== undefined) sentCanonicalTexts.set(correctionMessageId, correctionText);
+        if (pendingCorrectionText === correctionText) pendingCorrectionText = null;
+      })().catch((error: unknown) => {
+        logger.error("Error while applying scheduled quick typo correction:", error);
+      });
+      return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, typo: { mode: "quick", correction: "scheduled" } });
     }
 
     if (shouldUseTypo && typoMode === "recall") {
-      await sleep(randomDelayMs(TYPO_RECALL_DELETE_MIN_MS, TYPO_RECALL_DELETE_MAX_MS));
-      const deleted: boolean = await deleteMessage(ctx.chatId, sentMessageId);
-      if (deleted) {
-        actionsUsedByTool++;
+      // 判重条目保持连续：旧条目等重发消息落地后才移除，删除与重发之间的
+      // 空窗里模型重发同一句话仍会被拒绝。模型若赶在预约生效前自己撤回了
+      // 这条消息，这里的 deleteMessage 会失败、重发随之跳过——不会把模型
+      // 刚决定撤掉的内容又发回去。
+      actionsUsedByTool += 2;
+      void (async (): Promise<void> => {
+        await sleep(randomDelayMs(TYPO_RECALL_DELETE_MIN_MS, TYPO_RECALL_DELETE_MAX_MS));
+        const deleted: boolean = await deleteMessage(ctx.chatId, sentMessageId);
+        if (!deleted) return;
         deletableMessageIds.delete(sentMessageId);
         messageCount = Math.max(0, messageCount - 1);
         const correctedMessageId: number | undefined = await sendDirectMessage(text, replyToMessageId, true);
-        if (correctedMessageId === undefined) {
-          return JSON.stringify({ error: "Failed to send corrected message", actions_used: actionsUsedByTool });
-        }
-        actionsUsedByTool++;
-        visibleMessageId = correctedMessageId;
-        return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, typo: { mode: "recall", deleted_message_id: sentMessageId } });
-      }
+        if (correctedMessageId !== undefined) sentCanonicalTexts.set(correctedMessageId, text);
+        sentCanonicalTexts.delete(sentMessageId);
+      })().catch((error: unknown) => {
+        logger.error("Error while applying scheduled typo recall correction:", error);
+      });
+      return JSON.stringify({ success: true, message_id: visibleMessageId, actions_used: actionsUsedByTool, typo: { mode: "recall", correction: "scheduled" } });
     }
 
     return JSON.stringify({
@@ -304,6 +340,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     const deleted: boolean = await deleteMessage(ctx.chatId, messageId);
     if (!deleted) return JSON.stringify({ error: "Failed to delete message" });
     deletableMessageIds.delete(messageId);
+    sentCanonicalTexts.delete(messageId);
     messageCount = Math.max(0, messageCount - 1);
     return JSON.stringify({ success: true });
   }
@@ -368,6 +405,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       return result;
     },
     messagesSent: (): number => messageCount,
+    actionsUsed: (): number => actionsUsed,
     isActive: ctx.isActive,
   };
 }

@@ -23,7 +23,7 @@ import type { GenerateContentParameters, GenerateContentResponse } from "@google
 import { logger } from "../infra/logger";
 import { GEMINI_API_KEY } from "../infra/config";
 import { GEMINI_REQUEST_TIMEOUT_MS } from "../consts/aiChat";
-import { extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
+import { abnormalFinishDiagnostic, extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
 
 /** 进程内唯一的 Gemini 客户端实例（timeout 是每次请求/每次重试各自的预算，
  *  不是所有重试共享一个硬顶，见 consts/aiChat.ts 的 GEMINI_REQUEST_TIMEOUT_MS 注释）。
@@ -65,6 +65,14 @@ export async function requestGeminiResponse(body: GenerateContentParameters, err
       `thoughts_tokens=${data.usageMetadata?.thoughtsTokenCount ?? "?"}, ` +
       `max_output_tokens=${body.config?.maxOutputTokens ?? "?"}).`
     );
+  }
+
+  // HTTP 层成功但内容不可用（无 candidates / SAFETY 等非 STOP 收尾）也要
+  // 点名：这类响应对上层与「模型没产出」不可区分，不记就查无原因，见
+  // ai/utils/geminiResponse.ts 的 abnormalFinishDiagnostic。
+  const abnormal: string | null = abnormalFinishDiagnostic(data);
+  if (abnormal) {
+    logger.error(`${errorLabel} returned an unusable response: ${abnormal}.`);
   }
   return data;
 }

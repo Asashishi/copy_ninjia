@@ -102,7 +102,34 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         // 模型没有调用 send_message、却把正文留在最终响应时，仍走同一工具
         // 发送。只发贴纸或只扣反应的轮通常没有正文，不会重复发言。
         if (finalText && toolset.messagesSent() === 0) {
-          await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
+          const fallbackResult: string = await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
+          let fallbackError: string | null = null;
+          try {
+            const parsed = JSON.parse(fallbackResult) as { error?: unknown };
+            if (typeof parsed.error === "string") fallbackError = parsed.error;
+          } catch {
+            // 工具结果都是 replyToolset 自己拼的 JSON，解析不会失败；防御性兜底。
+          }
+          if (fallbackError !== null) {
+            logger.error(`AI reply fallback send failed (chat ${chatId}): ${fallbackError}`);
+          }
+        }
+
+        // 零动作轮点名记录：直接触发的「已读不回」只能靠这条日志观测——
+        // 模型违背「必须回应」指令、callGemini 的各条失败路径、兜底发送
+        // 失败都会落进来。被 invalidate 的轮除外（/ai_chat disable 的预期
+        // 沉默，不算失踪）。
+        if (isActive() && toolset.actionsUsed() === 0) {
+          const triggerKind: string = queuedTrigger
+            ? "queued"
+            : mediaComment?.directTriggerReason
+            ? "media-direct"
+            : mediaComment
+            ? "media-comment"
+            : isRandomTrigger
+            ? "random"
+            : "direct";
+          logger.error(`AI reply round ended with zero actions (chat ${chatId}, trigger=${triggerKind}, finalText=${finalText === null ? "none" : "unsent"}).`);
         }
       } finally {
         await heartbeat.stop();

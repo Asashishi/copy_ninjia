@@ -192,6 +192,11 @@ export interface ReplyToolset {
    *  模型是否真的「说过话」，决定要不要把最终正文兜底发出
    *  （见 workers/aiChatWorker.ts）。 */
   messagesSent(): number;
+  /** 本轮已成功落地的动作总数（发消息 + 撤回 + 发贴纸 + 扣反应，口径同
+   *  MAX_ACTIONS_PER_REPLY 的额度计数，被校验/限额拒绝或发送失败的不算）
+   *  ——调用方靠它识别「整轮零动作」的静默轮并点名记日志
+   *  （见 workers/aiChat/replyRound.ts）。 */
+  actionsUsed(): number;
   /** 是否仍允许本轮继续请求模型或执行新的群内副作用。 */
   isActive(): boolean;
 }

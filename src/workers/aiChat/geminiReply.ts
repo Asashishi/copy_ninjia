@@ -8,6 +8,7 @@ import {
   REPLY_TEMPERATURE,
 } from "../../consts/aiChat";
 import { TIME_AWARENESS_INSTRUCTION, WEB_SEARCH_INSTRUCTION } from "../../consts/aiChatPrompts";
+import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../ai/mood";
 import { requestGeminiResponse } from "../../ai/gemini";
 import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit } from "../../ai/utils/geminiResponse";
@@ -96,6 +97,12 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
       }
       contents.push({ role: "user", parts: responseParts });
       continue;
+    }
+
+    if (functionCalls.length > 0) {
+      // 只可能在 round === MAX_TOOL_ROUNDS 时走到：模型仍在要工具但轮数
+      // 上限已到，这些调用不再执行，本轮就此收尾（多半以零动作告终）。
+      logger.error(`AI reply for chat ${chatId} hit the tool-round limit (${MAX_TOOL_ROUNDS}) with ${functionCalls.length} unexecuted tool call(s); ending the round.`);
     }
 
     // 写到一半被 maxOutputTokens 腰斩的半句话，宁可不要，也不把断掉的句子

@@ -44,6 +44,7 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
     has: (name: string): boolean => name === "send_message",
     execute,
     messagesSent: (): number => 1,
+    actionsUsed: (): number => 1,
     isActive: (): boolean => true,
   };
 
@@ -72,6 +73,7 @@ test("最终输出被 token 上限截断时返回 null", async () => {
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
     messagesSent: (): number => 0,
+    actionsUsed: (): number => 0,
     isActive: (): boolean => true,
   };
 
@@ -93,6 +95,7 @@ test("请求在途时被禁用，响应回来后不再执行任何行动", async
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
     messagesSent: (): number => 0,
+    actionsUsed: (): number => 0,
     isActive: (): boolean => active,
   };
 
