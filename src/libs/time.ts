@@ -53,6 +53,25 @@ export function formatTokyoTime(timestampMs: number): string {
   return TOKYO_TIME_FORMATTER.format(timestampMs);
 }
 
+/** getTokyoHour 的格式器：模块加载时构造一次复用（理由同上）。hourCycle 显式
+ *  指定 h23（0~23），避免部分 ICU 实现在 hour12:false 场景下午夜返回 "24"
+ *  而不是 "0" 的已知坑。 */
+const TOKYO_HOUR_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Tokyo",
+  hourCycle: "h23",
+  hour: "numeric",
+});
+
+/**
+ * 东京时区的小时数（0~23）。心情系统按时段调整心情抽选概率用（见
+ * ai/mood.ts），接受可选的 date 参数仅为可测试性，生产调用省略即取当前时刻。
+ */
+export function getTokyoHour(date: Date = new Date()): number {
+  const hourPart: string | undefined = TOKYO_HOUR_FORMATTER.formatToParts(date).find((part) => part.type === "hour")?.value;
+  // % 24 兜底：即便某些环境仍返回 "24"，也不会产出越界的小时数。
+  return hourPart ? Number(hourPart) % 24 : date.getHours();
+}
+
 export interface CurrentTimeResult {
   iso: string;
   timezone: string;

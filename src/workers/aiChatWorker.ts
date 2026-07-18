@@ -66,12 +66,14 @@ import type { BufferedMessage, MediaKind, QueuedReplyTrigger, ToolDefinition } f
 import { createReplyToolset } from "../ai/tools/replyToolset";
 import { startChatActionHeartbeat } from "../ai/chatActionHeartbeat";
 import { createStickerSendLock } from "../ai/stickerSendLock";
+import { currentMoodInstruction, recordActivityAndMaybeRerollMood } from "../ai/mood";
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, getCatalogEntry, hydrateStickerCatalogs } from "../ai/stickerCatalog";
 import { stickerConfig } from "../ai/stickerConfig";
 import { describeMedia } from "../ai/imageDescription";
 import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit, requestGeminiResponse } from "../ai/gemini";
 import { sendMessage } from "../infra/telegram";
 import { TOOL_DEFINITIONS, callTool } from "../ai/tools";
+import { startWeatherRefreshLoop } from "../ai/weather";
 import { SEND_MESSAGE_TOOL } from "../consts/tools";
 import type {
   AiBotInfo,
@@ -113,6 +115,14 @@ import type {
  * ai/stickerCatalog.ts 生成/持久化，init 消息到达时后台启动生成（见
  * ensureStickerCatalogs），与本文件的 dirty 记忆快照共用同一条上报/落盘
  * 节奏（见文件底部的 setInterval 与 flushMemory 分支）。
+ *
+ * 心情系统：各群冷场太久（几小时量级）再冒泡时，随机换一种心情叠加进
+ * 系统提示词，模拟真人聊天号状态会变的感觉，重抽时还按当前东京天气/
+ * 时段微调各心情的概率，见 ai/mood.ts；两个内存缓存（cache/aiChatWorker.ts
+ * 的 chatMoods/chatLastActivityTimes）都不落盘，随 Worker 重启清空。天气
+ * 数据由 ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
+ * startWeatherRefreshLoop 调用），get_tokyo_weather 工具与心情系统都只
+ * 读现有缓存、不各自发请求。
  */
 
 declare var self: Worker;
@@ -133,8 +143,14 @@ function currentTimeSentence(): string {
  * 把一条已清洗好的缓存条目压进该群的滚动缓存，并按块边界触发轮换。
  * recordChatMessage / recordChatMedia 共用——后者需要拿住条目对象的引用
  * 以便异步回填描述，所以入队和构造条目分开。
+ *
+ * 心情系统的活跃度记录也挂在这里（见 ai/mood.ts 的
+ * recordActivityAndMaybeRerollMood）：不论文字/媒体、也不论这条消息最终
+ * 是否触发了 AI 回复，只要记进了滚动缓存就算「本群有动静」，必须放在
+ * push 之前调用——判断的是这条消息到来之前的空窗时长。
  */
 function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
+  recordActivityAndMaybeRerollMood(chatId);
   let buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf) {
     buf = new LinkedQueue<BufferedMessage>();
@@ -679,7 +695,11 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
  * （content 里的 thought signature 也要一并带回，缺了会丢思考上下文），
  * 直到模型不再要工具或达到轮数上限。查时间不走工具：当前时间默认拼进每次
  * 请求的系统提示词（见下方），转录行也自带每条消息的发送时间（见
- * ai/chatTranscript.ts 的 formatBufferedMessageLine）。
+ * ai/chatTranscript.ts 的 formatBufferedMessageLine）。心情同样现查现拼：
+ * 该群当前抽中的心情由 ai/mood.ts 维护，这里只读取，不在这里决定要不要
+ * 重抽（见 pushBufferedMessage 的 recordActivityAndMaybeRerollMood）。
+ * @param chatId 群聊 ID，用于取该群当前的心情（见 ai/mood.ts 的
+ *   currentMoodInstruction）。
  * @param userContent buildUserContent 拼好的对话上下文。
  * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
  *   副作用（发消息/贴纸/反应）都发生在它内部。
@@ -687,10 +707,10 @@ function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserCont
  *   为空）；请求失败、超时、被 token 上限腰斩或空输出时返回 null。调用方
  *   只在模型一条消息都没发出去时才把它当兜底回复用。
  */
-async function callGemini(userContent: string, toolset: ReplyToolset): Promise<string | null> {
+async function callGemini(chatId: number, userContent: string, toolset: ReplyToolset): Promise<string | null> {
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
-  const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
+  const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentMoodInstruction(chatId)}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
   const contents: Content[] = [{ role: "user", parts: [{ text: userContent }] }];
 
   const functionDeclarations: ToolDefinition[] = [...TOOL_DEFINITIONS, ...toolset.definitions];
@@ -987,7 +1007,7 @@ function startReplyRound(
           },
         };
         const toolset: ReplyToolset = await createReplyToolset(ctx);
-        const finalText: string | null = await callGemini(userContent, toolset);
+        const finalText: string | null = await callGemini(chatId, userContent, toolset);
 
         // 正文兜底，所有触发类型一视同仁：指令已不允许模型整轮沉默（见
         // REPLY_ACTION_INSTRUCTION），若它没走 send_message 工具、把话留在
@@ -1078,3 +1098,8 @@ setInterval(() => {
   flushDirtyMemories();
   flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
 }, AI_SNAPSHOT_INTERVAL_MS);
+
+// 东京天气的后台定时刷新（见 ai/weather.ts）：get_tokyo_weather 工具与
+// 心情系统（ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
+// 读不发请求。全进程只应调用一次——重复调用会叠加出多个定时器。
+startWeatherRefreshLoop();

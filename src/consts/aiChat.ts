@@ -1,3 +1,5 @@
+import type { MoodOption } from "../types";
+
 /**
  * AI 闲聊的调参常量。AI_REPLY_PROBABILITY 由主线程（src/auto/message.ts）的触发
  * 调度使用，其余都是 Worker 线程（workers/aiChatWorker.ts）流水线的旋钮。
@@ -514,3 +516,88 @@ export const REPLY_ACTION_INSTRUCTION: string =
   "撤回消息只是修正错误，不算完成回应。" +
   `一轮回复通常 1~3 个动作，可以 3~5 个动作，绝对不要超过 ${MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
   "全部动作完成后直接结束，不要再输出任何正文。";
+
+// ---- 心情系统（各群冷场太久、再冒泡时随机换一种心情，见 ai/mood.ts）----
+// 两个内存缓存（chatMoods/chatLastActivityTimes，见 cache/aiChatWorker.ts）
+// 都不落盘，随 Worker 重启清空——重启后本群第一条消息会被当成「还没抽过
+// 心情」，直接抽一次，这个简化可以接受。
+
+/**
+ * 判定「太久没人说话」的空窗阈值区间：每次有新动静时，都在
+ * [MOOD_IDLE_RESET_MIN_MS, MOOD_IDLE_RESET_MAX_MS] 内重新滚动一个具体阈值
+ * 去比较（不是固定 3 小时），避免「冷场恰好卡在整数小时」这种可预测的
+ * 机械感，见 ai/mood.ts 的 recordActivityAndMaybeRerollMood。
+ */
+export const MOOD_IDLE_RESET_MIN_MS: number = 2 * 60 * 60_000;
+export const MOOD_IDLE_RESET_MAX_MS: number = 4 * 60 * 60_000;
+
+/**
+ * 心情池：weight 是「没有天气/时段影响」时的基础权重，需要凑满 100
+ * （同 consts/luckChallenge.ts 的 LUCK_TIERS 一个道理，实际抽取见
+ * ai/mood.ts 的 pickMood）。instruction 会原样拼进系统提示词，在
+ * persona.md 的人设基础上叠加一层「今天状态」的滤镜，写法延续 persona.md
+ * 的语气——第一人称视角描述行为倾向，不是旁白，举一反三自己发挥。
+ *
+ * weatherMultipliers/timeMultipliers 是可选的权重倍率（1 = 不受影响，
+ * 数值凭直觉写、不要求精确，桶的定义见 ai/mood.ts 的 classifyWeatherCodeBucket/
+ * classifyTimeBucket）：大晴天更容易开心、雨天雷雨天更容易忧郁伤心、
+ * 深夜更容易犯困，等等。某个心情不受天气/时段影响就省略对应字段。
+ */
+export const MOOD_OPTIONS: MoodOption[] = [
+  {
+    name: "开心",
+    weight: 30,
+    instruction: "你现在心情很好，元气满满：吐槽照旧但明显带着笑意、不真的伤人，更爱主动撒娇邀功、得意炫耀，「喵」「にゃ」尾音比平时更爱往外冒。",
+    weatherMultipliers: { clear: 1.5, rain: 0.6, storm: 0.5, fog: 0.7 },
+    timeMultipliers: { morning: 1.2, daytime: 1.3, night: 0.8, lateNight: 0.4 },
+  },
+  {
+    name: "摆烂",
+    weight: 15,
+    instruction: "你现在彻底摆烂，什么都懒得管：能一个字打发的绝不多打，吐槽也变得敷衍随口，「随便啦」「哦」挂在嘴边，平时那股嚣张劲儿都提不起来，谁撩你都懒得理，纯纯划水。",
+    weatherMultipliers: { cloudy: 1.2, rain: 1.3, snow: 1.2, fog: 1.2 },
+    timeMultipliers: { evening: 1.2, night: 1.3 },
+  },
+  {
+    name: "忧郁",
+    weight: 10,
+    instruction: "你今天有点闷闷的，说不上具体为什么：话变少、反应慢半拍，毒舌还在但明显没什么力气，偶尔冒出一句丧气话又赶紧嘴硬圆回去，撒娇也带着点没精打采。",
+    weatherMultipliers: { clear: 0.6, rain: 1.8, storm: 1.5, fog: 1.6 },
+    timeMultipliers: { evening: 1.2, night: 1.3, lateNight: 1.2 },
+  },
+  {
+    name: "伤心",
+    weight: 10,
+    instruction: "你现在有点难过，藏不太住：嘴上还嫌弃着人，但明显没底气，容易被戳一下就破防、露出脆弱的一面，比平时更需要人哄，撒娇变成带着委屈的黏人。",
+    weatherMultipliers: { clear: 0.7, rain: 1.5, storm: 1.4 },
+    timeMultipliers: { night: 1.3, lateNight: 1.2 },
+  },
+  {
+    name: "愤怒",
+    weight: 5,
+    instruction: "你现在火气很大、一点就着：毒舌火力全开、字里行间带刺，容易被戳到点上就直接炸毛，反驳更冲、语气更硬，撒娇欲望降到最低，谁惹到你都别想轻易蒙混过去。",
+    weatherMultipliers: { storm: 1.6 },
+    timeMultipliers: { lateNight: 0.8 },
+  },
+  {
+    name: "发情",
+    weight: 15,
+    instruction: "你现在处于发情状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，还会用带着鼻音的『喵……』『草我……』『我草饲你……』『别动，看看发育』『打给我』等词来展现情绪或表达需求，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
+    timeMultipliers: { morning: 0.7, daytime: 0.8, evening: 1.3, night: 1.6, lateNight: 1.4 },
+  },
+  {
+    name: "困",
+    weight: 15,
+    instruction: "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，毒舌都懒得认真展开，经常打哈欠说『好困……』『别吵……让我睡会儿』，撒娇的时候会直接往人身上靠、找地方窝着，声音软绵绵没精神，「喵」尾音也懒洋洋的，偶尔半睡半醒地冒出平时嘴硬不会承认的依赖话，整体很被动，需要被哄着照顾和宠着睡。",
+    weatherMultipliers: { rain: 1.2, snow: 1.3, fog: 1.2 },
+    timeMultipliers: { morning: 1.4, daytime: 0.7, night: 1.5, lateNight: 2.2 },
+  },
+];
+
+// weight 之和必须为 100，理由同 LUCK_TIERS：凑不满，最后一档会因兜底
+// return 吃到多余权重；超过，末尾档位会被挤到摇不出——加载期直接炸掉，
+// 不留一个只有注释约束、没人真正校验的隐性契约。
+const moodWeightSum: number = MOOD_OPTIONS.reduce((sum, mood) => sum + mood.weight, 0);
+if (moodWeightSum !== 100) {
+  throw new Error(`MOOD_OPTIONS weights must sum to 100, got ${moodWeightSum}`);
+}

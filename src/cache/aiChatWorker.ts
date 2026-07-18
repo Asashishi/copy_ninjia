@@ -1,5 +1,5 @@
 import type { LinkedQueue } from "../libs/linkedQueue";
-import type { AiBotInfo, BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../types";
+import type { AiBotInfo, BufferedMessage, ChatActionHeartbeatEntry, MoodOption, QueuedReplyTrigger } from "../types";
 
 /**
  * AI 闲聊流水线（src/workers/aiChatWorker.ts）的内存状态。本模块只被 Worker 线程
@@ -79,3 +79,13 @@ export const stickerSendLocks: Map<number, object> = new Map();
  * flushDirtyMemories。上报后清空。
  */
 export const dirtyMemoryChats: Set<number> = new Set();
+
+/** 各群当前抽中的心情（本群还没抽过则无键）；随每次「有动静」按空窗
+ *  阈值随机重抽，见 ai/mood.ts 的 recordActivityAndMaybeRerollMood。不落盘，
+ *  随 Worker 重启清空。 */
+export const chatMoods: Map<number, MoodOption> = new Map();
+
+/** 各群最后一次有消息动静的时刻（毫秒时间戳），只用于心情重抽的空窗判定
+ *  （见 ai/mood.ts），与 BufferedMessage.at 的展示用时间字符串无关。不落盘，
+ *  随 Worker 重启清空。 */
+export const chatLastActivityTimes: Map<number, number> = new Map();

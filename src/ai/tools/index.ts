@@ -1,4 +1,4 @@
-import { getTokyoWeather } from "./weather";
+import { currentTokyoWeather } from "../weather";
 import { GET_TOKYO_WEATHER_TOOL } from "../../consts/tools";
 import type { ToolDefinition } from "../../types";
 
@@ -26,8 +26,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 export async function callTool(name: string): Promise<string> {
   switch (name) {
     case GET_TOKYO_WEATHER_TOOL: {
-      const result = await getTokyoWeather();
-      return JSON.stringify(result ?? { error: "Failed to fetch weather data" });
+      // 只读现有缓存，不在这里发请求——真正的刷新由 ai/weather.ts 的后台
+      // 定时循环负责，见该文件模块头注。
+      const result = currentTokyoWeather();
+      return JSON.stringify(result ?? { error: "Weather data not available yet" });
     }
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });

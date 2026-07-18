@@ -115,6 +115,34 @@ export interface BufferedMessage {
   at: string;
 }
 
+/** 心情系统的粗粒度天气分桶（见 ai/mood.ts 的 classifyWeatherCodeBucket），
+ *  由 Open-Meteo 的 WMO 天气代码归类而来，覆盖范围与 consts/weather.ts 的
+ *  WEATHER_CODE_DESCRIPTIONS 一致。 */
+export type WeatherBucket = "clear" | "cloudy" | "rain" | "snow" | "storm" | "fog";
+
+/** 心情系统的粗粒度时段分桶（见 ai/mood.ts 的 classifyTimeBucket），按
+ *  东京时区小时数归类。 */
+export type TimeBucket = "lateNight" | "morning" | "daytime" | "evening" | "night";
+
+/**
+ * 一种可抽中的心情（见 ai/mood.ts、consts/aiChat.ts 的 MOOD_OPTIONS）：
+ * weight 是「没有天气/时段影响」时抽中概率的份额，全表之和须为 100；
+ * instruction 是拼进系统提示词、描述这个心情下人设行为倾向的一段话。
+ * weatherMultipliers/timeMultipliers 是可选的权重倍率表：抽取时按当前
+ * 天气分桶/时段分桶各查一次，倍率相乘作用在 weight 上（见 ai/mood.ts 的
+ * computeAdjustedWeight）；某个桶不在表里则该桶按 ×1（不受影响）处理，
+ * 省略整个字段等价于所有桶都 ×1。倍率只影响运行时的实际抽取概率，跟
+ * weight 之和必须为 100 这条校验无关（那条校验管的是「没有天气/时段
+ * 影响」时的基准分布）。
+ */
+export interface MoodOption {
+  name: string;
+  weight: number;
+  instruction: string;
+  weatherMultipliers?: Partial<Record<WeatherBucket, number>>;
+  timeMultipliers?: Partial<Record<TimeBucket, number>>;
+}
+
 /** 一轮 AI 回复的行动工具集所需的外部上下文（见 ai/tools/replyToolset.ts 的
  *  createReplyToolset）。 */
 export interface ReplyToolContext {
