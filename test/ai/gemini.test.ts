@@ -17,7 +17,7 @@ mock.module("@google/genai", () => ({
   GoogleGenAI: class {
     readonly models = { generateContent };
   },
-  HarmBlockThreshold: { BLOCK_ONLY_HIGH: "BLOCK_ONLY_HIGH" },
+  HarmBlockThreshold: { BLOCK_NONE: "BLOCK_NONE" },
   HarmCategory: {
     HARM_CATEGORY_HARASSMENT: "HARM_CATEGORY_HARASSMENT",
     HARM_CATEGORY_HATE_SPEECH: "HARM_CATEGORY_HATE_SPEECH",
@@ -41,7 +41,7 @@ describe("Gemini request safety settings", () => {
     } as unknown as GenerateContentResponse));
   });
 
-  test("所有调用统一为四类仅高概率拦截，并保留调用方其它 config", async () => {
+  test("所有调用统一关闭四类可调概率拦截，并保留调用方其它 config", async () => {
     const result = await requestGeminiResponse({
       model: "gemini-test",
       contents: "hello",
@@ -52,10 +52,10 @@ describe("Gemini request safety settings", () => {
     const request: GenerateContentParameters = generateContent.mock.calls[0]![0]!;
     expect(request.config?.temperature).toBe(0.7);
     expect(request.config?.safetySettings as unknown).toEqual([
-      { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
-      { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
-      { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
-      { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
+      { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
     ]);
   });
 

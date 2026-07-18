@@ -32,15 +32,15 @@ import { abnormalFinishDiagnostic, extractOutputText, isTruncatedByTokenLimit } 
 const client: GoogleGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY, httpOptions: { timeout: GEMINI_REQUEST_TIMEOUT_MS } });
 
 /**
- * Google 可调的四类内容过滤统一采用「仅高概率拦截」。这比 BLOCK_NONE 保留
- * 一层审计，又允许低/中概率的群聊口语、人设吐槽与媒体描述通过。核心伤害
- * 保护由 Gemini 服务固定执行，不受这些每请求设置影响。
+ * Google 可调的四类内容过滤统一设为 BLOCK_NONE：应用不按这些概率等级
+ * 主动拒绝内容，交给 Gemini API 自身不可关闭的核心伤害保护和服务端策略
+ * 判断。该设置仍由请求显式携带，避免不同模型默认值漂移造成行为变化。
  */
 const GEMINI_SAFETY_SETTINGS: SafetySetting[] = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
 /**
@@ -60,7 +60,7 @@ export async function requestGeminiResponse(body: GenerateContentParameters, err
       config: {
         ...body.config,
         // 在唯一底层封装覆盖，聊天、压缩、媒体描述和未来调用方不会漏配，
-        // 也不能各自悄悄恢复成更严格或完全关闭的档位。
+        // 也不能各自悄悄恢复成更严格的档位。
         safetySettings: GEMINI_SAFETY_SETTINGS,
       },
     });
