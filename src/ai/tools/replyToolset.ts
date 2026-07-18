@@ -1,7 +1,7 @@
+import type { FunctionDeclaration, Tool } from "@google/genai";
 import { deleteMessage, sendMessage, setMessageReaction } from "../../infra/telegram";
 import { sleep } from "../../libs/sleep";
-import { truncateInline } from "../../libs/text";
-import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
+import { TOOL_DEFINITIONS } from "./index";
 import {
   ADD_REACTION_TOOL_INSTRUCTION,
   DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
@@ -10,15 +10,9 @@ import {
   SEND_MESSAGE_TOOL_INSTRUCTION,
   TYPO_QUICK_CORRECTION_MAX_MS,
   TYPO_QUICK_CORRECTION_MIN_MS,
-  TYPO_QUICK_CORRECTION_PROBABILITY,
-  TYPO_RECALL_CORRECTION_PROBABILITY,
   TYPO_RECALL_DELETE_MAX_MS,
   TYPO_RECALL_DELETE_MIN_MS,
   TYPO_SUBSTITUTION_RULE,
-  TYPING_DELAY_BASE_MS,
-  TYPING_DELAY_JITTER_MS,
-  TYPING_DELAY_MAX_MS,
-  TYPING_DELAY_PER_CHAR_MS,
 } from "../../consts/aiChat";
 import { ADD_REACTION_TOOL, DELETE_OWN_MESSAGE_TOOL, SEND_MESSAGE_TOOL, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
 import { REACTION_EMOJIS } from "../reactions";
@@ -30,15 +24,11 @@ import {
   sendStickerTool,
   viewStickerPackTool,
 } from "./stickers";
+import { cleanReply, isEmojiOnly } from "../utils/replyText";
+import { buildCharacterTypo, pickTypoCorrectionMode, type CharacterTypo, type TypoCorrectionMode } from "../utils/typo";
+import { randomDelayMs, typingDelayMs } from "../utils/timing";
+import { parseBooleanField, parsePositiveIntegerField, parseStringField } from "../utils/toolArgs";
 import type { ReplyToolContext, ReplyToolset, StickerPackCandidate, StickerRoundState, ToolDefinition } from "../../types";
-
-type TypoCorrectionMode = "quick" | "recall" | "ignore";
-
-export interface CharacterTypo {
-  readonly typoText: string;
-  readonly expected: string;
-  readonly typo: string;
-}
 
 /**
  * 一轮 AI 回复的「行动工具集」：发言（send_message）、撤回自己本轮刚发的
@@ -56,95 +46,6 @@ export interface CharacterTypo {
  * 与去重、反应次数再各自设分项上限。执行结果一律是喂回模型的 JSON 字符串
  * ——被限额/校验拒绝时模型能从 error 字段知道动作没做成。
  */
-
-/**
- * 清洗模型给出的消息文本，得到可直接发送的纯文本：去掉联网搜索可能附带的
- * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
- * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
- * 空则返回 null。send_message 工具的每条文本、以及模型不走工具时的最终
- * 正文兜底（见 workers/aiChatWorker.ts）都过这一道。
- */
-export function cleanReply(raw: string): string | null {
-  // URL 部分故意不排除 `)`：链接本身带括号很常见（如维基百科的消歧义链接
-  // .../Foo_(bar)），排除 `)` 会让匹配在 URL 内部就截停。但也不能简单放开
-  // 成贪婪的 `[^\s]+`（曾经的实现）：中文正文经常整行没有任何空白字符，
-  // 贪婪匹配会一路吃到本行最后一个 `)` 才回溯停下，把引用标记之后、这个
-  // 无关 `)` 之前的大段正文一并吞掉。改成「非括号非空白字符，或者一对不
-  // 含嵌套的平衡括号」重复一次以上：维基百科式的 .../Foo_(bar) 能作为一个
-  // 平衡括号整体吃掉，而遇到与 URL 无关的孤立 `)`（前面没有配对的 `(`）时
-  // 无法再继续匹配，会在引用标记自己的收尾括号处停下，不会越界。
-  let text: string = raw.replace(/\[\[\d+\]\]\((?:[^\s()]|\([^\s()]*\))+\)/g, "").trim();
-  if (!text) return null;
-
-  const fenceMatch = text.match(/^```[a-zA-Z]*\n?([\s\S]*?)\n?```$/);
-  if (fenceMatch && fenceMatch[1] !== undefined) {
-    text = fenceMatch[1].trim();
-  }
-
-  if (text.length >= 2) {
-    const first: string = text[0]!;
-    const last: string = text[text.length - 1]!;
-    if ((first === '"' && last === '"') || (first === "「" && last === "」") || (first === "“" && last === "”")) {
-      text = text.slice(1, -1).trim();
-    }
-  }
-
-  if (!text) return null;
-  return truncateInline(text, TELEGRAM_MESSAGE_MAX_CHARS);
-}
-
-/** 每条消息临发前「正在输入…」窗口的时长（1~7.5 秒）：按本条消息的长度
- *  估一个停顿加随机抖动，再统一封顶，见 consts/aiChat.ts 的 TYPING_DELAY_*。 */
-function typingDelayMs(nextPart: string): number {
-  const base: number = TYPING_DELAY_BASE_MS + nextPart.length * TYPING_DELAY_PER_CHAR_MS;
-  const jitter: number = Math.random() * TYPING_DELAY_JITTER_MS;
-  return Math.min(base + jitter, TYPING_DELAY_MAX_MS);
-}
-
-function randomDelayMs(min: number, max: number): number {
-  return min + Math.random() * (max - min);
-}
-
-/** 出错分支里修正方式由代码侧按概率决定，模型不参与（见 consts/aiChat.ts
- *  的 TYPO_QUICK_CORRECTION_PROBABILITY 注释）：落不进快速补字/撤回重发
- *  两个区间的剩余概率即「假装没发现」。 */
-function pickTypoCorrectionMode(): TypoCorrectionMode {
-  const roll: number = Math.random();
-  if (roll < TYPO_QUICK_CORRECTION_PROBABILITY) return "quick";
-  if (roll < TYPO_QUICK_CORRECTION_PROBABILITY + TYPO_RECALL_CORRECTION_PROBABILITY) return "recall";
-  return "ignore";
-}
-
-/**
- * 把 originalChar 在 text 里的第一个出现位置换成 replacementChar，构造出
- * 错字版本的整句话。不再要求模型把整句话重新打一遍、再靠 diff 两个模型
- * 各自生成的完整字符串来验证只有一处差异——那种方式在长句子上很容易因为
- * 模型自己复现走样而被误判失败（生产实录：27 字的句子模型给出的「错字
- * 版本」只有 2 个字，长度校验直接拒绝，导致概率拉满整轮也吃不到一次
- * 错字）。改成只问模型要「原字」「错字」这两个孤立单字，替换在结构上
- * 必然只有一处、必然和 text 等长，不再依赖模型的长句复现保真度。
- * @returns 两个字长度不为 1、彼此相同、含空白、含 emoji，或 originalChar
- *   压根不在 text 里时返回 null。
- */
-export function buildCharacterTypo(text: string, originalChar: string, replacementChar: string): CharacterTypo | null {
-  const originalChars: string[] = Array.from(originalChar);
-  const replacementChars: string[] = Array.from(replacementChar);
-  if (originalChars.length !== 1 || replacementChars.length !== 1) return null;
-
-  const expected: string = originalChars[0]!;
-  const typo: string = replacementChars[0]!;
-  if (expected === typo) return null;
-  if (!expected.trim() || !typo.trim()) return null;
-  // 换成的字（以及被换掉的原字）本身不能是 emoji。
-  if (isEmojiOnly(expected) || isEmojiOnly(typo)) return null;
-
-  const textChars: string[] = Array.from(text);
-  const index: number = textChars.indexOf(expected);
-  if (index === -1) return null;
-
-  textChars[index] = typo;
-  return { typoText: textChars.join(""), expected, typo };
-}
 
 /**
  * send_message 的参数 schema 按本轮是否抽中「出错」分支（ctx.roundHasTypo，
@@ -204,16 +105,6 @@ function buildDeleteOwnMessageToolDefinition(): ToolDefinition {
   };
 }
 
-/**
- * 文本是否是「纯 emoji 消息」：至少含一个图形 emoji，且除 emoji 本体/emoji
- * 组件（肤色、变体选择符、ZWJ 等）/空白外没有任何其它字符。这类消息被
- * send_message 拒绝——机器人不直接发表情，能直接发的画面表达只有贴纸，
- * 对消息表态用 add_reaction。导出仅为可测试性。
- */
-export function isEmojiOnly(text: string): boolean {
-  return /\p{Extended_Pictographic}/u.test(text) && /^[\p{Extended_Pictographic}\p{Emoji_Component}\s]+$/u.test(text);
-}
-
 /** REACTION_EMOJIS 为空（配置被清空）时返回 null，不提供这个工具。 */
 function buildAddReactionToolDefinition(): ToolDefinition | null {
   if (REACTION_EMOJIS.length === 0) return null;
@@ -228,42 +119,6 @@ function buildAddReactionToolDefinition(): ToolDefinition | null {
       required: ["emoji"],
     },
   };
-}
-
-/** 从参数 JSON 里解析出一个非空字符串字段；解析失败/缺失/类型不对返回 null。 */
-function parseStringField(argumentsJson: string, field: string): string | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(argumentsJson);
-  } catch {
-    return null;
-  }
-  const value: unknown = (parsed as Record<string, unknown> | null)?.[field];
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-/** 从参数 JSON 里解析出一个布尔字段；解析失败/缺失/类型不对一律按 false 处理
- *  （reply_to_trigger 是可选参数，缺省即「不挂回复引用」）。 */
-function parseBooleanField(argumentsJson: string, field: string): boolean {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(argumentsJson);
-  } catch {
-    return false;
-  }
-  return (parsed as Record<string, unknown> | null)?.[field] === true;
-}
-
-/** 从参数 JSON 里解析出一个正整数；解析失败/缺失/类型不对返回 null。 */
-function parsePositiveIntegerField(argumentsJson: string, field: string): number | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(argumentsJson);
-  } catch {
-    return null;
-  }
-  const value: unknown = (parsed as Record<string, unknown> | null)?.[field];
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 }
 
 /** 会真正落地一个群内动作的工具（发消息/撤回/发贴纸/扣反应），共同受
@@ -295,6 +150,18 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     ...(sendStickerDefinition ? [sendStickerDefinition] : []),
   ];
   const names: Set<string> = new Set(definitions.map((d: ToolDefinition) => d.name));
+
+  // 拼给 SDK 的完整 tools 数组：内置 googleSearch（服务端工具，Google 侧
+  // 自动执行，模型自主决定要不要联网查证）与自定义函数声明混用同一次请求
+  // 需要 callGemini 开 toolConfig.includeServerSideToolInvocations，见其
+  // 注释；这里只负责组装，不关心那个开关。查询工具清单（TOOL_DEFINITIONS）
+  // 排在本轮行动工具定义之前，顺序与原先在 geminiReply.ts 里组装时一致。
+  const sdkDeclarations: FunctionDeclaration[] = [...TOOL_DEFINITIONS, ...definitions].map((definition: ToolDefinition) => ({
+    name: definition.name,
+    description: definition.description,
+    parametersJsonSchema: definition.parameters,
+  }));
+  const tools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: sdkDeclarations }];
 
   function recordSentMessage(text: string, messageId: number): void {
     messageCount++;
@@ -472,6 +339,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
 
   return {
     definitions,
+    tools,
     has: (name: string): boolean => names.has(name),
     execute: async (name: string, argumentsJson: string): Promise<string> => {
       // 动作总量硬顶在入口统一把关（成功才计数——被参数校验/分项限额拒绝

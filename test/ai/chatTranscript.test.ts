@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatBufferedMessageLine } from "../../src/ai/chatTranscript";
+import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatBufferedMessageLine } from "../../src/ai/utils/chatTranscript";
 import { CHAT_MEMORY_PRIORITY_INSTRUCTION, COMPACT_BATCH_SIZE } from "../../src/consts/aiChat";
 import type { BufferedMessage } from "../../src/types";
 

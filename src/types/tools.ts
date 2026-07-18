@@ -36,7 +36,7 @@ export interface TokyoWeatherResult {
 
 /** 响应里一次待执行的自定义函数调用（内置服务端工具如 googleSearch
  *  不在此列，它们已在 Google 侧执行完）：parts 里的 functionCall 对象本身
- *  （id/name/args），见 ai/gemini.ts 的 extractFunctionCalls。 */
+ *  （id/name/args），见 ai/utils/geminiResponse.ts 的 extractFunctionCalls。 */
 export interface ExtractedFunctionCall {
   id?: string;
   name: string;

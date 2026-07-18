@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { parseIndexField } from "../../src/ai/utils/toolArgs";
 
 /**
  * ai/stickers.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者在
@@ -24,7 +25,6 @@ const {
   buildSendStickerToolDefinition,
   buildViewStickerPackToolDefinition,
   createStickerRoundState,
-  parseIndexField,
   parseStickerIntent,
   sendStickerTool,
   viewStickerPackTool,

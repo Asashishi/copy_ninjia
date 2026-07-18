@@ -1,4 +1,5 @@
 import type { Sticker } from "@grammyjs/types";
+import type { Tool } from "@google/genai";
 import type { ToolDefinition } from "./tools";
 
 /** 聊天状态心跳的挡位（见 ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）：
@@ -174,8 +175,16 @@ export interface ReplyToolContext {
 /** 一轮 AI 回复的行动工具集（发言/消息反应/两层应景贴纸），见
  *  ai/tools/replyToolset.ts 的 createReplyToolset。 */
 export interface ReplyToolset {
-  /** 本轮可用的行动工具定义，拼进请求的 functionDeclarations。 */
+  /** 本轮可用的行动工具定义（不含 src/ai/tools/index.ts 的静态查询工具清单
+   *  与内置 googleSearch，仅供 has()/内部对照使用；拼给 SDK 的完整声明见
+   *  下面的 tools）。 */
   definitions: ToolDefinition[];
+  /** 拼给 Gemini SDK 请求的完整 tools 数组：内置 googleSearch（服务端工具，
+   *  模型自主决定要不要联网查证）+ functionDeclarations（src/ai/tools/index.ts
+   *  的静态查询工具清单 + 本轮行动工具定义）。见 ai/tools/replyToolset.ts
+   *  的 createReplyToolset；workers/aiChat/geminiReply.ts 的 callGemini
+   *  直接透传，不再自己组装。 */
+  tools: Tool[];
   /** 这个名字是否属于本工具集（区别于 src/ai/tools/index.ts 的静态查询工具）。 */
   has(name: string): boolean;
   /** 执行一次工具调用，返回喂回模型的 JSON 字符串。 */

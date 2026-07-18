@@ -1,17 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
-
-/**
- * gemini.ts 经 infra/config -> 环境变量、infra/logger -> infra/diskIO，
- * 后者在模块顶层就会 `new Worker(...)`：单测里绝不能让它真的跑起来（理由同
- * test/commands/luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
- */
-mock.module("../../src/infra/diskIO", () => ({
-  postDiskIO: mock((..._args: unknown[]): void => {}),
-  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
-  relayLogMessage: mock((..._args: unknown[]): void => {}),
-}));
-
-const { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit } = await import("../../src/ai/gemini");
+import { describe, expect, test } from "bun:test";
+import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit } from "../../../src/ai/utils/geminiResponse";
 
 /** 按 generateContent 响应形状裁剪的夹具（思考段/正文段/functionCall 混排）。 */
 const RESPONSE_FIXTURE = {
@@ -32,7 +20,7 @@ const RESPONSE_FIXTURE = {
   ],
 };
 
-describe("ai/gemini 响应解析", () => {
+describe("ai/utils/geminiResponse", () => {
   test("extractOutputText：按序拼接全部非思考 text 段（thought: true 的不算正文）", () => {
     expect(extractOutputText(RESPONSE_FIXTURE)).toBe("今天东京晴。热死了。");
   });

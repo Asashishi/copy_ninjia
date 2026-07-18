@@ -12,7 +12,8 @@
 
 import { logger } from "../infra/logger";
 import { bot, buildFileDownloadUrl } from "../infra/telegram";
-import { extractOutputText, requestGeminiResponse } from "./gemini";
+import { requestGeminiResponse } from "./gemini";
+import { extractOutputText } from "./utils/geminiResponse";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
 import { prepareVisionImage, type VisionImage } from "../libs/image";
 import { createBoundedTaskRunner } from "../libs/boundedTaskRunner";

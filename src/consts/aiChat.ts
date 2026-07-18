@@ -12,7 +12,7 @@ import type { MoodOption } from "../types";
  * 1/5、媒体 1/8 两套，现已合并）。掷骰子决定是否触发属于主线程的调度
  * 逻辑（照顾 /quiet 状态与随机回复冷却，见 src/auto/message.ts），Worker
  * 只执行已触发的回复；媒体评价由 Worker 在描述解析成功时执行（解析失败
- * 没内容可评，静默放弃），见 workers/aiChatWorker.ts 的 recordChatMedia。
+ * 没内容可评，静默放弃），见 workers/aiChat/mediaIngest.ts 的 recordChatMedia。
  */
 export const AI_REPLY_PROBABILITY: number = 1 / 7;
 
@@ -45,7 +45,7 @@ export const STICKER_SET_FAILURE_RETRY_MS: number = 60_000;
  * REPLY_MAX_TOKENS 给得比 SUMMARY_MAX_TOKENS 更宽松：回复流水线挂了
  * googleSearch，命中搜索的那些请求要在思考预算里多担一层「决定要不要
  * 搜、消化搜索结果、整理正文」的开销，比纯聊天更容易顶到旧上限，
- * 表现为回复写到一半戛然而止（见 ai/gemini.ts 的 isTruncatedByTokenLimit，
+ * 表现为回复写到一半戛然而止（见 ai/utils/geminiResponse.ts 的 isTruncatedByTokenLimit，
  * 命中时 callGemini 直接放弃这轮，不把断句发出去——但预算给够从源头上更该
  * 优先，被动放弃只是兜底）。
  */
@@ -59,7 +59,7 @@ export const SUMMARY_TEMPERATURE: number = 0.6;
  * 镜像压缩失败后的重试退避序列（毫秒）：首次失败等 15 秒再试，再失败等
  * 60 秒试最后一次，全败才放弃。实测这类失败多为瞬时（网络抖动/临时超载，
  * 重启后同一批就能压成功），SDK 内建重试只兜请求内的快速瞬断，跨请求的
- * 短暂故障靠这里兜。放弃后该段中期记忆缺失（见 workers/aiChatWorker.ts
+ * 短暂故障靠这里兜。放弃后该段中期记忆缺失（见 workers/aiChat/compaction.ts
  * 的 rotateCompaction）。重试期间本群轮换链顺延，积压由
  * COMPACTION_MAX_PENDING_PER_CHAT 兜底，洪峰下超额批次照旧丢弃。
  */
@@ -74,7 +74,7 @@ export const REPLY_TEMPERATURE: number = 1.2;
  * 滑出、由（多半早已就绪的）摘要接棒。因此正常情况下不存在「已滑出逐字
  * 区但摘要未就绪」的失忆窗口；例外只有两种：50 条消息的洪峰比一次压缩
  * 调用还快，或压缩失败（刻意不回灌，该段记忆缺失，见
- * workers/aiChatWorker.ts 的 rotateCompaction）。
+ * workers/aiChat/compaction.ts 的 rotateCompaction）。
  * （Bot API 无法拉历史，缓存只能边收边攒。）
  */
 export const COMPACT_BATCH_SIZE: number = 50;
@@ -89,7 +89,7 @@ export const MAX_SUMMARY_ROUNDS: number = 5;
 
 /**
  * 回复上下文最前面的记忆优先级声明。具体的冷摘要/较早逐字记录/最热逐字
- * 记录分块由 ai/chatTranscript.ts 动态拼装；这里仅保存不随消息变化的规则。
+ * 记录分块由 ai/utils/chatTranscript.ts 动态拼装；这里仅保存不随消息变化的规则。
  */
 export const CHAT_MEMORY_PRIORITY_INSTRUCTION: string =
   "以下是按重要程度分层的本群聊天记忆。热记忆是判断当前情况的重要标准；冷记忆也必须纳入理解，用来把握长期话题、人物关系和前因后果，只是判断当前状态时权重较低。" +
@@ -105,7 +105,7 @@ export const COMPACTION_MAX_PENDING_PER_CHAT: number = 4;
 
 /**
  * 各群 dirty 的 AI 记忆快照（滚动缓存 + 中期摘要）上报给主线程（进而落盘）
- * 的节奏，见 workers/aiChatWorker.ts 的 flushDirtyMemories。硬崩（kill -9/
+ * 的节奏，见 workers/aiChat/rollingMemory.ts 的 flushDirtyMemories。硬崩（kill -9/
  * OOM）时这段间隔即记忆丢失的上界。
  */
 export const AI_SNAPSHOT_INTERVAL_MS: number = 30_000;
@@ -124,7 +124,7 @@ export const SUMMARY_MAX_CHARS: number = 500;
 
 /**
  * 冷消息压缩用的中性总结系统提示词（不带人设、不带工具），见
- * workers/aiChatWorker.ts 的 summarizeBatch。字数上限直接引用
+ * workers/aiChat/compaction.ts 的 summarizeBatch。字数上限直接引用
  * SUMMARY_MAX_CHARS，避免文案里的数字和 truncateInline 真正生效的截断值
  * 各改各的漂移。
  */
@@ -136,14 +136,14 @@ export const SUMMARY_SYSTEM_PROMPT: string =
 /**
  * callGemini 系统提示词里，紧跟在现查的「当前实际时间」句子之后的静态指令
  * （时间句本身不能预先算好存成字面量：Worker 线程常驻，缓存的时间会很快
- * 过期，须现查，见 workers/aiChatWorker.ts 的 currentTimeSentence）。
+ * 过期，须现查，见 workers/aiChat/timeSentence.ts 的 currentTimeSentence）。
  */
 export const TIME_AWARENESS_INSTRUCTION: string =
   "聊天记录每行行首方括号里是那条消息的发送时间，回答时间/日期相关的问题、或判断某句话是多久之前说的，都以这些真实时间为准，不要编造。";
 
 /**
  * 鼓励模型主动用内置 googleSearch 工具核实信息，而不是瞎编或一味嘴硬拒答，
- * 见 workers/aiChatWorker.ts 的 callGemini（tools 数组里的 { googleSearch: {} }）。
+ * 见 workers/aiChat/geminiReply.ts 的 callGemini（tools 数组里的 { googleSearch: {} }）。
  * 搜索由 Google 服务器侧自动执行，结果直接体现在最终文本里，不需要额外处理。
  * persona.md「绝对不编造事实」一节配套调整过：真查不到/查了没意义才傲慢
  * 回绝，能查的先查证。
@@ -216,12 +216,12 @@ export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 export const QUEUED_TRIGGER_SNIPPET_MAX_CHARS: number = 200;
 
 /**
- * 触发被限频黑洞丢弃时会明确回一句「你们太快了」（见 workers/aiChatWorker.ts 的
+ * 触发被限频黑洞丢弃时会明确回一句「你们太快了」（见 workers/aiChat/replyPipeline.ts 的
  * notifyRateLimited），这是该提示自身的冷却：同一个群在这段时间内至多提示
  * 一次，防止提示本身在刷屏场景下变成新的刷屏放大器。
  */
 export const RATE_LIMIT_NOTICE_COOLDOWN_MS: number = 60_000;
-/** 限频黑洞的固定提示文案，见 workers/aiChatWorker.ts 的 notifyRateLimited。 */
+/** 限频黑洞的固定提示文案，见 workers/aiChat/replyPipeline.ts 的 notifyRateLimited。 */
 export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡";
 
 /**
@@ -244,7 +244,7 @@ export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 export const CHAT_ACTION_MAX_CONSECUTIVE_FAILURES: number = 3;
 
 // ---- 媒体读图（群里有人发图片/贴纸/GIF -> 占位入缓存 -> 异步解析替换占位）----
-// 流程见 workers/aiChatWorker.ts 的 recordChatMedia 与 ai/imageDescription.ts 的
+// 流程见 workers/aiChat/mediaIngest.ts 的 recordChatMedia 与 ai/imageDescription.ts 的
 // describeMedia；三种媒体共用下载机制，只有未命中 memory/stickers/ 常驻
 // 目录的媒体才共用临时缓存，各自的占位符、prompt、描述长度上限分开定义。
 // 贴纸/GIF 的素材来源不总是 jpg/png（webp 贴纸本体、GIF 的 mp4 走缩略图），
@@ -256,7 +256,7 @@ export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
 export const IMAGE_FALLBACK_PLACEHOLDER: string = "[图片：解析失败，请无视此消息]";
 /** 贴纸的占位文本；解析失败时不用通用失败说明，而是退回原有的元数据行
  *  （情绪 emoji + 所属贴纸包，见 ai/stickerSets.ts 的 describeStickerForContext）
- *  ——即便视觉解析失败也不损失现状已有的信息，见 workers/aiChatWorker.ts 的
+ *  ——即便视觉解析失败也不损失现状已有的信息，见 workers/aiChat/mediaIngest.ts 的
  *  recordChatMedia。 */
 export const STICKER_PENDING_PLACEHOLDER: string = "[贴纸：识别中]";
 /** GIF 的占位/失败文本，与图片同款措辞。 */
@@ -423,7 +423,7 @@ export const DELETE_OWN_MESSAGE_TOOL_INSTRUCTION: string =
   "请重新用 send_message 发正确内容。";
 
 /**
- * 本轮是否走「出错」分支的概率：在 workers/aiChatWorker.ts 的 startReplyRound
+ * 本轮是否走「出错」分支的概率：在 workers/aiChat/replyPipeline.ts 的 startReplyRound
  * 里，请求模型之前先掷一次骰子决定，结果只在出错分支时才会拼进
  * TYPO_REQUIRED_INSTRUCTION（不出错时这一轮的回复指令、send_message 工具
  * 描述里都不会出现任何跟错字有关的字样——两个分支的提示词严格分开，模型
@@ -465,11 +465,11 @@ export const TYPO_SUBSTITUTION_RULE: string =
 
 /**
  * 本轮抽中「出错」分支时，拼在回复指令末尾的强制要求（见
- * workers/aiChatWorker.ts 的 buildUserContent）——只有这个分支才会拼上
+ * workers/aiChat/promptContext.ts 的 buildUserContent）——只有这个分支才会拼上
  * 这段文字，不出错的轮次完全不提错字这回事。模型只需要给 typo_original_char
  * （从 text 里原样抄一个字）和 typo_replacement_char（要换成的错字）这两个
  * 孤立单字，执行侧自己在 text 里做替换构造出错字版本（见
- * ai/tools/replyToolset.ts 的 buildCharacterTypo）——不再要求模型重新打一遍
+ * ai/utils/typo.ts 的 buildCharacterTypo）——不再要求模型重新打一遍
  * 整句话去 diff：生产实录显示，对较长的句子，模型经常复现走样（27 字的
  * 句子给出的「错字版本」只有 2 个字），导致长度校验直接拒绝、整轮吃不到
  * 一次错字，这是概率拉满仍不稳定出错的根因。要不要纠正、怎么纠正、等多久
@@ -505,7 +505,7 @@ export const ADD_REACTION_TOOL_INSTRUCTION: string =
  * 各工具的具体用法不在这里复述——同一次请求里每个工具自己的 description
  * 已经写清（见上方各 *_TOOL_INSTRUCTION），这里只放跨工具的全局规则：
  * 动作预算、必须回应（不允许整轮沉默——说话/贴纸/扣反应都算回应，执行侧
- * 另有正文兜底，见 workers/aiChatWorker.ts 的 startReplyRound 尾部）、
+ * 另有正文兜底，见 workers/aiChat/replyPipeline.ts 的 startReplyRound 尾部）、
  * 结束方式。
  */
 export const REPLY_ACTION_INSTRUCTION: string =

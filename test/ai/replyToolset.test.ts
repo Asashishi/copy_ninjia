@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { cleanReply, isEmojiOnly } from "../../src/ai/utils/replyText";
+import { buildCharacterTypo } from "../../src/ai/utils/typo";
 
 /**
  * ai/replyTools.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者在
@@ -40,7 +42,7 @@ mock.module("../../src/ai/stickerConfig", () => ({
 }));
 
 const { SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
-const { buildCharacterTypo, cleanReply, createReplyToolset, isEmojiOnly } = await import("../../src/ai/tools/replyToolset");
+const { createReplyToolset } = await import("../../src/ai/tools/replyToolset");
 
 beforeEach(() => {
   nextMessageId = 100;

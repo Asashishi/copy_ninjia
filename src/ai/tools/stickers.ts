@@ -4,6 +4,7 @@ import { sleep } from "../../libs/sleep";
 import { describeStickerForContext, getStickerSet } from "../stickerSets";
 import { getCatalogEntry, getPackSummary } from "../stickerCatalog";
 import { stickerConfig } from "../stickerConfig";
+import { parseIndexField } from "../utils/toolArgs";
 import {
   MAX_STICKERS_PER_REPLY,
   SEND_STICKER_TOOL_INSTRUCTION,
@@ -114,22 +115,6 @@ export function buildSendStickerToolDefinition(menu: StickerPackCandidate[]): To
       required: ["pack_index", "sticker_index"],
     },
   };
-}
-
-/**
- * 从工具调用的参数 JSON 里解析出一个合法的 1-based 编号字段；JSON 解析
- * 失败、字段缺失/类型不对/不是整数，或超出 [1, max]，一律返回 null。
- */
-export function parseIndexField(argumentsJson: string, field: string, max: number): number | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(argumentsJson);
-  } catch {
-    return null;
-  }
-  const index: unknown = (parsed as Record<string, unknown> | null)?.[field];
-  if (typeof index !== "number" || !Number.isInteger(index) || index < 1 || index > max) return null;
-  return index;
 }
 
 /** 解析查看贴纸包时必填的表达意图：必须是去除首尾空白后的非空单行文本，
