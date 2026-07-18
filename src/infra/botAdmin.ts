@@ -49,7 +49,7 @@ function recordBotAdminStatus(chatId: number, isAdmin: boolean): void {
 /**
  * 处理 my_chat_member 更新（机器人自己在某个聊天里的成员状态变化）：
  * 被授予/撤销管理员、被移出群聊时刷新本群的 botIsAdmin 记录。这类更新
- * 必须显式列进 allowed_updates 才会送达（见 index.ts）。
+ * 必须显式列进 allowed_updates 才会送达（见 app/lifecycle.ts）。
  */
 export function handleMyChatMemberUpdate(ctx: Context): void {
   const update = ctx.myChatMember;

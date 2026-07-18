@@ -284,7 +284,7 @@ onDiskIORespawn(() => {
  * 重抽，不硬造对象；fortunePercent 原样带回、不重新滚动，但要落在该 tier
  * 当前的 fortunePercentRange 内才收——区间若也在这之间被改过，落盘的旧值
  * 可能已经不在新区间里，同样丢弃该条记日志，语义与 label 查不到时一致。
- * 必须在 runner 开始投喂 inline_query 之前调用（见 index.ts），否则会出现
+ * 必须在 runner 开始投喂 inline_query 之前调用（见 app/lifecycle.ts），否则会出现
  * 「今天已抽过却又抽出新结果」。
  */
 export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache | null): void {

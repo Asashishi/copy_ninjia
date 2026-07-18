@@ -95,7 +95,7 @@ onDiskIORespawn(() => {
 
 /**
  * 把机器人自己的账号身份注入 AI Worker。须在 bot.init() 之后、runner 开始
- * 投喂更新之前调用一次（见 index.ts）——FIFO 保证 init 消息先于一切
+ * 投喂更新之前调用一次（见 app/lifecycle.ts）——FIFO 保证 init 消息先于一切
  * record/trigger 到达。Worker 靠它在转录里认出自己并自录自己发的消息。
  * 顺带记一份 lastInitState：Worker 崩溃重启后要重放这条消息，新 Worker 才能
  * 重新认出自己。
@@ -113,7 +113,7 @@ export function initAiChat(botInfo: AiBotInfo): void {
 /**
  * 启动时把 diskIOWorker 落盘恢复出的 AI 记忆快照灌回来：先存一份镜像
  * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
- * initAiChat 之后、runner 开始投喂更新之前调用（见 index.ts），FIFO 保证
+ * initAiChat 之后、runner 开始投喂更新之前调用（见 app/lifecycle.ts），FIFO 保证
  * hydrate 消息先于一切 record/trigger 到达。
  */
 export function hydrateAiMemory(memories: Map<number, string>): void {
@@ -128,7 +128,7 @@ export function hydrateAiMemory(memories: Map<number, string>): void {
 /**
  * 启动时把 diskIOWorker 落盘恢复出的白名单贴纸目录灌回来：先存一份镜像
  * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
- * initAiChat 之后、runner 开始投喂更新之前调用（见 index.ts）——FIFO 保证
+ * initAiChat 之后、runner 开始投喂更新之前调用（见 app/lifecycle.ts）——FIFO 保证
  * 这条消息紧跟在 init 之后，让 ensureStickerCatalogs 的 diff 生成看到已
  * 恢复的条目、不重复调视觉模型。
  */

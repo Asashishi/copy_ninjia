@@ -92,9 +92,9 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
 }
 
 /**
- * 启动时把某个已知身份（当前正在被复读的目标，见 infra/storage.ts 的
+ * 启动时把某个已知身份（当前正在被复读的目标，见 infra/storage/stateStore.ts 的
  * GlobalCopyState）预热进缓存，让进程重启后立刻能用 /copy @username 重新
- * 指到 TA，不必等 TA 再发一条消息刷新缓存。见 index.ts 的 main()。
+ * 指到 TA，不必等 TA 再发一条消息刷新缓存。见 app/lifecycle.ts。
  */
 export function seedSenderCache(user: CachedUser): void {
   if (!user.username) return;

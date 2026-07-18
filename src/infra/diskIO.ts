@@ -211,11 +211,11 @@ export interface LoadedData {
 
 /**
  * 启动恢复：向 diskIOWorker 请求上一次成功落盘的全部状态，带超时兜底。
- * 必须在 runner 开始投喂更新之前调用并等待完成（见 index.ts）——尤其是
+ * 必须在 runner 开始投喂更新之前调用并等待完成（见 app/lifecycle.ts）——尤其是
  * 运势缓存与待验证记录都必须先恢复，避免重复抽签或遗漏超时处置。
  * 超时或 Worker 不存在时拒绝启动。持久化恢复不能降级为空状态继续：迟到的
  * load 回执不会再被主线程接管，后续新快照会覆盖磁盘上的旧记忆，造成静默
- * 数据丢失；交给 index.ts 的 main().catch 以非零码退出并由进程管理器重试。
+ * 数据丢失；交给 app/lifecycle.ts 的 run().catch 以非零码退出并由进程管理器重试。
  */
 export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<LoadedData> {
   const worker: Worker | null = diskIOWorker;

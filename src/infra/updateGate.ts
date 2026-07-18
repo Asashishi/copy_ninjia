@@ -4,7 +4,7 @@ import { SUPER_ADMIN_USER_ID } from "./config";
 
 /**
  * isInitEnabled 网关的判断逻辑，从 index.ts 的 bot.use 内联箭头函数里抽出来，纯
- * 是为了能被单测覆盖——行为与原来完全一致，见 index.ts 里调用处的完整注释
+ * 是为了能被单测覆盖——行为与原来完全一致，见 app/registerHandlers.ts 的调用处
  * （未初始化群的更新在这里被挡下，放行 my_chat_member / 私聊 / 指向自己的
  * via_bot 消息 / /init 指令本身）。
  */
@@ -37,7 +37,7 @@ export function isSendCommandText(text: string): boolean {
 
 /**
  * 私聊指令网关的判断逻辑，从 index.ts 的 bot.use 内联箭头函数里抽出来，纯
- * 是为了能被单测覆盖——行为与原来完全一致，见 index.ts 调用处的完整注释
+ * 是为了能被单测覆盖——行为与原来完全一致，见 app/registerHandlers.ts 的调用处
  * （私聊里的 / 开头文本一律拦下，两处例外：/send 指令本身；有 /send 中转
  * 会话在跑时放行全部消息，好让 handleIncomingMessage 的转发分支收得到）。
  * 会话是否在跑走全局的 getActiveProxySendTarget（不针对某个 chatId 查），
