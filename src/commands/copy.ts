@@ -26,9 +26,9 @@ export async function handleCopyCommand(
   const messageId: number | undefined = ctx.msgId;
   const globalCopy: GlobalCopyState = getGlobalCopyState();
 
-  // isJATranslationEnabled 缺省视为启用（未设置时才走"启用"这一侧），只有
-  // 显式 /ja_copy disable 过的群才会拒绝 /ja_copy，见 ChatState 该字段注释。
-  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled === false) {
+  // 日语翻译与其它功能开关一致：缺省关闭，只有超级管理员显式 enable 后
+  // 才允许启动 /ja_copy。
+  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled !== true) {
     await sendMessage(chatId, `本天才在这个群的日语翻译功能被关掉啦，杂鱼去找超级管理员 /ja_copy enable 一下吧♡`, messageId);
     return;
   }

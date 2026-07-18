@@ -108,7 +108,7 @@ Telegram update
 | `/unquiet` | 群成员 | 提前解除安静模式 |
 | `/kick` | `PRIVILEGED_USERS_ID` | 在所有机器人管理的群中永久封禁目标 |
 | `/ai_chat enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群 AI 闲聊 |
-| `/ja_copy enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群日语翻译能力 |
+| `/ja_copy enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群日语翻译能力（默认关闭） |
 | `/init enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群整个业务处理入口 |
 | `/send <群组id>` `/send finish` | `SUPER_ADMIN_USER_ID`（仅私聊） | 与机器人私聊时开启/结束一轮中转：期间这个私聊发的每条消息都会原样转发进目标群一次。开启前会先探一次目标是否可达，中转期间目标失联会自动终止并告知。中转状态随 `state.json` 持久化，重启不丢；不进 Telegram 命令菜单，群里或非本人触发均无任何反应 |
 

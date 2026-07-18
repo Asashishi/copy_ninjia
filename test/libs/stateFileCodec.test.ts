@@ -53,4 +53,14 @@ describe("decodeStateFile", () => {
       globalCopy: { copiedUser: null, copyChatId: -1001 },
     })).toThrow("without copiedUser");
   });
+
+  test("多个活动中转目标拒绝加载，不能静默选取第一个", () => {
+    expect(() => decodeStateFile({
+      chats: {
+        "-1001": { isUseProxySend: true },
+        "-1002": { isUseProxySend: true },
+      },
+      globalCopy: { copiedUser: null },
+    })).toThrow("multiple active proxy send targets: -1001, -1002");
+  });
 });

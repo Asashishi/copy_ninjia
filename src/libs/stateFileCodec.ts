@@ -159,12 +159,18 @@ export function decodeStateFile(value: unknown): StateFileSchema {
   knownKeys(raw, ["chats", "globalCopy"], "state");
   const rawChats = record(raw.chats, "state.chats");
   const chats: Record<string, ChatState> = {};
+  const activeProxyChatIds: number[] = [];
   for (const [chatIdText, value] of Object.entries(rawChats)) {
     const chatId: number = Number(chatIdText);
     if (!Number.isSafeInteger(chatId) || chatId === 0 || String(chatId) !== chatIdText) {
       throw new Error(`state.chats has invalid chat id key: ${chatIdText}`);
     }
-    chats[chatIdText] = chatState(value, `state.chats.${chatIdText}`);
+    const decodedChatState: ChatState = chatState(value, `state.chats.${chatIdText}`);
+    chats[chatIdText] = decodedChatState;
+    if (decodedChatState.isUseProxySend === true) activeProxyChatIds.push(chatId);
+  }
+  if (activeProxyChatIds.length > 1) {
+    throw new Error(`state.chats has multiple active proxy send targets: ${activeProxyChatIds.join(", ")}`);
   }
   return { chats, globalCopy: globalCopy(raw.globalCopy) };
 }

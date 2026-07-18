@@ -9,7 +9,7 @@ import { resolveSuperAdminToggleArg } from "./superAdminToggle";
  * 处理 /ja_copy 指令：不带参数就是普通的 /copy（复读并翻译成日语，见
  * handleCopyCommand 的 "ja" mode）；带 enable/disable 参数则按群开关
  * 这个翻译功能本身（见 ChatState.isJATranslationEnabled，
- * 缺省启用）。两种用法共用同一个命令名，靠有没有参数区分。enable/disable
+ * 缺省禁用）。两种用法共用同一个命令名，靠有没有参数区分。enable/disable
  * 仅 SUPER_ADMIN_USER_ID 本人可用，不走 PRIVILEGED_USERS_ID 白名单——与
  * /ai_chat /init 共用同一批权限。
  */

@@ -45,10 +45,10 @@ export interface ChatState {
    */
   isUseAIChat?: boolean;
   /**
-   * 本群 /ja_copy 的日语翻译功能是否启用。缺省视为启用，可通过
-   * /ja_copy disable 关闭（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
-   * commands/jaCopy.ts）。与 isUseAIChat 相反，判断时要用 !== false
-   * 而非 === true，未设置时才会落在"启用"这一侧。
+   * 本群 /ja_copy 的日语翻译功能是否启用。缺省视为禁用，需通过
+   * /ja_copy enable 显式开启（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
+   * commands/jaCopy.ts）。判断时必须使用 === true；false 与缺省等价，
+   * 保存时会被规范化删除。
    */
   isJATranslationEnabled?: boolean;
   /**

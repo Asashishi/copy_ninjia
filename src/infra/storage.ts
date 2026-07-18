@@ -7,6 +7,7 @@ import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../consts/path
 import { DEFAULT_CHAT_STATE } from "../consts/storage";
 import { createLatestValueRunner } from "../libs/latestValueRunner";
 import { atomicWriteText } from "../libs/atomicFile";
+import { normalizeChatState, normalizeChatStateEntry } from "../libs/chatState";
 import { decodeStateFile } from "../libs/stateFileCodec";
 
 function isProcessAlive(pid: number): boolean {
@@ -370,7 +371,8 @@ export async function loadState(): Promise<void> {
     }
 
     for (const [chatIdStr, chatState] of Object.entries(decoded.chats)) {
-      chatStates.set(Number(chatIdStr), chatState);
+      normalizeChatState(chatState);
+      if (Object.keys(chatState).length > 0) chatStates.set(Number(chatIdStr), chatState);
     }
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
@@ -380,13 +382,19 @@ export async function loadState(): Promise<void> {
   }
 }
 
-/** 把内存状态全量序列化并持久化到 state.json；没有任何有效字段的群条目不落盘，保持文件干净。 */
+/**
+ * 把内存状态全量规范化、序列化并持久化到 state.json。规范化会同步回收
+ * Map 中已经没有有效字段的条目，使内存与落盘内容始终采用同一表示。
+ */
 export async function saveState(): Promise<void> {
   const chats: Record<string, ChatState> = {};
   for (const [chatId, chatState] of chatStates) {
-    if (Object.values(chatState).some((value) => value !== undefined)) {
-      chats[String(chatId)] = chatState;
+    normalizeChatState(chatState);
+    if (Object.keys(chatState).length === 0) {
+      chatStates.delete(chatId);
+      continue;
     }
+    chats[String(chatId)] = chatState;
   }
   const serializable: StateFileSchema = { chats, globalCopy: globalCopyState };
   await persistStateJson(JSON.stringify(serializable, null, 2));
@@ -455,6 +463,18 @@ export function getOrCreateChatState(chatId: number): ChatState {
     chatStates.set(chatId, chatState);
   }
   return chatState;
+}
+
+/**
+ * 删除单个可选字段并立即规范化该群状态。若删除后再无有效字段，连 Map 条目
+ * 一起回收；调用方仍需在确有状态变化时安排 saveStateInBackground()。
+ */
+export function clearChatStateField(chatId: number, field: keyof ChatState): boolean {
+  const chatState: ChatState | undefined = chatStates.get(chatId);
+  if (!chatState || !(field in chatState)) return false;
+  delete chatState[field];
+  normalizeChatStateEntry(chatStates, chatId);
+  return true;
 }
 
 /**

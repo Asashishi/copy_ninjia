@@ -36,6 +36,13 @@ mock.module("../../src/infra/storage", () => ({
     }
     return undefined;
   },
+  clearChatStateField: (chatId: number, field: string): boolean => {
+    const state = chatStates.get(chatId);
+    if (!state || !(field in state)) return false;
+    delete state[field];
+    if (Object.keys(state).length === 0) chatStates.delete(chatId);
+    return true;
+  },
   saveStateInBackground: saveStateInBackgroundMock,
 }));
 
@@ -123,7 +130,7 @@ describe("handleSendCommand", () => {
 
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100123"));
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "finish"));
-    expect(chatStates.get(-100123)).toEqual({ isUseProxySend: false });
+    expect(chatStates.get(-100123)).toBeUndefined();
     expect(saveStateInBackgroundMock).toHaveBeenCalledTimes(2);
   });
 });

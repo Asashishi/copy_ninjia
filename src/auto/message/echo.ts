@@ -6,7 +6,7 @@ import { applyCopyModeTransform } from "../../copy/copyModes";
 
 /** ja 模式关闭时只取消翻译变换，复读本身仍退化为原样复制。 */
 export function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefined): CopyMode | undefined {
-  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled === false) return undefined;
+  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled !== true) return undefined;
   return mode;
 }
 

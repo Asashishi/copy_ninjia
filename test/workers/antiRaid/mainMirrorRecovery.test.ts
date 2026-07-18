@@ -21,6 +21,7 @@ mock.module("../../../src/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../../src/infra/storage", () => ({
+  clearChatStateField: () => true,
   getAllChatStates: (): Map<number, never> => new Map<number, never>(),
   getOrCreateChatState: (): Record<string, never> => ({}),
   saveStateInBackground(): void {},

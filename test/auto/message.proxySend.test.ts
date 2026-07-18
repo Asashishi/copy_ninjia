@@ -11,10 +11,12 @@ mock.module("../../src/infra/telegram", () => ({
 }));
 
 const targetChatId = -1001234567890;
+let chatState: { isJATranslationEnabled?: boolean } = {};
 mock.module("../../src/infra/storage", () => ({
+  clearChatStateField: () => true,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => targetChatId,
-  getChatState: () => ({}),
+  getChatState: () => chatState,
   getOrCreateChatState: () => ({}),
   saveStateInBackground: () => {},
 }));
@@ -24,6 +26,7 @@ mock.module("../../src/aiChat", () => ({ recordChatMessage: () => {}, recordChat
 mock.module("../../src/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
 
 const { handleIncomingMessage } = await import("../../src/auto/message");
+const { resolveEffectiveCopyMode } = await import("../../src/auto/message/echo");
 const { SUPER_ADMIN_USER_ID } = await import("../../src/infra/config");
 
 function privateMessageCtx(userId: number): any {
@@ -41,6 +44,7 @@ function privateMessageCtx(userId: number): any {
 
 describe("/send 私聊中转权限", () => {
   beforeEach(() => {
+    chatState = {};
     copyMessageMock.mockClear();
     sendMessageMock.mockClear();
   });
@@ -52,5 +56,14 @@ describe("/send 私聊中转权限", () => {
     await handleIncomingMessage(privateMessageCtx(SUPER_ADMIN_USER_ID));
     expect(copyMessageMock).toHaveBeenCalledTimes(1);
     expect(copyMessageMock).toHaveBeenCalledWith(targetChatId, SUPER_ADMIN_USER_ID, 7);
+  });
+
+  test("日语翻译缺省关闭，只有显式 true 才保留 ja 模式", () => {
+    expect(resolveEffectiveCopyMode(targetChatId, "ja")).toBeUndefined();
+    chatState.isJATranslationEnabled = false;
+    expect(resolveEffectiveCopyMode(targetChatId, "ja")).toBeUndefined();
+    chatState.isJATranslationEnabled = true;
+    expect(resolveEffectiveCopyMode(targetChatId, "ja")).toBe("ja");
+    expect(resolveEffectiveCopyMode(targetChatId, "nya")).toBe("nya");
   });
 });
