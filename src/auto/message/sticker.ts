@@ -27,7 +27,7 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
       repliedBotText: directMediaTrigger.repliedBotText,
-      imageGenerationRequested: false,
+      imageGenerationRequested: true,
     });
     return true;
   }
@@ -43,9 +43,11 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
     caption: "",
     fileId: visionSource.fileId,
     fileUniqueId: visionSource.fileUniqueId,
+    width: visionSource.width,
+    height: visionSource.height,
     messageId: message.message_id,
     commentOnResolve: claimedRandomTrigger,
-    imageGenerationRequested: false,
+    imageGenerationRequested: directMediaTrigger !== undefined,
     stickerFallbackText: fallbackText,
     directTrigger: directMediaTrigger,
   });

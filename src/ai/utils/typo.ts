@@ -1,7 +1,7 @@
-import { TYPO_QUICK_CORRECTION_PROBABILITY, TYPO_RECALL_CORRECTION_PROBABILITY } from "../../consts/aiChat/tools";
+import { TYPO_QUICK_CORRECTION_PROBABILITY } from "../../consts/aiChat/tools";
 import { isEmojiOnly } from "./replyText";
 
-export type TypoCorrectionMode = "quick" | "recall" | "ignore";
+export type TypoCorrectionMode = "quick" | "ignore";
 
 export interface CharacterTypo {
   readonly typoText: string;
@@ -11,13 +11,12 @@ export interface CharacterTypo {
 
 /**
  * 出错分支里修正方式由代码侧按概率决定，模型不参与（见 consts/aiChat.ts
- * 的 TYPO_QUICK_CORRECTION_PROBABILITY 注释）：落不进快速补字/撤回重发
- * 两个区间的剩余概率即「假装没发现」。
+ * 的 TYPO_QUICK_CORRECTION_PROBABILITY 注释）：90% 补发正确单字，
+ * 剩余 10% 即「没发现」；不再存在撤回后重发正确全文的分支。
  */
 export function pickTypoCorrectionMode(): TypoCorrectionMode {
   const roll: number = Math.random();
   if (roll < TYPO_QUICK_CORRECTION_PROBABILITY) return "quick";
-  if (roll < TYPO_QUICK_CORRECTION_PROBABILITY + TYPO_RECALL_CORRECTION_PROBABILITY) return "recall";
   return "ignore";
 }
 

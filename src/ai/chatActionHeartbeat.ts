@@ -1,6 +1,6 @@
 import { typingHeartbeats } from "../cache/aiChat/heartbeat";
 import { CHAT_ACTION_MAX_CONSECUTIVE_FAILURES, TYPING_ACTION_INTERVAL_MS } from "../consts/aiChat/tools";
-import { sendChooseStickerAction, sendTypingAction } from "../infra/telegram";
+import { sendChooseStickerAction, sendTypingAction, sendUploadPhotoAction } from "../infra/telegram";
 import { settleInflight, trackInflight } from "../libs/inflight";
 import type { ChatActionHeartbeatControl, ChatActionHeartbeatEntry, ChatActionPhase } from "../types/aiChat/chatAction";
 
@@ -11,6 +11,7 @@ export interface ChatActionHeartbeatDependencies {
   intervalMs: number;
   maxConsecutiveFailures: number;
   sendTyping(chatId: number): Promise<boolean>;
+  sendUploadPhoto(chatId: number): Promise<boolean>;
   sendChooseSticker(chatId: number): Promise<boolean>;
 }
 
@@ -19,8 +20,19 @@ const DEFAULT_DEPENDENCIES: ChatActionHeartbeatDependencies = {
   intervalMs: TYPING_ACTION_INTERVAL_MS,
   maxConsecutiveFailures: CHAT_ACTION_MAX_CONSECUTIVE_FAILURES,
   sendTyping: sendTypingAction,
+  sendUploadPhoto: sendUploadPhotoAction,
   sendChooseSticker: sendChooseStickerAction,
 };
+
+function sendChatActionPhase(
+  phase: Exclude<ChatActionPhase, "idle">,
+  chatId: number,
+  dependencies: ChatActionHeartbeatDependencies
+): Promise<boolean> {
+  if (phase === "typing") return dependencies.sendTyping(chatId);
+  if (phase === "upload_photo") return dependencies.sendUploadPhoto(chatId);
+  return dependencies.sendChooseSticker(chatId);
+}
 
 /**
  * 把一发状态请求排进本群的串行链。执行时才重读当下挡位：挡位已切走的排队
@@ -63,7 +75,7 @@ export function pumpChatAction({
     if (deduplicable && entry.lastSentPhase === phase && Date.now() - entry.lastSentAt < dependencies.intervalMs) return;
     let ok: boolean;
     try {
-      ok = await (phase === "typing" ? dependencies.sendTyping(chatId) : dependencies.sendChooseSticker(chatId));
+      ok = await sendChatActionPhase(phase, chatId, dependencies);
     } catch {
       ok = false;
     }
@@ -86,7 +98,7 @@ export function pumpChatAction({
 
 /**
  * 在整轮 AI 工具对话期间提供聊天状态的挡位心跳：从 idle 挡起步——生成/
- * 思考期间不亮任何状态，「正在输入/选择贴纸…」只在具体动作临发前由工具
+ * 思考期间不亮任何状态，「正在输入/发送图片/选择贴纸…」只在具体动作临发前由工具
  * 执行路径拉起有界窗口（见 ai/tools/replyToolset.ts 与 stickers.ts 的挡位
  * 切换）。指令虽已要求每轮必须回应（见 consts/aiChat.ts 的
  * REPLY_ACTION_INSTRUCTION），只扣反应的轮本就不发消息，模型也仍可能违背
@@ -94,8 +106,9 @@ export function pumpChatAction({
  * 群友看到的「假输入」遗留。切到非 idle
  * 挡会立即补发一次对应状态（同挡位在间隔内刚发过则节流跳过），此后由
  * 定时器按间隔重发维持（choose_sticker 挡要跨越模型挑贴纸的整个往返，
- * 长消息的 typing 窗口也可长达 7.5 秒，都可能超过单次状态约 5 秒的过期
- * 时间，全靠间隔小于过期时间的重发接力）。所有发送共用条目上的串行链
+ * upload_photo 挡跨越参考图下载与生图，长消息的 typing 窗口也可长达 7.5
+ * 秒，都可能超过单次状态约 5 秒的过期时间，全靠间隔小于过期时间的重发
+ * 接力）。所有发送共用条目上的串行链
  * （见 pumpChatAction），并发切挡不会乱序。发送消息或贴纸前，调用方先切
  * idle 再 settle，确保所有较早的状态请求都先于消息落定。
  *

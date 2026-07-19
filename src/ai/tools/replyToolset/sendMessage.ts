@@ -11,10 +11,9 @@ import {
   type RoundMessageState,
 } from "./messageState";
 import {
+  applyQuickTypoCorrection,
   decideMessageTypo,
   parseCleanMessageText,
-  scheduleQuickTypoCorrection,
-  scheduleRecallTypoCorrection,
 } from "./typoHandling";
 
 /** 构造本轮 send_message 执行器；总动作计数仍由外层编排器统一结算。 */
@@ -68,6 +67,11 @@ export function createSendMessageExecutor(
 
     recordSentMessage({ ctx, state, text: typo.textToSend, messageId: sentMessageId });
     state.sentCanonicalTexts.set(sentMessageId, text);
+    if (typo.shouldUseTypo && typo.correctionText) {
+      // 无论本轮落在 90% 补字还是 10% 没发现，纠正都只由
+      // 执行侧决定，不允许模型根据 functionResponse 自行补单字。
+      state.reservedCorrectionText = typo.correctionText;
+    }
     let actionsUsedByTool: number = 1;
 
     if (
@@ -76,30 +80,13 @@ export function createSendMessageExecutor(
       typo.correctionText &&
       !isEmojiOnly(typo.correctionText)
     ) {
-      actionsUsedByTool++;
-      scheduleQuickTypoCorrection(ctx, state, typo.correctionText);
+      const correctionSent: boolean = await applyQuickTypoCorrection(ctx, state, typo.correctionText);
+      if (correctionSent) actionsUsedByTool++;
       return JSON.stringify({
         success: true,
         message_id: sentMessageId,
         actions_used: actionsUsedByTool,
-        typo: { mode: "quick", correction: "scheduled" },
-      });
-    }
-
-    if (typo.shouldUseTypo && typo.mode === "recall") {
-      actionsUsedByTool += 2;
-      scheduleRecallTypoCorrection({
-        ctx,
-        state,
-        sentMessageId,
-        correctedText: text,
-        replyToMessageId,
-      });
-      return JSON.stringify({
-        success: true,
-        message_id: sentMessageId,
-        actions_used: actionsUsedByTool,
-        typo: { mode: "recall", correction: "scheduled" },
+        typo: { mode: "quick", correction: correctionSent ? "sent" : "failed" },
       });
     }
 
@@ -107,7 +94,6 @@ export function createSendMessageExecutor(
       success: true,
       message_id: sentMessageId,
       actions_used: actionsUsedByTool,
-      ...(typo.shouldUseTypo ? { typo: { mode: "ignore" } } : {}),
       ...(typo.rejectedReason ? { typo_rejected: typo.rejectedReason } : {}),
     });
   };

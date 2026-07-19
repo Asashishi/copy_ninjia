@@ -84,14 +84,18 @@ describe("auto/message/facts", () => {
       { file_id: "middle", file_unique_id: "middle-u", width: 500, height: 500, file_size: MEDIA_MAX_DOWNLOAD_BYTES },
       { file_id: "large", file_unique_id: "large-u", width: 1000, height: 1000, file_size: MEDIA_MAX_DOWNLOAD_BYTES + 1 },
     ] as PhotoSize[];
-    expect(pickPhotoFile(sizes)).toEqual({ fileId: "middle", fileUniqueId: "middle-u" });
+    expect(pickPhotoFile(sizes)).toEqual({ fileId: "middle", fileUniqueId: "middle-u", width: 500, height: 500 });
     expect(pickPhotoFile(sizes.map((size) => ({ ...size, file_size: MEDIA_MAX_DOWNLOAD_BYTES + 1 })))).toEqual({
       fileId: "small",
       fileUniqueId: "small-u",
+      width: 100,
+      height: 100,
     });
     expect(pickPhotoFile([...sizes, { file_id: "unknown", file_unique_id: "unknown-u", width: 1200, height: 1200 }])).toEqual({
       fileId: "unknown",
       fileUniqueId: "unknown-u",
+      width: 1200,
+      height: 1200,
     });
   });
 
@@ -104,7 +108,12 @@ describe("auto/message/facts", () => {
       duration: 2,
       thumbnail: { file_id: "thumb", file_unique_id: "thumb-uid", width: 320, height: 240 },
     } as Animation;
-    expect(pickAnimationVisionSource(animation)).toEqual({ fileId: "thumb", fileUniqueId: "animation-uid" });
+    expect(pickAnimationVisionSource(animation)).toEqual({
+      fileId: "thumb",
+      fileUniqueId: "animation-uid",
+      width: 320,
+      height: 240,
+    });
     expect(pickAnimationVisionSource({ ...animation, thumbnail: undefined })).toBeNull();
   });
 

@@ -124,7 +124,7 @@ describe("Telegram 媒体下载与 Gemini 描述适配层", () => {
   test("Telegram/下载异常不抛出，贴纸目录描述绕过临时缓存", async () => {
     getFile.mockRejectedValueOnce(new Error("getFile failed"));
     await expect(describeMedia("photo", "throw", "u7")).resolves.toBeNull();
-    expect(loggerError).toHaveBeenCalledWith("Error describing chat media (kind=photo):", expect.any(Error));
+    expect(loggerError).toHaveBeenCalledWith("Error loading chat media (kind=photo):", expect.any(Error));
 
     await expect(describeMediaForStickerCatalog("catalog-file")).resolves.toBe("一只挥手的猫");
     await expect(describeMediaForStickerCatalog("catalog-file")).resolves.toBe("一只挥手的猫");

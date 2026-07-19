@@ -21,6 +21,8 @@ export interface MediaCommentContext {
   kind: MediaKind;
   senderName: string;
   description: string;
+  /** 已清洗的媒体转录整行（视觉描述 + caption），供排队快照保留原请求。 */
+  triggerText?: string;
   /** 用户是拿这份媒体明确在跟机器人说话（回复机器人，或 caption 里 @ 机器人）：
    *  回复指令改为必回语气（不许已读不回），并发闸打满时按直接触发排队补跑
    *  而非丢弃。 */

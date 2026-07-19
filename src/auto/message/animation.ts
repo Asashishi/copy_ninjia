@@ -1,6 +1,5 @@
 import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../aiChat";
 import { pickAnimationVisionSource, resolveSpeaker } from "./facts";
-import { hasExplicitImageGenerationIntent } from "./imageGenerationIntent";
 import type { MessageTriggerContext } from "./triggerContext";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 
@@ -27,7 +26,7 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
       repliedBotText: directMediaTrigger.repliedBotText,
-      imageGenerationRequested: hasExplicitImageGenerationIntent(caption),
+      imageGenerationRequested: true,
     });
     return true;
   }
@@ -43,9 +42,11 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
     caption,
     fileId: visionSource.fileId,
     fileUniqueId: visionSource.fileUniqueId,
+    width: visionSource.width,
+    height: visionSource.height,
     messageId: message.message_id,
     commentOnResolve: claimedRandomTrigger,
-    imageGenerationRequested: directMediaTrigger !== undefined && hasExplicitImageGenerationIntent(caption),
+    imageGenerationRequested: directMediaTrigger !== undefined,
     directTrigger: directMediaTrigger,
   });
   return directMediaTrigger !== undefined || commentOnResolveCandidate;

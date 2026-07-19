@@ -35,6 +35,7 @@ export function pushReplyTrigger({
   replyToMessageId,
   repliedBotText,
   imageGenerationRequested,
+  imageGenerationReference,
   mediaTrigger,
 }: {
   chatId: number;
@@ -42,6 +43,7 @@ export function pushReplyTrigger({
   replyToMessageId: number;
   repliedBotText: string | undefined;
   imageGenerationRequested: boolean;
+  imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
   mediaTrigger?: MediaCommentContext;
 }): void {
   let queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
@@ -55,8 +57,12 @@ export function pushReplyTrigger({
       replyToMessageId,
       repliedBotText,
       imageGenerationRequested,
+      ...(imageGenerationReference ? { imageGenerationReference } : {}),
       senderName: mediaTrigger.senderName,
-      text: truncateInline(resolvedTagFor(mediaTrigger.kind, mediaTrigger.description), QUEUED_TRIGGER_SNIPPET_MAX_CHARS),
+      text: truncateInline(
+        mediaTrigger.triggerText ?? resolvedTagFor(mediaTrigger.kind, mediaTrigger.description),
+        QUEUED_TRIGGER_SNIPPET_MAX_CHARS
+      ),
     });
     return;
   }
@@ -67,6 +73,7 @@ export function pushReplyTrigger({
     replyToMessageId,
     repliedBotText,
     imageGenerationRequested,
+    ...(imageGenerationReference ? { imageGenerationReference } : {}),
     senderName: triggerEntry ? displayBufferedMessageName(triggerEntry) : "",
     text: triggerEntry ? truncateInline(triggerEntry.text, QUEUED_TRIGGER_SNIPPET_MAX_CHARS) : "",
   });

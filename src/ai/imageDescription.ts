@@ -11,13 +11,10 @@
  */
 
 import { logger } from "../infra/logger";
-import { bot, buildFileDownloadUrl } from "../infra/telegram";
 import { requestGeminiResponse } from "./gemini";
 import { extractOutputText } from "./utils/geminiResponse";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
-import { prepareVisionImage, type VisionImage } from "../libs/image";
 import { createBoundedTaskRunner } from "../libs/boundedTaskRunner";
-import { readBoundedResponseBytes, type BoundedResponseResult } from "../libs/boundedResponse";
 import { transientDescriptionCache } from "../cache/imageDescription";
 import {
   GEMINI_MEDIA_MODEL,
@@ -25,13 +22,12 @@ import {
   MEDIA_DESCRIPTION_MAX_TOKENS,
   MEDIA_DESCRIPTION_MAX_CONCURRENCY,
   MEDIA_DESCRIPTION_MAX_PENDING,
-  MEDIA_DOWNLOAD_TIMEOUT_MS,
-  MEDIA_MAX_DOWNLOAD_BYTES,
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
 } from "../consts/aiChat/media";
 import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../consts/aiChat/prompts/media";
 import type { MediaKind } from "../types/media";
 import type { GenerateContentResponse } from "@google/genai";
+import { downloadTelegramVisionImage } from "./telegramImage";
 
 const mediaDescriptionRunner = createBoundedTaskRunner(MEDIA_DESCRIPTION_MAX_CONCURRENCY, MEDIA_DESCRIPTION_MAX_PENDING);
 
@@ -105,38 +101,8 @@ export function describeMediaForStickerCatalog(fileId: string): Promise<string |
 
 async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<string | null> {
   try {
-    const file = await bot.api.getFile(fileId);
-    if (!file.file_path) {
-      logger.error(`getFile for chat media (kind=${kind}) ${fileId} returned no file_path`);
-      return null;
-    }
-    // 只记录 file_path，绝不能把完整下载 URL 打进日志——URL 里嵌着 bot token
-    // （见 infra/telegram/client.ts 的 buildFileDownloadUrl 注释）。
-    const res: Response = await fetch(buildFileDownloadUrl(file.file_path), {
-      signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS),
-    });
-    if (!res.ok) {
-      logger.error(`Failed to download chat media (kind=${kind}, ${res.status}): ${file.file_path}`);
-      return null;
-    }
-    const download: BoundedResponseResult = await readBoundedResponseBytes(res, MEDIA_MAX_DOWNLOAD_BYTES);
-    if (!download.ok) {
-      // 调用方已按大小预筛过素材来源，走到这里说明元数据缺失或不实。
-      logger.error(`Chat media (kind=${kind}) too large to describe (${download.observedBytes} bytes): ${file.file_path}`);
-      return null;
-    }
-
-    // 按魔数嗅探实际格式并按需转码（webp/gif -> png），不依赖 file_path 的
-    // 扩展名——贴纸本体/缩略图的扩展名不总是可靠，见 libs/image.ts。
-    const image: VisionImage | null = await prepareVisionImage(Buffer.from(download.bytes));
-    if (!image) {
-      logger.error(`Chat media (kind=${kind}) is an unsupported/unrecognized image format: ${file.file_path}`);
-      return null;
-    }
-    if (image.bytes.byteLength > MEDIA_MAX_DOWNLOAD_BYTES) {
-      logger.error(`Prepared chat media (kind=${kind}) too large to describe (${image.bytes.byteLength} bytes): ${file.file_path}`);
-      return null;
-    }
+    const image = await downloadTelegramVisionImage({ fileId, logLabel: `chat media (kind=${kind})` });
+    if (!image) return null;
     const data: GenerateContentResponse | null = await requestGeminiResponse(
       {
         model: GEMINI_MEDIA_MODEL,

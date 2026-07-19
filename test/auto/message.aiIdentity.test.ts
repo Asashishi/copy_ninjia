@@ -108,6 +108,8 @@ describe("AI 缓存发送者 username 传递", () => {
       caption: "photo caption",
       fileId: "photo-file",
       fileUniqueId: "photo-unique",
+      width: 640,
+      height: 480,
       messageId: 10,
       commentOnResolve: false,
       imageGenerationRequested: false,

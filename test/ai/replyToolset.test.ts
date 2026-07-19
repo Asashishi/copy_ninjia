@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanReply, isEmojiOnly } from "../../src/ai/utils/replyText";
-import { buildCharacterTypo } from "../../src/ai/utils/typo";
+import { buildCharacterTypo, pickTypoCorrectionMode } from "../../src/ai/utils/typo";
 
 /**
  * 用空的 diskIO 桥隔离日志路由，并把 Telegram 动作替换为可断言的假实现。
@@ -30,6 +30,7 @@ mock.module("../../src/infra/telegram", () => ({
   setMessageReaction: setMessageReactionMock,
   sendChooseStickerAction: mock(async (): Promise<boolean> => true),
   sendTypingAction: mock(async (): Promise<boolean> => true),
+  sendUploadPhotoAction: mock(async (): Promise<boolean> => true),
   sendSticker: sendStickerMock,
 }));
 
@@ -37,7 +38,7 @@ mock.module("../../src/libs/sleep", () => ({
   sleep: sleepMock,
 }));
 
-const { SEND_MESSAGE_TOOL, DELETE_OWN_MESSAGE_TOOL } = await import("../../src/consts/tools");
+const { SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
 const { createReplyToolset } = await import("../../src/ai/tools/replyToolset");
 
 beforeEach(() => {
@@ -71,6 +72,7 @@ test("工具集真实注册 googleSearch，并同时提供函数行动工具", a
   expect(toolset.tools).toHaveLength(2);
   expect(toolset.tools[0]?.googleSearch).toEqual({});
   expect(toolset.tools[1]?.functionDeclarations?.length).toBeGreaterThan(0);
+  expect(toolset.definitions.map((definition) => definition.name)).not.toContain("delete_own_message");
 });
 
 describe("isEmojiOnly", () => {
@@ -148,6 +150,22 @@ describe("buildCharacterTypo", () => {
   });
 });
 
+describe("pickTypoCorrectionMode", () => {
+  test("90% 补发正确单字，从 0.9 起的剩余 10% 当作没发现", () => {
+    const originalRandom = Math.random;
+    try {
+      Math.random = () => 0.899999;
+      expect(pickTypoCorrectionMode()).toBe("quick");
+      Math.random = () => 0.9;
+      expect(pickTypoCorrectionMode()).toBe("ignore");
+      Math.random = () => 0.999999;
+      expect(pickTypoCorrectionMode()).toBe("ignore");
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+});
+
 describe("send_message typo correction", () => {
   test("禁用发生在输入停顿期间时不再发出消息", async () => {
     let active: boolean = true;
@@ -211,14 +229,13 @@ describe("send_message typo correction", () => {
 
       expect(result.success).toBe(true);
       expect(result.typo.mode).toBe("quick");
-      expect(result.typo.correction).toBe("scheduled");
-      // 纠正是预约的后台动作，不阻塞工具返回；冲刷一轮事件循环后落地。
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(result.typo.correction).toBe("sent");
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
       expect(sendMessageMock).toHaveBeenNthCalledWith(1, { chatId: -100800, text: "天汽", replyToMessageId: undefined });
       expect(sendMessageMock).toHaveBeenNthCalledWith(2, { chatId: -100800, text: "气", replyToMessageId: undefined });
       expect(onMessageSent).toHaveBeenNthCalledWith(1, "天汽", 100);
       expect(onMessageSent).toHaveBeenNthCalledWith(2, "气", 101);
+      expect(deleteMessageMock).not.toHaveBeenCalled();
     } finally {
       Math.random = originalRandom;
     }
@@ -297,8 +314,6 @@ describe("send_message typo correction", () => {
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
-      // 冲刷预约的纠正落地，保证下面调用序号确定。
-      await new Promise((resolve) => setTimeout(resolve, 0));
       const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
         text: "还好吧",
         typo_original_char: "好",
@@ -308,6 +323,48 @@ describe("send_message typo correction", () => {
       expect(first.typo?.mode).toBe("quick");
       expect(second.typo).toBeUndefined();
       expect(sendMessageMock).toHaveBeenNthCalledWith(3, { chatId: -100800, text: "还好吧", replyToMessageId: undefined });
+    } finally {
+      Math.random = originalRandom;
+    }
+  });
+
+  test("快速补字等待期间 AI 被禁用时不再落地，且不额外占动作数", async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    let active: boolean = true;
+    sleepMock
+      .mockImplementationOnce(async (): Promise<void> => {})
+      .mockImplementationOnce(async (): Promise<void> => {
+        active = false;
+      });
+    try {
+      const toolset = await createReplyToolset({
+        chatId: -100800,
+        replyToMessageId: 10,
+        imageGenerationRequested: true,
+        bypassImageGenerationCooldown: false,
+        chatAction: {
+          current: () => "idle",
+          set: mock((..._args: unknown[]): void => {}),
+          settle: mock(async (): Promise<void> => {}),
+        },
+        stickerLock: { tryAcquire: () => true, release: () => {} },
+        roundHasTypo: true,
+        isActive: () => active,
+        onMessageSent: mock((..._args: unknown[]): void => {}),
+        onStickerSent: mock((..._args: unknown[]): void => {}),
+        onImageSent: mock((..._args: unknown[]): void => {}),
+      });
+
+      const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+        text: "天气",
+        typo_original_char: "气",
+        typo_replacement_char: "汽",
+      })));
+
+      expect(result.typo).toEqual({ mode: "quick", correction: "failed" });
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      expect(toolset.actionsUsed()).toBe(1);
     } finally {
       Math.random = originalRandom;
     }
@@ -357,8 +414,6 @@ describe("send_message 重复消息去重", () => {
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
-      // 冲刷预约的纠正落地，让下面的发送计数确定。
-      await new Promise((resolve) => setTimeout(resolve, 0));
       const second = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
         typo_original_char: "气",
@@ -385,22 +440,18 @@ describe("send_message 重复消息去重", () => {
         typo_original_char: "气",
         typo_replacement_char: "汽",
       }));
-      // 不冲刷、立刻重发纠正字：纠正可能仍在预约中，靠 pendingCorrectionText
-      // 的预占也要能拒绝（预约与落地两种时序结果一致）。
       const duplicateCorrection = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
 
       expect(duplicateCorrection.error).toContain("identical message");
-      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
     } finally {
       Math.random = originalRandom;
     }
   });
 
-  test("撤回重发预约后台执行：不阻塞本轮、判重条目连续，撤回后自动补发正确原文", async () => {
+  test("落入剩余 10% 时保留错字消息，不补字、不撤回、不重发全文", async () => {
     const originalRandom = Math.random;
-    // pickTypoCorrectionMode：0.57 <= 0.6 < 0.90 → recall（撤回重发）。
-    Math.random = () => 0.6;
+    Math.random = () => 0.95;
     try {
       const toolset = await createReplyToolset(buildContext(true));
 
@@ -409,31 +460,18 @@ describe("send_message 重复消息去重", () => {
         typo_original_char: "气",
         typo_replacement_char: "汽",
       })));
-      expect(first.typo?.mode).toBe("recall");
-      expect(first.typo?.correction).toBe("scheduled");
+      expect(first.typo).toBeUndefined();
 
-      // 无论预约的撤回重发此刻是否已生效，重发同一句话都要被拒绝：
-      // 旧判重条目保持到重发消息落地才移除，中间没有空窗。
       const dup = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "天气" })));
       expect(dup.error).toContain("identical message");
+      const correction = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "气" })));
+      expect(correction.error).toContain("identical message");
 
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(deleteMessageMock).toHaveBeenCalledWith(-100800, 100);
-      expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -100800, text: "天气", replyToMessageId: undefined });
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -100800, text: "天汽", replyToMessageId: undefined });
+      expect(deleteMessageMock).not.toHaveBeenCalled();
     } finally {
       Math.random = originalRandom;
     }
-  });
-
-  test("delete_own_message 撤回后重发同一句话放行（合法的撤回重发）", async () => {
-    const toolset = await createReplyToolset(buildContext(false));
-
-    const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
-    const deletion = JSON.parse(await toolset.execute(DELETE_OWN_MESSAGE_TOOL, JSON.stringify({ message_id: first.message_id })));
-    const resend = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
-
-    expect(deletion.success).toBe(true);
-    expect(resend.success).toBe(true);
-    expect(sendMessageMock).toHaveBeenCalledTimes(2);
   });
 });

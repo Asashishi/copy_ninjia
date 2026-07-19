@@ -1,6 +1,6 @@
 /** AI 回复轮对 Telegram chat action 心跳的控制协议。 */
 
-export type ChatActionPhase = "typing" | "choose_sticker" | "idle";
+export type ChatActionPhase = "typing" | "upload_photo" | "choose_sticker" | "idle";
 
 export interface ChatActionControl {
   current(): ChatActionPhase;

@@ -2,7 +2,6 @@ import type { FunctionDeclaration, Tool } from "@google/genai";
 import { MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
 import {
   ADD_REACTION_TOOL,
-  DELETE_OWN_MESSAGE_TOOL,
   GENERATE_IMAGE_TOOL,
   SEND_MESSAGE_TOOL,
   SEND_STICKER_TOOL,
@@ -20,11 +19,9 @@ import {
   sendStickerTool,
   viewStickerPackTool,
 } from "../stickers";
-import { createDeleteOwnMessageExecutor } from "./deleteMessage";
 import { buildGenerateImageToolDefinition, createGenerateImageExecutor } from "./imageGeneration";
 import {
   buildAddReactionToolDefinition,
-  buildDeleteOwnMessageToolDefinition,
   buildSendMessageToolDefinition,
 } from "./definitions";
 import { createRoundMessageState } from "./messageState";
@@ -33,7 +30,6 @@ import { createSendMessageExecutor } from "./sendMessage";
 
 const ACTION_TOOLS: Set<string> = new Set([
   SEND_MESSAGE_TOOL,
-  DELETE_OWN_MESSAGE_TOOL,
   ADD_REACTION_TOOL,
   SEND_STICKER_TOOL,
   GENERATE_IMAGE_TOOL,
@@ -51,7 +47,6 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   const addReactionDefinition: ToolDefinition | null = buildAddReactionToolDefinition();
   const definitions: ToolDefinition[] = [
     buildSendMessageToolDefinition(ctx.roundHasTypo),
-    buildDeleteOwnMessageToolDefinition(),
     buildGenerateImageToolDefinition(ctx),
     ...(addReactionDefinition ? [addReactionDefinition] : []),
     ...(viewDefinition ? [viewDefinition] : []),
@@ -68,7 +63,6 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   const tools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: sdkDeclarations }];
 
   const executeSendMessage = createSendMessageExecutor(ctx, messageState, () => actionsUsed);
-  const executeDeleteOwnMessage = createDeleteOwnMessageExecutor(ctx, messageState);
   const executeAddReaction = createAddReactionExecutor(ctx);
   const executeGenerateImage = createGenerateImageExecutor(ctx);
 
@@ -76,8 +70,6 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     switch (name) {
       case SEND_MESSAGE_TOOL:
         return executeSendMessage(argumentsJson);
-      case DELETE_OWN_MESSAGE_TOOL:
-        return executeDeleteOwnMessage(argumentsJson);
       case ADD_REACTION_TOOL:
         return executeAddReaction(argumentsJson);
       case GENERATE_IMAGE_TOOL:
@@ -110,7 +102,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       }
       if (ACTION_TOOLS.has(name) && actionsUsed >= MAX_ACTIONS_PER_REPLY) {
         return JSON.stringify({
-          error: `Action limit reached: at most ${MAX_ACTIONS_PER_REPLY} actions (messages + deletes + stickers + reactions + images) per reply`,
+          error: `Action limit reached: at most ${MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images) per reply`,
         });
       }
 

@@ -5,10 +5,21 @@ import { getCatalogEntry } from "../../ai/stickers/catalog";
 import { describeMedia } from "../../ai/imageDescription";
 import { dirtyMemoryChats } from "../../cache/aiChat/memory";
 import type { BufferedMessage } from "../../types/aiChat/memory";
-import type { AiRecordMediaMessage } from "../../types/aiChat/protocol";
+import type { AiRecordMediaMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
 import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";
 import { pushBufferedMessage } from "./rollingMemory";
 import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent } from "./replyPipeline";
+
+/** 直接拿当前图片/贴纸叫机器人时附上短期参考；是否实际编辑由模型决定。GIF 不隐式混入。 */
+function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGenerationReference | undefined {
+  if (!msg.imageGenerationRequested || (msg.kind !== "photo" && msg.kind !== "sticker")) return undefined;
+  return {
+    fileId: msg.fileId,
+    fileUniqueId: msg.fileUniqueId,
+    width: msg.width,
+    height: msg.height,
+  };
+}
 
 /**
  * 记录一条图片/贴纸/GIF 消息：先以占位文本立即入缓存（保住它在对话时序里
@@ -42,6 +53,7 @@ import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent 
 export function recordChatMedia(msg: AiRecordMediaMessage): void {
   const generation: number = currentReplyGeneration(msg.chatId);
   const sanitizedCaption: string = sanitizeInline(msg.caption);
+  const imageGenerationReference: ImageGenerationReference | undefined = imageGenerationReferenceFor(msg);
 
   if (msg.kind === "sticker") {
     const catalogEntry = getCatalogEntry(msg.fileUniqueId);
@@ -63,10 +75,12 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           repliedBotText: msg.directTrigger.repliedBotText,
           isRandomTrigger: false,
           imageGenerationRequested: msg.imageGenerationRequested,
+          ...(imageGenerationReference ? { imageGenerationReference } : {}),
           mediaComment: {
             kind: "sticker",
             senderName: displayBufferedMessageName(entry),
             description: catalogEntry.description,
+            triggerText: entry.text,
             directTriggerReason: msg.directTrigger.reason,
           },
         });
@@ -82,6 +96,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
             kind: "sticker",
             senderName: displayBufferedMessageName(entry),
             description: catalogEntry.description,
+            triggerText: entry.text,
           },
         });
       }
@@ -116,10 +131,12 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         repliedBotText: msg.directTrigger.repliedBotText,
         isRandomTrigger: false,
         imageGenerationRequested: msg.imageGenerationRequested,
+        ...(imageGenerationReference ? { imageGenerationReference } : {}),
         mediaComment: {
           kind: msg.kind,
           senderName: displayBufferedMessageName(entry),
           description: description ?? replyFallbackDescriptionFor(msg),
+          triggerText: entry.text,
           directTriggerReason: msg.directTrigger.reason,
         },
       });
@@ -135,6 +152,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           kind: msg.kind,
           senderName: displayBufferedMessageName(entry),
           description,
+          triggerText: entry.text,
         },
       });
     }

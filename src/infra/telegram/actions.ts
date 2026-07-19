@@ -43,6 +43,16 @@ export async function sendTypingAction(chatId: number, api: Api = bot.api): Prom
   }
 }
 
+export async function sendUploadPhotoAction(chatId: number, api: Api = bot.api): Promise<boolean> {
+  try {
+    await api.sendChatAction(chatId, "upload_photo");
+    return true;
+  } catch (error: unknown) {
+    logApiError("send upload photo action", error);
+    return false;
+  }
+}
+
 export async function sendChooseStickerAction(chatId: number, api: Api = bot.api): Promise<boolean> {
   try {
     await api.sendChatAction(chatId, "choose_sticker");

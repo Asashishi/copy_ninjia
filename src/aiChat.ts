@@ -200,6 +200,8 @@ export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void 
  *   GIF 是本体或缩略图，见 auto/message/facts.ts 的素材选择）。
  * @param fileUniqueId 描述去重缓存的键（贴纸/GIF 固定用媒体自身的
  *   file_unique_id，见 workers/aiChat/mediaIngest.ts 的 recordChatMedia 参数注释）。
+ * @param width 实际交给视觉管线的本体/缩略图宽度，用于参考图生图的默认比例。
+ * @param height 实际交给视觉管线的本体/缩略图高度。
  * @param messageId 这条消息的 message_id（评价回复挂引用用）。
  * @param commentOnResolve 是否在解析成功后评价这份媒体。
  * @param stickerFallbackText kind 为 "sticker" 时解析失败的兜底文本（现有
@@ -227,8 +229,10 @@ type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigg
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
- * @param imageGenerationRequested 当前触发消息是否直接回复/@机器人并明确要求
- *   生成图片；Worker 执行器仍会据此做硬门禁。
+ * @param imageGenerationRequested 当前触发是否具备图片工具调用资格：仅直接
+ *   回复/@机器人为 true；具体是否有生图/修图意图由模型判断。
+ * @param imageGenerationReference 当前图片/贴纸或被回复图片/贴纸的 Telegram 短期引用；
+ *   只供本轮生图按需下载，不进入滚动记忆或持久化。
  * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机插话
  *   （怎么接、挂不挂回复引用由模型判断，但必须回应——说话/贴纸/扣反应
  *   都算，不允许沉默；「插不插话」的闸门在触发概率那一层，见
@@ -240,6 +244,7 @@ export function generateAndSendReply({
   replyToMessageId,
   repliedBotText,
   imageGenerationRequested,
+  imageGenerationReference,
   isRandomTrigger = false,
 }: GenerateAndSendReplyParams): void {
   post({
@@ -250,6 +255,7 @@ export function generateAndSendReply({
     repliedBotText,
     isRandomTrigger,
     imageGenerationRequested,
+    ...(imageGenerationReference ? { imageGenerationReference } : {}),
   });
 }
 

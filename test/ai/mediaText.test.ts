@@ -18,6 +18,8 @@ const stickerMessage: AiRecordMediaMessage = {
   caption: "",
   fileId: "file",
   fileUniqueId: "unique",
+  width: 512,
+  height: 512,
   messageId: 10,
   commentOnResolve: false,
   imageGenerationRequested: false,

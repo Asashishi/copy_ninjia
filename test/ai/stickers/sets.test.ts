@@ -34,8 +34,8 @@ describe("ai/stickers/sets describeStickerForContext", () => {
 
 describe("ai/stickers/sets pickStickerVisionSource", () => {
   test("静态贴纸直接用本体 file_id，file_unique_id 是贴纸自身的", () => {
-    const sticker: any = { file_id: "body-id", file_unique_id: "sticker-uid", is_animated: false, is_video: false };
-    expect(pickStickerVisionSource(sticker)).toEqual({ fileId: "body-id", fileUniqueId: "sticker-uid" });
+    const sticker: any = { file_id: "body-id", file_unique_id: "sticker-uid", width: 512, height: 384, is_animated: false, is_video: false };
+    expect(pickStickerVisionSource(sticker)).toEqual({ fileId: "body-id", fileUniqueId: "sticker-uid", width: 512, height: 384 });
   });
 
   test("视频贴纸没有可解码本体，改用缩略图的 file_id，但 fileUniqueId 仍是贴纸自身的", () => {
@@ -44,9 +44,9 @@ describe("ai/stickers/sets pickStickerVisionSource", () => {
       file_unique_id: "sticker-uid",
       is_animated: false,
       is_video: true,
-      thumbnail: { file_id: "thumb-id", file_unique_id: "thumb-uid" },
+      thumbnail: { file_id: "thumb-id", file_unique_id: "thumb-uid", width: 320, height: 180 },
     };
-    expect(pickStickerVisionSource(sticker)).toEqual({ fileId: "thumb-id", fileUniqueId: "sticker-uid" });
+    expect(pickStickerVisionSource(sticker)).toEqual({ fileId: "thumb-id", fileUniqueId: "sticker-uid", width: 320, height: 180 });
   });
 
   test("动态（tgs）贴纸同理，走缩略图", () => {
@@ -55,9 +55,9 @@ describe("ai/stickers/sets pickStickerVisionSource", () => {
       file_unique_id: "sticker-uid",
       is_animated: true,
       is_video: false,
-      thumbnail: { file_id: "thumb-id", file_unique_id: "thumb-uid" },
+      thumbnail: { file_id: "thumb-id", file_unique_id: "thumb-uid", width: 256, height: 256 },
     };
-    expect(pickStickerVisionSource(sticker)).toEqual({ fileId: "thumb-id", fileUniqueId: "sticker-uid" });
+    expect(pickStickerVisionSource(sticker)).toEqual({ fileId: "thumb-id", fileUniqueId: "sticker-uid", width: 256, height: 256 });
   });
 
   test("动态/视频贴纸没有缩略图时放弃视觉解析，返回 null", () => {

@@ -11,7 +11,7 @@ Object.defineProperty(globalThis, "self", {
 const heartbeatStop = mock(async (): Promise<void> => {});
 const startChatActionHeartbeat = mock((_chatId: number) => ({
   current: () => "idle" as const,
-  set: (_phase: "idle" | "typing" | "choose_sticker"): void => {},
+  set: (_phase: "idle" | "typing" | "upload_photo" | "choose_sticker"): void => {},
   settle: async (): Promise<void> => {},
   stop: heartbeatStop,
 }));
@@ -154,6 +154,54 @@ describe("AI 单轮回复生命周期", () => {
 
     await runRound({ triggerSenderId: 7 });
     expect(capturedContext?.bypassImageGenerationCooldown).toBe(false);
+  });
+
+  test("参考图短期引用原样进入本轮工具上下文", async () => {
+    await runRound({
+      imageGenerationRequested: true,
+      imageGenerationReference: { fileId: "reference-file", fileUniqueId: "reference-unique", width: 1600, height: 900 },
+    });
+
+    expect(capturedContext?.imageGenerationReference).toEqual({
+      fileId: "reference-file",
+      fileUniqueId: "reference-unique",
+      width: 1600,
+      height: 900,
+    });
+  });
+
+  test("自动文字回复与随机媒体评价即使被误传资格，也会强制关闭生图", async () => {
+    const reference = { fileId: "must-drop", fileUniqueId: "must-drop-unique", width: 512, height: 512 };
+
+    await runRound({
+      isRandomTrigger: true,
+      imageGenerationRequested: true,
+      imageGenerationReference: reference,
+    });
+    expect(capturedContext?.imageGenerationRequested).toBe(false);
+    expect(capturedContext?.imageGenerationReference).toBeUndefined();
+
+    await runRound({
+      imageGenerationRequested: true,
+      imageGenerationReference: reference,
+      mediaComment: { kind: "photo", senderName: "Alice", description: "一张夜景" },
+    });
+    expect(capturedContext?.imageGenerationRequested).toBe(false);
+    expect(capturedContext?.imageGenerationReference).toBeUndefined();
+  });
+
+  test("用户直接叫机器人的媒体轮仍可把生图资格交给模型判断", async () => {
+    await runRound({
+      imageGenerationRequested: true,
+      mediaComment: {
+        kind: "sticker",
+        senderName: "Alice",
+        description: "一枚猫猫贴纸",
+        directTriggerReason: "mention",
+      },
+    });
+
+    expect(capturedContext?.imageGenerationRequested).toBe(true);
   });
 
   test("构造上下文失败仍释放贴纸锁与并发位，但不会启动心跳", async () => {

@@ -29,6 +29,7 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): void {
       replyToMessageId: trigger.replyToMessageId,
       repliedBotText: trigger.repliedBotText,
       imageGenerationRequested: trigger.imageGenerationRequested,
+      ...(trigger.imageGenerationReference ? { imageGenerationReference: trigger.imageGenerationReference } : {}),
       isRandomTrigger: false,
       queuedTrigger: trigger,
     },
@@ -51,6 +52,7 @@ export function generateAndSendReply(
     replyToMessageId,
     repliedBotText,
     imageGenerationRequested,
+    imageGenerationReference,
     isRandomTrigger,
     mediaComment,
   }: {
@@ -59,6 +61,7 @@ export function generateAndSendReply(
     replyToMessageId: number;
     repliedBotText?: string;
     imageGenerationRequested: boolean;
+    imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
     isRandomTrigger: boolean;
     mediaComment?: MediaCommentContext;
   }
@@ -83,6 +86,7 @@ export function generateAndSendReply(
           replyToMessageId,
           repliedBotText,
           imageGenerationRequested,
+          ...(imageGenerationReference ? { imageGenerationReference } : {}),
           isRandomTrigger,
           mediaComment,
           generation,
@@ -99,6 +103,7 @@ export function generateAndSendReply(
         replyToMessageId,
         repliedBotText,
         imageGenerationRequested,
+        imageGenerationReference,
         mediaTrigger: mediaComment,
       });
       break;

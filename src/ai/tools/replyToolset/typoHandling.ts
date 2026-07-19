@@ -1,12 +1,9 @@
-import { deleteMessage } from "../../../infra/telegram";
 import { logger } from "../../../infra/logger";
 import { sleep } from "../../../libs/sleep";
 import {
   TYPO_MIN_REMAINING_ACTIONS,
   TYPO_QUICK_CORRECTION_MAX_MS,
   TYPO_QUICK_CORRECTION_MIN_MS,
-  TYPO_RECALL_DELETE_MAX_MS,
-  TYPO_RECALL_DELETE_MIN_MS,
 } from "../../../consts/aiChat/tools";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
 import { cleanReply, isEmojiOnly } from "../../utils/replyText";
@@ -80,61 +77,25 @@ export function decideMessageTypo({
   };
 }
 
-export function scheduleQuickTypoCorrection(
+export async function applyQuickTypoCorrection(
   ctx: ReplyToolContext,
   state: RoundMessageState,
   correctionText: string
-): void {
-  state.pendingCorrectionText = correctionText;
-  void (async (): Promise<void> => {
+): Promise<boolean> {
+  try {
     await sleep(randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS));
     const correctionMessageId: number | undefined = await sendDirectMessage({
       ctx,
       state,
       text: correctionText,
-      allowInactive: true,
     });
-    if (correctionMessageId !== undefined) {
-      state.sentCanonicalTexts.set(correctionMessageId, correctionText);
-    }
-    if (state.pendingCorrectionText === correctionText) state.pendingCorrectionText = null;
-  })().catch((error: unknown) => {
-    logger.error("Error while applying scheduled quick typo correction:", error);
-  });
-}
-
-export function scheduleRecallTypoCorrection({
-  ctx,
-  state,
-  sentMessageId,
-  correctedText,
-  replyToMessageId,
-}: {
-  ctx: ReplyToolContext;
-  state: RoundMessageState;
-  sentMessageId: number;
-  correctedText: string;
-  replyToMessageId?: number;
-}): void {
-  void (async (): Promise<void> => {
-    await sleep(randomDelayMs(TYPO_RECALL_DELETE_MIN_MS, TYPO_RECALL_DELETE_MAX_MS));
-    const deleted: boolean = await deleteMessage(ctx.chatId, sentMessageId);
-    if (!deleted) return;
-    // 旧 canonical 条目保留到纠正消息发送完成，堵住删除与重发之间的判重空窗。
-    state.deletableMessageIds.delete(sentMessageId);
-    state.messageCount = Math.max(0, state.messageCount - 1);
-    const correctedMessageId: number | undefined = await sendDirectMessage({
-      ctx,
-      state,
-      text: correctedText,
-      replyToMessageId,
-      allowInactive: true,
-    });
-    if (correctedMessageId !== undefined) state.sentCanonicalTexts.set(correctedMessageId, correctedText);
-    state.sentCanonicalTexts.delete(sentMessageId);
-  })().catch((error: unknown) => {
-    logger.error("Error while applying scheduled typo recall correction:", error);
-  });
+    if (correctionMessageId === undefined) return false;
+    state.sentCanonicalTexts.set(correctionMessageId, correctionText);
+    return true;
+  } catch (error: unknown) {
+    logger.error("Error while applying quick typo correction:", error);
+    return false;
+  }
 }
 
 /** send_message 入参的正文解析仍属于错字前的共同清洗步骤。 */

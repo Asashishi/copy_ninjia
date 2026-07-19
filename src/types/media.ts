@@ -3,3 +3,14 @@
  *  ai/imageDescription.ts 的 describeMedia、workers/aiChatWorker.ts 的
  *  recordChatMedia），只是占位符/提示词/描述长度各不相同。 */
 export type MediaKind = "photo" | "sticker" | "animation";
+
+/** 已选定的 Telegram 视觉素材：fileId 用于下载，宽高用于保留构图比例。 */
+export interface TelegramVisionSource {
+  /** 可下载的本体或缩略图 file_id。 */
+  fileId: string;
+  /** 原媒体的稳定去重键；使用缩略图时也保留原媒体键。 */
+  fileUniqueId: string;
+  /** fileId 对应素材的像素尺寸。 */
+  width: number;
+  height: number;
+}

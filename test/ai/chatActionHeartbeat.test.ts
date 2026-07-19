@@ -38,6 +38,7 @@ function dependencies(
     intervalMs: 60_000,
     maxConsecutiveFailures,
     sendTyping,
+    sendUploadPhoto: async () => true,
     sendChooseSticker,
   };
 }
@@ -46,18 +47,26 @@ describe("chatActionHeartbeat", () => {
   test("心跳从 idle 起步不发状态；切换挡位时补发对应状态，idle 后 settle 等齐在途请求", async () => {
     const choose = deferred<boolean>();
     const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
+    const sendUploadPhoto = mock(async (_chatId: number): Promise<boolean> => true);
     const sendChooseSticker = mock((_chatId: number): Promise<boolean> => choose.promise);
     const deps = dependencies(sendTyping, sendChooseSticker);
+    deps.sendUploadPhoto = sendUploadPhoto;
     const heartbeat = startChatActionHeartbeat(123, deps);
 
     expect(heartbeat.current()).toBe("idle");
     expect(sendTyping).not.toHaveBeenCalled();
+    expect(sendUploadPhoto).not.toHaveBeenCalled();
     expect(sendChooseSticker).not.toHaveBeenCalled();
 
     heartbeat.set("typing");
     expect(heartbeat.current()).toBe("typing");
     await flush();
     expect(sendTyping).toHaveBeenCalledWith(123);
+
+    heartbeat.set("upload_photo");
+    expect(heartbeat.current()).toBe("upload_photo");
+    await flush();
+    expect(sendUploadPhoto).toHaveBeenCalledWith(123);
 
     heartbeat.set("choose_sticker");
     expect(heartbeat.current()).toBe("choose_sticker");

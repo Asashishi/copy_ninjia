@@ -37,6 +37,7 @@ describe("AI 回复触发队列", () => {
       replyToMessageId: 88,
       repliedBotText: "机器人原话",
       imageGenerationRequested: true,
+      imageGenerationReference: { fileId: "reply-photo", fileUniqueId: "reply-photo-unique", width: 1280, height: 960 },
     });
 
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({
@@ -44,6 +45,7 @@ describe("AI 回复触发队列", () => {
       triggerSenderId: 2,
       repliedBotText: "机器人原话",
       imageGenerationRequested: true,
+      imageGenerationReference: { fileId: "reply-photo", fileUniqueId: "reply-photo-unique", width: 1280, height: 960 },
       senderName: "Alice Chen",
       text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS),
     });
@@ -60,6 +62,7 @@ describe("AI 回复触发队列", () => {
         kind: "animation",
         senderName: "Bob",
         description: "挥手",
+        triggerText: "[GIF：挥手] @bot 把它画成像素风",
         directTriggerReason: "mention",
       },
     });
@@ -70,7 +73,7 @@ describe("AI 回复触发队列", () => {
       repliedBotText: undefined,
       imageGenerationRequested: true,
       senderName: "Bob",
-      text: "[GIF：挥手]",
+      text: "[GIF：挥手] @bot 把它画成像素风",
     });
   });
 

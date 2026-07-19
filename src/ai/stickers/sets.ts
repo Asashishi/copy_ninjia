@@ -3,6 +3,7 @@ import { logger } from "../../infra/logger";
 import { bot } from "../../infra/telegram";
 import { failedPacks, inflightStickerSets, stickerSetCache } from "../../cache/stickers/sets";
 import { STICKER_SET_FAILURE_RETRY_MS } from "../../consts/aiChat/stickers";
+import type { TelegramVisionSource } from "../../types/media";
 
 interface StickerSetApi {
   getStickerSet(packName: string): Promise<StickerSet>;
@@ -64,10 +65,15 @@ export async function getStickerSet(packName: string, api: StickerSetApi = bot.a
  * 都记在同一个缓存/目录键下，见 ai/imageDescription.ts 的 describeMedia、
  * ai/stickers/catalog.ts 的目录条目键。
  */
-export function pickStickerVisionSource(sticker: Sticker): { fileId: string; fileUniqueId: string } | null {
-  const downloadFileId: string | undefined = !sticker.is_animated && !sticker.is_video ? sticker.file_id : sticker.thumbnail?.file_id;
-  if (!downloadFileId) return null;
-  return { fileId: downloadFileId, fileUniqueId: sticker.file_unique_id };
+export function pickStickerVisionSource(sticker: Sticker): TelegramVisionSource | null {
+  const source = !sticker.is_animated && !sticker.is_video ? sticker : sticker.thumbnail;
+  if (!source) return null;
+  return {
+    fileId: source.file_id,
+    fileUniqueId: sticker.file_unique_id,
+    width: source.width,
+    height: source.height,
+  };
 }
 
 /**

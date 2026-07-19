@@ -93,6 +93,7 @@ describe("AI Chat Worker lifecycle", () => {
         replyToMessageId: 10,
         isRandomTrigger: false,
         imageGenerationRequested: true,
+        imageGenerationReference: { fileId: "reference-file", fileUniqueId: "reference-unique", width: 1600, height: 900 },
       },
       { type: "hydrate", memories: new Map<number, string>() },
       { type: "hydrateStickerCatalog", catalogs: new Map<string, string>() },
@@ -114,6 +115,7 @@ describe("AI Chat Worker lifecycle", () => {
       replyToMessageId: 10,
       isRandomTrigger: false,
       imageGenerationRequested: true,
+      imageGenerationReference: { fileId: "reference-file", fileUniqueId: "reference-unique", width: 1600, height: 900 },
     });
     expect(hydrateMemories).toHaveBeenCalledTimes(1);
     expect(hydrateStickerCatalogs).toHaveBeenCalledTimes(1);

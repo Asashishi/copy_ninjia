@@ -50,9 +50,14 @@ const realStickerSets = await import("../../src/ai/stickers/sets");
 mock.module("../../src/ai/stickers/sets", () => ({
   ...realStickerSets,
   pickStickerVisionSource: (sticker: any) => {
-    const downloadFileId: string | undefined = !sticker.is_animated && !sticker.is_video ? sticker.file_id : sticker.thumbnail?.file_id;
-    if (!downloadFileId) return null;
-    return { fileId: downloadFileId, fileUniqueId: sticker.file_unique_id };
+    const source: any = !sticker.is_animated && !sticker.is_video ? sticker : sticker.thumbnail;
+    if (!source?.file_id) return null;
+    return {
+      fileId: source.file_id,
+      fileUniqueId: sticker.file_unique_id,
+      width: source.width,
+      height: source.height,
+    };
   },
 }));
 
@@ -108,9 +113,11 @@ describe("媒体直接叫机器人", () => {
       caption: "",
       fileId: "st-file",
       fileUniqueId: "st-uid",
+      width: 512,
+      height: 512,
       messageId: 11,
       commentOnResolve: false,
-      imageGenerationRequested: false,
+      imageGenerationRequested: true,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTrigger: { reason: "reply", repliedBotText: "机器人之前说的话" },
     });
@@ -147,7 +154,7 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 12,
       repliedBotText: "机器人之前说的话",
-      imageGenerationRequested: false,
+      imageGenerationRequested: true,
     });
   });
 
@@ -199,6 +206,8 @@ describe("媒体直接叫机器人", () => {
       caption: "",
       fileId: "st-random",
       fileUniqueId: "st-random-uid",
+      width: 512,
+      height: 512,
       messageId: 23,
       commentOnResolve: true,
       imageGenerationRequested: false,
@@ -232,6 +241,8 @@ describe("媒体直接叫机器人", () => {
       caption: "",
       fileId: "st-file",
       fileUniqueId: "st-uid",
+      width: 512,
+      height: 512,
       messageId: 13,
       commentOnResolve: false,
       imageGenerationRequested: false,
@@ -266,12 +277,96 @@ describe("媒体直接叫机器人", () => {
       caption: "帮我生成一张图 @test_bot",
       fileId: "photo-file",
       fileUniqueId: "photo-uid",
+      width: 640,
+      height: 480,
       messageId: 14,
       commentOnResolve: false,
       imageGenerationRequested: true,
       directTrigger: { reason: "mention" },
     });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
+  test("文字回复一张图片并 @ 机器人要求上色：把被回复图片作为短期参考图", async () => {
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 140,
+        date: 1,
+        chat,
+        from: alice,
+        text: "@test_bot 给这张图上色",
+        entities: [{ type: "mention", offset: 0, length: 9 }],
+        reply_to_message: {
+          message_id: 139,
+          date: 1,
+          chat,
+          from: { id: 456, is_bot: false, first_name: "Bob" },
+          photo: [
+            { file_id: "reply-photo-small", file_unique_id: "reply-photo-small-uid", width: 320, height: 240 },
+            { file_id: "reply-photo-large", file_unique_id: "reply-photo-large-uid", width: 1280, height: 960 },
+          ],
+        },
+      },
+    } as any);
+
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      triggerSenderId: 123,
+      replyToMessageId: 140,
+      repliedBotText: undefined,
+      imageGenerationRequested: true,
+      imageGenerationReference: {
+        fileId: "reply-photo-large",
+        fileUniqueId: "reply-photo-large-uid",
+        width: 1280,
+        height: 960,
+      },
+    });
+  });
+
+  test("文字回复静态贴纸并 @ 机器人要求修图：把贴纸本体作为短期参考图", async () => {
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 142,
+        date: 1,
+        chat,
+        from: alice,
+        text: "@test_bot 把这枚贴纸改成蓝色",
+        entities: [{ type: "mention", offset: 0, length: 9 }],
+        reply_to_message: {
+          message_id: 141,
+          date: 1,
+          chat,
+          from: { id: 456, is_bot: false, first_name: "Bob" },
+          sticker: {
+            file_id: "reply-sticker-body",
+            file_unique_id: "reply-sticker-uid",
+            type: "regular",
+            width: 512,
+            height: 512,
+            is_animated: false,
+            is_video: false,
+            emoji: "🐱",
+          },
+        },
+      },
+    } as any);
+
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      triggerSenderId: 123,
+      replyToMessageId: 142,
+      repliedBotText: undefined,
+      imageGenerationRequested: true,
+      imageGenerationReference: {
+        fileId: "reply-sticker-body",
+        fileUniqueId: "reply-sticker-uid",
+        width: 512,
+        height: 512,
+      },
+    });
   });
 
   test("GIF 回复机器人：只把缩略图交给视觉管线，缓存键仍使用 GIF 唯一 id", async () => {
@@ -305,9 +400,11 @@ describe("媒体直接叫机器人", () => {
       caption: "这个动图",
       fileId: "gif-thumb",
       fileUniqueId: "gif-uid",
+      width: 320,
+      height: 180,
       messageId: 15,
       commentOnResolve: false,
-      imageGenerationRequested: false,
+      imageGenerationRequested: true,
       directTrigger: { reason: "reply", repliedBotText: "机器人之前说的话" },
     });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -347,7 +444,7 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 16,
       repliedBotText: "机器人之前说的话",
-      imageGenerationRequested: false,
+      imageGenerationRequested: true,
     });
   });
 
@@ -519,6 +616,8 @@ describe("媒体直接叫机器人", () => {
       caption: "补一张图",
       fileId: "self-photo",
       fileUniqueId: "self-photo-uid",
+      width: 640,
+      height: 480,
       messageId: 35,
       commentOnResolve: false,
       imageGenerationRequested: false,
@@ -565,8 +664,8 @@ describe("媒体直接叫机器人", () => {
           date: 1,
           chat,
           from: alice,
-          text: "帮我画一只猫 @test_bot",
-          entities: [{ type: "mention", offset: 7, length: 9 }],
+          text: "找你 @test_bot",
+          entities: [{ type: "mention", offset: 3, length: 9 }],
         },
       } as any);
     } finally {

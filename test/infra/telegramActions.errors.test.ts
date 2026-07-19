@@ -62,6 +62,7 @@ describe("Telegram 动作适配层失败归一化", () => {
 
     expect(await actions.sendMessage({ chatId: -1001, text: "hello", api, keyboard: keyboard as never })).toBe(11);
     expect(await actions.sendTypingAction(-1001, api)).toBe(true);
+    expect(await actions.sendUploadPhotoAction(-1001, api)).toBe(true);
     expect(await actions.sendChooseStickerAction(-1001, api)).toBe(true);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
     expect(await actions.sendSticker(-1001, "file", api)).toBe(12);
@@ -82,6 +83,7 @@ describe("Telegram 动作适配层失败归一化", () => {
 
     expect(await actions.sendMessage({ chatId: -1001, text: "hello", api })).toBeUndefined();
     expect(await actions.sendTypingAction(-1001, api)).toBe(false);
+    expect(await actions.sendUploadPhotoAction(-1001, api)).toBe(false);
     expect(await actions.sendChooseStickerAction(-1001, api)).toBe(false);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", api })).resolves.toBeUndefined();
     expect(await actions.sendSticker(-1001, "file", api)).toBeUndefined();
@@ -95,7 +97,7 @@ describe("Telegram 动作适配层失败归一化", () => {
 
     copyMessageApi.mockRejectedValueOnce(new Error("copy failed"));
     expect(await actions.copyMessage(-1001, -2002, 8)).toBeUndefined();
-    expect(logApiError).toHaveBeenCalledTimes(13);
+    expect(logApiError).toHaveBeenCalledTimes(14);
     expect(markSelfSent).not.toHaveBeenCalled();
   });
 

@@ -70,6 +70,34 @@ describe("Gemini 图片生成适配器", () => {
     expect(Buffer.from(image?.bytes ?? []).equals(expectedBytes)).toBe(true);
   });
 
+  test("有参考图时把文字与图片字节作为同一个多模态输入发送", async () => {
+    const expectedBytes: Buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9]);
+    const referenceBytes: Buffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2]);
+    requestGeminiResponse.mockResolvedValueOnce({
+      candidates: [{
+        finishReason: "STOP",
+        content: { parts: [{ inlineData: { mimeType: "image/png", data: expectedBytes.toString("base64") } }] },
+      }],
+    });
+
+    await generateChatImage("把原图改成水彩", "4:3", { bytes: referenceBytes, mime: "image/jpeg" });
+
+    expect(requestGeminiResponse).toHaveBeenCalledWith({
+      model: GEMINI_IMAGE_GENERATION_MODEL,
+      contents: [{
+        role: "user",
+        parts: [
+          { text: "把原图改成水彩" },
+          { inlineData: { mimeType: "image/jpeg", data: referenceBytes.toString("base64") } },
+        ],
+      }],
+      config: {
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: { aspectRatio: "4:3", imageSize: "1K" },
+      },
+    }, "Gemini image generation API");
+  });
+
   test("没有可用 PNG/JPEG 时返回 null", async () => {
     requestGeminiResponse.mockResolvedValueOnce({
       candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: { mimeType: "image/webp", data: "AAAA" } }] } }],

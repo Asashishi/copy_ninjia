@@ -1,4 +1,4 @@
-import { FinishReason, type GenerateContentResponse, type Part } from "@google/genai";
+import { FinishReason, type GenerateContentParameters, type GenerateContentResponse, type Part } from "@google/genai";
 import {
   DEFAULT_IMAGE_GENERATION_ASPECT_RATIO,
   GEMINI_IMAGE_GENERATION_MODEL,
@@ -7,6 +7,7 @@ import {
   type ImageGenerationAspectRatio,
 } from "../consts/aiChat/imageGeneration";
 import { requestGeminiResponse } from "./gemini";
+import type { VisionImage } from "../libs/image";
 
 export interface GeneratedChatImage {
   bytes: Uint8Array;
@@ -99,12 +100,22 @@ function extractGeneratedImage(data: GenerateContentResponse): GeneratedChatImag
 /** 调用独立图片模型生成一张 1K 图片；文本段与思考中间图一律忽略。 */
 export async function generateChatImage(
   prompt: string,
-  aspectRatio: ImageGenerationAspectRatio
+  aspectRatio: ImageGenerationAspectRatio,
+  referenceImage?: VisionImage
 ): Promise<GeneratedChatImage | null> {
+  const contents: GenerateContentParameters["contents"] = referenceImage
+    ? [{
+      role: "user",
+      parts: [
+        { text: prompt },
+        { inlineData: { mimeType: referenceImage.mime, data: referenceImage.bytes.toString("base64") } },
+      ],
+    }]
+    : prompt;
   const response: GenerateContentResponse | null = await requestGeminiResponse(
     {
       model: GEMINI_IMAGE_GENERATION_MODEL,
-      contents: prompt,
+      contents,
       config: {
         responseModalities: ["TEXT", "IMAGE"],
         imageConfig: { aspectRatio, imageSize: "1K" },

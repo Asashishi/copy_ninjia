@@ -1,6 +1,5 @@
 import { recordChatMedia } from "../../aiChat";
 import { pickPhotoFile, resolveSpeaker } from "./facts";
-import { hasExplicitImageGenerationIntent } from "./imageGenerationIntent";
 import type { MessageTriggerContext } from "./triggerContext";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 
@@ -23,9 +22,12 @@ export function handlePhotoMessage(context: MessageTriggerContext): boolean {
     caption,
     fileId: photoFile.fileId,
     fileUniqueId: photoFile.fileUniqueId,
+    width: photoFile.width,
+    height: photoFile.height,
     messageId: message.message_id,
     commentOnResolve: claimedRandomTrigger,
-    imageGenerationRequested: directMediaTrigger !== undefined && hasExplicitImageGenerationIntent(caption),
+    // 直接回复/@ 只开放工具资格，具体是否要编辑图片交给模型判断。
+    imageGenerationRequested: directMediaTrigger !== undefined,
     directTrigger: directMediaTrigger,
   });
   return directMediaTrigger !== undefined || commentOnResolveCandidate;

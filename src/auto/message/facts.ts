@@ -2,6 +2,7 @@ import type { Animation, Message, MessageEntity, PhotoSize } from "@grammyjs/typ
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
 import { visibleSenderChat } from "../../users/visibleSender";
+import type { TelegramVisionSource } from "../../types/media";
 
 /** 一条消息在 AI 转录中使用的发送者身份。 */
 export interface MessageSpeaker {
@@ -104,21 +105,27 @@ export function isReplyToSelf(message: Message): boolean {
  * 从 Telegram 按分辨率升序返回的 photo 档位中挑最大且未声明超限的一档；
  * 全部超限时仍退回最小档，由下载侧的真实字节上限做最终防护。
  */
-export function pickPhotoFile(sizes: PhotoSize[]): { fileId: string; fileUniqueId: string } {
+export function pickPhotoFile(sizes: PhotoSize[]): TelegramVisionSource {
   for (let i = sizes.length - 1; i >= 0; i--) {
     const size: PhotoSize = sizes[i]!;
     if (!size.file_size || size.file_size <= MEDIA_MAX_DOWNLOAD_BYTES) {
-      return { fileId: size.file_id, fileUniqueId: size.file_unique_id };
+      return { fileId: size.file_id, fileUniqueId: size.file_unique_id, width: size.width, height: size.height };
     }
   }
-  return { fileId: sizes[0]!.file_id, fileUniqueId: sizes[0]!.file_unique_id };
+  const smallest: PhotoSize = sizes[0]!;
+  return { fileId: smallest.file_id, fileUniqueId: smallest.file_unique_id, width: smallest.width, height: smallest.height };
 }
 
 /** GIF 只分析 Telegram 缩略图，缓存键仍使用 animation 自身的唯一 id。 */
-export function pickAnimationVisionSource(animation: Animation): { fileId: string; fileUniqueId: string } | null {
-  const thumbnailFileId: string | undefined = animation.thumbnail?.file_id;
-  if (!thumbnailFileId) return null;
-  return { fileId: thumbnailFileId, fileUniqueId: animation.file_unique_id };
+export function pickAnimationVisionSource(animation: Animation): TelegramVisionSource | null {
+  const thumbnail = animation.thumbnail;
+  if (!thumbnail) return null;
+  return {
+    fileId: thumbnail.file_id,
+    fileUniqueId: animation.file_unique_id,
+    width: thumbnail.width,
+    height: thumbnail.height,
+  };
 }
 
 /** 随机复读前过滤没有可复制载荷的服务消息。 */

@@ -1,12 +1,10 @@
 import {
   ADD_REACTION_TOOL_INSTRUCTION,
-  DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
   SEND_MESSAGE_TOOL_INSTRUCTION,
   TYPO_SUBSTITUTION_RULE,
 } from "../../../consts/aiChat/prompts/tools";
 import {
   ADD_REACTION_TOOL,
-  DELETE_OWN_MESSAGE_TOOL,
   SEND_MESSAGE_TOOL,
 } from "../../../consts/tools";
 import type { ToolDefinition } from "../../../types/tools";
@@ -39,23 +37,6 @@ export function buildSendMessageToolDefinition(roundHasTypo: boolean): ToolDefin
     name: SEND_MESSAGE_TOOL,
     description: SEND_MESSAGE_TOOL_INSTRUCTION,
     parameters: { type: "object", properties, required },
-  };
-}
-
-export function buildDeleteOwnMessageToolDefinition(): ToolDefinition {
-  return {
-    name: DELETE_OWN_MESSAGE_TOOL,
-    description: DELETE_OWN_MESSAGE_TOOL_INSTRUCTION,
-    parameters: {
-      type: "object",
-      properties: {
-        message_id: {
-          type: "integer",
-          description: "要撤回的消息 ID，必须来自本轮 send_message 成功结果返回的 message_id。",
-        },
-      },
-      required: ["message_id"],
-    },
   };
 }
 

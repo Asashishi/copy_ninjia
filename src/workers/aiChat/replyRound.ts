@@ -10,7 +10,7 @@ import { SUPER_ADMIN_USER_ID } from "../../infra/config";
 import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { admitRound } from "../../states/replyAdmission";
-import type { AiBotInfo, AiSentMessage } from "../../types/aiChat/protocol";
+import type { AiBotInfo, AiSentMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
 import type { QueuedReplyTrigger, ReplyToolContext, ReplyToolset } from "../../types/aiChat/replies";
 import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { callGemini } from "./geminiReply";
@@ -26,6 +26,7 @@ export interface ReplyRoundRequest {
   replyToMessageId: number;
   repliedBotText?: string;
   imageGenerationRequested: boolean;
+  imageGenerationReference?: ImageGenerationReference;
   isRandomTrigger: boolean;
   mediaComment?: MediaCommentContext;
   queuedTrigger?: QueuedReplyTrigger;
@@ -44,12 +45,20 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     replyToMessageId,
     repliedBotText,
     imageGenerationRequested,
+    imageGenerationReference,
     isRandomTrigger,
     mediaComment,
     queuedTrigger,
   } = request;
   const generation: number = request.generation ?? currentReplyGeneration(chatId);
   if (!isReplyGenerationCurrent(chatId, generation)) return;
+
+  // 自动插话与随机媒体评价永远不得生图。这里在工具上下文
+  // 边界再做一次强制收紧，不依赖各入口永远正确传 false；用户直接
+  // 回复/@ 的文字轮，以及带 directTriggerReason 的媒体轮才可开放资格。
+  const imageGenerationAllowed: boolean = imageGenerationRequested &&
+    !isRandomTrigger &&
+    (mediaComment === undefined || mediaComment.directTriggerReason !== undefined);
 
   const selfInfo: AiBotInfo | null = botInfoState.current;
   if (!selfInfo) return;
@@ -92,7 +101,8 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         const ctx: ReplyToolContext = {
           chatId,
           replyToMessageId,
-          imageGenerationRequested,
+          imageGenerationRequested: imageGenerationAllowed,
+          ...(imageGenerationAllowed && imageGenerationReference ? { imageGenerationReference } : {}),
           bypassImageGenerationCooldown: triggerSenderId === SUPER_ADMIN_USER_ID,
           chatAction: heartbeat,
           stickerLock,

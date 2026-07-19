@@ -16,10 +16,6 @@ export const VIEW_STICKER_PACK_TOOL: string = "view_sticker_pack";
  *  消息的唯一途径——发言本身也是工具，模型自己决定发几条、什么顺序。 */
 export const SEND_MESSAGE_TOOL: string = "send_message";
 
-/** delete_own_message 工具名常量（见 ai/tools/replyToolset.ts）：只允许撤回
- *  本轮 send_message 已返回 message_id 的机器人自己发出的文字消息。 */
-export const DELETE_OWN_MESSAGE_TOOL: string = "delete_own_message";
-
 /** add_reaction 工具名常量（见 ai/tools/replyToolset.ts）：给触发消息扣一个标准
  *  emoji 反应，同样由模型自主决定用不用。 */
 export const ADD_REACTION_TOOL: string = "add_reaction";
