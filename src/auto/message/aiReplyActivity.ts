@@ -59,8 +59,8 @@ function probabilityFromCount(recentMessageCount: number): number {
 
 /**
  * 记录当前群消息并返回这一条应使用的 AI 随机搭话概率。当前消息
- * 先进滑动窗口，所以冷群第一条是 1/149；窗口内达到 135 条后封底
- * 1/15。队列 push/shift 和 Map 热度刷新都是 O(1)，到期修剪为均摊 O(1)。
+ * 先进滑动窗口，所以冷群第一条是 1/174；窗口内达到 165 条后封底
+ * 1/10。队列 push/shift 和 Map 热度刷新都是 O(1)，到期修剪为均摊 O(1)。
  */
 export function observeGroupMessageForAiReply(chatId: number, now: number = Date.now()): number {
   let entry: AiReplyActivityEntry | undefined = aiReplyActivityByChat.get(chatId);

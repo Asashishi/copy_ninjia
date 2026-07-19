@@ -333,10 +333,10 @@ describe("媒体直接叫机器人", () => {
     expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 32, undefined, true);
   });
 
-  test("冷群首条使用 1/149 动态概率，不再沿用旧固定概率", async () => {
+  test("冷群首条使用 1/174 动态概率，不再沿用旧固定概率", async () => {
     quietUntil = 0;
     const originalRandom = Math.random;
-    // 0.01 低于旧固定 1/10，但高于冷群首条 1/149；也恰好不小于 1/100 随机复读。
+    // 0.01 低于旧固定 1/10，但高于冷群首条 1/174；也恰好不小于 1/100 随机复读。
     Math.random = () => 0.01;
     try {
       await handleIncomingMessage({

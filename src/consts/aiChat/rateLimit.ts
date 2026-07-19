@@ -1,9 +1,9 @@
 /** AI 主动搭话按群统计最近一小时活跃度；不落盘，重启后从冷群起步。 */
 export const AI_REPLY_ACTIVITY_WINDOW_MS: number = 60 * 60 * 1000;
-/** 概率为 1 / base；每观察到一条群消息，base 从 150 减 1。 */
-export const AI_REPLY_PROBABILITY_BASE_INITIAL: number = 150;
-/** 最热时封底到 1/15。 */
-export const AI_REPLY_PROBABILITY_BASE_MIN: number = 15;
+/** 概率为 1 / base；每观察到一条群消息，base 从 175 减 1。 */
+export const AI_REPLY_PROBABILITY_BASE_INITIAL: number = 175;
+/** 最热时封底到 1/10。 */
+export const AI_REPLY_PROBABILITY_BASE_MIN: number = 10;
 /** 达到封底后更旧的时刻已不影响概率。 */
 export const AI_REPLY_ACTIVITY_MAX_TIMESTAMPS: number =
   AI_REPLY_PROBABILITY_BASE_INITIAL - AI_REPLY_PROBABILITY_BASE_MIN;

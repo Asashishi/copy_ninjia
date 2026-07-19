@@ -15,27 +15,27 @@ beforeEach(clearAiReplyActivity);
 afterAll(clearAiReplyActivity);
 
 describe("按群 AI 随机搭话活跃度", () => {
-  test("当前消息先计数：冷群从 1/149 起步，同群逐条升温，不同群互不影响", () => {
-    expect(observeGroupMessageForAiReply(-1001, 1_000)).toBe(1 / 149);
-    expect(observeGroupMessageForAiReply(-1001, 2_000)).toBe(1 / 148);
-    expect(observeGroupMessageForAiReply(-2002, 2_000)).toBe(1 / 149);
+  test("当前消息先计数：冷群从 1/174 起步，同群逐条升温，不同群互不影响", () => {
+    expect(observeGroupMessageForAiReply(-1001, 1_000)).toBe(1 / 174);
+    expect(observeGroupMessageForAiReply(-1001, 2_000)).toBe(1 / 173);
+    expect(observeGroupMessageForAiReply(-2002, 2_000)).toBe(1 / 174);
   });
 
   test("一小时滑动边界精确淘汰旧消息", () => {
-    expect(observeGroupMessageForAiReply(-1001, 0)).toBe(1 / 149);
-    expect(observeGroupMessageForAiReply(-1001, AI_REPLY_ACTIVITY_WINDOW_MS - 1)).toBe(1 / 148);
+    expect(observeGroupMessageForAiReply(-1001, 0)).toBe(1 / 174);
+    expect(observeGroupMessageForAiReply(-1001, AI_REPLY_ACTIVITY_WINDOW_MS - 1)).toBe(1 / 173);
 
     clearAiReplyActivity();
-    expect(observeGroupMessageForAiReply(-1001, 0)).toBe(1 / 149);
-    expect(observeGroupMessageForAiReply(-1001, AI_REPLY_ACTIVITY_WINDOW_MS)).toBe(1 / 149);
+    expect(observeGroupMessageForAiReply(-1001, 0)).toBe(1 / 174);
+    expect(observeGroupMessageForAiReply(-1001, AI_REPLY_ACTIVITY_WINDOW_MS)).toBe(1 / 174);
   });
 
-  test("达到 135 条后概率封底为 1/15，时间戳队列也不再增长", () => {
+  test("达到 165 条后概率封底为 1/10，时间戳队列也不再增长", () => {
     let probability: number = 0;
     for (let i = 0; i < AI_REPLY_ACTIVITY_MAX_TIMESTAMPS + 20; i++) {
       probability = observeGroupMessageForAiReply(-1001, i);
     }
-    expect(probability).toBe(1 / 15);
+    expect(probability).toBe(1 / 10);
     expect(aiReplyActivityByChat.get(-1001)?.timestamps.size).toBe(AI_REPLY_ACTIVITY_MAX_TIMESTAMPS);
   });
 
