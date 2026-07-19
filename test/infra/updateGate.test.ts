@@ -1,10 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 
 /**
- * storage.ts -> logger.ts -> diskIO.ts，而 diskIO.ts 在模块顶层就会
- * `new Worker(...)` 指向项目真实的 memory/logs 目录：单测里绝不能让它真的
- * 跑起来（见 commands/luckChallenge.test.ts 同样的顾虑）。mock.module 必须
- * 在任何真实 import 之前调用，所以下面用动态 import 拿被 mock 过的版本。
+ * 用空的 diskIO 桥隔离 storage/logger 的进程级状态。mock.module 必须在真实
+ * import 前调用，所以下面用动态 import 拿被替换依赖后的版本。
  */
 mock.module("../../src/infra/diskIO", () => ({
   postDiskIO: mock((..._args: unknown[]): void => {}),

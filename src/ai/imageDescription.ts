@@ -1,7 +1,7 @@
 /**
  * 群聊媒体（图片/贴纸/GIF）的异步描述：下载 Telegram 文件，按需转码成
  * 视觉接口通吃的 jpg/png（见 libs/image.ts），喂给 Gemini 的视觉输入
- * （inlineData），产出一行简短中文描述，供 workers/aiChatWorker.ts 的 recordChatMedia 把
+ * （inlineData），产出一行简短中文描述，供 workers/aiChat/mediaIngest.ts 的 recordChatMedia 把
  * 对话缓存里的占位文本替换掉，也供 ai/stickers/catalog.ts 生成机器人自己
  * 贴纸目录的描述条目。跑在 AI Worker 线程里（调用方就是它）。
  *

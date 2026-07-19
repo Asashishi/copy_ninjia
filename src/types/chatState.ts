@@ -26,7 +26,7 @@ export type CopyMode = "reverse" | "nya" | "ja";
 
 /**
  * 单个群聊各自独立的状态。机器人可能同时在多个群里运行，每个群各自维护一份，
- * 互不影响——见 storage.ts 中 Map<chatId, ChatState> 的用法。复读目标不在
+ * 互不影响——见 infra/storage/stateStore.ts 中 Map<chatId, ChatState> 的用法。复读目标不在
  * 这里——复读消耗的是机器人头像/人格这一份全局资源，同一时刻全局只有一个
  * 复读目标，见 GlobalCopyState。
  */
@@ -100,7 +100,8 @@ export interface GlobalCopyState {
 /**
  * state.json 的整体结构：chats 以 chatId（字符串）为键分别保存各群聊各自的
  * 状态（静默期、私密模式镜像）；globalCopy 是所有群共用的那一份复读状态与
- * 冷却时钟。整个文件由内存中唯一一份状态全量序列化而来（见 storage.ts），
+ * 冷却时钟。整个文件由内存中唯一一份状态全量序列化而来（见
+ * infra/storage/stateStore.ts），
  * 不拆分文件、不做局部 patch——这点状态量全量写一份 JSON 毫无性能压力。
  */
 export interface StateFileSchema {

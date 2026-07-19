@@ -22,8 +22,8 @@ import type { LockdownRecord } from "./types/chatState";
  * 同一次入群「先 join、后 message/callback」的先后顺序在 Worker 侧
  * 保持不变。
  *
- * 主线程唯一持有的私密模式状态是各群 ChatState.lockdown 字段（storage.ts
- * 持有、随 state.json 持久化），业务判定一概不读它，只用于两条恢复路径的
+ * 主线程唯一持有的私密模式状态是各群 ChatState.lockdown 字段
+ * （infra/storage/stateStore.ts 持有、随 state.json 持久化），业务判定一概不读它，只用于两条恢复路径的
  * adopt 重放：Worker 崩溃重启后交给新 Worker，以及整个进程重启后由
  * initAntiRaid 交回——权限限制已实际落在群上，不重放就永远无人解锁。
  *

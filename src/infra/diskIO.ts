@@ -6,13 +6,13 @@
  *
  * Worker 拥有权、崩溃自愈的重启节流、flush/load 握手全部收在这里；
  * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
- * aiChat.ts、commands/luckChallenge.ts 与 antiRaid.ts 经 postDiskIO 投递。
+ * aiChat.ts、commands/luckChallenge/cache.ts 与 antiRaid.ts 经 postDiskIO 投递。
  *
- * 本模块自身的错误一律 console.error（journal 兜底）——它就是落盘终点，
+ * 本模块自身的错误一律 console.error（由进程控制台日志兜底）——它就是落盘终点，
  * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是
  * 本模块不复用 libs/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）
- * 的原因，需要一份独立的、只用 console 的自愈逻辑，与 logger.ts 原有的
- * createDiskWorker 一脉相承。
+ * 的原因，需要一份独立的、只用 console 的自愈逻辑。
+ * @see ../../docs/architecture.md
  */
 
 import { pendingFlushes, pendingLoad, pendingLuckSecrets } from "../cache/diskIO";
@@ -274,7 +274,7 @@ let nextFlushId: number = 1;
 
 /**
  * 要求 diskIOWorker 立即把所有 dirty 数据（含待验证增量）全部落盘，
- * 并等待完成。用于进程退出前的最后一刷（替代原 flushLogs）。带超时兜底：
+ * 并等待完成。用于进程退出前的最后一刷。带超时兜底：
  * Worker 异常时停机流程最多被拖住 timeoutMs，不会挂死。resolve 只代表
  * "等待已结束"，不保证数据真落了盘——Worker 若恰好在这次 flush 期间崩溃，
  * onerror 会提前结算这次等待并单独记一条"flush 落空"的日志（见上方

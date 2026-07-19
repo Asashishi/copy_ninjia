@@ -2,9 +2,8 @@ import { describe, expect, mock, test } from "bun:test";
 import sharp from "sharp";
 
 /**
- * libs/image.ts 经 infra/logger -> infra/diskIO，后者在模块顶层就会
- * `new Worker(...)`：单测里绝不能让它真的跑起来（理由同
- * test/commands/luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
+ * 用空的 diskIO 桥隔离错误日志路由，避免测试结果依赖其它文件是否初始化过
+ * 进程级持久化组件。
  */
 mock.module("../../src/infra/diskIO", () => ({
   postDiskIO: mock((..._args: unknown[]): void => {}),

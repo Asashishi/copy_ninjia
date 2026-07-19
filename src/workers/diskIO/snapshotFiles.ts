@@ -7,7 +7,7 @@
  * AI 记忆快照是整份覆盖写：先写 <file>.tmp、fsync、再 rename，rename 在
  * 同一文件系统内是原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），
  * 目标文件要么是写入前的旧内容，要么是写入后的新内容，不会停在半截的撕裂
- * JSON（同 infra/storage.ts persistStateJson 的原子性理由，fsync 的必要性
+ * JSON（同 infra/storage/stateStore.ts 的原子性理由，fsync 的必要性
  * 见 atomicWriteText 注释）——快照本身有固定上限
  * （AI_MEMORY_HYDRATE_BUFFER_MAX/MAX_SUMMARY_ROUNDS），整份重写的开销
  * 不随时间增长，没有必要为它换成追加写。

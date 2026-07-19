@@ -4,8 +4,8 @@ import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER
  * AI 回复准入控制的纯决策规则（不做任何 I/O、不持有计时器，也不碰任何
  * Map/LinkedQueue/Date.now()）。对应原揉在 aiChatWorker.ts 里的两道闸：
  *
- * - admitTrigger：并发闸，触发到达时判定（原 generateAndSendReply）。
- * - admitRound：限频闸，真正开一轮前判定（原 startReplyRound 前半段）。
+ * - admitTrigger：并发闸，在触发到达时判定。
+ * - admitRound：限频闸，在真正开始一轮前判定。
  *
  * 两道闸不是同一个状态对象的两次转移——之间隔着「入队等待补跑」这个
  * 不定时长的中间态（补跑时才会走到 admitRound，见 replyQueue.ts），且

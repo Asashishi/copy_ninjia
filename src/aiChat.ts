@@ -182,7 +182,7 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
 
 /**
  * 记录一条图片/贴纸/GIF 消息：Worker 侧先以占位文本入缓存、异步解析媒体
- * 后原位回填描述（见 workers/aiChatWorker.ts 的 recordChatMedia）。默认
+ * 后原位回填描述（见 workers/aiChat/mediaIngest.ts 的 recordChatMedia）。默认
  * 只记上下文、不触发回复；commentOnResolve 为 true（主线程按本群
  * 近一小时活跃度掷中，与文字随机搭话共用同一个动态概率）时，解析成功
  * 后会以「回复那条消息」的形式发一条针对内容的评价。
@@ -192,7 +192,7 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
  * @param fileId 要下载的 file_id（图片是已挑好档位的 photo file_id；贴纸/
  *   GIF 是本体或缩略图，见 auto/message/facts.ts 的素材选择）。
  * @param fileUniqueId 描述去重缓存的键（贴纸/GIF 固定用媒体自身的
- *   file_unique_id，见 workers/aiChatWorker.ts 的 recordChatMedia 参数注释）。
+ *   file_unique_id，见 workers/aiChat/mediaIngest.ts 的 recordChatMedia 参数注释）。
  * @param messageId 这条消息的 message_id（评价回复挂引用用）。
  * @param commentOnResolve 是否在解析成功后评价这份媒体。
  * @param stickerFallbackText kind 为 "sticker" 时解析失败的兜底文本（现有

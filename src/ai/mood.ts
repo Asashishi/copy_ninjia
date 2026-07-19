@@ -99,7 +99,7 @@ export function pickMood(): MoodOption {
 
 /**
  * 每次有消息记入某个群的滚动缓存时调用一次（不论文字/媒体、也不论是否
- * 触发了 AI 回复，见 workers/aiChatWorker.ts 的 pushBufferedMessage）：
+ * 触发了 AI 回复，见 workers/aiChat/rollingMemory.ts 的 pushBufferedMessage）：
  * 更新该群「最后一次有动静」的时间戳，并按空窗规则决定要不要重新抽一次
  * 心情。必须在真正记录这条消息之前调用——判断的是「这条消息之前」的
  * 空窗时长，若先把这条消息自己的时间戳记成 lastActivity 再判断，空窗
@@ -132,7 +132,7 @@ export function recordActivityAndMaybeRerollMood(
 /**
  * 拼进系统提示词的当前心情指令。moods 里没有记录时返回空串（理论上不会
  * 发生：任何触发都对应一条已经先经 recordActivityAndMaybeRerollMood 记录
- * 过的消息，见 workers/aiChatWorker.ts 的 callGemini 调用点），系统提示词
+ * 过的消息，见 workers/aiChat/replyRound.ts 的 callGemini 调用点），系统提示词
  * 就少这一段，不必因为这种防御性场景多包一层判断。
  * @param moods 可注入仅为单测隔离；生产调用共享 Worker 内的 chatMoods。
  */

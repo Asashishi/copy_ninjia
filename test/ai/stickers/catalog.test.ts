@@ -1,9 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
 /**
- * ai/stickers/catalog.ts 经 infra/logger -> infra/diskIO，后者在模块顶层就会
- * `new Worker(...)`：单测里绝不能让它真的跑起来（理由同 test/commands/
- * luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
+ * 用空的 diskIO 桥隔离日志路由，再动态 import 被测模块。
  * ai/stickers/sets.ts（真实拉取贴纸集合）、ai/imageDescription.ts（真实调
  * 视觉模型）与 ai/gemini.ts（整包简介生成走的文本模型）也一并 mock 掉，
  * 换成测试可控的假实现——本文件只关心 generatePackCatalog 的对账逻辑

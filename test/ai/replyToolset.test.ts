@@ -3,9 +3,7 @@ import { cleanReply, isEmojiOnly } from "../../src/ai/utils/replyText";
 import { buildCharacterTypo } from "../../src/ai/utils/typo";
 
 /**
- * ai/replyTools.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者在
- * 模块顶层就会 `new Worker(...)`：单测里绝不能让它真的跑起来（理由同
- * test/commands/luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
+ * 用空的 diskIO 桥隔离日志路由，并把 Telegram 动作替换为可断言的假实现。
  * 贴纸分支逻辑在 test/ai/stickers.test.ts 覆盖；本文件只补文字清洗、错字
  * diff 与 send_message 的错字补发回归。
  */
@@ -37,10 +35,6 @@ mock.module("../../src/infra/telegram", () => ({
 
 mock.module("../../src/libs/sleep", () => ({
   sleep: sleepMock,
-}));
-
-mock.module("../../src/ai/stickers/config", () => ({
-  stickerConfig: { packs: [] },
 }));
 
 const { SEND_MESSAGE_TOOL, DELETE_OWN_MESSAGE_TOOL } = await import("../../src/consts/tools");

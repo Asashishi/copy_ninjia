@@ -13,10 +13,6 @@
  * 与运势/AI 记忆两个同进程内子系统口径一致），不依赖部署机器自身的系统
  * 时区设置——不然一旦部署环境时区漂移，三类落盘数据会在同一次事故里表现
  * 不一致（其余两类原本就显式用东京时区计算）。
- *
- * 本文件从原 src/workers/loggerWorker.ts 搬迁而来，落盘机制后续抽成了
- * diskIO/appendOnlyDayFile.ts，本文件自身的日志领域逻辑（buffer/阈值/
- * 保留期）无变化。
  */
 
 import { mkdirSync, readdirSync, unlinkSync } from "node:fs";

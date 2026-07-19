@@ -60,7 +60,7 @@ export interface LuckDrawDiskMessage {
    *  dailyLuckCache 的 key 一致（原文本不直接进 key，见 commands/luckChallenge.ts
    *  的 luckCacheKey 注释）。 */
   key: string;
-  /** LuckTier.label；加载时按 LUCK_TIERS 反查还原 tier 本身（见 commands/luckChallenge.ts 的 restoreLuckState）。 */
+  /** LuckTier.label；加载时按 LUCK_TIERS 反查还原 tier（见 commands/luckChallenge/cache.ts）。 */
   label: string;
   /** 该次抽签在 tier.fortunePercentRange 内浮动出的行大运具体数值（%，两位小数）。
    * 不再能从 label 反查得出（区间是浮动的），必须随 label 一起落盘，见 LuckDrawRecord。 */

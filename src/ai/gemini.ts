@@ -1,6 +1,6 @@
 /**
- * Gemini generateContent 的底层收发与响应解析。回复流水线（workers/aiChatWorker.ts
- * 的工具往返循环）、冷消息压缩（summarizeBatch）、图片描述
+ * Gemini generateContent 的底层收发与响应解析。回复工具往返
+ * （workers/aiChat/geminiReply.ts）、冷消息压缩（workers/aiChat/compaction.ts）、图片描述
  * （ai/imageDescription.ts）共用。
  *
  * 收发走官方 @google/genai SDK（Google 现行的统一 GenAI JS SDK）而不是手写
@@ -10,7 +10,7 @@
  * includeServerSideToolInvocations 让搜索记录随 content 接回；视觉输入
  * （inlineData）与多轮函数调用往返均由同一 SDK 处理。上一轮模型的完整
  * content（含 thought signature）会原样接回 contents，再附上 functionResponse，见
- * workers/aiChatWorker.ts 的 callGemini）。
+ * workers/aiChat/geminiReply.ts 的 callGemini）。
  *
  * 响应形状的结构性解析（取正文/函数调用/是否被 token 上限腰斩）是纯函数，
  * 抽在 ai/utils/geminiResponse.ts；本文件只管发请求、记错误日志。

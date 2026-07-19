@@ -2,10 +2,8 @@ import { describe, expect, mock, test } from "bun:test";
 import { parseIndexField } from "../../src/ai/utils/toolArgs";
 
 /**
- * ai/tools/stickers.ts 经 infra/telegram -> infra/logger -> infra/diskIO，后者在
- * 模块顶层就会 `new Worker(...)`：单测里绝不能让它真的跑起来（理由同
- * test/commands/luckChallenge.test.ts 的模块头注释），先 mock 掉再动态 import。
- * infra/telegram 的 sendSticker 也一并 mock 成测试可控的假实现——本文件
+ * 用空的 diskIO 桥隔离日志路由；infra/telegram 的 sendSticker 也一并 mock
+ * 成测试可控的假实现——本文件
  * 不关心真实 Telegram API 调用是否成功（那部分已用真实 API 手动验证过），
  * 只关心 stickers.ts 自己的解析/组装/两层选择与每轮限额逻辑。
  */

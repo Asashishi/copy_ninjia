@@ -77,7 +77,7 @@ Telegram update
 - 安全过滤：Google 可调的骚扰、仇恨、露骨和危险内容统一设为 `BLOCK_NONE`，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效。
 - 时间：每次请求注入东京当前时间，每条转录消息保留记录时刻。
 - 记忆：50～100 条逐字消息，加最多 5 × 50 条冷历史摘要，总跨度约 300～350 条；Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照。
-- 多模态：图片描述最多 120 字，贴纸/GIF 最多 100 字；未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。`memory/stickers/` 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录。
+- 多模态：图片描述最多 125 字，贴纸/GIF 最多 100 字；下载、转码和视觉请求共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。`memory/stickers/` 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录。
 - 压缩背压：每群最多保留 4 个压缩任务，API 长时间变慢时有界降级，不无限堆积消息批次。
 
 人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)。
@@ -135,8 +135,9 @@ cp .env.example .env
 
 ### 3. 配置
 
-按 [`.env.example`](.env.example) 填写 `.env`；所有变量均为必填项。用户 ID
-使用 Telegram 的十进制数字 ID，`PRIVILEGED_USERS_ID` 多项之间用英文逗号分隔。
+按 [`.env.example`](.env.example) 填写 `.env`：`TELEGRAM_BOT_TOKEN`、
+`GEMINI_API_KEY` 和单个十进制数字 ID `SUPER_ADMIN_USER_ID` 必填；
+`PRIVILEGED_USERS_ID` 可留空，多项之间用英文逗号分隔。
 
 如需日语翻译，将 Google Cloud 服务账号密钥保存为项目根目录的 `g-auth.json`。`.env` 与 `g-auth.json` 均已加入 `.gitignore`。
 
@@ -189,13 +190,15 @@ bun run start     # 启动长轮询
 
 | 路径 | 职责 |
 | --- | --- |
+| `src/app/` | 启动/退出生命周期、handler 注册与命令菜单 |
 | `src/commands/` | 显式命令处理 |
 | `src/auto/` | 自动复读、AI 记录与触发、反应同步 |
 | `src/states/` | 无 I/O 的验证、锁定状态机与回复准入规则 |
-| `src/libs/` | 原子文件、有界 I/O、严格 schema 解码及通用并发工具 |
+| `src/config/` | 贴纸/反应配置的严格 schema、惰性加载与启动校验 |
+| `src/libs/` | 原子文件、有界 I/O、通用 schema 辅助及并发工具 |
 | `src/workers/` | AI、守群、磁盘三个独立 Worker |
 | `src/ai/` | Gemini、视觉、贴纸目录及工具 |
-| `src/infra/` | Telegram、状态、日志、Worker 宿主 |
+| `src/infra/` | Telegram 客户端、Worker 宿主与持久化基础设施；`storage/` 收口实例锁、状态存储和启动清理 |
 | `src/cache/` | 按领域拆分的运行时状态容器 |
 | `src/consts/` | 调参常量与路径 |
 | `src/types/` | 跨模块协议与领域类型 |
@@ -228,7 +231,7 @@ bun run start     # 启动长轮询
 token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 需要并行部署时，
 应使用彼此独立的项目/数据目录。
 
-可靠性护栏包括：官方 SDK 类型边界、外部 JSON 逐字段校验、按 token 的实例注册表、按群 API 串行、Worker 崩溃节流自愈、失效 AI 轮次副作用拦截、反应队列硬顶、媒体缓存 LRU 容量上限、HTTP 响应流式大小限制，以及原子落盘和严格恢复。
+可靠性护栏包括：官方 SDK 类型边界、配置与持久化 JSON 逐字段校验、数据目录单实例锁、共享 Telegram API 限流/重试与必要的按群串行、Worker 崩溃节流自愈、失效 AI 轮次副作用拦截、反应队列硬顶、媒体执行/排队/LRU 容量上限、JSON API 与媒体下载的流式字节上限，以及原子落盘和严格恢复。跨模块生命周期约束见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 🧪 开发
 
@@ -238,7 +241,7 @@ bun test
 bun run check
 ```
 
-项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母（即使没有其它测试触达），当前过渡门槛为函数 64%、行 68%，补测完成后将恢复到 80%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
+项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入。当前过渡门槛为函数 64%、行 68%，最终门槛为二者均不低于 80%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
 
 ---
 

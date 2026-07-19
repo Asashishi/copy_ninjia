@@ -43,8 +43,8 @@ export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");
 
 /**
  * 原子重写（写 tmp、rename 覆盖目标路径）与损坏文件隔离共用的后缀，全项目
- * 落盘统一复用，见 infra/storage.ts 的 persistStateJson、
- * workers/diskIO/snapshotFiles.ts 的 atomicWriteJson/quarantine、
+ * 落盘统一复用，见 infra/storage/stateStore.ts、
+ * workers/diskIO/snapshotFiles.ts 的快照恢复、
  * workers/diskIO/appendOnlyDayFile.ts 的 atomicRewrite。
  */
 export const TMP_FILE_SUFFIX: string = ".tmp";

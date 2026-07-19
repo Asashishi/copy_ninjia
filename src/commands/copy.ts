@@ -57,8 +57,8 @@ export async function handleCopyCommand(
   globalCopy.copiedUser = targetUser;
   globalCopy.copyMode = mode;
   globalCopy.copyChatId = chatId;
-  // 落盘不阻塞回消息：命令热路径不必等 saveState 的双 fsync 完成（性能项
-  // M-6）。上面对 globalCopy 的同步写入已经立即生效，落盘只是让它在下次
+  // 落盘不阻塞回消息：命令热路径不必等 saveState 的双 fsync 完成。
+  // 上面对 globalCopy 的同步写入已经立即生效，落盘只是让它在下次
   // 重启后依然存在，不影响本次调用后续的复读判定。
   saveStateInBackground("copy started");
 

@@ -8,7 +8,7 @@ import type { ToolDefinition } from "../../types/tools";
  * JSON 字符串而不是抛错——模型收到工具结果后自己决定怎么向用户措辞。
  * （查时间不是工具：当前时间默认拼进每次请求的系统提示词，转录行也自带
  * 每条消息的发送时间，见 libs/time.ts 的 getCurrentTime、
- * workers/aiChatWorker.ts 的 callGemini/formatLine。）
+ * workers/aiChat/geminiReply.ts 与 ai/utils/chatTranscript.ts。）
  * 有副作用的行动工具（发言/反应/两层贴纸）不在这份静态清单里——它们需要
  * chatId 与每轮限额状态，且贴纸清单随目录内容变化、要按次回复现组装，见
  * 同目录的 replyToolset.ts / stickers.ts。

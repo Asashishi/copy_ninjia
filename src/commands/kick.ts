@@ -50,9 +50,9 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
   if (!targetUser) return;
 
   // 封禁清单：所有已记录「机器人是管理员」的群。本群是管理员时排最前
-  // （踢发起群里的目标最紧迫），不是管理员时不进清单——试也没用。逐群
-  // 顺序执行——bot.api 没有限流器，一把撒出去容易撞 Telegram 的全局限速，
-  // 这个量级串行足够快。
+  // （踢发起群里的目标最紧迫），不是管理员时不进清单——试也没用。共享
+  // bot.api 已安装限流与自动重试，但跨群封禁仍保持串行，避免一次命令制造
+  // 突发请求，也让成功/失败计数按确定顺序收敛。
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];
   for (const [adminChatId, chatState] of getAllChatStates()) {
     if (chatState.botIsAdmin === true && adminChatId !== chatId) {

@@ -2,10 +2,8 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 /**
  * mock.module 必须在任何真实 import 之前调用（静态 import 会被提升，所以下面
- * 全部用动态 import 拿到被 mock 过的版本）：commands/luckChallenge.ts 与
- * infra/logger.ts 都会 import infra/diskIO.ts，而该文件在模块顶层就会
- * `new Worker(...)` 指向项目真实的 memory/ 目录——单测里绝不能让它真的跑起来
- * （会跟正在跑的 bot 进程并发读写同一批文件）。
+ * 全部用动态 import 拿到被 mock 过的版本）。diskIO 模块导入已无副作用，
+ * 这里仍替换其进程级单例桥，才能精确断言落盘消息并模拟 Worker 重建。
  */
 const postDiskIOMock = mock((..._args: unknown[]): void => {});
 const onDiskIORespawnMock = mock((..._args: unknown[]): void => {});
