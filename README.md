@@ -139,6 +139,9 @@ cp .env.example .env
 `GEMINI_API_KEY` 和单个十进制数字 ID `SUPER_ADMIN_USER_ID` 必填；
 `PRIVILEGED_USERS_ID` 可留空，多项之间用英文逗号分隔。
 
+贴纸包在 [`config/stickers.json`](config/stickers.json) 中配置，最多配置 5 个；
+AI 每轮可以依次查看这 5 个包，但同一个包在一轮内只会查看一次。
+
 如需日语翻译，将 Google Cloud 服务账号密钥保存为项目根目录的 `g-auth.json`。`.env` 与 `g-auth.json` 均已加入 `.gitignore`。
 
 Telegram 侧还需要按功能配置：

@@ -3,8 +3,10 @@ export const STICKER_SET_FAILURE_RETRY_MS: number = 60_000;
 
 /** 一轮回复最多发送一枚贴纸。 */
 export const MAX_STICKERS_PER_REPLY: number = 1;
+/** 部署配置最多允许五个贴纸包，启动预检会拒绝超出的配置。 */
+export const MAX_CONFIGURED_STICKER_PACKS: number = 5;
 /** 一轮最多查看五个不同贴纸包；同一包由执行侧保证只能查看一次。 */
-export const MAX_STICKER_PACK_VIEWS_PER_REPLY: number = 5;
+export const MAX_STICKER_PACK_VIEWS_PER_REPLY: number = MAX_CONFIGURED_STICKER_PACKS;
 
 /** view_sticker_pack 展示「正在选择贴纸」的基础停顿和随机抖动。 */
 export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;

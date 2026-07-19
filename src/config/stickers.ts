@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { MAX_CONFIGURED_STICKER_PACKS } from "../consts/aiChat/stickers";
 import { STICKERS_CONFIG_PATH } from "../consts/paths";
 import { hasExactKeys, isPlainRecord } from "../libs/runtimeConfig";
 
@@ -9,10 +10,13 @@ export interface StickerConfig {
 const STICKER_PACK_NAME_PATTERN: RegExp = /^[A-Za-z0-9_]{1,64}$/;
 let defaultConfig: StickerConfig | null = null;
 
-/** 严格解码 stickers.json，并拒绝非法或重复的贴纸包 short name。 */
+/** 严格解码 stickers.json，并拒绝超量、非法或重复的贴纸包 short name。 */
 export function parseStickerConfig(value: unknown): StickerConfig {
   if (!isPlainRecord(value) || !hasExactKeys(value, ["packs"]) || !Array.isArray(value.packs)) {
     throw new Error("Invalid stickers config: expected exactly { packs: string[] }");
+  }
+  if (value.packs.length > MAX_CONFIGURED_STICKER_PACKS) {
+    throw new Error(`Invalid stickers config: at most ${MAX_CONFIGURED_STICKER_PACKS} packs are allowed`);
   }
 
   const packs: string[] = [];
