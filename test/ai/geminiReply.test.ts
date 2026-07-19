@@ -7,10 +7,12 @@ const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<Gene
   (replies.shift() as GenerateContentResponse | undefined) ?? null
 );
 const callToolMock = mock(async (..._args: unknown[]): Promise<string> => JSON.stringify({ success: true }));
+const loggerErrorMock = mock((..._args: unknown[]): void => {});
 
 mock.module("../../src/ai/gemini", () => ({ requestGeminiResponse: requestGeminiResponseMock }));
 mock.module("../../src/ai/mood", () => ({ currentMoodInstruction: (): string => "当前心情测试" }));
 mock.module("../../src/ai/tools", () => ({ callTool: callToolMock }));
+mock.module("../../src/infra/logger", () => ({ logger: { error: loggerErrorMock } }));
 mock.module("../../src/workers/aiChat/timeSentence", () => ({ currentTimeSentence: (): string => "当前实际时间：测试。" }));
 
 const { callGemini } = await import("../../src/workers/aiChat/geminiReply");
@@ -19,6 +21,7 @@ beforeEach(() => {
   replies.length = 0;
   requestGeminiResponseMock.mockClear();
   callToolMock.mockClear();
+  loggerErrorMock.mockClear();
 });
 
 test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证再行动", async () => {
@@ -55,9 +58,84 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   expect(firstRequest.config?.tools).toBe(registeredTools);
   expect(firstRequest.config?.toolConfig).toEqual({ includeServerSideToolInvocations: true });
   expect(String(firstRequest.config?.systemInstruction)).toContain("googleSearch 已作为本轮可调用工具真实注册");
+  expect(String(firstRequest.config?.systemInstruction)).toContain("累计最多调用 3 次");
   expect(String(firstRequest.config?.systemInstruction)).toContain("绝不能先行动再补查");
   expect((firstRequest.contents as unknown[])[0]).toEqual({ role: "user", parts: [{ text: "聊天上下文" }] });
   expect(execute).toHaveBeenCalledWith("send_message", JSON.stringify({ text: "已核实回复" }));
+});
+
+test("累计三次服务端搜索后，后续工具轮移除 googleSearch", async () => {
+  replies.push(
+    {
+      candidates: [{
+        content: {
+          role: "model",
+          parts: [
+            { toolCall: { id: "search-1", toolType: "GOOGLE_SEARCH_WEB" } },
+            { toolResponse: { id: "search-1", toolType: "GOOGLE_SEARCH_WEB", response: {} } },
+            { toolCall: { id: "search-2", toolType: "GOOGLE_SEARCH_WEB" } },
+            { toolResponse: { id: "search-2", toolType: "GOOGLE_SEARCH_WEB", response: {} } },
+            { toolCall: { id: "search-3", toolType: "GOOGLE_SEARCH_WEB" } },
+            { toolResponse: { id: "search-3", toolType: "GOOGLE_SEARCH_WEB", response: {} } },
+            { functionCall: { id: "call-1", name: "send_message", args: { text: "搜完了" } } },
+          ],
+        },
+      }],
+    },
+    { candidates: [{ content: { role: "model", parts: [{ text: "行动完成" }] } }] }
+  );
+
+  const registeredTools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }];
+  const execute = mock(async (): Promise<string> => JSON.stringify({ success: true }));
+  const toolset: ReplyToolset = {
+    definitions: [],
+    tools: registeredTools,
+    has: (name: string): boolean => name === "send_message",
+    execute,
+    messagesSent: (): number => 1,
+    actionsUsed: (): number => 1,
+    isActive: (): boolean => true,
+  };
+
+  await expect(callGemini(-1001, "聊天上下文", toolset)).resolves.toBe("行动完成");
+  expect(requestGeminiResponseMock).toHaveBeenCalledTimes(2);
+  const secondRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
+  expect(secondRequest.config?.tools).toEqual([{ functionDeclarations: [{ name: "send_message" }] }]);
+  expect(secondRequest.config?.toolConfig).toBeUndefined();
+  expect(String(secondRequest.config?.systemInstruction)).toContain("已经达到 3 次 Google Search 上限");
+});
+
+test("服务端先报 TOO_MANY_TOOL_CALLS 时，零动作轮关闭搜索后只重试一次", async () => {
+  replies.push(
+    {
+      candidates: [{
+        finishReason: "TOO_MANY_TOOL_CALLS",
+        content: { role: "model", parts: [] },
+      }],
+    },
+    {
+      candidates: [{
+        finishReason: "STOP",
+        content: { role: "model", parts: [{ text: "不再搜索，直接回答" }] },
+      }],
+    }
+  );
+
+  const toolset: ReplyToolset = {
+    definitions: [],
+    tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
+    has: (): boolean => false,
+    execute: async (): Promise<string> => JSON.stringify({ success: true }),
+    messagesSent: (): number => 0,
+    actionsUsed: (): number => 0,
+    isActive: (): boolean => true,
+  };
+
+  await expect(callGemini(-1001, "聊天上下文", toolset)).resolves.toBe("不再搜索，直接回答");
+  expect(requestGeminiResponseMock).toHaveBeenCalledTimes(2);
+  const retryRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
+  expect(retryRequest.config?.tools).toEqual([{ functionDeclarations: [{ name: "send_message" }] }]);
+  expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("retrying once with Google Search disabled"));
 });
 
 test("同一模型响应中的多个行动工具严格按返回顺序串行执行", async () => {

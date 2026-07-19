@@ -37,6 +37,12 @@ export function isTruncatedByTokenLimit(data: unknown): boolean {
   return firstCandidate(data)?.finishReason === "MAX_TOKENS";
 }
 
+/** 返回首个 candidate 的 finishReason；SDK 尚未认识的新枚举值也按字符串保留。 */
+export function extractFinishReason(data: unknown): string | undefined {
+  const finishReason: unknown = firstCandidate(data)?.finishReason;
+  return typeof finishReason === "string" ? finishReason : undefined;
+}
+
 /** 拼出响应里的最终文本：首个候选 content.parts 中所有非思考的 text 段按序连接；没有则为空串。 */
 export function extractOutputText(data: unknown): string {
   const parts: string[] = [];
@@ -83,4 +89,22 @@ export function extractFunctionCalls(data: unknown): ExtractedFunctionCall[] {
     });
   }
   return calls;
+}
+
+/**
+ * 统计一次响应中已经由服务端执行的 Google Search 调用。开启
+ * includeServerSideToolInvocations 时以 toolCall 为准；旧/降级响应没有这些
+ * part 时，用 groundingMetadata.webSearchQueries 的查询数做保守兜底。
+ */
+export function countGoogleSearchCalls(data: unknown): number {
+  let explicitCalls: number = 0;
+  for (const part of responseParts(data)) {
+    if (!isRecord(part) || !isRecord(part.toolCall)) continue;
+    if (part.toolCall.toolType === "GOOGLE_SEARCH_WEB") explicitCalls++;
+  }
+  if (explicitCalls > 0) return explicitCalls;
+
+  const groundingMetadata: unknown = firstCandidate(data)?.groundingMetadata;
+  if (!isRecord(groundingMetadata) || !Array.isArray(groundingMetadata.webSearchQueries)) return 0;
+  return groundingMetadata.webSearchQueries.length;
 }

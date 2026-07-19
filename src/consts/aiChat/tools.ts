@@ -15,7 +15,9 @@ export const TYPING_DELAY_JITTER_MS: number = 400;
 export const TYPING_DELAY_MAX_MS: number = 7_500;
 
 /** 工具对话往返硬顶，防止模型工具调用死循环。 */
-export const MAX_TOOL_ROUNDS: number = 45;
+export const MAX_TOOL_ROUNDS: number = 35;
+/** 单轮回复累计允许的 Google Search 服务端调用数；达到后续轮次移除搜索工具。 */
+export const MAX_GOOGLE_SEARCH_CALLS_PER_REPLY: number = 3;
 /** Telegram chat action 的心跳间隔与连续失败止损阈值。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 export const CHAT_ACTION_MAX_CONSECUTIVE_FAILURES: number = 3;

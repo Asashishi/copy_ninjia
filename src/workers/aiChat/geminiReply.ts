@@ -1,18 +1,25 @@
 import { readFileSync } from "node:fs";
-import type { Content, GenerateContentResponse, Part } from "@google/genai";
+import type { Content, GenerateContentResponse, Part, Tool } from "@google/genai";
 import { PERSONA_PATH } from "../../consts/paths";
 import {
   GEMINI_REPLY_MODEL,
+  MAX_GOOGLE_SEARCH_CALLS_PER_REPLY,
   MAX_TOOL_ROUNDS,
   REPLY_MAX_TOKENS,
   REPLY_TEMPERATURE,
 } from "../../consts/aiChat/tools";
 import { TIME_AWARENESS_INSTRUCTION } from "../../consts/aiChat/prompts/memory";
-import { WEB_SEARCH_INSTRUCTION } from "../../consts/aiChat/prompts/search";
+import { buildWebSearchInstruction, WEB_SEARCH_EXHAUSTED_INSTRUCTION } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../ai/mood";
 import { requestGeminiResponse } from "../../ai/gemini";
-import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit } from "../../ai/utils/geminiResponse";
+import {
+  countGoogleSearchCalls,
+  extractFinishReason,
+  extractFunctionCalls,
+  extractOutputText,
+  isTruncatedByTokenLimit,
+} from "../../ai/utils/geminiResponse";
 import { callTool } from "../../ai/tools";
 import { isPlainRecord } from "../../libs/runtimeConfig";
 import type { ReplyToolset } from "../../types/aiChat/replies";
@@ -52,21 +59,30 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
   if (!toolset.isActive()) return null;
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
-  const systemPrompt: string = `${SYSTEM_PROMPT}\n\n${currentMoodInstruction(chatId)}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}\n\n${WEB_SEARCH_INSTRUCTION}`;
+  const systemPromptPrefix: string = `${SYSTEM_PROMPT}\n\n${currentMoodInstruction(chatId)}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
   const contents: Content[] = [{ role: "user", parts: [{ text: userContent }] }];
+  const toolsWithoutGoogleSearch: Tool[] = toolset.tools.filter((tool: Tool) => tool.googleSearch === undefined);
+  const hasGoogleSearch: boolean = toolsWithoutGoogleSearch.length !== toolset.tools.length;
+  let googleSearchCalls: number = 0;
+  let searchLimitFallbackUsed: boolean = false;
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
     if (!toolset.isActive()) return null;
+    const remainingSearchCalls: number = Math.max(0, MAX_GOOGLE_SEARCH_CALLS_PER_REPLY - googleSearchCalls);
+    const googleSearchEnabled: boolean = hasGoogleSearch && remainingSearchCalls > 0;
+    const systemPrompt: string = `${systemPromptPrefix}\n\n${googleSearchEnabled
+      ? buildWebSearchInstruction(remainingSearchCalls)
+      : WEB_SEARCH_EXHAUSTED_INSTRUCTION}`;
     const data: GenerateContentResponse | null = await requestGeminiResponse(
       {
         model: GEMINI_REPLY_MODEL,
         contents,
         config: {
           systemInstruction: systemPrompt,
-          tools: toolset.tools,
+          tools: googleSearchEnabled ? toolset.tools : toolsWithoutGoogleSearch,
           // googleSearch 与函数工具混用时必须要求 SDK 把服务端工具调用记录
           // 接回 content；否则 Gemini API 会拒绝该组合或丢失搜索上下文。
-          toolConfig: { includeServerSideToolInvocations: true },
+          toolConfig: googleSearchEnabled ? { includeServerSideToolInvocations: true } : undefined,
           temperature: REPLY_TEMPERATURE,
           maxOutputTokens: REPLY_MAX_TOKENS,
         },
@@ -74,6 +90,33 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
       "Gemini API"
     );
     if (!toolset.isActive() || !data) return null;
+
+    const observedSearchCalls: number = countGoogleSearchCalls(data);
+    if (observedSearchCalls > 0) {
+      const allowedThisRequest: number = remainingSearchCalls;
+      googleSearchCalls = Math.min(
+        MAX_GOOGLE_SEARCH_CALLS_PER_REPLY,
+        googleSearchCalls + observedSearchCalls
+      );
+      if (observedSearchCalls > allowedThisRequest) {
+        logger.error(
+          `Gemini API exceeded the Google Search budget for chat ${chatId}: ` +
+          `observed ${observedSearchCalls} server-side call(s) with ${allowedThisRequest} remaining; disabling search.`
+        );
+      }
+    }
+
+    if (extractFinishReason(data) === "TOO_MANY_TOOL_CALLS" && googleSearchEnabled) {
+      googleSearchCalls = MAX_GOOGLE_SEARCH_CALLS_PER_REPLY;
+      if (!searchLimitFallbackUsed && toolset.actionsUsed() === 0) {
+        searchLimitFallbackUsed = true;
+        logger.error(
+          `Gemini API hit its server-side tool-call limit for chat ${chatId}; retrying once with Google Search disabled.`
+        );
+        continue;
+      }
+      return null;
+    }
 
     const functionCalls: ExtractedFunctionCall[] = extractFunctionCalls(data);
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {

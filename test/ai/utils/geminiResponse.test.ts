@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { extractFunctionCalls, extractOutputText, isTruncatedByTokenLimit } from "../../../src/ai/utils/geminiResponse";
+import {
+  countGoogleSearchCalls,
+  extractFinishReason,
+  extractFunctionCalls,
+  extractOutputText,
+  isTruncatedByTokenLimit,
+} from "../../../src/ai/utils/geminiResponse";
 
 /** 按 generateContent 响应形状裁剪的夹具（思考段/正文段/functionCall 混排）。 */
 const RESPONSE_FIXTURE = {
@@ -50,5 +56,31 @@ describe("ai/utils/geminiResponse", () => {
     expect(isTruncatedByTokenLimit({ candidates: [{ finishReason: "MAX_TOKENS" }] })).toBe(true);
     expect(isTruncatedByTokenLimit({ candidates: [{ finishReason: "SAFETY" }] })).toBe(false);
     expect(isTruncatedByTokenLimit(undefined)).toBe(false);
+  });
+
+  test("extractFinishReason：保留 SDK 尚未声明的新服务端枚举值", () => {
+    expect(extractFinishReason(RESPONSE_FIXTURE)).toBe("STOP");
+    expect(extractFinishReason({ candidates: [{ finishReason: "TOO_MANY_TOOL_CALLS" }] })).toBe("TOO_MANY_TOOL_CALLS");
+    expect(extractFinishReason({ candidates: [] })).toBeUndefined();
+  });
+
+  test("countGoogleSearchCalls：优先统计 server-side toolCall，并用查询元数据兜底", () => {
+    expect(countGoogleSearchCalls({
+      candidates: [{
+        groundingMetadata: { webSearchQueries: ["不应重复计数"] },
+        content: {
+          parts: [
+            { toolCall: { toolType: "GOOGLE_SEARCH_WEB" } },
+            { toolResponse: { toolType: "GOOGLE_SEARCH_WEB" } },
+            { toolCall: { toolType: "URL_CONTEXT" } },
+            { toolCall: { toolType: "GOOGLE_SEARCH_WEB" } },
+          ],
+        },
+      }],
+    })).toBe(2);
+    expect(countGoogleSearchCalls({
+      candidates: [{ groundingMetadata: { webSearchQueries: ["q1", "q2", "q3"] } }],
+    })).toBe(3);
+    expect(countGoogleSearchCalls(undefined)).toBe(0);
   });
 });
