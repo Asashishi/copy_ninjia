@@ -32,6 +32,8 @@ describe("AI 媒体转录文本", () => {
     expect(resolvedTagFor("animation", "旋转")).toBe("[GIF：旋转]");
     expect(resolvedTagFor("photo", "天空")).toBe("[图片：天空]");
     expect(fallbackTextFor("sticker", stickerMessage)).toBe("[贴纸：🙂，来自 pack]");
+    // 没有元数据兜底行的贴纸退回贴纸措辞的占位，不能错标成图片。
+    expect(fallbackTextFor("sticker", { ...stickerMessage, stickerFallbackText: undefined })).toBe("[贴纸：解析失败，请无视此消息]");
     expect(fallbackTextFor("animation", { ...stickerMessage, kind: "animation" })).toContain("GIF");
     expect(fallbackTextFor("photo", { ...stickerMessage, kind: "photo" })).toContain("图片");
   });

@@ -121,9 +121,17 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       }
       fileId = chat.photo.big_file_id;
     } else {
-      const chat = await bot.api.getChat(targetId);
-      const activeUniqueId: string | undefined = chat.photo?.big_file_unique_id;
-      const photos = await bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT });
+      // 两个请求互不依赖（activeUniqueId 在两者都返回后才被消费），并发
+      // 缩短这条用户可见路径的往返延迟。用 allSettled 等两边都落定，任一
+      // 失败再抛出原因，走外层 catch 原有的 transient-failure 语义。
+      const [chatResult, photosResult] = await Promise.allSettled([
+        bot.api.getChat(targetId),
+        bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }),
+      ]);
+      if (chatResult.status === "rejected") throw chatResult.reason;
+      if (photosResult.status === "rejected") throw photosResult.reason;
+      const activeUniqueId: string | undefined = chatResult.value.photo?.big_file_unique_id;
+      const photos = photosResult.value;
       if (photos.total_count === 0) {
         logger.error(`User ${targetId} has no profile photos visible to the bot (privacy settings or no avatar)`);
         return "permanent-failure";

@@ -68,9 +68,19 @@ function getPackMap(pack: string): Map<string, StickerCatalogEntry> {
   return map;
 }
 
+/** 把一枚贴纸记进所属包的失败桶（见 cache/stickers/catalog.ts 的 failedEntries）。 */
+function markEntryFailed(pack: string, fileUniqueId: string): void {
+  let failed: Set<string> | undefined = failedEntries.get(pack);
+  if (!failed) {
+    failed = new Set();
+    failedEntries.set(pack, failed);
+  }
+  failed.add(fileUniqueId);
+}
+
 /** 启动时（或本 Worker 崩溃重启后）灌入持久化的贴纸目录。只对内存里还没
  *  有数据的包生效——重启后本来就全空，天然成立，不会覆盖掉刚生成的条目。
- *  快照全程以序列化 JSON 文本流转（见 types/aiChat.ts 的
+ *  快照全程以序列化 JSON 文本流转（见 types/stickers/protocol.ts 的
  *  AiStickerCatalogEvent.snapshot），这里是整条管线唯一的解析点；文本只
  *  出自 buildSnapshot 的 stringify 或启动恢复时逐字段重建后的重新
  *  stringify，形状可信，解析失败按防御性丢弃处理。 */
@@ -177,13 +187,22 @@ export async function generatePackCatalog(pack: string): Promise<void> {
         dirtyPacks.add(pack);
       }
     }
+    // 失败记录同样按线上集合剪枝：贴纸被移出包后，它的失败记录留着只会
+    // 白占内存（该 id 不会再出现在补齐循环里），一并清掉。
+    const failed: Set<string> | undefined = failedEntries.get(pack);
+    if (failed) {
+      for (const fileUniqueId of failed) {
+        if (!liveIds.has(fileUniqueId)) failed.delete(fileUniqueId);
+      }
+      if (failed.size === 0) failedEntries.delete(pack);
+    }
 
     for (const sticker of set.stickers) {
-      if (map.has(sticker.file_unique_id) || failedEntries.has(sticker.file_unique_id)) continue;
+      if (map.has(sticker.file_unique_id) || failedEntries.get(pack)?.has(sticker.file_unique_id)) continue;
 
       const source: { fileId: string; fileUniqueId: string } | null = pickStickerVisionSource(sticker);
       if (!source) {
-        failedEntries.add(sticker.file_unique_id);
+        markEntryFailed(pack, sticker.file_unique_id);
         continue;
       }
       // 白名单目录是常驻权威缓存，不把新条目再塞进 MEDIA_DESCRIPTION_CACHE_MAX
@@ -194,7 +213,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
         () => describeMediaForStickerCatalog(source.fileId)
       );
       if (!description) {
-        failedEntries.add(sticker.file_unique_id);
+        markEntryFailed(pack, sticker.file_unique_id);
         continue;
       }
       map.set(sticker.file_unique_id, { emoji: sticker.emoji ?? "", description });

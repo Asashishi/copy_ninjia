@@ -1,13 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createKeyedSerialTaskRunner } from "../../src/libs/keyedSerialTaskRunner";
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred } from "./helpers";
 
 describe("createKeyedSerialTaskRunner", () => {
   test("同一个 key 严格按提交顺序执行，较早的慢任务不会晚于新任务落地", async () => {

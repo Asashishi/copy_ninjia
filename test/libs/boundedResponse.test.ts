@@ -1,17 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readBoundedResponseBytes, readBoundedResponseText } from "../../src/libs/boundedResponse";
-
-function chunkedResponse(chunks: readonly Uint8Array[], headers?: Record<string, string>): Response {
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      start(controller: ReadableStreamDefaultController<Uint8Array>): void {
-        for (const chunk of chunks) controller.enqueue(chunk);
-        controller.close();
-      },
-    }),
-    { headers }
-  );
-}
+import { chunkedResponse } from "./helpers";
 
 describe("bounded response reader", () => {
   test("combines chunks up to and including the limit", async () => {
@@ -20,12 +9,12 @@ describe("bounded response reader", () => {
   });
 
   test("rejects a declared oversized body before consuming it", async () => {
-    const result = await readBoundedResponseBytes(chunkedResponse([new Uint8Array([1])], { "content-length": "100" }), 10);
+    const result = await readBoundedResponseBytes(chunkedResponse([new Uint8Array([1])], { headers: { "content-length": "100" } }), 10);
     expect(result).toEqual({ ok: false, reason: "too-large", observedBytes: 100 });
   });
 
   test("rejects a streaming body that exceeds a missing or false length header", async () => {
-    const result = await readBoundedResponseBytes(chunkedResponse([new Uint8Array(4), new Uint8Array(4)], { "content-length": "1" }), 5);
+    const result = await readBoundedResponseBytes(chunkedResponse([new Uint8Array(4), new Uint8Array(4)], { headers: { "content-length": "1" } }), 5);
     expect(result).toEqual({ ok: false, reason: "too-large", observedBytes: 8 });
   });
 

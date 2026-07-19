@@ -51,11 +51,12 @@ export const PROBABILITY_THUMBNAIL_URL: string = "https://drive.google.com/uc?ex
 export const SAME_QUESTION_LABEL_MAX_LEN: number = 4;
 
 /**
- * pendingLuckDraws 与签名回执双向索引（见 cache/luckChallenge.ts）共用
- * 这份 key 数量上限，超出按插入顺序淘汰最旧的（同 ai/imageDescription.ts 的
- * descriptionCache 一个道理）。这两个 Map 记的是"预览阶段抽到、但还没被
- * 用户选中确认"的结果——inline_query 是打字即触发的预览，用户每敲一个字符
- * 都可能新增一条从未被选中过的 key，只有到东京零点跨天才会整体清空
- * （见 ensureCacheFreshForToday），单日内没有其它清理时机；需要一个真正
- * 生效的上限防止忙碌的一天里被打字预览堆到很大。 */
+ * pendingLuckDraws（见 cache/luckChallenge.ts）的 key 数量上限，超出按插入
+ * 顺序淘汰最旧的（同 ai/imageDescription.ts 的 descriptionCache 一个道理）。
+ * 这个 Map 记的是"预览阶段抽到、但还没被用户选中确认"的结果——inline_query
+ * 是打字即触发的预览，用户每敲一个字符都可能新增一条从未被选中过的 key，
+ * 只有到东京零点跨天才会整体清空（见 commands/luckChallenge/cache.ts 的
+ * ensureLuckCacheFreshForToday），单日内没有其它清理时机；需要一个真正
+ * 生效的上限防止忙碌的一天里被打字预览堆到很大。签名回执（libs/luckReceipt.ts）
+ * 是自描述验签，不占用任何反向索引，不受此上限约束。 */
 export const PENDING_LUCK_CACHE_MAX: number = 5000;

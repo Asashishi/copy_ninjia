@@ -20,6 +20,22 @@ mock.module("../../src/infra/diskIO", () => ({
   }),
 }));
 
+// 跨东京零点专项测试用的日期开关：mockTodayOverride 为 null（默认与收尾）
+// 时 getTokyoDateKey 走真实实现，其余测试完全不受影响。
+// 两个坑（都是本 bun 版本 mock.module 的行为）决定了必须写成这个形状：
+// 1. 真实模块必须先展开成普通对象快照再 mock——mock.module 之后，此前拿到的
+//    模块命名空间引用会被追溯重绑定到 mock 本身，工厂里引用它会在加载期
+//    死锁或调用期无限递归；普通对象持有的真实函数引用不受重绑定影响。
+// 2. 对同一模块的 mock.module 二次注册不会覆盖第一次（装上摘不掉），所以
+//    不能拆成独立测试文件各自 mock，只能单文件内做开关式透传。
+let mockTodayOverride: string | null = null;
+const realTime = { ...(await import("../../src/libs/time")) };
+mock.module("../../src/libs/time", () => ({
+  ...realTime,
+  getTokyoDateKey: (date?: Date): string =>
+    (mockTodayOverride === null || date ? realTime.getTokyoDateKey(date) : mockTodayOverride),
+}));
+
 const luckChallenge = await import("../../src/commands/luckChallenge");
 const cache = await import("../../src/cache/luckChallenge");
 const { LUCK_TIERS, RATE_LIMIT_MAX_CALLS_PER_WINDOW } = await import("../../src/consts/luckChallenge");
@@ -351,5 +367,62 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
     // 已经是确认过的结果，预览不应该重新调用 postDiskIO
     expect(postDiskIOMock).not.toHaveBeenCalled();
+  });
+
+  // 必须是本文件最后一个测试：进程内跨天会永久置位 cache.ts 的
+  // daySwitchedInProcess，此后 pending 未命中的确认一律 fail closed，会改变
+  // 前面依赖「重启后重建派生」的测试的行为。
+  test("进程内跨东京零点后：迟到确认 fail closed，当天新流程与带当日证明的回执不受影响", async () => {
+    const luckDrawCalls = (): unknown[] =>
+      postDiskIOMock.mock.calls.filter((call) => (call[0] as { type?: string }).type === "luckDraw");
+    try {
+      mockTodayOverride = "2030-01-01";
+      luckChallenge.restoreLuckState(
+        { version: 1 as const, day: "2030-01-01", key: TEST_SECRET.key },
+        null
+      );
+
+      // 1 月 1 日深夜的预览：结果进 pending，用户尚未确认。
+      const ctx = makeInlineCtx(111, "");
+      await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+      expect(cache.pendingLuckDraws.has("111")).toBe(true);
+      const oldBody: string = bodyTextOf(ctx.results[0]);
+      postDiskIOMock.mockClear();
+
+      // 东京零点翻页：下一次确认路径进入时整体切换日缓存、清空 pending。
+      mockTodayOverride = "2030-01-02";
+
+      // 迟到的 chosen 回执没有任何日期证明：不得用新一天的密钥重派生落盘。
+      await luckChallenge.handleLuckChosenInlineResult({
+        chosenInlineResult: { result_id: "luck-fortune", from: { id: 111 }, query: "" },
+      } as any);
+      expect(luckDrawCalls()).toHaveLength(0);
+      expect(cache.dailyLuckCache.size).toBe(0);
+
+      // 迟到的签名回执带着 1 月 1 日的日期与签名，在 1 月 2 日验签失败，同样丢弃。
+      await luckChallenge.confirmLuckDraw(oldBody);
+      expect(luckDrawCalls()).toHaveLength(0);
+      expect(cache.dailyLuckCache.size).toBe(0);
+
+      // 新的一天里正常的预览 -> 选中链路照常确认落盘（pending 命中路径）。
+      const todayCtx = makeInlineCtx(222, "");
+      await luckChallenge.handleLuckChallengeInlineQuery(todayCtx as any);
+      await luckChallenge.handleLuckChosenInlineResult({
+        chosenInlineResult: { result_id: "luck-fortune", from: { id: 222 }, query: "" },
+      } as any);
+      expect(cache.dailyLuckCache.has("222")).toBe(true);
+      expect(luckDrawCalls()).toHaveLength(1);
+
+      // 跨天后同日的回执确认自带当日证明：pending 即便丢失也允许重建派生。
+      const receiptCtx = makeInlineCtx(333, "");
+      await luckChallenge.handleLuckChallengeInlineQuery(receiptCtx as any);
+      const todayBody: string = bodyTextOf(receiptCtx.results[0]);
+      cache.pendingLuckDraws.clear();
+      await luckChallenge.confirmLuckDraw(todayBody);
+      expect(cache.dailyLuckCache.has("333")).toBe(true);
+      expect(luckDrawCalls()).toHaveLength(2);
+    } finally {
+      mockTodayOverride = null;
+    }
   });
 });

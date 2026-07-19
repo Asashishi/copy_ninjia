@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { User } from "@grammyjs/types";
 import { sendMessage } from "../infra/telegram";
-import { formatUserLabel } from "../users/userLabel";
+import { formatMockerLabel } from "../users/userLabel";
 import { SUPER_ADMIN_USER_ID } from "../infra/config";
 
 /**
@@ -31,10 +31,7 @@ export async function resolveSuperAdminToggleArg(
   const fromUser = ctx.from;
 
   if (!isSuperAdmin(fromUser)) {
-    const mockerLabel: string = fromUser
-      ? formatUserLabel({ id: fromUser.id, username: fromUser.username, first_name: fromUser.first_name })
-      : "哪个杂鱼";
-    await sendMessage(chatId, messages.rejection(mockerLabel), messageId);
+    await sendMessage(chatId, messages.rejection(formatMockerLabel(fromUser)), messageId);
     return undefined;
   }
 

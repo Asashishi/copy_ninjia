@@ -1,5 +1,5 @@
 import type { Message } from "@grammyjs/types";
-import { isBotMentioned, isReplyToSelf, mentionsOtherUser } from "./facts";
+import { isReplyToSelf, resolveMentionFacts, type MentionFacts } from "./facts";
 import type { DirectMediaTrigger } from "./triggerPolicy";
 
 export interface BotIdentity {
@@ -31,10 +31,11 @@ export function createMessageTriggerContext(
 ): MessageTriggerContext {
   const repliedTo: Message | undefined = message.reply_to_message;
   const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === bot.id;
-  const isMentioned: boolean = isBotMentioned(message, bot.username);
+  // 两个提及事实一次遍历解析（见 facts.ts 的 resolveMentionFacts）。
+  const mentionFacts: MentionFacts = resolveMentionFacts(message, bot.id, bot.username);
   const directMediaTrigger: DirectMediaTrigger | undefined = isReplyToBot
     ? { reason: "reply", repliedBotText: repliedTo?.text }
-    : isMentioned
+    : mentionFacts.isMentioned
     ? { reason: "mention" }
     : undefined;
 
@@ -46,8 +47,8 @@ export function createMessageTriggerContext(
     aiReplyProbability,
     repliedTo,
     isReplyToBot,
-    isMentioned,
-    hasOtherMention: mentionsOtherUser(message, bot.id, bot.username),
+    isMentioned: mentionFacts.isMentioned,
+    hasOtherMention: mentionFacts.hasOtherMention,
     repliesToSelf: isReplyToSelf(message),
     directMediaTrigger,
   };

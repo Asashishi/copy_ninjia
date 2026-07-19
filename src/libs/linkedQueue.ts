@@ -46,8 +46,11 @@ export class LinkedQueue<T> {
     return this.head ? this.head.value : undefined;
   }
 
-  /** 取队尾最近的 n 个元素，保持入队顺序；n 大于队列长度时返回全部。 */
+  /** 取队尾最近的 n 个元素，保持入队顺序；n 大于队列长度时返回全部。
+   *  n=1 走 tail 指针 O(1) 特判（replyQueue 每次入队都取最新一条），其余
+   *  情况单链表只能从头遍历。 */
   last(n: number): T[] {
+    if (n === 1) return this.tail ? [this.tail.value] : [];
     const skip: number = Math.max(0, this.count - n);
     const out: T[] = [];
     let index: number = 0;

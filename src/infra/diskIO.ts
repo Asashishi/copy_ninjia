@@ -17,7 +17,7 @@
 
 import { pendingFlushes, pendingLoad, pendingLuckSecrets } from "../cache/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
-import { createRestartThrottle } from "../libs/workerSupervisor";
+import { createRestartThrottle } from "../libs/restartThrottle";
 import { LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
 import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import type {
@@ -152,7 +152,8 @@ function createDiskIOWorker(): Worker {
     // 成功落盘的状态。
     next.postMessage({ type: "load" } satisfies LoadRequest);
     // 第二层恢复：把落盘间隔内的增量补齐，由各自登记的镜像重放负责——
-    // aiChat.ts、luckChallenge.ts 与 antiRaid.ts 分别重放各自主线程镜像。
+    // aiChat.ts、commands/luckChallenge/cache.ts 与 antiRaid.ts 分别重放
+    // 各自主线程镜像。
     // 两层叠加，load 先到（FIFO），重放消息随后
     // 落在新实例已经热好的缓存之上，损失为零或接近零。
     for (const listener of respawnListeners) {

@@ -25,11 +25,3 @@ export function sweepVerificationRevisionCache(now: number = Date.now()): number
   }
   return deleted;
 }
-
-/** Worker dispose/测试隔离时清空验证运行时状态。 */
-export function resetVerificationCache(): void {
-  for (const entry of verificationEntries.values()) clearTimeout(entry.timer);
-  verificationEntries.clear();
-  verificationGeneration.current = 0;
-  verificationRevisions.clear();
-}

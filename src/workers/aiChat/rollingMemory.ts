@@ -93,10 +93,13 @@ export function purgeChatMemory(chatId: number): void {
 
 /** 为一份新群记忆腾出容量；excludeChatId 永不作为本次淘汰对象。 */
 function ensureMemoryCapacity(excludeChatId: number): void {
-  while (chatMemoryIds().size >= AI_MEMORY_MAX_CHATS) {
+  for (;;) {
+    // chatMemoryIds() 每次都从三个 Map 重新构建 Set，同一轮淘汰内取一次共用。
+    const memoryIds: Set<number> = chatMemoryIds();
+    if (memoryIds.size < AI_MEMORY_MAX_CHATS) return;
     let oldestChatId: number | undefined;
     let oldestActivity: number = Number.POSITIVE_INFINITY;
-    for (const candidate of chatMemoryIds()) {
+    for (const candidate of memoryIds) {
       if (candidate === excludeChatId) continue;
       const activity: number = chatLastActivityTimes.get(candidate) ?? 0;
       if (activity < oldestActivity) {
@@ -176,6 +179,21 @@ export function hydrateMemories(memories: Map<number, string>): void {
       snapshot = JSON.parse(snapshotJson) as AiMemorySnapshot;
     } catch (error: unknown) {
       logger.error(`Failed to parse hydrated AI memory snapshot for chat ${chatId}, skipping it:`, error);
+      continue;
+    }
+
+    // 语法合法但形状不符（例如 schema 变更后遗留的旧格式文件）同样按防御性
+    // 丢弃处理：下方排序读 savedAt、恢复读 buffer/summaries/pendingSummary，
+    // 任何一处形状不符都不能抛出未捕获异常拦下其余群的恢复——respawn 重放
+    // 同一份坏数据会变成崩溃循环。
+    if (
+      typeof snapshot !== "object" || snapshot === null ||
+      typeof snapshot.savedAt !== "number" ||
+      !Array.isArray(snapshot.buffer) ||
+      !Array.isArray(snapshot.summaries) ||
+      (snapshot.pendingSummary !== null && snapshot.pendingSummary !== undefined && typeof snapshot.pendingSummary !== "string")
+    ) {
+      logger.error(`Hydrated AI memory snapshot for chat ${chatId} has an unexpected shape, skipping it`);
       continue;
     }
 

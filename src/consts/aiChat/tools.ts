@@ -22,6 +22,10 @@ export const CHAT_ACTION_MAX_CONSECUTIVE_FAILURES: number = 3;
 
 /** 本轮由代码侧预先决定是否制造一次单字手滑。 */
 export const AI_TEXT_TYPO_PROBABILITY: number = 0.15;
+/** 采纳一次手滑要求的最少剩余动作预算：错字消息本体之外，还得给后续的
+ *  纠正动作（快速补字一条，或撤回后重发一条）留出余量，见
+ *  ai/tools/replyToolset/typoHandling.ts 的 decideMessageTypo。 */
+export const TYPO_MIN_REMAINING_ACTIONS: number = 3;
 /** 出错后快速补字 / 撤回重发的概率，剩余概率为不纠正。 */
 export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.57;
 export const TYPO_RECALL_CORRECTION_PROBABILITY: number = 0.33;

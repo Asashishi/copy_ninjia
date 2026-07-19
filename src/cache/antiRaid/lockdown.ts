@@ -11,14 +11,3 @@ export const joinWindows: Map<number, JoinWindow> = new Map();
 export const lockdownEntries: Map<number, LockdownEntry> = new Map();
 /** 同一群的加锁、恢复和纠偏 API 调用共用的串行链。 */
 export const lockdownApiChains: Map<number, Promise<void>> = new Map();
-
-/** Worker dispose/测试隔离时清空私密模式运行时状态。 */
-export function resetLockdownCache(): void {
-  for (const window of joinWindows.values()) clearTimeout(window.resetTimeout);
-  for (const entry of lockdownEntries.values()) {
-    if (entry.timer !== undefined) clearTimeout(entry.timer);
-  }
-  joinWindows.clear();
-  lockdownEntries.clear();
-  lockdownApiChains.clear();
-}

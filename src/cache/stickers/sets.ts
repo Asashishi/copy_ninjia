@@ -10,3 +10,6 @@ export const stickerSetCache: Map<string, StickerSet> = new Map();
 /** 拉取失败的包 -> 允许再次尝试的时间戳。短期负缓存避免故障时每轮回复都
  * 重打请求，但不能永久封死：瞬时网络错误恢复后应在本进程内自动重试。 */
 export const failedPacks: Map<string, number> = new Map();
+/** 各包在途的拉取 Promise：并发轮同时组装菜单时合并成一次 Telegram 请求
+ * （请求合并样式同 ai/imageDescription.ts 的 describeMedia），settle 后移除。 */
+export const inflightStickerSets: Map<string, Promise<StickerSet | null>> = new Map();

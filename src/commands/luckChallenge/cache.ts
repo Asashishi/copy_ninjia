@@ -14,8 +14,12 @@ import { deriveLuckDraw } from "./draw";
 
 let luckDayRefreshPromise: Promise<void> | null = null;
 let respawnRecoveryInitialized: boolean = false;
+/** 进程内是否发生过跨东京零点的日切换（即 adoptLuckSecret 清空过前一天的
+ *  pending）。见 promotePendingDraw：切换后 pending 未命中不再允许重建派生。 */
+let daySwitchedInProcess: boolean = false;
 
 function adoptLuckSecret(secret: LuckReceiptSecret): void {
+  if (luckCacheState.dayKey && luckCacheState.dayKey !== secret.day) daySwitchedInProcess = true;
   luckReceiptSecretState.current = secret;
   luckCacheState.dayKey = secret.day;
   dailyLuckCache.clear();
@@ -74,11 +78,27 @@ export function getOrDrawLuck(cacheKey: string): LuckDraw {
   return draw;
 }
 
-/** chosen result 或有效签名把 pending 转正；重复确认幂等。 */
-export function promotePendingDraw(cacheKey: string): void {
-  const draw: LuckDraw = pendingLuckDraws.get(cacheKey) ?? deriveLuckDraw(currentLuckSecret(), cacheKey);
+/**
+ * chosen result 或有效签名把 pending 转正；重复确认幂等。
+ *
+ * pending 未命中时的重建派生（deriveLuckDraw 是确定性的）只对「同一天丢了
+ * 内存」的场景成立：进程重启后确认信号迟到（pending 全丢、密钥同日），
+ * 重建结果与用户看到的完全一致。而进程内一旦跨过东京零点，未命中的主因
+ * 就是旧日 pending 被 adoptLuckSecret 整体清空——用新一天的密钥重派生出来
+ * 的是用户根本没见过的另一个结果，不能落盘「确认」，除非调用方能证明确认
+ * 属于当天（签名回执自带发放当天的密钥、验签即证明，见 receipt.ts 的
+ * confirmLuckDraw）；chosen_inline_result 不带任何日期证明，跨天后一律
+ * fail closed 丢弃，与回执路径「验签失败即丢弃」对齐。同日内被容量淘汰的
+ * pending 被顺带拒绝也无损：派生是确定性的，重新预览仍是同一结果。
+ * @param confirmedForToday 调用方已证明这次确认属于当天（目前只有签名回执
+ *   验签通过这一种证明），允许在跨天后仍走重建派生。
+ */
+export function promotePendingDraw(cacheKey: string, confirmedForToday: boolean = false): void {
+  const pending: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
   pendingLuckDraws.delete(cacheKey);
   if (dailyLuckCache.has(cacheKey)) return;
+  if (!pending && daySwitchedInProcess && !confirmedForToday) return;
+  const draw: LuckDraw = pending ?? deriveLuckDraw(currentLuckSecret(), cacheKey);
 
   dailyLuckCache.set(cacheKey, draw);
   postDiskIO({

@@ -1,7 +1,7 @@
 import type { Sticker, StickerSet } from "@grammyjs/types";
 import { logger } from "../../infra/logger";
 import { bot } from "../../infra/telegram";
-import { failedPacks, stickerSetCache } from "../../cache/stickers/sets";
+import { failedPacks, inflightStickerSets, stickerSetCache } from "../../cache/stickers/sets";
 import { STICKER_SET_FAILURE_RETRY_MS } from "../../consts/aiChat/stickers";
 
 interface StickerSetApi {
@@ -28,16 +28,28 @@ export async function getStickerSet(packName: string, api: StickerSetApi = bot.a
     failedPacks.delete(packName);
   }
 
-  try {
-    const set: StickerSet = await api.getStickerSet(packName);
-    stickerSetCache.set(packName, set);
-    failedPacks.delete(packName);
-    return set;
-  } catch (error: unknown) {
-    logger.error(`Failed to fetch sticker set "${packName}":`, error);
-    failedPacks.set(packName, Date.now() + STICKER_SET_FAILURE_RETRY_MS);
-    return null;
-  }
+  // 缓存未命中时把在途 Promise 也登记进缓存做请求合并（样式同
+  // ai/imageDescription.ts 的 describeMedia）：并发的几轮回复同时组装贴纸
+  // 菜单时，同一个未缓存的包只对 Telegram 发一次请求。
+  const inflight: Promise<StickerSet | null> | undefined = inflightStickerSets.get(packName);
+  if (inflight) return inflight;
+
+  const request: Promise<StickerSet | null> = (async (): Promise<StickerSet | null> => {
+    try {
+      const set: StickerSet = await api.getStickerSet(packName);
+      stickerSetCache.set(packName, set);
+      failedPacks.delete(packName);
+      return set;
+    } catch (error: unknown) {
+      logger.error(`Failed to fetch sticker set "${packName}":`, error);
+      failedPacks.set(packName, Date.now() + STICKER_SET_FAILURE_RETRY_MS);
+      return null;
+    } finally {
+      inflightStickerSets.delete(packName);
+    }
+  })();
+  inflightStickerSets.set(packName, request);
+  return request;
 }
 
 /**

@@ -10,7 +10,7 @@ mock.module("../../../src/infra/diskIO", () => ({
 }));
 
 const { describeStickerForContext, getStickerSet, pickStickerVisionSource } = await import("../../../src/ai/stickers/sets");
-const { failedPacks, stickerSetCache } = await import("../../../src/cache/stickers/sets");
+const { failedPacks, inflightStickerSets, stickerSetCache } = await import("../../../src/cache/stickers/sets");
 
 describe("ai/stickers/sets describeStickerForContext", () => {
   test("emoji + 包名都有时按顺序拼接", () => {
@@ -94,6 +94,37 @@ describe("ai/stickers/sets getStickerSet 失败恢复", () => {
       expect(calls).toBe(2);
       expect(failedPacks.has(pack)).toBe(false);
       expect(stickerSetCache.get(pack)).toBe(expected);
+    } finally {
+      failedPacks.delete(pack);
+      stickerSetCache.delete(pack);
+    }
+  });
+
+  test("缓存未命中时并发调用合并成一次请求，settle 后不留在途登记", async () => {
+    const pack = "coalesced_pack";
+    const expected: any = { name: pack, title: "Coalesced", sticker_type: "regular", stickers: [] };
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((done) => {
+      release = done;
+    });
+    const api = {
+      getStickerSet: mock(async (): Promise<any> => {
+        calls++;
+        await gate;
+        return expected;
+      }),
+    };
+
+    try {
+      const first = getStickerSet(pack, api);
+      const second = getStickerSet(pack, api);
+      expect(inflightStickerSets.has(pack)).toBe(true);
+      release();
+      expect(await first).toBe(expected);
+      expect(await second).toBe(expected);
+      expect(calls).toBe(1);
+      expect(inflightStickerSets.has(pack)).toBe(false);
     } finally {
       failedPacks.delete(pack);
       stickerSetCache.delete(pack);

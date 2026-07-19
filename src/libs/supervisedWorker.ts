@@ -1,7 +1,7 @@
 import { logger } from "../infra/logger";
 import { relayLogMessage } from "../infra/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
-import { createRestartThrottle } from "./workerSupervisor";
+import { createRestartThrottle } from "./restartThrottle";
 import type { ForwardedLog } from "../types/diskIO";
 
 /**

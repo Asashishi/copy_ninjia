@@ -2,6 +2,7 @@ import { deleteMessage } from "../../../infra/telegram";
 import { logger } from "../../../infra/logger";
 import { sleep } from "../../../libs/sleep";
 import {
+  TYPO_MIN_REMAINING_ACTIONS,
   TYPO_QUICK_CORRECTION_MAX_MS,
   TYPO_QUICK_CORRECTION_MIN_MS,
   TYPO_RECALL_DELETE_MAX_MS,
@@ -47,7 +48,7 @@ export function decideMessageTypo(
     !typoAlreadyUsed &&
     characterTypo !== null &&
     !isEmojiOnly(typoText!) &&
-    remainingActions >= 3;
+    remainingActions >= TYPO_MIN_REMAINING_ACTIONS;
   const typoAttempted: boolean = roundHasTypo &&
     !!originalChar &&
     !!replacementChar &&

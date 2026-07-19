@@ -2,6 +2,7 @@ import type { CachedUser } from "../types/chatState";
 import type { Message } from "@grammyjs/types";
 import { userCache } from "../cache/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
+import { visibleSenderChat } from "./visibleSender";
 
 /**
  * 消息发送者的身份解析与缓存。自动流程（src/auto/message/ 靠 cacheSender
@@ -18,7 +19,7 @@ import { USER_CACHE_MAX } from "../consts/senderIdentity";
  */
 function resolveSenderIdentity(message: Message): CachedUser | undefined {
   const fromUser = message.from;
-  const senderChat = message.sender_chat ?? (message.chat.type === "channel" ? message.chat : undefined);
+  const senderChat = visibleSenderChat(message);
 
   if (senderChat) {
     return {

@@ -4,6 +4,7 @@ export const GEMINI_MEDIA_MODEL: string = "gemini-3.1-flash-lite";
 export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
 export const IMAGE_FALLBACK_PLACEHOLDER: string = "[图片：解析失败，请无视此消息]";
 export const STICKER_PENDING_PLACEHOLDER: string = "[贴纸：识别中]";
+export const STICKER_FALLBACK_PLACEHOLDER: string = "[贴纸：解析失败，请无视此消息]";
 export const ANIMATION_PENDING_PLACEHOLDER: string = "[GIF：识别中]";
 export const ANIMATION_FALLBACK_PLACEHOLDER: string = "[GIF：解析失败，请无视此消息]";
 

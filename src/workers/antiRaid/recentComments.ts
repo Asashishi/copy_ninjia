@@ -23,14 +23,10 @@ export function rememberRecentComment(chatId: number, userId: number, messageId:
   if (recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX) {
     sweepRecentComments(observedAt);
     if (recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX) {
-      let earliestKey: string | undefined;
-      let earliestObservedAt: number = Number.POSITIVE_INFINITY;
-      for (const [candidateKey, candidate] of recentChannelComments) {
-        if (candidate.observedAt < earliestObservedAt) {
-          earliestKey = candidateKey;
-          earliestObservedAt = candidate.observedAt;
-        }
-      }
+      // 每次更新都是「先 delete 旧 key 再 set」，Map 的插入序即观察时间序
+      // （observedAt 随调用单调不减），最早项恒为迭代器第一项，O(1) 淘汰，
+      // 不必线性扫描——raid 高峰持续触顶时这条路径每次插入都会走到。
+      const earliestKey: string | undefined = recentChannelComments.keys().next().value;
       if (earliestKey !== undefined) recentChannelComments.delete(earliestKey);
     }
   }

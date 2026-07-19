@@ -5,6 +5,7 @@ import {
   ANIMATION_PENDING_PLACEHOLDER,
   IMAGE_FALLBACK_PLACEHOLDER,
   IMAGE_PENDING_PLACEHOLDER,
+  STICKER_FALLBACK_PLACEHOLDER,
   STICKER_PENDING_PLACEHOLDER,
 } from "../../consts/aiChat/media";
 
@@ -45,7 +46,7 @@ export function resolvedTagFor(kind: MediaKind, description: string): string {
  *  信息，见 ai/stickers/sets.ts 的 describeStickerForContext），图片/GIF 用
  *  通用的失败说明。 */
 export function fallbackTextFor(kind: MediaKind, msg: AiRecordMediaMessage): string {
-  if (kind === "sticker") return msg.stickerFallbackText ?? IMAGE_FALLBACK_PLACEHOLDER;
+  if (kind === "sticker") return msg.stickerFallbackText ?? STICKER_FALLBACK_PLACEHOLDER;
   if (kind === "animation") return ANIMATION_FALLBACK_PLACEHOLDER;
   return IMAGE_FALLBACK_PLACEHOLDER;
 }

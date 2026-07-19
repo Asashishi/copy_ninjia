@@ -9,6 +9,7 @@ import {
   markAiMemoryDirty,
   resetAiMemoryCache,
 } from "../../cache/diskIO/snapshots";
+import { flushDirtyEntries } from "./dirtyFlush";
 import { deleteAiMemoryFile, recoverAiMemories, writeAiMemoryFile } from "./snapshotFiles";
 
 function scheduleAiMemoryFlush(): void {
@@ -57,19 +58,12 @@ export function flushAiMemorySnapshots(): void {
       console.error(`[diskIOWorker] failed to delete AI memory snapshot for chat ${chatId}:`, error);
     }
   }
-  for (const chatId of dirtyChats) {
-    const snapshot = aiMemoryCache.get(chatId);
-    if (!snapshot) {
-      dirtyChats.delete(chatId);
-      continue;
-    }
-    try {
-      writeAiMemoryFile(chatId, snapshot);
-      dirtyChats.delete(chatId);
-    } catch (error) {
-      console.error(`[diskIOWorker] failed to write AI memory snapshot for chat ${chatId}:`, error);
-    }
-  }
+  flushDirtyEntries(
+    dirtyChats,
+    aiMemoryCache,
+    writeAiMemoryFile,
+    (chatId: number) => `[diskIOWorker] failed to write AI memory snapshot for chat ${chatId}:`
+  );
   if (deletedAiMemoryChats.size > 0 || dirtyChats.size > 0) scheduleAiMemoryFlush();
 }
 

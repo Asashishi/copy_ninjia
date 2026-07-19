@@ -2,7 +2,7 @@ import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../
 import { describeStickerForContext, pickStickerVisionSource } from "../../ai/stickers/sets";
 import { resolveSpeaker } from "./facts";
 import type { MessageTriggerContext } from "./triggerContext";
-import { shouldAttemptRandomTrigger, tryClaimUserReplyTrigger } from "./triggerPolicy";
+import { claimRandomMediaTrigger } from "./triggerPolicy";
 
 /** 记录贴纸元数据/视觉描述并调度直接回复或随机评价。 */
 export function handleStickerMessage(context: MessageTriggerContext): boolean {
@@ -19,15 +19,7 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
     return true;
   }
 
-  const commentOnResolveCandidate: boolean = shouldAttemptRandomTrigger({
-    directTrigger: directMediaTrigger,
-    isQuiet: context.isQuiet,
-    hasOtherMention: context.hasOtherMention,
-    repliesToSelf: context.repliesToSelf,
-    probability: context.aiReplyProbability,
-  });
-  const claimedRandomTrigger: boolean = commentOnResolveCandidate &&
-    tryClaimUserReplyTrigger(chatId, speaker.id);
+  const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
   recordChatMedia(
     "sticker",
     chatId,

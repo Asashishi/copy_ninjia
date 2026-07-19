@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { JSON_API_ERROR_LOG_MAX_CHARS, JSON_API_MAX_RESPONSE_BYTES } from "../../src/consts/httpFetch";
+import { chunkedResponse } from "./helpers";
 
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../src/infra/logger", () => ({
@@ -11,18 +12,6 @@ const realFetch: typeof fetch = globalThis.fetch;
 
 function installFetch(handler: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): void {
   globalThis.fetch = handler as typeof fetch;
-}
-
-function chunkedResponse(chunks: readonly Uint8Array[], init?: ResponseInit): Response {
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      start(controller: ReadableStreamDefaultController<Uint8Array>): void {
-        for (const chunk of chunks) controller.enqueue(chunk);
-        controller.close();
-      },
-    }),
-    init
-  );
 }
 
 describe("fetchJsonWithTimeout", () => {

@@ -1,13 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { createSerialTaskRunner } from "../../src/libs/serialTaskRunner";
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred } from "./helpers";
 
 describe("createSerialTaskRunner", () => {
   test("严格按提交顺序执行，较早的慢任务不会晚于新任务落地", async () => {

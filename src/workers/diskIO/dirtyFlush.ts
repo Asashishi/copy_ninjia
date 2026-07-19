@@ -1,0 +1,26 @@
+/**
+ * aiMemoryFiles.ts 与 stickerCatalogFiles.ts 共用的 dirty 集合逐项写入循环：
+ * 快照已不在缓存里（落盘前又被删除）就直接摘掉 dirty 标记；写成功才摘除，
+ * 单项失败只 console.error（journal 兜底，理由见 workers/diskIOWorker.ts
+ * 模块头）并保留标记，由调用方检查残留后自行重排下一轮。
+ */
+export function flushDirtyEntries<K>(
+  dirty: Set<K>,
+  cache: Map<K, string>,
+  write: (key: K, snapshot: string) => void,
+  describeFailure: (key: K) => string
+): void {
+  for (const key of dirty) {
+    const snapshot: string | undefined = cache.get(key);
+    if (!snapshot) {
+      dirty.delete(key);
+      continue;
+    }
+    try {
+      write(key, snapshot);
+      dirty.delete(key);
+    } catch (error) {
+      console.error(describeFailure(key), error);
+    }
+  }
+}

@@ -7,6 +7,7 @@ import {
   stickerCatalogCache,
   stickerFlushState,
 } from "../../cache/diskIO/stickers";
+import { flushDirtyEntries } from "./dirtyFlush";
 import { recoverStickerCatalogs, writeStickerCatalogFile } from "./snapshotFiles";
 
 function scheduleStickerCatalogFlush(): void {
@@ -35,19 +36,12 @@ export function flushStickerCatalogs(): void {
     clearTimeout(stickerFlushState.timer);
     stickerFlushState.timer = null;
   }
-  for (const pack of dirtyStickerPacks) {
-    const snapshot = stickerCatalogCache.get(pack);
-    if (!snapshot) {
-      dirtyStickerPacks.delete(pack);
-      continue;
-    }
-    try {
-      writeStickerCatalogFile(pack, snapshot);
-      dirtyStickerPacks.delete(pack);
-    } catch (error) {
-      console.error(`[diskIOWorker] failed to write sticker catalog for pack "${pack}":`, error);
-    }
-  }
+  flushDirtyEntries(
+    dirtyStickerPacks,
+    stickerCatalogCache,
+    writeStickerCatalogFile,
+    (pack: string) => `[diskIOWorker] failed to write sticker catalog for pack "${pack}":`
+  );
   if (dirtyStickerPacks.size > 0) scheduleStickerCatalogFlush();
 }
 

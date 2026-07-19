@@ -39,5 +39,7 @@ export async function confirmLuckDraw(messageText: string | undefined): Promise<
   if (!secret) return;
   const cacheKey: string | undefined = verifyLuckReceipt(receipt, luckCacheState.dayKey, secret);
   if (!cacheKey) return;
-  promotePendingDraw(cacheKey);
+  // 验签通过即证明该回执是用当天密钥签发的：即便进程内已跨过零点、pending
+  // 已被清空，也允许用当天密钥重建派生（见 promotePendingDraw 的参数注释）。
+  promotePendingDraw(cacheKey, true);
 }

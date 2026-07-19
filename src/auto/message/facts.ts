@@ -1,6 +1,7 @@
 import type { Animation, Message, MessageEntity, PhotoSize } from "@grammyjs/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
+import { visibleSenderChat } from "../../users/visibleSender";
 
 /** 一条消息在 AI 转录中使用的发送者身份。 */
 export interface MessageSpeaker {
@@ -12,11 +13,12 @@ export interface MessageSpeaker {
 
 /**
  * 解析发言人的稳定身份字段。sender_chat 优先于 from，使频道马甲和匿名管理
- * 身份与群内实际展示一致；频道帖没有 sender_chat 时退回频道自身。
+ * 身份与群内实际展示一致；频道帖没有 sender_chat 时退回频道自身（判定见
+ * users/visibleSender.ts，与 users/senderIdentity.ts 共用）。
  */
 export function resolveSpeaker(message: Message): MessageSpeaker {
   const fromUser = message.from;
-  const senderChat = message.sender_chat ?? (message.chat.type === "channel" ? message.chat : undefined);
+  const senderChat = visibleSenderChat(message);
   if (senderChat) {
     return {
       id: senderChat.id,
@@ -42,43 +44,52 @@ function messageEntitySource(message: Message): { text: string; entities: Messag
   return null;
 }
 
-/** 只按 Telegram entity 精确识别 `@机器人用户名`，不做字符串子串匹配。 */
-export function isBotMentioned(message: Message, botUsername: string | undefined): boolean {
-  if (!botUsername) return false;
-  const source = messageEntitySource(message);
-  if (!source) return false;
-  const target: string = `@${botUsername}`.toLowerCase();
-  for (const entity of source.entities) {
-    if (entity.type !== "mention") continue;
-    const mentionText: string = source.text.substring(entity.offset, entity.offset + entity.length);
-    if (mentionText.toLowerCase() === target) return true;
-  }
-  return false;
+/** 提及相关的两个触发事实，见 resolveMentionFacts。 */
+export interface MentionFacts {
+  /** 消息里 @ 到了机器人自己（只按 Telegram entity 精确识别，不做子串匹配）。 */
+  isMentioned: boolean;
+  /** 消息提及了机器人以外的用户：显式 `@username` 和 Telegram 的隐藏用户名
+   *  提及 `text_mention` 都算，会阻止随机 AI 插话；同时提及机器人时仍由
+   *  调用方的直接触发分支优先处理。 */
+  hasOtherMention: boolean;
 }
 
 /**
- * 判断消息是否提及机器人以外的用户。显式 `@username` 和 Telegram 的隐藏
- * 用户名提及 `text_mention` 都会阻止随机 AI 插话；同时提及机器人时仍由
- * 调用方的直接触发分支优先处理。
+ * 一次遍历实体数组同时判定两个提及事实——createMessageTriggerContext 对每条
+ * 消息都要两者，合并解析避免对同一条消息的 entities 重复扫两遍。
  */
-export function mentionsOtherUser(message: Message, botId: number, botUsername: string | undefined): boolean {
+export function resolveMentionFacts(message: Message, botId: number, botUsername: string | undefined): MentionFacts {
+  const facts: MentionFacts = { isMentioned: false, hasOtherMention: false };
   const source = messageEntitySource(message);
-  if (!source) return false;
+  if (!source) return facts;
   const botTarget: string | undefined = botUsername ? `@${botUsername}`.toLowerCase() : undefined;
   for (const entity of source.entities) {
     if (entity.type === "mention") {
       const mentionText: string = source.text.substring(entity.offset, entity.offset + entity.length).toLowerCase();
-      if (mentionText !== botTarget) return true;
+      if (botTarget !== undefined && mentionText === botTarget) facts.isMentioned = true;
+      else facts.hasOtherMention = true;
+    } else if (entity.type === "text_mention" && entity.user.id !== botId) {
+      facts.hasOtherMention = true;
     }
-    if (entity.type === "text_mention" && entity.user.id !== botId) return true;
   }
-  return false;
+  return facts;
+}
+
+/** 只判定「@ 到机器人」单个事实的便捷形态，语义见 MentionFacts.isMentioned。 */
+export function isBotMentioned(message: Message, botUsername: string | undefined): boolean {
+  if (!botUsername) return false;
+  // botId 只影响 hasOtherMention，这里用不到，传 0 即可。
+  return resolveMentionFacts(message, 0, botUsername).isMentioned;
+}
+
+/** 只判定「提及了别人」单个事实的便捷形态，语义见 MentionFacts.hasOtherMention。 */
+export function mentionsOtherUser(message: Message, botId: number, botUsername: string | undefined): boolean {
+  return resolveMentionFacts(message, botId, botUsername).hasOtherMention;
 }
 
 /** 消息在群里显示的发送者 id；拿不到时返回 undefined，不伪造相等关系。 */
 function visibleSenderId(message: Message): number | undefined {
-  return message.sender_chat?.id ??
-    (message.chat.type === "channel" ? message.chat.id : message.from?.id);
+  return visibleSenderChat(message)?.id ?? message.from?.id;
 }
 
 /** 判断当前消息是否回复同一个可见发送者先前的消息。 */

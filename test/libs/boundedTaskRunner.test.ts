@@ -1,13 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createBoundedTaskRunner } from "../../src/libs/boundedTaskRunner";
-
-function deferred(): { promise: Promise<void>; resolve(): void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
+import { deferred } from "./helpers";
 
 describe("createBoundedTaskRunner", () => {
   test("限制执行与等待数量，饱和后立即拒绝且槽位释放后继续队列", async () => {

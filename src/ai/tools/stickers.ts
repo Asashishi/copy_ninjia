@@ -56,9 +56,17 @@ export function createStickerRoundState(): StickerRoundState {
  * 清单照常可看。
  */
 export async function buildStickerPackMenu(): Promise<StickerPackCandidate[]> {
+  const packs: readonly string[] = getStickerConfig().packs;
+  // 各包拉取互不依赖，并发进行，避免冷启动/负缓存刚过期时把多个包的网络
+  // 延迟串联进同一轮回复。用 allSettled 而非 all：任何一个包的意外异常都
+  // 不该把其余已经拉回来的包一并作废（getStickerSet 自身失败返回 null，
+  // reject 属于防御场景）。
+  const results: PromiseSettledResult<StickerSet | null>[] = await Promise.allSettled(packs.map((pack: string) => getStickerSet(pack)));
   const menu: StickerPackCandidate[] = [];
-  for (const pack of getStickerConfig().packs) {
-    const set: StickerSet | null = await getStickerSet(pack);
+  for (let i: number = 0; i < packs.length; i++) {
+    const pack: string = packs[i]!;
+    const result: PromiseSettledResult<StickerSet | null> = results[i]!;
+    const set: StickerSet | null = result.status === "fulfilled" ? result.value : null;
     if (!set) continue;
     const stickers: StickerCandidate[] = [];
     for (const sticker of set.stickers) {

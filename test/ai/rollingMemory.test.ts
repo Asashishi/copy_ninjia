@@ -48,6 +48,27 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
   expect(postMessageMock).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -2 });
 });
 
+test("语法坏掉或形状不符的持久化快照都按防御性丢弃，不拦下其余群的恢复", () => {
+  const memories = new Map<number, string>([
+    [-1, "not valid json"],
+    [-2, JSON.stringify({ version: 1, buffer: [], summaries: [], pendingSummary: null, savedAt: "昨天" })],
+    [-3, JSON.stringify({ version: 1, buffer: "oops", summaries: [], pendingSummary: null, savedAt: 3 })],
+    [-4, JSON.stringify(null)],
+    [-5, JSON.stringify({
+      version: 1,
+      buffer: [{ id: 5, firstName: "用户", lastName: "", text: "消息", at: "2026/07/18 00:00:00" }],
+      summaries: [],
+      pendingSummary: null,
+      savedAt: 5,
+    })],
+  ]);
+
+  hydrateMemories(memories);
+  expect(memoryCache.chatBuffers.has(-5)).toBe(true);
+  expect(memoryCache.chatBuffers.size).toBe(1);
+  expect(moodCache.chatMoods.has(-5)).toBe(true);
+});
+
 test("回归：hydrate 恢复 chatLastActivityTimes 的同时也播种 chatMoods，不违反“有活动时间就有心情”的不变量", () => {
   const memories = new Map<number, string>([
     [-42, JSON.stringify({

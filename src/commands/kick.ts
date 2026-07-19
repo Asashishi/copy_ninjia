@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import { sendMessage, banChatMember, banChatSenderChat, isChatMember, deleteMessageAfter } from "../infra/telegram";
-import { formatUserLabel } from "../users/userLabel";
+import { formatMockerLabel, formatUserLabel } from "../users/userLabel";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { resolveCommandTarget } from "./targetResolution";
@@ -28,10 +28,7 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
   const fromUser = ctx.from;
 
   if (!fromUser || !PRIVILEGED_USERS_ID.includes(fromUser.id)) {
-    const mockerLabel: string = fromUser
-      ? formatUserLabel({ id: fromUser.id, username: fromUser.username, first_name: fromUser.first_name })
-      : "哪个杂鱼";
-    const replyText: string = `就 ${mockerLabel} 也想 /kick 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
+    const replyText: string = `就 ${formatMockerLabel(fromUser)} 也想 /kick 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
     await sendMessage(chatId, replyText, messageId);
     return;
   }

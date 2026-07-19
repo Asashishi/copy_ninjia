@@ -10,10 +10,9 @@ import type { ChatState } from "../types/chatState";
  */
 export function normalizeChatState(chatState: ChatState, now: number = Date.now()): ChatState {
   if (chatState.quietUntil !== undefined && chatState.quietUntil <= now) delete chatState.quietUntil;
-  if (chatState.isAIChatEnabled === false) delete chatState.isAIChatEnabled;
-  if (chatState.isJATranslationEnabled === false) delete chatState.isJATranslationEnabled;
-  if (chatState.isInitEnabled === false) delete chatState.isInitEnabled;
-  if (chatState.isProxySendEnabled === false) delete chatState.isProxySendEnabled;
+  for (const toggle of ["isAIChatEnabled", "isJATranslationEnabled", "isInitEnabled", "isProxySendEnabled"] as const) {
+    if (chatState[toggle] === false) delete chatState[toggle];
+  }
 
   for (const key of Object.keys(chatState) as (keyof ChatState)[]) {
     if (chatState[key] === undefined) delete chatState[key];

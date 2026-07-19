@@ -1,7 +1,7 @@
 import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../aiChat";
 import { pickAnimationVisionSource, resolveSpeaker } from "./facts";
 import type { MessageTriggerContext } from "./triggerContext";
-import { shouldAttemptRandomTrigger, tryClaimUserReplyTrigger } from "./triggerPolicy";
+import { claimRandomMediaTrigger } from "./triggerPolicy";
 
 /** 记录 GIF 缩略图描述；无缩略图时退回纯文本上下文。 */
 export function handleAnimationMessage(context: MessageTriggerContext): boolean {
@@ -25,15 +25,7 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
     return true;
   }
 
-  const commentOnResolveCandidate: boolean = shouldAttemptRandomTrigger({
-    directTrigger: directMediaTrigger,
-    isQuiet: context.isQuiet,
-    hasOtherMention: context.hasOtherMention,
-    repliesToSelf: context.repliesToSelf,
-    probability: context.aiReplyProbability,
-  });
-  const claimedRandomTrigger: boolean = commentOnResolveCandidate &&
-    tryClaimUserReplyTrigger(chatId, speaker.id);
+  const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
   recordChatMedia(
     "animation",
     chatId,

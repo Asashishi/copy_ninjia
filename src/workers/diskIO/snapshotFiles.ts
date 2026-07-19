@@ -261,7 +261,7 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   const entries: Map<string, LuckDrawRecord> = new Map();
   for (const [key, value] of Object.entries(raw)) {
     // entries 里结构不对的条目丢弃（结构性校验，不假设未来档位表长什么样），
-    // 当天重抽，见 types/diskIO.ts 的 LuckDayFile 注释。
+    // 当天重抽，见 types/diskIO/storage.ts 的 LuckDayFile 注释。
     if (!isRecord(value)) continue;
     if (typeof value.label === "string" && typeof value.fortunePercent === "number" && Number.isFinite(value.fortunePercent)) {
       entries.set(key, { label: value.label, fortunePercent: value.fortunePercent });
