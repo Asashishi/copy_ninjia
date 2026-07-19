@@ -28,5 +28,5 @@ export const AI_TEXT_TYPO_PROBABILITY: number = 0.15;
 export const TYPO_MIN_REMAINING_ACTIONS: number = 2;
 /** 出错后补发正确单字的概率；剩余 10% 视为没发现。 */
 export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.9;
-export const TYPO_QUICK_CORRECTION_MIN_MS: number = 5_000;
-export const TYPO_QUICK_CORRECTION_MAX_MS: number = 7_500;
+export const TYPO_QUICK_CORRECTION_MIN_MS: number = 7_500;
+export const TYPO_QUICK_CORRECTION_MAX_MS: number = 10_000;

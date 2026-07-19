@@ -17,7 +17,7 @@ export const REPLY_GENERATIONS_MAX: number = 3500;
 export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
 export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
 /** 同群在途回复轮数和直接触发等候队列上限。 */
-export const REPLY_ROUND_MAX_CONCURRENT: number = 5;
+export const REPLY_ROUND_MAX_CONCURRENT: number = 3;
 export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 /** 排队触发原文快照的截断上限。 */
 export const QUEUED_TRIGGER_SNIPPET_MAX_CHARS: number = 200;

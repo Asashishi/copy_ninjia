@@ -11,7 +11,7 @@ export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;
 /** 每群保留的冷摘要轮数。 */
 export const MAX_SUMMARY_ROUNDS: number = 5;
 /** 单群执行中 + 排队中的压缩任务硬顶。 */
-export const COMPACTION_MAX_PENDING_PER_CHAT: number = 4;
+export const COMPACTION_MAX_PENDING_PER_CHAT: number = 5;
 /** dirty AI 记忆快照上报主线程的周期。 */
 export const AI_SNAPSHOT_INTERVAL_MS: number = 30_000;
 /** hydrate 少恢复一条，保证下一次 push 能精确命中轮换等值边界。 */

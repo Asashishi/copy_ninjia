@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { IMAGE_GENERATION_COOLDOWN_MS } from "../../src/consts/aiChat/imageGeneration";
 import {
   claimImageGeneration,
   getImageGenerationAvailability,
@@ -12,14 +13,14 @@ afterEach(() => {
 });
 
 describe("每群图片生成冷却", () => {
-  test("各群独立计时，并在一分钟边界重新放行", () => {
+  test("各群独立计时，并在配置的冷却边界重新放行", () => {
     expect(claimImageGeneration({ chatId: -1001, bypassCooldown: false, now: 0 })).toEqual({ allowed: true });
     expect(claimImageGeneration({ chatId: -1002, bypassCooldown: false, now: 10 })).toEqual({ allowed: true });
-    expect(claimImageGeneration({ chatId: -1001, bypassCooldown: false, now: 59_999 })).toEqual({
+    expect(claimImageGeneration({ chatId: -1001, bypassCooldown: false, now: IMAGE_GENERATION_COOLDOWN_MS - 1 })).toEqual({
       allowed: false,
       retryAfterMs: 1,
     });
-    expect(claimImageGeneration({ chatId: -1001, bypassCooldown: false, now: 60_000 })).toEqual({ allowed: true });
+    expect(claimImageGeneration({ chatId: -1001, bypassCooldown: false, now: IMAGE_GENERATION_COOLDOWN_MS })).toEqual({ allowed: true });
   });
 
   test("只读可用性查询与原子占位使用同一套冷却判断", () => {
@@ -27,7 +28,7 @@ describe("每群图片生成冷却", () => {
     claimImageGeneration({ chatId: -1001, bypassCooldown: false, now: 0 });
     expect(getImageGenerationAvailability({ chatId: -1001, bypassCooldown: false, now: 1_000 })).toEqual({
       allowed: false,
-      retryAfterMs: 59_000,
+      retryAfterMs: IMAGE_GENERATION_COOLDOWN_MS - 1_000,
     });
     expect(getImageGenerationAvailability({ chatId: -1001, bypassCooldown: true, now: 1_000 })).toEqual({ allowed: true });
   });
@@ -40,15 +41,15 @@ describe("每群图片生成冷却", () => {
     expect(imageGenerationClaimTimes.has(-1003)).toBe(false);
     expect(claimImageGeneration({ chatId: -1001, bypassCooldown: false, now: 300 })).toEqual({
       allowed: false,
-      retryAfterMs: 59_800,
+      retryAfterMs: IMAGE_GENERATION_COOLDOWN_MS - 200,
     });
   });
 
   test("维护清扫只删除已过期条目", () => {
     claimImageGeneration({ chatId: -1001, bypassCooldown: false, now: 0 });
-    claimImageGeneration({ chatId: -1002, bypassCooldown: false, now: 30_000 });
+    claimImageGeneration({ chatId: -1002, bypassCooldown: false, now: IMAGE_GENERATION_COOLDOWN_MS / 2 });
 
-    sweepImageGenerationCache(60_000);
+    sweepImageGenerationCache(IMAGE_GENERATION_COOLDOWN_MS);
 
     expect(imageGenerationClaimTimes.has(-1001)).toBe(false);
     expect(imageGenerationClaimTimes.has(-1002)).toBe(true);
