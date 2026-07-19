@@ -212,7 +212,7 @@ bun run start     # 启动长轮询
 | AI 群聊记忆 | `memory/ai/` | 每群独立快照，30 秒周期 + 停机 flush |
 | 贴纸描述目录 | `memory/stickers/` | 每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用 |
 | 今日运势 | `memory/luck/` | 结果按东京日期增量追加并修复尾部截断；`receipt-secret.json` 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 `0644` |
-| 待验证成员 | `memory/anti-raid/` | 当日 JSON 按 key 增量追加；普通更新 250ms 合并，创建/终结立即写；4 MiB 或 10,000 条历史前收敛 active 快照，跨日删除旧文件 |
+| 待验证成员 | `memory/anti-raid/` | 当日 JSON 按 `chatId:userId` 键增量追加；普通更新 250ms 合并，创建立即写，终结立即收敛 active 快照；4 MiB 或 10,000 条历史前收敛，跨日删除旧文件 |
 | error 日志 | `logs/` | Disk I/O Worker 统一批量追加 |
 | 运行实例 | `bot.lock` | 原子维护的多 Bot 进程注册表 |
 

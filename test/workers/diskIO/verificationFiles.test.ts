@@ -91,8 +91,37 @@ describe("pending verification daily append JSON", () => {
     }, receiveReply, dir, DAY_ONE);
 
     expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
-    expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8"))).toEqual({ "-1001:42": null });
+    expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8"))).toEqual({});
+    expect(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")).toBe("{}");
     expect(replies.at(-1)).toMatchObject({ revision: 2, deleted: true });
+  });
+
+  test("任一验证终结时收敛整份 active 快照，不给其它成员留下重复键", () => {
+    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: true }, receiveReply, dir, DAY_ONE);
+    handleVerificationUpsert({
+      type: "verificationUpsert",
+      record: snapshot(1, { userId: 43, label: "第二位" }),
+      critical: true,
+    }, receiveReply, dir, DAY_ONE);
+    handleVerificationUpsert({
+      type: "verificationUpsert",
+      record: snapshot(2, { userId: 43, label: "第二位" }),
+      critical: true,
+    }, receiveReply, dir, DAY_ONE);
+
+    handleVerificationDelete({
+      type: "verificationDelete",
+      chatId: -1001,
+      userId: 42,
+      generation: 1,
+      revision: 2,
+    }, receiveReply, dir, DAY_ONE);
+
+    const content: string = readFileSync(join(dir, `${DAY_ONE}.json`), "utf8");
+    expect(content.match(/"-1001:43":/g)).toHaveLength(1);
+    expect(JSON.parse(content)).toEqual({
+      "-1001:43": { version: 1, ...snapshot(2, { userId: 43, label: "第二位" }) },
+    });
   });
 
   test("尾部截断修复保留此前完整 revision，随后仍可追加", () => {
@@ -183,6 +212,19 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(join(dir, "2026-07-18.json"))).toBeFalse();
     expect(existsSync(join(dir, "notes.json"))).toBeTrue();
     expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  test("旧下划线键不再兼容，必须手动改成冒号格式", () => {
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
+      "-1001_42": { version: 1, ...snapshot(1) },
+    }, null, 2));
+
+    expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("ignoring invalid pending verification record for key -1001_42")
+    );
     error.mockRestore();
   });
 

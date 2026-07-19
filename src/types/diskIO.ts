@@ -154,6 +154,7 @@ export interface DiskFlushReply {
 /** diskIOWorker -> 主线程：一条验证变化已经进入当天 JSON 文件。 */
 export interface VerificationPersistedReply {
   type: "verificationPersisted";
+  /** 待验证落盘键，固定为 `chatId:userId`。 */
   key: string;
   generation: number;
   revision: number;
