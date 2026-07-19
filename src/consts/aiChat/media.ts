@@ -17,5 +17,5 @@ export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
 /** 非目录媒体描述的全局 LRU 上限。 */
 export const MEDIA_DESCRIPTION_CACHE_MAX: number = 1500;
 /** 下载、转码、视觉 API 共用执行器的并发与排队硬顶。 */
-export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 35;
-export const MEDIA_DESCRIPTION_MAX_PENDING: number = 75;
+export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 75;
+export const MEDIA_DESCRIPTION_MAX_PENDING: number = 150;
