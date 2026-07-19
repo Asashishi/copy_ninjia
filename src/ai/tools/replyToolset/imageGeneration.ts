@@ -5,6 +5,7 @@ import {
 } from "../../../cache/aiChat/imageGeneration";
 import {
   IMAGE_GENERATION_ASPECT_RATIOS,
+  IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY,
   IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS,
   IMAGE_GENERATION_PROMPT_MAX_CHARS,
   type ImageGenerationAspectRatio,
@@ -19,13 +20,15 @@ import type { ToolDefinition } from "../../../types/tools";
 import { generateChatImage, normalizeImageAspectRatio, type GeneratedChatImage } from "../../imageGeneration";
 
 export function buildGenerateImageToolDefinition(
-  ctx: Pick<ReplyToolContext, "chatId" | "bypassImageGenerationCooldown">
+  ctx: Pick<ReplyToolContext, "chatId" | "imageGenerationRequested" | "bypassImageGenerationCooldown">
 ): ToolDefinition {
   const availability: ImageGenerationClaim = getImageGenerationAvailability({
     chatId: ctx.chatId,
     bypassCooldown: ctx.bypassImageGenerationCooldown,
   });
-  const availabilityInstruction: string = ctx.bypassImageGenerationCooldown
+  const availabilityInstruction: string = !ctx.imageGenerationRequested
+    ? "当前状态：不可生图；当前触发消息没有直接向你明确要求生成图片，本轮禁止调用。"
+    : ctx.bypassImageGenerationCooldown
     ? "当前状态：可以生图；本轮由 superAdmin 触发，不受群冷却限制。"
     : availability.allowed
     ? "当前状态：可以生图。"
@@ -69,12 +72,26 @@ function parseArguments(argumentsJson: string): { prompt: string; aspectRatio: I
 }
 
 export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJson: string) => Promise<string> {
+  let consecutiveFailures: number = 0;
   return async (argumentsJson: string): Promise<string> => {
     if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+    if (!ctx.imageGenerationRequested) {
+      return JSON.stringify({
+        error: "Image generation is not authorized: the triggering message did not explicitly ask the bot to generate an image",
+        retryable: false,
+      });
+    }
     const parsed = parseArguments(argumentsJson);
     if (!parsed) {
       return JSON.stringify({
         error: "Invalid image arguments: prompt must be non-empty and aspect_ratio must look like W:H, W/H, WxH, or W×H",
+      });
+    }
+
+    if (consecutiveFailures >= IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY) {
+      return JSON.stringify({
+        error: "Image generation is disabled for the remainder of this reply after repeated failures; respond without retrying",
+        retryable: false,
       });
     }
 
@@ -89,9 +106,21 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
       });
     }
 
-    const image: GeneratedChatImage | null = await generateChatImage(parsed.prompt, parsed.aspectRatio);
+    ctx.chatAction.set("typing");
+    let image: GeneratedChatImage | null;
+    try {
+      image = await generateChatImage(parsed.prompt, parsed.aspectRatio);
+    } finally {
+      // 与 send_message 落地前的处理一致：先阻止新的 typing tick，再等已经
+      // 发出的状态请求收敛，避免它晚于图片到达而重新挂出“正在输入”。
+      ctx.chatAction.set("idle");
+      await ctx.chatAction.settle();
+    }
     if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
-    if (!image) return JSON.stringify({ error: "Image generation failed or returned no usable image" });
+    if (!image) {
+      consecutiveFailures++;
+      return JSON.stringify({ error: "Image generation failed or returned no usable image" });
+    }
 
     const messageId: number | undefined = await sendPhoto({
       chatId: ctx.chatId,
@@ -99,8 +128,12 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
       mimeType: image.mimeType,
       replyToMessageId: ctx.replyToMessageId,
     });
-    if (messageId === undefined) return JSON.stringify({ error: "Failed to send generated image" });
+    if (messageId === undefined) {
+      consecutiveFailures++;
+      return JSON.stringify({ error: "Failed to send generated image" });
+    }
 
+    consecutiveFailures = 0;
     const memoryPrompt: string = truncateInline(sanitizeInline(parsed.prompt), IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS);
     ctx.onImageSent(`（生成并发送了一张图片：${memoryPrompt}）`, messageId);
     return JSON.stringify({ success: true, message_id: messageId, aspect_ratio: parsed.aspectRatio, resolution: "1K" });

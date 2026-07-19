@@ -8,6 +8,7 @@ const { generateChatImage, normalizeImageAspectRatio } = await import("../../src
 const {
   GEMINI_IMAGE_GENERATION_MODEL,
   IMAGE_GENERATION_ASPECT_RATIOS,
+  IMAGE_GENERATION_MAX_BYTES,
 } = await import("../../src/consts/aiChat/imageGeneration");
 
 beforeEach(() => {
@@ -41,9 +42,10 @@ describe("图片比例归一化", () => {
 
 describe("Gemini 图片生成适配器", () => {
   test("固定请求 1K 图片，并跳过文本段与思考中间图", async () => {
-    const expectedBytes: Buffer = Buffer.from("final-image");
+    const expectedBytes: Buffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
     requestGeminiResponse.mockResolvedValueOnce({
       candidates: [{
+        finishReason: "STOP",
         content: {
           parts: [
             { text: "draft" },
@@ -70,9 +72,49 @@ describe("Gemini 图片生成适配器", () => {
 
   test("没有可用 PNG/JPEG 时返回 null", async () => {
     requestGeminiResponse.mockResolvedValueOnce({
-      candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/webp", data: "AAAA" } }] } }],
+      candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: { mimeType: "image/webp", data: "AAAA" } }] } }],
     });
 
     await expect(generateChatImage("test", "1:1")).resolves.toBeNull();
+  });
+
+  test("异常结束原因即使夹带图片 payload 也不会返回", async () => {
+    const encoded: string = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString("base64");
+    for (const finishReason of ["MAX_TOKENS", "SAFETY", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION", "NO_IMAGE"]) {
+      requestGeminiResponse.mockResolvedValueOnce({
+        candidates: [{ finishReason, content: { parts: [{ inlineData: { mimeType: "image/png", data: encoded } }] } }],
+      });
+      await expect(generateChatImage("test", "1:1")).resolves.toBeNull();
+    }
+  });
+
+  test("拒绝非法 base64 与 MIME/文件签名不一致的数据", async () => {
+    requestGeminiResponse.mockResolvedValueOnce({
+      candidates: [{
+        finishReason: "STOP",
+        content: { parts: [{ inlineData: { mimeType: "image/png", data: "not-base64!" } }] },
+      }],
+    });
+    await expect(generateChatImage("bad base64", "1:1")).resolves.toBeNull();
+
+    requestGeminiResponse.mockResolvedValueOnce({
+      candidates: [{
+        finishReason: "STOP",
+        content: { parts: [{ inlineData: { mimeType: "image/png", data: Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString("base64") } }] },
+      }],
+    });
+    await expect(generateChatImage("wrong signature", "1:1")).resolves.toBeNull();
+  });
+
+  test("编码长度已证明解码后可能超限时不分配图片 Buffer", async () => {
+    const encodedOverLimit: string = "A".repeat(Math.ceil(IMAGE_GENERATION_MAX_BYTES / 3) * 4 + 4);
+    requestGeminiResponse.mockResolvedValueOnce({
+      candidates: [{
+        finishReason: "STOP",
+        content: { parts: [{ inlineData: { mimeType: "image/png", data: encodedOverLimit } }] },
+      }],
+    });
+
+    await expect(generateChatImage("oversized", "1:1")).resolves.toBeNull();
   });
 });

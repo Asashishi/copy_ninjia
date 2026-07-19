@@ -25,6 +25,7 @@ export interface ReplyRoundRequest {
   triggerSenderId: number;
   replyToMessageId: number;
   repliedBotText?: string;
+  imageGenerationRequested: boolean;
   isRandomTrigger: boolean;
   mediaComment?: MediaCommentContext;
   queuedTrigger?: QueuedReplyTrigger;
@@ -37,7 +38,16 @@ export interface ReplyRoundRequest {
  * 本函数内成对获取/释放；完成回调用于让编排层继续排空等候队列。
  */
 export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId: number) => void): void {
-  const { chatId, triggerSenderId, replyToMessageId, repliedBotText, isRandomTrigger, mediaComment, queuedTrigger } = request;
+  const {
+    chatId,
+    triggerSenderId,
+    replyToMessageId,
+    repliedBotText,
+    imageGenerationRequested,
+    isRandomTrigger,
+    mediaComment,
+    queuedTrigger,
+  } = request;
   const generation: number = request.generation ?? currentReplyGeneration(chatId);
   if (!isReplyGenerationCurrent(chatId, generation)) return;
 
@@ -82,6 +92,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         const ctx: ReplyToolContext = {
           chatId,
           replyToMessageId,
+          imageGenerationRequested,
           bypassImageGenerationCooldown: triggerSenderId === SUPER_ADMIN_USER_ID,
           chatAction: heartbeat,
           stickerLock,

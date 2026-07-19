@@ -86,7 +86,14 @@ describe("AI Chat Worker lifecycle", () => {
       { type: "init", botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" } },
       { type: "record", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", username: "alice", text: "hi" },
       { type: "recordMedia", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", kind: "photo", fileId: "file", messageId: 10 } as unknown as AiChatWorkerMessage,
-      { type: "trigger", chatId: -1001, triggerSenderId: 7, replyToMessageId: 10, isRandomTrigger: false },
+      {
+        type: "trigger",
+        chatId: -1001,
+        triggerSenderId: 7,
+        replyToMessageId: 10,
+        isRandomTrigger: false,
+        imageGenerationRequested: true,
+      },
       { type: "hydrate", memories: new Map<number, string>() },
       { type: "hydrateStickerCatalog", catalogs: new Map<string, string>() },
       { type: "flushMemory", flushId: 8 },
@@ -106,6 +113,7 @@ describe("AI Chat Worker lifecycle", () => {
       triggerSenderId: 7,
       replyToMessageId: 10,
       isRandomTrigger: false,
+      imageGenerationRequested: true,
     });
     expect(hydrateMemories).toHaveBeenCalledTimes(1);
     expect(hydrateStickerCatalogs).toHaveBeenCalledTimes(1);

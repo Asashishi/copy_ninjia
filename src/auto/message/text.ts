@@ -1,5 +1,6 @@
 import { generateAndSendReply, recordChatMessage } from "../../aiChat";
 import { resolveSpeaker } from "./facts";
+import { hasExplicitImageGenerationIntent } from "./imageGenerationIntent";
 import type { MessageTriggerContext } from "./triggerContext";
 import { shouldAttemptRandomTrigger, tryClaimUserReplyTrigger } from "./triggerPolicy";
 
@@ -24,6 +25,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
       repliedBotText: context.isReplyToBot ? context.repliedTo?.text : undefined,
+      imageGenerationRequested: hasExplicitImageGenerationIntent(message.text),
     });
     return true;
   }
@@ -36,7 +38,14 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   });
   if (!isRandomTrigger) return false;
   if (tryClaimUserReplyTrigger(chatId, speaker.id)) {
-    generateAndSendReply({ chatId, triggerSenderId: speaker.id, replyToMessageId: message.message_id, isRandomTrigger: true });
+    generateAndSendReply({
+      chatId,
+      triggerSenderId: speaker.id,
+      replyToMessageId: message.message_id,
+      isRandomTrigger: true,
+      // 没有回复/@机器人只是随机插话，不构成对生图工具的明确调用。
+      imageGenerationRequested: false,
+    });
   }
   // 掷骰命中但个人冷却未取得时仍不随机复读，与原流水线语义一致。
   return true;

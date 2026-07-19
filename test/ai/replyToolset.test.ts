@@ -53,6 +53,7 @@ test("工具集真实注册 googleSearch，并同时提供函数行动工具", a
   const toolset = await createReplyToolset({
     chatId: -100800,
     replyToMessageId: 10,
+    imageGenerationRequested: true,
     bypassImageGenerationCooldown: false,
     chatAction: {
       current: () => "idle",
@@ -156,6 +157,7 @@ describe("send_message typo correction", () => {
     const toolset = await createReplyToolset({
       chatId: -100800,
       replyToMessageId: 10,
+      imageGenerationRequested: true,
       bypassImageGenerationCooldown: false,
       chatAction: {
         current: () => "idle",
@@ -183,6 +185,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        imageGenerationRequested: true,
         bypassImageGenerationCooldown: false,
         chatAction: {
           current: () => "idle",
@@ -229,6 +232,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        imageGenerationRequested: true,
         bypassImageGenerationCooldown: false,
         chatAction: {
           current: () => "idle",
@@ -270,6 +274,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        imageGenerationRequested: true,
         bypassImageGenerationCooldown: false,
         chatAction: {
           current: () => "idle",
@@ -314,6 +319,7 @@ describe("send_message 重复消息去重", () => {
     return {
       chatId: -100800,
       replyToMessageId: 10,
+      imageGenerationRequested: true,
       bypassImageGenerationCooldown: false,
       chatAction: {
         current: () => "idle" as const,

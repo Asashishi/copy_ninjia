@@ -227,6 +227,8 @@ type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigg
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
  * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
+ * @param imageGenerationRequested 当前触发消息是否直接回复/@机器人并明确要求
+ *   生成图片；Worker 执行器仍会据此做硬门禁。
  * @param isRandomTrigger 是否是无人回复/@机器人、单纯按概率命中的随机插话
  *   （怎么接、挂不挂回复引用由模型判断，但必须回应——说话/贴纸/扣反应
  *   都算，不允许沉默；「插不插话」的闸门在触发概率那一层，见
@@ -237,9 +239,18 @@ export function generateAndSendReply({
   triggerSenderId,
   replyToMessageId,
   repliedBotText,
+  imageGenerationRequested,
   isRandomTrigger = false,
 }: GenerateAndSendReplyParams): void {
-  post({ type: "trigger", chatId, triggerSenderId, replyToMessageId, repliedBotText, isRandomTrigger });
+  post({
+    type: "trigger",
+    chatId,
+    triggerSenderId,
+    replyToMessageId,
+    repliedBotText,
+    isRandomTrigger,
+    imageGenerationRequested,
+  });
 }
 
 /**

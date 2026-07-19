@@ -62,6 +62,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           replyToMessageId: msg.messageId,
           repliedBotText: msg.directTrigger.repliedBotText,
           isRandomTrigger: false,
+          imageGenerationRequested: msg.imageGenerationRequested,
           mediaComment: {
             kind: "sticker",
             senderName: displayBufferedMessageName(entry),
@@ -76,6 +77,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           replyToMessageId: msg.messageId,
           repliedBotText: undefined,
           isRandomTrigger: false,
+          imageGenerationRequested: false,
           mediaComment: {
             kind: "sticker",
             senderName: displayBufferedMessageName(entry),
@@ -113,6 +115,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         replyToMessageId: msg.messageId,
         repliedBotText: msg.directTrigger.repliedBotText,
         isRandomTrigger: false,
+        imageGenerationRequested: msg.imageGenerationRequested,
         mediaComment: {
           kind: msg.kind,
           senderName: displayBufferedMessageName(entry),
@@ -127,6 +130,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         replyToMessageId: msg.messageId,
         repliedBotText: undefined,
         isRandomTrigger: false,
+        imageGenerationRequested: false,
         mediaComment: {
           kind: msg.kind,
           senderName: displayBufferedMessageName(entry),

@@ -110,6 +110,7 @@ describe("AI 缓存发送者 username 传递", () => {
       fileUniqueId: "photo-unique",
       messageId: 10,
       commentOnResolve: false,
+      imageGenerationRequested: false,
       directTrigger: undefined,
     });
   });

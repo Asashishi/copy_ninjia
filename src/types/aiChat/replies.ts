@@ -8,6 +8,7 @@ export interface QueuedReplyTrigger {
   triggerSenderId: number;
   replyToMessageId: number;
   repliedBotText?: string;
+  imageGenerationRequested: boolean;
   senderName: string;
   text: string;
 }
@@ -16,6 +17,7 @@ export interface QueuedReplyTrigger {
 export interface ReplyToolContext {
   chatId: number;
   replyToMessageId: number;
+  imageGenerationRequested: boolean;
   bypassImageGenerationCooldown: boolean;
   chatAction: ChatActionControl;
   stickerLock: StickerSendLockControl;

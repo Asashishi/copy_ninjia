@@ -20,6 +20,7 @@ const stickerMessage: AiRecordMediaMessage = {
   fileUniqueId: "unique",
   messageId: 10,
   commentOnResolve: false,
+  imageGenerationRequested: false,
   stickerFallbackText: "[贴纸：🙂，来自 pack]",
 };
 

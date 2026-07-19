@@ -28,6 +28,7 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): void {
       triggerSenderId: trigger.triggerSenderId,
       replyToMessageId: trigger.replyToMessageId,
       repliedBotText: trigger.repliedBotText,
+      imageGenerationRequested: trigger.imageGenerationRequested,
       isRandomTrigger: false,
       queuedTrigger: trigger,
     },
@@ -49,6 +50,7 @@ export function generateAndSendReply(
     triggerSenderId,
     replyToMessageId,
     repliedBotText,
+    imageGenerationRequested,
     isRandomTrigger,
     mediaComment,
   }: {
@@ -56,6 +58,7 @@ export function generateAndSendReply(
     triggerSenderId: number;
     replyToMessageId: number;
     repliedBotText?: string;
+    imageGenerationRequested: boolean;
     isRandomTrigger: boolean;
     mediaComment?: MediaCommentContext;
   }
@@ -79,6 +82,7 @@ export function generateAndSendReply(
           triggerSenderId,
           replyToMessageId,
           repliedBotText,
+          imageGenerationRequested,
           isRandomTrigger,
           mediaComment,
           generation,
@@ -89,7 +93,14 @@ export function generateAndSendReply(
     case "dropSilently":
       break;
     case "enqueue":
-      pushReplyTrigger({ chatId, triggerSenderId, replyToMessageId, repliedBotText, mediaTrigger: mediaComment });
+      pushReplyTrigger({
+        chatId,
+        triggerSenderId,
+        replyToMessageId,
+        repliedBotText,
+        imageGenerationRequested,
+        mediaTrigger: mediaComment,
+      });
       break;
     case "enqueueOverflow":
       // 等当前轮收尾后再发提示，避免插进同一轮的连续短句中间。

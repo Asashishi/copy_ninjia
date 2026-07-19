@@ -36,6 +36,8 @@ export interface AiRecordMediaMessage {
   fileUniqueId: string;
   messageId: number;
   commentOnResolve: boolean;
+  /** 当前媒体消息是否直接向机器人明确要求生成图片。 */
+  imageGenerationRequested: boolean;
   stickerFallbackText?: string;
   directTrigger?: {
     reason: "reply" | "mention";
@@ -50,6 +52,8 @@ export interface AiTriggerMessage {
   replyToMessageId: number;
   repliedBotText?: string;
   isRandomTrigger: boolean;
+  /** 当前触发消息是否直接向机器人明确要求生成图片。 */
+  imageGenerationRequested: boolean;
 }
 
 export interface AiHydrateMessage {

@@ -77,6 +77,7 @@ function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}
       chatId: -1001,
       triggerSenderId: 7,
       replyToMessageId: 10,
+      imageGenerationRequested: false,
       isRandomTrigger: false,
       ...overrides,
     }, resolve);
@@ -184,6 +185,7 @@ describe("AI 单轮回复生命周期", () => {
       chatId: -1001,
       triggerSenderId: 7,
       replyToMessageId: 10,
+      imageGenerationRequested: false,
       isRandomTrigger: false,
       generation: 0,
     }, finished);
@@ -192,6 +194,7 @@ describe("AI 单轮回复生命周期", () => {
       chatId: -1002,
       triggerSenderId: 8,
       replyToMessageId: 11,
+      imageGenerationRequested: false,
       isRandomTrigger: false,
     }, finished);
 
@@ -208,7 +211,13 @@ describe("AI 单轮回复生命周期", () => {
     rateLimitNoticeTimes.set(-1001, now);
     const finished = mock((_chatId: number): void => {});
 
-    startReplyRound({ chatId: -1001, triggerSenderId: 7, replyToMessageId: 10, isRandomTrigger: false }, finished);
+    startReplyRound({
+      chatId: -1001,
+      triggerSenderId: 7,
+      replyToMessageId: 10,
+      imageGenerationRequested: false,
+      isRandomTrigger: false,
+    }, finished);
 
     expect(finished).not.toHaveBeenCalled();
     expect(createStickerSendLock).not.toHaveBeenCalled();

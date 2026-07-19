@@ -110,6 +110,7 @@ describe("媒体直接叫机器人", () => {
       fileUniqueId: "st-uid",
       messageId: 11,
       commentOnResolve: false,
+      imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTrigger: { reason: "reply", repliedBotText: "机器人之前说的话" },
     });
@@ -146,6 +147,7 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 12,
       repliedBotText: "机器人之前说的话",
+      imageGenerationRequested: false,
     });
   });
 
@@ -199,6 +201,7 @@ describe("媒体直接叫机器人", () => {
       fileUniqueId: "st-random-uid",
       messageId: 23,
       commentOnResolve: true,
+      imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTrigger: undefined,
     });
@@ -231,13 +234,14 @@ describe("媒体直接叫机器人", () => {
       fileUniqueId: "st-uid",
       messageId: 13,
       commentOnResolve: false,
+      imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTrigger: undefined,
     });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
-  test("图片 caption 里 @ 机器人：recordChatMedia 带 mention directTrigger，静默期也必回", async () => {
+  test("图片 caption 明确要求生图并 @ 机器人：向 Worker 传递生图授权", async () => {
     await handleIncomingMessage({
       me: botInfo,
       msg: {
@@ -245,8 +249,8 @@ describe("媒体直接叫机器人", () => {
         date: 1,
         chat,
         from: alice,
-        caption: "看看这个 @test_bot",
-        caption_entities: [{ type: "mention", offset: 5, length: 9 }],
+        caption: "帮我生成一张图 @test_bot",
+        caption_entities: [{ type: "mention", offset: 8, length: 9 }],
         photo: [{ file_id: "photo-file", file_unique_id: "photo-uid", width: 640, height: 480 }],
       },
     } as any);
@@ -259,11 +263,12 @@ describe("媒体直接叫机器人", () => {
       firstName: "Alice",
       lastName: "Tester",
       username: "alice_dev",
-      caption: "看看这个 @test_bot",
+      caption: "帮我生成一张图 @test_bot",
       fileId: "photo-file",
       fileUniqueId: "photo-uid",
       messageId: 14,
       commentOnResolve: false,
+      imageGenerationRequested: true,
       directTrigger: { reason: "mention" },
     });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -302,6 +307,7 @@ describe("媒体直接叫机器人", () => {
       fileUniqueId: "gif-uid",
       messageId: 15,
       commentOnResolve: false,
+      imageGenerationRequested: false,
       directTrigger: { reason: "reply", repliedBotText: "机器人之前说的话" },
     });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -341,6 +347,7 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 16,
       repliedBotText: "机器人之前说的话",
+      imageGenerationRequested: false,
     });
   });
 
@@ -412,6 +419,7 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 32,
       isRandomTrigger: true,
+      imageGenerationRequested: false,
     });
   });
 
@@ -513,6 +521,7 @@ describe("媒体直接叫机器人", () => {
       fileUniqueId: "self-photo-uid",
       messageId: 35,
       commentOnResolve: false,
+      imageGenerationRequested: false,
       directTrigger: undefined,
     });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
@@ -556,8 +565,8 @@ describe("媒体直接叫机器人", () => {
           date: 1,
           chat,
           from: alice,
-          text: "过来 @test_bot",
-          entities: [{ type: "mention", offset: 3, length: 9 }],
+          text: "帮我画一只猫 @test_bot",
+          entities: [{ type: "mention", offset: 7, length: 9 }],
         },
       } as any);
     } finally {
@@ -570,6 +579,7 @@ describe("媒体直接叫机器人", () => {
       triggerSenderId: 123,
       replyToMessageId: 34,
       repliedBotText: undefined,
+      imageGenerationRequested: true,
     });
   });
 });
