@@ -6,6 +6,7 @@ import { activeReplyCounts, longTriggerTimes } from "../../cache/aiChat/replies"
 import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";
 import { RATE_LIMIT_LONG_WINDOW_MS } from "../../consts/aiChat/rateLimit";
 import { SEND_MESSAGE_TOOL } from "../../consts/tools";
+import { SUPER_ADMIN_USER_ID } from "../../infra/config";
 import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { admitRound } from "../../states/replyAdmission";
@@ -21,6 +22,7 @@ declare const self: Worker;
 
 export interface ReplyRoundRequest {
   chatId: number;
+  triggerSenderId: number;
   replyToMessageId: number;
   repliedBotText?: string;
   isRandomTrigger: boolean;
@@ -35,7 +37,7 @@ export interface ReplyRoundRequest {
  * 本函数内成对获取/释放；完成回调用于让编排层继续排空等候队列。
  */
 export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId: number) => void): void {
-  const { chatId, replyToMessageId, repliedBotText, isRandomTrigger, mediaComment, queuedTrigger } = request;
+  const { chatId, triggerSenderId, replyToMessageId, repliedBotText, isRandomTrigger, mediaComment, queuedTrigger } = request;
   const generation: number = request.generation ?? currentReplyGeneration(chatId);
   if (!isReplyGenerationCurrent(chatId, generation)) return;
 
@@ -80,6 +82,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         const ctx: ReplyToolContext = {
           chatId,
           replyToMessageId,
+          bypassImageGenerationCooldown: triggerSenderId === SUPER_ADMIN_USER_ID,
           chatAction: heartbeat,
           stickerLock,
           roundHasTypo,
@@ -110,12 +113,25 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
               });
             }
           },
+          onImageSent: (imageDescription: string, messageId: number): void => {
+            self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+            if (isActive()) {
+              recordChatMessage({
+                chatId,
+                senderId: selfInfo.id,
+                firstName: selfInfo.first_name,
+                lastName: "",
+                username: selfInfo.username,
+                text: imageDescription,
+              });
+            }
+          },
         };
         const toolset: ReplyToolset = await createReplyToolset(ctx);
         const finalText: string | null = await callGemini(chatId, userContent, toolset);
 
         // 模型没有调用 send_message、却把正文留在最终响应时，仍走同一工具
-        // 发送。只发贴纸或只扣反应的轮通常没有正文，不会重复发言。
+        // 发送。只发贴纸、图片或只扣反应的轮通常没有正文，不会重复发言。
         if (finalText && toolset.messagesSent() === 0) {
           const fallbackResult: string = await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
           let fallbackError: string | null = null;

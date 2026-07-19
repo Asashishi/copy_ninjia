@@ -42,7 +42,7 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
  *   currentMoodInstruction）。
  * @param userContent promptContext.ts 的 buildUserContent 拼好的对话上下文。
  * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
- *   副作用（发消息/贴纸/反应）都发生在它内部；toolset.tools 直接透传给
+ *   副作用（发消息/贴纸/反应/图片）都发生在它内部；toolset.tools 直接透传给
  *   请求，本函数不再自己组装。
  * @returns 模型最后一轮的正文文本（正常情况下模型已通过工具把话说完、正文
  *   为空）；请求失败、超时、被 token 上限腰斩或空输出时返回 null。调用方

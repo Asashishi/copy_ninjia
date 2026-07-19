@@ -68,12 +68,14 @@ const {
 const { invalidateChatReplyCache } = await import("../../../src/cache/aiChat/replies");
 const { LinkedQueue } = await import("../../../src/libs/linkedQueue");
 const { RATE_LIMIT_LONG_MAX_TRIGGERS } = await import("../../../src/consts/aiChat/rateLimit");
+const { SUPER_ADMIN_USER_ID } = await import("../../../src/infra/config");
 const { SEND_MESSAGE_TOOL } = await import("../../../src/consts/tools");
 
 function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}): Promise<number> {
   return new Promise((resolve) => {
     startReplyRound({
       chatId: -1001,
+      triggerSenderId: 7,
       replyToMessageId: 10,
       isRandomTrigger: false,
       ...overrides,
@@ -133,6 +135,7 @@ describe("AI 单轮回复生命周期", () => {
     callGemini.mockImplementationOnce(async (): Promise<null> => {
       capturedContext!.onMessageSent("文字消息", 101);
       capturedContext!.onStickerSent("[贴纸：挥手]", 102);
+      capturedContext!.onImageSent("[生成图片：夜空]", 103);
       return null;
     });
 
@@ -140,7 +143,16 @@ describe("AI 单轮回复生命周期", () => {
 
     expect(postMessage).toHaveBeenNthCalledWith(1, { type: "sent", chatId: -1001, messageId: 101 });
     expect(postMessage).toHaveBeenNthCalledWith(2, { type: "sent", chatId: -1001, messageId: 102 });
-    expect(recordChatMessage).toHaveBeenCalledTimes(2);
+    expect(postMessage).toHaveBeenNthCalledWith(3, { type: "sent", chatId: -1001, messageId: 103 });
+    expect(recordChatMessage).toHaveBeenCalledTimes(3);
+  });
+
+  test("仅 superAdmin 触发的轮次绕过图片生成冷却", async () => {
+    await runRound({ triggerSenderId: SUPER_ADMIN_USER_ID });
+    expect(capturedContext?.bypassImageGenerationCooldown).toBe(true);
+
+    await runRound({ triggerSenderId: 7 });
+    expect(capturedContext?.bypassImageGenerationCooldown).toBe(false);
   });
 
   test("构造上下文失败仍释放贴纸锁与并发位，但不会启动心跳", async () => {
@@ -170,6 +182,7 @@ describe("AI 单轮回复生命周期", () => {
     const finished = mock((_chatId: number): void => {});
     startReplyRound({
       chatId: -1001,
+      triggerSenderId: 7,
       replyToMessageId: 10,
       isRandomTrigger: false,
       generation: 0,
@@ -177,6 +190,7 @@ describe("AI 单轮回复生命周期", () => {
     botInfoState.current = null;
     startReplyRound({
       chatId: -1002,
+      triggerSenderId: 8,
       replyToMessageId: 11,
       isRandomTrigger: false,
     }, finished);
@@ -194,7 +208,7 @@ describe("AI 单轮回复生命周期", () => {
     rateLimitNoticeTimes.set(-1001, now);
     const finished = mock((_chatId: number): void => {});
 
-    startReplyRound({ chatId: -1001, replyToMessageId: 10, isRandomTrigger: false }, finished);
+    startReplyRound({ chatId: -1001, triggerSenderId: 7, replyToMessageId: 10, isRandomTrigger: false }, finished);
 
     expect(finished).not.toHaveBeenCalled();
     expect(createStickerSendLock).not.toHaveBeenCalled();

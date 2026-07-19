@@ -5,3 +5,4 @@ export * from "./aiChat/tools";
 export * from "./aiChat/media";
 export * from "./aiChat/mood";
 export * from "./aiChat/stickers";
+export * from "./aiChat/imageGeneration";

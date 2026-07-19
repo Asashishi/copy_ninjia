@@ -1,3 +1,4 @@
+import { InputFile } from "grammy";
 import type { Api, InlineKeyboard } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
@@ -79,6 +80,35 @@ export async function sendSticker(chatId: number, fileId: string, api: Api = bot
     return sent.message_id;
   } catch (error: unknown) {
     logApiError("send sticker", error);
+    return undefined;
+  }
+}
+
+export interface SendPhotoParams {
+  chatId: number;
+  bytes: Uint8Array;
+  mimeType: "image/jpeg" | "image/png";
+  replyToMessageId?: number;
+  api?: Api;
+}
+
+/** 从内存上传一张图片，不落临时文件；用于 AI 生图等本地字节来源。 */
+export async function sendPhoto({
+  chatId,
+  bytes,
+  mimeType,
+  replyToMessageId,
+  api = bot.api,
+}: SendPhotoParams): Promise<number | undefined> {
+  try {
+    const extension: string = mimeType === "image/jpeg" ? "jpg" : "png";
+    const sent = await api.sendPhoto(chatId, new InputFile(bytes, `generated.${extension}`), {
+      ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
+    });
+    markSelfSent(chatId, sent.message_id);
+    return sent.message_id;
+  } catch (error: unknown) {
+    logApiError("send photo", error);
     return undefined;
   }
 }

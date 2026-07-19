@@ -53,6 +53,7 @@ test("工具集真实注册 googleSearch，并同时提供函数行动工具", a
   const toolset = await createReplyToolset({
     chatId: -100800,
     replyToMessageId: 10,
+    bypassImageGenerationCooldown: false,
     chatAction: {
       current: () => "idle",
       set: mock((..._args: unknown[]): void => {}),
@@ -63,6 +64,7 @@ test("工具集真实注册 googleSearch，并同时提供函数行动工具", a
     isActive: () => true,
     onMessageSent: mock((..._args: unknown[]): void => {}),
     onStickerSent: mock((..._args: unknown[]): void => {}),
+    onImageSent: mock((..._args: unknown[]): void => {}),
   });
 
   expect(toolset.tools).toHaveLength(2);
@@ -154,6 +156,7 @@ describe("send_message typo correction", () => {
     const toolset = await createReplyToolset({
       chatId: -100800,
       replyToMessageId: 10,
+      bypassImageGenerationCooldown: false,
       chatAction: {
         current: () => "idle",
         set: mock((..._args: unknown[]): void => {}),
@@ -164,6 +167,7 @@ describe("send_message typo correction", () => {
       isActive: () => active,
       onMessageSent: mock((..._args: unknown[]): void => {}),
       onStickerSent: mock((..._args: unknown[]): void => {}),
+      onImageSent: mock((..._args: unknown[]): void => {}),
     });
 
     const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: "不该发出" })));
@@ -179,6 +183,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        bypassImageGenerationCooldown: false,
         chatAction: {
           current: () => "idle",
           set: mock((..._args: unknown[]): void => {}),
@@ -192,6 +197,7 @@ describe("send_message typo correction", () => {
         isActive: () => true,
         onMessageSent,
         onStickerSent: mock((..._args: unknown[]): void => {}),
+        onImageSent: mock((..._args: unknown[]): void => {}),
       });
 
       const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
@@ -223,6 +229,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        bypassImageGenerationCooldown: false,
         chatAction: {
           current: () => "idle",
           set: mock((..._args: unknown[]): void => {}),
@@ -236,6 +243,7 @@ describe("send_message typo correction", () => {
         isActive: () => true,
         onMessageSent,
         onStickerSent: mock((..._args: unknown[]): void => {}),
+        onImageSent: mock((..._args: unknown[]): void => {}),
       });
 
       const result = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
@@ -262,6 +270,7 @@ describe("send_message typo correction", () => {
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
+        bypassImageGenerationCooldown: false,
         chatAction: {
           current: () => "idle",
           set: mock((..._args: unknown[]): void => {}),
@@ -275,6 +284,7 @@ describe("send_message typo correction", () => {
         isActive: () => true,
         onMessageSent: mock((..._args: unknown[]): void => {}),
         onStickerSent: mock((..._args: unknown[]): void => {}),
+        onImageSent: mock((..._args: unknown[]): void => {}),
       });
 
       const first = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
@@ -304,6 +314,7 @@ describe("send_message 重复消息去重", () => {
     return {
       chatId: -100800,
       replyToMessageId: 10,
+      bypassImageGenerationCooldown: false,
       chatAction: {
         current: () => "idle" as const,
         set: mock((..._args: unknown[]): void => {}),
@@ -314,6 +325,7 @@ describe("send_message 重复消息去重", () => {
       isActive: () => true,
       onMessageSent: mock((..._args: unknown[]): void => {}),
       onStickerSent: mock((..._args: unknown[]): void => {}),
+      onImageSent: mock((..._args: unknown[]): void => {}),
     };
   }
 

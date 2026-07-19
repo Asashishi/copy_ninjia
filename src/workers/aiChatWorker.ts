@@ -3,6 +3,7 @@ import { getStickerConfig } from "../config/stickers";
 import { startWeatherRefreshLoop } from "../ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState } from "../cache/aiChat/identity";
+import { sweepImageGenerationCache } from "../cache/aiChat/imageGeneration";
 import { sweepAiChatReplyCache } from "../cache/aiChat/replies";
 import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
@@ -19,8 +20,8 @@ import { initTelegramClients } from "../infra/telegram";
  * （aiChat/promptContext.ts）、调 Gemini（含 function calling 往返与内置
  * googleSearch，aiChat/geminiReply.ts）、以及回复准入控制（并发闸 + 5 分钟
  * 滑动窗口限频 + 溢出排队补跑，aiChat/replyPipeline.ts）。发言/消息反应/
- * 应景贴纸全部工具化（send_message / add_reaction / view_sticker_pack +
- * send_sticker，见 ai/tools/replyToolset.ts）：模型在同一次对话里自主决定
+ * 应景贴纸与生图全部工具化（send_message / add_reaction / view_sticker_pack +
+ * send_sticker / generate_image，见 ai/tools/replyToolset.ts）：模型在同一次对话里自主决定
  * 做哪几样、什么顺序。发往 Telegram 的调用不回主线程绕路——本线程 import
  * infra/telegram/ 时会得到自己独立的 grammY Api 客户端（那个 Bot 实例只用其
  * bot.api 发请求，从不 init/轮询；机器人自己的账号身份改由主线程在
@@ -95,6 +96,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
 // 退出为止，不需要引用计数/按需启停，无条目时两个 flush 都直接空转返回。
 export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
   sweepAiChatReplyCache(now);
+  sweepImageGenerationCache(now);
   flushDirtyMemories();
   flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
 }

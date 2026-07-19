@@ -143,6 +143,7 @@ describe("媒体直接叫机器人", () => {
     expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
     expect(generateAndSendReplyMock).toHaveBeenCalledWith({
       chatId: -100800,
+      triggerSenderId: 123,
       replyToMessageId: 12,
       repliedBotText: "机器人之前说的话",
     });
@@ -337,6 +338,7 @@ describe("媒体直接叫机器人", () => {
     });
     expect(generateAndSendReplyMock).toHaveBeenCalledWith({
       chatId: -100800,
+      triggerSenderId: 123,
       replyToMessageId: 16,
       repliedBotText: "机器人之前说的话",
     });
@@ -407,6 +409,7 @@ describe("媒体直接叫机器人", () => {
 
     expect(generateAndSendReplyMock).toHaveBeenCalledWith({
       chatId: -100800,
+      triggerSenderId: 123,
       replyToMessageId: 32,
       isRandomTrigger: true,
     });
@@ -564,6 +567,7 @@ describe("媒体直接叫机器人", () => {
     expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
     expect(generateAndSendReplyMock).toHaveBeenCalledWith({
       chatId: -100800,
+      triggerSenderId: 123,
       replyToMessageId: 34,
       repliedBotText: undefined,
     });

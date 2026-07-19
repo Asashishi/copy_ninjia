@@ -1,0 +1,22 @@
+/** AI 生图模型与每群独立冷却。模型只支持 1K，分辨率不做成可变参数。 */
+export const GEMINI_IMAGE_GENERATION_MODEL: string = "gemini-3.1-flash-lite-image";
+export const IMAGE_GENERATION_COOLDOWN_MS: number = 60_000;
+export const IMAGE_GENERATION_PROMPT_MAX_CHARS: number = 2_000;
+export const IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS: number = 240;
+export const IMAGE_GENERATION_MAX_BYTES: number = 10 * 1024 * 1024;
+
+export const IMAGE_GENERATION_ASPECT_RATIOS = [
+  "1:1",
+  "3:2",
+  "2:3",
+  "3:4",
+  "4:3",
+  "4:5",
+  "5:4",
+  "9:16",
+  "16:9",
+  "21:9",
+] as const;
+
+export type ImageGenerationAspectRatio = typeof IMAGE_GENERATION_ASPECT_RATIOS[number];
+export const DEFAULT_IMAGE_GENERATION_ASPECT_RATIO: ImageGenerationAspectRatio = "1:1";

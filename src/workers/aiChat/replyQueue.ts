@@ -31,11 +31,13 @@ export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaComm
  */
 export function pushReplyTrigger({
   chatId,
+  triggerSenderId,
   replyToMessageId,
   repliedBotText,
   mediaTrigger,
 }: {
   chatId: number;
+  triggerSenderId: number;
   replyToMessageId: number;
   repliedBotText: string | undefined;
   mediaTrigger?: MediaCommentContext;
@@ -47,6 +49,7 @@ export function pushReplyTrigger({
   }
   if (mediaTrigger) {
     queue.push({
+      triggerSenderId,
       replyToMessageId,
       repliedBotText,
       senderName: mediaTrigger.senderName,
@@ -57,6 +60,7 @@ export function pushReplyTrigger({
 
   const triggerEntry: BufferedMessage | undefined = chatBuffers.get(chatId)?.last(1)[0];
   queue.push({
+    triggerSenderId,
     replyToMessageId,
     repliedBotText,
     senderName: triggerEntry ? displayBufferedMessageName(triggerEntry) : "",

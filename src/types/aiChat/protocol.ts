@@ -46,6 +46,7 @@ export interface AiRecordMediaMessage {
 export interface AiTriggerMessage {
   type: "trigger";
   chatId: number;
+  triggerSenderId: number;
   replyToMessageId: number;
   repliedBotText?: string;
   isRandomTrigger: boolean;

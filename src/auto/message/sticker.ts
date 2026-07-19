@@ -24,6 +24,7 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
     if (!directMediaTrigger) return false;
     generateAndSendReply({
       chatId,
+      triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
       repliedBotText: directMediaTrigger.repliedBotText,
     });

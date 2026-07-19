@@ -21,6 +21,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   if (context.directMediaTrigger) {
     generateAndSendReply({
       chatId,
+      triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
       repliedBotText: context.isReplyToBot ? context.repliedTo?.text : undefined,
     });
@@ -35,7 +36,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   });
   if (!isRandomTrigger) return false;
   if (tryClaimUserReplyTrigger(chatId, speaker.id)) {
-    generateAndSendReply({ chatId, replyToMessageId: message.message_id, isRandomTrigger: true });
+    generateAndSendReply({ chatId, triggerSenderId: speaker.id, replyToMessageId: message.message_id, isRandomTrigger: true });
   }
   // 掷骰命中但个人冷却未取得时仍不随机复读，与原流水线语义一致。
   return true;

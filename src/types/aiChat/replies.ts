@@ -5,6 +5,7 @@ import type { ChatActionControl } from "./chatAction";
 
 /** 同群并发位占满时排队补跑的直接触发快照。 */
 export interface QueuedReplyTrigger {
+  triggerSenderId: number;
   replyToMessageId: number;
   repliedBotText?: string;
   senderName: string;
@@ -15,12 +16,14 @@ export interface QueuedReplyTrigger {
 export interface ReplyToolContext {
   chatId: number;
   replyToMessageId: number;
+  bypassImageGenerationCooldown: boolean;
   chatAction: ChatActionControl;
   stickerLock: StickerSendLockControl;
   roundHasTypo: boolean;
   isActive: () => boolean;
   onMessageSent: (text: string, messageId: number) => void;
   onStickerSent: (stickerDescription: string, messageId: number) => void;
+  onImageSent: (imageDescription: string, messageId: number) => void;
 }
 
 /** 一轮 AI 回复的函数工具集与执行状态。 */

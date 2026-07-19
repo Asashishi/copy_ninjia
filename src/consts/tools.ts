@@ -23,3 +23,6 @@ export const DELETE_OWN_MESSAGE_TOOL: string = "delete_own_message";
 /** add_reaction 工具名常量（见 ai/tools/replyToolset.ts）：给触发消息扣一个标准
  *  emoji 反应，同样由模型自主决定用不用。 */
 export const ADD_REACTION_TOOL: string = "add_reaction";
+
+/** generate_image 工具名：调用独立图片模型生成一张图片并发送到当前群。 */
+export const GENERATE_IMAGE_TOOL: string = "generate_image";

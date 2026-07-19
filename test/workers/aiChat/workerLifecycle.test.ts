@@ -19,6 +19,7 @@ const hydrateStickerCatalogs = mock((_catalogs: unknown): void => { calls.push("
 const getStickerConfig = mock(() => ({ packs: ["pack"] }));
 const startWeatherRefreshLoop = mock((): void => { calls.push("weather"); });
 const sweepAiChatReplyCache = mock((_now: number): void => { calls.push("sweep"); });
+const sweepImageGenerationCache = mock((_now: number): void => { calls.push("sweepImageGeneration"); });
 const flushDirtyMemories = mock((): void => { calls.push("flushMemories"); });
 const hydrateMemories = mock((_memories: unknown): void => { calls.push("hydrateMemories"); });
 const purgeChatMemory = mock((_chatId: number): void => { calls.push("purgeMemory"); });
@@ -36,6 +37,7 @@ mock.module("../../../src/ai/stickers/catalog", () => ({
 mock.module("../../../src/config/stickers", () => ({ getStickerConfig }));
 mock.module("../../../src/ai/weather", () => ({ startWeatherRefreshLoop }));
 mock.module("../../../src/cache/aiChat/replies", () => ({ sweepAiChatReplyCache }));
+mock.module("../../../src/cache/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
 mock.module("../../../src/workers/aiChat/rollingMemory", () => ({
   flushDirtyMemories,
   hydrateMemories,
@@ -61,6 +63,7 @@ beforeEach(() => {
     getStickerConfig,
     startWeatherRefreshLoop,
     sweepAiChatReplyCache,
+    sweepImageGenerationCache,
     flushDirtyMemories,
     hydrateMemories,
     purgeChatMemory,
@@ -83,7 +86,7 @@ describe("AI Chat Worker lifecycle", () => {
       { type: "init", botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" } },
       { type: "record", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", username: "alice", text: "hi" },
       { type: "recordMedia", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", kind: "photo", fileId: "file", messageId: 10 } as unknown as AiChatWorkerMessage,
-      { type: "trigger", chatId: -1001, replyToMessageId: 10, isRandomTrigger: false },
+      { type: "trigger", chatId: -1001, triggerSenderId: 7, replyToMessageId: 10, isRandomTrigger: false },
       { type: "hydrate", memories: new Map<number, string>() },
       { type: "hydrateStickerCatalog", catalogs: new Map<string, string>() },
       { type: "flushMemory", flushId: 8 },
@@ -100,6 +103,7 @@ describe("AI Chat Worker lifecycle", () => {
     expect(generateAndSendReply).toHaveBeenCalledWith({
       type: "trigger",
       chatId: -1001,
+      triggerSenderId: 7,
       replyToMessageId: 10,
       isRandomTrigger: false,
     });
@@ -115,6 +119,7 @@ describe("AI Chat Worker lifecycle", () => {
     worker.runAiChatWorkerMaintenance(1234);
 
     expect(sweepAiChatReplyCache).toHaveBeenCalledWith(1234);
+    expect(sweepImageGenerationCache).toHaveBeenCalledWith(1234);
     expect(flushDirtyMemories).toHaveBeenCalledTimes(1);
     expect(flushDirtyStickerCatalogs).toHaveBeenCalledTimes(1);
     expect(postMessage).toHaveBeenCalledWith({ type: "stickerCatalogSnapshot", name: "pack" });
@@ -140,6 +145,7 @@ describe("AI Chat Worker lifecycle", () => {
       maintenance!();
       expect(recordChatMessage).toHaveBeenCalledTimes(1);
       expect(sweepAiChatReplyCache).toHaveBeenCalledTimes(1);
+      expect(sweepImageGenerationCache).toHaveBeenCalledTimes(1);
     } finally {
       globalThis.setInterval = originalSetInterval;
     }

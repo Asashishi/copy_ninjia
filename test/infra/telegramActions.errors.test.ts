@@ -19,6 +19,7 @@ function apiWithSuccesses(): Api {
     sendChatAction: mock(async (..._args: unknown[]) => true),
     answerCallbackQuery: mock(async (..._args: unknown[]) => true),
     sendSticker: mock(async (..._args: unknown[]) => ({ message_id: 12 })),
+    sendPhoto: mock(async (..._args: unknown[]) => ({ message_id: 13 })),
     setMessageReaction: mock(async (..._args: unknown[]) => true),
     deleteMessage: mock(async (..._args: unknown[]) => true),
     unbanChatMember: mock(async (..._args: unknown[]) => true),
@@ -37,6 +38,7 @@ function apiWithFailures(): Api {
     sendChatAction: reject,
     answerCallbackQuery: reject,
     sendSticker: reject,
+    sendPhoto: reject,
     setMessageReaction: reject,
     deleteMessage: reject,
     unbanChatMember: reject,
@@ -63,6 +65,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendChooseStickerAction(-1001, api)).toBe(true);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
     expect(await actions.sendSticker(-1001, "file", api)).toBe(12);
+    expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBe(13);
     await expect(actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).resolves.toBeUndefined();
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
     expect(await actions.kickChatMember(-1001, 7, api)).toBe(true);
@@ -70,7 +73,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.isChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(true);
     expect(await actions.copyMessage(-1001, -2002, 8)).toBe(91);
-    expect(markSelfSent.mock.calls).toEqual([[-1001, 11], [-1001, 12], [-1001, 91]]);
+    expect(markSelfSent.mock.calls).toEqual([[-1001, 11], [-1001, 12], [-1001, 13], [-1001, 91]]);
     expect(logApiError).not.toHaveBeenCalled();
   });
 
@@ -82,6 +85,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendChooseStickerAction(-1001, api)).toBe(false);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", api })).resolves.toBeUndefined();
     expect(await actions.sendSticker(-1001, "file", api)).toBeUndefined();
+    expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBeUndefined();
     await expect(actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).resolves.toBeUndefined();
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(false);
     expect(await actions.kickChatMember(-1001, 7, api)).toBe(false);
@@ -91,7 +95,7 @@ describe("Telegram 动作适配层失败归一化", () => {
 
     copyMessageApi.mockRejectedValueOnce(new Error("copy failed"));
     expect(await actions.copyMessage(-1001, -2002, 8)).toBeUndefined();
-    expect(logApiError).toHaveBeenCalledTimes(12);
+    expect(logApiError).toHaveBeenCalledTimes(13);
     expect(markSelfSent).not.toHaveBeenCalled();
   });
 

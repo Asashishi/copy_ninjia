@@ -58,6 +58,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
       if (msg.directTrigger) {
         generateAndSendReply({
           chatId: msg.chatId,
+          triggerSenderId: msg.senderId,
           replyToMessageId: msg.messageId,
           repliedBotText: msg.directTrigger.repliedBotText,
           isRandomTrigger: false,
@@ -71,6 +72,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
       } else if (msg.commentOnResolve) {
         generateAndSendReply({
           chatId: msg.chatId,
+          triggerSenderId: msg.senderId,
           replyToMessageId: msg.messageId,
           repliedBotText: undefined,
           isRandomTrigger: false,
@@ -107,6 +109,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
       // 退回兜底文本照样触发——回应可以含糊，失踪不行。
       generateAndSendReply({
         chatId: msg.chatId,
+        triggerSenderId: msg.senderId,
         replyToMessageId: msg.messageId,
         repliedBotText: msg.directTrigger.repliedBotText,
         isRandomTrigger: false,
@@ -120,6 +123,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
     } else if (msg.commentOnResolve && description) {
       generateAndSendReply({
         chatId: msg.chatId,
+        triggerSenderId: msg.senderId,
         replyToMessageId: msg.messageId,
         repliedBotText: undefined,
         isRandomTrigger: false,

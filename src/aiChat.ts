@@ -234,11 +234,12 @@ type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigg
  */
 export function generateAndSendReply({
   chatId,
+  triggerSenderId,
   replyToMessageId,
   repliedBotText,
   isRandomTrigger = false,
 }: GenerateAndSendReplyParams): void {
-  post({ type: "trigger", chatId, replyToMessageId, repliedBotText, isRandomTrigger });
+  post({ type: "trigger", chatId, triggerSenderId, replyToMessageId, repliedBotText, isRandomTrigger });
 }
 
 /**

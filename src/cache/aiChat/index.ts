@@ -1,6 +1,7 @@
 import { resetAiChatCompactionCache } from "./compaction";
 import { clearChatHeartbeatCache, resetAiChatHeartbeatCache } from "./heartbeat";
 import { resetAiChatIdentityCache } from "./identity";
+import { resetImageGenerationCache } from "./imageGeneration";
 import { resetAiChatMemoryCache } from "./memory";
 import { resetAiChatMoodCache } from "./mood";
 import { invalidateChatReplyCache, resetAiChatReplyCache } from "./replies";
@@ -19,6 +20,7 @@ export function resetAiChatWorkerCache(): void {
   resetAiChatHeartbeatCache();
   resetAiChatCompactionCache();
   resetAiChatIdentityCache();
+  resetImageGenerationCache();
   resetAiChatMemoryCache();
   resetAiChatMoodCache();
   resetAiChatReplyCache();

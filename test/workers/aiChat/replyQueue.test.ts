@@ -31,10 +31,11 @@ describe("AI 回复触发队列", () => {
     messages.push({ id: 2, firstName: "Alice", lastName: "Chen", text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS + 20), at: "" });
     chatBuffers.set(-1001, messages);
 
-    pushReplyTrigger({ chatId: -1001, replyToMessageId: 88, repliedBotText: "机器人原话" });
+    pushReplyTrigger({ chatId: -1001, triggerSenderId: 2, replyToMessageId: 88, repliedBotText: "机器人原话" });
 
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({
       replyToMessageId: 88,
+      triggerSenderId: 2,
       repliedBotText: "机器人原话",
       senderName: "Alice Chen",
       text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS),
@@ -44,6 +45,7 @@ describe("AI 回复触发队列", () => {
   test("媒体触发使用解析结果快照，不依赖缓存尾部", () => {
     pushReplyTrigger({
       chatId: -1001,
+      triggerSenderId: 3,
       replyToMessageId: 89,
       repliedBotText: undefined,
       mediaTrigger: {
@@ -56,6 +58,7 @@ describe("AI 回复触发队列", () => {
 
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({
       replyToMessageId: 89,
+      triggerSenderId: 3,
       repliedBotText: undefined,
       senderName: "Bob",
       text: "[GIF：挥手]",
@@ -64,8 +67,8 @@ describe("AI 回复触发队列", () => {
 
   test("按 FIFO 补跑，并在回调占满并发位后保留剩余项", () => {
     const queue = new LinkedQueue<QueuedReplyTrigger>();
-    queue.push({ replyToMessageId: 1, senderName: "A", text: "first" });
-    queue.push({ replyToMessageId: 2, senderName: "B", text: "second" });
+    queue.push({ triggerSenderId: 1, replyToMessageId: 1, senderName: "A", text: "first" });
+    queue.push({ triggerSenderId: 2, replyToMessageId: 2, senderName: "B", text: "second" });
     pendingReplyTriggers.set(-1001, queue);
     activeReplyCounts.set(-1001, REPLY_ROUND_MAX_CONCURRENT - 1);
     const started: number[] = [];

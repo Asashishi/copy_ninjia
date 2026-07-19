@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { Api } from "grammy";
+import { InputFile, type Api } from "grammy";
 import { sentMessages } from "../../src/cache/selfSentTracker";
-import { isChatMember, sendMessage } from "../../src/infra/telegram/actions";
+import { isChatMember, sendMessage, sendPhoto } from "../../src/infra/telegram/actions";
 import { isSelfSent } from "../../src/infra/selfSentTracker";
 
 afterEach(() => {
@@ -26,6 +26,25 @@ describe("Telegram 常规动作封装", () => {
       reply_parameters: { message_id: 42, allow_sending_without_reply: true },
     });
     expect(isSelfSent(-1001, 77)).toBe(true);
+  });
+
+  test("从内存上传生成图片，并回复触发消息", async () => {
+    const sendPhotoMock = mock(async (..._args: unknown[]) => ({ message_id: 78 }));
+    const api = { sendPhoto: sendPhotoMock } as unknown as Api;
+
+    const messageId: number | undefined = await sendPhoto({
+      chatId: -1001,
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "image/png",
+      replyToMessageId: 42,
+      api,
+    });
+
+    expect(messageId).toBe(78);
+    expect(sendPhotoMock).toHaveBeenCalledWith(-1001, expect.any(InputFile), {
+      reply_parameters: { message_id: 42, allow_sending_without_reply: true },
+    });
+    expect(isSelfSent(-1001, 78)).toBe(true);
   });
 
   test("正确区分当前成员、受限成员和已离开成员", async () => {

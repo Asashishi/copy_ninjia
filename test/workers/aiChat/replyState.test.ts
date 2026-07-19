@@ -29,7 +29,7 @@ afterEach(() => {
 describe("AI 回复代际状态", () => {
   test("失效操作递增代数，清除排队/限频/心跳，但保留在途计数到 finally", () => {
     const queue = new LinkedQueue<QueuedReplyTrigger>();
-    queue.push({ replyToMessageId: 1, senderName: "Alice", text: "hello" });
+    queue.push({ triggerSenderId: 7, replyToMessageId: 1, senderName: "Alice", text: "hello" });
     pendingReplyTriggers.set(-1001, queue);
     pendingOverflowNotices.add(-1001);
     const triggerTimes = new LinkedQueue<number>();
