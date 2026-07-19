@@ -1,5 +1,5 @@
-import { chatLastActivityTimes, chatMoods } from "../cache/aiChat/mood";
-import { MOOD_IDLE_RESET_MAX_MS, MOOD_IDLE_RESET_MIN_MS } from "../consts/aiChat/mood";
+import { chatMoodExpiresAts, chatMoods } from "../cache/aiChat/mood";
+import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../consts/aiChat/mood";
 import { MOOD_OPTIONS } from "../consts/aiChat/prompts/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../consts/weather";
 import { getTokyoHour } from "../libs/time";
@@ -7,16 +7,17 @@ import { currentTokyoWeather } from "./weather";
 import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood";
 
 /**
- * 各群「心情」系统：模拟真人聊天号那种「隔了好久没说话，再冒泡时状态
- * 可能不一样了」的感觉，重抽时还会按当前天气/时段微调各心情的抽中概率
- * （大晴天更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等，
- * 具体倍率见 consts/aiChat/prompts/mood.ts）。两个内存缓存
- * （chatMoods/chatLastActivityTimes，见 cache/aiChat/mood.ts）都不落盘，
- * 随 Worker 重启清空。
+ * 各群「心情」系统：心情只随时间自然轮换——抽到一个心情后带一个随机
+ * 寿命（区间见 consts/aiChat/mood.ts），到期后下次拼提示词时重抽，与群里
+ * 是否有人说话无关。重抽时按当前天气/时段微调各心情的抽中概率（大晴天
+ * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等，具体倍率
+ * 见 consts/aiChat/prompts/mood.ts）。两个内存缓存
+ * （chatMoods/chatMoodExpiresAts，见 cache/aiChat/mood.ts）都不落盘，
+ * 随 Worker 重启清空、下次用到时重抽。
  *
  * 天气数据经 ai/weather.ts 的 currentTokyoWeather 读取——这里只读现有
- * 缓存，不在这条路径里发请求（重抽必须保持同步，见下方
- * recordActivityAndMaybeRerollMood 注释）；缓存保鲜由该模块内部的后台
+ * 缓存，不在这条路径里发请求（重抽发生在 geminiReply.ts 拼系统提示词的
+ * 同步路径上，必须保持同步）；缓存保鲜由该模块内部的后台
  * 定时循环负责（每小时刷新一次，见 startWeatherRefreshLoop），与
  * get_tokyo_weather 工具共用同一份数据、同一种「只读不发请求」的取用
  * 方式。缓存还没暖起来（Worker 刚启动、还没到第一次刷新）时按「没有
@@ -76,11 +77,7 @@ export function computeAdjustedWeight(mood: MoodOption, weather: WeatherBucket |
  * [0, 调整后总权重) 里掷一个连续骰子累加匹配——不再是 LUCK_TIERS 那种
  * 凑满 100 的固定整数区间，因为倍率之后权重不再是整数、总和也不再是 100。
  */
-/** 导出仅供 rollingMemory.ts 的 hydrateMemories 在恢复 chatLastActivityTimes
- *  的同时一并播种心情用（见其调用点注释：hydrate 场景不经过下面
- *  recordActivityAndMaybeRerollMood 的"首条消息"分支，必须由调用方顺手补种，
- *  否则会违反"有活动时间就必有心情"的不变量）。 */
-export function pickMood(): MoodOption {
+function pickMood(): MoodOption {
   const weather: WeatherBucket | null = currentWeatherBucket();
   const time: TimeBucket = classifyTimeBucket(getTokyoHour());
   const weighted: { mood: MoodOption; weight: number }[] = MOOD_OPTIONS.map((mood) => ({
@@ -98,46 +95,24 @@ export function pickMood(): MoodOption {
 }
 
 /**
- * 每次有消息记入某个群的滚动缓存时调用一次（不论文字/媒体、也不论是否
- * 触发了 AI 回复，见 workers/aiChat/rollingMemory.ts 的 pushBufferedMessage）：
- * 更新该群「最后一次有动静」的时间戳，并按空窗规则决定要不要重新抽一次
- * 心情。必须在真正记录这条消息之前调用——判断的是「这条消息之前」的
- * 空窗时长，若先把这条消息自己的时间戳记成 lastActivity 再判断，空窗
- * 永远算不出来。
+ * 拼进系统提示词的当前心情指令。心情缺失（本群第一次用到、或 Worker 重启
+ * 后缓存清空）或已过寿命时现场重抽，并给新心情掷一个新的随机寿命——重抽
+ * 只依赖时间区间，与群是否活跃无关。
  * @param chatId 群聊 ID。
- * @param moods/lastActivityTimes 可注入仅为单测隔离；生产调用共享 Worker
- *   内的 chatMoods/chatLastActivityTimes（见 cache/aiChat/mood.ts）。
+ * @param moods/expiresAts 可注入仅为单测隔离；生产调用共享 Worker 内的
+ *   chatMoods/chatMoodExpiresAts（见 cache/aiChat/mood.ts）。
  */
-export function recordActivityAndMaybeRerollMood(
+export function currentMoodInstruction(
   chatId: number,
   moods: Map<number, MoodOption> = chatMoods,
-  lastActivityTimes: Map<number, number> = chatLastActivityTimes
-): void {
+  expiresAts: Map<number, number> = chatMoodExpiresAts
+): string {
   const now: number = Date.now();
-  const lastActivity: number | undefined = lastActivityTimes.get(chatId);
-  lastActivityTimes.set(chatId, now);
-
-  if (lastActivity === undefined) {
-    // 本群第一次有动静（或 Worker 刚重启、缓存清空后的第一条消息），
-    // 还没有心情，直接抽一次。
-    moods.set(chatId, pickMood());
-    return;
+  let mood: MoodOption | undefined = moods.get(chatId);
+  if (!mood || now >= (expiresAts.get(chatId) ?? 0)) {
+    mood = pickMood();
+    moods.set(chatId, mood);
+    expiresAts.set(chatId, now + MOOD_REROLL_MIN_MS + Math.random() * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS));
   }
-  const idleThresholdMs: number = MOOD_IDLE_RESET_MIN_MS + Math.random() * (MOOD_IDLE_RESET_MAX_MS - MOOD_IDLE_RESET_MIN_MS);
-  if (now - lastActivity >= idleThresholdMs) {
-    moods.set(chatId, pickMood());
-  }
-}
-
-/**
- * 拼进系统提示词的当前心情指令。moods 里没有记录时返回空串（理论上不会
- * 发生：任何触发都对应一条已经先经 recordActivityAndMaybeRerollMood 记录
- * 过的消息，见 workers/aiChat/replyRound.ts 的 callGemini 调用点），系统提示词
- * 就少这一段，不必因为这种防御性场景多包一层判断。
- * @param moods 可注入仅为单测隔离；生产调用共享 Worker 内的 chatMoods。
- */
-export function currentMoodInstruction(chatId: number, moods: Map<number, MoodOption> = chatMoods): string {
-  const mood: MoodOption | undefined = moods.get(chatId);
-  if (!mood) return "";
   return `【今天的心情：${mood.name}】${mood.instruction}`;
 }

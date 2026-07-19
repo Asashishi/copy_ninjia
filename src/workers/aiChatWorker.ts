@@ -37,10 +37,11 @@ import { initTelegramClients } from "../infra/telegram";
  * ensureStickerCatalogs），与本文件的 dirty 记忆快照共用同一条上报/落盘
  * 节奏（见文件底部的 setInterval 与 flushMemory 分支）。
  *
- * 心情系统：各群冷场太久（几小时量级）再冒泡时，随机换一种心情叠加进
- * 系统提示词，模拟真人聊天号状态会变的感觉，重抽时还按当前东京天气/
- * 时段微调各心情的概率，见 ai/mood.ts；两个内存缓存（cache/aiChat/mood.ts
- * 的 chatMoods/chatLastActivityTimes）都不落盘，随 Worker 重启清空。天气
+ * 心情系统：各群心情按随机寿命（几小时量级）自然到期轮换，到期后下次
+ * 拼系统提示词时重抽叠加进去，与群是否活跃无关，模拟真人聊天号状态会变
+ * 的感觉；重抽时还按当前东京天气/时段微调各心情的概率，见 ai/mood.ts；
+ * 两个内存缓存（cache/aiChat/mood.ts
+ * 的 chatMoods/chatMoodExpiresAts）都不落盘，随 Worker 重启清空。天气
  * 数据由 ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
  * startWeatherRefreshLoop 调用），get_tokyo_weather 工具与心情系统都只
  * 读现有缓存、不各自发请求。

@@ -11,8 +11,8 @@ import { RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../../
 import { typingHeartbeats } from "../../../src/cache/aiChat/heartbeat";
 import { resetAiChatWorkerCache } from "../../../src/cache/aiChat/index";
 import { botInfoState } from "../../../src/cache/aiChat/identity";
-import { chatBuffers, dirtyMemoryChats } from "../../../src/cache/aiChat/memory";
-import { chatLastActivityTimes, chatMoods } from "../../../src/cache/aiChat/mood";
+import { chatBuffers, chatLastActivityTimes, dirtyMemoryChats } from "../../../src/cache/aiChat/memory";
+import { chatMoodExpiresAts, chatMoods } from "../../../src/cache/aiChat/mood";
 import { compactionChains, compactionPendingCounts } from "../../../src/cache/aiChat/compaction";
 import { LinkedQueue } from "../../../src/libs/linkedQueue";
 import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../src/types";
@@ -72,6 +72,7 @@ describe("AI 回复代际状态", () => {
     chatBuffers.set(-1002, messages);
     dirtyMemoryChats.add(-1002);
     chatMoods.set(-1002, { name: "平静", weight: 1, instruction: "保持平静" });
+    chatMoodExpiresAts.set(-1002, Date.now() + 60_000);
     chatLastActivityTimes.set(-1002, Date.now());
     compactionChains.set(-1002, Promise.resolve());
     compactionPendingCounts.set(-1002, 1);
@@ -97,6 +98,7 @@ describe("AI 回复代际状态", () => {
     expect(chatBuffers.size).toBe(0);
     expect(dirtyMemoryChats.size).toBe(0);
     expect(chatMoods.size).toBe(0);
+    expect(chatMoodExpiresAts.size).toBe(0);
     expect(chatLastActivityTimes.size).toBe(0);
     expect(compactionChains.size).toBe(0);
     expect(compactionPendingCounts.size).toBe(0);

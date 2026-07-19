@@ -1,3 +1,4 @@
-/** 冷场后重抽群心情的随机阈值区间；心情与活动时刻均不落盘。 */
-export const MOOD_IDLE_RESET_MIN_MS: number = 2 * 60 * 60_000;
-export const MOOD_IDLE_RESET_MAX_MS: number = 4 * 60 * 60_000;
+/** 心情的随机寿命区间：抽到后过这么久自然到期重抽，与群是否活跃无关；
+ *  心情与到期时刻均不落盘。 */
+export const MOOD_REROLL_MIN_MS: number = 2 * 60 * 60_000;
+export const MOOD_REROLL_MAX_MS: number = 4 * 60 * 60_000;

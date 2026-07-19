@@ -4,98 +4,93 @@ import {
   classifyWeatherCodeBucket,
   computeAdjustedWeight,
   currentMoodInstruction,
-  recordActivityAndMaybeRerollMood,
 } from "../../src/ai/mood";
-import { MOOD_IDLE_RESET_MAX_MS } from "../../src/consts/aiChat";
+import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../src/consts/aiChat";
 import { MOOD_OPTIONS } from "../../src/consts/aiChatPrompts";
 import type { MoodOption } from "../../src/types";
 
 /**
- * ai/mood.ts 的纯逻辑单测：首次抽取、空窗重抽/维持、群间隔离。所有用例
- * 注入独立 Map，不碰 Worker 全局的 chatMoods/chatLastActivityTimes（同
+ * ai/mood.ts 的纯逻辑单测：首次抽取、寿命内维持/到期重抽、群间隔离。所有
+ * 用例注入独立 Map，不碰 Worker 全局的 chatMoods/chatMoodExpiresAts（同
  * test/ai/stickers/sendLock.test.ts 的隔离方式）。抽中哪一档不硬编码具体
- * 心情名——只断言「roll=1 落在权重表第一档」「roll=100 落在最后一档」，
+ * 心情名——只断言「roll=0 落在权重表第一档」「roll 顶到上限落在最后一档」，
  * MOOD_OPTIONS 内容/顺序/条目数之后再调也不用跟着改这份测试。
  */
 
 const FIRST_MOOD_NAME: string = MOOD_OPTIONS[0]!.name;
 const LAST_MOOD_NAME: string = MOOD_OPTIONS[MOOD_OPTIONS.length - 1]!.name;
 
-describe("ai/mood recordActivityAndMaybeRerollMood", () => {
-  test("本群第一次有动静时直接抽一次心情", () => {
+describe("ai/mood currentMoodInstruction", () => {
+  test("本群第一次用到时直接抽一次心情并按随机寿命记下到期时刻", () => {
     const moods = new Map<number, MoodOption>();
-    const lastActivityTimes = new Map<number, number>();
+    const expiresAts = new Map<number, number>();
     const originalNow = Date.now;
     const originalRandom = Math.random;
     try {
       Date.now = () => 1_000_000;
-      Math.random = () => 0; // roll = 1，落在权重表第一档
-      recordActivityAndMaybeRerollMood(1, moods, lastActivityTimes);
+      Math.random = () => 0; // roll = 0，落在权重表第一档；寿命取区间下限
+      const instruction: string = currentMoodInstruction(1, moods, expiresAts);
 
       expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
-      expect(lastActivityTimes.get(1)).toBe(1_000_000);
+      expect(instruction).toBe(`【今天的心情：${FIRST_MOOD_NAME}】${MOOD_OPTIONS[0]!.instruction}`);
+      expect(expiresAts.get(1)).toBe(1_000_000 + MOOD_REROLL_MIN_MS);
     } finally {
       Date.now = originalNow;
       Math.random = originalRandom;
     }
   });
 
-  test("空窗时长不到阈值下限时维持原心情；超过阈值上限时必然重抽", () => {
+  test("寿命没到期时维持原心情；过了寿命上限后必然重抽", () => {
     const moods = new Map<number, MoodOption>();
-    const lastActivityTimes = new Map<number, number>();
+    const expiresAts = new Map<number, number>();
     const originalNow = Date.now;
     const originalRandom = Math.random;
     try {
       Date.now = () => 1_000_000;
-      Math.random = () => 0; // roll = 1，落在权重表第一档
-      recordActivityAndMaybeRerollMood(1, moods, lastActivityTimes);
+      Math.random = () => 0; // roll = 0，落在权重表第一档
+      currentMoodInstruction(1, moods, expiresAts);
       expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
 
-      // 空窗只有 1 分钟，远小于阈值下限（2 小时），不该重抽——即使这次
+      // 才过 1 分钟，远小于寿命下限（2 小时），不该重抽——即使这次
       // Math.random 换成会抽到另一档心情的值，也不该生效。
       Date.now = () => 1_000_000 + 60_000;
       Math.random = () => 0.99;
-      recordActivityAndMaybeRerollMood(1, moods, lastActivityTimes);
+      currentMoodInstruction(1, moods, expiresAts);
       expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
-      expect(lastActivityTimes.get(1)).toBe(1_000_000 + 60_000);
 
-      // 空窗拉到超过阈值上限一毫秒：无论阈值本身随机浮动到多少，都必然
-      // 落在空窗之内，一定会重抽。Math.random 固定为同一个值，阈值浮动
-      // 和重抽后的心情共用它。roll = 100，落在权重表最后一档。
-      Date.now = () => 1_000_000 + 60_000 + MOOD_IDLE_RESET_MAX_MS + 1;
+      // 过了寿命上限一毫秒：无论寿命本身随机浮动到多少都已到期，一定会
+      // 重抽。Math.random 固定为同一个值，重抽后的心情和新寿命共用它。
+      // roll 顶到上限附近，落在权重表最后一档。
+      Date.now = () => 1_000_000 + MOOD_REROLL_MAX_MS + 1;
       Math.random = () => 0.99;
-      recordActivityAndMaybeRerollMood(1, moods, lastActivityTimes);
+      currentMoodInstruction(1, moods, expiresAts);
       expect(moods.get(1)?.name).toBe(LAST_MOOD_NAME);
+      expect(expiresAts.get(1)).toBe(1_000_000 + MOOD_REROLL_MAX_MS + 1 + MOOD_REROLL_MIN_MS + 0.99 * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS));
     } finally {
       Date.now = originalNow;
       Math.random = originalRandom;
     }
   });
 
-  test("不同群的心情与活跃时间互不影响", () => {
+  test("不同群的心情与到期时刻互不影响", () => {
     const moods = new Map<number, MoodOption>();
-    const lastActivityTimes = new Map<number, number>();
+    const expiresAts = new Map<number, number>();
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      recordActivityAndMaybeRerollMood(1, moods, lastActivityTimes);
-      recordActivityAndMaybeRerollMood(2, moods, lastActivityTimes);
+      currentMoodInstruction(1, moods, expiresAts);
+      currentMoodInstruction(2, moods, expiresAts);
       expect(moods.size).toBe(2);
-      expect(lastActivityTimes.size).toBe(2);
+      expect(expiresAts.size).toBe(2);
     } finally {
       Math.random = originalRandom;
     }
   });
-});
 
-describe("ai/mood currentMoodInstruction", () => {
-  test("没有心情记录时返回空串", () => {
-    expect(currentMoodInstruction(1, new Map())).toBe("");
-  });
-
-  test("有心情记录时拼出带心情名的指令句", () => {
+  test("已有心情且没到期时用缓存的心情拼指令句", () => {
     const moods = new Map<number, MoodOption>([[1, { name: "摆烂", weight: 20, instruction: "随便啦。" }]]);
-    expect(currentMoodInstruction(1, moods)).toBe("【今天的心情：摆烂】随便啦。");
+    const expiresAts = new Map<number, number>([[1, Date.now() + 60_000]]);
+    expect(currentMoodInstruction(1, moods, expiresAts)).toBe("【今天的心情：摆烂】随便啦。");
   });
 });
 

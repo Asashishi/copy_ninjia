@@ -66,10 +66,9 @@ test("语法坏掉或形状不符的持久化快照都按防御性丢弃，不�
   hydrateMemories(memories);
   expect(memoryCache.chatBuffers.has(-5)).toBe(true);
   expect(memoryCache.chatBuffers.size).toBe(1);
-  expect(moodCache.chatMoods.has(-5)).toBe(true);
 });
 
-test("回归：hydrate 恢复 chatLastActivityTimes 的同时也播种 chatMoods，不违反“有活动时间就有心情”的不变量", () => {
+test("hydrate 以快照 savedAt 播种 chatLastActivityTimes 供 LRU 淘汰排序；心情不在 hydrate 播种", () => {
   const memories = new Map<number, string>([
     [-42, JSON.stringify({
       version: 1,
@@ -81,6 +80,6 @@ test("回归：hydrate 恢复 chatLastActivityTimes 的同时也播种 chatMoods
   ]);
 
   hydrateMemories(memories);
-  expect(moodCache.chatLastActivityTimes.has(-42)).toBe(true);
-  expect(moodCache.chatMoods.has(-42)).toBe(true);
+  expect(memoryCache.chatLastActivityTimes.get(-42)).toBe(1752800000000);
+  expect(moodCache.chatMoods.size).toBe(0);
 });

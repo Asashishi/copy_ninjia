@@ -36,9 +36,8 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
  * 轮数上限。查时间不走工具：当前时间默认拼进每次请求的系统提示词（见
  * 下方），转录行也自带每条消息的发送时间（见 ai/utils/chatTranscript.ts 的
  * formatBufferedMessageLine）。心情同样现查现拼：该群当前抽中的心情由
- * ai/mood.ts 维护，这里只读取，不在这里决定要不要重抽（见
- * rollingMemory.ts 的 pushBufferedMessage 里的
- * recordActivityAndMaybeRerollMood）。
+ * ai/mood.ts 维护，currentMoodInstruction 读取时顺带处理到期重抽（只按
+ * 随机寿命的时间区间轮换，与群是否活跃无关）。
  * @param chatId 群聊 ID，用于取该群当前的心情（见 ai/mood.ts 的
  *   currentMoodInstruction）。
  * @param userContent promptContext.ts 的 buildUserContent 拼好的对话上下文。

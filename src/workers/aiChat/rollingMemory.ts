@@ -2,10 +2,10 @@ import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { formatTokyoTime } from "../../libs/time";
 import { sanitizeInline } from "../../libs/text";
-import { pickMood, recordActivityAndMaybeRerollMood } from "../../ai/mood";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, AI_MEMORY_MAX_CHATS, COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../consts/aiChat/memory";
 import {
   chatBuffers,
+  chatLastActivityTimes,
   chatSummaries,
   chatMemoryIds,
   clearChatMemoryCache,
@@ -13,7 +13,7 @@ import {
   hasChatMemory,
   pendingSummaries,
 } from "../../cache/aiChat/memory";
-import { chatLastActivityTimes, chatMoods, clearChatMoodCache } from "../../cache/aiChat/mood";
+import { clearChatMoodCache } from "../../cache/aiChat/mood";
 import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
 import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
 import type { AiMemoryDeletedEvent, AiMemoryEvent } from "../../types/aiChat/protocol";
@@ -32,14 +32,14 @@ declare const self: Worker;
  * recordChatMessage / mediaIngest.ts 的 recordChatMedia 共用——后者需要拿住
  * 条目对象的引用以便异步回填描述，所以入队和构造条目分开。
  *
- * 心情系统的活跃度记录也挂在这里（见 ai/mood.ts 的
- * recordActivityAndMaybeRerollMood）：不论文字/媒体、也不论这条消息最终
- * 是否触发了 AI 回复，只要记进了滚动缓存就算「本群有动静」，必须放在
- * push 之前调用——判断的是这条消息到来之前的空窗时长。
+ * 各群「最后一次有动静」的时间戳也在这里更新（chatLastActivityTimes，见
+ * cache/aiChat/memory.ts）：不论文字/媒体、也不论这条消息最终是否触发了
+ * AI 回复，只要记进了滚动缓存就算——仅用于容量满时 ensureMemoryCapacity
+ * 的 LRU 淘汰排序，心情系统不看群活跃度（见 ai/mood.ts）。
  */
 export function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
   if (!hasChatMemory(chatId)) ensureMemoryCapacity(chatId);
-  recordActivityAndMaybeRerollMood(chatId);
+  chatLastActivityTimes.set(chatId, Date.now());
   let buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf) {
     buf = new LinkedQueue<BufferedMessage>();
@@ -158,12 +158,9 @@ export function flushDirtyMemories(): void {
  * 触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块摘要粒度
  * 略有漂移，可接受，不为此复刻轮换状态机。
  *
- * 恢复 chatLastActivityTimes 的同时必须顺手播种 chatMoods（见下方 pickMood
- * 调用）：ai/mood.ts 的 recordActivityAndMaybeRerollMood 靠
- * lastActivity===undefined 判断"本群第一次有动静、还没抽过心情"，若只恢复
- * 活动时间不恢复心情，该群在 savedAt 之后不到一个空窗阈值（2~4 小时）内
- * 再次说话就会被误判成"已经抽过"而跳过播种，提示词缺心情行直到真的沉默
- * 够久才补上——违反"任何触发都必已 record 过、mood 必已设置"的不变量。
+ * chatLastActivityTimes 以快照的 savedAt 近似播种，让恢复出来的群在 LRU
+ * 淘汰排序里保持合理的新旧顺序；心情不落盘也不在这里播种，下次拼系统
+ * 提示词时由 ai/mood.ts 的 currentMoodInstruction 现抽。
  */
 export function hydrateMemories(memories: Map<number, string>): void {
   const parsedMemories: { chatId: number; snapshot: AiMemorySnapshot }[] = [];
@@ -227,10 +224,6 @@ export function hydrateMemories(memories: Map<number, string>): void {
     }
     if (hasChatMemory(chatId)) {
       chatLastActivityTimes.set(chatId, snapshot.savedAt);
-      // 播种心情，与"本群第一次有动静"的路径保持同一份不变量（见上方
-      // 函数头注）；心情本身不落盘，这里跟真实的首条消息一样重新抽一次，
-      // 不尝试恢复重启前的具体心情。
-      chatMoods.set(chatId, pickMood());
     } else {
       self.postMessage({ type: "memoryDeleted", chatId } satisfies AiMemoryDeletedEvent);
     }
