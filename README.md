@@ -241,7 +241,7 @@ bun test
 bun run check
 ```
 
-项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入。当前过渡门槛为函数 64%、行 68%，最终门槛为二者均不低于 80%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
+项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 80%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
 
 ---
 
