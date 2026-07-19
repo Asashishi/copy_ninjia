@@ -29,7 +29,7 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
 
   if (!fromUser || !PRIVILEGED_USERS_ID.includes(fromUser.id)) {
     const replyText: string = `就 ${formatMockerLabel(fromUser)} 也想 /kick 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
-    await sendMessage(chatId, replyText, messageId);
+    await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
@@ -59,7 +59,11 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
 
   const targetLabel: string = formatUserLabel(targetUser);
   if (targetChatIds.length === 0) {
-    await sendMessage(chatId, `笨蛋，本天才连一个群的管理员都不是，${targetLabel} 想踢也踢不动啦，先给本天才上个管理再说♡`, messageId);
+    await sendMessage({
+      chatId,
+      text: `笨蛋，本天才连一个群的管理员都不是，${targetLabel} 想踢也踢不动啦，先给本天才上个管理再说♡`,
+      replyToMessageId: messageId,
+    });
     return;
   }
 
@@ -88,7 +92,7 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
   const bannedCount: number = kickedCount + preBannedCount;
   if (bannedCount === 0) {
     const replyText: string = `呜……${targetLabel} 居然一个群都踢不动，是本天才没有封禁权限吧？杂鱼管理员快去检查♡`;
-    await sendMessage(chatId, replyText, messageId);
+    await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
@@ -100,12 +104,12 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
   const kickedNote: string = kickedCount > 0 ? `从 ${kickedCount} 个群一脚踢出去还上了黑名单` : "";
   const preBannedNote: string = preBannedCount > 0 ? `在 ${preBannedCount} 个群提前拉黑（根本没让 TA 进去过）` : "";
   const actionNote: string = [kickedNote, preBannedNote].filter(Boolean).join("，");
-  const noticeMessageId: number | undefined = await sendMessage(
+  const noticeMessageId: number | undefined = await sendMessage({
     chatId,
-    `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}，杂鱼永远别想回来了♡`,
-    messageId
-  );
+    text: `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}，杂鱼永远别想回来了♡`,
+    replyToMessageId: messageId,
+  });
   if (noticeMessageId !== undefined) {
-    deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS);
+    deleteMessageAfter({ chatId, messageId: noticeMessageId, delayMs: KICK_NOTICE_AUTO_DELETE_MS });
   }
 }

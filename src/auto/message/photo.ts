@@ -11,20 +11,19 @@ export function handlePhotoMessage(context: MessageTriggerContext): boolean {
   const speaker = resolveSpeaker(message);
   const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
   const photoFile = pickPhotoFile(message.photo);
-  recordChatMedia(
-    "photo",
+  recordChatMedia({
+    kind: "photo",
     chatId,
-    speaker.id,
-    speaker.firstName,
-    speaker.lastName,
-    speaker.username,
-    typeof message.caption === "string" ? message.caption : "",
-    photoFile.fileId,
-    photoFile.fileUniqueId,
-    message.message_id,
-    claimedRandomTrigger,
-    undefined,
-    directMediaTrigger
-  );
+    senderId: speaker.id,
+    firstName: speaker.firstName,
+    lastName: speaker.lastName,
+    username: speaker.username,
+    caption: typeof message.caption === "string" ? message.caption : "",
+    fileId: photoFile.fileId,
+    fileUniqueId: photoFile.fileUniqueId,
+    messageId: message.message_id,
+    commentOnResolve: claimedRandomTrigger,
+    directTrigger: directMediaTrigger,
+  });
   return directMediaTrigger !== undefined || commentOnResolveCandidate;
 }

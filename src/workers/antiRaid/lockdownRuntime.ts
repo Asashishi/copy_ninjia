@@ -75,15 +75,18 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
         break;
       case "announceLockdown":
-        void sendMessage(
+        void sendMessage({
           chatId,
-          `哼，${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${effect.joinCount} 个杂鱼，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`,
-          undefined,
-          joinVerificationApi
-        );
+          text: `哼，${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${effect.joinCount} 个杂鱼，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`,
+          api: joinVerificationApi,
+        });
         break;
       case "announceUnlock":
-        void sendMessage(chatId, `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`, undefined, joinVerificationApi);
+        void sendMessage({
+          chatId,
+          text: `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`,
+          api: joinVerificationApi,
+        });
         break;
     }
   }

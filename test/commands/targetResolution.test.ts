@@ -47,7 +47,7 @@ describe("resolveCommandTarget", () => {
 
   test("无回复且 trim 后为空时报告缺少目标", async () => {
     expect(await resolveCommandTarget(context("   "), messages)).toBeUndefined();
-    expect(sendMessageMock).toHaveBeenCalledWith(-1001, "missing", 7);
+    expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: "missing", replyToMessageId: 7 });
   });
 
   test("合法用户名允许可选 @ 和前后空白，并完整交给缓存解析", async () => {
@@ -61,7 +61,7 @@ describe("resolveCommandTarget", () => {
     for (const argument of ["@foo-bar", "@1alice", "@_alice", "@alice_", "@alice extra"]) {
       sendMessageMock.mockClear();
       expect(await resolveCommandTarget(context(argument), messages)).toBeUndefined();
-      expect(sendMessageMock).toHaveBeenCalledWith(-1001, `invalid:${argument}`, 7);
+      expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: `invalid:${argument}`, replyToMessageId: 7 });
     }
   });
 
@@ -75,16 +75,16 @@ describe("resolveCommandTarget", () => {
 
     for (const argument of [atMin.slice(1), `${atMax}x`]) {
       expect(await resolveCommandTarget(context(argument), messages)).toBeUndefined();
-      expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, `invalid:${argument}`, 7);
+      expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: `invalid:${argument}`, replyToMessageId: 7 });
     }
   });
 
   test("合法但未缓存与目标为机器人自己仍使用各自错误", async () => {
     expect(await resolveCommandTarget(context("ghost"), messages)).toBeUndefined();
-    expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "unknown:ghost", 7);
+    expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: "unknown:ghost", replyToMessageId: 7 });
 
     knownTargets.set("mybot", { id: 999, username: "mybot" });
     expect(await resolveCommandTarget(context("mybot"), messages)).toBeUndefined();
-    expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "self", 7);
+    expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: "self", replyToMessageId: 7 });
   });
 });

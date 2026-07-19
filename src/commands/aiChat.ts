@@ -29,5 +29,5 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   const replyText: string = arg === "enable"
     ? `哼，那本天才就赏脸在这个群闲聊几句吧，杂鱼们好好珍惜♡`
     : `本天才不想再理你们这群杂鱼了，闲聊到此为止♡`;
-  await sendMessage(chatId, replyText, messageId);
+  await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

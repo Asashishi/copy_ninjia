@@ -127,10 +127,10 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       break;
     }
     case "verificationUpsert":
-      handleVerificationUpsert(msg, (reply) => self.postMessage(reply));
+      handleVerificationUpsert({ msg, reply: (reply) => self.postMessage(reply) });
       break;
     case "verificationDelete":
-      handleVerificationDelete(msg, (reply) => self.postMessage(reply));
+      handleVerificationDelete({ msg, reply: (reply) => self.postMessage(reply) });
       break;
     case "load":
       handleLoad();

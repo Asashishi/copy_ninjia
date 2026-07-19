@@ -65,7 +65,7 @@ describe("Open-Meteo 适配层", () => {
         todayMinC: 26,
         todayCondition: WEATHER_CODE_DESCRIPTIONS[3]!,
       });
-      const requestedUrl = fetchJsonWithTimeout.mock.calls[0]![0] as URL;
+      const requestedUrl = (fetchJsonWithTimeout.mock.calls[0]![0] as { input: URL }).input;
       expect(requestedUrl.origin + requestedUrl.pathname).toBe(WEATHER_API_URL);
       expect(requestedUrl.searchParams.get("timezone")).toBe("Asia/Tokyo");
 

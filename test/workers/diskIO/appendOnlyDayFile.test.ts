@@ -25,7 +25,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     const previousUmask: number = process.umask(0o077);
     try {
       const state: DayFileState = openDayFile(dir, "2026-07-16", PERSISTED_FILE_MODE);
-      appendToDayFile(dir, state, serializeDayFileEntry("a", 1), PERSISTED_FILE_MODE);
+      appendToDayFile({ dir, state, chunk: serializeDayFileEntry("a", 1), mode: PERSISTED_FILE_MODE });
     } finally {
       process.umask(previousUmask);
     }
@@ -45,7 +45,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
   test("从空文件开始追加一条，结果是合法 JSON 且值正确", () => {
     const state: DayFileState = openDayFile(dir, "2026-07-16");
     const chunk: string = serializeDayFileEntry("111", { label: "大吉", fortunePercent: 90.12 });
-    appendToDayFile(dir, state, chunk);
+    appendToDayFile({ dir, state, chunk });
 
     expect(readDay("2026-07-16")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
     expect(state.empty).toBe(false);
@@ -58,7 +58,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
       serializeDayFileEntry("B", { label: "小凶", fortunePercent: 39.99 }),
       serializeDayFileEntry("C:所求事项", { label: "尚可", fortunePercent: 50 }),
     ].join(",\n");
-    appendToDayFile(dir, state, chunk);
+    appendToDayFile({ dir, state, chunk });
 
     expect(readDay("2026-07-16")).toEqual({
       A: { label: "大吉", fortunePercent: 90.11 },
@@ -69,9 +69,9 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
 
   test("多次独立 flush（跨多次 appendToDayFile 调用）累积追加，不覆盖已有内容", () => {
     const state: DayFileState = openDayFile(dir, "2026-07-16");
-    appendToDayFile(dir, state, serializeDayFileEntry("A", { label: "大吉", fortunePercent: 90.11 }));
-    appendToDayFile(dir, state, serializeDayFileEntry("B", { label: "吉", fortunePercent: 75 }));
-    appendToDayFile(dir, state, serializeDayFileEntry("C", { label: "尚可", fortunePercent: 50 }));
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", { label: "大吉", fortunePercent: 90.11 }) });
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("B", { label: "吉", fortunePercent: 75 }) });
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("C", { label: "尚可", fortunePercent: 50 }) });
 
     expect(readDay("2026-07-16")).toEqual({
       A: { label: "大吉", fortunePercent: 90.11 },
@@ -83,14 +83,14 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
   test("重新 openDayFile（模拟进程重启）读到已有单条记录后，继续追加不会破坏旧内容", () => {
     // 手工构造出与真实 memory/luck/2026-07-16.json 完全相同的字节内容
     const state1: DayFileState = openDayFile(dir, "2026-07-16");
-    appendToDayFile(dir, state1, serializeDayFileEntry("8791894415", { label: "小凶", fortunePercent: 39.99 }));
+    appendToDayFile({ dir, state: state1, chunk: serializeDayFileEntry("8791894415", { label: "小凶", fortunePercent: 39.99 }) });
     const raw: string = readFileSync(join(dir, "2026-07-16.json"), "utf8");
     expect(raw).toBe('{\n  "8791894415": {\n    "label": "小凶",\n    "fortunePercent": 39.99\n  }\n}');
 
     // 模拟重启：新的 DayFileState 通过重新探测磁盘现有文件得到
     const state2: DayFileState = openDayFile(dir, "2026-07-16");
     expect(state2.empty).toBe(false);
-    appendToDayFile(dir, state2, serializeDayFileEntry("222", { label: "大凶", fortunePercent: 5 }));
+    appendToDayFile({ dir, state: state2, chunk: serializeDayFileEntry("222", { label: "大凶", fortunePercent: 5 }) });
 
     expect(readDay("2026-07-16")).toEqual({
       "8791894415": { label: "小凶", fortunePercent: 39.99 },
@@ -101,9 +101,9 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
   test("多字节 UTF-8 字符（中文 label）不影响后续追加的字节位置计算", () => {
     const state: DayFileState = openDayFile(dir, "2026-07-16");
     // label 全部是多字节字符，用来暴露「按字符数而非字节数」计算位置的潜在 bug
-    appendToDayFile(dir, state, serializeDayFileEntry("k1", { label: "大吉大利心想事成", fortunePercent: 90.12 }));
-    appendToDayFile(dir, state, serializeDayFileEntry("k2", { label: "倒霉透顶诸事不宜", fortunePercent: 4.56 }));
-    appendToDayFile(dir, state, serializeDayFileEntry("k3", { label: "普普通通", fortunePercent: 50.5 }));
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("k1", { label: "大吉大利心想事成", fortunePercent: 90.12 }) });
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("k2", { label: "倒霉透顶诸事不宜", fortunePercent: 4.56 }) });
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("k3", { label: "普普通通", fortunePercent: 50.5 }) });
 
     expect(readDay("2026-07-16")).toEqual({
       k1: { label: "大吉大利心想事成", fortunePercent: 90.12 },
@@ -120,7 +120,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     const state: DayFileState = openDayFile(dir, "2026-07-16");
     const total = 500;
     for (let i = 0; i < total; i++) {
-      appendToDayFile(dir, state, serializeDayFileEntry(`user${i}`, { label: "小吉", fortunePercent: 60 + (i % 8) }));
+      appendToDayFile({ dir, state, chunk: serializeDayFileEntry(`user${i}`, { label: "小吉", fortunePercent: 60 + (i % 8) }) });
     }
     const result: Record<string, unknown> = readDay("2026-07-16") as Record<string, unknown>;
     expect(Object.keys(result).length).toBe(total);
@@ -141,8 +141,8 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
 
   test("截断修复：断电截断在最后一条记录中间时，能裁掉残片并保留此前的完整记录", () => {
     const state: DayFileState = openDayFile(dir, "2026-07-16");
-    appendToDayFile(dir, state, serializeDayFileEntry("A", { label: "大吉", fortunePercent: 90.11 }));
-    appendToDayFile(dir, state, serializeDayFileEntry("B", { label: "小凶", fortunePercent: 39.99 }));
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", { label: "大吉", fortunePercent: 90.11 }) });
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("B", { label: "小凶", fortunePercent: 39.99 }) });
     const full: string = readFileSync(join(dir, "2026-07-16.json"), "utf8");
 
     // 模拟断电：整份内容被截断在第二条记录中间（缺收尾的 "\n  }\n}"）
@@ -157,7 +157,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     expect((parsedAfterRepair as any).A).toEqual({ label: "大吉", fortunePercent: 90.11 });
 
     // 修复后继续追加应仍能产出合法 JSON。
-    appendToDayFile(dir, recovered, serializeDayFileEntry("C", { label: "尚可", fortunePercent: 50 }));
+    appendToDayFile({ dir, state: recovered, chunk: serializeDayFileEntry("C", { label: "尚可", fortunePercent: 50 }) });
     expect((readDay("2026-07-16") as any).C).toEqual({ label: "尚可", fortunePercent: 50 });
   });
 
@@ -173,14 +173,14 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     // 关键回归点：empty 被正确置位后，下一次追加应走「整份覆写」分支，
     // 产出合法 JSON；修复前 empty 被错误置为 false，这里会在 3 字节文件的
     // 中间按位置写入，产出打头带逗号的非法 JSON。
-    appendToDayFile(dir, recovered, serializeDayFileEntry("111", { label: "大吉", fortunePercent: 90.12 }));
+    appendToDayFile({ dir, state: recovered, chunk: serializeDayFileEntry("111", { label: "大吉", fortunePercent: 90.12 }) });
     expect(readDay("2026-07-16")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
 
     // 再模拟一次重启，确认新记录在磁盘上是完整、可正常再次解析的合法 JSON
     // （而不是修复前那样：产出的坏文件在下次启动时会被判定修复失败并放弃）。
     const state3: DayFileState = openDayFile(dir, "2026-07-16");
     expect(state3.empty).toBe(false);
-    appendToDayFile(dir, state3, serializeDayFileEntry("222", { label: "小吉", fortunePercent: 60 }));
+    appendToDayFile({ dir, state: state3, chunk: serializeDayFileEntry("222", { label: "小吉", fortunePercent: 60 }) });
     expect(readDay("2026-07-16")).toEqual({
       "111": { label: "大吉", fortunePercent: 90.12 },
       "222": { label: "小吉", fortunePercent: 60 },

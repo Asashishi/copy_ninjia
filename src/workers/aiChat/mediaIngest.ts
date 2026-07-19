@@ -56,14 +56,30 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
       };
       pushBufferedMessage(msg.chatId, entry);
       if (msg.directTrigger) {
-        generateAndSendReply(msg.chatId, msg.messageId, msg.directTrigger.repliedBotText, false, {
-          kind: "sticker",
-          senderName: displayBufferedMessageName(entry),
-          description: catalogEntry.description,
-          directTriggerReason: msg.directTrigger.reason,
+        generateAndSendReply({
+          chatId: msg.chatId,
+          replyToMessageId: msg.messageId,
+          repliedBotText: msg.directTrigger.repliedBotText,
+          isRandomTrigger: false,
+          mediaComment: {
+            kind: "sticker",
+            senderName: displayBufferedMessageName(entry),
+            description: catalogEntry.description,
+            directTriggerReason: msg.directTrigger.reason,
+          },
         });
       } else if (msg.commentOnResolve) {
-        generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: "sticker", senderName: displayBufferedMessageName(entry), description: catalogEntry.description });
+        generateAndSendReply({
+          chatId: msg.chatId,
+          replyToMessageId: msg.messageId,
+          repliedBotText: undefined,
+          isRandomTrigger: false,
+          mediaComment: {
+            kind: "sticker",
+            senderName: displayBufferedMessageName(entry),
+            description: catalogEntry.description,
+          },
+        });
       }
       return;
     }
@@ -89,14 +105,30 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
     if (msg.directTrigger) {
       // 回填先于触发（同评价），模型拼上下文时看到的已是描述；解析失败
       // 退回兜底文本照样触发——回应可以含糊，失踪不行。
-      generateAndSendReply(msg.chatId, msg.messageId, msg.directTrigger.repliedBotText, false, {
-        kind: msg.kind,
-        senderName: displayBufferedMessageName(entry),
-        description: description ?? replyFallbackDescriptionFor(msg),
-        directTriggerReason: msg.directTrigger.reason,
+      generateAndSendReply({
+        chatId: msg.chatId,
+        replyToMessageId: msg.messageId,
+        repliedBotText: msg.directTrigger.repliedBotText,
+        isRandomTrigger: false,
+        mediaComment: {
+          kind: msg.kind,
+          senderName: displayBufferedMessageName(entry),
+          description: description ?? replyFallbackDescriptionFor(msg),
+          directTriggerReason: msg.directTrigger.reason,
+        },
       });
     } else if (msg.commentOnResolve && description) {
-      generateAndSendReply(msg.chatId, msg.messageId, undefined, false, { kind: msg.kind, senderName: displayBufferedMessageName(entry), description });
+      generateAndSendReply({
+        chatId: msg.chatId,
+        replyToMessageId: msg.messageId,
+        repliedBotText: undefined,
+        isRandomTrigger: false,
+        mediaComment: {
+          kind: msg.kind,
+          senderName: displayBufferedMessageName(entry),
+          description,
+        },
+      });
     }
   });
 }

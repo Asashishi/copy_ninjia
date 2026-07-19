@@ -31,7 +31,7 @@ describe("AI 回复触发队列", () => {
     messages.push({ id: 2, firstName: "Alice", lastName: "Chen", text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS + 20), at: "" });
     chatBuffers.set(-1001, messages);
 
-    pushReplyTrigger(-1001, 88, "机器人原话");
+    pushReplyTrigger({ chatId: -1001, replyToMessageId: 88, repliedBotText: "机器人原话" });
 
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({
       replyToMessageId: 88,
@@ -42,11 +42,16 @@ describe("AI 回复触发队列", () => {
   });
 
   test("媒体触发使用解析结果快照，不依赖缓存尾部", () => {
-    pushReplyTrigger(-1001, 89, undefined, {
-      kind: "animation",
-      senderName: "Bob",
-      description: "挥手",
-      directTriggerReason: "mention",
+    pushReplyTrigger({
+      chatId: -1001,
+      replyToMessageId: 89,
+      repliedBotText: undefined,
+      mediaTrigger: {
+        kind: "animation",
+        senderName: "Bob",
+        description: "挥手",
+        directTriggerReason: "mention",
+      },
     });
 
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({

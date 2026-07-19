@@ -5,10 +5,17 @@
  * 模块头）并保留标记，由调用方检查残留后自行重排下一轮。
  */
 export function flushDirtyEntries<K>(
-  dirty: Set<K>,
-  cache: Map<K, string>,
-  write: (key: K, snapshot: string) => void,
-  describeFailure: (key: K) => string
+  {
+    dirty,
+    cache,
+    write,
+    describeFailure,
+  }: {
+    dirty: Set<K>;
+    cache: Map<K, string>;
+    write: (key: K, snapshot: string) => void;
+    describeFailure: (key: K) => string;
+  }
 ): void {
   for (const key of dirty) {
     const snapshot: string | undefined = cache.get(key);

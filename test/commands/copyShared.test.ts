@@ -63,7 +63,11 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
     Date.now = (): number => 1_000_000 + COPY_COOLDOWN_MS - 1;
     await expect(shared.claimCopyCooldownOrReject({ id: 9 }, -1002, 11)).resolves.toEqual({ rejected: true });
-    expect(sendMessage).toHaveBeenCalledWith(-1002, expect.stringContaining("还要等"), 11);
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1002,
+      text: expect.stringContaining("还要等"),
+      replyToMessageId: 11,
+    });
     expect(globalCopyState.lastCopyTime).toBe(1_000_000);
   });
 
@@ -98,20 +102,38 @@ describe("copy 命令共享冷却与头像串行器", () => {
     const firstTarget: CachedUser = { id: 7, first_name: "Alice", username: "alice" };
     const secondTarget: CachedUser = { id: -2002, first_name: "Channel", username: "channel", isChannel: true };
 
-    shared.stealAvatarInBackground(-1001, firstTarget, "first-ok", "first-fail");
-    shared.stealAvatarInBackground(-1002, secondTarget, "second-ok", "second-fail");
+    shared.stealAvatarInBackground({
+      chatId: -1001,
+      target: firstTarget,
+      successText: "first-ok",
+      failureText: "first-fail",
+    });
+    shared.stealAvatarInBackground({
+      chatId: -1002,
+      target: secondTarget,
+      successText: "second-ok",
+      failureText: "second-fail",
+    });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
     expect(copyUserProfilePhoto).toHaveBeenCalledWith(7, false, "alice");
 
     resolveFirst(true);
     await waitFor(() => sendMessage.mock.calls.length === 2);
     expect(copyUserProfilePhoto).toHaveBeenNthCalledWith(2, -2002, true, "channel");
-    expect(sendMessage.mock.calls).toEqual([[-1001, "first-ok"], [-1002, "second-fail"]]);
+    expect(sendMessage.mock.calls).toEqual([
+      [{ chatId: -1001, text: "first-ok" }],
+      [{ chatId: -1002, text: "second-fail" }],
+    ]);
   });
 
   test("头像任务抛错由串行器记录，后续任务仍可继续", async () => {
     copyUserProfilePhoto.mockRejectedValueOnce(new Error("avatar failed"));
-    shared.stealAvatarInBackground(-1001, { id: 7, first_name: "Alice" }, "ok", "fail");
+    shared.stealAvatarInBackground({
+      chatId: -1001,
+      target: { id: 7, first_name: "Alice" },
+      successText: "ok",
+      failureText: "fail",
+    });
     await waitFor(() => loggerError.mock.calls.length === 1);
     expect(loggerError).toHaveBeenCalledWith("Error in background avatar steal task:", expect.any(Error));
   });

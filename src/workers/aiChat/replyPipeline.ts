@@ -43,11 +43,19 @@ function drainReplyQueue(chatId: number): void {
  * 以 fire-and-forget 方式执行，不阻塞 Worker 继续分发消息。
  */
 export function generateAndSendReply(
-  chatId: number,
-  replyToMessageId: number,
-  repliedBotText: string | undefined,
-  isRandomTrigger: boolean,
-  mediaComment?: MediaCommentContext
+  {
+    chatId,
+    replyToMessageId,
+    repliedBotText,
+    isRandomTrigger,
+    mediaComment,
+  }: {
+    chatId: number;
+    replyToMessageId: number;
+    repliedBotText?: string;
+    isRandomTrigger: boolean;
+    mediaComment?: MediaCommentContext;
+  }
 ): void {
   const generation: number = currentReplyGeneration(chatId);
   if (!botInfoState.current) {
@@ -77,7 +85,7 @@ export function generateAndSendReply(
     case "dropSilently":
       break;
     case "enqueue":
-      pushReplyTrigger(chatId, replyToMessageId, repliedBotText, mediaComment);
+      pushReplyTrigger({ chatId, replyToMessageId, repliedBotText, mediaTrigger: mediaComment });
       break;
     case "enqueueOverflow":
       // 等当前轮收尾后再发提示，避免插进同一轮的连续短句中间。

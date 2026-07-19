@@ -23,7 +23,7 @@ export function createAddReactionExecutor(
       });
     }
     reactionCount++;
-    void setMessageReaction(ctx.chatId, ctx.replyToMessageId, emoji);
+    void setMessageReaction({ chatId: ctx.chatId, messageId: ctx.replyToMessageId, emoji });
     return JSON.stringify({ success: true });
   };
 }

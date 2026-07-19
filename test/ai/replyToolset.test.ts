@@ -206,8 +206,8 @@ describe("send_message typo correction", () => {
       // 纠正是预约的后台动作，不阻塞工具返回；冲刷一轮事件循环后落地。
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
-      expect(sendMessageMock).toHaveBeenNthCalledWith(1, -100800, "天汽", undefined);
-      expect(sendMessageMock).toHaveBeenNthCalledWith(2, -100800, "气", undefined);
+      expect(sendMessageMock).toHaveBeenNthCalledWith(1, { chatId: -100800, text: "天汽", replyToMessageId: undefined });
+      expect(sendMessageMock).toHaveBeenNthCalledWith(2, { chatId: -100800, text: "气", replyToMessageId: undefined });
       expect(onMessageSent).toHaveBeenNthCalledWith(1, "天汽", 100);
       expect(onMessageSent).toHaveBeenNthCalledWith(2, "气", 101);
     } finally {
@@ -247,7 +247,7 @@ describe("send_message typo correction", () => {
       expect(result.success).toBe(true);
       expect(result.typo).toBeUndefined();
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
-      expect(sendMessageMock).toHaveBeenNthCalledWith(1, -100800, "天气", undefined);
+      expect(sendMessageMock).toHaveBeenNthCalledWith(1, { chatId: -100800, text: "天气", replyToMessageId: undefined });
       expect(onMessageSent).toHaveBeenCalledTimes(1);
       expect(onMessageSent).toHaveBeenNthCalledWith(1, "天气", 100);
     } finally {
@@ -292,7 +292,7 @@ describe("send_message typo correction", () => {
 
       expect(first.typo?.mode).toBe("quick");
       expect(second.typo).toBeUndefined();
-      expect(sendMessageMock).toHaveBeenNthCalledWith(3, -100800, "还好吧", undefined);
+      expect(sendMessageMock).toHaveBeenNthCalledWith(3, { chatId: -100800, text: "还好吧", replyToMessageId: undefined });
     } finally {
       Math.random = originalRandom;
     }
@@ -401,7 +401,7 @@ describe("send_message 重复消息去重", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(deleteMessageMock).toHaveBeenCalledWith(-100800, 100);
-      expect(sendMessageMock).toHaveBeenLastCalledWith(-100800, "天气", undefined);
+      expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -100800, text: "天气", replyToMessageId: undefined });
     } finally {
       Math.random = originalRandom;
     }

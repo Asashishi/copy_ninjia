@@ -35,11 +35,18 @@ export function notifyRateLimited(chatId: number, now: number, generation: numbe
   const lastNoticeTime: number = rateLimitNoticeTimes.get(chatId) ?? 0;
   if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
   rateLimitNoticeTimes.set(chatId, now);
-  void sendMessage(chatId, RATE_LIMIT_NOTICE_TEXT).then((sentMessageId: number | undefined) => {
+  void sendMessage({ chatId, text: RATE_LIMIT_NOTICE_TEXT }).then((sentMessageId: number | undefined) => {
     if (sentMessageId === undefined) return;
     self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
     if (botInfoState.current && isReplyGenerationCurrent(chatId, generation)) {
-      recordChatMessage(chatId, botInfoState.current.id, botInfoState.current.first_name, "", botInfoState.current.username, RATE_LIMIT_NOTICE_TEXT);
+      recordChatMessage({
+        chatId,
+        senderId: botInfoState.current.id,
+        firstName: botInfoState.current.first_name,
+        lastName: "",
+        username: botInfoState.current.username,
+        text: RATE_LIMIT_NOTICE_TEXT,
+      });
     }
   });
 }

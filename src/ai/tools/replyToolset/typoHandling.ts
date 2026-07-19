@@ -28,14 +28,22 @@ export interface TypoDecision {
   rejectedReason: string | null;
 }
 
+interface DecideMessageTypoParams {
+  argumentsJson: string;
+  text: string;
+  roundHasTypo: boolean;
+  typoAlreadyUsed: boolean;
+  remainingActions: number;
+}
+
 /** 解析模型提交的两枚单字并决定本条消息是否采用本轮唯一一次手滑。 */
-export function decideMessageTypo(
-  argumentsJson: string,
-  text: string,
-  roundHasTypo: boolean,
-  typoAlreadyUsed: boolean,
-  remainingActions: number
-): TypoDecision {
+export function decideMessageTypo({
+  argumentsJson,
+  text,
+  roundHasTypo,
+  typoAlreadyUsed,
+  remainingActions,
+}: DecideMessageTypoParams): TypoDecision {
   const rawOriginalChar: string | null = parseStringField(argumentsJson, "typo_original_char");
   const rawReplacementChar: string | null = parseStringField(argumentsJson, "typo_replacement_char");
   const originalChar: string | null = rawOriginalChar ? rawOriginalChar.trim() : null;
@@ -80,13 +88,12 @@ export function scheduleQuickTypoCorrection(
   state.pendingCorrectionText = correctionText;
   void (async (): Promise<void> => {
     await sleep(randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS));
-    const correctionMessageId: number | undefined = await sendDirectMessage(
+    const correctionMessageId: number | undefined = await sendDirectMessage({
       ctx,
       state,
-      correctionText,
-      undefined,
-      true
-    );
+      text: correctionText,
+      allowInactive: true,
+    });
     if (correctionMessageId !== undefined) {
       state.sentCanonicalTexts.set(correctionMessageId, correctionText);
     }
@@ -96,13 +103,19 @@ export function scheduleQuickTypoCorrection(
   });
 }
 
-export function scheduleRecallTypoCorrection(
-  ctx: ReplyToolContext,
-  state: RoundMessageState,
-  sentMessageId: number,
-  correctedText: string,
-  replyToMessageId?: number
-): void {
+export function scheduleRecallTypoCorrection({
+  ctx,
+  state,
+  sentMessageId,
+  correctedText,
+  replyToMessageId,
+}: {
+  ctx: ReplyToolContext;
+  state: RoundMessageState;
+  sentMessageId: number;
+  correctedText: string;
+  replyToMessageId?: number;
+}): void {
   void (async (): Promise<void> => {
     await sleep(randomDelayMs(TYPO_RECALL_DELETE_MIN_MS, TYPO_RECALL_DELETE_MAX_MS));
     const deleted: boolean = await deleteMessage(ctx.chatId, sentMessageId);
@@ -110,13 +123,13 @@ export function scheduleRecallTypoCorrection(
     // 旧 canonical 条目保留到纠正消息发送完成，堵住删除与重发之间的判重空窗。
     state.deletableMessageIds.delete(sentMessageId);
     state.messageCount = Math.max(0, state.messageCount - 1);
-    const correctedMessageId: number | undefined = await sendDirectMessage(
+    const correctedMessageId: number | undefined = await sendDirectMessage({
       ctx,
       state,
-      correctedText,
+      text: correctedText,
       replyToMessageId,
-      true
-    );
+      allowInactive: true,
+    });
     if (correctedMessageId !== undefined) state.sentCanonicalTexts.set(correctedMessageId, correctedText);
     state.sentCanonicalTexts.delete(sentMessageId);
   })().catch((error: unknown) => {

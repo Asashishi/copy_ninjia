@@ -35,13 +35,18 @@ function candidate(fileId: string, emoji: string, description: string): any {
   return { sticker: { file_id: fileId, file_unique_id: `${fileId}-uid`, emoji }, emoji, description };
 }
 
-function pack(name: string, title: string, summary: string, stickers: any[]): any {
+function pack({ name, title, summary, stickers }: {
+  name: string;
+  title: string;
+  summary: string;
+  stickers: any[];
+}): any {
   return { pack: name, title, summary, stickers };
 }
 
 const MENU: any[] = [
-  pack("pack_a", "猫猫包", "一包搞笑猫猫", [candidate("a1", "😂", "一只猫大笑"), candidate("a2", "😭", "一只猫哭泣")]),
-  pack("pack_b", "狗狗包", "一包卖萌狗狗", [candidate("b1", "🥰", "一只狗撒娇")]),
+  pack({ name: "pack_a", title: "猫猫包", summary: "一包搞笑猫猫", stickers: [candidate("a1", "😂", "一只猫大笑"), candidate("a2", "😭", "一只猫哭泣")] }),
+  pack({ name: "pack_b", title: "狗狗包", summary: "一包卖萌狗狗", stickers: [candidate("b1", "🥰", "一只狗撒娇")] }),
 ];
 
 /** 已看过 MENU 里所有包的限额状态，省得每个发送用例都先走一遍 view。 */
@@ -64,6 +69,26 @@ function chatActionMock(phase: string = "choose_sticker"): any {
  *  stickerSendLocks），单轮场景下恒能抢到，等价于加锁前的行为。 */
 function freshLock(chatId: number = 123): any {
   return createStickerSendLock(chatId, new Map());
+}
+
+function sendStickerForTest({
+  argumentsJson,
+  chatAction = chatActionMock(),
+  stickerLock = freshLock(),
+  chatId = 123,
+  menu = MENU,
+  state = viewedState(),
+  onSent = (): void => {},
+}: {
+  argumentsJson: string;
+  chatAction?: any;
+  stickerLock?: any;
+  chatId?: number;
+  menu?: any[];
+  state?: any;
+  onSent?: (stickerDescription: string, messageId: number) => void;
+}): Promise<string> {
+  return sendStickerTool({ chatAction, stickerLock, chatId, menu, argumentsJson, state, onSent });
 }
 
 describe("ai/stickers parseIndexField", () => {
@@ -131,7 +156,7 @@ describe("ai/stickers viewStickerPackTool", () => {
   test("合法调用返回意图和包内清单，按包记录意图，并把心跳切到「正在选择贴纸」挡", async () => {
     const chatAction = chatActionMock();
     const state = createStickerRoundState();
-    const result = JSON.parse(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1, "intent":"表达被逗笑，但不要显得在嘲讽对方"}', state));
+    const result = JSON.parse(await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"表达被逗笑，但不要显得在嘲讽对方"}', state }));
     expect(result.pack).toBe("猫猫包");
     expect(result.intent).toBe("表达被逗笑，但不要显得在嘲讽对方");
     expect(result.selection_instruction).toContain("严格按 intent");
@@ -143,15 +168,15 @@ describe("ai/stickers viewStickerPackTool", () => {
 
   test("没有 emoji 的贴纸用占位文案，不留空", async () => {
     const state = createStickerRoundState();
-    const menu = [pack("p", "包", "简介", [candidate("x1", "", "一个没有 emoji 的贴纸")])];
-    const result = JSON.parse(await viewStickerPackTool(chatActionMock(), menu, '{"pack_index": 1, "intent":"表达疑惑，但不要带攻击性"}', state));
+    const menu = [pack({ name: "p", title: "包", summary: "简介", stickers: [candidate("x1", "", "一个没有 emoji 的贴纸")] })];
+    const result = JSON.parse(await viewStickerPackTool({ chatAction: chatActionMock(), menu, argumentsJson: '{"pack_index": 1, "intent":"表达疑惑，但不要带攻击性"}', state }));
     expect(result.stickers).toContain("1. （无 emoji） 一个没有 emoji 的贴纸");
   });
 
   test("编号非法返回错误，不标记任何包、不切换聊天状态挡位", async () => {
     const chatAction = chatActionMock();
     const state = createStickerRoundState();
-    expect(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 99, "intent":"表达疑惑，但不要带攻击性"}', state)).toBe(JSON.stringify({ error: "Invalid pack_index" }));
+    expect(await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 99, "intent":"表达疑惑，但不要带攻击性"}', state })).toBe(JSON.stringify({ error: "Invalid pack_index" }));
     expect(state.viewedPackIntents.size).toBe(0);
     expect(chatAction.set).not.toHaveBeenCalled();
   });
@@ -159,7 +184,7 @@ describe("ai/stickers viewStickerPackTool", () => {
   test("意图缺失或无效时拒绝查看，不标记包、不切换聊天状态挡位", async () => {
     const chatAction = chatActionMock();
     const state = createStickerRoundState();
-    expect(JSON.parse(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1}', state)).error).toContain("Invalid intent");
+    expect(JSON.parse(await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 1}', state })).error).toContain("Invalid intent");
     expect(state.viewedPackIntents.size).toBe(0);
     expect(chatAction.set).not.toHaveBeenCalled();
   });
@@ -167,10 +192,10 @@ describe("ai/stickers viewStickerPackTool", () => {
   test("同一个包每轮只能查看一次，重复查看保留首次意图且不再切换状态", async () => {
     const chatAction = chatActionMock();
     const state = createStickerRoundState();
-    await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1, "intent":"表达惊讶，但不要显得害怕"}', state);
+    await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"表达惊讶，但不要显得害怕"}', state });
     chatAction.set.mockClear();
 
-    const repeated = JSON.parse(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1, "intent":"改为表达好笑，但不要嘲讽对方"}', state));
+    const repeated = JSON.parse(await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"改为表达好笑，但不要嘲讽对方"}', state }));
     expect(repeated.error).toContain("already viewed");
     expect(state.viewedPackIntents.get(1)).toBe("表达惊讶，但不要显得害怕");
     expect(chatAction.set).not.toHaveBeenCalled();
@@ -179,20 +204,20 @@ describe("ai/stickers viewStickerPackTool", () => {
   test("每轮最多查看五个不同贴纸包，第六个包被拒绝且不切换状态", async () => {
     const menu = Array.from(
       { length: MAX_STICKER_PACK_VIEWS_PER_REPLY + 1 },
-      (_, index) => pack(`pack_${index}`, `包 ${index}`, `简介 ${index}`, [candidate(`s${index}`, "🙂", `贴纸 ${index}`)])
+      (_, index) => pack({ name: `pack_${index}`, title: `包 ${index}`, summary: `简介 ${index}`, stickers: [candidate(`s${index}`, "🙂", `贴纸 ${index}`)] })
     );
     const state = createStickerRoundState();
     for (let packIndex = 1; packIndex <= MAX_STICKER_PACK_VIEWS_PER_REPLY; packIndex++) {
-      await viewStickerPackTool(chatActionMock(), menu, JSON.stringify({ pack_index: packIndex, intent: `查看第 ${packIndex} 个包` }), state);
+      await viewStickerPackTool({ chatAction: chatActionMock(), menu, argumentsJson: JSON.stringify({ pack_index: packIndex, intent: `查看第 ${packIndex} 个包` }), state });
     }
 
     const chatAction = chatActionMock();
-    const rejected = JSON.parse(await viewStickerPackTool(
+    const rejected = JSON.parse(await viewStickerPackTool({
       chatAction,
       menu,
-      JSON.stringify({ pack_index: MAX_STICKER_PACK_VIEWS_PER_REPLY + 1, intent: "尝试查看第六个包" }),
-      state
-    ));
+      argumentsJson: JSON.stringify({ pack_index: MAX_STICKER_PACK_VIEWS_PER_REPLY + 1, intent: "尝试查看第六个包" }),
+      state,
+    }));
     expect(rejected.error).toContain(`at most ${MAX_STICKER_PACK_VIEWS_PER_REPLY} different packs`);
     expect(state.viewedPackIntents.size).toBe(MAX_STICKER_PACK_VIEWS_PER_REPLY);
     expect(chatAction.set).not.toHaveBeenCalled();
@@ -203,7 +228,10 @@ describe("ai/stickers sendStickerTool", () => {
   test("编号非法时不调用 sendSticker，返回错误结果，不切换挡位", async () => {
     sendStickerMock.mockClear();
     const chatAction = chatActionMock();
-    const result = await sendStickerTool(chatAction, freshLock(), 123, MENU, '{"pack_index": 1, "sticker_index": 99}', viewedState(), () => {});
+    const result = await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 99}',
+      chatAction,
+    });
     expect(result).toBe(JSON.stringify({ error: "Invalid sticker_index" }));
     expect(sendStickerMock).not.toHaveBeenCalled();
     expect(chatAction.set).not.toHaveBeenCalled();
@@ -213,7 +241,10 @@ describe("ai/stickers sendStickerTool", () => {
     sendStickerMock.mockClear();
     const state = createStickerRoundState();
     state.viewedPackIntents.set(2, "表达撒娇，但不要过分亲密"); // 只看过 2 号包
-    const result = JSON.parse(await sendStickerTool(chatActionMock(), freshLock(), 123, MENU, '{"pack_index": 1, "sticker_index": 1}', state, () => {}));
+    const result = JSON.parse(await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
+      state,
+    }));
     expect(result.error).toContain("not viewed");
     expect(sendStickerMock).not.toHaveBeenCalled();
   });
@@ -224,8 +255,12 @@ describe("ai/stickers sendStickerTool", () => {
     const chatAction = chatActionMock();
     let recorded: [string, number] | null = null;
 
-    const result = await sendStickerTool(chatAction, freshLock(), 123, MENU, '{"pack_index": 1, "sticker_index": 2}', viewedState(), (desc: string, messageId: number) => {
-      recorded = [desc, messageId];
+    const result = await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 2}',
+      chatAction,
+      onSent: (desc: string, messageId: number) => {
+        recorded = [desc, messageId];
+      },
     });
 
     expect(sendStickerMock).toHaveBeenCalledWith(123, "a2");
@@ -245,7 +280,10 @@ describe("ai/stickers sendStickerTool", () => {
     sendStickerMock.mockImplementationOnce(async () => 999);
     const chatAction = chatActionMock("idle");
 
-    const result = await sendStickerTool(chatAction, freshLock(), 123, MENU, '{"pack_index": 1, "sticker_index": 2}', viewedState(), () => {});
+    const result = await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 2}',
+      chatAction,
+    });
 
     expect(result).toBe(JSON.stringify({ success: true }));
     expect(chatAction.set.mock.calls.map((call: unknown[]) => call[0])).toEqual(["choose_sticker", "idle"]);
@@ -257,9 +295,17 @@ describe("ai/stickers sendStickerTool", () => {
     sendStickerMock.mockClear();
     const state = viewedState();
     const lock = freshLock();
-    expect(JSON.parse(await sendStickerTool(chatActionMock(), lock, 123, MENU, '{"pack_index": 1, "sticker_index": 1}', state, () => {})).success).toBe(true);
+    expect(JSON.parse(await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
+      stickerLock: lock,
+      state,
+    })).success).toBe(true);
 
-    const result = JSON.parse(await sendStickerTool(chatActionMock(), lock, 123, MENU, '{"pack_index": 2, "sticker_index": 1}', state, () => {}));
+    const result = JSON.parse(await sendStickerForTest({
+      argumentsJson: '{"pack_index": 2, "sticker_index": 1}',
+      stickerLock: lock,
+      state,
+    }));
     expect(result.error).toContain("Sticker limit reached");
     expect(sendStickerMock).toHaveBeenCalledTimes(1);
   });
@@ -271,8 +317,13 @@ describe("ai/stickers sendStickerTool", () => {
     let called = false;
     const state = viewedState();
 
-    const result = await sendStickerTool(chatAction, freshLock(), 123, MENU, '{"pack_index": 1, "sticker_index": 1}', state, () => {
-      called = true;
+    const result = await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
+      chatAction,
+      state,
+      onSent: () => {
+        called = true;
+      },
     });
 
     expect(result).toBe(JSON.stringify({ error: "Failed to send sticker" }));
@@ -291,7 +342,11 @@ describe("ai/stickers 同群并发轮的发贴纸锁", () => {
     expect(createStickerSendLock(123, locks).tryAcquire()).toBe(true); // 并发轮先抢到
     const chatAction = chatActionMock();
 
-    const result = JSON.parse(await sendStickerTool(chatAction, createStickerSendLock(123, locks), 123, MENU, '{"pack_index": 1, "sticker_index": 1}', viewedState(), () => {}));
+    const result = JSON.parse(await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
+      chatAction,
+      stickerLock: createStickerSendLock(123, locks),
+    }));
 
     expect(result.error).toContain("Sticker throttled");
     expect(sendStickerMock).not.toHaveBeenCalled();
@@ -306,7 +361,10 @@ describe("ai/stickers 同群并发轮的发贴纸锁", () => {
     expect(holder.tryAcquire()).toBe(true);
     holder.release();
 
-    const result = JSON.parse(await sendStickerTool(chatActionMock(), createStickerSendLock(123, locks), 123, MENU, '{"pack_index": 1, "sticker_index": 1}', viewedState(), () => {}));
+    const result = JSON.parse(await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
+      stickerLock: createStickerSendLock(123, locks),
+    }));
     expect(result.success).toBe(true);
     expect(sendStickerMock).toHaveBeenCalledTimes(1);
   });
@@ -317,8 +375,16 @@ describe("ai/stickers 同群并发轮的发贴纸锁", () => {
     const lock = freshLock();
     const state = viewedState();
 
-    expect(JSON.parse(await sendStickerTool(chatActionMock(), lock, 123, MENU, '{"pack_index": 1, "sticker_index": 1}', state, () => {})).error).toBe("Failed to send sticker");
-    expect(JSON.parse(await sendStickerTool(chatActionMock(), lock, 123, MENU, '{"pack_index": 1, "sticker_index": 2}', state, () => {})).success).toBe(true);
+    expect(JSON.parse(await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
+      stickerLock: lock,
+      state,
+    })).error).toBe("Failed to send sticker");
+    expect(JSON.parse(await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 2}',
+      stickerLock: lock,
+      state,
+    })).success).toBe(true);
     expect(sendStickerMock).toHaveBeenCalledTimes(2);
   });
 
@@ -327,7 +393,10 @@ describe("ai/stickers 同群并发轮的发贴纸锁", () => {
     const locks = new Map<number, object>();
     expect(createStickerSendLock(456, locks).tryAcquire()).toBe(true);
 
-    const result = JSON.parse(await sendStickerTool(chatActionMock(), createStickerSendLock(123, locks), 123, MENU, '{"pack_index": 1, "sticker_index": 1}', viewedState(), () => {}));
+    const result = JSON.parse(await sendStickerForTest({
+      argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
+      stickerLock: createStickerSendLock(123, locks),
+    }));
     expect(result.success).toBe(true);
   });
 });

@@ -159,7 +159,17 @@ export function parseStickerIntent(argumentsJson: string): string | null {
  * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单。
  * @returns 喂回模型的结果 JSON 字符串（包名 + 编号清单，或错误说明）。
  */
-export async function viewStickerPackTool(chatAction: ChatActionControl, menu: StickerPackCandidate[], argumentsJson: string, state: StickerRoundState): Promise<string> {
+export async function viewStickerPackTool({
+  chatAction,
+  menu,
+  argumentsJson,
+  state,
+}: {
+  chatAction: ChatActionControl;
+  menu: StickerPackCandidate[];
+  argumentsJson: string;
+  state: StickerRoundState;
+}): Promise<string> {
   const packIndex: number | null = parseIndexField(argumentsJson, "pack_index", menu.length);
   if (packIndex === null) return JSON.stringify({ error: "Invalid pack_index" });
   const intent: string | null = parseStickerIntent(argumentsJson);
@@ -217,16 +227,25 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
  * @returns 喂回模型的结果 JSON 字符串（成功/失败的简短说明，供模型决定
  *   后续动作——如被限额拒绝，模型该知道贴纸没发出去）。
  */
-export async function sendStickerTool(
-  chatAction: ChatActionControl,
-  stickerLock: StickerSendLockControl,
-  chatId: number,
-  menu: StickerPackCandidate[],
-  argumentsJson: string,
-  state: StickerRoundState,
-  onSent: (stickerDescription: string, messageId: number) => void,
-  isActive: () => boolean = (): boolean => true
-): Promise<string> {
+export async function sendStickerTool({
+  chatAction,
+  stickerLock,
+  chatId,
+  menu,
+  argumentsJson,
+  state,
+  onSent,
+  isActive = (): boolean => true,
+}: {
+  chatAction: ChatActionControl;
+  stickerLock: StickerSendLockControl;
+  chatId: number;
+  menu: StickerPackCandidate[];
+  argumentsJson: string;
+  state: StickerRoundState;
+  onSent: (stickerDescription: string, messageId: number) => void;
+  isActive?: () => boolean;
+}): Promise<string> {
   if (!isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
   const packIndex: number | null = parseIndexField(argumentsJson, "pack_index", menu.length);
   if (packIndex === null) return JSON.stringify({ error: "Invalid pack_index" });

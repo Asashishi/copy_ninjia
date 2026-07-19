@@ -14,7 +14,19 @@ import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../const
  * 后续楼中楼回复降级）。不为每个成员创建 timer：统一由 Worker sweeper
  * 清理，读取路径自身也拒绝过期项。
  */
-export function rememberRecentComment(chatId: number, userId: number, messageId: number, repliesToChannelPost: boolean, observedAt: number = Date.now()): void {
+export function rememberRecentComment({
+  chatId,
+  userId,
+  messageId,
+  repliesToChannelPost,
+  observedAt = Date.now(),
+}: {
+  chatId: number;
+  userId: number;
+  messageId: number;
+  repliesToChannelPost: boolean;
+  observedAt?: number;
+}): void {
   const key: string = verificationKey(chatId, userId);
   const existing = recentChannelComments.get(key);
   const existingIsFresh: boolean = existing !== undefined && observedAt - existing.observedAt < COMMENT_JOIN_CORRELATE_MS;

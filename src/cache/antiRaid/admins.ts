@@ -11,7 +11,12 @@ export const pendingAdminChangesDuringFetch: Map<number, Map<number, boolean>> =
 
 /** 在 500 群硬顶内落一份管理员快照。 */
 export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: number = Date.now()): void {
-  setBoundedMapValue(chatAdmins, chatId, { adminIds, fetchedAt }, ANTI_RAID_CHAT_CACHE_MAX);
+  setBoundedMapValue({
+    map: chatAdmins,
+    key: chatId,
+    value: { adminIds, fetchedAt },
+    maxEntries: ANTI_RAID_CHAT_CACHE_MAX,
+  });
 }
 
 /** 获取或创建同群唯一一次全量拉取；settle 后自动释放在途槽位。 */

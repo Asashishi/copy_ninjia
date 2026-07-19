@@ -37,7 +37,17 @@ const DEFAULT_DEPENDENCIES: ChatActionHeartbeatDependencies = {
  * 连续失败计数，达到阈值才停表；链上的执行函数自身不抛异常，发送层报错
  * 按失败计。导出仅为可测试性（挂起/合并的时序靠直接驱动才能确定性复现）。
  */
-export function pumpChatAction(chatId: number, entry: ChatActionHeartbeatEntry, deduplicate: boolean, dependencies: ChatActionHeartbeatDependencies): void {
+export function pumpChatAction({
+  chatId,
+  entry,
+  deduplicate,
+  dependencies,
+}: {
+  chatId: number;
+  entry: ChatActionHeartbeatEntry;
+  deduplicate: boolean;
+  dependencies: ChatActionHeartbeatDependencies;
+}): void {
   if (entry.pendingSend) {
     entry.pendingSendDeduplicate &&= deduplicate;
     return;
@@ -102,7 +112,7 @@ export function startChatActionHeartbeat(
     const timer: ReturnType<typeof setInterval> = setInterval(() => {
       const live: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
       if (live?.timer !== timer || live.action === "idle") return;
-      pumpChatAction(chatId, live, false, dependencies);
+      pumpChatAction({ chatId, entry: live, deduplicate: false, dependencies });
     }, dependencies.intervalMs);
     entry = {
       timer,
@@ -148,7 +158,7 @@ export function startChatActionHeartbeat(
       }
       acquired.owner = ownerToken;
       acquired.action = phase;
-      pumpChatAction(chatId, acquired, true, dependencies);
+      pumpChatAction({ chatId, entry: acquired, deduplicate: true, dependencies });
     },
     settle: async (): Promise<void> => {
       // 即使本代已经因连续失败从 Map 移除，也必须等齐它留下的全部请求。

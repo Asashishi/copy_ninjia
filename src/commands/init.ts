@@ -29,5 +29,5 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   const replyText: string = arg === "enable"
     ? `哼，那本天才就大发慈悲开始搭理这个群了，杂鱼们好好珍惜♡`
     : `本天才不想再理这个群了，爱干嘛干嘛去吧♡`;
-  await sendMessage(chatId, replyText, messageId);
+  await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

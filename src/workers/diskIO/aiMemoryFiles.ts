@@ -58,12 +58,12 @@ export function flushAiMemorySnapshots(): void {
       console.error(`[diskIOWorker] failed to delete AI memory snapshot for chat ${chatId}:`, error);
     }
   }
-  flushDirtyEntries(
-    dirtyChats,
-    aiMemoryCache,
-    writeAiMemoryFile,
-    (chatId: number) => `[diskIOWorker] failed to write AI memory snapshot for chat ${chatId}:`
-  );
+  flushDirtyEntries({
+    dirty: dirtyChats,
+    cache: aiMemoryCache,
+    write: writeAiMemoryFile,
+    describeFailure: (chatId: number) => `[diskIOWorker] failed to write AI memory snapshot for chat ${chatId}:`,
+  });
   if (deletedAiMemoryChats.size > 0 || dirtyChats.size > 0) scheduleAiMemoryFlush();
 }
 

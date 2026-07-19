@@ -30,7 +30,19 @@ import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
  * @param updateId 产生本次调用的更新的 update_id（单调递增），用于新旧判断。
  * @param reactedAtUnix 目标点下反应的时刻（见 ReactionTask.reactedAtUnix），用于延迟统计。
  */
-export function enqueueReaction(chatId: number, messageId: number, reactions: CopyableReaction[], updateId: number, reactedAtUnix: number): void {
+export function enqueueReaction({
+  chatId,
+  messageId,
+  reactions,
+  updateId,
+  reactedAtUnix,
+}: {
+  chatId: number;
+  messageId: number;
+  reactions: CopyableReaction[];
+  updateId: number;
+  reactedAtUnix: number;
+}): void {
   const key: string = `${chatId}:${messageId}`;
   const existing: ReactionTask | undefined = pendingTasks.get(key);
   if (existing) {

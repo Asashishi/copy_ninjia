@@ -3,8 +3,22 @@ import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
 import { bot, logApiError } from "./client";
 
+export interface SendMessageParams {
+  chatId: number;
+  text: string;
+  replyToMessageId?: number;
+  api?: Api;
+  keyboard?: InlineKeyboard;
+}
+
 /** 发送纯文本消息；不设置 parse_mode，避免用户内容形成格式或链接注入。 */
-export async function sendMessage(chatId: number, text: string, replyToMessageId?: number, api: Api = bot.api, keyboard?: InlineKeyboard): Promise<number | undefined> {
+export async function sendMessage({
+  chatId,
+  text,
+  replyToMessageId,
+  api = bot.api,
+  keyboard,
+}: SendMessageParams): Promise<number | undefined> {
   try {
     const sent = await api.sendMessage(chatId, text, {
       ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
@@ -38,7 +52,19 @@ export async function sendChooseStickerAction(chatId: number, api: Api = bot.api
   }
 }
 
-export async function answerCallbackQuery(callbackQueryId: string, text?: string, showAlert: boolean = false, api: Api = bot.api): Promise<void> {
+export interface AnswerCallbackQueryParams {
+  callbackQueryId: string;
+  text?: string;
+  showAlert?: boolean;
+  api?: Api;
+}
+
+export async function answerCallbackQuery({
+  callbackQueryId,
+  text,
+  showAlert = false,
+  api = bot.api,
+}: AnswerCallbackQueryParams): Promise<void> {
   try {
     await api.answerCallbackQuery(callbackQueryId, { text, show_alert: showAlert });
   } catch (error: unknown) {
@@ -57,8 +83,15 @@ export async function sendSticker(chatId: number, fileId: string, api: Api = bot
   }
 }
 
+export interface SetMessageReactionParams {
+  chatId: number;
+  messageId: number;
+  emoji: string;
+  api?: Api;
+}
+
 /** 设置一个标准 emoji 反应，覆盖机器人在该消息上已有的反应。 */
-export async function setMessageReaction(chatId: number, messageId: number, emoji: string, api: Api = bot.api): Promise<void> {
+export async function setMessageReaction({ chatId, messageId, emoji, api = bot.api }: SetMessageReactionParams): Promise<void> {
   try {
     await api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }]);
   } catch (error: unknown) {
@@ -76,8 +109,15 @@ export async function deleteMessage(chatId: number, messageId: number, api: Api 
   }
 }
 
+export interface DeleteMessageAfterParams {
+  chatId: number;
+  messageId: number;
+  delayMs: number;
+  api?: Api;
+}
+
 /** 延迟删除用于公告清理，不让这类美化任务阻止进程退出。 */
-export function deleteMessageAfter(chatId: number, messageId: number, delayMs: number, api: Api = bot.api): void {
+export function deleteMessageAfter({ chatId, messageId, delayMs, api = bot.api }: DeleteMessageAfterParams): void {
   setTimeout(() => {
     void deleteMessage(chatId, messageId, api);
   }, delayMs).unref();

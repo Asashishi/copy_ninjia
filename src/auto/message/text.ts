@@ -9,17 +9,21 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   if (typeof message.text !== "string" || message.text.startsWith("/")) return false;
 
   const speaker = resolveSpeaker(message);
-  recordChatMessage(
+  recordChatMessage({
     chatId,
-    speaker.id,
-    speaker.firstName,
-    speaker.lastName,
-    speaker.username,
-    message.text
-  );
+    senderId: speaker.id,
+    firstName: speaker.firstName,
+    lastName: speaker.lastName,
+    username: speaker.username,
+    text: message.text,
+  });
 
   if (context.directMediaTrigger) {
-    generateAndSendReply(chatId, message.message_id, context.isReplyToBot ? context.repliedTo?.text : undefined);
+    generateAndSendReply({
+      chatId,
+      replyToMessageId: message.message_id,
+      repliedBotText: context.isReplyToBot ? context.repliedTo?.text : undefined,
+    });
     return true;
   }
 
@@ -31,7 +35,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   });
   if (!isRandomTrigger) return false;
   if (tryClaimUserReplyTrigger(chatId, speaker.id)) {
-    generateAndSendReply(chatId, message.message_id, undefined, true);
+    generateAndSendReply({ chatId, replyToMessageId: message.message_id, isRandomTrigger: true });
   }
   // 掷骰命中但个人冷却未取得时仍不随机复读，与原流水线语义一致。
   return true;

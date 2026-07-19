@@ -97,7 +97,12 @@ describe("AI Chat Worker lifecycle", () => {
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
     expect(recordChatMessage).toHaveBeenCalledTimes(1);
     expect(recordChatMedia).toHaveBeenCalledTimes(1);
-    expect(generateAndSendReply).toHaveBeenCalledWith(-1001, 10, undefined, false);
+    expect(generateAndSendReply).toHaveBeenCalledWith({
+      type: "trigger",
+      chatId: -1001,
+      replyToMessageId: 10,
+      isRandomTrigger: false,
+    });
     expect(hydrateMemories).toHaveBeenCalledTimes(1);
     expect(hydrateStickerCatalogs).toHaveBeenCalledTimes(1);
     expect(invalidateChatReplies).toHaveBeenCalledTimes(2);

@@ -123,7 +123,17 @@ function repairTruncated(content: string): string | null {
 }
 
 /** 把一段已序列化好的条目文本追加到某天的文件末尾（覆写结尾的「\n}」）。 */
-export function appendToDayFile(dir: string, state: DayFileState, chunk: string, mode?: number): void {
+export function appendToDayFile({
+  dir,
+  state,
+  chunk,
+  mode,
+}: {
+  dir: string;
+  state: DayFileState;
+  chunk: string;
+  mode?: number;
+}): void {
   const path: string = join(dir, `${state.day}.json`);
   if (state.empty) {
     const content: string = `{\n${chunk}\n}`;

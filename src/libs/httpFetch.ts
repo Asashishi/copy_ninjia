@@ -15,12 +15,17 @@ function boundedErrorPreview(text: string): string {
  * @param errorLabel 出现在错误日志里的接口名（如「Open-Meteo API」），
  *   用于区分是哪次调用出的错。
  */
-export async function fetchJsonWithTimeout(
-  input: string | URL,
-  init: RequestInit,
-  timeoutMs: number,
-  errorLabel: string
-): Promise<unknown> {
+export async function fetchJsonWithTimeout({
+  input,
+  init,
+  timeoutMs,
+  errorLabel,
+}: {
+  input: string | URL;
+  init: RequestInit;
+  timeoutMs: number;
+  errorLabel: string;
+}): Promise<unknown> {
   const controller: AbortController = new AbortController();
   const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), timeoutMs);
   try {

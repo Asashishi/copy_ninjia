@@ -107,7 +107,11 @@ function writeDay(day: string, texts: string[]): void {
       loggerFileState.current = openDayFile(LOGS_DIR, day);
       cleanupOldLogs();
     }
-    appendToDayFile(LOGS_DIR, loggerFileState.current, texts.join(",\n"));
+    appendToDayFile({
+      dir: LOGS_DIR,
+      state: loggerFileState.current,
+      chunk: texts.join(",\n"),
+    });
   } catch (err) {
     // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
     // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。

@@ -13,27 +13,38 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
   const fallbackText: string = describeStickerForContext(message.sticker);
   const visionSource = pickStickerVisionSource(message.sticker);
   if (!visionSource) {
-    recordChatMessage(chatId, speaker.id, speaker.firstName, speaker.lastName, speaker.username, fallbackText);
+    recordChatMessage({
+      chatId,
+      senderId: speaker.id,
+      firstName: speaker.firstName,
+      lastName: speaker.lastName,
+      username: speaker.username,
+      text: fallbackText,
+    });
     if (!directMediaTrigger) return false;
-    generateAndSendReply(chatId, message.message_id, directMediaTrigger.repliedBotText);
+    generateAndSendReply({
+      chatId,
+      replyToMessageId: message.message_id,
+      repliedBotText: directMediaTrigger.repliedBotText,
+    });
     return true;
   }
 
   const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
-  recordChatMedia(
-    "sticker",
+  recordChatMedia({
+    kind: "sticker",
     chatId,
-    speaker.id,
-    speaker.firstName,
-    speaker.lastName,
-    speaker.username,
-    "",
-    visionSource.fileId,
-    visionSource.fileUniqueId,
-    message.message_id,
-    claimedRandomTrigger,
-    fallbackText,
-    directMediaTrigger
-  );
+    senderId: speaker.id,
+    firstName: speaker.firstName,
+    lastName: speaker.lastName,
+    username: speaker.username,
+    caption: "",
+    fileId: visionSource.fileId,
+    fileUniqueId: visionSource.fileUniqueId,
+    messageId: message.message_id,
+    commentOnResolve: claimedRandomTrigger,
+    stickerFallbackText: fallbackText,
+    directTrigger: directMediaTrigger,
+  });
   return directMediaTrigger !== undefined || commentOnResolveCandidate;
 }

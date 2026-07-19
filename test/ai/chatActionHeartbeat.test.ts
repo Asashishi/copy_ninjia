@@ -172,9 +172,9 @@ describe("chatActionHeartbeat", () => {
     // 第一发挂在网络上时连续来三个 tick（生产里由 setInterval 驱动，这里
     // 直接调 pumpChatAction 确定性复现）：第一个排队，后两个合并进排队那发。
     const entry = deps.entries.get(654)!;
-    pumpChatAction(654, entry, false, deps);
-    pumpChatAction(654, entry, false, deps);
-    pumpChatAction(654, entry, false, deps);
+    pumpChatAction({ chatId: 654, entry, deduplicate: false, dependencies: deps });
+    pumpChatAction({ chatId: 654, entry, deduplicate: false, dependencies: deps });
+    pumpChatAction({ chatId: 654, entry, deduplicate: false, dependencies: deps });
 
     typing.resolve(true);
     await heartbeat.settle();
@@ -194,7 +194,12 @@ describe("chatActionHeartbeat", () => {
     // 可节流的切挡补发先排队，随后一个 tick 合并进来：第一发落定时刚记过
     // 节流账，排队那发若仍按可节流执行会被跳过，tick 的刷新语义要求必发。
     heartbeat.set("typing");
-    pumpChatAction(987, deps.entries.get(987)!, false, deps);
+    pumpChatAction({
+      chatId: 987,
+      entry: deps.entries.get(987)!,
+      deduplicate: false,
+      dependencies: deps,
+    });
 
     typing.resolve(true);
     await heartbeat.settle();

@@ -68,7 +68,11 @@ describe("/kick 跨群封禁", () => {
 
     target = { id: 7, first_name: "Alice" };
     await handleKickCommand(context());
-    expect(sendMessage).toHaveBeenLastCalledWith(-1001, expect.stringContaining("连一个群的管理员都不是"), 10);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("连一个群的管理员都不是"),
+      replyToMessageId: 10,
+    });
     expect(banChatMember).not.toHaveBeenCalled();
   });
 
@@ -82,12 +86,16 @@ describe("/kick 跨群封禁", () => {
 
     expect(isChatMember.mock.calls.map((call) => call[0])).toEqual([-2002, -3003]);
     expect(banChatMember.mock.calls.map((call) => call[0])).toEqual([-2002, -3003]);
-    expect(sendMessage).toHaveBeenLastCalledWith(
-      -1001,
-      expect.stringMatching(/这个群不是管理员.*从 1 个群一脚踢出去.*还有 1 个群没踢动/),
-      10
-    );
-    expect(deleteMessageAfter).toHaveBeenCalledWith(-1001, 55, expect.any(Number));
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringMatching(/这个群不是管理员.*从 1 个群一脚踢出去.*还有 1 个群没踢动/),
+      replyToMessageId: 10,
+    });
+    expect(deleteMessageAfter).toHaveBeenCalledWith({
+      chatId: -1001,
+      messageId: 55,
+      delayMs: expect.any(Number),
+    });
   });
 
   test("频道马甲只调用 banChatSenderChat，不查询成员状态", async () => {
@@ -99,7 +107,11 @@ describe("/kick 跨群封禁", () => {
     expect(banChatSenderChat).toHaveBeenCalledWith(-1001, -4004);
     expect(isChatMember).not.toHaveBeenCalled();
     expect(banChatMember).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenLastCalledWith(-1001, expect.stringContaining("提前拉黑"), 10);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("提前拉黑"),
+      replyToMessageId: 10,
+    });
   });
 
   test("所有群都封禁失败时给出权限诊断且不安排删除", async () => {
@@ -108,7 +120,11 @@ describe("/kick 跨群封禁", () => {
 
     await handleKickCommand(context());
 
-    expect(sendMessage).toHaveBeenLastCalledWith(-1001, expect.stringContaining("一个群都踢不动"), 10);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("一个群都踢不动"),
+      replyToMessageId: 10,
+    });
     expect(deleteMessageAfter).not.toHaveBeenCalled();
   });
 });

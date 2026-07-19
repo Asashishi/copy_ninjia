@@ -250,12 +250,17 @@ function scheduleVerificationFlush(reply: ReplySink, dir: string): void {
 }
 
 /** 新建立即追加；普通字段变化按 key 在 250ms 窗口内合并。 */
-export function handleVerificationUpsert(
-  msg: VerificationUpsertDiskMessage,
-  reply: ReplySink,
-  dir: string = VERIFICATION_MEMORY_DIR,
-  day: string = getTokyoDateKey()
-): void {
+export function handleVerificationUpsert({
+  msg,
+  reply,
+  dir = VERIFICATION_MEMORY_DIR,
+  day = getTokyoDateKey(),
+}: {
+  msg: VerificationUpsertDiskMessage;
+  reply: ReplySink;
+  dir?: string;
+  day?: string;
+}): void {
   const key: string = verificationFileKey(msg.record.chatId, msg.record.userId);
   const pending: VerificationFileChange | undefined = verificationPendingChanges.get(key);
   if (sameOrNewer(pending, msg.record.generation, msg.record.revision)) return;
@@ -277,12 +282,17 @@ export function handleVerificationUpsert(
 }
 
 /** 终结清掉同 key 缓冲 upsert、立即收敛 active 快照并回执。 */
-export function handleVerificationDelete(
-  msg: VerificationDeleteDiskMessage,
-  reply: ReplySink,
-  dir: string = VERIFICATION_MEMORY_DIR,
-  day: string = getTokyoDateKey()
-): void {
+export function handleVerificationDelete({
+  msg,
+  reply,
+  dir = VERIFICATION_MEMORY_DIR,
+  day = getTokyoDateKey(),
+}: {
+  msg: VerificationDeleteDiskMessage;
+  reply: ReplySink;
+  dir?: string;
+  day?: string;
+}): void {
   const key: string = verificationFileKey(msg.chatId, msg.userId);
   const pending: VerificationFileChange | undefined = verificationPendingChanges.get(key);
   if (sameOrNewer(pending, msg.generation, msg.revision)) return;
@@ -328,7 +338,12 @@ export function flushVerificationChanges(
       return;
     }
 
-    appendToDayFile(dir, verificationFileState.current, chunk, PERSISTED_FILE_MODE);
+    appendToDayFile({
+      dir,
+      state: verificationFileState.current,
+      chunk,
+      mode: PERSISTED_FILE_MODE,
+    });
     verificationFileState.appendedEntries += changes.length;
     verificationFileState.appendedBytes += appendedBytes;
     acknowledge(changes, reply);

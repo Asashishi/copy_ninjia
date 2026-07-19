@@ -19,12 +19,12 @@ export function recordSelfInlineResult(message: Message, bot: BotIdentity): void
   if (message.chat.type === "private" || typeof message.text !== "string") return;
   const chatId: number = message.chat.id;
   if (getActiveCopyIn(chatId) || getChatState(chatId).isAIChatEnabled !== true) return;
-  recordChatMessage(
+  recordChatMessage({
     chatId,
-    bot.id,
-    bot.firstName,
-    "",
-    bot.username,
-    stripLuckReceipt(message.text)
-  );
+    senderId: bot.id,
+    firstName: bot.firstName,
+    lastName: "",
+    username: bot.username,
+    text: stripLuckReceipt(message.text),
+  });
 }

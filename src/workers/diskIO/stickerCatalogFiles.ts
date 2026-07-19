@@ -36,12 +36,12 @@ export function flushStickerCatalogs(): void {
     clearTimeout(stickerFlushState.timer);
     stickerFlushState.timer = null;
   }
-  flushDirtyEntries(
-    dirtyStickerPacks,
-    stickerCatalogCache,
-    writeStickerCatalogFile,
-    (pack: string) => `[diskIOWorker] failed to write sticker catalog for pack "${pack}":`
-  );
+  flushDirtyEntries({
+    dirty: dirtyStickerPacks,
+    cache: stickerCatalogCache,
+    write: writeStickerCatalogFile,
+    describeFailure: (pack: string) => `[diskIOWorker] failed to write sticker catalog for pack "${pack}":`,
+  });
   if (dirtyStickerPacks.size > 0) scheduleStickerCatalogFlush();
 }
 

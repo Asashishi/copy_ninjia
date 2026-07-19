@@ -19,7 +19,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
   const quietUntil: number = getChatState(chatId).quietUntil ?? 0;
   if (quietUntil > Date.now()) {
     const remainingMinutes: number = Math.ceil((quietUntil - Date.now()) / 60_000);
-    await sendMessage(chatId, `本天才已经在闭嘴了呀（还剩约 ${remainingMinutes} 分钟），一个静默没结束不许再叠，想重来就先 /unquiet，笨蛋♡`, messageId);
+    await sendMessage({ chatId, text: `本天才已经在闭嘴了呀（还剩约 ${remainingMinutes} 分钟），一个静默没结束不许再叠，想重来就先 /unquiet，笨蛋♡`, replyToMessageId: messageId });
     return;
   }
 
@@ -28,7 +28,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
   if (arg) {
     const parsed: number = Number(arg);
     if (!Number.isFinite(parsed)) {
-      await sendMessage(chatId, `笨蛋，/quiet 后面要接分钟数（${QUIET_MIN_MINUTES}~${QUIET_MAX_MINUTES}），不填就是 ${QUIET_DEFAULT_MINUTES} 分钟♡`, messageId);
+      await sendMessage({ chatId, text: `笨蛋，/quiet 后面要接分钟数（${QUIET_MIN_MINUTES}~${QUIET_MAX_MINUTES}），不填就是 ${QUIET_DEFAULT_MINUTES} 分钟♡`, replyToMessageId: messageId });
       return;
     }
     minutes = Math.min(QUIET_MAX_MINUTES, Math.max(QUIET_MIN_MINUTES, Math.round(parsed)));
@@ -38,7 +38,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
   state.quietUntil = Date.now() + minutes * 60_000;
   saveStateInBackground("quiet set");
 
-  await sendMessage(chatId, `哼，本天才就赏你们 ${minutes} 分钟清净，不主动插话也不复读。想本天才了就回复或 @ 我，杂鱼♡`, messageId);
+  await sendMessage({ chatId, text: `哼，本天才就赏你们 ${minutes} 分钟清净，不主动插话也不复读。想本天才了就回复或 @ 我，杂鱼♡`, replyToMessageId: messageId });
 }
 
 /**
@@ -51,7 +51,7 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
 
   const state: ChatState = getChatState(chatId);
   if ((state.quietUntil ?? 0) <= Date.now()) {
-    await sendMessage(chatId, `本天才本来就没在闭嘴呀，笨蛋要 /unquiet 什么呢♡`, messageId);
+    await sendMessage({ chatId, text: `本天才本来就没在闭嘴呀，笨蛋要 /unquiet 什么呢♡`, replyToMessageId: messageId });
     return;
   }
 
@@ -60,5 +60,5 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
   clearChatStateField(chatId, "quietUntil");
   saveStateInBackground("quiet cleared");
 
-  await sendMessage(chatId, `哼，这么快就受不了没有本天才的日子啦？静默解除，杂鱼们做好被吵的准备吧♡`, messageId);
+  await sendMessage({ chatId, text: `哼，这么快就受不了没有本天才的日子啦？静默解除，杂鱼们做好被吵的准备吧♡`, replyToMessageId: messageId });
 }

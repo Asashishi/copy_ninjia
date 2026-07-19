@@ -76,18 +76,18 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       case ADD_REACTION_TOOL:
         return executeAddReaction(argumentsJson);
       case VIEW_STICKER_PACK_TOOL:
-        return viewStickerPackTool(ctx.chatAction, menu, argumentsJson, stickerState);
+        return viewStickerPackTool({ chatAction: ctx.chatAction, menu, argumentsJson, state: stickerState });
       case SEND_STICKER_TOOL:
-        return sendStickerTool(
-          ctx.chatAction,
-          ctx.stickerLock,
-          ctx.chatId,
+        return sendStickerTool({
+          chatAction: ctx.chatAction,
+          stickerLock: ctx.stickerLock,
+          chatId: ctx.chatId,
           menu,
           argumentsJson,
-          stickerState,
-          ctx.onStickerSent,
-          ctx.isActive
-        );
+          state: stickerState,
+          onSent: ctx.onStickerSent,
+          isActive: ctx.isActive,
+        });
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` });
     }

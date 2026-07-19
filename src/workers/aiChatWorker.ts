@@ -61,13 +61,13 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       ensureStickerCatalogs(getStickerConfig().packs);
       break;
     case "record":
-      recordChatMessage(msg.chatId, msg.senderId, msg.firstName, msg.lastName, msg.username, msg.text);
+      recordChatMessage(msg);
       break;
     case "recordMedia":
       recordChatMedia(msg);
       break;
     case "trigger":
-      generateAndSendReply(msg.chatId, msg.replyToMessageId, msg.repliedBotText, msg.isRandomTrigger);
+      generateAndSendReply(msg);
       break;
     case "hydrate":
       hydrateMemories(msg.memories);

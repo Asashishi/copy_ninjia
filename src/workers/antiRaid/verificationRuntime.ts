@@ -97,7 +97,17 @@ export function dispatchVerification(chatId: number, userId: number, event: Veri
   }
 }
 
-function verificationSnapshot(chatId: number, userId: number, state: VerificationState & { kind: "pending" }, revision: number): VerificationSnapshot {
+function verificationSnapshot({
+  chatId,
+  userId,
+  state,
+  revision,
+}: {
+  chatId: number;
+  userId: number;
+  state: VerificationState & { kind: "pending" };
+  revision: number;
+}): VerificationSnapshot {
   return {
     chatId,
     userId,
@@ -126,7 +136,10 @@ function publishVerificationChange(chatId: number, userId: number, previousWasPe
   const revision: number = (verificationRevisions.get(key)?.revision ?? 0) + 1;
   if (state?.kind === "pending") {
     verificationRevisions.set(key, { revision });
-    self.postMessage({ type: "verificationUpsert", record: verificationSnapshot(chatId, userId, state, revision) } satisfies VerificationUpsertEvent);
+    self.postMessage({
+      type: "verificationUpsert",
+      record: verificationSnapshot({ chatId, userId, state, revision }),
+    } satisfies VerificationUpsertEvent);
   } else if (previousWasPending) {
     verificationRevisions.set(key, { revision, retiredAt: Date.now() });
     self.postMessage({
@@ -194,19 +207,25 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
         if (effect.replyReminderMessageId !== undefined) await deleteMessage(chatId, effect.replyReminderMessageId, joinVerificationApi);
         break;
       case "expel":
-        await expelMember(chatId, userId, effect.snapshot, "timeout");
+        await expelMember({ chatId, userId, snapshot: effect.snapshot, reason: "timeout" });
         break;
       case "expelFlood":
-        await expelMember(chatId, userId, effect.snapshot, "flood");
+        await expelMember({ chatId, userId, snapshot: effect.snapshot, reason: "flood" });
         break;
       case "recheckInviter":
-        await recheckInviterThenSettle(chatId, userId, effect.inviterId, effect.snapshot);
+        await recheckInviterThenSettle({ chatId, userId, inviterId: effect.inviterId, snapshot: effect.snapshot });
         break;
       case "sendReminder":
-        sendVerificationReminder(chatId, userId, effect.label, effect.isBot);
+        sendVerificationReminder({ chatId, userId, label: effect.label, isBot: effect.isBot });
         break;
       case "sendReplyReminder":
-        sendReplyReminder(chatId, userId, effect.label, effect.targetMessageId, effect.inCommentThread);
+        sendReplyReminder({
+          chatId,
+          userId,
+          label: effect.label,
+          targetMessageId: effect.targetMessageId,
+          inCommentThread: effect.inCommentThread,
+        });
         break;
       case "sendWelcome": {
         const welcomeText: string =
@@ -215,9 +234,19 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
             : effect.variant === "vouchedBot"
               ? `哼，既然 ${effect.fromLabel} 大人愿意为机器人 ${effect.targetLabel} 作保，本天才就勉为其难放这个铁疙瘩进来啦~♡`
               : `哼，算你机灵，${effect.fromLabel} 通过验证啦，欢迎杂鱼入群~♡`;
-        const welcomeMessageId: number | undefined = await sendMessage(chatId, welcomeText, effect.anchorMessageId, joinVerificationApi);
+        const welcomeMessageId: number | undefined = await sendMessage({
+          chatId,
+          text: welcomeText,
+          replyToMessageId: effect.anchorMessageId,
+          api: joinVerificationApi,
+        });
         if (welcomeMessageId !== undefined) {
-          deleteMessageAfter(chatId, welcomeMessageId, WELCOME_AUTO_DELETE_MS, joinVerificationApi);
+          deleteMessageAfter({
+            chatId,
+            messageId: welcomeMessageId,
+            delayMs: WELCOME_AUTO_DELETE_MS,
+            api: joinVerificationApi,
+          });
         }
         break;
       }
@@ -230,7 +259,12 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
               : effect.reply === "notYourBotButton"
                 ? "帮机器人作保是白名单大人的特权，杂鱼别乱点～"
                 : "这不是你的验证按钮哦，杂鱼别乱点～";
-        await answerCallbackQuery(effect.callbackQueryId, replyText, effect.reply !== "ok", joinVerificationApi);
+        await answerCallbackQuery({
+          callbackQueryId: effect.callbackQueryId,
+          text: replyText,
+          showAlert: effect.reply !== "ok",
+          api: joinVerificationApi,
+        });
         break;
       }
       case "startAdminCheck":
@@ -272,18 +306,24 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
  * 之后）：这里捕获的 captured 快照才等于转移刚落下的那个状态，落地时的
  * 同一性比对才有意义，也不会被交错到达的其他投递抢先替换/删除状态。
  */
-function sendReminderMessage(
-  chatId: number,
-  userId: number,
-  reminderKind: "original" | "reply",
-  text: string,
-  replyToMessageId: number | undefined
-): void {
+function sendReminderMessage({
+  chatId,
+  userId,
+  reminderKind,
+  text,
+  replyToMessageId,
+}: {
+  chatId: number;
+  userId: number;
+  reminderKind: "original" | "reply";
+  text: string;
+  replyToMessageId: number | undefined;
+}): void {
   const key: string = verificationKey(chatId, userId);
   const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
   if (captured?.kind !== "pending") return;
   const verifyKeyboard: InlineKeyboard = new InlineKeyboard().text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${userId}`);
-  void sendMessage(chatId, text, replyToMessageId, joinVerificationApi, verifyKeyboard)
+  void sendMessage({ chatId, text, replyToMessageId, api: joinVerificationApi, keyboard: verifyKeyboard })
     .then((reminderMessageId: number | undefined) => {
       if (reminderMessageId === undefined) return;
       if (verificationEntries.get(key)?.state === captured) {
@@ -302,7 +342,17 @@ function sendReminderMessage(
  * （Bot API 不向机器人投递其他机器人的消息），提醒是说给群里的白名单
  * 用户听的：得有人代它点按钮作保。
  */
-function sendVerificationReminder(chatId: number, userId: number, label: string, isBot: boolean): void {
+function sendVerificationReminder({
+  chatId,
+  userId,
+  label,
+  isBot,
+}: {
+  chatId: number;
+  userId: number;
+  label: string;
+  isBot: boolean;
+}): void {
   const reminderText: string = isBot
     ? `哦？谁把 ${label} 这个机器人拎进来的？铁疙瘩自己可点不了按钮——` +
       `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内得有白名单大人帮它点下面的按钮作保，` +
@@ -310,21 +360,39 @@ function sendVerificationReminder(chatId: number, userId: number, label: string,
     : `喂，${label}，新来的杂鱼给本天才听好了，` +
       `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
       `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
-  sendReminderMessage(chatId, userId, "original", reminderText, undefined);
+  sendReminderMessage({ chatId, userId, reminderKind: "original", text: reminderText, replyToMessageId: undefined });
 }
 
 /**
  * 把带验证按钮的提醒以「回复 TA 那条消息」的形式补发一份（楼中楼场景按钮
  * 在频道侧可见可点，普通发言场景回复会给 TA 推通知）。
  */
-function sendReplyReminder(chatId: number, userId: number, label: string, targetMessageId: number, inCommentThread: boolean): void {
+function sendReplyReminder({
+  chatId,
+  userId,
+  label,
+  targetMessageId,
+  inCommentThread,
+}: {
+  chatId: number;
+  userId: number;
+  label: string;
+  targetMessageId: number;
+  inCommentThread: boolean;
+}): void {
   const reminderText: string = inCommentThread
     ? `喂，${label}，本天才瞧见你在评论区冒泡了。新来的杂鱼规矩要懂：` +
       `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
       `不然留言全删、人也一脚踢出去哦♡`
     : `喂，${label}，话都说上了，下面的验证按钮倒是点一下啊杂鱼。` +
       `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
-  sendReminderMessage(chatId, userId, "reply", reminderText, targetMessageId);
+  sendReminderMessage({
+    chatId,
+    userId,
+    reminderKind: "reply",
+    text: reminderText,
+    replyToMessageId: targetMessageId,
+  });
 }
 
 /**
@@ -355,7 +423,17 @@ function startAdminCheck(chatId: number, userId: number, actorId: number): void 
  * （与在途请求自动合并）。此刻验证状态已被删除，迟到的撤销回调/按钮点击都会
  * 因查不到记录而安全放弃；核对结果以 timeoutInviterVerdict 回投收尾。
  */
-async function recheckInviterThenSettle(chatId: number, userId: number, inviterId: number, snapshot: ExpelSnapshot): Promise<void> {
+async function recheckInviterThenSettle({
+  chatId,
+  userId,
+  inviterId,
+  snapshot,
+}: {
+  chatId: number;
+  userId: number;
+  inviterId: number;
+  snapshot: ExpelSnapshot;
+}): Promise<void> {
   const cachedAdmins: Set<number> | undefined = freshAdminIds(chatId);
   let inviterIsAdmin: boolean = cachedAdmins?.has(inviterId) === true;
   if (cachedAdmins === undefined) {
@@ -375,7 +453,17 @@ async function recheckInviterThenSettle(chatId: number, userId: number, inviterI
  * 踢人失败（典型是机器人缺封禁权限）时通知照发但如实说没踢动，且不自动
  * 删除——人还在群里，宣布"已踢出"就是当众撒谎。
  */
-async function expelMember(chatId: number, userId: number, snapshot: ExpelSnapshot, reason: "timeout" | "flood"): Promise<void> {
+async function expelMember({
+  chatId,
+  userId,
+  snapshot,
+  reason,
+}: {
+  chatId: number;
+  userId: number;
+  snapshot: ExpelSnapshot;
+  reason: "timeout" | "flood";
+}): Promise<void> {
   // 刷屏处置先踢人，阻止对方在删除排队期间继续制造消息；普通验证超时保留
   // 既有的先清痕迹后踢人顺序。deleteMessage 自身吞掉单条 API 失败并返回
   // false，因此一次删除失败不会中断后续清理或通知。
@@ -396,11 +484,20 @@ async function expelMember(chatId: number, userId: number, snapshot: ExpelSnapsh
       : snapshot.isBot
         ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
         : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
-  const noticeMessageId: number | undefined = await sendMessage(chatId, noticeText, undefined, joinVerificationApi);
+  const noticeMessageId: number | undefined = await sendMessage({
+    chatId,
+    text: noticeText,
+    api: joinVerificationApi,
+  });
   // 没踢动的战报不自动删：它是要管理员去补权限的行动提示，30 秒就消失的话
   // 多半没人看见，权限缺口会一直留着。
   if (noticeMessageId !== undefined && kicked) {
-    deleteMessageAfter(chatId, noticeMessageId, KICK_NOTICE_AUTO_DELETE_MS, joinVerificationApi);
+    deleteMessageAfter({
+      chatId,
+      messageId: noticeMessageId,
+      delayMs: KICK_NOTICE_AUTO_DELETE_MS,
+      api: joinVerificationApi,
+    });
   }
 }
 
@@ -454,7 +551,13 @@ export function handleTrackedMessage(msg: TrackedChatMessage): void {
     msg.repliesToChannelPost === true ||
     (msg.isThreadReply === true && chatHasLinkedChannel(msg.chatId));
   if (inCommentThread && !verificationEntries.has(verificationKey(msg.chatId, msg.userId))) {
-    rememberRecentComment(msg.chatId, msg.userId, msg.messageId, msg.repliesToChannelPost === true, Date.now());
+    rememberRecentComment({
+      chatId: msg.chatId,
+      userId: msg.userId,
+      messageId: msg.messageId,
+      repliesToChannelPost: msg.repliesToChannelPost === true,
+      observedAt: Date.now(),
+    });
     return;
   }
   dispatchVerification(msg.chatId, msg.userId, {
@@ -469,7 +572,7 @@ export function handleTrackedMessage(msg: TrackedChatMessage): void {
 /** 处理入群验证按钮的点击：翻译成 callback 事件（谁点的、有没有代点资格）交给状态机。 */
 export function handleVerificationCallback(msg: VerifyCallbackMessage): void {
   if (msg.chatId === undefined) {
-    void answerCallbackQuery(msg.callbackQueryId, undefined, false, joinVerificationApi).catch((error: unknown) => {
+    void answerCallbackQuery({ callbackQueryId: msg.callbackQueryId, api: joinVerificationApi }).catch((error: unknown) => {
       logger.error("Error answering join verification callback:", error);
     });
     return;

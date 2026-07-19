@@ -36,12 +36,12 @@ export async function resolveCommandTarget(
   if (!targetUser) {
     const rawArgument: string = ctx.match.trim();
     if (rawArgument.length === 0) {
-      await sendMessage(chatId, messages.missingTarget, messageId);
+      await sendMessage({ chatId, text: messages.missingTarget, replyToMessageId: messageId });
       return undefined;
     }
     const usernameMatch = USERNAME_ARG_PATTERN.exec(rawArgument);
     if (!usernameMatch) {
-      await sendMessage(chatId, messages.invalidUsername(rawArgument), messageId);
+      await sendMessage({ chatId, text: messages.invalidUsername(rawArgument), replyToMessageId: messageId });
       return undefined;
     }
     rawUsername = usernameMatch[1]!;
@@ -49,13 +49,13 @@ export async function resolveCommandTarget(
   }
 
   if (!targetUser) {
-    await sendMessage(chatId, messages.unknownUsername(rawUsername!), messageId);
+    await sendMessage({ chatId, text: messages.unknownUsername(rawUsername!), replyToMessageId: messageId });
     return undefined;
   }
 
   // 不能把本天才自己设成目标：/copy 会自己套自己没完没了，/kick 更是无稽之谈。
   if (targetUser.id === ctx.me.id) {
-    await sendMessage(chatId, messages.selfTarget, messageId);
+    await sendMessage({ chatId, text: messages.selfTarget, replyToMessageId: messageId });
     return undefined;
   }
 

@@ -18,12 +18,17 @@ import type { BotIdentity } from "./triggerContext";
  * 洗澡触发和随机复读；仅由无活动复制目标的非私聊流水线调用。AI 开启时
  * 仍保留洗澡关键词响应，但禁用随机复读，避免两套随机插话机制同时运行。
  */
-export async function handleProactiveMessageActions(
-  message: Message,
-  bot: BotIdentity,
-  isQuiet: boolean,
-  aiChatEnabled: boolean
-): Promise<void> {
+export async function handleProactiveMessageActions({
+  message,
+  bot,
+  isQuiet,
+  aiChatEnabled,
+}: {
+  message: Message;
+  bot: BotIdentity;
+  isQuiet: boolean;
+  aiChatEnabled: boolean;
+}): Promise<void> {
   const chatId: number = message.chat.id;
   if (
     !isQuiet &&
@@ -32,13 +37,20 @@ export async function handleProactiveMessageActions(
     message.text.length <= BATH_TRIGGER_MAX_MESSAGE_LENGTH &&
     BATH_TRIGGER_PATTERN.test(message.text)
   ) {
-    const sentMessageId: number | undefined = await sendMessage(
+    const sentMessageId: number | undefined = await sendMessage({
       chatId,
-      BATH_TRIGGER_REPLY_TEXT,
-      message.message_id
-    );
+      text: BATH_TRIGGER_REPLY_TEXT,
+      replyToMessageId: message.message_id,
+    });
     if (aiChatEnabled && sentMessageId !== undefined) {
-      recordChatMessage(chatId, bot.id, bot.firstName, "", bot.username, BATH_TRIGGER_REPLY_TEXT);
+      recordChatMessage({
+        chatId,
+        senderId: bot.id,
+        firstName: bot.firstName,
+        lastName: "",
+        username: bot.username,
+        text: BATH_TRIGGER_REPLY_TEXT,
+      });
     }
     return;
   }
@@ -50,6 +62,6 @@ export async function handleProactiveMessageActions(
     Math.random() < RANDOM_ECHO_PROBABILITY
   ) {
     const mode: CopyMode | undefined = resolveEffectiveCopyMode(chatId, pickRandom(RANDOM_ECHO_MODES));
-    await echoMessage(chatId, message, mode);
+    await echoMessage({ chatId, message, mode });
   }
 }

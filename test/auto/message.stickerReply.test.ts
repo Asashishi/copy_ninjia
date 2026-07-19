@@ -98,12 +98,21 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMediaMock).toHaveBeenCalledWith(
-      "sticker", -100800, 123, "Alice", "Tester", "alice_dev", "",
-      "st-file", "st-uid", 11, false,
-      "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
-      { reason: "reply", repliedBotText: "机器人之前说的话" }
-    );
+    expect(recordChatMediaMock).toHaveBeenCalledWith({
+      kind: "sticker",
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      caption: "",
+      fileId: "st-file",
+      fileUniqueId: "st-uid",
+      messageId: 11,
+      commentOnResolve: false,
+      stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
+      directTrigger: { reason: "reply", repliedBotText: "机器人之前说的话" },
+    });
     // 触发在 Worker 侧等描述就绪后才发生，主线程不直接 trigger。
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
@@ -123,9 +132,20 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).not.toHaveBeenCalled();
-    expect(recordChatMessageMock).toHaveBeenCalledWith(-100800, 123, "Alice", "Tester", "alice_dev", "（发了一枚贴纸：情绪含义 😅）");
+    expect(recordChatMessageMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      text: "（发了一枚贴纸：情绪含义 😅）",
+    });
     expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
-    expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 12, "机器人之前说的话");
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      replyToMessageId: 12,
+      repliedBotText: "机器人之前说的话",
+    });
   });
 
   test("同一用户连续两次直接叫机器人都交给 Worker，不被 15 秒随机冷却吞掉", async () => {
@@ -166,12 +186,21 @@ describe("媒体直接叫机器人", () => {
       Math.random = originalRandom;
     }
 
-    expect(recordChatMediaMock).toHaveBeenCalledWith(
-      "sticker", -100800, 123, "Alice", "Tester", "alice_dev", "",
-      "st-random", "st-random-uid", 23, true,
-      "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
-      undefined
-    );
+    expect(recordChatMediaMock).toHaveBeenCalledWith({
+      kind: "sticker",
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      caption: "",
+      fileId: "st-random",
+      fileUniqueId: "st-random-uid",
+      messageId: 23,
+      commentOnResolve: true,
+      stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
+      directTrigger: undefined,
+    });
     expect(copyMessageMock).not.toHaveBeenCalled();
   });
 
@@ -189,12 +218,21 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMediaMock).toHaveBeenCalledWith(
-      "sticker", -100800, 123, "Alice", "Tester", "alice_dev", "",
-      "st-file", "st-uid", 13, false,
-      "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
-      undefined
-    );
+    expect(recordChatMediaMock).toHaveBeenCalledWith({
+      kind: "sticker",
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      caption: "",
+      fileId: "st-file",
+      fileUniqueId: "st-uid",
+      messageId: 13,
+      commentOnResolve: false,
+      stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
+      directTrigger: undefined,
+    });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -213,10 +251,20 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMediaMock).toHaveBeenCalledWith(
-      "photo", -100800, 123, "Alice", "Tester", "alice_dev", "看看这个 @test_bot",
-      "photo-file", "photo-uid", 14, false, undefined, { reason: "mention" }
-    );
+    expect(recordChatMediaMock).toHaveBeenCalledWith({
+      kind: "photo",
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      caption: "看看这个 @test_bot",
+      fileId: "photo-file",
+      fileUniqueId: "photo-uid",
+      messageId: 14,
+      commentOnResolve: false,
+      directTrigger: { reason: "mention" },
+    });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -241,11 +289,20 @@ describe("媒体直接叫机器人", () => {
       },
     } as any);
 
-    expect(recordChatMediaMock).toHaveBeenCalledWith(
-      "animation", -100800, 123, "Alice", "Tester", "alice_dev", "这个动图",
-      "gif-thumb", "gif-uid", 15, false, undefined,
-      { reason: "reply", repliedBotText: "机器人之前说的话" }
-    );
+    expect(recordChatMediaMock).toHaveBeenCalledWith({
+      kind: "animation",
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      caption: "这个动图",
+      fileId: "gif-thumb",
+      fileUniqueId: "gif-uid",
+      messageId: 15,
+      commentOnResolve: false,
+      directTrigger: { reason: "reply", repliedBotText: "机器人之前说的话" },
+    });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -270,10 +327,19 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).not.toHaveBeenCalled();
-    expect(recordChatMessageMock).toHaveBeenCalledWith(
-      -100800, 123, "Alice", "Tester", "alice_dev", "[GIF] 看这个"
-    );
-    expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 16, "机器人之前说的话");
+    expect(recordChatMessageMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      text: "[GIF] 看这个",
+    });
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      replyToMessageId: 16,
+      repliedBotText: "机器人之前说的话",
+    });
   });
 
   test("文字回复自己的消息不参与随机 AI 回复", async () => {
@@ -302,7 +368,14 @@ describe("媒体直接叫机器人", () => {
       Math.random = originalRandom;
     }
 
-    expect(recordChatMessageMock).toHaveBeenCalledWith(-100800, 123, "Alice", "Tester", "alice_dev", "再补充一句");
+    expect(recordChatMessageMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      text: "再补充一句",
+    });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -332,7 +405,11 @@ describe("媒体直接叫机器人", () => {
       Math.random = originalRandom;
     }
 
-    expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 32, undefined, true);
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      replyToMessageId: 32,
+      isRandomTrigger: true,
+    });
   });
 
   test("冷群首条使用 1/174 动态概率，不再沿用旧固定概率", async () => {
@@ -421,10 +498,20 @@ describe("媒体直接叫机器人", () => {
       Math.random = originalRandom;
     }
 
-    expect(recordChatMediaMock).toHaveBeenCalledWith(
-      "photo", -100800, 123, "Alice", "Tester", "alice_dev", "补一张图",
-      "self-photo", "self-photo-uid", 35, false, undefined, undefined
-    );
+    expect(recordChatMediaMock).toHaveBeenCalledWith({
+      kind: "photo",
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      caption: "补一张图",
+      fileId: "self-photo",
+      fileUniqueId: "self-photo-uid",
+      messageId: 35,
+      commentOnResolve: false,
+      directTrigger: undefined,
+    });
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -475,6 +562,10 @@ describe("媒体直接叫机器人", () => {
     }
 
     expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
-    expect(generateAndSendReplyMock).toHaveBeenCalledWith(-100800, 34, undefined);
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      replyToMessageId: 34,
+      repliedBotText: undefined,
+    });
   });
 });

@@ -40,13 +40,13 @@ export function createSendMessageExecutor(
       });
     }
 
-    const typo = decideMessageTypo(
+    const typo = decideMessageTypo({
       argumentsJson,
       text,
-      ctx.roundHasTypo,
-      state.typoUsedThisRound,
-      MAX_ACTIONS_PER_REPLY - getActionsUsed()
-    );
+      roundHasTypo: ctx.roundHasTypo,
+      typoAlreadyUsed: state.typoUsedThisRound,
+      remainingActions: MAX_ACTIONS_PER_REPLY - getActionsUsed(),
+    });
     if (typo.shouldUseTypo) state.typoUsedThisRound = true;
 
     ctx.chatAction.set("typing");
@@ -59,10 +59,14 @@ export function createSendMessageExecutor(
 
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
     const replyToMessageId: number | undefined = replyToTrigger ? ctx.replyToMessageId : undefined;
-    const sentMessageId: number | undefined = await sendMessage(ctx.chatId, typo.textToSend, replyToMessageId);
+    const sentMessageId: number | undefined = await sendMessage({
+      chatId: ctx.chatId,
+      text: typo.textToSend,
+      replyToMessageId,
+    });
     if (sentMessageId === undefined) return JSON.stringify({ error: "Failed to send message" });
 
-    recordSentMessage(ctx, state, typo.textToSend, sentMessageId);
+    recordSentMessage({ ctx, state, text: typo.textToSend, messageId: sentMessageId });
     state.sentCanonicalTexts.set(sentMessageId, text);
     let actionsUsedByTool: number = 1;
 
@@ -84,7 +88,13 @@ export function createSendMessageExecutor(
 
     if (typo.shouldUseTypo && typo.mode === "recall") {
       actionsUsedByTool += 2;
-      scheduleRecallTypoCorrection(ctx, state, sentMessageId, text, replyToMessageId);
+      scheduleRecallTypoCorrection({
+        ctx,
+        state,
+        sentMessageId,
+        correctedText: text,
+        replyToMessageId,
+      });
       return JSON.stringify({
         success: true,
         message_id: sentMessageId,

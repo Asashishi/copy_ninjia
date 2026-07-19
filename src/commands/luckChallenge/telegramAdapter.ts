@@ -56,9 +56,9 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
   const cacheKey: string = luckCacheKey(fromUser.id, text || undefined);
   const draw: LuckDraw = getOrDrawLuck(cacheKey);
   const results: InlineQueryResultArticle[] = text
-    ? [buildFortuneResult(draw, fromUser.id, userLabel, text)]
+    ? [buildFortuneResult({ draw, userId: fromUser.id, userLabel, text })]
     : [
-      buildFortuneResult(draw, fromUser.id, userLabel, undefined),
+      buildFortuneResult({ draw, userId: fromUser.id, userLabel, text: undefined }),
       buildProbabilityResult(draw, fromUser.id, userLabel),
     ];
 

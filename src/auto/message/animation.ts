@@ -12,34 +12,37 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
   const caption: string = typeof message.caption === "string" ? message.caption : "";
   const visionSource = pickAnimationVisionSource(message.animation);
   if (!visionSource) {
-    recordChatMessage(
+    recordChatMessage({
       chatId,
-      speaker.id,
-      speaker.firstName,
-      speaker.lastName,
-      speaker.username,
-      caption ? `[GIF] ${caption}` : "[GIF]"
-    );
+      senderId: speaker.id,
+      firstName: speaker.firstName,
+      lastName: speaker.lastName,
+      username: speaker.username,
+      text: caption ? `[GIF] ${caption}` : "[GIF]",
+    });
     if (!directMediaTrigger) return false;
-    generateAndSendReply(chatId, message.message_id, directMediaTrigger.repliedBotText);
+    generateAndSendReply({
+      chatId,
+      replyToMessageId: message.message_id,
+      repliedBotText: directMediaTrigger.repliedBotText,
+    });
     return true;
   }
 
   const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
-  recordChatMedia(
-    "animation",
+  recordChatMedia({
+    kind: "animation",
     chatId,
-    speaker.id,
-    speaker.firstName,
-    speaker.lastName,
-    speaker.username,
+    senderId: speaker.id,
+    firstName: speaker.firstName,
+    lastName: speaker.lastName,
+    username: speaker.username,
     caption,
-    visionSource.fileId,
-    visionSource.fileUniqueId,
-    message.message_id,
-    claimedRandomTrigger,
-    undefined,
-    directMediaTrigger
-  );
+    fileId: visionSource.fileId,
+    fileUniqueId: visionSource.fileUniqueId,
+    messageId: message.message_id,
+    commentOnResolve: claimedRandomTrigger,
+    directTrigger: directMediaTrigger,
+  });
   return directMediaTrigger !== undefined || commentOnResolveCandidate;
 }

@@ -28,12 +28,16 @@ export async function handleStealIconCommand(ctx: CommandContext<Context>): Prom
   // saveStateInBackground 调用），这里不需要再落一次。
 
   const targetLabel: string = formatUserLabel(targetUser);
-  await sendMessage(chatId, `收到收到，本天才这就去把 ${targetLabel} 的脸皮扒下来戴上，杂鱼稍安勿躁~♡`, messageId);
-
-  stealAvatarInBackground(
+  await sendMessage({
     chatId,
-    targetUser,
-    `嘿嘿，${targetLabel} 的脸已经被本天才偷来戴上啦，杂鱼♡`,
-    `啧，偷 ${targetLabel} 的头像失败了呢（可能是 TA 没设置公开头像，或者本天才换头像太频繁被限流了），下次再来吧杂鱼♡`
-  );
+    text: `收到收到，本天才这就去把 ${targetLabel} 的脸皮扒下来戴上，杂鱼稍安勿躁~♡`,
+    replyToMessageId: messageId,
+  });
+
+  stealAvatarInBackground({
+    chatId,
+    target: targetUser,
+    successText: `嘿嘿，${targetLabel} 的脸已经被本天才偷来戴上啦，杂鱼♡`,
+    failureText: `啧，偷 ${targetLabel} 的头像失败了呢（可能是 TA 没设置公开头像，或者本天才换头像太频繁被限流了），下次再来吧杂鱼♡`,
+  });
 }

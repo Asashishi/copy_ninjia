@@ -16,7 +16,7 @@ import {
 import { clearChatMoodCache } from "../../cache/aiChat/mood";
 import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
 import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
-import type { AiMemoryDeletedEvent, AiMemoryEvent } from "../../types/aiChat/protocol";
+import type { AiMemoryDeletedEvent, AiMemoryEvent, AiRecordMessage } from "../../types/aiChat/protocol";
 import { scheduleRotation } from "./compaction";
 
 declare const self: Worker;
@@ -71,12 +71,19 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage): voi
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param text 消息文本。
  */
-export function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, username: string | undefined, text: string): void {
+export function recordChatMessage({
+  chatId,
+  senderId,
+  firstName,
+  lastName,
+  username,
+  text,
+}: Omit<AiRecordMessage, "type">): void {
   const sanitized: string = sanitizeInline(text);
   if (!sanitized) return;
   const sanitizedUsername: string = sanitizeInline(username ?? "").replace(/^@+/, "");
   pushBufferedMessage(chatId, {
-    id,
+    id: senderId,
     firstName: sanitizeInline(firstName),
     lastName: sanitizeInline(lastName),
     ...(sanitizedUsername ? { username: sanitizedUsername } : {}),

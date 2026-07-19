@@ -129,6 +129,7 @@ export default defineConfig(
       "curly": ["error", "multi-line"],
       "default-case-last": "error",
       "eqeqeq": ["error", "always"],
+      "max-params": ["error", 3],
       "no-else-return": ["error", { allowElseIf: true }],
       "no-lonely-if": "error",
       "no-useless-return": "error",

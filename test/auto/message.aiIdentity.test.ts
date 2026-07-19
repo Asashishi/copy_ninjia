@@ -52,7 +52,14 @@ describe("AI 缓存发送者 username 传递", () => {
     } as any);
 
     expect(recordChatMessageMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMessageMock).toHaveBeenCalledWith(-100800, 123, "Alice", "Tester", "alice_dev", "hello @bob");
+    expect(recordChatMessageMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      text: "hello @bob",
+    });
   });
 
   test("频道帖子使用频道的 username 和 title", async () => {
@@ -67,7 +74,14 @@ describe("AI 缓存发送者 username 传递", () => {
     } as any);
 
     expect(recordChatMessageMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMessageMock).toHaveBeenCalledWith(-100900, -100900, "News Channel", "", "news_channel", "channel post");
+    expect(recordChatMessageMock).toHaveBeenCalledWith({
+      chatId: -100900,
+      senderId: -100900,
+      firstName: "News Channel",
+      lastName: "",
+      username: "news_channel",
+      text: "channel post",
+    });
   });
 
   test("媒体消息同样把发送者 username 交给 AI", async () => {
@@ -84,9 +98,19 @@ describe("AI 缓存发送者 username 传递", () => {
     } as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMediaMock).toHaveBeenCalledWith(
-      "photo", -100800, 123, "Alice", "Tester", "alice_dev", "photo caption",
-      "photo-file", "photo-unique", 10, false, undefined, undefined
-    );
+    expect(recordChatMediaMock).toHaveBeenCalledWith({
+      kind: "photo",
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      caption: "photo caption",
+      fileId: "photo-file",
+      fileUniqueId: "photo-unique",
+      messageId: 10,
+      commentOnResolve: false,
+      directTrigger: undefined,
+    });
   });
 });

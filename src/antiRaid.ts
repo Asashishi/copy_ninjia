@@ -342,7 +342,7 @@ export function handleVerificationCallback(ctx: Context): void {
   // callback_data 属于外部输入：前缀匹配不代表后半段一定是合法整数。NaN 若
   // 进入 Worker 会生成 "chatId:NaN" 状态键，按钮只会永远转圈且留下脏状态。
   if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
-    void answerCallbackQuery(query.id, "验证请求无效", true);
+    void answerCallbackQuery({ callbackQueryId: query.id, text: "验证请求无效", showAlert: true });
     return;
   }
 

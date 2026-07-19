@@ -29,7 +29,11 @@ export async function handleCopyCommand(
   // 日语翻译与其它功能开关一致：缺省关闭，只有超级管理员显式 enable 后
   // 才允许启动 /ja_copy。
   if (mode === "ja" && getChatState(chatId).isJATranslationEnabled !== true) {
-    await sendMessage(chatId, `本天才在这个群的日语翻译功能被关掉啦，杂鱼去找超级管理员 /ja_copy enable 一下吧♡`, messageId);
+    await sendMessage({
+      chatId,
+      text: `本天才在这个群的日语翻译功能被关掉啦，杂鱼去找超级管理员 /ja_copy enable 一下吧♡`,
+      replyToMessageId: messageId,
+    });
     return;
   }
 
@@ -49,7 +53,7 @@ export async function handleCopyCommand(
     const replyText: string = globalCopy.copiedUser.id === targetUser.id
       ? `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`
       : `本天才手上已经有猎物啦，想换人的话先 /stop_copy 呀，笨蛋♡`;
-    await sendMessage(chatId, replyText, messageId);
+    await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
@@ -65,15 +69,15 @@ export async function handleCopyCommand(
   // 发送过渡反馈
   const targetLabel: string = formatUserLabel(targetUser);
   const startText: string = `正在把 ${targetLabel} 的脸皮扒下来当本天才的头像哦${describeCopyModeEffect(mode)}，杂鱼乖乖等一下~♡`;
-  await sendMessage(chatId, startText, messageId);
+  await sendMessage({ chatId, text: startText, replyToMessageId: messageId });
 
   // 头像复制放在后台执行：copiedUser 已经写入，复读逻辑立即生效。
-  stealAvatarInBackground(
+  stealAvatarInBackground({
     chatId,
-    targetUser,
-    `嘿嘿，${targetLabel} 的脸已经被本天才偷走啦，杂鱼♡`,
-    `啧，修改头像失败了呢（可能是 TA 没设置公开头像，或者本天才换头像太频繁被限流了）。不过没关系，本天才依然要开始疯狂复读 ${targetLabel} 的消息啦，杂鱼♡`
-  );
+    target: targetUser,
+    successText: `嘿嘿，${targetLabel} 的脸已经被本天才偷走啦，杂鱼♡`,
+    failureText: `啧，修改头像失败了呢（可能是 TA 没设置公开头像，或者本天才换头像太频繁被限流了）。不过没关系，本天才依然要开始疯狂复读 ${targetLabel} 的消息啦，杂鱼♡`,
+  });
 }
 
 /**
@@ -86,7 +90,11 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
   const globalCopy: GlobalCopyState = getGlobalCopyState();
 
   if (!globalCopy.copiedUser) {
-    await sendMessage(chatId, `本天才现在什么杂鱼都没盯着呢，笨蛋要 /stop_copy 什么呀♡`, messageId);
+    await sendMessage({
+      chatId,
+      text: `本天才现在什么杂鱼都没盯着呢，笨蛋要 /stop_copy 什么呀♡`,
+      replyToMessageId: messageId,
+    });
     return;
   }
 
@@ -95,5 +103,5 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
   globalCopy.copyChatId = undefined;
   saveStateInBackground("copy stopped");
 
-  await sendMessage(chatId, `哼，不玩了，本天才先歇一下~杂鱼♡`, messageId);
+  await sendMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });
 }

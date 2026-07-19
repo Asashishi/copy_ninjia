@@ -55,12 +55,12 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
 
   const activeCopy = getActiveCopyIn(chatId);
   if (activeCopy && senderId === activeCopy.copiedUser.id) {
-    await echoMessage(
+    await echoMessage({
       chatId,
       message,
-      resolveEffectiveCopyMode(chatId, activeCopy.copyMode),
-      activeCopy.copiedUser.id
-    );
+      mode: resolveEffectiveCopyMode(chatId, activeCopy.copyMode),
+      expectedTargetId: activeCopy.copiedUser.id,
+    });
     return;
   }
 
@@ -73,12 +73,12 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   const aiChatEnabled: boolean = state.isAIChatEnabled === true;
 
   if (!activeCopy && aiChatEnabled) {
-    const triggerContext: MessageTriggerContext = createMessageTriggerContext(
+    const triggerContext: MessageTriggerContext = createMessageTriggerContext({
       message,
-      botIdentity,
+      bot: botIdentity,
       isQuiet,
-      aiReplyProbability
-    );
+      aiReplyProbability,
+    });
     let shouldStop: boolean = false;
     if (typeof message.text === "string" && !message.text.startsWith("/")) {
       shouldStop = handleTextMessage(triggerContext);
@@ -95,6 +95,6 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   // 复制目标活动期间禁止本群其它主动行为；无目标时才处理洗澡触发，
   // 并且只在 AI 关闭时允许随机复读。
   if (!activeCopy) {
-    await handleProactiveMessageActions(message, botIdentity, isQuiet, aiChatEnabled);
+    await handleProactiveMessageActions({ message, bot: botIdentity, isQuiet, aiChatEnabled });
   }
 }

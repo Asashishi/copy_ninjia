@@ -27,27 +27,41 @@ export function isDuplicateOfSentMessage(state: RoundMessageState, text: string)
   return false;
 }
 
-export function recordSentMessage(
-  ctx: ReplyToolContext,
-  state: RoundMessageState,
-  text: string,
-  messageId: number
-): void {
+interface RecordSentMessageParams {
+  ctx: ReplyToolContext;
+  state: RoundMessageState;
+  text: string;
+  messageId: number;
+}
+
+interface SendDirectMessageParams {
+  ctx: ReplyToolContext;
+  state: RoundMessageState;
+  text: string;
+  replyToMessageId?: number;
+  allowInactive?: boolean;
+}
+
+export function recordSentMessage({ ctx, state, text, messageId }: RecordSentMessageParams): void {
   state.messageCount++;
   state.deletableMessageIds.add(messageId);
   ctx.onMessageSent(text, messageId);
 }
 
-export async function sendDirectMessage(
-  ctx: ReplyToolContext,
-  state: RoundMessageState,
-  text: string,
-  replyToMessageId?: number,
-  allowInactive: boolean = false
-): Promise<number | undefined> {
+export async function sendDirectMessage({
+  ctx,
+  state,
+  text,
+  replyToMessageId,
+  allowInactive = false,
+}: SendDirectMessageParams): Promise<number | undefined> {
   if (!allowInactive && !ctx.isActive()) return undefined;
-  const sentMessageId: number | undefined = await sendMessage(ctx.chatId, text, replyToMessageId);
-  if (sentMessageId !== undefined) recordSentMessage(ctx, state, text, sentMessageId);
+  const sentMessageId: number | undefined = await sendMessage({
+    chatId: ctx.chatId,
+    text,
+    replyToMessageId,
+  });
+  if (sentMessageId !== undefined) recordSentMessage({ ctx, state, text, messageId: sentMessageId });
   return sentMessageId;
 }
 

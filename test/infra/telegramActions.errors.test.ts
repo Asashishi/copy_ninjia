@@ -58,12 +58,12 @@ describe("Telegram 动作适配层失败归一化", () => {
     const api: Api = apiWithSuccesses();
     const keyboard = { inline_keyboard: [[{ text: "确认", callback_data: "ok" }]] };
 
-    expect(await actions.sendMessage(-1001, "hello", undefined, api, keyboard as never)).toBe(11);
+    expect(await actions.sendMessage({ chatId: -1001, text: "hello", api, keyboard: keyboard as never })).toBe(11);
     expect(await actions.sendTypingAction(-1001, api)).toBe(true);
     expect(await actions.sendChooseStickerAction(-1001, api)).toBe(true);
-    await expect(actions.answerCallbackQuery("callback", "done", true, api)).resolves.toBeUndefined();
+    await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
     expect(await actions.sendSticker(-1001, "file", api)).toBe(12);
-    await expect(actions.setMessageReaction(-1001, 3, "👍", api)).resolves.toBeUndefined();
+    await expect(actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).resolves.toBeUndefined();
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
     expect(await actions.kickChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.banChatMember(-1001, 7, api)).toBe(true);
@@ -77,12 +77,12 @@ describe("Telegram 动作适配层失败归一化", () => {
   test("Telegram 抛错时不向业务层泄漏异常，按动作返回 false/undefined", async () => {
     const api: Api = apiWithFailures();
 
-    expect(await actions.sendMessage(-1001, "hello", undefined, api)).toBeUndefined();
+    expect(await actions.sendMessage({ chatId: -1001, text: "hello", api })).toBeUndefined();
     expect(await actions.sendTypingAction(-1001, api)).toBe(false);
     expect(await actions.sendChooseStickerAction(-1001, api)).toBe(false);
-    await expect(actions.answerCallbackQuery("callback", undefined, false, api)).resolves.toBeUndefined();
+    await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", api })).resolves.toBeUndefined();
     expect(await actions.sendSticker(-1001, "file", api)).toBeUndefined();
-    await expect(actions.setMessageReaction(-1001, 3, "👍", api)).resolves.toBeUndefined();
+    await expect(actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).resolves.toBeUndefined();
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(false);
     expect(await actions.kickChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.banChatMember(-1001, 7, api)).toBe(false);
@@ -106,7 +106,7 @@ describe("Telegram 动作适配层失败归一化", () => {
       return { unref } as unknown as ReturnType<typeof setTimeout>;
     }) as typeof setTimeout;
     try {
-      actions.deleteMessageAfter(-1001, 44, 500, api);
+      actions.deleteMessageAfter({ chatId: -1001, messageId: 44, delayMs: 500, api });
       expect(unref).toHaveBeenCalledTimes(1);
       scheduled!();
       await Promise.resolve();

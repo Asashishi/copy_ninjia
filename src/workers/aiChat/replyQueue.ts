@@ -29,12 +29,17 @@ export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaComm
  * 保存直接触发的必要快照。媒体解析可能异步完成，直接使用已解析的发送人和
  * 描述；文本触发则读取刚写入滚动缓存的尾部消息。
  */
-export function pushReplyTrigger(
-  chatId: number,
-  replyToMessageId: number,
-  repliedBotText: string | undefined,
-  mediaTrigger?: MediaCommentContext
-): void {
+export function pushReplyTrigger({
+  chatId,
+  replyToMessageId,
+  repliedBotText,
+  mediaTrigger,
+}: {
+  chatId: number;
+  replyToMessageId: number;
+  repliedBotText: string | undefined;
+  mediaTrigger?: MediaCommentContext;
+}): void {
   let queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
   if (!queue) {
     queue = new LinkedQueue<QueuedReplyTrigger>();

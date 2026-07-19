@@ -36,7 +36,12 @@ async function refreshTokyoWeather(): Promise<void> {
   url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,weather_code");
   url.searchParams.set("timezone", "Asia/Tokyo");
 
-  const data: unknown = await fetchJsonWithTimeout(url, {}, WEATHER_REQUEST_TIMEOUT_MS, "Open-Meteo API");
+  const data: unknown = await fetchJsonWithTimeout({
+    input: url,
+    init: {},
+    timeoutMs: WEATHER_REQUEST_TIMEOUT_MS,
+    errorLabel: "Open-Meteo API",
+  });
   if (data === null) return;
 
   const record: Record<string, unknown> = typeof data === "object" && data !== null && !Array.isArray(data) ? data as Record<string, unknown> : {};

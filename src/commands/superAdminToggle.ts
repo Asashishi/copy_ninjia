@@ -31,13 +31,17 @@ export async function resolveSuperAdminToggleArg(
   const fromUser = ctx.from;
 
   if (!isSuperAdmin(fromUser)) {
-    await sendMessage(chatId, messages.rejection(formatMockerLabel(fromUser)), messageId);
+    await sendMessage({
+      chatId,
+      text: messages.rejection(formatMockerLabel(fromUser)),
+      replyToMessageId: messageId,
+    });
     return undefined;
   }
 
   const arg: string = ctx.match.trim().toLowerCase();
   if (arg !== "enable" && arg !== "disable") {
-    await sendMessage(chatId, messages.usage, messageId);
+    await sendMessage({ chatId, text: messages.usage, replyToMessageId: messageId });
     return undefined;
   }
 

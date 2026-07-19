@@ -3,8 +3,15 @@ import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
 import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes, purgedAiMemoryChats } from "./cache/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "./consts/lifecycle";
-import type { AiBotInfo, AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "./types/aiChat/protocol";
-import type { MediaKind } from "./types/media";
+import type {
+  AiBotInfo,
+  AiChatWorkerEvent,
+  AiChatWorkerMessage,
+  AiInitMessage,
+  AiRecordMediaMessage,
+  AiRecordMessage,
+  AiTriggerMessage,
+} from "./types/aiChat/protocol";
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
@@ -175,9 +182,9 @@ export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): P
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param text 消息文本。
  */
-export function recordChatMessage(chatId: number, id: number, firstName: string, lastName: string, username: string | undefined, text: string): void {
-  purgedAiMemoryChats.delete(chatId);
-  post({ type: "record", chatId, senderId: id, firstName, lastName, username, text });
+export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void {
+  purgedAiMemoryChats.delete(message.chatId);
+  post({ type: "record", ...message });
 }
 
 /**
@@ -203,24 +210,14 @@ export function recordChatMessage(chatId: number, id: number, firstName: string,
  *   一次直接回复，语义见 AiRecordMediaMessage.directTrigger；与
  *   commentOnResolve 互斥。
  */
-export function recordChatMedia(
-  kind: MediaKind,
-  chatId: number,
-  id: number,
-  firstName: string,
-  lastName: string,
-  username: string | undefined,
-  caption: string,
-  fileId: string,
-  fileUniqueId: string,
-  messageId: number,
-  commentOnResolve: boolean,
-  stickerFallbackText?: string,
-  directTrigger?: { reason: "reply" | "mention"; repliedBotText?: string }
-): void {
-  purgedAiMemoryChats.delete(chatId);
-  post({ type: "recordMedia", kind, chatId, senderId: id, firstName, lastName, username, caption, fileId, fileUniqueId, messageId, commentOnResolve, stickerFallbackText, directTrigger });
+export function recordChatMedia(message: Omit<AiRecordMediaMessage, "type">): void {
+  purgedAiMemoryChats.delete(message.chatId);
+  post({ type: "recordMedia", ...message });
 }
+
+type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigger"> & {
+  isRandomTrigger?: boolean;
+};
 
 /**
  * 触发一次 AI 回复：把触发事件投递给 Worker，由它做同群并发占位（在途
@@ -235,12 +232,12 @@ export function recordChatMedia(
  *   都算，不允许沉默；「插不插话」的闸门在触发概率那一层，见
  *   workers/aiChat/replyPipeline.ts 的 generateAndSendReply）。
  */
-export function generateAndSendReply(
-  chatId: number,
-  replyToMessageId: number,
-  repliedBotText?: string,
-  isRandomTrigger: boolean = false
-): void {
+export function generateAndSendReply({
+  chatId,
+  replyToMessageId,
+  repliedBotText,
+  isRandomTrigger = false,
+}: GenerateAndSendReplyParams): void {
   post({ type: "trigger", chatId, replyToMessageId, repliedBotText, isRandomTrigger });
 }
 

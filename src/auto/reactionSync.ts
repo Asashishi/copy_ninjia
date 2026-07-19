@@ -41,5 +41,11 @@ export function handleReaction(ctx: Context): void {
     toApply = [];
   }
 
-  enqueueReaction(reaction.chat.id, reaction.message_id, toApply, ctx.update.update_id, reaction.date);
+  enqueueReaction({
+    chatId: reaction.chat.id,
+    messageId: reaction.message_id,
+    reactions: toApply,
+    updateId: ctx.update.update_id,
+    reactedAtUnix: reaction.date,
+  });
 }

@@ -53,7 +53,12 @@ export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[],
   }
 
   compactionPendingCounts.set(chatId, pendingCount + 1);
-  const next: Promise<void> = compactionRunner.run(chatId, () => rotateCompaction(chatId, mirrorBatch, promoteFirst, generation));
+  const next: Promise<void> = compactionRunner.run(chatId, () => rotateCompaction({
+    chatId,
+    mirrorBatch,
+    promoteFirst,
+    generation,
+  }));
   void next.then(
     () => finishCompactionTask(chatId),
     () => finishCompactionTask(chatId)
@@ -69,7 +74,17 @@ function finishCompactionTask(chatId: number): void {
 }
 
 /** 执行一轮轮换：先晋升上一轮镜像的摘要（若有），再 AI 压缩新镜像存为待晋升。 */
-async function rotateCompaction(chatId: number, mirrorBatch: BufferedMessage[], promoteFirst: boolean, generation: number): Promise<void> {
+async function rotateCompaction({
+  chatId,
+  mirrorBatch,
+  promoteFirst,
+  generation,
+}: {
+  chatId: number;
+  mirrorBatch: BufferedMessage[];
+  promoteFirst: boolean;
+  generation: number;
+}): Promise<void> {
   try {
     if (cachedReplyGeneration(chatId) !== generation) return;
     if (promoteFirst) {

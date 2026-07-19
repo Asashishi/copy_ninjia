@@ -56,7 +56,11 @@ export async function claimCopyCooldownOrReject(
   if (!isExempted && globalCopyState.lastCopyTime) {
     const elapsed: number = Date.now() - globalCopyState.lastCopyTime;
     if (elapsed < COPY_COOLDOWN_MS) {
-      await sendMessage(chatId, `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`, messageId);
+      await sendMessage({
+        chatId,
+        text: `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`,
+        replyToMessageId: messageId,
+      });
       return { rejected: true };
     }
   }
@@ -117,9 +121,19 @@ export async function resolveCopyCommandTarget(
  * @param successText 头像更换成功时发送的文本。
  * @param failureText 头像更换失败时发送的文本。
  */
-export function stealAvatarInBackground(chatId: number, target: CachedUser, successText: string, failureText: string): void {
+export function stealAvatarInBackground({
+  chatId,
+  target,
+  successText,
+  failureText,
+}: {
+  chatId: number;
+  target: CachedUser;
+  successText: string;
+  failureText: string;
+}): void {
   avatarUpdateRunner.run(async (): Promise<void> => {
     const photoUpdated: boolean = await copyUserProfilePhoto(target.id, !!target.isChannel, target.username);
-    await sendMessage(chatId, photoUpdated ? successText : failureText);
+    await sendMessage({ chatId, text: photoUpdated ? successText : failureText });
   });
 }

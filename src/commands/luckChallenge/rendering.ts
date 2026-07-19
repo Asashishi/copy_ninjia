@@ -32,12 +32,17 @@ function buildRetryKeyboard(text: string | undefined): InlineKeyboard {
   return keyboard;
 }
 
-export function buildFortuneResult(
-  draw: LuckDraw,
-  userId: number,
-  userLabel: string,
-  text: string | undefined
-): InlineQueryResultArticle {
+export function buildFortuneResult({
+  draw,
+  userId,
+  userLabel,
+  text,
+}: {
+  draw: LuckDraw;
+  userId: number;
+  userLabel: string;
+  text: string | undefined;
+}): InlineQueryResultArticle {
   const bodyText: string = text
     ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${draw.tier.label}\n${draw.tier.comment}`
     : `你好，${userLabel}\n汝的今日运势: ${draw.tier.label}\n${draw.tier.comment}`;

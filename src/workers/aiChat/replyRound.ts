@@ -86,11 +86,29 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           isActive,
           onMessageSent: (text: string, messageId: number): void => {
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-            if (isActive()) recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, text);
+            if (isActive()) {
+              recordChatMessage({
+                chatId,
+                senderId: selfInfo.id,
+                firstName: selfInfo.first_name,
+                lastName: "",
+                username: selfInfo.username,
+                text,
+              });
+            }
           },
           onStickerSent: (stickerDescription: string, messageId: number): void => {
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-            if (isActive()) recordChatMessage(chatId, selfInfo.id, selfInfo.first_name, "", selfInfo.username, stickerDescription);
+            if (isActive()) {
+              recordChatMessage({
+                chatId,
+                senderId: selfInfo.id,
+                firstName: selfInfo.first_name,
+                lastName: "",
+                username: selfInfo.username,
+                text: stickerDescription,
+              });
+            }
           },
         };
         const toolset: ReplyToolset = await createReplyToolset(ctx);

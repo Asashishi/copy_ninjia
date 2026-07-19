@@ -65,7 +65,11 @@ describe("/quiet 与 /unquiet", () => {
     states.set(-1001, { quietUntil: 1_000_000 + 90_000 });
     await handleQuietCommand(context("10"));
     expect(states.get(-1001)?.quietUntil).toBe(1_090_000);
-    expect(sendMessage).toHaveBeenLastCalledWith(-1001, expect.stringContaining("还剩约 2 分钟"), 8);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("还剩约 2 分钟"),
+      replyToMessageId: 8,
+    });
   });
 
   test("解除只处理仍生效的静默，并回收空状态", async () => {

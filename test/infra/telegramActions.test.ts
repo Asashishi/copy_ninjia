@@ -14,7 +14,12 @@ describe("Telegram 常规动作封装", () => {
     const sendMessageMock = mock(async (..._args: unknown[]) => ({ message_id: 77 }));
     const api = { sendMessage: sendMessageMock } as unknown as Api;
 
-    const messageId: number | undefined = await sendMessage(-1001, "hello", 42, api);
+    const messageId: number | undefined = await sendMessage({
+      chatId: -1001,
+      text: "hello",
+      replyToMessageId: 42,
+      api,
+    });
 
     expect(messageId).toBe(77);
     expect(sendMessageMock).toHaveBeenCalledWith(-1001, "hello", {

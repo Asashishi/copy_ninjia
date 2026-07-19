@@ -284,5 +284,10 @@ export function appendLuckEntries(day: string, fileState: { current: DayFileStat
     fileState.current = openDayFile(LUCK_MEMORY_DIR, day, PERSISTED_FILE_MODE);
   }
   const chunk: string = pending.map((entry) => serializeDayFileEntry(entry.key, entry.record)).join(",\n");
-  appendToDayFile(LUCK_MEMORY_DIR, fileState.current, chunk, PERSISTED_FILE_MODE);
+  appendToDayFile({
+    dir: LUCK_MEMORY_DIR,
+    state: fileState.current,
+    chunk,
+    mode: PERSISTED_FILE_MODE,
+  });
 }

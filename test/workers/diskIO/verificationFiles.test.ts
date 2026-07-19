@@ -14,7 +14,12 @@ import {
   verificationFileState,
   verificationPendingChanges,
 } from "../../../src/cache/diskIO/verification";
-import type { VerificationPersistedReply, VerificationSnapshot } from "../../../src/types";
+import type {
+  VerificationDeleteDiskMessage,
+  VerificationPersistedReply,
+  VerificationSnapshot,
+  VerificationUpsertDiskMessage,
+} from "../../../src/types";
 import { VERIFICATION_FILE_COMPACT_BYTES } from "../../../src/consts/diskIO";
 
 const DAY_ONE = "2026-07-19";
@@ -45,6 +50,14 @@ const receiveReply = (reply: VerificationPersistedReply): void => {
   replies.push(reply);
 };
 
+function upsert(msg: VerificationUpsertDiskMessage, day: string = DAY_ONE): void {
+  handleVerificationUpsert({ msg, reply: receiveReply, dir, day });
+}
+
+function deleteVerification(msg: VerificationDeleteDiskMessage, day: string = DAY_ONE): void {
+  handleVerificationDelete({ msg, reply: receiveReply, dir, day });
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "verification-day-test-"));
   replies = [];
@@ -60,13 +73,13 @@ afterEach(() => {
 
 describe("pending verification daily append JSON", () => {
   test("新建立即写入，同一 key 高频普通更新只追加窗口内最终快照", () => {
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: true }, receiveReply, dir, DAY_ONE);
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     for (let revision = 2; revision <= 500; revision++) {
-      handleVerificationUpsert({
+      upsert({
         type: "verificationUpsert",
         record: snapshot(revision, { messageIds: [10, revision] }),
         critical: false,
-      }, receiveReply, dir, DAY_ONE);
+      });
     }
 
     expect(verificationPendingChanges.size).toBe(1);
@@ -81,14 +94,14 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("终结 null 覆盖尚未 flush 的旧 upsert，不会复活", () => {
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: false }, receiveReply, dir, DAY_ONE);
-    handleVerificationDelete({
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: false });
+    deleteVerification({
       type: "verificationDelete",
       chatId: -1001,
       userId: 42,
       generation: 1,
       revision: 2,
-    }, receiveReply, dir, DAY_ONE);
+    });
 
     expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
     expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8"))).toEqual({});
@@ -97,25 +110,25 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("任一验证终结时收敛整份 active 快照，不给其它成员留下重复键", () => {
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: true }, receiveReply, dir, DAY_ONE);
-    handleVerificationUpsert({
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    upsert({
       type: "verificationUpsert",
       record: snapshot(1, { userId: 43, label: "第二位" }),
       critical: true,
-    }, receiveReply, dir, DAY_ONE);
-    handleVerificationUpsert({
+    });
+    upsert({
       type: "verificationUpsert",
       record: snapshot(2, { userId: 43, label: "第二位" }),
       critical: true,
-    }, receiveReply, dir, DAY_ONE);
+    });
 
-    handleVerificationDelete({
+    deleteVerification({
       type: "verificationDelete",
       chatId: -1001,
       userId: 42,
       generation: 1,
       revision: 2,
-    }, receiveReply, dir, DAY_ONE);
+    });
 
     const content: string = readFileSync(join(dir, `${DAY_ONE}.json`), "utf8");
     expect(content.match(/"-1001:43":/g)).toHaveLength(1);
@@ -125,24 +138,24 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("尾部截断修复保留此前完整 revision，随后仍可追加", () => {
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: true }, receiveReply, dir, DAY_ONE);
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(2), critical: true }, receiveReply, dir, DAY_ONE);
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
     const path: string = join(dir, `${DAY_ONE}.json`);
     const full: string = readFileSync(path, "utf8");
     writeFileSync(path, full.slice(0, full.lastIndexOf('"revision": 2') + 18));
 
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.revision).toBe(1);
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(3), critical: true }, receiveReply, dir, DAY_ONE);
+    upsert({ type: "verificationUpsert", record: snapshot(3), critical: true });
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.revision).toBe(3);
   });
 
   test("跨日先复制 active 快照到新日文件，再删除旧日文件", () => {
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: true }, receiveReply, dir, DAY_ONE);
-    handleVerificationUpsert({
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    upsert({
       type: "verificationUpsert",
       record: snapshot(1, { userId: 43, label: "第二位" }),
       critical: true,
-    }, receiveReply, dir, DAY_TWO);
+    }, DAY_TWO);
 
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
     const recovered = recoverVerificationDay(DAY_TWO, dir);
@@ -150,14 +163,14 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("压缩前后恢复结果一致，并移除重复 key 与 null 历史", () => {
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: true }, receiveReply, dir, DAY_ONE);
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(2), critical: true }, receiveReply, dir, DAY_ONE);
-    handleVerificationUpsert({
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
+    upsert({
       type: "verificationUpsert",
       record: snapshot(1, { userId: 43, label: "第二位" }),
       critical: true,
-    }, receiveReply, dir, DAY_ONE);
-    handleVerificationDelete({ type: "verificationDelete", chatId: -1001, userId: 43, generation: 1, revision: 2 }, receiveReply, dir, DAY_ONE);
+    });
+    deleteVerification({ type: "verificationDelete", chatId: -1001, userId: 43, generation: 1, revision: 2 });
     const before = recoverVerificationDay(DAY_ONE, dir);
 
     compactVerificationDay(DAY_ONE, dir);
@@ -166,10 +179,10 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("增量历史达到条数阈值时自动收敛为 active 快照", () => {
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: true }, receiveReply, dir, DAY_ONE);
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     verificationFileState.appendedEntries = 9_999;
 
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(2), critical: true }, receiveReply, dir, DAY_ONE);
+    upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
 
     expect(verificationFileState.appendedEntries).toBe(0);
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.revision).toBe(2);
@@ -177,10 +190,10 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("增量历史达到字节阈值时自动收敛，但不把 active 基线反复计入历史", () => {
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(1), critical: true }, receiveReply, dir, DAY_ONE);
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     verificationFileState.appendedBytes = VERIFICATION_FILE_COMPACT_BYTES - 1;
 
-    handleVerificationUpsert({ type: "verificationUpsert", record: snapshot(2), critical: true }, receiveReply, dir, DAY_ONE);
+    upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
 
     expect(verificationFileState.appendedEntries).toBe(0);
     expect(verificationFileState.appendedBytes).toBe(0);
@@ -229,11 +242,11 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("消息窗口随当天快照恢复，旧版缺失字段按空窗口兼容", () => {
-    handleVerificationUpsert({
+    upsert({
       type: "verificationUpsert",
       record: snapshot(1, { trackedMessageTimes: [10_000, 20_000] }),
       critical: true,
-    }, receiveReply, dir, DAY_ONE);
+    });
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.trackedMessageTimes).toEqual([10_000, 20_000]);
 
     const legacy = snapshot(2);

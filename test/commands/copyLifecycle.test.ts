@@ -82,11 +82,19 @@ describe("copy 类命令生命周期", () => {
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
     await handleCopyCommand(context());
     expect(releaseCopyCooldownClaim).toHaveBeenCalledTimes(2);
-    expect(sendMessage).toHaveBeenLastCalledWith(-1001, expect.stringContaining("早就在复读"), 9);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("早就在复读"),
+      replyToMessageId: 9,
+    });
 
     target = { id: 8, first_name: "Bob" };
     await handleCopyCommand(context());
-    expect(sendMessage).toHaveBeenLastCalledWith(-1001, expect.stringContaining("先 /stop_copy"), 9);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("先 /stop_copy"),
+      replyToMessageId: 9,
+    });
   });
 
   test("成功启动立即写全局状态，头像更新留在受控后台任务", async () => {
@@ -99,7 +107,11 @@ describe("copy 类命令生命周期", () => {
     });
     expect(saveStateInBackground).toHaveBeenCalledWith("copy started");
     expect(stealAvatarInBackground).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(-1001, expect.stringContaining("倒过来念"), 9);
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("倒过来念"),
+      replyToMessageId: 9,
+    });
   });
 
   test("/stop_copy 对空状态只提示，对活动状态清空全部复制字段", async () => {

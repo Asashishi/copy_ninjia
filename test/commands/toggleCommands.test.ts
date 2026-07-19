@@ -52,9 +52,13 @@ describe("超级管理员开关命令", () => {
 
     const messages = { rejection: (label: string): string => `reject:${label}`, usage: "usage" };
     await expect(resolveSuperAdminToggleArg(context("enable", 101), messages)).resolves.toBeUndefined();
-    expect(sendMessage).toHaveBeenLastCalledWith(-1001, expect.stringContaining("reject:"), 7);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("reject:"),
+      replyToMessageId: 7,
+    });
     await expect(resolveSuperAdminToggleArg(context("invalid"), messages)).resolves.toBeUndefined();
-    expect(sendMessage).toHaveBeenLastCalledWith(-1001, "usage", 7);
+    expect(sendMessage).toHaveBeenLastCalledWith({ chatId: -1001, text: "usage", replyToMessageId: 7 });
     expect(states.size).toBe(0);
   });
 

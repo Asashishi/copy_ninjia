@@ -9,7 +9,12 @@ export const linkedChannelFetches: Map<number, Promise<void>> = new Map();
 
 /** 在 500 群硬顶内落一份关联频道快照。 */
 export function cacheLinkedChannel(chatId: number, hasLinked: boolean, fetchedAt: number = Date.now()): void {
-  setBoundedMapValue(linkedChannels, chatId, { hasLinked, fetchedAt }, ANTI_RAID_CHAT_CACHE_MAX);
+  setBoundedMapValue({
+    map: linkedChannels,
+    key: chatId,
+    value: { hasLinked, fetchedAt },
+    maxEntries: ANTI_RAID_CHAT_CACHE_MAX,
+  });
 }
 
 /** 获取或创建同群唯一一次关联频道拉取；settle 后自动释放在途槽位。 */

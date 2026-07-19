@@ -54,7 +54,13 @@ afterEach(() => {
 
 describe("Telegram reaction 同步队列", () => {
   test("成功调用后清理本群队列并记录分段延迟", async () => {
-    enqueueReaction(-1001, 10, [{ type: "emoji", emoji: "👍" }], 1, Math.floor(Date.now() / 1000));
+    enqueueReaction({
+      chatId: -1001,
+      messageId: 10,
+      reactions: [{ type: "emoji", emoji: "👍" }],
+      updateId: 1,
+      reactedAtUnix: Math.floor(Date.now() / 1000),
+    });
     await waitForIdle();
 
     expect(setMessageReaction).toHaveBeenCalledWith(-1001, 10, [{ type: "emoji", emoji: "👍" }]);
@@ -67,9 +73,9 @@ describe("Telegram reaction 同步队列", () => {
     let resolveFirst!: (value: boolean) => void;
     setMessageReaction.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
 
-    enqueueReaction(-1001, 10, [{ type: "emoji", emoji: "👍" }], 10, 1);
-    enqueueReaction(-1001, 10, [{ type: "emoji", emoji: "🔥" }], 11, 2);
-    enqueueReaction(-1001, 10, [{ type: "emoji", emoji: "😁" }], 9, 3);
+    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "👍" }], updateId: 10, reactedAtUnix: 1 });
+    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "🔥" }], updateId: 11, reactedAtUnix: 2 });
+    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "😁" }], updateId: 9, reactedAtUnix: 3 });
     expect(setMessageReaction).toHaveBeenCalledTimes(1);
 
     resolveFirst(true);
@@ -82,14 +88,14 @@ describe("Telegram reaction 同步队列", () => {
     setMessageReaction
       .mockRejectedValueOnce(new FakeGrammyError(429, { retry_after: 2 }))
       .mockResolvedValueOnce(true);
-    enqueueReaction(-1001, 10, [], 1, 1);
+    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [], updateId: 1, reactedAtUnix: 1 });
     await waitForIdle();
     expect(sleep).toHaveBeenCalledWith(2_000);
     expect(loggerWarn).toHaveBeenCalledWith(expect.stringContaining("retry 2/3"));
     expect(setMessageReaction).toHaveBeenCalledTimes(2);
 
     setMessageReaction.mockRejectedValueOnce(new Error("bad reaction"));
-    enqueueReaction(-1002, 20, [], 2, 2);
+    enqueueReaction({ chatId: -1002, messageId: 20, reactions: [], updateId: 2, reactedAtUnix: 2 });
     await waitForIdle();
     expect(logApiError).toHaveBeenCalledWith("set message reaction", expect.any(Error));
     expect(pendingTasks.size).toBe(0);
