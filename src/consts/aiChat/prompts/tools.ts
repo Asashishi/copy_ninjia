@@ -1,5 +1,5 @@
 import { MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
-import { MAX_STICKERS_PER_REPLY } from "../stickers";
+import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 
 export const STICKER_INTENT_SELECTION_INSTRUCTION: string =
   "严格按 intent 选择最合适的贴纸；没有符合意图的贴纸就不要发送。";
@@ -8,7 +8,8 @@ export const VIEW_STICKER_PACK_TOOL_INSTRUCTION: string =
   "发贴纸的第一步：查看某个贴纸包内每枚贴纸的具体描述清单。发贴纸是你说话方式的一部分，" +
   "情绪、语气对上了就该顺手配一枚。调用前先明确这枚贴纸要产生的回复效果，以及需要避免传达的语气；" +
   "没有明确意图时不要为了发贴纸而查看贴纸包。再按下面的整包简介挑一个最可能有应景贴纸的包，调用本工具" +
-  "拿到包内清单后始终按声明的意图选择，没有合适的就不发。pack_index 填包的编号：\n";
+  `拿到包内清单后始终按声明的意图选择。每轮最多查看 ${MAX_STICKER_PACK_VIEWS_PER_REPLY} 个不同贴纸包，每个包只能查看一次；` +
+  "不要重复查看已经看过的包。没有合适的就换一个尚未查看的包，或不发贴纸、改用文字/反应回应。pack_index 填包的编号：\n";
 
 export const SEND_STICKER_TOOL_INSTRUCTION: string =
   "从某个贴纸包里发送一枚贴纸到群里。必须先用 view_sticker_pack 查看过那个包的贴纸清单，" +

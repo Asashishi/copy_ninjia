@@ -28,7 +28,7 @@ const {
   viewStickerPackTool,
 } = await import("../../src/ai/tools/stickers");
 const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../src/consts/tools");
-const { STICKER_INTENT_MAX_CHARS } = await import("../../src/consts/aiChat/stickers");
+const { MAX_STICKER_PACK_VIEWS_PER_REPLY, STICKER_INTENT_MAX_CHARS } = await import("../../src/consts/aiChat/stickers");
 const { createStickerSendLock } = await import("../../src/ai/stickers/sendLock");
 
 function candidate(fileId: string, emoji: string, description: string): any {
@@ -115,6 +115,7 @@ describe("ai/stickers 工具定义组装", () => {
     expect(def?.name).toBe(VIEW_STICKER_PACK_TOOL);
     expect(def?.description).toContain("1. 「猫猫包」（2 枚）：一包搞笑猫猫");
     expect(def?.description).toContain("2. 「狗狗包」（1 枚）：一包卖萌狗狗");
+    expect(def?.description).toContain(`最多查看 ${MAX_STICKER_PACK_VIEWS_PER_REPLY} 个不同贴纸包，每个包只能查看一次`);
     expect(def?.parameters.required).toEqual(["pack_index", "intent"]);
     expect((def?.parameters.properties.intent as { maxLength?: number }).maxLength).toBe(STICKER_INTENT_MAX_CHARS);
   });
@@ -163,11 +164,38 @@ describe("ai/stickers viewStickerPackTool", () => {
     expect(chatAction.set).not.toHaveBeenCalled();
   });
 
-  test("重复查看同一个包时以最新意图为准", async () => {
+  test("同一个包每轮只能查看一次，重复查看保留首次意图且不再切换状态", async () => {
+    const chatAction = chatActionMock();
     const state = createStickerRoundState();
-    await viewStickerPackTool(chatActionMock(), MENU, '{"pack_index": 1, "intent":"表达惊讶，但不要显得害怕"}', state);
-    await viewStickerPackTool(chatActionMock(), MENU, '{"pack_index": 1, "intent":"改为表达好笑，但不要嘲讽对方"}', state);
-    expect(state.viewedPackIntents.get(1)).toBe("改为表达好笑，但不要嘲讽对方");
+    await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1, "intent":"表达惊讶，但不要显得害怕"}', state);
+    chatAction.set.mockClear();
+
+    const repeated = JSON.parse(await viewStickerPackTool(chatAction, MENU, '{"pack_index": 1, "intent":"改为表达好笑，但不要嘲讽对方"}', state));
+    expect(repeated.error).toContain("already viewed");
+    expect(state.viewedPackIntents.get(1)).toBe("表达惊讶，但不要显得害怕");
+    expect(chatAction.set).not.toHaveBeenCalled();
+  });
+
+  test("每轮最多查看五个不同贴纸包，第六个包被拒绝且不切换状态", async () => {
+    const menu = Array.from(
+      { length: MAX_STICKER_PACK_VIEWS_PER_REPLY + 1 },
+      (_, index) => pack(`pack_${index}`, `包 ${index}`, `简介 ${index}`, [candidate(`s${index}`, "🙂", `贴纸 ${index}`)])
+    );
+    const state = createStickerRoundState();
+    for (let packIndex = 1; packIndex <= MAX_STICKER_PACK_VIEWS_PER_REPLY; packIndex++) {
+      await viewStickerPackTool(chatActionMock(), menu, JSON.stringify({ pack_index: packIndex, intent: `查看第 ${packIndex} 个包` }), state);
+    }
+
+    const chatAction = chatActionMock();
+    const rejected = JSON.parse(await viewStickerPackTool(
+      chatAction,
+      menu,
+      JSON.stringify({ pack_index: MAX_STICKER_PACK_VIEWS_PER_REPLY + 1, intent: "尝试查看第六个包" }),
+      state
+    ));
+    expect(rejected.error).toContain(`at most ${MAX_STICKER_PACK_VIEWS_PER_REPLY} different packs`);
+    expect(state.viewedPackIntents.size).toBe(MAX_STICKER_PACK_VIEWS_PER_REPLY);
+    expect(chatAction.set).not.toHaveBeenCalled();
   });
 });
 

@@ -5,6 +5,7 @@ import { sleep } from "../../libs/sleep";
 import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
 import { parseIndexField } from "../utils/toolArgs";
 import {
+  MAX_STICKER_PACK_VIEWS_PER_REPLY,
   MAX_STICKERS_PER_REPLY,
   STICKER_CHOOSE_DELAY_BASE_MS,
   STICKER_CHOOSE_DELAY_JITTER_MS,
@@ -28,8 +29,9 @@ import type { ToolDefinition } from "../../types/tools";
  * 简介（≤200 字，见 ai/stickers/catalog.ts 的 summarizePack），模型按简介挑
  * 一个包调用，返回包内每枚贴纸的编号清单（emoji + 画面描述）；
  * 二层 send_sticker——按「包编号 + 贴纸编号」真正发送。必须先看过对应包的
- * 清单才能发（viewedPackIntents 强制），每轮回复最多 MAX_STICKERS_PER_REPLY 枚
- * （当前为 1：要么不发、要么只发一枚）、绝不重复同一枚（sentStickerUids 按
+ * 清单才能发（viewedPackIntents 强制）；每轮最多查看
+ * MAX_STICKER_PACK_VIEWS_PER_REPLY 个不同包，同一包只能查看一次；每轮回复最多
+ * MAX_STICKERS_PER_REPLY 枚（当前为 1：要么不发、要么只发一枚）、绝不重复同一枚（sentStickerUids 按
  * file_unique_id 强制，上限为 1 时限额先挡住、此规则只在上限放宽时兜底）
  * ——这些限额状态挂在 StickerRoundState 上，每轮回复新建一份（见
  * ai/tools/replyToolset.ts）。轮内限额之外还有一道跨轮互斥：同群并发的几轮回复
@@ -146,8 +148,8 @@ export function parseStickerIntent(argumentsJson: string): string | null {
 }
 
 /**
- * 执行一次 view_sticker_pack 工具调用：校验包编号和表达意图、按包保存
- * 本轮最新意图，返回意图及包内贴纸的编号清单。合法调用会把聊天状态心跳切到
+ * 执行一次 view_sticker_pack 工具调用：校验包编号和表达意图、拒绝重复查看
+ * 或超过每轮五个不同包的上限，首次查看时保存意图并返回包内贴纸的编号清单。合法调用会把聊天状态心跳切到
  * 「正在选择贴纸…」挡并停顿 1.5~5 秒（见 STICKER_CHOOSE_DELAY_BASE_MS），
  * 模拟真人翻贴纸面板的节奏；这一挡不随停顿结束切回——保持到贴纸真正发出
  * （或模型转头发消息/本轮结束）为止，模型挑选贴纸那轮往返的耗时也计入
@@ -162,6 +164,16 @@ export async function viewStickerPackTool(chatAction: ChatActionControl, menu: S
   if (packIndex === null) return JSON.stringify({ error: "Invalid pack_index" });
   const intent: string | null = parseStickerIntent(argumentsJson);
   if (intent === null) return JSON.stringify({ error: `Invalid intent: provide a concrete non-empty intent within ${STICKER_INTENT_MAX_CHARS} characters` });
+  if (state.viewedPackIntents.has(packIndex)) {
+    return JSON.stringify({
+      error: "Sticker pack already viewed in this reply; do not view it again. Use its existing list, choose a different unviewed pack, or reply without a sticker",
+    });
+  }
+  if (state.viewedPackIntents.size >= MAX_STICKER_PACK_VIEWS_PER_REPLY) {
+    return JSON.stringify({
+      error: `Sticker pack view limit reached: at most ${MAX_STICKER_PACK_VIEWS_PER_REPLY} different packs per reply; do not call view_sticker_pack again. Reply with text/reaction or finish`,
+    });
+  }
 
   // 切挡立即补发一次 choose_sticker，之后由心跳按间隔重发维持（间隔小于
   // 约 5 秒的状态过期时间，显示连续）。
