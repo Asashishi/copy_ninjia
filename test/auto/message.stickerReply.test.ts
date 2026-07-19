@@ -11,6 +11,7 @@ const recordChatMediaMock = mock((..._args: unknown[]): void => {});
 const generateAndSendReplyMock = mock((..._args: unknown[]): void => {});
 const copyMessageMock = mock(async (..._args: unknown[]): Promise<undefined> => undefined);
 let quietUntil: number = Number.MAX_SAFE_INTEGER;
+let aiChatEnabled: boolean = true;
 
 mock.module("../../src/infra/telegram", () => ({
   copyMessage: copyMessageMock,
@@ -23,7 +24,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   clearChatStateField: () => false,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => undefined,
-  getChatState: () => ({ isAIChatEnabled: true, quietUntil }),
+  getChatState: () => ({ isAIChatEnabled: aiChatEnabled, quietUntil }),
   getOrCreateChatState: () => ({}),
   saveStateInBackground: () => {},
 }));
@@ -76,6 +77,7 @@ describe("媒体直接叫机器人", () => {
     generateAndSendReplyMock.mockClear();
     copyMessageMock.mockClear();
     quietUntil = Number.MAX_SAFE_INTEGER;
+    aiChatEnabled = true;
     userReplyTriggerTimes.clear();
     clearAiReplyActivity();
   });
@@ -355,6 +357,41 @@ describe("媒体直接叫机器人", () => {
 
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
     expect(copyMessageMock).not.toHaveBeenCalled();
+  });
+
+  test("AI 模式开启时关闭随机复读，关闭后恢复", async () => {
+    quietUntil = 0;
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+    try {
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 38,
+          date: 1,
+          chat,
+          from: alice,
+          document: { file_id: "ai-on-doc", file_unique_id: "ai-on-doc-uid" },
+        },
+      } as any);
+      expect(copyMessageMock).not.toHaveBeenCalled();
+
+      aiChatEnabled = false;
+      await handleIncomingMessage({
+        me: botInfo,
+        msg: {
+          message_id: 39,
+          date: 1,
+          chat,
+          from: alice,
+          document: { file_id: "ai-off-doc", file_unique_id: "ai-off-doc-uid" },
+        },
+      } as any);
+    } finally {
+      Math.random = originalRandom;
+    }
+
+    expect(copyMessageMock).toHaveBeenCalledTimes(1);
   });
 
   test("回复自己发的图片不参与随机 AI 评价", async () => {

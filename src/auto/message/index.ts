@@ -92,7 +92,8 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     if (shouldStop) return;
   }
 
-  // 复制目标活动期间禁止本群其它主动行为；无目标时才处理洗澡触发和随机复读。
+  // 复制目标活动期间禁止本群其它主动行为；无目标时才处理洗澡触发，
+  // 并且只在 AI 关闭时允许随机复读。
   if (!activeCopy) {
     await handleProactiveMessageActions(message, botIdentity, isQuiet, aiChatEnabled);
   }

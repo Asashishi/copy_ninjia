@@ -14,7 +14,10 @@ import { echoMessage, resolveEffectiveCopyMode } from "./echo";
 import { hasCopyableContent } from "./facts";
 import type { BotIdentity } from "./triggerContext";
 
-/** 洗澡触发和随机复读；仅由无活动复制目标的非私聊流水线调用。 */
+/**
+ * 洗澡触发和随机复读；仅由无活动复制目标的非私聊流水线调用。AI 开启时
+ * 仍保留洗澡关键词响应，但禁用随机复读，避免两套随机插话机制同时运行。
+ */
 export async function handleProactiveMessageActions(
   message: Message,
   bot: BotIdentity,
@@ -40,11 +43,13 @@ export async function handleProactiveMessageActions(
     return;
   }
 
-  if (!isQuiet && hasCopyableContent(message) && Math.random() < RANDOM_ECHO_PROBABILITY) {
+  if (
+    !aiChatEnabled &&
+    !isQuiet &&
+    hasCopyableContent(message) &&
+    Math.random() < RANDOM_ECHO_PROBABILITY
+  ) {
     const mode: CopyMode | undefined = resolveEffectiveCopyMode(chatId, pickRandom(RANDOM_ECHO_MODES));
-    const echoedText: string | undefined = await echoMessage(chatId, message, mode);
-    if (aiChatEnabled && echoedText !== undefined) {
-      recordChatMessage(chatId, bot.id, bot.firstName, "", bot.username, echoedText);
-    }
+    await echoMessage(chatId, message, mode);
   }
 }
