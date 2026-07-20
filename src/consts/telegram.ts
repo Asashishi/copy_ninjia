@@ -1,5 +1,17 @@
 /** Telegram API 封装（src/infra/telegram/）的调参常量。 */
 
+/** 长轮询订阅的完整 update 类型集合。 */
+export const TELEGRAM_ALLOWED_UPDATES = [
+  "message",
+  "channel_post",
+  "message_reaction",
+  "chat_member",
+  "my_chat_member",
+  "callback_query",
+  "inline_query",
+  "chosen_inline_result",
+] as const;
+
 // 抓取目标头像（Bot API / t.me 主页兜底）的超时与重试次数。
 export const AVATAR_FETCH_TIMEOUT_MS: number = 15000;
 export const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;

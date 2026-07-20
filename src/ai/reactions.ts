@@ -1,3 +1,4 @@
+import { reactionEmojiCache } from "../cache/reactions";
 import { getReactionConfig } from "../config/reactions";
 
 /**
@@ -10,10 +11,8 @@ import { getReactionConfig } from "../config/reactions";
  * REACTION_INVALID，与是否有 Telegram Premium 无关，是 bot 账号的硬限制）。
  */
 
-let cachedEmojis: readonly string[] | null = null;
-
 /** add_reaction 工具允许的标准反应 emoji；首次业务调用时才读取配置。 */
 export function getReactionEmojis(): readonly string[] {
-  cachedEmojis ??= Object.freeze(Object.keys(getReactionConfig().emotionKeywords));
-  return cachedEmojis;
+  reactionEmojiCache.current ??= Object.freeze(Object.keys(getReactionConfig().emotionKeywords));
+  return reactionEmojiCache.current;
 }

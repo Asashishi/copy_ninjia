@@ -4,15 +4,14 @@ import { restoreLuckState } from "../commands";
 import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
 import {
-  AI_MEMORY_FLUSH_TIMEOUT_MS,
-  BACKGROUND_MAINTENANCE_TIMEOUT_MS,
-  DISK_IO_FLUSH_TIMEOUT_MS,
-  EMERGENCY_FLUSH_TIMEOUT_MS,
+  EMERGENCY_FLUSH_TIMEOUTS,
+  NORMAL_FLUSH_TIMEOUTS,
   RUNNER_DRAIN_POLL_INTERVAL_MS,
   RUNNER_DRAIN_TIMEOUT_MS,
-  STATE_FLUSH_TIMEOUT_MS,
+  type FlushTimeouts,
   type FlushResult,
 } from "../consts/lifecycle";
+import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
 import { refreshAllChatTitles } from "../infra/chatTitle";
 import { BOT_TOKEN } from "../infra/config";
 import { flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO, type LoadedData } from "../infra/diskIO";
@@ -27,38 +26,6 @@ import { seedSenderCache } from "../users/senderIdentity";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers, type HandlerRegistration } from "./registerHandlers";
 import { runAcknowledgedUpdateBatches, type AcknowledgedUpdateRunner } from "./updateRunner";
-
-const ALLOWED_UPDATES = [
-  "message",
-  "channel_post",
-  "message_reaction",
-  "chat_member",
-  "my_chat_member",
-  "callback_query",
-  "inline_query",
-  "chosen_inline_result",
-] as const;
-
-interface FlushTimeouts {
-  aiMemoryMs: number;
-  diskIOMs: number;
-  stateMs: number;
-  maintenanceMs: number;
-}
-
-const NORMAL_FLUSH_TIMEOUTS: FlushTimeouts = {
-  aiMemoryMs: AI_MEMORY_FLUSH_TIMEOUT_MS,
-  diskIOMs: DISK_IO_FLUSH_TIMEOUT_MS,
-  stateMs: STATE_FLUSH_TIMEOUT_MS,
-  maintenanceMs: BACKGROUND_MAINTENANCE_TIMEOUT_MS,
-};
-
-const EMERGENCY_FLUSH_TIMEOUTS: FlushTimeouts = {
-  aiMemoryMs: EMERGENCY_FLUSH_TIMEOUT_MS,
-  diskIOMs: EMERGENCY_FLUSH_TIMEOUT_MS,
-  stateMs: EMERGENCY_FLUSH_TIMEOUT_MS,
-  maintenanceMs: 0,
-};
 
 /**
  * 持有应用从取得单实例锁到释放锁的完整生命周期。所有会联网、创建 Worker、
@@ -156,7 +123,7 @@ export class ApplicationLifecycle {
       (restoredCopiedUser ? `, currently copying ${restoredCopiedUser.id}.` : ".")
     );
 
-    this.runner = runAcknowledgedUpdateBatches(bot, ALLOWED_UPDATES);
+    this.runner = runAcknowledgedUpdateBatches(bot, TELEGRAM_ALLOWED_UPDATES);
     if (this.stopRequested) this.stopOnSignal();
   }
 

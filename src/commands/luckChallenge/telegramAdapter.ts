@@ -2,6 +2,7 @@ import type { InlineQueryResultArticle } from "@grammyjs/types";
 import type { Context } from "grammy";
 import { formatUserLabel } from "../../users/userLabel";
 import type { LuckDraw } from "../../types/luckChallenge";
+import { LUCK_RESULT_IDS } from "../../consts/luckChallenge";
 import {
   ensureLuckCacheFreshForToday,
   getOrDrawLuck,
@@ -14,12 +15,6 @@ import {
   buildProbabilityResult,
   buildRateLimitedResult,
 } from "./rendering";
-
-const LUCK_RESULT_IDS: ReadonlySet<string> = new Set([
-  "luck-fortune",
-  "luck-fortune-text",
-  "luck-probability",
-]);
 
 /** Telegram chosen_inline_result 是抽签真正被选中的主确认信号。 */
 export async function handleLuckChosenInlineResult(ctx: Context): Promise<void> {

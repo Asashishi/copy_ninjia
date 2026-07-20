@@ -1,11 +1,13 @@
 import type { MessageEntity } from "@grammyjs/types";
 import { luckCacheState, luckReceiptSecretState } from "../../cache/luckChallenge";
 import {
+  LUCK_RECEIPT_DISPLAY_PREFIX,
+  LUCK_RECEIPT_LINK_PREFIX,
+} from "../../consts/luckReceipt";
+import {
   createLuckReceipt,
   hashLuckReceipt,
   isLuckReceiptHash,
-  LUCK_RECEIPT_DISPLAY_PREFIX,
-  LUCK_RECEIPT_LINK_PREFIX,
   unwrapLuckReceiptLine,
   verifyLuckReceipt,
 } from "../../libs/luckReceipt";

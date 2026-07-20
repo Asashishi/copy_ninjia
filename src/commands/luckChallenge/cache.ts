@@ -2,6 +2,7 @@ import {
   dailyLuckCache,
   luckCacheState,
   luckReceiptSecretState,
+  luckRuntimeState,
   pendingLuckDraws,
 } from "../../cache/luckChallenge";
 import { LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../consts/luckChallenge";
@@ -12,14 +13,13 @@ import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage
 import type { LuckDraw, LuckTier } from "../../types/luckChallenge";
 import { deriveLuckDraw } from "./draw";
 
-let luckDayRefreshPromise: Promise<void> | null = null;
-let respawnRecoveryInitialized: boolean = false;
 /** 进程内是否发生过跨东京零点的日切换（即 adoptLuckSecret 清空过前一天的
  *  pending）。见 promotePendingDraw：切换后 pending 未命中不再允许重建派生。 */
-let daySwitchedInProcess: boolean = false;
 
 function adoptLuckSecret(secret: LuckReceiptSecret): void {
-  if (luckCacheState.dayKey && luckCacheState.dayKey !== secret.day) daySwitchedInProcess = true;
+  if (luckCacheState.dayKey && luckCacheState.dayKey !== secret.day) {
+    luckRuntimeState.daySwitchedInProcess = true;
+  }
   luckReceiptSecretState.current = secret;
   luckCacheState.dayKey = secret.day;
   dailyLuckCache.clear();
@@ -30,9 +30,9 @@ function adoptLuckSecret(secret: LuckReceiptSecret): void {
 export async function ensureLuckCacheFreshForToday(): Promise<void> {
   const todayKey: string = getTokyoDateKey();
   if (todayKey === luckCacheState.dayKey && luckReceiptSecretState.current?.day === todayKey) return;
-  if (luckDayRefreshPromise !== null) return luckDayRefreshPromise;
+  if (luckRuntimeState.dayRefreshPromise !== null) return luckRuntimeState.dayRefreshPromise;
 
-  luckDayRefreshPromise = (async (): Promise<void> => {
+  luckRuntimeState.dayRefreshPromise = (async (): Promise<void> => {
     let requestedDay: string = todayKey;
     for (;;) {
       const secret: LuckReceiptSecret = await ensureLuckReceiptSecret(requestedDay);
@@ -48,9 +48,9 @@ export async function ensureLuckCacheFreshForToday(): Promise<void> {
     }
   })();
   try {
-    await luckDayRefreshPromise;
+    await luckRuntimeState.dayRefreshPromise;
   } finally {
-    luckDayRefreshPromise = null;
+    luckRuntimeState.dayRefreshPromise = null;
   }
 }
 
@@ -97,7 +97,7 @@ export function promotePendingDraw(cacheKey: string, confirmedForToday: boolean 
   const pending: LuckDraw | undefined = pendingLuckDraws.get(cacheKey);
   pendingLuckDraws.delete(cacheKey);
   if (dailyLuckCache.has(cacheKey)) return;
-  if (!pending && daySwitchedInProcess && !confirmedForToday) return;
+  if (!pending && luckRuntimeState.daySwitchedInProcess && !confirmedForToday) return;
   const draw: LuckDraw = pending ?? deriveLuckDraw(currentLuckSecret(), cacheKey);
 
   dailyLuckCache.set(cacheKey, draw);
@@ -111,8 +111,8 @@ export function promotePendingDraw(cacheKey: string, confirmedForToday: boolean 
 }
 
 function initializeRespawnRecovery(): void {
-  if (respawnRecoveryInitialized) return;
-  respawnRecoveryInitialized = true;
+  if (luckRuntimeState.respawnRecoveryInitialized) return;
+  luckRuntimeState.respawnRecoveryInitialized = true;
   onDiskIORespawn(() => {
     void ensureLuckCacheFreshForToday()
       .then(() => {

@@ -1,12 +1,12 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import {
+  LUCK_CACHE_KEY_PATTERN,
+  LUCK_RECEIPT_DISPLAY_PREFIX,
+  LUCK_RECEIPT_HASH_PATTERN,
+  LUCK_RECEIPT_MAX_LENGTH,
+  LUCK_RECEIPT_PATTERN,
+} from "../consts/luckReceipt";
 import type { LuckReceiptSecret } from "../types/diskIO/storage";
-
-const CACHE_KEY_PATTERN: RegExp = /^[1-9]\d{0,15}(?::[a-f0-9]{64})?$/;
-const RECEIPT_PATTERN: RegExp = /^luck:v1:(\d{4}-\d{2}-\d{2}):([A-Za-z0-9_-]{1,120})\.([A-Za-z0-9_-]{43})$/;
-const RECEIPT_HASH_PATTERN: RegExp = /^[a-f0-9]{64}$/;
-export const LUCK_RECEIPT_MAX_LENGTH: number = 192;
-export const LUCK_RECEIPT_DISPLAY_PREFIX: string = "防伪标记: ";
-export const LUCK_RECEIPT_LINK_PREFIX: string = "https://t.me/#luck-receipt=";
 
 function secretKey(secret: LuckReceiptSecret): Buffer {
   const key: Buffer = Buffer.from(secret.key, "base64url");
@@ -17,7 +17,7 @@ function secretKey(secret: LuckReceiptSecret): Buffer {
 }
 
 function encodedCacheKey(cacheKey: string): string {
-  if (!CACHE_KEY_PATTERN.test(cacheKey)) throw new Error(`Invalid luck cache key: ${cacheKey}`);
+  if (!LUCK_CACHE_KEY_PATTERN.test(cacheKey)) throw new Error(`Invalid luck cache key: ${cacheKey}`);
   return Buffer.from(cacheKey, "utf8").toString("base64url");
 }
 
@@ -39,7 +39,7 @@ export function hashLuckReceipt(receipt: string): string {
 }
 
 export function isLuckReceiptHash(value: string): boolean {
-  return RECEIPT_HASH_PATTERN.test(value);
+  return LUCK_RECEIPT_HASH_PATTERN.test(value);
 }
 
 /**
@@ -52,13 +52,13 @@ export function verifyLuckReceipt(
   secret: LuckReceiptSecret
 ): string | undefined {
   if (receipt.length > LUCK_RECEIPT_MAX_LENGTH || secret.day !== expectedDay) return undefined;
-  const match: RegExpExecArray | null = RECEIPT_PATTERN.exec(receipt);
+  const match: RegExpExecArray | null = LUCK_RECEIPT_PATTERN.exec(receipt);
   if (match?.[1] !== expectedDay) return undefined;
   const encoded: string = match[2]!;
   const decoded: Buffer = Buffer.from(encoded, "base64url");
   if (decoded.toString("base64url") !== encoded) return undefined;
   const cacheKey: string = decoded.toString("utf8");
-  if (!CACHE_KEY_PATTERN.test(cacheKey) || encodedCacheKey(cacheKey) !== encoded) return undefined;
+  if (!LUCK_CACHE_KEY_PATTERN.test(cacheKey) || encodedCacheKey(cacheKey) !== encoded) return undefined;
 
   const signatureOffset: number = receipt.lastIndexOf(".");
   const unsigned: string = receipt.slice(0, signatureOffset);
@@ -93,7 +93,7 @@ export function stripLuckReceipt(text: string): string {
   const line: string = text.slice(lastLineBreak + 1);
   const receipt: string = unwrapLuckReceiptLine(line);
   const isCurrentHash: boolean = line.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX) && isLuckReceiptHash(receipt);
-  const isLegacyReceipt: boolean = receipt.length <= LUCK_RECEIPT_MAX_LENGTH && RECEIPT_PATTERN.test(receipt);
+  const isLegacyReceipt: boolean = receipt.length <= LUCK_RECEIPT_MAX_LENGTH && LUCK_RECEIPT_PATTERN.test(receipt);
   return isCurrentHash || isLegacyReceipt
     ? text.slice(0, lastLineBreak)
     : text;

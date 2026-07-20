@@ -50,6 +50,13 @@ export const PROBABILITY_THUMBNAIL_URL: string = "https://drive.google.com/uc?ex
 /** "同款问题"按钮上展示的所求事项摘要，超过这个字符数就截断并加 "..."。 */
 export const SAME_QUESTION_LABEL_MAX_LEN: number = 4;
 
+/** 只有这些内联结果代表用户实际选中了运势结果。 */
+export const LUCK_RESULT_IDS: ReadonlySet<string> = new Set([
+  "luck-fortune",
+  "luck-fortune-text",
+  "luck-probability",
+]);
+
 /**
  * pendingLuckDraws（见 cache/luckChallenge.ts）的 key 数量上限，超出按插入
  * 顺序淘汰最旧的（同 ai/imageDescription.ts 的 descriptionCache 一个道理）。

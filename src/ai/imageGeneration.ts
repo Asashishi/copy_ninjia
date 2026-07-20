@@ -3,7 +3,9 @@ import {
   DEFAULT_IMAGE_GENERATION_ASPECT_RATIO,
   GEMINI_IMAGE_GENERATION_MODEL,
   IMAGE_GENERATION_ASPECT_RATIOS,
+  IMAGE_GENERATION_MAX_ENCODED_CHARS,
   IMAGE_GENERATION_MAX_BYTES,
+  PNG_SIGNATURE,
   type ImageGenerationAspectRatio,
 } from "../consts/aiChat/imageGeneration";
 import { requestGeminiResponse } from "./gemini";
@@ -13,9 +15,6 @@ export interface GeneratedChatImage {
   bytes: Uint8Array;
   mimeType: "image/jpeg" | "image/png";
 }
-
-const MAX_ENCODED_IMAGE_CHARS: number = Math.ceil(IMAGE_GENERATION_MAX_BYTES / 3) * 4;
-const PNG_SIGNATURE: readonly number[] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 function ratioValue(ratio: ImageGenerationAspectRatio): number {
   const [width, height] = ratio.split(":").map(Number);
@@ -87,7 +86,7 @@ function extractGeneratedImage(data: GenerateContentResponse): GeneratedChatImag
     if (mimeType !== "image/png" && mimeType !== "image/jpeg") continue;
     // 先按 base64 理论上限挡住异常大响应，避免解码后才发现超限而额外分配
     // 一份最多不可控大小的 Buffer。API 返回的标准 base64 不含换行。
-    if (encoded.length > MAX_ENCODED_IMAGE_CHARS) continue;
+    if (encoded.length > IMAGE_GENERATION_MAX_ENCODED_CHARS) continue;
     if (!isCanonicalBase64(encoded)) continue;
     const bytes: Buffer = Buffer.from(encoded, "base64");
     if (bytes.byteLength === 0 || bytes.byteLength > IMAGE_GENERATION_MAX_BYTES) continue;

@@ -1,26 +1,16 @@
-import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { readFileSync } from "node:fs";
+import { defaultReactionConfigCache } from "../cache/config";
 import { REACTIONS_CONFIG_PATH } from "../consts/paths";
+import { TELEGRAM_REACTION_EMOJIS, type ReactionEmoji } from "../consts/reactions";
 import { hasExactKeys, isNonEmptyStringArray, isPlainRecord } from "../libs/runtimeConfig";
 
-export type ReactionEmoji = ReactionTypeEmoji["emoji"];
+export type { ReactionEmoji } from "../consts/reactions";
 
 export interface ReactionConfig {
   readonly emotionKeywords: Readonly<Partial<Record<ReactionEmoji, readonly string[]>>>;
 }
 
-/** 与当前 @grammyjs/types 的 ReactionTypeEmoji 联合保持一致，供启动时做运行时校验。 */
-export const TELEGRAM_REACTION_EMOJIS = [
-  "👍", "👎", "❤", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢",
-  "🎉", "🤩", "🤮", "💩", "🙏", "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳",
-  "❤‍🔥", "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓",
-  "🍾", "💋", "🖕", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈",
-  "😇", "😨", "🤝", "✍", "🤗", "🫡", "🎅", "🎄", "☃", "💅", "🤪", "🗿",
-  "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾", "🤷‍♂", "🤷", "🤷‍♀", "😡",
-] as const satisfies readonly ReactionEmoji[];
-
 const allowedReactionEmojis: ReadonlySet<string> = new Set(TELEGRAM_REACTION_EMOJIS);
-let defaultConfig: ReactionConfig | null = null;
 
 /** 严格解码 reactions.json；非法 Telegram 标准反应在启动阶段直接报错。 */
 export function parseReactionConfig(value: unknown): ReactionConfig {
@@ -48,6 +38,6 @@ export function loadReactionConfig(path: string = REACTIONS_CONFIG_PATH): Reacti
 
 /** 默认部署配置按进程/Worker 惰性加载一次。主进程会在取得实例锁后预先调用。 */
 export function getReactionConfig(): ReactionConfig {
-  defaultConfig ??= loadReactionConfig();
-  return defaultConfig;
+  defaultReactionConfigCache.current ??= loadReactionConfig();
+  return defaultReactionConfigCache.current;
 }

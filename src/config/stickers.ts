@@ -1,14 +1,12 @@
 import { readFileSync } from "node:fs";
-import { MAX_CONFIGURED_STICKER_PACKS } from "../consts/aiChat/stickers";
+import { defaultStickerConfigCache } from "../cache/config";
+import { MAX_CONFIGURED_STICKER_PACKS, STICKER_PACK_NAME_PATTERN } from "../consts/aiChat/stickers";
 import { STICKERS_CONFIG_PATH } from "../consts/paths";
 import { hasExactKeys, isPlainRecord } from "../libs/runtimeConfig";
 
 export interface StickerConfig {
   readonly packs: readonly string[];
 }
-
-const STICKER_PACK_NAME_PATTERN: RegExp = /^[A-Za-z0-9_]{1,64}$/;
-let defaultConfig: StickerConfig | null = null;
 
 /** 严格解码 stickers.json，并拒绝超量、非法或重复的贴纸包 short name。 */
 export function parseStickerConfig(value: unknown): StickerConfig {
@@ -39,6 +37,6 @@ export function loadStickerConfig(path: string = STICKERS_CONFIG_PATH): StickerC
 
 /** 默认部署配置按进程/Worker 惰性加载一次。主进程会在取得实例锁后预先调用。 */
 export function getStickerConfig(): StickerConfig {
-  defaultConfig ??= loadStickerConfig();
-  return defaultConfig;
+  defaultStickerConfigCache.current ??= loadStickerConfig();
+  return defaultStickerConfigCache.current;
 }

@@ -18,7 +18,7 @@
 import { pendingFlushes, pendingLoad, pendingLuckSecrets } from "../cache/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "../libs/restartThrottle";
-import { LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
+import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
 import { DISK_IO_FLUSH_TIMEOUT_MS, type FlushResult } from "../consts/lifecycle";
 import type {
   AiMemoryDiskMessage,
@@ -40,8 +40,6 @@ import type { VerificationSnapshot } from "../types/antiRaid";
 import type { LuckDayCache, LuckReceiptSecret } from "../types/diskIO/storage";
 
 const isMainThread: boolean = Bun.isMainThread;
-const DEFAULT_MAX_PENDING_BUSINESS_MESSAGES: number = 10_000;
-
 export interface DiskIOInitOptions {
   /** 运行时恢复无法继续时通知应用停止；启动握手失败仍由 loadPersistedData reject。 */
   onFatal?: (error: Error) => void;

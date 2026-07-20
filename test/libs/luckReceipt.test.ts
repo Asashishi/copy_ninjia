@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
+  LUCK_RECEIPT_DISPLAY_PREFIX,
+  LUCK_RECEIPT_MAX_LENGTH,
+} from "../../src/consts/luckReceipt";
+import {
   createLuckReceipt,
   deriveLuckEntropy,
   hashLuckReceipt,
   isLuckReceiptHash,
-  LUCK_RECEIPT_DISPLAY_PREFIX,
-  LUCK_RECEIPT_MAX_LENGTH,
   stripLuckReceipt,
   unwrapLuckReceiptLine,
   verifyLuckReceipt,

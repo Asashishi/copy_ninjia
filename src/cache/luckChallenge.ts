@@ -22,5 +22,16 @@ export const pendingLuckDraws: Map<string, LuckDraw> = new Map();
 /** 当前东京日期的持久化密钥；启动恢复后才允许生成预览。 */
 export const luckReceiptSecretState: { current: LuckReceiptSecret | null } = { current: null };
 
+/** 日期轮换、Worker 重建监听与跨日 fail-closed 判定的主线程运行态。 */
+export const luckRuntimeState: {
+  dayRefreshPromise: Promise<void> | null;
+  respawnRecoveryInitialized: boolean;
+  daySwitchedInProcess: boolean;
+} = {
+  dayRefreshPromise: null,
+  respawnRecoveryInitialized: false,
+  daySwitchedInProcess: false,
+};
+
 /** 内联查询的全局滑动窗口频率限制：最近 RATE_LIMIT_WINDOW_MS（90 秒）内各次请求的时刻戳。 */
 export const recentCallTimestamps: number[] = [];

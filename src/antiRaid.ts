@@ -7,7 +7,15 @@ import { isBotAdminIn, markBotAdminObserved, registerAntiRaidChatTeardown } from
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid/verification";
 import { superviseWorker } from "./libs/supervisedWorker";
 import { onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./infra/diskIO";
-import { activeVerificationSnapshots, pendingVerificationDeletes, persistedVerificationRevisions } from "./cache/antiRaid";
+import {
+  activeVerificationSnapshots,
+  antiRaidRuntimeState,
+  pendingLockdownPersistence,
+  pendingVerificationDeletes,
+  persistedLockdownFingerprints,
+  persistedVerificationRevisions,
+  type PersistedLockdownFingerprint,
+} from "./cache/antiRaid";
 import type { AdoptableLockdown, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent } from "./types/antiRaid";
 import type { LockdownRecord } from "./types/chatState";
 
@@ -31,27 +39,13 @@ import type { LockdownRecord } from "./types/chatState";
  * Worker 或整个进程重建后都按 expiresAt 接管。私密模式仍由 state.json 恢复。
  */
 
-let antiRaidGeneration: number = 0;
-let antiRaidInitialized: boolean = false;
-
-interface PersistedLockdownFingerprint {
-  phase: "applying" | "active" | "restoring";
-  intentId: number;
-  expiresAt: number;
-}
-
-/** 主线程镜像可能仍在 fsync；Worker 重建时不能把它自动视为已经持久化。 */
-const persistedLockdownFingerprints: Map<number, PersistedLockdownFingerprint> = new Map();
-/** 每群至多保留一个 durability waiter；期间的新阶段由完成后的循环补写。 */
-const pendingLockdownPersistence: Set<number> = new Set();
-
 function verificationMirrorKey(chatId: number, userId: number): string {
   return `${chatId}:${userId}`;
 }
 
 function nextAntiRaidGeneration(): number {
-  antiRaidGeneration++;
-  return antiRaidGeneration;
+  antiRaidRuntimeState.generation++;
+  return antiRaidRuntimeState.generation;
 }
 
 function buildAdoptVerificationsMessage(generation: number, resumePersistedTerminals: boolean = false): AdoptVerificationsMessage {
@@ -197,7 +191,7 @@ registerAntiRaidChatTeardown((chatId: number): void => post({ type: "deactivateC
 
 function acceptVerificationUpsert(event: VerificationUpsertEvent): void {
   const snapshot: VerificationSnapshot = event.record;
-  if (snapshot.generation !== antiRaidGeneration) return;
+  if (snapshot.generation !== antiRaidRuntimeState.generation) return;
   const key: string = verificationMirrorKey(snapshot.chatId, snapshot.userId);
   const latestRevision: number = Math.max(
     activeVerificationSnapshots.get(key)?.revision ?? 0,
@@ -216,7 +210,7 @@ function acceptVerificationUpsert(event: VerificationUpsertEvent): void {
 }
 
 function acceptVerificationDelete(event: VerificationDeleteEvent): void {
-  if (event.generation !== antiRaidGeneration) return;
+  if (event.generation !== antiRaidRuntimeState.generation) return;
   const key: string = verificationMirrorKey(event.chatId, event.userId);
   const current: VerificationSnapshot | undefined = activeVerificationSnapshots.get(key);
   const pendingRevision: number = pendingVerificationDeletes.get(key)?.revision ?? 0;
@@ -286,8 +280,8 @@ function abandonLockdowns(): void {
  * 新事件到达，Worker 侧「私密模式下直接踢人」的判断对随后涌入的入群立即生效。
  */
 export function initAntiRaid(): void {
-  if (antiRaidInitialized) return;
-  antiRaidInitialized = true;
+  if (antiRaidRuntimeState.initialized) return;
+  antiRaidRuntimeState.initialized = true;
   persistedLockdownFingerprints.clear();
   for (const [chatId, chatState] of getAllChatStates()) {
     if (chatState.lockdown !== undefined) {
@@ -316,7 +310,9 @@ export function terminateAntiRaid(): Promise<void> {
 
 /** Disk I/O 启动恢复完成后、Anti-Raid Worker 初始化前灌入主线程镜像。 */
 export function hydratePendingVerifications(records: Map<string, VerificationSnapshot>): void {
-  if (antiRaidInitialized) throw new Error("Pending verifications must be hydrated before Anti-Raid initialization.");
+  if (antiRaidRuntimeState.initialized) {
+    throw new Error("Pending verifications must be hydrated before Anti-Raid initialization.");
+  }
   activeVerificationSnapshots.clear();
   pendingVerificationDeletes.clear();
   persistedVerificationRevisions.clear();

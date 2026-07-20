@@ -1,13 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
+import { LUCK_DAY_PATTERN, LUCK_RECEIPT_SECRET_PATTERN } from "../../consts/luckReceipt";
 import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
-
-const DAY_PATTERN: RegExp = /^\d{4}-\d{2}-\d{2}$/;
-const SECRET_PATTERN: RegExp = /^[A-Za-z0-9_-]{43}$/;
 
 export interface LuckSecretFileIO {
   generateKey: () => Buffer;
@@ -29,8 +27,10 @@ function decodeLuckReceiptSecret(value: unknown, path: string): LuckReceiptSecre
   const keys: string[] = Object.keys(raw).sort();
   if (keys.join(",") !== "day,key,version") throw new Error(`${path} has unknown or missing fields`);
   if (raw.version !== 1) throw new Error(`${path}.version must be 1`);
-  if (typeof raw.day !== "string" || !DAY_PATTERN.test(raw.day)) throw new Error(`${path}.day is invalid`);
-  if (typeof raw.key !== "string" || !SECRET_PATTERN.test(raw.key)) throw new Error(`${path}.key is invalid`);
+  if (typeof raw.day !== "string" || !LUCK_DAY_PATTERN.test(raw.day)) throw new Error(`${path}.day is invalid`);
+  if (typeof raw.key !== "string" || !LUCK_RECEIPT_SECRET_PATTERN.test(raw.key)) {
+    throw new Error(`${path}.key is invalid`);
+  }
   const decoded: Buffer = Buffer.from(raw.key, "base64url");
   if (decoded.length !== 32 || decoded.toString("base64url") !== raw.key) {
     throw new Error(`${path}.key is not canonical base64url`);
@@ -55,7 +55,7 @@ export function recoverLuckReceiptSecret(
   path: string = LUCK_RECEIPT_SECRET_PATH,
   io: LuckSecretFileIO = DEFAULT_IO
 ): LuckReceiptSecret {
-  if (!DAY_PATTERN.test(today)) throw new Error(`Invalid Tokyo day for luck receipt secret: ${today}`);
+  if (!LUCK_DAY_PATTERN.test(today)) throw new Error(`Invalid Tokyo day for luck receipt secret: ${today}`);
   mkdirSync(dirname(path), { recursive: true });
   if (!existsSync(path)) return newSecret(today, path, io);
   if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) io.chmod(path, PERSISTED_FILE_MODE);

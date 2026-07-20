@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
+import { DAY_FILE_JSON_INDENT, DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import {
   VERIFICATION_FILE_COMPACT_BYTES,
@@ -41,7 +41,6 @@ type ReplySink = (reply: VerificationPersistedReply) => void;
 
 const TOKYO_OFFSET_MS: number = 9 * 60 * 60 * 1000;
 const DAY_MS: number = 24 * 60 * 60 * 1000;
-const DAY_FILE_PATTERN: RegExp = /^\d{4}-\d{2}-\d{2}\.json$/;
 const TOP_LEVEL_ENTRY_PATTERN: RegExp = new RegExp(
   `^${" ".repeat(DAY_FILE_JSON_INDENT)}"(?:[^"\\\\]|\\\\.)+":`,
   "gm"
