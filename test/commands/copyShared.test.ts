@@ -9,7 +9,8 @@ const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
 
 mock.module("../../src/infra/config", () => ({ PRIVILEGED_USERS_ID: [100] }));
-mock.module("../../src/infra/telegram", () => ({ sendMessage, copyUserProfilePhoto }));
+mock.module("../../src/infra/telegram/actions", () => ({ sendMessage }));
+mock.module("../../src/infra/telegram/avatar", () => ({ copyUserProfilePhoto }));
 mock.module("../../src/infra/storage/stateStore", () => ({
   getGlobalCopyState: () => globalCopyState,
   saveStateInBackground,
@@ -25,6 +26,8 @@ mock.module("../../src/infra/logger", () => ({
 }));
 
 const shared = await import("../../src/commands/copyShared");
+const { drainAvatarUpdates } = await import("../../src/copy/avatarQueue");
+const { avatarUpdateState } = await import("../../src/cache/copy/avatar");
 const { COPY_COOLDOWN_MS } = await import("../../src/consts/commands");
 const originalDateNow: () => number = Date.now;
 
@@ -48,6 +51,10 @@ beforeEach(() => {
   ]) mocked.mockClear();
   copyUserProfilePhoto.mockImplementation(async (): Promise<boolean> => true);
   resolveCommandTarget.mockImplementation(async (): Promise<CachedUser | undefined> => ({ id: 7, first_name: "Alice" }));
+  avatarUpdateState.pending = null;
+  avatarUpdateState.running = false;
+  avatarUpdateState.nextGeneration = 1;
+  avatarUpdateState.latestGeneration = 0;
 });
 
 afterEach(() => {
@@ -94,13 +101,14 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(options.selfTarget).toContain("自己");
   });
 
-  test("头像任务严格串行，并按布尔结果发送成功或失败战报", async () => {
+  test("头像全局并发度为 1，运行中只保留最新待执行目标与最新战报", async () => {
     let resolveFirst!: (value: boolean) => void;
     copyUserProfilePhoto
       .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
       .mockResolvedValueOnce(false);
     const firstTarget: CachedUser = { id: 7, first_name: "Alice", username: "alice" };
-    const secondTarget: CachedUser = { id: -2002, first_name: "Channel", username: "channel", isChannel: true };
+    const secondTarget: CachedUser = { id: -2002, first_name: "Old Channel", username: "old_channel", isChannel: true };
+    const latestTarget: CachedUser = { id: -3003, first_name: "Latest Channel", username: "latest_channel", isChannel: true };
 
     shared.stealAvatarInBackground({
       chatId: -1001,
@@ -114,16 +122,23 @@ describe("copy 命令共享冷却与头像串行器", () => {
       successText: "second-ok",
       failureText: "second-fail",
     });
+    shared.stealAvatarInBackground({
+      chatId: -1003,
+      target: latestTarget,
+      successText: "latest-ok",
+      failureText: "latest-fail",
+    });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
     expect(copyUserProfilePhoto).toHaveBeenCalledWith(7, false, "alice");
 
     resolveFirst(true);
-    await waitFor(() => sendMessage.mock.calls.length === 2);
-    expect(copyUserProfilePhoto).toHaveBeenNthCalledWith(2, -2002, true, "channel");
+    await waitFor(() => sendMessage.mock.calls.length === 1);
+    expect(copyUserProfilePhoto).toHaveBeenCalledTimes(2);
+    expect(copyUserProfilePhoto).toHaveBeenNthCalledWith(2, -3003, true, "latest_channel");
     expect(sendMessage.mock.calls).toEqual([
-      [{ chatId: -1001, text: "first-ok" }],
-      [{ chatId: -1002, text: "second-fail" }],
+      [{ chatId: -1003, text: "latest-fail" }],
     ]);
+    await expect(drainAvatarUpdates(100)).resolves.toBe("flushed");
   });
 
   test("头像任务抛错由串行器记录，后续任务仍可继续", async () => {

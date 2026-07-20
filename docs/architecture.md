@@ -26,7 +26,11 @@
 
 - `state.json` 使用最新值合并、临时文件、fsync 和原子 rename。
 - AI 记忆与贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的
-  JSON 追加文件。待验证只保留东京当天文件，并在阈值前收敛为 active 快照。
+  JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone，只保留
+  东京当天文件，并在条数/字节阈值处收敛为 active 快照。
+- Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
+  反应/头像后台 owner 与 AI/Disk I/O flush 都有显式有界 drain。任一关键 flush 失败
+  必须返回失败、阻止最终 offset 确认并以非零状态退出。
 - `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由主机账户权限、
   部署隔离和备份策略控制，不通过制造不可读文件解决。
 - 持久化 schema 不做猜测式自动迁移；不兼容输入会阻止启动，避免空状态覆盖原数据。

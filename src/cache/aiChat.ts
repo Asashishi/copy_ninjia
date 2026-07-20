@@ -13,6 +13,8 @@ export const lastInitState: { current: AiInitMessage | null } = { current: null 
 export const latestAiMemories: Map<number, string> = new Map();
 /** 已请求彻底清除记忆的群；用于拒绝失效 Worker 迟到的旧快照。 */
 export const purgedAiMemoryChats: Set<number> = new Set();
+/** Worker 是否仍可接收 invalidate 并回传 memoryDeleted；give-up 后显式关闭。 */
+export const aiChatWorkerState: { available: boolean } = { available: false };
 /** 各白名单贴纸包最新的目录快照镜像（同为序列化 JSON 文本），机制与
  *  latestAiMemories 完全一致（双向崩溃重放的唯一来源），见 aiChat.ts 模块头注。 */
 export const latestStickerCatalogs: Map<string, string> = new Map();

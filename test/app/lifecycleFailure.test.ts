@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { ApplicationLifecycleDependencies } from "../../src/types/lifecycle";
 
 const calls: string[] = [];
 const acquireSingleInstanceLock = mock(async (): Promise<void> => { calls.push("acquireLock"); });
@@ -28,6 +29,9 @@ const flushAiMemory = mock(async (): Promise<FlushResult> => { calls.push("flush
 const terminateDiskIO = mock(async (): Promise<void> => { calls.push("terminateDiskIO"); });
 const terminateAiChat = mock(async (): Promise<void> => { calls.push("terminateAiChat"); });
 const terminateAntiRaid = mock(async (): Promise<void> => { calls.push("terminateAntiRaid"); });
+const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drainAntiRaid"); return "flushed"; });
+const drainReactionQueue = mock(async (): Promise<FlushResult> => { calls.push("drainReaction"); return "flushed"; });
+const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
 const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiMemory"); });
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
 const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
@@ -57,42 +61,48 @@ const runnerSize = mock((): number => 0);
 const runnerHandle = { stop: runnerStop, task: runnerTask, size: runnerSize };
 const runAcknowledgedUpdateBatches = mock((_bot: unknown, _updates: unknown) => runnerHandle);
 
-mock.module("../../src/app/updateRunner", () => ({ runAcknowledgedUpdateBatches }));
-mock.module("../../src/aiChat", () => ({
+const testDependencies = {
+  BOT_TOKEN: "test-token",
+  acquireSingleInstanceLock,
+  bot,
+  cleanupOrphanedTempFiles,
+  drainAntiRaid,
+  drainAvatarUpdates,
+  drainReactionQueue,
   flushAiMemory,
+  flushDiskIO,
+  flushStateToDisk,
+  getAllChatStates,
+  getGlobalCopyState,
+  getReactionConfig,
+  getStickerConfig,
   hydrateAiMemory,
+  hydratePendingVerifications,
   hydrateStickerCatalog,
   initAiChat,
-  terminateAiChat,
-}));
-mock.module("../../src/antiRaid", () => ({ hydratePendingVerifications, initAntiRaid, terminateAntiRaid }));
-mock.module("../../src/commands", () => ({ restoreLuckState }));
-mock.module("../../src/config/reactions", () => ({ getReactionConfig }));
-mock.module("../../src/config/stickers", () => ({ getStickerConfig }));
-mock.module("../../src/infra/chatTitle", () => ({ refreshAllChatTitles }));
-mock.module("../../src/infra/config", () => ({ BOT_TOKEN: "test-token" }));
-mock.module("../../src/infra/diskIO", () => ({ flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO }));
-mock.module("../../src/infra/logger", () => ({
+  initDiskIO,
+  initTelegramClients,
+  initAntiRaid,
+  loadPersistedData,
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
     warn: mock((..._args: unknown[]): void => {}),
     error: loggerError,
   },
-}));
-mock.module("../../src/infra/storage/cleanup", () => ({ cleanupOrphanedTempFiles }));
-mock.module("../../src/infra/storage/instanceLock", () => ({ acquireSingleInstanceLock, releaseSingleInstanceLock }));
-mock.module("../../src/infra/storage/stateStore", () => ({
-  flushStateToDisk,
-  getAllChatStates,
-  getGlobalCopyState,
   loadState,
-}));
-mock.module("../../src/infra/telegram", () => ({ bot, initTelegramClients }));
-mock.module("../../src/libs/sleep", () => ({ sleep }));
-mock.module("../../src/users/senderIdentity", () => ({ seedSenderCache }));
-mock.module("../../src/app/commandMenu", () => ({ registerCommandMenu }));
-mock.module("../../src/app/registerHandlers", () => ({ registerHandlers }));
+  refreshAllChatTitles,
+  registerCommandMenu,
+  registerHandlers,
+  releaseSingleInstanceLock,
+  restoreLuckState,
+  runAcknowledgedUpdateBatches,
+  seedSenderCache,
+  sleep,
+  terminateAiChat,
+  terminateAntiRaid,
+  terminateDiskIO,
+} as unknown as ApplicationLifecycleDependencies;
 
 const { ApplicationLifecycle } = await import("../../src/app/lifecycle");
 
@@ -119,6 +129,9 @@ beforeEach(() => {
     terminateDiskIO,
     terminateAiChat,
     terminateAntiRaid,
+    drainAntiRaid,
+    drainReactionQueue,
+    drainAvatarUpdates,
     hydrateAiMemory,
     hydrateStickerCatalog,
     initAiChat,
@@ -158,7 +171,7 @@ describe("应用启动失败与退出清理", () => {
     getStickerConfig.mockImplementationOnce((): never => { throw new Error("invalid stickers.json"); });
     const beforeSigint: number = process.listenerCount("SIGINT");
     const beforeSigterm: number = process.listenerCount("SIGTERM");
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run();
     await lifecycle.dispose();
@@ -176,7 +189,7 @@ describe("应用启动失败与退出清理", () => {
   test("轮询任务异常后执行完整持久化顺序并只释放一次锁", async () => {
     runnerTask.mockRejectedValueOnce(new Error("polling failed"));
     copiedUser = { id: 7 };
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run();
     await lifecycle.dispose();
@@ -198,7 +211,7 @@ describe("应用启动失败与退出清理", () => {
   });
 
   test("主动 dispose 会先停止仍在运行的 runner，再排空 AI、磁盘和状态", async () => {
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     await lifecycle.dispose();
@@ -215,7 +228,7 @@ describe("应用启动失败与退出清理", () => {
   });
 
   test("Disk I/O 运行时 fatal 会设置非零退出码并停止继续取 update", async () => {
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     diskIOFatalHandler!(new Error("runtime recovery failed"));
@@ -232,7 +245,7 @@ describe("应用启动失败与退出清理", () => {
 
   test("标题维护永不结束时 dispose 仍在预算内终止 Worker，并保留实例锁", async () => {
     refreshAllChatTitles.mockImplementationOnce(() => new Promise<void>(() => {}));
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     await lifecycle.dispose({ aiMemoryMs: 10, diskIOMs: 10, stateMs: 10, maintenanceMs: 1 });
@@ -246,7 +259,7 @@ describe("应用启动失败与退出清理", () => {
 
   test("state writer 超时且可能仍会 rename 时不释放实例锁", async () => {
     flushStateToDisk.mockResolvedValueOnce("timedOut");
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     await lifecycle.dispose({ aiMemoryMs: 10, diskIOMs: 10, stateMs: 1, maintenanceMs: 10 });
@@ -258,7 +271,7 @@ describe("应用启动失败与退出清理", () => {
 
   test("state writer 明确失败时也保留实例锁，不能假设后台重试已经停止", async () => {
     flushStateToDisk.mockResolvedValueOnce("failed");
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     await lifecycle.dispose({ aiMemoryMs: 10, diskIOMs: 10, stateMs: 1, maintenanceMs: 10 });
@@ -267,10 +280,22 @@ describe("应用启动失败与退出清理", () => {
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("state=failed"));
   });
 
+  test("Disk flush 明确失败时设置非零退出码并保留实例锁", async () => {
+    flushDiskIO.mockResolvedValue("failed");
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.dispose({ aiMemoryMs: 10, diskIOMs: 10, stateMs: 10, maintenanceMs: 10 });
+
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("disk=failed"));
+  });
+
   test("正常 wait 会等待 runner 排空并确认最后 update offset", async () => {
     runnerSize.mockReturnValueOnce(1).mockReturnValue(0);
     lastSeenUpdateId = 321;
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     await lifecycle.wait();
@@ -287,7 +312,7 @@ describe("应用启动失败与退出清理", () => {
   test("确认前任一持久化边界失败时不确认 update offset", async () => {
     lastSeenUpdateId = 321;
     flushDiskIO.mockResolvedValueOnce("failed");
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     await lifecycle.wait();
@@ -304,7 +329,7 @@ describe("应用启动失败与退出清理", () => {
     runnerSize.mockReturnValue(2);
     sleep.mockImplementation(async (): Promise<void> => { now += 5_000; });
     lastSeenUpdateId = 321;
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
 
     try {
       await lifecycle.init();
@@ -326,7 +351,7 @@ describe("应用启动失败与退出清理", () => {
     runnerSize.mockReturnValue(1);
     sleep.mockImplementation(async (): Promise<void> => { now += 5_000; });
     lastSeenUpdateId = 900;
-    const lifecycle = new ApplicationLifecycle();
+    const lifecycle = new ApplicationLifecycle(testDependencies);
 
     try {
       await lifecycle.init();

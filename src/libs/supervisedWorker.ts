@@ -37,8 +37,8 @@ export interface SupervisedWorkerOptions<TMessage, TEvent> {
 export interface SupervisedWorkerHandle<TMessage> {
   /** 显式启动 Worker；重复调用幂等。 */
   init: () => void;
-  /** 只向已初始化且仍可用的 Worker 投递；初始化前与自愈放弃后静默丢弃。 */
-  post: (message: TMessage) => void;
+  /** 只向已初始化且仍可用的 Worker 投递；成功返回 true，不可用时返回 false。 */
+  post: (message: TMessage) => boolean;
   /** 停止当前实例并阻止迟到 onerror 触发自愈；重复调用幂等。 */
   terminate: () => Promise<void>;
 }
@@ -103,8 +103,10 @@ export function superviseWorker<TMessage, TEvent = never>(
 
   return {
     init,
-    post: (message: TMessage): void => {
-      worker?.postMessage(message);
+    post: (message: TMessage): boolean => {
+      if (worker === null) return false;
+      worker.postMessage(message);
+      return true;
     },
     terminate: (): Promise<void> => {
       const current: Worker | null = worker;

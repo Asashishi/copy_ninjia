@@ -42,6 +42,9 @@ export function runAcknowledgedUpdateBatches(
       } catch (handlerError: unknown) {
         logger.error("Bot update error handler failed:", handlerError);
       }
+      // 处理失败的 update 不能被下一轮 getUpdates 确认；让整批失败并交给
+      // 应用生命周期停止进程，由 Telegram 在重启后重新投递。
+      throw error;
     } finally {
       activeUpdates--;
     }

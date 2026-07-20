@@ -1,14 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
-
-/**
- * 用空的 diskIO 桥隔离 storage/logger 的进程级状态。mock.module 必须在真实
- * import 前调用，所以下面用动态 import 拿被替换依赖后的版本。
- */
-mock.module("../../src/infra/diskIO", () => ({
-  postDiskIO: mock((..._args: unknown[]): void => {}),
-  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
-  relayLogMessage: mock((..._args: unknown[]): void => {}),
-}));
+import { describe, expect, test } from "bun:test";
 
 const { getOrCreateChatState } = await import("../../src/infra/storage");
 const {

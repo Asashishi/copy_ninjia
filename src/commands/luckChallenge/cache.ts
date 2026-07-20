@@ -6,12 +6,12 @@ import {
   pendingLuckDraws,
 } from "../../cache/luckChallenge";
 import { LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../consts/luckChallenge";
-import { ensureLuckReceiptSecret, onDiskIORespawn, postDiskIO } from "../../infra/diskIO";
 import { logger } from "../../infra/logger";
 import { getTokyoDateKey } from "../../libs/time";
 import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw, LuckTier } from "../../types/luckChallenge";
 import { deriveLuckDraw } from "./draw";
+import { ensureLuckReceiptSecret, onDiskIORespawn, postDiskIO } from "./persistence";
 
 /** 进程内是否发生过跨东京零点的日切换（即 adoptLuckSecret 清空过前一天的
  *  pending）。见 promotePendingDraw：切换后 pending 未命中不再允许重建派生。 */

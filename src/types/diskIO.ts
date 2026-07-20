@@ -151,6 +151,12 @@ export interface DiskFlushReply {
   flushedId: number;
 }
 
+/** diskIOWorker -> 主线程：至少一个领域仍 dirty 或本轮写入失败。 */
+export interface DiskFlushFailedReply {
+  type: "flushFailed";
+  flushedId: number;
+}
+
 /** diskIOWorker -> 主线程：一条验证变化已经进入当天 JSON 文件。 */
 export interface VerificationPersistedReply {
   type: "verificationPersisted";
@@ -161,4 +167,4 @@ export interface VerificationPersistedReply {
   deleted: boolean;
 }
 
-export type DiskIOReply = LoadedReply | LuckSecretReply | DiskFlushReply | VerificationPersistedReply;
+export type DiskIOReply = LoadedReply | LuckSecretReply | DiskFlushReply | DiskFlushFailedReply | VerificationPersistedReply;

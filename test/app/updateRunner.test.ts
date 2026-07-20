@@ -75,4 +75,24 @@ describe("acknowledgement-safe update runner", () => {
     expect(runner.size()).toBe(0);
     expect(fetchOffsets).toEqual([0]);
   });
+
+  test("middleware 失败会终止批次，绝不通过下一次 fetch 确认失败 update", async () => {
+    const fetchOffsets: number[] = [];
+    let handledErrors: number = 0;
+    const fakeBot = {
+      api: {
+        getUpdates: async (args: { offset: number }): Promise<Update[]> => {
+          fetchOffsets.push(args.offset);
+          return [{ update_id: 30 }] as Update[];
+        },
+      },
+      handleUpdate: async (): Promise<void> => { throw new Error("durability barrier failed"); },
+      errorHandler: (): void => { handledErrors++; },
+    };
+
+    const runner = runAcknowledgedUpdateBatches(fakeBot as unknown as Bot, ["message"]);
+    await expect(runner.task()).rejects.toThrow("durability barrier failed");
+    expect(handledErrors).toBe(1);
+    expect(fetchOffsets).toEqual([0]);
+  });
 });

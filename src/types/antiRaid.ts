@@ -172,6 +172,12 @@ export interface LockdownPersistedMessage {
   intentId: number;
 }
 
+/** 主线程 -> Worker：FIFO mailbox barrier；此前消息完成同步状态转移后回执。 */
+export interface AntiRaidBarrierMessage {
+  type: "barrier";
+  barrierId: number;
+}
+
 export type AntiRaidWorkerMessage =
   | NewMemberMessage
   | MemberLeftMessage
@@ -182,7 +188,8 @@ export type AntiRaidWorkerMessage =
   | AdoptVerificationsMessage
   | VerificationPersistedMessage
   | LockdownPersistedMessage
-  | AdminsChangedMessage;
+  | AdminsChangedMessage
+  | AntiRaidBarrierMessage;
 
 /** Worker -> 主线程：写入 applying/active/restoring 的持久化阶段。 */
 export interface LockdownEvent {
@@ -215,4 +222,15 @@ export interface VerificationDeleteEvent {
   revision: number;
 }
 
-export type AntiRaidWorkerEvent = LockdownEvent | UnlockEvent | VerificationUpsertEvent | VerificationDeleteEvent;
+/** Worker -> 主线程：barrier 之前的消息均已完成同步路由和镜像发布。 */
+export interface AntiRaidBarrierCompleteEvent {
+  type: "barrierComplete";
+  barrierId: number;
+}
+
+export type AntiRaidWorkerEvent =
+  | LockdownEvent
+  | UnlockEvent
+  | VerificationUpsertEvent
+  | VerificationDeleteEvent
+  | AntiRaidBarrierCompleteEvent;

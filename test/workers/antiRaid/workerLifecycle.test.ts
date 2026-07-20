@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AntiRaidWorkerMessage } from "../../../src/types";
+import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../src/types";
 
 const calls: string[] = [];
-const workerSelf: { onmessage: ((event: MessageEvent<AntiRaidWorkerMessage>) => void) | null } = { onmessage: null };
+const workerEvents: AntiRaidWorkerEvent[] = [];
+const workerSelf: {
+  onmessage: ((event: MessageEvent<AntiRaidWorkerMessage>) => void) | null;
+  postMessage: (event: AntiRaidWorkerEvent) => void;
+} = {
+  onmessage: null,
+  postMessage: (event) => { workerEvents.push(event); },
+};
 Object.defineProperty(globalThis, "self", { configurable: true, value: workerSelf });
 
 mock.module("../../../src/workers/antiRaid/verificationRuntime", () => ({
@@ -25,7 +32,7 @@ mock.module("../../../src/workers/antiRaid/adminCache", () => ({
 const sweepRecentComments = mock((_now: number): number => 0);
 mock.module("../../../src/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
 const initTelegramClients = mock((): void => {});
-mock.module("../../../src/infra/telegram", () => ({ initTelegramClients }));
+mock.module("../../../src/infra/telegram/client", () => ({ initTelegramClients }));
 
 const worker = await import("../../../src/workers/antiRaidWorker");
 const {
@@ -42,6 +49,7 @@ const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTI
 beforeEach(() => {
   worker.stopAntiRaidWorker();
   calls.length = 0;
+  workerEvents.length = 0;
   initTelegramClients.mockClear();
   sweepRecentComments.mockClear();
   adminFetches.clear();
@@ -69,12 +77,14 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "adoptVerifications", generation: 1, verifications: [] },
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isAdmin: true },
+      { type: "barrier", barrierId: 99 },
     ];
     for (const message of messages) workerSelf.onmessage!({ data: message } as MessageEvent<AntiRaidWorkerMessage>);
     expect(calls).toEqual([
       "join", "left", "deactivateVerification", "deactivateLockdown", "message", "callback",
       "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
     ]);
+    expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();

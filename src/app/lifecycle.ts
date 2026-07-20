@@ -1,8 +1,3 @@
-import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, terminateAiChat } from "../aiChat";
-import { hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
-import { restoreLuckState } from "../commands";
-import { getReactionConfig } from "../config/reactions";
-import { getStickerConfig } from "../config/stickers";
 import {
   EMERGENCY_FLUSH_TIMEOUTS,
   NORMAL_FLUSH_TIMEOUTS,
@@ -12,20 +7,12 @@ import {
   type FlushResult,
 } from "../consts/lifecycle";
 import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
-import { refreshAllChatTitles } from "../infra/chatTitle";
-import { BOT_TOKEN } from "../infra/config";
-import { flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO, type LoadedData } from "../infra/diskIO";
-import { logger } from "../infra/logger";
-import { cleanupOrphanedTempFiles } from "../infra/storage/cleanup";
-import { acquireSingleInstanceLock, releaseSingleInstanceLock } from "../infra/storage/instanceLock";
-import { flushStateToDisk, getAllChatStates, getGlobalCopyState, loadState } from "../infra/storage/stateStore";
-import { bot, initTelegramClients } from "../infra/telegram";
-import { sleep } from "../libs/sleep";
 import type { CachedUser } from "../types/chatState";
-import { seedSenderCache } from "../users/senderIdentity";
-import { registerCommandMenu } from "./commandMenu";
-import { registerHandlers, type HandlerRegistration } from "./registerHandlers";
-import { runAcknowledgedUpdateBatches, type AcknowledgedUpdateRunner } from "./updateRunner";
+import type { LoadedData } from "../infra/diskIO";
+import type { ApplicationLifecycleDependencies } from "../types/lifecycle";
+import type { HandlerRegistration } from "./registerHandlers";
+import type { AcknowledgedUpdateRunner } from "./updateRunner";
+import { lifecycleDependencies } from "./lifecycleDependencies";
 
 /**
  * 持有应用从取得单实例锁到释放锁的完整生命周期。所有会联网、创建 Worker、
@@ -34,6 +21,8 @@ import { runAcknowledgedUpdateBatches, type AcknowledgedUpdateRunner } from "./u
  * @see ../../docs/architecture.md
  */
 export class ApplicationLifecycle {
+  constructor(private readonly dependencies: ApplicationLifecycleDependencies = lifecycleDependencies) {}
+
   private lockAcquired: boolean = false;
   private diskIOInitialized: boolean = false;
   private aiChatInitialized: boolean = false;
@@ -51,26 +40,26 @@ export class ApplicationLifecycle {
   private readonly stopOnSignal = (): void => {
     this.stopRequested = true;
     this.runner?.stop().catch((error: unknown) => {
-      logger.error("Error stopping runner:", error);
+      this.dependencies.logger.error("Error stopping runner:", error);
     });
   };
 
   private readonly handleUncaughtException = (error: unknown): void => {
-    logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
+    this.dependencies.logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
     this.exitAfterEmergencyDispose();
   };
 
   private readonly handleUnhandledRejection = (reason: unknown): void => {
-    logger.error("Unhandled rejection, attempting a best-effort flush before exit:", reason);
+    this.dependencies.logger.error("Unhandled rejection, attempting a best-effort flush before exit:", reason);
     this.exitAfterEmergencyDispose();
   };
 
   private readonly handleDiskIOFatal = (error: Error): void => {
-    logger.error("Persistence became unavailable at runtime; stopping for a supervised restart:", error);
+    this.dependencies.logger.error("Persistence became unavailable at runtime; stopping for a supervised restart:", error);
     process.exitCode = 1;
     this.stopRequested = true;
     this.runner?.stop().catch((stopError: unknown) => {
-      logger.error("Error stopping runner after persistence failure:", stopError);
+      this.dependencies.logger.error("Error stopping runner after persistence failure:", stopError);
     });
   };
 
@@ -78,52 +67,55 @@ export class ApplicationLifecycle {
   async init(): Promise<void> {
     if (this.runner !== null || this.lockAcquired) throw new Error("Application lifecycle is already initialized");
 
-    await acquireSingleInstanceLock(BOT_TOKEN);
+    await this.dependencies.acquireSingleInstanceLock(this.dependencies.BOT_TOKEN);
     this.lockAcquired = true;
 
     // 配置文件属于不可信部署输入：持锁后、启动 Worker/联网前统一校验，失败时
     // 由 finally 释放实例锁；各 Worker 在自己的 isolate 中复用同一解析器。
-    getStickerConfig();
-    getReactionConfig();
-    initTelegramClients();
-    initDiskIO({ onFatal: this.handleDiskIOFatal });
+    this.dependencies.getStickerConfig();
+    this.dependencies.getReactionConfig();
+    this.dependencies.initTelegramClients();
+    this.dependencies.initDiskIO({ onFatal: this.handleDiskIOFatal });
     this.diskIOInitialized = true;
-    await cleanupOrphanedTempFiles();
-    await loadState();
+    await this.dependencies.cleanupOrphanedTempFiles();
+    await this.dependencies.loadState();
 
     // 这是后台维护任务而非启动阻塞项，但必须被追踪：退出最终快照前会等待它，
     // 防止 refresh 在 state.json flush 后才补写群名。
     this.chatTitleRefreshSettled = false;
-    this.chatTitleRefreshTask = refreshAllChatTitles()
+    this.chatTitleRefreshTask = this.dependencies.refreshAllChatTitles()
       .catch((error: unknown) => {
-        logger.error("Failed to complete chat title refresh:", error);
+        this.dependencies.logger.error("Failed to complete chat title refresh:", error);
       })
       .finally(() => { this.chatTitleRefreshSettled = true; });
 
-    const loaded: LoadedData = await loadPersistedData();
-    const restoredCopiedUser: CachedUser | null = getGlobalCopyState().copiedUser;
-    if (restoredCopiedUser) seedSenderCache(restoredCopiedUser);
+    const loaded: LoadedData = await this.dependencies.loadPersistedData();
+    const restoredCopiedUser: CachedUser | null = this.dependencies.getGlobalCopyState().copiedUser;
+    if (restoredCopiedUser) this.dependencies.seedSenderCache(restoredCopiedUser);
 
-    this.handlers = registerHandlers(bot);
-    await registerCommandMenu(bot);
-    await bot.init();
+    this.handlers = this.dependencies.registerHandlers(this.dependencies.bot);
+    await this.dependencies.registerCommandMenu(this.dependencies.bot);
+    await this.dependencies.bot.init();
 
-    initAiChat(bot.botInfo);
+    this.dependencies.initAiChat(this.dependencies.bot.botInfo);
     this.aiChatInitialized = true;
-    hydrateAiMemory(loaded.aiMemories);
-    hydrateStickerCatalog(loaded.stickerCatalogs);
-    restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
-    hydratePendingVerifications(loaded.verifications);
-    initAntiRaid();
+    this.dependencies.hydrateAiMemory(loaded.aiMemories);
+    this.dependencies.hydrateStickerCatalog(loaded.stickerCatalogs);
+    this.dependencies.restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
+    this.dependencies.hydratePendingVerifications(loaded.verifications);
+    this.dependencies.initAntiRaid();
     this.antiRaidInitialized = true;
 
-    logger.log(
-      `Bot started as @${bot.botInfo.username}. ` +
-      `Restored state for ${getAllChatStates().size} chat(s)` +
+    this.dependencies.logger.log(
+      `Bot started as @${this.dependencies.bot.botInfo.username}. ` +
+      `Restored state for ${this.dependencies.getAllChatStates().size} chat(s)` +
       (restoredCopiedUser ? `, currently copying ${restoredCopiedUser.id}.` : ".")
     );
 
-    this.runner = runAcknowledgedUpdateBatches(bot, TELEGRAM_ALLOWED_UPDATES);
+    this.runner = this.dependencies.runAcknowledgedUpdateBatches(
+      this.dependencies.bot,
+      TELEGRAM_ALLOWED_UPDATES
+    );
     if (this.stopRequested) this.stopOnSignal();
   }
 
@@ -148,9 +140,9 @@ export class ApplicationLifecycle {
     const lastSeenUpdateId: number = this.handlers?.getLastSeenUpdateId() ?? 0;
     if (runnerDrained && maintenanceSettled && persistenceFlushed && lastSeenUpdateId > 0) {
       try {
-        await bot.api.getUpdates({ offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 });
+        await this.dependencies.bot.api.getUpdates({ offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 });
       } catch (error: unknown) {
-        logger.error("Failed to confirm update offset on shutdown:", error);
+        this.dependencies.logger.error("Failed to confirm update offset on shutdown:", error);
       }
     }
   }
@@ -160,42 +152,71 @@ export class ApplicationLifecycle {
     this.disposePromise ??= (async (): Promise<void> => {
       if (this.runner !== null && !this.runnerTaskSettled) {
         await this.runner.stop().catch((error: unknown) => {
-          logger.error("Error stopping runner during disposal:", error);
+          this.dependencies.logger.error("Error stopping runner during disposal:", error);
         });
       }
+      const runnerDrained: boolean = this.runner === null
+        ? true
+        : await this.waitForRunnerDrain(this.runner);
       const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(timeouts.maintenanceMs);
+      const avatarResult: FlushResult = await this.dependencies.drainAvatarUpdates(timeouts.maintenanceMs);
+      const reactionResult: FlushResult = await this.dependencies.drainReactionQueue(timeouts.maintenanceMs);
+      const antiRaidResult: FlushResult = this.antiRaidInitialized
+        ? await this.dependencies.drainAntiRaid(timeouts.maintenanceMs)
+        : "flushed";
       let aiResult: FlushResult = "flushed";
       if (this.aiChatInitialized) {
-        aiResult = await flushAiMemory(timeouts.aiMemoryMs);
-        await terminateAiChat();
+        aiResult = await this.dependencies.flushAiMemory(timeouts.aiMemoryMs);
+        await this.dependencies.terminateAiChat();
         this.aiChatInitialized = false;
-      }
-      if (this.antiRaidInitialized) {
-        await terminateAntiRaid();
-        this.antiRaidInitialized = false;
       }
       let diskResult: FlushResult = "flushed";
       if (this.diskIOInitialized) {
-        diskResult = await flushDiskIO(timeouts.diskIOMs);
-        await terminateDiskIO();
+        diskResult = await this.dependencies.flushDiskIO(timeouts.diskIOMs);
+      }
+      if (this.antiRaidInitialized) {
+        await this.dependencies.terminateAntiRaid();
+        this.antiRaidInitialized = false;
+      }
+      if (this.diskIOInitialized) {
+        await this.dependencies.terminateDiskIO();
         this.diskIOInitialized = false;
       }
       const stateResult: FlushResult = this.lockAcquired
-        ? await flushStateToDisk(timeouts.stateMs, true)
+        ? await this.dependencies.flushStateToDisk(timeouts.stateMs, true)
         : "flushed";
-      if (aiResult !== "flushed" || diskResult !== "flushed" || stateResult !== "flushed") {
-        logger.error(
-          `Shutdown flush results: ai=${aiResult}, disk=${diskResult}, state=${stateResult}.`
+      if (
+        !runnerDrained ||
+        avatarResult !== "flushed" ||
+        reactionResult !== "flushed" ||
+        antiRaidResult !== "flushed" ||
+        aiResult !== "flushed" ||
+        diskResult !== "flushed" ||
+        stateResult !== "flushed"
+      ) {
+        process.exitCode = 1;
+        this.dependencies.logger.error(
+          `Shutdown drain/flush results: runner=${runnerDrained}, avatar=${avatarResult}, reaction=${reactionResult}, ` +
+          `antiRaid=${antiRaidResult}, ai=${aiResult}, disk=${diskResult}, state=${stateResult}.`
         );
       }
       if (!this.lockAcquired) return;
-      if (!maintenanceSettled || stateResult !== "flushed") {
-        logger.error(
-          "Retaining the single-instance lock until process exit because a maintenance task or state writer may still mutate shared files."
+      if (
+        !runnerDrained ||
+        !maintenanceSettled ||
+        avatarResult !== "flushed" ||
+        reactionResult !== "flushed" ||
+        antiRaidResult !== "flushed" ||
+        aiResult !== "flushed" ||
+        diskResult !== "flushed" ||
+        stateResult !== "flushed"
+      ) {
+        this.dependencies.logger.error(
+          "Retaining the single-instance lock until process exit because a task did not drain or persistence did not flush."
         );
         return;
       }
-      await releaseSingleInstanceLock(BOT_TOKEN);
+      await this.dependencies.releaseSingleInstanceLock(this.dependencies.BOT_TOKEN);
       this.lockAcquired = false;
     })();
     return this.disposePromise;
@@ -206,7 +227,7 @@ export class ApplicationLifecycle {
     this.installProcessHandlers();
     return this.runMain()
       .catch((error: unknown) => {
-        logger.error("Unhandled error in bot main runner:", error);
+        this.dependencies.logger.error("Unhandled error in bot main runner:", error);
         process.exitCode = 1;
       })
       .finally(async (): Promise<void> => {
@@ -252,10 +273,10 @@ export class ApplicationLifecycle {
   ): Promise<boolean> {
     const deadline: number = Date.now() + timeoutMs;
     while (runner.size() > 0 && Date.now() < deadline) {
-      await sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
+      await this.dependencies.sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
     }
     if (runner.size() > 0) {
-      logger.error(
+      this.dependencies.logger.error(
         `Shutdown proceeding with ${runner.size()} update(s) still being processed after waiting ${timeoutMs}ms; ` +
         "their Telegram offset will not be confirmed."
       );
@@ -268,7 +289,7 @@ export class ApplicationLifecycle {
     const task: Promise<void> | null = this.chatTitleRefreshTask;
     if (task === null || this.chatTitleRefreshSettled) return true;
     if (timeoutMs <= 0) {
-      logger.error("Skipping unfinished chat title refresh during emergency disposal.");
+      this.dependencies.logger.error("Skipping unfinished chat title refresh during emergency disposal.");
       return false;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -279,23 +300,39 @@ export class ApplicationLifecycle {
       }),
     ]);
     if (timer !== undefined) clearTimeout(timer);
-    if (!settled) logger.error(`Chat title refresh did not settle within ${timeoutMs}ms.`);
+    if (!settled) this.dependencies.logger.error(`Chat title refresh did not settle within ${timeoutMs}ms.`);
     return settled;
   }
 
   private async flushAllToDisk(timeouts: FlushTimeouts): Promise<boolean> {
     if (!this.lockAcquired) return false;
+    // Worker mailbox 与主线程后台队列必须先归零；随后 flush 才覆盖它们发布的
+    // 最后一份镜像，不能在 flush 后再让旧任务补写。
+    const avatarResult: FlushResult = await this.dependencies.drainAvatarUpdates(timeouts.maintenanceMs);
+    const reactionResult: FlushResult = await this.dependencies.drainReactionQueue(timeouts.maintenanceMs);
+    const antiRaidResult: FlushResult = this.antiRaidInitialized
+      ? await this.dependencies.drainAntiRaid(timeouts.maintenanceMs)
+      : "flushed";
     // AI memory 必须先回传到 diskIOWorker，再 flush 该 Worker。
     const aiResult: FlushResult = this.aiChatInitialized
-      ? await flushAiMemory(timeouts.aiMemoryMs)
+      ? await this.dependencies.flushAiMemory(timeouts.aiMemoryMs)
       : "flushed";
     const diskResult: FlushResult = this.diskIOInitialized
-      ? await flushDiskIO(timeouts.diskIOMs)
+      ? await this.dependencies.flushDiskIO(timeouts.diskIOMs)
       : "flushed";
-    const stateResult: FlushResult = await flushStateToDisk(timeouts.stateMs);
-    if (aiResult !== "flushed" || diskResult !== "flushed" || stateResult !== "flushed") {
-      logger.error(
-        `Pre-confirmation flush results: ai=${aiResult}, disk=${diskResult}, state=${stateResult}; ` +
+    const stateResult: FlushResult = await this.dependencies.flushStateToDisk(timeouts.stateMs);
+    if (
+      avatarResult !== "flushed" ||
+      reactionResult !== "flushed" ||
+      antiRaidResult !== "flushed" ||
+      aiResult !== "flushed" ||
+      diskResult !== "flushed" ||
+      stateResult !== "flushed"
+    ) {
+      process.exitCode = 1;
+      this.dependencies.logger.error(
+        `Pre-confirmation drain/flush results: avatar=${avatarResult}, reaction=${reactionResult}, antiRaid=${antiRaidResult}, ` +
+        `ai=${aiResult}, disk=${diskResult}, state=${stateResult}; ` +
         "the final Telegram update offset will not be confirmed."
       );
       return false;

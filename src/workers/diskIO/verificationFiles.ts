@@ -1,8 +1,8 @@
 /**
  * Anti-Raid 待验证状态的按日增量 JSON。热路径完全复用 appendOnlyDayFile：
  * 顶层 key 是 `chatId:userId`，upsert 追加完整快照；普通变化按 key 合并，
- * 终结时立即收敛为 active 快照，不保留已经失效的重复历史。其余历史达到
- * 阈值时收敛；东京日期切换时先写新日 active 快照，再删除旧日文件。
+ * 终结追加 durable tombstone；累计历史达到条数/字节阈值时才收敛为 active
+ * 快照。东京日期切换时先写新日 active 快照，再删除旧日文件。
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
@@ -316,7 +316,7 @@ export function handleVerificationUpsert({
   }
 }
 
-/** 终结清掉同 key 缓冲 upsert、立即收敛 active 快照并回执。 */
+/** 终结清掉同 key 缓冲 upsert、立即追加 durable tombstone 并回执。 */
 export function handleVerificationDelete({
   msg,
   reply,
@@ -339,12 +339,12 @@ export function handleVerificationDelete({
   flushVerificationChanges(reply, dir, day);
 }
 
-/** 批量追加本窗口最终变化；含终结或预计越过历史阈值时原子收敛 active 镜像。 */
+/** 批量追加本窗口最终变化；仅在历史越过阈值时原子收敛 active 镜像。 */
 export function flushVerificationChanges(
   reply: ReplySink,
   dir: string = VERIFICATION_MEMORY_DIR,
   day: string = getTokyoDateKey()
-): void {
+): boolean {
   if (verificationFlushTimer.timer !== null) {
     clearTimeout(verificationFlushTimer.timer);
     verificationFlushTimer.timer = null;
@@ -354,9 +354,9 @@ export function flushVerificationChanges(
     mkdirSync(dir, { recursive: true });
     if (verificationFileState.current?.day !== day) {
       rolloverVerificationDay(day, reply, dir);
-      return;
+      return true;
     }
-    if (verificationPendingChanges.size === 0) return;
+    if (verificationPendingChanges.size === 0) return true;
 
     const changes: [string, VerificationFileChange][] = [...verificationPendingChanges.entries()];
     const chunk: string = changes.map(([key, change]) =>
@@ -364,13 +364,12 @@ export function flushVerificationChanges(
     ).join(",\n");
     const appendedBytes: number = Buffer.byteLength(chunk) + (verificationFileState.current.empty ? 4 : 2);
     if (
-      changes.some(([, change]) => change.value === null) ||
       verificationFileState.appendedEntries + changes.length >= VERIFICATION_FILE_COMPACT_ENTRIES ||
       verificationFileState.appendedBytes + appendedBytes >= VERIFICATION_FILE_COMPACT_BYTES
     ) {
       compactVerificationDay(day, dir);
       acknowledge(changes, reply);
-      return;
+      return true;
     }
 
     appendToDayFile({
@@ -382,9 +381,11 @@ export function flushVerificationChanges(
     verificationFileState.appendedEntries += changes.length;
     verificationFileState.appendedBytes += appendedBytes;
     acknowledge(changes, reply);
+    return true;
   } catch (error: unknown) {
     verificationFileState.current = null;
     console.error("[diskIOWorker] failed to append pending verification JSON:", error);
     scheduleVerificationFlush(reply, dir);
+    return false;
   }
 }

@@ -54,7 +54,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(luckPendingAppends.length).toBe(1);
     expect(luckFlushTimer.timer).not.toBeNull();
 
-    flushLuckAppends();
+    expect(flushLuckAppends()).toBeTrue();
     expect(luckPendingAppends.length).toBe(0);
     expect(luckFlushTimer.timer).toBeNull();
     expect(readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
@@ -62,7 +62,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
 
   test("同 key 同值重放（Worker 崩溃重建后的全量重放）不重复入缓冲", () => {
     handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
-    flushLuckAppends();
+    expect(flushLuckAppends()).toBeTrue();
 
     handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
     expect(luckPendingAppends.length).toBe(0);
@@ -105,14 +105,14 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     // 把当天文件位置占成一个目录，让 openDayFile 的 readFileSync 抛 EISDIR
     mkdirSync(join(luckDir, `${DAY}.json`), { recursive: true });
     handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
-    flushLuckAppends();
+    expect(flushLuckAppends()).toBeFalse();
 
     expect(luckPendingAppends.length).toBe(1); // 失败保留，等下轮重试
     expect(luckFlushTimer.timer).not.toBeNull(); // 重试不依赖下一条消息，定时器已重排
     expect(luckFileState.current).toBeNull(); // 下次重新探测/校验文件
 
     rmSync(join(luckDir, `${DAY}.json`), { recursive: true, force: true });
-    flushLuckAppends();
+    expect(flushLuckAppends()).toBeTrue();
     expect(luckPendingAppends.length).toBe(0);
     expect(readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
   });

@@ -10,7 +10,7 @@
  * 打开/探测/追加/损坏修复。
  */
 
-import { chmodSync, closeSync, existsSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
@@ -37,6 +37,7 @@ export interface SyncWriteRequest {
 }
 
 export type SyncBufferWriter = (request: SyncWriteRequest) => number;
+export type SyncFile = (fd: number) => void;
 
 const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }) =>
   writeSync(fd, buffer, offset, length, position);
@@ -165,6 +166,7 @@ export function appendToDayFile({
   chunk,
   mode,
   write = nodeWriteBuffer,
+  sync = fsyncSync,
 }: {
   dir: string;
   state: DayFileState;
@@ -172,6 +174,8 @@ export function appendToDayFile({
   mode?: number;
   /** 仅供故障注入测试；生产使用 node:fs writeSync。 */
   write?: SyncBufferWriter;
+  /** 仅供故障注入测试；生产在成功回执前 fsync 当前批次。 */
+  sync?: SyncFile;
 }): void {
   const path: string = join(dir, `${state.day}.json`);
   if (state.empty) {
@@ -188,6 +192,9 @@ export function appendToDayFile({
   let failure: unknown = null;
   try {
     writeBufferFully(fd, data, { position: state.size - 2, write });
+    // write/close 只保证字节进入内核页缓存；验证 persisted 与统一 flushed
+    // 回执承诺的是断电后仍可恢复，因此每个已合并批次在成功返回前只 sync 一次。
+    sync(fd);
   } catch (error: unknown) {
     failure = error;
   }

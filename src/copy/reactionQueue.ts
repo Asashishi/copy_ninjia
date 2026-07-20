@@ -4,7 +4,8 @@ import { bot, logApiError } from "../infra/telegram";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { sleep } from "../libs/sleep";
 import { DEFAULT_RETRY_AFTER_SECONDS, MAX_ATTEMPTS, MAX_PENDING_TASKS_PER_CHAT } from "../consts/reactionQueue";
-import { chatQueues, consumingChats, pendingTasks } from "../cache/reactionQueue";
+import { chatQueues, consumingChats, pendingReactionWaiters, pendingTasks, reactionDrainWaiters } from "../cache/reactionQueue";
+import type { FlushResult } from "../consts/lifecycle";
 import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
 
 /**
@@ -29,6 +30,7 @@ import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
  * @param reactions 要应用的反应（数组最多 1 个，见 handleReaction 中的选择逻辑）。
  * @param updateId 产生本次调用的更新的 update_id（单调递增），用于新旧判断。
  * @param reactedAtUnix 目标点下反应的时刻（见 ReactionTask.reactedAtUnix），用于延迟统计。
+ * @returns 此版本已经应用、被更新版本覆盖或按硬顶策略显式丢弃时结算。
  */
 export function enqueueReaction({
   chatId,
@@ -42,14 +44,22 @@ export function enqueueReaction({
   reactions: CopyableReaction[];
   updateId: number;
   reactedAtUnix: number;
-}): void {
+}): Promise<void> {
   const key: string = `${chatId}:${messageId}`;
+  const settled: Promise<void> = new Promise((resolve) => {
+    let waiters = pendingReactionWaiters.get(key);
+    if (waiters === undefined) {
+      waiters = new Set();
+      pendingReactionWaiters.set(key, waiters);
+    }
+    waiters.add(resolve);
+  });
   const existing: ReactionTask | undefined = pendingTasks.get(key);
   if (existing) {
     // reaction 更新是无约束并发处理的，入队顺序不保证等于真实顺序；date 只有
     // 秒级精度，这里用单调递增的 update_id 判断新旧，旧状态不许覆盖新状态。
     if (updateId < existing.updateId) {
-      return;
+      return settled;
     }
   } else {
     let order: LinkedQueue<string> | undefined = chatQueues.get(chatId);
@@ -62,7 +72,10 @@ export function enqueueReaction({
     // 保留较新的用户动作。当前正在处理的 key 已从 order 取出，不会被误删。
     if (order.size >= MAX_PENDING_TASKS_PER_CHAT) {
       const droppedKey: string | undefined = order.shift();
-      if (droppedKey !== undefined) pendingTasks.delete(droppedKey);
+      if (droppedKey !== undefined) {
+        pendingTasks.delete(droppedKey);
+        settleReactionKey(droppedKey);
+      }
     }
     order.push(key);
   }
@@ -73,8 +86,54 @@ export function enqueueReaction({
     // unhandled rejection。
     consumeChatQueue(chatId).catch((error: unknown) => {
       logger.error("Error in reaction queue consumer:", error);
+      settleFailedChatQueue(chatId);
     });
   }
+  return settled;
+}
+
+function settleReactionKey(key: string): void {
+  const waiters = pendingReactionWaiters.get(key);
+  if (waiters === undefined) return;
+  pendingReactionWaiters.delete(key);
+  for (const resolve of waiters) resolve();
+}
+
+function notifyReactionDrainIfIdle(): void {
+  if (pendingTasks.size > 0 || consumingChats.size > 0) return;
+  for (const resolve of reactionDrainWaiters) resolve();
+  reactionDrainWaiters.clear();
+}
+
+function settleFailedChatQueue(chatId: number): void {
+  for (const [key, task] of pendingTasks) {
+    if (task.chatId !== chatId) continue;
+    pendingTasks.delete(key);
+    settleReactionKey(key);
+  }
+  chatQueues.delete(chatId);
+  consumingChats.delete(chatId);
+  notifyReactionDrainIfIdle();
+}
+
+/** 生命周期边界：等待已接收任务被应用、合并或按硬顶策略显式丢弃。 */
+export function drainReactionQueue(timeoutMs: number): Promise<FlushResult> {
+  if (pendingTasks.size === 0 && consumingChats.size === 0) return Promise.resolve("flushed");
+  if (timeoutMs <= 0) return Promise.resolve("timedOut");
+  return new Promise((resolve) => {
+    let settled: boolean = false;
+    function finish(result: FlushResult): void {
+      if (settled) return;
+      settled = true;
+      reactionDrainWaiters.delete(onIdle);
+      clearTimeout(timer);
+      resolve(result);
+    }
+    const onIdle = (): void => finish("flushed");
+    const timer = setTimeout(() => finish("timedOut"), timeoutMs);
+    reactionDrainWaiters.add(onIdle);
+    notifyReactionDrainIfIdle();
+  });
 }
 
 async function consumeChatQueue(chatId: number): Promise<void> {
@@ -94,6 +153,7 @@ async function consumeChatQueue(chatId: number): Promise<void> {
       const settled: boolean = await applyReaction(key);
       if (settled) {
         pendingTasks.delete(key);
+        settleReactionKey(key);
       } else {
         order.push(key);
       }
@@ -104,6 +164,7 @@ async function consumeChatQueue(chatId: number): Promise<void> {
     if (order?.size === 0) {
       chatQueues.delete(chatId);
     }
+    notifyReactionDrainIfIdle();
   }
 }
 

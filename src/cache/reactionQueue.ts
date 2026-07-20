@@ -12,3 +12,8 @@ import type { ReactionTask } from "../types/reactionQueue";
 export const pendingTasks: Map<string, ReactionTask> = new Map();
 export const chatQueues: Map<number, LinkedQueue<string>> = new Map();
 export const consumingChats: Set<number> = new Set();
+
+/** 同 key 的 update settlement；新状态落地会一并结算被覆盖的旧状态。 */
+export const pendingReactionWaiters: Map<string, Set<() => void>> = new Map();
+/** 生命周期等待整个反应队列归零的回调。 */
+export const reactionDrainWaiters: Set<() => void> = new Set();

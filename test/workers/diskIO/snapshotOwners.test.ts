@@ -7,14 +7,8 @@ const recoverStickerCatalogs = mock((_packs: readonly string[]): Map<string, str
 const writeAiMemoryFile = mock((_chatId: number, _snapshot: string): void => {});
 const deleteAiMemoryFile = mock((_chatId: number): void => {});
 const writeStickerCatalogFile = mock((_pack: string, _snapshot: string): void => {});
-
-mock.module("../../../src/workers/diskIO/snapshotFiles", () => ({
-  recoverAiMemories,
-  recoverStickerCatalogs,
-  writeAiMemoryFile,
-  deleteAiMemoryFile,
-  writeStickerCatalogFile,
-}));
+const aiFiles = { recover: recoverAiMemories, write: writeAiMemoryFile, delete: deleteAiMemoryFile };
+const stickerFiles = { recover: recoverStickerCatalogs, write: writeStickerCatalogFile };
 
 const {
   deleteAiMemorySnapshot,
@@ -63,8 +57,8 @@ describe("Disk I/O snapshot domain owners", () => {
     stickerCatalogCache.set("stale_pack", "stale-sticker");
     dirtyStickerPacks.add("stale_pack");
 
-    expect(hydrateAiMemorySnapshots()).toEqual(recoveredAi);
-    expect(hydrateStickerCatalogs(["pack_one"])).toEqual(recoveredStickers);
+    expect(hydrateAiMemorySnapshots(aiFiles)).toEqual(recoveredAi);
+    expect(hydrateStickerCatalogs(["pack_one"], stickerFiles)).toEqual(recoveredStickers);
     expect(dirtyChats).toHaveLength(0);
     expect(dirtyStickerPacks).toHaveLength(0);
 
@@ -74,13 +68,13 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(stickerFlushState.timer).not.toBeNull();
     expect(aiMemoryFlushState.timer).not.toBe(stickerFlushState.timer);
 
-    flushAiMemorySnapshots();
+    flushAiMemorySnapshots(aiFiles);
     expect(writeAiMemoryFile).toHaveBeenCalledWith(2, "ai-two");
     expect(dirtyChats).toHaveLength(0);
     expect(aiMemoryFlushState.timer).toBeNull();
     expect(stickerFlushState.timer).not.toBeNull();
 
-    flushStickerCatalogs();
+    flushStickerCatalogs(stickerFiles);
     expect(writeStickerCatalogFile).toHaveBeenCalledWith("pack_two", "sticker-two");
     expect(dirtyStickerPacks).toHaveLength(0);
     expect(stickerFlushState.timer).toBeNull();
@@ -94,22 +88,22 @@ describe("Disk I/O snapshot domain owners", () => {
 
     markAiMemorySnapshotDirty(2, "ai-two");
     markStickerCatalogSnapshotDirty("pack_two", "sticker-two");
-    flushAiMemorySnapshots();
-    flushStickerCatalogs();
+    expect(flushAiMemorySnapshots(aiFiles)).toBeFalse();
+    expect(flushStickerCatalogs(stickerFiles)).toBeFalse();
     expect(dirtyChats.has(2)).toBeTrue();
     expect(dirtyStickerPacks.has("pack_two")).toBeTrue();
     expect(aiMemoryFlushState.timer).not.toBeNull();
     expect(stickerFlushState.timer).not.toBeNull();
 
-    flushAiMemorySnapshots();
-    flushStickerCatalogs();
+    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
+    expect(flushStickerCatalogs(stickerFiles)).toBeTrue();
     expect(dirtyChats).toHaveLength(0);
     expect(dirtyStickerPacks).toHaveLength(0);
 
-    deleteAiMemorySnapshot(2);
+    deleteAiMemorySnapshot(2, aiFiles);
     expect(deletedAiMemoryChats.has(2)).toBeTrue();
     expect(aiMemoryFlushState.timer).not.toBeNull();
-    flushAiMemorySnapshots();
+    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
     expect(deletedAiMemoryChats).toHaveLength(0);
     expect(aiMemoryFlushState.timer).toBeNull();
     expect(errorSpy).toHaveBeenCalledTimes(3);

@@ -112,11 +112,11 @@ function createDiskIOWorker(): Worker {
       for (const listener of verificationPersistedListeners) listener(data);
       return;
     }
-    if (data.type === "flushed") {
+    if (data.type === "flushed" || data.type === "flushFailed") {
       const resolve = pendingFlushes.get(data.flushedId);
       if (resolve) {
         pendingFlushes.delete(data.flushedId);
-        resolve("flushed");
+        resolve(data.type === "flushed" ? "flushed" : "failed");
       }
       return;
     }

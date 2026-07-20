@@ -1,15 +1,19 @@
 import { logger } from "./infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember, Message } from "@grammyjs/types";
-import { clearChatStateField, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "./infra/storage/stateStore";
-import { answerCallbackQuery } from "./infra/telegram";
+import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "./infra/storage/stateStore";
+import { answerCallbackQuery } from "./infra/telegram/actions";
 import { isBotAdminIn, markBotAdminObserved, registerAntiRaidChatTeardown } from "./infra/botAdmin";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid/verification";
+import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "./consts/antiRaid/protocol";
+import type { FlushResult } from "./consts/lifecycle";
 import { superviseWorker } from "./libs/supervisedWorker";
-import { onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./infra/diskIO";
+import { flushDiskIO, onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./workers/antiRaid/persistence";
 import {
   activeVerificationSnapshots,
+  antiRaidBarrierSequence,
   antiRaidRuntimeState,
+  pendingAntiRaidBarriers,
   pendingLockdownPersistence,
   pendingVerificationDeletes,
   persistedLockdownFingerprints,
@@ -141,24 +145,37 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
         getOrCreateChatState(event.chatId).lockdown = expected;
         persistedLockdownFingerprints.delete(event.chatId);
         persistCurrentLockdown(event.chatId);
+        antiRaidRuntimeState.persistenceVersion++;
         break;
       }
-      case "unlock":
+      case "unlock": {
         persistedLockdownFingerprints.delete(event.chatId);
-        clearChatStateField(event.chatId, "lockdown");
-        saveStateInBackground("anti-raid unlock");
+        if (clearChatStateField(event.chatId, "lockdown")) {
+          saveStateInBackground("anti-raid unlock");
+          antiRaidRuntimeState.persistenceVersion++;
+        }
         break;
+      }
       case "verificationUpsert":
-        acceptVerificationUpsert(event);
+        if (acceptVerificationUpsert(event)) antiRaidRuntimeState.persistenceVersion++;
         break;
       case "verificationDelete":
-        acceptVerificationDelete(event);
+        if (acceptVerificationDelete(event)) antiRaidRuntimeState.persistenceVersion++;
         break;
+      case "barrierComplete": {
+        const resolve = pendingAntiRaidBarriers.get(event.barrierId);
+        if (resolve !== undefined) {
+          pendingAntiRaidBarriers.delete(event.barrierId);
+          resolve("flushed");
+        }
+        break;
+      }
     }
   },
   // 崩溃的 Worker 带走了所有计时器；先用主线程待验证镜像重建验证，再把
   // 仍在生效的私密模式交给新 Worker。FIFO 保证两类 adopt 都先于新投递。
   onRespawn: (postToNext) => {
+    settleAntiRaidBarriers("failed");
     const generation: number = nextAntiRaidGeneration();
     for (const [key, record] of activeVerificationSnapshots) {
       const persisted = persistedVerificationRevisions.get(key);
@@ -184,20 +201,25 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
       postToNext(adopt);
     }
   },
-  onGiveUp: () => abandonLockdowns(),
+  onGiveUp: () => {
+    settleAntiRaidBarriers("failed");
+    abandonLockdowns();
+  },
 });
 
-registerAntiRaidChatTeardown((chatId: number): void => post({ type: "deactivateChat", chatId }));
+registerAntiRaidChatTeardown((chatId: number): void => {
+  post({ type: "deactivateChat", chatId });
+});
 
-function acceptVerificationUpsert(event: VerificationUpsertEvent): void {
+function acceptVerificationUpsert(event: VerificationUpsertEvent): boolean {
   const snapshot: VerificationSnapshot = event.record;
-  if (snapshot.generation !== antiRaidRuntimeState.generation) return;
+  if (snapshot.generation !== antiRaidRuntimeState.generation) return false;
   const key: string = verificationMirrorKey(snapshot.chatId, snapshot.userId);
   const latestRevision: number = Math.max(
     activeVerificationSnapshots.get(key)?.revision ?? 0,
     pendingVerificationDeletes.get(key)?.revision ?? 0
   );
-  if (snapshot.revision <= latestRevision) return;
+  if (snapshot.revision <= latestRevision) return false;
   const critical: boolean = !activeVerificationSnapshots.has(key) ||
     snapshot.phase === "checkingInviter" || snapshot.phase === "expelling";
   activeVerificationSnapshots.set(key, {
@@ -207,14 +229,15 @@ function acceptVerificationUpsert(event: VerificationUpsertEvent): void {
   });
   pendingVerificationDeletes.delete(key);
   postDiskIO({ type: "verificationUpsert", record: snapshot, critical });
+  return true;
 }
 
-function acceptVerificationDelete(event: VerificationDeleteEvent): void {
-  if (event.generation !== antiRaidRuntimeState.generation) return;
+function acceptVerificationDelete(event: VerificationDeleteEvent): boolean {
+  if (event.generation !== antiRaidRuntimeState.generation) return false;
   const key: string = verificationMirrorKey(event.chatId, event.userId);
   const current: VerificationSnapshot | undefined = activeVerificationSnapshots.get(key);
   const pendingRevision: number = pendingVerificationDeletes.get(key)?.revision ?? 0;
-  if ((!current && pendingRevision === 0) || event.revision <= Math.max(current?.revision ?? 0, pendingRevision)) return;
+  if ((!current && pendingRevision === 0) || event.revision <= Math.max(current?.revision ?? 0, pendingRevision)) return false;
   activeVerificationSnapshots.delete(key);
   persistedVerificationRevisions.delete(key);
   const deletion = {
@@ -225,6 +248,56 @@ function acceptVerificationDelete(event: VerificationDeleteEvent): void {
   };
   pendingVerificationDeletes.set(key, deletion);
   postDiskIO({ type: "verificationDelete", ...deletion });
+  return true;
+}
+
+function settleAntiRaidBarriers(result: FlushResult): void {
+  for (const resolve of pendingAntiRaidBarriers.values()) resolve(result);
+  pendingAntiRaidBarriers.clear();
+}
+
+/** FIFO barrier：回执前 Worker 已同步处理完此前消息，镜像事件也已先到主线程。 */
+export function drainAntiRaid(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS): Promise<FlushResult> {
+  if (!antiRaidRuntimeState.initialized) return Promise.resolve("flushed");
+  const barrierId: number = antiRaidBarrierSequence.nextId++;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingAntiRaidBarriers.delete(barrierId);
+      resolve("timedOut");
+    }, timeoutMs);
+    pendingAntiRaidBarriers.set(barrierId, (result: FlushResult): void => {
+      clearTimeout(timer);
+      resolve(result);
+    });
+    if (!post({ type: "barrier", barrierId })) {
+      const settle = pendingAntiRaidBarriers.get(barrierId);
+      pendingAntiRaidBarriers.delete(barrierId);
+      settle?.("failed");
+    }
+  });
+}
+
+/** update 安全交接：处理 mailbox 后，仅在镜像变化时同步两类持久化 owner。 */
+async function postAntiRaidDurably(
+  messages: readonly AntiRaidWorkerMessage[],
+  timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS
+): Promise<void> {
+  const persistenceVersionBefore: number = antiRaidRuntimeState.persistenceVersion;
+  for (const message of messages) {
+    if (!post(message)) throw new Error("Anti-Raid Worker is unavailable.");
+  }
+  const barrierResult: FlushResult = await drainAntiRaid(timeoutMs);
+  if (barrierResult !== "flushed") {
+    throw new Error(`Anti-Raid Worker barrier ${barrierResult}.`);
+  }
+  if (antiRaidRuntimeState.persistenceVersion === persistenceVersionBefore) return;
+  const [diskResult, stateResult] = await Promise.all([
+    flushDiskIO(timeoutMs),
+    flushStateToDisk(timeoutMs),
+  ]);
+  if (diskResult !== "flushed" || stateResult !== "flushed") {
+    throw new Error(`Anti-Raid persistence failed: disk=${diskResult}, state=${stateResult}.`);
+  }
 }
 
 // Disk I/O Worker 重建时，active 与尚未确认的终结变化一起重放；否则旧日
@@ -282,6 +355,7 @@ function abandonLockdowns(): void {
 export function initAntiRaid(): void {
   if (antiRaidRuntimeState.initialized) return;
   antiRaidRuntimeState.initialized = true;
+  antiRaidRuntimeState.persistenceVersion = 0;
   persistedLockdownFingerprints.clear();
   for (const [chatId, chatState] of getAllChatStates()) {
     if (chatState.lockdown !== undefined) {
@@ -305,6 +379,8 @@ export function deactivateAntiRaidChat(chatId: number): void {
 
 /** 停机时终止 Worker；验证/lockdown 的 write-ahead 镜像已在主线程持有。 */
 export function terminateAntiRaid(): Promise<void> {
+  settleAntiRaidBarriers("failed");
+  antiRaidRuntimeState.initialized = false;
   return terminateAntiRaidWorker();
 }
 
@@ -344,7 +420,7 @@ function isActiveChatMember(member: ChatMember): boolean {
  * 离群消息"，这些服务消息就完全不会再发送）。要接收非机器人自身成员的这类
  * 更新，需要机器人是群管理员——而封禁/删除消息本来也需要这个权限。
  */
-export function handleChatMemberUpdate(ctx: Context): void {
+export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const update = ctx.chatMember;
   if (!update) return;
 
@@ -372,19 +448,19 @@ export function handleChatMemberUpdate(ctx: Context): void {
   // 缓存 TTL 只是兜底。FIFO 保证它先于随后的 join/left 投递生效。
   const wasAdmin: boolean = update.old_chat_member.status === "administrator" || update.old_chat_member.status === "creator";
   const isAdmin: boolean = update.new_chat_member.status === "administrator" || update.new_chat_member.status === "creator";
-  if (wasAdmin !== isAdmin) {
-    post({ type: "adminsChanged", chatId, userId: user.id, isAdmin });
-  }
+  const messages: AntiRaidWorkerMessage[] = [];
+  if (wasAdmin !== isAdmin) messages.push({ type: "adminsChanged", chatId, userId: user.id, isAdmin });
 
   if (!wasActive && isActive) {
     // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径
     // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
     // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker
     // 收到豁免后会将其撤销。
-    post({ type: "join", chatId, member: pickMember(user), exempt: isAdmin, actorId: update.from.id });
+    messages.push({ type: "join", chatId, member: pickMember(user), exempt: isAdmin, actorId: update.from.id });
   } else if (wasActive && !isActive) {
-    post({ type: "left", chatId, userId: user.id });
+    messages.push({ type: "left", chatId, userId: user.id });
   }
+  if (messages.length > 0) await postAntiRaidDurably(messages);
 }
 
 /**
@@ -412,33 +488,41 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
   }
 
   if (message.new_chat_members && message.new_chat_members.length > 0) {
+    const joins: AntiRaidWorkerMessage[] = [];
     for (const member of message.new_chat_members) {
       // 机器人不再豁免（走白名单用户代点验证的流程），只跳过本天才自己
       // ——自己既不能验证自己，也不该被自己踢出去。
       if (member.id === botId) continue;
-      post({ type: "join", chatId: message.chat.id, member: pickMember(member), announcementMessageId: message.message_id, actorId: message.from?.id });
+      joins.push({ type: "join", chatId: message.chat.id, member: pickMember(member), announcementMessageId: message.message_id, actorId: message.from?.id });
     }
+    if (joins.length > 0) await postAntiRaidDurably(joins);
     return true;
   }
 
   if (message.left_chat_member) {
-    post({ type: "left", chatId: message.chat.id, userId: message.left_chat_member.id });
+    await postAntiRaidDurably([{ type: "left", chatId: message.chat.id, userId: message.left_chat_member.id }]);
     return false;
   }
 
   const userId: number | undefined = message.from?.id;
-  if (userId !== undefined) {
+  const mayPrecedeJoinInCommentThread: boolean =
+    message.reply_to_message?.is_automatic_forward === true ||
+    message.message_thread_id !== undefined;
+  if (
+    userId !== undefined &&
+    (activeVerificationSnapshots.has(verificationMirrorKey(message.chat.id, userId)) || mayPrecedeJoinInCommentThread)
+  ) {
     // 附带频道评论区的识别线索：在关联频道的帖子下留言的人会被 Telegram
     // 自动拉进讨论群，这是真人操作，Worker 据此免除验证（直接回复频道帖）
     // 或把验证提醒追发到 TA 的回复下（楼中楼）。
-    post({
+    await postAntiRaidDurably([{
       type: "message",
       chatId: message.chat.id,
       userId,
       messageId: message.message_id,
       repliesToChannelPost: message.reply_to_message?.is_automatic_forward === true,
       isThreadReply: message.message_thread_id !== undefined,
-    });
+    }]);
   }
   return false;
 }
@@ -447,7 +531,7 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
  * 处理入群验证按钮的点击（callback_query）：解析出目标成员后整体投递给
  * Worker 应答与处理。前缀不匹配的 callback_query 与本模块无关，直接放过。
  */
-export function handleVerificationCallback(ctx: Context): void {
+export async function handleVerificationCallback(ctx: Context): Promise<void> {
   const query = ctx.callbackQuery;
   const data: string | undefined = query?.data;
   if (!query || !data?.startsWith(VERIFY_CALLBACK_PREFIX)) return;
@@ -456,15 +540,15 @@ export function handleVerificationCallback(ctx: Context): void {
   // callback_data 属于外部输入：前缀匹配不代表后半段一定是合法整数。NaN 若
   // 进入 Worker 会生成 "chatId:NaN" 状态键，按钮只会永远转圈且留下脏状态。
   if (!Number.isSafeInteger(targetUserId) || targetUserId <= 0) {
-    void answerCallbackQuery({ callbackQueryId: query.id, text: "验证请求无效", showAlert: true });
+    await answerCallbackQuery({ callbackQueryId: query.id, text: "验证请求无效", showAlert: true });
     return;
   }
 
-  post({
+  await postAntiRaidDurably([{
     type: "callback",
     callbackQueryId: query.id,
     chatId: query.message?.chat.id,
     targetUserId,
     from: pickMember(query.from),
-  });
+  }]);
 }

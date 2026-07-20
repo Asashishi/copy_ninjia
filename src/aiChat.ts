@@ -1,7 +1,7 @@
 import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
-import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
-import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes, purgedAiMemoryChats } from "./cache/aiChat";
+import { onDiskIORespawn, postDiskIO } from "./ai/persistence";
+import { aiChatWorkerState, lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes, purgedAiMemoryChats } from "./cache/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS, type FlushResult } from "./consts/lifecycle";
 import type {
   AiBotInfo,
@@ -89,6 +89,12 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
       postToNext({ type: "hydrateStickerCatalog", catalogs: latestStickerCatalogs });
     }
   },
+  onGiveUp: () => {
+    aiChatWorkerState.available = false;
+    // 已终止实例不可能再回传旧 memory；磁盘删除在 invalidate 时已独立投递，
+    // 故障态无需为永远不会到来的 memoryDeleted 保留每群 tombstone。
+    purgedAiMemoryChats.clear();
+  },
 });
 
 // diskIOWorker 崩溃重建后，把当前记忆/贴纸目录镜像整份重发给它，补齐上
@@ -111,6 +117,7 @@ onDiskIORespawn(() => {
  */
 export function initAiChat(botInfo: AiBotInfo): void {
   initAiChatWorker();
+  aiChatWorkerState.available = true;
   const message: AiInitMessage = {
     type: "init",
     botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
@@ -178,6 +185,8 @@ export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): P
 export async function terminateAiChat(): Promise<void> {
   for (const resolve of pendingMemoryFlushes.values()) resolve("failed");
   pendingMemoryFlushes.clear();
+  aiChatWorkerState.available = false;
+  purgedAiMemoryChats.clear();
   await terminateAiChatWorker();
 }
 
@@ -274,7 +283,7 @@ export function generateAndSendReply({
  */
 export function invalidateAiChat(chatId: number, purgeMemory: boolean): void {
   if (purgeMemory) {
-    purgedAiMemoryChats.add(chatId);
+    if (aiChatWorkerState.available) purgedAiMemoryChats.add(chatId);
     latestAiMemories.delete(chatId);
     postDiskIO({ type: "deleteAiMemory", chatId });
   }

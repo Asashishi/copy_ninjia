@@ -31,7 +31,7 @@ import { aiMemoryCache } from "../cache/diskIO/snapshots";
 import { stickerCatalogCache } from "../cache/diskIO/stickers";
 import { luckWorkerCache } from "../cache/diskIO/luck";
 import type { VerificationSnapshot } from "../types/antiRaid";
-import type { DiskFlushReply, DiskIOMessage, LoadedReply, LuckSecretReply } from "../types/diskIO";
+import type { DiskFlushFailedReply, DiskFlushReply, DiskIOMessage, LoadedReply, LuckSecretReply } from "../types/diskIO";
 import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 declare const self: Worker;
@@ -39,12 +39,16 @@ declare const self: Worker;
 /** 统一 flush：日志缓冲、AI 记忆快照、运势追加缓冲全部立即落盘（进程退出前
  *  的最后一刷，各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
  *  该刷的都立即刷）。 */
-function flushAll(): void {
-  flushLogBuffer();
-  flushAiMemorySnapshots();
-  flushStickerCatalogs();
-  flushLuckAppends();
-  flushVerificationChanges((reply) => self.postMessage(reply));
+function flushAll(): boolean {
+  // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
+  const results: boolean[] = [
+    flushLogBuffer(),
+    flushAiMemorySnapshots(),
+    flushStickerCatalogs(),
+    flushLuckAppends(),
+    flushVerificationChanges((reply) => self.postMessage(reply)),
+  ];
+  return results.every(Boolean);
 }
 
 /**
@@ -136,8 +140,9 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       handleLoad();
       break;
     case "flush": {
-      flushAll();
-      const reply: DiskFlushReply = { type: "flushed", flushedId: msg.flushId };
+      const reply: DiskFlushReply | DiskFlushFailedReply = flushAll()
+        ? { type: "flushed", flushedId: msg.flushId }
+        : { type: "flushFailed", flushedId: msg.flushId };
       self.postMessage(reply);
       break;
     }

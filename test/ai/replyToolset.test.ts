@@ -2,17 +2,6 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanReply, isEmojiOnly } from "../../src/ai/utils/replyText";
 import { buildCharacterTypo, pickTypoCorrectionMode } from "../../src/ai/utils/typo";
 
-/**
- * 用空的 diskIO 桥隔离日志路由，并把 Telegram 动作替换为可断言的假实现。
- * 贴纸分支逻辑在 test/ai/stickers.test.ts 覆盖；本文件只补文字清洗、错字
- * diff 与 send_message 的错字补发回归。
- */
-mock.module("../../src/infra/diskIO", () => ({
-  postDiskIO: mock((..._args: unknown[]): void => {}),
-  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
-  relayLogMessage: mock((..._args: unknown[]): void => {}),
-}));
-
 let nextMessageId: number = 100;
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
 const deleteMessageMock = mock(async (..._args: unknown[]): Promise<boolean> => true);

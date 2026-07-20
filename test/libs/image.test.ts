@@ -1,15 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import sharp from "sharp";
-
-/**
- * 用空的 diskIO 桥隔离错误日志路由，避免测试结果依赖其它文件是否初始化过
- * 进程级持久化组件。
- */
-mock.module("../../src/infra/diskIO", () => ({
-  postDiskIO: mock((..._args: unknown[]): void => {}),
-  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
-  relayLogMessage: mock((..._args: unknown[]): void => {}),
-}));
 
 const { prepareVisionImage, sniffImageFormat } = await import("../../src/libs/image");
 

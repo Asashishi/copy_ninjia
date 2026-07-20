@@ -100,8 +100,8 @@ function cleanupOldLogs(): void {
   }
 }
 
-function writeDay(day: string, texts: string[]): void {
-  if (texts.length === 0) return;
+function writeDay(day: string, texts: string[]): boolean {
+  if (texts.length === 0) return true;
   try {
     if (loggerFileState.current?.day !== day) {
       loggerFileState.current = openDayFile(LOGS_DIR, day);
@@ -112,11 +112,13 @@ function writeDay(day: string, texts: string[]): void {
       state: loggerFileState.current,
       chunk: texts.join(",\n"),
     });
+    return true;
   } catch (err) {
     // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
     // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。
     loggerFileState.current = null;
     console.error("[diskIOWorker] flush to disk failed:", err);
+    return false;
   }
 }
 
@@ -129,26 +131,27 @@ export function initLogFiles(): void {
 }
 
 /** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */
-export function flushLogBuffer(): void {
+export function flushLogBuffer(): boolean {
   if (flushBuffer.timer !== null) {
     clearTimeout(flushBuffer.timer);
     flushBuffer.timer = null;
   }
-  if (flushBuffer.entries.length === 0) return;
+  if (flushBuffer.entries.length === 0) return true;
   const entries = flushBuffer.entries;
   flushBuffer.entries = [];
   // 按天分组落盘（保持顺序），只有跨天瞬间的那批会拆成两组。
   let day: string = entries[0]!.day;
   let texts: string[] = [];
+  let clean: boolean = true;
   for (const entry of entries) {
     if (entry.day !== day) {
-      writeDay(day, texts);
+      clean = writeDay(day, texts) && clean;
       day = entry.day;
       texts = [];
     }
     texts.push(entry.text);
   }
-  writeDay(day, texts);
+  return writeDay(day, texts) && clean;
 }
 
 /** 处理一条日志消息：入内存 buffer，达到阈值立即落盘，否则按需启动定时器。 */

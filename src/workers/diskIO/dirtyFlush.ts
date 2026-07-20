@@ -16,7 +16,7 @@ export function flushDirtyEntries<K>(
     write: (key: K, snapshot: string) => void;
     describeFailure: (key: K) => string;
   }
-): void {
+): boolean {
   for (const key of dirty) {
     const snapshot: string | undefined = cache.get(key);
     if (!snapshot) {
@@ -30,4 +30,5 @@ export function flushDirtyEntries<K>(
       console.error(describeFailure(key), error);
     }
   }
+  return dirty.size === 0;
 }

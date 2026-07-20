@@ -1,14 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
 
-/**
- * 用空的 diskIO 桥隔离错误日志路由，避免测试共享进程级持久化状态。
- */
-mock.module("../../../src/infra/diskIO", () => ({
-  postDiskIO: mock((..._args: unknown[]): void => {}),
-  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
-  relayLogMessage: mock((..._args: unknown[]): void => {}),
-}));
-
 const { describeStickerForContext, getStickerSet, pickStickerVisionSource } = await import("../../../src/ai/stickers/sets");
 const { failedPacks, inflightStickerSets, stickerSetCache } = await import("../../../src/cache/stickers/sets");
 

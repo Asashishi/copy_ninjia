@@ -46,12 +46,13 @@ function scheduleLuckFlush(): void {
  * 过期文件清理放在追加成功、pending 清空之后：它一旦抛错只影响清理本身，
  * 不能连累已经写进磁盘的条目被当作「没写过」再追加一遍。
  */
-export function flushLuckAppends(): void {
+export function flushLuckAppends(): boolean {
   if (luckFlushTimer.timer !== null) {
     clearTimeout(luckFlushTimer.timer);
     luckFlushTimer.timer = null;
   }
-  if (luckPendingAppends.length === 0 || !luckWorkerCache.current) return;
+  if (luckPendingAppends.length === 0) return true;
+  if (!luckWorkerCache.current) return false;
   const day: string = luckWorkerCache.current.day;
   try {
     appendLuckEntries(day, luckFileState, luckPendingAppends);
@@ -60,13 +61,14 @@ export function flushLuckAppends(): void {
     luckFileState.current = null;
     scheduleLuckFlush();
     console.error(`[diskIOWorker] failed to append luck entries for ${day}:`, error);
-    return;
+    return false;
   }
   try {
     cleanupStaleLuckFiles(day);
   } catch (error) {
     console.error(`[diskIOWorker] failed to clean up stale luck files for ${day}:`, error);
   }
+  return true;
 }
 
 /** 处理一条抽签结果消息：跨天检查 -> 去重 -> 入缓冲，达到条数阈值立即

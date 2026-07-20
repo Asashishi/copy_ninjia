@@ -85,6 +85,15 @@ describe("explicit Worker initialization", () => {
       first.onmessage!({ data: { type: "flushed", flushedId: flush.type === "flush" ? flush.flushId : -1 } } as MessageEvent<DiskIOReply>);
       await flushPromise;
 
+      const failedFlushPromise = diskIO.flushDiskIO(1_000);
+      const failedFlush = first.messages.at(-1)!;
+      expect(failedFlush.type).toBe("flush");
+      first.onmessage!({ data: {
+        type: "flushFailed",
+        flushedId: failedFlush.type === "flush" ? failedFlush.flushId : -1,
+      } } as MessageEvent<DiskIOReply>);
+      expect(await failedFlushPromise).toBe("failed");
+
       const persisted: VerificationPersistedReply[] = [];
       diskIO.onVerificationPersisted((reply) => { persisted.push(reply); });
       const ack: VerificationPersistedReply = {

@@ -15,6 +15,7 @@ const markSelfSent = mock((_chatId: number, _messageId: number): void => {});
 let supervisorOptions: {
   onEvent: (event: AiChatWorkerEvent) => void;
   onRespawn: (post: (message: AiChatWorkerMessage) => void) => void;
+  onGiveUp: () => void;
 } | undefined;
 let diskRespawn: (() => void) | undefined;
 
@@ -24,12 +25,12 @@ mock.module("../../../src/libs/supervisedWorker", () => ({
     supervisorOptions = options;
     return {
       init: initWorker,
-      post: (message: AiChatWorkerMessage): void => { workerPosts.push(message); },
+      post: (message: AiChatWorkerMessage): boolean => { workerPosts.push(message); return true; },
       terminate: async (): Promise<void> => {},
     };
   },
 }));
-mock.module("../../../src/infra/diskIO", () => ({
+mock.module("../../../src/ai/persistence", () => ({
   postDiskIO: (message: AiDiskMessage): void => { diskPosts.push(message); },
   onDiskIORespawn: (callback: () => void): void => { diskRespawn = callback; },
 }));
@@ -41,6 +42,7 @@ const {
   latestStickerCatalogs,
   pendingMemoryFlushes,
   purgedAiMemoryChats,
+  aiChatWorkerState,
 } = await import("../../../src/cache/aiChat");
 
 beforeEach(() => {
@@ -53,6 +55,7 @@ beforeEach(() => {
   latestStickerCatalogs.clear();
   pendingMemoryFlushes.clear();
   purgedAiMemoryChats.clear();
+  aiChatWorkerState.available = false;
 });
 
 describe("AI main-thread persistence mirror", () => {
@@ -115,5 +118,19 @@ describe("AI main-thread persistence mirror", () => {
     if (timedOutRequest?.type !== "flushMemory") throw new Error("Expected a flushMemory request");
     await timedOut;
     expect(pendingMemoryFlushes.has(timedOutRequest.flushId)).toBeFalse();
+  });
+
+  test("Worker 放弃自愈后清空 purge tombstone，后续删除不再等待不存在的回执", () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    aiChat.invalidateAiChat(-1001, true);
+    expect(purgedAiMemoryChats.has(-1001)).toBeTrue();
+
+    supervisorOptions!.onGiveUp();
+    expect(aiChatWorkerState.available).toBeFalse();
+    expect(purgedAiMemoryChats.size).toBe(0);
+
+    aiChat.invalidateAiChat(-1002, true);
+    expect(purgedAiMemoryChats.size).toBe(0);
+    expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1002 });
   });
 });

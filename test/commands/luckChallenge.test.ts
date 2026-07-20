@@ -9,7 +9,7 @@ const postDiskIOMock = mock((..._args: unknown[]): void => {});
 const onDiskIORespawnMock = mock((..._args: unknown[]): void => {});
 const relayLogMessageMock = mock((..._args: unknown[]): void => {});
 
-mock.module("../../src/infra/diskIO", () => ({
+mock.module("../../src/commands/luckChallenge/persistence", () => ({
   postDiskIO: postDiskIOMock,
   onDiskIORespawn: onDiskIORespawnMock,
   relayLogMessage: relayLogMessageMock,

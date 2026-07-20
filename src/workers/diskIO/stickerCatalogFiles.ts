@@ -9,6 +9,12 @@ import {
 } from "../../cache/diskIO/stickers";
 import { flushDirtyEntries } from "./dirtyFlush";
 import { recoverStickerCatalogs, writeStickerCatalogFile } from "./snapshotFiles";
+import type { StickerCatalogFileDependencies } from "../../types/diskIO/snapshotOwners";
+
+const STICKER_CATALOG_FILE_DEPENDENCIES: StickerCatalogFileDependencies = {
+  recover: recoverStickerCatalogs,
+  write: writeStickerCatalogFile,
+};
 
 function scheduleStickerCatalogFlush(): void {
   if (stickerFlushState.timer !== null) return;
@@ -19,8 +25,11 @@ function scheduleStickerCatalogFlush(): void {
 }
 
 /** 启动恢复边界：按当前白名单对账后整体替换内存 owner。 */
-export function hydrateStickerCatalogs(activePacks: readonly string[]): Map<string, string> {
-  hydrateStickerCatalogCache(recoverStickerCatalogs(activePacks));
+export function hydrateStickerCatalogs(
+  activePacks: readonly string[],
+  files: StickerCatalogFileDependencies = STICKER_CATALOG_FILE_DEPENDENCIES
+): Map<string, string> {
+  hydrateStickerCatalogCache(files.recover(activePacks));
   return stickerCatalogCache;
 }
 
@@ -31,7 +40,9 @@ export function markStickerCatalogSnapshotDirty(pack: string, snapshot: string):
 }
 
 /** flush 边界：逐包写入，单包失败保留 dirty 并自动重排。 */
-export function flushStickerCatalogs(): void {
+export function flushStickerCatalogs(
+  files: StickerCatalogFileDependencies = STICKER_CATALOG_FILE_DEPENDENCIES
+): boolean {
   if (stickerFlushState.timer !== null) {
     clearTimeout(stickerFlushState.timer);
     stickerFlushState.timer = null;
@@ -39,10 +50,11 @@ export function flushStickerCatalogs(): void {
   flushDirtyEntries({
     dirty: dirtyStickerPacks,
     cache: stickerCatalogCache,
-    write: writeStickerCatalogFile,
+    write: (pack: string, snapshot: string): void => { files.write(pack, snapshot); },
     describeFailure: (pack: string) => `[diskIOWorker] failed to write sticker catalog for pack "${pack}":`,
   });
   if (dirtyStickerPacks.size > 0) scheduleStickerCatalogFlush();
+  return dirtyStickerPacks.size === 0;
 }
 
 /** reset 边界：停止 timer 并清空恢复态与 dirty 集合。 */

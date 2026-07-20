@@ -8,9 +8,10 @@ import { enqueueReaction } from "../copy/reactionQueue";
  * emoji 都支持）同步到同一条消息上；目标移除了自己的回应时也会跟着清除。
  * 与复读一致，只在发起 /copy 的那个群里同步（判定统一走 getActiveCopyIn）。
  * 实际的 setMessageReaction 调用走 reactionQueue（429 重试、同消息合并、
- * 按 chat 隔离限流等待），这里只做过滤和入队，不阻塞更新处理。
+ * 按 chat 隔离限流等待）；本 update 等到对应版本被应用、覆盖或按硬顶丢弃
+ * 才结算，使下一轮取数不会提前确认仍在后台的反应。
  */
-export function handleReaction(ctx: Context): void {
+export async function handleReaction(ctx: Context): Promise<void> {
   const reaction = ctx.messageReaction;
   if (!reaction) return;
 
@@ -41,7 +42,7 @@ export function handleReaction(ctx: Context): void {
     toApply = [];
   }
 
-  enqueueReaction({
+  await enqueueReaction({
     chatId: reaction.chat.id,
     messageId: reaction.message_id,
     reactions: toApply,

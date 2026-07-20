@@ -93,7 +93,7 @@ describe("pending verification daily append JSON", () => {
     expect(replies.map((reply) => reply.revision)).toEqual([1, 500]);
   });
 
-  test("终结 null 覆盖尚未 flush 的旧 upsert，不会复活", () => {
+  test("终结以 durable tombstone 覆盖尚未 flush 的旧 upsert，不会复活", () => {
     upsert({ type: "verificationUpsert", record: snapshot(1), critical: false });
     deleteVerification({
       type: "verificationDelete",
@@ -104,12 +104,11 @@ describe("pending verification daily append JSON", () => {
     });
 
     expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
-    expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8"))).toEqual({});
-    expect(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")).toBe("{}");
+    expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8"))).toEqual({ "-1001:42": null });
     expect(replies.at(-1)).toMatchObject({ revision: 2, deleted: true });
   });
 
-  test("任一验证终结时收敛整份 active 快照，不给其它成员留下重复键", () => {
+  test("验证终结只追加 tombstone，不因单次 delete 全量重写其它 active", () => {
     upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     upsert({
       type: "verificationUpsert",
@@ -131,10 +130,37 @@ describe("pending verification daily append JSON", () => {
     });
 
     const content: string = readFileSync(join(dir, `${DAY_ONE}.json`), "utf8");
-    expect(content.match(/"-1001:43":/g)).toHaveLength(1);
+    expect(content.match(/"-1001:43":/g)).toHaveLength(2);
     expect(JSON.parse(content)).toEqual({
+      "-1001:42": null,
       "-1001:43": { version: 1, ...snapshot(2, { userId: 43, label: "第二位" }) },
     });
+    expect(recoverVerificationDay(DAY_ONE, dir).has("-1001:42")).toBeFalse();
+  });
+
+  test("批量终结按 delete 数线性追加，不在每次终结后重置历史计数", () => {
+    const total: number = 200;
+    for (let userId = 1; userId <= total; userId++) {
+      upsert({
+        type: "verificationUpsert",
+        record: snapshot(1, { userId, label: `member-${userId}` }),
+        critical: true,
+      });
+    }
+    expect(verificationFileState.appendedEntries).toBe(total);
+
+    for (let userId = 1; userId <= total; userId++) {
+      deleteVerification({
+        type: "verificationDelete",
+        chatId: -1001,
+        userId,
+        generation: 1,
+        revision: 2,
+      });
+    }
+
+    expect(verificationFileState.appendedEntries).toBe(total * 2);
+    expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
   });
 
   test("尾部截断修复保留此前完整 revision，随后仍可追加", () => {

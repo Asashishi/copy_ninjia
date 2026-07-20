@@ -1,4 +1,5 @@
 import type { VerificationSnapshot } from "../types/antiRaid";
+export * from "./antiRaid/protocol";
 
 export interface PersistedLockdownFingerprint {
   phase: "applying" | "active" | "restoring";
@@ -7,9 +8,10 @@ export interface PersistedLockdownFingerprint {
 }
 
 /** Anti-Raid 主线程代理的代际与初始化状态。 */
-export const antiRaidRuntimeState: { generation: number; initialized: boolean } = {
+export const antiRaidRuntimeState: { generation: number; initialized: boolean; persistenceVersion: number } = {
   generation: 0,
   initialized: false,
+  persistenceVersion: 0,
 };
 
 /** 主线程镜像可能仍在 fsync；Worker 重建时不能把它自动视为已经持久化。 */

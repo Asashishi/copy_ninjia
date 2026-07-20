@@ -1,19 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
 
 /**
- * 用空的 diskIO 桥隔离日志路由，再动态 import 被测模块。
  * ai/stickers/sets.ts（真实拉取贴纸集合）、ai/imageDescription.ts（真实调
  * 视觉模型）与 ai/gemini.ts（整包简介生成走的文本模型）也一并 mock 掉，
  * 换成测试可控的假实现——本文件只关心 generatePackCatalog 的对账逻辑
  * （补/剪/失败时按兵不动/整包简介的生成时机），不关心真实网络调用是否
  * 成功（那部分由手动跑过的真实模型调用验证过）。
  */
-mock.module("../../../src/infra/diskIO", () => ({
-  postDiskIO: mock((..._args: unknown[]): void => {}),
-  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
-  relayLogMessage: mock((..._args: unknown[]): void => {}),
-}));
-
 const getStickerSetMock = mock(async (_pack: string): Promise<any> => null);
 const describeMediaMock = mock(async (..._args: unknown[]): Promise<string | null> => null);
 const describeMediaForStickerCatalogMock = mock(async (..._args: unknown[]): Promise<string | null> => null);

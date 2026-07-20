@@ -1,13 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
 
-/** chatActionHeartbeat 的生产默认依赖会经 infra/telegram 引入日志转发；测试只
- * 验证心跳控制器本身，禁止启动真实 diskIO Worker。 */
-mock.module("../../src/infra/diskIO", () => ({
-  postDiskIO: mock((..._args: unknown[]): void => {}),
-  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
-  relayLogMessage: mock((..._args: unknown[]): void => {}),
-}));
-
 const { startChatActionHeartbeat, pumpChatAction } = await import("../../src/ai/chatActionHeartbeat");
 import type { ChatActionHeartbeatDependencies } from "../../src/ai/chatActionHeartbeat";
 import type { ChatActionHeartbeatEntry } from "../../src/types";

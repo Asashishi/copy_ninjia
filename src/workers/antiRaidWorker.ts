@@ -14,7 +14,7 @@ import { sweepAdminCache } from "../cache/antiRaid/admins";
 import { sweepLinkedChannelCache } from "../cache/antiRaid/linkedChannels";
 import { sweepVerificationRevisionCache } from "../cache/antiRaid/verification";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid";
-import { initTelegramClients } from "../infra/telegram";
+import { initTelegramClients } from "../infra/telegram/client";
 import { sweepRecentComments } from "./antiRaid/recentComments";
 
 /**
@@ -77,6 +77,9 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       break;
     case "adminsChanged":
       applyAdminChange(msg.chatId, msg.userId, msg.isAdmin);
+      break;
+    case "barrier":
+      self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });
       break;
   }
 }

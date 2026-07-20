@@ -215,13 +215,13 @@ bun run start     # 启动长轮询
 | AI 群聊记忆 | `memory/ai/` | 每群独立快照，30 秒周期 + 停机 flush |
 | 贴纸描述目录 | `memory/stickers/` | 每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用 |
 | 今日运势 | `memory/luck/` | 结果按东京日期增量追加并修复尾部截断；`receipt-secret.json` 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 `0644` |
-| 待验证成员 | `memory/anti-raid/` | 当日 JSON 按 `chatId:userId` 键增量追加；普通更新 250ms 合并，创建立即写，终结立即收敛 active 快照；4 MiB 或 10,000 条历史前收敛，跨日删除旧文件 |
+| 待验证成员 | `memory/anti-raid/` | 当日 JSON 按 `chatId:userId` 键增量追加；普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件 |
 | error 日志 | `logs/` | Disk I/O Worker 统一批量追加 |
 | 运行实例 | `bot.lock` | 原子维护的多 Bot 进程注册表 |
 
 `memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据；项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请通过主机访问控制限制机器上的用户，并控制备份范围与保留周期。备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。`logs/`、`memory/`、`state.json`、凭据和运行锁均不会提交到 Git。
 
-待验证热路径复用每日运势和日志已有的 JSON 末尾追加机制，不会每次全量重写，也不会增加新的 IO 线程。只有跨日轮换或达到历史阈值时才原子收敛当前 active 镜像；同步文件操作始终留在 Disk I/O Worker，不阻塞 Telegram 更新主线程。
+待验证热路径复用每日运势和日志已有的 JSON 末尾追加机制，不会每次全量重写，也不会增加新的 IO 线程。终结记录以 tombstone 线性追加，只有跨日轮换或达到历史阈值时才原子收敛当前 active 镜像；每批追加在成功回执前执行 fsync。同步文件操作始终留在 Disk I/O Worker，不阻塞 Telegram 更新主线程。
 
 持久化 schema 变更不在运行时自动迁移。部署包含结构变更的版本前，应先手工迁移 `state.json` 与对应 `memory/` 快照；任一必需快照不符合当前结构时机器人会拒绝启动，避免用部分状态或空状态覆盖原文件。
 
@@ -234,7 +234,7 @@ bun run start     # 启动长轮询
 token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 需要并行部署时，
 应使用彼此独立的项目/数据目录。
 
-可靠性护栏包括：官方 SDK 类型边界、配置与持久化 JSON 逐字段校验、数据目录单实例锁、共享 Telegram API 限流/重试与必要的按群串行、Worker 崩溃节流自愈、失效 AI 轮次副作用拦截、反应队列硬顶、媒体执行/排队/LRU 容量上限、JSON API 与媒体下载的流式字节上限，以及原子落盘和严格恢复。跨模块生命周期约束见 [`docs/architecture.md`](docs/architecture.md)。
+可靠性护栏包括：官方 SDK 类型边界、配置与持久化 JSON 逐字段校验、数据目录单实例锁、共享 Telegram API 限流/重试与必要的按群串行、Worker 崩溃节流自愈、失效 AI 轮次副作用拦截、反应队列硬顶、头像单执行槽与 latest-only 合并、后台 owner 有界 drain、媒体执行/排队/LRU 容量上限、JSON API 与媒体下载的流式字节上限，以及追加批次 fsync、原子落盘和严格恢复。跨模块生命周期约束见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 🧪 开发
 

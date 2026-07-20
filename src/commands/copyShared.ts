@@ -1,12 +1,11 @@
-import { logger } from "../infra/logger";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import { getGlobalCopyState, saveStateInBackground } from "../infra/storage/stateStore";
-import { sendMessage, copyUserProfilePhoto } from "../infra/telegram";
+import { sendMessage } from "../infra/telegram/actions";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
-import { createSerialTaskRunner } from "../libs/serialTaskRunner";
+import { queueAvatarUpdate } from "../copy/avatarQueue";
 import { resolveCommandTarget } from "./targetResolution";
 
 /**
@@ -18,14 +17,6 @@ import { resolveCommandTarget } from "./targetResolution";
  * 的旧时间戳与本次占用写入的时间戳，供调用方在这次尝试最终没有真正开始复制时
  * 用 releaseCopyCooldownClaim 回滚。 */
 type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCopyTime: number | undefined; claimedAt: number };
-
-// 机器人头像是全局唯一资源。白名单用户不受冷却限制，可能快速连续触发多次
-// /copy 或 /steal_icon；按触发顺序串行执行，确保较早的慢请求不可能在较新的
-// 请求成功后才落地，把头像覆盖回旧目标。链始终自行兜错，后续任务不会因
-// 前一个任务失败而被永久跳过。
-const avatarUpdateRunner = createSerialTaskRunner((error: unknown): void => {
-  logger.error("Error in background avatar steal task:", error);
-});
 
 /**
  * copy 类命令的公共冷却检查 + 原子占用。全局共享一份 lastCopyTime 冷却时钟
@@ -132,8 +123,5 @@ export function stealAvatarInBackground({
   successText: string;
   failureText: string;
 }): void {
-  avatarUpdateRunner.run(async (): Promise<void> => {
-    const photoUpdated: boolean = await copyUserProfilePhoto(target.id, !!target.isChannel, target.username);
-    await sendMessage({ chatId, text: photoUpdated ? successText : failureText });
-  });
+  queueAvatarUpdate({ chatId, target, successText, failureText });
 }

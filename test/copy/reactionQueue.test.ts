@@ -26,8 +26,14 @@ mock.module("../../src/infra/logger", () => ({
   logger: { log: loggerLog, info: mock(() => {}), warn: loggerWarn, error: loggerError },
 }));
 
-const { enqueueReaction } = await import("../../src/copy/reactionQueue");
-const { chatQueues, consumingChats, pendingTasks } = await import("../../src/cache/reactionQueue");
+const { drainReactionQueue, enqueueReaction } = await import("../../src/copy/reactionQueue");
+const {
+  chatQueues,
+  consumingChats,
+  pendingReactionWaiters,
+  pendingTasks,
+  reactionDrainWaiters,
+} = await import("../../src/cache/reactionQueue");
 
 async function waitForIdle(): Promise<void> {
   for (let attempt: number = 0; attempt < 30; attempt++) {
@@ -41,6 +47,8 @@ beforeEach(() => {
   pendingTasks.clear();
   chatQueues.clear();
   consumingChats.clear();
+  pendingReactionWaiters.clear();
+  reactionDrainWaiters.clear();
   for (const mocked of [setMessageReaction, logApiError, sleep, loggerLog, loggerWarn, loggerError]) mocked.mockClear();
   setMessageReaction.mockImplementation(async (): Promise<boolean> => true);
   sleep.mockImplementation(async (): Promise<void> => {});
@@ -50,6 +58,8 @@ afterEach(() => {
   pendingTasks.clear();
   chatQueues.clear();
   consumingChats.clear();
+  pendingReactionWaiters.clear();
+  reactionDrainWaiters.clear();
 });
 
 describe("Telegram reaction 同步队列", () => {
@@ -73,15 +83,27 @@ describe("Telegram reaction 同步队列", () => {
     let resolveFirst!: (value: boolean) => void;
     setMessageReaction.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
 
-    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "👍" }], updateId: 10, reactedAtUnix: 1 });
-    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "🔥" }], updateId: 11, reactedAtUnix: 2 });
-    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "😁" }], updateId: 9, reactedAtUnix: 3 });
+    const first = enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "👍" }], updateId: 10, reactedAtUnix: 1 });
+    const latest = enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "🔥" }], updateId: 11, reactedAtUnix: 2 });
+    const stale = enqueueReaction({ chatId: -1001, messageId: 10, reactions: [{ type: "emoji", emoji: "😁" }], updateId: 9, reactedAtUnix: 3 });
     expect(setMessageReaction).toHaveBeenCalledTimes(1);
 
     resolveFirst(true);
     await waitForIdle();
+    await Promise.all([first, latest, stale]);
     expect(setMessageReaction).toHaveBeenCalledTimes(2);
     expect(setMessageReaction).toHaveBeenNthCalledWith(2, -1001, 10, [{ type: "emoji", emoji: "🔥" }]);
+  });
+
+  test("drain 在 API 在途时不提前成功，任务完成后结算", async () => {
+    let release!: (value: boolean) => void;
+    setMessageReaction.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const task = enqueueReaction({ chatId: -1001, messageId: 10, reactions: [], updateId: 1, reactedAtUnix: 1 });
+
+    await expect(drainReactionQueue(1)).resolves.toBe("timedOut");
+    release(true);
+    await task;
+    await expect(drainReactionQueue(100)).resolves.toBe("flushed");
   });
 
   test("429 按 retry_after 等待后重试，其它错误记录后放弃", async () => {

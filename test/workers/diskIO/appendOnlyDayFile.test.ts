@@ -101,6 +101,47 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     expect(state.size).toBe(statSync(join(dir, "2026-07-16.json")).size);
   });
 
+  test("已有文件的追加在成功返回前只执行一次 fsync，且顺序晚于完整 write", () => {
+    const state: DayFileState = openDayFile(dir, "2026-07-16");
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", 1) });
+    const calls: string[] = [];
+
+    appendToDayFile({
+      dir,
+      state,
+      chunk: serializeDayFileEntry("B", 2),
+      write: (request) => {
+        calls.push("write");
+        return writeSync(request.fd, request.buffer, request.offset, request.length, request.position);
+      },
+      sync: () => { calls.push("sync"); },
+    });
+
+    expect(calls).toEqual(["write", "sync"]);
+    expect(readDay("2026-07-16")).toEqual({ A: 1, B: 2 });
+  });
+
+  test("fsync 失败按追加失败上抛、重新探测游标并关闭 fd", () => {
+    const state: DayFileState = openDayFile(dir, "2026-07-16");
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", 1) });
+    let capturedFd: number | null = null;
+
+    expect(() => appendToDayFile({
+      dir,
+      state,
+      chunk: serializeDayFileEntry("B", 2),
+      sync: (fd) => {
+        capturedFd = fd;
+        throw new Error("injected fsync failure");
+      },
+    })).toThrow("injected fsync failure");
+
+    expect(state.size).toBe(statSync(join(dir, "2026-07-16.json")).size);
+    expect(() => writeSync(capturedFd!, Buffer.from("x"), 0, 1, 0)).toThrow();
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("C", 3) });
+    expect(readDay("2026-07-16")).toEqual({ A: 1, B: 2, C: 3 });
+  });
+
   test("零字节写显式失败，不虚增 offset，并关闭文件描述符", () => {
     const state: DayFileState = openDayFile(dir, "2026-07-16");
     appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", 1) });

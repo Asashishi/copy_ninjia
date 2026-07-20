@@ -2,17 +2,10 @@ import { describe, expect, mock, test } from "bun:test";
 import { parseIndexField } from "../../src/ai/utils/toolArgs";
 
 /**
- * 用空的 diskIO 桥隔离日志路由；infra/telegram 的 sendSticker 也一并 mock
- * 成测试可控的假实现——本文件
+ * infra/telegram 的 sendSticker 替换为测试可控的假实现——本文件
  * 不关心真实 Telegram API 调用是否成功（那部分已用真实 API 手动验证过），
  * 只关心 stickers.ts 自己的解析/组装/两层选择与每轮限额逻辑。
  */
-mock.module("../../src/infra/diskIO", () => ({
-  postDiskIO: mock((..._args: unknown[]): void => {}),
-  onDiskIORespawn: mock((..._args: unknown[]): void => {}),
-  relayLogMessage: mock((..._args: unknown[]): void => {}),
-}));
-
 const realTelegram = await import("../../src/infra/telegram");
 const sendStickerMock = mock(async (_chatId: number, _fileId: string): Promise<number | undefined> => 12345);
 mock.module("../../src/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
