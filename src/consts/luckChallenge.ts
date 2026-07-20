@@ -59,4 +59,4 @@ export const SAME_QUESTION_LABEL_MAX_LEN: number = 4;
  * ensureLuckCacheFreshForToday），单日内没有其它清理时机；需要一个真正
  * 生效的上限防止忙碌的一天里被打字预览堆到很大。签名回执（libs/luckReceipt.ts）
  * 是自描述验签，不占用任何反向索引，不受此上限约束。 */
-export const PENDING_LUCK_CACHE_MAX: number = 5000;
+export const PENDING_LUCK_CACHE_MAX: number = 15000;

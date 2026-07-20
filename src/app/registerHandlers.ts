@@ -49,7 +49,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
   // 因此必须在 isInit 网关前检查。
   bot.use(async (ctx, next) => {
-    await confirmLuckDraw(ctx.msg?.text);
+    await confirmLuckDraw(ctx.msg?.text, ctx.msg?.entities);
     return next();
   });
 

@@ -53,7 +53,11 @@ export function buildFortuneResult({
     reply_markup: buildRetryKeyboard(text),
     thumbnail_url: FORTUNE_THUMBNAIL_URL,
   }).text(signed.text, {
-    entities: [{ type: "spoiler", offset: signed.receiptOffset, length: signed.receiptLength }],
+    entities: [
+      { type: "spoiler", offset: signed.receiptOffset, length: signed.receiptLength },
+      { type: "text_link", offset: signed.receiptOffset, length: signed.receiptLength, url: signed.receiptUrl },
+    ],
+    link_preview_options: { is_disabled: true },
   });
 }
 
@@ -70,7 +74,11 @@ export function buildProbabilityResult(
     reply_markup: buildRetryKeyboard(undefined),
     thumbnail_url: PROBABILITY_THUMBNAIL_URL,
   }).text(signed.text, {
-    entities: [{ type: "spoiler", offset: signed.receiptOffset, length: signed.receiptLength }],
+    entities: [
+      { type: "spoiler", offset: signed.receiptOffset, length: signed.receiptLength },
+      { type: "text_link", offset: signed.receiptOffset, length: signed.receiptLength, url: signed.receiptUrl },
+    ],
+    link_preview_options: { is_disabled: true },
   });
 }
 

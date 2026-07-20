@@ -1,7 +1,11 @@
+import type { MessageEntity } from "@grammyjs/types";
 import { luckCacheState, luckReceiptSecretState } from "../../cache/luckChallenge";
 import {
   createLuckReceipt,
+  hashLuckReceipt,
+  isLuckReceiptHash,
   LUCK_RECEIPT_DISPLAY_PREFIX,
+  LUCK_RECEIPT_LINK_PREFIX,
   unwrapLuckReceiptLine,
   verifyLuckReceipt,
 } from "../../libs/luckReceipt";
@@ -12,29 +16,64 @@ export interface SignedLuckResult {
   text: string;
   receiptOffset: number;
   receiptLength: number;
+  receiptUrl: string;
 }
 
-/** 在正文末尾附加可见「防伪标记: 」与 spoiler 协议载荷。 */
+/** 正文只展示定长 SHA-256；自描述签名回执放在同范围的 text_link 元数据中。 */
 export function signLuckResultText(bodyText: string, cacheKey: string): SignedLuckResult {
   const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
   if (!secret) throw new Error("Daily luck receipt secret is not initialized");
   const receipt: string = createLuckReceipt(secret, cacheKey);
-  const displayLine: string = `${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`;
+  const receiptHash: string = hashLuckReceipt(receipt);
+  const displayLine: string = `${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`;
   return {
     text: `${bodyText}\n${displayLine}`,
     receiptOffset: bodyText.length + 1 + LUCK_RECEIPT_DISPLAY_PREFIX.length,
-    receiptLength: receipt.length,
+    receiptLength: receiptHash.length,
+    receiptUrl: `${LUCK_RECEIPT_LINK_PREFIX}${receipt}`,
   };
 }
 
-/** 从消息末行验证自描述 HMAC 回执并把对应 pending 抽签转正。 */
-export async function confirmLuckDraw(messageText: string | undefined): Promise<void> {
+function receiptFromLinkEntity(
+  receiptHash: string,
+  receiptOffset: number,
+  entities: readonly MessageEntity[] | undefined
+): string | undefined {
+  const link: MessageEntity | undefined = entities?.find((entity) =>
+    entity.type === "text_link" &&
+    entity.offset === receiptOffset &&
+    entity.length === receiptHash.length
+  );
+  if (link?.type !== "text_link" || !link.url.startsWith(LUCK_RECEIPT_LINK_PREFIX)) return undefined;
+  const receipt: string = link.url.slice(LUCK_RECEIPT_LINK_PREFIX.length);
+  return hashLuckReceipt(receipt) === receiptHash ? receipt : undefined;
+}
+
+/** 从消息末行与实体元数据验证 HMAC 回执，并把对应 pending 抽签转正。 */
+export async function confirmLuckDraw(
+  messageText: string | undefined,
+  entities?: readonly MessageEntity[]
+): Promise<void> {
   if (typeof messageText !== "string") return;
   await ensureLuckCacheFreshForToday();
 
-  const receiptLine: string | undefined = messageText.split("\n").at(-1);
+  const lastLineBreak: number = messageText.lastIndexOf("\n");
+  if (lastLineBreak < 0) return;
+  const receiptLine: string = messageText.slice(lastLineBreak + 1);
   if (!receiptLine) return;
-  const receipt: string = unwrapLuckReceiptLine(receiptLine);
+  const marker: string = unwrapLuckReceiptLine(receiptLine);
+  let receipt: string | undefined;
+  if (isLuckReceiptHash(marker)) {
+    if (!receiptLine.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX)) return;
+    receipt = receiptFromLinkEntity(
+      marker,
+      lastLineBreak + 1 + LUCK_RECEIPT_DISPLAY_PREFIX.length,
+      entities
+    );
+  } else {
+    receipt = marker;
+  }
+  if (!receipt) return;
   const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
   if (!secret) return;
   const cacheKey: string | undefined = verifyLuckReceipt(receipt, luckCacheState.dayKey, secret);

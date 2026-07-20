@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   createLuckReceipt,
   deriveLuckEntropy,
+  hashLuckReceipt,
+  isLuckReceiptHash,
   LUCK_RECEIPT_DISPLAY_PREFIX,
   LUCK_RECEIPT_MAX_LENGTH,
   stripLuckReceipt,
@@ -40,10 +42,21 @@ describe("luck receipt protocol", () => {
     expect(deriveLuckEntropy(OTHER_SECRET, "123")).not.toEqual(first);
   });
 
-  test("stripLuckReceipt 只移除末行的规范自描述回执", () => {
+  test("展示用 SHA-256 固定为 64 位十六进制，且完整回执变化时随之变化", () => {
+    const first: string = hashLuckReceipt(createLuckReceipt(SECRET, "123"));
+    expect(first).toHaveLength(64);
+    expect(isLuckReceiptHash(first)).toBe(true);
+    expect(hashLuckReceipt(createLuckReceipt(SECRET, "124"))).not.toBe(first);
+    expect(isLuckReceiptHash(first.toUpperCase())).toBe(false);
+  });
+
+  test("stripLuckReceipt 只移除末行的展示哈希或旧版自描述回执", () => {
     const receipt: string = createLuckReceipt(SECRET, "123");
+    const receiptHash: string = hashLuckReceipt(receipt);
     expect(stripLuckReceipt(`可读正文\n${receipt}`)).toBe("可读正文");
     expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBe("可读正文");
+    expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`)).toBe("可读正文");
+    expect(stripLuckReceipt(`可读正文\n${receiptHash}`)).toBe(`可读正文\n${receiptHash}`);
     expect(unwrapLuckReceiptLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBe(receipt);
     expect(unwrapLuckReceiptLine(receipt)).toBe(receipt);
     expect(stripLuckReceipt(`正文 ${receipt}`)).toBe(`正文 ${receipt}`);

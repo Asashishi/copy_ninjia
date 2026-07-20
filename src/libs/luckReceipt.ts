@@ -1,10 +1,12 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 const CACHE_KEY_PATTERN: RegExp = /^[1-9]\d{0,15}(?::[a-f0-9]{64})?$/;
 const RECEIPT_PATTERN: RegExp = /^luck:v1:(\d{4}-\d{2}-\d{2}):([A-Za-z0-9_-]{1,120})\.([A-Za-z0-9_-]{43})$/;
+const RECEIPT_HASH_PATTERN: RegExp = /^[a-f0-9]{64}$/;
 export const LUCK_RECEIPT_MAX_LENGTH: number = 192;
 export const LUCK_RECEIPT_DISPLAY_PREFIX: string = "防伪标记: ";
+export const LUCK_RECEIPT_LINK_PREFIX: string = "https://t.me/#luck-receipt=";
 
 function secretKey(secret: LuckReceiptSecret): Buffer {
   const key: Buffer = Buffer.from(secret.key, "base64url");
@@ -29,6 +31,15 @@ export function createLuckReceipt(secret: LuckReceiptSecret, cacheKey: string): 
   const receipt: string = `${unsigned}.${signature(secret, unsigned).toString("base64url")}`;
   if (receipt.length > LUCK_RECEIPT_MAX_LENGTH) throw new Error("Luck receipt exceeds its protocol length limit");
   return receipt;
+}
+
+/** 最终消息只展示完整回执的定长 SHA-256，原回执由 Telegram 实体元数据携带。 */
+export function hashLuckReceipt(receipt: string): string {
+  return createHash("sha256").update(receipt, "utf8").digest("hex");
+}
+
+export function isLuckReceiptHash(value: string): boolean {
+  return RECEIPT_HASH_PATTERN.test(value);
 }
 
 /**
@@ -79,8 +90,11 @@ export function unwrapLuckReceiptLine(line: string): string {
 export function stripLuckReceipt(text: string): string {
   const lastLineBreak: number = text.lastIndexOf("\n");
   if (lastLineBreak < 0) return text;
-  const receipt: string = unwrapLuckReceiptLine(text.slice(lastLineBreak + 1));
-  return receipt.length <= LUCK_RECEIPT_MAX_LENGTH && RECEIPT_PATTERN.test(receipt)
+  const line: string = text.slice(lastLineBreak + 1);
+  const receipt: string = unwrapLuckReceiptLine(line);
+  const isCurrentHash: boolean = line.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX) && isLuckReceiptHash(receipt);
+  const isLegacyReceipt: boolean = receipt.length <= LUCK_RECEIPT_MAX_LENGTH && RECEIPT_PATTERN.test(receipt);
+  return isCurrentHash || isLegacyReceipt
     ? text.slice(0, lastLineBreak)
     : text;
 }

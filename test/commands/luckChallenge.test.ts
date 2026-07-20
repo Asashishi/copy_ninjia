@@ -57,6 +57,14 @@ function bodyTextOf(result: any): string {
   return result.input_message_content.message_text;
 }
 
+function entitiesOf(result: any): any[] {
+  return result.input_message_content.entities;
+}
+
+async function confirmResult(result: any): Promise<void> {
+  await luckChallenge.confirmLuckDraw(bodyTextOf(result), entitiesOf(result));
+}
+
 function visibleBodyOf(result: any): string {
   return bodyTextOf(result).split("\n").slice(0, -1).join("\n");
 }
@@ -76,10 +84,17 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(ctx.results.length).toBe(2);
 
     const fortuneBody: string = bodyTextOf(ctx.results[0]);
-    expect(fortuneBody.split("\n").at(-1)?.startsWith("防伪标记: luck:v1:")).toBe(true);
+    expect(fortuneBody.split("\n").at(-1)).toMatch(/^防伪标记: [a-f0-9]{64}$/);
     const spoiler = ctx.results[0].input_message_content.entities[0];
-    expect(fortuneBody.slice(spoiler.offset, spoiler.offset + spoiler.length).startsWith("luck:v1:")).toBe(true);
-    await luckChallenge.confirmLuckDraw(fortuneBody);
+    expect(fortuneBody.slice(spoiler.offset, spoiler.offset + spoiler.length)).toMatch(/^[a-f0-9]{64}$/);
+    const receiptLink = ctx.results[0].input_message_content.entities[1];
+    expect(receiptLink).toMatchObject({
+      type: "text_link",
+      offset: spoiler.offset,
+      length: spoiler.length,
+    });
+    expect(receiptLink.url.startsWith("https://t.me/#luck-receipt=luck:v1:")).toBe(true);
+    await confirmResult(ctx.results[0]);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     const msg: any = postDiskIOMock.mock.calls[0]![0];
@@ -93,8 +108,9 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const ctx = makeInlineCtx(112, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     const lines: string[] = bodyTextOf(ctx.results[0]).split("\n");
-    const prefixedReceipt: string = lines.pop()!;
-    const legacyReceipt: string = prefixedReceipt.slice("防伪标记: ".length);
+    lines.pop();
+    const receiptUrl: string = entitiesOf(ctx.results[0])[1]!.url;
+    const legacyReceipt: string = receiptUrl.slice("https://t.me/#luck-receipt=".length);
 
     await luckChallenge.confirmLuckDraw(`${lines.join("\n")}\n${legacyReceipt}`);
     expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "112" });
@@ -103,8 +119,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("不带文本：选中「概率论」结果（同一把 key）也能确认落盘", async () => {
     const ctx = makeInlineCtx(222, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
-    const probabilityBody: string = bodyTextOf(ctx.results[1]);
-    await luckChallenge.confirmLuckDraw(probabilityBody);
+    await confirmResult(ctx.results[1]);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "222" });
@@ -116,8 +131,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     expect(ctx.results.length).toBe(1);
 
-    const body: string = bodyTextOf(ctx.results[0]);
-    await luckChallenge.confirmLuckDraw(body);
+    await confirmResult(ctx.results[0]);
 
     const expectedKey: string = luckChallenge.luckCacheKey(333, "今天适合表白吗");
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
@@ -149,15 +163,15 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("同一天多个不同 key（多用户 / 同用户不同所求事项）各自独立落盘一次", async () => {
     const ctxA = makeInlineCtx(1, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctxA as any);
-    await luckChallenge.confirmLuckDraw(bodyTextOf(ctxA.results[0]));
+    await confirmResult(ctxA.results[0]);
 
     const ctxB = makeInlineCtx(2, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctxB as any);
-    await luckChallenge.confirmLuckDraw(bodyTextOf(ctxB.results[0]));
+    await confirmResult(ctxB.results[0]);
 
     const ctxC = makeInlineCtx(1, "工作运");
     await luckChallenge.handleLuckChallengeInlineQuery(ctxC as any);
-    await luckChallenge.confirmLuckDraw(bodyTextOf(ctxC.results[0]));
+    await confirmResult(ctxC.results[0]);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(3);
     const expectedKeys = new Set([
@@ -176,10 +190,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     // 旧实现的 `${userId} ${文本}` 索引永远查不上——确认只能靠文本本身。
     const ctx = makeInlineCtx(888, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
-    const body: string = bodyTextOf(ctx.results[0]);
-
-    // 调用方（index.ts 的网关前中间件）只把消息文本传进来，不含（也拿不到）真实 uid
-    await luckChallenge.confirmLuckDraw(body);
+    // 调用方只传消息文本及其实体，不含（也拿不到）真实 uid。
+    await confirmResult(ctx.results[0]);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "888" });
@@ -195,10 +207,10 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const secondSignedBody: string = bodyTextOf(second.results[0]);
     expect(secondSignedBody).not.toBe(firstSignedBody);
 
-    await luckChallenge.confirmLuckDraw(firstSignedBody);
+    await confirmResult(first.results[0]);
     expect(cache.dailyLuckCache.has("881")).toBe(true);
     expect(cache.dailyLuckCache.has("882")).toBe(false);
-    await luckChallenge.confirmLuckDraw(secondSignedBody);
+    await confirmResult(second.results[0]);
     expect(cache.dailyLuckCache.has("882")).toBe(true);
     expect(postDiskIOMock).toHaveBeenCalledTimes(2);
   });
@@ -211,10 +223,13 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
     await luckChallenge.confirmLuckDraw(visibleBody);
     await luckChallenge.confirmLuckDraw(`${visibleBody}\n防伪标记: luck:v1:${TEST_SECRET.day}:MTIz.${"B".repeat(43)}`);
+    await luckChallenge.confirmLuckDraw(signedBody);
+    const tamperedBody: string = `${signedBody.slice(0, -1)}${signedBody.endsWith("a") ? "b" : "a"}`;
+    await luckChallenge.confirmLuckDraw(tamperedBody, entitiesOf(ctx.results[0]));
     expect(cache.dailyLuckCache.has("883")).toBe(false);
     expect(postDiskIOMock).not.toHaveBeenCalled();
 
-    await luckChallenge.confirmLuckDraw(signedBody);
+    await confirmResult(ctx.results[0]);
     expect(cache.dailyLuckCache.has("883")).toBe(true);
   });
 
@@ -246,13 +261,11 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("chosen_inline_result 与签名回执兜底先后到达：幂等，只落盘一次", async () => {
     const ctx = makeInlineCtx(1001, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
-    const body: string = bodyTextOf(ctx.results[0]);
-
     await luckChallenge.handleLuckChosenInlineResult({
       chosenInlineResult: { result_id: "luck-fortune", from: { id: 1001 }, query: "" },
     } as any);
     const confirmed = cache.dailyLuckCache.get("1001");
-    await luckChallenge.confirmLuckDraw(body);
+    await confirmResult(ctx.results[0]);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(cache.dailyLuckCache.size).toBe(1);
@@ -301,12 +314,12 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("预览后进程重启，消息回执仍可重建结果并转正", async () => {
     const ctx = makeInlineCtx(446, "重启后确认");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
-    const body: string = bodyTextOf(ctx.results[0]);
+    const result = ctx.results[0];
 
     cache.dailyLuckCache.clear();
     cache.pendingLuckDraws.clear();
     luckChallenge.restoreLuckState(TEST_SECRET, null);
-    await luckChallenge.confirmLuckDraw(body);
+    await confirmResult(result);
 
     const key: string = luckChallenge.luckCacheKey(446, "重启后确认");
     expect(cache.dailyLuckCache.has(key)).toBe(true);
@@ -333,11 +346,10 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("重复送达同一条结果消息（如多份转发副本）：幂等，只落盘一次", async () => {
     const ctx = makeInlineCtx(555, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
-    const body: string = bodyTextOf(ctx.results[0]);
-    await luckChallenge.confirmLuckDraw(body);
+    await confirmResult(ctx.results[0]);
     const confirmed = cache.dailyLuckCache.get("555");
-    await luckChallenge.confirmLuckDraw(body);
-    await luckChallenge.confirmLuckDraw(body);
+    await confirmResult(ctx.results[0]);
+    await confirmResult(ctx.results[0]);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(cache.dailyLuckCache.size).toBe(1);
@@ -347,7 +359,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   test("重新预览同一把 key 后再选中：同一天不会二次落盘/二次滚动", async () => {
     const ctx1 = makeInlineCtx(666, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx1 as any);
-    await luckChallenge.confirmLuckDraw(bodyTextOf(ctx1.results[0]));
+    await confirmResult(ctx1.results[0]);
     const confirmed = cache.dailyLuckCache.get("666");
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
 
@@ -355,7 +367,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const ctx2 = makeInlineCtx(666, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx2 as any);
     expect(visibleBodyOf(ctx2.results[0])).toBe(visibleBodyOf(ctx1.results[0]));
-    await luckChallenge.confirmLuckDraw(bodyTextOf(ctx2.results[0]));
+    await confirmResult(ctx2.results[0]);
 
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(cache.dailyLuckCache.get("666")).toBe(confirmed!);
@@ -396,7 +408,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       const ctx = makeInlineCtx(111, "");
       await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
       expect(cache.pendingLuckDraws.has("111")).toBe(true);
-      const oldBody: string = bodyTextOf(ctx.results[0]);
+      const oldResult = ctx.results[0];
       postDiskIOMock.mockClear();
 
       // 东京零点翻页：下一次确认路径进入时整体切换日缓存、清空 pending。
@@ -410,7 +422,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       expect(cache.dailyLuckCache.size).toBe(0);
 
       // 迟到的签名回执带着 1 月 1 日的日期与签名，在 1 月 2 日验签失败，同样丢弃。
-      await luckChallenge.confirmLuckDraw(oldBody);
+      await confirmResult(oldResult);
       expect(luckDrawCalls()).toHaveLength(0);
       expect(cache.dailyLuckCache.size).toBe(0);
 
@@ -426,9 +438,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       // 跨天后同日的回执确认自带当日证明：pending 即便丢失也允许重建派生。
       const receiptCtx = makeInlineCtx(333, "");
       await luckChallenge.handleLuckChallengeInlineQuery(receiptCtx as any);
-      const todayBody: string = bodyTextOf(receiptCtx.results[0]);
       cache.pendingLuckDraws.clear();
-      await luckChallenge.confirmLuckDraw(todayBody);
+      await confirmResult(receiptCtx.results[0]);
       expect(cache.dailyLuckCache.has("333")).toBe(true);
       expect(luckDrawCalls()).toHaveLength(2);
     } finally {
