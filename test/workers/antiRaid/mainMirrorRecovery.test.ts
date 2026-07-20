@@ -23,8 +23,15 @@ const chatStates = new Map<number, { lockdown?: {
   expiresAt: number;
 } }>();
 const saveState = mock(async (): Promise<void> => {});
-const flushStateToDisk = mock(async (): Promise<"flushed"> => "flushed");
-const flushDiskIO = mock(async (): Promise<"flushed"> => "flushed");
+type FlushResult = "flushed" | "timedOut" | "failed";
+const flushStateToDisk = mock(async (): Promise<FlushResult> => "flushed");
+const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 mock.module("../../../src/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
@@ -199,10 +206,16 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     }]);
   });
 
-  test("chat_member update 等待 Worker barrier 与镜像落盘后才结算", async () => {
+  test("chat_member update 必须依次跨过 Worker barrier 与两类落盘后才结算", async () => {
+    workerPosts.length = 0;
     flushDiskIO.mockClear();
     flushStateToDisk.mockClear();
+    const diskGate = deferred<FlushResult>();
+    const stateGate = deferred<FlushResult>();
+    flushDiskIO.mockImplementationOnce(() => diskGate.promise);
+    flushStateToDisk.mockImplementationOnce(() => stateGate.promise);
     const { antiRaidRuntimeState } = await import("../../../src/cache/antiRaid");
+    let settled: boolean = false;
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
       chatMember: {
@@ -211,7 +224,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
         old_chat_member: { status: "left", user: { id: 77 } },
         new_chat_member: { status: "member", user: { id: 77, first_name: "New" } },
       },
-    } as never);
+    } as never).finally(() => { settled = true; });
 
     const barrier = workerPosts.at(-1);
     expect(barrier?.type).toBe("barrier");
@@ -219,13 +232,138 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       type: "verificationUpsert",
       record: { ...record(antiRaidRuntimeState.generation, 1), chatId: -3001, userId: 77 },
     });
+    await Bun.sleep(0);
+    expect(settled).toBe(false);
+    expect(flushDiskIO).not.toHaveBeenCalled();
+    expect(flushStateToDisk).not.toHaveBeenCalled();
+
     if (barrier?.type === "barrier") {
       supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
     }
-    await handled;
-
+    await Bun.sleep(0);
     expect(flushDiskIO).toHaveBeenCalledTimes(1);
     expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+
+    diskGate.resolve("flushed");
+    await Bun.sleep(0);
+    expect(settled).toBe(false);
+    stateGate.resolve("flushed");
+    await handled;
+    expect(settled).toBe(true);
+  });
+
+  test("barrier 后任一持久化 owner 失败，安全 update 必须 reject", async () => {
+    workerPosts.length = 0;
+    flushDiskIO.mockResolvedValueOnce("failed");
+    const { antiRaidRuntimeState } = await import("../../../src/cache/antiRaid");
+    const handled = antiRaid.handleChatMemberUpdate({
+      me: { id: 99 },
+      chatMember: {
+        chat: { id: -3002 },
+        from: { id: 8 },
+        old_chat_member: { status: "left", user: { id: 78 } },
+        new_chat_member: { status: "member", user: { id: 78, first_name: "Newer" } },
+      },
+    } as never);
+    const barrier = workerPosts.at(-1);
+    supervisorOptions!.onEvent({
+      type: "verificationUpsert",
+      record: { ...record(antiRaidRuntimeState.generation, 1), chatId: -3002, userId: 78 },
+    });
+    if (barrier?.type === "barrier") {
+      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
+    }
+
+    await expect(handled).rejects.toThrow("Anti-Raid persistence failed: disk=failed, state=flushed");
+  });
+
+  test("Worker 在 barrier 等待期间重建会立即失败，不把旧实例回执当成功", async () => {
+    workerPosts.length = 0;
+    flushDiskIO.mockClear();
+    flushStateToDisk.mockClear();
+    const handled = antiRaid.handleChatMemberUpdate({
+      me: { id: 99 },
+      chatMember: {
+        chat: { id: -3003 },
+        from: { id: 9 },
+        old_chat_member: { status: "left", user: { id: 79 } },
+        new_chat_member: { status: "member", user: { id: 79, first_name: "Newest" } },
+      },
+    } as never);
+    expect(workerPosts.at(-1)?.type).toBe("barrier");
+
+    supervisorOptions!.onRespawn((): void => {});
+
+    await expect(handled).rejects.toThrow("Anti-Raid Worker barrier failed");
+    expect(flushDiskIO).not.toHaveBeenCalled();
+    expect(flushStateToDisk).not.toHaveBeenCalled();
+  });
+
+  test("barrier 超时会清理 waiter，迟到回执不能改变失败结果", async () => {
+    workerPosts.length = 0;
+    const { pendingAntiRaidBarriers } = await import("../../../src/cache/antiRaid");
+    const result = antiRaid.drainAntiRaid(1);
+    const barrier = workerPosts.at(-1);
+
+    await expect(result).resolves.toBe("timedOut");
+    expect(pendingAntiRaidBarriers.size).toBe(0);
+    if (barrier?.type === "barrier") {
+      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
+    }
+    expect(pendingAntiRaidBarriers.size).toBe(0);
+  });
+
+  test("服务消息与验证按钮入口都把各自 barrier 纳入返回 Promise", async () => {
+    async function expectOwnBarrier(
+      start: () => Promise<unknown>,
+      expectedMessageType: AntiRaidWorkerMessage["type"]
+    ): Promise<void> {
+      workerPosts.length = 0;
+      let settled: boolean = false;
+      const handled = start().finally(() => { settled = true; });
+      await Bun.sleep(0);
+      expect(workerPosts[0]?.type).toBe(expectedMessageType);
+      const barrier = workerPosts.at(-1);
+      expect(barrier?.type).toBe("barrier");
+      await Bun.sleep(0);
+      expect(settled).toBe(false);
+      if (barrier?.type === "barrier") {
+        supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
+      }
+      await handled;
+      expect(settled).toBe(true);
+    }
+
+    await expectOwnBarrier(
+      () => antiRaid.handleGroupJoinVerification({
+        chat: { id: -5001 },
+        from: { id: 20 },
+        message_id: 60,
+        new_chat_members: [{ id: 201, first_name: "Join" }],
+      } as never, 99),
+      "join"
+    );
+    await expectOwnBarrier(
+      () => antiRaid.handleGroupJoinVerification({
+        chat: { id: -5002 },
+        from: { id: 21 },
+        message_id: 61,
+        left_chat_member: { id: 202, first_name: "Left" },
+      } as never, 99),
+      "left"
+    );
+    await expectOwnBarrier(
+      () => antiRaid.handleVerificationCallback({
+        callbackQuery: {
+          id: "callback-1",
+          data: "verify:203",
+          message: { chat: { id: -5003 } },
+          from: { id: 203, first_name: "Verify" },
+        },
+      } as never),
+      "callback"
+    );
   });
 
   test("入群事件晚到时仍转交评论区线索，普通非待验证消息不进入 Worker", async () => {

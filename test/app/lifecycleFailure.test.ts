@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ApplicationLifecycleDependencies } from "../../src/types/lifecycle";
 
 const calls: string[] = [];
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 const acquireSingleInstanceLock = mock(async (): Promise<void> => { calls.push("acquireLock"); });
 const releaseSingleInstanceLock = mock(async (): Promise<void> => { calls.push("releaseLock"); });
 const getStickerConfig = mock((): object => ({}));
@@ -47,7 +53,7 @@ let copiedUser: object | null = null;
 const getGlobalCopyState = mock(() => ({ copiedUser }));
 const sleep = mock(async (): Promise<void> => {});
 const loggerError = mock((..._args: unknown[]): void => {});
-const getUpdates = mock(async (): Promise<unknown[]> => []);
+const getUpdates = mock(async (): Promise<unknown[]> => { calls.push("getUpdates"); return []; });
 const botInit = mock(async (): Promise<void> => { calls.push("botInit"); });
 const bot = {
   botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot", is_bot: true },
@@ -156,6 +162,9 @@ beforeEach(() => {
   flushDiskIO.mockImplementation(async () => { calls.push("flushDiskIO"); return "flushed" as const; });
   flushStateToDisk.mockImplementation(async () => { calls.push("flushState"); return "flushed" as const; });
   flushAiMemory.mockImplementation(async () => { calls.push("flushAiMemory"); return "flushed" as const; });
+  drainAntiRaid.mockImplementation(async () => { calls.push("drainAntiRaid"); return "flushed" as const; });
+  drainReactionQueue.mockImplementation(async () => { calls.push("drainReaction"); return "flushed" as const; });
+  drainAvatarUpdates.mockImplementation(async () => { calls.push("drainAvatar"); return "flushed" as const; });
   runnerTask.mockImplementation(async (): Promise<void> => {});
   runnerSize.mockImplementation((): number => 0);
 });
@@ -225,6 +234,50 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("runnerStop")).toBeLessThan(calls.indexOf("flushAiMemory"));
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));
     expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("terminateDiskIO"));
+  });
+
+  test("dispose 在 Anti-Raid drain 落定前不得 flush 或终止任何业务 Worker", async () => {
+    const antiRaidGate = deferred<FlushResult>();
+    drainAntiRaid.mockImplementationOnce(() => {
+      calls.push("drainAntiRaid");
+      return antiRaidGate.promise;
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    const disposing = lifecycle.dispose();
+    await Bun.sleep(0);
+
+    expect(drainAntiRaid).toHaveBeenCalledTimes(1);
+    expect(flushAiMemory).not.toHaveBeenCalled();
+    expect(flushDiskIO).not.toHaveBeenCalled();
+    expect(terminateAiChat).not.toHaveBeenCalled();
+    expect(terminateAntiRaid).not.toHaveBeenCalled();
+    expect(terminateDiskIO).not.toHaveBeenCalled();
+
+    antiRaidGate.resolve("flushed");
+    await disposing;
+
+    expect(calls.indexOf("drainAntiRaid")).toBeLessThan(calls.indexOf("flushAiMemory"));
+    expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));
+    expect(calls.indexOf("terminateAiChat")).toBeLessThan(calls.indexOf("flushDiskIO"));
+    expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("terminateAntiRaid"));
+    expect(calls.indexOf("terminateAntiRaid")).toBeLessThan(calls.indexOf("terminateDiskIO"));
+    expect(calls.indexOf("terminateDiskIO")).toBeLessThan(calls.indexOf("flushState"));
+  });
+
+  test("Anti-Raid drain 失败仍终止 Worker，但设置非零退出码并保留实例锁", async () => {
+    drainAntiRaid.mockResolvedValueOnce("failed");
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.dispose();
+
+    expect(process.exitCode).toBe(1);
+    expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
+    expect(terminateDiskIO).toHaveBeenCalledTimes(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("antiRaid=failed"));
   });
 
   test("Disk I/O 运行时 fatal 会设置非零退出码并停止继续取 update", async () => {
@@ -307,6 +360,50 @@ describe("应用启动失败与退出清理", () => {
     expect(flushDiskIO).toHaveBeenCalledTimes(2);
     expect(flushStateToDisk).toHaveBeenCalledTimes(2);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
+  test("wait 在 Anti-Raid drain 完成前不得 flush，更不得确认 offset", async () => {
+    const antiRaidGate = deferred<FlushResult>();
+    drainAntiRaid.mockImplementationOnce(() => {
+      calls.push("drainAntiRaid");
+      return antiRaidGate.promise;
+    });
+    lastSeenUpdateId = 654;
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    const waiting = lifecycle.wait();
+    await Bun.sleep(0);
+
+    expect(drainAntiRaid).toHaveBeenCalledTimes(1);
+    expect(flushAiMemory).not.toHaveBeenCalled();
+    expect(flushDiskIO).not.toHaveBeenCalled();
+    expect(flushStateToDisk).not.toHaveBeenCalled();
+    expect(getUpdates).not.toHaveBeenCalled();
+
+    antiRaidGate.resolve("flushed");
+    await waiting;
+
+    expect(calls.indexOf("drainAntiRaid")).toBeLessThan(calls.indexOf("flushAiMemory"));
+    expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("flushDiskIO"));
+    expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("flushState"));
+    expect(calls.indexOf("flushState")).toBeLessThan(calls.indexOf("getUpdates"));
+    expect(getUpdates).toHaveBeenCalledWith({ offset: 655, limit: 1, timeout: 0 });
+    await lifecycle.dispose();
+  });
+
+  test("确认前 Anti-Raid drain 超时会阻止 offset，并把失败传播到退出状态", async () => {
+    lastSeenUpdateId = 777;
+    drainAntiRaid.mockResolvedValueOnce("timedOut");
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.wait();
+
+    expect(process.exitCode).toBe(1);
+    expect(getUpdates).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("antiRaid=timedOut"));
+    await lifecycle.dispose();
   });
 
   test("确认前任一持久化边界失败时不确认 update offset", async () => {
