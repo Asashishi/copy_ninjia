@@ -67,7 +67,7 @@ describe("production module coverage manifest", () => {
     //
     // 拦截必须做成「带开关的透传包装」而不是简单替换：本 bun 版本对同一
     // builtin 的 mock.module 二次调用不会覆盖第一次，mock 装上就摘不掉；
-    // 非 --isolate 的 bun test 里它会泄漏到同进程随后加载的测试文件（真实
+    // 非隔离测试里它会泄漏到同进程随后加载的测试文件（真实
     // 读写临时目录的 diskIO/instanceLock 等测试会被误伤）。开关在 finally
     // 里关掉后，泄漏出去的只是对真实实现的纯透传。
     let fsWriteStarts: number = 0;

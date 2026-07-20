@@ -6,8 +6,8 @@ import {
 } from "../../consts/luckReceipt";
 import {
   createLuckReceipt,
-  hashLuckReceipt,
   isLuckReceiptHash,
+  luckReceiptHmacHash,
   unwrapLuckReceiptLine,
   verifyLuckReceipt,
 } from "../../libs/luckReceipt";
@@ -21,12 +21,13 @@ export interface SignedLuckResult {
   receiptUrl: string;
 }
 
-/** 正文只展示定长 SHA-256；自描述签名回执放在同范围的 text_link 元数据中。 */
+/** 正文直接展示回执的定长 HMAC；自描述签名回执放在同范围的 text_link 元数据中。 */
 export function signLuckResultText(bodyText: string, cacheKey: string): SignedLuckResult {
   const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
   if (!secret) throw new Error("Daily luck receipt secret is not initialized");
   const receipt: string = createLuckReceipt(secret, cacheKey);
-  const receiptHash: string = hashLuckReceipt(receipt);
+  const receiptHash: string | undefined = luckReceiptHmacHash(receipt);
+  if (!receiptHash) throw new Error("Created an invalid luck receipt");
   const displayLine: string = `${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`;
   return {
     text: `${bodyText}\n${displayLine}`,
@@ -48,7 +49,7 @@ function receiptFromLinkEntity(
   );
   if (link?.type !== "text_link" || !link.url.startsWith(LUCK_RECEIPT_LINK_PREFIX)) return undefined;
   const receipt: string = link.url.slice(LUCK_RECEIPT_LINK_PREFIX.length);
-  return hashLuckReceipt(receipt) === receiptHash ? receipt : undefined;
+  return luckReceiptHmacHash(receipt) === receiptHash ? receipt : undefined;
 }
 
 /** 从消息末行与实体元数据验证 HMAC 回执，并把对应 pending 抽签转正。 */

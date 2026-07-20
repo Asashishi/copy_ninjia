@@ -67,7 +67,7 @@ describe("shouldPassInitGate", () => {
   test("已 /init 过的群 + 普通消息：放行", () => {
     const chatId = -1001111111113;
     getOrCreateChatState(chatId).isInitEnabled = true;
-    // bun test 默认同进程共享 infra/storage 的模块级 chatStates（同文件的
+    // 若误用非隔离测试，同进程会共享 infra/storage 的模块级 chatStates（同文件的
     // /send 中转测试也有这条注意事项），务必测完把这个字段清回去，不留给
     // 同进程里跑在它之后的其它测试文件。注意：这里只重置字段、不能用
     // 删除整个状态——本文件只 mock 了 infra/diskIO（防的是 logger.ts
@@ -138,7 +138,7 @@ describe("shouldPassPrivateCommandGate", () => {
   test("有 /send 中转会话时只放行超管的其它私聊指令，外部用户仍被拦截", () => {
     // getActiveProxySendTarget 是全局扫描，不像 shouldPassInitGate 那样只看
     // 单个 chatId：这里设的 true 若不清掉，会污染同进程里跑在它之后的其它
-    // 测试（包括其它测试文件——bun test 默认同进程共享 infra/storage 的
+    // 测试（包括其它测试文件——非隔离测试会在同进程共享 infra/storage 的
     // 模块级 chatStates），务必 finally 里清回去。
     const targetChatId = -1004444444444;
     getOrCreateChatState(targetChatId).isProxySendEnabled = true;

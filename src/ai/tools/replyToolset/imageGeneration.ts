@@ -41,7 +41,8 @@ export function buildGenerateImageToolDefinition(
     ? "当前状态：可以生图；由你判断当前消息是否明确要求生成或编辑图片。本轮由 superAdmin 触发，不受群冷却限制。"
     : availability.allowed
     ? "当前状态：可以生图；由你判断当前消息是否明确要求生成或编辑图片，没有明确意图就不要调用。"
-    : `当前状态：暂不可生图，群冷却剩余约 ${Math.ceil(availability.retryAfterMs / 1_000)} 秒；本轮不要调用。`;
+    : `当前状态：暂不可生图，群冷却剩余约 ${Math.ceil(availability.retryAfterMs / 1_000)} 秒；本轮不要调用，` +
+      "并且必须用 send_message 明确告诉群友当前暂时不能使用生图，请稍后再试。";
   const defaultAspectRatio: ImageGenerationAspectRatio = defaultAspectRatioFor(ctx.imageGenerationReference);
   const referenceInstruction: string = ctx.imageGenerationReference
     ? `当前触发附带一份 ${ctx.imageGenerationReference.width}×${ctx.imageGenerationReference.height} 的参考图片素材；调用时会自动交给图片模型。` +
@@ -120,9 +121,14 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
       bypassCooldown: ctx.bypassImageGenerationCooldown,
     });
     if (!claim.allowed) {
+      const retryAfterSeconds: number = Math.ceil(claim.retryAfterMs / 1_000);
       return JSON.stringify({
         error: "Image generation is cooling down in this chat",
-        retry_after_seconds: Math.ceil(claim.retryAfterMs / 1_000),
+        retry_after_seconds: retryAfterSeconds,
+        retryable: false,
+        required_action:
+          `必须使用 send_message 明确告诉群友当前暂时不能使用生图，请约 ${retryAfterSeconds} 秒后再试；` +
+          "本轮不要再次调用 generate_image。",
       });
     }
 

@@ -5,7 +5,7 @@ export const LUCK_CACHE_KEY_PATTERN: RegExp = /^[1-9]\d{0,15}(?::[a-f0-9]{64})?$
 /** v1 自描述回执：东京日期、base64url cache key 与完整 HMAC-SHA256。 */
 export const LUCK_RECEIPT_PATTERN: RegExp =
   /^luck:v1:(\d{4}-\d{2}-\d{2}):([A-Za-z0-9_-]{1,120})\.([A-Za-z0-9_-]{43})$/;
-/** 最终消息中展示的 SHA-256 十六进制摘要。 */
+/** 最终消息中展示的 HMAC-SHA256 十六进制摘要。 */
 export const LUCK_RECEIPT_HASH_PATTERN: RegExp = /^[a-f0-9]{64}$/;
 /** 自描述回执的协议长度硬上限。 */
 export const LUCK_RECEIPT_MAX_LENGTH: number = 192;

@@ -7,7 +7,7 @@
     "start": "bun run index.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "bun test",
+    "test": "bun test --isolate",
     "test:coverage": "bun test --isolate --coverage --coverage-reporter=text",
     "typecheck": "tsc --noEmit",
     "check": "bun run lint && bun run typecheck && bun run test:coverage"

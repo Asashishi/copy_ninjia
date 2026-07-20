@@ -98,6 +98,7 @@ describe("generate_image 工具执行器", () => {
     const coolingDescription = buildGenerateImageToolDefinition(buildContext()).description;
     expect(coolingDescription).toContain("当前状态：暂不可生图");
     expect(coolingDescription).toContain("本轮不要调用");
+    expect(coolingDescription).toContain("必须用 send_message 明确告诉群友当前暂时不能使用生图");
 
     const superAdminDescription = buildGenerateImageToolDefinition(buildContext(-1001, true)).description;
     expect(superAdminDescription).toContain("当前状态：可以生图");
@@ -256,6 +257,9 @@ describe("generate_image 工具执行器", () => {
     const limited = JSON.parse(await sameChat(JSON.stringify({ prompt: "second" })));
     expect(limited.error).toContain("cooling down");
     expect(limited.retry_after_seconds).toBeGreaterThan(0);
+    expect(limited.retryable).toBe(false);
+    expect(limited.required_action).toContain("必须使用 send_message 明确告诉群友当前暂时不能使用生图");
+    expect(limited.required_action).toContain("本轮不要再次调用 generate_image");
     expect(JSON.parse(await otherChat(JSON.stringify({ prompt: "third" }))).success).toBe(true);
     expect(generateChatImage).toHaveBeenCalledTimes(2);
   });

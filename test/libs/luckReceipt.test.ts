@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import {
   LUCK_RECEIPT_DISPLAY_PREFIX,
@@ -6,8 +7,8 @@ import {
 import {
   createLuckReceipt,
   deriveLuckEntropy,
-  hashLuckReceipt,
   isLuckReceiptHash,
+  luckReceiptHmacHash,
   stripLuckReceipt,
   unwrapLuckReceiptLine,
   verifyLuckReceipt,
@@ -44,17 +45,24 @@ describe("luck receipt protocol", () => {
     expect(deriveLuckEntropy(OTHER_SECRET, "123")).not.toEqual(first);
   });
 
-  test("展示用 SHA-256 固定为 64 位十六进制，且完整回执变化时随之变化", () => {
-    const first: string = hashLuckReceipt(createLuckReceipt(SECRET, "123"));
+  test("展示值直接复用回执的 HMAC，不再对完整回执二次哈希", () => {
+    const firstReceipt: string = createLuckReceipt(SECRET, "123");
+    const unsigned: string = firstReceipt.slice(0, firstReceipt.lastIndexOf("."));
+    const expectedHmac: string = createHmac("sha256", Buffer.from(SECRET.key, "base64url"))
+      .update(unsigned, "utf8")
+      .digest("hex");
+    const first: string | undefined = luckReceiptHmacHash(firstReceipt);
+    expect(first).toBe(expectedHmac);
     expect(first).toHaveLength(64);
-    expect(isLuckReceiptHash(first)).toBe(true);
-    expect(hashLuckReceipt(createLuckReceipt(SECRET, "124"))).not.toBe(first);
-    expect(isLuckReceiptHash(first.toUpperCase())).toBe(false);
+    expect(isLuckReceiptHash(first!)).toBe(true);
+    expect(luckReceiptHmacHash(createLuckReceipt(SECRET, "124"))).not.toBe(first);
+    expect(luckReceiptHmacHash("not-a-receipt")).toBeUndefined();
+    expect(isLuckReceiptHash(first!.toUpperCase())).toBe(false);
   });
 
   test("stripLuckReceipt 只移除末行的展示哈希或旧版自描述回执", () => {
     const receipt: string = createLuckReceipt(SECRET, "123");
-    const receiptHash: string = hashLuckReceipt(receipt);
+    const receiptHash: string = luckReceiptHmacHash(receipt)!;
     expect(stripLuckReceipt(`可读正文\n${receipt}`)).toBe("可读正文");
     expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBe("可读正文");
     expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`)).toBe("可读正文");

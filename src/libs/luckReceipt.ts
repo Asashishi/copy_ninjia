@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   LUCK_CACHE_KEY_PATTERN,
   LUCK_RECEIPT_DISPLAY_PREFIX,
@@ -33,9 +33,16 @@ export function createLuckReceipt(secret: LuckReceiptSecret, cacheKey: string): 
   return receipt;
 }
 
-/** 最终消息只展示完整回执的定长 SHA-256，原回执由 Telegram 实体元数据携带。 */
-export function hashLuckReceipt(receipt: string): string {
-  return createHash("sha256").update(receipt, "utf8").digest("hex");
+/**
+ * 最终消息直接展示回执里已有的 HMAC-SHA256（转成十六进制），不再对完整
+ * 回执额外做一次 SHA-256；原回执仍由 Telegram 实体元数据携带。
+ */
+export function luckReceiptHmacHash(receipt: string): string | undefined {
+  const match: RegExpExecArray | null = LUCK_RECEIPT_PATTERN.exec(receipt);
+  if (!match) return undefined;
+  const hmac: Buffer = Buffer.from(match[3]!, "base64url");
+  if (hmac.length !== 32 || hmac.toString("base64url") !== match[3]) return undefined;
+  return hmac.toString("hex");
 }
 
 export function isLuckReceiptHash(value: string): boolean {
