@@ -1,3 +1,4 @@
+import { IMAGE_GENERATION_COOLDOWN_MS } from "../imageGeneration";
 import { MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 
@@ -50,7 +51,8 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
   "修图、上色、改图、做海报/壁纸/视觉稿，或明确要求把想法呈现成图片。仅仅提到图片、描述场景、讨论构图、询问你是否会生图或修图，或你觉得配图更好，" +
   "都不构成调用意图；不得根据暗示或自行发挥擅自生图。执行侧只校验当前消息是否直接回复/@你，具体意图由你根据当前消息判断，不依赖关键词匹配。" +
   "prompt 必须是可独立交给图片模型的完整画面说明，" +
-  "不要写对工具的解释。同一个群每 60 秒最多接受一次由普通用户触发的生图尝试，群内共享冷却；superAdmin 不受这项冷却限制，冷却由执行侧强制。";
+  `不要写对工具的解释。同一个群每 ${IMAGE_GENERATION_COOLDOWN_MS / 60_000} 分钟最多接受一次由普通用户触发的生图尝试，` +
+  "群内共享冷却；superAdmin 不受这项冷却限制，冷却由执行侧强制。";
 
 export const REPLY_ACTION_INSTRUCTION: string =
   "你的所有动作（说话 send_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +

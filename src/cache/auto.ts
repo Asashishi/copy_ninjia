@@ -10,7 +10,7 @@ import type { LinkedQueue } from "../libs/linkedQueue";
 export const userReplyTriggerTimes: Map<string, number> = new Map();
 
 export interface AiReplyActivityEntry {
-  /** 只保留足以计算 1/15 下限的最新消息时间戳。 */
+  /** 只保留足以计算 1/10 下限的最新消息时间戳。 */
   timestamps: LinkedQueue<number>;
   lastObservedAt: number;
 }

@@ -14,11 +14,13 @@
 
 ## Worker 与状态所有权
 
-- 主线程持有 Telegram runner、`state.json` 镜像和 Worker 监督句柄。
+- 主线程持有 Telegram runner、Worker 监督句柄，并由 `StateStore` 独立维护
+  `state.json` 的内存镜像、latest-only 原子写、失败重试和退出 flush。
 - AI Worker 独占群聊记忆、回复准入、媒体描述流水线和贴纸目录生成的运行时状态。
 - Anti-Raid Worker 独占验证/锁定状态机和对应计时器；主线程只持可恢复镜像。
-- Disk I/O Worker 是进程内唯一持久化线程，串行写日志、AI 记忆、贴纸目录、
-  运势和待验证数据。业务 Worker 不直接写共享目录。
+- Disk I/O Worker 独占日志、AI 记忆、贴纸目录、运势和待验证数据的持久化，
+  在单一 Worker 线程内串行读写这些共享目录；`state.json` 是明确的例外，由主线程
+  `StateStore` 异步维护。业务 Worker 不直接写共享目录。
 - 长期 Map、Set、队列和 timer 必须由对应 `src/cache/<domain>/` 与业务生命周期模块
   共同给出容量、清理和 Worker 重建语义。
 
@@ -29,7 +31,7 @@
   JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone，只保留
   东京当天文件，并在条数/字节阈值处收敛为 active 快照。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
-  反应/头像后台 owner 与 AI/Disk I/O flush 都有显式有界 drain。任一关键 flush 失败
+  反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败
   必须返回失败、阻止最终 offset 确认并以非零状态退出。
 - `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由主机账户权限、
   部署隔离和备份策略控制，不通过制造不可读文件解决。

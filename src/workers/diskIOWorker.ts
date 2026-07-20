@@ -1,9 +1,10 @@
 /**
- * 磁盘 IO 线程（Bun Worker）：进程内所有磁盘 IO 收在这一条线程里串行执行——
+ * 磁盘 IO 线程（Bun Worker）：共享业务数据的磁盘 IO 收在这一条线程里串行执行——
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
  * 目录快照、每日运势缓存与待验证当日增量 JSON 都由进程唯一的统一持久化
  * Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
- * 互相踩坏。原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
+ * 互相踩坏。state.json 是明确例外，由主线程 StateStore 独立异步维护。
+ * 本 Worker 原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
  *
  * 本文件只做消息路由、统一 flush 调度、启动恢复编排；具体逻辑分别在
  * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/aiMemoryFiles.ts（AI 记忆）、
@@ -36,7 +37,7 @@ import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 declare const self: Worker;
 
-/** 统一 flush：日志缓冲、AI 记忆快照、运势追加缓冲全部立即落盘（进程退出前
+/** 统一 flush：日志缓冲、AI 记忆/贴纸目录快照、运势与待验证追加缓冲全部立即落盘（进程退出前
  *  的最后一刷，各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
  *  该刷的都立即刷）。 */
 function flushAll(): boolean {

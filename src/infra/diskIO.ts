@@ -1,8 +1,8 @@
 /**
- * 进程唯一的磁盘 IO 线程宿主（主线程侧）：统一承载日志、AI/贴纸快照、
+ * 进程唯一的共享数据 Disk I/O Worker 宿主（主线程侧）：统一承载日志、AI/贴纸快照、
  * 每日运势与待验证当日增量 JSON——由 diskIOWorker 在单一 Worker 线程里
- * 串行执行，避免多个落盘线程并发写坏文件（见 infra/logger.ts 模块头注
- * 「唯一落盘线程」的定位）。
+ * 串行执行，避免多个业务 Worker 并发写坏共享文件。state.json 是明确例外，
+ * 由主线程的 infra/storage/stateStore.ts 独立异步读写与 flush。
  *
  * Worker 拥有权、崩溃自愈的重启节流、flush/load 握手全部收在这里；
  * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
