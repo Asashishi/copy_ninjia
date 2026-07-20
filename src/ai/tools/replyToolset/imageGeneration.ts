@@ -20,6 +20,7 @@ import type { ReplyToolContext } from "../../../types/aiChat/replies";
 import type { ToolDefinition } from "../../../types/tools";
 import { generateChatImage, normalizeImageAspectRatio, type GeneratedChatImage } from "../../imageGeneration";
 import { downloadTelegramVisionImage } from "../../telegramImage";
+import { runMediaTask } from "../../mediaTaskRunner";
 import type { VisionImage } from "../../../libs/image";
 
 function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
@@ -131,10 +132,11 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
     try {
       let referenceImage: VisionImage | undefined;
       if (ctx.imageGenerationReference) {
-        referenceImage = await downloadTelegramVisionImage({
-          fileId: ctx.imageGenerationReference.fileId,
+        const referenceFileId: string = ctx.imageGenerationReference.fileId;
+        referenceImage = await runMediaTask(() => downloadTelegramVisionImage({
+          fileId: referenceFileId,
           logLabel: "image generation reference",
-        }) ?? undefined;
+        })) ?? undefined;
         referenceUnavailable = referenceImage === undefined;
       }
       if (referenceUnavailable) {

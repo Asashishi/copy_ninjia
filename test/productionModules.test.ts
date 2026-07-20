@@ -30,9 +30,13 @@ describe("production module coverage manifest", () => {
     const originalWorker: typeof Worker = globalThis.Worker;
     const originalFetch: typeof fetch = globalThis.fetch;
     const originalSetInterval: typeof setInterval = globalThis.setInterval;
+    const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
     let workerStarts: number = 0;
     let networkStarts: number = 0;
     let intervalStarts: number = 0;
+    let timeoutStarts: number = 0;
+    let currentImportPath: string = "";
+    const timeoutImportPaths: string[] = [];
 
     class ImportGuardWorker {
       constructor() {
@@ -50,6 +54,11 @@ describe("production module coverage manifest", () => {
       intervalStarts++;
       throw new Error("A production module registered an interval during import.");
     }) as typeof setInterval;
+    globalThis.setTimeout = ((): ReturnType<typeof setTimeout> => {
+      timeoutStarts++;
+      timeoutImportPaths.push(currentImportPath);
+      throw new Error("A production module registered a timeout during import.");
+    }) as unknown as typeof setTimeout;
 
     // 文件系统写入与上面三类副作用同级拦截：任何生产模块都不得在 import
     // 阶段写盘（历史事故见 .claude/CLAUDE.md——曾有测试进程覆盖掉线上
@@ -93,21 +102,25 @@ describe("production module coverage manifest", () => {
 
     try {
       for (const path of productionRuntimeModules) {
+        currentImportPath = path;
         await import(pathToFileURL(path).href);
       }
     } finally {
       globalThis.Worker = originalWorker;
       globalThis.fetch = originalFetch;
       globalThis.setInterval = originalSetInterval;
+      globalThis.setTimeout = originalSetTimeout;
       // 关掉开关：此后（含泄漏到其它测试文件的场景）包装函数全部透传真实实现。
       fsGuardActive = false;
     }
 
     expect(productionRuntimeModules.length).toBeGreaterThan(100);
-    expect({ workerStarts, networkStarts, intervalStarts, fsWriteStarts }).toEqual({
+    expect(timeoutImportPaths).toEqual([]);
+    expect({ workerStarts, networkStarts, intervalStarts, timeoutStarts, fsWriteStarts }).toEqual({
       workerStarts: 0,
       networkStarts: 0,
       intervalStarts: 0,
+      timeoutStarts: 0,
       fsWriteStarts: 0,
     });
   }, 15_000);

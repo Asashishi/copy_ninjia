@@ -252,4 +252,23 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({ "-1001:42": { version: 1, ...legacy } }, null, 2));
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.trackedMessageTimes).toBeUndefined();
   });
+
+  test("成功播报标记只允许出现在 expelling 终态并可完整恢复", () => {
+    upsert({
+      type: "verificationUpsert",
+      record: snapshot(1, {
+        phase: "expelling",
+        expelReason: "timeout",
+        successNoticeSent: true,
+      }),
+      critical: true,
+    });
+    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.successNoticeSent).toBe(true);
+
+    const invalidPending = snapshot(2, { successNoticeSent: true });
+    writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
+      "-1001:42": { version: 1, ...invalidPending },
+    }));
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("invalid active pending verification record");
+  });
 });

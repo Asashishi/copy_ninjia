@@ -18,6 +18,19 @@ import { STICKER_PACK_SUMMARY_PROMPT } from "../../consts/aiChat/prompts/media";
 import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../types/stickers/catalog";
 import type { AiStickerCatalogEvent } from "../../types/stickers/protocol";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapshot {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.entries)) return false;
+  if (value.summary !== null && typeof value.summary !== "string") return false;
+  if (typeof value.savedAt !== "number" || !Number.isFinite(value.savedAt)) return false;
+  return Object.values(value.entries).every((entry: unknown) =>
+    isRecord(entry) && typeof entry.emoji === "string" && typeof entry.description === "string"
+  );
+}
+
 /**
  * 机器人自己要发的贴纸（config/stickers.json 白名单包）的画面描述目录：
  * file_unique_id -> { emoji, description }，外加一条整包简介（≤200 字，
@@ -87,20 +100,21 @@ function markEntryFailed(pack: string, fileUniqueId: string): void {
 export function hydrateStickerCatalogs(snapshots: Map<string, string>): void {
   for (const [pack, snapshotJson] of snapshots) {
     if (catalogs.has(pack)) continue;
-    let snapshot: StickerCatalogSnapshot;
     try {
-      snapshot = JSON.parse(snapshotJson) as StickerCatalogSnapshot;
+      const parsed: unknown = JSON.parse(snapshotJson);
+      if (!isStickerCatalogSnapshot(parsed)) throw new Error("unexpected sticker catalog snapshot shape");
+      const snapshot: StickerCatalogSnapshot = parsed;
+      catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
+      // Worker 重启前或极端 FIFO 竞态下，同一 ID 可能曾以普通群贴纸身份进入
+      // 临时缓存；常驻目录恢复后立即移除临时副本，保证只有一个权威来源。
+      for (const fileUniqueId of Object.keys(snapshot.entries)) {
+        transientDescriptionCache.delete(fileUniqueId);
+      }
+      if (snapshot.summary) packSummaries.set(pack, snapshot.summary);
     } catch (error: unknown) {
-      logger.error(`Failed to parse hydrated sticker catalog snapshot for pack "${pack}", skipping it:`, error);
+      logger.error(`Failed to hydrate sticker catalog snapshot for pack "${pack}", skipping it:`, error);
       continue;
     }
-    catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
-    // Worker 重启前或极端 FIFO 竞态下，同一 ID 可能曾以普通群贴纸身份进入
-    // 临时缓存；常驻目录恢复后立即移除临时副本，保证只有一个权威来源。
-    for (const fileUniqueId of Object.keys(snapshot.entries)) {
-      transientDescriptionCache.delete(fileUniqueId);
-    }
-    if (snapshot.summary) packSummaries.set(pack, snapshot.summary);
   }
 }
 

@@ -204,8 +204,10 @@ export function recoverStickerCatalogs(activePacks: readonly string[]): Map<stri
       continue;
     }
     const snapshot: StickerCatalogSnapshot | null = rebuildStickerCatalogSnapshot(parsed);
-    if (snapshot) result.set(pack, JSON.stringify(snapshot, null, 2));
-    else console.error(`[diskIOWorker] sticker catalog file ${name} does not match the current version=1 schema; migrate it manually`);
+    if (!snapshot) {
+      throw new Error(`Sticker catalog file ${name} does not match the current version=1 schema; migrate it manually before starting the bot`);
+    }
+    result.set(pack, JSON.stringify(snapshot, null, 2));
   }
   return result;
 }

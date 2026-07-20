@@ -15,6 +15,7 @@ const normalizeImageAspectRatio = mock((requested: string | undefined) => {
 });
 const referenceVisionImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
 const downloadTelegramVisionImage = mock(async (..._args: unknown[]): Promise<typeof referenceVisionImage | null> => referenceVisionImage);
+const runMediaTask = mock(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
 const sendPhoto = mock(async (..._args: unknown[]): Promise<number | undefined> => 77);
 const realImageGeneration = await import("../../src/ai/imageGeneration");
 const realTelegram = await import("../../src/infra/telegram");
@@ -26,6 +27,7 @@ mock.module("../../src/ai/imageGeneration", () => ({
 }));
 mock.module("../../src/infra/telegram", () => ({ ...realTelegram, sendPhoto }));
 mock.module("../../src/ai/telegramImage", () => ({ downloadTelegramVisionImage }));
+mock.module("../../src/ai/mediaTaskRunner", () => ({ runMediaTask }));
 
 const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../src/ai/tools/replyToolset/imageGeneration");
 const { claimImageGeneration, resetImageGenerationCache } = await import("../../src/cache/aiChat/imageGeneration");
@@ -73,6 +75,8 @@ beforeEach(() => {
   normalizeImageAspectRatio.mockClear();
   downloadTelegramVisionImage.mockClear();
   downloadTelegramVisionImage.mockResolvedValue(referenceVisionImage);
+  runMediaTask.mockClear();
+  runMediaTask.mockImplementation(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
   sendPhoto.mockClear();
   sendPhoto.mockResolvedValue(77);
 });
@@ -145,6 +149,7 @@ describe("generate_image 工具执行器", () => {
       fileId: "reference-file",
       logLabel: "image generation reference",
     });
+    expect(runMediaTask).toHaveBeenCalledTimes(1);
     expect(generateChatImage).toHaveBeenCalledWith("把原图改成油画", "16:9", referenceVisionImage);
     expect(result.aspect_ratio).toBe("16:9");
     expect(result.reference_image_used).toBe(true);
@@ -174,6 +179,17 @@ describe("generate_image 工具执行器", () => {
     expect(ctx.chatAction.set).toHaveBeenNthCalledWith(1, "upload_photo");
     expect(ctx.chatAction.set).toHaveBeenNthCalledWith(2, "idle");
     expect(ctx.chatAction.settle).toHaveBeenCalledTimes(1);
+  });
+
+  test("共享媒体预算已满时不启动参考图下载，并按素材不可用降级", async () => {
+    runMediaTask.mockResolvedValueOnce(undefined);
+    const ctx: ReplyToolContext = buildReferenceContext(-1001, true);
+
+    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "队列已满" })));
+
+    expect(result.error).toContain("reference image");
+    expect(downloadTelegramVisionImage).not.toHaveBeenCalled();
+    expect(generateChatImage).not.toHaveBeenCalled();
   });
 
   test("Telegram 发送失败不登记图片记忆", async () => {

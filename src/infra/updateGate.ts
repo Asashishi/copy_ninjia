@@ -49,3 +49,15 @@ export function shouldPassPrivateCommandGate(ctx: Context): boolean {
   }
   return ctx.from?.id === SUPER_ADMIN_USER_ID && getActiveProxySendTarget() !== undefined;
 }
+
+/**
+ * 活动中的 /send 私聊消息必须在注册命令之前直接交给中转流水线。否则消息
+ * 恰好以 /copy、/kick 等已注册命令开头时，会先被 grammY 的 command handler
+ * 截获并真的执行，而不是作为消息内容转发。/send 本身仍留给命令处理器，供
+ * 超管切换目标或结束会话。
+ */
+export function shouldRoutePrivateProxyMessage(ctx: Context): boolean {
+  if (!ctx.message || ctx.chat?.type !== "private" || ctx.from?.id !== SUPER_ADMIN_USER_ID) return false;
+  if (typeof ctx.message.text === "string" && isSendCommandText(ctx.message.text)) return false;
+  return getActiveProxySendTarget() !== undefined;
+}

@@ -14,22 +14,18 @@ import { logger } from "../infra/logger";
 import { requestGeminiResponse } from "./gemini";
 import { extractOutputText } from "./utils/geminiResponse";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
-import { createBoundedTaskRunner } from "../libs/boundedTaskRunner";
 import { transientDescriptionCache } from "../cache/imageDescription";
 import {
   GEMINI_MEDIA_MODEL,
   IMAGE_DESCRIPTION_MAX_CHARS,
   MEDIA_DESCRIPTION_MAX_TOKENS,
-  MEDIA_DESCRIPTION_MAX_CONCURRENCY,
-  MEDIA_DESCRIPTION_MAX_PENDING,
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
 } from "../consts/aiChat/media";
 import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../consts/aiChat/prompts/media";
 import type { MediaKind } from "../types/media";
 import type { GenerateContentResponse } from "@google/genai";
 import { downloadTelegramVisionImage } from "./telegramImage";
-
-const mediaDescriptionRunner = createBoundedTaskRunner(MEDIA_DESCRIPTION_MAX_CONCURRENCY, MEDIA_DESCRIPTION_MAX_PENDING);
+import { runMediaTask } from "./mediaTaskRunner";
 
 /** 按媒体类型选喂给视觉模型的描述指令，三者风格/侧重点不同。 */
 function promptFor(kind: MediaKind): string {
@@ -68,7 +64,7 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
   const cached: Promise<string | null> | undefined = transientDescriptionCache.get(fileUniqueId);
   if (cached) return cached;
 
-  const pending: Promise<string | null> = mediaDescriptionRunner.run(() => describeMediaUncached(kind, fileId)).then((description: string | null | undefined) => {
+  const pending: Promise<string | null> = runMediaTask(() => describeMediaUncached(kind, fileId)).then((description: string | null | undefined) => {
     // 执行槽位和等待队列都满时返回 undefined；按普通解析失败降级，不再
     // 启动下载、转码或视觉 API 请求。
     const result: string | null = description ?? null;
@@ -96,7 +92,7 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
  * 常驻目录。
  */
 export function describeMediaForStickerCatalog(fileId: string): Promise<string | null> {
-  return mediaDescriptionRunner.run(() => describeMediaUncached("sticker", fileId)).then((description) => description ?? null);
+  return runMediaTask(() => describeMediaUncached("sticker", fileId)).then((description) => description ?? null);
 }
 
 async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<string | null> {

@@ -130,6 +130,8 @@ export interface VerificationSnapshot {
   terminalInviterId?: number;
   /** expelling 终态的处置原因。 */
   expelReason?: "timeout" | "flood";
+  /** 成功处置播报已发送；仅 expelling 终态可携带。 */
+  successNoticeSent?: boolean;
 }
 
 /** 主线程 -> Worker：Worker 重建时接管尚未结束的验证。 */

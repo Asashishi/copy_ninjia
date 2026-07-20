@@ -11,7 +11,12 @@ mock.module("../../src/infra/diskIO", () => ({
 }));
 
 const { getOrCreateChatState } = await import("../../src/infra/storage");
-const { isSendCommandText, shouldPassInitGate, shouldPassPrivateCommandGate } = await import("../../src/infra/updateGate");
+const {
+  isSendCommandText,
+  shouldPassInitGate,
+  shouldPassPrivateCommandGate,
+  shouldRoutePrivateProxyMessage,
+} = await import("../../src/infra/updateGate");
 const { SUPER_ADMIN_USER_ID } = await import("../../src/infra/config");
 
 const ME = { id: 999, username: "test_bot", first_name: "TestBot" };
@@ -65,9 +70,9 @@ describe("shouldPassInitGate", () => {
     // bun test 默认同进程共享 infra/storage 的模块级 chatStates（同文件的
     // /send 中转测试也有这条注意事项），务必测完把这个字段清回去，不留给
     // 同进程里跑在它之后的其它测试文件。注意：这里只重置字段、不能用
-    // deleteChatState——本文件只 mock 了 infra/diskIO（防的是 logger.ts
+    // 删除整个状态——本文件只 mock 了 infra/diskIO（防的是 logger.ts
     // 间接把真实 Worker 拉起来），没有 mock infra/storage 本体，
-    // deleteChatState 删除成功时会触发 saveStateInBackground 真的写项目根
+    // 若调用带落盘的删除路径，会触发 saveStateInBackground 真的写项目根
     // 目录下的 state.json，那是这台机器上正在跑的真实 bot 在用的文件。
     try {
       const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text: "随便说点什么" } });
@@ -163,5 +168,26 @@ describe("shouldPassPrivateCommandGate", () => {
 
     getOrCreateChatState(targetChatId).isProxySendEnabled = false;
     expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
+  });
+});
+
+describe("shouldRoutePrivateProxyMessage", () => {
+  test("活动中转会话的普通消息和撞名指令都在命令注册前短路，/send 本身除外", () => {
+    const targetChatId = -1006666666666;
+    getOrCreateChatState(targetChatId).isProxySendEnabled = true;
+    try {
+      const base = { chat: { id: SUPER_ADMIN_USER_ID, type: "private" }, from: { id: SUPER_ADMIN_USER_ID } };
+      expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "普通文本" } }))).toBe(true);
+      expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "/stop_copy" } }))).toBe(true);
+      expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { photo: [{}] } }))).toBe(true);
+      expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "/send finish" } }))).toBe(false);
+      expect(shouldRoutePrivateProxyMessage(fakeCtx({
+        chat: { id: SUPER_ADMIN_USER_ID + 1, type: "private" },
+        from: { id: SUPER_ADMIN_USER_ID + 1 },
+        message: { text: "/stop_copy" },
+      }))).toBe(false);
+    } finally {
+      getOrCreateChatState(targetChatId).isProxySendEnabled = false;
+    }
   });
 });

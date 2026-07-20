@@ -8,6 +8,7 @@ import {
   SAME_QUESTION_LABEL_MAX_LEN,
 } from "../../consts/luckChallenge";
 import type { LuckDraw } from "../../types/luckChallenge";
+import { splitGraphemes } from "../../libs/text";
 import { luckCacheKey } from "./key";
 import { signLuckResultText } from "./receipt";
 
@@ -22,7 +23,7 @@ function pickDominantProbability(draw: LuckDraw): { label: string; percent: numb
 function buildRetryKeyboard(text: string | undefined): InlineKeyboard {
   const keyboard: InlineKeyboard = new InlineKeyboard().switchInlineCurrent("我也试试", "");
   if (text) {
-    const characters: string[] = Array.from(text);
+    const characters: string[] = splitGraphemes(text);
     const sameQuestionLabel: string = characters.length > SAME_QUESTION_LABEL_MAX_LEN
       ? `${characters.slice(0, SAME_QUESTION_LABEL_MAX_LEN).join("")}...`
       : text;

@@ -50,6 +50,13 @@ function persisted(pack: string, entries: Record<string, { emoji: string; descri
 }
 
 describe("ai/stickers/catalog generatePackCatalog 对账", () => {
+  test("hydrate 遇到语法合法但形状错误的快照时只丢弃该包", () => {
+    hydrateStickerCatalogs(new Map([["pack_bad_shape", JSON.stringify({ version: 1, entries: null })]]));
+
+    expect(getPackSummary("pack_bad_shape")).toBeUndefined();
+    expect(getCatalogEntry("pack_bad_shape_uid")).toBeUndefined();
+  });
+
   test("线上有、目录没有的补：生成描述并写入，随后生成整包简介", async () => {
     transientDescriptionCache.set("new-uid", Promise.resolve("临时旧描述"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "新包", stickers: [sticker("new-uid", "😂")] }));

@@ -100,13 +100,18 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     !isSafeTimestamp(value.joinedAt) ||
     !isSafeTimestamp(value.expiresAt) ||
     value.expiresAt < value.joinedAt ||
-    (value.phase === "checkingInviter" && (!isPositiveId(value.terminalInviterId) || value.expelReason !== undefined)) ||
+    (value.phase === "checkingInviter" && (
+      !isPositiveId(value.terminalInviterId) ||
+      value.expelReason !== undefined ||
+      value.successNoticeSent !== undefined
+    )) ||
     (value.phase === "expelling" && (
       (value.expelReason !== "timeout" && value.expelReason !== "flood") ||
-      value.terminalInviterId !== undefined
+      value.terminalInviterId !== undefined ||
+      (value.successNoticeSent !== undefined && typeof value.successNoticeSent !== "boolean")
     )) ||
     ((value.phase === undefined || value.phase === "pending") && (
-      value.terminalInviterId !== undefined || value.expelReason !== undefined
+      value.terminalInviterId !== undefined || value.expelReason !== undefined || value.successNoticeSent !== undefined
     )) ||
     key !== verificationFileKey(value.chatId, value.userId)
   ) return null;
@@ -131,6 +136,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     expiresAt: value.expiresAt,
     terminalInviterId: value.terminalInviterId as number | undefined,
     expelReason: value.expelReason as "timeout" | "flood" | undefined,
+    successNoticeSent: value.successNoticeSent as boolean | undefined,
   };
 }
 

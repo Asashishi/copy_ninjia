@@ -46,8 +46,8 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
   test("缺少当前必填 summary 字段的文件不自动迁移", () => {
     mkdirSync(stickerDir, { recursive: true });
     writeFileSync(join(stickerDir, "pack_a.json"), JSON.stringify({ version: 1, entries: { "file-uid-1": { emoji: "😂", description: "旧条目" } }, savedAt: 0 }));
-    const result = recoverStickerCatalogs(["pack_a"]);
-    expect(result.has("pack_a")).toBe(false);
+    expect(() => recoverStickerCatalogs(["pack_a"])).toThrow("migrate it manually before starting the bot");
+    expect(existsSync(join(stickerDir, "pack_a.json"))).toBe(true);
   });
 
   test("白名单已经不包含的包视为孤儿：不载入内存，且磁盘文件被删除", () => {

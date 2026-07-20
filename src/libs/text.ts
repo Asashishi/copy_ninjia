@@ -13,6 +13,16 @@ export function sanitizeInline(raw: string): string {
   return raw.replace(/\s+/g, " ").trim();
 }
 
+/** 按 Unicode 扩展字形簇切分；旧运行时不支持 Segmenter 时退化为按码点。 */
+export function splitGraphemes(text: string): string[] {
+  try {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    return Array.from(segmenter.segment(text), (segment) => segment.segment);
+  } catch {
+    return Array.from(text);
+  }
+}
+
 /**
  * 把文本截断到 maxChars 个 UTF-16 码元以内。slice 可能恰好切在代理对中间
  * （emoji 等），此时去掉孤立的高位代理——孤立代理不是合法字符，混进消息

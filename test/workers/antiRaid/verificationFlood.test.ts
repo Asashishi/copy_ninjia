@@ -33,7 +33,11 @@ mock.module("../../../src/infra/telegram", () => ({
 }));
 
 const runtime = await import("../../../src/workers/antiRaid/verificationRuntime");
-const { verificationEntries, verificationRevisions } = await import("../../../src/cache/antiRaid/verification");
+const {
+  verificationEntries,
+  verificationGeneration,
+  verificationRevisions,
+} = await import("../../../src/cache/antiRaid/verification");
 
 beforeEach(() => {
   for (const entry of verificationEntries.values()) {
@@ -41,6 +45,7 @@ beforeEach(() => {
   }
   verificationEntries.clear();
   verificationRevisions.clear();
+  verificationGeneration.current = 0;
   actions.length = 0;
   workerEvents.length = 0;
   kickSucceeds = true;
@@ -104,6 +109,19 @@ describe("Anti-Raid pending-member flood handling", () => {
       "notice",
       "schedule-notice-delete",
     ]);
+    expect(verificationEntries.has("-1001:42")).toBeTrue();
+    expect(verificationEntries.get("-1001:42")?.timer).toBeUndefined();
+    const noticePersist = workerEvents.findLast((event) =>
+      event.type === "verificationUpsert" && event.record.successNoticeSent === true
+    );
+    expect(noticePersist).toMatchObject({ type: "verificationUpsert", record: { successNoticeSent: true } });
+    if (noticePersist?.type !== "verificationUpsert") throw new Error("missing success-notice upsert");
+    runtime.handleVerificationPersisted({
+      type: "verificationPersisted",
+      key: "-1001:42",
+      generation: noticePersist.record.generation,
+      revision: noticePersist.record.revision,
+    });
     expect(verificationEntries.has("-1001:42")).toBeFalse();
 
     runtime.dispatchVerification(-1001, 42, {
@@ -115,6 +133,42 @@ describe("Anti-Raid pending-member flood handling", () => {
     });
     await Bun.sleep(0);
     expect(actions.filter((action) => action === "kick")).toHaveLength(1);
+  });
+
+  test("恢复已持久化的成功播报终态时直接收尾，不重复踢人、删消息或播报", async () => {
+    const record: VerificationSnapshot = {
+      chatId: -1003,
+      userId: 44,
+      generation: 2,
+      revision: 3,
+      phase: "expelling",
+      expelReason: "flood",
+      successNoticeSent: true,
+      label: "已经处置的成员",
+      isBot: false,
+      messageIds: [101],
+      trackedMessageTimes: [],
+      replyReminderRequested: false,
+      reminderSuperseded: true,
+      joinedAt: Date.now(),
+      expiresAt: Date.now(),
+    };
+
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 2,
+      verifications: [record],
+      resumePersistedTerminals: true,
+    });
+    await Bun.sleep(0);
+
+    expect(verificationEntries.has("-1003:44")).toBeFalse();
+    expect(actions).toEqual([]);
+    expect(workerEvents).toContainEqual(expect.objectContaining({
+      type: "verificationDelete",
+      chatId: -1003,
+      userId: 44,
+    }));
   });
 
   test("踢人失败时保留持久化终态并安排重试，成功后才发布删除", async () => {
@@ -155,6 +209,20 @@ describe("Anti-Raid pending-member flood handling", () => {
       revision: 1,
     });
     await Bun.sleep(0);
+
+    const successPersist = workerEvents.findLast((event) =>
+      event.type === "verificationUpsert" &&
+      event.record.chatId === -1002 &&
+      event.record.userId === 43 &&
+      event.record.successNoticeSent === true
+    );
+    if (successPersist?.type !== "verificationUpsert") throw new Error("missing success-notice upsert");
+    runtime.handleVerificationPersisted({
+      type: "verificationPersisted",
+      key: "-1002:43",
+      generation: successPersist.record.generation,
+      revision: successPersist.record.revision,
+    });
 
     expect(verificationEntries.has("-1002:43")).toBeFalse();
     expect(workerEvents.some((event) => event.type === "verificationDelete")).toBeTrue();

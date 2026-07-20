@@ -23,7 +23,11 @@ import {
 } from "../antiRaid";
 import { handleMyChatMemberUpdate } from "../infra/botAdmin";
 import { logger } from "../infra/logger";
-import { shouldPassInitGate, shouldPassPrivateCommandGate } from "../infra/updateGate";
+import {
+  shouldPassInitGate,
+  shouldPassPrivateCommandGate,
+  shouldRoutePrivateProxyMessage,
+} from "../infra/updateGate";
 
 export interface HandlerRegistration {
   getLastSeenUpdateId(): number;
@@ -55,8 +59,13 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 普通聊天按 chat 串行；反应同步有自己的合并队列，不占用聊天车道。
   bot.use(sequentialize((ctx) => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
 
-  // 私聊只放行 /send 入口和活动中的中转会话。
-  bot.use((ctx, next) => (shouldPassPrivateCommandGate(ctx) ? next() : undefined));
+  // 私聊只放行 /send 入口和活动中的中转会话。中转消息在命令注册之前直接
+  // 短路到消息流水线，避免 /copy 等文本被当成真实命令执行。
+  bot.use((ctx, next) => {
+    if (!shouldPassPrivateCommandGate(ctx)) return undefined;
+    if (shouldRoutePrivateProxyMessage(ctx)) return handleIncomingMessage(ctx);
+    return next();
+  });
 
   // 入群验证必须早于命令处理器，否则待验证用户发出的命令不会被追踪清理。
   bot.on("message", async (ctx, next) => {

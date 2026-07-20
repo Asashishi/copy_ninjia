@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { truncateAtClauseBoundary, truncateInline } from "../../src/libs/text";
+import { splitGraphemes, truncateAtClauseBoundary, truncateInline } from "../../src/libs/text";
 
 describe("libs/text truncateAtClauseBoundary", () => {
   test("不超限时原样返回", () => {
@@ -29,5 +29,11 @@ describe("libs/text truncateAtClauseBoundary", () => {
     const text: string = "无标点内容";
     expect(truncateAtClauseBoundary(text, 1)).toBe(truncateInline(text, 1));
     expect(truncateAtClauseBoundary(text, 1)).not.toBe("");
+  });
+});
+
+describe("libs/text splitGraphemes", () => {
+  test("ZWJ 表情和组合附加符分别保持为一个字形簇", () => {
+    expect(splitGraphemes("A👨‍👩‍👧‍👦éB")).toEqual(["A", "👨‍👩‍👧‍👦", "é", "B"]);
   });
 });

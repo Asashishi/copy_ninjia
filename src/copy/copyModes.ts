@@ -1,6 +1,7 @@
 import type { CopyMode } from "../types/chatState";
 import { translateToJapanese } from "./translate";
 import { NYA_SUFFIX } from "../consts/copyModes";
+import { splitGraphemes } from "../libs/text";
 
 /**
  * 按 Unicode 扩展字形簇（grapheme cluster）反转字符串（若 Intl.Segmenter 不可用则
@@ -8,13 +9,7 @@ import { NYA_SUFFIX } from "../consts/copyModes";
  * @param text 待反转的文本。
  */
 function reverseText(text: string): string {
-  try {
-    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-    const clusters: string[] = Array.from(segmenter.segment(text), (s) => s.segment);
-    return clusters.reverse().join("");
-  } catch {
-    return Array.from(text).reverse().join("");
-  }
+  return splitGraphemes(text).reverse().join("");
 }
 
 /**

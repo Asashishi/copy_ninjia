@@ -74,6 +74,11 @@ export interface ExpellingState {
   executionStarted?: boolean;
   /** 避免同一 Worker 内每次失败重试都重复发送管理员告警。 */
   failureNoticeSent?: boolean;
+  /**
+   * 成功播报已经发出并进入持久化快照。落盘确认后可直接结束终态，Worker
+   * 重建不再重放踢人、删消息和成功播报。
+   */
+  successNoticeSent?: boolean;
 }
 
 export type VerificationTerminalState = CheckingInviterState | ExpellingState;

@@ -139,6 +139,7 @@ function verificationSnapshot({
     expiresAt: source.expiresAt,
     terminalInviterId: state.kind === "checkingInviter" ? state.inviterId : undefined,
     expelReason: state.kind === "expelling" ? state.reason : undefined,
+    successNoticeSent: state.kind === "expelling" ? state.successNoticeSent : undefined,
   };
 }
 
@@ -195,7 +196,12 @@ export function adoptVerifications(msg: AdoptVerificationsMessage): void {
     const state: VerificationState = record.phase === "checkingInviter"
       ? { kind: "checkingInviter", inviterId: record.terminalInviterId!, snapshot: expelSnapshot }
       : record.phase === "expelling"
-        ? { kind: "expelling", reason: record.expelReason!, snapshot: expelSnapshot }
+        ? {
+          kind: "expelling",
+          reason: record.expelReason!,
+          snapshot: expelSnapshot,
+          successNoticeSent: record.successNoticeSent,
+        }
         : {
           kind: "pending",
           label: record.label,
@@ -218,7 +224,13 @@ export function adoptVerifications(msg: AdoptVerificationsMessage): void {
     if (state.kind === "pending" && record.expiresAt <= now) {
       dispatchVerification(record.chatId, record.userId, { type: "verifyTimeout" });
     } else if ((state.kind === "checkingInviter" || state.kind === "expelling") && msg.resumePersistedTerminals === true) {
-      dispatchVerification(record.chatId, record.userId, { type: "terminalPersisted" });
+      dispatchVerification(
+        record.chatId,
+        record.userId,
+        state.kind === "expelling" && state.successNoticeSent === true
+          ? { type: "expelSettled" }
+          : { type: "terminalPersisted" }
+      );
     }
   }
 }
@@ -235,7 +247,13 @@ export function handleVerificationPersisted(msg: VerificationPersistedMessage): 
   if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(userId)) return;
   const state: VerificationState | undefined = verificationEntries.get(msg.key)?.state;
   if (state?.kind !== "checkingInviter" && state?.kind !== "expelling") return;
-  dispatchVerification(chatId, userId, { type: "terminalPersisted" });
+  dispatchVerification(
+    chatId,
+    userId,
+    state.kind === "expelling" && state.successNoticeSent === true
+      ? { type: "expelSettled" }
+      : { type: "terminalPersisted" }
+  );
 }
 
 /** 取消某群所有验证 owner，并为每条持久化记录发布 tombstone。 */
@@ -274,7 +292,14 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
         const settled: boolean = await expelMember({ chatId, userId, snapshot: effect.snapshot, reason, expectedState });
         if (settled && verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState) {
           dispatchVerification(chatId, userId, { type: "expelSettled" });
-        } else if (verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState) {
+        } else if (
+          verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState &&
+          expectedState.successNoticeSent !== true
+        ) {
+          // 只有踢人失败等可重试处置才走本地 timer。成功播报已经发送时必须
+          // 原地等待对应 revision 的真实落盘回执；若用 timer 伪造
+          // terminalPersisted 提前收尾，进程在 delete 落盘前崩溃仍会从旧
+          // expelling 快照重放播报，持久化标记就失去意义。
           expectedState.executionStarted = false;
           const entry = verificationEntries.get(verificationKey(chatId, userId));
           if (entry !== undefined) {
@@ -572,7 +597,9 @@ async function expelMember({
         ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
         : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
   if (!stillCurrent()) return false;
-  const shouldSendNotice: boolean = kicked || expectedState.failureNoticeSent !== true;
+  const shouldSendNotice: boolean = kicked
+    ? expectedState.successNoticeSent !== true
+    : expectedState.failureNoticeSent !== true;
   const noticeMessageId: number | undefined = shouldSendNotice
     ? await sendMessage({
       chatId,
@@ -590,6 +617,12 @@ async function expelMember({
       delayMs: KICK_NOTICE_AUTO_DELETE_MS,
       api: joinVerificationApi,
     });
+    // 先把“成功播报已发出”作为新的终态 revision 落盘；对应回执会直接
+    // expelSettled。这样 Worker 在此后崩溃重建时不会重复播报。Telegram
+    // 发送成功到本同步标记发布之间仍存在无法跨系统原子化的极窄窗口。
+    expectedState.successNoticeSent = true;
+    publishVerificationChange(chatId, userId, true);
+    return false;
   }
   return kicked && stillCurrent();
 }

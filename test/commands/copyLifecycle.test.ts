@@ -34,9 +34,9 @@ mock.module("../../src/commands/copyShared", () => ({
 const { handleCopyCommand, handleStopCommand } = await import("../../src/commands/copy");
 const { handleStealIconCommand } = await import("../../src/commands/stealIcon");
 
-function context(): never {
+function context(chatId: number = -1001): never {
   return {
-    chat: { id: -1001 },
+    chat: { id: chatId },
     from: { id: 8, first_name: "Caller" },
     msgId: 9,
     match: "",
@@ -81,7 +81,7 @@ describe("copy 类命令生命周期", () => {
     target = { id: 7, first_name: "Alice" };
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
     await handleCopyCommand(context());
-    expect(releaseCopyCooldownClaim).toHaveBeenCalledTimes(2);
+    expect(releaseCopyCooldownClaim).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("早就在复读"),
@@ -112,6 +112,26 @@ describe("copy 类命令生命周期", () => {
       text: expect.stringContaining("倒过来念"),
       replyToMessageId: 9,
     });
+  });
+
+  test("两个群并发启动时第二个在目标解析完成前就被全局占位拒绝", async () => {
+    let resolveFirstTarget: ((value: CachedUser) => void) | undefined;
+    resolveCopyCommandTarget.mockImplementationOnce(async () => await new Promise<CachedUser>((resolve) => {
+      resolveFirstTarget = resolve;
+    }));
+
+    const first = handleCopyCommand(context(-1001));
+    await Bun.sleep(0);
+    await handleCopyCommand(context(-1002));
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1002,
+      text: expect.stringContaining("正在处理另一条 /copy"),
+      replyToMessageId: 9,
+    });
+    resolveFirstTarget!({ id: 7, first_name: "Alice" });
+    await first;
+    expect(globalCopy.copyChatId).toBe(-1001);
   });
 
   test("/stop_copy 对空状态只提示，对活动状态清空全部复制字段", async () => {

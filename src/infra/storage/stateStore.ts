@@ -300,15 +300,9 @@ export function clearChatStateField(chatId: number, field: keyof ChatState): boo
   return true;
 }
 
-export function deleteChatState(chatId: number): void {
-  if (chatStates.delete(chatId)) {
-    saveStateInBackground(`chat ${chatId} state removed (bot left/kicked)`);
-  }
-}
-
 /**
  * 机器人离群时删除普通配置，但保留尚需恢复的 lockdown write-ahead 记录。
- * 无记录时等价于 deleteChatState；调用方负责在同一 teardown 尾部统一落盘。
+ * 无记录时不做任何事；调用方负责在同一 teardown 尾部统一落盘。
  */
 export function pruneDepartedChatState(chatId: number): void {
   const current: ChatState | undefined = chatStates.get(chatId);

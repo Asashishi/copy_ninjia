@@ -15,6 +15,7 @@ import {
 } from "../../cache/aiChat/memory";
 import { clearChatMoodCache } from "../../cache/aiChat/mood";
 import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
+import { activeReplyCounts } from "../../cache/aiChat/replies";
 import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
 import type { AiMemoryDeletedEvent, AiMemoryEvent, AiRecordMessage } from "../../types/aiChat/protocol";
 import { scheduleRotation } from "./compaction";
@@ -98,22 +99,30 @@ export function purgeChatMemory(chatId: number): void {
   clearChatMoodCache(chatId);
 }
 
-/** 为一份新群记忆腾出容量；excludeChatId 永不作为本次淘汰对象。 */
+/**
+ * 为一份新群记忆腾出容量；excludeChatId 永不作为本次淘汰对象。优先跳过
+ * 仍有回复轮次在途的群，仅当所有候选都活跃时才退化为按原始 LRU 淘汰。
+ */
 function ensureMemoryCapacity(excludeChatId: number): void {
   for (;;) {
     // chatMemoryIds() 每次都从三个 Map 重新构建 Set，同一轮淘汰内取一次共用。
     const memoryIds: Set<number> = chatMemoryIds();
     if (memoryIds.size < AI_MEMORY_MAX_CHATS) return;
-    let oldestChatId: number | undefined;
-    let oldestActivity: number = Number.POSITIVE_INFINITY;
-    for (const candidate of memoryIds) {
-      if (candidate === excludeChatId) continue;
-      const activity: number = chatLastActivityTimes.get(candidate) ?? 0;
-      if (activity < oldestActivity) {
-        oldestActivity = activity;
-        oldestChatId = candidate;
+    const findOldest = (excludeActiveReplies: boolean): number | undefined => {
+      let oldestChatId: number | undefined;
+      let oldestActivity: number = Number.POSITIVE_INFINITY;
+      for (const candidate of memoryIds) {
+        if (candidate === excludeChatId) continue;
+        if (excludeActiveReplies && (activeReplyCounts.get(candidate) ?? 0) > 0) continue;
+        const activity: number = chatLastActivityTimes.get(candidate) ?? 0;
+        if (activity < oldestActivity) {
+          oldestActivity = activity;
+          oldestChatId = candidate;
+        }
       }
-    }
+      return oldestChatId;
+    };
+    const oldestChatId: number | undefined = findOldest(true) ?? findOldest(false);
     if (oldestChatId === undefined) return;
 
     invalidateChatRuntimeCache(oldestChatId);

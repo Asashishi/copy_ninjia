@@ -5,6 +5,13 @@ import { sendMessage } from "../infra/telegram";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
 import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
+import {
+  cancelPendingCopySlot,
+  cancelPendingCopySlotOwnedBy,
+  claimCopySlot,
+  commitCopySlot,
+  releaseCopySlot,
+} from "./copySlot";
 
 /**
  * 处理 /copy、/r_copy、/nya_copy 和 /ja_copy 指令。目标既可以通过 @username
@@ -37,30 +44,58 @@ export async function handleCopyCommand(
     return;
   }
 
-  const cooldownClaim = await claimCopyCooldownOrReject(ctx.from, chatId, messageId);
-  if (cooldownClaim.rejected) return;
-
-  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, "/copy");
-  if (!targetUser) {
-    releaseCopyCooldownClaim(cooldownClaim);
-    return;
-  }
-
-  // 已经在复读时不接新目标——全局同一时间只能复制一个人（不管是从哪个群
-  // 发起的），重复点同一个目标和想换人分别嘲讽。
-  if (globalCopy.copiedUser !== null) {
-    releaseCopyCooldownClaim(cooldownClaim);
-    const replyText: string = globalCopy.copiedUser.id === targetUser.id
+  // 不同群的 update 会并发执行；必须在第一个 await 之前同步占住全局槽。
+  const slotDecision = claimCopySlot(globalCopy, chatId);
+  if (!slotDecision.claimed) {
+    if (slotDecision.reason === "pending") {
+      await sendMessage({
+        chatId,
+        text: `本天才正在处理另一条 /copy 啦，杂鱼别同时抢本天才的手♡`,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
+    const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, "/copy");
+    if (!targetUser) return;
+    const replyText: string = slotDecision.copiedUser.id === targetUser.id
       ? `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`
       : `本天才手上已经有猎物啦，想换人的话先 /stop_copy 呀，笨蛋♡`;
     await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
-  // 开始复制模式（不变量见函数顶部 JSDoc）。
-  globalCopy.copiedUser = targetUser;
-  globalCopy.copyMode = mode;
-  globalCopy.copyChatId = chatId;
+  let cooldownClaim: Awaited<ReturnType<typeof claimCopyCooldownOrReject>> | undefined;
+  let slotCommitted: boolean = false;
+  let targetUser: CachedUser | undefined;
+  try {
+    cooldownClaim = await claimCopyCooldownOrReject(ctx.from, chatId, messageId);
+    if (cooldownClaim.rejected) return;
+
+    targetUser = await resolveCopyCommandTarget(ctx, "/copy");
+    if (!targetUser) return;
+
+    slotCommitted = commitCopySlot(slotDecision.claim, globalCopy, {
+      copiedUser: targetUser,
+      copyMode: mode,
+      copyChatId: chatId,
+    });
+    if (!slotCommitted) {
+      await sendMessage({
+        chatId,
+        text: `这轮 /copy 已经被 /stop_copy 取消啦，杂鱼想玩就重新来一次♡`,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
+  } finally {
+    if (!slotCommitted) {
+      releaseCopySlot(slotDecision.claim);
+      if (cooldownClaim && !cooldownClaim.rejected) releaseCopyCooldownClaim(cooldownClaim);
+    }
+  }
+
+  if (!targetUser) return;
+  // 开始复制模式（状态已由 commitCopySlot 在无 await 的同步块内原子写入）。
   // 落盘不阻塞回消息：命令热路径不必等 saveState 的双 fsync 完成。
   // 上面对 globalCopy 的同步写入已经立即生效，落盘只是让它在下次
   // 重启后依然存在，不影响本次调用后续的复读判定。
@@ -89,7 +124,8 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
   const messageId: number | undefined = ctx.msgId;
   const globalCopy: GlobalCopyState = getGlobalCopyState();
 
-  if (!globalCopy.copiedUser) {
+  const pendingCancelled: boolean = cancelPendingCopySlot();
+  if (!globalCopy.copiedUser && !pendingCancelled) {
     await sendMessage({
       chatId,
       text: `本天才现在什么杂鱼都没盯着呢，笨蛋要 /stop_copy 什么呀♡`,
@@ -98,10 +134,12 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  globalCopy.copiedUser = null;
-  globalCopy.copyMode = undefined;
-  globalCopy.copyChatId = undefined;
-  saveStateInBackground("copy stopped");
+  if (globalCopy.copiedUser) {
+    globalCopy.copiedUser = null;
+    globalCopy.copyMode = undefined;
+    globalCopy.copyChatId = undefined;
+    saveStateInBackground("copy stopped");
+  }
 
   await sendMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });
 }
@@ -109,7 +147,8 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
 /** teardown 专用：只停止由指定源群持有的全局 copy，不在这里单独落盘。 */
 export function stopCopyOwnedByChat(chatId: number): boolean {
   const globalCopy: GlobalCopyState = getGlobalCopyState();
-  if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return false;
+  const pendingCancelled: boolean = cancelPendingCopySlotOwnedBy(chatId);
+  if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return pendingCancelled;
   globalCopy.copiedUser = null;
   globalCopy.copyMode = undefined;
   globalCopy.copyChatId = undefined;
