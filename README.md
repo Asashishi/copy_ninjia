@@ -122,7 +122,10 @@ Telegram update
 - Telegram Bot Token
 - Gemini API Key
 - Google Cloud 服务账号 JSON（仅 `/ja_copy` 需要）
-- 推荐生产起步：4 vCPU（程序吃 4 个内核线程，不满足可能造成更多切换开销，没有 4 个也能跑） / 2 GB RAM；单实例建议控制在约 15 个 1000-3000 人的活跃群以内（TG单Bot的API请求限制，不是架构能处理的并发上限）
+- 最低配置（文本为主、仅少量群开启 AI）：4 vCPU / 2 GB RAM / 本地 SSD；2 GB 不适合作为媒体洪峰下的内存保障
+- 推荐生产配置（约 15 个 1000-3000 人活跃群）：4 vCPU / 4 GB RAM / 本地 SSD
+- 全部群开启 AI 且图片、贴纸较多：4 vCPU / 8 GB RAM，给媒体下载、Base64 编码和图片转码预留峰值空间
+- 单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自 Telegram 单 Bot API、Gemini 配额和实际消息/媒体速率，而不是群成员总数
 
 ### 2. 安装
 
