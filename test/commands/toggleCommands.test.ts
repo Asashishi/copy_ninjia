@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
+const teardownChatRuntime = mock((..._args: unknown[]): void => {});
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
 const states = new Map<number, Record<string, unknown>>();
@@ -9,6 +10,7 @@ const states = new Map<number, Record<string, unknown>>();
 mock.module("../../src/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
 mock.module("../../src/infra/telegram", () => ({ sendMessage }));
 mock.module("../../src/aiChat", () => ({ invalidateAiChat }));
+mock.module("../../src/infra/botAdmin", () => ({ teardownChatRuntime }));
 mock.module("../../src/infra/storage/stateStore", () => ({
   getOrCreateChatState(chatId: number): Record<string, unknown> {
     let state = states.get(chatId);
@@ -40,6 +42,7 @@ beforeEach(() => {
   states.clear();
   sendMessage.mockClear();
   invalidateAiChat.mockClear();
+  teardownChatRuntime.mockClear();
   saveStateInBackground.mockClear();
   handleCopyCommand.mockClear();
 });
@@ -77,7 +80,7 @@ describe("超级管理员开关命令", () => {
   test("/init disable 同时失效 AI，enable 恢复群更新入口", async () => {
     await handleInitCommand(context("disable"));
     expect(states.get(-1001)?.isInitEnabled).toBe(false);
-    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
+    expect(teardownChatRuntime).toHaveBeenCalledWith(-1001);
 
     await handleInitCommand(context("enable"));
     expect(states.get(-1001)?.isInitEnabled).toBe(true);

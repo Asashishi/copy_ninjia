@@ -50,10 +50,28 @@ describe("StateStore", () => {
       },
     });
 
-    await expect(store.save(schema(4))).rejects.toThrow("disk unavailable");
+    const saved: Promise<void> = store.save(schema(4));
     await retryCompleted;
+    await expect(saved).resolves.toBeUndefined();
     expect(attempts).toBe(2);
     await store.flush(20);
+    store.dispose();
+  });
+
+  test("后台快照只排队重试，不为永久磁盘故障保留逐次持久化等待者", async () => {
+    let attempts: number = 0;
+    const store = new StateStore({
+      retryDelaysMs: [1],
+      writeText: async () => {
+        attempts++;
+        throw new Error("disk unavailable");
+      },
+    });
+
+    await expect(store.save(schema(40), { waitForPersistence: false })).resolves.toBeUndefined();
+    await Bun.sleep(5);
+    expect(attempts).toBeGreaterThan(1);
+    await expect(store.flush(20, true)).resolves.toBe("failed");
     store.dispose();
   });
 
@@ -66,5 +84,37 @@ describe("StateStore", () => {
     await expect(existing.load()).resolves.toEqual(expected);
     missing.dispose();
     existing.dispose();
+  });
+
+  test("底层 writer 未停稳时 flush 明确返回 timedOut", async () => {
+    const store = new StateStore({
+      writeText: async () => await new Promise<void>(() => {}),
+    });
+    const save = store.save(schema(6)).catch(() => undefined);
+
+    await expect(store.flush(1)).resolves.toBe("timedOut");
+    store.dispose();
+    await save;
+  });
+
+  test("退出 quiesce 后失败 writer 不会重新安排后台重试", async () => {
+    let attempts: number = 0;
+    const store = new StateStore({
+      retryDelaysMs: [1],
+      writeText: async () => {
+        attempts++;
+        throw new Error("disk unavailable");
+      },
+    });
+    const save = store.save(schema(7)).catch(() => undefined);
+
+    await expect(store.flush(20, true)).resolves.toBe("failed");
+    const attemptsAfterFlush: number = attempts;
+    await Bun.sleep(10);
+
+    expect(attemptsAfterFlush).toBeGreaterThan(0);
+    expect(attempts).toBe(attemptsAfterFlush);
+    store.dispose();
+    await save;
   });
 });

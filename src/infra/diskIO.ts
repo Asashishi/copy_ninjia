@@ -19,7 +19,7 @@ import { pendingFlushes, pendingLoad, pendingLuckSecrets } from "../cache/diskIO
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "../libs/restartThrottle";
 import { LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
-import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import { DISK_IO_FLUSH_TIMEOUT_MS, type FlushResult } from "../consts/lifecycle";
 import type {
   AiMemoryDiskMessage,
   AiMemoryDeleteDiskMessage,
@@ -40,9 +40,19 @@ import type { VerificationSnapshot } from "../types/antiRaid";
 import type { LuckDayCache, LuckReceiptSecret } from "../types/diskIO/storage";
 
 const isMainThread: boolean = Bun.isMainThread;
+const DEFAULT_MAX_PENDING_BUSINESS_MESSAGES: number = 10_000;
 
-// 落盘 Worker 崩溃自愈的节流，避免陷入无限重启烧 CPU；耗尽后只保留控制台
-// 输出（所有持久化领域都停，功能本身不受影响，只是不再落盘）。
+export interface DiskIOInitOptions {
+  /** 运行时恢复无法继续时通知应用停止；启动握手失败仍由 loadPersistedData reject。 */
+  onFatal?: (error: Error) => void;
+  /** 仅供测试缩短；生产默认与启动 load 握手使用同一预算。 */
+  runtimeRecoveryTimeoutMs?: number;
+  /** 恢复窗口内的业务增量硬顶，避免失联 Worker 造成无界内存增长。 */
+  maxPendingBusinessMessages?: number;
+}
+
+// 落盘 Worker 崩溃自愈的节流，避免陷入无限重启烧 CPU；耗尽或恢复握手失败
+// 会发出 fatal 信号，让应用停止取 update 并交给进程管理器重启。
 const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
 
 // 落盘 Worker 只能由入口在取得 bot.lock 后显式初始化。模块导入本身不得
@@ -51,16 +61,40 @@ const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTAR
 // 本宿主，只使用 logger.ts 的转发模式。
 let diskIOWorker: Worker | null = null;
 let diskIOInitialized: boolean = false;
+let diskIOWritable: boolean = false;
+let runtimeRecoveryWorker: Worker | null = null;
+let runtimeRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+let runtimeRecoveryTimeoutMs: number = LOAD_TIMEOUT_MS;
+let maxPendingBusinessMessages: number = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
+let diskIOFatalHandler: ((error: Error) => void) | undefined;
+let diskIOFatalSignaled: boolean = false;
+
+type DiskBusinessMessage =
+  | AiMemoryDiskMessage
+  | AiMemoryDeleteDiskMessage
+  | StickerCatalogDiskMessage
+  | LuckDrawDiskMessage
+  | VerificationUpsertDiskMessage
+  | VerificationDeleteDiskMessage;
+
+// Worker 恢复成功前不能把新状态写到只恢复了一部分的缓存上。短暂重建期间
+// 暂存业务增量；镜像重放成功后再按到达顺序补投。
+const pendingBusinessMessages: DiskBusinessMessage[] = [];
 
 /**
  * 在主线程显式启动唯一的落盘 Worker。调用方必须已经取得数据目录的
  * bot.lock；重复调用幂等，不能借重复初始化绕过崩溃自愈的放弃阈值。
  */
-export function initDiskIO(): void {
+export function initDiskIO(options: DiskIOInitOptions = {}): void {
   if (!isMainThread) {
     throw new Error("Disk I/O can only be initialized by the main thread.");
   }
   if (diskIOInitialized) return;
+  diskIOFatalHandler = options.onFatal;
+  runtimeRecoveryTimeoutMs = options.runtimeRecoveryTimeoutMs ?? LOAD_TIMEOUT_MS;
+  maxPendingBusinessMessages = options.maxPendingBusinessMessages ?? DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
+  diskIOFatalSignaled = false;
+  diskIOWritable = false;
   diskIOWorker = createDiskIOWorker();
   diskIOInitialized = true;
 }
@@ -84,7 +118,7 @@ function createDiskIOWorker(): Worker {
       const resolve = pendingFlushes.get(data.flushedId);
       if (resolve) {
         pendingFlushes.delete(data.flushedId);
-        resolve();
+        resolve("flushed");
       }
       return;
     }
@@ -100,14 +134,22 @@ function createDiskIOWorker(): Worker {
       }
       return;
     }
-    // data.type === "loaded"：崩溃重建后自动重跑的那次 load（见下方 onerror）
-    // 没有人专门等待这次回执——Worker 侧缓存的热身在它自己内部已经完成，
-    // 主线程这边只在存在挂起的 loadPersistedData() 调用时才需要消费。
+    // data.type === "loaded"：启动和运行时重建都必须先验证完整恢复结果，
+    // 任何领域失败时都不能进入 writable，也不能重放可能覆盖旧数据的镜像。
     const resolve = pendingLoad.resolve;
     if (resolve) {
       pendingLoad.resolve = null;
       resolve(data);
+      if (isSuccessfulLoad(data)) activateDiskIOWorker(w, false);
+      else stopWorkerAfterLoadFailure(w, data.error ?? "no luck receipt secret returned", false);
+      return;
     }
+    if (runtimeRecoveryWorker !== w) return;
+    if (!isSuccessfulLoad(data)) {
+      stopWorkerAfterLoadFailure(w, data.error ?? "no luck receipt secret returned", true);
+      return;
+    }
+    activateDiskIOWorker(w, true);
   };
   w.onerror = (event: ErrorEvent) => {
     // 已替换旧实例的迟到/重复错误不能再启动第二条并行重建链。
@@ -117,6 +159,11 @@ function createDiskIOWorker(): Worker {
     // （同步或 async 均如此，已实测验证）就会直接终止该 Worker 线程，这里
     // 不需要（实际上也没法）再手动 terminate，直接换一个新实例顶上即可。
     console.error("[diskIO] persistence Worker errored:", event.message || event.error || event);
+    diskIOWritable = false;
+    if (runtimeRecoveryWorker === w) {
+      runtimeRecoveryWorker = null;
+      clearRuntimeRecoveryTimer();
+    }
     if (pendingFlushes.size > 0) {
       // 崩溃这一刻若正好卡着 flushDiskIO 的等待：旧实例内存里的 dirty 数据
       // （上次成功落盘之后攒下的增量）随线程一起没了，新实例读不到、也补不
@@ -126,7 +173,7 @@ function createDiskIOWorker(): Worker {
       console.error(
         `[diskIO] ${pendingFlushes.size} pending flush(es) lost — persistence Worker crashed mid-flush, their buffered data was not written to disk.`
       );
-      for (const resolve of pendingFlushes.values()) resolve();
+      for (const resolve of pendingFlushes.values()) resolve("failed");
       pendingFlushes.clear();
     }
     if (pendingLuckSecrets.size > 0) {
@@ -140,27 +187,96 @@ function createDiskIOWorker(): Worker {
     if (restartThrottle.shouldGiveUp()) {
       console.error(
         `[diskIO] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +
-        `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — logs, snapshots, luck draws and pending verifications ` +
-        `will only stay in memory (no disk persistence) until the process restarts.`
+        `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing and forcing a supervised process restart ` +
+        `before any more updates are accepted.`
       );
       diskIOWorker = null;
+      pendingBusinessMessages.length = 0;
+      signalDiskIOFatal(new Error("Persistence Worker exhausted its runtime restart budget."));
       return;
     }
     const next: Worker = createDiskIOWorker();
     diskIOWorker = next;
     // 崩溃重建后的第一层恢复：新实例缓存全空，先自己读一次盘拿到最后一次
     // 成功落盘的状态。
-    next.postMessage({ type: "load" } satisfies LoadRequest);
-    // 第二层恢复：把落盘间隔内的增量补齐，由各自登记的镜像重放负责——
-    // aiChat.ts、commands/luckChallenge/cache.ts 与 antiRaid.ts 分别重放
-    // 各自主线程镜像。
-    // 两层叠加，load 先到（FIFO），重放消息随后
-    // 落在新实例已经热好的缓存之上，损失为零或接近零。
-    for (const listener of respawnListeners) {
-      listener();
-    }
+    beginRuntimeRecovery(next);
   };
   return w;
+}
+
+function isSuccessfulLoad(reply: LoadedReply): boolean {
+  return reply.error === undefined && reply.luckReceiptSecret !== null;
+}
+
+function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): void {
+  if (diskIOWorker !== worker) return;
+  clearRuntimeRecoveryTimer();
+  runtimeRecoveryWorker = null;
+  diskIOWritable = true;
+  if (replayMirrors) {
+    // load 已完整成功，此时才允许各领域把崩溃窗口内的主线程镜像补齐。
+    for (const listener of respawnListeners) {
+      try {
+        listener();
+      } catch (error: unknown) {
+        console.error("[diskIO] failed to replay a persistence mirror after recovery:", error);
+      }
+    }
+  }
+  for (const message of pendingBusinessMessages.splice(0)) worker.postMessage(message);
+}
+
+function clearRuntimeRecoveryTimer(): void {
+  if (runtimeRecoveryTimer === null) return;
+  clearTimeout(runtimeRecoveryTimer);
+  runtimeRecoveryTimer = null;
+}
+
+function signalDiskIOFatal(error: Error): void {
+  if (diskIOFatalSignaled) return;
+  diskIOFatalSignaled = true;
+  if (diskIOFatalHandler !== undefined) {
+    diskIOFatalHandler(error);
+  } else {
+    console.error("[diskIO] fatal persistence failure requires process restart:", error.message);
+  }
+}
+
+function beginRuntimeRecovery(worker: Worker): void {
+  clearRuntimeRecoveryTimer();
+  runtimeRecoveryWorker = worker;
+  runtimeRecoveryTimer = setTimeout(() => {
+    runtimeRecoveryTimer = null;
+    stopWorkerAfterLoadFailure(
+      worker,
+      `runtime load handshake timed out after ${runtimeRecoveryTimeoutMs}ms`,
+      true
+    );
+  }, runtimeRecoveryTimeoutMs);
+  runtimeRecoveryTimer.unref();
+  worker.postMessage({ type: "load" } satisfies LoadRequest);
+}
+
+function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal: boolean): void {
+  if (diskIOWorker !== worker) return;
+  clearRuntimeRecoveryTimer();
+  console.error(
+    `[diskIO] persistence recovery failed; keeping storage unavailable and refusing writes: ${reason}`
+  );
+  diskIOWorker = null;
+  runtimeRecoveryWorker = null;
+  diskIOWritable = false;
+  pendingBusinessMessages.length = 0;
+  for (const resolve of pendingFlushes.values()) resolve("failed");
+  pendingFlushes.clear();
+  try {
+    void Promise.resolve(worker.terminate()).catch((error: unknown) => {
+      console.error("[diskIO] failed to terminate unusable persistence Worker:", error);
+    });
+  } catch (error: unknown) {
+    console.error("[diskIO] failed to terminate unusable persistence Worker:", error);
+  }
+  if (fatal) signalDiskIOFatal(new Error(`[diskIO] runtime persistence recovery failed: ${reason}`));
 }
 
 const respawnListeners: (() => void)[] = [];
@@ -183,20 +299,30 @@ export function onVerificationPersisted(callback: (reply: VerificationPersistedR
 
 /** 把其它 Worker 线程转发来的 error 日志转投落盘线程（logger.ts 的转发模式，仅主线程调用）。 */
 export function relayLogMessage(message: LogMessage): void {
-  diskIOWorker?.postMessage({ type: "log", ...message } satisfies LogEnvelope);
+  const worker: Worker | null = diskIOWorker;
+  if (worker === null || !diskIOWritable) return;
+  worker.postMessage({ type: "log", ...message } satisfies LogEnvelope);
 }
 
 /** 主线程 -> diskIOWorker：统一的快照或增量写入。 */
 export function postDiskIO(
-  message:
-    | AiMemoryDiskMessage
-    | AiMemoryDeleteDiskMessage
-    | StickerCatalogDiskMessage
-    | LuckDrawDiskMessage
-    | VerificationUpsertDiskMessage
-    | VerificationDeleteDiskMessage
+  message: DiskBusinessMessage
 ): void {
-  diskIOWorker?.postMessage(message);
+  const worker: Worker | null = diskIOWorker;
+  if (worker === null) return;
+  if (!diskIOWritable) {
+    if (pendingBusinessMessages.length >= maxPendingBusinessMessages) {
+      stopWorkerAfterLoadFailure(
+        worker,
+        `buffered business message limit (${maxPendingBusinessMessages}) exceeded during recovery`,
+        true
+      );
+      return;
+    }
+    pendingBusinessMessages.push(message);
+    return;
+  }
+  worker.postMessage(message);
 }
 
 /** 两张快照表的值是序列化 JSON 文本（与消息协议同形态，见 types/aiChat.ts
@@ -259,7 +385,9 @@ export function ensureLuckReceiptSecret(
   timeoutMs: number = LOAD_TIMEOUT_MS
 ): Promise<LuckReceiptSecret> {
   const worker: Worker | null = diskIOWorker;
-  if (!worker) return Promise.reject(new Error("Persistence Worker is unavailable; cannot rotate luck receipt secret."));
+  if (!worker || !diskIOWritable) {
+    return Promise.reject(new Error("Persistence Worker is unavailable; cannot rotate luck receipt secret."));
+  }
   const requestId: number = nextLuckSecretRequestId++;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -277,24 +405,53 @@ let nextFlushId: number = 1;
  * 要求 diskIOWorker 立即把所有 dirty 数据（含待验证增量）全部落盘，
  * 并等待完成。用于进程退出前的最后一刷。带超时兜底：
  * Worker 异常时停机流程最多被拖住 timeoutMs，不会挂死。resolve 只代表
- * "等待已结束"，不保证数据真落了盘——Worker 若恰好在这次 flush 期间崩溃，
- * onerror 会提前结算这次等待并单独记一条"flush 落空"的日志（见上方
- * createDiskIOWorker），调用方无需（也没法）区分，只按尽力而为对待。
+ * "等待已结束"；返回值明确区分成功、超时与失败。Worker 若恰好在这次
+ * flush 期间崩溃，onerror 会立即以 failed 结算并记录数据未落盘。
  */
-export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<void> {
+export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   const worker: Worker | null = diskIOWorker;
-  if (!worker) return Promise.resolve();
+  if (!worker || !diskIOWritable) return Promise.resolve("failed");
   return new Promise((resolve) => {
     const id: number = nextFlushId++;
     const timer = setTimeout(() => {
       pendingFlushes.delete(id);
-      resolve();
+      resolve("timedOut");
     }, timeoutMs);
-    pendingFlushes.set(id, () => {
+    pendingFlushes.set(id, (result: FlushResult) => {
       clearTimeout(timer);
-      resolve();
+      resolve(result);
     });
     const request: DiskFlushRequest = { type: "flush", flushId: id };
     worker.postMessage(request);
   });
+}
+
+/** 终止落盘 Worker；返回后旧实例不可能再 rename/append 共享文件。 */
+export function terminateDiskIO(): Promise<void> {
+  const worker: Worker | null = diskIOWorker;
+  diskIOWorker = null;
+  diskIOInitialized = false;
+  diskIOWritable = false;
+  runtimeRecoveryWorker = null;
+  clearRuntimeRecoveryTimer();
+  diskIOFatalHandler = undefined;
+  diskIOFatalSignaled = false;
+  runtimeRecoveryTimeoutMs = LOAD_TIMEOUT_MS;
+  maxPendingBusinessMessages = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
+  pendingBusinessMessages.length = 0;
+  for (const resolve of pendingFlushes.values()) resolve("failed");
+  pendingFlushes.clear();
+  const terminationError = new Error("Persistence Worker terminated before the request completed.");
+  for (const pending of pendingLuckSecrets.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(terminationError);
+  }
+  pendingLuckSecrets.clear();
+  if (worker === null) return Promise.resolve();
+  try {
+    worker.terminate();
+    return Promise.resolve();
+  } catch (error: unknown) {
+    return Promise.reject(error instanceof Error ? error : new Error("Persistence Worker termination failed."));
+  }
 }

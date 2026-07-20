@@ -1,4 +1,4 @@
-import type { ExpelSnapshot, RecentComment } from "./state";
+import type { RecentComment } from "./state";
 
 export interface JoinEvent {
   type: "join";
@@ -25,6 +25,8 @@ export type VerificationEvent =
   | { type: "callback"; callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
   | { type: "adminCheckResolved" }
   | { type: "verifyTimeout" }
-  | { type: "timeoutInviterVerdict"; inviterIsAdmin: boolean; snapshot: ExpelSnapshot }
+  | { type: "terminalPersisted" }
+  | { type: "timeoutInviterVerdict"; inviterIsAdmin: boolean }
+  | { type: "expelSettled" }
   | { type: "reminderLanded"; reminderKind: "original" | "reply"; messageId: number }
   | { type: "dedupeExpired" };

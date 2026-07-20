@@ -105,3 +105,13 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
 
   await sendMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });
 }
+
+/** teardown 专用：只停止由指定源群持有的全局 copy，不在这里单独落盘。 */
+export function stopCopyOwnedByChat(chatId: number): boolean {
+  const globalCopy: GlobalCopyState = getGlobalCopyState();
+  if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return false;
+  globalCopy.copiedUser = null;
+  globalCopy.copyMode = undefined;
+  globalCopy.copyChatId = undefined;
+  return true;
+}

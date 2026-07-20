@@ -30,7 +30,7 @@ mock.module("../../src/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
 
-const { requestGeminiResponse } = await import("../../src/ai/gemini");
+const { requestGeminiResponse, requestGeminiResult } = await import("../../src/ai/gemini");
 
 describe("Gemini request safety settings", () => {
   beforeEach(() => {
@@ -70,7 +70,7 @@ describe("Gemini request safety settings", () => {
     expect(loggerError).toHaveBeenCalledWith("Error calling Gemini test:", expect.any(Error));
   });
 
-  test("安全拦截和 token 截断的成功响应仍保留原响应，同时记录不可用原因", async () => {
+  test("安全拦截和 token 截断即使夹带内容也不会越过公共边界", async () => {
     generateContent.mockResolvedValueOnce({
       candidates: [{ finishReason: "MAX_TOKENS", content: { role: "model", parts: [{ text: "partial" }] } }],
       usageMetadata: { thoughtsTokenCount: 12 },
@@ -80,12 +80,28 @@ describe("Gemini request safety settings", () => {
       contents: "hello",
       config: { maxOutputTokens: 100 },
     }, "Gemini test");
-    expect(String(truncated?.candidates?.[0]?.finishReason)).toBe("MAX_TOKENS");
-    expect(loggerError).toHaveBeenCalledTimes(1);
+    expect(truncated).toBeNull();
+    expect(loggerError).toHaveBeenCalledTimes(2);
 
     loggerError.mockClear();
     generateContent.mockResolvedValueOnce({ candidates: [{ finishReason: "SAFETY" }] } as unknown as GenerateContentResponse);
-    expect(await requestGeminiResponse({ model: "gemini-test", contents: "hello" }, "Gemini test")).not.toBeNull();
+    expect(await requestGeminiResponse({ model: "gemini-test", contents: "hello" }, "Gemini test")).toBeNull();
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("finishReason=SAFETY"));
+  });
+
+  test("判别结果保留未知 finish reason 与 finishMessage 供无副作用降级判断", async () => {
+    generateContent.mockResolvedValueOnce({
+      candidates: [{
+        finishReason: "TOO_MANY_TOOL_CALLS",
+        finishMessage: "server tool limit",
+        content: { parts: [{ text: "不得消费" }, { functionCall: { name: "send_message" } }] },
+      }],
+    } as unknown as GenerateContentResponse);
+    const result = await requestGeminiResult({ model: "gemini-test", contents: "hello" }, "Gemini test");
+    expect(result).toMatchObject({
+      ok: false,
+      finishReason: "TOO_MANY_TOOL_CALLS",
+      finishMessage: "server tool limit",
+    });
   });
 });

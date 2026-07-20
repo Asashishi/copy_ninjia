@@ -28,6 +28,42 @@ if (DAY_FILE_JSON_INDENT < 1) {
  *  DAY_FILE_JSON_INDENT 注释。 */
 const ENTRY_LINE_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
 
+export interface SyncWriteRequest {
+  fd: number;
+  buffer: Buffer;
+  offset: number;
+  length: number;
+  position: number;
+}
+
+export type SyncBufferWriter = (request: SyncWriteRequest) => number;
+
+const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }) =>
+  writeSync(fd, buffer, offset, length, position);
+
+/** write(2) 允许成功但只写一部分；只有整段 Buffer 落下才算 append 成功。 */
+export function writeBufferFully(
+  fd: number,
+  buffer: Buffer,
+  options: { position: number; write?: SyncBufferWriter }
+): void {
+  const write: SyncBufferWriter = options.write ?? nodeWriteBuffer;
+  let offset: number = 0;
+  while (offset < buffer.length) {
+    const written: number = write({
+      fd,
+      buffer,
+      offset,
+      length: buffer.length - offset,
+      position: options.position + offset,
+    });
+    if (!Number.isSafeInteger(written) || written <= 0 || written > buffer.length - offset) {
+      throw new Error(`Short write made no valid progress (${written} byte(s) reported).`);
+    }
+    offset += written;
+  }
+}
+
 /**
  * 整份文件重写用：tmp + fsync + rename（同文件系统内原子操作），避免这类
  * 维护性重写被杀一半留下撕裂 JSON（同 snapshotFiles.ts atomicWriteText 的
@@ -128,11 +164,14 @@ export function appendToDayFile({
   state,
   chunk,
   mode,
+  write = nodeWriteBuffer,
 }: {
   dir: string;
   state: DayFileState;
   chunk: string;
   mode?: number;
+  /** 仅供故障注入测试；生产使用 node:fs writeSync。 */
+  write?: SyncBufferWriter;
 }): void {
   const path: string = join(dir, `${state.day}.json`);
   if (state.empty) {
@@ -144,14 +183,28 @@ export function appendToDayFile({
     state.empty = false;
     return;
   }
-  const data: string = `,\n${chunk}\n}`;
+  const data: Buffer = Buffer.from(`,\n${chunk}\n}`, "utf8");
   const fd: number = openSync(path, "r+");
+  let failure: unknown = null;
   try {
-    writeSync(fd, data, state.size - 2, "utf8");
-  } finally {
-    closeSync(fd);
+    writeBufferFully(fd, data, { position: state.size - 2, write });
+  } catch (error: unknown) {
+    failure = error;
   }
-  state.size = state.size - 2 + Buffer.byteLength(data);
+  try {
+    closeSync(fd);
+  } catch (error: unknown) {
+    failure ??= error;
+  }
+  if (failure !== null) {
+    // 可能已有前缀落盘，旧 size 与物理文件都不再可信。fd 已关闭后重新
+    // 探测并尽力裁掉残片；绝不能按完整 data 的长度推进游标。
+    const recovered: DayFileState = openDayFile(dir, state.day, mode);
+    state.size = recovered.size;
+    state.empty = recovered.empty;
+    throw failure instanceof Error ? failure : new Error("Append failed with a non-Error value.");
+  }
+  state.size = state.size - 2 + data.length;
 }
 
 /**

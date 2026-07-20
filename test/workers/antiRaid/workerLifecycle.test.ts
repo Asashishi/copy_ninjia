@@ -11,9 +11,13 @@ mock.module("../../../src/workers/antiRaid/verificationRuntime", () => ({
   handleVerificationCallback(): void { calls.push("callback"); },
   dispatchVerification(): void { calls.push("left"); },
   adoptVerifications(): void { calls.push("adoptVerifications"); },
+  handleVerificationPersisted(): void { calls.push("verificationPersisted"); },
+  deactivateVerificationChat(): void { calls.push("deactivateVerification"); },
 }));
 mock.module("../../../src/workers/antiRaid/lockdownRuntime", () => ({
   adoptLockdowns(): void { calls.push("adopt"); },
+  handleLockdownPersisted(): void { calls.push("lockdownPersisted"); },
+  deactivateLockdownChat(): void { calls.push("deactivateLockdown"); },
 }));
 mock.module("../../../src/workers/antiRaid/adminCache", () => ({
   applyAdminChange(): void { calls.push("adminsChanged"); },
@@ -57,14 +61,20 @@ describe("Anti-Raid Worker lifecycle", () => {
     const messages: AntiRaidWorkerMessage[] = [
       { type: "join", chatId: -1001, member: { id: 1 } },
       { type: "left", chatId: -1001, userId: 1 },
+      { type: "deactivateChat", chatId: -1001 },
       { type: "message", chatId: -1001, userId: 1, messageId: 10 },
       { type: "callback", callbackQueryId: "q", targetUserId: 1, from: { id: 1 } },
       { type: "adopt", lockdowns: [] },
+      { type: "lockdownPersisted", chatId: -1001, phase: "applying", intentId: 1 },
       { type: "adoptVerifications", generation: 1, verifications: [] },
+      { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isAdmin: true },
     ];
     for (const message of messages) workerSelf.onmessage!({ data: message } as MessageEvent<AntiRaidWorkerMessage>);
-    expect(calls).toEqual(["join", "left", "message", "callback", "adopt", "adoptVerifications", "adminsChanged"]);
+    expect(calls).toEqual([
+      "join", "left", "deactivateVerification", "deactivateLockdown", "message", "callback",
+      "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
+    ]);
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();

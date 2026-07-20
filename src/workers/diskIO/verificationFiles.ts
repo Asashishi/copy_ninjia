@@ -78,6 +78,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     !isPositiveId(value.userId) ||
     !isPositiveId(value.generation) ||
     !isPositiveId(value.revision) ||
+    (value.phase !== undefined && value.phase !== "pending" && value.phase !== "checkingInviter" && value.phase !== "expelling") ||
     typeof value.label !== "string" ||
     value.label.length === 0 ||
     value.label.length > 512 ||
@@ -99,6 +100,14 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     !isSafeTimestamp(value.joinedAt) ||
     !isSafeTimestamp(value.expiresAt) ||
     value.expiresAt < value.joinedAt ||
+    (value.phase === "checkingInviter" && (!isPositiveId(value.terminalInviterId) || value.expelReason !== undefined)) ||
+    (value.phase === "expelling" && (
+      (value.expelReason !== "timeout" && value.expelReason !== "flood") ||
+      value.terminalInviterId !== undefined
+    )) ||
+    ((value.phase === undefined || value.phase === "pending") && (
+      value.terminalInviterId !== undefined || value.expelReason !== undefined
+    )) ||
     key !== verificationFileKey(value.chatId, value.userId)
   ) return null;
 
@@ -107,6 +116,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     userId: value.userId,
     generation: value.generation,
     revision: value.revision,
+    phase: value.phase,
     label: value.label,
     isBot: value.isBot,
     messageIds: [...value.messageIds],
@@ -119,6 +129,8 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     reminderSuperseded: value.reminderSuperseded,
     joinedAt: value.joinedAt,
     expiresAt: value.expiresAt,
+    terminalInviterId: value.terminalInviterId as number | undefined,
+    expelReason: value.expelReason as "timeout" | "flood" | undefined,
   };
 }
 
@@ -156,23 +168,41 @@ export function recoverVerificationDay(
 ): Map<string, VerificationSnapshot> {
   mkdirSync(dir, { recursive: true });
   resetVerificationPersistenceCache();
-  verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
-  removeOldVerificationDays(day, dir);
 
   const path: string = join(dir, `${day}.json`);
-  if (!existsSync(path)) return new Map();
-  const content: string = readFileSync(path, "utf8");
-  const parsed: unknown = JSON.parse(content);
+  if (!existsSync(path)) {
+    verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
+    removeOldVerificationDays(day, dir);
+    return new Map();
+  }
+
+  let content: string = readFileSync(path, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    // 仅对字节级尾部截断沿用通用修复；修复不了仍由下次 parse fail closed。
+    verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
+    content = readFileSync(path, "utf8");
+    parsed = JSON.parse(content);
+  }
   if (!isRecord(parsed)) throw new Error(`${path} must contain a JSON object.`);
+
+  const recovered: Map<string, VerificationSnapshot> = new Map();
   for (const [key, value] of Object.entries(parsed)) {
     if (value === null) continue;
     const snapshot: VerificationSnapshot | null = decodeVerificationSnapshot(key, value);
     if (snapshot === null) {
-      console.error(`[diskIOWorker] ignoring invalid pending verification record for key ${key}`);
-      continue;
+      throw new Error(`${path} contains an invalid active pending verification record for key ${key}.`);
     }
-    verificationWorkerCache.set(key, snapshot);
+    recovered.set(key, snapshot);
   }
+
+  // 全部 active 记录通过后才发布缓存、接管文件及清理旧日；单条损坏不能
+  // 留下部分恢复结果，也不能在失败启动过程中改写原文件。
+  for (const [key, snapshot] of recovered) verificationWorkerCache.set(key, snapshot);
+  verificationFileState.current ??= openDayFile(dir, day, PERSISTED_FILE_MODE);
+  removeOldVerificationDays(day, dir);
 
   // 重启后无法区分规范 active 基线与其后的重复 key，保守地把当前文件都计入
   // 历史；达到任一阈值就收敛一次。收敛后 bytes 归零，active 本身再大也不会

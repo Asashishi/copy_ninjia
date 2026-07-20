@@ -15,6 +15,7 @@ import { PRIVILEGED_USERS_ID } from "../../infra/config";
 import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import {
   LOCKDOWN_KICK_DEDUPE_MS,
+  VERIFICATION_TERMINAL_RETRY_MS,
   VERIFICATION_BUTTON_TEXT,
   VERIFICATION_TIMEOUT_MS,
   VERIFY_CALLBACK_PREFIX,
@@ -22,7 +23,7 @@ import {
 } from "../../consts/antiRaid/verification";
 import { lockdownEntries } from "../../cache/antiRaid/lockdown";
 import { verificationEntries, verificationGeneration, verificationRevisions } from "../../cache/antiRaid/verification";
-import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types/antiRaid";
+import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationPersistedMessage, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types/antiRaid";
 import {
   joinCreatesNewRecord,
   transitionVerification,
@@ -31,6 +32,8 @@ import {
   type VerificationEffect,
   type VerificationEvent,
   type VerificationState,
+  type VerificationTerminalState,
+  type PendingState,
 } from "../../states/verification";
 import { verificationKey } from "./keys";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
@@ -60,14 +63,21 @@ function memberLabel(member: AntiRaidMember): string {
 // —— 验证状态机解释器 ——
 
 /** pending 起验证超时计时，exempt/kicked 起去重窗口计时（到期事件回投状态机）。 */
-function startVerificationTimer(chatId: number, userId: number, state: VerificationState): ReturnType<typeof setTimeout> {
+function startVerificationTimer(chatId: number, userId: number, state: VerificationState): ReturnType<typeof setTimeout> | undefined {
   if (state.kind === "pending") {
     return setTimeout(
       () => dispatchVerification(chatId, userId, { type: "verifyTimeout" }),
       Math.max(0, state.expiresAt - Date.now())
     );
   }
+  if (state.kind === "checkingInviter" || state.kind === "expelling") return undefined;
   return setTimeout(() => dispatchVerification(chatId, userId, { type: "dedupeExpired" }), LOCKDOWN_KICK_DEDUPE_MS);
+}
+
+type PersistedVerificationState = PendingState | VerificationTerminalState;
+
+function isPersistedVerificationState(state: VerificationState | undefined): state is PersistedVerificationState {
+  return state?.kind === "pending" || state?.kind === "checkingInviter" || state?.kind === "expelling";
 }
 
 /**
@@ -77,10 +87,10 @@ function startVerificationTimer(chatId: number, userId: number, state: Verificat
 export function dispatchVerification(chatId: number, userId: number, event: VerificationEvent): void {
   const key: string = verificationKey(chatId, userId);
   const entry = verificationEntries.get(key);
-  const previousWasPending: boolean = entry?.state.kind === "pending";
+  const previousWasPersisted: boolean = isPersistedVerificationState(entry?.state);
   const { next, effects, snapshotChanged = false } = transitionVerification(entry?.state, event);
   if (next !== entry?.state) {
-    if (entry) clearTimeout(entry.timer);
+    if (entry?.timer !== undefined) clearTimeout(entry.timer);
     if (next === undefined) {
       verificationEntries.delete(key);
     } else {
@@ -88,7 +98,7 @@ export function dispatchVerification(chatId: number, userId: number, event: Veri
     }
   }
   if (snapshotChanged || next !== entry?.state) {
-    publishVerificationChange(chatId, userId, previousWasPending);
+    publishVerificationChange(chatId, userId, previousWasPersisted);
   }
   if (effects.length > 0) {
     void runVerificationEffects(chatId, userId, effects).catch((error: unknown) => {
@@ -105,42 +115,46 @@ function verificationSnapshot({
 }: {
   chatId: number;
   userId: number;
-  state: VerificationState & { kind: "pending" };
+  state: PersistedVerificationState;
   revision: number;
 }): VerificationSnapshot {
+  const source: PendingState | ExpelSnapshot = state.kind === "pending" ? state : state.snapshot;
   return {
     chatId,
     userId,
     generation: verificationGeneration.current,
     revision,
-    label: state.label,
-    isBot: state.isBot,
-    messageIds: [...state.messageIds],
-    trackedMessageTimes: [...state.trackedMessageTimes],
-    invitedBy: state.invitedBy,
-    reminderMessageId: state.reminderMessageId,
-    replyReminderMessageId: state.replyReminderMessageId,
-    replyReminderRequested: state.replyReminderRequested,
-    welcomeAnchorMessageId: state.welcomeAnchorMessageId,
-    reminderSuperseded: state.reminderSuperseded,
-    joinedAt: state.joinedAt,
-    expiresAt: state.expiresAt,
+    phase: state.kind,
+    label: source.label,
+    isBot: source.isBot,
+    messageIds: [...source.messageIds],
+    trackedMessageTimes: state.kind === "pending" ? [...state.trackedMessageTimes] : [],
+    invitedBy: state.kind === "pending" ? state.invitedBy : undefined,
+    reminderMessageId: source.reminderMessageId,
+    replyReminderMessageId: source.replyReminderMessageId,
+    replyReminderRequested: state.kind === "pending" ? state.replyReminderRequested : false,
+    welcomeAnchorMessageId: state.kind === "pending" ? state.welcomeAnchorMessageId : undefined,
+    reminderSuperseded: state.kind === "pending" ? state.reminderSuperseded : true,
+    joinedAt: source.joinedAt,
+    expiresAt: source.expiresAt,
+    terminalInviterId: state.kind === "checkingInviter" ? state.inviterId : undefined,
+    expelReason: state.kind === "expelling" ? state.reason : undefined,
   };
 }
 
-/** 状态同步落地后，仅在 pending 的纯数据实际变化时发布 upsert/delete。 */
-function publishVerificationChange(chatId: number, userId: number, previousWasPending: boolean): void {
+/** 状态同步落地后，为 pending/终态发布 upsert，只在彻底收尾后发布 delete。 */
+function publishVerificationChange(chatId: number, userId: number, previousWasPersisted: boolean): void {
   if (verificationGeneration.current <= 0) return;
   const key: string = verificationKey(chatId, userId);
   const state: VerificationState | undefined = verificationEntries.get(key)?.state;
   const revision: number = (verificationRevisions.get(key)?.revision ?? 0) + 1;
-  if (state?.kind === "pending") {
+  if (isPersistedVerificationState(state)) {
     verificationRevisions.set(key, { revision });
     self.postMessage({
       type: "verificationUpsert",
       record: verificationSnapshot({ chatId, userId, state, revision }),
     } satisfies VerificationUpsertEvent);
-  } else if (previousWasPending) {
+  } else if (previousWasPersisted) {
     verificationRevisions.set(key, { revision, retiredAt: Date.now() });
     self.postMessage({
       type: "verificationDelete",
@@ -156,7 +170,9 @@ function publishVerificationChange(chatId: number, userId: number, previousWasPe
 export function adoptVerifications(msg: AdoptVerificationsMessage): void {
   if (msg.generation < verificationGeneration.current) return;
   if (msg.generation > verificationGeneration.current) {
-    for (const entry of verificationEntries.values()) clearTimeout(entry.timer);
+    for (const entry of verificationEntries.values()) {
+      if (entry.timer !== undefined) clearTimeout(entry.timer);
+    }
     verificationEntries.clear();
     verificationRevisions.clear();
     verificationGeneration.current = msg.generation;
@@ -167,27 +183,71 @@ export function adoptVerifications(msg: AdoptVerificationsMessage): void {
     const key: string = verificationKey(record.chatId, record.userId);
     if ((verificationRevisions.get(key)?.revision ?? 0) >= record.revision) continue;
     verificationRevisions.set(key, { revision: record.revision });
-    const state: VerificationState = {
-      kind: "pending",
+    const expelSnapshot: ExpelSnapshot = {
       label: record.label,
       isBot: record.isBot,
       messageIds: [...record.messageIds],
-      trackedMessageTimes: (record.trackedMessageTimes ?? []).filter((timestamp) => timestamp > now - JOIN_WINDOW_MS),
-      invitedBy: record.invitedBy,
       reminderMessageId: record.reminderMessageId,
       replyReminderMessageId: record.replyReminderMessageId,
-      replyReminderRequested: record.replyReminderRequested,
-      welcomeAnchorMessageId: record.welcomeAnchorMessageId,
-      reminderSuperseded: record.reminderSuperseded,
       joinedAt: record.joinedAt,
       expiresAt: record.expiresAt,
     };
+    const state: VerificationState = record.phase === "checkingInviter"
+      ? { kind: "checkingInviter", inviterId: record.terminalInviterId!, snapshot: expelSnapshot }
+      : record.phase === "expelling"
+        ? { kind: "expelling", reason: record.expelReason!, snapshot: expelSnapshot }
+        : {
+          kind: "pending",
+          label: record.label,
+          isBot: record.isBot,
+          messageIds: [...record.messageIds],
+          trackedMessageTimes: (record.trackedMessageTimes ?? []).filter((timestamp) => timestamp > now - JOIN_WINDOW_MS),
+          invitedBy: record.invitedBy,
+          reminderMessageId: record.reminderMessageId,
+          replyReminderMessageId: record.replyReminderMessageId,
+          replyReminderRequested: record.replyReminderRequested,
+          welcomeAnchorMessageId: record.welcomeAnchorMessageId,
+          reminderSuperseded: record.reminderSuperseded,
+          joinedAt: record.joinedAt,
+          expiresAt: record.expiresAt,
+        };
     verificationEntries.set(key, {
       state,
       timer: startVerificationTimer(record.chatId, record.userId, state),
     });
-    if (record.expiresAt <= now) {
+    if (state.kind === "pending" && record.expiresAt <= now) {
       dispatchVerification(record.chatId, record.userId, { type: "verifyTimeout" });
+    } else if ((state.kind === "checkingInviter" || state.kind === "expelling") && msg.resumePersistedTerminals === true) {
+      dispatchVerification(record.chatId, record.userId, { type: "terminalPersisted" });
+    }
+  }
+}
+
+/** 只有精确匹配当前终态 revision 的落盘回执才能启动副作用。 */
+export function handleVerificationPersisted(msg: VerificationPersistedMessage): void {
+  if (msg.generation !== verificationGeneration.current) return;
+  const knownRevision: number | undefined = verificationRevisions.get(msg.key)?.revision;
+  if (knownRevision !== msg.revision) return;
+  const separator: number = msg.key.lastIndexOf(":");
+  if (separator <= 0) return;
+  const chatId: number = Number(msg.key.slice(0, separator));
+  const userId: number = Number(msg.key.slice(separator + 1));
+  if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(userId)) return;
+  const state: VerificationState | undefined = verificationEntries.get(msg.key)?.state;
+  if (state?.kind !== "checkingInviter" && state?.kind !== "expelling") return;
+  dispatchVerification(chatId, userId, { type: "terminalPersisted" });
+}
+
+/** 取消某群所有验证 owner，并为每条持久化记录发布 tombstone。 */
+export function deactivateVerificationChat(chatId: number): void {
+  const prefix: string = `${chatId}:`;
+  for (const [key, entry] of [...verificationEntries]) {
+    if (!key.startsWith(prefix)) continue;
+    const userId: number = Number(key.slice(prefix.length));
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+    verificationEntries.delete(key);
+    if (isPersistedVerificationState(entry.state) && Number.isSafeInteger(userId)) {
+      publishVerificationChange(chatId, userId, true);
     }
   }
 }
@@ -207,14 +267,32 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
         if (effect.replyReminderMessageId !== undefined) await deleteMessage(chatId, effect.replyReminderMessageId, joinVerificationApi);
         break;
       case "expel":
-        await expelMember({ chatId, userId, snapshot: effect.snapshot, reason: "timeout" });
+      case "expelFlood": {
+        const expectedState: VerificationState | undefined = verificationEntries.get(verificationKey(chatId, userId))?.state;
+        const reason: "timeout" | "flood" = effect.kind === "expelFlood" ? "flood" : "timeout";
+        if (expectedState?.kind !== "expelling" || expectedState.reason !== reason || expectedState.snapshot !== effect.snapshot) break;
+        const settled: boolean = await expelMember({ chatId, userId, snapshot: effect.snapshot, reason, expectedState });
+        if (settled && verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState) {
+          dispatchVerification(chatId, userId, { type: "expelSettled" });
+        } else if (verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState) {
+          expectedState.executionStarted = false;
+          const entry = verificationEntries.get(verificationKey(chatId, userId));
+          if (entry !== undefined) {
+            if (entry.timer !== undefined) clearTimeout(entry.timer);
+            entry.timer = setTimeout(
+              () => dispatchVerification(chatId, userId, { type: "terminalPersisted" }),
+              VERIFICATION_TERMINAL_RETRY_MS
+            );
+          }
+        }
         break;
-      case "expelFlood":
-        await expelMember({ chatId, userId, snapshot: effect.snapshot, reason: "flood" });
+      }
+      case "recheckInviter": {
+        const expectedState: VerificationState | undefined = verificationEntries.get(verificationKey(chatId, userId))?.state;
+        if (expectedState?.kind !== "checkingInviter" || expectedState.snapshot !== effect.snapshot) break;
+        await recheckInviterThenSettle({ chatId, userId, inviterId: effect.inviterId, expectedState });
         break;
-      case "recheckInviter":
-        await recheckInviterThenSettle({ chatId, userId, inviterId: effect.inviterId, snapshot: effect.snapshot });
-        break;
+      }
       case "sendReminder":
         sendVerificationReminder({ chatId, userId, label: effect.label, isBot: effect.isBot });
         break;
@@ -283,7 +361,7 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
       case "restartVerifyTimer": {
         const entry = verificationEntries.get(verificationKey(chatId, userId));
         if (entry?.state.kind === "pending") {
-          clearTimeout(entry.timer);
+          if (entry.timer !== undefined) clearTimeout(entry.timer);
           entry.timer = startVerificationTimer(chatId, userId, entry.state);
         }
         break;
@@ -420,19 +498,19 @@ function startAdminCheck(chatId: number, userId: number, actorId: number): void 
 
 /**
  * 超时踢人前对拉人者身份的最后核对：缓存热直接判；缓存冷就等一次全量拉取
- * （与在途请求自动合并）。此刻验证状态已被删除，迟到的撤销回调/按钮点击都会
- * 因查不到记录而安全放弃；核对结果以 timeoutInviterVerdict 回投收尾。
+ * （与在途请求自动合并）。终态在核对期间继续占有该 userId；新一代入群会
+ * 用新状态对象替换它，下面的对象同一性检查会让迟到结果安全放弃。
  */
 async function recheckInviterThenSettle({
   chatId,
   userId,
   inviterId,
-  snapshot,
+  expectedState,
 }: {
   chatId: number;
   userId: number;
   inviterId: number;
-  snapshot: ExpelSnapshot;
+  expectedState: VerificationTerminalState & { kind: "checkingInviter" };
 }): Promise<void> {
   const cachedAdmins: Set<number> | undefined = freshAdminIds(chatId);
   let inviterIsAdmin: boolean = cachedAdmins?.has(inviterId) === true;
@@ -443,7 +521,9 @@ async function recheckInviterThenSettle({
       logger.error(`Error rechecking admin-invite exemption before expiring verification in chat ${chatId}:`, error);
     }
   }
-  dispatchVerification(chatId, userId, { type: "timeoutInviterVerdict", inviterIsAdmin, snapshot });
+  if (verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState) {
+    dispatchVerification(chatId, userId, { type: "timeoutInviterVerdict", inviterIsAdmin });
+  }
 }
 
 /**
@@ -458,20 +538,27 @@ async function expelMember({
   userId,
   snapshot,
   reason,
+  expectedState,
 }: {
   chatId: number;
   userId: number;
   snapshot: ExpelSnapshot;
   reason: "timeout" | "flood";
-}): Promise<void> {
+  expectedState: VerificationTerminalState & { kind: "expelling" };
+}): Promise<boolean> {
+  const stillCurrent = (): boolean =>
+    verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState;
   // 刷屏处置先踢人，阻止对方在删除排队期间继续制造消息；普通验证超时保留
   // 既有的先清痕迹后踢人顺序。deleteMessage 自身吞掉单条 API 失败并返回
   // false，因此一次删除失败不会中断后续清理或通知。
   let kicked: boolean = false;
+  if (!stillCurrent()) return false;
   if (reason === "flood") kicked = await kickChatMember(chatId, userId, joinVerificationApi);
   for (const messageId of snapshot.messageIds) {
+    if (!stillCurrent()) return false;
     await deleteMessage(chatId, messageId, joinVerificationApi);
   }
+  if (!stillCurrent()) return false;
   if (reason === "timeout") kicked = await kickChatMember(chatId, userId, joinVerificationApi);
   // 踢没踢动要老实说：缺封禁权限时人还留在群里，照旧宣布"已踢出"就是
   // 当众撒谎，管理员也不会意识到该去补机器人权限。
@@ -484,11 +571,16 @@ async function expelMember({
       : snapshot.isBot
         ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
         : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
-  const noticeMessageId: number | undefined = await sendMessage({
-    chatId,
-    text: noticeText,
-    api: joinVerificationApi,
-  });
+  if (!stillCurrent()) return false;
+  const shouldSendNotice: boolean = kicked || expectedState.failureNoticeSent !== true;
+  const noticeMessageId: number | undefined = shouldSendNotice
+    ? await sendMessage({
+      chatId,
+      text: noticeText,
+      api: joinVerificationApi,
+    })
+    : undefined;
+  if (!kicked) expectedState.failureNoticeSent = true;
   // 没踢动的战报不自动删：它是要管理员去补权限的行动提示，30 秒就消失的话
   // 多半没人看见，权限缺口会一直留着。
   if (noticeMessageId !== undefined && kicked) {
@@ -499,6 +591,7 @@ async function expelMember({
       api: joinVerificationApi,
     });
   }
+  return kicked && stillCurrent();
 }
 
 // —— 投递 → 验证状态机事件的翻译 ——

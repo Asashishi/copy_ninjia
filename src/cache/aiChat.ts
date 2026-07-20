@@ -1,4 +1,5 @@
 import type { AiInitMessage } from "../types/aiChat/protocol";
+import type { FlushResult } from "../consts/lifecycle";
 
 /** AI 闲聊主线程侧代理（src/aiChat.ts）的内存状态。 */
 
@@ -17,4 +18,4 @@ export const purgedAiMemoryChats: Set<number> = new Set();
 export const latestStickerCatalogs: Map<string, string> = new Map();
 
 /** flushAiMemory 的回执路由：flushId -> resolve（握手样式同 cache/diskIO.ts 的 pendingFlushes）。 */
-export const pendingMemoryFlushes: Map<number, () => void> = new Map();
+export const pendingMemoryFlushes: Map<number, (result: FlushResult) => void> = new Map();

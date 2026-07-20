@@ -4,12 +4,19 @@ import { sendMessage, joinVerificationApi } from "../../infra/telegram";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
 import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaid/lockdown";
 import { LinkedQueue } from "../../libs/linkedQueue";
-import type { AdoptableLockdown, LockdownEvent, UnlockEvent } from "../../types/antiRaid";
+import type { AdoptableLockdown, LockdownEvent, LockdownPersistedMessage, UnlockEvent } from "../../types/antiRaid";
 import { transitionLockdown, type LockdownEffect, type LockdownMachineEvent } from "../../states/lockdown";
 import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 
 declare const self: Worker;
+
+let lastLockdownIntentId: number = 0;
+
+function nextLockdownIntentId(): number {
+  lastLockdownIntentId = Math.max(Date.now(), lastLockdownIntentId + 1);
+  return lastLockdownIntentId;
+}
 
 /**
  * 反刷群私密模式状态机（src/states/lockdown.ts）的解释器：把每条投递翻译成
@@ -54,22 +61,33 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         const entry = lockdownEntries.get(chatId);
         if (!entry) break;
         if (entry.timer !== undefined) clearTimeout(entry.timer);
-        entry.timer = setTimeout(() => dispatchLockdown(chatId, { type: "restoreTimerFired" }), effect.delayMs);
+        entry.timer = setTimeout(() => dispatchLockdown(chatId, {
+          type: "restoreTimerFired",
+          intentId: nextLockdownIntentId(),
+        }), effect.delayMs);
         break;
       }
-      case "beginApply":
-        beginApplyLockdown(chatId, effect.joinCount);
+      case "scheduleRestoreRetry": {
+        const entry = lockdownEntries.get(chatId);
+        if (!entry) break;
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        entry.timer = setTimeout(() => dispatchLockdown(chatId, { type: "restoreRetryFired" }), effect.delayMs);
+        break;
+      }
+      case "prepareApply":
+        prepareApplyLockdown(chatId, effect.joinCount);
+        break;
+      case "persistState":
+        publishLockdownState(chatId);
+        break;
+      case "commitApply":
+        commitApplyLockdown(chatId, effect.originalPermissions);
         break;
       case "beginRestore":
         beginRestoreLockdown(chatId, effect.originalPermissions);
         break;
       case "reapplyRestriction":
         reapplyLockdownRestriction(chatId, effect.originalPermissions);
-        break;
-      case "reportLockdown":
-        // 权限已实际落地才回报——镜像里只该出现真正生效了的私密模式，adopt
-        // 重放时「恢复原始权限」才不会把从未改过权限的群改坏。
-        self.postMessage({ type: "lockdown", chatId, originalPermissions: effect.originalPermissions } satisfies LockdownEvent);
         break;
       case "reportUnlock":
         self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
@@ -90,6 +108,48 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         break;
     }
   }
+}
+
+function publishLockdownState(chatId: number): void {
+  const state = lockdownEntries.get(chatId)?.state;
+  if (state === undefined) return;
+  let intentId: number;
+  let originalPermissions: ChatPermissions;
+  if (state.kind === "applying") {
+    if (state.originalPermissions === undefined || state.intentId === undefined) return;
+    intentId = state.intentId;
+    originalPermissions = state.originalPermissions;
+  } else {
+    intentId = state.intentId;
+    originalPermissions = state.originalPermissions;
+  }
+  self.postMessage({
+    type: "lockdown",
+    chatId,
+    phase: state.kind,
+    intentId,
+    originalPermissions,
+    expiresAt: state.kind === "active" ? Date.now() + LOCKDOWN_MS : Date.now(),
+  } satisfies LockdownEvent);
+}
+
+/** 主线程确认 write-ahead 阶段已落盘后，继续对应权限副作用。 */
+export function handleLockdownPersisted(msg: LockdownPersistedMessage): void {
+  dispatchLockdown(msg.chatId, {
+    type: "statePersisted",
+    phase: msg.phase,
+    intentId: msg.intentId,
+  });
+}
+
+/** 群被禁用/离开/撤管理员时，先持久化 restoring 再尝试恢复权限。 */
+export function deactivateLockdownChat(chatId: number): void {
+  const window = joinWindows.get(chatId);
+  if (window !== undefined) {
+    clearTimeout(window.resetTimeout);
+    joinWindows.delete(chatId);
+  }
+  dispatchLockdown(chatId, { type: "deactivate", intentId: nextLockdownIntentId() });
 }
 
 /** 私密模式加锁/纠偏共用：在原始权限基础上关掉 can_invite_users，其余字段原样保留。 */
@@ -117,7 +177,7 @@ function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
  * 回投。真实刷群下这两个调用可能在限流队列里排几分钟，期间占位状态挡住
  * 重复触发（见状态机注释）。
  */
-function beginApplyLockdown(chatId: number, joinCount: number): void {
+function prepareApplyLockdown(chatId: number, joinCount: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
       const chat = await joinVerificationApi.getChat(chatId);
@@ -126,15 +186,32 @@ function beginApplyLockdown(chatId: number, joinCount: number): void {
         // 放弃这次锁定（入群验证的逐个踢人仍在兜底），也不能拿 {} 当"原始
         // 权限"存进 ACTIVE：到期恢复会把所有省略字段当 false，整群被永久禁言。
         logger.error(`Chat ${chatId} getChat response missing permissions field, skipping anti-raid lockdown`);
-        dispatchLockdown(chatId, { type: "applyResult", ok: false });
+        dispatchLockdown(chatId, { type: "applyPreparationFailed" });
         return;
       }
       const originalPermissions: ChatPermissions = chat.permissions;
-      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(originalPermissions));
-      dispatchLockdown(chatId, { type: "applyResult", ok: true, originalPermissions, joinCount });
+      dispatchLockdown(chatId, {
+        type: "applyPrepared",
+        originalPermissions,
+        joinCount,
+        intentId: nextLockdownIntentId(),
+      });
     } catch (error: unknown) {
-      logger.error("Error triggering anti-raid lockdown:", error);
-      dispatchLockdown(chatId, { type: "applyResult", ok: false });
+      logger.error("Error preparing anti-raid lockdown:", error);
+      dispatchLockdown(chatId, { type: "applyPreparationFailed" });
+    }
+  });
+}
+
+/** applying intent 已落盘后才真正修改 Telegram。失败按结果不确定处理并恢复。 */
+function commitApplyLockdown(chatId: number, originalPermissions: ChatPermissions): void {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
+    try {
+      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(originalPermissions));
+      dispatchLockdown(chatId, { type: "applyResult", ok: true });
+    } catch (error: unknown) {
+      logger.error("Error applying anti-raid lockdown; scheduling a restorative reconciliation:", error);
+      dispatchLockdown(chatId, { type: "applyResult", ok: false, restoreIntentId: nextLockdownIntentId() });
     }
   });
 }
@@ -143,7 +220,17 @@ function beginApplyLockdown(chatId: number, joinCount: number): void {
 function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissions): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
-      await joinVerificationApi.setChatPermissions(chatId, originalPermissions);
+      const chat = await joinVerificationApi.getChat(chatId);
+      if (!("permissions" in chat) || !chat.permissions) throw new Error("getChat response missing permissions");
+      const currentPermissions: ChatPermissions = chat.permissions;
+      // Lockdown 只拥有 invite 字段；锁定期间管理员修改的媒体、投票等权限
+      // 全部以当前值为准。若管理员已主动重新开启邀请，也视为显式覆盖并保留。
+      const restoredInvite: boolean = currentPermissions.can_invite_users === true ||
+        originalPermissions.can_invite_users === true;
+      await joinVerificationApi.setChatPermissions(chatId, {
+        ...currentPermissions,
+        can_invite_users: restoredInvite,
+      });
       dispatchLockdown(chatId, { type: "restoreResult", ok: true });
     } catch (error: unknown) {
       logger.error(`Failed to restore chat permissions for ${chatId}, retrying shortly:`, error);
@@ -154,16 +241,18 @@ function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissio
 
 /**
  * 迟到的旧 beginRestore 成功回执撞上新峰值重新给满的 ACTIVE 时用来纠偏：
- * 原始权限已经在状态里，直接 setChatPermissions 补一次限制，不必再 getChat。
+ * 重新读取当前权限，只把 invite 字段补回限制，保留管理员并发修改的其它字段。
  * 结果不回投状态机——不改变当前 ACTIVE 状态，失败只记日志（best-effort：
  * ACTIVE 到期后自然会走一次常规 beginRestore，届时若权限意外仍是开放的，
  * 后续峰值触发的 thresholdExceeded 也会在下次滑窗超限时重新收紧）。挂在同一
  * 条 runLockdownApiCall 串行链上，保证不会比它之后才发起的一次恢复更晚落地。
  */
-function reapplyLockdownRestriction(chatId: number, originalPermissions: ChatPermissions): void {
+function reapplyLockdownRestriction(chatId: number, _originalPermissions: ChatPermissions): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
-      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(originalPermissions));
+      const chat = await joinVerificationApi.getChat(chatId);
+      if (!("permissions" in chat) || !chat.permissions) throw new Error("getChat response missing permissions");
+      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(chat.permissions));
     } catch (error: unknown) {
       logger.error(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded:`, error);
     }
@@ -227,7 +316,7 @@ export function retractJoin(chatId: number, joinedAt: number): void {
 
 /** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid.ts）。 */
 export function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
-  for (const { chatId, originalPermissions, remainingMs } of lockdowns) {
-    dispatchLockdown(chatId, { type: "adopt", originalPermissions, remainingMs });
+  for (const { chatId, phase, intentId, originalPermissions, remainingMs, persisted } of lockdowns) {
+    dispatchLockdown(chatId, { type: "adopt", phase, intentId, originalPermissions, remainingMs, persisted });
   }
 }

@@ -2,7 +2,7 @@ import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { onDiskIORespawn, postDiskIO } from "./infra/diskIO";
 import { lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes, purgedAiMemoryChats } from "./cache/aiChat";
-import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "./consts/lifecycle";
+import { AI_MEMORY_FLUSH_TIMEOUT_MS, type FlushResult } from "./consts/lifecycle";
 import type {
   AiBotInfo,
   AiChatWorkerEvent,
@@ -33,7 +33,7 @@ import type {
  * 凭它重发落盘（下方 onDiskIORespawn），两条路径互不依赖。
  */
 
-const { init: initAiChatWorker, post } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
+const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
   url: new URL("./workers/aiChatWorker.ts", import.meta.url).href,
   label: "AI Worker",
   giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
@@ -65,13 +65,15 @@ const { init: initAiChatWorker, post } = superviseWorker<AiChatWorkerMessage, Ai
         const resolve = pendingMemoryFlushes.get(event.flushId);
         if (resolve) {
           pendingMemoryFlushes.delete(event.flushId);
-          resolve();
+          resolve("flushed");
         }
         break;
       }
     }
   },
   onRespawn: (postToNext) => {
+    for (const resolve of pendingMemoryFlushes.values()) resolve("failed");
+    pendingMemoryFlushes.clear();
     // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
     // 重启发生在 initAiChat 调用之前的话 lastInitState.current 仍是 null，
     // 没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
@@ -156,20 +158,27 @@ let nextMemoryFlushId: number = 1;
  * （握手样式同 infra/diskIO.ts 的 flushDiskIO）。带超时兜底：Worker 异常时
  * 停机流程最多被拖住 timeoutMs，不会挂死。
  */
-export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): Promise<void> {
-  if (lastInitState.current === null) return Promise.resolve();
+export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
+  if (lastInitState.current === null) return Promise.resolve("flushed");
   return new Promise((resolve) => {
     const id: number = nextMemoryFlushId++;
     const timer = setTimeout(() => {
       pendingMemoryFlushes.delete(id);
-      resolve();
+      resolve("timedOut");
     }, timeoutMs);
-    pendingMemoryFlushes.set(id, () => {
+    pendingMemoryFlushes.set(id, (result: FlushResult) => {
       clearTimeout(timer);
-      resolve();
+      resolve(result);
     });
     post({ type: "flushMemory", flushId: id });
   });
+}
+
+/** 停机时强制终止 AI Worker，保证它不会在 Disk I/O flush 后继续发布旧快照。 */
+export async function terminateAiChat(): Promise<void> {
+  for (const resolve of pendingMemoryFlushes.values()) resolve("failed");
+  pendingMemoryFlushes.clear();
+  await terminateAiChatWorker();
 }
 
 /**

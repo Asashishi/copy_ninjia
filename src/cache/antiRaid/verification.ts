@@ -4,7 +4,7 @@ import { VERIFICATION_REVISION_RETENTION_MS } from "../../consts/antiRaid/verifi
 /** 一条验证状态机条目：纯状态 + 解释器持有的活动计时器。 */
 export interface VerificationEntry {
   state: VerificationState;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
 }
 
 /** 以 "chatId:userId" 为键，同一个人在不同群里独立追踪。 */

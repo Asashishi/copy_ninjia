@@ -6,7 +6,11 @@ const releaseSingleInstanceLock = mock(async (): Promise<void> => { calls.push("
 const getStickerConfig = mock((): object => ({}));
 const getReactionConfig = mock((): object => ({}));
 const initTelegramClients = mock((): void => { calls.push("initTelegram"); });
-const initDiskIO = mock((): void => { calls.push("initDiskIO"); });
+let diskIOFatalHandler: ((error: Error) => void) | undefined;
+const initDiskIO = mock((options?: { onFatal?: (error: Error) => void }): void => {
+  calls.push("initDiskIO");
+  diskIOFatalHandler = options?.onFatal;
+});
 const cleanupOrphanedTempFiles = mock(async (): Promise<void> => { calls.push("cleanupTemps"); });
 const loadState = mock(async (): Promise<void> => { calls.push("loadState"); });
 const refreshAllChatTitles = mock(async (): Promise<void> => { calls.push("refreshTitles"); });
@@ -17,9 +21,13 @@ const loadPersistedData = mock(async () => ({
   luckReceiptSecret: { day: "2026-07-19", secret: "test-secret" },
   verifications: new Map<string, never>(),
 }));
-const flushDiskIO = mock(async (): Promise<void> => { calls.push("flushDiskIO"); });
-const flushStateToDisk = mock(async (): Promise<void> => { calls.push("flushState"); });
-const flushAiMemory = mock(async (): Promise<void> => { calls.push("flushAiMemory"); });
+type FlushResult = "flushed" | "timedOut" | "failed";
+const flushDiskIO = mock(async (): Promise<FlushResult> => { calls.push("flushDiskIO"); return "flushed"; });
+const flushStateToDisk = mock(async (): Promise<FlushResult> => { calls.push("flushState"); return "flushed"; });
+const flushAiMemory = mock(async (): Promise<FlushResult> => { calls.push("flushAiMemory"); return "flushed"; });
+const terminateDiskIO = mock(async (): Promise<void> => { calls.push("terminateDiskIO"); });
+const terminateAiChat = mock(async (): Promise<void> => { calls.push("terminateAiChat"); });
+const terminateAntiRaid = mock(async (): Promise<void> => { calls.push("terminateAntiRaid"); });
 const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiMemory"); });
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
 const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
@@ -47,22 +55,23 @@ const runnerStop = mock(async (): Promise<void> => { calls.push("runnerStop"); }
 const runnerTask = mock(async (): Promise<void> => {});
 const runnerSize = mock((): number => 0);
 const runnerHandle = { stop: runnerStop, task: runnerTask, size: runnerSize };
-const run = mock((_bot: unknown, _options: unknown) => runnerHandle);
+const runAcknowledgedUpdateBatches = mock((_bot: unknown, _updates: unknown) => runnerHandle);
 
-mock.module("@grammyjs/runner", () => ({ run }));
+mock.module("../../src/app/updateRunner", () => ({ runAcknowledgedUpdateBatches }));
 mock.module("../../src/aiChat", () => ({
   flushAiMemory,
   hydrateAiMemory,
   hydrateStickerCatalog,
   initAiChat,
+  terminateAiChat,
 }));
-mock.module("../../src/antiRaid", () => ({ hydratePendingVerifications, initAntiRaid }));
+mock.module("../../src/antiRaid", () => ({ hydratePendingVerifications, initAntiRaid, terminateAntiRaid }));
 mock.module("../../src/commands", () => ({ restoreLuckState }));
 mock.module("../../src/config/reactions", () => ({ getReactionConfig }));
 mock.module("../../src/config/stickers", () => ({ getStickerConfig }));
 mock.module("../../src/infra/chatTitle", () => ({ refreshAllChatTitles }));
 mock.module("../../src/infra/config", () => ({ BOT_TOKEN: "test-token" }));
-mock.module("../../src/infra/diskIO", () => ({ flushDiskIO, initDiskIO, loadPersistedData }));
+mock.module("../../src/infra/diskIO", () => ({ flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO }));
 mock.module("../../src/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
@@ -89,6 +98,7 @@ const { ApplicationLifecycle } = await import("../../src/app/lifecycle");
 
 beforeEach(() => {
   calls.length = 0;
+  diskIOFatalHandler = undefined;
   copiedUser = null;
   lastSeenUpdateId = 0;
   process.exitCode = 0;
@@ -106,6 +116,9 @@ beforeEach(() => {
     flushDiskIO,
     flushStateToDisk,
     flushAiMemory,
+    terminateDiskIO,
+    terminateAiChat,
+    terminateAntiRaid,
     hydrateAiMemory,
     hydrateStickerCatalog,
     initAiChat,
@@ -122,11 +135,14 @@ beforeEach(() => {
     runnerStop,
     runnerTask,
     runnerSize,
-    run,
+    runAcknowledgedUpdateBatches,
   ]) mocked.mockClear();
   acquireSingleInstanceLock.mockImplementation(async (): Promise<void> => { calls.push("acquireLock"); });
   getStickerConfig.mockImplementation((): object => ({}));
   refreshAllChatTitles.mockImplementation(async (): Promise<void> => { calls.push("refreshTitles"); });
+  flushDiskIO.mockImplementation(async () => { calls.push("flushDiskIO"); return "flushed" as const; });
+  flushStateToDisk.mockImplementation(async () => { calls.push("flushState"); return "flushed" as const; });
+  flushAiMemory.mockImplementation(async () => { calls.push("flushAiMemory"); return "flushed" as const; });
   runnerTask.mockImplementation(async (): Promise<void> => {});
   runnerSize.mockImplementation((): number => 0);
 });
@@ -174,6 +190,9 @@ describe("应用启动失败与退出清理", () => {
     expect(flushDiskIO).toHaveBeenCalledTimes(1);
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("flushDiskIO"));
     expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(terminateAiChat).toHaveBeenCalledTimes(1);
+    expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
+    expect(terminateDiskIO).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(runnerStop).not.toHaveBeenCalled();
   });
@@ -191,6 +210,61 @@ describe("应用启动失败与退出清理", () => {
     expect(flushStateToDisk).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(calls.indexOf("runnerStop")).toBeLessThan(calls.indexOf("flushAiMemory"));
+    expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));
+    expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("terminateDiskIO"));
+  });
+
+  test("Disk I/O 运行时 fatal 会设置非零退出码并停止继续取 update", async () => {
+    const lifecycle = new ApplicationLifecycle();
+    await lifecycle.init();
+
+    diskIOFatalHandler!(new Error("runtime recovery failed"));
+    await lifecycle.wait();
+    await lifecycle.dispose();
+
+    expect(process.exitCode).toBe(1);
+    expect(runnerStop).toHaveBeenCalledTimes(1);
+    expect(loggerError).toHaveBeenCalledWith(
+      "Persistence became unavailable at runtime; stopping for a supervised restart:",
+      expect.any(Error)
+    );
+  });
+
+  test("标题维护永不结束时 dispose 仍在预算内终止 Worker，并保留实例锁", async () => {
+    refreshAllChatTitles.mockImplementationOnce(() => new Promise<void>(() => {}));
+    const lifecycle = new ApplicationLifecycle();
+    await lifecycle.init();
+
+    await lifecycle.dispose({ aiMemoryMs: 10, diskIOMs: 10, stateMs: 10, maintenanceMs: 1 });
+
+    expect(terminateAiChat).toHaveBeenCalledTimes(1);
+    expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
+    expect(terminateDiskIO).toHaveBeenCalledTimes(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Retaining the single-instance lock"));
+  });
+
+  test("state writer 超时且可能仍会 rename 时不释放实例锁", async () => {
+    flushStateToDisk.mockResolvedValueOnce("timedOut");
+    const lifecycle = new ApplicationLifecycle();
+    await lifecycle.init();
+
+    await lifecycle.dispose({ aiMemoryMs: 10, diskIOMs: 10, stateMs: 1, maintenanceMs: 10 });
+
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("state=timedOut"));
+  });
+
+  test("state writer 明确失败时也保留实例锁，不能假设后台重试已经停止", async () => {
+    flushStateToDisk.mockResolvedValueOnce("failed");
+    const lifecycle = new ApplicationLifecycle();
+    await lifecycle.init();
+
+    await lifecycle.dispose({ aiMemoryMs: 10, diskIOMs: 10, stateMs: 1, maintenanceMs: 10 });
+
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("state=failed"));
   });
 
   test("正常 wait 会等待 runner 排空并确认最后 update offset", async () => {
@@ -208,5 +282,60 @@ describe("应用启动失败与退出清理", () => {
     expect(flushDiskIO).toHaveBeenCalledTimes(2);
     expect(flushStateToDisk).toHaveBeenCalledTimes(2);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
+  test("确认前任一持久化边界失败时不确认 update offset", async () => {
+    lastSeenUpdateId = 321;
+    flushDiskIO.mockResolvedValueOnce("failed");
+    const lifecycle = new ApplicationLifecycle();
+    await lifecycle.init();
+
+    await lifecycle.wait();
+    await lifecycle.dispose();
+
+    expect(getUpdates).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("final Telegram update offset will not be confirmed"));
+  });
+
+  test("排空超时且仍有 update 在处理时不确认 offset", async () => {
+    let now: number = 1_000;
+    const originalDateNow = Date.now;
+    Date.now = (): number => now;
+    runnerSize.mockReturnValue(2);
+    sleep.mockImplementation(async (): Promise<void> => { now += 5_000; });
+    lastSeenUpdateId = 321;
+    const lifecycle = new ApplicationLifecycle();
+
+    try {
+      await lifecycle.init();
+      await lifecycle.wait();
+      await lifecycle.dispose();
+    } finally {
+      Date.now = originalDateNow;
+    }
+
+    expect(getUpdates).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset will not be confirmed"));
+  });
+
+  test("并发 update 乱序完成时不会跨过仍在途的较小 update", async () => {
+    let now: number = 2_000;
+    const originalDateNow = Date.now;
+    Date.now = (): number => now;
+    // 较大的 update 已经完成，但较小的 update 仍占据 runner，因此 size 始终非零。
+    runnerSize.mockReturnValue(1);
+    sleep.mockImplementation(async (): Promise<void> => { now += 5_000; });
+    lastSeenUpdateId = 900;
+    const lifecycle = new ApplicationLifecycle();
+
+    try {
+      await lifecycle.init();
+      await lifecycle.wait();
+      await lifecycle.dispose();
+    } finally {
+      Date.now = originalDateNow;
+    }
+
+    expect(getUpdates).not.toHaveBeenCalled();
   });
 });

@@ -43,6 +43,12 @@ export function extractFinishReason(data: unknown): string | undefined {
   return typeof finishReason === "string" ? finishReason : undefined;
 }
 
+/** 服务端随异常 finish reason 返回的简短诊断；未知 SDK 字段也按字符串读取。 */
+export function extractFinishMessage(data: unknown): string | undefined {
+  const finishMessage: unknown = firstCandidate(data)?.finishMessage;
+  return typeof finishMessage === "string" ? finishMessage : undefined;
+}
+
 /** 拼出响应里的最终文本：首个候选 content.parts 中所有非思考的 text 段按序连接；没有则为空串。 */
 export function extractOutputText(data: unknown): string {
   const parts: string[] = [];
@@ -57,8 +63,8 @@ export function extractOutputText(data: unknown): string {
 
 /** 响应在 HTTP 层成功、内容却不可用时的诊断串：candidates 缺失（附上
  *  promptFeedback——提示词层被拦截时 blockReason 就在里面），或 finishReason
- *  不是正常收尾的 STOP（MAX_TOKENS 已由 requestGeminiResponse 单独点名记录，
- *  这里跳过；剩下的多为 SAFETY/RECITATION 一类生成侧拦截）。正常响应返回
+ *  不是正常收尾的 STOP（MAX_TOKENS 会由 requestGeminiResult 额外记录 token
+ *  诊断，但契约上同样不可用）。正常响应返回
  *  null。这类失败对上层与「模型没产出」不可区分，不点名记录就查无原因。 */
 export function abnormalFinishDiagnostic(data: unknown): string | null {
   const candidate: Record<string, unknown> | undefined = firstCandidate(data);
@@ -67,8 +73,11 @@ export function abnormalFinishDiagnostic(data: unknown): string | null {
     return `no candidates (promptFeedback=${JSON.stringify(feedback ?? null)})`;
   }
   const finishReason: unknown = candidate.finishReason;
-  if (typeof finishReason === "string" && finishReason !== "STOP" && finishReason !== "MAX_TOKENS") {
-    return `finishReason=${finishReason}`;
+  if (typeof finishReason !== "string") return "missing finishReason";
+  if (finishReason !== "STOP") {
+    const finishMessage: unknown = candidate.finishMessage;
+    return `finishReason=${finishReason}` +
+      (typeof finishMessage === "string" ? `, finishMessage=${JSON.stringify(finishMessage.slice(0, 500))}` : "");
   }
   return null;
 }

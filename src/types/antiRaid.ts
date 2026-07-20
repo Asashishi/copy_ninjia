@@ -33,6 +33,12 @@ export interface MemberLeftMessage {
   userId: number;
 }
 
+/** 主线程 -> Worker：统一拆除某群的验证计时器，并恢复/保留 lockdown owner。 */
+export interface DeactivateChatMessage {
+  type: "deactivateChat";
+  chatId: number;
+}
+
 /**
  * 主线程 -> Worker：一条普通群消息的（chatId, userId, messageId）三元组。
  * Worker 用它追踪待验证成员在等待期间发送的消息，验证超时被踢出时一并清理；
@@ -71,7 +77,11 @@ export interface VerifyCallbackMessage {
 /** adopt 重放里的一条私密模式记录（见 AdoptLockdownsMessage）。 */
 export interface AdoptableLockdown {
   chatId: number;
+  phase: "applying" | "active" | "restoring";
+  intentId: number;
   originalPermissions: ChatPermissions;
+  /** false 表示仅存在主线程内存镜像，必须继续等待原 saveState 的落盘回执。 */
+  persisted?: boolean;
   /**
    * 距离应当恢复原始权限还剩多久（ms，已按 Math.max(0, ...) 夹到不为负）
    * ——由主线程根据持久化的 LockdownRecord.expiresAt 与当前时刻算出，见
@@ -101,6 +111,8 @@ export interface VerificationSnapshot {
   generation: number;
   /** 同一代际、同一 key 内单调递增的状态修订号。 */
   revision: number;
+  /** 缺失表示旧版 pending；终态必须在落盘确认后才能执行外部处置。 */
+  phase?: "pending" | "checkingInviter" | "expelling";
   label: string;
   isBot: boolean;
   messageIds: number[];
@@ -114,6 +126,10 @@ export interface VerificationSnapshot {
   reminderSuperseded: boolean;
   joinedAt: number;
   expiresAt: number;
+  /** checkingInviter 终态的最终核查对象。 */
+  terminalInviterId?: number;
+  /** expelling 终态的处置原因。 */
+  expelReason?: "timeout" | "flood";
 }
 
 /** 主线程 -> Worker：Worker 重建时接管尚未结束的验证。 */
@@ -121,6 +137,16 @@ export interface AdoptVerificationsMessage {
   type: "adoptVerifications";
   generation: number;
   verifications: VerificationSnapshot[];
+  /** 进程启动恢复来自磁盘，可直接续跑终态；Worker 内重建则重新等待落盘回执。 */
+  resumePersistedTerminals?: boolean;
+}
+
+/** 主线程 -> Worker：某条验证 revision 已进入当天文件，可安全执行终态副作用。 */
+export interface VerificationPersistedMessage {
+  type: "verificationPersisted";
+  key: string;
+  generation: number;
+  revision: number;
 }
 
 /**
@@ -136,20 +162,34 @@ export interface AdminsChangedMessage {
   isAdmin: boolean;
 }
 
+/** 主线程完成 state.json 写入后，允许 Worker 执行对应权限副作用。 */
+export interface LockdownPersistedMessage {
+  type: "lockdownPersisted";
+  chatId: number;
+  phase: "applying" | "active" | "restoring";
+  intentId: number;
+}
+
 export type AntiRaidWorkerMessage =
   | NewMemberMessage
   | MemberLeftMessage
+  | DeactivateChatMessage
   | TrackedChatMessage
   | VerifyCallbackMessage
   | AdoptLockdownsMessage
   | AdoptVerificationsMessage
+  | VerificationPersistedMessage
+  | LockdownPersistedMessage
   | AdminsChangedMessage;
 
-/** Worker -> 主线程：某群的私密模式已实际生效（setChatPermissions 成功）。 */
+/** Worker -> 主线程：写入 applying/active/restoring 的持久化阶段。 */
 export interface LockdownEvent {
   type: "lockdown";
   chatId: number;
+  phase: "applying" | "active" | "restoring";
+  intentId: number;
   originalPermissions: ChatPermissions;
+  expiresAt: number;
 }
 
 /** Worker -> 主线程：某群的私密模式已解除（原始权限恢复成功）。 */

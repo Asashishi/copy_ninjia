@@ -25,6 +25,7 @@ mock.module("../../../src/libs/supervisedWorker", () => ({
     return {
       init: initWorker,
       post: (message: AiChatWorkerMessage): void => { workerPosts.push(message); },
+      terminate: async (): Promise<void> => {},
     };
   },
 }));

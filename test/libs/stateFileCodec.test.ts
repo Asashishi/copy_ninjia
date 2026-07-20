@@ -45,6 +45,21 @@ describe("decodeStateFile", () => {
     })).toThrow("state.chats.-1001.lockdown");
   });
 
+  test("空 ChatPermissions 合法，但未知字段和非 boolean 仍拒绝", () => {
+    expect(decodeStateFile({
+      chats: { "-1001": { lockdown: { originalPermissions: {}, expiresAt: 2_000 } } },
+      globalCopy: { copiedUser: null },
+    }).chats["-1001"]?.lockdown?.originalPermissions).toEqual({});
+    expect(() => decodeStateFile({
+      chats: { "-1001": { lockdown: { originalPermissions: { can_fly: true }, expiresAt: 2_000 } } },
+      globalCopy: { copiedUser: null },
+    })).toThrow("can_fly");
+    expect(() => decodeStateFile({
+      chats: { "-1001": { lockdown: { originalPermissions: { can_invite_users: "yes" }, expiresAt: 2_000 } } },
+      globalCopy: { copiedUser: null },
+    })).toThrow("can_invite_users");
+  });
+
   test("未知字段、错误类型和失配的复读组合均拒绝", () => {
     expect(() => decodeStateFile({ chats: {}, globalCopy: { copiedUser: null }, version: 1 })).toThrow("state.version");
     expect(() => decodeStateFile({ chats: { nope: {} }, globalCopy: { copiedUser: null } })).toThrow("invalid chat id");

@@ -1,9 +1,25 @@
 import type { Context } from "grammy";
 import { logger } from "./logger";
 import { bot } from "./telegram";
-import { deleteChatState, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage/stateStore";
+import { clearChatStateField, getChatState, getOrCreateChatState, pruneDepartedChatState, saveStateInBackground } from "./storage/stateStore";
 import { botAdminFetches } from "../cache/botAdmin";
 import { invalidateAiChat } from "../aiChat";
+import { stopCopyOwnedByChat } from "../commands/copy";
+
+let deactivateAntiRaidChat: (chatId: number) => void = (_chatId) => undefined;
+
+/** Anti-Raid 入口在自己的 supervisor 建好后注册，避免 botAdmin ↔ antiRaid 循环依赖。 */
+export function registerAntiRaidChatTeardown(callback: (chatId: number) => void): void {
+  deactivateAntiRaidChat = callback;
+}
+
+/** 配置去留由调用入口决定；这里只停止 owner、取消计时器并发起权限恢复。 */
+export function teardownChatRuntime(chatId: number): void {
+  stopCopyOwnedByChat(chatId);
+  clearChatStateField(chatId, "isProxySendEnabled");
+  invalidateAiChat(chatId, true);
+  deactivateAntiRaidChat(chatId);
+}
 
 /**
  * 机器人自己在各群的管理员身份追踪。入群守卫（antiRaid）和 /kick 都需要
@@ -57,14 +73,17 @@ export function handleMyChatMemberUpdate(ctx: Context): void {
   // 私聊没有管理员概念，频道里机器人不做任何守卫/踢人，都不记录。
   if (update.chat.type !== "group" && update.chat.type !== "supergroup") return;
   if (update.new_chat_member.status === "left" || update.new_chat_member.status === "kicked") {
-    invalidateAiChat(update.chat.id, true);
-    // 机器人已不在这个群里：删除整条持久化状态（见 deleteChatState 注释），
-    // 而不是只把 botIsAdmin 降级为 false——否则该群的 ChatState 条目会随
-    // 「加群又退群」永久留存，内存与 state.json 单调增长。
-    deleteChatState(update.chat.id);
+    teardownChatRuntime(update.chat.id);
+    // 普通配置删除；若 lockdown 尚未恢复则保留 write-ahead owner，避免群权限
+    // 因退群而永久卡住。重新入群后 initAntiRaid/Worker 重建会继续接管。
+    pruneDepartedChatState(update.chat.id);
+    saveStateInBackground(`chat ${update.chat.id} state pruned after bot left/kicked`);
     return;
   }
-  recordBotAdminStatus(update.chat.id, update.new_chat_member.status === "administrator");
+  const wasAdmin: boolean = update.old_chat_member.status === "administrator" || update.old_chat_member.status === "creator";
+  const isAdmin: boolean = update.new_chat_member.status === "administrator" || update.new_chat_member.status === "creator";
+  if (wasAdmin && !isAdmin) teardownChatRuntime(update.chat.id);
+  recordBotAdminStatus(update.chat.id, isAdmin);
 }
 
 /**

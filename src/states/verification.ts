@@ -8,11 +8,14 @@ export type { VerificationEffect, VerificationTransition } from "./verification/
 export type { JoinEvent, VerificationEvent } from "./verification/events";
 export type {
   ExemptState,
+  CheckingInviterState,
   ExpelSnapshot,
+  ExpellingState,
   KickedState,
   PendingState,
   RecentComment,
   VerificationState,
+  VerificationTerminalState,
 } from "./verification/state";
 
 /**
@@ -27,8 +30,9 @@ export type {
  *   ABSENT ──普通入群──────────────────────────────────────> PENDING
  *   PENDING ──频道评论确证 / 异步管理员核查通过──────────────> EXEMPT
  *   PENDING ──验证按钮通过 / 中途离群────────────────────────> ABSENT
- *   PENDING ──超时（拉人者最终核对非管理员 → 踢人）──────────> ABSENT
- *   PENDING ──超时（拉人者最终核对是管理员）─────────────────> EXEMPT
+ *   PENDING ──超时/刷屏──> CHECKING_INVITER / EXPELLING（落盘后执行）
+ *   CHECKING_INVITER ──管理员──> EXEMPT；非管理员──> EXPELLING
+ *   EXPELLING ──处置完成──────────────────────────────────────> ABSENT
  *   EXEMPT/KICKED ──去重窗口到期 / 离群──────────────────────> ABSENT
  *
  * EXEMPT/KICKED 是 chat_member 与服务消息双路投递之间的短期去重占位。
@@ -49,7 +53,8 @@ function resolveJoinExemption(event: JoinEvent): { exempt: boolean; viaChannelCo
  * 私密模式，越过阈值的那次入群自己就要走秒踢分支，顺序不能反。
  */
 export function joinCreatesNewRecord(state: VerificationState | undefined, event: JoinEvent): boolean {
-  return state === undefined && !resolveJoinExemption(event).exempt;
+  return (state === undefined || state.kind === "checkingInviter" || state.kind === "expelling") &&
+    !resolveJoinExemption(event).exempt;
 }
 
 function snapshotOf(state: PendingState): ExpelSnapshot {
@@ -60,6 +65,7 @@ function snapshotOf(state: PendingState): ExpelSnapshot {
     reminderMessageId: state.reminderMessageId,
     replyReminderMessageId: state.replyReminderMessageId,
     joinedAt: state.joinedAt,
+    expiresAt: state.expiresAt,
   };
 }
 
@@ -68,6 +74,12 @@ function remindersOf(source: Pick<PendingState, "reminderMessageId" | "replyRemi
 }
 
 function handleJoin(state: VerificationState | undefined, event: JoinEvent): VerificationTransition {
+  // 终态属于上一次物理入群。若 Telegram 已经送来一次新入群，就以新记录
+  // 替换它；解释器捕获的旧终态会因对象同一性不再匹配而停止踢人，避免误伤
+  // 同一 userId 的新一代成员记录。
+  if (state?.kind === "checkingInviter" || state?.kind === "expelling") {
+    return handleJoin(undefined, event);
+  }
   const { exempt, viaChannelComment } = resolveJoinExemption(event);
   const invitedByOther: boolean = event.actorId !== undefined && event.actorId !== event.memberId;
 
@@ -207,7 +219,10 @@ function handleTrackedMessage(
   state.trackedMessageTimes.push(event.now);
   state.messageIds.push(event.messageId);
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
-    return { next: undefined, effects: [{ kind: "expelFlood", snapshot: snapshotOf(state) }] };
+    return {
+      next: { kind: "expelling", reason: "flood", snapshot: snapshotOf(state) },
+      effects: [],
+    };
   }
   // TA 开口说话了还没点按钮：把提醒补发为回复 TA 消息的形式（只补发一次）。
   if (state.replyReminderRequested) return { next: state, effects: [], snapshotChanged: true };
@@ -243,13 +258,16 @@ function handleCallback(
   state: VerificationState | undefined,
   event: { callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
 ): VerificationTransition {
+  const stateIsBot: boolean = state?.kind === "checkingInviter" || state?.kind === "expelling"
+    ? state.snapshot.isBot
+    : state?.isBot === true;
   if (!event.isSelf) {
     // 只有本人点击才算数；唯一例外是白名单用户为机器人代点作保。
-    const vouchingForBot: boolean = state?.isBot === true && event.fromIsPrivileged;
+    const vouchingForBot: boolean = stateIsBot && event.fromIsPrivileged;
     if (!vouchingForBot) {
       return {
         next: state,
-        effects: [{ kind: "answerCallback", callbackQueryId: event.callbackQueryId, reply: state?.isBot === true ? "notYourBotButton" : "notYourButton" }],
+        effects: [{ kind: "answerCallback", callbackQueryId: event.callbackQueryId, reply: stateIsBot ? "notYourBotButton" : "notYourButton" }],
       };
     }
   }
@@ -279,27 +297,23 @@ function handleCallback(
 function handleVerifyTimeout(state: VerificationState | undefined): VerificationTransition {
   if (state?.kind !== "pending") return { next: state, effects: [] };
   const snapshot: ExpelSnapshot = snapshotOf(state);
-  // 记录立即删除：终核等待期间迟到的撤销回调/按钮点击都会因查不到记录而安全失效。
   if (state.invitedBy !== undefined) {
     // 管理员拉人的异步豁免可能到期了还没落定（管理员表拉取在限流队列里排队
     // 或重试失败）：踢人前对拉人者身份做最后核对。
-    return { next: undefined, effects: [{ kind: "recheckInviter", inviterId: state.invitedBy, snapshot }] };
+    return { next: { kind: "checkingInviter", inviterId: state.invitedBy, snapshot }, effects: [] };
   }
-  return { next: undefined, effects: [{ kind: "expel", snapshot }] };
+  return { next: { kind: "expelling", reason: "timeout", snapshot }, effects: [] };
 }
 
 function handleTimeoutInviterVerdict(
   state: VerificationState | undefined,
-  event: { inviterIsAdmin: boolean; snapshot: ExpelSnapshot }
+  event: { inviterIsAdmin: boolean }
 ): VerificationTransition {
+  if (state?.kind !== "checkingInviter") return { next: state, effects: [] };
+  const snapshot: ExpelSnapshot = state.snapshot;
   if (!event.inviterIsAdmin) {
-    // 终核等待期间若有新投递重开了记录（比如这段时间里 TA 退群又重新进群），
-    // 说明这份踢人结论已经过期——不能无条件执行 expel，否则会把当前占着
-    // 这个 key 的全新合法状态连坐踢掉（这份新记录本身没被替换过，只是踢人
-    // 副作用不认代际）。只清理旧快照里可能还挂着的提醒，新记录原样保留、
-    // 不重启计时，对称于下方"拉人者确是管理员"分支的处理方式。
-    if (state === undefined) return { next: undefined, effects: [{ kind: "expel", snapshot: event.snapshot }] };
-    return { next: state, effects: [remindersOf(event.snapshot)] };
+    // 先转成另一条可持久化终态；收到这一 revision 的落盘回执后才真正踢人。
+    return { next: { kind: "expelling", reason: "timeout", snapshot }, effects: [] };
   }
   // 拉人者确是管理员：按豁免收尾——只删带按钮的提醒，入群公告和 TA 的发言
   // 都留下（合法成员），也不发踢人通知。终核等待期间若有新投递重开了记录，
@@ -307,11 +321,8 @@ function handleTimeoutInviterVerdict(
   // 那次入群"的命运——它创建时必然已被计入刷群统计（能走到 verifyTimeout
   // 才有这次终核），事后确证是管理员就要撤销那次计数，与是否新建 exempt
   // 占位无关。
-  const effects: VerificationEffect[] = [remindersOf(event.snapshot), { kind: "retractJoinCount", joinedAt: event.snapshot.joinedAt }];
-  if (state === undefined) {
-    return { next: { kind: "exempt", label: event.snapshot.label, isBot: event.snapshot.isBot }, effects };
-  }
-  return { next: state, effects };
+  const effects: VerificationEffect[] = [remindersOf(snapshot), { kind: "retractJoinCount", joinedAt: snapshot.joinedAt }];
+  return { next: { kind: "exempt", label: snapshot.label, isBot: snapshot.isBot }, effects };
 }
 
 function handleReminderLanded(
@@ -340,6 +351,9 @@ export function transitionVerification(state: VerificationState | undefined, eve
       // 人都走了，入群公告/发言不值得再刷一串删除调用；但带按钮的提醒必须删，
       // 不删就成了永远指向「已失效」的孤儿按钮。占位记录没有提醒可删。
       if (state?.kind === "pending") return { next: undefined, effects: [remindersOf(state)] };
+      // 终态可能正因本机器人踢人而收到 left；只有终态副作用完成后才能删除
+      // 持久化记录，因此这里保持不动。
+      if (state?.kind === "checkingInviter" || state?.kind === "expelling") return { next: state, effects: [] };
       return { next: undefined, effects: [] };
     case "trackedMessage":
       return handleTrackedMessage(state, event);
@@ -355,8 +369,26 @@ export function transitionVerification(state: VerificationState | undefined, eve
       };
     case "verifyTimeout":
       return handleVerifyTimeout(state);
+    case "terminalPersisted":
+      if (state?.kind === "checkingInviter") {
+        if (state.executionStarted === true) return { next: state, effects: [] };
+        state.executionStarted = true;
+        return { next: state, effects: [{ kind: "recheckInviter", inviterId: state.inviterId, snapshot: state.snapshot }] };
+      }
+      if (state?.kind === "expelling") {
+        if (state.executionStarted === true) return { next: state, effects: [] };
+        state.executionStarted = true;
+        return {
+          next: state,
+          effects: [{ kind: state.reason === "flood" ? "expelFlood" : "expel", snapshot: state.snapshot }],
+        };
+      }
+      return { next: state, effects: [] };
     case "timeoutInviterVerdict":
       return handleTimeoutInviterVerdict(state, event);
+    case "expelSettled":
+      if (state?.kind === "expelling") return { next: undefined, effects: [] };
+      return { next: state, effects: [] };
     case "reminderLanded":
       return handleReminderLanded(state, event);
     case "dedupeExpired":

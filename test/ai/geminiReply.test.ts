@@ -1,15 +1,22 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
 import type { ReplyToolset } from "../../src/types";
+import type { GeminiRequestResult } from "../../src/ai/gemini";
 
 const replies: unknown[] = [];
-const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<GenerateContentResponse | null> =>
-  (replies.shift() as GenerateContentResponse | undefined) ?? null
-);
+const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => {
+  const response: GenerateContentResponse | undefined = replies.shift() as GenerateContentResponse | undefined;
+  if (!response) return { ok: false, diagnostic: "request failed" };
+  const finishReason: string | undefined = response.candidates?.[0]?.finishReason as string | undefined;
+  if (finishReason !== undefined && finishReason !== "STOP") {
+    return { ok: false, diagnostic: `finishReason=${finishReason}`, finishReason, response };
+  }
+  return { ok: true, response };
+});
 const callToolMock = mock(async (..._args: unknown[]): Promise<string> => JSON.stringify({ success: true }));
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 
-mock.module("../../src/ai/gemini", () => ({ requestGeminiResponse: requestGeminiResponseMock }));
+mock.module("../../src/ai/gemini", () => ({ requestGeminiResult: requestGeminiResponseMock }));
 mock.module("../../src/ai/mood", () => ({ currentMoodInstruction: (): string => "当前心情测试" }));
 mock.module("../../src/ai/tools", () => ({ callTool: callToolMock }));
 mock.module("../../src/infra/logger", () => ({ logger: { error: loggerErrorMock } }));
@@ -55,7 +62,7 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(2);
 
   const firstRequest = requestGeminiResponseMock.mock.calls[0]![0] as GenerateContentParameters;
-  expect(firstRequest.config?.tools).toBe(registeredTools);
+  expect(firstRequest.config?.tools).toEqual(registeredTools);
   expect(firstRequest.config?.toolConfig).toEqual({ includeServerSideToolInvocations: true });
   expect(String(firstRequest.config?.systemInstruction)).toContain("googleSearch 已作为本轮可调用工具真实注册");
   expect(String(firstRequest.config?.systemInstruction)).toContain("累计最多调用 3 次");
@@ -212,11 +219,11 @@ test("最终输出被 token 上限截断时返回 null", async () => {
 
 test("请求在途时被禁用，响应回来后不再执行任何行动", async () => {
   let active: boolean = true;
-  requestGeminiResponseMock.mockImplementationOnce(async (): Promise<GenerateContentResponse> => {
+  requestGeminiResponseMock.mockImplementationOnce(async (): Promise<GeminiRequestResult> => {
     active = false;
-    return {
+    return { ok: true, response: {
       candidates: [{ content: { role: "model", parts: [{ text: "迟到的搜索资料" }] } }],
-    } as unknown as GenerateContentResponse;
+    } as unknown as GenerateContentResponse };
   });
   const toolset: ReplyToolset = {
     definitions: [],
@@ -229,5 +236,97 @@ test("请求在途时被禁用，响应回来后不再执行任何行动", async
   };
 
   await expect(callGemini(-1001, "聊天上下文", toolset)).resolves.toBeNull();
+  expect(requestGeminiResponseMock).toHaveBeenCalledTimes(1);
+});
+
+test("连续无效参数也计入单工具预算，达到四次后从下一请求移除声明", async () => {
+  for (let index = 0; index < 4; index++) {
+    replies.push({
+      candidates: [{ content: { role: "model", parts: [{ functionCall: { id: `bad-${index}`, name: "view_sticker_pack", args: {} } }] } }],
+    });
+  }
+  replies.push({ candidates: [{ content: { role: "model", parts: [{ text: "不再重试" }] } }] });
+  const execute = mock(async (): Promise<string> => JSON.stringify({ error: "invalid arguments" }));
+  const toolset: ReplyToolset = {
+    definitions: [],
+    tools: [{ functionDeclarations: [{ name: "view_sticker_pack" }] }],
+    has: (): boolean => true,
+    execute,
+    messagesSent: (): number => 0,
+    actionsUsed: (): number => 0,
+    isActive: (): boolean => true,
+  };
+
+  await expect(callGemini(-1001, "错拼角色名", toolset)).resolves.toBe("不再重试");
+  expect(execute).toHaveBeenCalledTimes(4);
+  const lastRequest = requestGeminiResponseMock.mock.calls[4]![0] as GenerateContentParameters;
+  expect(lastRequest.config?.tools).toEqual([]);
+});
+
+test("同一响应多调用计入总预算，最多执行十六个并在下一请求移除全部函数", async () => {
+  const names = Array.from({ length: 18 }, (_, index) => `tool_${index}`);
+  replies.push({
+    candidates: [{
+      content: {
+        role: "model",
+        parts: names.map((name, index) => ({ functionCall: { id: `call-${index}`, name, args: {} } })),
+      },
+    }],
+  });
+  replies.push({ candidates: [{ content: { role: "model", parts: [{ text: "预算收敛" }] } }] });
+  const execute = mock(async (): Promise<string> => JSON.stringify({ error: "failed" }));
+  const toolset: ReplyToolset = {
+    definitions: [],
+    tools: [{ functionDeclarations: names.map((name) => ({ name })) }],
+    has: (): boolean => true,
+    execute,
+    messagesSent: (): number => 0,
+    actionsUsed: (): number => 0,
+    isActive: (): boolean => true,
+  };
+
+  await expect(callGemini(-1001, "并行调用", toolset)).resolves.toBe("预算收敛");
+  expect(execute).toHaveBeenCalledTimes(16);
+  const secondRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
+  expect(secondRequest.config?.tools).toEqual([]);
+});
+
+test("异常 candidate 夹带文本和 functionCall 时零执行、零最终文本", async () => {
+  replies.push({
+    candidates: [{
+      finishReason: "PROHIBITED_CONTENT",
+      finishMessage: "blocked",
+      content: { role: "model", parts: [{ text: "半截文本" }, { functionCall: { name: "send_message", args: { text: "不得发送" } } }] },
+    }],
+  });
+  const execute = mock(async (): Promise<string> => JSON.stringify({ success: true }));
+  const toolset: ReplyToolset = {
+    definitions: [],
+    tools: [{ functionDeclarations: [{ name: "send_message" }] }],
+    has: (): boolean => true,
+    execute,
+    messagesSent: (): number => 0,
+    actionsUsed: (): number => 0,
+    isActive: (): boolean => true,
+  };
+
+  await expect(callGemini(-1001, "上下文", toolset)).resolves.toBeNull();
+  expect(execute).not.toHaveBeenCalled();
+  expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("finish_reason=PROHIBITED_CONTENT"));
+});
+
+test("已经产生外部副作用后遇到 TOO_MANY_TOOL_CALLS 不做降级重试", async () => {
+  replies.push({ candidates: [{ finishReason: "TOO_MANY_TOOL_CALLS", content: { role: "model", parts: [] } }] });
+  const toolset: ReplyToolset = {
+    definitions: [],
+    tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
+    has: (): boolean => false,
+    execute: async (): Promise<string> => JSON.stringify({ success: true }),
+    messagesSent: (): number => 1,
+    actionsUsed: (): number => 1,
+    isActive: (): boolean => true,
+  };
+
+  await expect(callGemini(-1001, "上下文", toolset)).resolves.toBeNull();
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(1);
 });

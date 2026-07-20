@@ -9,6 +9,7 @@ class FakeWorker {
   onmessage: ((event: MessageEvent<DiskIOReply>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   readonly messages: DiskIOMessage[] = [];
+  terminated: boolean = false;
 
   constructor(readonly url: string) {
     FakeWorker.instances.push(this);
@@ -18,6 +19,11 @@ class FakeWorker {
 
   postMessage(message: DiskIOMessage): void {
     this.messages.push(message);
+  }
+
+  async terminate(): Promise<number> {
+    this.terminated = true;
+    return 0;
   }
 }
 
@@ -39,9 +45,10 @@ describe("explicit Worker initialization", () => {
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     const error = spyOn(console, "error").mockImplementation(() => {});
+    const fatalErrors: Error[] = [];
     try {
       expect(FakeWorker.instances).toHaveLength(0);
-      diskIO.initDiskIO();
+      diskIO.initDiskIO({ onFatal: (fatal) => { fatalErrors.push(fatal); } });
       diskIO.initDiskIO();
       expect(FakeWorker.instances).toHaveLength(1);
       const first: FakeWorker = FakeWorker.instances[0]!;
@@ -98,11 +105,45 @@ describe("explicit Worker initialization", () => {
       first.onerror!({ message: "boom" } as ErrorEvent);
       expect(FakeWorker.instances).toHaveLength(2);
       const second: FakeWorker = FakeWorker.instances[1]!;
+      expect(respawns).toBe(0);
+      expect(second.messages).toEqual([{ type: "load" }]);
+
+      // load 完整成功前镜像不重放；成功回执后才进入 writable。
+      second.onmessage!({ data: {
+        type: "loaded",
+        aiMemories: new Map(),
+        stickerCatalogs: new Map(),
+        luckDay: null,
+        luckReceiptSecret,
+        verifications: new Map(),
+      } } as MessageEvent<DiskIOReply>);
       expect(respawns).toBe(1);
       expect(second.messages).toEqual([{ type: "load" }, luckDraw]);
 
       first.onmessage!({ data: { ...ack, revision: 99 } } as MessageEvent<DiskIOReply>);
       expect(persisted).toEqual([ack]);
+
+      // 运行时恢复失败时不得重放、flush 或继续写入部分缓存。
+      second.onerror!({ message: "boom again" } as ErrorEvent);
+      const third: FakeWorker = FakeWorker.instances[2]!;
+      diskIO.postDiskIO(luckDraw);
+      expect(third.messages).toEqual([{ type: "load" }]);
+      third.onmessage!({ data: {
+        type: "loaded",
+        aiMemories: new Map(),
+        stickerCatalogs: new Map(),
+        luckDay: null,
+        luckReceiptSecret: null,
+        verifications: new Map(),
+        error: "verification file is corrupt",
+      } } as MessageEvent<DiskIOReply>);
+      await Promise.resolve();
+      expect(respawns).toBe(1);
+      expect(third.messages).toEqual([{ type: "load" }]);
+      expect(third.terminated).toBe(true);
+      expect(await diskIO.flushDiskIO(1_000)).toBe("failed");
+      expect(fatalErrors).toHaveLength(1);
+      expect(fatalErrors[0]?.message).toContain("verification file is corrupt");
 
       let supervisedConstructed: number = FakeWorker.instances.length;
       const handle = superviseWorker({ url: "fake-worker.ts", label: "fake", giveUpConsequence: "none" });
@@ -111,7 +152,80 @@ describe("explicit Worker initialization", () => {
       supervisedConstructed++;
       handle.init();
       expect(FakeWorker.instances.length).toBe(supervisedConstructed);
+      const supervised: FakeWorker = FakeWorker.instances.at(-1)!;
+      await handle.terminate();
+      expect(supervised.terminated).toBe(true);
     } finally {
+      await diskIO.terminateDiskIO();
+      error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("终止 Worker 会立即拒绝在途运势密钥请求并清理其超时计时器", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      worker.onmessage!({ data: {
+        type: "loaded",
+        aiMemories: new Map(),
+        stickerCatalogs: new Map(),
+        luckDay: null,
+        luckReceiptSecret,
+        verifications: new Map(),
+      } } as MessageEvent<DiskIOReply>);
+      await loadedPromise;
+
+      const pendingSecret = diskIO.ensureLuckReceiptSecret("2026-07-20", 60_000)
+        .then(() => null, (error: unknown) => error);
+      await diskIO.terminateDiskIO();
+
+      expect(await pendingSecret).toBeInstanceOf(Error);
+      expect(worker.terminated).toBeTrue();
+    } finally {
+      await diskIO.terminateDiskIO();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("运行时 load 握手超时会终止不可用 Worker 并发出 fatal 信号", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    const fatalErrors: Error[] = [];
+    try {
+      diskIO.initDiskIO({
+        onFatal: (fatal) => { fatalErrors.push(fatal); },
+        runtimeRecoveryTimeoutMs: 2,
+      });
+      const first: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      first.onmessage!({ data: {
+        type: "loaded",
+        aiMemories: new Map(),
+        stickerCatalogs: new Map(),
+        luckDay: null,
+        luckReceiptSecret,
+        verifications: new Map(),
+      } } as MessageEvent<DiskIOReply>);
+      await loadedPromise;
+
+      first.onerror!({ message: "runtime crash" } as ErrorEvent);
+      const recovery: FakeWorker = FakeWorker.instances[1]!;
+      expect(recovery.messages).toEqual([{ type: "load" }]);
+      await Bun.sleep(10);
+
+      expect(recovery.terminated).toBe(true);
+      expect(fatalErrors).toHaveLength(1);
+      expect(fatalErrors[0]?.message).toContain("timed out");
+      expect(await diskIO.flushDiskIO(10)).toBe("failed");
+    } finally {
+      await diskIO.terminateDiskIO();
       error.mockRestore();
       globalThis.Worker = originalWorker;
     }

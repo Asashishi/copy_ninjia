@@ -39,6 +39,8 @@ export interface SupervisedWorkerHandle<TMessage> {
   init: () => void;
   /** 只向已初始化且仍可用的 Worker 投递；初始化前与自愈放弃后静默丢弃。 */
   post: (message: TMessage) => void;
+  /** 停止当前实例并阻止迟到 onerror 触发自愈；重复调用幂等。 */
+  terminate: () => Promise<void>;
 }
 
 /**
@@ -103,6 +105,18 @@ export function superviseWorker<TMessage, TEvent = never>(
     init,
     post: (message: TMessage): void => {
       worker?.postMessage(message);
+    },
+    terminate: (): Promise<void> => {
+      const current: Worker | null = worker;
+      worker = null;
+      initialized = false;
+      if (current === null) return Promise.resolve();
+      try {
+        current.terminate();
+        return Promise.resolve();
+      } catch (error: unknown) {
+        return Promise.reject(error instanceof Error ? error : new Error("Worker termination failed."));
+      }
     },
   };
 }

@@ -1,11 +1,13 @@
-import { describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../../src/consts/antiRaid";
-import type { VerificationSnapshot } from "../../../src/types";
+import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../src/types";
 
 const actions: string[] = [];
+const workerEvents: AntiRaidWorkerEvent[] = [];
+let kickSucceeds: boolean = true;
 Object.defineProperty(globalThis, "self", {
   configurable: true,
-  value: { postMessage(): void {} },
+  value: { postMessage(event: AntiRaidWorkerEvent): void { workerEvents.push(event); } },
 });
 
 mock.module("../../../src/infra/logger", () => ({
@@ -25,13 +27,24 @@ mock.module("../../../src/infra/telegram", () => ({
   deleteMessageAfter(): void { actions.push("schedule-notice-delete"); },
   kickChatMember: async (): Promise<boolean> => {
     actions.push("kick");
-    return true;
+    return kickSucceeds;
   },
   answerCallbackQuery: async (): Promise<void> => {},
 }));
 
 const runtime = await import("../../../src/workers/antiRaid/verificationRuntime");
-const { verificationEntries } = await import("../../../src/cache/antiRaid/verification");
+const { verificationEntries, verificationRevisions } = await import("../../../src/cache/antiRaid/verification");
+
+beforeEach(() => {
+  for (const entry of verificationEntries.values()) {
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+  }
+  verificationEntries.clear();
+  verificationRevisions.clear();
+  actions.length = 0;
+  workerEvents.length = 0;
+  kickSucceeds = true;
+});
 
 describe("Anti-Raid pending-member flood handling", () => {
   test("第 46 条先踢后清理，单条删除失败不中断，迟到消息不重复处置", async () => {
@@ -71,7 +84,17 @@ describe("Anti-Raid pending-member flood handling", () => {
       repliesToChannelPost: false,
       now,
     });
-    expect(verificationEntries.has("-1001:42")).toBeFalse();
+    expect(verificationEntries.get("-1001:42")?.state.kind).toBe("expelling");
+    expect(actions).toEqual([]);
+    const terminal = workerEvents.findLast((event) => event.type === "verificationUpsert");
+    expect(terminal).toMatchObject({ type: "verificationUpsert", record: { phase: "expelling", expelReason: "flood" } });
+    if (terminal?.type !== "verificationUpsert") throw new Error("missing terminal upsert");
+    runtime.handleVerificationPersisted({
+      type: "verificationPersisted",
+      key: "-1001:42",
+      generation: terminal.record.generation,
+      revision: terminal.record.revision,
+    });
     expect(actions[0]).toBe("kick");
 
     await Bun.sleep(10);
@@ -81,6 +104,7 @@ describe("Anti-Raid pending-member flood handling", () => {
       "notice",
       "schedule-notice-delete",
     ]);
+    expect(verificationEntries.has("-1001:42")).toBeFalse();
 
     runtime.dispatchVerification(-1001, 42, {
       type: "trackedMessage",
@@ -91,5 +115,48 @@ describe("Anti-Raid pending-member flood handling", () => {
     });
     await Bun.sleep(0);
     expect(actions.filter((action) => action === "kick")).toHaveLength(1);
+  });
+
+  test("踢人失败时保留持久化终态并安排重试，成功后才发布删除", async () => {
+    kickSucceeds = false;
+    const record: VerificationSnapshot = {
+      chatId: -1002,
+      userId: 43,
+      generation: 1,
+      revision: 1,
+      phase: "expelling",
+      expelReason: "timeout",
+      label: "暂时踢不动的成员",
+      isBot: false,
+      messageIds: [],
+      trackedMessageTimes: [],
+      replyReminderRequested: false,
+      reminderSuperseded: true,
+      joinedAt: Date.now(),
+      expiresAt: Date.now(),
+    };
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [record],
+      resumePersistedTerminals: true,
+    });
+    await Bun.sleep(0);
+
+    expect(verificationEntries.get("-1002:43")?.state.kind).toBe("expelling");
+    expect(verificationEntries.get("-1002:43")?.timer).toBeDefined();
+    expect(workerEvents.some((event) => event.type === "verificationDelete")).toBeFalse();
+
+    kickSucceeds = true;
+    runtime.handleVerificationPersisted({
+      type: "verificationPersisted",
+      key: "-1002:43",
+      generation: 1,
+      revision: 1,
+    });
+    await Bun.sleep(0);
+
+    expect(verificationEntries.has("-1002:43")).toBeFalse();
+    expect(workerEvents.some((event) => event.type === "verificationDelete")).toBeTrue();
   });
 });

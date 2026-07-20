@@ -1,4 +1,4 @@
-import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
+import { STATE_FLUSH_TIMEOUT_MS, type FlushResult } from "../../consts/lifecycle";
 import { STATE_FILE_PATH } from "../../consts/paths";
 import { DEFAULT_CHAT_STATE, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
 import { atomicWriteText } from "../../libs/atomicFile";
@@ -17,6 +17,22 @@ export interface StateStoreOptions {
   onFlushError?: (error: unknown) => void;
 }
 
+export interface StateSaveOptions {
+  /** false 用于 fire-and-forget 快照：仍会重试，但不为每次后台变化保留等待者。 */
+  waitForPersistence?: boolean;
+}
+
+interface StateWrite {
+  json: string;
+  revision: number;
+}
+
+interface PersistenceWaiter {
+  revision: number;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
 async function readExistingText(path: string): Promise<string | null> {
   const file = Bun.file(path);
   return await file.exists() ? file.text() : null;
@@ -33,11 +49,16 @@ export class StateStore {
   private readonly retryDelaysMs: readonly number[];
   private readonly onRetryError: (attempt: number, error: unknown) => void;
   private readonly onFlushError: (error: unknown) => void;
-  private readonly writer: LatestValueRunner<string>;
+  private readonly writer: LatestValueRunner<StateWrite>;
 
-  private dirtyJson: string | null = null;
+  private dirtyWrite: StateWrite | null = null;
+  private nextRevision: number = 1;
   private retryAttempt: number = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private observedWriterPromise: Promise<void> | null = null;
+  private readonly persistenceWaiters: PersistenceWaiter[] = [];
+  private quiescing: boolean = false;
+  private disposed: boolean = false;
 
   constructor(options: StateStoreOptions = {}) {
     this.stateFilePath = options.stateFilePath ?? STATE_FILE_PATH;
@@ -46,17 +67,18 @@ export class StateStore {
     this.retryDelaysMs = options.retryDelaysMs ?? STATE_SAVE_RETRY_DELAYS_MS;
     if (this.retryDelaysMs.length === 0) throw new Error("StateStore requires at least one retry delay");
     this.onRetryError = options.onRetryError ?? ((attempt, error) => {
-      logger.error(`Failed to retry state persistence (attempt ${attempt}):`, error);
+      logger.error(`Failed to persist state (attempt ${attempt}):`, error);
     });
     this.onFlushError = options.onFlushError ?? ((error) => {
       logger.error("Failed to flush state to disk on shutdown:", error);
     });
-    this.writer = createLatestValueRunner<string>(async (json) => {
-      await this.writeText(this.stateFilePath, json);
-      if (this.dirtyJson === json) {
-        this.dirtyJson = null;
-        this.retryAttempt = 0;
+    this.writer = createLatestValueRunner<StateWrite>(async (write) => {
+      await this.writeText(this.stateFilePath, write.json);
+      if (this.dirtyWrite !== null && this.dirtyWrite.revision <= write.revision) {
+        this.dirtyWrite = null;
       }
+      this.retryAttempt = 0;
+      this.resolvePersistedWaiters(write.revision);
     });
   }
 
@@ -65,56 +87,115 @@ export class StateStore {
     return content === null ? null : decodeStateFile(JSON.parse(content));
   }
 
-  save(schema: StateFileSchema): Promise<void> {
+  save(schema: StateFileSchema, options: StateSaveOptions = {}): Promise<void> {
+    if (this.quiescing || this.disposed) {
+      return Promise.reject(new Error("StateStore is quiescing and no longer accepts writes."));
+    }
     const json: string = JSON.stringify(schema, null, 2);
-    this.dirtyJson = json;
-    return this.writer.push(json).catch((error: unknown) => {
-      this.scheduleRetry();
-      throw error;
-    });
+    const write: StateWrite = { json, revision: this.nextRevision++ };
+    this.dirtyWrite = write;
+    const persisted: Promise<void> = options.waitForPersistence === false
+      ? Promise.resolve()
+      : new Promise((resolve, reject) => {
+        this.persistenceWaiters.push({ revision: write.revision, resolve, reject });
+      });
+    void this.push(write);
+    return persisted;
+  }
+
+  private push(write: StateWrite): Promise<void> {
+    const run: Promise<void> = this.writer.push(write);
+    if (this.observedWriterPromise !== run) {
+      this.observedWriterPromise = run;
+      void run.then(
+        () => {
+          if (this.observedWriterPromise === run) this.observedWriterPromise = null;
+        },
+        (error: unknown) => {
+          if (this.observedWriterPromise === run) this.observedWriterPromise = null;
+          this.handleWriteFailure(error);
+        }
+      );
+    }
+    return run;
+  }
+
+  private handleWriteFailure(error: unknown): void {
+    if (this.quiescing || this.disposed) {
+      this.rejectPersistenceWaiters(error);
+      return;
+    }
+    this.onRetryError(this.retryAttempt + 1, error);
+    this.scheduleRetry();
+  }
+
+  private resolvePersistedWaiters(revision: number): void {
+    for (let index = this.persistenceWaiters.length - 1; index >= 0; index--) {
+      const waiter: PersistenceWaiter = this.persistenceWaiters[index]!;
+      if (waiter.revision > revision) continue;
+      this.persistenceWaiters.splice(index, 1);
+      waiter.resolve();
+    }
+  }
+
+  private rejectPersistenceWaiters(error: unknown): void {
+    const reason: Error = error instanceof Error ? error : new Error(String(error));
+    for (const waiter of this.persistenceWaiters.splice(0)) waiter.reject(reason);
   }
 
   private scheduleRetry(): void {
-    if (this.dirtyJson === null || this.retryTimer !== null) return;
+    if (this.quiescing || this.disposed || this.dirtyWrite === null || this.retryTimer !== null) return;
     const delay: number = this.retryDelaysMs[Math.min(this.retryAttempt, this.retryDelaysMs.length - 1)]!;
     this.retryAttempt++;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
-      const json: string | null = this.dirtyJson;
-      if (json === null) return;
-      void this.writer.push(json).catch((error: unknown) => {
-        this.onRetryError(this.retryAttempt, error);
-        this.scheduleRetry();
-      });
+      const write: StateWrite | null = this.dirtyWrite;
+      if (write === null || this.quiescing || this.disposed) return;
+      void this.push(write);
     }, delay);
     this.retryTimer.unref();
   }
 
-  flush(timeoutMs: number = STATE_FLUSH_TIMEOUT_MS): Promise<void> {
+  flush(timeoutMs: number = STATE_FLUSH_TIMEOUT_MS, quiesce: boolean = false): Promise<FlushResult> {
+    if (quiesce) this.quiescing = true;
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
-    const json: string | null = this.dirtyJson;
-    if (json === null) return Promise.resolve();
+    const write: StateWrite | null = this.dirtyWrite;
+    const run: Promise<void> | null = write === null
+      ? this.observedWriterPromise
+      : this.push(write);
+    if (run === null) return Promise.resolve("flushed");
     return new Promise((resolve) => {
-      const timer = setTimeout(resolve, timeoutMs);
-      this.writer
-        .push(json)
-        .catch((error: unknown) => this.onFlushError(error))
+      let settled: boolean = false;
+      const settle = (result: FlushResult): void => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+      const timer = setTimeout(() => settle("timedOut"), timeoutMs);
+      run
+        .then(() => settle("flushed"))
+        .catch((error: unknown) => {
+          this.onFlushError(error);
+          settle("failed");
+        })
         .finally(() => {
           clearTimeout(timer);
-          resolve();
         });
     });
   }
 
   /** 测试/显式 dispose 用；不隐式落盘，调用方应先 flush。 */
   dispose(): void {
+    this.quiescing = true;
+    this.disposed = true;
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    this.rejectPersistenceWaiters(new Error("StateStore was disposed before persistence completed."));
   }
 }
 
@@ -168,7 +249,7 @@ export async function loadState(): Promise<void> {
   }
 }
 
-export async function saveState(): Promise<void> {
+function currentStateSnapshot(): StateFileSchema {
   const chats: Record<string, ChatState> = {};
   for (const [chatId, chatState] of chatStates) {
     normalizeChatState(chatState);
@@ -178,17 +259,24 @@ export async function saveState(): Promise<void> {
     }
     chats[String(chatId)] = chatState;
   }
-  await stateStore.save({ chats, globalCopy: globalCopyState });
+  return { chats, globalCopy: globalCopyState };
+}
+
+export function saveState(): Promise<void> {
+  return stateStore.save(currentStateSnapshot());
 }
 
 export function saveStateInBackground(context: string): void {
-  void saveState().catch((error: unknown) => {
+  void stateStore.save(currentStateSnapshot(), { waitForPersistence: false }).catch((error: unknown) => {
     logger.error(`Failed to persist background state update (${context}):`, error);
   });
 }
 
-export function flushStateToDisk(timeoutMs: number = STATE_FLUSH_TIMEOUT_MS): Promise<void> {
-  return stateStore.flush(timeoutMs);
+export function flushStateToDisk(
+  timeoutMs: number = STATE_FLUSH_TIMEOUT_MS,
+  quiesce: boolean = false
+): Promise<FlushResult> {
+  return stateStore.flush(timeoutMs, quiesce);
 }
 
 export function getChatState(chatId: number): ChatState {
@@ -216,4 +304,18 @@ export function deleteChatState(chatId: number): void {
   if (chatStates.delete(chatId)) {
     saveStateInBackground(`chat ${chatId} state removed (bot left/kicked)`);
   }
+}
+
+/**
+ * 机器人离群时删除普通配置，但保留尚需恢复的 lockdown write-ahead 记录。
+ * 无记录时等价于 deleteChatState；调用方负责在同一 teardown 尾部统一落盘。
+ */
+export function pruneDepartedChatState(chatId: number): void {
+  const current: ChatState | undefined = chatStates.get(chatId);
+  if (!current) return;
+  if (current.lockdown === undefined) {
+    chatStates.delete(chatId);
+    return;
+  }
+  chatStates.set(chatId, { lockdown: current.lockdown });
 }

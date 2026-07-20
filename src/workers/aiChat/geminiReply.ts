@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
-import type { Content, GenerateContentResponse, Part, Tool } from "@google/genai";
+import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool } from "@google/genai";
 import { PERSONA_PATH } from "../../consts/paths";
 import {
   GEMINI_REPLY_MODEL,
+  MAX_CUSTOM_TOOL_CALLS_PER_NAME,
+  MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
   MAX_GOOGLE_SEARCH_CALLS_PER_REPLY,
   MAX_TOOL_ROUNDS,
   REPLY_MAX_TOKENS,
@@ -12,10 +14,9 @@ import { TIME_AWARENESS_INSTRUCTION } from "../../consts/aiChat/prompts/memory";
 import { buildWebSearchInstruction, WEB_SEARCH_EXHAUSTED_INSTRUCTION } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../ai/mood";
-import { requestGeminiResponse } from "../../ai/gemini";
+import { requestGeminiResult, type GeminiRequestResult } from "../../ai/gemini";
 import {
   countGoogleSearchCalls,
-  extractFinishReason,
   extractFunctionCalls,
   extractOutputText,
   isTruncatedByTokenLimit,
@@ -25,6 +26,39 @@ import { isPlainRecord } from "../../libs/runtimeConfig";
 import type { ReplyToolset } from "../../types/aiChat/replies";
 import type { ExtractedFunctionCall } from "../../types/tools";
 import { currentTimeSentence } from "./timeSentence";
+
+function availableTools(
+  tools: Tool[],
+  options: {
+    googleSearchEnabled: boolean;
+    disabledFunctionNames: ReadonlySet<string>;
+    allFunctionsDisabled: boolean;
+  }
+): Tool[] {
+  const { googleSearchEnabled, disabledFunctionNames, allFunctionsDisabled } = options;
+  const available: Tool[] = [];
+  for (const tool of tools) {
+    if (tool.googleSearch !== undefined) {
+      if (googleSearchEnabled) available.push(tool);
+      continue;
+    }
+    if (tool.functionDeclarations !== undefined) {
+      if (allFunctionsDisabled) continue;
+      const declarations: FunctionDeclaration[] = tool.functionDeclarations.filter((declaration) =>
+        typeof declaration.name === "string" && !disabledFunctionNames.has(declaration.name)
+      );
+      if (declarations.length > 0) available.push({ ...tool, functionDeclarations: declarations });
+      continue;
+    }
+    available.push(tool);
+  }
+  return available;
+}
+
+function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
+  return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, count]) => `${name}:${count}`).join(",") || "none";
+}
 
 /** 人设文本存放在仓库根目录的 prompt/persona.md，修改人设不需要碰代码。
  *  只在这里读一次（模块加载时）——callGemini 是它唯一的消费者。 */
@@ -61,25 +95,35 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPromptPrefix: string = `${SYSTEM_PROMPT}\n\n${currentMoodInstruction(chatId)}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
   const contents: Content[] = [{ role: "user", parts: [{ text: userContent }] }];
-  const toolsWithoutGoogleSearch: Tool[] = toolset.tools.filter((tool: Tool) => tool.googleSearch === undefined);
-  const hasGoogleSearch: boolean = toolsWithoutGoogleSearch.length !== toolset.tools.length;
+  const hasGoogleSearch: boolean = toolset.tools.some((tool: Tool) => tool.googleSearch !== undefined);
   let googleSearchCalls: number = 0;
+  let customToolCalls: number = 0;
+  const customToolCallsByName: Map<string, number> = new Map();
+  const disabledFunctionNames: Set<string> = new Set();
   let searchLimitFallbackUsed: boolean = false;
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
     if (!toolset.isActive()) return null;
     const remainingSearchCalls: number = Math.max(0, MAX_GOOGLE_SEARCH_CALLS_PER_REPLY - googleSearchCalls);
     const googleSearchEnabled: boolean = hasGoogleSearch && remainingSearchCalls > 0;
+    const requestTools: Tool[] = availableTools(
+      toolset.tools,
+      {
+        googleSearchEnabled,
+        disabledFunctionNames,
+        allFunctionsDisabled: customToolCalls >= MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
+      }
+    );
     const systemPrompt: string = `${systemPromptPrefix}\n\n${googleSearchEnabled
       ? buildWebSearchInstruction(remainingSearchCalls)
       : WEB_SEARCH_EXHAUSTED_INSTRUCTION}`;
-    const data: GenerateContentResponse | null = await requestGeminiResponse(
+    const result: GeminiRequestResult = await requestGeminiResult(
       {
         model: GEMINI_REPLY_MODEL,
         contents,
         config: {
           systemInstruction: systemPrompt,
-          tools: googleSearchEnabled ? toolset.tools : toolsWithoutGoogleSearch,
+          tools: requestTools,
           // googleSearch 与函数工具混用时必须要求 SDK 把服务端工具调用记录
           // 接回 content；否则 Gemini API 会拒绝该组合或丢失搜索上下文。
           toolConfig: googleSearchEnabled ? { includeServerSideToolInvocations: true } : undefined,
@@ -89,9 +133,31 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
       },
       "Gemini API"
     );
-    if (!toolset.isActive() || !data) return null;
+    if (!toolset.isActive()) return null;
 
-    const observedSearchCalls: number = countGoogleSearchCalls(data);
+    const diagnosticResponse: GenerateContentResponse | undefined = result.response;
+    const observedSearchCalls: number = diagnosticResponse === undefined ? 0 : countGoogleSearchCalls(diagnosticResponse);
+    if (!result.ok) {
+      logger.error(
+        `Gemini API unusable response for chat ${chatId}: round=${round}, ` +
+        `custom_calls=${customToolCalls}, per_tool=${toolCountsDiagnostic(customToolCallsByName)}, ` +
+        `server_tool_invocations=${observedSearchCalls}, finish_reason=${result.finishReason ?? "?"}, ` +
+        `finish_message=${JSON.stringify((result.finishMessage ?? "").slice(0, 500))}, side_effects=${toolset.actionsUsed()}.`
+      );
+      if (result.finishReason === "TOO_MANY_TOOL_CALLS" && googleSearchEnabled) {
+        googleSearchCalls = MAX_GOOGLE_SEARCH_CALLS_PER_REPLY;
+        if (!searchLimitFallbackUsed && toolset.actionsUsed() === 0) {
+          searchLimitFallbackUsed = true;
+          logger.error(
+            `Gemini API hit its server-side tool-call limit for chat ${chatId}; retrying once with Google Search disabled.`
+          );
+          continue;
+        }
+      }
+      return null;
+    }
+    const data: GenerateContentResponse = result.response;
+
     if (observedSearchCalls > 0) {
       const allowedThisRequest: number = remainingSearchCalls;
       googleSearchCalls = Math.min(
@@ -106,18 +172,6 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
       }
     }
 
-    if (extractFinishReason(data) === "TOO_MANY_TOOL_CALLS" && googleSearchEnabled) {
-      googleSearchCalls = MAX_GOOGLE_SEARCH_CALLS_PER_REPLY;
-      if (!searchLimitFallbackUsed && toolset.actionsUsed() === 0) {
-        searchLimitFallbackUsed = true;
-        logger.error(
-          `Gemini API hit its server-side tool-call limit for chat ${chatId}; retrying once with Google Search disabled.`
-        );
-        continue;
-      }
-      return null;
-    }
-
     const functionCalls: ExtractedFunctionCall[] = extractFunctionCalls(data);
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
       // 模型这一轮的 content 原样接回（缺了 thought signature 会丢思考
@@ -130,12 +184,20 @@ export async function callGemini(chatId: number, userContent: string, toolset: R
       const responseParts: Part[] = [];
       for (const call of functionCalls) {
         if (!toolset.isActive()) return null;
-        const result: string = toolset.has(call.name)
-          ? await toolset.execute(call.name, JSON.stringify(call.args ?? {}))
-          : callTool(call.name);
+        customToolCalls++;
+        const perNameCalls: number = (customToolCallsByName.get(call.name) ?? 0) + 1;
+        customToolCallsByName.set(call.name, perNameCalls);
+        if (perNameCalls >= MAX_CUSTOM_TOOL_CALLS_PER_NAME) disabledFunctionNames.add(call.name);
+        const withinBudget: boolean = customToolCalls <= MAX_CUSTOM_TOOL_CALLS_PER_REPLY &&
+          perNameCalls <= MAX_CUSTOM_TOOL_CALLS_PER_NAME;
+        const toolResult: string = withinBudget
+          ? toolset.has(call.name)
+            ? await toolset.execute(call.name, JSON.stringify(call.args ?? {}))
+            : callTool(call.name)
+          : JSON.stringify({ unavailable: "Tool budget exhausted for this reply" });
         // 工具实现返回的都是 JSON 字符串（见 src/ai/tools），
         // functionResponse.response 要求对象，解析回来直接挂上。
-        const response: unknown = JSON.parse(result);
+        const response: unknown = JSON.parse(toolResult);
         if (!isPlainRecord(response)) throw new Error(`Tool ${call.name} returned a non-object JSON value`);
         responseParts.push({ functionResponse: { id: call.id, name: call.name, response } });
       }

@@ -238,11 +238,14 @@ describe("trackedMessage", () => {
       repliesToChannelPost: false,
       now: 10_000,
     });
-    expect(overflow.next).toBeUndefined();
-    expect(overflow.effects).toEqual([{
-      kind: "expelFlood",
-      snapshot: expect.objectContaining({ messageIds: Array.from({ length: ANTI_RAID_PER_MINUTE_LIMIT + 1 }, (_, index) => index + 1) }),
-    }]);
+    expect(overflow.next).toMatchObject({
+      kind: "expelling",
+      reason: "flood",
+      snapshot: { messageIds: Array.from({ length: ANTI_RAID_PER_MINUTE_LIMIT + 1 }, (_, index) => index + 1) },
+    });
+    expect(overflow.effects).toEqual([]);
+    const persisted = transitionVerification(overflow.next, { type: "terminalPersisted" });
+    expect(effectKinds(persisted.effects)).toEqual(["expelFlood"]);
   });
 
   test("窗口修剪一分钟外的旧消息，且不同成员/群各自持有独立计数", () => {
@@ -316,23 +319,28 @@ describe("callback", () => {
 });
 
 describe("超时与拉人者终核", () => {
-  test("超时且非被拉入群 → 立即删记录 + 收尾踢人", () => {
+  test("超时且非被拉入群 → 先持久化 expelling，再收尾踢人", () => {
     const state = pendingState({ messageIds: [1, 2] });
     const { next, effects } = transitionVerification(state, { type: "verifyTimeout" });
-    expect(next).toBeUndefined();
-    expect(effects).toEqual([{ kind: "expel", snapshot: { label: "杂鱼A", isBot: false, messageIds: [1, 2], reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0 } }]);
+    expect(next).toMatchObject({ kind: "expelling", reason: "timeout", snapshot: { messageIds: [1, 2] } });
+    expect(effects).toEqual([]);
+    expect(effectKinds(transitionVerification(next, { type: "terminalPersisted" }).effects)).toEqual(["expel"]);
+    expect(transitionVerification(next, { type: "terminalPersisted" }).effects).toEqual([]);
   });
 
-  test("超时且被拉入群 → 立即删记录 + 转终核（迟到的点击将查无记录）", () => {
+  test("超时且被拉入群 → 先持久化 checkingInviter，再做终核", () => {
     const state = pendingState({ invitedBy: 999 });
     const { next, effects } = transitionVerification(state, { type: "verifyTimeout" });
-    expect(next).toBeUndefined();
-    expect(effects[0]).toMatchObject({ kind: "recheckInviter", inviterId: 999 });
+    expect(next).toMatchObject({ kind: "checkingInviter", inviterId: 999 });
+    expect(effects).toEqual([]);
+    expect(transitionVerification(next, { type: "terminalPersisted" }).effects[0]).toMatchObject({ kind: "recheckInviter", inviterId: 999 });
+    expect(transitionVerification(next, { type: "terminalPersisted" }).effects).toEqual([]);
   });
 
   test("终核：拉人者确是管理员 → 补豁免占位，只删提醒不踢人，且按精确时刻撤销此前记的那次刷群计数", () => {
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 54_321 };
-    const { next, effects } = transitionVerification(undefined, { type: "timeoutInviterVerdict", inviterIsAdmin: true, snapshot });
+    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 54_321, expiresAt: 120_000 };
+    const checking: VerificationState = { kind: "checkingInviter", inviterId: 999, snapshot };
+    const { next, effects } = transitionVerification(checking, { type: "timeoutInviterVerdict", inviterIsAdmin: true });
     expect(next?.kind).toBe("exempt");
     expect(effects).toEqual([
       { kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: undefined },
@@ -342,24 +350,24 @@ describe("超时与拉人者终核", () => {
 
   test("终核：等待期间已有新记录 → 不覆盖它", () => {
     const fresh = pendingState({ label: "重新进群的同一人" });
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [], reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0 };
-    const { next } = transitionVerification(fresh, { type: "timeoutInviterVerdict", inviterIsAdmin: true, snapshot });
+    const { next } = transitionVerification(fresh, { type: "timeoutInviterVerdict", inviterIsAdmin: true });
     expect(next).toBe(fresh);
   });
 
-  test("终核：拉人者不是管理员 → 收尾踢人", () => {
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0 };
-    const { effects } = transitionVerification(undefined, { type: "timeoutInviterVerdict", inviterIsAdmin: false, snapshot });
-    expect(effects).toEqual([{ kind: "expel", snapshot }]);
+  test("终核：拉人者不是管理员 → 先持久化 expelling，再收尾踢人", () => {
+    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0, expiresAt: 120_000 };
+    const checking: VerificationState = { kind: "checkingInviter", inviterId: 999, snapshot };
+    const { next, effects } = transitionVerification(checking, { type: "timeoutInviterVerdict", inviterIsAdmin: false });
+    expect(next).toMatchObject({ kind: "expelling", reason: "timeout", snapshot });
+    expect(effects).toEqual([]);
   });
 
   test("终核：拉人者不是管理员，但等待期间已有新记录 → 不踢、不覆盖它", () => {
     const fresh = pendingState({ label: "重新进群的同一人" });
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 0 };
-    const { next, effects } = transitionVerification(fresh, { type: "timeoutInviterVerdict", inviterIsAdmin: false, snapshot });
+    const { next, effects } = transitionVerification(fresh, { type: "timeoutInviterVerdict", inviterIsAdmin: false });
     expect(next).toBe(fresh);
     expect(effectKinds(effects)).not.toContain("expel");
-    expect(effects).toEqual([{ kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: undefined }]);
+    expect(effects).toEqual([]);
   });
 });
 

@@ -1,20 +1,21 @@
-import { run, type RunnerHandle } from "@grammyjs/runner";
-import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat } from "../aiChat";
-import { hydratePendingVerifications, initAntiRaid } from "../antiRaid";
+import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, terminateAiChat } from "../aiChat";
+import { hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
 import { restoreLuckState } from "../commands";
 import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
 import {
   AI_MEMORY_FLUSH_TIMEOUT_MS,
+  BACKGROUND_MAINTENANCE_TIMEOUT_MS,
   DISK_IO_FLUSH_TIMEOUT_MS,
   EMERGENCY_FLUSH_TIMEOUT_MS,
   RUNNER_DRAIN_POLL_INTERVAL_MS,
   RUNNER_DRAIN_TIMEOUT_MS,
   STATE_FLUSH_TIMEOUT_MS,
+  type FlushResult,
 } from "../consts/lifecycle";
 import { refreshAllChatTitles } from "../infra/chatTitle";
 import { BOT_TOKEN } from "../infra/config";
-import { flushDiskIO, initDiskIO, loadPersistedData, type LoadedData } from "../infra/diskIO";
+import { flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO, type LoadedData } from "../infra/diskIO";
 import { logger } from "../infra/logger";
 import { cleanupOrphanedTempFiles } from "../infra/storage/cleanup";
 import { acquireSingleInstanceLock, releaseSingleInstanceLock } from "../infra/storage/instanceLock";
@@ -25,6 +26,7 @@ import type { CachedUser } from "../types/chatState";
 import { seedSenderCache } from "../users/senderIdentity";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers, type HandlerRegistration } from "./registerHandlers";
+import { runAcknowledgedUpdateBatches, type AcknowledgedUpdateRunner } from "./updateRunner";
 
 const ALLOWED_UPDATES = [
   "message",
@@ -41,18 +43,21 @@ interface FlushTimeouts {
   aiMemoryMs: number;
   diskIOMs: number;
   stateMs: number;
+  maintenanceMs: number;
 }
 
 const NORMAL_FLUSH_TIMEOUTS: FlushTimeouts = {
   aiMemoryMs: AI_MEMORY_FLUSH_TIMEOUT_MS,
   diskIOMs: DISK_IO_FLUSH_TIMEOUT_MS,
   stateMs: STATE_FLUSH_TIMEOUT_MS,
+  maintenanceMs: BACKGROUND_MAINTENANCE_TIMEOUT_MS,
 };
 
 const EMERGENCY_FLUSH_TIMEOUTS: FlushTimeouts = {
   aiMemoryMs: EMERGENCY_FLUSH_TIMEOUT_MS,
   diskIOMs: EMERGENCY_FLUSH_TIMEOUT_MS,
   stateMs: EMERGENCY_FLUSH_TIMEOUT_MS,
+  maintenanceMs: 0,
 };
 
 /**
@@ -65,11 +70,13 @@ export class ApplicationLifecycle {
   private lockAcquired: boolean = false;
   private diskIOInitialized: boolean = false;
   private aiChatInitialized: boolean = false;
+  private antiRaidInitialized: boolean = false;
   private stopRequested: boolean = false;
-  private runner: RunnerHandle | null = null;
+  private runner: AcknowledgedUpdateRunner | null = null;
   private runnerTaskSettled: boolean = false;
   private handlers: HandlerRegistration | null = null;
   private chatTitleRefreshTask: Promise<void> | null = null;
+  private chatTitleRefreshSettled: boolean = true;
   private disposePromise: Promise<void> | null = null;
   private processHandlersInstalled: boolean = false;
   private fatalExitStarted: boolean = false;
@@ -91,6 +98,15 @@ export class ApplicationLifecycle {
     this.exitAfterEmergencyDispose();
   };
 
+  private readonly handleDiskIOFatal = (error: Error): void => {
+    logger.error("Persistence became unavailable at runtime; stopping for a supervised restart:", error);
+    process.exitCode = 1;
+    this.stopRequested = true;
+    this.runner?.stop().catch((stopError: unknown) => {
+      logger.error("Error stopping runner after persistence failure:", stopError);
+    });
+  };
+
   /** 初始化各组件并开始长轮询；重复调用会被拒绝。 */
   async init(): Promise<void> {
     if (this.runner !== null || this.lockAcquired) throw new Error("Application lifecycle is already initialized");
@@ -103,16 +119,19 @@ export class ApplicationLifecycle {
     getStickerConfig();
     getReactionConfig();
     initTelegramClients();
-    initDiskIO();
+    initDiskIO({ onFatal: this.handleDiskIOFatal });
     this.diskIOInitialized = true;
     await cleanupOrphanedTempFiles();
     await loadState();
 
     // 这是后台维护任务而非启动阻塞项，但必须被追踪：退出最终快照前会等待它，
     // 防止 refresh 在 state.json flush 后才补写群名。
-    this.chatTitleRefreshTask = refreshAllChatTitles().catch((error: unknown) => {
-      logger.error("Failed to complete chat title refresh:", error);
-    });
+    this.chatTitleRefreshSettled = false;
+    this.chatTitleRefreshTask = refreshAllChatTitles()
+      .catch((error: unknown) => {
+        logger.error("Failed to complete chat title refresh:", error);
+      })
+      .finally(() => { this.chatTitleRefreshSettled = true; });
 
     const loaded: LoadedData = await loadPersistedData();
     const restoredCopiedUser: CachedUser | null = getGlobalCopyState().copiedUser;
@@ -129,6 +148,7 @@ export class ApplicationLifecycle {
     restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
     hydratePendingVerifications(loaded.verifications);
     initAntiRaid();
+    this.antiRaidInitialized = true;
 
     logger.log(
       `Bot started as @${bot.botInfo.username}. ` +
@@ -136,13 +156,13 @@ export class ApplicationLifecycle {
       (restoredCopiedUser ? `, currently copying ${restoredCopiedUser.id}.` : ".")
     );
 
-    this.runner = run(bot, { runner: { fetch: { allowed_updates: [...ALLOWED_UPDATES] } } });
+    this.runner = runAcknowledgedUpdateBatches(bot, ALLOWED_UPDATES);
     if (this.stopRequested) this.stopOnSignal();
   }
 
   /** 等待轮询停止、在途 update 排空、后台维护结束，并确认最终 update offset。 */
   async wait(): Promise<void> {
-    const runner: RunnerHandle | null = this.runner;
+    const runner: AcknowledgedUpdateRunner | null = this.runner;
     if (runner === null) throw new Error("Application lifecycle has not been initialized");
 
     try {
@@ -150,14 +170,16 @@ export class ApplicationLifecycle {
     } finally {
       this.runnerTaskSettled = true;
     }
-    await this.waitForRunnerDrain(runner);
+    const runnerDrained: boolean = await this.waitForRunnerDrain(runner);
 
     // 标题刷新可能触发 saveStateInBackground；必须先等它完成，再做最终 flush。
-    await this.waitForBackgroundMaintenance();
-    await this.flushAllToDisk(NORMAL_FLUSH_TIMEOUTS);
+    const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(
+      NORMAL_FLUSH_TIMEOUTS.maintenanceMs
+    );
+    const persistenceFlushed: boolean = await this.flushAllToDisk(NORMAL_FLUSH_TIMEOUTS);
 
     const lastSeenUpdateId: number = this.handlers?.getLastSeenUpdateId() ?? 0;
-    if (lastSeenUpdateId > 0) {
+    if (runnerDrained && maintenanceSettled && persistenceFlushed && lastSeenUpdateId > 0) {
       try {
         await bot.api.getUpdates({ offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 });
       } catch (error: unknown) {
@@ -174,9 +196,38 @@ export class ApplicationLifecycle {
           logger.error("Error stopping runner during disposal:", error);
         });
       }
-      await this.waitForBackgroundMaintenance();
-      await this.flushAllToDisk(timeouts);
+      const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(timeouts.maintenanceMs);
+      let aiResult: FlushResult = "flushed";
+      if (this.aiChatInitialized) {
+        aiResult = await flushAiMemory(timeouts.aiMemoryMs);
+        await terminateAiChat();
+        this.aiChatInitialized = false;
+      }
+      if (this.antiRaidInitialized) {
+        await terminateAntiRaid();
+        this.antiRaidInitialized = false;
+      }
+      let diskResult: FlushResult = "flushed";
+      if (this.diskIOInitialized) {
+        diskResult = await flushDiskIO(timeouts.diskIOMs);
+        await terminateDiskIO();
+        this.diskIOInitialized = false;
+      }
+      const stateResult: FlushResult = this.lockAcquired
+        ? await flushStateToDisk(timeouts.stateMs, true)
+        : "flushed";
+      if (aiResult !== "flushed" || diskResult !== "flushed" || stateResult !== "flushed") {
+        logger.error(
+          `Shutdown flush results: ai=${aiResult}, disk=${diskResult}, state=${stateResult}.`
+        );
+      }
       if (!this.lockAcquired) return;
+      if (!maintenanceSettled || stateResult !== "flushed") {
+        logger.error(
+          "Retaining the single-instance lock until process exit because a maintenance task or state writer may still mutate shared files."
+        );
+        return;
+      }
       await releaseSingleInstanceLock(BOT_TOKEN);
       this.lockAcquired = false;
     })();
@@ -229,9 +280,9 @@ export class ApplicationLifecycle {
   }
 
   private async waitForRunnerDrain(
-    runner: RunnerHandle,
+    runner: AcknowledgedUpdateRunner,
     timeoutMs: number = RUNNER_DRAIN_TIMEOUT_MS
-  ): Promise<void> {
+  ): Promise<boolean> {
     const deadline: number = Date.now() + timeoutMs;
     while (runner.size() > 0 && Date.now() < deadline) {
       await sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
@@ -239,27 +290,50 @@ export class ApplicationLifecycle {
     if (runner.size() > 0) {
       logger.error(
         `Shutdown proceeding with ${runner.size()} update(s) still being processed after waiting ${timeoutMs}ms; ` +
-        "their offset confirmation may be premature."
+        "their Telegram offset will not be confirmed."
       );
+      return false;
     }
+    return true;
   }
 
-  private async waitForBackgroundMaintenance(): Promise<void> {
-    await this.chatTitleRefreshTask;
-  }
-
-  private async flushAllToDisk(timeouts: FlushTimeouts): Promise<void> {
-    if (!this.lockAcquired) return;
-    await Promise.all([
-      this.diskIOInitialized
-        ? (async (): Promise<void> => {
-          // AI memory 必须先回传到 diskIOWorker，再 flush 该 Worker。
-          if (this.aiChatInitialized) await flushAiMemory(timeouts.aiMemoryMs);
-          await flushDiskIO(timeouts.diskIOMs);
-        })()
-        : Promise.resolve(),
-      flushStateToDisk(timeouts.stateMs),
+  private async waitForBackgroundMaintenance(timeoutMs: number): Promise<boolean> {
+    const task: Promise<void> | null = this.chatTitleRefreshTask;
+    if (task === null || this.chatTitleRefreshSettled) return true;
+    if (timeoutMs <= 0) {
+      logger.error("Skipping unfinished chat title refresh during emergency disposal.");
+      return false;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled: boolean = await Promise.race([
+      task.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
     ]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (!settled) logger.error(`Chat title refresh did not settle within ${timeoutMs}ms.`);
+    return settled;
+  }
+
+  private async flushAllToDisk(timeouts: FlushTimeouts): Promise<boolean> {
+    if (!this.lockAcquired) return false;
+    // AI memory 必须先回传到 diskIOWorker，再 flush 该 Worker。
+    const aiResult: FlushResult = this.aiChatInitialized
+      ? await flushAiMemory(timeouts.aiMemoryMs)
+      : "flushed";
+    const diskResult: FlushResult = this.diskIOInitialized
+      ? await flushDiskIO(timeouts.diskIOMs)
+      : "flushed";
+    const stateResult: FlushResult = await flushStateToDisk(timeouts.stateMs);
+    if (aiResult !== "flushed" || diskResult !== "flushed" || stateResult !== "flushed") {
+      logger.error(
+        `Pre-confirmation flush results: ai=${aiResult}, disk=${diskResult}, state=${stateResult}; ` +
+        "the final Telegram update offset will not be confirmed."
+      );
+      return false;
+    }
+    return true;
   }
 }
 

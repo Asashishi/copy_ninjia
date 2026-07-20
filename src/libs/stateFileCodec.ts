@@ -89,24 +89,31 @@ function chatPermissions(value: unknown, path: string): ChatPermissions {
   const raw = record(value, path);
   knownKeys(raw, Object.keys(CHAT_PERMISSION_KEYS), path);
   const decoded: ChatPermissions = {};
-  let count: number = 0;
   for (const key of Object.keys(CHAT_PERMISSION_KEYS) as (keyof ChatPermissions)[]) {
     const field: unknown = raw[key];
     if (field === undefined) continue;
     if (typeof field !== "boolean") throw new Error(`${path}.${key} must be a boolean`);
     Reflect.set(decoded, key, field);
-    count++;
   }
-  if (count === 0) throw new Error(`${path} must contain at least one permission field`);
   return decoded;
 }
 
 function lockdown(value: unknown, path: string): LockdownRecord {
   const raw = record(value, path);
-  knownKeys(raw, ["originalPermissions", "expiresAt"], path);
+  knownKeys(raw, ["phase", "intentId", "originalPermissions", "expiresAt"], path);
   const expiresAt: number | undefined = optionalTimestamp(raw, "expiresAt", path);
   if (expiresAt === undefined) throw new Error(`${path}.expiresAt is required`);
+  const phase: unknown = raw.phase;
+  if (phase !== undefined && phase !== "applying" && phase !== "active" && phase !== "restoring") {
+    throw new Error(`${path}.phase must be applying, active or restoring`);
+  }
+  const intentId: number | undefined = optionalTimestamp(raw, "intentId", path);
+  if ((phase === "applying" || phase === "restoring") && (intentId === undefined || intentId === 0)) {
+    throw new Error(`${path}.intentId is required for ${phase}`);
+  }
   return {
+    ...(phase === undefined ? {} : { phase }),
+    ...(intentId === undefined ? {} : { intentId }),
     originalPermissions: chatPermissions(raw.originalPermissions, `${path}.originalPermissions`),
     expiresAt,
   };

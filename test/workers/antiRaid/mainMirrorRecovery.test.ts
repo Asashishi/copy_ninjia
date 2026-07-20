@@ -16,20 +16,38 @@ let supervisorOptions: {
 } | undefined;
 let diskRespawn: (() => void) | undefined;
 let persistedAck: ((reply: VerificationPersistedReply) => void) | undefined;
+const chatStates = new Map<number, { lockdown?: {
+  phase?: "applying" | "active" | "restoring";
+  intentId?: number;
+  originalPermissions: Record<string, boolean | undefined>;
+  expiresAt: number;
+} }>();
+const saveState = mock(async (): Promise<void> => {});
 
 mock.module("../../../src/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../../src/infra/storage/stateStore", () => ({
-  clearChatStateField: () => true,
-  getAllChatStates: (): Map<number, never> => new Map<number, never>(),
-  getOrCreateChatState: (): Record<string, never> => ({}),
+  clearChatStateField: (chatId: number, field: "lockdown"): boolean => {
+    const state = chatStates.get(chatId);
+    if (!state || !(field in state)) return false;
+    delete state[field];
+    return true;
+  },
+  getAllChatStates: () => chatStates,
+  getOrCreateChatState: (chatId: number) => {
+    const current = chatStates.get(chatId) ?? {};
+    chatStates.set(chatId, current);
+    return current;
+  },
+  saveState,
   saveStateInBackground(): void {},
 }));
 mock.module("../../../src/infra/telegram", () => ({ answerCallbackQuery: async (): Promise<boolean> => true }));
 mock.module("../../../src/infra/botAdmin", () => ({
   isBotAdminIn: async (): Promise<boolean> => true,
   markBotAdminObserved(): void {},
+  registerAntiRaidChatTeardown(): void {},
 }));
 mock.module("../../../src/libs/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
@@ -37,6 +55,7 @@ mock.module("../../../src/libs/supervisedWorker", () => ({
     return {
       init(): void {},
       post: (message: AntiRaidWorkerMessage): void => { workerPosts.push(message); },
+      terminate: async (): Promise<void> => {},
     };
   },
 }));
@@ -99,5 +118,73 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       verifications: [expect.objectContaining({ revision: 4 })],
     })]);
     expect(activeVerificationSnapshots.get("-1001:42")?.revision).toBe(4);
+  });
+
+  test("Worker 重建不会把尚未完成 saveState 的 lockdown 镜像当成已持久化", async () => {
+    let releaseSave: (() => void) | undefined;
+    saveState.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSave = resolve; }));
+    supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2002,
+      phase: "applying",
+      intentId: 77,
+      originalPermissions: { can_invite_users: true },
+      expiresAt: 123_456,
+    });
+
+    const respawnPosts: AntiRaidWorkerMessage[] = [];
+    supervisorOptions!.onRespawn((message) => { respawnPosts.push(message); });
+    const adopt = respawnPosts.find((message) => message.type === "adopt");
+    expect(adopt).toEqual({
+      type: "adopt",
+      lockdowns: [expect.objectContaining({ chatId: -2002, phase: "applying", intentId: 77, persisted: false })],
+    });
+    expect(workerPosts.some((message) => message.type === "lockdownPersisted" && message.chatId === -2002)).toBe(false);
+
+    releaseSave?.();
+    await Bun.sleep(0);
+    expect(workerPosts).toContainEqual({
+      type: "lockdownPersisted",
+      chatId: -2002,
+      phase: "applying",
+      intentId: 77,
+    });
+  });
+
+  test("同群连续 lockdown 快照共用一个在途 waiter，并在完成后补写最新阶段", async () => {
+    workerPosts.length = 0;
+    saveState.mockClear();
+    let releaseSave: (() => void) | undefined;
+    saveState.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSave = resolve; }));
+
+    supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2003,
+      phase: "active",
+      intentId: 88,
+      originalPermissions: { can_invite_users: true },
+      expiresAt: 200_000,
+    });
+    supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2003,
+      phase: "active",
+      intentId: 88,
+      originalPermissions: { can_invite_users: true },
+      expiresAt: 300_000,
+    });
+    expect(saveState).toHaveBeenCalledTimes(1);
+
+    releaseSave?.();
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(saveState).toHaveBeenCalledTimes(2);
+    expect(workerPosts.filter((message) => message.type === "lockdownPersisted" && message.chatId === -2003)).toEqual([{
+      type: "lockdownPersisted",
+      chatId: -2003,
+      phase: "active",
+      intentId: 88,
+    }]);
   });
 });

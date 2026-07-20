@@ -5,6 +5,8 @@ export const VERIFICATION_BUTTON_TEXT: string = "我是新人，别搞！";
 /** 验证按钮 callback_data 的前缀，后面拼上待验证成员的 userId。 */
 export const VERIFY_CALLBACK_PREFIX: string = "verify:";
 export const VERIFICATION_TIMEOUT_MS: number = 90 * 1000;
+/** 终态踢人失败后的重试间隔；记录保持持久化，不能把未处置成员当作已完成。 */
+export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
 /**
  * 私密模式下直接踢人的占位记录存活时长：只是给 chat_member 更新和
  * new_chat_members 服务消息（针对同一次入群各自触发）留出去重窗口，

@@ -1,11 +1,14 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { VerificationDeleteEvent, VerificationSnapshot } from "../../../src/types";
+import type { AntiRaidWorkerEvent, VerificationSnapshot, VerificationUpsertEvent } from "../../../src/types";
 
 let kicks: number = 0;
-const workerEvents: VerificationDeleteEvent[] = [];
+const deletedMessageIds: number[] = [];
+let blockNextDelete: boolean = false;
+let releaseBlockedDelete: (() => void) | undefined;
+const workerEvents: AntiRaidWorkerEvent[] = [];
 Object.defineProperty(globalThis, "self", {
   configurable: true,
-  value: { postMessage: (event: VerificationDeleteEvent): void => { workerEvents.push(event); } },
+  value: { postMessage: (event: AntiRaidWorkerEvent): void => { workerEvents.push(event); } },
 });
 
 mock.module("../../../src/infra/logger", () => ({
@@ -15,7 +18,14 @@ mock.module("../../../src/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
 mock.module("../../../src/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<undefined> => undefined,
-  deleteMessage: async (): Promise<boolean> => true,
+  deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> => {
+    deletedMessageIds.push(messageId);
+    if (blockNextDelete) {
+      blockNextDelete = false;
+      await new Promise<void>((resolve) => { releaseBlockedDelete = resolve; });
+    }
+    return messageId !== 10;
+  },
   deleteMessageAfter(): void {},
   kickChatMember: async (): Promise<boolean> => { kicks++; return true; },
   answerCallbackQuery: async (): Promise<boolean> => true,
@@ -40,6 +50,19 @@ function record(userId: number, expiresAt: number): VerificationSnapshot {
   };
 }
 
+function settleLatestTerminal(userId: number): void {
+  const event = workerEvents.findLast((candidate): candidate is VerificationUpsertEvent =>
+    candidate.type === "verificationUpsert" && candidate.record.userId === userId && candidate.record.phase !== "pending"
+  );
+  if (!event) throw new Error(`missing terminal upsert for ${userId}`);
+  runtime.handleVerificationPersisted({
+    type: "verificationPersisted",
+    key: `${event.record.chatId}:${event.record.userId}`,
+    generation: event.record.generation,
+    revision: event.record.revision,
+  });
+}
+
 describe("Anti-Raid Worker verification recovery", () => {
   test("adopt uses remaining expiry, replaces old timers, and handles expired records immediately", async () => {
     const active: VerificationSnapshot = record(42, Date.now() + 100);
@@ -52,11 +75,15 @@ describe("Anti-Raid Worker verification recovery", () => {
     await Bun.sleep(30);
     expect(kicks).toBe(0);
     await Bun.sleep(100);
+    expect(kicks).toBe(0);
+    settleLatestTerminal(42);
+    await Bun.sleep(0);
     expect(kicks).toBe(1);
 
     const expired: VerificationSnapshot = record(43, Date.now() - 1);
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 3, verifications: [expired] });
-    expect(verificationEntries.has("-1001:43")).toBeFalse();
+    expect(verificationEntries.get("-1001:43")?.state.kind).toBe("expelling");
+    settleLatestTerminal(43);
     await Bun.sleep(0);
     expect(kicks).toBe(2);
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 3, verifications: [expired] });
@@ -77,15 +104,69 @@ describe("Anti-Raid Worker verification recovery", () => {
 
     expect(kicks).toBe(2);
     expect(verificationEntries.has("-1001:44") || verificationEntries.has("-1001:45")).toBeFalse();
-    expect(workerEvents.map((event) => ({
+    expect(workerEvents.filter((event) => event.type === "verificationDelete").map((event) => ({
       generation: event.generation,
       revision: event.revision,
       userId: event.userId,
     }))).toEqual([
-      { generation: 2, revision: 2, userId: 42 },
-      { generation: 3, revision: 2, userId: 43 },
+      { generation: 2, revision: 3, userId: 42 },
+      { generation: 3, revision: 3, userId: 43 },
       { generation: 4, revision: 2, userId: 44 },
       { generation: 4, revision: 2, userId: 45 },
     ]);
+  });
+
+  test("恢复部分完成的 expelling，并在同 userId 新一代入群后停止旧踢人", async () => {
+    const baselineKicks: number = kicks;
+    deletedMessageIds.length = 0;
+    const terminal: VerificationSnapshot = {
+      ...record(50, Date.now()),
+      generation: 5,
+      phase: "expelling",
+      expelReason: "timeout",
+      messageIds: [10, 11],
+    };
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 5,
+      verifications: [terminal],
+      resumePersistedTerminals: true,
+    });
+    await Bun.sleep(0);
+    // 10 代表崩溃前已经删除过、恢复时 API 返回“目标不存在”；仍会继续 11 和踢人。
+    expect(deletedMessageIds).toEqual([10, 11]);
+    expect(kicks).toBe(baselineKicks + 1);
+
+    const nextTerminal: VerificationSnapshot = {
+      ...terminal,
+      userId: 51,
+      generation: 6,
+      revision: 1,
+      messageIds: [20],
+    };
+    blockNextDelete = true;
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 6,
+      verifications: [nextTerminal],
+      resumePersistedTerminals: true,
+    });
+    await Bun.sleep(0);
+    const beforeRejoinKicks: number = kicks;
+    runtime.dispatchVerification(-1001, 51, {
+      type: "join",
+      memberId: 51,
+      label: "重新入群",
+      isBot: false,
+      identityExempt: false,
+      actorSyncExempt: false,
+      adminCacheFresh: true,
+      lockdownActive: false,
+      now: Date.now() + 1,
+    });
+    expect(verificationEntries.get("-1001:51")?.state.kind).toBe("pending");
+    releaseBlockedDelete!();
+    await Bun.sleep(0);
+    expect(kicks).toBe(beforeRejoinKicks);
   });
 });

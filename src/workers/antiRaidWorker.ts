@@ -4,8 +4,10 @@ import {
   handleVerificationCallback,
   dispatchVerification,
   adoptVerifications,
+  handleVerificationPersisted,
+  deactivateVerificationChat,
 } from "./antiRaid/verificationRuntime";
-import { adoptLockdowns } from "./antiRaid/lockdownRuntime";
+import { adoptLockdowns, deactivateLockdownChat, handleLockdownPersisted } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
 import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
 import { sweepAdminCache } from "../cache/antiRaid/admins";
@@ -51,6 +53,10 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "left":
       dispatchVerification(msg.chatId, msg.userId, { type: "left" });
       break;
+    case "deactivateChat":
+      deactivateVerificationChat(msg.chatId);
+      deactivateLockdownChat(msg.chatId);
+      break;
     case "message":
       handleTrackedMessage(msg);
       break;
@@ -60,8 +66,14 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "adopt":
       adoptLockdowns(msg.lockdowns);
       break;
+    case "lockdownPersisted":
+      handleLockdownPersisted(msg);
+      break;
     case "adoptVerifications":
       adoptVerifications(msg);
+      break;
+    case "verificationPersisted":
+      handleVerificationPersisted(msg);
       break;
     case "adminsChanged":
       applyAdminChange(msg.chatId, msg.userId, msg.isAdmin);

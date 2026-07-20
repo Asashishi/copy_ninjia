@@ -45,9 +45,7 @@ export interface KickedState {
   kickedAt: number;
 }
 
-export type VerificationState = PendingState | ExemptState | KickedState;
-
-/** 超时流程删除状态后，供异步终核与最终清理继续使用的不可变语义快照。 */
+/** 供终核与最终清理使用的不可变语义快照。 */
 export interface ExpelSnapshot {
   label: string;
   isBot: boolean;
@@ -55,4 +53,28 @@ export interface ExpelSnapshot {
   reminderMessageId?: number;
   replyReminderMessageId?: number;
   joinedAt: number;
+  expiresAt: number;
 }
+
+/** 已持久化后才可执行拉人者终核；Worker/进程重建会继续本阶段。 */
+export interface CheckingInviterState {
+  kind: "checkingInviter";
+  inviterId: number;
+  snapshot: ExpelSnapshot;
+  /** Worker 本地幂等门；不持久化，Worker 重建后允许安全重放。 */
+  executionStarted?: boolean;
+}
+
+/** 已持久化后才可执行删消息/踢人；这些 API 均按幂等方式重放。 */
+export interface ExpellingState {
+  kind: "expelling";
+  reason: "timeout" | "flood";
+  snapshot: ExpelSnapshot;
+  /** Worker 本地幂等门；不持久化，Worker 重建后允许安全重放。 */
+  executionStarted?: boolean;
+  /** 避免同一 Worker 内每次失败重试都重复发送管理员告警。 */
+  failureNoticeSent?: boolean;
+}
+
+export type VerificationTerminalState = CheckingInviterState | ExpellingState;
+export type VerificationState = PendingState | ExemptState | KickedState | VerificationTerminalState;

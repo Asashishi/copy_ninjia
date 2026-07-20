@@ -23,7 +23,18 @@ import type { GenerateContentParameters, GenerateContentResponse, SafetySetting 
 import { logger } from "../infra/logger";
 import { GEMINI_API_KEY } from "../infra/config";
 import { GEMINI_REQUEST_TIMEOUT_MS } from "../consts/aiChat/tools";
-import { abnormalFinishDiagnostic, extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
+import { abnormalFinishDiagnostic, extractFinishMessage, extractFinishReason, extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
+
+export type GeminiRequestResult =
+  | { ok: true; response: GenerateContentResponse }
+  | {
+    ok: false;
+    diagnostic: string;
+    finishReason?: string;
+    finishMessage?: string;
+    /** 仅供异常分支做预算/重试判断；不得解析其中的文本或 functionCall。 */
+    response?: GenerateContentResponse;
+  };
 
 /** 进程内唯一的 Gemini 客户端实例（timeout 是每次请求/每次重试各自的预算，
  *  不是所有重试共享一个硬顶，见 consts/aiChat.ts 的 GEMINI_REQUEST_TIMEOUT_MS 注释）。
@@ -44,15 +55,15 @@ const GEMINI_SAFETY_SETTINGS: SafetySetting[] = [
 ];
 
 /**
- * 调一次 generateContent 接口。请求失败、超时或非 2xx 时返回 null（已记
- * 日志）；finishReason=MAX_TOKENS 的静默失败（多半是输出/思考把
+ * 调一次 generateContent 接口。请求失败、超时、非 2xx 或异常 candidate
+ * 返回带诊断的失败结果（已记日志）；finishReason=MAX_TOKENS 的静默失败（多半是输出/思考把
  * maxOutputTokens 烧光，见 consts/aiChat.ts 的 REPLY_MAX_TOKENS 注释）点名
  * 记下来，否则上层只能看到「没产出」，查不到原因。
  * @param body 完整请求体（model/contents/config 等由调用方拼好），直接使用
  *   官方 SDK 的 GenerateContentParameters，SDK 升级造成的字段漂移会在编译期暴露。
  * @param errorLabel 出现在错误日志里的调用名，用于区分是哪条流水线出的错。
  */
-export async function requestGeminiResponse(body: GenerateContentParameters, errorLabel: string): Promise<GenerateContentResponse | null> {
+export async function requestGeminiResult(body: GenerateContentParameters, errorLabel: string): Promise<GeminiRequestResult> {
   let data: GenerateContentResponse;
   try {
     data = await client.models.generateContent({
@@ -71,7 +82,7 @@ export async function requestGeminiResponse(body: GenerateContentParameters, err
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }
-    return null;
+    return { ok: false, diagnostic: "request failed" };
   }
 
   if (isTruncatedByTokenLimit(data)) {
@@ -93,6 +104,25 @@ export async function requestGeminiResponse(body: GenerateContentParameters, err
   const abnormal: string | null = abnormalFinishDiagnostic(data);
   if (abnormal) {
     logger.error(`${errorLabel} returned an unusable response: ${abnormal}.`);
+    return {
+      ok: false,
+      diagnostic: abnormal,
+      finishReason: extractFinishReason(data),
+      finishMessage: extractFinishMessage(data),
+      response: data,
+    };
   }
-  return data;
+  return { ok: true, response: data };
+}
+
+/**
+ * 无需检查异常原因的调用方使用的安全便捷边界。只有正常 STOP candidate 才
+ * 返回响应；任何夹带文本/functionCall 的异常 candidate 都在这里被清空。
+ */
+export async function requestGeminiResponse(
+  body: GenerateContentParameters,
+  errorLabel: string
+): Promise<GenerateContentResponse | null> {
+  const result: GeminiRequestResult = await requestGeminiResult(body, errorLabel);
+  return result.ok ? result.response : null;
 }

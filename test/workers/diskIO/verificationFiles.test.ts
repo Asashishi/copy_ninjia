@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -211,34 +211,32 @@ describe("pending verification daily append JSON", () => {
     expect(JSON.parse(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8"))).toEqual({});
   });
 
-  test("启动只留当天日期文件，并逐字段拒绝损坏记录", () => {
-    const error = spyOn(console, "error").mockImplementation(() => {});
+  test("同一文件一条合法、一条损坏时 fail closed，且不改写原文件或清理旧日", () => {
     writeFileSync(join(dir, "2026-07-18.json"), "{}");
     writeFileSync(join(dir, "notes.json"), "{}");
-    writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
+    const original: string = JSON.stringify({
+      "-1001:99": { version: 1, ...snapshot(2, { userId: 99 }) },
       "-1001:42": { version: 1, ...snapshot(1), expiresAt: "soon" },
-      "-1001:99": { version: 1, ...snapshot(2) },
       "-1001:50": null,
-    }, null, 2));
+    }, null, 2);
+    writeFileSync(join(dir, `${DAY_ONE}.json`), original);
 
-    expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
-    expect(existsSync(join(dir, "2026-07-18.json"))).toBeFalse();
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
+      "invalid active pending verification record for key -1001:42"
+    );
+    expect(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")).toBe(original);
+    expect(existsSync(join(dir, "2026-07-18.json"))).toBeTrue();
     expect(existsSync(join(dir, "notes.json"))).toBeTrue();
-    expect(error).toHaveBeenCalledTimes(2);
-    error.mockRestore();
   });
 
   test("旧下划线键不再兼容，必须手动改成冒号格式", () => {
-    const error = spyOn(console, "error").mockImplementation(() => {});
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
       "-1001_42": { version: 1, ...snapshot(1) },
     }, null, 2));
 
-    expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("ignoring invalid pending verification record for key -1001_42")
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
+      "invalid active pending verification record for key -1001_42"
     );
-    error.mockRestore();
   });
 
   test("消息窗口随当天快照恢复，旧版缺失字段按空窗口兼容", () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "../../../src/workers/diskIO/appendOnlyDayFile";
@@ -78,6 +78,71 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
       B: { label: "吉", fortunePercent: 75 },
       C: { label: "尚可", fortunePercent: 50 },
     });
+  });
+
+  test("底层分段 short write 会循环到完整 Buffer 后才推进游标", () => {
+    const state: DayFileState = openDayFile(dir, "2026-07-16");
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", { label: "大吉" }) });
+    const writes: number[] = [];
+
+    appendToDayFile({
+      dir,
+      state,
+      chunk: serializeDayFileEntry("B", { label: "小吉" }),
+      write: ({ fd, buffer, offset, length, position }) => {
+        const bytes: number = Math.min(3, length);
+        writes.push(bytes);
+        return writeSync(fd, buffer, offset, bytes, position);
+      },
+    });
+
+    expect(writes.length).toBeGreaterThan(1);
+    expect(readDay("2026-07-16")).toEqual({ A: { label: "大吉" }, B: { label: "小吉" } });
+    expect(state.size).toBe(statSync(join(dir, "2026-07-16.json")).size);
+  });
+
+  test("零字节写显式失败，不虚增 offset，并关闭文件描述符", () => {
+    const state: DayFileState = openDayFile(dir, "2026-07-16");
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", 1) });
+    const originalSize: number = state.size;
+    let capturedFd: number | null = null;
+
+    expect(() => appendToDayFile({
+      dir,
+      state,
+      chunk: serializeDayFileEntry("B", 2),
+      write: ({ fd }) => {
+        capturedFd = fd;
+        return 0;
+      },
+    })).toThrow("made no valid progress");
+
+    expect(state.size).toBe(originalSize);
+    expect(readDay("2026-07-16")).toEqual({ A: 1 });
+    expect(() => writeSync(capturedFd!, Buffer.from("x"), 0, 1, 0)).toThrow();
+  });
+
+  test("中途写异常会重新探测并修复文件，后续 append 不从虚假 offset 开始", () => {
+    const state: DayFileState = openDayFile(dir, "2026-07-16");
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", { value: 1 }) });
+    let call: number = 0;
+
+    expect(() => appendToDayFile({
+      dir,
+      state,
+      chunk: serializeDayFileEntry("B", { payload: "会被截断" }),
+      write: ({ fd, buffer, offset, length, position }) => {
+        call++;
+        if (call > 1) throw new Error("injected I/O failure");
+        const bytes: number = Math.min(8, length);
+        return writeSync(fd, buffer, offset, bytes, position);
+      },
+    })).toThrow("injected I/O failure");
+
+    expect(readDay("2026-07-16")).toEqual({ A: { value: 1 } });
+    expect(state.size).toBe(statSync(join(dir, "2026-07-16.json")).size);
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("C", 3) });
+    expect(readDay("2026-07-16")).toEqual({ A: { value: 1 }, C: 3 });
   });
 
   test("重新 openDayFile（模拟进程重启）读到已有单条记录后，继续追加不会破坏旧内容", () => {
