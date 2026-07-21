@@ -1,5 +1,5 @@
 /** 图片、贴纸与 GIF 描述使用的视觉模型。 */
-export const GEMINI_MEDIA_MODEL: string = "gemini-3.1-flash-lite";
+export const GEMINI_MEDIA_MODEL: string = "gemini-3.5-flash-lite";
 
 export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
 export const IMAGE_FALLBACK_PLACEHOLDER: string = "[图片：解析失败，请无视此消息]";

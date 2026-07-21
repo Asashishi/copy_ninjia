@@ -1,5 +1,5 @@
 /** 闲聊回复模型与所有 Gemini 请求的 per-attempt 超时。 */
-export const GEMINI_REPLY_MODEL: string = "gemini-3.1-flash-lite";
+export const GEMINI_REPLY_MODEL: string = "gemini-3.5-flash-lite";
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
 /** 回复 token 上限包含思考 token；温度偏高以保留人设发挥。 */
 export const REPLY_MAX_TOKENS: number = 65_536;
