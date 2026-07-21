@@ -6,12 +6,18 @@
   <img alt="Copy Ninjia Banner" src="docs/assets/banner_light.jpg" width="100%" style="border-radius: 8px; margin-bottom: 20px;">
 </picture>
 
-<h1 align="center">
-  <a href="https://t.me/copy_ninjia_bot" style="text-decoration: none;">
-    <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="48" height="48" alt="Copy Ninjia Bot 头像" style="border-radius: 50%; border: 2px solid #8e75ff; vertical-align: middle; margin-right: 15px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
-  </a>
-  <span style="vertical-align: middle;">Copy Ninjia</span>
-</h1>
+<table align="center" style="border: none; border-collapse: collapse; border-spacing: 0; margin: 0 auto;">
+  <tr style="border: none;">
+    <td align="right" valign="middle" style="border: none; padding: 0 15px 0 0; background: transparent;">
+      <a href="https://t.me/copy_ninjia_bot">
+        <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="48" height="48" alt="Copy Ninjia Bot 头像" style="border-radius: 50%; border: 2px solid #8e75ff; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+      </a>
+    </td>
+    <td align="left" valign="middle" style="border: none; padding: 0; background: transparent;">
+      <h1 style="border: none; margin: 0; padding: 0; line-height: 1;">Copy Ninjia</h1>
+    </td>
+  </tr>
+</table>
 
 ### 会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人
 
