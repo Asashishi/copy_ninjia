@@ -1,7 +1,13 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner_dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner_light.jpg">
+  <img alt="Copy Ninjia Banner" src="docs/assets/banner_light.jpg" width="100%" style="border-radius: 8px; margin-bottom: 20px;">
+</picture>
+
 <a href="https://t.me/copy_ninjia_bot">
-  <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="128" height="128" alt="Copy Ninjia Bot 当前头像" style="border-radius: 50%; object-fit: cover; object-position: center;">
+  <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="96" height="96" alt="Copy Ninjia Bot 当前头像" style="border-radius: 50%; border: 3px solid #8e75ff; object-fit: cover; box-shadow: 0 4px 10px rgba(0,0,0,0.15); margin-bottom: 10px;">
 </a>
 
 # 🥷 Copy Ninjia
@@ -12,28 +18,25 @@
 
 <sub>全仓另经 **Fable 5**、**GPT-5.6（Sol）** 等尖端模型多轮审查与生产环境安全情景推演</sub>
 
-[![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=000000&labelColor=ffffff)](https://bun.sh/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=3178c6&labelColor=ffffff)](https://www.typescriptlang.org/)
-[![grammY](https://img.shields.io/badge/Telegram-grammY-26a5e4?logo=telegram&logoColor=26a5e4&labelColor=ffffff)](https://grammy.dev/)
-[![Gemini](https://img.shields.io/badge/AI-Gemini_3.1_Flash_Lite-8e75ff?logo=googlegemini&logoColor=8e75ff&labelColor=ffffff)](https://ai.google.dev/)
+<p align="center">
+  <a href="https://bun.sh/"><img src="https://img.shields.io/badge/Bun-v1.3+-f9f1e1?style=flat-square&logo=bun&logoColor=000000" alt="Bun"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
+  <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
+</p>
 
-[![100% AI-written](https://img.shields.io/badge/code-100%25_AI--written-e91e63?labelColor=ffffff)](#-纯-ai-开发)
-[![Audited by frontier models](https://img.shields.io/badge/audited_by-Fable_5_%C2%B7_GPT--5.6_%28Sol%29-6d4aff?labelColor=ffffff)](#-纯-ai-开发)
-[![Tests](https://img.shields.io/badge/tests-639_pass-2ea44f?labelColor=ffffff)](#-开发)
-[![Coverage](https://img.shields.io/badge/coverage-91.8%25_lines_%C2%B7_90.1%25_funcs-2ea44f?labelColor=ffffff)](#-开发)
+<p align="center">
+  <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
+  <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-639_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-91.8%25-2ea44f?style=flat-square" alt="Coverage"></a>
+</p>
 
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
 
-<a href="#-纯-ai-开发"><kbd> 🧬 纯 AI 开发 </kbd></a>
-<a href="#-它能做什么"><kbd> ✨ 能做什么 </kbd></a>
-<a href="#-复读模式"><kbd> 🎭 复读模式 </kbd></a>
-<a href="#-ai-流水线"><kbd> 🧠 AI 流水线 </kbd></a>
-<a href="#️-入群验证与-anti-raid"><kbd> 🛡️ 守群 </kbd></a>
-<a href="#-命令与权限"><kbd> 🎮 命令 </kbd></a>
-<a href="#-快速开始"><kbd> 🚀 快速开始 </kbd></a>
-<a href="#️-架构"><kbd> 🏗️ 架构 </kbd></a>
-<a href="#-数据与可靠性"><kbd> 💾 数据 </kbd></a>
-<a href="#-开发"><kbd> 🧪 开发 </kbd></a>
+---
+
+🧬 [纯 AI 开发](#-纯-ai-开发) • ✨ [它能做什么](#-它能做什么) • 🎭 [复读模式](#-复读模式) • 🧠 [AI 流水线](#-ai-流水线) • 🛡️ [入群验证与 Anti-Raid](#️-入群验证与-anti-raid) • 🎮 [命令与权限](#-命令与权限) • 🚀 [快速开始](#-快速开始) • 🏗️ [架构](#️-架构) • 💾 [数据与可靠性](#-数据与可靠性) • 🧪 [开发](#-开发)
 
 </div>
 
@@ -56,21 +59,48 @@
 
 ## ✨ 它能做什么
 
-<table>
+<table width="100%">
 <tr>
-<td align="center" width="33%">🪞<br/><b>精准复读</b><br/><sub>锁定用户或频道后逐条复读，支持原样、反转、加「喵~」、翻译日语四种模式</sub></td>
-<td align="center" width="33%">🥷<br/><b>偷头像</b><br/><sub><code>/copy</code> 自动换成目标头像；<code>/steal_icon</code> 也能只偷头像、不进入复读状态</sub></td>
-<td align="center" width="33%">🤖<br/><b>AI 群聊</b><br/><sub>Gemini 人设回复、实时 Google 搜索、东京天气工具、文字/贴纸/反应/生图统一 function calling</sub></td>
+<td align="left" valign="top" width="33%">
+  <h4>🪞 精准复读</h4>
+  <p>锁定用户或频道后逐条复读，支持原样、反转、加「喵~」以及日语翻译等四种复读模式。</p>
+</td>
+<td align="left" valign="top" width="33%">
+  <h4>🥷 偷头像</h4>
+  <p><code>/copy</code> 自动同步目标头像，或通过 <code>/steal_icon</code> 仅复制头像而不启动复读状态。</p>
+</td>
+<td align="left" valign="top" width="33%">
+  <h4>🤖 AI 群聊</h4>
+  <p>基于 Gemini 人设进行智能回复，集成实时搜索与工具调用，统一处理文字/贴纸/反应等交互。</p>
+</td>
 </tr>
 <tr>
-<td align="center">👁️<br/><b>多模态与生图</b><br/><sub>识别图片、静态/动态贴纸和 GIF 封面帧；也能按明确请求生成或参考现有素材编辑图片</sub></td>
-<td align="center">🧠<br/><b>群聊记忆</b><br/><sub>50～100 条逐字上下文 + 最多 5 轮压缩摘要，并定期原子落盘恢复</sub></td>
-<td align="center">🛡️<br/><b>入群验证</b><br/><sub>新成员 90 秒按钮验证，支持机器人由白名单用户代点、管理员拉人豁免、评论区感知</sub></td>
+<td align="left" valign="top">
+  <h4>👁️ 多模态与生图</h4>
+  <p>支持识别图片、动态贴纸和 GIF 帧，能按需生成新图片或对现有素材进行智能编辑。</p>
+</td>
+<td align="left" valign="top">
+  <h4>🧠 群聊记忆</h4>
+  <p>滚动维护 50~100 条上下文及多轮摘要压缩，结合原子落盘策略，实现极高可靠性恢复。</p>
+</td>
+<td align="left" valign="top">
+  <h4>🛡️ 入群验证</h4>
+  <p>提供新成员 90 秒限时按钮验证，并支持白名单担保点按、管理员邀请免验和评论区感知。</p>
+</td>
 </tr>
 <tr>
-<td align="center">🚨<br/><b>Anti-Raid</b><br/><sub>60 秒内第 46 位新人触发 5 分钟邀请锁定，重启后自动接管并恢复原权限</sub></td>
-<td align="center">🎲<br/><b>今日运势</b><br/><sub>Telegram Inline Mode 抽签，日级密钥保证重启前后预览一致，选中或签名回执后落盘</sub></td>
-<td align="center">🌐<br/><b>跨群管理</b><br/><sub><code>/kick</code> 在机器人拥有管理员权限的所有已知群中同步封禁目标</sub></td>
+<td align="left" valign="top">
+  <h4>🚨 Anti-Raid</h4>
+  <p>监测入群频率，触发阈值自动锁定群组邀请并自动处置可疑分子，重启后无缝恢复状态。</p>
+</td>
+<td align="left" valign="top">
+  <h4>🎲 今日运势</h4>
+  <p>采用 Inline Mode 实现确定性抽签，配合日级哈希密钥保证重启后状态与签名回执一致。</p>
+</td>
+<td align="left" valign="top">
+  <h4>🌐 跨群管理</h4>
+  <p><code>/kick</code> 命令支持对已知所有机器人管理群进行多群联动同步封禁，实现一体化群组防线。</p>
+</td>
 </tr>
 </table>
 
@@ -96,16 +126,23 @@
 
 ```mermaid
 flowchart TD
-    U(["📨 Telegram update"]) --> TXT["文本"]
-    U --> MED["图片 / 贴纸 / GIF"]
-    MED -- 异步视觉描述 --> MEM["AI Worker 滚动记忆"]
+    %% 样式定义以增强视觉效果
+    classDef input fill:#2e1f4d,stroke:#8e75ff,stroke-width:2px,color:#e8e3f5;
+    classDef process fill:#1b2234,stroke:#3b82f6,stroke-width:1.5px,color:#e2e8f0;
+    classDef ai fill:#1e2d24,stroke:#10b981,stroke-width:2px,color:#e6f4ea;
+    classDef action fill:#2a2b36,stroke:#a855f7,stroke-width:1.5px,color:#f3e8ff;
+
+    U(["📨 Telegram update"]):::input --> TXT["文本"]:::process
+    U --> MED["图片 / 贴纸 / GIF"]:::process
+    MED -- 异步视觉描述 --> MEM["AI Worker 滚动记忆"]:::ai
     TXT --> MEM
-    MEM --> G["Gemini + googleSearch + 自定义工具"]
-    G --> A1["💬 发文字消息"]
-    G --> A2["👍 添加反应"]
-    G --> A3["🔍 查看贴纸包"]
-    G --> A4["🎟️ 发送贴纸"]
-    G --> A5["🎨 生成图片"]
+    MEM --> G["Gemini + googleSearch + 自定义工具"]:::ai
+    
+    G --> A1["💬 发文字消息"]:::action
+    G --> A2["👍 添加反应"]:::action
+    G --> A3["🔍 查看贴纸包"]:::action
+    G --> A4["🎟️ 发送贴纸"]:::action
+    G --> A5["🎨 生成图片"]:::action
 ```
 
 <table width="100%">
@@ -240,10 +277,18 @@ bun run start     # 启动长轮询
 
 ```mermaid
 flowchart TD
-    MAIN["<b>🧵 主线程</b><br/>grammY runner + 按群 sequentialize<br/>命令与自动消息流水线<br/>全局 copy 状态 / 群状态镜像<br/>StateStore：state.json latest-only 原子写与失败重试"]
-    AI["<b>🤖 AI Worker</b><br/>Gemini 多轮工具调用<br/>对话滚动、摘要压缩、视觉理解<br/>分群限频、并发闸与溢出排队"]
-    RAID["<b>🛡️ Anti-Raid Worker</b><br/>验证状态机 · 锁定状态机<br/>Telegram 管理副作用解释器"]
-    DISK["<b>💾 Disk I/O Worker</b><br/>error 日志<br/>AI 记忆 / 贴纸目录原子快照<br/>每日运势 / 待验证状态的按日追加文件与截断修复"]
+    %% 样式定义以增强视觉效果
+    classDef main fill:#1e1e2e,stroke:#89b4fa,stroke-width:2.5px,color:#cdd6f4;
+    classDef worker fill:#181825,stroke:#cba6f7,stroke-width:2px,color:#cdd6f4;
+
+    MAIN["<b>🧵 主线程 (Main Thread)</b><br/>grammY runner + 按群 sequentialize<br/>命令与自动消息流水线<br/>全局 copy 状态 / 群状态镜像<br/>StateStore：state.json 原子写与重试"]:::main
+    
+    AI["<b>🤖 AI Worker</b><br/>Gemini 多轮工具调用<br/>对话滚动、摘要压缩、视觉理解<br/>分群限频、并发闸与溢出排队"]:::worker
+    
+    RAID["<b>🛡️ Anti-Raid Worker</b><br/>验证状态机 · 锁定状态机<br/>Telegram 管理副作用解释器"]:::worker
+    
+    DISK["<b>💾 Disk I/O Worker</b><br/>Error 日志<br/>AI 记忆 / 贴纸目录原子快照<br/>每日运势 / 待验证状态按日追加与修复"]:::worker
+
     MAIN --> AI
     MAIN --> RAID
     MAIN --> DISK
@@ -307,14 +352,14 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 
 ## 🧪 开发
 
-<table align="center">
-<tr>
-<td align="center"><b>639</b><br/><sub>测试全部通过</sub></td>
-<td align="center"><b>101</b><br/><sub>测试文件</sub></td>
-<td align="center"><b>2,517</b><br/><sub>断言</sub></td>
-<td align="center"><b>90.06%</b><br/><sub>函数覆盖率</sub></td>
-<td align="center"><b>91.82%</b><br/><sub>行覆盖率</sub></td>
-</tr>
+<table align="center" width="100%">
+  <tr>
+    <td align="center" width="20%">🚀 <b>639</b><br/>测试全部通过</td>
+    <td align="center" width="20%">📂 <b>101</b><br/>测试文件</td>
+    <td align="center" width="20%">🔬 <b>2,517</b><br/>断言总数</td>
+    <td align="center" width="20%">🎯 <b>90.06%</b><br/>函数覆盖率</td>
+    <td align="center" width="20%">📈 <b>91.82%</b><br/>行覆盖率</td>
+  </tr>
 </table>
 
 ```bash
