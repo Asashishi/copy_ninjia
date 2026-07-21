@@ -43,13 +43,14 @@
 
 这个仓库里的每一行生产代码、每一个测试用例，连同这份 README 本身，都出自 AI 之手。人类不写代码，但从未离席：负责架构设计，并和 AI 一起审查了每一次提交。
 
-| 环节 | 由谁完成 | 做了什么 |
-| --- | --- | --- |
-| 📐 架构设计 | **Asashishi**（本项目唯一的人类） | 系统边界、Worker 拆分、持久化与恢复策略的设计与裁决 |
-| ⌨️ 编码实现 | **Claude Code** · **Codex** · **Antigravity** | 100% 的生产代码、测试与文档 |
-| 🧾 提交审查 | **Asashishi** × AI | 每一次提交都经人类与 AI 共同审查后才落库 |
-| 🔬 全仓审查 | **Fable 5** · **GPT-5.6（Sol）** 等尖端模型 | 多轮全代码仓交叉审查，发现的问题直接转化为加固提交 |
-| 🛰️ 安全推演 | 同一批尖端模型 | 生产环境安全情景推演：崩溃恢复、并发竞态、恶意输入、资源耗尽等场景逐一过审 |
+<table width="100%">
+<tr><th width="14%" align="left">环节</th><th width="32%" align="left">由谁完成</th><th width="54%" align="left">做了什么</th></tr>
+<tr><td>📐&nbsp;架构设计</td><td><b>Asashishi</b>（本项目唯一的人类）</td><td>系统边界、Worker 拆分、持久化与恢复策略的设计与裁决</td></tr>
+<tr><td>⌨️&nbsp;编码实现</td><td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td><td>100% 的生产代码、测试与文档</td></tr>
+<tr><td>🧾&nbsp;提交审查</td><td><b>Asashishi</b> × AI</td><td>每一次提交都经人类与 AI 共同审查后才落库</td></tr>
+<tr><td>🔬&nbsp;全仓审查</td><td><b>Fable 5</b> · <b>GPT-5.6（Sol）</b> 等尖端模型</td><td>多轮全代码仓交叉审查，发现的问题直接转化为加固提交</td></tr>
+<tr><td>🛰️&nbsp;安全推演</td><td>同一批尖端模型</td><td>生产环境安全情景推演：崩溃恢复、并发竞态、恶意输入、资源耗尽等场景逐一过审</td></tr>
+</table>
 
 审查不是一次性仪式：从逐条提交的人机共审，到尖端模型的多轮全仓审查与安全推演，每一层结论都会回流成新的约束。下文出现的有界缓存、原子落盘、崩溃自愈与竞态防护，相当一部分正是这样长出来的。
 
@@ -107,19 +108,20 @@ flowchart TD
     G --> A5["🎨 生成图片"]
 ```
 
-| 维度 | 策略 |
-| :--- | :--- |
-| 🧩 模型 | 回复、摘要、视觉描述使用 `gemini-3.1-flash-lite`；生成或编辑图片使用 `gemini-3.1-flash-lite-image` |
-| 🎯 触发 | 回复机器人或 `@机器人` 时必定触发；普通文字和媒体评价共用按群活跃度的动态概率。当前消息先计入近 1 小时窗口，因此冷群第一条为 1/174；窗口内达到 165 条后封底为 1/10。活跃度只存内存，空闲满一小时或重启后回到冷启动 |
-| 🚦 同群并发 | 每群最多 3 轮 Gemini 工具对话在途；直接触发进入有界队列，随机触发在满载时丢弃 |
-| ⏱️ 限频 | 每群 5 分钟最多启动 150 轮；超限提示本身也有冷却 |
-| 🔧 工具 | 同一请求真实注册内置 `googleSearch`，并提供东京天气、`send_message`、`add_reaction`、`view_sticker_pack`、`send_sticker`、`generate_image` 等函数工具；提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 `send_message`，图片、贴纸或反应完成后的最终正文不会被当作额外发言 |
-| 🛡️ 安全过滤 | Google 可调的骚扰、仇恨、露骨和危险内容统一设为 `BLOCK_NONE`，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效 |
-| 🕰️ 时间 | 每次请求注入东京当前时间，每条转录消息保留记录时刻 |
-| 🧠 记忆 | 50～100 条逐字消息，加最多 5 × 50 条冷历史摘要，总跨度约 300～350 条；Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群 |
-| 🖼️ 多模态 | 图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。`memory/stickers/` 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录 |
-| 🎨 生图 | 只有直接回复或 `@机器人` 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，`SUPER_ADMIN_USER_ID` 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片 |
-| 🗜️ 压缩背压 | 每群最多保留 5 个压缩任务，API 长时间变慢时有界降级，不无限堆积消息批次 |
+<table width="100%">
+<tr><th width="13%" align="left">维度</th><th width="87%" align="left">策略</th></tr>
+<tr><td>🧩&nbsp;模型</td><td>回复、摘要、视觉描述使用 <code>gemini-3.1-flash-lite</code>；生成或编辑图片使用 <code>gemini-3.1-flash-lite-image</code></td></tr>
+<tr><td>🎯&nbsp;触发</td><td>回复机器人或 <code>@机器人</code> 时必定触发；普通文字和媒体评价共用按群活跃度的动态概率。当前消息先计入近 1 小时窗口，因此冷群第一条为 1/174；窗口内达到 165 条后封底为 1/10。活跃度只存内存，空闲满一小时或重启后回到冷启动</td></tr>
+<tr><td>🚦&nbsp;同群并发</td><td>每群最多 3 轮 Gemini 工具对话在途；直接触发进入有界队列，随机触发在满载时丢弃</td></tr>
+<tr><td>⏱️&nbsp;限频</td><td>每群 5 分钟最多启动 150 轮；超限提示本身也有冷却</td></tr>
+<tr><td>🔧&nbsp;工具</td><td>同一请求真实注册内置 <code>googleSearch</code>，并提供东京天气、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> 等函数工具；提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 <code>send_message</code>，图片、贴纸或反应完成后的最终正文不会被当作额外发言</td></tr>
+<tr><td>🛡️&nbsp;安全过滤</td><td>Google 可调的骚扰、仇恨、露骨和危险内容统一设为 <code>BLOCK_NONE</code>，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效</td></tr>
+<tr><td>🕰️&nbsp;时间</td><td>每次请求注入东京当前时间，每条转录消息保留记录时刻</td></tr>
+<tr><td>🧠&nbsp;记忆</td><td>50～100 条逐字消息，加最多 5 × 50 条冷历史摘要，总跨度约 300～350 条；Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
+<tr><td>🖼️&nbsp;多模态</td><td>图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。<code>memory/stickers/</code> 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录</td></tr>
+<tr><td>🎨&nbsp;生图</td><td>只有直接回复或 <code>@机器人</code> 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，<code>SUPER_ADMIN_USER_ID</code> 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片</td></tr>
+<tr><td>🗜️&nbsp;压缩背压</td><td>每群最多保留 5 个压缩任务，API 长时间变慢时有界降级，不无限堆积消息批次</td></tr>
+</table>
 
 人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)。
 
@@ -145,18 +147,19 @@ flowchart TD
 
 ## 🎮 命令与权限
 
-| 命令 | 权限 | 说明 |
-| :--- | :---: | :--- |
-| `/copy` `/r_copy` `/nya_copy` `/ja_copy` | 群成员 | 启动相应复读模式 |
-| `/stop_copy` | 群成员 | 停止当前全局复读 |
-| `/steal_icon` | 群成员 | 只偷头像 |
-| `/quiet [1-15]` | 群成员 | 暂停随机插话、随机复读等主动行为，默认 3 分钟 |
-| `/unquiet` | 群成员 | 提前解除安静模式 |
-| `/kick` | `PRIVILEGED_USERS_ID` | 在所有机器人管理的群中永久封禁目标 |
-| `/ai_chat enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群 AI 闲聊 |
-| `/ja_copy enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群日语翻译能力（默认关闭） |
-| `/init enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群整个业务处理入口 |
-| `/send <群组id>` `/send finish` | `SUPER_ADMIN_USER_ID`（仅私聊） | 与机器人私聊时开启/结束一轮中转：期间这个私聊发的每条消息都会原样转发进目标群一次。开启前会先探一次目标是否可达，中转期间目标失联会自动终止并告知。中转状态随 `state.json` 持久化，重启不丢；不进 Telegram 命令菜单，群里或非本人触发均无任何反应 |
+<table width="100%">
+<tr><th width="26%" align="left">命令</th><th width="19%" align="center">权限</th><th width="55%" align="left">说明</th></tr>
+<tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">群成员</td><td>启动相应复读模式</td></tr>
+<tr><td><code>/stop_copy</code></td><td align="center">群成员</td><td>停止当前全局复读</td></tr>
+<tr><td><code>/steal_icon</code></td><td align="center">群成员</td><td>只偷头像</td></tr>
+<tr><td><code>/quiet [1-15]</code></td><td align="center">群成员</td><td>暂停随机插话、随机复读等主动行为，默认 3 分钟</td></tr>
+<tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
+<tr><td><code>/kick</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>在所有机器人管理的群中永久封禁目标</td></tr>
+<tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群 AI 闲聊</td></tr>
+<tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群日语翻译能力（默认关闭）</td></tr>
+<tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群整个业务处理入口</td></tr>
+<tr><td><code>/send &lt;群组id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>与机器人私聊时开启/结束一轮中转：期间这个私聊发的每条消息都会原样转发进目标群一次。开启前会先探一次目标是否可达，中转期间目标失联会自动终止并告知。中转状态随 <code>state.json</code> 持久化，重启不丢；不进 Telegram 命令菜单，群里或非本人触发均无任何反应</td></tr>
+</table>
 
 > [!TIP]
 > `/luck_challenge` 不占斜杠命令：在任意聊天输入 `@机器人用户名 [所求事项]` 使用 Inline Mode。需在 BotFather 开启 Inline Mode，并建议通过 `/setinlinefeedback` 开启 100% 结果反馈。内联查询采用全局滑动窗口限流，每 90 秒最多应答 300 次。
@@ -173,12 +176,13 @@ flowchart TD
 <details>
 <summary><b>📦 硬件配置参考</b>（按部署规模展开）</summary>
 
-| 部署规模 | 建议配置 | 说明 |
-| :--- | :--- | :--- |
-| 入门（低活跃、文本为主、仅少量群开启 AI） | 2 vCPU / 2 GB RAM / 本地 SSD | 可以运行，但多 Worker 会争用 CPU，不适合 15 个活跃群或媒体洪峰 |
-| 轻量生产（文本为主、仅少量群开启 AI） | 4 vCPU / 2 GB RAM / 本地 SSD | 2 GB 不适合作为媒体洪峰下的内存保障 |
-| 推荐生产（约 15 个 1000-3000 人活跃群） | 4 vCPU / 4 GB RAM / 本地 SSD | — |
-| 全部群开启 AI 且图片、贴纸较多 | 4 vCPU / 8 GB RAM | 给媒体下载、Base64 编码和图片转码预留峰值空间 |
+<table width="100%">
+<tr><th width="33%" align="left">部署规模</th><th width="26%" align="left">建议配置</th><th width="41%" align="left">说明</th></tr>
+<tr><td>入门（低活跃、文本为主、仅少量群开启 AI）</td><td>2 vCPU / 2 GB RAM / 本地 SSD</td><td>可以运行，但多 Worker 会争用 CPU，不适合 15 个活跃群或媒体洪峰</td></tr>
+<tr><td>轻量生产（文本为主、仅少量群开启 AI）</td><td>4 vCPU / 2 GB RAM / 本地 SSD</td><td>2 GB 不适合作为媒体洪峰下的内存保障</td></tr>
+<tr><td>推荐生产（约 15 个 1000-3000 人活跃群）</td><td>4 vCPU / 4 GB RAM / 本地 SSD</td><td>—</td></tr>
+<tr><td>全部群开启 AI 且图片、贴纸较多</td><td>4 vCPU / 8 GB RAM</td><td>给媒体下载、Base64 编码和图片转码预留峰值空间</td></tr>
+</table>
 
 单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自 Telegram 单 Bot API、Gemini 配额和实际消息/媒体速率，而不是群成员总数。
 
@@ -247,36 +251,38 @@ flowchart TD
 
 关键目录：
 
-| 路径 | 职责 |
-| --- | --- |
-| `src/app/` | 启动/退出生命周期、handler 注册与命令菜单 |
-| `src/commands/` | 显式命令处理 |
-| `src/auto/` | 自动复读、AI 记录与触发、反应同步 |
-| `src/states/` | 无 I/O 的验证、锁定状态转移与回复准入规则实现 |
-| `src/config/` | 贴纸/反应配置的严格 schema、惰性加载与启动校验 |
-| `src/libs/` | 原子文件、有界 I/O、通用 schema 辅助及并发工具 |
-| `src/workers/` | AI、守群、磁盘三个独立 Worker |
-| `src/ai/` | Gemini、视觉、贴纸目录及工具 |
-| `src/infra/` | Telegram 客户端、Worker 宿主与持久化基础设施；`storage/` 收口实例锁、状态存储和启动清理 |
-| `src/cache/` | 按领域拆分的运行时状态容器 |
-| `src/consts/` | 调参常量与路径 |
-| `src/types/` | 跨模块协议、领域类型及 `states/` 对应的状态机契约 |
-| `test/` | 与源码结构对应的 Bun 单元测试 |
+<table width="100%">
+<tr><th width="18%" align="left">路径</th><th width="82%" align="left">职责</th></tr>
+<tr><td><code>src/app/</code></td><td>启动/退出生命周期、handler 注册与命令菜单</td></tr>
+<tr><td><code>src/commands/</code></td><td>显式命令处理</td></tr>
+<tr><td><code>src/auto/</code></td><td>自动复读、AI 记录与触发、反应同步</td></tr>
+<tr><td><code>src/states/</code></td><td>无 I/O 的验证、锁定状态转移与回复准入规则实现</td></tr>
+<tr><td><code>src/config/</code></td><td>贴纸/反应配置的严格 schema、惰性加载与启动校验</td></tr>
+<tr><td><code>src/libs/</code></td><td>原子文件、有界 I/O、通用 schema 辅助及并发工具</td></tr>
+<tr><td><code>src/workers/</code></td><td>AI、守群、磁盘三个独立 Worker</td></tr>
+<tr><td><code>src/ai/</code></td><td>Gemini、视觉、贴纸目录及工具</td></tr>
+<tr><td><code>src/infra/</code></td><td>Telegram 客户端、Worker 宿主与持久化基础设施；<code>storage/</code> 收口实例锁、状态存储和启动清理</td></tr>
+<tr><td><code>src/cache/</code></td><td>按领域拆分的运行时状态容器</td></tr>
+<tr><td><code>src/consts/</code></td><td>调参常量与路径</td></tr>
+<tr><td><code>src/types/</code></td><td>跨模块协议、领域类型及 <code>states/</code> 对应的状态机契约</td></tr>
+<tr><td><code>test/</code></td><td>与源码结构对应的 Bun 单元测试</td></tr>
+</table>
 
 ## 💾 数据与可靠性
 
 下表中的位置均相对于运行时数据根目录；默认是项目根目录，可通过
 `COPY_NINJIA_DATA_ROOT` 修改。
 
-| 数据 | 位置 | 写入策略 |
-| --- | --- | --- |
-| 群状态 / copy 状态 / 锁定镜像 | `state.json` | 只保留“在写 + 最新待写”两份快照，失败后台重试，临时文件 + fsync + 原子 rename |
-| AI 群聊记忆 | `memory/ai/` | 每群独立快照，30 秒周期 + 停机 flush |
-| 贴纸描述目录 | `memory/stickers/` | 每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用 |
-| 今日运势 | `memory/luck/` | 结果按东京日期增量追加并修复尾部截断；`receipt-secret.json` 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 `0644` |
-| 待验证成员 | `memory/anti-raid/` | 当日 JSON 按 `chatId:userId` 键增量追加；普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件 |
-| error 日志 | `logs/` | Disk I/O Worker 统一批量追加 |
-| 运行实例 | `bot.lock` | 原子维护的多 Bot 进程注册表 |
+<table width="100%">
+<tr><th width="21%" align="left">数据</th><th width="17%" align="left">位置</th><th width="62%" align="left">写入策略</th></tr>
+<tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code></td><td>只保留“在写 + 最新待写”两份快照，失败后台重试，临时文件 + fsync + 原子 rename</td></tr>
+<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush</td></tr>
+<tr><td>贴纸描述目录</td><td><code>memory/stickers/</code></td><td>每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用</td></tr>
+<tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code></td></tr>
+<tr><td>待验证成员</td><td><code>memory/anti-raid/</code></td><td>当日 JSON 按 <code>chatId:userId</code> 键增量追加；普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件</td></tr>
+<tr><td>error 日志</td><td><code>logs/</code></td><td>Disk I/O Worker 统一批量追加</td></tr>
+<tr><td>运行实例</td><td><code>bot.lock</code></td><td>原子维护的多 Bot 进程注册表</td></tr>
+</table>
 
 > [!WARNING]
 > `memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据；项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请通过主机访问控制限制机器上的用户，并控制备份范围与保留周期。备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。`logs/`、`memory/`、`state.json`、凭据和运行锁均不会提交到 Git。
