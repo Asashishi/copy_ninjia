@@ -1,6 +1,7 @@
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, terminateAiChat } from "../aiChat";
 import { drainAntiRaid, hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
 import { restoreLuckState } from "../commands";
+import { getMoodConfig } from "../config/mood";
 import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
 import { drainAvatarUpdates } from "../copy/avatarQueue";
@@ -38,6 +39,7 @@ export const lifecycleDependencies = {
   flushStateToDisk,
   getAllChatStates,
   getGlobalCopyState,
+  getMoodConfig,
   getReactionConfig,
   getStickerConfig,
   hydrateAiMemory,

@@ -12,6 +12,7 @@ const acquireSingleInstanceLock = mock(async (): Promise<void> => { calls.push("
 const releaseSingleInstanceLock = mock(async (): Promise<void> => { calls.push("releaseLock"); });
 const getStickerConfig = mock((): object => ({}));
 const getReactionConfig = mock((): object => ({}));
+const getMoodConfig = mock((): object => ({}));
 const initTelegramClients = mock((): void => { calls.push("initTelegram"); });
 let diskIOFatalHandler: ((error: Error) => void) | undefined;
 const initDiskIO = mock((options?: { onFatal?: (error: Error) => void }): void => {
@@ -80,6 +81,7 @@ const testDependencies = {
   flushStateToDisk,
   getAllChatStates,
   getGlobalCopyState,
+  getMoodConfig,
   getReactionConfig,
   getStickerConfig,
   hydrateAiMemory,
@@ -123,6 +125,7 @@ beforeEach(() => {
     releaseSingleInstanceLock,
     getStickerConfig,
     getReactionConfig,
+    getMoodConfig,
     initTelegramClients,
     initDiskIO,
     cleanupOrphanedTempFiles,

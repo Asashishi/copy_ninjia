@@ -1,6 +1,6 @@
 import { chatMoodExpiresAts, chatMoods } from "../cache/aiChat/mood";
+import { getMoodConfig } from "../config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../consts/aiChat/mood";
-import { MOOD_OPTIONS } from "../consts/aiChat/prompts/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../consts/weather";
 import { getTokyoHour } from "../libs/time";
 import { currentTokyoWeather } from "./weather";
@@ -10,8 +10,9 @@ import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood
  * 各群「心情」系统：心情只随时间自然轮换——抽到一个心情后带一个随机
  * 寿命（区间见 consts/aiChat/mood.ts），到期后下次拼提示词时重抽，与群里
  * 是否有人说话无关。重抽时按当前天气/时段微调各心情的抽中概率（大晴天
- * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等，具体倍率
- * 见 consts/aiChat/prompts/mood.ts）。两个内存缓存
+ * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等）。心情档位
+ * 的文案、base weight 与倍率来自部署配置 config/mood.json（严格解码见
+ * config/mood.ts，主进程持锁后预热、Worker 首次抽取时惰性加载）。两个内存缓存
  * （chatMoods/chatMoodExpiresAts，见 cache/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空、下次用到时重抽。
  *
@@ -73,14 +74,14 @@ export function computeAdjustedWeight(mood: MoodOption, weather: WeatherBucket |
 
 /**
  * 按当前天气/时段调整过的权重表抽一个心情：现查一次天气分桶与时段分桶，
- * 把 MOOD_OPTIONS 的 base weight 逐个按各自倍率调整后，在
+ * 把 config/mood.json 各档位的 base weight 逐个按各自倍率调整后，在
  * [0, 调整后总权重) 里掷一个连续骰子累加匹配——不再是 LUCK_TIERS 那种
  * 凑满 100 的固定整数区间，因为倍率之后权重不再是整数、总和也不再是 100。
  */
 function pickMood(): MoodOption {
   const weather: WeatherBucket | null = currentWeatherBucket();
   const time: TimeBucket = classifyTimeBucket(getTokyoHour());
-  const weighted: { mood: MoodOption; weight: number }[] = MOOD_OPTIONS.map((mood) => ({
+  const weighted: { mood: MoodOption; weight: number }[] = getMoodConfig().moods.map((mood) => ({
     mood,
     weight: computeAdjustedWeight(mood, weather, time),
   }));

@@ -167,7 +167,7 @@ flowchart TD
 <tr><td>🗜️&nbsp;压缩背压</td><td>每群执行中与排队中的压缩任务合计最多 21 个，API 长时间变慢时有界降级，不无限堆积消息批次</td></tr>
 </table>
 
-人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)。
+人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)，心情档位（文案、权重与天气/时段倍率，权重必须是正整数且总和恰好为 100）在 [`config/mood.json`](config/mood.json)。
 
 <p align="right"><sub><a href="#-copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
@@ -248,7 +248,7 @@ cp .env.example .env
 `PRIVILEGED_USERS_ID` 可留空，多项之间用英文逗号分隔。
 
 `COPY_NINJIA_DATA_ROOT` 可选，用于单独指定运行时生成数据的根目录。设置后，
-`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；人设、贴纸/反应配置
+`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；人设、贴纸/反应/心情配置
 与 `g-auth.json` 仍从项目根目录读取。留空时保持原行为，数据直接位于项目根目录。
 并行部署多个 Bot 时，每个实例必须使用不同的数据根目录。
 
@@ -309,7 +309,7 @@ flowchart TD
 <tr><td><code>src/commands/</code></td><td>显式命令处理</td></tr>
 <tr><td><code>src/auto/</code></td><td>自动复读、AI 记录与触发、反应同步</td></tr>
 <tr><td><code>src/states/</code></td><td>无 I/O 的验证、锁定状态转移与回复准入规则实现</td></tr>
-<tr><td><code>src/config/</code></td><td>贴纸/反应配置的严格 schema、惰性加载与启动校验</td></tr>
+<tr><td><code>src/config/</code></td><td>贴纸/反应/心情配置的严格 schema、惰性加载与启动校验</td></tr>
 <tr><td><code>src/libs/</code></td><td>原子文件、有界 I/O、通用 schema 辅助及并发工具</td></tr>
 <tr><td><code>src/workers/</code></td><td>AI、守群、磁盘三个独立 Worker</td></tr>
 <tr><td><code>src/ai/</code></td><td>Gemini、视觉、贴纸目录及工具</td></tr>

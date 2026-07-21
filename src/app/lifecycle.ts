@@ -74,6 +74,7 @@ export class ApplicationLifecycle {
     // 由 finally 释放实例锁；各 Worker 在自己的 isolate 中复用同一解析器。
     this.dependencies.getStickerConfig();
     this.dependencies.getReactionConfig();
+    this.dependencies.getMoodConfig();
     this.dependencies.initTelegramClients();
     this.dependencies.initDiskIO({ onFatal: this.handleDiskIOFatal });
     this.diskIOInitialized = true;

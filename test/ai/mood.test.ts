@@ -5,8 +5,8 @@ import {
   computeAdjustedWeight,
   currentMoodInstruction,
 } from "../../src/ai/mood";
+import { getMoodConfig } from "../../src/config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../src/consts/aiChat";
-import { MOOD_OPTIONS } from "../../src/consts/aiChatPrompts";
 import type { MoodOption } from "../../src/types";
 
 /**
@@ -14,9 +14,10 @@ import type { MoodOption } from "../../src/types";
  * 用例注入独立 Map，不碰 Worker 全局的 chatMoods/chatMoodExpiresAts（同
  * test/ai/stickers/sendLock.test.ts 的隔离方式）。抽中哪一档不硬编码具体
  * 心情名——只断言「roll=0 落在权重表第一档」「roll 顶到上限落在最后一档」，
- * MOOD_OPTIONS 内容/顺序/条目数之后再调也不用跟着改这份测试。
+ * config/mood.json 内容/顺序/条目数之后再调也不用跟着改这份测试。
  */
 
+const MOOD_OPTIONS: readonly MoodOption[] = getMoodConfig().moods;
 const FIRST_MOOD_NAME: string = MOOD_OPTIONS[0]!.name;
 const LAST_MOOD_NAME: string = MOOD_OPTIONS[MOOD_OPTIONS.length - 1]!.name;
 

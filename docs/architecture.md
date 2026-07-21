@@ -9,8 +9,8 @@
 - 主进程先取得 `bot.lock`，再校验 `config/`，随后显式初始化 Telegram 客户端、
   Disk I/O Worker、状态恢复、AI Worker 和 Anti-Raid Worker。
 - 初始化失败和正常退出都由 `ApplicationLifecycle` 收口；只有已取得的资源才会释放或 flush。
-- 配置解析器本身无 I/O；`getStickerConfig()` / `getReactionConfig()` 在业务首次使用时
-  惰性加载，主进程会在持锁后预热，以便部署错误在联网前暴露。
+- 配置解析器本身无 I/O；`getStickerConfig()` / `getReactionConfig()` / `getMoodConfig()`
+  在业务首次使用时惰性加载，主进程会在持锁后预热，以便部署错误在联网前暴露。
 - `state.json`、`bot.lock`、`logs/` 与 `memory/` 全部从统一运行时数据根派生；
   生产缺省使用项目根目录，测试 preload 在任何生产模块 import 前注入逐隔离体的临时根，
   让真实文件 I/O 也不可能读写生产缓存。

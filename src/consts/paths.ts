@@ -28,6 +28,8 @@ export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
 // 应景贴纸 / 应景反应的配置文件（白名单、概率、情绪关键词映射）。
 export const STICKERS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "stickers.json");
 export const REACTIONS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "reactions.json");
+/** AI 心情档位配置（文案、base weight、天气/时段倍率），见 src/config/mood.ts。 */
+export const MOOD_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "mood.json");
 
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
 export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
