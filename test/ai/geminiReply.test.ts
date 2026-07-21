@@ -1,5 +1,6 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
+import { MAX_CUSTOM_TOOL_CALLS_PER_REPLY } from "../../src/consts/aiChat/tools";
 import type { ReplyToolset } from "../../src/types";
 import type { GeminiRequestResult } from "../../src/ai/gemini";
 
@@ -256,8 +257,8 @@ test("连续无效参数也计入单工具预算，达到四次后从下一请�
   expect(lastRequest.config?.tools).toEqual([]);
 });
 
-test("同一响应多调用计入总预算，最多执行十六个并在下一请求移除全部函数", async () => {
-  const names = Array.from({ length: 18 }, (_, index) => `tool_${index}`);
+test("同一响应多调用计入总预算，达到硬顶后在下一请求移除全部函数", async () => {
+  const names = Array.from({ length: MAX_CUSTOM_TOOL_CALLS_PER_REPLY + 2 }, (_, index) => `tool_${index}`);
   replies.push({
     candidates: [{
       content: {
@@ -278,7 +279,7 @@ test("同一响应多调用计入总预算，最多执行十六个并在下一�
   };
 
   await expect(callGemini(-1001, "并行调用", toolset)).resolves.toBe("预算收敛");
-  expect(execute).toHaveBeenCalledTimes(16);
+  expect(execute).toHaveBeenCalledTimes(MAX_CUSTOM_TOOL_CALLS_PER_REPLY);
   const secondRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
   expect(secondRequest.config?.tools).toEqual([]);
 });

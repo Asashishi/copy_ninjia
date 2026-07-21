@@ -29,7 +29,7 @@ import { initTelegramClients } from "../infra/telegram";
  * error 日志经 logger.ts 的转发模式回传主线程统一落盘。本文件只剩消息路由、
  * 定时 sweep 与启动编排。
  *
- * 中期记忆：镜像/热块轮换机制见 consts/aiChat.ts 的 COMPACT_BATCH_SIZE 注释；
+ * 中期记忆：镜像/热块轮换机制见 consts/aiChat/memory.ts 的 COMPACT_BATCH_SIZE 注释；
  * 轮换本身由 aiChat/rollingMemory.ts 的 pushBufferedMessage 触发、
  * aiChat/compaction.ts 的 scheduleRotation/rotateCompaction 实现。
  *

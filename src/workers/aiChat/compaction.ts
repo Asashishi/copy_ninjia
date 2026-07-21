@@ -26,7 +26,7 @@ import { currentTimeSentence } from "./timeSentence";
 
 /**
  * 中期记忆的轮换/压缩：镜像块攒满后串行执行「晋升上一轮摘要 + AI 压缩新
- * 镜像」，机制见 consts/aiChat.ts 的 COMPACT_BATCH_SIZE 注释。入口是
+ * 镜像」，机制见 consts/aiChat/memory.ts 的 COMPACT_BATCH_SIZE 注释。入口是
  * scheduleRotation，由 rollingMemory.ts 的 pushBufferedMessage 在块边界调用。
  */
 

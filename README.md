@@ -88,7 +88,7 @@
 </td>
 <td align="left" valign="top">
   <h4>🧠 群聊记忆</h4>
-  <p>滚动维护 50~100 条上下文及多轮摘要压缩，结合原子落盘策略，实现极高可靠性恢复。</p>
+  <p>滚动维护 75~150 条上下文及多轮摘要压缩，结合原子落盘策略，实现极高可靠性恢复。</p>
 </td>
 <td align="left" valign="top">
   <h4>🛡️ 入群验证</h4>
@@ -158,13 +158,13 @@ flowchart TD
 <tr><td>🎯&nbsp;触发</td><td>回复机器人或 <code>@机器人</code> 时必定触发；普通文字和媒体评价共用按群活跃度的动态概率。当前消息先计入近 1 小时窗口，因此冷群第一条为 1/174；窗口内达到 165 条后封底为 1/10。活跃度只存内存，空闲满一小时或重启后回到冷启动</td></tr>
 <tr><td>🚦&nbsp;同群并发</td><td>每群最多 3 轮 Gemini 工具对话在途；直接触发进入有界队列，随机触发在满载时丢弃</td></tr>
 <tr><td>⏱️&nbsp;限频</td><td>每群 5 分钟最多启动 150 轮；超限提示本身也有冷却</td></tr>
-<tr><td>🔧&nbsp;工具</td><td>同一请求真实注册内置 <code>googleSearch</code>，并提供东京天气、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> 等函数工具；提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 <code>send_message</code>，图片、贴纸或反应完成后的最终正文不会被当作额外发言</td></tr>
+<tr><td>🔧&nbsp;工具</td><td>同一请求真实注册内置 <code>googleSearch</code>，并提供东京天气、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> 等函数工具；每轮回复最多执行 20 次自定义函数调用。提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 <code>send_message</code>，图片、贴纸或反应完成后的最终正文不会被当作额外发言</td></tr>
 <tr><td>🛡️&nbsp;安全过滤</td><td>Google 可调的骚扰、仇恨、露骨和危险内容统一设为 <code>BLOCK_NONE</code>，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效</td></tr>
 <tr><td>🕰️&nbsp;时间</td><td>每次请求注入东京当前时间，每条转录消息保留记录时刻</td></tr>
-<tr><td>🧠&nbsp;记忆</td><td>50～100 条逐字消息，加最多 5 × 50 条冷历史摘要，总跨度约 300～350 条；Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
+<tr><td>🧠&nbsp;记忆</td><td>75～150 条逐字消息，加最多 7 × 75 条冷历史摘要，总跨度约 600～675 条；Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
 <tr><td>🖼️&nbsp;多模态</td><td>图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。<code>memory/stickers/</code> 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录</td></tr>
 <tr><td>🎨&nbsp;生图</td><td>只有直接回复或 <code>@机器人</code> 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，<code>SUPER_ADMIN_USER_ID</code> 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片</td></tr>
-<tr><td>🗜️&nbsp;压缩背压</td><td>每群最多保留 5 个压缩任务，API 长时间变慢时有界降级，不无限堆积消息批次</td></tr>
+<tr><td>🗜️&nbsp;压缩背压</td><td>每群执行中与排队中的压缩任务合计最多 21 个，API 长时间变慢时有界降级，不无限堆积消息批次</td></tr>
 </table>
 
 人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)。

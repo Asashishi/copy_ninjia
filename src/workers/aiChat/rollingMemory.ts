@@ -169,8 +169,8 @@ export function flushDirtyMemories(): void {
  *
  * buffer 只恢复最新 AI_MEMORY_HYDRATE_BUFFER_MAX（= VERBATIM_CONTEXT_MAX - 1）
  * 条：recordChatMessage 靠严格等值 `size === VERBATIM_CONTEXT_MAX` 触发轮换，
- * 若恰好灌回整 100 条，下一次 push 后 size 变 101，会永远错过这个判等，
- * 缓存无界增长。`=== COMPACT_BATCH_SIZE` 分支对恢复后 size ≥ 50 的群不再
+ * 若恰好灌回整 VERBATIM_CONTEXT_MAX 条，下一次 push 后 size 会越过该判等，
+ * 缓存无界增长。`=== COMPACT_BATCH_SIZE` 分支对恢复后 size 已达到该值的群不再
  * 触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块摘要粒度
  * 略有漂移，可接受，不为此复刻轮换状态机。
  *
