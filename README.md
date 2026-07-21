@@ -8,9 +8,9 @@
 
 <h1 align="center">
   <a href="https://t.me/copy_ninjia_bot" style="text-decoration: none;">
-    <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="48" height="48" alt="Copy Ninjia Bot 头像" style="border-radius: 50%; border: 2px solid #8e75ff; vertical-align: middle; margin-right: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+    <img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="48" height="48" alt="Copy Ninjia Bot 头像" style="border-radius: 50%; border: 2px solid #8e75ff; vertical-align: middle; margin-right: 15px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
   </a>
-  Copy Ninjia
+  <span style="vertical-align: middle;">Copy Ninjia</span>
 </h1>
 
 ### 会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人
