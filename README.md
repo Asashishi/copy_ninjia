@@ -154,7 +154,7 @@ flowchart TD
 
 <table width="100%">
 <tr><th width="13%" align="left">维度</th><th width="87%" align="left">策略</th></tr>
-<tr><td>🧩&nbsp;模型</td><td>回复、摘要、视觉描述使用 <code>gemini-3.1-flash-lite</code>；生成或编辑图片使用 <code>gemini-3.1-flash-lite-image</code></td></tr>
+<tr><td>🧩&nbsp;模型</td><td>回复、摘要、视觉描述使用 <code>gemini-3.5-flash-lite</code>；生成或编辑图片使用 <code>gemini-3.1-flash-lite-image</code></td></tr>
 <tr><td>🎯&nbsp;触发</td><td>回复机器人或 <code>@机器人</code> 时必定触发；普通文字和媒体评价共用按群活跃度的动态概率。当前消息先计入近 1 小时窗口，因此冷群第一条为 1/174；窗口内达到 165 条后封底为 1/10。活跃度只存内存，空闲满一小时或重启后回到冷启动</td></tr>
 <tr><td>🚦&nbsp;同群并发</td><td>每群最多 3 轮 Gemini 工具对话在途；直接触发进入有界队列，随机触发在满载时丢弃</td></tr>
 <tr><td>⏱️&nbsp;限频</td><td>每群 5 分钟最多启动 150 轮；超限提示本身也有冷却</td></tr>
