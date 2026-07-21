@@ -151,9 +151,10 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         const toolset: ReplyToolset = await createReplyToolset(ctx);
         const finalText: string | null = await callGemini(chatId, userContent, toolset);
 
-        // 模型没有调用 send_message、却把正文留在最终响应时，仍走同一工具
-        // 发送。只发贴纸、图片或只扣反应的轮通常没有正文，不会重复发言。
-        if (finalText && toolset.messagesSent() === 0) {
+        // 模型没有成功执行任何可见动作、却把正文留在最终响应时，仍走
+        // send_message 兜底。若贴纸、图片、反应或文字已经成功落地，尾随正文
+        // 不再形成额外发言；模型真想补充文字就必须显式调用 send_message。
+        if (finalText && toolset.actionsUsed() === 0) {
           const fallbackResult: string = await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
           let fallbackError: string | null = null;
           try {

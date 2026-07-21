@@ -12,9 +12,9 @@ import type { ForwardedLog } from "../types/diskIO";
  * - Worker 崩溃时按节流重建：Bun 里 Worker 内部一旦抛出未捕获异常（同步或
  *   async 均如此，已实测验证）就会直接终止该 Worker 线程，不需要（实际上
  *   也没法）手动 terminate，直接换新实例顶上，并经 onRespawn 重放必要状态；
- * - 放弃自愈的节流阈值/理由见 consts/workerSupervisor.ts；放弃后 post() 安静
- *   地丢弃消息——不能再对已终止的 Worker postMessage（Bun 会同步抛
- *   InvalidStateError）。
+ * - 放弃自愈的节流阈值/理由见 consts/workerSupervisor.ts；放弃后 post() 返回
+ *   false。不同 Bun 版本对不可用 Worker 的 postMessage 可能抛出或静默丢弃，
+ *   因此投递边界也把同步异常统一收敛为 false。
  */
 export interface SupervisedWorkerOptions<TMessage, TEvent> {
   /** Worker 脚本的 URL（new URL("...", import.meta.url).href）。 */
@@ -37,7 +37,7 @@ export interface SupervisedWorkerOptions<TMessage, TEvent> {
 export interface SupervisedWorkerHandle<TMessage> {
   /** 显式启动 Worker；重复调用幂等。 */
   init: () => void;
-  /** 只向已初始化且仍可用的 Worker 投递；成功返回 true，不可用时返回 false。 */
+  /** 只向已初始化且仍可用的 Worker 投递；已提交返回 true，不可用或同步拒绝时返回 false。 */
   post: (message: TMessage) => boolean;
   /** 停止当前实例并阻止迟到 onerror 触发自愈；重复调用幂等。 */
   terminate: () => Promise<void>;
@@ -104,9 +104,15 @@ export function superviseWorker<TMessage, TEvent = never>(
   return {
     init,
     post: (message: TMessage): boolean => {
-      if (worker === null) return false;
-      worker.postMessage(message);
-      return true;
+      const current: Worker | null = worker;
+      if (current === null) return false;
+      try {
+        current.postMessage(message);
+        return true;
+      } catch (error: unknown) {
+        logger.error(`${options.label} postMessage failed:`, error);
+        return false;
+      }
     },
     terminate: (): Promise<void> => {
       const current: Worker | null = worker;

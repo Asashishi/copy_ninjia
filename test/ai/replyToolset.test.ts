@@ -28,6 +28,7 @@ mock.module("../../src/libs/sleep", () => ({
 }));
 
 const { SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
+const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../src/consts/aiChat/prompts/tools");
 const { createReplyToolset } = await import("../../src/ai/tools/replyToolset");
 
 beforeEach(() => {
@@ -62,6 +63,12 @@ test("工具集真实注册 googleSearch，并同时提供函数行动工具", a
   expect(toolset.tools[0]?.googleSearch).toEqual({});
   expect(toolset.tools[1]?.functionDeclarations?.length).toBeGreaterThan(0);
   expect(toolset.definitions.map((definition) => definition.name)).not.toContain("delete_own_message");
+});
+
+test("回复提示明确要求所有可见文本经 send_message，最终响应不得夹带正文", () => {
+  expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("任何主回复、图片/贴纸说明或动作后的补充文字都必须显式调用本工具");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("所有需要让群友看到的文本发言都必须显式调用 send_message");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("最终响应保持空白");
 });
 
 describe("isEmojiOnly", () => {

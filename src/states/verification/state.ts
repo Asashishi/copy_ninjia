@@ -1,10 +1,6 @@
 /** 早于入群更新到达、被暂存下来的评论区留言。 */
 export interface RecentComment {
   messageId: number;
-  /** 收到评论投递的时刻；评论先到时仍按真实消息时刻计入窗口。 */
-  observedAt: number;
-  /** 是否直接回复频道帖；该操作足以确证真人并豁免验证。 */
-  repliesToChannelPost: boolean;
 }
 
 /** 正在等待点击验证按钮的成员。 */

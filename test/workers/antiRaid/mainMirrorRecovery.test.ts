@@ -372,7 +372,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     );
   });
 
-  test("入群事件晚到时仍转交评论区线索，普通非待验证消息不进入 Worker", async () => {
+  test("入群事件晚到时仍转交直属评论与楼中楼线索，普通非待验证消息不进入 Worker", async () => {
     workerPosts.length = 0;
     const comment = antiRaid.handleGroupJoinVerification({
       chat: { id: -4001 },
@@ -394,10 +394,30 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     await comment;
 
     workerPosts.length = 0;
-    await antiRaid.handleGroupJoinVerification({
+    const threadReply = antiRaid.handleGroupJoinVerification({
       chat: { id: -4001 },
       from: { id: 89 },
       message_id: 56,
+      message_thread_id: 55,
+    } as never, 99);
+    await Bun.sleep(0);
+    const threadBarrier = workerPosts.at(-1);
+    expect(workerPosts[0]).toMatchObject({
+      type: "message",
+      chatId: -4001,
+      userId: 89,
+      isThreadReply: true,
+    });
+    if (threadBarrier?.type === "barrier") {
+      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: threadBarrier.barrierId });
+    }
+    await threadReply;
+
+    workerPosts.length = 0;
+    await antiRaid.handleGroupJoinVerification({
+      chat: { id: -4001 },
+      from: { id: 90 },
+      message_id: 57,
     } as never, 99);
     expect(workerPosts).toHaveLength(0);
   });

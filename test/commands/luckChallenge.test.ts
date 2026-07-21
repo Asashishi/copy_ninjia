@@ -8,16 +8,37 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 const postDiskIOMock = mock((..._args: unknown[]): void => {});
 const onDiskIORespawnMock = mock((..._args: unknown[]): void => {});
 const relayLogMessageMock = mock((..._args: unknown[]): void => {});
+const logApiErrorMock = mock((..._args: unknown[]): void => {});
+const loggerErrorMock = mock((..._args: unknown[]): void => {});
+let ensureLuckReceiptSecretError: unknown = null;
+
+const ensureLuckReceiptSecretMock = mock(async (day: string) => {
+  if (ensureLuckReceiptSecretError !== null) throw ensureLuckReceiptSecretError;
+  return {
+    version: 1 as const,
+    day,
+    key: Buffer.alloc(32, 7).toString("base64url"),
+  };
+});
+
+mock.module("../../src/infra/telegram", () => ({
+  logApiError: logApiErrorMock,
+}));
+
+mock.module("../../src/infra/logger", () => ({
+  logger: {
+    log: () => {},
+    info: () => {},
+    warn: () => {},
+    error: loggerErrorMock,
+  },
+}));
 
 mock.module("../../src/commands/luckChallenge/persistence", () => ({
   postDiskIO: postDiskIOMock,
   onDiskIORespawn: onDiskIORespawnMock,
   relayLogMessage: relayLogMessageMock,
-  ensureLuckReceiptSecret: async (day: string) => ({
-    version: 1 as const,
-    day,
-    key: Buffer.alloc(32, 7).toString("base64url"),
-  }),
+  ensureLuckReceiptSecret: ensureLuckReceiptSecretMock,
 }));
 
 // 跨东京零点专项测试用的日期开关：mockTodayOverride 为 null（默认与收尾）
@@ -76,6 +97,95 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     cache.recentCallTimestamps.length = 0;
     luckChallenge.restoreLuckState(TEST_SECRET, null);
     postDiskIOMock.mockClear();
+    logApiErrorMock.mockClear();
+    loggerErrorMock.mockClear();
+    ensureLuckReceiptSecretMock.mockClear();
+    ensureLuckReceiptSecretError = null;
+  });
+
+  test("普通内联回答失败只记录错误，不向 update handler 抛出", async () => {
+    const error = new Error("query is too old");
+    const ctx = {
+      ...makeInlineCtx(101, ""),
+      answerInlineQuery: async (): Promise<void> => { throw error; },
+    };
+
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+
+    expect(logApiErrorMock).toHaveBeenCalledWith("answer luck inline query", error);
+  });
+
+  test("限流内联回答失败只记录错误，不向 update handler 抛出", async () => {
+    cache.recentCallTimestamps.push(
+      ...Array.from({ length: RATE_LIMIT_MAX_CALLS_PER_WINDOW }, () => Date.now())
+    );
+    const error = new Error("query is too old");
+    const ctx = {
+      ...makeInlineCtx(102, ""),
+      answerInlineQuery: async (): Promise<void> => { throw error; },
+    };
+
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+
+    expect(logApiErrorMock).toHaveBeenCalledWith("answer rate-limited luck inline query", error);
+  });
+
+  test("刷新日缓存失败时，内联查询与选中确认都记录错误后返回", async () => {
+    const error = new Error("disk I/O unavailable");
+    ensureLuckReceiptSecretError = error;
+    mockTodayOverride = "2030-01-02";
+    try {
+      const ctx = makeInlineCtx(103, "");
+      await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+      await luckChallenge.handleLuckChosenInlineResult({
+        chosenInlineResult: { result_id: "luck-fortune", from: { id: 103 }, query: "" },
+      } as any);
+
+      expect(ctx.results).toHaveLength(0);
+      expect(logApiErrorMock).not.toHaveBeenCalled();
+      expect(loggerErrorMock.mock.calls).toEqual([
+        ["Failed to refresh luck cache for inline query:", error],
+        ["Failed to refresh luck cache for chosen inline result:", error],
+      ]);
+    } finally {
+      mockTodayOverride = null;
+    }
+  });
+
+  test("普通多行文本和缺少实体的伪回执不触发跨日密钥刷新", async () => {
+    mockTodayOverride = "2030-01-02";
+    try {
+      await luckChallenge.confirmLuckDraw("普通消息\n第二行也只是正文");
+      await luckChallenge.confirmLuckDraw(`伪造消息\n防伪标记: ${"a".repeat(64)}`);
+
+      expect(ensureLuckReceiptSecretMock).not.toHaveBeenCalled();
+      expect(loggerErrorMock).not.toHaveBeenCalled();
+      expect(postDiskIOMock).not.toHaveBeenCalled();
+    } finally {
+      mockTodayOverride = null;
+    }
+  });
+
+  test("有效回执刷新日缓存失败时只记录错误，不阻断 update handler", async () => {
+    const ctx = makeInlineCtx(104, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+    const error = new Error("disk I/O unavailable");
+    ensureLuckReceiptSecretMock.mockClear();
+    ensureLuckReceiptSecretError = error;
+    mockTodayOverride = "2030-01-02";
+    try {
+      await luckChallenge.confirmLuckDraw(bodyTextOf(ctx.results[0]), entitiesOf(ctx.results[0]));
+
+      expect(ensureLuckReceiptSecretMock).toHaveBeenCalledTimes(1);
+      expect(ensureLuckReceiptSecretMock).toHaveBeenCalledWith("2030-01-02");
+      expect(loggerErrorMock).toHaveBeenCalledWith(
+        "Failed to refresh luck cache while confirming a luck receipt:",
+        error
+      );
+      expect(postDiskIOMock).not.toHaveBeenCalled();
+    } finally {
+      mockTodayOverride = null;
+    }
   });
 
   test("不带文本：带签名回执的结果现身后转正并 postDiskIO 落盘", async () => {

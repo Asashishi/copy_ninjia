@@ -125,7 +125,6 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       }
       return result;
     },
-    messagesSent: (): number => messageState.messageCount,
     actionsUsed: (): number => actionsUsed,
     isActive: ctx.isActive,
   };

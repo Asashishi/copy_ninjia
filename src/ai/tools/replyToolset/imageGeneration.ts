@@ -1,6 +1,8 @@
 import {
   claimImageGeneration,
   getImageGenerationAvailability,
+  releaseImageGenerationClaim,
+  type ImageGenerationAvailability,
   type ImageGenerationClaim,
 } from "../../../cache/aiChat/imageGeneration";
 import {
@@ -31,7 +33,7 @@ function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationRefer
 export function buildGenerateImageToolDefinition(
   ctx: Pick<ReplyToolContext, "chatId" | "imageGenerationRequested" | "imageGenerationReference" | "bypassImageGenerationCooldown">
 ): ToolDefinition {
-  const availability: ImageGenerationClaim = getImageGenerationAvailability({
+  const availability: ImageGenerationAvailability = getImageGenerationAvailability({
     chatId: ctx.chatId,
     bypassCooldown: ctx.bypassImageGenerationCooldown,
   });
@@ -132,62 +134,71 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
       });
     }
 
-    ctx.chatAction.set("upload_photo");
-    let image: GeneratedChatImage | null;
-    let referenceUnavailable: boolean = false;
+    let modelRequestStarted: boolean = false;
     try {
-      let referenceImage: VisionImage | undefined;
-      if (ctx.imageGenerationReference) {
-        const referenceFileId: string = ctx.imageGenerationReference.fileId;
-        referenceImage = await runMediaTask(() => downloadTelegramVisionImage({
-          fileId: referenceFileId,
-          logLabel: "image generation reference",
-        })) ?? undefined;
-        referenceUnavailable = referenceImage === undefined;
+      ctx.chatAction.set("upload_photo");
+      let image: GeneratedChatImage | null;
+      let referenceUnavailable: boolean = false;
+      try {
+        let referenceImage: VisionImage | undefined;
+        if (ctx.imageGenerationReference) {
+          const referenceFileId: string = ctx.imageGenerationReference.fileId;
+          referenceImage = await runMediaTask(() => downloadTelegramVisionImage({
+            fileId: referenceFileId,
+            logLabel: "image generation reference",
+          })) ?? undefined;
+          referenceUnavailable = referenceImage === undefined;
+        }
+        if (referenceUnavailable) {
+          image = null;
+        } else {
+          if (!ctx.isActive()) {
+            return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+          }
+          modelRequestStarted = true;
+          image = referenceImage
+            ? await generateChatImage(parsed.prompt, parsed.aspectRatio, referenceImage)
+            : await generateChatImage(parsed.prompt, parsed.aspectRatio);
+        }
+      } finally {
+        // 与 send_message 落地前的处理一致：先阻止新的 upload_photo tick，再
+        // 等已经发出的状态请求收敛，避免它晚于图片到达而重新挂出“正在发送图片”。
+        ctx.chatAction.set("idle");
+        await ctx.chatAction.settle();
       }
+      if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
       if (referenceUnavailable) {
-        image = null;
-      } else if (referenceImage) {
-        image = await generateChatImage(parsed.prompt, parsed.aspectRatio, referenceImage);
-      } else {
-        image = await generateChatImage(parsed.prompt, parsed.aspectRatio);
+        consecutiveFailures++;
+        return JSON.stringify({ error: "Failed to load the reference image from Telegram" });
       }
+      if (!image) {
+        consecutiveFailures++;
+        return JSON.stringify({ error: "Image generation failed or returned no usable image" });
+      }
+
+      const messageId: number | undefined = await sendPhoto({
+        chatId: ctx.chatId,
+        bytes: image.bytes,
+        mimeType: image.mimeType,
+        replyToMessageId: ctx.replyToMessageId,
+      });
+      if (messageId === undefined) {
+        consecutiveFailures++;
+        return JSON.stringify({ error: "Failed to send generated image" });
+      }
+
+      consecutiveFailures = 0;
+      const memoryPrompt: string = truncateInline(sanitizeInline(parsed.prompt), IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS);
+      ctx.onImageSent(`（${ctx.imageGenerationReference ? "参考素材" : ""}生成并发送了一张图片：${memoryPrompt}）`, messageId);
+      return JSON.stringify({
+        success: true,
+        message_id: messageId,
+        aspect_ratio: parsed.aspectRatio,
+        resolution: "1K",
+        ...(ctx.imageGenerationReference ? { reference_image_used: true } : {}),
+      });
     } finally {
-      // 与 send_message 落地前的处理一致：先阻止新的 upload_photo tick，再
-      // 等已经发出的状态请求收敛，避免它晚于图片到达而重新挂出“正在发送图片”。
-      ctx.chatAction.set("idle");
-      await ctx.chatAction.settle();
+      if (!modelRequestStarted) releaseImageGenerationClaim(ctx.chatId, claim.token);
     }
-    if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
-    if (referenceUnavailable) {
-      consecutiveFailures++;
-      return JSON.stringify({ error: "Failed to load the reference image from Telegram" });
-    }
-    if (!image) {
-      consecutiveFailures++;
-      return JSON.stringify({ error: "Image generation failed or returned no usable image" });
-    }
-
-    const messageId: number | undefined = await sendPhoto({
-      chatId: ctx.chatId,
-      bytes: image.bytes,
-      mimeType: image.mimeType,
-      replyToMessageId: ctx.replyToMessageId,
-    });
-    if (messageId === undefined) {
-      consecutiveFailures++;
-      return JSON.stringify({ error: "Failed to send generated image" });
-    }
-
-    consecutiveFailures = 0;
-    const memoryPrompt: string = truncateInline(sanitizeInline(parsed.prompt), IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS);
-    ctx.onImageSent(`（${ctx.imageGenerationReference ? "参考素材" : ""}生成并发送了一张图片：${memoryPrompt}）`, messageId);
-    return JSON.stringify({
-      success: true,
-      message_id: messageId,
-      aspect_ratio: parsed.aspectRatio,
-      resolution: "1K",
-      ...(ctx.imageGenerationReference ? { reference_image_used: true } : {}),
-    });
   };
 }

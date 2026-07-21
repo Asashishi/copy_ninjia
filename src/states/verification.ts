@@ -25,10 +25,10 @@ export type {
  *
  * 状态图（ABSENT = Map 里没有这个 key）：
  *
- *   ABSENT ──身份豁免/白名单拉人/管理员缓存命中/频道评论确证──> EXEMPT
+ *   ABSENT ──身份豁免/白名单拉人/管理员缓存命中/评论区活动──> EXEMPT
  *   ABSENT ──私密模式期间入群──────────────────────────────> KICKED
  *   ABSENT ──普通入群──────────────────────────────────────> PENDING
- *   PENDING ──频道评论确证 / 异步管理员核查通过──────────────> EXEMPT
+ *   PENDING ──评论区活动 / 异步管理员核查通过────────────────> EXEMPT
  *   PENDING ──验证按钮通过 / 中途离群────────────────────────> ABSENT
  *   PENDING ──超时/刷屏──> CHECKING_INVITER / EXPELLING（落盘后执行）
  *   CHECKING_INVITER ──管理员──> EXEMPT；非管理员──> EXPELLING
@@ -40,10 +40,14 @@ export type {
  * 计时器，异步回调也依赖对象同一性拒绝迟到结果。
  */
 
-/** 汇总一次入群的全部豁免来源；viaChannelComment 标记豁免是否由频道评论确证（要补欢迎）。 */
+/**
+ * 汇总一次入群的全部豁免来源。关联频道评论区的直属评论和楼中楼回复都视为
+ * 已实际参与讨论：Telegram 的入群/消息投递顺序不稳定，机器人也无法可靠
+ * 反查线程根，因此只要在关联讨论线程观察到消息就豁免且不计刷群统计。
+ */
 function resolveJoinExemption(event: JoinEvent): { exempt: boolean; viaChannelComment: boolean } {
   if (event.identityExempt || event.actorSyncExempt) return { exempt: true, viaChannelComment: false };
-  if (event.recentComment?.repliesToChannelPost === true) return { exempt: true, viaChannelComment: true };
+  if (event.recentComment !== undefined) return { exempt: true, viaChannelComment: true };
   return { exempt: false, viaChannelComment: false };
 }
 
@@ -153,8 +157,6 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     // 管理员拉人只认同步缓存判定（触发/接管锁定时已预热），异步兜底一律没有。
     const effects: VerificationEffect[] = [];
     if (event.announcementMessageId !== undefined) effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
-    // 楼中楼评论触发的自动入群也被秒踢：那条评论按刷群痕迹一并清理。
-    if (event.recentComment !== undefined) effects.push({ kind: "deleteMessage", messageId: event.recentComment.messageId });
     effects.push({ kind: "kickMember" });
     return { next: { kind: "kicked", label: event.label, isBot: event.isBot, kickedAt: event.now }, effects };
   }
@@ -172,33 +174,23 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     expiresAt: event.now + VERIFICATION_TIMEOUT_MS,
   };
   const effects: VerificationEffect[] = [];
-  if (event.recentComment !== undefined) {
-    // 楼中楼回复先到、入群更新后到：验证提醒直接以回复 TA 那条评论的形式发
-    // （频道侧看得到按钮），原始独立提醒不再发。评论本身补进追踪，超时一并清理。
-    pending.messageIds.push(event.recentComment.messageId);
-    pending.trackedMessageTimes.push(event.recentComment.observedAt);
-    pending.replyReminderRequested = true;
-    pending.reminderSuperseded = true;
-    pending.welcomeAnchorMessageId = event.recentComment.messageId;
-    effects.push({ kind: "sendReplyReminder", label: event.label, targetMessageId: event.recentComment.messageId, inCommentThread: true });
-  }
   // 他人拉入群但同步快路径没命中：异步全量核查兜底（顺手把缓存补热，
   // 同群下一次管理员拉人就能走同步快路径、不再闪验证按钮）。
   if (invitedByOther) effects.push({ kind: "startAdminCheck", actorId: event.actorId! });
-  if (event.recentComment === undefined) effects.push({ kind: "sendReminder", label: event.label, isBot: event.isBot });
+  effects.push({ kind: "sendReminder", label: event.label, isBot: event.isBot });
   return { next: pending, effects };
 }
 
 function handleTrackedMessage(
   state: VerificationState | undefined,
-  event: { messageId: number; inCommentThread: boolean; repliesToChannelPost: boolean; now: number }
+  event: { messageId: number; inCommentThread: boolean; now: number }
 ): VerificationTransition {
   // 占位记录不是真的在等验证；无记录的消息与验证无关。
   if (state?.kind !== "pending") return { next: state, effects: [] };
 
-  if (event.repliesToChannelPost) {
-    // 在关联频道的帖子下留言是确证的真人操作，免验证放行。TA 已发的消息
-    // 一概不删（合法评论），在这条评论下补欢迎让 TA 知道已通过。这里的
+  if (event.inCommentThread) {
+    // 在关联频道的评论区发出直属评论或楼中楼回复都免验证放行。TA 已发的
+    // 消息一概不删（合法讨论），在这条消息下补欢迎让 TA 知道已通过。这里的
     // state 一定是 pending（函数顶部已排除 undefined/非 pending），创建时
     // 必然计过数，见 joinCreatesNewRecord，事后确证豁免要撤销那次计数。
     return {
@@ -211,7 +203,7 @@ function handleTrackedMessage(
     };
   }
 
-  // 频道帖子直属评论在上方先完成豁免，不能进入刷屏计数。其余待验证消息按
+  // 频道评论区活动在上方先完成豁免，不能进入刷屏计数。其余待验证消息按
   // 成员自己的滑动窗口统计；第 46 条同步删除状态，迟到事件因查无记录不会
   // 再产生第二次踢人。messageIds 不截断，确保已制造的痕迹仍全部进入清理。
   const cutoff: number = event.now - JOIN_WINDOW_MS;

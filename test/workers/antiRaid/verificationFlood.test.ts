@@ -75,7 +75,6 @@ describe("Anti-Raid pending-member flood handling", () => {
         type: "trackedMessage",
         messageId,
         inCommentThread: false,
-        repliesToChannelPost: false,
         now,
       });
     }
@@ -86,7 +85,6 @@ describe("Anti-Raid pending-member flood handling", () => {
       type: "trackedMessage",
       messageId: ANTI_RAID_PER_MINUTE_LIMIT + 1,
       inCommentThread: false,
-      repliesToChannelPost: false,
       now,
     });
     expect(verificationEntries.get("-1001:42")?.state.kind).toBe("expelling");
@@ -128,7 +126,6 @@ describe("Anti-Raid pending-member flood handling", () => {
       type: "trackedMessage",
       messageId: 999,
       inCommentThread: false,
-      repliesToChannelPost: false,
       now,
     });
     await Bun.sleep(0);

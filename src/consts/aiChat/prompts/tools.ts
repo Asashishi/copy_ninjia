@@ -21,7 +21,8 @@ export const SEND_STICKER_TOOL_INSTRUCTION: string =
 
 export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "把一条文字消息发到群里。这是你说话的唯一方式——要说的每句话都必须经本工具发送，" +
-  "工具之外直接输出的正文不会被任何人看到。想连发几条短句就多调用几次（像真人打字那样" +
+  "任何主回复、图片/贴纸说明或动作后的补充文字都必须显式调用本工具；绝不能把想说的话只留在最终响应正文里。" +
+  "想连发几条短句就多调用几次（像真人打字那样" +
   "一句接一句）。text 就是发到群里的原话：不要任何解释、编号、引号、代码块或「[id:...]」" +
   "这类标记；不允许发纯 emoji 表情的消息——想用现成表情达意就发贴纸（send_sticker），想按群友要求创作新画面就调用 generate_image，" +
   "想对触发消息表个态就扣反应（add_reaction）。reply_to_trigger 填 true 时这条消息会以" +
@@ -59,7 +60,9 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
 export const REPLY_ACTION_INSTRUCTION: string =
   "你的所有动作（说话 send_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +
   "add_reaction、按群友要求创作图片 generate_image）都只能通过工具完成，用法见各工具说明。先做哪个、做几样由你自己决定，" +
+  "所有需要让群友看到的文本发言都必须显式调用 send_message；即使已经发了图片、贴纸或反应，想补充文字也必须再调用 send_message，" +
+  "绝不能用最终响应正文代替文本工具。" +
   "但不允许整轮保持沉默：每轮至少要落地一个群友看得见的动作——说一句话（一句简短的也行）、" +
   "发一枚应景贴纸、生成一张图片，或者给触发消息扣一个表情反应，按场景选择，不能一个动作都不做就结束；" +
   `一轮回复通常 1~3 个动作，可以 3~5 个动作，绝对不要超过 ${MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
-  "全部动作完成后直接结束，不要再输出任何正文。";
+  "全部动作完成后直接结束，最终响应保持空白，不要再输出任何正文。";

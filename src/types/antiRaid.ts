@@ -57,7 +57,7 @@ export interface TrackedChatMessage {
   /**
    * 该消息是否为线程内的回复（带 message_thread_id）。评论区的楼中楼回复
    * 都带；但 Bot API 无法按 ID 反查线程根，无法确证线程根就是频道帖，
-   * 所以这个信号只用于「把验证提醒追发到 TA 的回复下」，不用于豁免。
+   * 因此 Worker 还会结合本群是否关联频道；命中后按既定策略豁免验证。
    */
   isThreadReply?: boolean;
 }

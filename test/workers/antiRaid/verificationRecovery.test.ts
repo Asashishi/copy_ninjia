@@ -169,4 +169,29 @@ describe("Anti-Raid Worker verification recovery", () => {
     await Bun.sleep(0);
     expect(kicks).toBe(beforeRejoinKicks);
   });
+
+  test("同代更高 revision 覆盖时取消旧 timer，不按旧期限提前超时", async () => {
+    const now: number = Date.now();
+    const original: VerificationSnapshot = {
+      ...record(60, now + 50),
+      generation: 7,
+      revision: 1,
+    };
+    const extended: VerificationSnapshot = {
+      ...original,
+      revision: 2,
+      expiresAt: now + 10_000,
+    };
+
+    runtime.adoptVerifications({ type: "adoptVerifications", generation: 7, verifications: [original] });
+    const originalEntry = verificationEntries.get("-1001:60");
+    runtime.adoptVerifications({ type: "adoptVerifications", generation: 7, verifications: [extended] });
+    expect(verificationEntries.get("-1001:60")).not.toBe(originalEntry);
+
+    await Bun.sleep(100);
+    expect(verificationEntries.get("-1001:60")?.state.kind).toBe("pending");
+
+    // 清理延长后的计时器，避免测试进程等待或影响后续用例。
+    runtime.adoptVerifications({ type: "adoptVerifications", generation: 8, verifications: [] });
+  });
 });

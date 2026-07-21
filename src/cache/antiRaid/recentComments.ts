@@ -1,6 +1,5 @@
 export interface RecentChannelComment {
   messageId: number;
-  repliesToChannelPost: boolean;
   observedAt: number;
 }
 

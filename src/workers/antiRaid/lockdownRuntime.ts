@@ -46,6 +46,13 @@ function dispatchLockdown(chatId: number, event: LockdownMachineEvent): void {
   runLockdownEffects(chatId, effects);
 }
 
+function lockdownAnnouncementText(joinCount?: number): string {
+  const influx: string = joinCount === undefined
+    ? "检测到短时间内大量成员入群"
+    : `${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${joinCount} 个杂鱼`;
+  return `哼，${influx}，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`;
+}
+
 /** 执行一次私密模式转移返回的副作用（网络请求 fire-and-forget，结果以事件回投）。 */
 function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
   for (const effect of effects) {
@@ -95,7 +102,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
       case "announceLockdown":
         void sendMessage({
           chatId,
-          text: `哼，${JOIN_WINDOW_MS / 1000} 秒内冲进来了 ${effect.joinCount} 个杂鱼，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`,
+          text: lockdownAnnouncementText(effect.joinCount),
           api: joinVerificationApi,
         });
         break;

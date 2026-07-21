@@ -69,6 +69,18 @@ describe("加锁落地", () => {
     ]);
   });
 
+  test("接管 applying 后 set 成功 → 人数未知时公告不伪造为 0", () => {
+    const adopted = transitionLockdown(undefined, {
+      type: "adopt", phase: "applying", intentId: 7, originalPermissions: PERMS, remainingMs: 0,
+    });
+    const { effects } = transitionLockdown(adopted.next, { type: "applyResult", ok: true });
+    expect(effects).toEqual([
+      { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
+      { kind: "persistState" },
+      { kind: "announceLockdown" },
+    ]);
+  });
+
   test("set 结果不确定 → 先持久化 restoring 再恢复，不能删除 owner", () => {
     const applying: LockdownState = { kind: "applying", originalPermissions: PERMS, intentId: 7 };
     const { next, effects } = transitionLockdown(applying, { type: "applyResult", ok: false, restoreIntentId: 8 });

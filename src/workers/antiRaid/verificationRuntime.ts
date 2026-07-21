@@ -217,6 +217,11 @@ export function adoptVerifications(msg: AdoptVerificationsMessage): void {
           joinedAt: record.joinedAt,
           expiresAt: record.expiresAt,
         };
+    // 当前生产路径每次重建都会提升 generation；仍防御同代更高 revision 的
+    // 增量重放。Map.set 只替换条目，不会取消旧 timer，必须先显式清理，
+    // 否则旧期限到达后会拿新状态提前触发超时。
+    const previousEntry = verificationEntries.get(key);
+    if (previousEntry?.timer !== undefined) clearTimeout(previousEntry.timer);
     verificationEntries.set(key, {
       state,
       timer: startVerificationTimer(record.chatId, record.userId, state),
@@ -670,7 +675,8 @@ export function handleJoin(msg: NewMemberMessage): void {
 /**
  * 处理一条普通群消息投递：先识别关联频道的评论区活动。评论区留言/楼中楼
  * 回复若先于入群更新到达（两个事件的到达顺序不保证），先暂存、入群时消费；
- * 已有验证状态的交给状态机（直接回复频道帖 → 豁免；其余 → 追踪 + 提醒改锚）。
+ * 已有验证状态的交给状态机（评论区直属留言与楼中楼回复均豁免；普通群消息
+ * 才进入追踪与提醒改锚）。
  */
 export function handleTrackedMessage(msg: TrackedChatMessage): void {
   const inCommentThread: boolean =
@@ -681,7 +687,6 @@ export function handleTrackedMessage(msg: TrackedChatMessage): void {
       chatId: msg.chatId,
       userId: msg.userId,
       messageId: msg.messageId,
-      repliesToChannelPost: msg.repliesToChannelPost === true,
       observedAt: Date.now(),
     });
     return;
@@ -690,7 +695,6 @@ export function handleTrackedMessage(msg: TrackedChatMessage): void {
     type: "trackedMessage",
     messageId: msg.messageId,
     inCommentThread,
-    repliesToChannelPost: msg.repliesToChannelPost === true,
     now: Date.now(),
   });
 }

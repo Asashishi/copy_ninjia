@@ -75,7 +75,8 @@ export type LockdownEffect =
    *  "迟到的旧恢复成功、但当前仍应保持 ACTIVE"分支）。 */
   | { kind: "reapplyRestriction"; originalPermissions: ChatPermissions }
   | { kind: "reportUnlock" }
-  | { kind: "announceLockdown"; joinCount: number }
+  /** joinCount 仅在本 Worker 亲历触发时可知；接管 applying intent 时缺失。 */
+  | { kind: "announceLockdown"; joinCount?: number }
   | { kind: "announceUnlock" };
 
 export interface LockdownTransition {
@@ -144,7 +145,10 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
         effects: [
           { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
           { kind: "persistState" },
-          { kind: "announceLockdown", joinCount: state.joinCount ?? 0 },
+          {
+            kind: "announceLockdown",
+            ...(state.joinCount === undefined ? {} : { joinCount: state.joinCount }),
+          },
         ],
       };
     case "restoreTimerFired":

@@ -193,6 +193,18 @@ describe("generate_image 工具执行器", () => {
     expect(generateChatImage).not.toHaveBeenCalled();
   });
 
+  test("普通用户在参考图前置阶段失败时回滚冷却，下一次可以立即重试", async () => {
+    runMediaTask.mockResolvedValueOnce(undefined);
+    const execute = createGenerateImageExecutor(buildReferenceContext());
+
+    const failed = JSON.parse(await execute(JSON.stringify({ prompt: "队列暂时已满" })));
+    const retried = JSON.parse(await execute(JSON.stringify({ prompt: "立即重试" })));
+
+    expect(failed.error).toContain("reference image");
+    expect(retried.success).toBe(true);
+    expect(generateChatImage).toHaveBeenCalledTimes(1);
+  });
+
   test("Telegram 发送失败不登记图片记忆", async () => {
     sendPhoto.mockResolvedValueOnce(undefined);
     const ctx: ReplyToolContext = buildContext();
@@ -201,6 +213,8 @@ describe("generate_image 工具执行器", () => {
 
     expect(result.error).toContain("Failed to send");
     expect(ctx.onImageSent).not.toHaveBeenCalled();
+    const retry = JSON.parse(await createGenerateImageExecutor(buildContext())(JSON.stringify({ prompt: "不能立即再生成" })));
+    expect(retry.error).toContain("cooling down");
   });
 
   test("实际生图期间显示正在发送图片，并在发送图片前切回 idle、等待状态收敛", async () => {

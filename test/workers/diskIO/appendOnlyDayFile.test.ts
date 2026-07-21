@@ -267,6 +267,25 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     expect((readDay("2026-07-16") as any).C).toEqual({ label: "尚可", fortunePercent: 50 });
   });
 
+  test("截断修复：重复 key 的 null tombstone 后发生撕裂时，保留 tombstone 作为最后值", () => {
+    const state: DayFileState = openDayFile(dir, "2026-07-16");
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("K", { revision: 1 }) });
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("R", { revision: 1 }) });
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("K", null) });
+    appendToDayFile({ dir, state, chunk: serializeDayFileEntry("N", { revision: 1, payload: "会被截断" }) });
+
+    const path: string = join(dir, "2026-07-16.json");
+    const full: string = readFileSync(path, "utf8");
+    const tornEntryStart: number = full.lastIndexOf('"N"');
+    writeFileSync(path, full.slice(0, tornEntryStart + 20));
+
+    const recovered: DayFileState = openDayFile(dir, "2026-07-16");
+    expect(readDay("2026-07-16")).toEqual({ K: null, R: { revision: 1 } });
+
+    appendToDayFile({ dir, state: recovered, chunk: serializeDayFileEntry("C", true) });
+    expect(readDay("2026-07-16")).toEqual({ K: null, R: { revision: 1 }, C: true });
+  });
+
   test("截断修复：断电截断发生在第一条记录写入之前（文件只剩一个 \"{\"），修复出的空对象要被正确判成 empty，" +
     "否则下一次追加会误判成「非空、按位置追加」写出非法 JSON（回归：曾导致这条记录永久丢失的级联损坏）", () => {
     const path = join(dir, "2026-07-16.json");

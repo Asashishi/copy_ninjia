@@ -10,26 +10,23 @@ import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../const
 /**
  * 暂存一条「发言者当前没有验证状态记录」的评论区留言/线程回复，等这条留言
  * 触发的自动拉群（chat_member 更新可能后到）来消费。同一人连发多条只留
- * 最新的；有效期内直接回复频道帖的标记一旦出现就保持（豁免的确证不被
- * 后续楼中楼回复降级）。不为每个成员创建 timer：统一由 Worker sweeper
- * 清理，读取路径自身也拒绝过期项。
+ * 最新的；直属评论和楼中楼回复在豁免语义上没有差别，因此缓存不再携带
+ * 来源标记。不为每个成员创建 timer：统一由 Worker sweeper 清理，读取路径
+ * 自身也拒绝过期项。
  */
 export function rememberRecentComment({
   chatId,
   userId,
   messageId,
-  repliesToChannelPost,
   observedAt = Date.now(),
 }: {
   chatId: number;
   userId: number;
   messageId: number;
-  repliesToChannelPost: boolean;
   observedAt?: number;
 }): void {
   const key: string = verificationKey(chatId, userId);
   const existing = recentChannelComments.get(key);
-  const existingIsFresh: boolean = existing !== undefined && observedAt - existing.observedAt < COMMENT_JOIN_CORRELATE_MS;
   if (existing !== undefined) recentChannelComments.delete(key);
 
   if (recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX) {
@@ -45,7 +42,6 @@ export function rememberRecentComment({
 
   recentChannelComments.set(key, {
     messageId,
-    repliesToChannelPost: repliesToChannelPost || (existingIsFresh && existing?.repliesToChannelPost === true),
     observedAt,
   });
 }
@@ -57,7 +53,7 @@ export function takeRecentComment(chatId: number, userId: number, now: number = 
   if (!entry) return undefined;
   recentChannelComments.delete(key);
   if (now - entry.observedAt >= COMMENT_JOIN_CORRELATE_MS) return undefined;
-  return { messageId: entry.messageId, repliesToChannelPost: entry.repliesToChannelPost, observedAt: entry.observedAt };
+  return { messageId: entry.messageId, observedAt: entry.observedAt };
 }
 
 /** 由 Anti-Raid Worker 的唯一周期 sweeper 调用；返回删除数便于测试和观测。 */

@@ -175,6 +175,37 @@ describe("pending verification daily append JSON", () => {
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.revision).toBe(3);
   });
 
+  test("尾部截断不会丢弃重复 key 的 tombstone、复活已终结验证", () => {
+    upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    upsert({
+      type: "verificationUpsert",
+      record: snapshot(1, { userId: 43, label: "仍在验证" }),
+      critical: true,
+    });
+    deleteVerification({
+      type: "verificationDelete",
+      chatId: -1001,
+      userId: 42,
+      generation: 1,
+      revision: 2,
+    });
+    upsert({
+      type: "verificationUpsert",
+      record: snapshot(1, { userId: 44, label: "写到一半" }),
+      critical: true,
+    });
+
+    const path: string = join(dir, `${DAY_ONE}.json`);
+    const full: string = readFileSync(path, "utf8");
+    const tornEntryStart: number = full.lastIndexOf('"-1001:44"');
+    writeFileSync(path, full.slice(0, tornEntryStart + 50));
+
+    const recovered: Map<string, VerificationSnapshot> = recoverVerificationDay(DAY_ONE, dir);
+    expect(recovered.has("-1001:42")).toBeFalse();
+    expect(recovered.get("-1001:43")?.label).toBe("仍在验证");
+    expect(recovered.has("-1001:44")).toBeFalse();
+  });
+
   test("跨日先复制 active 快照到新日文件，再删除旧日文件", () => {
     upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     upsert({

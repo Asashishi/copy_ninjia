@@ -23,11 +23,6 @@ if (DAY_FILE_JSON_INDENT < 1) {
   throw new Error("DAY_FILE_JSON_INDENT must be >= 1: serializeDayFileEntry relies on multi-line JSON.stringify output");
 }
 
-/** repairTruncated 用来识别"一条完整记录的收尾行"，必须与 openDayFile/
- *  serializeDayFileEntry 的 JSON.stringify 缩进宽度保持一致，见
- *  DAY_FILE_JSON_INDENT 注释。 */
-const ENTRY_LINE_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
-
 export interface SyncWriteRequest {
   fd: number;
   buffer: Buffer;
@@ -113,7 +108,7 @@ export function openDayFile(dir: string, day: string, mode?: number): DayFileSta
     // 收尾括号就能修复成语义为空的 "{}"——如果这里不做同样的检查、无条件
     // 标 empty:false，下一次追加会误判成"非空、按位置追加"，从这份只有
     // 几字节的文件中间写入，产出打头带逗号的非法 JSON；这个坏文件下次
-    // 重启又会因为找不到 `${ENTRY_LINE_INDENT}},` 这样的行边界而修复失败
+    // 重启又会因为找不到顶层记录边界而修复失败
     // 被放弃（物理文件却不会被清空），直到再下一次追加触发 writeFileSync
     // 整份覆写，才把这段本可挽救的数据永久冲掉。
     const repairedParsed: unknown = JSON.parse(repaired);
@@ -130,9 +125,10 @@ export function openDayFile(dir: string, day: string, mode?: number): DayFileSta
 
 /**
  * 修复被截断的日文件：先试着直接补一个「\n}」收尾（只是丢了最后的收尾
- * 括号这种最常见情况）；不行的话，从末尾往前找最后一行完整的「  },」
- * （某条记录的收尾且后面还有别的记录），裁掉它之后的乱码残片，去掉这行的
- * 逗号再补上「\n}」。两种都拼不出合法 JSON 就返回 null，交给调用方从空
+ * 括号这种最常见情况）；不行的话，结构化扫描字符串转义与括号深度，找出
+ * 顶层对象成员之间的逗号。最后一个这类逗号之前就是最后一条完整记录，值
+ * 无论是对象、数组还是 null 等基础类型都适用；裁掉其后的撕裂记录、补上
+ * 「\n}」并以 JSON.parse 复核。所有候选都无效才返回 null，交给调用方从空
  * 文件重新开始。
  */
 function repairTruncated(content: string): string | null {
@@ -143,17 +139,40 @@ function repairTruncated(content: string): string | null {
   } catch {
     // 继续尝试裁掉末尾残片。
   }
-  const lines: string[] = content.split("\n");
-  const entryClosingLine: string = `${ENTRY_LINE_INDENT}}`;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i] !== `${entryClosingLine},`) continue;
-    lines[i] = entryClosingLine;
-    const candidate: string = `${lines.slice(0, i + 1).join("\n")}\n}`;
+  const boundaries: number[] = [];
+  let depth: number = 0;
+  let inString: boolean = false;
+  let escaped: boolean = false;
+  for (let i = 0; i < content.length; i++) {
+    const char: string = content[i]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      depth++;
+    } else if (char === "}" || char === "]") {
+      depth--;
+    } else if (char === "," && depth === 1) {
+      boundaries.push(i);
+    }
+  }
+
+  for (let i = boundaries.length - 1; i >= 0; i--) {
+    const candidate: string = `${content.slice(0, boundaries[i])}\n}`;
     try {
       JSON.parse(candidate);
       return candidate;
     } catch {
-      // 这一行也不构成合法边界（理论上不该发生），继续往前找。
+      // 更晚的完整记录本身也可能损坏；继续回退到更早的顶层边界。
     }
   }
   return null;

@@ -21,7 +21,6 @@ const createStickerSendLock = mock((_chatId: number) => ({
   release: stickerLockRelease,
 }));
 const execute = mock(async (..._args: unknown[]): Promise<string> => JSON.stringify({ success: true }));
-let messagesSent: number = 0;
 let actionsUsed: number = 1;
 let capturedContext: ReplyToolContext | null = null;
 const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyToolset> => {
@@ -31,7 +30,6 @@ const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyTool
     tools: [],
     has: (): boolean => true,
     execute,
-    messagesSent: (): number => messagesSent,
     actionsUsed: (): number => actionsUsed,
     isActive: ctx.isActive,
   };
@@ -88,7 +86,6 @@ beforeEach(() => {
   resetAiChatReplyCache();
   botInfoState.current = { id: 99, first_name: "Ninja", username: "ninja_bot" };
   builtContent = "用户上下文";
-  messagesSent = 0;
   actionsUsed = 1;
   capturedContext = null;
   postMessage.mockClear();
@@ -118,6 +115,11 @@ afterAll(() => {
 
 describe("AI 单轮回复生命周期", () => {
   test("模型只返回最终正文时统一走 send_message 兜底，并成对释放资源", async () => {
+    actionsUsed = 0;
+    execute.mockImplementationOnce(async (): Promise<string> => {
+      actionsUsed = 1;
+      return JSON.stringify({ success: true });
+    });
     await expect(runRound()).resolves.toBe(-1001);
 
     expect(execute).toHaveBeenCalledWith(
@@ -130,8 +132,15 @@ describe("AI 单轮回复生命周期", () => {
     expect(longTriggerTimes.get(-1001)?.size).toBe(1);
   });
 
+  test("非文本动作已成功时忽略尾随正文，文字必须由模型显式调用 send_message", async () => {
+    actionsUsed = 1;
+
+    await runRound();
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   test("工具发送回调回传消息 ID，并只在代际仍有效时登记滚动记忆", async () => {
-    messagesSent = 2;
     actionsUsed = 2;
     callGemini.mockImplementationOnce(async (): Promise<null> => {
       capturedContext!.onMessageSent("文字消息", 101);

@@ -53,7 +53,6 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
     tools: registeredTools,
     has: (name: string): boolean => name === "send_message",
     execute,
-    messagesSent: (): number => 1,
     actionsUsed: (): number => 1,
     isActive: (): boolean => true,
   };
@@ -99,7 +98,6 @@ test("累计三次服务端搜索后，后续工具轮移除 googleSearch", asyn
     tools: registeredTools,
     has: (name: string): boolean => name === "send_message",
     execute,
-    messagesSent: (): number => 1,
     actionsUsed: (): number => 1,
     isActive: (): boolean => true,
   };
@@ -133,7 +131,6 @@ test("服务端先报 TOO_MANY_TOOL_CALLS 时，零动作轮关闭搜索后只�
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
-    messagesSent: (): number => 0,
     actionsUsed: (): number => 0,
     isActive: (): boolean => true,
   };
@@ -177,7 +174,6 @@ test("同一模型响应中的多个行动工具严格按返回顺序串行执�
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "generate_image" }, { name: "send_message" }] }],
     has: (name: string): boolean => name === "generate_image" || name === "send_message",
     execute,
-    messagesSent: (): number => 1,
     actionsUsed: (): number => 2,
     isActive: (): boolean => true,
   };
@@ -208,7 +204,6 @@ test("最终输出被 token 上限截断时返回 null", async () => {
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
-    messagesSent: (): number => 0,
     actionsUsed: (): number => 0,
     isActive: (): boolean => true,
   };
@@ -230,7 +225,6 @@ test("请求在途时被禁用，响应回来后不再执行任何行动", async
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
-    messagesSent: (): number => 0,
     actionsUsed: (): number => 0,
     isActive: (): boolean => active,
   };
@@ -252,7 +246,6 @@ test("连续无效参数也计入单工具预算，达到四次后从下一请�
     tools: [{ functionDeclarations: [{ name: "view_sticker_pack" }] }],
     has: (): boolean => true,
     execute,
-    messagesSent: (): number => 0,
     actionsUsed: (): number => 0,
     isActive: (): boolean => true,
   };
@@ -280,7 +273,6 @@ test("同一响应多调用计入总预算，最多执行十六个并在下一�
     tools: [{ functionDeclarations: names.map((name) => ({ name })) }],
     has: (): boolean => true,
     execute,
-    messagesSent: (): number => 0,
     actionsUsed: (): number => 0,
     isActive: (): boolean => true,
   };
@@ -305,7 +297,6 @@ test("异常 candidate 夹带文本和 functionCall 时零执行、零最终文�
     tools: [{ functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => true,
     execute,
-    messagesSent: (): number => 0,
     actionsUsed: (): number => 0,
     isActive: (): boolean => true,
   };
@@ -322,7 +313,6 @@ test("已经产生外部副作用后遇到 TOO_MANY_TOOL_CALLS 不做降级重�
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
-    messagesSent: (): number => 1,
     actionsUsed: (): number => 1,
     isActive: (): boolean => true,
   };

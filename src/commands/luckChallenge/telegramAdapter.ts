@@ -3,6 +3,8 @@ import type { Context } from "grammy";
 import { formatUserLabel } from "../../users/userLabel";
 import type { LuckDraw } from "../../types/luckChallenge";
 import { LUCK_RESULT_IDS } from "../../consts/luckChallenge";
+import { logApiError } from "../../infra/telegram";
+import { logger } from "../../infra/logger";
 import {
   ensureLuckCacheFreshForToday,
   getOrDrawLuck,
@@ -20,7 +22,12 @@ import {
 export async function handleLuckChosenInlineResult(ctx: Context): Promise<void> {
   const chosen = ctx.chosenInlineResult;
   if (!chosen || !LUCK_RESULT_IDS.has(chosen.result_id)) return;
-  await ensureLuckCacheFreshForToday();
+  try {
+    await ensureLuckCacheFreshForToday();
+  } catch (error: unknown) {
+    logger.error("Failed to refresh luck cache for chosen inline result:", error);
+    return;
+  }
 
   const text: string = chosen.query.trim();
   const cacheKey: string = luckCacheKey(
@@ -36,11 +43,20 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
   if (!inlineQuery) return;
 
   if (!tryConsumeLuckRateLimit()) {
-    await ctx.answerInlineQuery([buildRateLimitedResult()], { cache_time: 1, is_personal: true });
+    try {
+      await ctx.answerInlineQuery([buildRateLimitedResult()], { cache_time: 1, is_personal: true });
+    } catch (error: unknown) {
+      logApiError("answer rate-limited luck inline query", error);
+    }
     return;
   }
 
-  await ensureLuckCacheFreshForToday();
+  try {
+    await ensureLuckCacheFreshForToday();
+  } catch (error: unknown) {
+    logger.error("Failed to refresh luck cache for inline query:", error);
+    return;
+  }
   const fromUser = inlineQuery.from;
   const userLabel: string = formatUserLabel({
     id: fromUser.id,
@@ -57,5 +73,9 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
       buildProbabilityResult(draw, fromUser.id, userLabel),
     ];
 
-  await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
+  try {
+    await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
+  } catch (error: unknown) {
+    logApiError("answer luck inline query", error);
+  }
 }

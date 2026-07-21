@@ -491,9 +491,9 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
     userId !== undefined &&
     (activeVerificationSnapshots.has(verificationKey(message.chat.id, userId)) || mayPrecedeJoinInCommentThread)
   ) {
-    // 附带频道评论区的识别线索：在关联频道的帖子下留言的人会被 Telegram
-    // 自动拉进讨论群，这是真人操作，Worker 据此免除验证（直接回复频道帖）
-    // 或把验证提醒追发到 TA 的回复下（楼中楼）。
+    // 附带频道评论区的识别线索：评论与楼中楼回复都代表 TA 已实际参与讨论，
+    // Worker 据此免除验证且不计入刷群窗口。没有任何评论区消息的普通入群
+    // 照常验证，超时仍会被踢出。
     await postAntiRaidDurably([{
       type: "message",
       chatId: message.chat.id,

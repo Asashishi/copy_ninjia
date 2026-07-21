@@ -22,6 +22,7 @@ import type { AntiRaidWorkerEvent } from "../../../src/types";
 
 const lockdownEvents: AntiRaidWorkerEvent[] = [];
 const permissionWrites: Record<string, boolean | undefined>[] = [];
+const sentMessages: { chatId: number; text: string }[] = [];
 let currentPermissions: Record<string, boolean | undefined> = {};
 Object.defineProperty(globalThis, "self", {
   configurable: true,
@@ -39,7 +40,10 @@ mock.module("../../../src/infra/telegram", () => ({
       currentPermissions = { ...permissions };
     },
   },
-  sendMessage: async (): Promise<undefined> => undefined,
+  sendMessage: async (message: { chatId: number; text: string }): Promise<undefined> => {
+    sentMessages.push(message);
+    return undefined;
+  },
 }));
 
 const lockdownRuntime = await import("../../../src/workers/antiRaid/lockdownRuntime");
@@ -49,6 +53,7 @@ beforeEach(() => {
   resetLinkedChannelCache();
   lockdownEvents.length = 0;
   permissionWrites.length = 0;
+  sentMessages.length = 0;
   currentPermissions = {};
   for (const window of joinWindows.values()) clearTimeout(window.resetTimeout);
   for (const entry of lockdownEntries.values()) {
@@ -155,6 +160,23 @@ describe("Lockdown write-ahead runtime", () => {
     await Bun.sleep(0);
     expect(permissionWrites[0]).toEqual({ can_invite_users: false, can_send_messages: true });
     expect(lockdownEvents.some((event) => event.type === "lockdown" && event.phase === "active")).toBeTrue();
+    expect(sentMessages[0]?.text).toContain("60 秒内冲进来了 46 个");
+  });
+
+  test("重建 applying 完成加锁时使用未知人数文案，不谎报 0 人", async () => {
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    lockdownRuntime.adoptLockdowns([{
+      chatId: -1004,
+      phase: "applying",
+      intentId: 10,
+      originalPermissions: { can_invite_users: true, can_send_messages: true },
+      remainingMs: 0,
+    }]);
+    await Bun.sleep(0);
+
+    expect(permissionWrites[0]).toEqual({ can_invite_users: false, can_send_messages: true });
+    expect(sentMessages[0]?.text).toContain("检测到短时间内大量成员入群");
+    expect(sentMessages[0]?.text).not.toContain("0 个");
   });
 
   test("重建会继续 applying/restoring，恢复仅合并 invite 字段", async () => {

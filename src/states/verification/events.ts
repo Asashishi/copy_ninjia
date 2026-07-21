@@ -21,7 +21,7 @@ export interface JoinEvent {
 export type VerificationEvent =
   | JoinEvent
   | { type: "left" }
-  | { type: "trackedMessage"; messageId: number; inCommentThread: boolean; repliesToChannelPost: boolean; now: number }
+  | { type: "trackedMessage"; messageId: number; inCommentThread: boolean; now: number }
   | { type: "callback"; callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
   | { type: "adminCheckResolved" }
   | { type: "verifyTimeout" }

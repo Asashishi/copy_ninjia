@@ -26,6 +26,12 @@
   `StateStore` 异步维护。业务 Worker 不直接写共享目录。
 - 长期 Map、Set、队列和 timer 必须由对应 `src/cache/<domain>/` 与业务生命周期模块
   共同给出容量、清理和 Worker 重建语义。
+- 业务 Worker 的主线程监督句柄把同步 `postMessage` 拒绝统一收敛为 `false` 并记录错误；
+  需要确认处理与落盘边界的调用方必须把 `false` 当作失败，不能确认对应 Telegram update。
+- AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；仅在零成功动作时，
+  最终正文才经 `send_message` 兜底。所有有意展示的文字必须由模型显式调用该工具。
+- Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存
+  只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。
 - chat runtime teardown 的三个固定 owner 回调由 `src/cache/chatTeardown.ts` 持有，
   上层领域经 `src/infra/chatTeardown.ts` 反向注册；`src/infra/botAdmin.ts` 不得静态依赖
   `commands/`、AI 或 Anti-Raid 业务模块。
@@ -35,7 +41,9 @@
 - `state.json` 使用最新值合并、临时文件、fsync 和原子 rename。
 - AI 记忆与贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的
   JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone，只保留
-  东京当天文件，并在条数/字节阈值处收敛为 active 快照。
+  东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、
+  转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；`null` tombstone 与其它
+  基础类型都必须被视为完整的最后值。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
   反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败
   必须返回失败、阻止最终 offset 确认并以非零状态退出。

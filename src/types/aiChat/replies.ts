@@ -39,7 +39,6 @@ export interface ReplyToolset {
   tools: Tool[];
   has(name: string): boolean;
   execute(name: string, argumentsJson: string): Promise<string>;
-  messagesSent(): number;
   actionsUsed(): number;
   isActive(): boolean;
 }

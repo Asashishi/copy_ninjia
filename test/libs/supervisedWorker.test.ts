@@ -17,6 +17,7 @@ class FakeWorker {
   onerror: ((event: ErrorEvent) => void) | null = null;
   readonly messages: unknown[] = [];
   terminated: boolean = false;
+  postError: Error | null = null;
 
   constructor(readonly url: string) {
     FakeWorker.instances.push(this);
@@ -25,6 +26,7 @@ class FakeWorker {
   unref(): void {}
 
   postMessage(message: unknown): void {
+    if (this.postError !== null) throw this.postError;
     this.messages.push(message);
   }
 
@@ -126,6 +128,14 @@ describe("supervised Worker", () => {
       expect(events).toEqual(["current"]);
       expect(respawns).toBe(1);
       expect(FakeWorker.instances).toHaveLength(2);
+
+      second.postError = new Error("post rejected");
+      expect(handle.post({ type: "restore" })).toBeFalse();
+      expect(second.messages).toEqual([{ type: "restore" }]);
+      expect(error).toHaveBeenCalledWith(
+        "fake Worker postMessage failed:",
+        expect.objectContaining({ message: "post rejected" })
+      );
 
       await handle.terminate();
       second.onerror!({ message: "after terminate" } as ErrorEvent);

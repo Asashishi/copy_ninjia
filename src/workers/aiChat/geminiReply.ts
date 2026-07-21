@@ -87,7 +87,7 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
  *   请求，本函数不再自己组装。
  * @returns 模型最后一轮的正文文本（正常情况下模型已通过工具把话说完、正文
  *   为空）；请求失败、超时、被 token 上限腰斩或空输出时返回 null。调用方
- *   只在模型一条消息都没发出去时才把它当兜底回复用。
+ *   只在模型没有成功执行任何可见动作时才把它经 send_message 当兜底回复用。
  */
 export async function callGemini(chatId: number, userContent: string, toolset: ReplyToolset): Promise<string | null> {
   if (!toolset.isActive()) return null;

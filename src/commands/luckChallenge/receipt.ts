@@ -11,6 +11,7 @@ import {
   unwrapLuckReceiptLine,
   verifyLuckReceipt,
 } from "../../libs/luckReceipt";
+import { logger } from "../../infra/logger";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import { ensureLuckCacheFreshForToday, promotePendingDraw } from "./cache";
 
@@ -58,8 +59,6 @@ export async function confirmLuckDraw(
   entities?: readonly MessageEntity[]
 ): Promise<void> {
   if (typeof messageText !== "string") return;
-  await ensureLuckCacheFreshForToday();
-
   const lastLineBreak: number = messageText.lastIndexOf("\n");
   if (lastLineBreak < 0) return;
   const receiptLine: string = messageText.slice(lastLineBreak + 1);
@@ -74,9 +73,17 @@ export async function confirmLuckDraw(
       entities
     );
   } else {
-    receipt = marker;
+    // 旧版回执直接显示完整协议串；先做结构与 canonical base64url 检查，
+    // 普通多行消息不能因此进入跨日密钥刷新与磁盘 Worker 往返。
+    receipt = luckReceiptHmacHash(marker) === undefined ? undefined : marker;
   }
   if (!receipt) return;
+  try {
+    await ensureLuckCacheFreshForToday();
+  } catch (error: unknown) {
+    logger.error("Failed to refresh luck cache while confirming a luck receipt:", error);
+    return;
+  }
   const secret: LuckReceiptSecret | null = luckReceiptSecretState.current;
   if (!secret) return;
   const cacheKey: string | undefined = verifyLuckReceipt(receipt, luckCacheState.dayKey, secret);
