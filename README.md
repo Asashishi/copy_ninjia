@@ -8,84 +8,127 @@
 
 ### 会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人
 
-由 **Asashishi** 与 **Claude Code**、**Codex**、**Antigravity** 共同开发
+**代码 100% 由 AI 编写的纯 AI 开发项目** — 人类只负责架构设计，并与 AI 共同审查每一次提交
+
+<sub>全仓另经 **Fable 5**、**GPT-5.6（Sol）** 等尖端模型多轮审查与生产环境安全情景推演</sub>
 
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=000000&labelColor=ffffff)](https://bun.sh/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=3178c6&labelColor=ffffff)](https://www.typescriptlang.org/)
 [![grammY](https://img.shields.io/badge/Telegram-grammY-26a5e4?logo=telegram&logoColor=26a5e4&labelColor=ffffff)](https://grammy.dev/)
 [![Gemini](https://img.shields.io/badge/AI-Gemini_3.1_Flash_Lite-8e75ff?logo=googlegemini&logoColor=8e75ff&labelColor=ffffff)](https://ai.google.dev/)
 
+[![100% AI-written](https://img.shields.io/badge/code-100%25_AI--written-e91e63?labelColor=ffffff)](#-纯-ai-开发)
+[![Audited by frontier models](https://img.shields.io/badge/audited_by-Fable_5_%C2%B7_GPT--5.6_%28Sol%29-6d4aff?labelColor=ffffff)](#-纯-ai-开发)
+[![Tests](https://img.shields.io/badge/tests-639_pass-2ea44f?labelColor=ffffff)](#-开发)
+[![Coverage](https://img.shields.io/badge/coverage-91.8%25_lines_%C2%B7_90.1%25_funcs-2ea44f?labelColor=ffffff)](#-开发)
+
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
+
+<a href="#-纯-ai-开发"><kbd> 🧬 纯 AI 开发 </kbd></a>
+<a href="#-它能做什么"><kbd> ✨ 能做什么 </kbd></a>
+<a href="#-复读模式"><kbd> 🎭 复读模式 </kbd></a>
+<a href="#-ai-流水线"><kbd> 🧠 AI 流水线 </kbd></a>
+<a href="#️-入群验证与-anti-raid"><kbd> 🛡️ 守群 </kbd></a>
+<a href="#-命令与权限"><kbd> 🎮 命令 </kbd></a>
+<a href="#-快速开始"><kbd> 🚀 快速开始 </kbd></a>
+<a href="#️-架构"><kbd> 🏗️ 架构 </kbd></a>
+<a href="#-数据与可靠性"><kbd> 💾 数据 </kbd></a>
+<a href="#-开发"><kbd> 🧪 开发 </kbd></a>
 
 </div>
 
 ---
 
+## 🧬 纯 AI 开发
+
+这个仓库里的每一行生产代码、每一个测试用例，连同这份 README 本身，都出自 AI 之手。人类不写代码，但从未离席：负责架构设计，并和 AI 一起审查了每一次提交。
+
+| 环节 | 由谁完成 | 做了什么 |
+| --- | --- | --- |
+| 📐 架构设计 | **Asashishi**（本项目唯一的人类） | 系统边界、Worker 拆分、持久化与恢复策略的设计与裁决 |
+| ⌨️ 编码实现 | **Claude Code** · **Codex** · **Antigravity** | 100% 的生产代码、测试与文档 |
+| 🧾 提交审查 | **Asashishi** × AI | 每一次提交都经人类与 AI 共同审查后才落库 |
+| 🔬 全仓审查 | **Fable 5** · **GPT-5.6（Sol）** 等尖端模型 | 多轮全代码仓交叉审查，发现的问题直接转化为加固提交 |
+| 🛰️ 安全推演 | 同一批尖端模型 | 生产环境安全情景推演：崩溃恢复、并发竞态、恶意输入、资源耗尽等场景逐一过审 |
+
+审查不是一次性仪式：从逐条提交的人机共审，到尖端模型的多轮全仓审查与安全推演，每一层结论都会回流成新的约束。下文出现的有界缓存、原子落盘、崩溃自愈与竞态防护，相当一部分正是这样长出来的。
+
 ## ✨ 它能做什么
 
-| 能力 | 说明 |
-| --- | --- |
-| 🪞 精准复读 | 锁定用户或频道后逐条复读，支持原样、反转、加「喵~」、翻译日语四种模式 |
-| 🥷 偷头像 | `/copy` 自动换成目标头像；`/steal_icon` 也能只偷头像、不进入复读状态 |
-| 🤖 AI 群聊 | Gemini 人设回复、实时 Google 搜索、东京天气工具、文字/贴纸/反应/生图统一 function calling |
-| 👁️ 多模态与生图 | 识别图片、静态/动态贴纸和 GIF 封面帧；也能按明确请求生成或参考现有素材编辑图片 |
-| 🧠 群聊记忆 | 50～100 条逐字上下文 + 最多 5 轮压缩摘要，并定期原子落盘恢复 |
-| 🛡️ 入群验证 | 新成员 90 秒按钮验证，支持机器人由白名单用户代点、管理员拉人豁免、评论区感知 |
-| 🚨 Anti-Raid | 60 秒内第 46 位新人触发 5 分钟邀请锁定，重启后自动接管并恢复原权限 |
-| 🎲 今日运势 | Telegram Inline Mode 抽签，日级密钥保证重启前后预览一致，选中或签名回执后落盘 |
-| 🌐 跨群管理 | `/kick` 在机器人拥有管理员权限的所有已知群中同步封禁目标 |
+<table>
+<tr>
+<td align="center" width="33%">🪞<br/><b>精准复读</b><br/><sub>锁定用户或频道后逐条复读，支持原样、反转、加「喵~」、翻译日语四种模式</sub></td>
+<td align="center" width="33%">🥷<br/><b>偷头像</b><br/><sub><code>/copy</code> 自动换成目标头像；<code>/steal_icon</code> 也能只偷头像、不进入复读状态</sub></td>
+<td align="center" width="33%">🤖<br/><b>AI 群聊</b><br/><sub>Gemini 人设回复、实时 Google 搜索、东京天气工具、文字/贴纸/反应/生图统一 function calling</sub></td>
+</tr>
+<tr>
+<td align="center">👁️<br/><b>多模态与生图</b><br/><sub>识别图片、静态/动态贴纸和 GIF 封面帧；也能按明确请求生成或参考现有素材编辑图片</sub></td>
+<td align="center">🧠<br/><b>群聊记忆</b><br/><sub>50～100 条逐字上下文 + 最多 5 轮压缩摘要，并定期原子落盘恢复</sub></td>
+<td align="center">🛡️<br/><b>入群验证</b><br/><sub>新成员 90 秒按钮验证，支持机器人由白名单用户代点、管理员拉人豁免、评论区感知</sub></td>
+</tr>
+<tr>
+<td align="center">🚨<br/><b>Anti-Raid</b><br/><sub>60 秒内第 46 位新人触发 5 分钟邀请锁定，重启后自动接管并恢复原权限</sub></td>
+<td align="center">🎲<br/><b>今日运势</b><br/><sub>Telegram Inline Mode 抽签，日级密钥保证重启前后预览一致，选中或签名回执后落盘</sub></td>
+<td align="center">🌐<br/><b>跨群管理</b><br/><sub><code>/kick</code> 在机器人拥有管理员权限的所有已知群中同步封禁目标</sub></td>
+</tr>
+</table>
 
 ## 🎭 复读模式
 
 复读目标是全局唯一的：同一实例同时只能“变成”一个目标，但复读只发生在发起命令的群中。`/stop_copy` 可在任意群停止当前复读。
 
 | 命令 | 行为 |
-| --- | --- |
-| `/copy` | 原样复读 |
-| `/r_copy` | 按字形簇反转纯文本 |
-| `/nya_copy` | 在纯文本末尾追加「喵~」 |
-| `/ja_copy` | 使用 Google Cloud Translate 翻译为日语后复读 |
-| `/steal_icon` | 只复制头像 |
-| `/stop_copy` | 停止全局复读状态 |
+| :---: | :--- |
+| <kbd>/copy</kbd> | 原样复读 |
+| <kbd>/r_copy</kbd> | 按字形簇反转纯文本 |
+| <kbd>/nya_copy</kbd> | 在纯文本末尾追加「喵~」 |
+| <kbd>/ja_copy</kbd> | 使用 Google Cloud Translate 翻译为日语后复读 |
+| <kbd>/steal_icon</kbd> | 只复制头像 |
+| <kbd>/stop_copy</kbd> | 停止全局复读状态 |
 
 目标可通过“回复 TA 的消息”或 `@username` 指定。按用户名查找依赖机器人此前观察到该账号；回复消息不受这个限制。普通用户受 5 分钟 copy 类命令冷却，`PRIVILEGED_USERS_ID` 白名单不受限。
 
 ## 🧠 AI 流水线
 
-AI 闲聊默认按群关闭，由超级管理员执行 `/ai_chat enable` 开启。关闭时不记录该群对话，也不会产生 AI 请求。
+> [!NOTE]
+> AI 闲聊默认按群关闭，由超级管理员执行 `/ai_chat enable` 开启。关闭时不记录该群对话，也不会产生 AI 请求。
 
-```text
-Telegram update
-      │
-      ├─ 文本 ───────────────┐
-      ├─ 图片/贴纸/GIF ──> 异步视觉描述 ──┐
-      │                                    │
-      └────────────────> AI Worker 滚动记忆
-                                           │
-                         Gemini + googleSearch + 自定义工具
-                                           │
-                    ┌─────────┬─────────┬─────────┬─────────┐
-                    ▼         ▼         ▼         ▼         ▼
-                发文字消息  添加反应  查看贴纸包  发送贴纸  生成图片
+```mermaid
+flowchart TD
+    U(["📨 Telegram update"]) --> TXT["文本"]
+    U --> MED["图片 / 贴纸 / GIF"]
+    MED -- 异步视觉描述 --> MEM["AI Worker 滚动记忆"]
+    TXT --> MEM
+    MEM --> G["Gemini + googleSearch + 自定义工具"]
+    G --> A1["💬 发文字消息"]
+    G --> A2["👍 添加反应"]
+    G --> A3["🔍 查看贴纸包"]
+    G --> A4["🎟️ 发送贴纸"]
+    G --> A5["🎨 生成图片"]
 ```
 
-- 模型：回复、摘要、视觉描述使用 `gemini-3.1-flash-lite`；生成或编辑图片使用 `gemini-3.1-flash-lite-image`。
-- 触发：回复机器人或 `@机器人` 时必定触发；普通文字和媒体评价共用按群活跃度的动态概率。当前消息先计入近 1 小时窗口，因此冷群第一条为 1/174；窗口内达到 165 条后封底为 1/10。活跃度只存内存，空闲满一小时或重启后回到冷启动。
-- 同群并发：每群最多 3 轮 Gemini 工具对话在途；直接触发进入有界队列，随机触发在满载时丢弃。
-- 限频：每群 5 分钟最多启动 150 轮；超限提示本身也有冷却。
-- 工具：同一请求真实注册内置 `googleSearch`，并提供东京天气、`send_message`、`add_reaction`、`view_sticker_pack`、`send_sticker`、`generate_image` 等函数工具；提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 `send_message`，图片、贴纸或反应完成后的最终正文不会被当作额外发言。
-- 安全过滤：Google 可调的骚扰、仇恨、露骨和危险内容统一设为 `BLOCK_NONE`，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效。
-- 时间：每次请求注入东京当前时间，每条转录消息保留记录时刻。
-- 记忆：50～100 条逐字消息，加最多 5 × 50 条冷历史摘要，总跨度约 300～350 条；Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群。
-- 多模态：图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。`memory/stickers/` 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录。
-- 生图：只有直接回复或 `@机器人` 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，`SUPER_ADMIN_USER_ID` 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片。
-- 压缩背压：每群最多保留 5 个压缩任务，API 长时间变慢时有界降级，不无限堆积消息批次。
+| 维度 | 策略 |
+| :--- | :--- |
+| 🧩 模型 | 回复、摘要、视觉描述使用 `gemini-3.1-flash-lite`；生成或编辑图片使用 `gemini-3.1-flash-lite-image` |
+| 🎯 触发 | 回复机器人或 `@机器人` 时必定触发；普通文字和媒体评价共用按群活跃度的动态概率。当前消息先计入近 1 小时窗口，因此冷群第一条为 1/174；窗口内达到 165 条后封底为 1/10。活跃度只存内存，空闲满一小时或重启后回到冷启动 |
+| 🚦 同群并发 | 每群最多 3 轮 Gemini 工具对话在途；直接触发进入有界队列，随机触发在满载时丢弃 |
+| ⏱️ 限频 | 每群 5 分钟最多启动 150 轮；超限提示本身也有冷却 |
+| 🔧 工具 | 同一请求真实注册内置 `googleSearch`，并提供东京天气、`send_message`、`add_reaction`、`view_sticker_pack`、`send_sticker`、`generate_image` 等函数工具；提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 `send_message`，图片、贴纸或反应完成后的最终正文不会被当作额外发言 |
+| 🛡️ 安全过滤 | Google 可调的骚扰、仇恨、露骨和危险内容统一设为 `BLOCK_NONE`，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效 |
+| 🕰️ 时间 | 每次请求注入东京当前时间，每条转录消息保留记录时刻 |
+| 🧠 记忆 | 50～100 条逐字消息，加最多 5 × 50 条冷历史摘要，总跨度约 300～350 条；Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群 |
+| 🖼️ 多模态 | 图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。`memory/stickers/` 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录 |
+| 🎨 生图 | 只有直接回复或 `@机器人` 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，`SUPER_ADMIN_USER_ID` 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片 |
+| 🗜️ 压缩背压 | 每群最多保留 5 个压缩任务，API 长时间变慢时有界降级，不无限堆积消息批次 |
 
 人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)。
 
+<p align="right"><sub><a href="#-copy-ninjia">⬆️ 回到顶部</a></sub></p>
+
 ## 🛡️ 入群验证与 Anti-Raid
 
-守群功能只在机器人拥有群管理员权限时运行：没有删消息、踢人权限时不会假装启动一套注定失败的流程。
+> [!NOTE]
+> 守群功能只在机器人拥有群管理员权限时运行：没有删消息、踢人权限时不会假装启动一套注定失败的流程。
 
 - 新成员需在 90 秒内点击验证按钮；超时会删除验证期内追踪到的消息并踢出，但不永久封禁。
 - 每位待验证成员独立统计最近 60 秒消息；第 46 条会先踢人止损，再尽力清理全部已追踪消息。关联频道评论区的直属评论和楼中楼回复都按既定策略豁免，不计入刷屏窗口。
@@ -98,10 +141,12 @@ Telegram update
 - 管理员表与关联频道缓存都有 TTL、500 群硬顶和周期淘汰，不按历史群数永久增长。
 - 最近评论关联缓存只保留 2 分钟、全局最多 5,000 条；复用 Anti-Raid Worker 的唯一周期 sweeper，不为每位成员创建 timer。
 
+<p align="right"><sub><a href="#-copy-ninjia">⬆️ 回到顶部</a></sub></p>
+
 ## 🎮 命令与权限
 
 | 命令 | 权限 | 说明 |
-| --- | --- | --- |
+| :--- | :---: | :--- |
 | `/copy` `/r_copy` `/nya_copy` `/ja_copy` | 群成员 | 启动相应复读模式 |
 | `/stop_copy` | 群成员 | 停止当前全局复读 |
 | `/steal_icon` | 群成员 | 只偷头像 |
@@ -113,7 +158,8 @@ Telegram update
 | `/init enable\|disable` | `SUPER_ADMIN_USER_ID` | 开关本群整个业务处理入口 |
 | `/send <群组id>` `/send finish` | `SUPER_ADMIN_USER_ID`（仅私聊） | 与机器人私聊时开启/结束一轮中转：期间这个私聊发的每条消息都会原样转发进目标群一次。开启前会先探一次目标是否可达，中转期间目标失联会自动终止并告知。中转状态随 `state.json` 持久化，重启不丢；不进 Telegram 命令菜单，群里或非本人触发均无任何反应 |
 
-`/luck_challenge` 不占斜杠命令：在任意聊天输入 `@机器人用户名 [所求事项]` 使用 Inline Mode。需在 BotFather 开启 Inline Mode，并建议通过 `/setinlinefeedback` 开启 100% 结果反馈。内联查询采用全局滑动窗口限流，每 90 秒最多应答 300 次。
+> [!TIP]
+> `/luck_challenge` 不占斜杠命令：在任意聊天输入 `@机器人用户名 [所求事项]` 使用 Inline Mode。需在 BotFather 开启 Inline Mode，并建议通过 `/setinlinefeedback` 开启 100% 结果反馈。内联查询采用全局滑动窗口限流，每 90 秒最多应答 300 次。
 
 ## 🚀 快速开始
 
@@ -123,11 +169,20 @@ Telegram update
 - Telegram Bot Token
 - Gemini API Key
 - Google Cloud 服务账号 JSON（仅 `/ja_copy` 需要）
-- 入门配置（低活跃、文本为主、仅少量群开启 AI）：2 vCPU / 2 GB RAM / 本地 SSD；可以运行，但多 Worker 会争用 CPU，不适合 15 个活跃群或媒体洪峰
-- 轻量生产配置（文本为主、仅少量群开启 AI）：4 vCPU / 2 GB RAM / 本地 SSD；2 GB 不适合作为媒体洪峰下的内存保障
-- 推荐生产配置（约 15 个 1000-3000 人活跃群）：4 vCPU / 4 GB RAM / 本地 SSD
-- 全部群开启 AI 且图片、贴纸较多：4 vCPU / 8 GB RAM，给媒体下载、Base64 编码和图片转码预留峰值空间
-- 单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自 Telegram 单 Bot API、Gemini 配额和实际消息/媒体速率，而不是群成员总数
+
+<details>
+<summary><b>📦 硬件配置参考</b>（按部署规模展开）</summary>
+
+| 部署规模 | 建议配置 | 说明 |
+| :--- | :--- | :--- |
+| 入门（低活跃、文本为主、仅少量群开启 AI） | 2 vCPU / 2 GB RAM / 本地 SSD | 可以运行，但多 Worker 会争用 CPU，不适合 15 个活跃群或媒体洪峰 |
+| 轻量生产（文本为主、仅少量群开启 AI） | 4 vCPU / 2 GB RAM / 本地 SSD | 2 GB 不适合作为媒体洪峰下的内存保障 |
+| 推荐生产（约 15 个 1000-3000 人活跃群） | 4 vCPU / 4 GB RAM / 本地 SSD | — |
+| 全部群开启 AI 且图片、贴纸较多 | 4 vCPU / 8 GB RAM | 给媒体下载、Base64 编码和图片转码预留峰值空间 |
+
+单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自 Telegram 单 Bot API、Gemini 配额和实际消息/媒体速率，而不是群成员总数。
+
+</details>
 
 ### 2. 安装
 
@@ -175,29 +230,19 @@ bun run start     # 启动长轮询
 /ai_chat enable
 ```
 
+<p align="right"><sub><a href="#-copy-ninjia">⬆️ 回到顶部</a></sub></p>
+
 ## 🏗️ 架构
 
-```text
-主线程
-├─ grammY runner + 按群 sequentialize
-├─ 命令与自动消息流水线
-├─ 全局 copy 状态 / 群状态镜像
-├─ StateStore：state.json latest-only 原子写与失败重试
-│
-├── AI Worker
-│   ├─ Gemini 多轮工具调用
-│   ├─ 对话滚动、摘要压缩、视觉理解
-│   └─ 分群限频、并发闸与溢出排队
-│
-├── Anti-Raid Worker
-│   ├─ 验证状态机
-│   ├─ 锁定状态机
-│   └─ Telegram 管理副作用解释器
-│
-└── Disk I/O Worker
-    ├─ error 日志
-    ├─ AI 记忆 / 贴纸目录原子快照
-    └─ 每日运势 / 待验证状态的按日追加文件与截断修复
+```mermaid
+flowchart TD
+    MAIN["<b>🧵 主线程</b><br/>grammY runner + 按群 sequentialize<br/>命令与自动消息流水线<br/>全局 copy 状态 / 群状态镜像<br/>StateStore：state.json latest-only 原子写与失败重试"]
+    AI["<b>🤖 AI Worker</b><br/>Gemini 多轮工具调用<br/>对话滚动、摘要压缩、视觉理解<br/>分群限频、并发闸与溢出排队"]
+    RAID["<b>🛡️ Anti-Raid Worker</b><br/>验证状态机 · 锁定状态机<br/>Telegram 管理副作用解释器"]
+    DISK["<b>💾 Disk I/O Worker</b><br/>error 日志<br/>AI 记忆 / 贴纸目录原子快照<br/>每日运势 / 待验证状态的按日追加文件与截断修复"]
+    MAIN --> AI
+    MAIN --> RAID
+    MAIN --> DISK
 ```
 
 关键目录：
@@ -233,11 +278,13 @@ bun run start     # 启动长轮询
 | error 日志 | `logs/` | Disk I/O Worker 统一批量追加 |
 | 运行实例 | `bot.lock` | 原子维护的多 Bot 进程注册表 |
 
-`memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据；项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请通过主机访问控制限制机器上的用户，并控制备份范围与保留周期。备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。`logs/`、`memory/`、`state.json`、凭据和运行锁均不会提交到 Git。
+> [!WARNING]
+> `memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据；项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请通过主机访问控制限制机器上的用户，并控制备份范围与保留周期。备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。`logs/`、`memory/`、`state.json`、凭据和运行锁均不会提交到 Git。
 
 待验证热路径复用每日运势和日志已有的 JSON 末尾追加机制，不会每次全量重写，也不会增加新的 IO 线程。终结记录以 `null` tombstone 线性追加，尾部截断修复按 JSON 结构边界扫描，因此会保留最后一条完整 tombstone，不会让已终结验证复活；只有跨日轮换或达到历史阈值时才原子收敛当前 active 镜像。每批追加在成功回执前执行 fsync。同步文件操作始终留在 Disk I/O Worker，不阻塞 Telegram 更新主线程。
 
-持久化 schema 变更不在运行时自动迁移。部署包含结构变更的版本前，应先手工迁移 `state.json` 与对应 `memory/` 快照；任一必需快照不符合当前结构时机器人会拒绝启动，避免用部分状态或空状态覆盖原文件。
+> [!IMPORTANT]
+> 持久化 schema 变更不在运行时自动迁移。部署包含结构变更的版本前，应先手工迁移 `state.json` 与对应 `memory/` 快照；任一必需快照不符合当前结构时机器人会拒绝启动，避免用部分状态或空状态覆盖原文件。
 
 `bot.lock` 以严格的 `pid:sha256(token)` 格式记录运行实例。数据目录全局独占：
 只要存在活跃 PID，无论 token 相同还是不同，新实例都会拒绝启动。死 PID 会在
@@ -250,7 +297,19 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 
 可靠性护栏包括：官方 SDK 类型边界、配置与持久化 JSON 逐字段校验、数据目录单实例锁、共享 Telegram API 限流/重试与必要的按群串行、Worker 崩溃节流自愈、失效 AI 轮次副作用拦截、反应队列硬顶、头像单执行槽与 latest-only 合并、后台 owner 有界 drain、媒体执行/排队/LRU 容量上限、JSON API 与媒体下载的流式字节上限，以及追加批次 fsync、原子落盘和严格恢复。跨模块生命周期约束见 [`docs/architecture.md`](docs/architecture.md)。
 
+<p align="right"><sub><a href="#-copy-ninjia">⬆️ 回到顶部</a></sub></p>
+
 ## 🧪 开发
+
+<table align="center">
+<tr>
+<td align="center"><b>639</b><br/><sub>测试全部通过</sub></td>
+<td align="center"><b>101</b><br/><sub>测试文件</sub></td>
+<td align="center"><b>2,517</b><br/><sub>断言</sub></td>
+<td align="center"><b>90.06%</b><br/><sub>函数覆盖率</sub></td>
+<td align="center"><b>91.82%</b><br/><sub>行覆盖率</sub></td>
+</tr>
+</table>
 
 ```bash
 bun run typecheck
@@ -258,12 +317,20 @@ bun run test
 bun run check
 ```
 
-测试必须通过 `bun run test` 执行；该入口强制启用文件隔离，避免 `mock.module` 和模块级状态污染其它测试文件。测试 preload 还会在任何生产模块加载前为每个隔离体创建独立临时数据根，因此未 mock 的真实文件 I/O 也不会读写生产 `state.json`、`bot.lock`、`logs/` 或 `memory/`，结束后临时目录会被清理。项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
+> [!IMPORTANT]
+> 测试必须通过 `bun run test` 执行；该入口强制启用文件隔离，避免 `mock.module` 和模块级状态污染其它测试文件。测试 preload 还会在任何生产模块加载前为每个隔离体创建独立临时数据根，因此未 mock 的真实文件 I/O 也不会读写生产 `state.json`、`bot.lock`、`logs/` 或 `memory/`，结束后临时目录会被清理。
+
+- **严格检查**：项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查。
+- **覆盖率口径**：`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。
+- **当前主干实测**：639 个测试跨 101 个文件全部通过（2,517 次断言），函数覆盖率 **90.06%**、行覆盖率 **91.82%**——全源码计入分母口径，不是只统计被测文件。
+- **代码放置约定**：新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
 
 ---
 
 <div align="center">
 
 **Copy Ninjia** — 不是只会复读，是把整套群聊现场偷走再演一遍。
+
+*人类没有写下任何一行代码，但也从未退场——画完图纸之后，还和 AI 一起审过每一次提交。*
 
 </div>
