@@ -13,7 +13,9 @@ export const VIEW_STICKER_PACK_TOOL_INSTRUCTION: string =
   "不要重复查看已经看过的包。没有合适的就换一个尚未查看的包，或不发贴纸、改用文字/反应回应。pack_index 填包的编号：\n";
 
 export const SEND_STICKER_TOOL_INSTRUCTION: string =
-  "从某个贴纸包里发送一枚贴纸到群里。必须先用 view_sticker_pack 查看过那个包的贴纸清单，" +
+  "从某个贴纸包里发送一枚贴纸到群里。这是发贴纸的唯一方式——任何贴纸都只能经本工具发送，" +
+  "绝不要试图用 send_message 发贴纸链接、文件 ID 或纯 emoji 来代替贴纸。" +
+  "必须先用 view_sticker_pack 查看过那个包的贴纸清单，" +
   `再按清单里的编号发送。每轮回复最多发 ${MAX_STICKERS_PER_REPLY} 枚——选最应景的那枚，` +
   "没有合适的就不发。";
 
