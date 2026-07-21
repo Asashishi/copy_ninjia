@@ -13,3 +13,6 @@ export type * from "./tools";
 export type * from "./luckChallenge";
 export type * from "./media";
 export type * from "./stickers";
+export type * from "./states/verification";
+export type * from "./states/lockdown";
+export type * from "./states/replyAdmission";

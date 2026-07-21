@@ -13,7 +13,7 @@ import { LinkedQueue } from "../../libs/linkedQueue";
 import { truncateInline } from "../../libs/text";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
-import type { TriggerKind } from "../../states/replyAdmission";
+import type { TriggerKind } from "../../types/states/replyAdmission";
 import type { MediaCommentContext } from "./promptContext";
 import { resolvedTagFor } from "./mediaText";
 import { notifyRateLimited } from "./replyState";

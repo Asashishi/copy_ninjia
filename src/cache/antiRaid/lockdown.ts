@@ -1,5 +1,5 @@
-import type { LockdownState } from "../../states/lockdown";
 import type { JoinWindow } from "../../types/antiRaid/internal";
+import type { LockdownState } from "../../types/states/lockdown";
 
 /** 一条私密模式状态机条目：纯状态 + 解释器持有的恢复计时器。 */
 export interface LockdownEntry {

@@ -207,7 +207,7 @@ bun run start     # 启动长轮询
 | `src/app/` | 启动/退出生命周期、handler 注册与命令菜单 |
 | `src/commands/` | 显式命令处理 |
 | `src/auto/` | 自动复读、AI 记录与触发、反应同步 |
-| `src/states/` | 无 I/O 的验证、锁定状态机与回复准入规则 |
+| `src/states/` | 无 I/O 的验证、锁定状态转移与回复准入规则实现 |
 | `src/config/` | 贴纸/反应配置的严格 schema、惰性加载与启动校验 |
 | `src/libs/` | 原子文件、有界 I/O、通用 schema 辅助及并发工具 |
 | `src/workers/` | AI、守群、磁盘三个独立 Worker |
@@ -215,7 +215,7 @@ bun run start     # 启动长轮询
 | `src/infra/` | Telegram 客户端、Worker 宿主与持久化基础设施；`storage/` 收口实例锁、状态存储和启动清理 |
 | `src/cache/` | 按领域拆分的运行时状态容器 |
 | `src/consts/` | 调参常量与路径 |
-| `src/types/` | 跨模块协议与领域类型 |
+| `src/types/` | 跨模块协议、领域类型及 `states/` 对应的状态机契约 |
 | `test/` | 与源码结构对应的 Bun 单元测试 |
 
 ## 💾 数据与可靠性
@@ -258,7 +258,7 @@ bun run test
 bun run check
 ```
 
-测试必须通过 `bun run test` 执行；该入口强制启用文件隔离，避免 `mock.module` 和模块级状态污染其它测试文件。测试 preload 还会在任何生产模块加载前为每个隔离体创建独立临时数据根，因此未 mock 的真实文件 I/O 也不会读写生产 `state.json`、`bot.lock`、`logs/` 或 `memory/`，结束后临时目录会被清理。项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
+测试必须通过 `bun run test` 执行；该入口强制启用文件隔离，避免 `mock.module` 和模块级状态污染其它测试文件。测试 preload 还会在任何生产模块加载前为每个隔离体创建独立临时数据根，因此未 mock 的真实文件 I/O 也不会读写生产 `state.json`、`bot.lock`、`logs/` 或 `memory/`，结束后临时目录会被清理。项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
 
 ---
 

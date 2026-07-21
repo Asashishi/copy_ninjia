@@ -24,17 +24,16 @@ import {
 import { lockdownEntries } from "../../cache/antiRaid/lockdown";
 import { verificationEntries, verificationGeneration, verificationRevisions } from "../../cache/antiRaid/verification";
 import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationPersistedMessage, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types/antiRaid";
-import {
-  joinCreatesNewRecord,
-  transitionVerification,
-  type ExpelSnapshot,
-  type JoinEvent,
-  type VerificationEffect,
-  type VerificationEvent,
-  type VerificationState,
-  type VerificationTerminalState,
-  type PendingState,
-} from "../../states/verification";
+import { joinCreatesNewRecord, transitionVerification } from "../../states/verification";
+import type {
+  ExpelSnapshot,
+  JoinEvent,
+  PendingState,
+  VerificationEffect,
+  VerificationEvent,
+  VerificationState,
+  VerificationTerminalState,
+} from "../../types/states/verification";
 import { verificationKey } from "../../libs/verificationKey";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { rememberRecentComment, takeRecentComment } from "./recentComments";

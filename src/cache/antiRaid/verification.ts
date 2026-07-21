@@ -1,5 +1,5 @@
-import type { VerificationState } from "../../states/verification";
 import { VERIFICATION_REVISION_RETENTION_MS } from "../../consts/antiRaid/verification";
+import type { VerificationState } from "../../types/states/verification";
 
 /** 一条验证状态机条目：纯状态 + 解释器持有的活动计时器。 */
 export interface VerificationEntry {

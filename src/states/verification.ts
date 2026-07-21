@@ -1,27 +1,19 @@
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
 import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiRaid/verification";
-import type { VerificationEffect, VerificationTransition } from "./verification/effects";
-import type { JoinEvent, VerificationEvent } from "./verification/events";
-import type { ExpelSnapshot, PendingState, VerificationState } from "./verification/state";
-
-export type { VerificationEffect, VerificationTransition } from "./verification/effects";
-export type { JoinEvent, VerificationEvent } from "./verification/events";
-export type {
-  ExemptState,
-  CheckingInviterState,
+import type {
   ExpelSnapshot,
-  ExpellingState,
-  KickedState,
+  JoinEvent,
   PendingState,
-  RecentComment,
+  VerificationEffect,
+  VerificationEvent,
   VerificationState,
-  VerificationTerminalState,
-} from "./verification/state";
+  VerificationTransition,
+} from "../types/states/verification";
 
 /**
- * 入群验证生命周期的显式状态机（纯逻辑，不做 I/O、不持有计时器）。状态模型、
- * 输入事件和输出副作用分别位于 verification/*；所有状态转移仍集中在本文件，
- * 让状态图和跨事件不变量可以在一个位置完整审计。
+ * 入群验证生命周期的显式状态机（纯逻辑，不做 I/O、不持有计时器）。状态、
+ * 事件与副作用契约统一位于 types/states/verification.ts；所有状态转移集中在
+ * 本文件，让状态图和跨事件不变量可以在一个位置完整审计。
  *
  * 状态图（ABSENT = Map 里没有这个 key）：
  *

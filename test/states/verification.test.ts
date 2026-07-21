@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  joinCreatesNewRecord,
-  transitionVerification,
-  type JoinEvent,
-  type PendingState,
-  type VerificationState,
-} from "../../src/states/verification";
+import { joinCreatesNewRecord, transitionVerification } from "../../src/states/verification";
+import type { JoinEvent, PendingState, VerificationState } from "../../src/types/states/verification";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, VERIFICATION_TIMEOUT_MS } from "../../src/consts/antiRaid";
 
 /** 造一个 join 事件，默认是「自主入群、无豁免、无锁定」，用覆盖项表达各场景。 */

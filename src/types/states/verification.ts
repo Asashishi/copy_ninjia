@@ -79,3 +79,59 @@ export interface ExpellingState {
 
 export type VerificationTerminalState = CheckingInviterState | ExpellingState;
 export type VerificationState = PendingState | ExemptState | KickedState | VerificationTerminalState;
+
+export interface JoinEvent {
+  type: "join";
+  memberId: number;
+  label: string;
+  isBot: boolean;
+  announcementMessageId?: number;
+  /** undefined 或 memberId 表示自主入群，否则是拉人者。 */
+  actorId?: number;
+  identityExempt: boolean;
+  actorSyncExempt: boolean;
+  /** 管理员缓存是否未过期；决定是否还需异步核查。 */
+  adminCacheFresh: boolean;
+  /** 必须在 recordJoin 可能触发锁定之后读取。 */
+  lockdownActive: boolean;
+  recentComment?: RecentComment;
+  now: number;
+}
+
+export type VerificationEvent =
+  | JoinEvent
+  | { type: "left" }
+  | { type: "trackedMessage"; messageId: number; inCommentThread: boolean; now: number }
+  | { type: "callback"; callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
+  | { type: "adminCheckResolved" }
+  | { type: "verifyTimeout" }
+  | { type: "terminalPersisted" }
+  | { type: "timeoutInviterVerdict"; inviterIsAdmin: boolean }
+  | { type: "expelSettled" }
+  | { type: "reminderLanded"; reminderKind: "original" | "reply"; messageId: number }
+  | { type: "dedupeExpired" };
+
+/** 状态机只描述意图；antiRaid Worker 按顺序解释这些副作用。 */
+export type VerificationEffect =
+  | { kind: "deleteMessage"; messageId: number }
+  | { kind: "kickMember" }
+  | { kind: "sendReminder"; label: string; isBot: boolean }
+  | { kind: "sendReplyReminder"; label: string; targetMessageId: number; inCommentThread: boolean }
+  | { kind: "sendWelcome"; variant: "verified" | "vouchedBot" | "channelComment"; targetLabel: string; fromLabel?: string; anchorMessageId?: number }
+  | { kind: "answerCallback"; callbackQueryId: string; reply: "ok" | "invalid" | "notYourButton" | "notYourBotButton" }
+  | { kind: "deleteReminders"; reminderMessageId?: number; replyReminderMessageId?: number }
+  | { kind: "startAdminCheck"; actorId: number }
+  | { kind: "logStaleKickedExemption"; label: string }
+  | { kind: "retractJoinCount"; joinedAt: number }
+  | { kind: "recheckInviter"; inviterId: number; snapshot: ExpelSnapshot }
+  | { kind: "expel"; snapshot: ExpelSnapshot }
+  | { kind: "expelFlood"; snapshot: ExpelSnapshot }
+  | { kind: "restartVerifyTimer" };
+
+export interface VerificationTransition {
+  /** undefined = 删除；同一引用 = 原地更新。 */
+  next: VerificationState | undefined;
+  effects: VerificationEffect[];
+  /** 仅原地修改 pending 时置 true。 */
+  snapshotChanged?: boolean;
+}

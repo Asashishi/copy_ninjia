@@ -21,6 +21,8 @@
   `state.json` 的内存镜像、latest-only 原子写、失败重试和退出 flush。
 - AI Worker 独占群聊记忆、回复准入、媒体描述流水线和贴纸目录生成的运行时状态。
 - Anti-Raid Worker 独占验证/锁定状态机和对应计时器；主线程只持可恢复镜像。
+- 状态机的 `State/Event/Effect/Transition/Decision` 契约统一由 `src/types/states/`
+  持有，`src/states/` 只实现无 I/O 的纯状态转移；解释器和 cache 直接依赖前者的类型。
 - Disk I/O Worker 独占日志、AI 记忆、贴纸目录、运势和待验证数据的持久化，
   在单一 Worker 线程内串行读写这些共享目录；`state.json` 是明确的例外，由主线程
   `StateStore` 异步维护。业务 Worker 不直接写共享目录。
