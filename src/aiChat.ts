@@ -1,7 +1,9 @@
 import { superviseWorker } from "./libs/supervisedWorker";
+import { createFlushBarrier } from "./libs/flushBarrier";
 import { markSelfSent } from "./infra/selfSentTracker";
+import { registerChatTeardown } from "./infra/chatTeardown";
 import { onDiskIORespawn, postDiskIO } from "./ai/persistence";
-import { aiChatWorkerState, lastInitState, latestAiMemories, latestStickerCatalogs, pendingMemoryFlushes, purgedAiMemoryChats } from "./cache/aiChat";
+import { aiChatWorkerState, lastInitState, latestAiMemories, latestStickerCatalogs, purgedAiMemoryChats } from "./cache/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS, type FlushResult } from "./consts/lifecycle";
 import type {
   AiBotInfo,
@@ -13,11 +15,13 @@ import type {
   AiTriggerMessage,
 } from "./types/aiChat/protocol";
 
+const aiMemoryFlushBarrier = createFlushBarrier({ timeoutMs: AI_MEMORY_FLUSH_TIMEOUT_MS });
+
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
  * 贴纸/GIF 占位与异步描述、限频、拼装上下文、调 Gemini（含 function
  * calling 往返与内置 googleSearch）、工具化的发言/消息反应/两层应景贴纸
- * （见 src/ai/tools/replyToolset.ts）、白名单贴纸目录与整包简介生成——全部在独立
+ * （见 src/ai/tools/replyToolset/）、白名单贴纸目录与整包简介生成——全部在独立
  * 的 Bun Worker（src/workers/aiChatWorker.ts）里
  * 执行；主线程只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
  * 让 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
@@ -62,18 +66,13 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
         postDiskIO({ type: "stickerCatalog", pack: event.pack, snapshot: event.snapshot });
         break;
       case "memoryFlushed": {
-        const resolve = pendingMemoryFlushes.get(event.flushId);
-        if (resolve) {
-          pendingMemoryFlushes.delete(event.flushId);
-          resolve("flushed");
-        }
+        aiMemoryFlushBarrier.settle(event.flushId, "flushed");
         break;
       }
     }
   },
   onRespawn: (postToNext) => {
-    for (const resolve of pendingMemoryFlushes.values()) resolve("failed");
-    pendingMemoryFlushes.clear();
+    aiMemoryFlushBarrier.settleAll("failed");
     // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
     // 重启发生在 initAiChat 调用之前的话 lastInitState.current 仍是 null，
     // 没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
@@ -157,8 +156,6 @@ export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
   }
 }
 
-let nextMemoryFlushId: number = 1;
-
 /**
  * 要求 aiChatWorker 立即把所有 dirty 群的记忆快照、dirty 的贴纸目录上报
  * （进而转投 diskIOWorker 落盘），并等待完成。用于进程退出前的最后一刷
@@ -167,24 +164,15 @@ let nextMemoryFlushId: number = 1;
  */
 export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   if (lastInitState.current === null) return Promise.resolve("flushed");
-  return new Promise((resolve) => {
-    const id: number = nextMemoryFlushId++;
-    const timer = setTimeout(() => {
-      pendingMemoryFlushes.delete(id);
-      resolve("timedOut");
-    }, timeoutMs);
-    pendingMemoryFlushes.set(id, (result: FlushResult) => {
-      clearTimeout(timer);
-      resolve(result);
-    });
-    post({ type: "flushMemory", flushId: id });
-  });
+  return aiMemoryFlushBarrier.begin(
+    (id) => post({ type: "flushMemory", flushId: id }),
+    timeoutMs
+  );
 }
 
 /** 停机时强制终止 AI Worker，保证它不会在 Disk I/O flush 后继续发布旧快照。 */
 export async function terminateAiChat(): Promise<void> {
-  for (const resolve of pendingMemoryFlushes.values()) resolve("failed");
-  pendingMemoryFlushes.clear();
+  aiMemoryFlushBarrier.settleAll("failed");
   aiChatWorkerState.available = false;
   purgedAiMemoryChats.clear();
   await terminateAiChatWorker();
@@ -289,3 +277,5 @@ export function invalidateAiChat(chatId: number, purgeMemory: boolean): void {
   }
   post({ type: "invalidateChat", chatId, purgeMemory });
 }
+
+registerChatTeardown("aiChat", (chatId) => invalidateAiChat(chatId, true));

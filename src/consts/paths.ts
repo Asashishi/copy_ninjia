@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { RUNTIME_DATA_ROOT_ENV } from "./environment";
 
 /**
  * 项目内所有文件/目录路径的集中定义。各模块统一从这里取，不再各自散落
@@ -7,9 +8,19 @@ import { join } from "node:path";
  */
 export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 
+/**
+ * 所有运行时生成数据的根目录。生产默认保持项目根目录；测试 preload 必须在
+ * 任何生产模块加载前注入独立临时目录，从源头隔离真实 I/O，而非依赖每个
+ * 测试都记得 mock 路径。
+ */
+const configuredDataRoot: string | undefined = process.env[RUNTIME_DATA_ROOT_ENV]?.trim() || undefined;
+export const RUNTIME_DATA_ROOT: string = configuredDataRoot === undefined
+  ? PROJECT_ROOT
+  : resolve(configuredDataRoot);
+
 // 持久状态与运行实例注册表；具体 schema/协议由各自的所有者模块定义。
-export const STATE_FILE_PATH: string = join(PROJECT_ROOT, "state.json");
-export const LOCK_FILE_PATH: string = join(PROJECT_ROOT, "bot.lock");
+export const STATE_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "state.json");
+export const LOCK_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "bot.lock");
 
 /** AI 闲聊人设文本（Markdown，修改人设不需要碰代码）。 */
 export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
@@ -19,7 +30,7 @@ export const STICKERS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "sticke
 export const REACTIONS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "reactions.json");
 
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
-export const LOGS_DIR: string = join(PROJECT_ROOT, "logs");
+export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
 
 /**
  * memory/ 落盘目录：AI 记忆快照（ai/ 下按 chatId 一个 <chatId>.json）、每日
@@ -29,7 +40,7 @@ export const LOGS_DIR: string = join(PROJECT_ROOT, "logs");
  * 落盘，见 src/workers/diskIOWorker.ts。不进 git，与
  * logs/ 同级对待；AI 记忆快照含群聊逐字明文，部署时应按敏感数据保护。
  */
-export const MEMORY_DIR: string = join(PROJECT_ROOT, "memory");
+export const MEMORY_DIR: string = join(RUNTIME_DATA_ROOT, "memory");
 export const AI_MEMORY_DIR: string = join(MEMORY_DIR, "ai");
 export const LUCK_MEMORY_DIR: string = join(MEMORY_DIR, "luck");
 /** 当日运势确定性派生与回执签名共用的敏感密钥文件。 */

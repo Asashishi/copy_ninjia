@@ -40,7 +40,6 @@ const {
   lastInitState,
   latestAiMemories,
   latestStickerCatalogs,
-  pendingMemoryFlushes,
   purgedAiMemoryChats,
   aiChatWorkerState,
 } = await import("../../../src/cache/aiChat");
@@ -53,7 +52,6 @@ beforeEach(() => {
   lastInitState.current = null;
   latestAiMemories.clear();
   latestStickerCatalogs.clear();
-  pendingMemoryFlushes.clear();
   purgedAiMemoryChats.clear();
   aiChatWorkerState.available = false;
 });
@@ -107,17 +105,15 @@ describe("AI main-thread persistence mirror", () => {
     const acknowledged = aiChat.flushAiMemory(1_000);
     const acknowledgedRequest = workerPosts.at(-1);
     if (acknowledgedRequest?.type !== "flushMemory") throw new Error("Expected a flushMemory request");
-    expect(pendingMemoryFlushes.has(acknowledgedRequest.flushId)).toBeTrue();
 
     supervisorOptions!.onEvent({ type: "memoryFlushed", flushId: acknowledgedRequest.flushId });
-    await acknowledged;
-    expect(pendingMemoryFlushes.has(acknowledgedRequest.flushId)).toBeFalse();
+    await expect(acknowledged).resolves.toBe("flushed");
 
     const timedOut = aiChat.flushAiMemory(1);
     const timedOutRequest = workerPosts.at(-1);
     if (timedOutRequest?.type !== "flushMemory") throw new Error("Expected a flushMemory request");
-    await timedOut;
-    expect(pendingMemoryFlushes.has(timedOutRequest.flushId)).toBeFalse();
+    await expect(timedOut).resolves.toBe("timedOut");
+    supervisorOptions!.onEvent({ type: "memoryFlushed", flushId: timedOutRequest.flushId });
   });
 
   test("Worker 放弃自愈后清空 purge tombstone，后续删除不再等待不存在的回执", () => {

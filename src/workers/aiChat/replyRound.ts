@@ -1,6 +1,6 @@
 import { startChatActionHeartbeat } from "../../ai/chatActionHeartbeat";
 import { createStickerSendLock } from "../../ai/stickers/sendLock";
-import { createReplyToolset } from "../../ai/tools/replyToolset";
+import { createReplyToolset } from "../../ai/tools/replyToolset/orchestrator";
 import { botInfoState } from "../../cache/aiChat/identity";
 import { activeReplyCounts, longTriggerTimes } from "../../cache/aiChat/replies";
 import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";

@@ -1,4 +1,4 @@
-import { verificationKey } from "./keys";
+import { verificationKey } from "../../libs/verificationKey";
 import { recentChannelComments, type RecentChannelComment } from "../../cache/antiRaid/recentComments";
 import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../consts/antiRaid/cache";
 

@@ -10,12 +10,6 @@ mock.module("../../src/infra/logger", () => ({
 mock.module("../../src/infra/telegram", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember: async () => ({ status: "administrator" }) } },
 }));
-mock.module("../../src/aiChat", () => ({
-  invalidateAiChat(chatId: number, purge: boolean): void { calls.push(`ai:${chatId}:${purge}`); },
-}));
-mock.module("../../src/commands/copy", () => ({
-  stopCopyOwnedByChat(chatId: number): boolean { calls.push(`copy:${chatId}`); return true; },
-}));
 mock.module("../../src/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
@@ -43,6 +37,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
 }));
 
 const botAdmin = await import("../../src/infra/botAdmin");
+const chatTeardown = await import("../../src/infra/chatTeardown");
 
 function memberContext(newStatus: string, oldStatus: string = "administrator"): never {
   return {
@@ -58,7 +53,9 @@ beforeEach(() => {
   calls.length = 0;
   states.clear();
   saveStateInBackground.mockClear();
-  botAdmin.registerAntiRaidChatTeardown((chatId: number): void => { calls.push(`anti:${chatId}`); });
+  chatTeardown.registerChatTeardown("copy", (chatId: number): void => { calls.push(`copy:${chatId}`); });
+  chatTeardown.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
+  chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
 });
 
 describe("chat runtime teardown", () => {

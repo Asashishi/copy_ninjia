@@ -28,6 +28,7 @@ import {
 } from "../../cache/diskIO/verification";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { getTokyoDateKey } from "../../libs/time";
+import { verificationKey } from "../../libs/verificationKey";
 import type {
   VerificationDeleteDiskMessage,
   VerificationFileChange,
@@ -45,10 +46,6 @@ const TOP_LEVEL_ENTRY_PATTERN: RegExp = new RegExp(
   `^${" ".repeat(DAY_FILE_JSON_INDENT)}"(?:[^"\\\\]|\\\\.)+":`,
   "gm"
 );
-
-export function verificationFileKey(chatId: number, userId: number): string {
-  return `${chatId}:${userId}`;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -112,7 +109,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     ((value.phase === undefined || value.phase === "pending") && (
       value.terminalInviterId !== undefined || value.expelReason !== undefined || value.successNoticeSent !== undefined
     )) ||
-    key !== verificationFileKey(value.chatId, value.userId)
+    key !== verificationKey(value.chatId, value.userId)
   ) return null;
 
   return {
@@ -296,7 +293,7 @@ export function handleVerificationUpsert({
   dir?: string;
   day?: string;
 }): void {
-  const key: string = verificationFileKey(msg.record.chatId, msg.record.userId);
+  const key: string = verificationKey(msg.record.chatId, msg.record.userId);
   const pending: VerificationFileChange | undefined = verificationPendingChanges.get(key);
   if (sameOrNewer(pending, msg.record.generation, msg.record.revision)) return;
   const current: VerificationSnapshot | undefined = verificationWorkerCache.get(key);
@@ -328,7 +325,7 @@ export function handleVerificationDelete({
   dir?: string;
   day?: string;
 }): void {
-  const key: string = verificationFileKey(msg.chatId, msg.userId);
+  const key: string = verificationKey(msg.chatId, msg.userId);
   const pending: VerificationFileChange | undefined = verificationPendingChanges.get(key);
   if (sameOrNewer(pending, msg.generation, msg.revision)) return;
   const current: VerificationSnapshot | undefined = verificationWorkerCache.get(key);

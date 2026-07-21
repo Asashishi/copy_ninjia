@@ -1,5 +1,4 @@
 import type { AiInitMessage } from "../types/aiChat/protocol";
-import type { FlushResult } from "../consts/lifecycle";
 
 /** AI 闲聊主线程侧代理（src/aiChat.ts）的内存状态。 */
 
@@ -18,6 +17,3 @@ export const aiChatWorkerState: { available: boolean } = { available: false };
 /** 各白名单贴纸包最新的目录快照镜像（同为序列化 JSON 文本），机制与
  *  latestAiMemories 完全一致（双向崩溃重放的唯一来源），见 aiChat.ts 模块头注。 */
 export const latestStickerCatalogs: Map<string, string> = new Map();
-
-/** flushAiMemory 的回执路由：flushId -> resolve（握手样式同 cache/diskIO.ts 的 pendingFlushes）。 */
-export const pendingMemoryFlushes: Map<number, (result: FlushResult) => void> = new Map();

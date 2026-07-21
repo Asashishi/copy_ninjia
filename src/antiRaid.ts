@@ -3,17 +3,19 @@ import type { Context } from "grammy";
 import type { ChatMember, Message } from "@grammyjs/types";
 import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "./infra/storage/stateStore";
 import { answerCallbackQuery } from "./infra/telegram/actions";
-import { isBotAdminIn, markBotAdminObserved, registerAntiRaidChatTeardown } from "./infra/botAdmin";
+import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
+import { registerChatTeardown } from "./infra/chatTeardown";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid/verification";
 import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "./consts/antiRaid/protocol";
 import type { FlushResult } from "./consts/lifecycle";
+import { createFlushBarrier } from "./libs/flushBarrier";
+import { isAdminStatus } from "./libs/chatMember";
 import { superviseWorker } from "./libs/supervisedWorker";
+import { verificationKey } from "./libs/verificationKey";
 import { flushDiskIO, onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./workers/antiRaid/persistence";
 import {
   activeVerificationSnapshots,
-  antiRaidBarrierSequence,
   antiRaidRuntimeState,
-  pendingAntiRaidBarriers,
   pendingLockdownPersistence,
   pendingVerificationDeletes,
   persistedLockdownFingerprints,
@@ -22,6 +24,8 @@ import {
 } from "./cache/antiRaid";
 import type { AdoptableLockdown, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent } from "./types/antiRaid";
 import type { LockdownRecord } from "./types/chatState";
+
+const antiRaidBarrier = createFlushBarrier({ timeoutMs: ANTI_RAID_BARRIER_TIMEOUT_MS });
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
@@ -42,10 +46,6 @@ import type { LockdownRecord } from "./types/chatState";
  * 待验证纯数据由主线程镜像并转投唯一 Disk I/O Worker 的当日增量 JSON：
  * Worker 或整个进程重建后都按 expiresAt 接管。私密模式仍由 state.json 恢复。
  */
-
-function verificationMirrorKey(chatId: number, userId: number): string {
-  return `${chatId}:${userId}`;
-}
 
 function nextAntiRaidGeneration(): number {
   antiRaidRuntimeState.generation++;
@@ -163,11 +163,7 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
         if (acceptVerificationDelete(event)) antiRaidRuntimeState.persistenceVersion++;
         break;
       case "barrierComplete": {
-        const resolve = pendingAntiRaidBarriers.get(event.barrierId);
-        if (resolve !== undefined) {
-          pendingAntiRaidBarriers.delete(event.barrierId);
-          resolve("flushed");
-        }
+        antiRaidBarrier.settle(event.barrierId, "flushed");
         break;
       }
     }
@@ -175,7 +171,7 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
   // 崩溃的 Worker 带走了所有计时器；先用主线程待验证镜像重建验证，再把
   // 仍在生效的私密模式交给新 Worker。FIFO 保证两类 adopt 都先于新投递。
   onRespawn: (postToNext) => {
-    settleAntiRaidBarriers("failed");
+    antiRaidBarrier.settleAll("failed");
     const generation: number = nextAntiRaidGeneration();
     for (const [key, record] of activeVerificationSnapshots) {
       const persisted = persistedVerificationRevisions.get(key);
@@ -202,19 +198,19 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
     }
   },
   onGiveUp: () => {
-    settleAntiRaidBarriers("failed");
+    antiRaidBarrier.settleAll("failed");
     abandonLockdowns();
   },
 });
 
-registerAntiRaidChatTeardown((chatId: number): void => {
+registerChatTeardown("antiRaid", (chatId: number): void => {
   post({ type: "deactivateChat", chatId });
 });
 
 function acceptVerificationUpsert(event: VerificationUpsertEvent): boolean {
   const snapshot: VerificationSnapshot = event.record;
   if (snapshot.generation !== antiRaidRuntimeState.generation) return false;
-  const key: string = verificationMirrorKey(snapshot.chatId, snapshot.userId);
+  const key: string = verificationKey(snapshot.chatId, snapshot.userId);
   const latestRevision: number = Math.max(
     activeVerificationSnapshots.get(key)?.revision ?? 0,
     pendingVerificationDeletes.get(key)?.revision ?? 0
@@ -234,7 +230,7 @@ function acceptVerificationUpsert(event: VerificationUpsertEvent): boolean {
 
 function acceptVerificationDelete(event: VerificationDeleteEvent): boolean {
   if (event.generation !== antiRaidRuntimeState.generation) return false;
-  const key: string = verificationMirrorKey(event.chatId, event.userId);
+  const key: string = verificationKey(event.chatId, event.userId);
   const current: VerificationSnapshot | undefined = activeVerificationSnapshots.get(key);
   const pendingRevision: number = pendingVerificationDeletes.get(key)?.revision ?? 0;
   if ((!current && pendingRevision === 0) || event.revision <= Math.max(current?.revision ?? 0, pendingRevision)) return false;
@@ -251,30 +247,13 @@ function acceptVerificationDelete(event: VerificationDeleteEvent): boolean {
   return true;
 }
 
-function settleAntiRaidBarriers(result: FlushResult): void {
-  for (const resolve of pendingAntiRaidBarriers.values()) resolve(result);
-  pendingAntiRaidBarriers.clear();
-}
-
 /** FIFO barrier：回执前 Worker 已同步处理完此前消息，镜像事件也已先到主线程。 */
 export function drainAntiRaid(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS): Promise<FlushResult> {
   if (!antiRaidRuntimeState.initialized) return Promise.resolve("flushed");
-  const barrierId: number = antiRaidBarrierSequence.nextId++;
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pendingAntiRaidBarriers.delete(barrierId);
-      resolve("timedOut");
-    }, timeoutMs);
-    pendingAntiRaidBarriers.set(barrierId, (result: FlushResult): void => {
-      clearTimeout(timer);
-      resolve(result);
-    });
-    if (!post({ type: "barrier", barrierId })) {
-      const settle = pendingAntiRaidBarriers.get(barrierId);
-      pendingAntiRaidBarriers.delete(barrierId);
-      settle?.("failed");
-    }
-  });
+  return antiRaidBarrier.begin(
+    (barrierId) => post({ type: "barrier", barrierId }),
+    timeoutMs
+  );
 }
 
 /** update 安全交接：处理 mailbox 后，仅在镜像变化时同步两类持久化 owner。 */
@@ -379,7 +358,7 @@ export function deactivateAntiRaidChat(chatId: number): void {
 
 /** 停机时终止 Worker；验证/lockdown 的 write-ahead 镜像已在主线程持有。 */
 export function terminateAntiRaid(): Promise<void> {
-  settleAntiRaidBarriers("failed");
+  antiRaidBarrier.settleAll("failed");
   antiRaidRuntimeState.initialized = false;
   return terminateAntiRaidWorker();
 }
@@ -446,8 +425,8 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   // 管理员任免（含管理员入群/离群）同样以 chat_member 更新送达：同步给
   // Worker 侧的管理员表缓存，让「管理员拉人免验证」的同步判定近乎实时，
   // 缓存 TTL 只是兜底。FIFO 保证它先于随后的 join/left 投递生效。
-  const wasAdmin: boolean = update.old_chat_member.status === "administrator" || update.old_chat_member.status === "creator";
-  const isAdmin: boolean = update.new_chat_member.status === "administrator" || update.new_chat_member.status === "creator";
+  const wasAdmin: boolean = isAdminStatus(update.old_chat_member.status);
+  const isAdmin: boolean = isAdminStatus(update.new_chat_member.status);
   const messages: AntiRaidWorkerMessage[] = [];
   if (wasAdmin !== isAdmin) messages.push({ type: "adminsChanged", chatId, userId: user.id, isAdmin });
 
@@ -510,7 +489,7 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
     message.message_thread_id !== undefined;
   if (
     userId !== undefined &&
-    (activeVerificationSnapshots.has(verificationMirrorKey(message.chat.id, userId)) || mayPrecedeJoinInCommentThread)
+    (activeVerificationSnapshots.has(verificationKey(message.chat.id, userId)) || mayPrecedeJoinInCommentThread)
   ) {
     // 附带频道评论区的识别线索：在关联频道的帖子下留言的人会被 Telegram
     // 自动拉进讨论群，这是真人操作，Worker 据此免除验证（直接回复频道帖）

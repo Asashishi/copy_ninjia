@@ -57,7 +57,6 @@ mock.module("../../../src/infra/telegram/actions", () => ({ answerCallbackQuery:
 mock.module("../../../src/infra/botAdmin", () => ({
   isBotAdminIn: async (): Promise<boolean> => true,
   markBotAdminObserved(): void {},
-  registerAntiRaidChatTeardown(): void {},
 }));
 mock.module("../../../src/libs/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
@@ -302,16 +301,23 @@ describe("Anti-Raid main-thread persistence mirror", () => {
 
   test("barrier 超时会清理 waiter，迟到回执不能改变失败结果", async () => {
     workerPosts.length = 0;
-    const { pendingAntiRaidBarriers } = await import("../../../src/cache/antiRaid");
     const result = antiRaid.drainAntiRaid(1);
     const barrier = workerPosts.at(-1);
 
     await expect(result).resolves.toBe("timedOut");
-    expect(pendingAntiRaidBarriers.size).toBe(0);
+    const nextResult = antiRaid.drainAntiRaid(1_000);
+    const nextBarrier = workerPosts.at(-1);
+    let nextSettled: boolean = false;
+    void nextResult.finally(() => { nextSettled = true; });
     if (barrier?.type === "barrier") {
       supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
     }
-    expect(pendingAntiRaidBarriers.size).toBe(0);
+    await Bun.sleep(0);
+    expect(nextSettled).toBeFalse();
+    if (nextBarrier?.type === "barrier") {
+      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: nextBarrier.barrierId });
+    }
+    await expect(nextResult).resolves.toBe("flushed");
   });
 
   test("服务消息与验证按钮入口都把各自 barrier 纳入返回 Promise", async () => {

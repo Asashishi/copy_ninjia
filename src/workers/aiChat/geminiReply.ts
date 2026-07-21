@@ -66,7 +66,7 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
 
 /**
  * 调用 Gemini 的 generateContent 接口跑完一轮回复对话（收发与响应解析在
- * ai/gemini.ts）。toolset.tools 带三类，组装见 ai/tools/replyToolset.ts 的
+ * ai/gemini.ts）。toolset.tools 带三类，组装见 ai/tools/replyToolset/orchestrator.ts 的
  * createReplyToolset：内置的 googleSearch（Google 服务器侧自动执行，模型
  * 自主决定要不要联网查证）+ src/ai/tools 里的静态自定义函数（目前是查东京
  * 天气）+ 按次回复现组装的行动工具集（发言/反应/两层贴纸——发消息、发贴纸

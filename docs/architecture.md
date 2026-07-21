@@ -11,6 +11,9 @@
 - 初始化失败和正常退出都由 `ApplicationLifecycle` 收口；只有已取得的资源才会释放或 flush。
 - 配置解析器本身无 I/O；`getStickerConfig()` / `getReactionConfig()` 在业务首次使用时
   惰性加载，主进程会在持锁后预热，以便部署错误在联网前暴露。
+- `state.json`、`bot.lock`、`logs/` 与 `memory/` 全部从统一运行时数据根派生；
+  生产缺省使用项目根目录，测试 preload 在任何生产模块 import 前注入逐隔离体的临时根，
+  让真实文件 I/O 也不可能读写生产缓存。
 
 ## Worker 与状态所有权
 
@@ -23,6 +26,9 @@
   `StateStore` 异步维护。业务 Worker 不直接写共享目录。
 - 长期 Map、Set、队列和 timer 必须由对应 `src/cache/<domain>/` 与业务生命周期模块
   共同给出容量、清理和 Worker 重建语义。
+- chat runtime teardown 的三个固定 owner 回调由 `src/cache/chatTeardown.ts` 持有，
+  上层领域经 `src/infra/chatTeardown.ts` 反向注册；`src/infra/botAdmin.ts` 不得静态依赖
+  `commands/`、AI 或 Anti-Raid 业务模块。
 
 ## 持久化
 
@@ -33,6 +39,8 @@
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
   反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败
   必须返回失败、阻止最终 offset 确认并以非零状态退出。
+- Worker flush 与 mailbox barrier 统一使用 `src/libs/flushBarrier.ts` 管理 ID、等待表、
+  超时、迟到回执和崩溃批量结算；领域缓存不得重新暴露 resolver Map。
 - `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由主机账户权限、
   部署隔离和备份策略控制，不通过制造不可读文件解决。
 - 持久化 schema 不做猜测式自动迁移；不兼容输入会阻止启动，避免空状态覆盖原数据。

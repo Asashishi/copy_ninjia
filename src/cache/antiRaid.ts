@@ -1,5 +1,4 @@
 import type { VerificationSnapshot } from "../types/antiRaid";
-export * from "./antiRaid/protocol";
 
 export interface PersistedLockdownFingerprint {
   phase: "applying" | "active" | "restoring";

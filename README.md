@@ -144,6 +144,11 @@ cp .env.example .env
 `GEMINI_API_KEY` 和单个十进制数字 ID `SUPER_ADMIN_USER_ID` 必填；
 `PRIVILEGED_USERS_ID` 可留空，多项之间用英文逗号分隔。
 
+`COPY_NINJIA_DATA_ROOT` 可选，用于单独指定运行时生成数据的根目录。设置后，
+`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；人设、贴纸/反应配置
+与 `g-auth.json` 仍从项目根目录读取。留空时保持原行为，数据直接位于项目根目录。
+并行部署多个 Bot 时，每个实例必须使用不同的数据根目录。
+
 贴纸包在 [`config/stickers.json`](config/stickers.json) 中配置，最多配置 5 个；
 AI 每轮可以依次查看这 5 个包，但同一个包在一轮内只会查看一次。
 
@@ -215,6 +220,9 @@ bun run start     # 启动长轮询
 
 ## 💾 数据与可靠性
 
+下表中的位置均相对于运行时数据根目录；默认是项目根目录，可通过
+`COPY_NINJIA_DATA_ROOT` 修改。
+
 | 数据 | 位置 | 写入策略 |
 | --- | --- | --- |
 | 群状态 / copy 状态 / 锁定镜像 | `state.json` | 只保留“在写 + 最新待写”两份快照，失败后台重试，临时文件 + fsync + 原子 rename |
@@ -238,7 +246,7 @@ bun run start     # 启动长轮询
 锁格式不正确时不会自动猜测或迁移，请停掉相关进程后手工处理。
 
 token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 需要并行部署时，
-应使用彼此独立的项目/数据目录。
+应使用彼此独立的项目目录，或为每个实例配置不同的 `COPY_NINJIA_DATA_ROOT`。
 
 可靠性护栏包括：官方 SDK 类型边界、配置与持久化 JSON 逐字段校验、数据目录单实例锁、共享 Telegram API 限流/重试与必要的按群串行、Worker 崩溃节流自愈、失效 AI 轮次副作用拦截、反应队列硬顶、头像单执行槽与 latest-only 合并、后台 owner 有界 drain、媒体执行/排队/LRU 容量上限、JSON API 与媒体下载的流式字节上限，以及追加批次 fsync、原子落盘和严格恢复。跨模块生命周期约束见 [`docs/architecture.md`](docs/architecture.md)。
 
@@ -250,7 +258,7 @@ bun run test
 bun run check
 ```
 
-测试必须通过 `bun run test` 执行；该入口强制启用文件隔离，避免 `mock.module` 和模块级状态污染其它测试文件。项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
+测试必须通过 `bun run test` 执行；该入口强制启用文件隔离，避免 `mock.module` 和模块级状态污染其它测试文件。测试 preload 还会在任何生产模块加载前为每个隔离体创建独立临时数据根，因此未 mock 的真实文件 I/O 也不会读写生产 `state.json`、`bot.lock`、`logs/` 或 `memory/`，结束后临时目录会被清理。项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查；`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。新增共享协议放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，避免业务文件继续长出游离状态。
 
 ---
 

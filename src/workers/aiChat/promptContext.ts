@@ -101,7 +101,7 @@ export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: U
 
   // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
   // 发言/贴纸/反应全部工具化，做什么、什么顺序由模型自己决定（见
-  // ai/tools/replyToolset.ts）。
+  // ai/tools/replyToolset/）。
   // - 拿媒体直接叫机器人：对方用贴纸/图片/GIF 回复机器人，或在 caption 里
   //   @ 机器人（见 MediaCommentContext 的 directTriggerReason），语气同
   //   回复/@ 触发——别已读不回；描述可能是解析结果也可能是元数据兜底，模型

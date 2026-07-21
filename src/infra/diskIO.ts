@@ -15,9 +15,10 @@
  * @see ../../docs/architecture.md
  */
 
-import { pendingFlushes, pendingLoad, pendingLuckSecrets } from "../cache/diskIO";
+import { pendingLoad, pendingLuckSecrets } from "../cache/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "../libs/restartThrottle";
+import { createFlushBarrier } from "../libs/flushBarrier";
 import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
 import { DISK_IO_FLUSH_TIMEOUT_MS, type FlushResult } from "../consts/lifecycle";
 import type {
@@ -66,6 +67,7 @@ let runtimeRecoveryTimeoutMs: number = LOAD_TIMEOUT_MS;
 let maxPendingBusinessMessages: number = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
 let diskIOFatalHandler: ((error: Error) => void) | undefined;
 let diskIOFatalSignaled: boolean = false;
+const diskIOFlushBarrier = createFlushBarrier({ timeoutMs: DISK_IO_FLUSH_TIMEOUT_MS });
 
 type DiskBusinessMessage =
   | AiMemoryDiskMessage
@@ -113,11 +115,7 @@ function createDiskIOWorker(): Worker {
       return;
     }
     if (data.type === "flushed" || data.type === "flushFailed") {
-      const resolve = pendingFlushes.get(data.flushedId);
-      if (resolve) {
-        pendingFlushes.delete(data.flushedId);
-        resolve(data.type === "flushed" ? "flushed" : "failed");
-      }
+      diskIOFlushBarrier.settle(data.flushedId, data.type === "flushed" ? "flushed" : "failed");
       return;
     }
     if (data.type === "luckSecret") {
@@ -162,17 +160,17 @@ function createDiskIOWorker(): Worker {
       runtimeRecoveryWorker = null;
       clearRuntimeRecoveryTimer();
     }
-    if (pendingFlushes.size > 0) {
+    const pendingFlushCount: number = diskIOFlushBarrier.pendingCount();
+    if (pendingFlushCount > 0) {
       // 崩溃这一刻若正好卡着 flushDiskIO 的等待：旧实例内存里的 dirty 数据
       // （上次成功落盘之后攒下的增量）随线程一起没了，新实例读不到、也补不
       // 回来——不能让 flushDiskIO 的调用方（进程退出前的最后一刷）误以为
       // 超时=已落盘。这里立即结算这些 flush（而不是干等 timeoutMs 到期），
       // 并把"这次 flush 实际落空"打进日志，与上面的崩溃日志对齐时间点。
       console.error(
-        `[diskIO] ${pendingFlushes.size} pending flush(es) lost — persistence Worker crashed mid-flush, their buffered data was not written to disk.`
+        `[diskIO] ${pendingFlushCount} pending flush(es) lost — persistence Worker crashed mid-flush, their buffered data was not written to disk.`
       );
-      for (const resolve of pendingFlushes.values()) resolve("failed");
-      pendingFlushes.clear();
+      diskIOFlushBarrier.settleAll("failed");
     }
     if (pendingLuckSecrets.size > 0) {
       const error = new Error("Persistence Worker crashed while loading the daily luck receipt secret.");
@@ -265,8 +263,7 @@ function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal: boole
   runtimeRecoveryWorker = null;
   diskIOWritable = false;
   pendingBusinessMessages.length = 0;
-  for (const resolve of pendingFlushes.values()) resolve("failed");
-  pendingFlushes.clear();
+  diskIOFlushBarrier.settleAll("failed");
   try {
     void Promise.resolve(worker.terminate()).catch((error: unknown) => {
       console.error("[diskIO] failed to terminate unusable persistence Worker:", error);
@@ -397,8 +394,6 @@ export function ensureLuckReceiptSecret(
   });
 }
 
-let nextFlushId: number = 1;
-
 /**
  * 要求 diskIOWorker 立即把所有 dirty 数据（含待验证增量）全部落盘，
  * 并等待完成。用于进程退出前的最后一刷。带超时兜底：
@@ -409,19 +404,10 @@ let nextFlushId: number = 1;
 export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   const worker: Worker | null = diskIOWorker;
   if (!worker || !diskIOWritable) return Promise.resolve("failed");
-  return new Promise((resolve) => {
-    const id: number = nextFlushId++;
-    const timer = setTimeout(() => {
-      pendingFlushes.delete(id);
-      resolve("timedOut");
-    }, timeoutMs);
-    pendingFlushes.set(id, (result: FlushResult) => {
-      clearTimeout(timer);
-      resolve(result);
-    });
+  return diskIOFlushBarrier.begin((id) => {
     const request: DiskFlushRequest = { type: "flush", flushId: id };
     worker.postMessage(request);
-  });
+  }, timeoutMs);
 }
 
 /** 终止落盘 Worker；返回后旧实例不可能再 rename/append 共享文件。 */
@@ -437,8 +423,7 @@ export function terminateDiskIO(): Promise<void> {
   runtimeRecoveryTimeoutMs = LOAD_TIMEOUT_MS;
   maxPendingBusinessMessages = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
   pendingBusinessMessages.length = 0;
-  for (const resolve of pendingFlushes.values()) resolve("failed");
-  pendingFlushes.clear();
+  diskIOFlushBarrier.settleAll("failed");
   const terminationError = new Error("Persistence Worker terminated before the request completed.");
   for (const pending of pendingLuckSecrets.values()) {
     clearTimeout(pending.timer);

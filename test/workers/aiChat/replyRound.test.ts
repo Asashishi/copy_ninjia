@@ -44,7 +44,7 @@ const logError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../src/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat }));
 mock.module("../../../src/ai/stickers/sendLock", () => ({ createStickerSendLock }));
-mock.module("../../../src/ai/tools/replyToolset", () => ({ createReplyToolset }));
+mock.module("../../../src/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
 mock.module("../../../src/workers/aiChat/geminiReply", () => ({ callGemini }));
 mock.module("../../../src/workers/aiChat/promptContext", () => ({ buildUserContent }));
 mock.module("../../../src/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));

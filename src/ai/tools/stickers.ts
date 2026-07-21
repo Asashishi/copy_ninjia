@@ -34,7 +34,7 @@ import type { ToolDefinition } from "../../types/tools";
  * MAX_STICKERS_PER_REPLY 枚（当前为 1：要么不发、要么只发一枚）、绝不重复同一枚（sentStickerUids 按
  * file_unique_id 强制，上限为 1 时限额先挡住、此规则只在上限放宽时兜底）
  * ——这些限额状态挂在 StickerRoundState 上，每轮回复新建一份（见
- * ai/tools/replyToolset.ts）。轮内限额之外还有一道跨轮互斥：同群并发的几轮回复
+ * ai/tools/replyToolset/orchestrator.ts）。轮内限额之外还有一道跨轮互斥：同群并发的几轮回复
  * 只有第一个走到发送的轮能抢到本群的发贴纸锁（见 ai/stickers/sendLock.ts），
  * 其余轮的 send_sticker 被拒绝、改用文字回应，避免并发轮各发一枚在几秒内
  * 贴纸刷屏。

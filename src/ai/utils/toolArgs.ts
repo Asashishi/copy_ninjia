@@ -1,7 +1,7 @@
 /**
  * 从工具调用的参数 JSON 字符串里解析单个字段的纯函数族：JSON.parse 失败/
  * 字段缺失/类型不对一律返回 null（或对布尔字段返回 false），不抛错——
- * 调用方按各自的错误提示喂回模型。ai/tools/replyToolset.ts 与
+ * 调用方按各自的错误提示喂回模型。ai/tools/replyToolset/ 与
  * ai/tools/stickers.ts 共用，避免各自重复一份 try/catch JSON.parse 样板。
  */
 

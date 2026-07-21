@@ -99,7 +99,7 @@ export function pumpChatAction({
 /**
  * 在整轮 AI 工具对话期间提供聊天状态的挡位心跳：从 idle 挡起步——生成/
  * 思考期间不亮任何状态，「正在输入/发送图片/选择贴纸…」只在具体动作临发前由工具
- * 执行路径拉起有界窗口（见 ai/tools/replyToolset.ts 与 stickers.ts 的挡位
+ * 执行路径拉起有界窗口（见 ai/tools/replyToolset/ 与 stickers.ts 的挡位
  * 切换）。指令虽已要求每轮必须回应（见 consts/aiChat.ts 的
  * REPLY_ACTION_INSTRUCTION），只扣反应的轮本就不发消息，模型也仍可能违背
  * 指令整轮零产出——这两种轮里全程亮着的打字状态最后等不来任何消息，就是

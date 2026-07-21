@@ -11,7 +11,7 @@ import type { ToolDefinition } from "../../types/tools";
  * workers/aiChat/geminiReply.ts 与 ai/utils/chatTranscript.ts。）
  * 有副作用的行动工具（发言/反应/两层贴纸/生图）不在这份静态清单里——它们需要
  * chatId 与每轮限额状态，且贴纸清单随目录内容变化、要按次回复现组装，见
- * 同目录的 replyToolset.ts / stickers.ts。
+ * 同目录的 replyToolset/ / stickers.ts。
  */
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [

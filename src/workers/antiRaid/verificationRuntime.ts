@@ -35,7 +35,7 @@ import {
   type VerificationTerminalState,
   type PendingState,
 } from "../../states/verification";
-import { verificationKey } from "./keys";
+import { verificationKey } from "../../libs/verificationKey";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { rememberRecentComment, takeRecentComment } from "./recentComments";
 import { chatHasLinkedChannel } from "./linkedChannel";
