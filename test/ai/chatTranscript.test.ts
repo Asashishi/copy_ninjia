@@ -59,16 +59,15 @@ describe("AI 群聊转录身份格式", () => {
     expect(transcript).toEndWith(`[id:${COMPACT_BATCH_SIZE + 1}] 千早 愛音：消息 ${COMPACT_BATCH_SIZE + 1}`);
   });
 
-  test("总提示强调热记忆，同时要求冷摘要作为长期背景纳入理解", () => {
-    expect(CHAT_MEMORY_PRIORITY_INSTRUCTION).toContain("热记忆是判断当前情况的重要标准");
-    expect(CHAT_MEMORY_PRIORITY_INSTRUCTION).toContain("冷记忆也必须纳入理解");
+  test("总提示只保留两层记忆仲裁：逐字转录定当前状态，冷记忆只作长期背景", () => {
+    expect(CHAT_MEMORY_PRIORITY_INSTRUCTION).toContain("只分两层仲裁");
+    expect(CHAT_MEMORY_PRIORITY_INSTRUCTION).toContain("只依据逐字转录");
+    expect(CHAT_MEMORY_PRIORITY_INSTRUCTION).toContain("不用于判断当前状态");
 
     const coldBlock: string = buildColdMemoryBlock(["较早摘要", "更近摘要"]);
-    expect(coldBlock).toStartWith("【冷记忆（长期背景，必须参考）】");
-    expect(coldBlock).toContain("不能直接忽略");
-    expect(coldBlock).toContain("判断这是否代表状态、观点或关系后来发生了变化");
-    expect(coldBlock).toContain("当前状态则以较新的逐字记录为准");
-    expect(coldBlock).toContain(`优先参考最新 ${COMPACT_BATCH_SIZE} 条最热记忆`);
+    expect(coldBlock).toStartWith("【冷记忆（长期背景）】");
+    expect(coldBlock).toContain("只用于理解长期话题");
+    expect(coldBlock).toContain("当前状态以逐字记录为准");
     expect(coldBlock).toContain("1. 较早摘要\n2. 更近摘要");
   });
 });

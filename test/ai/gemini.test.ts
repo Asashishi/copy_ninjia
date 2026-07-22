@@ -59,6 +59,18 @@ describe("Gemini request safety settings", () => {
     ]);
   });
 
+  test("systemInstruction 保持在 config 独立字段，不拼入普通对话 contents", async () => {
+    await requestGeminiResponse({
+      model: "gemini-test",
+      contents: "hello",
+      config: { systemInstruction: "系统提示词" },
+    }, "Gemini test");
+
+    const request: GenerateContentParameters = generateContent.mock.calls[0]![0]!;
+    expect(request.config?.systemInstruction).toBe("系统提示词");
+    expect(request.contents).toBe("hello");
+  });
+
   test("SDK API 错误和普通异常都返回 null，并保留可诊断日志", async () => {
     generateContent.mockRejectedValueOnce(new FakeApiError(429, "quota"));
     expect(await requestGeminiResponse({ model: "gemini-test", contents: "hello" }, "Gemini test")).toBeNull();

@@ -77,7 +77,8 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   expect(String(firstRequest.config?.systemInstruction)).toContain("累计最多调用 3 次");
   expect(String(firstRequest.config?.systemInstruction)).toContain("绝不能先行动再补查");
   expect(String(firstRequest.config?.systemInstruction)).toContain("三个顺序固定的 text Part");
-  expect(String(firstRequest.config?.systemInstruction)).toContain("按重要程度分层的本群聊天记忆");
+  expect(String(firstRequest.config?.systemInstruction)).toContain("聊天记忆只分两层仲裁");
+  expect(String(firstRequest.config?.systemInstruction)).toContain("叠加在基础人设上的今日状态");
   expect((firstRequest.contents as unknown[])[0]).toEqual({
     role: "user",
     parts: [

@@ -17,7 +17,8 @@ export const SEND_STICKER_TOOL_INSTRUCTION: string =
   "绝不要试图用 send_message 发贴纸链接、文件 ID 或纯 emoji 来代替贴纸。" +
   "必须先用 view_sticker_pack 查看过那个包的贴纸清单，" +
   `再按清单里的编号发送。每轮回复最多发 ${MAX_STICKERS_PER_REPLY} 枚——选最应景的那枚，` +
-  "没有合适的就不发。";
+  "没有合适的就不发。转录里「（发了一枚贴纸：…）」的行也包括你自己发过的贴纸：" +
+  "最近几条里你已经发过的那枚不要再发；连续想表达同一种情绪时，优先从清单里换一枚没用过的同类情绪贴纸，换不出来就不发贴纸、改用文字或表情反应。";
 
 export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "把一条文字消息发到群里。这是你说话的唯一方式——要说的每句话都必须经本工具发送，" +

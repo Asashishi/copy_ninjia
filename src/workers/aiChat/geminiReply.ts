@@ -15,6 +15,7 @@ import {
   REPLY_CONTEXT_STRUCTURE_INSTRUCTION,
   TIME_AWARENESS_INSTRUCTION,
 } from "../../consts/aiChat/prompts/memory";
+import { MOOD_STATE_PRECEDENCE_INSTRUCTION } from "../../consts/aiChat/prompts/mood";
 import { buildWebSearchInstruction, WEB_SEARCH_EXHAUSTED_INSTRUCTION } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../ai/mood";
@@ -103,7 +104,7 @@ export async function callGemini(
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPromptPrefix: string =
     `${SYSTEM_PROMPT}\n\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
-    `${currentMoodInstruction(chatId)}\n\n` +
+    `${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
     `${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
   const contents: Content[] = [{
     role: "user",

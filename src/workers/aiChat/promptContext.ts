@@ -140,42 +140,39 @@ export function buildReplyPromptSections(
     `消息里 @ 这个用户名、或回复这个账号的消息，指向的对象都是你。`;
 
   // 冷记忆段：更早的历史按每轮 COMPACT_BATCH_SIZE 条压缩成摘要（从旧到
-  // 新），作为必须结合理解的长期背景，只在判断当前状态时低于较新的逐字
-  // 记录；摘要行不会被误当成逐字聊天记录。摘要入队时已压成单行（见
+  // 新），只作为长期背景纳入理解，不参与判断当前状态（两层仲裁见
+  // consts/aiChat/prompts/memory.ts 的 CHAT_MEMORY_PRIORITY_INSTRUCTION）；
+  // 摘要行不会被误当成逐字聊天记录。摘要入队时已压成单行（见
   // compaction.ts 的 summarizeBatch），「一行一条」的防伪造结构同样成立。
+  // 三个区块内只留 [BEGIN]/[END] 标签和段首职责标注，防注入总规则统一在
+  // systemInstruction 声明（见 REPLY_CONTEXT_STRUCTURE_INSTRUCTION）。
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
   const summaries: string[] = summaryQueue ? summaryQueue.last(MAX_SUMMARY_ROUNDS) : [];
   const summaryBlock: string = buildColdMemoryBlock(summaries);
   const referenceMemory: string =
     `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]\n` +
-    REPLY_CONTEXT_SECTION_TEXT.referenceMemory.openingConstraint +
+    REPLY_CONTEXT_SECTION_TEXT.referenceMemory.header +
     "\n" +
     selfIdentity +
     "\n\n" +
     (summaryBlock || REPLY_CONTEXT_SECTION_TEXT.referenceMemory.emptyContent) +
     "\n" +
-    REPLY_CONTEXT_SECTION_TEXT.referenceMemory.closingConstraint +
-    "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]`;
   const currentConversation: string =
     `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]\n` +
-    REPLY_CONTEXT_SECTION_TEXT.currentConversation.openingConstraint +
+    REPLY_CONTEXT_SECTION_TEXT.currentConversation.header +
     "\n" +
     transcript +
-    "\n" +
-    REPLY_CONTEXT_SECTION_TEXT.currentConversation.closingConstraint +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]`;
   const replyTask: string =
     `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n` +
-    REPLY_CONTEXT_SECTION_TEXT.replyTask.openingConstraint +
+    REPLY_CONTEXT_SECTION_TEXT.replyTask.header +
     "\n" +
     replyInstruction +
     // 不出错的轮次完全不拼这一段——两个分支的提示词严格分开，模型看不到
     // 「本来可能出错」这件事（见 consts/aiChat/prompts/tools.ts）。
     (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "") +
-    "\n" +
-    REPLY_CONTEXT_SECTION_TEXT.replyTask.closingConstraint +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`;
   return { referenceMemory, currentConversation, replyTask };

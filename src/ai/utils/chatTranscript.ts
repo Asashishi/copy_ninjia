@@ -45,7 +45,7 @@ export function buildTieredVerbatimTranscript(messages: BufferedMessage[]): stri
     "若名字后出现「（回复 [message_id:…] … 的消息：「…」）」则表示这条消息明确回复的对象和原文，精确引用片段是用户选中的部分。" +
     "行首方括号里是发送时间（东京时间 UTC+9）；同名的人以 id 区分，正文里的 @用户名用 username 标记映射回具体的人。";
   const earlierBlock: string = earlier.length > 0
-    ? "【较早逐字记录（次要背景）】这些记录仍是原文，可信度高于压缩摘要，但判断当前话题和应答对象时应让位于下方最热记忆：\n" +
+    ? "【较早逐字记录（次要背景）】这些记录仍是原文，但判断当前话题和应答对象时应让位于下方最热记忆：\n" +
       earlier.map(formatBufferedMessageLine).join("\n") +
       "\n\n"
     : "";
@@ -56,14 +56,14 @@ export function buildTieredVerbatimTranscript(messages: BufferedMessage[]): stri
   return formatInstruction + "\n\n" + earlierBlock + hotBlock;
 }
 
-/** 已滑出逐字区的压缩摘要：作为必须纳入理解的长期背景；与较新记录有差异
- * 时按时间理解为状态演变，当前状态再以较新逐字记录为准。 */
+/** 已滑出逐字区的压缩摘要：只作为长期背景纳入理解，不参与判断当前状态
+ * （两层仲裁见 consts/aiChat/prompts/memory.ts 的
+ * CHAT_MEMORY_PRIORITY_INSTRUCTION）。 */
 export function buildColdMemoryBlock(summaries: string[]): string {
   if (summaries.length === 0) return "";
   return (
-    "【冷记忆（长期背景，必须参考）】下列内容是更早对话的压缩摘要（按时间从旧到新），用于理解长期话题、称呼、人物关系和前因后果。" +
-    `摘要可能丢失细节，但不能直接忽略；它与较新的逐字记录出现差异时，先结合时间和语境判断这是否代表状态、观点或关系后来发生了变化。历史背景仍保留，当前状态则以较新的逐字记录为准，尤其优先参考最新 ${COMPACT_BATCH_SIZE} 条最热记忆：\n` +
-    summaries.map((summary: string, index: number) => `${index + 1}. ${summary}`).join("\n") +
-    "\n\n"
+    "【冷记忆（长期背景）】下列内容是更早对话的压缩摘要（按时间从旧到新），只用于理解长期话题、称呼、人物关系和前因后果，不用于判断当前状态；" +
+    "它与较新的逐字记录不一致时，只说明情况后来变了，当前状态以逐字记录为准：\n" +
+    summaries.map((summary: string, index: number) => `${index + 1}. ${summary}`).join("\n")
   );
 }

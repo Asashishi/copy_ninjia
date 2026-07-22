@@ -6,7 +6,7 @@ export const SUMMARY_TEMPERATURE: number = 0.5;
 export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 
 /** 压缩块 = 热窗口 = 镜像窗口；逐字上下文最多保留两块。 */
-export const COMPACT_BATCH_SIZE: number = 50;
+export const COMPACT_BATCH_SIZE: number = 75;
 export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;
 /** 每群保留的冷摘要轮数。 */
 export const MAX_SUMMARY_ROUNDS: number = 7;
