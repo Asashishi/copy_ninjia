@@ -60,7 +60,8 @@ describe("Anti-Raid pending-member flood handling", () => {
       revision: 1,
       label: "刷屏者",
       isBot: false,
-      messageIds: [],
+      messageIds: [900],
+      replyReminderMessageId: 900,
       trackedMessageTimes: [],
       replyReminderRequested: true,
       reminderSuperseded: true,
@@ -103,6 +104,7 @@ describe("Anti-Raid pending-member flood handling", () => {
     await Bun.sleep(10);
     expect(actions).toEqual([
       "kick",
+      "delete:900",
       ...Array.from({ length: ANTI_RAID_PER_MINUTE_LIMIT + 1 }, (_, index) => `delete:${index + 1}`),
       "notice",
       "schedule-notice-delete",

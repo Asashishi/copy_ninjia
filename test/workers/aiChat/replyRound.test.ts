@@ -287,4 +287,19 @@ describe("AI 单轮回复生命周期", () => {
     expect(activeReplyCounts.has(-1001)).toBe(false);
     expect(longTriggerTimes.get(-1001)?.size).toBe(RATE_LIMIT_LONG_MAX_TRIGGERS);
   });
+
+  test("长窗口在上限时遇到时钟回拨，清空旧时间轴并正常开启新轮", async () => {
+    const now: number = Date.now();
+    const times = new LinkedQueue<number>();
+    for (let index: number = 0; index < RATE_LIMIT_LONG_MAX_TRIGGERS; index++) {
+      times.push(now + 60_000 + index);
+    }
+    longTriggerTimes.set(-1001, times);
+
+    await expect(runRound()).resolves.toBe(-1001);
+
+    expect(createReplyToolset).toHaveBeenCalledTimes(1);
+    expect(longTriggerTimes.get(-1001)?.size).toBe(1);
+    expect(longTriggerTimes.get(-1001)?.peek()).toBeLessThan(now + 60_000);
+  });
 });

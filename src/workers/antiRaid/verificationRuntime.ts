@@ -15,6 +15,8 @@ import { PRIVILEGED_USERS_ID } from "../../infra/config";
 import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import {
   LOCKDOWN_KICK_DEDUPE_MS,
+  VERIFICATION_REMINDER_RETRY_INITIAL_MS,
+  VERIFICATION_REMINDER_RETRY_MAX_MS,
   VERIFICATION_TERMINAL_RETRY_MS,
   VERIFICATION_BUTTON_TEXT,
   VERIFICATION_TIMEOUT_MS,
@@ -37,10 +39,39 @@ import type {
 import { verificationKey } from "../../libs/verificationKey";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { rememberRecentComment, takeRecentComment } from "./recentComments";
-import { chatHasLinkedChannel } from "./linkedChannel";
+import { cachedChatHasLinkedChannel, fetchChatHasLinkedChannel } from "./linkedChannel";
 import { recordJoin, retractJoin } from "./lockdownRuntime";
 
 declare const self: Worker;
+
+interface ThreadCommentConfirmation {
+  messageId: number;
+  observedAt: number;
+  expectedState: VerificationState | undefined;
+  boundToJoin: boolean;
+}
+
+/** 冷缓存楼中楼消息等待 getChat 明确确认；按成员保存以便迟到的 join 把检查
+ * 绑定到刚创建的状态对象，后续离群/通过/重入都会因对象不一致而失效。 */
+const threadCommentConfirmations: Map<string, Set<ThreadCommentConfirmation>> = new Map();
+
+type ReminderKind = "original" | "reply";
+
+interface ReminderDelivery {
+  key: string;
+  chatId: number;
+  userId: number;
+  kind: ReminderKind;
+  text: string;
+  replyToMessageId: number | undefined;
+  expectedState: PendingState;
+  attempts: number;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  inFlight: boolean;
+}
+
+/** 每名待验证成员最多一个提醒投递 owner；回复式提醒会取代原始提醒 owner。 */
+const reminderDeliveries: Map<string, ReminderDelivery> = new Map();
 
 /**
  * 入群验证状态机（src/states/verification.ts）的解释器：把每条投递翻译成
@@ -65,7 +96,7 @@ function memberLabel(member: AntiRaidMember): string {
 function startVerificationTimer(chatId: number, userId: number, state: VerificationState): ReturnType<typeof setTimeout> | undefined {
   if (state.kind === "pending") {
     return setTimeout(
-      () => dispatchVerification(chatId, userId, { type: "verifyTimeout" }),
+      () => dispatchVerification(chatId, userId, { type: "verifyTimeout", now: Date.now() }),
       Math.max(0, state.expiresAt - Date.now())
     );
   }
@@ -87,14 +118,18 @@ export function dispatchVerification(chatId: number, userId: number, event: Veri
   const key: string = verificationKey(chatId, userId);
   const entry = verificationEntries.get(key);
   const previousWasPersisted: boolean = isPersistedVerificationState(entry?.state);
-  const { next, effects, snapshotChanged = false } = transitionVerification(entry?.state, event);
+  const { next, effects, snapshotChanged = false, rescheduleTimer = false } = transitionVerification(entry?.state, event);
   if (next !== entry?.state) {
+    cancelReminderDelivery(key);
     if (entry?.timer !== undefined) clearTimeout(entry.timer);
     if (next === undefined) {
       verificationEntries.delete(key);
     } else {
       verificationEntries.set(key, { state: next, timer: startVerificationTimer(chatId, userId, next) });
     }
+  } else if (rescheduleTimer && entry !== undefined && next !== undefined) {
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+    entry.timer = startVerificationTimer(chatId, userId, next);
   }
   if (snapshotChanged || next !== entry?.state) {
     publishVerificationChange(chatId, userId, previousWasPersisted);
@@ -175,6 +210,8 @@ export function adoptVerifications(msg: AdoptVerificationsMessage): void {
     }
     verificationEntries.clear();
     verificationRevisions.clear();
+    threadCommentConfirmations.clear();
+    clearReminderDeliveries();
     verificationGeneration.current = msg.generation;
   }
 
@@ -221,12 +258,15 @@ export function adoptVerifications(msg: AdoptVerificationsMessage): void {
     // 否则旧期限到达后会拿新状态提前触发超时。
     const previousEntry = verificationEntries.get(key);
     if (previousEntry?.timer !== undefined) clearTimeout(previousEntry.timer);
+    cancelReminderDelivery(key);
     verificationEntries.set(key, {
       state,
       timer: startVerificationTimer(record.chatId, record.userId, state),
     });
     if (state.kind === "pending" && record.expiresAt <= now) {
-      dispatchVerification(record.chatId, record.userId, { type: "verifyTimeout" });
+      dispatchVerification(record.chatId, record.userId, { type: "verifyTimeout", now });
+    } else if (state.kind === "pending") {
+      ensurePendingReminder(record.chatId, record.userId, state);
     } else if ((state.kind === "checkingInviter" || state.kind === "expelling") && msg.resumePersistedTerminals === true) {
       dispatchVerification(
         record.chatId,
@@ -263,14 +303,27 @@ export function handleVerificationPersisted(msg: VerificationPersistedMessage): 
 /** 取消某群所有验证 owner，并为每条持久化记录发布 tombstone。 */
 export function deactivateVerificationChat(chatId: number): void {
   const prefix: string = `${chatId}:`;
+  for (const key of threadCommentConfirmations.keys()) {
+    if (key.startsWith(prefix)) threadCommentConfirmations.delete(key);
+  }
   for (const [key, entry] of [...verificationEntries]) {
     if (!key.startsWith(prefix)) continue;
+    cancelReminderDelivery(key);
     const userId: number = Number(key.slice(prefix.length));
     if (entry.timer !== undefined) clearTimeout(entry.timer);
     verificationEntries.delete(key);
     if (isPersistedVerificationState(entry.state) && Number.isSafeInteger(userId)) {
       publishVerificationChange(chatId, userId, true);
     }
+  }
+}
+
+/** Worker 停止时清理所有本地 timer/owner；主线程镜像仍保留权威恢复数据。 */
+export function stopVerificationRuntime(): void {
+  clearReminderDeliveries();
+  threadCommentConfirmations.clear();
+  for (const entry of verificationEntries.values()) {
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
   }
 }
 
@@ -404,6 +457,95 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
  * 之后）：这里捕获的 captured 快照才等于转移刚落下的那个状态，落地时的
  * 同一性比对才有意义，也不会被交错到达的其他投递抢先替换/删除状态。
  */
+function cancelReminderDelivery(key: string): void {
+  const delivery: ReminderDelivery | undefined = reminderDeliveries.get(key);
+  if (!delivery) return;
+  if (delivery.timer !== undefined) clearTimeout(delivery.timer);
+  reminderDeliveries.delete(key);
+}
+
+function clearReminderDeliveries(): void {
+  for (const delivery of reminderDeliveries.values()) {
+    if (delivery.timer !== undefined) clearTimeout(delivery.timer);
+  }
+  reminderDeliveries.clear();
+}
+
+function scheduleReminderRetry(delivery: ReminderDelivery): void {
+  if (reminderDeliveries.get(delivery.key) !== delivery) return;
+  if (verificationEntries.get(delivery.key)?.state !== delivery.expectedState) {
+    cancelReminderDelivery(delivery.key);
+    return;
+  }
+  const remainingMs: number = delivery.expectedState.expiresAt - Date.now();
+  if (remainingMs <= 0) return; // verifyTimeout 会延长期限并重新唤醒这个 owner。
+  const backoffMs: number = Math.min(
+    VERIFICATION_REMINDER_RETRY_INITIAL_MS * (2 ** delivery.attempts),
+    VERIFICATION_REMINDER_RETRY_MAX_MS
+  );
+  delivery.attempts += 1;
+  delivery.timer = setTimeout(
+    () => {
+      delivery.timer = undefined;
+      attemptReminderDelivery(delivery);
+    },
+    Math.max(1, Math.min(backoffMs, remainingMs))
+  );
+  delivery.timer.unref();
+}
+
+function attemptReminderDelivery(delivery: ReminderDelivery): void {
+  if (reminderDeliveries.get(delivery.key) !== delivery || delivery.inFlight) return;
+  if (verificationEntries.get(delivery.key)?.state !== delivery.expectedState) {
+    cancelReminderDelivery(delivery.key);
+    return;
+  }
+
+  delivery.inFlight = true;
+  const verifyKeyboard: InlineKeyboard = new InlineKeyboard()
+    .text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${delivery.userId}`);
+  void (async (): Promise<void> => {
+    let reminderMessageId: number | undefined;
+    try {
+      reminderMessageId = await sendMessage({
+        chatId: delivery.chatId,
+        text: delivery.text,
+        replyToMessageId: delivery.replyToMessageId,
+        api: joinVerificationApi,
+        keyboard: verifyKeyboard,
+      });
+    } catch (error: unknown) {
+      logger.error(`Error sending ${delivery.kind} join verification reminder:`, error);
+    }
+    delivery.inFlight = false;
+
+    // 回复式提醒已取代原 owner，或状态已通过/离群/重建：成功落地的迟到消息
+    // 必须自删，失败结果则不能为旧 owner 再安排重试。
+    if (
+      reminderDeliveries.get(delivery.key) !== delivery ||
+      verificationEntries.get(delivery.key)?.state !== delivery.expectedState
+    ) {
+      if (reminderMessageId !== undefined) {
+        void deleteMessage(delivery.chatId, reminderMessageId, joinVerificationApi);
+      }
+      return;
+    }
+
+    if (reminderMessageId === undefined) {
+      scheduleReminderRetry(delivery);
+      return;
+    }
+
+    reminderDeliveries.delete(delivery.key);
+    dispatchVerification(delivery.chatId, delivery.userId, {
+      type: "reminderLanded",
+      reminderKind: delivery.kind,
+      messageId: reminderMessageId,
+      now: Date.now(),
+    });
+  })();
+}
+
 function sendReminderMessage({
   chatId,
   userId,
@@ -413,26 +555,33 @@ function sendReminderMessage({
 }: {
   chatId: number;
   userId: number;
-  reminderKind: "original" | "reply";
+  reminderKind: ReminderKind;
   text: string;
   replyToMessageId: number | undefined;
 }): void {
   const key: string = verificationKey(chatId, userId);
   const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
   if (captured?.kind !== "pending") return;
-  const verifyKeyboard: InlineKeyboard = new InlineKeyboard().text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${userId}`);
-  void sendMessage({ chatId, text, replyToMessageId, api: joinVerificationApi, keyboard: verifyKeyboard })
-    .then((reminderMessageId: number | undefined) => {
-      if (reminderMessageId === undefined) return;
-      if (verificationEntries.get(key)?.state === captured) {
-        dispatchVerification(chatId, userId, { type: "reminderLanded", reminderKind, messageId: reminderMessageId });
-      } else {
-        void deleteMessage(chatId, reminderMessageId, joinVerificationApi);
-      }
-    })
-    .catch((error: unknown) => {
-      logger.error(`Error sending ${reminderKind} join verification reminder:`, error);
-    });
+  const existing: ReminderDelivery | undefined = reminderDeliveries.get(key);
+  if (existing?.expectedState === captured && existing.kind === reminderKind) {
+    if (!existing.inFlight && existing.timer === undefined) attemptReminderDelivery(existing);
+    return;
+  }
+  cancelReminderDelivery(key);
+  const delivery: ReminderDelivery = {
+    key,
+    chatId,
+    userId,
+    kind: reminderKind,
+    text,
+    replyToMessageId,
+    expectedState: captured,
+    attempts: 0,
+    timer: undefined,
+    inFlight: false,
+  };
+  reminderDeliveries.set(key, delivery);
+  attemptReminderDelivery(delivery);
 }
 
 /**
@@ -482,6 +631,21 @@ function sendReplyReminder({
     text: reminderText,
     replyToMessageId: targetMessageId,
   });
+}
+
+/** 恢复快照或 timeout 续窗时，按当前状态选择唯一有效的提醒形态。 */
+function ensurePendingReminder(chatId: number, userId: number, state: PendingState): void {
+  if (state.reminderMessageId !== undefined || state.replyReminderMessageId !== undefined) return;
+  if (state.replyReminderRequested && state.welcomeAnchorMessageId !== undefined) {
+    sendReplyReminder({
+      chatId,
+      userId,
+      label: state.label,
+      targetMessageId: state.welcomeAnchorMessageId,
+    });
+  } else {
+    sendVerificationReminder({ chatId, userId, label: state.label, isBot: state.isBot });
+  }
 }
 
 /**
@@ -651,6 +815,69 @@ export function handleJoin(msg: NewMemberMessage): void {
   }
   event.lockdownActive = lockdownEntries.has(chatId);
   dispatchVerification(chatId, member.id, event);
+
+  // 楼中楼消息可能比 join 更新先到、其 getChat 又尚未返回。把这类检查绑定到
+  // 本次 join 创建的精确状态对象；若之后离群、通过或重入，对象变化会使迟到
+  // 的关联频道查询结果自动失效，不能豁免新一代状态。
+  const key: string = verificationKey(chatId, member.id);
+  const currentState: VerificationState | undefined = verificationEntries.get(key)?.state;
+  const confirmations = threadCommentConfirmations.get(key);
+  if (confirmations && currentState !== undefined) {
+    for (const confirmation of confirmations) {
+      if (!confirmation.boundToJoin) {
+        confirmation.expectedState = currentState;
+        confirmation.boundToJoin = true;
+      }
+    }
+  }
+}
+
+function rememberOrDispatchConfirmedComment(msg: TrackedChatMessage, observedAt: number): void {
+  const key: string = verificationKey(msg.chatId, msg.userId);
+  if (!verificationEntries.has(key)) {
+    rememberRecentComment({
+      chatId: msg.chatId,
+      userId: msg.userId,
+      messageId: msg.messageId,
+      observedAt,
+    });
+    return;
+  }
+  dispatchVerification(msg.chatId, msg.userId, {
+    type: "trackedMessage",
+    messageId: msg.messageId,
+    inCommentThread: true,
+    now: observedAt,
+  });
+}
+
+function confirmThreadComment(msg: TrackedChatMessage, observedAt: number): void {
+  const key: string = verificationKey(msg.chatId, msg.userId);
+  const expectedState: VerificationState | undefined = verificationEntries.get(key)?.state;
+  const confirmation: ThreadCommentConfirmation = {
+    messageId: msg.messageId,
+    observedAt,
+    expectedState,
+    boundToJoin: expectedState !== undefined,
+  };
+  let confirmations = threadCommentConfirmations.get(key);
+  if (!confirmations) {
+    confirmations = new Set();
+    threadCommentConfirmations.set(key, confirmations);
+  }
+  confirmations.add(confirmation);
+
+  void fetchChatHasLinkedChannel(msg.chatId).then((hasLinked: boolean | undefined) => {
+    const activeConfirmations = threadCommentConfirmations.get(key);
+    activeConfirmations?.delete(confirmation);
+    if (activeConfirmations?.size === 0) threadCommentConfirmations.delete(key);
+    if (hasLinked !== true) return;
+
+    const currentState: VerificationState | undefined = verificationEntries.get(key)?.state;
+    if (currentState !== confirmation.expectedState) return;
+    if (currentState === undefined && confirmation.boundToJoin) return;
+    rememberOrDispatchConfirmedComment(msg, confirmation.observedAt);
+  });
 }
 
 /**
@@ -660,23 +887,35 @@ export function handleJoin(msg: NewMemberMessage): void {
  * 才进入追踪与提醒改锚）。
  */
 export function handleTrackedMessage(msg: TrackedChatMessage): void {
-  const inCommentThread: boolean =
-    msg.repliesToChannelPost === true ||
-    (msg.isThreadReply === true && chatHasLinkedChannel(msg.chatId));
-  if (inCommentThread && !verificationEntries.has(verificationKey(msg.chatId, msg.userId))) {
-    rememberRecentComment({
-      chatId: msg.chatId,
-      userId: msg.userId,
-      messageId: msg.messageId,
-      observedAt: Date.now(),
-    });
+  const observedAt: number = Date.now();
+  if (msg.repliesToChannelPost === true) {
+    rememberOrDispatchConfirmedComment(msg, observedAt);
     return;
   }
+
+  if (msg.isThreadReply === true) {
+    const cachedHasLinked: boolean | undefined = cachedChatHasLinkedChannel(msg.chatId);
+    if (cachedHasLinked === true) {
+      rememberOrDispatchConfirmedComment(msg, observedAt);
+      return;
+    }
+    // 冷缓存或过期缓存必须先 fail closed：当前消息作为普通待验证消息追踪。
+    // 查询明确为 true 后再用状态对象同一性把它升级为评论区豁免。
+    dispatchVerification(msg.chatId, msg.userId, {
+      type: "trackedMessage",
+      messageId: msg.messageId,
+      inCommentThread: false,
+      now: observedAt,
+    });
+    if (cachedHasLinked === undefined) confirmThreadComment(msg, observedAt);
+    return;
+  }
+
   dispatchVerification(msg.chatId, msg.userId, {
     type: "trackedMessage",
     messageId: msg.messageId,
-    inCommentThread,
-    now: Date.now(),
+    inCommentThread: false,
+    now: observedAt,
   });
 }
 

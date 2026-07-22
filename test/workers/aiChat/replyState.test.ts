@@ -125,4 +125,18 @@ describe("AI 回复代际状态", () => {
     expect(rateLimitNoticeTimes.has(-1003)).toBe(true);
     expect(rateLimitNoticeTimes.has(-1004)).toBe(false);
   });
+
+  test("时钟回拨时整体丢弃未来的长窗口与提示冷却", () => {
+    const now = 1_000_000;
+    const futureTimes = new LinkedQueue<number>();
+    futureTimes.push(now + 1);
+    futureTimes.push(now + RATE_LIMIT_LONG_WINDOW_MS * 10);
+    longTriggerTimes.set(-1005, futureTimes);
+    rateLimitNoticeTimes.set(-1005, now + 1);
+
+    sweepAiChatReplyCache(now);
+
+    expect(longTriggerTimes.has(-1005)).toBe(false);
+    expect(rateLimitNoticeTimes.has(-1005)).toBe(false);
+  });
 });

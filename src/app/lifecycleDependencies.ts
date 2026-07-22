@@ -6,6 +6,7 @@ import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainReactionQueue, initReactionQueue, quiesceReactionQueue } from "../copy/reactionQueue";
+import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../copy/translate";
 import {
   abortChatTitleRefresh,
   initChatTitleRefresh,
@@ -43,9 +44,11 @@ export const lifecycleDependencies = {
   acquireSingleInstanceLock,
   bot,
   cleanupOrphanedTempFiles,
+  closeTranslate,
   drainAntiRaid,
   drainAvatarUpdates,
   drainReactionQueue,
+  drainTranslate,
   flushAiMemory,
   flushDiskIO,
   flushStateToDisk,
@@ -63,6 +66,7 @@ export const lifecycleDependencies = {
   initChatTitleRefresh,
   initDiskIO,
   initReactionQueue,
+  initTranslate,
   initTelegramClients,
   loadPersistedData,
   loadState,
@@ -76,6 +80,7 @@ export const lifecycleDependencies = {
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
   quiesceReactionQueue,
+  quiesceTranslate,
   seedSenderCache,
   setStatePersistenceFatalHandler,
   sleep,

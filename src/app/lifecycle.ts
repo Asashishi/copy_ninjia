@@ -27,6 +27,7 @@ export class ApplicationLifecycle {
   private diskIOInitialized: boolean = false;
   private aiChatInitialized: boolean = false;
   private antiRaidInitialized: boolean = false;
+  private translateInitialized: boolean = false;
   private stopRequested: boolean = false;
   private runner: AcknowledgedUpdateRunner | null = null;
   private runnerTaskSettled: boolean = false;
@@ -76,6 +77,8 @@ export class ApplicationLifecycle {
     this.dependencies.initAvatarUpdates();
     this.dependencies.initReactionQueue();
     this.dependencies.initChatTitleRefresh();
+    this.dependencies.initTranslate();
+    this.translateInitialized = true;
 
     // 配置文件属于不可信部署输入：持锁后、启动 Worker/联网前统一校验，失败时
     // 由 finally 释放实例锁；各 Worker 在自己的 isolate 中复用同一解析器。
@@ -173,6 +176,13 @@ export class ApplicationLifecycle {
       const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(timeouts.maintenanceMs);
       const avatarResult: FlushResult = await this.dependencies.drainAvatarUpdates(timeouts.maintenanceMs);
       const reactionResult: FlushResult = await this.dependencies.drainReactionQueue(timeouts.maintenanceMs);
+      let translateResult: FlushResult = "flushed";
+      if (this.translateInitialized) {
+        translateResult = await this.dependencies.drainTranslate(timeouts.maintenanceMs);
+        const closeResult: FlushResult = await this.dependencies.closeTranslate(timeouts.maintenanceMs);
+        if (translateResult === "flushed" && closeResult !== "flushed") translateResult = closeResult;
+        this.translateInitialized = false;
+      }
       const antiRaidResult: FlushResult = this.antiRaidInitialized
         ? await this.dependencies.drainAntiRaid(timeouts.maintenanceMs)
         : "flushed";
@@ -202,6 +212,7 @@ export class ApplicationLifecycle {
         !runnerDrained ||
         avatarResult !== "flushed" ||
         reactionResult !== "flushed" ||
+        translateResult !== "flushed" ||
         antiRaidResult !== "flushed" ||
         aiResult !== "flushed" ||
         diskResult !== "flushed" ||
@@ -210,7 +221,7 @@ export class ApplicationLifecycle {
         process.exitCode = 1;
         this.dependencies.logger.error(
           `Shutdown drain/flush results: runner=${runnerDrained}, avatar=${avatarResult}, reaction=${reactionResult}, ` +
-          `antiRaid=${antiRaidResult}, ai=${aiResult}, disk=${diskResult}, state=${stateResult}.`
+          `translate=${translateResult}, antiRaid=${antiRaidResult}, ai=${aiResult}, disk=${diskResult}, state=${stateResult}.`
         );
       }
       if (!this.lockAcquired) return;
@@ -219,6 +230,7 @@ export class ApplicationLifecycle {
         !maintenanceSettled ||
         avatarResult !== "flushed" ||
         reactionResult !== "flushed" ||
+        translateResult !== "flushed" ||
         antiRaidResult !== "flushed" ||
         aiResult !== "flushed" ||
         diskResult !== "flushed" ||
@@ -326,6 +338,7 @@ export class ApplicationLifecycle {
     this.dependencies.quiesceAvatarUpdates();
     this.dependencies.quiesceReactionQueue();
     this.dependencies.quiesceChatTitleRefresh();
+    this.dependencies.quiesceTranslate();
   }
 
   private async flushAllToDisk(timeouts: FlushTimeouts): Promise<boolean> {
@@ -334,6 +347,9 @@ export class ApplicationLifecycle {
     // 最后一份镜像，不能在 flush 后再让旧任务补写。
     const avatarResult: FlushResult = await this.dependencies.drainAvatarUpdates(timeouts.maintenanceMs);
     const reactionResult: FlushResult = await this.dependencies.drainReactionQueue(timeouts.maintenanceMs);
+    const translateResult: FlushResult = this.translateInitialized
+      ? await this.dependencies.drainTranslate(timeouts.maintenanceMs)
+      : "flushed";
     const antiRaidResult: FlushResult = this.antiRaidInitialized
       ? await this.dependencies.drainAntiRaid(timeouts.maintenanceMs)
       : "flushed";
@@ -348,6 +364,7 @@ export class ApplicationLifecycle {
     if (
       avatarResult !== "flushed" ||
       reactionResult !== "flushed" ||
+      translateResult !== "flushed" ||
       antiRaidResult !== "flushed" ||
       aiResult !== "flushed" ||
       diskResult !== "flushed" ||
@@ -356,7 +373,7 @@ export class ApplicationLifecycle {
       process.exitCode = 1;
       this.dependencies.logger.error(
         `Pre-confirmation drain/flush results: avatar=${avatarResult}, reaction=${reactionResult}, antiRaid=${antiRaidResult}, ` +
-        `ai=${aiResult}, disk=${diskResult}, state=${stateResult}; ` +
+        `translate=${translateResult}, ai=${aiResult}, disk=${diskResult}, state=${stateResult}; ` +
         "the final Telegram update offset will not be confirmed."
       );
       return false;

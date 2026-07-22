@@ -49,7 +49,14 @@
   的共享模板同时生成拼装文本与提示词说明里的占位形态，两侧不得各自手写同一格式；
   转发归属按标注层级区分：回复标注外层属于当前消息本身，内层属于被回复的原消息。
 - Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存
-  只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。
+  只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。冷缓存的
+  `message_thread_id` 只是异步确认候选：查询落定前先按普通待验证消息处理，仅在确认
+  `linked_chat_id` 且状态对象/代际仍一致时撤销；查询失败 fail closed 并允许后续重试。
+- 验证提醒按成员只有一个投递 owner，发送失败有界退避。`reminderMessageId` /
+  `replyReminderMessageId` 至少一个成功回填是超时踢人的前置不变量；从未落地时只续窗补发。
+  恢复时无 reminder ID 的快照复用同一 owner，状态替换、离群、teardown 和 Worker 终止均会撤销它。
+- 发送者用户名缓存同时维护“归一化 username → identity”与“sender ID → 当前 username”；
+  改名、去名、换绑和容量淘汰都在同一 owner 原子更新双向关系，解析器拒绝不一致别名。
 - chat runtime teardown 的三个固定 owner 回调由 `src/cache/chatTeardown.ts` 持有，
   上层领域经 `src/infra/chatTeardown.ts` 反向注册；`src/infra/botAdmin.ts` 不得静态依赖
   `commands/`、AI 或 Anti-Raid 业务模块。
@@ -74,7 +81,10 @@
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
   反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败
   必须返回失败、阻止最终 offset 确认并以非零状态退出。
-- 正常与异常停机都先 quiesce update/标题/反应/头像入口，再有界 drain；预算耗尽时 abort 仍在
+- 正常与异常停机都先 quiesce update/标题/反应/头像/翻译入口，再有界 drain；翻译客户端
+  只在首次真实请求时惰性构造，单次 RPC 有项目级短超时，drain 后显式 `close()` 并清理
+  project parent/客户端引用。翻译 drain 超时或 close 失败与其它关键 owner 一样阻止释放实例锁。
+  预算耗尽时 abort 仍在
   进行的 Telegram 请求、媒体下载和 429 sleep，结算尚未开始的队列，随后依次 flush AI、Disk I/O
   与 StateStore 并终止 Worker。abort 后不得再发送消息、改头像或写入群标题。
 - Worker flush 与 mailbox barrier 统一使用 `src/libs/flushBarrier.ts` 管理 ID、等待表、
@@ -82,6 +92,8 @@
 - `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由主机账户权限、
   部署隔离和备份策略控制，不通过制造不可读文件解决。
 - 持久化 schema 不做猜测式自动迁移；不兼容输入会阻止启动，避免空状态覆盖原数据。
+- 本轮 Anti-Raid 修复只改变运行时不变量，没有改变待验证追加文件的 schema；
+  旧快照的可选 reminder ID 按原字段读取，缺失时走可靠补发，无需磁盘迁移。
 
 ## 兼容入口
 

@@ -104,11 +104,11 @@ export type VerificationEvent =
   | { type: "trackedMessage"; messageId: number; inCommentThread: boolean; now: number }
   | { type: "callback"; callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
   | { type: "adminCheckResolved" }
-  | { type: "verifyTimeout" }
+  | { type: "verifyTimeout"; now: number }
   | { type: "terminalPersisted" }
   | { type: "timeoutInviterVerdict"; inviterIsAdmin: boolean }
   | { type: "expelSettled" }
-  | { type: "reminderLanded"; reminderKind: "original" | "reply"; messageId: number }
+  | { type: "reminderLanded"; reminderKind: "original" | "reply"; messageId: number; now: number }
   | { type: "dedupeExpired" };
 
 /** 状态机只描述意图；antiRaid Worker 按顺序解释这些副作用。 */
@@ -133,4 +133,6 @@ export interface VerificationTransition {
   effects: VerificationEffect[];
   /** 仅原地修改 pending 时置 true。 */
   snapshotChanged?: boolean;
+  /** expiresAt 原地变化时通知解释器重建验证 timer。 */
+  rescheduleTimer?: boolean;
 }

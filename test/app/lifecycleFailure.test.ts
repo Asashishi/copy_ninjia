@@ -39,12 +39,16 @@ const terminateAntiRaid = mock(async (): Promise<void> => { calls.push("terminat
 const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drainAntiRaid"); return "flushed"; });
 const drainReactionQueue = mock(async (): Promise<FlushResult> => { calls.push("drainReaction"); return "flushed"; });
 const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
+const drainTranslate = mock(async (): Promise<FlushResult> => { calls.push("drainTranslate"); return "flushed"; });
+const closeTranslate = mock(async (): Promise<FlushResult> => { calls.push("closeTranslate"); return "flushed"; });
 const initAvatarUpdates = mock((): void => { calls.push("initAvatar"); });
 const initReactionQueue = mock((): void => { calls.push("initReaction"); });
 const initChatTitleRefresh = mock((): void => { calls.push("initTitles"); });
+const initTranslate = mock((): void => { calls.push("initTranslate"); });
 const quiesceAvatarUpdates = mock((): void => { calls.push("quiesceAvatar"); });
 const quiesceReactionQueue = mock((): void => { calls.push("quiesceReaction"); });
 const quiesceChatTitleRefresh = mock((): void => { calls.push("quiesceTitles"); });
+const quiesceTranslate = mock((): void => { calls.push("quiesceTranslate"); });
 const abortChatTitleRefresh = mock((): void => { calls.push("abortTitles"); });
 const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiMemory"); });
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
@@ -85,9 +89,11 @@ const testDependencies = {
   acquireSingleInstanceLock,
   bot,
   cleanupOrphanedTempFiles,
+  closeTranslate,
   drainAntiRaid,
   drainAvatarUpdates,
   drainReactionQueue,
+  drainTranslate,
   flushAiMemory,
   flushDiskIO,
   flushStateToDisk,
@@ -106,6 +112,7 @@ const testDependencies = {
   initAntiRaid,
   initChatTitleRefresh,
   initReactionQueue,
+  initTranslate,
   loadPersistedData,
   logger: {
     log: mock((..._args: unknown[]): void => {}),
@@ -123,6 +130,7 @@ const testDependencies = {
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
   quiesceReactionQueue,
+  quiesceTranslate,
   seedSenderCache,
   setStatePersistenceFatalHandler,
   sleep,
@@ -160,12 +168,16 @@ beforeEach(() => {
     drainAntiRaid,
     drainReactionQueue,
     drainAvatarUpdates,
+    drainTranslate,
+    closeTranslate,
     initAvatarUpdates,
     initReactionQueue,
     initChatTitleRefresh,
+    initTranslate,
     quiesceAvatarUpdates,
     quiesceReactionQueue,
     quiesceChatTitleRefresh,
+    quiesceTranslate,
     abortChatTitleRefresh,
     hydrateAiMemory,
     hydrateStickerCatalog,
@@ -195,6 +207,8 @@ beforeEach(() => {
   drainAntiRaid.mockImplementation(async () => { calls.push("drainAntiRaid"); return "flushed" as const; });
   drainReactionQueue.mockImplementation(async () => { calls.push("drainReaction"); return "flushed" as const; });
   drainAvatarUpdates.mockImplementation(async () => { calls.push("drainAvatar"); return "flushed" as const; });
+  drainTranslate.mockImplementation(async () => { calls.push("drainTranslate"); return "flushed" as const; });
+  closeTranslate.mockImplementation(async () => { calls.push("closeTranslate"); return "flushed" as const; });
   runnerTask.mockImplementation(async (): Promise<void> => {});
   runnerSize.mockImplementation((): number => 0);
 });
@@ -285,8 +299,14 @@ describe("应用启动失败与退出清理", () => {
     expect(flushAiMemory).toHaveBeenCalledTimes(1);
     expect(flushDiskIO).toHaveBeenCalledTimes(1);
     expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(initTranslate).toHaveBeenCalledTimes(1);
+    expect(quiesceTranslate).toHaveBeenCalledTimes(1);
+    expect(drainTranslate).toHaveBeenCalledTimes(1);
+    expect(closeTranslate).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(calls.indexOf("runnerStop")).toBeLessThan(calls.indexOf("flushAiMemory"));
+    expect(calls.indexOf("quiesceTranslate")).toBeLessThan(calls.indexOf("drainTranslate"));
+    expect(calls.indexOf("drainTranslate")).toBeLessThan(calls.indexOf("closeTranslate"));
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));
     expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("terminateDiskIO"));
   });
@@ -333,6 +353,19 @@ describe("应用启动失败与退出清理", () => {
     expect(terminateDiskIO).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("antiRaid=failed"));
+  });
+
+  test("翻译 drain 超时仍关闭 gRPC 客户端，并保留实例锁", async () => {
+    drainTranslate.mockResolvedValueOnce("timedOut");
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.dispose();
+
+    expect(closeTranslate).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("translate=timedOut"));
   });
 
   test("Disk I/O 运行时 fatal 会设置非零退出码并停止继续取 update", async () => {
@@ -415,6 +448,8 @@ describe("应用启动失败与退出清理", () => {
     expect(flushAiMemory).toHaveBeenCalledTimes(2);
     expect(flushDiskIO).toHaveBeenCalledTimes(2);
     expect(flushStateToDisk).toHaveBeenCalledTimes(2);
+    expect(drainTranslate).toHaveBeenCalledTimes(2);
+    expect(closeTranslate).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 

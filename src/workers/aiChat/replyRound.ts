@@ -72,6 +72,11 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     longTimes = new LinkedQueue<number>();
     longTriggerTimes.set(chatId, longTimes);
   }
+  // 回拨会破坏 FIFO 时间队列的单调性；丢弃旧时间轴的整个窗口，
+  // 避免“未来”记录在限额上卡到时钟追上。
+  if ((longTimes.last(1)[0] ?? now) > now) {
+    while (longTimes.size > 0) longTimes.shift();
+  }
   while (longTimes.size > 0 && now - longTimes.peek()! >= RATE_LIMIT_LONG_WINDOW_MS) {
     longTimes.shift();
   }

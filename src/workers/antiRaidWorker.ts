@@ -6,6 +6,7 @@ import {
   adoptVerifications,
   handleVerificationPersisted,
   deactivateVerificationChat,
+  stopVerificationRuntime,
 } from "./antiRaid/verificationRuntime";
 import { adoptLockdowns, deactivateLockdownChat, handleLockdownPersisted } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
@@ -108,9 +109,11 @@ export function startAntiRaidWorker(): void {
 
 /** 协作式退出时清掉唯一 sweeper；强制 terminate 时整个 Worker isolate 一并销毁。 */
 export function stopAntiRaidWorker(): void {
-  if (cacheSweepTimer === null) return;
-  clearInterval(cacheSweepTimer);
-  cacheSweepTimer = null;
+  if (cacheSweepTimer !== null) {
+    clearInterval(cacheSweepTimer);
+    cacheSweepTimer = null;
+  }
+  stopVerificationRuntime();
   self.onmessage = null;
   process.off("exit", stopAntiRaidWorker);
 }

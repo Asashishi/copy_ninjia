@@ -272,8 +272,31 @@ function handleCallback(
   };
 }
 
-function handleVerifyTimeout(state: VerificationState | undefined): VerificationTransition {
+function handleVerifyTimeout(
+  state: VerificationState | undefined,
+  event: { now: number }
+): VerificationTransition {
   if (state?.kind !== "pending") return { next: state, effects: [] };
+
+  // 没有任何一条带按钮提醒成功落地，就不能把“未点击”解释为成员拒绝验证。
+  // 延长一个完整窗口并继续补发；只有成员确实获得过可见按钮后才允许踢人。
+  if (state.reminderMessageId === undefined && state.replyReminderMessageId === undefined) {
+    state.expiresAt = event.now + VERIFICATION_TIMEOUT_MS;
+    const canReply: boolean = state.replyReminderRequested && state.welcomeAnchorMessageId !== undefined;
+    if (!canReply) {
+      state.replyReminderRequested = false;
+      state.reminderSuperseded = false;
+    }
+    return {
+      next: state,
+      effects: canReply
+        ? [{ kind: "sendReplyReminder", label: state.label, targetMessageId: state.welcomeAnchorMessageId! }]
+        : [{ kind: "sendReminder", label: state.label, isBot: state.isBot }],
+      snapshotChanged: true,
+      rescheduleTimer: true,
+    };
+  }
+
   const snapshot: ExpelSnapshot = snapshotOf(state);
   if (state.invitedBy !== undefined) {
     // 管理员拉人的异步豁免可能到期了还没落定（管理员表拉取在限流队列里排队
@@ -305,7 +328,7 @@ function handleTimeoutInviterVerdict(
 
 function handleReminderLanded(
   state: VerificationState | undefined,
-  event: { reminderKind: "original" | "reply"; messageId: number }
+  event: { reminderKind: "original" | "reply"; messageId: number; now: number }
 ): VerificationTransition {
   // 解释器只在状态对象未被替换时才投递本事件，这里的防御分支正常不可达。
   if (state?.kind !== "pending") {
@@ -318,7 +341,9 @@ function handleReminderLanded(
   state.messageIds.push(event.messageId);
   if (event.reminderKind === "original") state.reminderMessageId = event.messageId;
   else state.replyReminderMessageId = event.messageId;
-  return { next: state, effects: [], snapshotChanged: true };
+  // 验证窗口从按钮真正可见时重新给满；网络/限流排队不能蚕食用户可用时间。
+  state.expiresAt = event.now + VERIFICATION_TIMEOUT_MS;
+  return { next: state, effects: [], snapshotChanged: true, rescheduleTimer: true };
 }
 
 export function transitionVerification(state: VerificationState | undefined, event: VerificationEvent): VerificationTransition {
@@ -346,7 +371,7 @@ export function transitionVerification(state: VerificationState | undefined, eve
         effects: [remindersOf(state), { kind: "retractJoinCount", joinedAt: state.joinedAt }],
       };
     case "verifyTimeout":
-      return handleVerifyTimeout(state);
+      return handleVerifyTimeout(state, event);
     case "terminalPersisted":
       if (state?.kind === "checkingInviter") {
         if (state.executionStarted === true) return { next: state, effects: [] };

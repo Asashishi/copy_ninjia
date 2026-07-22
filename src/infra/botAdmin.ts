@@ -8,7 +8,7 @@ import {
   persistAuthoritativeState,
   pruneDepartedChatState,
 } from "./storage/stateStore";
-import { botAdminFetches } from "../cache/botAdmin";
+import { botAdminFetches, botAdminGenerations } from "../cache/botAdmin";
 import { isAdminStatus } from "../libs/chatMember";
 import { teardownRegisteredChat } from "./chatTeardown";
 
@@ -101,6 +101,16 @@ export function markBotAdminObserved(chatId: number): Promise<void> {
 }
 
 /**
+ * /init 开关的边界上把持久值恢复为“未知”，并废弃切换前的在途
+ * getChatMember。下一次真正需要权限时必须重新向 Telegram 查询。
+ */
+export function invalidateBotAdminStatus(chatId: number): void {
+  botAdminGenerations.set(chatId, (botAdminGenerations.get(chatId) ?? 0) + 1);
+  botAdminFetches.delete(chatId);
+  clearChatStateField(chatId, "botIsAdmin");
+}
+
+/**
  * 机器人在某群是否为管理员。已有记录（无论真假）直接同步返回；从未记录过
  * 的群现查一次 getChatMember 并回填（带在途去重，同群并发判定共享同一次
  * 请求）。现查失败按「不是管理员」处理（fail closed：门控宁可漏跑一次守卫
@@ -118,9 +128,15 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
 
   let inFlight = botAdminFetches.get(chatId);
   if (!inFlight) {
-    inFlight = bot.api
+    const generation: number = botAdminGenerations.get(chatId) ?? 0;
+    const request: Promise<boolean> = bot.api
       .getChatMember(chatId, bot.botInfo.id)
       .then(async (member) => {
+        // /init 在请求期间切换过：这个响应属于旧一代，不回填，
+        // 改用新一代的查询结果。
+        if ((botAdminGenerations.get(chatId) ?? 0) !== generation) {
+          return isBotAdminIn(chatId);
+        }
         const currentKnown: boolean | undefined = getChatState(chatId).botIsAdmin;
         if (currentKnown !== undefined) return currentKnown;
         const isAdmin: boolean = isAdminStatus(member.status);
@@ -131,8 +147,11 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
         logger.error(`Failed to check bot's own admin status in chat ${chatId}:`, error);
         return false;
       })
-      .finally(() => botAdminFetches.delete(chatId));
-    botAdminFetches.set(chatId, inFlight);
+      .finally(() => {
+        if (botAdminFetches.get(chatId) === request) botAdminFetches.delete(chatId);
+      });
+    inFlight = request;
+    botAdminFetches.set(chatId, request);
   }
   return inFlight;
 }

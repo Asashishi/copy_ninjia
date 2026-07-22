@@ -36,11 +36,15 @@ export function invalidateChatReplyCache(chatId: number): number {
 /** 定时收掉已过期的限频窗口和提示冷却记录。 */
 export function sweepAiChatReplyCache(now: number = Date.now()): void {
   for (const [chatId, times] of longTriggerTimes) {
+    if ((times.last(1)[0] ?? now) > now) {
+      longTriggerTimes.delete(chatId);
+      continue;
+    }
     while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_LONG_WINDOW_MS) times.shift();
     if (times.size === 0) longTriggerTimes.delete(chatId);
   }
   for (const [chatId, at] of rateLimitNoticeTimes) {
-    if (now - at >= RATE_LIMIT_NOTICE_COOLDOWN_MS) rateLimitNoticeTimes.delete(chatId);
+    if (at > now || now - at >= RATE_LIMIT_NOTICE_COOLDOWN_MS) rateLimitNoticeTimes.delete(chatId);
   }
 }
 

@@ -43,11 +43,12 @@ export function claimRandomMediaTrigger(context: MessageTriggerContext, speakerI
  * 按「群 × 发言人」占用一次随机回复冷却名额。明确回复或 @ 机器人的直接
  * 交互不经过这里，由 Worker 的有界直接触发队列承接。
  */
-export function tryClaimUserReplyTrigger(chatId: number, speakerId: number): boolean {
+export function tryClaimUserReplyTrigger(chatId: number, speakerId: number, now: number = Date.now()): boolean {
   const key: string = `${chatId}_${speakerId}`;
-  const now: number = Date.now();
   const lastTime: number = userReplyTriggerTimes.get(key) ?? 0;
-  if (now - lastTime < USER_REPLY_TRIGGER_COOLDOWN_MS) return false;
+  // 时钟回拨时旧冷却点位于未来；先失效它，再从新时间轴计时。
+  if (lastTime > now) userReplyTriggerTimes.delete(key);
+  else if (now - lastTime < USER_REPLY_TRIGGER_COOLDOWN_MS) return false;
 
   userReplyTriggerTimes.set(key, now);
   setTimeout(() => {

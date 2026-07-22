@@ -3,7 +3,7 @@ import type { ChatState } from "../types/chatState";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
-import { teardownChatRuntime } from "../infra/botAdmin";
+import { invalidateBotAdminStatus, teardownChatRuntime } from "../infra/botAdmin";
 
 /**
  * 处理 /init enable|disable 指令：按群开关机器人是否处理这个群的更新（见
@@ -24,6 +24,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   const messageId: number | undefined = ctx.msgId;
   const state: ChatState = getOrCreateChatState(chatId);
   state.isInitEnabled = arg === "enable";
+  invalidateBotAdminStatus(chatId);
   if (arg === "disable") await teardownChatRuntime(chatId);
   await persistAuthoritativeState("init toggled");
 

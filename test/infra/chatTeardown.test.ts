@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 const calls: string[] = [];
 const states = new Map<number, Record<string, unknown>>();
 const saveStateInBackground = mock((context: string): void => { calls.push(`save:${context}`); });
+const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
 
 mock.module("../../src/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../src/infra/telegram", () => ({
-  bot: { botInfo: { id: 99 }, api: { getChatMember: async () => ({ status: "administrator" }) } },
+  bot: { botInfo: { id: 99 }, api: { getChatMember } },
 }));
 mock.module("../../src/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
@@ -38,6 +39,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
 }));
 
 const botAdmin = await import("../../src/infra/botAdmin");
+const botAdminCache = await import("../../src/cache/botAdmin");
 const chatTeardown = await import("../../src/infra/chatTeardown");
 
 function memberContext(newStatus: string, oldStatus: string = "administrator"): never {
@@ -54,6 +56,10 @@ beforeEach(() => {
   calls.length = 0;
   states.clear();
   saveStateInBackground.mockClear();
+  getChatMember.mockClear();
+  getChatMember.mockImplementation(async (): Promise<{ status: string }> => ({ status: "administrator" }));
+  botAdminCache.botAdminFetches.clear();
+  botAdminCache.botAdminGenerations.clear();
   chatTeardown.registerChatTeardown("copy", (chatId: number): void => { calls.push(`copy:${chatId}`); });
   chatTeardown.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
   chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
@@ -101,6 +107,23 @@ describe("chat runtime teardown", () => {
       "ai:-1001:true",
       "anti:-1001",
     ]);
+    expect(states.get(-1001)?.botIsAdmin).toBe(false);
+  });
+
+  test("/init 切换后废弃旧在途结果，第一次权限判定必须重查", async () => {
+    let releaseOld!: (member: { status: string }) => void;
+    getChatMember.mockImplementationOnce(() => new Promise((resolve) => { releaseOld = resolve; }));
+    states.set(-1001, { isInitEnabled: true });
+
+    const staleCheck = botAdmin.isBotAdminIn(-1001);
+    botAdmin.invalidateBotAdminStatus(-1001);
+    getChatMember.mockImplementationOnce(async () => ({ status: "member" }));
+    const freshCheck = botAdmin.isBotAdminIn(-1001);
+
+    expect(await freshCheck).toBe(false);
+    releaseOld({ status: "administrator" });
+    expect(await staleCheck).toBe(false);
+    expect(getChatMember).toHaveBeenCalledTimes(2);
     expect(states.get(-1001)?.botIsAdmin).toBe(false);
   });
 });

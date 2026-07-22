@@ -19,6 +19,9 @@ export const DISK_IO_FLUSH_TIMEOUT_MS: number = 3_000;
 export const STATE_FLUSH_TIMEOUT_MS: number = 3_000;
 export const BACKGROUND_MAINTENANCE_TIMEOUT_MS: number = 3_000;
 
+/** 单次 Google Translation RPC 的上限，避免在途翻译无限阻塞停机。 */
+export const TRANSLATE_REQUEST_TIMEOUT_MS: number = 2_500;
+
 /** 未捕获异常路径的尽力落盘预算；避免故障进程在清理阶段久留。 */
 export const EMERGENCY_FLUSH_TIMEOUT_MS: number = 1_000;
 

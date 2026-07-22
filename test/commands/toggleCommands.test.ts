@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
 const teardownChatRuntime = mock((..._args: unknown[]): void => {});
+const invalidateBotAdminStatus = mock((chatId: number): void => {
+  delete states.get(chatId)?.botIsAdmin;
+});
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const persistAuthoritativeState = mock(async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); });
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
@@ -11,7 +14,7 @@ const states = new Map<number, Record<string, unknown>>();
 mock.module("../../src/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
 mock.module("../../src/infra/telegram", () => ({ sendMessage }));
 mock.module("../../src/aiChat", () => ({ invalidateAiChat }));
-mock.module("../../src/infra/botAdmin", () => ({ teardownChatRuntime }));
+mock.module("../../src/infra/botAdmin", () => ({ invalidateBotAdminStatus, teardownChatRuntime }));
 mock.module("../../src/infra/storage/stateStore", () => ({
   getOrCreateChatState(chatId: number): Record<string, unknown> {
     let state = states.get(chatId);
@@ -45,6 +48,7 @@ beforeEach(() => {
   sendMessage.mockClear();
   invalidateAiChat.mockClear();
   teardownChatRuntime.mockClear();
+  invalidateBotAdminStatus.mockClear();
   saveStateInBackground.mockClear();
   persistAuthoritativeState.mockClear();
   persistAuthoritativeState.mockImplementation(async (...args: unknown[]): Promise<void> => {
@@ -84,12 +88,18 @@ describe("超级管理员开关命令", () => {
   });
 
   test("/init disable 同时失效 AI，enable 恢复群更新入口", async () => {
+    states.set(-1001, { botIsAdmin: true });
     await handleInitCommand(context("disable"));
     expect(states.get(-1001)?.isInitEnabled).toBe(false);
+    expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
+    expect(invalidateBotAdminStatus).toHaveBeenLastCalledWith(-1001);
     expect(teardownChatRuntime).toHaveBeenCalledWith(-1001);
 
+    states.get(-1001)!.botIsAdmin = false;
     await handleInitCommand(context("enable"));
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
+    expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
+    expect(invalidateBotAdminStatus).toHaveBeenCalledTimes(2);
     expect(saveStateInBackground).toHaveBeenCalledTimes(2);
   });
 

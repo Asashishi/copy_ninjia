@@ -316,9 +316,33 @@ describe("callback", () => {
 });
 
 describe("超时与拉人者终核", () => {
+  test("提醒从未成功落地时不踢人，延长完整窗口并重发原始提醒", () => {
+    const state = pendingState({ expiresAt: 1_000 });
+    const result = transitionVerification(state, { type: "verifyTimeout", now: 2_000 });
+
+    expect(result.next).toBe(state);
+    expect(state.expiresAt).toBe(2_000 + VERIFICATION_TIMEOUT_MS);
+    expect(result.effects).toEqual([{ kind: "sendReminder", label: "杂鱼A", isBot: false }]);
+    expect(result.snapshotChanged).toBeTrue();
+    expect(result.rescheduleTimer).toBeTrue();
+  });
+
+  test("已请求回复式提醒但未落地时，续窗后仍只补发回复式提醒", () => {
+    const state = pendingState({
+      replyReminderRequested: true,
+      reminderSuperseded: true,
+      welcomeAnchorMessageId: 88,
+    });
+    const result = transitionVerification(state, { type: "verifyTimeout", now: 2_000 });
+
+    expect(result.next).toBe(state);
+    expect(result.effects).toEqual([{ kind: "sendReplyReminder", label: "杂鱼A", targetMessageId: 88 }]);
+    expect(state.expiresAt).toBe(2_000 + VERIFICATION_TIMEOUT_MS);
+  });
+
   test("超时且非被拉入群 → 先持久化 expelling，再收尾踢人", () => {
-    const state = pendingState({ messageIds: [1, 2] });
-    const { next, effects } = transitionVerification(state, { type: "verifyTimeout" });
+    const state = pendingState({ messageIds: [1, 2], reminderMessageId: 2 });
+    const { next, effects } = transitionVerification(state, { type: "verifyTimeout", now: 120_000 });
     expect(next).toMatchObject({ kind: "expelling", reason: "timeout", snapshot: { messageIds: [1, 2] } });
     expect(effects).toEqual([]);
     expect(effectKinds(transitionVerification(next, { type: "terminalPersisted" }).effects)).toEqual(["expel"]);
@@ -326,8 +350,8 @@ describe("超时与拉人者终核", () => {
   });
 
   test("超时且被拉入群 → 先持久化 checkingInviter，再做终核", () => {
-    const state = pendingState({ invitedBy: 999 });
-    const { next, effects } = transitionVerification(state, { type: "verifyTimeout" });
+    const state = pendingState({ invitedBy: 999, reminderMessageId: 30 });
+    const { next, effects } = transitionVerification(state, { type: "verifyTimeout", now: 120_000 });
     expect(next).toMatchObject({ kind: "checkingInviter", inviterId: 999 });
     expect(effects).toEqual([]);
     expect(transitionVerification(next, { type: "terminalPersisted" }).effects[0]).toMatchObject({ kind: "recheckInviter", inviterId: 999 });
@@ -394,21 +418,23 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
 
   test("原始提醒落地回填", () => {
     const state = pendingState();
-    transitionVerification(state, { type: "reminderLanded", reminderKind: "original", messageId: 30 });
+    const result = transitionVerification(state, { type: "reminderLanded", reminderKind: "original", messageId: 30, now: 1_000 });
     expect(state.reminderMessageId).toBe(30);
     expect(state.messageIds).toEqual([30]);
+    expect(state.expiresAt).toBe(1_000 + VERIFICATION_TIMEOUT_MS);
+    expect(result.rescheduleTimer).toBeTrue();
   });
 
   test("原始提醒落地时已被取代 → 落地即自删", () => {
     const state = pendingState({ reminderSuperseded: true });
-    const { effects } = transitionVerification(state, { type: "reminderLanded", reminderKind: "original", messageId: 30 });
+    const { effects } = transitionVerification(state, { type: "reminderLanded", reminderKind: "original", messageId: 30, now: 1_000 });
     expect(effects).toEqual([{ kind: "deleteMessage", messageId: 30 }]);
     expect(state.reminderMessageId).toBeUndefined();
   });
 
   test("回复式提醒落地回填不受取代标记影响", () => {
     const state = pendingState({ reminderSuperseded: true });
-    transitionVerification(state, { type: "reminderLanded", reminderKind: "reply", messageId: 31 });
+    transitionVerification(state, { type: "reminderLanded", reminderKind: "reply", messageId: 31, now: 1_000 });
     expect(state.replyReminderMessageId).toBe(31);
   });
 

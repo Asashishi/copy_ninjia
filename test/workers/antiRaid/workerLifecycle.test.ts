@@ -20,6 +20,7 @@ mock.module("../../../src/workers/antiRaid/verificationRuntime", () => ({
   adoptVerifications(): void { calls.push("adoptVerifications"); },
   handleVerificationPersisted(): void { calls.push("verificationPersisted"); },
   deactivateVerificationChat(): void { calls.push("deactivateVerification"); },
+  stopVerificationRuntime(): void { calls.push("stopVerification"); },
 }));
 mock.module("../../../src/workers/antiRaid/lockdownRuntime", () => ({
   adoptLockdowns(): void { calls.push("adopt"); },
@@ -88,6 +89,7 @@ describe("Anti-Raid Worker lifecycle", () => {
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();
+    expect(calls.at(-1)).toBe("stopVerification");
     worker.startAntiRaidWorker();
     expect(initTelegramClients).toHaveBeenCalledTimes(2);
     worker.stopAntiRaidWorker();

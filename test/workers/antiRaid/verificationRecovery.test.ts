@@ -5,6 +5,8 @@ let kicks: number = 0;
 const deletedMessageIds: number[] = [];
 let blockNextDelete: boolean = false;
 let releaseBlockedDelete: (() => void) | undefined;
+const reminderResults: (number | undefined)[] = [];
+let reminderAttempts: number = 0;
 const workerEvents: AntiRaidWorkerEvent[] = [];
 Object.defineProperty(globalThis, "self", {
   configurable: true,
@@ -17,7 +19,10 @@ mock.module("../../../src/infra/logger", () => ({
 mock.module("../../../src/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
 mock.module("../../../src/infra/telegram", () => ({
   joinVerificationApi: {},
-  sendMessage: async (): Promise<undefined> => undefined,
+  sendMessage: async (): Promise<number | undefined> => {
+    reminderAttempts++;
+    return reminderResults.shift();
+  },
   deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> => {
     deletedMessageIds.push(messageId);
     if (blockNextDelete) {
@@ -43,6 +48,7 @@ function record(userId: number, expiresAt: number): VerificationSnapshot {
     label: "待验证成员",
     isBot: false,
     messageIds: [10],
+    reminderMessageId: 10,
     replyReminderRequested: false,
     reminderSuperseded: false,
     joinedAt: Date.now() - 1_000,
@@ -193,5 +199,37 @@ describe("Anti-Raid Worker verification recovery", () => {
 
     // 清理延长后的计时器，避免测试进程等待或影响后续用例。
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 8, verifications: [] });
+  });
+
+  test("恢复时未有已落地提醒会重发，首次失败后自动重试并从真正落地时重置窗口", async () => {
+    const baselineAttempts: number = reminderAttempts;
+    reminderResults.push(undefined, 701);
+    const before: number = Date.now();
+    const pendingWithoutReminder: VerificationSnapshot = {
+      ...record(70, before + 10_000),
+      generation: 9,
+      reminderMessageId: undefined,
+      messageIds: [],
+    };
+
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 9,
+      verifications: [pendingWithoutReminder],
+    });
+    await Bun.sleep(20);
+    expect(reminderAttempts).toBe(baselineAttempts + 1);
+    expect(verificationEntries.get("-1001:70")?.state).toMatchObject({
+      kind: "pending",
+      reminderMessageId: undefined,
+    });
+
+    await Bun.sleep(1_050);
+    const recovered = verificationEntries.get("-1001:70")?.state;
+    expect(reminderAttempts).toBe(baselineAttempts + 2);
+    expect(recovered).toMatchObject({ kind: "pending", reminderMessageId: 701 });
+    expect(recovered?.kind === "pending" ? recovered.expiresAt : 0).toBeGreaterThanOrEqual(before + 90_000);
+
+    runtime.adoptVerifications({ type: "adoptVerifications", generation: 10, verifications: [] });
   });
 });

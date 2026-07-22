@@ -1,6 +1,6 @@
 import type { CachedUser } from "../types/chatState";
 import type { Message } from "@grammyjs/types";
-import { userCache } from "../cache/senderIdentity";
+import { senderUsernameCache, userCache } from "../cache/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
 import { visibleSenderChat } from "./visibleSender";
 
@@ -40,6 +40,52 @@ function resolveSenderIdentity(message: Message): CachedUser | undefined {
   return undefined;
 }
 
+/** 删除正向 alias，并仅在反向索引仍指向该 alias 时同步删除反向记录。 */
+function deleteAlias(username: string): void {
+  const cached = userCache.get(username);
+  userCache.delete(username);
+  if (cached && senderUsernameCache.get(cached.id) === username) {
+    senderUsernameCache.delete(cached.id);
+  }
+}
+
+/**
+ * 原子维护 username <-> sender id 双向缓存。所有身份写入（消息观察与启动预热）
+ * 都必须走这里，避免改名、去名、username 换绑和容量淘汰产生悬空映射。
+ */
+function updateCachedIdentity(identity: CachedUser): void {
+  const username: string | undefined = identity.username
+    ? identity.username.toLowerCase()
+    : undefined;
+  const previousUsername: string | undefined = senderUsernameCache.get(identity.id);
+
+  // 同一 sender 改名或移除 username：先撤销只属于 TA 的旧 alias。
+  if (previousUsername !== undefined && previousUsername !== username) {
+    if (userCache.get(previousUsername)?.id === identity.id) {
+      userCache.delete(previousUsername);
+    }
+    senderUsernameCache.delete(identity.id);
+  }
+
+  if (username === undefined) return;
+
+  // 同一 username 被另一 sender 接管：旧 sender 不再拥有该 alias。
+  const previousIdentity: CachedUser | undefined = userCache.get(username);
+  if (previousIdentity && previousIdentity.id !== identity.id &&
+    senderUsernameCache.get(previousIdentity.id) === username) {
+    senderUsernameCache.delete(previousIdentity.id);
+  }
+
+  // 只有新增正向 key 才占容量。同名资料刷新和 username 换绑都不增长条数。
+  if (!previousIdentity && userCache.size >= USER_CACHE_MAX) {
+    const oldestUsername: string | undefined = userCache.keys().next().value;
+    if (oldestUsername !== undefined) deleteAlias(oldestUsername);
+  }
+
+  userCache.set(username, identity);
+  senderUsernameCache.set(identity.id, username);
+}
+
 /**
  * 记录/刷新某个发送者的缓存条目（两类身份见上方 resolveSenderIdentity），
  * 以便之后 /copy @username 能找到 TA。没有公开 username 的发送者不入缓存
@@ -50,26 +96,7 @@ export function cacheSender(message: Message): number | undefined {
   const identity = resolveSenderIdentity(message);
   if (!identity) return undefined;
 
-  if (identity.username) {
-    const lowerUsername: string = identity.username.toLowerCase();
-    const cached = userCache.get(lowerUsername);
-    const isStale = cached?.id !== identity.id ||
-      cached.title !== identity.title ||
-      cached.first_name !== identity.first_name ||
-      cached.last_name !== identity.last_name;
-    if (isStale) {
-      // 只有真正的新 key（此前未见过这个 username）才会让缓存条数增长，
-      // 才需要检查上限——同一 username 的信息更新（isStale 但 cached 存在）
-      // 只是覆写既有条目，不占用新名额。
-      if (!cached && userCache.size >= USER_CACHE_MAX) {
-        // 超上限就淘汰最早插入的条目（Map 迭代顺序即插入顺序），不搞真
-        // LRU——活跃用户反复发言不刷新位置，靠上限本身足够大兜底，见
-        // consts/senderIdentity.ts 的 USER_CACHE_MAX 注释。
-        userCache.delete(userCache.keys().next().value!);
-      }
-      userCache.set(lowerUsername, identity);
-    }
-  }
+  updateCachedIdentity(identity);
 
   return identity.id;
 }
@@ -89,7 +116,18 @@ export function resolveReplyTarget(message: Message): CachedUser | undefined {
  *  /copy、/kick 等命令解析 @username 形式的目标，见
  *  commands/targetResolution.ts 的 resolveCommandTarget。 */
 export function resolveUsernameTarget(username: string): CachedUser | undefined {
-  return userCache.get(username.toLowerCase());
+  const normalizedUsername: string = username.toLowerCase();
+  const identity: CachedUser | undefined = userCache.get(normalizedUsername);
+  if (!identity) return undefined;
+
+  // 已知不一致的 alias 一律拒绝，并顺手清除坏的正向记录。/kick 等破坏性命令
+  // 因此不会继续相信仅存在于单边缓存中的陈旧身份；提示层会建议回复消息定位。
+  if (senderUsernameCache.get(identity.id) !== normalizedUsername) {
+    userCache.delete(normalizedUsername);
+    return undefined;
+  }
+
+  return identity;
 }
 
 /**
@@ -98,6 +136,5 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
  * 指到 TA，不必等 TA 再发一条消息刷新缓存。见 app/lifecycle.ts。
  */
 export function seedSenderCache(user: CachedUser): void {
-  if (!user.username) return;
-  userCache.set(user.username.toLowerCase(), user);
+  updateCachedIdentity(user);
 }
