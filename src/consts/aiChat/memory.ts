@@ -1,7 +1,7 @@
 /** 冷消息压缩使用的模型与生成参数。 */
-export const GEMINI_SUMMARY_MODEL: string = "gemini-3.1-flash-lite";
-export const SUMMARY_MAX_TOKENS: number = 32_768;
-export const SUMMARY_TEMPERATURE: number = 0.6;
+export const GEMINI_SUMMARY_MODEL: string = "gemini-3.5-flash-lite";
+export const SUMMARY_MAX_TOKENS: number = 49_152;
+export const SUMMARY_TEMPERATURE: number = 0.5;
 /** 跨请求压缩失败后的两次退避。 */
 export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 
