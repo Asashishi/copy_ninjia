@@ -1,4 +1,4 @@
-import { MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
+import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
 import { sendMessage } from "../../../infra/telegram";
 import { sleep } from "../../../libs/sleep";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
@@ -44,7 +44,7 @@ export function createSendMessageExecutor(
       text,
       roundHasTypo: ctx.roundHasTypo,
       typoAlreadyUsed: state.typoUsedThisRound,
-      remainingActions: MAX_ACTIONS_PER_REPLY - getActionsUsed(),
+      remainingActions: HARD_MAX_ACTIONS_PER_REPLY - getActionsUsed(),
     });
     if (typo.shouldUseTypo) state.typoUsedThisRound = true;
 

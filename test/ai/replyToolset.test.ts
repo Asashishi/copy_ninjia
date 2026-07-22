@@ -28,6 +28,7 @@ mock.module("../../src/libs/sleep", () => ({
 }));
 
 const { ADD_REACTION_TOOL, SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
+const { AI_MAX_ACTIONS_PER_REPLY, HARD_MAX_ACTIONS_PER_REPLY } = await import("../../src/consts/aiChat/tools");
 const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../src/consts/aiChat/prompts/tools");
 const { createReplyToolset } = await import("../../src/ai/tools/replyToolset");
 
@@ -118,6 +119,47 @@ test("回复提示明确要求所有可见文本经 send_message，最终响应�
   expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("任何主回复、图片/贴纸说明或动作后的补充文字都必须显式调用本工具");
   expect(REPLY_ACTION_INSTRUCTION).toContain("所有需要让群友看到的文本发言都必须显式调用 send_message");
   expect(REPLY_ACTION_INSTRUCTION).toContain("最终响应保持空白");
+});
+
+test("模型提示限制为 8 个动作，执行侧留余量到 11 个动作才触发硬顶", async () => {
+  expect(AI_MAX_ACTIONS_PER_REPLY).toBe(8);
+  expect(HARD_MAX_ACTIONS_PER_REPLY).toBe(11);
+  expect(REPLY_ACTION_INSTRUCTION).toContain(`绝对不要超过 ${AI_MAX_ACTIONS_PER_REPLY} 个动作`);
+  expect(REPLY_ACTION_INSTRUCTION).not.toContain(`绝对不要超过 ${HARD_MAX_ACTIONS_PER_REPLY} 个动作`);
+
+  const toolset = await createReplyToolset({
+    chatId: -100800,
+    replyToMessageId: 10,
+    imageGenerationRequested: false,
+    bypassImageGenerationCooldown: false,
+    chatAction: {
+      current: () => "idle",
+      set: mock((..._args: unknown[]): void => {}),
+      settle: mock(async (): Promise<void> => {}),
+    },
+    stickerLock: { tryAcquire: () => true, release: () => {} },
+    roundHasTypo: false,
+    isActive: () => true,
+    onMessageSent: mock((..._args: unknown[]): void => {}),
+    onStickerSent: mock((..._args: unknown[]): void => {}),
+    onImageSent: mock((..._args: unknown[]): void => {}),
+  });
+
+  for (let action: number = 1; action <= HARD_MAX_ACTIONS_PER_REPLY; action++) {
+    const result = JSON.parse(await toolset.execute(
+      SEND_MESSAGE_TOOL,
+      JSON.stringify({ text: `第 ${action} 个动作` })
+    ));
+    expect(result.success).toBe(true);
+  }
+  const overflow = JSON.parse(await toolset.execute(
+    SEND_MESSAGE_TOOL,
+    JSON.stringify({ text: "第 12 个动作" })
+  ));
+
+  expect(toolset.actionsUsed()).toBe(HARD_MAX_ACTIONS_PER_REPLY);
+  expect(overflow.error).toContain(`at most ${HARD_MAX_ACTIONS_PER_REPLY} actions`);
+  expect(sendMessageMock).toHaveBeenCalledTimes(HARD_MAX_ACTIONS_PER_REPLY);
 });
 
 describe("isEmojiOnly", () => {

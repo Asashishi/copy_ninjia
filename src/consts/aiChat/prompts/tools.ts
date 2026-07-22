@@ -1,5 +1,5 @@
 import { IMAGE_GENERATION_COOLDOWN_MS } from "../imageGeneration";
-import { MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
+import { AI_MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 
 export const STICKER_INTENT_SELECTION_INSTRUCTION: string =
@@ -64,5 +64,5 @@ export const REPLY_ACTION_INSTRUCTION: string =
   "绝不能用最终响应正文代替文本工具。" +
   "但不允许整轮保持沉默：每轮至少要落地一个群友看得见的动作——说一句话（一句简短的也行）、" +
   "发一枚应景贴纸、生成一张图片，或者给触发消息扣一个表情反应，按场景选择，不能一个动作都不做就结束；" +
-  `一轮回复通常 1~3 个动作，可以 3~5 个动作，绝对不要超过 ${MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
+  `一轮回复通常 1~3 个动作，可以 3~5 个动作，绝对不要超过 ${AI_MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +
   "全部动作完成后直接结束，最终响应保持空白，不要再输出任何正文。";

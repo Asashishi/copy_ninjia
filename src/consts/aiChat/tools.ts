@@ -3,10 +3,12 @@ export const GEMINI_REPLY_MODEL: string = "gemini-3.5-flash-lite";
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
 /** 回复 token 上限包含思考 token；温度偏高以保留人设发挥。 */
 export const REPLY_MAX_TOKENS: number = 65_536;
-export const REPLY_TEMPERATURE: number = 1.0;
+export const REPLY_TEMPERATURE: number = 1.2;
 
+/** 告知模型的单轮动作上限；低于执行硬顶，为模型偏离提示留出安全余量。 */
+export const AI_MAX_ACTIONS_PER_REPLY: number = 8;
 /** 一轮所有可见动作与表情反应的执行侧硬顶。 */
-export const MAX_ACTIONS_PER_REPLY: number = 8;
+export const HARD_MAX_ACTIONS_PER_REPLY: number = 11;
 export const MAX_REACTIONS_PER_REPLY: number = 1;
 /** 单条消息发送前的模拟输入停顿参数。 */
 export const TYPING_DELAY_BASE_MS: number = 1_500;

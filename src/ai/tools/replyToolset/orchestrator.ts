@@ -1,5 +1,5 @@
 import type { FunctionDeclaration, Tool } from "@google/genai";
-import { MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
+import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
 import {
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
@@ -100,9 +100,9 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       if (!ctx.isActive()) {
         return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
       }
-      if (ACTION_TOOLS.has(name) && actionsUsed >= MAX_ACTIONS_PER_REPLY) {
+      if (ACTION_TOOLS.has(name) && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
         return JSON.stringify({
-          error: `Action limit reached: at most ${MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images) per reply`,
+          error: `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images) per reply`,
         });
       }
 
