@@ -4,15 +4,26 @@ import { restoreLuckState } from "../commands";
 import { getMoodConfig } from "../config/mood";
 import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
-import { drainAvatarUpdates } from "../copy/avatarQueue";
-import { drainReactionQueue } from "../copy/reactionQueue";
-import { refreshAllChatTitles } from "../infra/chatTitle";
+import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
+import { drainReactionQueue, initReactionQueue, quiesceReactionQueue } from "../copy/reactionQueue";
+import {
+  abortChatTitleRefresh,
+  initChatTitleRefresh,
+  quiesceChatTitleRefresh,
+  refreshAllChatTitles,
+} from "../infra/chatTitle";
 import { BOT_TOKEN } from "../infra/config";
 import { flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO } from "../infra/diskIO";
 import { logger } from "../infra/logger";
 import { cleanupOrphanedTempFiles } from "../infra/storage/cleanup";
 import { acquireSingleInstanceLock, releaseSingleInstanceLock } from "../infra/storage/instanceLock";
-import { flushStateToDisk, getAllChatStates, getGlobalCopyState, loadState } from "../infra/storage/stateStore";
+import {
+  flushStateToDisk,
+  getAllChatStates,
+  getGlobalCopyState,
+  loadState,
+  setStatePersistenceFatalHandler,
+} from "../infra/storage/stateStore";
 import { bot, initTelegramClients } from "../infra/telegram";
 import { sleep } from "../libs/sleep";
 import { seedSenderCache } from "../users/senderIdentity";
@@ -28,6 +39,7 @@ import { runAcknowledgedUpdateBatches } from "./updateRunner";
  */
 export const lifecycleDependencies = {
   BOT_TOKEN,
+  abortChatTitleRefresh,
   acquireSingleInstanceLock,
   bot,
   cleanupOrphanedTempFiles,
@@ -45,9 +57,12 @@ export const lifecycleDependencies = {
   hydrateAiMemory,
   hydratePendingVerifications,
   hydrateStickerCatalog,
+  initAvatarUpdates,
   initAiChat,
   initAntiRaid,
+  initChatTitleRefresh,
   initDiskIO,
+  initReactionQueue,
   initTelegramClients,
   loadPersistedData,
   loadState,
@@ -58,7 +73,11 @@ export const lifecycleDependencies = {
   releaseSingleInstanceLock,
   restoreLuckState,
   runAcknowledgedUpdateBatches,
+  quiesceAvatarUpdates,
+  quiesceChatTitleRefresh,
+  quiesceReactionQueue,
   seedSenderCache,
+  setStatePersistenceFatalHandler,
   sleep,
   terminateAiChat,
   terminateAntiRaid,

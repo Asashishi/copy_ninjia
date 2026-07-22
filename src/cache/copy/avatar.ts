@@ -14,3 +14,7 @@ export const avatarUpdateState: {
 };
 
 export const avatarDrainWaiters: Set<() => void> = new Set();
+export const avatarUpdateRuntime: { accepting: boolean; controller: AbortController } = {
+  accepting: true,
+  controller: new AbortController(),
+};

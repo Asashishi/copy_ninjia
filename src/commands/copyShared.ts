@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
-import { getGlobalCopyState, saveStateInBackground } from "../infra/storage/stateStore";
+import { getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram/actions";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
@@ -31,8 +31,8 @@ type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCop
  * 已经在复读别人等），必须调用 releaseCopyCooldownClaim 撤销占用，否则无效
  * 尝试也会白白消耗掉全局冷却，殃及所有群。
  *
- * 占用当场后台落盘（saveStateInBackground，不 await，不影响上面"同步栈内
- * 完成占用"的不变量）：若只在真正开始复读时才落盘（旧行为），冷却时钟在
+ * 占用在同步栈内完成后等待权威落盘；await 发生在写入之后，不影响上面的
+ * 原子占位不变量。若只在真正开始复读时才落盘，冷却时钟在
  * "已认领但还没真正开始复读"的短窗口内只活在内存里，此时崩溃重启会让
  * 冷却被重置，刚好卡在这个窗口发起的下一次尝试就能绕开冷却限制。
  * @returns rejected 为 true 时提示已发送，调用方应直接返回；否则调用方可以
@@ -47,7 +47,9 @@ export async function claimCopyCooldownOrReject(
   const isExempted: boolean = !!fromUser && PRIVILEGED_USERS_ID.includes(fromUser.id);
   if (!isExempted && globalCopyState.lastCopyTime) {
     const elapsed: number = Date.now() - globalCopyState.lastCopyTime;
-    if (elapsed < COPY_COOLDOWN_MS) {
+    // 墙钟回拨时 elapsed 为负；把旧时间戳视为已过期，随后本次 claim 会用
+    // 当前时钟重建冷却起点，避免额外冻结到时钟追平。
+    if (elapsed >= 0 && elapsed < COPY_COOLDOWN_MS) {
       await sendMessage({
         chatId,
         text: `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`,
@@ -60,7 +62,7 @@ export async function claimCopyCooldownOrReject(
   const previousLastCopyTime: number | undefined = globalCopyState.lastCopyTime;
   const claimedAt: number = Date.now();
   globalCopyState.lastCopyTime = claimedAt;
-  saveStateInBackground("copy cooldown claimed");
+  await persistAuthoritativeState("copy cooldown claimed");
   return { rejected: false, previousLastCopyTime, claimedAt };
 }
 
@@ -77,11 +79,13 @@ export async function claimCopyCooldownOrReject(
  * 的仍是那个已作废的 claimedAt——重启后每个非白名单用户的下一次 /copy 都
  * 会被这个本不该存在的冷却错误地拒绝，直到它自然过期。
  */
-export function releaseCopyCooldownClaim(claim: { previousLastCopyTime: number | undefined; claimedAt: number }): void {
+export async function releaseCopyCooldownClaim(
+  claim: { previousLastCopyTime: number | undefined; claimedAt: number }
+): Promise<void> {
   const globalCopyState = getGlobalCopyState();
   if (globalCopyState.lastCopyTime === claim.claimedAt) {
     globalCopyState.lastCopyTime = claim.previousLastCopyTime;
-    saveStateInBackground("copy cooldown released");
+    await persistAuthoritativeState("copy cooldown released");
   }
 }
 

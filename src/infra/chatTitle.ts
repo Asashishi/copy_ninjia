@@ -2,6 +2,8 @@ import type { Chat } from "@grammyjs/types";
 import { logger } from "./logger";
 import { bot } from "./telegram";
 import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage/stateStore";
+import { chatTitleRefreshRuntime } from "../cache/chatTitle";
+import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../consts/telegram";
 
 /**
  * 各群名称的追踪与持久化（ChatState.title，随 state.json 落盘）。群名称不
@@ -44,21 +46,68 @@ export function recordChatTitleFromChat(chat: Chat): void {
  * bot 启动主流程——这纯粹是方便人读 state.json 的锦上添花，慢一点或个别
  * 群查询失败都不影响机器人正常运行。app/lifecycle.ts 会追踪该任务，并在
  * 最终状态快照前等待它完成，避免刷新任务在 flush 后继续改状态。共享的 bot.api 客户端
- * 自带限流+自动重试（见 infra/telegram/client.ts 的 apiThrottler/autoRetry），这里
- * 并发发起全部请求即可，不需要自己再实现一层排队。
+ * 自带限流+自动重试（见 infra/telegram/client.ts 的 apiThrottler/autoRetry）；本 owner
+ * 仍使用固定小并发池，避免历史群一次性占满启动期的共享 Telegram 队列。
  */
-export async function refreshAllChatTitles(): Promise<void> {
+export async function refreshAllChatTitles(
+  signal: AbortSignal = chatTitleRefreshRuntime.controller.signal
+): Promise<void> {
+  if (!chatTitleRefreshRuntime.accepting || signal.aborted) return;
   const chatIds: number[] = [...getAllChatStates().keys()];
-  await Promise.all(chatIds.map(async (chatId: number): Promise<void> => {
-    try {
-      const chat = await bot.api.getChat(chatId);
-      if (chat.type === "group" || chat.type === "supergroup") {
-        recordChatTitle(chatId, chat.title);
+  const total: number = chatIds.length;
+  const startedAt: number = Date.now();
+  let nextIndex: number = 0;
+  let completed: number = 0;
+  logger.info(`Chat title refresh started: total=${total}, concurrency=${CHAT_TITLE_REFRESH_CONCURRENCY}.`);
+
+  const workers: Promise<void>[] = Array.from(
+    { length: Math.min(CHAT_TITLE_REFRESH_CONCURRENCY, total) },
+    async (): Promise<void> => {
+      while (!signal.aborted) {
+        const index: number = nextIndex++;
+        if (index >= total) return;
+        const chatId: number = chatIds[index]!;
+        try {
+          const chat = await bot.api.getChat(
+            chatId,
+            signal as unknown as Parameters<typeof bot.api.getChat>[1]
+          );
+          if (!signal.aborted && (chat.type === "group" || chat.type === "supergroup")) {
+            recordChatTitle(chatId, chat.title);
+          }
+        } catch (error: unknown) {
+          if (!signal.aborted) {
+            // 单个群查询失败不该中断其它群的回填。
+            logger.error(`Failed to refresh chat title for chat ${chatId}:`, error);
+          }
+        } finally {
+          completed++;
+          if (completed === total || completed % 50 === 0) {
+            logger.info(
+              `Chat title refresh progress: ${completed}/${total}, elapsed=${Date.now() - startedAt}ms.`
+            );
+          }
+        }
       }
-    } catch (error: unknown) {
-      // 单个群查询失败（机器人已被踢出/群已解散等）不该中断其它群的回填，
-      // 记日志留痕即可，下次启动或下一条该群消息自然有机会补上。
-      logger.error(`Failed to refresh chat title for chat ${chatId}:`, error);
     }
-  }));
+  );
+  await Promise.allSettled(workers);
+  logger.info(
+    `Chat title refresh ${signal.aborted ? "aborted" : "completed"}: ` +
+    `${completed}/${total}, elapsed=${Date.now() - startedAt}ms.`
+  );
+}
+
+export function initChatTitleRefresh(): void {
+  chatTitleRefreshRuntime.controller = new AbortController();
+  chatTitleRefreshRuntime.accepting = true;
+}
+
+export function quiesceChatTitleRefresh(): void {
+  chatTitleRefreshRuntime.accepting = false;
+}
+
+export function abortChatTitleRefresh(): void {
+  chatTitleRefreshRuntime.accepting = false;
+  if (!chatTitleRefreshRuntime.controller.signal.aborted) chatTitleRefreshRuntime.controller.abort();
 }

@@ -10,7 +10,7 @@ const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 const recordChatMediaMock = mock((..._args: unknown[]): void => {});
 const generateAndSendReplyMock = mock((..._args: unknown[]): void => {});
 const copyMessageMock = mock(async (..._args: unknown[]): Promise<undefined> => undefined);
-let quietUntil: number = Number.MAX_SAFE_INTEGER;
+let quietUntil: number = Date.now() + 60_000;
 let aiChatEnabled: boolean = true;
 
 mock.module("../../src/infra/telegram", () => ({
@@ -26,6 +26,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   getActiveProxySendTarget: () => undefined,
   getChatState: () => ({ isAIChatEnabled: aiChatEnabled, quietUntil }),
   getOrCreateChatState: () => ({}),
+  persistAuthoritativeState: async (): Promise<void> => {},
   saveStateInBackground: () => {},
 }));
 mock.module("../../src/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
@@ -97,7 +98,7 @@ describe("媒体直接叫机器人", () => {
     recordChatMediaMock.mockClear();
     generateAndSendReplyMock.mockClear();
     copyMessageMock.mockClear();
-    quietUntil = Number.MAX_SAFE_INTEGER;
+    quietUntil = Date.now() + 60_000;
     aiChatEnabled = true;
     userReplyTriggerTimes.clear();
     clearAiReplyActivity();

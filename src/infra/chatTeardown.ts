@@ -7,6 +7,6 @@ export function registerChatTeardown(owner: ChatRuntimeOwner, callback: ChatTear
 }
 
 /** 执行指定 owner 当前注册的 teardown；未注册时是显式 no-op。 */
-export function teardownRegisteredChat(owner: ChatRuntimeOwner, chatId: number): void {
-  chatTeardownCallbacks[owner](chatId);
+export function teardownRegisteredChat(owner: ChatRuntimeOwner, chatId: number): Promise<void> {
+  return Promise.resolve(chatTeardownCallbacks[owner](chatId));
 }

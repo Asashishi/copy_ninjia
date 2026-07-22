@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
-import { getOrCreateChatState, saveStateInBackground } from "../infra/storage/stateStore";
+import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 import { teardownChatRuntime } from "../infra/botAdmin";
@@ -23,9 +23,9 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const state: ChatState = getOrCreateChatState(chatId);
-  if (arg === "disable") teardownChatRuntime(chatId);
   state.isInitEnabled = arg === "enable";
-  saveStateInBackground("init toggled");
+  if (arg === "disable") await teardownChatRuntime(chatId);
+  await persistAuthoritativeState("init toggled");
 
   const replyText: string = arg === "enable"
     ? `哼，那本天才就大发慈悲开始搭理这个群了，杂鱼们好好珍惜♡`

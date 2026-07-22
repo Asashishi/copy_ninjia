@@ -6,19 +6,24 @@
 ## 启动与 import 边界
 
 - 生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入。
-- 主进程先取得 `bot.lock`，再校验 `config/`，随后显式初始化 Telegram 客户端、
-  Disk I/O Worker、状态恢复、AI Worker 和 Anti-Raid Worker。
+- 主进程先递归创建并预检运行时数据根的写入、文件 fsync、hard link、原子 rename 与目录 fsync，
+  再取得 `bot.lock`；随后校验 `config/`，并显式初始化 Telegram 客户端、Disk I/O Worker、
+  状态恢复、AI Worker 和 Anti-Raid Worker。预检或锁失败发生在任何联网和 Worker 创建之前。
 - 初始化失败和正常退出都由 `ApplicationLifecycle` 收口；只有已取得的资源才会释放或 flush。
 - 配置解析器本身无 I/O；`getStickerConfig()` / `getReactionConfig()` / `getMoodConfig()`
   在业务首次使用时惰性加载，主进程会在持锁后预热，以便部署错误在联网前暴露。
 - `state.json`、`bot.lock`、`logs/` 与 `memory/` 全部从统一运行时数据根派生；
   生产缺省使用项目根目录，测试 preload 在任何生产模块 import 前注入逐隔离体的临时根，
   让真实文件 I/O 也不可能读写生产缓存。
+- 命令菜单、`bot.init()`、Worker hydrate 与 acknowledgement-safe runner 就绪后，才启动低优先级
+  群标题维护；标题 owner 当前最多并发 15 个 `getChat`，限制历史回填在共享 throttler 中造成的
+  队头阻塞，并接受生命周期的 quiesce/abort 信号。
 
 ## Worker 与状态所有权
 
 - 主线程持有 Telegram runner、Worker 监督句柄，并由 `StateStore` 独立维护
-  `state.json` 的内存镜像、latest-only 原子写、失败重试和退出 flush。
+  `state.json` 的内存镜像、latest-only 原子写、有限失败重试和退出 flush。有限重试耗尽是
+  fatal durability failure，必须停止 runner；不得继续确认 update。
 - AI Worker 独占群聊记忆、回复准入、媒体描述流水线和贴纸目录生成的运行时状态。
 - Anti-Raid Worker 独占验证/锁定状态机和对应计时器；主线程只持可恢复镜像。
 - 状态机的 `State/Event/Effect/Transition/Decision` 契约统一由 `src/types/states/`
@@ -28,7 +33,9 @@
   `StateStore` 异步维护。业务 Worker 不直接写共享目录。
 - 长期 Map、Set、队列和 timer 必须由对应 `src/cache/<domain>/` 与业务生命周期模块
   共同给出容量、清理和 Worker 重建语义。
-- 业务 Worker 的主线程监督句柄把同步 `postMessage` 拒绝统一收敛为 `false` 并记录错误；
+- 业务 Worker 与独立 Disk I/O 宿主都把同步 `postMessage` 拒绝统一收敛为显式失败；请求型
+  投递立即清理 waiter/timer，日志只退回 console，关键业务投递触发 fatal。恢复重放再次拒绝时
+  不得宣称 Worker writable。
   需要确认处理与落盘边界的调用方必须把 `false` 当作失败，不能确认对应 Telegram update。
 - AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；仅在零成功动作时，
   最终正文才经 `send_message` 兜底。所有有意展示的文字必须由模型显式调用该工具。
@@ -49,18 +56,27 @@
 
 ## 持久化
 
-- `state.json` 使用最新值合并、临时文件、fsync 和原子 rename。
+- `state.json` 使用最新值合并、临时文件、fsync 和原子 rename。命令开关、代理、copy 与权限/
+  离群状态等权威变更必须等待对应 revision 依次写入主文件和 LKG 后才能反馈成功并返回
+  middleware；群标题等可重建元数据才允许后台最终一致保存。
 - AI 记忆与贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的
   JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone，只保留
   东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、
   转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；`null` tombstone 与其它
   基础类型都必须被视为完整的最后值。
+- AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，
+  Disk I/O Worker 只有在 unlink 达到 durable 边界或删除已被更新 revision 覆盖时才回执；Worker
+  重建会重放 tombstone 与最新镜像，顺序不决定最终结果。启动恢复以 `state.json` 为准，只 hydrate
+  明确启用 AI 的群，并为关闭群的残留快照安排删除。该协议不改变现有磁盘快照 schema。
 - AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`
   （当前为 149 条逐字消息与 7 轮冷摘要）从快照尾部截取最新数据；调整容量常量部署前，应在旧进程停止后以同一
   恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
   反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败
   必须返回失败、阻止最终 offset 确认并以非零状态退出。
+- 正常与异常停机都先 quiesce update/标题/反应/头像入口，再有界 drain；预算耗尽时 abort 仍在
+  进行的 Telegram 请求、媒体下载和 429 sleep，结算尚未开始的队列，随后依次 flush AI、Disk I/O
+  与 StateStore 并终止 Worker。abort 后不得再发送消息、改头像或写入群标题。
 - Worker flush 与 mailbox barrier 统一使用 `src/libs/flushBarrier.ts` 管理 ID、等待表、
   超时、迟到回执和崩溃批量结算；领域缓存不得重新暴露 resolver Map。
 - `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由主机账户权限、

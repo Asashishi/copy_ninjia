@@ -4,6 +4,7 @@ const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
 const teardownChatRuntime = mock((..._args: unknown[]): void => {});
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
+const persistAuthoritativeState = mock(async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); });
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
 const states = new Map<number, Record<string, unknown>>();
 
@@ -20,6 +21,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
     }
     return state;
   },
+  persistAuthoritativeState,
   saveStateInBackground,
 }));
 mock.module("../../src/commands/copy", () => ({ handleCopyCommand }));
@@ -44,6 +46,10 @@ beforeEach(() => {
   invalidateAiChat.mockClear();
   teardownChatRuntime.mockClear();
   saveStateInBackground.mockClear();
+  persistAuthoritativeState.mockClear();
+  persistAuthoritativeState.mockImplementation(async (...args: unknown[]): Promise<void> => {
+    saveStateInBackground(...args);
+  });
   handleCopyCommand.mockClear();
 });
 
@@ -97,5 +103,31 @@ describe("超级管理员开关命令", () => {
     await handleJaCopyCommand(context("disable"));
     expect(states.get(-1001)?.isJATranslationEnabled).toBe(false);
     expect(saveStateInBackground).toHaveBeenCalledTimes(2);
+  });
+
+  test("/ai_chat disable 在 state 与记忆删除都完成前不发送成功反馈", async () => {
+    let releaseState!: () => void;
+    let releaseDelete!: () => void;
+    persistAuthoritativeState.mockImplementationOnce(async (...args: unknown[]): Promise<void> => {
+      saveStateInBackground(...args);
+      await new Promise<void>((resolve) => { releaseState = resolve; });
+    });
+    invalidateAiChat.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { releaseDelete = resolve; });
+    });
+
+    const command = handleAiChatCommand(context("disable"));
+    await Bun.sleep(0);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(invalidateAiChat).not.toHaveBeenCalled();
+
+    releaseState();
+    await Bun.sleep(0);
+    expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    releaseDelete();
+    await command;
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 });

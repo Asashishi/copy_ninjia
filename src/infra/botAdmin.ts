@@ -1,17 +1,28 @@
 import type { Context } from "grammy";
 import { logger } from "./logger";
 import { bot } from "./telegram";
-import { clearChatStateField, getChatState, getOrCreateChatState, pruneDepartedChatState, saveStateInBackground } from "./storage/stateStore";
+import {
+  clearChatStateField,
+  getChatState,
+  getOrCreateChatState,
+  persistAuthoritativeState,
+  pruneDepartedChatState,
+} from "./storage/stateStore";
 import { botAdminFetches } from "../cache/botAdmin";
 import { isAdminStatus } from "../libs/chatMember";
 import { teardownRegisteredChat } from "./chatTeardown";
 
 /** 配置去留由调用入口决定；这里只停止 owner、取消计时器并发起权限恢复。 */
-export function teardownChatRuntime(chatId: number): void {
-  teardownRegisteredChat("copy", chatId);
+export async function teardownChatRuntime(chatId: number): Promise<void> {
+  // 先同步调用全部 owner，让跨群 copy 槽、代理入口和 Worker 闸门在第一个
+  // await 之前一起关闭；随后等待需要 durable 回执的异步 owner。
+  const copyTeardown: Promise<void> = teardownRegisteredChat("copy", chatId);
   clearChatStateField(chatId, "isProxySendEnabled");
-  teardownRegisteredChat("aiChat", chatId);
-  teardownRegisteredChat("antiRaid", chatId);
+  const aiTeardown: Promise<void> = teardownRegisteredChat("aiChat", chatId);
+  const antiRaidTeardown: Promise<void> = teardownRegisteredChat("antiRaid", chatId);
+  await copyTeardown;
+  await aiTeardown;
+  await antiRaidTeardown;
 }
 
 /**
@@ -49,12 +60,12 @@ export function teardownChatRuntime(chatId: number): void {
  * （见本文件顶部注释的第 3 条路径）会在真正需要时现查一次并正确落盘，
  * 这里的省略不损失任何信息。
  */
-function recordBotAdminStatus(chatId: number, isAdmin: boolean): void {
+async function recordBotAdminStatus(chatId: number, isAdmin: boolean): Promise<void> {
   if (getChatState(chatId).isInitEnabled !== true) return;
   const chatState = getOrCreateChatState(chatId);
   if (chatState.botIsAdmin === isAdmin) return;
   chatState.botIsAdmin = isAdmin;
-  saveStateInBackground("bot admin status refresh");
+  await persistAuthoritativeState("bot admin status refresh");
 }
 
 /**
@@ -62,31 +73,31 @@ function recordBotAdminStatus(chatId: number, isAdmin: boolean): void {
  * 被授予/撤销管理员、被移出群聊时刷新本群的 botIsAdmin 记录。这类更新
  * 必须显式列进 allowed_updates 才会送达（见 app/lifecycle.ts）。
  */
-export function handleMyChatMemberUpdate(ctx: Context): void {
+export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
   const update = ctx.myChatMember;
   if (!update) return;
   // 私聊没有管理员概念，频道里机器人不做任何守卫/踢人，都不记录。
   if (update.chat.type !== "group" && update.chat.type !== "supergroup") return;
   if (update.new_chat_member.status === "left" || update.new_chat_member.status === "kicked") {
-    teardownChatRuntime(update.chat.id);
+    await teardownChatRuntime(update.chat.id);
     // 普通配置删除；若 lockdown 尚未恢复则保留 write-ahead owner，避免群权限
     // 因退群而永久卡住。重新入群后 initAntiRaid/Worker 重建会继续接管。
     pruneDepartedChatState(update.chat.id);
-    saveStateInBackground(`chat ${update.chat.id} state pruned after bot left/kicked`);
+    await persistAuthoritativeState(`chat ${update.chat.id} state pruned after bot left/kicked`);
     return;
   }
   const wasAdmin: boolean = isAdminStatus(update.old_chat_member.status);
   const isAdmin: boolean = isAdminStatus(update.new_chat_member.status);
-  if (wasAdmin && !isAdmin) teardownChatRuntime(update.chat.id);
-  recordBotAdminStatus(update.chat.id, isAdmin);
+  if (wasAdmin && !isAdmin) await teardownChatRuntime(update.chat.id);
+  await recordBotAdminStatus(update.chat.id, isAdmin);
 }
 
 /**
  * 收到一条别人的 chat_member 更新即证明机器人此刻是该群管理员（Telegram
  * 只向管理员机器人推送这类更新），顺手记录，不打任何 API。
  */
-export function markBotAdminObserved(chatId: number): void {
-  recordBotAdminStatus(chatId, true);
+export function markBotAdminObserved(chatId: number): Promise<void> {
+  return recordBotAdminStatus(chatId, true);
 }
 
 /**
@@ -109,11 +120,11 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
   if (!inFlight) {
     inFlight = bot.api
       .getChatMember(chatId, bot.botInfo.id)
-      .then((member) => {
+      .then(async (member) => {
         const currentKnown: boolean | undefined = getChatState(chatId).botIsAdmin;
         if (currentKnown !== undefined) return currentKnown;
         const isAdmin: boolean = isAdminStatus(member.status);
-        recordBotAdminStatus(chatId, isAdmin);
+        await recordBotAdminStatus(chatId, isAdmin);
         return isAdmin;
       })
       .catch((error: unknown) => {

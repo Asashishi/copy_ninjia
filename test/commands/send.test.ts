@@ -43,6 +43,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
     if (Object.keys(state).length === 0) chatStates.delete(chatId);
     return true;
   },
+  persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackgroundMock(...args); },
   saveStateInBackground: saveStateInBackgroundMock,
 }));
 

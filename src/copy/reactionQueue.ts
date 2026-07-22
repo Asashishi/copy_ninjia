@@ -3,8 +3,20 @@ import { GrammyError } from "grammy";
 import { bot, logApiError } from "../infra/telegram";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { sleep } from "../libs/sleep";
-import { DEFAULT_RETRY_AFTER_SECONDS, MAX_ATTEMPTS, MAX_PENDING_TASKS_PER_CHAT } from "../consts/reactionQueue";
-import { chatQueues, consumingChats, pendingReactionWaiters, pendingTasks, reactionDrainWaiters } from "../cache/reactionQueue";
+import {
+  DEFAULT_RETRY_AFTER_SECONDS,
+  MAX_ATTEMPTS,
+  MAX_PENDING_TASKS_PER_CHAT,
+  MAX_RETRY_AFTER_SECONDS,
+} from "../consts/reactionQueue";
+import {
+  chatQueues,
+  consumingChats,
+  pendingReactionWaiters,
+  pendingTasks,
+  reactionDrainWaiters,
+  reactionQueueRuntime,
+} from "../cache/reactionQueue";
 import type { FlushResult } from "../consts/lifecycle";
 import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
 
@@ -45,6 +57,7 @@ export function enqueueReaction({
   updateId: number;
   reactedAtUnix: number;
 }): Promise<void> {
+  if (!reactionQueueRuntime.accepting) return Promise.resolve();
   const key: string = `${chatId}:${messageId}`;
   const settled: Promise<void> = new Promise((resolve) => {
     let waiters = pendingReactionWaiters.get(key);
@@ -118,8 +131,10 @@ function settleFailedChatQueue(chatId: number): void {
 
 /** 生命周期边界：等待已接收任务被应用、合并或按硬顶策略显式丢弃。 */
 export function drainReactionQueue(timeoutMs: number): Promise<FlushResult> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("Reaction drain timeout must be a positive finite number.");
+  }
   if (pendingTasks.size === 0 && consumingChats.size === 0) return Promise.resolve("flushed");
-  if (timeoutMs <= 0) return Promise.resolve("timedOut");
   return new Promise((resolve) => {
     let settled: boolean = false;
     function finish(result: FlushResult): void {
@@ -130,10 +145,35 @@ export function drainReactionQueue(timeoutMs: number): Promise<FlushResult> {
       resolve(result);
     }
     const onIdle = (): void => finish("flushed");
-    const timer = setTimeout(() => finish("timedOut"), timeoutMs);
+    const timer = setTimeout(() => {
+      abortReactionQueue();
+      finish("timedOut");
+    }, timeoutMs);
     reactionDrainWaiters.add(onIdle);
     notifyReactionDrainIfIdle();
   });
+}
+
+/** 应用启动边界；重新建立 owner signal，测试和嵌入式生命周期也可显式复用。 */
+export function initReactionQueue(): void {
+  if (consumingChats.size > 0) throw new Error("Cannot initialize reaction queue while consumers are active.");
+  reactionQueueRuntime.controller = new AbortController();
+  reactionQueueRuntime.accepting = true;
+}
+
+/** 停机第一阶段：拒绝新任务，保留已接收任务供有界 drain。 */
+export function quiesceReactionQueue(): void {
+  reactionQueueRuntime.accepting = false;
+}
+
+/** drain 超时后的取消阶段：打断 API/sleep，结算所有尚未开始的任务。 */
+export function abortReactionQueue(): void {
+  reactionQueueRuntime.accepting = false;
+  if (!reactionQueueRuntime.controller.signal.aborted) reactionQueueRuntime.controller.abort();
+  for (const key of [...pendingTasks.keys()]) settleReactionKey(key);
+  pendingTasks.clear();
+  chatQueues.clear();
+  notifyReactionDrainIfIdle();
 }
 
 async function consumeChatQueue(chatId: number): Promise<void> {
@@ -179,11 +219,19 @@ async function consumeChatQueue(chatId: number): Promise<void> {
  *   条 key 重新排回队尾、用最新数据再走一轮。
  */
 async function applyReaction(key: string): Promise<boolean> {
+  const signal: AbortSignal = reactionQueueRuntime.controller.signal;
   for (let attempt: number = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (signal.aborted) return true;
     const task: ReactionTask | undefined = pendingTasks.get(key);
     if (!task) return true; // 理论不可达（key 还在处理中就不该被删掉），防御性放行。
     try {
-      await bot.api.setMessageReaction(task.chatId, task.messageId, task.reactions);
+      await bot.api.setMessageReaction(
+        task.chatId,
+        task.messageId,
+        task.reactions,
+        {},
+        signal as unknown as Parameters<typeof bot.api.setMessageReaction>[4]
+      );
       // 延迟拆解：delivery = 目标点反应到更新抵达机器人（Telegram 侧 + 轮询，
       // 我们控制不了），queue = 入队到调用完成（我们这边的耗时）。delivery 用
       // 本地时钟减 Telegram 服务器时间，轻微时钟偏差可能出现负数，夹到 0。
@@ -195,13 +243,22 @@ async function applyReaction(key: string): Promise<boolean> {
       );
       return pendingTasks.get(key) === task;
     } catch (error: unknown) {
+      if (signal.aborted) return true;
       if (error instanceof GrammyError && error.error_code === 429 && attempt < MAX_ATTEMPTS) {
-        const retryAfterSeconds: number = error.parameters.retry_after ?? DEFAULT_RETRY_AFTER_SECONDS;
+        const rawRetryAfter: number | undefined = error.parameters.retry_after;
+        const retryAfterSeconds: number = rawRetryAfter !== undefined && Number.isFinite(rawRetryAfter) && rawRetryAfter > 0
+          ? Math.min(rawRetryAfter, MAX_RETRY_AFTER_SECONDS)
+          : DEFAULT_RETRY_AFTER_SECONDS;
         logger.warn(
           `setMessageReaction rate limited (chat ${task.chatId}, msg ${task.messageId}), ` +
           `waiting ${retryAfterSeconds}s before retry ${attempt + 1}/${MAX_ATTEMPTS}`
         );
-        await sleep(retryAfterSeconds * 1000);
+        try {
+          await sleep(retryAfterSeconds * 1000, signal);
+        } catch {
+          if (signal.aborted) return true;
+          throw error;
+        }
         continue; // 下一轮循环开头会重新读取 pendingTasks[key]，天然拿到最新版本。
       }
       // 目标点完立刻取消时，自定义表情不再「存在于消息上」，这里会收到

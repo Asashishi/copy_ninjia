@@ -1,6 +1,6 @@
 import { STATE_FLUSH_TIMEOUT_MS, type FlushResult } from "../../consts/lifecycle";
 import { CORRUPT_FILE_SUFFIX, STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
-import { DEFAULT_CHAT_STATE, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
+import { DEFAULT_CHAT_STATE, STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
 import { atomicWriteText, durableRename } from "../../libs/atomicFile";
 import { normalizeChatState, normalizeChatStateEntry } from "../../libs/chatState";
 import { createLatestValueRunner, type LatestValueRunner } from "../../libs/latestValueRunner";
@@ -15,8 +15,10 @@ export interface StateStoreOptions {
   writeText?: (path: string, content: string) => Promise<void>;
   moveFile?: (sourcePath: string, destinationPath: string) => Promise<void>;
   retryDelaysMs?: readonly number[];
+  maxAttempts?: number;
   onRetryError?: (attempt: number, error: unknown) => void;
   onFlushError?: (error: unknown) => void;
+  onFatal?: (error: Error) => void;
 }
 
 export interface StateSaveOptions {
@@ -68,8 +70,10 @@ export class StateStore {
   private readonly writeText: (path: string, content: string) => Promise<void>;
   private readonly moveFile: (sourcePath: string, destinationPath: string) => Promise<void>;
   private readonly retryDelaysMs: readonly number[];
+  private readonly maxAttempts: number;
   private readonly onRetryError: (attempt: number, error: unknown) => void;
   private readonly onFlushError: (error: unknown) => void;
+  private fatalHandler: ((error: Error) => void) | undefined;
   private readonly writer: LatestValueRunner<StateWrite>;
 
   private dirtyWrite: StateWrite | null = null;
@@ -80,6 +84,7 @@ export class StateStore {
   private readonly persistenceWaiters: PersistenceWaiter[] = [];
   private quiescing: boolean = false;
   private disposed: boolean = false;
+  private fatalSignaled: boolean = false;
 
   constructor(options: StateStoreOptions = {}) {
     this.stateFilePath = options.stateFilePath ?? STATE_FILE_PATH;
@@ -90,12 +95,20 @@ export class StateStore {
     this.moveFile = options.moveFile ?? durableRename;
     this.retryDelaysMs = options.retryDelaysMs ?? STATE_SAVE_RETRY_DELAYS_MS;
     if (this.retryDelaysMs.length === 0) throw new Error("StateStore requires at least one retry delay");
+    if (this.retryDelaysMs.some((delay) => !Number.isFinite(delay) || delay <= 0)) {
+      throw new RangeError("StateStore retry delays must be positive finite numbers");
+    }
+    this.maxAttempts = options.maxAttempts ?? STATE_SAVE_MAX_ATTEMPTS;
+    if (!Number.isSafeInteger(this.maxAttempts) || this.maxAttempts < 1) {
+      throw new Error("StateStore maxAttempts must be a positive safe integer");
+    }
     this.onRetryError = options.onRetryError ?? ((attempt, error) => {
       logger.error(`Failed to persist state (attempt ${attempt}):`, error);
     });
     this.onFlushError = options.onFlushError ?? ((error) => {
       logger.error("Failed to flush state to disk on shutdown:", error);
     });
+    this.fatalHandler = options.onFatal;
     this.writer = createLatestValueRunner<StateWrite>(async (write) => {
       await this.writeText(this.stateFilePath, write.json);
       await this.writeText(this.backupFilePath, write.json);
@@ -110,10 +123,18 @@ export class StateStore {
   async load(): Promise<StateFileSchema | null> {
     // 两份副本必须先全部读完、严格解码，再做任何隔离或修复。这样两份都
     // 不可用时能原样保留现场，绝不把可能含 lockdown 的状态静默变为空。
-    const [primary, backup]: [StateCopy, StateCopy] = await Promise.all([
+    const copies = await Promise.allSettled([
       this.readCopy(this.stateFilePath),
       this.readCopy(this.backupFilePath),
     ]);
+    const readFailures: unknown[] = copies
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason as unknown);
+    if (readFailures.length > 0) {
+      throw new AggregateError(readFailures, "Failed to read all persisted state copies.");
+    }
+    const primary: StateCopy = (copies[0] as PromiseFulfilledResult<StateCopy>).value;
+    const backup: StateCopy = (copies[1] as PromiseFulfilledResult<StateCopy>).value;
     if (primary.kind === "missing" && backup.kind === "missing") return null;
 
     if (primary.kind === "valid") {
@@ -204,7 +225,22 @@ export class StateStore {
       this.rejectPersistenceWaiters(error);
       return;
     }
-    this.onRetryError(this.retryAttempt + 1, error);
+    const failedAttempt: number = ++this.retryAttempt;
+    this.onRetryError(failedAttempt, error);
+    if (failedAttempt >= this.maxAttempts) {
+      const reason: Error = error instanceof Error ? error : new Error(String(error));
+      const fatal = new Error(
+        `State persistence failed after ${failedAttempt} attempt(s); refusing further updates.`,
+        { cause: reason }
+      );
+      this.quiescing = true;
+      this.rejectPersistenceWaiters(fatal);
+      if (!this.fatalSignaled) {
+        this.fatalSignaled = true;
+        this.fatalHandler?.(fatal);
+      }
+      return;
+    }
     this.scheduleRetry();
   }
 
@@ -224,8 +260,7 @@ export class StateStore {
 
   private scheduleRetry(): void {
     if (this.quiescing || this.disposed || this.dirtyWrite === null || this.retryTimer !== null) return;
-    const delay: number = this.retryDelaysMs[Math.min(this.retryAttempt, this.retryDelaysMs.length - 1)]!;
-    this.retryAttempt++;
+    const delay: number = this.retryDelaysMs[Math.min(this.retryAttempt - 1, this.retryDelaysMs.length - 1)]!;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
       const write: StateWrite | null = this.dirtyWrite;
@@ -236,6 +271,9 @@ export class StateStore {
   }
 
   flush(timeoutMs: number = STATE_FLUSH_TIMEOUT_MS, quiesce: boolean = false): Promise<FlushResult> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new RangeError("StateStore flush timeout must be a positive finite number.");
+    }
     if (quiesce) this.quiescing = true;
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
@@ -275,6 +313,10 @@ export class StateStore {
       this.retryTimer = null;
     }
     this.rejectPersistenceWaiters(new Error("StateStore was disposed before persistence completed."));
+  }
+
+  setFatalHandler(handler: ((error: Error) => void) | undefined): void {
+    this.fatalHandler = handler;
   }
 }
 
@@ -343,6 +385,23 @@ function currentStateSnapshot(): StateFileSchema {
 
 export function saveState(): Promise<void> {
   return stateStore.save(currentStateSnapshot());
+}
+
+/**
+ * 权威业务状态的统一 durability barrier。快照在调用同步栈内完成序列化，
+ * 返回的 Promise 只会在对应 revision（或更新 revision）主、备两份都落盘后完成。
+ */
+export async function persistAuthoritativeState(context: string): Promise<void> {
+  try {
+    await stateStore.save(currentStateSnapshot());
+  } catch (error: unknown) {
+    const reason: Error = error instanceof Error ? error : new Error(String(error));
+    throw new Error(`Failed to persist authoritative state update (${context}): ${reason.message}`, { cause: error });
+  }
+}
+
+export function setStatePersistenceFatalHandler(handler: ((error: Error) => void) | undefined): void {
+  stateStore.setFatalHandler(handler);
 }
 
 export function saveStateInBackground(context: string): void {

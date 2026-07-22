@@ -34,6 +34,8 @@ export interface LogEnvelope extends LogMessage {
 export interface AiMemoryDiskMessage {
   type: "aiMemory";
   chatId: number;
+  /** 进程内按 chat 单调递增；只用于消息竞态，不改变快照文件 schema。 */
+  revision: number;
   snapshot: string;
 }
 
@@ -41,6 +43,7 @@ export interface AiMemoryDiskMessage {
 export interface AiMemoryDeleteDiskMessage {
   type: "deleteAiMemory";
   chatId: number;
+  revision: number;
 }
 
 /** 主线程 -> diskIOWorker：覆盖式写入某个白名单贴纸包的目录快照。snapshot
@@ -167,4 +170,17 @@ export interface VerificationPersistedReply {
   deleted: boolean;
 }
 
-export type DiskIOReply = LoadedReply | LuckSecretReply | DiskFlushReply | DiskFlushFailedReply | VerificationPersistedReply;
+/** diskIOWorker -> 主线程：指定 revision 的删除已 durable，或已被更新 revision 覆盖。 */
+export interface AiMemoryDeletedPersistedReply {
+  type: "aiMemoryDeletedPersisted";
+  chatId: number;
+  revision: number;
+}
+
+export type DiskIOReply =
+  | LoadedReply
+  | LuckSecretReply
+  | DiskFlushReply
+  | DiskFlushFailedReply
+  | VerificationPersistedReply
+  | AiMemoryDeletedPersistedReply;

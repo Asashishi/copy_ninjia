@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import type { DiskIOMessage, DiskIOReply, LuckDrawDiskMessage, VerificationPersistedReply } from "../../src/types";
+import { pendingLoad, pendingLuckSecrets } from "../../src/cache/diskIO";
 
 const diskIO = await import("../../src/infra/diskIO");
 const { superviseWorker } = await import("../../src/libs/supervisedWorker");
@@ -9,6 +10,7 @@ class FakeWorker {
   onmessage: ((event: MessageEvent<DiskIOReply>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   readonly messages: DiskIOMessage[] = [];
+  readonly rejectedTypes = new Set<DiskIOMessage["type"]>();
   terminated: boolean = false;
 
   constructor(readonly url: string) {
@@ -18,6 +20,7 @@ class FakeWorker {
   unref(): void {}
 
   postMessage(message: DiskIOMessage): void {
+    if (this.rejectedTypes.has(message.type)) throw new Error(`rejected ${message.type}`);
     this.messages.push(message);
   }
 
@@ -41,6 +44,23 @@ const luckReceiptSecret = {
 };
 
 describe("explicit Worker initialization", () => {
+  test("拒绝非正有限恢复预算和非法待写容量，且不留下半初始化状态", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      expect(() => diskIO.initDiskIO({ runtimeRecoveryTimeoutMs: Number.NaN })).toThrow("positive finite");
+      expect(() => diskIO.initDiskIO({ runtimeRecoveryTimeoutMs: 0 })).toThrow("positive finite");
+      expect(() => diskIO.initDiskIO({ maxPendingBusinessMessages: 0 })).toThrow("positive safe integer");
+      expect(() => diskIO.initDiskIO({ maxPendingBusinessMessages: 1.5 })).toThrow("positive safe integer");
+      expect(diskIO.isDiskIOInitialized()).toBeFalse();
+      expect(FakeWorker.instances).toHaveLength(0);
+    } finally {
+      await diskIO.terminateDiskIO();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
   test("imports are inert; init, handshakes, stale guards, and respawn replay are deterministic", async () => {
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
@@ -233,6 +253,68 @@ describe("explicit Worker initialization", () => {
       expect(fatalErrors).toHaveLength(1);
       expect(fatalErrors[0]?.message).toContain("timed out");
       expect(await diskIO.flushDiskIO(10)).toBe("failed");
+    } finally {
+      await diskIO.terminateDiskIO();
+      error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("同步投递拒绝会立即清理请求等待项，业务写入则 fail closed", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    const fatalErrors: Error[] = [];
+    try {
+      diskIO.initDiskIO({ onFatal: (fatal) => { fatalErrors.push(fatal); } });
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      worker.onmessage!({ data: {
+        type: "loaded",
+        aiMemories: new Map(),
+        stickerCatalogs: new Map(),
+        luckDay: null,
+        luckReceiptSecret,
+        verifications: new Map(),
+      } } as MessageEvent<DiskIOReply>);
+      await loadedPromise;
+
+      worker.rejectedTypes.add("ensureLuckSecret");
+      await expect(diskIO.ensureLuckReceiptSecret("2026-07-21", 60_000))
+        .rejects.toThrow("rejected the luck receipt secret request");
+      expect(pendingLuckSecrets.size).toBe(0);
+
+      worker.rejectedTypes.add("flush");
+      await expect(diskIO.flushDiskIO(60_000)).resolves.toBe("failed");
+
+      worker.rejectedTypes.add("log");
+      expect(diskIO.relayLogMessage({ timestamp: 1, level: "error", args: ["boom"] })).toBe(false);
+      expect(fatalErrors).toHaveLength(0);
+
+      worker.rejectedTypes.add("luckDraw");
+      expect(diskIO.postDiskIO(luckDraw)).toBe(false);
+      expect(fatalErrors).toHaveLength(1);
+      expect(worker.terminated).toBe(true);
+    } finally {
+      await diskIO.terminateDiskIO();
+      error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("启动 load 同步拒绝时不遗留 timer 或 resolver", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      worker.rejectedTypes.add("load");
+
+      await expect(diskIO.loadPersistedData(60_000)).rejects.toThrow("rejected the startup load request");
+      expect(pendingLoad).toEqual({ resolve: null, reject: null, timer: null });
     } finally {
       await diskIO.terminateDiskIO();
       error.mockRestore();

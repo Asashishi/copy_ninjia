@@ -23,6 +23,15 @@ interface ParsedHtmlTag {
 /** 单次头像复制尝试的结果：区分可重试故障与确定性失败。 */
 type AvatarCopyAttemptResult = "ok" | "transient-failure" | "permanent-failure";
 
+function avatarFetchSignal(signal?: AbortSignal): AbortSignal {
+  const timeout: AbortSignal = AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS);
+  return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+}
+
+function telegramSignal(signal?: AbortSignal): Parameters<typeof bot.api.getChat>[1] {
+  return signal as unknown as Parameters<typeof bot.api.getChat>[1];
+}
+
 /** 去掉首尾空白和多余的 @，空结果视为没有公开用户名。 */
 export function normalizePublicUsername(username: string | undefined): string | undefined {
   const normalized: string | undefined = username?.trim().replace(/^@+/, "");
@@ -186,11 +195,16 @@ export function extractAvatarUrlFromProfileHtml(html: string, expectedUsername?:
   return undefined;
 }
 
-async function resolvePublicUsernameFromChat(targetId: number, isChannel: boolean): Promise<PublicUsernameLookupResult> {
+async function resolvePublicUsernameFromChat(
+  targetId: number,
+  isChannel: boolean,
+  signal?: AbortSignal
+): Promise<PublicUsernameLookupResult> {
   try {
-    const chat = await bot.api.getChat(targetId);
+    const chat = await bot.api.getChat(targetId, telegramSignal(signal));
     return { username: extractPublicUsername(chat), failed: false };
   } catch (error: unknown) {
+    if (signal?.aborted) return { failed: true };
     if (error instanceof GrammyError) {
       if (error.error_code === 403) {
         logger.error(`Could not check ${isChannel ? "channel" : "user"} ${targetId} public username via getChat: 403 Forbidden (chat is not accessible to the bot)`);
@@ -205,10 +219,10 @@ async function resolvePublicUsernameFromChat(targetId: number, isChannel: boolea
 }
 
 /** 从 t.me 公开主页下载头像，页面或图片异常时返回 null。 */
-export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8Array | null> {
+export async function fetchAvatarFromWebProfile(username: string, signal?: AbortSignal): Promise<Uint8Array | null> {
   try {
     const pageRes: Response = await fetch(`https://telegram.me/${encodeURIComponent(username)}`, {
-      signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS),
+      signal: avatarFetchSignal(signal),
     });
     if (!pageRes.ok) {
       logger.error(`Failed to fetch telegram.me profile page for @${username}: ${pageRes.status}`);
@@ -226,7 +240,7 @@ export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8
       return null;
     }
 
-    const imgRes: Response = await fetch(photoUrl, { signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
+    const imgRes: Response = await fetch(photoUrl, { signal: avatarFetchSignal(signal) });
     if (!imgRes.ok) {
       logger.error(`Failed to download avatar from ${photoUrl}: ${imgRes.status}`);
       return null;
@@ -238,16 +252,22 @@ export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8
     }
     return download.bytes;
   } catch (error: unknown) {
+    if (signal?.aborted) return null;
     logger.error(`Error scraping t.me profile photo for @${username}:`, error);
     return null;
   }
 }
 
-async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean): Promise<AvatarCopyAttemptResult> {
+async function attemptCopyUserProfilePhoto(
+  targetId: number,
+  isChannel: boolean,
+  signal?: AbortSignal
+): Promise<AvatarCopyAttemptResult> {
   try {
+    if (signal?.aborted) return "permanent-failure";
     let fileId: string;
     if (isChannel) {
-      const chat = await bot.api.getChat(targetId);
+      const chat = await bot.api.getChat(targetId, telegramSignal(signal));
       if (!chat.photo) {
         logger.error(`Channel ${targetId} has no chat photo visible to the bot`);
         return "permanent-failure";
@@ -258,8 +278,8 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       // 缩短这条用户可见路径的往返延迟。用 allSettled 等两边都落定，任一
       // 失败再抛出原因，走外层 catch 原有的 transient-failure 语义。
       const [chatResult, photosResult] = await Promise.allSettled([
-        bot.api.getChat(targetId),
-        bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }),
+        bot.api.getChat(targetId, telegramSignal(signal)),
+        bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }, telegramSignal(signal)),
       ]);
       if (chatResult.status === "rejected") throw chatResult.reason;
       if (photosResult.status === "rejected") throw photosResult.reason;
@@ -280,14 +300,14 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       fileId = matchedPhoto.file_id;
     }
 
-    const file = await bot.api.getFile(fileId);
+    const file = await bot.api.getFile(fileId, telegramSignal(signal));
     if (!file.file_path) {
       logger.error(`getFile for target ${targetId}'s avatar returned no file_path`);
       return "permanent-failure";
     }
 
     const downloadUrl: string = buildFileDownloadUrl(file.file_path);
-    const imgRes: Response = await fetch(downloadUrl, { signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
+    const imgRes: Response = await fetch(downloadUrl, { signal: avatarFetchSignal(signal) });
     if (!imgRes.ok) {
       logger.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
       return "transient-failure";
@@ -298,9 +318,13 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
       return "permanent-failure";
     }
 
-    await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(download.bytes, "avatar.jpg") });
+    await bot.api.setMyProfilePhoto(
+      { type: "static", photo: new InputFile(download.bytes, "avatar.jpg") },
+      telegramSignal(signal)
+    );
     return "ok";
   } catch (error: unknown) {
+    if (signal?.aborted) return "permanent-failure";
     logApiError("copy user profile photo", error);
     return "transient-failure";
   }
@@ -310,9 +334,20 @@ async function attemptCopyUserProfilePhoto(targetId: number, isChannel: boolean)
  * 复制用户或频道的当前头像。优先通过 Bot API 精确匹配当前头像，失败后使用
  * 调用方提供或 getChat 补查到的公开 username 抓取 t.me 页面兜底。
  */
-export async function copyUserProfilePhoto(targetId: number, isChannel: boolean = false, username?: string): Promise<boolean> {
+export interface CopyUserProfilePhotoOptions {
+  username?: string;
+  signal?: AbortSignal;
+}
+
+export async function copyUserProfilePhoto(
+  targetId: number,
+  isChannel: boolean = false,
+  options: CopyUserProfilePhotoOptions = {}
+): Promise<boolean> {
+  const { username, signal } = options;
   for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
-    const result: AvatarCopyAttemptResult = await attemptCopyUserProfilePhoto(targetId, isChannel);
+    if (signal?.aborted) return false;
+    const result: AvatarCopyAttemptResult = await attemptCopyUserProfilePhoto(targetId, isChannel, signal);
     if (result === "ok") return true;
     logger.error(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
     if (result === "permanent-failure") break;
@@ -321,16 +356,20 @@ export async function copyUserProfilePhoto(targetId: number, isChannel: boolean 
   const providedUsername: string | undefined = normalizePublicUsername(username);
   const lookup: PublicUsernameLookupResult = providedUsername
     ? { username: providedUsername, failed: false }
-    : await resolvePublicUsernameFromChat(targetId, isChannel);
+    : await resolvePublicUsernameFromChat(targetId, isChannel, signal);
   const fallbackUsername: string | undefined = lookup.username;
   if (fallbackUsername) {
     logger.error(`Falling back to t.me web profile scrape for @${fallbackUsername}`);
-    const imgBuffer: Uint8Array | null = await fetchAvatarFromWebProfile(fallbackUsername);
+    const imgBuffer: Uint8Array | null = await fetchAvatarFromWebProfile(fallbackUsername, signal);
     if (imgBuffer) {
       try {
-        await bot.api.setMyProfilePhoto({ type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") });
+        await bot.api.setMyProfilePhoto(
+          { type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") },
+          telegramSignal(signal)
+        );
         return true;
       } catch (error: unknown) {
+        if (signal?.aborted) return false;
         logApiError("set profile photo from web fallback", error);
       }
     }

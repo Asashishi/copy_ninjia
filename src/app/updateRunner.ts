@@ -68,7 +68,13 @@ export function runAcknowledgedUpdateBatches(
       }
       if (!running) return;
 
-      const batch: Promise<void> = Promise.all(updates.map(handleUpdate)).then(() => undefined);
+      const batch: Promise<void> = Promise.allSettled(updates.map(handleUpdate)).then((results) => {
+        const failures: unknown[] = results
+          .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+          .map((result) => result.reason as unknown);
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) throw new AggregateError(failures, "Multiple Telegram updates failed.");
+      });
       await Promise.race([batch, stopped]);
       if (!running) return;
       await batch;

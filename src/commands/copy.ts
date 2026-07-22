@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
-import { getChatState, getGlobalCopyState, saveStateInBackground } from "../infra/storage/stateStore";
+import { getChatState, getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { describeCopyModeEffect } from "../copy/copyModes";
@@ -91,16 +91,15 @@ export async function handleCopyCommand(
   } finally {
     if (!slotCommitted) {
       releaseCopySlot(slotDecision.claim);
-      if (cooldownClaim && !cooldownClaim.rejected) releaseCopyCooldownClaim(cooldownClaim);
+      if (cooldownClaim && !cooldownClaim.rejected) await releaseCopyCooldownClaim(cooldownClaim);
     }
   }
 
   if (!targetUser) return;
   // 开始复制模式（状态已由 commitCopySlot 在无 await 的同步块内原子写入）。
-  // 落盘不阻塞回消息：命令热路径不必等 saveState 的双 fsync 完成。
-  // 上面对 globalCopy 的同步写入已经立即生效，落盘只是让它在下次
-  // 重启后依然存在，不影响本次调用后续的复读判定。
-  saveStateInBackground("copy started");
+  // 全局槽仍在同步块内原子提交；成功反馈和头像任务必须等对应 revision
+  // 的主、备两份 state 都 durable，避免 update 已确认后重启复活旧 copy 状态。
+  await persistAuthoritativeState("copy started");
 
   // 发送过渡反馈
   const targetLabel: string = formatUserLabel(targetUser);
@@ -139,7 +138,7 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
     globalCopy.copiedUser = null;
     globalCopy.copyMode = undefined;
     globalCopy.copyChatId = undefined;
-    saveStateInBackground("copy stopped");
+    await persistAuthoritativeState("copy stopped");
   }
 
   await sendMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });
@@ -156,4 +155,4 @@ export function stopCopyOwnedByChat(chatId: number): boolean {
   return true;
 }
 
-registerChatTeardown("copy", stopCopyOwnedByChat);
+registerChatTeardown("copy", (chatId) => { stopCopyOwnedByChat(chatId); });

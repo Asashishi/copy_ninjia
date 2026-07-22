@@ -3,6 +3,7 @@ import type { Message } from "@grammyjs/types";
 import { AI_REPLY_PROBABILITY_BASE_INITIAL } from "../../consts/aiChat/rateLimit";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";
 import { getActiveCopyIn, getChatState } from "../../infra/storage/stateStore";
+import { isQuietUntilActive } from "../../libs/chatState";
 import type { ChatState } from "../../types/chatState";
 import { cacheSender } from "../../users/senderIdentity";
 import { handleAnimationMessage } from "./animation";
@@ -69,7 +70,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     return;
   }
 
-  const isQuiet: boolean = (state.quietUntil ?? 0) > Date.now();
+  const isQuiet: boolean = isQuietUntilActive(state.quietUntil);
   const aiChatEnabled: boolean = state.isAIChatEnabled === true;
 
   if (!activeCopy && aiChatEnabled) {

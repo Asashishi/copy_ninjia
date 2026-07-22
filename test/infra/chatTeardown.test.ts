@@ -33,6 +33,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
     if (lockdown === undefined) states.delete(chatId);
     else states.set(chatId, { lockdown });
   },
+  persistAuthoritativeState: async (context: string): Promise<void> => { saveStateInBackground(context); },
   saveStateInBackground,
 }));
 
@@ -59,9 +60,9 @@ beforeEach(() => {
 });
 
 describe("chat runtime teardown", () => {
-  test("按 copy、proxy、AI、Anti-Raid 顺序拆除组合运行态", () => {
+  test("按 copy、proxy、AI、Anti-Raid 顺序拆除组合运行态", async () => {
     states.set(-1001, { isProxySendEnabled: true });
-    botAdmin.teardownChatRuntime(-1001);
+    await botAdmin.teardownChatRuntime(-1001);
     expect(calls).toEqual([
       "copy:-1001",
       "clear:isProxySendEnabled",
@@ -71,7 +72,7 @@ describe("chat runtime teardown", () => {
     expect(states.get(-1001)?.isProxySendEnabled).toBeUndefined();
   });
 
-  test("退群保留尚未恢复的 lockdown owner，删除其它群配置", () => {
+  test("退群保留尚未恢复的 lockdown owner，删除其它群配置", async () => {
     const lockdown = { phase: "active", intentId: 7, originalPermissions: {}, expiresAt: 9_000 };
     states.set(-1001, {
       isInitEnabled: true,
@@ -79,7 +80,7 @@ describe("chat runtime teardown", () => {
       isProxySendEnabled: true,
       lockdown,
     });
-    botAdmin.handleMyChatMemberUpdate(memberContext("kicked"));
+    await botAdmin.handleMyChatMemberUpdate(memberContext("kicked"));
     expect(states.get(-1001)).toEqual({ lockdown });
     expect(calls.slice(0, 6)).toEqual([
       "copy:-1001",
@@ -91,9 +92,9 @@ describe("chat runtime teardown", () => {
     ]);
   });
 
-  test("管理员降级调用同一 teardown，并记录 botIsAdmin=false", () => {
+  test("管理员降级调用同一 teardown，并记录 botIsAdmin=false", async () => {
     states.set(-1001, { isInitEnabled: true, botIsAdmin: true, isProxySendEnabled: true });
-    botAdmin.handleMyChatMemberUpdate(memberContext("member"));
+    await botAdmin.handleMyChatMemberUpdate(memberContext("member"));
     expect(calls.slice(0, 4)).toEqual([
       "copy:-1001",
       "clear:isProxySendEnabled",

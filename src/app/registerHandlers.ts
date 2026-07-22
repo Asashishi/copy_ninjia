@@ -104,6 +104,10 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     } else {
       logger.error(`Unhandled error while handling update ${err.ctx.update.update_id}:`, err.error);
     }
+    // 记录后必须继续向 acknowledged runner 传播。吞掉异常会让 bot.handleUpdate
+    // resolve，下一次 getUpdates 随即确认本次失败（包括 durability barrier
+    // 失败）的 update，进程重启后 Telegram 也不会重投。
+    throw err.error;
   });
 
   return { getLastSeenUpdateId: (): number => lastSeenUpdateId };

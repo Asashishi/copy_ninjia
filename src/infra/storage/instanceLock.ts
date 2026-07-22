@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { link, open, readFile, unlink } from "node:fs/promises";
+import { dirname } from "node:path";
 import { BOT_LOCK_LINE_PATTERN, LINUX_BOOT_ID_PATTERN, PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { LOCK_FILE_PATH } from "../../consts/paths";
 import { atomicWriteText } from "../../libs/atomicFile";
 import { logger } from "../logger";
+import { prepareRuntimeDataRoot } from "./dataRoot";
 
 export interface ProcessIdentity {
   pid: number;
@@ -291,6 +293,7 @@ export async function acquireSingleInstanceLock(
   lockFilePath: string = LOCK_FILE_PATH,
   options: InstanceLockOptions = {}
 ): Promise<void> {
+  await prepareRuntimeDataRoot(dirname(lockFilePath));
   const tokenFingerprint: string = getBotTokenFingerprint(botToken);
   const readProcessIdentity = options.readProcessIdentity ?? readLinuxProcessIdentity;
   const currentIdentity: ProcessIdentity = await resolveCurrentIdentity({ ...options, readProcessIdentity });

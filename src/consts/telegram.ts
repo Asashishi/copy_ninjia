@@ -32,6 +32,9 @@ export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;
 export const API_RETRY_MAX_ATTEMPTS: number = 3;
 export const API_RETRY_MAX_DELAY_SECONDS: number = 5;
 
+/** 标题回填的最大并发 getChat 数，限制低优先级维护在共享 throttler 中造成的队头阻塞。 */
+export const CHAT_TITLE_REFRESH_CONCURRENCY: number = 15;
+
 /**
  * 自发消息登记表（见 infra/selfSentTracker.ts）的存活时长：只需覆盖「发送 →
  * 更新原样弹回」的往返时间（频道帖自回环、转发进关联讨论组的副本），

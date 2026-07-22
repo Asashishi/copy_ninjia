@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-696_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-92.6%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-725_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-94.4%25-2ea44f?style=flat-square" alt="Coverage"></a>
 </p>
 
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
@@ -254,6 +254,18 @@ cp .env.example .env
 与 `g-auth.json` 仍从项目根目录读取。留空时保持原行为，数据直接位于项目根目录。
 并行部署多个 Bot 时，每个实例必须使用不同的数据根目录。
 
+程序会在联网和创建 Worker 之前递归创建该目录，并验证写入、文件 fsync、同目录 hard link、
+原子 rename 与目录 fsync。任一能力不满足都会带实际路径拒绝启动。生产环境应由部署工具预建
+目录并交给运行账户；例如 systemd 主机可先执行：
+
+```bash
+sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia
+```
+
+再为服务设置 `Environment=COPY_NINJIA_DATA_ROOT=/var/lib/copy-ninjia`。容器部署则把同一目录
+作为持久卷挂载，并在镜像启动前由宿主或 init container 设置 owner；不要把 `memory/` 放在
+容器临时层。备份应覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成。
+
 贴纸包在 [`config/stickers.json`](config/stickers.json) 中配置，最多配置 5 个；
 AI 每轮可以依次查看这 5 个包，但同一个包在一轮内只会查看一次。
 
@@ -329,8 +341,8 @@ flowchart TD
 
 <table width="100%">
 <tr><th width="21%" align="left">数据</th><th width="17%" align="left">位置</th><th width="62%" align="left">写入策略</th></tr>
-<tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>只保留“在写 + 最新待写”两份内存快照；每次按主文件、LKG 备份顺序执行临时文件 + fsync + 原子 rename，任一写入失败都会后台重试。启动时主文件无效会由严格校验通过的备份恢复；两份均无效则拒绝启动且保留原件</td></tr>
-<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；恢复时按当前容量保留最新 149 条逐字消息和最新 7 轮冷摘要</td></tr>
+<tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>只保留“在写 + 最新待写”两份内存快照；每次按主文件、LKG 备份顺序执行临时文件 + fsync + 原子 rename。命令开关、代理与 copy 等权威变更会等待对应 revision 的主备副本完成后才反馈成功并允许确认 update；有限重试耗尽会停止接收更新并以失败退出。群标题等派生元数据仍可后台合并保存。启动时主文件无效会由严格校验通过的备份恢复；两份均无效则拒绝启动且保留原件</td></tr>
+<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；upsert/delete 按群携带单调 revision，删除意图保留到 durable unlink 回执，Disk I/O Worker 重建后会重放。启动只 hydrate 当前明确启用 AI 的群，并清理关闭群的残留快照。恢复时按当前容量保留最新 149 条逐字消息和最新 7 轮冷摘要</td></tr>
 <tr><td>贴纸描述目录</td><td><code>memory/stickers/</code></td><td>每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用</td></tr>
 <tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code></td></tr>
 <tr><td>待验证成员</td><td><code>memory/anti-raid/</code></td><td>当日 JSON 按 <code>chatId:userId</code> 键增量追加；普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件</td></tr>
@@ -339,7 +351,7 @@ flowchart TD
 </table>
 
 > [!WARNING]
-> `memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据；项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请通过主机访问控制限制机器上的用户，并控制备份范围与保留周期。备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。`logs/`、`memory/`、state 主备副本及 `.corrupt` 隔离件、凭据和运行锁均不会提交到 Git。
+> `memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据；项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请用数据根目录 owner/权限和主机账户隔离限制访问，并控制备份范围与保留周期。备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。`logs/`、`memory/`、state 主备副本及 `.corrupt` 隔离件、凭据和运行锁均不会提交到 Git。
 
 待验证热路径复用每日运势和日志已有的 JSON 末尾追加机制，不会每次全量重写，也不会增加新的 IO 线程。终结记录以 `null` tombstone 线性追加，尾部截断修复按 JSON 结构边界扫描，因此会保留最后一条完整 tombstone，不会让已终结验证复活；只有跨日轮换或达到历史阈值时才原子收敛当前 active 镜像。每批追加在成功回执前执行 fsync。同步文件操作始终留在 Disk I/O Worker，不阻塞 Telegram 更新主线程。
 
@@ -361,7 +373,10 @@ starttime 与 boot ID 均匹配才视为同一活跃 owner；PID 被复用或机
 token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 需要并行部署时，
 应使用彼此独立的项目目录，或为每个实例配置不同的 `COPY_NINJIA_DATA_ROOT`。
 
-可靠性护栏包括：官方 SDK 类型边界、配置与持久化 JSON 逐字段校验、数据目录单实例锁、共享 Telegram API 限流/重试与必要的按群串行、Worker 崩溃节流自愈、失效 AI 轮次副作用拦截、反应队列硬顶、头像单执行槽与 latest-only 合并、后台 owner 有界 drain、媒体执行/排队/LRU 容量上限、JSON API 与媒体下载的流式字节上限，以及追加批次 fsync、原子落盘和严格恢复。跨模块生命周期约束见 [`docs/architecture.md`](docs/architecture.md)。
+可靠性护栏包括：官方 SDK 类型边界、配置与持久化 JSON 逐字段校验、数据根能力预检与单实例锁、共享 Telegram API 限流/重试与必要的按群串行、Worker 崩溃节流自愈、失效 AI 轮次副作用拦截、AI 删除 revision/tombstone、反应队列硬顶、头像单执行槽与 latest-only 合并、可取消的后台 owner 有界 drain、媒体执行/排队/LRU 容量上限、JSON API 与媒体下载的流式字节上限，以及追加批次 fsync、原子落盘和严格恢复。跨模块生命周期约束见 [`docs/architecture.md`](docs/architecture.md)。
+
+历史群标题回填只在关键启动握手和 update runner 就绪后运行，当前最多并发 15 个 `getChat`；
+共享 throttler 继续控制 Telegram 全局速率，标题 owner 的并发上限用于约束低优先级维护的队头占位。
 
 <p align="right"><sub><a href="#-copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
@@ -369,11 +384,11 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 
 <table align="center" width="100%">
   <tr>
-    <td align="center" width="20%">🚀 <b>696</b><br/>测试全部通过</td>
-    <td align="center" width="20%">📂 <b>104</b><br/>测试文件</td>
-    <td align="center" width="20%">🔬 <b>2,714</b><br/>断言总数</td>
-    <td align="center" width="20%">🎯 <b>90.89%</b><br/>函数覆盖率</td>
-    <td align="center" width="20%">📈 <b>92.64%</b><br/>行覆盖率</td>
+    <td align="center" width="20%">🚀 <b>725</b><br/>测试全部通过</td>
+    <td align="center" width="20%">📂 <b>110</b><br/>测试文件</td>
+    <td align="center" width="20%">🔬 <b>2,820</b><br/>断言总数</td>
+    <td align="center" width="20%">🎯 <b>92.39%</b><br/>函数覆盖率</td>
+    <td align="center" width="20%">📈 <b>94.39%</b><br/>行覆盖率</td>
   </tr>
 </table>
 
@@ -381,14 +396,21 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 bun run typecheck
 bun run test
 bun run check
+bun run test:fault-injection
 ```
+
+容器镜像构建或部署前运行 `bun run release:check`：它会执行 frozen lockfile 安装、完整
+lint/typecheck/覆盖率测试和确定性故障注入套件，任一步失败都会返回非零状态。本仓库不依赖
+GitHub Actions；发布环境应把这个命令作为显式构建或 pre-deploy 步骤。联网的发布环境还应运行
+`bun run audit:release`，网络失败只表示审计未完成，不能解释为零漏洞；如需忽略 CVE，应记录原因
+与到期时间。
 
 > [!IMPORTANT]
 > 测试必须通过 `bun run test` 执行；该入口强制启用文件隔离，避免 `mock.module` 和模块级状态污染其它测试文件。测试 preload 还会在任何生产模块加载前为每个隔离体创建独立临时数据根，因此未 mock 的真实文件 I/O 也不会读写生产 `state.json`、`bot.lock`、`logs/` 或 `memory/`，结束后临时目录会被清理。
 
 - **严格检查**：项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查。
 - **覆盖率口径**：`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。
-- **当前主干实测**：696 个测试跨 104 个文件全部通过（2,714 次断言），函数覆盖率 **90.89%**、行覆盖率 **92.64%**——全源码计入分母口径，不是只统计被测文件。
+- **当前主干实测**：725 个测试跨 110 个文件全部通过（2,820 次断言），函数覆盖率 **92.39%**、行覆盖率 **94.39%**——全源码计入分母口径，不是只统计被测文件。
 - **代码放置约定**：新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
 
 ---

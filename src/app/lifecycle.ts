@@ -36,9 +36,11 @@ export class ApplicationLifecycle {
   private disposePromise: Promise<void> | null = null;
   private processHandlersInstalled: boolean = false;
   private fatalExitStarted: boolean = false;
+  private maintenanceQuiesced: boolean = false;
 
   private readonly stopOnSignal = (): void => {
     this.stopRequested = true;
+    this.quiesceMaintenance();
     this.runner?.stop().catch((error: unknown) => {
       this.dependencies.logger.error("Error stopping runner:", error);
     });
@@ -58,6 +60,7 @@ export class ApplicationLifecycle {
     this.dependencies.logger.error("Persistence became unavailable at runtime; stopping for a supervised restart:", error);
     process.exitCode = 1;
     this.stopRequested = true;
+    this.quiesceMaintenance();
     this.runner?.stop().catch((stopError: unknown) => {
       this.dependencies.logger.error("Error stopping runner after persistence failure:", stopError);
     });
@@ -69,6 +72,10 @@ export class ApplicationLifecycle {
 
     await this.dependencies.acquireSingleInstanceLock(this.dependencies.BOT_TOKEN);
     this.lockAcquired = true;
+    this.dependencies.setStatePersistenceFatalHandler(this.handleDiskIOFatal);
+    this.dependencies.initAvatarUpdates();
+    this.dependencies.initReactionQueue();
+    this.dependencies.initChatTitleRefresh();
 
     // 配置文件属于不可信部署输入：持锁后、启动 Worker/联网前统一校验，失败时
     // 由 finally 释放实例锁；各 Worker 在自己的 isolate 中复用同一解析器。
@@ -83,15 +90,6 @@ export class ApplicationLifecycle {
     this.dependencies.initTelegramClients();
     this.dependencies.initDiskIO({ onFatal: this.handleDiskIOFatal });
     this.diskIOInitialized = true;
-
-    // 这是后台维护任务而非启动阻塞项，但必须被追踪：退出最终快照前会等待它，
-    // 防止 refresh 在 state.json flush 后才补写群名。
-    this.chatTitleRefreshSettled = false;
-    this.chatTitleRefreshTask = this.dependencies.refreshAllChatTitles()
-      .catch((error: unknown) => {
-        this.dependencies.logger.error("Failed to complete chat title refresh:", error);
-      })
-      .finally(() => { this.chatTitleRefreshSettled = true; });
 
     const loaded: LoadedData = await this.dependencies.loadPersistedData();
     const restoredCopiedUser: CachedUser | null = this.dependencies.getGlobalCopyState().copiedUser;
@@ -120,6 +118,14 @@ export class ApplicationLifecycle {
       this.dependencies.bot,
       TELEGRAM_ALLOWED_UPDATES
     );
+    // 关键 Bot API 握手、Worker hydrate 和 runner 入口全部就绪后，才让低优先级
+    // 标题维护进入共享 throttler；小并发池由 chatTitle owner 自己保证。
+    this.chatTitleRefreshSettled = false;
+    this.chatTitleRefreshTask = this.dependencies.refreshAllChatTitles()
+      .catch((error: unknown) => {
+        this.dependencies.logger.error("Failed to complete chat title refresh:", error);
+      })
+      .finally(() => { this.chatTitleRefreshSettled = true; });
     if (this.stopRequested) this.stopOnSignal();
   }
 
@@ -133,6 +139,7 @@ export class ApplicationLifecycle {
     } finally {
       this.runnerTaskSettled = true;
     }
+    this.quiesceMaintenance();
     const runnerDrained: boolean = await this.waitForRunnerDrain(runner);
 
     // 标题刷新可能触发 saveStateInBackground；必须先等它完成，再做最终 flush。
@@ -154,6 +161,7 @@ export class ApplicationLifecycle {
   /** 停止活动 runner，等待后台任务完成，排空持久化并释放单实例锁。 */
   dispose(timeouts: FlushTimeouts = NORMAL_FLUSH_TIMEOUTS): Promise<void> {
     this.disposePromise ??= (async (): Promise<void> => {
+      this.quiesceMaintenance();
       if (this.runner !== null && !this.runnerTaskSettled) {
         await this.runner.stop().catch((error: unknown) => {
           this.dependencies.logger.error("Error stopping runner during disposal:", error);
@@ -189,6 +197,7 @@ export class ApplicationLifecycle {
       const stateResult: FlushResult = this.lockAcquired
         ? await this.dependencies.flushStateToDisk(timeouts.stateMs, true)
         : "flushed";
+      this.dependencies.setStatePersistenceFatalHandler(undefined);
       if (
         !runnerDrained ||
         avatarResult !== "flushed" ||
@@ -304,8 +313,19 @@ export class ApplicationLifecycle {
       }),
     ]);
     if (timer !== undefined) clearTimeout(timer);
-    if (!settled) this.dependencies.logger.error(`Chat title refresh did not settle within ${timeoutMs}ms.`);
+    if (!settled) {
+      this.dependencies.abortChatTitleRefresh();
+      this.dependencies.logger.error(`Chat title refresh did not settle within ${timeoutMs}ms and was aborted.`);
+    }
     return settled;
+  }
+
+  private quiesceMaintenance(): void {
+    if (this.maintenanceQuiesced) return;
+    this.maintenanceQuiesced = true;
+    this.dependencies.quiesceAvatarUpdates();
+    this.dependencies.quiesceReactionQueue();
+    this.dependencies.quiesceChatTitleRefresh();
   }
 
   private async flushAllToDisk(timeouts: FlushTimeouts): Promise<boolean> {

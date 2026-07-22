@@ -1,2 +1,2 @@
 export type ChatRuntimeOwner = "copy" | "aiChat" | "antiRaid";
-export type ChatTeardownCallback = (chatId: number) => void;
+export type ChatTeardownCallback = (chatId: number) => void | Promise<void>;

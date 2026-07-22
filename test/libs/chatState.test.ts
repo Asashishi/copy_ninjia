@@ -45,4 +45,9 @@ describe("chat state normalization", () => {
     expect(normalizeChatStateEntry(states, -1001, 1_000)).toBeUndefined();
     expect(states.has(-1001)).toBe(false);
   });
+
+  test("墙钟回拨造成超出最大静默时长的未来截止时间会被回收", () => {
+    const state: ChatState = { quietUntil: 1_000 + 16 * 60_000 };
+    expect(normalizeChatState(state, 1_000)).toEqual({});
+  });
 });

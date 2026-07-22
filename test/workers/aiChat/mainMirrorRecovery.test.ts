@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AiChatWorkerEvent, AiChatWorkerMessage } from "../../../src/types/aiChat/protocol";
 import type {
+  AiMemoryDeletedPersistedReply,
   AiMemoryDeleteDiskMessage,
   AiMemoryDiskMessage,
   StickerCatalogDiskMessage,
@@ -18,6 +19,8 @@ let supervisorOptions: {
   onGiveUp: () => void;
 } | undefined;
 let diskRespawn: (() => void) | undefined;
+let diskDeletePersisted: ((reply: AiMemoryDeletedPersistedReply) => void) | undefined;
+const aiEnabledChats = new Set<number>();
 
 mock.module("../../../src/infra/selfSentTracker", () => ({ markSelfSent }));
 mock.module("../../../src/libs/supervisedWorker", () => ({
@@ -31,8 +34,14 @@ mock.module("../../../src/libs/supervisedWorker", () => ({
   },
 }));
 mock.module("../../../src/ai/persistence", () => ({
-  postDiskIO: (message: AiDiskMessage): void => { diskPosts.push(message); },
+  postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
+  onAiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
+    diskDeletePersisted = callback;
+  },
   onDiskIORespawn: (callback: () => void): void => { diskRespawn = callback; },
+}));
+mock.module("../../../src/infra/storage/stateStore", () => ({
+  getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
 }));
 
 const aiChat = await import("../../../src/aiChat");
@@ -42,6 +51,10 @@ const {
   latestStickerCatalogs,
   purgedAiMemoryChats,
   aiChatWorkerState,
+  aiMemoryDeleteWaiters,
+  aiMemoryRevisionCounters,
+  latestAiMemoryRevisions,
+  pendingAiMemoryDeletes,
 } = await import("../../../src/cache/aiChat");
 
 beforeEach(() => {
@@ -51,13 +64,22 @@ beforeEach(() => {
   markSelfSent.mockClear();
   lastInitState.current = null;
   latestAiMemories.clear();
+  latestAiMemoryRevisions.clear();
+  aiMemoryRevisionCounters.clear();
+  pendingAiMemoryDeletes.clear();
+  for (const waiters of aiMemoryDeleteWaiters.values()) {
+    for (const waiter of waiters) clearTimeout(waiter.timer);
+  }
+  aiMemoryDeleteWaiters.clear();
   latestStickerCatalogs.clear();
   purgedAiMemoryChats.clear();
   aiChatWorkerState.available = false;
+  aiEnabledChats.clear();
 });
 
 describe("AI main-thread persistence mirror", () => {
-  test("AI 与 Disk I/O Worker 重建时重放最新镜像，清除后的迟到快照不会复活", () => {
+  test("AI 与 Disk I/O Worker 重建时重放最新镜像，清除后的迟到快照不会复活", async () => {
+    aiEnabledChats.add(-1001);
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
     aiChat.hydrateAiMemory(new Map([[-1001, "restored-memory"]]));
     aiChat.hydrateStickerCatalog(new Map([["pack_a", "restored-catalog"]]));
@@ -80,23 +102,43 @@ describe("AI main-thread persistence mirror", () => {
     diskPosts.length = 0;
     diskRespawn!();
     expect(diskPosts).toEqual([
-      { type: "aiMemory", chatId: -1001, snapshot: "latest-memory" },
+      { type: "aiMemory", chatId: -1001, revision: 1, snapshot: "latest-memory" },
       { type: "stickerCatalog", pack: "pack_a", snapshot: "latest-catalog" },
     ]);
 
-    aiChat.invalidateAiChat(-1001, true);
+    const invalidated = aiChat.invalidateAiChat(-1001, true);
     supervisorOptions!.onEvent({ type: "memory", chatId: -1001, snapshot: "stale-memory" });
 
     expect(latestAiMemories.has(-1001)).toBeFalse();
     expect(purgedAiMemoryChats.has(-1001)).toBeTrue();
     expect(diskPosts.slice(-2)).toEqual([
-      { type: "deleteAiMemory", chatId: -1001 },
-      { type: "deleteAiMemory", chatId: -1001 },
+      { type: "deleteAiMemory", chatId: -1001, revision: 2 },
+      { type: "deleteAiMemory", chatId: -1001, revision: 2 },
     ]);
 
     supervisorOptions!.onEvent({ type: "memoryDeleted", chatId: -1001 });
     expect(purgedAiMemoryChats.has(-1001)).toBeFalse();
-    expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1001 });
+    expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1001, revision: 2 });
+    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 2 });
+    await invalidated;
+  });
+
+  test("启动恢复不会 hydrate 已关闭群，并为磁盘残留安排 durable 删除", () => {
+    aiEnabledChats.add(-1002);
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+
+    aiChat.hydrateAiMemory(new Map([
+      [-1001, "disabled-memory"],
+      [-1002, "enabled-memory"],
+    ]));
+
+    expect(workerPosts.at(-1)).toEqual({
+      type: "hydrate",
+      memories: new Map([[-1002, "enabled-memory"]]),
+    });
+    expect(latestAiMemories).toEqual(new Map([[-1002, "enabled-memory"]]));
+    expect(pendingAiMemoryDeletes.get(-1001)).toBe(1);
+    expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1001, revision: 1 });
   });
 
   test("记忆 flush 在 Worker 确认或超时后都会结算并清理等待项", async () => {
@@ -116,17 +158,22 @@ describe("AI main-thread persistence mirror", () => {
     supervisorOptions!.onEvent({ type: "memoryFlushed", flushId: timedOutRequest.flushId });
   });
 
-  test("Worker 放弃自愈后清空 purge tombstone，后续删除不再等待不存在的回执", () => {
+  test("Worker 放弃自愈只清 Worker purge guard，不丢未确认的 durable tombstone", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-    aiChat.invalidateAiChat(-1001, true);
+    const firstDelete = aiChat.invalidateAiChat(-1001, true);
     expect(purgedAiMemoryChats.has(-1001)).toBeTrue();
 
     supervisorOptions!.onGiveUp();
     expect(aiChatWorkerState.available).toBeFalse();
     expect(purgedAiMemoryChats.size).toBe(0);
+    expect(pendingAiMemoryDeletes.get(-1001)).toBe(1);
 
-    aiChat.invalidateAiChat(-1002, true);
+    const secondDelete = aiChat.invalidateAiChat(-1002, true);
     expect(purgedAiMemoryChats.size).toBe(0);
-    expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1002 });
+    expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1002, revision: 1 });
+    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1002, revision: 1 });
+    await firstDelete;
+    await secondDelete;
   });
 });

@@ -393,10 +393,16 @@ async function postAntiRaidDurably(
     throw new Error(`Anti-Raid Worker barrier ${barrierResult}.`);
   }
   if (antiRaidRuntimeState.persistenceVersion === persistenceVersionBefore) return;
-  const [diskResult, stateResult] = await Promise.all([
+  const persistenceResults = await Promise.allSettled([
     flushDiskIO(timeoutMs),
     flushStateToDisk(timeoutMs),
   ]);
+  const failures: unknown[] = persistenceResults
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => result.reason as unknown);
+  if (failures.length > 0) throw new AggregateError(failures, "Anti-Raid persistence boundary rejected.");
+  const diskResult: FlushResult = (persistenceResults[0] as PromiseFulfilledResult<FlushResult>).value;
+  const stateResult: FlushResult = (persistenceResults[1] as PromiseFulfilledResult<FlushResult>).value;
   if (diskResult !== "flushed" || stateResult !== "flushed") {
     throw new Error(`Anti-Raid persistence failed: disk=${diskResult}, state=${stateResult}.`);
   }
@@ -539,7 +545,7 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   // 能收到别人的 chat_member 更新，本身就证明机器人此刻是本群管理员——
   // 顺手记录（见 botAdmin.ts），这条路径无需（也不能）做非管理员门控：
   // 不是管理员时这类更新根本不会送达。
-  markBotAdminObserved(chatId);
+  await markBotAdminObserved(chatId);
 
   // 机器人不再豁免——僵尸 bot 也会被批量拉进群刷屏，照常走验证（由白名单
   // 用户代点按钮作保）。

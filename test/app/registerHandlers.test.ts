@@ -17,6 +17,7 @@ describe("application handler registration", () => {
     const commands: string[] = [];
     const updates: unknown[] = [];
     let catchCount: number = 0;
+    let caughtHandler: ((error: { ctx: Context; error: unknown }) => void) | undefined;
     const fakeBot: FakeBot = {
       use(handler: TestMiddleware): FakeBot {
         middleware.push(handler);
@@ -30,8 +31,9 @@ describe("application handler registration", () => {
         updates.push(update);
         return fakeBot;
       },
-      catch(_handler: unknown): FakeBot {
+      catch(handler: unknown): FakeBot {
         catchCount++;
+        caughtHandler = handler as typeof caughtHandler;
         return fakeBot;
       },
     };
@@ -61,5 +63,11 @@ describe("application handler registration", () => {
     await middleware[0]!({ update: { update_id: 12 } } as Context, next);
     await middleware[0]!({ update: { update_id: 8 } } as Context, next);
     expect(registration.getLastSeenUpdateId()).toBe(12);
+
+    const durabilityError = new Error("durability barrier failed");
+    expect(() => caughtHandler!({
+      ctx: { update: { update_id: 13 } } as Context,
+      error: durabilityError,
+    })).toThrow(durabilityError);
   });
 });

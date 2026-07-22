@@ -39,6 +39,13 @@ const terminateAntiRaid = mock(async (): Promise<void> => { calls.push("terminat
 const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drainAntiRaid"); return "flushed"; });
 const drainReactionQueue = mock(async (): Promise<FlushResult> => { calls.push("drainReaction"); return "flushed"; });
 const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
+const initAvatarUpdates = mock((): void => { calls.push("initAvatar"); });
+const initReactionQueue = mock((): void => { calls.push("initReaction"); });
+const initChatTitleRefresh = mock((): void => { calls.push("initTitles"); });
+const quiesceAvatarUpdates = mock((): void => { calls.push("quiesceAvatar"); });
+const quiesceReactionQueue = mock((): void => { calls.push("quiesceReaction"); });
+const quiesceChatTitleRefresh = mock((): void => { calls.push("quiesceTitles"); });
+const abortChatTitleRefresh = mock((): void => { calls.push("abortTitles"); });
 const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiMemory"); });
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
 const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
@@ -53,6 +60,7 @@ const getAllChatStates = mock(() => new Map<number, unknown>());
 let copiedUser: object | null = null;
 const getGlobalCopyState = mock(() => ({ copiedUser }));
 const sleep = mock(async (): Promise<void> => {});
+const setStatePersistenceFatalHandler = mock((_handler: ((error: Error) => void) | undefined): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 const getUpdates = mock(async (): Promise<unknown[]> => { calls.push("getUpdates"); return []; });
 const botInit = mock(async (): Promise<void> => { calls.push("botInit"); });
@@ -66,10 +74,14 @@ const runnerStop = mock(async (): Promise<void> => { calls.push("runnerStop"); }
 const runnerTask = mock(async (): Promise<void> => {});
 const runnerSize = mock((): number => 0);
 const runnerHandle = { stop: runnerStop, task: runnerTask, size: runnerSize };
-const runAcknowledgedUpdateBatches = mock((_bot: unknown, _updates: unknown) => runnerHandle);
+const runAcknowledgedUpdateBatches = mock((_bot: unknown, _updates: unknown) => {
+  calls.push("runUpdates");
+  return runnerHandle;
+});
 
 const testDependencies = {
   BOT_TOKEN: "test-token",
+  abortChatTitleRefresh,
   acquireSingleInstanceLock,
   bot,
   cleanupOrphanedTempFiles,
@@ -87,10 +99,13 @@ const testDependencies = {
   hydrateAiMemory,
   hydratePendingVerifications,
   hydrateStickerCatalog,
+  initAvatarUpdates,
   initAiChat,
   initDiskIO,
   initTelegramClients,
   initAntiRaid,
+  initChatTitleRefresh,
+  initReactionQueue,
   loadPersistedData,
   logger: {
     log: mock((..._args: unknown[]): void => {}),
@@ -105,7 +120,11 @@ const testDependencies = {
   releaseSingleInstanceLock,
   restoreLuckState,
   runAcknowledgedUpdateBatches,
+  quiesceAvatarUpdates,
+  quiesceChatTitleRefresh,
+  quiesceReactionQueue,
   seedSenderCache,
+  setStatePersistenceFatalHandler,
   sleep,
   terminateAiChat,
   terminateAntiRaid,
@@ -141,6 +160,13 @@ beforeEach(() => {
     drainAntiRaid,
     drainReactionQueue,
     drainAvatarUpdates,
+    initAvatarUpdates,
+    initReactionQueue,
+    initChatTitleRefresh,
+    quiesceAvatarUpdates,
+    quiesceReactionQueue,
+    quiesceChatTitleRefresh,
+    abortChatTitleRefresh,
     hydrateAiMemory,
     hydrateStickerCatalog,
     initAiChat,
@@ -148,6 +174,7 @@ beforeEach(() => {
     initAntiRaid,
     restoreLuckState,
     seedSenderCache,
+    setStatePersistenceFatalHandler,
     registerCommandMenu,
     registerHandlers,
     sleep,
@@ -205,6 +232,8 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("cleanupTemps")).toBeLessThan(calls.indexOf("loadState"));
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initDiskIO"));
+    expect(calls.indexOf("botInit")).toBeLessThan(calls.indexOf("runUpdates"));
+    expect(calls.indexOf("runUpdates")).toBeLessThan(calls.indexOf("refreshTitles"));
     await lifecycle.dispose();
   });
 
@@ -332,6 +361,7 @@ describe("应用启动失败与退出清理", () => {
     expect(terminateAiChat).toHaveBeenCalledTimes(1);
     expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
     expect(terminateDiskIO).toHaveBeenCalledTimes(1);
+    expect(abortChatTitleRefresh).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Retaining the single-instance lock"));
   });

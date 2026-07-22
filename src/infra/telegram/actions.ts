@@ -10,6 +10,7 @@ export interface SendMessageParams {
   replyToMessageId?: number;
   api?: Api;
   keyboard?: InlineKeyboard;
+  signal?: AbortSignal;
 }
 
 /** 发送纯文本消息；不设置 parse_mode，避免用户内容形成格式或链接注入。 */
@@ -19,15 +20,20 @@ export async function sendMessage({
   replyToMessageId,
   api = bot.api,
   keyboard,
+  signal,
 }: SendMessageParams): Promise<number | undefined> {
   try {
-    const sent = await api.sendMessage(chatId, text, {
+    const other: Parameters<Api["sendMessage"]>[2] = {
       ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
       ...(keyboard ? { reply_markup: keyboard } : {}),
-    });
+    };
+    const sent = signal === undefined
+      ? await api.sendMessage(chatId, text, other)
+      : await api.sendMessage(chatId, text, other, signal as unknown as Parameters<Api["sendMessage"]>[3]);
     markSelfSent(chatId, sent.message_id);
     return sent.message_id;
   } catch (error: unknown) {
+    if (signal?.aborted) return undefined;
     logApiError("send message", error);
     return undefined;
   }

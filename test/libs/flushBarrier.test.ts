@@ -30,7 +30,11 @@ describe("flush barrier", () => {
 
     barrier.settleAll("failed");
 
-    await expect(Promise.all([first, second])).resolves.toEqual(["failed", "failed"]);
+    const results = await Promise.allSettled([first, second]);
+    expect(results).toEqual([
+      { status: "fulfilled", value: "failed" },
+      { status: "fulfilled", value: "failed" },
+    ]);
     expect(barrier.pendingCount()).toBe(0);
   });
 });

@@ -36,7 +36,11 @@ describe("createBoundedTaskRunner", () => {
 
     second.resolve();
     third.resolve();
-    expect(await Promise.all([p2, p3])).toEqual([2, 3]);
+    const results = await Promise.allSettled([p2, p3]);
+    expect(results).toEqual([
+      { status: "fulfilled", value: 2 },
+      { status: "fulfilled", value: 3 },
+    ]);
     expect(runner.activeCount).toBe(0);
   });
 });

@@ -27,7 +27,12 @@ mock.module("../../src/infra/logger", () => ({
   logger: { log: loggerLog, info: mock(() => {}), warn: loggerWarn, error: loggerError },
 }));
 
-const { drainReactionQueue, enqueueReaction } = await import("../../src/copy/reactionQueue");
+const {
+  drainReactionQueue,
+  enqueueReaction,
+  initReactionQueue,
+  quiesceReactionQueue,
+} = await import("../../src/copy/reactionQueue");
 const {
   chatQueues,
   consumingChats,
@@ -50,6 +55,7 @@ beforeEach(() => {
   consumingChats.clear();
   pendingReactionWaiters.clear();
   reactionDrainWaiters.clear();
+  initReactionQueue();
   for (const mocked of [setMessageReaction, logApiError, sleep, loggerLog, loggerWarn, loggerError]) mocked.mockClear();
   setMessageReaction.mockImplementation(async (): Promise<boolean> => true);
   sleep.mockImplementation(async (): Promise<void> => {});
@@ -64,6 +70,11 @@ afterEach(() => {
 });
 
 describe("Telegram reaction 同步队列", () => {
+  test("drain 拒绝非正有限预算", () => {
+    expect(() => drainReactionQueue(0)).toThrow("positive finite");
+    expect(() => drainReactionQueue(Number.POSITIVE_INFINITY)).toThrow("positive finite");
+  });
+
   test("成功调用后清理本群队列并记录分段延迟", async () => {
     enqueueReaction({
       chatId: -1001,
@@ -74,7 +85,13 @@ describe("Telegram reaction 同步队列", () => {
     });
     await waitForIdle();
 
-    expect(setMessageReaction).toHaveBeenCalledWith(-1001, 10, [{ type: "emoji", emoji: "👍" }]);
+    expect(setMessageReaction).toHaveBeenCalledWith(
+      -1001,
+      10,
+      [{ type: "emoji", emoji: "👍" }],
+      {},
+      expect.any(AbortSignal)
+    );
     expect(pendingTasks.size).toBe(0);
     expect(chatQueues.size).toBe(0);
     expect(loggerLog).toHaveBeenCalledWith(expect.stringContaining("Reaction synced"));
@@ -91,9 +108,16 @@ describe("Telegram reaction 同步队列", () => {
 
     resolveFirst(true);
     await waitForIdle();
-    await Promise.all([first, latest, stale]);
+    await Promise.allSettled([first, latest, stale]);
     expect(setMessageReaction).toHaveBeenCalledTimes(2);
-    expect(setMessageReaction).toHaveBeenNthCalledWith(2, -1001, 10, [{ type: "emoji", emoji: "🔥" }]);
+    expect(setMessageReaction).toHaveBeenNthCalledWith(
+      2,
+      -1001,
+      10,
+      [{ type: "emoji", emoji: "🔥" }],
+      {},
+      expect.any(AbortSignal)
+    );
   });
 
   test("硬顶淘汰最旧的未开始任务并结算 waiter，不误删在途任务或最新任务", async () => {
@@ -118,12 +142,14 @@ describe("Telegram reaction 同步队列", () => {
     expect(pendingTasks.has(`${chatId}:${MAX_PENDING_TASKS_PER_CHAT + 1}`)).toBeTrue();
 
     releaseInFlight(true);
-    await Promise.all([inFlight, ...queued]);
+    await Promise.allSettled([inFlight, ...queued]);
     await waitForIdle();
 
     expect(setMessageReaction).toHaveBeenCalledTimes(MAX_PENDING_TASKS_PER_CHAT + 1);
-    expect(setMessageReaction).not.toHaveBeenCalledWith(chatId, 1, []);
-    expect(setMessageReaction).toHaveBeenCalledWith(chatId, MAX_PENDING_TASKS_PER_CHAT + 1, []);
+    expect(setMessageReaction.mock.calls.some((call) => call[0] === chatId && call[1] === 1)).toBeFalse();
+    expect(setMessageReaction.mock.calls.some((call) =>
+      call[0] === chatId && call[1] === MAX_PENDING_TASKS_PER_CHAT + 1
+    )).toBeTrue();
     expect(pendingTasks.size).toBe(0);
     expect(pendingReactionWaiters.size).toBe(0);
     expect(chatQueues.size).toBe(0);
@@ -146,7 +172,7 @@ describe("Telegram reaction 同步队列", () => {
       .mockResolvedValueOnce(true);
     enqueueReaction({ chatId: -1001, messageId: 10, reactions: [], updateId: 1, reactedAtUnix: 1 });
     await waitForIdle();
-    expect(sleep).toHaveBeenCalledWith(2_000);
+    expect(sleep).toHaveBeenCalledWith(2_000, expect.any(AbortSignal));
     expect(loggerWarn).toHaveBeenCalledWith(expect.stringContaining("retry 2/3"));
     expect(setMessageReaction).toHaveBeenCalledTimes(2);
 
@@ -155,5 +181,27 @@ describe("Telegram reaction 同步队列", () => {
     await waitForIdle();
     expect(logApiError).toHaveBeenCalledWith("set message reaction", expect.any(Error));
     expect(pendingTasks.size).toBe(0);
+  });
+
+  test("停机预算耗尽会打断 429 sleep、清空队列且不再重试", async () => {
+    setMessageReaction.mockRejectedValueOnce(new FakeGrammyError(429, { retry_after: 999_999 }));
+    sleep.mockImplementationOnce(async (...args: unknown[]): Promise<void> => {
+      const signal = args[1] as AbortSignal | undefined;
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    });
+    enqueueReaction({ chatId: -1003, messageId: 30, reactions: [], updateId: 3, reactedAtUnix: 3 });
+    await Bun.sleep(0);
+    expect(sleep).toHaveBeenCalledWith(5_000, expect.any(AbortSignal));
+
+    quiesceReactionQueue();
+    await expect(drainReactionQueue(1)).resolves.toBe("timedOut");
+    await waitForIdle();
+
+    expect(setMessageReaction).toHaveBeenCalledTimes(1);
+    expect(pendingTasks.size).toBe(0);
+    expect(pendingReactionWaiters.size).toBe(0);
+    expect(reactionDrainWaiters.size).toBe(0);
   });
 });

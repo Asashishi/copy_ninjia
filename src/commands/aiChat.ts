@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { invalidateAiChat } from "../aiChat";
-import { getOrCreateChatState, saveStateInBackground } from "../infra/storage/stateStore";
+import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 
@@ -23,8 +23,8 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   state.isAIChatEnabled = arg === "enable";
   // 关闭时同步清掉 Worker 侧已排队的触发：主线程停止投喂只拦得住之后的，
   // 递增状态代数并清队列，拦截排队和在途回复的后续副作用。
-  if (arg === "disable") invalidateAiChat(chatId, true);
-  saveStateInBackground("ai_chat toggled");
+  await persistAuthoritativeState("ai_chat toggled");
+  if (arg === "disable") await invalidateAiChat(chatId, true);
 
   const replyText: string = arg === "enable"
     ? `哼，那本天才就赏脸在这个群闲聊几句吧，杂鱼们好好珍惜♡`

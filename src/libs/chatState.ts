@@ -1,4 +1,13 @@
 import type { ChatState } from "../types/chatState";
+import { QUIET_MAX_MINUTES } from "../consts/commands";
+
+const QUIET_MAX_DURATION_MS: number = QUIET_MAX_MINUTES * 60_000;
+
+/** 墙钟回拨时拒绝把静默期延长到配置上限之外。 */
+export function isQuietUntilActive(quietUntil: number | undefined, now: number = Date.now()): boolean {
+  if (quietUntil === undefined || quietUntil <= now) return false;
+  return quietUntil - now <= QUIET_MAX_DURATION_MS;
+}
 
 /**
  * 把单群状态收敛到唯一的持久化表示。布尔开关统一只保存偏离缺省值的状态：
@@ -9,7 +18,9 @@ import type { ChatState } from "../types/chatState";
  * 不能删除：反刷群恢复流程仍需用其 originalPermissions 执行解锁。
  */
 export function normalizeChatState(chatState: ChatState, now: number = Date.now()): ChatState {
-  if (chatState.quietUntil !== undefined && chatState.quietUntil <= now) delete chatState.quietUntil;
+  if (chatState.quietUntil !== undefined && !isQuietUntilActive(chatState.quietUntil, now)) {
+    delete chatState.quietUntil;
+  }
   for (const toggle of ["isAIChatEnabled", "isJATranslationEnabled", "isInitEnabled", "isProxySendEnabled"] as const) {
     if (chatState[toggle] === false) delete chatState[toggle];
   }

@@ -22,6 +22,7 @@ mock.module("../../src/infra/telegram", () => ({ sendMessage }));
 mock.module("../../src/infra/storage/stateStore", () => ({
   getChatState: () => ({ isJATranslationEnabled: jaEnabled }),
   getGlobalCopyState: () => globalCopy,
+  persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
   saveStateInBackground,
 }));
 mock.module("../../src/commands/copyShared", () => ({

@@ -22,6 +22,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
     if (Object.keys(state).length === 0) states.delete(chatId);
     return true;
   },
+  persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
   saveStateInBackground,
 }));
 
@@ -80,5 +81,14 @@ describe("/quiet 与 /unquiet", () => {
     await handleUnquietCommand(context(""));
     expect(states.has(-1001)).toBe(false);
     expect(saveStateInBackground).toHaveBeenCalledWith("quiet cleared");
+  });
+
+  test("墙钟回拨导致截止时间超过最大窗口时允许重建静默", async () => {
+    states.set(-1001, { quietUntil: 1_000_000 + 16 * 60_000 });
+
+    await handleQuietCommand(context("2"));
+
+    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + 2 * 60_000);
+    expect(saveStateInBackground).toHaveBeenCalledWith("quiet set");
   });
 });

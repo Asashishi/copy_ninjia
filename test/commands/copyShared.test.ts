@@ -13,6 +13,7 @@ mock.module("../../src/infra/telegram/actions", () => ({ sendMessage }));
 mock.module("../../src/infra/telegram/avatar", () => ({ copyUserProfilePhoto }));
 mock.module("../../src/infra/storage/stateStore", () => ({
   getGlobalCopyState: () => globalCopyState,
+  persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
   saveStateInBackground,
 }));
 mock.module("../../src/commands/targetResolution", () => ({ resolveCommandTarget }));
@@ -26,7 +27,11 @@ mock.module("../../src/infra/logger", () => ({
 }));
 
 const shared = await import("../../src/commands/copyShared");
-const { drainAvatarUpdates } = await import("../../src/copy/avatarQueue");
+const {
+  drainAvatarUpdates,
+  initAvatarUpdates,
+  quiesceAvatarUpdates,
+} = await import("../../src/copy/avatarQueue");
 const { avatarUpdateState } = await import("../../src/cache/copy/avatar");
 const { COPY_COOLDOWN_MS } = await import("../../src/consts/commands");
 const originalDateNow: () => number = Date.now;
@@ -55,6 +60,7 @@ beforeEach(() => {
   avatarUpdateState.running = false;
   avatarUpdateState.nextGeneration = 1;
   avatarUpdateState.latestGeneration = 0;
+  initAvatarUpdates();
 });
 
 afterEach(() => {
@@ -62,6 +68,11 @@ afterEach(() => {
 });
 
 describe("copy 命令共享冷却与头像串行器", () => {
+  test("头像 drain 拒绝非正有限预算", () => {
+    expect(() => drainAvatarUpdates(0)).toThrow("positive finite");
+    expect(() => drainAvatarUpdates(Number.NaN)).toThrow("positive finite");
+  });
+
   test("普通用户原子占用全局冷却，窗口内下一次调用被拒绝", async () => {
     const claim = await shared.claimCopyCooldownOrReject({ id: 8 }, -1001, 10);
     expect(claim).toEqual({ rejected: false, previousLastCopyTime: undefined, claimedAt: 1_000_000 });
@@ -84,13 +95,23 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(claim).toEqual({ rejected: false, previousLastCopyTime: 900_000, claimedAt: 1_000_000 });
 
     globalCopyState.lastCopyTime = 1_000_001;
-    shared.releaseCopyCooldownClaim(claim as Exclude<typeof claim, { rejected: true }>);
+    await shared.releaseCopyCooldownClaim(claim as Exclude<typeof claim, { rejected: true }>);
     expect(globalCopyState.lastCopyTime).toBe(1_000_001);
 
     globalCopyState.lastCopyTime = 1_000_000;
-    shared.releaseCopyCooldownClaim(claim as Exclude<typeof claim, { rejected: true }>);
+    await shared.releaseCopyCooldownClaim(claim as Exclude<typeof claim, { rejected: true }>);
     expect(globalCopyState.lastCopyTime).toBe(900_000);
     expect(saveStateInBackground).toHaveBeenLastCalledWith("copy cooldown released");
+  });
+
+  test("墙钟回拨时旧冷却视为过期，并从当前时刻重新占用", async () => {
+    globalCopyState.lastCopyTime = 1_100_000;
+
+    const claim = await shared.claimCopyCooldownOrReject({ id: 8 }, -1001, 10);
+
+    expect(claim).toEqual({ rejected: false, previousLastCopyTime: 1_100_000, claimedAt: 1_000_000 });
+    expect(globalCopyState.lastCopyTime).toBe(1_000_000);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("目标解析器收到 copy 专用错误文案", async () => {
@@ -129,14 +150,22 @@ describe("copy 命令共享冷却与头像串行器", () => {
       failureText: "latest-fail",
     });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
-    expect(copyUserProfilePhoto).toHaveBeenCalledWith(7, false, "alice");
+    expect(copyUserProfilePhoto).toHaveBeenCalledWith(7, false, {
+      username: "alice",
+      signal: expect.any(AbortSignal),
+    });
 
     resolveFirst(true);
     await waitFor(() => sendMessage.mock.calls.length === 1);
     expect(copyUserProfilePhoto).toHaveBeenCalledTimes(2);
-    expect(copyUserProfilePhoto).toHaveBeenNthCalledWith(2, -3003, true, "latest_channel");
+    expect(copyUserProfilePhoto).toHaveBeenNthCalledWith(
+      2,
+      -3003,
+      true,
+      { username: "latest_channel", signal: expect.any(AbortSignal) }
+    );
     expect(sendMessage.mock.calls).toEqual([
-      [{ chatId: -1003, text: "latest-fail" }],
+      [{ chatId: -1003, text: "latest-fail", signal: expect.any(AbortSignal) }],
     ]);
     await expect(drainAvatarUpdates(100)).resolves.toBe("flushed");
   });
@@ -151,5 +180,26 @@ describe("copy 命令共享冷却与头像串行器", () => {
     });
     await waitFor(() => loggerError.mock.calls.length === 1);
     expect(loggerError).toHaveBeenCalledWith("Error in background avatar steal task:", expect.any(Error));
+  });
+
+  test("停机预算耗尽会 abort 悬挂头像任务且不发送迟到战报", async () => {
+    copyUserProfilePhoto.mockImplementationOnce(async (...args: unknown[]): Promise<boolean> => await new Promise<boolean>((_resolve, reject) => {
+      const signal = (args[2] as { signal?: AbortSignal } | undefined)?.signal;
+      signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    }));
+    shared.stealAvatarInBackground({
+      chatId: -1001,
+      target: { id: 7, first_name: "Alice" },
+      successText: "late-ok",
+      failureText: "late-fail",
+    });
+    await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
+
+    quiesceAvatarUpdates();
+    await expect(drainAvatarUpdates(1)).resolves.toBe("timedOut");
+    await waitFor(() => !avatarUpdateState.running);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(avatarUpdateState.pending).toBeNull();
   });
 });

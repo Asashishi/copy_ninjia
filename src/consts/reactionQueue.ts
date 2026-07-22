@@ -9,3 +9,5 @@ export const MAX_ATTEMPTS: number = 3;
 export const MAX_PENDING_TASKS_PER_CHAT: number = 500;
 /** Telegram 429 响应缺失 retry_after 字段时的兜底等待秒数。 */
 export const DEFAULT_RETRY_AFTER_SECONDS: number = 3;
+/** 防御异常 retry_after 制造超长 referenced timer；与 Telegram 客户端重试上限一致。 */
+export const MAX_RETRY_AFTER_SECONDS: number = 5;

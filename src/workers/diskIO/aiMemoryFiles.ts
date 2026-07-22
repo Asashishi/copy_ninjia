@@ -2,6 +2,7 @@ import { SNAPSHOT_FLUSH_INTERVAL_MS } from "../../consts/diskIO/snapshots";
 import {
   aiMemoryCache,
   aiMemoryFlushState,
+  aiMemoryRevisions,
   deletedAiMemoryChats,
   dirtyChats,
   hydrateAiMemoryCache,
@@ -12,12 +13,24 @@ import {
 import { flushDirtyEntries } from "./dirtyFlush";
 import { deleteAiMemoryFile, recoverAiMemories, writeAiMemoryFile } from "./snapshotFiles";
 import type { AiMemorySnapshotFileDependencies } from "../../types/diskIO/snapshotOwners";
+import type { AiMemoryDeletedPersistedReply } from "../../types/diskIO";
 
 const AI_MEMORY_FILE_DEPENDENCIES: AiMemorySnapshotFileDependencies = {
   recover: recoverAiMemories,
   write: writeAiMemoryFile,
   delete: deleteAiMemoryFile,
 };
+
+let notifyDeletePersisted: (reply: AiMemoryDeletedPersistedReply) => void = () => {
+  // Worker 入口会在处理消息前配置；测试可只验证文件 owner，不需要回执出口。
+};
+
+/** Worker 启动时注入唯一回执出口；测试可替换为确定性收集器。 */
+export function configureAiMemoryDeletePersistedReply(
+  notify: (reply: AiMemoryDeletedPersistedReply) => void
+): void {
+  notifyDeletePersisted = notify;
+}
 
 function scheduleAiMemoryFlush(): void {
   if (aiMemoryFlushState.timer !== null) return;
@@ -36,20 +49,25 @@ export function hydrateAiMemorySnapshots(
 }
 
 /** 覆盖式快照的 markDirty 边界。 */
-export function markAiMemorySnapshotDirty(chatId: number, snapshot: string): void {
-  markAiMemoryDirty(chatId, snapshot);
+export function markAiMemorySnapshotDirty(chatId: number, revision: number, snapshot: string): void {
+  if (!markAiMemoryDirty(chatId, revision, snapshot)) return;
   scheduleAiMemoryFlush();
 }
 
 /** 删除立即尝试落盘；失败保留待删标记并独立重试。 */
 export function deleteAiMemorySnapshot(
   chatId: number,
+  revision: number,
   files: AiMemorySnapshotFileDependencies = AI_MEMORY_FILE_DEPENDENCIES
 ): void {
-  markAiMemoryDeleted(chatId);
+  if (!markAiMemoryDeleted(chatId, revision)) {
+    notifyDeletePersisted({ type: "aiMemoryDeletedPersisted", chatId, revision });
+    return;
+  }
   try {
     files.delete(chatId);
     deletedAiMemoryChats.delete(chatId);
+    notifyDeletePersisted({ type: "aiMemoryDeletedPersisted", chatId, revision });
   } catch (error) {
     console.error(`[diskIOWorker] failed to delete AI memory snapshot for chat ${chatId}:`, error);
     scheduleAiMemoryFlush();
@@ -68,6 +86,11 @@ export function flushAiMemorySnapshots(
     try {
       files.delete(chatId);
       deletedAiMemoryChats.delete(chatId);
+      notifyDeletePersisted({
+        type: "aiMemoryDeletedPersisted",
+        chatId,
+        revision: aiMemoryRevisions.get(chatId)!,
+      });
     } catch (error) {
       console.error(`[diskIOWorker] failed to delete AI memory snapshot for chat ${chatId}:`, error);
     }

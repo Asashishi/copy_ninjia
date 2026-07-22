@@ -10,6 +10,20 @@ export const lastInitState: { current: AiInitMessage | null } = { current: null 
  *  见 types/aiChat.ts 的 AiMemoryEvent.snapshot），见 aiChat.ts 模块头注
  *  「AI 记忆持久化」。 */
 export const latestAiMemories: Map<number, string> = new Map();
+/** latestAiMemories 中每份快照对应的运行时 revision。启动恢复快照统一从 0 开始。 */
+export const latestAiMemoryRevisions: Map<number, number> = new Map();
+/** 本进程内各 chat 已分配的最高 revision；进程重启后旧消息不存在，可安全从 0 重建。 */
+export const aiMemoryRevisionCounters: Map<number, number> = new Map();
+/** 已投递但尚未收到 durable delete 回执的最新墓碑。 */
+export const pendingAiMemoryDeletes: Map<number, number> = new Map();
+export interface AiMemoryDeleteWaiter {
+  revision: number;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+/** 只有显式禁用/teardown 会等待；LRU 删除只保留 pending tombstone。 */
+export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Map();
 /** 已请求彻底清除记忆的群；用于拒绝失效 Worker 迟到的旧快照。 */
 export const purgedAiMemoryChats: Set<number> = new Set();
 /** Worker 是否仍可接收 invalidate 并回传 memoryDeleted；give-up 后显式关闭。 */

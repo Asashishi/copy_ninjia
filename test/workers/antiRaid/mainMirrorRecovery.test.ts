@@ -62,7 +62,7 @@ mock.module("../../../src/infra/telegram/lockdownPermissions", () => ({ restoreL
 mock.module("../../../src/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5 }));
 mock.module("../../../src/infra/botAdmin", () => ({
   isBotAdminIn: async (): Promise<boolean> => true,
-  markBotAdminObserved(): void {},
+  markBotAdminObserved: async (): Promise<void> => {},
 }));
 mock.module("../../../src/libs/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
@@ -231,6 +231,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       },
     } as never).finally(() => { settled = true; });
 
+    await Bun.sleep(0);
     const barrier = workerPosts.at(-1);
     expect(barrier?.type).toBe("barrier");
     supervisorOptions!.onEvent({
@@ -271,6 +272,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
         new_chat_member: { status: "member", user: { id: 78, first_name: "Newer" } },
       },
     } as never);
+    await Bun.sleep(0);
     const barrier = workerPosts.at(-1);
     supervisorOptions!.onEvent({
       type: "verificationUpsert",
@@ -296,6 +298,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
         new_chat_member: { status: "member", user: { id: 79, first_name: "Newest" } },
       },
     } as never);
+    await Bun.sleep(0);
     expect(workerPosts.at(-1)?.type).toBe("barrier");
 
     supervisorOptions!.onRespawn((): void => {});

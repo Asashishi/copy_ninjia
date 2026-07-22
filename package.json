@@ -9,8 +9,11 @@
     "lint:fix": "eslint . --fix",
     "test": "bun test --isolate",
     "test:coverage": "bun test --isolate --coverage --coverage-reporter=text",
+    "test:fault-injection": "bun test --isolate test/app/updateRunner.test.ts test/auto/reactionSync.test.ts test/infra/storage/stateStore.test.ts test/infra/diskIOInitialization.test.ts test/workers/aiChat/mainMirrorRecovery.test.ts test/workers/aiChat/replyPipeline.test.ts test/workers/diskIO/snapshotOwners.test.ts test/workers/diskIOWorker.test.ts test/copy/reactionQueue.test.ts test/commands/copyShared.test.ts test/infra/chatTitle.test.ts test/infra/storage/dataRoot.test.ts test/libs/sleep.test.ts",
     "typecheck": "tsc --noEmit",
-    "check": "bun run lint && bun run typecheck && bun run test:coverage"
+    "check": "bun run lint && bun run typecheck && bun run test:coverage",
+    "release:check": "bun install --frozen-lockfile && bun run check && bun run test:fault-injection",
+    "audit:release": "bun audit --audit-level=moderate"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

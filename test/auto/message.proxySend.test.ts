@@ -18,6 +18,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   getActiveProxySendTarget: () => targetChatId,
   getChatState: () => chatState,
   getOrCreateChatState: () => ({}),
+  persistAuthoritativeState: async (): Promise<void> => {},
   saveStateInBackground: () => {},
 }));
 mock.module("../../src/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));

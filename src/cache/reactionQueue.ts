@@ -17,3 +17,7 @@ export const consumingChats: Set<number> = new Set();
 export const pendingReactionWaiters: Map<string, Set<() => void>> = new Map();
 /** 生命周期等待整个反应队列归零的回调。 */
 export const reactionDrainWaiters: Set<() => void> = new Set();
+export const reactionQueueRuntime: { accepting: boolean; controller: AbortController } = {
+  accepting: true,
+  controller: new AbortController(),
+};

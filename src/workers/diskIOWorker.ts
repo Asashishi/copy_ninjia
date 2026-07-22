@@ -24,7 +24,13 @@ import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFile
 import { flushLuckAppends, handleLuckDrawMessage, hydrateLuckDay } from "./diskIO/luckFiles";
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import { flushVerificationChanges, handleVerificationDelete, handleVerificationUpsert, recoverVerificationDay, scheduleVerificationRollover } from "./diskIO/verificationFiles";
-import { deleteAiMemorySnapshot, flushAiMemorySnapshots, hydrateAiMemorySnapshots, markAiMemorySnapshotDirty } from "./diskIO/aiMemoryFiles";
+import {
+  configureAiMemoryDeletePersistedReply,
+  deleteAiMemorySnapshot,
+  flushAiMemorySnapshots,
+  hydrateAiMemorySnapshots,
+  markAiMemorySnapshotDirty,
+} from "./diskIO/aiMemoryFiles";
 import { flushStickerCatalogs, hydrateStickerCatalogs, markStickerCatalogSnapshotDirty } from "./diskIO/stickerCatalogFiles";
 import { getStickerConfig } from "../config/stickers";
 import { getTokyoDateKey } from "../libs/time";
@@ -99,17 +105,14 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       handleLogMessage(msg);
       break;
     case "aiMemory":
-      markAiMemorySnapshotDirty(msg.chatId, msg.snapshot);
+      markAiMemorySnapshotDirty(msg.chatId, msg.revision, msg.snapshot);
       break;
     case "deleteAiMemory":
       // 同步立即 unlink（而不是只走 dirty 标记 + 定时 flush）：删除是
-      // 幂等的，不必等 SNAPSHOT_FLUSH_INTERVAL_MS 的批量窗口。若走批量窗口，
-      // 本线程恰好在窗口内崩溃会导致待删标记（易失态）随线程
-      // 丢失，重建后 load 从盘上把仍然存在的文件读回缓存，而主线程侧
-      // onDiskIORespawn 只重放现存镜像、没有「待删」镜像可重放，删除就此
-      // 永久丢失（进程重启时还会被 hydrate 回 AI 上下文）。失败仍保留原有
-      // 的 dirty 标记 + 重试兜底。
-      deleteAiMemorySnapshot(msg.chatId);
+      // 幂等的，不必等 SNAPSHOT_FLUSH_INTERVAL_MS 的批量窗口。失败会保留
+      // dirty 删除状态；若线程在处理前或处理中崩溃，主线程持有的 revision
+      // tombstone 会在新 Worker 完成 load 后重放，直到收到 durable 删除回执。
+      deleteAiMemorySnapshot(msg.chatId, msg.revision);
       break;
     case "stickerCatalog":
       markStickerCatalogSnapshotDirty(msg.pack, msg.snapshot);
@@ -152,6 +155,7 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
 
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 export function startDiskIOWorker(): void {
+  configureAiMemoryDeletePersistedReply((reply) => self.postMessage(reply));
   initLogFiles();
   self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
     handleDiskIOWorkerMessage(event.data);

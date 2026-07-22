@@ -1,4 +1,4 @@
-import { avatarDrainWaiters, avatarUpdateState } from "../cache/copy/avatar";
+import { avatarDrainWaiters, avatarUpdateRuntime, avatarUpdateState } from "../cache/copy/avatar";
 import type { FlushResult } from "../consts/lifecycle";
 import { logger } from "../infra/logger";
 import { copyUserProfilePhoto } from "../infra/telegram/avatar";
@@ -18,18 +18,25 @@ async function consumeAvatarUpdates(): Promise<void> {
     while (avatarUpdateState.pending !== null) {
       const task: AvatarUpdateTask = avatarUpdateState.pending;
       avatarUpdateState.pending = null;
+      const signal: AbortSignal = avatarUpdateRuntime.controller.signal;
+      if (signal.aborted) break;
       try {
         const updated: boolean = await copyUserProfilePhoto(
           task.target.id,
           !!task.target.isChannel,
-          task.target.username
+          { username: task.target.username, signal }
         );
         // 在途任务不能取消，但新目标到达后旧战报已经过期；最终只让最新目标
         // 报告结果，随后单一执行槽继续处理最新 pending。
-        if (task.generation === avatarUpdateState.latestGeneration) {
-          await sendMessage({ chatId: task.chatId, text: updated ? task.successText : task.failureText });
+        if (!signal.aborted && task.generation === avatarUpdateState.latestGeneration) {
+          await sendMessage({
+            chatId: task.chatId,
+            text: updated ? task.successText : task.failureText,
+            signal,
+          });
         }
       } catch (error: unknown) {
+        if (signal.aborted) break;
         logger.error("Error in background avatar steal task:", error);
       }
     }
@@ -43,6 +50,7 @@ async function consumeAvatarUpdates(): Promise<void> {
 
 /** 提交头像目标；运行中只保留最新一份，历史请求不会形成 Promise 链。 */
 export function queueAvatarUpdate(request: AvatarUpdateRequest): void {
+  if (!avatarUpdateRuntime.accepting) return;
   const generation: number = avatarUpdateState.nextGeneration++;
   avatarUpdateState.latestGeneration = generation;
   avatarUpdateState.pending = { ...request, generation };
@@ -51,8 +59,10 @@ export function queueAvatarUpdate(request: AvatarUpdateRequest): void {
 
 /** 生命周期边界：等待当前执行槽和 latest-only 待执行槽归零。 */
 export function drainAvatarUpdates(timeoutMs: number): Promise<FlushResult> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("Avatar drain timeout must be a positive finite number.");
+  }
   if (!avatarUpdateState.running && avatarUpdateState.pending === null) return Promise.resolve("flushed");
-  if (timeoutMs <= 0) return Promise.resolve("timedOut");
   return new Promise((resolve) => {
     let settled: boolean = false;
     function finish(result: FlushResult): void {
@@ -63,8 +73,30 @@ export function drainAvatarUpdates(timeoutMs: number): Promise<FlushResult> {
       resolve(result);
     }
     const onIdle = (): void => finish("flushed");
-    const timer = setTimeout(() => finish("timedOut"), timeoutMs);
+    const timer = setTimeout(() => {
+      abortAvatarUpdates();
+      finish("timedOut");
+    }, timeoutMs);
     avatarDrainWaiters.add(onIdle);
     notifyAvatarDrainIfIdle();
   });
+}
+
+export function initAvatarUpdates(): void {
+  if (avatarUpdateState.running) throw new Error("Cannot initialize avatar updates while a task is active.");
+  avatarUpdateState.pending = null;
+  avatarUpdateRuntime.controller = new AbortController();
+  avatarUpdateRuntime.accepting = true;
+}
+
+export function quiesceAvatarUpdates(): void {
+  avatarUpdateRuntime.accepting = false;
+}
+
+export function abortAvatarUpdates(): void {
+  avatarUpdateRuntime.accepting = false;
+  avatarUpdateState.pending = null;
+  avatarUpdateState.latestGeneration = avatarUpdateState.nextGeneration++;
+  if (!avatarUpdateRuntime.controller.signal.aborted) avatarUpdateRuntime.controller.abort();
+  notifyAvatarDrainIfIdle();
 }

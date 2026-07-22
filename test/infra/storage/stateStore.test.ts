@@ -13,6 +13,15 @@ function schema(chatId: number): StateFileSchema {
 }
 
 describe("StateStore", () => {
+  test("拒绝非法重试延时与 flush 预算", () => {
+    expect(() => new StateStore({ retryDelaysMs: [] })).toThrow("at least one retry delay");
+    expect(() => new StateStore({ retryDelaysMs: [0] })).toThrow("positive finite");
+    const store = new StateStore();
+    expect(() => store.flush(0)).toThrow("positive finite");
+    expect(() => store.flush(Number.NaN)).toThrow("positive finite");
+    store.dispose();
+  });
+
   test("注入 IO 后独立验证 schema 序列化与 latest-only 写入", async () => {
     const writes: { path: string; content: string }[] = [];
     let releaseFirst: (() => void) | undefined;
@@ -31,7 +40,7 @@ describe("StateStore", () => {
     const second = store.save(schema(2));
     const third = store.save(schema(3));
     releaseFirst!();
-    await Promise.all([first, second, third]);
+    await Promise.allSettled([first, second, third]);
 
     expect(writes.map((write) => write.path)).toEqual([
       "/virtual/state.json",
@@ -80,6 +89,28 @@ describe("StateStore", () => {
     await Bun.sleep(5);
     expect(attempts).toBeGreaterThan(1);
     await expect(store.flush(20, true)).resolves.toBe("failed");
+    store.dispose();
+  });
+
+  test("权威写入用尽有限重试后 reject 等待者并只触发一次 fatal", async () => {
+    const fatalErrors: Error[] = [];
+    let attempts: number = 0;
+    const store = new StateStore({
+      retryDelaysMs: [1],
+      maxAttempts: 2,
+      onRetryError: () => {},
+      onFatal: (error) => { fatalErrors.push(error); },
+      writeText: async () => {
+        attempts++;
+        throw new Error("read-only filesystem");
+      },
+    });
+
+    await expect(store.save(schema(41))).rejects.toThrow("refusing further updates");
+    expect(attempts).toBe(2);
+    expect(fatalErrors).toHaveLength(1);
+    await expect(store.save(schema(42))).rejects.toThrow("quiescing");
+    expect(fatalErrors).toHaveLength(1);
     store.dispose();
   });
 

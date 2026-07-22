@@ -19,7 +19,7 @@ describe("createLatestValueRunner", () => {
     expect(consumed).toEqual([1]);
 
     releaseFirst!();
-    await Promise.all([first, second, third]);
+    await Promise.allSettled([first, second, third]);
     expect(consumed).toEqual([1, 3]);
   });
 
