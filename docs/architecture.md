@@ -46,6 +46,9 @@
   东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、
   转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；`null` tombstone 与其它
   基础类型都必须被视为完整的最后值。
+- AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`
+  从快照尾部截取最新逐字消息和冷摘要；调整容量常量部署前，应在旧进程停止后以同一
+  恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
   反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败
   必须返回失败、阻止最终 offset 确认并以非零状态退出。

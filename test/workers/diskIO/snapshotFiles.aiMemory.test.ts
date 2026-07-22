@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_SUMMARY_ROUNDS } from "../../../src/consts/aiChat";
+import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../../src/consts/aiChat";
 
 // 与既有单测同样的手法:先把 AI_MEMORY_DIR 重定向到临时目录再 import,
 // 绝不能碰项目真实的 memory/ai/(线上 bot 正在用)。
@@ -129,6 +129,23 @@ test("恢复时只保留配置数量的最新冷摘要", () => {
 
   const recovered = recoverAiMemories();
   expect(JSON.parse(recovered.get(-100128)!).summaries).toEqual(summaries.slice(-MAX_SUMMARY_ROUNDS));
+});
+
+test("恢复时只保留配置数量的最新逐字消息", () => {
+  const buffer = Array.from({ length: AI_MEMORY_HYDRATE_BUFFER_MAX + 2 }, (_, index: number) => ({
+    id: index + 1,
+    firstName: `用户${index + 1}`,
+    lastName: "",
+    text: `消息${index + 1}`,
+    at: "2026/07/22 20:00:00",
+  }));
+  writeFileSync(join(aiDir, "-100132.json"), JSON.stringify({
+    ...currentSnapshot,
+    buffer,
+  }));
+
+  const recovered = recoverAiMemories();
+  expect(JSON.parse(recovered.get(-100132)!).buffer).toEqual(buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX));
 });
 
 test("删除记忆文件幂等且不会留下快照", () => {
