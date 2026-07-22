@@ -11,10 +11,15 @@ import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { admitRound } from "../../states/replyAdmission";
 import type { AiBotInfo, AiSentMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
-import type { QueuedReplyTrigger, ReplyToolContext, ReplyToolset } from "../../types/aiChat/replies";
+import type {
+  QueuedReplyTrigger,
+  ReplyPromptSections,
+  ReplyToolContext,
+  ReplyToolset,
+} from "../../types/aiChat/replies";
 import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { callGemini } from "./geminiReply";
-import { buildUserContent, type MediaCommentContext } from "./promptContext";
+import { buildReplyPromptSections, type MediaCommentContext } from "./promptContext";
 import { currentReplyGeneration, isReplyGenerationCurrent, notifyRateLimited } from "./replyState";
 import { recordChatMessage } from "./rollingMemory";
 
@@ -84,13 +89,13 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     // 提示词和工具 schema 必须共用同一次抽签，否则配置概率不等于实际错字概率。
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
     try {
-      const userContent: string | null = buildUserContent(chatId, selfInfo, {
+      const promptSections: ReplyPromptSections | null = buildReplyPromptSections(chatId, selfInfo, {
         isRandomTrigger,
         mediaComment,
         queuedTrigger,
         roundHasTypo,
       });
-      if (!userContent) return;
+      if (!promptSections) return;
 
       // 心跳从 idle 起步，只有具体发送工具临发前才显示输入或选择贴纸状态。
       const heartbeat = startChatActionHeartbeat(chatId);
@@ -149,7 +154,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           },
         };
         const toolset: ReplyToolset = await createReplyToolset(ctx);
-        const finalText: string | null = await callGemini(chatId, userContent, toolset);
+        const finalText: string | null = await callGemini(chatId, promptSections, toolset);
 
         // 模型没有成功执行任何可见动作、却把正文留在最终响应时，仍走
         // send_message 兜底。若贴纸、图片、反应或文字已经成功落地，尾随正文

@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-676_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-92.2%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-686_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-92.5%25-2ea44f?style=flat-square" alt="Coverage"></a>
 </p>
 
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
@@ -159,9 +159,10 @@ flowchart TD
 <tr><td>🚦&nbsp;同群并发</td><td>每群最多 3 轮 Gemini 工具对话在途；直接触发进入有界队列，随机触发在满载时丢弃</td></tr>
 <tr><td>⏱️&nbsp;限频</td><td>每群 5 分钟最多启动 150 轮；超限提示本身也有冷却</td></tr>
 <tr><td>🔧&nbsp;工具</td><td>同一请求真实注册内置 <code>googleSearch</code>，并提供东京天气、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> 等函数工具；每轮回复最多执行 20 次自定义函数调用。提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 <code>send_message</code>，图片、贴纸或反应完成后的最终正文不会被当作额外发言</td></tr>
+<tr><td>🧱&nbsp;输入边界</td><td>初始 Gemini 请求使用一个 <code>user Content</code>，按顺序承载三个独立 <code>text Part</code>：只读参考记忆、只读当前会话、本轮回复任务。每段都有明确首尾标签与局部约束，<code>systemInstruction</code> 再声明前两段只作数据、只有最后一段是待执行任务；后续工具轮次仍按真实 <code>model/user</code> 角色追加</td></tr>
 <tr><td>🛡️&nbsp;安全过滤</td><td>Google 可调的骚扰、仇恨、露骨和危险内容统一设为 <code>BLOCK_NONE</code>，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效</td></tr>
 <tr><td>🕰️&nbsp;时间</td><td>每次请求注入东京当前时间，每条转录消息保留记录时刻</td></tr>
-<tr><td>🧠&nbsp;记忆</td><td>50～100 条逐字消息，加最多 5 × 50 条冷历史摘要，总跨度约 300～350 条；启动恢复只载入最新 99 条逐字消息并为下一条消息预留轮换边界。Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
+<tr><td>🧠&nbsp;记忆</td><td>50～100 条逐字消息，加最多 7 × 50 条冷历史摘要，总跨度约 400～450 条；启动恢复只载入最新 99 条逐字消息并为下一条消息预留轮换边界。Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
 <tr><td>🖼️&nbsp;多模态</td><td>图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。<code>memory/stickers/</code> 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录</td></tr>
 <tr><td>🎨&nbsp;生图</td><td>只有直接回复或 <code>@机器人</code> 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，<code>SUPER_ADMIN_USER_ID</code> 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片</td></tr>
 <tr><td>🗜️&nbsp;压缩背压</td><td>每群执行中与排队中的压缩任务合计最多 25 个，API 长时间变慢时有界降级，不无限堆积消息批次</td></tr>
@@ -328,7 +329,7 @@ flowchart TD
 <table width="100%">
 <tr><th width="21%" align="left">数据</th><th width="17%" align="left">位置</th><th width="62%" align="left">写入策略</th></tr>
 <tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>只保留“在写 + 最新待写”两份内存快照；每次按主文件、LKG 备份顺序执行临时文件 + fsync + 原子 rename，任一写入失败都会后台重试。启动时主文件无效会由严格校验通过的备份恢复；两份均无效则拒绝启动且保留原件</td></tr>
-<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；恢复时按当前容量保留最新 99 条逐字消息和最新 5 轮冷摘要</td></tr>
+<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；恢复时按当前容量保留最新 99 条逐字消息和最新 7 轮冷摘要</td></tr>
 <tr><td>贴纸描述目录</td><td><code>memory/stickers/</code></td><td>每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用</td></tr>
 <tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code></td></tr>
 <tr><td>待验证成员</td><td><code>memory/anti-raid/</code></td><td>当日 JSON 按 <code>chatId:userId</code> 键增量追加；普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件</td></tr>
@@ -367,11 +368,11 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 
 <table align="center" width="100%">
   <tr>
-    <td align="center" width="20%">🚀 <b>676</b><br/>测试全部通过</td>
-    <td align="center" width="20%">📂 <b>103</b><br/>测试文件</td>
-    <td align="center" width="20%">🔬 <b>2,647</b><br/>断言总数</td>
-    <td align="center" width="20%">🎯 <b>90.43%</b><br/>函数覆盖率</td>
-    <td align="center" width="20%">📈 <b>92.17%</b><br/>行覆盖率</td>
+    <td align="center" width="20%">🚀 <b>686</b><br/>测试全部通过</td>
+    <td align="center" width="20%">📂 <b>104</b><br/>测试文件</td>
+    <td align="center" width="20%">🔬 <b>2,690</b><br/>断言总数</td>
+    <td align="center" width="20%">🎯 <b>90.64%</b><br/>函数覆盖率</td>
+    <td align="center" width="20%">📈 <b>92.54%</b><br/>行覆盖率</td>
   </tr>
 </table>
 
@@ -386,7 +387,7 @@ bun run check
 
 - **严格检查**：项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查。
 - **覆盖率口径**：`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。
-- **当前主干实测**：676 个测试跨 103 个文件全部通过（2,647 次断言），函数覆盖率 **90.43%**、行覆盖率 **92.17%**——全源码计入分母口径，不是只统计被测文件。
+- **当前主干实测**：686 个测试跨 104 个文件全部通过（2,690 次断言），函数覆盖率 **90.64%**、行覆盖率 **92.54%**——全源码计入分母口径，不是只统计被测文件。
 - **代码放置约定**：新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
 
 ---

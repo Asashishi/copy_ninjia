@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { ReplyToolContext, ReplyToolset } from "../../../src/types/aiChat/replies";
+import type { ReplyPromptSections, ReplyToolContext, ReplyToolset } from "../../../src/types/aiChat/replies";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
@@ -35,8 +35,13 @@ const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyTool
   };
 });
 const callGemini = mock(async (..._args: unknown[]): Promise<string | null> => "最终正文");
-let builtContent: string | null = "用户上下文";
-const buildUserContent = mock((..._args: unknown[]): string | null => builtContent);
+const defaultPromptSections = (): ReplyPromptSections => ({
+  referenceMemory: "参考记忆",
+  currentConversation: "当前会话",
+  replyTask: "回复任务",
+});
+let builtPromptSections: ReplyPromptSections | null = defaultPromptSections();
+const buildReplyPromptSections = mock((..._args: unknown[]): ReplyPromptSections | null => builtPromptSections);
 const recordChatMessage = mock((..._args: unknown[]): void => {});
 const logError = mock((..._args: unknown[]): void => {});
 
@@ -44,7 +49,7 @@ mock.module("../../../src/ai/chatActionHeartbeat", () => ({ startChatActionHeart
 mock.module("../../../src/ai/stickers/sendLock", () => ({ createStickerSendLock }));
 mock.module("../../../src/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
 mock.module("../../../src/workers/aiChat/geminiReply", () => ({ callGemini }));
-mock.module("../../../src/workers/aiChat/promptContext", () => ({ buildUserContent }));
+mock.module("../../../src/workers/aiChat/promptContext", () => ({ buildReplyPromptSections }));
 mock.module("../../../src/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
 mock.module("../../../src/infra/logger", () => ({
   logger: {
@@ -85,7 +90,7 @@ function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}
 beforeEach(() => {
   resetAiChatReplyCache();
   botInfoState.current = { id: 99, first_name: "Ninja", username: "ninja_bot" };
-  builtContent = "用户上下文";
+  builtPromptSections = defaultPromptSections();
   actionsUsed = 1;
   capturedContext = null;
   postMessage.mockClear();
@@ -98,7 +103,7 @@ beforeEach(() => {
   execute.mockImplementation(async (): Promise<string> => JSON.stringify({ success: true }));
   callGemini.mockClear();
   callGemini.mockImplementation(async (): Promise<string | null> => "最终正文");
-  buildUserContent.mockClear();
+  buildReplyPromptSections.mockClear();
   recordChatMessage.mockClear();
   logError.mockClear();
 });
@@ -214,7 +219,7 @@ describe("AI 单轮回复生命周期", () => {
   });
 
   test("构造上下文失败仍释放贴纸锁与并发位，但不会启动心跳", async () => {
-    builtContent = null;
+    builtPromptSections = null;
 
     await runRound();
 

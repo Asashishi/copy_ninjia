@@ -32,6 +32,10 @@
   需要确认处理与落盘边界的调用方必须把 `false` 当作失败，不能确认对应 Telegram update。
 - AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；仅在零成功动作时，
   最终正文才经 `send_message` 兜底。所有有意展示的文字必须由模型显式调用该工具。
+- AI 回复的初始 Gemini 输入必须保持一个 `user Content` 下的三个有序 `text Part`：
+  只读参考记忆、只读当前会话、本轮回复任务。每段由模型可见的首尾标签与约束包围，
+  `systemInstruction` 负责声明信任边界；工具调用后的历史再按真实 `model/user` 角色追加，
+  不得把参考资料伪装成历史对话轮次。
 - Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存
   只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。
 - chat runtime teardown 的三个固定 owner 回调由 `src/cache/chatTeardown.ts` 持有，
@@ -47,7 +51,7 @@
   转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；`null` tombstone 与其它
   基础类型都必须被视为完整的最后值。
 - AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`
-  从快照尾部截取最新逐字消息和冷摘要；调整容量常量部署前，应在旧进程停止后以同一
+  （当前为 99 条逐字消息与 7 轮冷摘要）从快照尾部截取最新数据；调整容量常量部署前，应在旧进程停止后以同一
   恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
   反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败

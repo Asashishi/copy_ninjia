@@ -4,13 +4,16 @@ import {
   MAX_SUMMARY_ROUNDS,
   VERBATIM_CONTEXT_MAX,
 } from "../../consts/aiChat/memory";
-import { CHAT_MEMORY_PRIORITY_INSTRUCTION } from "../../consts/aiChat/prompts/memory";
+import {
+  REPLY_CONTEXT_SECTION_NAMES,
+  REPLY_CONTEXT_SECTION_TEXT,
+} from "../../consts/aiChat/prompts/memory";
 import { REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/aiChat/memory";
 import { resolvedTagFor } from "./mediaText";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AiBotInfo, AiDirectTriggerReason } from "../../types/aiChat/protocol";
-import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
+import type { QueuedReplyTrigger, ReplyPromptSections } from "../../types/aiChat/replies";
 import type { MediaKind } from "../../types/media";
 
 /** 评价触发的附加上下文：发送人显示名 + 解析出的描述 + 媒体类型，见
@@ -49,7 +52,7 @@ function mediaTagHintFor(kind: MediaKind): string {
   return resolvedTagFor(kind, "…");
 }
 
-/** buildUserContent 的可选附加上下文，按需组合，见各字段说明。 */
+/** buildReplyPromptSections 的可选附加上下文，按需组合，见各字段说明。 */
 interface UserContentOptions {
   /** 是否是随机插话触发（见 replyPipeline.ts 的 generateAndSendReply 的
    *  isRandomTrigger）：没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、
@@ -75,15 +78,18 @@ interface UserContentOptions {
 }
 
 /**
- * 把某群的对话上下文拼装成给模型的用户消息内容：先声明记忆优先级，再放
- * 冷记忆摘要段（若有，最多 MAX_SUMMARY_ROUNDS 轮，从旧到新），最后把逐字
- * 缓存拆成「较早原文」与「最新 COMPACT_BATCH_SIZE 条最热记忆」两层；
- * 越热越靠近回复指令。
+ * 把某群的对话上下文拼装成三个职责固定的模型输入区块：只读参考记忆、只读
+ * 当前会话和本轮回复任务。geminiReply.ts 会保持这个顺序，把它们映射成同一个
+ * user Content 下的三个 text Part，而不是伪造成 user/model 历史轮次。
  * @param chatId 群聊 ID。
  * @param selfInfo 机器人自己的账号身份（见 cache/aiChat/identity.ts 的 botInfoState），用于转录里的自我认知。
- * @returns 拼好的用户消息内容；缓存为空时返回 null。
+ * @returns 拼好的三个区块；缓存为空时返回 null。
  */
-export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserContentOptions): string | null {
+export function buildReplyPromptSections(
+  chatId: number,
+  selfInfo: AiBotInfo,
+  options: UserContentOptions
+): ReplyPromptSections | null {
   const { isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
@@ -129,9 +135,9 @@ export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: U
   // 都要能认出来是你自己，不能当成第三个人。username/id 来自主线程在
   // bot.init() 之后注入的 init 消息（见 cache/aiChat/identity.ts 的 botInfoState），不写死在代码里。
   const selfIdentity: string =
-    `你在这个群里的 Telegram 账号是 @${selfInfo.username}（[id:${selfInfo.id}]）：` +
-    `记录里标着这个 id 的行是你自己之前说过的话，别把它们当成别人的发言；` +
-    `消息里 @ 这个用户名、或回复你的消息，都是在跟你说话。`;
+    `本群中你的 Telegram 账号身份是 @${selfInfo.username}（[id:${selfInfo.id}]）。` +
+    `转录里标着这个 id 的行是你自己之前说过的话；` +
+    `消息里 @ 这个用户名、或回复这个账号的消息，指向的对象都是你。`;
 
   // 冷记忆段：更早的历史按每轮 COMPACT_BATCH_SIZE 条压缩成摘要（从旧到
   // 新），作为必须结合理解的长期背景，只在判断当前状态时低于较新的逐字
@@ -140,17 +146,37 @@ export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: U
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
   const summaries: string[] = summaryQueue ? summaryQueue.last(MAX_SUMMARY_ROUNDS) : [];
   const summaryBlock: string = buildColdMemoryBlock(summaries);
-  return (
-    CHAT_MEMORY_PRIORITY_INSTRUCTION +
+  const referenceMemory: string =
+    `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]\n` +
+    REPLY_CONTEXT_SECTION_TEXT.referenceMemory.openingConstraint +
     "\n" +
     selfIdentity +
     "\n\n" +
-    summaryBlock +
+    (summaryBlock || REPLY_CONTEXT_SECTION_TEXT.referenceMemory.emptyContent) +
+    "\n" +
+    REPLY_CONTEXT_SECTION_TEXT.referenceMemory.closingConstraint +
+    "\n" +
+    `[END ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]`;
+  const currentConversation: string =
+    `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]\n` +
+    REPLY_CONTEXT_SECTION_TEXT.currentConversation.openingConstraint +
+    "\n" +
     transcript +
-    "\n\n" +
+    "\n" +
+    REPLY_CONTEXT_SECTION_TEXT.currentConversation.closingConstraint +
+    "\n" +
+    `[END ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]`;
+  const replyTask: string =
+    `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n` +
+    REPLY_CONTEXT_SECTION_TEXT.replyTask.openingConstraint +
+    "\n" +
     replyInstruction +
     // 不出错的轮次完全不拼这一段——两个分支的提示词严格分开，模型看不到
     // 「本来可能出错」这件事（见 consts/aiChat/prompts/tools.ts）。
-    (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "")
-  );
+    (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "") +
+    "\n" +
+    REPLY_CONTEXT_SECTION_TEXT.replyTask.closingConstraint +
+    "\n" +
+    `[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`;
+  return { referenceMemory, currentConversation, replyTask };
 }

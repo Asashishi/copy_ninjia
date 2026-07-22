@@ -1,7 +1,7 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
 import { MAX_CUSTOM_TOOL_CALLS_PER_REPLY } from "../../src/consts/aiChat/tools";
-import type { ReplyToolset } from "../../src/types";
+import type { ReplyPromptSections, ReplyToolset } from "../../src/types/aiChat/replies";
 import type { GeminiRequestResult } from "../../src/ai/gemini";
 
 const replies: unknown[] = [];
@@ -24,6 +24,14 @@ mock.module("../../src/infra/logger", () => ({ logger: { error: loggerErrorMock 
 mock.module("../../src/workers/aiChat/timeSentence", () => ({ currentTimeSentence: (): string => "当前实际时间：测试。" }));
 
 const { callGemini } = await import("../../src/workers/aiChat/geminiReply");
+
+function promptSections(label: string): ReplyPromptSections {
+  return {
+    referenceMemory: `${label}：参考记忆`,
+    currentConversation: `${label}：当前会话`,
+    replyTask: `${label}：回复任务`,
+  };
+}
 
 beforeEach(() => {
   replies.length = 0;
@@ -58,7 +66,8 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
     isActive: (): boolean => true,
   };
 
-  await expect(callGemini(-1001, "聊天上下文", toolset)).resolves.toBe("行动完成");
+  const sections: ReplyPromptSections = promptSections("聊天上下文");
+  await expect(callGemini(-1001, sections, toolset)).resolves.toBe("行动完成");
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(2);
 
   const firstRequest = requestGeminiResponseMock.mock.calls[0]![0] as GenerateContentParameters;
@@ -67,7 +76,17 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   expect(String(firstRequest.config?.systemInstruction)).toContain("googleSearch 已作为本轮可调用工具真实注册");
   expect(String(firstRequest.config?.systemInstruction)).toContain("累计最多调用 3 次");
   expect(String(firstRequest.config?.systemInstruction)).toContain("绝不能先行动再补查");
-  expect((firstRequest.contents as unknown[])[0]).toEqual({ role: "user", parts: [{ text: "聊天上下文" }] });
+  expect(String(firstRequest.config?.systemInstruction)).toContain("三个顺序固定的 text Part");
+  expect(String(firstRequest.config?.systemInstruction)).toContain("按重要程度分层的本群聊天记忆");
+  expect((firstRequest.contents as unknown[])[0]).toEqual({
+    role: "user",
+    parts: [
+      { text: sections.referenceMemory },
+      { text: sections.currentConversation },
+      { text: sections.replyTask },
+    ],
+  });
+  expect((firstRequest.contents as { role?: string }[]).map((content) => content.role)).toEqual(["user", "model", "user"]);
   expect(execute).toHaveBeenCalledWith("send_message", JSON.stringify({ text: "已核实回复" }));
 });
 
@@ -103,7 +122,7 @@ test("累计三次服务端搜索后，后续工具轮移除 googleSearch", asyn
     isActive: (): boolean => true,
   };
 
-  await expect(callGemini(-1001, "聊天上下文", toolset)).resolves.toBe("行动完成");
+  await expect(callGemini(-1001, promptSections("聊天上下文"), toolset)).resolves.toBe("行动完成");
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(2);
   const secondRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
   expect(secondRequest.config?.tools).toEqual([{ functionDeclarations: [{ name: "send_message" }] }]);
@@ -136,7 +155,7 @@ test("服务端先报 TOO_MANY_TOOL_CALLS 时，零动作轮关闭搜索后只�
     isActive: (): boolean => true,
   };
 
-  await expect(callGemini(-1001, "聊天上下文", toolset)).resolves.toBe("不再搜索，直接回答");
+  await expect(callGemini(-1001, promptSections("聊天上下文"), toolset)).resolves.toBe("不再搜索，直接回答");
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(2);
   const retryRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
   expect(retryRequest.config?.tools).toEqual([{ functionDeclarations: [{ name: "send_message" }] }]);
@@ -179,7 +198,7 @@ test("同一模型响应中的多个行动工具严格按返回顺序串行执�
     isActive: (): boolean => true,
   };
 
-  const reply = callGemini(-1001, "聊天上下文", toolset);
+  const reply = callGemini(-1001, promptSections("聊天上下文"), toolset);
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   expect(executionOrder).toEqual(["generate_image:start"]);
 
@@ -209,7 +228,7 @@ test("最终输出被 token 上限截断时返回 null", async () => {
     isActive: (): boolean => true,
   };
 
-  await expect(callGemini(-1001, "聊天上下文", toolset)).resolves.toBeNull();
+  await expect(callGemini(-1001, promptSections("聊天上下文"), toolset)).resolves.toBeNull();
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(1);
 });
 
@@ -230,7 +249,7 @@ test("请求在途时被禁用，响应回来后不再执行任何行动", async
     isActive: (): boolean => active,
   };
 
-  await expect(callGemini(-1001, "聊天上下文", toolset)).resolves.toBeNull();
+  await expect(callGemini(-1001, promptSections("聊天上下文"), toolset)).resolves.toBeNull();
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(1);
 });
 
@@ -251,7 +270,7 @@ test("连续无效参数也计入单工具预算，达到四次后从下一请�
     isActive: (): boolean => true,
   };
 
-  await expect(callGemini(-1001, "错拼角色名", toolset)).resolves.toBe("不再重试");
+  await expect(callGemini(-1001, promptSections("错拼角色名"), toolset)).resolves.toBe("不再重试");
   expect(execute).toHaveBeenCalledTimes(4);
   const lastRequest = requestGeminiResponseMock.mock.calls[4]![0] as GenerateContentParameters;
   expect(lastRequest.config?.tools).toEqual([]);
@@ -278,7 +297,7 @@ test("同一响应多调用计入总预算，达到硬顶后在下一请求移�
     isActive: (): boolean => true,
   };
 
-  await expect(callGemini(-1001, "并行调用", toolset)).resolves.toBe("预算收敛");
+  await expect(callGemini(-1001, promptSections("并行调用"), toolset)).resolves.toBe("预算收敛");
   expect(execute).toHaveBeenCalledTimes(MAX_CUSTOM_TOOL_CALLS_PER_REPLY);
   const secondRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
   expect(secondRequest.config?.tools).toEqual([]);
@@ -302,7 +321,7 @@ test("异常 candidate 夹带文本和 functionCall 时零执行、零最终文�
     isActive: (): boolean => true,
   };
 
-  await expect(callGemini(-1001, "上下文", toolset)).resolves.toBeNull();
+  await expect(callGemini(-1001, promptSections("上下文"), toolset)).resolves.toBeNull();
   expect(execute).not.toHaveBeenCalled();
   expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("finish_reason=PROHIBITED_CONTENT"));
 });
@@ -318,6 +337,6 @@ test("已经产生外部副作用后遇到 TOO_MANY_TOOL_CALLS 不做降级重�
     isActive: (): boolean => true,
   };
 
-  await expect(callGemini(-1001, "上下文", toolset)).resolves.toBeNull();
+  await expect(callGemini(-1001, promptSections("上下文"), toolset)).resolves.toBeNull();
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(1);
 });

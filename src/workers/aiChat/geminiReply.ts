@@ -10,7 +10,11 @@ import {
   REPLY_MAX_TOKENS,
   REPLY_TEMPERATURE,
 } from "../../consts/aiChat/tools";
-import { TIME_AWARENESS_INSTRUCTION } from "../../consts/aiChat/prompts/memory";
+import {
+  CHAT_MEMORY_PRIORITY_INSTRUCTION,
+  REPLY_CONTEXT_STRUCTURE_INSTRUCTION,
+  TIME_AWARENESS_INSTRUCTION,
+} from "../../consts/aiChat/prompts/memory";
 import { buildWebSearchInstruction, WEB_SEARCH_EXHAUSTED_INSTRUCTION } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../ai/mood";
@@ -23,7 +27,7 @@ import {
 } from "../../ai/utils/geminiResponse";
 import { callTool } from "../../ai/tools";
 import { isPlainRecord } from "../../libs/runtimeConfig";
-import type { ReplyToolset } from "../../types/aiChat/replies";
+import type { ReplyPromptSections, ReplyToolset } from "../../types/aiChat/replies";
 import type { ExtractedFunctionCall } from "../../types/tools";
 import { currentTimeSentence } from "./timeSentence";
 
@@ -81,7 +85,7 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
  * 随机寿命的时间区间轮换，与群是否活跃无关）。
  * @param chatId 群聊 ID，用于取该群当前的心情（见 ai/mood.ts 的
  *   currentMoodInstruction）。
- * @param userContent promptContext.ts 的 buildUserContent 拼好的对话上下文。
+ * @param promptSections promptContext.ts 拼好的只读参考记忆、当前会话与回复任务。
  * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
  *   副作用（发消息/贴纸/反应/图片）都发生在它内部；toolset.tools 直接透传给
  *   请求，本函数不再自己组装。
@@ -89,12 +93,26 @@ const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
  *   为空）；请求失败、超时、被 token 上限腰斩或空输出时返回 null。调用方
  *   只在模型没有成功执行任何可见动作时才把它经 send_message 当兜底回复用。
  */
-export async function callGemini(chatId: number, userContent: string, toolset: ReplyToolset): Promise<string | null> {
+export async function callGemini(
+  chatId: number,
+  promptSections: ReplyPromptSections,
+  toolset: ReplyToolset
+): Promise<string | null> {
   if (!toolset.isActive()) return null;
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
-  const systemPromptPrefix: string = `${SYSTEM_PROMPT}\n\n${currentMoodInstruction(chatId)}\n\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
-  const contents: Content[] = [{ role: "user", parts: [{ text: userContent }] }];
+  const systemPromptPrefix: string =
+    `${SYSTEM_PROMPT}\n\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
+    `${currentMoodInstruction(chatId)}\n\n` +
+    `${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
+  const contents: Content[] = [{
+    role: "user",
+    parts: [
+      { text: promptSections.referenceMemory },
+      { text: promptSections.currentConversation },
+      { text: promptSections.replyTask },
+    ],
+  }];
   const hasGoogleSearch: boolean = toolset.tools.some((tool: Tool) => tool.googleSearch !== undefined);
   let googleSearchCalls: number = 0;
   let customToolCalls: number = 0;

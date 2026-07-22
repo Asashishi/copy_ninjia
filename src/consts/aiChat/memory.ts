@@ -9,7 +9,7 @@ export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 export const COMPACT_BATCH_SIZE: number = 50;
 export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;
 /** 每群保留的冷摘要轮数。 */
-export const MAX_SUMMARY_ROUNDS: number = 5;
+export const MAX_SUMMARY_ROUNDS: number = 7;
 /** 单群执行中 + 排队中的压缩任务硬顶。 */
 export const COMPACTION_MAX_PENDING_PER_CHAT: number = 25;
 /** dirty AI 记忆快照上报主线程的周期。 */
