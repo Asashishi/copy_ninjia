@@ -198,6 +198,29 @@ describe("应用启动失败与退出清理", () => {
     expect(loggerError).toHaveBeenCalledWith("Unhandled error in bot main runner:", expect.any(Error));
   });
 
+  test("state 清理与 LKG 恢复完成后才初始化 Telegram 和 Disk I/O Worker", async () => {
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    expect(calls.indexOf("cleanupTemps")).toBeLessThan(calls.indexOf("loadState"));
+    expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initTelegram"));
+    expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initDiskIO"));
+    await lifecycle.dispose();
+  });
+
+  test("state 主备均不可恢复时不启动任何运行时 Worker，并释放实例锁", async () => {
+    loadState.mockRejectedValueOnce(new Error("manual recovery is required"));
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+    await lifecycle.dispose();
+
+    expect(process.exitCode).toBe(1);
+    expect(initTelegramClients).not.toHaveBeenCalled();
+    expect(initDiskIO).not.toHaveBeenCalled();
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
   test("轮询任务异常后执行完整持久化顺序并只释放一次锁", async () => {
     runnerTask.mockRejectedValueOnce(new Error("polling failed"));
     copiedUser = { id: 7 };

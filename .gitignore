@@ -48,3 +48,6 @@ memory
 bot.lock
 bot.lock.*
 state.json
+state.json.bak
+state.json.*.corrupt
+.state.json.*.tmp

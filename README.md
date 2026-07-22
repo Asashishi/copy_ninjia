@@ -288,7 +288,7 @@ flowchart TD
     classDef main fill:#1e1e2e,stroke:#89b4fa,stroke-width:2.5px,color:#cdd6f4;
     classDef worker fill:#181825,stroke:#cba6f7,stroke-width:2px,color:#cdd6f4;
 
-    MAIN["<b>🧵 主线程 (Main Thread)</b><br/>grammY runner + 按群 sequentialize<br/>命令与自动消息流水线<br/>全局 copy 状态 / 群状态镜像<br/>StateStore：state.json 原子写与重试"]:::main
+    MAIN["<b>🧵 主线程 (Main Thread)</b><br/>grammY runner + 按群 sequentialize<br/>命令与自动消息流水线<br/>全局 copy 状态 / 群状态镜像<br/>StateStore：state.json + LKG 原子写与恢复"]:::main
     
     AI["<b>🤖 AI Worker</b><br/>Gemini 多轮工具调用<br/>对话滚动、摘要压缩、视觉理解<br/>分群限频、并发闸与溢出排队"]:::worker
     
@@ -327,7 +327,7 @@ flowchart TD
 
 <table width="100%">
 <tr><th width="21%" align="left">数据</th><th width="17%" align="left">位置</th><th width="62%" align="left">写入策略</th></tr>
-<tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code></td><td>只保留“在写 + 最新待写”两份快照，失败后台重试，临时文件 + fsync + 原子 rename</td></tr>
+<tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>只保留“在写 + 最新待写”两份内存快照；每次按主文件、LKG 备份顺序执行临时文件 + fsync + 原子 rename，任一写入失败都会后台重试。启动时主文件无效会由严格校验通过的备份恢复；两份均无效则拒绝启动且保留原件</td></tr>
 <tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush</td></tr>
 <tr><td>贴纸描述目录</td><td><code>memory/stickers/</code></td><td>每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用</td></tr>
 <tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code></td></tr>
@@ -337,18 +337,24 @@ flowchart TD
 </table>
 
 > [!WARNING]
-> `memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据；项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请通过主机访问控制限制机器上的用户，并控制备份范围与保留周期。备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。`logs/`、`memory/`、`state.json`、凭据和运行锁均不会提交到 Git。
+> `memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据；项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请通过主机访问控制限制机器上的用户，并控制备份范围与保留周期。备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。`logs/`、`memory/`、state 主备副本及 `.corrupt` 隔离件、凭据和运行锁均不会提交到 Git。
 
 待验证热路径复用每日运势和日志已有的 JSON 末尾追加机制，不会每次全量重写，也不会增加新的 IO 线程。终结记录以 `null` tombstone 线性追加，尾部截断修复按 JSON 结构边界扫描，因此会保留最后一条完整 tombstone，不会让已终结验证复活；只有跨日轮换或达到历史阈值时才原子收敛当前 active 镜像。每批追加在成功回执前执行 fsync。同步文件操作始终留在 Disk I/O Worker，不阻塞 Telegram 更新主线程。
 
 > [!IMPORTANT]
-> 持久化 schema 变更不在运行时自动迁移。部署包含结构变更的版本前，应先手工迁移 `state.json` 与对应 `memory/` 快照；任一必需快照不符合当前结构时机器人会拒绝启动，避免用部分状态或空状态覆盖原文件。
+> 持久化 schema 变更不在运行时自动迁移。部署包含结构变更的版本前，应同时迁移 `state.json`、`state.json.bak` 与对应 `memory/` 快照。StateStore 会用严格校验通过的主副本刷新另一份；若两份 state 副本均不符合当前结构则拒绝启动且不改动它们，避免用部分状态或空状态覆盖原文件。单份损坏副本会以唯一的 `.corrupt` 名称永久隔离，供人工排查。
 
-`bot.lock` 以严格的 `pid:sha256(token)` 格式记录运行实例。数据目录全局独占：
-只要存在活跃 PID，无论 token 相同还是不同，新实例都会拒绝启动。死 PID 会在
-下一次启动或退出时清理。更新注册表时短暂出现
-的 `.guard`、`.candidate.*` 和 `.tmp` 是并发保护文件，正常操作结束即删除。
-锁格式不正确时不会自动猜测或迁移，请停掉相关进程后手工处理。
+`bot.lock` 只接受严格的 `v2:pid:starttime:boot_id:sha256(token)` 格式；其中
+`starttime` 来自 `/proc/<pid>/stat` 第 22 字段。数据目录全局独占：只有 PID、
+starttime 与 boot ID 均匹配才视为同一活跃 owner；PID 被复用或机器重启后，
+当前 v2 格式的 stale owner 会在下一次启动或退出时清理。`.guard` 和
+`.recovery` 同样只接受 `v2:pid:starttime:boot_id`，`.candidate.*` 与 `.tmp`
+是正常操作结束即删除的并发保护文件。
+
+实例锁明确依赖 Linux `/proc`，读取或解析失败时保持 fail-closed。旧
+`pid:sha256(token)` registry、纯 PID guard/recovery、未知格式和损坏格式都
+不会兼容读取、自动迁移或按 PID 猜测清理；程序保持原文件不变并拒绝启动，
+必须先停掉相关进程再手工处理。
 
 token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 需要并行部署时，
 应使用彼此独立的项目目录，或为每个实例配置不同的 `COPY_NINJIA_DATA_ROOT`。

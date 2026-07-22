@@ -13,6 +13,7 @@ const diskPosts: (VerificationUpsertDiskMessage | VerificationDeleteDiskMessage)
 let supervisorOptions: {
   onEvent: (event: AntiRaidWorkerEvent) => void;
   onRespawn: (post: (message: AntiRaidWorkerMessage) => void) => void;
+  onGiveUp: () => void;
 } | undefined;
 let diskRespawn: (() => void) | undefined;
 let persistedAck: ((reply: VerificationPersistedReply) => void) | undefined;
@@ -23,9 +24,11 @@ const chatStates = new Map<number, { lockdown?: {
   expiresAt: number;
 } }>();
 const saveState = mock(async (): Promise<void> => {});
+const saveStateInBackground = mock((_context: string): void => {});
 type FlushResult = "flushed" | "timedOut" | "failed";
 const flushStateToDisk = mock(async (): Promise<FlushResult> => "flushed");
 const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
+const restoreLockdownInvitePermission = mock(async (..._args: unknown[]): Promise<void> => {});
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
@@ -51,9 +54,12 @@ mock.module("../../../src/infra/storage/stateStore", () => ({
   },
   saveState,
   flushStateToDisk,
-  saveStateInBackground(): void {},
+  saveStateInBackground,
 }));
 mock.module("../../../src/infra/telegram/actions", () => ({ answerCallbackQuery: async (): Promise<boolean> => true }));
+mock.module("../../../src/infra/telegram/client", () => ({ joinVerificationApi: { kind: "main-thread-test-api" } }));
+mock.module("../../../src/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
+mock.module("../../../src/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5 }));
 mock.module("../../../src/infra/botAdmin", () => ({
   isBotAdminIn: async (): Promise<boolean> => true,
   markBotAdminObserved(): void {},
@@ -420,5 +426,92 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       message_id: 57,
     } as never, 99);
     expect(workerPosts).toHaveLength(0);
+  });
+
+  test("Worker 放弃自愈后主线程恢复权限、重试失败群且不清除更新后的 intent", async () => {
+    chatStates.clear();
+    restoreLockdownInvitePermission.mockClear();
+    saveStateInBackground.mockClear();
+    antiRaid.initAntiRaid();
+
+    const successfulChatId = -6001;
+    const retryChatId = -6002;
+    const changedChatId = -6003;
+    const stoppedChatId = -6004;
+    for (const [chatId, intentId, phase] of [
+      [successfulChatId, 101, "applying"],
+      [retryChatId, 102, "active"],
+      [changedChatId, 103, "active"],
+    ] as const) {
+      chatStates.set(chatId, {
+        lockdown: {
+          phase,
+          intentId,
+          originalPermissions: { can_invite_users: true, can_send_messages: true },
+          expiresAt: 10_000 + intentId,
+        },
+      });
+    }
+
+    let retryAttempts: number = 0;
+    const changedRestore = deferred<void>();
+    const stoppedRestore = deferred<void>();
+    restoreLockdownInvitePermission.mockImplementation(async (input: unknown): Promise<void> => {
+      const chatId: number = (input as { chatId: number }).chatId;
+      if (chatId === retryChatId && retryAttempts++ === 0) throw new Error("temporary Telegram failure");
+      if (chatId === changedChatId) await changedRestore.promise;
+      if (chatId === stoppedChatId) await stoppedRestore.promise;
+    });
+
+    supervisorOptions!.onGiveUp();
+    chatStates.get(changedChatId)!.lockdown = {
+      phase: "active",
+      intentId: 999,
+      originalPermissions: { can_invite_users: false },
+      expiresAt: 99_999,
+    };
+    changedRestore.resolve(undefined);
+    await Bun.sleep(20);
+
+    expect(chatStates.get(successfulChatId)?.lockdown).toBeUndefined();
+    expect(chatStates.get(retryChatId)?.lockdown).toBeUndefined();
+    expect(chatStates.get(changedChatId)?.lockdown?.intentId).toBe(999);
+    expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
+      (input as { chatId: number }).chatId === retryChatId
+    )).toHaveLength(2);
+    expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
+      (input as { chatId: number }).chatId === changedChatId
+    )).toHaveLength(1);
+    expect(saveStateInBackground).toHaveBeenCalledTimes(2);
+
+    chatStates.clear();
+    chatStates.set(stoppedChatId, {
+      lockdown: {
+        phase: "restoring",
+        intentId: 104,
+        originalPermissions: { can_invite_users: true },
+        expiresAt: 10_104,
+      },
+    });
+    supervisorOptions!.onGiveUp();
+    await Bun.sleep(0);
+    const terminationResult = await Promise.race([
+      antiRaid.terminateAntiRaid().then(() => "terminated" as const),
+      Bun.sleep(50).then(() => "timedOut" as const),
+    ]);
+
+    expect(terminationResult).toBe("terminated");
+    expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
+      (input as { chatId: number }).chatId === stoppedChatId
+    )).toHaveLength(1);
+    const { emergencyLockdownRecoveries, emergencyLockdownRecoveryRuntime } = await import("../../../src/cache/antiRaid");
+    expect(emergencyLockdownRecoveries.size).toBe(0);
+    expect(emergencyLockdownRecoveryRuntime.stopped).toBeTrue();
+    expect(chatStates.get(stoppedChatId)?.lockdown?.intentId).toBe(104);
+
+    stoppedRestore.resolve(undefined);
+    await Bun.sleep(0);
+    expect(chatStates.get(stoppedChatId)?.lockdown?.intentId).toBe(104);
+    expect(saveStateInBackground).toHaveBeenCalledTimes(2);
   });
 });

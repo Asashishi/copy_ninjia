@@ -20,6 +20,8 @@ export const RUNTIME_DATA_ROOT: string = configuredDataRoot === undefined
 
 // 持久状态与运行实例注册表；具体 schema/协议由各自的所有者模块定义。
 export const STATE_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "state.json");
+/** state.json 的 last-known-good 同目录副本；与主文件使用同一严格 schema。 */
+export const STATE_BACKUP_FILE_PATH: string = `${STATE_FILE_PATH}.bak`;
 export const LOCK_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "bot.lock");
 
 /** AI 闲聊人设文本（Markdown，修改人设不需要碰代码）。 */

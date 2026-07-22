@@ -47,7 +47,10 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
     fetchMock = mock(async (input: FetchInput): Promise<Response> => {
       const url = urlOf(input);
       if (url === "https://telegram.me/YunaSakagami") {
-        return new Response('<img class="tgme_page_photo_image" src="https://cdn.example/avatar.jpg">');
+        return new Response(`
+          <meta property="al:ios:url" content="tg://resolve?domain=YunaSakagami">
+          <meta property="og:image" content="https://cdn.example/avatar.jpg">
+        `);
       }
       if (url === "https://cdn.example/avatar.jpg") {
         return new Response(new Uint8Array([1, 2, 3]));

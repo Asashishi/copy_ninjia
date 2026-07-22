@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StateStore } from "../../../src/infra/storage/stateStore";
 import type { StateFileSchema } from "../../../src/types/chatState";
 
@@ -11,15 +14,15 @@ function schema(chatId: number): StateFileSchema {
 
 describe("StateStore", () => {
   test("注入 IO 后独立验证 schema 序列化与 latest-only 写入", async () => {
-    const writes: string[] = [];
+    const writes: { path: string; content: string }[] = [];
     let releaseFirst: (() => void) | undefined;
     const firstBlocked = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
     const store = new StateStore({
       stateFilePath: "/virtual/state.json",
-      writeText: async (_path, content) => {
-        writes.push(content);
+      writeText: async (path, content) => {
+        writes.push({ path, content });
         if (writes.length === 1) await firstBlocked;
       },
     });
@@ -30,8 +33,13 @@ describe("StateStore", () => {
     releaseFirst!();
     await Promise.all([first, second, third]);
 
-    expect(writes).toHaveLength(2);
-    expect(JSON.parse(writes[1]!)).toEqual(schema(3));
+    expect(writes.map((write) => write.path)).toEqual([
+      "/virtual/state.json",
+      "/virtual/state.json.bak",
+      "/virtual/state.json",
+      "/virtual/state.json.bak",
+    ]);
+    expect(JSON.parse(writes[3]!.content)).toEqual(schema(3));
     store.dispose();
   });
 
@@ -53,7 +61,7 @@ describe("StateStore", () => {
     const saved: Promise<void> = store.save(schema(4));
     await retryCompleted;
     await expect(saved).resolves.toBeUndefined();
-    expect(attempts).toBe(2);
+    expect(attempts).toBe(3);
     await store.flush(20);
     store.dispose();
   });
@@ -84,6 +92,203 @@ describe("StateStore", () => {
     await expect(existing.load()).resolves.toEqual(expected);
     missing.dispose();
     existing.dispose();
+  });
+
+  test("主文件有效但备份缺失时先补建 LKG，再返回解码状态", async () => {
+    const expected: StateFileSchema = schema(50);
+    const primaryContent: string = JSON.stringify(expected, null, 2);
+    const writes: { path: string; content: string }[] = [];
+    const store = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? null : primaryContent,
+      writeText: async (path, content) => { writes.push({ path, content }); },
+    });
+
+    await expect(store.load()).resolves.toEqual(expected);
+    expect(writes).toEqual([{ path: "/virtual/state.json.bak", content: primaryContent }]);
+    store.dispose();
+  });
+
+  test("主文件有效时直接刷新内容不同但同样合法的旧备份", async () => {
+    const primary: string = JSON.stringify(schema(51), null, 2);
+    const staleBackup: string = JSON.stringify(schema(52), null, 2);
+    const writes: { path: string; content: string }[] = [];
+    const moves: string[] = [];
+    const store = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? staleBackup : primary,
+      writeText: async (path, content) => { writes.push({ path, content }); },
+      moveFile: async (path) => { moves.push(path); },
+    });
+
+    await expect(store.load()).resolves.toEqual(schema(51));
+    expect(writes).toEqual([{ path: "/virtual/state.json.bak", content: primary }]);
+    expect(moves).toEqual([]);
+    store.dispose();
+  });
+
+  test("主文件有效、备份损坏时隔离坏备份并重建", async () => {
+    const primary: string = JSON.stringify(schema(53), null, 2);
+    const moves: { source: string; destination: string }[] = [];
+    const writes: { path: string; content: string }[] = [];
+    const store = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? "{broken" : primary,
+      writeText: async (path, content) => { writes.push({ path, content }); },
+      moveFile: async (source, destination) => { moves.push({ source, destination }); },
+    });
+
+    await expect(store.load()).resolves.toEqual(schema(53));
+    expect(moves).toHaveLength(1);
+    expect(moves[0]!.source).toBe("/virtual/state.json.bak");
+    expect(moves[0]!.destination).toMatch(/^\/virtual\/state\.json\.bak\.\d+\.[^.]+\.corrupt$/);
+    expect(writes).toEqual([{ path: "/virtual/state.json.bak", content: primary }]);
+    store.dispose();
+  });
+
+  test("主文件损坏时隔离原件，并从有效 LKG 恢复包含 lockdown 的状态", async () => {
+    const expected: StateFileSchema = {
+      chats: {
+        "-100": {
+          lockdown: {
+            phase: "active",
+            intentId: 9,
+            originalPermissions: { can_invite_users: true, can_send_messages: false },
+            expiresAt: 1_900_000_000_000,
+          },
+        },
+      },
+      globalCopy: { copiedUser: null },
+    };
+    const backup: string = JSON.stringify(expected, null, 2);
+    const moves: { source: string; destination: string }[] = [];
+    const writes: { path: string; content: string }[] = [];
+    const store = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? backup : "{broken",
+      writeText: async (path, content) => { writes.push({ path, content }); },
+      moveFile: async (source, destination) => { moves.push({ source, destination }); },
+    });
+
+    await expect(store.load()).resolves.toEqual(expected);
+    expect(moves).toHaveLength(1);
+    expect(moves[0]!.source).toBe("/virtual/state.json");
+    expect(moves[0]!.destination).toMatch(/^\/virtual\/state\.json\.\d+\.[^.]+\.corrupt$/);
+    expect(writes).toEqual([{ path: "/virtual/state.json", content: backup }]);
+    store.dispose();
+  });
+
+  test("主文件缺失时从有效 LKG 原子恢复且不创建损坏隔离件", async () => {
+    const expected: StateFileSchema = schema(54);
+    const backup: string = JSON.stringify(expected, null, 2);
+    const moves: string[] = [];
+    const writes: { path: string; content: string }[] = [];
+    const store = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? backup : null,
+      writeText: async (path, content) => { writes.push({ path, content }); },
+      moveFile: async (source) => { moves.push(source); },
+    });
+
+    await expect(store.load()).resolves.toEqual(expected);
+    expect(moves).toEqual([]);
+    expect(writes).toEqual([{ path: "/virtual/state.json", content: backup }]);
+    store.dispose();
+  });
+
+  test("主备均无有效状态时 fail-closed，且不隔离、不覆盖现场", async () => {
+    const moves: string[] = [];
+    const writes: string[] = [];
+    const store = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? JSON.stringify({ chats: {} }) : "{broken",
+      writeText: async (path) => { writes.push(path); },
+      moveFile: async (source) => { moves.push(source); },
+    });
+
+    await expect(store.load()).rejects.toThrow("manual recovery is required");
+    expect(moves).toEqual([]);
+    expect(writes).toEqual([]);
+    store.dispose();
+  });
+
+  test("隔离或恢复 IO 失败都会终止加载，不返回未建立冗余的状态", async () => {
+    const backup: string = JSON.stringify(schema(55));
+    const quarantineFailure = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? backup : "{broken",
+      moveFile: async () => { throw new Error("rename unavailable"); },
+    });
+    await expect(quarantineFailure.load()).rejects.toThrow("rename unavailable");
+
+    const restoreFailure = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? backup : null,
+      writeText: async () => { throw new Error("write unavailable"); },
+    });
+    await expect(restoreFailure.load()).rejects.toThrow("write unavailable");
+    quarantineFailure.dispose();
+    restoreFailure.dispose();
+  });
+
+  test("备份写失败也算保存失败，并按主文件到备份的完整顺序重试", async () => {
+    const paths: string[] = [];
+    let backupAttempts: number = 0;
+    const store = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      retryDelaysMs: [1],
+      writeText: async (path) => {
+        paths.push(path);
+        if (path.endsWith(".bak") && ++backupAttempts === 1) throw new Error("backup unavailable");
+      },
+    });
+
+    await expect(store.save(schema(56))).resolves.toBeUndefined();
+    expect(paths).toEqual([
+      "/virtual/state.json",
+      "/virtual/state.json.bak",
+      "/virtual/state.json",
+      "/virtual/state.json.bak",
+    ]);
+    store.dispose();
+  });
+
+  test("保存前拒绝严格 codec 无法重新加载的快照，主备均不写入", async () => {
+    const paths: string[] = [];
+    const store = new StateStore({
+      writeText: async (path) => { paths.push(path); },
+    });
+    const invalid = {
+      chats: {},
+      globalCopy: { copiedUser: null },
+      unknownField: true,
+    } as unknown as StateFileSchema;
+
+    await expect(store.save(invalid)).rejects.toThrow("unknownField");
+    expect(paths).toEqual([]);
+    store.dispose();
+  });
+
+  test("真实文件边界会持久隔离坏主文件并原子恢复 LKG", async () => {
+    const dir: string = mkdtempSync(join(tmpdir(), "state-lkg-test-"));
+    const statePath: string = join(dir, "state.json");
+    const backupPath: string = `${statePath}.bak`;
+    const backup: string = JSON.stringify(schema(57), null, 2);
+    writeFileSync(statePath, "{broken");
+    writeFileSync(backupPath, backup);
+    const store = new StateStore({ stateFilePath: statePath });
+
+    try {
+      await expect(store.load()).resolves.toEqual(schema(57));
+      expect(readFileSync(statePath, "utf8")).toBe(backup);
+      const corruptEntry: string | undefined = readdirSync(dir)
+        .find((entry) => /^state\.json\.\d+\.[^.]+\.corrupt$/.test(entry));
+      expect(corruptEntry).toBeDefined();
+      expect(readFileSync(join(dir, corruptEntry!), "utf8")).toBe("{broken");
+    } finally {
+      store.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("底层 writer 未停稳时 flush 明确返回 timedOut", async () => {

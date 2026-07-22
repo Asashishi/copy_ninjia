@@ -14,7 +14,7 @@ function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-/** 持锁后清扫 state.json/bot.lock 原子写中断留下的顶层临时文件。 */
+/** 持锁后清扫 state.json（含 .bak）/bot.lock 原子写中断留下的顶层临时文件。 */
 export async function cleanupOrphanedTempFiles(options: StorageCleanupOptions = {}): Promise<void> {
   const stateFilePath: string = options.stateFilePath ?? STATE_FILE_PATH;
   const lockFilePath: string = options.lockFilePath ?? LOCK_FILE_PATH;

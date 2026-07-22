@@ -1,7 +1,7 @@
 import { STATE_FLUSH_TIMEOUT_MS, type FlushResult } from "../../consts/lifecycle";
-import { STATE_FILE_PATH } from "../../consts/paths";
+import { CORRUPT_FILE_SUFFIX, STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
 import { DEFAULT_CHAT_STATE, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
-import { atomicWriteText } from "../../libs/atomicFile";
+import { atomicWriteText, durableRename } from "../../libs/atomicFile";
 import { normalizeChatState, normalizeChatStateEntry } from "../../libs/chatState";
 import { createLatestValueRunner, type LatestValueRunner } from "../../libs/latestValueRunner";
 import { decodeStateFile } from "../../libs/stateFileCodec";
@@ -10,8 +10,10 @@ import { logger } from "../logger";
 
 export interface StateStoreOptions {
   stateFilePath?: string;
+  backupFilePath?: string;
   readText?: (path: string) => Promise<string | null>;
   writeText?: (path: string, content: string) => Promise<void>;
+  moveFile?: (sourcePath: string, destinationPath: string) => Promise<void>;
   retryDelaysMs?: readonly number[];
   onRetryError?: (attempt: number, error: unknown) => void;
   onFlushError?: (error: unknown) => void;
@@ -26,6 +28,23 @@ interface StateWrite {
   json: string;
   revision: number;
 }
+
+interface ValidStateCopy {
+  kind: "valid";
+  content: string;
+  schema: StateFileSchema;
+}
+
+interface InvalidStateCopy {
+  kind: "invalid";
+  error: Error;
+}
+
+interface MissingStateCopy {
+  kind: "missing";
+}
+
+type StateCopy = ValidStateCopy | InvalidStateCopy | MissingStateCopy;
 
 interface PersistenceWaiter {
   revision: number;
@@ -44,8 +63,10 @@ async function readExistingText(path: string): Promise<string | null> {
  */
 export class StateStore {
   private readonly stateFilePath: string;
+  private readonly backupFilePath: string;
   private readonly readText: (path: string) => Promise<string | null>;
   private readonly writeText: (path: string, content: string) => Promise<void>;
+  private readonly moveFile: (sourcePath: string, destinationPath: string) => Promise<void>;
   private readonly retryDelaysMs: readonly number[];
   private readonly onRetryError: (attempt: number, error: unknown) => void;
   private readonly onFlushError: (error: unknown) => void;
@@ -62,8 +83,11 @@ export class StateStore {
 
   constructor(options: StateStoreOptions = {}) {
     this.stateFilePath = options.stateFilePath ?? STATE_FILE_PATH;
+    this.backupFilePath = options.backupFilePath ??
+      (options.stateFilePath === undefined ? STATE_BACKUP_FILE_PATH : `${this.stateFilePath}.bak`);
     this.readText = options.readText ?? readExistingText;
     this.writeText = options.writeText ?? atomicWriteText;
+    this.moveFile = options.moveFile ?? durableRename;
     this.retryDelaysMs = options.retryDelaysMs ?? STATE_SAVE_RETRY_DELAYS_MS;
     if (this.retryDelaysMs.length === 0) throw new Error("StateStore requires at least one retry delay");
     this.onRetryError = options.onRetryError ?? ((attempt, error) => {
@@ -74,6 +98,7 @@ export class StateStore {
     });
     this.writer = createLatestValueRunner<StateWrite>(async (write) => {
       await this.writeText(this.stateFilePath, write.json);
+      await this.writeText(this.backupFilePath, write.json);
       if (this.dirtyWrite !== null && this.dirtyWrite.revision <= write.revision) {
         this.dirtyWrite = null;
       }
@@ -83,15 +108,69 @@ export class StateStore {
   }
 
   async load(): Promise<StateFileSchema | null> {
-    const content: string | null = await this.readText(this.stateFilePath);
-    return content === null ? null : decodeStateFile(JSON.parse(content));
+    // 两份副本必须先全部读完、严格解码，再做任何隔离或修复。这样两份都
+    // 不可用时能原样保留现场，绝不把可能含 lockdown 的状态静默变为空。
+    const [primary, backup]: [StateCopy, StateCopy] = await Promise.all([
+      this.readCopy(this.stateFilePath),
+      this.readCopy(this.backupFilePath),
+    ]);
+    if (primary.kind === "missing" && backup.kind === "missing") return null;
+
+    if (primary.kind === "valid") {
+      if (backup.kind === "valid" && backup.content === primary.content) return primary.schema;
+      if (backup.kind === "invalid") await this.quarantine(this.backupFilePath);
+      await this.writeText(this.backupFilePath, primary.content);
+      return primary.schema;
+    }
+
+    if (backup.kind === "valid") {
+      if (primary.kind === "invalid") await this.quarantine(this.stateFilePath);
+      await this.writeText(this.stateFilePath, backup.content);
+      return backup.schema;
+    }
+
+    const errors: Error[] = [primary, backup]
+      .filter((copy): copy is InvalidStateCopy => copy.kind === "invalid")
+      .map((copy) => copy.error);
+    throw new AggregateError(
+      errors,
+      `Neither ${this.stateFilePath} nor ${this.backupFilePath} contains a valid state; manual recovery is required.`
+    );
+  }
+
+  private async readCopy(path: string): Promise<StateCopy> {
+    const content: string | null = await this.readText(path);
+    if (content === null) return { kind: "missing" };
+    try {
+      return { kind: "valid", content, schema: decodeStateFile(JSON.parse(content)) };
+    } catch (error: unknown) {
+      const reason: Error = error instanceof Error ? error : new Error(String(error));
+      return {
+        kind: "invalid",
+        error: new Error(`Invalid persisted state copy ${path}: ${reason.message}`, { cause: reason }),
+      };
+    }
+  }
+
+  private async quarantine(path: string): Promise<void> {
+    const corruptPath: string = `${path}.${Date.now()}.${crypto.randomUUID()}${CORRUPT_FILE_SUFFIX}`;
+    await this.moveFile(path, corruptPath);
   }
 
   save(schema: StateFileSchema, options: StateSaveOptions = {}): Promise<void> {
     if (this.quiescing || this.disposed) {
       return Promise.reject(new Error("StateStore is quiescing and no longer accepts writes."));
     }
-    const json: string = JSON.stringify(schema, null, 2);
+    let json: string;
+    try {
+      json = JSON.stringify(schema, null, 2);
+      // TypeScript 类型不能约束运行时对共享 ChatState 的修改；两份磁盘副本
+      // 只能接收可被启动期同一严格 codec 再次加载的快照。
+      decodeStateFile(JSON.parse(json));
+    } catch (error: unknown) {
+      const reason: Error = error instanceof Error ? error : new Error(String(error));
+      return Promise.reject(reason);
+    }
     const write: StateWrite = { json, revision: this.nextRevision++ };
     this.dirtyWrite = write;
     const persisted: Promise<void> = options.waitForPersistence === false

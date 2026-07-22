@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { MAX_PENDING_TASKS_PER_CHAT } from "../../src/consts/reactionQueue";
 
 class FakeGrammyError extends Error {
   constructor(
@@ -93,6 +94,39 @@ describe("Telegram reaction 同步队列", () => {
     await Promise.all([first, latest, stale]);
     expect(setMessageReaction).toHaveBeenCalledTimes(2);
     expect(setMessageReaction).toHaveBeenNthCalledWith(2, -1001, 10, [{ type: "emoji", emoji: "🔥" }]);
+  });
+
+  test("硬顶淘汰最旧的未开始任务并结算 waiter，不误删在途任务或最新任务", async () => {
+    let releaseInFlight!: (value: boolean) => void;
+    setMessageReaction.mockImplementationOnce(() => new Promise((resolve) => { releaseInFlight = resolve; }));
+    const chatId: number = -1001;
+    const inFlight: Promise<void> = enqueueReaction({ chatId, messageId: 0, reactions: [], updateId: 0, reactedAtUnix: 1 });
+    expect(setMessageReaction).toHaveBeenCalledTimes(1);
+
+    const queued: Promise<void>[] = [];
+    for (let messageId: number = 1; messageId <= MAX_PENDING_TASKS_PER_CHAT + 1; messageId++) {
+      queued.push(enqueueReaction({ chatId, messageId, reactions: [], updateId: messageId, reactedAtUnix: 1 }));
+    }
+
+    const droppedKey: string = `${chatId}:1`;
+    await queued[0];
+    expect(pendingTasks.has(droppedKey)).toBeFalse();
+    expect(pendingReactionWaiters.has(droppedKey)).toBeFalse();
+    expect(pendingTasks.has(`${chatId}:0`)).toBeTrue();
+    expect(chatQueues.get(chatId)?.size).toBe(MAX_PENDING_TASKS_PER_CHAT);
+    expect(pendingTasks.size).toBe(MAX_PENDING_TASKS_PER_CHAT + 1);
+    expect(pendingTasks.has(`${chatId}:${MAX_PENDING_TASKS_PER_CHAT + 1}`)).toBeTrue();
+
+    releaseInFlight(true);
+    await Promise.all([inFlight, ...queued]);
+    await waitForIdle();
+
+    expect(setMessageReaction).toHaveBeenCalledTimes(MAX_PENDING_TASKS_PER_CHAT + 1);
+    expect(setMessageReaction).not.toHaveBeenCalledWith(chatId, 1, []);
+    expect(setMessageReaction).toHaveBeenCalledWith(chatId, MAX_PENDING_TASKS_PER_CHAT + 1, []);
+    expect(pendingTasks.size).toBe(0);
+    expect(pendingReactionWaiters.size).toBe(0);
+    expect(chatQueues.size).toBe(0);
   });
 
   test("drain 在 API 在途时不提前成功，任务完成后结算", async () => {

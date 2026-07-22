@@ -9,6 +9,7 @@ describe("storage startup cleanup", () => {
       lockFilePath: "/virtual/bot.lock",
       readDirectory: async () => [
         ".state.json.1.uuid.tmp",
+        ".state.json.bak.1.uuid.tmp",
         ".bot.lock.1.uuid.tmp",
         ".other.json.1.uuid.tmp",
         "state.json",
@@ -20,6 +21,7 @@ describe("storage startup cleanup", () => {
 
     expect(removed).toEqual([
       "/virtual/.state.json.1.uuid.tmp",
+      "/virtual/.state.json.bak.1.uuid.tmp",
       "/virtual/.bot.lock.1.uuid.tmp",
     ]);
   });

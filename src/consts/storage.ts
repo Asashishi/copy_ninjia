@@ -9,8 +9,16 @@ import type { ChatState } from "../types/chatState";
  */
 export const DEFAULT_CHAT_STATE: Readonly<ChatState> = Object.freeze({});
 
-/** bot.lock 每行的持久化格式：PID + SHA-256 token 指纹。 */
-export const BOT_LOCK_LINE_PATTERN: RegExp = /^([1-9]\d*):([0-9a-f]{64})$/;
+/** Linux boot_id 的内核格式；持久化时统一使用小写。 */
+export const LINUX_BOOT_ID_PATTERN: RegExp = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** guard/recovery 当前唯一格式：v2:PID:/proc starttime:boot_id。 */
+export const PROCESS_IDENTITY_PATTERN: RegExp =
+  /^v2:([1-9]\d*):(0|[1-9]\d*):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
+/** bot.lock 当前唯一格式：process identity + SHA-256 token 指纹。 */
+export const BOT_LOCK_LINE_PATTERN: RegExp =
+  /^v2:([1-9]\d*):(0|[1-9]\d*):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([0-9a-f]{64})$/;
 
 /** state.json 后台写入失败后的退避序列；用尽后固定使用最后一档。 */
 export const STATE_SAVE_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 5_000, 30_000];

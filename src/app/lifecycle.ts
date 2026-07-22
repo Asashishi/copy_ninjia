@@ -75,11 +75,14 @@ export class ApplicationLifecycle {
     this.dependencies.getStickerConfig();
     this.dependencies.getReactionConfig();
     this.dependencies.getMoodConfig();
+    await this.dependencies.cleanupOrphanedTempFiles();
+    await this.dependencies.loadState();
+
+    // state 主副本已经严格校验并建立 LKG 后，才创建运行时 Worker 和会安装
+    // 心跳 timer 的 Telegram transformer；恢复失败不会留下半初始化组件。
     this.dependencies.initTelegramClients();
     this.dependencies.initDiskIO({ onFatal: this.handleDiskIOFatal });
     this.diskIOInitialized = true;
-    await this.dependencies.cleanupOrphanedTempFiles();
-    await this.dependencies.loadState();
 
     // 这是后台维护任务而非启动阻塞项，但必须被追踪：退出最终快照前会等待它，
     // 防止 refresh 在 state.json flush 后才补写群名。

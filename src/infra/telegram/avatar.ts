@@ -15,6 +15,11 @@ interface PublicUsernameLookupResult {
   failed: boolean;
 }
 
+interface ParsedHtmlTag {
+  name: string;
+  attributes: ReadonlyMap<string, string>;
+}
+
 /** 单次头像复制尝试的结果：区分可重试故障与确定性失败。 */
 type AvatarCopyAttemptResult = "ok" | "transient-failure" | "permanent-failure";
 
@@ -42,15 +47,143 @@ export function extractPublicUsername(chat: unknown): string | undefined {
   return undefined;
 }
 
+/** 只解码 URL 和 HTML 属性中会用到的实体，未知或无效实体保持原样。 */
+function decodeHtmlAttribute(value: string): string {
+  return value.replace(/&(?:amp|quot|apos|lt|gt|#\d+|#x[\da-f]+);/gi, (entity: string): string => {
+    switch (entity.toLowerCase()) {
+      case "&amp;": return "&";
+      case "&quot;": return '"';
+      case "&apos;": return "'";
+      case "&lt;": return "<";
+      case "&gt;": return ">";
+    }
+
+    const hexadecimal: boolean = entity[2]?.toLowerCase() === "x";
+    const digits: string = entity.slice(hexadecimal ? 3 : 2, -1);
+    const codePoint: number = Number.parseInt(digits, hexadecimal ? 16 : 10);
+    if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+      return entity;
+    }
+    return String.fromCodePoint(codePoint);
+  });
+}
+
+/** 解析 img/meta/link 起始标签；页面正文已在进入这里前受到字节硬顶限制。 */
+function parseRelevantHtmlTags(html: string): ParsedHtmlTag[] {
+  const tags: ParsedHtmlTag[] = [];
+  for (const tagMatch of html.matchAll(/<(img|meta|link)\b[^>]*>/gi)) {
+    const rawTag: string = tagMatch[0];
+    const attributes: Map<string, string> = new Map();
+    const tagNameEnd: number = rawTag.search(/[\s/>]/);
+    const attributeSource: string = tagNameEnd === -1 ? "" : rawTag.slice(tagNameEnd, -1);
+    const attributePattern = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+    for (const attributeMatch of attributeSource.matchAll(attributePattern)) {
+      const name: string = attributeMatch[1]!.toLowerCase();
+      if (attributes.has(name)) continue;
+      const value: string = attributeMatch[2] ?? attributeMatch[3] ?? attributeMatch[4] ?? "";
+      attributes.set(name, decodeHtmlAttribute(value));
+    }
+    tags.push({ name: tagMatch[1]!.toLowerCase(), attributes });
+  }
+  return tags;
+}
+
+function parseHttpsUrl(value: string | undefined): URL | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "https:" || url.username || url.password) return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasAttributeToken(attributes: ReadonlyMap<string, string>, name: string, expected: string): boolean {
+  return attributes.get(name)?.split(/\s+/).some((token: string): boolean => token.toLowerCase() === expected) ?? false;
+}
+
+function isMetaKind(attributes: ReadonlyMap<string, string>, expected: string): boolean {
+  return [attributes.get("property"), attributes.get("name")]
+    .some((value: string | undefined): boolean => value?.trim().toLowerCase() === expected);
+}
+
+function isMatchingHttpsProfileUrl(value: string | undefined, expectedUsername: string): boolean {
+  const url: URL | undefined = parseHttpsUrl(value);
+  if (!url || url.port || url.search || url.hash) return false;
+  const hostname: string = url.hostname.toLowerCase().replace(/^www\./, "");
+  if (hostname !== "t.me" && hostname !== "telegram.me") return false;
+
+  try {
+    const pathname: string = decodeURIComponent(url.pathname).replace(/\/$/, "");
+    return pathname.toLowerCase() === `/${expectedUsername.toLowerCase()}`;
+  } catch {
+    return false;
+  }
+}
+
+function isMatchingTelegramDeepLink(value: string | undefined, expectedUsername: string): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "tg:" || url.hostname.toLowerCase() !== "resolve" || url.pathname || url.port || url.username || url.password || url.hash) {
+      return false;
+    }
+    const queryEntries: [string, string][] = [...url.searchParams.entries()];
+    return queryEntries.length === 1 &&
+      queryEntries[0]![0] === "domain" &&
+      queryEntries[0]![1].toLowerCase() === expectedUsername.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function isProfileIdentityMeta(attributes: ReadonlyMap<string, string>): boolean {
+  return [
+    "og:url",
+    "al:ios:url",
+    "al:android:url",
+    "twitter:app:url:iphone",
+    "twitter:app:url:ipad",
+    "twitter:app:url:googleplay",
+  ].some((kind: string): boolean => isMetaKind(attributes, kind));
+}
+
+function hasMatchingProfileIdentity(tags: readonly ParsedHtmlTag[], expectedUsername: string): boolean {
+  return tags.some(({ name, attributes }: ParsedHtmlTag): boolean => {
+    if (name === "meta" && isProfileIdentityMeta(attributes)) {
+      const content: string | undefined = attributes.get("content");
+      return isMatchingHttpsProfileUrl(content, expectedUsername) || isMatchingTelegramDeepLink(content, expectedUsername);
+    }
+    if (name === "link" && hasAttributeToken(attributes, "rel", "canonical")) {
+      return isMatchingHttpsProfileUrl(attributes.get("href"), expectedUsername);
+    }
+    return false;
+  });
+}
+
 /**
- * 从 t.me 公开主页提取头像 HTTPS URL。先定位头像 img，再读取 src，避免页面
- * 上其它图片或属性顺序变化造成误匹配。
+ * 从 t.me 公开主页提取头像 HTTPS URL。优先使用头像 class；语义 meta 回退
+ * 只有在页面身份与目标 username 完全匹配时才启用，避免误取挑战页分享图。
  */
-export function extractAvatarUrlFromProfileHtml(html: string): string | undefined {
-  const imgTagMatch = /<img[^>]*class="[^"]*tgme_page_photo_image[^"]*"[^>]*>/.exec(html);
-  const srcMatch = imgTagMatch?.[0].match(/src="([^"]+)"/);
-  const photoUrl: string | undefined = srcMatch?.[1];
-  return photoUrl?.startsWith("https://") ? photoUrl : undefined;
+export function extractAvatarUrlFromProfileHtml(html: string, expectedUsername?: string): string | undefined {
+  const tags: ParsedHtmlTag[] = parseRelevantHtmlTags(html);
+  for (const { name, attributes } of tags) {
+    if (name !== "img" || !hasAttributeToken(attributes, "class", "tgme_page_photo_image")) continue;
+    const photoUrl: URL | undefined = parseHttpsUrl(attributes.get("src"));
+    if (photoUrl) return photoUrl.href;
+  }
+
+  const normalizedUsername: string | undefined = normalizePublicUsername(expectedUsername);
+  if (!normalizedUsername || !hasMatchingProfileIdentity(tags, normalizedUsername)) return undefined;
+  for (const metaKind of ["og:image", "twitter:image"] as const) {
+    for (const { name, attributes } of tags) {
+      if (name !== "meta" || !isMetaKind(attributes, metaKind)) continue;
+      const photoUrl: URL | undefined = parseHttpsUrl(attributes.get("content"));
+      if (photoUrl) return photoUrl.href;
+    }
+  }
+  return undefined;
 }
 
 async function resolvePublicUsernameFromChat(targetId: number, isChannel: boolean): Promise<PublicUsernameLookupResult> {
@@ -87,7 +220,7 @@ export async function fetchAvatarFromWebProfile(username: string): Promise<Uint8
       return null;
     }
 
-    const photoUrl: string | undefined = extractAvatarUrlFromProfileHtml(html);
+    const photoUrl: string | undefined = extractAvatarUrlFromProfileHtml(html, username);
     if (!photoUrl) {
       logger.error(`No profile photo found on t.me page for @${username}`);
       return null;

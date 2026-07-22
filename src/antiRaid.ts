@@ -3,8 +3,11 @@ import type { Context } from "grammy";
 import type { ChatMember, Message } from "@grammyjs/types";
 import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "./infra/storage/stateStore";
 import { answerCallbackQuery } from "./infra/telegram/actions";
+import { joinVerificationApi } from "./infra/telegram/client";
+import { restoreLockdownInvitePermission } from "./infra/telegram/lockdownPermissions";
 import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
 import { registerChatTeardown } from "./infra/chatTeardown";
+import { RESTORE_RETRY_MS } from "./consts/antiRaid/lockdown";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid/verification";
 import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "./consts/antiRaid/protocol";
 import type { FlushResult } from "./consts/lifecycle";
@@ -16,10 +19,13 @@ import { flushDiskIO, onDiskIORespawn, onVerificationPersisted, postDiskIO } fro
 import {
   activeVerificationSnapshots,
   antiRaidRuntimeState,
+  emergencyLockdownRecoveries,
+  emergencyLockdownRecoveryRuntime,
   pendingLockdownPersistence,
   pendingVerificationDeletes,
   persistedLockdownFingerprints,
   persistedVerificationRevisions,
+  type EmergencyLockdownRecovery,
   type PersistedLockdownFingerprint,
 } from "./cache/antiRaid";
 import type { AdoptableLockdown, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent } from "./types/antiRaid";
@@ -31,16 +37,17 @@ const antiRaidBarrier = createFlushBarrier({ timeoutMs: ANTI_RAID_BARRIER_TIMEOU
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
  * ——验证窗口、超时踢人、按钮应答、入群计数、私密模式的触发/恢复、
  * 私密模式期间的删公告 + 踢人——全部在独立的 Bun Worker
- * （src/workers/antiRaidWorker.ts）里执行；主线程只从 grammY 更新里
- * 提取出无状态的事件投递过去，不发起任何 Telegram API 调用，让更新
- * 调度不被入群守卫的突发 API 流量抢占。postMessage 按 FIFO 送达，
- * 同一次入群「先 join、后 message/callback」的先后顺序在 Worker 侧
- * 保持不变。
+ * （src/workers/antiRaidWorker.ts）里执行；正常路径下主线程只从 grammY
+ * 更新里提取出无状态的事件投递过去，不发起 Telegram API 调用，让更新
+ * 调度不被入群守卫的突发 API 流量抢占。唯一例外是 Worker 耗尽重建预算
+ * 后的紧急解锁：主线程只接管已经持久化在镜像里的邀请权限恢复。
+ * postMessage 按 FIFO 送达，同一次入群「先 join、后 message/callback」的
+ * 先后顺序在 Worker 侧保持不变。
  *
  * 主线程唯一持有的私密模式状态是各群 ChatState.lockdown 字段
- * （infra/storage/stateStore.ts 持有、随 state.json 持久化），业务判定一概不读它，只用于两条恢复路径的
- * adopt 重放：Worker 崩溃重启后交给新 Worker，以及整个进程重启后由
- * initAntiRaid 交回——权限限制已实际落在群上，不重放就永远无人解锁。
+ * （infra/storage/stateStore.ts 持有、随 state.json 持久化），业务判定一概
+ * 不读它，只用于 Worker/进程重建时的 adopt 重放，以及 supervisor 放弃
+ * 自愈后的主线程紧急恢复——权限限制已实际落在群上，恢复 owner 不能丢。
  *
  * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
  * 待验证纯数据由主线程镜像并转投唯一 Disk I/O Worker 的当日增量 JSON：
@@ -129,6 +136,122 @@ function persistCurrentLockdown(chatId: number): void {
     });
 }
 
+function finishEmergencyLockdownRecovery(chatId: number, recovery: EmergencyLockdownRecovery): void {
+  if (recovery.retryTimer !== null) {
+    clearTimeout(recovery.retryTimer);
+    recovery.retryTimer = null;
+  }
+  if (emergencyLockdownRecoveries.get(chatId) === recovery) {
+    emergencyLockdownRecoveries.delete(chatId);
+  }
+}
+
+function runEmergencyLockdownRecovery(chatId: number, recovery: EmergencyLockdownRecovery): void {
+  if (
+    emergencyLockdownRecoveryRuntime.stopped ||
+    emergencyLockdownRecoveries.get(chatId) !== recovery ||
+    recovery.inFlight !== null
+  ) return;
+
+  const task: Promise<void> = (async (): Promise<void> => {
+    const before: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
+    if (before === undefined || !fingerprintMatches(before, recovery.fingerprint)) {
+      finishEmergencyLockdownRecovery(chatId, recovery);
+      return;
+    }
+    try {
+      await restoreLockdownInvitePermission({
+        chatId,
+        originalPermissions: recovery.originalPermissions,
+        api: joinVerificationApi,
+      });
+      if (
+        emergencyLockdownRecoveryRuntime.stopped ||
+        emergencyLockdownRecoveries.get(chatId) !== recovery
+      ) {
+        finishEmergencyLockdownRecovery(chatId, recovery);
+        return;
+      }
+      const current: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
+      if (current === undefined || !fingerprintMatches(current, recovery.fingerprint)) {
+        logger.warn(
+          `Emergency anti-raid restore for chat ${chatId} completed after its lockdown intent changed; ` +
+          "leaving the newer state untouched."
+        );
+        finishEmergencyLockdownRecovery(chatId, recovery);
+        return;
+      }
+      persistedLockdownFingerprints.delete(chatId);
+      if (clearChatStateField(chatId, "lockdown")) {
+        saveStateInBackground("emergency anti-raid unlock");
+        antiRaidRuntimeState.persistenceVersion++;
+      }
+      logger.log(`Emergency anti-raid permission restore completed for chat ${chatId}.`);
+      finishEmergencyLockdownRecovery(chatId, recovery);
+    } catch (error: unknown) {
+      const current: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
+      if (
+        emergencyLockdownRecoveryRuntime.stopped ||
+        current === undefined ||
+        !fingerprintMatches(current, recovery.fingerprint) ||
+        emergencyLockdownRecoveries.get(chatId) !== recovery
+      ) {
+        finishEmergencyLockdownRecovery(chatId, recovery);
+        return;
+      }
+      logger.error(
+        `Emergency anti-raid permission restore failed for chat ${chatId}; ` +
+        `retrying in ${RESTORE_RETRY_MS / 1000}s:`,
+        error
+      );
+      recovery.retryTimer = setTimeout(() => {
+        recovery.retryTimer = null;
+        runEmergencyLockdownRecovery(chatId, recovery);
+      }, RESTORE_RETRY_MS);
+      recovery.retryTimer.unref();
+    }
+  })();
+  recovery.inFlight = task;
+  void task.finally(() => {
+    if (recovery.inFlight === task) recovery.inFlight = null;
+  });
+}
+
+function startEmergencyLockdownRecovery(chatId: number, record: LockdownRecord): void {
+  const fingerprint: PersistedLockdownFingerprint = lockdownFingerprint(record);
+  const existing: EmergencyLockdownRecovery | undefined = emergencyLockdownRecoveries.get(chatId);
+  if (existing !== undefined) {
+    if (
+      existing.fingerprint.phase === fingerprint.phase &&
+      existing.fingerprint.intentId === fingerprint.intentId &&
+      existing.fingerprint.expiresAt === fingerprint.expiresAt
+    ) return;
+    finishEmergencyLockdownRecovery(chatId, existing);
+  }
+  const recovery: EmergencyLockdownRecovery = {
+    fingerprint,
+    originalPermissions: { ...record.originalPermissions },
+    retryTimer: null,
+    inFlight: null,
+  };
+  emergencyLockdownRecoveries.set(chatId, recovery);
+  runEmergencyLockdownRecovery(chatId, recovery);
+}
+
+function stopEmergencyLockdownRecoveries(): void {
+  emergencyLockdownRecoveryRuntime.stopped = true;
+  for (const recovery of emergencyLockdownRecoveries.values()) {
+    if (recovery.retryTimer !== null) {
+      clearTimeout(recovery.retryTimer);
+      recovery.retryTimer = null;
+    }
+  }
+  // Telegram 请求本身可能永久悬挂，停机不能越过生命周期预算无限等待。
+  // 已关闸且清空 owner；迟到的成功/失败都会在 run 中停止，不再修改 state
+  // 或重新安排 timer。state 保留 lockdown，下一进程可幂等恢复权限。
+  emergencyLockdownRecoveries.clear();
+}
+
 const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
   url: new URL("./workers/antiRaidWorker.ts", import.meta.url).href,
   label: "Anti-raid guard Worker",
@@ -199,7 +322,7 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
   },
   onGiveUp: () => {
     antiRaidBarrier.settleAll("failed");
-    abandonLockdowns();
+    recoverAbandonedLockdowns();
   },
 });
 
@@ -309,19 +432,18 @@ onVerificationPersisted((reply) => {
   }
 });
 
-/**
- * 自愈放弃后，还挂着的私密模式已无人恢复。主线程只做投递不碰 Telegram API，
- * 救不了这些群的权限，只能在日志里点名。ChatState.lockdown 特意不清：
- * 重启进程后 initAntiRaid 会重放给新 Worker，自动把权限恢复回去；不重启
- * 就只能由管理员手动恢复（自愈已放弃，进程内不会再有人读这份记录）。
- */
-function abandonLockdowns(): void {
-  const abandoned = collectActiveLockdowns();
+/** Worker 自愈放弃后，由主线程独立接管仍挂着的邀请权限恢复。 */
+function recoverAbandonedLockdowns(): void {
+  const abandoned: number[] = [];
+  for (const [chatId, chatState] of getAllChatStates()) {
+    if (chatState.lockdown === undefined) continue;
+    abandoned.push(chatId);
+    startEmergencyLockdownRecovery(chatId, chatState.lockdown);
+  }
   if (abandoned.length === 0) return;
   logger.error(
-    `Nobody is left to lift lockdown mode for these chats; restart the bot process (it restores permissions automatically) ` +
-    `or have an admin re-enable member invites manually: ` +
-    abandoned.map((l) => l.chatId).join(", ")
+    "Anti-raid Worker gave up self-healing; main-thread emergency permission recovery started for chats: " +
+    abandoned.join(", ")
   );
 }
 
@@ -335,6 +457,7 @@ export function initAntiRaid(): void {
   if (antiRaidRuntimeState.initialized) return;
   antiRaidRuntimeState.initialized = true;
   antiRaidRuntimeState.persistenceVersion = 0;
+  emergencyLockdownRecoveryRuntime.stopped = false;
   persistedLockdownFingerprints.clear();
   for (const [chatId, chatState] of getAllChatStates()) {
     if (chatState.lockdown !== undefined) {
@@ -357,10 +480,11 @@ export function deactivateAntiRaidChat(chatId: number): void {
 }
 
 /** 停机时终止 Worker；验证/lockdown 的 write-ahead 镜像已在主线程持有。 */
-export function terminateAntiRaid(): Promise<void> {
+export async function terminateAntiRaid(): Promise<void> {
   antiRaidBarrier.settleAll("failed");
   antiRaidRuntimeState.initialized = false;
-  return terminateAntiRaidWorker();
+  stopEmergencyLockdownRecoveries();
+  await terminateAntiRaidWorker();
 }
 
 /** Disk I/O 启动恢复完成后、Anti-Raid Worker 初始化前灌入主线程镜像。 */

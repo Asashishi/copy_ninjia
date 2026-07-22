@@ -1,6 +1,7 @@
 import { logger } from "../../infra/logger";
 import type { ChatPermissions } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "../../infra/telegram";
+import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
 import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaid/lockdown";
 import { LinkedQueue } from "../../libs/linkedQueue";
@@ -228,16 +229,10 @@ function commitApplyLockdown(chatId: number, originalPermissions: ChatPermission
 function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissions): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
-      const chat = await joinVerificationApi.getChat(chatId);
-      if (!("permissions" in chat) || !chat.permissions) throw new Error("getChat response missing permissions");
-      const currentPermissions: ChatPermissions = chat.permissions;
-      // Lockdown 只拥有 invite 字段；锁定期间管理员修改的媒体、投票等权限
-      // 全部以当前值为准。若管理员已主动重新开启邀请，也视为显式覆盖并保留。
-      const restoredInvite: boolean = currentPermissions.can_invite_users === true ||
-        originalPermissions.can_invite_users === true;
-      await joinVerificationApi.setChatPermissions(chatId, {
-        ...currentPermissions,
-        can_invite_users: restoredInvite,
+      await restoreLockdownInvitePermission({
+        chatId,
+        originalPermissions,
+        api: joinVerificationApi,
       });
       dispatchLockdown(chatId, { type: "restoreResult", ok: true });
     } catch (error: unknown) {

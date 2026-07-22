@@ -31,6 +31,13 @@ async function syncDirectory(path: string): Promise<void> {
   }
 }
 
+/** rename 后同步涉及的目录项；用于把损坏文件持久隔离到同目录唯一路径。 */
+export async function durableRename(sourcePath: string, destinationPath: string): Promise<void> {
+  await rename(sourcePath, destinationPath);
+  await syncDirectory(destinationPath);
+  if (dirname(sourcePath) !== dirname(destinationPath)) await syncDirectory(sourcePath);
+}
+
 function syncDirectorySync(path: string): void {
   const fd: number = openSync(dirname(path), "r");
   try {
@@ -62,8 +69,7 @@ export async function atomicWriteText(path: string, content: string): Promise<vo
   }
 
   try {
-    await rename(tmpPath, path);
-    await syncDirectory(path);
+    await durableRename(tmpPath, path);
   } catch (error: unknown) {
     await unlink(tmpPath).catch(() => undefined);
     throw error;

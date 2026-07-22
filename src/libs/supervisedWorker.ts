@@ -30,7 +30,7 @@ export interface SupervisedWorkerOptions<TMessage, TEvent> {
   /** 新实例顶上后重放状态（如 aiChat 重放 init、antiRaid 重放 adopt）。
    *  FIFO 保证这里 post 的消息先于此后的一切投递到达新 Worker。 */
   onRespawn?: (post: (message: TMessage) => void) => void;
-  /** 放弃自愈时的额外收尾（如 antiRaid 清空并点名镜像里的私密模式）。 */
+  /** 放弃自愈时的额外收尾（如 antiRaid 启动主线程紧急权限恢复）。 */
   onGiveUp?: () => void;
 }
 
