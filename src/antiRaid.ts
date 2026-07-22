@@ -567,7 +567,8 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
 }
 
 /**
- * 消息事件的投递入口，在 index.ts 里以中间件形式挂在所有命令处理器之前
+ * 消息事件的投递入口，在 app/registerHandlers.ts 里以中间件形式挂在所有
+ * 命令处理器之前
  * ——这样待验证用户发的命令消息（/copy 之类）也会被追踪，超时踢人时
  * 一并清理，不给刷群脚本留「刷命令就删不掉」的空子。职责：在群组未隐藏
  * `new_chat_members`/`left_chat_member` 服务消息时顺带捕获它们（以便这些

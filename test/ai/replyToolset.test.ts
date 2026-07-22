@@ -5,7 +5,7 @@ import { buildCharacterTypo, pickTypoCorrectionMode } from "../../src/ai/utils/t
 let nextMessageId: number = 100;
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
 const deleteMessageMock = mock(async (..._args: unknown[]): Promise<boolean> => true);
-const setMessageReactionMock = mock((..._args: unknown[]): void => {});
+const setMessageReactionMock = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const sendStickerMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
 const sleepMock = mock(async (..._args: unknown[]): Promise<void> => {});
 const realTelegram = await import("../../src/infra/telegram");
@@ -27,7 +27,7 @@ mock.module("../../src/libs/sleep", () => ({
   sleep: sleepMock,
 }));
 
-const { SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
+const { ADD_REACTION_TOOL, SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
 const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../src/consts/aiChat/prompts/tools");
 const { createReplyToolset } = await import("../../src/ai/tools/replyToolset");
 
@@ -36,6 +36,7 @@ beforeEach(() => {
   sendMessageMock.mockClear();
   deleteMessageMock.mockClear();
   setMessageReactionMock.mockClear();
+  setMessageReactionMock.mockImplementation(async (): Promise<boolean> => true);
   sendStickerMock.mockClear();
   sleepMock.mockClear();
 });
@@ -63,6 +64,54 @@ test("工具集真实注册 googleSearch，并同时提供函数行动工具", a
   expect(toolset.tools[0]?.googleSearch).toEqual({});
   expect(toolset.tools[1]?.functionDeclarations?.length).toBeGreaterThan(0);
   expect(toolset.definitions.map((definition) => definition.name)).not.toContain("delete_own_message");
+});
+
+describe("add_reaction 成功动作计数", () => {
+  function buildContext() {
+    return {
+      chatId: -100800,
+      replyToMessageId: 10,
+      imageGenerationRequested: true,
+      bypassImageGenerationCooldown: false,
+      chatAction: {
+        current: () => "idle" as const,
+        set: mock((..._args: unknown[]): void => {}),
+        settle: mock(async (): Promise<void> => {}),
+      },
+      stickerLock: { tryAcquire: () => true, release: () => {} },
+      roundHasTypo: false,
+      isActive: () => true,
+      onMessageSent: mock((..._args: unknown[]): void => {}),
+      onStickerSent: mock((..._args: unknown[]): void => {}),
+      onImageSent: mock((..._args: unknown[]): void => {}),
+    };
+  }
+
+  test("Telegram 反应成功后才返回成功并占用一个动作", async () => {
+    const toolset = await createReplyToolset(buildContext());
+
+    const result = JSON.parse(await toolset.execute(ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
+
+    expect(result).toEqual({ success: true });
+    expect(setMessageReactionMock).toHaveBeenCalledWith({ chatId: -100800, messageId: 10, emoji: "👍" });
+    expect(toolset.actionsUsed()).toBe(1);
+  });
+
+  test("Telegram 反应失败不占动作，也不消耗成功反应限额", async () => {
+    setMessageReactionMock
+      .mockImplementationOnce(async (): Promise<boolean> => false)
+      .mockImplementationOnce(async (): Promise<boolean> => true);
+    const toolset = await createReplyToolset(buildContext());
+
+    const failed = JSON.parse(await toolset.execute(ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
+    expect(failed.error).toContain("Failed to set reaction");
+    expect(toolset.actionsUsed()).toBe(0);
+
+    const retried = JSON.parse(await toolset.execute(ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
+    expect(retried).toEqual({ success: true });
+    expect(setMessageReactionMock).toHaveBeenCalledTimes(2);
+    expect(toolset.actionsUsed()).toBe(1);
+  });
 });
 
 test("回复提示明确要求所有可见文本经 send_message，最终响应不得夹带正文", () => {

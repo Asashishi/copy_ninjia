@@ -67,7 +67,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
     expect(await actions.sendSticker(-1001, "file", api)).toBe(12);
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBe(13);
-    await expect(actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).resolves.toBeUndefined();
+    expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(true);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
     expect(await actions.kickChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.banChatMember(-1001, 7, api)).toBe(true);
@@ -88,7 +88,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", api })).resolves.toBeUndefined();
     expect(await actions.sendSticker(-1001, "file", api)).toBeUndefined();
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBeUndefined();
-    await expect(actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).resolves.toBeUndefined();
+    expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(false);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(false);
     expect(await actions.kickChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.banChatMember(-1001, 7, api)).toBe(false);

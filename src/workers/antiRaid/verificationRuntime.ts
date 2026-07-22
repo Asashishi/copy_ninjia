@@ -331,7 +331,6 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
           userId,
           label: effect.label,
           targetMessageId: effect.targetMessageId,
-          inCommentThread: effect.inCommentThread,
         });
         break;
       case "sendWelcome": {
@@ -387,14 +386,6 @@ async function runVerificationEffects(chatId: number, userId: number, effects: V
           `an admin may need to manually re-invite them if this was a false positive.`
         );
         break;
-      case "restartVerifyTimer": {
-        const entry = verificationEntries.get(verificationKey(chatId, userId));
-        if (entry?.state.kind === "pending") {
-          if (entry.timer !== undefined) clearTimeout(entry.timer);
-          entry.timer = startVerificationTimer(chatId, userId, entry.state);
-        }
-        break;
-      }
     }
   }
 }
@@ -470,29 +461,20 @@ function sendVerificationReminder({
   sendReminderMessage({ chatId, userId, reminderKind: "original", text: reminderText, replyToMessageId: undefined });
 }
 
-/**
- * 把带验证按钮的提醒以「回复 TA 那条消息」的形式补发一份（楼中楼场景按钮
- * 在频道侧可见可点，普通发言场景回复会给 TA 推通知）。
- */
+/** 把带验证按钮的提醒回复到待验证成员刚发出的普通群消息，确保 TA 收到通知。 */
 function sendReplyReminder({
   chatId,
   userId,
   label,
   targetMessageId,
-  inCommentThread,
 }: {
   chatId: number;
   userId: number;
   label: string;
   targetMessageId: number;
-  inCommentThread: boolean;
 }): void {
-  const reminderText: string = inCommentThread
-    ? `喂，${label}，本天才瞧见你在评论区冒泡了。新来的杂鱼规矩要懂：` +
-      `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
-      `不然留言全删、人也一脚踢出去哦♡`
-    : `喂，${label}，话都说上了，下面的验证按钮倒是点一下啊杂鱼。` +
-      `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
+  const reminderText: string = `喂，${label}，话都说上了，下面的验证按钮倒是点一下啊杂鱼。` +
+    `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
   sendReminderMessage({
     chatId,
     userId,

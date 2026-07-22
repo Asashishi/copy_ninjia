@@ -19,7 +19,7 @@ import { sweepRecentComments } from "./antiRaid/recentComments";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
- * 主线程（src/auto/message/ / index.ts → antiRaid.ts 代理）只做事件投递。
+ * 主线程（app/registerHandlers.ts → antiRaid.ts 代理）只做事件投递。
  *
  * 本文件是两台状态机（src/states/verification.ts / lockdown.ts）的解释器
  * 入口：具体解释逻辑分别在 antiRaid/verificationRuntime.ts（入群验证）与

@@ -215,18 +215,12 @@ function handleTrackedMessage(
   state.reminderSuperseded = true;
 
   const effects: VerificationEffect[] = [];
-  // 楼中楼：TA 在频道侧此刻才看得到按钮，验证计时重新给满；普通发言不重置。
-  // 排在列表最前——解释器按序执行且会 await 删除调用，重置不能被限流队列拖后。
-  if (event.inCommentThread) {
-    state.expiresAt = event.now + VERIFICATION_TIMEOUT_MS;
-    effects.push({ kind: "restartVerifyTimer" });
-  }
   // 补发提醒排在删旧提醒之前：解释器对 deleteMessage 是 await 的，中间会让出
   // 事件循环，若先执行删除，补发提醒真正发出时可能已经隔了一段时间——其间
   // 状态可能被交错到达的其他投递替换/重建，捕获到错误的记录（回填打进新
   // 记录、或对已离群/已豁免成员发出过期提醒）。发提醒本身不 await，紧跟在
   // 状态转移的同一 tick 内同步执行，不受后面的 await 影响。
-  effects.push({ kind: "sendReplyReminder", label: state.label, targetMessageId: event.messageId, inCommentThread: event.inCommentThread });
+  effects.push({ kind: "sendReplyReminder", label: state.label, targetMessageId: event.messageId });
   if (state.reminderMessageId !== undefined) {
     // 原提醒被取代，立刻删除（顺手从待清理列表去掉，免得过期清理时再对它
     // 多打一次注定失败的删除调用）。

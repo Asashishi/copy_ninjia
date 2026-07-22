@@ -24,7 +24,8 @@ type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCop
  *
  * 检查通过后会在同一个同步执行栈里立刻写入 globalCopyState.lastCopyTime 占住
  * 冷却槽，中间不经过任何 await：grammY 按群并发处理更新（不同群互不排队，见
- * index.ts 的 sequentialize），若"检查"和"占用"分成两步、中间跨了 await，
+ * app/registerHandlers.ts 的 sequentialize），若"检查"和"占用"分成两步、
+ * 中间跨了 await，
  * 两个几乎同时抵达的不同群命令就可能都读到"未冷却"从而一起放行，全局冷却
  * 形同虚设。调用方后续如果发现这次尝试并不会真正触发复制（解析目标失败、
  * 已经在复读别人等），必须调用 releaseCopyCooldownClaim 撤销占用，否则无效

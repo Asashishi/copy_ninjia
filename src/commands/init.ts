@@ -8,7 +8,8 @@ import { teardownChatRuntime } from "../infra/botAdmin";
 /**
  * 处理 /init enable|disable 指令：按群开关机器人是否处理这个群的更新（见
  * ChatState.isInitEnabled，缺省未初始化）。禁用/未初始化时，这个群的更新在
- * index.ts 最前端的网关中间件处直接丢弃，不做任何监听/复读/AI 相关工作
+ * app/registerHandlers.ts 最前端的网关中间件处直接丢弃，不做任何监听/
+ * 复读/AI 相关工作
  * ——仅 SUPER_ADMIN_USER_ID 本人可用，不走 PRIVILEGED_USERS_ID 白名单，与
  * /ai_chat /ja_copy 共用同一批权限。
  */

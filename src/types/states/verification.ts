@@ -116,7 +116,7 @@ export type VerificationEffect =
   | { kind: "deleteMessage"; messageId: number }
   | { kind: "kickMember" }
   | { kind: "sendReminder"; label: string; isBot: boolean }
-  | { kind: "sendReplyReminder"; label: string; targetMessageId: number; inCommentThread: boolean }
+  | { kind: "sendReplyReminder"; label: string; targetMessageId: number }
   | { kind: "sendWelcome"; variant: "verified" | "vouchedBot" | "channelComment"; targetLabel: string; fromLabel?: string; anchorMessageId?: number }
   | { kind: "answerCallback"; callbackQueryId: string; reply: "ok" | "invalid" | "notYourButton" | "notYourBotButton" }
   | { kind: "deleteReminders"; reminderMessageId?: number; replyReminderMessageId?: number }
@@ -125,8 +125,7 @@ export type VerificationEffect =
   | { kind: "retractJoinCount"; joinedAt: number }
   | { kind: "recheckInviter"; inviterId: number; snapshot: ExpelSnapshot }
   | { kind: "expel"; snapshot: ExpelSnapshot }
-  | { kind: "expelFlood"; snapshot: ExpelSnapshot }
-  | { kind: "restartVerifyTimer" };
+  | { kind: "expelFlood"; snapshot: ExpelSnapshot };
 
 export interface VerificationTransition {
   /** undefined = 删除；同一引用 = 原地更新。 */

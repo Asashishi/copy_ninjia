@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-639_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-91.8%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-676_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-92.2%25-2ea44f?style=flat-square" alt="Coverage"></a>
 </p>
 
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
@@ -333,7 +333,7 @@ flowchart TD
 <tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code></td></tr>
 <tr><td>待验证成员</td><td><code>memory/anti-raid/</code></td><td>当日 JSON 按 <code>chatId:userId</code> 键增量追加；普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件</td></tr>
 <tr><td>error 日志</td><td><code>logs/</code></td><td>Disk I/O Worker 统一批量追加</td></tr>
-<tr><td>运行实例</td><td><code>bot.lock</code></td><td>原子维护的多 Bot 进程注册表</td></tr>
+<tr><td>运行实例</td><td><code>bot.lock</code></td><td>原子维护的数据目录单实例 owner 锁</td></tr>
 </table>
 
 > [!WARNING]
@@ -367,11 +367,11 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 
 <table align="center" width="100%">
   <tr>
-    <td align="center" width="20%">🚀 <b>639</b><br/>测试全部通过</td>
-    <td align="center" width="20%">📂 <b>101</b><br/>测试文件</td>
-    <td align="center" width="20%">🔬 <b>2,517</b><br/>断言总数</td>
-    <td align="center" width="20%">🎯 <b>90.06%</b><br/>函数覆盖率</td>
-    <td align="center" width="20%">📈 <b>91.82%</b><br/>行覆盖率</td>
+    <td align="center" width="20%">🚀 <b>676</b><br/>测试全部通过</td>
+    <td align="center" width="20%">📂 <b>103</b><br/>测试文件</td>
+    <td align="center" width="20%">🔬 <b>2,647</b><br/>断言总数</td>
+    <td align="center" width="20%">🎯 <b>90.43%</b><br/>函数覆盖率</td>
+    <td align="center" width="20%">📈 <b>92.17%</b><br/>行覆盖率</td>
   </tr>
 </table>
 
@@ -386,7 +386,7 @@ bun run check
 
 - **严格检查**：项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查。
 - **覆盖率口径**：`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。
-- **当前主干实测**：639 个测试跨 101 个文件全部通过（2,517 次断言），函数覆盖率 **90.06%**、行覆盖率 **91.82%**——全源码计入分母口径，不是只统计被测文件。
+- **当前主干实测**：676 个测试跨 103 个文件全部通过（2,647 次断言），函数覆盖率 **90.43%**、行覆盖率 **92.17%**——全源码计入分母口径，不是只统计被测文件。
 - **代码放置约定**：新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
 
 ---

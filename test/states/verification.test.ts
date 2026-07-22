@@ -178,11 +178,10 @@ describe("trackedMessage", () => {
     expect(state.reminderMessageId).toBeUndefined();
     expect(state.reminderSuperseded).toBe(true);
     expect(state.welcomeAnchorMessageId).toBe(40);
-    // 补发提醒排在删旧提醒之前：解释器对 deleteMessage 是 await 的，发提醒
-    // 排在后面会被拖到删除落地之后才真正执行，期间状态可能已被替换（见
-    // review-findings R1-R3）。
+    // 补发提醒排在删旧提醒之前：解释器会 await deleteMessage；若顺序反过来，
+    // 删除等待期间状态可能被其它投递替换，导致过期提醒回填到新记录。
     expect(effects).toEqual([
-      { kind: "sendReplyReminder", label: "杂鱼A", targetMessageId: 40, inCommentThread: false },
+      { kind: "sendReplyReminder", label: "杂鱼A", targetMessageId: 40 },
       { kind: "deleteMessage", messageId: 30 },
     ]);
   });

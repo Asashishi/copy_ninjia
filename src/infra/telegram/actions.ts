@@ -130,12 +130,14 @@ export interface SetMessageReactionParams {
   api?: Api;
 }
 
-/** 设置一个标准 emoji 反应，覆盖机器人在该消息上已有的反应。 */
-export async function setMessageReaction({ chatId, messageId, emoji, api = bot.api }: SetMessageReactionParams): Promise<void> {
+/** 设置一个标准 emoji 反应，覆盖机器人在该消息上已有的反应；仅 API 落地成功时返回 true。 */
+export async function setMessageReaction({ chatId, messageId, emoji, api = bot.api }: SetMessageReactionParams): Promise<boolean> {
   try {
     await api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }]);
+    return true;
   } catch (error: unknown) {
     logApiError("set message reaction", error);
+    return false;
   }
 }
 
