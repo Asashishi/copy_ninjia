@@ -1,6 +1,7 @@
 import type { Message } from "@grammyjs/types";
-import { isReplyToSelf, resolveMentionFacts, type MentionFacts } from "./facts";
-import type { DirectMediaTrigger } from "./triggerPolicy";
+import { isReplyToSelf, resolveMentionFacts, resolveReplyReference, type MentionFacts } from "./facts";
+import type { DirectTrigger } from "./triggerPolicy";
+import type { AiReplyReference } from "../../types/aiChat/protocol";
 
 export interface BotIdentity {
   id: number;
@@ -15,11 +16,11 @@ export interface MessageTriggerContext {
   isQuiet: boolean;
   aiReplyProbability: number;
   repliedTo?: Message;
-  isReplyToBot: boolean;
+  replyReference?: AiReplyReference;
   isMentioned: boolean;
   hasOtherMention: boolean;
   repliesToSelf: boolean;
-  directMediaTrigger?: DirectMediaTrigger;
+  directTrigger?: DirectTrigger;
 }
 
 interface CreateMessageTriggerContextParams {
@@ -40,8 +41,8 @@ export function createMessageTriggerContext({
   const isReplyToBot: boolean = !!repliedTo && repliedTo.from?.id === bot.id;
   // 两个提及事实一次遍历解析（见 facts.ts 的 resolveMentionFacts）。
   const mentionFacts: MentionFacts = resolveMentionFacts(message, bot.id, bot.username);
-  const directMediaTrigger: DirectMediaTrigger | undefined = isReplyToBot
-    ? { reason: "reply", repliedBotText: repliedTo?.text }
+  const directTrigger: DirectTrigger | undefined = isReplyToBot
+    ? { reason: "reply" }
     : mentionFacts.isMentioned
     ? { reason: "mention" }
     : undefined;
@@ -53,10 +54,10 @@ export function createMessageTriggerContext({
     isQuiet,
     aiReplyProbability,
     repliedTo,
-    isReplyToBot,
+    replyReference: resolveReplyReference(message),
     isMentioned: mentionFacts.isMentioned,
     hasOtherMention: mentionFacts.hasOtherMention,
     repliesToSelf: isReplyToSelf(message),
-    directMediaTrigger,
+    directTrigger,
   };
 }

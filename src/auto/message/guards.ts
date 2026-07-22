@@ -25,6 +25,7 @@ export function recordSelfInlineResult(message: Message, bot: BotIdentity): void
     firstName: bot.firstName,
     lastName: "",
     username: bot.username,
+    messageId: message.message_id,
     text: stripLuckReceipt(message.text),
   });
 }

@@ -11,6 +11,7 @@ mock.module("../../../src/workers/aiChat/compaction", () => ({
 }));
 
 const { pushBufferedMessage } = await import("../../../src/workers/aiChat/rollingMemory");
+const { buildBufferedMessage, sanitizeReplyReference } = await import("../../../src/workers/aiChat/bufferedMessage");
 const {
   chatBuffers,
   chatLastActivityTimes,
@@ -37,6 +38,59 @@ afterAll(() => {
 });
 
 describe("AI rolling-memory capacity", () => {
+  test("统一构造器保留 message_id 并清洗发送者和回复引用", () => {
+    expect(buildBufferedMessage({
+      chatId: -1001,
+      senderId: 1,
+      firstName: "Alice\nA",
+      lastName: "",
+      username: "@alice",
+      messageId: 10,
+      replyTo: {
+        messageId: 9,
+        id: 2,
+        firstName: "Bob",
+        lastName: "",
+        text: "原文\n第二行",
+      },
+    }, "当前\n消息", 0)).toEqual({
+      messageId: 10,
+      id: 1,
+      firstName: "Alice A",
+      lastName: "",
+      username: "alice",
+      text: "当前 消息",
+      replyTo: {
+        messageId: 9,
+        id: 2,
+        firstName: "Bob",
+        lastName: "",
+        text: "原文 第二行",
+      },
+      at: expect.any(String),
+    });
+  });
+
+  test("回复引用按单行清洗并去掉 username 的多余 @", () => {
+    expect(sanitizeReplyReference({
+      messageId: 9,
+      id: 2,
+      firstName: "Bob\nBuilder",
+      lastName: "",
+      username: "@@bob_dev",
+      text: "第一行\n第二行",
+      quote: "第二行\n末尾",
+    })).toEqual({
+      messageId: 9,
+      id: 2,
+      firstName: "Bob Builder",
+      lastName: "",
+      username: "bob_dev",
+      text: "第一行 第二行",
+      quote: "第二行 末尾",
+    });
+  });
+
   test("LRU 淘汰优先跳过仍有回复轮次在途的最老群", () => {
     for (let index: number = 0; index < AI_MEMORY_MAX_CHATS; index++) {
       const chatId: number = -10_000 - index;

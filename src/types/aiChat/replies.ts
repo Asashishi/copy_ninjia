@@ -3,12 +3,13 @@ import type { ToolDefinition } from "../tools";
 import type { StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../stickers/tools";
 import type { ChatActionControl } from "./chatAction";
 import type { ImageGenerationReference } from "./protocol";
+import type { BufferedReplyReference } from "./memory";
 
 /** 同群并发位占满时排队补跑的直接触发快照。 */
 export interface QueuedReplyTrigger {
   triggerSenderId: number;
   replyToMessageId: number;
-  repliedBotText?: string;
+  replyTo?: BufferedReplyReference;
   /** 是否允许模型根据本轮直接触发内容决定调用图片工具。 */
   imageGenerationRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;

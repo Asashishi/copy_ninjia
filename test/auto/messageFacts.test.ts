@@ -8,6 +8,7 @@ import {
   mentionsOtherUser,
   pickAnimationVisionSource,
   pickPhotoFile,
+  resolveReplyReference,
   resolveSpeaker,
 } from "../../src/auto/message/facts";
 
@@ -76,6 +77,34 @@ describe("auto/message/facts", () => {
       reply_to_message: message({ message_id: 2, sender_chat: anonymousSender }),
     }))).toBe(true);
     expect(isReplyToSelf(message({ from: undefined, reply_to_message: message({ message_id: 2, from: undefined }) }))).toBe(false);
+  });
+
+  test("回复引用保留原发送者、原文和 Telegram 选中的精确片段", () => {
+    expect(resolveReplyReference(message({
+      text: "@test_bot 这句呢",
+      reply_to_message: message({
+        message_id: 40,
+        from: { id: 456, is_bot: false, first_name: "Bob", username: "bob_dev" },
+        text: "第一句\n第二句",
+      }),
+      quote: { text: "第二句", position: 4, is_manual: true },
+    }))).toEqual({
+      messageId: 40,
+      id: 456,
+      firstName: "Bob",
+      lastName: "",
+      username: "bob_dev",
+      text: "第一句\n第二句",
+      quote: "第二句",
+    });
+
+    expect(resolveReplyReference(message({
+      reply_to_message: message({
+        message_id: 41,
+        photo: [{ file_id: "photo", file_unique_id: "photo-u", width: 10, height: 10 }],
+        caption: "看这里",
+      }),
+    }))?.text).toBe("[图片] 看这里");
   });
 
   test("图片档位选最大未超限项，全超限时退回最小档", () => {

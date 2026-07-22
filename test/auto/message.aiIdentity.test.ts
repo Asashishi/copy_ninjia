@@ -58,7 +58,53 @@ describe("AI 缓存发送者 username 传递", () => {
       firstName: "Alice",
       lastName: "Tester",
       username: "alice_dev",
+      messageId: 8,
       text: "hello @bob",
+    });
+  });
+
+  test("@ 机器人同时回复别人时把原消息引用一并交给 AI", async () => {
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 81,
+        date: 1,
+        chat: { id: -100800, type: "supergroup", title: "Test Group" },
+        from: { id: 123, is_bot: false, username: "alice_dev", first_name: "Alice", last_name: "Tester" },
+        text: "@test_bot 你怎么看",
+        entities: [{ type: "mention", offset: 0, length: 9 }],
+        reply_to_message: {
+          message_id: 80,
+          date: 1,
+          chat: { id: -100800, type: "supergroup", title: "Test Group" },
+          from: { id: 456, is_bot: false, username: "bob_dev", first_name: "Bob" },
+          text: "TypeScript 比 JavaScript 简单",
+        },
+      },
+    } as any);
+
+    expect(recordChatMessageMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      messageId: 81,
+      text: "@test_bot 你怎么看",
+      replyTo: {
+        messageId: 80,
+        id: 456,
+        firstName: "Bob",
+        lastName: "",
+        username: "bob_dev",
+        text: "TypeScript 比 JavaScript 简单",
+      },
+    });
+    expect(generateAndSendReplyMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      triggerSenderId: 123,
+      replyToMessageId: 81,
+      imageGenerationRequested: true,
     });
   });
 
@@ -80,6 +126,7 @@ describe("AI 缓存发送者 username 传递", () => {
       firstName: "News Channel",
       lastName: "",
       username: "news_channel",
+      messageId: 9,
       text: "channel post",
     });
   });

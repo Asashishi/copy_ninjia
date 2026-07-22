@@ -21,7 +21,8 @@
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
+import type { AiMemorySnapshot, BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
+import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types/diskIO/storage";
 import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../types/stickers/catalog";
 import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
@@ -64,18 +65,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isBufferedMessage(value: unknown): value is BufferedMessage {
+function isAiSpeakerSnapshot(value: unknown): value is Record<string, unknown> & AiSpeakerSnapshot {
   return isRecord(value) &&
     typeof value.id === "number" && Number.isFinite(value.id) &&
     typeof value.firstName === "string" &&
     typeof value.lastName === "string" &&
-    (value.username === undefined || typeof value.username === "string") &&
+    (value.username === undefined || typeof value.username === "string");
+}
+
+function isBufferedReplyReference(value: unknown): value is BufferedReplyReference {
+  return isAiSpeakerSnapshot(value) &&
+    typeof value.messageId === "number" && Number.isFinite(value.messageId) &&
     typeof value.text === "string" &&
+    (value.quote === undefined || typeof value.quote === "string");
+}
+
+function isBufferedMessage(value: unknown): value is BufferedMessage {
+  return isAiSpeakerSnapshot(value) &&
+    (value.messageId === undefined || (typeof value.messageId === "number" && Number.isFinite(value.messageId))) &&
+    typeof value.text === "string" &&
+    (value.replyTo === undefined || isBufferedReplyReference(value.replyTo)) &&
     typeof value.at === "string";
 }
 
-/** 只接受当前 version=1 的完整结构；username 是向后兼容的可选扩展，旧条目
- * 没有它也合法，不需要改版本或迁移旧文件。其余版本变更由部署前手工迁移。 */
+/** 只接受当前 version=1 的完整结构；username/replyTo 是向后兼容的可选扩展，
+ * 旧条目没有它们也合法，不需要改版本或迁移旧文件。其余版本变更由部署前手工迁移。 */
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;

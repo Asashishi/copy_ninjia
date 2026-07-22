@@ -49,6 +49,7 @@ export async function handleProactiveMessageActions({
         firstName: bot.firstName,
         lastName: "",
         username: bot.username,
+        messageId: sentMessageId,
         text: BATH_TRIGGER_REPLY_TEXT,
       });
     }

@@ -24,7 +24,6 @@ export interface ReplyRoundRequest {
   chatId: number;
   triggerSenderId: number;
   replyToMessageId: number;
-  repliedBotText?: string;
   imageGenerationRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;
   isRandomTrigger: boolean;
@@ -43,7 +42,6 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     chatId,
     triggerSenderId,
     replyToMessageId,
-    repliedBotText,
     imageGenerationRequested,
     imageGenerationReference,
     isRandomTrigger,
@@ -87,7 +85,6 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
     try {
       const userContent: string | null = buildUserContent(chatId, selfInfo, {
-        repliedBotText,
         isRandomTrigger,
         mediaComment,
         queuedTrigger,
@@ -117,6 +114,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
                 firstName: selfInfo.first_name,
                 lastName: "",
                 username: selfInfo.username,
+                messageId,
                 text,
               });
             }
@@ -130,6 +128,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
                 firstName: selfInfo.first_name,
                 lastName: "",
                 username: selfInfo.username,
+                messageId,
                 text: stickerDescription,
               });
             }
@@ -143,6 +142,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
                 firstName: selfInfo.first_name,
                 lastName: "",
                 username: selfInfo.username,
+                messageId,
                 text: imageDescription,
               });
             }

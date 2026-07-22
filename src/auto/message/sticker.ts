@@ -1,12 +1,13 @@
 import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../aiChat";
 import { describeStickerForContext, pickStickerVisionSource } from "../../ai/stickers/sets";
 import { resolveSpeaker } from "./facts";
+import { buildAiRecordContext } from "./recordContext";
 import type { MessageTriggerContext } from "./triggerContext";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 
 /** 记录贴纸元数据/视觉描述并调度直接回复或随机评价。 */
 export function handleStickerMessage(context: MessageTriggerContext): boolean {
-  const { message, chatId, directMediaTrigger } = context;
+  const { message, chatId, directTrigger } = context;
   if (!message.sticker) return false;
 
   const speaker = resolveSpeaker(message);
@@ -14,19 +15,14 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
   const visionSource = pickStickerVisionSource(message.sticker);
   if (!visionSource) {
     recordChatMessage({
-      chatId,
-      senderId: speaker.id,
-      firstName: speaker.firstName,
-      lastName: speaker.lastName,
-      username: speaker.username,
+      ...buildAiRecordContext(context, speaker),
       text: fallbackText,
     });
-    if (!directMediaTrigger) return false;
+    if (!directTrigger) return false;
     generateAndSendReply({
       chatId,
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
-      repliedBotText: directMediaTrigger.repliedBotText,
       imageGenerationRequested: true,
     });
     return true;
@@ -35,21 +31,16 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
   const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
   recordChatMedia({
     kind: "sticker",
-    chatId,
-    senderId: speaker.id,
-    firstName: speaker.firstName,
-    lastName: speaker.lastName,
-    username: speaker.username,
+    ...buildAiRecordContext(context, speaker),
     caption: "",
     fileId: visionSource.fileId,
     fileUniqueId: visionSource.fileUniqueId,
     width: visionSource.width,
     height: visionSource.height,
-    messageId: message.message_id,
     commentOnResolve: claimedRandomTrigger,
-    imageGenerationRequested: directMediaTrigger !== undefined,
+    imageGenerationRequested: directTrigger !== undefined,
     stickerFallbackText: fallbackText,
-    directTrigger: directMediaTrigger,
+    directTrigger,
   });
-  return directMediaTrigger !== undefined || commentOnResolveCandidate;
+  return directTrigger !== undefined || commentOnResolveCandidate;
 }

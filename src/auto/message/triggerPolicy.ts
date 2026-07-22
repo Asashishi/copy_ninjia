@@ -1,14 +1,14 @@
 import { userReplyTriggerTimes } from "../../cache/auto";
 import { USER_REPLY_TRIGGER_COOLDOWN_MS } from "../../consts/auto";
+import type { AiDirectTriggerReason } from "../../types/aiChat/protocol";
 import type { MessageTriggerContext } from "./triggerContext";
 
-export interface DirectMediaTrigger {
-  reason: "reply" | "mention";
-  repliedBotText?: string;
+export interface DirectTrigger {
+  reason: AiDirectTriggerReason;
 }
 
 export interface RandomTriggerConditions {
-  directTrigger?: DirectMediaTrigger;
+  directTrigger?: DirectTrigger;
   isQuiet: boolean;
   hasOtherMention: boolean;
   repliesToSelf: boolean;
@@ -30,7 +30,7 @@ export function shouldAttemptRandomTrigger(conditions: RandomTriggerConditions):
  *  claimed 决定 recordChatMedia 的 commentOnResolve。 */
 export function claimRandomMediaTrigger(context: MessageTriggerContext, speakerId: number): { candidate: boolean; claimed: boolean } {
   const candidate: boolean = shouldAttemptRandomTrigger({
-    directTrigger: context.directMediaTrigger,
+    directTrigger: context.directTrigger,
     isQuiet: context.isQuiet,
     hasOtherMention: context.hasOtherMention,
     repliesToSelf: context.repliesToSelf,

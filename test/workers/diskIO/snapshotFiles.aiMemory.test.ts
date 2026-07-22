@@ -64,6 +64,35 @@ test("新版可选 username 会随 version=1 AI 记忆恢复并回写", () => {
   expect(readFileSync(join(aiDir, "-100126.json"), "utf8")).toBe(bytes);
 });
 
+test("回复对象快照会随 version=1 AI 记忆恢复并回写", () => {
+  const snapshotWithReply = {
+    ...currentSnapshot,
+    buffer: [
+      currentSnapshot.buffer[0]!,
+      {
+        ...currentSnapshot.buffer[1]!,
+        messageId: 71,
+        replyTo: {
+          messageId: 70,
+          id: 111,
+          firstName: "太郎",
+          lastName: "山田",
+          username: "taro_dev",
+          text: "第一句 第二句",
+          quote: "第二句",
+        },
+      },
+    ],
+  };
+  const bytes: string = JSON.stringify(snapshotWithReply, null, 2);
+  writeFileSync(join(aiDir, "-100130.json"), bytes);
+
+  const recovered = recoverAiMemories();
+  const json = recovered.get(-100130)!;
+  expect(JSON.parse(json)).toEqual(snapshotWithReply);
+  expect(json).toBe(bytes);
+});
+
 test("缺少当前必填字段时拒绝整次恢复，防止后续快照覆盖待迁移文件", () => {
   writeFileSync(join(aiDir, "-100124.json"), JSON.stringify({
     ...currentSnapshot,
@@ -77,6 +106,15 @@ test("username 若存在则必须为字符串", () => {
   writeFileSync(join(aiDir, "-100127.json"), JSON.stringify({
     ...currentSnapshot,
     buffer: [{ ...currentSnapshot.buffer[0]!, username: 123 }],
+  }));
+
+  expect(() => recoverAiMemories()).toThrow("migrate it manually before starting");
+});
+
+test("replyTo 若存在则必须是完整合法的回复对象", () => {
+  writeFileSync(join(aiDir, "-100131.json"), JSON.stringify({
+    ...currentSnapshot,
+    buffer: [{ ...currentSnapshot.buffer[0]!, replyTo: { messageId: 7, text: "缺发送者" } }],
   }));
 
   expect(() => recoverAiMemories()).toThrow("migrate it manually before starting");

@@ -25,17 +25,23 @@ describe("AI 回复触发队列", () => {
     expect(triggerKindFor(false, { ...media, directTriggerReason: "reply" })).toBe("mediaDirect");
   });
 
-  test("文本触发快照读取滚动缓存尾部并截断正文", () => {
+  test("文本触发快照读取滚动缓存尾部，保留回复对象并截断正文", () => {
     const messages = new LinkedQueue<BufferedMessage>();
     messages.push({ id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" });
-    messages.push({ id: 2, firstName: "Alice", lastName: "Chen", text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS + 20), at: "" });
+    messages.push({
+      id: 2,
+      firstName: "Alice",
+      lastName: "Chen",
+      text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS + 20),
+      replyTo: { messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" },
+      at: "",
+    });
     chatBuffers.set(-1001, messages);
 
     pushReplyTrigger({
       chatId: -1001,
       triggerSenderId: 2,
       replyToMessageId: 88,
-      repliedBotText: "机器人原话",
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "reply-photo", fileUniqueId: "reply-photo-unique", width: 1280, height: 960 },
     });
@@ -43,7 +49,7 @@ describe("AI 回复触发队列", () => {
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({
       replyToMessageId: 88,
       triggerSenderId: 2,
-      repliedBotText: "机器人原话",
+      replyTo: { messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" },
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "reply-photo", fileUniqueId: "reply-photo-unique", width: 1280, height: 960 },
       senderName: "Alice Chen",
@@ -56,7 +62,6 @@ describe("AI 回复触发队列", () => {
       chatId: -1001,
       triggerSenderId: 3,
       replyToMessageId: 89,
-      repliedBotText: undefined,
       imageGenerationRequested: true,
       mediaTrigger: {
         kind: "animation",
@@ -64,13 +69,14 @@ describe("AI 回复触发队列", () => {
         description: "挥手",
         triggerText: "[GIF：挥手] @bot 把它画成像素风",
         directTriggerReason: "mention",
+        replyTo: { messageId: 71, id: 5, firstName: "Dave", lastName: "", text: "[图片]" },
       },
     });
 
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({
       replyToMessageId: 89,
       triggerSenderId: 3,
-      repliedBotText: undefined,
+      replyTo: { messageId: 71, id: 5, firstName: "Dave", lastName: "", text: "[图片]" },
       imageGenerationRequested: true,
       senderName: "Bob",
       text: "[GIF：挥手] @bot 把它画成像素风",

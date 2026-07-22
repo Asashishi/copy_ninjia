@@ -1,4 +1,3 @@
-import { formatTokyoTime } from "../../libs/time";
 import { sanitizeInline } from "../../libs/text";
 import { displayBufferedMessageName } from "../../ai/utils/chatTranscript";
 import { getCatalogEntry } from "../../ai/stickers/catalog";
@@ -7,6 +6,7 @@ import { dirtyMemoryChats } from "../../cache/aiChat/memory";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import type { AiRecordMediaMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
 import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";
+import { buildBufferedMessage } from "./bufferedMessage";
 import { pushBufferedMessage } from "./rollingMemory";
 import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent } from "./replyPipeline";
 
@@ -58,21 +58,16 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
   if (msg.kind === "sticker") {
     const catalogEntry = getCatalogEntry(msg.fileUniqueId);
     if (catalogEntry) {
-      const entry: BufferedMessage = {
-        id: msg.senderId,
-        firstName: sanitizeInline(msg.firstName),
-        lastName: sanitizeInline(msg.lastName),
-        ...(msg.username ? { username: sanitizeInline(msg.username).replace(/^@+/, "") } : {}),
-        text: composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption),
-        at: formatTokyoTime(Date.now()),
-      };
+      const entry: BufferedMessage = buildBufferedMessage(
+        msg,
+        composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption)
+      )!;
       pushBufferedMessage(msg.chatId, entry);
       if (msg.directTrigger) {
         generateAndSendReply({
           chatId: msg.chatId,
           triggerSenderId: msg.senderId,
           replyToMessageId: msg.messageId,
-          repliedBotText: msg.directTrigger.repliedBotText,
           isRandomTrigger: false,
           imageGenerationRequested: msg.imageGenerationRequested,
           ...(imageGenerationReference ? { imageGenerationReference } : {}),
@@ -82,6 +77,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
             description: catalogEntry.description,
             triggerText: entry.text,
             directTriggerReason: msg.directTrigger.reason,
+            ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
           },
         });
       } else if (msg.commentOnResolve) {
@@ -89,7 +85,6 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           chatId: msg.chatId,
           triggerSenderId: msg.senderId,
           replyToMessageId: msg.messageId,
-          repliedBotText: undefined,
           isRandomTrigger: false,
           imageGenerationRequested: false,
           mediaComment: {
@@ -104,14 +99,10 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
     }
   }
 
-  const entry: BufferedMessage = {
-    id: msg.senderId,
-    firstName: sanitizeInline(msg.firstName),
-    lastName: sanitizeInline(msg.lastName),
-    ...(msg.username ? { username: sanitizeInline(msg.username).replace(/^@+/, "") } : {}),
-    text: composeMediaText(pendingPlaceholderFor(msg.kind), sanitizedCaption),
-    at: formatTokyoTime(Date.now()),
-  };
+  const entry: BufferedMessage = buildBufferedMessage(
+    msg,
+    composeMediaText(pendingPlaceholderFor(msg.kind), sanitizedCaption)
+  )!;
   pushBufferedMessage(msg.chatId, entry);
   // describeMedia 内部兜住一切异常只返回 null，这条异步链不会 reject；
   // 同一份媒体按 file_unique_id 去重，不同媒体则经过全局有界执行器，避免
@@ -128,7 +119,6 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         chatId: msg.chatId,
         triggerSenderId: msg.senderId,
         replyToMessageId: msg.messageId,
-        repliedBotText: msg.directTrigger.repliedBotText,
         isRandomTrigger: false,
         imageGenerationRequested: msg.imageGenerationRequested,
         ...(imageGenerationReference ? { imageGenerationReference } : {}),
@@ -138,6 +128,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           description: description ?? replyFallbackDescriptionFor(msg),
           triggerText: entry.text,
           directTriggerReason: msg.directTrigger.reason,
+          ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
         },
       });
     } else if (msg.commentOnResolve && description) {
@@ -145,7 +136,6 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         chatId: msg.chatId,
         triggerSenderId: msg.senderId,
         replyToMessageId: msg.messageId,
-        repliedBotText: undefined,
         isRandomTrigger: false,
         imageGenerationRequested: false,
         mediaComment: {

@@ -45,6 +45,7 @@ export function notifyRateLimited(chatId: number, now: number, generation: numbe
         firstName: botInfoState.current.first_name,
         lastName: "",
         username: botInfoState.current.username,
+        messageId: sentMessageId,
         text: RATE_LIMIT_NOTICE_TEXT,
       });
     }

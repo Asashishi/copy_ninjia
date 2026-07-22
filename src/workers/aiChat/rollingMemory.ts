@@ -1,7 +1,5 @@
 import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
-import { formatTokyoTime } from "../../libs/time";
-import { sanitizeInline } from "../../libs/text";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, AI_MEMORY_MAX_CHATS, COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../consts/aiChat/memory";
 import {
   chatBuffers,
@@ -18,6 +16,7 @@ import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
 import { activeReplyCounts } from "../../cache/aiChat/replies";
 import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
 import type { AiMemoryDeletedEvent, AiMemoryEvent, AiRecordMessage } from "../../types/aiChat/protocol";
+import { buildBufferedMessage } from "./bufferedMessage";
 import { scheduleRotation } from "./compaction";
 
 declare const self: Worker;
@@ -66,31 +65,17 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage): voi
  * 记录一条群消息到该群的滚动缓存，供之后拼装成对话上下文喂给模型。
  * 文本与昵称都会被压成单行（见 sanitizeInline，防转录注入）。
  * @param chatId 群聊 ID。
- * @param id 发言人 id（真实用户 id，或频道马甲/频道帖的频道 id）。
+ * @param senderId 发言人 id（真实用户 id，或频道马甲/频道帖的频道 id）。
  * @param firstName 发言人 first_name（频道则是 title）。
  * @param lastName 发言人 last_name（频道则为空）。
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
+ * @param messageId 这条 Telegram 消息的 message_id，供回复引用精确关联。
+ * @param replyTo 当前消息显式回复的原消息快照；非回复消息省略。
  * @param text 消息文本。
  */
-export function recordChatMessage({
-  chatId,
-  senderId,
-  firstName,
-  lastName,
-  username,
-  text,
-}: Omit<AiRecordMessage, "type">): void {
-  const sanitized: string = sanitizeInline(text);
-  if (!sanitized) return;
-  const sanitizedUsername: string = sanitizeInline(username ?? "").replace(/^@+/, "");
-  pushBufferedMessage(chatId, {
-    id: senderId,
-    firstName: sanitizeInline(firstName),
-    lastName: sanitizeInline(lastName),
-    ...(sanitizedUsername ? { username: sanitizedUsername } : {}),
-    text: sanitized,
-    at: formatTokyoTime(Date.now()),
-  });
+export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void {
+  const entry: BufferedMessage | null = buildBufferedMessage(message, message.text);
+  if (entry) pushBufferedMessage(message.chatId, entry);
 }
 
 /** 删除某群全部可持久化记忆及其衍生运行时状态。 */

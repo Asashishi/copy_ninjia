@@ -3,14 +3,11 @@ import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
 import { visibleSenderChat } from "../../users/visibleSender";
 import type { TelegramVisionSource } from "../../types/media";
+import type { AiReplyReference } from "../../types/aiChat/protocol";
+import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 
 /** 一条消息在 AI 转录中使用的发送者身份。 */
-export interface MessageSpeaker {
-  id: number;
-  firstName: string;
-  lastName: string;
-  username?: string;
-}
+export type MessageSpeaker = AiSpeakerSnapshot;
 
 /**
  * 解析发言人的稳定身份字段。sender_chat 优先于 from，使频道马甲和匿名管理
@@ -99,6 +96,44 @@ export function isReplyToSelf(message: Message): boolean {
   if (!repliedTo) return false;
   const senderId: number | undefined = visibleSenderId(message);
   return senderId !== undefined && senderId === visibleSenderId(repliedTo);
+}
+
+/** 把被回复的 Telegram 消息转换成模型可读的单行正文；视觉内容会在原消息
+ * 自己进入缓存时异步获得描述，这里的类型标签负责旧消息已滑出缓存时兜底。 */
+function replyReferenceText(message: Message): string {
+  if (typeof message.text === "string") return message.text;
+  const caption: string = typeof message.caption === "string" ? ` ${message.caption}` : "";
+  if (message.photo) return `[图片]${caption}`;
+  if (message.sticker) return `[贴纸${message.sticker.emoji ? `：${message.sticker.emoji}` : ""}]`;
+  if (message.animation) return `[GIF]${caption}`;
+  if (message.video) return `[视频]${caption}`;
+  if (message.video_note) return "[视频消息]";
+  if (message.voice) return `[语音]${caption}`;
+  if (message.audio) return `[音频]${caption}`;
+  if (message.document) return `[文件${message.document.file_name ? `：${message.document.file_name}` : ""}]${caption}`;
+  if (message.poll) return `[投票：${message.poll.question}]`;
+  if (message.dice) return `[骰子：${message.dice.emoji} ${message.dice.value}]`;
+  if (message.contact) return `[联系人：${message.contact.first_name}${message.contact.last_name ? ` ${message.contact.last_name}` : ""}]`;
+  if (message.venue) return `[地点：${message.venue.title}]`;
+  if (message.location) return "[位置]";
+  return "[非文本消息]";
+}
+
+/** 提取当前消息的显式回复关系。Telegram 已在 reply_to_message 中附带原消息，
+ * 因此无需额外 API 请求；quote 则保留用户选中的精确引用片段。 */
+export function resolveReplyReference(message: Message): AiReplyReference | undefined {
+  const repliedTo: Message | undefined = message.reply_to_message;
+  if (!repliedTo) return undefined;
+  const speaker = resolveSpeaker(repliedTo);
+  return {
+    messageId: repliedTo.message_id,
+    id: speaker.id,
+    firstName: speaker.firstName,
+    lastName: speaker.lastName,
+    ...(speaker.username ? { username: speaker.username } : {}),
+    text: replyReferenceText(repliedTo),
+    ...(message.quote?.text ? { quote: message.quote.text } : {}),
+  };
 }
 
 /**

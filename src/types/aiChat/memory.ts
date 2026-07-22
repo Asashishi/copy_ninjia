@@ -1,12 +1,22 @@
 /** AI 群聊逐字缓存与持久化记忆 schema。 */
 
-export interface BufferedMessage {
-  id: number;
-  firstName: string;
-  lastName: string;
-  /** Telegram 公开 username（不含 @）；旧快照或无公开名时省略。 */
-  username?: string;
+import type { AiSpeakerSnapshot } from "./speaker";
+
+/** 一条 Telegram 回复所指向的原消息快照。可选字段保证旧记忆快照兼容。 */
+export interface BufferedReplyReference extends AiSpeakerSnapshot {
+  messageId: number;
+  /** 原消息正文；媒体消息使用可读的类型占位和 caption。 */
   text: string;
+  /** 用户在 Telegram 中只选中一段原文引用时的精确片段。 */
+  quote?: string;
+}
+
+export interface BufferedMessage extends AiSpeakerSnapshot {
+  /** Telegram message_id；旧快照没有时省略。 */
+  messageId?: number;
+  text: string;
+  /** 当前消息显式回复的原消息；旧快照和非回复消息省略。 */
+  replyTo?: BufferedReplyReference;
   /** 已格式化的东京时间；旧快照未知时为空串。 */
   at: string;
 }

@@ -182,10 +182,12 @@ export async function terminateAiChat(): Promise<void> {
  * 记录一条群消息到该群在 Worker 侧的滚动缓存，供之后拼装成对话上下文喂给
  * 模型。文本与昵称在 Worker 侧会被压成单行（防转录注入）。
  * @param chatId 群聊 ID。
- * @param id 发言人 id（真实用户 id，或频道马甲/频道帖的频道 id）。
+ * @param senderId 发言人 id（真实用户 id，或频道马甲/频道帖的频道 id）。
  * @param firstName 发言人 first_name（频道则是 title）。
  * @param lastName 发言人 last_name（频道则为空）。
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
+ * @param messageId 这条 Telegram 消息的 message_id，供回复引用精确关联。
+ * @param replyTo 当前消息显式回复的原消息快照；非回复消息省略。
  * @param text 消息文本。
  */
 export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void {
@@ -201,6 +203,7 @@ export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void 
  * 后会以「回复那条消息」的形式发一条针对内容的评价。
  * @param kind 媒体类型：photo/sticker/animation，决定占位符/视觉提示词。
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
+ * @param replyTo 当前媒体显式回复的原消息快照；非回复消息省略。
  * @param caption 媒体自带的配文（没有则传空串）。
  * @param fileId 要下载的 file_id（图片是已挑好档位的 photo file_id；贴纸/
  *   GIF 是本体或缩略图，见 auto/message/facts.ts 的素材选择）。
@@ -234,7 +237,6 @@ type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigg
  * 生成与发送流程。fire-and-forget，主线程不等待任何结果。
  * @param chatId 目标群聊。
  * @param replyToMessageId 触发这次回复的消息 ID，回复/@ 触发时用它引用原消息。
- * @param repliedBotText 若是「用户回复机器人」触发，被回复的机器人消息文本。
  * @param imageGenerationRequested 当前触发是否具备图片工具调用资格：仅直接
  *   回复/@机器人为 true；具体是否有生图/修图意图由模型判断。
  * @param imageGenerationReference 当前图片/贴纸或被回复图片/贴纸的 Telegram 短期引用；
@@ -248,7 +250,6 @@ export function generateAndSendReply({
   chatId,
   triggerSenderId,
   replyToMessageId,
-  repliedBotText,
   imageGenerationRequested,
   imageGenerationReference,
   isRandomTrigger = false,
@@ -258,7 +259,6 @@ export function generateAndSendReply({
     chatId,
     triggerSenderId,
     replyToMessageId,
-    repliedBotText,
     isRandomTrigger,
     imageGenerationRequested,
     ...(imageGenerationReference ? { imageGenerationReference } : {}),

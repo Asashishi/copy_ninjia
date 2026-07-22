@@ -76,6 +76,7 @@ describe("AI 媒体触发的生图参考图", () => {
       mediaComment: expect.objectContaining({ triggerText: "[图片：一只戴帽子的猫] @bot 把它画成油画" }),
     }));
     const bufferedEntry = pushBufferedMessage.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(bufferedEntry.messageId).toBe(10);
     expect(bufferedEntry.fileId).toBeUndefined();
     expect(bufferedEntry.fileUniqueId).toBeUndefined();
   });

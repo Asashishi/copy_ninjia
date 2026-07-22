@@ -1,10 +1,22 @@
-import type { BufferedMessage } from "../../types/aiChat/memory";
+import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
+import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import { FALLBACK_SPEAKER_NAME } from "../../consts/auto";
 import { COMPACT_BATCH_SIZE } from "../../consts/aiChat/memory";
 
 /** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
+export function displaySpeakerName(speaker: AiSpeakerSnapshot): string {
+  return [speaker.firstName, speaker.lastName].filter((part: string) => !!part).join(" ").trim() || FALLBACK_SPEAKER_NAME;
+}
+
 export function displayBufferedMessageName(message: BufferedMessage): string {
-  return [message.firstName, message.lastName].filter((part: string) => !!part).join(" ").trim() || FALLBACK_SPEAKER_NAME;
+  return displaySpeakerName(message);
+}
+
+/** 回复关系以内嵌元数据呈现，模型无需靠相邻消息猜测被回复对象。 */
+export function formatReplyReference(reference: BufferedReplyReference): string {
+  const usernameTag: string = reference.username ? ` [username:@${reference.username.replace(/^@+/, "")}]` : "";
+  const quote: string = reference.quote ? `；精确引用片段：「${reference.quote}」` : "";
+  return `（回复 [message_id:${reference.messageId}] [id:${reference.id}]${usernameTag} ${displaySpeakerName(reference)} 的消息：「${reference.text}」${quote}）`;
 }
 
 /**
@@ -13,8 +25,10 @@ export function displayBufferedMessageName(message: BufferedMessage): string {
  * 消息正文里的 @username 认回具体发言人。旧缓存没有 username 时保持原格式。
  */
 export function formatBufferedMessageLine(message: BufferedMessage): string {
+  const messageIdTag: string = message.messageId === undefined ? "" : ` [message_id:${message.messageId}]`;
   const usernameTag: string = message.username ? ` [username:@${message.username.replace(/^@+/, "")}]` : "";
-  return `[${message.at}] [id:${message.id}]${usernameTag} ${displayBufferedMessageName(message)}：${message.text}`;
+  const replyTag: string = message.replyTo ? formatReplyReference(message.replyTo) : "";
+  return `[${message.at}]${messageIdTag} [id:${message.id}]${usernameTag} ${displayBufferedMessageName(message)}${replyTag}：${message.text}`;
 }
 
 /**
@@ -27,7 +41,8 @@ export function buildTieredVerbatimTranscript(messages: BufferedMessage[]): stri
   const earlier: BufferedMessage[] = messages.slice(0, hotStart);
   const hottest: BufferedMessage[] = messages.slice(hotStart);
   const formatInstruction: string =
-    "每行格式为「[年/月/日 时:分:秒] [id:用户ID] [username:@公开用户名] 名字：内容」，其中 username 标记仅在发言人有公开用户名时出现。" +
+    "每行格式为「[年/月/日 时:分:秒] [message_id:消息ID] [id:用户ID] [username:@公开用户名] 名字：内容」，其中 message_id/username 标记在旧记录没有对应信息时省略。" +
+    "若名字后出现「（回复 [message_id:…] … 的消息：「…」）」则表示这条消息明确回复的对象和原文，精确引用片段是用户选中的部分。" +
     "行首方括号里是发送时间（东京时间 UTC+9）；同名的人以 id 区分，正文里的 @用户名用 username 标记映射回具体的人。";
   const earlierBlock: string = earlier.length > 0
     ? "【较早逐字记录（次要背景）】这些记录仍是原文，可信度高于压缩摘要，但判断当前话题和应答对象时应让位于下方最热记忆：\n" +

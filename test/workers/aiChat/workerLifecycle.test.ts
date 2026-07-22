@@ -84,7 +84,7 @@ describe("AI Chat Worker lifecycle", () => {
   test("协议路由覆盖恢复、记录、触发、刷盘与可选记忆清除", () => {
     const messages: AiChatWorkerMessage[] = [
       { type: "init", botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" } },
-      { type: "record", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", username: "alice", text: "hi" },
+      { type: "record", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", username: "alice", messageId: 9, text: "hi" },
       { type: "recordMedia", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", kind: "photo", fileId: "file", messageId: 10 } as unknown as AiChatWorkerMessage,
       {
         type: "trigger",

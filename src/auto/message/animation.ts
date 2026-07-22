@@ -1,11 +1,12 @@
 import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../aiChat";
 import { pickAnimationVisionSource, resolveSpeaker } from "./facts";
+import { buildAiRecordContext } from "./recordContext";
 import type { MessageTriggerContext } from "./triggerContext";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 
 /** 记录 GIF 缩略图描述；无缩略图时退回纯文本上下文。 */
 export function handleAnimationMessage(context: MessageTriggerContext): boolean {
-  const { message, chatId, directMediaTrigger } = context;
+  const { message, chatId, directTrigger } = context;
   if (!message.animation) return false;
 
   const speaker = resolveSpeaker(message);
@@ -13,19 +14,14 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
   const visionSource = pickAnimationVisionSource(message.animation);
   if (!visionSource) {
     recordChatMessage({
-      chatId,
-      senderId: speaker.id,
-      firstName: speaker.firstName,
-      lastName: speaker.lastName,
-      username: speaker.username,
+      ...buildAiRecordContext(context, speaker),
       text: caption ? `[GIF] ${caption}` : "[GIF]",
     });
-    if (!directMediaTrigger) return false;
+    if (!directTrigger) return false;
     generateAndSendReply({
       chatId,
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
-      repliedBotText: directMediaTrigger.repliedBotText,
       imageGenerationRequested: true,
     });
     return true;
@@ -34,20 +30,15 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
   const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
   recordChatMedia({
     kind: "animation",
-    chatId,
-    senderId: speaker.id,
-    firstName: speaker.firstName,
-    lastName: speaker.lastName,
-    username: speaker.username,
+    ...buildAiRecordContext(context, speaker),
     caption,
     fileId: visionSource.fileId,
     fileUniqueId: visionSource.fileUniqueId,
     width: visionSource.width,
     height: visionSource.height,
-    messageId: message.message_id,
     commentOnResolve: claimedRandomTrigger,
-    imageGenerationRequested: directMediaTrigger !== undefined,
-    directTrigger: directMediaTrigger,
+    imageGenerationRequested: directTrigger !== undefined,
+    directTrigger,
   });
-  return directMediaTrigger !== undefined || commentOnResolveCandidate;
+  return directTrigger !== undefined || commentOnResolveCandidate;
 }

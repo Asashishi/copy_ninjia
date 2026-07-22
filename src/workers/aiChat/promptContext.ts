@@ -1,6 +1,5 @@
 import type { LinkedQueue } from "../../libs/linkedQueue";
-import { sanitizeInline } from "../../libs/text";
-import { buildColdMemoryBlock, buildTieredVerbatimTranscript } from "../../ai/utils/chatTranscript";
+import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatReplyReference } from "../../ai/utils/chatTranscript";
 import {
   MAX_SUMMARY_ROUNDS,
   VERBATIM_CONTEXT_MAX,
@@ -9,8 +8,8 @@ import { CHAT_MEMORY_PRIORITY_INSTRUCTION } from "../../consts/aiChat/prompts/me
 import { REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/aiChat/memory";
 import { resolvedTagFor } from "./mediaText";
-import type { BufferedMessage } from "../../types/aiChat/memory";
-import type { AiBotInfo } from "../../types/aiChat/protocol";
+import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
+import type { AiBotInfo, AiDirectTriggerReason } from "../../types/aiChat/protocol";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import type { MediaKind } from "../../types/media";
 
@@ -26,7 +25,9 @@ export interface MediaCommentContext {
   /** 用户是拿这份媒体明确在跟机器人说话（回复机器人，或 caption 里 @ 机器人）：
    *  回复指令改为必回语气（不许已读不回），并发闸打满时按直接触发排队补跑
    *  而非丢弃。 */
-  directTriggerReason?: "reply" | "mention";
+  directTriggerReason?: AiDirectTriggerReason;
+  /** 排队时随触发快照保存，避免原转录条目滑出后丢失回复对象。 */
+  replyTo?: BufferedReplyReference;
 }
 
 /** 按媒体类型给出提示词里要用的名词短语与转录行标签，见 replyInstruction
@@ -50,9 +51,6 @@ function mediaTagHintFor(kind: MediaKind): string {
 
 /** buildUserContent 的可选附加上下文，按需组合，见各字段说明。 */
 interface UserContentOptions {
-  /** 若本次是「用户回复了机器人」，被回复的那条机器人消息文本，作为上下文
-   *  （机器人自己发的消息不会作为更新推送回来，不在缓存里）。 */
-  repliedBotText?: string;
   /** 是否是随机插话触发（见 replyPipeline.ts 的 generateAndSendReply 的
    *  isRandomTrigger）：没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、
    *  要不要称呼对方）由模型自主判断，但必须回应（说话/贴纸/扣反应都算）——
@@ -86,18 +84,15 @@ interface UserContentOptions {
  * @returns 拼好的用户消息内容；缓存为空时返回 null。
  */
 export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: UserContentOptions): string | null {
-  const { repliedBotText, isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo } = options;
+  const { isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
   const recent: BufferedMessage[] = buf.last(VERBATIM_CONTEXT_MAX);
   const transcript: string = buildTieredVerbatimTranscript(recent);
-  const trailingContext: string[] = [];
-  if (repliedBotText) {
-    // 同样压成单行：这段文本虽是机器人自己说过的话，保持转录「一行一条」的
-    // 结构不变即可杜绝任何多行伪造的可能。
-    trailingContext.push(`（你刚才说过：${sanitizeInline(repliedBotText)}）`);
-  }
+  const queuedReplyReference: string = queuedTrigger?.replyTo
+    ? `；那条消息${formatReplyReference(queuedTrigger.replyTo)}`
+    : "";
 
   // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
   // 发言/贴纸/反应全部工具化，做什么、什么顺序由模型自己决定（见
@@ -124,7 +119,7 @@ export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: U
     : mediaComment
     ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
     : queuedTrigger
-    ? `刚才你忙着回别的消息的时候，${queuedTrigger.senderName || "有人"} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」，在聊天记录里能找到对应那行），这条是排队等到现在才轮到处理的。请针对 TA 那条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，就换个说法简短接一句、或至少给 TA 那条消息扣个表情反应表示看到了，别原样重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才你忙着回别的消息的时候，${queuedTrigger.senderName || "有人"} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」${queuedReplyReference}），这条是排队等到现在才轮到处理的。请针对 TA 那条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，就换个说法简短接一句、或至少给 TA 那条消息扣个表情反应表示看到了，别原样重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
     : isRandomTrigger
     ? `群里最新这条消息并没有人在叫你——只是你自己刷到了，想插一嘴：请以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；哪怕话题跟你关系不大，也要留下点回应——一句吐槽或感想都行，实在没话就扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
     : `请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`;
@@ -145,10 +140,6 @@ export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: U
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
   const summaries: string[] = summaryQueue ? summaryQueue.last(MAX_SUMMARY_ROUNDS) : [];
   const summaryBlock: string = buildColdMemoryBlock(summaries);
-  const trailingBlock: string = trailingContext.length > 0
-    ? "\n\n【回复引用补充】\n" + trailingContext.join("\n")
-    : "";
-
   return (
     CHAT_MEMORY_PRIORITY_INSTRUCTION +
     "\n" +
@@ -156,7 +147,6 @@ export function buildUserContent(chatId: number, selfInfo: AiBotInfo, options: U
     "\n\n" +
     summaryBlock +
     transcript +
-    trailingBlock +
     "\n\n" +
     replyInstruction +
     // 不出错的轮次完全不拼这一段——两个分支的提示词严格分开，模型看不到

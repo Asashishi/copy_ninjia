@@ -20,3 +20,5 @@ export const AI_MEMORY_HYDRATE_BUFFER_MAX: number = VERBATIM_CONTEXT_MAX - 1;
 export const AI_MEMORY_MAX_CHATS: number = 100;
 /** 单条摘要硬性字符上限。 */
 export const SUMMARY_MAX_CHARS: number = 500;
+/** 回复引用只保留足以辨认原消息的单行片段，避免重复整条长消息撑大上下文。 */
+export const REPLY_REFERENCE_MAX_CHARS: number = 500;

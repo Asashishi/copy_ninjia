@@ -1,6 +1,7 @@
 import { generateAndSendReply, recordChatMessage } from "../../aiChat";
 import { pickStickerVisionSource } from "../../ai/stickers/sets";
 import { pickPhotoFile, resolveSpeaker } from "./facts";
+import { buildAiRecordContext } from "./recordContext";
 import type { MessageTriggerContext } from "./triggerContext";
 import { shouldAttemptRandomTrigger, tryClaimUserReplyTrigger } from "./triggerPolicy";
 
@@ -11,15 +12,11 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
 
   const speaker = resolveSpeaker(message);
   recordChatMessage({
-    chatId,
-    senderId: speaker.id,
-    firstName: speaker.firstName,
-    lastName: speaker.lastName,
-    username: speaker.username,
+    ...buildAiRecordContext(context, speaker),
     text: message.text,
   });
 
-  if (context.directMediaTrigger) {
+  if (context.directTrigger) {
     // 这里只确认当前消息确实直接叫了机器人；是否包含生图/修图意图由模型
     // 根据本轮消息与工具说明判断，避免关键词正则漏掉自然表达。
     const repliedPhoto = Array.isArray(context.repliedTo?.photo) && context.repliedTo.photo.length > 0
@@ -33,7 +30,6 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       chatId,
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
-      repliedBotText: context.isReplyToBot ? context.repliedTo?.text : undefined,
       imageGenerationRequested: true,
       ...(imageGenerationReference ? { imageGenerationReference } : {}),
     });

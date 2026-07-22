@@ -33,7 +33,6 @@ export function pushReplyTrigger({
   chatId,
   triggerSenderId,
   replyToMessageId,
-  repliedBotText,
   imageGenerationRequested,
   imageGenerationReference,
   mediaTrigger,
@@ -41,7 +40,6 @@ export function pushReplyTrigger({
   chatId: number;
   triggerSenderId: number;
   replyToMessageId: number;
-  repliedBotText: string | undefined;
   imageGenerationRequested: boolean;
   imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
   mediaTrigger?: MediaCommentContext;
@@ -55,7 +53,7 @@ export function pushReplyTrigger({
     queue.push({
       triggerSenderId,
       replyToMessageId,
-      repliedBotText,
+      ...(mediaTrigger.replyTo ? { replyTo: mediaTrigger.replyTo } : {}),
       imageGenerationRequested,
       ...(imageGenerationReference ? { imageGenerationReference } : {}),
       senderName: mediaTrigger.senderName,
@@ -71,7 +69,7 @@ export function pushReplyTrigger({
   queue.push({
     triggerSenderId,
     replyToMessageId,
-    repliedBotText,
+    ...(triggerEntry?.replyTo ? { replyTo: triggerEntry.replyTo } : {}),
     imageGenerationRequested,
     ...(imageGenerationReference ? { imageGenerationReference } : {}),
     senderName: triggerEntry ? displayBufferedMessageName(triggerEntry) : "",

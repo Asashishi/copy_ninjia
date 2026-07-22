@@ -25,6 +25,25 @@ describe("AI 群聊转录身份格式", () => {
     );
   });
 
+  test("显式标出回复对象、原消息和局部引用，不让模型靠相邻上下文猜", () => {
+    expect(formatBufferedMessageLine({
+      ...legacyMessage,
+      messageId: 42,
+      text: "@ninja_bot 你怎么看",
+      replyTo: {
+        messageId: 41,
+        id: 7,
+        firstName: "Bob",
+        lastName: "Builder",
+        username: "bob_dev",
+        text: "第一句 第二句",
+        quote: "第二句",
+      },
+    })).toBe(
+      "[2026/07/17 18:18:42] [message_id:42] [id:42] 千早 愛音（回复 [message_id:41] [id:7] [username:@bob_dev] Bob Builder 的消息：「第一句 第二句」；精确引用片段：「第二句」）：@ninja_bot 你怎么看"
+    );
+  });
+
   test("逐字缓存把最新一个压缩块单列为最热判断标准", () => {
     const messages: BufferedMessage[] = Array.from({ length: COMPACT_BATCH_SIZE + 1 }, (_, index: number) => ({
       ...legacyMessage,
