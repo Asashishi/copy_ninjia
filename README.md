@@ -169,7 +169,7 @@ flowchart TD
 <tr><td>🗜️&nbsp;压缩背压</td><td>每群执行中与排队中的压缩任务合计最多 25 个，API 长时间变慢时有界降级，不无限堆积消息批次</td></tr>
 </table>
 
-人设在 [`prompt/persona.md`](prompt/persona.md)，贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)，心情档位（文案、权重与天气/时段倍率，权重必须是正整数且总和恰好为 100）在 [`config/mood.json`](config/mood.json)。
+基础人设在 [`prompt/persona.md`](prompt/persona.md)；与转录格式、身份标记和回复对象判定耦合的运行时互动规则由代码随 `systemInstruction` 注入。贴纸包和反应集合分别在 [`config/stickers.json`](config/stickers.json) 与 [`config/reactions.json`](config/reactions.json)，心情档位（文案、权重与天气/时段倍率，权重必须是正整数且总和恰好为 100）在 [`config/mood.json`](config/mood.json)。
 
 <p align="right"><sub><a href="#-copy-ninjia">⬆️ 回到顶部</a></sub></p>
 

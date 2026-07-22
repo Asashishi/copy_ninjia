@@ -11,6 +11,7 @@ import {
   REPLY_TEMPERATURE,
 } from "../../consts/aiChat/tools";
 import {
+  CHAT_INTERACTION_INSTRUCTION,
   CHAT_MEMORY_PRIORITY_INSTRUCTION,
   REPLY_CONTEXT_STRUCTURE_INSTRUCTION,
   TIME_AWARENESS_INSTRUCTION,
@@ -103,7 +104,8 @@ export async function callGemini(
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
   // 线程常驻、一跑就是几天，缓存的时间会很快过期。
   const systemPromptPrefix: string =
-    `${SYSTEM_PROMPT}\n\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
+    `${SYSTEM_PROMPT}\n\n${CHAT_INTERACTION_INSTRUCTION}\n\n` +
+    `${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
     `${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
     `${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
   const contents: Content[] = [{

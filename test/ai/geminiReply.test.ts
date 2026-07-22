@@ -1,6 +1,9 @@
 import { beforeEach, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
+import { CHAT_INTERACTION_INSTRUCTION } from "../../src/consts/aiChat/prompts/memory";
 import { MAX_CUSTOM_TOOL_CALLS_PER_REPLY } from "../../src/consts/aiChat/tools";
+import { PERSONA_PATH } from "../../src/consts/paths";
 import type { ReplyPromptSections, ReplyToolset } from "../../src/types/aiChat/replies";
 import type { GeminiRequestResult } from "../../src/ai/gemini";
 
@@ -78,6 +81,7 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   expect(String(firstRequest.config?.systemInstruction)).toContain("绝不能先行动再补查");
   expect(String(firstRequest.config?.systemInstruction)).toContain("三个顺序固定的 text Part");
   expect(String(firstRequest.config?.systemInstruction)).toContain("聊天记忆只分两层仲裁");
+  expect(String(firstRequest.config?.systemInstruction)).toContain(CHAT_INTERACTION_INSTRUCTION);
   expect(String(firstRequest.config?.systemInstruction)).toContain("叠加在基础人设上的今日状态");
   expect((firstRequest.contents as unknown[])[0]).toEqual({
     role: "user",
@@ -89,6 +93,13 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   });
   expect((firstRequest.contents as { role?: string }[]).map((content) => content.role)).toEqual(["user", "model", "user"]);
   expect(execute).toHaveBeenCalledWith("send_message", JSON.stringify({ text: "已核实回复" }));
+});
+
+test("上下文互动协议由代码注入，不混入可编辑的人设文件", () => {
+  expect(CHAT_INTERACTION_INSTRUCTION).toContain("[username:@用户名]");
+  expect(CHAT_INTERACTION_INSTRUCTION).toContain("消息明确回复了你发出的某条消息");
+  expect(CHAT_INTERACTION_INSTRUCTION).toContain("别把别人互相 at 错认成在叫你");
+  expect(readFileSync(PERSONA_PATH, "utf8")).not.toContain("## 上下文与互动规则");
 });
 
 test("累计三次服务端搜索后，后续工具轮移除 googleSearch", async () => {
