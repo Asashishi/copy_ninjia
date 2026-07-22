@@ -63,6 +63,36 @@ describe("AI 缓存发送者 username 传递", () => {
     });
   });
 
+  test("转发文字消息把来源路径一并交给 AI", async () => {
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 82,
+        date: 1,
+        chat: { id: -100800, type: "supergroup", title: "Test Group" },
+        from: { id: 123, is_bot: false, username: "alice_dev", first_name: "Alice", last_name: "Tester" },
+        text: "转来的消息",
+        forward_origin: {
+          type: "channel",
+          date: 1,
+          chat: { id: -100666, type: "channel", title: "东京日报", username: "tokyo_daily" },
+          message_id: 9,
+        },
+      },
+    } as any);
+
+    expect(recordChatMessageMock).toHaveBeenCalledWith({
+      chatId: -100800,
+      senderId: 123,
+      firstName: "Alice",
+      lastName: "Tester",
+      username: "alice_dev",
+      messageId: 82,
+      forwardedFrom: "频道 [id:-100666] [username:@tokyo_daily] 东京日报",
+      text: "转来的消息",
+    });
+  });
+
   test("@ 机器人同时回复别人时把原消息引用一并交给 AI", async () => {
     await handleIncomingMessage({
       me: botInfo,

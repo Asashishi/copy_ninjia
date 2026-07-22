@@ -60,7 +60,7 @@ beforeEach(() => {
 
 describe("AI 媒体触发的生图参考图", () => {
   test("当前图片明确触发生图时，把自身 file_id 只沿本轮触发链传递", async () => {
-    recordChatMedia(photoMessage());
+    recordChatMedia({ ...photoMessage(), forwardedFrom: "频道 [id:-100666] 东京日报" });
     await Promise.resolve();
 
     expect(generateAndSendReply).toHaveBeenCalledWith(expect.objectContaining({
@@ -73,12 +73,17 @@ describe("AI 媒体触发的生图参考图", () => {
         width: 1600,
         height: 900,
       },
-      mediaComment: expect.objectContaining({ triggerText: "[图片：一只戴帽子的猫] @bot 把它画成油画" }),
+      mediaComment: expect.objectContaining({
+        senderId: 7,
+        triggerText: "[图片：一只戴帽子的猫] @bot 把它画成油画",
+        forwardedFrom: "频道 [id:-100666] 东京日报",
+      }),
     }));
     const bufferedEntry = pushBufferedMessage.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(bufferedEntry.messageId).toBe(10);
     expect(bufferedEntry.fileId).toBeUndefined();
     expect(bufferedEntry.fileUniqueId).toBeUndefined();
+    expect(bufferedEntry.forwardedFrom).toBe("频道 [id:-100666] 东京日报");
   });
 
   test("贴纸的可视素材会作为本轮生图参考", async () => {

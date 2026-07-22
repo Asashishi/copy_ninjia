@@ -71,6 +71,7 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage): voi
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param messageId 这条 Telegram 消息的 message_id，供回复引用精确关联。
  * @param replyTo 当前消息显式回复的原消息快照；非回复消息省略。
+ * @param forwardedFrom 当前消息是转发时的来源标注；非转发省略。
  * @param text 消息文本。
  */
 export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void {

@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe("AI 回复触发队列", () => {
   test("按随机、直接媒体和随机媒体分类", () => {
-    const media = { kind: "photo" as const, senderName: "Alice", description: "一张图" };
+    const media = { kind: "photo" as const, senderId: 1, senderName: "Alice", description: "一张图" };
     expect(triggerKindFor(true, undefined)).toBe("random");
     expect(triggerKindFor(true, { ...media, directTriggerReason: "mention" })).toBe("random");
     expect(triggerKindFor(false, undefined)).toBe("direct");
@@ -33,6 +33,7 @@ describe("AI 回复触发队列", () => {
       firstName: "Alice",
       lastName: "Chen",
       text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS + 20),
+      forwardedFrom: "频道 [id:-100666] 东京日报",
       replyTo: { messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" },
       at: "",
     });
@@ -50,6 +51,7 @@ describe("AI 回复触发队列", () => {
       replyToMessageId: 88,
       triggerSenderId: 2,
       replyTo: { messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" },
+      forwardedFrom: "频道 [id:-100666] 东京日报",
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "reply-photo", fileUniqueId: "reply-photo-unique", width: 1280, height: 960 },
       senderName: "Alice Chen",
@@ -65,9 +67,11 @@ describe("AI 回复触发队列", () => {
       imageGenerationRequested: true,
       mediaTrigger: {
         kind: "animation",
+        senderId: 3,
         senderName: "Bob",
         description: "挥手",
         triggerText: "[GIF：挥手] @bot 把它画成像素风",
+        forwardedFrom: "[id:6] Eve",
         directTriggerReason: "mention",
         replyTo: { messageId: 71, id: 5, firstName: "Dave", lastName: "", text: "[图片]" },
       },
@@ -77,6 +81,7 @@ describe("AI 回复触发队列", () => {
       replyToMessageId: 89,
       triggerSenderId: 3,
       replyTo: { messageId: 71, id: 5, firstName: "Dave", lastName: "", text: "[图片]" },
+      forwardedFrom: "[id:6] Eve",
       imageGenerationRequested: true,
       senderName: "Bob",
       text: "[GIF：挥手] @bot 把它画成像素风",

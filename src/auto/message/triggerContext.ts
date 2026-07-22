@@ -1,5 +1,5 @@
 import type { Message } from "@grammyjs/types";
-import { isReplyToSelf, resolveMentionFacts, resolveReplyReference, type MentionFacts } from "./facts";
+import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference, type MentionFacts } from "./facts";
 import type { DirectTrigger } from "./triggerPolicy";
 import type { AiReplyReference } from "../../types/aiChat/protocol";
 
@@ -17,6 +17,8 @@ export interface MessageTriggerContext {
   aiReplyProbability: number;
   repliedTo?: Message;
   replyReference?: AiReplyReference;
+  /** 当前消息本身是转发时的来源标注；非转发省略。 */
+  forwardedFrom?: string;
   isMentioned: boolean;
   hasOtherMention: boolean;
   repliesToSelf: boolean;
@@ -55,6 +57,7 @@ export function createMessageTriggerContext({
     aiReplyProbability,
     repliedTo,
     replyReference: resolveReplyReference(message),
+    forwardedFrom: resolveForwardOrigin(message),
     isMentioned: mentionFacts.isMentioned,
     hasOtherMention: mentionFacts.hasOtherMention,
     repliesToSelf: isReplyToSelf(message),

@@ -53,6 +53,7 @@ describe("AI rolling-memory capacity", () => {
         lastName: "",
         text: "原文\n第二行",
       },
+      forwardedFrom: "[id:789]\nCarol",
     }, "当前\n消息", 0)).toEqual({
       messageId: 10,
       id: 1,
@@ -67,6 +68,7 @@ describe("AI rolling-memory capacity", () => {
         lastName: "",
         text: "原文 第二行",
       },
+      forwardedFrom: "[id:789] Carol",
       at: expect.any(String),
     });
   });
@@ -80,6 +82,7 @@ describe("AI rolling-memory capacity", () => {
       username: "@@bob_dev",
       text: "第一行\n第二行",
       quote: "第二行\n末尾",
+      forwardedFrom: "频道 [id:-100666]\n东京日报",
     })).toEqual({
       messageId: 9,
       id: 2,
@@ -88,6 +91,7 @@ describe("AI rolling-memory capacity", () => {
       username: "bob_dev",
       text: "第一行 第二行",
       quote: "第二行 末尾",
+      forwardedFrom: "频道 [id:-100666] 东京日报",
     });
   });
 

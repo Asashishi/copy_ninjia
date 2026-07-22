@@ -15,5 +15,6 @@ export function buildAiRecordContext(
     ...(speaker.username ? { username: speaker.username } : {}),
     messageId: context.message.message_id,
     ...(context.replyReference ? { replyTo: context.replyReference } : {}),
+    ...(context.forwardedFrom ? { forwardedFrom: context.forwardedFrom } : {}),
   };
 }

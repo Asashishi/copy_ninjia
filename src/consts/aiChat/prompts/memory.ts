@@ -1,4 +1,5 @@
 import { SUMMARY_MAX_CHARS } from "../memory";
+import { FORWARD_TAG_HINT, REPLY_TAG_HINT } from "./transcript";
 
 /** 初始 user Content 内三个 text Part 的可见区块名。Part 才是 SDK 结构边界；
  * 标签同时帮助模型与请求日志中的人工审查者辨认各段职责。 */
@@ -40,6 +41,7 @@ export const CHAT_MEMORY_PRIORITY_INSTRUCTION: string =
 
 export const SUMMARY_SYSTEM_PROMPT: string =
   "你是一个群聊记录压缩器。用户会给你一段群聊转录，每行格式为「[年/月/日 时:分:秒] [id:用户ID] [username:@公开用户名] 名字：内容」，其中 username 标记仅在发言人有公开用户名时出现。行首方括号里是那条消息的发送时间（东京时间），同名的人以 id 区分；正文里出现的 @用户名要用 username 标记映射回具体的人。" +
+  `名字后若有「${REPLY_TAG_HINT}」标注，表示这条消息明确回复的对象和原文。必须按标注所在层级判断转发归属：直接紧跟当前发言人名字、位于回复标注外层的「${FORWARD_TAG_HINT}」，表示当前正文是该发言人转发来的；出现在回复标注内部、紧跟「的消息」之后的「${FORWARD_TAG_HINT}」，只表示被回复的原消息是转发内容，当前正文仍是当前发言人自己写的。摘要里不要把任何转发正文当成转发者自己的话，也不要把被回复原消息的转发来源误套到当前正文。` +
   "请把这段记录压缩成一段简洁的摘要，只挑最要紧的信息，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆；有 username 的关键人物再保留 [username:@xxx]，供后续识别 @ 提及）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
   `摘要正文不得超过 ${SUMMARY_MAX_CHARS} 字，不要展开细节、不要逐条复述。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。`;
 

@@ -93,6 +93,35 @@ test("回复对象快照会随 version=1 AI 记忆恢复并回写", () => {
   expect(json).toBe(bytes);
 });
 
+test("当前消息与回复对象的转发来源会随 version=1 AI 记忆恢复并回写", () => {
+  const snapshotWithForwardPaths = {
+    ...currentSnapshot,
+    buffer: [
+      currentSnapshot.buffer[0]!,
+      {
+        ...currentSnapshot.buffer[1]!,
+        messageId: 73,
+        forwardedFrom: "频道 [id:-100666] 东京日报",
+        replyTo: {
+          messageId: 72,
+          id: 333,
+          firstName: "次郎",
+          lastName: "",
+          text: "另一条转发",
+          forwardedFrom: "[id:444] 三郎",
+        },
+      },
+    ],
+  };
+  const bytes: string = JSON.stringify(snapshotWithForwardPaths, null, 2);
+  writeFileSync(join(aiDir, "-100133.json"), bytes);
+
+  const recovered = recoverAiMemories();
+  const json = recovered.get(-100133)!;
+  expect(JSON.parse(json)).toEqual(snapshotWithForwardPaths);
+  expect(json).toBe(bytes);
+});
+
 test("缺少当前必填字段时拒绝整次恢复，防止后续快照覆盖待迁移文件", () => {
   writeFileSync(join(aiDir, "-100124.json"), JSON.stringify({
     ...currentSnapshot,

@@ -8,7 +8,7 @@ import { buildReplyPromptSections } from "../../../src/workers/aiChat/promptCont
 
 beforeEach(resetAiChatMemoryCache);
 
-test("排队触发独立携带 replyTo，不依赖原消息仍留在滚动缓存", () => {
+test("排队触发独立携带回复对象和转发路径，不依赖原消息仍留在滚动缓存", () => {
   const messages = new LinkedQueue<BufferedMessage>();
   messages.push({
     messageId: 81,
@@ -29,6 +29,7 @@ test("排队触发独立携带 replyTo，不依赖原消息仍留在滚动缓存
       lastName: "",
       text: "被回复的原问题",
     },
+    forwardedFrom: "频道 [id:-100666] [username:@tokyo_daily] 东京日报",
     imageGenerationRequested: false,
     senderName: "Alice",
     text: "@ninja_bot 你怎么看",
@@ -53,6 +54,42 @@ test("排队触发独立携带 replyTo，不依赖原消息仍留在滚动缓存
   expect(sections.currentConversation).toEndWith(`\n[END ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]`);
 
   expect(sections.replyTask).toStartWith(`[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n${REPLY_CONTEXT_SECTION_TEXT.replyTask.header}`);
+  expect(sections.replyTask).toContain("转发路径：「频道 [id:-100666] [username:@tokyo_daily] 东京日报 → [id:1] Alice」");
+  expect(sections.replyTask).toContain("转发正文：「@ninja_bot 你怎么看」");
+  expect(sections.replyTask).not.toContain("TA 说的是：「@ninja_bot 你怎么看」");
   expect(sections.replyTask).toContain("那条消息（回复 [message_id:70] [id:2] Bob 的消息：「被回复的原问题」）");
   expect(sections.replyTask).toEndWith(`\n[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`);
+});
+
+test("媒体特殊回复任务明确标出来源到当前发送者的转发路径", () => {
+  const messages = new LinkedQueue<BufferedMessage>();
+  messages.push({
+    messageId: 82,
+    id: 3,
+    firstName: "Carol",
+    lastName: "Chan",
+    text: "[图片：夜景] @ninja_bot 看这个",
+    forwardedFrom: "[id:4] Dave",
+    at: "2026/07/22 12:01:00",
+  });
+  chatBuffers.set(-1001, messages);
+
+  const sections: ReplyPromptSections = buildReplyPromptSections(
+    -1001,
+    { id: 99, first_name: "Ninja", username: "ninja_bot" },
+    {
+      isRandomTrigger: false,
+      mediaComment: {
+        kind: "photo",
+        senderId: 3,
+        senderName: "Carol Chan",
+        description: "一张城市夜景",
+        forwardedFrom: "[id:4] Dave",
+        directTriggerReason: "mention",
+      },
+      roundHasTypo: false,
+    }
+  )!;
+
+  expect(sections.replyTask).toContain("这份内容是转发来的，转发路径：「[id:4] Dave → [id:3] Carol Chan」");
 });

@@ -8,6 +8,7 @@ import {
   REPLY_CONTEXT_SECTION_NAMES,
   REPLY_CONTEXT_SECTION_TEXT,
 } from "../../consts/aiChat/prompts/memory";
+import { forwardPathTemplate } from "../../consts/aiChat/prompts/transcript";
 import { REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/aiChat/memory";
 import { resolvedTagFor } from "./mediaText";
@@ -21,8 +22,11 @@ import type { MediaKind } from "../../types/media";
  *  "一枚贴纸"/"一个 GIF"）。 */
 export interface MediaCommentContext {
   kind: MediaKind;
+  senderId: number;
   senderName: string;
   description: string;
+  /** 当前媒体是转发时的来源；用于在特殊回复任务中明确来源到转发者的路径。 */
+  forwardedFrom?: string;
   /** 已清洗的媒体转录整行（视觉描述 + caption），供排队快照保留原请求。 */
   triggerText?: string;
   /** 用户是拿这份媒体明确在跟机器人说话（回复机器人，或 caption 里 @ 机器人）：
@@ -50,6 +54,11 @@ function mediaNounFor(kind: MediaKind): string {
  *  格式保证不会各改各的漂移。 */
 function mediaTagHintFor(kind: MediaKind): string {
   return resolvedTagFor(kind, "…");
+}
+
+/** 用稳定 id 标出转发者，方向固定为「原始来源 → 当前群发送者」。 */
+function forwardPathFor(origin: string | undefined, senderId: number, senderName: string): string {
+  return origin ? forwardPathTemplate(origin, `[id:${senderId}] ${senderName}`) : "";
 }
 
 /** buildReplyPromptSections 的可选附加上下文，按需组合，见各字段说明。 */
@@ -99,6 +108,19 @@ export function buildReplyPromptSections(
   const queuedReplyReference: string = queuedTrigger?.replyTo
     ? `；那条消息${formatReplyReference(queuedTrigger.replyTo)}`
     : "";
+  const mediaForwardPath: string = mediaComment
+    ? forwardPathFor(mediaComment.forwardedFrom, mediaComment.senderId, mediaComment.senderName)
+    : "";
+  const mediaForwardNotice: string = mediaForwardPath ? `这份内容是转发来的，${mediaForwardPath}；` : "";
+  const queuedSenderName: string = queuedTrigger?.senderName || "有人";
+  const queuedForwardPath: string = queuedTrigger
+    ? forwardPathFor(queuedTrigger.forwardedFrom, queuedTrigger.triggerSenderId, queuedSenderName)
+    : "";
+  const queuedTriggerDescription: string = queuedTrigger
+    ? queuedForwardPath
+      ? `${queuedSenderName} 转发了一条给你的内容（${queuedForwardPath}；转发正文：「${queuedTrigger.text}」${queuedReplyReference}）`
+      : `${queuedSenderName} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」${queuedReplyReference}）`
+    : "";
 
   // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
   // 发言/贴纸/反应全部工具化，做什么、什么顺序由模型自己决定（见
@@ -119,13 +141,13 @@ export function buildReplyPromptSections(
   //   不再强制点名。
   // - 回复/@ 触发：对方明确在跟机器人说话，别已读不回，建议第一条挂引用。
   const replyInstruction: string = mediaComment?.directTriggerReason === "reply"
-    ? `刚才 ${mediaComment.senderName} 用${mediaNounFor(mediaComment.kind)}回复了你上一条消息，内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才 ${mediaComment.senderName} 用${mediaNounFor(mediaComment.kind)}回复了你上一条消息。${mediaForwardNotice}内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
     : mediaComment?.directTriggerReason === "mention"
-    ? `刚才 ${mediaComment.senderName} 发了${mediaNounFor(mediaComment.kind)}并在配文里 @ 了你，内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才 ${mediaComment.senderName} 发了${mediaNounFor(mediaComment.kind)}并在配文里 @ 了你。${mediaForwardNotice}内容是：「${mediaComment.description}」。TA 是在跟你说话，别已读不回——请结合这份内容和你们正聊的话题，以你的人设自然接住，通常一两句话就够；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`
     : mediaComment
-    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}，内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才 ${mediaComment.senderName} 在群里发了${mediaNounFor(mediaComment.kind)}。${mediaForwardNotice}内容是：「${mediaComment.description}」（聊天记录里对应「${mediaTagHintFor(mediaComment.kind)}」那行）。请以你的人设，针对这份内容本身发表一两句评价/吐槽/调侃——自然一点，不要机械复述描述，也不要提"描述"两个字。第一条消息请把 reply_to_trigger 设为 true，让评价以「回复」形式挂在那条消息上；评不出花来，简短一句也行，或者至少给那条消息扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
     : queuedTrigger
-    ? `刚才你忙着回别的消息的时候，${queuedTrigger.senderName || "有人"} 也在跟你说话（TA 说的是：「${queuedTrigger.text}」${queuedReplyReference}），这条是排队等到现在才轮到处理的。请针对 TA 那条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，就换个说法简短接一句、或至少给 TA 那条消息扣个表情反应表示看到了，别原样重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
+    ? `刚才你忙着回别的消息的时候，${queuedTriggerDescription}，这条是排队等到现在才轮到处理的。请针对这条消息、以你的人设自然接住话题，建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让对方知道你在回哪条；如果你后来的发言其实已经回应过这条、或者话题早就翻篇了，就换个说法简短接一句、或至少给那条消息扣个表情反应表示看到了，别原样重复自己说过的话。${REPLY_ACTION_INSTRUCTION}`
     : isRandomTrigger
     ? `群里最新这条消息并没有人在叫你——只是你自己刷到了，想插一嘴：请以你的人设自然接住话题（要不要挂 reply_to_trigger、要不要在文字里称呼对方，都按怎么自然怎么来）；哪怕话题跟你关系不大，也要留下点回应——一句吐槽或感想都行，实在没话就扣个表情反应。${REPLY_ACTION_INSTRUCTION}`
     : `请针对最新这条消息，以你的人设自然接住话题——通常一到两句话就够，想连发几条短句也随你。对方是在跟你说话，别已读不回；建议第一条消息把 reply_to_trigger 设为 true 挂在那条消息上，让 TA 知道你在回谁。${REPLY_ACTION_INSTRUCTION}`;

@@ -10,6 +10,8 @@ export interface QueuedReplyTrigger {
   triggerSenderId: number;
   replyToMessageId: number;
   replyTo?: BufferedReplyReference;
+  /** 当前触发消息是转发时的来源；排队期间即使原转录滑出也保留归属。 */
+  forwardedFrom?: string;
   /** 是否允许模型根据本轮直接触发内容决定调用图片工具。 */
   imageGenerationRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;

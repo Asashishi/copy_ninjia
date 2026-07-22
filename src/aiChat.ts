@@ -188,6 +188,8 @@ export async function terminateAiChat(): Promise<void> {
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param messageId 这条 Telegram 消息的 message_id，供回复引用精确关联。
  * @param replyTo 当前消息显式回复的原消息快照；非回复消息省略。
+ * @param forwardedFrom 当前消息是转发时的来源标注（见 auto/message/facts.ts
+ *   的 resolveForwardOrigin）；非转发省略。
  * @param text 消息文本。
  */
 export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void {
@@ -204,6 +206,7 @@ export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void 
  * @param kind 媒体类型：photo/sticker/animation，决定占位符/视觉提示词。
  * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
  * @param replyTo 当前媒体显式回复的原消息快照；非回复消息省略。
+ * @param forwardedFrom 当前媒体是转发时的来源标注；非转发省略。
  * @param caption 媒体自带的配文（没有则传空串）。
  * @param fileId 要下载的 file_id（图片是已挑好档位的 photo file_id；贴纸/
  *   GIF 是本体或缩略图，见 auto/message/facts.ts 的素材选择）。

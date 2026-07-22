@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatBufferedMessageLine } from "../../src/ai/utils/chatTranscript";
 import { COMPACT_BATCH_SIZE } from "../../src/consts/aiChat";
-import { CHAT_MEMORY_PRIORITY_INSTRUCTION } from "../../src/consts/aiChatPrompts";
+import { CHAT_MEMORY_PRIORITY_INSTRUCTION, FORWARD_TAG_HINT, REPLY_TAG_HINT, SUMMARY_SYSTEM_PROMPT } from "../../src/consts/aiChatPrompts";
 import type { BufferedMessage } from "../../src/types";
 
 const legacyMessage: BufferedMessage = {
@@ -41,6 +41,46 @@ describe("AI 群聊转录身份格式", () => {
       },
     })).toBe(
       "[2026/07/17 18:18:42] [message_id:42] [id:42] 千早 愛音（回复 [message_id:41] [id:7] [username:@bob_dev] Bob Builder 的消息：「第一句 第二句」；精确引用片段：「第二句」）：@ninja_bot 你怎么看"
+    );
+  });
+
+  test("标注占位形态由真实模板代入「…」生成，与说明文案不会漂移", () => {
+    expect(REPLY_TAG_HINT).toBe("（回复 [message_id:…] … 的消息：「…」）");
+    expect(FORWARD_TAG_HINT).toBe("（转发自 …）");
+  });
+
+  test("摘要提示按标注层级区分当前转发与被回复原消息的转发", () => {
+    expect(SUMMARY_SYSTEM_PROMPT).toContain("直接紧跟当前发言人名字、位于回复标注外层");
+    expect(SUMMARY_SYSTEM_PROMPT).toContain("出现在回复标注内部、紧跟「的消息」之后");
+    expect(SUMMARY_SYSTEM_PROMPT).toContain("当前正文仍是当前发言人自己写的");
+  });
+
+  test("转发消息在名字后标出来源，正文不算发送者本人所写", () => {
+    expect(formatBufferedMessageLine({
+      ...legacyMessage,
+      messageId: 50,
+      text: "转来的爆料",
+      forwardedFrom: "[id:789] [username:@carol_cc] Carol Chan",
+    })).toBe(
+      "[2026/07/17 18:18:42] [message_id:50] [id:42] 千早 愛音（转发自 [id:789] [username:@carol_cc] Carol Chan）：转来的爆料"
+    );
+  });
+
+  test("被回复的原消息是转发时，回复引用一并标出转发来源", () => {
+    expect(formatBufferedMessageLine({
+      ...legacyMessage,
+      messageId: 51,
+      text: "@ninja_bot 这条你怎么看",
+      replyTo: {
+        messageId: 50,
+        id: 7,
+        firstName: "Bob",
+        lastName: "Builder",
+        text: "转来的爆料",
+        forwardedFrom: "频道 [id:-100666] [username:@tokyo_daily] 东京日报",
+      },
+    })).toBe(
+      "[2026/07/17 18:18:42] [message_id:51] [id:42] 千早 愛音（回复 [message_id:50] [id:7] Bob Builder 的消息（转发自 频道 [id:-100666] [username:@tokyo_daily] 东京日报）：「转来的爆料」）：@ninja_bot 这条你怎么看"
     );
   });
 

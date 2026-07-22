@@ -9,6 +9,8 @@ export interface BufferedReplyReference extends AiSpeakerSnapshot {
   text: string;
   /** 用户在 Telegram 中只选中一段原文引用时的精确片段。 */
   quote?: string;
+  /** 原消息是转发时的来源标注（预格式化身份文本）；非转发和旧快照省略。 */
+  forwardedFrom?: string;
 }
 
 export interface BufferedMessage extends AiSpeakerSnapshot {
@@ -17,6 +19,8 @@ export interface BufferedMessage extends AiSpeakerSnapshot {
   text: string;
   /** 当前消息显式回复的原消息；旧快照和非回复消息省略。 */
   replyTo?: BufferedReplyReference;
+  /** 当前消息本身是转发时的来源标注（预格式化身份文本）；非转发和旧快照省略。 */
+  forwardedFrom?: string;
   /** 已格式化的东京时间；旧快照未知时为空串。 */
   at: string;
 }

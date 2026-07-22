@@ -1,4 +1,4 @@
-import type { Animation, Message, MessageEntity, PhotoSize } from "@grammyjs/types";
+import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize } from "@grammyjs/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
 import { visibleSenderChat } from "../../users/visibleSender";
@@ -98,6 +98,37 @@ export function isReplyToSelf(message: Message): boolean {
   return senderId !== undefined && senderId === visibleSenderId(repliedTo);
 }
 
+/** 把 forward_origin 的四种来源统一整理成转录可读的身份标注，标记词汇与
+ * 转录行一致（[id:]/[username:@]，缺失时省略）；隐藏账号的来源只有显示名。 */
+function forwardOriginLabel(origin: MessageOrigin): string {
+  switch (origin.type) {
+    case "user": {
+      const user = origin.sender_user;
+      const name: string = [user.first_name, user.last_name].filter((part) => !!part).join(" ").trim() || FALLBACK_SPEAKER_NAME;
+      return `[id:${user.id}]${user.username ? ` [username:@${user.username}]` : ""} ${name}`;
+    }
+    case "hidden_user":
+      return origin.sender_user_name || FALLBACK_SPEAKER_NAME;
+    case "chat": {
+      const senderChat = origin.sender_chat;
+      const title: string = ("title" in senderChat ? senderChat.title : undefined) ?? FALLBACK_CHANNEL_NAME;
+      const username: string | undefined = "username" in senderChat ? senderChat.username : undefined;
+      return `[id:${senderChat.id}]${username ? ` [username:@${username}]` : ""} ${title}`;
+    }
+    case "channel":
+      return `频道 [id:${origin.chat.id}]${origin.chat.username ? ` [username:@${origin.chat.username}]` : ""} ${origin.chat.title}`;
+  }
+}
+
+/** 提取当前消息的转发来源标注；非转发消息返回 undefined。关联频道帖自动
+ * 转进讨论组的副本（is_automatic_forward）也不标：其转录发言人已解析为频道
+ * 本身（见 users/visibleSender.ts），再标「转发自」同一频道只是逐条噪音。 */
+export function resolveForwardOrigin(message: Message): string | undefined {
+  const origin: MessageOrigin | undefined = message.forward_origin;
+  if (origin === undefined || message.is_automatic_forward === true) return undefined;
+  return forwardOriginLabel(origin);
+}
+
 /** 把被回复的 Telegram 消息转换成模型可读的单行正文；视觉内容会在原消息
  * 自己进入缓存时异步获得描述，这里的类型标签负责旧消息已滑出缓存时兜底。 */
 function replyReferenceText(message: Message): string {
@@ -125,6 +156,7 @@ export function resolveReplyReference(message: Message): AiReplyReference | unde
   const repliedTo: Message | undefined = message.reply_to_message;
   if (!repliedTo) return undefined;
   const speaker = resolveSpeaker(repliedTo);
+  const forwardedFrom: string | undefined = resolveForwardOrigin(repliedTo);
   return {
     messageId: repliedTo.message_id,
     id: speaker.id,
@@ -133,6 +165,7 @@ export function resolveReplyReference(message: Message): AiReplyReference | unde
     ...(speaker.username ? { username: speaker.username } : {}),
     text: replyReferenceText(repliedTo),
     ...(message.quote?.text ? { quote: message.quote.text } : {}),
+    ...(forwardedFrom ? { forwardedFrom } : {}),
   };
 }
 

@@ -38,6 +38,9 @@
   统一只在 `systemInstruction` 声明一次，不逐段重复。工具调用后的历史再按真实
   `model/user` 角色追加，不得把参考资料伪装成历史对话轮次。系统提示词只通过
   `GenerateContentConfig.systemInstruction` 独立字段发送，不得拼入普通对话 `contents`。
+- 群聊转录的行内标注（回复引用、转发来源）由 `src/consts/aiChat/prompts/transcript.ts`
+  的共享模板同时生成拼装文本与提示词说明里的占位形态，两侧不得各自手写同一格式；
+  转发归属按标注层级区分：回复标注外层属于当前消息本身，内层属于被回复的原消息。
 - Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存
   只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。
 - chat runtime teardown 的三个固定 owner 回调由 `src/cache/chatTeardown.ts` 持有，

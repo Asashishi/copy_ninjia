@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-686_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-92.5%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-696_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-92.6%25-2ea44f?style=flat-square" alt="Coverage"></a>
 </p>
 
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
@@ -162,6 +162,7 @@ flowchart TD
 <tr><td>🧱&nbsp;输入边界</td><td>初始 Gemini 请求使用一个 <code>user Content</code>，按顺序承载三个独立 <code>text Part</code>：只读参考记忆、只读当前会话、本轮回复任务。每段都有明确首尾标签与局部约束，<code>systemInstruction</code> 再声明前两段只作数据、只有最后一段是待执行任务；后续工具轮次仍按真实 <code>model/user</code> 角色追加</td></tr>
 <tr><td>🛡️&nbsp;安全过滤</td><td>Google 可调的骚扰、仇恨、露骨和危险内容统一设为 <code>BLOCK_NONE</code>，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效</td></tr>
 <tr><td>🕰️&nbsp;时间</td><td>每次请求注入东京当前时间，每条转录消息保留记录时刻</td></tr>
+<tr><td>🧾&nbsp;转录标注</td><td>每条逐字消息行内标注 <code>message_id</code> 与发送者 <code>id</code>/<code>username</code>；显式回复内嵌被回复消息的身份、原文与精确引用片段；转发消息标注原始来源（用户、隐藏账号、群组或频道，带可用的 <code>id</code>/<code>username</code>），被回复的原消息是转发时在引用内单独标注，提示词按标注层级区分转发归属；频道帖自动转进讨论组的副本不标转发。标注拼装与提示词里的格式说明共用同一份模板生成，防止两侧漂移</td></tr>
 <tr><td>🧠&nbsp;记忆</td><td>50～100 条逐字消息，加最多 7 × 50 条冷历史摘要，总跨度约 400～450 条；启动恢复只载入最新 99 条逐字消息并为下一条消息预留轮换边界。Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
 <tr><td>🖼️&nbsp;多模态</td><td>图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。<code>memory/stickers/</code> 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录</td></tr>
 <tr><td>🎨&nbsp;生图</td><td>只有直接回复或 <code>@机器人</code> 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，<code>SUPER_ADMIN_USER_ID</code> 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片</td></tr>
@@ -368,11 +369,11 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 
 <table align="center" width="100%">
   <tr>
-    <td align="center" width="20%">🚀 <b>686</b><br/>测试全部通过</td>
+    <td align="center" width="20%">🚀 <b>696</b><br/>测试全部通过</td>
     <td align="center" width="20%">📂 <b>104</b><br/>测试文件</td>
-    <td align="center" width="20%">🔬 <b>2,690</b><br/>断言总数</td>
-    <td align="center" width="20%">🎯 <b>90.64%</b><br/>函数覆盖率</td>
-    <td align="center" width="20%">📈 <b>92.54%</b><br/>行覆盖率</td>
+    <td align="center" width="20%">🔬 <b>2,714</b><br/>断言总数</td>
+    <td align="center" width="20%">🎯 <b>90.89%</b><br/>函数覆盖率</td>
+    <td align="center" width="20%">📈 <b>92.64%</b><br/>行覆盖率</td>
   </tr>
 </table>
 
@@ -387,7 +388,7 @@ bun run check
 
 - **严格检查**：项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查。
 - **覆盖率口径**：`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。
-- **当前主干实测**：686 个测试跨 104 个文件全部通过（2,690 次断言），函数覆盖率 **90.64%**、行覆盖率 **92.54%**——全源码计入分母口径，不是只统计被测文件。
+- **当前主干实测**：696 个测试跨 104 个文件全部通过（2,714 次断言），函数覆盖率 **90.89%**、行覆盖率 **92.64%**——全源码计入分母口径，不是只统计被测文件。
 - **代码放置约定**：新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
 
 ---

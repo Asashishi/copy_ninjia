@@ -23,6 +23,8 @@ export interface AiReplyReference extends AiSpeakerSnapshot {
   messageId: number;
   text: string;
   quote?: string;
+  /** 原消息是转发时的来源标注（见 auto/message/facts.ts 的 resolveForwardOrigin）。 */
+  forwardedFrom?: string;
 }
 
 /** 文字与媒体记录协议共用的消息身份和回复关系。 */
@@ -34,6 +36,8 @@ export interface AiRecordContext {
   username?: string;
   messageId: number;
   replyTo?: AiReplyReference;
+  /** 当前消息本身是转发时的来源标注；非转发省略。 */
+  forwardedFrom?: string;
 }
 
 export interface AiRecordMessage extends AiRecordContext {

@@ -198,7 +198,7 @@ describe("AI 单轮回复生命周期", () => {
     await runRound({
       imageGenerationRequested: true,
       imageGenerationReference: reference,
-      mediaComment: { kind: "photo", senderName: "Alice", description: "一张夜景" },
+      mediaComment: { kind: "photo", senderId: 7, senderName: "Alice", description: "一张夜景" },
     });
     expect(capturedContext?.imageGenerationRequested).toBe(false);
     expect(capturedContext?.imageGenerationReference).toBeUndefined();
@@ -209,6 +209,7 @@ describe("AI 单轮回复生命周期", () => {
       imageGenerationRequested: true,
       mediaComment: {
         kind: "sticker",
+        senderId: 7,
         senderName: "Alice",
         description: "一枚猫猫贴纸",
         directTriggerReason: "mention",

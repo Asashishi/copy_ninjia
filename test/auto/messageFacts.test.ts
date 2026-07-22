@@ -8,6 +8,7 @@ import {
   mentionsOtherUser,
   pickAnimationVisionSource,
   pickPhotoFile,
+  resolveForwardOrigin,
   resolveReplyReference,
   resolveSpeaker,
 } from "../../src/auto/message/facts";
@@ -105,6 +106,66 @@ describe("auto/message/facts", () => {
         caption: "看这里",
       }),
     }))?.text).toBe("[图片] 看这里");
+  });
+
+  test("resolveForwardOrigin 覆盖四种转发来源，非转发返回 undefined", () => {
+    expect(resolveForwardOrigin(message())).toBeUndefined();
+    // 关联频道帖自动转进讨论组：发言人已是频道本身，不再标「转发自」。
+    expect(resolveForwardOrigin(message({
+      is_automatic_forward: true,
+      sender_chat: { id: -100666, type: "channel", title: "东京日报", username: "tokyo_daily" },
+      forward_origin: {
+        type: "channel",
+        date: 1,
+        chat: { id: -100666, type: "channel", title: "东京日报", username: "tokyo_daily" },
+        message_id: 9,
+      },
+    }))).toBeUndefined();
+    expect(resolveForwardOrigin(message({
+      forward_origin: {
+        type: "user",
+        date: 1,
+        sender_user: { id: 789, is_bot: false, first_name: "Carol", last_name: "Chan", username: "carol_cc" },
+      },
+    }))).toBe("[id:789] [username:@carol_cc] Carol Chan");
+    expect(resolveForwardOrigin(message({
+      forward_origin: { type: "hidden_user", date: 1, sender_user_name: "神秘人" },
+    }))).toBe("神秘人");
+    expect(resolveForwardOrigin(message({
+      forward_origin: {
+        type: "chat",
+        date: 1,
+        sender_chat: { id: -100777, type: "supergroup", title: "隔壁群" },
+      },
+    }))).toBe("[id:-100777] 隔壁群");
+    expect(resolveForwardOrigin(message({
+      forward_origin: {
+        type: "channel",
+        date: 1,
+        chat: { id: -100666, type: "channel", title: "东京日报", username: "tokyo_daily" },
+        message_id: 9,
+      },
+    }))).toBe("频道 [id:-100666] [username:@tokyo_daily] 东京日报");
+  });
+
+  test("被回复的消息是转发时，回复引用带上转发来源标注", () => {
+    expect(resolveReplyReference(message({
+      text: "@test_bot 你怎么看这条",
+      reply_to_message: message({
+        message_id: 42,
+        from: { id: 456, is_bot: false, first_name: "Bob", username: "bob_dev" },
+        forward_origin: { type: "hidden_user", date: 1, sender_user_name: "神秘人" },
+        text: "转来的爆料",
+      }),
+    }))).toEqual({
+      messageId: 42,
+      id: 456,
+      firstName: "Bob",
+      lastName: "",
+      username: "bob_dev",
+      text: "转来的爆料",
+      forwardedFrom: "神秘人",
+    });
   });
 
   test("图片档位选最大未超限项，全超限时退回最小档", () => {

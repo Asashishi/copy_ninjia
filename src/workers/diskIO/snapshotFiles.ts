@@ -77,7 +77,8 @@ function isBufferedReplyReference(value: unknown): value is BufferedReplyReferen
   return isAiSpeakerSnapshot(value) &&
     typeof value.messageId === "number" && Number.isFinite(value.messageId) &&
     typeof value.text === "string" &&
-    (value.quote === undefined || typeof value.quote === "string");
+    (value.quote === undefined || typeof value.quote === "string") &&
+    (value.forwardedFrom === undefined || typeof value.forwardedFrom === "string");
 }
 
 function isBufferedMessage(value: unknown): value is BufferedMessage {
@@ -85,11 +86,13 @@ function isBufferedMessage(value: unknown): value is BufferedMessage {
     (value.messageId === undefined || (typeof value.messageId === "number" && Number.isFinite(value.messageId))) &&
     typeof value.text === "string" &&
     (value.replyTo === undefined || isBufferedReplyReference(value.replyTo)) &&
+    (value.forwardedFrom === undefined || typeof value.forwardedFrom === "string") &&
     typeof value.at === "string";
 }
 
-/** 只接受当前 version=1 的完整结构；username/replyTo 是向后兼容的可选扩展，
- * 旧条目没有它们也合法，不需要改版本或迁移旧文件。其余版本变更由部署前手工迁移。 */
+/** 只接受当前 version=1 的完整结构；username/replyTo/forwardedFrom 是向后兼容
+ * 的可选扩展，旧条目没有它们也合法，不需要改版本或迁移旧文件。其余版本变更
+ * 由部署前手工迁移。 */
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;

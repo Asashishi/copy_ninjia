@@ -73,11 +73,13 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           ...(imageGenerationReference ? { imageGenerationReference } : {}),
           mediaComment: {
             kind: "sticker",
+            senderId: entry.id,
             senderName: displayBufferedMessageName(entry),
             description: catalogEntry.description,
             triggerText: entry.text,
             directTriggerReason: msg.directTrigger.reason,
             ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
+            ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
           },
         });
       } else if (msg.commentOnResolve) {
@@ -89,9 +91,11 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           imageGenerationRequested: false,
           mediaComment: {
             kind: "sticker",
+            senderId: entry.id,
             senderName: displayBufferedMessageName(entry),
             description: catalogEntry.description,
             triggerText: entry.text,
+            ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
           },
         });
       }
@@ -124,11 +128,13 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         ...(imageGenerationReference ? { imageGenerationReference } : {}),
         mediaComment: {
           kind: msg.kind,
+          senderId: entry.id,
           senderName: displayBufferedMessageName(entry),
           description: description ?? replyFallbackDescriptionFor(msg),
           triggerText: entry.text,
           directTriggerReason: msg.directTrigger.reason,
           ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
+          ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
         },
       });
     } else if (msg.commentOnResolve && description) {
@@ -140,9 +146,11 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         imageGenerationRequested: false,
         mediaComment: {
           kind: msg.kind,
+          senderId: entry.id,
           senderName: displayBufferedMessageName(entry),
           description,
           triggerText: entry.text,
+          ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
         },
       });
     }

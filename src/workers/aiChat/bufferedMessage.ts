@@ -8,6 +8,7 @@ import type { AiRecordContext, AiReplyReference } from "../../types/aiChat/proto
 export function sanitizeReplyReference(reference: AiReplyReference): BufferedReplyReference {
   const sanitizedUsername: string = sanitizeInline(reference.username ?? "").replace(/^@+/, "");
   const sanitizedQuote: string = truncateInline(sanitizeInline(reference.quote ?? ""), REPLY_REFERENCE_MAX_CHARS);
+  const sanitizedForwardedFrom: string = sanitizeInline(reference.forwardedFrom ?? "");
   return {
     messageId: reference.messageId,
     id: reference.id,
@@ -16,6 +17,7 @@ export function sanitizeReplyReference(reference: AiReplyReference): BufferedRep
     ...(sanitizedUsername ? { username: sanitizedUsername } : {}),
     text: truncateInline(sanitizeInline(reference.text), REPLY_REFERENCE_MAX_CHARS) || "[非文本消息]",
     ...(sanitizedQuote ? { quote: sanitizedQuote } : {}),
+    ...(sanitizedForwardedFrom ? { forwardedFrom: sanitizedForwardedFrom } : {}),
   };
 }
 
@@ -28,6 +30,7 @@ export function buildBufferedMessage(
   const sanitizedText: string = sanitizeInline(text);
   if (!sanitizedText) return null;
   const sanitizedUsername: string = sanitizeInline(source.username ?? "").replace(/^@+/, "");
+  const sanitizedForwardedFrom: string = sanitizeInline(source.forwardedFrom ?? "");
   return {
     messageId: source.messageId,
     id: source.senderId,
@@ -36,6 +39,7 @@ export function buildBufferedMessage(
     ...(sanitizedUsername ? { username: sanitizedUsername } : {}),
     text: sanitizedText,
     ...(source.replyTo ? { replyTo: sanitizeReplyReference(source.replyTo) } : {}),
+    ...(sanitizedForwardedFrom ? { forwardedFrom: sanitizedForwardedFrom } : {}),
     at: formatTokyoTime(now),
   };
 }
