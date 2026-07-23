@@ -18,6 +18,7 @@ import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memor
 import type { AiMemoryDeletedEvent, AiMemoryEvent, AiRecordMessage } from "../../types/aiChat/protocol";
 import { buildBufferedMessage } from "./bufferedMessage";
 import { scheduleRotation } from "./compaction";
+import { indexBufferedMessage, unindexBufferedMessage } from "./replyChain";
 
 declare const self: Worker;
 
@@ -46,13 +47,15 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage): voi
     chatBuffers.set(chatId, buf);
   }
   buf.push(entry);
+  indexBufferedMessage(chatId, entry);
   dirtyMemoryChats.add(chatId);
   // 轮换机制见 COMPACT_BATCH_SIZE 注释。push 每次只 +1，且轮换把 size 收回
   // COMPACT_BATCH_SIZE 后 push 不会再撞上下面第二个判等，两个 === 各自恰好
   // 在块边界命中一次。
   if (buf.size === VERBATIM_CONTEXT_MAX) {
     for (let i: number = 0; i < COMPACT_BATCH_SIZE; i++) {
-      buf.shift();
+      const removed: BufferedMessage | undefined = buf.shift();
+      if (removed) unindexBufferedMessage(chatId, removed);
     }
     scheduleRotation(chatId, buf.last(COMPACT_BATCH_SIZE), true);
   } else if (buf.size === COMPACT_BATCH_SIZE) {
@@ -210,6 +213,8 @@ export function hydrateMemories(memories: Map<number, string>): void {
     const buf: LinkedQueue<BufferedMessage> = new LinkedQueue<BufferedMessage>();
     for (const message of snapshot.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)) {
       buf.push(message);
+      // 回复链索引不落盘，恢复热区的同时同源重建（见 cache/aiChat/memory.ts）。
+      indexBufferedMessage(chatId, message);
     }
     if (buf.size > 0) chatBuffers.set(chatId, buf);
 

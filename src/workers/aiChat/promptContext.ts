@@ -1,5 +1,5 @@
 import type { LinkedQueue } from "../../libs/linkedQueue";
-import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatReplyReference } from "../../ai/utils/chatTranscript";
+import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatReplyChain, formatReplyReference } from "../../ai/utils/chatTranscript";
 import {
   MAX_SUMMARY_ROUNDS,
   VERBATIM_CONTEXT_MAX,
@@ -11,6 +11,7 @@ import {
 import { forwardPathTemplate } from "../../consts/aiChat/prompts/transcript";
 import { REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { chatBuffers, chatSummaries } from "../../cache/aiChat/memory";
+import { collectReplyChain, lookupBufferedMessage } from "./replyChain";
 import { resolvedTagFor } from "./mediaText";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AiBotInfo, AiDirectTriggerReason } from "../../types/aiChat/protocol";
@@ -25,6 +26,9 @@ export interface MediaCommentContext {
   senderId: number;
   senderName: string;
   description: string;
+  /** 当前媒体消息自身的快照；视觉解析或排队期间滑出热区后，发送自录仍可
+   * 保留实际回复边。 */
+  triggerReference?: BufferedReplyReference;
   /** 当前媒体是转发时的来源；用于在特殊回复任务中明确来源到转发者的路径。 */
   forwardedFrom?: string;
   /** 已清洗的媒体转录整行（视觉描述 + caption），供排队快照保留原请求。 */
@@ -63,6 +67,10 @@ function forwardPathFor(origin: string | undefined, senderId: number, senderName
 
 /** buildReplyPromptSections 的可选附加上下文，按需组合，见各字段说明。 */
 interface UserContentOptions {
+  /** 本轮触发消息的 message_id（即工具挂回复引用的目标，见 replyRound.ts
+   *  的 replyToMessageId）：用于从热区索引回溯它所在的多层回复链，并在链
+   *  标注里点名触发消息本身。 */
+  triggerMessageId: number;
   /** 是否是随机插话触发（见 replyPipeline.ts 的 generateAndSendReply 的
    *  isRandomTrigger）：没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、
    *  要不要称呼对方）由模型自主判断，但必须回应（说话/贴纸/扣反应都算）——
@@ -99,12 +107,20 @@ export function buildReplyPromptSections(
   selfInfo: AiBotInfo,
   options: UserContentOptions
 ): ReplyPromptSections | null {
-  const { isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo } = options;
+  const { triggerMessageId, isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
   const recent: BufferedMessage[] = buf.last(VERBATIM_CONTEXT_MAX);
   const transcript: string = buildTieredVerbatimTranscript(recent);
+  // 多层回复链：触发消息还在热区就用它当前的 replyTo 起跳；排队补跑/媒体
+  // 触发时它可能已滑出，退回入队时保存的回复快照。链 ≥2 跳才拼标注（第一
+  // 跳转录行内的单跳标注已覆盖），见 formatReplyChain。
+  const chainFirstHop: BufferedReplyReference | undefined =
+    lookupBufferedMessage(chatId, triggerMessageId)?.replyTo ?? queuedTrigger?.replyTo ?? mediaComment?.replyTo;
+  const replyChainBlock: string = chainFirstHop
+    ? formatReplyChain(triggerMessageId, collectReplyChain(chatId, chainFirstHop))
+    : "";
   const queuedReplyReference: string = queuedTrigger?.replyTo
     ? `；那条消息${formatReplyReference(queuedTrigger.replyTo)}`
     : "";
@@ -192,6 +208,9 @@ export function buildReplyPromptSections(
     REPLY_CONTEXT_SECTION_TEXT.replyTask.header +
     "\n" +
     replyInstruction +
+    // 触发消息带着 ≥2 跳的回复链时补全路径标注，帮模型免于在整段转录里
+    // 自行追 message_id；单跳或无回复时该段为空串，完全不出现。
+    (replyChainBlock ? "\n\n" + replyChainBlock : "") +
     // 不出错的轮次完全不拼这一段——两个分支的提示词严格分开，模型看不到
     // 「本来可能出错」这件事（见 consts/aiChat/prompts/tools.ts）。
     (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "") +

@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-725_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-94.4%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-770_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-95.3%25-2ea44f?style=flat-square" alt="Coverage"></a>
 </p>
 
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
@@ -88,7 +88,7 @@
 </td>
 <td align="left" valign="top">
   <h4>🧠 群聊记忆</h4>
-  <p>滚动维护 75~150 条上下文及多轮摘要压缩，结合原子落盘策略，实现极高可靠性恢复。</p>
+  <p>滚动维护 75~150 条上下文及多轮摘要压缩，追踪有界多层回复链，并结合原子落盘策略可靠恢复。</p>
 </td>
 <td align="left" valign="top">
   <h4>🛡️ 入群验证</h4>
@@ -163,6 +163,7 @@ flowchart TD
 <tr><td>🛡️&nbsp;安全过滤</td><td>Google 可调的骚扰、仇恨、露骨和危险内容统一设为 <code>BLOCK_NONE</code>，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效</td></tr>
 <tr><td>🕰️&nbsp;时间</td><td>每次请求注入东京当前时间，每条转录消息保留记录时刻</td></tr>
 <tr><td>🧾&nbsp;转录标注</td><td>每条逐字消息行内标注 <code>message_id</code> 与发送者 <code>id</code>/<code>username</code>；显式回复内嵌被回复消息的身份、原文与精确引用片段；转发消息标注原始来源（用户、隐藏账号、群组或频道，带可用的 <code>id</code>/<code>username</code>），被回复的原消息是转发时在引用内单独标注，提示词按标注层级区分转发归属；频道帖自动转进讨论组的副本不标转发。标注拼装与提示词里的格式说明共用同一份模板生成，防止两侧漂移</td></tr>
+<tr><td>🧵&nbsp;回复链</td><td>触发消息处在至少两层回复关系中时，本轮任务额外列出最多 15 跳的路径；每跳保留 <code>message_id</code>、发送者身份和转发来源，正文最多 500 字。链尾原消息若已滑出逐字区，改用上一跳携带的最多 500 字快照并显式标为 <code>[仅回复快照]</code>，不会声称完整原文仍在转录中。机器人自己的文字与图片只按 Telegram 返回的实际回复关系自录：目标被删除、发送降级为普通消息时不制造回复边；目标只是在排队或生成期间滑出热区时，则由本轮开始前捕获的触发快照续接</td></tr>
 <tr><td>🧠&nbsp;记忆</td><td>75～150 条逐字消息，加最多 7 × 75 条冷历史摘要，总跨度约 600～675 条；启动恢复只载入最新 149 条逐字消息并为下一条消息预留轮换边界。Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
 <tr><td>🖼️&nbsp;多模态</td><td>图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。<code>memory/stickers/</code> 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录</td></tr>
 <tr><td>🎨&nbsp;生图</td><td>只有直接回复或 <code>@机器人</code> 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，<code>SUPER_ADMIN_USER_ID</code> 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片</td></tr>
@@ -342,7 +343,7 @@ flowchart TD
 <table width="100%">
 <tr><th width="21%" align="left">数据</th><th width="17%" align="left">位置</th><th width="62%" align="left">写入策略</th></tr>
 <tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>只保留“在写 + 最新待写”两份内存快照；每次按主文件、LKG 备份顺序执行临时文件 + fsync + 原子 rename。命令开关、代理与 copy 等权威变更会等待对应 revision 的主备副本完成后才反馈成功并允许确认 update；有限重试耗尽会停止接收更新并以失败退出。群标题等派生元数据仍可后台合并保存。启动时主文件无效会由严格校验通过的备份恢复；两份均无效则拒绝启动且保留原件</td></tr>
-<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；upsert/delete 按群携带单调 revision，删除意图保留到 durable unlink 回执，Disk I/O Worker 重建后会重放。启动只 hydrate 当前明确启用 AI 的群，并清理关闭群的残留快照。恢复时按当前容量保留最新 149 条逐字消息和最新 7 轮冷摘要</td></tr>
+<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；upsert/delete 按群携带单调 revision，删除意图保留到 durable unlink 回执，Disk I/O Worker 重建后会重放。启动只 hydrate 当前明确启用 AI 的群，并清理关闭群的残留快照。恢复时按当前容量保留最新 149 条逐字消息和最新 7 轮冷摘要；回复链的 <code>message_id</code> 索引只从当前热区派生并在 hydrate 时重建，不单独落盘，因此回复链功能不改变快照 schema</td></tr>
 <tr><td>贴纸描述目录</td><td><code>memory/stickers/</code></td><td>每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用</td></tr>
 <tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code></td></tr>
 <tr><td>待验证成员</td><td><code>memory/anti-raid/</code></td><td>当日 JSON 按 <code>chatId:userId</code> 键增量追加；普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件</td></tr>

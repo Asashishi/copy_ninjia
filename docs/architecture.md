@@ -48,6 +48,9 @@
 - 群聊转录的行内标注（回复引用、转发来源）由 `src/consts/aiChat/prompts/transcript.ts`
   的共享模板同时生成拼装文本与提示词说明里的占位形态，两侧不得各自手写同一格式；
   转发归属按标注层级区分：回复标注外层属于当前消息本身，内层属于被回复的原消息。
+  多层回复链的逐跳格式、转发来源和 `[仅回复快照]` 标记也必须复用该领域模板；只有至少
+  两层关系才向回复任务追加链路，快照链尾必须明确原消息已不在逐字转录中，不得暗示存在
+  可供模型查阅的完整原文。
 - Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存
   只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。冷缓存的
   `message_thread_id` 只是异步确认候选：查询落定前先按普通待验证消息处理，仅在确认
@@ -78,6 +81,13 @@
 - AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`
   （当前为 149 条逐字消息与 7 轮冷摘要）从快照尾部截取最新数据；调整容量常量部署前，应在旧进程停止后以同一
   恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
+- 回复链索引（`chatReplyChainIndexes`）是滚动缓存的纯派生索引，不落盘、内层值与缓存共享对象引用；
+  登记/删除只允许发生在消息进出热区的物理位置（`rollingMemory.ts` 的 push/轮换/hydrate），
+  任何其它模块只读。索引因此永远只覆盖仍在热区的消息，容量受滚动缓存上限约束，无独立淘汰；
+  机器人发送自录只按 Telegram 返回的实际 `reply_to_message` 建边，目标在生成/排队期间滑出热区时
+  使用轮次开始前捕获的有界触发快照兜底，不扩张索引覆盖范围。模型可见的回溯深度、单个链节点
+  正文和触发快照分别受 `REPLY_CHAIN_MAX_DEPTH`、`REPLY_CHAIN_NODE_MAX_CHARS`、
+  `REPLY_REFERENCE_MAX_CHARS` 约束（当前为 15 跳、500 字、500 字）。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、
   反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败
   必须返回失败、阻止最终 offset 确认并以非零状态退出。

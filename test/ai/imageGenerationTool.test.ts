@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ReplyToolContext } from "../../src/types/aiChat/replies";
+import type { TelegramSendResult } from "../../src/types/telegram";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
 const generateChatImage = mock(async (..._args: unknown[]): Promise<{
@@ -16,7 +17,10 @@ const normalizeImageAspectRatio = mock((requested: string | undefined) => {
 const referenceVisionImage = { bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
 const downloadTelegramVisionImage = mock(async (..._args: unknown[]): Promise<typeof referenceVisionImage | null> => referenceVisionImage);
 const runMediaTask = mock(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
-const sendPhoto = mock(async (..._args: unknown[]): Promise<number | undefined> => 77);
+const sendPhotoWithResult = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({
+  messageId: 77,
+  repliedToMessageId: 42,
+}));
 const realImageGeneration = await import("../../src/ai/imageGeneration");
 const realTelegram = await import("../../src/infra/telegram");
 
@@ -25,7 +29,7 @@ mock.module("../../src/ai/imageGeneration", () => ({
   generateChatImage,
   normalizeImageAspectRatio,
 }));
-mock.module("../../src/infra/telegram", () => ({ ...realTelegram, sendPhoto }));
+mock.module("../../src/infra/telegram", () => ({ ...realTelegram, sendPhotoWithResult }));
 mock.module("../../src/ai/telegramImage", () => ({ downloadTelegramVisionImage }));
 mock.module("../../src/ai/mediaTaskRunner", () => ({ runMediaTask }));
 
@@ -77,8 +81,8 @@ beforeEach(() => {
   downloadTelegramVisionImage.mockResolvedValue(referenceVisionImage);
   runMediaTask.mockClear();
   runMediaTask.mockImplementation(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
-  sendPhoto.mockClear();
-  sendPhoto.mockResolvedValue(77);
+  sendPhotoWithResult.mockClear();
+  sendPhotoWithResult.mockResolvedValue({ messageId: 77, repliedToMessageId: 42 });
 });
 
 afterEach(() => {
@@ -132,13 +136,14 @@ describe("generate_image 工具执行器", () => {
 
     expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", resolution: "1K" });
     expect(generateChatImage).toHaveBeenCalledWith("日落下的纸飞机", "4:3");
-    expect(sendPhoto).toHaveBeenCalledWith({
+    expect(sendPhotoWithResult).toHaveBeenCalledWith({
       chatId: -1001,
       bytes: generatedBytes,
       mimeType: "image/png",
       replyToMessageId: 42,
     });
-    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：日落下的纸飞机）", 77);
+    // 图片请求固定指向触发消息，服务端实际挂上后自录回调才带回复目标。
+    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：日落下的纸飞机）", 77, 42);
   });
 
   test("参考图按需从 Telegram 下载并以内联图片交给生图模型", async () => {
@@ -154,7 +159,7 @@ describe("generate_image 工具执行器", () => {
     expect(generateChatImage).toHaveBeenCalledWith("把原图改成油画", "16:9", referenceVisionImage);
     expect(result.aspect_ratio).toBe("16:9");
     expect(result.reference_image_used).toBe(true);
-    expect(ctx.onImageSent).toHaveBeenCalledWith("（参考素材生成并发送了一张图片：把原图改成油画）", 77);
+    expect(ctx.onImageSent).toHaveBeenCalledWith("（参考素材生成并发送了一张图片：把原图改成油画）", 77, 42);
   });
 
   test("参考图下显式比例仍优先，非官方比例照常归一化", async () => {
@@ -206,7 +211,7 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("Telegram 发送失败不登记图片记忆", async () => {
-    sendPhoto.mockResolvedValueOnce(undefined);
+    sendPhotoWithResult.mockResolvedValueOnce(undefined);
     const ctx: ReplyToolContext = buildContext();
 
     const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "无法发送的图" })));
@@ -215,6 +220,16 @@ describe("generate_image 工具执行器", () => {
     expect(ctx.onImageSent).not.toHaveBeenCalled();
     const retry = JSON.parse(await createGenerateImageExecutor(buildContext())(JSON.stringify({ prompt: "不能立即再生成" })));
     expect(retry.error).toContain("cooling down");
+  });
+
+  test("Telegram 退化为无回复发送时不伪造图片回复关系", async () => {
+    sendPhotoWithResult.mockResolvedValueOnce({ messageId: 77 });
+    const ctx: ReplyToolContext = buildContext();
+
+    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "回复目标已删除" })));
+
+    expect(result.success).toBe(true);
+    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：回复目标已删除）", 77, undefined);
   });
 
   test("实际生图期间显示正在发送图片，并在发送图片前切回 idle、等待状态收敛", async () => {
@@ -230,9 +245,9 @@ describe("generate_image 工具执行器", () => {
       events.push("generated");
       return { bytes: generatedBytes, mimeType: "image/png" };
     });
-    sendPhoto.mockImplementationOnce(async () => {
+    sendPhotoWithResult.mockImplementationOnce(async () => {
       events.push("sent");
-      return 77;
+      return { messageId: 77, repliedToMessageId: 42 };
     });
 
     const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "显示状态" })));
@@ -259,7 +274,7 @@ describe("generate_image 工具执行器", () => {
 
     expect(result.error).toContain("failed");
     expect(events).toEqual(["upload_photo", "failed", "idle", "settled"]);
-    expect(sendPhoto).not.toHaveBeenCalled();
+    expect(sendPhotoWithResult).not.toHaveBeenCalled();
   });
 
   test("普通用户同群第二次被拒绝，不同群独立放行", async () => {

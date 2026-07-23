@@ -162,6 +162,75 @@ describe("AI 单轮回复生命周期", () => {
     expect(recordChatMessage).toHaveBeenCalledTimes(3);
   });
 
+  test("实际回复目标已滑出热区时，用轮次捕获的触发快照保留自录回复边", async () => {
+    actionsUsed = 1;
+    callGemini.mockImplementationOnce(async (): Promise<null> => {
+      capturedContext!.onMessageSent("排队后才发出的回复", 104, 555);
+      return null;
+    });
+
+    await runRound({
+      replyToMessageId: 555,
+      triggerReference: {
+        messageId: 555,
+        id: 7,
+        firstName: "Alice",
+        lastName: "Chen",
+        username: "alice_dev",
+        text: "很早以前排队的触发消息",
+        forwardedFrom: "频道 [id:-100666] 东京日报",
+      },
+    });
+
+    expect(recordChatMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      senderId: 99,
+      firstName: "Ninja",
+      lastName: "",
+      username: "ninja_bot",
+      messageId: 104,
+      replyTo: {
+        messageId: 555,
+        id: 7,
+        firstName: "Alice",
+        lastName: "Chen",
+        username: "alice_dev",
+        text: "很早以前排队的触发消息",
+        forwardedFrom: "频道 [id:-100666] 东京日报",
+      },
+      text: "排队后才发出的回复",
+    });
+  });
+
+  test("Telegram 未实际挂回复时，即使有触发快照也不建立自录回复边", async () => {
+    actionsUsed = 1;
+    callGemini.mockImplementationOnce(async (): Promise<null> => {
+      capturedContext!.onMessageSent("退化成普通消息", 105, undefined);
+      return null;
+    });
+
+    await runRound({
+      replyToMessageId: 556,
+      triggerReference: {
+        messageId: 556,
+        id: 8,
+        firstName: "Bob",
+        lastName: "",
+        text: "已经删除的触发消息",
+      },
+    });
+
+    expect(recordChatMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      senderId: 99,
+      firstName: "Ninja",
+      lastName: "",
+      username: "ninja_bot",
+      messageId: 105,
+      text: "退化成普通消息",
+    });
+  });
+
   test("仅 superAdmin 触发的轮次绕过图片生成冷却", async () => {
     await runRound({ triggerSenderId: SUPER_ADMIN_USER_ID });
     expect(capturedContext?.bypassImageGenerationCooldown).toBe(true);

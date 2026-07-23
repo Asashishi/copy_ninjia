@@ -15,10 +15,11 @@ import {
 } from "../../../consts/aiChat/imageGeneration";
 import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../consts/aiChat/prompts/tools";
 import { GENERATE_IMAGE_TOOL } from "../../../consts/tools";
-import { sendPhoto } from "../../../infra/telegram";
+import { sendPhotoWithResult } from "../../../infra/telegram";
 import { isPlainRecord } from "../../../libs/runtimeConfig";
 import { sanitizeInline, truncateInline } from "../../../libs/text";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
+import type { TelegramSendResult } from "../../../types/telegram";
 import type { ToolDefinition } from "../../../types/tools";
 import { generateChatImage, normalizeImageAspectRatio, type GeneratedChatImage } from "../../imageGeneration";
 import { downloadTelegramVisionImage } from "../../telegramImage";
@@ -176,23 +177,29 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
         return JSON.stringify({ error: "Image generation failed or returned no usable image" });
       }
 
-      const messageId: number | undefined = await sendPhoto({
+      const sent: TelegramSendResult | undefined = await sendPhotoWithResult({
         chatId: ctx.chatId,
         bytes: image.bytes,
         mimeType: image.mimeType,
         replyToMessageId: ctx.replyToMessageId,
       });
-      if (messageId === undefined) {
+      if (sent === undefined) {
         consecutiveFailures++;
         return JSON.stringify({ error: "Failed to send generated image" });
       }
 
       consecutiveFailures = 0;
       const memoryPrompt: string = truncateInline(sanitizeInline(parsed.prompt), IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS);
-      ctx.onImageSent(`（${ctx.imageGenerationReference ? "参考素材" : ""}生成并发送了一张图片：${memoryPrompt}）`, messageId);
+      // allow_sending_without_reply 可能让图片在目标已删除时退化为普通消息，
+      // 自录只采用 Telegram 返回的实际回复关系。
+      ctx.onImageSent(
+        `（${ctx.imageGenerationReference ? "参考素材" : ""}生成并发送了一张图片：${memoryPrompt}）`,
+        sent.messageId,
+        sent.repliedToMessageId
+      );
       return JSON.stringify({
         success: true,
-        message_id: messageId,
+        message_id: sent.messageId,
         aspect_ratio: parsed.aspectRatio,
         resolution: "1K",
         ...(ctx.imageGenerationReference ? { reference_image_used: true } : {}),

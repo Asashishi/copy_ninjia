@@ -13,6 +13,12 @@ export interface BufferedReplyReference extends AiSpeakerSnapshot {
   forwardedFrom?: string;
 }
 
+/** 回复链回溯的一跳：除回复快照的身份、正文和转发来源外，显式区分它是
+ * 当前热区条目还是上一跳附带的链尾快照（见 workers/aiChat/replyChain.ts）。 */
+export interface ReplyChainLink extends BufferedReplyReference {
+  snapshotOnly: boolean;
+}
+
 export interface BufferedMessage extends AiSpeakerSnapshot {
   /** Telegram message_id；旧快照没有时省略。 */
   messageId?: number;

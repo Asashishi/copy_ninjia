@@ -77,6 +77,14 @@ describe("AI 媒体触发的生图参考图", () => {
         senderId: 7,
         triggerText: "[图片：一只戴帽子的猫] @bot 把它画成油画",
         forwardedFrom: "频道 [id:-100666] 东京日报",
+        triggerReference: {
+          messageId: 10,
+          id: 7,
+          firstName: "Alice",
+          lastName: "",
+          text: "[图片：一只戴帽子的猫] @bot 把它画成油画",
+          forwardedFrom: "频道 [id:-100666] 东京日报",
+        },
       }),
     }));
     const bufferedEntry = pushBufferedMessage.mock.calls[0]?.[1] as Record<string, unknown>;

@@ -5,6 +5,7 @@ import { LinkedQueue } from "../../../src/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../src/types";
 import type { ReplyPromptSections } from "../../../src/types/aiChat/replies";
 import { buildReplyPromptSections } from "../../../src/workers/aiChat/promptContext";
+import { indexBufferedMessage } from "../../../src/workers/aiChat/replyChain";
 
 beforeEach(resetAiChatMemoryCache);
 
@@ -41,7 +42,7 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
   const sections: ReplyPromptSections = buildReplyPromptSections(
     -1001,
     { id: 99, first_name: "Ninja", username: "ninja_bot" },
-    { isRandomTrigger: false, queuedTrigger, roundHasTypo: false }
+    { triggerMessageId: 81, isRandomTrigger: false, queuedTrigger, roundHasTypo: false }
   )!;
 
   expect(sections.referenceMemory).toStartWith(`[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]\n${REPLY_CONTEXT_SECTION_TEXT.referenceMemory.header}`);
@@ -58,7 +59,54 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
   expect(sections.replyTask).toContain("转发正文：「@ninja_bot 你怎么看」");
   expect(sections.replyTask).not.toContain("TA 说的是：「@ninja_bot 你怎么看」");
   expect(sections.replyTask).toContain("那条消息（回复 [message_id:70] [id:2] Bob 的消息：「被回复的原问题」）");
+  // 被回复的原消息已不在热区索引里，链只有单跳快照，不拼多层回复链标注。
+  expect(sections.replyTask).not.toContain("多层回复链");
   expect(sections.replyTask).toEndWith(`\n[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`);
+});
+
+test("触发消息处在多层回复链上时回复任务补全链标注", () => {
+  const root: BufferedMessage = {
+    messageId: 70,
+    id: 2,
+    firstName: "Bob",
+    lastName: "",
+    text: "最早的问题",
+    at: "2026/07/22 11:58:00",
+  };
+  const middle: BufferedMessage = {
+    messageId: 81,
+    id: 1,
+    firstName: "Alice",
+    lastName: "",
+    text: "接着追问",
+    replyTo: { messageId: 70, id: 2, firstName: "Bob", lastName: "", text: "最早的问题" },
+    at: "2026/07/22 11:59:00",
+  };
+  const trigger: BufferedMessage = {
+    messageId: 90,
+    id: 3,
+    firstName: "Carol",
+    lastName: "",
+    text: "@ninja_bot 你来评评理",
+    replyTo: { messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "接着追问" },
+    at: "2026/07/22 12:00:00",
+  };
+  const messages = new LinkedQueue<BufferedMessage>();
+  for (const entry of [root, middle, trigger]) {
+    messages.push(entry);
+    indexBufferedMessage(-1001, entry);
+  }
+  chatBuffers.set(-1001, messages);
+
+  const sections: ReplyPromptSections = buildReplyPromptSections(
+    -1001,
+    { id: 99, first_name: "Ninja", username: "ninja_bot" },
+    { triggerMessageId: 90, isRandomTrigger: false, roundHasTypo: false }
+  )!;
+
+  expect(sections.replyTask).toContain("本轮触发消息（[message_id:90]）处在一条多层回复链上");
+  expect(sections.replyTask).toContain("1. [message_id:81] [id:1] Alice：「接着追问」");
+  expect(sections.replyTask).toContain("2. [message_id:70] [id:2] Bob：「最早的问题」");
 });
 
 test("媒体特殊回复任务明确标出来源到当前发送者的转发路径", () => {
@@ -78,6 +126,7 @@ test("媒体特殊回复任务明确标出来源到当前发送者的转发路�
     -1001,
     { id: 99, first_name: "Ninja", username: "ninja_bot" },
     {
+      triggerMessageId: 82,
       isRandomTrigger: false,
       mediaComment: {
         kind: "photo",

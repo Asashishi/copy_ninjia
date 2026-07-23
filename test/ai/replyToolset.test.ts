@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanReply, isEmojiOnly } from "../../src/ai/utils/replyText";
 import { buildCharacterTypo, pickTypoCorrectionMode } from "../../src/ai/utils/typo";
+import type { TelegramSendResult } from "../../src/types/telegram";
 
 let nextMessageId: number = 100;
-const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
+const sendMessageMock = mock(async (
+  params: { replyToMessageId?: number }
+): Promise<TelegramSendResult | undefined> => ({
+  messageId: nextMessageId++,
+  ...(params.replyToMessageId !== undefined ? { repliedToMessageId: params.replyToMessageId } : {}),
+}));
 const deleteMessageMock = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const setMessageReactionMock = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const sendStickerMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
@@ -14,7 +20,7 @@ mock.module("../../src/infra/telegram", () => ({
   ...realTelegram,
   bot: { api: { getStickerSet: mock(async (): Promise<null> => null), getFile: mock(async (): Promise<null> => null) } },
   buildFileDownloadUrl: mock((_filePath: string): string => "https://example.invalid/file"),
-  sendMessage: sendMessageMock,
+  sendMessageWithResult: sendMessageMock,
   deleteMessage: deleteMessageMock,
   setMessageReaction: setMessageReactionMock,
   sendChooseStickerAction: mock(async (): Promise<boolean> => true),
@@ -160,6 +166,37 @@ test("模型提示限制为 8 个动作，执行侧留余量到 11 个动作才�
   expect(toolset.actionsUsed()).toBe(HARD_MAX_ACTIONS_PER_REPLY);
   expect(overflow.error).toContain(`at most ${HARD_MAX_ACTIONS_PER_REPLY} actions`);
   expect(sendMessageMock).toHaveBeenCalledTimes(HARD_MAX_ACTIONS_PER_REPLY);
+});
+
+test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回复关系", async () => {
+  sendMessageMock.mockImplementationOnce(async (): Promise<TelegramSendResult> => ({ messageId: 100 }));
+  const onMessageSent = mock((..._args: unknown[]): void => {});
+  const toolset = await createReplyToolset({
+    chatId: -100800,
+    replyToMessageId: 10,
+    imageGenerationRequested: false,
+    bypassImageGenerationCooldown: false,
+    chatAction: {
+      current: () => "idle",
+      set: mock((..._args: unknown[]): void => {}),
+      settle: mock(async (): Promise<void> => {}),
+    },
+    stickerLock: { tryAcquire: () => true, release: () => {} },
+    roundHasTypo: false,
+    isActive: () => true,
+    onMessageSent,
+    onStickerSent: mock((..._args: unknown[]): void => {}),
+    onImageSent: mock((..._args: unknown[]): void => {}),
+  });
+
+  const result = JSON.parse(await toolset.execute(
+    SEND_MESSAGE_TOOL,
+    JSON.stringify({ text: "目标已删除也照常发", reply_to_trigger: true })
+  ));
+
+  expect(result.success).toBe(true);
+  expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -100800, text: "目标已删除也照常发", replyToMessageId: 10 });
+  expect(onMessageSent).toHaveBeenCalledWith("目标已删除也照常发", 100, undefined);
 });
 
 describe("isEmojiOnly", () => {
@@ -320,8 +357,8 @@ describe("send_message typo correction", () => {
       expect(sendMessageMock).toHaveBeenCalledTimes(2);
       expect(sendMessageMock).toHaveBeenNthCalledWith(1, { chatId: -100800, text: "天汽", replyToMessageId: undefined });
       expect(sendMessageMock).toHaveBeenNthCalledWith(2, { chatId: -100800, text: "气", replyToMessageId: undefined });
-      expect(onMessageSent).toHaveBeenNthCalledWith(1, "天汽", 100);
-      expect(onMessageSent).toHaveBeenNthCalledWith(2, "气", 101);
+      expect(onMessageSent).toHaveBeenNthCalledWith(1, "天汽", 100, undefined);
+      expect(onMessageSent).toHaveBeenNthCalledWith(2, "气", 101, undefined);
       expect(deleteMessageMock).not.toHaveBeenCalled();
     } finally {
       Math.random = originalRandom;
@@ -365,7 +402,7 @@ describe("send_message typo correction", () => {
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
       expect(sendMessageMock).toHaveBeenNthCalledWith(1, { chatId: -100800, text: "天气", replyToMessageId: undefined });
       expect(onMessageSent).toHaveBeenCalledTimes(1);
-      expect(onMessageSent).toHaveBeenNthCalledWith(1, "天气", 100);
+      expect(onMessageSent).toHaveBeenNthCalledWith(1, "天气", 100, undefined);
     } finally {
       Math.random = originalRandom;
     }

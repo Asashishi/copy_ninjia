@@ -1,7 +1,8 @@
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
-import { sendMessage } from "../../../infra/telegram";
+import { sendMessageWithResult } from "../../../infra/telegram";
 import { sleep } from "../../../libs/sleep";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
+import type { TelegramSendResult } from "../../../types/telegram";
 import { isEmojiOnly } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
 import { parseBooleanField } from "../../utils/toolArgs";
@@ -58,15 +59,21 @@ export function createSendMessageExecutor(
 
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
     const replyToMessageId: number | undefined = replyToTrigger ? ctx.replyToMessageId : undefined;
-    const sentMessageId: number | undefined = await sendMessage({
+    const sent: TelegramSendResult | undefined = await sendMessageWithResult({
       chatId: ctx.chatId,
       text: typo.textToSend,
       replyToMessageId,
     });
-    if (sentMessageId === undefined) return JSON.stringify({ error: "Failed to send message" });
+    if (sent === undefined) return JSON.stringify({ error: "Failed to send message" });
 
-    recordSentMessage({ ctx, state, text: typo.textToSend, messageId: sentMessageId });
-    state.sentCanonicalTexts.set(sentMessageId, text);
+    recordSentMessage({
+      ctx,
+      state,
+      text: typo.textToSend,
+      messageId: sent.messageId,
+      ...(sent.repliedToMessageId !== undefined ? { repliedToMessageId: sent.repliedToMessageId } : {}),
+    });
+    state.sentCanonicalTexts.set(sent.messageId, text);
     if (typo.shouldUseTypo && typo.correctionText) {
       // 无论本轮落在 90% 补字还是 10% 没发现，纠正都只由
       // 执行侧决定，不允许模型根据 functionResponse 自行补单字。
@@ -84,7 +91,7 @@ export function createSendMessageExecutor(
       if (correctionSent) actionsUsedByTool++;
       return JSON.stringify({
         success: true,
-        message_id: sentMessageId,
+        message_id: sent.messageId,
         actions_used: actionsUsedByTool,
         typo: { mode: "quick", correction: correctionSent ? "sent" : "failed" },
       });
@@ -92,7 +99,7 @@ export function createSendMessageExecutor(
 
     return JSON.stringify({
       success: true,
-      message_id: sentMessageId,
+      message_id: sent.messageId,
       actions_used: actionsUsedByTool,
       ...(typo.rejectedReason ? { typo_rejected: typo.rejectedReason } : {}),
     });

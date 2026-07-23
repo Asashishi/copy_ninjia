@@ -3,11 +3,13 @@ import { activeReplyCounts, pendingOverflowNotices, pendingReplyTriggers } from 
 import { logger } from "../../infra/logger";
 import { admitTrigger } from "../../states/replyAdmission";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
+import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AdmitDecision } from "../../types/states/replyAdmission";
 import type { MediaCommentContext } from "./promptContext";
 import { drainReplyQueue as drainQueuedReplies, pushReplyTrigger, triggerKindFor } from "./replyQueue";
 import { startReplyRound } from "./replyRound";
 import { currentReplyGeneration } from "./replyState";
+import { replyReferenceForBufferedMessage } from "./replyChain";
 
 export {
   currentReplyGeneration,
@@ -30,6 +32,7 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): void {
       replyToMessageId: trigger.replyToMessageId,
       imageGenerationRequested: trigger.imageGenerationRequested,
       ...(trigger.imageGenerationReference ? { imageGenerationReference: trigger.imageGenerationReference } : {}),
+      ...(trigger.triggerReference ? { triggerReference: trigger.triggerReference } : {}),
       isRandomTrigger: false,
       queuedTrigger: trigger,
     },
@@ -69,6 +72,8 @@ export function generateAndSendReply(
     logger.error("aiChatWorker received trigger before init message; dropping.");
     return;
   }
+  const triggerReference: BufferedReplyReference | undefined = mediaComment?.triggerReference ??
+    replyReferenceForBufferedMessage(chatId, replyToMessageId);
 
   const decision: AdmitDecision = admitTrigger({
     activeRounds: activeReplyCounts.get(chatId) ?? 0,
@@ -84,6 +89,7 @@ export function generateAndSendReply(
           replyToMessageId,
           imageGenerationRequested,
           ...(imageGenerationReference ? { imageGenerationReference } : {}),
+          ...(triggerReference ? { triggerReference } : {}),
           isRandomTrigger,
           mediaComment,
           generation,
@@ -100,6 +106,7 @@ export function generateAndSendReply(
         replyToMessageId,
         imageGenerationRequested,
         imageGenerationReference,
+        triggerReference,
         mediaTrigger: mediaComment,
       });
       break;

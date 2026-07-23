@@ -8,6 +8,14 @@ const pushReplyTrigger = mock((_input: unknown): void => {});
 const drainQueuedReplies = mock((_chatId: number, _start: (trigger: unknown) => void): void => {});
 const loggerError = mock((_message: string): void => {});
 const pendingOverflowNotices = new Set<number>();
+const triggerReference = {
+  messageId: 7,
+  id: 42,
+  firstName: "Alice",
+  lastName: "",
+  text: "触发消息",
+};
+const replyReferenceForBufferedMessage = mock((_chatId: number, _messageId: number) => triggerReference);
 
 mock.module("../../../src/cache/aiChat/identity", () => ({
   botInfoState: { current: { id: 1, username: "copy_ninjia_bot", first_name: "Ninjia" } },
@@ -27,6 +35,7 @@ mock.module("../../../src/workers/aiChat/replyQueue", () => ({
   triggerKindFor: (random: boolean, media: unknown): string => media ? "mediaDirect" : random ? "random" : "direct",
 }));
 mock.module("../../../src/workers/aiChat/replyRound", () => ({ startReplyRound }));
+mock.module("../../../src/workers/aiChat/replyChain", () => ({ replyReferenceForBufferedMessage }));
 mock.module("../../../src/workers/aiChat/replyState", () => ({
   currentReplyGeneration: (): number => 17,
   invalidateChatReplies: (): void => {},
@@ -46,7 +55,14 @@ const baseRequest = {
 beforeEach(() => {
   decision = { action: "startRound" };
   pendingOverflowNotices.clear();
-  for (const fn of [admitTrigger, startReplyRound, pushReplyTrigger, drainQueuedReplies, loggerError]) fn.mockClear();
+  for (const fn of [
+    admitTrigger,
+    startReplyRound,
+    pushReplyTrigger,
+    drainQueuedReplies,
+    loggerError,
+    replyReferenceForBufferedMessage,
+  ]) fn.mockClear();
 });
 
 describe("AI reply admission pipeline", () => {
@@ -54,9 +70,10 @@ describe("AI reply admission pipeline", () => {
     generateAndSendReply(baseRequest);
 
     expect(startReplyRound).toHaveBeenCalledWith(
-      expect.objectContaining({ ...baseRequest, generation: 17 }),
+      expect.objectContaining({ ...baseRequest, triggerReference, generation: 17 }),
       expect.any(Function)
     );
+    expect(replyReferenceForBufferedMessage).toHaveBeenCalledWith(-1001, 7);
     const drain = startReplyRound.mock.calls[0]![1];
     drain(-1001);
     expect(drainQueuedReplies).toHaveBeenCalledWith(-1001, expect.any(Function));
@@ -65,7 +82,10 @@ describe("AI reply admission pipeline", () => {
   test("排队、溢出和静默丢弃分别只执行自己的副作用", () => {
     decision = { action: "enqueue" };
     generateAndSendReply({ ...baseRequest, imageGenerationRequested: true });
-    expect(pushReplyTrigger).toHaveBeenCalledWith(expect.objectContaining({ chatId: -1001 }));
+    expect(pushReplyTrigger).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: -1001,
+      triggerReference,
+    }));
 
     decision = { action: "enqueueOverflow" };
     generateAndSendReply(baseRequest);

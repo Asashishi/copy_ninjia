@@ -12,6 +12,7 @@ export type * from "./antiRaid";
 export type * from "./tools";
 export type * from "./luckChallenge";
 export type * from "./media";
+export type * from "./telegram";
 export type * from "./stickers";
 export type * from "./states/verification";
 export type * from "./states/lockdown";

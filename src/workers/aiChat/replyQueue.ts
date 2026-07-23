@@ -11,12 +11,13 @@ import {
 import { chatBuffers } from "../../cache/aiChat/memory";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { truncateInline } from "../../libs/text";
-import type { BufferedMessage } from "../../types/aiChat/memory";
+import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import type { TriggerKind } from "../../types/states/replyAdmission";
 import type { MediaCommentContext } from "./promptContext";
 import { resolvedTagFor } from "./mediaText";
 import { notifyRateLimited } from "./replyState";
+import { replyReferenceForBufferedEntry } from "./replyChain";
 
 /** 分类顺序与原短路判断一致：随机触发优先于媒体触发。 */
 export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaCommentContext | undefined): TriggerKind {
@@ -35,6 +36,7 @@ export function pushReplyTrigger({
   replyToMessageId,
   imageGenerationRequested,
   imageGenerationReference,
+  triggerReference,
   mediaTrigger,
 }: {
   chatId: number;
@@ -42,6 +44,7 @@ export function pushReplyTrigger({
   replyToMessageId: number;
   imageGenerationRequested: boolean;
   imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
+  triggerReference?: BufferedReplyReference;
   mediaTrigger?: MediaCommentContext;
 }): void {
   let queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
@@ -50,9 +53,12 @@ export function pushReplyTrigger({
     pendingReplyTriggers.set(chatId, queue);
   }
   if (mediaTrigger) {
+    const capturedTriggerReference: BufferedReplyReference | undefined =
+      triggerReference ?? mediaTrigger.triggerReference;
     queue.push({
       triggerSenderId,
       replyToMessageId,
+      ...(capturedTriggerReference ? { triggerReference: capturedTriggerReference } : {}),
       ...(mediaTrigger.replyTo ? { replyTo: mediaTrigger.replyTo } : {}),
       ...(mediaTrigger.forwardedFrom ? { forwardedFrom: mediaTrigger.forwardedFrom } : {}),
       imageGenerationRequested,
@@ -67,9 +73,12 @@ export function pushReplyTrigger({
   }
 
   const triggerEntry: BufferedMessage | undefined = chatBuffers.get(chatId)?.last(1)[0];
+  const capturedTriggerReference: BufferedReplyReference | undefined = triggerReference ??
+    (triggerEntry ? replyReferenceForBufferedEntry(replyToMessageId, triggerEntry) : undefined);
   queue.push({
     triggerSenderId,
     replyToMessageId,
+    ...(capturedTriggerReference ? { triggerReference: capturedTriggerReference } : {}),
     ...(triggerEntry?.replyTo ? { replyTo: triggerEntry.replyTo } : {}),
     ...(triggerEntry?.forwardedFrom ? { forwardedFrom: triggerEntry.forwardedFrom } : {}),
     imageGenerationRequested,

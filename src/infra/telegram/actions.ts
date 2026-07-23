@@ -3,6 +3,7 @@ import type { Api, InlineKeyboard } from "grammy";
 import type { ReactionTypeEmoji } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
 import { bot, logApiError } from "./client";
+import type { TelegramSendResult } from "../../types/telegram";
 
 export interface SendMessageParams {
   chatId: number;
@@ -13,15 +14,16 @@ export interface SendMessageParams {
   signal?: AbortSignal;
 }
 
-/** 发送纯文本消息；不设置 parse_mode，避免用户内容形成格式或链接注入。 */
-export async function sendMessage({
+/** 发送纯文本消息并返回 Telegram 实际建立的回复关系；不设置 parse_mode，
+ * 避免用户内容形成格式或链接注入。 */
+export async function sendMessageWithResult({
   chatId,
   text,
   replyToMessageId,
   api = bot.api,
   keyboard,
   signal,
-}: SendMessageParams): Promise<number | undefined> {
+}: SendMessageParams): Promise<TelegramSendResult | undefined> {
   try {
     const other: Parameters<Api["sendMessage"]>[2] = {
       ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
@@ -31,12 +33,20 @@ export async function sendMessage({
       ? await api.sendMessage(chatId, text, other)
       : await api.sendMessage(chatId, text, other, signal as unknown as Parameters<Api["sendMessage"]>[3]);
     markSelfSent(chatId, sent.message_id);
-    return sent.message_id;
+    return {
+      messageId: sent.message_id,
+      ...(sent.reply_to_message ? { repliedToMessageId: sent.reply_to_message.message_id } : {}),
+    };
   } catch (error: unknown) {
     if (signal?.aborted) return undefined;
     logApiError("send message", error);
     return undefined;
   }
+}
+
+/** 发送纯文本消息的兼容入口；只需要 message_id 的调用方继续使用此函数。 */
+export async function sendMessage(params: SendMessageParams): Promise<number | undefined> {
+  return (await sendMessageWithResult(params))?.messageId;
 }
 
 export async function sendTypingAction(chatId: number, api: Api = bot.api): Promise<boolean> {
@@ -108,25 +118,33 @@ export interface SendPhotoParams {
   api?: Api;
 }
 
-/** 从内存上传一张图片，不落临时文件；用于 AI 生图等本地字节来源。 */
-export async function sendPhoto({
+/** 从内存上传一张图片并返回 Telegram 实际建立的回复关系；不落临时文件。 */
+export async function sendPhotoWithResult({
   chatId,
   bytes,
   mimeType,
   replyToMessageId,
   api = bot.api,
-}: SendPhotoParams): Promise<number | undefined> {
+}: SendPhotoParams): Promise<TelegramSendResult | undefined> {
   try {
     const extension: string = mimeType === "image/jpeg" ? "jpg" : "png";
     const sent = await api.sendPhoto(chatId, new InputFile(bytes, `generated.${extension}`), {
       ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
     });
     markSelfSent(chatId, sent.message_id);
-    return sent.message_id;
+    return {
+      messageId: sent.message_id,
+      ...(sent.reply_to_message ? { repliedToMessageId: sent.reply_to_message.message_id } : {}),
+    };
   } catch (error: unknown) {
     logApiError("send photo", error);
     return undefined;
   }
+}
+
+/** 上传图片的兼容入口；只需要 message_id 的调用方继续使用此函数。 */
+export async function sendPhoto(params: SendPhotoParams): Promise<number | undefined> {
+  return (await sendPhotoWithResult(params))?.messageId;
 }
 
 export interface SetMessageReactionParams {

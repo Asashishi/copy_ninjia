@@ -1,13 +1,16 @@
-import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
+import type { BufferedMessage, BufferedReplyReference, ReplyChainLink } from "../../types/aiChat/memory";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import { FALLBACK_SPEAKER_NAME } from "../../consts/auto";
-import { COMPACT_BATCH_SIZE } from "../../consts/aiChat/memory";
+import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from "../../consts/aiChat/memory";
 import {
   FORWARD_TAG_HINT,
   forwardTagTemplate,
+  REPLY_CHAIN_SNAPSHOT_TAG,
   REPLY_TAG_HINT,
+  replyChainTemplate,
   replyTagTemplate,
 } from "../../consts/aiChat/prompts/transcript";
+import { truncateInline } from "../../libs/text";
 
 /** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
 export function displaySpeakerName(speaker: AiSpeakerSnapshot): string {
@@ -34,6 +37,22 @@ export function formatReplyReference(reference: BufferedReplyReference): string 
     forwardTag: formatForwardTag(reference.forwardedFrom),
     quote,
   });
+}
+
+/**
+ * 多层回复链标注：单跳回复标注只覆盖第一跳，链 ≥2 跳时在回复任务区块补
+ * 全路径（见 workers/aiChat/promptContext.ts）。各跳身份与转发来源标记和
+ * 转录行一致，正文按 REPLY_CHAIN_NODE_MAX_CHARS 截断。已滑出热区、仅靠
+ * 上一跳回复快照保留的链尾显式标记；不足 2 跳时返回空串。
+ */
+export function formatReplyChain(triggerMessageId: number, chain: ReplyChainLink[]): string {
+  if (chain.length < 2) return "";
+  const links: string[] = chain.map((link: ReplyChainLink): string => {
+    const usernameTag: string = link.username ? ` [username:@${link.username.replace(/^@+/, "")}]` : "";
+    const snapshotTag: string = link.snapshotOnly ? ` ${REPLY_CHAIN_SNAPSHOT_TAG}` : "";
+    return `[message_id:${link.messageId}] [id:${link.id}]${usernameTag} ${displaySpeakerName(link)}${formatForwardTag(link.forwardedFrom)}${snapshotTag}：「${truncateInline(link.text, REPLY_CHAIN_NODE_MAX_CHARS)}」`;
+  });
+  return replyChainTemplate(triggerMessageId, links);
 }
 
 /**

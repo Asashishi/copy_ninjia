@@ -11,6 +11,7 @@ import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { admitRound } from "../../states/replyAdmission";
 import type { AiBotInfo, AiSentMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
+import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type {
   QueuedReplyTrigger,
   ReplyPromptSections,
@@ -20,6 +21,7 @@ import type {
 import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { callGemini } from "./geminiReply";
 import { buildReplyPromptSections, type MediaCommentContext } from "./promptContext";
+import { replyReferenceForBufferedMessage } from "./replyChain";
 import { currentReplyGeneration, isReplyGenerationCurrent, notifyRateLimited } from "./replyState";
 import { recordChatMessage } from "./rollingMemory";
 
@@ -31,6 +33,8 @@ export interface ReplyRoundRequest {
   replyToMessageId: number;
   imageGenerationRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;
+  /** 轮次开始前捕获的触发消息快照；生成或排队期间滑出热区时用于自录兜底。 */
+  triggerReference?: BufferedReplyReference;
   isRandomTrigger: boolean;
   mediaComment?: MediaCommentContext;
   queuedTrigger?: QueuedReplyTrigger;
@@ -49,6 +53,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     replyToMessageId,
     imageGenerationRequested,
     imageGenerationReference,
+    triggerReference,
     isRandomTrigger,
     mediaComment,
     queuedTrigger,
@@ -95,6 +100,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
     try {
       const promptSections: ReplyPromptSections | null = buildReplyPromptSections(chatId, selfInfo, {
+        triggerMessageId: replyToMessageId,
         isRandomTrigger,
         mediaComment,
         queuedTrigger,
@@ -105,6 +111,14 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
       // 心跳从 idle 起步，只有具体发送工具临发前才显示输入或选择贴纸状态。
       const heartbeat = startChatActionHeartbeat(chatId);
       try {
+        /** 只为 Telegram 实际返回的回复目标建边；目标已滑出热区时退回轮次
+         * 开始前捕获的触发快照。 */
+        const selfReplyReferenceFor = (
+          repliedToMessageId: number | undefined
+        ): BufferedReplyReference | undefined => repliedToMessageId === undefined
+          ? undefined
+          : replyReferenceForBufferedMessage(chatId, repliedToMessageId) ??
+            (triggerReference?.messageId === repliedToMessageId ? triggerReference : undefined);
         const ctx: ReplyToolContext = {
           chatId,
           replyToMessageId,
@@ -115,9 +129,12 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           stickerLock,
           roundHasTypo,
           isActive,
-          onMessageSent: (text: string, messageId: number): void => {
+          onMessageSent: (text: string, messageId: number, repliedToMessageId?: number): void => {
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
             if (isActive()) {
+              // 挂了回复的自发消息把目标还原成回复引用一起自录：自己的发言
+              // 在转录里同样带「回复了谁」，回复链也能穿过机器人的消息。
+              const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
               recordChatMessage({
                 chatId,
                 senderId: selfInfo.id,
@@ -125,6 +142,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
                 lastName: "",
                 username: selfInfo.username,
                 messageId,
+                ...(selfReplyTo ? { replyTo: selfReplyTo } : {}),
                 text,
               });
             }
@@ -143,9 +161,12 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
               });
             }
           },
-          onImageSent: (imageDescription: string, messageId: number): void => {
+          onImageSent: (imageDescription: string, messageId: number, repliedToMessageId?: number): void => {
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
             if (isActive()) {
+              // 同 onMessageSent：图片请求固定指向触发消息，自录只采信服务端
+              // 实际返回的回复关系。
+              const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
               recordChatMessage({
                 chatId,
                 senderId: selfInfo.id,
@@ -153,6 +174,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
                 lastName: "",
                 username: selfInfo.username,
                 messageId,
+                ...(selfReplyTo ? { replyTo: selfReplyTo } : {}),
                 text: imageDescription,
               });
             }

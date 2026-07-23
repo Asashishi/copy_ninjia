@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatBufferedMessageLine } from "../../src/ai/utils/chatTranscript";
-import { COMPACT_BATCH_SIZE } from "../../src/consts/aiChat";
-import { CHAT_MEMORY_PRIORITY_INSTRUCTION, FORWARD_TAG_HINT, REPLY_TAG_HINT, SUMMARY_SYSTEM_PROMPT } from "../../src/consts/aiChatPrompts";
+import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatBufferedMessageLine, formatReplyChain } from "../../src/ai/utils/chatTranscript";
+import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from "../../src/consts/aiChat";
+import { CHAT_MEMORY_PRIORITY_INSTRUCTION, FORWARD_TAG_HINT, REPLY_CHAIN_SNAPSHOT_TAG, REPLY_TAG_HINT, SUMMARY_SYSTEM_PROMPT } from "../../src/consts/aiChatPrompts";
 import type { BufferedMessage } from "../../src/types";
 
 const legacyMessage: BufferedMessage = {
@@ -109,5 +109,35 @@ describe("AI 群聊转录身份格式", () => {
     expect(coldBlock).toContain("只用于理解长期话题");
     expect(coldBlock).toContain("当前状态以逐字记录为准");
     expect(coldBlock).toContain("1. 较早摘要\n2. 更近摘要");
+  });
+
+  test("多层回复链标注按编号列出各跳并截断超长正文", () => {
+    const longText: string = "长".repeat(REPLY_CHAIN_NODE_MAX_CHARS + 20);
+    const block: string = formatReplyChain(90, [
+      {
+        messageId: 81,
+        id: 1,
+        firstName: "Alice",
+        lastName: "",
+        username: "alice_dev",
+        text: "第一跳原文",
+        forwardedFrom: "频道 [id:-100666] 东京日报",
+        snapshotOnly: false,
+      },
+      { messageId: 70, id: 2, firstName: "Bob", lastName: "", text: longText, snapshotOnly: true },
+    ]);
+    expect(block).toContain("本轮触发消息（[message_id:90]）处在一条多层回复链上");
+    expect(block).toContain("1. [message_id:81] [id:1] [username:@alice_dev] Alice（转发自 频道 [id:-100666] 东京日报）：「第一跳原文」");
+    expect(block).toContain(`2. [message_id:70] [id:2] Bob ${REPLY_CHAIN_SNAPSHOT_TAG}：「${"长".repeat(REPLY_CHAIN_NODE_MAX_CHARS)}」`);
+    expect(block).toContain(`${REPLY_CHAIN_SNAPSHOT_TAG}，它是上一条消息自带的回复快照`);
+    expect(block).toContain("除链尾快照外，完整原文以逐字记录为准");
+    expect(block).not.toContain(longText);
+  });
+
+  test("回复链不足 2 跳时返回空串，不产生重复标注", () => {
+    expect(formatReplyChain(90, [])).toBe("");
+    expect(formatReplyChain(90, [
+      { messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "只有单跳", snapshotOnly: false },
+    ])).toBe("");
   });
 });

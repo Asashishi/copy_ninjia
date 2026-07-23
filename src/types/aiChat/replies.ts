@@ -9,6 +9,9 @@ import type { BufferedReplyReference } from "./memory";
 export interface QueuedReplyTrigger {
   triggerSenderId: number;
   replyToMessageId: number;
+  /** 触发消息自身的单跳快照；排队期间即使它滑出热区，机器人发送后的
+   * 自录仍可保留 Telegram 实际建立的回复关系。 */
+  triggerReference?: BufferedReplyReference;
   replyTo?: BufferedReplyReference;
   /** 当前触发消息是转发时的来源；排队期间即使原转录滑出也保留归属。 */
   forwardedFrom?: string;
@@ -39,9 +42,13 @@ export interface ReplyToolContext {
   stickerLock: StickerSendLockControl;
   roundHasTypo: boolean;
   isActive: () => boolean;
-  onMessageSent: (text: string, messageId: number) => void;
+  /** repliedToMessageId 是这次发送实际挂上的回复目标（send_message 由模型的
+   *  reply_to_trigger 决定、图片请求固定指向触发消息）；Telegram 因目标已删除
+   *  而退化为普通发送时省略。供 Worker 自录记忆时带上「回复了谁」，让机器
+   *  人自己的发言也能被回复链回溯。 */
+  onMessageSent: (text: string, messageId: number, repliedToMessageId?: number) => void;
   onStickerSent: (stickerDescription: string, messageId: number) => void;
-  onImageSent: (imageDescription: string, messageId: number) => void;
+  onImageSent: (imageDescription: string, messageId: number, repliedToMessageId?: number) => void;
 }
 
 /** 一轮 AI 回复的函数工具集与执行状态。 */

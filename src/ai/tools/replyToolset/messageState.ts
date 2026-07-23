@@ -1,5 +1,6 @@
-import { sendMessage } from "../../../infra/telegram";
+import { sendMessageWithResult } from "../../../infra/telegram";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
+import type { TelegramSendResult } from "../../../types/telegram";
 
 export interface RoundMessageState {
   messageCount: number;
@@ -31,6 +32,8 @@ interface RecordSentMessageParams {
   state: RoundMessageState;
   text: string;
   messageId: number;
+  /** 这次发送实际挂上的回复目标；没挂回复时省略（见 ReplyToolContext.onMessageSent）。 */
+  repliedToMessageId?: number;
 }
 
 interface SendDirectMessageParams {
@@ -40,9 +43,9 @@ interface SendDirectMessageParams {
   replyToMessageId?: number;
 }
 
-export function recordSentMessage({ ctx, state, text, messageId }: RecordSentMessageParams): void {
+export function recordSentMessage({ ctx, state, text, messageId, repliedToMessageId }: RecordSentMessageParams): void {
   state.messageCount++;
-  ctx.onMessageSent(text, messageId);
+  ctx.onMessageSent(text, messageId, repliedToMessageId);
 }
 
 export async function sendDirectMessage({
@@ -52,11 +55,19 @@ export async function sendDirectMessage({
   replyToMessageId,
 }: SendDirectMessageParams): Promise<number | undefined> {
   if (!ctx.isActive()) return undefined;
-  const sentMessageId: number | undefined = await sendMessage({
+  const sent: TelegramSendResult | undefined = await sendMessageWithResult({
     chatId: ctx.chatId,
     text,
     replyToMessageId,
   });
-  if (sentMessageId !== undefined) recordSentMessage({ ctx, state, text, messageId: sentMessageId });
-  return sentMessageId;
+  if (sent !== undefined) {
+    recordSentMessage({
+      ctx,
+      state,
+      text,
+      messageId: sent.messageId,
+      ...(sent.repliedToMessageId !== undefined ? { repliedToMessageId: sent.repliedToMessageId } : {}),
+    });
+  }
+  return sent?.messageId;
 }

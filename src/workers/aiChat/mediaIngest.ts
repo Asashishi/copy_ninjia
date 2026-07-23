@@ -9,6 +9,7 @@ import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallback
 import { buildBufferedMessage } from "./bufferedMessage";
 import { pushBufferedMessage } from "./rollingMemory";
 import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent } from "./replyPipeline";
+import { replyReferenceForBufferedEntry } from "./replyChain";
 
 /** 直接拿当前图片/贴纸叫机器人时附上短期参考；是否实际编辑由模型决定。GIF 不隐式混入。 */
 function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGenerationReference | undefined {
@@ -77,6 +78,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
             senderName: displayBufferedMessageName(entry),
             description: catalogEntry.description,
             triggerText: entry.text,
+            triggerReference: replyReferenceForBufferedEntry(msg.messageId, entry),
             directTriggerReason: msg.directTrigger.reason,
             ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
             ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
@@ -95,6 +97,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
             senderName: displayBufferedMessageName(entry),
             description: catalogEntry.description,
             triggerText: entry.text,
+            triggerReference: replyReferenceForBufferedEntry(msg.messageId, entry),
             ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
           },
         });
@@ -132,6 +135,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           senderName: displayBufferedMessageName(entry),
           description: description ?? replyFallbackDescriptionFor(msg),
           triggerText: entry.text,
+          triggerReference: replyReferenceForBufferedEntry(msg.messageId, entry),
           directTriggerReason: msg.directTrigger.reason,
           ...(entry.replyTo ? { replyTo: entry.replyTo } : {}),
           ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
@@ -150,6 +154,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           senderName: displayBufferedMessageName(entry),
           description,
           triggerText: entry.text,
+          triggerReference: replyReferenceForBufferedEntry(msg.messageId, entry),
           ...(entry.forwardedFrom ? { forwardedFrom: entry.forwardedFrom } : {}),
         },
       });
