@@ -156,7 +156,7 @@ flowchart TD
 <tr><th width="13%" align="left">维度</th><th width="87%" align="left">策略</th></tr>
 <tr><td>🧩&nbsp;模型</td><td>回复、摘要、视觉描述使用 <code>gemini-3.5-flash-lite</code>；生成或编辑图片使用 <code>gemini-3.1-flash-lite-image</code></td></tr>
 <tr><td>🎯&nbsp;触发</td><td>回复机器人或 <code>@机器人</code> 时必定触发；普通文字和媒体评价共用按群活跃度的动态概率。当前消息先计入近 1 小时窗口，因此冷群第一条为 1/174；窗口内达到 165 条后封底为 1/10。活跃度只存内存，空闲满一小时或重启后回到冷启动</td></tr>
-<tr><td>🚦&nbsp;同群并发</td><td>每群最多 3 轮 Gemini 工具对话在途；直接触发进入有界队列，随机触发在满载时丢弃</td></tr>
+<tr><td>🚦&nbsp;同群并发</td><td>每群最多 1 轮 Gemini 工具对话在途；本轮未结束时，直接触发进入有界队列，随机触发丢弃</td></tr>
 <tr><td>⏱️&nbsp;限频</td><td>每群 5 分钟最多启动 150 轮；超限提示本身也有冷却</td></tr>
 <tr><td>🔧&nbsp;工具</td><td>同一请求真实注册内置 <code>googleSearch</code>，并提供东京天气、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> 等函数工具；每轮回复最多执行 20 次自定义函数调用。提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 <code>send_message</code>，图片、贴纸或反应完成后的最终正文不会被当作额外发言</td></tr>
 <tr><td>🧱&nbsp;输入边界</td><td>初始 Gemini 请求使用一个 <code>user Content</code>，按顺序承载三个独立 <code>text Part</code>：只读参考记忆、只读当前会话、本轮回复任务。每段都有明确首尾标签与局部约束，<code>systemInstruction</code> 再声明前两段只作数据、只有最后一段是待执行任务；后续工具轮次仍按真实 <code>model/user</code> 角色追加</td></tr>

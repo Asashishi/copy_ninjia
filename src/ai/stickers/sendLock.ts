@@ -2,9 +2,9 @@ import { stickerSendLocks } from "../../cache/stickers/sendLock";
 import type { StickerSendLockControl } from "../../types/stickers/tools";
 
 /**
- * 同群「发贴纸」的跨轮互斥锁。同群最多 REPLY_ROUND_MAX_CONCURRENT 轮回复
- * 并发（见 workers/aiChat/replyRound.ts 的 startReplyRound），没有这道锁时几个
- * 并发轮可能各自发一枚贴纸，短短几秒内贴纸连着落地就是刷屏。锁按群记账
+ * 同群「发贴纸」的跨轮互斥锁。当前 REPLY_ROUND_MAX_CONCURRENT 为 1，
+ * 锁仍保留轮令牌所有权边界，避免迟到工具调用越过轮生命周期；若之后重新
+ * 开放同群并发，它还会阻止几个并发轮各自发一枚贴纸造成刷屏。锁按群记账
  * （chatId -> 持锁轮令牌）：每轮回复持有自己的句柄，send_sticker 校验通过
  * 后、真正发送前先 tryAcquire——空闲即抢占、本轮已持有则直接通过（发送
  * 失败换一枚重试不受影响），被并发轮抢先则拒绝（喂回模型错误，让它改用

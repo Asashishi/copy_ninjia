@@ -18,7 +18,7 @@ export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
 /** 单群长窗口内允许启动的最大回复轮数。 */
 export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
 /** 同群在途回复轮数和直接触发等候队列上限。 */
-export const REPLY_ROUND_MAX_CONCURRENT: number = 3;
+export const REPLY_ROUND_MAX_CONCURRENT: number = 1;
 /** 同群直接触发在并发满载时允许排队的最大数量。 */
 export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 /** 排队触发原文快照的截断上限。 */

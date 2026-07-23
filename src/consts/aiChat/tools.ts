@@ -58,6 +58,6 @@ export const TYPO_MIN_REMAINING_ACTIONS: number = 2;
 /** 出错后补发正确单字的概率；剩余 10% 视为没发现。 */
 export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.9;
 /** 手滑后快速补字停顿的最小值。 */
-export const TYPO_QUICK_CORRECTION_MIN_MS: number = 7_500;
+export const TYPO_QUICK_CORRECTION_MIN_MS: number = 1_500;
 /** 手滑后快速补字停顿的最大值。 */
-export const TYPO_QUICK_CORRECTION_MAX_MS: number = 10_000;
+export const TYPO_QUICK_CORRECTION_MAX_MS: number = 7_500;
