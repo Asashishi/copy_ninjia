@@ -1,5 +1,7 @@
 # 02 架构总览
 
+**简体中文** · [English](en/02-architecture.md) · [日本語](ja/02-architecture.md)
+
 [← 01 环境搭建](01-getting-started.md) · [返回目录](README.md) · 下一页：[03 目录导览](03-directory-map.md)
 
 本页讲「系统长什么样、一条消息怎么流过去、进程怎么起来怎么停」。这里是叙述性的导览；可执行的精确约束（谁拥有什么状态、什么顺序不可颠倒）以 [04 运行时权威约束](04-invariants.md) 为准。

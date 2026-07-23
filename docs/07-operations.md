@@ -1,5 +1,7 @@
 # 07 运维与排障
 
+**简体中文** · [English](en/07-operations.md) · [日本語](ja/07-operations.md)
+
 [← 06 常见修改配方](06-modification-guide.md) · [返回目录](README.md)
 
 ## 部署形态

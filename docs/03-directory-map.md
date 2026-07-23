@@ -1,5 +1,7 @@
 # 03 目录导览与代码放置
 
+**简体中文** · [English](en/03-directory-map.md) · [日本語](ja/03-directory-map.md)
+
 [← 02 架构总览](02-architecture.md) · [返回目录](README.md) · 下一页：[04 运行时权威约束](04-invariants.md)
 
 本页回答「这段代码住在哪、新代码该放哪」。风格细则（引号、参数上限、import type 等）由 eslint 与 [`AGENTS.md`](../AGENTS.md) 约束，此处不重复。

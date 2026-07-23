@@ -1,5 +1,7 @@
 # 04 运行时权威约束
 
+**简体中文** · [English](en/04-invariants.md) · [日本語](ja/04-invariants.md)
+
 [← 03 目录导览](03-directory-map.md) · [返回目录](README.md) · 下一页：[05 开发流程](05-dev-workflow.md)
 
 本页记录跨模块、跨生命周期的**权威约束**（前身为 `docs/architecture.md`）。源码注释应解释局部不变量并引用这里（`@see ../../docs/04-invariants.md`），不在多个模块重复维护整套启动或持久化叙述。改动涉及下列任何一条时，先改这里，再改代码。

@@ -1,5 +1,7 @@
 # 05 开发流程与质量门禁
 
+**简体中文** · [English](en/05-dev-workflow.md) · [日本語](ja/05-dev-workflow.md)
+
 [← 04 运行时权威约束](04-invariants.md) · [返回目录](README.md) · 下一页：[06 常见修改配方](06-modification-guide.md)
 
 ## 命令速查

@@ -1,5 +1,7 @@
 # 06 常见修改配方
 
+**简体中文** · [English](en/06-modification-guide.md) · [日本語](ja/06-modification-guide.md)
+
 [← 05 开发流程](05-dev-workflow.md) · [返回目录](README.md) · 下一页：[07 运维与排障](07-operations.md)
 
 每个配方给出触碰的文件与顺序。通用前提：改动前读 [`AGENTS.md`](../AGENTS.md)；涉及运行时数据文件（`state.json`、`memory/`、`bot.lock`）或会间接写它们的代码路径时，动手前先备份；完成后 `bun run check` 全绿并按需同步根 README。

@@ -1,5 +1,7 @@
 # 01 环境搭建与首次运行
 
+**简体中文** · [English](en/01-getting-started.md) · [日本語](ja/01-getting-started.md)
+
 [← 返回目录](README.md) · 下一页：[02 架构总览](02-architecture.md)
 
 本页把一个全新环境带到「机器人在群里正常工作」。只求最短路径；每一步背后的设计原因见 [02 架构总览](02-architecture.md)。

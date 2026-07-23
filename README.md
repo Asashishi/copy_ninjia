@@ -1,5 +1,7 @@
 <div align="center">
 
+<p><b>简体中文</b> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a></p>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner_dark.jpg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner_light.jpg">

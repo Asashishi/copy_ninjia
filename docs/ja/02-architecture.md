@@ -1,0 +1,74 @@
+# 02 アーキテクチャ概要
+
+[简体中文](../02-architecture.md) · [English](../en/02-architecture.md) · **日本語**
+
+[← 01 環境構築](01-getting-started.md) · [目次に戻る](README.md) · 次へ：[03 ディレクトリ構成](03-directory-map.md)
+
+このページでは、システム全体の形、メッセージが処理される流れ、プロセスの起動と停止を説明します。ここは案内用の概要であり、状態の所有者や変更できない順序など、実行可能な厳密な制約は [04 実行時の正式な不変条件](04-invariants.md) を正本とします。
+
+## トポロジー：メインスレッド + 3 つの Worker
+
+```mermaid
+flowchart TD
+    classDef main stroke:#8e75ff,stroke-width:2.5px;
+    classDef worker stroke:#3b82f6,stroke-width:2px;
+
+    MAIN["🧵 メインスレッド<br/>grammY runner + グループ単位の sequentialize<br/>コマンドと自動メッセージ処理<br/>StateStore（state.json）"]:::main
+    AI["🤖 AI Worker<br/>Gemini の複数ターン・ツール呼び出し<br/>ローリングメモリ · 要約圧縮 · ムード"]:::worker
+    RAID["🛡️ Anti-Raid Worker<br/>認証とロックダウンの状態機械"]:::worker
+    DISK["💾 Disk I/O Worker<br/>ログ / メモリスナップショット / 運勢 / 認証ファイル"]:::worker
+
+    MAIN --> AI
+    MAIN --> RAID
+    MAIN --> DISK
+```
+
+基本原則は**状態の排他的所有**です。各実行時状態には所有者が 1 つだけ存在し、スレッド間ではメモリを共有せずメッセージだけを渡します。
+
+- **メインスレッド**は Telegram runner、3 つの Worker の監視ハンドル、`StateStore` が管理する `state.json` のメモリミラーを所有します。ミラーにはグループのスイッチ、copy 状態、ロックダウンのミラーなどの正式な状態が含まれます。
+- **AI Worker**はグループチャットのメモリ、返信の受け入れ制御、メディア説明パイプライン、グループごとのムード、スタンプカタログの実行時状態を排他的に所有します。
+- **Anti-Raid Worker**は認証・ロックダウン状態機械とタイマーを排他的に所有し、メインスレッドは復元可能なミラーだけを保持します。
+- **Disk I/O Worker**は `logs/` や `memory/` など共有ディレクトリの読み書きを直列化して排他的に扱います。唯一の例外は `state.json` で、メインスレッドの `StateStore` が直接アトミックに書き込みます。
+
+Worker のクラッシュはレート制限付きで自己修復しますが、ホスト実装は 2 系統です。AI と Anti-Raid は [`src/libs/supervisedWorker.ts`](../../src/libs/supervisedWorker.ts) を共有します。Disk I/O 自身はディスクへ書く logger に依存できないため、[`src/infra/diskIO.ts`](../../src/infra/diskIO.ts) に console-only の独自復旧処理があります。再構築後はメインスレッドのミラーまたはディスクスナップショットから再生します。再起動予算を使い切ると、[`src/infra/workerSupervisor.ts`](../../src/infra/workerSupervisor.ts) などの fatal 境界がライフサイクルへ停止を通知します。
+
+## 1 件のメッセージが通る経路
+
+[`src/app/registerHandlers.ts`](../../src/app/registerHandlers.ts) が update チェーンを 1 か所で明示的に登録し、middleware の順序そのものが意味を持ちます。
+
+1. **`update_id` の追跡** — 処理に入った最大の update ID を記録し、停止時に正しい Telegram offset を確認できるようにします。
+2. **運勢の署名付き receipt 確認** — すべてのゲートウェイより前に実行し、転送された複製も有効です。
+3. **init ゲートウェイ** — `/init enable` されていないグループの通常業務 update はここで終了します。`my_chat_member`、Bot 自身の `via_bot` メッセージ、スーパー管理者の `/init` など明示的な例外は [`src/infra/updateGate.ts`](../../src/infra/updateGate.ts) が許可します。
+4. **グループ単位の直列化** — `sequentialize` が同一チャット内のメッセージ順を保証します。リアクション同期は独立した結合キューを使い、チャットレーンを占有しません。
+5. **プライベートチャット・ゲートウェイ** — プライベートチャットでは `/send` の入口と進行中の中継セッションだけを許可します。中継メッセージはメッセージパイプラインへ直接入り、本文がコマンドとして解釈されるのを防ぎます。
+6. **参加認証** — コマンド処理より前でなければなりません。後ろに置くと、認証待ちユーザーのコマンドを追跡して削除できません。
+7. **コマンド登録** — 13 個の `bot.command(...)`。詳細は [06 よくある変更手順](06-modification-guide.md#スラッシュコマンドの追加) を参照してください。
+8. **自動メッセージパイプライン** — [`src/auto/`](../../src/auto) が copy、AI の文字起こしとトリガー判定、リアクション同期などコマンド以外の動作を処理します。
+
+AI がトリガーされた後は、メインスレッドが活動量に基づく確率または直接トリガーを判定し、AI Worker に送信します。Worker は Gemini 入力を参照メモリ、現在の会話、今回の返信タスクという 3 部構成にし、複数ターンのツール呼び出しを実行します。メッセージ、スタンプ、リアクション、画像生成はすべてメインスレッドのプロキシ経由で行い、結果をローリングメモリへ戻して定期的にスナップショットへ保存します。
+
+`bot.catch` は未処理エラーを記録した後に**再 throw**します。例外を握りつぶすと失敗した update が確認済みになり、永続化失敗を含めて、再起動後に Telegram から再配信されなくなります。
+
+## 起動順序
+
+エントリポイントの [`index.ts`](../../index.ts) は [`src/app/lifecycle.ts`](../../src/app/lifecycle.ts) の `ApplicationLifecycle` を組み立てるだけです。production モジュールの import では Worker、タイマー、ネットワーク要求、共有ディレクトリへの書き込みを開始せず、実行時の初期化はすべて明示的に行います。
+
+1. データルートを再帰的に作成して**事前検査**します。書き込み、ファイル fsync、同一ディレクトリ内 hard link、アトミック rename、ディレクトリ fsync のどれかが失敗すると、実パスを示して起動を拒否します。
+2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
+3. **設定を事前読み込みし StateStore を復元**します。`config/` の 3 つの JSON を検証し、トップレベルの孤立した一時ファイルを削除してから、`state.json` の主・副コピーを厳密に検証して復元します。すべてネットワーク接続や Worker 作成より前です。
+4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータを復元します。どれかのドメインで復元に失敗すると、部分状態での起動を拒否します。
+5. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
+6. **AI Worker** を初期化し、`state.json` で AI が明示的に有効なグループだけを hydrate します。その後、運勢と認証待ちのミラーを復元し、**Anti-Raid Worker** を初期化して、最後に acknowledgement-safe runner を開始します。
+7. すべての準備完了後にだけ、共有レート制限を占有しないよう上限を設けた**低優先度のグループタイトル補完**を開始します。
+
+失敗と終了は `ApplicationLifecycle` が一元管理し、実際に取得したリソースだけを解放または flush します。
+
+## 停止順序
+
+正常停止と異常停止は同じライフサイクルに合流します。最初にタイトル、リアクション、アバター、翻訳の入口を **quiesce** して runner を止め、次に各キューと mailbox を**上限付きで drain**します。正常経路では最終 Telegram offset の確認前に AI、Disk I/O、StateStore の順で flush します。最終 dispose の順序は「AI を flush → AI を終了 → Disk I/O を flush → Anti-Raid と Disk I/O を終了 → StateStore を flush → インスタンスロックを解放」で固定です。重要な drain/flush が 1 つでも失敗すると最終 offset の確認とロック解放を行わず、未確認 update が Telegram から再配信されるよう非ゼロで終了します。時間予算を使い切った場合は実行中の要求を abort してから未開始作業を精算し、abort 後はメッセージを送信しません。
+
+どの失敗が fatal か、どの順序を入れ替えられないかを含む完全な規則は [04 実行時の正式な不変条件](04-invariants.md) を参照してください。
+
+---
+
+[← 01 環境構築](01-getting-started.md) · [目次に戻る](README.md) · 次へ：[03 ディレクトリ構成](03-directory-map.md)
