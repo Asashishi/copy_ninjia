@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-770_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-95.3%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Tests-785_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="#-开发"><img src="https://img.shields.io/badge/Coverage-95.76%25-2ea44f?style=flat-square" alt="Coverage"></a>
 </p>
 
 复读与人格模仿只是表面；底下是一套多 Worker、可恢复、有界缓存、带竞态防护的群聊自动化系统。
@@ -385,11 +385,11 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 
 <table align="center" width="100%">
   <tr>
-    <td align="center" width="20%">🚀 <b>725</b><br/>测试全部通过</td>
-    <td align="center" width="20%">📂 <b>110</b><br/>测试文件</td>
-    <td align="center" width="20%">🔬 <b>2,820</b><br/>断言总数</td>
-    <td align="center" width="20%">🎯 <b>92.39%</b><br/>函数覆盖率</td>
-    <td align="center" width="20%">📈 <b>94.39%</b><br/>行覆盖率</td>
+    <td align="center" width="20%">🚀 <b>785</b><br/>测试全部通过</td>
+    <td align="center" width="20%">📂 <b>116</b><br/>测试文件</td>
+    <td align="center" width="20%">🔬 <b>7,556</b><br/>断言总数</td>
+    <td align="center" width="20%">🎯 <b>93.89%</b><br/>函数覆盖率</td>
+    <td align="center" width="20%">📈 <b>95.76%</b><br/>行覆盖率</td>
   </tr>
 </table>
 
@@ -411,7 +411,7 @@ GitHub Actions；发布环境应把这个命令作为显式构建或 pre-deploy 
 
 - **严格检查**：项目启用了 `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 等检查。
 - **覆盖率口径**：`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。
-- **当前主干实测**：725 个测试跨 110 个文件全部通过（2,820 次断言），函数覆盖率 **92.39%**、行覆盖率 **94.39%**——全源码计入分母口径，不是只统计被测文件。
+- **当前主干实测**：785 个测试跨 116 个文件全部通过（7,556 次断言），函数覆盖率 **93.89%**、行覆盖率 **95.76%**——全源码计入分母口径，不是只统计被测文件。
 - **代码放置约定**：新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
 
 ---
