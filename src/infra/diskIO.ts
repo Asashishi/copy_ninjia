@@ -12,7 +12,7 @@
  * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是
  * 本模块不复用 libs/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）
  * 的原因，需要一份独立的、只用 console 的自愈逻辑。
- * @see ../../docs/architecture.md
+ * @see ../../docs/04-invariants.md
  */
 
 import {

@@ -10,7 +10,7 @@
 
 ## 编码规范
 
-风格细则（引号、缩进、逗号、空格等）由 eslint 强制，不在此重复；提交前跑 `bun run lint && bun run typecheck`（或全量 `bun run check`）。以下是放置位置与写法约定，部分有 eslint 规则兜底，其余以现有代码为准；跨模块、跨生命周期的权威约束见 `docs/architecture.md`，此处不重复。
+风格细则（引号、缩进、逗号、空格等）由 eslint 强制，不在此重复；提交前跑 `bun run lint && bun run typecheck`（或全量 `bun run check`）。以下是放置位置与写法约定，部分有 eslint 规则兜底，其余以现有代码为准；跨模块、跨生命周期的权威约束见 `docs/04-invariants.md`，此处不重复。
 
 ### 常量
 
@@ -23,7 +23,7 @@
 
 - 长期存活的 Map/Set/队列/timer/单例引用放 `src/cache/<domain>.ts`（或 `<domain>/`），文件头注明 owner 模块，如「AI 闲聊主线程侧代理（src/aiChat.ts）的内存状态」。
 - 可变单例用 holder 对象 `{ current: T | null }`，不用 `export let`。
-- 每个导出带 JSDoc 说明生命周期：何时填充、何时清理、Worker 崩溃重启后如何重建；容量与清理策略须满足 `docs/architecture.md` 的约束。
+- 每个导出带 JSDoc 说明生命周期：何时填充、何时清理、Worker 崩溃重启后如何重建；容量与清理策略须满足 `docs/04-invariants.md` 的约束。
 - 泛型写在类型标注上：`const cache: Map<number, string> = new Map()`。
 
 ### 类型安全
@@ -41,6 +41,6 @@
 
 ### 注释与日志
 
-- 注释用中文，解释局部不变量和「为什么」；涉及跨模块约束时引用 `docs/architecture.md`，不在多处重复维护同一套叙述。
+- 注释用中文，解释局部不变量和「为什么」；涉及跨模块约束时引用 `docs/04-invariants.md`，不在多处重复维护同一套叙述。
 - 除特殊情况无法使用 worker ，日志一律使用 `logger`，不直接 `console.log`。
 - `logger.error` 等错误日志文案一律英文。

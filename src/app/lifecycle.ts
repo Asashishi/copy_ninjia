@@ -16,7 +16,7 @@ import { lifecycleDependencies } from "./lifecycleDependencies";
  * 持有应用从取得单实例锁到释放锁的完整生命周期。所有会联网、创建 Worker、
  * 注册进程 handler 或写盘的动作都由显式 init/run/dispose 驱动，模块导入本身
  * 不启动任何组件。
- * @see ../../docs/architecture.md
+ * @see ../../docs/04-invariants.md
  */
 export class ApplicationLifecycle {
   constructor(private readonly dependencies: ApplicationLifecycleDependencies = lifecycleDependencies) {}
