@@ -51,6 +51,7 @@ describe("application handler registration", () => {
       "stop_copy",
       "kick",
       "ai_chat",
+      "switch_mood",
       "init",
       "quiet",
       "unquiet",

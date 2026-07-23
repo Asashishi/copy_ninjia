@@ -91,6 +91,18 @@ export interface AiInvalidateChatMessage {
   purgeMemory: boolean;
 }
 
+/** /switch_mood 的重抽请求：未过 deadlineAt 时 Worker 调 ai/mood.ts 的
+ *  switchMood，再以同 requestId 的 moodSwitched 回执带回结果；过期请求
+ *  不得产生副作用，回复由主线程命令处理器发出。 */
+export interface AiSwitchMoodMessage {
+  type: "switchMood";
+  chatId: number;
+  /** 主线程分配的单调递增回执关联 id（见 cache/aiChat.ts 的 moodSwitchRequestCounter）。 */
+  requestId: number;
+  /** 请求的绝对截止时刻；Worker 收到时已过期则不得再改写群心情。 */
+  deadlineAt: number;
+}
+
 export type AiChatWorkerMessage =
   | AiInitMessage
   | AiRecordMessage
@@ -99,7 +111,8 @@ export type AiChatWorkerMessage =
   | AiHydrateMessage
   | AiHydrateStickerCatalogMessage
   | AiFlushMemoryMessage
-  | AiInvalidateChatMessage;
+  | AiInvalidateChatMessage
+  | AiSwitchMoodMessage;
 
 export interface AiSentMessage {
   type: "sent";
@@ -123,9 +136,19 @@ export interface AiMemoryFlushedEvent {
   flushId: number;
 }
 
+/** switchMood 请求的回执：带回重抽结果，主线程凭 requestId 结算等待者。 */
+export interface AiMoodSwitchedEvent {
+  type: "moodSwitched";
+  chatId: number;
+  requestId: number;
+  /** 新抽中的心情档位名（config/mood.json 的 name 字段）。 */
+  moodName: string;
+}
+
 export type AiChatWorkerEvent =
   | AiSentMessage
   | AiMemoryEvent
   | AiMemoryDeletedEvent
   | AiMemoryFlushedEvent
+  | AiMoodSwitchedEvent
   | AiStickerCatalogEvent;

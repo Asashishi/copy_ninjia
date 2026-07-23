@@ -14,6 +14,7 @@ import {
   handleSendCommand,
   handleStealIconCommand,
   handleStopCommand,
+  handleSwitchMoodCommand,
   handleUnquietCommand,
 } from "../commands";
 import {
@@ -81,6 +82,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("stop_copy", (ctx) => handleStopCommand(ctx));
   bot.command("kick", (ctx) => handleKickCommand(ctx));
   bot.command("ai_chat", (ctx) => handleAiChatCommand(ctx));
+  bot.command("switch_mood", (ctx) => handleSwitchMoodCommand(ctx));
   bot.command("init", (ctx) => handleInitCommand(ctx));
   bot.command("quiet", (ctx) => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx) => handleUnquietCommand(ctx));

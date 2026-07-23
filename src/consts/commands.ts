@@ -12,6 +12,7 @@ export const BOT_COMMANDS: readonly BotCommand[] = Object.freeze([
   Object.freeze({ command: "steal_icon", description: "偷取目标头像作为 bot 头像" }),
   Object.freeze({ command: "kick", description: "在所有本天才管理的群里踢出并封禁（仅白名单用户可用）" }),
   Object.freeze({ command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" }),
+  Object.freeze({ command: "switch_mood", description: "重新抽一个本群 AI 的当前心情（仅限定用户可用）" }),
   Object.freeze({ command: "init", description: "开关本群的机器人监听/初始化，enable/disable（仅限定用户可用）" }),
   Object.freeze({ command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" }),
   Object.freeze({ command: "unquiet", description: "提前解除 /quiet 静默" }),

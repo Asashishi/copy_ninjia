@@ -4,6 +4,7 @@ import {
   classifyWeatherCodeBucket,
   computeAdjustedWeight,
   currentMoodInstruction,
+  switchMood,
 } from "../../src/ai/mood";
 import { getMoodConfig } from "../../src/config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../src/consts/aiChat";
@@ -92,6 +93,42 @@ describe("ai/mood currentMoodInstruction", () => {
     const moods = new Map<number, MoodOption>([[1, { name: "摆烂", weight: 20, instruction: "随便啦。" }]]);
     const expiresAts = new Map<number, number>([[1, Date.now() + 60_000]]);
     expect(currentMoodInstruction(1, moods, expiresAts)).toBe("【今天的心情：摆烂】随便啦。");
+  });
+});
+
+describe("ai/mood switchMood", () => {
+  test("未到期也强制重抽，写回新心情并重掷随机寿命", () => {
+    const moods = new Map<number, MoodOption>([[1, { name: "旧心情", weight: 1, instruction: "旧指令" }]]);
+    const expiresAts = new Map<number, number>([[1, 9_999_999]]);
+    const originalNow = Date.now;
+    const originalRandom = Math.random;
+    try {
+      Date.now = () => 1_000_000;
+      Math.random = () => 0; // roll = 0，落在权重表第一档；寿命取区间下限
+      const mood: MoodOption = switchMood(1, moods, expiresAts);
+
+      expect(mood.name).toBe(FIRST_MOOD_NAME);
+      expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
+      expect(expiresAts.get(1)).toBe(1_000_000 + MOOD_REROLL_MIN_MS);
+    } finally {
+      Date.now = originalNow;
+      Math.random = originalRandom;
+    }
+  });
+
+  test("切换后 currentMoodInstruction 直接使用新抽的心情", () => {
+    const moods = new Map<number, MoodOption>();
+    const expiresAts = new Map<number, number>();
+    const originalRandom = Math.random;
+    try {
+      Math.random = () => 0.99; // roll 顶到上限，落在权重表最后一档
+      switchMood(1, moods, expiresAts);
+      expect(currentMoodInstruction(1, moods, expiresAts)).toBe(
+        `【今天的心情：${LAST_MOOD_NAME}】${MOOD_OPTIONS[MOOD_OPTIONS.length - 1]!.instruction}`
+      );
+    } finally {
+      Math.random = originalRandom;
+    }
   });
 });
 

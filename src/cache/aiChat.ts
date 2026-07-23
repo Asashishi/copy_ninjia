@@ -37,6 +37,18 @@ export interface AiMemoryDeleteWaiter {
 export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Map();
 /** 已请求彻底清除记忆的群；用于拒绝失效 Worker 迟到的旧快照。 */
 export const purgedAiMemoryChats: Set<number> = new Set();
+/** 等待 /switch_mood 重抽回执（moodSwitched 事件）的调用方。 */
+export interface MoodSwitchWaiter {
+  resolve: (moodName: string) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+/** 在途 switchMood 请求的等待表（requestId → waiter）：成功回执、超时或
+ *  Worker 崩溃/终止时结算并删除（见 aiChat.ts 的 switchAiMood），容量受并发
+ *  /switch_mood 命令数约束。 */
+export const moodSwitchWaiters: Map<number, MoodSwitchWaiter> = new Map();
+/** 本进程内已分配的最高 switchMood requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
+export const moodSwitchRequestCounter: { current: number } = { current: 0 };
 /** Worker 是否仍可接收 invalidate 并回传 memoryDeleted；give-up 后显式关闭。 */
 export const aiChatWorkerState: { available: boolean } = { available: false };
 /** 各白名单贴纸包最新的目录快照镜像（同为序列化 JSON 文本），机制与

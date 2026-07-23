@@ -53,6 +53,8 @@ const {
   lastInitState,
   latestAiMemories,
   latestStickerCatalogs,
+  moodSwitchRequestCounter,
+  moodSwitchWaiters,
   purgedAiMemoryChats,
   aiChatWorkerState,
   aiMemoryDeleteWaiters,
@@ -75,6 +77,9 @@ beforeEach(() => {
     for (const waiter of waiters) clearTimeout(waiter.timer);
   }
   aiMemoryDeleteWaiters.clear();
+  for (const waiter of moodSwitchWaiters.values()) clearTimeout(waiter.timer);
+  moodSwitchWaiters.clear();
+  moodSwitchRequestCounter.current = 0;
   latestStickerCatalogs.clear();
   purgedAiMemoryChats.clear();
   aiChatWorkerState.available = false;
@@ -177,6 +182,31 @@ describe("AI main-thread persistence mirror", () => {
     if (timedOutRequest?.type !== "flushMemory") throw new Error("Expected a flushMemory request");
     await expect(timedOut).resolves.toBe("timedOut");
     supervisorOptions!.onEvent({ type: "memoryFlushed", flushId: timedOutRequest.flushId });
+  });
+
+  test("switchMood 回执按 requestId 结算；崩溃重启与投递失败都立即 reject", async () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+
+    const acknowledged = aiChat.switchAiMood(-1001);
+    const request = workerPosts.at(-1);
+    if (request?.type !== "switchMood") throw new Error("Expected a switchMood request");
+    expect(request.deadlineAt).toBeGreaterThan(Date.now());
+    supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: request.requestId, moodName: "摆烂" });
+    await expect(acknowledged).resolves.toBe("摆烂");
+    expect(moodSwitchWaiters.size).toBe(0);
+
+    // 迟到/重复回执不应产生副作用。
+    supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: request.requestId, moodName: "开心" });
+
+    const crashed = aiChat.switchAiMood(-1001);
+    supervisorOptions!.onRespawn(() => true);
+    await expect(crashed).rejects.toThrow("AI Worker crashed before acknowledging the mood switch.");
+    expect(moodSwitchWaiters.size).toBe(0);
+
+    workerPostAccepted = false;
+    await expect(aiChat.switchAiMood(-1001)).rejects.toThrow("AI Worker is unavailable.");
+    expect(moodSwitchWaiters.size).toBe(0);
+    expect(aiChatWorkerState.available).toBeFalse();
   });
 
   test("Worker 放弃自愈只清 Worker purge guard，不丢未确认的 durable tombstone", async () => {

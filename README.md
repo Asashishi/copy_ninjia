@@ -162,6 +162,7 @@ flowchart TD
 <tr><td>🧱&nbsp;输入边界</td><td>初始 Gemini 请求使用一个 <code>user Content</code>，按顺序承载三个独立 <code>text Part</code>：只读参考记忆、只读当前会话、本轮回复任务。每段都有明确首尾标签与局部约束，<code>systemInstruction</code> 再声明前两段只作数据、只有最后一段是待执行任务；后续工具轮次仍按真实 <code>model/user</code> 角色追加</td></tr>
 <tr><td>🛡️&nbsp;安全过滤</td><td>Google 可调的骚扰、仇恨、露骨和危险内容统一设为 <code>BLOCK_NONE</code>，应用不按概率等级主动拒绝；Gemini API 不可调的核心伤害保护与服务端策略仍然生效</td></tr>
 <tr><td>🕰️&nbsp;时间</td><td>每次请求注入东京当前时间，每条转录消息保留记录时刻</td></tr>
+<tr><td>🎭&nbsp;心情</td><td>每群在 AI Worker 内独立保存当前心情，随机维持 2～4 小时；自然到期后按东京天气与时段修正权重并重抽，不落盘、Worker 重启后按需重建。超级管理员可用 <code>/switch_mood</code> 立即重抽已开启 AI 闲聊的群；命令通过带 5 秒截止时刻的 Worker 回执确认，过期积压请求不会迟到改写心情</td></tr>
 <tr><td>🧾&nbsp;转录标注</td><td>每条逐字消息行内标注 <code>message_id</code> 与发送者 <code>id</code>/<code>username</code>；显式回复内嵌被回复消息的身份、原文与精确引用片段；转发消息标注原始来源（用户、隐藏账号、群组或频道，带可用的 <code>id</code>/<code>username</code>），被回复的原消息是转发时在引用内单独标注，提示词按标注层级区分转发归属；频道帖自动转进讨论组的副本不标转发。标注拼装与提示词里的格式说明共用同一份模板生成，防止两侧漂移</td></tr>
 <tr><td>🧵&nbsp;回复链</td><td>触发消息处在至少两层回复关系中时，本轮任务额外列出最多 15 跳的路径；每跳保留 <code>message_id</code>、发送者身份和转发来源，正文最多 500 字。链尾原消息若已滑出逐字区，改用上一跳携带的最多 500 字快照并显式标为 <code>[仅回复快照]</code>，不会声称完整原文仍在转录中。机器人自己的文字与图片只按 Telegram 返回的实际回复关系自录：目标被删除、发送降级为普通消息时不制造回复边；目标只是在排队或生成期间滑出热区时，则由本轮开始前捕获的触发快照续接</td></tr>
 <tr><td>🧠&nbsp;记忆</td><td>75～150 条逐字消息，加最多 7 × 75 条冷历史摘要，总跨度约 600～675 条；启动恢复只载入最新 149 条逐字消息并为下一条消息预留轮换边界。Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
@@ -203,6 +204,7 @@ flowchart TD
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
 <tr><td><code>/kick</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>在所有机器人管理的群中永久封禁目标</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群 AI 闲聊</td></tr>
+<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>为已开启 AI 闲聊的群立即重抽当前心情，并在 Worker 明确回执后回复新心情名</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群日语翻译能力（默认关闭）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群整个业务处理入口</td></tr>
 <tr><td><code>/send &lt;群组id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>与机器人私聊时开启/结束一轮中转：期间这个私聊发的每条消息都会原样转发进目标群一次。开启前会先探一次目标是否可达，中转期间目标失联会自动终止并告知。中转状态随 <code>state.json</code> 持久化，重启不丢；不进 Telegram 命令菜单，群里或非本人触发均无任何反应</td></tr>

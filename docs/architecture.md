@@ -24,7 +24,7 @@
 - 主线程持有 Telegram runner、Worker 监督句柄，并由 `StateStore` 独立维护
   `state.json` 的内存镜像、latest-only 原子写、有限失败重试和退出 flush。有限重试耗尽是
   fatal durability failure，必须停止 runner；不得继续确认 update。
-- AI Worker 独占群聊记忆、回复准入、媒体描述流水线和贴纸目录生成的运行时状态。
+- AI Worker 独占群聊记忆、回复准入、媒体描述流水线、群心情和贴纸目录生成的运行时状态。
 - Anti-Raid Worker 独占验证/锁定状态机和对应计时器；主线程只持可恢复镜像。
 - 状态机的 `State/Event/Effect/Transition/Decision` 契约统一由 `src/types/states/`
   持有，`src/states/` 只实现无 I/O 的纯状态转移；解释器和 cache 直接依赖前者的类型。
@@ -37,6 +37,10 @@
   投递立即清理 waiter/timer，日志只退回 console，关键业务投递触发 fatal。恢复重放再次拒绝时
   不得宣称 Worker writable。
   需要确认处理与落盘边界的调用方必须把 `false` 当作失败，不能确认对应 Telegram update。
+- `/switch_mood` 采用主线程 request/waiter 与 AI Worker 回执握手。主线程必须先登记 waiter
+  再投递，并在超时、Worker 崩溃、放弃重启和停机时统一结算；请求携带绝对截止时刻，AI Worker
+  必须在重抽这一副作用之前拒绝已经过期的积压请求。只有 `moodSwitched` 回执能宣称重抽成功；
+  后续 Telegram 成功回复发送失败不得被改写成“重抽失败”。
 - AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；仅在零成功动作时，
   最终正文才经 `send_message` 兜底。所有有意展示的文字必须由模型显式调用该工具。
 - AI 回复的初始 Gemini 输入必须保持一个 `user Content` 下的三个有序 `text Part`：

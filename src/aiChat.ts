@@ -12,11 +12,15 @@ import {
   latestAiMemories,
   latestAiMemoryRevisions,
   latestStickerCatalogs,
+  moodSwitchRequestCounter,
+  moodSwitchWaiters,
   pendingAiMemoryDeletes,
   purgedAiMemoryChats,
   type AiMemoryDeleteWaiter,
+  type MoodSwitchWaiter,
 } from "./cache/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "./consts/lifecycle";
+import { MOOD_SWITCH_TIMEOUT_MS } from "./consts/aiChat/mood";
 import type { FlushResult } from "./types/lifecycle";
 import { getChatState } from "./infra/storage/stateStore";
 import type {
@@ -84,6 +88,16 @@ function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<void> | u
     }
   }
   return persisted;
+}
+
+/** 在途 switchMood 请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
+ *  的回执不可能再到达，不结算会让命令处理器干等到超时。 */
+function rejectAllMoodSwitchWaiters(reason: string): void {
+  for (const waiter of moodSwitchWaiters.values()) {
+    clearTimeout(waiter.timer);
+    waiter.reject(new Error(reason));
+  }
+  moodSwitchWaiters.clear();
 }
 
 onAiMemoryDeletedPersisted((reply) => {
@@ -155,10 +169,19 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
         aiMemoryFlushBarrier.settle(event.flushId, "flushed");
         break;
       }
+      case "moodSwitched": {
+        const waiter: MoodSwitchWaiter | undefined = moodSwitchWaiters.get(event.requestId);
+        if (!waiter) break;
+        moodSwitchWaiters.delete(event.requestId);
+        clearTimeout(waiter.timer);
+        waiter.resolve(event.moodName);
+        break;
+      }
     }
   },
   onRespawn: (postToNext) => {
     aiMemoryFlushBarrier.settleAll("failed");
+    rejectAllMoodSwitchWaiters("AI Worker crashed before acknowledging the mood switch.");
     // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
     // 重启发生在 initAiChat 调用之前的话 lastInitState.current 仍是 null，
     // 没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
@@ -178,6 +201,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
   },
   onGiveUp: () => {
     aiChatWorkerState.available = false;
+    rejectAllMoodSwitchWaiters("AI Worker gave up restarting before acknowledging the mood switch.");
     // 已终止实例不可能再回传旧 memory；purged 只负责拒绝旧 Worker 快照。
     // pendingAiMemoryDeletes 由 Disk I/O durable 回执拥有，绝不能在这里清空。
     purgedAiMemoryChats.clear();
@@ -279,9 +303,43 @@ export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): P
 /** 停机时强制终止 AI Worker，保证它不会在 Disk I/O flush 后继续发布旧快照。 */
 export async function terminateAiChat(): Promise<void> {
   aiMemoryFlushBarrier.settleAll("failed");
+  rejectAllMoodSwitchWaiters("AI Worker is shutting down before acknowledging the mood switch.");
   aiChatWorkerState.available = false;
   purgedAiMemoryChats.clear();
   await terminateAiChatWorker();
+}
+
+/**
+ * /switch_mood：要求 aiChatWorker 立即重抽某群的心情（心情缓存在 Worker 内，
+ * 见 cache/aiChat/mood.ts），并等待带回执的新心情名。回复由调用方（主线程
+ * 命令处理器）自行发送，Worker 不发 Telegram 消息。Worker 不可用、崩溃或
+ * 回执超时（MOOD_SWITCH_TIMEOUT_MS）时 reject，由调用方兜底回复；同一超时
+ * 也作为请求的绝对截止时刻，Worker 不执行积压到过期的重抽。
+ */
+export function switchAiMood(chatId: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const requestId: number = ++moodSwitchRequestCounter.current;
+    const deadlineAt: number = Date.now() + MOOD_SWITCH_TIMEOUT_MS;
+    const waiter: MoodSwitchWaiter = {
+      resolve,
+      reject,
+      timer: setTimeout(() => {
+        moodSwitchWaiters.delete(requestId);
+        reject(new Error(
+          `AI mood switch for chat ${chatId} timed out after ${MOOD_SWITCH_TIMEOUT_MS}ms.`
+        ));
+      }, MOOD_SWITCH_TIMEOUT_MS),
+    };
+    // 等待项在 post 之前登记，同步回执也不会丢（同 libs/flushBarrier.ts 的顺序约定）。
+    moodSwitchWaiters.set(requestId, waiter);
+    try {
+      postAiChatOrThrow({ type: "switchMood", chatId, requestId, deadlineAt });
+    } catch (error: unknown) {
+      moodSwitchWaiters.delete(requestId);
+      clearTimeout(waiter.timer);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 /**

@@ -29,6 +29,7 @@ const recordChatMedia = mock((_message: unknown): void => { calls.push("recordMe
 const generateAndSendReply = mock((..._args: unknown[]): void => { calls.push("trigger"); });
 const invalidateChatReplies = mock((_chatId: number): void => { calls.push("invalidate"); });
 const initTelegramClients = mock((): void => { calls.push("telegram"); });
+const switchMood = mock((_chatId: number) => ({ name: "开心", weight: 1, instruction: "" }));
 
 mock.module("../../../src/ai/stickers/catalog", () => ({
   ensureStickerCatalogs,
@@ -48,6 +49,7 @@ mock.module("../../../src/workers/aiChat/rollingMemory", () => ({
 mock.module("../../../src/workers/aiChat/mediaIngest", () => ({ recordChatMedia }));
 mock.module("../../../src/workers/aiChat/replyPipeline", () => ({ generateAndSendReply, invalidateChatReplies }));
 mock.module("../../../src/infra/telegram", () => ({ initTelegramClients }));
+mock.module("../../../src/ai/mood", () => ({ switchMood }));
 
 const worker = await import("../../../src/workers/aiChatWorker");
 const { botInfoState } = await import("../../../src/cache/aiChat/identity");
@@ -75,6 +77,7 @@ beforeEach(() => {
     generateAndSendReply,
     invalidateChatReplies,
     initTelegramClients,
+    switchMood,
   ]) mocked.mockClear();
 });
 
@@ -103,6 +106,7 @@ describe("AI Chat Worker lifecycle", () => {
       { type: "flushMemory", flushId: 8 },
       { type: "invalidateChat", chatId: -1001, purgeMemory: false },
       { type: "invalidateChat", chatId: -1002, purgeMemory: true },
+      { type: "switchMood", chatId: -1001, requestId: 3, deadlineAt: Number.MAX_SAFE_INTEGER },
     ];
 
     for (const message of messages) worker.handleAiChatWorkerMessage(message);
@@ -126,6 +130,20 @@ describe("AI Chat Worker lifecycle", () => {
     expect(purgeChatMemory).toHaveBeenCalledWith(-1002);
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 8 });
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1002 });
+    expect(switchMood).toHaveBeenCalledWith(-1001);
+    expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", chatId: -1001, requestId: 3, moodName: "开心" });
+  });
+
+  test("过期的 switchMood 请求不再迟到改写心情", () => {
+    worker.handleAiChatWorkerMessage({
+      type: "switchMood",
+      chatId: -1001,
+      requestId: 4,
+      deadlineAt: 0,
+    });
+
+    expect(switchMood).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
   });
 
   test("统一维护周期清理限频缓存并上报两类 dirty 快照", () => {

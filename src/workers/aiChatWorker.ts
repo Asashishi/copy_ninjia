@@ -9,7 +9,8 @@ import { aiChatMaintenanceTimer } from "../cache/aiChat/worker";
 import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
-import type { AiChatWorkerMessage, AiMemoryFlushedEvent } from "../types/aiChat/protocol";
+import { switchMood } from "../ai/mood";
+import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiMoodSwitchedEvent } from "../types/aiChat/protocol";
 import type { AiStickerCatalogEvent } from "../types/stickers/protocol";
 import { initTelegramClients } from "../infra/telegram";
 
@@ -88,6 +89,19 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
         purgeChatMemory(msg.chatId);
         self.postMessage({ type: "memoryDeleted", chatId: msg.chatId });
       }
+      break;
+    case "switchMood":
+      // 主线程超时只会撤销 waiter，无法从 Worker 消息队列里召回已投递请求；
+      // 因此在副作用发生前检查绝对截止时刻，积压到过期的命令不得迟到改心情。
+      if (Date.now() >= msg.deadlineAt) break;
+      // /switch_mood：同步重抽后立刻回执结果；回复由主线程命令处理器发出，
+      // 本线程不发 Telegram 消息（见 commands/switchMood.ts）。
+      self.postMessage({
+        type: "moodSwitched",
+        chatId: msg.chatId,
+        requestId: msg.requestId,
+        moodName: switchMood(msg.chatId).name,
+      } satisfies AiMoodSwitchedEvent);
       break;
   }
 }

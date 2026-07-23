@@ -7,6 +7,7 @@ export { handleStealIconCommand } from "./stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./quiet";
 export { handleKickCommand } from "./kick";
 export { handleAiChatCommand } from "./aiChat";
+export { handleSwitchMoodCommand } from "./switchMood";
 export { handleJaCopyCommand } from "./jaCopy";
 export { handleInitCommand } from "./init";
 export { handleSendCommand } from "./send";

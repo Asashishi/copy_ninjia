@@ -96,6 +96,25 @@ function pickMood(): MoodOption {
 }
 
 /**
+ * 立即重抽某群的心情并写回缓存：无视剩余寿命强制换一次，给新心情掷一个
+ * 新的随机寿命。自然到期重抽（下方 currentMoodInstruction）与 /switch_mood
+ * 手动切换（aiChatWorker.ts 的 switchMood 消息路由）共用这一条路径。
+ * @param chatId 群聊 ID。
+ * @param moods/expiresAts 可注入仅为单测隔离；生产调用共享 Worker 内的
+ *   chatMoods/chatMoodExpiresAts（见 cache/aiChat/mood.ts）。
+ */
+export function switchMood(
+  chatId: number,
+  moods: Map<number, MoodOption> = chatMoods,
+  expiresAts: Map<number, number> = chatMoodExpiresAts
+): MoodOption {
+  const mood: MoodOption = pickMood();
+  moods.set(chatId, mood);
+  expiresAts.set(chatId, Date.now() + MOOD_REROLL_MIN_MS + Math.random() * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS));
+  return mood;
+}
+
+/**
  * 拼进系统提示词的当前心情指令。心情缺失（本群第一次用到、或 Worker 重启
  * 后缓存清空）或已过寿命时现场重抽，并给新心情掷一个新的随机寿命——重抽
  * 只依赖时间区间，与群是否活跃无关。
@@ -111,9 +130,7 @@ export function currentMoodInstruction(
   const now: number = Date.now();
   let mood: MoodOption | undefined = moods.get(chatId);
   if (!mood || now >= (expiresAts.get(chatId) ?? 0)) {
-    mood = pickMood();
-    moods.set(chatId, mood);
-    expiresAts.set(chatId, now + MOOD_REROLL_MIN_MS + Math.random() * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS));
+    mood = switchMood(chatId, moods, expiresAts);
   }
   return `【今天的心情：${mood.name}】${mood.instruction}`;
 }
