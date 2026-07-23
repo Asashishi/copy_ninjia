@@ -34,6 +34,7 @@ function snapshot(revision: number, overrides: Partial<VerificationSnapshot> = {
     userId: 42,
     generation: 1,
     revision,
+    phase: "pending",
     label: "@pending_user",
     isBot: false,
     messageIds: [10],
@@ -286,6 +287,15 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(join(dir, "notes.json"))).toBeTrue();
   });
 
+  test("顶层不是对象时 fail closed，并保持文件字节不变", () => {
+    const path: string = join(dir, `${DAY_ONE}.json`);
+    const original: string = "[{\"bad\":\"shape\"}]";
+    writeFileSync(path, original);
+
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must contain a JSON object");
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
   test("旧下划线键不再兼容，必须手动改成冒号格式", () => {
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
       "-1001_42": { version: 1, ...snapshot(1) },
@@ -296,7 +306,7 @@ describe("pending verification daily append JSON", () => {
     );
   });
 
-  test("消息窗口随当天快照恢复，旧版缺失字段按空窗口兼容", () => {
+  test("消息窗口随当天快照恢复，缺失当前必填字段时拒绝启动", () => {
     upsert({
       type: "verificationUpsert",
       record: snapshot(1, { trackedMessageTimes: [10_000, 20_000] }),
@@ -304,10 +314,15 @@ describe("pending verification daily append JSON", () => {
     });
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.trackedMessageTimes).toEqual([10_000, 20_000]);
 
-    const legacy = snapshot(2);
-    delete legacy.trackedMessageTimes;
-    writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({ "-1001:42": { version: 1, ...legacy } }, null, 2));
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.trackedMessageTimes).toBeUndefined();
+    const incompatible: Record<string, unknown> = { version: 1, ...snapshot(2) };
+    delete incompatible.trackedMessageTimes;
+    const path: string = join(dir, `${DAY_ONE}.json`);
+    const original: string = JSON.stringify({ "-1001:42": incompatible }, null, 2);
+    writeFileSync(path, original);
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
+      "invalid active pending verification record for key -1001:42"
+    );
+    expect(readFileSync(path, "utf8")).toBe(original);
   });
 
   test("成功播报标记只允许出现在 expelling 终态并可完整恢复", () => {

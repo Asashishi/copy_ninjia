@@ -30,4 +30,5 @@ export const BATH_TRIGGER_REPLY_TEXT: string = "看看";
 
 /** resolveSpeaker 解析发言人身份时的兜底展示名：频道马甲缺 title、以及既非频道也非真实用户（理论不可达的防御分支）时使用。 */
 export const FALLBACK_CHANNEL_NAME: string = "某频道";
+/** 无法解析到用户或频道身份时使用的最终兜底展示名。 */
 export const FALLBACK_SPEAKER_NAME: string = "某杂鱼";

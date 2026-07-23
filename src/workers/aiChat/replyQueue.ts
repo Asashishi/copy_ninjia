@@ -30,6 +30,16 @@ export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaComm
  * 保存直接触发的必要快照。媒体解析可能异步完成，直接使用已解析的发送人和
  * 描述；文本触发则读取刚写入滚动缓存的尾部消息。
  */
+export interface PushReplyTriggerParams {
+  chatId: number;
+  triggerSenderId: number;
+  replyToMessageId: number;
+  imageGenerationRequested: boolean;
+  imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
+  triggerReference?: BufferedReplyReference;
+  mediaTrigger?: MediaCommentContext;
+}
+
 export function pushReplyTrigger({
   chatId,
   triggerSenderId,
@@ -38,15 +48,7 @@ export function pushReplyTrigger({
   imageGenerationReference,
   triggerReference,
   mediaTrigger,
-}: {
-  chatId: number;
-  triggerSenderId: number;
-  replyToMessageId: number;
-  imageGenerationRequested: boolean;
-  imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
-  triggerReference?: BufferedReplyReference;
-  mediaTrigger?: MediaCommentContext;
-}): void {
+}: PushReplyTriggerParams): void {
   let queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
   if (!queue) {
     queue = new LinkedQueue<QueuedReplyTrigger>();

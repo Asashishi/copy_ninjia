@@ -40,7 +40,6 @@ memory
 .claude
 .agents
 .codex
-AGENTS.md
 
 # Finder (MacOS) folder config
 .DS_Store

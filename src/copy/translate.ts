@@ -1,25 +1,22 @@
 import { logger } from "../infra/logger";
 import { v3 as GoogleTranslate } from "@google-cloud/translate";
 import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
-import { translateParentCache } from "../cache/translate";
-import { TRANSLATE_REQUEST_TIMEOUT_MS, type FlushResult } from "../consts/lifecycle";
+import { translateParentCache, translateRuntime } from "../cache/translate";
+import { TRANSLATE_REQUEST_TIMEOUT_MS } from "../consts/lifecycle";
+import type { FlushResult } from "../types/lifecycle";
 
 // Google Cloud Translation - Advanced (v3) 客户端，通过 g-auth.json 里的服务账号
 // 密钥完成鉴权——供 copyMode "ja" 使用，用于在复读复制目标的纯文本消息前
 // 先将其翻译成日语。
-let translateClient: GoogleTranslate.TranslationServiceClient | null = null;
-let acceptingTranslations: boolean = false;
-let translateGeneration: number = 0;
-const translateTasks: Set<Promise<string | null>> = new Set();
 
 /** 由应用生命周期显式开启；仍不会在没有真实请求时构造 gRPC 客户端。 */
 export function initTranslate(): void {
-  acceptingTranslations = true;
+  translateRuntime.accepting = true;
 }
 
 /** 同步关闭新工作入口，已开始的请求交给 drainTranslate 等待。 */
 export function quiesceTranslate(): void {
-  acceptingTranslations = false;
+  translateRuntime.accepting = false;
 }
 
 function withTimeout<T>(task: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
@@ -40,16 +37,16 @@ function withTimeout<T>(task: Promise<T>, timeoutMs: number, operation: string):
 
 /** gRPC 客户端构造会注册退避 timer；延迟到首次真实翻译，保持模块导入无副作用。 */
 function getTranslateClient(): GoogleTranslate.TranslationServiceClient {
-  translateClient ??= new GoogleTranslate.TranslationServiceClient({
+  translateRuntime.client ??= new GoogleTranslate.TranslationServiceClient({
     keyFilename: GOOGLE_AUTH_FILE_PATH,
   });
-  return translateClient;
+  return translateRuntime.client;
 }
 
 // v3 请求作用域限定在 "projects/{project}/locations/{location}" 下；project
 // 解析与缓存见 getTranslateParent（缓存原因见 cache/translate.ts）。
 function ensureTranslateGeneration(expectedGeneration: number): void {
-  if (expectedGeneration !== translateGeneration) {
+  if (expectedGeneration !== translateRuntime.generation) {
     throw new Error("Google Translation owner was closed while the request was in flight");
   }
 }
@@ -97,10 +94,10 @@ async function runTranslation(text: string, expectedGeneration: number): Promise
 }
 
 export function translateToJapanese(text: string): Promise<string | null> {
-  if (!acceptingTranslations) return Promise.resolve(null);
-  const task: Promise<string | null> = runTranslation(text, translateGeneration);
-  translateTasks.add(task);
-  void task.finally(() => { translateTasks.delete(task); });
+  if (!translateRuntime.accepting) return Promise.resolve(null);
+  const task: Promise<string | null> = runTranslation(text, translateRuntime.generation);
+  translateRuntime.tasks.add(task);
+  void task.finally(() => { translateRuntime.tasks.delete(task); });
   return task;
 }
 
@@ -109,12 +106,12 @@ export async function drainTranslate(timeoutMs: number): Promise<FlushResult> {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
     throw new Error("translate drain timeout must be a non-negative finite number");
   }
-  if (translateTasks.size === 0) return "flushed";
+  if (translateRuntime.tasks.size === 0) return "flushed";
   if (timeoutMs === 0) return "timedOut";
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const drained: boolean = await Promise.race([
-    Promise.allSettled([...translateTasks]).then(() => true),
+    Promise.allSettled([...translateRuntime.tasks]).then(() => true),
     new Promise<boolean>((resolve) => {
       timer = setTimeout(() => resolve(false), timeoutMs);
       timer.unref();
@@ -129,10 +126,10 @@ export async function closeTranslate(timeoutMs: number = TRANSLATE_REQUEST_TIMEO
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
     throw new Error("translate close timeout must be a non-negative finite number");
   }
-  acceptingTranslations = false;
-  translateGeneration += 1;
-  const client: GoogleTranslate.TranslationServiceClient | null = translateClient;
-  translateClient = null;
+  translateRuntime.accepting = false;
+  translateRuntime.generation += 1;
+  const client: GoogleTranslate.TranslationServiceClient | null = translateRuntime.client;
+  translateRuntime.client = null;
   translateParentCache.parent = null;
   if (client === null) return "flushed";
   try {

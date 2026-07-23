@@ -1,5 +1,6 @@
 import type { DayFileState } from "../../types/diskIO/storage";
 
+/** 一条尚未刷盘的日志序列化文本及其东京日期。 */
 export interface BufferedLogEntry {
   day: string;
   text: string;
@@ -13,11 +14,13 @@ export const flushBuffer: { entries: BufferedLogEntry[]; timer: ReturnType<typeo
   timer: null,
 };
 
+/** 追加一条待刷日志并返回当前批量长度；阈值或 timer 触发 flush。 */
 export function markLogDirty(entry: BufferedLogEntry): number {
   flushBuffer.entries.push(entry);
   return flushBuffer.entries.length;
 }
 
+/** Worker 启动/停止或测试隔离时取消 timer 并清空文件游标和待刷批次。 */
 export function resetLogCache(): void {
   if (flushBuffer.timer !== null) clearTimeout(flushBuffer.timer);
   flushBuffer.entries = [];

@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { defaultMoodConfigCache } from "../cache/config";
-import { TIME_BUCKETS, WEATHER_BUCKETS } from "../consts/aiChat/mood";
+import {
+  MOOD_ENTRY_OPTIONAL_KEYS,
+  MOOD_ENTRY_REQUIRED_KEYS,
+  TIME_BUCKETS,
+  WEATHER_BUCKETS,
+} from "../consts/aiChat/mood";
 import { MOOD_CONFIG_PATH } from "../consts/paths";
 import { hasExactKeys, isPlainRecord } from "../libs/runtimeConfig";
 import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood";
@@ -8,9 +13,6 @@ import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood
 export interface MoodConfig {
   readonly moods: readonly MoodOption[];
 }
-
-const MOOD_ENTRY_REQUIRED_KEYS = ["name", "weight", "instruction"] as const;
-const MOOD_ENTRY_OPTIONAL_KEYS = ["weatherMultipliers", "timeMultipliers"] as const;
 
 /** 解码倍率表：键必须是对应维度的合法桶名，倍率必须是正有限数——
  *  computeAdjustedWeight 假定倍率乘完权重仍为正（见 ai/mood.ts）。

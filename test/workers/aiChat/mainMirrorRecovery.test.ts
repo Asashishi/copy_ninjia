@@ -13,9 +13,10 @@ const workerPosts: AiChatWorkerMessage[] = [];
 const diskPosts: AiDiskMessage[] = [];
 const initWorker = mock((): void => {});
 const markSelfSent = mock((_chatId: number, _messageId: number): void => {});
+let workerPostAccepted: boolean = true;
 let supervisorOptions: {
   onEvent: (event: AiChatWorkerEvent) => void;
-  onRespawn: (post: (message: AiChatWorkerMessage) => void) => void;
+  onRespawn: (post: (message: AiChatWorkerMessage) => boolean) => void;
   onGiveUp: () => void;
 } | undefined;
 let diskRespawn: (() => void) | undefined;
@@ -28,7 +29,10 @@ mock.module("../../../src/libs/supervisedWorker", () => ({
     supervisorOptions = options;
     return {
       init: initWorker,
-      post: (message: AiChatWorkerMessage): boolean => { workerPosts.push(message); return true; },
+      post: (message: AiChatWorkerMessage): boolean => {
+        workerPosts.push(message);
+        return workerPostAccepted;
+      },
       terminate: async (): Promise<void> => {},
     };
   },
@@ -75,6 +79,7 @@ beforeEach(() => {
   purgedAiMemoryChats.clear();
   aiChatWorkerState.available = false;
   aiEnabledChats.clear();
+  workerPostAccepted = true;
 });
 
 describe("AI main-thread persistence mirror", () => {
@@ -89,7 +94,10 @@ describe("AI main-thread persistence mirror", () => {
     supervisorOptions!.onEvent({ type: "sent", chatId: -1001, messageId: 42 });
 
     const aiRespawnPosts: AiChatWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message) => { aiRespawnPosts.push(message); });
+    supervisorOptions!.onRespawn((message) => {
+      aiRespawnPosts.push(message);
+      return true;
+    });
 
     expect(initWorker).toHaveBeenCalledTimes(1);
     expect(markSelfSent).toHaveBeenCalledWith(-1001, 42);
@@ -139,6 +147,19 @@ describe("AI main-thread persistence mirror", () => {
     expect(latestAiMemories).toEqual(new Map([[-1002, "enabled-memory"]]));
     expect(pendingAiMemoryDeletes.get(-1001)).toBe(1);
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1001, revision: 1 });
+  });
+
+  test("启动 init 投递被拒绝时不发布可用状态或可重放身份", () => {
+    workerPostAccepted = false;
+
+    expect(() => aiChat.initAiChat({
+      id: 99,
+      username: "ninja_bot",
+      first_name: "Ninja",
+    })).toThrow("AI Worker is unavailable");
+
+    expect(aiChatWorkerState.available).toBeFalse();
+    expect(lastInitState.current).toBeNull();
   });
 
   test("记忆 flush 在 Worker 确认或超时后都会结算并清理等待项", async () => {

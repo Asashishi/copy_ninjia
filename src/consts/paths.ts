@@ -13,22 +13,26 @@ export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
  * 任何生产模块加载前注入独立临时目录，从源头隔离真实 I/O，而非依赖每个
  * 测试都记得 mock 路径。
  */
-const configuredDataRoot: string | undefined = process.env[RUNTIME_DATA_ROOT_ENV]?.trim() || undefined;
-export const RUNTIME_DATA_ROOT: string = configuredDataRoot === undefined
+/** 环境变量解析出的可选数据根；空白值按未配置处理。 */
+const CONFIGURED_DATA_ROOT: string | undefined = process.env[RUNTIME_DATA_ROOT_ENV]?.trim() || undefined;
+/** 当前进程实际使用的运行时数据根目录。 */
+export const RUNTIME_DATA_ROOT: string = CONFIGURED_DATA_ROOT === undefined
   ? PROJECT_ROOT
-  : resolve(configuredDataRoot);
+  : resolve(CONFIGURED_DATA_ROOT);
 
-// 持久状态与运行实例注册表；具体 schema/协议由各自的所有者模块定义。
+/** state.json 主文件路径。 */
 export const STATE_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "state.json");
 /** state.json 的 last-known-good 同目录副本；与主文件使用同一严格 schema。 */
 export const STATE_BACKUP_FILE_PATH: string = `${STATE_FILE_PATH}.bak`;
+/** 数据目录单实例 owner 锁文件路径。 */
 export const LOCK_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "bot.lock");
 
 /** AI 闲聊人设文本（Markdown，修改人设不需要碰代码）。 */
 export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
 
-// 应景贴纸 / 应景反应的配置文件（白名单、概率、情绪关键词映射）。
+/** 应景贴纸包白名单配置文件。 */
 export const STICKERS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "stickers.json");
+/** Telegram 反应集合部署配置文件。 */
 export const REACTIONS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "reactions.json");
 /** AI 心情档位配置（文案、base weight、天气/时段倍率），见 src/config/mood.ts。 */
 export const MOOD_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "mood.json");
@@ -45,10 +49,13 @@ export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
  * logs/ 同级对待；AI 记忆快照含群聊逐字明文，部署时应按敏感数据保护。
  */
 export const MEMORY_DIR: string = join(RUNTIME_DATA_ROOT, "memory");
+/** 每群 AI 记忆原子快照目录。 */
 export const AI_MEMORY_DIR: string = join(MEMORY_DIR, "ai");
+/** 当日运势追加文件与签名密钥目录。 */
 export const LUCK_MEMORY_DIR: string = join(MEMORY_DIR, "luck");
 /** 当日运势确定性派生与回执签名共用的敏感密钥文件。 */
 export const LUCK_RECEIPT_SECRET_PATH: string = join(LUCK_MEMORY_DIR, "receipt-secret.json");
+/** 白名单贴纸包视觉目录快照目录。 */
 export const STICKER_MEMORY_DIR: string = join(MEMORY_DIR, "stickers");
 /** Anti-Raid 待验证增量文件目录；按东京日期命名，只保留当天文件。 */
 export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");

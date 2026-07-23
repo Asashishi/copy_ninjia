@@ -1,4 +1,5 @@
 import { VERIFICATION_REVISION_RETENTION_MS } from "../../consts/antiRaid/verification";
+import type { ReminderDelivery, ThreadCommentConfirmation } from "../../types/antiRaid/internal";
 import type { VerificationState } from "../../types/states/verification";
 
 /** 一条验证状态机条目：纯状态 + 解释器持有的活动计时器。 */
@@ -13,6 +14,18 @@ export const verificationEntries: Map<string, VerificationEntry> = new Map();
 export const verificationGeneration: { current: number } = { current: 0 };
 /** 每个 key 在当前代际内最后使用的 revision；终结项只短期保留。 */
 export const verificationRevisions: Map<string, { revision: number; retiredAt?: number }> = new Map();
+
+/**
+ * 冷缓存楼中楼消息的在途关联频道确认。消息到达时填充，请求 settle、群停用、
+ * Worker adopt 或停止时清除；Worker 崩溃后不恢复，重新观察消息后再建。
+ */
+export const threadCommentConfirmations: Map<string, Set<ThreadCommentConfirmation>> = new Map();
+
+/**
+ * 每名 pending 成员唯一的提醒发送 owner。状态替换、发送落地、群停用、
+ * adopt 或 Worker 停止时清除；崩溃后由持久化 pending 快照重新安排。
+ */
+export const reminderDeliveries: Map<string, ReminderDelivery> = new Map();
 
 /** 删除超过防迟到保留期的终结 revision。 */
 export function sweepVerificationRevisionCache(now: number = Date.now()): number {

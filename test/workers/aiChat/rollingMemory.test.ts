@@ -21,7 +21,7 @@ const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../src/
 const { AI_MEMORY_MAX_CHATS } = await import("../../../src/consts/aiChat/memory");
 
 function entry(text: string): BufferedMessage {
-  return { id: 1, firstName: "Alice", lastName: "", text, at: "00:00" };
+  return { messageId: 1, id: 1, firstName: "Alice", lastName: "", text, at: "00:00" };
 }
 
 beforeEach(() => {

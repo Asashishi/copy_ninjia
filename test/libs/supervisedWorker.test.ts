@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { WORKER_MAX_RESTARTS } from "../../src/consts/workerSupervisor";
+import { setBusinessWorkerFatalHandler } from "../../src/infra/workerSupervisor";
 import { superviseWorker } from "../../src/libs/supervisedWorker";
 import type { SupervisedWorkerFixtureCommand, SupervisedWorkerFixtureReply } from "./supervisedWorker.fixture";
 
@@ -13,13 +14,16 @@ function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 
 class FakeWorker {
   static readonly instances: FakeWorker[] = [];
+  static nextPostError: Error | null = null;
   onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   readonly messages: unknown[] = [];
   terminated: boolean = false;
-  postError: Error | null = null;
+  postError: Error | null;
 
   constructor(readonly url: string) {
+    this.postError = FakeWorker.nextPostError;
+    FakeWorker.nextPostError = null;
     FakeWorker.instances.push(this);
   }
 
@@ -96,6 +100,7 @@ describe("supervised Worker", () => {
 
   test("替换或终止后的旧实例迟到业务事件与错误均被丢弃", async () => {
     FakeWorker.instances.length = 0;
+    FakeWorker.nextPostError = null;
     const originalWorker: typeof Worker = globalThis.Worker;
     const error = spyOn(console, "error").mockImplementation(() => {});
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
@@ -145,6 +150,51 @@ describe("supervised Worker", () => {
     } finally {
       await handle.terminate();
       globalThis.Worker = originalWorker;
+      error.mockRestore();
+    }
+  });
+
+  test("重放被新实例同步拒绝时撤销该实例并进入永久不可用状态", async () => {
+    FakeWorker.instances.length = 0;
+    FakeWorker.nextPostError = null;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    let giveUps: number = 0;
+    const fatalErrors: Error[] = [];
+    setBusinessWorkerFatalHandler((failure: Error): void => {
+      fatalErrors.push(failure);
+    });
+    const handle = superviseWorker<{ type: "restore" }>({
+      url: "fake-worker.ts",
+      label: "fake Worker",
+      giveUpConsequence: "test feature unavailable",
+      onRespawn: (post) => {
+        post({ type: "restore" });
+      },
+      onGiveUp: () => {
+        giveUps++;
+      },
+    });
+
+    try {
+      handle.init();
+      const first: FakeWorker = FakeWorker.instances[0]!;
+      FakeWorker.nextPostError = new Error("replay rejected");
+
+      expect(() => first.onerror!({ message: "boom" } as ErrorEvent)).not.toThrow();
+
+      const second: FakeWorker = FakeWorker.instances[1]!;
+      expect(second.messages).toEqual([]);
+      expect(second.terminated).toBeTrue();
+      expect(giveUps).toBe(1);
+      expect(handle.post({ type: "restore" })).toBeFalse();
+      expect(fatalErrors[0]?.message).toContain("state replay was rejected");
+    } finally {
+      await handle.terminate();
+      setBusinessWorkerFatalHandler(undefined);
+      globalThis.Worker = originalWorker;
+      FakeWorker.nextPostError = null;
       error.mockRestore();
     }
   });

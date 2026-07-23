@@ -33,6 +33,7 @@ const { resetAiChatMemoryCache } = await import("../../../src/cache/aiChat/memor
 const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../src/consts/aiChat/memory");
 
 const batch: BufferedMessage[] = [{
+  messageId: 7,
   id: 7,
   firstName: "Alice",
   lastName: "",

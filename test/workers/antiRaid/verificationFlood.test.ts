@@ -58,6 +58,7 @@ describe("Anti-Raid pending-member flood handling", () => {
       userId: 42,
       generation: 1,
       revision: 1,
+      phase: "pending",
       label: "刷屏者",
       isBot: false,
       messageIds: [900],

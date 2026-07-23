@@ -1,4 +1,5 @@
 import type { ChatPermissions } from "@grammyjs/types";
+import { CHAT_PERMISSION_KEYS } from "../consts/storage";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, LockdownRecord, StateFileSchema } from "../types/chatState";
 
 /**
@@ -66,30 +67,11 @@ function cachedUser(value: unknown, path: string): CachedUser {
   };
 }
 
-const CHAT_PERMISSION_KEYS: Record<keyof ChatPermissions, true> = {
-  can_send_messages: true,
-  can_send_audios: true,
-  can_send_documents: true,
-  can_send_photos: true,
-  can_send_videos: true,
-  can_send_video_notes: true,
-  can_send_voice_notes: true,
-  can_send_polls: true,
-  can_send_other_messages: true,
-  can_add_web_page_previews: true,
-  can_react_to_messages: true,
-  can_change_info: true,
-  can_invite_users: true,
-  can_edit_tag: true,
-  can_pin_messages: true,
-  can_manage_topics: true,
-};
-
 function chatPermissions(value: unknown, path: string): ChatPermissions {
   const raw = record(value, path);
-  knownKeys(raw, Object.keys(CHAT_PERMISSION_KEYS), path);
+  knownKeys(raw, CHAT_PERMISSION_KEYS, path);
   const decoded: ChatPermissions = {};
-  for (const key of Object.keys(CHAT_PERMISSION_KEYS) as (keyof ChatPermissions)[]) {
+  for (const key of CHAT_PERMISSION_KEYS) {
     const field: unknown = raw[key];
     if (field === undefined) continue;
     if (typeof field !== "boolean") throw new Error(`${path}.${key} must be a boolean`);
@@ -104,16 +86,16 @@ function lockdown(value: unknown, path: string): LockdownRecord {
   const expiresAt: number | undefined = optionalTimestamp(raw, "expiresAt", path);
   if (expiresAt === undefined) throw new Error(`${path}.expiresAt is required`);
   const phase: unknown = raw.phase;
-  if (phase !== undefined && phase !== "applying" && phase !== "active" && phase !== "restoring") {
-    throw new Error(`${path}.phase must be applying, active or restoring`);
+  if (phase !== "applying" && phase !== "active" && phase !== "restoring") {
+    throw new Error(`${path}.phase is required and must be applying, active or restoring`);
   }
   const intentId: number | undefined = optionalTimestamp(raw, "intentId", path);
-  if ((phase === "applying" || phase === "restoring") && (intentId === undefined || intentId === 0)) {
-    throw new Error(`${path}.intentId is required for ${phase}`);
+  if (intentId === undefined || intentId === 0) {
+    throw new Error(`${path}.intentId must be a positive safe integer`);
   }
   return {
-    ...(phase === undefined ? {} : { phase }),
-    ...(intentId === undefined ? {} : { intentId }),
+    phase,
+    intentId,
     originalPermissions: chatPermissions(raw.originalPermissions, `${path}.originalPermissions`),
     expiresAt,
   };

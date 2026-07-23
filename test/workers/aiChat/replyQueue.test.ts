@@ -27,8 +27,9 @@ describe("AI 回复触发队列", () => {
 
   test("文本触发快照读取滚动缓存尾部，保留回复对象并截断正文", () => {
     const messages = new LinkedQueue<BufferedMessage>();
-    messages.push({ id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" });
+    messages.push({ messageId: 87, id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" });
     messages.push({
+      messageId: 88,
       id: 2,
       firstName: "Alice",
       lastName: "Chen",

@@ -185,7 +185,7 @@ flowchart TD
 - 其他机器人也必须验证，由白名单用户代点作保。
 - 关联频道评论区会识别“留言或回帖导致自动入群”的场景：已经实际评论/回帖的成员直接豁免；只从评论区点击入群但没有发消息，仍按普通成员验证，锁定期间会直接踢出。
 - 最近 60 秒入群人数超过 45 时进入 5 分钟锁定，临时关闭普通成员邀请权限。
-- 待验证状态、未过期的消息窗口和终态处置进度写入 `memory/anti-raid/YYYY-MM-DD.json`：Worker 或进程重建后按原 `expiresAt` 的剩余时间继续；无 reminder ID 的旧快照会先补发并重置完整窗口，不会无提醒踢人。成功踢人播报落盘确认后不会在崩溃重放时重复发送；只保留东京当天文件。本次修复未改变持久化 schema，旧快照无需迁移。
+- 待验证状态、未过期的消息窗口和终态处置进度写入 `memory/anti-raid/YYYY-MM-DD.json`：当前格式要求每条 active 记录包含 `phase` 和 `trackedMessageTimes`；Worker 或进程重建后按原 `expiresAt` 的剩余时间继续。reminder ID 是业务可选项，尚未成功发送提醒时为空；恢复后会先补发并重置完整窗口，不会无提醒踢人。成功踢人播报落盘确认后不会在崩溃重放时重复发送；只保留东京当天文件。
 - 权限写入按群串行，恢复失败每 30 秒重试；锁定状态写入 `state.json`，进程重启后继续剩余计时。
 - 管理员表与关联频道缓存都有 TTL、500 群硬顶和周期淘汰，不按历史群数永久增长。
 - 最近评论关联缓存只保留 2 分钟、全局最多 5,000 条；复用 Anti-Raid Worker 的唯一周期 sweeper，不为每位成员创建 timer。
@@ -342,11 +342,11 @@ flowchart TD
 
 <table width="100%">
 <tr><th width="21%" align="left">数据</th><th width="17%" align="left">位置</th><th width="62%" align="left">写入策略</th></tr>
-<tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>只保留“在写 + 最新待写”两份内存快照；每次按主文件、LKG 备份顺序执行临时文件 + fsync + 原子 rename。命令开关、代理与 copy 等权威变更会等待对应 revision 的主备副本完成后才反馈成功并允许确认 update；有限重试耗尽会停止接收更新并以失败退出。群标题等派生元数据仍可后台合并保存。启动时主文件无效会由严格校验通过的备份恢复；两份均无效则拒绝启动且保留原件</td></tr>
-<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；upsert/delete 按群携带单调 revision，删除意图保留到 durable unlink 回执，Disk I/O Worker 重建后会重放。启动只 hydrate 当前明确启用 AI 的群，并清理关闭群的残留快照。恢复时按当前容量保留最新 149 条逐字消息和最新 7 轮冷摘要；回复链的 <code>message_id</code> 索引只从当前热区派生并在 hydrate 时重建，不单独落盘，因此回复链功能不改变快照 schema</td></tr>
+<tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>只保留“在写 + 最新待写”两份内存快照；每次按主文件、LKG 备份顺序执行临时文件 + fsync + 原子 rename。命令开关、代理与 copy 等权威变更会等待对应 revision 的主备副本完成后才反馈成功并允许确认 update；有限重试耗尽会停止接收更新并以失败退出。群标题等派生元数据仍可后台合并保存。当前锁定镜像要求包含 <code>phase</code> 和正数 <code>intentId</code>。启动时主文件无效会由严格校验通过的备份恢复；两份均无效则拒绝启动且保留原件</td></tr>
+<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；upsert/delete 按群携带单调 revision，删除意图保留到 durable unlink 回执，Disk I/O Worker 重建后会重放。启动只 hydrate 当前明确启用 AI 的群，并清理关闭群的残留快照。恢复时按当前容量保留最新 149 条逐字消息和最新 7 轮冷摘要；当前格式要求每条热区消息带正数 <code>message_id</code>，回复链索引只从当前热区派生并在 hydrate 时重建，不单独落盘</td></tr>
 <tr><td>贴纸描述目录</td><td><code>memory/stickers/</code></td><td>每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用</td></tr>
 <tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code></td></tr>
-<tr><td>待验证成员</td><td><code>memory/anti-raid/</code></td><td>当日 JSON 按 <code>chatId:userId</code> 键增量追加；普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件</td></tr>
+<tr><td>待验证成员</td><td><code>memory/anti-raid/</code></td><td>当日 JSON 按 <code>chatId:userId</code> 键增量追加；当前 active 记录要求包含 <code>phase</code> 和 <code>trackedMessageTimes</code>。普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件</td></tr>
 <tr><td>error 日志</td><td><code>logs/</code></td><td>Disk I/O Worker 统一批量追加</td></tr>
 <tr><td>运行实例</td><td><code>bot.lock</code></td><td>原子维护的数据目录单实例 owner 锁</td></tr>
 </table>

@@ -3,8 +3,11 @@ import type { BufferedMessage } from "../../types/aiChat/memory";
 
 /** 可持久化 AI 记忆的唯一内存 owner；快照恢复/刷盘由 rollingMemory.ts 编排。 */
 export const chatBuffers: Map<number, LinkedQueue<BufferedMessage>> = new Map();
+/** 每群已完成的冷历史摘要；轮换压缩填充，快照恢复，群淘汰时删除。 */
 export const chatSummaries: Map<number, LinkedQueue<string>> = new Map();
+/** 每群尚未合并进 summaries 的摘要文本；压缩 settle 或群淘汰时清除。 */
 export const pendingSummaries: Map<number, string> = new Map();
+/** 需要在下一次周期上报快照的群；成功上报或群清除时删除。 */
 export const dirtyMemoryChats: Set<number> = new Set();
 
 /** 各群最后一次记入滚动缓存的时刻，仅用于容量满时的 LRU 淘汰排序（见
@@ -20,10 +23,12 @@ export const chatLastActivityTimes: Map<number, number> = new Map();
  *  只有仍在热区的消息。 */
 export const chatReplyChainIndexes: Map<number, Map<number, BufferedMessage>> = new Map();
 
+/** 判断某群是否存在任一可持久化记忆部分。 */
 export function hasChatMemory(chatId: number): boolean {
   return chatBuffers.has(chatId) || chatSummaries.has(chatId) || pendingSummaries.has(chatId);
 }
 
+/** 返回当前可持久化记忆涉及的群 ID 快照；调用方可独立修改返回集合。 */
 export function chatMemoryIds(): Set<number> {
   return new Set([...chatBuffers.keys(), ...chatSummaries.keys(), ...pendingSummaries.keys()]);
 }

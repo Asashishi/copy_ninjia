@@ -11,3 +11,10 @@ export const weatherCache: TimedCache<TokyoWeatherResult> = {
   result: null,
   at: 0,
 };
+
+/**
+ * AI Worker 内唯一的天气刷新 interval。startWeatherRefreshLoop 填充，
+ * stopWeatherRefreshLoop 清除；Worker 强制崩溃时随 isolate 销毁，重建后
+ * 重新启动，容量固定为一个 timer。
+ */
+export const weatherRefreshTimer: { current: ReturnType<typeof setInterval> | null } = { current: null };

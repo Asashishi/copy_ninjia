@@ -46,6 +46,7 @@ export function takePendingAdminChanges(chatId: number): Map<number, boolean> | 
   return pending;
 }
 
+/** 拉取失败或群失效时丢弃该群尚未重放的管理员增量。 */
 export function discardPendingAdminChanges(chatId: number): void {
   pendingAdminChangesDuringFetch.delete(chatId);
 }

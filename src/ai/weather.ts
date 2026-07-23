@@ -7,7 +7,7 @@ import {
   WEATHER_REFRESH_INTERVAL_MS,
   WEATHER_REQUEST_TIMEOUT_MS,
 } from "../consts/weather";
-import { weatherCache } from "../cache/weather";
+import { weatherCache, weatherRefreshTimer } from "../cache/weather";
 import { fetchJsonWithTimeout } from "../libs/httpFetch";
 import type { TokyoWeatherResult } from "../types/tools";
 
@@ -97,6 +97,15 @@ export function currentTokyoWeather(): TokyoWeatherResult | null {
  * 下一次照常按周期再试。
  */
 export function startWeatherRefreshLoop(): void {
+  if (weatherRefreshTimer.current !== null) return;
   void refreshTokyoWeather();
-  setInterval(() => void refreshTokyoWeather(), WEATHER_REFRESH_INTERVAL_MS);
+  weatherRefreshTimer.current = setInterval(() => void refreshTokyoWeather(), WEATHER_REFRESH_INTERVAL_MS);
+  weatherRefreshTimer.current.unref();
+}
+
+/** 停止唯一刷新 interval；Worker 重建后由启动入口重新创建。 */
+export function stopWeatherRefreshLoop(): void {
+  if (weatherRefreshTimer.current === null) return;
+  clearInterval(weatherRefreshTimer.current);
+  weatherRefreshTimer.current = null;
 }

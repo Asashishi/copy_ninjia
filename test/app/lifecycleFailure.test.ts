@@ -15,6 +15,7 @@ const getReactionConfig = mock((): object => ({}));
 const getMoodConfig = mock((): object => ({}));
 const initTelegramClients = mock((): void => { calls.push("initTelegram"); });
 let diskIOFatalHandler: ((error: Error) => void) | undefined;
+let businessWorkerFatalHandler: ((error: Error) => void) | undefined;
 const initDiskIO = mock((options?: { onFatal?: (error: Error) => void }): void => {
   calls.push("initDiskIO");
   diskIOFatalHandler = options?.onFatal;
@@ -65,6 +66,9 @@ let copiedUser: object | null = null;
 const getGlobalCopyState = mock(() => ({ copiedUser }));
 const sleep = mock(async (): Promise<void> => {});
 const setStatePersistenceFatalHandler = mock((_handler: ((error: Error) => void) | undefined): void => {});
+const setBusinessWorkerFatalHandler = mock((handler: ((error: Error) => void) | undefined): void => {
+  businessWorkerFatalHandler = handler;
+});
 const loggerError = mock((..._args: unknown[]): void => {});
 const getUpdates = mock(async (): Promise<unknown[]> => { calls.push("getUpdates"); return []; });
 const botInit = mock(async (): Promise<void> => { calls.push("botInit"); });
@@ -132,6 +136,7 @@ const testDependencies = {
   quiesceReactionQueue,
   quiesceTranslate,
   seedSenderCache,
+  setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
   terminateAiChat,
@@ -144,6 +149,7 @@ const { ApplicationLifecycle } = await import("../../src/app/lifecycle");
 beforeEach(() => {
   calls.length = 0;
   diskIOFatalHandler = undefined;
+  businessWorkerFatalHandler = undefined;
   copiedUser = null;
   lastSeenUpdateId = 0;
   process.exitCode = 0;
@@ -186,6 +192,7 @@ beforeEach(() => {
     initAntiRaid,
     restoreLuckState,
     seedSenderCache,
+    setBusinessWorkerFatalHandler,
     setStatePersistenceFatalHandler,
     registerCommandMenu,
     registerHandlers,
@@ -380,6 +387,22 @@ describe("应用启动失败与退出清理", () => {
     expect(runnerStop).toHaveBeenCalledTimes(1);
     expect(loggerError).toHaveBeenCalledWith(
       "Persistence became unavailable at runtime; stopping for a supervised restart:",
+      expect.any(Error)
+    );
+  });
+
+  test("业务 Worker 永久不可用时会设置非零退出码并停止继续取 update", async () => {
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    businessWorkerFatalHandler!(new Error("AI Worker replay failed"));
+    await lifecycle.wait();
+    await lifecycle.dispose();
+
+    expect(process.exitCode).toBe(1);
+    expect(runnerStop).toHaveBeenCalledTimes(1);
+    expect(loggerError).toHaveBeenCalledWith(
+      "Business Worker became unavailable at runtime; stopping for a supervised restart:",
       expect.any(Error)
     );
   });

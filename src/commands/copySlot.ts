@@ -1,17 +1,8 @@
-import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
+import { pendingCopySlotClaim } from "../cache/copy/slot";
+import type { GlobalCopyState } from "../types/chatState";
+import type { CopySlotClaim, CopySlotDecision, CopySlotTarget } from "../types/copy/slot";
 
-/** 跨群 /copy 启动流程的同步占位；不同群不会被 grammY 的按群串行器互斥。 */
-export interface CopySlotClaim {
-  readonly token: symbol;
-  readonly copyChatId: number;
-}
-
-export type CopySlotDecision =
-  | { claimed: true; claim: CopySlotClaim }
-  | { claimed: false; reason: "active"; copiedUser: CachedUser }
-  | { claimed: false; reason: "pending" };
-
-let pendingCopySlotClaim: CopySlotClaim | null = null;
+export type { CopySlotClaim, CopySlotDecision } from "../types/copy/slot";
 
 /**
  * 在同一个同步执行栈里检查并占住全局 copy 槽。占位必须早于目标解析、冷却
@@ -21,9 +12,9 @@ export function claimCopySlot(globalCopy: GlobalCopyState, copyChatId: number): 
   if (globalCopy.copiedUser !== null) {
     return { claimed: false, reason: "active", copiedUser: globalCopy.copiedUser };
   }
-  if (pendingCopySlotClaim !== null) return { claimed: false, reason: "pending" };
+  if (pendingCopySlotClaim.current !== null) return { claimed: false, reason: "pending" };
   const claim: CopySlotClaim = { token: Symbol("copy-slot"), copyChatId };
-  pendingCopySlotClaim = claim;
+  pendingCopySlotClaim.current = claim;
   return { claimed: true, claim };
 }
 
@@ -31,31 +22,31 @@ export function claimCopySlot(globalCopy: GlobalCopyState, copyChatId: number): 
 export function commitCopySlot(
   claim: CopySlotClaim,
   globalCopy: GlobalCopyState,
-  target: { copiedUser: CachedUser; copyMode: CopyMode | undefined; copyChatId: number }
+  target: CopySlotTarget
 ): boolean {
-  if (pendingCopySlotClaim?.token !== claim.token || globalCopy.copiedUser !== null) return false;
+  if (pendingCopySlotClaim.current?.token !== claim.token || globalCopy.copiedUser !== null) return false;
   globalCopy.copiedUser = target.copiedUser;
   globalCopy.copyMode = target.copyMode;
   globalCopy.copyChatId = target.copyChatId;
-  pendingCopySlotClaim = null;
+  pendingCopySlotClaim.current = null;
   return true;
 }
 
 /** 目标解析、冷却检查或后续校验失败时释放尚未提交的占位。 */
 export function releaseCopySlot(claim: CopySlotClaim): void {
-  if (pendingCopySlotClaim?.token === claim.token) pendingCopySlotClaim = null;
+  if (pendingCopySlotClaim.current?.token === claim.token) pendingCopySlotClaim.current = null;
 }
 
 /** /stop_copy 可取消还在解析目标/检查冷却的启动流程。 */
 export function cancelPendingCopySlot(): boolean {
-  if (pendingCopySlotClaim === null) return false;
-  pendingCopySlotClaim = null;
+  if (pendingCopySlotClaim.current === null) return false;
+  pendingCopySlotClaim.current = null;
   return true;
 }
 
 /** 群 teardown 只取消由该群发起、尚未提交的 copy。 */
 export function cancelPendingCopySlotOwnedBy(copyChatId: number): boolean {
-  if (pendingCopySlotClaim?.copyChatId !== copyChatId) return false;
-  pendingCopySlotClaim = null;
+  if (pendingCopySlotClaim.current?.copyChatId !== copyChatId) return false;
+  pendingCopySlotClaim.current = null;
   return true;
 }

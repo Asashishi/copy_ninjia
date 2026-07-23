@@ -5,10 +5,12 @@ function descriptionOutputRule(maxChars: number): string {
   return `不超过 ${maxChars} 字，只输出描述本身，不要任何前缀或解释，也不要用引号把整段描述包起来。`;
 }
 
+/** 图片视觉描述模型的固定任务提示。 */
 export const IMAGE_DESCRIPTION_PROMPT: string =
   "这是中文群聊里有人发的一张图片。请用中文简要描述它：是什么内容、图里有什么文字、想表达什么；" +
   `若是表情包/梗图/截图，请点出梗点和情绪。${descriptionOutputRule(IMAGE_DESCRIPTION_MAX_CHARS)}`;
 
+/** 贴纸视觉描述模型的固定任务提示。 */
 export const STICKER_DESCRIPTION_PROMPT: string =
   "这是中文群聊场景用到的一枚贴纸（表情包）。请用中文描述它，最优先的任务是把画面里出现的文字" +
   "一字不差地原样抄录出来、放进「」里（中英文、品牌名、代码符号都照抄，不要改写、意译或省略——" +
@@ -19,10 +21,12 @@ export const STICKER_DESCRIPTION_PROMPT: string =
   "抄录之后，再简述角色/形象是谁或什么、动作表情、整体想表达的情绪或语气。不要特意的描述为什么动漫什么游戏的人物, 正常描述特征即可" +
   descriptionOutputRule(SHORT_MEDIA_DESCRIPTION_MAX_CHARS);
 
+/** GIF 首帧视觉描述模型的固定任务提示。 */
 export const ANIMATION_DESCRIPTION_PROMPT: string =
   "这是中文群聊里发的一个动图（GIF）的封面帧画面（不是完整动图，只是第一帧）。请用中文简要描述这一帧看到的内容、" +
   `画面里的文字（如有）、大致想表达的情绪或梗。${descriptionOutputRule(SHORT_MEDIA_DESCRIPTION_MAX_CHARS)}`;
 
+/** 根据逐枚描述生成整包贴纸导览的固定任务提示。 */
 export const STICKER_PACK_SUMMARY_PROMPT: string =
   "以下是一个 Telegram 贴纸包里每枚贴纸的画面描述（每行一条，行首可能带这枚贴纸自带的情绪 emoji）。" +
   "请用中文为这一整个贴纸包写一段精准的导览简介，读者是要「按情绪/梗挑贴纸」的人，看完简介就能判断该不该进这个包找。必须具体写清：" +

@@ -18,9 +18,8 @@ import {
 import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
 import { botInfoState } from "../../cache/aiChat/identity";
 import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/aiChat/memory";
-import { compactionChains, compactionPendingCounts } from "../../cache/aiChat/compaction";
+import { compactionPendingCounts, compactionRunner } from "../../cache/aiChat/compaction";
 import { cachedReplyGeneration } from "../../cache/aiChat/replies";
-import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import { currentTimeSentence } from "./timeSentence";
 
@@ -29,8 +28,6 @@ import { currentTimeSentence } from "./timeSentence";
  * 镜像」，机制见 consts/aiChat/memory.ts 的 COMPACT_BATCH_SIZE 注释。入口是
  * scheduleRotation，由 rollingMemory.ts 的 pushBufferedMessage 在块边界调用。
  */
-
-const compactionRunner = createKeyedSerialTaskRunner(compactionChains);
 
 /**
  * 把一轮「晋升旧摘要 + 压缩新镜像」挂到该群的轮换串行链上（链的机制见
@@ -73,18 +70,20 @@ function finishCompactionTask(chatId: number): void {
   else compactionPendingCounts.set(chatId, remaining);
 }
 
+export interface RotateCompactionParams {
+  chatId: number;
+  mirrorBatch: BufferedMessage[];
+  promoteFirst: boolean;
+  generation: number;
+}
+
 /** 执行一轮轮换：先晋升上一轮镜像的摘要（若有），再 AI 压缩新镜像存为待晋升。 */
 async function rotateCompaction({
   chatId,
   mirrorBatch,
   promoteFirst,
   generation,
-}: {
-  chatId: number;
-  mirrorBatch: BufferedMessage[];
-  promoteFirst: boolean;
-  generation: number;
-}): Promise<void> {
+}: RotateCompactionParams): Promise<void> {
   try {
     if (cachedReplyGeneration(chatId) !== generation) return;
     if (promoteFirst) {

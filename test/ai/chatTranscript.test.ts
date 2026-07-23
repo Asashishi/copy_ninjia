@@ -4,7 +4,8 @@ import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from "../../src/consts
 import { CHAT_MEMORY_PRIORITY_INSTRUCTION, FORWARD_TAG_HINT, REPLY_CHAIN_SNAPSHOT_TAG, REPLY_TAG_HINT, SUMMARY_SYSTEM_PROMPT } from "../../src/consts/aiChatPrompts";
 import type { BufferedMessage } from "../../src/types";
 
-const legacyMessage: BufferedMessage = {
+const message: BufferedMessage = {
+  messageId: 42,
   id: 42,
   firstName: "千早",
   lastName: "愛音",
@@ -14,20 +15,20 @@ const legacyMessage: BufferedMessage = {
 
 describe("AI 群聊转录身份格式", () => {
   test("有公开 username 时输出可供 @ 提及映射的标记", () => {
-    expect(formatBufferedMessageLine({ ...legacyMessage, username: "anon_tokyo" })).toBe(
-      "[2026/07/17 18:18:42] [id:42] [username:@anon_tokyo] 千早 愛音：咋啦"
+    expect(formatBufferedMessageLine({ ...message, username: "anon_tokyo" })).toBe(
+      "[2026/07/17 18:18:42] [message_id:42] [id:42] [username:@anon_tokyo] 千早 愛音：咋啦"
     );
   });
 
-  test("没有 username 的旧缓存条目保持原有转录格式", () => {
-    expect(formatBufferedMessageLine(legacyMessage)).toBe(
-      "[2026/07/17 18:18:42] [id:42] 千早 愛音：咋啦"
+  test("没有 username 的缓存条目仍保留消息索引", () => {
+    expect(formatBufferedMessageLine(message)).toBe(
+      "[2026/07/17 18:18:42] [message_id:42] [id:42] 千早 愛音：咋啦"
     );
   });
 
   test("显式标出回复对象、原消息和局部引用，不让模型靠相邻上下文猜", () => {
     expect(formatBufferedMessageLine({
-      ...legacyMessage,
+      ...message,
       messageId: 42,
       text: "@ninja_bot 你怎么看",
       replyTo: {
@@ -57,7 +58,7 @@ describe("AI 群聊转录身份格式", () => {
 
   test("转发消息在名字后标出来源，正文不算发送者本人所写", () => {
     expect(formatBufferedMessageLine({
-      ...legacyMessage,
+      ...message,
       messageId: 50,
       text: "转来的爆料",
       forwardedFrom: "[id:789] [username:@carol_cc] Carol Chan",
@@ -68,7 +69,7 @@ describe("AI 群聊转录身份格式", () => {
 
   test("被回复的原消息是转发时，回复引用一并标出转发来源", () => {
     expect(formatBufferedMessageLine({
-      ...legacyMessage,
+      ...message,
       messageId: 51,
       text: "@ninja_bot 这条你怎么看",
       replyTo: {
@@ -86,17 +87,22 @@ describe("AI 群聊转录身份格式", () => {
 
   test("逐字缓存把最新一个压缩块单列为最热判断标准", () => {
     const messages: BufferedMessage[] = Array.from({ length: COMPACT_BATCH_SIZE + 1 }, (_, index: number) => ({
-      ...legacyMessage,
+      ...message,
+      messageId: index + 1,
       id: index + 1,
       text: `消息 ${index + 1}`,
     }));
     const transcript: string = buildTieredVerbatimTranscript(messages);
 
     expect(transcript).toContain("【较早逐字记录（次要背景）】");
-    expect(transcript).toContain("[id:1] 千早 愛音：消息 1");
+    expect(transcript).toContain("[message_id:1] [id:1] 千早 愛音：消息 1");
     expect(transcript).toContain(`【最热记忆（重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条）】`);
-    expect(transcript.indexOf("【最热记忆")).toBeLessThan(transcript.indexOf("[id:2] 千早 愛音：消息 2"));
-    expect(transcript).toEndWith(`[id:${COMPACT_BATCH_SIZE + 1}] 千早 愛音：消息 ${COMPACT_BATCH_SIZE + 1}`);
+    expect(transcript.indexOf("【最热记忆")).toBeLessThan(
+      transcript.indexOf("[message_id:2] [id:2] 千早 愛音：消息 2")
+    );
+    expect(transcript).toEndWith(
+      `[message_id:${COMPACT_BATCH_SIZE + 1}] [id:${COMPACT_BATCH_SIZE + 1}] 千早 愛音：消息 ${COMPACT_BATCH_SIZE + 1}`
+    );
   });
 
   test("总提示只保留两层记忆仲裁：逐字转录定当前状态，冷记忆只作长期背景", () => {

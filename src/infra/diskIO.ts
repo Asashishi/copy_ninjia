@@ -15,16 +15,20 @@
  * @see ../../docs/architecture.md
  */
 
-import { pendingLoad, pendingLuckSecrets } from "../cache/diskIO";
+import {
+  diskIOFlushBarrier,
+  diskIORestartThrottle,
+  diskIORuntime,
+  pendingLoad,
+  pendingLuckSecrets,
+} from "../cache/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
-import { createRestartThrottle } from "../libs/restartThrottle";
-import { createFlushBarrier } from "../libs/flushBarrier";
 import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
-import { DISK_IO_FLUSH_TIMEOUT_MS, type FlushResult } from "../consts/lifecycle";
+import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import type { FlushResult } from "../types/lifecycle";
 import type {
-  AiMemoryDiskMessage,
-  AiMemoryDeleteDiskMessage,
   AiMemoryDeletedPersistedReply,
+  DiskBusinessMessage,
   DiskFlushRequest,
   DiskIOMessage,
   DiskIOReply,
@@ -33,11 +37,7 @@ import type {
   LoadedReply,
   LogEnvelope,
   LogMessage,
-  LuckDrawDiskMessage,
-  StickerCatalogDiskMessage,
-  VerificationDeleteDiskMessage,
   VerificationPersistedReply,
-  VerificationUpsertDiskMessage,
 } from "../types/diskIO";
 import type { VerificationSnapshot } from "../types/antiRaid";
 import type { LuckDayCache, LuckReceiptSecret } from "../types/diskIO/storage";
@@ -52,37 +52,10 @@ export interface DiskIOInitOptions {
   maxPendingBusinessMessages?: number;
 }
 
-// 落盘 Worker 崩溃自愈的节流，避免陷入无限重启烧 CPU；耗尽或恢复握手失败
-// 会发出 fatal 信号，让应用停止取 update 并交给进程管理器重启。
-const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
-
 // 落盘 Worker 只能由入口在取得 bot.lock 后显式初始化。模块导入本身不得
 // 创建线程：否则竞争单实例锁失败的第二进程仍会执行 diskIOWorker 顶层的
 // initLogFiles()，提前创建/清扫共享 logs/ 目录。Worker 线程里永远不初始化
 // 本宿主，只使用 logger.ts 的转发模式。
-let diskIOWorker: Worker | null = null;
-let diskIOInitialized: boolean = false;
-let diskIOWritable: boolean = false;
-let runtimeRecoveryWorker: Worker | null = null;
-let runtimeRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
-let runtimeRecoveryTimeoutMs: number = LOAD_TIMEOUT_MS;
-let maxPendingBusinessMessages: number = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
-let diskIOFatalHandler: ((error: Error) => void) | undefined;
-let diskIOFatalSignaled: boolean = false;
-const diskIOFlushBarrier = createFlushBarrier({ timeoutMs: DISK_IO_FLUSH_TIMEOUT_MS });
-
-type DiskBusinessMessage =
-  | AiMemoryDiskMessage
-  | AiMemoryDeleteDiskMessage
-  | StickerCatalogDiskMessage
-  | LuckDrawDiskMessage
-  | VerificationUpsertDiskMessage
-  | VerificationDeleteDiskMessage;
-
-// Worker 恢复成功前不能把新状态写到只恢复了一部分的缓存上。短暂重建期间
-// 暂存业务增量；镜像重放成功后再按到达顺序补投。
-const pendingBusinessMessages: DiskBusinessMessage[] = [];
-
 function requirePositiveFinite(value: number, label: string): number {
   if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${label} must be a positive finite number.`);
   return value;
@@ -96,7 +69,7 @@ export function initDiskIO(options: DiskIOInitOptions = {}): void {
   if (!isMainThread) {
     throw new Error("Disk I/O can only be initialized by the main thread.");
   }
-  if (diskIOInitialized) return;
+  if (diskIORuntime.initialized) return;
   const nextRuntimeRecoveryTimeoutMs: number = requirePositiveFinite(
     options.runtimeRecoveryTimeoutMs ?? LOAD_TIMEOUT_MS,
     "Disk I/O runtime recovery timeout"
@@ -106,32 +79,32 @@ export function initDiskIO(options: DiskIOInitOptions = {}): void {
   if (!Number.isSafeInteger(nextMaxPendingBusinessMessages) || nextMaxPendingBusinessMessages < 1) {
     throw new RangeError("Disk I/O pending business message capacity must be a positive safe integer.");
   }
-  diskIOFatalHandler = options.onFatal;
-  runtimeRecoveryTimeoutMs = nextRuntimeRecoveryTimeoutMs;
-  maxPendingBusinessMessages = nextMaxPendingBusinessMessages;
-  diskIOFatalSignaled = false;
-  diskIOWritable = false;
-  diskIOWorker = createDiskIOWorker();
-  diskIOInitialized = true;
+  diskIORuntime.fatalHandler = options.onFatal;
+  diskIORuntime.runtimeRecoveryTimeoutMs = nextRuntimeRecoveryTimeoutMs;
+  diskIORuntime.maxPendingBusinessMessages = nextMaxPendingBusinessMessages;
+  diskIORuntime.fatalSignaled = false;
+  diskIORuntime.writable = false;
+  diskIORuntime.worker = createDiskIOWorker();
+  diskIORuntime.initialized = true;
 }
 
 /** 供入口生命周期守卫和无副作用 import 测试查询，不代表 Worker 当前可用。 */
 export function isDiskIOInitialized(): boolean {
-  return diskIOInitialized;
+  return diskIORuntime.initialized;
 }
 
 function createDiskIOWorker(): Worker {
   const w: Worker = new Worker(new URL("../workers/diskIOWorker.ts", import.meta.url).href);
   w.unref();
   w.onmessage = (event: MessageEvent<DiskIOReply>) => {
-    if (diskIOWorker !== w) return;
+    if (diskIORuntime.worker !== w) return;
     const data: DiskIOReply = event.data;
     if (data.type === "verificationPersisted") {
-      for (const listener of verificationPersistedListeners) listener(data);
+      for (const listener of diskIORuntime.verificationPersistedListeners) listener(data);
       return;
     }
     if (data.type === "aiMemoryDeletedPersisted") {
-      for (const listener of aiMemoryDeletedPersistedListeners) listener(data);
+      for (const listener of diskIORuntime.aiMemoryDeletedPersistedListeners) listener(data);
       return;
     }
     if (data.type === "flushed" || data.type === "flushFailed") {
@@ -163,7 +136,7 @@ function createDiskIOWorker(): Worker {
       else stopWorkerAfterLoadFailure(w, data.error ?? "no luck receipt secret returned", false);
       return;
     }
-    if (runtimeRecoveryWorker !== w) return;
+    if (diskIORuntime.runtimeRecoveryWorker !== w) return;
     if (!isSuccessfulLoad(data)) {
       stopWorkerAfterLoadFailure(w, data.error ?? "no luck receipt secret returned", true);
       return;
@@ -172,15 +145,15 @@ function createDiskIOWorker(): Worker {
   };
   w.onerror = (event: ErrorEvent) => {
     // 已替换旧实例的迟到/重复错误不能再启动第二条并行重建链。
-    if (diskIOWorker !== w) return;
+    if (diskIORuntime.worker !== w) return;
     // 落盘线程自己出错时不能再指望它把这条日志落盘，直接走控制台，避免
     // 自己给自己转发出一场递归。Bun 里 Worker 内部一旦抛出未捕获异常
     // （同步或 async 均如此，已实测验证）就会直接终止该 Worker 线程，这里
     // 不需要（实际上也没法）再手动 terminate，直接换一个新实例顶上即可。
     console.error("[diskIO] persistence Worker errored:", event.message || event.error || event);
-    diskIOWritable = false;
-    if (runtimeRecoveryWorker === w) {
-      runtimeRecoveryWorker = null;
+    diskIORuntime.writable = false;
+    if (diskIORuntime.runtimeRecoveryWorker === w) {
+      diskIORuntime.runtimeRecoveryWorker = null;
       clearRuntimeRecoveryTimer();
     }
     const pendingFlushCount: number = diskIOFlushBarrier.pendingCount();
@@ -203,19 +176,19 @@ function createDiskIOWorker(): Worker {
       }
       pendingLuckSecrets.clear();
     }
-    if (restartThrottle.shouldGiveUp()) {
+    if (diskIORestartThrottle.shouldGiveUp()) {
       console.error(
         `[diskIO] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +
         `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing and forcing a supervised process restart ` +
         `before any more updates are accepted.`
       );
-      diskIOWorker = null;
-      pendingBusinessMessages.length = 0;
+      diskIORuntime.worker = null;
+      diskIORuntime.pendingBusinessMessages.length = 0;
       signalDiskIOFatal(new Error("Persistence Worker exhausted its runtime restart budget."));
       return;
     }
     const next: Worker = createDiskIOWorker();
-    diskIOWorker = next;
+    diskIORuntime.worker = next;
     // 崩溃重建后的第一层恢复：新实例缓存全空，先自己读一次盘拿到最后一次
     // 成功落盘的状态。
     beginRuntimeRecovery(next);
@@ -228,28 +201,28 @@ function isSuccessfulLoad(reply: LoadedReply): boolean {
 }
 
 function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): void {
-  if (diskIOWorker !== worker) return;
+  if (diskIORuntime.worker !== worker) return;
   clearRuntimeRecoveryTimer();
-  runtimeRecoveryWorker = null;
-  diskIOWritable = true;
+  diskIORuntime.runtimeRecoveryWorker = null;
+  diskIORuntime.writable = true;
   if (replayMirrors) {
     // load 已完整成功，此时才允许各领域把崩溃窗口内的主线程镜像补齐。
-    for (const listener of respawnListeners) {
+    for (const listener of diskIORuntime.respawnListeners) {
       try {
         listener();
       } catch (error: unknown) {
         console.error("[diskIO] failed to replay a persistence mirror after recovery:", error);
       }
-      if (diskIOWorker !== worker || !diskIOWritable) return;
+      if (diskIORuntime.worker !== worker || !diskIORuntime.writable) return;
     }
   }
-  while (pendingBusinessMessages.length > 0) {
-    const message: DiskBusinessMessage = pendingBusinessMessages[0]!;
+  while (diskIORuntime.pendingBusinessMessages.length > 0) {
+    const message: DiskBusinessMessage = diskIORuntime.pendingBusinessMessages[0]!;
     if (!safePostDiskIO(worker, message, `replay ${message.type}`)) {
       stopWorkerAfterLoadFailure(worker, `Worker rejected ${message.type} during recovery replay`, true);
       return;
     }
-    pendingBusinessMessages.shift();
+    diskIORuntime.pendingBusinessMessages.shift();
   }
 }
 
@@ -268,16 +241,16 @@ function safePostDiskIO(worker: Worker, message: DiskIOMessage, context: string)
 }
 
 function clearRuntimeRecoveryTimer(): void {
-  if (runtimeRecoveryTimer === null) return;
-  clearTimeout(runtimeRecoveryTimer);
-  runtimeRecoveryTimer = null;
+  if (diskIORuntime.runtimeRecoveryTimer === null) return;
+  clearTimeout(diskIORuntime.runtimeRecoveryTimer);
+  diskIORuntime.runtimeRecoveryTimer = null;
 }
 
 function signalDiskIOFatal(error: Error): void {
-  if (diskIOFatalSignaled) return;
-  diskIOFatalSignaled = true;
-  if (diskIOFatalHandler !== undefined) {
-    diskIOFatalHandler(error);
+  if (diskIORuntime.fatalSignaled) return;
+  diskIORuntime.fatalSignaled = true;
+  if (diskIORuntime.fatalHandler !== undefined) {
+    diskIORuntime.fatalHandler(error);
   } else {
     console.error("[diskIO] fatal persistence failure requires process restart:", error.message);
   }
@@ -285,31 +258,31 @@ function signalDiskIOFatal(error: Error): void {
 
 function beginRuntimeRecovery(worker: Worker): void {
   clearRuntimeRecoveryTimer();
-  runtimeRecoveryWorker = worker;
-  runtimeRecoveryTimer = setTimeout(() => {
-    runtimeRecoveryTimer = null;
+  diskIORuntime.runtimeRecoveryWorker = worker;
+  diskIORuntime.runtimeRecoveryTimer = setTimeout(() => {
+    diskIORuntime.runtimeRecoveryTimer = null;
     stopWorkerAfterLoadFailure(
       worker,
-      `runtime load handshake timed out after ${runtimeRecoveryTimeoutMs}ms`,
+      `runtime load handshake timed out after ${diskIORuntime.runtimeRecoveryTimeoutMs}ms`,
       true
     );
-  }, runtimeRecoveryTimeoutMs);
-  runtimeRecoveryTimer.unref();
+  }, diskIORuntime.runtimeRecoveryTimeoutMs);
+  diskIORuntime.runtimeRecoveryTimer.unref();
   if (!safePostDiskIO(worker, { type: "load" } satisfies LoadRequest, "runtime load request")) {
     stopWorkerAfterLoadFailure(worker, "Worker synchronously rejected the runtime load request", true);
   }
 }
 
 function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal: boolean): void {
-  if (diskIOWorker !== worker) return;
+  if (diskIORuntime.worker !== worker) return;
   clearRuntimeRecoveryTimer();
   console.error(
     `[diskIO] persistence recovery failed; keeping storage unavailable and refusing writes: ${reason}`
   );
-  diskIOWorker = null;
-  runtimeRecoveryWorker = null;
-  diskIOWritable = false;
-  pendingBusinessMessages.length = 0;
+  diskIORuntime.worker = null;
+  diskIORuntime.runtimeRecoveryWorker = null;
+  diskIORuntime.writable = false;
+  diskIORuntime.pendingBusinessMessages.length = 0;
   diskIOFlushBarrier.settleAll("failed");
   try {
     void Promise.resolve(worker.terminate()).catch((error: unknown) => {
@@ -321,10 +294,6 @@ function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal: boole
   if (fatal) signalDiskIOFatal(new Error(`[diskIO] runtime persistence recovery failed: ${reason}`));
 }
 
-const respawnListeners: (() => void)[] = [];
-const verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[] = [];
-const aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[] = [];
-
 /**
  * 注册一个回调：diskIOWorker 崩溃重建后调用，用于把主线程侧的镜像
  * （AI 记忆 latestAiMemories、运势 dailyLuckCache、待验证 active/终结变化）
@@ -332,25 +301,25 @@ const aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply)
  * 单例，各领域各自登记一个回调即可。
  */
 export function onDiskIORespawn(callback: () => void): void {
-  respawnListeners.push(callback);
+  diskIORuntime.respawnListeners.push(callback);
 }
 
 /** 注册待验证增量 JSON 真正写入后的确认回调。 */
 export function onVerificationPersisted(callback: (reply: VerificationPersistedReply) => void): void {
-  verificationPersistedListeners.push(callback);
+  diskIORuntime.verificationPersistedListeners.push(callback);
 }
 
 /** 注册 AI 记忆删除真正 durable（或被更新 revision 覆盖）的确认回调。 */
 export function onAiMemoryDeletedPersisted(callback: (reply: AiMemoryDeletedPersistedReply) => void): void {
-  aiMemoryDeletedPersistedListeners.push(callback);
+  diskIORuntime.aiMemoryDeletedPersistedListeners.push(callback);
 }
 
 /** 把其它 Worker 线程转发来的 error 日志转投落盘线程（logger.ts 的转发模式，仅主线程调用）。 */
 export function relayLogMessage(message: LogMessage): boolean {
-  const worker: Worker | null = diskIOWorker;
-  if (worker === null || !diskIOWritable) return false;
-  // Logging must never recursively invoke the logger or escalate to an application
-  // fatal. The console diagnostic in safePostDiskIO is the terminal fallback.
+  const worker: Worker | null = diskIORuntime.worker;
+  if (worker === null || !diskIORuntime.writable) return false;
+  // 日志转投绝不能递归调用 logger，也不能把落盘故障升级成应用 fatal；
+  // safePostDiskIO 的 console 诊断是这条路径的最终兜底。
   return safePostDiskIO(worker, { type: "log", ...message } satisfies LogEnvelope, "log message");
 }
 
@@ -358,18 +327,18 @@ export function relayLogMessage(message: LogMessage): boolean {
 export function postDiskIO(
   message: DiskBusinessMessage
 ): boolean {
-  const worker: Worker | null = diskIOWorker;
+  const worker: Worker | null = diskIORuntime.worker;
   if (worker === null) return false;
-  if (!diskIOWritable) {
-    if (pendingBusinessMessages.length >= maxPendingBusinessMessages) {
+  if (!diskIORuntime.writable) {
+    if (diskIORuntime.pendingBusinessMessages.length >= diskIORuntime.maxPendingBusinessMessages) {
       stopWorkerAfterLoadFailure(
         worker,
-        `buffered business message limit (${maxPendingBusinessMessages}) exceeded during recovery`,
+        `buffered business message limit (${diskIORuntime.maxPendingBusinessMessages}) exceeded during recovery`,
         true
       );
       return false;
     }
-    pendingBusinessMessages.push(message);
+    diskIORuntime.pendingBusinessMessages.push(message);
     return true;
   }
   if (safePostDiskIO(worker, message, `${message.type} business message`)) return true;
@@ -398,7 +367,7 @@ export interface LoadedData {
  */
 export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<LoadedData> {
   requirePositiveFinite(timeoutMs, "Disk I/O load timeout");
-  const worker: Worker | null = diskIOWorker;
+  const worker: Worker | null = diskIORuntime.worker;
   if (!worker) {
     return Promise.reject(new Error("Persistence Worker is unavailable; refusing to start with empty persisted state."));
   }
@@ -439,19 +408,17 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
   });
 }
 
-let nextLuckSecretRequestId: number = 1;
-
 /** 东京日期切换后，经唯一 Disk I/O Worker 原子加载或轮换日级运势密钥。 */
 export function ensureLuckReceiptSecret(
   day: string,
   timeoutMs: number = LOAD_TIMEOUT_MS
 ): Promise<LuckReceiptSecret> {
   requirePositiveFinite(timeoutMs, "Luck receipt secret timeout");
-  const worker: Worker | null = diskIOWorker;
-  if (!worker || !diskIOWritable) {
+  const worker: Worker | null = diskIORuntime.worker;
+  if (!worker || !diskIORuntime.writable) {
     return Promise.reject(new Error("Persistence Worker is unavailable; cannot rotate luck receipt secret."));
   }
-  const requestId: number = nextLuckSecretRequestId++;
+  const requestId: number = diskIORuntime.nextLuckSecretRequestId++;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingLuckSecrets.delete(requestId);
@@ -479,8 +446,8 @@ export function ensureLuckReceiptSecret(
  */
 export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   requirePositiveFinite(timeoutMs, "Disk I/O flush timeout");
-  const worker: Worker | null = diskIOWorker;
-  if (!worker || !diskIOWritable) return Promise.resolve("failed");
+  const worker: Worker | null = diskIORuntime.worker;
+  if (!worker || !diskIORuntime.writable) return Promise.resolve("failed");
   return diskIOFlushBarrier.begin((id) => {
     const request: DiskFlushRequest = { type: "flush", flushId: id };
     return safePostDiskIO(worker, request, "flush request");
@@ -489,17 +456,18 @@ export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promi
 
 /** 终止落盘 Worker；返回后旧实例不可能再 rename/append 共享文件。 */
 export function terminateDiskIO(): Promise<void> {
-  const worker: Worker | null = diskIOWorker;
-  diskIOWorker = null;
-  diskIOInitialized = false;
-  diskIOWritable = false;
-  runtimeRecoveryWorker = null;
+  const worker: Worker | null = diskIORuntime.worker;
+  diskIORuntime.worker = null;
+  diskIORuntime.initialized = false;
+  diskIORuntime.writable = false;
+  diskIORuntime.runtimeRecoveryWorker = null;
   clearRuntimeRecoveryTimer();
-  diskIOFatalHandler = undefined;
-  diskIOFatalSignaled = false;
-  runtimeRecoveryTimeoutMs = LOAD_TIMEOUT_MS;
-  maxPendingBusinessMessages = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
-  pendingBusinessMessages.length = 0;
+  diskIORuntime.fatalHandler = undefined;
+  diskIORuntime.fatalSignaled = false;
+  diskIORuntime.runtimeRecoveryTimeoutMs = LOAD_TIMEOUT_MS;
+  diskIORuntime.maxPendingBusinessMessages = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
+  diskIORuntime.pendingBusinessMessages.length = 0;
+  diskIORuntime.nextLuckSecretRequestId = 1;
   diskIOFlushBarrier.settleAll("failed");
   const terminationError = new Error("Persistence Worker terminated before the request completed.");
   if (pendingLoad.timer !== null) clearTimeout(pendingLoad.timer);

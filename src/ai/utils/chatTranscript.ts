@@ -9,6 +9,7 @@ import {
   REPLY_TAG_HINT,
   replyChainTemplate,
   replyTagTemplate,
+  TRANSCRIPT_LINE_FORMAT_HINT,
 } from "../../consts/aiChat/prompts/transcript";
 import { truncateInline } from "../../libs/text";
 
@@ -61,7 +62,7 @@ export function formatReplyChain(triggerMessageId: number, chain: ReplyChainLink
  * 消息正文里的 @username 认回具体发言人。旧缓存没有 username 时保持原格式。
  */
 export function formatBufferedMessageLine(message: BufferedMessage): string {
-  const messageIdTag: string = message.messageId === undefined ? "" : ` [message_id:${message.messageId}]`;
+  const messageIdTag: string = ` [message_id:${message.messageId}]`;
   const usernameTag: string = message.username ? ` [username:@${message.username.replace(/^@+/, "")}]` : "";
   const replyTag: string = message.replyTo ? formatReplyReference(message.replyTo) : "";
   return `[${message.at}]${messageIdTag} [id:${message.id}]${usernameTag} ${displayBufferedMessageName(message)}${formatForwardTag(message.forwardedFrom)}${replyTag}：${message.text}`;
@@ -77,7 +78,7 @@ export function buildTieredVerbatimTranscript(messages: BufferedMessage[]): stri
   const earlier: BufferedMessage[] = messages.slice(0, hotStart);
   const hottest: BufferedMessage[] = messages.slice(hotStart);
   const formatInstruction: string =
-    "每行格式为「[年/月/日 时:分:秒] [message_id:消息ID] [id:用户ID] [username:@公开用户名] 名字：内容」，其中 message_id/username 标记在旧记录没有对应信息时省略。" +
+    `每行格式为${TRANSCRIPT_LINE_FORMAT_HINT}，其中 message_id/username 标记在旧记录没有对应信息时省略。` +
     `若名字后出现「${REPLY_TAG_HINT}」则表示这条消息明确回复的对象和原文，精确引用片段是用户选中的部分。` +
     `若出现「${FORWARD_TAG_HINT}」则表示这条消息（或被回复的原消息）是从别处转发的，正文出自转发来源而非发送者本人；来源身份同样以 [id:]/[username:@] 标记区分，来源账号隐藏时只有显示名。` +
     "行首方括号里是发送时间（东京时间 UTC+9）；同名的人以 id 区分，正文里的 @用户名用 username 标记映射回具体的人。";

@@ -3,13 +3,11 @@ import {
   NORMAL_FLUSH_TIMEOUTS,
   RUNNER_DRAIN_POLL_INTERVAL_MS,
   RUNNER_DRAIN_TIMEOUT_MS,
-  type FlushTimeouts,
-  type FlushResult,
 } from "../consts/lifecycle";
 import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
 import type { CachedUser } from "../types/chatState";
 import type { LoadedData } from "../infra/diskIO";
-import type { ApplicationLifecycleDependencies } from "../types/lifecycle";
+import type { ApplicationLifecycleDependencies, FlushResult, FlushTimeouts } from "../types/lifecycle";
 import type { HandlerRegistration } from "./registerHandlers";
 import type { AcknowledgedUpdateRunner } from "./updateRunner";
 import { lifecycleDependencies } from "./lifecycleDependencies";
@@ -67,12 +65,26 @@ export class ApplicationLifecycle {
     });
   };
 
+  private readonly handleBusinessWorkerFatal = (error: Error): void => {
+    this.dependencies.logger.error(
+      "Business Worker became unavailable at runtime; stopping for a supervised restart:",
+      error
+    );
+    process.exitCode = 1;
+    this.stopRequested = true;
+    this.quiesceMaintenance();
+    this.runner?.stop().catch((stopError: unknown) => {
+      this.dependencies.logger.error("Error stopping runner after business Worker failure:", stopError);
+    });
+  };
+
   /** 初始化各组件并开始长轮询；重复调用会被拒绝。 */
   async init(): Promise<void> {
     if (this.runner !== null || this.lockAcquired) throw new Error("Application lifecycle is already initialized");
 
     await this.dependencies.acquireSingleInstanceLock(this.dependencies.BOT_TOKEN);
     this.lockAcquired = true;
+    this.dependencies.setBusinessWorkerFatalHandler(this.handleBusinessWorkerFatal);
     this.dependencies.setStatePersistenceFatalHandler(this.handleDiskIOFatal);
     this.dependencies.initAvatarUpdates();
     this.dependencies.initReactionQueue();
@@ -207,6 +219,7 @@ export class ApplicationLifecycle {
       const stateResult: FlushResult = this.lockAcquired
         ? await this.dependencies.flushStateToDisk(timeouts.stateMs, true)
         : "flushed";
+      this.dependencies.setBusinessWorkerFatalHandler(undefined);
       this.dependencies.setStatePersistenceFatalHandler(undefined);
       if (
         !runnerDrained ||

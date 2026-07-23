@@ -57,7 +57,7 @@ export function flushLuckAppends(): boolean {
   try {
     appendLuckEntries(day, luckFileState, luckPendingAppends);
     luckPendingAppends.length = 0;
-  } catch (error) {
+  } catch (error: unknown) {
     luckFileState.current = null;
     scheduleLuckFlush();
     console.error(`[diskIOWorker] failed to append luck entries for ${day}:`, error);
@@ -65,7 +65,7 @@ export function flushLuckAppends(): boolean {
   }
   try {
     cleanupStaleLuckFiles(day);
-  } catch (error) {
+  } catch (error: unknown) {
     console.error(`[diskIOWorker] failed to clean up stale luck files for ${day}:`, error);
   }
   return true;

@@ -10,6 +10,7 @@ import type { LuckDraw } from "../types/luckChallenge";
  * memory/luck/（只留当天一份文件），重启由 restoreLuckState 灌回，见
  * commands/luckChallenge/cache.ts。 */
 export const luckCacheState: { dayKey: string } = { dayKey: "" };
+/** 当日已确认抽签结果；启动恢复填充，跨日整体清空，容量受当日唯一 key 数约束。 */
 export const dailyLuckCache: Map<string, LuckDraw> = new Map();
 
 /** 尚未确认的抽签结果：inline_query 应答（预览）阶段抽到、但还没等到用户

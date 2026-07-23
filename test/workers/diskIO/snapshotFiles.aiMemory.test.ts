@@ -16,8 +16,8 @@ const { deleteAiMemoryFile, recoverAiMemories, writeAiMemoryFile } = await impor
 const currentSnapshot = {
   version: 1,
   buffer: [
-    { id: 111, firstName: "太郎", lastName: "山田", text: "こんにちは", at: "2026/07/16 21:35:04" },
-    { id: 222, firstName: "花子", lastName: "", text: "[贴纸:一只猫大笑] 哈哈", at: "2026/07/16 21:36:10" },
+    { messageId: 111, id: 111, firstName: "太郎", lastName: "山田", text: "こんにちは", at: "2026/07/16 21:35:04" },
+    { messageId: 222, id: 222, firstName: "花子", lastName: "", text: "[贴纸:一只猫大笑] 哈哈", at: "2026/07/16 21:36:10" },
   ],
   summaries: ["第一轮摘要", "第二轮摘要"],
   pendingSummary: "待晋升摘要",
@@ -30,7 +30,7 @@ beforeEach(() => {
   mkdirSync(aiDir, { recursive: true });
 });
 
-test("旧版无 username 的 version=1 AI 记忆仍恢复无损,回写字节级一致", () => {
+test("没有 username 的当前 version=1 AI 记忆仍恢复无损,回写字节级一致", () => {
   writeFileSync(join(aiDir, "-100123.json"), currentBytes);
 
   const recovered = recoverAiMemories();
@@ -125,7 +125,7 @@ test("当前消息与回复对象的转发来源会随 version=1 AI 记忆恢复
 test("缺少当前必填字段时拒绝整次恢复，防止后续快照覆盖待迁移文件", () => {
   writeFileSync(join(aiDir, "-100124.json"), JSON.stringify({
     ...currentSnapshot,
-    buffer: [{ id: 111, firstName: "太郎", lastName: "", text: "旧记录", at: 1752650000000 }],
+    buffer: [{ id: 111, firstName: "太郎", lastName: "", text: "旧记录", at: "2026/07/16 21:35:04" }],
   }));
   expect(() => recoverAiMemories()).toThrow("migrate it manually before starting");
   expect(readFileSync(join(aiDir, "-100124.json"), "utf8")).not.toBe("");
@@ -162,6 +162,7 @@ test("恢复时只保留配置数量的最新冷摘要", () => {
 
 test("恢复时只保留配置数量的最新逐字消息", () => {
   const buffer = Array.from({ length: AI_MEMORY_HYDRATE_BUFFER_MAX + 2 }, (_, index: number) => ({
+    messageId: index + 1,
     id: index + 1,
     firstName: `用户${index + 1}`,
     lastName: "",

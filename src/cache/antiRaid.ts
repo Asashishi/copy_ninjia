@@ -1,6 +1,17 @@
 import type { ChatPermissions } from "@grammyjs/types";
+import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "../consts/antiRaid/protocol";
+import { createFlushBarrier } from "../libs/flushBarrier";
 import type { VerificationSnapshot } from "../types/antiRaid";
 
+/**
+ * Anti-Raid 主线程与 Worker 的 mailbox barrier。模块加载时创建，terminate
+ * 时统一结算等待者；进程重启后以空等待表和新序号重建，容量受并发 flush 数约束。
+ */
+export const antiRaidBarrier: ReturnType<typeof createFlushBarrier> = createFlushBarrier({
+  timeoutMs: ANTI_RAID_BARRIER_TIMEOUT_MS,
+});
+
+/** 主线程判断 lockdown 落盘回执是否仍对应当前意图的指纹。 */
 export interface PersistedLockdownFingerprint {
   phase: "applying" | "active" | "restoring";
   intentId: number;
@@ -19,6 +30,7 @@ export const persistedLockdownFingerprints: Map<number, PersistedLockdownFingerp
 /** 每群至多保留一个 durability waiter；期间的新阶段由完成后的循环补写。 */
 export const pendingLockdownPersistence: Set<number> = new Set();
 
+/** Worker 永久不可用后，单群主线程权限恢复链的运行态。 */
 export interface EmergencyLockdownRecovery {
   fingerprint: PersistedLockdownFingerprint;
   originalPermissions: ChatPermissions;

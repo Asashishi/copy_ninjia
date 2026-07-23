@@ -1,10 +1,11 @@
 import { superviseWorker } from "./libs/supervisedWorker";
-import { createFlushBarrier } from "./libs/flushBarrier";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { registerChatTeardown } from "./infra/chatTeardown";
+import { logger } from "./infra/logger";
 import { onAiMemoryDeletedPersisted, onDiskIORespawn, postDiskIO } from "./ai/persistence";
 import {
   aiChatWorkerState,
+  aiMemoryFlushBarrier,
   aiMemoryDeleteWaiters,
   aiMemoryRevisionCounters,
   lastInitState,
@@ -15,7 +16,8 @@ import {
   purgedAiMemoryChats,
   type AiMemoryDeleteWaiter,
 } from "./cache/aiChat";
-import { AI_MEMORY_FLUSH_TIMEOUT_MS, type FlushResult } from "./consts/lifecycle";
+import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "./consts/lifecycle";
+import type { FlushResult } from "./types/lifecycle";
 import { getChatState } from "./infra/storage/stateStore";
 import type {
   AiBotInfo,
@@ -26,8 +28,6 @@ import type {
   AiRecordMessage,
   AiTriggerMessage,
 } from "./types/aiChat/protocol";
-
-const aiMemoryFlushBarrier = createFlushBarrier({ timeoutMs: AI_MEMORY_FLUSH_TIMEOUT_MS });
 
 function nextAiMemoryRevision(chatId: number): number {
   const revision: number = (aiMemoryRevisionCounters.get(chatId) ?? 0) + 1;
@@ -162,16 +162,18 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
     // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
     // 重启发生在 initAiChat 调用之前的话 lastInitState.current 仍是 null，
     // 没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
-    if (lastInitState.current) postToNext(lastInitState.current);
+    if (lastInitState.current && !postToNext(lastInitState.current)) return;
     // 记忆镜像同样要重放：新 Worker 内存全空，凭上一实例上报过的最新快照
     // 补齐（见模块头注）。
     if (latestAiMemories.size > 0) {
-      postToNext({ type: "hydrate", memories: latestAiMemories });
+      if (!postToNext({ type: "hydrate", memories: latestAiMemories })) return;
     }
     // 贴纸目录镜像同理：新 Worker 的 init 处理会重新 ensureStickerCatalogs，
     // 若不先灌回已生成的条目会白白重新调一遍视觉模型。
     if (latestStickerCatalogs.size > 0) {
-      postToNext({ type: "hydrateStickerCatalog", catalogs: latestStickerCatalogs });
+      if (!postToNext({ type: "hydrateStickerCatalog", catalogs: latestStickerCatalogs })) {
+        logger.error("AI Worker sticker catalog replay was rejected.");
+      }
     }
   },
   onGiveUp: () => {
@@ -181,6 +183,12 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
     purgedAiMemoryChats.clear();
   },
 });
+
+function postAiChatOrThrow(message: AiChatWorkerMessage): void {
+  if (post(message)) return;
+  aiChatWorkerState.available = false;
+  throw new Error("AI Worker is unavailable.");
+}
 
 // diskIOWorker 崩溃重建后，把当前记忆/贴纸目录镜像整份重发给它，补齐上
 // 一次成功落盘之后的增量（见 infra/diskIO.ts 的 onDiskIORespawn 注释）。
@@ -206,13 +214,13 @@ onDiskIORespawn(() => {
  */
 export function initAiChat(botInfo: AiBotInfo): void {
   initAiChatWorker();
-  aiChatWorkerState.available = true;
   const message: AiInitMessage = {
     type: "init",
     botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
   };
+  postAiChatOrThrow(message);
   lastInitState.current = message;
-  post(message);
+  aiChatWorkerState.available = true;
 }
 
 /**
@@ -234,7 +242,7 @@ export function hydrateAiMemory(memories: Map<number, string>): void {
     enabledMemories.set(chatId, snapshot);
   }
   if (enabledMemories.size > 0) {
-    post({ type: "hydrate", memories: enabledMemories });
+    postAiChatOrThrow({ type: "hydrate", memories: enabledMemories });
   }
 }
 
@@ -250,7 +258,7 @@ export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
     latestStickerCatalogs.set(pack, snapshot);
   }
   if (catalogs.size > 0) {
-    post({ type: "hydrateStickerCatalog", catalogs });
+    postAiChatOrThrow({ type: "hydrateStickerCatalog", catalogs });
   }
 }
 
@@ -292,7 +300,7 @@ export async function terminateAiChat(): Promise<void> {
  */
 export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void {
   purgedAiMemoryChats.delete(message.chatId);
-  post({ type: "record", ...message });
+  postAiChatOrThrow({ type: "record", ...message });
 }
 
 /**
@@ -324,7 +332,7 @@ export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void 
  */
 export function recordChatMedia(message: Omit<AiRecordMediaMessage, "type">): void {
   purgedAiMemoryChats.delete(message.chatId);
-  post({ type: "recordMedia", ...message });
+  postAiChatOrThrow({ type: "recordMedia", ...message });
 }
 
 type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigger"> & {
@@ -355,7 +363,7 @@ export function generateAndSendReply({
   imageGenerationReference,
   isRandomTrigger = false,
 }: GenerateAndSendReplyParams): void {
-  post({
+  postAiChatOrThrow({
     type: "trigger",
     chatId,
     triggerSenderId,

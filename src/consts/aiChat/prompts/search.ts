@@ -11,6 +11,7 @@ export function buildWebSearchInstruction(remainingCalls: number): string {
   );
 }
 
+/** 本轮搜索额度耗尽后替换进系统提示的固定说明。 */
 export const WEB_SEARCH_EXHAUSTED_INSTRUCTION: string =
   `本轮回复已经达到 ${MAX_GOOGLE_SEARCH_CALLS_PER_REPLY} 次 Google Search 上限，搜索工具现已移除。` +
   "必须直接使用已有搜索结果和聊天上下文完成行动；不要再请求搜索，也不要因为不能继续搜索而保持沉默。";

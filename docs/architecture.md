@@ -57,7 +57,8 @@
   `linked_chat_id` 且状态对象/代际仍一致时撤销；查询失败 fail closed 并允许后续重试。
 - 验证提醒按成员只有一个投递 owner，发送失败有界退避。`reminderMessageId` /
   `replyReminderMessageId` 至少一个成功回填是超时踢人的前置不变量；从未落地时只续窗补发。
-  恢复时无 reminder ID 的快照复用同一 owner，状态替换、离群、teardown 和 Worker 终止均会撤销它。
+  恢复时尚无 reminder ID 的当前格式快照复用同一 owner，状态替换、离群、teardown 和 Worker
+  终止均会撤销它；这里是未成功发送提醒的业务状态，不是旧格式兼容分支。
 - 发送者用户名缓存同时维护“归一化 username → identity”与“sender ID → 当前 username”；
   改名、去名、换绑和容量淘汰都在同一 owner 原子更新双向关系，解析器拒绝不一致别名。
 - chat runtime teardown 的三个固定 owner 回调由 `src/cache/chatTeardown.ts` 持有，
@@ -77,7 +78,8 @@
 - AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，
   Disk I/O Worker 只有在 unlink 达到 durable 边界或删除已被更新 revision 覆盖时才回执；Worker
   重建会重放 tombstone 与最新镜像，顺序不决定最终结果。启动恢复以 `state.json` 为准，只 hydrate
-  明确启用 AI 的群，并为关闭群的残留快照安排删除。该协议不改变现有磁盘快照 schema。
+  明确启用 AI 的群，并为关闭群的残留快照安排删除。当前快照中的每条热区消息必须包含正数
+  `messageId`；回复链索引由这些消息重建，不单独持久化。
 - AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`
   （当前为 149 条逐字消息与 7 轮冷摘要）从快照尾部截取最新数据；调整容量常量部署前，应在旧进程停止后以同一
   恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
@@ -102,8 +104,9 @@
 - `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由主机账户权限、
   部署隔离和备份策略控制，不通过制造不可读文件解决。
 - 持久化 schema 不做猜测式自动迁移；不兼容输入会阻止启动，避免空状态覆盖原数据。
-- 本轮 Anti-Raid 修复只改变运行时不变量，没有改变待验证追加文件的 schema；
-  旧快照的可选 reminder ID 按原字段读取，缺失时走可靠补发，无需磁盘迁移。
+- 当前 lockdown 镜像要求 `phase` 与正数 `intentId`；待验证 active 记录要求 `phase` 与
+  `trackedMessageTimes`。reminder ID 仍是业务可选字段：缺失只表示提醒尚未成功落地，恢复后
+  走可靠补发。其它缺失或不兼容字段必须在旧进程停止期间人工迁移，生产读取路径不保留兼容逻辑。
 
 ## 兼容入口
 

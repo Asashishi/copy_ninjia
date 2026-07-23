@@ -2,10 +2,10 @@ import type { ChatPermissions } from "@grammyjs/types";
 
 /** 反刷群锁定的持久化恢复记录。 */
 export interface LockdownRecord {
-  /** 旧记录缺失时按 active 解码。 */
-  phase?: "applying" | "active" | "restoring";
-  /** write-ahead 阶段标识；旧 active 记录缺失时按 0 接管。 */
-  intentId?: number;
+  /** 当前持久化阶段；恢复时必须按该阶段继续幂等对账。 */
+  phase: "applying" | "active" | "restoring";
+  /** write-ahead 阶段的正整数标识。 */
+  intentId: number;
   originalPermissions: ChatPermissions;
   /** 应恢复原始权限的绝对时间戳（ms）；续期必须同步刷新。 */
   expiresAt: number;

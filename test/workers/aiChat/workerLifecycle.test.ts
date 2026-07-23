@@ -18,6 +18,7 @@ const flushDirtyStickerCatalogs = mock((emit: (event: unknown) => void): void =>
 const hydrateStickerCatalogs = mock((_catalogs: unknown): void => { calls.push("hydrateCatalogs"); });
 const getStickerConfig = mock(() => ({ packs: ["pack"] }));
 const startWeatherRefreshLoop = mock((): void => { calls.push("weather"); });
+const stopWeatherRefreshLoop = mock((): void => { calls.push("stopWeather"); });
 const sweepAiChatReplyCache = mock((_now: number): void => { calls.push("sweep"); });
 const sweepImageGenerationCache = mock((_now: number): void => { calls.push("sweepImageGeneration"); });
 const flushDirtyMemories = mock((): void => { calls.push("flushMemories"); });
@@ -35,7 +36,7 @@ mock.module("../../../src/ai/stickers/catalog", () => ({
   hydrateStickerCatalogs,
 }));
 mock.module("../../../src/config/stickers", () => ({ getStickerConfig }));
-mock.module("../../../src/ai/weather", () => ({ startWeatherRefreshLoop }));
+mock.module("../../../src/ai/weather", () => ({ startWeatherRefreshLoop, stopWeatherRefreshLoop }));
 mock.module("../../../src/cache/aiChat/replies", () => ({ sweepAiChatReplyCache }));
 mock.module("../../../src/cache/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
 mock.module("../../../src/workers/aiChat/rollingMemory", () => ({
@@ -52,6 +53,7 @@ const worker = await import("../../../src/workers/aiChatWorker");
 const { botInfoState } = await import("../../../src/cache/aiChat/identity");
 
 beforeEach(() => {
+  worker.stopAiChatWorker();
   calls.length = 0;
   postMessage.mockClear();
   workerSelf.onmessage = null;
@@ -62,6 +64,7 @@ beforeEach(() => {
     hydrateStickerCatalogs,
     getStickerConfig,
     startWeatherRefreshLoop,
+    stopWeatherRefreshLoop,
     sweepAiChatReplyCache,
     sweepImageGenerationCache,
     flushDirtyMemories,
@@ -140,9 +143,10 @@ describe("AI Chat Worker lifecycle", () => {
     let maintenance: (() => void) | null = null;
     globalThis.setInterval = ((handler: (...args: unknown[]) => void): ReturnType<typeof setInterval> => {
       maintenance = handler as () => void;
-      return 1 as unknown as ReturnType<typeof setInterval>;
+      return { unref(): void {} } as unknown as ReturnType<typeof setInterval>;
     }) as typeof setInterval;
     try {
+      worker.startAiChatWorker();
       worker.startAiChatWorker();
       expect(initTelegramClients).toHaveBeenCalledTimes(1);
       expect(startWeatherRefreshLoop).toHaveBeenCalledTimes(1);
@@ -156,6 +160,9 @@ describe("AI Chat Worker lifecycle", () => {
       expect(recordChatMessage).toHaveBeenCalledTimes(1);
       expect(sweepAiChatReplyCache).toHaveBeenCalledTimes(1);
       expect(sweepImageGenerationCache).toHaveBeenCalledTimes(1);
+      worker.stopAiChatWorker();
+      expect(workerSelf.onmessage).toBeNull();
+      expect(stopWeatherRefreshLoop).toHaveBeenCalledTimes(1);
     } finally {
       globalThis.setInterval = originalSetInterval;
     }

@@ -26,6 +26,7 @@ mock.module("../../../src/workers/antiRaid/lockdownRuntime", () => ({
   adoptLockdowns(): void { calls.push("adopt"); },
   handleLockdownPersisted(): void { calls.push("lockdownPersisted"); },
   deactivateLockdownChat(): void { calls.push("deactivateLockdown"); },
+  stopLockdownRuntime(): void { calls.push("stopLockdown"); },
 }));
 mock.module("../../../src/workers/antiRaid/adminCache", () => ({
   applyAdminChange(): void { calls.push("adminsChanged"); },
@@ -89,7 +90,7 @@ describe("Anti-Raid Worker lifecycle", () => {
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();
-    expect(calls.at(-1)).toBe("stopVerification");
+    expect(calls.slice(-2)).toEqual(["stopVerification", "stopLockdown"]);
     worker.startAntiRaidWorker();
     expect(initTelegramClients).toHaveBeenCalledTimes(2);
     worker.stopAntiRaidWorker();

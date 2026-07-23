@@ -12,7 +12,7 @@ const workerPosts: AntiRaidWorkerMessage[] = [];
 const diskPosts: (VerificationUpsertDiskMessage | VerificationDeleteDiskMessage)[] = [];
 let supervisorOptions: {
   onEvent: (event: AntiRaidWorkerEvent) => void;
-  onRespawn: (post: (message: AntiRaidWorkerMessage) => void) => void;
+  onRespawn: (post: (message: AntiRaidWorkerMessage) => boolean) => void;
   onGiveUp: () => void;
 } | undefined;
 let diskRespawn: (() => void) | undefined;
@@ -90,9 +90,11 @@ function record(generation: number, revision: number): VerificationSnapshot {
     userId: 42,
     generation,
     revision,
+    phase: "pending",
     label: "待验证成员",
     isBot: false,
     messageIds: [10],
+    trackedMessageTimes: [],
     replyReminderRequested: false,
     reminderSuperseded: false,
     joinedAt: 1_000,
@@ -121,7 +123,10 @@ describe("Anti-Raid main-thread persistence mirror", () => {
 
     supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(1, 4) });
     const respawnPosts: AntiRaidWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message) => { respawnPosts.push(message); });
+    supervisorOptions!.onRespawn((message) => {
+      respawnPosts.push(message);
+      return true;
+    });
     supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 5 });
 
     expect(workerPosts[0]).toMatchObject({ type: "adoptVerifications", generation: 1, verifications: [{ revision: 1 }] });
@@ -156,7 +161,10 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     });
 
     const respawnPosts: AntiRaidWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message) => { respawnPosts.push(message); });
+    supervisorOptions!.onRespawn((message) => {
+      respawnPosts.push(message);
+      return true;
+    });
     const adopt = respawnPosts.find((message) => message.type === "adopt");
     expect(adopt).toEqual({
       type: "adopt",
@@ -301,7 +309,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     await Bun.sleep(0);
     expect(workerPosts.at(-1)?.type).toBe("barrier");
 
-    supervisorOptions!.onRespawn((): void => {});
+    supervisorOptions!.onRespawn((): boolean => true);
 
     await expect(handled).rejects.toThrow("Anti-Raid Worker barrier failed");
     expect(flushDiskIO).not.toHaveBeenCalled();

@@ -60,6 +60,7 @@ beforeEach(() => {
   getChatMember.mockImplementation(async (): Promise<{ status: string }> => ({ status: "administrator" }));
   botAdminCache.botAdminFetches.clear();
   botAdminCache.botAdminGenerations.clear();
+  botAdminCache.botAdminGenerationUsers.clear();
   chatTeardown.registerChatTeardown("copy", (chatId: number): void => { calls.push(`copy:${chatId}`); });
   chatTeardown.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
   chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });

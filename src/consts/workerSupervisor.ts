@@ -5,4 +5,5 @@
  * 每次都正常重启。
  */
 export const WORKER_MAX_RESTARTS: number = 5;
+/** Worker 重启计数采用的滑动窗口时长。 */
 export const WORKER_RESTART_WINDOW_MS: number = 60_000;

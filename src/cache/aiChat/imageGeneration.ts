@@ -1,27 +1,23 @@
 import { IMAGE_GENERATION_COOLDOWN_MS } from "../../consts/aiChat/imageGeneration";
+import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../types/aiChat/imageGeneration";
 
 /** 每群最近一次普通用户生图占位时间；独立于 AI 回复触发限频且不落盘。 */
 export const imageGenerationClaimTimes: Map<number, number> = new Map();
 const imageGenerationClaimTokens: Map<number, symbol> = new Map();
 
-export type ImageGenerationAvailability =
-  | { allowed: true }
-  | { allowed: false; retryAfterMs: number };
-
-export type ImageGenerationClaim =
-  | { allowed: true; token: symbol | null }
-  | { allowed: false; retryAfterMs: number };
-
 /** 只读取某群此刻的生图可用性；工具 schema 用它在调用前告知模型当前状态。 */
+export interface ImageGenerationCooldownParams {
+  chatId: number;
+  bypassCooldown: boolean;
+  now?: number;
+}
+
+/** 只读检查当前冷却，不建立占位。 */
 export function getImageGenerationAvailability({
   chatId,
   bypassCooldown,
   now = Date.now(),
-}: {
-  chatId: number;
-  bypassCooldown: boolean;
-  now?: number;
-}): ImageGenerationAvailability {
+}: ImageGenerationCooldownParams): ImageGenerationAvailability {
   if (bypassCooldown) return { allowed: true };
   const previous: number | undefined = imageGenerationClaimTimes.get(chatId);
   if (previous === undefined) return { allowed: true };
@@ -39,11 +35,7 @@ export function claimImageGeneration({
   chatId,
   bypassCooldown,
   now = Date.now(),
-}: {
-  chatId: number;
-  bypassCooldown: boolean;
-  now?: number;
-}): ImageGenerationClaim {
+}: ImageGenerationCooldownParams): ImageGenerationClaim {
   const availability: ImageGenerationAvailability = getImageGenerationAvailability({ chatId, bypassCooldown, now });
   if (!availability.allowed) return availability;
   if (bypassCooldown) return { allowed: true, token: null };
@@ -61,6 +53,7 @@ export function releaseImageGenerationClaim(chatId: number, token: symbol | null
   return true;
 }
 
+/** 删除已过期或因时钟回拨落到未来的生图冷却；由 Worker 统一周期维护。 */
 export function sweepImageGenerationCache(now: number = Date.now()): void {
   for (const [chatId, claimedAt] of imageGenerationClaimTimes) {
     if (claimedAt > now || now - claimedAt >= IMAGE_GENERATION_COOLDOWN_MS) {
@@ -70,6 +63,7 @@ export function sweepImageGenerationCache(now: number = Date.now()): void {
   }
 }
 
+/** Worker dispose 或测试隔离时清空全部生图占位和冷却。 */
 export function resetImageGenerationCache(): void {
   imageGenerationClaimTimes.clear();
   imageGenerationClaimTokens.clear();

@@ -8,7 +8,11 @@ import {
   persistAuthoritativeState,
   pruneDepartedChatState,
 } from "./storage/stateStore";
-import { botAdminFetches, botAdminGenerations } from "../cache/botAdmin";
+import {
+  botAdminFetches,
+  botAdminGenerations,
+  botAdminGenerationUsers,
+} from "../cache/botAdmin";
 import { isAdminStatus } from "../libs/chatMember";
 import { teardownRegisteredChat } from "./chatTeardown";
 
@@ -105,7 +109,11 @@ export function markBotAdminObserved(chatId: number): Promise<void> {
  * getChatMember。下一次真正需要权限时必须重新向 Telegram 查询。
  */
 export function invalidateBotAdminStatus(chatId: number): void {
-  botAdminGenerations.set(chatId, (botAdminGenerations.get(chatId) ?? 0) + 1);
+  if ((botAdminGenerationUsers.get(chatId) ?? 0) > 0) {
+    botAdminGenerations.set(chatId, (botAdminGenerations.get(chatId) ?? 0) + 1);
+  } else {
+    botAdminGenerations.delete(chatId);
+  }
   botAdminFetches.delete(chatId);
   clearChatStateField(chatId, "botIsAdmin");
 }
@@ -129,6 +137,7 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
   let inFlight = botAdminFetches.get(chatId);
   if (!inFlight) {
     const generation: number = botAdminGenerations.get(chatId) ?? 0;
+    botAdminGenerationUsers.set(chatId, (botAdminGenerationUsers.get(chatId) ?? 0) + 1);
     const request: Promise<boolean> = bot.api
       .getChatMember(chatId, bot.botInfo.id)
       .then(async (member) => {
@@ -149,6 +158,13 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
       })
       .finally(() => {
         if (botAdminFetches.get(chatId) === request) botAdminFetches.delete(chatId);
+        const remainingUsers: number = (botAdminGenerationUsers.get(chatId) ?? 1) - 1;
+        if (remainingUsers <= 0) {
+          botAdminGenerationUsers.delete(chatId);
+          botAdminGenerations.delete(chatId);
+        } else {
+          botAdminGenerationUsers.set(chatId, remainingUsers);
+        }
       });
     inFlight = request;
     botAdminFetches.set(chatId, request);

@@ -1,15 +1,17 @@
 /** 向 Map 写入一项；新增键越过上限时淘汰最早插入项（FIFO，不刷新热度）。 */
+export interface SetBoundedMapValueParams<K, V> {
+  map: Map<K, V>;
+  key: K;
+  value: V;
+  maxEntries: number;
+}
+
 export function setBoundedMapValue<K, V>({
   map,
   key,
   value,
   maxEntries,
-}: {
-  map: Map<K, V>;
-  key: K;
-  value: V;
-  maxEntries: number;
-}): void {
+}: SetBoundedMapValueParams<K, V>): void {
   if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
     throw new RangeError("maxEntries must be a positive safe integer");
   }

@@ -10,14 +10,14 @@ import { registerChatTeardown } from "./infra/chatTeardown";
 import { RESTORE_RETRY_MS } from "./consts/antiRaid/lockdown";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid/verification";
 import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "./consts/antiRaid/protocol";
-import type { FlushResult } from "./consts/lifecycle";
-import { createFlushBarrier } from "./libs/flushBarrier";
+import type { FlushResult } from "./types/lifecycle";
 import { isAdminStatus } from "./libs/chatMember";
 import { superviseWorker } from "./libs/supervisedWorker";
 import { verificationKey } from "./libs/verificationKey";
 import { flushDiskIO, onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./workers/antiRaid/persistence";
 import {
   activeVerificationSnapshots,
+  antiRaidBarrier,
   antiRaidRuntimeState,
   emergencyLockdownRecoveries,
   emergencyLockdownRecoveryRuntime,
@@ -30,8 +30,6 @@ import {
 } from "./cache/antiRaid";
 import type { AdoptableLockdown, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent } from "./types/antiRaid";
 import type { LockdownRecord } from "./types/chatState";
-
-const antiRaidBarrier = createFlushBarrier({ timeoutMs: ANTI_RAID_BARRIER_TIMEOUT_MS });
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
@@ -65,8 +63,8 @@ function buildAdoptVerificationsMessage(generation: number, resumePersistedTermi
 
 function lockdownFingerprint(record: LockdownRecord): PersistedLockdownFingerprint {
   return {
-    phase: record.phase ?? "active",
-    intentId: record.intentId ?? 0,
+    phase: record.phase,
+    intentId: record.intentId,
     expiresAt: record.expiresAt,
   };
 }
@@ -81,8 +79,8 @@ function fingerprintMatches(record: LockdownRecord, fingerprint: PersistedLockdo
 function toAdoptableLockdown(chatId: number, record: LockdownRecord, now: number): AdoptableLockdown {
   return {
     chatId,
-    phase: record.phase ?? "active",
-    intentId: record.intentId ?? 0,
+    phase: record.phase,
+    intentId: record.intentId,
     originalPermissions: record.originalPermissions,
     remainingMs: Math.max(0, record.expiresAt - now),
     persisted: fingerprintMatches(record, persistedLockdownFingerprints.get(chatId)),
@@ -119,7 +117,7 @@ function persistCurrentLockdown(chatId: number): void {
       if (current === undefined) return;
       if (!fingerprintMatches(current, expectedFingerprint)) continue;
       persistedLockdownFingerprints.set(chatId, expectedFingerprint);
-      post({
+      postAntiRaidOrThrow({
         type: "lockdownPersisted",
         chatId,
         phase: expectedFingerprint.phase,
@@ -303,12 +301,12 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
         persistedVerificationRevisions.set(key, { generation, revision: record.revision });
       }
     }
-    postToNext(buildAdoptVerificationsMessage(generation));
+    if (!postToNext(buildAdoptVerificationsMessage(generation))) return;
     for (const [key, record] of activeVerificationSnapshots) {
       if (record.phase !== "checkingInviter" && record.phase !== "expelling") continue;
       const persisted = persistedVerificationRevisions.get(key);
       if (persisted?.generation === record.generation && persisted.revision === record.revision) {
-        postToNext({ type: "verificationPersisted", key, generation, revision: record.revision });
+        if (!postToNext({ type: "verificationPersisted", key, generation, revision: record.revision })) return;
       } else {
         // 旧 Worker 可能在终态 upsert 发出后、落盘回执前崩溃；重新提交并等待
         // Disk I/O 的精确 revision 回执，绝不凭主线程镜像直接执行踢人。
@@ -317,7 +315,9 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
     }
     const adopt: AdoptLockdownsMessage = buildAdoptMessage();
     if (adopt.lockdowns.length > 0) {
-      postToNext(adopt);
+      if (!postToNext(adopt)) {
+        logger.error("Anti-Raid Worker lockdown replay was rejected.");
+      }
     }
   },
   onGiveUp: () => {
@@ -326,8 +326,13 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
   },
 });
 
+function postAntiRaidOrThrow(message: AntiRaidWorkerMessage): void {
+  if (post(message)) return;
+  throw new Error("Anti-Raid Worker is unavailable.");
+}
+
 registerChatTeardown("antiRaid", (chatId: number): void => {
-  post({ type: "deactivateChat", chatId });
+  deactivateAntiRaidChat(chatId);
 });
 
 function acceptVerificationUpsert(event: VerificationUpsertEvent): boolean {
@@ -344,7 +349,7 @@ function acceptVerificationUpsert(event: VerificationUpsertEvent): boolean {
   activeVerificationSnapshots.set(key, {
     ...snapshot,
     messageIds: [...snapshot.messageIds],
-    trackedMessageTimes: snapshot.trackedMessageTimes === undefined ? undefined : [...snapshot.trackedMessageTimes],
+    trackedMessageTimes: [...snapshot.trackedMessageTimes],
   });
   pendingVerificationDeletes.delete(key);
   postDiskIO({ type: "verificationUpsert", record: snapshot, critical });
@@ -424,12 +429,12 @@ onVerificationPersisted((reply) => {
     const current = activeVerificationSnapshots.get(reply.key);
     if (current?.generation !== reply.generation || current.revision !== reply.revision) return;
     persistedVerificationRevisions.set(reply.key, { generation: reply.generation, revision: reply.revision });
-    post({
+    if (!post({
       type: "verificationPersisted",
       key: reply.key,
       generation: reply.generation,
       revision: reply.revision,
-    });
+    })) return;
     return;
   }
   const deletion = pendingVerificationDeletes.get(reply.key);
@@ -471,18 +476,24 @@ export function initAntiRaid(): void {
     }
   }
   const generation: number = nextAntiRaidGeneration();
-  initAntiRaidWorker();
-  post(buildAdoptVerificationsMessage(generation, true));
-  const adopt: AdoptLockdownsMessage = buildAdoptMessage();
-  if (adopt.lockdowns.length === 0) return;
+  try {
+    initAntiRaidWorker();
+    postAntiRaidOrThrow(buildAdoptVerificationsMessage(generation, true));
+    const adopt: AdoptLockdownsMessage = buildAdoptMessage();
+    if (adopt.lockdowns.length === 0) return;
 
-  post(adopt);
-  logger.log(`Adopted lockdowns still active from previous process exit: ${adopt.lockdowns.map((l) => l.chatId).join(", ")}`);
+    postAntiRaidOrThrow(adopt);
+    logger.log(`Adopted lockdowns still active from previous process exit: ${adopt.lockdowns.map((l) => l.chatId).join(", ")}`);
+  } catch (error: unknown) {
+    antiRaidRuntimeState.initialized = false;
+    stopEmergencyLockdownRecoveries();
+    throw error;
+  }
 }
 
 /** 统一群 teardown 入口：Worker 内取消验证并对 lockdown 发起可恢复解锁。 */
 export function deactivateAntiRaidChat(chatId: number): void {
-  post({ type: "deactivateChat", chatId });
+  postAntiRaidOrThrow({ type: "deactivateChat", chatId });
 }
 
 /** 停机时终止 Worker；验证/lockdown 的 write-ahead 镜像已在主线程持有。 */
@@ -505,14 +516,21 @@ export function hydratePendingVerifications(records: Map<string, VerificationSna
     activeVerificationSnapshots.set(key, {
       ...record,
       messageIds: [...record.messageIds],
-      trackedMessageTimes: record.trackedMessageTimes === undefined ? undefined : [...record.trackedMessageTimes],
+      trackedMessageTimes: [...record.trackedMessageTimes],
     });
     persistedVerificationRevisions.set(key, { generation: record.generation, revision: record.revision });
   }
 }
 
+export interface PickMemberParams {
+  id: number;
+  username?: string;
+  first_name?: string;
+  is_bot?: boolean;
+}
+
 /** 从 grammY 的 User 对象里摘出投递给 Worker 的最小身份字段。 */
-function pickMember(user: { id: number; username?: string; first_name?: string; is_bot?: boolean }): AntiRaidMember {
+function pickMember(user: PickMemberParams): AntiRaidMember {
   return { id: user.id, username: user.username, first_name: user.first_name, isBot: user.is_bot === true };
 }
 

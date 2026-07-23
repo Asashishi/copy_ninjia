@@ -81,7 +81,7 @@ function handleLoad(): void {
     luckReceiptSecret = recoverLuckReceiptSecret(todayKey);
     verifications = recoverVerificationDay(todayKey);
     scheduleVerificationRollover((reply) => self.postMessage(reply));
-  } catch (error) {
+  } catch (error: unknown) {
     loadError = error instanceof Error ? error.message : String(error);
     console.error("[diskIOWorker] startup recovery failed:", error);
   }

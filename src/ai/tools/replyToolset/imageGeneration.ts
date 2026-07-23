@@ -2,8 +2,6 @@ import {
   claimImageGeneration,
   getImageGenerationAvailability,
   releaseImageGenerationClaim,
-  type ImageGenerationAvailability,
-  type ImageGenerationClaim,
 } from "../../../cache/aiChat/imageGeneration";
 import {
   DEFAULT_IMAGE_GENERATION_ASPECT_RATIO,
@@ -19,6 +17,7 @@ import { sendPhotoWithResult } from "../../../infra/telegram";
 import { isPlainRecord } from "../../../libs/runtimeConfig";
 import { sanitizeInline, truncateInline } from "../../../libs/text";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
+import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../../types/aiChat/imageGeneration";
 import type { TelegramSendResult } from "../../../types/telegram";
 import type { ToolDefinition } from "../../../types/tools";
 import { generateChatImage, normalizeImageAspectRatio, type GeneratedChatImage } from "../../imageGeneration";

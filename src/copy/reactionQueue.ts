@@ -17,7 +17,7 @@ import {
   reactionDrainWaiters,
   reactionQueueRuntime,
 } from "../cache/reactionQueue";
-import type { FlushResult } from "../consts/lifecycle";
+import type { FlushResult } from "../types/lifecycle";
 import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
 
 /**
@@ -44,19 +44,21 @@ import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
  * @param reactedAtUnix 目标点下反应的时刻（见 ReactionTask.reactedAtUnix），用于延迟统计。
  * @returns 此版本已经应用、被更新版本覆盖或按硬顶策略显式丢弃时结算。
  */
+export interface EnqueueReactionParams {
+  chatId: number;
+  messageId: number;
+  reactions: CopyableReaction[];
+  updateId: number;
+  reactedAtUnix: number;
+}
+
 export function enqueueReaction({
   chatId,
   messageId,
   reactions,
   updateId,
   reactedAtUnix,
-}: {
-  chatId: number;
-  messageId: number;
-  reactions: CopyableReaction[];
-  updateId: number;
-  reactedAtUnix: number;
-}): Promise<void> {
+}: EnqueueReactionParams): Promise<void> {
   if (!reactionQueueRuntime.accepting) return Promise.resolve();
   const key: string = `${chatId}:${messageId}`;
   const settled: Promise<void> = new Promise((resolve) => {

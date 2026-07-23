@@ -2,6 +2,7 @@ import { Api, Bot, GrammyError } from "grammy";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { API_RETRY_MAX_ATTEMPTS, API_RETRY_MAX_DELAY_SECONDS } from "../../consts/telegram";
+import { telegramClientInitialization } from "../../cache/telegram";
 import { BOT_TOKEN } from "../config";
 import { logger } from "../logger";
 
@@ -14,20 +15,18 @@ export const bot: Bot = new Bot(BOT_TOKEN);
  */
 export const joinVerificationApi: Api = new Api(BOT_TOKEN);
 
-let telegramClientsInitialized: boolean = false;
-
 /**
  * 安装会创建 Bottleneck 心跳计时器的节流/重试 transformer。主进程须在取得
  * bot.lock 后调用；业务 Worker 则在各自启动入口调用。模块导入本身只构造
  * 尚未联网的客户端，不创建计时器，重复调用幂等。
  */
 export function initTelegramClients(): void {
-  if (telegramClientsInitialized) return;
+  if (telegramClientInitialization.current) return;
   bot.api.config.use(apiThrottler());
   bot.api.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
   joinVerificationApi.config.use(apiThrottler());
   joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
-  telegramClientsInitialized = true;
+  telegramClientInitialization.current = true;
 }
 
 /** 统一展开 Telegram API 错误，保留 Bot API 的状态码和 description。 */

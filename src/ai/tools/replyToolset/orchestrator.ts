@@ -1,6 +1,7 @@
 import type { FunctionDeclaration, Tool } from "@google/genai";
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
 import {
+  ACTION_TOOL_NAMES,
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
   SEND_MESSAGE_TOOL,
@@ -27,13 +28,6 @@ import {
 import { createRoundMessageState } from "./messageState";
 import { createAddReactionExecutor } from "./reaction";
 import { createSendMessageExecutor } from "./sendMessage";
-
-const ACTION_TOOLS: Set<string> = new Set([
-  SEND_MESSAGE_TOOL,
-  ADD_REACTION_TOOL,
-  SEND_STICKER_TOOL,
-  GENERATE_IMAGE_TOOL,
-]);
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
 export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {
@@ -100,14 +94,14 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       if (!ctx.isActive()) {
         return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
       }
-      if (ACTION_TOOLS.has(name) && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
+      if (ACTION_TOOL_NAMES.includes(name) && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
         return JSON.stringify({
           error: `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images) per reply`,
         });
       }
 
       const result: string = await dispatch(name, argumentsJson);
-      if (ACTION_TOOLS.has(name)) {
+      if (ACTION_TOOL_NAMES.includes(name)) {
         try {
           const parsed = JSON.parse(result) as { success?: boolean; actions_used?: unknown };
           if (

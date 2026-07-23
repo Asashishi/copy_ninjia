@@ -1,6 +1,7 @@
 import { verificationKey } from "../../libs/verificationKey";
-import { recentChannelComments, type RecentChannelComment } from "../../cache/antiRaid/recentComments";
+import { recentChannelComments } from "../../cache/antiRaid/recentComments";
 import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../consts/antiRaid/cache";
+import type { RecentChannelComment } from "../../types/antiRaid/internal";
 
 /**
  * 频道评论区留言的暂存：评论先到、入群更新后到时的关联缓冲，供
@@ -14,17 +15,19 @@ import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../const
  * 来源标记。不为每个成员创建 timer：统一由 Worker sweeper 清理，读取路径
  * 自身也拒绝过期项。
  */
+export interface RememberRecentCommentParams {
+  chatId: number;
+  userId: number;
+  messageId: number;
+  observedAt?: number;
+}
+
 export function rememberRecentComment({
   chatId,
   userId,
   messageId,
   observedAt = Date.now(),
-}: {
-  chatId: number;
-  userId: number;
-  messageId: number;
-  observedAt?: number;
-}): void {
+}: RememberRecentCommentParams): void {
   const key: string = verificationKey(chatId, userId);
   const existing = recentChannelComments.get(key);
   if (existing !== undefined) recentChannelComments.delete(key);

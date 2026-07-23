@@ -4,9 +4,11 @@
 export const VERIFICATION_BUTTON_TEXT: string = "我是新人，别搞！";
 /** 验证按钮 callback_data 的前缀，后面拼上待验证成员的 userId。 */
 export const VERIFY_CALLBACK_PREFIX: string = "verify:";
+/** 新成员完成验证的完整时间窗口。 */
 export const VERIFICATION_TIMEOUT_MS: number = 90 * 1000;
 /** 验证提醒投递失败后的指数退避边界；失败期间成员不会因看不到按钮被踢。 */
 export const VERIFICATION_REMINDER_RETRY_INITIAL_MS: number = 1_000;
+/** 验证提醒指数退避允许增长到的最大间隔。 */
 export const VERIFICATION_REMINDER_RETRY_MAX_MS: number = 15_000;
 /** 终态踢人失败后的重试间隔；记录保持持久化，不能把未处置成员当作已完成。 */
 export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;

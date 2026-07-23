@@ -32,4 +32,50 @@ describe("storage startup cleanup", () => {
       "/virtual/bot.lock.guard.recovery",
     ]);
   });
+
+  test("目录扫描失败时安全返回，不尝试删除任何文件", async () => {
+    let removeCalls: number = 0;
+
+    await expect(cleanupOrphanedTempFiles({
+      stateFilePath: "/virtual/state.json",
+      lockFilePath: "/virtual/bot.lock",
+      readDirectory: async () => {
+        throw new Error("injected readdir failure");
+      },
+      removeFile: async () => {
+        removeCalls++;
+      },
+    })).resolves.toBeUndefined();
+
+    expect(removeCalls).toBe(0);
+  });
+
+  test("单个删除失败或文件已消失时继续清理后续目标", async () => {
+    const attempted: string[] = [];
+
+    await cleanupOrphanedTempFiles({
+      stateFilePath: "/virtual/state.json",
+      lockFilePath: "/virtual/bot.lock",
+      readDirectory: async () => [
+        ".state.json.1.first.tmp",
+        ".state.json.1.gone.tmp",
+        ".bot.lock.1.last.tmp",
+      ],
+      removeFile: async (path) => {
+        attempted.push(path);
+        if (path.endsWith("first.tmp")) throw new Error("injected unlink failure");
+        if (path.endsWith("gone.tmp")) {
+          const error: NodeJS.ErrnoException = new Error("gone");
+          error.code = "ENOENT";
+          throw error;
+        }
+      },
+    });
+
+    expect(attempted).toEqual([
+      "/virtual/.state.json.1.first.tmp",
+      "/virtual/.state.json.1.gone.tmp",
+      "/virtual/.bot.lock.1.last.tmp",
+    ]);
+  });
 });

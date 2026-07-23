@@ -34,14 +34,31 @@ export interface SyncWriteRequest {
 export type SyncBufferWriter = (request: SyncWriteRequest) => number;
 export type SyncFile = (fd: number) => void;
 
+export interface WriteBufferFullyParams {
+  position: number;
+  write?: SyncBufferWriter;
+}
+
+/** 日文件不是可安全追记的当前格式；调用方必须阻止写入并安排人工恢复。 */
+export class DayFileFormatError extends Error {
+  constructor(path: string, reason: string) {
+    super(`${path} ${reason}`);
+    this.name = "DayFileFormatError";
+  }
+}
+
 const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }) =>
   writeSync(fd, buffer, offset, length, position);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 /** write(2) 允许成功但只写一部分；只有整段 Buffer 落下才算 append 成功。 */
 export function writeBufferFully(
   fd: number,
   buffer: Buffer,
-  options: { position: number; write?: SyncBufferWriter }
+  options: WriteBufferFullyParams
 ): void {
   const write: SyncBufferWriter = options.write ?? nodeWriteBuffer;
   let offset: number = 0;
@@ -75,8 +92,9 @@ function atomicRewrite(path: string, content: string, mode?: number): void {
  * 打开（或接管）某天的文件并校验其可追加性。文件不存在或为空对象视作
  * 空文件；内容合法但结尾形态不符（比如被人手动编辑过）就按标准格式重写
  * 一次；解析失败（断电等原因导致结尾写了一半）先尝试 repairTruncated
- * 裁掉末尾残片修复，实在修不好才放弃旧内容从头开始。size 一律以
- * fs.statSync 读到的物理文件大小为准，不信任内存里算出来的字节数。
+ * 裁掉末尾残片修复；顶层不是普通对象或无法修复时抛错并保留原始字节。
+ * size 一律以 fs.statSync 读到的物理文件大小为准，不信任内存里算出来的
+ * 字节数。完整扫描只发生在打开/恢复阶段，成功后的追记热路径仍为 O(1)。
  */
 export function openDayFile(dir: string, day: string, mode?: number): DayFileState {
   const path: string = join(dir, `${day}.json`);
@@ -88,38 +106,32 @@ export function openDayFile(dir: string, day: string, mode?: number): DayFileSta
   // 所有，虽然当前账号可读写，对相同 mode 做 chmod 仍会 EPERM。
   if (mode !== undefined && (statSync(path).mode & 0o777) !== mode) chmodSync(path, mode);
   const content: string = readFileSync(path, "utf8");
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(content);
-    if (parsed === null || typeof parsed !== "object" || Object.keys(parsed).length === 0) return state;
-    if (!content.endsWith("\n}")) {
-      atomicRewrite(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT), mode);
-    }
-    state.size = statSync(path).size;
-    state.empty = false;
-    return state;
+    parsed = JSON.parse(content);
   } catch {
-    // 解析失败，尝试修复后再决定是否放弃。
-  }
-  const repaired: string | null = repairTruncated(content);
-  if (repaired === null) return state;
-  try {
-    // 与上面"解析成功"分支同样的空对象判断不能漏掉：文件若恰好在写入
-    // 第一条记录之前被杀（物理内容只有一个 "{"），repairTruncated 补一个
-    // 收尾括号就能修复成语义为空的 "{}"——如果这里不做同样的检查、无条件
-    // 标 empty:false，下一次追加会误判成"非空、按位置追加"，从这份只有
-    // 几字节的文件中间写入，产出打头带逗号的非法 JSON；这个坏文件下次
-    // 重启又会因为找不到顶层记录边界而修复失败
-    // 被放弃（物理文件却不会被清空），直到再下一次追加触发 writeFileSync
-    // 整份覆写，才把这段本可挽救的数据永久冲掉。
+    const repaired: string | null = repairTruncated(content);
+    if (repaired === null) {
+      throw new DayFileFormatError(path, "could not be parsed or repaired.");
+    }
     const repairedParsed: unknown = JSON.parse(repaired);
-    const repairedIsEmpty: boolean =
-      repairedParsed !== null && typeof repairedParsed === "object" && Object.keys(repairedParsed).length === 0;
+    if (!isRecord(repairedParsed)) {
+      throw new DayFileFormatError(path, "must contain a top-level JSON object.");
+    }
     atomicRewrite(path, repaired, mode);
     state.size = statSync(path).size;
-    state.empty = repairedIsEmpty;
-  } catch {
-    // 写回修复内容也失败，只能从空文件重新开始，不让调用方崩掉。
+    state.empty = Object.keys(repairedParsed).length === 0;
+    return state;
   }
+  if (!isRecord(parsed)) {
+    throw new DayFileFormatError(path, "must contain a top-level JSON object.");
+  }
+  if (Object.keys(parsed).length === 0) return state;
+  if (!content.endsWith("\n}")) {
+    atomicRewrite(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT), mode);
+  }
+  state.size = statSync(path).size;
+  state.empty = false;
   return state;
 }
 
@@ -178,15 +190,7 @@ function repairTruncated(content: string): string | null {
   return null;
 }
 
-/** 把一段已序列化好的条目文本追加到某天的文件末尾（覆写结尾的「\n}」）。 */
-export function appendToDayFile({
-  dir,
-  state,
-  chunk,
-  mode,
-  write = nodeWriteBuffer,
-  sync = fsyncSync,
-}: {
+export interface AppendToDayFileParams {
   dir: string;
   state: DayFileState;
   chunk: string;
@@ -195,7 +199,17 @@ export function appendToDayFile({
   write?: SyncBufferWriter;
   /** 仅供故障注入测试；生产在成功回执前 fsync 当前批次。 */
   sync?: SyncFile;
-}): void {
+}
+
+/** 把一段已序列化好的条目文本追加到某天的文件末尾（覆写结尾的「\n}」）。 */
+export function appendToDayFile({
+  dir,
+  state,
+  chunk,
+  mode,
+  write = nodeWriteBuffer,
+  sync = fsyncSync,
+}: AppendToDayFileParams): void {
   const path: string = join(dir, `${state.day}.json`);
   if (state.empty) {
     const content: string = `{\n${chunk}\n}`;

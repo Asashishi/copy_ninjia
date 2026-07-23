@@ -8,6 +8,8 @@ describe("decodeStateFile", () => {
         "-1001": {
           isInitEnabled: true,
           lockdown: {
+            phase: "active",
+            intentId: 1,
             originalPermissions: { can_send_messages: true, can_invite_users: false },
             expiresAt: 2_000_000,
           },
@@ -19,6 +21,8 @@ describe("decodeStateFile", () => {
         "-1001": {
           quietUntil: undefined,
           lockdown: {
+            phase: "active",
+            intentId: 1,
             originalPermissions: { can_send_messages: true, can_invite_users: false },
             expiresAt: 2_000_000,
           },
@@ -45,17 +49,44 @@ describe("decodeStateFile", () => {
     })).toThrow("state.chats.-1001.lockdown");
   });
 
+  test("lockdown 当前格式要求 phase 和正数 intentId", () => {
+    expect(() => decodeStateFile({
+      chats: {
+        "-1001": {
+          lockdown: { intentId: 1, originalPermissions: {}, expiresAt: 2_000 },
+        },
+      },
+      globalCopy: { copiedUser: null },
+    })).toThrow("state.chats.-1001.lockdown.phase is required");
+    expect(() => decodeStateFile({
+      chats: {
+        "-1001": {
+          lockdown: { phase: "active", originalPermissions: {}, expiresAt: 2_000 },
+        },
+      },
+      globalCopy: { copiedUser: null },
+    })).toThrow("state.chats.-1001.lockdown.intentId must be a positive safe integer");
+    expect(() => decodeStateFile({
+      chats: {
+        "-1001": {
+          lockdown: { phase: "active", intentId: 0, originalPermissions: {}, expiresAt: 2_000 },
+        },
+      },
+      globalCopy: { copiedUser: null },
+    })).toThrow("state.chats.-1001.lockdown.intentId must be a positive safe integer");
+  });
+
   test("空 ChatPermissions 合法，但未知字段和非 boolean 仍拒绝", () => {
     expect(decodeStateFile({
-      chats: { "-1001": { lockdown: { originalPermissions: {}, expiresAt: 2_000 } } },
+      chats: { "-1001": { lockdown: { phase: "active", intentId: 1, originalPermissions: {}, expiresAt: 2_000 } } },
       globalCopy: { copiedUser: null },
     }).chats["-1001"]?.lockdown?.originalPermissions).toEqual({});
     expect(() => decodeStateFile({
-      chats: { "-1001": { lockdown: { originalPermissions: { can_fly: true }, expiresAt: 2_000 } } },
+      chats: { "-1001": { lockdown: { phase: "active", intentId: 1, originalPermissions: { can_fly: true }, expiresAt: 2_000 } } },
       globalCopy: { copiedUser: null },
     })).toThrow("can_fly");
     expect(() => decodeStateFile({
-      chats: { "-1001": { lockdown: { originalPermissions: { can_invite_users: "yes" }, expiresAt: 2_000 } } },
+      chats: { "-1001": { lockdown: { phase: "active", intentId: 1, originalPermissions: { can_invite_users: "yes" }, expiresAt: 2_000 } } },
       globalCopy: { copiedUser: null },
     })).toThrow("can_invite_users");
   });

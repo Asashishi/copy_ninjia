@@ -8,15 +8,22 @@ import {
   deactivateVerificationChat,
   stopVerificationRuntime,
 } from "./antiRaid/verificationRuntime";
-import { adoptLockdowns, deactivateLockdownChat, handleLockdownPersisted } from "./antiRaid/lockdownRuntime";
+import {
+  adoptLockdowns,
+  deactivateLockdownChat,
+  handleLockdownPersisted,
+  stopLockdownRuntime,
+} from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
 import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
-import { sweepAdminCache } from "../cache/antiRaid/admins";
-import { sweepLinkedChannelCache } from "../cache/antiRaid/linkedChannels";
+import { resetAdminCache, sweepAdminCache } from "../cache/antiRaid/admins";
+import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/antiRaid/linkedChannels";
+import { recentChannelComments } from "../cache/antiRaid/recentComments";
 import { sweepVerificationRevisionCache } from "../cache/antiRaid/verification";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid";
 import { initTelegramClients } from "../infra/telegram/client";
 import { sweepRecentComments } from "./antiRaid/recentComments";
+import { antiRaidCacheSweepTimer } from "../cache/antiRaid/worker";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
@@ -93,27 +100,29 @@ export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
   sweepRecentComments(now);
 }
 
-let cacheSweepTimer: ReturnType<typeof setInterval> | null = null;
-
 /** Worker 线程启动入口；主线程导入本模块时不得注册 handler 或 sweeper。 */
 export function startAntiRaidWorker(): void {
-  if (cacheSweepTimer !== null) return;
+  if (antiRaidCacheSweepTimer.current !== null) return;
   initTelegramClients();
   self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
     handleAntiRaidWorkerMessage(event.data);
   };
-  cacheSweepTimer = setInterval(sweepAntiRaidWorkerCaches, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS);
-  cacheSweepTimer.unref();
+  antiRaidCacheSweepTimer.current = setInterval(sweepAntiRaidWorkerCaches, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS);
+  antiRaidCacheSweepTimer.current.unref();
   process.once("exit", stopAntiRaidWorker);
 }
 
 /** 协作式退出时清掉唯一 sweeper；强制 terminate 时整个 Worker isolate 一并销毁。 */
 export function stopAntiRaidWorker(): void {
-  if (cacheSweepTimer !== null) {
-    clearInterval(cacheSweepTimer);
-    cacheSweepTimer = null;
+  if (antiRaidCacheSweepTimer.current !== null) {
+    clearInterval(antiRaidCacheSweepTimer.current);
+    antiRaidCacheSweepTimer.current = null;
   }
   stopVerificationRuntime();
+  stopLockdownRuntime();
+  resetAdminCache();
+  resetLinkedChannelCache();
+  recentChannelComments.clear();
   self.onmessage = null;
   process.off("exit", stopAntiRaidWorker);
 }

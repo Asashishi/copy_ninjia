@@ -1,10 +1,11 @@
 import { ensureStickerCatalogs, flushDirtyStickerCatalogs, hydrateStickerCatalogs } from "../ai/stickers/catalog";
 import { getStickerConfig } from "../config/stickers";
-import { startWeatherRefreshLoop } from "../ai/weather";
+import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState } from "../cache/aiChat/identity";
 import { sweepImageGenerationCache } from "../cache/aiChat/imageGeneration";
 import { sweepAiChatReplyCache } from "../cache/aiChat/replies";
+import { aiChatMaintenanceTimer } from "../cache/aiChat/worker";
 import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
@@ -103,15 +104,29 @@ export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
 
 /** Worker 线程启动入口；主线程导入本模块时不得注册 handler、计时器或网络刷新。 */
 export function startAiChatWorker(): void {
+  if (aiChatMaintenanceTimer.current !== null) return;
   initTelegramClients();
   self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
     handleAiChatWorkerMessage(event.data);
   };
-  setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);
+  aiChatMaintenanceTimer.current = setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);
+  aiChatMaintenanceTimer.current.unref();
   // 东京天气的后台定时刷新（见 ai/weather.ts）：get_tokyo_weather 工具与
   // 心情系统（ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
   // 读不发请求。全进程只应调用一次——重复调用会叠加出多个定时器。
   startWeatherRefreshLoop();
+  process.once("exit", stopAiChatWorker);
+}
+
+/** 协作式停止 AI Worker 的 handler、维护 timer 与天气刷新 owner。 */
+export function stopAiChatWorker(): void {
+  if (aiChatMaintenanceTimer.current !== null) {
+    clearInterval(aiChatMaintenanceTimer.current);
+    aiChatMaintenanceTimer.current = null;
+  }
+  stopWeatherRefreshLoop();
+  self.onmessage = null;
+  process.off("exit", stopAiChatWorker);
 }
 
 if (!Bun.isMainThread) startAiChatWorker();

@@ -10,11 +10,14 @@ import { join } from "node:path";
 import { DAY_FILE_JSON_INDENT, DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import {
+  DAY_MS,
+  TOKYO_OFFSET_MS,
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_COMPACT_ENTRIES,
   VERIFICATION_FILE_MAX_MESSAGE_IDS,
   VERIFICATION_FLUSH_INTERVAL_MS,
   VERIFICATION_FLUSH_MAX_KEYS,
+  VERIFICATION_TOP_LEVEL_ENTRY_PATTERN,
 } from "../../consts/diskIO/verification";
 import { VERIFICATION_MEMORY_DIR } from "../../consts/paths";
 import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../consts/antiRaid/lockdown";
@@ -39,13 +42,6 @@ import type { VerificationSnapshot } from "../../types/antiRaid";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 type ReplySink = (reply: VerificationPersistedReply) => void;
-
-const TOKYO_OFFSET_MS: number = 9 * 60 * 60 * 1000;
-const DAY_MS: number = 24 * 60 * 60 * 1000;
-const TOP_LEVEL_ENTRY_PATTERN: RegExp = new RegExp(
-  `^${" ".repeat(DAY_FILE_JSON_INDENT)}"(?:[^"\\\\]|\\\\.)+":`,
-  "gm"
-);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -74,7 +70,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     !isPositiveId(value.userId) ||
     !isPositiveId(value.generation) ||
     !isPositiveId(value.revision) ||
-    (value.phase !== undefined && value.phase !== "pending" && value.phase !== "checkingInviter" && value.phase !== "expelling") ||
+    (value.phase !== "pending" && value.phase !== "checkingInviter" && value.phase !== "expelling") ||
     typeof value.label !== "string" ||
     value.label.length === 0 ||
     value.label.length > 512 ||
@@ -82,11 +78,10 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     !Array.isArray(value.messageIds) ||
     value.messageIds.length > VERIFICATION_FILE_MAX_MESSAGE_IDS ||
     !value.messageIds.every(isPositiveId) ||
-    (value.trackedMessageTimes !== undefined && (
-      !Array.isArray(value.trackedMessageTimes) ||
+    (!Array.isArray(value.trackedMessageTimes) ||
       value.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT ||
       !value.trackedMessageTimes.every(isSafeTimestamp)
-    )) ||
+    ) ||
     !isOptionalPositiveId(value.invitedBy) ||
     !isOptionalPositiveId(value.reminderMessageId) ||
     !isOptionalPositiveId(value.replyReminderMessageId) ||
@@ -106,7 +101,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
       value.terminalInviterId !== undefined ||
       (value.successNoticeSent !== undefined && typeof value.successNoticeSent !== "boolean")
     )) ||
-    ((value.phase === undefined || value.phase === "pending") && (
+    (value.phase === "pending" && (
       value.terminalInviterId !== undefined || value.expelReason !== undefined || value.successNoticeSent !== undefined
     )) ||
     key !== verificationKey(value.chatId, value.userId)
@@ -121,7 +116,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     label: value.label,
     isBot: value.isBot,
     messageIds: [...value.messageIds],
-    trackedMessageTimes: value.trackedMessageTimes === undefined ? undefined : [...value.trackedMessageTimes],
+    trackedMessageTimes: [...value.trackedMessageTimes],
     invitedBy: value.invitedBy,
     reminderMessageId: value.reminderMessageId,
     replyReminderMessageId: value.replyReminderMessageId,
@@ -209,7 +204,7 @@ export function recoverVerificationDay(
   // 重启后无法区分规范 active 基线与其后的重复 key，保守地把当前文件都计入
   // 历史；达到任一阈值就收敛一次。收敛后 bytes 归零，active 本身再大也不会
   // 让后续每条小增量都反复触发整份重写。
-  verificationFileState.appendedEntries = content.match(TOP_LEVEL_ENTRY_PATTERN)?.length ?? 0;
+  verificationFileState.appendedEntries = content.match(VERIFICATION_TOP_LEVEL_ENTRY_PATTERN)?.length ?? 0;
   verificationFileState.appendedBytes = verificationFileState.current.size;
   if (
     verificationFileState.appendedEntries >= VERIFICATION_FILE_COMPACT_ENTRIES ||
@@ -281,18 +276,20 @@ function scheduleVerificationFlush(reply: ReplySink, dir: string): void {
   verificationFlushTimer.timer.unref();
 }
 
+export interface HandleVerificationUpsertParams {
+  msg: VerificationUpsertDiskMessage;
+  reply: ReplySink;
+  dir?: string;
+  day?: string;
+}
+
 /** 新建立即追加；普通字段变化按 key 在 250ms 窗口内合并。 */
 export function handleVerificationUpsert({
   msg,
   reply,
   dir = VERIFICATION_MEMORY_DIR,
   day = getTokyoDateKey(),
-}: {
-  msg: VerificationUpsertDiskMessage;
-  reply: ReplySink;
-  dir?: string;
-  day?: string;
-}): void {
+}: HandleVerificationUpsertParams): void {
   const key: string = verificationKey(msg.record.chatId, msg.record.userId);
   const pending: VerificationFileChange | undefined = verificationPendingChanges.get(key);
   if (sameOrNewer(pending, msg.record.generation, msg.record.revision)) return;
@@ -302,7 +299,7 @@ export function handleVerificationUpsert({
   const snapshot: VerificationSnapshot = {
     ...msg.record,
     messageIds: [...msg.record.messageIds],
-    trackedMessageTimes: msg.record.trackedMessageTimes === undefined ? undefined : [...msg.record.trackedMessageTimes],
+    trackedMessageTimes: [...msg.record.trackedMessageTimes],
   };
   verificationWorkerCache.set(key, snapshot);
   verificationPendingChanges.set(key, { ...snapshot, value: snapshot });
@@ -313,18 +310,20 @@ export function handleVerificationUpsert({
   }
 }
 
+export interface HandleVerificationDeleteParams {
+  msg: VerificationDeleteDiskMessage;
+  reply: ReplySink;
+  dir?: string;
+  day?: string;
+}
+
 /** 终结清掉同 key 缓冲 upsert、立即追加 durable tombstone 并回执。 */
 export function handleVerificationDelete({
   msg,
   reply,
   dir = VERIFICATION_MEMORY_DIR,
   day = getTokyoDateKey(),
-}: {
-  msg: VerificationDeleteDiskMessage;
-  reply: ReplySink;
-  dir?: string;
-  day?: string;
-}): void {
+}: HandleVerificationDeleteParams): void {
   const key: string = verificationKey(msg.chatId, msg.userId);
   const pending: VerificationFileChange | undefined = verificationPendingChanges.get(key);
   if (sameOrNewer(pending, msg.generation, msg.revision)) return;

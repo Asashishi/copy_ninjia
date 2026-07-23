@@ -10,9 +10,8 @@ import type { BufferedMessage, BufferedReplyReference, ReplyChainLink } from "..
  * chatBuffers 严格一致；本文件不持有任何状态。
  */
 
-/** 消息进入热区时登记；旧快照没有 message_id 的条目无法索引，链在其上断开。 */
+/** 消息进入热区时登记 message_id，供回复链回溯。 */
 export function indexBufferedMessage(chatId: number, entry: BufferedMessage): void {
-  if (entry.messageId === undefined) return;
   let index: Map<number, BufferedMessage> | undefined = chatReplyChainIndexes.get(chatId);
   if (!index) {
     index = new Map<number, BufferedMessage>();
@@ -23,7 +22,6 @@ export function indexBufferedMessage(chatId: number, entry: BufferedMessage): vo
 
 /** 消息被轮换移出热区时删键；整群索引空了就连外层键一并回收。 */
 export function unindexBufferedMessage(chatId: number, entry: BufferedMessage): void {
-  if (entry.messageId === undefined) return;
   const index: Map<number, BufferedMessage> | undefined = chatReplyChainIndexes.get(chatId);
   if (!index) return;
   index.delete(entry.messageId);

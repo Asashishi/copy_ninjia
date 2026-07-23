@@ -30,7 +30,7 @@ import { DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { AI_MEMORY_FILE_PATTERN, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO/snapshots";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat/memory";
-import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
+import { DayFileFormatError, appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
 
 /**
@@ -56,7 +56,7 @@ function ensurePersistedFileMode(path: string): void {
 function quarantine(path: string): void {
   try {
     renameSync(path, `${path}${CORRUPT_FILE_SUFFIX}`);
-  } catch (error) {
+  } catch (error: unknown) {
     console.error(`[diskIOWorker] failed to quarantine ${path}:`, error);
   }
 }
@@ -83,16 +83,15 @@ function isBufferedReplyReference(value: unknown): value is BufferedReplyReferen
 
 function isBufferedMessage(value: unknown): value is BufferedMessage {
   return isAiSpeakerSnapshot(value) &&
-    (value.messageId === undefined || (typeof value.messageId === "number" && Number.isFinite(value.messageId))) &&
+    typeof value.messageId === "number" && Number.isSafeInteger(value.messageId) && value.messageId > 0 &&
     typeof value.text === "string" &&
     (value.replyTo === undefined || isBufferedReplyReference(value.replyTo)) &&
     (value.forwardedFrom === undefined || typeof value.forwardedFrom === "string") &&
     typeof value.at === "string";
 }
 
-/** 只接受当前 version=1 的完整结构；username/replyTo/forwardedFrom 是向后兼容
- * 的可选扩展，旧条目没有它们也合法，不需要改版本或迁移旧文件。其余版本变更
- * 由部署前手工迁移。 */
+/** 只接受当前 version=1 的完整结构；username/replyTo/forwardedFrom 按业务
+ * 语义可选，messageId 等当前格式必填字段缺失时拒绝启动。 */
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;
@@ -130,7 +129,7 @@ export function recoverAiMemories(): Map<number, string> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(path, "utf8"));
-    } catch (error) {
+    } catch (error: unknown) {
       quarantine(path);
       console.error(`[diskIOWorker] AI memory file ${name} failed to parse, quarantined as .corrupt:`, error);
       continue;
@@ -215,7 +214,7 @@ export function recoverStickerCatalogs(activePacks: readonly string[]): Map<stri
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(path, "utf8"));
-    } catch (error) {
+    } catch (error: unknown) {
       quarantine(path);
       console.error(`[diskIOWorker] sticker catalog file ${name} failed to parse, quarantined as .corrupt:`, error);
       continue;
@@ -255,37 +254,46 @@ export function cleanupStaleLuckFiles(todayKey: string): void {
  * 挡住外部干预留下的残留）、删除所有非今天的日期文件，只关心今天那份
  * （不存在则返回 null）。读取前必须先经 openDayFile 校验/修复：启动恢复
  * 本身就是本次运行第一次碰这份文件，不能假设追加路径已经先打开过它。
- * 修复后仍解析失败才视为真正损坏并隔离为 .corrupt。
+ * 修复不了或结构不符合当前格式时阻止启动并保留原文件，等待人工处理。
  */
 export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
   for (const name of readdirSync(LUCK_MEMORY_DIR)) {
     if (name.endsWith(TMP_FILE_SUFFIX)) tryUnlink(join(LUCK_MEMORY_DIR, name));
   }
-  cleanupStaleLuckFiles(todayKey);
-
   const todayPath: string = join(LUCK_MEMORY_DIR, `${todayKey}.json`);
-  if (!existsSync(todayPath)) return null;
-  let parsed: unknown;
-  try {
-    openDayFile(LUCK_MEMORY_DIR, todayKey, PERSISTED_FILE_MODE);
-    parsed = JSON.parse(readFileSync(todayPath, "utf8"));
-  } catch (error) {
-    quarantine(todayPath);
-    console.error(`[diskIOWorker] luck file ${todayKey}.json failed to parse, quarantined as .corrupt:`, error);
+  if (!existsSync(todayPath)) {
+    cleanupStaleLuckFiles(todayKey);
     return null;
   }
-  if (!isRecord(parsed)) return null;
+  let content: string = readFileSync(todayPath, "utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    openDayFile(LUCK_MEMORY_DIR, todayKey, PERSISTED_FILE_MODE);
+    content = readFileSync(todayPath, "utf8");
+    parsed = JSON.parse(content);
+  }
+  if (!isRecord(parsed)) {
+    throw new DayFileFormatError(todayPath, "must contain a top-level JSON object.");
+  }
   const raw: Record<string, unknown> = parsed;
   const entries: Map<string, LuckDrawRecord> = new Map();
   for (const [key, value] of Object.entries(raw)) {
-    // entries 里结构不对的条目丢弃（结构性校验，不假设未来档位表长什么样），
-    // 当天重抽，见 types/diskIO/storage.ts 的 LuckDayFile 注释。
-    if (!isRecord(value)) continue;
-    if (typeof value.label === "string" && typeof value.fortunePercent === "number" && Number.isFinite(value.fortunePercent)) {
-      entries.set(key, { label: value.label, fortunePercent: value.fortunePercent });
+    if (
+      !isRecord(value) ||
+      typeof value.label !== "string" ||
+      typeof value.fortunePercent !== "number" ||
+      !Number.isFinite(value.fortunePercent)
+    ) {
+      throw new Error(`${todayPath} contains an invalid luck record for key ${key}.`);
     }
+    entries.set(key, { label: value.label, fortunePercent: value.fortunePercent });
   }
+  // 领域 schema 全部通过后才允许通用 helper 做格式规范化，也才清理旧日。
+  openDayFile(LUCK_MEMORY_DIR, todayKey, PERSISTED_FILE_MODE);
+  cleanupStaleLuckFiles(todayKey);
   return { day: todayKey, entries };
 }
 
@@ -296,7 +304,11 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
  * 或刚跨天）时，先探测/接管一次对应日期的文件。pending 为空是防御性早退
  * ——调用方按 dirty 判断只在非空时才会调用，这里不该真的走到。
  */
-export function appendLuckEntries(day: string, fileState: { current: DayFileState | null }, pending: LuckPendingEntry[]): void {
+export interface LuckFileStateHolder {
+  current: DayFileState | null;
+}
+
+export function appendLuckEntries(day: string, fileState: LuckFileStateHolder, pending: LuckPendingEntry[]): void {
   if (pending.length === 0) return;
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
   if (fileState.current?.day !== day) {

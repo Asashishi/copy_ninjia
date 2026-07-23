@@ -98,17 +98,49 @@ export interface JoinEvent {
   now: number;
 }
 
+export interface TrackedMessageEvent {
+  type: "trackedMessage";
+  messageId: number;
+  inCommentThread: boolean;
+  now: number;
+}
+
+export interface VerificationCallbackEvent {
+  type: "callback";
+  callbackQueryId: string;
+  isSelf: boolean;
+  fromIsPrivileged: boolean;
+  fromLabel: string;
+}
+
+export interface VerifyTimeoutEvent {
+  type: "verifyTimeout";
+  now: number;
+}
+
+export interface TimeoutInviterVerdictEvent {
+  type: "timeoutInviterVerdict";
+  inviterIsAdmin: boolean;
+}
+
+export interface ReminderLandedEvent {
+  type: "reminderLanded";
+  reminderKind: "original" | "reply";
+  messageId: number;
+  now: number;
+}
+
 export type VerificationEvent =
   | JoinEvent
   | { type: "left" }
-  | { type: "trackedMessage"; messageId: number; inCommentThread: boolean; now: number }
-  | { type: "callback"; callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
+  | TrackedMessageEvent
+  | VerificationCallbackEvent
   | { type: "adminCheckResolved" }
-  | { type: "verifyTimeout"; now: number }
+  | VerifyTimeoutEvent
   | { type: "terminalPersisted" }
-  | { type: "timeoutInviterVerdict"; inviterIsAdmin: boolean }
+  | TimeoutInviterVerdictEvent
   | { type: "expelSettled" }
-  | { type: "reminderLanded"; reminderKind: "original" | "reply"; messageId: number; now: number }
+  | ReminderLandedEvent
   | { type: "dedupeExpired" };
 
 /** 状态机只描述意图；antiRaid Worker 按顺序解释这些副作用。 */

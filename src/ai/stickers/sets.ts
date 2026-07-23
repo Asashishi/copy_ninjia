@@ -85,7 +85,12 @@ export function pickStickerVisionSource(sticker: Sticker): TelegramVisionSource 
  *   ai/stickers/catalog.ts、ai/imageDescription.ts 的 describeMedia）；没有则
  *   省略这部分，退化为原有的纯元数据行。
  */
-export function describeStickerForContext(sticker: { emoji?: string; set_name?: string }, visualDescription?: string): string {
+export interface DescribeStickerForContextParams {
+  emoji?: string;
+  set_name?: string;
+}
+
+export function describeStickerForContext(sticker: DescribeStickerForContextParams, visualDescription?: string): string {
   const parts: string[] = [];
   if (visualDescription) parts.push(`画面：${visualDescription}`);
   if (sticker.emoji) parts.push(`情绪含义 ${sticker.emoji}`);

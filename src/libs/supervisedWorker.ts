@@ -1,5 +1,6 @@
 import { logger } from "../infra/logger";
 import { relayLogMessage } from "../infra/diskIO";
+import { signalBusinessWorkerFatal } from "../infra/workerSupervisor";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createRestartThrottle } from "./restartThrottle";
 import type { ForwardedLog } from "../types/diskIO";
@@ -12,25 +13,27 @@ import type { ForwardedLog } from "../types/diskIO";
  * - Worker 崩溃时按节流重建：Bun 里 Worker 内部一旦抛出未捕获异常（同步或
  *   async 均如此，已实测验证）就会直接终止该 Worker 线程，不需要（实际上
  *   也没法）手动 terminate，直接换新实例顶上，并经 onRespawn 重放必要状态；
- * - 放弃自愈的节流阈值/理由见 consts/workerSupervisor.ts；放弃后 post() 返回
- *   false。不同 Bun 版本对不可用 Worker 的 postMessage 可能抛出或静默丢弃，
- *   因此投递边界也把同步异常统一收敛为 false。
+ * - 放弃自愈的节流阈值/理由见 consts/workerSupervisor.ts；永久不可用时
+ *   post() 返回 false，并通知 ApplicationLifecycle 停止 runner。不同 Bun
+ *   版本对不可用 Worker 的 postMessage 可能抛出或静默丢弃，因此投递边界
+ *   也把同步异常统一收敛为 false。
  */
 export interface SupervisedWorkerOptions<TMessage, TEvent> {
   /** Worker 脚本的 URL（new URL("...", import.meta.url).href）。 */
   url: string;
   /** 日志里称呼这个 Worker 的名字（如 "AI Worker"）。 */
   label: string;
-  /** 放弃自愈时，日志里点明的业务后果（哪个功能会静默失效到进程重启）。 */
+  /** 永久不可用时，fatal 错误里点明受影响的业务能力。 */
   giveUpConsequence: string;
   /** 非日志信封的业务事件回传（如 antiRaid 的 lockdown/unlock 镜像同步）。
    *  data 按 TEvent 交付——与旧的内联 onmessage 一样，信任 Worker 只回传
    *  声明过的事件类型。 */
   onEvent?: (data: TEvent) => void;
   /** 新实例顶上后重放状态（如 aiChat 重放 init、antiRaid 重放 adopt）。
-   *  FIFO 保证这里 post 的消息先于此后的一切投递到达新 Worker。 */
-  onRespawn?: (post: (message: TMessage) => void) => void;
-  /** 放弃自愈时的额外收尾（如 antiRaid 启动主线程紧急权限恢复）。 */
+   *  FIFO 保证这里 post 的消息先于此后的一切投递到达新 Worker；任意一次
+   *  同步拒绝都会在回调结束后撤销整个新实例，即使调用方忽略返回值。 */
+  onRespawn?: (post: (message: TMessage) => boolean) => void;
+  /** 永久不可用时的领域收尾（如 antiRaid 启动主线程紧急权限恢复）。 */
   onGiveUp?: () => void;
 }
 
@@ -45,7 +48,8 @@ export interface SupervisedWorkerHandle<TMessage> {
 
 /**
  * 建立业务 Worker 的监督句柄，但不在模块导入时创建线程。入口完成单实例锁和
- * 必要的持久化恢复后，由领域 init 显式启动；自愈放弃后投递被静默丢弃。
+ * 必要的持久化恢复后，由领域 init 显式启动；永久不可用后拒绝投递并通知
+ * 应用生命周期交给进程管理器重启。
  */
 export function superviseWorker<TMessage, TEvent = never>(
   options: SupervisedWorkerOptions<TMessage, TEvent>
@@ -53,6 +57,40 @@ export function superviseWorker<TMessage, TEvent = never>(
   const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
   let worker: Worker | null = null;
   let initialized: boolean = false;
+
+  function asError(error: unknown, fallback: string): Error {
+    return error instanceof Error ? error : new Error(fallback, { cause: error });
+  }
+
+  function terminateFailedWorker(failedWorker: Worker): void {
+    try {
+      failedWorker.terminate();
+    } catch (error: unknown) {
+      logger.error(`${options.label} termination after failure rejected:`, error);
+    }
+  }
+
+  function becomeUnavailable(failedWorker: Worker, failure: Error): void {
+    if (worker !== failedWorker) return;
+    worker = null;
+    terminateFailedWorker(failedWorker);
+    try {
+      options.onGiveUp?.();
+    } catch (error: unknown) {
+      logger.error(`${options.label} unavailable cleanup failed:`, error);
+    }
+    signalBusinessWorkerFatal(failure);
+  }
+
+  function postToWorker(target: Worker, message: TMessage): boolean {
+    try {
+      target.postMessage(message);
+      return true;
+    } catch (error: unknown) {
+      logger.error(`${options.label} postMessage failed:`, error);
+      return false;
+    }
+  }
 
   function createWorker(): Worker {
     const w: Worker = new Worker(options.url);
@@ -80,17 +118,39 @@ export function superviseWorker<TMessage, TEvent = never>(
       if (worker !== w) return;
       logger.error(`${options.label} errored, restarting:`, event.message || event.error || event);
       if (restartThrottle.shouldGiveUp()) {
-        logger.error(
-          `${options.label} restarted ${WORKER_MAX_RESTARTS} times within ${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing — ` +
-          options.giveUpConsequence
+        const failure: Error = new Error(
+          `${options.label} restarted ${WORKER_MAX_RESTARTS} times within ` +
+          `${WORKER_RESTART_WINDOW_MS / 1000}s; ${options.giveUpConsequence}`
         );
-        options.onGiveUp?.();
-        worker = null;
+        logger.error(`${failure.message}`);
+        becomeUnavailable(w, failure);
         return;
       }
-      const next: Worker = createWorker();
+      let next: Worker;
+      try {
+        next = createWorker();
+      } catch (error: unknown) {
+        const failure: Error = asError(error, `${options.label} replacement construction failed.`);
+        logger.error(`${options.label} replacement construction failed:`, error);
+        becomeUnavailable(w, failure);
+        return;
+      }
       worker = next;
-      options.onRespawn?.((message: TMessage) => next.postMessage(message));
+      let replayFailure: Error | null = null;
+      try {
+        options.onRespawn?.((message: TMessage): boolean => {
+          if (replayFailure !== null) return false;
+          if (postToWorker(next, message)) return true;
+          replayFailure = new Error(`${options.label} state replay was rejected.`);
+          return false;
+        });
+      } catch (error: unknown) {
+        replayFailure = asError(error, `${options.label} state replay failed.`);
+        logger.error(`${options.label} state replay failed:`, error);
+      }
+      if (replayFailure !== null) {
+        becomeUnavailable(next, replayFailure);
+      }
     };
     return w;
   }
@@ -106,13 +166,9 @@ export function superviseWorker<TMessage, TEvent = never>(
     post: (message: TMessage): boolean => {
       const current: Worker | null = worker;
       if (current === null) return false;
-      try {
-        current.postMessage(message);
-        return true;
-      } catch (error: unknown) {
-        logger.error(`${options.label} postMessage failed:`, error);
-        return false;
-      }
+      if (postToWorker(current, message)) return true;
+      becomeUnavailable(current, new Error(`${options.label} synchronous message delivery was rejected.`));
+      return false;
     },
     terminate: (): Promise<void> => {
       const current: Worker | null = worker;

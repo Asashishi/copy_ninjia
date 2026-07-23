@@ -42,6 +42,25 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     expect(state).toEqual({ day: "2026-07-16", size: 0, empty: true });
   });
 
+  test("非对象顶层 JSON 会阻止接管并保持原始字节不变", () => {
+    const path: string = join(dir, "2026-07-16.json");
+    for (const content of ["[]", "[{\"bad\":\"shape\"}]", "null", "\"text\"", "42"]) {
+      writeFileSync(path, content);
+
+      expect(() => openDayFile(dir, "2026-07-16")).toThrow("must contain a top-level JSON object");
+      expect(readFileSync(path, "utf8")).toBe(content);
+    }
+  });
+
+  test("无法修复的语法损坏会阻止接管并保持原始字节不变", () => {
+    const path: string = join(dir, "2026-07-16.json");
+    const content: string = "not-json";
+    writeFileSync(path, content);
+
+    expect(() => openDayFile(dir, "2026-07-16")).toThrow("could not be parsed or repaired");
+    expect(readFileSync(path, "utf8")).toBe(content);
+  });
+
   test("从空文件开始追加一条，结果是合法 JSON 且值正确", () => {
     const state: DayFileState = openDayFile(dir, "2026-07-16");
     const chunk: string = serializeDayFileEntry("111", { label: "大吉", fortunePercent: 90.12 });

@@ -1,6 +1,16 @@
+import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import { createFlushBarrier } from "../libs/flushBarrier";
 import type { AiInitMessage } from "../types/aiChat/protocol";
 
 /** AI 闲聊主线程侧代理（src/aiChat.ts）的内存状态。 */
+
+/**
+ * AI Worker 记忆回传 barrier。模块加载时创建，Worker 终止时统一结算等待者；
+ * 进程重启后以空等待表重建，容量受并发 flush 数约束。
+ */
+export const aiMemoryFlushBarrier: ReturnType<typeof createFlushBarrier> = createFlushBarrier({
+  timeoutMs: AI_MEMORY_FLUSH_TIMEOUT_MS,
+});
 
 /** 最近一次注入 AI Worker 的 init 消息，供 Worker 崩溃重启后重放（新 Worker
  *  不知道机器人自己的账号身份），见 aiChat.ts 的 initAiChat/onRespawn。 */
@@ -16,6 +26,7 @@ export const latestAiMemoryRevisions: Map<number, number> = new Map();
 export const aiMemoryRevisionCounters: Map<number, number> = new Map();
 /** 已投递但尚未收到 durable delete 回执的最新墓碑。 */
 export const pendingAiMemoryDeletes: Map<number, number> = new Map();
+/** 等待某群指定 AI 记忆删除 revision durable 的调用方。 */
 export interface AiMemoryDeleteWaiter {
   revision: number;
   resolve: () => void;

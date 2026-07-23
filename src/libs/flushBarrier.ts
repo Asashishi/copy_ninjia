@@ -1,11 +1,11 @@
-import type { FlushResult } from "../consts/lifecycle";
+import type { FlushResult } from "../types/lifecycle";
 
 interface PendingFlush {
   resolve: (result: FlushResult) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
-interface FlushBarrier {
+export interface FlushBarrier {
   /** 建立一次等待；post 返回 false 或同步抛错时立即按 failed 结算。 */
   begin: (post: (id: number) => boolean | void, timeoutMs?: number) => Promise<FlushResult>;
   /** 结算指定回执；迟到或重复回执返回 false 且不产生副作用。 */
@@ -16,12 +16,16 @@ interface FlushBarrier {
   pendingCount: () => number;
 }
 
+export interface CreateFlushBarrierParams {
+  timeoutMs: number;
+}
+
 /**
  * Worker flush / mailbox barrier 的统一握手原语。等待项在 post 之前登记，
  * 因而同步回执也不会丢失；所有完成路径都先从 Map 删除并清 timer，再 resolve，
  * 让超时、迟到回执与崩溃结算之间保持 exactly-once。
  */
-export function createFlushBarrier(options: { timeoutMs: number }): FlushBarrier {
+export function createFlushBarrier(options: CreateFlushBarrierParams): FlushBarrier {
   const pending: Map<number, PendingFlush> = new Map();
   let nextId: number = 1;
 

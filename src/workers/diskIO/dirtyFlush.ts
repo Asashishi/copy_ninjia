@@ -4,19 +4,19 @@
  * 单项失败只 console.error（journal 兜底，理由见 workers/diskIOWorker.ts
  * 模块头）并保留标记，由调用方检查残留后自行重排下一轮。
  */
-export function flushDirtyEntries<K>(
-  {
-    dirty,
-    cache,
-    write,
-    describeFailure,
-  }: {
-    dirty: Set<K>;
-    cache: Map<K, string>;
-    write: (key: K, snapshot: string) => void;
-    describeFailure: (key: K) => string;
-  }
-): boolean {
+export interface FlushDirtyEntriesParams<K> {
+  dirty: Set<K>;
+  cache: Map<K, string>;
+  write: (key: K, snapshot: string) => void;
+  describeFailure: (key: K) => string;
+}
+
+export function flushDirtyEntries<K>({
+  dirty,
+  cache,
+  write,
+  describeFailure,
+}: FlushDirtyEntriesParams<K>): boolean {
   for (const key of dirty) {
     const snapshot: string | undefined = cache.get(key);
     if (!snapshot) {
@@ -26,7 +26,7 @@ export function flushDirtyEntries<K>(
     try {
       write(key, snapshot);
       dirty.delete(key);
-    } catch (error) {
+    } catch (error: unknown) {
       console.error(describeFailure(key), error);
     }
   }

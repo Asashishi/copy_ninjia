@@ -13,7 +13,9 @@ export const avatarUpdateState: {
   latestGeneration: 0,
 };
 
+/** 等待头像执行槽和 latest-only 槽归零的回调；完成或停机超时时结算清空。 */
 export const avatarDrainWaiters: Set<() => void> = new Set();
+/** 头像入口闸与统一 abort owner；init 重建 controller，quiesce/abort 时关闭。 */
 export const avatarUpdateRuntime: { accepting: boolean; controller: AbortController } = {
   accepting: true,
   controller: new AbortController(),

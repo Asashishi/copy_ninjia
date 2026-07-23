@@ -10,12 +10,18 @@ import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 /** 回复调度的唯一运行时 owner。全部状态不落盘，Worker 重建时清空。代际表
  * 使用有界 LRU；窗口队列、提示冷却和待处理队列都按群主动清理。 */
 export const replyGenerations: LruCache<number, number> = new LruCache(REPLY_GENERATIONS_MAX);
+/** 每群最近一次限频提示时刻；周期 sweep 删除过期项，Worker 重建后清空。 */
 export const rateLimitNoticeTimes: Map<number, number> = new Map();
+/** 每群长窗口触发时刻队列；周期 sweep 删除过期项，长度受窗口请求上限约束。 */
 export const longTriggerTimes: Map<number, LinkedQueue<number>> = new Map();
+/** 每群当前在途回复数；回复 finally 递减，Worker 重建后归零。 */
 export const activeReplyCounts: Map<number, number> = new Map();
+/** 同群并发满载后的直接触发有界队列；轮次接纳或群失效时消费/清除。 */
 export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> = new Map();
+/** 已安排溢出提示的群集合；提示任务 settle 或群失效时删除。 */
 export const pendingOverflowNotices: Set<number> = new Set();
 
+/** 读取某群当前回复代际；未登记或 Worker 重建后返回 0。 */
 export function cachedReplyGeneration(chatId: number): number {
   return replyGenerations.get(chatId) ?? 0;
 }

@@ -15,17 +15,19 @@ export function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefi
  * entity 偏移量失效；其余消息一律 copyMessage。锁定目标路径会在异步翻译
  * 返回后重新核对目标，防止另一群已经结束全局复读会话后仍迟到补发。
  */
+export interface EchoMessageParams {
+  chatId: number;
+  message: Message;
+  mode: CopyMode | undefined;
+  expectedTargetId?: number;
+}
+
 export async function echoMessage({
   chatId,
   message,
   mode,
   expectedTargetId,
-}: {
-  chatId: number;
-  message: Message;
-  mode: CopyMode | undefined;
-  expectedTargetId?: number;
-}): Promise<string | undefined> {
+}: EchoMessageParams): Promise<string | undefined> {
   const text: string = message.text || "";
   if (text.startsWith("/")) return undefined;
 

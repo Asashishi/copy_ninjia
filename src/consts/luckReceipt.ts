@@ -9,10 +9,12 @@ export const LUCK_RECEIPT_PATTERN: RegExp =
 export const LUCK_RECEIPT_HASH_PATTERN: RegExp = /^[a-f0-9]{64}$/;
 /** 自描述回执的协议长度硬上限。 */
 export const LUCK_RECEIPT_MAX_LENGTH: number = 192;
+/** 最终消息展示防伪摘要时使用的固定前缀。 */
 export const LUCK_RECEIPT_DISPLAY_PREFIX: string = "防伪标记: ";
 /** text_link 实体只用作携带原回执；正文仍只展示定长摘要。 */
 export const LUCK_RECEIPT_LINK_PREFIX: string = "https://t.me/#luck-receipt=";
 
 /** receipt-secret.json 的日期与 32 字节 base64url 密钥格式。 */
 export const LUCK_DAY_PATTERN: RegExp = /^\d{4}-\d{2}-\d{2}$/;
+/** 32 字节密钥的无 padding base64url 格式。 */
 export const LUCK_RECEIPT_SECRET_PATTERN: RegExp = /^[A-Za-z0-9_-]{43}$/;

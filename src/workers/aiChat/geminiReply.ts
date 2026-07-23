@@ -33,13 +33,15 @@ import type { ReplyPromptSections, ReplyToolset } from "../../types/aiChat/repli
 import type { ExtractedFunctionCall } from "../../types/tools";
 import { currentTimeSentence } from "./timeSentence";
 
+export interface AvailableToolsParams {
+  googleSearchEnabled: boolean;
+  disabledFunctionNames: ReadonlySet<string>;
+  allFunctionsDisabled: boolean;
+}
+
 function availableTools(
   tools: Tool[],
-  options: {
-    googleSearchEnabled: boolean;
-    disabledFunctionNames: ReadonlySet<string>;
-    allFunctionsDisabled: boolean;
-  }
+  options: AvailableToolsParams
 ): Tool[] {
   const { googleSearchEnabled, disabledFunctionNames, allFunctionsDisabled } = options;
   const available: Tool[] = [];
@@ -102,12 +104,14 @@ export async function callGemini(
 ): Promise<string | null> {
   if (!toolset.isActive()) return null;
   // 每次请求现查当前时间拼进系统提示词（而非用模块加载时算好的值），worker
-  // 线程常驻、一跑就是几天，缓存的时间会很快过期。
+  // 线程常驻、一跑就是几天，缓存的时间会很快过期。persona.md 与
+  // CHAT_INTERACTION_INSTRUCTION 自带 Markdown 标题，其余运行时段落在此补
+  // 同级的 ## 标题，避免按 Markdown 层级全部挂进「上下文与互动规则」小节。
   const systemPromptPrefix: string =
     `${SYSTEM_PROMPT}\n\n${CHAT_INTERACTION_INSTRUCTION}\n\n` +
-    `${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
-    `${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
-    `${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
+    `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
+    `## 今天的状态\n${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
+    `## 当前时间\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
   const contents: Content[] = [{
     role: "user",
     parts: [
@@ -135,7 +139,7 @@ export async function callGemini(
         allFunctionsDisabled: customToolCalls >= MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
       }
     );
-    const systemPrompt: string = `${systemPromptPrefix}\n\n${googleSearchEnabled
+    const systemPrompt: string = `${systemPromptPrefix}\n\n## 联网查证\n${googleSearchEnabled
       ? buildWebSearchInstruction(remainingSearchCalls)
       : WEB_SEARCH_EXHAUSTED_INSTRUCTION}`;
     const result: GeminiRequestResult = await requestGeminiResult(

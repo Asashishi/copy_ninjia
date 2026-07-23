@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
+import { allowedReactionEmojis } from "../cache/reactions";
 import { defaultReactionConfigCache } from "../cache/config";
 import { REACTIONS_CONFIG_PATH } from "../consts/paths";
-import { TELEGRAM_REACTION_EMOJIS, type ReactionEmoji } from "../consts/reactions";
+import type { ReactionEmoji } from "../consts/reactions";
 import { hasExactKeys, isNonEmptyStringArray, isPlainRecord } from "../libs/runtimeConfig";
 
 export type { ReactionEmoji } from "../consts/reactions";
@@ -9,8 +10,6 @@ export type { ReactionEmoji } from "../consts/reactions";
 export interface ReactionConfig {
   readonly emotionKeywords: Readonly<Partial<Record<ReactionEmoji, readonly string[]>>>;
 }
-
-const allowedReactionEmojis: ReadonlySet<string> = new Set(TELEGRAM_REACTION_EMOJIS);
 
 /** 严格解码 reactions.json；非法 Telegram 标准反应在启动阶段直接报错。 */
 export function parseReactionConfig(value: unknown): ReactionConfig {

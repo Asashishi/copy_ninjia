@@ -21,7 +21,7 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
   for (let index: number = 1; index <= AI_MEMORY_MAX_CHATS + 1; index++) {
     memories.set(-index, JSON.stringify({
       version: 1,
-      buffer: [{ id: index, firstName: "用户", lastName: "", text: `消息${index}`, at: "2026/07/18 00:00:00" }],
+      buffer: [{ messageId: index, id: index, firstName: "用户", lastName: "", text: `消息${index}`, at: "2026/07/18 00:00:00" }],
       summaries: [],
       pendingSummary: null,
       savedAt: index,
@@ -35,6 +35,7 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
 
   replyCache.replyGenerations.set(-2, 7);
   pushBufferedMessage(-999, {
+    messageId: 999,
     id: 999,
     firstName: "新用户",
     lastName: "",
@@ -56,7 +57,7 @@ test("语法坏掉或形状不符的持久化快照都按防御性丢弃，不�
     [-4, JSON.stringify(null)],
     [-5, JSON.stringify({
       version: 1,
-      buffer: [{ id: 5, firstName: "用户", lastName: "", text: "消息", at: "2026/07/18 00:00:00" }],
+      buffer: [{ messageId: 5, id: 5, firstName: "用户", lastName: "", text: "消息", at: "2026/07/18 00:00:00" }],
       summaries: [],
       pendingSummary: null,
       savedAt: 5,
@@ -72,7 +73,7 @@ test("hydrate 以快照 savedAt 播种 chatLastActivityTimes 供 LRU 淘汰排�
   const memories = new Map<number, string>([
     [-42, JSON.stringify({
       version: 1,
-      buffer: [{ id: 1, firstName: "用户", lastName: "", text: "消息", at: "2026/07/18 00:00:00" }],
+      buffer: [{ messageId: 1, id: 1, firstName: "用户", lastName: "", text: "消息", at: "2026/07/18 00:00:00" }],
       summaries: [],
       pendingSummary: null,
       savedAt: 1752800000000,

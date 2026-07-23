@@ -15,14 +15,20 @@
  * 不一致（其余两类原本就显式用东京时区计算）。
  */
 
-import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types/diskIO";
+import type { DayFileState } from "../../types/diskIO/storage";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO/appendOnly";
 import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
-import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
+import {
+  DayFileFormatError,
+  appendToDayFile,
+  openDayFile,
+  serializeDayFileEntry,
+} from "./appendOnlyDayFile";
 
 interface LogRecord {
   level: string;
@@ -48,6 +54,51 @@ const TOKYO_DATETIME_MS_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat
   fractionalSecondDigits: 3,
   hour12: false,
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function assertLogFileSchema(path: string, parsed: unknown): void {
+  if (!isRecord(parsed)) {
+    throw new DayFileFormatError(path, "must contain a top-level JSON object.");
+  }
+  for (const [key, value] of Object.entries(parsed)) {
+    if (
+      !isRecord(value) ||
+      typeof value.level !== "string" ||
+      typeof value.message !== "string" ||
+      (value.args !== undefined && !Array.isArray(value.args))
+    ) {
+      throw new DayFileFormatError(path, `contains an invalid log record for key ${key}.`);
+    }
+  }
+}
+
+/**
+ * 接管某日日志前校验领域 schema。可解析的错误结构在通用格式化发生前就拒绝，
+ * 保证原字节不变；截断内容则先由 openDayFile 修复，再校验修复结果。两次完整
+ * 读取最多发生在启动/跨日打开时，追加热路径不调用本函数。
+ */
+function openLogDay(day: string): DayFileState {
+  const path: string = join(LOGS_DIR, `${day}.json`);
+  let schemaValidated: boolean = false;
+  if (existsSync(path)) {
+    const content: string = readFileSync(path, "utf8");
+    try {
+      const parsed: unknown = JSON.parse(content);
+      assertLogFileSchema(path, parsed);
+      schemaValidated = true;
+    } catch (error: unknown) {
+      if (!(error instanceof SyntaxError)) throw error;
+    }
+  }
+  const state: DayFileState = openDayFile(LOGS_DIR, day);
+  if (!schemaValidated && existsSync(path)) {
+    assertLogFileSchema(path, JSON.parse(readFileSync(path, "utf8")));
+  }
+  return state;
+}
 
 /** 毫秒时间戳 → 东京时区的「YYYY-MM-DD HH:mm:ss.SSS」，用作落盘日志条目的
  *  key（人类可读部分；同一毫秒内的多条日志靠后缀的 UUID 区分，见
@@ -104,7 +155,7 @@ function writeDay(day: string, texts: string[]): boolean {
   if (texts.length === 0) return true;
   try {
     if (loggerFileState.current?.day !== day) {
-      loggerFileState.current = openDayFile(LOGS_DIR, day);
+      loggerFileState.current = openLogDay(day);
       cleanupOldLogs();
     }
     appendToDayFile({
@@ -113,7 +164,7 @@ function writeDay(day: string, texts: string[]): boolean {
       chunk: texts.join(",\n"),
     });
     return true;
-  } catch (err) {
+  } catch (err: unknown) {
     // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
     // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。
     loggerFileState.current = null;
@@ -127,6 +178,9 @@ export function initLogFiles(): void {
   resetLogCache();
   mkdirSync(LOGS_DIR, { recursive: true });
   cleanupStaleTmpFiles();
+  // 当前日文件必须在 Worker 宣称可接收消息前完成结构校验；只在启动扫描一次，
+  // 后续 appendToDayFile 仍按已缓存的字节 offset 做 O(1) 追记。
+  loggerFileState.current = openLogDay(dayKey(Date.now()));
   cleanupOldLogs();
 }
 

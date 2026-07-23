@@ -6,7 +6,14 @@
 
 /** 回复标注模板。target 是被回复者的完整身份段（[message_id:]/[id:] 等标记
  * 加显示名）；forwardTag/quote 传空串表示省略对应段。 */
-export function replyTagTemplate(parts: { target: string; text: string; forwardTag: string; quote: string }): string {
+export interface ReplyTagTemplateParams {
+  target: string;
+  text: string;
+  forwardTag: string;
+  quote: string;
+}
+
+export function replyTagTemplate(parts: ReplyTagTemplateParams): string {
   return `（回复 ${parts.target} 的消息${parts.forwardTag}：「${parts.text}」${parts.quote}）`;
 }
 
@@ -37,6 +44,14 @@ export function replyChainTemplate(triggerMessageId: number, links: string[]): s
   );
 }
 
+/** 转录行基础格式的占位形态。逐字转录段首的格式说明（ai/utils/chatTranscript.ts
+ * 的 buildTieredVerbatimTranscript）与压缩摘要系统提示（本目录 memory.ts 的
+ * SUMMARY_SYSTEM_PROMPT）共用同一字符串，防止行格式与说明各改各的漂移；
+ * 实际行的拼装见 ai/utils/chatTranscript.ts 的 formatBufferedMessageLine。 */
+export const TRANSCRIPT_LINE_FORMAT_HINT: string =
+  "「[年/月/日 时:分:秒] [message_id:消息ID] [id:用户ID] [username:@公开用户名] 名字：内容」";
+
 /** 说明文案里引用的两种标注占位形态。 */
 export const REPLY_TAG_HINT: string = replyTagTemplate({ target: "[message_id:…] …", text: "…", forwardTag: "", quote: "" });
+/** 说明文案引用的转发来源占位形态。 */
 export const FORWARD_TAG_HINT: string = forwardTagTemplate("…");

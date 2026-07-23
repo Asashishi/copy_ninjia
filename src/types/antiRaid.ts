@@ -111,13 +111,13 @@ export interface VerificationSnapshot {
   generation: number;
   /** 同一代际、同一 key 内单调递增的状态修订号。 */
   revision: number;
-  /** 缺失表示旧版 pending；终态必须在落盘确认后才能执行外部处置。 */
-  phase?: "pending" | "checkingInviter" | "expelling";
+  /** 当前持久化阶段；终态必须在落盘确认后才能执行外部处置。 */
+  phase: "pending" | "checkingInviter" | "expelling";
   label: string;
   isBot: boolean;
   messageIds: number[];
-  /** 最近一分钟的待验证成员消息时间戳；旧版当日记录缺失时按空窗口恢复。 */
-  trackedMessageTimes?: number[];
+  /** 最近一分钟的待验证成员消息时间戳。 */
+  trackedMessageTimes: number[];
   invitedBy?: number;
   reminderMessageId?: number;
   replyReminderMessageId?: number;

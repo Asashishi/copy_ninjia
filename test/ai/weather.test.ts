@@ -14,7 +14,11 @@ mock.module("../../src/infra/logger", () => ({
   },
 }));
 
-const { currentTokyoWeather, startWeatherRefreshLoop } = await import("../../src/ai/weather");
+const {
+  currentTokyoWeather,
+  startWeatherRefreshLoop,
+  stopWeatherRefreshLoop,
+} = await import("../../src/ai/weather");
 const { weatherCache } = await import("../../src/cache/weather");
 const { WEATHER_API_URL, WEATHER_CODE_DESCRIPTIONS, WEATHER_REFRESH_INTERVAL_MS } = await import("../../src/consts/weather");
 
@@ -36,6 +40,7 @@ function validWeather(currentCode: number = 0, todayCode: number = 3): object {
 }
 
 beforeEach(() => {
+  stopWeatherRefreshLoop();
   responses.length = 0;
   fetchJsonWithTimeout.mockClear();
   loggerError.mockClear();
@@ -51,7 +56,7 @@ describe("Open-Meteo 适配层", () => {
     globalThis.setInterval = ((callback: (...args: unknown[]) => void, delay: number) => {
       expect(delay).toBe(WEATHER_REFRESH_INTERVAL_MS);
       intervalCallback = callback;
-      return 1 as unknown as ReturnType<typeof setInterval>;
+      return { unref(): void {} } as unknown as ReturnType<typeof setInterval>;
     }) as typeof setInterval;
     try {
       startWeatherRefreshLoop();
@@ -90,7 +95,7 @@ describe("Open-Meteo 适配层", () => {
     weatherCache.result = previous;
     responses.push(null);
     const originalSetInterval: typeof setInterval = globalThis.setInterval;
-    globalThis.setInterval = (() => 1 as unknown as ReturnType<typeof setInterval>) as typeof setInterval;
+    globalThis.setInterval = (() => ({ unref(): void {} }) as unknown as ReturnType<typeof setInterval>) as typeof setInterval;
     try {
       startWeatherRefreshLoop();
       await flushRefresh();
@@ -98,6 +103,7 @@ describe("Open-Meteo 适配层", () => {
       expect(loggerError).not.toHaveBeenCalled();
 
       responses.push({ current: { temperature_2m: "hot" }, daily: {} });
+      stopWeatherRefreshLoop();
       startWeatherRefreshLoop();
       await flushRefresh();
       expect(currentTokyoWeather()).toBe(previous);

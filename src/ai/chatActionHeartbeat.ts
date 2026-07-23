@@ -49,17 +49,19 @@ function sendChatActionPhase(
  * 连续失败计数，达到阈值才停表；链上的执行函数自身不抛异常，发送层报错
  * 按失败计。导出仅为可测试性（挂起/合并的时序靠直接驱动才能确定性复现）。
  */
+export interface PumpChatActionParams {
+  chatId: number;
+  entry: ChatActionHeartbeatEntry;
+  deduplicate: boolean;
+  dependencies: ChatActionHeartbeatDependencies;
+}
+
 export function pumpChatAction({
   chatId,
   entry,
   deduplicate,
   dependencies,
-}: {
-  chatId: number;
-  entry: ChatActionHeartbeatEntry;
-  deduplicate: boolean;
-  dependencies: ChatActionHeartbeatDependencies;
-}): void {
+}: PumpChatActionParams): void {
   if (entry.pendingSend) {
     entry.pendingSendDeduplicate &&= deduplicate;
     return;

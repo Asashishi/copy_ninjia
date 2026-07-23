@@ -57,6 +57,7 @@ function pendingRecord(userId: number, generation: number): VerificationSnapshot
     userId,
     generation,
     revision: 1,
+    phase: "pending",
     label: `User ${userId}`,
     isBot: false,
     messageIds: [],

@@ -16,6 +16,7 @@ import {
 import { BOT_TOKEN } from "../infra/config";
 import { flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO } from "../infra/diskIO";
 import { logger } from "../infra/logger";
+import { setBusinessWorkerFatalHandler } from "../infra/workerSupervisor";
 import { cleanupOrphanedTempFiles } from "../infra/storage/cleanup";
 import { acquireSingleInstanceLock, releaseSingleInstanceLock } from "../infra/storage/instanceLock";
 import {
@@ -82,6 +83,7 @@ export const lifecycleDependencies = {
   quiesceReactionQueue,
   quiesceTranslate,
   seedSenderCache,
+  setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
   terminateAiChat,

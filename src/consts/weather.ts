@@ -1,9 +1,13 @@
 /** 东京天气服务（src/ai/weather.ts）的调参常量。天气数据由 get_tokyo_weather
  *  工具与心情系统（ai/mood.ts）共用，两边都只读缓存，不各自发请求。 */
 
+/** Open-Meteo 请求使用的东京纬度。 */
 export const TOKYO_LATITUDE: number = 35.6895;
+/** Open-Meteo 请求使用的东京经度。 */
 export const TOKYO_LONGITUDE: number = 139.6917;
+/** 东京天气请求使用的 Open-Meteo 公开端点。 */
 export const WEATHER_API_URL: string = "https://api.open-meteo.com/v1/forecast";
+/** 单次 Open-Meteo 请求的超时预算。 */
 export const WEATHER_REQUEST_TIMEOUT_MS: number = 10_000;
 
 /** 后台定时刷新东京天气缓存的间隔：每小时一次，由 ai/weather.ts 的

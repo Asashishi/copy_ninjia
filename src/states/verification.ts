@@ -4,10 +4,15 @@ import type {
   ExpelSnapshot,
   JoinEvent,
   PendingState,
+  ReminderLandedEvent,
+  TimeoutInviterVerdictEvent,
+  TrackedMessageEvent,
+  VerificationCallbackEvent,
   VerificationEffect,
   VerificationEvent,
   VerificationState,
   VerificationTransition,
+  VerifyTimeoutEvent,
 } from "../types/states/verification";
 
 /**
@@ -175,7 +180,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
 
 function handleTrackedMessage(
   state: VerificationState | undefined,
-  event: { messageId: number; inCommentThread: boolean; now: number }
+  event: TrackedMessageEvent
 ): VerificationTransition {
   // 占位记录不是真的在等验证；无记录的消息与验证无关。
   if (state?.kind !== "pending") return { next: state, effects: [] };
@@ -234,7 +239,7 @@ function handleTrackedMessage(
 
 function handleCallback(
   state: VerificationState | undefined,
-  event: { callbackQueryId: string; isSelf: boolean; fromIsPrivileged: boolean; fromLabel: string }
+  event: VerificationCallbackEvent
 ): VerificationTransition {
   const stateIsBot: boolean = state?.kind === "checkingInviter" || state?.kind === "expelling"
     ? state.snapshot.isBot
@@ -274,7 +279,7 @@ function handleCallback(
 
 function handleVerifyTimeout(
   state: VerificationState | undefined,
-  event: { now: number }
+  event: VerifyTimeoutEvent
 ): VerificationTransition {
   if (state?.kind !== "pending") return { next: state, effects: [] };
 
@@ -308,7 +313,7 @@ function handleVerifyTimeout(
 
 function handleTimeoutInviterVerdict(
   state: VerificationState | undefined,
-  event: { inviterIsAdmin: boolean }
+  event: TimeoutInviterVerdictEvent
 ): VerificationTransition {
   if (state?.kind !== "checkingInviter") return { next: state, effects: [] };
   const snapshot: ExpelSnapshot = state.snapshot;
@@ -328,7 +333,7 @@ function handleTimeoutInviterVerdict(
 
 function handleReminderLanded(
   state: VerificationState | undefined,
-  event: { reminderKind: "original" | "reply"; messageId: number; now: number }
+  event: ReminderLandedEvent
 ): VerificationTransition {
   // 解释器只在状态对象未被替换时才投递本事件，这里的防御分支正常不可达。
   if (state?.kind !== "pending") {

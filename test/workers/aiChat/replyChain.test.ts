@@ -68,11 +68,6 @@ describe("回复链索引维护", () => {
     expect(lookupBufferedMessage(CHAT_ID, 999)).toBeUndefined();
   });
 
-  test("没有 message_id 的旧条目不入索引", () => {
-    pushBufferedMessage(CHAT_ID, { id: 11, firstName: "User11", lastName: "", text: "旧快照", at: "" });
-    expect(chatReplyChainIndexes.has(CHAT_ID)).toBe(false);
-  });
-
   test("轮换把移出热区的键删掉，仍热的保留", () => {
     for (let messageId: number = 1; messageId <= VERBATIM_CONTEXT_MAX; messageId++) {
       pushBufferedMessage(CHAT_ID, message(messageId, `消息-${messageId}`));

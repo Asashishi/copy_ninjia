@@ -12,7 +12,7 @@ function drawLuckTier(roll: number): LuckTier {
   return LUCK_TIERS[LUCK_TIERS.length - 1]!;
 }
 
-function rollFortunePercent([min, max]: [number, number], fraction: number): number {
+function rollFortunePercent([min, max]: readonly [number, number], fraction: number): number {
   const raw: number = min + fraction * (max - min);
   return Math.round(raw * 100) / 100;
 }

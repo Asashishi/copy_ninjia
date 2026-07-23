@@ -48,25 +48,25 @@ function drainReplyQueue(chatId: number): void {
  * 接纳一次 AI 回复触发。此函数同步完成并发准入与排队决策，真正的生成发送
  * 以 fire-and-forget 方式执行，不阻塞 Worker 继续分发消息。
  */
-export function generateAndSendReply(
-  {
-    chatId,
-    triggerSenderId,
-    replyToMessageId,
-    imageGenerationRequested,
-    imageGenerationReference,
-    isRandomTrigger,
-    mediaComment,
-  }: {
-    chatId: number;
-    triggerSenderId: number;
-    replyToMessageId: number;
-    imageGenerationRequested: boolean;
-    imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
-    isRandomTrigger: boolean;
-    mediaComment?: MediaCommentContext;
-  }
-): void {
+export interface GenerateAndSendReplyParams {
+  chatId: number;
+  triggerSenderId: number;
+  replyToMessageId: number;
+  imageGenerationRequested: boolean;
+  imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
+  isRandomTrigger: boolean;
+  mediaComment?: MediaCommentContext;
+}
+
+export function generateAndSendReply({
+  chatId,
+  triggerSenderId,
+  replyToMessageId,
+  imageGenerationRequested,
+  imageGenerationReference,
+  isRandomTrigger,
+  mediaComment,
+}: GenerateAndSendReplyParams): void {
   const generation: number = currentReplyGeneration(chatId);
   if (!botInfoState.current) {
     logger.error("aiChatWorker received trigger before init message; dropping.");

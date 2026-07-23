@@ -101,6 +101,32 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(existsSync(join(luckDir, `${DAY}.json.corrupt`))).toBe(false);
   });
 
+  test("启动恢复遇到不兼容结构时阻止启动，不改写当天文件或清理旧日", () => {
+    mkdirSync(luckDir, { recursive: true });
+    const todayPath: string = join(luckDir, `${DAY}.json`);
+    const stalePath: string = join(luckDir, "2026-07-15.json");
+    const original: string = "[{\"bad\":\"shape\"}]";
+    writeFileSync(todayPath, original);
+    writeFileSync(stalePath, "{}");
+
+    expect(() => recoverLuckDay(DAY)).toThrow("must contain a top-level JSON object");
+    expect(readFileSync(todayPath, "utf8")).toBe(original);
+    expect(existsSync(`${todayPath}.corrupt`)).toBe(false);
+    expect(existsSync(stalePath)).toBe(true);
+  });
+
+  test("启动恢复遇到非法运势记录时阻止启动并保持原文件不变", () => {
+    mkdirSync(luckDir, { recursive: true });
+    const path: string = join(luckDir, `${DAY}.json`);
+    const original: string = JSON.stringify({
+      "111": { label: 123, fortunePercent: 90.12 },
+    }, null, 2);
+    writeFileSync(path, original);
+
+    expect(() => recoverLuckDay(DAY)).toThrow("contains an invalid luck record for key 111");
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
   test("追加失败：缓冲保留、定时器重排、文件探测状态重置；故障排除后重试成功且不丢条目", () => {
     // 把当天文件位置占成一个目录，让 openDayFile 的 readFileSync 抛 EISDIR
     mkdirSync(join(luckDir, `${DAY}.json`), { recursive: true });

@@ -9,6 +9,8 @@ import type { LinkedQueue } from "../libs/linkedQueue";
  */
 export const userReplyTriggerTimes: Map<string, number> = new Map();
 
+/** 单群随机 AI 触发概率所需的最近活跃窗口。 */
+/** 单群随机 AI 触发概率所需的最近活跃窗口。 */
 export interface AiReplyActivityEntry {
   /** 只保留足以计算 1/10 下限的最新消息时间戳。 */
   timestamps: LinkedQueue<number>;

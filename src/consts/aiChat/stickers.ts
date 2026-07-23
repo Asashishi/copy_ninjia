@@ -12,6 +12,7 @@ export const MAX_STICKER_PACK_VIEWS_PER_REPLY: number = MAX_CONFIGURED_STICKER_P
 
 /** view_sticker_pack 展示「正在选择贴纸」的基础停顿和随机抖动。 */
 export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
+/** 贴纸选择停顿额外增加的随机时间上界。 */
 export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 
 /** 贴纸目录单次 AI 调用失败后的跨请求退避序列。 */
@@ -19,6 +20,9 @@ export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_00
 
 /** 整包简介与工具意图的领域约束。 */
 export const STICKER_PACK_SUMMARY_MAX_CHARS: number = 200;
+/** 整包简介生成请求允许的最大输出 token。 */
 export const STICKER_PACK_SUMMARY_MAX_TOKENS: number = 4096;
+/** 整包简介尚未生成时提供给模型的固定占位。 */
 export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成中，可进包内查看具体贴纸）";
+/** 模型选择贴纸意图文本的最大字符数。 */
 export const STICKER_INTENT_MAX_CHARS: number = 80;

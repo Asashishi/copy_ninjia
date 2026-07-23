@@ -11,15 +11,17 @@ type LockdownPermissionsApi = Pick<Api, "getChat" | "setChatPermissions">;
  * 该边界同时供 Worker 正常恢复和主线程 onGiveUp 紧急恢复使用，保证两条
  * 路径不会逐渐产生不同的权限合并语义。
  */
+export interface RestoreLockdownInvitePermissionParams {
+  chatId: number;
+  originalPermissions: ChatPermissions;
+  api: LockdownPermissionsApi;
+}
+
 export async function restoreLockdownInvitePermission({
   chatId,
   originalPermissions,
   api,
-}: {
-  chatId: number;
-  originalPermissions: ChatPermissions;
-  api: LockdownPermissionsApi;
-}): Promise<void> {
+}: RestoreLockdownInvitePermissionParams): Promise<void> {
   const chat = await api.getChat(chatId);
   if (!("permissions" in chat) || !chat.permissions) {
     throw new Error(`Chat ${chatId} getChat response missing permissions`);

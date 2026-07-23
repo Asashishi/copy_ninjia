@@ -1,7 +1,5 @@
 import type { ChatState } from "../types/chatState";
-import { QUIET_MAX_MINUTES } from "../consts/commands";
-
-const QUIET_MAX_DURATION_MS: number = QUIET_MAX_MINUTES * 60_000;
+import { QUIET_MAX_DURATION_MS } from "../consts/commands";
 
 /** 墙钟回拨时拒绝把静默期延长到配置上限之外。 */
 export function isQuietUntilActive(quietUntil: number | undefined, now: number = Date.now()): boolean {

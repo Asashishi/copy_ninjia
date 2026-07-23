@@ -1,4 +1,6 @@
-import { STATE_FLUSH_TIMEOUT_MS, type FlushResult } from "../../consts/lifecycle";
+import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
+import type { FlushResult } from "../../types/lifecycle";
+import { chatStates, globalCopyState, stateStoreHolder } from "../../cache/storage";
 import { CORRUPT_FILE_SUFFIX, STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
 import { DEFAULT_CHAT_STATE, STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
 import { atomicWriteText, durableRename } from "../../libs/atomicFile";
@@ -320,9 +322,10 @@ export class StateStore {
   }
 }
 
-const stateStore = new StateStore();
-const chatStates: Map<number, ChatState> = new Map();
-const globalCopyState: GlobalCopyState = { copiedUser: null };
+function sharedStateStore(): StateStore {
+  stateStoreHolder.current ??= new StateStore();
+  return stateStoreHolder.current;
+}
 
 export function getGlobalCopyState(): GlobalCopyState {
   return globalCopyState;
@@ -352,7 +355,7 @@ function adoptCopyTarget(copiedUser: CachedUser, copyMode: CopyMode | undefined,
 
 export async function loadState(): Promise<void> {
   try {
-    const decoded: StateFileSchema | null = await stateStore.load();
+    const decoded: StateFileSchema | null = await sharedStateStore().load();
     if (decoded === null) return;
     if (decoded.globalCopy.lastCopyTime !== undefined) {
       globalCopyState.lastCopyTime = decoded.globalCopy.lastCopyTime;
@@ -384,7 +387,7 @@ function currentStateSnapshot(): StateFileSchema {
 }
 
 export function saveState(): Promise<void> {
-  return stateStore.save(currentStateSnapshot());
+  return sharedStateStore().save(currentStateSnapshot());
 }
 
 /**
@@ -393,7 +396,7 @@ export function saveState(): Promise<void> {
  */
 export async function persistAuthoritativeState(context: string): Promise<void> {
   try {
-    await stateStore.save(currentStateSnapshot());
+    await sharedStateStore().save(currentStateSnapshot());
   } catch (error: unknown) {
     const reason: Error = error instanceof Error ? error : new Error(String(error));
     throw new Error(`Failed to persist authoritative state update (${context}): ${reason.message}`, { cause: error });
@@ -401,11 +404,11 @@ export async function persistAuthoritativeState(context: string): Promise<void> 
 }
 
 export function setStatePersistenceFatalHandler(handler: ((error: Error) => void) | undefined): void {
-  stateStore.setFatalHandler(handler);
+  sharedStateStore().setFatalHandler(handler);
 }
 
 export function saveStateInBackground(context: string): void {
-  void stateStore.save(currentStateSnapshot(), { waitForPersistence: false }).catch((error: unknown) => {
+  void sharedStateStore().save(currentStateSnapshot(), { waitForPersistence: false }).catch((error: unknown) => {
     logger.error(`Failed to persist background state update (${context}):`, error);
   });
 }
@@ -414,7 +417,7 @@ export function flushStateToDisk(
   timeoutMs: number = STATE_FLUSH_TIMEOUT_MS,
   quiesce: boolean = false
 ): Promise<FlushResult> {
-  return stateStore.flush(timeoutMs, quiesce);
+  return sharedStateStore().flush(timeoutMs, quiesce);
 }
 
 export function getChatState(chatId: number): ChatState {

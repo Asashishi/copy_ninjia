@@ -87,6 +87,15 @@ export interface VerificationDeleteDiskMessage {
   revision: number;
 }
 
+/** 运行时恢复窗口允许暂存并按序重放的业务持久化消息。 */
+export type DiskBusinessMessage =
+  | AiMemoryDiskMessage
+  | AiMemoryDeleteDiskMessage
+  | StickerCatalogDiskMessage
+  | LuckDrawDiskMessage
+  | VerificationUpsertDiskMessage
+  | VerificationDeleteDiskMessage;
+
 /** diskIOWorker 短窗口内按 key 合并后的最终变化。 */
 export interface VerificationFileChange {
   chatId: number;

@@ -10,22 +10,23 @@ import type { LuckTier } from "../types/luckChallenge";
  * 唯独「尚可」横跨 50（45~55）——半吉半凶的档位，行大运/倒大霉谁占上风本就该
  * 各半，浮动出来偶尔翻面是应有之义。
  */
-export const LUCK_TIERS: LuckTier[] = [
-  { label: "大吉", weight: 7, comment: "简直要飞升啦，杂鱼快让本天才蹭蹭欧气～♡", fortunePercentRange: [88, 97] },
-  { label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercentRange: [72, 82] },
-  { label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercentRange: [58, 67] },
-  { label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercentRange: [45, 55] },
-  { label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercentRange: [33, 42] },
-  { label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercentRange: [18, 28] },
-  { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: [3, 12] },
-];
+export const LUCK_TIERS: readonly LuckTier[] = Object.freeze([
+  Object.freeze({ label: "大吉", weight: 7, comment: "简直要飞升啦，杂鱼快让本天才蹭蹭欧气～♡", fortunePercentRange: Object.freeze([88, 97] as const) }),
+  Object.freeze({ label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercentRange: Object.freeze([72, 82] as const) }),
+  Object.freeze({ label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercentRange: Object.freeze([58, 67] as const) }),
+  Object.freeze({ label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercentRange: Object.freeze([45, 55] as const) }),
+  Object.freeze({ label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercentRange: Object.freeze([33, 42] as const) }),
+  Object.freeze({ label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercentRange: Object.freeze([18, 28] as const) }),
+  Object.freeze({ label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: Object.freeze([3, 12] as const) }),
+]);
 
 // weight 必须凑满 100（drawLuckTier 按 1~100 掷骰累加匹配）：凑不满 100，
 // 最后一档会因兜底 return 吃到多余权重；超过 100，末尾档位会被挤到摇不出——
 // 加载期直接炸掉，不留一个只有注释约束、没人真正校验的隐性契约。
-const luckTierWeightSum: number = LUCK_TIERS.reduce((sum, tier) => sum + tier.weight, 0);
-if (luckTierWeightSum !== 100) {
-  throw new Error(`LUCK_TIERS weights must sum to 100, got ${luckTierWeightSum}`);
+/** 启动期校验使用的吉凶档总权重，固定必须为 100。 */
+const LUCK_TIER_WEIGHT_SUM: number = LUCK_TIERS.reduce((sum, tier) => sum + tier.weight, 0);
+if (LUCK_TIER_WEIGHT_SUM !== 100) {
+  throw new Error(`LUCK_TIERS weights must sum to 100, got ${LUCK_TIER_WEIGHT_SUM}`);
 }
 
 /**
@@ -35,6 +36,7 @@ if (luckTierWeightSum !== 100) {
  * 几秒内就该有结果的内联查询没有意义。
  */
 export const RATE_LIMIT_MAX_CALLS_PER_WINDOW: number = 300;
+/** 全局内联查询滑动限频窗口时长。 */
 export const RATE_LIMIT_WINDOW_MS: number = 90_000;
 
 /**
@@ -45,6 +47,7 @@ export const RATE_LIMIT_WINDOW_MS: number = 90_000;
  * 如果发现缩略图时有时无，再考虑换成稳定的图床或自建静态资源。
  */
 export const FORTUNE_THUMBNAIL_URL: string = "https://drive.google.com/uc?export=view&id=1o4wCIRE3XGSI7-MjXYWfvcPgR3QjClk-";
+/** 概率论结果使用的 Telegram 内联缩略图直链。 */
 export const PROBABILITY_THUMBNAIL_URL: string = "https://drive.google.com/uc?export=view&id=1o4wCIRE3XGSI7-MjXYWfvcPgR3QjClk-";
 
 /** "同款问题"按钮上展示的所求事项摘要，超过这个字符数就截断并加 "..."。 */
@@ -66,4 +69,4 @@ export const LUCK_RESULT_IDS: ReadonlySet<string> = new Set([
  * ensureLuckCacheFreshForToday），单日内没有其它清理时机；需要一个真正
  * 生效的上限防止忙碌的一天里被打字预览堆到很大。签名回执（libs/luckReceipt.ts）
  * 是自描述验签，不占用任何反向索引，不受此上限约束。 */
-export const PENDING_LUCK_CACHE_MAX: number = 15000;
+export const PENDING_LUCK_CACHE_MAX: number = 15_000;

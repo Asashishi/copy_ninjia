@@ -3,21 +3,24 @@ import type { ChatPermissions } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
-import { joinWindows, lockdownApiChains, lockdownEntries } from "../../cache/antiRaid/lockdown";
+import {
+  joinWindows,
+  lastLockdownIntentId,
+  lockdownApiChains,
+  lockdownApiRunner,
+  lockdownEntries,
+} from "../../cache/antiRaid/lockdown";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { AdoptableLockdown, LockdownEvent, LockdownPersistedMessage, UnlockEvent } from "../../types/antiRaid";
 import { transitionLockdown } from "../../states/lockdown";
 import type { LockdownEffect, LockdownMachineEvent } from "../../types/states/lockdown";
-import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 
 declare const self: Worker;
 
-let lastLockdownIntentId: number = 0;
-
 function nextLockdownIntentId(): number {
-  lastLockdownIntentId = Math.max(Date.now(), lastLockdownIntentId + 1);
-  return lastLockdownIntentId;
+  lastLockdownIntentId.current = Math.max(Date.now(), lastLockdownIntentId.current + 1);
+  return lastLockdownIntentId.current;
 }
 
 /**
@@ -175,8 +178,6 @@ function restrictedPermissions(originalPermissions: ChatPermissions): ChatPermis
  * restoreResult 分支的类头注释）。链的机制见 libs/keyedSerialTaskRunner.ts；
  * task 自身兜错，链永不因此中断。
  */
-const lockdownApiRunner = createKeyedSerialTaskRunner(lockdownApiChains);
-
 function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
   void lockdownApiRunner.run(chatId, task);
 }
@@ -315,6 +316,18 @@ export function retractJoin(chatId: number, joinedAt: number): void {
   const window = joinWindows.get(chatId);
   if (!window) return;
   window.timestamps.removeValue(joinedAt);
+}
+
+/** Worker 停止时清除全部 lockdown timer、滑窗和串行链；主线程镜像负责重建。 */
+export function stopLockdownRuntime(): void {
+  for (const window of joinWindows.values()) clearTimeout(window.resetTimeout);
+  for (const entry of lockdownEntries.values()) {
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+  }
+  joinWindows.clear();
+  lockdownEntries.clear();
+  lockdownApiChains.clear();
+  lastLockdownIntentId.current = 0;
 }
 
 /** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid.ts）。 */

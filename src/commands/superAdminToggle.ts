@@ -16,6 +16,11 @@ export function isSuperAdmin(fromUser: User | undefined): boolean {
   return fromUser?.id === SUPER_ADMIN_USER_ID;
 }
 
+export interface SuperAdminToggleMessages {
+  rejection: (mockerLabel: string) => string;
+  usage: string;
+}
+
 /**
  * /ai_chat、/ja_copy（开关分支）、/init 共用的权限与参数校验：发起人必须是
  * SUPER_ADMIN_USER_ID 本人，且 ctx.match 必须是 enable/disable 之一。任一
@@ -24,7 +29,7 @@ export function isSuperAdmin(fromUser: User | undefined): boolean {
  */
 export async function resolveSuperAdminToggleArg(
   ctx: CommandContext<Context>,
-  messages: { rejection: (mockerLabel: string) => string; usage: string }
+  messages: SuperAdminToggleMessages
 ): Promise<"enable" | "disable" | undefined> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;

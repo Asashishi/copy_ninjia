@@ -24,8 +24,15 @@ import {
   WELCOME_AUTO_DELETE_MS,
 } from "../../consts/antiRaid/verification";
 import { lockdownEntries } from "../../cache/antiRaid/lockdown";
-import { verificationEntries, verificationGeneration, verificationRevisions } from "../../cache/antiRaid/verification";
+import {
+  reminderDeliveries,
+  threadCommentConfirmations,
+  verificationEntries,
+  verificationGeneration,
+  verificationRevisions,
+} from "../../cache/antiRaid/verification";
 import type { AdoptVerificationsMessage, AntiRaidMember, NewMemberMessage, TrackedChatMessage, VerificationDeleteEvent, VerificationPersistedMessage, VerificationSnapshot, VerificationUpsertEvent, VerifyCallbackMessage } from "../../types/antiRaid";
+import type { ReminderDelivery, ReminderKind, ThreadCommentConfirmation } from "../../types/antiRaid/internal";
 import { joinCreatesNewRecord, transitionVerification } from "../../states/verification";
 import type {
   ExpelSnapshot,
@@ -43,35 +50,6 @@ import { cachedChatHasLinkedChannel, fetchChatHasLinkedChannel } from "./linkedC
 import { recordJoin, retractJoin } from "./lockdownRuntime";
 
 declare const self: Worker;
-
-interface ThreadCommentConfirmation {
-  messageId: number;
-  observedAt: number;
-  expectedState: VerificationState | undefined;
-  boundToJoin: boolean;
-}
-
-/** 冷缓存楼中楼消息等待 getChat 明确确认；按成员保存以便迟到的 join 把检查
- * 绑定到刚创建的状态对象，后续离群/通过/重入都会因对象不一致而失效。 */
-const threadCommentConfirmations: Map<string, Set<ThreadCommentConfirmation>> = new Map();
-
-type ReminderKind = "original" | "reply";
-
-interface ReminderDelivery {
-  key: string;
-  chatId: number;
-  userId: number;
-  kind: ReminderKind;
-  text: string;
-  replyToMessageId: number | undefined;
-  expectedState: PendingState;
-  attempts: number;
-  timer: ReturnType<typeof setTimeout> | undefined;
-  inFlight: boolean;
-}
-
-/** 每名待验证成员最多一个提醒投递 owner；回复式提醒会取代原始提醒 owner。 */
-const reminderDeliveries: Map<string, ReminderDelivery> = new Map();
 
 /**
  * 入群验证状态机（src/states/verification.ts）的解释器：把每条投递翻译成
@@ -141,17 +119,19 @@ export function dispatchVerification(chatId: number, userId: number, event: Veri
   }
 }
 
+export interface VerificationSnapshotParams {
+  chatId: number;
+  userId: number;
+  state: PersistedVerificationState;
+  revision: number;
+}
+
 function verificationSnapshot({
   chatId,
   userId,
   state,
   revision,
-}: {
-  chatId: number;
-  userId: number;
-  state: PersistedVerificationState;
-  revision: number;
-}): VerificationSnapshot {
+}: VerificationSnapshotParams): VerificationSnapshot {
   const source: PendingState | ExpelSnapshot = state.kind === "pending" ? state : state.snapshot;
   return {
     chatId,
@@ -243,7 +223,7 @@ export function adoptVerifications(msg: AdoptVerificationsMessage): void {
           label: record.label,
           isBot: record.isBot,
           messageIds: [...record.messageIds],
-          trackedMessageTimes: (record.trackedMessageTimes ?? []).filter((timestamp) => timestamp > now - JOIN_WINDOW_MS),
+          trackedMessageTimes: record.trackedMessageTimes.filter((timestamp) => timestamp > now - JOIN_WINDOW_MS),
           invitedBy: record.invitedBy,
           reminderMessageId: record.reminderMessageId,
           replyReminderMessageId: record.replyReminderMessageId,
@@ -325,6 +305,9 @@ export function stopVerificationRuntime(): void {
   for (const entry of verificationEntries.values()) {
     if (entry.timer !== undefined) clearTimeout(entry.timer);
   }
+  verificationEntries.clear();
+  verificationRevisions.clear();
+  verificationGeneration.current = 0;
 }
 
 /** 按序执行一次转移返回的副作用（同一列表内先删后踢再通知的顺序有意义）。 */
@@ -546,19 +529,21 @@ function attemptReminderDelivery(delivery: ReminderDelivery): void {
   })();
 }
 
+export interface SendReminderMessageParams {
+  chatId: number;
+  userId: number;
+  reminderKind: ReminderKind;
+  text: string;
+  replyToMessageId: number | undefined;
+}
+
 function sendReminderMessage({
   chatId,
   userId,
   reminderKind,
   text,
   replyToMessageId,
-}: {
-  chatId: number;
-  userId: number;
-  reminderKind: ReminderKind;
-  text: string;
-  replyToMessageId: number | undefined;
-}): void {
+}: SendReminderMessageParams): void {
   const key: string = verificationKey(chatId, userId);
   const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
   if (captured?.kind !== "pending") return;
@@ -589,17 +574,19 @@ function sendReminderMessage({
  * （Bot API 不向机器人投递其他机器人的消息），提醒是说给群里的白名单
  * 用户听的：得有人代它点按钮作保。
  */
+export interface SendVerificationReminderParams {
+  chatId: number;
+  userId: number;
+  label: string;
+  isBot: boolean;
+}
+
 function sendVerificationReminder({
   chatId,
   userId,
   label,
   isBot,
-}: {
-  chatId: number;
-  userId: number;
-  label: string;
-  isBot: boolean;
-}): void {
+}: SendVerificationReminderParams): void {
   const reminderText: string = isBot
     ? `哦？谁把 ${label} 这个机器人拎进来的？铁疙瘩自己可点不了按钮——` +
       `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内得有白名单大人帮它点下面的按钮作保，` +
@@ -611,17 +598,19 @@ function sendVerificationReminder({
 }
 
 /** 把带验证按钮的提醒回复到待验证成员刚发出的普通群消息，确保 TA 收到通知。 */
+export interface SendReplyReminderParams {
+  chatId: number;
+  userId: number;
+  label: string;
+  targetMessageId: number;
+}
+
 function sendReplyReminder({
   chatId,
   userId,
   label,
   targetMessageId,
-}: {
-  chatId: number;
-  userId: number;
-  label: string;
-  targetMessageId: number;
-}): void {
+}: SendReplyReminderParams): void {
   const reminderText: string = `喂，${label}，话都说上了，下面的验证按钮倒是点一下啊杂鱼。` +
     `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
   sendReminderMessage({
@@ -676,17 +665,19 @@ function startAdminCheck(chatId: number, userId: number, actorId: number): void 
  * （与在途请求自动合并）。终态在核对期间继续占有该 userId；新一代入群会
  * 用新状态对象替换它，下面的对象同一性检查会让迟到结果安全放弃。
  */
+export interface RecheckInviterThenSettleParams {
+  chatId: number;
+  userId: number;
+  inviterId: number;
+  expectedState: VerificationTerminalState & { kind: "checkingInviter" };
+}
+
 async function recheckInviterThenSettle({
   chatId,
   userId,
   inviterId,
   expectedState,
-}: {
-  chatId: number;
-  userId: number;
-  inviterId: number;
-  expectedState: VerificationTerminalState & { kind: "checkingInviter" };
-}): Promise<void> {
+}: RecheckInviterThenSettleParams): Promise<void> {
   const cachedAdmins: Set<number> | undefined = freshAdminIds(chatId);
   let inviterIsAdmin: boolean = cachedAdmins?.has(inviterId) === true;
   if (cachedAdmins === undefined) {
@@ -708,19 +699,21 @@ async function recheckInviterThenSettle({
  * 踢人失败（典型是机器人缺封禁权限）时通知照发但如实说没踢动，且不自动
  * 删除——人还在群里，宣布"已踢出"就是当众撒谎。
  */
+export interface ExpelMemberParams {
+  chatId: number;
+  userId: number;
+  snapshot: ExpelSnapshot;
+  reason: "timeout" | "flood";
+  expectedState: VerificationTerminalState & { kind: "expelling" };
+}
+
 async function expelMember({
   chatId,
   userId,
   snapshot,
   reason,
   expectedState,
-}: {
-  chatId: number;
-  userId: number;
-  snapshot: ExpelSnapshot;
-  reason: "timeout" | "flood";
-  expectedState: VerificationTerminalState & { kind: "expelling" };
-}): Promise<boolean> {
+}: ExpelMemberParams): Promise<boolean> {
   const stillCurrent = (): boolean =>
     verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState;
   // 刷屏处置先踢人，阻止对方在删除排队期间继续制造消息；普通验证超时保留

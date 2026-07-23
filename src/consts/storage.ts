@@ -1,3 +1,4 @@
+import type { ChatPermissions } from "@grammyjs/types";
 import type { ChatState } from "../types/chatState";
 
 /** 状态持久化（src/infra/storage/stateStore.ts）的常量。文件路径见 paths.ts。 */
@@ -25,3 +26,23 @@ export const STATE_SAVE_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 5_000,
 
 /** 单份最新 state 快照的最大落盘尝试数；用尽后进入 fatal 停机路径。 */
 export const STATE_SAVE_MAX_ATTEMPTS: number = STATE_SAVE_RETRY_DELAYS_MS.length + 1;
+
+/** state.json 中允许持久化的 Telegram 群权限字段全集。 */
+export const CHAT_PERMISSION_KEYS: readonly (keyof ChatPermissions)[] = Object.freeze([
+  "can_send_messages",
+  "can_send_audios",
+  "can_send_documents",
+  "can_send_photos",
+  "can_send_videos",
+  "can_send_video_notes",
+  "can_send_voice_notes",
+  "can_send_polls",
+  "can_send_other_messages",
+  "can_add_web_page_previews",
+  "can_react_to_messages",
+  "can_change_info",
+  "can_invite_users",
+  "can_edit_tag",
+  "can_pin_messages",
+  "can_manage_topics",
+]);

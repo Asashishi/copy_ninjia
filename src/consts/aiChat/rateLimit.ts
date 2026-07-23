@@ -15,12 +15,15 @@ export const REPLY_GENERATIONS_MAX: number = 3500;
 
 /** 单群五分钟滚动窗口及其触发上限。 */
 export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
+/** 单群长窗口内允许启动的最大回复轮数。 */
 export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
 /** 同群在途回复轮数和直接触发等候队列上限。 */
 export const REPLY_ROUND_MAX_CONCURRENT: number = 3;
+/** 同群直接触发在并发满载时允许排队的最大数量。 */
 export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 /** 排队触发原文快照的截断上限。 */
 export const QUEUED_TRIGGER_SNIPPET_MAX_CHARS: number = 200;
 /** 限频提示本身的冷却与固定文案。 */
 export const RATE_LIMIT_NOTICE_COOLDOWN_MS: number = 60_000;
+/** 达到回复限频时发送给群聊的固定提示。 */
 export const RATE_LIMIT_NOTICE_TEXT: string = "你们太快了……本天才的嘴巴也是要休息的，这波先不接了，杂鱼们悠着点♡";

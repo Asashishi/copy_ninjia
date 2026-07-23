@@ -1,5 +1,5 @@
 import { avatarDrainWaiters, avatarUpdateRuntime, avatarUpdateState } from "../cache/copy/avatar";
-import type { FlushResult } from "../consts/lifecycle";
+import type { FlushResult } from "../types/lifecycle";
 import { logger } from "../infra/logger";
 import { copyUserProfilePhoto } from "../infra/telegram/avatar";
 import { sendMessage } from "../infra/telegram/actions";

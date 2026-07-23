@@ -16,7 +16,21 @@ import { resolveCommandTarget } from "./targetResolution";
 /** claimCopyCooldownOrReject 的返回值：拒绝时只有 rejected；放行时附带占用前
  * 的旧时间戳与本次占用写入的时间戳，供调用方在这次尝试最终没有真正开始复制时
  * 用 releaseCopyCooldownClaim 回滚。 */
-type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCopyTime: number | undefined; claimedAt: number };
+export interface CopyCommandUser {
+  id: number;
+}
+
+export interface RejectedCopyCooldownClaim {
+  rejected: true;
+}
+
+export interface GrantedCopyCooldownClaim {
+  rejected: false;
+  previousLastCopyTime: number | undefined;
+  claimedAt: number;
+}
+
+export type CopyCooldownClaim = RejectedCopyCooldownClaim | GrantedCopyCooldownClaim;
 
 /**
  * copy 类命令的公共冷却检查 + 原子占用。全局共享一份 lastCopyTime 冷却时钟
@@ -39,7 +53,7 @@ type CopyCooldownClaim = { rejected: true } | { rejected: false; previousLastCop
  * 继续，并需要在放弃这次尝试时把返回值传给 releaseCopyCooldownClaim 回滚。
  */
 export async function claimCopyCooldownOrReject(
-  fromUser: { id: number } | undefined,
+  fromUser: CopyCommandUser | undefined,
   chatId: number,
   messageId: number | undefined
 ): Promise<CopyCooldownClaim> {
@@ -80,7 +94,7 @@ export async function claimCopyCooldownOrReject(
  * 会被这个本不该存在的冷却错误地拒绝，直到它自然过期。
  */
 export async function releaseCopyCooldownClaim(
-  claim: { previousLastCopyTime: number | undefined; claimedAt: number }
+  claim: GrantedCopyCooldownClaim
 ): Promise<void> {
   const globalCopyState = getGlobalCopyState();
   if (globalCopyState.lastCopyTime === claim.claimedAt) {
@@ -117,16 +131,18 @@ export async function resolveCopyCommandTarget(
  * @param successText 头像更换成功时发送的文本。
  * @param failureText 头像更换失败时发送的文本。
  */
+export interface StealAvatarInBackgroundParams {
+  chatId: number;
+  target: CachedUser;
+  successText: string;
+  failureText: string;
+}
+
 export function stealAvatarInBackground({
   chatId,
   target,
   successText,
   failureText,
-}: {
-  chatId: number;
-  target: CachedUser;
-  successText: string;
-  failureText: string;
-}): void {
+}: StealAvatarInBackgroundParams): void {
   queueAvatarUpdate({ chatId, target, successText, failureText });
 }

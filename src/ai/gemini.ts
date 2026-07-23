@@ -18,11 +18,12 @@
  * 最终文本里，不会以 functionCall 形式抛回来。
  */
 
-import { ApiError, GoogleGenAI, HarmBlockThreshold, HarmCategory } from "@google/genai";
-import type { GenerateContentParameters, GenerateContentResponse, SafetySetting } from "@google/genai";
+import { ApiError, GoogleGenAI } from "@google/genai";
+import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
+import { geminiClientHolder } from "../cache/gemini";
 import { logger } from "../infra/logger";
 import { GEMINI_API_KEY } from "../infra/config";
-import { GEMINI_REQUEST_TIMEOUT_MS } from "../consts/aiChat/tools";
+import { GEMINI_REQUEST_TIMEOUT_MS, GEMINI_SAFETY_SETTINGS } from "../consts/aiChat/tools";
 import { abnormalFinishDiagnostic, extractFinishMessage, extractFinishReason, extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
 
 export type GeminiRequestResult =
@@ -36,23 +37,17 @@ export type GeminiRequestResult =
     response?: GenerateContentResponse;
   };
 
-/** 进程内唯一的 Gemini 客户端实例（timeout 是每次请求/每次重试各自的预算，
- *  不是所有重试共享一个硬顶，见 consts/aiChat.ts 的 GEMINI_REQUEST_TIMEOUT_MS 注释）。
- *  Worker 线程各自 import 本文件会各自拿到一份独立实例，符合现状——本来
- *  就没有跨线程共享 Gemini 调用状态的需求。 */
-const client: GoogleGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY, httpOptions: { timeout: GEMINI_REQUEST_TIMEOUT_MS } });
-
 /**
- * Google 可调的四类内容过滤统一设为 BLOCK_NONE：应用不按这些概率等级
- * 主动拒绝内容，交给 Gemini API 自身不可关闭的核心伤害保护和服务端策略
- * 判断。该设置仍由请求显式携带，避免不同模型默认值漂移造成行为变化。
+ * 取得线程内唯一 Gemini 客户端。timeout 是每次请求/每次 SDK 重试各自的预算，
+ * Worker 线程各自拥有独立实例，崩溃重建后由 cache/gemini.ts 的空 holder 重建。
  */
-const GEMINI_SAFETY_SETTINGS: SafetySetting[] = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-];
+function getGeminiClient(): GoogleGenAI {
+  geminiClientHolder.current ??= new GoogleGenAI({
+    apiKey: GEMINI_API_KEY,
+    httpOptions: { timeout: GEMINI_REQUEST_TIMEOUT_MS },
+  });
+  return geminiClientHolder.current;
+}
 
 /**
  * 调一次 generateContent 接口。请求失败、超时、非 2xx 或异常 candidate
@@ -66,13 +61,13 @@ const GEMINI_SAFETY_SETTINGS: SafetySetting[] = [
 export async function requestGeminiResult(body: GenerateContentParameters, errorLabel: string): Promise<GeminiRequestResult> {
   let data: GenerateContentResponse;
   try {
-    data = await client.models.generateContent({
+    data = await getGeminiClient().models.generateContent({
       ...body,
       config: {
         ...body.config,
         // 在唯一底层封装覆盖，聊天、压缩、媒体描述和未来调用方不会漏配，
         // 也不能各自悄悄恢复成更严格的档位。
-        safetySettings: GEMINI_SAFETY_SETTINGS,
+        safetySettings: [...GEMINI_SAFETY_SETTINGS],
       },
     });
   } catch (error: unknown) {
