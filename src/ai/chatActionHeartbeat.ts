@@ -147,7 +147,9 @@ export function startChatActionHeartbeat(
 
   // 心跳条目按群共享并用 refCount 记持有轮数，最后一个 stop 才拆表；当前
   // 同群回复上限是 1，这套所有权仍防止旧轮迟到 stop 误拆后继轮的条目，并
-  // 保留未来重新提高 REPLY_ROUND_MAX_CONCURRENT 时的并发安全。
+  // 保留未来重新提高 REPLY_ROUND_MAX_CONCURRENT 时的并发安全。该上限只是
+  // 可调参数、后续可能增大，不能因为当前为 1 而删除或简化 refCount/owner
+  // 以及按轮收挡的现有实现。
   // 非 idle 挡按轮记归属（owner）：后切非 idle 挡的轮盖掉前一轮的挡位仍是
   // 后写覆盖（Telegram 一个聊天同时只显示一种状态，接受），但收挡只认持有
   // 轮——切 idle/停止只收回自己拉起的挡位，并发轮的窗口不会被别的轮掐灭，

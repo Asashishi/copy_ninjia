@@ -10,6 +10,8 @@ import type { StickerSendLockControl } from "../../types/stickers/tools";
  * 失败换一枚重试不受影响），被并发轮抢先则拒绝（喂回模型错误，让它改用
  * 文字回应）；轮结束（无论正常收尾还是异常中断）在 finally 里 release，
  * 只清自己持有的锁。单轮独占（无并发）时锁恒空闲，行为与加锁前一致。
+ * REPLY_ROUND_MAX_CONCURRENT 只是可调参数、后续可能增大，不能因为当前为 1
+ * 而删除或简化这套锁与轮令牌实现。
  *
  * 锁不设 TTL：持有期严格等于一轮回复的生命周期，轮的 finally 兜底释放，
  * 不存在泄漏后靠超时自愈的问题；Worker 重启时随内存清空。
