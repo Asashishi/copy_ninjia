@@ -11,7 +11,11 @@
   Copy Ninjia
 </h1>
 
-### 会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tagline_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tagline_light.svg">
+  <img alt="会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人" src="docs/assets/tagline_light.svg" width="780">
+</picture>
 
 **代码 100% 由 AI 编写的纯 AI 开发项目** — 人类只负责架构设计，并与 AI 共同审查每一次提交
 
@@ -33,7 +37,8 @@
 
 ---
 
-🧬 [纯 AI 开发](#-纯-ai-开发) • ✨ [它能做什么](#-它能做什么) • 🎭 [复读模式](#-复读模式) • 🧠 [AI 流水线](#-ai-流水线) • 🛡️ [入群验证与 Anti-Raid](#️-入群验证与-anti-raid) • 🎮 [命令与权限](#-命令与权限) • 🚀 [快速开始](#-快速开始) • 🏗️ [架构](#️-架构) • 💾 [数据与可靠性](#-数据与可靠性) • 🧪 [开发](#-开发)
+🧬 [纯 AI 开发](#-纯-ai-开发) • ✨ [它能做什么](#-它能做什么) • 🎭 [复读模式](#-复读模式) • 🧠 [AI 流水线](#-ai-流水线) • 🛡️ [入群验证与 Anti-Raid](#️-入群验证与-anti-raid)<br>
+🎮 [命令与权限](#-命令与权限) • 🚀 [快速开始](#-快速开始) • 🏗️ [架构](#️-架构) • 💾 [数据与可靠性](#-数据与可靠性) • 🧪 [开发](#-开发)
 
 </div>
 
@@ -226,10 +231,13 @@ flowchart TD
 > [!TIP]
 > `/luck_challenge` 不占斜杠命令：在任意聊天输入 `@机器人用户名 [所求事项]` 使用 Inline Mode。需在 BotFather 开启 Inline Mode，并建议通过 `/setinlinefeedback` 开启 100% 结果反馈。内联查询采用全局滑动窗口限流，每 90 秒最多应答 300 次。
 
+<p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
+
 ## 🚀 快速开始
 
 ### 1. 环境
 
+- Linux（带可读的 `/proc`；实例锁在其它平台 fail-closed）
 - Bun 1.3+
 - Telegram Bot Token
 - Gemini API Key
@@ -282,7 +290,7 @@ Telegram 侧还需要按功能配置：
 1. 关闭 Bot Privacy Mode，机器人才能观察完整群消息并复读普通成员。
 2. 授予删消息、封禁成员、管理群权限，入群验证和 Anti-Raid 才会启用。
 3. 启用 Inline Mode 才能使用运势抽签。
-4. 启用 inline feedback，抽签结果才能可靠确认并落盘。
+4. 建议把 inline feedback 设为 100%，让 `chosen_inline_result` 作为抽签确认与落盘的主路径；消息内签名回执仍提供补充确认。
 
 ### 4. 启动与检查
 
@@ -341,6 +349,8 @@ flowchart TD
 <tr><td><code>test/</code></td><td>与源码结构对应的 Bun 单元测试</td></tr>
 </table>
 
+<p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
+
 ## 💾 数据与可靠性
 
 下表中的位置均相对于运行时数据根目录；默认是项目根目录，可通过 `COPY_NINJIA_DATA_ROOT` 修改。
@@ -368,7 +378,7 @@ flowchart TD
 > [!IMPORTANT]
 > 持久化 schema 变更不在运行时自动迁移。部署包含结构变更的版本前，应同时迁移 `state.json`、`state.json.bak` 与对应 `memory/` 快照。StateStore 会用严格校验通过的主副本刷新另一份；若两份 state 副本均不符合当前结构则拒绝启动且不改动它们，避免用部分状态或空状态覆盖原文件。单份损坏副本会以唯一的 `.corrupt` 名称永久隔离，供人工排查。
 
-`bot.lock` 只接受严格的 `v2:pid:starttime:boot_id:sha256(token)` 格式；其中 `starttime` 来自 `/proc/<pid>/stat` 第 22 字段。数据目录全局独占：只有 PID、starttime 与 boot ID 均匹配才视为同一活跃 owner；PID 被复用或机器重启后，当前 v2 格式的 stale owner 会在下一次启动或退出时清理。`.guard` 和 `.recovery` 同样只接受 `v2:pid:starttime:boot_id`，`.candidate.*` 与 `.tmp` 是正常操作结束即删除的并发保护文件。
+`bot.lock` 只接受严格的 `v2:pid:starttime:boot_id:sha256(token)` 格式；其中 `starttime` 来自 `/proc/<pid>/stat` 第 22 字段。数据目录全局独占：只有 PID、starttime 与 boot ID 均匹配才视为同一活跃 owner；PID 被复用或机器重启后，当前 v2 格式的 stale owner 会在下一次启动或退出时清理。`.guard` 和 `.recovery` 同样只接受 `v2:pid:starttime:boot_id`；`.candidate.*` 是 hard-link 锁协议候选文件，`.tmp` 是 state/锁注册表原子重写的临时文件，正常操作结束都会删除。
 
 实例锁明确依赖 Linux `/proc`，读取或解析失败时保持 fail-closed。旧 `pid:sha256(token)` registry、纯 PID guard/recovery、未知格式和损坏格式都不会兼容读取、自动迁移或按 PID 猜测清理；程序保持原文件不变并拒绝启动，必须先停掉相关进程再手工处理。
 
@@ -380,7 +390,7 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 - **并发与容量**——共享 Telegram API 限流/重试与必要的按群串行；反应队列硬顶；头像单执行槽与 latest-only 合并；媒体执行/排队/LRU 容量上限；可取消的后台 owner 有界 drain。
 - **落盘与恢复**——数据根能力预检与单实例锁；追加批次 fsync 与原子落盘；AI 删除 revision/tombstone；失效 AI 轮次副作用拦截；Worker 崩溃节流自愈；严格恢复。
 
-跨模块生命周期约束见 [`docs/architecture.md`](docs/architecture.md)。
+跨模块生命周期约束见 [`docs/04-invariants.md`](docs/04-invariants.md)。
 
 历史群标题回填只在关键启动握手和 update runner 就绪后运行，当前最多并发 15 个 `getChat`；共享 throttler 继续控制 Telegram 全局速率，标题 owner 的并发上限用于约束低优先级维护的队头占位。
 
@@ -388,15 +398,11 @@ token 指纹只用于识别锁所有者，不是数据隔离边界。不同 Bot 
 
 ## 🧪 开发
 
-<table align="center" width="100%">
-  <tr>
-    <td align="center" width="20%">🚀 <b>794</b><br/>测试全部通过</td>
-    <td align="center" width="20%">📂 <b>117</b><br/>测试文件</td>
-    <td align="center" width="20%">🔬 <b>7,586</b><br/>断言总数</td>
-    <td align="center" width="20%">🎯 <b>93.91%</b><br/>函数覆盖率</td>
-    <td align="center" width="20%">📈 <b>95.78%</b><br/>行覆盖率</td>
-  </tr>
-</table>
+<div align="center">
+
+🚀&nbsp;**794**&nbsp;测试全部通过 &nbsp;·&nbsp; 📂&nbsp;**117**&nbsp;测试文件 &nbsp;·&nbsp; 🔬&nbsp;**7,586**&nbsp;断言总数 &nbsp;·&nbsp; 🎯&nbsp;函数覆盖率&nbsp;**93.91%** &nbsp;·&nbsp; 📈&nbsp;行覆盖率&nbsp;**95.78%**
+
+</div>
 
 ```bash
 bun run typecheck
@@ -414,12 +420,17 @@ bun run test:fault-injection
 - **覆盖率口径**：`bun run check` 会让所有生产运行时模块进入覆盖率分母，未被专项测试触达的模块也按 0% 计入，函数和行覆盖率门槛均为 90%。
 - **当前主干实测**：794 个测试跨 117 个文件全部通过（7,586 次断言），函数覆盖率 **93.91%**、行覆盖率 **95.78%**——全源码计入分母口径，不是只统计被测文件。
 - **代码放置约定**：新增共享协议与状态机契约放进 `src/types/`，调参值放进 `src/consts/`，运行时状态放进对应 `src/cache/`，纯状态转移留在 `src/states/`，避免业务文件继续长出游离状态。
+- **深入文档**：环境搭建、架构讲解、修改配方与运维手册见 [`docs/`](docs/README.md)。
 
 ---
 
 <div align="center">
 
-**Copy Ninjia** — 不是只会复读，是把整套群聊现场偷走再演一遍。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/footer_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/footer_light.svg">
+  <img alt="Copy Ninjia — 不是只会复读，是把整套群聊现场偷走再演一遍。" src="docs/assets/footer_light.svg" width="580">
+</picture>
 
 *人类没有写下任何一行代码，但也从未退场——画完图纸之后，还和 AI 一起审过每一次提交。*
 
