@@ -2,6 +2,8 @@ import type { ChatAdminCache } from "../../types/antiRaid/internal";
 import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CHAT_CACHE_MAX } from "../../consts/antiRaid/cache";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
+/** 群管理员表按需缓存（src/workers/antiRaid/adminCache.ts）的内存状态。 */
+
 /** 按需拉取的各群管理员表。 */
 export const chatAdmins: Map<number, ChatAdminCache> = new Map();
 /** 进行中的全量管理员拉取，按 chatId 去重。 */

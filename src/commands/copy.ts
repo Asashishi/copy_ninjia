@@ -101,7 +101,6 @@ export async function handleCopyCommand(
   // 的主、备两份 state 都 durable，避免 update 已确认后重启复活旧 copy 状态。
   await persistAuthoritativeState("copy started");
 
-  // 发送过渡反馈
   const targetLabel: string = formatUserLabel(targetUser);
   const startText: string = `正在把 ${targetLabel} 的脸皮扒下来当本天才的头像哦${describeCopyModeEffect(mode)}，杂鱼乖乖等一下~♡`;
   await sendMessage({ chatId, text: startText, replyToMessageId: messageId });

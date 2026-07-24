@@ -1,5 +1,7 @@
 import type { DayFileState, LuckDayCache, LuckPendingEntry } from "../../types/diskIO/storage";
 
+/** 每日运势落盘（src/workers/diskIO/luckFiles.ts）的内存状态。 */
+
 /** 当日已知结果、待追加条目、文件游标及 flush timer 的唯一 owner。 */
 export const luckWorkerCache: { current: LuckDayCache | null } = { current: null };
 /** 尚未追加到当日文件的抽签条目；flush 成功后按批清除。 */

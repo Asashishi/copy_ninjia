@@ -35,7 +35,17 @@ export interface AiMemoryDeleteWaiter {
 }
 /** 只有显式禁用/teardown 会等待；LRU 删除只保留 pending tombstone。 */
 export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Map();
-/** 已请求彻底清除记忆的群；用于拒绝失效 Worker 迟到的旧快照。 */
+/**
+ * 已请求彻底清除记忆、正在等待 Worker 确认删除的群。用于在等待期间拒绝
+ * 旧 Worker 迟到的记忆快照上报："memory" 事件到达时若群在此集合中，快照
+ * 直接丢弃并改发一次 delete，不当作有效数据存进 latestAiMemories。
+ * invalidateAiChat(chatId, true) 在 Worker 可用时加入；Worker 确认删除完成
+ * （"memoryDeleted" 事件）或该群又开始产生新记录（recordChatMessage/
+ * recordChatMedia，意味着 AI 记忆已重新启用）时移出。Worker 彻底不可用时
+ * （onGiveUp/terminateAiChat）整表清空：已终止的实例不可能再回传旧快照，
+ * 没有可拒绝的对象；pendingAiMemoryDeletes 由 Disk I/O 的 durable 回执
+ * 独立拥有，不受这里清空影响。
+ */
 export const purgedAiMemoryChats: Set<number> = new Set();
 /** 等待 /switch_mood 重抽回执（moodSwitched 事件）的调用方。 */
 export interface MoodSwitchWaiter {

@@ -1,5 +1,10 @@
 import type { AiMemoryDeletedPersistedReply } from "../../types/diskIO";
 
+/**
+ * AI 记忆快照落盘（src/workers/diskIO/aiMemoryFiles.ts）的内存状态；同目录
+ * 下的 snapshotFiles.ts 只是无状态的读写辅助函数集合，不持有任何状态。
+ */
+
 /** AI 记忆快照、dirty/delete 集合及其 flush timer 的唯一 owner。 */
 export const aiMemoryCache: Map<number, string> = new Map();
 /** 需要覆盖写入的群；成功 flush、删除接管或 reset 时清除。 */

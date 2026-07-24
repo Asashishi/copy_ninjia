@@ -27,7 +27,7 @@ export function isDuplicateOfSentMessage(state: RoundMessageState, text: string)
   return false;
 }
 
-interface RecordSentMessageParams {
+export interface RecordSentMessageParams {
   ctx: ReplyToolContext;
   state: RoundMessageState;
   text: string;
@@ -36,7 +36,7 @@ interface RecordSentMessageParams {
   repliedToMessageId?: number;
 }
 
-interface SendDirectMessageParams {
+export interface SendDirectMessageParams {
   ctx: ReplyToolContext;
   state: RoundMessageState;
   text: string;

@@ -66,7 +66,7 @@ function forwardPathFor(origin: string | undefined, senderId: number, senderName
 }
 
 /** buildReplyPromptSections 的可选附加上下文，按需组合，见各字段说明。 */
-interface UserContentOptions {
+export interface UserContentOptions {
   /** 本轮触发消息的 message_id（即工具挂回复引用的目标，见 replyRound.ts
    *  的 replyToMessageId）：用于从热区索引回溯它所在的多层回复链，并在链
    *  标注里点名触发消息本身。 */
@@ -105,9 +105,8 @@ interface UserContentOptions {
 export function buildReplyPromptSections(
   chatId: number,
   selfInfo: AiBotInfo,
-  options: UserContentOptions
+  { triggerMessageId, isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo }: UserContentOptions
 ): ReplyPromptSections | null {
-  const { triggerMessageId, isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo } = options;
   const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 

@@ -2,6 +2,8 @@ import { VERIFICATION_REVISION_RETENTION_MS } from "../../consts/antiRaid/verifi
 import type { ReminderDelivery, ThreadCommentConfirmation } from "../../types/antiRaid/internal";
 import type { VerificationState } from "../../types/states/verification";
 
+/** 入群验证状态机（src/workers/antiRaid/verificationRuntime.ts）的内存状态。 */
+
 /** 一条验证状态机条目：纯状态 + 解释器持有的活动计时器。 */
 export interface VerificationEntry {
   state: VerificationState;

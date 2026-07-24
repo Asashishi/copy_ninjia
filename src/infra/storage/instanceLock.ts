@@ -122,12 +122,14 @@ async function isProcessIdentityActive(
   return current !== null && sameProcessIdentity(identity, validateProcessIdentity(current, identity.pid));
 }
 
-async function resolveCurrentIdentity(options: InstanceLockOptions): Promise<ProcessIdentity> {
-  if (options.currentIdentity !== undefined) {
-    return validateProcessIdentity(options.currentIdentity, process.pid);
+async function resolveCurrentIdentity({
+  currentIdentity,
+  readProcessIdentity = readLinuxProcessIdentity,
+}: InstanceLockOptions): Promise<ProcessIdentity> {
+  if (currentIdentity !== undefined) {
+    return validateProcessIdentity(currentIdentity, process.pid);
   }
-  const reader = options.readProcessIdentity ?? readLinuxProcessIdentity;
-  const identity: ProcessIdentity | null = await reader(process.pid);
+  const identity: ProcessIdentity | null = await readProcessIdentity(process.pid);
   if (identity === null) throw new Error(`Cannot read the current process identity for pid ${process.pid}.`);
   return validateProcessIdentity(identity, process.pid);
 }

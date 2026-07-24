@@ -3,6 +3,11 @@ import type { KeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import type { JoinWindow } from "../../types/antiRaid/internal";
 import type { LockdownState } from "../../types/states/lockdown";
 
+/**
+ * 私密模式状态机（src/workers/antiRaid/lockdownRuntime.ts）的内存状态；
+ * verificationRuntime.ts 只读取 lockdownEntries 判断当前是否处于私密模式。
+ */
+
 /** 一条私密模式状态机条目：纯状态 + 解释器持有的恢复计时器。 */
 export interface LockdownEntry {
   state: LockdownState;

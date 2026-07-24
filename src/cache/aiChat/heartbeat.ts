@@ -1,5 +1,7 @@
 import type { ChatActionHeartbeatEntry } from "../../types/aiChat/chatAction";
 
+/** 聊天状态心跳（src/ai/chatActionHeartbeat.ts）的内存状态。 */
+
 /** chatId -> 共享聊天状态心跳；每个条目由同群全部在途回复轮引用计数。 */
 export const typingHeartbeats: Map<number, ChatActionHeartbeatEntry> = new Map();
 

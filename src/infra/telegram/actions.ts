@@ -5,7 +5,7 @@ import { markSelfSent } from "../selfSentTracker";
 import { bot, logApiError } from "./client";
 import type { TelegramSendResult } from "../../types/telegram";
 
-interface RunTelegramActionParams<T, R> {
+export interface RunTelegramActionParams<T, R> {
   action: string;
   execute: () => Promise<T>;
   map: (result: T) => R;

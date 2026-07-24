@@ -1,6 +1,11 @@
 import { IMAGE_GENERATION_COOLDOWN_MS } from "../../consts/aiChat/imageGeneration";
 import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../types/aiChat/imageGeneration";
 
+/**
+ * AI 生图工具冷却占位（src/ai/tools/replyToolset/imageGeneration.ts）的
+ * 内存状态；aiChatWorker.ts 只驱动周期性 sweepImageGenerationCache 维护。
+ */
+
 /** 每群最近一次普通用户生图占位时间；独立于 AI 回复触发限频且不落盘。 */
 export const imageGenerationClaimTimes: Map<number, number> = new Map();
 const imageGenerationClaimTokens: Map<number, symbol> = new Map();

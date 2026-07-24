@@ -25,7 +25,7 @@ export interface MessageTriggerContext {
   directTrigger?: DirectTrigger;
 }
 
-interface CreateMessageTriggerContextParams {
+export interface CreateMessageTriggerContextParams {
   message: Message;
   bot: BotIdentity;
   isQuiet: boolean;

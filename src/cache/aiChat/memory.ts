@@ -1,6 +1,13 @@
 import type { LinkedQueue } from "../../libs/linkedQueue";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 
+/**
+ * AI 滚动记忆（src/workers/aiChat/rollingMemory.ts）的权威内存状态：整体
+ * hydrate/清空/容量淘汰由它编排；个别字段的产出方分散在回复流水线其它
+ * 子模块（如中期压缩 compaction.ts 产出 pendingSummaries、回复链索引由
+ * replyChain.ts 维护），细节见各导出注释。
+ */
+
 /** 可持久化 AI 记忆的唯一内存 owner；快照恢复/刷盘由 rollingMemory.ts 编排。 */
 export const chatBuffers: Map<number, LinkedQueue<BufferedMessage>> = new Map();
 /** 每群已完成的冷历史摘要；轮换压缩填充，快照恢复，群淘汰时删除。 */

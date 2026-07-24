@@ -1,5 +1,11 @@
 import { TELEGRAM_REACTION_EMOJIS } from "../consts/reactions";
 
+/**
+ * 两处互不相关状态的内存状态：reactionEmojiCache 属于 src/ai/reactions.ts
+ * 的进程内缓存；allowedReactionEmojis 是 src/config/reactions.ts 解码配置
+ * 时使用的只读查找表。
+ */
+
 /** AI 反应工具从部署配置派生出的进程内只读缓存。 */
 export const reactionEmojiCache: { current: readonly string[] | null } = { current: null };
 

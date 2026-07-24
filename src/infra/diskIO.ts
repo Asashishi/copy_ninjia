@@ -65,23 +65,25 @@ function requirePositiveFinite(value: number, label: string): number {
  * 在主线程显式启动唯一的落盘 Worker。调用方必须已经取得数据目录的
  * bot.lock；重复调用幂等，不能借重复初始化绕过崩溃自愈的放弃阈值。
  */
-export function initDiskIO(options: DiskIOInitOptions = {}): void {
+export function initDiskIO({
+  onFatal,
+  runtimeRecoveryTimeoutMs = LOAD_TIMEOUT_MS,
+  maxPendingBusinessMessages = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES,
+}: DiskIOInitOptions = {}): void {
   if (!isMainThread) {
     throw new Error("Disk I/O can only be initialized by the main thread.");
   }
   if (diskIORuntime.initialized) return;
   const nextRuntimeRecoveryTimeoutMs: number = requirePositiveFinite(
-    options.runtimeRecoveryTimeoutMs ?? LOAD_TIMEOUT_MS,
+    runtimeRecoveryTimeoutMs,
     "Disk I/O runtime recovery timeout"
   );
-  const nextMaxPendingBusinessMessages: number =
-    options.maxPendingBusinessMessages ?? DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
-  if (!Number.isSafeInteger(nextMaxPendingBusinessMessages) || nextMaxPendingBusinessMessages < 1) {
+  if (!Number.isSafeInteger(maxPendingBusinessMessages) || maxPendingBusinessMessages < 1) {
     throw new RangeError("Disk I/O pending business message capacity must be a positive safe integer.");
   }
-  diskIORuntime.fatalHandler = options.onFatal;
+  diskIORuntime.fatalHandler = onFatal;
   diskIORuntime.runtimeRecoveryTimeoutMs = nextRuntimeRecoveryTimeoutMs;
-  diskIORuntime.maxPendingBusinessMessages = nextMaxPendingBusinessMessages;
+  diskIORuntime.maxPendingBusinessMessages = maxPendingBusinessMessages;
   diskIORuntime.fatalSignaled = false;
   diskIORuntime.writable = false;
   diskIORuntime.worker = createDiskIOWorker();
@@ -227,8 +229,8 @@ function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): void {
 }
 
 /**
- * Worker.postMessage can throw synchronously after the local owner still observed the
- * Worker as writable. Keep that race out of every business/log/request caller.
+ * Worker.postMessage 可能在本地 owner 仍判定 Worker 可写之后同步抛出；把这个
+ * 竞态统一挡在这里，不让它扩散到每一个业务/日志/请求类调用方。
  */
 function safePostDiskIO(worker: Worker, message: DiskIOMessage, context: string): boolean {
   try {

@@ -88,29 +88,40 @@ export class StateStore {
   private disposed: boolean = false;
   private fatalSignaled: boolean = false;
 
-  constructor(options: StateStoreOptions = {}) {
-    this.stateFilePath = options.stateFilePath ?? STATE_FILE_PATH;
-    this.backupFilePath = options.backupFilePath ??
-      (options.stateFilePath === undefined ? STATE_BACKUP_FILE_PATH : `${this.stateFilePath}.bak`);
-    this.readText = options.readText ?? readExistingText;
-    this.writeText = options.writeText ?? atomicWriteText;
-    this.moveFile = options.moveFile ?? durableRename;
-    this.retryDelaysMs = options.retryDelaysMs ?? STATE_SAVE_RETRY_DELAYS_MS;
+  constructor({
+    stateFilePath = STATE_FILE_PATH,
+    backupFilePath,
+    readText = readExistingText,
+    writeText = atomicWriteText,
+    moveFile = durableRename,
+    retryDelaysMs = STATE_SAVE_RETRY_DELAYS_MS,
+    maxAttempts = STATE_SAVE_MAX_ATTEMPTS,
+    onRetryError = (attempt, error) => {
+      logger.error(`Failed to persist state (attempt ${attempt}):`, error);
+    },
+    onFlushError = (error) => {
+      logger.error("Failed to flush state to disk on shutdown:", error);
+    },
+    onFatal,
+  }: StateStoreOptions = {}) {
+    this.stateFilePath = stateFilePath;
+    this.backupFilePath = backupFilePath ??
+      (stateFilePath === STATE_FILE_PATH ? STATE_BACKUP_FILE_PATH : `${stateFilePath}.bak`);
+    this.readText = readText;
+    this.writeText = writeText;
+    this.moveFile = moveFile;
+    this.retryDelaysMs = retryDelaysMs;
     if (this.retryDelaysMs.length === 0) throw new Error("StateStore requires at least one retry delay");
     if (this.retryDelaysMs.some((delay) => !Number.isFinite(delay) || delay <= 0)) {
       throw new RangeError("StateStore retry delays must be positive finite numbers");
     }
-    this.maxAttempts = options.maxAttempts ?? STATE_SAVE_MAX_ATTEMPTS;
+    this.maxAttempts = maxAttempts;
     if (!Number.isSafeInteger(this.maxAttempts) || this.maxAttempts < 1) {
       throw new Error("StateStore maxAttempts must be a positive safe integer");
     }
-    this.onRetryError = options.onRetryError ?? ((attempt, error) => {
-      logger.error(`Failed to persist state (attempt ${attempt}):`, error);
-    });
-    this.onFlushError = options.onFlushError ?? ((error) => {
-      logger.error("Failed to flush state to disk on shutdown:", error);
-    });
-    this.fatalHandler = options.onFatal;
+    this.onRetryError = onRetryError;
+    this.onFlushError = onFlushError;
+    this.fatalHandler = onFatal;
     this.writer = createLatestValueRunner<StateWrite>(async (write) => {
       await this.writeText(this.stateFilePath, write.json);
       await this.writeText(this.backupFilePath, write.json);

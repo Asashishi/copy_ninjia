@@ -15,8 +15,9 @@ export const WEATHER_REQUEST_TIMEOUT_MS: number = 10_000;
  *  地方。 */
 export const WEATHER_REFRESH_INTERVAL_MS: number = 60 * 60 * 1_000;
 
-/** WMO 天气代码 -> 中文描述，覆盖 Open-Meteo 会返回的全部取值。 */
-export const WEATHER_CODE_DESCRIPTIONS: Record<number, string> = {
+/** WMO 天气代码 -> 中文描述，覆盖 Open-Meteo 会返回的全部取值；被 ai/mood.ts 与
+ *  ai/weather.ts 共用，冻结防止一方误改动影响另一方。 */
+export const WEATHER_CODE_DESCRIPTIONS: Readonly<Record<number, string>> = Object.freeze({
   0: "晴朗",
   1: "大致晴朗",
   2: "局部多云",
@@ -45,4 +46,4 @@ export const WEATHER_CODE_DESCRIPTIONS: Record<number, string> = {
   95: "雷雨",
   96: "雷雨伴小冰雹",
   99: "雷雨伴大冰雹",
-};
+});

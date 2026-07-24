@@ -1,5 +1,7 @@
 import type { DayFileState } from "../../types/diskIO/storage";
 
+/** 日志落盘（src/workers/diskIO/logFiles.ts）的内存状态。 */
+
 /** 一条尚未刷盘的日志序列化文本及其东京日期。 */
 export interface BufferedLogEntry {
   day: string;

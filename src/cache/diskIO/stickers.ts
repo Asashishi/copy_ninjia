@@ -1,3 +1,5 @@
+/** 贴纸目录落盘（src/workers/diskIO/stickerCatalogFiles.ts）的内存状态。 */
+
 /** 贴纸目录快照、dirty 集合及其 flush timer 的唯一 owner。 */
 export const stickerCatalogCache: Map<string, string> = new Map();
 /** 需要在下一轮 flush 写入的贴纸包；成功写入或 reset 时删除。 */

@@ -4,7 +4,7 @@ import { bot, buildFileDownloadUrl } from "../infra/telegram";
 import { readBoundedResponseBytes, type BoundedResponseResult } from "../libs/boundedResponse";
 import { prepareVisionImage, type VisionImage } from "../libs/image";
 
-interface DownloadTelegramVisionImageParams {
+export interface DownloadTelegramVisionImageParams {
   fileId: string;
   /** 只用于固定格式诊断日志，不得包含用户文本、URL 或 token。 */
   logLabel: string;

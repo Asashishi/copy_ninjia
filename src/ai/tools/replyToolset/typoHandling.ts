@@ -25,7 +25,7 @@ export interface TypoDecision {
   rejectedReason: string | null;
 }
 
-interface DecideMessageTypoParams {
+export interface DecideMessageTypoParams {
   argumentsJson: string;
   text: string;
   roundHasTypo: boolean;

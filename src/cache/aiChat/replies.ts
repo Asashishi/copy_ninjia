@@ -7,6 +7,14 @@ import {
 } from "../../consts/aiChat/rateLimit";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 
+/**
+ * AI 回复调度的内存状态，由回复流水线的多个子模块共同驱动，没有单一 owner：
+ * src/workers/aiChat/replyQueue.ts（排队/溢出提示消费）、replyRound.ts
+ * （并发位与长窗口触发时刻）、replyPipeline.ts（在途计数读取/溢出提示登记）、
+ * replyState.ts（代际读取、限频提示冷却）；失效与整体重置经
+ * cache/aiChat/index.ts 的门面函数，由 replyState.ts/rollingMemory.ts 调用。
+ */
+
 /** 回复调度的唯一运行时 owner。全部状态不落盘，Worker 重建时清空。代际表
  * 使用有界 LRU；窗口队列、提示冷却和待处理队列都按群主动清理。 */
 export const replyGenerations: LruCache<number, number> = new LruCache(REPLY_GENERATIONS_MAX);

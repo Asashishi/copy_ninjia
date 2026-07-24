@@ -8,15 +8,15 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { DAY_FILE_JSON_INDENT, DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
-import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
+import { DAY_MS, PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import {
-  DAY_MS,
   TOKYO_OFFSET_MS,
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_COMPACT_ENTRIES,
   VERIFICATION_FILE_MAX_MESSAGE_IDS,
   VERIFICATION_FLUSH_INTERVAL_MS,
   VERIFICATION_FLUSH_MAX_KEYS,
+  VERIFICATION_LABEL_MAX_CHARS,
   VERIFICATION_TOP_LEVEL_ENTRY_PATTERN,
 } from "../../consts/diskIO/verification";
 import { VERIFICATION_MEMORY_DIR } from "../../consts/paths";
@@ -73,7 +73,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     (value.phase !== "pending" && value.phase !== "checkingInviter" && value.phase !== "expelling") ||
     typeof value.label !== "string" ||
     value.label.length === 0 ||
-    value.label.length > 512 ||
+    value.label.length > VERIFICATION_LABEL_MAX_CHARS ||
     typeof value.isBot !== "boolean" ||
     !Array.isArray(value.messageIds) ||
     value.messageIds.length > VERIFICATION_FILE_MAX_MESSAGE_IDS ||

@@ -3,6 +3,8 @@ import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "../consts/antiRaid/protocol";
 import { createFlushBarrier } from "../libs/flushBarrier";
 import type { VerificationSnapshot } from "../types/antiRaid";
 
+/** Anti-Raid 主线程侧代理（src/antiRaid.ts）的内存状态。 */
+
 /**
  * Anti-Raid 主线程与 Worker 的 mailbox barrier。模块加载时创建，terminate
  * 时统一结算等待者；进程重启后以空等待表和新序号重建，容量受并发 flush 数约束。
@@ -25,7 +27,15 @@ export const antiRaidRuntimeState: { generation: number; initialized: boolean; p
   persistenceVersion: 0,
 };
 
-/** 主线程镜像可能仍在 fsync；Worker 重建时不能把它自动视为已经持久化。 */
+/**
+ * 记录某群当前 lockdown 记录是否已确认落盘，而非 lockdown 本身——真正的
+ * 私密模式状态在 ChatState.lockdown（stateStore 持有）。initAntiRaid 启动时
+ * 先清空，再用已加载的 state.json 记录播种（能载入即视为上次已持久化）；
+ * Worker 报告新 lockdown 意图或 unlock（onEvent）时先删除旧指纹，
+ * persistCurrentLockdown 待 saveState 成功且记录未被更新覆盖后才重新写入
+ * 并通知 Worker；主线程紧急恢复权限成功后同样删除。仅供 toAdoptableLockdown
+ * 在构建 adopt 消息时判断某条记录是否已知持久化。
+ */
 export const persistedLockdownFingerprints: Map<number, PersistedLockdownFingerprint> = new Map();
 /** 每群至多保留一个 durability waiter；期间的新阶段由完成后的循环补写。 */
 export const pendingLockdownPersistence: Set<number> = new Set();
@@ -43,7 +53,16 @@ export const emergencyLockdownRecoveries: Map<number, EmergencyLockdownRecovery>
 /** terminate 关闸后，迟到 API 结果不得修改 state 或重新挂 timer。 */
 export const emergencyLockdownRecoveryRuntime: { stopped: boolean } = { stopped: true };
 
-/** 主线程持有的待验证最新纯数据镜像，供两类 Worker 重建时重放。 */
+/**
+ * 主线程持有的待验证纯数据镜像，key 为 verificationKey(chatId, userId)；
+ * 不是验证状态机本身——权威状态在 Anti-Raid Worker 内，这里只做两类 Worker
+ * 崩溃重放的数据源。hydratePendingVerifications 在启动时先清空、再用 Disk
+ * I/O 恢复出的记录整体重建；此后 acceptVerificationUpsert/
+ * acceptVerificationDelete 按 generation+revision 拒绝迟到事件后增量更新
+ * /删除。Anti-Raid Worker 崩溃重建时（onRespawn）本镜像不清空，只原地把
+ * 每条记录的 generation 提升到新代际后整体回放给新 Worker；Disk I/O Worker
+ * 崩溃重建时（onDiskIORespawn）同样整体重放给它补齐。
+ */
 export const activeVerificationSnapshots: Map<string, VerificationSnapshot> = new Map();
 
 /** 主线程已收到 Disk I/O 回执的最新 active revision，用于 Anti-Raid Worker 重建。 */

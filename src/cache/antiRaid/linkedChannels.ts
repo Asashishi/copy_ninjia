@@ -2,6 +2,8 @@ import type { LinkedChannelCache } from "../../types/antiRaid/internal";
 import { ANTI_RAID_CHAT_CACHE_MAX, LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid/cache";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
+/** 关联频道按需缓存（src/workers/antiRaid/linkedChannel.ts）的内存状态。 */
+
 /** 各群是否有关联频道的按需 TTL 缓存。 */
 export const linkedChannels: Map<number, LinkedChannelCache> = new Map();
 /** 进行中的关联频道信息拉取，按 chatId 去重。 */

@@ -58,9 +58,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function writeBufferFully(
   fd: number,
   buffer: Buffer,
-  options: WriteBufferFullyParams
+  { position, write = nodeWriteBuffer }: WriteBufferFullyParams
 ): void {
-  const write: SyncBufferWriter = options.write ?? nodeWriteBuffer;
   let offset: number = 0;
   while (offset < buffer.length) {
     const written: number = write({
@@ -68,7 +67,7 @@ export function writeBufferFully(
       buffer,
       offset,
       length: buffer.length - offset,
-      position: options.position + offset,
+      position: position + offset,
     });
     if (!Number.isSafeInteger(written) || written <= 0 || written > buffer.length - offset) {
       throw new Error(`Short write made no valid progress (${written} byte(s) reported).`);

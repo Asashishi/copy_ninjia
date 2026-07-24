@@ -21,6 +21,7 @@ import type { LogMessage } from "../../types/diskIO";
 import type { DayFileState } from "../../types/diskIO/storage";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO/appendOnly";
+import { DAY_MS } from "../../consts/diskIO/common";
 import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
 import {
@@ -138,7 +139,7 @@ function cleanupStaleTmpFiles(): void {
 
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
 function cleanupOldLogs(): void {
-  const oldestKept: string = dayKey(Date.now() - (RETENTION_DAYS - 1) * 24 * 60 * 60 * 1000);
+  const oldestKept: string = dayKey(Date.now() - (RETENTION_DAYS - 1) * DAY_MS);
   for (const name of readdirSync(LOGS_DIR)) {
     const match = DAY_FILE_PATTERN.exec(name);
     if (match && match[1]! < oldestKept) {

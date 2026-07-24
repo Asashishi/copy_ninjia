@@ -1,6 +1,8 @@
 import type { StateStore } from "../infra/storage/stateStore";
 import type { ChatState, GlobalCopyState } from "../types/chatState";
 
+/** state 权威存储（src/infra/storage/stateStore.ts）的内存状态。 */
+
 /**
  * 进程唯一 StateStore 的惰性 holder。首次持久化操作时填充，应用生命周期
  * 结束后对象保持 quiesced 直到进程退出；新进程从空 holder 创建全新 writer。

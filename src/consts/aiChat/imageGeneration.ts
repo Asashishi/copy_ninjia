@@ -19,8 +19,9 @@ export const IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY: number = 2;
 export type ImageGenerationAspectRatio =
   | "1:1" | "3:2" | "2:3" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
 
-/** 生图模型接受的全部官方宽高比，供校验和工具说明共用。 */
-export const IMAGE_GENERATION_ASPECT_RATIOS: readonly ImageGenerationAspectRatio[] = [
+/** 生图模型接受的全部官方宽高比，供校验和工具说明共用；两个调用方共享同一
+ *  数组引用，冻结防止一方误改动影响另一方。 */
+export const IMAGE_GENERATION_ASPECT_RATIOS: readonly ImageGenerationAspectRatio[] = Object.freeze([
   "1:1",
   "3:2",
   "2:3",
@@ -31,7 +32,7 @@ export const IMAGE_GENERATION_ASPECT_RATIOS: readonly ImageGenerationAspectRatio
   "9:16",
   "16:9",
   "21:9",
-] as const;
+] as const);
 
 /** 没有参考图或显式比例时使用的默认正方形比例。 */
 export const DEFAULT_IMAGE_GENERATION_ASPECT_RATIO: ImageGenerationAspectRatio = "1:1";

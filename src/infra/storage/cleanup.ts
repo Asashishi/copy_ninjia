@@ -34,13 +34,13 @@ async function hasInactiveCurrentFormatOwner(path: string): Promise<boolean> {
 }
 
 /** 持锁后清扫 state.json（含 .bak）/bot.lock 原子写中断留下的顶层临时文件。 */
-export async function cleanupOrphanedTempFiles(options: StorageCleanupOptions = {}): Promise<void> {
-  const stateFilePath: string = options.stateFilePath ?? STATE_FILE_PATH;
-  const lockFilePath: string = options.lockFilePath ?? LOCK_FILE_PATH;
-  const readDirectory: (path: string) => Promise<string[]> = options.readDirectory ?? readdir;
-  const removeFile: (path: string) => Promise<void> = options.removeFile ?? unlink;
-  const isInactiveLockOwner: (path: string) => Promise<boolean> =
-    options.isInactiveLockOwner ?? hasInactiveCurrentFormatOwner;
+export async function cleanupOrphanedTempFiles({
+  stateFilePath = STATE_FILE_PATH,
+  lockFilePath = LOCK_FILE_PATH,
+  readDirectory = readdir,
+  removeFile = unlink,
+  isInactiveLockOwner = hasInactiveCurrentFormatOwner,
+}: StorageCleanupOptions = {}): Promise<void> {
   const dir: string = dirname(stateFilePath);
   let entries: string[];
   try {

@@ -4,8 +4,6 @@ import { DAY_FILE_JSON_INDENT } from "./appendOnly";
 
 /** 东京标准时相对 UTC 的固定毫秒偏移，用于计算下一次本地午夜。 */
 export const TOKYO_OFFSET_MS: number = 9 * 60 * 60 * 1_000;
-/** 公历日的固定毫秒数；只与固定 UTC+9 偏移配合，不用于有夏令时的时区。 */
-export const DAY_MS: number = 24 * 60 * 60 * 1_000;
 /** 匹配按约定缩进序列化的顶层 JSON 条目，用于统计追加历史。 */
 export const VERIFICATION_TOP_LEVEL_ENTRY_PATTERN: RegExp = new RegExp(
   `^${" ".repeat(DAY_FILE_JSON_INDENT)}"(?:[^"\\\\]|\\\\.)+":`,
@@ -22,3 +20,9 @@ export const VERIFICATION_FILE_COMPACT_ENTRIES: number = 10_000;
 export const VERIFICATION_FILE_COMPACT_BYTES: number = 4 * 1024 * 1024;
 /** 读取损坏/手工修改文件时的防御上限；运行时消息窗口会另设更小上限。 */
 export const VERIFICATION_FILE_MAX_MESSAGE_IDS: number = 5_000;
+/**
+ * 快照 label 字段的防御性长度上限。正常取值来自 Telegram username（≤32）、
+ * first_name（≤64）或频道标题（≤128），远小于此值；这里只用于拒绝损坏/篡改
+ * 文件，不代表业务预期长度。
+ */
+export const VERIFICATION_LABEL_MAX_CHARS: number = 512;

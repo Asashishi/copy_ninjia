@@ -393,7 +393,7 @@ export function recordChatMedia(message: Omit<AiRecordMediaMessage, "type">): vo
   postAiChatOrThrow({ type: "recordMedia", ...message });
 }
 
-type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigger"> & {
+export type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigger"> & {
   isRandomTrigger?: boolean;
 };
 
