@@ -16,7 +16,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tagline_en_dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/tagline_en_light.svg">
-  <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="docs/assets/tagline_en_light.svg" width="840">
+  <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="docs/assets/tagline_en_light.svg" width="760">
 </picture>
 
 **A pure-AI development project with 100% AI-written code** — the human designs the architecture and reviews every commit together with AI
