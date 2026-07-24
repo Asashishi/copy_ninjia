@@ -1,6 +1,7 @@
 import { createUpdateFetcher, type FetchOptions } from "@grammyjs/runner";
 import type { Update } from "@grammyjs/types";
-import type { Bot, BotError, Context } from "grammy";
+import { BotError } from "grammy";
+import type { Bot, Context } from "grammy";
 import { logger } from "../infra/logger";
 
 export interface AcknowledgedUpdateRunner {
@@ -40,7 +41,14 @@ export function runAcknowledgedUpdateBatches(
       try {
         await bot.errorHandler(error as BotError<Context>);
       } catch (handlerError: unknown) {
-        logger.error("Bot update error handler failed:", handlerError);
+        // bot.catch 可以有意重抛 BotError 或其原始 error，让 acknowledged
+        // runner 保留失败 update；这属于传播协议，不是 error handler 自身
+        // 故障。只有抛出了不同对象时才追加诊断，避免二次扫描再次误报。
+        const deliberatelyPropagated: boolean = handlerError === error ||
+          (error instanceof BotError && handlerError === error.error);
+        if (!deliberatelyPropagated) {
+          logger.error("Bot update error handler failed:", handlerError);
+        }
       }
       // 处理失败的 update 不能被下一轮 getUpdates 确认；让整批失败并交给
       // 应用生命周期停止进程，由 Telegram 在重启后重新投递。

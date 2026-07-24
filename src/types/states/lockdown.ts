@@ -9,6 +9,7 @@ export type LockdownMachineEvent =
   | { type: "thresholdExceeded"; joinCount: number }
   | { type: "applyPrepared"; originalPermissions: ChatPermissions; joinCount: number; intentId: number }
   | { type: "applyPreparationFailed" }
+  | { type: "applyCommitPreparationFailed" }
   | { type: "statePersisted"; phase: "applying" | "active" | "restoring"; intentId: number }
   | { type: "applyResult"; ok: true }
   | { type: "applyResult"; ok: false; restoreIntentId: number }
@@ -32,8 +33,8 @@ export type LockdownEffect =
   | { kind: "prepareApply"; joinCount: number }
   /** 把当前 applying/active/restoring 状态交给主线程落盘。 */
   | { kind: "persistState" }
-  /** applying intent 已落盘，可以收紧 invite 权限。 */
-  | { kind: "commitApply"; originalPermissions: ChatPermissions }
+  /** applying intent 已落盘，可以重新读取最新权限并收紧 invite 权限。 */
+  | { kind: "commitApply" }
   /** （重新）安排恢复计时器，到期投递 restoreTimerFired。 */
   | { kind: "scheduleRestore"; delayMs: number }
   | { kind: "scheduleRestoreRetry"; delayMs: number }

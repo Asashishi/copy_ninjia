@@ -28,7 +28,7 @@ All parameters are centralized under `src/consts/`, so changing a value does not
 | Media-description length, execution slots, LRU capacity | `src/consts/aiChat/media.ts` |
 | Image-generation cooldown and byte limit | `src/consts/aiChat/imageGeneration.ts` |
 | Mood duration and command timeout | `src/consts/aiChat/mood.ts` |
-| Tool-call limits, model names, request timeouts | `src/consts/aiChat/tools.ts` |
+| Tool action/lookup limits, model names, request timeouts | `src/consts/aiChat/tools.ts` |
 | Verification window, spam threshold, append/compaction policy | `src/consts/antiRaid/` |
 | Copy cooldown, `/quiet` range, username rules | `src/consts/commands.ts` |
 | Random-trigger cooldown per sender | `src/consts/auto.ts` |
@@ -44,9 +44,15 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 2. **Definition**: put stateless static-query `ToolDefinition` values in [`src/ai/tools/index.ts`](../../src/ai/tools/index.ts). For action tools that need chat context, dynamic schemas, or per-round state, provide a definition builder under `src/ai/tools/replyToolset/`. The reply-toolset orchestrator converts these domain definitions into SDK `FunctionDeclaration` values.
 3. **Implementation**: implement execution under `src/ai/tools/`. Telegram-facing side effects run through main-thread proxies; the Worker must not hold a Bot instance directly.
 4. **Registration**: connect static query tools to dispatch in `src/ai/tools/index.ts`; connect action tools to definitions, dispatch, and per-round state under `src/ai/tools/replyToolset/`.
-5. **Budgets**: verify that the action budget and per-function call limits in `src/consts/aiChat/tools.ts` apply correctly. Successful side effects count toward the unified action budget; see [04](04-invariants.md#worker-and-state-ownership).
+5. **Budgets**: visible side-effect tools belong in the unified action budget; do not add a per-tool call limit by default. Create an independent limit only for a domain-specific reason—the current cases are sticker-pack viewing, Google Search, and one successful sticker, reaction, or generated image per round. The whole-round custom-function loop guard still applies; see [04](04-invariants.md#worker-and-state-ownership).
 6. **Prompt**: add usage rules under `src/consts/aiChat/prompts/` if needed. Anything coupled to transcript format must reuse shared templates from `transcript.ts`; never hand-write the same format on both sides.
 7. **Tests + docs**: add tests under `test/ai/` or the corresponding Worker path, and update the root README's Tools row when relevant.
+
+## Adding a Generic JSON API Call
+
+1. Add the exact HTTPS origin explicitly to `JSON_API_ALLOWED_ORIGINS` in [`src/consts/httpFetch.ts`](../../src/consts/httpFetch.ts). Do not broaden it to arbitrary hosts, HTTP, or credential-bearing URLs.
+2. Reuse the bounded JSON reader in [`src/libs/httpFetch.ts`](../../src/libs/httpFetch.ts). Keep redirects disabled and preserve response-body and error-log limits.
+3. Add tests for origins, redirects, oversized responses, and failure logging. Telegram avatar crawling is a separate media path; do not reroute or restrict it merely to add a JSON API.
 
 ## Changing the Persona or JSON Configuration
 

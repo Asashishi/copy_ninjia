@@ -93,7 +93,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         publishLockdownState(chatId);
         break;
       case "commitApply":
-        commitApplyLockdown(chatId, effect.originalPermissions);
+        commitApplyLockdown(chatId);
         break;
       case "beginRestore":
         beginRestoreLockdown(chatId, effect.originalPermissions);
@@ -164,9 +164,9 @@ export function deactivateLockdownChat(chatId: number): void {
   dispatchLockdown(chatId, { type: "deactivate", intentId: nextLockdownIntentId() });
 }
 
-/** 私密模式加锁/纠偏共用：在原始权限基础上关掉 can_invite_users，其余字段原样保留。 */
-function restrictedPermissions(originalPermissions: ChatPermissions): ChatPermissions {
-  return { ...originalPermissions, can_invite_users: false };
+/** 私密模式加锁/纠偏共用：在给定权限上关闭 can_invite_users，其余字段原样保留。 */
+function restrictedPermissions(permissions: ChatPermissions): ChatPermissions {
+  return { ...permissions, can_invite_users: false };
 }
 
 /**
@@ -213,11 +213,34 @@ function prepareApplyLockdown(chatId: number, joinCount: number): void {
   });
 }
 
-/** applying intent 已落盘后才真正修改 Telegram。失败按结果不确定处理并恢复。 */
-function commitApplyLockdown(chatId: number, originalPermissions: ChatPermissions): void {
+/**
+ * applying intent 已落盘后才真正修改 Telegram。先重新读取最新权限，只合并
+ * invite 限制，避免 T0 快照覆盖落盘窗口内的管理员修改。读取失败发生在写
+ * 操作之前，可安全撤销 intent；set 失败的远端结果不确定，仍需恢复协调。
+ */
+function commitApplyLockdown(chatId: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
+    let currentPermissions: ChatPermissions;
     try {
-      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(originalPermissions));
+      const chat = await joinVerificationApi.getChat(chatId);
+      if (!("permissions" in chat) || !chat.permissions) {
+        logger.error(
+          `Chat ${chatId} commit getChat response missing permissions field, abandoning anti-raid lockdown`
+        );
+        dispatchLockdown(chatId, { type: "applyCommitPreparationFailed" });
+        return;
+      }
+      currentPermissions = chat.permissions;
+    } catch (error: unknown) {
+      logger.error(
+        "Error refreshing chat permissions before anti-raid lockdown; abandoning unapplied intent:",
+        error
+      );
+      dispatchLockdown(chatId, { type: "applyCommitPreparationFailed" });
+      return;
+    }
+    try {
+      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(currentPermissions));
       dispatchLockdown(chatId, { type: "applyResult", ok: true });
     } catch (error: unknown) {
       logger.error("Error applying anti-raid lockdown; scheduling a restorative reconciliation:", error);

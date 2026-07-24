@@ -46,6 +46,18 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
   });
   if (!targetUser) return;
 
+  // 匿名管理员以当前群组身份发言时，Telegram 只提供 sender_chat=当前群，
+  // 不会暴露皮套背后的真实用户。该身份在 /copy 中必须保留用于头像和复读；
+  // 但 /kick 若继续执行，只会尝试封禁整个群组身份，不能踢出那名管理员。
+  if (targetUser.isChannel === true && targetUser.id === chatId) {
+    await sendMessage({
+      chatId,
+      text: `匿名管理员拿这个群当皮套时，Telegram 不会告诉本天才皮套底下是谁；本天才不能把整个群当成那个人踢掉呀♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+
   // 封禁清单：所有已记录「机器人是管理员」的群。本群是管理员时排最前
   // （踢发起群里的目标最紧迫），不是管理员时不进清单——试也没用。共享
   // bot.api 已安装限流与自动重试，但跨群封禁仍保持串行，避免一次命令制造

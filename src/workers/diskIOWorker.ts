@@ -26,6 +26,7 @@ import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import { flushVerificationChanges, handleVerificationDelete, handleVerificationUpsert, recoverVerificationDay, scheduleVerificationRollover } from "./diskIO/verificationFiles";
 import {
   configureAiMemoryDeletePersistedReply,
+  configureAiMemoryPersistedReply,
   deleteAiMemorySnapshot,
   flushAiMemorySnapshots,
   hydrateAiMemorySnapshots,
@@ -78,7 +79,10 @@ function handleLoad(): void {
     hydrateStickerCatalogs(getStickerConfig().packs);
     const todayKey: string = getTokyoDateKey();
     hydrateLuckDay(todayKey);
-    luckReceiptSecret = recoverLuckReceiptSecret(todayKey);
+    luckReceiptSecret = recoverLuckReceiptSecret({
+      day: todayKey,
+      confirmedResultCount: luckWorkerCache.current?.entries.size ?? 0,
+    });
     verifications = recoverVerificationDay(todayKey);
     scheduleVerificationRollover((reply) => self.postMessage(reply));
   } catch (error: unknown) {
@@ -105,7 +109,12 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       handleLogMessage(msg);
       break;
     case "aiMemory":
-      markAiMemorySnapshotDirty(msg.chatId, msg.revision, msg.snapshot);
+      markAiMemorySnapshotDirty({
+        chatId: msg.chatId,
+        revision: msg.revision,
+        snapshot: msg.snapshot,
+        persistImmediately: msg.persistImmediately === true,
+      });
       break;
     case "deleteAiMemory":
       // 同步立即 unlink（而不是只走 dirty 标记 + 定时 flush）：删除是
@@ -123,7 +132,32 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
     case "ensureLuckSecret": {
       let reply: LuckSecretReply;
       try {
-        reply = { type: "luckSecret", requestId: msg.requestId, secret: recoverLuckReceiptSecret(msg.day) };
+        const currentLuckDay: string | undefined = luckWorkerCache.current?.day;
+        if (currentLuckDay !== undefined && msg.day < currentLuckDay) {
+          throw new Error(
+            `Refusing to move luck persistence backward from ${currentLuckDay} to ${msg.day}.`
+          );
+        }
+        // hydrateLuckDay 会重置当前 owner 的追加缓冲，因此跨日切换前必须先把
+        // 旧日已确认结果刷盘。失败时拒绝切换，避免仅仅请求新日密钥就丢掉
+        // 尚在正常批量窗口内的旧日结果；这也让新日结果与密钥的一致性检查
+        // 始终建立在已完整提交的上一日 owner 之上。
+        if (currentLuckDay !== msg.day) {
+          if (!flushLuckAppends()) {
+            throw new Error(`Failed to flush luck results before switching from ${currentLuckDay ?? "none"} to ${msg.day}.`);
+          }
+          // 跨日请求必须先恢复目标日结果，再决定能否轮换密钥；否则不一致备份
+          // 中“结果文件存在、密钥仍是旧日”的组合会被误当成安全的新一天。
+          hydrateLuckDay(msg.day);
+        }
+        reply = {
+          type: "luckSecret",
+          requestId: msg.requestId,
+          secret: recoverLuckReceiptSecret({
+            day: msg.day,
+            confirmedResultCount: luckWorkerCache.current?.entries.size ?? 0,
+          }),
+        };
       } catch (error: unknown) {
         reply = {
           type: "luckSecret",
@@ -156,6 +190,7 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 export function startDiskIOWorker(): void {
   configureAiMemoryDeletePersistedReply((reply) => self.postMessage(reply));
+  configureAiMemoryPersistedReply((reply) => self.postMessage(reply));
   initLogFiles();
   self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
     handleDiskIOWorkerMessage(event.data);

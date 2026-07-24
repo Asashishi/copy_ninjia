@@ -22,6 +22,9 @@ const stopWeatherRefreshLoop = mock((): void => { calls.push("stopWeather"); });
 const sweepAiChatReplyCache = mock((_now: number): void => { calls.push("sweep"); });
 const sweepImageGenerationCache = mock((_now: number): void => { calls.push("sweepImageGeneration"); });
 const flushDirtyMemories = mock((): void => { calls.push("flushMemories"); });
+const flushMemorySnapshot = mock((_chatId: number, _persistImmediately?: boolean): void => {
+  calls.push("flushMemorySnapshot");
+});
 const hydrateMemories = mock((_memories: unknown): void => { calls.push("hydrateMemories"); });
 const purgeChatMemory = mock((_chatId: number): void => { calls.push("purgeMemory"); });
 const recordChatMessage = mock((..._args: unknown[]): void => { calls.push("record"); });
@@ -42,6 +45,7 @@ mock.module("../../../src/cache/aiChat/replies", () => ({ sweepAiChatReplyCache 
 mock.module("../../../src/cache/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
 mock.module("../../../src/workers/aiChat/rollingMemory", () => ({
   flushDirtyMemories,
+  flushMemorySnapshot,
   hydrateMemories,
   purgeChatMemory,
   recordChatMessage,
@@ -70,6 +74,7 @@ beforeEach(() => {
     sweepAiChatReplyCache,
     sweepImageGenerationCache,
     flushDirtyMemories,
+    flushMemorySnapshot,
     hydrateMemories,
     purgeChatMemory,
     recordChatMessage,
@@ -90,8 +95,28 @@ describe("AI Chat Worker lifecycle", () => {
   test("协议路由覆盖恢复、记录、触发、刷盘与可选记忆清除", () => {
     const messages: AiChatWorkerMessage[] = [
       { type: "init", botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" } },
-      { type: "record", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", username: "alice", messageId: 9, text: "hi" },
-      { type: "recordMedia", chatId: -1001, senderId: 7, firstName: "Alice", lastName: "", kind: "photo", fileId: "file", messageId: 10 } as unknown as AiChatWorkerMessage,
+      {
+        type: "record",
+        chatId: -1001,
+        senderId: 7,
+        firstName: "Alice",
+        lastName: "",
+        username: "alice",
+        messageId: 9,
+        text: "hi",
+        persistImmediately: true,
+      },
+      {
+        type: "recordMedia",
+        chatId: -1001,
+        senderId: 7,
+        firstName: "Alice",
+        lastName: "",
+        kind: "photo",
+        fileId: "file",
+        messageId: 10,
+        persistImmediately: true,
+      } as unknown as AiChatWorkerMessage,
       {
         type: "trigger",
         chatId: -1001,
@@ -115,6 +140,8 @@ describe("AI Chat Worker lifecycle", () => {
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
     expect(recordChatMessage).toHaveBeenCalledTimes(1);
     expect(recordChatMedia).toHaveBeenCalledTimes(1);
+    expect(flushMemorySnapshot).toHaveBeenNthCalledWith(1, -1001, true);
+    expect(flushMemorySnapshot).toHaveBeenNthCalledWith(2, -1001, true);
     expect(generateAndSendReply).toHaveBeenCalledWith({
       type: "trigger",
       chatId: -1001,

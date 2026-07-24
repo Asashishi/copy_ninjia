@@ -542,6 +542,15 @@ function isActiveChatMember(member: ChatMember): boolean {
 }
 
 /**
+ * 只有身份可归因的非匿名管理员才提供“邀请者免验证”。匿名管理员仍是
+ * Telegram 管理员，也仍可因自身管理员身份免验证；这里只避免把匿名操作
+ * 可能携带的脱敏/共享 actor 身份当作可信邀请者。
+ */
+function isInviterExemptAdmin(member: ChatMember): boolean {
+  return isAdminStatus(member.status) && (!("is_anonymous" in member) || member.is_anonymous !== true);
+}
+
+/**
  * 处理 `chat_member` 更新：这是权威且始终会送达的入群/离群信号（不同于
  * `new_chat_members`/`left_chat_member` 服务消息——一旦群组开启了"隐藏入群/
  * 离群消息"，这些服务消息就完全不会再发送）。要接收非机器人自身成员的这类
@@ -570,13 +579,16 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const wasActive: boolean = isActiveChatMember(update.old_chat_member);
   const isActive: boolean = isActiveChatMember(update.new_chat_member);
 
-  // 管理员任免（含管理员入群/离群）同样以 chat_member 更新送达：同步给
-  // Worker 侧的管理员表缓存，让「管理员拉人免验证」的同步判定近乎实时，
-  // 缓存 TTL 只是兜底。FIFO 保证它先于随后的 join/left 投递生效。
-  const wasAdmin: boolean = isAdminStatus(update.old_chat_member.status);
+  // 管理员任免、入离群及匿名模式切换同样以 chat_member 更新送达：同步给
+  // Worker 侧的邀请者豁免缓存，让「非匿名管理员拉人免验证」的同步判定
+  // 近乎实时，缓存 TTL 只是兜底。FIFO 保证它先于随后的 join/left 投递生效。
   const isAdmin: boolean = isAdminStatus(update.new_chat_member.status);
+  const wasInviterExempt: boolean = isInviterExemptAdmin(update.old_chat_member);
+  const isInviterExempt: boolean = isInviterExemptAdmin(update.new_chat_member);
   const messages: AntiRaidWorkerMessage[] = [];
-  if (wasAdmin !== isAdmin) messages.push({ type: "adminsChanged", chatId, userId: user.id, isAdmin });
+  if (wasInviterExempt !== isInviterExempt) {
+    messages.push({ type: "adminsChanged", chatId, userId: user.id, isInviterExempt });
+  }
 
   if (!wasActive && isActive) {
     // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径

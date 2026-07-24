@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
-const teardownChatRuntime = mock((..._args: unknown[]): void => {});
+const teardownChatRuntime = mock(async (..._args: unknown[]): Promise<void> => {});
 const invalidateBotAdminStatus = mock((chatId: number): void => {
   delete states.get(chatId)?.botIsAdmin;
 });
@@ -101,6 +101,19 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
     expect(invalidateBotAdminStatus).toHaveBeenCalledTimes(2);
     expect(saveStateInBackground).toHaveBeenCalledTimes(2);
+  });
+
+  test("/init disable 拆运行态失败仍持久化禁用状态，但不发送成功提示", async () => {
+    const teardownError = new Error("chat teardown failed");
+    states.set(-1001, { botIsAdmin: true });
+    teardownChatRuntime.mockRejectedValueOnce(teardownError);
+
+    await expect(handleInitCommand(context("disable"))).rejects.toBe(teardownError);
+
+    expect(states.get(-1001)?.isInitEnabled).toBe(false);
+    expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
+    expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("/ja_copy 非开关参数交给复制命令，开关参数只修改日语状态", async () => {

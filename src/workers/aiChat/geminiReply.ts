@@ -3,7 +3,7 @@ import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool 
 import { PERSONA_PATH } from "../../consts/paths";
 import {
   GEMINI_REPLY_MODEL,
-  MAX_CUSTOM_TOOL_CALLS_PER_NAME,
+  HARD_MAX_ACTIONS_PER_REPLY,
   MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
   MAX_GOOGLE_SEARCH_CALLS_PER_REPLY,
   MAX_TOOL_ROUNDS,
@@ -16,6 +16,7 @@ import {
   REPLY_CONTEXT_STRUCTURE_INSTRUCTION,
   TIME_AWARENESS_INSTRUCTION,
 } from "../../consts/aiChat/prompts/memory";
+import { ACTION_TOOL_NAMES } from "../../consts/tools";
 import { MOOD_STATE_PRECEDENCE_INSTRUCTION } from "../../consts/aiChat/prompts/mood";
 import { buildWebSearchInstruction, WEB_SEARCH_EXHAUSTED_INSTRUCTION } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
@@ -129,6 +130,9 @@ export async function callGemini(
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
     if (!toolset.isActive()) return null;
+    if (toolset.actionsUsed() >= HARD_MAX_ACTIONS_PER_REPLY) {
+      for (const name of ACTION_TOOL_NAMES) disabledFunctionNames.add(name);
+    }
     const remainingSearchCalls: number = Math.max(0, MAX_GOOGLE_SEARCH_CALLS_PER_REPLY - googleSearchCalls);
     const googleSearchEnabled: boolean = hasGoogleSearch && remainingSearchCalls > 0;
     const requestTools: Tool[] = availableTools(
@@ -212,14 +216,15 @@ export async function callGemini(
         customToolCalls++;
         const perNameCalls: number = (customToolCallsByName.get(call.name) ?? 0) + 1;
         customToolCallsByName.set(call.name, perNameCalls);
-        if (perNameCalls >= MAX_CUSTOM_TOOL_CALLS_PER_NAME) disabledFunctionNames.add(call.name);
-        const withinBudget: boolean = customToolCalls <= MAX_CUSTOM_TOOL_CALLS_PER_REPLY &&
-          perNameCalls <= MAX_CUSTOM_TOOL_CALLS_PER_NAME;
+        const withinBudget: boolean = customToolCalls <= MAX_CUSTOM_TOOL_CALLS_PER_REPLY;
         const toolResult: string = withinBudget
           ? toolset.has(call.name)
             ? await toolset.execute(call.name, JSON.stringify(call.args ?? {}))
             : callTool(call.name)
           : JSON.stringify({ unavailable: "Tool budget exhausted for this reply" });
+        if (toolset.actionsUsed() >= HARD_MAX_ACTIONS_PER_REPLY) {
+          for (const name of ACTION_TOOL_NAMES) disabledFunctionNames.add(name);
+        }
         // 工具实现返回的都是 JSON 字符串（见 src/ai/tools），
         // functionResponse.response 要求对象，解析回来直接挂上。
         const response: unknown = JSON.parse(toolResult);

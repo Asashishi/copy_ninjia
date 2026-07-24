@@ -43,7 +43,7 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 | `state.json` + `state.json.bak` | Authoritative group switches, copy state, lockdown mirrors, and related state | Back up primary and backup together |
 | `memory/ai/` | Per-group AI-memory snapshots | Contains verbatim group-chat content; sensitive |
 | `memory/stickers/` | Sticker-description catalog | Reconstructible by reconciling online packs |
-| `memory/luck/` | Fortune results + `receipt-secret.json` | Back up the key and current-day results in one consistent snapshot |
+| `memory/luck/` | Fortune results + `receipt-secret.json` | Back up the key and current-day results in one consistent snapshot; never regenerate only the key |
 | `memory/anti-raid/` | Daily pending-verification state | Only the current Tokyo-day file is retained |
 | `logs/` | Error logs with English messages | As needed |
 | `bot.lock` and `.guard` / `.recovery` | Single-instance lock | Do not back up or edit manually |
@@ -60,6 +60,7 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
 | `bot.lock` refuses startup | See the next section | Follow the next section |
 | Configuration schema validation fails | Invalid `config/*.json` or `.env` | Fix the named field; mood weights must total exactly 100 and at most 5 sticker packs are allowed |
 | Both state copies are invalid | A schema-changing version was deployed without migrating data | Migrate using [06 Changing a Persistence Schema](06-modification-guide.md#changing-a-persistence-schema), then restart; the program does not modify the originals |
+| Fortune results and receipt key are inconsistent | The current-day results and `receipt-secret.json` came from different backup points, or only one was restored | Stop the bot and restore the complete `memory/luck/` directory from one consistency point; do not delete or regenerate only the key |
 | A `*.corrupt` file appears | One damaged state copy was quarantined and the other took over | This is normal self-recovery; remove the quarantined file after investigating the cause |
 
 ### `bot.lock` Refuses Startup

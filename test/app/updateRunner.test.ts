@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { Update } from "@grammyjs/types";
-import type { Bot } from "grammy";
+import { BotError } from "grammy";
+import type { Bot, Context } from "grammy";
 import { runAcknowledgedUpdateBatches } from "../../src/app/updateRunner";
+import { logger } from "../../src/infra/logger";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: (() => void) | undefined;
@@ -94,5 +96,49 @@ describe("acknowledgement-safe update runner", () => {
     await expect(runner.task()).rejects.toThrow("durability barrier failed");
     expect(handledErrors).toBe(1);
     expect(fetchOffsets).toEqual([0]);
+  });
+
+  test("error handler 有意重抛原始错误时不误报 handler 自身失败", async () => {
+    const update = { update_id: 40 } as Update;
+    const middlewareError = new Error("middleware failed");
+    const botError = new BotError(middlewareError, { update } as Context);
+    const errorLog = spyOn(logger, "error").mockImplementation(() => undefined);
+    const fakeBot = {
+      api: {
+        getUpdates: async (): Promise<Update[]> => [update],
+      },
+      handleUpdate: async (): Promise<never> => { throw botError; },
+      errorHandler: (error: BotError<Context>): never => { throw error.error; },
+    };
+
+    try {
+      const runner = runAcknowledgedUpdateBatches(fakeBot as unknown as Bot, ["message"]);
+      await expect(runner.task()).rejects.toBe(botError);
+      expect(errorLog).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  test("error handler 抛出不同错误时保留自身失败诊断并传播原始 update 错误", async () => {
+    const update = { update_id: 50 } as Update;
+    const botError = new BotError(new Error("middleware failed"), { update } as Context);
+    const handlerError = new Error("error logger failed");
+    const errorLog = spyOn(logger, "error").mockImplementation(() => undefined);
+    const fakeBot = {
+      api: {
+        getUpdates: async (): Promise<Update[]> => [update],
+      },
+      handleUpdate: async (): Promise<never> => { throw botError; },
+      errorHandler: (): never => { throw handlerError; },
+    };
+
+    try {
+      const runner = runAcknowledgedUpdateBatches(fakeBot as unknown as Bot, ["message"]);
+      await expect(runner.task()).rejects.toBe(botError);
+      expect(errorLog).toHaveBeenCalledWith("Bot update error handler failed:", handlerError);
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });

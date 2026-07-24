@@ -4,6 +4,7 @@ import { senderUsernameCache, userCache } from "../../src/cache/senderIdentity";
 import { USER_CACHE_MAX } from "../../src/consts/senderIdentity";
 import {
   cacheSender,
+  resolveReplyTarget,
   resolveUsernameTarget,
   seedSenderCache,
 } from "../../src/users/senderIdentity";
@@ -35,6 +36,27 @@ beforeEach(() => {
 });
 
 describe("sender identity cache", () => {
+  test("回复当前群组皮套消息时保留群身份，供 copy 复制头像并复读", () => {
+    const repliedMessage = {
+      message_id: 1,
+      date: 1,
+      chat,
+      sender_chat: chat,
+    } as unknown as Message;
+    const commandMessage = {
+      message_id: 2,
+      date: 1,
+      chat,
+      reply_to_message: repliedMessage,
+    } as unknown as Message;
+
+    expect(resolveReplyTarget(commandMessage)).toEqual({
+      id: -1001,
+      title: "Test Group",
+      isChannel: true,
+    });
+  });
+
   test("用户改名、去名和恢复 username 时只有当前 alias 可解析", () => {
     cacheSender(userMessage(1, "OldName"));
     expect(resolveUsernameTarget("OLDNAME")?.id).toBe(1);

@@ -65,7 +65,7 @@ AI がトリガーされた後は、メインスレッドが活動量に基づ�
 
 ## 停止順序
 
-正常停止と異常停止は同じライフサイクルに合流します。最初にタイトル、リアクション、アバター、翻訳の入口を **quiesce** して runner を止め、次に各キューと mailbox を**上限付きで drain**します。正常経路では最終 Telegram offset の確認前に AI、Disk I/O、StateStore の順で flush します。最終 dispose の順序は「AI を flush → AI を終了 → Disk I/O を flush → Anti-Raid と Disk I/O を終了 → StateStore を flush → インスタンスロックを解放」で固定です。重要な drain/flush が 1 つでも失敗すると最終 offset の確認とロック解放を行わず、未確認 update が Telegram から再配信されるよう非ゼロで終了します。時間予算を使い切った場合は実行中の要求を abort してから未開始作業を精算し、abort 後はメッセージを送信しません。
+正常停止と異常停止は同じライフサイクルに合流します。最初にタイトル、リアクション、アバター、翻訳の入口を **quiesce** して runner を止め、次に各キューと mailbox を**上限付きで drain**します。正常経路では最終 Telegram offset の確認前に AI、Disk I/O、StateStore の順で flush します。最終 dispose の順序は「AI を flush → AI を終了 → Disk I/O を flush → Anti-Raid と Disk I/O を終了 → StateStore を flush → インスタンスロックを解放」で固定です。重要な drain/flush が 1 つでも失敗すると最終 offset の確認とロック解放を行わず、未確認 update が Telegram から再配信されるよう非ゼロで終了します。通常 dispose の進行中に fatal error が発生した場合、emergency 経路は同じ Promise を再利用しますが、独立した絶対 15 秒の deadline で最終強制終了を保証します。時間予算を使い切った場合は実行中の要求を abort してから未開始作業を精算し、abort 後はメッセージを送信しません。
 
 どの失敗が fatal か、どの順序を入れ替えられないかを含む完全な規則は [04 実行時の正式な不変条件](04-invariants.md) を参照してください。
 

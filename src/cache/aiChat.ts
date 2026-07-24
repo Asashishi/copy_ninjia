@@ -26,6 +26,12 @@ export const latestAiMemoryRevisions: Map<number, number> = new Map();
 export const aiMemoryRevisionCounters: Map<number, number> = new Map();
 /** 已投递但尚未收到 durable delete 回执的最新墓碑。 */
 export const pendingAiMemoryDeletes: Map<number, number> = new Map();
+/**
+ * purge 后首份新记忆的即时持久化状态：null 表示已把强制上报标志交给 AI
+ * Worker、尚未收到快照；number 表示已投给 Disk I/O、等待该 revision
+ * durable。确认前保留，供 AI/Disk I/O Worker 重建时继续强制快速路径。
+ */
+export const postPurgeAiMemoryPersistRevisions: Map<number, number | null> = new Map();
 /** 等待某群指定 AI 记忆删除 revision durable 的调用方。 */
 export interface AiMemoryDeleteWaiter {
   revision: number;

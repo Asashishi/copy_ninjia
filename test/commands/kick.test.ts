@@ -114,6 +114,23 @@ describe("/kick 跨群封禁", () => {
     });
   });
 
+  test("当前群组皮套仍可被解析，但 kick 不会把整个群误当作匿名管理员封禁", async () => {
+    target = { id: -1001, title: "Test Group", isChannel: true };
+    isBotAdminIn.mockResolvedValueOnce(true);
+    chatStates.set(-2002, { botIsAdmin: true });
+
+    await handleKickCommand(context());
+
+    expect(banChatSenderChat).not.toHaveBeenCalled();
+    expect(banChatMember).not.toHaveBeenCalled();
+    expect(isChatMember).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("不会告诉本天才皮套底下是谁"),
+      replyToMessageId: 10,
+    });
+  });
+
   test("所有群都封禁失败时给出权限诊断且不安排删除", async () => {
     isBotAdminIn.mockResolvedValueOnce(true);
     banChatMember.mockResolvedValueOnce(false);

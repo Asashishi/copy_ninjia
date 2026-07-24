@@ -1,4 +1,7 @@
-import { IMAGE_GENERATION_COOLDOWN_MS } from "../imageGeneration";
+import {
+  IMAGE_GENERATION_COOLDOWN_MS,
+  MAX_GENERATED_IMAGES_PER_REPLY,
+} from "../imageGeneration";
 import { AI_MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 
@@ -61,7 +64,8 @@ export const ADD_REACTION_TOOL_INSTRUCTION: string =
 
 /** generate_image 工具的模型可见资格与冷却说明。 */
 export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
-  "根据群友当前请求生成或编辑一张 1K 图片并直接发送到群里。调用的硬前提是：本轮触发消息直接回复或 @ 了你，且消息本身明确要求画图、生图、" +
+  `根据群友当前请求生成或编辑一张 1K 图片并直接发送到群里，每轮最多成功发送 ${MAX_GENERATED_IMAGES_PER_REPLY} 张。` +
+  "调用的硬前提是：本轮触发消息直接回复或 @ 了你，且消息本身明确要求画图、生图、" +
   "修图、上色、改图、做海报/壁纸/视觉稿，或明确要求把想法呈现成图片。仅仅提到图片、描述场景、讨论构图、询问你是否会生图或修图，或你觉得配图更好，" +
   "都不构成调用意图；不得根据暗示或自行发挥擅自生图。执行侧只校验当前消息是否直接回复/@你，具体意图由你根据当前消息判断，不依赖关键词匹配。" +
   "prompt 必须是可独立交给图片模型的完整画面说明，" +

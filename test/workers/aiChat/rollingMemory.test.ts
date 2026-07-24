@@ -10,11 +10,15 @@ mock.module("../../../src/workers/aiChat/compaction", () => ({
   scheduleRotation: mock((..._args: unknown[]): void => {}),
 }));
 
-const { pushBufferedMessage } = await import("../../../src/workers/aiChat/rollingMemory");
+const {
+  flushMemorySnapshot,
+  pushBufferedMessage,
+} = await import("../../../src/workers/aiChat/rollingMemory");
 const { buildBufferedMessage, sanitizeReplyReference } = await import("../../../src/workers/aiChat/bufferedMessage");
 const {
   chatBuffers,
   chatLastActivityTimes,
+  dirtyMemoryChats,
   resetAiChatMemoryCache,
 } = await import("../../../src/cache/aiChat/memory");
 const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../src/cache/aiChat/replies");
@@ -93,6 +97,21 @@ describe("AI rolling-memory capacity", () => {
       quote: "第二行 末尾",
       forwardedFrom: "频道 [id:-100666] 东京日报",
     });
+  });
+
+  test("purge 后首份新记忆可按群立即上报，并从普通 dirty 批次移除", () => {
+    pushBufferedMessage(-1001, entry("post-purge"));
+
+    flushMemorySnapshot(-1001, true);
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "memory",
+      chatId: -1001,
+      snapshot: expect.any(String),
+      persistImmediately: true,
+    });
+    expect(chatBuffers.get(-1001)?.size).toBe(1);
+    expect(dirtyMemoryChats.has(-1001)).toBeFalse();
   });
 
   test("LRU 淘汰优先跳过仍有回复轮次在途的最老群", () => {

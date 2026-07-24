@@ -16,23 +16,23 @@ describe("daily luck receipt secret file", () => {
     const previousUmask: number = process.umask(0o077);
     let created: ReturnType<typeof recoverLuckReceiptSecret>;
     try {
-      created = recoverLuckReceiptSecret("2026-07-19", path);
+      created = recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 0, path });
     } finally {
       process.umask(previousUmask);
     }
-    const loaded = recoverLuckReceiptSecret("2026-07-19", path);
+    const loaded = recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 3, path });
     expect(loaded).toEqual(created);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(created);
     expect(statSync(path).mode & 0o777).toBe(0o644);
 
     chmodSync(path, 0o600);
-    recoverLuckReceiptSecret("2026-07-19", path);
+    recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 3, path });
     expect(statSync(path).mode & 0o777).toBe(0o644);
   });
 
   test("东京日期前进时生成新密钥并原子替换旧日文件", () => {
-    const previous = recoverLuckReceiptSecret("2026-07-19", path);
-    const next = recoverLuckReceiptSecret("2026-07-20", path);
+    const previous = recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 0, path });
+    const next = recoverLuckReceiptSecret({ day: "2026-07-20", confirmedResultCount: 0, path });
     expect(next.day).toBe("2026-07-20");
     expect(next.key).not.toBe(previous.key);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(next);
@@ -47,7 +47,7 @@ describe("daily luck receipt secret file", () => {
     ];
     for (const content of invalidContents) {
       writeFileSync(path, content);
-      expect(() => recoverLuckReceiptSecret("2026-07-19", path)).toThrow();
+      expect(() => recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 0, path })).toThrow();
       expect(readFileSync(path, "utf8")).toBe(content);
     }
   });
@@ -58,7 +58,34 @@ describe("daily luck receipt secret file", () => {
       writeText: () => { throw new Error("disk full"); },
       chmod: () => {},
     };
-    expect(() => recoverLuckReceiptSecret("2026-07-19", path, io)).toThrow("disk full");
+    expect(() => recoverLuckReceiptSecret({
+      day: "2026-07-19",
+      confirmedResultCount: 0,
+      path,
+      io,
+    })).toThrow("disk full");
     expect(existsSync(path)).toBe(false);
+  });
+
+  test("当天已有确认结果时，密钥缺失会拒绝铸造并保留缺失现场", () => {
+    expect(() => recoverLuckReceiptSecret({
+      day: "2026-07-19",
+      confirmedResultCount: 2,
+      path,
+    })).toThrow("restore");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("当天已有确认结果时，旧日密钥会拒绝轮换并保留原文件", () => {
+    const previous = recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 0, path });
+    const original: string = readFileSync(path, "utf8");
+
+    expect(() => recoverLuckReceiptSecret({
+      day: "2026-07-20",
+      confirmedResultCount: 1,
+      path,
+    })).toThrow("same consistent backup");
+    expect(readFileSync(path, "utf8")).toBe(original);
+    expect(JSON.parse(original)).toEqual(previous);
   });
 });

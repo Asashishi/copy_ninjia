@@ -1,5 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import type { DiskIOMessage, DiskIOReply, LuckDrawDiskMessage, VerificationPersistedReply } from "../../src/types";
+import type {
+  AiMemoryPersistedReply,
+  DiskIOMessage,
+  DiskIOReply,
+  LuckDrawDiskMessage,
+  VerificationPersistedReply,
+} from "../../src/types";
 import { pendingLoad, pendingLuckSecrets } from "../../src/cache/diskIO";
 
 const diskIO = await import("../../src/infra/diskIO");
@@ -125,6 +131,16 @@ describe("explicit Worker initialization", () => {
       };
       first.onmessage!({ data: ack } as MessageEvent<DiskIOReply>);
       expect(persisted).toEqual([ack]);
+
+      const aiMemoryPersisted: AiMemoryPersistedReply[] = [];
+      diskIO.onAiMemoryPersisted((reply) => { aiMemoryPersisted.push(reply); });
+      const aiMemoryAck: AiMemoryPersistedReply = {
+        type: "aiMemoryPersisted",
+        chatId: -1001,
+        revision: 3,
+      };
+      first.onmessage!({ data: aiMemoryAck } as MessageEvent<DiskIOReply>);
+      expect(aiMemoryPersisted).toEqual([aiMemoryAck]);
 
       let respawns: number = 0;
       diskIO.onDiskIORespawn(() => {

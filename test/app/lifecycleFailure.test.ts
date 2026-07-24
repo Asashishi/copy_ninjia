@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { EMERGENCY_REUSED_DISPOSE_DEADLINE_MS } from "../../src/consts/lifecycle";
 import type { ApplicationLifecycleDependencies } from "../../src/types/lifecycle";
 
 const calls: string[] = [];
@@ -348,6 +349,64 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("terminateDiskIO")).toBeLessThan(calls.indexOf("flushState"));
   });
 
+  test("普通 dispose 在途时发生致命异常会受独立硬截止约束且只请求退出一次", async () => {
+    const antiRaidGate = deferred<FlushResult>();
+    drainAntiRaid.mockImplementationOnce(() => {
+      calls.push("drainAntiRaid");
+      return antiRaidGate.promise;
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    const disposing = lifecycle.dispose();
+    await Bun.sleep(0);
+
+    const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
+    const originalClearTimeout: typeof clearTimeout = globalThis.clearTimeout;
+    const deadlineToken = {} as ReturnType<typeof setTimeout>;
+    let deadlineCallback: (() => void) | null = null;
+    let deadlineDelayMs: number | undefined;
+    let deadlineCleared: boolean = false;
+    const exit = spyOn(process, "exit").mockImplementation(
+      (_code?: string | number | null): never => undefined as never
+    );
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number) => {
+      deadlineCallback = callback;
+      deadlineDelayMs = delay;
+      return deadlineToken;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((timer: ReturnType<typeof setTimeout>): void => {
+      if (timer === deadlineToken) deadlineCleared = true;
+    }) as typeof clearTimeout;
+
+    try {
+      // 直接触发私有入口，避免向测试进程广播 uncaughtException 干扰 Bun runner。
+      (lifecycle as unknown as { exitAfterEmergencyDispose(): void }).exitAfterEmergencyDispose();
+
+      expect(deadlineDelayMs).toBe(EMERGENCY_REUSED_DISPOSE_DEADLINE_MS);
+      expect(drainAntiRaid).toHaveBeenCalledTimes(1);
+      expect(exit).not.toHaveBeenCalled();
+
+      deadlineCallback!();
+      expect(exit).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("hard deadline"));
+
+      antiRaidGate.resolve("flushed");
+      await disposing;
+      await Promise.resolve();
+
+      expect(deadlineCleared).toBe(true);
+      expect(exit).toHaveBeenCalledTimes(1);
+    } finally {
+      antiRaidGate.resolve("flushed");
+      await disposing;
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+      exit.mockRestore();
+    }
+  });
+
   test("Anti-Raid drain 失败仍终止 Worker，但设置非零退出码并保留实例锁", async () => {
     drainAntiRaid.mockResolvedValueOnce("failed");
     const lifecycle = new ApplicationLifecycle(testDependencies);
@@ -407,18 +466,20 @@ describe("应用启动失败与退出清理", () => {
     );
   });
 
-  test("标题维护永不结束时 dispose 仍在预算内终止 Worker，并保留实例锁", async () => {
+  test("标题维护永不结束时 dispose 设置非零退出码、终止 Worker 并保留实例锁", async () => {
     refreshAllChatTitles.mockImplementationOnce(() => new Promise<void>(() => {}));
     const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     await lifecycle.dispose({ aiMemoryMs: 10, diskIOMs: 10, stateMs: 10, maintenanceMs: 1 });
 
+    expect(process.exitCode).toBe(1);
     expect(terminateAiChat).toHaveBeenCalledTimes(1);
     expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
     expect(terminateDiskIO).toHaveBeenCalledTimes(1);
     expect(abortChatTitleRefresh).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("maintenance=false"));
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Retaining the single-instance lock"));
   });
 

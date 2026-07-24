@@ -9,6 +9,7 @@ import {
   IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY,
   IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS,
   IMAGE_GENERATION_PROMPT_MAX_CHARS,
+  MAX_GENERATED_IMAGES_PER_REPLY,
   type ImageGenerationAspectRatio,
 } from "../../../consts/aiChat/imageGeneration";
 import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../consts/aiChat/prompts/tools";
@@ -96,11 +97,18 @@ function parseArguments(
 
 export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJson: string) => Promise<string> {
   let consecutiveFailures: number = 0;
+  let generatedImages: number = 0;
   return async (argumentsJson: string): Promise<string> => {
     if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
     if (!ctx.imageGenerationRequested) {
       return JSON.stringify({
         error: "Image generation is not authorized: the triggering message was not a direct reply to or mention of the bot",
+        retryable: false,
+      });
+    }
+    if (generatedImages >= MAX_GENERATED_IMAGES_PER_REPLY) {
+      return JSON.stringify({
+        error: `Image limit reached: at most ${MAX_GENERATED_IMAGES_PER_REPLY} generated image per reply`,
         retryable: false,
       });
     }
@@ -188,6 +196,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
       }
 
       consecutiveFailures = 0;
+      generatedImages++;
       const memoryPrompt: string = truncateInline(sanitizeInline(parsed.prompt), IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS);
       // allow_sending_without_reply 可能让图片在目标已删除时退化为普通消息，
       // 自录只采用 Telegram 返回的实际回复关系。

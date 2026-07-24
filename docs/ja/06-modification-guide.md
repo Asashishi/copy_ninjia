@@ -28,7 +28,7 @@
 | メディア説明長、実行 slot、LRU 容量 | `src/consts/aiChat/media.ts` |
 | 画像生成 cooldown と byte 上限 | `src/consts/aiChat/imageGeneration.ts` |
 | ムード時間とコマンド timeout | `src/consts/aiChat/mood.ts` |
-| ツール呼び出し上限、モデル名、request timeout | `src/consts/aiChat/tools.ts` |
+| ツール action・lookup 上限、モデル名、request timeout | `src/consts/aiChat/tools.ts` |
 | 認証 window、spam threshold、追記・compaction 方針 | `src/consts/antiRaid/` |
 | copy cooldown、`/quiet` 範囲、username 規則 | `src/consts/commands.ts` |
 | 送信者ごとのランダムトリガー cooldown | `src/consts/auto.ts` |
@@ -44,9 +44,15 @@
 2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`src/ai/tools/index.ts`](../../src/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `src/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator がドメイン定義を SDK の `FunctionDeclaration` に変換します。
 3. **実装**：`src/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
 4. **登録**：静的 query tool は `src/ai/tools/index.ts` の dispatch へ、action tool は `src/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
-5. **予算**：`src/consts/aiChat/tools.ts` の action budget と function ごとの呼び出し上限が新ツールに適切か確認します。成功した副作用は統一 action budget に数えます。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
+5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、Google Search、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
 6. **Prompt**：必要なら `src/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
 7. **テスト + 文書**：`test/ai/` または対応する Worker パスにテストを追加し、必要ならルート README のツール行を更新します。
+
+## 汎用 JSON API 呼び出しの追加
+
+1. [`src/consts/httpFetch.ts`](../../src/consts/httpFetch.ts) の `JSON_API_ALLOWED_ORIGINS` に正確な HTTPS origin を明示的に追加します。任意 host、HTTP、credential を含む URL へ広げてはいけません。
+2. [`src/libs/httpFetch.ts`](../../src/libs/httpFetch.ts) の上限付き JSON reader を再利用します。redirect は無効のままにし、response body と error log の上限を維持します。
+3. origin、redirect、過大 response、失敗 log のテストを追加します。Telegram avatar crawler は独立した media 経路であり、JSON API 追加のために接続先を変えたり制限したりしません。
 
 ## ペルソナまたは JSON 設定の変更
 

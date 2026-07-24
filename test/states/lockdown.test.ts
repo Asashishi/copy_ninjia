@@ -55,7 +55,7 @@ describe("加锁落地", () => {
     expect(prepared.effects).toEqual([{ kind: "persistState" }]);
     expect(transitionLockdown(prepared.next, { type: "statePersisted", phase: "applying", intentId: 6 }).effects).toEqual([]);
     expect(transitionLockdown(prepared.next, { type: "statePersisted", phase: "applying", intentId: 7 }).effects).toEqual([
-      { kind: "commitApply", originalPermissions: PERMS },
+      { kind: "commitApply" },
     ]);
   });
 
@@ -94,6 +94,13 @@ describe("加锁落地", () => {
     const { next, effects } = transitionLockdown(state, { type: "applyPreparationFailed" });
     expect(next).toBeUndefined();
     expect(effects).toEqual([]);
+  });
+
+  test("提交前刷新权限失败 → 删除已落盘但尚未写 Telegram 的 intent", () => {
+    const state: LockdownState = { kind: "applying", originalPermissions: PERMS, intentId: 7 };
+    const { next, effects } = transitionLockdown(state, { type: "applyCommitPreparationFailed" });
+    expect(next).toBeUndefined();
+    expect(effects).toEqual([{ kind: "reportUnlock" }]);
   });
 });
 

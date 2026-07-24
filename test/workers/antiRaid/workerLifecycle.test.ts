@@ -78,7 +78,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "lockdownPersisted", chatId: -1001, phase: "applying", intentId: 1 },
       { type: "adoptVerifications", generation: 1, verifications: [] },
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
-      { type: "adminsChanged", chatId: -1001, userId: 1, isAdmin: true },
+      { type: "adminsChanged", chatId: -1001, userId: 1, isInviterExempt: true },
       { type: "barrier", barrierId: 99 },
     ];
     for (const message of messages) workerSelf.onmessage!({ data: message } as MessageEvent<AntiRaidWorkerMessage>);

@@ -5,6 +5,7 @@ import { createFlushBarrier } from "../libs/flushBarrier";
 import { createRestartThrottle } from "../libs/restartThrottle";
 import type {
   AiMemoryDeletedPersistedReply,
+  AiMemoryPersistedReply,
   DiskBusinessMessage,
   LoadedReply,
   VerificationPersistedReply,
@@ -44,6 +45,7 @@ interface DiskIORuntime {
   respawnListeners: (() => void)[];
   verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[];
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
+  aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
   nextLuckSecretRequestId: number;
 }
 
@@ -66,6 +68,7 @@ export const diskIORuntime: DiskIORuntime = {
   respawnListeners: [],
   verificationPersistedListeners: [],
   aiMemoryDeletedPersistedListeners: [],
+  aiMemoryPersistedListeners: [],
   nextLuckSecretRequestId: 1,
 };
 

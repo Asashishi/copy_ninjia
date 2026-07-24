@@ -267,6 +267,67 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(settled).toBe(true);
   });
 
+  test("匿名模式切换会更新邀请者豁免，但匿名管理员本人仍按管理员身份免验证", async () => {
+    workerPosts.length = 0;
+    const anonymityChanged = antiRaid.handleChatMemberUpdate({
+      me: { id: 99 },
+      chatMember: {
+        chat: { id: -3010 },
+        from: { id: 7 },
+        old_chat_member: {
+          status: "administrator",
+          is_anonymous: false,
+          user: { id: 80, first_name: "Admin" },
+        },
+        new_chat_member: {
+          status: "administrator",
+          is_anonymous: true,
+          user: { id: 80, first_name: "Admin" },
+        },
+      },
+    } as never);
+    await Bun.sleep(0);
+    expect(workerPosts[0]).toEqual({
+      type: "adminsChanged",
+      chatId: -3010,
+      userId: 80,
+      isInviterExempt: false,
+    });
+    let barrier = workerPosts.at(-1);
+    if (barrier?.type === "barrier") {
+      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
+    }
+    await anonymityChanged;
+
+    workerPosts.length = 0;
+    const anonymousAdminJoined = antiRaid.handleChatMemberUpdate({
+      me: { id: 99 },
+      chatMember: {
+        chat: { id: -3011 },
+        from: { id: 8 },
+        old_chat_member: { status: "left", user: { id: 81, first_name: "Owner" } },
+        new_chat_member: {
+          status: "administrator",
+          is_anonymous: true,
+          user: { id: 81, first_name: "Owner" },
+        },
+      },
+    } as never);
+    await Bun.sleep(0);
+    expect(workerPosts[0]).toMatchObject({
+      type: "join",
+      chatId: -3011,
+      member: { id: 81, first_name: "Owner" },
+      exempt: true,
+      actorId: 8,
+    });
+    barrier = workerPosts.at(-1);
+    if (barrier?.type === "barrier") {
+      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
+    }
+    await anonymousAdminJoined;
+  });
+
   test("barrier 后任一持久化 owner 失败，安全 update 必须 reject", async () => {
     workerPosts.length = 0;
     flushDiskIO.mockResolvedValueOnce("failed");

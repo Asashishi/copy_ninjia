@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { JSON_API_ERROR_LOG_MAX_CHARS, JSON_API_MAX_RESPONSE_BYTES } from "../../src/consts/httpFetch";
+import {
+  JSON_API_ALLOWED_ORIGINS,
+  JSON_API_ERROR_LOG_MAX_CHARS,
+  JSON_API_MAX_RESPONSE_BYTES,
+} from "../../src/consts/httpFetch";
+import { WEATHER_API_URL } from "../../src/consts/weather";
 import { chunkedResponse } from "./helpers";
 
 const loggerError = mock((..._args: unknown[]): void => {});
@@ -12,6 +17,10 @@ const realFetch: typeof fetch = globalThis.fetch;
 
 function installFetch(handler: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): void {
   globalThis.fetch = handler as typeof fetch;
+}
+
+function allowedUrl(path: string): string {
+  return new URL(path, WEATHER_API_URL).href;
 }
 
 describe("fetchJsonWithTimeout", () => {
@@ -30,15 +39,44 @@ describe("fetchJsonWithTimeout", () => {
     });
 
     await expect(fetchJsonWithTimeout({
-      input: "https://example.test/data",
+      input: allowedUrl("/data"),
       init: { headers: { accept: "application/json" } },
       timeoutMs: 1000,
       errorLabel: "Example API",
     }))
       .resolves.toEqual({ ok: true });
     expect(receivedInit?.headers).toEqual({ accept: "application/json" });
+    expect(receivedInit?.redirect).toBe("error");
     expect(receivedInit?.signal).toBeInstanceOf(AbortSignal);
     expect(loggerError).not.toHaveBeenCalled();
+  });
+
+  test("只允许配置内的 HTTPS origin，拒绝其它主机、协议与凭据", async () => {
+    const fetchAttempt = mock(async (): Promise<Response> => new Response("{}"));
+    installFetch(fetchAttempt);
+
+    expect(JSON_API_ALLOWED_ORIGINS).toContain(new URL(WEATHER_API_URL).origin);
+    expect(await fetchJsonWithTimeout({
+      input: "https://127.0.0.1/internal",
+      init: {},
+      timeoutMs: 1000,
+      errorLabel: "Internal API",
+    })).toBeNull();
+    expect(await fetchJsonWithTimeout({
+      input: "http://api.open-meteo.com/v1/forecast",
+      init: {},
+      timeoutMs: 1000,
+      errorLabel: "Plain HTTP API",
+    })).toBeNull();
+    expect(await fetchJsonWithTimeout({
+      input: "https://user:secret@api.open-meteo.com/v1/forecast",
+      init: {},
+      timeoutMs: 1000,
+      errorLabel: "Credential API",
+    })).toBeNull();
+
+    expect(fetchAttempt).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledTimes(3);
   });
 
   test("Content-Length 已声明超限时提前拒绝成功响应", async () => {
@@ -46,7 +84,7 @@ describe("fetchJsonWithTimeout", () => {
       headers: { "content-length": String(JSON_API_MAX_RESPONSE_BYTES + 1) },
     }));
 
-    expect(await fetchJsonWithTimeout({ input: "https://example.test/large", init: {}, timeoutMs: 1000, errorLabel: "Large API" })).toBeNull();
+    expect(await fetchJsonWithTimeout({ input: allowedUrl("/large"), init: {}, timeoutMs: 1000, errorLabel: "Large API" })).toBeNull();
     expect(loggerError).toHaveBeenCalledWith(
       `Large API response exceeded ${JSON_API_MAX_RESPONSE_BYTES} bytes (observed ${JSON_API_MAX_RESPONSE_BYTES + 1}).`
     );
@@ -58,7 +96,7 @@ describe("fetchJsonWithTimeout", () => {
       new Uint8Array([1]),
     ]));
 
-    expect(await fetchJsonWithTimeout({ input: "https://example.test/stream", init: {}, timeoutMs: 1000, errorLabel: "Stream API" })).toBeNull();
+    expect(await fetchJsonWithTimeout({ input: allowedUrl("/stream"), init: {}, timeoutMs: 1000, errorLabel: "Stream API" })).toBeNull();
     expect(loggerError).toHaveBeenCalledWith(
       `Stream API response exceeded ${JSON_API_MAX_RESPONSE_BYTES} bytes (observed ${JSON_API_MAX_RESPONSE_BYTES + 1}).`
     );
@@ -68,13 +106,13 @@ describe("fetchJsonWithTimeout", () => {
     const body = "x".repeat(JSON_API_ERROR_LOG_MAX_CHARS + 200);
     installFetch(async (): Promise<Response> => new Response(body, { status: 502 }));
 
-    expect(await fetchJsonWithTimeout({ input: "https://example.test/error", init: {}, timeoutMs: 1000, errorLabel: "Error API" })).toBeNull();
+    expect(await fetchJsonWithTimeout({ input: allowedUrl("/error"), init: {}, timeoutMs: 1000, errorLabel: "Error API" })).toBeNull();
     expect(loggerError).toHaveBeenCalledWith(`Error API error: 502 ${"x".repeat(JSON_API_ERROR_LOG_MAX_CHARS)}…`);
   });
 
   test("非法 JSON 和读取中断统一返回 null 并记录异常", async () => {
     installFetch(async (): Promise<Response> => new Response("not-json"));
-    expect(await fetchJsonWithTimeout({ input: "https://example.test/invalid", init: {}, timeoutMs: 1000, errorLabel: "Invalid API" })).toBeNull();
+    expect(await fetchJsonWithTimeout({ input: allowedUrl("/invalid"), init: {}, timeoutMs: 1000, errorLabel: "Invalid API" })).toBeNull();
     expect(loggerError).toHaveBeenCalledTimes(1);
 
     loggerError.mockClear();
@@ -83,7 +121,7 @@ describe("fetchJsonWithTimeout", () => {
         controller.error(new Error("stream broke"));
       },
     })));
-    expect(await fetchJsonWithTimeout({ input: "https://example.test/broken", init: {}, timeoutMs: 1000, errorLabel: "Broken API" })).toBeNull();
+    expect(await fetchJsonWithTimeout({ input: allowedUrl("/broken"), init: {}, timeoutMs: 1000, errorLabel: "Broken API" })).toBeNull();
     expect(loggerError).toHaveBeenCalledTimes(1);
   });
 
@@ -92,7 +130,7 @@ describe("fetchJsonWithTimeout", () => {
       init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
     }));
 
-    expect(await fetchJsonWithTimeout({ input: "https://example.test/slow", init: {}, timeoutMs: 5, errorLabel: "Slow API" })).toBeNull();
+    expect(await fetchJsonWithTimeout({ input: allowedUrl("/slow"), init: {}, timeoutMs: 5, errorLabel: "Slow API" })).toBeNull();
     expect(loggerError).toHaveBeenCalledTimes(1);
   });
 });

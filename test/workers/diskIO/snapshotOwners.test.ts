@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import type { AiMemoryDeletedPersistedReply } from "../../../src/types/diskIO";
+import type {
+  AiMemoryDeletedPersistedReply,
+  AiMemoryPersistedReply,
+} from "../../../src/types/diskIO";
 
 const recoveredAi: Map<number, string> = new Map<number, string>([[1, "ai-one"]]);
 const recoveredStickers: Map<string, string> = new Map<string, string>([["pack_one", "sticker-one"]]);
@@ -11,10 +14,12 @@ const writeStickerCatalogFile = mock((_pack: string, _snapshot: string): void =>
 const aiFiles = { recover: recoverAiMemories, write: writeAiMemoryFile, delete: deleteAiMemoryFile };
 const stickerFiles = { recover: recoverStickerCatalogs, write: writeStickerCatalogFile };
 const deleteReplies: AiMemoryDeletedPersistedReply[] = [];
+const persistedReplies: AiMemoryPersistedReply[] = [];
 
 const {
   deleteAiMemorySnapshot,
   configureAiMemoryDeletePersistedReply,
+  configureAiMemoryPersistedReply,
   flushAiMemorySnapshots,
   hydrateAiMemorySnapshots,
   markAiMemorySnapshotDirty,
@@ -47,7 +52,9 @@ beforeEach(() => {
   deleteAiMemoryFile.mockClear();
   writeStickerCatalogFile.mockClear();
   deleteReplies.length = 0;
+  persistedReplies.length = 0;
   configureAiMemoryDeletePersistedReply((reply) => { deleteReplies.push(reply); });
+  configureAiMemoryPersistedReply((reply) => { persistedReplies.push(reply); });
 });
 
 afterEach(() => {
@@ -67,7 +74,7 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(dirtyChats).toHaveLength(0);
     expect(dirtyStickerPacks).toHaveLength(0);
 
-    markAiMemorySnapshotDirty(2, 1, "ai-two");
+    markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", files: aiFiles });
     markStickerCatalogSnapshotDirty("pack_two", "sticker-two");
     expect(aiMemoryFlushState.timer).not.toBeNull();
     expect(stickerFlushState.timer).not.toBeNull();
@@ -85,13 +92,37 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(stickerFlushState.timer).toBeNull();
   });
 
+  test("purge 后首份 AI 快照立即写盘，失败时保留即时回执语义供 timer 重试", () => {
+    writeAiMemoryFile.mockImplementationOnce((): void => { throw new Error("temporary failure"); });
+    const errorSpy = spyOn(console, "error").mockImplementation((): void => {});
+
+    markAiMemorySnapshotDirty({
+      chatId: 2,
+      revision: 3,
+      snapshot: "post-purge-memory",
+      persistImmediately: true,
+      files: aiFiles,
+    });
+
+    expect(writeAiMemoryFile).toHaveBeenCalledTimes(1);
+    expect(dirtyChats.has(2)).toBeTrue();
+    expect(aiMemoryFlushState.timer).not.toBeNull();
+    expect(persistedReplies).toEqual([]);
+
+    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
+    expect(writeAiMemoryFile).toHaveBeenLastCalledWith(2, "post-purge-memory");
+    expect(persistedReplies).toEqual([{ type: "aiMemoryPersisted", chatId: 2, revision: 3 }]);
+    expect(aiMemoryFlushState.timer).toBeNull();
+    errorSpy.mockRestore();
+  });
+
   test("单领域 flush/delete 失败保留状态并自动重排，成功重试后清理", () => {
     const errorSpy = spyOn(console, "error").mockImplementation((): void => {});
     writeAiMemoryFile.mockImplementationOnce((): void => { throw new Error("ai write failed"); });
     writeStickerCatalogFile.mockImplementationOnce((): void => { throw new Error("sticker write failed"); });
     deleteAiMemoryFile.mockImplementationOnce((): void => { throw new Error("ai delete failed"); });
 
-    markAiMemorySnapshotDirty(2, 1, "ai-two");
+    markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", files: aiFiles });
     markStickerCatalogSnapshotDirty("pack_two", "sticker-two");
     expect(flushAiMemorySnapshots(aiFiles)).toBeFalse();
     expect(flushStickerCatalogs(stickerFiles)).toBeFalse();
@@ -118,7 +149,7 @@ describe("Disk I/O snapshot domain owners", () => {
 
   test("迟到的旧 revision 删除只回执、不删除更新快照", () => {
     hydrateAiMemorySnapshots(aiFiles);
-    markAiMemorySnapshotDirty(2, 2, "new-memory");
+    markAiMemorySnapshotDirty({ chatId: 2, revision: 2, snapshot: "new-memory", files: aiFiles });
     expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
     writeAiMemoryFile.mockClear();
 
@@ -132,7 +163,7 @@ describe("Disk I/O snapshot domain owners", () => {
   });
 
   test("reset 取消本领域 timer 并清空恢复态、dirty 与待删除集合", () => {
-    markAiMemorySnapshotDirty(2, 1, "ai-two");
+    markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", files: aiFiles });
     markStickerCatalogSnapshotDirty("pack_two", "sticker-two");
     deletedAiMemoryChats.add(3);
 

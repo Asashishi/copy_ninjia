@@ -73,10 +73,15 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
     case "applyPreparationFailed":
       if (state?.kind !== "applying" || state.originalPermissions !== undefined) return { next: state, effects: [] };
       return { next: undefined, effects: [] };
+    case "applyCommitPreparationFailed":
+      if (state?.kind !== "applying" || state.originalPermissions === undefined) return { next: state, effects: [] };
+      // applying intent 已经落盘，但 Telegram 写操作尚未开始；删除 owner 即可，
+      // 不能走恢复路径，否则可能用 T0 快照覆盖管理员刚改过的 invite 权限。
+      return { next: undefined, effects: [{ kind: "reportUnlock" }] };
     case "statePersisted":
       if (state?.kind !== event.phase || state.intentId !== event.intentId) return { next: state, effects: [] };
       if (state.kind === "applying" && state.originalPermissions !== undefined) {
-        return { next: state, effects: [{ kind: "commitApply", originalPermissions: state.originalPermissions }] };
+        return { next: state, effects: [{ kind: "commitApply" }] };
       }
       if (state.kind === "restoring") {
         return { next: state, effects: [{ kind: "beginRestore", originalPermissions: state.originalPermissions }] };
@@ -155,7 +160,7 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
             { kind: "prefetchAdmins", onlyIfCold: false },
             ...(event.persisted === false
               ? []
-              : [{ kind: "commitApply", originalPermissions: event.originalPermissions } as const]),
+              : [{ kind: "commitApply" } as const]),
           ],
         };
       }

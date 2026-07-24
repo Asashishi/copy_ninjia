@@ -13,7 +13,7 @@ export interface LinkedChannelCache {
   fetchedAt: number;
 }
 
-/** 某群管理员表的 TTL 缓存条目。 */
+/** 某群可为邀请提供验证豁免的非匿名管理员 TTL 缓存条目。 */
 export interface ChatAdminCache {
   adminIds: Set<number>;
   fetchedAt: number;

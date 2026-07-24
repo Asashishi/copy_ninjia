@@ -90,7 +90,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ 入群验证</b></p>
-  <p>提供新成员 90 秒限时按钮验证，并支持白名单担保点按、管理员邀请免验和评论区感知。</p>
+  <p>提供新成员 90 秒限时按钮验证，并支持白名单担保点按、可归属的非匿名管理员邀请免验和评论区感知。</p>
 </td>
 </tr>
 <tr>
@@ -122,7 +122,7 @@
 | `/steal_icon` | 只复制头像 |
 | `/stop_copy` | 停止全局复读状态 |
 
-目标可通过「回复 TA 的消息」或 `@username` 指定。按用户名查找依赖机器人此前观察到该账号；改名、移除用户名或用户名换绑会立即失效旧别名。对 `/kick` 这类破坏性操作优先回复目标消息，不依赖历史用户名。普通用户受 5 分钟 copy 类命令冷却，`PRIVILEGED_USERS_ID` 白名单不受限。
+目标可通过「回复 TA 的消息」或 `@username` 指定。按用户名查找依赖机器人此前观察到该账号；改名、移除用户名或用户名换绑会立即失效旧别名。匿名管理员以当前群身份发言时，复读目标就是当前群，因而可取得群头像并复读这层“皮套”；`/kick` 会拒绝把当前群身份当作成员目标。对 `/kick` 这类破坏性操作优先回复目标消息，不依赖历史用户名。普通用户受 5 分钟 copy 类命令冷却，`PRIVILEGED_USERS_ID` 白名单不受限。
 
 ## 🧠 AI 流水线
 
@@ -153,9 +153,9 @@ flowchart TD
 <tr><th width="13%" align="left">维度</th><th width="87%" align="left">策略</th></tr>
 <tr><td>🧩&nbsp;模型</td><td>回复、摘要、视觉描述使用 <code>gemini-3.5-flash-lite</code>；生成或编辑图片使用 <code>gemini-3.1-flash-lite-image</code></td></tr>
 <tr><td>🎯&nbsp;触发</td><td>回复机器人或 <code>@机器人</code> 时必定触发；普通文字和媒体评价共用按群活跃度的动态概率，同一发言人在同一群另受 15 秒随机触发冷却。当前消息先计入近 1 小时窗口，因此冷群第一条为 1/174；窗口内达到 165 条后封底为 1/10。活跃度只存内存，空闲满一小时或重启后回到冷启动</td></tr>
-<tr><td>🚦&nbsp;同群并发</td><td>每群最多 10 轮 Gemini 工具对话同时在途；并发满载时，直接触发进入最多 25 项的队列，随机触发丢弃</td></tr>
+<tr><td>🚦&nbsp;同群并发</td><td>每群最多 5 轮 Gemini 工具对话同时在途；并发满载时，直接触发进入最多 25 项的队列，随机触发丢弃</td></tr>
 <tr><td>⏱️&nbsp;限频</td><td>每群 5 分钟最多启动 150 轮；超限提示本身也有冷却</td></tr>
-<tr><td>🔧&nbsp;工具</td><td>同一请求真实注册内置 <code>googleSearch</code>，并提供东京天气、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> 等函数工具；每轮回复最多执行 20 次自定义函数调用。提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 <code>send_message</code>，图片、贴纸或反应完成后的最终正文不会被当作额外发言</td></tr>
+<tr><td>🔧&nbsp;工具</td><td>同一请求真实注册内置 <code>googleSearch</code>，并提供东京天气、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> 等函数工具。<code>send_message</code>、<code>send_sticker</code>、<code>add_reaction</code> 与 <code>generate_image</code> 共用动作计数：提示模型最多 8 个动作，执行侧硬顶 11 个；贴纸、反应和生成图片各最多成功 1 次，不再对其余单个工具另设调用上限。贴纸包最多查看 5 个不同包，Google Search 最多调用 3 次，全部自定义函数调用另有 20 次防循环硬顶。提示词要求需要查证时先搜索再行动，所有面向群友的文字必须显式经过 <code>send_message</code>，图片、贴纸或反应完成后的最终正文不会被当作额外发言</td></tr>
 <tr><td>🧠&nbsp;记忆</td><td>75～150 条逐字消息，加最多 7 × 75 条冷历史摘要，总跨度约 600～675 条；启动恢复只载入最新 149 条逐字消息并为下一条消息预留轮换边界。Worker 最多常驻 100 个群，超出按最后活动时间淘汰并删除磁盘快照，淘汰时优先避开仍有回复轮次在途的群</td></tr>
 </table>
 
@@ -177,7 +177,7 @@ flowchart TD
 <table width="100%">
 <tr><th width="13%" align="left">维度</th><th width="87%" align="left">策略</th></tr>
 <tr><td>🖼️&nbsp;多模态</td><td>图片描述最多 125 字，贴纸/GIF 最多 100 字；聊天媒体的下载、转码、视觉描述与生图参考素材的下载、转码，共用最多 75 个执行槽与 150 项等待队列。未命中本地贴纸目录的媒体共享 1,500 项 LRU 去重缓存（命中即续命，超额淘汰最久未使用的一项，不设 TTL）。<code>memory/stickers/</code> 中配置包的描述启动后常驻内存，仅在线上贴纸包对账发现更新时增删，群消息里的同款贴纸会直接命中该目录</td></tr>
-<tr><td>🎨&nbsp;生图</td><td>只有直接回复或 <code>@机器人</code> 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，<code>SUPER_ADMIN_USER_ID</code> 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片</td></tr>
+<tr><td>🎨&nbsp;生图</td><td>只有直接回复或 <code>@机器人</code> 的消息才开放工具资格，且模型仅在当前消息明确要求生成或编辑图片时调用；每轮最多成功生成并发送 1 张。当前或被回复的图片/贴纸可作为本轮短期参考素材，不进入滚动记忆或落盘。普通用户按群共享 3 分钟冷却，<code>SUPER_ADMIN_USER_ID</code> 不受该冷却限制；参考素材下载、队列或失效等模型调用前失败会释放占位，模型请求一旦开始（包括生成失败或发送失败）仍保留冷却；输出固定为 1K 图片</td></tr>
 <tr><td>🎭&nbsp;心情</td><td>每群在 AI Worker 内独立保存当前心情，随机维持 2～4 小时；自然到期后按东京天气与时段修正权重并重抽，不落盘、Worker 重启后按需重建。超级管理员可用 <code>/switch_mood</code> 立即重抽已开启 AI 闲聊的群；命令通过带 5 秒截止时刻的 Worker 回执确认，过期积压请求不会迟到改写心情</td></tr>
 </table>
 </details>
@@ -203,7 +203,7 @@ flowchart TD
 
 - **验证窗口**：新成员在带按钮的验证提醒真正发送成功后获得完整 90 秒；超时会删除验证期内追踪到的消息并踢出，但不永久封禁。提醒失败会有界退避重试；若从未落地，超时只续窗补发，不踢人。
 - **刷屏止损**：每位待验证成员独立统计最近 60 秒消息；第 46 条会先踢人止损，再尽力清理全部已追踪消息。
-- **身份豁免**：管理员/群主身份、管理员或白名单用户拉入的成员可豁免；其他机器人也必须验证，由白名单用户代点作保。
+- **身份豁免**：管理员/群主本人始终按管理员豁免；只有可归属到具体账号的非匿名管理员邀请才能豁免被邀请者，匿名管理员的邀请不继承该豁免；白名单用户拉入的成员仍可豁免。其他机器人也必须验证，由白名单用户代点作保。
 - **评论区感知**：关联频道评论区会识别「留言或回帖导致自动入群」的场景——已经实际评论/回帖的成员直接豁免；只从评论区点击入群但没有发消息，仍按普通成员验证，锁定期间会直接踢出。直属评论和楼中楼回复都按既定策略豁免；楼中楼在关联缓存冷启动时先按普通消息追踪，只有 `getChat` 明确确认关联频道后才转为豁免，查询失败不放行。
 - **Anti-Raid 锁定**：最近 60 秒入群人数超过 45 时进入 5 分钟锁定，临时关闭普通成员邀请权限。
 - **崩溃恢复**：待验证状态、未过期的消息窗口和终态处置进度写入 `memory/anti-raid/YYYY-MM-DD.json`：当前格式要求每条 active 记录包含 `phase` 和 `trackedMessageTimes`；Worker 或进程重建后按原 `expiresAt` 的剩余时间继续。reminder ID 是业务可选项，尚未成功发送提醒时为空；恢复后会先补发并重置完整窗口，不会无提醒踢人。成功踢人播报落盘确认后不会在崩溃重放时重复发送；只保留东京当天文件。
@@ -361,9 +361,9 @@ flowchart TD
 <table width="100%">
 <tr><th width="21%" align="left">数据</th><th width="17%" align="left">位置</th><th width="62%" align="left">写入策略</th></tr>
 <tr><td>群状态 / copy 状态 / 锁定镜像</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>只保留「在写 + 最新待写」两份内存快照；每次按主文件、LKG 备份顺序执行临时文件 + fsync + 原子 rename。命令开关、代理与 copy 等权威变更会等待对应 revision 的主备副本完成后才反馈成功并允许确认 update；有限重试耗尽会停止接收更新并以失败退出。群标题等派生元数据仍可后台合并保存。当前锁定镜像要求包含 <code>phase</code> 和正数 <code>intentId</code>。启动时主文件无效会由严格校验通过的备份恢复；两份均无效则拒绝启动且保留原件</td></tr>
-<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，30 秒周期 + 停机 flush；upsert/delete 按群携带单调 revision，删除意图保留到 durable unlink 回执，Disk I/O Worker 重建后会重放。启动只 hydrate 当前明确启用 AI 的群，并清理关闭群的残留快照。恢复时按当前容量保留最新 149 条逐字消息和最新 7 轮冷摘要；当前格式要求每条热区消息带正数 <code>message_id</code>，回复链索引只从当前热区派生并在 hydrate 时重建，不单独落盘</td></tr>
+<tr><td>AI 群聊记忆</td><td><code>memory/ai/</code></td><td>每群独立快照，通常按 30 秒周期 + 停机 flush；upsert/delete 按群携带单调 revision，删除意图保留到 durable unlink 回执，Disk I/O Worker 重建后会重放。一次已确认删除或 LRU 淘汰后的首份新快照会立即写入，并在收到 durable 回执前跨 Disk I/O Worker 重建重放，避免正常批量窗口再次丢失刚重建的记忆。启动只 hydrate 当前明确启用 AI 的群，并清理关闭群的残留快照。恢复时按当前容量保留最新 149 条逐字消息和最新 7 轮冷摘要；当前格式要求每条热区消息带正数 <code>message_id</code>，回复链索引只从当前热区派生并在 hydrate 时重建，不单独落盘</td></tr>
 <tr><td>贴纸描述目录</td><td><code>memory/stickers/</code></td><td>每包独立原子快照；启动恢复后常驻内存，与线上贴纸包对账时更新，并供群消息解析复用</td></tr>
-<tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code></td></tr>
+<tr><td>今日运势</td><td><code>memory/luck/</code></td><td>结果按东京日期增量追加并修复尾部截断；跨日切换前先刷完旧日追加缓冲。<code>receipt-secret.json</code> 原子保存当日确定性抽签/HMAC 密钥，权限固定为普通用户可读、仅属主可写的 <code>0644</code>；若目标日已有确认结果而密钥缺失或日期不一致，恢复会拒绝启动/轮换，不会静默重建密钥</td></tr>
 <tr><td>待验证成员</td><td><code>memory/anti-raid/</code></td><td>当日 JSON 按 <code>chatId:userId</code> 键增量追加；当前 active 记录要求包含 <code>phase</code> 和 <code>trackedMessageTimes</code>。普通更新 250ms 合并，创建立即写，终结追加 tombstone；达到 4 MiB 或 10,000 条历史时收敛 active 快照，跨日删除旧文件</td></tr>
 <tr><td>error 日志</td><td><code>logs/</code></td><td>Disk I/O Worker 统一批量追加</td></tr>
 <tr><td>运行实例</td><td><code>bot.lock</code></td><td>原子维护的数据目录单实例 owner 锁</td></tr>
@@ -373,7 +373,7 @@ flowchart TD
 > `memory/` 含群聊逐字内容与运势回执密钥，应视为敏感数据：
 >
 > - 项目按部署约定将其中的 JSON 写成普通系统用户可读的 `0644`，请用数据根目录 owner/权限和主机账户隔离限制访问，并控制备份范围与保留周期。
-> - 备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。
+> - 备份当天运势时必须把 `memory/luck/receipt-secret.json` 与当天结果文件放在同一一致性备份中；密钥不会写入日志。若恢复后报告结果与密钥不一致，应恢复同一时间点的完整 `memory/luck/` 备份，不能只删除或重新生成密钥。
 > - `logs/`、`memory/`、state 主备副本及 `.corrupt` 隔离件、凭据和运行锁均不会提交到 Git。
 
 待验证热路径复用每日运势和日志已有的 JSON 末尾追加机制，不会每次全量重写，也不会增加新的 IO 线程。终结记录以 `null` tombstone 线性追加，尾部截断修复按 JSON 结构边界扫描，因此会保留最后一条完整 tombstone，不会让已终结验证复活；只有跨日轮换或达到历史阈值时才原子收敛当前 active 镜像。每批追加在成功回执前执行 fsync。同步文件操作始终留在 Disk I/O Worker，不阻塞 Telegram 更新主线程。

@@ -1,5 +1,6 @@
 import {
   EMERGENCY_FLUSH_TIMEOUTS,
+  EMERGENCY_REUSED_DISPOSE_DEADLINE_MS,
   NORMAL_FLUSH_TIMEOUTS,
   RUNNER_DRAIN_POLL_INTERVAL_MS,
   RUNNER_DRAIN_TIMEOUT_MS,
@@ -223,6 +224,7 @@ export class ApplicationLifecycle {
       this.dependencies.setStatePersistenceFatalHandler(undefined);
       if (
         !runnerDrained ||
+        !maintenanceSettled ||
         avatarResult !== "flushed" ||
         reactionResult !== "flushed" ||
         translateResult !== "flushed" ||
@@ -233,8 +235,9 @@ export class ApplicationLifecycle {
       ) {
         process.exitCode = 1;
         this.dependencies.logger.error(
-          `Shutdown drain/flush results: runner=${runnerDrained}, avatar=${avatarResult}, reaction=${reactionResult}, ` +
-          `translate=${translateResult}, antiRaid=${antiRaidResult}, ai=${aiResult}, disk=${diskResult}, state=${stateResult}.`
+          `Shutdown drain/flush results: runner=${runnerDrained}, maintenance=${maintenanceSettled}, ` +
+          `avatar=${avatarResult}, reaction=${reactionResult}, translate=${translateResult}, ` +
+          `antiRaid=${antiRaidResult}, ai=${aiResult}, disk=${diskResult}, state=${stateResult}.`
         );
       }
       if (!this.lockAcquired) return;
@@ -302,7 +305,32 @@ export class ApplicationLifecycle {
   private exitAfterEmergencyDispose(): void {
     if (this.fatalExitStarted) return;
     this.fatalExitStarted = true;
-    void this.dispose(EMERGENCY_FLUSH_TIMEOUTS).finally(() => process.exit(1));
+    const reusesActiveDisposal: boolean = this.disposePromise !== null;
+    let exitRequested: boolean = false;
+    let hardDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const exitWithFailure = (): void => {
+      if (exitRequested) return;
+      exitRequested = true;
+      process.exit(1);
+    };
+
+    // disposePromise 会固定首次调用的预算：普通关停已在途时，传入紧急预算
+    // 无法缩短它。因此仅在复用分支设置独立绝对截止，避免二次扫描把新建的
+    // 紧急 dispose（其各阶段已有短预算）误判为同一问题。该 timer 刻意保持
+    // ref，确保清理卡死时仍能执行最后的强制退出。
+    if (reusesActiveDisposal) {
+      hardDeadlineTimer = setTimeout(() => {
+        this.dependencies.logger.error(
+          `Emergency shutdown exceeded the ${EMERGENCY_REUSED_DISPOSE_DEADLINE_MS}ms hard deadline; forcing exit.`
+        );
+        exitWithFailure();
+      }, EMERGENCY_REUSED_DISPOSE_DEADLINE_MS);
+    }
+
+    void this.dispose(EMERGENCY_FLUSH_TIMEOUTS).finally(() => {
+      if (hardDeadlineTimer !== undefined) clearTimeout(hardDeadlineTimer);
+      exitWithFailure();
+    });
   }
 
   private async waitForRunnerDrain(

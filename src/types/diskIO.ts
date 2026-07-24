@@ -37,6 +37,8 @@ export interface AiMemoryDiskMessage {
   /** 进程内按 chat 单调递增；只用于消息竞态，不改变快照文件 schema。 */
   revision: number;
   snapshot: string;
+  /** purge 后首份新快照；绕过普通批量窗口，并在 durable 后回执 revision。 */
+  persistImmediately?: boolean;
 }
 
 /** 主线程 -> diskIOWorker：彻底删除某群 AI 记忆快照。 */
@@ -186,10 +188,18 @@ export interface AiMemoryDeletedPersistedReply {
   revision: number;
 }
 
+/** diskIOWorker -> 主线程：要求即时写入的 AI 记忆 revision 已 durable。 */
+export interface AiMemoryPersistedReply {
+  type: "aiMemoryPersisted";
+  chatId: number;
+  revision: number;
+}
+
 export type DiskIOReply =
   | LoadedReply
   | LuckSecretReply
   | DiskFlushReply
   | DiskFlushFailedReply
   | VerificationPersistedReply
+  | AiMemoryPersistedReply
   | AiMemoryDeletedPersistedReply;

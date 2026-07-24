@@ -21,6 +21,11 @@ export const TRANSLATE_REQUEST_TIMEOUT_MS: number = 2_500;
 
 /** 未捕获异常路径的尽力落盘预算；避免故障进程在清理阶段久留。 */
 export const EMERGENCY_FLUSH_TIMEOUT_MS: number = 1_000;
+/**
+ * 普通关停已在途时发生致命异常，复用该关停 Promise 所允许的绝对最长时间。
+ * 该截止独立于各 owner 的 flush 预算，属于生命周期模块的最终强制退出边界。
+ */
+export const EMERGENCY_REUSED_DISPOSE_DEADLINE_MS: number = 15_000;
 
 /** 正常停机与异常退出路径各自采用一组完整、不可拆散的时间预算。 */
 export const NORMAL_FLUSH_TIMEOUTS: Readonly<FlushTimeouts> = Object.freeze({

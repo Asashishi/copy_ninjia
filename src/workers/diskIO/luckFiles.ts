@@ -24,7 +24,7 @@ import {
 } from "../../cache/diskIO/luck";
 import { appendLuckEntries, cleanupStaleLuckFiles, recoverLuckDay } from "./snapshotFiles";
 import type { LuckDrawDiskMessage } from "../../types/diskIO";
-import type { LuckDrawRecord } from "../../types/diskIO/storage";
+import type { LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
 
 /** 按需启动运势追加缓冲的定时落盘；已有定时器在跑就不重复排。条数达到
  *  FLUSH_MAX_ENTRIES 时不经过这个定时器，由 handleLuckDrawMessage 直接调
@@ -74,13 +74,20 @@ export function flushLuckAppends(): boolean {
 /** 处理一条抽签结果消息：跨天检查 -> 去重 -> 入缓冲，达到条数阈值立即
  *  落盘，否则按需启动定时器。 */
 export function handleLuckDrawMessage(msg: LuckDrawDiskMessage): void {
-  // 跨天检查放在消息入口：day 与当前已知缓存不一致就视为跨天——旧 day
-  // 已知的 key 集合、待追加缓冲、文件追加状态全部丢弃重建（旧 day 已是
-  // 昨日黄花，不会再有消息带着旧 day 补写它的文件）；下一次 flush 落盘
-  // 时 cleanupStaleLuckFiles 会顺带删除非当日文件。
-  const dayCache = luckWorkerCache.current?.day === msg.day
-    ? luckWorkerCache.current
-    : startLuckDay(msg.day);
+  // YYYY-MM-DD 可按字典序判断方向。Worker 重建后可能重放跨零点前缓冲的旧
+  // 消息；它不能把已恢复的当天 owner 拍回昨日，更不能让后续清理误删当天文件。
+  const current: LuckDayCache | null = luckWorkerCache.current;
+  let dayCache: LuckDayCache;
+  if (current === null || msg.day > current.day) {
+    dayCache = startLuckDay(msg.day);
+  } else if (msg.day < current.day) {
+    console.error(
+      `[diskIOWorker] discarded stale luck draw for ${msg.day}; current luck day is ${current.day}`
+    );
+    return;
+  } else {
+    dayCache = current;
+  }
   // 去重按「key + 值」而不是只看 key：值也一样才算重复（本 Worker 崩溃
   // 重建后主线程会把 dailyLuckCache 全量重放一遍，见 infra/diskIO.ts 的
   // onDiskIORespawn，其中多数条目已经在崩溃前落过盘，不去重会白占地方）。

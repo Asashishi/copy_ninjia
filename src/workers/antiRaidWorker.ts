@@ -84,7 +84,7 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       handleVerificationPersisted(msg);
       break;
     case "adminsChanged":
-      applyAdminChange(msg.chatId, msg.userId, msg.isAdmin);
+      applyAdminChange(msg.chatId, msg.userId, msg.isInviterExempt);
       break;
     case "barrier":
       self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });

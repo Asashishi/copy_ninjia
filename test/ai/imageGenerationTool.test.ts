@@ -92,6 +92,7 @@ afterEach(() => {
 describe("generate_image 工具执行器", () => {
   test("动态工具说明告知模型当前是否可以生图", () => {
     expect(buildGenerateImageToolDefinition(buildContext()).description).toContain("当前状态：可以生图");
+    expect(buildGenerateImageToolDefinition(buildContext()).description).toContain("每轮最多成功发送 1 张");
 
     const unauthorizedDescription = buildGenerateImageToolDefinition(buildContext(-1001, false, false)).description;
     expect(unauthorizedDescription).toContain("当前状态：不可生图");
@@ -293,7 +294,7 @@ describe("generate_image 工具执行器", () => {
     expect(generateChatImage).toHaveBeenCalledTimes(2);
   });
 
-  test("失败尝试仍占冷却，superAdmin 则可连续调用", async () => {
+  test("失败尝试仍占冷却，superAdmin 绕过冷却但每轮仍只能成功发送一张", async () => {
     generateChatImage.mockResolvedValueOnce(null);
     const normal = createGenerateImageExecutor(buildContext(-1001));
     expect(JSON.parse(await normal(JSON.stringify({ prompt: "failed" }))).error).toContain("failed");
@@ -301,24 +302,23 @@ describe("generate_image 工具执行器", () => {
 
     const superAdmin = createGenerateImageExecutor(buildContext(-1001, true));
     expect(JSON.parse(await superAdmin(JSON.stringify({ prompt: "admin one" }))).success).toBe(true);
-    expect(JSON.parse(await superAdmin(JSON.stringify({ prompt: "admin two" }))).success).toBe(true);
+    const limited = JSON.parse(await superAdmin(JSON.stringify({ prompt: "admin two" })));
+    expect(limited.error).toContain("at most 1 generated image");
+    expect(limited.retryable).toBe(false);
+    expect(generateChatImage).toHaveBeenCalledTimes(2);
   });
 
-  test("superAdmin 连续失败两次后本轮止损，成功会清零失败计数", async () => {
+  test("superAdmin 连续失败两次后本轮止损", async () => {
     generateChatImage
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ bytes: generatedBytes, mimeType: "image/png" })
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
     const execute = createGenerateImageExecutor(buildContext(-1001, true));
 
     expect(JSON.parse(await execute(JSON.stringify({ prompt: "fail one" }))).error).toContain("failed");
-    expect(JSON.parse(await execute(JSON.stringify({ prompt: "success resets" }))).success).toBe(true);
     expect(JSON.parse(await execute(JSON.stringify({ prompt: "fail two" }))).error).toContain("failed");
-    expect(JSON.parse(await execute(JSON.stringify({ prompt: "fail three" }))).error).toContain("failed");
     const stopped = JSON.parse(await execute(JSON.stringify({ prompt: "must not call upstream" })));
     expect(stopped.error).toContain("remainder of this reply");
     expect(stopped.retryable).toBe(false);
-    expect(generateChatImage).toHaveBeenCalledTimes(4);
+    expect(generateChatImage).toHaveBeenCalledTimes(2);
   });
 });

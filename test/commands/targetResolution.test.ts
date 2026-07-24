@@ -45,6 +45,13 @@ describe("resolveCommandTarget", () => {
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
+  test("有意保留当前群组 sender_chat，供 copy 类命令复制头像和复读皮套消息", async () => {
+    replyTarget = { id: -1001, title: "Test Group", isChannel: true };
+
+    expect(await resolveCommandTarget(context(""), messages)).toEqual(replyTarget);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
   test("无回复且 trim 后为空时报告缺少目标", async () => {
     expect(await resolveCommandTarget(context("   "), messages)).toBeUndefined();
     expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: "missing", replyToMessageId: 7 });

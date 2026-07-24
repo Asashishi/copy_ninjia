@@ -65,7 +65,7 @@ AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投�
 
 ## 停机顺序
 
-正常与异常停机由同一个生命周期收口：先 **quiesce** 标题/反应/头像/翻译入口并停止 runner，再 **有界 drain** 各队列与 mailbox。正常路径会在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 固定按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」收尾。任一关键 drain/flush 失败都会阻止最终 offset 确认和实例锁释放，并以非零状态退出；未确认的 update 由 Telegram 重投。预算耗尽时先 abort 在途请求再结算，abort 后不再发送任何消息。
+正常与异常停机由同一个生命周期收口：先 **quiesce** 标题/反应/头像/翻译入口并停止 runner，再 **有界 drain** 各队列与 mailbox。正常路径会在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 固定按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」收尾。任一关键 drain/flush 失败都会阻止最终 offset 确认和实例锁释放，并以非零状态退出；未确认的 update 由 Telegram 重投。普通 dispose 已在途时若又发生致命异常，异常路径虽复用同一 Promise，但由独立的 15 秒绝对 deadline 保证最终强制退出。预算耗尽时先 abort 在途请求再结算，abort 后不再发送任何消息。
 
 各步骤的完整不变量（哪些失败必须 fatal、哪些顺序不可交换）见 [04 运行时权威约束](04-invariants.md)。
 

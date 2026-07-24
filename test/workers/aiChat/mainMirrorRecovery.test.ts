@@ -4,6 +4,7 @@ import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryDeleteDiskMessage,
   AiMemoryDiskMessage,
+  AiMemoryPersistedReply,
   StickerCatalogDiskMessage,
 } from "../../../src/types/diskIO";
 
@@ -21,6 +22,7 @@ let supervisorOptions: {
 } | undefined;
 let diskRespawn: (() => void) | undefined;
 let diskDeletePersisted: ((reply: AiMemoryDeletedPersistedReply) => void) | undefined;
+let diskMemoryPersisted: ((reply: AiMemoryPersistedReply) => void) | undefined;
 const aiEnabledChats = new Set<number>();
 
 mock.module("../../../src/infra/selfSentTracker", () => ({ markSelfSent }));
@@ -42,6 +44,9 @@ mock.module("../../../src/ai/persistence", () => ({
   onAiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
     diskDeletePersisted = callback;
   },
+  onAiMemoryPersisted: (callback: (reply: AiMemoryPersistedReply) => void): void => {
+    diskMemoryPersisted = callback;
+  },
   onDiskIORespawn: (callback: () => void): void => { diskRespawn = callback; },
 }));
 mock.module("../../../src/infra/storage/stateStore", () => ({
@@ -61,6 +66,7 @@ const {
   aiMemoryRevisionCounters,
   latestAiMemoryRevisions,
   pendingAiMemoryDeletes,
+  postPurgeAiMemoryPersistRevisions,
 } = await import("../../../src/cache/aiChat");
 
 beforeEach(() => {
@@ -73,6 +79,7 @@ beforeEach(() => {
   latestAiMemoryRevisions.clear();
   aiMemoryRevisionCounters.clear();
   pendingAiMemoryDeletes.clear();
+  postPurgeAiMemoryPersistRevisions.clear();
   for (const waiters of aiMemoryDeleteWaiters.values()) {
     for (const waiter of waiters) clearTimeout(waiter.timer);
   }
@@ -152,6 +159,67 @@ describe("AI main-thread persistence mirror", () => {
     expect(latestAiMemories).toEqual(new Map([[-1002, "enabled-memory"]]));
     expect(pendingAiMemoryDeletes.get(-1001)).toBe(1);
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1001, revision: 1 });
+  });
+
+  test("purge 后首份新记忆跨两级 Worker 立即持久化，确认后恢复普通批处理", async () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const invalidated = aiChat.invalidateAiChat(-1001, true);
+    supervisorOptions!.onEvent({ type: "memoryDeleted", chatId: -1001 });
+    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+    await invalidated;
+    workerPosts.length = 0;
+    diskPosts.length = 0;
+
+    const message = {
+      chatId: -1001,
+      senderId: 7,
+      firstName: "Alice",
+      lastName: "",
+      messageId: 10,
+      text: "new memory",
+    };
+    aiChat.recordChatMessage(message);
+    expect(workerPosts.at(-1)).toEqual({
+      type: "record",
+      ...message,
+      persistImmediately: true,
+    });
+    expect(postPurgeAiMemoryPersistRevisions.get(-1001)).toBeNull();
+
+    supervisorOptions!.onEvent({
+      type: "memory",
+      chatId: -1001,
+      snapshot: "post-purge-memory",
+      persistImmediately: true,
+    });
+    expect(diskPosts.at(-1)).toEqual({
+      type: "aiMemory",
+      chatId: -1001,
+      revision: 2,
+      snapshot: "post-purge-memory",
+      persistImmediately: true,
+    });
+    expect(postPurgeAiMemoryPersistRevisions.get(-1001)).toBe(2);
+
+    diskPosts.length = 0;
+    diskRespawn!();
+    expect(diskPosts).toEqual([{
+      type: "aiMemory",
+      chatId: -1001,
+      revision: 2,
+      snapshot: "post-purge-memory",
+      persistImmediately: true,
+    }]);
+
+    // 快照已交给 Disk I/O 后由主线程镜像负责重放，后续记录恢复普通上报。
+    aiChat.recordChatMessage({ ...message, messageId: 11, text: "second memory" });
+    expect(workerPosts.at(-1)).not.toHaveProperty("persistImmediately");
+
+    diskMemoryPersisted!({ type: "aiMemoryPersisted", chatId: -1001, revision: 2 });
+    expect(postPurgeAiMemoryPersistRevisions.has(-1001)).toBeFalse();
+
+    aiChat.recordChatMessage({ ...message, messageId: 12, text: "normal memory" });
+    expect(workerPosts.at(-1)).not.toHaveProperty("persistImmediately");
   });
 
   test("启动 init 投递被拒绝时不发布可用状态或可重放身份", () => {

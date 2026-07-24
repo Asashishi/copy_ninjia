@@ -79,6 +79,25 @@ describe("chat runtime teardown", () => {
     expect(states.get(-1001)?.isProxySendEnabled).toBeUndefined();
   });
 
+  test("owner 同步抛错或异步拒绝时仍启动并等待其余 teardown", async () => {
+    const copyError = new Error("copy teardown failed");
+    const aiError = new Error("AI teardown failed");
+    states.set(-1001, { isProxySendEnabled: true });
+    chatTeardown.registerChatTeardown("copy", (): never => { throw copyError; });
+    chatTeardown.registerChatTeardown("aiChat", async (): Promise<void> => { throw aiError; });
+    chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
+
+    const error = await botAdmin.teardownChatRuntime(-1001).catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual([copyError, aiError]);
+    expect(calls).toEqual([
+      "clear:isProxySendEnabled",
+      "anti:-1001",
+    ]);
+    expect(states.get(-1001)?.isProxySendEnabled).toBeUndefined();
+  });
+
   test("退群保留尚未恢复的 lockdown owner，删除其它群配置", async () => {
     const lockdown = { phase: "active", intentId: 7, originalPermissions: {}, expiresAt: 9_000 };
     states.set(-1001, {
@@ -99,6 +118,21 @@ describe("chat runtime teardown", () => {
     ]);
   });
 
+  test("退群 teardown 失败仍裁剪并持久化权威状态，随后传播错误", async () => {
+    const teardownError = new Error("anti-raid teardown failed");
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true, isProxySendEnabled: true });
+    chatTeardown.registerChatTeardown("antiRaid", async (): Promise<void> => { throw teardownError; });
+
+    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("left"))
+      .catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual([teardownError]);
+    expect(states.has(-1001)).toBe(false);
+    expect(calls).toContain("prune:-1001");
+    expect(calls).toContain("save:chat -1001 state pruned after bot left/kicked");
+  });
+
   test("管理员降级调用同一 teardown，并记录 botIsAdmin=false", async () => {
     states.set(-1001, { isInitEnabled: true, botIsAdmin: true, isProxySendEnabled: true });
     await botAdmin.handleMyChatMemberUpdate(memberContext("member"));
@@ -109,6 +143,20 @@ describe("chat runtime teardown", () => {
       "anti:-1001",
     ]);
     expect(states.get(-1001)?.botIsAdmin).toBe(false);
+  });
+
+  test("管理员降级 teardown 失败仍持久化 botIsAdmin=false，随后传播错误", async () => {
+    const teardownError = new Error("AI teardown failed");
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true, isProxySendEnabled: true });
+    chatTeardown.registerChatTeardown("aiChat", async (): Promise<void> => { throw teardownError; });
+
+    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("member"))
+      .catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect((error as AggregateError).errors).toEqual([teardownError]);
+    expect(states.get(-1001)?.botIsAdmin).toBe(false);
+    expect(saveStateInBackground).toHaveBeenCalledWith("bot admin status refresh");
   });
 
   test("/init 切换后废弃旧在途结果，第一次权限判定必须重查", async () => {

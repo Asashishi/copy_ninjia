@@ -90,7 +90,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ 参加認証</b></p>
-  <p>新規メンバーに 90 秒のボタン認証を行い、許可ユーザーによる保証、管理者招待の免除、ディスカッショングループ認識に対応します。</p>
+  <p>新規メンバーに 90 秒のボタン認証を行い、許可ユーザーによる保証、特定可能な非匿名管理者による招待の免除、ディスカッショングループ認識に対応します。</p>
 </td>
 </tr>
 <tr>
@@ -124,7 +124,7 @@ copy 対象は global に 1 つだけです。同じ instance が同時に「な
 | `/steal_icon` | アバターだけを複製 |
 | `/stop_copy` | global copy 状態を停止 |
 
-対象はメッセージへの返信または `@username` で指定します。username 検索は Bot が以前その account を観測したことに依存します。名前変更、username 削除、username の再割り当てがあると、古い alias は直ちに無効になります。`/kick` のような破壊的操作では履歴 username に依存せず、対象メッセージへの返信を優先してください。一般ユーザーには copy 系コマンドで 5 分の cooldown があり、`PRIVILEGED_USERS_ID` のユーザーは免除されます。
+対象はメッセージへの返信または `@username` で指定します。username 検索は Bot が以前その account を観測したことに依存します。名前変更、username 削除、username の再割り当てがあると、古い alias は直ちに無効になります。匿名管理者が現在のグループとして発言した場合、そのグループ identity が copy 対象になるため、copy mode はグループ avatar を取得してその「皮」を再現できます。`/kick` は現在のグループ identity をメンバー対象として拒否します。`/kick` のような破壊的操作では履歴 username に依存せず、対象メッセージへの返信を優先してください。一般ユーザーには copy 系コマンドで 5 分の cooldown があり、`PRIVILEGED_USERS_ID` のユーザーは免除されます。
 
 <a id="ai-pipeline"></a>
 
@@ -157,9 +157,9 @@ flowchart TD
 <tr><th width="13%" align="left">項目</th><th width="87%" align="left">方針</th></tr>
 <tr><td>🧩&nbsp;モデル</td><td>返信、要約、画像説明には <code>gemini-3.5-flash-lite</code>、画像生成・編集には <code>gemini-3.1-flash-lite-image</code> を使用</td></tr>
 <tr><td>🎯&nbsp;トリガー</td><td>Bot への返信または <code>@Bot</code> は必ずトリガー。通常テキストとメディア評価はグループ活動量に基づく動的確率を共有し、同じ送信者・同じグループには 15 秒のランダムトリガー cooldown も適用します。現在のメッセージを直近 1 時間の window に先に加えるため、cold group の最初の 1 件は 1/174、window 内 165 件で下限 1/10 です。活動量はメモリだけに保持し、1 時間 idle または再起動で cold start に戻ります</td></tr>
-<tr><td>🚦&nbsp;グループ内並列</td><td>グループごとに実行中の Gemini tool conversation は最大 10 round。並列枠が埋まっている間、直接トリガーは最大 25 件のキューに入り、ランダムトリガーは破棄します</td></tr>
+<tr><td>🚦&nbsp;グループ内並列</td><td>グループごとに実行中の Gemini tool conversation は最大 5 round。並列枠が埋まっている間、直接トリガーは最大 25 件のキューに入り、ランダムトリガーは破棄します</td></tr>
 <tr><td>⏱️&nbsp;レート制限</td><td>グループごとに 5 分間で最大 150 round を開始。超過通知自体にも cooldown があります</td></tr>
-<tr><td>🔧&nbsp;ツール</td><td>同一 request に組み込み <code>googleSearch</code> を実際に登録し、東京の天気、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> などの function tool を提供します。1 reply round で custom function call は最大 20 回。検証が必要な場合は行動前に検索すること、グループ向けテキストはすべて明示的に <code>send_message</code> を通すことを prompt で要求します。画像、スタンプ、リアクション成功後の最終本文は追加発言として扱いません</td></tr>
+<tr><td>🔧&nbsp;ツール</td><td>同一 request に組み込み <code>googleSearch</code> を実際に登録し、東京の天気、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> などの function tool を提供します。<code>send_message</code>、<code>send_sticker</code>、<code>add_reaction</code>、<code>generate_image</code> は 1 つの action count を共有し、prompt では最大 8 action、実行側では hard cap 11 action です。スタンプ、リアクション、生成画像はそれぞれ最大 1 回だけ成功でき、その他の個別 tool に追加の per-tool call cap はありません。異なるスタンプパックの表示は最大 5 件、Google Search は最大 3 回、loop guard として custom function call 全体は最大 20 回です。検証が必要な場合は行動前に検索すること、グループ向けテキストはすべて明示的に <code>send_message</code> を通すことを prompt で要求します。画像、スタンプ、リアクション成功後の最終本文は追加発言として扱いません</td></tr>
 <tr><td>🧠&nbsp;メモリ</td><td>逐語メッセージ 75～150 件と、最大 7 × 75 件の cold history 要約により、合計約 600～675 件を保持。起動復元は最新の逐語メッセージ 149 件だけを読み、次の rotation 境界を予約します。Worker に常駐するグループは最大 100 件で、超過時は最終活動時刻から eviction して disk snapshot を削除し、返信 round 実行中のグループをできるだけ避けます</td></tr>
 </table>
 
@@ -181,7 +181,7 @@ flowchart TD
 <table width="100%">
 <tr><th width="13%" align="left">項目</th><th width="87%" align="left">方針</th></tr>
 <tr><td>🖼️&nbsp;マルチモーダル</td><td>画像説明は最大 125 文字、スタンプ/GIF は最大 100 文字。チャットメディアの download・transcode・画像説明と、画像生成参照素材の download・transcode は、最大 75 execution slot と 150 件の待機キューを共有します。local sticker catalog にないメディアは 1,500 件の LRU dedup cache を共有し、hit で recency を更新し、超過時は least-recently-used を削除し、TTL は設けません。<code>memory/stickers/</code> にある設定済みパックの説明は起動後に常駐し、online pack 照合で更新を検出した場合だけ増減します。同じスタンプがグループメッセージに現れれば catalog へ直接 hit します</td></tr>
-<tr><td>🎨&nbsp;画像生成</td><td>ツールを利用できるのは直接返信または <code>@Bot</code> メンションだけで、モデルは現在メッセージが画像生成・編集を明示的に要求した場合だけ呼び出します。現在または返信先の画像・スタンプを今回の短期参照素材にできますが、rolling memory や disk には保存しません。一般ユーザーはグループ共通で 3 分 cooldown、<code>SUPER_ADMIN_USER_ID</code> は免除です。参照 download、キュー、期限切れなどモデル呼び出し前の失敗は予約を解放します。モデル request 開始後は生成失敗・送信失敗でも cooldown を維持します。出力は 1K 固定です</td></tr>
+<tr><td>🎨&nbsp;画像生成</td><td>ツールを利用できるのは直接返信または <code>@Bot</code> メンションだけで、モデルは現在メッセージが画像生成・編集を明示的に要求した場合だけ呼び出します。1 round で生成して送信に成功できる画像は最大 1 枚です。現在または返信先の画像・スタンプを今回の短期参照素材にできますが、rolling memory や disk には保存しません。一般ユーザーはグループ共通で 3 分 cooldown、<code>SUPER_ADMIN_USER_ID</code> は免除です。参照 download、キュー、期限切れなどモデル呼び出し前の失敗は予約を解放します。モデル request 開始後は生成失敗・送信失敗でも cooldown を維持します。出力は 1K 固定です</td></tr>
 <tr><td>🎭&nbsp;ムード</td><td>AI Worker はグループごとに独立したムードをランダムな 2～4 時間保持します。自然失効時に東京の天気と時間帯で重みを補正し、再抽選します。永続化せず、Worker 再起動後に必要に応じて再構築します。スーパー管理者は <code>/switch_mood</code> で AI 有効グループを即時再抽選できます。コマンドは 5 秒 deadline 付き Worker 応答で確認するため、期限切れのキュー request が遅れてムードを書き換えることはありません</td></tr>
 </table>
 </details>
@@ -209,7 +209,7 @@ flowchart TD
 
 - **認証 window**：ボタン付き reminder の送信が実際に成功してから、新規メンバーに完全な 90 秒を与えます。timeout 時は認証中に追跡したメッセージを削除してメンバーを退出させますが、永久 BAN はしません。reminder 送信失敗には上限付き backoff で再試行し、一度も送信できなければ timeout では window を延長して再送するだけで、kick しません。
 - **spam circuit breaker**：認証待ちメンバーごとに直近 60 秒のメッセージ数を独立集計します。46 件目で先にメンバーを退出させ、その後に追跡済みメッセージを可能な限り削除します。
-- **identity 免除**：管理者・owner、管理者または許可ユーザーが招待したメンバーは免除できます。ほかの Bot も認証が必要ですが、許可ユーザーが代わりにクリックして保証できます。
+- **identity 免除**：管理者・owner 自身は常に管理者として免除します。招待されたメンバーが管理者招待の免除を継承するのは、招待者を特定の非匿名管理者 account へ帰属できる場合だけです。グループとして匿名で行われた管理者招待は継承しません。許可ユーザーが招待したメンバーは引き続き免除できます。ほかの Bot も認証が必要ですが、許可ユーザーが代わりにクリックして保証できます。
 - **ディスカッショングループ認識**：連携チャンネルのディスカッショングループで、コメントまたは返信により自動参加した状況を認識します。実際にコメント・返信したメンバーは免除し、ディスカッション画面から参加しただけで発言していないメンバーは通常どおり認証し、ロックダウン中なら直ちに退出させます。直接コメントとスレッド内返信は同じ免除方針です。関連 cache が cold のとき、スレッド内返信はまず通常メッセージとして追跡し、`getChat` が連携チャンネルを明示的に確認した後だけ免除へ変更します。lookup 失敗では許可しません。
 - **Anti-Raid ロックダウン**：直近 60 秒で参加者が 45 人を超えると 5 分間のロックダウンに入り、一般メンバーによる招待権限を一時的に無効にします。
 - **crash recovery**：認証待ち状態、未期限切れのメッセージ window、終端処理の進捗を `memory/anti-raid/YYYY-MM-DD.json` に保存します。現行 active record には `phase` と `trackedMessageTimes` が必要です。Worker またはプロセスの再構築後、元の `expiresAt` の残り時間から継続します。reminder ID は業務上 optional で、送信成功前は空です。復元後はまず再送して完全な window を再設定し、reminder なしで kick しません。kick 成功通知は永続化確認後、crash replay で重複送信しません。東京日付の当日ファイルだけを保持します。
@@ -375,9 +375,9 @@ flowchart TD
 <table width="100%">
 <tr><th width="21%" align="left">データ</th><th width="17%" align="left">場所</th><th width="62%" align="left">書き込み方針</th></tr>
 <tr><td>グループ状態 / copy 状態 / ロックダウンミラー</td><td><code>state.json</code>、<code>state.json.bak</code></td><td>メモリには「書き込み中」と「最新の待機中」snapshot だけを保持します。保存ごとに一時ファイル + fsync + アトミック rename を主ファイル、LKG backup の順で行います。コマンドスイッチ、中継、copy などの正式な変更は、該当 revision が主・副コピーへ書き込まれるまで成功を返さず、update の確認も許可しません。上限付き retry を使い切ると update の受け入れを停止し、失敗終了します。グループタイトルなど導出可能な metadata は background で結合保存できます。現行のロックダウンミラーには <code>phase</code> と正の <code>intentId</code> が必要です。起動時、無効な主ファイルは厳密検証を通った backup から復元し、両方無効なら元ファイルを保持して起動を拒否します</td></tr>
-<tr><td>AI グループチャットメモリ</td><td><code>memory/ai/</code></td><td>グループごとの snapshot を 30 秒周期 + 停止時 flush で保存します。upsert/delete はグループごとの単調 revision を持ち、delete intent は durable unlink 応答まで保持し、Disk I/O Worker 再構築後に replay します。起動時は AI が明示的に有効なグループだけを hydrate し、無効グループの残存 snapshot を削除します。現在の容量に従い、最新の逐語メッセージ 149 件と cold summary 7 round を復元します。現行形式の hot message は正の <code>message_id</code> が必須です。返信チェーン index は hot region からのみ導出し、hydrate 時に再構築して別途永続化しません</td></tr>
+<tr><td>AI グループチャットメモリ</td><td><code>memory/ai/</code></td><td>グループごとの snapshot を通常 30 秒周期 + 停止時 flush で保存します。upsert/delete はグループごとの単調 revision を持ち、delete intent は durable unlink 応答まで保持し、Disk I/O Worker 再構築後に replay します。確認済み delete または LRU eviction 後の最初の新 snapshot は直ちに保存し、durable 応答を受けるまで Disk I/O Worker 再構築後も replay して、通常 batch window 内で再構築直後のメモリが失われるのを防ぎます。起動時は AI が明示的に有効なグループだけを hydrate し、無効グループの残存 snapshot を削除します。現在の容量に従い、最新の逐語メッセージ 149 件と cold summary 7 round を復元します。現行形式の hot message は正の <code>message_id</code> が必須です。返信チェーン index は hot region からのみ導出し、hydrate 時に再構築して別途永続化しません</td></tr>
 <tr><td>スタンプ説明カタログ</td><td><code>memory/stickers/</code></td><td>パックごとにアトミック snapshot。起動復元後はメモリに常駐し、online pack 照合で更新し、グループメッセージ解析でも再利用します</td></tr>
-<tr><td>今日の運勢</td><td><code>memory/luck/</code></td><td>東京日付ごとに結果を増分追記し、末尾切断を修復します。<code>receipt-secret.json</code> は当日の決定論的抽選/HMAC key をアトミックに保存し、通常ユーザーが読み取り可能で owner だけが書き込める <code>0644</code> 固定です</td></tr>
+<tr><td>今日の運勢</td><td><code>memory/luck/</code></td><td>東京日付ごとに結果を増分追記し、末尾切断を修復します。日付 owner を切り替える前に前日の追加 buffer を flush します。<code>receipt-secret.json</code> は当日の決定論的抽選/HMAC key をアトミックに保存し、通常ユーザーが読み取り可能で owner だけが書き込める <code>0644</code> 固定です。対象日に確認済み結果があるのに key が欠落している、または別日を示す場合、黙って新しい key を生成せず起動・日付切り替えを拒否します</td></tr>
 <tr><td>認証待ちメンバー</td><td><code>memory/anti-raid/</code></td><td>当日 JSON へ <code>chatId:userId</code> key で増分追記します。active record には <code>phase</code> と <code>trackedMessageTimes</code> が必要です。通常 update は 250ms で結合し、作成は即時書き込み、完了は tombstone を追記します。履歴が 4 MiB または 10,000 件に達すると active snapshot へ compact し、日付変更で旧ファイルを削除します</td></tr>
 <tr><td>Error log</td><td><code>logs/</code></td><td>Disk I/O Worker が一元的に batch 追記</td></tr>
 <tr><td>実行 instance</td><td><code>bot.lock</code></td><td>データディレクトリの単一 instance owner lock をアトミックに管理</td></tr>
@@ -387,7 +387,7 @@ flowchart TD
 > `memory/` にはグループチャットの逐語内容と運勢 receipt key が含まれるため、機密データとして扱ってください。
 >
 > - デプロイ規約により JSON は通常の system user が読み取れる `0644` です。データルートの owner・permission と host account の隔離でアクセスを制限し、バックアップ範囲と保持期間を管理してください。
-> - 当日の運勢をバックアップするときは、`memory/luck/receipt-secret.json` と当日の結果ファイルを同じ整合 snapshot に含めます。key はログへ書きません。
+> - 当日の運勢をバックアップするときは、`memory/luck/receipt-secret.json` と当日の結果ファイルを同じ整合 snapshot に含めます。key はログへ書きません。復元時に結果と key の不一致が報告された場合は、同じ整合時点の `memory/luck/` 全体を復元し、key だけを削除・再生成しないでください。
 > - `logs/`、`memory/`、state の主・副コピー、`.corrupt` 隔離ファイル、資格情報、実行 lock は Git に commit しません。
 
 認証待ちの hot path は、日次運勢とログで既に使う JSON 末尾追記機構を再利用し、毎回の全量書き換えや新しい I/O thread を増やしません。完了 record は `null` tombstone として線形追記します。末尾切断修復は JSON 構造境界を走査するため、最後の完全な tombstone を保持して、完了済み認証を復活させません。日付変更または履歴 threshold 到達時だけ、現在の active mirror をアトミックに compact します。各追記 batch は成功応答より前に fsync します。同期ファイル操作は Disk I/O Worker 内に留まり、Telegram update のメインスレッドを block しません。

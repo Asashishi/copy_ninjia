@@ -42,8 +42,6 @@ export const MAX_TOOL_ROUNDS: number = 35;
 export const MAX_GOOGLE_SEARCH_CALLS_PER_REPLY: number = 3;
 /** 所有自定义函数调用（含查询、查看、失败/拒绝调用）的整轮硬顶。 */
 export const MAX_CUSTOM_TOOL_CALLS_PER_REPLY: number = 20;
-/** 单一函数达到该次数后，从下一请求的 declarations 中移除，阻止重试环。 */
-export const MAX_CUSTOM_TOOL_CALLS_PER_NAME: number = 4;
 /** Telegram chat action 的心跳间隔与连续失败止损阈值。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 /** 连续发送 chat action 失败后的止损阈值。 */

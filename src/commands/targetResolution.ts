@@ -59,5 +59,9 @@ export async function resolveCommandTarget(
     return undefined;
   }
 
+  // 不在共享解析层拒绝 targetUser.id === chatId：匿名管理员以当前群为
+  // sender_chat 时，/copy 必须保留该身份来复制群头像并复读同一皮套的消息。
+  // Telegram 不会提供皮套背后的真实用户；/kick 等破坏性命令应在调用处
+  // 按自己的语义拒绝，避免误把整个群组身份当作那名管理员。
   return targetUser;
 }

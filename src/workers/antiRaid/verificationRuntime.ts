@@ -638,8 +638,8 @@ function ensurePendingReminder(chatId: number, userId: number, state: PendingSta
 }
 
 /**
- * 发起「拉人者是不是管理员」的异步核查：全量拉取管理员表（顺手把缓存补热），
- * 确认是管理员则把 adminCheckResolved 回投状态机撤销验证窗口。fetchAdminIds
+ * 发起「拉人者是不是非匿名管理员」的异步核查：全量拉取邀请者豁免表（顺手
+ * 把缓存补热），确认可豁免则把 adminCheckResolved 回投状态机撤销验证窗口。fetchAdminIds
  * 自带进行中去重，两路投递重复挂载只是对同一结果多检查一遍，先撤销者生效，
  * 后到的发现状态对象已被替换即放弃。
  */
@@ -791,7 +791,7 @@ export function handleJoin(msg: NewMemberMessage): void {
     actorId: msg.actorId,
     identityExempt: msg.exempt === true,
     // 管理员拉人免验证的同步快路径：拉人者在特权白名单里，或命中未过期的
-    // 管理员表缓存。私密模式期间只认这条同步判定（触发/接管锁定时已预热
+    // 非匿名管理员缓存。私密模式期间只认这条同步判定（触发/接管锁定时已预热
     // 缓存），没命中的一律秒踢，不给刷子留验证窗口。
     actorSyncExempt: invitedByOther && (PRIVILEGED_USERS_ID.includes(msg.actorId!) || freshAdminIds(chatId)?.has(msg.actorId!) === true),
     adminCacheFresh: freshAdminIds(chatId) !== undefined,

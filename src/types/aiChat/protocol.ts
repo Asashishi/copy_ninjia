@@ -38,6 +38,11 @@ export interface AiRecordContext {
   replyTo?: AiReplyReference;
   /** 当前消息本身是转发时的来源标注；非转发省略。 */
   forwardedFrom?: string;
+  /**
+   * 主线程确认该群此前发生过 durable purge 时，要求这条记录形成的快照
+   * 绕过周期上报；仅由 aiChat.ts 注入，Telegram 入口不得自行设置。
+   */
+  persistImmediately?: boolean;
 }
 
 export interface AiRecordMessage extends AiRecordContext {
@@ -124,6 +129,8 @@ export interface AiMemoryEvent {
   type: "memory";
   chatId: number;
   snapshot: string;
+  /** purge 后首份新快照；主线程须要求 Disk I/O 立即写盘并等待 revision 回执。 */
+  persistImmediately?: boolean;
 }
 
 export interface AiMemoryDeletedEvent {

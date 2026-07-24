@@ -28,7 +28,7 @@
 | 媒体描述长度、执行槽、LRU 容量 | `src/consts/aiChat/media.ts` |
 | 生图冷却与字节上限 | `src/consts/aiChat/imageGeneration.ts` |
 | 心情时长与开关超时 | `src/consts/aiChat/mood.ts` |
-| 工具调用上限、模型名、请求超时 | `src/consts/aiChat/tools.ts` |
+| 工具动作/查询上限、模型名、请求超时 | `src/consts/aiChat/tools.ts` |
 | 验证窗口、刷屏阈值、追加/收敛策略 | `src/consts/antiRaid/` |
 | copy 冷却、/quiet 范围、用户名规则 | `src/consts/commands.ts` |
 | 随机触发的发言人冷却 | `src/consts/auto.ts` |
@@ -44,9 +44,15 @@
 2. **定义**：无状态的静态查询工具把 `ToolDefinition` 放进 [`src/ai/tools/index.ts`](../src/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `src/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一转换成 SDK `FunctionDeclaration`。
 3. **实现**：在 `src/ai/tools/` 实现执行逻辑；面向 Telegram 的副作用经主线程代理执行，Worker 内不直接持有 Bot 实例。
 4. **注册**：静态查询工具接入 `src/ai/tools/index.ts` 的分发；行动工具接入 `src/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
-5. **预算**：确认 `src/consts/aiChat/tools.ts` 里的动作预算、单函数调用上限对新工具的适用性；成功副作用要计入统一动作预算（约束见 [04](04-invariants.md#worker-与状态所有权)）。
+5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、Google Search，以及贴纸/反应/生成图片各一次成功）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
 6. **提示词**：如需使用规则，在 `src/consts/aiChat/prompts/` 补充；涉及转录格式的必须复用 `transcript.ts` 共享模板，两侧不得各自手写。
 7. **测试 + 文档**：`test/ai/`（或对应 workers 路径）补测试；根 README「工具」行按需更新。
+
+## 新增一个通用 JSON API 调用
+
+1. 在 [`src/consts/httpFetch.ts`](../src/consts/httpFetch.ts) 的 `JSON_API_ALLOWED_ORIGINS` 显式加入准确的 HTTPS origin；不要放宽成任意 host、HTTP 或 credential URL。
+2. 复用 [`src/libs/httpFetch.ts`](../src/libs/httpFetch.ts) 的有界 JSON 读取；redirect 保持禁用，响应体和错误日志都受限。
+3. 补充 origin、redirect、超大响应和失败日志测试。Telegram 头像爬虫是独立媒体入口，不要为了新增 JSON API 而改接或收紧该路径。
 
 ## 修改人设与 JSON 配置
 

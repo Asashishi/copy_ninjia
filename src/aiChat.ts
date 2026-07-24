@@ -2,7 +2,12 @@ import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { registerChatTeardown } from "./infra/chatTeardown";
 import { logger } from "./infra/logger";
-import { onAiMemoryDeletedPersisted, onDiskIORespawn, postDiskIO } from "./ai/persistence";
+import {
+  onAiMemoryDeletedPersisted,
+  onAiMemoryPersisted,
+  onDiskIORespawn,
+  postDiskIO,
+} from "./ai/persistence";
 import {
   aiChatWorkerState,
   aiMemoryFlushBarrier,
@@ -15,6 +20,7 @@ import {
   moodSwitchRequestCounter,
   moodSwitchWaiters,
   pendingAiMemoryDeletes,
+  postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
   type AiMemoryDeleteWaiter,
   type MoodSwitchWaiter,
@@ -70,6 +76,9 @@ function waitForAiMemoryDelete(chatId: number, revision: number): Promise<void> 
 function requestAiMemoryDelete(chatId: number, wait: true): Promise<void>;
 function requestAiMemoryDelete(chatId: number, wait: false): undefined;
 function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<void> | undefined {
+  // 新一轮 purge 使此前任何“首份新快照”确认失效；删除 revision 之后真正
+  // 出现的新记录会按 revisionCounter + 无镜像条件重新武装快速路径。
+  postPurgeAiMemoryPersistRevisions.delete(chatId);
   const hadLatestSnapshot: boolean = latestAiMemories.delete(chatId);
   latestAiMemoryRevisions.delete(chatId);
   let revision: number | undefined = pendingAiMemoryDeletes.get(chatId);
@@ -113,6 +122,15 @@ onAiMemoryDeletedPersisted((reply) => {
   }
 });
 
+onAiMemoryPersisted((reply) => {
+  const expectedRevision: number | null | undefined =
+    postPurgeAiMemoryPersistRevisions.get(reply.chatId);
+  if (expectedRevision === undefined || expectedRevision === null) return;
+  if (reply.revision >= expectedRevision) {
+    postPurgeAiMemoryPersistRevisions.delete(reply.chatId);
+  }
+});
+
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
  * 贴纸/GIF 占位与异步描述、限频、拼装上下文、调 Gemini（含 function
@@ -152,9 +170,21 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
         }
         {
           const revision: number = nextAiMemoryRevision(event.chatId);
+          const persistImmediately: boolean =
+            event.persistImmediately === true &&
+            postPurgeAiMemoryPersistRevisions.has(event.chatId);
+          if (persistImmediately) {
+            postPurgeAiMemoryPersistRevisions.set(event.chatId, revision);
+          }
           latestAiMemories.set(event.chatId, event.snapshot);
           latestAiMemoryRevisions.set(event.chatId, revision);
-          postDiskIO({ type: "aiMemory", chatId: event.chatId, revision, snapshot: event.snapshot });
+          postDiskIO({
+            type: "aiMemory",
+            chatId: event.chatId,
+            revision,
+            snapshot: event.snapshot,
+            ...(persistImmediately ? { persistImmediately: true } : {}),
+          });
         }
         break;
       case "memoryDeleted":
@@ -205,6 +235,11 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
     // 已终止实例不可能再回传旧 memory；purged 只负责拒绝旧 Worker 快照。
     // pendingAiMemoryDeletes 由 Disk I/O durable 回执拥有，绝不能在这里清空。
     purgedAiMemoryChats.clear();
+    // 尚未收到首份快照（null）的群已不可能由终止的 Worker 回传；已经投给
+    // Disk I/O 的数字 revision 继续保留，供其重建时维持即时写盘语义。
+    for (const [chatId, revision] of postPurgeAiMemoryPersistRevisions) {
+      if (revision === null) postPurgeAiMemoryPersistRevisions.delete(chatId);
+    }
   },
 });
 
@@ -222,7 +257,19 @@ onDiskIORespawn(() => {
   }
   for (const [chatId, snapshot] of latestAiMemories) {
     const revision: number = latestAiMemoryRevisions.get(chatId) ?? 0;
-    postDiskIO({ type: "aiMemory", chatId, revision, snapshot });
+    const immediateRevision: number | null | undefined =
+      postPurgeAiMemoryPersistRevisions.get(chatId);
+    postDiskIO({
+      type: "aiMemory",
+      chatId,
+      revision,
+      snapshot,
+      ...(immediateRevision !== undefined &&
+      immediateRevision !== null &&
+      revision >= immediateRevision
+        ? { persistImmediately: true }
+        : {}),
+    });
   }
   for (const [pack, snapshot] of latestStickerCatalogs) {
     postDiskIO({ type: "stickerCatalog", pack, snapshot });
@@ -306,6 +353,7 @@ export async function terminateAiChat(): Promise<void> {
   rejectAllMoodSwitchWaiters("AI Worker is shutting down before acknowledging the mood switch.");
   aiChatWorkerState.available = false;
   purgedAiMemoryChats.clear();
+  postPurgeAiMemoryPersistRevisions.clear();
   await terminateAiChatWorker();
 }
 
@@ -342,6 +390,30 @@ export function switchAiMood(chatId: number): Promise<string> {
   });
 }
 
+/** 为 purge 后第一份新记忆武装即时持久化标志，并在投递失败时回滚新标志。 */
+function postMemoryRecord(
+  message: AiRecordMessage | AiRecordMediaMessage
+): void {
+  const armedRevision: number | null | undefined =
+    postPurgeAiMemoryPersistRevisions.get(message.chatId);
+  const wasArmed: boolean = postPurgeAiMemoryPersistRevisions.has(message.chatId);
+  const shouldArm: boolean =
+    !wasArmed &&
+    (!latestAiMemories.has(message.chatId) && aiMemoryRevisionCounters.has(message.chatId));
+  if (shouldArm) {
+    postPurgeAiMemoryPersistRevisions.set(message.chatId, null);
+  }
+  try {
+    postAiChatOrThrow({
+      ...message,
+      ...(shouldArm || armedRevision === null ? { persistImmediately: true } : {}),
+    });
+  } catch (error: unknown) {
+    if (shouldArm) postPurgeAiMemoryPersistRevisions.delete(message.chatId);
+    throw error;
+  }
+}
+
 /**
  * 记录一条群消息到该群在 Worker 侧的滚动缓存，供之后拼装成对话上下文喂给
  * 模型。文本与昵称在 Worker 侧会被压成单行（防转录注入）。
@@ -356,9 +428,11 @@ export function switchAiMood(chatId: number): Promise<string> {
  *   的 resolveForwardOrigin）；非转发省略。
  * @param text 消息文本。
  */
-export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void {
+export function recordChatMessage(
+  message: Omit<AiRecordMessage, "type" | "persistImmediately">
+): void {
   purgedAiMemoryChats.delete(message.chatId);
-  postAiChatOrThrow({ type: "record", ...message });
+  postMemoryRecord({ type: "record", ...message });
 }
 
 /**
@@ -388,9 +462,11 @@ export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void 
  *   一次直接回复，语义见 AiRecordMediaMessage.directTrigger；与
  *   commentOnResolve 互斥。
  */
-export function recordChatMedia(message: Omit<AiRecordMediaMessage, "type">): void {
+export function recordChatMedia(
+  message: Omit<AiRecordMediaMessage, "type" | "persistImmediately">
+): void {
   purgedAiMemoryChats.delete(message.chatId);
-  postAiChatOrThrow({ type: "recordMedia", ...message });
+  postMemoryRecord({ type: "recordMedia", ...message });
 }
 
 export type GenerateAndSendReplyParams = Omit<AiTriggerMessage, "type" | "isRandomTrigger"> & {

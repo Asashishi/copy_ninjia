@@ -6,7 +6,13 @@ import { botInfoState } from "../cache/aiChat/identity";
 import { sweepImageGenerationCache } from "../cache/aiChat/imageGeneration";
 import { sweepAiChatReplyCache } from "../cache/aiChat/replies";
 import { aiChatMaintenanceTimer } from "../cache/aiChat/worker";
-import { flushDirtyMemories, hydrateMemories, purgeChatMemory, recordChatMessage } from "./aiChat/rollingMemory";
+import {
+  flushDirtyMemories,
+  flushMemorySnapshot,
+  hydrateMemories,
+  purgeChatMemory,
+  recordChatMessage,
+} from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
 import { switchMood } from "../ai/mood";
@@ -65,9 +71,11 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       break;
     case "record":
       recordChatMessage(msg);
+      if (msg.persistImmediately === true) flushMemorySnapshot(msg.chatId, true);
       break;
     case "recordMedia":
       recordChatMedia(msg);
+      if (msg.persistImmediately === true) flushMemorySnapshot(msg.chatId, true);
       break;
     case "trigger":
       generateAndSendReply(msg);

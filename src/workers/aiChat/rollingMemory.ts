@@ -140,16 +140,28 @@ export function buildMemorySnapshot(chatId: number): string {
 }
 
 /**
+ * 上报单群当前快照；只有 dirty 时发送，成功交给主线程后清除 dirty。用于
+ * purge 后第一条新记录的即时上报，也由普通批量 flush 复用。
+ */
+export function flushMemorySnapshot(chatId: number, persistImmediately: boolean = false): void {
+  if (!dirtyMemoryChats.has(chatId)) return;
+  self.postMessage({
+    type: "memory",
+    chatId,
+    snapshot: buildMemorySnapshot(chatId),
+    ...(persistImmediately ? { persistImmediately: true } : {}),
+  } satisfies AiMemoryEvent);
+  dirtyMemoryChats.delete(chatId);
+}
+
+/**
  * 把所有 dirty 群的记忆快照 post 给主线程（进而转投 diskIOWorker 落盘），
  * 随后清空 dirty 标记。定时调用（见 aiChatWorker.ts 底部的 setInterval）以及
  * flushMemory（退出前最后一刷）共用。
  */
 export function flushDirtyMemories(): void {
   if (dirtyMemoryChats.size === 0) return;
-  for (const chatId of dirtyMemoryChats) {
-    self.postMessage({ type: "memory", chatId, snapshot: buildMemorySnapshot(chatId) } satisfies AiMemoryEvent);
-  }
-  dirtyMemoryChats.clear();
+  for (const chatId of dirtyMemoryChats) flushMemorySnapshot(chatId);
 }
 
 /**

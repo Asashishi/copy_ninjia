@@ -24,6 +24,13 @@ const lockdownEvents: AntiRaidWorkerEvent[] = [];
 const permissionWrites: Record<string, boolean | undefined>[] = [];
 const sentMessages: { chatId: number; text: string }[] = [];
 let currentPermissions: Record<string, boolean | undefined> = {};
+const getChat = mock(async (): Promise<{ permissions?: Record<string, boolean | undefined> }> => ({
+  permissions: { ...currentPermissions },
+}));
+const getChatAdministrators = mock(async (): Promise<{
+  user: { id: number };
+  is_anonymous: boolean;
+}[]> => []);
 Object.defineProperty(globalThis, "self", {
   configurable: true,
   value: { postMessage(event: AntiRaidWorkerEvent): void { lockdownEvents.push(event); } },
@@ -33,8 +40,8 @@ mock.module("../../../src/infra/logger", () => ({
 }));
 mock.module("../../../src/infra/telegram", () => ({
   joinVerificationApi: {
-    getChatAdministrators: async (): Promise<never[]> => [],
-    getChat: async () => ({ permissions: { ...currentPermissions } }),
+    getChatAdministrators,
+    getChat,
     setChatPermissions: async (_chatId: number, permissions: Record<string, boolean | undefined>): Promise<void> => {
       permissionWrites.push({ ...permissions });
       currentPermissions = { ...permissions };
@@ -46,6 +53,7 @@ mock.module("../../../src/infra/telegram", () => ({
   },
 }));
 
+const adminCache = await import("../../../src/workers/antiRaid/adminCache");
 const lockdownRuntime = await import("../../../src/workers/antiRaid/lockdownRuntime");
 
 beforeEach(() => {
@@ -55,6 +63,10 @@ beforeEach(() => {
   permissionWrites.length = 0;
   sentMessages.length = 0;
   currentPermissions = {};
+  getChat.mockClear();
+  getChat.mockImplementation(async () => ({ permissions: { ...currentPermissions } }));
+  getChatAdministrators.mockClear();
+  getChatAdministrators.mockResolvedValue([]);
   for (const window of joinWindows.values()) clearTimeout(window.resetTimeout);
   for (const entry of lockdownEntries.values()) {
     if (entry.timer !== undefined) clearTimeout(entry.timer);
@@ -109,6 +121,16 @@ describe("Anti-Raid cache owners", () => {
     expect(pendingAdminChangesDuringFetch.has(-1001)).toBeFalse();
   });
 
+  test("全量管理员快照只缓存身份可归因的非匿名管理员", async () => {
+    getChatAdministrators.mockResolvedValueOnce([
+      { user: { id: 41 }, is_anonymous: false },
+      { user: { id: 42 }, is_anonymous: true },
+    ]);
+
+    await expect(adminCache.fetchAdminIds(-1002)).resolves.toEqual(new Set([41]));
+    expect(chatAdmins.get(-1002)?.adminIds).toEqual(new Set([41]));
+  });
+
   test("关联频道 owner 去重在途请求并在 settle 后释放槽位", async () => {
     let resolveFetch!: () => void;
     let createCalls: number = 0;
@@ -151,6 +173,8 @@ describe("Lockdown write-ahead runtime", () => {
     expect(permissionWrites).toEqual([]);
     if (applying?.type !== "lockdown") throw new Error("missing applying intent");
 
+    // applying intent 落盘期间管理员调整了其它权限；提交必须重新读取并保留。
+    currentPermissions = { can_invite_users: true, can_send_messages: false, can_send_polls: true };
     lockdownRuntime.handleLockdownPersisted({
       type: "lockdownPersisted",
       chatId,
@@ -158,13 +182,18 @@ describe("Lockdown write-ahead runtime", () => {
       intentId: applying.intentId,
     });
     await Bun.sleep(0);
-    expect(permissionWrites[0]).toEqual({ can_invite_users: false, can_send_messages: true });
+    expect(permissionWrites[0]).toEqual({
+      can_invite_users: false,
+      can_send_messages: false,
+      can_send_polls: true,
+    });
+    expect(getChat).toHaveBeenCalledTimes(2);
     expect(lockdownEvents.some((event) => event.type === "lockdown" && event.phase === "active")).toBeTrue();
     expect(sentMessages[0]?.text).toContain("60 秒内冲进来了 46 个");
   });
 
-  test("重建 applying 完成加锁时使用未知人数文案，不谎报 0 人", async () => {
-    currentPermissions = { can_invite_users: true, can_send_messages: true };
+  test("重建 applying 也合并当前权限，并使用未知人数文案", async () => {
+    currentPermissions = { can_invite_users: true, can_send_messages: false, can_send_polls: true };
     lockdownRuntime.adoptLockdowns([{
       chatId: -1004,
       phase: "applying",
@@ -174,9 +203,38 @@ describe("Lockdown write-ahead runtime", () => {
     }]);
     await Bun.sleep(0);
 
-    expect(permissionWrites[0]).toEqual({ can_invite_users: false, can_send_messages: true });
+    expect(permissionWrites[0]).toEqual({
+      can_invite_users: false,
+      can_send_messages: false,
+      can_send_polls: true,
+    });
+    expect(getChat).toHaveBeenCalledTimes(1);
     expect(sentMessages[0]?.text).toContain("检测到短时间内大量成员入群");
     expect(sentMessages[0]?.text).not.toContain("0 个");
+  });
+
+  test("提交前刷新权限缺失时不写 Telegram，并清除已落盘 applying intent", async () => {
+    const chatId = -1005;
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    cacheAdminIds(chatId, new Set(), Date.now());
+    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    await Bun.sleep(0);
+
+    const applying = lockdownEvents.find((event) => event.type === "lockdown");
+    if (applying?.type !== "lockdown") throw new Error("missing applying intent");
+    getChat.mockResolvedValueOnce({});
+
+    lockdownRuntime.handleLockdownPersisted({
+      type: "lockdownPersisted",
+      chatId,
+      phase: "applying",
+      intentId: applying.intentId,
+    });
+    await Bun.sleep(0);
+
+    expect(permissionWrites).toEqual([]);
+    expect(lockdownEntries.has(chatId)).toBeFalse();
+    expect(lockdownEvents.some((event) => event.type === "unlock" && event.chatId === chatId)).toBeTrue();
   });
 
   test("重建会继续 applying/restoring，恢复仅合并 invite 字段", async () => {

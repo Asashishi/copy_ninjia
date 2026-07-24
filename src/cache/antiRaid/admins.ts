@@ -2,16 +2,16 @@ import type { ChatAdminCache } from "../../types/antiRaid/internal";
 import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CHAT_CACHE_MAX } from "../../consts/antiRaid/cache";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
-/** 群管理员表按需缓存（src/workers/antiRaid/adminCache.ts）的内存状态。 */
+/** 非匿名管理员邀请豁免表（src/workers/antiRaid/adminCache.ts）的内存状态。 */
 
-/** 按需拉取的各群管理员表。 */
+/** 按需拉取的各群非匿名管理员 ID 表。 */
 export const chatAdmins: Map<number, ChatAdminCache> = new Map();
 /** 进行中的全量管理员拉取，按 chatId 去重。 */
 export const adminFetches: Map<number, Promise<Set<number>>> = new Map();
-/** 全量拉取在途期间到达的增量任免，待快照落地后重放。 */
+/** 全量拉取在途期间到达的增量资格变化，待快照落地后重放。 */
 export const pendingAdminChangesDuringFetch: Map<number, Map<number, boolean>> = new Map();
 
-/** 在 500 群硬顶内落一份管理员快照。 */
+/** 在 500 群硬顶内落一份非匿名管理员豁免快照。 */
 export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: number = Date.now()): void {
   setBoundedMapValue({
     map: chatAdmins,
@@ -30,18 +30,22 @@ export function getOrCreateAdminFetch(chatId: number, create: () => Promise<Set<
   return inFlight;
 }
 
-/** 若全量拉取正在进行，合并记录一条比快照更新的管理员任免。 */
-export function bufferAdminChangeDuringFetch(chatId: number, userId: number, isAdmin: boolean): void {
+/** 若全量拉取正在进行，合并记录一条比快照更新的邀请豁免资格变化。 */
+export function bufferAdminChangeDuringFetch(
+  chatId: number,
+  userId: number,
+  isInviterExempt: boolean
+): void {
   if (!adminFetches.has(chatId)) return;
   let pending = pendingAdminChangesDuringFetch.get(chatId);
   if (!pending) {
     pending = new Map();
     pendingAdminChangesDuringFetch.set(chatId, pending);
   }
-  pending.set(userId, isAdmin);
+  pending.set(userId, isInviterExempt);
 }
 
-/** 取走并删除一次拉取期间积累的管理员任免。 */
+/** 取走并删除一次拉取期间积累的邀请豁免资格变化。 */
 export function takePendingAdminChanges(chatId: number): Map<number, boolean> | undefined {
   const pending = pendingAdminChangesDuringFetch.get(chatId);
   pendingAdminChangesDuringFetch.delete(chatId);

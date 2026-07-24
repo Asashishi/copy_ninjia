@@ -1,4 +1,4 @@
-import type { AiMemoryDeletedPersistedReply } from "../../types/diskIO";
+import type { AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../../types/diskIO";
 
 /**
  * AI 记忆快照落盘（src/workers/diskIO/aiMemoryFiles.ts）的内存状态；同目录
@@ -17,6 +17,11 @@ export const aiMemoryRevisions: Map<number, number> = new Map();
 export const aiMemoryOperations: Map<number, "upsert" | "delete"> = new Map();
 /** AI 记忆批量刷盘 timer；首次 dirty 创建，flush/reset 时清除。 */
 export const aiMemoryFlushState: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
+/**
+ * 要求即时写入的最早 revision；若写盘前被更新 revision 覆盖，写入最新快照
+ * 后以最新 revision 回执，同样证明这次 purge 后已有新记忆 durable。
+ */
+export const aiMemoryImmediateRevisions: Map<number, number> = new Map();
 
 /**
  * AI 快照删除 durable 后的唯一回执出口。diskIOWorker 启动时配置，Worker
@@ -24,6 +29,15 @@ export const aiMemoryFlushState: { timer: ReturnType<typeof setTimeout> | null }
  */
 export const aiMemoryDeletePersistedNotifier: {
   current: (reply: AiMemoryDeletedPersistedReply) => void;
+} = {
+  current: () => {
+    // Worker 入口会在处理消息前配置；文件 owner 单测不需要回执出口。
+  },
+};
+
+/** purge 后首份新快照 durable 后的唯一回执出口。 */
+export const aiMemoryPersistedNotifier: {
+  current: (reply: AiMemoryPersistedReply) => void;
 } = {
   current: () => {
     // Worker 入口会在处理消息前配置；文件 owner 单测不需要回执出口。
@@ -39,6 +53,7 @@ export function hydrateAiMemoryCache(snapshots: ReadonlyMap<number, string>): vo
   deletedAiMemoryChats.clear();
   aiMemoryRevisions.clear();
   aiMemoryOperations.clear();
+  aiMemoryImmediateRevisions.clear();
   for (const [chatId, snapshot] of snapshots) {
     aiMemoryCache.set(chatId, snapshot);
     aiMemoryRevisions.set(chatId, 0);
@@ -69,6 +84,7 @@ export function markAiMemoryDeleted(chatId: number, revision: number): boolean {
   aiMemoryRevisions.set(chatId, revision);
   aiMemoryOperations.set(chatId, "delete");
   deletedAiMemoryChats.add(chatId);
+  aiMemoryImmediateRevisions.delete(chatId);
   return true;
 }
 
@@ -81,4 +97,5 @@ export function resetAiMemoryCache(): void {
   deletedAiMemoryChats.clear();
   aiMemoryRevisions.clear();
   aiMemoryOperations.clear();
+  aiMemoryImmediateRevisions.clear();
 }

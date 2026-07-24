@@ -43,7 +43,7 @@ WantedBy=multi-user.target
 | `state.json` + `state.json.bak` | 群开关、copy、锁定镜像等权威状态 | 主备一起备份 |
 | `memory/ai/` | 每群 AI 记忆快照 | 含群聊逐字内容，敏感 |
 | `memory/stickers/` | 贴纸描述目录 | 可由线上对账重建 |
-| `memory/luck/` | 运势结果 + `receipt-secret.json` | 密钥与当天结果必须在同一一致性备份中 |
+| `memory/luck/` | 运势结果 + `receipt-secret.json` | 密钥与当天结果必须在同一一致性备份中；不可只重建密钥 |
 | `memory/anti-raid/` | 待验证状态按日文件 | 只保留东京当天 |
 | `logs/` | 错误日志（英文文案） | 按需 |
 | `bot.lock`（及 `.guard`/`.recovery`） | 单实例锁 | 不备份、不手工编辑 |
@@ -60,6 +60,7 @@ WantedBy=multi-user.target
 | `bot.lock` 拒绝启动 | 见下节 | 见下节 |
 | config schema 校验失败 | `config/*.json` 或 `.env` 不合法 | 按报错字段修正；mood 权重和必须恰好 100，贴纸最多 5 包 |
 | 两份 state 副本均无效 | 部署了 schema 变更但没迁移数据 | 按 [06 变更持久化 schema](06-modification-guide.md#变更持久化-schema) 迁移后再启；程序不会改动原文件 |
+| 运势结果与回执密钥不一致 | 当日结果和 `receipt-secret.json` 来自不同备份时点，或只恢复了其中一项 | 停止 Bot，恢复同一一致性时点的完整 `memory/luck/`；不要删除或重新生成单独的密钥 |
 | 出现 `*.corrupt` 文件 | 单份 state 副本损坏被隔离，另一份已接管 | 正常自愈路径；排查完原因后可删除隔离件 |
 
 ### `bot.lock` 拒绝启动

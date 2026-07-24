@@ -13,7 +13,11 @@ const luckDir: string = mkdtempSync(join(tmpdir(), "luck-files-test-"));
 const realPaths = await import("../../../src/consts/paths");
 mock.module("../../../src/consts/paths", () => ({ ...realPaths, LUCK_MEMORY_DIR: luckDir }));
 
-const { flushLuckAppends, handleLuckDrawMessage } = await import("../../../src/workers/diskIO/luckFiles");
+const {
+  flushLuckAppends,
+  handleLuckDrawMessage,
+  hydrateLuckDay,
+} = await import("../../../src/workers/diskIO/luckFiles");
 const { recoverLuckDay } = await import("../../../src/workers/diskIO/snapshotFiles");
 const { luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache, resetLuckCache } = await import("../../../src/cache/diskIO/luck");
 const { FLUSH_MAX_ENTRIES } = await import("../../../src/consts/diskIO");
@@ -153,6 +157,26 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(luckPendingAppends[0]!.key).toBe("222");
 
     flushLuckAppends();
+    expect(readDayFile()).toEqual({ "222": { label: "小凶", fortunePercent: 39.99 } });
+    expect(existsSync(join(luckDir, "2026-07-15.json"))).toBe(false);
+  });
+
+  test("恢复当天文件后重放昨日消息会丢弃旧消息，不倒退缓存或误删当天文件", () => {
+    handleLuckDrawMessage(luckMsg({ key: "222", label: "小凶", fortunePercent: 39.99, day: DAY }));
+    expect(flushLuckAppends()).toBeTrue();
+    resetLuckCache();
+    hydrateLuckDay(DAY);
+
+    handleLuckDrawMessage(luckMsg({
+      key: "111",
+      label: "大吉",
+      fortunePercent: 90.12,
+      day: "2026-07-15",
+    }));
+
+    expect(luckWorkerCache.current?.day).toBe(DAY);
+    expect(luckPendingAppends).toEqual([]);
+    expect(flushLuckAppends()).toBeTrue();
     expect(readDayFile()).toEqual({ "222": { label: "小凶", fortunePercent: 39.99 } });
     expect(existsSync(join(luckDir, "2026-07-15.json"))).toBe(false);
   });

@@ -46,18 +46,52 @@ function newSecret(day: string, path: string, io: LuckSecretFileIO): LuckReceipt
   return secret;
 }
 
+/** 恢复日级运势密钥所需的目标日期、已确认结果数与可替换 I/O。 */
+export interface RecoverLuckReceiptSecretParams {
+  day: string;
+  confirmedResultCount: number;
+  path?: string;
+  io?: LuckSecretFileIO;
+}
+
 /**
- * 加载当天密钥；不存在时首次创建，文件属于过去日期时原子轮换。损坏、未来
- * 日期或字段异常一律拒绝，绝不静默覆盖导致当天未确认结果改变。
+ * 已有确认结果时，密钥缺失或属于旧日代表备份不一致。此时生成新密钥会让
+ * 尚未确认的同日预览静默变化，必须保留现场并要求人工恢复一致备份。
+ */
+function assertSecretCanBeCreated(
+  day: string,
+  confirmedResultCount: number,
+  path: string
+): void {
+  if (confirmedResultCount === 0) return;
+  throw new Error(
+    `Luck receipt secret is missing or outdated for ${day}, but ${confirmedResultCount} confirmed ` +
+    `result(s) already exist; restore ${path} and the ${day} luck results from the same consistent backup.`
+  );
+}
+
+/**
+ * 加载当天密钥；仅在当天尚无确认结果时允许首次创建或从旧日原子轮换。
+ * 损坏、未来日期、字段异常及“已有结果但密钥缺失/过期”一律拒绝，绝不
+ * 静默覆盖导致当天尚未确认的预览结果改变。
  */
 export function recoverLuckReceiptSecret(
-  today: string,
-  path: string = LUCK_RECEIPT_SECRET_PATH,
-  io: LuckSecretFileIO = DEFAULT_IO
+  {
+    day,
+    confirmedResultCount,
+    path = LUCK_RECEIPT_SECRET_PATH,
+    io = DEFAULT_IO,
+  }: RecoverLuckReceiptSecretParams
 ): LuckReceiptSecret {
-  if (!LUCK_DAY_PATTERN.test(today)) throw new Error(`Invalid Tokyo day for luck receipt secret: ${today}`);
+  if (!LUCK_DAY_PATTERN.test(day)) throw new Error(`Invalid Tokyo day for luck receipt secret: ${day}`);
+  if (!Number.isSafeInteger(confirmedResultCount) || confirmedResultCount < 0) {
+    throw new Error(`Invalid confirmed luck result count for ${day}: ${confirmedResultCount}`);
+  }
   mkdirSync(dirname(path), { recursive: true });
-  if (!existsSync(path)) return newSecret(today, path, io);
+  if (!existsSync(path)) {
+    assertSecretCanBeCreated(day, confirmedResultCount, path);
+    return newSecret(day, path, io);
+  }
   if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) io.chmod(path, PERSISTED_FILE_MODE);
 
   let secret: LuckReceiptSecret;
@@ -66,9 +100,12 @@ export function recoverLuckReceiptSecret(
   } catch (error: unknown) {
     throw new Error(`Luck receipt secret file is invalid; repair ${path} manually.`, { cause: error });
   }
-  if (secret.day > today) {
-    throw new Error(`Luck receipt secret file is from future day ${secret.day}; refusing to replace it for ${today}.`);
+  if (secret.day > day) {
+    throw new Error(`Luck receipt secret file is from future day ${secret.day}; refusing to replace it for ${day}.`);
   }
-  if (secret.day < today) return newSecret(today, path, io);
+  if (secret.day < day) {
+    assertSecretCanBeCreated(day, confirmedResultCount, path);
+    return newSecret(day, path, io);
+  }
   return secret;
 }

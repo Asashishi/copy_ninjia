@@ -43,7 +43,7 @@ WantedBy=multi-user.target
 | `state.json` + `state.json.bak` | グループスイッチ、copy、ロックダウンミラーなどの正式な状態 | 主・副を同時にバックアップ |
 | `memory/ai/` | グループごとの AI メモリ snapshot | グループチャットの逐語内容を含み、機密 |
 | `memory/stickers/` | スタンプ説明カタログ | オンラインパックとの照合から再構築可能 |
-| `memory/luck/` | 運勢結果 + `receipt-secret.json` | キーと当日結果を同じ整合 snapshot に含める |
+| `memory/luck/` | 運勢結果 + `receipt-secret.json` | キーと当日結果を同じ整合 snapshot に含め、key だけを再生成しない |
 | `memory/anti-raid/` | 日別の認証待ち状態 | 東京日付の当日ファイルだけを保持 |
 | `logs/` | 英語メッセージのエラーログ | 必要に応じて |
 | `bot.lock` と `.guard` / `.recovery` | 単一インスタンスロック | バックアップも手動編集もしない |
@@ -60,6 +60,7 @@ Bot 停止中または storage snapshot の整合境界で、データルート�
 | `bot.lock` が起動を拒否 | 次の section を参照 | 次の section に従う |
 | config schema 検証失敗 | `config/*.json` または `.env` が不正 | 指摘された field を修正。mood の重みは合計 100、スタンプパックは最大 5 個 |
 | state の 2 コピーが両方無効 | schema 変更版をデータ migration なしでデプロイした | [06 永続化 schema の変更](06-modification-guide.md#永続化-schema-の変更) に従って migration してから起動。プログラムは元ファイルを変更しません |
+| 運勢結果と receipt key が不整合 | 当日結果と `receipt-secret.json` が異なる backup 時点から復元された、または片方だけを復元した | Bot を停止し、同じ整合時点の `memory/luck/` 全体を復元。key だけを削除・再生成しない |
 | `*.corrupt` ファイルが現れる | 壊れた state copy 1 件を隔離し、もう一方へ切り替えた | 正常な自己修復経路。原因調査後に隔離ファイルを削除可能 |
 
 ### `bot.lock` が起動を拒否する場合

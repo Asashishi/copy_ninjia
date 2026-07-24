@@ -2,8 +2,18 @@ import { beforeEach, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
 import { CHAT_INTERACTION_INSTRUCTION } from "../../src/consts/aiChat/prompts/memory";
-import { MAX_CUSTOM_TOOL_CALLS_PER_REPLY } from "../../src/consts/aiChat/tools";
+import {
+  HARD_MAX_ACTIONS_PER_REPLY,
+  MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
+} from "../../src/consts/aiChat/tools";
 import { PERSONA_PATH } from "../../src/consts/paths";
+import {
+  ADD_REACTION_TOOL,
+  GENERATE_IMAGE_TOOL,
+  SEND_MESSAGE_TOOL,
+  SEND_STICKER_TOOL,
+  VIEW_STICKER_PACK_TOOL,
+} from "../../src/consts/tools";
 import type { ReplyPromptSections, ReplyToolset } from "../../src/types/aiChat/replies";
 import type { GeminiRequestResult } from "../../src/ai/gemini";
 
@@ -265,17 +275,22 @@ test("请求在途时被禁用，响应回来后不再执行任何行动", async
   expect(requestGeminiResponseMock).toHaveBeenCalledTimes(1);
 });
 
-test("连续无效参数也计入单工具预算，达到四次后从下一请求移除声明", async () => {
-  for (let index = 0; index < 4; index++) {
+test("不存在通用单工具四次上限，无效调用只受整轮总预算约束", async () => {
+  for (let index = 0; index < 5; index++) {
     replies.push({
-      candidates: [{ content: { role: "model", parts: [{ functionCall: { id: `bad-${index}`, name: "view_sticker_pack", args: {} } }] } }],
+      candidates: [{
+        content: {
+          role: "model",
+          parts: [{ functionCall: { id: `bad-${index}`, name: VIEW_STICKER_PACK_TOOL, args: {} } }],
+        },
+      }],
     });
   }
   replies.push({ candidates: [{ content: { role: "model", parts: [{ text: "不再重试" }] } }] });
   const execute = mock(async (): Promise<string> => JSON.stringify({ error: "invalid arguments" }));
   const toolset: ReplyToolset = {
     definitions: [],
-    tools: [{ functionDeclarations: [{ name: "view_sticker_pack" }] }],
+    tools: [{ functionDeclarations: [{ name: VIEW_STICKER_PACK_TOOL }] }],
     has: (): boolean => true,
     execute,
     actionsUsed: (): number => 0,
@@ -283,9 +298,60 @@ test("连续无效参数也计入单工具预算，达到四次后从下一请�
   };
 
   await expect(callGemini(-1001, promptSections("错拼角色名"), toolset)).resolves.toBe("不再重试");
-  expect(execute).toHaveBeenCalledTimes(4);
-  const lastRequest = requestGeminiResponseMock.mock.calls[4]![0] as GenerateContentParameters;
-  expect(lastRequest.config?.tools).toEqual([]);
+  expect(execute).toHaveBeenCalledTimes(5);
+  const finalRequest = requestGeminiResponseMock.mock.calls[5]![0] as GenerateContentParameters;
+  expect(finalRequest.config?.tools).toEqual([{ functionDeclarations: [{ name: VIEW_STICKER_PACK_TOOL }] }]);
+});
+
+test("四类可见动作共享十一动作硬顶，达到后一起移除但保留贴纸包查看", async () => {
+  const actionSequence: string[] = [
+    ...Array.from({ length: HARD_MAX_ACTIONS_PER_REPLY - 3 }, () => SEND_MESSAGE_TOOL),
+    SEND_STICKER_TOOL,
+    ADD_REACTION_TOOL,
+    GENERATE_IMAGE_TOOL,
+  ];
+  for (const [index, name] of actionSequence.entries()) {
+    replies.push({
+      candidates: [{
+        content: {
+          role: "model",
+          parts: [{ functionCall: { id: `action-${index}`, name, args: {} } }],
+        },
+      }],
+    });
+  }
+  replies.push({ candidates: [{ content: { role: "model", parts: [{ text: "动作完成" }] } }] });
+  let actionsUsed: number = 0;
+  const execute = mock(async (): Promise<string> => {
+    actionsUsed++;
+    return JSON.stringify({ success: true });
+  });
+  const declarations = [
+    { name: SEND_MESSAGE_TOOL },
+    { name: SEND_STICKER_TOOL },
+    { name: ADD_REACTION_TOOL },
+    { name: GENERATE_IMAGE_TOOL },
+    { name: VIEW_STICKER_PACK_TOOL },
+  ];
+  const toolset: ReplyToolset = {
+    definitions: [],
+    tools: [{ functionDeclarations: declarations }],
+    has: (): boolean => true,
+    execute,
+    actionsUsed: (): number => actionsUsed,
+    isActive: (): boolean => true,
+  };
+
+  await expect(callGemini(-1001, promptSections("混合动作"), toolset)).resolves.toBe("动作完成");
+
+  expect(execute).toHaveBeenCalledTimes(HARD_MAX_ACTIONS_PER_REPLY);
+  expect(actionsUsed).toBe(HARD_MAX_ACTIONS_PER_REPLY);
+  const finalRequest = (
+    requestGeminiResponseMock.mock.calls[HARD_MAX_ACTIONS_PER_REPLY]![0]
+  ) as GenerateContentParameters;
+  expect(finalRequest.config?.tools).toEqual([{
+    functionDeclarations: [{ name: VIEW_STICKER_PACK_TOOL }],
+  }]);
 });
 
 test("同一响应多调用计入总预算，达到硬顶后在下一请求移除全部函数", async () => {

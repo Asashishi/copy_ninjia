@@ -16,6 +16,22 @@ import {
 import { isAdminStatus } from "../libs/chatMember";
 import { teardownRegisteredChat } from "./chatTeardown";
 
+async function completeAfterTeardown(
+  teardown: Promise<void>,
+  authoritativeAction: () => Promise<void>,
+  failureMessage: string
+): Promise<void> {
+  const [teardownResult] = await Promise.allSettled([teardown]);
+  // Anti-Raid teardown 可能仍在恢复群权限，必须等它落定后才能裁剪 owner；
+  // teardown 失败也不能跳过后续权威状态收敛。
+  const [authoritativeResult] = await Promise.allSettled([authoritativeAction()]);
+  const failures: unknown[] = [teardownResult, authoritativeResult].flatMap(
+    (result: PromiseSettledResult<void>): unknown[] => result.status === "rejected" ? [result.reason] : []
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, failureMessage);
+}
+
 /** 配置去留由调用入口决定；这里只停止 owner、取消计时器并发起权限恢复。 */
 export async function teardownChatRuntime(chatId: number): Promise<void> {
   // 先同步调用全部 owner，让跨群 copy 槽、代理入口和 Worker 闸门在第一个
@@ -24,9 +40,17 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
   clearChatStateField(chatId, "isProxySendEnabled");
   const aiTeardown: Promise<void> = teardownRegisteredChat("aiChat", chatId);
   const antiRaidTeardown: Promise<void> = teardownRegisteredChat("antiRaid", chatId);
-  await copyTeardown;
-  await aiTeardown;
-  await antiRaidTeardown;
+  const results: PromiseSettledResult<void>[] = await Promise.allSettled([
+    copyTeardown,
+    aiTeardown,
+    antiRaidTeardown,
+  ]);
+  const failures: unknown[] = results.flatMap(
+    (result: PromiseSettledResult<void>): unknown[] => result.status === "rejected" ? [result.reason] : []
+  );
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `Chat runtime teardown failed for chat ${chatId}.`);
+  }
 }
 
 /**
@@ -83,16 +107,28 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
   // 私聊没有管理员概念，频道里机器人不做任何守卫/踢人，都不记录。
   if (update.chat.type !== "group" && update.chat.type !== "supergroup") return;
   if (update.new_chat_member.status === "left" || update.new_chat_member.status === "kicked") {
-    await teardownChatRuntime(update.chat.id);
-    // 普通配置删除；若 lockdown 尚未恢复则保留 write-ahead owner，避免群权限
-    // 因退群而永久卡住。重新入群后 initAntiRaid/Worker 重建会继续接管。
-    pruneDepartedChatState(update.chat.id);
-    await persistAuthoritativeState(`chat ${update.chat.id} state pruned after bot left/kicked`);
+    await completeAfterTeardown(
+      teardownChatRuntime(update.chat.id),
+      async (): Promise<void> => {
+        // 普通配置删除；若 lockdown 尚未恢复则保留 write-ahead owner，避免群权限
+        // 因退群而永久卡住。重新入群后 initAntiRaid/Worker 重建会继续接管。
+        pruneDepartedChatState(update.chat.id);
+        await persistAuthoritativeState(`chat ${update.chat.id} state pruned after bot left/kicked`);
+      },
+      `Failed to complete departure transition for chat ${update.chat.id}.`
+    );
     return;
   }
   const wasAdmin: boolean = isAdminStatus(update.old_chat_member.status);
   const isAdmin: boolean = isAdminStatus(update.new_chat_member.status);
-  if (wasAdmin && !isAdmin) await teardownChatRuntime(update.chat.id);
+  if (wasAdmin && !isAdmin) {
+    await completeAfterTeardown(
+      teardownChatRuntime(update.chat.id),
+      () => recordBotAdminStatus(update.chat.id, false),
+      `Failed to complete admin downgrade transition for chat ${update.chat.id}.`
+    );
+    return;
+  }
   await recordBotAdminStatus(update.chat.id, isAdmin);
 }
 

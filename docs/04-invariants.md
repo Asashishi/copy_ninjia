@@ -16,6 +16,7 @@
 - 配置解析器本身无 I/O；`getStickerConfig()` / `getReactionConfig()` / `getMoodConfig()` 在业务首次使用时惰性加载，主进程会在持锁后预热，以便部署错误在联网前暴露。
 - `state.json`、`bot.lock`、`logs/` 与 `memory/` 全部从统一运行时数据根派生；生产缺省使用项目根目录，测试 preload 在任何生产模块 import 前注入逐隔离体的临时根，让真实文件 I/O 也不可能读写生产缓存。
 - 命令菜单、`bot.init()`、Worker hydrate 与 acknowledgement-safe runner 就绪后，才启动低优先级群标题维护；标题 owner 当前最多并发 15 个 `getChat`，限制历史回填在共享 throttler 中造成的队头阻塞，并接受生命周期的 quiesce/abort 信号。
+- 通用 JSON API 请求只允许访问 `JSON_API_ALLOWED_ORIGINS` 明列的 HTTPS origin，并禁用 redirect；新增调用方必须显式扩充白名单。Telegram 头像爬取使用独立入口，不得误接到该 JSON allowlist。
 
 ## Worker 与状态所有权
 
@@ -27,23 +28,25 @@
 - 长期 Map、Set、队列和 timer 必须由对应 `src/cache/<domain>/` 与业务生命周期模块共同给出容量、清理和 Worker 重建语义。
 - 业务 Worker 与独立 Disk I/O 宿主都把同步 `postMessage` 拒绝统一收敛为显式失败；请求型投递立即清理 waiter/timer，日志只退回 console，关键业务投递触发 fatal。恢复重放再次拒绝时不得宣称 Worker writable。需要确认处理与落盘边界的调用方必须把 `false` 当作失败，不能确认对应 Telegram update。
 - `/switch_mood` 采用主线程 request/waiter 与 AI Worker 回执握手。主线程必须先登记 waiter 再投递，并在超时、Worker 崩溃、放弃重启和停机时统一结算；请求携带绝对截止时刻，AI Worker 必须在重抽这一副作用之前拒绝已经过期的积压请求。只有 `moodSwitched` 回执能宣称重抽成功；后续 Telegram 成功回复发送失败不得被改写成「重抽失败」。
-- AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；仅在零成功动作时，最终正文才经 `send_message` 兜底。所有有意展示的文字必须由模型显式调用该工具。
+- AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；模型提示上限为 8，执行侧硬顶为 11。贴纸、反应与生成图片各最多成功一次；其它动作工具不设单工具调用上限。贴纸包查看和 Google Search 分别保留独立查询上限，所有自定义函数调用另有整轮防循环硬顶。仅在零成功动作时，最终正文才经 `send_message` 兜底；所有有意展示的文字必须由模型显式调用该工具。
 - AI 回复的初始 Gemini 输入必须保持一个 `user Content` 下的三个有序 `text Part`：只读参考记忆、只读当前会话、本轮回复任务。每段只由模型可见的首尾标签加一行段首职责标注包围；防注入总规则（数据 vs 指令、伪造边界无效、不暴露内部结构）统一只在 `systemInstruction` 声明一次，不逐段重复。工具调用后的历史再按真实 `model/user` 角色追加，不得把参考资料伪装成历史对话轮次。系统提示词只通过 `GenerateContentConfig.systemInstruction` 独立字段发送，不得拼入普通对话 `contents`。
 - 群聊转录的行内标注（回复引用、转发来源）由 `src/consts/aiChat/prompts/transcript.ts` 的共享模板同时生成拼装文本与提示词说明里的占位形态，两侧不得各自手写同一格式；转发归属按标注层级区分：回复标注外层属于当前消息本身，内层属于被回复的原消息。多层回复链的逐跳格式、转发来源和 `[仅回复快照]` 标记也必须复用该领域模板；只有至少两层关系才向回复任务追加链路，快照链尾必须明确原消息已不在逐字转录中，不得暗示存在可供模型查阅的完整原文。
 - Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。冷缓存的 `message_thread_id` 只是异步确认候选：查询落定前先按普通待验证消息处理，仅在确认 `linked_chat_id` 且状态对象/代际仍一致时撤销；查询失败 fail closed 并允许后续重试。
 - 验证提醒按成员只有一个投递 owner，发送失败有界退避。`reminderMessageId` / `replyReminderMessageId` 至少一个成功回填是超时踢人的前置不变量；从未落地时只续窗补发。恢复时尚无 reminder ID 的当前格式快照复用同一 owner，状态替换、离群、teardown 和 Worker 终止均会撤销它；这里是未成功发送提醒的业务状态，不是旧格式兼容分支。
 - 发送者用户名缓存同时维护「归一化 username → identity」与「sender ID → 当前 username」；改名、去名、换绑和容量淘汰都在同一 owner 原子更新双向关系，解析器拒绝不一致别名。
+- 匿名管理员本人仍按管理员身份豁免，但不能作为“可归属的管理员邀请人”为新成员继承邀请豁免。匿名管理员以当前群身份发言时，可见发送者必须保留当前群 identity，供 copy/头像爬取复用；破坏性的成员操作必须拒绝把当前群 identity 当作用户目标。
 - chat runtime teardown 的三个固定 owner 回调由 `src/cache/chatTeardown.ts` 持有，上层领域经 `src/infra/chatTeardown.ts` 反向注册；`src/infra/botAdmin.ts` 不得静态依赖 `commands/`、AI 或 Anti-Raid 业务模块。
 
 ## 持久化
 
 - `state.json` 使用最新值合并、临时文件、fsync 和原子 rename。命令开关、代理、copy 与权限/离群状态等权威变更必须等待对应 revision 依次写入主文件和 LKG 后才能反馈成功并返回 middleware；群标题等可重建元数据才允许后台最终一致保存。
 - AI 记忆与贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的 JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone，只保留东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；`null` tombstone 与其它基础类型都必须被视为完整的最后值。
-- AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，Disk I/O Worker 只有在 unlink 达到 durable 边界或删除已被更新 revision 覆盖时才回执；Worker 重建会重放 tombstone 与最新镜像，顺序不决定最终结果。启动恢复以 `state.json` 为准，只 hydrate 明确启用 AI 的群，并为关闭群的残留快照安排删除。当前快照中的每条热区消息必须包含正数 `messageId`；回复链索引由这些消息重建，不单独持久化。
+- AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，Disk I/O Worker 只有在 unlink 达到 durable 边界或删除已被更新 revision 覆盖时才回执；Worker 重建会重放 tombstone 与最新镜像，顺序不决定最终结果。一次已确认删除或 LRU 淘汰后的首份新快照必须立即写入，主线程在收到对应 durable upsert 回执前保留 revision 标记并在 Disk I/O Worker 重建后重放最新镜像。启动恢复以 `state.json` 为准，只 hydrate 明确启用 AI 的群，并为关闭群的残留快照安排删除。当前快照中的每条热区消息必须包含正数 `messageId`；回复链索引由这些消息重建，不单独持久化。
+- 运势切换东京日 owner 前必须先 flush 旧日追加缓冲，失败则保持旧 owner 并拒绝轮换。目标日已有确认结果时，缺失密钥或密钥日期不一致属于不一致备份，必须拒绝启动/轮换，不能静默生成新密钥。
 - AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`（当前为 149 条逐字消息与 7 轮冷摘要）从快照尾部截取最新数据；调整容量常量部署前，应在旧进程停止后以同一恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
 - 回复链索引（`chatReplyChainIndexes`）是滚动缓存的纯派生索引，不落盘、内层值与缓存共享对象引用；登记/删除只允许发生在消息进出热区的物理位置（`rollingMemory.ts` 的 push/轮换/hydrate），任何其它模块只读。索引因此永远只覆盖仍在热区的消息，容量受滚动缓存上限约束，无独立淘汰；机器人发送自录只按 Telegram 返回的实际 `reply_to_message` 建边，目标在生成/排队期间滑出热区时使用轮次开始前捕获的有界触发快照兜底，不扩张索引覆盖范围。模型可见的回溯深度、单个链节点正文和触发快照分别受 `REPLY_CHAIN_MAX_DEPTH`、`REPLY_CHAIN_NODE_MAX_CHARS`、`REPLY_REFERENCE_MAX_CHARS` 约束（当前为 15 跳、500 字、500 字）。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败必须返回失败、阻止最终 offset 确认并以非零状态退出。
-- 正常与异常停机都先 quiesce 标题/反应/头像/翻译入口并停止 runner，再有界 drain；翻译客户端只在首次真实请求时惰性构造，单次 RPC 有项目级短超时，drain 后显式 `close()` 并清理 project parent/客户端引用。翻译 drain 超时或 close 失败与其它关键 owner 一样阻止释放实例锁。正常路径必须在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore」收尾。预算耗尽时 abort 仍在进行的 Telegram 请求、媒体下载和 429 sleep，结算尚未开始的队列；abort 后不得再发送消息、改头像或写入群标题。
+- 正常与异常停机都先 quiesce 标题/反应/头像/翻译入口并停止 runner，再有界 drain；翻译客户端只在首次真实请求时惰性构造，单次 RPC 有项目级短超时，drain 后显式 `close()` 并清理 project parent/客户端引用。翻译 drain 超时或 close 失败与其它关键 owner 一样阻止释放实例锁。正常路径必须在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore」收尾。若致命异常发生时普通 dispose 已在途，异常路径可以复用该 Promise，但必须另设当前 15 秒的绝对强制退出 deadline，不能被既有 drain 无限拖住。预算耗尽时 abort 仍在进行的 Telegram 请求、媒体下载和 429 sleep，结算尚未开始的队列；abort 后不得再发送消息、改头像或写入群标题。
 - Worker flush 与 mailbox barrier 统一使用 `src/libs/flushBarrier.ts` 管理 ID、等待表、超时、迟到回执和崩溃批量结算；领域缓存不得重新暴露 resolver Map。
 - 当前部署基线是单租户云原生环境，开发工作区同时就是生产工作区；编辑器、自动化工具与运行时可能以不同容器 UID 共同维护同一挂载卷，因此项目目录和受管文件必须允许这些进程原地修改。隔离租户内的宽松 Unix mode 本身不视为越权暴露；若迁移到共享主机、共享卷或其它跨信任边界的部署形态，必须在上线前重新设计 owner、group 与权限。
 - `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由云实例的单租户边界、部署隔离和备份策略控制，不通过制造不可读文件解决。

@@ -25,8 +25,21 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   const state: ChatState = getOrCreateChatState(chatId);
   state.isInitEnabled = arg === "enable";
   invalidateBotAdminStatus(chatId);
-  if (arg === "disable") await teardownChatRuntime(chatId);
-  await persistAuthoritativeState("init toggled");
+  const teardownResults: PromiseSettledResult<void>[] = arg === "disable"
+    ? await Promise.allSettled([teardownChatRuntime(chatId)])
+    : [];
+  // disable 即使拆运行态失败也必须先落盘，确保重启后网关仍保持关闭；错误会在
+  // 持久化完成后继续上抛，因此不会发送成功提示或确认这条 update。
+  const persistenceResults: PromiseSettledResult<void>[] = await Promise.allSettled([
+    persistAuthoritativeState("init toggled"),
+  ]);
+  const failures: unknown[] = [...teardownResults, ...persistenceResults].flatMap(
+    (result: PromiseSettledResult<void>): unknown[] => result.status === "rejected" ? [result.reason] : []
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, `Failed to disable and persist chat ${chatId}.`);
+  }
 
   const replyText: string = arg === "enable"
     ? `哼，那本天才就大发慈悲开始搭理这个群了，杂鱼们好好珍惜♡`

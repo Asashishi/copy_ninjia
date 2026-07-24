@@ -28,6 +28,7 @@ import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import type { FlushResult } from "../types/lifecycle";
 import type {
   AiMemoryDeletedPersistedReply,
+  AiMemoryPersistedReply,
   DiskBusinessMessage,
   DiskFlushRequest,
   DiskIOMessage,
@@ -107,6 +108,10 @@ function createDiskIOWorker(): Worker {
     }
     if (data.type === "aiMemoryDeletedPersisted") {
       for (const listener of diskIORuntime.aiMemoryDeletedPersistedListeners) listener(data);
+      return;
+    }
+    if (data.type === "aiMemoryPersisted") {
+      for (const listener of diskIORuntime.aiMemoryPersistedListeners) listener(data);
       return;
     }
     if (data.type === "flushed" || data.type === "flushFailed") {
@@ -314,6 +319,11 @@ export function onVerificationPersisted(callback: (reply: VerificationPersistedR
 /** 注册 AI 记忆删除真正 durable（或被更新 revision 覆盖）的确认回调。 */
 export function onAiMemoryDeletedPersisted(callback: (reply: AiMemoryDeletedPersistedReply) => void): void {
   diskIORuntime.aiMemoryDeletedPersistedListeners.push(callback);
+}
+
+/** 注册 purge 后首份新 AI 记忆真正 durable 的确认回调。 */
+export function onAiMemoryPersisted(callback: (reply: AiMemoryPersistedReply) => void): void {
+  diskIORuntime.aiMemoryPersistedListeners.push(callback);
 }
 
 /** 把其它 Worker 线程转发来的 error 日志转投落盘线程（logger.ts 的转发模式，仅主线程调用）。 */
