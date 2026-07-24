@@ -30,9 +30,11 @@ import { antiRaidCacheSweepTimer } from "../cache/antiRaid/worker";
  * 主线程（app/registerHandlers.ts → antiRaid.ts 代理）只做事件投递。
  *
  * 本文件是两台状态机（src/states/verification.ts / lockdown.ts）的解释器
- * 入口：具体解释逻辑分别在 antiRaid/verificationRuntime.ts（入群验证）与
- * antiRaid/lockdownRuntime.ts（私密模式）；五类状态各自由 cache/antiRaid/
- * 下的领域模块持有。本文件只剩消息路由与缓存 sweep 调度。
+ * 入口：入群验证核心、事件翻译、副作用和提醒 owner 分别位于
+ * antiRaid/verificationRuntime.ts、verificationEvents.ts、
+ * verificationEffects.ts、verificationReminders.ts；私密模式位于
+ * antiRaid/lockdownRuntime.ts。五类状态各自由 cache/antiRaid/ 下的领域
+ * 模块持有。本文件只剩消息路由与缓存 sweep 调度。
  * 关键约定（详见各 runtime 模块头）：
  * - dispatch 里状态更替是同步的，副作用（网络请求）一律事后执行——消息
  *   按 FIFO 逐条处理，同一波刷屏入群的后续投递不会被网络往返卡住，

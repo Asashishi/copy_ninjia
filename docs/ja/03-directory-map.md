@@ -19,12 +19,13 @@
 | `src/app/` | 起動・終了ライフサイクル、handler 登録、コマンドメニュー、update runner | `lifecycle.ts`、`registerHandlers.ts`、`updateRunner.ts` |
 | `src/commands/` | 明示的なコマンド処理。1 コマンド 1 ファイル | `copy.ts`、`kick.ts`、`send.ts`、`targetResolution.ts` |
 | `src/auto/` | コマンド以外の自動動作：copy、AI の文字起こしとトリガー、リアクション同期 | `message/`、`triggerPolicy.ts` |
+| `src/antiRaid/` | メインスレッド側 Anti-Raid 代理のロックダウン復旧と認証待ちミラー受信 | `lockdownMirror.ts`、`verificationMirror.ts` |
 | `src/copy/` | copy モードの変換と、アバター・リアクション・翻訳の実行キュー | `copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、`translate.ts` |
 | `src/users/` | 送信者 identity キャッシュ、表示上の送信者判定、ユーザーラベル生成 | `senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts` |
 | `src/states/` | **I/O を行わない**認証、ロックダウン、返信受け入れの純粋な状態遷移 | `verification.ts`、`lockdown.ts` |
 | `src/config/` | `config/*.json` の厳密な schema、遅延読み込み、起動時検証 | `stickers.ts`、`reactions.ts`、`mood.ts` |
 | `src/libs/` | ドメイン非依存の基盤：アトミックファイル、上限付き I/O、並行処理ツール | `flushBarrier.ts`、`linkedQueue.ts`、`text.ts` |
-| `src/workers/` | 3 つの Worker のスレッド内実装 | `aiChatWorker.ts` + `aiChat/`、`antiRaidWorker.ts` + `antiRaid/`、`diskIOWorker.ts` + `diskIO/` |
+| `src/workers/` | 3 つの Worker のスレッド内実装 | `aiChatWorker.ts` + `aiChat/`、`antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts`、`diskIOWorker.ts` + `diskIO/` |
 | `src/ai/` | Gemini クライアント、画像説明、画像生成、スタンプカタログ、ツール実装 | `gemini.ts`、`tools/replyToolset/`、`imageGeneration.ts` |
 | `src/infra/` | Telegram クライアント、Worker ホスト、logger、環境変数設定 | `telegram/`、`config.ts`、`workerSupervisor.ts` |
 | `src/infra/storage/` | データルート事前検査、インスタンスロック、StateStore、起動時の清掃 | `dataRoot.ts`、`instanceLock.ts`、`stateStore.ts` |

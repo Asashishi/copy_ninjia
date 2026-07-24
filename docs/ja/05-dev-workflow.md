@@ -31,6 +31,10 @@
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **規約検査**：`check:conventions` はコード配置などのリポジトリ規約を lint より先に検査します。
 
+### このドキュメント版の実測値
+
+`bun run test:coverage`：**821 tests / 117 files / 7697 `expect()` calls**。全ソースコードの**関数カバレッジは 94.09%、行カバレッジは 95.77%**です。ルート README の Coverage badge は行カバレッジを表示します。
+
 ## テスト分離
 
 テストは必ず `bun run test`、つまり `bun test --isolate` から実行し、2 層で保護します。
@@ -60,14 +64,14 @@
 
 ### README 指標の更新
 
-ルート README のテスト数、assertion 数、カバレッジは実測値です。テスト、production モジュール、カバレッジ定義が変わった場合は次のように更新します。
+ルート README の badge と、上記のテスト数、assertion 数、カバレッジは実測値です。テスト、production モジュール、カバレッジ定義が変わった場合は次のように更新します。
 
 ```bash
 bun run test:coverage 2>&1 | tail -5           # テスト数、ファイル数、expect() 数
 bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 ```
 
-Tests / Coverage badge、「開発」section の指標行、「現在の main branch 実測値」を 3 言語すべてで同期します。確率、容量、時間など README 内の動作値は `src/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
+3 言語の README にある Tests / Coverage badge と、3 言語の本文にある「このドキュメント版の実測値」を同期します。Coverage badge は常に `All files` の行カバレッジを使い、関数カバレッジは本文に記録します。確率、容量、時間など README 内の動作値は `src/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース
 

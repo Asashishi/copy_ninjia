@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-794_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.78%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-821_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.77%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -91,7 +91,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ Join verification</b></p>
-  <p>Gives new members a 90-second button challenge, with allowlisted guarantors, exemptions for attributable non-anonymous administrator invitations, and discussion-group awareness.</p>
+  <p>Gives new members a 90-second button challenge. Human members must click for themselves; only bots may be vouched for by allowlisted users. Attributable non-anonymous administrator invitations and discussion-group activity remain exempt.</p>
 </td>
 </tr>
 <tr>

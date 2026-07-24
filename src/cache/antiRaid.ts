@@ -33,8 +33,8 @@ export const antiRaidRuntimeState: { generation: number; initialized: boolean; p
  * 先清空，再用已加载的 state.json 记录播种（能载入即视为上次已持久化）；
  * Worker 报告新 lockdown 意图或 unlock（onEvent）时先删除旧指纹，
  * persistCurrentLockdown 待 saveState 成功且记录未被更新覆盖后才重新写入
- * 并通知 Worker；主线程紧急恢复权限成功后同样删除。仅供 toAdoptableLockdown
- * 在构建 adopt 消息时判断某条记录是否已知持久化。
+ * 并通知 Worker；主线程紧急恢复权限成功后同样删除。仅供
+ * antiRaid/lockdownMirror.ts 构建 adopt 消息时判断某条记录是否已知持久化。
  */
 export const persistedLockdownFingerprints: Map<number, PersistedLockdownFingerprint> = new Map();
 /** 每群至多保留一个 durability waiter；期间的新阶段由完成后的循环补写。 */
@@ -57,9 +57,9 @@ export const emergencyLockdownRecoveryRuntime: { stopped: boolean } = { stopped:
  * 主线程持有的待验证纯数据镜像，key 为 verificationKey(chatId, userId)；
  * 不是验证状态机本身——权威状态在 Anti-Raid Worker 内，这里只做两类 Worker
  * 崩溃重放的数据源。hydratePendingVerifications 在启动时先清空、再用 Disk
- * I/O 恢复出的记录整体重建；此后 acceptVerificationUpsert/
- * acceptVerificationDelete 按 generation+revision 拒绝迟到事件后增量更新
- * /删除。Anti-Raid Worker 崩溃重建时（onRespawn）本镜像不清空，只原地把
+ * I/O 恢复出的记录整体重建；此后 antiRaid/verificationMirror.ts 按
+ * generation+revision 拒绝迟到事件后增量更新/删除。Anti-Raid Worker
+ * 崩溃重建时（onRespawn）本镜像不清空，只原地把
  * 每条记录的 generation 提升到新代际后整体回放给新 Worker；Disk I/O Worker
  * 崩溃重建时（onDiskIORespawn）同样整体重放给它补齐。
  */

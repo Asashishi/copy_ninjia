@@ -85,7 +85,7 @@ export interface AdoptableLockdown {
   /**
    * 距离应当恢复原始权限还剩多久（ms，已按 Math.max(0, ...) 夹到不为负）
    * ——由主线程根据持久化的 LockdownRecord.expiresAt 与当前时刻算出，见
-   * src/antiRaid.ts 的 collectActiveLockdowns。
+   * src/antiRaid/lockdownMirror.ts 的 buildAdoptLockdownsMessage。
    */
   remainingMs: number;
 }

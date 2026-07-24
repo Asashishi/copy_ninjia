@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-794_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.78%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-821_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.77%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -95,7 +95,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ 参加認証</b></p>
-  <p>新規メンバーに 90 秒のボタン認証を提供。ホワイトリストによる代行承認や非匿名管理者の招待免除に対応。</p>
+  <p>新規メンバーに 90 秒のボタン認証を提供。人間は本人だけがクリックでき、Bot に限りホワイトリストユーザーが代行保証できます。帰属可能な非匿名管理者の招待とディスカッショングループでの活動は免除されます。</p>
 </td>
 </tr>
 <tr>

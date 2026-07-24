@@ -19,12 +19,13 @@
 | `src/app/` | 启动/退出生命周期、handler 注册、命令菜单、update runner | `lifecycle.ts`、`registerHandlers.ts`、`updateRunner.ts` |
 | `src/commands/` | 显式命令处理，一命令一文件 | `copy.ts`、`kick.ts`、`send.ts`、`targetResolution.ts` |
 | `src/auto/` | 非命令的自动行为：复读、AI 转录与触发、反应同步 | `message/`、`triggerPolicy.ts` |
+| `src/antiRaid/` | Anti-Raid 主线程代理的 lockdown 恢复与待验证镜像接收 | `lockdownMirror.ts`、`verificationMirror.ts` |
 | `src/copy/` | 复读模式变换与头像/反应/翻译的执行队列 | `copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、`translate.ts` |
 | `src/users/` | 发送者身份缓存、可见发送者判定、用户标签生成 | `senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts` |
 | `src/states/` | **无 I/O** 的纯状态转移：验证、锁定、回复准入 | `verification.ts`、`lockdown.ts` |
 | `src/config/` | `config/*.json` 的严格 schema、惰性加载与启动校验 | `stickers.ts`、`reactions.ts`、`mood.ts` |
 | `src/libs/` | 领域无关的基础设施：原子文件、有界 I/O、并发工具 | `flushBarrier.ts`、`linkedQueue.ts`、`text.ts` |
-| `src/workers/` | 三个 Worker 的线程内实现 | `aiChatWorker.ts` + `aiChat/`、`antiRaidWorker.ts` + `antiRaid/`、`diskIOWorker.ts` + `diskIO/` |
+| `src/workers/` | 三个 Worker 的线程内实现 | `aiChatWorker.ts` + `aiChat/`、`antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts`、`diskIOWorker.ts` + `diskIO/` |
 | `src/ai/` | Gemini 客户端、视觉描述、生图、贴纸目录、工具实现 | `gemini.ts`、`tools/replyToolset/`、`imageGeneration.ts` |
 | `src/infra/` | Telegram 客户端、Worker 宿主、logger、env 配置 | `telegram/`、`config.ts`、`workerSupervisor.ts` |
 | `src/infra/storage/` | 数据根预检、实例锁、StateStore、启动清理 | `dataRoot.ts`、`instanceLock.ts`、`stateStore.ts` |

@@ -31,6 +31,10 @@
 - **ESLint + fully strict tsc**: `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters` are all enabled. `any` is forbidden in production code but exempted in tests.
 - **Convention checks**: `check:conventions` checks code-placement and similar repository rules before lint runs.
 
+### Measurements for This Documentation Version
+
+`bun run test:coverage`: **821 tests / 117 files / 7697 `expect()` calls**; full-source **function coverage 94.09% / line coverage 95.77%**. The root README's Coverage badge displays line coverage.
+
 ## Test Isolation
 
 Tests must run through `bun run test`, which invokes `bun test --isolate`, with two layers of protection:
@@ -60,14 +64,14 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 
 ### Updating README Metrics
 
-The root README's test, assertion, and coverage figures are measured values. Update them after changes to tests, production modules, or the coverage definition:
+The root README badges and the test, assertion, and coverage figures above are measured values. Update them after changes to tests, production modules, or the coverage definition:
 
 ```bash
 bun run test:coverage 2>&1 | tail -5           # test count, file count, expect() count
 bun run test:coverage 2>&1 | grep 'All files'  # function and line coverage
 ```
 
-Synchronize the Tests/Coverage badges, the metrics strip in “Development,” and the “Current main-branch measurements” bullet. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `src/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
+Synchronize the Tests/Coverage badges in all three READMEs and “Measurements for This Documentation Version” in all three workflow documents. The Coverage badge always uses the `All files` line-coverage value; function coverage remains recorded here. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `src/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release
 

@@ -1,5 +1,16 @@
 import type { LinkedQueue } from "../../libs/linkedQueue";
-import type { PendingState, VerificationState } from "../states/verification";
+import type {
+  PendingState,
+  VerificationEvent,
+  VerificationState,
+} from "../states/verification";
+
+/** Worker 侧验证运行时各职责模块回投纯状态机事件的统一入口。 */
+export type VerificationDispatcher = (
+  chatId: number,
+  userId: number,
+  event: VerificationEvent
+) => void;
 
 /** 反刷群 Worker 的入群滑动计数窗口。 */
 export interface JoinWindow {

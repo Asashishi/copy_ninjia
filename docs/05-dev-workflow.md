@@ -31,6 +31,10 @@
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **约定自检**：`check:conventions` 检查放置约定类问题，先于 lint 运行。
 
+### 当前文档版本实测
+
+`bun run test:coverage`：**821 tests / 117 files / 7697 次 `expect()`**；全源码**函数覆盖率 94.09% / 行覆盖率 95.77%**。根 README 的 Coverage 徽章展示行覆盖率。
+
 ## 测试隔离机制
 
 测试必须通过 `bun run test`（即 `bun test --isolate`）执行，两层保护：
@@ -60,14 +64,14 @@
 
 ### 同步 README 指标
 
-根 README 的测试数/断言数/覆盖率是实测值；测试、生产模块或覆盖率口径变化后按此更新：
+根 README 徽章与上方测试数/断言数/覆盖率是实测值；测试、生产模块或覆盖率口径变化后按此更新：
 
 ```bash
 bun run test:coverage 2>&1 | tail -5        # 测试数、文件数、expect() 调用数
 bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 ```
 
-需要同步的位置：徽章行（Tests / Coverage）、「开发」节的统计条与「当前主干实测」列表项。README 中引用的行为数值（概率、容量、时长）与 `src/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
+需要同步的位置：三语 README 的徽章行（Tests / Coverage），以及三语本文的「当前文档版本实测」。Coverage 徽章固定采用 `All files` 的行覆盖率，函数覆盖率保留在本文。README 中引用的行为数值（概率、容量、时长）与 `src/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布
 

@@ -18,7 +18,10 @@ export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 /** Google Gemini API 密钥，供 AI 闲聊回复/图片理解功能（src/workers/aiChatWorker.ts、src/ai/）调用。 */
 export const GEMINI_API_KEY: string = requireEnv("GEMINI_API_KEY");
 
-/** 免受 /copy 冷却限制、且可以使用 /kick 的用户 ID 白名单（逗号分割）。 */
+/**
+ * 免受 /copy 冷却限制、可使用 /kick，且可为其他机器人代点入群验证的
+ * 用户 ID 白名单（逗号分割）；真人验证始终只能由本人点击。
+ */
 export const PRIVILEGED_USERS_ID: readonly number[] = parseTelegramUserIdList(requireEnv("PRIVILEGED_USERS_ID", true), "PRIVILEGED_USERS_ID");
 
 /** 唯一可使用 /ai_chat、/ja_copy enable|disable、/init enable|disable 的用户 ID——独立一批权限，不走 PRIVILEGED_USERS_ID 白名单。 */

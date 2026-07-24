@@ -3,11 +3,8 @@ import type { Context } from "grammy";
 import type { ChatMember, Message } from "@grammyjs/types";
 import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "./infra/storage/stateStore";
 import { answerCallbackQuery } from "./infra/telegram/actions";
-import { joinVerificationApi } from "./infra/telegram/client";
-import { restoreLockdownInvitePermission } from "./infra/telegram/lockdownPermissions";
 import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
 import { registerChatTeardown } from "./infra/chatTeardown";
-import { RESTORE_RETRY_MS } from "./consts/antiRaid/lockdown";
 import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid/verification";
 import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "./consts/antiRaid/protocol";
 import type { FlushResult } from "./types/lifecycle";
@@ -16,19 +13,29 @@ import { superviseWorker } from "./libs/supervisedWorker";
 import { verificationKey } from "./libs/verificationKey";
 import { flushDiskIO, onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./workers/antiRaid/persistence";
 import {
+  buildAdoptLockdownsMessage,
+  lockdownFingerprint,
+  lockdownFingerprintMatches,
+  recoverAbandonedLockdowns,
+  seedPersistedLockdownFingerprints,
+  stopEmergencyLockdownRecoveries,
+} from "./antiRaid/lockdownMirror";
+import {
+  acceptVerificationDelete,
+  acceptVerificationUpsert,
+} from "./antiRaid/verificationMirror";
+import {
   activeVerificationSnapshots,
   antiRaidBarrier,
   antiRaidRuntimeState,
-  emergencyLockdownRecoveries,
   emergencyLockdownRecoveryRuntime,
   pendingLockdownPersistence,
   pendingVerificationDeletes,
   persistedLockdownFingerprints,
   persistedVerificationRevisions,
-  type EmergencyLockdownRecovery,
   type PersistedLockdownFingerprint,
 } from "./cache/antiRaid";
-import type { AdoptableLockdown, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationDeleteEvent, VerificationSnapshot, VerificationUpsertEvent } from "./types/antiRaid";
+import type { AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot } from "./types/antiRaid";
 import type { LockdownRecord } from "./types/chatState";
 
 /**
@@ -61,49 +68,6 @@ function buildAdoptVerificationsMessage(generation: number, resumePersistedTermi
   return { type: "adoptVerifications", generation, verifications: [...activeVerificationSnapshots.values()], resumePersistedTerminals };
 }
 
-function lockdownFingerprint(record: LockdownRecord): PersistedLockdownFingerprint {
-  return {
-    phase: record.phase,
-    intentId: record.intentId,
-    expiresAt: record.expiresAt,
-  };
-}
-
-function fingerprintMatches(record: LockdownRecord, fingerprint: PersistedLockdownFingerprint | undefined): boolean {
-  const current: PersistedLockdownFingerprint = lockdownFingerprint(record);
-  return fingerprint?.phase === current.phase &&
-    fingerprint.intentId === current.intentId &&
-    fingerprint.expiresAt === current.expiresAt;
-}
-
-function toAdoptableLockdown(chatId: number, record: LockdownRecord, now: number): AdoptableLockdown {
-  return {
-    chatId,
-    phase: record.phase,
-    intentId: record.intentId,
-    originalPermissions: record.originalPermissions,
-    remainingMs: Math.max(0, record.expiresAt - now),
-    persisted: fingerprintMatches(record, persistedLockdownFingerprints.get(chatId)),
-  };
-}
-
-/** 收集当前仍在生效的私密模式，换算出各自的真实剩余时长。 */
-function collectActiveLockdowns(): AdoptableLockdown[] {
-  const lockdowns: AdoptableLockdown[] = [];
-  const now: number = Date.now();
-  for (const [chatId, chatState] of getAllChatStates()) {
-    if (chatState.lockdown) {
-      lockdowns.push(toAdoptableLockdown(chatId, chatState.lockdown, now));
-    }
-  }
-  return lockdowns;
-}
-
-/** 把仍在生效的私密模式打包成 adopt 消息（两条恢复路径共用）。 */
-function buildAdoptMessage(): AdoptLockdownsMessage {
-  return { type: "adopt", lockdowns: collectActiveLockdowns() };
-}
-
 function persistCurrentLockdown(chatId: number): void {
   if (pendingLockdownPersistence.has(chatId)) return;
   pendingLockdownPersistence.add(chatId);
@@ -115,7 +79,7 @@ function persistCurrentLockdown(chatId: number): void {
       await saveState();
       const current: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
       if (current === undefined) return;
-      if (!fingerprintMatches(current, expectedFingerprint)) continue;
+      if (!lockdownFingerprintMatches(current, expectedFingerprint)) continue;
       persistedLockdownFingerprints.set(chatId, expectedFingerprint);
       postAntiRaidOrThrow({
         type: "lockdownPersisted",
@@ -132,122 +96,6 @@ function persistCurrentLockdown(chatId: number): void {
     .finally(() => {
       pendingLockdownPersistence.delete(chatId);
     });
-}
-
-function finishEmergencyLockdownRecovery(chatId: number, recovery: EmergencyLockdownRecovery): void {
-  if (recovery.retryTimer !== null) {
-    clearTimeout(recovery.retryTimer);
-    recovery.retryTimer = null;
-  }
-  if (emergencyLockdownRecoveries.get(chatId) === recovery) {
-    emergencyLockdownRecoveries.delete(chatId);
-  }
-}
-
-function runEmergencyLockdownRecovery(chatId: number, recovery: EmergencyLockdownRecovery): void {
-  if (
-    emergencyLockdownRecoveryRuntime.stopped ||
-    emergencyLockdownRecoveries.get(chatId) !== recovery ||
-    recovery.inFlight !== null
-  ) return;
-
-  const task: Promise<void> = (async (): Promise<void> => {
-    const before: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
-    if (before === undefined || !fingerprintMatches(before, recovery.fingerprint)) {
-      finishEmergencyLockdownRecovery(chatId, recovery);
-      return;
-    }
-    try {
-      await restoreLockdownInvitePermission({
-        chatId,
-        originalPermissions: recovery.originalPermissions,
-        api: joinVerificationApi,
-      });
-      if (
-        emergencyLockdownRecoveryRuntime.stopped ||
-        emergencyLockdownRecoveries.get(chatId) !== recovery
-      ) {
-        finishEmergencyLockdownRecovery(chatId, recovery);
-        return;
-      }
-      const current: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
-      if (current === undefined || !fingerprintMatches(current, recovery.fingerprint)) {
-        logger.warn(
-          `Emergency anti-raid restore for chat ${chatId} completed after its lockdown intent changed; ` +
-          "leaving the newer state untouched."
-        );
-        finishEmergencyLockdownRecovery(chatId, recovery);
-        return;
-      }
-      persistedLockdownFingerprints.delete(chatId);
-      if (clearChatStateField(chatId, "lockdown")) {
-        saveStateInBackground("emergency anti-raid unlock");
-        antiRaidRuntimeState.persistenceVersion++;
-      }
-      logger.log(`Emergency anti-raid permission restore completed for chat ${chatId}.`);
-      finishEmergencyLockdownRecovery(chatId, recovery);
-    } catch (error: unknown) {
-      const current: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
-      if (
-        emergencyLockdownRecoveryRuntime.stopped ||
-        current === undefined ||
-        !fingerprintMatches(current, recovery.fingerprint) ||
-        emergencyLockdownRecoveries.get(chatId) !== recovery
-      ) {
-        finishEmergencyLockdownRecovery(chatId, recovery);
-        return;
-      }
-      logger.error(
-        `Emergency anti-raid permission restore failed for chat ${chatId}; ` +
-        `retrying in ${RESTORE_RETRY_MS / 1000}s:`,
-        error
-      );
-      recovery.retryTimer = setTimeout(() => {
-        recovery.retryTimer = null;
-        runEmergencyLockdownRecovery(chatId, recovery);
-      }, RESTORE_RETRY_MS);
-      recovery.retryTimer.unref();
-    }
-  })();
-  recovery.inFlight = task;
-  void task.finally(() => {
-    if (recovery.inFlight === task) recovery.inFlight = null;
-  });
-}
-
-function startEmergencyLockdownRecovery(chatId: number, record: LockdownRecord): void {
-  const fingerprint: PersistedLockdownFingerprint = lockdownFingerprint(record);
-  const existing: EmergencyLockdownRecovery | undefined = emergencyLockdownRecoveries.get(chatId);
-  if (existing !== undefined) {
-    if (
-      existing.fingerprint.phase === fingerprint.phase &&
-      existing.fingerprint.intentId === fingerprint.intentId &&
-      existing.fingerprint.expiresAt === fingerprint.expiresAt
-    ) return;
-    finishEmergencyLockdownRecovery(chatId, existing);
-  }
-  const recovery: EmergencyLockdownRecovery = {
-    fingerprint,
-    originalPermissions: { ...record.originalPermissions },
-    retryTimer: null,
-    inFlight: null,
-  };
-  emergencyLockdownRecoveries.set(chatId, recovery);
-  runEmergencyLockdownRecovery(chatId, recovery);
-}
-
-function stopEmergencyLockdownRecoveries(): void {
-  emergencyLockdownRecoveryRuntime.stopped = true;
-  for (const recovery of emergencyLockdownRecoveries.values()) {
-    if (recovery.retryTimer !== null) {
-      clearTimeout(recovery.retryTimer);
-      recovery.retryTimer = null;
-    }
-  }
-  // Telegram 请求本身可能永久悬挂，停机不能越过生命周期预算无限等待。
-  // 已关闸且清空 owner；迟到的成功/失败都会在 run 中停止，不再修改 state
-  // 或重新安排 timer。state 保留 lockdown，下一进程可幂等恢复权限。
-  emergencyLockdownRecoveries.clear();
 }
 
 const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
@@ -313,7 +161,7 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
         postDiskIO({ type: "verificationUpsert", record: { ...record, generation }, critical: true });
       }
     }
-    const adopt: AdoptLockdownsMessage = buildAdoptMessage();
+    const adopt: AdoptLockdownsMessage = buildAdoptLockdownsMessage();
     if (adopt.lockdowns.length > 0) {
       if (!postToNext(adopt)) {
         logger.error("Anti-Raid Worker lockdown replay was rejected.");
@@ -334,46 +182,6 @@ function postAntiRaidOrThrow(message: AntiRaidWorkerMessage): void {
 registerChatTeardown("antiRaid", (chatId: number): void => {
   deactivateAntiRaidChat(chatId);
 });
-
-function acceptVerificationUpsert(event: VerificationUpsertEvent): boolean {
-  const snapshot: VerificationSnapshot = event.record;
-  if (snapshot.generation !== antiRaidRuntimeState.generation) return false;
-  const key: string = verificationKey(snapshot.chatId, snapshot.userId);
-  const latestRevision: number = Math.max(
-    activeVerificationSnapshots.get(key)?.revision ?? 0,
-    pendingVerificationDeletes.get(key)?.revision ?? 0
-  );
-  if (snapshot.revision <= latestRevision) return false;
-  const critical: boolean = !activeVerificationSnapshots.has(key) ||
-    snapshot.phase === "checkingInviter" || snapshot.phase === "expelling";
-  activeVerificationSnapshots.set(key, {
-    ...snapshot,
-    messageIds: [...snapshot.messageIds],
-    trackedMessageTimes: [...snapshot.trackedMessageTimes],
-  });
-  pendingVerificationDeletes.delete(key);
-  postDiskIO({ type: "verificationUpsert", record: snapshot, critical });
-  return true;
-}
-
-function acceptVerificationDelete(event: VerificationDeleteEvent): boolean {
-  if (event.generation !== antiRaidRuntimeState.generation) return false;
-  const key: string = verificationKey(event.chatId, event.userId);
-  const current: VerificationSnapshot | undefined = activeVerificationSnapshots.get(key);
-  const pendingRevision: number = pendingVerificationDeletes.get(key)?.revision ?? 0;
-  if ((!current && pendingRevision === 0) || event.revision <= Math.max(current?.revision ?? 0, pendingRevision)) return false;
-  activeVerificationSnapshots.delete(key);
-  persistedVerificationRevisions.delete(key);
-  const deletion = {
-    chatId: event.chatId,
-    userId: event.userId,
-    generation: event.generation,
-    revision: event.revision,
-  };
-  pendingVerificationDeletes.set(key, deletion);
-  postDiskIO({ type: "verificationDelete", ...deletion });
-  return true;
-}
 
 /** FIFO barrier：回执前 Worker 已同步处理完此前消息，镜像事件也已先到主线程。 */
 export function drainAntiRaid(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS): Promise<FlushResult> {
@@ -443,21 +251,6 @@ onVerificationPersisted((reply) => {
   }
 });
 
-/** Worker 自愈放弃后，由主线程独立接管仍挂着的邀请权限恢复。 */
-function recoverAbandonedLockdowns(): void {
-  const abandoned: number[] = [];
-  for (const [chatId, chatState] of getAllChatStates()) {
-    if (chatState.lockdown === undefined) continue;
-    abandoned.push(chatId);
-    startEmergencyLockdownRecovery(chatId, chatState.lockdown);
-  }
-  if (abandoned.length === 0) return;
-  logger.error(
-    "Anti-raid Worker gave up self-healing; main-thread emergency permission recovery started for chats: " +
-    abandoned.join(", ")
-  );
-}
-
 /**
  * 启动时的私密模式接管：把 state.json 里进程上次退出时仍在生效的私密模式
  * （已随 loadState() 载入各群 ChatState.lockdown）adopt 给 Worker 重新排
@@ -469,17 +262,12 @@ export function initAntiRaid(): void {
   antiRaidRuntimeState.initialized = true;
   antiRaidRuntimeState.persistenceVersion = 0;
   emergencyLockdownRecoveryRuntime.stopped = false;
-  persistedLockdownFingerprints.clear();
-  for (const [chatId, chatState] of getAllChatStates()) {
-    if (chatState.lockdown !== undefined) {
-      persistedLockdownFingerprints.set(chatId, lockdownFingerprint(chatState.lockdown));
-    }
-  }
+  seedPersistedLockdownFingerprints();
   const generation: number = nextAntiRaidGeneration();
   try {
     initAntiRaidWorker();
     postAntiRaidOrThrow(buildAdoptVerificationsMessage(generation, true));
-    const adopt: AdoptLockdownsMessage = buildAdoptMessage();
+    const adopt: AdoptLockdownsMessage = buildAdoptLockdownsMessage();
     if (adopt.lockdowns.length === 0) return;
 
     postAntiRaidOrThrow(adopt);

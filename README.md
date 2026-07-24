@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-794_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.78%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-821_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.77%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -91,7 +91,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ 入群验证</b></p>
-  <p>提供新成员 90 秒限时按钮验证，并支持白名单担保点按、可归属的非匿名管理员邀请免验和评论区感知。</p>
+  <p>提供新成员 90 秒限时按钮验证；真人只能本人点击，机器人仅可由白名单用户代点担保，并支持可归属的非匿名管理员邀请免验和评论区感知。</p>
 </td>
 </tr>
 <tr>

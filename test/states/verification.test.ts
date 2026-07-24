@@ -295,6 +295,22 @@ describe("callback", () => {
     expect(effects).toEqual([{ kind: "answerCallback", callbackQueryId: "q1", reply: "notYourButton" }]);
   });
 
+  test("白名单也不能为真人代点", () => {
+    const state = pendingState();
+    const { next, effects } = transitionVerification(
+      state,
+      cb({ isSelf: false, fromIsPrivileged: true })
+    );
+    expect(next).toBe(state);
+    expect(effects).toEqual([
+      {
+        kind: "answerCallback",
+        callbackQueryId: "q1",
+        reply: "notYourButton",
+      },
+    ]);
+  });
+
   test("白名单为机器人代点 → 以作保通过", () => {
     const state = pendingState({ isBot: true });
     const { next, effects } = transitionVerification(state, cb({ isSelf: false, fromIsPrivileged: true }));

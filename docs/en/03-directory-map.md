@@ -19,12 +19,13 @@ This page answers “where does this code live, and where should new code go?”
 | `src/app/` | Startup/shutdown lifecycle, handler registration, command menu, update runner | `lifecycle.ts`, `registerHandlers.ts`, `updateRunner.ts` |
 | `src/commands/` | Explicit command handling, one command per file | `copy.ts`, `kick.ts`, `send.ts`, `targetResolution.ts` |
 | `src/auto/` | Automatic non-command behavior: copying, AI transcription and triggers, reaction synchronization | `message/`, `triggerPolicy.ts` |
+| `src/antiRaid/` | Lockdown recovery and pending-verification mirror intake for the main-thread Anti-Raid proxy | `lockdownMirror.ts`, `verificationMirror.ts` |
 | `src/copy/` | Copy-mode transformations and execution queues for avatars, reactions, and translation | `copyModes.ts`, `avatarQueue.ts`, `reactionQueue.ts`, `translate.ts` |
 | `src/users/` | Sender-identity cache, visible-sender resolution, user-label generation | `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts` |
 | `src/states/` | **I/O-free** state transitions for verification, lockdown, and reply admission | `verification.ts`, `lockdown.ts` |
 | `src/config/` | Strict schemas, lazy loading, and startup validation for `config/*.json` | `stickers.ts`, `reactions.ts`, `mood.ts` |
 | `src/libs/` | Domain-independent infrastructure: atomic files, bounded I/O, concurrency utilities | `flushBarrier.ts`, `linkedQueue.ts`, `text.ts` |
-| `src/workers/` | In-thread implementations for all three Workers | `aiChatWorker.ts` + `aiChat/`, `antiRaidWorker.ts` + `antiRaid/`, `diskIOWorker.ts` + `diskIO/` |
+| `src/workers/` | In-thread implementations for all three Workers | `aiChatWorker.ts` + `aiChat/`, `antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts`, `diskIOWorker.ts` + `diskIO/` |
 | `src/ai/` | Gemini client, vision descriptions, image generation, sticker catalog, tool implementations | `gemini.ts`, `tools/replyToolset/`, `imageGeneration.ts` |
 | `src/infra/` | Telegram client, Worker hosts, logger, environment configuration | `telegram/`, `config.ts`, `workerSupervisor.ts` |
 | `src/infra/storage/` | Data-root preflight, instance lock, StateStore, startup cleanup | `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts` |
