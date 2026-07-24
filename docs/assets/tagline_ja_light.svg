@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 100" width="1160" height="100" role="img" aria-label="アバターを盗み、メッセージを真似し、画像を見て、グループを守り、真顔で悪口まで言う Telegram グループチャット Bot">
   <title>アバターを盗み、メッセージを真似し、画像を見て、グループを守り、真顔で悪口まで言う Telegram グループチャット Bot</title>
   <style>
-    .txt { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Hiragino Sans', 'Yu Gothic', sans-serif; font-weight: 700; font-size: 34px; text-anchor: middle; }
+    .txt { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Hiragino Sans', 'Yu Gothic', sans-serif; font-weight: 700; font-size: 34px; }
   </style>
-  <text x="580" y="40" class="txt">
+  <text x="580" y="40" text-anchor="middle" class="txt">
     <tspan fill="#6d4aff">アバターを盗み</tspan>
     <tspan fill="#24292f">、</tspan>
     <tspan fill="#6d4aff">メッセージを真似し</tspan>
@@ -11,7 +11,7 @@
     <tspan fill="#6d4aff">画像を見て</tspan>
     <tspan fill="#24292f">、</tspan>
   </text>
-  <text x="580" y="82" class="txt">
+  <text x="580" y="82" text-anchor="middle" class="txt">
     <tspan fill="#6d4aff">グループを守り</tspan>
     <tspan fill="#24292f">、真顔で</tspan>
     <tspan fill="#6d4aff">悪口まで言う</tspan>

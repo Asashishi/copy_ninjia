@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 120" width="920" height="120" role="img" aria-label="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face">
   <title>A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face</title>
   <style>
-    .txt { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 28px; text-anchor: middle; }
+    .txt { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 28px; }
   </style>
-  <text x="460" y="34" class="txt">
+  <text x="460" y="34" text-anchor="middle" class="txt">
     <tspan fill="#e6edf3">A </tspan>
     <tspan fill="#58b9ec">Telegram</tspan>
     <tspan fill="#e6edf3"> group-chat bot that</tspan>
   </text>
-  <text x="460" y="70" class="txt">
+  <text x="460" y="70" text-anchor="middle" class="txt">
     <tspan fill="#a99bff">steals avatars</tspan>
     <tspan fill="#e6edf3">, </tspan>
     <tspan fill="#a99bff">copies messages</tspan>
@@ -16,7 +16,7 @@
     <tspan fill="#a99bff">sees images</tspan>
     <tspan fill="#e6edf3">,</tspan>
   </text>
-  <text x="460" y="106" class="txt">
+  <text x="460" y="106" text-anchor="middle" class="txt">
     <tspan fill="#a99bff">guards groups</tspan>
     <tspan fill="#e6edf3">, and </tspan>
     <tspan fill="#a99bff">roasts people</tspan>
