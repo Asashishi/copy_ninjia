@@ -16,7 +16,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tagline_ja_dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/tagline_ja_light.svg">
-  <img alt="アバターを盗み、メッセージを真似し、画像を見て、グループを守り、真顔で悪口まで言う Telegram グループチャット Bot" src="docs/assets/tagline_ja_light.svg" width="760">
+  <img alt="アバターを盗み、メッセージを真似し、画像を見て、グループを守り、真顔で悪口まで言う Telegram グループチャット Bot" src="docs/assets/tagline_ja_light.svg" width="820">
 </picture>
 
 **コードの 100% を AI が書いた純 AI 開発プロジェクト** — 人間はアーキテクチャを設計し、AI と共同で全コミットをレビュー
@@ -243,7 +243,7 @@ Copy Ninjia の詳細なアーキテクチャ概要、モジュールマップ�
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/footer_ja_dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/footer_ja_light.svg">
-  <img alt="Copy Ninjia — 単に真似をするだけでなく、チャット現場を丸ごと盗んで演じ直す。" src="docs/assets/footer_ja_light.svg" width="720">
+  <img alt="Copy Ninjia — 単に真似をするだけでなく、チャット現場を丸ごと盗んで演じ直す。" src="docs/assets/footer_ja_light.svg" width="750">
 </picture>
 
 *人間は 1 行もコードを書きませんが、決して舞台を降りませんでした。設計図を描いた後も、すべてのコミットを AI と共同でレビューしています。*

@@ -16,7 +16,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tagline_en_dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/tagline_en_light.svg">
-  <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="docs/assets/tagline_en_light.svg" width="700">
+  <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="docs/assets/tagline_en_light.svg" width="840">
 </picture>
 
 **A pure-AI development project with 100% AI-written code** — the human designs the architecture and reviews every commit together with AI
@@ -237,7 +237,7 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/footer_en_dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/footer_en_light.svg">
-  <img alt="Copy Ninjia — Not just copying messages, but stealing the entire group-chat scene and re-enacting it." src="docs/assets/footer_en_light.svg" width="780">
+  <img alt="Copy Ninjia — Not just copying messages, but stealing the entire group-chat scene and re-enacting it." src="docs/assets/footer_en_light.svg" width="800">
 </picture>
 
 *The human never wrote a line of code, but never left the stage: after drawing the blueprints, they reviewed every commit together with AI.*

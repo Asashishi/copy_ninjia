@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/tagline_en_dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../assets/tagline_en_light.svg">
-  <img alt="Copy Ninjia Tagline" src="../assets/tagline_en_light.svg" width="700">
+  <img alt="Copy Ninjia Tagline" src="../assets/tagline_en_light.svg" width="840">
 </picture>
 
 # 📚 Copy Ninjia Developer Documentation
@@ -87,7 +87,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/footer_en_dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../assets/footer_en_light.svg">
-  <img alt="Copy Ninjia Footer" src="../assets/footer_en_light.svg" width="780">
+  <img alt="Copy Ninjia Footer" src="../assets/footer_en_light.svg" width="800">
 </picture>
 
 </div>
