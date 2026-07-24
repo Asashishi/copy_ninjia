@@ -77,6 +77,20 @@ flowchart TD
     G --> A5["🎨 Generate image"]:::action
 ```
 
+A message first splits by type, then converges into the AI Worker's rolling memory:
+
+- **Text** is enqueued immediately as-is, preserving its position in the conversation timeline.
+- **Images / stickers / GIFs** are enqueued with a placeholder first, then downloaded and described by a vision model asynchronously; once parsing finishes, the same entry's text field is backfilled in place. A hit against the sticker allowlist catalog skips the asynchronous parse and writes the catalog's existing description directly.
+
+When a reply is triggered, rolling memory is assembled into the three-part Gemini input described in the previous section, and sent to Gemini together with `googleSearch` and the custom tools. The model may issue multiple tool calls within one round, each executed through main-thread proxies rather than talking to Telegram directly:
+
+- 💬 **Send text**—the model must call the send tool explicitly for any body text; the system only falls back to sending on its own when the whole round produced zero successful actions.
+- 👍 **Add reaction**—chosen from an allowlist of emoji, at most one success per round.
+- 🔍 **View sticker pack**—looks up the sticker catalog on demand, counted independently from other tool calls.
+- 🎟️ **Send sticker** and 🎨 **Generate image**—likewise capped at one success per round.
+
+Text, sticker, reaction, and image results produced this round are written back to rolling memory and periodically snapshotted to disk. See [04 Authoritative Runtime Invariants](04-invariants.md) for the per-round action cap and anti-loop rules.
+
 ## Startup Order
 
 The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycle` from [`src/app/lifecycle.ts`](../../src/app/lifecycle.ts). Importing production modules does not start Workers, timers, network requests, or shared-directory writes; all runtime initialization is explicit:
