@@ -17,9 +17,8 @@ export const REPLY_GENERATIONS_MAX: number = 3500;
 export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
 /** 单群长窗口内允许启动的最大回复轮数。 */
 export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
-/** 同群在途回复轮数和直接触发等候队列上限。当前值 1 只是运行参数，后续
- *  可能重新提高；不得据此删除或简化心跳、贴纸发送等现有跨轮并发保护。 */
-export const REPLY_ROUND_MAX_CONCURRENT: number = 1;
+/** 同群允许同时在途的最大回复轮数；心跳、贴纸发送等路径必须保持跨轮并发安全。 */
+export const REPLY_ROUND_MAX_CONCURRENT: number = 5;
 /** 同群直接触发在并发满载时允许排队的最大数量。 */
 export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 /** 排队触发原文快照的截断上限。 */
