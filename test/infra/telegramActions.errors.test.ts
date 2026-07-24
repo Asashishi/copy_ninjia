@@ -101,6 +101,32 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(markSelfSent).not.toHaveBeenCalled();
   });
 
+  test("主动取消发送时返回 undefined 且不记录 API 错误", async () => {
+    const api: Api = apiWithFailures();
+    const controller: AbortController = new AbortController();
+    controller.abort();
+
+    expect(await actions.sendMessage({
+      chatId: -1001,
+      text: "hello",
+      api,
+      signal: controller.signal,
+    })).toBeUndefined();
+    expect(logApiError).not.toHaveBeenCalled();
+    expect(markSelfSent).not.toHaveBeenCalled();
+  });
+
+  test("成功响应后的映射失败仍按原动作归一化", async () => {
+    const api: Api = apiWithSuccesses();
+    const mappingError: Error = new Error("self-sent tracking failed");
+    markSelfSent.mockImplementationOnce(() => {
+      throw mappingError;
+    });
+
+    expect(await actions.sendSticker(-1001, "file", api)).toBeUndefined();
+    expect(logApiError).toHaveBeenCalledWith("send sticker", mappingError);
+  });
+
   test("延迟删除只注册一个不阻止退出的 timer，并在到期后复用 deleteMessage", async () => {
     const api: Api = apiWithSuccesses();
     const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
