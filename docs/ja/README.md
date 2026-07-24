@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/tagline_ja_dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../assets/tagline_ja_light.svg">
-  <img alt="Copy Ninjia Tagline" src="../assets/tagline_ja_light.svg" width="780">
+  <img alt="Copy Ninjia Tagline" src="../assets/tagline_ja_light.svg" width="920">
 </picture>
 
 # 📚 Copy Ninjia 開発者ドキュメント

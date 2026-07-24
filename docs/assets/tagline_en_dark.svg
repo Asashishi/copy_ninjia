@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1245 54" width="1245" height="54" role="img" aria-label="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1540 54" width="1540" height="54" role="img" aria-label="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face">
   <title>A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face</title>
   <style>
-    .txt { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 25px; }
+    .txt { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-weight: 700; font-size: 24px; }
   </style>
-  <text x="8" y="38" class="txt">
+  <text x="10" y="36" class="txt">
     <tspan fill="#e6edf3">A </tspan>
     <tspan fill="#58b9ec">Telegram</tspan>
     <tspan fill="#e6edf3"> group-chat bot that </tspan>
