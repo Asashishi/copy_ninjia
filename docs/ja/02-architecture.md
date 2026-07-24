@@ -55,6 +55,28 @@ AI がトリガーされた後は、メインスレッドが活動量に基づ�
 
 `bot.catch` は未処理エラーを記録した後に**再 throw**します。例外を握りつぶすと失敗した update が確認済みになり、永続化失敗を含めて、再起動後に Telegram から再配信されなくなります。
 
+## AI メッセージ処理パイプライン
+
+```mermaid
+flowchart TD
+    classDef input stroke:#8e75ff,stroke-width:2px;
+    classDef process stroke:#3b82f6,stroke-width:1.5px;
+    classDef ai stroke:#10b981,stroke-width:2px;
+    classDef action stroke:#a855f7,stroke-width:1.5px;
+
+    U(["📨 Telegram update"]):::input --> TXT["テキスト"]:::process
+    U --> MED["画像 / スタンプ / GIF"]:::process
+    MED -- 非同期ビジョン記述 --> MEM["AI Worker 記憶コンテキスト"]:::ai
+    TXT --> MEM
+    MEM --> G["Gemini + googleSearch + カスタムツール"]:::ai
+
+    G --> A1["💬 テキスト送信"]:::action
+    G --> A2["👍 リアクション追加"]:::action
+    G --> A3["🔍 スタンプパック閲覧"]:::action
+    G --> A4["🎟️ スタンプ送信"]:::action
+    G --> A5["🎨 画像生成"]:::action
+```
+
 ## 起動順序
 
 エントリポイントの [`index.ts`](../../index.ts) は [`src/app/lifecycle.ts`](../../src/app/lifecycle.ts) の `ApplicationLifecycle` を組み立てるだけです。production モジュールの import では Worker、タイマー、ネットワーク要求、共有ディレクトリへの書き込みを開始せず、実行時の初期化はすべて明示的に行います。

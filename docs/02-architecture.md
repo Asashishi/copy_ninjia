@@ -55,6 +55,28 @@ AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投�
 
 `bot.catch` 记录未处理错误后**继续抛出**——吞掉异常会让失败的 update 被确认，进程重启后 Telegram 不再重投（含持久化失败的场景）。
 
+## AI 消息处理流水线
+
+```mermaid
+flowchart TD
+    classDef input stroke:#8e75ff,stroke-width:2px;
+    classDef process stroke:#3b82f6,stroke-width:1.5px;
+    classDef ai stroke:#10b981,stroke-width:2px;
+    classDef action stroke:#a855f7,stroke-width:1.5px;
+
+    U(["📨 Telegram update"]):::input --> TXT["文本"]:::process
+    U --> MED["图片 / 贴纸 / GIF"]:::process
+    MED -- 异步视觉描述 --> MEM["AI Worker 滚动记忆"]:::ai
+    TXT --> MEM
+    MEM --> G["Gemini + googleSearch + 自定义工具"]:::ai
+    
+    G --> A1["💬 发文字消息"]:::action
+    G --> A2["👍 添加反应"]:::action
+    G --> A3["🔍 查看贴纸包"]:::action
+    G --> A4["🎟️ 发送贴纸"]:::action
+    G --> A5["🎨 生成图片"]:::action
+```
+
 ## 启动顺序
 
 入口 [`index.ts`](../index.ts) 只组装 [`src/app/lifecycle.ts`](../src/app/lifecycle.ts) 的 `ApplicationLifecycle`；生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入，一切运行时初始化都显式发生：

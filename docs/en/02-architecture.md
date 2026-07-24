@@ -55,6 +55,28 @@ After an AI trigger, the main thread evaluates the activity-based probability or
 
 `bot.catch` logs unhandled errors and then **rethrows them**. Swallowing an exception would acknowledge the failed update, preventing Telegram from redelivering it after restart—including when persistence failed.
 
+## AI Message Processing Pipeline
+
+```mermaid
+flowchart TD
+    classDef input stroke:#8e75ff,stroke-width:2px;
+    classDef process stroke:#3b82f6,stroke-width:1.5px;
+    classDef ai stroke:#10b981,stroke-width:2px;
+    classDef action stroke:#a855f7,stroke-width:1.5px;
+
+    U(["📨 Telegram update"]):::input --> TXT["Text"]:::process
+    U --> MED["Image / sticker / GIF"]:::process
+    MED -- asynchronous vision description --> MEM["AI Worker rolling memory"]:::ai
+    TXT --> MEM
+    MEM --> G["Gemini + googleSearch + custom tools"]:::ai
+
+    G --> A1["💬 Send text"]:::action
+    G --> A2["👍 Add reaction"]:::action
+    G --> A3["🔍 View sticker pack"]:::action
+    G --> A4["🎟️ Send sticker"]:::action
+    G --> A5["🎨 Generate image"]:::action
+```
+
 ## Startup Order
 
 The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycle` from [`src/app/lifecycle.ts`](../../src/app/lifecycle.ts). Importing production modules does not start Workers, timers, network requests, or shared-directory writes; all runtime initialization is explicit:
