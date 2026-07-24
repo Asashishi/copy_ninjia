@@ -1,34 +1,93 @@
-# Copy Ninjia 开发文档
+<div align="center">
 
-**简体中文** · [English](en/README.md) · [日本語](ja/README.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/tagline_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/tagline_light.svg">
+  <img alt="Copy Ninjia Tagline" src="assets/tagline_light.svg" width="780">
+</picture>
 
-这里是面向开发者的多页文档：环境搭建、架构讲解、修改配方与运维手册。根目录 [`README.md`](../README.md) 面向使用者与快速开始，[`AGENTS.md`](../AGENTS.md) 收录编码风格与放置约定，本目录负责其余一切「怎么改、为什么这样设计」的问题。
+# 📚 Copy Ninjia 开发者文档
 
-## 阅读路线
+<p align="center">
+  <b>简体中文</b> · <a href="en/README.md">English</a> · <a href="ja/README.md">日本語</a> · <a href="../README.md">🏠 根目录 README</a>
+</p>
 
-| 你想做什么 | 从哪读起 |
-| :--- | :--- |
-| 第一次跑起来这个项目 | [01 环境搭建与首次运行](01-getting-started.md) |
-| 理解整体设计 | [02 架构总览](02-architecture.md) → [04 运行时权威约束](04-invariants.md) |
-| 找到代码该放哪 | [03 目录导览与代码放置](03-directory-map.md) |
-| 日常开发、测试与提交 | [05 开发流程与质量门禁](05-dev-workflow.md) |
-| 加功能、调参数、改行为 | [06 常见修改配方](06-modification-guide.md) |
-| 部署、备份与排障 | [07 运维与排障](07-operations.md) |
+面向开发者的完整多页指南：从环境搭建、架构设计、工程规范，到功能扩展与运维排障。
 
-## 页面清单
+</div>
 
-1. [环境搭建与首次运行](01-getting-started.md)——依赖、`.env`、Telegram 侧配置、第一次启动。
-2. [架构总览](02-architecture.md)——主线程与三个 Worker、一条消息的完整旅程、启动与停机顺序。
-3. [目录导览与代码放置](03-directory-map.md)——每个目录的职责、新代码的放置决策、兼容入口约定。
-4. [运行时权威约束](04-invariants.md)——跨模块、跨生命周期的权威不变量；源码注释中的 `@see` 指向这里。
-5. [开发流程与质量门禁](05-dev-workflow.md)——`bun run check` 全链路、测试隔离机制、覆盖率口径、提交与发布。
-6. [常见修改配方](06-modification-guide.md)——新增命令、调整参数、新增 AI 工具、改配置与持久化 schema 的分步指南。
-7. [运维与排障](07-operations.md)——systemd 部署、数据根、备份策略、启动失败排查。
+---
 
-## 文档维护约定
+## 🧭 开发者快速导航
 
-- 中文文档保留在 `docs/`，英文镜像放在 `docs/en/`，日文镜像放在 `docs/ja/`；修改内容、链接或行为数值时同步更新对应页面。
-- 段落不手动断行（GitHub 会把段内换行渲染成空格，中文会出现异常空隙）。
-- 跨模块约束只在 [04 运行时权威约束](04-invariants.md) 维护一份；其它页面与源码注释引用它，不复述。
-- 行为参数（概率、容量、时长）的权威来源是 `src/consts/`，文档引用常量名与文件路径，尽量不抄具体数值；根 README 中确需展示的数值在改参时同步。
-- 根 README 的测试/覆盖率指标来自 `bun run test:coverage` 实测，更新方式见 [05 开发流程](05-dev-workflow.md#同步-readme-指标)。
+| 目标场景 | 推荐路径 | 直达链接 |
+| :--- | :--- | :---: |
+| 🚀 **首次运行** | 依赖安装、`.env` 配置、Telegram API 权限及首次启动 | [📖 01 环境搭建](01-getting-started.md) |
+| 🏗️ **理解架构** | 主线程与 3 个 Worker 协作模型、消息生命周期及持久化恢复 | [📖 02 架构总览](02-architecture.md) |
+| 🗺️ **查找代码** | 模块职责分工、源码目录映射及新代码放置约定 | [📖 03 目录导览](03-directory-map.md) |
+| ⚡ **遵守不变量** | 跨模块权威约束、并发防护与全局状态机规则 | [📖 04 权威约束](04-invariants.md) |
+| 🧪 **开发与测试** | `bun run check` 质量门禁、测试隔离机制与覆盖率口径 | [📖 05 开发流程](05-dev-workflow.md) |
+| 🛠️ **新增/修改功能** | 添加命令、调参、新增 AI 工具及 Schema 变更手把手配方 | [📖 06 修改配方](06-modification-guide.md) |
+| 🛡️ **生产运维** | systemd 部署、`COPY_NINJIA_DATA_ROOT`、备份与故障排查 | [📖 07 运维手册](07-operations.md) |
+
+---
+
+## 📑 页面清单与核心内容
+
+1. **[01 环境搭建与首次运行](01-getting-started.md)**
+   - 基础依赖 (Bun 1.3+ / Linux / Bot Token / Gemini API Key)
+   - `.env` 配置文件说明与必填字段
+   - Telegram BotFather 配置（Privacy Mode / Admin 权限 / Inline Mode）
+   - 首次启动与拉群 `/init enable` 握手流程
+
+2. **[02 架构总览](02-architecture.md)**
+   - 1 个主线程 (Main Thread) + 3 个 Worker (AI / Anti-Raid / Disk I/O) 的多进程协作模型
+   - 一条 Telegram Update 消息从接收、校验、分发到 Worker 响应的完整旅程
+   - 进程启动与优雅退出的全串行刷新屏障 (Flush Barrier)
+
+3. **[03 目录导览与代码放置](03-directory-map.md)**
+   - `src/` 目录下 13 个子领域的清晰职责边界
+   - 「代码该放哪」的决策树：常量、类型、缓存、状态转移与 Worker
+   - 向后兼容入口的收敛与导出规则
+
+4. **[04 运行时权威约束](04-invariants.md)**
+   - 跨模块与跨生命周期的权威不变量（源码 `@see` 注释指向此处）
+   - 状态隔离、并发限制、缓存淘汰上限及锁机制
+   - 持久化原子双写、Anti-Raid 验证状态机与运势 HMAC 密钥一致性
+
+5. **[05 开发流程与质量门禁](05-dev-workflow.md)**
+   - `bun run check` 4 级串行流水线：规范检查 + Lint + Typecheck + 全覆盖率测试
+   - 测试环境隔离机制与临时数据根沙盒
+   - 提交规范与发布前故障注入测试 `bun run test:fault-injection`
+
+6. **[06 常见修改配方](06-modification-guide.md)**
+   - 配方 1：新增 Telegram 斜杠命令
+   - 配方 2：调整系统硬硬顶参数或超时时间
+   - 配方 3：扩展 Gemini AI 自定义工具函数
+   - 配方 4：修改配置 Schema 或持久化数据结构（手动迁移策略）
+
+7. **[07 运维与排障](07-operations.md)**
+   - 生产环境推荐硬件配置与部署指南
+   - `COPY_NINJIA_DATA_ROOT` 目录能力校验（fsync / hard link / rename）
+   - 备份与恢复（`memory/luck/receipt-secret.json` 密钥一致性）
+   - 常见启动失败与 `bot.lock` 单实例锁故障排查
+
+---
+
+## 📝 文档维护约定
+
+- **三语同步**：中文文档保留在 `docs/`，英文镜像在 `docs/en/`，日文镜像在 `docs/ja/`。修改架构或数值时需同步更新三语版本。
+- **单点维护**：跨模块不变量仅在 [04 权威约束](04-invariants.md) 维护一份，其他文档引用链接，不复述内容。
+- **常量引用**：参数数值的权威来源是 `src/consts/`，文档尽量引用常量名及路径。
+
+---
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/footer_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/footer_light.svg">
+  <img alt="Copy Ninjia Footer" src="assets/footer_light.svg" width="580">
+</picture>
+
+</div>

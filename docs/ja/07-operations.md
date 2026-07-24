@@ -1,8 +1,14 @@
 # 07 運用とトラブルシューティング
 
-[简体中文](../07-operations.md) · [English](../en/07-operations.md) · **日本語**
+<p align="center">
+  <a href="../07-operations.md">简体中文</a> · <a href="../en/07-operations.md">English</a> · <b>日本語</b>
+</p>
 
-[← 06 よくある変更手順](06-modification-guide.md) · [目次に戻る](README.md)
+<p align="center">
+  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="06-modification-guide.md">← 前のページ：06 変更レシピ</a> · <b>次のページ：なし →</b>
+</p>
+
+---
 
 ## デプロイ形態
 
@@ -88,4 +94,8 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 
 ---
 
-[← 06 よくある変更手順](06-modification-guide.md) · [目次に戻る](README.md)
+<div align="center">
+
+[← 前のページ：06 変更レシピ](06-modification-guide.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#07-運用とトラブルシューティング) · **次のページ：なし →**
+
+</div>

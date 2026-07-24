@@ -1,8 +1,14 @@
 # 06 常见修改配方
 
-**简体中文** · [English](en/06-modification-guide.md) · [日本語](ja/06-modification-guide.md)
+<p align="center">
+  <b>简体中文</b> · <a href="en/06-modification-guide.md">English</a> · <a href="ja/06-modification-guide.md">日本語</a>
+</p>
 
-[← 05 开发流程](05-dev-workflow.md) · [返回目录](README.md) · 下一页：[07 运维与排障](07-operations.md)
+<p align="center">
+  <a href="README.md">📚 开发者文档首页</a> · <a href="05-dev-workflow.md">← 上一页：05 开发流程</a> · <a href="07-operations.md">下一页：07 运维与排障 →</a>
+</p>
+
+---
 
 每个配方给出触碰的文件与顺序。通用前提：改动前读 [`AGENTS.md`](../AGENTS.md)；涉及运行时数据文件（`state.json`、`memory/`、`bot.lock`）或会间接写它们的代码路径时，动手前先备份；完成后 `bun run check` 全绿并按需同步根 README。
 
@@ -89,4 +95,8 @@
 
 ---
 
-[← 05 开发流程](05-dev-workflow.md) · [返回目录](README.md) · 下一页：[07 运维与排障](07-operations.md)
+<div align="center">
+
+[← 上一页：05 开发流程](05-dev-workflow.md) · [📚 开发者文档首页](README.md) · [⬆️ 回到顶部](#06-常见修改配方) · [下一页：07 运维与排障 →](07-operations.md)
+
+</div>

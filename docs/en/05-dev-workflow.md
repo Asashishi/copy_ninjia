@@ -1,8 +1,14 @@
 # 05 Development Workflow and Quality Gates
 
-[简体中文](../05-dev-workflow.md) · **English** · [日本語](../ja/05-dev-workflow.md)
+<p align="center">
+  <a href="../05-dev-workflow.md">简体中文</a> · <b>English</b> · <a href="../ja/05-dev-workflow.md">日本語</a>
+</p>
 
-[← 04 Authoritative Runtime Invariants](04-invariants.md) · [Back to index](README.md) · Next: [06 Common Modification Recipes](06-modification-guide.md)
+<p align="center">
+  <a href="README.md">📚 Developer Docs Home</a> · <a href="04-invariants.md">← Prev: 04 Invariants</a> · <a href="06-modification-guide.md">Next: 06 Recipes →</a>
+</p>
+
+---
 
 ## Command Reference
 
@@ -69,4 +75,8 @@ This repository does not rely on GitHub Actions. Release environments should mak
 
 ---
 
-[← 04 Authoritative Runtime Invariants](04-invariants.md) · [Back to index](README.md) · Next: [06 Common Modification Recipes](06-modification-guide.md)
+<div align="center">
+
+[← Prev: 04 Invariants](04-invariants.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#05-development-workflow-and-quality-gates) · [Next: 06 Recipes →](06-modification-guide.md)
+
+</div>

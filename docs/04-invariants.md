@@ -1,8 +1,14 @@
 # 04 运行时权威约束
 
-**简体中文** · [English](en/04-invariants.md) · [日本語](ja/04-invariants.md)
+<p align="center">
+  <b>简体中文</b> · <a href="en/04-invariants.md">English</a> · <a href="ja/04-invariants.md">日本語</a>
+</p>
 
-[← 03 目录导览](03-directory-map.md) · [返回目录](README.md) · 下一页：[05 开发流程](05-dev-workflow.md)
+<p align="center">
+  <a href="README.md">📚 开发者文档首页</a> · <a href="03-directory-map.md">← 上一页：03 目录导览</a> · <a href="05-dev-workflow.md">下一页：05 开发流程 →</a>
+</p>
+
+---
 
 本页记录跨模块、跨生命周期的**权威约束**（前身为 `docs/architecture.md`）。源码注释应解释局部不变量并引用这里（`@see ../../docs/04-invariants.md`），不在多个模块重复维护整套启动或持久化叙述。改动涉及下列任何一条时，先改这里，再改代码。
 
@@ -59,4 +65,8 @@
 
 ---
 
-[← 03 目录导览](03-directory-map.md) · [返回目录](README.md) · 下一页：[05 开发流程](05-dev-workflow.md)
+<div align="center">
+
+[← 上一页：03 目录导览](03-directory-map.md) · [📚 开发者文档首页](README.md) · [⬆️ 回到顶部](#04-运行时权威约束) · [下一页：05 开发流程 →](05-dev-workflow.md)
+
+</div>

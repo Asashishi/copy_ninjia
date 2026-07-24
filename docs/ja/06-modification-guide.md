@@ -1,8 +1,14 @@
 # 06 よくある変更手順
 
-[简体中文](../06-modification-guide.md) · [English](../en/06-modification-guide.md) · **日本語**
+<p align="center">
+  <a href="../06-modification-guide.md">简体中文</a> · <a href="../en/06-modification-guide.md">English</a> · <b>日本語</b>
+</p>
 
-[← 05 開発フロー](05-dev-workflow.md) · [目次に戻る](README.md) · 次へ：[07 運用とトラブルシューティング](07-operations.md)
+<p align="center">
+  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="05-dev-workflow.md">← 前のページ：05 開発フロー</a> · <a href="07-operations.md">次のページ：07 運用マニュアル →</a>
+</p>
+
+---
 
 各項目では変更するファイルと順序を示します。共通の前提は、編集前に [`AGENTS.md`](../../AGENTS.md) を読むこと、`state.json`、`memory/`、`bot.lock` などの実行時データを変更する場合や間接的に書き込むコード経路を実行する場合は先にバックアップすること、最後に `bun run check` をすべて通すこと、必要に応じてルート README を同期することです。
 
@@ -89,4 +95,8 @@
 
 ---
 
-[← 05 開発フロー](05-dev-workflow.md) · [目次に戻る](README.md) · 次へ：[07 運用とトラブルシューティング](07-operations.md)
+<div align="center">
+
+[← 前のページ：05 開発フロー](05-dev-workflow.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#06-よくある変更手順) · [次のページ：07 運用マニュアル →](07-operations.md)
+
+</div>

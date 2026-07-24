@@ -1,8 +1,14 @@
 # 02 Architecture Overview
 
-[简体中文](../02-architecture.md) · **English** · [日本語](../ja/02-architecture.md)
+<p align="center">
+  <a href="../02-architecture.md">简体中文</a> · <b>English</b> · <a href="../ja/02-architecture.md">日本語</a>
+</p>
 
-[← 01 Environment Setup](01-getting-started.md) · [Back to index](README.md) · Next: [03 Directory Map](03-directory-map.md)
+<p align="center">
+  <a href="README.md">📚 Developer Docs Home</a> · <a href="01-getting-started.md">← Prev: 01 Setup</a> · <a href="03-directory-map.md">Next: 03 Directory Map →</a>
+</p>
+
+---
 
 This page explains what the system looks like, how a message flows through it, and how the process starts and stops. It is a narrative overview; [04 Authoritative Runtime Invariants](04-invariants.md) defines the exact executable constraints, including state ownership and ordering that must not change.
 
@@ -71,4 +77,8 @@ See [04 Authoritative Runtime Invariants](04-invariants.md) for the complete rul
 
 ---
 
-[← 01 Environment Setup](01-getting-started.md) · [Back to index](README.md) · Next: [03 Directory Map](03-directory-map.md)
+<div align="center">
+
+[← Prev: 01 Setup](01-getting-started.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#02-architecture-overview) · [Next: 03 Directory Map →](03-directory-map.md)
+
+</div>

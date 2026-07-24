@@ -1,8 +1,14 @@
 # 05 开发流程与质量门禁
 
-**简体中文** · [English](en/05-dev-workflow.md) · [日本語](ja/05-dev-workflow.md)
+<p align="center">
+  <b>简体中文</b> · <a href="en/05-dev-workflow.md">English</a> · <a href="ja/05-dev-workflow.md">日本語</a>
+</p>
 
-[← 04 运行时权威约束](04-invariants.md) · [返回目录](README.md) · 下一页：[06 常见修改配方](06-modification-guide.md)
+<p align="center">
+  <a href="README.md">📚 开发者文档首页</a> · <a href="04-invariants.md">← 上一页：04 权威约束</a> · <a href="06-modification-guide.md">下一页：06 修改配方 →</a>
+</p>
+
+---
 
 ## 命令速查
 
@@ -69,4 +75,8 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 ---
 
-[← 04 运行时权威约束](04-invariants.md) · [返回目录](README.md) · 下一页：[06 常见修改配方](06-modification-guide.md)
+<div align="center">
+
+[← 上一页：04 权威约束](04-invariants.md) · [📚 开发者文档首页](README.md) · [⬆️ 回到顶部](#05-开发流程与质量门禁) · [下一页：06 修改配方 →](06-modification-guide.md)
+
+</div>

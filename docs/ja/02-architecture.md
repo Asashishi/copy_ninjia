@@ -1,8 +1,14 @@
 # 02 アーキテクチャ概要
 
-[简体中文](../02-architecture.md) · [English](../en/02-architecture.md) · **日本語**
+<p align="center">
+  <a href="../02-architecture.md">简体中文</a> · <a href="../en/02-architecture.md">English</a> · <b>日本語</b>
+</p>
 
-[← 01 環境構築](01-getting-started.md) · [目次に戻る](README.md) · 次へ：[03 ディレクトリ構成](03-directory-map.md)
+<p align="center">
+  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="01-getting-started.md">← 前のページ：01 環境構築</a> · <a href="03-directory-map.md">次のページ：03 ディレクトリマップ →</a>
+</p>
+
+---
 
 このページでは、システム全体の形、メッセージが処理される流れ、プロセスの起動と停止を説明します。ここは案内用の概要であり、状態の所有者や変更できない順序など、実行可能な厳密な制約は [04 実行時の正式な不変条件](04-invariants.md) を正本とします。
 
@@ -71,4 +77,8 @@ AI がトリガーされた後は、メインスレッドが活動量に基づ�
 
 ---
 
-[← 01 環境構築](01-getting-started.md) · [目次に戻る](README.md) · 次へ：[03 ディレクトリ構成](03-directory-map.md)
+<div align="center">
+
+[← 前のページ：01 環境構築](01-getting-started.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#02-アーキテクチャ概要) · [次のページ：03 ディレクトリマップ →](03-directory-map.md)
+
+</div>

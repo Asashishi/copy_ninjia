@@ -1,8 +1,14 @@
 # 07 Operations and Troubleshooting
 
-[简体中文](../07-operations.md) · **English** · [日本語](../ja/07-operations.md)
+<p align="center">
+  <a href="../07-operations.md">简体中文</a> · <b>English</b> · <a href="../ja/07-operations.md">日本語</a>
+</p>
 
-[← 06 Common Modification Recipes](06-modification-guide.md) · [Back to index](README.md)
+<p align="center">
+  <a href="README.md">📚 Developer Docs Home</a> · <a href="06-modification-guide.md">← Prev: 06 Recipes</a> · <b>Next: None →</b>
+</p>
+
+---
 
 ## Deployment Model
 
@@ -88,4 +94,8 @@ The token fingerprint identifies the lock owner; it is not a data-isolation boun
 
 ---
 
-[← 06 Common Modification Recipes](06-modification-guide.md) · [Back to index](README.md)
+<div align="center">
+
+[← Prev: 06 Recipes](06-modification-guide.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#07-operations-and-troubleshooting) · **Next: None →**
+
+</div>

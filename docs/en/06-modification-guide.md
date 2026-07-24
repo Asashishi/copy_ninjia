@@ -1,8 +1,14 @@
 # 06 Common Modification Recipes
 
-[简体中文](../06-modification-guide.md) · **English** · [日本語](../ja/06-modification-guide.md)
+<p align="center">
+  <a href="../06-modification-guide.md">简体中文</a> · <b>English</b> · <a href="../ja/06-modification-guide.md">日本語</a>
+</p>
 
-[← 05 Development Workflow](05-dev-workflow.md) · [Back to index](README.md) · Next: [07 Operations and Troubleshooting](07-operations.md)
+<p align="center">
+  <a href="README.md">📚 Developer Docs Home</a> · <a href="05-dev-workflow.md">← Prev: 05 Workflow</a> · <a href="07-operations.md">Next: 07 Operations →</a>
+</p>
+
+---
 
 Each recipe names the files to touch and the order to follow. The universal prerequisites are: read [`AGENTS.md`](../../AGENTS.md) before editing; back up runtime data such as `state.json`, `memory/`, and `bot.lock` before changing it or exercising a code path that may write it indirectly; finish with a green `bun run check`; and update the root README when needed.
 
@@ -89,4 +95,8 @@ The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#pers
 
 ---
 
-[← 05 Development Workflow](05-dev-workflow.md) · [Back to index](README.md) · Next: [07 Operations and Troubleshooting](07-operations.md)
+<div align="center">
+
+[← Prev: 05 Workflow](05-dev-workflow.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#06-common-modification-recipes) · [Next: 07 Operations →](07-operations.md)
+
+</div>

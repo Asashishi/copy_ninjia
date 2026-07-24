@@ -1,8 +1,14 @@
 # 04 Authoritative Runtime Invariants
 
-[简体中文](../04-invariants.md) · **English** · [日本語](../ja/04-invariants.md)
+<p align="center">
+  <a href="../04-invariants.md">简体中文</a> · <b>English</b> · <a href="../ja/04-invariants.md">日本語</a>
+</p>
 
-[← 03 Directory Map](03-directory-map.md) · [Back to index](README.md) · Next: [05 Development Workflow](05-dev-workflow.md)
+<p align="center">
+  <a href="README.md">📚 Developer Docs Home</a> · <a href="03-directory-map.md">← Prev: 03 Directory Map</a> · <a href="05-dev-workflow.md">Next: 05 Workflow →</a>
+</p>
+
+---
 
 This page records the **authoritative constraints** across modules and lifecycles; it supersedes the former `docs/architecture.md`. Source comments should explain local invariants and link here, for example with `@see ../../docs/04-invariants.md`, instead of maintaining complete startup or persistence narratives in multiple modules. When a change touches any rule below, update this page before changing the code.
 
@@ -59,4 +65,8 @@ Top-level barrels retained after splitting large files exist only for gradual mi
 
 ---
 
-[← 03 Directory Map](03-directory-map.md) · [Back to index](README.md) · Next: [05 Development Workflow](05-dev-workflow.md)
+<div align="center">
+
+[← Prev: 03 Directory Map](03-directory-map.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#04-authoritative-runtime-invariants) · [Next: 05 Workflow →](05-dev-workflow.md)
+
+</div>

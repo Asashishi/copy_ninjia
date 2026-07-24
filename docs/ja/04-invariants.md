@@ -1,8 +1,14 @@
 # 04 実行時の正式な不変条件
 
-[简体中文](../04-invariants.md) · [English](../en/04-invariants.md) · **日本語**
+<p align="center">
+  <a href="../04-invariants.md">简体中文</a> · <a href="../en/04-invariants.md">English</a> · <b>日本語</b>
+</p>
 
-[← 03 ディレクトリ構成](03-directory-map.md) · [目次に戻る](README.md) · 次へ：[05 開発フロー](05-dev-workflow.md)
+<p align="center">
+  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="03-directory-map.md">← 前のページ：03 ディレクトリマップ</a> · <a href="05-dev-workflow.md">次のページ：05 開発フロー →</a>
+</p>
+
+---
 
 このページは、モジュールやライフサイクルをまたぐ**正式な制約**を記録します。旧 `docs/architecture.md` の後継です。ソースコメントでは局所的な不変条件を説明し、`@see ../../docs/04-invariants.md` のようにここを参照してください。起動や永続化の説明全体を複数のモジュールへ重複させてはいけません。以下のいずれかに関わる変更では、コードより先にこのページを更新します。
 
@@ -59,4 +65,8 @@
 
 ---
 
-[← 03 ディレクトリ構成](03-directory-map.md) · [目次に戻る](README.md) · 次へ：[05 開発フロー](05-dev-workflow.md)
+<div align="center">
+
+[← 前のページ：03 ディレクトリマップ](03-directory-map.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#04-実行時の正式な不変条件) · [次のページ：05 開発フロー →](05-dev-workflow.md)
+
+</div>

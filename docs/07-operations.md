@@ -1,8 +1,14 @@
 # 07 运维与排障
 
-**简体中文** · [English](en/07-operations.md) · [日本語](ja/07-operations.md)
+<p align="center">
+  <b>简体中文</b> · <a href="en/07-operations.md">English</a> · <a href="ja/07-operations.md">日本語</a>
+</p>
 
-[← 06 常见修改配方](06-modification-guide.md) · [返回目录](README.md)
+<p align="center">
+  <a href="README.md">📚 开发者文档首页</a> · <a href="06-modification-guide.md">← 上一页：06 修改配方</a> · <b>下一页：无 →</b>
+</p>
+
+---
 
 ## 部署形态
 
@@ -88,4 +94,8 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 
 ---
 
-[← 06 常见修改配方](06-modification-guide.md) · [返回目录](README.md)
+<div align="center">
+
+[← 上一页：06 修改配方](06-modification-guide.md) · [📚 开发者文档首页](README.md) · [⬆️ 回到顶部](#07-运维与排障) · **下一页：无 →**
+
+</div>

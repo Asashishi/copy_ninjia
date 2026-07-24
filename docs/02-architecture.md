@@ -1,8 +1,14 @@
 # 02 架构总览
 
-**简体中文** · [English](en/02-architecture.md) · [日本語](ja/02-architecture.md)
+<p align="center">
+  <b>简体中文</b> · <a href="en/02-architecture.md">English</a> · <a href="ja/02-architecture.md">日本語</a>
+</p>
 
-[← 01 环境搭建](01-getting-started.md) · [返回目录](README.md) · 下一页：[03 目录导览](03-directory-map.md)
+<p align="center">
+  <a href="README.md">📚 开发者文档首页</a> · <a href="01-getting-started.md">← 上一页：01 环境搭建</a> · <a href="03-directory-map.md">下一页：03 目录导览 →</a>
+</p>
+
+---
 
 本页讲「系统长什么样、一条消息怎么流过去、进程怎么起来怎么停」。这里是叙述性的导览；可执行的精确约束（谁拥有什么状态、什么顺序不可颠倒）以 [04 运行时权威约束](04-invariants.md) 为准。
 
@@ -71,4 +77,8 @@ AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投�
 
 ---
 
-[← 01 环境搭建](01-getting-started.md) · [返回目录](README.md) · 下一页：[03 目录导览](03-directory-map.md)
+<div align="center">
+
+[← 上一页：01 环境搭建](01-getting-started.md) · [📚 开发者文档首页](README.md) · [⬆️ 回到顶部](#02-架构总览) · [下一页：03 目录导览 →](03-directory-map.md)
+
+</div>

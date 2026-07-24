@@ -1,8 +1,14 @@
 # 03 ディレクトリ構成とコード配置
 
-[简体中文](../03-directory-map.md) · [English](../en/03-directory-map.md) · **日本語**
+<p align="center">
+  <a href="../03-directory-map.md">简体中文</a> · <a href="../en/03-directory-map.md">English</a> · <b>日本語</b>
+</p>
 
-[← 02 アーキテクチャ概要](02-architecture.md) · [目次に戻る](README.md) · 次へ：[04 実行時の正式な不変条件](04-invariants.md)
+<p align="center">
+  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="02-architecture.md">← 前のページ：02 アーキテクチャ</a> · <a href="04-invariants.md">次のページ：04 不変条件 →</a>
+</p>
+
+---
 
 このページでは「このコードはどこにあるか」「新しいコードをどこに置くか」を説明します。引用符、引数数の上限、`import type` などのスタイル詳細は ESLint と [`AGENTS.md`](../../AGENTS.md) が規定するため、ここでは繰り返しません。
 
@@ -54,4 +60,8 @@
 
 ---
 
-[← 02 アーキテクチャ概要](02-architecture.md) · [目次に戻る](README.md) · 次へ：[04 実行時の正式な不変条件](04-invariants.md)
+<div align="center">
+
+[← 前のページ：02 アーキテクチャ](02-architecture.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#03-ディレクトリ構成とコード配置) · [次のページ：04 不変条件 →](04-invariants.md)
+
+</div>

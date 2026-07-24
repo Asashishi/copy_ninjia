@@ -1,8 +1,14 @@
 # 03 Directory Map and Code Placement
 
-[简体中文](../03-directory-map.md) · **English** · [日本語](../ja/03-directory-map.md)
+<p align="center">
+  <a href="../03-directory-map.md">简体中文</a> · <b>English</b> · <a href="../ja/03-directory-map.md">日本語</a>
+</p>
 
-[← 02 Architecture Overview](02-architecture.md) · [Back to index](README.md) · Next: [04 Authoritative Runtime Invariants](04-invariants.md)
+<p align="center">
+  <a href="README.md">📚 Developer Docs Home</a> · <a href="02-architecture.md">← Prev: 02 Architecture</a> · <a href="04-invariants.md">Next: 04 Invariants →</a>
+</p>
+
+---
 
 This page answers “where does this code live, and where should new code go?” ESLint and [`AGENTS.md`](../../AGENTS.md) define style details such as quotes, parameter limits, and `import type`; they are not repeated here.
 
@@ -54,4 +60,8 @@ Paths under `test/` mirror `src/`: when changing `src/workers/diskIO/verificatio
 
 ---
 
-[← 02 Architecture Overview](02-architecture.md) · [Back to index](README.md) · Next: [04 Authoritative Runtime Invariants](04-invariants.md)
+<div align="center">
+
+[← Prev: 02 Architecture](02-architecture.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#03-directory-map-and-code-placement) · [Next: 04 Invariants →](04-invariants.md)
+
+</div>

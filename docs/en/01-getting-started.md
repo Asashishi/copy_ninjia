@@ -1,8 +1,14 @@
 # 01 Environment Setup and First Run
 
-[简体中文](../01-getting-started.md) · **English** · [日本語](../ja/01-getting-started.md)
+<p align="center">
+  <a href="../01-getting-started.md">简体中文</a> · <b>English</b> · <a href="../ja/01-getting-started.md">日本語</a>
+</p>
 
-[← Back to index](README.md) · Next: [02 Architecture Overview](02-architecture.md)
+<p align="center">
+  <a href="README.md">📚 Developer Docs Home</a> · <b>← Prev: None</b> · <a href="02-architecture.md">Next: 02 Architecture →</a>
+</p>
+
+---
 
 This page takes a clean environment all the way to “the bot works normally in a group.” It focuses on the shortest path; see [02 Architecture Overview](02-architecture.md) for the design reasoning behind each step.
 
@@ -79,4 +85,8 @@ Startup failures from the data-root preflight, `bot.lock`, or state validation a
 
 ---
 
-[← Back to index](README.md) · Next: [02 Architecture Overview](02-architecture.md)
+<div align="center">
+
+**← Prev: None** · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#01-environment-setup-and-first-run) · [Next: 02 Architecture →](02-architecture.md)
+
+</div>

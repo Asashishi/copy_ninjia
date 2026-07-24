@@ -1,33 +1,93 @@
-# Copy Ninjia 開発者ドキュメント
+<div align="center">
 
-[简体中文](../README.md) · [English](../en/README.md) · **日本語**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/tagline_ja_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../assets/tagline_ja_light.svg">
+  <img alt="Copy Ninjia Tagline" src="../assets/tagline_ja_light.svg" width="780">
+</picture>
 
-ここには、環境構築、アーキテクチャ、変更手順、運用に関する開発者向けの複数ページドキュメントをまとめています。ルートの [`README.ja.md`](../../README.ja.md) は利用者向けの概要とクイックスタート、[`AGENTS.md`](../../AGENTS.md) はコーディングスタイルとコード配置規約を扱い、それ以外の「どう変更するか」「なぜこの設計なのか」は本ディレクトリで説明します。
+# 📚 Copy Ninjia 開発者ドキュメント
 
-## 読み方
+<p align="center">
+  <a href="../README.md">简体中文</a> · <a href="../en/README.md">English</a> · <b>日本語</b> · <a href="../../README.ja.md">🏠 ルート README</a>
+</p>
 
-| やりたいこと | 最初に読むページ |
-| :--- | :--- |
-| 初めてプロジェクトを起動する | [01 環境構築と初回起動](01-getting-started.md) |
-| 全体設計を理解する | [02 アーキテクチャ概要](02-architecture.md) → [04 実行時の正式な不変条件](04-invariants.md) |
-| コードをどこに置くか調べる | [03 ディレクトリ構成とコード配置](03-directory-map.md) |
-| 日常の開発、テスト、コミット | [05 開発フローと品質ゲート](05-dev-workflow.md) |
-| 機能追加、パラメータ調整、動作変更 | [06 よくある変更手順](06-modification-guide.md) |
-| デプロイ、バックアップ、障害対応 | [07 運用とトラブルシューティング](07-operations.md) |
+開発者向けマルチページガイド：環境構築、アーキテクチャ設計、コーディング規約から機能拡張・運用保守まで網羅。
 
-## ページ一覧
+</div>
 
-1. [環境構築と初回起動](01-getting-started.md) — 依存関係、`.env`、Telegram 側の設定、最初の起動。
-2. [アーキテクチャ概要](02-architecture.md) — メインスレッドと 3 つの Worker、メッセージ処理の全経路、起動と停止の順序。
-3. [ディレクトリ構成とコード配置](03-directory-map.md) — 各ディレクトリの責務、新しいコードの配置判断、互換エントリの規約。
-4. [実行時の正式な不変条件](04-invariants.md) — モジュールやライフサイクルをまたぐ正式な制約。ソースコード内の `@see` はこのページを参照します。
-5. [開発フローと品質ゲート](05-dev-workflow.md) — `bun run check` の全処理、テスト分離、カバレッジ基準、コミットとリリース。
-6. [よくある変更手順](06-modification-guide.md) — コマンド追加、パラメータ調整、AI ツール追加、設定や永続化 schema 変更の手順。
-7. [運用とトラブルシューティング](07-operations.md) — systemd デプロイ、データルート、バックアップ方針、起動失敗の調査。
+---
 
-## ドキュメントの保守規約
+## 🧭 開発者クイックナビゲーション
 
-- 中国語の原文は `docs/`、英語版は `docs/en/`、日本語版は `docs/ja/` に置きます。内容、リンク、動作上の数値を変更したときは、対応するページを同時に更新してください。
-- モジュール横断の制約は [04 実行時の正式な不変条件](04-invariants.md) だけを正式な記述元とし、ほかのページやソースコメントでは重複記述せず参照します。
-- 確率、容量、時間などの動作パラメータは `src/consts/` が正本です。可能な限り具体値を複製せず、定数名とファイルパスを記載してください。ルート README に表示が必要な数値は、パラメータ変更時に同期します。
-- ルート README のテスト数とカバレッジは `bun run test:coverage` の実測値です。更新手順は [05 開発フロー](05-dev-workflow.md#readme-指標の更新) を参照してください。
+| シナリオ | おすすめパス | 直達リンク |
+| :--- | :--- | :---: |
+| 🚀 **初回実行** | 依存関係、`.env` 設定、Telegram API 権限および初回起動 | [📖 01 環境構築](01-getting-started.md) |
+| 🏗️ **アーキテクチャ理解** | メインスレッドと 3 つの Worker モデル、メッセージ生存期間と復元 | [📖 02 アーキテクチャ](02-architecture.md) |
+| 🗺️ **コード検索** | モジュール役割分担、ソース構造マップおよび配置規約 | [📖 03 ディレクトリマップ](03-directory-map.md) |
+| ⚡ **不変条件** | モジュール横断の権威的制約、並行性保護と状態規約 | [📖 04 権威的不変条件](04-invariants.md) |
+| 🧪 **開発とテスト** | `bun run check` 品質ゲート、テスト隔離機構とカバー率 | [📖 05 開発フロー](05-dev-workflow.md) |
+| 🛠️ **機能の追加・変更** | コマンド追加、パラメータ調整、AI ツール追加および Schema 変更のレシピ | [📖 06 変更レシピ](06-modification-guide.md) |
+| 🛡️ **本番運用** | systemd デプロイ、`COPY_NINJIA_DATA_ROOT`、バックアップと障害対応 | [📖 07 運用マニュアル](07-operations.md) |
+
+---
+
+## 📑 ページ一覧と概要
+
+1. **[01 環境構築と初回実行](01-getting-started.md)**
+   - 依存関係（Bun 1.3+ / Linux / Bot Token / Gemini API Key）
+   - `.env` 設定ファイルの必須項目
+   - Telegram BotFather 設定（Privacy Mode / 管理者権限 / Inline Mode）
+   - 初回起動と `/init enable` のハンドシェイク
+
+2. **[02 アーキテクチャ概要](02-architecture.md)**
+   - 1 つのメインスレッド + 3 つの Worker（AI / Anti-Raid / Disk I/O）プロセスモデル
+   - Telegram Update の受信から検証・配送・応答までの旅路
+   - 起動シーケンスおよび Flush Barrier による安全な停止手順
+
+3. **[03 ディレクトリマップとコード配置](03-directory-map.md)**
+   - `src/` 下の 13 サブドメインの明確な責務境界
+   - コード配置の意思決定ツリー（定数、型、キャッシュ、状態遷移、Worker）
+   - 後行互換エントリーポイントの集約ルール
+
+4. **[04 実行時権威的不変条件](04-invariants.md)**
+   - モジュール間・ライフサイクル間の権威的制約（コード内 `@see` 注釈のリンク先）
+   - 状態隔離、並行制限、キャッシュ淘汰上限およびロック機構
+   - アトミック永続化、Anti-Raid 認証状態マシンおよびおみくじ HMAC 鍵の一貫性
+
+5. **[05 開発フローと品質ゲート](05-dev-workflow.md)**
+   - `bun run check` 4 段階検証パイプライン：規約チェック + Lint + Typecheck + カバー率テスト
+   - テスト隔離機構と一時データサンドボックス
+   - コミット規約とリリース前の障害注入テスト `bun run test:fault-injection`
+
+6. **[06 よくある変更レシピ](06-modification-guide.md)**
+   - レシピ 1：Telegram スラッシュコマンドの追加
+   - レシピ 2：システム定数やタイムアウトの調整
+   - レシピ 3：Gemini AI カスタムツールの拡張
+   - レシピ 4：設定 Schema または永続化データ構造の変更（手動移行戦略）
+
+7. **[07 運用と障害対応](07-operations.md)**
+   - 推奨ハードウェア構成とデプロイガイド
+   - `COPY_NINJIA_DATA_ROOT` ディレクトリ機能チェック（fsync / hard link / rename）
+   - バックアップと復元（`memory/luck/receipt-secret.json` 鍵の一貫性）
+   - よくある起動失敗と `bot.lock` のトラブルシューティング
+
+---
+
+## 📝 ドキュメント保守規約
+
+- **3 言語同期**：中国語版は `docs/`、英語版は `docs/en/`、日本語版は `docs/ja/` に配置。構成や数値変更時は 3 言語を同時に更新。
+- **一元管理**：モジュール横断の制約は [04 権威的不変条件](04-invariants.md) でのみ保守し、他ドキュメントからはリンク参照。
+- **定数参照**：数値の真実のソースは `src/consts/` です。ドキュメントでは数値の直接記述を避け定数名を記述。
+
+---
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/footer_ja_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../assets/footer_ja_light.svg">
+  <img alt="Copy Ninjia Footer" src="../assets/footer_ja_light.svg" width="580">
+</picture>
+
+</div>

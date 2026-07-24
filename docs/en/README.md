@@ -1,33 +1,93 @@
-# Copy Ninjia Developer Documentation
+<div align="center">
 
-[简体中文](../README.md) · **English** · [日本語](../ja/README.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/tagline_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../assets/tagline_en_light.svg">
+  <img alt="Copy Ninjia Tagline" src="../assets/tagline_en_light.svg" width="780">
+</picture>
 
-These multi-page docs are for developers: environment setup, architecture, modification recipes, and operations. The root [`README.en.md`](../../README.en.md) is for users and quick starts, while [`AGENTS.md`](../../AGENTS.md) defines coding style and code-placement conventions. Everything else about how to change the project and why it is designed this way lives here.
+# 📚 Copy Ninjia Developer Documentation
 
-## Reading Paths
+<p align="center">
+  <a href="../README.md">简体中文</a> · <b>English</b> · <a href="../ja/README.md">日本語</a> · <a href="../../README.en.md">🏠 Root README</a>
+</p>
 
-| What you want to do | Start here |
-| :--- | :--- |
-| Run the project for the first time | [01 Environment Setup and First Run](01-getting-started.md) |
-| Understand the overall design | [02 Architecture Overview](02-architecture.md) → [04 Authoritative Runtime Invariants](04-invariants.md) |
-| Find where code belongs | [03 Directory Map and Code Placement](03-directory-map.md) |
-| Develop, test, and commit day to day | [05 Development Workflow and Quality Gates](05-dev-workflow.md) |
-| Add features, tune parameters, or change behavior | [06 Common Modification Recipes](06-modification-guide.md) |
-| Deploy, back up, and troubleshoot | [07 Operations and Troubleshooting](07-operations.md) |
+Comprehensive multi-page developer guide: from setup, architecture, and coding standards, to feature additions and operational maintenance.
 
-## Page Index
+</div>
 
-1. [Environment Setup and First Run](01-getting-started.md)—dependencies, `.env`, Telegram-side configuration, and the first launch.
-2. [Architecture Overview](02-architecture.md)—the main thread and three Workers, the complete journey of a message, and startup/shutdown order.
-3. [Directory Map and Code Placement](03-directory-map.md)—each directory's responsibility, where new code belongs, and compatibility-entry conventions.
-4. [Authoritative Runtime Invariants](04-invariants.md)—authoritative constraints across modules and lifecycles; `@see` comments in source code point here.
-5. [Development Workflow and Quality Gates](05-dev-workflow.md)—the full `bun run check` chain, test isolation, coverage rules, commits, and releases.
-6. [Common Modification Recipes](06-modification-guide.md)—step-by-step guides for adding commands, adjusting parameters, adding AI tools, and changing configuration or persistence schemas.
-7. [Operations and Troubleshooting](07-operations.md)—systemd deployment, the data root, backup strategy, and startup troubleshooting.
+---
 
-## Documentation Maintenance
+## 🧭 Developer Quick Navigation
 
-- Chinese originals remain in `docs/`, with English mirrors in `docs/en/` and Japanese mirrors in `docs/ja/`; update corresponding pages together whenever content, links, or behavioral figures change.
-- Cross-module constraints have one authoritative home: [04 Authoritative Runtime Invariants](04-invariants.md). Other pages and source comments should link to it rather than restating it.
-- The source of truth for behavioral parameters such as probabilities, capacities, and durations is `src/consts/`. Documentation should name constants and file paths instead of copying numeric values where possible; figures that must appear in the root README must be updated whenever those parameters change.
-- Test and coverage figures in the root README come from an actual `bun run test:coverage` run. See [05 Development Workflow](05-dev-workflow.md#updating-readme-metrics) for the update procedure.
+| Scenario | Recommended Path | Direct Link |
+| :--- | :--- | :---: |
+| 🚀 **First Run** | Environment setup, `.env` config, Telegram API options, first run | [📖 01 Setup](01-getting-started.md) |
+| 🏗️ **Architecture** | Main thread + 3 Workers model, message lifecycle, recovery | [📖 02 Architecture](02-architecture.md) |
+| 🗺️ **Code Placement** | Module map, code structure, placement decision rules | [📖 03 Directory Map](03-directory-map.md) |
+| ⚡ **Invariants** | Cross-module constraints, concurrency safety, invariant rules | [📖 04 Invariants](04-invariants.md) |
+| 🧪 **Development** | `bun run check` pipeline, test isolation, coverage rules | [📖 05 Workflow](05-dev-workflow.md) |
+| 🛠️ **Modifications** | Step-by-step recipes for commands, AI tools, and schema edits | [📖 06 Recipes](06-modification-guide.md) |
+| 🛡️ **Operations** | systemd deployment, `COPY_NINJIA_DATA_ROOT`, backup, debugging | [📖 07 Operations](07-operations.md) |
+
+---
+
+## 📑 Page Index & Summary
+
+1. **[01 Environment Setup and First Run](01-getting-started.md)**
+   - Dependencies (Bun 1.3+ / Linux / Bot Token / Gemini API Key)
+   - `.env` configuration file requirements
+   - Telegram BotFather setup (Privacy Mode / Admin permissions / Inline Mode)
+   - First launch and group `/init enable` handshake
+
+2. **[02 Architecture Overview](02-architecture.md)**
+   - Main Thread + 3 Workers (AI / Anti-Raid / Disk I/O) multi-process architecture
+   - Full journey of a Telegram Update from ingestion to Worker dispatch
+   - Startup sequence and Flush Barrier graceful shutdown
+
+3. **[03 Directory Map and Code Placement](03-directory-map.md)**
+   - Responsibility boundaries across 13 subdomains under `src/`
+   - Decision tree for code placement: consts, types, caches, states, and workers
+   - Backward-compatibility entry point conventions
+
+4. **[04 Authoritative Runtime Invariants](04-invariants.md)**
+   - Authoritative constraints across modules and lifecycles (source `@see` comments point here)
+   - State isolation, concurrency limits, cache eviction bounds, and locking
+   - Atomic persistence, Anti-Raid verification state machine, and fortune HMAC key consistency
+
+5. **[05 Development Workflow and Quality Gates](05-dev-workflow.md)**
+   - `bun run check` 4-stage validation: conventions + lint + typecheck + full coverage test
+   - Test isolation mechanism and temporary data root sandbox
+   - Commit standards and pre-release fault injection suite `bun run test:fault-injection`
+
+6. **[06 Common Modification Recipes](06-modification-guide.md)**
+   - Recipe 1: Adding a Telegram slash command
+   - Recipe 2: Adjusting system constants or timeouts
+   - Recipe 3: Extending Gemini AI custom function tools
+   - Recipe 4: Modifying config schemas or persistence structures (manual migration)
+
+7. **[07 Operations and Troubleshooting](07-operations.md)**
+   - Recommended hardware specs and deployment options
+   - `COPY_NINJIA_DATA_ROOT` directory capability checks (fsync / hard link / rename)
+   - Backup and recovery (`memory/luck/receipt-secret.json` key consistency)
+   - Common startup failures and `bot.lock` troubleshooting
+
+---
+
+## 📝 Documentation Maintenance
+
+- **Trilingual Sync**: Chinese docs live in `docs/`, English in `docs/en/`, Japanese in `docs/ja/`. Update all 3 languages when architecture or figures change.
+- **Single Source of Truth**: Cross-module invariants are maintained solely in [04 Invariants](04-invariants.md). Other pages link to it without duplication.
+- **Constant References**: The source of truth for numeric values is `src/consts/`. Reference constant names and paths instead of hardcoding numbers.
+
+---
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/footer_en_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../assets/footer_en_light.svg">
+  <img alt="Copy Ninjia Footer" src="../assets/footer_en_light.svg" width="580">
+</picture>
+
+</div>

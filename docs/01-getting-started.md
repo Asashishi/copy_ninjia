@@ -1,8 +1,14 @@
 # 01 环境搭建与首次运行
 
-**简体中文** · [English](en/01-getting-started.md) · [日本語](ja/01-getting-started.md)
+<p align="center">
+  <b>简体中文</b> · <a href="en/01-getting-started.md">English</a> · <a href="ja/01-getting-started.md">日本語</a>
+</p>
 
-[← 返回目录](README.md) · 下一页：[02 架构总览](02-architecture.md)
+<p align="center">
+  <a href="README.md">📚 开发者文档首页</a> · <b>← 上一页：无</b> · <a href="02-architecture.md">下一页：02 架构总览 →</a>
+</p>
+
+---
 
 本页把一个全新环境带到「机器人在群里正常工作」。只求最短路径；每一步背后的设计原因见 [02 架构总览](02-architecture.md)。
 
@@ -79,4 +85,8 @@ bun run start     # 启动长轮询
 
 ---
 
-[← 返回目录](README.md) · 下一页：[02 架构总览](02-architecture.md)
+<div align="center">
+
+**← 上一页：无** · [📚 开发者文档首页](README.md) · [⬆️ 回到顶部](#01-环境搭建与首次运行) · [下一页：02 架构总览 →](02-architecture.md)
+
+</div>

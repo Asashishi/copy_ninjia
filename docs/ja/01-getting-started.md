@@ -1,8 +1,14 @@
 # 01 環境構築と初回起動
 
-[简体中文](../01-getting-started.md) · [English](../en/01-getting-started.md) · **日本語**
+<p align="center">
+  <a href="../01-getting-started.md">简体中文</a> · <a href="../en/01-getting-started.md">English</a> · <b>日本語</b>
+</p>
 
-[← 目次に戻る](README.md) · 次へ：[02 アーキテクチャ概要](02-architecture.md)
+<p align="center">
+  <a href="README.md">📚 開発者ドキュメント TOP</a> · <b>← 前のページ：なし</b> · <a href="02-architecture.md">次のページ：02 アーキテクチャ →</a>
+</p>
+
+---
 
 このページでは、まっさらな環境から「Bot がグループ内で正常に動作する」状態までを最短手順で案内します。各手順の設計上の理由は [02 アーキテクチャ概要](02-architecture.md) を参照してください。
 
@@ -79,4 +85,8 @@ bun run start     # ロングポーリングを開始
 
 ---
 
-[← 目次に戻る](README.md) · 次へ：[02 アーキテクチャ概要](02-architecture.md)
+<div align="center">
+
+**← 前のページ：なし** · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#01-環境構築と初回起動) · [次のページ：02 アーキテクチャ →](02-architecture.md)
+
+</div>

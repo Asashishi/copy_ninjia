@@ -1,8 +1,14 @@
 # 05 開発フローと品質ゲート
 
-[简体中文](../05-dev-workflow.md) · [English](../en/05-dev-workflow.md) · **日本語**
+<p align="center">
+  <a href="../05-dev-workflow.md">简体中文</a> · <a href="../en/05-dev-workflow.md">English</a> · <b>日本語</b>
+</p>
 
-[← 04 実行時の正式な不変条件](04-invariants.md) · [目次に戻る](README.md) · 次へ：[06 よくある変更手順](06-modification-guide.md)
+<p align="center">
+  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="04-invariants.md">← 前のページ：04 不変条件</a> · <a href="06-modification-guide.md">次のページ：06 変更レシピ →</a>
+</p>
+
+---
 
 ## コマンド早見表
 
@@ -69,4 +75,8 @@ Tests / Coverage badge、「開発」section の指標行、「現在の main br
 
 ---
 
-[← 04 実行時の正式な不変条件](04-invariants.md) · [目次に戻る](README.md) · 次へ：[06 よくある変更手順](06-modification-guide.md)
+<div align="center">
+
+[← 前のページ：04 不変条件](04-invariants.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#05-開発フローと品質ゲート) · [次のページ：06 変更レシピ →](06-modification-guide.md)
+
+</div>
