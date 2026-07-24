@@ -157,7 +157,7 @@ flowchart TD
 <tr><th width="13%" align="left">項目</th><th width="87%" align="left">方針</th></tr>
 <tr><td>🧩&nbsp;モデル</td><td>返信、要約、画像説明には <code>gemini-3.5-flash-lite</code>、画像生成・編集には <code>gemini-3.1-flash-lite-image</code> を使用</td></tr>
 <tr><td>🎯&nbsp;トリガー</td><td>Bot への返信または <code>@Bot</code> は必ずトリガー。通常テキストとメディア評価はグループ活動量に基づく動的確率を共有し、同じ送信者・同じグループには 15 秒のランダムトリガー cooldown も適用します。現在のメッセージを直近 1 時間の window に先に加えるため、cold group の最初の 1 件は 1/174、window 内 165 件で下限 1/10 です。活動量はメモリだけに保持し、1 時間 idle または再起動で cold start に戻ります</td></tr>
-<tr><td>🚦&nbsp;グループ内並列</td><td>グループごとに実行中の Gemini tool conversation は最大 5 round。並列枠が埋まっている間、直接トリガーは上限付きキューに入り、ランダムトリガーは破棄します</td></tr>
+<tr><td>🚦&nbsp;グループ内並列</td><td>グループごとに実行中の Gemini tool conversation は最大 10 round。並列枠が埋まっている間、直接トリガーは最大 25 件のキューに入り、ランダムトリガーは破棄します</td></tr>
 <tr><td>⏱️&nbsp;レート制限</td><td>グループごとに 5 分間で最大 150 round を開始。超過通知自体にも cooldown があります</td></tr>
 <tr><td>🔧&nbsp;ツール</td><td>同一 request に組み込み <code>googleSearch</code> を実際に登録し、東京の天気、<code>send_message</code>、<code>add_reaction</code>、<code>view_sticker_pack</code>、<code>send_sticker</code>、<code>generate_image</code> などの function tool を提供します。1 reply round で custom function call は最大 20 回。検証が必要な場合は行動前に検索すること、グループ向けテキストはすべて明示的に <code>send_message</code> を通すことを prompt で要求します。画像、スタンプ、リアクション成功後の最終本文は追加発言として扱いません</td></tr>
 <tr><td>🧠&nbsp;メモリ</td><td>逐語メッセージ 75～150 件と、最大 7 × 75 件の cold history 要約により、合計約 600～675 件を保持。起動復元は最新の逐語メッセージ 149 件だけを読み、次の rotation 境界を予約します。Worker に常駐するグループは最大 100 件で、超過時は最終活動時刻から eviction して disk snapshot を削除し、返信 round 実行中のグループをできるだけ避けます</td></tr>
