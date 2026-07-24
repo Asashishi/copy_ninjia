@@ -6,19 +6,20 @@
   <text x="460" y="34" text-anchor="middle" class="txt">
     <tspan fill="#e6edf3">A </tspan>
     <tspan fill="#58b9ec">Telegram</tspan>
-    <tspan fill="#e6edf3"> group-chat bot that</tspan>
+    <tspan fill="#e6edf3"> group-chat bot that </tspan>
+    <tspan fill="#a99bff">steals avatars</tspan>
+    <tspan fill="#e6edf3">,</tspan>
   </text>
   <text x="460" y="70" text-anchor="middle" class="txt">
-    <tspan fill="#a99bff">steals avatars</tspan>
-    <tspan fill="#e6edf3">, </tspan>
     <tspan fill="#a99bff">copies messages</tspan>
     <tspan fill="#e6edf3">, </tspan>
     <tspan fill="#a99bff">sees images</tspan>
+    <tspan fill="#e6edf3">, and </tspan>
+    <tspan fill="#a99bff">guards groups</tspan>
     <tspan fill="#e6edf3">,</tspan>
   </text>
   <text x="460" y="106" text-anchor="middle" class="txt">
-    <tspan fill="#a99bff">guards groups</tspan>
-    <tspan fill="#e6edf3">, and </tspan>
+    <tspan fill="#e6edf3">and </tspan>
     <tspan fill="#a99bff">roasts people</tspan>
     <tspan fill="#e6edf3"> with a straight face</tspan>
   </text>
