@@ -68,9 +68,36 @@ afterEach(() => {
 });
 
 describe("copy 命令共享冷却与头像串行器", () => {
-  test("头像 drain 拒绝非正有限预算", () => {
-    expect(() => drainAvatarUpdates(0)).toThrow("positive finite");
-    expect(() => drainAvatarUpdates(Number.NaN)).toThrow("positive finite");
+  test("头像 drain 拒绝非有限与负预算", () => {
+    expect(() => drainAvatarUpdates(-1)).toThrow("non-negative finite");
+    expect(() => drainAvatarUpdates(Number.NaN)).toThrow("non-negative finite");
+    expect(() => drainAvatarUpdates(Number.POSITIVE_INFINITY)).toThrow("non-negative finite");
+  });
+
+  test("零预算在空闲时直接结算为 flushed", async () => {
+    await expect(drainAvatarUpdates(0)).resolves.toBe("flushed");
+  });
+
+  test("零预算在有任务在途时立即 abort 并结算为 timedOut", async () => {
+    copyUserProfilePhoto.mockImplementationOnce(async (...args: unknown[]): Promise<boolean> => await new Promise<boolean>((_resolve, reject) => {
+      const signal = (args[2] as { signal?: AbortSignal } | undefined)?.signal;
+      signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    }));
+    shared.stealAvatarInBackground({
+      chatId: -1001,
+      target: { id: 7, first_name: "Alice" },
+      successText: "late-ok",
+      failureText: "late-fail",
+    });
+    await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
+
+    quiesceAvatarUpdates();
+    await expect(drainAvatarUpdates(0)).resolves.toBe("timedOut");
+    await waitFor(() => !avatarUpdateState.running);
+
+    // abort 后不得再发送迟到战报，与 docs/04-invariants.md 的停机不变量一致。
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(avatarUpdateState.pending).toBeNull();
   });
 
   test("普通用户原子占用全局冷却，窗口内下一次调用被拒绝", async () => {

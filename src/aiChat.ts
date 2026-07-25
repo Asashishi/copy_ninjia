@@ -2,16 +2,11 @@ import { superviseWorker } from "./libs/supervisedWorker";
 import { markSelfSent } from "./infra/selfSentTracker";
 import { registerChatTeardown } from "./infra/chatTeardown";
 import { logger } from "./infra/logger";
-import {
-  onAiMemoryDeletedPersisted,
-  onAiMemoryPersisted,
-  onDiskIORespawn,
-  postDiskIO,
-} from "./ai/persistence";
+import { postDiskIO } from "./ai/persistence";
+import { nextAiMemoryRevision, requestAiMemoryDelete } from "./aiChat/memoryMirror";
 import {
   aiChatWorkerState,
   aiMemoryFlushBarrier,
-  aiMemoryDeleteWaiters,
   aiMemoryRevisionCounters,
   lastInitState,
   latestAiMemories,
@@ -19,10 +14,8 @@ import {
   latestStickerCatalogs,
   moodSwitchRequestCounter,
   moodSwitchWaiters,
-  pendingAiMemoryDeletes,
   postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
-  type AiMemoryDeleteWaiter,
   type MoodSwitchWaiter,
 } from "./cache/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "./consts/lifecycle";
@@ -39,66 +32,6 @@ import type {
   AiTriggerMessage,
 } from "./types/aiChat/protocol";
 
-function nextAiMemoryRevision(chatId: number): number {
-  const revision: number = (aiMemoryRevisionCounters.get(chatId) ?? 0) + 1;
-  aiMemoryRevisionCounters.set(chatId, revision);
-  return revision;
-}
-
-function removeDeleteWaiter(chatId: number, waiter: AiMemoryDeleteWaiter): void {
-  const waiters: AiMemoryDeleteWaiter[] | undefined = aiMemoryDeleteWaiters.get(chatId);
-  if (!waiters) return;
-  const index: number = waiters.indexOf(waiter);
-  if (index >= 0) waiters.splice(index, 1);
-  if (waiters.length === 0) aiMemoryDeleteWaiters.delete(chatId);
-}
-
-function waitForAiMemoryDelete(chatId: number, revision: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const waiter: AiMemoryDeleteWaiter = {
-      revision,
-      resolve,
-      reject,
-      timer: setTimeout(() => {
-        removeDeleteWaiter(chatId, waiter);
-        reject(new Error(
-          `AI memory deletion for chat ${chatId} revision ${revision} timed out after ${AI_MEMORY_FLUSH_TIMEOUT_MS}ms.`
-        ));
-      }, AI_MEMORY_FLUSH_TIMEOUT_MS),
-    };
-    const waiters: AiMemoryDeleteWaiter[] = aiMemoryDeleteWaiters.get(chatId) ?? [];
-    waiters.push(waiter);
-    aiMemoryDeleteWaiters.set(chatId, waiters);
-  });
-}
-
-/** 建立/重放最新墓碑；wait=true 用于命令与 teardown 的 update durability barrier。 */
-function requestAiMemoryDelete(chatId: number, wait: true): Promise<void>;
-function requestAiMemoryDelete(chatId: number, wait: false): undefined;
-function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<void> | undefined {
-  // 新一轮 purge 使此前任何“首份新快照”确认失效；删除 revision 之后真正
-  // 出现的新记录会按 revisionCounter + 无镜像条件重新武装快速路径。
-  postPurgeAiMemoryPersistRevisions.delete(chatId);
-  const hadLatestSnapshot: boolean = latestAiMemories.delete(chatId);
-  latestAiMemoryRevisions.delete(chatId);
-  let revision: number | undefined = pendingAiMemoryDeletes.get(chatId);
-  if (revision === undefined || hadLatestSnapshot) {
-    revision = nextAiMemoryRevision(chatId);
-    pendingAiMemoryDeletes.set(chatId, revision);
-  }
-  const persisted: Promise<void> | undefined = wait ? waitForAiMemoryDelete(chatId, revision) : undefined;
-  if (postDiskIO({ type: "deleteAiMemory", chatId, revision }) === false && persisted !== undefined) {
-    const waiters: AiMemoryDeleteWaiter[] = aiMemoryDeleteWaiters.get(chatId) ?? [];
-    for (const waiter of [...waiters]) {
-      if (waiter.revision !== revision) continue;
-      clearTimeout(waiter.timer);
-      removeDeleteWaiter(chatId, waiter);
-      waiter.reject(new Error(`Persistence Worker rejected AI memory deletion for chat ${chatId}.`));
-    }
-  }
-  return persisted;
-}
-
 /** 在途 switchMood 请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
  *  的回执不可能再到达，不结算会让命令处理器干等到超时。 */
 function rejectAllMoodSwitchWaiters(reason: string): void {
@@ -108,28 +41,6 @@ function rejectAllMoodSwitchWaiters(reason: string): void {
   }
   moodSwitchWaiters.clear();
 }
-
-onAiMemoryDeletedPersisted((reply) => {
-  if (pendingAiMemoryDeletes.get(reply.chatId) === reply.revision) {
-    pendingAiMemoryDeletes.delete(reply.chatId);
-  }
-  const waiters: AiMemoryDeleteWaiter[] = aiMemoryDeleteWaiters.get(reply.chatId) ?? [];
-  for (const waiter of [...waiters]) {
-    if (waiter.revision > reply.revision) continue;
-    clearTimeout(waiter.timer);
-    removeDeleteWaiter(reply.chatId, waiter);
-    waiter.resolve();
-  }
-});
-
-onAiMemoryPersisted((reply) => {
-  const expectedRevision: number | null | undefined =
-    postPurgeAiMemoryPersistRevisions.get(reply.chatId);
-  if (expectedRevision === undefined || expectedRevision === null) return;
-  if (reply.revision >= expectedRevision) {
-    postPurgeAiMemoryPersistRevisions.delete(reply.chatId);
-  }
-});
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
@@ -148,8 +59,9 @@ onAiMemoryPersisted((reply) => {
  * 事件），本模块各存一份镜像（latestAiMemories / latestStickerCatalogs）后
  * 转投 diskIOWorker 落盘。这份镜像与按 chat 单调递增的 revision、待确认删除
  * tombstone 一起构成双向崩溃重放来源：aiChatWorker 崩溃重启后凭镜像重放
- * hydrate（下方 onRespawn），diskIOWorker 崩溃重启后重放 tombstone 与最新快照
- * （下方 onDiskIORespawn）。只有 durable 删除回执能释放 tombstone。
+ * hydrate（下方 onRespawn），diskIOWorker 崩溃重启后重放 tombstone 与最新快照。
+ * revision / tombstone / 删除回执 waiter 与 diskIOWorker 侧的重放都在
+ * aiChat/memoryMirror.ts；本文件只保留 Worker 监督与对外 API。
  */
 
 const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
@@ -248,33 +160,6 @@ function postAiChatOrThrow(message: AiChatWorkerMessage): void {
   aiChatWorkerState.available = false;
   throw new Error("AI Worker is unavailable.");
 }
-
-// diskIOWorker 崩溃重建后，把当前记忆/贴纸目录镜像整份重发给它，补齐上
-// 一次成功落盘之后的增量（见 infra/diskIO.ts 的 onDiskIORespawn 注释）。
-onDiskIORespawn(() => {
-  for (const [chatId, revision] of pendingAiMemoryDeletes) {
-    postDiskIO({ type: "deleteAiMemory", chatId, revision });
-  }
-  for (const [chatId, snapshot] of latestAiMemories) {
-    const revision: number = latestAiMemoryRevisions.get(chatId) ?? 0;
-    const immediateRevision: number | null | undefined =
-      postPurgeAiMemoryPersistRevisions.get(chatId);
-    postDiskIO({
-      type: "aiMemory",
-      chatId,
-      revision,
-      snapshot,
-      ...(immediateRevision !== undefined &&
-      immediateRevision !== null &&
-      revision >= immediateRevision
-        ? { persistImmediately: true }
-        : {}),
-    });
-  }
-  for (const [pack, snapshot] of latestStickerCatalogs) {
-    postDiskIO({ type: "stickerCatalog", pack, snapshot });
-  }
-});
 
 /**
  * 把机器人自己的账号身份注入 AI Worker。须在 bot.init() 之后、runner 开始

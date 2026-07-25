@@ -29,6 +29,3 @@ export interface DayFileState {
   size: number;
   empty: boolean;
 }
-
-/** memory/luck/YYYY-MM-DD.json 的扁平落盘结构。 */
-export type LuckDayFile = Record<string, LuckDrawRecord>;

@@ -38,15 +38,15 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Dependencies (Bun 1.3+ / Linux / Bot Token / Gemini API Key)
    - `.env` configuration file requirements
    - Telegram BotFather setup (Privacy Mode / Admin permissions / Inline Mode)
-   - First launch and group `/init enable` handshake
+   - First launch and the `/init enable` handshake after the bot joins a group
 
 2. **[02 Architecture Overview](02-architecture.md)**
-   - Main Thread + 3 Workers (AI / Anti-Raid / Disk I/O) multi-process architecture
+   - Main Thread + 3 Workers (AI / Anti-Raid / Disk I/O) multi-threaded runtime topology
    - Full journey of a Telegram Update from ingestion to Worker dispatch
    - Startup sequence and Flush Barrier graceful shutdown
 
 3. **[03 Directory Map and Code Placement](03-directory-map.md)**
-   - Responsibility boundaries across 13 subdomains under `src/`
+   - Responsibility boundaries across the subdomains under `src/`
    - Decision tree for code placement: consts, types, caches, states, and workers
    - Backward-compatibility entry point conventions
 
@@ -56,7 +56,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Atomic persistence, Anti-Raid verification state machine, and fortune HMAC key consistency
 
 5. **[05 Development Workflow and Quality Gates](05-dev-workflow.md)**
-   - `bun run check` 4-stage validation: conventions + lint + typecheck + full coverage test
+   - `bun run check` 4-stage validation: conventions + lint + typecheck + full test suite with coverage
    - Test isolation mechanism and temporary data root sandbox
    - Commit standards and pre-release fault injection suite `bun run test:fault-injection`
 

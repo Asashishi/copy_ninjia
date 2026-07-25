@@ -1,5 +1,6 @@
 import { avatarDrainWaiters, avatarUpdateRuntime, avatarUpdateState } from "../cache/copy/avatar";
 import type { FlushResult } from "../types/lifecycle";
+import { drainWithWaiter } from "../libs/drainWaiter";
 import { logger } from "../infra/logger";
 import { copyUserProfilePhoto } from "../infra/telegram/avatar";
 import { sendMessage } from "../infra/telegram/actions";
@@ -59,26 +60,13 @@ export function queueAvatarUpdate(request: AvatarUpdateRequest): void {
 
 /** 生命周期边界：等待当前执行槽和 latest-only 待执行槽归零。 */
 export function drainAvatarUpdates(timeoutMs: number): Promise<FlushResult> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new RangeError("Avatar drain timeout must be a positive finite number.");
-  }
-  if (!avatarUpdateState.running && avatarUpdateState.pending === null) return Promise.resolve("flushed");
-  return new Promise((resolve) => {
-    let settled: boolean = false;
-    function finish(result: FlushResult): void {
-      if (settled) return;
-      settled = true;
-      avatarDrainWaiters.delete(onIdle);
-      clearTimeout(timer);
-      resolve(result);
-    }
-    const onIdle = (): void => finish("flushed");
-    const timer = setTimeout(() => {
-      abortAvatarUpdates();
-      finish("timedOut");
-    }, timeoutMs);
-    avatarDrainWaiters.add(onIdle);
-    notifyAvatarDrainIfIdle();
+  return drainWithWaiter({
+    owner: "Avatar",
+    timeoutMs,
+    isIdle: () => !avatarUpdateState.running && avatarUpdateState.pending === null,
+    waiters: avatarDrainWaiters,
+    notifyIfIdle: notifyAvatarDrainIfIdle,
+    abort: abortAvatarUpdates,
   });
 }
 

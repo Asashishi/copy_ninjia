@@ -19,7 +19,7 @@
   <img alt="A Telegram group-chat bot that steals avatars, copies messages, sees images, guards groups, and roasts people with a straight face" src="docs/assets/tagline_en_light.svg" width="760">
 </picture>
 
-**A pure-AI development project with 100% AI-written code** — the human designs the architecture and reviews every commit together with AI
+**A pure-AI development project whose production code, tests, and documentation are written entirely by AI** — the human designs the architecture and reviews every commit together with AI
 
 <p align="center">
   <a href="https://bun.sh/"><img src="https://img.shields.io/badge/Bun-v1.3+-f9f1e1?style=flat-square&logo=bun&logoColor=000000" alt="Bun"></a>
@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-821_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.77%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-849_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.95%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -87,7 +87,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 </td>
 <td align="left" valign="top">
   <p><b>🧠 Group-chat memory</b></p>
-  <p>Maintains 75–150 rolling context messages plus multi-round compressed summaries, tracks bounded multi-level reply chains, and recovers reliably through atomic persistence.</p>
+  <p>Maintains bounded verbatim context and multi-round compressed summaries, tracks bounded multi-level reply chains, and recovers reliably through atomic persistence.</p>
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ Join verification</b></p>
@@ -101,7 +101,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 </td>
 <td align="left" valign="top">
   <p><b>🎲 Daily fortune</b></p>
-  <p>Uses Inline Mode for deterministic draws, with a daily hash key that keeps state and signed receipts consistent across restarts.</p>
+  <p>Uses Inline Mode for deterministic draws, with a daily HMAC signing key that keeps state and signed receipts consistent across restarts.</p>
 </td>
 <td align="left" valign="top">
   <p><b>🌐 Cross-group moderation</b></p>
@@ -142,14 +142,14 @@ Choose a target by replying to their message or providing `@username`. Username 
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle AI chat for the group</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Reroll current group mood immediately and reply with new mood name</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle Japanese translation mode for the group (disabled by default)</td></tr>
-<tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle entry gateway processing for the group</td></tr>
-<tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code> (PM only)</td><td>Start/finish message relaying round from PM to target group</td></tr>
+<tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle the group's main processing gate</td></tr>
+<tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code> (PM only)</td><td>Start or finish a relay session from the bot's private chat to the target group</td></tr>
 </table>
 
-`/send` verifies target reachability before starting; if the target becomes unreachable during relay, it terminates and notifies the admin. Relay state persists via `state.json` across restarts.
+`/send` verifies target reachability before starting. If the target becomes unreachable during relay, the session ends and the super administrator is notified. Relay state persists in `state.json` across restarts. The command is omitted from Telegram's command menu and remains silent in groups or when invoked by any other user.
 
 > [!TIP]
-> `/luck_challenge` uses Inline Mode: type `@bot_username [query]` in any chat. Requires Inline Mode enabled in BotFather, with 100% feedback recommended.
+> `/luck_challenge` is not a slash command: type `@bot_username [query]` in any chat to use Inline Mode. Enable Inline Mode in BotFather; 100% result feedback is recommended. Inline queries share a global sliding-window limit of 300 responses per 90 seconds.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -170,7 +170,7 @@ Choose a target by replying to their message or providing `@username`. Username 
 <tr><th width="33%" align="left">Deployment Scale</th><th width="26%" align="left">Recommended Specs</th><th width="41%" align="left">Notes</th></tr>
 <tr><td>Starter (Low activity, mostly text, AI in few groups)</td><td>2 vCPU / 2 GB RAM / Local SSD</td><td>Runs fine, but multi-Worker setup competes for CPU under peak media loads</td></tr>
 <tr><td>Light Production (Mostly text, AI in few groups)</td><td>4 vCPU / 2 GB RAM / Local SSD</td><td>2 GB is not recommended for media spikes</td></tr>
-<tr><td>Recommended Production (~15 active 1000-3000 member groups)</td><td>4 vCPU / 4 GB RAM / Local SSD</td><td>—</td></tr>
+<tr><td>Recommended Production (~15 active groups with 1,000–3,000 members)</td><td>4 vCPU / 4 GB RAM / Local SSD</td><td>—</td></tr>
 <tr><td>All groups AI enabled with high image/sticker volume</td><td>4 vCPU / 8 GB RAM</td><td>Leaves peak headroom for media processing and image encoding</td></tr>
 </table>
 
@@ -189,13 +189,14 @@ cp .env.example .env
 
 ### 3. Configuration
 
-Fill in `.env` according to [`.env.example`](.env.example): `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, and a single decimal user ID for `SUPER_ADMIN_USER_ID` are required.
+Fill in `.env` according to [`.env.example`](.env.example): `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, and `SUPER_ADMIN_USER_ID` containing one decimal user ID are required. `PRIVILEGED_USERS_ID` may be empty; separate multiple IDs with ASCII commas.
 
-`COPY_NINJIA_DATA_ROOT` is optional for specifying a separate data directory for `state.json`, `bot.lock`, `logs/`, and `memory/`.
+`COPY_NINJIA_DATA_ROOT` optionally selects a separate runtime-data root. When set, `state.json`, `bot.lock`, `logs/`, and `memory/` are derived from it; persona, sticker, reaction, and mood configuration plus `g-auth.json` remain under the project root. When omitted, runtime data stays in the project root.
 
-For Japanese translation, save the Google Cloud service account key as `g-auth.json` in the project root.
+For Japanese translation, save the Google Cloud service account key as `g-auth.json` in the project root. Both `.env` and `g-auth.json` are ignored by Git.
 
 Telegram-side configuration:
+
 1. Turn off Bot Privacy Mode in BotFather.
 2. Grant admin permissions (delete messages, ban users, manage chat) in groups.
 3. Enable Inline Mode for fortune draws.
@@ -204,11 +205,11 @@ Telegram-side configuration:
 ### 4. Launch and Verification
 
 ```bash
-bun run check     # ESLint + TypeScript strict check + full coverage test
+bun run check     # Project conventions + ESLint + strict TypeScript + coverage tests
 bun run start     # Start long polling
 ```
 
-After adding the bot to a group, `SUPER_ADMIN_USER_ID` executes:
+After the bot first joins a group, `SUPER_ADMIN_USER_ID` executes:
 
 ```text
 /init enable
@@ -224,7 +225,7 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
 | Topic | Description & Contents | Direct Link |
 | :--- | :--- | :---: |
 | 🏗️ **Architecture** | Main thread + 3 Workers topology, message journey, startup & shutdown order | [📖 02 Architecture](docs/en/02-architecture.md) |
-| 🗺️ **Directory Map** | `src/` 13 subdomains responsibilities & code placement decision tree | [📖 03 Directory Map](docs/en/03-directory-map.md) |
+| 🗺️ **Directory Map** | Responsibilities of the `src/` subdomains and the code-placement decision tree | [📖 03 Directory Map](docs/en/03-directory-map.md) |
 | ⚡ **Invariants** | Cross-module state isolation, concurrency limits, atomic storage contracts | [📖 04 Invariants](docs/en/04-invariants.md) |
 | 🧪 **Development** | `bun run check` quality gates, test isolation & fault injection suite | [📖 05 Workflow](docs/en/05-dev-workflow.md) |
 | 🛠️ **Recipes** | Guides for commands, parameter tuning, AI tools & schema migration | [📖 06 Recipes](docs/en/06-modification-guide.md) |

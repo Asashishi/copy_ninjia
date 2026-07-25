@@ -500,6 +500,49 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(workerPosts).toHaveLength(0);
   });
 
+  test("论坛话题消息不是评论区候选：不投递、不加投 barrier", async () => {
+    workerPosts.length = 0;
+    // 开了 topics 的超级群里每条普通消息都带 message_thread_id；只有关联频道
+    // 讨论组的评论线程才算候选，论坛话题必须走普通非待验证语义。
+    await antiRaid.handleGroupJoinVerification({
+      chat: { id: -4001 },
+      from: { id: 91 },
+      message_id: 58,
+      message_thread_id: 77,
+      is_topic_message: true,
+    } as never, 99);
+
+    expect(workerPosts).toHaveLength(0);
+  });
+
+  test("待验证用户在论坛话题里发言仍被追踪，但不标记为评论线索", async () => {
+    activeVerificationSnapshots.set("-4001:92", { ...record(1, 1), chatId: -4001, userId: 92 });
+    workerPosts.length = 0;
+
+    const topicMessage = antiRaid.handleGroupJoinVerification({
+      chat: { id: -4001 },
+      from: { id: 92 },
+      message_id: 59,
+      message_thread_id: 77,
+      is_topic_message: true,
+    } as never, 99);
+    await Bun.sleep(0);
+    const topicBarrier = workerPosts.at(-1);
+
+    expect(workerPosts[0]).toMatchObject({
+      type: "message",
+      chatId: -4001,
+      userId: 92,
+      isThreadReply: false,
+      repliesToChannelPost: false,
+    });
+    if (topicBarrier?.type === "barrier") {
+      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: topicBarrier.barrierId });
+    }
+    await topicMessage;
+    activeVerificationSnapshots.delete("-4001:92");
+  });
+
   test("Worker 放弃自愈后主线程恢复权限、重试失败群且不清除更新后的 intent", async () => {
     chatStates.clear();
     restoreLockdownInvitePermission.mockClear();

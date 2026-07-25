@@ -214,7 +214,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(cache.pendingLuckDraws.has("111")).toBe(false);
   });
 
-  test("当日升级前已发出的旧版无「防伪标记」前缀回执仍能确认", async () => {
+  test("旧版无「防伪标记」前缀的回执不再被确认", async () => {
     const ctx = makeInlineCtx(112, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
     const lines: string[] = bodyTextOf(ctx.results[0]).split("\n");
@@ -222,8 +222,10 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const receiptUrl: string = entitiesOf(ctx.results[0])[1]!.url;
     const legacyReceipt: string = receiptUrl.slice("https://t.me/#luck-receipt=".length);
 
+    // 验签要求回执内嵌日期等于当天，日级密钥每天轮换：旧格式回执在展示标签
+    // 格式上线次日起就已不可能验过，识别路径因此只保留当前格式。
     await luckChallenge.confirmLuckDraw(`${lines.join("\n")}\n${legacyReceipt}`);
-    expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "112" });
+    expect(postDiskIOMock).not.toHaveBeenCalled();
   });
 
   test("不带文本：选中「概率论」结果（同一把 key）也能确认落盘", async () => {

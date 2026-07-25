@@ -22,7 +22,11 @@ function temporaryPath(path: string): string {
   );
 }
 
-async function syncDirectory(path: string): Promise<void> {
+/**
+ * 同步 path 所在目录的目录项，让此前的 rename/link/unlink 在掉电后仍可见。
+ * 导出供 hard link 协议（infra/storage/instanceLock.ts）复用，不要另抄一份。
+ */
+export async function syncDirectory(path: string): Promise<void> {
   const handle = await open(dirname(path), "r");
   try {
     await handle.sync();

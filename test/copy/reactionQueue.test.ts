@@ -70,9 +70,34 @@ afterEach(() => {
 });
 
 describe("Telegram reaction 同步队列", () => {
-  test("drain 拒绝非正有限预算", () => {
-    expect(() => drainReactionQueue(0)).toThrow("positive finite");
-    expect(() => drainReactionQueue(Number.POSITIVE_INFINITY)).toThrow("positive finite");
+  test("drain 拒绝非有限与负预算", () => {
+    expect(() => drainReactionQueue(-1)).toThrow("non-negative finite");
+    expect(() => drainReactionQueue(Number.NaN)).toThrow("non-negative finite");
+    expect(() => drainReactionQueue(Number.POSITIVE_INFINITY)).toThrow("non-negative finite");
+  });
+
+  test("零预算在空闲时直接结算为 flushed", async () => {
+    await expect(drainReactionQueue(0)).resolves.toBe("flushed");
+  });
+
+  test("零预算在有任务在途时立即 abort 并结算为 timedOut", async () => {
+    setMessageReaction.mockImplementationOnce(async (...args: unknown[]): Promise<boolean> => await new Promise<boolean>((_resolve, reject) => {
+      const signal = args[4] as AbortSignal | undefined;
+      signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    }));
+    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [], updateId: 1, reactedAtUnix: 1 });
+    await Bun.sleep(0);
+    expect(setMessageReaction).toHaveBeenCalledTimes(1);
+
+    quiesceReactionQueue();
+    await expect(drainReactionQueue(0)).resolves.toBe("timedOut");
+    await waitForIdle();
+
+    // abort 后不再重试，未开始的任务全部结算，见 docs/04-invariants.md 停机不变量。
+    expect(setMessageReaction).toHaveBeenCalledTimes(1);
+    expect(pendingTasks.size).toBe(0);
+    expect(pendingReactionWaiters.size).toBe(0);
+    expect(reactionDrainWaiters.size).toBe(0);
   });
 
   test("成功调用后清理本群队列并记录分段延迟", async () => {

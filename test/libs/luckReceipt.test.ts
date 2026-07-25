@@ -10,7 +10,7 @@ import {
   isLuckReceiptHash,
   luckReceiptHmacHash,
   stripLuckReceipt,
-  unwrapLuckReceiptLine,
+  luckReceiptHashFromLine,
   verifyLuckReceipt,
 } from "../../src/libs/luckReceipt";
 import type { LuckReceiptSecret } from "../../src/types";
@@ -60,16 +60,27 @@ describe("luck receipt protocol", () => {
     expect(isLuckReceiptHash(first!.toUpperCase())).toBe(false);
   });
 
-  test("stripLuckReceipt 只移除末行的展示哈希或旧版自描述回执", () => {
+  test("stripLuckReceipt 只移除末行的当前格式展示哈希", () => {
     const receipt: string = createLuckReceipt(SECRET, "123");
     const receiptHash: string = luckReceiptHmacHash(receipt)!;
-    expect(stripLuckReceipt(`可读正文\n${receipt}`)).toBe("可读正文");
-    expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBe("可读正文");
     expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`)).toBe("可读正文");
+    // 旧格式（无标签的完整协议串、或标签后跟完整协议串）不再被识别为回执。
+    expect(stripLuckReceipt(`可读正文\n${receipt}`)).toBe(`可读正文\n${receipt}`);
+    expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`))
+      .toBe(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`);
     expect(stripLuckReceipt(`可读正文\n${receiptHash}`)).toBe(`可读正文\n${receiptHash}`);
-    expect(unwrapLuckReceiptLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBe(receipt);
-    expect(unwrapLuckReceiptLine(receipt)).toBe(receipt);
-    expect(stripLuckReceipt(`正文 ${receipt}`)).toBe(`正文 ${receipt}`);
+    expect(stripLuckReceipt(`正文 ${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`))
+      .toBe(`正文 ${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`);
     expect(stripLuckReceipt("普通正文\nluck:伪造")).toBe("普通正文\nluck:伪造");
+  });
+
+  test("luckReceiptHashFromLine 只认标签前缀加定长摘要", () => {
+    const receipt: string = createLuckReceipt(SECRET, "123");
+    const receiptHash: string = luckReceiptHmacHash(receipt)!;
+    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`)).toBe(receiptHash);
+    expect(luckReceiptHashFromLine(receiptHash)).toBeUndefined();
+    expect(luckReceiptHashFromLine(receipt)).toBeUndefined();
+    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`)).toBeUndefined();
+    expect(luckReceiptHashFromLine(`${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash.toUpperCase()}`)).toBeUndefined();
   });
 });

@@ -19,7 +19,7 @@
   <img alt="アバターを盗み、メッセージを真似し、画像を見て、グループを守り、真顔で悪口まで言う Telegram グループチャット Bot" src="docs/assets/tagline_ja_light.svg" width="820">
 </picture>
 
-**コードの 100% を AI が書いた純 AI 開発プロジェクト** — 人間はアーキテクチャを設計し、AI と共同で全コミットをレビュー
+**本番コード、テスト、ドキュメントをすべて AI が書く純 AI 開発プロジェクト** — 人間はアーキテクチャを設計し、AI と共同で全コミットをレビュー
 
 <p align="center">
   <a href="https://bun.sh/"><img src="https://img.shields.io/badge/Bun-v1.3+-f9f1e1?style=flat-square&logo=bun&logoColor=000000" alt="Bun"></a>
@@ -31,12 +31,12 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-821_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.77%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-849_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.95%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
-メッセージの copy と人格模倣は表面にすぎません。その下には、複数 Worker、復元機能、上限付き cache、競合対策を備えたグループチャット自動化システムがあります。
+メッセージの復唱と人格模倣は表面にすぎません。その下では、複数の Worker が、障害復旧、上限付きキャッシュ、競合対策を備えたグループチャット自動化システムを支えています。
 
 ---
 
@@ -53,7 +53,7 @@
 このリポジトリの production コード、テストケース、そして README 自体も、すべて AI が書いています。人間はコードを書きませんが、決して席を外してはいません。アーキテクチャを設計し、すべてのコミットを AI と共同でレビューします。
 
 <table width="100%">
-<tr><th width="14%" align="left">工程</th><th width="32%" align="left">担当者</th><th width="54%" align="left">実績</th></tr>
+<tr><th width="14%" align="left">工程</th><th width="32%" align="left">担当者</th><th width="54%" align="left">役割</th></tr>
 <tr><td>📐&nbsp;設計</td><td><b>Asashishi</b>（本プロジェクト唯一の人間）</td><td>システム境界、Worker 分割、永続化・復元戦略の決定</td></tr>
 <tr><td>⌨️&nbsp;実装</td><td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td><td>100% の production コード、テスト、ドキュメントを作成</td></tr>
 <tr><td>🧾&nbsp;レビュー</td><td><b>Asashishi</b> × AI</td><td>全コミットを人間と AI が共同レビューしたうえで取り込み</td></tr>
@@ -61,7 +61,7 @@
 <tr><td>🛰️&nbsp;安全演習</td><td>同上の先端モデル群</td><td>クラッシュ復元・競合・悪意ある入力・資源枯渇などのシナリオ演習をすべて通過</td></tr>
 </table>
 
-レビューは一回限りの儀式ではありません。毎回のコミットレビューと先端モデルによる全倉監査の結論が、新しい制約条件としてコードへ回流しています。
+レビューは一回限りの儀式ではありません。毎回のコミットレビュー、先端モデルによるリポジトリ全体の監査、安全演習から得た知見を、新たな制約としてコードへ反映しています。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
@@ -73,7 +73,7 @@
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🪞 高精度な復唱</b></p>
-  <p>ユーザーやチャンネルを固定してメッセージを真似します。通常、反転、「nya~」追加、日本語翻訳の 4 モードに対応。</p>
+  <p>ユーザーやチャンネルを指定してメッセージを復唱します。そのまま、反転、「nya~」追加、日本語翻訳の 4 モードに対応します。</p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🥷 アバター盗用</b></p>
@@ -81,7 +81,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI チャット</b></p>
-  <p>Gemini ペルソナに基づく応答。リアルタイム検索やツール呼び出しを統合し、テキスト/スタンプ/リアクションを処理。</p>
+  <p>Gemini ペルソナに基づいて応答します。リアルタイム検索やツール呼び出しを統合し、テキスト、スタンプ、リアクションを処理します。</p>
 </td>
 </tr>
 <tr>
@@ -91,21 +91,21 @@
 </td>
 <td align="left" valign="top">
   <p><b>🧠 コンテキスト記憶</b></p>
-  <p>75〜150 件の文脈と要約圧縮を保持。多層の返信チェーンを追跡し、アトミック永続化により信頼高く復元。</p>
+  <p>上限付きの逐語コンテキストと複数ラウンドの圧縮要約を保持し、多層の返信チェーンを追跡します。アトミックな永続化により確実に復元できます。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ 参加認証</b></p>
-  <p>新規メンバーに 90 秒のボタン認証を提供。人間は本人だけがクリックでき、Bot に限りホワイトリストユーザーが代行保証できます。帰属可能な非匿名管理者の招待とディスカッショングループでの活動は免除されます。</p>
+  <p>新規メンバーに 90 秒のボタン認証を提供します。人間は本人だけがクリックでき、Bot アカウントに限り許可リストのユーザーが代理認証できます。招待者を特定できる非匿名管理者からの招待と、連携ディスカッショングループでの活動は免除されます。</p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
   <p><b>🚨 Anti-Raid</b></p>
-  <p>参加頻度を監視し、閾値を超えると招待を自動ロックして不審者を処置。再起動後も無縫に状態を復元。</p>
+  <p>参加頻度を監視し、閾値に達するとグループへの招待を停止して異常な参加者を処置します。再起動後も状態を復元できます。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🎲 今日のおみくじ</b></p>
-  <p>Inline Mode による決定論的くじ引き。日次ハッシュ鍵により、再起動後も状態と署名レシートの一貫性を保持。</p>
+  <p>Inline Mode による決定論的なくじ引きです。日ごとに切り替わる HMAC 署名鍵により、再起動後も状態と署名レシートの一貫性を保ちます。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🌐 複数グループ連携</b></p>
@@ -125,13 +125,13 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 | コマンド | 挙動 |
 | :---: | :--- |
 | `/copy` | メッセージをそのまま復唱 |
-| `/r_copy` | 書素クラスタ単位でテキストを反転 |
+| `/r_copy` | 書記素クラスタ単位でテキストを反転 |
 | `/nya_copy` | テキストの末尾に「nya~」を追加 |
 | `/ja_copy` | Google Cloud Translate で日本語翻訳してから復唱 |
 | `/steal_icon` | アバターのみコピー |
 | `/stop_copy` | グローバル copy 状態を停止 |
 
-対象は「メッセージへの返信」または `@username` で指定します。
+対象は「メッセージへの返信」または `@username` で指定します。ユーザー名での検索には、Bot がそのアカウントを以前に観測している必要があります。改名、ユーザー名の削除、ユーザー名の再割り当てが行われると、古い別名は直ちに無効になります。匿名管理者が現在のグループとして発言した場合、そのグループ自体が copy 対象となるため、グループのアバターを取得してその「外見」を再現できます。`/kick` は現在のグループをメンバー対象として扱うことを拒否します。`/kick` のような破壊的操作では、過去のユーザー名に頼らず対象メッセージへの返信を優先してください。一般ユーザーの copy 系コマンドには 5 分間のグローバル cooldown があり、`PRIVILEGED_USERS_ID` の許可リストは対象外です。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
@@ -150,12 +150,14 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの AI チャットを切り替え</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>AI 有効グループの気分を即時再抽選して応答</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>日本語翻訳機能を切り替え（既定 OFF）</td></tr>
-<tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>業務処理入口を切り替え</td></tr>
-<tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code> (PM限定)</td><td>Bot との DM から指定グループへの転送を開始/終了</td></tr>
+<tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの主要処理ゲートを切り替え</td></tr>
+<tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（PM 限定）</td><td>Bot との個人チャットから指定グループへの転送セッションを開始/終了</td></tr>
 </table>
 
+`/send` は開始前に対象へ到達できるか確認します。転送中に対象へ到達できなくなった場合はセッションを終了し、スーパー管理者へ通知します。転送状態は `state.json` に保存され、再起動後も復元されます。このコマンドは Telegram のコマンドメニューには表示されず、グループ内や他のユーザーから呼び出されても応答しません。
+
 > [!TIP]
-> `/luck_challenge` は斜杠コマンドを消費しません。任意のチャットで `@Botのユーザー名 [お願い]` を入力して Inline Mode を使用します。BotFather で Inline Mode を有効にし、`/setinlinefeedback` を 100% に設定することをお勧めします。
+> `/luck_challenge` はスラッシュコマンドではありません。任意のチャットで `@Botのユーザー名 [お願い]` と入力して Inline Mode を使用します。BotFather で Inline Mode を有効にし、`/setinlinefeedback` を 100% に設定することをお勧めします。Inline query にはグローバルな sliding window 制限があり、応答は 90 秒あたり最大 300 回です。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
@@ -165,7 +167,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 
 ### 1. 環境
 
-- Linux（読み取り可能な `/proc` が必要）
+- Linux（読み取り可能な `/proc` が必要。ほかのプラットフォームではインスタンスロックが fail closed）
 - Bun 1.3+
 - Telegram Bot Token
 - Gemini API Key
@@ -178,9 +180,11 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><th width="33%" align="left">規模</th><th width="26%" align="left">推奨スペック</th><th width="41%" align="left">備考</th></tr>
 <tr><td>入門（低アクティブ、テキスト中心）</td><td>2 vCPU / 2 GB RAM / ローカル SSD</td><td>動作可能ですがメディアピーク時は CPU 競合が発生します</td></tr>
 <tr><td>軽量本番（テキスト中心）</td><td>4 vCPU / 2 GB RAM / ローカル SSD</td><td>2 GB はメディア処理ピーク時のメモリ確保に適しません</td></tr>
-<tr><td>推奨本番（1000-3000 人規模 15 アクティブ群）</td><td>4 vCPU / 4 GB RAM / ローカル SSD</td><td>—</td></tr>
+<tr><td>推奨本番（1,000〜3,000 人規模のアクティブグループ約 15 個）</td><td>4 vCPU / 4 GB RAM / ローカル SSD</td><td>—</td></tr>
 <tr><td>全群 AI 有効かつ画像・スタンプ多数</td><td>4 vCPU / 8 GB RAM</td><td>メディア処理と Base64 符号化に十分な余裕を確保</td></tr>
 </table>
+
+単一インスタンスでは、上記規模のアクティブグループを約 15 個以内に抑えることを推奨します。主な制約は総メンバー数ではなく、単一の Telegram Bot API、Gemini の quota、実際のメッセージ/メディア流量です。
 
 </details>
 
@@ -195,11 +199,14 @@ cp .env.example .env
 
 ### 3. 設定
 
-[`.env.example`](.env.example) にしたがって `.env` を記入します。`TELEGRAM_BOT_TOKEN`、`GEMINI_API_KEY`、`SUPER_ADMIN_USER_ID` は必須です。
+[`.env.example`](.env.example) にしたがって `.env` を記入します。`TELEGRAM_BOT_TOKEN`、`GEMINI_API_KEY`、10 進数のユーザー ID を 1 つ指定する `SUPER_ADMIN_USER_ID` は必須です。`PRIVILEGED_USERS_ID` は空でも構いません。複数の ID は半角カンマで区切ります。
 
-日本語翻訳を使用する場合は、サービスアカウントキーを `g-auth.json` としてプロジェクトルートに保存します。
+`COPY_NINJIA_DATA_ROOT` を指定すると、実行時データを別のルートへ配置できます。設定時は `state.json`、`bot.lock`、`logs/`、`memory/` がそのディレクトリから派生します。ペルソナ、スタンプ、リアクション、気分の設定と `g-auth.json` は引き続きプロジェクトルートから読み込みます。未指定の場合、実行時データはプロジェクトルートに置かれます。
+
+日本語翻訳を使用する場合は、サービスアカウントキーを `g-auth.json` としてプロジェクトルートに保存します。`.env` と `g-auth.json` はどちらも `.gitignore` の対象です。
 
 Telegram 側の設定：
+
 1. BotFather で Bot Privacy Mode を OFF にする。
 2. グループで Bot に管理者権限（削除、BAN、管理）を付与する。
 3. Inline Mode を有効にする。
@@ -208,11 +215,11 @@ Telegram 側の設定：
 ### 4. 起動と確認
 
 ```bash
-bun run check     # ESLint + TypeScript 厳格検査 + 全テスト
+bun run check     # プロジェクト規約 + ESLint + TypeScript 厳格検査 + coverage test
 bun run start     # ロングポーリング起動
 ```
 
-グループ追加後、`SUPER_ADMIN_USER_ID` がグループ内で以下を実行します：
+Bot を初めてグループに追加した後、`SUPER_ADMIN_USER_ID` がグループ内で以下を実行します：
 
 ```text
 /init enable
@@ -225,16 +232,16 @@ bun run start     # ロングポーリング起動
 
 ## 📚 開発者ドキュメントとアーキテクチャガイド
 
-Copy Ninjia の詳細なアーキテクチャ概要、モジュールマップ、実行時権威的不変条件、テストフロー、運用マニュアルは、すべて **[開発者ドキュメント TOP](docs/ja/README.md)** にまとめています：
+Copy Ninjia のアーキテクチャ概要、モジュールマップ、実行時の正式な不変条件、テストフロー、運用マニュアルは、**[開発者ドキュメント TOP](docs/ja/README.md)** にまとめています：
 
-| トピック | 内容と概要 | 直達リンク |
+| トピック | 内容と概要 | リンク |
 | :--- | :--- | :---: |
 | 🏗️ **アーキテクチャ** | メインスレッド + 3 Worker トポロジー、メッセージ処理と起動・停止順序 | [📖 02 アーキテクチャ](docs/ja/02-architecture.md) |
-| 🗺️ **ソースコード案内** | `src/` 13 サブモジュールの役割分担とコード配置ツリー | [📖 03 ディレクトリマップ](docs/ja/03-directory-map.md) |
+| 🗺️ **ソースコード案内** | `src/` 各サブドメインの役割分担とコード配置ツリー | [📖 03 ディレクトリマップ](docs/ja/03-directory-map.md) |
 | ⚡ **権威的不変条件** | モジュール間状態隔離、並行上限、アトミック保存契約 | [📖 04 権威的不変条件](docs/ja/04-invariants.md) |
 | 🧪 **開発とテスト** | `bun run check` 品質ゲート、テスト環境隔離と障害注入スイート | [📖 05 開発フロー](docs/ja/05-dev-workflow.md) |
-| 🛠️ **変更レシピ** | コマンド追加、パラメータ調整、AI ツール追加、Schema 移行手順 | [📖 06 変更レシピ](docs/ja/06-modification-guide.md) |
-| 🛡️ **運用マニュアル** | systemd デプロイ、`COPY_NINJIA_DATA_ROOT`、バックアップと排障 | [📖 07 運用マニュアル](docs/ja/07-operations.md) |
+| 🛠️ **変更レシピ** | コマンド追加、パラメータ調整、AI ツール追加、schema 移行手順 | [📖 06 変更レシピ](docs/ja/06-modification-guide.md) |
+| 🛡️ **運用マニュアル** | systemd デプロイ、`COPY_NINJIA_DATA_ROOT`、バックアップとトラブルシューティング | [📖 07 運用マニュアル](docs/ja/07-operations.md) |
 
 ---
 

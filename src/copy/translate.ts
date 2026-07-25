@@ -3,6 +3,7 @@ import { v3 as GoogleTranslate } from "@google-cloud/translate";
 import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
 import { translateParentCache, translateRuntime } from "../cache/translate";
 import { TRANSLATE_REQUEST_TIMEOUT_MS } from "../consts/lifecycle";
+import { withTimeout } from "../libs/withTimeout";
 import type { FlushResult } from "../types/lifecycle";
 
 // Google Cloud Translation - Advanced (v3) 客户端，通过 g-auth.json 里的服务账号
@@ -17,22 +18,6 @@ export function initTranslate(): void {
 /** 同步关闭新工作入口，已开始的请求交给 drainTranslate 等待。 */
 export function quiesceTranslate(): void {
   translateRuntime.accepting = false;
-}
-
-function withTimeout<T>(task: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    task,
-    new Promise<T>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
-        timeoutMs
-      );
-      timer.unref();
-    }),
-  ]).finally(() => {
-    if (timer !== undefined) clearTimeout(timer);
-  });
 }
 
 /** gRPC 客户端构造会注册退避 timer；延迟到首次真实翻译，保持模块导入无副作用。 */

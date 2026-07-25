@@ -139,8 +139,11 @@ export function openDayFile(dir: string, day: string, mode?: number): DayFileSta
  * 括号这种最常见情况）；不行的话，结构化扫描字符串转义与括号深度，找出
  * 顶层对象成员之间的逗号。最后一个这类逗号之前就是最后一条完整记录，值
  * 无论是对象、数组还是 null 等基础类型都适用；裁掉其后的撕裂记录、补上
- * 「\n}」并以 JSON.parse 复核。所有候选都无效才返回 null，交给调用方从空
- * 文件重新开始。
+ * 「\n}」并以 JSON.parse 复核。
+ * @returns 修复后的完整 JSON 文本；所有候选都无效时返回 null，表示无法修复
+ *   ——调用方（openDayFile）据此抛 DayFileFormatError 阻止写入并原样保留字节，
+ *   等待人工恢复，绝不从空文件重新开始覆盖原数据。
+ * @see ../../../docs/04-invariants.md
  */
 function repairTruncated(content: string): string | null {
   const withClosingBrace: string = `${content}\n}`;

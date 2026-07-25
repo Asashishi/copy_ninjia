@@ -237,12 +237,21 @@ onVerificationPersisted((reply) => {
     const current = activeVerificationSnapshots.get(reply.key);
     if (current?.generation !== reply.generation || current.revision !== reply.revision) return;
     persistedVerificationRevisions.set(reply.key, { generation: reply.generation, revision: reply.revision });
+    // 投递失败不做补偿是有意的：Worker 不可用意味着它即将重建，onRespawn 会对
+    // 终态重新投递 verificationPersisted（见上方 onRespawn）。但按
+    // docs/04-invariants.md 的要求，落盘边界的 false 必须显式当作失败记录，
+    // 不能静默吞掉——否则看不出这是依赖重放还是漏写。
     if (!post({
       type: "verificationPersisted",
       key: reply.key,
       generation: reply.generation,
       revision: reply.revision,
-    })) return;
+    })) {
+      logger.error(
+        `Anti-Raid Worker rejected the persisted verification receipt for ${reply.key}; ` +
+        "relying on respawn replay to redeliver it."
+      );
+    }
     return;
   }
   const deletion = pendingVerificationDeletes.get(reply.key);
@@ -433,9 +442,14 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
   }
 
   const userId: number | undefined = message.from?.id;
+  // message_thread_id 有两个来源：关联频道讨论组的评论线程，和论坛（topics）
+  // 群里的话题。只有前者可能是「评论早于 join 更新到达」的候选；论坛话题回复
+  // 永远不可能是频道评论，把它排除掉，否则开了 topics 的群里每条普通消息都要
+  // 白走一次 Worker barrier 与关联频道探测。
+  const isCommentThreadReply: boolean =
+    message.message_thread_id !== undefined && message.is_topic_message !== true;
   const mayPrecedeJoinInCommentThread: boolean =
-    message.reply_to_message?.is_automatic_forward === true ||
-    message.message_thread_id !== undefined;
+    message.reply_to_message?.is_automatic_forward === true || isCommentThreadReply;
   if (
     userId !== undefined &&
     (activeVerificationSnapshots.has(verificationKey(message.chat.id, userId)) || mayPrecedeJoinInCommentThread)
@@ -449,7 +463,7 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
       userId,
       messageId: message.message_id,
       repliesToChannelPost: message.reply_to_message?.is_automatic_forward === true,
-      isThreadReply: message.message_thread_id !== undefined,
+      isThreadReply: isCommentThreadReply,
     }]);
   }
   return false;

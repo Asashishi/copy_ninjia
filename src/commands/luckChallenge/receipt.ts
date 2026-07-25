@@ -6,9 +6,8 @@ import {
 } from "../../consts/luckReceipt";
 import {
   createLuckReceipt,
-  isLuckReceiptHash,
+  luckReceiptHashFromLine,
   luckReceiptHmacHash,
-  unwrapLuckReceiptLine,
   verifyLuckReceipt,
 } from "../../libs/luckReceipt";
 import { logger } from "../../infra/logger";
@@ -63,20 +62,15 @@ export async function confirmLuckDraw(
   if (lastLineBreak < 0) return;
   const receiptLine: string = messageText.slice(lastLineBreak + 1);
   if (!receiptLine) return;
-  const marker: string = unwrapLuckReceiptLine(receiptLine);
-  let receipt: string | undefined;
-  if (isLuckReceiptHash(marker)) {
-    if (!receiptLine.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX)) return;
-    receipt = receiptFromLinkEntity(
-      marker,
-      lastLineBreak + 1 + LUCK_RECEIPT_DISPLAY_PREFIX.length,
-      entities
-    );
-  } else {
-    // 旧版回执直接显示完整协议串；先做结构与 canonical base64url 检查，
-    // 普通多行消息不能因此进入跨日密钥刷新与磁盘 Worker 往返。
-    receipt = luckReceiptHmacHash(marker) === undefined ? undefined : marker;
-  }
+  // 只认当前格式：标签前缀 + 定长摘要，原回执由同范围的 text_link 实体携带。
+  // 普通多行消息不能因此进入跨日密钥刷新与磁盘 Worker 往返。
+  const receiptHash: string | undefined = luckReceiptHashFromLine(receiptLine);
+  if (receiptHash === undefined) return;
+  const receipt: string | undefined = receiptFromLinkEntity(
+    receiptHash,
+    lastLineBreak + 1 + LUCK_RECEIPT_DISPLAY_PREFIX.length,
+    entities
+  );
   if (!receipt) return;
   try {
     await ensureLuckCacheFreshForToday();

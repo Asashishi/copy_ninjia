@@ -17,6 +17,7 @@ import {
   reactionDrainWaiters,
   reactionQueueRuntime,
 } from "../cache/reactionQueue";
+import { drainWithWaiter } from "../libs/drainWaiter";
 import type { FlushResult } from "../types/lifecycle";
 import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
 
@@ -133,26 +134,13 @@ function settleFailedChatQueue(chatId: number): void {
 
 /** 生命周期边界：等待已接收任务被应用、合并或按硬顶策略显式丢弃。 */
 export function drainReactionQueue(timeoutMs: number): Promise<FlushResult> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new RangeError("Reaction drain timeout must be a positive finite number.");
-  }
-  if (pendingTasks.size === 0 && consumingChats.size === 0) return Promise.resolve("flushed");
-  return new Promise((resolve) => {
-    let settled: boolean = false;
-    function finish(result: FlushResult): void {
-      if (settled) return;
-      settled = true;
-      reactionDrainWaiters.delete(onIdle);
-      clearTimeout(timer);
-      resolve(result);
-    }
-    const onIdle = (): void => finish("flushed");
-    const timer = setTimeout(() => {
-      abortReactionQueue();
-      finish("timedOut");
-    }, timeoutMs);
-    reactionDrainWaiters.add(onIdle);
-    notifyReactionDrainIfIdle();
+  return drainWithWaiter({
+    owner: "Reaction",
+    timeoutMs,
+    isIdle: () => pendingTasks.size === 0 && consumingChats.size === 0,
+    waiters: reactionDrainWaiters,
+    notifyIfIdle: notifyReactionDrainIfIdle,
+    abort: abortReactionQueue,
   });
 }
 

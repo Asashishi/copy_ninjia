@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { EMERGENCY_REUSED_DISPOSE_DEADLINE_MS } from "../../src/consts/lifecycle";
+import { EMERGENCY_FLUSH_TIMEOUTS, EMERGENCY_REUSED_DISPOSE_DEADLINE_MS } from "../../src/consts/lifecycle";
 import type { ApplicationLifecycleDependencies } from "../../src/types/lifecycle";
 
 const calls: string[] = [];
@@ -146,6 +146,15 @@ const testDependencies = {
 } as unknown as ApplicationLifecycleDependencies;
 
 const { ApplicationLifecycle } = await import("../../src/app/lifecycle");
+// 异常退出路径必须用真实 drain：忽略 timeoutMs 的替身会把参数校验整个跳过，
+// 紧急预算（maintenanceMs = 0）下的真实行为就永远测不到。
+const { drainAvatarUpdates: realDrainAvatarUpdates } = await import("../../src/copy/avatarQueue");
+const { drainReactionQueue: realDrainReactionQueue } = await import("../../src/copy/reactionQueue");
+const realDrainDependencies = {
+  ...testDependencies,
+  drainAvatarUpdates: realDrainAvatarUpdates,
+  drainReactionQueue: realDrainReactionQueue,
+} as unknown as ApplicationLifecycleDependencies;
 
 beforeEach(() => {
   calls.length = 0;
@@ -405,6 +414,79 @@ describe("应用启动失败与退出清理", () => {
       globalThis.clearTimeout = originalClearTimeout;
       exit.mockRestore();
     }
+  });
+
+  test("紧急预算下真实 drain 不再抛错，AI/磁盘/state 与 fatal handler 全部收尾", async () => {
+    const lifecycle = new ApplicationLifecycle(realDrainDependencies);
+    await lifecycle.init();
+
+    await expect(lifecycle.dispose(EMERGENCY_FLUSH_TIMEOUTS)).resolves.toBeUndefined();
+
+    expect(flushAiMemory).toHaveBeenCalledTimes(1);
+    expect(flushDiskIO).toHaveBeenCalledTimes(1);
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(terminateAiChat).toHaveBeenCalledTimes(1);
+    expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
+    expect(terminateDiskIO).toHaveBeenCalledTimes(1);
+    expect(setBusinessWorkerFatalHandler).toHaveBeenLastCalledWith(undefined);
+    expect(setStatePersistenceFatalHandler).toHaveBeenLastCalledWith(undefined);
+  });
+
+  test("任一 owner 抛错时其余 owner 仍执行，退出码置 1 并保留实例锁", async () => {
+    drainAvatarUpdates.mockImplementationOnce((): never => { throw new Error("avatar drain exploded"); });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await expect(lifecycle.dispose()).resolves.toBeUndefined();
+
+    expect(drainReactionQueue).toHaveBeenCalledTimes(1);
+    expect(flushAiMemory).toHaveBeenCalledTimes(1);
+    expect(flushDiskIO).toHaveBeenCalledTimes(1);
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(terminateAiChat).toHaveBeenCalledTimes(1);
+    expect(terminateDiskIO).toHaveBeenCalledTimes(1);
+    expect(setBusinessWorkerFatalHandler).toHaveBeenLastCalledWith(undefined);
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("avatar=failed"));
+  });
+
+  test("任一 quiesce 抛错时仍关闭其余入口，并把失败纳入停机结果", async () => {
+    quiesceAvatarUpdates.mockImplementationOnce((): never => {
+      calls.push("quiesceAvatar");
+      throw new Error("avatar quiesce exploded");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await expect(lifecycle.dispose()).resolves.toBeUndefined();
+
+    expect(quiesceReactionQueue).toHaveBeenCalledTimes(1);
+    expect(quiesceChatTitleRefresh).toHaveBeenCalledTimes(1);
+    expect(quiesceTranslate).toHaveBeenCalledTimes(1);
+    expect(drainAvatarUpdates).toHaveBeenCalledTimes(1);
+    expect(drainReactionQueue).toHaveBeenCalledTimes(1);
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(
+      "Shutdown owner avatar quiesce threw during shutdown:",
+      expect.any(Error)
+    );
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("maintenance=false"));
+  });
+
+  test("紧急预算跳过未结束的标题刷新时必须 abort 标题 owner", async () => {
+    refreshAllChatTitles.mockImplementationOnce(() => new Promise<void>(() => {}));
+    const lifecycle = new ApplicationLifecycle(realDrainDependencies);
+    await lifecycle.init();
+
+    await lifecycle.dispose(EMERGENCY_FLUSH_TIMEOUTS);
+
+    expect(abortChatTitleRefresh).toHaveBeenCalledTimes(1);
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
   });
 
   test("Anti-Raid drain 失败仍终止 Worker，但设置非零退出码并保留实例锁", async () => {

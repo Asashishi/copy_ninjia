@@ -86,22 +86,22 @@ export function deriveLuckEntropy(secret: LuckReceiptSecret, cacheKey: string): 
     .digest();
 }
 
-/** 结果消息的可见标签不参与 HMAC；旧版无标签回执仍原样返回以便验证。 */
-export function unwrapLuckReceiptLine(line: string): string {
-  return line.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX)
-    ? line.slice(LUCK_RECEIPT_DISPLAY_PREFIX.length)
-    : line;
+/**
+ * 从结果消息的末行取出展示用 HMAC 摘要；可见标签不参与 HMAC。
+ * 只识别当前格式：没有标签前缀、或前缀后不是合法摘要，一律不是回执。
+ * @returns 十六进制 HMAC 摘要；该行不是当前格式的回执时返回 undefined。
+ */
+export function luckReceiptHashFromLine(line: string): string | undefined {
+  if (!line.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX)) return undefined;
+  const hash: string = line.slice(LUCK_RECEIPT_DISPLAY_PREFIX.length);
+  return isLuckReceiptHash(hash) ? hash : undefined;
 }
 
 /** AI 记忆只保留用户可读正文，不把内部签名协议混进群聊转录。 */
 export function stripLuckReceipt(text: string): string {
   const lastLineBreak: number = text.lastIndexOf("\n");
   if (lastLineBreak < 0) return text;
-  const line: string = text.slice(lastLineBreak + 1);
-  const receipt: string = unwrapLuckReceiptLine(line);
-  const isCurrentHash: boolean = line.startsWith(LUCK_RECEIPT_DISPLAY_PREFIX) && isLuckReceiptHash(receipt);
-  const isLegacyReceipt: boolean = receipt.length <= LUCK_RECEIPT_MAX_LENGTH && LUCK_RECEIPT_PATTERN.test(receipt);
-  return isCurrentHash || isLegacyReceipt
-    ? text.slice(0, lastLineBreak)
-    : text;
+  return luckReceiptHashFromLine(text.slice(lastLineBreak + 1)) === undefined
+    ? text
+    : text.slice(0, lastLineBreak);
 }

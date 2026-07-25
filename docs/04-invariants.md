@@ -37,7 +37,7 @@
 - AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；模型提示上限为 8，执行侧硬顶为 11。贴纸、反应与生成图片各最多成功一次；其它动作工具不设单工具调用上限。贴纸包查看和 Google Search 分别保留独立查询上限，所有自定义函数调用另有整轮防循环硬顶。仅在零成功动作时，最终正文才经 `send_message` 兜底；所有有意展示的文字必须由模型显式调用该工具。
 - AI 回复的初始 Gemini 输入必须保持一个 `user Content` 下的三个有序 `text Part`：只读参考记忆、只读当前会话、本轮回复任务。每段只由模型可见的首尾标签加一行段首职责标注包围；防注入总规则（数据 vs 指令、伪造边界无效、不暴露内部结构）统一只在 `systemInstruction` 声明一次，不逐段重复。工具调用后的历史再按真实 `model/user` 角色追加，不得把参考资料伪装成历史对话轮次。系统提示词只通过 `GenerateContentConfig.systemInstruction` 独立字段发送，不得拼入普通对话 `contents`。
 - 群聊转录的行内标注（回复引用、转发来源）由 `src/consts/aiChat/prompts/transcript.ts` 的共享模板同时生成拼装文本与提示词说明里的占位形态，两侧不得各自手写同一格式；转发归属按标注层级区分：回复标注外层属于当前消息本身，内层属于被回复的原消息。多层回复链的逐跳格式、转发来源和 `[仅回复快照]` 标记也必须复用该领域模板；只有至少两层关系才向回复任务追加链路，快照链尾必须明确原消息已不在逐字转录中，不得暗示存在可供模型查阅的完整原文。
-- Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。冷缓存的 `message_thread_id` 只是异步确认候选：查询落定前先按普通待验证消息处理，仅在确认 `linked_chat_id` 且状态对象/代际仍一致时撤销；查询失败 fail closed 并允许后续重试。
+- Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。只有关联频道讨论组的评论线程才是候选：`message_thread_id` 同时也出现在论坛（topics）群的每一条话题消息上，必须用 `is_topic_message !== true` 把论坛话题排除，它们一律走普通待验证语义，不触发 barrier 加投与关联频道探测。冷缓存的 `message_thread_id` 只是异步确认候选：查询落定前先按普通待验证消息处理，仅在确认 `linked_chat_id` 且状态对象/代际仍一致时撤销；查询失败 fail closed 并允许后续重试。
 - 真人的入群验证只接受本人点击：Worker 必须以可信的 `callback_query.from.id === callback_data` 目标 ID 计算本人关系，不能接受调用方直接声称。即使点击者在 `PRIVILEGED_USERS_ID` 中，也不得替真人通过；唯一代点例外是当前待验证快照明确 `isBot === true` 且点击者在该白名单中。无状态、已终结或目标不匹配的点击只能应答失败，不得改变验证记录。
 - 验证提醒按成员只有一个投递 owner，发送失败有界退避。`reminderMessageId` / `replyReminderMessageId` 至少一个成功回填是超时踢人的前置不变量；从未落地时只续窗补发。恢复时尚无 reminder ID 的当前格式快照复用同一 owner，状态替换、离群、teardown 和 Worker 终止均会撤销它；这里是未成功发送提醒的业务状态，不是旧格式兼容分支。
 - 发送者用户名缓存同时维护「归一化 username → identity」与「sender ID → 当前 username」；改名、去名、换绑和容量淘汰都在同一 owner 原子更新双向关系，解析器拒绝不一致别名。
@@ -53,7 +53,7 @@
 - AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`（当前为 149 条逐字消息与 7 轮冷摘要）从快照尾部截取最新数据；调整容量常量部署前，应在旧进程停止后以同一恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
 - 回复链索引（`chatReplyChainIndexes`）是滚动缓存的纯派生索引，不落盘、内层值与缓存共享对象引用；登记/删除只允许发生在消息进出热区的物理位置（`rollingMemory.ts` 的 push/轮换/hydrate），任何其它模块只读。索引因此永远只覆盖仍在热区的消息，容量受滚动缓存上限约束，无独立淘汰；机器人发送自录只按 Telegram 返回的实际 `reply_to_message` 建边，目标在生成/排队期间滑出热区时使用轮次开始前捕获的有界触发快照兜底，不扩张索引覆盖范围。模型可见的回溯深度、单个链节点正文和触发快照分别受 `REPLY_CHAIN_MAX_DEPTH`、`REPLY_CHAIN_NODE_MAX_CHARS`、`REPLY_REFERENCE_MAX_CHARS` 约束（当前为 15 跳、500 字、500 字）。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败必须返回失败、阻止最终 offset 确认并以非零状态退出。
-- 正常与异常停机都先 quiesce 标题/反应/头像/翻译入口并停止 runner，再有界 drain；翻译客户端只在首次真实请求时惰性构造，单次 RPC 有项目级短超时，drain 后显式 `close()` 并清理 project parent/客户端引用。翻译 drain 超时或 close 失败与其它关键 owner 一样阻止释放实例锁。正常路径必须在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore」收尾。若致命异常发生时普通 dispose 已在途，异常路径可以复用该 Promise，但必须另设当前 15 秒的绝对强制退出 deadline，不能被既有 drain 无限拖住。预算耗尽时 abort 仍在进行的 Telegram 请求、媒体下载和 429 sleep，结算尚未开始的队列；abort 后不得再发送消息、改头像或写入群标题。
+- 正常与异常停机都先 quiesce 标题/反应/头像/翻译入口并停止 runner，再有界 drain。四个 quiesce 调用必须逐项捕获失败：任一入口抛错时仍须尝试其余入口，未全部成功不得缓存静默完成，且该次失败必须阻止最终 offset 确认和实例锁释放；后续 `wait()`/`dispose()` 可重试所有幂等入口。翻译客户端只在首次真实请求时惰性构造，单次 RPC 有项目级短超时，drain 后显式 `close()` 并清理 project parent/客户端引用。翻译 drain 超时或 close 失败与其它关键 owner 一样阻止释放实例锁。正常路径必须在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore」收尾。若致命异常发生时普通 dispose 已在途，异常路径可以复用该 Promise，但必须另设当前 15 秒的绝对强制退出 deadline，不能被既有 drain 无限拖住。预算耗尽时 abort 仍在进行的 Telegram 请求、媒体下载和 429 sleep，结算尚未开始的队列；abort 后不得再发送消息、改头像或写入群标题。异常退出路径的维护预算为 0：drain 必须把「预算为 0」当成合法输入，空闲直接结算为 `flushed`，仍有在途工作则立即 abort 并结算为 `timedOut`，绝不能因参数校验抛错；未结束的标题刷新在跳过时同样必须 abort。dispose 的每个 owner 也要各自失败隔离，异常一律折算为 `failed` 参与结算，任何单点抛错都不得跳过其后的 owner、`flushStateToDisk` 与实例锁处置。
 - Worker flush 与 mailbox barrier 统一使用 `src/libs/flushBarrier.ts` 管理 ID、等待表、超时、迟到回执和崩溃批量结算；领域缓存不得重新暴露 resolver Map。
 - 当前部署基线是单租户云原生环境，开发工作区同时就是生产工作区；编辑器、自动化工具与运行时可能以不同容器 UID 共同维护同一挂载卷，因此项目目录和受管文件必须允许这些进程原地修改。隔离租户内的宽松 Unix mode 本身不视为越权暴露；若迁移到共享主机、共享卷或其它跨信任边界的部署形态，必须在上线前重新设计 owner、group 与权限。
 - `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由云实例的单租户边界、部署隔离和备份策略控制，不通过制造不可读文件解决。
@@ -63,6 +63,8 @@
 ## 兼容入口
 
 大文件拆分时保留的顶层 barrel 只用于渐进迁移。新增生产代码应从所属领域文件导入；兼容入口不得重新持有状态、解析配置或引入 import 副作用。
+
+运势回执不设旧格式兼容分支：验签要求回执内嵌日期等于当天东京日期、且日级密钥每天轮换，因此跨日回执一律验不过——旧格式回执在展示标签格式上线次日起就已不可能通过验证。识别、剥离与验签一律只认当前格式（标签前缀 + 定长 HMAC 摘要 + 同范围 `text_link` 实体携带的原回执）。
 
 ---
 

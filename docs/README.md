@@ -27,7 +27,7 @@
 | 🗺️ **查找代码** | 模块职责分工、源码目录映射及新代码放置约定 | [📖 03 目录导览](03-directory-map.md) |
 | ⚡ **遵守不变量** | 跨模块权威约束、并发防护与全局状态机规则 | [📖 04 权威约束](04-invariants.md) |
 | 🧪 **开发与测试** | `bun run check` 质量门禁、测试隔离机制与覆盖率口径 | [📖 05 开发流程](05-dev-workflow.md) |
-| 🛠️ **新增/修改功能** | 添加命令、调参、新增 AI 工具及 Schema 变更手把手配方 | [📖 06 修改配方](06-modification-guide.md) |
+| 🛠️ **新增/修改功能** | 添加命令、调参、新增 AI 工具及 schema 变更的分步指南 | [📖 06 修改配方](06-modification-guide.md) |
 | 🛡️ **生产运维** | systemd 部署、`COPY_NINJIA_DATA_ROOT`、备份与故障排查 | [📖 07 运维手册](07-operations.md) |
 
 ---
@@ -38,15 +38,15 @@
    - 基础依赖 (Bun 1.3+ / Linux / Bot Token / Gemini API Key)
    - `.env` 配置文件说明与必填字段
    - Telegram BotFather 配置（Privacy Mode / Admin 权限 / Inline Mode）
-   - 首次启动与拉群 `/init enable` 握手流程
+   - 首次启动与机器人入群后的 `/init enable` 握手流程
 
 2. **[02 架构总览](02-architecture.md)**
-   - 1 个主线程 (Main Thread) + 3 个 Worker (AI / Anti-Raid / Disk I/O) 的多进程协作模型
-   - 一条 Telegram Update 消息从接收、校验、分发到 Worker 响应的完整旅程
+   - 1 个主线程 (Main Thread) + 3 个 Worker (AI / Anti-Raid / Disk I/O) 的多线程协作模型
+   - 一条 Telegram update 从接收、校验、分发到 Worker 响应的完整旅程
    - 进程启动与优雅退出的全串行刷新屏障 (Flush Barrier)
 
 3. **[03 目录导览与代码放置](03-directory-map.md)**
-   - `src/` 目录下 13 个子领域的清晰职责边界
+   - `src/` 目录下各子领域的清晰职责边界
    - 「代码该放哪」的决策树：常量、类型、缓存、状态转移与 Worker
    - 向后兼容入口的收敛与导出规则
 
@@ -56,15 +56,15 @@
    - 持久化原子双写、Anti-Raid 验证状态机与运势 HMAC 密钥一致性
 
 5. **[05 开发流程与质量门禁](05-dev-workflow.md)**
-   - `bun run check` 4 级串行流水线：规范检查 + Lint + Typecheck + 全覆盖率测试
+   - `bun run check` 4 级串行流水线：规范检查 + Lint + Typecheck + 带覆盖率统计的全量测试
    - 测试环境隔离机制与临时数据根沙盒
    - 提交规范与发布前故障注入测试 `bun run test:fault-injection`
 
 6. **[06 常见修改配方](06-modification-guide.md)**
    - 配方 1：新增 Telegram 斜杠命令
-   - 配方 2：调整系统硬硬顶参数或超时时间
+   - 配方 2：调整系统硬顶参数或超时时间
    - 配方 3：扩展 Gemini AI 自定义工具函数
-   - 配方 4：修改配置 Schema 或持久化数据结构（手动迁移策略）
+   - 配方 4：修改配置 schema 或持久化数据结构（手动迁移策略）
 
 7. **[07 运维与排障](07-operations.md)**
    - 生产环境推荐硬件配置与部署指南

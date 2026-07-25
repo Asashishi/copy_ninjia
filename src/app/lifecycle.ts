@@ -12,6 +12,14 @@ import type { ApplicationLifecycleDependencies, FlushResult, FlushTimeouts } fro
 import type { HandlerRegistration } from "./registerHandlers";
 import type { AcknowledgedUpdateRunner } from "./updateRunner";
 import { lifecycleDependencies } from "./lifecycleDependencies";
+import {
+  createOwnerSettler,
+  flushAllToDisk,
+  formatShutdownResults,
+  isCleanShutdown,
+  runShutdownOwners,
+} from "./lifecycle/shutdown";
+import type { OwnerInitFlags, OwnerSettler, ShutdownResults } from "./lifecycle/shutdown";
 
 /**
  * 持有应用从取得单实例锁到释放锁的完整生命周期。所有会联网、创建 Worker、
@@ -23,10 +31,14 @@ export class ApplicationLifecycle {
   constructor(private readonly dependencies: ApplicationLifecycleDependencies = lifecycleDependencies) {}
 
   private lockAcquired: boolean = false;
-  private diskIOInitialized: boolean = false;
-  private aiChatInitialized: boolean = false;
-  private antiRaidInitialized: boolean = false;
-  private translateInitialized: boolean = false;
+  // 各 owner 的初始化标志交给停机序列就地读写（见 lifecycle/shutdown.ts）：
+  // 终止过的 owner 会被置回 false，避免重复终止。
+  private readonly flags: OwnerInitFlags = {
+    aiChatInitialized: false,
+    antiRaidInitialized: false,
+    diskIOInitialized: false,
+    translateInitialized: false,
+  };
   private stopRequested: boolean = false;
   private runner: AcknowledgedUpdateRunner | null = null;
   private runnerTaskSettled: boolean = false;
@@ -91,7 +103,7 @@ export class ApplicationLifecycle {
     this.dependencies.initReactionQueue();
     this.dependencies.initChatTitleRefresh();
     this.dependencies.initTranslate();
-    this.translateInitialized = true;
+    this.flags.translateInitialized = true;
 
     // 配置文件属于不可信部署输入：持锁后、启动 Worker/联网前统一校验，失败时
     // 由 finally 释放实例锁；各 Worker 在自己的 isolate 中复用同一解析器。
@@ -105,7 +117,7 @@ export class ApplicationLifecycle {
     // 心跳 timer 的 Telegram transformer；恢复失败不会留下半初始化组件。
     this.dependencies.initTelegramClients();
     this.dependencies.initDiskIO({ onFatal: this.handleDiskIOFatal });
-    this.diskIOInitialized = true;
+    this.flags.diskIOInitialized = true;
 
     const loaded: LoadedData = await this.dependencies.loadPersistedData();
     const restoredCopiedUser: CachedUser | null = this.dependencies.getGlobalCopyState().copiedUser;
@@ -116,13 +128,13 @@ export class ApplicationLifecycle {
     await this.dependencies.bot.init();
 
     this.dependencies.initAiChat(this.dependencies.bot.botInfo);
-    this.aiChatInitialized = true;
+    this.flags.aiChatInitialized = true;
     this.dependencies.hydrateAiMemory(loaded.aiMemories);
     this.dependencies.hydrateStickerCatalog(loaded.stickerCatalogs);
     this.dependencies.restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
     this.dependencies.hydratePendingVerifications(loaded.verifications);
     this.dependencies.initAntiRaid();
-    this.antiRaidInitialized = true;
+    this.flags.antiRaidInitialized = true;
 
     this.dependencies.logger.log(
       `Bot started as @${this.dependencies.bot.botInfo.username}. ` +
@@ -155,17 +167,24 @@ export class ApplicationLifecycle {
     } finally {
       this.runnerTaskSettled = true;
     }
-    this.quiesceMaintenance();
+    const maintenanceQuiesceSucceeded: boolean = this.quiesceMaintenance();
     const runnerDrained: boolean = await this.waitForRunnerDrain(runner);
 
     // 标题刷新可能触发 saveStateInBackground；必须先等它完成，再做最终 flush。
     const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(
       NORMAL_FLUSH_TIMEOUTS.maintenanceMs
     );
+    if (!maintenanceQuiesceSucceeded) process.exitCode = 1;
     const persistenceFlushed: boolean = await this.flushAllToDisk(NORMAL_FLUSH_TIMEOUTS);
 
     const lastSeenUpdateId: number = this.handlers?.getLastSeenUpdateId() ?? 0;
-    if (runnerDrained && maintenanceSettled && persistenceFlushed && lastSeenUpdateId > 0) {
+    if (
+      maintenanceQuiesceSucceeded &&
+      runnerDrained &&
+      maintenanceSettled &&
+      persistenceFlushed &&
+      lastSeenUpdateId > 0
+    ) {
       try {
         await this.dependencies.bot.api.getUpdates({ offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 });
       } catch (error: unknown) {
@@ -177,87 +196,58 @@ export class ApplicationLifecycle {
   /** 停止活动 runner，等待后台任务完成，排空持久化并释放单实例锁。 */
   dispose(timeouts: FlushTimeouts = NORMAL_FLUSH_TIMEOUTS): Promise<void> {
     this.disposePromise ??= (async (): Promise<void> => {
-      this.quiesceMaintenance();
-      if (this.runner !== null && !this.runnerTaskSettled) {
-        await this.runner.stop().catch((error: unknown) => {
+      const settler: OwnerSettler = createOwnerSettler(this.dependencies.logger);
+      const maintenanceQuiesceSucceeded: boolean = this.quiesceMaintenance();
+      const runner: AcknowledgedUpdateRunner | null = this.runner;
+      if (runner !== null && !this.runnerTaskSettled) {
+        await runner.stop().catch((error: unknown) => {
           this.dependencies.logger.error("Error stopping runner during disposal:", error);
         });
       }
-      const runnerDrained: boolean = this.runner === null
+      const runnerDrained: boolean = runner === null
         ? true
-        : await this.waitForRunnerDrain(this.runner);
-      const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(timeouts.maintenanceMs);
-      const avatarResult: FlushResult = await this.dependencies.drainAvatarUpdates(timeouts.maintenanceMs);
-      const reactionResult: FlushResult = await this.dependencies.drainReactionQueue(timeouts.maintenanceMs);
-      let translateResult: FlushResult = "flushed";
-      if (this.translateInitialized) {
-        translateResult = await this.dependencies.drainTranslate(timeouts.maintenanceMs);
-        const closeResult: FlushResult = await this.dependencies.closeTranslate(timeouts.maintenanceMs);
-        if (translateResult === "flushed" && closeResult !== "flushed") translateResult = closeResult;
-        this.translateInitialized = false;
+        : await settler.gate("runner drain", () => this.waitForRunnerDrain(runner));
+      const backgroundMaintenanceSettled: boolean = await settler.gate(
+        "background maintenance",
+        () => this.waitForBackgroundMaintenance(timeouts.maintenanceMs)
+      );
+      const results: ShutdownResults = {
+        runnerDrained,
+        maintenanceSettled: maintenanceQuiesceSucceeded && backgroundMaintenanceSettled,
+        ...await runShutdownOwners({
+          dependencies: this.dependencies,
+          flags: this.flags,
+          settler,
+          timeouts,
+          lockAcquired: this.lockAcquired,
+        }),
+      };
+      try {
+        this.dependencies.setBusinessWorkerFatalHandler(undefined);
+        this.dependencies.setStatePersistenceFatalHandler(undefined);
+      } catch (error: unknown) {
+        this.dependencies.logger.error("Shutdown owner fatal-handler teardown threw during disposal:", error);
       }
-      const antiRaidResult: FlushResult = this.antiRaidInitialized
-        ? await this.dependencies.drainAntiRaid(timeouts.maintenanceMs)
-        : "flushed";
-      let aiResult: FlushResult = "flushed";
-      if (this.aiChatInitialized) {
-        aiResult = await this.dependencies.flushAiMemory(timeouts.aiMemoryMs);
-        await this.dependencies.terminateAiChat();
-        this.aiChatInitialized = false;
-      }
-      let diskResult: FlushResult = "flushed";
-      if (this.diskIOInitialized) {
-        diskResult = await this.dependencies.flushDiskIO(timeouts.diskIOMs);
-      }
-      if (this.antiRaidInitialized) {
-        await this.dependencies.terminateAntiRaid();
-        this.antiRaidInitialized = false;
-      }
-      if (this.diskIOInitialized) {
-        await this.dependencies.terminateDiskIO();
-        this.diskIOInitialized = false;
-      }
-      const stateResult: FlushResult = this.lockAcquired
-        ? await this.dependencies.flushStateToDisk(timeouts.stateMs, true)
-        : "flushed";
-      this.dependencies.setBusinessWorkerFatalHandler(undefined);
-      this.dependencies.setStatePersistenceFatalHandler(undefined);
-      if (
-        !runnerDrained ||
-        !maintenanceSettled ||
-        avatarResult !== "flushed" ||
-        reactionResult !== "flushed" ||
-        translateResult !== "flushed" ||
-        antiRaidResult !== "flushed" ||
-        aiResult !== "flushed" ||
-        diskResult !== "flushed" ||
-        stateResult !== "flushed"
-      ) {
+      const clean: boolean = isCleanShutdown(results);
+      if (!clean) {
         process.exitCode = 1;
-        this.dependencies.logger.error(
-          `Shutdown drain/flush results: runner=${runnerDrained}, maintenance=${maintenanceSettled}, ` +
-          `avatar=${avatarResult}, reaction=${reactionResult}, translate=${translateResult}, ` +
-          `antiRaid=${antiRaidResult}, ai=${aiResult}, disk=${diskResult}, state=${stateResult}.`
-        );
+        this.dependencies.logger.error(`Shutdown drain/flush results: ${formatShutdownResults(results)}.`);
       }
       if (!this.lockAcquired) return;
-      if (
-        !runnerDrained ||
-        !maintenanceSettled ||
-        avatarResult !== "flushed" ||
-        reactionResult !== "flushed" ||
-        translateResult !== "flushed" ||
-        antiRaidResult !== "flushed" ||
-        aiResult !== "flushed" ||
-        diskResult !== "flushed" ||
-        stateResult !== "flushed"
-      ) {
+      if (!clean) {
         this.dependencies.logger.error(
           "Retaining the single-instance lock until process exit because a task did not drain or persistence did not flush."
         );
         return;
       }
-      await this.dependencies.releaseSingleInstanceLock(this.dependencies.BOT_TOKEN);
+      const released: FlushResult = await settler.terminate(
+        "single-instance lock release",
+        () => this.dependencies.releaseSingleInstanceLock(this.dependencies.BOT_TOKEN)
+      );
+      if (released !== "flushed") {
+        process.exitCode = 1;
+        return;
+      }
       this.lockAcquired = false;
     })();
     return this.disposePromise;
@@ -355,7 +345,9 @@ export class ApplicationLifecycle {
     const task: Promise<void> | null = this.chatTitleRefreshTask;
     if (task === null || this.chatTitleRefreshSettled) return true;
     if (timeoutMs <= 0) {
-      this.dependencies.logger.error("Skipping unfinished chat title refresh during emergency disposal.");
+      // 没有等待窗口时也必须 abort：不变量要求预算耗尽后不得再写入群标题。
+      this.dependencies.abortChatTitleRefresh();
+      this.dependencies.logger.error("Skipping unfinished chat title refresh during emergency disposal; aborted it.");
       return false;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -373,53 +365,36 @@ export class ApplicationLifecycle {
     return settled;
   }
 
-  private quiesceMaintenance(): void {
-    if (this.maintenanceQuiesced) return;
-    this.maintenanceQuiesced = true;
-    this.dependencies.quiesceAvatarUpdates();
-    this.dependencies.quiesceReactionQueue();
-    this.dependencies.quiesceChatTitleRefresh();
-    this.dependencies.quiesceTranslate();
+  private quiesceMaintenance(): boolean {
+    if (this.maintenanceQuiesced) return true;
+    let succeeded: boolean = true;
+    const quiesceOwner = (owner: string, run: () => void): void => {
+      try {
+        run();
+      } catch (error: unknown) {
+        succeeded = false;
+        this.dependencies.logger.error(`Shutdown owner ${owner} quiesce threw during shutdown:`, error);
+      }
+    };
+    // 每个入口独立结算：前一个 owner 抛错不能让后续入口继续接受新工作。
+    // 只有全部成功才记为完成；否则下一次 wait/dispose 仍会重试，已成功的
+    // quiesce 都是幂等赋值，可以安全重复。
+    quiesceOwner("avatar", () => this.dependencies.quiesceAvatarUpdates());
+    quiesceOwner("reaction", () => this.dependencies.quiesceReactionQueue());
+    quiesceOwner("chat-title", () => this.dependencies.quiesceChatTitleRefresh());
+    quiesceOwner("translate", () => this.dependencies.quiesceTranslate());
+    this.maintenanceQuiesced = succeeded;
+    return succeeded;
   }
 
-  private async flushAllToDisk(timeouts: FlushTimeouts): Promise<boolean> {
-    if (!this.lockAcquired) return false;
-    // Worker mailbox 与主线程后台队列必须先归零；随后 flush 才覆盖它们发布的
-    // 最后一份镜像，不能在 flush 后再让旧任务补写。
-    const avatarResult: FlushResult = await this.dependencies.drainAvatarUpdates(timeouts.maintenanceMs);
-    const reactionResult: FlushResult = await this.dependencies.drainReactionQueue(timeouts.maintenanceMs);
-    const translateResult: FlushResult = this.translateInitialized
-      ? await this.dependencies.drainTranslate(timeouts.maintenanceMs)
-      : "flushed";
-    const antiRaidResult: FlushResult = this.antiRaidInitialized
-      ? await this.dependencies.drainAntiRaid(timeouts.maintenanceMs)
-      : "flushed";
-    // AI memory 必须先回传到 diskIOWorker，再 flush 该 Worker。
-    const aiResult: FlushResult = this.aiChatInitialized
-      ? await this.dependencies.flushAiMemory(timeouts.aiMemoryMs)
-      : "flushed";
-    const diskResult: FlushResult = this.diskIOInitialized
-      ? await this.dependencies.flushDiskIO(timeouts.diskIOMs)
-      : "flushed";
-    const stateResult: FlushResult = await this.dependencies.flushStateToDisk(timeouts.stateMs);
-    if (
-      avatarResult !== "flushed" ||
-      reactionResult !== "flushed" ||
-      translateResult !== "flushed" ||
-      antiRaidResult !== "flushed" ||
-      aiResult !== "flushed" ||
-      diskResult !== "flushed" ||
-      stateResult !== "flushed"
-    ) {
-      process.exitCode = 1;
-      this.dependencies.logger.error(
-        `Pre-confirmation drain/flush results: avatar=${avatarResult}, reaction=${reactionResult}, antiRaid=${antiRaidResult}, ` +
-        `translate=${translateResult}, ai=${aiResult}, disk=${diskResult}, state=${stateResult}; ` +
-        "the final Telegram update offset will not be confirmed."
-      );
-      return false;
-    }
-    return true;
+  private flushAllToDisk(timeouts: FlushTimeouts): Promise<boolean> {
+    if (!this.lockAcquired) return Promise.resolve(false);
+    return flushAllToDisk({
+      dependencies: this.dependencies,
+      flags: this.flags,
+      settler: createOwnerSettler(this.dependencies.logger),
+      timeouts,
+    });
   }
 }
 

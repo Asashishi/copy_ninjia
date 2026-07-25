@@ -3,7 +3,7 @@ import { link, open, readFile, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { BOT_LOCK_LINE_PATTERN, LINUX_BOOT_ID_PATTERN, PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { LOCK_FILE_PATH } from "../../consts/paths";
-import { atomicWriteText } from "../../libs/atomicFile";
+import { atomicWriteText, syncDirectory } from "../../libs/atomicFile";
 import { logger } from "../logger";
 import { prepareRuntimeDataRoot } from "./dataRoot";
 
@@ -191,12 +191,18 @@ async function acquirePidFileLock(
   const candidatePath: string = `${lockFilePath}.candidate.${process.pid}.${crypto.randomUUID()}`;
   const handle = await open(candidatePath, "wx");
   try {
-    await handle.writeFile(serializeProcessIdentity(currentIdentity));
-  } finally {
-    await handle.close();
-  }
+    try {
+      await handle.writeFile(serializeProcessIdentity(currentIdentity));
+      // candidate 会被 link() 直接发布成 guard 本体，没有 rename 兜底，因此这里
+      // 必须先把数据和目录项都落盘。否则掉电可能留下内容为空或撕裂的
+      // bot.lock.guard——它既不在 cleanupOrphanedTempFiles 的清扫范围内，
+      // 又会让下次启动在 parseProcessIdentity 处直接被拒，只能人工 rm。
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await syncDirectory(candidatePath);
 
-  try {
     for (;;) {
       try {
         await link(candidatePath, lockFilePath);
