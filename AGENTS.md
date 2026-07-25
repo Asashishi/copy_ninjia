@@ -10,13 +10,12 @@
 
 ## 分支与提交
 
-- **开发一律在 `dev` 分支上进行，不直接向 `master` 提交。** `master` 是部署基线，只接受已经跑过完整验收的成品。
-- `dev` 从 `master` 拉出。需要并行推进互不相干的改动时，可以从 `dev` 再拉短命的 `feat/*`，完成后并回 `dev`。
+- **仓库只有 `master` 与 `dev` 两个分支，不开功能分支。** 一切开发都在 `dev` 上进行，不直接向 `master` 提交；`master` 是部署基线，只接受已经跑过完整验收的成品。
 - **合并进 `master` 只用 squash，一次改动收敛成一个提交**（`git merge --squash` + 单次 `git commit`），保持 `master` 线性、每个提交都是一个可回滚的完整变更。开发过程中的中间提交不进 `master` 历史。
 - squash 提交的信息要覆盖整个改动集，并说明「为什么这么改」而不只是「改了什么」——它是 `master` 上唯一留存的记录，中间提交的说明都随 squash 消失了。
 - 合并前必须 `bun run check` 全绿；碰到持久化、停机、Worker 生命周期相关代码时再补 `bun run test:fault-injection`。任一项失败不得合并。
-- 合并后删除已完成的功能分支（本地与 `origin` 都删），`dev` 重新与 `master` 对齐后继续。
-- 覆盖率/测试数写在 README 与 `docs/05-dev-workflow.md` 里，是**实测值**：改动影响到它们时，按合并前那次 `bun run check` 的真实输出同步三份 README 与三份文档，不要凭估计填。
+- 合并后把 `dev` 重新对齐到 `master` 再继续：squash 产生的是新提交，`dev` 上那条原始提交虽然内容已在 `master` 上，却仍会被算作「领先」，留着会让人误判 `dev` 还有未合并的东西。对齐用 `git reset --hard master` 加 `git push --force-with-lease origin dev`；强推前先确认两边树一致（`git diff dev master --quiet`），确保不会丢东西。
+- 覆盖率/测试数是**实测值**，且分散在徽章、`docs/assets/coverage_{light,dark}.svg`、README 的 `<img alt>` 与三份开发文档里：改动影响到它们时，按合并前那次 `bun run check` 的真实输出逐处同步，不要凭估计填。完整位置清单见 [`docs/05-dev-workflow.md`](docs/05-dev-workflow.md) 的「同步 README 指标」，此处不重复。
 
 ## 编码规范
 - 当一个文件的代码行数超过 500 行，考虑拆分成多个文件；超过 1000 行，必须拆分。

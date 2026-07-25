@@ -63,7 +63,13 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 
 ### 🧪 Project Quality
 
-`bun run test:coverage`: **896 tests / 123 files / 8479 `expect()` calls**; full-source **function coverage 94.81% / line coverage 96.67%**.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
+    <img alt="bun run test:coverage — 896 tests passed, 123 test files, 8,479 expect() calls, 94.81% function coverage, 96.67% line coverage" src="docs/assets/coverage_light.svg" width="780">
+  </picture>
+</p>
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 

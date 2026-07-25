@@ -63,7 +63,13 @@
 
 ### 🧪 项目质量
 
-`bun run test:coverage`：**896 tests / 123 files / 8479 次 `expect()`**；全源码**函数覆盖率 94.81% / 行覆盖率 96.67%**。
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
+    <img alt="bun run test:coverage：896 项测试全部通过 / 123 个测试文件 / 8,479 次 expect() 调用 / 函数覆盖率 94.81% / 行覆盖率 96.67%" src="docs/assets/coverage_light.svg" width="780">
+  </picture>
+</p>
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 

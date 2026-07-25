@@ -72,7 +72,7 @@ bun run test:coverage 2>&1 | tail -5        # 测试数、文件数、expect() �
 bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 ```
 
-需要同步的位置：三语 README 的徽章行（Tests / Coverage）、三语 README「纯 AI 开发」节的「项目质量」，以及三语本文的「当前文档版本实测」——后两处是同一组实测数值（README 那份不重复徽章口径说明），改一处就改另一处。Coverage 徽章固定采用 `All files` 的行覆盖率。README 中引用的行为数值（概率、容量、时长）与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
+需要同步的位置：三语 README 的徽章行（Tests / Coverage）；三语 README「纯 AI 开发」节「项目质量」引用的 [`docs/assets/coverage_light.svg`](assets/coverage_light.svg) 与 [`coverage_dark.svg`](assets/coverage_dark.svg)——一对图由三语 README 共用（同 banner），改动要同时落在两个主题文件的数值上，以及三份 README 里 `<img alt>` 的等价文案（图以图片加载，SVG 内部的 `<title>`/`aria-label` 读屏软件读不到，alt 是唯一的无障碍出口）；三语本文的「当前文档版本实测」。以上是同一组实测数值，改一处就要全部改到。Coverage 徽章固定采用 `All files` 的行覆盖率。README 中引用的行为数值（概率、容量、时长）与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布
 

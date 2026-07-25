@@ -65,7 +65,13 @@
 
 ### 🧪 プロジェクト品質
 
-`bun run test:coverage`：**896 tests / 123 files / 8479 `expect()` calls**。全ソースコードの**関数カバレッジは 94.81%、行カバレッジは 96.67%**です。
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
+    <img alt="bun run test:coverage — 896 件のテストが全て成功 / テストファイル 123 件 / expect() 呼び出し 8,479 回 / 関数カバレッジ 94.81% / 行カバレッジ 96.67%" src="docs/assets/coverage_light.svg" width="780">
+  </picture>
+</p>
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
