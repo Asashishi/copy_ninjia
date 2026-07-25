@@ -30,17 +30,29 @@ describe("滑动窗口限流判定", () => {
     expect(contents(timestamps)).toEqual([100, 200, 300]);
   });
 
-  test("最早一次滑出窗口后立刻释放一个名额", () => {
-    const timestamps = new LinkedQueue<number>();
-    for (const now of [100, 200, 300]) expect(consume(timestamps, now)).toBeTrue();
+  test("窗口是半开区间 (now - windowMs, now]，边界两侧行为明确", () => {
+    // 全仓所有滑动窗口共用这一个边界定义（见 trimSlidingWindow）：曾经各处
+    // 写法不一（`<` / `<=` / `>=`），同样的窗口长度差出一个刻度。
+    const justInside = queueOf(100, 200, 300);
+    // 1099：100 还差 1 毫秒才满一个窗口，仍占着名额。
+    expect(consume(justInside, 1_099)).toBeFalse();
 
-    // 窗口边界按 `< now - windowMs` 淘汰：1100 时 100 仍在窗口内。
-    expect(consume(timestamps, 1_100)).toBeFalse();
-    expect(consume(timestamps, 1_101)).toBeTrue();
-    expect(contents(timestamps)).toEqual([200, 300, 1_101]);
+    const atBoundary = queueOf(100, 200, 300);
+    // 1100：100 恰好满一个窗口，出局并立刻释放名额。
+    expect(consume(atBoundary, 1_100)).toBeTrue();
+    expect(contents(atBoundary)).toEqual([200, 300, 1_100]);
   });
 
-  test("时钟回拨时整窗重建，配额不被冻结", () => {
+  test("时钟回拨只丢落在未来的记录，合法历史必须留下", () => {
+    // 整窗清空等于把配额清零重来——往回拨 1 毫秒就能凭空换到一整个新窗口。
+    const timestamps = queueOf(900, 5_002);
+    expect(consume(timestamps, 1_000, 2)).toBeTrue();
+    // 900 仍占名额，所以这次必须被拒；若回拨时整窗清空了，这里会错误放行。
+    expect(consume(timestamps, 1_000, 2)).toBeFalse();
+    expect(contents(timestamps)).toEqual([900, 1_000]);
+  });
+
+  test("全部记录都在未来时窗口确实清空，配额不被冻结", () => {
     const timestamps = queueOf(5_000, 5_001, 5_002);
     expect(consume(timestamps, 1_000)).toBeTrue();
     expect(contents(timestamps)).toEqual([1_000]);

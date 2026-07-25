@@ -6,6 +6,7 @@ import {
   REPLY_GENERATIONS_MAX,
 } from "../../consts/aiChat/rateLimit";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
+import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
 
 /**
  * AI 回复调度的内存状态，由回复流水线的多个子模块共同驱动，没有单一 owner：
@@ -50,11 +51,7 @@ export function invalidateChatReplyCache(chatId: number): number {
 /** 定时收掉已过期的限频窗口和提示冷却记录。 */
 export function sweepAiChatReplyCache(now: number = Date.now()): void {
   for (const [chatId, times] of longTriggerTimes) {
-    if ((times.last(1)[0] ?? now) > now) {
-      longTriggerTimes.delete(chatId);
-      continue;
-    }
-    while (times.size > 0 && now - times.peek()! >= RATE_LIMIT_LONG_WINDOW_MS) times.shift();
+    trimSlidingWindow({ timestamps: times, windowMs: RATE_LIMIT_LONG_WINDOW_MS, now });
     if (times.size === 0) longTriggerTimes.delete(chatId);
   }
   for (const [chatId, at] of rateLimitNoticeTimes) {

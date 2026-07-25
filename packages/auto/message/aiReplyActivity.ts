@@ -11,12 +11,10 @@ import {
   type AiReplyActivityEntry,
 } from "../../cache/auto";
 import { LinkedQueue } from "../../libs/linkedQueue";
+import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
 
 function pruneEntry(entry: AiReplyActivityEntry, now: number): void {
-  const cutoff: number = now - AI_REPLY_ACTIVITY_WINDOW_MS;
-  while ((entry.timestamps.peek() ?? Number.POSITIVE_INFINITY) <= cutoff) {
-    entry.timestamps.shift();
-  }
+  trimSlidingWindow({ timestamps: entry.timestamps, windowMs: AI_REPLY_ACTIVITY_WINDOW_MS, now });
 }
 
 /**

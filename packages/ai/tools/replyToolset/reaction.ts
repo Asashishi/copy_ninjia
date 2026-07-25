@@ -20,9 +20,9 @@ export function createAddReactionExecutor(
       return toolError("Invalid reaction emoji: pick one from the list");
     }
     if (reactionCount >= MAX_REACTIONS_PER_REPLY) {
-      return JSON.stringify({
-        error: `Reaction limit reached: at most ${MAX_REACTIONS_PER_REPLY} reaction per reply`,
-      });
+      return toolError(
+        `Reaction limit reached: at most ${MAX_REACTIONS_PER_REPLY} reaction per reply`
+      );
     }
     const sent: boolean = await setMessageReaction({ chatId: ctx.chatId, messageId: ctx.replyToMessageId, emoji });
     if (!sent) return toolError("Failed to set reaction");

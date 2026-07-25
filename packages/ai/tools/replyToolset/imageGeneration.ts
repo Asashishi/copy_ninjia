@@ -102,29 +102,29 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
   return async (argumentsJson: string): Promise<string> => {
     if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
     if (!ctx.imageGenerationRequested) {
-      return JSON.stringify({
-        error: "Image generation is not authorized: the triggering message was not a direct reply to or mention of the bot",
-        retryable: false,
-      });
+      return toolError(
+        "Image generation is not authorized: the triggering message was not a direct reply to or mention of the bot",
+        { retryable: false }
+      );
     }
     if (generatedImages >= MAX_GENERATED_IMAGES_PER_REPLY) {
-      return JSON.stringify({
-        error: `Image limit reached: at most ${MAX_GENERATED_IMAGES_PER_REPLY} generated image per reply`,
-        retryable: false,
-      });
+      return toolError(
+        `Image limit reached: at most ${MAX_GENERATED_IMAGES_PER_REPLY} generated image per reply`,
+        { retryable: false }
+      );
     }
     const parsed = parseArguments(argumentsJson, defaultAspectRatioFor(ctx.imageGenerationReference));
     if (!parsed) {
-      return JSON.stringify({
-        error: "Invalid image arguments: prompt must be non-empty and aspect_ratio must look like W:H, W/H, WxH, or W×H",
-      });
+      return toolError(
+        "Invalid image arguments: prompt must be non-empty and aspect_ratio must look like W:H, W/H, WxH, or W×H"
+      );
     }
 
     if (consecutiveFailures >= IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY) {
-      return JSON.stringify({
-        error: "Image generation is disabled for the remainder of this reply after repeated failures; respond without retrying",
-        retryable: false,
-      });
+      return toolError(
+        "Image generation is disabled for the remainder of this reply after repeated failures; respond without retrying",
+        { retryable: false }
+      );
     }
 
     const claim: ImageGenerationClaim = claimImageGeneration({
@@ -133,8 +133,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
     });
     if (!claim.allowed) {
       const retryAfterSeconds: number = Math.ceil(claim.retryAfterMs / 1_000);
-      return JSON.stringify({
-        error: "Image generation is cooling down in this chat",
+      return toolError("Image generation is cooling down in this chat", {
         retry_after_seconds: retryAfterSeconds,
         retryable: false,
         required_action:

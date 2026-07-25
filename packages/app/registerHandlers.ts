@@ -5,6 +5,7 @@ import {
   confirmLuckDraw,
   handleAiChatCommand,
   handleCjkActionCommand,
+  handleCjkActionUsageCommand,
   handleCopyCommand,
   handleInitCommand,
   handleJaCopyCommand,
@@ -89,11 +90,11 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("quiet", (ctx) => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx) => handleUnquietCommand(ctx));
   bot.command("send", (ctx) => handleSendCommand(ctx));
-  // 菜单占位项，故意不做任何处理：它只为在命令菜单里曝光「/<单个中文字>」这个
-  // 用法（那类命令名注册不进菜单，见 consts/commands.ts）。但必须注册成一个
-  // 空 handler 并就此终止链路——点菜单会真的把 /x 发出去，不拦住的话它会落到
-  // 下面的消息兜底，被当成普通消息进入 AI/复读流水线。
-  bot.command("x", () => undefined);
+  // 菜单占位项：它只为在命令菜单里曝光「/<单个中文字>」这个用法（那类命令名
+  // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
+  // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
+  // 流水线；但也不能什么都不回，否则点了菜单的人只会得到一片沉默。
+  bot.command("x", (ctx) => handleCjkActionUsageCommand(ctx));
   // `/咬` 这类单字中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
   // 匹配不到，只能按消息原文 hears。必须排在消息兜底处理器之前，否则会被当成
   // 普通消息进入 AI/复读流水线；不认领的形态由 handler 自己 next() 放行。

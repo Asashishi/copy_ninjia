@@ -19,6 +19,9 @@ describe("application handler registration", () => {
     const commands: string[] = [];
     const hearsTriggers: RegExp[] = [];
     const updates: unknown[] = [];
+    // hears 与 on 记在两个互不相干的数组里，各自的内容断言锁不住它们之间的
+    // 相对顺序；这条有序流水专门用来钉住「hears 必须早于消息兜底」。
+    const registrationOrder: string[] = [];
     let catchCount: number = 0;
     let caughtHandler: ((error: { ctx: Context; error: unknown }) => void) | undefined;
     const fakeBot: FakeBot = {
@@ -28,14 +31,17 @@ describe("application handler registration", () => {
       },
       command(command: string, _handler: unknown): FakeBot {
         commands.push(command);
+        registrationOrder.push(`command:${command}`);
         return fakeBot;
       },
       hears(trigger: RegExp, _handler: unknown): FakeBot {
         hearsTriggers.push(trigger);
+        registrationOrder.push("hears");
         return fakeBot;
       },
       on(update: unknown, _handler: unknown): FakeBot {
         updates.push(update);
+        registrationOrder.push(`on:${JSON.stringify(update)}`);
         return fakeBot;
       },
       catch(handler: unknown): FakeBot {
@@ -68,6 +74,16 @@ describe("application handler registration", () => {
     // 单字中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
     // 消息兜底之前，否则会被当成普通消息进入 AI/复读流水线。
     expect(hearsTriggers).toEqual([CJK_ACTION_COMMAND_PATTERN]);
+    // 顺序是承重的，必须显式断言：把 hears 挪到消息兜底之后，上面所有断言依旧
+    // 全绿，而运行时每条 `/咬` 都会先被 handleIncomingMessage 吞掉，整个动作
+    // 命令特性静默失效并落进它明令要避开的 AI/复读流水线。
+    const messageFallbackIndex: number =
+      registrationOrder.indexOf(`on:${JSON.stringify(["message", "channel_post"])}`);
+    expect(messageFallbackIndex).toBeGreaterThan(-1);
+    expect(registrationOrder.indexOf("hears")).toBeGreaterThan(-1);
+    expect(registrationOrder.indexOf("hears")).toBeLessThan(messageFallbackIndex);
+    // /x 占位项同理：它也终止链路，必须先于消息兜底注册。
+    expect(registrationOrder.indexOf("command:x")).toBeLessThan(messageFallbackIndex);
     expect(updates).toHaveLength(8);
     expect(catchCount).toBe(1);
 

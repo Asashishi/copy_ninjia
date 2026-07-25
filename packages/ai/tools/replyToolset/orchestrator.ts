@@ -98,9 +98,9 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
         return toolError(REPLY_INVALIDATED_TOOL_ERROR);
       }
       if (ACTION_TOOL_NAMES.includes(name) && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
-        return JSON.stringify({
-          error: `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images) per reply`,
-        });
+        return toolError(
+          `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images) per reply`
+        );
       }
 
       const result: string = await dispatch(name, argumentsJson);

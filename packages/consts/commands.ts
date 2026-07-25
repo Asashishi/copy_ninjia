@@ -16,9 +16,11 @@ export const BOT_COMMANDS: readonly BotCommand[] = Object.freeze([
   Object.freeze({ command: "ja_copy", description: "复读并翻译为日语；enable/disable 开关本群该功能（仅限定用户可用）" }),
   Object.freeze({ command: "stop_copy", description: "停止当前的复读" }),
   Object.freeze({ command: "steal_icon", description: "偷取目标头像作为 bot 头像" }),
-  // 纯占位说明项：命令名 x 就是那个「变量」，提示用户把它换成任意一个中文字。
-  // 故意没有任何处理逻辑（见 app/registerHandlers.ts 的空 handler），它存在的
-  // 唯一目的是让单字中文动作命令在菜单里可见——那类命令名进不了菜单，见上方说明。
+  // 占位说明项：命令名 x 就是那个「变量」，提示用户把它换成任意一个中文字。
+  // 它存在的唯一目的是让单字中文动作命令在菜单里可见——那类命令名进不了菜单，
+  // 见上方说明。收到时由 commands/cjkAction.ts 的 handleCjkActionUsageCommand
+  // 回一句用法并终止链路：既不能沉默（点了菜单的人不知道发生了什么），也不能
+  // 放行到消息兜底（会被当成普通消息进入 AI/复读流水线）。
   Object.freeze({ command: "x", description: "动作命令：把 x 换成任意一个中文字直接发，如 /咬；回复 TA 的消息或加 @username 指定对象" }),
   Object.freeze({ command: "kick", description: "在所有本天才管理的群里踢出并封禁（仅白名单用户可用）" }),
   Object.freeze({ command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" }),

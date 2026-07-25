@@ -178,14 +178,14 @@ export async function viewStickerPackTool({
   const intent: string | null = parseStickerIntent(argumentsJson);
   if (intent === null) return toolError(`Invalid intent: provide a concrete non-empty intent within ${STICKER_INTENT_MAX_CHARS} characters`);
   if (state.viewedPackIntents.has(packIndex)) {
-    return JSON.stringify({
-      error: "Sticker pack already viewed in this reply; do not view it again. Use its existing list, choose a different unviewed pack, or reply without a sticker",
-    });
+    return toolError(
+      "Sticker pack already viewed in this reply; do not view it again. Use its existing list, choose a different unviewed pack, or reply without a sticker"
+    );
   }
   if (state.viewedPackIntents.size >= MAX_STICKER_PACK_VIEWS_PER_REPLY) {
-    return JSON.stringify({
-      error: `Sticker pack view limit reached: at most ${MAX_STICKER_PACK_VIEWS_PER_REPLY} different packs per reply; do not call view_sticker_pack again. Reply with text/reaction or finish`,
-    });
+    return toolError(
+      `Sticker pack view limit reached: at most ${MAX_STICKER_PACK_VIEWS_PER_REPLY} different packs per reply; do not call view_sticker_pack again. Reply with text/reaction or finish`
+    );
   }
 
   // 切挡立即补发一次 choose_sticker，之后由心跳按间隔重发维持（间隔小于

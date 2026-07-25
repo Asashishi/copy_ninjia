@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-896_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.67%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-907_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.60%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -67,7 +67,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 896 tests passed, 123 test files, 8,479 expect() calls, 94.81% function coverage, 96.67% line coverage" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 907 tests passed, 123 test files, 8,505 expect() calls, 94.65% function coverage, 96.60% line coverage" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 

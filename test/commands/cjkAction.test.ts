@@ -16,6 +16,10 @@ const {
   CJK_ACTION_RATE_LIMIT_WINDOW_MS,
 } = await import("../../packages/consts/commands");
 const { recentActionCallTimestamps } = await import("../../packages/cache/cjkAction");
+const { markSelfSent } = await import("../../packages/infra/selfSentTracker");
+const { sentMessages } = await import("../../packages/cache/selfSentTracker");
+const { resolveUsernameTarget } = await import("../../packages/users/senderIdentity");
+const { handleCjkActionUsageCommand } = await import("../../packages/commands/cjkAction");
 
 const actor = { id: 100, first_name: "ネオン", last_name: "アサ", username: "neon_asa" };
 
@@ -39,6 +43,9 @@ beforeEach(() => {
   target = { id: 7, first_name: "冷曦[Hiyase] 🏳️‍🌈", username: "hiyase" };
   nextCalls = 0;
   recentActionCallTimestamps.clear();
+  // 自发消息登记是模块级状态且 TTL 很长，不清会渗到后续用例里。
+  for (const timer of sentMessages.values()) clearTimeout(timer);
+  sentMessages.clear();
   sendMessage.mockClear();
   resolveCommandTarget.mockClear();
 });
@@ -90,6 +97,8 @@ describe("/<单字> 动作命令", () => {
         { type: "text_link", offset: 0, length: 6, url: "https://t.me/neon_asa" },
         { type: "text_link", offset: 10, length: 17, url: "https://t.me/hiyase" },
       ],
+      // 两个名字都挂 t.me 链接，必须关掉 Telegram 的自动预览卡片。
+      disableLinkPreview: true,
     });
     // 实体必须精确覆盖两个名字，否则链接会错位到旁边的文字上。
     expect(text.slice(0, 6)).toBe("ネオン アサ");
@@ -136,6 +145,7 @@ describe("/<单字> 动作命令", () => {
       text: "Alice 咬了 Bob！",
       replyToMessageId: 10,
       entities: [],
+      disableLinkPreview: true,
     });
   });
 
@@ -215,5 +225,63 @@ describe("/<单字> 动作命令", () => {
     await handleCjkActionCommand(context("/copy"), next);
     expect(nextCalls).toBe(3);
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("动作命令的认领边界", () => {
+  test("caption 形态不认领，放行回消息流水线", async () => {
+    // bot.hears 对 caption 也匹配。若在这里认领，这条带图消息就再也到不了
+    // handleIncomingMessage，那张图不会进 AI 滚动记忆与视觉流水线。
+    const ctx: any = context("/咬");
+    delete ctx.msg.text;
+    ctx.msg.caption = "/咬";
+    ctx.msg.photo = [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }];
+
+    await handleCjkActionCommand(ctx, next);
+
+    expect(nextCalls).toBe(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+  });
+
+  test("机器人自己发出的消息不认领，避免自问自答的刷屏循环", async () => {
+    // 本 handler 排在消息流水线之前，拿不到它那道自发消息门禁；频道里机器人
+    // 自己的帖子会被原样推回，而回复正文里的名字可被对方设成 /咬 开头。
+    const ctx: any = context("/咬");
+    markSelfSent(-1001, 10);
+
+    await handleCjkActionCommand(ctx, next);
+
+    expect(nextCalls).toBe(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("认领消息时顺手把发起人写进 username 缓存", async () => {
+    // 被认领的消息不再流经 handleIncomingMessage，而 cacheSender 只在那里调用；
+    // 不补这一次，发言以动作命令为主的人就永远查不到。
+    // 用本文件独有的名字：模块级 username 缓存会被同文件先前的用例填过。
+    expect(resolveUsernameTarget("only_seen_via_action")).toBeUndefined();
+
+    await handleCjkActionCommand(
+      context("/咬", { id: 4242, first_name: "Zed", username: "only_seen_via_action" }),
+      next
+    );
+
+    expect(resolveUsernameTarget("only_seen_via_action")).toMatchObject({
+      id: 4242,
+      username: "only_seen_via_action",
+    });
+  });
+});
+
+describe("/x 菜单占位项", () => {
+  test("回一句用法提示，而不是静默吞掉更新", async () => {
+    await handleCjkActionUsageCommand(context("/x"));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const params = sendMessage.mock.calls[0]![0] as { chatId: number; text: string; replyToMessageId: number };
+    expect(params.chatId).toBe(-1001);
+    expect(params.replyToMessageId).toBe(10);
+    expect(params.text).toContain("/咬");
   });
 });

@@ -36,7 +36,7 @@ mock.module("../../packages/aiChat", () => ({
   recordChatMedia: recordChatMediaMock,
   generateAndSendReply: generateAndSendReplyMock,
 }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
+mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false, isBotOwnMessage: () => false }));
 
 // tryClaimUserReplyTrigger 的 15s 每人触发冷却按真实 Date.now() 计时（见
 // packages/auto/message/）：本文件多个用例共用同一个 chatId + alice.id 夹具，

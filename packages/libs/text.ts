@@ -14,24 +14,51 @@ export function sanitizeInline(raw: string): string {
 }
 
 /**
+ * Unicode 双向格式控制符：ALM、LRM/RLM、LRE/RLE/PDF/LRO/RLO 与隔离符
+ * LRI/RLI/FSI/PDI。刻意**不**包含同属 Cf 的 ZWJ(U+200D)/ZWNJ(U+200C)——它们是
+ * 🏳️‍🌈 这类 emoji 组合序列和部分文字的正常组成部分，剥掉会把昵称里的 emoji 拆碎。
+ */
+const BIDI_CONTROL_PATTERN: RegExp = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+/**
+ * 显示名清洗：剥掉双向控制符后再压成单行。
+ *
+ * 昵称由用户自己设置，却会被拼进机器人撰写的句子、并作为 text_link 的锚文本
+ * （见 commands/cjkAction.ts）。一个 RLO 就能让整句的其余部分反向渲染，使
+ * 「发起人 X了 目标」在视觉上主宾颠倒、两个人名各自的主页链接看起来挂错人。
+ * 空白折叠的规则与 sanitizeInline 共用，不另写一份。
+ */
+export function sanitizeDisplayName(raw: string): string {
+  return sanitizeInline(raw.replace(BIDI_CONTROL_PATTERN, ""));
+}
+
+/**
  * 复用同一个 Segmenter：它的构造远贵于一次 segment 调用（理由同 libs/time.ts
  * 里几个 Intl.DateTimeFormat 提到模块级）。这里不能照搬 time.ts 在模块加载时
  * 直接构造——旧运行时没有 Intl.Segmenter，模块级构造抛错会让整个模块 import
- * 失败，而 splitGraphemes 的契约是「没有就退化为按码点切分」。故用三态惰性
- * holder：undefined = 尚未尝试，null = 本运行时不支持，其余 = 可复用实例。
+ * 失败，而 splitGraphemes 的契约是「没有就退化为按码点切分」。
  * 不导出，也不跨模块共享，因此不属于 packages/cache/ 的范畴。
  */
-const graphemeSegmenterHolder: { current: Intl.Segmenter | null | undefined } = { current: undefined };
+const graphemeSegmenterHolder: { current: Intl.Segmenter | null } = { current: null };
 
 function graphemeSegmenter(): Intl.Segmenter | null {
-  if (graphemeSegmenterHolder.current === undefined) {
-    try {
-      graphemeSegmenterHolder.current = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-    } catch {
-      graphemeSegmenterHolder.current = null;
-    }
+  if (graphemeSegmenterHolder.current !== null) return graphemeSegmenterHolder.current;
+  try {
+    graphemeSegmenterHolder.current = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  } catch {
+    // 只缓存成功，失败不写进 holder。构造失败未必是「本运行时不支持」这种永久
+    // 事实，也可能是 ICU 数据一时不可用、内存压力下分配失败这类瞬时故障；把它
+    // 记下来就等于把一次性抖动固化成进程生命周期内的降级，此后每条 /r_copy 都
+    // 按码点拆 ZWJ 序列、吐出坏掉的 emoji，直到重启为止。下次调用重试即可——
+    // 真正不支持的运行时无非每次多付一次抛错，与提取 holder 之前的行为一致。
+    return null;
   }
   return graphemeSegmenterHolder.current;
+}
+
+/** 清空已缓存的 Segmenter；仅供单测在替换 Intl.Segmenter 前后重置状态。 */
+export function resetGraphemeSegmenterCache(): void {
+  graphemeSegmenterHolder.current = null;
 }
 
 /** 按 Unicode 扩展字形簇切分；旧运行时不支持 Segmenter 时退化为按码点。 */

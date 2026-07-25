@@ -1,4 +1,5 @@
 import type { CachedUser } from "../types/chatState";
+import { sanitizeDisplayName } from "../libs/text";
 
 /**
  * 生成用于回复文本中的、人类可读的用户/频道标签。当目标没有公开 @username 时
@@ -8,8 +9,10 @@ import type { CachedUser } from "../types/chatState";
  */
 export function formatUserLabel(user: CachedUser): string {
   if (user.username) return `@${user.username}`;
-  if (user.isChannel) return user.title ?? "这个频道";
-  return user.first_name ?? "这个杂鱼";
+  // title / first_name 是用户可控内容，同样要清洗后才拼进机器人的句子；
+  // username 由 Telegram 限定字符集，直接用。
+  if (user.isChannel) return sanitizeDisplayName(user.title ?? "") || "这个频道";
+  return sanitizeDisplayName(user.first_name ?? "") || "这个杂鱼";
 }
 
 /**
@@ -23,7 +26,7 @@ export function formatFullName(user: CachedUser): string {
   const rawName: string = user.isChannel
     ? user.title ?? ""
     : [user.first_name, user.last_name].filter(Boolean).join(" ");
-  const displayName: string = rawName.replace(/\s+/g, " ").trim();
+  const displayName: string = sanitizeDisplayName(rawName);
   if (displayName.length > 0) return displayName;
   return user.username ? `@${user.username}` : "这个杂鱼";
 }

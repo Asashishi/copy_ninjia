@@ -38,12 +38,16 @@ export function isSendCommandText(text: string): boolean {
  * 私聊指令前置网关，见 app/registerHandlers.ts。私聊里的 / 开头文本一律
  * 拦下，两处例外：/send 指令本身；有 /send 中转会话在跑时放行全部消息，
  * 好让 handleIncomingMessage 的转发分支收得到。
+ * 判定同时看 text 与 caption：bot.command 只认 text，但 bot.hears（`/咬` 这类
+ * 单字中文动作命令，见 commands/cjkAction.ts）两者都匹配。只看 text 的话，
+ * 一张 caption 写着 `/咬` 的图片就能绕过本网关，让任意陌生人在私聊里驱使
+ * 机器人作答、并借回复文案的差异探测 username 缓存里有谁。
  * 会话是否在跑走全局的 getActiveProxySendTarget（不针对某个 chatId 查），
  * 同时必须核对私聊发送者就是超管。机器人可能收到任意用户的私聊更新，不能
  * 因为超管开启了一轮全局会话就把其他用户的命令也放进后续处理器。
  */
 export function shouldPassPrivateCommandGate(ctx: Context): boolean {
-  const text: string | undefined = ctx.message?.text;
+  const text: string | undefined = ctx.message?.text ?? ctx.message?.caption;
   if (ctx.chat?.type !== "private" || !text?.startsWith("/") || isSendCommandText(text)) {
     return true;
   }

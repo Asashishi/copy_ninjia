@@ -125,6 +125,25 @@ describe("shouldPassPrivateCommandGate", () => {
     expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
   });
 
+  test("caption 里的指令同样拦下：bot.hears 对 caption 也匹配", () => {
+    // bot.command 只认 text，但 `/咬` 这类单字中文动作命令走 bot.hears，text 和
+    // caption 都会匹配。网关只看 text 的话，一张 caption 写着指令的图片就能绕过
+    // 私聊封锁，让任意陌生人驱使机器人在私聊里作答、并借回复差异探测缓存。
+    const ctx = fakeCtx({
+      chat: { id: 4, type: "private" },
+      message: { caption: "/咬 @someone", photo: [{ file_id: "f" }] },
+    });
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
+  });
+
+  test("私聊里的普通 caption（不以 / 开头）仍放行", () => {
+    const ctx = fakeCtx({
+      chat: { id: 5, type: "private" },
+      message: { caption: "看看这张图", photo: [{ file_id: "f" }] },
+    });
+    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+  });
+
   test("有 /send 中转会话时只放行超管的其它私聊指令，外部用户仍被拦截", () => {
     // getActiveProxySendTarget 是全局扫描，不像 shouldPassInitGate 那样只看
     // 单个 chatId：这里设的 true 若不清掉，会污染同进程里跑在它之后的其它

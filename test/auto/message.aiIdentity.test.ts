@@ -27,7 +27,7 @@ mock.module("../../packages/aiChat", () => ({
   recordChatMedia: recordChatMediaMock,
   generateAndSendReply: generateAndSendReplyMock,
 }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
+mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false, isBotOwnMessage: () => false }));
 
 const { handleIncomingMessage } = await import("../../packages/auto/message");
 

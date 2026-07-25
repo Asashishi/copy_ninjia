@@ -32,14 +32,14 @@ export function createSendMessageExecutor(
     const text: string | null = parseCleanMessageText(argumentsJson);
     if (!text) return toolError("Invalid or empty text");
     if (isEmojiOnly(text)) {
-      return JSON.stringify({
-        error: "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead",
-      });
+      return toolError(
+        "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead"
+      );
     }
     if (isDuplicateOfSentMessage(state, text)) {
-      return JSON.stringify({
-        error: "An identical message was already sent in this round; do not repeat yourself. Say something new, or use add_reaction / send_sticker instead",
-      });
+      return toolError(
+        "An identical message was already sent in this round; do not repeat yourself. Say something new, or use add_reaction / send_sticker instead"
+      );
     }
 
     const typo = decideMessageTypo({

@@ -26,21 +26,78 @@ function hasJsDoc(node: ts.Node): boolean {
   return ts.getJSDocCommentsAndTags(node).length > 0;
 }
 
+/** 剥掉 `as const` / `satisfies T` / 多余括号，拿到真正的初始化表达式。 */
+function unwrapTypeWrappers(expression: ts.Expression): ts.Expression {
+  let current: ts.Expression = expression;
+  while (
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isParenthesizedExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function isObjectFreezeCall(expression: ts.Expression): boolean {
+  return ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    expression.expression.expression.getText() === "Object" &&
+    expression.expression.name.text === "freeze";
+}
+
+/**
+ * 声明类型是不是「容器」。用于判断一个非 Object.freeze 的调用结果该不该被要求
+ * 冻结：`Math.ceil(...)` 返回 number，不该管；`buildList()` 声明成 readonly T[]
+ * 就该管——它返回的是一份全新的可变数组。
+ */
+function isContainerTypeNode(type: ts.TypeNode | undefined): boolean {
+  if (type === undefined) return false;
+  if (ts.isArrayTypeNode(type) || ts.isTupleTypeNode(type)) return true;
+  if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) return true;
+  if (ts.isTypeReferenceNode(type)) {
+    // 刻意不含 Map/Set：Object.freeze 只冻结自有属性，Map/Set 的数据放在内部
+    // 槽里，冻完 .add()/.set() 照样能改。对它们要求冻结等于要求一个无效动作。
+    const CONTAINER_TYPE_NAMES: readonly string[] = ["Readonly", "ReadonlyArray", "Record", "Array"];
+    return CONTAINER_TYPE_NAMES.includes(type.typeName.getText());
+  }
+  return false;
+}
+
 /**
  * AGENTS.md 要求「跨调用方共享的对象常量 Object.freeze」。只认数组/对象字面量：
- * RegExp、`new X()` 与派生计算结果不在此列——冻结正则会把 lastIndex 变成只读，
- * 对带 /g 的正则反而是引入 bug。`as const` 与多余括号先剥掉再判断。
+ * RegExp、`new X()` 与派生的标量计算不在此列——冻结正则会把 lastIndex 变成只读，
+ * 对带 /g 的正则反而是引入 bug。
+ *
+ * Object.freeze 是浅冻结，因此还要递归进已冻结容器的元素/属性值：`BOT_COMMANDS`
+ * 那样的数组，外层冻了但每一项仍可被就地改写。
+ * @returns 需要报告的问题描述；没问题则为空数组。
  */
-function isUnfrozenContainerLiteral(initializer: ts.Expression | undefined): boolean {
-  let expression: ts.Expression | undefined = initializer;
-  while (
-    expression !== undefined &&
-    (ts.isAsExpression(expression) || ts.isParenthesizedExpression(expression))
-  ) {
-    expression = expression.expression;
+function collectUnfrozenLiterals(expression: ts.Expression, path: string): string[] {
+  const inner: ts.Expression = unwrapTypeWrappers(expression);
+
+  if (ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner)) {
+    return [`${path} is a shared container literal and must be wrapped in Object.freeze`];
   }
-  if (expression === undefined) return false;
-  return ts.isArrayLiteralExpression(expression) || ts.isObjectLiteralExpression(expression);
+
+  if (isObjectFreezeCall(inner)) {
+    const frozen: ts.Expression | undefined = (inner as ts.CallExpression).arguments[0];
+    if (frozen === undefined) return [];
+    const target: ts.Expression = unwrapTypeWrappers(frozen);
+    if (ts.isArrayLiteralExpression(target)) {
+      return target.elements.flatMap((element: ts.Expression, index: number): string[] =>
+        collectUnfrozenLiterals(element, `${path}[${index}]`));
+    }
+    if (ts.isObjectLiteralExpression(target)) {
+      return target.properties.flatMap((property: ts.ObjectLiteralElementLike): string[] =>
+        ts.isPropertyAssignment(property)
+          ? collectUnfrozenLiterals(property.initializer, `${path}.${property.name.getText()}`)
+          : []);
+    }
+    return [];
+  }
+
+  return [];
 }
 
 function declarationName(node: ts.Node): string {
@@ -106,8 +163,20 @@ for (const path of sourceFilesUnder(CONSTS_ROOT)) {
       if (!hasJsDoc(statement)) {
         failures.push(`${location} constant ${name} lacks JSDoc`);
       }
-      if (isExported(statement) && isUnfrozenContainerLiteral(declaration.initializer)) {
-        failures.push(`${location} constant ${name} is a shared container literal and must be wrapped in Object.freeze`);
+      if (isExported(statement) && declaration.initializer !== undefined) {
+        for (const problem of collectUnfrozenLiterals(declaration.initializer, `constant ${name}`)) {
+          failures.push(`${location} ${problem}`);
+        }
+        // 声明成容器类型、却由 Object.freeze 之外的调用产出：静态看不出返回的是不是
+        // 新的可变容器，一律要求显式冻结，别让「看起来只读」的类型标注糊弄过去。
+        const initializer: ts.Expression = unwrapTypeWrappers(declaration.initializer);
+        if (
+          isContainerTypeNode(declaration.type) &&
+          (ts.isCallExpression(initializer) || ts.isNewExpression(initializer)) &&
+          !isObjectFreezeCall(initializer)
+        ) {
+          failures.push(`${location} constant ${name} is a shared container built by a call and must be wrapped in Object.freeze`);
+        }
       }
     }
   }

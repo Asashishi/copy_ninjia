@@ -15,6 +15,7 @@ import type { AdoptableLockdown, LockdownEvent, LockdownPersistedMessage, Unlock
 import { transitionLockdown } from "../../states/lockdown";
 import type { LockdownEffect, LockdownMachineEvent } from "../../types/states/lockdown";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
+import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
 
 declare const self: Worker;
 
@@ -305,10 +306,7 @@ export function recordJoin(chatId: number, now: number): void {
     window.resetTimeout = setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS);
   }
 
-  const cutoff: number = now - JOIN_WINDOW_MS;
-  while (window.timestamps.size > 0 && window.timestamps.peek()! <= cutoff) {
-    window.timestamps.shift();
-  }
+  trimSlidingWindow({ timestamps: window.timestamps, windowMs: JOIN_WINDOW_MS, now });
   window.timestamps.push(now);
 
   if (window.timestamps.size > ANTI_RAID_PER_MINUTE_LIMIT) {

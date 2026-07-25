@@ -24,7 +24,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
 mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.from?.id }));
 mock.module("../../packages/aiChat", () => ({ recordChatMessage: () => {}, recordChatMedia: () => {}, generateAndSendReply: () => {} }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
+mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false, isBotOwnMessage: () => false }));
 
 const { handleIncomingMessage } = await import("../../packages/auto/message");
 const { resolveEffectiveCopyMode } = await import("../../packages/auto/message/echo");

@@ -67,6 +67,13 @@ export interface SendMessageParams {
   signal?: AbortSignal;
   /** 由调用方自行算好偏移的富文本实体，见 sendMessageWithResult 的说明。 */
   entities?: readonly MessageEntity[];
+  /**
+   * 关闭 Telegram 为正文里第一个 URL 自动生成的预览卡片。挂 text_link 实体
+   * 指向 t.me 主页时必须置真：一行动作回复底下跟一整块「Telegram: Contact
+   * @xxx」预览卡是噪音，发起人是频道马甲时还会变成「加入频道」邀请卡。
+   * 运势 inline 结果同样显式禁用（见 commands/luckChallenge/rendering.ts）。
+   */
+  disableLinkPreview?: boolean;
 }
 
 /** 发送纯文本消息并返回 Telegram 实际建立的回复关系；不设置 parse_mode，
@@ -81,6 +88,7 @@ export async function sendMessageWithResult({
   keyboard,
   signal,
   entities,
+  disableLinkPreview,
 }: SendMessageParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send message",
@@ -89,6 +97,7 @@ export async function sendMessageWithResult({
         ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
         ...(keyboard ? { reply_markup: keyboard } : {}),
         ...(entities && entities.length > 0 ? { entities: [...entities] } : {}),
+        ...(disableLinkPreview ? { link_preview_options: { is_disabled: true } } : {}),
       };
       return signal === undefined
         ? api.sendMessage(chatId, text, other)
