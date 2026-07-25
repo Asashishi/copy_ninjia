@@ -15,6 +15,7 @@ import {
   type AiMemoryDeleteWaiter,
 } from "../cache/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import type { AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../types/diskIO";
 
 /**
  * AI 记忆的主线程镜像侧（owner 是 packages/aiChat/index.ts）：按 chat 单调递增的
@@ -44,12 +45,12 @@ function removeDeleteWaiter(chatId: number, waiter: AiMemoryDeleteWaiter): void 
 }
 
 function waitForAiMemoryDelete(chatId: number, revision: number): Promise<void> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
     const waiter: AiMemoryDeleteWaiter = {
       revision,
       resolve,
       reject,
-      timer: setTimeout(() => {
+      timer: setTimeout((): void => {
         removeDeleteWaiter(chatId, waiter);
         reject(new Error(
           `AI memory deletion for chat ${chatId} revision ${revision} timed out after ${AI_MEMORY_FLUSH_TIMEOUT_MS}ms.`
@@ -89,7 +90,7 @@ export function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<vo
   return persisted;
 }
 
-onAiMemoryDeletedPersisted((reply) => {
+onAiMemoryDeletedPersisted((reply: AiMemoryDeletedPersistedReply): void => {
   if (pendingAiMemoryDeletes.get(reply.chatId) === reply.revision) {
     pendingAiMemoryDeletes.delete(reply.chatId);
   }
@@ -102,7 +103,7 @@ onAiMemoryDeletedPersisted((reply) => {
   }
 });
 
-onAiMemoryPersisted((reply) => {
+onAiMemoryPersisted((reply: AiMemoryPersistedReply): void => {
   const expectedRevision: number | null | undefined =
     postPurgeAiMemoryPersistRevisions.get(reply.chatId);
   if (expectedRevision === undefined || expectedRevision === null) return;
@@ -113,7 +114,7 @@ onAiMemoryPersisted((reply) => {
 
 // diskIOWorker 崩溃重建后，把当前记忆/贴纸目录镜像整份重发给它，补齐上
 // 一次成功落盘之后的增量（见 infra/diskIO.ts 的 onDiskIORespawn 注释）。
-onDiskIORespawn(() => {
+onDiskIORespawn((): void => {
   for (const [chatId, revision] of pendingAiMemoryDeletes) {
     postDiskIO({ type: "deleteAiMemory", chatId, revision });
   }

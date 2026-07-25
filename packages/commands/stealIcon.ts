@@ -3,6 +3,7 @@ import type { CachedUser } from "../types/chatState";
 import { sendMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
+import type { CopyCooldownClaim } from "./copyShared";
 
 /**
  * 处理 /steal_icon 指令：只把目标的头像偷来戴上，不开启复读。目标的指定方式
@@ -15,7 +16,7 @@ export async function handleStealIconCommand(ctx: CommandContext<Context>): Prom
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
 
-  const cooldownClaim = await claimCopyCooldownOrReject(ctx.from, chatId, messageId);
+  const cooldownClaim: CopyCooldownClaim = await claimCopyCooldownOrReject(ctx.from, chatId, messageId);
   if (cooldownClaim.rejected) return;
 
   const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, "/steal_icon");

@@ -58,7 +58,7 @@ function scheduleReminderRetry(
   );
   delivery.attempts += 1;
   delivery.timer = setTimeout(
-    () => {
+    (): void => {
       delivery.timer = undefined;
       attemptReminderDelivery(delivery, dispatchVerification);
     },

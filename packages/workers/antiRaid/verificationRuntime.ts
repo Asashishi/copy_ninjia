@@ -27,7 +27,7 @@ import type {
   PendingState,
   VerificationEvent,
   VerificationState,
-  VerificationTerminalState,
+  VerificationTerminalState, VerificationTransition,
 } from "../../types/states/verification";
 import { verificationKey } from "../../libs/verificationKey";
 import { runVerificationEffects } from "./verificationEffects";
@@ -41,6 +41,7 @@ import {
   clearReminderDeliveries,
   ensurePendingReminder,
 } from "./verificationReminders";
+import type { VerificationEntry } from "../../cache/antiRaid/verification";
 
 declare const self: Worker;
 
@@ -61,7 +62,7 @@ function startVerificationTimer(
 ): ReturnType<typeof setTimeout> | undefined {
   if (state.kind === "pending") {
     return setTimeout(
-      () => dispatchVerification(
+      (): void => dispatchVerification(
         chatId,
         userId,
         { type: "verifyTimeout", now: Date.now() }
@@ -73,7 +74,7 @@ function startVerificationTimer(
     return undefined;
   }
   return setTimeout(
-    () => dispatchVerification(chatId, userId, { type: "dedupeExpired" }),
+    (): void => dispatchVerification(chatId, userId, { type: "dedupeExpired" }),
     LOCKDOWN_KICK_DEDUPE_MS
   );
 }
@@ -98,7 +99,7 @@ export function dispatchVerification(
   event: VerificationEvent
 ): void {
   const key: string = verificationKey(chatId, userId);
-  const entry = verificationEntries.get(key);
+  const entry: VerificationEntry | undefined = verificationEntries.get(key);
   const previousWasPersisted: boolean =
     isPersistedVerificationState(entry?.state);
   const {
@@ -106,7 +107,7 @@ export function dispatchVerification(
     effects,
     snapshotChanged = false,
     rescheduleTimer = false,
-  } = transitionVerification(entry?.state, event);
+  }: VerificationTransition = transitionVerification(entry?.state, event);
   if (next !== entry?.state) {
     cancelReminderDelivery(key);
     if (entry?.timer !== undefined) clearTimeout(entry.timer);
@@ -132,7 +133,7 @@ export function dispatchVerification(
       effects,
       dispatchVerification,
       publishVerificationChange,
-    }).catch((error: unknown) => {
+    }).catch((error: unknown): void => {
       logger.error("Error running join verification effects:", error);
     });
   }
@@ -262,7 +263,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
           isBot: record.isBot,
           messageIds: [...record.messageIds],
           trackedMessageTimes: record.trackedMessageTimes.filter(
-            (timestamp) => timestamp > now - JOIN_WINDOW_MS
+            (timestamp: number): boolean => timestamp > now - JOIN_WINDOW_MS
           ),
           invitedBy: record.invitedBy,
           reminderMessageId: record.reminderMessageId,
@@ -274,7 +275,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
           expiresAt: record.expiresAt,
         };
     // 同代增量重放也要先清旧 timer，否则旧期限会提前触发新状态。
-    const previousEntry = verificationEntries.get(key);
+    const previousEntry: VerificationEntry | undefined = verificationEntries.get(key);
     if (previousEntry?.timer !== undefined) clearTimeout(previousEntry.timer);
     cancelReminderDelivery(key);
     verificationEntries.set(key, {

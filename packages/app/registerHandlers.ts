@@ -32,6 +32,14 @@ import {
   shouldPassPrivateCommandGate,
   shouldRoutePrivateProxyMessage,
 } from "../infra/updateGate";
+import type {
+  BotError,
+  CommandContext,
+  Context,
+  Filter,
+  HearsContext,
+  NextFunction,
+} from "grammy";
 
 export interface HandlerRegistration {
   getLastSeenUpdateId(): number;
@@ -45,69 +53,69 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   let lastSeenUpdateId: number = 0;
 
   // 追踪已进入处理的最大 update_id，停机时用于确认 Telegram offset。
-  bot.use((ctx, next) => {
+  bot.use((ctx: Context, next: NextFunction): Promise<void> => {
     if (ctx.update.update_id > lastSeenUpdateId) lastSeenUpdateId = ctx.update.update_id;
     return next();
   });
 
   // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
   // 因此必须在 isInit 网关前检查。
-  bot.use(async (ctx, next) => {
+  bot.use(async (ctx: Context, next: NextFunction): Promise<void> => {
     await confirmLuckDraw(ctx.msg?.text, ctx.msg?.entities);
     return next();
   });
 
   // 未初始化群在最前端终止，避免继续进入串行队列、验证、命令与 AI 链路。
-  bot.use((ctx, next) => (shouldPassInitGate(ctx) ? next() : undefined));
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => (shouldPassInitGate(ctx) ? next() : undefined));
 
   // 普通聊天按 chat 串行；反应同步有自己的合并队列，不占用聊天车道。
-  bot.use(sequentialize((ctx) => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
+  bot.use(sequentialize((ctx: Context): string[] => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
 
   // 私聊只放行 /send 入口和活动中的中转会话。中转消息在命令注册之前直接
   // 短路到消息流水线，避免 /copy 等文本被当成真实命令执行。
-  bot.use((ctx, next) => {
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     if (!shouldPassPrivateCommandGate(ctx)) return undefined;
     if (shouldRoutePrivateProxyMessage(ctx)) return handleIncomingMessage(ctx);
     return next();
   });
 
   // 入群验证必须早于命令处理器，否则待验证用户发出的命令不会被追踪清理。
-  bot.on("message", async (ctx, next) => {
+  bot.on("message", async (ctx: Filter<Context, "message">, next: NextFunction): Promise<void> => {
     if (await handleGroupJoinVerification(ctx.message, ctx.me.id)) return;
     return next();
   });
 
-  bot.command("copy", (ctx) => handleCopyCommand(ctx));
-  bot.command("r_copy", (ctx) => handleCopyCommand(ctx, "reverse"));
-  bot.command("nya_copy", (ctx) => handleCopyCommand(ctx, "nya"));
-  bot.command("ja_copy", (ctx) => handleJaCopyCommand(ctx));
-  bot.command("steal_icon", (ctx) => handleStealIconCommand(ctx));
-  bot.command("stop_copy", (ctx) => handleStopCommand(ctx));
-  bot.command("kick", (ctx) => handleKickCommand(ctx));
-  bot.command("ai_chat", (ctx) => handleAiChatCommand(ctx));
-  bot.command("switch_mood", (ctx) => handleSwitchMoodCommand(ctx));
-  bot.command("init", (ctx) => handleInitCommand(ctx));
-  bot.command("quiet", (ctx) => handleQuietCommand(ctx));
-  bot.command("unquiet", (ctx) => handleUnquietCommand(ctx));
-  bot.command("send", (ctx) => handleSendCommand(ctx));
+  bot.command("copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx));
+  bot.command("r_copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx, "reverse"));
+  bot.command("nya_copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx, "nya"));
+  bot.command("ja_copy", (ctx: CommandContext<Context>): Promise<void> => handleJaCopyCommand(ctx));
+  bot.command("steal_icon", (ctx: CommandContext<Context>): Promise<void> => handleStealIconCommand(ctx));
+  bot.command("stop_copy", (ctx: CommandContext<Context>): Promise<void> => handleStopCommand(ctx));
+  bot.command("kick", (ctx: CommandContext<Context>): Promise<void> => handleKickCommand(ctx));
+  bot.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
+  bot.command("switch_mood", (ctx: CommandContext<Context>): Promise<void> => handleSwitchMoodCommand(ctx));
+  bot.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
+  bot.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));
+  bot.command("unquiet", (ctx: CommandContext<Context>): Promise<void> => handleUnquietCommand(ctx));
+  bot.command("send", (ctx: CommandContext<Context>): Promise<void> => handleSendCommand(ctx));
   // 菜单占位项：它只为在命令菜单里曝光「/<单个中文字>」这个用法（那类命令名
   // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
   // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
   // 流水线；但也不能什么都不回，否则点了菜单的人只会得到一片沉默。
-  bot.command("x", (ctx) => handleCjkActionUsageCommand(ctx));
+  bot.command("x", (ctx: CommandContext<Context>): Promise<void> => handleCjkActionUsageCommand(ctx));
   // `/咬` 这类单字中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
   // 匹配不到，只能按消息原文 hears。必须排在消息兜底处理器之前，否则会被当成
   // 普通消息进入 AI/复读流水线；不认领的形态由 handler 自己 next() 放行。
-  bot.hears(CJK_ACTION_COMMAND_PATTERN, (ctx, next) => handleCjkActionCommand(ctx, next));
-  bot.on(["message", "channel_post"], (ctx) => handleIncomingMessage(ctx));
-  bot.on("message_reaction", (ctx) => handleReaction(ctx));
-  bot.on("chat_member", (ctx) => handleChatMemberUpdate(ctx));
-  bot.on("my_chat_member", (ctx) => handleMyChatMemberUpdate(ctx));
-  bot.on("callback_query:data", (ctx) => handleVerificationCallback(ctx));
-  bot.on("inline_query", (ctx) => handleLuckChallengeInlineQuery(ctx));
-  bot.on("chosen_inline_result", (ctx) => handleLuckChosenInlineResult(ctx));
+  bot.hears(CJK_ACTION_COMMAND_PATTERN, (ctx: HearsContext<Context>, next: NextFunction): Promise<void> => handleCjkActionCommand(ctx, next));
+  bot.on(["message", "channel_post"], (ctx: Filter<Context, "message" | "channel_post">): Promise<void> => handleIncomingMessage(ctx));
+  bot.on("message_reaction", (ctx: Filter<Context, "message_reaction">): Promise<void> => handleReaction(ctx));
+  bot.on("chat_member", (ctx: Filter<Context, "chat_member">): Promise<void> => handleChatMemberUpdate(ctx));
+  bot.on("my_chat_member", (ctx: Filter<Context, "my_chat_member">): Promise<void> => handleMyChatMemberUpdate(ctx));
+  bot.on("callback_query:data", (ctx: Filter<Context, "callback_query:data">): Promise<void> => handleVerificationCallback(ctx));
+  bot.on("inline_query", (ctx: Filter<Context, "inline_query">): Promise<void> => handleLuckChallengeInlineQuery(ctx));
+  bot.on("chosen_inline_result", (ctx: Filter<Context, "chosen_inline_result">): Promise<void> => handleLuckChosenInlineResult(ctx));
 
-  bot.catch((err) => {
+  bot.catch((err: BotError<Context>): never => {
     // GrammyError 携带完整请求 payload；这里只记录状态码和描述，避免日志泄漏
     // 可能嵌在 URL 或 inline result 中的 BOT_TOKEN。
     if (err.error instanceof GrammyError) {

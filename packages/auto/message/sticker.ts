@@ -4,15 +4,17 @@ import { resolveSpeaker } from "./facts";
 import { buildAiRecordContext } from "./recordContext";
 import type { MessageTriggerContext } from "./triggerContext";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
+import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
+import type { TelegramVisionSource } from "../../types/media";
 
 /** 记录贴纸元数据/视觉描述并调度直接回复或随机评价。 */
 export function handleStickerMessage(context: MessageTriggerContext): boolean {
-  const { message, chatId, directTrigger } = context;
+  const { message, chatId, directTrigger }: MessageTriggerContext = context;
   if (!message.sticker) return false;
 
-  const speaker = resolveSpeaker(message);
+  const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
   const fallbackText: string = describeStickerForContext(message.sticker);
-  const visionSource = pickStickerVisionSource(message.sticker);
+  const visionSource: TelegramVisionSource | null = pickStickerVisionSource(message.sticker);
   if (!visionSource) {
     recordChatMessage({
       ...buildAiRecordContext(context, speaker),
@@ -28,7 +30,7 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
     return true;
   }
 
-  const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
+  const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger }: { candidate: boolean; claimed: boolean; } = claimRandomMediaTrigger(context, speaker.id);
   recordChatMedia({
     kind: "sticker",
     ...buildAiRecordContext(context, speaker),

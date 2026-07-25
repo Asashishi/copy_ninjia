@@ -7,7 +7,7 @@ export function createRestartThrottle(maxRestarts: number, windowMs: number): { 
   return {
     shouldGiveUp: (): boolean => {
       const now: number = Date.now();
-      timestamps = timestamps.filter((t) => now - t < windowMs);
+      timestamps = timestamps.filter((t: number): boolean => now - t < windowMs);
       if (timestamps.length >= maxRestarts) return true;
       timestamps.push(now);
       return false;

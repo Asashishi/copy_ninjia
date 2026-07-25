@@ -31,12 +31,13 @@ import { createRoundMessageState } from "./messageState";
 import { createAddReactionExecutor } from "./reaction";
 import { createSendMessageExecutor } from "./sendMessage";
 import { toolError } from "../../utils/toolResult";
+import type { RoundMessageState } from "./messageState";
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
 export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {
   const menu: StickerPackCandidate[] = await buildStickerPackMenu();
   const stickerState: StickerRoundState = createStickerRoundState();
-  const messageState = createRoundMessageState();
+  const messageState: RoundMessageState = createRoundMessageState();
   let actionsUsed: number = 0;
 
   const viewDefinition: ToolDefinition | null = buildViewStickerPackToolDefinition(menu);
@@ -49,7 +50,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     ...(viewDefinition ? [viewDefinition] : []),
     ...(sendStickerDefinition ? [sendStickerDefinition] : []),
   ];
-  const names: Set<string> = new Set(definitions.map((definition) => definition.name));
+  const names: Set<string> = new Set(definitions.map((definition: ToolDefinition): string => definition.name));
   const sdkDeclarations: FunctionDeclaration[] = [...TOOL_DEFINITIONS, ...definitions].map(
     (definition: ToolDefinition): FunctionDeclaration => ({
       name: definition.name,
@@ -59,9 +60,9 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   );
   const tools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: sdkDeclarations }];
 
-  const executeSendMessage = createSendMessageExecutor(ctx, messageState, () => actionsUsed);
-  const executeAddReaction = createAddReactionExecutor(ctx);
-  const executeGenerateImage = createGenerateImageExecutor(ctx);
+  const executeSendMessage: (argumentsJson: string) => Promise<string> = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
+  const executeAddReaction: (argumentsJson: string) => Promise<string> = createAddReactionExecutor(ctx);
+  const executeGenerateImage: (argumentsJson: string) => Promise<string> = createGenerateImageExecutor(ctx);
 
   async function dispatch(name: string, argumentsJson: string): Promise<string> {
     switch (name) {
@@ -106,7 +107,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       const result: string = await dispatch(name, argumentsJson);
       if (ACTION_TOOL_NAMES.includes(name)) {
         try {
-          const parsed = JSON.parse(result) as { success?: boolean; actions_used?: unknown };
+          const parsed: { success?: boolean; actions_used?: unknown; } = JSON.parse(result) as { success?: boolean; actions_used?: unknown };
           if (
             typeof parsed.actions_used === "number" &&
             Number.isFinite(parsed.actions_used) &&

@@ -247,7 +247,7 @@ function msUntilNextTokyoDay(nowMs: number = Date.now()): number {
 }
 
 function armVerificationRollover(reply: ReplySink, dir: string, delayMs: number): void {
-  verificationRolloverTimer.timer = setTimeout(() => {
+  verificationRolloverTimer.timer = setTimeout((): void => {
     verificationRolloverTimer.timer = null;
     try {
       rolloverVerificationDay(getTokyoDateKey(), reply, dir);
@@ -269,7 +269,7 @@ export function scheduleVerificationRollover(reply: ReplySink, dir: string = VER
 
 function scheduleVerificationFlush(reply: ReplySink, dir: string): void {
   if (verificationFlushTimer.timer !== null) return;
-  verificationFlushTimer.timer = setTimeout(() => {
+  verificationFlushTimer.timer = setTimeout((): void => {
     verificationFlushTimer.timer = null;
     flushVerificationChanges(reply, dir);
   }, VERIFICATION_FLUSH_INTERVAL_MS);
@@ -355,7 +355,7 @@ export function flushVerificationChanges(
     if (verificationPendingChanges.size === 0) return true;
 
     const changes: [string, VerificationFileChange][] = [...verificationPendingChanges.entries()];
-    const chunk: string = changes.map(([key, change]) =>
+    const chunk: string = changes.map(([key, change]: [string, VerificationFileChange]): string =>
       serializeDayFileEntry(key, change.value === null ? null : storedSnapshot(change.value))
     ).join(",\n");
     const appendedBytes: number = Buffer.byteLength(chunk) + (verificationFileState.current.empty ? 4 : 2);

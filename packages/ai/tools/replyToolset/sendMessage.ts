@@ -18,6 +18,7 @@ import {
   decideMessageTypo,
   parseCleanMessageText,
 } from "./typoHandling";
+import type { TypoDecision } from "./typoHandling";
 
 /** 构造本轮 send_message 执行器；总动作计数仍由外层编排器统一结算。 */
 export function createSendMessageExecutor(
@@ -42,7 +43,7 @@ export function createSendMessageExecutor(
       );
     }
 
-    const typo = decideMessageTypo({
+    const typo: TypoDecision = decideMessageTypo({
       argumentsJson,
       text,
       roundHasTypo: ctx.roundHasTypo,

@@ -64,7 +64,7 @@ export async function buildStickerPackMenu(): Promise<StickerPackCandidate[]> {
   // 延迟串联进同一轮回复。用 allSettled 而非 all：任何一个包的意外异常都
   // 不该把其余已经拉回来的包一并作废（getStickerSet 自身失败返回 null，
   // reject 属于防御场景）。
-  const results: PromiseSettledResult<StickerSet | null>[] = await Promise.allSettled(packs.map((pack: string) => getStickerSet(pack)));
+  const results: PromiseSettledResult<StickerSet | null>[] = await Promise.allSettled(packs.map((pack: string): Promise<StickerSet | null> => getStickerSet(pack)));
   const menu: StickerPackCandidate[] = [];
   for (let i: number = 0; i < packs.length; i++) {
     const pack: string = packs[i]!;
@@ -84,7 +84,7 @@ export async function buildStickerPackMenu(): Promise<StickerPackCandidate[]> {
 
 /** 包内贴纸的编号清单文本（每行「编号. emoji 画面描述」），一层工具的返回值用。 */
 export function formatPackStickerList(candidate: StickerPackCandidate): string {
-  return candidate.stickers.map((c: StickerCandidate, i: number) => `${i + 1}. ${c.emoji || "（无 emoji）"} ${c.description}`).join("\n");
+  return candidate.stickers.map((c: StickerCandidate, i: number): string => `${i + 1}. ${c.emoji || "（无 emoji）"} ${c.description}`).join("\n");
 }
 
 /**
@@ -95,7 +95,7 @@ export function formatPackStickerList(candidate: StickerPackCandidate): string {
 export function buildViewStickerPackToolDefinition(menu: StickerPackCandidate[]): ToolDefinition | null {
   if (menu.length === 0) return null;
 
-  const listText: string = menu.map((p: StickerPackCandidate, i: number) => `${i + 1}. 「${p.title}」（${p.stickers.length} 枚）：${p.summary}`).join("\n");
+  const listText: string = menu.map((p: StickerPackCandidate, i: number): string => `${i + 1}. 「${p.title}」（${p.stickers.length} 枚）：${p.summary}`).join("\n");
   return {
     name: VIEW_STICKER_PACK_TOOL,
     description: VIEW_STICKER_PACK_TOOL_INSTRUCTION + listText,

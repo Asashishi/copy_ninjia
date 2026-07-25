@@ -1,4 +1,5 @@
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
+import type { BunFile } from "bun";
 import type { FlushResult } from "../../types/lifecycle";
 import { chatStates, globalCopyState, stateStoreHolder } from "../../cache/storage";
 import { CORRUPT_FILE_SUFFIX, STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
@@ -57,7 +58,7 @@ interface PersistenceWaiter {
 }
 
 async function readExistingText(path: string): Promise<string | null> {
-  const file = Bun.file(path);
+  const file: BunFile = Bun.file(path);
   return await file.exists() ? file.text() : null;
 }
 
@@ -96,10 +97,10 @@ export class StateStore {
     moveFile = durableRename,
     retryDelaysMs = STATE_SAVE_RETRY_DELAYS_MS,
     maxAttempts = STATE_SAVE_MAX_ATTEMPTS,
-    onRetryError = (attempt, error) => {
+    onRetryError = (attempt: number, error: unknown): void => {
       logger.error(`Failed to persist state (attempt ${attempt}):`, error);
     },
-    onFlushError = (error) => {
+    onFlushError = (error: unknown): void => {
       logger.error("Failed to flush state to disk on shutdown:", error);
     },
     onFatal,
@@ -112,7 +113,7 @@ export class StateStore {
     this.moveFile = moveFile;
     this.retryDelaysMs = retryDelaysMs;
     if (this.retryDelaysMs.length === 0) throw new Error("StateStore requires at least one retry delay");
-    if (this.retryDelaysMs.some((delay) => !Number.isFinite(delay) || delay <= 0)) {
+    if (this.retryDelaysMs.some((delay: number): boolean => !Number.isFinite(delay) || delay <= 0)) {
       throw new RangeError("StateStore retry delays must be positive finite numbers");
     }
     this.maxAttempts = maxAttempts;
@@ -122,7 +123,7 @@ export class StateStore {
     this.onRetryError = onRetryError;
     this.onFlushError = onFlushError;
     this.fatalHandler = onFatal;
-    this.writer = createLatestValueRunner<StateWrite>(async (write) => {
+    this.writer = createLatestValueRunner<StateWrite>(async (write: StateWrite): Promise<void> => {
       await this.writeText(this.stateFilePath, write.json);
       await this.writeText(this.backupFilePath, write.json);
       if (this.dirtyWrite !== null && this.dirtyWrite.revision <= write.revision) {
@@ -136,13 +137,13 @@ export class StateStore {
   async load(): Promise<StateFileSchema | null> {
     // 两份副本必须先全部读完、严格解码，再做任何隔离或修复。这样两份都
     // 不可用时能原样保留现场，绝不把可能含 lockdown 的状态静默变为空。
-    const copies = await Promise.allSettled([
+    const copies: [PromiseSettledResult<StateCopy>, PromiseSettledResult<StateCopy>] = await Promise.allSettled([
       this.readCopy(this.stateFilePath),
       this.readCopy(this.backupFilePath),
     ]);
     const readFailures: unknown[] = copies
-      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result) => result.reason as unknown);
+      .filter((result: PromiseSettledResult<StateCopy>): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result: PromiseRejectedResult): unknown => result.reason as unknown);
     if (readFailures.length > 0) {
       throw new AggregateError(readFailures, "Failed to read all persisted state copies.");
     }
@@ -164,8 +165,8 @@ export class StateStore {
     }
 
     const errors: Error[] = [primary, backup]
-      .filter((copy): copy is InvalidStateCopy => copy.kind === "invalid")
-      .map((copy) => copy.error);
+      .filter((copy: InvalidStateCopy | MissingStateCopy): copy is InvalidStateCopy => copy.kind === "invalid")
+      .map((copy: InvalidStateCopy): Error => copy.error);
     throw new AggregateError(
       errors,
       `Neither ${this.stateFilePath} nor ${this.backupFilePath} contains a valid state; manual recovery is required.`
@@ -209,7 +210,7 @@ export class StateStore {
     this.dirtyWrite = write;
     const persisted: Promise<void> = options.waitForPersistence === false
       ? Promise.resolve()
-      : new Promise((resolve, reject) => {
+      : new Promise((resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
         this.persistenceWaiters.push({ revision: write.revision, resolve, reject });
       });
     void this.push(write);
@@ -221,10 +222,10 @@ export class StateStore {
     if (this.observedWriterPromise !== run) {
       this.observedWriterPromise = run;
       void run.then(
-        () => {
+        (): void => {
           if (this.observedWriterPromise === run) this.observedWriterPromise = null;
         },
-        (error: unknown) => {
+        (error: unknown): void => {
           if (this.observedWriterPromise === run) this.observedWriterPromise = null;
           this.handleWriteFailure(error);
         }
@@ -242,7 +243,7 @@ export class StateStore {
     this.onRetryError(failedAttempt, error);
     if (failedAttempt >= this.maxAttempts) {
       const reason: Error = error instanceof Error ? error : new Error(String(error));
-      const fatal = new Error(
+      const fatal: Error = new Error(
         `State persistence failed after ${failedAttempt} attempt(s); refusing further updates.`,
         { cause: reason }
       );
@@ -258,7 +259,7 @@ export class StateStore {
   }
 
   private resolvePersistedWaiters(revision: number): void {
-    for (let index = this.persistenceWaiters.length - 1; index >= 0; index--) {
+    for (let index: number = this.persistenceWaiters.length - 1; index >= 0; index--) {
       const waiter: PersistenceWaiter = this.persistenceWaiters[index]!;
       if (waiter.revision > revision) continue;
       this.persistenceWaiters.splice(index, 1);
@@ -274,7 +275,7 @@ export class StateStore {
   private scheduleRetry(): void {
     if (this.quiescing || this.disposed || this.dirtyWrite === null || this.retryTimer !== null) return;
     const delay: number = this.retryDelaysMs[Math.min(this.retryAttempt - 1, this.retryDelaysMs.length - 1)]!;
-    this.retryTimer = setTimeout(() => {
+    this.retryTimer = setTimeout((): void => {
       this.retryTimer = null;
       const write: StateWrite | null = this.dirtyWrite;
       if (write === null || this.quiescing || this.disposed) return;
@@ -297,21 +298,21 @@ export class StateStore {
       ? this.observedWriterPromise
       : this.push(write);
     if (run === null) return Promise.resolve("flushed");
-    return new Promise((resolve) => {
+    return new Promise((resolve: (value: FlushResult | PromiseLike<FlushResult>) => void): void => {
       let settled: boolean = false;
       const settle = (result: FlushResult): void => {
         if (settled) return;
         settled = true;
         resolve(result);
       };
-      const timer = setTimeout(() => settle("timedOut"), timeoutMs);
+      const timer: ReturnType<typeof setTimeout> = setTimeout((): void => settle("timedOut"), timeoutMs);
       run
-        .then(() => settle("flushed"))
-        .catch((error: unknown) => {
+        .then((): void => settle("flushed"))
+        .catch((error: unknown): void => {
           this.onFlushError(error);
           settle("failed");
         })
-        .finally(() => {
+        .finally((): void => {
           clearTimeout(timer);
         });
     });
@@ -419,7 +420,7 @@ export function setStatePersistenceFatalHandler(handler: ((error: Error) => void
 }
 
 export function saveStateInBackground(context: string): void {
-  void sharedStateStore().save(currentStateSnapshot(), { waitForPersistence: false }).catch((error: unknown) => {
+  void sharedStateStore().save(currentStateSnapshot(), { waitForPersistence: false }).catch((error: unknown): void => {
     logger.error(`Failed to persist background state update (${context}):`, error);
   });
 }
@@ -436,7 +437,7 @@ export function getChatState(chatId: number): ChatState {
 }
 
 export function getOrCreateChatState(chatId: number): ChatState {
-  let chatState = chatStates.get(chatId);
+  let chatState: ChatState | undefined = chatStates.get(chatId);
   if (!chatState) {
     chatState = {};
     chatStates.set(chatId, chatState);

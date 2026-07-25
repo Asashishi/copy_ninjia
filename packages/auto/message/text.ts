@@ -4,13 +4,15 @@ import { pickPhotoFile, resolveSpeaker } from "./facts";
 import { buildAiRecordContext } from "./recordContext";
 import type { MessageTriggerContext } from "./triggerContext";
 import { shouldAttemptRandomTrigger, tryClaimUserReplyTrigger } from "./triggerPolicy";
+import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
+import type { TelegramVisionSource } from "../../types/media";
 
 /** 记录普通文字并处理直接回复/@ 与随机搭话。true 表示终止后续主动行为。 */
 export function handleTextMessage(context: MessageTriggerContext): boolean {
-  const { message, chatId } = context;
+  const { message, chatId }: MessageTriggerContext = context;
   if (typeof message.text !== "string" || message.text.startsWith("/")) return false;
 
-  const speaker = resolveSpeaker(message);
+  const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
   recordChatMessage({
     ...buildAiRecordContext(context, speaker),
     text: message.text,
@@ -19,13 +21,13 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   if (context.directTrigger) {
     // 这里只确认当前消息确实直接叫了机器人；是否包含生图/修图意图由模型
     // 根据本轮消息与工具说明判断，避免关键词正则漏掉自然表达。
-    const repliedPhoto = Array.isArray(context.repliedTo?.photo) && context.repliedTo.photo.length > 0
+    const repliedPhoto: TelegramVisionSource | undefined = Array.isArray(context.repliedTo?.photo) && context.repliedTo.photo.length > 0
       ? pickPhotoFile(context.repliedTo.photo)
       : undefined;
-    const repliedSticker = context.repliedTo?.sticker
+    const repliedSticker: TelegramVisionSource | undefined = context.repliedTo?.sticker
       ? pickStickerVisionSource(context.repliedTo.sticker) ?? undefined
       : undefined;
-    const imageGenerationReference = repliedPhoto ?? repliedSticker;
+    const imageGenerationReference: TelegramVisionSource | undefined = repliedPhoto ?? repliedSticker;
     generateAndSendReply({
       chatId,
       triggerSenderId: speaker.id,

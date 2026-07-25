@@ -10,6 +10,7 @@ import {
 import { open, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { TMP_FILE_SUFFIX } from "../consts/paths";
+import type { FileHandle } from "node:fs/promises";
 
 /**
  * 可持久化的原子文件操作。写入遵循“同目录唯一临时文件 -> fsync -> rename ->
@@ -27,7 +28,7 @@ function temporaryPath(path: string): string {
  * 导出供 hard link 协议（infra/storage/instanceLock.ts）复用，不要另抄一份。
  */
 export async function syncDirectory(path: string): Promise<void> {
-  const handle = await open(dirname(path), "r");
+  const handle: FileHandle = await open(dirname(path), "r");
   try {
     await handle.sync();
   } finally {
@@ -54,13 +55,13 @@ function syncDirectorySync(path: string): void {
 /** 原子替换文本文件，并同步文件数据和父目录项。 */
 export async function atomicWriteText(path: string, content: string): Promise<void> {
   const tmpPath: string = temporaryPath(path);
-  const handle = await open(tmpPath, "wx");
+  const handle: FileHandle = await open(tmpPath, "wx");
   try {
     await handle.writeFile(content);
     await handle.sync();
   } catch (error: unknown) {
-    await handle.close().catch(() => undefined);
-    await unlink(tmpPath).catch(() => undefined);
+    await handle.close().catch((): undefined => undefined);
+    await unlink(tmpPath).catch((): undefined => undefined);
     throw error;
   }
   try {
@@ -68,14 +69,14 @@ export async function atomicWriteText(path: string, content: string): Promise<vo
   } catch (error: unknown) {
     // close() 本身失败：不能再假设 tmp 文件完好可用，按失败路径清理，
     // 不尝试 rename——否则 close 抛错时会跳过下面的清理，留下孤儿 .tmp。
-    await unlink(tmpPath).catch(() => undefined);
+    await unlink(tmpPath).catch((): undefined => undefined);
     throw error;
   }
 
   try {
     await durableRename(tmpPath, path);
   } catch (error: unknown) {
-    await unlink(tmpPath).catch(() => undefined);
+    await unlink(tmpPath).catch((): undefined => undefined);
     throw error;
   }
 }

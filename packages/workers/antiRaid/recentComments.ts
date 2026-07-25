@@ -29,7 +29,7 @@ export function rememberRecentComment({
   observedAt = Date.now(),
 }: RememberRecentCommentParams): void {
   const key: string = verificationKey(chatId, userId);
-  const existing = recentChannelComments.get(key);
+  const existing: RecentChannelComment | undefined = recentChannelComments.get(key);
   if (existing !== undefined) recentChannelComments.delete(key);
 
   if (recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX) {
@@ -52,7 +52,7 @@ export function rememberRecentComment({
 /** 消费（取出并删除）某人最近暂存的评论区留言，没有则返回 undefined。 */
 export function takeRecentComment(chatId: number, userId: number, now: number = Date.now()): RecentChannelComment | undefined {
   const key: string = verificationKey(chatId, userId);
-  const entry = recentChannelComments.get(key);
+  const entry: RecentChannelComment | undefined = recentChannelComments.get(key);
   if (!entry) return undefined;
   recentChannelComments.delete(key);
   if (now - entry.observedAt >= COMMENT_JOIN_CORRELATE_MS) return undefined;

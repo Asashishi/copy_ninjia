@@ -11,6 +11,7 @@ import type { LuckDraw } from "../../types/luckChallenge";
 import { splitGraphemes } from "../../libs/text";
 import { luckCacheKey } from "./key";
 import { signLuckResultText } from "./receipt";
+import type { SignedLuckResult } from "./receipt";
 
 function pickDominantProbability(draw: LuckDraw): { label: string; percent: number } {
   const misfortunePercent: number = Math.round((100 - draw.fortunePercent) * 100) / 100;
@@ -49,7 +50,7 @@ export function buildFortuneResult({
   const bodyText: string = text
     ? `你好，${userLabel}\n所求事项: ${text}\n结果: ${draw.tier.label}\n${draw.tier.comment}`
     : `你好，${userLabel}\n汝的今日运势: ${draw.tier.label}\n${draw.tier.comment}`;
-  const signed = signLuckResultText(bodyText, luckCacheKey(userId, text));
+  const signed: SignedLuckResult = signLuckResultText(bodyText, luckCacheKey(userId, text));
   return InlineQueryResultBuilder.article(text ? "luck-fortune-text" : "luck-fortune", "未卜先知", {
     description: text ? `所求事项：${text}` : "测测你今天的运势",
     reply_markup: buildRetryKeyboard(text),
@@ -68,9 +69,9 @@ export function buildProbabilityResult(
   userId: number,
   userLabel: string
 ): InlineQueryResultArticle {
-  const { label, percent } = pickDominantProbability(draw);
+  const { label, percent }: { label: string; percent: number; } = pickDominantProbability(draw);
   const bodyText: string = `你好，${userLabel}\n汝今天${label}概率是 ${percent.toFixed(2)}%`;
-  const signed = signLuckResultText(bodyText, luckCacheKey(userId, undefined));
+  const signed: SignedLuckResult = signLuckResultText(bodyText, luckCacheKey(userId, undefined));
   return InlineQueryResultBuilder.article("luck-probability", "概率论！", {
     description: "看看你今天行大运/倒大霉的概率",
     reply_markup: buildRetryKeyboard(undefined),

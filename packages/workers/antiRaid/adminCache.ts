@@ -8,6 +8,8 @@ import {
   getOrCreateAdminFetch,
   takePendingAdminChanges,
 } from "../../cache/antiRaid/admins";
+import type { ChatAdminCache } from "../../types/antiRaid/internal";
+import type { ChatMemberAdministrator, ChatMemberOwner } from "@grammyjs/types";
 
 /**
  * 各群非匿名管理员邀请豁免缓存：按需全量拉取 + TTL 缓存 + 拉取在途期间
@@ -19,24 +21,24 @@ import {
 
 /** 未过期的某群非匿名管理员 ID 集合；没有或过期时返回 undefined。 */
 export function freshAdminIds(chatId: number): Set<number> | undefined {
-  const cached = chatAdmins.get(chatId);
+  const cached: ChatAdminCache | undefined = chatAdmins.get(chatId);
   if (!cached || Date.now() - cached.fetchedAt > ADMIN_CACHE_TTL_MS) return undefined;
   return cached.adminIds;
 }
 
 /** 全量拉取某群非匿名管理员并落缓存（带进行中去重，见 adminFetches）。 */
 export function fetchAdminIds(chatId: number): Promise<Set<number>> {
-  return getOrCreateAdminFetch(chatId, () =>
+  return getOrCreateAdminFetch(chatId, (): Promise<Set<number>> =>
     joinVerificationApi
       .getChatAdministrators(chatId)
-      .then((admins) => {
+      .then((admins: (ChatMemberOwner | ChatMemberAdministrator)[]): Set<number> => {
         const adminIds: Set<number> = new Set(
-          admins.filter((admin) => admin.is_anonymous !== true).map((admin) => admin.user.id)
+          admins.filter((admin: ChatMemberOwner | ChatMemberAdministrator): boolean => admin.is_anonymous !== true).map((admin: ChatMemberOwner | ChatMemberAdministrator): number => admin.user.id)
         );
         // 拉取在途期间到达的增量变化比这份快照更新（chat_member 更新是
         // 近实时的权威信号），重放在其上，不能被这次 resolve 覆盖掉——见
         // pendingAdminChangesDuringFetch 注释。
-        const pending = takePendingAdminChanges(chatId);
+        const pending: Map<number, boolean> | undefined = takePendingAdminChanges(chatId);
         if (pending) {
           for (const [userId, isInviterExempt] of pending) {
             if (isInviterExempt) adminIds.add(userId);
@@ -46,7 +48,7 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
         cacheAdminIds(chatId, adminIds);
         return adminIds;
       })
-      .catch((error: unknown) => {
+      .catch((error: unknown): never => {
         // 没有成功的全量快照就没有可重放增量的基底。下次拉取会取得更新的
         // 权威快照；继续留着只会让失败过的群永久占住这张 Map。
         discardPendingAdminChanges(chatId);
@@ -63,7 +65,7 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
  */
 export function applyAdminChange(chatId: number, userId: number, isInviterExempt: boolean): void {
   bufferAdminChangeDuringFetch(chatId, userId, isInviterExempt);
-  const cached = chatAdmins.get(chatId);
+  const cached: ChatAdminCache | undefined = chatAdmins.get(chatId);
   if (!cached) return;
   if (isInviterExempt) {
     cached.adminIds.add(userId);

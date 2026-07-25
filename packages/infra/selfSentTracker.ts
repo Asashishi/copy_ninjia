@@ -1,4 +1,4 @@
-import type { Message } from "@grammyjs/types";
+import type { Message, MessageOrigin } from "@grammyjs/types";
 import { SELF_SENT_MESSAGE_TTL_MS } from "../consts/telegram";
 import { sentMessages } from "../cache/selfSentTracker";
 
@@ -23,11 +23,11 @@ function key(chatId: number, messageId: number): string {
 /** 登记一条刚发出的消息；TTL 到期自动清理。 */
 export function markSelfSent(chatId: number, messageId: number): void {
   const k: string = key(chatId, messageId);
-  const existing = sentMessages.get(k);
+  const existing: ReturnType<typeof setTimeout> | undefined = sentMessages.get(k);
   if (existing) clearTimeout(existing);
   sentMessages.set(
     k,
-    setTimeout(() => sentMessages.delete(k), SELF_SENT_MESSAGE_TTL_MS).unref()
+    setTimeout((): boolean => sentMessages.delete(k), SELF_SENT_MESSAGE_TTL_MS).unref()
   );
 }
 
@@ -44,7 +44,7 @@ export function isSelfSent(chatId: number, messageId: number): boolean {
  */
 export function isBotOwnMessage(message: Message): boolean {
   if (isSelfSent(message.chat.id, message.message_id)) return true;
-  const origin = message.forward_origin;
+  const origin: MessageOrigin | undefined = message.forward_origin;
   return message.is_automatic_forward === true &&
     origin?.type === "channel" &&
     isSelfSent(origin.chat.id, origin.message_id);

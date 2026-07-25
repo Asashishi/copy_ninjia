@@ -5,6 +5,7 @@ import {
   JSON_API_MAX_RESPONSE_BYTES,
 } from "../consts/httpFetch";
 import { readBoundedResponseBytes } from "./boundedResponse";
+import type { BoundedResponseResult } from "./boundedResponse";
 
 function boundedErrorPreview(text: string): string {
   if (text.length <= JSON_API_ERROR_LOG_MAX_CHARS) return text;
@@ -50,14 +51,14 @@ export async function fetchJsonWithTimeout({
     return null;
   }
   const controller: AbortController = new AbortController();
-  const timer: ReturnType<typeof setTimeout> = setTimeout(() => controller.abort(), timeoutMs);
+  const timer: ReturnType<typeof setTimeout> = setTimeout((): void => controller.abort(), timeoutMs);
   try {
     const response: Response = await fetch(requestUrl, {
       ...init,
       redirect: "error",
       signal: controller.signal,
     });
-    const body = await readBoundedResponseBytes(response, JSON_API_MAX_RESPONSE_BYTES);
+    const body: BoundedResponseResult = await readBoundedResponseBytes(response, JSON_API_MAX_RESPONSE_BYTES);
     if (!body.ok) {
       logger.error(`${errorLabel} response exceeded ${JSON_API_MAX_RESPONSE_BYTES} bytes (observed ${body.observedBytes}).`);
       return null;

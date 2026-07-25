@@ -14,8 +14,8 @@ import { invalidateBotAdminStatus, teardownChatRuntime } from "../infra/botAdmin
  * /ai_chat /ja_copy 共用同一批权限。
  */
 export async function handleInitCommand(ctx: CommandContext<Context>): Promise<void> {
-  const arg = await resolveSuperAdminToggleArg(ctx, {
-    rejection: (mockerLabel) => `就 ${mockerLabel} 也想让本天才在这个群干活？哪来的资格呀，笨蛋♡`,
+  const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
+    rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想让本天才在这个群干活？哪来的资格呀，笨蛋♡`,
     usage: `笨蛋，要 /init enable 还是 /init disable，说清楚呀♡`,
   });
   if (!arg) return;

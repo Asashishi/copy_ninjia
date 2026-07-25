@@ -42,7 +42,7 @@ function receiptFromLinkEntity(
   receiptOffset: number,
   entities: readonly MessageEntity[] | undefined
 ): string | undefined {
-  const link: MessageEntity | undefined = entities?.find((entity) =>
+  const link: MessageEntity | undefined = entities?.find((entity: MessageEntity): boolean =>
     entity.type === "text_link" &&
     entity.offset === receiptOffset &&
     entity.length === receiptHash.length

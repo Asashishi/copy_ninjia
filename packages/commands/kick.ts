@@ -7,6 +7,7 @@ import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { resolveCommandTarget } from "./targetResolution";
 import { isBotAdminIn } from "../infra/botAdmin";
 import { getAllChatStates } from "../infra/storage/stateStore";
+import type { User } from "@grammyjs/types";
 
 /**
  * 处理 /kick 指令：将目标在所有「机器人是管理员」的群里同时封禁（与入群
@@ -25,7 +26,7 @@ import { getAllChatStates } from "../infra/storage/stateStore";
 export async function handleKickCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const fromUser = ctx.from;
+  const fromUser: User | undefined = ctx.from;
 
   if (!fromUser || !PRIVILEGED_USERS_ID.includes(fromUser.id)) {
     const replyText: string = `就 ${formatMockerLabel(fromUser)} 也想 /kick 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
@@ -45,8 +46,8 @@ export async function handleKickCommand(ctx: CommandContext<Context>): Promise<v
     rawArgument: ctx.match,
     messages: {
       missingTarget: `笨蛋，要么 /kick @username，要么回复 TA 的一条消息再 /kick，本天才可不会读心术♡`,
-      invalidUsername: (rawArgument: string) => `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，别拿半截参数糊弄本天才♡`,
-      unknownUsername: (rawUsername: string) => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /kick 吧♡`,
+      invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，别拿半截参数糊弄本天才♡`,
+      unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /kick 吧♡`,
       selfTarget: `笨蛋，本天才才不会把自己踢出去呢♡`,
     },
   });

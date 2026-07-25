@@ -14,7 +14,7 @@ export interface LuckSecretFileIO {
 }
 
 const DEFAULT_IO: LuckSecretFileIO = {
-  generateKey: () => randomBytes(32),
+  generateKey: (): Buffer => randomBytes(32),
   writeText: atomicWriteTextSync,
   chmod: chmodSync,
 };
@@ -23,7 +23,7 @@ function decodeLuckReceiptSecret(value: unknown, path: string): LuckReceiptSecre
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${path} must contain an object`);
   }
-  const raw = value as Record<string, unknown>;
+  const raw: Record<string, unknown> = value as Record<string, unknown>;
   const keys: string[] = Object.keys(raw).sort();
   if (keys.join(",") !== "day,key,version") throw new Error(`${path} has unknown or missing fields`);
   if (raw.version !== 1) throw new Error(`${path}.version must be 1`);

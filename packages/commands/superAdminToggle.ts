@@ -33,7 +33,7 @@ export async function resolveSuperAdminToggleArg(
 ): Promise<"enable" | "disable" | undefined> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const fromUser = ctx.from;
+  const fromUser: User | undefined = ctx.from;
 
   if (!isSuperAdmin(fromUser)) {
     await sendMessage({

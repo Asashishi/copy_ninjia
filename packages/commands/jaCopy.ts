@@ -23,8 +23,8 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
     return;
   }
 
-  const toggleArg = await resolveSuperAdminToggleArg(ctx, {
-    rejection: (mockerLabel) => `就 ${mockerLabel} 也想管本天才要不要翻译日语？哪来的资格呀，笨蛋♡`,
+  const toggleArg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
+    rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想管本天才要不要翻译日语？哪来的资格呀，笨蛋♡`,
     usage: `笨蛋，/ja_copy 不带参数是复读翻译，要开关这个功能就 /ja_copy enable 或 /ja_copy disable，说清楚呀♡`,
   });
   if (!toggleArg) return;

@@ -10,6 +10,7 @@ import { buildBufferedMessage } from "./bufferedMessage";
 import { pushBufferedMessage } from "./rollingMemory";
 import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent } from "./replyPipeline";
 import { replyReferenceForBufferedEntry } from "./replyChain";
+import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 
 /** 直接拿当前图片/贴纸叫机器人时附上短期参考；是否实际编辑由模型决定。GIF 不隐式混入。 */
 function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGenerationReference | undefined {
@@ -57,7 +58,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
   const imageGenerationReference: ImageGenerationReference | undefined = imageGenerationReferenceFor(msg);
 
   if (msg.kind === "sticker") {
-    const catalogEntry = getCatalogEntry(msg.fileUniqueId);
+    const catalogEntry: StickerCatalogEntry | undefined = getCatalogEntry(msg.fileUniqueId);
     if (catalogEntry) {
       const entry: BufferedMessage = buildBufferedMessage(
         msg,
@@ -114,7 +115,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
   // describeMedia 内部兜住一切异常只返回 null，这条异步链不会 reject；
   // 同一份媒体按 file_unique_id 去重，不同媒体则经过全局有界执行器，避免
   // 洪峰同时启动无界的下载、转码和视觉请求。
-  void describeMedia(msg.kind, msg.fileId, msg.fileUniqueId).then((description: string | null) => {
+  void describeMedia(msg.kind, msg.fileId, msg.fileUniqueId).then((description: string | null): void => {
     if (!isReplyGenerationCurrent(msg.chatId, generation)) return;
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。

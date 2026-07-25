@@ -1,4 +1,4 @@
-import { FinishReason, type GenerateContentParameters, type GenerateContentResponse, type Part } from "@google/genai";
+import { FinishReason, type Blob as GenAiBlob, type Candidate, type GenerateContentParameters, type GenerateContentResponse, type Part } from "@google/genai";
 import {
   DEFAULT_IMAGE_GENERATION_ASPECT_RATIO,
   GEMINI_IMAGE_GENERATION_MODEL,
@@ -17,7 +17,7 @@ export interface GeneratedChatImage {
 }
 
 function ratioValue(ratio: ImageGenerationAspectRatio): number {
-  const [width, height] = ratio.split(":").map(Number);
+  const [width, height]: number[] = ratio.split(":").map(Number);
   return width! / height!;
 }
 
@@ -43,7 +43,7 @@ function isCanonicalBase64(encoded: string): boolean {
 
 function hasExpectedImageSignature(bytes: Uint8Array, mimeType: GeneratedChatImage["mimeType"]): boolean {
   if (mimeType === "image/png") {
-    return bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((value: number, index: number) => bytes[index] === value);
+    return bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((value: number, index: number): boolean => bytes[index] === value);
   }
   return bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
 }
@@ -74,14 +74,14 @@ export function normalizeImageAspectRatio(requested: string | undefined): ImageG
 }
 
 function extractGeneratedImage(data: GenerateContentResponse): GeneratedChatImage | null {
-  const candidate = data.candidates?.[0];
+  const candidate: Candidate | undefined = data.candidates?.[0];
   // unary generateContent 返回时生成已经结束；只有明确 STOP 的 candidate
   // 才可发送。安全/复刻/禁止内容/NO_IMAGE 等异常即使意外夹带 payload 也拒绝。
   if (candidate?.finishReason !== FinishReason.STOP) return null;
   const parts: Part[] = candidate.content?.parts ?? [];
   for (const part of parts) {
     if (part.thought === true || !part.inlineData) continue;
-    const { data: encoded, mimeType } = part.inlineData;
+    const { data: encoded, mimeType }: GenAiBlob = part.inlineData;
     if (typeof encoded !== "string" || !encoded) continue;
     if (mimeType !== "image/png" && mimeType !== "image/jpeg") continue;
     // 先按 base64 理论上限挡住异常大响应，避免解码后才发现超限而额外分配

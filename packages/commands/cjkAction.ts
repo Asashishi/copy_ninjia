@@ -156,7 +156,7 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
   // 超额静默丢弃，也不再 next()——限流的意义就是不为这条更新做任何输出。
   if (!tryConsumeCjkActionRateLimit()) return;
 
-  const { actionWord } = command;
+  const { actionWord }: CjkActionCommand = command;
   const target: CachedUser | undefined = await resolveCommandTarget({
     chatId,
     message,
@@ -164,16 +164,16 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
     rawArgument: command.rawArgument,
     messages: {
       missingTarget: `笨蛋，要 ${actionWord} 谁呀？回复 TA 的一条消息，或者写成 /${actionWord} @username 再来♡`,
-      invalidUsername: (rawArgument: string) =>
+      invalidUsername: (rawArgument: string): string =>
         `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，本天才可不会对着空气 ${actionWord}♡`,
-      unknownUsername: (rawUsername: string) =>
+      unknownUsername: (rawUsername: string): string =>
         `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息再 ${actionWord} 吧♡`,
       selfTarget: `哼，本天才可不给杂鱼 ${actionWord}，想得美♡`,
     },
   });
   if (!target) return;
 
-  const { text, entities } = buildActionMessage([
+  const { text, entities }: ActionMessage = buildActionMessage([
     { text: formatFullName(actor), url: formatProfileUrl(actor) },
     { text: ` ${actionWord}了 `, url: undefined },
     { text: formatFullName(target), url: formatProfileUrl(target) },

@@ -23,9 +23,9 @@ export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: 
 
 /** 获取或创建同群唯一一次全量拉取；settle 后自动释放在途槽位。 */
 export function getOrCreateAdminFetch(chatId: number, create: () => Promise<Set<number>>): Promise<Set<number>> {
-  let inFlight = adminFetches.get(chatId);
+  let inFlight: Promise<Set<number>> | undefined = adminFetches.get(chatId);
   if (inFlight) return inFlight;
-  inFlight = create().finally(() => adminFetches.delete(chatId));
+  inFlight = create().finally((): boolean => adminFetches.delete(chatId));
   adminFetches.set(chatId, inFlight);
   return inFlight;
 }
@@ -37,7 +37,7 @@ export function bufferAdminChangeDuringFetch(
   isInviterExempt: boolean
 ): void {
   if (!adminFetches.has(chatId)) return;
-  let pending = pendingAdminChangesDuringFetch.get(chatId);
+  let pending: Map<number, boolean> | undefined = pendingAdminChangesDuringFetch.get(chatId);
   if (!pending) {
     pending = new Map();
     pendingAdminChangesDuringFetch.set(chatId, pending);
@@ -47,7 +47,7 @@ export function bufferAdminChangeDuringFetch(
 
 /** 取走并删除一次拉取期间积累的邀请豁免资格变化。 */
 export function takePendingAdminChanges(chatId: number): Map<number, boolean> | undefined {
-  const pending = pendingAdminChangesDuringFetch.get(chatId);
+  const pending: Map<number, boolean> | undefined = pendingAdminChangesDuringFetch.get(chatId);
   pendingAdminChangesDuringFetch.delete(chatId);
   return pending;
 }

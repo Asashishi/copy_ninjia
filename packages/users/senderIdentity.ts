@@ -1,5 +1,5 @@
 import type { CachedUser } from "../types/chatState";
-import type { Message } from "@grammyjs/types";
+import type { Message, User, Chat } from "@grammyjs/types";
 import { senderUsernameCache, userCache } from "../cache/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
 import { visibleSenderChat } from "./visibleSender";
@@ -19,8 +19,8 @@ import { visibleSenderChat } from "./visibleSender";
  * 单字中文动作命令取出发起人身份（见 commands/cjkAction.ts）。
  */
 export function resolveSenderIdentity(message: Message): CachedUser | undefined {
-  const fromUser = message.from;
-  const senderChat = visibleSenderChat(message);
+  const fromUser: User | undefined = message.from;
+  const senderChat: Chat | undefined = visibleSenderChat(message);
 
   if (senderChat) {
     return {
@@ -43,7 +43,7 @@ export function resolveSenderIdentity(message: Message): CachedUser | undefined 
 
 /** 删除正向 alias，并仅在反向索引仍指向该 alias 时同步删除反向记录。 */
 function deleteAlias(username: string): void {
-  const cached = userCache.get(username);
+  const cached: CachedUser | undefined = userCache.get(username);
   userCache.delete(username);
   if (cached && senderUsernameCache.get(cached.id) === username) {
     senderUsernameCache.delete(cached.id);
@@ -94,7 +94,7 @@ function updateCachedIdentity(identity: CachedUser): void {
  * @returns 解析出的发送者 id（若以频道身份发送则为频道 id，否则为用户 id）。
  */
 export function cacheSender(message: Message): number | undefined {
-  const identity = resolveSenderIdentity(message);
+  const identity: CachedUser | undefined = resolveSenderIdentity(message);
   if (!identity) return undefined;
 
   updateCachedIdentity(identity);

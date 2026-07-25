@@ -100,7 +100,15 @@ function emit(level: LogLevel, args: unknown[]): void {
   }
 }
 
-export const logger = {
+/** 主线程与 Worker 共用的日志出口；Worker 侧经 postMessage 转发到主线程。 */
+interface Logger {
+  log: (...args: unknown[]) => void;
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+}
+
+export const logger: Logger = {
   log: (...args: unknown[]): void => emit("log", args),
   info: (...args: unknown[]): void => emit("info", args),
   warn: (...args: unknown[]): void => emit("warn", args),

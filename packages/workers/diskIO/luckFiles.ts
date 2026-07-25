@@ -31,7 +31,7 @@ import type { LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
  *  flushLuckAppends 立即落盘。 */
 function scheduleLuckFlush(): void {
   if (luckFlushTimer.timer !== null) return;
-  luckFlushTimer.timer = setTimeout(() => {
+  luckFlushTimer.timer = setTimeout((): void => {
     luckFlushTimer.timer = null;
     flushLuckAppends();
   }, FLUSH_INTERVAL_MS);

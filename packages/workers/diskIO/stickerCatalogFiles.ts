@@ -18,7 +18,7 @@ const STICKER_CATALOG_FILE_DEPENDENCIES: StickerCatalogFileDependencies = {
 
 function scheduleStickerCatalogFlush(): void {
   if (stickerFlushState.timer !== null) return;
-  stickerFlushState.timer = setTimeout(() => {
+  stickerFlushState.timer = setTimeout((): void => {
     stickerFlushState.timer = null;
     flushStickerCatalogs();
   }, SNAPSHOT_FLUSH_INTERVAL_MS);
@@ -51,7 +51,7 @@ export function flushStickerCatalogs(
     dirty: dirtyStickerPacks,
     cache: stickerCatalogCache,
     write: (pack: string, snapshot: string): void => { files.write(pack, snapshot); },
-    describeFailure: (pack: string) => `[diskIOWorker] failed to write sticker catalog for pack "${pack}":`,
+    describeFailure: (pack: string): string => `[diskIOWorker] failed to write sticker catalog for pack "${pack}":`,
   });
   if (dirtyStickerPacks.size > 0) scheduleStickerCatalogFlush();
   return dirtyStickerPacks.size === 0;

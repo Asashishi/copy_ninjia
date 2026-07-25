@@ -96,7 +96,7 @@ function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;
   if (raw.version !== 1 || !Array.isArray(raw.buffer) || !raw.buffer.every(isBufferedMessage)) return null;
-  if (!Array.isArray(raw.summaries) || !raw.summaries.every((s: unknown) => typeof s === "string")) return null;
+  if (!Array.isArray(raw.summaries) || !raw.summaries.every((s: unknown): s is string => typeof s === "string")) return null;
   if (raw.pendingSummary !== null && typeof raw.pendingSummary !== "string") return null;
   if (typeof raw.savedAt !== "number" || !Number.isFinite(raw.savedAt)) return null;
   const buffer: BufferedMessage[] = raw.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX);
@@ -123,7 +123,7 @@ export function recoverAiMemories(): Map<number, string> {
       tryUnlink(path);
       continue;
     }
-    const match = AI_MEMORY_FILE_PATTERN.exec(name);
+    const match: RegExpExecArray | null = AI_MEMORY_FILE_PATTERN.exec(name);
     if (!match) continue; // 非 <chatId>.json 形态（含 .corrupt 隔离文件），跳过不动
     ensurePersistedFileMode(path);
     let parsed: unknown;
@@ -202,7 +202,7 @@ export function recoverStickerCatalogs(activePacks: readonly string[]): Map<stri
       tryUnlink(path);
       continue;
     }
-    const match = STICKER_CATALOG_FILE_PATTERN.exec(name);
+    const match: RegExpExecArray | null = STICKER_CATALOG_FILE_PATTERN.exec(name);
     if (!match) continue; // 非 <pack>.json 形态（含 .corrupt 隔离文件），跳过不动
     ensurePersistedFileMode(path);
     const pack: string = match[1]!;
@@ -242,7 +242,7 @@ export function writeStickerCatalogFile(pack: string, snapshotJson: string): voi
  */
 export function cleanupStaleLuckFiles(todayKey: string): void {
   for (const name of readdirSync(LUCK_MEMORY_DIR)) {
-    const match = DAY_FILE_PATTERN.exec(name);
+    const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
     if (match && match[1] !== todayKey) {
       tryUnlink(join(LUCK_MEMORY_DIR, name));
     }
@@ -314,7 +314,7 @@ export function appendLuckEntries(day: string, fileState: LuckFileStateHolder, p
   if (fileState.current?.day !== day) {
     fileState.current = openDayFile(LUCK_MEMORY_DIR, day, PERSISTED_FILE_MODE);
   }
-  const chunk: string = pending.map((entry) => serializeDayFileEntry(entry.key, entry.record)).join(",\n");
+  const chunk: string = pending.map((entry: LuckPendingEntry): string => serializeDayFileEntry(entry.key, entry.record)).join(",\n");
   appendToDayFile({
     dir: LUCK_MEMORY_DIR,
     state: fileState.current,

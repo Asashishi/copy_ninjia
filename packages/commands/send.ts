@@ -2,6 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import { clearChatStateField, getActiveProxySendTarget, getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { bot, logApiError, sendMessage } from "../infra/telegram";
 import { isSuperAdmin } from "./superAdminToggle";
+import type { ChatFullInfo } from "@grammyjs/types";
 
 /**
  * 隐藏的超管私聊中转命令；群聊和非超管调用静默拒绝。只接受可达的
@@ -41,7 +42,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   }
 
   try {
-    const targetChat = await bot.api.getChat(targetChatId);
+    const targetChat: ChatFullInfo = await bot.api.getChat(targetChatId);
     if (targetChat.type !== "group" && targetChat.type !== "supergroup") {
       await sendMessage({ chatId, text: `只能转发进群组呀，${targetChatId} 不是群组，检查一下 id♡`, replyToMessageId: messageId });
       return;

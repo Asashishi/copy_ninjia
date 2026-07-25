@@ -54,7 +54,7 @@ export interface SupervisedWorkerHandle<TMessage> {
 export function superviseWorker<TMessage, TEvent = never>(
   options: SupervisedWorkerOptions<TMessage, TEvent>
 ): SupervisedWorkerHandle<TMessage> {
-  const restartThrottle = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
+  const restartThrottle: { shouldGiveUp: () => boolean; } = createRestartThrottle(WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS);
   let worker: Worker | null = null;
   let initialized: boolean = false;
 
@@ -95,7 +95,7 @@ export function superviseWorker<TMessage, TEvent = never>(
   function createWorker(): Worker {
     const w: Worker = new Worker(options.url);
     w.unref();
-    w.onmessage = (event: MessageEvent<unknown>) => {
+    w.onmessage = (event: MessageEvent<unknown>): void => {
       const data: unknown = event.data;
       // __log 转发不受下面的活跃实例守卫约束：它只是把这个 Worker 自己的
       // error 日志转投落盘线程，不改写任何共享镜像，没有"过期数据覆盖新
@@ -113,7 +113,7 @@ export function superviseWorker<TMessage, TEvent = never>(
       if (worker !== w) return;
       options.onEvent?.(data as TEvent);
     };
-    w.onerror = (event: ErrorEvent) => {
+    w.onerror = (event: ErrorEvent): void => {
       // 已被替换的旧实例若迟到/重复上报错误，不得再次创建一条平行自愈链。
       if (worker !== w) return;
       logger.error(`${options.label} errored, restarting:`, event.message || event.error || event);

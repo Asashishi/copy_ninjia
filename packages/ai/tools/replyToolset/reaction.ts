@@ -9,7 +9,7 @@ import { parseStringField } from "../../utils/toolArgs";
 export function createAddReactionExecutor(
   ctx: ReplyToolContext
 ): (argumentsJson: string) => Promise<string> {
-  const reactionEmojis = getReactionEmojis();
+  const reactionEmojis: readonly string[] = getReactionEmojis();
   let reactionCount: number = 0;
   return async (argumentsJson: string): Promise<string> => {
     if (!ctx.isActive()) {

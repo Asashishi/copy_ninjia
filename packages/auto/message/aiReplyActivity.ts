@@ -37,7 +37,7 @@ function scheduleNextSweep(now: number): void {
   }
   if (!Number.isFinite(earliestExpiry)) return;
   const delay: number = Math.max(1, earliestExpiry - now);
-  const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+  const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
     aiReplyActivitySweepState.timer = null;
     const currentTime: number = Date.now();
     sweepAiReplyActivity(currentTime);

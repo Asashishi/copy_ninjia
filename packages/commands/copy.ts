@@ -13,6 +13,7 @@ import {
   commitCopySlot,
   releaseCopySlot,
 } from "./copySlot";
+import type { CopySlotDecision } from "../types/copy/slot";
 
 /**
  * 处理 /copy、/r_copy、/nya_copy 和 /ja_copy 指令。目标既可以通过 @username
@@ -46,7 +47,7 @@ export async function handleCopyCommand(
   }
 
   // 不同群的 update 会并发执行；必须在第一个 await 之前同步占住全局槽。
-  const slotDecision = claimCopySlot(globalCopy, chatId);
+  const slotDecision: CopySlotDecision = claimCopySlot(globalCopy, chatId);
   if (!slotDecision.claimed) {
     if (slotDecision.reason === "pending") {
       await sendMessage({
@@ -154,4 +155,4 @@ export function stopCopyOwnedByChat(chatId: number): boolean {
   return true;
 }
 
-registerChatTeardown("copy", (chatId) => { stopCopyOwnedByChat(chatId); });
+registerChatTeardown("copy", (chatId: number): void => { stopCopyOwnedByChat(chatId); });

@@ -41,7 +41,7 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): void {
 }
 
 function drainReplyQueue(chatId: number): void {
-  drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger) => startQueuedRound(chatId, trigger));
+  drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): void => startQueuedRound(chatId, trigger));
 }
 
 /**

@@ -63,7 +63,7 @@ export function drainAvatarUpdates(timeoutMs: number): Promise<FlushResult> {
   return drainWithWaiter({
     owner: "Avatar",
     timeoutMs,
-    isIdle: () => !avatarUpdateState.running && avatarUpdateState.pending === null,
+    isIdle: (): boolean => !avatarUpdateState.running && avatarUpdateState.pending === null,
     waiters: avatarDrainWaiters,
     notifyIfIdle: notifyAvatarDrainIfIdle,
     abort: abortAvatarUpdates,

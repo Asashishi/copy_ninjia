@@ -1,5 +1,6 @@
 import { logger } from "../infra/logger";
 import { v3 as GoogleTranslate } from "@google-cloud/translate";
+import type { protos } from "@google-cloud/translate";
 import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
 import { translateParentCache, translateRuntime } from "../cache/translate";
 import { TRANSLATE_REQUEST_TIMEOUT_MS } from "../consts/lifecycle";
@@ -61,7 +62,13 @@ async function runTranslation(text: string, expectedGeneration: number): Promise
   try {
     const parent: string = await getTranslateParent(expectedGeneration);
     ensureTranslateGeneration(expectedGeneration);
-    const [response] = await getTranslateClient().translateText({
+    // translateText 是重载签名，ReturnType 只会取到回调那一版，因此直接写出
+    // 元组首项的 proto 响应类型。
+    const [response]: [
+      protos.google.cloud.translation.v3.ITranslateTextResponse,
+      protos.google.cloud.translation.v3.ITranslateTextRequest | undefined,
+      Record<string, never> | undefined
+    ] = await getTranslateClient().translateText({
       parent,
       contents: [text],
       mimeType: "text/plain",
@@ -82,7 +89,7 @@ export function translateToJapanese(text: string): Promise<string | null> {
   if (!translateRuntime.accepting) return Promise.resolve(null);
   const task: Promise<string | null> = runTranslation(text, translateRuntime.generation);
   translateRuntime.tasks.add(task);
-  void task.finally(() => { translateRuntime.tasks.delete(task); });
+  void task.finally((): void => { translateRuntime.tasks.delete(task); });
   return task;
 }
 
@@ -96,9 +103,9 @@ export async function drainTranslate(timeoutMs: number): Promise<FlushResult> {
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const drained: boolean = await Promise.race([
-    Promise.allSettled([...translateRuntime.tasks]).then(() => true),
-    new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), timeoutMs);
+    Promise.allSettled([...translateRuntime.tasks]).then((): boolean => true),
+    new Promise<boolean>((resolve: (value: boolean | PromiseLike<boolean>) => void): void => {
+      timer = setTimeout((): void => resolve(false), timeoutMs);
       timer.unref();
     }),
   ]);

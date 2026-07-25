@@ -26,12 +26,15 @@ export function runAcknowledgedUpdateBatches(
   bot: Bot,
   allowedUpdates: NonNullable<FetchOptions["allowed_updates"]>
 ): AcknowledgedUpdateRunner {
-  const fetchUpdates = createUpdateFetcher(bot, { fetch: { allowed_updates: allowedUpdates } });
+  // 形参 signal 用的是 @grammyjs/runner 内部的 abort-controller shim 类型，
+  // 无法从公开入口引用，因此借 ReturnType 精确表达而不是手写形参类型。
+  const fetchUpdates: ReturnType<typeof createUpdateFetcher<Update, unknown>> =
+    createUpdateFetcher(bot, { fetch: { allowed_updates: allowedUpdates } });
   let running: boolean = true;
   let activeUpdates: number = 0;
   let currentAbortController: AbortController | null = null;
   let resolveStop: (() => void) | undefined;
-  const stopped: Promise<void> = new Promise((resolve) => { resolveStop = resolve; });
+  const stopped: Promise<void> = new Promise((resolve: (value: void | PromiseLike<void>) => void): void => { resolveStop = resolve; });
 
   const handleUpdate = async (update: Update): Promise<void> => {
     activeUpdates++;
@@ -60,7 +63,7 @@ export function runAcknowledgedUpdateBatches(
 
   const task: Promise<void> = (async (): Promise<void> => {
     while (running) {
-      const controller = new AbortController();
+      const controller: AbortController = new AbortController();
       currentAbortController = controller;
       let updates: Update[];
       try {
@@ -76,10 +79,10 @@ export function runAcknowledgedUpdateBatches(
       }
       if (!running) return;
 
-      const batch: Promise<void> = Promise.allSettled(updates.map(handleUpdate)).then((results) => {
+      const batch: Promise<void> = Promise.allSettled(updates.map(handleUpdate)).then((results: PromiseSettledResult<void>[]): void => {
         const failures: unknown[] = results
-          .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-          .map((result) => result.reason as unknown);
+          .filter((result: PromiseSettledResult<void>): result is PromiseRejectedResult => result.status === "rejected")
+          .map((result: PromiseRejectedResult): unknown => result.reason as unknown);
         if (failures.length === 1) throw failures[0];
         if (failures.length > 1) throw new AggregateError(failures, "Multiple Telegram updates failed.");
       });

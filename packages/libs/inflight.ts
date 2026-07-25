@@ -2,8 +2,8 @@
 export function trackInflight<T>(inflight: Set<Promise<unknown>>, request: Promise<T>): Promise<T> {
   inflight.add(request);
   void request.then(
-    () => inflight.delete(request),
-    () => inflight.delete(request)
+    (): boolean => inflight.delete(request),
+    (): boolean => inflight.delete(request)
   );
   return request;
 }

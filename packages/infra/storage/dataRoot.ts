@@ -1,6 +1,7 @@
 import { link, mkdir, open, rename, stat, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import type { Stats } from "node:fs";
 
 export interface DataRootProbeDependencies {
   mkdir: typeof mkdir;
@@ -32,7 +33,7 @@ export async function prepareRuntimeDataRoot(
 
   try {
     await fs.mkdir(root, { recursive: true });
-    const rootStat = await fs.stat(root);
+    const rootStat: Stats = await fs.stat(root);
     if (!rootStat.isDirectory()) throw new Error("path exists but is not a directory");
 
     sourceHandle = await fs.open(sourcePath, "wx", 0o600);
@@ -55,10 +56,10 @@ export async function prepareRuntimeDataRoot(
       { cause: error }
     );
   } finally {
-    await sourceHandle?.close().catch(() => undefined);
-    await directoryHandle?.close().catch(() => undefined);
-    await fs.unlink(linkPath).catch(() => undefined);
-    await fs.unlink(renamedPath).catch(() => undefined);
-    await fs.unlink(sourcePath).catch(() => undefined);
+    await sourceHandle?.close().catch((): undefined => undefined);
+    await directoryHandle?.close().catch((): undefined => undefined);
+    await fs.unlink(linkPath).catch((): undefined => undefined);
+    await fs.unlink(renamedPath).catch((): undefined => undefined);
+    await fs.unlink(sourcePath).catch((): undefined => undefined);
   }
 }

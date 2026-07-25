@@ -47,7 +47,7 @@ export class DayFileFormatError extends Error {
   }
 }
 
-const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }) =>
+const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }: SyncWriteRequest): number =>
   writeSync(fd, buffer, offset, length, position);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -157,7 +157,7 @@ function repairTruncated(content: string): string | null {
   let depth: number = 0;
   let inString: boolean = false;
   let escaped: boolean = false;
-  for (let i = 0; i < content.length; i++) {
+  for (let i: number = 0; i < content.length; i++) {
     const char: string = content[i]!;
     if (inString) {
       if (escaped) {
@@ -180,7 +180,7 @@ function repairTruncated(content: string): string | null {
     }
   }
 
-  for (let i = boundaries.length - 1; i >= 0; i--) {
+  for (let i: number = boundaries.length - 1; i >= 0; i--) {
     const candidate: string = `${content.slice(0, boundaries[i])}\n}`;
     try {
       JSON.parse(candidate);

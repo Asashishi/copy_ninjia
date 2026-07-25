@@ -29,6 +29,7 @@ import {
   sendReplyReminder,
   sendVerificationReminder,
 } from "./verificationReminders";
+import type { VerificationEntry } from "../../cache/antiRaid/verification";
 
 type VerificationChangePublisher = (
   chatId: number,
@@ -99,11 +100,11 @@ export async function runVerificationEffects({
           // 只有踢人失败等可重试处置才走本地 timer。成功播报已经发送时必须
           // 原地等待对应 revision 的真实落盘回执。
           expectedState.executionStarted = false;
-          const entry = verificationEntries.get(verificationKey(chatId, userId));
+          const entry: VerificationEntry | undefined = verificationEntries.get(verificationKey(chatId, userId));
           if (entry !== undefined) {
             if (entry.timer !== undefined) clearTimeout(entry.timer);
             entry.timer = setTimeout(
-              () => dispatchVerification(chatId, userId, { type: "terminalPersisted" }),
+              (): void => dispatchVerification(chatId, userId, { type: "terminalPersisted" }),
               VERIFICATION_TERMINAL_RETRY_MS
             );
           }
@@ -224,13 +225,13 @@ function startAdminCheck({
   const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
   if (captured?.kind !== "pending") return;
   void fetchAdminIds(chatId)
-    .then((adminIds: Set<number>) => {
+    .then((adminIds: Set<number>): void => {
       if (!adminIds.has(actorId)) return;
       if (verificationEntries.get(key)?.state === captured) {
         dispatchVerification(chatId, userId, { type: "adminCheckResolved" });
       }
     })
-    .catch((error: unknown) => {
+    .catch((error: unknown): void => {
       logger.error(
         `Error fetching chat admins for admin-invite exemption in chat ${chatId}:`,
         error

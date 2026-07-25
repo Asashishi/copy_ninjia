@@ -1,4 +1,4 @@
-import type { Sticker, StickerSet } from "@grammyjs/types";
+import type { Sticker, StickerSet, PhotoSize } from "@grammyjs/types";
 import { logger } from "../../infra/logger";
 import { bot } from "../../infra/telegram";
 import { failedPacks, inflightStickerSets, stickerSetCache } from "../../cache/stickers/sets";
@@ -66,7 +66,7 @@ export async function getStickerSet(packName: string, api: StickerSetApi = bot.a
  * ai/stickers/catalog.ts 的目录条目键。
  */
 export function pickStickerVisionSource(sticker: Sticker): TelegramVisionSource | null {
-  const source = !sticker.is_animated && !sticker.is_video ? sticker : sticker.thumbnail;
+  const source: PhotoSize | undefined = !sticker.is_animated && !sticker.is_video ? sticker : sticker.thumbnail;
   if (!source) return null;
   return {
     fileId: source.file_id,

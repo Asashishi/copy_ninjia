@@ -1,5 +1,5 @@
 import { logger } from "../../infra/logger";
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
@@ -13,9 +13,11 @@ import {
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { AdoptableLockdown, LockdownEvent, LockdownPersistedMessage, UnlockEvent } from "../../types/antiRaid";
 import { transitionLockdown } from "../../states/lockdown";
-import type { LockdownEffect, LockdownMachineEvent } from "../../types/states/lockdown";
+import type { LockdownEffect, LockdownMachineEvent, LockdownTransition, LockdownState } from "../../types/states/lockdown";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
+import type { LockdownEntry } from "../../cache/antiRaid/lockdown";
+import type { JoinWindow } from "../../types/antiRaid/internal";
 
 declare const self: Worker;
 
@@ -35,8 +37,8 @@ function nextLockdownIntentId(): number {
  */
 
 function dispatchLockdown(chatId: number, event: LockdownMachineEvent): void {
-  const entry = lockdownEntries.get(chatId);
-  const { next, effects } = transitionLockdown(entry?.state, event);
+  const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
+  const { next, effects }: LockdownTransition = transitionLockdown(entry?.state, event);
   if (next !== entry?.state) {
     if (next === undefined) {
       if (entry) {
@@ -65,26 +67,26 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
     switch (effect.kind) {
       case "prefetchAdmins":
         if (!effect.onlyIfCold || freshAdminIds(chatId) === undefined) {
-          void fetchAdminIds(chatId).catch((error: unknown) => {
+          void fetchAdminIds(chatId).catch((error: unknown): void => {
             logger.error(`Error prefetching chat admins for lockdown in chat ${chatId}:`, error);
           });
         }
         break;
       case "scheduleRestore": {
-        const entry = lockdownEntries.get(chatId);
+        const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
         if (!entry) break;
         if (entry.timer !== undefined) clearTimeout(entry.timer);
-        entry.timer = setTimeout(() => dispatchLockdown(chatId, {
+        entry.timer = setTimeout((): void => dispatchLockdown(chatId, {
           type: "restoreTimerFired",
           intentId: nextLockdownIntentId(),
         }), effect.delayMs);
         break;
       }
       case "scheduleRestoreRetry": {
-        const entry = lockdownEntries.get(chatId);
+        const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
         if (!entry) break;
         if (entry.timer !== undefined) clearTimeout(entry.timer);
-        entry.timer = setTimeout(() => dispatchLockdown(chatId, { type: "restoreRetryFired" }), effect.delayMs);
+        entry.timer = setTimeout((): void => dispatchLockdown(chatId, { type: "restoreRetryFired" }), effect.delayMs);
         break;
       }
       case "prepareApply":
@@ -124,7 +126,7 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
 }
 
 function publishLockdownState(chatId: number): void {
-  const state = lockdownEntries.get(chatId)?.state;
+  const state: LockdownState | undefined = lockdownEntries.get(chatId)?.state;
   if (state === undefined) return;
   let intentId: number;
   let originalPermissions: ChatPermissions;
@@ -157,7 +159,7 @@ export function handleLockdownPersisted(msg: LockdownPersistedMessage): void {
 
 /** 群被禁用/离开/撤管理员时，先持久化 restoring 再尝试恢复权限。 */
 export function deactivateLockdownChat(chatId: number): void {
-  const window = joinWindows.get(chatId);
+  const window: JoinWindow | undefined = joinWindows.get(chatId);
   if (window !== undefined) {
     clearTimeout(window.resetTimeout);
     joinWindows.delete(chatId);
@@ -191,7 +193,7 @@ function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
 function prepareApplyLockdown(chatId: number, joinCount: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
-      const chat = await joinVerificationApi.getChat(chatId);
+      const chat: ChatFullInfo = await joinVerificationApi.getChat(chatId);
       if (!("permissions" in chat) || !chat.permissions) {
         // permissions 字段对群/超级群实际总会返回，缺失多半是异常响应——
         // 放弃这次锁定（入群验证的逐个踢人仍在兜底），也不能拿 {} 当"原始
@@ -223,7 +225,7 @@ function commitApplyLockdown(chatId: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     let currentPermissions: ChatPermissions;
     try {
-      const chat = await joinVerificationApi.getChat(chatId);
+      const chat: ChatFullInfo = await joinVerificationApi.getChat(chatId);
       if (!("permissions" in chat) || !chat.permissions) {
         logger.error(
           `Chat ${chatId} commit getChat response missing permissions field, abandoning anti-raid lockdown`
@@ -278,7 +280,7 @@ function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissio
 function reapplyLockdownRestriction(chatId: number, _originalPermissions: ChatPermissions): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
-      const chat = await joinVerificationApi.getChat(chatId);
+      const chat: ChatFullInfo = await joinVerificationApi.getChat(chatId);
       if (!("permissions" in chat) || !chat.permissions) throw new Error("getChat response missing permissions");
       await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(chat.permissions));
     } catch (error: unknown) {
@@ -295,15 +297,15 @@ function reapplyLockdownRestriction(chatId: number, _originalPermissions: ChatPe
  * 固定桶永远数不满）。
  */
 export function recordJoin(chatId: number, now: number): void {
-  let window = joinWindows.get(chatId);
+  let window: JoinWindow | undefined = joinWindows.get(chatId);
   if (!window) {
-    window = { timestamps: new LinkedQueue<number>(), resetTimeout: setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS) };
+    window = { timestamps: new LinkedQueue<number>(), resetTimeout: setTimeout((): boolean => joinWindows.delete(chatId), JOIN_WINDOW_MS) };
     joinWindows.set(chatId, window);
   } else {
     // 清理计时器在每次入群时重置：它到期即意味着窗口静默满 JOIN_WINDOW_MS，
     // 届时所有时间戳都已过期，整个条目可以安全删除。
     clearTimeout(window.resetTimeout);
-    window.resetTimeout = setTimeout(() => joinWindows.delete(chatId), JOIN_WINDOW_MS);
+    window.resetTimeout = setTimeout((): boolean => joinWindows.delete(chatId), JOIN_WINDOW_MS);
   }
 
   trimSlidingWindow({ timestamps: window.timestamps, windowMs: JOIN_WINDOW_MS, now });
@@ -334,7 +336,7 @@ export function recordJoin(chatId: number, now: number): void {
  * 就是正确的 no-op——说明这次撤销早就没有意义了。
  */
 export function retractJoin(chatId: number, joinedAt: number): void {
-  const window = joinWindows.get(chatId);
+  const window: JoinWindow | undefined = joinWindows.get(chatId);
   if (!window) return;
   window.timestamps.removeValue(joinedAt);
 }

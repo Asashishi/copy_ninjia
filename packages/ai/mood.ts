@@ -6,6 +6,12 @@ import { getTokyoHour } from "../libs/time";
 import { currentTokyoWeather } from "./weather";
 import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood";
 
+/** 按当前天气/时段调整过权重的候选心情，仅用于 pickMood 的一次抽选。 */
+interface WeightedMood {
+  mood: MoodOption;
+  weight: number;
+}
+
 /**
  * 各群「心情」系统：心情只随时间自然轮换——抽到一个心情后带一个随机
  * 寿命（区间见 consts/aiChat/mood.ts），到期后下次拼提示词时重抽，与群里
@@ -31,7 +37,7 @@ import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood
  *  （TokyoWeatherResult 没有保留原始 WMO 代码，那是特意精简给模型看的
  *  字段），所以按描述文案反查桶。 */
 const WEATHER_DESCRIPTION_TO_BUCKET: Record<string, WeatherBucket> = Object.fromEntries(
-  Object.entries(WEATHER_CODE_DESCRIPTIONS).map(([code, description]) => [description, classifyWeatherCodeBucket(Number(code))])
+  Object.entries(WEATHER_CODE_DESCRIPTIONS).map(([code, description]: [string, string]): [string, WeatherBucket] => [description, classifyWeatherCodeBucket(Number(code))])
 );
 
 /** 按 WMO 天气代码归类到粗粒度天气桶，覆盖范围与 WEATHER_CODE_DESCRIPTIONS
@@ -81,11 +87,11 @@ export function computeAdjustedWeight(mood: MoodOption, weather: WeatherBucket |
 function pickMood(): MoodOption {
   const weather: WeatherBucket | null = currentWeatherBucket();
   const time: TimeBucket = classifyTimeBucket(getTokyoHour());
-  const weighted: { mood: MoodOption; weight: number }[] = getMoodConfig().moods.map((mood) => ({
+  const weighted: WeightedMood[] = getMoodConfig().moods.map((mood: MoodOption): WeightedMood => ({
     mood,
     weight: computeAdjustedWeight(mood, weather, time),
   }));
-  const totalWeight: number = weighted.reduce((sum, entry) => sum + entry.weight, 0);
+  const totalWeight: number = weighted.reduce((sum: number, entry: WeightedMood): number => sum + entry.weight, 0);
   const roll: number = Math.random() * totalWeight;
   let cumulative: number = 0;
   for (const entry of weighted) {

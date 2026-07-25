@@ -1,6 +1,6 @@
 import { logger } from "../infra/logger";
 import type { Context } from "grammy";
-import type { ChatMember, Message } from "@grammyjs/types";
+import type { ChatMember, Message, ChatMemberUpdated, User, CallbackQuery } from "@grammyjs/types";
 import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "../infra/storage/stateStore";
 import { answerCallbackQuery } from "../infra/telegram/actions";
 import { isBotAdminIn, markBotAdminObserved } from "../infra/botAdmin";
@@ -35,8 +35,10 @@ import {
   persistedVerificationRevisions,
   type PersistedLockdownFingerprint,
 } from "../cache/antiRaid";
-import type { AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot } from "../types/antiRaid";
+import type { AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot, AdoptableLockdown } from "../types/antiRaid";
 import type { LockdownRecord } from "../types/chatState";
+import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
+import type { VerificationPersistedReply } from "../types/diskIO";
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
@@ -90,19 +92,19 @@ function persistCurrentLockdown(chatId: number): void {
       return;
     }
   })()
-    .catch((error: unknown) => {
+    .catch((error: unknown): void => {
       logger.error(`Failed to persist anti-raid lockdown intent for chat ${chatId}:`, error);
     })
-    .finally(() => {
+    .finally((): void => {
       pendingLockdownPersistence.delete(chatId);
     });
 }
 
-const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
+const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: SupervisedWorkerHandle<AntiRaidWorkerMessage> = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
   url: new URL("../workers/antiRaidWorker.ts", import.meta.url).href,
   label: "Anti-raid guard Worker",
   giveUpConsequence: "join verification and anti-raid features will silently stay disabled until the process restarts.",
-  onEvent: (event) => {
+  onEvent: (event: AntiRaidWorkerEvent): void => {
     switch (event.type) {
       case "lockdown": {
         const expected: LockdownRecord = {
@@ -139,11 +141,11 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
   },
   // 崩溃的 Worker 带走了所有计时器；先用主线程待验证镜像重建验证，再把
   // 仍在生效的私密模式交给新 Worker。FIFO 保证两类 adopt 都先于新投递。
-  onRespawn: (postToNext) => {
+  onRespawn: (postToNext: (message: AntiRaidWorkerMessage) => boolean): void => {
     antiRaidBarrier.settleAll("failed");
     const generation: number = nextAntiRaidGeneration();
     for (const [key, record] of activeVerificationSnapshots) {
-      const persisted = persistedVerificationRevisions.get(key);
+      const persisted: { generation: number; revision: number; } | undefined = persistedVerificationRevisions.get(key);
       activeVerificationSnapshots.set(key, { ...record, generation });
       if (persisted?.generation === record.generation && persisted.revision === record.revision) {
         persistedVerificationRevisions.set(key, { generation, revision: record.revision });
@@ -152,7 +154,7 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
     if (!postToNext(buildAdoptVerificationsMessage(generation))) return;
     for (const [key, record] of activeVerificationSnapshots) {
       if (record.phase !== "checkingInviter" && record.phase !== "expelling") continue;
-      const persisted = persistedVerificationRevisions.get(key);
+      const persisted: { generation: number; revision: number; } | undefined = persistedVerificationRevisions.get(key);
       if (persisted?.generation === record.generation && persisted.revision === record.revision) {
         if (!postToNext({ type: "verificationPersisted", key, generation, revision: record.revision })) return;
       } else {
@@ -168,7 +170,7 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = s
       }
     }
   },
-  onGiveUp: () => {
+  onGiveUp: (): void => {
     antiRaidBarrier.settleAll("failed");
     recoverAbandonedLockdowns();
   },
@@ -187,7 +189,7 @@ registerChatTeardown("antiRaid", (chatId: number): void => {
 export function drainAntiRaid(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS): Promise<FlushResult> {
   if (!antiRaidRuntimeState.initialized) return Promise.resolve("flushed");
   return antiRaidBarrier.begin(
-    (barrierId) => post({ type: "barrier", barrierId }),
+    (barrierId: number): boolean => post({ type: "barrier", barrierId }),
     timeoutMs
   );
 }
@@ -206,13 +208,13 @@ async function postAntiRaidDurably(
     throw new Error(`Anti-Raid Worker barrier ${barrierResult}.`);
   }
   if (antiRaidRuntimeState.persistenceVersion === persistenceVersionBefore) return;
-  const persistenceResults = await Promise.allSettled([
+  const persistenceResults: [PromiseSettledResult<FlushResult>, PromiseSettledResult<FlushResult>] = await Promise.allSettled([
     flushDiskIO(timeoutMs),
     flushStateToDisk(timeoutMs),
   ]);
   const failures: unknown[] = persistenceResults
-    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-    .map((result) => result.reason as unknown);
+    .filter((result: PromiseSettledResult<FlushResult>): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result: PromiseRejectedResult): unknown => result.reason as unknown);
   if (failures.length > 0) throw new AggregateError(failures, "Anti-Raid persistence boundary rejected.");
   const diskResult: FlushResult = (persistenceResults[0] as PromiseFulfilledResult<FlushResult>).value;
   const stateResult: FlushResult = (persistenceResults[1] as PromiseFulfilledResult<FlushResult>).value;
@@ -223,7 +225,7 @@ async function postAntiRaidDurably(
 
 // Disk I/O Worker 重建时，active 与尚未确认的终结变化一起重放；否则旧日
 // 文件里的 active 记录可能在下一次进程启动时复活。
-onDiskIORespawn(() => {
+onDiskIORespawn((): void => {
   for (const record of activeVerificationSnapshots.values()) {
     postDiskIO({ type: "verificationUpsert", record, critical: true });
   }
@@ -232,9 +234,9 @@ onDiskIORespawn(() => {
   }
 });
 
-onVerificationPersisted((reply) => {
+onVerificationPersisted((reply: VerificationPersistedReply): void => {
   if (!reply.deleted) {
-    const current = activeVerificationSnapshots.get(reply.key);
+    const current: VerificationSnapshot | undefined = activeVerificationSnapshots.get(reply.key);
     if (current?.generation !== reply.generation || current.revision !== reply.revision) return;
     persistedVerificationRevisions.set(reply.key, { generation: reply.generation, revision: reply.revision });
     // 投递失败不做补偿是有意的：Worker 不可用意味着它即将重建，onRespawn 会对
@@ -254,7 +256,7 @@ onVerificationPersisted((reply) => {
     }
     return;
   }
-  const deletion = pendingVerificationDeletes.get(reply.key);
+  const deletion: { chatId: number; userId: number; generation: number; revision: number; } | undefined = pendingVerificationDeletes.get(reply.key);
   if (deletion?.generation === reply.generation && deletion.revision === reply.revision) {
     pendingVerificationDeletes.delete(reply.key);
   }
@@ -280,7 +282,7 @@ export function initAntiRaid(): void {
     if (adopt.lockdowns.length === 0) return;
 
     postAntiRaidOrThrow(adopt);
-    logger.log(`Adopted lockdowns still active from previous process exit: ${adopt.lockdowns.map((l) => l.chatId).join(", ")}`);
+    logger.log(`Adopted lockdowns still active from previous process exit: ${adopt.lockdowns.map((l: AdoptableLockdown): number => l.chatId).join(", ")}`);
   } catch (error: unknown) {
     antiRaidRuntimeState.initialized = false;
     stopEmergencyLockdownRecoveries();
@@ -354,11 +356,11 @@ function isInviterExemptAdmin(member: ChatMember): boolean {
  * 更新，需要机器人是群管理员——而封禁/删除消息本来也需要这个权限。
  */
 export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
-  const update = ctx.chatMember;
+  const update: ChatMemberUpdated | undefined = ctx.chatMember;
   if (!update) return;
 
   const chatId: number = update.chat.id;
-  const user = update.new_chat_member.user;
+  const user: User = update.new_chat_member.user;
   // 自身的成员变动本来走 my_chat_member；这条排除必须放在最前面——万一
   // Telegram 真的也为机器人自己送来一条 chat_member（比如这次恰好就是自己
   // 被撤管理员），排在下面 markBotAdminObserved 之后会被误判：那条推理
@@ -474,7 +476,7 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
  * Worker 应答与处理。前缀不匹配的 callback_query 与本模块无关，直接放过。
  */
 export async function handleVerificationCallback(ctx: Context): Promise<void> {
-  const query = ctx.callbackQuery;
+  const query: CallbackQuery | undefined = ctx.callbackQuery;
   const data: string | undefined = query?.data;
   if (!query || !data?.startsWith(VERIFY_CALLBACK_PREFIX)) return;
 

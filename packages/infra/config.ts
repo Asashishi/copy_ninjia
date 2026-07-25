@@ -25,7 +25,7 @@ export const GEMINI_API_KEY: string = requireEnv("GEMINI_API_KEY");
 export const PRIVILEGED_USERS_ID: readonly number[] = parseTelegramUserIdList(requireEnv("PRIVILEGED_USERS_ID", true), "PRIVILEGED_USERS_ID");
 
 /** 唯一可使用 /ai_chat、/ja_copy enable|disable、/init enable|disable 的用户 ID——独立一批权限，不走 PRIVILEGED_USERS_ID 白名单。 */
-export const SUPER_ADMIN_USER_ID: number = (() => {
+export const SUPER_ADMIN_USER_ID: number = ((): number => {
   const raw: string = requireEnv("SUPER_ADMIN_USER_ID");
   return parseTelegramUserId(raw, "SUPER_ADMIN_USER_ID");
 })();

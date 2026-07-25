@@ -10,8 +10,8 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (!Number.isFinite(ms) || ms < 0) return Promise.reject(new RangeError("sleep duration must be finite and non-negative"));
   if (signal?.aborted) return Promise.reject(abortReason(signal));
   if (signal === undefined) return Bun.sleep(ms);
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+  return new Promise((resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
       signal.removeEventListener("abort", onAbort);
       resolve();
     }, ms);

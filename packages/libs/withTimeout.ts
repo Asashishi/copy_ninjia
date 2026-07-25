@@ -14,15 +14,15 @@ export function withTimeout<T>(task: Promise<T>, timeoutMs: number, operation: s
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     task,
-    new Promise<T>((_resolve, reject) => {
+    new Promise<T>((_resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: unknown) => void): void => {
       timer = setTimeout(
-        () => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
+        (): void => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
         timeoutMs
       );
       // 超时 timer 不应把进程留在事件循环里：竞速的另一侧才是真正的工作。
       timer.unref();
     }),
-  ]).finally(() => {
+  ]).finally((): void => {
     if (timer !== undefined) clearTimeout(timer);
   });
 }

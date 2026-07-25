@@ -181,8 +181,8 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
   if (!worker) {
     return Promise.reject(new Error("Persistence Worker is unavailable; refusing to start with empty persisted state."));
   }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+  return new Promise((resolve: (value: LoadedData | PromiseLike<LoadedData>) => void, reject: (reason?: unknown) => void): void => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
       pendingLoad.resolve = null;
       pendingLoad.reject = null;
       pendingLoad.timer = null;
@@ -229,8 +229,8 @@ export function ensureLuckReceiptSecret(
     return Promise.reject(new Error("Persistence Worker is unavailable; cannot rotate luck receipt secret."));
   }
   const requestId: number = diskIORuntime.nextLuckSecretRequestId++;
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+  return new Promise((resolve: (value: LuckReceiptSecret | PromiseLike<LuckReceiptSecret>) => void, reject: (reason?: unknown) => void): void => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
       pendingLuckSecrets.delete(requestId);
       reject(new Error(`[diskIO] luck receipt secret request timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
@@ -258,7 +258,7 @@ export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promi
   requirePositiveFinite(timeoutMs, "Disk I/O flush timeout");
   const worker: Worker | null = diskIORuntime.worker;
   if (!worker || !diskIORuntime.writable) return Promise.resolve("failed");
-  return diskIOFlushBarrier.begin((id) => {
+  return diskIOFlushBarrier.begin((id: number): boolean => {
     const request: DiskFlushRequest = { type: "flush", flushId: id };
     return safePostDiskIO(worker, request, "flush request");
   }, timeoutMs);
@@ -279,7 +279,7 @@ export function terminateDiskIO(): Promise<void> {
   diskIORuntime.pendingBusinessMessages.length = 0;
   diskIORuntime.nextLuckSecretRequestId = 1;
   diskIOFlushBarrier.settleAll("failed");
-  const terminationError = new Error("Persistence Worker terminated before the request completed.");
+  const terminationError: Error = new Error("Persistence Worker terminated before the request completed.");
   if (pendingLoad.timer !== null) clearTimeout(pendingLoad.timer);
   pendingLoad.timer = null;
   pendingLoad.resolve = null;

@@ -51,7 +51,7 @@ export function tryClaimUserReplyTrigger(chatId: number, speakerId: number, now:
   else if (now - lastTime < USER_REPLY_TRIGGER_COOLDOWN_MS) return false;
 
   userReplyTriggerTimes.set(key, now);
-  setTimeout(() => {
+  setTimeout((): void => {
     if (userReplyTriggerTimes.get(key) === now) userReplyTriggerTimes.delete(key);
   }, USER_REPLY_TRIGGER_COOLDOWN_MS).unref();
   return true;

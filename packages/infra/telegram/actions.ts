@@ -1,6 +1,6 @@
 import { InputFile } from "grammy";
 import type { Api, InlineKeyboard } from "grammy";
-import type { Message, MessageEntity, ReactionTypeEmoji } from "@grammyjs/types";
+import type { Message, MessageEntity, ReactionTypeEmoji, ChatMember, MessageId } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
 import { bot, logApiError } from "./client";
 import type { TelegramSendResult } from "../../types/telegram";
@@ -92,7 +92,7 @@ export async function sendMessageWithResult({
 }: SendMessageParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send message",
-    execute: async () => {
+    execute: async (): Promise<Message.TextMessage> => {
       const other: Parameters<Api["sendMessage"]>[2] = {
         ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
         ...(keyboard ? { reply_markup: keyboard } : {}),
@@ -103,7 +103,7 @@ export async function sendMessageWithResult({
         ? api.sendMessage(chatId, text, other)
         : api.sendMessage(chatId, text, other, signal as unknown as Parameters<Api["sendMessage"]>[3]);
     },
-    map: (sent): TelegramSendResult | undefined => toSendResult(chatId, sent),
+    map: (sent: Message.TextMessage): TelegramSendResult | undefined => toSendResult(chatId, sent),
     fallback: undefined,
     shouldLogError: (): boolean => signal?.aborted !== true,
   });
@@ -115,15 +115,15 @@ export async function sendMessage(params: SendMessageParams): Promise<number | u
 }
 
 export async function sendTypingAction(chatId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction("send typing action", () => api.sendChatAction(chatId, "typing"));
+  return runBooleanTelegramAction("send typing action", (): Promise<true> => api.sendChatAction(chatId, "typing"));
 }
 
 export async function sendUploadPhotoAction(chatId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction("send upload photo action", () => api.sendChatAction(chatId, "upload_photo"));
+  return runBooleanTelegramAction("send upload photo action", (): Promise<true> => api.sendChatAction(chatId, "upload_photo"));
 }
 
 export async function sendChooseStickerAction(chatId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction("send choose sticker action", () => api.sendChatAction(chatId, "choose_sticker"));
+  return runBooleanTelegramAction("send choose sticker action", (): Promise<true> => api.sendChatAction(chatId, "choose_sticker"));
 }
 
 export interface AnswerCallbackQueryParams {
@@ -141,7 +141,7 @@ export async function answerCallbackQuery({
 }: AnswerCallbackQueryParams): Promise<void> {
   return runTelegramAction({
     action: "answer callback query",
-    execute: () => api.answerCallbackQuery(callbackQueryId, { text, show_alert: showAlert }),
+    execute: (): Promise<true> => api.answerCallbackQuery(callbackQueryId, { text, show_alert: showAlert }),
     map: (): undefined => undefined,
     fallback: undefined,
   });
@@ -150,8 +150,8 @@ export async function answerCallbackQuery({
 export async function sendSticker(chatId: number, fileId: string, api: Api = bot.api): Promise<number | undefined> {
   return runTelegramAction({
     action: "send sticker",
-    execute: () => api.sendSticker(chatId, fileId),
-    map: (sent): number | undefined => {
+    execute: (): Promise<Message.StickerMessage> => api.sendSticker(chatId, fileId),
+    map: (sent: Message.StickerMessage): number | undefined => {
       markSelfSent(chatId, sent.message_id);
       return sent.message_id;
     },
@@ -177,13 +177,13 @@ export async function sendPhotoWithResult({
 }: SendPhotoParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send photo",
-    execute: async () => {
+    execute: async (): Promise<Message.PhotoMessage> => {
       const extension: string = mimeType === "image/jpeg" ? "jpg" : "png";
       return api.sendPhoto(chatId, new InputFile(bytes, `generated.${extension}`), {
         ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
       });
     },
-    map: (sent): TelegramSendResult | undefined => toSendResult(chatId, sent),
+    map: (sent: Message.PhotoMessage): TelegramSendResult | undefined => toSendResult(chatId, sent),
     fallback: undefined,
   });
 }
@@ -204,12 +204,12 @@ export interface SetMessageReactionParams {
 export async function setMessageReaction({ chatId, messageId, emoji, api = bot.api }: SetMessageReactionParams): Promise<boolean> {
   return runBooleanTelegramAction(
     "set message reaction",
-    () => api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }])
+    (): Promise<true> => api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }])
   );
 }
 
 export async function deleteMessage(chatId: number, messageId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction("delete message", () => api.deleteMessage(chatId, messageId));
+  return runBooleanTelegramAction("delete message", (): Promise<true> => api.deleteMessage(chatId, messageId));
 }
 
 export interface DeleteMessageAfterParams {
@@ -221,7 +221,7 @@ export interface DeleteMessageAfterParams {
 
 /** 延迟删除用于公告清理，不让这类美化任务阻止进程退出。 */
 export function deleteMessageAfter({ chatId, messageId, delayMs, api = bot.api }: DeleteMessageAfterParams): void {
-  setTimeout(() => {
+  setTimeout((): void => {
     void deleteMessage(chatId, messageId, api);
   }, delayMs).unref();
 }
@@ -230,14 +230,14 @@ export function deleteMessageAfter({ chatId, messageId, delayMs, api = bot.api }
 export async function kickChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   return runBooleanTelegramAction(
     `kick chat member (chat ${chatId}, user ${userId})`,
-    () => api.unbanChatMember(chatId, userId)
+    (): Promise<true> => api.unbanChatMember(chatId, userId)
   );
 }
 
 export async function banChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   return runBooleanTelegramAction(
     `ban chat member (chat ${chatId}, user ${userId})`,
-    () => api.banChatMember(chatId, userId)
+    (): Promise<true> => api.banChatMember(chatId, userId)
   );
 }
 
@@ -245,8 +245,8 @@ export async function banChatMember(chatId: number, userId: number, api: Api = b
 export async function isChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   return runTelegramAction({
     action: `check chat membership (chat ${chatId}, user ${userId})`,
-    execute: () => api.getChatMember(chatId, userId),
-    map: (member): boolean => {
+    execute: (): Promise<ChatMember> => api.getChatMember(chatId, userId),
+    map: (member: ChatMember): boolean => {
       if (member.status === "restricted") return member.is_member;
       return member.status === "creator" || member.status === "administrator" || member.status === "member";
     },
@@ -257,15 +257,15 @@ export async function isChatMember(chatId: number, userId: number, api: Api = bo
 export async function banChatSenderChat(chatId: number, senderChatId: number, api: Api = bot.api): Promise<boolean> {
   return runBooleanTelegramAction(
     `ban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
-    () => api.banChatSenderChat(chatId, senderChatId)
+    (): Promise<true> => api.banChatSenderChat(chatId, senderChatId)
   );
 }
 
 export async function copyMessage(chatId: number, fromChatId: number, messageId: number): Promise<number | undefined> {
   return runTelegramAction({
     action: "copy message",
-    execute: () => bot.api.copyMessage(chatId, fromChatId, messageId),
-    map: (copied): number | undefined => {
+    execute: (): Promise<MessageId> => bot.api.copyMessage(chatId, fromChatId, messageId),
+    map: (copied: MessageId): number | undefined => {
       markSelfSent(chatId, copied.message_id);
       return copied.message_id;
     },

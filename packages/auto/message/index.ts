@@ -5,7 +5,7 @@ import { recordChatTitleFromChat } from "../../infra/chatTitle";
 import { getActiveCopyIn, getChatState } from "../../infra/storage/stateStore";
 import { isQuietUntilActive } from "../../libs/chatState";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
-import type { ChatState } from "../../types/chatState";
+import type { ChatState, CachedUser, CopyMode } from "../../types/chatState";
 import { cacheSender } from "../../users/senderIdentity";
 import { handleAnimationMessage } from "./animation";
 import { observeGroupMessageForAiReply } from "./aiReplyActivity";
@@ -52,7 +52,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       ? observeGroupMessageForAiReply(chatId)
       : 1 / AI_REPLY_PROBABILITY_BASE_INITIAL;
 
-  const activeCopy = getActiveCopyIn(chatId);
+  const activeCopy: { copiedUser: CachedUser; copyMode: CopyMode | undefined; } | null = getActiveCopyIn(chatId);
   if (activeCopy && senderId === activeCopy.copiedUser.id) {
     await echoMessage({
       chatId,

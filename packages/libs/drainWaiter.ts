@@ -43,7 +43,7 @@ export function drainWithWaiter({
     abort();
     return Promise.resolve("timedOut");
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve: (value: FlushResult | PromiseLike<FlushResult>) => void): void => {
     let settled: boolean = false;
     function finish(result: FlushResult): void {
       if (settled) return;
@@ -53,7 +53,7 @@ export function drainWithWaiter({
       resolve(result);
     }
     const onIdle = (): void => finish("flushed");
-    const timer = setTimeout(() => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
       abort();
       finish("timedOut");
     }, timeoutMs);

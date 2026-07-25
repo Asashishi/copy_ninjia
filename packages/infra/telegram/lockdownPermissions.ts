@@ -1,4 +1,4 @@
-import type { ChatPermissions } from "@grammyjs/types";
+import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
 import type { Api } from "grammy";
 
 type LockdownPermissionsApi = Pick<Api, "getChat" | "setChatPermissions">;
@@ -22,7 +22,7 @@ export async function restoreLockdownInvitePermission({
   originalPermissions,
   api,
 }: RestoreLockdownInvitePermissionParams): Promise<void> {
-  const chat = await api.getChat(chatId);
+  const chat: ChatFullInfo = await api.getChat(chatId);
   if (!("permissions" in chat) || !chat.permissions) {
     throw new Error(`Chat ${chatId} getChat response missing permissions`);
   }

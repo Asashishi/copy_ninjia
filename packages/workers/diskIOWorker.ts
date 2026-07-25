@@ -39,7 +39,7 @@ import { aiMemoryCache } from "../cache/diskIO/snapshots";
 import { stickerCatalogCache } from "../cache/diskIO/stickers";
 import { luckWorkerCache } from "../cache/diskIO/luck";
 import type { VerificationSnapshot } from "../types/antiRaid";
-import type { DiskFlushFailedReply, DiskFlushReply, DiskIOMessage, LoadedReply, LuckSecretReply } from "../types/diskIO";
+import type { DiskFlushFailedReply, DiskFlushReply, DiskIOMessage, LoadedReply, LuckSecretReply, VerificationPersistedReply, AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../types/diskIO";
 import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 declare const self: Worker;
@@ -54,7 +54,7 @@ function flushAll(): boolean {
     flushAiMemorySnapshots(),
     flushStickerCatalogs(),
     flushLuckAppends(),
-    flushVerificationChanges((reply) => self.postMessage(reply)),
+    flushVerificationChanges((reply: VerificationPersistedReply): void => self.postMessage(reply)),
   ];
   return results.every(Boolean);
 }
@@ -84,7 +84,7 @@ function handleLoad(): void {
       confirmedResultCount: luckWorkerCache.current?.entries.size ?? 0,
     });
     verifications = recoverVerificationDay(todayKey);
-    scheduleVerificationRollover((reply) => self.postMessage(reply));
+    scheduleVerificationRollover((reply: VerificationPersistedReply): void => self.postMessage(reply));
   } catch (error: unknown) {
     loadError = error instanceof Error ? error.message : String(error);
     console.error("[diskIOWorker] startup recovery failed:", error);
@@ -169,10 +169,10 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       break;
     }
     case "verificationUpsert":
-      handleVerificationUpsert({ msg, reply: (reply) => self.postMessage(reply) });
+      handleVerificationUpsert({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
       break;
     case "verificationDelete":
-      handleVerificationDelete({ msg, reply: (reply) => self.postMessage(reply) });
+      handleVerificationDelete({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
       break;
     case "load":
       handleLoad();
@@ -189,10 +189,10 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
 
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 export function startDiskIOWorker(): void {
-  configureAiMemoryDeletePersistedReply((reply) => self.postMessage(reply));
-  configureAiMemoryPersistedReply((reply) => self.postMessage(reply));
+  configureAiMemoryDeletePersistedReply((reply: AiMemoryDeletedPersistedReply): void => self.postMessage(reply));
+  configureAiMemoryPersistedReply((reply: AiMemoryPersistedReply): void => self.postMessage(reply));
   initLogFiles();
-  self.onmessage = (event: MessageEvent<DiskIOMessage>) => {
+  self.onmessage = (event: MessageEvent<DiskIOMessage>): void => {
     handleDiskIOWorkerMessage(event.data);
   };
 }

@@ -106,7 +106,7 @@ export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
 export function startAntiRaidWorker(): void {
   if (antiRaidCacheSweepTimer.current !== null) return;
   initTelegramClients();
-  self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>) => {
+  self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>): void => {
     handleAntiRaidWorkerMessage(event.data);
   };
   antiRaidCacheSweepTimer.current = setInterval(sweepAntiRaidWorkerCaches, ANTI_RAID_CACHE_SWEEP_INTERVAL_MS);

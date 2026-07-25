@@ -113,7 +113,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
         { retryable: false }
       );
     }
-    const parsed = parseArguments(argumentsJson, defaultAspectRatioFor(ctx.imageGenerationReference));
+    const parsed: { prompt: string; aspectRatio: ImageGenerationAspectRatio; } | null = parseArguments(argumentsJson, defaultAspectRatioFor(ctx.imageGenerationReference));
     if (!parsed) {
       return toolError(
         "Invalid image arguments: prompt must be non-empty and aspect_ratio must look like W:H, W/H, WxH, or W×H"
@@ -151,7 +151,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
         let referenceImage: VisionImage | undefined;
         if (ctx.imageGenerationReference) {
           const referenceFileId: string = ctx.imageGenerationReference.fileId;
-          referenceImage = await runMediaTask(() => downloadTelegramVisionImage({
+          referenceImage = await runMediaTask((): Promise<VisionImage | null> => downloadTelegramVisionImage({
             fileId: referenceFileId,
             logLabel: "image generation reference",
           })) ?? undefined;

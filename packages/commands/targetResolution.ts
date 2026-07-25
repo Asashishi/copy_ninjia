@@ -60,7 +60,7 @@ export async function resolveCommandTarget({
       await sendMessage({ chatId, text: messages.missingTarget, replyToMessageId: messageId });
       return undefined;
     }
-    const usernameMatch = USERNAME_ARG_PATTERN.exec(trimmedArgument);
+    const usernameMatch: RegExpExecArray | null = USERNAME_ARG_PATTERN.exec(trimmedArgument);
     if (!usernameMatch) {
       await sendMessage({ chatId, text: messages.invalidUsername(trimmedArgument), replyToMessageId: messageId });
       return undefined;

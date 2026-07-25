@@ -42,7 +42,7 @@ export function buildSendMessageToolDefinition(roundHasTypo: boolean): ToolDefin
 
 /** 反应白名单为空时不向模型提供反应工具。 */
 export function buildAddReactionToolDefinition(): ToolDefinition | null {
-  const reactionEmojis = getReactionEmojis();
+  const reactionEmojis: readonly string[] = getReactionEmojis();
   if (reactionEmojis.length === 0) return null;
   return {
     name: ADD_REACTION_TOOL,

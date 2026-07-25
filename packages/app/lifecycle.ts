@@ -53,7 +53,7 @@ export class ApplicationLifecycle {
   private readonly stopOnSignal = (): void => {
     this.stopRequested = true;
     this.quiesceMaintenance();
-    this.runner?.stop().catch((error: unknown) => {
+    this.runner?.stop().catch((error: unknown): void => {
       this.dependencies.logger.error("Error stopping runner:", error);
     });
   };
@@ -73,7 +73,7 @@ export class ApplicationLifecycle {
     process.exitCode = 1;
     this.stopRequested = true;
     this.quiesceMaintenance();
-    this.runner?.stop().catch((stopError: unknown) => {
+    this.runner?.stop().catch((stopError: unknown): void => {
       this.dependencies.logger.error("Error stopping runner after persistence failure:", stopError);
     });
   };
@@ -86,7 +86,7 @@ export class ApplicationLifecycle {
     process.exitCode = 1;
     this.stopRequested = true;
     this.quiesceMaintenance();
-    this.runner?.stop().catch((stopError: unknown) => {
+    this.runner?.stop().catch((stopError: unknown): void => {
       this.dependencies.logger.error("Error stopping runner after business Worker failure:", stopError);
     });
   };
@@ -150,10 +150,10 @@ export class ApplicationLifecycle {
     // 标题维护进入共享 throttler；小并发池由 chatTitle owner 自己保证。
     this.chatTitleRefreshSettled = false;
     this.chatTitleRefreshTask = this.dependencies.refreshAllChatTitles()
-      .catch((error: unknown) => {
+      .catch((error: unknown): void => {
         this.dependencies.logger.error("Failed to complete chat title refresh:", error);
       })
-      .finally(() => { this.chatTitleRefreshSettled = true; });
+      .finally((): void => { this.chatTitleRefreshSettled = true; });
     if (this.stopRequested) this.stopOnSignal();
   }
 
@@ -200,16 +200,16 @@ export class ApplicationLifecycle {
       const maintenanceQuiesceSucceeded: boolean = this.quiesceMaintenance();
       const runner: AcknowledgedUpdateRunner | null = this.runner;
       if (runner !== null && !this.runnerTaskSettled) {
-        await runner.stop().catch((error: unknown) => {
+        await runner.stop().catch((error: unknown): void => {
           this.dependencies.logger.error("Error stopping runner during disposal:", error);
         });
       }
       const runnerDrained: boolean = runner === null
         ? true
-        : await settler.gate("runner drain", () => this.waitForRunnerDrain(runner));
+        : await settler.gate("runner drain", (): Promise<boolean> => this.waitForRunnerDrain(runner));
       const backgroundMaintenanceSettled: boolean = await settler.gate(
         "background maintenance",
-        () => this.waitForBackgroundMaintenance(timeouts.maintenanceMs)
+        (): Promise<boolean> => this.waitForBackgroundMaintenance(timeouts.maintenanceMs)
       );
       const results: ShutdownResults = {
         runnerDrained,
@@ -242,7 +242,7 @@ export class ApplicationLifecycle {
       }
       const released: FlushResult = await settler.terminate(
         "single-instance lock release",
-        () => this.dependencies.releaseSingleInstanceLock(this.dependencies.BOT_TOKEN)
+        (): Promise<void> => this.dependencies.releaseSingleInstanceLock(this.dependencies.BOT_TOKEN)
       );
       if (released !== "flushed") {
         process.exitCode = 1;
@@ -257,7 +257,7 @@ export class ApplicationLifecycle {
   run(): Promise<void> {
     this.installProcessHandlers();
     return this.runMain()
-      .catch((error: unknown) => {
+      .catch((error: unknown): void => {
         this.dependencies.logger.error("Unhandled error in bot main runner:", error);
         process.exitCode = 1;
       })
@@ -309,7 +309,7 @@ export class ApplicationLifecycle {
     // 紧急 dispose（其各阶段已有短预算）误判为同一问题。该 timer 刻意保持
     // ref，确保清理卡死时仍能执行最后的强制退出。
     if (reusesActiveDisposal) {
-      hardDeadlineTimer = setTimeout(() => {
+      hardDeadlineTimer = setTimeout((): void => {
         this.dependencies.logger.error(
           `Emergency shutdown exceeded the ${EMERGENCY_REUSED_DISPOSE_DEADLINE_MS}ms hard deadline; forcing exit.`
         );
@@ -317,7 +317,7 @@ export class ApplicationLifecycle {
       }, EMERGENCY_REUSED_DISPOSE_DEADLINE_MS);
     }
 
-    void this.dispose(EMERGENCY_FLUSH_TIMEOUTS).finally(() => {
+    void this.dispose(EMERGENCY_FLUSH_TIMEOUTS).finally((): void => {
       if (hardDeadlineTimer !== undefined) clearTimeout(hardDeadlineTimer);
       exitWithFailure();
     });
@@ -352,9 +352,9 @@ export class ApplicationLifecycle {
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const settled: boolean = await Promise.race([
-      task.then(() => true),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
+      task.then((): boolean => true),
+      new Promise<boolean>((resolve: (value: boolean | PromiseLike<boolean>) => void): void => {
+        timer = setTimeout((): void => resolve(false), timeoutMs);
       }),
     ]);
     if (timer !== undefined) clearTimeout(timer);
@@ -379,10 +379,10 @@ export class ApplicationLifecycle {
     // 每个入口独立结算：前一个 owner 抛错不能让后续入口继续接受新工作。
     // 只有全部成功才记为完成；否则下一次 wait/dispose 仍会重试，已成功的
     // quiesce 都是幂等赋值，可以安全重复。
-    quiesceOwner("avatar", () => this.dependencies.quiesceAvatarUpdates());
-    quiesceOwner("reaction", () => this.dependencies.quiesceReactionQueue());
-    quiesceOwner("chat-title", () => this.dependencies.quiesceChatTitleRefresh());
-    quiesceOwner("translate", () => this.dependencies.quiesceTranslate());
+    quiesceOwner("avatar", (): void => this.dependencies.quiesceAvatarUpdates());
+    quiesceOwner("reaction", (): void => this.dependencies.quiesceReactionQueue());
+    quiesceOwner("chat-title", (): void => this.dependencies.quiesceChatTitleRefresh());
+    quiesceOwner("translate", (): void => this.dependencies.quiesceTranslate());
     this.maintenanceQuiesced = succeeded;
     return succeeded;
   }

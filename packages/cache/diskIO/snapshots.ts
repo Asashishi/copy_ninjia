@@ -30,7 +30,7 @@ export const aiMemoryImmediateRevisions: Map<number, number> = new Map();
 export const aiMemoryDeletePersistedNotifier: {
   current: (reply: AiMemoryDeletedPersistedReply) => void;
 } = {
-  current: () => {
+  current: (): void => {
     // Worker 入口会在处理消息前配置；文件 owner 单测不需要回执出口。
   },
 };
@@ -39,7 +39,7 @@ export const aiMemoryDeletePersistedNotifier: {
 export const aiMemoryPersistedNotifier: {
   current: (reply: AiMemoryPersistedReply) => void;
 } = {
-  current: () => {
+  current: (): void => {
     // Worker 入口会在处理消息前配置；文件 owner 单测不需要回执出口。
   },
 };
@@ -64,7 +64,7 @@ export function hydrateAiMemoryCache(snapshots: ReadonlyMap<number, string>): vo
 /** 以 revision 判定并接管一份 upsert；拒绝迟到更新，接受时标记待刷。 */
 export function markAiMemoryDirty(chatId: number, revision: number, snapshot: string): boolean {
   const currentRevision: number = aiMemoryRevisions.get(chatId) ?? -1;
-  const currentOperation = aiMemoryOperations.get(chatId);
+  const currentOperation: "delete" | "upsert" | undefined = aiMemoryOperations.get(chatId);
   if (revision < currentRevision || (revision === currentRevision && currentOperation === "delete")) return false;
   deletedAiMemoryChats.delete(chatId);
   aiMemoryCache.set(chatId, snapshot);
@@ -77,7 +77,7 @@ export function markAiMemoryDirty(chatId: number, revision: number, snapshot: st
 /** 以 revision 判定并接管一份删除；接受时移除镜像并登记待 unlink。 */
 export function markAiMemoryDeleted(chatId: number, revision: number): boolean {
   const currentRevision: number = aiMemoryRevisions.get(chatId) ?? -1;
-  const currentOperation = aiMemoryOperations.get(chatId);
+  const currentOperation: "delete" | "upsert" | undefined = aiMemoryOperations.get(chatId);
   if (revision < currentRevision || (revision === currentRevision && currentOperation === "upsert")) return false;
   aiMemoryCache.delete(chatId);
   dirtyChats.delete(chatId);

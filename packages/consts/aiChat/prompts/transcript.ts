@@ -40,7 +40,7 @@ export function replyChainTemplate(triggerMessageId: number, links: string[]): s
     `补充：本轮触发消息（[message_id:${triggerMessageId}]）处在一条多层回复链上——它回复了下面第 1 条，第 1 条又回复了第 2 条，依此类推。` +
     `链沿仍在逐字聊天记录内的消息回溯；若最后一跳标有 ${REPLY_CHAIN_SNAPSHOT_TAG}，它是上一条消息自带的回复快照，原消息已不在逐字记录中。` +
     "各跳正文超长时会截断；除链尾快照外，完整原文以逐字记录为准。理解话题走向和人物指代时请顺着这条链看：\n" +
-    links.map((link: string, index: number) => `${index + 1}. ${link}`).join("\n")
+    links.map((link: string, index: number): string => `${index + 1}. ${link}`).join("\n")
   );
 }
 

@@ -26,6 +26,7 @@ import type { MediaKind } from "../types/media";
 import type { GenerateContentResponse } from "@google/genai";
 import { downloadTelegramVisionImage } from "./telegramImage";
 import { runMediaTask } from "./mediaTaskRunner";
+import type { VisionImage } from "../libs/image";
 
 /** 按媒体类型选喂给视觉模型的描述指令，三者风格/侧重点不同。 */
 function promptFor(kind: MediaKind): string {
@@ -64,7 +65,7 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
   const cached: Promise<string | null> | undefined = transientDescriptionCache.get(fileUniqueId);
   if (cached) return cached;
 
-  const pending: Promise<string | null> = runMediaTask(() => describeMediaUncached(kind, fileId)).then((description: string | null | undefined) => {
+  const pending: Promise<string | null> = runMediaTask((): Promise<string | null> => describeMediaUncached(kind, fileId)).then((description: string | null | undefined): string | null => {
     // 执行槽位和等待队列都满时返回 undefined；按普通解析失败降级，不再
     // 启动下载、转码或视觉 API 请求。
     const result: string | null = description ?? null;
@@ -92,12 +93,12 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
  * 常驻目录。
  */
 export function describeMediaForStickerCatalog(fileId: string): Promise<string | null> {
-  return runMediaTask(() => describeMediaUncached("sticker", fileId)).then((description) => description ?? null);
+  return runMediaTask((): Promise<string | null> => describeMediaUncached("sticker", fileId)).then((description: string | null | undefined): string | null => description ?? null);
 }
 
 async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<string | null> {
   try {
-    const image = await downloadTelegramVisionImage({ fileId, logLabel: `chat media (kind=${kind})` });
+    const image: VisionImage | null = await downloadTelegramVisionImage({ fileId, logLabel: `chat media (kind=${kind})` });
     if (!image) return null;
     const data: GenerateContentResponse | null = await requestGeminiResponse(
       {

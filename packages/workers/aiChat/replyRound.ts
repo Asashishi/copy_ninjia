@@ -26,6 +26,7 @@ import { replyReferenceForBufferedMessage } from "./replyChain";
 import { currentReplyGeneration, isReplyGenerationCurrent, notifyRateLimited } from "./replyState";
 import { recordChatMessage } from "./rollingMemory";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
+import type { ChatActionHeartbeatControl } from "../../types/aiChat/chatAction";
 
 declare const self: Worker;
 
@@ -59,7 +60,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     isRandomTrigger,
     mediaComment,
     queuedTrigger,
-  } = request;
+  }: ReplyRoundRequest = request;
   const generation: number = request.generation ?? currentReplyGeneration(chatId);
   if (!isReplyGenerationCurrent(chatId, generation)) return;
 
@@ -105,7 +106,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
       if (!promptSections) return;
 
       // 心跳从 idle 起步，只有具体发送工具临发前才显示输入或选择贴纸状态。
-      const heartbeat = startChatActionHeartbeat(chatId);
+      const heartbeat: ChatActionHeartbeatControl = startChatActionHeartbeat(chatId);
       try {
         /** 只为 Telegram 实际返回的回复目标建边；目标已滑出热区时退回轮次
          * 开始前捕获的触发快照。 */
@@ -169,7 +170,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           const fallbackResult: string = await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
           let fallbackError: string | null = null;
           try {
-            const parsed = JSON.parse(fallbackResult) as { error?: unknown };
+            const parsed: { error?: unknown; } = JSON.parse(fallbackResult) as { error?: unknown };
             if (typeof parsed.error === "string") fallbackError = parsed.error;
           } catch {
             // 工具结果都是 replyToolset 自己拼的 JSON，解析不会失败；防御性兜底。
@@ -205,7 +206,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
       else activeReplyCounts.delete(chatId);
       onFinished(chatId);
     }
-  })().catch((error: unknown) => {
+  })().catch((error: unknown): void => {
     logger.error("Error in AI reply task:", error);
   });
 }

@@ -39,7 +39,7 @@ export function configureAiMemoryPersistedReply(
 
 function scheduleAiMemoryFlush(): void {
   if (aiMemoryFlushState.timer !== null) return;
-  aiMemoryFlushState.timer = setTimeout(() => {
+  aiMemoryFlushState.timer = setTimeout((): void => {
     aiMemoryFlushState.timer = null;
     flushAiMemorySnapshots();
   }, SNAPSHOT_FLUSH_INTERVAL_MS);

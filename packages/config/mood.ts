@@ -83,14 +83,14 @@ export function parseMoodConfig(value: unknown): MoodConfig {
   if (value.moods.length === 0) throw new Error("Invalid mood config: moods must not be empty");
 
   const seen: Set<string> = new Set();
-  const moods: MoodOption[] = value.moods.map((entry: unknown, index: number) => {
+  const moods: MoodOption[] = value.moods.map((entry: unknown, index: number): MoodOption => {
     const mood: MoodOption = parseMoodOption(entry, index);
     if (seen.has(mood.name)) throw new Error(`Duplicate mood config entry name: ${mood.name}`);
     seen.add(mood.name);
     return mood;
   });
 
-  const weightSum: number = moods.reduce((sum, mood) => sum + mood.weight, 0);
+  const weightSum: number = moods.reduce((sum: number, mood: MoodOption): number => sum + mood.weight, 0);
   if (weightSum !== 100) {
     throw new Error(`Mood config weights must sum to 100, got ${weightSum}`);
   }

@@ -1,4 +1,4 @@
-import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize } from "@grammyjs/types";
+import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize, User, Chat } from "@grammyjs/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME } from "../../consts/auto";
 import { visibleSenderChat } from "../../users/visibleSender";
@@ -15,8 +15,8 @@ export type MessageSpeaker = AiSpeakerSnapshot;
  * users/visibleSender.ts，与 users/senderIdentity.ts 共用）。
  */
 export function resolveSpeaker(message: Message): MessageSpeaker {
-  const fromUser = message.from;
-  const senderChat = visibleSenderChat(message);
+  const fromUser: User | undefined = message.from;
+  const senderChat: Chat | undefined = visibleSenderChat(message);
   if (senderChat) {
     return {
       id: senderChat.id,
@@ -58,7 +58,7 @@ export interface MentionFacts {
  */
 export function resolveMentionFacts(message: Message, botId: number, botUsername: string | undefined): MentionFacts {
   const facts: MentionFacts = { isMentioned: false, hasOtherMention: false };
-  const source = messageEntitySource(message);
+  const source: { text: string; entities: MessageEntity[]; } | null = messageEntitySource(message);
   if (!source) return facts;
   const botTarget: string | undefined = botUsername ? `@${botUsername}`.toLowerCase() : undefined;
   for (const entity of source.entities) {
@@ -103,14 +103,14 @@ export function isReplyToSelf(message: Message): boolean {
 function forwardOriginLabel(origin: MessageOrigin): string {
   switch (origin.type) {
     case "user": {
-      const user = origin.sender_user;
-      const name: string = [user.first_name, user.last_name].filter((part) => !!part).join(" ").trim() || FALLBACK_SPEAKER_NAME;
+      const user: User = origin.sender_user;
+      const name: string = [user.first_name, user.last_name].filter((part: string | undefined): boolean => !!part).join(" ").trim() || FALLBACK_SPEAKER_NAME;
       return `[id:${user.id}]${user.username ? ` [username:@${user.username}]` : ""} ${name}`;
     }
     case "hidden_user":
       return origin.sender_user_name || FALLBACK_SPEAKER_NAME;
     case "chat": {
-      const senderChat = origin.sender_chat;
+      const senderChat: Chat = origin.sender_chat;
       const title: string = ("title" in senderChat ? senderChat.title : undefined) ?? FALLBACK_CHANNEL_NAME;
       const username: string | undefined = "username" in senderChat ? senderChat.username : undefined;
       return `[id:${senderChat.id}]${username ? ` [username:@${username}]` : ""} ${title}`;
@@ -155,7 +155,7 @@ function replyReferenceText(message: Message): string {
 export function resolveReplyReference(message: Message): AiReplyReference | undefined {
   const repliedTo: Message | undefined = message.reply_to_message;
   if (!repliedTo) return undefined;
-  const speaker = resolveSpeaker(repliedTo);
+  const speaker: AiSpeakerSnapshot = resolveSpeaker(repliedTo);
   const forwardedFrom: string | undefined = resolveForwardOrigin(repliedTo);
   return {
     messageId: repliedTo.message_id,
@@ -174,7 +174,7 @@ export function resolveReplyReference(message: Message): AiReplyReference | unde
  * 全部超限时仍退回最小档，由下载侧的真实字节上限做最终防护。
  */
 export function pickPhotoFile(sizes: PhotoSize[]): TelegramVisionSource {
-  for (let i = sizes.length - 1; i >= 0; i--) {
+  for (let i: number = sizes.length - 1; i >= 0; i--) {
     const size: PhotoSize = sizes[i]!;
     if (!size.file_size || size.file_size <= MEDIA_MAX_DOWNLOAD_BYTES) {
       return { fileId: size.file_id, fileUniqueId: size.file_unique_id, width: size.width, height: size.height };
@@ -186,7 +186,7 @@ export function pickPhotoFile(sizes: PhotoSize[]): TelegramVisionSource {
 
 /** GIF 只分析 Telegram 缩略图，缓存键仍使用 animation 自身的唯一 id。 */
 export function pickAnimationVisionSource(animation: Animation): TelegramVisionSource | null {
-  const thumbnail = animation.thumbnail;
+  const thumbnail: PhotoSize | undefined = animation.thumbnail;
   if (!thumbnail) return null;
   return {
     fileId: thumbnail.file_id,

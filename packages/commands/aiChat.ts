@@ -11,8 +11,8 @@ import { resolveSuperAdminToggleArg } from "./superAdminToggle";
  * 这是单独一批权限，其他任何人尝试都只会被嘲讽，指令本身不会执行。
  */
 export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise<void> {
-  const arg = await resolveSuperAdminToggleArg(ctx, {
-    rejection: (mockerLabel) => `就 ${mockerLabel} 也想管本天才要不要闲聊？哪来的资格呀，笨蛋♡`,
+  const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
+    rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想管本天才要不要闲聊？哪来的资格呀，笨蛋♡`,
     usage: `笨蛋，要 /ai_chat enable 还是 /ai_chat disable，说清楚呀♡`,
   });
   if (!arg) return;

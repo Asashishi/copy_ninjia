@@ -66,7 +66,7 @@ export function splitGraphemes(text: string): string[] {
   const segmenter: Intl.Segmenter | null = graphemeSegmenter();
   if (segmenter === null) return Array.from(text);
   try {
-    return Array.from(segmenter.segment(text), (segment) => segment.segment);
+    return Array.from(segmenter.segment(text), (segment: Intl.SegmentData): string => segment.segment);
   } catch {
     // 构造之外的失败仍按原契约退化，保持与提取 holder 之前逐字一致的行为。
     return Array.from(text);
@@ -104,7 +104,7 @@ export function truncateAtClauseBoundary(text: string, maxChars: number): string
 
   let lastSentenceEnd: number = -1;
   let lastClauseBreak: number = -1;
-  for (let i = 0; i < hardCut.length; i++) {
+  for (let i: number = 0; i < hardCut.length; i++) {
     const ch: string = hardCut[i]!;
     if ("。！？…～♡".includes(ch)) lastSentenceEnd = i;
     else if ("，、；：".includes(ch)) lastClauseBreak = i;

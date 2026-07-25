@@ -49,7 +49,7 @@ function availableTools(
   tools: Tool[],
   options: AvailableToolsParams
 ): Tool[] {
-  const { googleSearchEnabled, disabledFunctionNames, allFunctionsDisabled } = options;
+  const { googleSearchEnabled, disabledFunctionNames, allFunctionsDisabled }: AvailableToolsParams = options;
   const available: Tool[] = [];
   for (const tool of tools) {
     if (tool.googleSearch !== undefined) {
@@ -58,7 +58,7 @@ function availableTools(
     }
     if (tool.functionDeclarations !== undefined) {
       if (allFunctionsDisabled) continue;
-      const declarations: FunctionDeclaration[] = tool.functionDeclarations.filter((declaration) =>
+      const declarations: FunctionDeclaration[] = tool.functionDeclarations.filter((declaration: FunctionDeclaration): boolean =>
         typeof declaration.name === "string" && !disabledFunctionNames.has(declaration.name)
       );
       if (declarations.length > 0) available.push({ ...tool, functionDeclarations: declarations });
@@ -70,8 +70,8 @@ function availableTools(
 }
 
 function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
-  return [...counts.entries()].sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, count]) => `${name}:${count}`).join(",") || "none";
+  return [...counts.entries()].sort(([left]: [string, number], [right]: [string, number]): number => left.localeCompare(right))
+    .map(([name, count]: [string, number]): string => `${name}:${count}`).join(",") || "none";
 }
 
 /** 人设文本存放在仓库根目录的 prompt/persona.md，修改人设不需要碰代码。
@@ -126,7 +126,7 @@ export async function callGemini(
       { text: promptSections.replyTask },
     ],
   }];
-  const hasGoogleSearch: boolean = toolset.tools.some((tool: Tool) => tool.googleSearch !== undefined);
+  const hasGoogleSearch: boolean = toolset.tools.some((tool: Tool): boolean => tool.googleSearch !== undefined);
   let googleSearchCalls: number = 0;
   let customToolCalls: number = 0;
   const customToolCallsByName: Map<string, number> = new Map();

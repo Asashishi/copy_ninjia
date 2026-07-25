@@ -21,9 +21,9 @@ export function cacheLinkedChannel(chatId: number, hasLinked: boolean, fetchedAt
 
 /** 获取或创建同群唯一一次关联频道拉取；settle 后自动释放在途槽位。 */
 export function getOrCreateLinkedChannelFetch(chatId: number, create: () => Promise<void>): Promise<void> {
-  let inFlight = linkedChannelFetches.get(chatId);
+  let inFlight: Promise<void> | undefined = linkedChannelFetches.get(chatId);
   if (inFlight) return inFlight;
-  inFlight = create().finally(() => linkedChannelFetches.delete(chatId));
+  inFlight = create().finally((): boolean => linkedChannelFetches.delete(chatId));
   linkedChannelFetches.set(chatId, inFlight);
   return inFlight;
 }

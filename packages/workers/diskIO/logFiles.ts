@@ -30,6 +30,7 @@ import {
   openDayFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
+import type { BufferedLogEntry } from "../../cache/diskIO/logs";
 
 interface LogRecord {
   level: string;
@@ -141,7 +142,7 @@ function cleanupStaleTmpFiles(): void {
 function cleanupOldLogs(): void {
   const oldestKept: string = dayKey(Date.now() - (RETENTION_DAYS - 1) * DAY_MS);
   for (const name of readdirSync(LOGS_DIR)) {
-    const match = DAY_FILE_PATTERN.exec(name);
+    const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
     if (match && match[1]! < oldestKept) {
       try {
         unlinkSync(join(LOGS_DIR, name));
@@ -192,7 +193,7 @@ export function flushLogBuffer(): boolean {
     flushBuffer.timer = null;
   }
   if (flushBuffer.entries.length === 0) return true;
-  const entries = flushBuffer.entries;
+  const entries: BufferedLogEntry[] = flushBuffer.entries;
   flushBuffer.entries = [];
   // 按天分组落盘（保持顺序），只有跨天瞬间的那批会拆成两组。
   let day: string = entries[0]!.day;

@@ -20,7 +20,7 @@ export function cleanReply(raw: string): string | null {
   let text: string = raw.replace(/\[\[\d+\]\]\((?:[^\s()]|\([^\s()]*\))+\)/g, "").trim();
   if (!text) return null;
 
-  const fenceMatch = /^```[a-zA-Z]*\n?([\s\S]*?)\n?```$/.exec(text);
+  const fenceMatch: RegExpExecArray | null = /^```[a-zA-Z]*\n?([\s\S]*?)\n?```$/.exec(text);
   if (fenceMatch?.[1] !== undefined) {
     text = fenceMatch[1].trim();
   }

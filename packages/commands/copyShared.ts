@@ -1,5 +1,5 @@
 import type { CommandContext, Context } from "grammy";
-import type { CachedUser } from "../types/chatState";
+import type { CachedUser, GlobalCopyState } from "../types/chatState";
 import { getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram/actions";
 import { PRIVILEGED_USERS_ID } from "../infra/config";
@@ -57,7 +57,7 @@ export async function claimCopyCooldownOrReject(
   chatId: number,
   messageId: number | undefined
 ): Promise<CopyCooldownClaim> {
-  const globalCopyState = getGlobalCopyState();
+  const globalCopyState: GlobalCopyState = getGlobalCopyState();
   const isExempted: boolean = !!fromUser && PRIVILEGED_USERS_ID.includes(fromUser.id);
   if (!isExempted && globalCopyState.lastCopyTime) {
     const elapsed: number = Date.now() - globalCopyState.lastCopyTime;
@@ -96,7 +96,7 @@ export async function claimCopyCooldownOrReject(
 export async function releaseCopyCooldownClaim(
   claim: GrantedCopyCooldownClaim
 ): Promise<void> {
-  const globalCopyState = getGlobalCopyState();
+  const globalCopyState: GlobalCopyState = getGlobalCopyState();
   if (globalCopyState.lastCopyTime === claim.claimedAt) {
     globalCopyState.lastCopyTime = claim.previousLastCopyTime;
     await persistAuthoritativeState("copy cooldown released");
@@ -121,9 +121,9 @@ export async function resolveCopyCommandTarget(
     rawArgument: ctx.match,
     messages: {
       missingTarget: `笨蛋，要么 ${commandName} @username，要么直接回复 TA 的一条消息再 ${commandName}，本天才总得知道杂鱼是谁吧♡`,
-      invalidUsername: (rawArgument: string) =>
+      invalidUsername: (rawArgument: string): string =>
         `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 ${commandName} @username，别在后面夹垃圾♡`,
-      unknownUsername: (rawUsername: string) =>
+      unknownUsername: (rawUsername: string): string =>
         `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 ${commandName} 呀♡`,
       selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
     },

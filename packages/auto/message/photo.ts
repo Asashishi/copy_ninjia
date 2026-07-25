@@ -3,15 +3,17 @@ import { pickPhotoFile, resolveSpeaker } from "./facts";
 import { buildAiRecordContext } from "./recordContext";
 import type { MessageTriggerContext } from "./triggerContext";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
+import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
+import type { TelegramVisionSource } from "../../types/media";
 
 /** 记录图片占位/描述，并调度直接回复或随机评价。 */
 export function handlePhotoMessage(context: MessageTriggerContext): boolean {
-  const { message, directTrigger } = context;
+  const { message, directTrigger }: MessageTriggerContext = context;
   if (!Array.isArray(message.photo) || message.photo.length === 0) return false;
 
-  const speaker = resolveSpeaker(message);
-  const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger } = claimRandomMediaTrigger(context, speaker.id);
-  const photoFile = pickPhotoFile(message.photo);
+  const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
+  const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger }: { candidate: boolean; claimed: boolean; } = claimRandomMediaTrigger(context, speaker.id);
+  const photoFile: TelegramVisionSource = pickPhotoFile(message.photo);
   const caption: string = typeof message.caption === "string" ? message.caption : "";
   recordChatMedia({
     kind: "photo",

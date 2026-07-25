@@ -9,6 +9,7 @@ import {
 import { readBoundedResponseBytes, readBoundedResponseText, type BoundedResponseResult } from "../../libs/boundedResponse";
 import { logger } from "../logger";
 import { bot, buildFileDownloadUrl, logApiError } from "./client";
+import type { ChatFullInfo, PhotoSize, UserProfilePhotos, File as TelegramFile } from "@grammyjs/types";
 
 interface PublicUsernameLookupResult {
   username?: string;
@@ -41,7 +42,7 @@ export function normalizePublicUsername(username: string | undefined): string | 
 /** 从 getChat 响应中优先提取 username，再尝试 active_usernames。 */
 export function extractPublicUsername(chat: unknown): string | undefined {
   if (!chat || typeof chat !== "object") return undefined;
-  const maybeChat = chat as { username?: unknown; active_usernames?: unknown };
+  const maybeChat: { username?: unknown; active_usernames?: unknown } = chat;
   if (typeof maybeChat.username === "string") {
     const username: string | undefined = normalizePublicUsername(maybeChat.username);
     if (username) return username;
@@ -85,7 +86,7 @@ function parseRelevantHtmlTags(html: string): ParsedHtmlTag[] {
     const attributes: Map<string, string> = new Map();
     const tagNameEnd: number = rawTag.search(/[\s/>]/);
     const attributeSource: string = tagNameEnd === -1 ? "" : rawTag.slice(tagNameEnd, -1);
-    const attributePattern = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+    const attributePattern: RegExp = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
     for (const attributeMatch of attributeSource.matchAll(attributePattern)) {
       const name: string = attributeMatch[1]!.toLowerCase();
       if (attributes.has(name)) continue;
@@ -100,7 +101,7 @@ function parseRelevantHtmlTags(html: string): ParsedHtmlTag[] {
 function parseHttpsUrl(value: string | undefined): URL | undefined {
   if (!value) return undefined;
   try {
-    const url = new URL(value.trim());
+    const url: URL = new URL(value.trim());
     if (url.protocol !== "https:" || url.username || url.password) return undefined;
     return url;
   } catch {
@@ -134,7 +135,7 @@ function isMatchingHttpsProfileUrl(value: string | undefined, expectedUsername: 
 function isMatchingTelegramDeepLink(value: string | undefined, expectedUsername: string): boolean {
   if (!value) return false;
   try {
-    const url = new URL(value.trim());
+    const url: URL = new URL(value.trim());
     if (url.protocol !== "tg:" || url.hostname.toLowerCase() !== "resolve" || url.pathname || url.port || url.username || url.password || url.hash) {
       return false;
     }
@@ -201,7 +202,7 @@ async function resolvePublicUsernameFromChat(
   signal?: AbortSignal
 ): Promise<PublicUsernameLookupResult> {
   try {
-    const chat = await bot.api.getChat(targetId, telegramSignal(signal));
+    const chat: ChatFullInfo = await bot.api.getChat(targetId, telegramSignal(signal));
     return { username: extractPublicUsername(chat), failed: false };
   } catch (error: unknown) {
     if (signal?.aborted) return { failed: true };
@@ -267,7 +268,7 @@ async function attemptCopyUserProfilePhoto(
     if (signal?.aborted) return "permanent-failure";
     let fileId: string;
     if (isChannel) {
-      const chat = await bot.api.getChat(targetId, telegramSignal(signal));
+      const chat: ChatFullInfo = await bot.api.getChat(targetId, telegramSignal(signal));
       if (!chat.photo) {
         logger.error(`Channel ${targetId} has no chat photo visible to the bot`);
         return "permanent-failure";
@@ -277,21 +278,21 @@ async function attemptCopyUserProfilePhoto(
       // 两个请求互不依赖（activeUniqueId 在两者都返回后才被消费），并发
       // 缩短这条用户可见路径的往返延迟。用 allSettled 等两边都落定，任一
       // 失败再抛出原因，走外层 catch 原有的 transient-failure 语义。
-      const [chatResult, photosResult] = await Promise.allSettled([
+      const [chatResult, photosResult]: [PromiseSettledResult<ChatFullInfo>, PromiseSettledResult<UserProfilePhotos>] = await Promise.allSettled([
         bot.api.getChat(targetId, telegramSignal(signal)),
         bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }, telegramSignal(signal)),
       ]);
       if (chatResult.status === "rejected") throw chatResult.reason;
       if (photosResult.status === "rejected") throw photosResult.reason;
       const activeUniqueId: string | undefined = chatResult.value.photo?.big_file_unique_id;
-      const photos = photosResult.value;
+      const photos: UserProfilePhotos = photosResult.value;
       if (photos.total_count === 0) {
         logger.error(`User ${targetId} has no profile photos visible to the bot (privacy settings or no avatar)`);
         return "permanent-failure";
       }
 
-      const matchedPhoto = activeUniqueId
-        ? photos.photos.find((sizes) => sizes.length > 0 && sizes[sizes.length - 1]!.file_unique_id === activeUniqueId)?.at(-1)
+      const matchedPhoto: PhotoSize | undefined = activeUniqueId
+        ? photos.photos.find((sizes: PhotoSize[]): boolean => sizes.length > 0 && sizes[sizes.length - 1]!.file_unique_id === activeUniqueId)?.at(-1)
         : undefined;
       if (!matchedPhoto) {
         logger.error(`Active avatar of user ${targetId} not found among their visible profile photos (no chat.photo, or history beyond first 100)`);
@@ -300,7 +301,7 @@ async function attemptCopyUserProfilePhoto(
       fileId = matchedPhoto.file_id;
     }
 
-    const file = await bot.api.getFile(fileId, telegramSignal(signal));
+    const file: TelegramFile = await bot.api.getFile(fileId, telegramSignal(signal));
     if (!file.file_path) {
       logger.error(`getFile for target ${targetId}'s avatar returned no file_path`);
       return "permanent-failure";
@@ -344,7 +345,7 @@ export async function copyUserProfilePhoto(
   isChannel: boolean = false,
   options: CopyUserProfilePhotoOptions = {}
 ): Promise<boolean> {
-  const { username, signal } = options;
+  const { username, signal }: CopyUserProfilePhotoOptions = options;
   for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) return false;
     const result: AvatarCopyAttemptResult = await attemptCopyUserProfilePhoto(targetId, isChannel, signal);

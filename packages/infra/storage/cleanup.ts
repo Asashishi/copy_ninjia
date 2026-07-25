@@ -49,16 +49,16 @@ export async function cleanupOrphanedTempFiles({
     logger.error("Failed to scan project root for orphaned temp files:", error);
     return;
   }
-  const prefixes: string[] = [basename(stateFilePath), basename(lockFilePath)].map((name) => `.${name}.`);
+  const prefixes: string[] = [basename(stateFilePath), basename(lockFilePath)].map((name: string): string => `.${name}.`);
   const escapedLockName: string = basename(lockFilePath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const guardCandidatePattern = new RegExp(
+  const guardCandidatePattern: RegExp = new RegExp(
     `^${escapedLockName}\\.guard\\.candidate\\.[1-9]\\d*\\.` +
     "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
   );
   const guardRecoveryName: string = `${basename(lockFilePath)}.guard.recovery`;
   for (const entry of entries) {
     const isAtomicTemp: boolean = entry.endsWith(TMP_FILE_SUFFIX) &&
-      prefixes.some((prefix) => entry.startsWith(prefix));
+      prefixes.some((prefix: string): boolean => entry.startsWith(prefix));
     const isGuardOrphan: boolean = entry === guardRecoveryName || guardCandidatePattern.test(entry);
     if (!isAtomicTemp && !isGuardOrphan) continue;
     const path: string = join(dir, entry);

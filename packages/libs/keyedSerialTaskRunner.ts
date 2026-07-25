@@ -28,10 +28,10 @@ export function createKeyedSerialTaskRunner<K>(chains: Map<K, Promise<void>>): K
       const next: Promise<void> = prev.then(task, task);
       chains.set(key, next);
       void next.then(
-        () => {
+        (): void => {
           if (chains.get(key) === next) chains.delete(key);
         },
-        () => {
+        (): void => {
           if (chains.get(key) === next) chains.delete(key);
         }
       );

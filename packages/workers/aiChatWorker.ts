@@ -88,7 +88,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       break;
     case "flushMemory":
       flushDirtyMemories();
-      flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
+      flushDirtyStickerCatalogs((event: AiStickerCatalogEvent): void => self.postMessage(event));
       self.postMessage({ type: "memoryFlushed", flushId: msg.flushId } satisfies AiMemoryFlushedEvent);
       break;
     case "invalidateChat":
@@ -121,14 +121,14 @@ export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
   sweepAiChatReplyCache(now);
   sweepImageGenerationCache(now);
   flushDirtyMemories();
-  flushDirtyStickerCatalogs((event: AiStickerCatalogEvent) => self.postMessage(event));
+  flushDirtyStickerCatalogs((event: AiStickerCatalogEvent): void => self.postMessage(event));
 }
 
 /** Worker 线程启动入口；主线程导入本模块时不得注册 handler、计时器或网络刷新。 */
 export function startAiChatWorker(): void {
   if (aiChatMaintenanceTimer.current !== null) return;
   initTelegramClients();
-  self.onmessage = (event: MessageEvent<AiChatWorkerMessage>) => {
+  self.onmessage = (event: MessageEvent<AiChatWorkerMessage>): void => {
     handleAiChatWorkerMessage(event.data);
   };
   aiChatMaintenanceTimer.current = setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);

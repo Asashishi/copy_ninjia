@@ -162,7 +162,7 @@ function runEmergencyLockdownRecovery(
         `retrying in ${RESTORE_RETRY_MS / 1000}s:`,
         error
       );
-      recovery.retryTimer = setTimeout(() => {
+      recovery.retryTimer = setTimeout((): void => {
         recovery.retryTimer = null;
         runEmergencyLockdownRecovery(chatId, recovery);
       }, RESTORE_RETRY_MS);
@@ -170,7 +170,7 @@ function runEmergencyLockdownRecovery(
     }
   })();
   recovery.inFlight = task;
-  void task.finally(() => {
+  void task.finally((): void => {
     if (recovery.inFlight === task) recovery.inFlight = null;
   });
 }

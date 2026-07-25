@@ -46,7 +46,7 @@ export class LruCache<K, V> {
     this.map.delete(key);
     this.map.set(key, value);
     if (this.map.size > this.maxEntries) {
-      const oldest = this.map.keys().next();
+      const oldest: IteratorResult<K, undefined> = this.map.keys().next();
       if (!oldest.done) this.map.delete(oldest.value);
     }
   }

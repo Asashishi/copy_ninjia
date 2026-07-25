@@ -26,7 +26,7 @@ function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapsh
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.entries)) return false;
   if (value.summary !== null && typeof value.summary !== "string") return false;
   if (typeof value.savedAt !== "number" || !Number.isFinite(value.savedAt)) return false;
-  return Object.values(value.entries).every((entry: unknown) =>
+  return Object.values(value.entries).every((entry: unknown): boolean =>
     isRecord(entry) && typeof entry.emoji === "string" && typeof entry.description === "string"
   );
 }
@@ -163,7 +163,7 @@ export function ensureStickerCatalogs(packs: readonly string[]): void {
   for (const pack of packs) {
     if (generatingPacks.has(pack)) continue;
     generatingPacks.add(pack);
-    void generatePackCatalog(pack).finally(() => generatingPacks.delete(pack));
+    void generatePackCatalog(pack).finally((): boolean => generatingPacks.delete(pack));
   }
 }
 
@@ -187,7 +187,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
     if (!set) return;
 
     const map: Map<string, StickerCatalogEntry> = getPackMap(pack);
-    const liveIds: Set<string> = new Set(set.stickers.map((sticker: Sticker) => sticker.file_unique_id));
+    const liveIds: Set<string> = new Set(set.stickers.map((sticker: Sticker): string => sticker.file_unique_id));
     let entriesChanged: boolean = false;
     for (const fileUniqueId of map.keys()) {
       if (!liveIds.has(fileUniqueId)) {
@@ -224,7 +224,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       // 读到旧描述。
       const description: string | null = await callWithRetry(
         `Sticker catalog description (pack "${pack}", sticker ${sticker.file_unique_id})`,
-        () => describeMediaForStickerCatalog(source.fileId)
+        (): Promise<string | null> => describeMediaForStickerCatalog(source.fileId)
       );
       if (!description) {
         markEntryFailed(pack, sticker.file_unique_id);
@@ -242,7 +242,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
     if (map.size > 0 && (entriesChanged || !packSummaries.has(pack))) {
       const summary: string | null = await callWithRetry(
         `Sticker pack summary (pack "${pack}")`,
-        () => summarizePack(set.title, [...map.values()].map(formatEntryForSummary))
+        (): Promise<string | null> => summarizePack(set.title, [...map.values()].map(formatEntryForSummary))
       );
       if (summary) {
         packSummaries.set(pack, summary);

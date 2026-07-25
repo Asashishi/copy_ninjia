@@ -31,7 +31,7 @@
 - 泛型写在类型标注上：`const cache: Map<number, string> = new Map()`。
 
 ### 类型安全
-- 变量类型应该显式写明，不依赖类型推导；函数参数、返回值、对象属性、数组元素等都要标注类型，包括 for (let i: number)。
+- 变量类型应该显式写明，不依赖类型推导；函数参数、返回值、对象属性、数组元素等都要标注类型，包括 for (let i: number)。三处例外：`for...of` / `for...in` 的循环变量（TS 语法不允许标注）、初始化器已是全标注箭头函数的 const（不再重复写一遍函数类型）、类型定义反过来引用自身的 `typeof` 常量。
 - 共享类型按领域放 `packages/types/<domain>.ts`；`packages/types/index.ts` 汇总入口只留给测试与渐进迁移，生产代码从领域文件直接导入。
 - 类型导入用独立的 `import type` 语句，与值导入分开。
 - 导出函数显式标注返回类型（含 `Promise<T>`）；`catch (error: unknown)`。

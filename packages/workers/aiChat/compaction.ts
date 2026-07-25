@@ -50,15 +50,15 @@ export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[],
   }
 
   compactionPendingCounts.set(chatId, pendingCount + 1);
-  const next: Promise<void> = compactionRunner.run(chatId, () => rotateCompaction({
+  const next: Promise<void> = compactionRunner.run(chatId, (): Promise<void> => rotateCompaction({
     chatId,
     mirrorBatch,
     promoteFirst,
     generation,
   }));
   void next.then(
-    () => finishCompactionTask(chatId),
-    () => finishCompactionTask(chatId)
+    (): void => finishCompactionTask(chatId),
+    (): void => finishCompactionTask(chatId)
   );
 }
 

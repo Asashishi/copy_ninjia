@@ -15,6 +15,12 @@ import { clearChatMoodCache } from "../../cache/aiChat/mood";
 import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
 import { activeReplyCounts } from "../../cache/aiChat/replies";
 import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
+
+/** 启动恢复时解析成功、等待按 savedAt 排序的一条群快照。 */
+interface ParsedChatMemory {
+  chatId: number;
+  snapshot: AiMemorySnapshot;
+}
 import type { AiMemoryDeletedEvent, AiMemoryEvent, AiRecordMessage } from "../../types/aiChat/protocol";
 import { buildBufferedMessage } from "./bufferedMessage";
 import { scheduleRotation } from "./compaction";
@@ -180,7 +186,7 @@ export function flushDirtyMemories(): void {
  * 提示词时由 ai/mood.ts 的 currentMoodInstruction 现抽。
  */
 export function hydrateMemories(memories: Map<number, string>): void {
-  const parsedMemories: { chatId: number; snapshot: AiMemorySnapshot }[] = [];
+  const parsedMemories: ParsedChatMemory[] = [];
   for (const [chatId, snapshotJson] of memories) {
     if (chatBuffers.has(chatId)) continue;
 
@@ -214,7 +220,7 @@ export function hydrateMemories(memories: Map<number, string>): void {
     parsedMemories.push({ chatId, snapshot });
   }
 
-  parsedMemories.sort((left, right) => right.snapshot.savedAt - left.snapshot.savedAt);
+  parsedMemories.sort((left: ParsedChatMemory, right: ParsedChatMemory): number => right.snapshot.savedAt - left.snapshot.savedAt);
   for (const { chatId, snapshot } of parsedMemories) {
     if (hasChatMemory(chatId)) continue;
     if (chatMemoryIds().size >= AI_MEMORY_MAX_CHATS) {

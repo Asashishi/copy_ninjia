@@ -62,8 +62,8 @@ export function enqueueReaction({
 }: EnqueueReactionParams): Promise<void> {
   if (!reactionQueueRuntime.accepting) return Promise.resolve();
   const key: string = `${chatId}:${messageId}`;
-  const settled: Promise<void> = new Promise((resolve) => {
-    let waiters = pendingReactionWaiters.get(key);
+  const settled: Promise<void> = new Promise((resolve: (value: void | PromiseLike<void>) => void): void => {
+    let waiters: Set<() => void> | undefined = pendingReactionWaiters.get(key);
     if (waiters === undefined) {
       waiters = new Set();
       pendingReactionWaiters.set(key, waiters);
@@ -100,7 +100,7 @@ export function enqueueReaction({
     // applyReaction 内部全捕获，正常不会 reject；这层 catch 只是防御——万一
     // 将来漏出异常，finally 已保证 consumingChats 清理，这里别让它变成
     // unhandled rejection。
-    consumeChatQueue(chatId).catch((error: unknown) => {
+    consumeChatQueue(chatId).catch((error: unknown): void => {
       logger.error("Error in reaction queue consumer:", error);
       settleFailedChatQueue(chatId);
     });
@@ -109,7 +109,7 @@ export function enqueueReaction({
 }
 
 function settleReactionKey(key: string): void {
-  const waiters = pendingReactionWaiters.get(key);
+  const waiters: Set<() => void> | undefined = pendingReactionWaiters.get(key);
   if (waiters === undefined) return;
   pendingReactionWaiters.delete(key);
   for (const resolve of waiters) resolve();
@@ -137,7 +137,7 @@ export function drainReactionQueue(timeoutMs: number): Promise<FlushResult> {
   return drainWithWaiter({
     owner: "Reaction",
     timeoutMs,
-    isIdle: () => pendingTasks.size === 0 && consumingChats.size === 0,
+    isIdle: (): boolean => pendingTasks.size === 0 && consumingChats.size === 0,
     waiters: reactionDrainWaiters,
     notifyIfIdle: notifyReactionDrainIfIdle,
     abort: abortReactionQueue,

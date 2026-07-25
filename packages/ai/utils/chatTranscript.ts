@@ -15,7 +15,7 @@ import { truncateInline } from "../../libs/text";
 
 /** 发言人的显示名：first/last 拼接，都没有则给个占位。 */
 export function displaySpeakerName(speaker: AiSpeakerSnapshot): string {
-  return [speaker.firstName, speaker.lastName].filter((part: string) => !!part).join(" ").trim() || FALLBACK_SPEAKER_NAME;
+  return [speaker.firstName, speaker.lastName].filter((part: string): boolean => !!part).join(" ").trim() || FALLBACK_SPEAKER_NAME;
 }
 
 export function displayBufferedMessageName(message: BufferedMessage): string {
@@ -102,6 +102,6 @@ export function buildColdMemoryBlock(summaries: string[]): string {
   return (
     "【冷记忆（长期背景）】下列内容是更早对话的压缩摘要（按时间从旧到新），只用于理解长期话题、称呼、人物关系和前因后果，不用于判断当前状态；" +
     "它与较新的逐字记录不一致时，只说明情况后来变了，当前状态以逐字记录为准：\n" +
-    summaries.map((summary: string, index: number) => `${index + 1}. ${summary}`).join("\n")
+    summaries.map((summary: string, index: number): string => `${index + 1}. ${summary}`).join("\n")
   );
 }

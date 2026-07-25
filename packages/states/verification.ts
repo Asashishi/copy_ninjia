@@ -81,7 +81,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
   if (state?.kind === "checkingInviter" || state?.kind === "expelling") {
     return handleJoin(undefined, event);
   }
-  const { exempt, viaChannelComment } = resolveJoinExemption(event);
+  const { exempt, viaChannelComment }: { exempt: boolean; viaChannelComment: boolean; } = resolveJoinExemption(event);
   const invitedByOther: boolean = event.actorId !== undefined && event.actorId !== event.memberId;
 
   if (exempt) {
@@ -204,7 +204,7 @@ function handleTrackedMessage(
   // 成员自己的滑动窗口统计；第 46 条同步删除状态，迟到事件因查无记录不会
   // 再产生第二次踢人。messageIds 不截断，确保已制造的痕迹仍全部进入清理。
   const cutoff: number = event.now - JOIN_WINDOW_MS;
-  state.trackedMessageTimes = state.trackedMessageTimes.filter((timestamp) => timestamp > cutoff);
+  state.trackedMessageTimes = state.trackedMessageTimes.filter((timestamp: number): boolean => timestamp > cutoff);
   state.trackedMessageTimes.push(event.now);
   state.messageIds.push(event.messageId);
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {

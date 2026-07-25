@@ -1,9 +1,10 @@
-import type { Chat } from "@grammyjs/types";
+import type { Chat, ChatFullInfo } from "@grammyjs/types";
 import { logger } from "./logger";
 import { bot } from "./telegram";
 import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage/stateStore";
 import { chatTitleRefreshRuntime } from "../cache/chatTitle";
 import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../consts/telegram";
+import type { ChatState } from "../types/chatState";
 
 /**
  * 各群名称的追踪与持久化（ChatState.title，随 state.json 落盘）。群名称不
@@ -26,7 +27,7 @@ import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../consts/telegram";
  */
 function recordChatTitle(chatId: number, title: string): void {
   if (getChatState(chatId).isInitEnabled !== true) return;
-  const chatState = getOrCreateChatState(chatId);
+  const chatState: ChatState = getOrCreateChatState(chatId);
   if (chatState.title === title) return;
   chatState.title = title;
   saveStateInBackground("chat title refresh");
@@ -68,7 +69,7 @@ export async function refreshAllChatTitles(
         if (index >= total) return;
         const chatId: number = chatIds[index]!;
         try {
-          const chat = await bot.api.getChat(
+          const chat: ChatFullInfo = await bot.api.getChat(
             chatId,
             signal as unknown as Parameters<typeof bot.api.getChat>[1]
           );

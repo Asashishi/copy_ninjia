@@ -15,16 +15,18 @@ import {
 } from "../cache/botAdmin";
 import { isAdminStatus } from "../libs/chatMember";
 import { teardownRegisteredChat } from "./chatTeardown";
+import type { ChatState } from "../types/chatState";
+import type { ChatMember, ChatMemberUpdated } from "@grammyjs/types";
 
 async function completeAfterTeardown(
   teardown: Promise<void>,
   authoritativeAction: () => Promise<void>,
   failureMessage: string
 ): Promise<void> {
-  const [teardownResult] = await Promise.allSettled([teardown]);
+  const [teardownResult]: [PromiseSettledResult<void>] = await Promise.allSettled([teardown]);
   // Anti-Raid teardown 可能仍在恢复群权限，必须等它落定后才能裁剪 owner；
   // teardown 失败也不能跳过后续权威状态收敛。
-  const [authoritativeResult] = await Promise.allSettled([authoritativeAction()]);
+  const [authoritativeResult]: [PromiseSettledResult<void>] = await Promise.allSettled([authoritativeAction()]);
   const failures: unknown[] = [teardownResult, authoritativeResult].flatMap(
     (result: PromiseSettledResult<void>): unknown[] => result.status === "rejected" ? [result.reason] : []
   );
@@ -90,7 +92,7 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
  */
 async function recordBotAdminStatus(chatId: number, isAdmin: boolean): Promise<void> {
   if (getChatState(chatId).isInitEnabled !== true) return;
-  const chatState = getOrCreateChatState(chatId);
+  const chatState: ChatState = getOrCreateChatState(chatId);
   if (chatState.botIsAdmin === isAdmin) return;
   chatState.botIsAdmin = isAdmin;
   await persistAuthoritativeState("bot admin status refresh");
@@ -102,7 +104,7 @@ async function recordBotAdminStatus(chatId: number, isAdmin: boolean): Promise<v
  * 必须显式列进 allowed_updates 才会送达（见 app/lifecycle.ts）。
  */
 export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
-  const update = ctx.myChatMember;
+  const update: ChatMemberUpdated | undefined = ctx.myChatMember;
   if (!update) return;
   // 私聊没有管理员概念，频道里机器人不做任何守卫/踢人，都不记录。
   if (update.chat.type !== "group" && update.chat.type !== "supergroup") return;
@@ -124,7 +126,7 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
   if (wasAdmin && !isAdmin) {
     await completeAfterTeardown(
       teardownChatRuntime(update.chat.id),
-      () => recordBotAdminStatus(update.chat.id, false),
+      (): Promise<void> => recordBotAdminStatus(update.chat.id, false),
       `Failed to complete admin downgrade transition for chat ${update.chat.id}.`
     );
     return;
@@ -170,13 +172,13 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
   const known: boolean | undefined = getChatState(chatId).botIsAdmin;
   if (known !== undefined) return known;
 
-  let inFlight = botAdminFetches.get(chatId);
+  let inFlight: Promise<boolean> | undefined = botAdminFetches.get(chatId);
   if (!inFlight) {
     const generation: number = botAdminGenerations.get(chatId) ?? 0;
     botAdminGenerationUsers.set(chatId, (botAdminGenerationUsers.get(chatId) ?? 0) + 1);
     const request: Promise<boolean> = bot.api
       .getChatMember(chatId, bot.botInfo.id)
-      .then(async (member) => {
+      .then(async (member: ChatMember): Promise<boolean> => {
         // /init 在请求期间切换过：这个响应属于旧一代，不回填，
         // 改用新一代的查询结果。
         if ((botAdminGenerations.get(chatId) ?? 0) !== generation) {
@@ -188,11 +190,11 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
         await recordBotAdminStatus(chatId, isAdmin);
         return isAdmin;
       })
-      .catch((error: unknown) => {
+      .catch((error: unknown): boolean => {
         logger.error(`Failed to check bot's own admin status in chat ${chatId}:`, error);
         return false;
       })
-      .finally(() => {
+      .finally((): void => {
         if (botAdminFetches.get(chatId) === request) botAdminFetches.delete(chatId);
         const remainingUsers: number = (botAdminGenerationUsers.get(chatId) ?? 1) - 1;
         if (remainingUsers <= 0) {

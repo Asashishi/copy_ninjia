@@ -1,3 +1,4 @@
+import type { File as TelegramFile } from "@grammyjs/types";
 import { MEDIA_DOWNLOAD_TIMEOUT_MS, MEDIA_MAX_DOWNLOAD_BYTES } from "../consts/aiChat/media";
 import { logger } from "../infra/logger";
 import { bot, buildFileDownloadUrl } from "../infra/telegram";
@@ -20,7 +21,7 @@ export async function downloadTelegramVisionImage({
   logLabel,
 }: DownloadTelegramVisionImageParams): Promise<VisionImage | null> {
   try {
-    const file = await bot.api.getFile(fileId);
+    const file: TelegramFile = await bot.api.getFile(fileId);
     if (!file.file_path) {
       logger.error(`getFile for ${logLabel} ${fileId} returned no file_path`);
       return null;

@@ -57,7 +57,7 @@ export function acceptVerificationDelete(
   ) return false;
   activeVerificationSnapshots.delete(key);
   persistedVerificationRevisions.delete(key);
-  const deletion = {
+  const deletion: { chatId: number; userId: number; generation: number; revision: number; } = {
     chatId: event.chatId,
     userId: event.userId,
     generation: event.generation,

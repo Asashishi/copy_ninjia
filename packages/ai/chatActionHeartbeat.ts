@@ -124,7 +124,7 @@ export function startChatActionHeartbeat(
 ): ChatActionHeartbeatControl {
   let entry: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
   if (!entry) {
-    const timer: ReturnType<typeof setInterval> = setInterval(() => {
+    const timer: ReturnType<typeof setInterval> = setInterval((): void => {
       const live: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
       if (live?.timer !== timer || live.action === "idle") return;
       pumpChatAction({ chatId, entry: live, deduplicate: false, dependencies });

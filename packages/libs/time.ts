@@ -67,7 +67,7 @@ const TOKYO_HOUR_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US
  * ai/mood.ts），接受可选的 date 参数仅为可测试性，生产调用省略即取当前时刻。
  */
 export function getTokyoHour(date: Date = new Date()): number {
-  const hourPart: string | undefined = TOKYO_HOUR_FORMATTER.formatToParts(date).find((part) => part.type === "hour")?.value;
+  const hourPart: string | undefined = TOKYO_HOUR_FORMATTER.formatToParts(date).find((part: Intl.DateTimeFormatPart): boolean => part.type === "hour")?.value;
   // % 24 兜底：即便某些环境仍返回 "24"，也不会产出越界的小时数。
   return hourPart ? Number(hourPart) % 24 : date.getHours();
 }

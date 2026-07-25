@@ -24,7 +24,7 @@ export function createBoundedTaskRunner(maxConcurrent: number, maxPending: numbe
     activeCount++;
     return Promise.resolve()
       .then(task)
-      .finally(() => {
+      .finally((): void => {
         activeCount--;
         pending.shift()?.();
       });
@@ -40,8 +40,8 @@ export function createBoundedTaskRunner(maxConcurrent: number, maxPending: numbe
     run<T>(task: () => Promise<T>): Promise<T | undefined> {
       if (activeCount < maxConcurrent) return start(task);
       if (pending.length >= maxPending) return Promise.resolve(undefined);
-      return new Promise<T>((resolve, reject) => {
-        pending.push(() => {
+      return new Promise<T>((resolve: (value: T | PromiseLike<T>) => void, reject: (reason?: unknown) => void): void => {
+        pending.push((): void => {
           void start(task).then(resolve, reject);
         });
       });

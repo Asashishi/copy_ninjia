@@ -24,7 +24,7 @@ export const LUCK_TIERS: readonly LuckTier[] = Object.freeze([
 // 最后一档会因兜底 return 吃到多余权重；超过 100，末尾档位会被挤到摇不出——
 // 加载期直接炸掉，不留一个只有注释约束、没人真正校验的隐性契约。
 /** 启动期校验使用的吉凶档总权重，固定必须为 100。 */
-const LUCK_TIER_WEIGHT_SUM: number = LUCK_TIERS.reduce((sum, tier) => sum + tier.weight, 0);
+const LUCK_TIER_WEIGHT_SUM: number = LUCK_TIERS.reduce((sum: number, tier: LuckTier): number => sum + tier.weight, 0);
 if (LUCK_TIER_WEIGHT_SUM !== 100) {
   throw new Error(`LUCK_TIERS weights must sum to 100, got ${LUCK_TIER_WEIGHT_SUM}`);
 }

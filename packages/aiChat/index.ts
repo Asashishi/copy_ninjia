@@ -31,6 +31,7 @@ import type {
   AiRecordMessage,
   AiTriggerMessage,
 } from "../types/aiChat/protocol";
+import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
 
 /** 在途 switchMood 请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
  *  的回执不可能再到达，不结算会让命令处理器干等到超时。 */
@@ -64,11 +65,11 @@ function rejectAllMoodSwitchWaiters(reason: string): void {
  * aiChat/memoryMirror.ts；本文件只保留 Worker 监督与对外 API。
  */
 
-const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
+const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: SupervisedWorkerHandle<AiChatWorkerMessage> = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
   url: new URL("../workers/aiChatWorker.ts", import.meta.url).href,
   label: "AI Worker",
   giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
-  onEvent: (event) => {
+  onEvent: (event: AiChatWorkerEvent): void => {
     switch (event.type) {
       case "sent":
         // Worker 报回它刚发出的消息：登记进自发消息表，供自动流水线识别
@@ -121,7 +122,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
       }
     }
   },
-  onRespawn: (postToNext) => {
+  onRespawn: (postToNext: (message: AiChatWorkerMessage) => boolean): void => {
     aiMemoryFlushBarrier.settleAll("failed");
     rejectAllMoodSwitchWaiters("AI Worker crashed before acknowledging the mood switch.");
     // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
@@ -141,7 +142,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = super
       }
     }
   },
-  onGiveUp: () => {
+  onGiveUp: (): void => {
     aiChatWorkerState.available = false;
     rejectAllMoodSwitchWaiters("AI Worker gave up restarting before acknowledging the mood switch.");
     // 已终止实例不可能再回传旧 memory；purged 只负责拒绝旧 Worker 快照。
@@ -227,7 +228,7 @@ export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
 export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   if (lastInitState.current === null) return Promise.resolve("flushed");
   return aiMemoryFlushBarrier.begin(
-    (id) => post({ type: "flushMemory", flushId: id }),
+    (id: number): boolean => post({ type: "flushMemory", flushId: id }),
     timeoutMs
   );
 }
@@ -250,13 +251,13 @@ export async function terminateAiChat(): Promise<void> {
  * 也作为请求的绝对截止时刻，Worker 不执行积压到过期的重抽。
  */
 export function switchAiMood(chatId: number): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve: (value: string | PromiseLike<string>) => void, reject: (reason?: unknown) => void): void => {
     const requestId: number = ++moodSwitchRequestCounter.current;
     const deadlineAt: number = Date.now() + MOOD_SWITCH_TIMEOUT_MS;
     const waiter: MoodSwitchWaiter = {
       resolve,
       reject,
-      timer: setTimeout(() => {
+      timer: setTimeout((): void => {
         moodSwitchWaiters.delete(requestId);
         reject(new Error(
           `AI mood switch for chat ${chatId} timed out after ${MOOD_SWITCH_TIMEOUT_MS}ms.`
@@ -409,4 +410,4 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
   await persistedDelete;
 }
 
-registerChatTeardown("aiChat", (chatId) => invalidateAiChat(chatId, true));
+registerChatTeardown("aiChat", (chatId: number): Promise<void> => invalidateAiChat(chatId, true));

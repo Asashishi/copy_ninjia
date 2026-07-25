@@ -39,10 +39,10 @@ export function createFlushBarrier(options: CreateFlushBarrierParams): FlushBarr
   }
 
   return {
-    begin: (post, timeoutMs = options.timeoutMs): Promise<FlushResult> => {
+    begin: (post: (id: number) => boolean | void, timeoutMs: number | undefined = options.timeoutMs): Promise<FlushResult> => {
       const id: number = nextId++;
-      return new Promise((resolve) => {
-        const timer = setTimeout(() => {
+      return new Promise((resolve: (value: FlushResult | PromiseLike<FlushResult>) => void): void => {
+        const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
           settle(id, "timedOut");
         }, timeoutMs);
         pending.set(id, { resolve, timer });
@@ -54,7 +54,7 @@ export function createFlushBarrier(options: CreateFlushBarrierParams): FlushBarr
       });
     },
     settle,
-    settleAll: (result): void => {
+    settleAll: (result: FlushResult): void => {
       for (const id of [...pending.keys()]) settle(id, result);
     },
     pendingCount: (): number => pending.size,

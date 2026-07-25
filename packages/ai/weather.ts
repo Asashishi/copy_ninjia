@@ -99,7 +99,7 @@ export function currentTokyoWeather(): TokyoWeatherResult | null {
 export function startWeatherRefreshLoop(): void {
   if (weatherRefreshTimer.current !== null) return;
   void refreshTokyoWeather();
-  weatherRefreshTimer.current = setInterval(() => void refreshTokyoWeather(), WEATHER_REFRESH_INTERVAL_MS);
+  weatherRefreshTimer.current = setInterval((): undefined => void refreshTokyoWeather(), WEATHER_REFRESH_INTERVAL_MS);
   weatherRefreshTimer.current.unref();
 }
 

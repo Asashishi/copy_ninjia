@@ -6,6 +6,7 @@ import { LOCK_FILE_PATH } from "../../consts/paths";
 import { atomicWriteText, syncDirectory } from "../../libs/atomicFile";
 import { logger } from "../logger";
 import { prepareRuntimeDataRoot } from "./dataRoot";
+import type { FileHandle } from "node:fs/promises";
 
 export interface ProcessIdentity {
   pid: number;
@@ -151,7 +152,7 @@ async function readBotLockRecords(lockFilePath: string): Promise<BotLockRecord[]
   const records: BotLockRecord[] = [];
   const fingerprints: Set<string> = new Set();
   for (const line of content.slice(0, -1).split("\n")) {
-    const match = BOT_LOCK_LINE_PATTERN.exec(line);
+    const match: RegExpExecArray | null = BOT_LOCK_LINE_PATTERN.exec(line);
     if (!match) throw new Error(`${lockFilePath} has an obsolete or invalid lock registry format; repair it manually.`);
     const pid: number = Number(match[1]);
     const startTimeTicks: string = match[2]!;
@@ -178,7 +179,7 @@ async function writeBotLockRecords(lockFilePath: string, records: BotLockRecord[
   }
   await atomicWriteText(
     lockFilePath,
-    records.map((record) => `${serializeProcessIdentity(record)}:${record.tokenFingerprint}\n`).join("")
+    records.map((record: BotLockRecord): string => `${serializeProcessIdentity(record)}:${record.tokenFingerprint}\n`).join("")
   );
 }
 
@@ -189,7 +190,7 @@ async function acquirePidFileLock(
   readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null>
 ): Promise<void> {
   const candidatePath: string = `${lockFilePath}.candidate.${process.pid}.${crypto.randomUUID()}`;
-  const handle = await open(candidatePath, "wx");
+  const handle: FileHandle = await open(candidatePath, "wx");
   try {
     try {
       await handle.writeFile(serializeProcessIdentity(currentIdentity));
@@ -265,11 +266,11 @@ async function acquirePidFileLock(
         }
         await unlink(lockFilePath);
       } finally {
-        await unlink(recoveryPath).catch(() => undefined);
+        await unlink(recoveryPath).catch((): undefined => undefined);
       }
     }
   } finally {
-    await unlink(candidatePath).catch(() => undefined);
+    await unlink(candidatePath).catch((): undefined => undefined);
   }
 }
 
@@ -303,7 +304,7 @@ export async function acquireSingleInstanceLock(
 ): Promise<void> {
   await prepareRuntimeDataRoot(dirname(lockFilePath));
   const tokenFingerprint: string = getBotTokenFingerprint(botToken);
-  const readProcessIdentity = options.readProcessIdentity ?? readLinuxProcessIdentity;
+  const readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null> = options.readProcessIdentity ?? readLinuxProcessIdentity;
   const currentIdentity: ProcessIdentity = await resolveCurrentIdentity({ ...options, readProcessIdentity });
   await withBotLockGuard(lockFilePath, { currentIdentity, readProcessIdentity }, async (): Promise<void> => {
     const activeRecords: BotLockRecord[] = [];
@@ -329,7 +330,7 @@ export async function releaseSingleInstanceLock(
 ): Promise<void> {
   const tokenFingerprint: string = getBotTokenFingerprint(botToken);
   try {
-    const readProcessIdentity = options.readProcessIdentity ?? readLinuxProcessIdentity;
+    const readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null> = options.readProcessIdentity ?? readLinuxProcessIdentity;
     const currentIdentity: ProcessIdentity = await resolveCurrentIdentity({ ...options, readProcessIdentity });
     await withBotLockGuard(lockFilePath, { currentIdentity, readProcessIdentity }, async (): Promise<void> => {
       const remaining: BotLockRecord[] = [];

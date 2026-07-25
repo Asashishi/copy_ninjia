@@ -56,9 +56,9 @@ export function createOwnerSettler(logger: ApplicationLifecycleDependencies["log
     }
   }
   return {
-    flush: (owner, run) => settle<FlushResult>(owner, run, "failed"),
-    gate: (owner, run) => settle<boolean>(owner, run, false),
-    terminate: (owner, run) => settle<FlushResult>(owner, async (): Promise<FlushResult> => {
+    flush: (owner: string, run: () => Promise<FlushResult>): Promise<FlushResult> => settle<FlushResult>(owner, run, "failed"),
+    gate: (owner: string, run: () => Promise<boolean>): Promise<boolean> => settle<boolean>(owner, run, false),
+    terminate: (owner: string, run: () => Promise<void>): Promise<FlushResult> => settle<FlushResult>(owner, async (): Promise<FlushResult> => {
       await run();
       return "flushed";
     }, "failed"),
@@ -89,26 +89,26 @@ export async function runShutdownOwners({
 }: RunShutdownOwnersParams): Promise<OwnerShutdownResults> {
   const avatar: FlushResult = await settler.flush(
     "avatar drain",
-    () => dependencies.drainAvatarUpdates(timeouts.maintenanceMs)
+    (): Promise<FlushResult> => dependencies.drainAvatarUpdates(timeouts.maintenanceMs)
   );
   const reaction: FlushResult = await settler.flush(
     "reaction drain",
-    () => dependencies.drainReactionQueue(timeouts.maintenanceMs)
+    (): Promise<FlushResult> => dependencies.drainReactionQueue(timeouts.maintenanceMs)
   );
 
   let translate: FlushResult = "flushed";
   if (flags.translateInitialized) {
-    translate = await settler.flush("translate drain", () => dependencies.drainTranslate(timeouts.maintenanceMs));
+    translate = await settler.flush("translate drain", (): Promise<FlushResult> => dependencies.drainTranslate(timeouts.maintenanceMs));
     const closed: FlushResult = await settler.flush(
       "translate close",
-      () => dependencies.closeTranslate(timeouts.maintenanceMs)
+      (): Promise<FlushResult> => dependencies.closeTranslate(timeouts.maintenanceMs)
     );
     if (translate === "flushed" && closed !== "flushed") translate = closed;
     flags.translateInitialized = false;
   }
 
   const antiRaid: FlushResult = flags.antiRaidInitialized
-    ? await settler.flush("anti-raid drain", () => dependencies.drainAntiRaid(timeouts.maintenanceMs))
+    ? await settler.flush("anti-raid drain", (): Promise<FlushResult> => dependencies.drainAntiRaid(timeouts.maintenanceMs))
     : "flushed";
 
   // 终止型 owner 的失败单独汇总：它们排在各自 flush 之后，失败不影响已经
@@ -120,26 +120,26 @@ export async function runShutdownOwners({
 
   let ai: FlushResult = "flushed";
   if (flags.aiChatInitialized) {
-    ai = await settler.flush("AI memory flush", () => dependencies.flushAiMemory(timeouts.aiMemoryMs));
-    recordTermination(await settler.terminate("AI chat termination", () => dependencies.terminateAiChat()));
+    ai = await settler.flush("AI memory flush", (): Promise<FlushResult> => dependencies.flushAiMemory(timeouts.aiMemoryMs));
+    recordTermination(await settler.terminate("AI chat termination", (): Promise<void> => dependencies.terminateAiChat()));
     flags.aiChatInitialized = false;
   }
 
   const disk: FlushResult = flags.diskIOInitialized
-    ? await settler.flush("disk I/O flush", () => dependencies.flushDiskIO(timeouts.diskIOMs))
+    ? await settler.flush("disk I/O flush", (): Promise<FlushResult> => dependencies.flushDiskIO(timeouts.diskIOMs))
     : "flushed";
 
   if (flags.antiRaidInitialized) {
-    recordTermination(await settler.terminate("anti-raid termination", () => dependencies.terminateAntiRaid()));
+    recordTermination(await settler.terminate("anti-raid termination", (): Promise<void> => dependencies.terminateAntiRaid()));
     flags.antiRaidInitialized = false;
   }
   if (flags.diskIOInitialized) {
-    recordTermination(await settler.terminate("disk I/O termination", () => dependencies.terminateDiskIO()));
+    recordTermination(await settler.terminate("disk I/O termination", (): Promise<void> => dependencies.terminateDiskIO()));
     flags.diskIOInitialized = false;
   }
 
   const state: FlushResult = lockAcquired
-    ? await settler.flush("state flush", () => dependencies.flushStateToDisk(timeouts.stateMs, true))
+    ? await settler.flush("state flush", (): Promise<FlushResult> => dependencies.flushStateToDisk(timeouts.stateMs, true))
     : "flushed";
 
   return { avatar, reaction, translate, antiRaid, ai, disk, terminate, state };
@@ -188,28 +188,28 @@ export async function flushAllToDisk({
 }: FlushAllToDiskParams): Promise<boolean> {
   const avatar: FlushResult = await settler.flush(
     "avatar drain",
-    () => dependencies.drainAvatarUpdates(timeouts.maintenanceMs)
+    (): Promise<FlushResult> => dependencies.drainAvatarUpdates(timeouts.maintenanceMs)
   );
   const reaction: FlushResult = await settler.flush(
     "reaction drain",
-    () => dependencies.drainReactionQueue(timeouts.maintenanceMs)
+    (): Promise<FlushResult> => dependencies.drainReactionQueue(timeouts.maintenanceMs)
   );
   const translate: FlushResult = flags.translateInitialized
-    ? await settler.flush("translate drain", () => dependencies.drainTranslate(timeouts.maintenanceMs))
+    ? await settler.flush("translate drain", (): Promise<FlushResult> => dependencies.drainTranslate(timeouts.maintenanceMs))
     : "flushed";
   const antiRaid: FlushResult = flags.antiRaidInitialized
-    ? await settler.flush("anti-raid drain", () => dependencies.drainAntiRaid(timeouts.maintenanceMs))
+    ? await settler.flush("anti-raid drain", (): Promise<FlushResult> => dependencies.drainAntiRaid(timeouts.maintenanceMs))
     : "flushed";
   // AI memory 必须先回传到 diskIOWorker，再 flush 该 Worker。
   const ai: FlushResult = flags.aiChatInitialized
-    ? await settler.flush("AI memory flush", () => dependencies.flushAiMemory(timeouts.aiMemoryMs))
+    ? await settler.flush("AI memory flush", (): Promise<FlushResult> => dependencies.flushAiMemory(timeouts.aiMemoryMs))
     : "flushed";
   const disk: FlushResult = flags.diskIOInitialized
-    ? await settler.flush("disk I/O flush", () => dependencies.flushDiskIO(timeouts.diskIOMs))
+    ? await settler.flush("disk I/O flush", (): Promise<FlushResult> => dependencies.flushDiskIO(timeouts.diskIOMs))
     : "flushed";
   const state: FlushResult = await settler.flush(
     "state flush",
-    () => dependencies.flushStateToDisk(timeouts.stateMs)
+    (): Promise<FlushResult> => dependencies.flushStateToDisk(timeouts.stateMs)
   );
 
   if (

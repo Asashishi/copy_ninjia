@@ -1,7 +1,7 @@
 import { currentTokyoWeather } from "../weather";
 import { GET_TOKYO_WEATHER_TOOL, unknownToolError } from "../../consts/tools";
 import { toolError } from "../utils/toolResult";
-import type { ToolDefinition } from "../../types/tools";
+import type { ToolDefinition, TokyoWeatherResult } from "../../types/tools";
 
 /**
  * AI 回复流水线的工具目录（packages/ai/tools/）。本文件是其中「静态查询工具」的
@@ -29,7 +29,7 @@ export function callTool(name: string): string {
     case GET_TOKYO_WEATHER_TOOL: {
       // 只读现有缓存，不在这里发请求——真正的刷新由 ai/weather.ts 的后台
       // 定时循环负责，见该文件模块头注。
-      const result = currentTokyoWeather();
+      const result: TokyoWeatherResult | null = currentTokyoWeather();
       return JSON.stringify(result ?? { error: "Weather data not available yet" });
     }
     default:

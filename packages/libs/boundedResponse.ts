@@ -1,3 +1,8 @@
+import type {
+  ReadableStreamDefaultReader as WebReadableStreamDefaultReader,
+  ReadableStreamReadResult as WebReadableStreamReadResult,
+} from "node:stream/web";
+
 /** 有界响应读取结果；失败时返回实际观察到的大小，不保留部分响应体。 */
 export type BoundedResponseResult =
   | { readonly ok: true; readonly bytes: Uint8Array }
@@ -16,26 +21,26 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
   if (declaredLength && /^\d+$/.test(declaredLength)) {
     const parsedLength: number = Number(declaredLength);
     if (Number.isSafeInteger(parsedLength) && parsedLength > maxBytes) {
-      await response.body?.cancel().catch(() => undefined);
+      await response.body?.cancel().catch((): undefined => undefined);
       return { ok: false, reason: "too-large", observedBytes: parsedLength };
     }
   }
 
   // Bun 的全局 Response.body 当前会退化为 ReadableStream<any>；在这一个
   // Web API 边界收窄为 fetch 响应实际产出的字节块，避免 any 向下游扩散。
-  const body = response.body as ReadableStream<Uint8Array> | null;
+  const body: ReadableStream<Uint8Array<ArrayBufferLike>> | null = response.body as ReadableStream<Uint8Array> | null;
   if (!body) return { ok: true, bytes: new Uint8Array() };
 
-  const reader = body.getReader();
+  const reader: WebReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>> = body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes: number = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value }: WebReadableStreamReadResult<Uint8Array<ArrayBufferLike>> = await reader.read();
       if (done) break;
       totalBytes += value.byteLength;
       if (totalBytes > maxBytes) {
-        await reader.cancel().catch(() => undefined);
+        await reader.cancel().catch((): undefined => undefined);
         return { ok: false, reason: "too-large", observedBytes: totalBytes };
       }
       chunks.push(value);

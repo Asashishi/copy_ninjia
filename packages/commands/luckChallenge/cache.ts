@@ -113,9 +113,9 @@ export function promotePendingDraw(cacheKey: string, confirmedForToday: boolean 
 function initializeRespawnRecovery(): void {
   if (luckRuntimeState.respawnRecoveryInitialized) return;
   luckRuntimeState.respawnRecoveryInitialized = true;
-  onDiskIORespawn(() => {
+  onDiskIORespawn((): void => {
     void ensureLuckCacheFreshForToday()
-      .then(() => {
+      .then((): void => {
         for (const [key, draw] of dailyLuckCache) {
           postDiskIO({
             type: "luckDraw",
@@ -126,7 +126,7 @@ function initializeRespawnRecovery(): void {
           });
         }
       })
-      .catch((error: unknown) => {
+      .catch((error: unknown): void => {
         logger.error("Failed to restore daily luck secret after Disk I/O Worker respawn:", error);
       });
   });
@@ -143,7 +143,7 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
   if (loaded?.day !== todayKey) return;
 
   for (const [key, record] of loaded.entries) {
-    const tier: LuckTier | undefined = LUCK_TIERS.find((candidate) => candidate.label === record.label);
+    const tier: LuckTier | undefined = LUCK_TIERS.find((candidate: LuckTier): boolean => candidate.label === record.label);
     if (!tier) {
       logger.error(
         `Restored luck entry "${key}" has label "${record.label}" that no longer matches any LUCK_TIERS entry; ` +
@@ -151,7 +151,7 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
       );
       continue;
     }
-    const [min, max] = tier.fortunePercentRange;
+    const [min, max]: readonly [number, number] = tier.fortunePercentRange;
     if (record.fortunePercent < min || record.fortunePercent > max) {
       logger.error(
         `Restored luck entry "${key}" has fortunePercent ${record.fortunePercent} outside tier ` +

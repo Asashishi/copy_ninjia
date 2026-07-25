@@ -1,6 +1,7 @@
 import { createApplicationLifecycle } from "./packages/app/lifecycle";
+import type { ApplicationLifecycle } from "./packages/app/lifecycle";
 
-const application = createApplicationLifecycle();
+const application: ApplicationLifecycle = createApplicationLifecycle();
 
 /** 供测试或嵌入式调用显式驱动初始化与轮询。 */
 export async function main(): Promise<void> {

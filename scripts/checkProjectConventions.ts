@@ -19,7 +19,7 @@ function sourceFilesUnder(root: string): string[] {
 
 function isExported(node: ts.Node): boolean {
   return ts.canHaveModifiers(node) &&
-    ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true;
+    ts.getModifiers(node)?.some((modifier: ts.ModifierLike): boolean => modifier.kind === ts.SyntaxKind.ExportKeyword) === true;
 }
 
 function hasJsDoc(node: ts.Node): boolean {

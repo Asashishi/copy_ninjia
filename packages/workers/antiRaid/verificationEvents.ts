@@ -59,7 +59,7 @@ export function handleJoinEvent({
   message,
   dispatchVerification,
 }: HandleJoinEventParams): void {
-  const { chatId, member } = message;
+  const { chatId, member }: NewMemberMessage = message;
   const entryState: VerificationState | undefined =
     verificationEntries.get(verificationKey(chatId, member.id))?.state;
   const invitedByOther: boolean =
@@ -94,7 +94,7 @@ export function handleJoinEvent({
   const key: string = verificationKey(chatId, member.id);
   const currentState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
-  const confirmations = threadCommentConfirmations.get(key);
+  const confirmations: Set<ThreadCommentConfirmation> | undefined = threadCommentConfirmations.get(key);
   if (confirmations && currentState !== undefined) {
     for (const confirmation of confirmations) {
       if (!confirmation.boundToJoin) {
@@ -148,15 +148,15 @@ function confirmThreadComment({
     expectedState,
     boundToJoin: expectedState !== undefined,
   };
-  let confirmations = threadCommentConfirmations.get(key);
+  let confirmations: Set<ThreadCommentConfirmation> | undefined = threadCommentConfirmations.get(key);
   if (!confirmations) {
     confirmations = new Set();
     threadCommentConfirmations.set(key, confirmations);
   }
   confirmations.add(confirmation);
 
-  void fetchChatHasLinkedChannel(message.chatId).then((hasLinked) => {
-    const activeConfirmations = threadCommentConfirmations.get(key);
+  void fetchChatHasLinkedChannel(message.chatId).then((hasLinked: boolean | undefined): void => {
+    const activeConfirmations: Set<ThreadCommentConfirmation> | undefined = threadCommentConfirmations.get(key);
     activeConfirmations?.delete(confirmation);
     if (activeConfirmations?.size === 0) threadCommentConfirmations.delete(key);
     if (hasLinked !== true) return;
@@ -241,7 +241,7 @@ export function handleVerificationCallbackEvent({
     void answerCallbackQuery({
       callbackQueryId: message.callbackQueryId,
       api: joinVerificationApi,
-    }).catch((error: unknown) => {
+    }).catch((error: unknown): void => {
       logger.error("Error answering join verification callback:", error);
     });
     return;

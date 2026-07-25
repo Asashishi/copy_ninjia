@@ -1,4 +1,4 @@
-import type { InlineQueryResultArticle } from "@grammyjs/types";
+import type { InlineQueryResultArticle, ChosenInlineResult, InlineQuery, User } from "@grammyjs/types";
 import type { Context } from "grammy";
 import { formatUserLabel } from "../../users/userLabel";
 import type { LuckDraw } from "../../types/luckChallenge";
@@ -20,7 +20,7 @@ import {
 
 /** Telegram chosen_inline_result 是抽签真正被选中的主确认信号。 */
 export async function handleLuckChosenInlineResult(ctx: Context): Promise<void> {
-  const chosen = ctx.chosenInlineResult;
+  const chosen: ChosenInlineResult | undefined = ctx.chosenInlineResult;
   if (!chosen || !LUCK_RESULT_IDS.has(chosen.result_id)) return;
   try {
     await ensureLuckCacheFreshForToday();
@@ -39,7 +39,7 @@ export async function handleLuckChosenInlineResult(ctx: Context): Promise<void> 
 
 /** Telegram 内联查询适配层：负责输入输出，抽签、缓存与渲染由各领域模块完成。 */
 export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void> {
-  const inlineQuery = ctx.inlineQuery;
+  const inlineQuery: InlineQuery | undefined = ctx.inlineQuery;
   if (!inlineQuery) return;
 
   if (!tryConsumeLuckRateLimit()) {
@@ -57,7 +57,7 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     logger.error("Failed to refresh luck cache for inline query:", error);
     return;
   }
-  const fromUser = inlineQuery.from;
+  const fromUser: User = inlineQuery.from;
   const userLabel: string = formatUserLabel({
     id: fromUser.id,
     username: fromUser.username,

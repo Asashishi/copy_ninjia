@@ -52,7 +52,7 @@ function copyMode(value: unknown, path: string): CopyMode | undefined {
 }
 
 function cachedUser(value: unknown, path: string): CachedUser {
-  const raw = record(value, path);
+  const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, ["id", "username", "first_name", "last_name", "title", "isChannel"], path);
   if (typeof raw.id !== "number" || !Number.isSafeInteger(raw.id) || raw.id === 0) {
     throw new Error(`${path}.id must be a non-zero safe integer`);
@@ -68,7 +68,7 @@ function cachedUser(value: unknown, path: string): CachedUser {
 }
 
 function chatPermissions(value: unknown, path: string): ChatPermissions {
-  const raw = record(value, path);
+  const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, CHAT_PERMISSION_KEYS, path);
   const decoded: ChatPermissions = {};
   for (const key of CHAT_PERMISSION_KEYS) {
@@ -81,7 +81,7 @@ function chatPermissions(value: unknown, path: string): ChatPermissions {
 }
 
 function lockdown(value: unknown, path: string): LockdownRecord {
-  const raw = record(value, path);
+  const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, ["phase", "intentId", "originalPermissions", "expiresAt"], path);
   const expiresAt: number | undefined = optionalTimestamp(raw, "expiresAt", path);
   if (expiresAt === undefined) throw new Error(`${path}.expiresAt is required`);
@@ -102,7 +102,7 @@ function lockdown(value: unknown, path: string): LockdownRecord {
 }
 
 function chatState(value: unknown, path: string): ChatState {
-  const raw = record(value, path);
+  const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, [
     "quietUntil", "lockdown", "isAIChatEnabled", "isJATranslationEnabled",
     "isInitEnabled", "botIsAdmin", "title", "isProxySendEnabled",
@@ -121,7 +121,7 @@ function chatState(value: unknown, path: string): ChatState {
 
 function globalCopy(value: unknown): GlobalCopyState {
   const path: string = "state.globalCopy";
-  const raw = record(value, path);
+  const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, ["lastCopyTime", "copiedUser", "copyMode", "copyChatId"], path);
   if (!("copiedUser" in raw)) throw new Error(`${path}.copiedUser is required`);
   const lastCopyTime: number | undefined = optionalTimestamp(raw, "lastCopyTime", path);
@@ -144,9 +144,9 @@ function globalCopy(value: unknown): GlobalCopyState {
 
 /** 解码完整 state.json；任何存在但非法的字段都会拒绝整个文件。 */
 export function decodeStateFile(value: unknown): StateFileSchema {
-  const raw = record(value, "state");
+  const raw: Record<string, unknown> = record(value, "state");
   knownKeys(raw, ["chats", "globalCopy"], "state");
-  const rawChats = record(raw.chats, "state.chats");
+  const rawChats: Record<string, unknown> = record(raw.chats, "state.chats");
   const chats: Record<string, ChatState> = {};
   const activeProxyChatIds: number[] = [];
   for (const [chatIdText, value] of Object.entries(rawChats)) {

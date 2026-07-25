@@ -13,6 +13,7 @@ import type {
   LoadRequest,
   LoadedReply,
 } from "../../types/diskIO";
+import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 
 /**
  * Disk I/O Worker 的宿主内核（owner 是 packages/infra/diskIO.ts）：Worker 创建、
@@ -73,7 +74,7 @@ export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal
   diskIORuntime.pendingBusinessMessages.length = 0;
   diskIOFlushBarrier.settleAll("failed");
   try {
-    void Promise.resolve(worker.terminate()).catch((error: unknown) => {
+    void Promise.resolve(worker.terminate()).catch((error: unknown): void => {
       console.error("[diskIO] failed to terminate unusable persistence Worker:", error);
     });
   } catch (error: unknown) {
@@ -115,7 +116,7 @@ function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): void {
 function beginRuntimeRecovery(worker: Worker): void {
   clearRuntimeRecoveryTimer();
   diskIORuntime.runtimeRecoveryWorker = worker;
-  diskIORuntime.runtimeRecoveryTimer = setTimeout(() => {
+  diskIORuntime.runtimeRecoveryTimer = setTimeout((): void => {
     diskIORuntime.runtimeRecoveryTimer = null;
     stopWorkerAfterLoadFailure(
       worker,
@@ -133,7 +134,7 @@ function beginRuntimeRecovery(worker: Worker): void {
 export function createDiskIOWorker(): Worker {
   const w: Worker = new Worker(new URL("../../workers/diskIOWorker.ts", import.meta.url).href);
   w.unref();
-  w.onmessage = (event: MessageEvent<DiskIOReply>) => {
+  w.onmessage = (event: MessageEvent<DiskIOReply>): void => {
     if (diskIORuntime.worker !== w) return;
     const data: DiskIOReply = event.data;
     if (data.type === "verificationPersisted") {
@@ -153,7 +154,7 @@ export function createDiskIOWorker(): Worker {
       return;
     }
     if (data.type === "luckSecret") {
-      const pending = pendingLuckSecrets.get(data.requestId);
+      const pending: { resolve: (secret: LuckReceiptSecret) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; } | undefined = pendingLuckSecrets.get(data.requestId);
       if (!pending) return;
       pendingLuckSecrets.delete(data.requestId);
       clearTimeout(pending.timer);
@@ -166,7 +167,7 @@ export function createDiskIOWorker(): Worker {
     }
     // data.type === "loaded"：启动和运行时重建都必须先验证完整恢复结果，
     // 任何领域失败时都不能进入 writable，也不能重放可能覆盖旧数据的镜像。
-    const resolve = pendingLoad.resolve;
+    const resolve: ((reply: LoadedReply) => void) | null = pendingLoad.resolve;
     if (resolve) {
       pendingLoad.resolve = null;
       pendingLoad.reject = null;
@@ -184,7 +185,7 @@ export function createDiskIOWorker(): Worker {
     }
     activateDiskIOWorker(w, true);
   };
-  w.onerror = (event: ErrorEvent) => {
+  w.onerror = (event: ErrorEvent): void => {
     // 已替换旧实例的迟到/重复错误不能再启动第二条并行重建链。
     if (diskIORuntime.worker !== w) return;
     // 落盘线程自己出错时不能再指望它把这条日志落盘，直接走控制台，避免
@@ -210,7 +211,7 @@ export function createDiskIOWorker(): Worker {
       diskIOFlushBarrier.settleAll("failed");
     }
     if (pendingLuckSecrets.size > 0) {
-      const error = new Error("Persistence Worker crashed while loading the daily luck receipt secret.");
+      const error: Error = new Error("Persistence Worker crashed while loading the daily luck receipt secret.");
       for (const pending of pendingLuckSecrets.values()) {
         clearTimeout(pending.timer);
         pending.reject(error);

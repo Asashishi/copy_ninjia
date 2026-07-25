@@ -16,7 +16,7 @@ export function setBoundedMapValue<K, V>({
     throw new RangeError("maxEntries must be a positive safe integer");
   }
   if (!map.has(key) && map.size >= maxEntries) {
-    const oldest = map.keys().next();
+    const oldest: IteratorResult<K, undefined> = map.keys().next();
     if (!oldest.done) map.delete(oldest.value);
   }
   map.set(key, value);
