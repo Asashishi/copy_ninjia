@@ -29,7 +29,7 @@ function nextLockdownIntentId(): number {
  * thresholdExceeded 的占位同步生效——recordJoin 调用 dispatchLockdown 后，
  * 同一批投递里紧随其后的入群立刻就能在 verificationRuntime.ts 的 handleJoin
  * 里看到 lockdownEntries 有记录。lockdown/unlock 事件回报主线程用于持久化 +
- * Worker 崩溃后的 adopt 重放，机制见 antiRaid.ts；总体架构见
+ * Worker 崩溃后的 adopt 重放，机制见 antiRaid/index.ts；总体架构见
  * ../antiRaidWorker.ts 模块头。
  */
 
@@ -353,7 +353,7 @@ export function stopLockdownRuntime(): void {
   lastLockdownIntentId.current = 0;
 }
 
-/** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid.ts）。 */
+/** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid/index.ts）。 */
 export function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
   for (const { chatId, phase, intentId, originalPermissions, remainingMs, persisted } of lockdowns) {
     dispatchLockdown(chatId, { type: "adopt", phase, intentId, originalPermissions, remainingMs, persisted });

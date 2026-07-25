@@ -36,7 +36,7 @@ flowchart TD
 - **Anti-Raid Worker**は認証・ロックダウン状態機械とタイマーを排他的に所有し、メインスレッドは復元可能なミラーだけを保持します。
 - **Disk I/O Worker**は `logs/` や `memory/` など共有ディレクトリの読み書きを直列化して排他的に扱います。唯一の例外は `state.json` で、メインスレッドの `StateStore` が直接アトミックに書き込みます。
 
-メインスレッド側 Anti-Raid の入口は引き続き [`src/antiRaid.ts`](../../src/antiRaid.ts) が編成し、ロックダウン復旧と認証ミラー受信は [`src/antiRaid/lockdownMirror.ts`](../../src/antiRaid/lockdownMirror.ts) と [`src/antiRaid/verificationMirror.ts`](../../src/antiRaid/verificationMirror.ts) が担当します。Worker 内の認証 interpreter は [`src/workers/antiRaid/`](../../src/workers/antiRaid/) で、状態・復元の core、受信 event 変換、Telegram 副作用、reminder delivery owner に分割されています。各モジュールは同じ dispatcher を共有し、状態機械と revision の正式な入口を 1 つに保ちます。
+メインスレッド側 Anti-Raid の入口は引き続き [`src/antiRaid/index.ts`](../../src/antiRaid/index.ts) が編成し、ロックダウン復旧と認証ミラー受信は [`src/antiRaid/lockdownMirror.ts`](../../src/antiRaid/lockdownMirror.ts) と [`src/antiRaid/verificationMirror.ts`](../../src/antiRaid/verificationMirror.ts) が担当します。Worker 内の認証 interpreter は [`src/workers/antiRaid/`](../../src/workers/antiRaid/) で、状態・復元の core、受信 event 変換、Telegram 副作用、reminder delivery owner に分割されています。各モジュールは同じ dispatcher を共有し、状態機械と revision の正式な入口を 1 つに保ちます。
 
 Worker のクラッシュはレート制限付きで自己修復しますが、ホスト実装は 2 系統です。AI と Anti-Raid は [`src/libs/supervisedWorker.ts`](../../src/libs/supervisedWorker.ts) を共有します。Disk I/O 自身はディスクへ書く logger に依存できないため、[`src/infra/diskIO.ts`](../../src/infra/diskIO.ts) に console-only の独自復旧処理があります。再構築後はメインスレッドのミラーまたはディスクスナップショットから再生します。再起動予算を使い切ると、[`src/infra/workerSupervisor.ts`](../../src/infra/workerSupervisor.ts) などの fatal 境界がライフサイクルへ停止を通知します。
 

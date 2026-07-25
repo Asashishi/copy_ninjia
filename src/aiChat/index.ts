@@ -1,9 +1,9 @@
-import { superviseWorker } from "./libs/supervisedWorker";
-import { markSelfSent } from "./infra/selfSentTracker";
-import { registerChatTeardown } from "./infra/chatTeardown";
-import { logger } from "./infra/logger";
-import { postDiskIO } from "./ai/persistence";
-import { nextAiMemoryRevision, requestAiMemoryDelete } from "./aiChat/memoryMirror";
+import { superviseWorker } from "../libs/supervisedWorker";
+import { markSelfSent } from "../infra/selfSentTracker";
+import { registerChatTeardown } from "../infra/chatTeardown";
+import { logger } from "../infra/logger";
+import { postDiskIO } from "../ai/persistence";
+import { nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
 import {
   aiChatWorkerState,
   aiMemoryFlushBarrier,
@@ -17,11 +17,11 @@ import {
   postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
   type MoodSwitchWaiter,
-} from "./cache/aiChat";
-import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "./consts/lifecycle";
-import { MOOD_SWITCH_TIMEOUT_MS } from "./consts/aiChat/mood";
-import type { FlushResult } from "./types/lifecycle";
-import { getChatState } from "./infra/storage/stateStore";
+} from "../cache/aiChat";
+import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import { MOOD_SWITCH_TIMEOUT_MS } from "../consts/aiChat/mood";
+import type { FlushResult } from "../types/lifecycle";
+import { getChatState } from "../infra/storage/stateStore";
 import type {
   AiBotInfo,
   AiChatWorkerEvent,
@@ -30,7 +30,7 @@ import type {
   AiRecordMediaMessage,
   AiRecordMessage,
   AiTriggerMessage,
-} from "./types/aiChat/protocol";
+} from "../types/aiChat/protocol";
 
 /** 在途 switchMood 请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
  *  的回执不可能再到达，不结算会让命令处理器干等到超时。 */
@@ -65,7 +65,7 @@ function rejectAllMoodSwitchWaiters(reason: string): void {
  */
 
 const { init: initAiChatWorker, post, terminate: terminateAiChatWorker } = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
-  url: new URL("./workers/aiChatWorker.ts", import.meta.url).href,
+  url: new URL("../workers/aiChatWorker.ts", import.meta.url).href,
   label: "AI Worker",
   giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
   onEvent: (event) => {

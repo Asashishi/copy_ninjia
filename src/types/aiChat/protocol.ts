@@ -40,7 +40,7 @@ export interface AiRecordContext {
   forwardedFrom?: string;
   /**
    * 主线程确认该群此前发生过 durable purge 时，要求这条记录形成的快照
-   * 绕过周期上报；仅由 aiChat.ts 注入，Telegram 入口不得自行设置。
+   * 绕过周期上报；仅由 aiChat/index.ts 注入，Telegram 入口不得自行设置。
    */
   persistImmediately?: boolean;
 }

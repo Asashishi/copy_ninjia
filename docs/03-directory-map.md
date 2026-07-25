@@ -19,7 +19,8 @@
 | `src/app/` | 启动/退出生命周期、handler 注册、命令菜单、update runner | `lifecycle.ts`、`registerHandlers.ts`、`updateRunner.ts` |
 | `src/commands/` | 显式命令处理，一命令一文件 | `copy.ts`、`kick.ts`、`send.ts`、`targetResolution.ts` |
 | `src/auto/` | 非命令的自动行为：复读、AI 转录与触发、反应同步 | `message/`、`triggerPolicy.ts` |
-| `src/antiRaid/` | Anti-Raid 主线程代理的 lockdown 恢复与待验证镜像接收 | `lockdownMirror.ts`、`verificationMirror.ts` |
+| `src/aiChat/` | AI 闲聊主线程代理：Worker 监督入口与记忆镜像 | `index.ts`、`memoryMirror.ts` |
+| `src/antiRaid/` | Anti-Raid 主线程代理：Worker 监督入口、lockdown 恢复与待验证镜像接收 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts` |
 | `src/copy/` | 复读模式变换与头像/反应/翻译的执行队列 | `copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、`translate.ts` |
 | `src/users/` | 发送者身份缓存、可见发送者判定、用户标签生成 | `senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts` |
 | `src/states/` | **无 I/O** 的纯状态转移：验证、锁定、回复准入 | `verification.ts`、`lockdown.ts` |
@@ -54,6 +55,7 @@
 - 兼容入口只服务旧 import 的渐进迁移；**新代码一律直接从领域子文件导入**。
 - 兼容入口不得重新持有状态、解析配置或引入 import 副作用。
 - `src/types/index.ts` 同理，仅为测试/渐进迁移保留。
+- 包内 `index.ts` 是另一回事：主线程代理这类模块的入口本身就是实现（如 `src/aiChat/index.ts`、`src/antiRaid/index.ts`），与同包的子模块一起构成一个包，不受上面三条约束。
 
 ## 测试的镜像结构
 

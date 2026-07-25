@@ -1,17 +1,17 @@
-import { logger } from "./infra/logger";
+import { logger } from "../infra/logger";
 import type { Context } from "grammy";
 import type { ChatMember, Message } from "@grammyjs/types";
-import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "./infra/storage/stateStore";
-import { answerCallbackQuery } from "./infra/telegram/actions";
-import { isBotAdminIn, markBotAdminObserved } from "./infra/botAdmin";
-import { registerChatTeardown } from "./infra/chatTeardown";
-import { VERIFY_CALLBACK_PREFIX } from "./consts/antiRaid/verification";
-import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "./consts/antiRaid/protocol";
-import type { FlushResult } from "./types/lifecycle";
-import { isAdminStatus } from "./libs/chatMember";
-import { superviseWorker } from "./libs/supervisedWorker";
-import { verificationKey } from "./libs/verificationKey";
-import { flushDiskIO, onDiskIORespawn, onVerificationPersisted, postDiskIO } from "./workers/antiRaid/persistence";
+import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "../infra/storage/stateStore";
+import { answerCallbackQuery } from "../infra/telegram/actions";
+import { isBotAdminIn, markBotAdminObserved } from "../infra/botAdmin";
+import { registerChatTeardown } from "../infra/chatTeardown";
+import { VERIFY_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
+import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "../consts/antiRaid/protocol";
+import type { FlushResult } from "../types/lifecycle";
+import { isAdminStatus } from "../libs/chatMember";
+import { superviseWorker } from "../libs/supervisedWorker";
+import { verificationKey } from "../libs/verificationKey";
+import { flushDiskIO, onDiskIORespawn, onVerificationPersisted, postDiskIO } from "../workers/antiRaid/persistence";
 import {
   buildAdoptLockdownsMessage,
   lockdownFingerprint,
@@ -19,11 +19,11 @@ import {
   recoverAbandonedLockdowns,
   seedPersistedLockdownFingerprints,
   stopEmergencyLockdownRecoveries,
-} from "./antiRaid/lockdownMirror";
+} from "./lockdownMirror";
 import {
   acceptVerificationDelete,
   acceptVerificationUpsert,
-} from "./antiRaid/verificationMirror";
+} from "./verificationMirror";
 import {
   activeVerificationSnapshots,
   antiRaidBarrier,
@@ -34,9 +34,9 @@ import {
   persistedLockdownFingerprints,
   persistedVerificationRevisions,
   type PersistedLockdownFingerprint,
-} from "./cache/antiRaid";
-import type { AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot } from "./types/antiRaid";
-import type { LockdownRecord } from "./types/chatState";
+} from "../cache/antiRaid";
+import type { AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot } from "../types/antiRaid";
+import type { LockdownRecord } from "../types/chatState";
 
 /**
  * 入群守卫入口（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
@@ -99,7 +99,7 @@ function persistCurrentLockdown(chatId: number): void {
 }
 
 const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker } = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
-  url: new URL("./workers/antiRaidWorker.ts", import.meta.url).href,
+  url: new URL("../workers/antiRaidWorker.ts", import.meta.url).href,
   label: "Anti-raid guard Worker",
   giveUpConsequence: "join verification and anti-raid features will silently stay disabled until the process restarts.",
   onEvent: (event) => {

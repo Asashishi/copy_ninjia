@@ -19,7 +19,8 @@
 | `src/app/` | 起動・終了ライフサイクル、handler 登録、コマンドメニュー、update runner | `lifecycle.ts`、`registerHandlers.ts`、`updateRunner.ts` |
 | `src/commands/` | 明示的なコマンド処理。1 コマンド 1 ファイル | `copy.ts`、`kick.ts`、`send.ts`、`targetResolution.ts` |
 | `src/auto/` | コマンド以外の自動動作：copy、AI の文字起こしとトリガー、リアクション同期 | `message/`、`triggerPolicy.ts` |
-| `src/antiRaid/` | メインスレッド側 Anti-Raid 代理のロックダウン復旧と認証待ちミラー受信 | `lockdownMirror.ts`、`verificationMirror.ts` |
+| `src/aiChat/` | メインスレッド側 AI チャット代理：Worker 監督の入口とメモリミラー | `index.ts`、`memoryMirror.ts` |
+| `src/antiRaid/` | メインスレッド側 Anti-Raid 代理：Worker 監督の入口、ロックダウン復旧、認証待ちミラー受信 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts` |
 | `src/copy/` | copy モードの変換と、アバター・リアクション・翻訳の実行キュー | `copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、`translate.ts` |
 | `src/users/` | 送信者 identity キャッシュ、表示上の送信者判定、ユーザーラベル生成 | `senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts` |
 | `src/states/` | **I/O を行わない**認証、ロックダウン、返信受け入れの純粋な状態遷移 | `verification.ts`、`lockdown.ts` |
@@ -54,6 +55,7 @@
 - 互換エントリは古い import を段階移行するためだけに存在します。**新しいコードは必ずドメインのサブファイルから直接 import します。**
 - 互換エントリは状態を所有せず、設定を解析せず、import 時の副作用を導入しません。
 - `src/types/index.ts` も同様で、テストと段階移行のためだけに残します。
+- パッケージ内の `index.ts` は別物です。メインスレッド代理のようなモジュールでは入口そのものが実装であり（`src/aiChat/index.ts`、`src/antiRaid/index.ts`）、同じパッケージのサブモジュールと合わせて 1 つのパッケージを構成します。上記 3 条の対象外です。
 
 ## テストのミラー構造
 

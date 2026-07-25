@@ -9,7 +9,7 @@ import { isSuperAdmin } from "./superAdminToggle";
 /**
  * 处理 /switch_mood 指令：立即重抽本群 AI 的当前心情并回复结果。心情缓存
  * 在 AI Worker 线程内（cache/aiChat/mood.ts），主线程只 post 一条 switchMood
- * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat.ts 的 switchAiMood），
+ * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat/index.ts 的 switchAiMood），
  * 回复固定从这里发出，不走 AI 回复流水线。仅 SUPER_ADMIN_USER_ID 本人可用，
  * 与 /ai_chat 同一批权限：其他人尝试只会被嘲讽，指令本身不会执行。
  */

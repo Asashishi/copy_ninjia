@@ -3,7 +3,7 @@ import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "../consts/antiRaid/protocol";
 import { createFlushBarrier } from "../libs/flushBarrier";
 import type { VerificationSnapshot } from "../types/antiRaid";
 
-/** Anti-Raid 主线程侧代理（src/antiRaid.ts）的内存状态。 */
+/** Anti-Raid 主线程侧代理（src/antiRaid/index.ts）的内存状态。 */
 
 /**
  * Anti-Raid 主线程与 Worker 的 mailbox barrier。模块加载时创建，terminate

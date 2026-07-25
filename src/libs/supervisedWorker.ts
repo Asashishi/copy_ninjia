@@ -6,7 +6,7 @@ import { createRestartThrottle } from "./restartThrottle";
 import type { ForwardedLog } from "../types/diskIO";
 
 /**
- * 可自愈的业务 Worker 宿主（主线程侧），aiChat.ts 与 antiRaid.ts 共用的骨架：
+ * 可自愈的业务 Worker 宿主（主线程侧），aiChat/index.ts 与 antiRaid/index.ts 共用的骨架：
  * - 创建 Worker 并 unref（不阻止进程退出，停机时在途任务随线程丢弃）；
  * - 识别 Worker 回传的 error 日志信封（logger.ts 的转发模式），转投主线程
  *   唯一的落盘线程；其余消息交给 onEvent（业务事件回传）；

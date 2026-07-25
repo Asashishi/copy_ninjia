@@ -36,7 +36,7 @@ flowchart TD
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。
 - **Disk I/O Worker** 独占共享目录（`logs/`、`memory/`）的串行读写；`state.json` 是唯一例外，由主线程 `StateStore` 直接原子写。
 
-Anti-Raid 主线程入口由 [`src/antiRaid.ts`](../src/antiRaid.ts) 编排，lockdown 恢复与验证镜像接收分别下沉到 [`src/antiRaid/lockdownMirror.ts`](../src/antiRaid/lockdownMirror.ts) 和 [`src/antiRaid/verificationMirror.ts`](../src/antiRaid/verificationMirror.ts)。Worker 侧验证解释器则按核心状态/恢复、入站事件翻译、Telegram 副作用、提醒投递 owner 拆在 [`src/workers/antiRaid/`](../src/workers/antiRaid/) 中；这些模块共享同一个 dispatcher，不改变状态机与 revision 的单一权威入口。
+Anti-Raid 主线程入口由 [`src/antiRaid/index.ts`](../src/antiRaid/index.ts) 编排，lockdown 恢复与验证镜像接收分别下沉到 [`src/antiRaid/lockdownMirror.ts`](../src/antiRaid/lockdownMirror.ts) 和 [`src/antiRaid/verificationMirror.ts`](../src/antiRaid/verificationMirror.ts)。Worker 侧验证解释器则按核心状态/恢复、入站事件翻译、Telegram 副作用、提醒投递 owner 拆在 [`src/workers/antiRaid/`](../src/workers/antiRaid/) 中；这些模块共享同一个 dispatcher，不改变状态机与 revision 的单一权威入口。
 
 Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`src/libs/supervisedWorker.ts`](../src/libs/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`src/infra/diskIO.ts`](../src/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；重启预算耗尽再由 [`src/infra/workerSupervisor.ts`](../src/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
 

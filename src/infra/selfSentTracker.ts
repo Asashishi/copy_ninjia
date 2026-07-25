@@ -12,7 +12,7 @@ import { sentMessages } from "../cache/selfSentTracker";
  * 本模块只在各自的线程内生效（Worker 各自持有独立的模块实例，见
  * infra/telegram/ 入口注释）：Worker 里发送的消息要让主线程的自动流水线
  * 认出来，得由 Worker 经 postMessage 把 chatId/messageId 报回主线程，主线程
- * 收到后再调用这里的 markSelfSent（见 aiChat.ts 的 onEvent）。
+ * 收到后再调用这里的 markSelfSent（见 aiChat/index.ts 的 onEvent）。
  */
 
 function key(chatId: number, messageId: number): string {

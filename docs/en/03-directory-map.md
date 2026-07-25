@@ -19,7 +19,8 @@ This page answers “where does this code live, and where should new code go?”
 | `src/app/` | Startup/shutdown lifecycle, handler registration, command menu, update runner | `lifecycle.ts`, `registerHandlers.ts`, `updateRunner.ts` |
 | `src/commands/` | Explicit command handling, one command per file | `copy.ts`, `kick.ts`, `send.ts`, `targetResolution.ts` |
 | `src/auto/` | Automatic non-command behavior: copying, AI transcription and triggers, reaction synchronization | `message/`, `triggerPolicy.ts` |
-| `src/antiRaid/` | Lockdown recovery and pending-verification mirror intake for the main-thread Anti-Raid proxy | `lockdownMirror.ts`, `verificationMirror.ts` |
+| `src/aiChat/` | Main-thread AI chat proxy: Worker supervision entry point and memory mirror | `index.ts`, `memoryMirror.ts` |
+| `src/antiRaid/` | Main-thread Anti-Raid proxy: Worker supervision entry point, lockdown recovery, and pending-verification mirror intake | `index.ts`, `lockdownMirror.ts`, `verificationMirror.ts` |
 | `src/copy/` | Copy-mode transformations and execution queues for avatars, reactions, and translation | `copyModes.ts`, `avatarQueue.ts`, `reactionQueue.ts`, `translate.ts` |
 | `src/users/` | Sender-identity cache, visible-sender resolution, user-label generation | `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts` |
 | `src/states/` | **I/O-free** state transitions for verification, lockdown, and reply admission | `verification.ts`, `lockdown.ts` |
@@ -54,6 +55,7 @@ When a large file is split into submodules, the original file becomes a pure `ex
 - Compatibility entry points exist only for gradual migration of old imports. **All new code imports directly from the domain submodule.**
 - A compatibility entry point must not own state, parse configuration, or introduce import-time side effects.
 - The same applies to `src/types/index.ts`; it remains only for tests and gradual migration.
+- An in-package `index.ts` is a different thing: for modules such as the main-thread proxies, the entry point is the implementation itself (`src/aiChat/index.ts`, `src/antiRaid/index.ts`). Together with its sibling submodules it forms one package, and the three rules above do not apply to it.
 
 ## Mirrored Test Structure
 

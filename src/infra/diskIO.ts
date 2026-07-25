@@ -7,7 +7,7 @@
  * Worker 拥有权、flush/load 握手与对外投递语义收在本文件；Worker 创建、
  * 回执路由与崩溃自愈的重启节流在 infra/diskIO/host.ts。
  * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
- * aiChat.ts、commands/luckChallenge/cache.ts 与 antiRaid.ts 经 postDiskIO 投递。
+ * aiChat/index.ts、commands/luckChallenge/cache.ts 与 antiRaid/index.ts 经 postDiskIO 投递。
  *
  * 本模块自身的错误一律 console.error（由进程控制台日志兜底）——它就是落盘终点，
  * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是

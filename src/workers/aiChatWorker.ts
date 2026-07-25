@@ -21,7 +21,7 @@ import type { AiStickerCatalogEvent } from "../types/stickers/protocol";
 import { initTelegramClients } from "../infra/telegram";
 
 /**
- * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message/ → aiChat.ts 代理）
+ * AI 闲聊流水线线程（Bun Worker）。主线程（src/auto/message/ → aiChat/index.ts 代理）
  * 只做事件投递，重活分散在 aiChat/ 目录下的内聚模块里：滚动对话缓存与快照
  * 落盘/恢复（aiChat/rollingMemory.ts）、中期记忆轮换压缩（aiChat/compaction.ts）、
  * 图片/贴纸/GIF 占位与异步描述回填（aiChat/mediaIngest.ts）、对话上下文拼装

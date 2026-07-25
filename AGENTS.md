@@ -21,7 +21,7 @@
 
 ### 缓存（进程内存状态）
 
-- 长期存活的 Map/Set/队列/timer/单例引用放 `src/cache/<domain>.ts`（或 `<domain>/`），文件头注明 owner 模块，如「AI 闲聊主线程侧代理（src/aiChat.ts）的内存状态」。
+- 长期存活的 Map/Set/队列/timer/单例引用放 `src/cache/<domain>.ts`（或 `<domain>/`），文件头注明 owner 模块，如「AI 闲聊主线程侧代理（src/aiChat/index.ts）的内存状态」。
 - 可变单例用 holder 对象 `{ current: T | null }`，不用 `export let`。
 - 每个导出带 JSDoc 说明生命周期：何时填充、何时清理、Worker 崩溃重启后如何重建；容量与清理策略须满足 `docs/04-invariants.md` 的约束。
 - 泛型写在类型标注上：`const cache: Map<number, string> = new Map()`。

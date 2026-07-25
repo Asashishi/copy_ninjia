@@ -27,7 +27,7 @@ import { antiRaidCacheSweepTimer } from "../cache/antiRaid/worker";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
- * 主线程（app/registerHandlers.ts → antiRaid.ts 代理）只做事件投递。
+ * 主线程（app/registerHandlers.ts → antiRaid/index.ts 代理）只做事件投递。
  *
  * 本文件是两台状态机（src/states/verification.ts / lockdown.ts）的解释器
  * 入口：入群验证核心、事件翻译、副作用和提醒 owner 分别位于
