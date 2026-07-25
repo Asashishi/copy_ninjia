@@ -5,10 +5,14 @@ import type { SafetySetting } from "@google/genai";
 export const GEMINI_REPLY_MODEL: string = "gemini-3.5-flash-lite";
 /** 单次 Gemini 回复/摘要请求的超时上限。 */
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
-/** 回复 token 上限包含思考 token；温度偏高以保留人设发挥。 */
+/** 回复 token 上限包含思考 token。 */
 export const REPLY_MAX_TOKENS: number = 65_536;
-/** 闲聊回复生成温度。 */
-export const REPLY_TEMPERATURE: number = 1.2;
+/** 闲聊回复生成温度：略高于中性，保留人设发挥。 */
+export const REPLY_TEMPERATURE: number = 1.0;
+/** 本轮已观测到服务端搜索后，后续工具轮改用的温度：高温对事实忠实度的伤害
+ *  比提示词措辞更大，查证过的轮次压低采样随机性，让模型照搜索结果讲。
+ *  注意搜索与首次成文发生在同一次请求里，那一轮仍按 REPLY_TEMPERATURE 生成。 */
+export const GROUNDED_REPLY_TEMPERATURE: number = 0.7;
 
 /**
  * 所有 Gemini 请求统一携带的内容过滤设置；应用不按可调概率等级主动拒绝，
@@ -39,9 +43,9 @@ export const TYPING_DELAY_MAX_MS: number = 7_500;
 /** 工具对话往返硬顶，防止模型工具调用死循环。 */
 export const MAX_TOOL_ROUNDS: number = 35;
 /** 单轮回复累计允许的 Google Search 服务端调用数；达到后续轮次移除搜索工具。 */
-export const MAX_GOOGLE_SEARCH_CALLS_PER_REPLY: number = 3;
+export const MAX_GOOGLE_SEARCH_CALLS_PER_REPLY: number = 5;
 /** 所有自定义函数调用（含查询、查看、失败/拒绝调用）的整轮硬顶。 */
-export const MAX_CUSTOM_TOOL_CALLS_PER_REPLY: number = 20;
+export const MAX_CUSTOM_TOOL_CALLS_PER_REPLY: number = 25;
 /** Telegram chat action 的心跳间隔与连续失败止损阈值。 */
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 /** 连续发送 chat action 失败后的止损阈值。 */

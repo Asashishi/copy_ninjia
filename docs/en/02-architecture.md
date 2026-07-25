@@ -84,7 +84,7 @@ A message first splits by type, then converges into the AI Worker's rolling memo
 - **Text** is enqueued immediately as-is, preserving its position in the conversation timeline.
 - **Images / stickers / GIFs** are enqueued with a placeholder first, then downloaded and described by a vision model asynchronously; once parsing finishes, the same entry's text field is backfilled in place. A hit against the sticker allowlist catalog skips the asynchronous parse and writes the catalog's existing description directly.
 
-When a reply is triggered, rolling memory is assembled into the three-part Gemini input described in the previous section, and sent to Gemini together with `googleSearch` and the custom tools. The model may issue multiple tool calls within one round, each executed through main-thread proxies rather than talking to Telegram directly:
+When a reply is triggered, rolling memory is assembled into the three-part Gemini input described in the previous section, and sent to Gemini together with `googleSearch` and the custom tools. `googleSearch` runs on Google's servers; its instruction switches between three states based on this round's search progress and does not count against the action budget (see [04 Runtime Invariants](04-invariants.md)). The model may issue multiple tool calls within one round, each executed through main-thread proxies rather than talking to Telegram directly:
 
 - 💬 **Send text**—the model must call the send tool explicitly for any body text; the system only falls back to sending on its own when the whole round produced zero successful actions.
 - 👍 **Add reaction**—chosen from an allowlist of emoji, at most one success per round.

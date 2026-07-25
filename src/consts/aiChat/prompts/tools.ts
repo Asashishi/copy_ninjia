@@ -76,6 +76,8 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
 export const REPLY_ACTION_INSTRUCTION: string =
   "你的所有动作（说话 send_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +
   "add_reaction、按群友要求创作图片 generate_image）都只能通过工具完成，用法见各工具说明。先做哪个、做几样由你自己决定，" +
+  "但本轮命中系统提示「联网查证」里必须先搜索的情形时，要先调用 googleSearch 拿到结果再开始下面这些动作——" +
+  "查证不是群友看得见的动作，不计入本轮动作预算，别为了省动作跳过它。" +
   "所有需要让群友看到的文本发言都必须显式调用 send_message；即使已经发了图片、贴纸或反应，想补充文字也必须再调用 send_message，" +
   "绝不能用最终响应正文代替文本工具。" +
   "但不允许整轮保持沉默：每轮至少要落地一个群友看得见的动作——说一句话（一句简短的也行）、" +

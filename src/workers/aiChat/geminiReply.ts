@@ -3,6 +3,7 @@ import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool 
 import { PERSONA_PATH } from "../../consts/paths";
 import {
   GEMINI_REPLY_MODEL,
+  GROUNDED_REPLY_TEMPERATURE,
   HARD_MAX_ACTIONS_PER_REPLY,
   MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
   MAX_GOOGLE_SEARCH_CALLS_PER_REPLY,
@@ -18,7 +19,11 @@ import {
 } from "../../consts/aiChat/prompts/memory";
 import { ACTION_TOOL_NAMES } from "../../consts/tools";
 import { MOOD_STATE_PRECEDENCE_INSTRUCTION } from "../../consts/aiChat/prompts/mood";
-import { buildWebSearchInstruction, WEB_SEARCH_EXHAUSTED_INSTRUCTION } from "../../consts/aiChat/prompts/search";
+import {
+  buildGroundedWebSearchInstruction,
+  buildWebSearchInstruction,
+  WEB_SEARCH_EXHAUSTED_INSTRUCTION,
+} from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../ai/mood";
 import { requestGeminiResult, type GeminiRequestResult } from "../../ai/gemini";
@@ -143,9 +148,16 @@ export async function callGemini(
         allFunctionsDisabled: customToolCalls >= MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
       }
     );
-    const systemPrompt: string = `${systemPromptPrefix}\n\n## 联网查证\n${googleSearchEnabled
-      ? buildWebSearchInstruction(remainingSearchCalls)
-      : WEB_SEARCH_EXHAUSTED_INSTRUCTION}`;
+    // 联网查证说明分三态：还没搜过（讲该不该搜）、已经搜过且有余额（讲结果
+    // 怎么用、缺口怎么补搜）、额度耗尽（讲结果怎么用、查不到怎么收口）。
+    // 搜完之后继续喂「你该不该搜」的文案，等于整轮没有一句话约束模型必须照
+    // 搜索结果回答，见 consts/aiChat/prompts/search.ts。
+    const searchInstruction: string = googleSearchEnabled
+      ? googleSearchCalls > 0
+        ? buildGroundedWebSearchInstruction(remainingSearchCalls)
+        : buildWebSearchInstruction(remainingSearchCalls)
+      : WEB_SEARCH_EXHAUSTED_INSTRUCTION;
+    const systemPrompt: string = `${systemPromptPrefix}\n\n## 联网查证\n${searchInstruction}`;
     const result: GeminiRequestResult = await requestGeminiResult(
       {
         model: GEMINI_REPLY_MODEL,
@@ -156,7 +168,9 @@ export async function callGemini(
           // googleSearch 与函数工具混用时必须要求 SDK 把服务端工具调用记录
           // 接回 content；否则 Gemini API 会拒绝该组合或丢失搜索上下文。
           toolConfig: googleSearchEnabled ? { includeServerSideToolInvocations: true } : undefined,
-          temperature: REPLY_TEMPERATURE,
+          // 已经查证过的轮次压低采样随机性，让模型照搜索结果讲；搜索与首次
+          // 成文发生在同一次请求里，那一轮无法预知，仍按常规温度生成。
+          temperature: googleSearchCalls > 0 ? GROUNDED_REPLY_TEMPERATURE : REPLY_TEMPERATURE,
           maxOutputTokens: REPLY_MAX_TOKENS,
         },
       },

@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
 import { CHAT_INTERACTION_INSTRUCTION } from "../../src/consts/aiChat/prompts/memory";
 import {
+  GROUNDED_REPLY_TEMPERATURE,
   HARD_MAX_ACTIONS_PER_REPLY,
   MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
+  MAX_GOOGLE_SEARCH_CALLS_PER_REPLY,
+  REPLY_TEMPERATURE,
 } from "../../src/consts/aiChat/tools";
 import { PERSONA_PATH } from "../../src/consts/paths";
 import {
@@ -87,8 +90,10 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   expect(firstRequest.config?.tools).toEqual(registeredTools);
   expect(firstRequest.config?.toolConfig).toEqual({ includeServerSideToolInvocations: true });
   expect(String(firstRequest.config?.systemInstruction)).toContain("googleSearch 已作为本轮可调用工具真实注册");
-  expect(String(firstRequest.config?.systemInstruction)).toContain("累计最多调用 3 次");
+  expect(String(firstRequest.config?.systemInstruction)).toContain(`累计最多调用 ${MAX_GOOGLE_SEARCH_CALLS_PER_REPLY} 次`);
   expect(String(firstRequest.config?.systemInstruction)).toContain("绝不能先行动再补查");
+  expect(String(firstRequest.config?.systemInstruction)).toContain("不计入本轮动作数");
+  expect(firstRequest.config?.temperature).toBe(REPLY_TEMPERATURE);
   expect(String(firstRequest.config?.systemInstruction)).toContain("三个顺序固定的 text Part");
   expect(String(firstRequest.config?.systemInstruction)).toContain("聊天记忆只分两层仲裁");
   expect(String(firstRequest.config?.systemInstruction)).toContain(CHAT_INTERACTION_INSTRUCTION);
@@ -112,22 +117,23 @@ test("上下文互动协议由代码注入，不混入可编辑的人设文件",
   expect(readFileSync(PERSONA_PATH, "utf8")).not.toContain("## 上下文与互动规则");
 });
 
-test("累计三次服务端搜索后，后续工具轮移除 googleSearch", async () => {
+/** 一轮里连续跑满 count 次服务端搜索的响应 parts，末尾附一次 send_message
+ *  以驱动下一轮工具往返。 */
+function searchRoundParts(count: number): unknown[] {
+  const parts: unknown[] = [];
+  for (let index: number = 1; index <= count; index++) {
+    parts.push({ toolCall: { id: `search-${index}`, toolType: "GOOGLE_SEARCH_WEB" } });
+    parts.push({ toolResponse: { id: `search-${index}`, toolType: "GOOGLE_SEARCH_WEB", response: {} } });
+  }
+  parts.push({ functionCall: { id: "call-1", name: "send_message", args: { text: "搜完了" } } });
+  return parts;
+}
+
+test("搜索额度跑满后，后续工具轮移除 googleSearch", async () => {
   replies.push(
     {
       candidates: [{
-        content: {
-          role: "model",
-          parts: [
-            { toolCall: { id: "search-1", toolType: "GOOGLE_SEARCH_WEB" } },
-            { toolResponse: { id: "search-1", toolType: "GOOGLE_SEARCH_WEB", response: {} } },
-            { toolCall: { id: "search-2", toolType: "GOOGLE_SEARCH_WEB" } },
-            { toolResponse: { id: "search-2", toolType: "GOOGLE_SEARCH_WEB", response: {} } },
-            { toolCall: { id: "search-3", toolType: "GOOGLE_SEARCH_WEB" } },
-            { toolResponse: { id: "search-3", toolType: "GOOGLE_SEARCH_WEB", response: {} } },
-            { functionCall: { id: "call-1", name: "send_message", args: { text: "搜完了" } } },
-          ],
-        },
+        content: { role: "model", parts: searchRoundParts(MAX_GOOGLE_SEARCH_CALLS_PER_REPLY) },
       }],
     },
     { candidates: [{ content: { role: "model", parts: [{ text: "行动完成" }] } }] }
@@ -149,7 +155,39 @@ test("累计三次服务端搜索后，后续工具轮移除 googleSearch", asyn
   const secondRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
   expect(secondRequest.config?.tools).toEqual([{ functionDeclarations: [{ name: "send_message" }] }]);
   expect(secondRequest.config?.toolConfig).toBeUndefined();
-  expect(String(secondRequest.config?.systemInstruction)).toContain("已经达到 3 次 Google Search 上限");
+  expect(String(secondRequest.config?.systemInstruction))
+    .toContain(`已经达到 ${MAX_GOOGLE_SEARCH_CALLS_PER_REPLY} 次 Google Search 上限`);
+  // 额度耗尽也必须继续约束结果怎么用，并压低采样随机性。
+  expect(String(secondRequest.config?.systemInstruction)).toContain("一律以搜索结果为准");
+  expect(secondRequest.config?.temperature).toBe(GROUNDED_REPLY_TEMPERATURE);
+});
+
+test("搜过且仍有额度时，联网查证说明切到结果纪律并降温", async () => {
+  replies.push(
+    { candidates: [{ content: { role: "model", parts: searchRoundParts(1) } }] },
+    { candidates: [{ content: { role: "model", parts: [{ text: "行动完成" }] } }] }
+  );
+
+  const registeredTools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }];
+  const toolset: ReplyToolset = {
+    definitions: [],
+    tools: registeredTools,
+    has: (name: string): boolean => name === "send_message",
+    execute: async (): Promise<string> => JSON.stringify({ success: true }),
+    actionsUsed: (): number => 1,
+    isActive: (): boolean => true,
+  };
+
+  await expect(callGemini(-1001, promptSections("聊天上下文"), toolset)).resolves.toBe("行动完成");
+  const secondRequest = requestGeminiResponseMock.mock.calls[1]![0] as GenerateContentParameters;
+  // 搜索工具仍在，但提示词重心从「该不该搜」换成「结果怎么用 + 缺口补搜」。
+  expect(secondRequest.config?.tools).toEqual(registeredTools);
+  expect(String(secondRequest.config?.systemInstruction)).toContain("本轮你已经调用过 googleSearch");
+  expect(String(secondRequest.config?.systemInstruction)).toContain("一律以搜索结果为准");
+  expect(String(secondRequest.config?.systemInstruction)).not.toContain("【动手前的强制自查】");
+  expect(String(secondRequest.config?.systemInstruction))
+    .toContain(`当前还可调用 ${MAX_GOOGLE_SEARCH_CALLS_PER_REPLY - 1} 次`);
+  expect(secondRequest.config?.temperature).toBe(GROUNDED_REPLY_TEMPERATURE);
 });
 
 test("服务端先报 TOO_MANY_TOOL_CALLS 时，零动作轮关闭搜索后只重试一次", async () => {
