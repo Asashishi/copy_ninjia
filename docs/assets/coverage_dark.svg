@@ -10,9 +10,9 @@
   <line x1="373" y1="52" x2="373" y2="104" stroke="#30363d" stroke-width="1"/>
   <line x1="547" y1="52" x2="547" y2="104" stroke="#30363d" stroke-width="1"/>
   <line x1="720" y1="52" x2="720" y2="104" stroke="#30363d" stroke-width="1"/>
-  <text x="113" y="84" text-anchor="middle" class="val" fill="#e6edf3">907</text>
+  <text x="113" y="84" text-anchor="middle" class="val" fill="#56d364">907</text>
   <text x="113" y="106" text-anchor="middle" class="lbl" fill="#8b949e">Tests passed</text>
-  <text x="286" y="84" text-anchor="middle" class="val" fill="#e6edf3">123</text>
+  <text x="286" y="84" text-anchor="middle" class="val" fill="#58b9ec">123</text>
   <text x="286" y="106" text-anchor="middle" class="lbl" fill="#8b949e">Test files</text>
   <text x="460" y="84" text-anchor="middle" class="val" fill="#e6edf3">8,505</text>
   <text x="460" y="106" text-anchor="middle" class="lbl" fill="#8b949e">expect() calls</text>
