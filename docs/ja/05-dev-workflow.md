@@ -71,7 +71,7 @@ bun run test:coverage 2>&1 | tail -5           # テスト数、ファイル数�
 bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 ```
 
-3 言語の README にある Tests / Coverage badge と、3 言語の本文にある「このドキュメント版の実測値」を同期します。Coverage badge は常に `All files` の行カバレッジを使い、関数カバレッジは本文に記録します。確率、容量、時間など README 内の動作値は `src/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
+3 言語の README にある Tests / Coverage badge、各 README「純 AI 開発」節の「プロジェクト品質」、そして 3 言語の本文にある「このドキュメント版の実測値」を同期します。後者 2 つは同じ実測値です（README 側は badge の説明を省きます）。必ず同時に更新します。Coverage badge は常に `All files` の行カバレッジを使います。確率、容量、時間など README 内の動作値は `src/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース
 

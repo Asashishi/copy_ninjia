@@ -61,6 +61,10 @@ Every line of production code, every test case, and this README itself was writt
 
 Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI review, repeated full-repository audits, and safety exercises flow back into new constraints.
 
+### 🧪 Project Quality
+
+`bun run test:coverage`: **875 tests / 121 files / 7884 `expect()` calls**; full-source **function coverage 94.69% / line coverage 96.49%**.
+
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
 ## ✨ Features

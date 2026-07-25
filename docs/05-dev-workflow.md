@@ -71,7 +71,7 @@ bun run test:coverage 2>&1 | tail -5        # 测试数、文件数、expect() �
 bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 ```
 
-需要同步的位置：三语 README 的徽章行（Tests / Coverage），以及三语本文的「当前文档版本实测」。Coverage 徽章固定采用 `All files` 的行覆盖率，函数覆盖率保留在本文。README 中引用的行为数值（概率、容量、时长）与 `src/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
+需要同步的位置：三语 README 的徽章行（Tests / Coverage）、三语 README「纯 AI 开发」节的「项目质量」，以及三语本文的「当前文档版本实测」——后两处是同一组实测数值（README 那份不重复徽章口径说明），改一处就改另一处。Coverage 徽章固定采用 `All files` 的行覆盖率。README 中引用的行为数值（概率、容量、时长）与 `src/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布
 

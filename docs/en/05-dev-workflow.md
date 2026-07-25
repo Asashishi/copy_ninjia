@@ -71,7 +71,7 @@ bun run test:coverage 2>&1 | tail -5           # test count, file count, expect(
 bun run test:coverage 2>&1 | grep 'All files'  # function and line coverage
 ```
 
-Synchronize the Tests/Coverage badges in all three READMEs and “Measurements for This Documentation Version” in all three workflow documents. The Coverage badge always uses the `All files` line-coverage value; function coverage remains recorded here. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `src/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
+Synchronize the Tests/Coverage badges in all three READMEs, the “Project Quality” block in each README's “Pure AI Development” section, and “Measurements for This Documentation Version” in all three workflow documents. The latter two carry the same measured figures, with the README copy omitting the badge note, so update them together. The Coverage badge always uses the `All files` line-coverage value. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `src/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release
 
