@@ -56,11 +56,12 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 
 ## Commit Workflow
 
-1. Users may adjust parameters while development is in progress. Reread files before editing so uncommitted work is not overwritten.
-2. Review the complete `git diff --stat` before committing, and keep unrelated files out of the commit.
-3. Make sure `bun run check` passes.
-4. Use Conventional Commits style—`feat(ai): ...`, `fix(runtime): ...`, `docs: ...`—with an English subject line.
-5. Every commit is stored only after joint human/AI review, following the project convention described in the root README's “Pure AI Development” section.
+1. Develop on the `dev` branch and never commit straight to `master`; merge into `master` with a squash so one change set becomes one commit. See “分支与提交” in [`AGENTS.md`](../../AGENTS.md) for the branch rules, which are not repeated here.
+2. Users may adjust parameters while development is in progress. Reread files before editing so uncommitted work is not overwritten.
+3. Review the complete `git diff --stat` before committing, and keep unrelated files out of the commit.
+4. Make sure `bun run check` passes.
+5. Use Conventional Commits style—`feat(ai): ...`, `fix(runtime): ...`, `docs: ...`—with an English subject line.
+6. Every commit is stored only after joint human/AI review, following the project convention described in the root README's “Pure AI Development” section.
 
 ### Updating README Metrics
 

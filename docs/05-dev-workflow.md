@@ -56,11 +56,12 @@
 
 ## 提交流程
 
-1. 开发中用户可能随手改参——编辑前重读文件，别覆盖未提交的现场改动。
-2. 提交前 `git diff --stat` 全量过一遍，无关文件不混进本次提交。
-3. `bun run check` 全绿。
-4. 提交信息用 conventional commits 风格（`feat(ai): ...`、`fix(runtime): ...`、`docs: ...`），主题行英文。
-5. 每次提交经人机共同审查后才落库（项目惯例，见根 README「纯 AI 开发」节）。
+1. 开发在 `dev` 分支上进行，不直接提交 `master`；合并进 `master` 只用 squash，一次改动一个提交。分支约定见 [`AGENTS.md`](../AGENTS.md) 的「分支与提交」，此处不重复。
+2. 开发中用户可能随手改参——编辑前重读文件，别覆盖未提交的现场改动。
+3. 提交前 `git diff --stat` 全量过一遍，无关文件不混进本次提交。
+4. `bun run check` 全绿。
+5. 提交信息用 conventional commits 风格（`feat(ai): ...`、`fix(runtime): ...`、`docs: ...`），主题行英文。
+6. 每次提交经人机共同审查后才落库（项目惯例，见根 README「纯 AI 开发」节）。
 
 ### 同步 README 指标
 
