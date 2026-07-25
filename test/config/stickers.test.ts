@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { loadStickerConfig, parseStickerConfig } from "../../src/config/stickers";
-import { MAX_CONFIGURED_STICKER_PACKS } from "../../src/consts/aiChat/stickers";
+import { loadStickerConfig, parseStickerConfig } from "../../packages/config/stickers";
+import { MAX_CONFIGURED_STICKER_PACKS } from "../../packages/consts/aiChat/stickers";
 
 describe("sticker config", () => {
   test("严格解析合法白名单，并能加载部署文件", () => {

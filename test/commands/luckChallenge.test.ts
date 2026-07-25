@@ -21,11 +21,11 @@ const ensureLuckReceiptSecretMock = mock(async (day: string) => {
   };
 });
 
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   logApiError: logApiErrorMock,
 }));
 
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/logger", () => ({
   logger: {
     log: () => {},
     info: () => {},
@@ -34,7 +34,7 @@ mock.module("../../src/infra/logger", () => ({
   },
 }));
 
-mock.module("../../src/commands/luckChallenge/persistence", () => ({
+mock.module("../../packages/commands/luckChallenge/persistence", () => ({
   postDiskIO: postDiskIOMock,
   onDiskIORespawn: onDiskIORespawnMock,
   relayLogMessage: relayLogMessageMock,
@@ -50,17 +50,17 @@ mock.module("../../src/commands/luckChallenge/persistence", () => ({
 // 2. 对同一模块的 mock.module 二次注册不会覆盖第一次（装上摘不掉），所以
 //    不能拆成独立测试文件各自 mock，只能单文件内做开关式透传。
 let mockTodayOverride: string | null = null;
-const realTime = { ...(await import("../../src/libs/time")) };
-mock.module("../../src/libs/time", () => ({
+const realTime = { ...(await import("../../packages/libs/time")) };
+mock.module("../../packages/libs/time", () => ({
   ...realTime,
   getTokyoDateKey: (date?: Date): string =>
     (mockTodayOverride === null || date ? realTime.getTokyoDateKey(date) : mockTodayOverride),
 }));
 
-const luckChallenge = await import("../../src/commands/luckChallenge");
-const cache = await import("../../src/cache/luckChallenge");
-const { LUCK_TIERS, RATE_LIMIT_MAX_CALLS_PER_WINDOW } = await import("../../src/consts/luckChallenge");
-const { getTokyoDateKey } = await import("../../src/libs/time");
+const luckChallenge = await import("../../packages/commands/luckChallenge");
+const cache = await import("../../packages/cache/luckChallenge");
+const { LUCK_TIERS, RATE_LIMIT_MAX_CALLS_PER_WINDOW } = await import("../../packages/consts/luckChallenge");
+const { getTokyoDateKey } = await import("../../packages/libs/time");
 const TEST_SECRET = { version: 1 as const, day: getTokyoDateKey(), key: Buffer.alloc(32, 7).toString("base64url") };
 
 function makeInlineCtx(userId: number, query: string) {

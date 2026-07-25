@@ -10,18 +10,18 @@ import { join } from "node:path";
  * 那里写（会跟正在跑的 bot 进程并发读写同一批文件），整体重定向到临时目录。
  */
 const luckDir: string = mkdtempSync(join(tmpdir(), "luck-files-test-"));
-const realPaths = await import("../../../src/consts/paths");
-mock.module("../../../src/consts/paths", () => ({ ...realPaths, LUCK_MEMORY_DIR: luckDir }));
+const realPaths = await import("../../../packages/consts/paths");
+mock.module("../../../packages/consts/paths", () => ({ ...realPaths, LUCK_MEMORY_DIR: luckDir }));
 
 const {
   flushLuckAppends,
   handleLuckDrawMessage,
   hydrateLuckDay,
-} = await import("../../../src/workers/diskIO/luckFiles");
-const { recoverLuckDay } = await import("../../../src/workers/diskIO/snapshotFiles");
-const { luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache, resetLuckCache } = await import("../../../src/cache/diskIO/luck");
-const { FLUSH_MAX_ENTRIES } = await import("../../../src/consts/diskIO");
-import type { LuckDrawDiskMessage } from "../../../src/types";
+} = await import("../../../packages/workers/diskIO/luckFiles");
+const { recoverLuckDay } = await import("../../../packages/workers/diskIO/snapshotFiles");
+const { luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache, resetLuckCache } = await import("../../../packages/cache/diskIO/luck");
+const { FLUSH_MAX_ENTRIES } = await import("../../../packages/consts/diskIO");
+import type { LuckDrawDiskMessage } from "../../../packages/types";
 
 const DAY = "2026-07-16";
 

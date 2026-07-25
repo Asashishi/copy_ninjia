@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { ChatPermissions } from "@grammyjs/types";
-import { restoreLockdownInvitePermission } from "../../src/infra/telegram/lockdownPermissions";
+import { restoreLockdownInvitePermission } from "../../packages/infra/telegram/lockdownPermissions";
 
 function apiWithPermissions(currentPermissions: ChatPermissions) {
   const getChat = mock(async () => ({ permissions: { ...currentPermissions } }));

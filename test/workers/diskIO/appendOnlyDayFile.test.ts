@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendToDayFile, openDayFile, serializeDayFileEntry } from "../../../src/workers/diskIO/appendOnlyDayFile";
-import { PERSISTED_FILE_MODE } from "../../../src/consts/diskIO";
-import type { DayFileState } from "../../../src/types";
+import { appendToDayFile, openDayFile, serializeDayFileEntry } from "../../../packages/workers/diskIO/appendOnlyDayFile";
+import { PERSISTED_FILE_MODE } from "../../../packages/consts/diskIO";
+import type { DayFileState } from "../../../packages/types";
 
 let dir: string;
 

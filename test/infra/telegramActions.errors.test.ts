@@ -5,13 +5,13 @@ const logApiError = mock((..._args: unknown[]): void => {});
 const markSelfSent = mock((..._args: unknown[]): void => {});
 const copyMessageApi = mock(async (..._args: unknown[]) => ({ message_id: 91 }));
 
-mock.module("../../src/infra/telegram/client", () => ({
+mock.module("../../packages/infra/telegram/client", () => ({
   bot: { api: { copyMessage: copyMessageApi } },
   logApiError,
 }));
-mock.module("../../src/infra/selfSentTracker", () => ({ markSelfSent }));
+mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
 
-const actions = await import("../../src/infra/telegram/actions");
+const actions = await import("../../packages/infra/telegram/actions");
 
 function apiWithSuccesses(): Api {
   return {

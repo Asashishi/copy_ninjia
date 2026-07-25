@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { weatherCache } from "../../src/cache/weather";
-import { GET_TOKYO_WEATHER_TOOL } from "../../src/consts/tools";
-import { callTool, TOOL_DEFINITIONS } from "../../src/ai/tools";
+import { weatherCache } from "../../packages/cache/weather";
+import { GET_TOKYO_WEATHER_TOOL } from "../../packages/consts/tools";
+import { callTool, TOOL_DEFINITIONS } from "../../packages/ai/tools";
 
 afterEach(() => {
   weatherCache.result = null;

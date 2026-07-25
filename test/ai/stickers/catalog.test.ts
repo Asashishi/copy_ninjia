@@ -15,22 +15,22 @@ const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<any>
   candidates: [{ content: { parts: [{ text: "一包默认简介" }] } }],
 }));
 
-mock.module("../../../src/ai/stickers/sets", () => ({
+mock.module("../../../packages/ai/stickers/sets", () => ({
   getStickerSet: getStickerSetMock,
   pickStickerVisionSource: (sticker: any) => ({ fileId: `${sticker.file_id}`, fileUniqueId: sticker.file_unique_id }),
 }));
-mock.module("../../../src/ai/imageDescription", () => ({
+mock.module("../../../packages/ai/imageDescription", () => ({
   describeMedia: describeMediaMock,
   describeMediaForStickerCatalog: describeMediaForStickerCatalogMock,
 }));
 // 单次调用失败会按 STICKER_CATALOG_RETRY_DELAYS_MS 退避重试；测试里把
 // 睡眠打成即时返回，失败用例才不会真等几分钟。
-mock.module("../../../src/libs/sleep", () => ({ sleep: mock(async (_ms: number): Promise<void> => {}) }));
-const realGemini = await import("../../../src/ai/gemini");
-mock.module("../../../src/ai/gemini", () => ({ ...realGemini, requestGeminiResponse: requestGeminiResponseMock }));
+mock.module("../../../packages/libs/sleep", () => ({ sleep: mock(async (_ms: number): Promise<void> => {}) }));
+const realGemini = await import("../../../packages/ai/gemini");
+mock.module("../../../packages/ai/gemini", () => ({ ...realGemini, requestGeminiResponse: requestGeminiResponseMock }));
 
-const { generatePackCatalog, getCatalogEntry, getPackSummary, hydrateStickerCatalogs } = await import("../../../src/ai/stickers/catalog");
-const { transientDescriptionCache } = await import("../../../src/cache/imageDescription");
+const { generatePackCatalog, getCatalogEntry, getPackSummary, hydrateStickerCatalogs } = await import("../../../packages/ai/stickers/catalog");
+const { transientDescriptionCache } = await import("../../../packages/cache/imageDescription");
 
 function sticker(fileUniqueId: string, emoji: string): any {
   return { file_id: `id-${fileUniqueId}`, file_unique_id: fileUniqueId, emoji, is_animated: false, is_video: false };

@@ -6,21 +6,21 @@ import {
   pendingReplyTriggers,
   rateLimitNoticeTimes,
   sweepAiChatReplyCache,
-} from "../../../src/cache/aiChat/replies";
-import { RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../../../src/consts/aiChat";
-import { typingHeartbeats } from "../../../src/cache/aiChat/heartbeat";
-import { resetAiChatWorkerCache } from "../../../src/cache/aiChat/index";
-import { botInfoState } from "../../../src/cache/aiChat/identity";
-import { chatBuffers, chatLastActivityTimes, dirtyMemoryChats } from "../../../src/cache/aiChat/memory";
-import { chatMoodExpiresAts, chatMoods } from "../../../src/cache/aiChat/mood";
-import { compactionChains, compactionPendingCounts } from "../../../src/cache/aiChat/compaction";
-import { LinkedQueue } from "../../../src/libs/linkedQueue";
-import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../src/types";
+} from "../../../packages/cache/aiChat/replies";
+import { RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../../../packages/consts/aiChat";
+import { typingHeartbeats } from "../../../packages/cache/aiChat/heartbeat";
+import { resetAiChatWorkerCache } from "../../../packages/cache/aiChat/index";
+import { botInfoState } from "../../../packages/cache/aiChat/identity";
+import { chatBuffers, chatLastActivityTimes, dirtyMemoryChats } from "../../../packages/cache/aiChat/memory";
+import { chatMoodExpiresAts, chatMoods } from "../../../packages/cache/aiChat/mood";
+import { compactionChains, compactionPendingCounts } from "../../../packages/cache/aiChat/compaction";
+import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../packages/types";
 import {
   currentReplyGeneration,
   invalidateChatReplies,
   isReplyGenerationCurrent,
-} from "../../../src/workers/aiChat/replyState";
+} from "../../../packages/workers/aiChat/replyState";
 
 afterEach(() => {
   resetAiChatWorkerCache();

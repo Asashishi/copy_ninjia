@@ -1,11 +1,11 @@
 import { beforeEach, expect, test } from "bun:test";
-import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../src/cache/aiChat/memory";
-import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../src/consts/aiChat/prompts/memory";
-import { LinkedQueue } from "../../../src/libs/linkedQueue";
-import type { BufferedMessage, QueuedReplyTrigger } from "../../../src/types";
-import type { ReplyPromptSections } from "../../../src/types/aiChat/replies";
-import { buildReplyPromptSections } from "../../../src/workers/aiChat/promptContext";
-import { indexBufferedMessage } from "../../../src/workers/aiChat/replyChain";
+import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/aiChat/memory";
+import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../packages/consts/aiChat/prompts/memory";
+import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
+import type { ReplyPromptSections } from "../../../packages/types/aiChat/replies";
+import { buildReplyPromptSections } from "../../../packages/workers/aiChat/promptContext";
+import { indexBufferedMessage } from "../../../packages/workers/aiChat/replyChain";
 
 beforeEach(resetAiChatMemoryCache);
 

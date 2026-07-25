@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CachedUser } from "../../src/types/chatState";
+import type { CachedUser } from "../../packages/types/chatState";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const banChatMember = mock(async (..._args: unknown[]): Promise<boolean> => true);
@@ -11,19 +11,19 @@ let target: CachedUser | undefined;
 const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => target);
 const chatStates = new Map<number, { botIsAdmin?: boolean }>();
 
-mock.module("../../src/infra/config", () => ({ PRIVILEGED_USERS_ID: [100] }));
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [100] }));
+mock.module("../../packages/infra/telegram", () => ({
   sendMessage,
   banChatMember,
   banChatSenderChat,
   isChatMember,
   deleteMessageAfter,
 }));
-mock.module("../../src/infra/botAdmin", () => ({ isBotAdminIn }));
-mock.module("../../src/infra/storage/stateStore", () => ({ getAllChatStates: () => chatStates }));
-mock.module("../../src/commands/targetResolution", () => ({ resolveCommandTarget }));
+mock.module("../../packages/infra/botAdmin", () => ({ isBotAdminIn }));
+mock.module("../../packages/infra/storage/stateStore", () => ({ getAllChatStates: () => chatStates }));
+mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 
-const { handleKickCommand } = await import("../../src/commands/kick");
+const { handleKickCommand } = await import("../../packages/commands/kick");
 
 function context(userId: number | undefined = 100): never {
   return {

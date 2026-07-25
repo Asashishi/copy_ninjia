@@ -5,7 +5,7 @@ import {
   extractFunctionCalls,
   extractOutputText,
   isTruncatedByTokenLimit,
-} from "../../../src/ai/utils/geminiResponse";
+} from "../../../packages/ai/utils/geminiResponse";
 
 /** 按 generateContent 响应形状裁剪的夹具（思考段/正文段/functionCall 混排）。 */
 const RESPONSE_FIXTURE = {

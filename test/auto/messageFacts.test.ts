@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Animation, Message, PhotoSize } from "@grammyjs/types";
-import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../src/consts/aiChat";
+import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../packages/consts/aiChat";
 import {
   hasCopyableContent,
   isBotMentioned,
@@ -11,7 +11,7 @@ import {
   resolveForwardOrigin,
   resolveReplyReference,
   resolveSpeaker,
-} from "../../src/auto/message/facts";
+} from "../../packages/auto/message/facts";
 
 const chat = { id: -100800, type: "supergroup", title: "Test Group" } as const;
 const alice = { id: 123, is_bot: false, first_name: "Alice", last_name: "Tester", username: "alice_dev" } as const;

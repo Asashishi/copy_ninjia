@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AiChatWorkerMessage } from "../../../src/types/aiChat/protocol";
+import type { AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
@@ -34,29 +34,29 @@ const invalidateChatReplies = mock((_chatId: number): void => { calls.push("inva
 const initTelegramClients = mock((): void => { calls.push("telegram"); });
 const switchMood = mock((_chatId: number) => ({ name: "开心", weight: 1, instruction: "" }));
 
-mock.module("../../../src/ai/stickers/catalog", () => ({
+mock.module("../../../packages/ai/stickers/catalog", () => ({
   ensureStickerCatalogs,
   flushDirtyStickerCatalogs,
   hydrateStickerCatalogs,
 }));
-mock.module("../../../src/config/stickers", () => ({ getStickerConfig }));
-mock.module("../../../src/ai/weather", () => ({ startWeatherRefreshLoop, stopWeatherRefreshLoop }));
-mock.module("../../../src/cache/aiChat/replies", () => ({ sweepAiChatReplyCache }));
-mock.module("../../../src/cache/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
-mock.module("../../../src/workers/aiChat/rollingMemory", () => ({
+mock.module("../../../packages/config/stickers", () => ({ getStickerConfig }));
+mock.module("../../../packages/ai/weather", () => ({ startWeatherRefreshLoop, stopWeatherRefreshLoop }));
+mock.module("../../../packages/cache/aiChat/replies", () => ({ sweepAiChatReplyCache }));
+mock.module("../../../packages/cache/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
+mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
   flushDirtyMemories,
   flushMemorySnapshot,
   hydrateMemories,
   purgeChatMemory,
   recordChatMessage,
 }));
-mock.module("../../../src/workers/aiChat/mediaIngest", () => ({ recordChatMedia }));
-mock.module("../../../src/workers/aiChat/replyPipeline", () => ({ generateAndSendReply, invalidateChatReplies }));
-mock.module("../../../src/infra/telegram", () => ({ initTelegramClients }));
-mock.module("../../../src/ai/mood", () => ({ switchMood }));
+mock.module("../../../packages/workers/aiChat/mediaIngest", () => ({ recordChatMedia }));
+mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({ generateAndSendReply, invalidateChatReplies }));
+mock.module("../../../packages/infra/telegram", () => ({ initTelegramClients }));
+mock.module("../../../packages/ai/mood", () => ({ switchMood }));
 
-const worker = await import("../../../src/workers/aiChatWorker");
-const { botInfoState } = await import("../../../src/cache/aiChat/identity");
+const worker = await import("../../../packages/workers/aiChatWorker");
+const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
 
 beforeEach(() => {
   worker.stopAiChatWorker();

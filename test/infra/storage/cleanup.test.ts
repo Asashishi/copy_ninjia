@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanupOrphanedTempFiles } from "../../../src/infra/storage/cleanup";
-import { readLinuxProcessIdentity, type ProcessIdentity } from "../../../src/infra/storage/instanceLock";
+import { cleanupOrphanedTempFiles } from "../../../packages/infra/storage/cleanup";
+import { readLinuxProcessIdentity, type ProcessIdentity } from "../../../packages/infra/storage/instanceLock";
 
 describe("storage startup cleanup", () => {
   test("只删除 state/lock 原子写临时文件，目录扫描与删除均可注入", async () => {

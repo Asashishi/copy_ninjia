@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AiChatWorkerEvent, AiChatWorkerMessage } from "../../../src/types/aiChat/protocol";
+import type { AiChatWorkerEvent, AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryDeleteDiskMessage,
   AiMemoryDiskMessage,
   AiMemoryPersistedReply,
   StickerCatalogDiskMessage,
-} from "../../../src/types/diskIO";
+} from "../../../packages/types/diskIO";
 
 type AiDiskMessage = AiMemoryDiskMessage | AiMemoryDeleteDiskMessage | StickerCatalogDiskMessage;
 
@@ -25,8 +25,8 @@ let diskDeletePersisted: ((reply: AiMemoryDeletedPersistedReply) => void) | unde
 let diskMemoryPersisted: ((reply: AiMemoryPersistedReply) => void) | undefined;
 const aiEnabledChats = new Set<number>();
 
-mock.module("../../../src/infra/selfSentTracker", () => ({ markSelfSent }));
-mock.module("../../../src/libs/supervisedWorker", () => ({
+mock.module("../../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
+mock.module("../../../packages/libs/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
     supervisorOptions = options;
     return {
@@ -39,7 +39,7 @@ mock.module("../../../src/libs/supervisedWorker", () => ({
     };
   },
 }));
-mock.module("../../../src/ai/persistence", () => ({
+mock.module("../../../packages/ai/persistence", () => ({
   postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
   onAiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
     diskDeletePersisted = callback;
@@ -49,11 +49,11 @@ mock.module("../../../src/ai/persistence", () => ({
   },
   onDiskIORespawn: (callback: () => void): void => { diskRespawn = callback; },
 }));
-mock.module("../../../src/infra/storage/stateStore", () => ({
+mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
 }));
 
-const aiChat = await import("../../../src/aiChat");
+const aiChat = await import("../../../packages/aiChat");
 const {
   lastInitState,
   latestAiMemories,
@@ -67,7 +67,7 @@ const {
   latestAiMemoryRevisions,
   pendingAiMemoryDeletes,
   postPurgeAiMemoryPersistRevisions,
-} = await import("../../../src/cache/aiChat");
+} = await import("../../../packages/cache/aiChat");
 
 beforeEach(() => {
   workerPosts.length = 0;

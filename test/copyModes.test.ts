@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const translateToJapanese = mock(async (text: string): Promise<string> => `日语:${text}`);
-mock.module("../src/copy/translate", () => ({ translateToJapanese }));
+mock.module("../packages/copy/translate", () => ({ translateToJapanese }));
 
-const { applyCopyModeTransform, describeCopyModeEffect } = await import("../src/copy/copyModes");
+const { applyCopyModeTransform, describeCopyModeEffect } = await import("../packages/copy/copyModes");
 
 beforeEach(() => {
   translateToJapanese.mockClear();

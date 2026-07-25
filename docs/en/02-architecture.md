@@ -36,22 +36,22 @@ The organizing principle is **exclusive state ownership**: every piece of runtim
 - The **Anti-Raid Worker** exclusively owns the verification/lockdown state machines and their timers. The main thread keeps only recoverable mirrors.
 - The **Disk I/O Worker** exclusively serializes reads and writes to shared directories such as `logs/` and `memory/`. `state.json` is the sole exception and is written atomically by the main-thread `StateStore`.
 
-The main-thread Anti-Raid entry point remains [`src/antiRaid/index.ts`](../../src/antiRaid/index.ts), while lockdown recovery and verification-mirror intake live in [`src/antiRaid/lockdownMirror.ts`](../../src/antiRaid/lockdownMirror.ts) and [`src/antiRaid/verificationMirror.ts`](../../src/antiRaid/verificationMirror.ts). Inside the Worker, the verification interpreter is split under [`src/workers/antiRaid/`](../../src/workers/antiRaid/) into core state/recovery, inbound event translation, Telegram effects, and the reminder-delivery owner. Those modules share one dispatcher, preserving a single authoritative state-machine and revision entry point.
+The main-thread Anti-Raid entry point remains [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts), while lockdown recovery and verification-mirror intake live in [`packages/antiRaid/lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) and [`packages/antiRaid/verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts). Inside the Worker, the verification interpreter is split under [`packages/workers/antiRaid/`](../../packages/workers/antiRaid/) into core state/recovery, inbound event translation, Telegram effects, and the reminder-delivery owner. Those modules share one dispatcher, preserving a single authoritative state-machine and revision entry point.
 
-Worker crashes are rate-limited and self-healing, but the hosts have two implementations. AI and Anti-Raid share [`src/libs/supervisedWorker.ts`](../../src/libs/supervisedWorker.ts). Because Disk I/O cannot depend on the disk-backed logger, [`src/infra/diskIO.ts`](../../src/infra/diskIO.ts) contains its own console-only recovery logic. After reconstruction, main-thread mirrors or disk snapshots are replayed. If the restart budget is exhausted, fatal boundaries such as [`src/infra/workerSupervisor.ts`](../../src/infra/workerSupervisor.ts) notify the application lifecycle to shut down.
+Worker crashes are rate-limited and self-healing, but the hosts have two implementations. AI and Anti-Raid share [`packages/libs/supervisedWorker.ts`](../../packages/libs/supervisedWorker.ts). Because Disk I/O cannot depend on the disk-backed logger, [`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) contains its own console-only recovery logic. After reconstruction, main-thread mirrors or disk snapshots are replayed. If the restart budget is exhausted, fatal boundaries such as [`packages/infra/workerSupervisor.ts`](../../packages/infra/workerSupervisor.ts) notify the application lifecycle to shut down.
 
 ## The Journey of a Message
 
-[`src/app/registerHandlers.ts`](../../src/app/registerHandlers.ts) installs the update chain explicitly in one place; middleware order is part of the semantics:
+[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) installs the update chain explicitly in one place; middleware order is part of the semantics:
 
 1. **`update_id` tracking**—records the highest update ID that has entered processing so shutdown can acknowledge the correct Telegram offset.
 2. **Signed fortune-receipt confirmation**—runs before every gateway and also accepts forwarded copies.
-3. **Init gateway**—ordinary business updates from groups without `/init enable` stop here. Explicit exceptions such as `my_chat_member`, the bot's own `via_bot` messages, and the super administrator's `/init` are allowed by [`src/infra/updateGate.ts`](../../src/infra/updateGate.ts).
+3. **Init gateway**—ordinary business updates from groups without `/init enable` stop here. Explicit exceptions such as `my_chat_member`, the bot's own `via_bot` messages, and the super administrator's `/init` are allowed by [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts).
 4. **Per-chat serialization**—`sequentialize` preserves message order within a chat. Reaction synchronization uses a separate coalescing queue and does not occupy the chat lane.
 5. **Private-chat gateway**—private chats allow only the `/send` entry point and active relay sessions. Relay messages short-circuit into the message pipeline so their text is not interpreted as commands.
 6. **Join verification**—must run before command handlers, or commands sent by pending users would not be tracked for cleanup.
 7. **Command registration**—13 `bot.command(...)` registrations; see [06 Common Modification Recipes](06-modification-guide.md#adding-a-slash-command).
-8. **Automatic-message pipeline**—[`src/auto/`](../../src/auto) handles copying, AI transcription and trigger decisions, reaction synchronization, and other non-command behavior.
+8. **Automatic-message pipeline**—[`packages/auto/`](../../packages/auto) handles copying, AI transcription and trigger decisions, reaction synchronization, and other non-command behavior.
 
 After an AI trigger, the main thread evaluates the activity-based probability or direct trigger, dispatches to the AI Worker, and the Worker assembles the three-part Gemini input: reference memory, current conversation, and the reply task. Gemini then performs multi-turn tool calls—messages, stickers, reactions, and image generation, all executed through main-thread proxies—before the result is written back to rolling memory and periodically snapshotted.
 
@@ -95,7 +95,7 @@ Text, sticker, reaction, and image results produced this round are written back 
 
 ## Startup Order
 
-The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycle` from [`src/app/lifecycle.ts`](../../src/app/lifecycle.ts). Importing production modules does not start Workers, timers, network requests, or shared-directory writes; all runtime initialization is explicit:
+The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycle` from [`packages/app/lifecycle.ts`](../../packages/app/lifecycle.ts). Importing production modules does not start Workers, timers, network requests, or shared-directory writes; all runtime initialization is explicit:
 
 1. Recursively create and **preflight the data root**: write, file fsync, same-directory hard link, atomic rename, and directory fsync. Any failure aborts startup with the actual path.
 2. Acquire the **`bot.lock`** single-instance lock. See [07 Operations and Troubleshooting](07-operations.md#botlock-refuses-startup) for its format and cleanup rules.

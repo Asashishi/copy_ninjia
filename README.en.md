@@ -229,7 +229,7 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
 | Topic | Description & Contents | Direct Link |
 | :--- | :--- | :---: |
 | 🏗️ **Architecture** | Main thread + 3 Workers topology, message journey, startup & shutdown order | [📖 02 Architecture](docs/en/02-architecture.md) |
-| 🗺️ **Directory Map** | Responsibilities of the `src/` subdomains and the code-placement decision tree | [📖 03 Directory Map](docs/en/03-directory-map.md) |
+| 🗺️ **Directory Map** | Responsibilities of the `packages/` subdomains and the code-placement decision tree | [📖 03 Directory Map](docs/en/03-directory-map.md) |
 | ⚡ **Invariants** | Cross-module state isolation, concurrency limits, atomic storage contracts | [📖 04 Invariants](docs/en/04-invariants.md) |
 | 🧪 **Development** | `bun run check` quality gates, test isolation & fault injection suite | [📖 05 Workflow](docs/en/05-dev-workflow.md) |
 | 🛠️ **Recipes** | Guides for commands, parameter tuning, AI tools & schema migration | [📖 06 Recipes](docs/en/06-modification-guide.md) |

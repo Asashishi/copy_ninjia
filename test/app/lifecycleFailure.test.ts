@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { EMERGENCY_FLUSH_TIMEOUTS, EMERGENCY_REUSED_DISPOSE_DEADLINE_MS } from "../../src/consts/lifecycle";
-import type { ApplicationLifecycleDependencies } from "../../src/types/lifecycle";
+import { EMERGENCY_FLUSH_TIMEOUTS, EMERGENCY_REUSED_DISPOSE_DEADLINE_MS } from "../../packages/consts/lifecycle";
+import type { ApplicationLifecycleDependencies } from "../../packages/types/lifecycle";
 
 const calls: string[] = [];
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
@@ -145,11 +145,11 @@ const testDependencies = {
   terminateDiskIO,
 } as unknown as ApplicationLifecycleDependencies;
 
-const { ApplicationLifecycle } = await import("../../src/app/lifecycle");
+const { ApplicationLifecycle } = await import("../../packages/app/lifecycle");
 // 异常退出路径必须用真实 drain：忽略 timeoutMs 的替身会把参数校验整个跳过，
 // 紧急预算（maintenanceMs = 0）下的真实行为就永远测不到。
-const { drainAvatarUpdates: realDrainAvatarUpdates } = await import("../../src/copy/avatarQueue");
-const { drainReactionQueue: realDrainReactionQueue } = await import("../../src/copy/reactionQueue");
+const { drainAvatarUpdates: realDrainAvatarUpdates } = await import("../../packages/copy/avatarQueue");
+const { drainReactionQueue: realDrainReactionQueue } = await import("../../packages/copy/reactionQueue");
 const realDrainDependencies = {
   ...testDependencies,
   drainAvatarUpdates: realDrainAvatarUpdates,

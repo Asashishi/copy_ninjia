@@ -4,8 +4,8 @@ const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 
-mock.module("../../src/infra/telegram", () => ({ sendMessage }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
   getOrCreateChatState(chatId: number): Record<string, unknown> {
     let state = states.get(chatId);
@@ -26,7 +26,7 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   saveStateInBackground,
 }));
 
-const { handleQuietCommand, handleUnquietCommand } = await import("../../src/commands/quiet");
+const { handleQuietCommand, handleUnquietCommand } = await import("../../packages/commands/quiet");
 const originalDateNow: () => number = Date.now;
 
 function context(argument: string): never {

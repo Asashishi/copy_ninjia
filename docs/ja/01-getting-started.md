@@ -31,7 +31,7 @@ cp .env.example .env
 
 ## `.env` の設定
 
-プロジェクトが読む環境変数は次の 5 つだけで、未記載のスイッチはありません。資格情報と権限に関する 4 項目は [`src/infra/config.ts`](../../src/infra/config.ts) が解析します。`COPY_NINJIA_DATA_ROOT` は実行時パス定数が確定する前に反映する必要があるため、[`src/consts/paths.ts`](../../src/consts/paths.ts) が先に読み取ります。
+プロジェクトが読む環境変数は次の 5 つだけで、未記載のスイッチはありません。資格情報と権限に関する 4 項目は [`packages/infra/config.ts`](../../packages/infra/config.ts) が解析します。`COPY_NINJIA_DATA_ROOT` は実行時パス定数が確定する前に反映する必要があるため、[`packages/consts/paths.ts`](../../packages/consts/paths.ts) が先に読み取ります。
 
 | 変数 | 必須 | 説明 |
 | :--- | :---: | :--- |
@@ -48,9 +48,9 @@ cp .env.example .env
 | ファイル | 内容 | 検証 |
 | :--- | :--- | :--- |
 | [`prompt/persona.md`](../../prompt/persona.md) | AI チャットの基本ペルソナ | プレーンテキスト、schema なし |
-| [`config/stickers.json`](../../config/stickers.json) | AI が使えるスタンプパック、最大 5 個 | [`src/config/stickers.ts`](../../src/config/stickers.ts) |
-| [`config/reactions.json`](../../config/reactions.json) | AI が使える絵文字リアクション | [`src/config/reactions.ts`](../../src/config/reactions.ts) |
-| [`config/mood.json`](../../config/mood.json) | ムードの文面、重み、天気・時間帯の倍率 | [`src/config/mood.ts`](../../src/config/mood.ts)。重みは正の整数で、合計がちょうど 100 でなければなりません |
+| [`config/stickers.json`](../../config/stickers.json) | AI が使えるスタンプパック、最大 5 個 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
+| [`config/reactions.json`](../../config/reactions.json) | AI が使える絵文字リアクション | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
+| [`config/mood.json`](../../config/mood.json) | ムードの文面、重み、天気・時間帯の倍率 | [`packages/config/mood.ts`](../../packages/config/mood.ts)。重みは正の整数で、合計がちょうど 100 でなければなりません |
 
 3 つの JSON はすべて厳密な schema 検証を受け、起動時のネットワーク接続より前に事前読み込みされます。設定が不正なら該当フィールドを示して起動を拒否し、不完全な状態では実行しません。
 

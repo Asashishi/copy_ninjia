@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { ChatState } from "../../src/types";
-import { normalizeChatState, normalizeChatStateEntry } from "../../src/libs/chatState";
+import type { ChatState } from "../../packages/types";
+import { normalizeChatState, normalizeChatStateEntry } from "../../packages/libs/chatState";
 
 describe("chat state normalization", () => {
   test("删除缺省等价字段和过期静默，同时保留有意义的 false", () => {

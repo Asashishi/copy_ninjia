@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { ReplyToolContext } from "../../src/types/aiChat/replies";
-import type { TelegramSendResult } from "../../src/types/telegram";
+import type { ReplyToolContext } from "../../packages/types/aiChat/replies";
+import type { TelegramSendResult } from "../../packages/types/telegram";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
 const generateChatImage = mock(async (..._args: unknown[]): Promise<{
@@ -21,20 +21,20 @@ const sendPhotoWithResult = mock(async (..._args: unknown[]): Promise<TelegramSe
   messageId: 77,
   repliedToMessageId: 42,
 }));
-const realImageGeneration = await import("../../src/ai/imageGeneration");
-const realTelegram = await import("../../src/infra/telegram");
+const realImageGeneration = await import("../../packages/ai/imageGeneration");
+const realTelegram = await import("../../packages/infra/telegram");
 
-mock.module("../../src/ai/imageGeneration", () => ({
+mock.module("../../packages/ai/imageGeneration", () => ({
   ...realImageGeneration,
   generateChatImage,
   normalizeImageAspectRatio,
 }));
-mock.module("../../src/infra/telegram", () => ({ ...realTelegram, sendPhotoWithResult }));
-mock.module("../../src/ai/telegramImage", () => ({ downloadTelegramVisionImage }));
-mock.module("../../src/ai/mediaTaskRunner", () => ({ runMediaTask }));
+mock.module("../../packages/infra/telegram", () => ({ ...realTelegram, sendPhotoWithResult }));
+mock.module("../../packages/ai/telegramImage", () => ({ downloadTelegramVisionImage }));
+mock.module("../../packages/ai/mediaTaskRunner", () => ({ runMediaTask }));
 
-const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../src/ai/tools/replyToolset/imageGeneration");
-const { claimImageGeneration, resetImageGenerationCache } = await import("../../src/cache/aiChat/imageGeneration");
+const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../packages/ai/tools/replyToolset/imageGeneration");
+const { claimImageGeneration, resetImageGenerationCache } = await import("../../packages/cache/aiChat/imageGeneration");
 
 function buildContext(
   chatId: number = -1001,

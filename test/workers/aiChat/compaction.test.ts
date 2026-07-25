@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { GenerateContentResponse } from "@google/genai";
-import type { BufferedMessage } from "../../../src/types/aiChat/memory";
+import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 
 const responses: (GenerateContentResponse | null)[] = [];
 const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<GenerateContentResponse | null> =>
@@ -9,9 +9,9 @@ const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<Generate
 const sleep = mock(async (..._args: unknown[]): Promise<void> => {});
 const logError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../src/ai/gemini", () => ({ requestGeminiResponse }));
-mock.module("../../../src/libs/sleep", () => ({ sleep }));
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/ai/gemini", () => ({ requestGeminiResponse }));
+mock.module("../../../packages/libs/sleep", () => ({ sleep }));
+mock.module("../../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
@@ -19,18 +19,18 @@ mock.module("../../../src/infra/logger", () => ({
     error: logError,
   },
 }));
-mock.module("../../../src/workers/aiChat/timeSentence", () => ({
+mock.module("../../../packages/workers/aiChat/timeSentence", () => ({
   currentTimeSentence: (): string => "当前实际时间：测试。",
 }));
 
-const { scheduleRotation } = await import("../../../src/workers/aiChat/compaction");
-const { botInfoState } = await import("../../../src/cache/aiChat/identity");
-const { compactionChains, compactionPendingCounts } = await import("../../../src/cache/aiChat/compaction");
-const { chatSummaries, dirtyMemoryChats, pendingSummaries } = await import("../../../src/cache/aiChat/memory");
-const { invalidateChatReplyCache, resetAiChatReplyCache } = await import("../../../src/cache/aiChat/replies");
-const { resetAiChatCompactionCache } = await import("../../../src/cache/aiChat/compaction");
-const { resetAiChatMemoryCache } = await import("../../../src/cache/aiChat/memory");
-const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../src/consts/aiChat/memory");
+const { scheduleRotation } = await import("../../../packages/workers/aiChat/compaction");
+const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
+const { compactionChains, compactionPendingCounts } = await import("../../../packages/cache/aiChat/compaction");
+const { chatSummaries, dirtyMemoryChats, pendingSummaries } = await import("../../../packages/cache/aiChat/memory");
+const { invalidateChatReplyCache, resetAiChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
+const { resetAiChatCompactionCache } = await import("../../../packages/cache/aiChat/compaction");
+const { resetAiChatMemoryCache } = await import("../../../packages/cache/aiChat/memory");
+const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../packages/consts/aiChat/memory");
 
 const batch: BufferedMessage[] = [{
   messageId: 7,

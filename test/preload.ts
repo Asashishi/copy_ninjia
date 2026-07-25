@@ -2,7 +2,7 @@ import { afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RUNTIME_DATA_ROOT_ENV } from "../src/consts/environment";
+import { RUNTIME_DATA_ROOT_ENV } from "../packages/consts/environment";
 
 const previousDataRoot: string | undefined = process.env[RUNTIME_DATA_ROOT_ENV];
 const testDataRoot: string = mkdtempSync(join(tmpdir(), "copy-ninjia-test-data-"));

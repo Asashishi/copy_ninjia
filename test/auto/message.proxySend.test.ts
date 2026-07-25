@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const copyMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 42);
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   copyMessage: copyMessageMock,
   sendMessage: sendMessageMock,
   bot: { api: {} },
@@ -12,7 +12,7 @@ mock.module("../../src/infra/telegram", () => ({
 
 const targetChatId = -1001234567890;
 let chatState: { isJATranslationEnabled?: boolean } = {};
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: () => true,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => targetChatId,
@@ -21,14 +21,14 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   persistAuthoritativeState: async (): Promise<void> => {},
   saveStateInBackground: () => {},
 }));
-mock.module("../../src/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
-mock.module("../../src/users/senderIdentity", () => ({ cacheSender: (message: any) => message.from?.id }));
-mock.module("../../src/aiChat", () => ({ recordChatMessage: () => {}, recordChatMedia: () => {}, generateAndSendReply: () => {} }));
-mock.module("../../src/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
+mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
+mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.from?.id }));
+mock.module("../../packages/aiChat", () => ({ recordChatMessage: () => {}, recordChatMedia: () => {}, generateAndSendReply: () => {} }));
+mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
 
-const { handleIncomingMessage } = await import("../../src/auto/message");
-const { resolveEffectiveCopyMode } = await import("../../src/auto/message/echo");
-const { SUPER_ADMIN_USER_ID } = await import("../../src/infra/config");
+const { handleIncomingMessage } = await import("../../packages/auto/message");
+const { resolveEffectiveCopyMode } = await import("../../packages/auto/message/echo");
+const { SUPER_ADMIN_USER_ID } = await import("../../packages/infra/config");
 
 function privateMessageCtx(userId: number): any {
   return {

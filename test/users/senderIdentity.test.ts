@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Message } from "@grammyjs/types";
-import { senderUsernameCache, userCache } from "../../src/cache/senderIdentity";
-import { USER_CACHE_MAX } from "../../src/consts/senderIdentity";
+import { senderUsernameCache, userCache } from "../../packages/cache/senderIdentity";
+import { USER_CACHE_MAX } from "../../packages/consts/senderIdentity";
 import {
   cacheSender,
   resolveReplyTarget,
   resolveUsernameTarget,
   seedSenderCache,
-} from "../../src/users/senderIdentity";
+} from "../../packages/users/senderIdentity";
 
 const chat = { id: -1001, type: "supergroup", title: "Test Group" } as const;
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createStickerSendLock } from "../../../src/ai/stickers/sendLock";
+import { createStickerSendLock } from "../../../packages/ai/stickers/sendLock";
 
 /**
  * ai/stickers/sendLock.ts 的纯逻辑单测：锁的抢占/重入/互斥/释放语义。与

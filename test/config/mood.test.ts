@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { loadMoodConfig, parseMoodConfig } from "../../src/config/mood";
+import { loadMoodConfig, parseMoodConfig } from "../../packages/config/mood";
 
 describe("mood config", () => {
   test("严格解析心情档位，并能加载全部部署配置", () => {

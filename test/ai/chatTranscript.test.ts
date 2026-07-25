@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatBufferedMessageLine, formatReplyChain } from "../../src/ai/utils/chatTranscript";
-import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from "../../src/consts/aiChat";
-import { CHAT_MEMORY_PRIORITY_INSTRUCTION, SUMMARY_SYSTEM_PROMPT } from "../../src/consts/aiChat/prompts/memory";
-import { FORWARD_TAG_HINT, REPLY_CHAIN_SNAPSHOT_TAG, REPLY_TAG_HINT } from "../../src/consts/aiChat/prompts/transcript";
-import type { BufferedMessage } from "../../src/types";
+import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatBufferedMessageLine, formatReplyChain } from "../../packages/ai/utils/chatTranscript";
+import { COMPACT_BATCH_SIZE, REPLY_CHAIN_NODE_MAX_CHARS } from "../../packages/consts/aiChat";
+import { CHAT_MEMORY_PRIORITY_INSTRUCTION, SUMMARY_SYSTEM_PROMPT } from "../../packages/consts/aiChat/prompts/memory";
+import { FORWARD_TAG_HINT, REPLY_CHAIN_SNAPSHOT_TAG, REPLY_TAG_HINT } from "../../packages/consts/aiChat/prompts/transcript";
+import type { BufferedMessage } from "../../packages/types";
 
 const message: BufferedMessage = {
   messageId: 42,

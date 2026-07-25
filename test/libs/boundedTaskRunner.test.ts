@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createBoundedTaskRunner } from "../../src/libs/boundedTaskRunner";
+import { createBoundedTaskRunner } from "../../packages/libs/boundedTaskRunner";
 import { deferred } from "./helpers";
 
 describe("createBoundedTaskRunner", () => {

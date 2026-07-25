@@ -46,7 +46,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Startup sequence and Flush Barrier graceful shutdown
 
 3. **[03 Directory Map and Code Placement](03-directory-map.md)**
-   - Responsibility boundaries across the subdomains under `src/`
+   - Responsibility boundaries across the subdomains under `packages/`
    - Decision tree for code placement: consts, types, caches, states, and workers
    - Backward-compatibility entry point conventions
 
@@ -78,7 +78,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 
 - **Trilingual Sync**: Chinese docs live in `docs/`, English in `docs/en/`, Japanese in `docs/ja/`. Update all 3 languages when architecture or figures change.
 - **Single Source of Truth**: Cross-module invariants are maintained solely in [04 Invariants](04-invariants.md). Other pages link to it without duplication.
-- **Constant References**: The source of truth for numeric values is `src/consts/`. Reference constant names and paths instead of hardcoding numbers.
+- **Constant References**: The source of truth for numeric values is `packages/consts/`. Reference constant names and paths instead of hardcoding numbers.
 
 ---
 

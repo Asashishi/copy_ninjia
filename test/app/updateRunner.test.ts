@@ -2,8 +2,8 @@ import { describe, expect, spyOn, test } from "bun:test";
 import type { Update } from "@grammyjs/types";
 import { BotError } from "grammy";
 import type { Bot, Context } from "grammy";
-import { runAcknowledgedUpdateBatches } from "../../src/app/updateRunner";
-import { logger } from "../../src/infra/logger";
+import { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
+import { logger } from "../../packages/infra/logger";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: (() => void) | undefined;

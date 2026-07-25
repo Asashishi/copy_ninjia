@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   LUCK_RECEIPT_DISPLAY_PREFIX,
   LUCK_RECEIPT_MAX_LENGTH,
-} from "../../src/consts/luckReceipt";
+} from "../../packages/consts/luckReceipt";
 import {
   createLuckReceipt,
   deriveLuckEntropy,
@@ -12,8 +12,8 @@ import {
   stripLuckReceipt,
   luckReceiptHashFromLine,
   verifyLuckReceipt,
-} from "../../src/libs/luckReceipt";
-import type { LuckReceiptSecret } from "../../src/types";
+} from "../../packages/libs/luckReceipt";
+import type { LuckReceiptSecret } from "../../packages/types";
 
 const DAY = "2026-07-19";
 const SECRET: LuckReceiptSecret = { version: 1, day: DAY, key: Buffer.alloc(32, 7).toString("base64url") };

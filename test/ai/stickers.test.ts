@@ -1,16 +1,16 @@
 import { describe, expect, mock, test } from "bun:test";
-import { parseIndexField } from "../../src/ai/utils/toolArgs";
+import { parseIndexField } from "../../packages/ai/utils/toolArgs";
 
 /**
  * infra/telegram 的 sendSticker 替换为测试可控的假实现——本文件
  * 不关心真实 Telegram API 调用是否成功（那部分已用真实 API 手动验证过），
  * 只关心 stickers.ts 自己的解析/组装/两层选择与每轮限额逻辑。
  */
-const realTelegram = await import("../../src/infra/telegram");
+const realTelegram = await import("../../packages/infra/telegram");
 const sendStickerMock = mock(async (_chatId: number, _fileId: string): Promise<number | undefined> => 12345);
-mock.module("../../src/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
+mock.module("../../packages/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
 // view_sticker_pack 会为模拟真人翻贴纸面板停顿 1.5~5 秒，单测里直接跳过。
-mock.module("../../src/libs/sleep", () => ({ sleep: async (_ms: number): Promise<void> => {} }));
+mock.module("../../packages/libs/sleep", () => ({ sleep: async (_ms: number): Promise<void> => {} }));
 
 const {
   buildSendStickerToolDefinition,
@@ -19,10 +19,10 @@ const {
   parseStickerIntent,
   sendStickerTool,
   viewStickerPackTool,
-} = await import("../../src/ai/tools/stickers");
-const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../src/consts/tools");
-const { MAX_STICKER_PACK_VIEWS_PER_REPLY, STICKER_INTENT_MAX_CHARS } = await import("../../src/consts/aiChat/stickers");
-const { createStickerSendLock } = await import("../../src/ai/stickers/sendLock");
+} = await import("../../packages/ai/tools/stickers");
+const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../packages/consts/tools");
+const { MAX_STICKER_PACK_VIEWS_PER_REPLY, STICKER_INTENT_MAX_CHARS } = await import("../../packages/consts/aiChat/stickers");
+const { createStickerSendLock } = await import("../../packages/ai/stickers/sendLock");
 
 function candidate(fileId: string, emoji: string, description: string): any {
   return { sticker: { file_id: fileId, file_unique_id: `${fileId}-uid`, emoji }, emoji, description };

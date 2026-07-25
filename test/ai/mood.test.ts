@@ -5,10 +5,10 @@ import {
   computeAdjustedWeight,
   currentMoodInstruction,
   switchMood,
-} from "../../src/ai/mood";
-import { getMoodConfig } from "../../src/config/mood";
-import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../src/consts/aiChat";
-import type { MoodOption } from "../../src/types";
+} from "../../packages/ai/mood";
+import { getMoodConfig } from "../../packages/config/mood";
+import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../packages/consts/aiChat";
+import type { MoodOption } from "../../packages/types";
 
 /**
  * ai/mood.ts 的纯逻辑单测：首次抽取、寿命内维持/到期重抽、群间隔离。所有

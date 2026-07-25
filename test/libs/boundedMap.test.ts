@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { setBoundedMapValue } from "../../src/libs/boundedMap";
+import { setBoundedMapValue } from "../../packages/libs/boundedMap";
 
 describe("setBoundedMapValue", () => {
   test("新增键越界时淘汰最早项", () => {

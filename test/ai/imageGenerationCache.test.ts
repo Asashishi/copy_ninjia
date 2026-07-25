@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { IMAGE_GENERATION_COOLDOWN_MS } from "../../src/consts/aiChat/imageGeneration";
+import { IMAGE_GENERATION_COOLDOWN_MS } from "../../packages/consts/aiChat/imageGeneration";
 import {
   claimImageGeneration,
   getImageGenerationAvailability,
@@ -7,7 +7,7 @@ import {
   releaseImageGenerationClaim,
   resetImageGenerationCache,
   sweepImageGenerationCache,
-} from "../../src/cache/aiChat/imageGeneration";
+} from "../../packages/cache/aiChat/imageGeneration";
 
 afterEach(() => {
   resetImageGenerationCache();

@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-const { getOrCreateChatState } = await import("../../src/infra/storage");
+const { getOrCreateChatState } = await import("../../packages/infra/storage");
 const {
   isSendCommandText,
   shouldPassInitGate,
   shouldPassPrivateCommandGate,
   shouldRoutePrivateProxyMessage,
-} = await import("../../src/infra/updateGate");
-const { SUPER_ADMIN_USER_ID } = await import("../../src/infra/config");
+} = await import("../../packages/infra/updateGate");
+const { SUPER_ADMIN_USER_ID } = await import("../../packages/infra/config");
 
 const ME = { id: 999, username: "test_bot", first_name: "TestBot" };
 

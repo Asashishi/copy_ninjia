@@ -4,14 +4,14 @@ const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 const recordChatMediaMock = mock((..._args: unknown[]): void => {});
 const generateAndSendReplyMock = mock((..._args: unknown[]): void => {});
 
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   copyMessage: async (): Promise<undefined> => undefined,
   sendMessage: async (): Promise<undefined> => undefined,
   bot: { api: {} },
   buildFileDownloadUrl: () => "",
   logApiError: () => {},
 }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: () => false,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => undefined,
@@ -20,16 +20,16 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   persistAuthoritativeState: async (): Promise<void> => {},
   saveStateInBackground: () => {},
 }));
-mock.module("../../src/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
-mock.module("../../src/users/senderIdentity", () => ({ cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id }));
-mock.module("../../src/aiChat", () => ({
+mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
+mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id }));
+mock.module("../../packages/aiChat", () => ({
   recordChatMessage: recordChatMessageMock,
   recordChatMedia: recordChatMediaMock,
   generateAndSendReply: generateAndSendReplyMock,
 }));
-mock.module("../../src/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
+mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
 
-const { handleIncomingMessage } = await import("../../src/auto/message");
+const { handleIncomingMessage } = await import("../../packages/auto/message");
 
 const botInfo = { id: 999999, username: "test_bot", first_name: "TestBot" };
 

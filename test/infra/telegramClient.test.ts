@@ -36,8 +36,8 @@ class FakeApi {
 mock.module("grammy", () => ({ Api: FakeApi, Bot: FakeBot, GrammyError: FakeGrammyError }));
 mock.module("@grammyjs/transformer-throttler", () => ({ apiThrottler }));
 mock.module("@grammyjs/auto-retry", () => ({ autoRetry }));
-mock.module("../../src/infra/config", () => ({ BOT_TOKEN: "token:secret" }));
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/config", () => ({ BOT_TOKEN: "token:secret" }));
+mock.module("../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
@@ -46,7 +46,7 @@ mock.module("../../src/infra/logger", () => ({
   },
 }));
 
-const client = await import("../../src/infra/telegram/client");
+const client = await import("../../packages/infra/telegram/client");
 
 describe("Telegram 客户端初始化", () => {
   test("两个客户端各安装一次节流与重试 transformer，重复初始化幂等", () => {

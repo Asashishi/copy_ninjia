@@ -4,8 +4,8 @@ const responses: unknown[] = [];
 const fetchJsonWithTimeout = mock(async (..._args: unknown[]): Promise<unknown> => responses.shift() ?? null);
 const loggerError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../src/libs/httpFetch", () => ({ fetchJsonWithTimeout }));
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/libs/httpFetch", () => ({ fetchJsonWithTimeout }));
+mock.module("../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
@@ -18,9 +18,9 @@ const {
   currentTokyoWeather,
   startWeatherRefreshLoop,
   stopWeatherRefreshLoop,
-} = await import("../../src/ai/weather");
-const { weatherCache } = await import("../../src/cache/weather");
-const { WEATHER_API_URL, WEATHER_CODE_DESCRIPTIONS, WEATHER_REFRESH_INTERVAL_MS } = await import("../../src/consts/weather");
+} = await import("../../packages/ai/weather");
+const { weatherCache } = await import("../../packages/cache/weather");
+const { WEATHER_API_URL, WEATHER_CODE_DESCRIPTIONS, WEATHER_REFRESH_INTERVAL_MS } = await import("../../packages/consts/weather");
 
 async function flushRefresh(): Promise<void> {
   await Promise.resolve();

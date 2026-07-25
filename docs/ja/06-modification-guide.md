@@ -14,30 +14,30 @@
 
 ## スラッシュコマンドの追加
 
-1. **Handler**：`src/commands/` に 1 ファイル作成し、`function` 宣言で `handleXxxCommand` を明示的な戻り値型付きで export します。権限 gate は既存パターンを参照します。許可ユーザーは `kick.ts`、スーパー管理者は `superAdminToggle.ts` / `switchMood.ts`、プライベートチャット限定は `send.ts` です。後者は本人以外またはプライベートチャット以外ならエラーを返さず静かに return します。
-2. **Export**：`src/commands/index.ts` に追加します。
-3. **登録**：[`src/app/registerHandlers.ts`](../../src/app/registerHandlers.ts) に `bot.command("xxx", ...)` を追加します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
-4. **プライベートチャット gate**：新しいコマンドをプライベートチャットで使う場合は、[`src/infra/updateGate.ts`](../../src/infra/updateGate.ts) も変更し、gate テストを追加します。現在、プライベートチャットのスラッシュコマンドは `/send` だけを明示的に許可しているため、handler 登録だけでは到達しません。グループ専用コマンドは変更不要です。
-5. **メニュー**：Telegram のコマンドメニューに表示するなら [`src/consts/commands.ts`](../../src/consts/commands.ts) の `BOT_COMMANDS` に追加します。`/send` のような hidden command は追加しません。
-6. **パラメータ定数**：cooldown、threshold などは `src/consts/commands.ts` または該当ドメインの consts に置き、中国語 JSDoc を付けます。
+1. **Handler**：`packages/commands/` に 1 ファイル作成し、`function` 宣言で `handleXxxCommand` を明示的な戻り値型付きで export します。権限 gate は既存パターンを参照します。許可ユーザーは `kick.ts`、スーパー管理者は `superAdminToggle.ts` / `switchMood.ts`、プライベートチャット限定は `send.ts` です。後者は本人以外またはプライベートチャット以外ならエラーを返さず静かに return します。
+2. **Export**：`packages/commands/index.ts` に追加します。
+3. **登録**：[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) に `bot.command("xxx", ...)` を追加します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
+4. **プライベートチャット gate**：新しいコマンドをプライベートチャットで使う場合は、[`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) も変更し、gate テストを追加します。現在、プライベートチャットのスラッシュコマンドは `/send` だけを明示的に許可しているため、handler 登録だけでは到達しません。グループ専用コマンドは変更不要です。
+5. **メニュー**：Telegram のコマンドメニューに表示するなら [`packages/consts/commands.ts`](../../packages/consts/commands.ts) の `BOT_COMMANDS` に追加します。`/send` のような hidden command は追加しません。
+6. **パラメータ定数**：cooldown、threshold などは `packages/consts/commands.ts` または該当ドメインの consts に置き、中国語 JSDoc を付けます。
 7. **テスト**：`test/commands/xxx.test.ts` を追加し、少なくとも権限拒否、引数解析、主要経路を検証します。
 8. **ドキュメント**：3 言語すべてのルート README の「コマンドと権限」table に行を追加します。
 
 ## 動作パラメータの調整
 
-パラメータはすべて `src/consts/` に集約されているため、値の変更で業務コードを編集する必要はありません。主な場所は次のとおりです。
+パラメータはすべて `packages/consts/` に集約されているため、値の変更で業務コードを編集する必要はありません。主な場所は次のとおりです。
 
 | 調整対象 | ファイル |
 | :--- | :--- |
-| AI トリガー確率、レート制限、並列数、キュー | `src/consts/aiChat/rateLimit.ts` |
-| AI メモリ容量、snapshot 周期、要約 backpressure | `src/consts/aiChat/memory.ts` |
-| メディア説明長、実行 slot、LRU 容量 | `src/consts/aiChat/media.ts` |
-| 画像生成 cooldown と byte 上限 | `src/consts/aiChat/imageGeneration.ts` |
-| ムード時間とコマンド timeout | `src/consts/aiChat/mood.ts` |
-| ツール action・lookup 上限、モデル名、request timeout | `src/consts/aiChat/tools.ts` |
-| 認証 window、spam threshold、追記・compaction 方針 | `src/consts/antiRaid/` |
-| copy cooldown、`/quiet` 範囲、username 規則 | `src/consts/commands.ts` |
-| 送信者ごとのランダムトリガー cooldown | `src/consts/auto.ts` |
+| AI トリガー確率、レート制限、並列数、キュー | `packages/consts/aiChat/rateLimit.ts` |
+| AI メモリ容量、snapshot 周期、要約 backpressure | `packages/consts/aiChat/memory.ts` |
+| メディア説明長、実行 slot、LRU 容量 | `packages/consts/aiChat/media.ts` |
+| 画像生成 cooldown と byte 上限 | `packages/consts/aiChat/imageGeneration.ts` |
+| ムード時間とコマンド timeout | `packages/consts/aiChat/mood.ts` |
+| ツール action・lookup 上限、モデル名、request timeout | `packages/consts/aiChat/tools.ts` |
+| 認証 window、spam threshold、追記・compaction 方針 | `packages/consts/antiRaid/` |
+| copy cooldown、`/quiet` 範囲、username 規則 | `packages/consts/commands.ts` |
+| 送信者ごとのランダムトリガー cooldown | `packages/consts/auto.ts` |
 
 手順：定数を変更 → 不変条件の変更も含めて中国語 JSDoc を更新 → ルート README がその値を引用していないか確認し 3 言語を同期 → `bun run check`。
 
@@ -46,43 +46,43 @@
 
 ## AI ツールの追加
 
-1. **名前定数**：[`src/consts/tools.ts`](../../src/consts/tools.ts) にツール名を定義します。目に見える副作用がある場合は `ACTION_TOOL_NAMES` に含めるべきか確認します。
-2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`src/ai/tools/index.ts`](../../src/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `src/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator がドメイン定義を SDK の `FunctionDeclaration` に変換します。
-3. **実装**：`src/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
-4. **登録**：静的 query tool は `src/ai/tools/index.ts` の dispatch へ、action tool は `src/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
+1. **名前定数**：[`packages/consts/tools.ts`](../../packages/consts/tools.ts) にツール名を定義します。目に見える副作用がある場合は `ACTION_TOOL_NAMES` に含めるべきか確認します。
+2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`packages/ai/tools/index.ts`](../../packages/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator がドメイン定義を SDK の `FunctionDeclaration` に変換します。
+3. **実装**：`packages/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
+4. **登録**：静的 query tool は `packages/ai/tools/index.ts` の dispatch へ、action tool は `packages/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
 5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、Google Search、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
-6. **Prompt**：必要なら `src/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
+6. **Prompt**：必要なら `packages/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
 7. **テスト + 文書**：`test/ai/` または対応する Worker パスにテストを追加し、必要ならルート README のツール行を更新します。
 
 ## 汎用 JSON API 呼び出しの追加
 
-1. [`src/consts/httpFetch.ts`](../../src/consts/httpFetch.ts) の `JSON_API_ALLOWED_ORIGINS` に正確な HTTPS origin を明示的に追加します。任意 host、HTTP、credential を含む URL へ広げてはいけません。
-2. [`src/libs/httpFetch.ts`](../../src/libs/httpFetch.ts) の上限付き JSON reader を再利用します。redirect は無効のままにし、response body と error log の上限を維持します。
+1. [`packages/consts/httpFetch.ts`](../../packages/consts/httpFetch.ts) の `JSON_API_ALLOWED_ORIGINS` に正確な HTTPS origin を明示的に追加します。任意 host、HTTP、credential を含む URL へ広げてはいけません。
+2. [`packages/libs/httpFetch.ts`](../../packages/libs/httpFetch.ts) の上限付き JSON reader を再利用します。redirect は無効のままにし、response body と error log の上限を維持します。
 3. origin、redirect、過大 response、失敗 log のテストを追加します。Telegram avatar crawler は独立した media 経路であり、JSON API 追加のために接続先を変えたり制限したりしません。
 
 ## ペルソナまたは JSON 設定の変更
 
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
-- `config/stickers.json`、`reactions.json`、`mood.json`：schema は対応する `src/config/` ファイルにあり、起動時に厳密検証されます。スタンプパックは最大 5 個、mood の重みは正の整数で合計がちょうど 100 です。構造変更では、先に `src/config/` の schema と `src/types/` の型を変更してから JSON を変更します。不正な設定は起動を拒否します。
+- `config/stickers.json`、`reactions.json`、`mood.json`：schema は対応する `packages/config/` ファイルにあり、起動時に厳密検証されます。スタンプパックは最大 5 個、mood の重みは正の整数で合計がちょうど 100 です。構造変更では、先に `packages/config/` の schema と `packages/types/` の型を変更してから JSON を変更します。不正な設定は起動を拒否します。
 
 ## 環境変数の追加
 
-1. `src/infra/config.ts` で宣言・解析し、必須か空でもよいか、形式検証もここで定義します。解析失敗は起動を拒否します。
+1. `packages/infra/config.ts` で宣言・解析し、必須か空でもよいか、形式検証もここで定義します。解析失敗は起動を拒否します。
 2. [`.env.example`](../../.env.example) にコメント付きの例を追加します。
 3. 3 言語のルート README にある「設定」section と [01 環境構築](01-getting-started.md#env-の設定) の変数 table を同期します。
 
 ## 実行時 cache の追加
 
-1. `src/cache/<domain>/` またはドメインファイルに置き、ファイル先頭で owner モジュールを示します。可変 singleton は `{ current: T | null }` のような holder object を使います。
+1. `packages/cache/<domain>/` またはドメインファイルに置き、ファイル先頭で owner モジュールを示します。可変 singleton は `{ current: T | null }` のような holder object を使います。
 2. 各 export にライフサイクル JSDoc を付けます。いつ格納し、いつ削除し、Worker crash/restart 後にどう再構築するかを記載します。
 3. 容量上限と削除方針を定め、[04 実行時の正式な不変条件](04-invariants.md#worker-と状態の所有権) の長寿命コンテナ要件、すなわち bounded、owner あり、再構築可能を満たすか確認します。
-4. 停止時に flush または精算する必要があるなら `src/libs/flushBarrier.ts` を使い、新しい resolver Map を作りません。
+4. 停止時に flush または精算する必要があるなら `packages/libs/flushBarrier.ts` を使い、新しい resolver Map を作りません。
 
 ## 永続化 schema の変更
 
 [`AGENTS.md`](../../AGENTS.md) と [04](04-invariants.md#永続化) の絶対規則は、**旧形式の互換 logic をコードに残さず、実行時の自動 migration を行わない**ことです。非互換入力は起動を拒否します。したがって手順は次のとおりです。
 
-1. `src/types/` の永続化型と validator を変更し、新形式を厳密に検証します。
+1. `packages/types/` の永続化型と validator を変更し、新形式を厳密に検証します。
 2. `test/infra/storage/`、`test/workers/diskIO/` などのテストを追加または変更し、`bun run test:fault-injection` を実行します。
 3. **旧プロセスを停止**し、`bot.lock` が解放されたことを確認します。
 4. `state.json`、`state.json.bak`、影響する `memory/` snapshot を新形式へ手動 migration します。migration 前にコピーでバックアップします。
@@ -91,7 +91,7 @@
 
 ## Worker 間 protocol の変更
 
-スレッド間メッセージ protocol は `src/types/` が所有します。変更時は、型定義、対応する `src/infra/` または `src/cache/` のメインスレッド側プロキシ、`src/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/switch_mood` の handshake が実装例です。
+スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/switch_mood` の handshake が実装例です。
 
 ---
 

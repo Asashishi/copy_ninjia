@@ -36,22 +36,22 @@ flowchart TD
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。
 - **Disk I/O Worker** 独占共享目录（`logs/`、`memory/`）的串行读写；`state.json` 是唯一例外，由主线程 `StateStore` 直接原子写。
 
-Anti-Raid 主线程入口由 [`src/antiRaid/index.ts`](../src/antiRaid/index.ts) 编排，lockdown 恢复与验证镜像接收分别下沉到 [`src/antiRaid/lockdownMirror.ts`](../src/antiRaid/lockdownMirror.ts) 和 [`src/antiRaid/verificationMirror.ts`](../src/antiRaid/verificationMirror.ts)。Worker 侧验证解释器则按核心状态/恢复、入站事件翻译、Telegram 副作用、提醒投递 owner 拆在 [`src/workers/antiRaid/`](../src/workers/antiRaid/) 中；这些模块共享同一个 dispatcher，不改变状态机与 revision 的单一权威入口。
+Anti-Raid 主线程入口由 [`packages/antiRaid/index.ts`](../packages/antiRaid/index.ts) 编排，lockdown 恢复与验证镜像接收分别下沉到 [`packages/antiRaid/lockdownMirror.ts`](../packages/antiRaid/lockdownMirror.ts) 和 [`packages/antiRaid/verificationMirror.ts`](../packages/antiRaid/verificationMirror.ts)。Worker 侧验证解释器则按核心状态/恢复、入站事件翻译、Telegram 副作用、提醒投递 owner 拆在 [`packages/workers/antiRaid/`](../packages/workers/antiRaid/) 中；这些模块共享同一个 dispatcher，不改变状态机与 revision 的单一权威入口。
 
-Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`src/libs/supervisedWorker.ts`](../src/libs/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`src/infra/diskIO.ts`](../src/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；重启预算耗尽再由 [`src/infra/workerSupervisor.ts`](../src/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
+Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`packages/libs/supervisedWorker.ts`](../packages/libs/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`packages/infra/diskIO.ts`](../packages/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；重启预算耗尽再由 [`packages/infra/workerSupervisor.ts`](../packages/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
 
 ## 一条消息的旅程
 
-更新链在 [`src/app/registerHandlers.ts`](../src/app/registerHandlers.ts) 一次性显式安装，middleware 顺序即语义：
+更新链在 [`packages/app/registerHandlers.ts`](../packages/app/registerHandlers.ts) 一次性显式安装，middleware 顺序即语义：
 
 1. **update_id 追踪**——记录已进入处理的最大 `update_id`，停机时用于确认 Telegram offset。
 2. **运势签名回执确认**——在一切网关之前，转发副本也有效。
-3. **init 网关**——未 `/init enable` 的群，其普通业务 update 在这里终止；`my_chat_member`、自身 `via_bot` 消息与超级管理员的 `/init` 等显式例外由 [`src/infra/updateGate.ts`](../src/infra/updateGate.ts) 放行。
+3. **init 网关**——未 `/init enable` 的群，其普通业务 update 在这里终止；`my_chat_member`、自身 `via_bot` 消息与超级管理员的 `/init` 等显式例外由 [`packages/infra/updateGate.ts`](../packages/infra/updateGate.ts) 放行。
 4. **按群串行**——`sequentialize` 保证同群消息顺序处理；反应同步走独立合并队列，不占聊天车道。
 5. **私聊网关**——私聊只放行 `/send` 入口与进行中的中转会话；中转消息短路进消息流水线，避免文本被当成命令。
 6. **入群验证**——必须早于命令处理，否则待验证用户发的命令不会被追踪清理。
 7. **命令注册**——13 个 `bot.command(...)`，见 [06 常见修改配方](06-modification-guide.md#新增一个斜杠命令)。
-8. **自动消息流水线**——[`src/auto/`](../src/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
+8. **自动消息流水线**——[`packages/auto/`](../packages/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
 
 AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投递 AI Worker → Worker 组装三段式 Gemini 输入（参考记忆 / 当前会话 / 本轮任务）→ 多轮工具调用（发消息、贴纸、反应、生图，全部经主线程代理执行）→ 结果写回滚动记忆 → 周期快照落盘。
 
@@ -95,7 +95,7 @@ flowchart TD
 
 ## 启动顺序
 
-入口 [`index.ts`](../index.ts) 只组装 [`src/app/lifecycle.ts`](../src/app/lifecycle.ts) 的 `ApplicationLifecycle`；生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入，一切运行时初始化都显式发生：
+入口 [`index.ts`](../index.ts) 只组装 [`packages/app/lifecycle.ts`](../packages/app/lifecycle.ts) 的 `ApplicationLifecycle`；生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入，一切运行时初始化都显式发生：
 
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。

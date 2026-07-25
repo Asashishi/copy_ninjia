@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AntiRaidWorkerEvent } from "../../../src/types";
+import type { AntiRaidWorkerEvent } from "../../../packages/types";
 import type {
   ExpelSnapshot,
   VerificationEffect,
   VerificationEvent,
   VerificationState,
-} from "../../../src/types/states/verification";
+} from "../../../packages/types/states/verification";
 
 /**
  * 副作用解释器里两条「踢人前先确认拉人者身份」的异步分支：管理员拉人豁免的
@@ -29,7 +29,7 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage(_event: AntiRaidWorkerEvent): void {} },
 });
 
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/infra/logger", () => ({
   logger: {
     log(): void {},
     info(): void {},
@@ -37,7 +37,7 @@ mock.module("../../../src/infra/logger", () => ({
     error(message: string): void { loggedErrors.push(message); },
   },
 }));
-mock.module("../../../src/infra/telegram", () => ({
+mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: { getChatAdministrators },
   sendMessage: async (message: { text: string }): Promise<number | undefined> => {
     sentTexts.push(message.text);
@@ -57,10 +57,10 @@ mock.module("../../../src/infra/telegram", () => ({
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 
-const { runVerificationEffects } = await import("../../../src/workers/antiRaid/verificationEffects");
-const { verificationEntries } = await import("../../../src/cache/antiRaid/verification");
-const { cacheAdminIds, resetAdminCache } = await import("../../../src/cache/antiRaid/admins");
-const { WELCOME_AUTO_DELETE_MS } = await import("../../../src/consts/antiRaid/verification");
+const { runVerificationEffects } = await import("../../../packages/workers/antiRaid/verificationEffects");
+const { verificationEntries } = await import("../../../packages/cache/antiRaid/verification");
+const { cacheAdminIds, resetAdminCache } = await import("../../../packages/cache/antiRaid/admins");
+const { WELCOME_AUTO_DELETE_MS } = await import("../../../packages/consts/antiRaid/verification");
 
 const CHAT_ID: number = -1001;
 const USER_ID: number = 42;

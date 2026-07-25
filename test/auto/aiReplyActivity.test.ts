@@ -3,13 +3,13 @@ import {
   AI_REPLY_ACTIVITY_MAX_CHATS,
   AI_REPLY_ACTIVITY_MAX_TIMESTAMPS,
   AI_REPLY_ACTIVITY_WINDOW_MS,
-} from "../../src/consts/aiChat";
-import { aiReplyActivityByChat } from "../../src/cache/auto";
+} from "../../packages/consts/aiChat";
+import { aiReplyActivityByChat } from "../../packages/cache/auto";
 import {
   clearAiReplyActivity,
   observeGroupMessageForAiReply,
   sweepAiReplyActivity,
-} from "../../src/auto/message/aiReplyActivity";
+} from "../../packages/auto/message/aiReplyActivity";
 
 beforeEach(clearAiReplyActivity);
 afterAll(clearAiReplyActivity);

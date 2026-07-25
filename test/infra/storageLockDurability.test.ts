@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import * as realFsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { InstanceLockOptions, ProcessIdentity } from "../../src/infra/storage/instanceLock";
+import type { InstanceLockOptions, ProcessIdentity } from "../../packages/infra/storage/instanceLock";
 
 /**
  * guard 协议的 candidate 是用 link() 直接发布成 bot.lock.guard 的，没有 rename
@@ -20,7 +20,7 @@ const realLink = realFs.link;
 let failCandidateSync: boolean = false;
 let failCandidateDirectorySync: boolean = false;
 
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/logger", () => ({
   logger: { error: mock((..._args: unknown[]): void => {}) },
 }));
 
@@ -61,7 +61,7 @@ mock.module("node:fs/promises", () => ({
 }));
 
 const { acquireSingleInstanceLock, releaseSingleInstanceLock } =
-  await import("../../src/infra/storage/instanceLock");
+  await import("../../packages/infra/storage/instanceLock");
 
 const TOKEN = "123456789:test-secret-durability";
 const BOOT_ID = "11111111-1111-4111-8111-111111111111";

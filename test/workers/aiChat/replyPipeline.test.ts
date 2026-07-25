@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AdmitDecision } from "../../../src/types/states/replyAdmission";
+import type { AdmitDecision } from "../../../packages/types/states/replyAdmission";
 
 let decision: AdmitDecision = { action: "startRound" };
 const admitTrigger = mock((_input: unknown): AdmitDecision => decision);
@@ -19,30 +19,30 @@ const replyReferenceForBufferedMessage = mock((_chatId: number, _messageId: numb
 const botInfo = { id: 1, username: "copy_ninjia_bot", first_name: "Ninjia" };
 const botInfoState: { current: typeof botInfo | null } = { current: botInfo };
 
-mock.module("../../../src/cache/aiChat/identity", () => ({ botInfoState }));
-mock.module("../../../src/cache/aiChat/replies", () => ({
+mock.module("../../../packages/cache/aiChat/identity", () => ({ botInfoState }));
+mock.module("../../../packages/cache/aiChat/replies", () => ({
   activeReplyCounts: new Map<number, number>(),
   pendingOverflowNotices,
   pendingReplyTriggers: new Map<number, { size: number }>(),
 }));
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/infra/logger", () => ({
   logger: { error: loggerError },
 }));
-mock.module("../../../src/states/replyAdmission", () => ({ admitTrigger }));
-mock.module("../../../src/workers/aiChat/replyQueue", () => ({
+mock.module("../../../packages/states/replyAdmission", () => ({ admitTrigger }));
+mock.module("../../../packages/workers/aiChat/replyQueue", () => ({
   drainReplyQueue: drainQueuedReplies,
   pushReplyTrigger,
   triggerKindFor: (random: boolean, media: unknown): string => media ? "mediaDirect" : random ? "random" : "direct",
 }));
-mock.module("../../../src/workers/aiChat/replyRound", () => ({ startReplyRound }));
-mock.module("../../../src/workers/aiChat/replyChain", () => ({ replyReferenceForBufferedMessage }));
-mock.module("../../../src/workers/aiChat/replyState", () => ({
+mock.module("../../../packages/workers/aiChat/replyRound", () => ({ startReplyRound }));
+mock.module("../../../packages/workers/aiChat/replyChain", () => ({ replyReferenceForBufferedMessage }));
+mock.module("../../../packages/workers/aiChat/replyState", () => ({
   currentReplyGeneration: (): number => 17,
   invalidateChatReplies: (): void => {},
   isReplyGenerationCurrent: (): boolean => true,
 }));
 
-const { generateAndSendReply } = await import("../../../src/workers/aiChat/replyPipeline");
+const { generateAndSendReply } = await import("../../../packages/workers/aiChat/replyPipeline");
 
 const baseRequest = {
   chatId: -1001,

@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
-const { describeStickerForContext, getStickerSet, pickStickerVisionSource } = await import("../../../src/ai/stickers/sets");
-const { failedPacks, inflightStickerSets, stickerSetCache } = await import("../../../src/cache/stickers/sets");
+const { describeStickerForContext, getStickerSet, pickStickerVisionSource } = await import("../../../packages/ai/stickers/sets");
+const { failedPacks, inflightStickerSets, stickerSetCache } = await import("../../../packages/cache/stickers/sets");
 
 describe("ai/stickers/sets describeStickerForContext", () => {
   test("emoji + 包名都有时按顺序拼接", () => {

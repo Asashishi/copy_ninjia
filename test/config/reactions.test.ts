@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   loadReactionConfig,
   parseReactionConfig,
-} from "../../src/config/reactions";
-import { TELEGRAM_REACTION_EMOJIS } from "../../src/consts/reactions";
+} from "../../packages/config/reactions";
+import { TELEGRAM_REACTION_EMOJIS } from "../../packages/consts/reactions";
 
 describe("reaction config", () => {
   test("严格解析标准反应，并能加载全部部署配置", () => {

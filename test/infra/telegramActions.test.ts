@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { InputFile, type Api } from "grammy";
-import { sentMessages } from "../../src/cache/selfSentTracker";
+import { sentMessages } from "../../packages/cache/selfSentTracker";
 import {
   isChatMember,
   sendMessageWithResult,
   sendPhotoWithResult,
-} from "../../src/infra/telegram/actions";
-import { isSelfSent } from "../../src/infra/selfSentTracker";
+} from "../../packages/infra/telegram/actions";
+import { isSelfSent } from "../../packages/infra/selfSentTracker";
 
 afterEach(() => {
   for (const timer of sentMessages.values()) clearTimeout(timer);

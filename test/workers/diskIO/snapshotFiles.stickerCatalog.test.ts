@@ -10,12 +10,12 @@ import { join } from "node:path";
  * 往那里写，整体重定向到临时目录。
  */
 const stickerDir: string = mkdtempSync(join(tmpdir(), "sticker-catalog-test-"));
-const realPaths = await import("../../../src/consts/paths");
+const realPaths = await import("../../../packages/consts/paths");
 const { mock } = await import("bun:test");
-mock.module("../../../src/consts/paths", () => ({ ...realPaths, STICKER_MEMORY_DIR: stickerDir }));
+mock.module("../../../packages/consts/paths", () => ({ ...realPaths, STICKER_MEMORY_DIR: stickerDir }));
 
-const { recoverStickerCatalogs, writeStickerCatalogFile } = await import("../../../src/workers/diskIO/snapshotFiles");
-import type { StickerCatalogSnapshot } from "../../../src/types";
+const { recoverStickerCatalogs, writeStickerCatalogFile } = await import("../../../packages/workers/diskIO/snapshotFiles");
+import type { StickerCatalogSnapshot } from "../../../packages/types";
 
 /** 快照在管线上以序列化 JSON 文本流转（见 types/aiChat.ts 的
  *  AiStickerCatalogEvent.snapshot），写入接口也吃字符串。 */

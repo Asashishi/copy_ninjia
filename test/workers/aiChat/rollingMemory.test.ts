@@ -1,28 +1,28 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { LinkedQueue } from "../../../src/libs/linkedQueue";
-import type { BufferedMessage } from "../../../src/types/aiChat/memory";
+import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
 Object.defineProperty(globalThis, "self", { configurable: true, value: { postMessage } });
 
-mock.module("../../../src/workers/aiChat/compaction", () => ({
+mock.module("../../../packages/workers/aiChat/compaction", () => ({
   scheduleRotation: mock((..._args: unknown[]): void => {}),
 }));
 
 const {
   flushMemorySnapshot,
   pushBufferedMessage,
-} = await import("../../../src/workers/aiChat/rollingMemory");
-const { buildBufferedMessage, sanitizeReplyReference } = await import("../../../src/workers/aiChat/bufferedMessage");
+} = await import("../../../packages/workers/aiChat/rollingMemory");
+const { buildBufferedMessage, sanitizeReplyReference } = await import("../../../packages/workers/aiChat/bufferedMessage");
 const {
   chatBuffers,
   chatLastActivityTimes,
   dirtyMemoryChats,
   resetAiChatMemoryCache,
-} = await import("../../../src/cache/aiChat/memory");
-const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../src/cache/aiChat/replies");
-const { AI_MEMORY_MAX_CHATS } = await import("../../../src/consts/aiChat/memory");
+} = await import("../../../packages/cache/aiChat/memory");
+const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
+const { AI_MEMORY_MAX_CHATS } = await import("../../../packages/consts/aiChat/memory");
 
 function entry(text: string): BufferedMessage {
   return { messageId: 1, id: 1, firstName: "Alice", lastName: "", text, at: "00:00" };

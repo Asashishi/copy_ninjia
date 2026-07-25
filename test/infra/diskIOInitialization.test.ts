@@ -5,11 +5,11 @@ import type {
   DiskIOReply,
   LuckDrawDiskMessage,
   VerificationPersistedReply,
-} from "../../src/types";
-import { pendingLoad, pendingLuckSecrets } from "../../src/cache/diskIO";
+} from "../../packages/types";
+import { pendingLoad, pendingLuckSecrets } from "../../packages/cache/diskIO";
 
-const diskIO = await import("../../src/infra/diskIO");
-const { superviseWorker } = await import("../../src/libs/supervisedWorker");
+const diskIO = await import("../../packages/infra/diskIO");
+const { superviseWorker } = await import("../../packages/libs/supervisedWorker");
 
 class FakeWorker {
   static instances: FakeWorker[] = [];

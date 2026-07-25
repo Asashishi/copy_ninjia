@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { DiskIOMessage } from "../../src/types";
+import type { DiskIOMessage } from "../../packages/types";
 
 const handleLogMessage = mock((_message: unknown): void => {});
 const markAiMemorySnapshotDirty = mock((_input: unknown): void => {});
@@ -36,26 +36,26 @@ const flushLuckAppends = mock((): boolean => true);
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
 const postMessage = mock((_reply: unknown): void => {});
 
-mock.module("../../src/workers/diskIO/logFiles", () => ({
+mock.module("../../packages/workers/diskIO/logFiles", () => ({
   flushLogBuffer,
   handleLogMessage,
   initLogFiles: (): void => {},
 }));
-mock.module("../../src/workers/diskIO/luckFiles", () => ({
+mock.module("../../packages/workers/diskIO/luckFiles", () => ({
   flushLuckAppends,
   handleLuckDrawMessage,
   hydrateLuckDay,
 }));
-mock.module("../../src/workers/diskIO/luckSecretFile", () => ({ recoverLuckReceiptSecret }));
-mock.module("../../src/cache/diskIO/luck", () => ({ luckWorkerCache }));
-mock.module("../../src/workers/diskIO/verificationFiles", () => ({
+mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({ recoverLuckReceiptSecret }));
+mock.module("../../packages/cache/diskIO/luck", () => ({ luckWorkerCache }));
+mock.module("../../packages/workers/diskIO/verificationFiles", () => ({
   flushVerificationChanges,
   handleVerificationDelete,
   handleVerificationUpsert,
   recoverVerificationDay: (): Map<string, unknown> => new Map(),
   scheduleVerificationRollover: (): void => {},
 }));
-mock.module("../../src/workers/diskIO/aiMemoryFiles", () => ({
+mock.module("../../packages/workers/diskIO/aiMemoryFiles", () => ({
   configureAiMemoryDeletePersistedReply: (): void => {},
   configureAiMemoryPersistedReply: (): void => {},
   deleteAiMemorySnapshot,
@@ -63,7 +63,7 @@ mock.module("../../src/workers/diskIO/aiMemoryFiles", () => ({
   hydrateAiMemorySnapshots: (): Map<number, string> => new Map(),
   markAiMemorySnapshotDirty,
 }));
-mock.module("../../src/workers/diskIO/stickerCatalogFiles", () => ({
+mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
   flushStickerCatalogs,
   hydrateStickerCatalogs: (): Map<string, string> => new Map(),
   markStickerCatalogSnapshotDirty,
@@ -72,7 +72,7 @@ mock.module("../../src/workers/diskIO/stickerCatalogFiles", () => ({
 const workerGlobal = globalThis as typeof globalThis & { postMessage: (message: unknown) => void };
 const originalPostMessage = workerGlobal.postMessage;
 workerGlobal.postMessage = postMessage;
-const { handleDiskIOWorkerMessage } = await import("../../src/workers/diskIOWorker");
+const { handleDiskIOWorkerMessage } = await import("../../packages/workers/diskIOWorker");
 
 afterAll(() => {
   workerGlobal.postMessage = originalPostMessage;

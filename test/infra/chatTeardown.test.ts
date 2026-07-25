@@ -5,13 +5,13 @@ const states = new Map<number, Record<string, unknown>>();
 const saveStateInBackground = mock((context: string): void => { calls.push(`save:${context}`); });
 const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
 
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },
 }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
     let state = states.get(chatId);
@@ -38,9 +38,9 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   saveStateInBackground,
 }));
 
-const botAdmin = await import("../../src/infra/botAdmin");
-const botAdminCache = await import("../../src/cache/botAdmin");
-const chatTeardown = await import("../../src/infra/chatTeardown");
+const botAdmin = await import("../../packages/infra/botAdmin");
+const botAdminCache = await import("../../packages/cache/botAdmin");
+const chatTeardown = await import("../../packages/infra/chatTeardown");
 
 function memberContext(newStatus: string, oldStatus: string = "administrator"): never {
   return {

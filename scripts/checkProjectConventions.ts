@@ -3,9 +3,9 @@ import { extname, join, relative } from "node:path";
 import ts from "typescript";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
-const CACHE_ROOT: string = join(PROJECT_ROOT, "src", "cache");
-const CONSTS_ROOT: string = join(PROJECT_ROOT, "src", "consts");
-const SOURCE_ROOT: string = join(PROJECT_ROOT, "src");
+const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
+const CONSTS_ROOT: string = join(PROJECT_ROOT, "packages", "consts");
+const SOURCE_ROOT: string = join(PROJECT_ROOT, "packages");
 
 function sourceFilesUnder(root: string): string[] {
   const files: string[] = [];

@@ -5,15 +5,15 @@ const switchAiMood = mock(async (_chatId: number): Promise<string> => "开心");
 const loggerError = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 
-mock.module("../../src/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
-mock.module("../../src/infra/telegram", () => ({ sendMessage }));
-mock.module("../../src/aiChat", () => ({ switchAiMood }));
-mock.module("../../src/infra/logger", () => ({ logger: { error: loggerError } }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
+mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/aiChat", () => ({ switchAiMood }));
+mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
 }));
 
-const { handleSwitchMoodCommand } = await import("../../src/commands/switchMood");
+const { handleSwitchMoodCommand } = await import("../../packages/commands/switchMood");
 
 function context(userId: number | undefined = 100): never {
   return {

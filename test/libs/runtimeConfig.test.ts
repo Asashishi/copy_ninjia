@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseTelegramUserId, parseTelegramUserIdList } from "../../src/libs/runtimeConfig";
+import { parseTelegramUserId, parseTelegramUserIdList } from "../../packages/libs/runtimeConfig";
 
 describe("runtime config validation", () => {
   test("only accepts positive decimal safe Telegram user IDs", () => {

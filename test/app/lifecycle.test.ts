@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ApplicationLifecycle, createApplicationLifecycle } from "../../src/app/lifecycle";
+import { ApplicationLifecycle, createApplicationLifecycle } from "../../packages/app/lifecycle";
 
 describe("application lifecycle", () => {
   test("构造与空 dispose 都没有启动 Worker、联网或写盘，dispose 幂等", async () => {

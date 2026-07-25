@@ -16,8 +16,8 @@ class TranslationServiceClient {
 mock.module("@google-cloud/translate", () => ({
   v3: { TranslationServiceClient },
 }));
-mock.module("../../src/consts/paths", () => ({ GOOGLE_AUTH_FILE_PATH: "/tmp/test-g-auth.json" }));
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/consts/paths", () => ({ GOOGLE_AUTH_FILE_PATH: "/tmp/test-g-auth.json" }));
+mock.module("../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
@@ -32,8 +32,8 @@ const {
   initTranslate,
   quiesceTranslate,
   translateToJapanese,
-} = await import("../../src/copy/translate");
-const { translateParentCache } = await import("../../src/cache/translate");
+} = await import("../../packages/copy/translate");
+const { translateParentCache } = await import("../../packages/cache/translate");
 
 beforeEach(async () => {
   await closeTranslate();

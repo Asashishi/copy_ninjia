@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../../src/consts/antiRaid";
-import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../src/types";
+import { ANTI_RAID_PER_MINUTE_LIMIT } from "../../../packages/consts/antiRaid";
+import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../packages/types";
 
 const actions: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
@@ -10,11 +10,11 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage(event: AntiRaidWorkerEvent): void { workerEvents.push(event); } },
 });
 
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../src/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
-mock.module("../../../src/infra/telegram", () => ({
+mock.module("../../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
+mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<number> => {
     actions.push("notice");
@@ -32,12 +32,12 @@ mock.module("../../../src/infra/telegram", () => ({
   answerCallbackQuery: async (): Promise<void> => {},
 }));
 
-const runtime = await import("../../../src/workers/antiRaid/verificationRuntime");
+const runtime = await import("../../../packages/workers/antiRaid/verificationRuntime");
 const {
   verificationEntries,
   verificationGeneration,
   verificationRevisions,
-} = await import("../../../src/cache/antiRaid/verification");
+} = await import("../../../packages/cache/antiRaid/verification");
 
 beforeEach(() => {
   for (const entry of verificationEntries.values()) {

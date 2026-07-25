@@ -31,7 +31,7 @@ cp .env.example .env
 
 ## 配置 `.env`
 
-项目只读取下面 5 个环境变量，不存在未文档化的开关。其中 4 项凭据/权限配置由 [`src/infra/config.ts`](../src/infra/config.ts) 解析；`COPY_NINJIA_DATA_ROOT` 必须在运行时路径常量冻结前生效，因此由 [`src/consts/paths.ts`](../src/consts/paths.ts) 提前读取：
+项目只读取下面 5 个环境变量，不存在未文档化的开关。其中 4 项凭据/权限配置由 [`packages/infra/config.ts`](../packages/infra/config.ts) 解析；`COPY_NINJIA_DATA_ROOT` 必须在运行时路径常量冻结前生效，因此由 [`packages/consts/paths.ts`](../packages/consts/paths.ts) 提前读取：
 
 | 变量 | 必填 | 说明 |
 | :--- | :---: | :--- |
@@ -48,9 +48,9 @@ cp .env.example .env
 | 文件 | 内容 | 校验 |
 | :--- | :--- | :--- |
 | [`prompt/persona.md`](../prompt/persona.md) | AI 闲聊的基础人设 | 纯文本，无 schema |
-| [`config/stickers.json`](../config/stickers.json) | AI 可用的贴纸包，最多 5 个 | [`src/config/stickers.ts`](../src/config/stickers.ts) |
-| [`config/reactions.json`](../config/reactions.json) | AI 可用的 emoji 反应集合 | [`src/config/reactions.ts`](../src/config/reactions.ts) |
-| [`config/mood.json`](../config/mood.json) | 心情档位：文案、权重与天气/时段倍率 | [`src/config/mood.ts`](../src/config/mood.ts)；权重必须是正整数且总和恰好 100 |
+| [`config/stickers.json`](../config/stickers.json) | AI 可用的贴纸包，最多 5 个 | [`packages/config/stickers.ts`](../packages/config/stickers.ts) |
+| [`config/reactions.json`](../config/reactions.json) | AI 可用的 emoji 反应集合 | [`packages/config/reactions.ts`](../packages/config/reactions.ts) |
+| [`config/mood.json`](../config/mood.json) | 心情档位：文案、权重与天气/时段倍率 | [`packages/config/mood.ts`](../packages/config/mood.ts)；权重必须是正整数且总和恰好 100 |
 
 三个 JSON 都走严格 schema 校验，启动时在联网之前预热；配错会直接拒绝启动并说明字段，不会带病运行。
 

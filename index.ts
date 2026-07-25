@@ -1,4 +1,4 @@
-import { createApplicationLifecycle } from "./src/app/lifecycle";
+import { createApplicationLifecycle } from "./packages/app/lifecycle";
 
 const application = createApplicationLifecycle();
 

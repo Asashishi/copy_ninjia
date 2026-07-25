@@ -1,8 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 
-const { startChatActionHeartbeat, pumpChatAction } = await import("../../src/ai/chatActionHeartbeat");
-import type { ChatActionHeartbeatDependencies } from "../../src/ai/chatActionHeartbeat";
-import type { ChatActionHeartbeatEntry } from "../../src/types";
+const { startChatActionHeartbeat, pumpChatAction } = await import("../../packages/ai/chatActionHeartbeat");
+import type { ChatActionHeartbeatDependencies } from "../../packages/ai/chatActionHeartbeat";
+import type { ChatActionHeartbeatEntry } from "../../packages/types";
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;

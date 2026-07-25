@@ -1,13 +1,13 @@
 import { beforeEach, expect, mock, test } from "bun:test";
-import { AI_MEMORY_MAX_CHATS } from "../../src/consts/aiChat";
+import { AI_MEMORY_MAX_CHATS } from "../../packages/consts/aiChat";
 
 const postMessageMock = mock((..._args: unknown[]): void => {});
 (globalThis as unknown as { self: { postMessage: typeof postMessageMock } }).self = { postMessage: postMessageMock };
 
-const memoryCache = await import("../../src/cache/aiChat/memory");
-const moodCache = await import("../../src/cache/aiChat/mood");
-const replyCache = await import("../../src/cache/aiChat/replies");
-const { hydrateMemories, pushBufferedMessage } = await import("../../src/workers/aiChat/rollingMemory");
+const memoryCache = await import("../../packages/cache/aiChat/memory");
+const moodCache = await import("../../packages/cache/aiChat/mood");
+const replyCache = await import("../../packages/cache/aiChat/replies");
+const { hydrateMemories, pushBufferedMessage } = await import("../../packages/workers/aiChat/rollingMemory");
 
 beforeEach(() => {
   memoryCache.resetAiChatMemoryCache();

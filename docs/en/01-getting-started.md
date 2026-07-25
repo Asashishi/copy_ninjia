@@ -31,7 +31,7 @@ cp .env.example .env
 
 ## Configuring `.env`
 
-The project reads exactly five environment variables; there are no undocumented switches. Four credential/authorization settings are parsed by [`src/infra/config.ts`](../../src/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`src/consts/paths.ts`](../../src/consts/paths.ts) reads it earlier:
+The project reads exactly five environment variables; there are no undocumented switches. Four credential/authorization settings are parsed by [`packages/infra/config.ts`](../../packages/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`packages/consts/paths.ts`](../../packages/consts/paths.ts) reads it earlier:
 
 | Variable | Required | Description |
 | :--- | :---: | :--- |
@@ -48,9 +48,9 @@ For Japanese translation, save the service-account key as `g-auth.json` in the p
 | File | Contents | Validation |
 | :--- | :--- | :--- |
 | [`prompt/persona.md`](../../prompt/persona.md) | Base persona for AI chat | Plain text; no schema |
-| [`config/stickers.json`](../../config/stickers.json) | Sticker packs available to the AI, up to 5 | [`src/config/stickers.ts`](../../src/config/stickers.ts) |
-| [`config/reactions.json`](../../config/reactions.json) | Emoji reactions available to the AI | [`src/config/reactions.ts`](../../src/config/reactions.ts) |
-| [`config/mood.json`](../../config/mood.json) | Mood tiers: copy, weights, and weather/time multipliers | [`src/config/mood.ts`](../../src/config/mood.ts); weights must be positive integers totaling exactly 100 |
+| [`config/stickers.json`](../../config/stickers.json) | Sticker packs available to the AI, up to 5 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
+| [`config/reactions.json`](../../config/reactions.json) | Emoji reactions available to the AI | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
+| [`config/mood.json`](../../config/mood.json) | Mood tiers: copy, weights, and weather/time multipliers | [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must be positive integers totaling exactly 100 |
 
 All three JSON files undergo strict schema validation and are warmed up before any network access during startup. Invalid configuration fails startup with the offending field instead of running in a degraded state.
 

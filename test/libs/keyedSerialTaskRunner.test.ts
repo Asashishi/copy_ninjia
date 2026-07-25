@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createKeyedSerialTaskRunner } from "../../src/libs/keyedSerialTaskRunner";
+import { createKeyedSerialTaskRunner } from "../../packages/libs/keyedSerialTaskRunner";
 import { deferred } from "./helpers";
 
 describe("createKeyedSerialTaskRunner", () => {

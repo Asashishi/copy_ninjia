@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import type { DiskIOMessage, DiskIOReply, LogEnvelope } from "../../src/types";
+import type { DiskIOMessage, DiskIOReply, LogEnvelope } from "../../packages/types";
 
 class FakeWorker {
   static instances: FakeWorker[] = [];
@@ -18,8 +18,8 @@ class FakeWorker {
   }
 }
 
-const diskIO = await import("../../src/infra/diskIO");
-const { logger } = await import("../../src/infra/logger");
+const diskIO = await import("../../packages/infra/diskIO");
+const { logger } = await import("../../packages/infra/logger");
 
 describe("logger persistence routing boundary", () => {
   test("初始化前只写控制台，完整恢复成功后 error 才转投唯一落盘 Worker", async () => {

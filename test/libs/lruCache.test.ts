@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LruCache } from "../../src/libs/lruCache";
+import { LruCache } from "../../packages/libs/lruCache";
 
 describe("LruCache", () => {
   test("超容量淘汰最久未使用的一项", () => {

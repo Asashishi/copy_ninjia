@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LinkedQueue } from "../../src/libs/linkedQueue";
+import { LinkedQueue } from "../../packages/libs/linkedQueue";
 
 describe("LinkedQueue", () => {
   test("push/shift 按先进先出顺序", () => {

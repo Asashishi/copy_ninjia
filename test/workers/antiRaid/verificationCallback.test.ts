@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import type { VerificationSnapshot } from "../../../src/types/antiRaid";
+import type { VerificationSnapshot } from "../../../packages/types/antiRaid";
 
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../src/infra/config", () => ({
+mock.module("../../../packages/infra/config", () => ({
   PRIVILEGED_USERS_ID: [900],
 }));
-mock.module("../../../src/infra/telegram", () => ({
+mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<undefined> => undefined,
   deleteMessage: async (): Promise<boolean> => true,
@@ -22,10 +22,10 @@ Object.defineProperty(globalThis, "self", {
 });
 
 const runtime = await import(
-  "../../../src/workers/antiRaid/verificationRuntime"
+  "../../../packages/workers/antiRaid/verificationRuntime"
 );
 const { verificationEntries } = await import(
-  "../../../src/cache/antiRaid/verification"
+  "../../../packages/cache/antiRaid/verification"
 );
 
 function pendingRecord(userId: number, isBot: boolean): VerificationSnapshot {

@@ -102,7 +102,7 @@ mock.module("node:fs", () => ({
   },
 }));
 
-const { atomicWriteText, atomicWriteTextSync } = await import("../../src/libs/atomicFile");
+const { atomicWriteText, atomicWriteTextSync } = await import("../../packages/libs/atomicFile");
 
 let testDir: string;
 let targetPath: string;

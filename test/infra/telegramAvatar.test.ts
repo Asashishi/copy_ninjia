@@ -3,7 +3,7 @@ import {
   extractAvatarUrlFromProfileHtml,
   extractPublicUsername,
   normalizePublicUsername,
-} from "../../src/infra/telegram/avatar";
+} from "../../packages/infra/telegram/avatar";
 
 describe("Telegram 公开头像解析", () => {
   test("规范化公开用户名并拒绝空值", () => {

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
-} from "../../../src/types/diskIO";
+} from "../../../packages/types/diskIO";
 
 const recoveredAi: Map<number, string> = new Map<number, string>([[1, "ai-one"]]);
 const recoveredStickers: Map<string, string> = new Map<string, string>([["pack_one", "sticker-one"]]);
@@ -24,24 +24,24 @@ const {
   hydrateAiMemorySnapshots,
   markAiMemorySnapshotDirty,
   resetAiMemoryFiles,
-} = await import("../../../src/workers/diskIO/aiMemoryFiles");
+} = await import("../../../packages/workers/diskIO/aiMemoryFiles");
 const {
   flushStickerCatalogs,
   hydrateStickerCatalogs,
   markStickerCatalogSnapshotDirty,
   resetStickerCatalogFiles,
-} = await import("../../../src/workers/diskIO/stickerCatalogFiles");
+} = await import("../../../packages/workers/diskIO/stickerCatalogFiles");
 const {
   aiMemoryCache,
   aiMemoryFlushState,
   deletedAiMemoryChats,
   dirtyChats,
-} = await import("../../../src/cache/diskIO/snapshots");
+} = await import("../../../packages/cache/diskIO/snapshots");
 const {
   dirtyStickerPacks,
   stickerCatalogCache,
   stickerFlushState,
-} = await import("../../../src/cache/diskIO/stickers");
+} = await import("../../../packages/cache/diskIO/stickers");
 
 beforeEach(() => {
   resetAiMemoryFiles();

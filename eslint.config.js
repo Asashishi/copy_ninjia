@@ -15,7 +15,7 @@ export default defineConfig(
     extends: [eslint.configs.recommended],
   },
   {
-    files: ["index.ts", "src/**/*.ts", "scripts/**/*.ts"],
+    files: ["index.ts", "packages/**/*.ts", "scripts/**/*.ts"],
     extends: [
       eslint.configs.recommended,
       tseslint.configs.recommendedTypeChecked,

@@ -1,7 +1,7 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import type { Bot } from "grammy";
-import { registerCommandMenu } from "../../src/app/commandMenu";
-import { logger } from "../../src/infra/logger";
+import { registerCommandMenu } from "../../packages/app/commandMenu";
+import { logger } from "../../packages/infra/logger";
 
 describe("application command menu", () => {
   test("显式注册公开命令且不暴露管理员私聊 /send", async () => {

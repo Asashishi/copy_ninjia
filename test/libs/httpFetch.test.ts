@@ -3,16 +3,16 @@ import {
   JSON_API_ALLOWED_ORIGINS,
   JSON_API_ERROR_LOG_MAX_CHARS,
   JSON_API_MAX_RESPONSE_BYTES,
-} from "../../src/consts/httpFetch";
-import { WEATHER_API_URL } from "../../src/consts/weather";
+} from "../../packages/consts/httpFetch";
+import { WEATHER_API_URL } from "../../packages/consts/weather";
 import { chunkedResponse } from "./helpers";
 
 const loggerError = mock((..._args: unknown[]): void => {});
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
 
-const { fetchJsonWithTimeout } = await import("../../src/libs/httpFetch");
+const { fetchJsonWithTimeout } = await import("../../packages/libs/httpFetch");
 const realFetch: typeof fetch = globalThis.fetch;
 
 function installFetch(handler: (input: string | URL | Request, init?: RequestInit) => Promise<Response>): void {

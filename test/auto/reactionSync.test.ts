@@ -5,10 +5,10 @@ const getActiveCopyIn = mock((_chatId: number): { copiedUser: { id: number } } |
 }));
 const enqueueReaction = mock(async (..._args: unknown[]): Promise<void> => {});
 
-mock.module("../../src/infra/storage/stateStore", () => ({ getActiveCopyIn }));
-mock.module("../../src/copy/reactionQueue", () => ({ enqueueReaction }));
+mock.module("../../packages/infra/storage/stateStore", () => ({ getActiveCopyIn }));
+mock.module("../../packages/copy/reactionQueue", () => ({ enqueueReaction }));
 
-const { handleReaction } = await import("../../src/auto/reactionSync");
+const { handleReaction } = await import("../../packages/auto/reactionSync");
 
 function context(
   reactions: Record<string, string[]>,

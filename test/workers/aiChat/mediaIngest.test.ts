@@ -1,23 +1,23 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AiRecordMediaMessage } from "../../../src/types/aiChat/protocol";
-import type { StickerCatalogEntry } from "../../../src/types/stickers/catalog";
+import type { AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
+import type { StickerCatalogEntry } from "../../../packages/types/stickers/catalog";
 
 const describeMedia = mock(async (..._args: unknown[]): Promise<string | null> => "一只戴帽子的猫");
 const getCatalogEntry = mock((_fileUniqueId: string): StickerCatalogEntry | undefined => undefined);
 const pushBufferedMessage = mock((..._args: unknown[]): void => {});
 const generateAndSendReply = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../src/ai/imageDescription", () => ({ describeMedia }));
-mock.module("../../../src/ai/stickers/catalog", () => ({ getCatalogEntry }));
-mock.module("../../../src/workers/aiChat/rollingMemory", () => ({ pushBufferedMessage }));
-mock.module("../../../src/workers/aiChat/replyPipeline", () => ({
+mock.module("../../../packages/ai/imageDescription", () => ({ describeMedia }));
+mock.module("../../../packages/ai/stickers/catalog", () => ({ getCatalogEntry }));
+mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ pushBufferedMessage }));
+mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
   currentReplyGeneration: () => 0,
   generateAndSendReply,
   isReplyGenerationCurrent: () => true,
 }));
 
-const { recordChatMedia } = await import("../../../src/workers/aiChat/mediaIngest");
-const { dirtyMemoryChats } = await import("../../../src/cache/aiChat/memory");
+const { recordChatMedia } = await import("../../../packages/workers/aiChat/mediaIngest");
+const { dirtyMemoryChats } = await import("../../../packages/cache/aiChat/memory");
 
 function photoMessage(): AiRecordMediaMessage {
   return {

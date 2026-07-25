@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CachedUser } from "../../src/types";
+import type { CachedUser } from "../../packages/types";
 
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 let replyTarget: CachedUser | undefined;
 const knownTargets = new Map<string, CachedUser>();
 
-mock.module("../../src/infra/telegram", () => ({ sendMessage: sendMessageMock }));
-mock.module("../../src/users/senderIdentity", () => ({
+mock.module("../../packages/infra/telegram", () => ({ sendMessage: sendMessageMock }));
+mock.module("../../packages/users/senderIdentity", () => ({
   resolveReplyTarget: (): CachedUser | undefined => replyTarget,
   resolveUsernameTarget: (username: string): CachedUser | undefined => knownTargets.get(username.toLowerCase()),
 }));
 
-const { resolveCommandTarget } = await import("../../src/commands/targetResolution");
-const { TELEGRAM_USERNAME_MIN_LENGTH, TELEGRAM_USERNAME_MAX_LENGTH } = await import("../../src/consts/commands");
+const { resolveCommandTarget } = await import("../../packages/commands/targetResolution");
+const { TELEGRAM_USERNAME_MIN_LENGTH, TELEGRAM_USERNAME_MAX_LENGTH } = await import("../../packages/consts/commands");
 
 const messages = {
   missingTarget: "missing",

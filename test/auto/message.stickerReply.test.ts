@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
-/** 「拿媒体直接叫机器人」的触发判定（见 src/auto/message/ 的媒体分支）：
+/** 「拿媒体直接叫机器人」的触发判定（见 packages/auto/message/ 的媒体分支）：
  * 有视觉素材时经 recordChatMedia 带 directTrigger 走「先试缓存、解析完成再
  * 回答」的必回管线；没有素材时记完兜底行直接触发。storage mock 里
  * quietUntil 恒为将来时刻——必回路径与文字回复/@ 一致地无视 /quiet，正好
@@ -13,14 +13,14 @@ const copyMessageMock = mock(async (..._args: unknown[]): Promise<undefined> => 
 let quietUntil: number = Date.now() + 60_000;
 let aiChatEnabled: boolean = true;
 
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   copyMessage: copyMessageMock,
   sendMessage: async (): Promise<undefined> => undefined,
   bot: { api: {} },
   buildFileDownloadUrl: () => "",
   logApiError: () => {},
 }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: () => false,
   getActiveCopyIn: () => null,
   getActiveProxySendTarget: () => undefined,
@@ -29,26 +29,26 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   persistAuthoritativeState: async (): Promise<void> => {},
   saveStateInBackground: () => {},
 }));
-mock.module("../../src/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
-mock.module("../../src/users/senderIdentity", () => ({ cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id }));
-mock.module("../../src/aiChat", () => ({
+mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
+mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.sender_chat?.id ?? message.from?.id }));
+mock.module("../../packages/aiChat", () => ({
   recordChatMessage: recordChatMessageMock,
   recordChatMedia: recordChatMediaMock,
   generateAndSendReply: generateAndSendReplyMock,
 }));
-mock.module("../../src/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
+mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false }));
 
 // tryClaimUserReplyTrigger 的 15s 每人触发冷却按真实 Date.now() 计时（见
-// src/auto/message/）：本文件多个用例共用同一个 chatId + alice.id 夹具，
+// packages/auto/message/）：本文件多个用例共用同一个 chatId + alice.id 夹具，
 // 不清空会导致后面的用例被前一个用例占用的冷却名额挡住、断言失败。
-const { userReplyTriggerTimes } = await import("../../src/cache/auto");
+const { userReplyTriggerTimes } = await import("../../packages/cache/auto");
 
 // 全量跑时 test/ai/stickers/catalog.test.ts 会把 pickStickerVisionSource 换成
 // 恒返回素材的桩（bun 的 mock.module 是进程级注册表，跨文件生效），这里按
 // 真实语义重新钉住：静态贴纸下载本体，动态/视频贴纸只有缩略图可用、没有
-// 缩略图则没有素材（与 src/ai/stickers/sets.ts 的实现一致）。
-const realStickerSets = await import("../../src/ai/stickers/sets");
-mock.module("../../src/ai/stickers/sets", () => ({
+// 缩略图则没有素材（与 packages/ai/stickers/sets.ts 的实现一致）。
+const realStickerSets = await import("../../packages/ai/stickers/sets");
+mock.module("../../packages/ai/stickers/sets", () => ({
   ...realStickerSets,
   pickStickerVisionSource: (sticker: any) => {
     const source: any = !sticker.is_animated && !sticker.is_video ? sticker : sticker.thumbnail;
@@ -62,8 +62,8 @@ mock.module("../../src/ai/stickers/sets", () => ({
   },
 }));
 
-const { handleIncomingMessage } = await import("../../src/auto/message");
-const { clearAiReplyActivity } = await import("../../src/auto/message/aiReplyActivity");
+const { handleIncomingMessage } = await import("../../packages/auto/message");
+const { clearAiReplyActivity } = await import("../../packages/auto/message/aiReplyActivity");
 
 const botInfo = { id: 999999, username: "test_bot", first_name: "TestBot" };
 const chat = { id: -100800, type: "supergroup", title: "Test Group" };

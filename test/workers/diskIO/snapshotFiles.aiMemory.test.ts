@@ -2,16 +2,16 @@ import { beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../../src/consts/aiChat";
+import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../../packages/consts/aiChat";
 
 // 与既有单测同样的手法:先把 AI_MEMORY_DIR 重定向到临时目录再 import,
 // 绝不能碰项目真实的 memory/ai/(线上 bot 正在用)。
 const aiDir: string = mkdtempSync(join(tmpdir(), "ai-memory-schema-"));
-const realPaths = await import("../../../src/consts/paths");
+const realPaths = await import("../../../packages/consts/paths");
 const { mock } = await import("bun:test");
-mock.module("../../../src/consts/paths", () => ({ ...realPaths, AI_MEMORY_DIR: aiDir }));
+mock.module("../../../packages/consts/paths", () => ({ ...realPaths, AI_MEMORY_DIR: aiDir }));
 
-const { deleteAiMemoryFile, recoverAiMemories, writeAiMemoryFile } = await import("../../../src/workers/diskIO/snapshotFiles");
+const { deleteAiMemoryFile, recoverAiMemories, writeAiMemoryFile } = await import("../../../packages/workers/diskIO/snapshotFiles");
 
 const currentSnapshot = {
   version: 1,

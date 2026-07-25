@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import sharp from "sharp";
 
-const { prepareVisionImage, sniffImageFormat } = await import("../../src/libs/image");
+const { prepareVisionImage, sniffImageFormat } = await import("../../packages/libs/image");
 
 async function tinyPng(): Promise<Buffer> {
   return sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer();

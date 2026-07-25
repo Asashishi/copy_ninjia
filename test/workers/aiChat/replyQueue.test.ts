@@ -3,12 +3,12 @@ import {
   activeReplyCounts,
   pendingReplyTriggers,
   resetAiChatReplyCache,
-} from "../../../src/cache/aiChat/replies";
-import { chatBuffers, resetAiChatMemoryCache } from "../../../src/cache/aiChat/memory";
-import { QUEUED_TRIGGER_SNIPPET_MAX_CHARS, REPLY_ROUND_MAX_CONCURRENT } from "../../../src/consts/aiChat";
-import { LinkedQueue } from "../../../src/libs/linkedQueue";
-import type { BufferedMessage, QueuedReplyTrigger } from "../../../src/types";
-import { drainReplyQueue, pushReplyTrigger, triggerKindFor } from "../../../src/workers/aiChat/replyQueue";
+} from "../../../packages/cache/aiChat/replies";
+import { chatBuffers, resetAiChatMemoryCache } from "../../../packages/cache/aiChat/memory";
+import { QUEUED_TRIGGER_SNIPPET_MAX_CHARS, REPLY_ROUND_MAX_CONCURRENT } from "../../../packages/consts/aiChat";
+import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
+import { drainReplyQueue, pushReplyTrigger, triggerKindFor } from "../../../packages/workers/aiChat/replyQueue";
 
 afterEach(() => {
   resetAiChatReplyCache();

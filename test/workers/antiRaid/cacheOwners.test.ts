@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { ANTI_RAID_CHAT_CACHE_MAX } from "../../../src/consts/antiRaid";
+import { ANTI_RAID_CHAT_CACHE_MAX } from "../../../packages/consts/antiRaid";
 import {
   adminFetches,
   bufferAdminChangeDuringFetch,
@@ -9,16 +9,16 @@ import {
   pendingAdminChangesDuringFetch,
   resetAdminCache,
   takePendingAdminChanges,
-} from "../../../src/cache/antiRaid/admins";
+} from "../../../packages/cache/antiRaid/admins";
 import {
   cacheLinkedChannel,
   getOrCreateLinkedChannelFetch,
   linkedChannelFetches,
   linkedChannels,
   resetLinkedChannelCache,
-} from "../../../src/cache/antiRaid/linkedChannels";
-import { joinWindows, lockdownApiChains, lockdownEntries } from "../../../src/cache/antiRaid/lockdown";
-import type { AntiRaidWorkerEvent } from "../../../src/types";
+} from "../../../packages/cache/antiRaid/linkedChannels";
+import { joinWindows, lockdownApiChains, lockdownEntries } from "../../../packages/cache/antiRaid/lockdown";
+import type { AntiRaidWorkerEvent } from "../../../packages/types";
 
 const lockdownEvents: AntiRaidWorkerEvent[] = [];
 const permissionWrites: Record<string, boolean | undefined>[] = [];
@@ -35,10 +35,10 @@ Object.defineProperty(globalThis, "self", {
   configurable: true,
   value: { postMessage(event: AntiRaidWorkerEvent): void { lockdownEvents.push(event); } },
 });
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../src/infra/telegram", () => ({
+mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {
     getChatAdministrators,
     getChat,
@@ -53,8 +53,8 @@ mock.module("../../../src/infra/telegram", () => ({
   },
 }));
 
-const adminCache = await import("../../../src/workers/antiRaid/adminCache");
-const lockdownRuntime = await import("../../../src/workers/antiRaid/lockdownRuntime");
+const adminCache = await import("../../../packages/workers/antiRaid/adminCache");
+const lockdownRuntime = await import("../../../packages/workers/antiRaid/lockdownRuntime");
 
 beforeEach(() => {
   resetAdminCache();

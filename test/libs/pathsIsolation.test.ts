@@ -10,7 +10,7 @@ import {
   PROJECT_ROOT,
   RUNTIME_DATA_ROOT,
   STATE_FILE_PATH,
-} from "../../src/consts/paths";
+} from "../../packages/consts/paths";
 
 test("测试环境的真实运行时文件与生产数据根完全隔离", () => {
   expect(RUNTIME_DATA_ROOT).not.toBe(PROJECT_ROOT);

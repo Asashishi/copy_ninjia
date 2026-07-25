@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { recentCallTimestamps } from "../../src/cache/luckChallenge";
-import { tryConsumeLuckRateLimit } from "../../src/commands/luckChallenge/rateLimit";
+import { recentCallTimestamps } from "../../packages/cache/luckChallenge";
+import { tryConsumeLuckRateLimit } from "../../packages/commands/luckChallenge/rateLimit";
 import {
   RATE_LIMIT_MAX_CALLS_PER_WINDOW,
   RATE_LIMIT_WINDOW_MS,
-} from "../../src/consts/luckChallenge";
+} from "../../packages/consts/luckChallenge";
 
 afterEach(() => { recentCallTimestamps.length = 0; });
 

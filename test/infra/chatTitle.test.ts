@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../../src/consts/telegram";
+import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../../packages/consts/telegram";
 
 const states = new Map<number, { isInitEnabled: true; title?: string }>();
 const saveStateInBackground = mock((_context: string): void => {});
@@ -10,11 +10,11 @@ const getChat = mock(async (_chatId: number, _signal?: AbortSignal): Promise<{
 const loggerInfo = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../src/infra/telegram", () => ({ bot: { api: { getChat } } }));
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/telegram", () => ({ bot: { api: { getChat } } }));
+mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, warn(): void {}, info: loggerInfo, error: loggerError },
 }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/storage/stateStore", () => ({
   getAllChatStates: () => states,
   getChatState: (chatId: number) => states.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number) => states.get(chatId)!,
@@ -25,7 +25,7 @@ const {
   abortChatTitleRefresh,
   initChatTitleRefresh,
   refreshAllChatTitles,
-} = await import("../../src/infra/chatTitle");
+} = await import("../../packages/infra/chatTitle");
 
 beforeEach(() => {
   states.clear();

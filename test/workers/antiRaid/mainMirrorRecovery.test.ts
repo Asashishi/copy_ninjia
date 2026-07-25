@@ -6,7 +6,7 @@ import type {
   VerificationPersistedReply,
   VerificationSnapshot,
   VerificationUpsertDiskMessage,
-} from "../../../src/types";
+} from "../../../packages/types";
 
 const workerPosts: AntiRaidWorkerMessage[] = [];
 const diskPosts: (VerificationUpsertDiskMessage | VerificationDeleteDiskMessage)[] = [];
@@ -36,10 +36,10 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   return { promise, resolve };
 }
 
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../src/infra/storage/stateStore", () => ({
+mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (chatId: number, field: "lockdown"): boolean => {
     const state = chatStates.get(chatId);
     if (!state || !(field in state)) return false;
@@ -56,15 +56,15 @@ mock.module("../../../src/infra/storage/stateStore", () => ({
   flushStateToDisk,
   saveStateInBackground,
 }));
-mock.module("../../../src/infra/telegram/actions", () => ({ answerCallbackQuery: async (): Promise<boolean> => true }));
-mock.module("../../../src/infra/telegram/client", () => ({ joinVerificationApi: { kind: "main-thread-test-api" } }));
-mock.module("../../../src/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
-mock.module("../../../src/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5 }));
-mock.module("../../../src/infra/botAdmin", () => ({
+mock.module("../../../packages/infra/telegram/actions", () => ({ answerCallbackQuery: async (): Promise<boolean> => true }));
+mock.module("../../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "main-thread-test-api" } }));
+mock.module("../../../packages/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
+mock.module("../../../packages/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5 }));
+mock.module("../../../packages/infra/botAdmin", () => ({
   isBotAdminIn: async (): Promise<boolean> => true,
   markBotAdminObserved: async (): Promise<void> => {},
 }));
-mock.module("../../../src/libs/supervisedWorker", () => ({
+mock.module("../../../packages/libs/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
     supervisorOptions = options;
     return {
@@ -74,15 +74,15 @@ mock.module("../../../src/libs/supervisedWorker", () => ({
     };
   },
 }));
-mock.module("../../../src/workers/antiRaid/persistence", () => ({
+mock.module("../../../packages/workers/antiRaid/persistence", () => ({
   flushDiskIO,
   postDiskIO: (message: VerificationUpsertDiskMessage | VerificationDeleteDiskMessage): void => { diskPosts.push(message); },
   onDiskIORespawn: (callback: () => void): void => { diskRespawn = callback; },
   onVerificationPersisted: (callback: (reply: VerificationPersistedReply) => void): void => { persistedAck = callback; },
 }));
 
-const antiRaid = await import("../../../src/antiRaid");
-const { activeVerificationSnapshots, pendingVerificationDeletes } = await import("../../../src/cache/antiRaid");
+const antiRaid = await import("../../../packages/antiRaid");
+const { activeVerificationSnapshots, pendingVerificationDeletes } = await import("../../../packages/cache/antiRaid");
 
 function record(generation: number, revision: number): VerificationSnapshot {
   return {
@@ -227,7 +227,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     const stateGate = deferred<FlushResult>();
     flushDiskIO.mockImplementationOnce(() => diskGate.promise);
     flushStateToDisk.mockImplementationOnce(() => stateGate.promise);
-    const { antiRaidRuntimeState } = await import("../../../src/cache/antiRaid");
+    const { antiRaidRuntimeState } = await import("../../../packages/cache/antiRaid");
     let settled: boolean = false;
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
@@ -331,7 +331,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
   test("barrier 后任一持久化 owner 失败，安全 update 必须 reject", async () => {
     workerPosts.length = 0;
     flushDiskIO.mockResolvedValueOnce("failed");
-    const { antiRaidRuntimeState } = await import("../../../src/cache/antiRaid");
+    const { antiRaidRuntimeState } = await import("../../../packages/cache/antiRaid");
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
       chatMember: {
@@ -619,7 +619,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
       (input as { chatId: number }).chatId === stoppedChatId
     )).toHaveLength(1);
-    const { emergencyLockdownRecoveries, emergencyLockdownRecoveryRuntime } = await import("../../../src/cache/antiRaid");
+    const { emergencyLockdownRecoveries, emergencyLockdownRecoveryRuntime } = await import("../../../packages/cache/antiRaid");
     expect(emergencyLockdownRecoveries.size).toBe(0);
     expect(emergencyLockdownRecoveryRuntime.stopped).toBeTrue();
     expect(chatStates.get(stoppedChatId)?.lockdown?.intentId).toBe(104);

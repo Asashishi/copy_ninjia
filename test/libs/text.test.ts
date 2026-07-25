@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { splitGraphemes, truncateAtClauseBoundary, truncateInline } from "../../src/libs/text";
+import { splitGraphemes, truncateAtClauseBoundary, truncateInline } from "../../packages/libs/text";
 
 describe("libs/text truncateAtClauseBoundary", () => {
   test("不超限时原样返回", () => {

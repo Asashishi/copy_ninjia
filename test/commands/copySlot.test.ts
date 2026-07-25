@@ -5,8 +5,8 @@ import {
   claimCopySlot,
   commitCopySlot,
   releaseCopySlot,
-} from "../../src/commands/copySlot";
-import type { GlobalCopyState } from "../../src/types/chatState";
+} from "../../packages/commands/copySlot";
+import type { GlobalCopyState } from "../../packages/types/chatState";
 
 describe("copy global slot", () => {
   test("第一个跨群启动同步占位，提交前拒绝第二个启动，释放后可重新认领", () => {

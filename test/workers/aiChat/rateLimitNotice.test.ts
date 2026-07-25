@@ -18,18 +18,18 @@ const sendMessage = mock(async (_message: { chatId: number; text: string }): Pro
 );
 const recordChatMessage = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../src/infra/telegram", () => ({ sendMessage }));
-mock.module("../../../src/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
+mock.module("../../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
 
-const { currentReplyGeneration, notifyRateLimited } = await import("../../../src/workers/aiChat/replyState");
-const { botInfoState } = await import("../../../src/cache/aiChat/identity");
+const { currentReplyGeneration, notifyRateLimited } = await import("../../../packages/workers/aiChat/replyState");
+const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
 const {
   invalidateChatReplyCache,
   rateLimitNoticeTimes,
   resetAiChatReplyCache,
-} = await import("../../../src/cache/aiChat/replies");
+} = await import("../../../packages/cache/aiChat/replies");
 const { RATE_LIMIT_NOTICE_COOLDOWN_MS, RATE_LIMIT_NOTICE_TEXT } =
-  await import("../../../src/consts/aiChat/rateLimit");
+  await import("../../../packages/consts/aiChat/rateLimit");
 
 const CHAT_ID: number = -1001;
 const NOW: number = 1_700_000_000_000;

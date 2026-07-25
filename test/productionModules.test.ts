@@ -10,8 +10,8 @@ function findRuntimeModules(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path: string = join(dir, entry.name);
     if (entry.isDirectory()) {
-      // src/types/ 只含被 TypeScript 擦除的 interface/type 声明，没有运行时代码。
-      if (path === join(projectRoot, "src", "types")) continue;
+      // packages/types/ 只含被 TypeScript 擦除的 interface/type 声明，没有运行时代码。
+      if (path === join(projectRoot, "packages", "types")) continue;
       result.push(...findRuntimeModules(path));
     } else if (entry.isFile() && entry.name.endsWith(".ts")) {
       result.push(path);
@@ -22,7 +22,7 @@ function findRuntimeModules(dir: string): string[] {
 
 const productionRuntimeModules: string[] = [
   join(projectRoot, "index.ts"),
-  ...findRuntimeModules(join(projectRoot, "src")),
+  ...findRuntimeModules(join(projectRoot, "packages")),
 ].sort();
 
 describe("production module coverage manifest", () => {

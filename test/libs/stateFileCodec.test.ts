@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeStateFile } from "../../src/libs/stateFileCodec";
+import { decodeStateFile } from "../../packages/libs/stateFileCodec";
 
 describe("decodeStateFile", () => {
   test("恢复完整的当前状态", () => {

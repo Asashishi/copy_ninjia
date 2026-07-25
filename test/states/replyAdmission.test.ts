@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../../src/consts/aiChat";
-import { admitRound, admitTrigger } from "../../src/states/replyAdmission";
-import type { TriggerKind } from "../../src/types/states/replyAdmission";
+import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../../packages/consts/aiChat";
+import { admitRound, admitTrigger } from "../../packages/states/replyAdmission";
+import type { TriggerKind } from "../../packages/types/states/replyAdmission";
 
 const ALL_KINDS: TriggerKind[] = ["direct", "random", "mediaDirect", "mediaRandom"];
 

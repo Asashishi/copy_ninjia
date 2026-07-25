@@ -1,24 +1,24 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
-import { CHAT_INTERACTION_INSTRUCTION } from "../../src/consts/aiChat/prompts/memory";
+import { CHAT_INTERACTION_INSTRUCTION } from "../../packages/consts/aiChat/prompts/memory";
 import {
   GROUNDED_REPLY_TEMPERATURE,
   HARD_MAX_ACTIONS_PER_REPLY,
   MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
   MAX_GOOGLE_SEARCH_CALLS_PER_REPLY,
   REPLY_TEMPERATURE,
-} from "../../src/consts/aiChat/tools";
-import { PERSONA_PATH } from "../../src/consts/paths";
+} from "../../packages/consts/aiChat/tools";
+import { PERSONA_PATH } from "../../packages/consts/paths";
 import {
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
   SEND_MESSAGE_TOOL,
   SEND_STICKER_TOOL,
   VIEW_STICKER_PACK_TOOL,
-} from "../../src/consts/tools";
-import type { ReplyPromptSections, ReplyToolset } from "../../src/types/aiChat/replies";
-import type { GeminiRequestResult } from "../../src/ai/gemini";
+} from "../../packages/consts/tools";
+import type { ReplyPromptSections, ReplyToolset } from "../../packages/types/aiChat/replies";
+import type { GeminiRequestResult } from "../../packages/ai/gemini";
 
 const replies: unknown[] = [];
 const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => {
@@ -33,13 +33,13 @@ const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<Gemi
 const callToolMock = mock(async (..._args: unknown[]): Promise<string> => JSON.stringify({ success: true }));
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 
-mock.module("../../src/ai/gemini", () => ({ requestGeminiResult: requestGeminiResponseMock }));
-mock.module("../../src/ai/mood", () => ({ currentMoodInstruction: (): string => "当前心情测试" }));
-mock.module("../../src/ai/tools", () => ({ callTool: callToolMock }));
-mock.module("../../src/infra/logger", () => ({ logger: { error: loggerErrorMock } }));
-mock.module("../../src/workers/aiChat/timeSentence", () => ({ currentTimeSentence: (): string => "当前实际时间：测试。" }));
+mock.module("../../packages/ai/gemini", () => ({ requestGeminiResult: requestGeminiResponseMock }));
+mock.module("../../packages/ai/mood", () => ({ currentMoodInstruction: (): string => "当前心情测试" }));
+mock.module("../../packages/ai/tools", () => ({ callTool: callToolMock }));
+mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerErrorMock } }));
+mock.module("../../packages/workers/aiChat/timeSentence", () => ({ currentTimeSentence: (): string => "当前实际时间：测试。" }));
 
-const { callGemini } = await import("../../src/workers/aiChat/geminiReply");
+const { callGemini } = await import("../../packages/workers/aiChat/geminiReply");
 
 function promptSections(label: string): ReplyPromptSections {
   return {

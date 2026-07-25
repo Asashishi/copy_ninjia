@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CachedUser } from "../../src/types/chatState";
+import type { CachedUser } from "../../packages/types/chatState";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
@@ -18,22 +18,22 @@ let jaEnabled: boolean = true;
 const claimCopyCooldownOrReject = mock(async () => cooldownRejected ? { rejected: true as const } : claim);
 const resolveCopyCommandTarget = mock(async (): Promise<CachedUser | undefined> => target);
 
-mock.module("../../src/infra/telegram", () => ({ sendMessage }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: () => ({ isJATranslationEnabled: jaEnabled }),
   getGlobalCopyState: () => globalCopy,
   persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
   saveStateInBackground,
 }));
-mock.module("../../src/commands/copyShared", () => ({
+mock.module("../../packages/commands/copyShared", () => ({
   claimCopyCooldownOrReject,
   releaseCopyCooldownClaim,
   resolveCopyCommandTarget,
   stealAvatarInBackground,
 }));
 
-const { handleCopyCommand, handleStopCommand } = await import("../../src/commands/copy");
-const { handleStealIconCommand } = await import("../../src/commands/stealIcon");
+const { handleCopyCommand, handleStopCommand } = await import("../../packages/commands/copy");
+const { handleStealIconCommand } = await import("../../packages/commands/stealIcon");
 
 function context(chatId: number = -1001): never {
   return {

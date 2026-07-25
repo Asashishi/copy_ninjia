@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../src/types";
+import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../packages/types";
 
 interface DeferredChat {
   promise: Promise<Record<string, unknown>>;
@@ -24,11 +24,11 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage(event: AntiRaidWorkerEvent): void { workerEvents.push(event); } },
 });
 
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../src/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
-mock.module("../../../src/infra/telegram", () => ({
+mock.module("../../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
+mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {
     getChat(): Promise<Record<string, unknown>> {
       const request = deferredChat();
@@ -44,12 +44,12 @@ mock.module("../../../src/infra/telegram", () => ({
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 
-const runtime = await import("../../../src/workers/antiRaid/verificationRuntime");
+const runtime = await import("../../../packages/workers/antiRaid/verificationRuntime");
 const { verificationEntries, verificationGeneration, verificationRevisions } =
-  await import("../../../src/cache/antiRaid/verification");
+  await import("../../../packages/cache/antiRaid/verification");
 const { resetLinkedChannelCache, linkedChannels } =
-  await import("../../../src/cache/antiRaid/linkedChannels");
-const { recentChannelComments } = await import("../../../src/cache/antiRaid/recentComments");
+  await import("../../../packages/cache/antiRaid/linkedChannels");
+const { recentChannelComments } = await import("../../../packages/cache/antiRaid/recentComments");
 
 function pendingRecord(userId: number, generation: number): VerificationSnapshot {
   return {

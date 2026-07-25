@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { settleInflight, trackInflight } from "../../src/libs/inflight";
+import { settleInflight, trackInflight } from "../../packages/libs/inflight";
 import { deferred } from "./helpers";
 
 describe("inflight tracker", () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../src/types";
+import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../packages/types";
 
 const calls: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
@@ -12,7 +12,7 @@ const workerSelf: {
 };
 Object.defineProperty(globalThis, "self", { configurable: true, value: workerSelf });
 
-mock.module("../../../src/workers/antiRaid/verificationRuntime", () => ({
+mock.module("../../../packages/workers/antiRaid/verificationRuntime", () => ({
   handleJoin(): void { calls.push("join"); },
   handleTrackedMessage(): void { calls.push("message"); },
   handleVerificationCallback(): void { calls.push("callback"); },
@@ -22,31 +22,31 @@ mock.module("../../../src/workers/antiRaid/verificationRuntime", () => ({
   deactivateVerificationChat(): void { calls.push("deactivateVerification"); },
   stopVerificationRuntime(): void { calls.push("stopVerification"); },
 }));
-mock.module("../../../src/workers/antiRaid/lockdownRuntime", () => ({
+mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({
   adoptLockdowns(): void { calls.push("adopt"); },
   handleLockdownPersisted(): void { calls.push("lockdownPersisted"); },
   deactivateLockdownChat(): void { calls.push("deactivateLockdown"); },
   stopLockdownRuntime(): void { calls.push("stopLockdown"); },
 }));
-mock.module("../../../src/workers/antiRaid/adminCache", () => ({
+mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
   applyAdminChange(): void { calls.push("adminsChanged"); },
 }));
 const sweepRecentComments = mock((_now: number): number => 0);
-mock.module("../../../src/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
+mock.module("../../../packages/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
 const initTelegramClients = mock((): void => {});
-mock.module("../../../src/infra/telegram/client", () => ({ initTelegramClients }));
+mock.module("../../../packages/infra/telegram/client", () => ({ initTelegramClients }));
 
-const worker = await import("../../../src/workers/antiRaidWorker");
+const worker = await import("../../../packages/workers/antiRaidWorker");
 const {
   adminFetches,
   chatAdmins,
-} = await import("../../../src/cache/antiRaid/admins");
+} = await import("../../../packages/cache/antiRaid/admins");
 const {
   linkedChannelFetches,
   linkedChannels,
-} = await import("../../../src/cache/antiRaid/linkedChannels");
-const { verificationRevisions } = await import("../../../src/cache/antiRaid/verification");
-const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } = await import("../../../src/consts/antiRaid");
+} = await import("../../../packages/cache/antiRaid/linkedChannels");
+const { verificationRevisions } = await import("../../../packages/cache/antiRaid/verification");
+const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } = await import("../../../packages/consts/antiRaid");
 
 beforeEach(() => {
   worker.stopAntiRaidWorker();

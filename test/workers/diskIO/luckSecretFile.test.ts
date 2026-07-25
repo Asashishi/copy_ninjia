@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recoverLuckReceiptSecret, type LuckSecretFileIO } from "../../../src/workers/diskIO/luckSecretFile";
+import { recoverLuckReceiptSecret, type LuckSecretFileIO } from "../../../packages/workers/diskIO/luckSecretFile";
 
 const dir: string = mkdtempSync(join(tmpdir(), "luck-secret-test-"));
 const path: string = join(dir, "receipt-secret.json");

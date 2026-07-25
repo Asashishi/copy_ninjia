@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createFlushBarrier } from "../../src/libs/flushBarrier";
+import { createFlushBarrier } from "../../packages/libs/flushBarrier";
 
 describe("flush barrier", () => {
   test("ack 只结算一次并忽略迟到回执", async () => {

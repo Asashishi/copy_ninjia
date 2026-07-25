@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { AntiRaidWorkerEvent, VerificationSnapshot, VerificationUpsertEvent } from "../../../src/types";
+import type { AntiRaidWorkerEvent, VerificationSnapshot, VerificationUpsertEvent } from "../../../packages/types";
 
 let kicks: number = 0;
 const deletedMessageIds: number[] = [];
@@ -13,11 +13,11 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage: (event: AntiRaidWorkerEvent): void => { workerEvents.push(event); } },
 });
 
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../src/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
-mock.module("../../../src/infra/telegram", () => ({
+mock.module("../../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
+mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<number | undefined> => {
     reminderAttempts++;
@@ -36,8 +36,8 @@ mock.module("../../../src/infra/telegram", () => ({
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 
-const runtime = await import("../../../src/workers/antiRaid/verificationRuntime");
-const { verificationEntries } = await import("../../../src/cache/antiRaid/verification");
+const runtime = await import("../../../packages/workers/antiRaid/verificationRuntime");
+const { verificationEntries } = await import("../../../packages/cache/antiRaid/verification");
 
 function record(userId: number, expiresAt: number): VerificationSnapshot {
   return {

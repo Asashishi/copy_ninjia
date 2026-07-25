@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { ReplyPromptSections, ReplyToolContext, ReplyToolset } from "../../../src/types/aiChat/replies";
+import type { ReplyPromptSections, ReplyToolContext, ReplyToolset } from "../../../packages/types/aiChat/replies";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
@@ -45,13 +45,13 @@ const buildReplyPromptSections = mock((..._args: unknown[]): ReplyPromptSections
 const recordChatMessage = mock((..._args: unknown[]): void => {});
 const logError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../src/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat }));
-mock.module("../../../src/ai/stickers/sendLock", () => ({ createStickerSendLock }));
-mock.module("../../../src/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
-mock.module("../../../src/workers/aiChat/geminiReply", () => ({ callGemini }));
-mock.module("../../../src/workers/aiChat/promptContext", () => ({ buildReplyPromptSections }));
-mock.module("../../../src/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
-mock.module("../../../src/infra/logger", () => ({
+mock.module("../../../packages/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat }));
+mock.module("../../../packages/ai/stickers/sendLock", () => ({ createStickerSendLock }));
+mock.module("../../../packages/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
+mock.module("../../../packages/workers/aiChat/geminiReply", () => ({ callGemini }));
+mock.module("../../../packages/workers/aiChat/promptContext", () => ({ buildReplyPromptSections }));
+mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
+mock.module("../../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
@@ -60,19 +60,19 @@ mock.module("../../../src/infra/logger", () => ({
   },
 }));
 
-const { startReplyRound } = await import("../../../src/workers/aiChat/replyRound");
-const { botInfoState } = await import("../../../src/cache/aiChat/identity");
+const { startReplyRound } = await import("../../../packages/workers/aiChat/replyRound");
+const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
 const {
   activeReplyCounts,
   longTriggerTimes,
   rateLimitNoticeTimes,
   resetAiChatReplyCache,
-} = await import("../../../src/cache/aiChat/replies");
-const { invalidateChatReplyCache } = await import("../../../src/cache/aiChat/replies");
-const { LinkedQueue } = await import("../../../src/libs/linkedQueue");
-const { RATE_LIMIT_LONG_MAX_TRIGGERS } = await import("../../../src/consts/aiChat/rateLimit");
-const { SUPER_ADMIN_USER_ID } = await import("../../../src/infra/config");
-const { SEND_MESSAGE_TOOL } = await import("../../../src/consts/tools");
+} = await import("../../../packages/cache/aiChat/replies");
+const { invalidateChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
+const { LinkedQueue } = await import("../../../packages/libs/linkedQueue");
+const { RATE_LIMIT_LONG_MAX_TRIGGERS } = await import("../../../packages/consts/aiChat/rateLimit");
+const { SUPER_ADMIN_USER_ID } = await import("../../../packages/infra/config");
+const { SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
 
 function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}): Promise<number> {
   return new Promise((resolve) => {

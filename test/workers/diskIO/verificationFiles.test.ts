@@ -8,19 +8,19 @@ import {
   handleVerificationDelete,
   handleVerificationUpsert,
   recoverVerificationDay,
-} from "../../../src/workers/diskIO/verificationFiles";
+} from "../../../packages/workers/diskIO/verificationFiles";
 import {
   resetVerificationPersistenceCache,
   verificationFileState,
   verificationPendingChanges,
-} from "../../../src/cache/diskIO/verification";
+} from "../../../packages/cache/diskIO/verification";
 import type {
   VerificationDeleteDiskMessage,
   VerificationPersistedReply,
   VerificationSnapshot,
   VerificationUpsertDiskMessage,
-} from "../../../src/types";
-import { VERIFICATION_FILE_COMPACT_BYTES } from "../../../src/consts/diskIO";
+} from "../../../packages/types";
+import { VERIFICATION_FILE_COMPACT_BYTES } from "../../../packages/consts/diskIO";
 
 const DAY_ONE = "2026-07-19";
 const DAY_TWO = "2026-07-20";

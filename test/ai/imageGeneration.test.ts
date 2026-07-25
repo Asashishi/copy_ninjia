@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<unknown> => null);
 
-mock.module("../../src/ai/gemini", () => ({ requestGeminiResponse }));
+mock.module("../../packages/ai/gemini", () => ({ requestGeminiResponse }));
 
-const { generateChatImage, normalizeImageAspectRatio } = await import("../../src/ai/imageGeneration");
+const { generateChatImage, normalizeImageAspectRatio } = await import("../../packages/ai/imageGeneration");
 const {
   GEMINI_IMAGE_GENERATION_MODEL,
   IMAGE_GENERATION_ASPECT_RATIOS,
   IMAGE_GENERATION_MAX_BYTES,
-} = await import("../../src/consts/aiChat/imageGeneration");
+} = await import("../../packages/consts/aiChat/imageGeneration");
 
 beforeEach(() => {
   requestGeminiResponse.mockClear();

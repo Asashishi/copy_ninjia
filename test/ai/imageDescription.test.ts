@@ -10,14 +10,14 @@ const prepareVisionImage = mock(async (..._args: unknown[]) => ({ bytes: Buffer.
 const readBoundedResponseBytes = mock(async (..._args: unknown[]) => ({ ok: true as const, bytes: new Uint8Array([1, 2, 3]) }));
 const loggerError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   bot: { api: { getFile } },
   buildFileDownloadUrl,
 }));
-mock.module("../../src/ai/gemini", () => ({ requestGeminiResponse }));
-mock.module("../../src/libs/image", () => ({ prepareVisionImage }));
-mock.module("../../src/libs/boundedResponse", () => ({ readBoundedResponseBytes }));
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/ai/gemini", () => ({ requestGeminiResponse }));
+mock.module("../../packages/libs/image", () => ({ prepareVisionImage }));
+mock.module("../../packages/libs/boundedResponse", () => ({ readBoundedResponseBytes }));
+mock.module("../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
@@ -26,9 +26,9 @@ mock.module("../../src/infra/logger", () => ({
   },
 }));
 
-const { describeMedia, describeMediaForStickerCatalog } = await import("../../src/ai/imageDescription");
-const { transientDescriptionCache } = await import("../../src/cache/imageDescription");
-const { MEDIA_MAX_DOWNLOAD_BYTES } = await import("../../src/consts/aiChat/media");
+const { describeMedia, describeMediaForStickerCatalog } = await import("../../packages/ai/imageDescription");
+const { transientDescriptionCache } = await import("../../packages/cache/imageDescription");
+const { MEDIA_MAX_DOWNLOAD_BYTES } = await import("../../packages/consts/aiChat/media");
 const originalFetch: typeof fetch = globalThis.fetch;
 const fetchMock = mock(async (..._args: unknown[]): Promise<Response> => new Response("image"));
 

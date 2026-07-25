@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InstanceLockOptions, ProcessIdentity } from "../../src/infra/storage/instanceLock";
+import type { InstanceLockOptions, ProcessIdentity } from "../../packages/infra/storage/instanceLock";
 
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/logger", () => ({
   logger: { error: mock((..._args: unknown[]): void => {}) },
 }));
 
@@ -14,7 +14,7 @@ const {
   parseLinuxProcessStat,
   readLinuxProcessIdentity,
   releaseSingleInstanceLock,
-} = await import("../../src/infra/storage/instanceLock");
+} = await import("../../packages/infra/storage/instanceLock");
 const TOKEN_A = "123456789:test-secret-a";
 const TOKEN_B = "987654321:test-secret-b";
 const BOOT_A = "11111111-1111-4111-8111-111111111111";

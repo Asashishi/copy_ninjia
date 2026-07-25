@@ -25,12 +25,12 @@ mock.module("@google/genai", () => ({
     HARM_CATEGORY_DANGEROUS_CONTENT: "HARM_CATEGORY_DANGEROUS_CONTENT",
   },
 }));
-mock.module("../../src/infra/config", () => ({ GEMINI_API_KEY: "test-key" }));
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/config", () => ({ GEMINI_API_KEY: "test-key" }));
+mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
 
-const { requestGeminiResponse, requestGeminiResult } = await import("../../src/ai/gemini");
+const { requestGeminiResponse, requestGeminiResult } = await import("../../packages/ai/gemini");
 
 describe("Gemini request safety settings", () => {
   beforeEach(() => {

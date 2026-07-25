@@ -11,11 +11,11 @@ const persistAuthoritativeState = mock(async (...args: unknown[]): Promise<void>
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
 const states = new Map<number, Record<string, unknown>>();
 
-mock.module("../../src/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
-mock.module("../../src/infra/telegram", () => ({ sendMessage }));
-mock.module("../../src/aiChat", () => ({ invalidateAiChat }));
-mock.module("../../src/infra/botAdmin", () => ({ invalidateBotAdminStatus, teardownChatRuntime }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
+mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
+mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, teardownChatRuntime }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
   getOrCreateChatState(chatId: number): Record<string, unknown> {
     let state = states.get(chatId);
     if (!state) {
@@ -27,12 +27,12 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   persistAuthoritativeState,
   saveStateInBackground,
 }));
-mock.module("../../src/commands/copy", () => ({ handleCopyCommand }));
+mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));
 
-const { handleAiChatCommand } = await import("../../src/commands/aiChat");
-const { handleInitCommand } = await import("../../src/commands/init");
-const { handleJaCopyCommand } = await import("../../src/commands/jaCopy");
-const { isSuperAdmin, resolveSuperAdminToggleArg } = await import("../../src/commands/superAdminToggle");
+const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
+const { handleInitCommand } = await import("../../packages/commands/init");
+const { handleJaCopyCommand } = await import("../../packages/commands/jaCopy");
+const { isSuperAdmin, resolveSuperAdminToggleArg } = await import("../../packages/commands/superAdminToggle");
 
 function context(argument: string, userId: number | undefined = 100): never {
   return {

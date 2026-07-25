@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { sleep } from "../../src/libs/sleep";
+import { sleep } from "../../packages/libs/sleep";
 
 describe("abortable sleep", () => {
   test("abort 会立即拒绝并清理真实的长时 referenced timer", async () => {

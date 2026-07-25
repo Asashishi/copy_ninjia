@@ -46,7 +46,7 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 
 ### Test-Writing Conventions
 
-- Mirror `src/` paths: `src/foo/bar.ts` → `test/foo/bar.test.ts`.
+- Mirror `packages/` paths: `packages/foo/bar.ts` → `test/foo/bar.test.ts`.
 - Shared helpers belong in `test/libs/helpers.ts`. Do not share mutable module state across tests; isolation can conceal such mistakes until someone runs without `--isolate`.
 - Tests that exercise real file I/O are safe because the preload provides a temporary data root. Still, watch mock boundaries around `infra/storage`: mocking only `infra/diskIO` while leaving `infra/storage` real can reach the real `saveStateInBackground`, which is exactly the situation where [`AGENTS.md`](../../AGENTS.md) requires backing up runtime files first.
 
@@ -71,7 +71,7 @@ bun run test:coverage 2>&1 | tail -5           # test count, file count, expect(
 bun run test:coverage 2>&1 | grep 'All files'  # function and line coverage
 ```
 
-Synchronize the Tests/Coverage badges in all three READMEs, the “Project Quality” block in each README's “Pure AI Development” section, and “Measurements for This Documentation Version” in all three workflow documents. The latter two carry the same measured figures, with the README copy omitting the badge note, so update them together. The Coverage badge always uses the `All files` line-coverage value. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `src/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
+Synchronize the Tests/Coverage badges in all three READMEs, the “Project Quality” block in each README's “Pure AI Development” section, and “Measurements for This Documentation Version” in all three workflow documents. The latter two carry the same measured figures, with the README copy omitting the badge note, so update them together. The Coverage badge always uses the `All files` line-coverage value. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release
 

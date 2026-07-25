@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { userReplyTriggerTimes } from "../../src/cache/auto";
-import { USER_REPLY_TRIGGER_COOLDOWN_MS } from "../../src/consts/auto";
-import { tryClaimUserReplyTrigger } from "../../src/auto/message/triggerPolicy";
+import { userReplyTriggerTimes } from "../../packages/cache/auto";
+import { USER_REPLY_TRIGGER_COOLDOWN_MS } from "../../packages/consts/auto";
+import { tryClaimUserReplyTrigger } from "../../packages/auto/message/triggerPolicy";
 
 afterEach(() => { userReplyTriggerTimes.clear(); });
 

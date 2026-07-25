@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { MAX_PENDING_TASKS_PER_CHAT } from "../../src/consts/reactionQueue";
+import { MAX_PENDING_TASKS_PER_CHAT } from "../../packages/consts/reactionQueue";
 
 class FakeGrammyError extends Error {
   constructor(
@@ -18,12 +18,12 @@ const loggerWarn = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("grammy", () => ({ GrammyError: FakeGrammyError }));
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   bot: { api: { setMessageReaction } },
   logApiError,
 }));
-mock.module("../../src/libs/sleep", () => ({ sleep }));
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/libs/sleep", () => ({ sleep }));
+mock.module("../../packages/infra/logger", () => ({
   logger: { log: loggerLog, info: mock(() => {}), warn: loggerWarn, error: loggerError },
 }));
 
@@ -32,14 +32,14 @@ const {
   enqueueReaction,
   initReactionQueue,
   quiesceReactionQueue,
-} = await import("../../src/copy/reactionQueue");
+} = await import("../../packages/copy/reactionQueue");
 const {
   chatQueues,
   consumingChats,
   pendingReactionWaiters,
   pendingTasks,
   reactionDrainWaiters,
-} = await import("../../src/cache/reactionQueue");
+} = await import("../../packages/cache/reactionQueue");
 
 async function waitForIdle(): Promise<void> {
   for (let attempt: number = 0; attempt < 30; attempt++) {

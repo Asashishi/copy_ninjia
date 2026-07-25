@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Bot, Context } from "grammy";
-import { registerHandlers } from "../../src/app/registerHandlers";
+import { registerHandlers } from "../../packages/app/registerHandlers";
 
 type TestMiddleware = (ctx: Context, next: () => Promise<void>) => unknown;
 

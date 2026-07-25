@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLatestValueRunner } from "../../src/libs/latestValueRunner";
+import { createLatestValueRunner } from "../../packages/libs/latestValueRunner";
 
 describe("createLatestValueRunner", () => {
   test("写入在途时只保留最新待处理值", async () => {

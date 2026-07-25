@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GrammyError } from "grammy";
 
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
@@ -14,7 +14,7 @@ mock.module("../../src/infra/logger", () => ({
 const realFetch = globalThis.fetch;
 type FetchInput = Parameters<typeof fetch>[0];
 
-const { bot, copyUserProfilePhoto } = await import("../../src/infra/telegram");
+const { bot, copyUserProfilePhoto } = await import("../../packages/infra/telegram");
 
 const getChatMock = mock(async (_chatId: number): Promise<any> => ({
   id: -1003952764805,

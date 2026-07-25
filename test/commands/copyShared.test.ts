@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CachedUser } from "../../src/types/chatState";
+import type { CachedUser } from "../../packages/types/chatState";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const copyUserProfilePhoto = mock(async (..._args: unknown[]): Promise<boolean> => true);
@@ -8,16 +8,16 @@ const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUse
 const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
 
-mock.module("../../src/infra/config", () => ({ PRIVILEGED_USERS_ID: [100] }));
-mock.module("../../src/infra/telegram/actions", () => ({ sendMessage }));
-mock.module("../../src/infra/telegram/avatar", () => ({ copyUserProfilePhoto }));
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [100] }));
+mock.module("../../packages/infra/telegram/actions", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram/avatar", () => ({ copyUserProfilePhoto }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
   getGlobalCopyState: () => globalCopyState,
   persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
   saveStateInBackground,
 }));
-mock.module("../../src/commands/targetResolution", () => ({ resolveCommandTarget }));
-mock.module("../../src/infra/logger", () => ({
+mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
+mock.module("../../packages/infra/logger", () => ({
   logger: {
     log: mock((..._args: unknown[]): void => {}),
     info: mock((..._args: unknown[]): void => {}),
@@ -26,14 +26,14 @@ mock.module("../../src/infra/logger", () => ({
   },
 }));
 
-const shared = await import("../../src/commands/copyShared");
+const shared = await import("../../packages/commands/copyShared");
 const {
   drainAvatarUpdates,
   initAvatarUpdates,
   quiesceAvatarUpdates,
-} = await import("../../src/copy/avatarQueue");
-const { avatarUpdateState } = await import("../../src/cache/copy/avatar");
-const { COPY_COOLDOWN_MS } = await import("../../src/consts/commands");
+} = await import("../../packages/copy/avatarQueue");
+const { avatarUpdateState } = await import("../../packages/cache/copy/avatar");
+const { COPY_COOLDOWN_MS } = await import("../../packages/consts/commands");
 const originalDateNow: () => number = Date.now;
 
 async function waitFor(predicate: () => boolean): Promise<void> {

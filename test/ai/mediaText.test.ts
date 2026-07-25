@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { AiRecordMediaMessage } from "../../src/types/aiChat/protocol";
+import type { AiRecordMediaMessage } from "../../packages/types/aiChat/protocol";
 import {
   composeMediaText,
   fallbackTextFor,
   pendingPlaceholderFor,
   replyFallbackDescriptionFor,
   resolvedTagFor,
-} from "../../src/workers/aiChat/mediaText";
+} from "../../packages/workers/aiChat/mediaText";
 
 const stickerMessage: AiRecordMediaMessage = {
   type: "recordMedia",

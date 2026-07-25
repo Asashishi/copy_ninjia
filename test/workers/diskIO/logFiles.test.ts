@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../../src/cache/diskIO/logs";
-import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../../src/consts/paths";
-import { getTokyoDateKey } from "../../../src/libs/time";
+import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../../packages/cache/diskIO/logs";
+import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../../packages/consts/paths";
+import { getTokyoDateKey } from "../../../packages/libs/time";
 import {
   flushLogBuffer,
   handleLogMessage,
   initLogFiles,
-} from "../../../src/workers/diskIO/logFiles";
-import { serializeDayFileEntry } from "../../../src/workers/diskIO/appendOnlyDayFile";
+} from "../../../packages/workers/diskIO/logFiles";
+import { serializeDayFileEntry } from "../../../packages/workers/diskIO/appendOnlyDayFile";
 
 beforeEach(() => {
   rmSync(LOGS_DIR, { recursive: true, force: true });

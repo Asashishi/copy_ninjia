@@ -46,7 +46,7 @@
 
 ### 写测试的约定
 
-- 路径镜像 `src/`：`src/foo/bar.ts` → `test/foo/bar.test.ts`。
+- 路径镜像 `packages/`：`packages/foo/bar.ts` → `test/foo/bar.test.ts`。
 - 公共辅助在 `test/libs/helpers.ts`；不要在测试间共享可变模块状态（隔离机制会掩盖这类错误直到有人不用 `--isolate` 运行）。
 - 触发真实文件 I/O 的测试可以放心写——preload 的临时数据根兜底；但涉及 `infra/storage` 的测试注意 mock 边界（只 mock `infra/diskIO` 而漏掉 `infra/storage` 会调到真实 `saveStateInBackground`，这正是 [`AGENTS.md`](../AGENTS.md) 要求先备份运行时文件的场景）。
 
@@ -71,7 +71,7 @@ bun run test:coverage 2>&1 | tail -5        # 测试数、文件数、expect() �
 bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 ```
 
-需要同步的位置：三语 README 的徽章行（Tests / Coverage）、三语 README「纯 AI 开发」节的「项目质量」，以及三语本文的「当前文档版本实测」——后两处是同一组实测数值（README 那份不重复徽章口径说明），改一处就改另一处。Coverage 徽章固定采用 `All files` 的行覆盖率。README 中引用的行为数值（概率、容量、时长）与 `src/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
+需要同步的位置：三语 README 的徽章行（Tests / Coverage）、三语 README「纯 AI 开发」节的「项目质量」，以及三语本文的「当前文档版本实测」——后两处是同一组实测数值（README 那份不重复徽章口径说明），改一处就改另一处。Coverage 徽章固定采用 `All files` 的行覆盖率。README 中引用的行为数值（概率、容量、时长）与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布
 

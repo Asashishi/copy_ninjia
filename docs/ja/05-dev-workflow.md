@@ -46,7 +46,7 @@
 
 ### テスト作成の規約
 
-- `src/` のパスを反映します：`src/foo/bar.ts` → `test/foo/bar.test.ts`。
+- `packages/` のパスを反映します：`packages/foo/bar.ts` → `test/foo/bar.test.ts`。
 - 共通 helper は `test/libs/helpers.ts` に置きます。テスト間で可変なモジュール状態を共有しないでください。分離機構によって、`--isolate` なしで実行されるまで問題が隠れる可能性があります。
 - 実ファイル I/O を行うテストも、preload の一時データルートによって安全です。ただし `infra/storage` 周辺の mock 境界には注意してください。`infra/diskIO` だけを mock して `infra/storage` を実物のままにすると、実際の `saveStateInBackground` に到達する可能性があります。これは [`AGENTS.md`](../../AGENTS.md) が実行時ファイルの事前バックアップを求める状況です。
 
@@ -71,7 +71,7 @@ bun run test:coverage 2>&1 | tail -5           # テスト数、ファイル数�
 bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 ```
 
-3 言語の README にある Tests / Coverage badge、各 README「純 AI 開発」節の「プロジェクト品質」、そして 3 言語の本文にある「このドキュメント版の実測値」を同期します。後者 2 つは同じ実測値です（README 側は badge の説明を省きます）。必ず同時に更新します。Coverage badge は常に `All files` の行カバレッジを使います。確率、容量、時間など README 内の動作値は `src/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
+3 言語の README にある Tests / Coverage badge、各 README「純 AI 開発」節の「プロジェクト品質」、そして 3 言語の本文にある「このドキュメント版の実測値」を同期します。後者 2 つは同じ実測値です（README 側は badge の説明を省きます）。必ず同時に更新します。Coverage badge は常に `All files` の行カバレッジを使います。確率、容量、時間など README 内の動作値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース
 

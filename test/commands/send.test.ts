@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const getChatMock = mock(async (chatId: number): Promise<any> => ({ id: chatId, type: "supergroup", title: "Test Group" }));
 const logApiErrorMock = mock((..._args: unknown[]): void => {});
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   sendMessage: sendMessageMock,
   bot: { api: { getChat: getChatMock } },
   logApiError: logApiErrorMock,
@@ -21,7 +21,7 @@ mock.module("../../src/infra/telegram", () => ({
 
 const chatStates = new Map<number, Record<string, unknown>>();
 const saveStateInBackgroundMock = mock((..._args: unknown[]): void => {});
-mock.module("../../src/infra/storage/stateStore", () => ({
+mock.module("../../packages/infra/storage/stateStore", () => ({
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
     let state = chatStates.get(chatId);
     if (!state) {
@@ -47,8 +47,8 @@ mock.module("../../src/infra/storage/stateStore", () => ({
   saveStateInBackground: saveStateInBackgroundMock,
 }));
 
-const { handleSendCommand } = await import("../../src/commands/send");
-const { SUPER_ADMIN_USER_ID } = await import("../../src/infra/config");
+const { handleSendCommand } = await import("../../packages/commands/send");
+const { SUPER_ADMIN_USER_ID } = await import("../../packages/infra/config");
 
 function makeCtx(chatType: "private" | "group", userId: number | undefined, arg: string): any {
   return {

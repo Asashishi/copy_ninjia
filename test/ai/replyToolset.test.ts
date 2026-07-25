@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanReply, isEmojiOnly } from "../../src/ai/utils/replyText";
-import { buildCharacterTypo, pickTypoCorrectionMode } from "../../src/ai/utils/typo";
-import type { TelegramSendResult } from "../../src/types/telegram";
+import { cleanReply, isEmojiOnly } from "../../packages/ai/utils/replyText";
+import { buildCharacterTypo, pickTypoCorrectionMode } from "../../packages/ai/utils/typo";
+import type { TelegramSendResult } from "../../packages/types/telegram";
 
 let nextMessageId: number = 100;
 const sendMessageMock = mock(async (
@@ -14,9 +14,9 @@ const deleteMessageMock = mock(async (..._args: unknown[]): Promise<boolean> => 
 const setMessageReactionMock = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const sendStickerMock = mock(async (..._args: unknown[]): Promise<number | undefined> => nextMessageId++);
 const sleepMock = mock(async (..._args: unknown[]): Promise<void> => {});
-const realTelegram = await import("../../src/infra/telegram");
+const realTelegram = await import("../../packages/infra/telegram");
 
-mock.module("../../src/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram", () => ({
   ...realTelegram,
   bot: { api: { getStickerSet: mock(async (): Promise<null> => null), getFile: mock(async (): Promise<null> => null) } },
   buildFileDownloadUrl: mock((_filePath: string): string => "https://example.invalid/file"),
@@ -29,14 +29,14 @@ mock.module("../../src/infra/telegram", () => ({
   sendSticker: sendStickerMock,
 }));
 
-mock.module("../../src/libs/sleep", () => ({
+mock.module("../../packages/libs/sleep", () => ({
   sleep: sleepMock,
 }));
 
-const { ADD_REACTION_TOOL, SEND_MESSAGE_TOOL } = await import("../../src/consts/tools");
-const { AI_MAX_ACTIONS_PER_REPLY, HARD_MAX_ACTIONS_PER_REPLY } = await import("../../src/consts/aiChat/tools");
-const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../src/consts/aiChat/prompts/tools");
-const { createReplyToolset } = await import("../../src/ai/tools/replyToolset");
+const { ADD_REACTION_TOOL, SEND_MESSAGE_TOOL } = await import("../../packages/consts/tools");
+const { AI_MAX_ACTIONS_PER_REPLY, HARD_MAX_ACTIONS_PER_REPLY } = await import("../../packages/consts/aiChat/tools");
+const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../packages/consts/aiChat/prompts/tools");
+const { createReplyToolset } = await import("../../packages/ai/tools/replyToolset");
 
 beforeEach(() => {
   nextMessageId = 100;

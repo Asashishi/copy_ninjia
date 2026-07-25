@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { LOCKDOWN_MS, RESTORE_RETRY_MS } from "../../src/consts/antiRaid";
-import { transitionLockdown } from "../../src/states/lockdown";
-import type { LockdownState } from "../../src/types/states/lockdown";
+import { LOCKDOWN_MS, RESTORE_RETRY_MS } from "../../packages/consts/antiRaid";
+import { transitionLockdown } from "../../packages/states/lockdown";
+import type { LockdownState } from "../../packages/types/states/lockdown";
 
 const PERMS = { can_send_messages: true };
 const ACTIVE: LockdownState = { kind: "active", originalPermissions: PERMS, intentId: 1 };
