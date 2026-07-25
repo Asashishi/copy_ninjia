@@ -8,6 +8,7 @@
 
 ## 分支与提交
 - 仓库只有 `master` 与 `dev` 两个分支，不开功能分支。一切开发在 `dev` 上进行，不直接向 `master` 提交。
+- 每次 `git commit` 前先 `git branch --show-current` 确认所在分支：`master` 上只允许 `git merge --squash` 之后的那一次提交，其余一律在 `dev` 上。误提交到 `master` 且尚未推送时，用 `git cherry-pick` 把提交搬到 `dev`、`git branch -f master origin/master` 复位，再走正常 squash 流程。
 - 合并进 `master` 只用 squash（`git merge --squash` + 单次 `git commit`），一次改动收敛成一个提交，开发过程中的中间提交不进 `master` 历史。
 - squash 提交的信息要覆盖整个改动集，并说明「为什么这么改」而不只是「改了什么」。
 - 合并前必须 `bun run check` 全绿；碰到持久化、停机、Worker 生命周期相关代码时再补 `bun run test:fault-injection`。任一项失败不得合并。
