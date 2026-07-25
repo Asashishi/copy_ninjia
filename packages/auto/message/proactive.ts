@@ -1,5 +1,6 @@
 import type { Message } from "@grammyjs/types";
 import { recordChatMessage } from "../../aiChat";
+import { buildSelfRecordContext } from "../../ai/utils/selfRecord";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
@@ -9,10 +10,10 @@ import {
 } from "../../consts/auto";
 import { sendMessage } from "../../infra/telegram";
 import { pickRandom } from "../../libs/random";
+import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type { CopyMode } from "../../types/chatState";
 import { echoMessage, resolveEffectiveCopyMode } from "./echo";
 import { hasCopyableContent } from "./facts";
-import type { BotIdentity } from "./triggerContext";
 
 /**
  * 洗澡触发和随机复读；仅由无活动复制目标的非私聊流水线调用。AI 开启时
@@ -20,7 +21,7 @@ import type { BotIdentity } from "./triggerContext";
  */
 export interface HandleProactiveMessageActionsParams {
   message: Message;
-  bot: BotIdentity;
+  bot: AiBotInfo;
   isQuiet: boolean;
   aiChatEnabled: boolean;
 }
@@ -46,12 +47,7 @@ export async function handleProactiveMessageActions({
     });
     if (aiChatEnabled && sentMessageId !== undefined) {
       recordChatMessage({
-        chatId,
-        senderId: bot.id,
-        firstName: bot.firstName,
-        lastName: "",
-        username: bot.username,
-        messageId: sentMessageId,
+        ...buildSelfRecordContext({ chatId, self: bot, messageId: sentMessageId }),
         text: BATH_TRIGGER_REPLY_TEXT,
       });
     }

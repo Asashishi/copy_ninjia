@@ -10,7 +10,7 @@ export const TELEGRAM_ALLOWED_UPDATES: readonly (
   | "callback_query"
   | "inline_query"
   | "chosen_inline_result"
-)[] = [
+)[] = Object.freeze([
   "message",
   "channel_post",
   "message_reaction",
@@ -19,7 +19,7 @@ export const TELEGRAM_ALLOWED_UPDATES: readonly (
   "callback_query",
   "inline_query",
   "chosen_inline_result",
-] as const;
+] as const);
 
 /** 抓取目标头像（Bot API / t.me 兜底）的单次请求超时。 */
 export const AVATAR_FETCH_TIMEOUT_MS: number = 15_000;

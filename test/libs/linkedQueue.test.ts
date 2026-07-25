@@ -27,6 +27,32 @@ describe("LinkedQueue", () => {
     expect(q.size).toBe(2);
   });
 
+  test("clear 整体清空，之后 push 接在新链上而非已丢弃的旧队尾", () => {
+    const queue = new LinkedQueue<number>();
+    for (const value of [1, 2, 3]) queue.push(value);
+
+    queue.clear();
+    expect(queue.size).toBe(0);
+    expect(queue.peek()).toBeUndefined();
+    expect(queue.shift()).toBeUndefined();
+    expect(queue.last(1)).toEqual([]);
+
+    // tail 未一并清掉的话，这次 push 会挂到旧节点后面，size 与出队顺序都会错。
+    queue.push(9);
+    expect(queue.size).toBe(1);
+    expect(queue.peek()).toBe(9);
+    expect(queue.last(3)).toEqual([9]);
+  });
+
+  test("空队列 clear 是幂等的", () => {
+    const queue = new LinkedQueue<number>();
+    queue.clear();
+    queue.clear();
+    expect(queue.size).toBe(0);
+    queue.push(1);
+    expect(queue.shift()).toBe(1);
+  });
+
   test("last(n) 取队尾最近 n 个，保持入队顺序；n 超出长度时返回全部", () => {
     const q = new LinkedQueue<number>();
     [1, 2, 3, 4, 5].forEach((v) => q.push(v));

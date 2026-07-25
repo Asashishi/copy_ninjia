@@ -6,17 +6,22 @@ import {
   RATE_LIMIT_WINDOW_MS,
 } from "../../packages/consts/luckChallenge";
 
-afterEach(() => { recentCallTimestamps.length = 0; });
+afterEach(() => { recentCallTimestamps.clear(); });
+
+/** 队列内容快照：窗口是 LinkedQueue，断言前先摊平成数组。 */
+function windowContents(): number[] {
+  return recentCallTimestamps.last(recentCallTimestamps.size);
+}
 
 describe("运势全局滑动窗口", () => {
   test("恰在上限时遇到小回拨，清空旧窗口并从当前时刻恢复", () => {
     const now = 1_000_000;
-    recentCallTimestamps.push(
-      ...Array.from({ length: RATE_LIMIT_MAX_CALLS_PER_WINDOW }, () => now + 1)
-    );
+    for (let filled = 0; filled < RATE_LIMIT_MAX_CALLS_PER_WINDOW; filled++) {
+      recentCallTimestamps.push(now + 1);
+    }
 
     expect(tryConsumeLuckRateLimit(now)).toBeTrue();
-    expect(recentCallTimestamps).toEqual([now]);
+    expect(windowContents()).toEqual([now]);
     expect(tryConsumeLuckRateLimit(now)).toBeTrue();
   });
 
@@ -25,8 +30,8 @@ describe("运势全局滑动窗口", () => {
     recentCallTimestamps.push(now + RATE_LIMIT_WINDOW_MS * 100);
 
     expect(tryConsumeLuckRateLimit(now)).toBeTrue();
-    expect(recentCallTimestamps).toEqual([now]);
+    expect(windowContents()).toEqual([now]);
     expect(tryConsumeLuckRateLimit(now + RATE_LIMIT_WINDOW_MS + 1)).toBeTrue();
-    expect(recentCallTimestamps).toEqual([now + RATE_LIMIT_WINDOW_MS + 1]);
+    expect(windowContents()).toEqual([now + RATE_LIMIT_WINDOW_MS + 1]);
   });
 });

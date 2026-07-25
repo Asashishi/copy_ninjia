@@ -13,7 +13,8 @@ import {
   type ImageGenerationAspectRatio,
 } from "../../../consts/aiChat/imageGeneration";
 import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../consts/aiChat/prompts/tools";
-import { GENERATE_IMAGE_TOOL } from "../../../consts/tools";
+import { GENERATE_IMAGE_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../consts/tools";
+import { toolError } from "../../utils/toolResult";
 import { sendPhotoWithResult } from "../../../infra/telegram";
 import { isPlainRecord } from "../../../libs/runtimeConfig";
 import { sanitizeInline, truncateInline } from "../../../libs/text";
@@ -99,7 +100,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
   let consecutiveFailures: number = 0;
   let generatedImages: number = 0;
   return async (argumentsJson: string): Promise<string> => {
-    if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+    if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
     if (!ctx.imageGenerationRequested) {
       return JSON.stringify({
         error: "Image generation is not authorized: the triggering message was not a direct reply to or mention of the bot",
@@ -161,7 +162,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
           image = null;
         } else {
           if (!ctx.isActive()) {
-            return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+            return toolError(REPLY_INVALIDATED_TOOL_ERROR);
           }
           modelRequestStarted = true;
           image = referenceImage
@@ -174,14 +175,14 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
         ctx.chatAction.set("idle");
         await ctx.chatAction.settle();
       }
-      if (!ctx.isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+      if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
       if (referenceUnavailable) {
         consecutiveFailures++;
-        return JSON.stringify({ error: "Failed to load the reference image from Telegram" });
+        return toolError("Failed to load the reference image from Telegram");
       }
       if (!image) {
         consecutiveFailures++;
-        return JSON.stringify({ error: "Image generation failed or returned no usable image" });
+        return toolError("Image generation failed or returned no usable image");
       }
 
       const sent: TelegramSendResult | undefined = await sendPhotoWithResult({
@@ -192,7 +193,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
       });
       if (sent === undefined) {
         consecutiveFailures++;
-        return JSON.stringify({ error: "Failed to send generated image" });
+        return toolError("Failed to send generated image");
       }
 
       consecutiveFailures = 0;

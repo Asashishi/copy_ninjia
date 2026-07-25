@@ -23,6 +23,12 @@
 7. **テスト**：`test/commands/xxx.test.ts` を追加し、少なくとも権限拒否、引数解析、主要経路を検証します。
 8. **ドキュメント**：3 言語すべてのルート README の「コマンドと権限」table に行を追加します。
 
+非 ASCII のコマンド名（`/咬` のような漢字 1 文字のアクションコマンド）は別経路です。Telegram は ASCII コマンドにしか `bot_command` entity を付けないため `bot.command` では永久に一致しません。`bot.hears(正規表現, ...)` でメッセージ原文に対して照合し、フォールバックの `bot.on(["message", "channel_post"], ...)` より前に登録します。そうしないと通常メッセージとして AI/copy pipeline に流れます。この handler が受け取るのは `CommandContext` ではなく素の `Context` なので、対象解決は [`targetResolution.ts`](../../packages/commands/targetResolution.ts) の `resolveCommandTarget` に `ResolveCommandTargetParams` を直接渡します。自分宛でない形（`/咬@OtherBot`、異常なメッセージ形態）は `next()` で通し、update を黙って握り潰してはいけません。BotFather のコマンド名も ASCII 限定（ラテン文字・数字・アンダースコア、最長 32 文字）のため、これらは `BOT_COMMANDS` メニューに入れられません。`setMyCommands` はリスト全体を一括送信するので、1 件でも不正な名前が混ざるとメニュー全体が `BOT_COMMAND_INVALID` で失敗します。登録失敗はログに残るだけで起動を止めないため、メニューが黙って消えます。メニューで使い方を見せたい場合は ASCII のプレースホルダー項目（既存の `/x`）を追加し、構文は description に書きます。この種の項目でも、何もしない空の handler を必ず登録します。メニューをタップすると実際にコマンドが送信されるため、登録しないとフォールバックに到達し、通常メッセージとして AI/copy pipeline に流れてしまいます。さらに、コマンドメニューという自然な制約を持たないコマンド（アクション文字は誰でもその場で作れます）は、自前のグローバル rate limit を備える必要があります。window と上限は `packages/consts/commands.ts`、タイムスタンプ列は `packages/cache/<domain>.ts` に置き、判定は [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) を再利用します（呼び出し側が渡した列をその場で更新する純関数で、自身は状態を持ちません）。実装例は [`cjkAction.ts`](../../packages/commands/cjkAction.ts) です。
+
+## 応答にリンクや書式を付ける
+
+`sendMessage` は `parse_mode` を一切設定しません。表示名やメッセージ本文に含まれる記号が書式やリンクに化ける余地を残さないためです。リッチテキストが本当に必要な場合は、呼び出し側がテキストを段ごとに組み立て、`entities` の offset を自分で計算して `sendMessage` に渡します（[`infra/telegram/actions.ts`](../../packages/infra/telegram/actions.ts) 参照）。offset は Telegram の UTF-16 code unit 基準で、これは JavaScript の `String#length` と同一です。表示名の emoji（surrogate pair）は自然に 2 単位となり、追加の換算は不要です。長さ 0 の entity はメッセージ全体が拒否される原因になるため、空の段に entity を付けてはいけません。実装例は `cjkAction.ts` の `buildActionMessage` です。
+
 ## 動作パラメータの調整
 
 パラメータはすべて `packages/consts/` に集約されているため、値の変更で業務コードを編集する必要はありません。主な場所は次のとおりです。
@@ -36,7 +42,7 @@
 | ムード時間とコマンド timeout | `packages/consts/aiChat/mood.ts` |
 | ツール action・lookup 上限、モデル名、request timeout | `packages/consts/aiChat/tools.ts` |
 | 認証 window、spam threshold、追記・compaction 方針 | `packages/consts/antiRaid/` |
-| copy cooldown、`/quiet` 範囲、username 規則 | `packages/consts/commands.ts` |
+| copy cooldown、`/quiet` 範囲、username 規則、アクションコマンドの rate limit | `packages/consts/commands.ts` |
 | 送信者ごとのランダムトリガー cooldown | `packages/consts/auto.ts` |
 
 手順：定数を変更 → 不変条件の変更も含めて中国語 JSDoc を更新 → ルート README がその値を引用していないか確認し 3 言語を同期 → `bun run check`。

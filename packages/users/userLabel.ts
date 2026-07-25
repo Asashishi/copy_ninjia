@@ -13,6 +13,31 @@ export function formatUserLabel(user: CachedUser): string {
 }
 
 /**
+ * 「first_name last_name」形式的展示名，供单字中文动作命令这类需要念出人名
+ * 的场景使用（见 commands/cjkAction.ts）；`@username` 只在完全没有姓名时兜底。
+ * 频道/匿名管理员没有姓名，退化为 title。昵称里的换行与连续空白会被压成
+ * 单个空格，避免一句话被撑成多行。
+ * @param user 要生成展示名的用户/频道。
+ */
+export function formatFullName(user: CachedUser): string {
+  const rawName: string = user.isChannel
+    ? user.title ?? ""
+    : [user.first_name, user.last_name].filter(Boolean).join(" ");
+  const displayName: string = rawName.replace(/\s+/g, " ").trim();
+  if (displayName.length > 0) return displayName;
+  return user.username ? `@${user.username}` : "这个杂鱼";
+}
+
+/**
+ * 展示名要挂的个人主页链接。只有公开 username 能拼出稳定的 t.me 地址；
+ * username 已由 Telegram 限定为字母数字下划线，直接拼接不会产生注入。
+ * @returns 没有公开 username 时为 undefined（调用方应退化为纯文本）。
+ */
+export function formatProfileUrl(user: CachedUser): string | undefined {
+  return user.username ? `https://t.me/${user.username}` : undefined;
+}
+
+/**
  * 权限校验失败时嘲讽文案里的发起人标签：ctx.from 可能缺失（极端更新形态），
  * 此时退化为泛指。/kick 与超管开关命令共用。
  * @param fromUser 发起命令的 ctx.from（可能为 undefined）。

@@ -8,6 +8,7 @@ import {
 } from "../../cache/aiChat/replies";
 import { botInfoState } from "../../cache/aiChat/identity";
 import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
+import { buildSelfRecordContext } from "../../ai/utils/selfRecord";
 import { sendMessage } from "../../infra/telegram";
 import type { AiSentMessage } from "../../types/aiChat/protocol";
 import { recordChatMessage } from "./rollingMemory";
@@ -40,12 +41,7 @@ export function notifyRateLimited(chatId: number, now: number, generation: numbe
     self.postMessage({ type: "sent", chatId, messageId: sentMessageId } satisfies AiSentMessage);
     if (botInfoState.current && isReplyGenerationCurrent(chatId, generation)) {
       recordChatMessage({
-        chatId,
-        senderId: botInfoState.current.id,
-        firstName: botInfoState.current.first_name,
-        lastName: "",
-        username: botInfoState.current.username,
-        messageId: sentMessageId,
+        ...buildSelfRecordContext({ chatId, self: botInfoState.current, messageId: sentMessageId }),
         text: RATE_LIMIT_NOTICE_TEXT,
       });
     }

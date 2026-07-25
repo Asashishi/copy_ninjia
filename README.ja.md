@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-875_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.49%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-896_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.67%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -65,7 +65,7 @@
 
 ### 🧪 プロジェクト品質
 
-`bun run test:coverage`：**875 tests / 121 files / 7884 `expect()` calls**。全ソースコードの**関数カバレッジは 94.69%、行カバレッジは 96.49%**です。
+`bun run test:coverage`：**896 tests / 123 files / 8479 `expect()` calls**。全ソースコードの**関数カバレッジは 94.81%、行カバレッジは 96.67%**です。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
@@ -148,6 +148,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">メンバー</td><td>各 copy モードを開始</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">メンバー</td><td>現在のグローバル copy を停止</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">メンバー</td><td>アバターのみ取得</td></tr>
+<tr><td><code>/&lt;漢字 1 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> で「実行者 咬了 対象！」と応答。名前は first_name last_name 形式で、公開ユーザー名があればプロフィールへリンク</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">メンバー</td><td>自発的発言を N 分間停止（既定 3 分）</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">メンバー</td><td>静寂モードを早期解除</td></tr>
 <tr><td><code>/kick</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>全管理グループで対象を永久 BAN</td></tr>
@@ -159,6 +160,9 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 </table>
 
 `/send` は開始前に対象へ到達できるか確認します。転送中に対象へ到達できなくなった場合はセッションを終了し、スーパー管理者へ通知します。転送状態は `state.json` に保存され、再起動後も復元されます。このコマンドは Telegram のコマンドメニューには表示されず、グループ内や他のユーザーから呼び出されても応答しません。
+
+> [!TIP]
+> 漢字 1 文字のアクションコマンド（`/咬`、`/摸` など）は事前登録が不要で、どの漢字でも使えます。対象の指定方法は他のコマンドと同じで、返信または `@username` です。Telegram のコマンド名は ASCII（ラテン文字・数字・アンダースコア）のみのため、コマンドメニューにも補完にも現れません。メニューにはプレースホルダー項目 `/x` だけを置いています。コマンド名の `x` がその変数であり、任意の漢字 1 文字に置き換えることを示します。実行しても何も起こらず、通常メッセージとして AI/copy pipeline へ流れることもないよう意図的に握り潰します。`/咬人` のような複数文字はアクションコマンドとして扱わず、通常のメッセージ処理へ流します。登録不要で誰でも自由に作れるため、グローバルな sliding window 制限があり、グループ・ユーザーを合算して 90 秒あたり最大 450 回まで応答します。超過分は通知なしで黙って破棄されます。
 
 > [!TIP]
 > `/luck_challenge` はスラッシュコマンドではありません。任意のチャットで `@Botのユーザー名 [お願い]` と入力して Inline Mode を使用します。BotFather で Inline Mode を有効にし、`/setinlinefeedback` を 100% に設定することをお勧めします。Inline query にはグローバルな sliding window 制限があり、応答は 90 秒あたり最大 300 回です。

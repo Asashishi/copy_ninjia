@@ -17,7 +17,7 @@
 | パス | 責務 | 代表的なファイル |
 | :--- | :--- | :--- |
 | `packages/app/` | 起動・終了ライフサイクル、handler 登録、コマンドメニュー、update runner | `lifecycle.ts`、`registerHandlers.ts`、`updateRunner.ts` |
-| `packages/commands/` | 明示的なコマンド処理。1 コマンド 1 ファイル | `copy.ts`、`kick.ts`、`send.ts`、`targetResolution.ts` |
+| `packages/commands/` | 明示的なコマンド処理。1 コマンド 1 ファイル | `copy.ts`、`kick.ts`、`cjkAction.ts`、`send.ts`、`targetResolution.ts` |
 | `packages/auto/` | コマンド以外の自動動作：copy、AI の文字起こしとトリガー、リアクション同期 | `message/`、`triggerPolicy.ts` |
 | `packages/aiChat/` | メインスレッド側 AI チャット代理：Worker 監督の入口とメモリミラー | `index.ts`、`memoryMirror.ts` |
 | `packages/antiRaid/` | メインスレッド側 Anti-Raid 代理：Worker 監督の入口、ロックダウン復旧、認証待ちミラー受信 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts` |

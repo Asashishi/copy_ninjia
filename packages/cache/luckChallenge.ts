@@ -1,3 +1,4 @@
+import { LinkedQueue } from "../libs/linkedQueue";
 import type { LuckReceiptSecret } from "../types/diskIO/storage";
 import type { LuckDraw } from "../types/luckChallenge";
 
@@ -34,5 +35,6 @@ export const luckRuntimeState: {
   daySwitchedInProcess: false,
 };
 
-/** 内联查询的全局滑动窗口频率限制：最近 RATE_LIMIT_WINDOW_MS（90 秒）内各次请求的时刻戳。 */
-export const recentCallTimestamps: number[] = [];
+/** 内联查询的全局滑动窗口频率限制：最近 RATE_LIMIT_WINDOW_MS（90 秒）内各次请求的时刻戳。
+ *  修剪只发生在队首，故用 LinkedQueue 而非数组，见 libs/slidingWindowRateLimit.ts。 */
+export const recentCallTimestamps: LinkedQueue<number> = new LinkedQueue();

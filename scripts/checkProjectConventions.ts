@@ -26,6 +26,23 @@ function hasJsDoc(node: ts.Node): boolean {
   return ts.getJSDocCommentsAndTags(node).length > 0;
 }
 
+/**
+ * AGENTS.md 要求「跨调用方共享的对象常量 Object.freeze」。只认数组/对象字面量：
+ * RegExp、`new X()` 与派生计算结果不在此列——冻结正则会把 lastIndex 变成只读，
+ * 对带 /g 的正则反而是引入 bug。`as const` 与多余括号先剥掉再判断。
+ */
+function isUnfrozenContainerLiteral(initializer: ts.Expression | undefined): boolean {
+  let expression: ts.Expression | undefined = initializer;
+  while (
+    expression !== undefined &&
+    (ts.isAsExpression(expression) || ts.isParenthesizedExpression(expression))
+  ) {
+    expression = expression.expression;
+  }
+  if (expression === undefined) return false;
+  return ts.isArrayLiteralExpression(expression) || ts.isObjectLiteralExpression(expression);
+}
+
 function declarationName(node: ts.Node): string {
   if ("name" in node && node.name !== undefined) {
     return (node.name as ts.Node).getText();
@@ -88,6 +105,9 @@ for (const path of sourceFilesUnder(CONSTS_ROOT)) {
       }
       if (!hasJsDoc(statement)) {
         failures.push(`${location} constant ${name} lacks JSDoc`);
+      }
+      if (isExported(statement) && isUnfrozenContainerLiteral(declaration.initializer)) {
+        failures.push(`${location} constant ${name} is a shared container literal and must be wrapped in Object.freeze`);
       }
     }
   }

@@ -1,6 +1,7 @@
 import { startChatActionHeartbeat } from "../../ai/chatActionHeartbeat";
 import { createStickerSendLock } from "../../ai/stickers/sendLock";
 import { createReplyToolset } from "../../ai/tools/replyToolset/orchestrator";
+import { buildSelfRecordContext } from "../../ai/utils/selfRecord";
 import { botInfoState } from "../../cache/aiChat/identity";
 import { activeReplyCounts, longTriggerTimes } from "../../cache/aiChat/replies";
 import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";
@@ -136,13 +137,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
               // 在转录里同样带「回复了谁」，回复链也能穿过机器人的消息。
               const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
               recordChatMessage({
-                chatId,
-                senderId: selfInfo.id,
-                firstName: selfInfo.first_name,
-                lastName: "",
-                username: selfInfo.username,
-                messageId,
-                ...(selfReplyTo ? { replyTo: selfReplyTo } : {}),
+                ...buildSelfRecordContext({ chatId, self: selfInfo, messageId, ...(selfReplyTo ? { replyTo: selfReplyTo } : {}) }),
                 text,
               });
             }
@@ -151,12 +146,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
             if (isActive()) {
               recordChatMessage({
-                chatId,
-                senderId: selfInfo.id,
-                firstName: selfInfo.first_name,
-                lastName: "",
-                username: selfInfo.username,
-                messageId,
+                ...buildSelfRecordContext({ chatId, self: selfInfo, messageId }),
                 text: stickerDescription,
               });
             }
@@ -168,13 +158,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
               // 实际返回的回复关系。
               const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
               recordChatMessage({
-                chatId,
-                senderId: selfInfo.id,
-                firstName: selfInfo.first_name,
-                lastName: "",
-                username: selfInfo.username,
-                messageId,
-                ...(selfReplyTo ? { replyTo: selfReplyTo } : {}),
+                ...buildSelfRecordContext({ chatId, self: selfInfo, messageId, ...(selfReplyTo ? { replyTo: selfReplyTo } : {}) }),
                 text: imageDescription,
               });
             }

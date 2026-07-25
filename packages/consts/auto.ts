@@ -13,7 +13,7 @@ export const USER_REPLY_TRIGGER_COOLDOWN_MS: number = 15_000;
 export const RANDOM_ECHO_PROBABILITY: number = 1 / 100;
 
 /** 随机复读时的模式池：undefined 表示原样复读，其余对应各 /*_copy 的文本变换。 */
-export const RANDOM_ECHO_MODES: readonly (CopyMode | undefined)[] = [undefined, "reverse", "nya", "ja"];
+export const RANDOM_ECHO_MODES: readonly (CopyMode | undefined)[] = Object.freeze([undefined, "reverse", "nya", "ja"]);
 
 /**
  * 「说到洗澡就回看看」的触发词：洗澡 / 泡澡（中间可插最多 4 个白名单里的

@@ -27,11 +27,33 @@ declare const self: Worker;
 const isMainThread: boolean = Bun.isMainThread;
 
 /**
+ * 本次调用要脱敏的敏感值。每条日志取一次而不是每个参数取一次；不提到模块
+ * 加载期，是为了不依赖「logger 首次 import 时 env 已就绪」这个额外前提
+ * （logger 必须在 infra/config.ts 的 env 校验失败时也能照常记录）。
+ */
+function currentSecrets(): string[] {
+  return [
+    process.env.TELEGRAM_BOT_TOKEN ?? "",
+    process.env.GEMINI_API_KEY ?? "",
+  ];
+}
+
+/**
  * 把任意日志参数转成可 JSON 序列化的值。Error（含 GrammyError 等子类）
  * 展开为 name/message/stack 加自有可枚举属性；其余对象尝试 JSON 序列化，
  * 失败（循环引用等）则退化为字符串。
+ *
+ * Bun 的 fetch 网络异常会把完整请求 URL 放进 Error 的可枚举 path 字段；
+ * Telegram 文件下载 URL 内嵌 BOT_TOKEN。对象先序列化成稳定 JSON，再对整份
+ * 文本做值级脱敏，确保 message/stack/path/cause 任一位置都不会漏。
  */
-function serializeArg(arg: unknown): unknown {
+function serializeArg(arg: unknown, secrets: readonly string[]): unknown {
+  // 绝大多数日志参数是拼好的字符串（本项目的 logger.log/info/warn 全部如此）。
+  // 字符串直接脱敏即可，不必走 stringify -> 脱敏 -> parse 的往返：两条路径对
+  // 字符串的结果逐字符相同，唯一的差异是敏感值自身含 JSON 转义字符时，往返
+  // 路径反而会因为转义后不再字面匹配而漏脱敏，直接脱敏没有这个问题。
+  if (typeof arg === "string") return redactSecretsInText(arg, secrets);
+
   let serializable: unknown;
   if (arg instanceof Error) {
     serializable = {
@@ -46,13 +68,6 @@ function serializeArg(arg: unknown): unknown {
     serializable = JSON.parse(safeStringify(arg));
   }
 
-  // Bun 的 fetch 网络异常会把完整请求 URL 放进 Error 的可枚举 path 字段；
-  // Telegram 文件下载 URL 内嵌 BOT_TOKEN。先序列化成稳定 JSON，再对整份
-  // 文本做值级脱敏，确保 message/stack/path/cause 任一位置都不会漏。
-  const secrets: string[] = [
-    process.env.TELEGRAM_BOT_TOKEN ?? "",
-    process.env.GEMINI_API_KEY ?? "",
-  ];
   return JSON.parse(redactSecretsInText(safeStringify(serializable), secrets));
 }
 
@@ -65,7 +80,9 @@ function safeStringify(value: unknown): string {
 }
 
 function emit(level: LogLevel, args: unknown[]): void {
-  const serializedArgs: unknown[] = args.map(serializeArg);
+  // 显式箭头包一层：map 会把 index 当第二个实参传进去，不能直接传 serializeArg。
+  const secrets: readonly string[] = currentSecrets();
+  const serializedArgs: unknown[] = args.map((arg: unknown): unknown => serializeArg(arg, secrets));
   // 所有控制台级别都可能被 journal 长期保存，统一输出脱敏后的参数；不能
   // 只保护 error 的 JSON 文件而让 info/warn 中未来新增的敏感值原样泄露。
   console[level](...serializedArgs);

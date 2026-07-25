@@ -1,18 +1,12 @@
 import type { Message } from "@grammyjs/types";
 import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference, type MentionFacts } from "./facts";
 import type { DirectTrigger } from "./triggerPolicy";
-import type { AiReplyReference } from "../../types/aiChat/protocol";
-
-export interface BotIdentity {
-  id: number;
-  firstName: string;
-  username: string;
-}
+import type { AiBotInfo, AiReplyReference } from "../../types/aiChat/protocol";
 
 export interface MessageTriggerContext {
   message: Message;
   chatId: number;
-  bot: BotIdentity;
+  bot: AiBotInfo;
   isQuiet: boolean;
   aiReplyProbability: number;
   repliedTo?: Message;
@@ -27,7 +21,7 @@ export interface MessageTriggerContext {
 
 export interface CreateMessageTriggerContextParams {
   message: Message;
-  bot: BotIdentity;
+  bot: AiBotInfo;
   isQuiet: boolean;
   aiReplyProbability: number;
 }

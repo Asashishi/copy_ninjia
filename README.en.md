@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-875_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.49%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-896_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.67%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -63,7 +63,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 
 ### 🧪 Project Quality
 
-`bun run test:coverage`: **875 tests / 121 files / 7884 `expect()` calls**; full-source **function coverage 94.69% / line coverage 96.49%**.
+`bun run test:coverage`: **896 tests / 123 files / 8479 `expect()` calls**; full-source **function coverage 94.81% / line coverage 96.67%**.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -140,6 +140,7 @@ Choose a target by replying to their message or providing `@username`. Username 
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">Group member</td><td>Start respective copy mode</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">Group member</td><td>Stop current global copy state</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">Group member</td><td>Copy avatar only</td></tr>
+<tr><td><code>/&lt;single CJK char&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> replies "actor 咬了 target！"; both names render as first_name last_name and link to the profile when a public username exists</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">Group member</td><td>Resume proactive behavior early</td></tr>
 <tr><td><code>/kick</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>Permanently ban target across all bot-managed groups</td></tr>
@@ -151,6 +152,9 @@ Choose a target by replying to their message or providing `@username`. Username 
 </table>
 
 `/send` verifies target reachability before starting. If the target becomes unreachable during relay, the session ends and the super administrator is notified. Relay state persists in `state.json` across restarts. The command is omitted from Telegram's command menu and remains silent in groups or when invoked by any other user.
+
+> [!TIP]
+> Single-CJK-character action commands (`/咬`, `/摸`, …) need no registration — any single Chinese character works, and the target is picked the same way, by replying to their message or by `@username`. Telegram only accepts ASCII command names (Latin letters, digits, underscores), so these never appear in the command menu and get no autocompletion — the menu carries a single placeholder entry `/x` instead — the name `x` is the variable, prompting you to swap it for any Chinese character. It does nothing when invoked and is deliberately swallowed rather than falling through into the AI/copy pipeline; multi-character forms such as `/咬人` are not action commands and fall through to normal message handling. Precisely because anyone can invent one without registering it, these commands share a global sliding-window limit of 450 responses per 90 seconds, counted across all groups and users; anything over the quota is dropped silently with no notice.
 
 > [!TIP]
 > `/luck_challenge` is not a slash command: type `@bot_username [query]` in any chat to use Inline Mode. Enable Inline Mode in BotFather; 100% result feedback is recommended. Inline queries share a global sliding-window limit of 300 responses per 90 seconds.

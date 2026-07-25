@@ -35,6 +35,26 @@ describe("Telegram 常规动作封装", () => {
     expect(isSelfSent(-1001, 77)).toBe(true);
   });
 
+  test("显式 entities 原样进入 payload，空数组则整个字段不出现", async () => {
+    const sendMessageMock = mock(async (..._args: unknown[]) => ({ message_id: 88 }));
+    const api = { sendMessage: sendMessageMock } as unknown as Api;
+    // 富文本只能靠调用方算好的 entities 表达，绝不通过 parse_mode，
+    // 见 docs/04-invariants.md 的出站消息约束。
+    const entities = [{ type: "text_link" as const, offset: 0, length: 3, url: "https://t.me/foo" }];
+
+    await sendMessageWithResult({ chatId: -1001, text: "abc def", entities, api });
+    expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "abc def", { entities });
+    // 传入的只读数组不能被后续改动波及，payload 必须是自己的副本。
+    expect((sendMessageMock.mock.calls[0]![2] as { entities: unknown[] }).entities).not.toBe(entities);
+
+    await sendMessageWithResult({ chatId: -1001, text: "abc def", entities: [], api });
+    expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "abc def", {});
+    // 任何一条路径都不得设置 parse_mode。
+    for (const call of sendMessageMock.mock.calls) {
+      expect(call[2]).not.toHaveProperty("parse_mode");
+    }
+  });
+
   test("回复目标已删除时仍发送文字，但结果不伪造回复关系", async () => {
     const sendMessageMock = mock(async (..._args: unknown[]) => ({ message_id: 79 }));
     const api = { sendMessage: sendMessageMock } as unknown as Api;

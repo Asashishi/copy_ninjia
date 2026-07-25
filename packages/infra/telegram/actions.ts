@@ -1,6 +1,6 @@
 import { InputFile } from "grammy";
 import type { Api, InlineKeyboard } from "grammy";
-import type { ReactionTypeEmoji } from "@grammyjs/types";
+import type { Message, MessageEntity, ReactionTypeEmoji } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
 import { bot, logApiError } from "./client";
 import type { TelegramSendResult } from "../../types/telegram";
@@ -35,6 +35,19 @@ async function runTelegramAction<T, R>({
   }
 }
 
+/**
+ * 把一条已发出的消息收敛成 TelegramSendResult：登记进自发消息表（供自动流水线
+ * 识别频道自回环，见 infra/selfSentTracker.ts），并带回 Telegram 实际建立的回复
+ * 关系。发消息与发图片共用，两者不得各写一份。
+ */
+function toSendResult(chatId: number, sent: Message): TelegramSendResult {
+  markSelfSent(chatId, sent.message_id);
+  return {
+    messageId: sent.message_id,
+    ...(sent.reply_to_message ? { repliedToMessageId: sent.reply_to_message.message_id } : {}),
+  };
+}
+
 /** 执行只关心是否成功的 Telegram 动作。 */
 async function runBooleanTelegramAction(action: string, execute: () => Promise<unknown>): Promise<boolean> {
   return runTelegramAction({
@@ -52,10 +65,14 @@ export interface SendMessageParams {
   api?: Api;
   keyboard?: InlineKeyboard;
   signal?: AbortSignal;
+  /** 由调用方自行算好偏移的富文本实体，见 sendMessageWithResult 的说明。 */
+  entities?: readonly MessageEntity[];
 }
 
 /** 发送纯文本消息并返回 Telegram 实际建立的回复关系；不设置 parse_mode，
- * 避免用户内容形成格式或链接注入。 */
+ * 避免用户内容形成格式或链接注入。确实需要链接/格式时，由调用方显式传入
+ * entities：偏移按 Telegram 的 UTF-16 code unit 口径逐段算好，昵称等用户内容
+ * 只作为纯文本参与拼接，不会被解析成标记。 */
 export async function sendMessageWithResult({
   chatId,
   text,
@@ -63,6 +80,7 @@ export async function sendMessageWithResult({
   api = bot.api,
   keyboard,
   signal,
+  entities,
 }: SendMessageParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send message",
@@ -70,18 +88,13 @@ export async function sendMessageWithResult({
       const other: Parameters<Api["sendMessage"]>[2] = {
         ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
         ...(keyboard ? { reply_markup: keyboard } : {}),
+        ...(entities && entities.length > 0 ? { entities: [...entities] } : {}),
       };
       return signal === undefined
         ? api.sendMessage(chatId, text, other)
         : api.sendMessage(chatId, text, other, signal as unknown as Parameters<Api["sendMessage"]>[3]);
     },
-    map: (sent): TelegramSendResult | undefined => {
-      markSelfSent(chatId, sent.message_id);
-      return {
-        messageId: sent.message_id,
-        ...(sent.reply_to_message ? { repliedToMessageId: sent.reply_to_message.message_id } : {}),
-      };
-    },
+    map: (sent): TelegramSendResult | undefined => toSendResult(chatId, sent),
     fallback: undefined,
     shouldLogError: (): boolean => signal?.aborted !== true,
   });
@@ -161,13 +174,7 @@ export async function sendPhotoWithResult({
         ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
       });
     },
-    map: (sent): TelegramSendResult | undefined => {
-      markSelfSent(chatId, sent.message_id);
-      return {
-        messageId: sent.message_id,
-        ...(sent.reply_to_message ? { repliedToMessageId: sent.reply_to_message.message_id } : {}),
-      };
-    },
+    map: (sent): TelegramSendResult | undefined => toSendResult(chatId, sent),
     fallback: undefined,
   });
 }

@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-875_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.49%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-896_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.67%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -63,7 +63,7 @@
 
 ### 🧪 项目质量
 
-`bun run test:coverage`：**875 tests / 121 files / 7884 次 `expect()`**；全源码**函数覆盖率 94.69% / 行覆盖率 96.49%**。
+`bun run test:coverage`：**896 tests / 123 files / 8479 次 `expect()`**；全源码**函数覆盖率 94.81% / 行覆盖率 96.67%**。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
@@ -140,6 +140,7 @@
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">群成员</td><td>启动相应复读模式</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">群成员</td><td>停止当前全局复读</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">群成员</td><td>只偷头像</td></tr>
+<tr><td><code>/&lt;单个中文字&gt;</code></td><td align="center">群成员</td><td>动作命令，如 <code>/咬</code> 回复「发起人 咬了 目标！」；姓名用 first_name last_name 形式，有公开用户名的一方挂上主页链接</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">群成员</td><td>暂停随机插话、随机复读等主动行为，默认 3 分钟</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
 <tr><td><code>/kick</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>在所有机器人管理的群中永久封禁目标</td></tr>
@@ -151,6 +152,9 @@
 </table>
 
 `/send` 开启前会先探测目标是否可达；中转期间目标失联时会自动终止并通知超级管理员。中转状态随 `state.json` 持久化，重启后仍可恢复。该命令不进入 Telegram 命令菜单；在群内调用或由其他用户触发时均不响应。
+
+> [!TIP]
+> 单字中文动作命令（`/咬`、`/摸`……）不需要预先登记：任意一个中文字都能用，目标同样通过「回复 TA 的消息」或 `@username` 指定。Telegram 的命令名只收 ASCII（只能用拉丁字母、数字、下划线），因此这类命令既不出现在命令菜单里、也不会有输入补全——菜单里只放了一条占位说明项 `/x`——命令名 `x` 就是那个变量，提示把它换成任意一个中文字；它本身不做任何处理，点了不会有反应，也不会被当成普通消息进入 AI/复读流水线；`/咬人` 这种多字写法不算动作命令，会按普通消息处理。正因为不需要登记、谁都能随手造一个，它采用全局滑动窗口限流，每 90 秒最多应答 450 次，不分群、不分用户合并计数；超额直接静默丢弃，不回提示。
 
 > [!TIP]
 > `/luck_challenge` 不是斜杠命令：在任意聊天输入 `@机器人用户名 [所求事项]` 即可使用 Inline Mode。需在 BotFather 中开启 Inline Mode，并建议通过 `/setinlinefeedback` 开启 100% 结果反馈。内联查询采用全局滑动窗口限流，每 90 秒最多应答 300 次。

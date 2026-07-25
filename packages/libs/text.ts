@@ -13,12 +13,35 @@ export function sanitizeInline(raw: string): string {
   return raw.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * 复用同一个 Segmenter：它的构造远贵于一次 segment 调用（理由同 libs/time.ts
+ * 里几个 Intl.DateTimeFormat 提到模块级）。这里不能照搬 time.ts 在模块加载时
+ * 直接构造——旧运行时没有 Intl.Segmenter，模块级构造抛错会让整个模块 import
+ * 失败，而 splitGraphemes 的契约是「没有就退化为按码点切分」。故用三态惰性
+ * holder：undefined = 尚未尝试，null = 本运行时不支持，其余 = 可复用实例。
+ * 不导出，也不跨模块共享，因此不属于 packages/cache/ 的范畴。
+ */
+const graphemeSegmenterHolder: { current: Intl.Segmenter | null | undefined } = { current: undefined };
+
+function graphemeSegmenter(): Intl.Segmenter | null {
+  if (graphemeSegmenterHolder.current === undefined) {
+    try {
+      graphemeSegmenterHolder.current = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    } catch {
+      graphemeSegmenterHolder.current = null;
+    }
+  }
+  return graphemeSegmenterHolder.current;
+}
+
 /** 按 Unicode 扩展字形簇切分；旧运行时不支持 Segmenter 时退化为按码点。 */
 export function splitGraphemes(text: string): string[] {
+  const segmenter: Intl.Segmenter | null = graphemeSegmenter();
+  if (segmenter === null) return Array.from(text);
   try {
-    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
     return Array.from(segmenter.segment(text), (segment) => segment.segment);
   } catch {
+    // 构造之外的失败仍按原契约退化，保持与提取 holder 之前逐字一致的行为。
     return Array.from(text);
   }
 }

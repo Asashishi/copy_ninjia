@@ -69,4 +69,27 @@ describe("logger persistence routing boundary", () => {
       globalThis.Worker = originalWorker;
     }
   });
+
+  test("字符串参数与 Error 可枚举字段里的敏感值都被脱敏后才进控制台与落盘", () => {
+    const token: string = process.env.TELEGRAM_BOT_TOKEN!;
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // 字符串走的是不经 JSON 往返的快路径；对象/Error 仍走序列化后整份脱敏。
+      logger.error(`download failed: https://api.telegram.org/file/bot${token}/photo.jpg`);
+      const stringArg: unknown = consoleError.mock.calls.at(-1)![0];
+      expect(stringArg).toBe("download failed: https://api.telegram.org/file/bot[REDACTED]/photo.jpg");
+      expect(String(stringArg)).not.toContain(token);
+
+      const failure = Object.assign(new Error("fetch failed"), {
+        path: `https://api.telegram.org/file/bot${token}/photo.jpg`,
+      });
+      logger.error("boom", failure);
+      const errorArg = consoleError.mock.calls.at(-1)![1] as { path: string; message: string };
+      expect(errorArg.message).toBe("fetch failed");
+      expect(errorArg.path).toBe("https://api.telegram.org/file/bot[REDACTED]/photo.jpg");
+      expect(JSON.stringify(errorArg)).not.toContain(token);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
 });

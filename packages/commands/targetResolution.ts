@@ -1,4 +1,4 @@
-import type { CommandContext, Context } from "grammy";
+import type { Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
 import { sendMessage } from "../infra/telegram";
 import { resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
@@ -17,31 +17,52 @@ export interface CommandTargetMessages {
 }
 
 /**
+ * resolveCommandTarget 的入参。这里只收命令消息本身与几个标量，不收 grammY 的
+ * CommandContext：`/咬` 这类单字中文命令拿不到 bot_command 实体、走的是
+ * bot.hears，根本没有 CommandContext 可传（见 commands/cjkAction.ts）。
+ */
+export interface ResolveCommandTargetParams {
+  /** 命令所在会话 id，失败提示发到这里。 */
+  chatId: number;
+  /** 命令消息本身：既用于解析回复目标，也用于把提示回复到它下面。 */
+  message: Message;
+  /** 机器人自己的用户 id，用于拒绝把自己当目标。 */
+  botUserId: number;
+  /** 命令词之后的参数原文，未 trim 也可以。 */
+  rawArgument: string;
+  /** 解析失败时发送的提示文案。 */
+  messages: CommandTargetMessages;
+}
+
+/**
  * 解析命令的目标用户/频道：回复目标的消息优先于参数里的 @username——这样
  * 即使对方没有公开 username、或者本天才还没缓存过 TA（比如 privacy mode
  * 没关导致漏听），只要能回复到 TA 发的一条消息就能直接锁定目标。
- * /copy 系与 /kick 共用同一套解析流程，只是失败时的嘲讽文案不同。
+ * /copy 系、/kick 与单字中文动作命令共用同一套解析流程，只是失败时的嘲讽
+ * 文案不同。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
  */
-export async function resolveCommandTarget(
-  ctx: CommandContext<Context>,
-  messages: CommandTargetMessages
-): Promise<CachedUser | undefined> {
-  const chatId: number = ctx.chat.id;
-  const messageId: number | undefined = ctx.msgId;
+export async function resolveCommandTarget({
+  chatId,
+  message,
+  botUserId,
+  rawArgument,
+  messages,
+}: ResolveCommandTargetParams): Promise<CachedUser | undefined> {
+  const messageId: number = message.message_id;
 
-  let targetUser: CachedUser | undefined = resolveReplyTarget(ctx.msg);
+  let targetUser: CachedUser | undefined = resolveReplyTarget(message);
   let rawUsername: string | undefined;
 
   if (!targetUser) {
-    const rawArgument: string = ctx.match.trim();
-    if (rawArgument.length === 0) {
+    const trimmedArgument: string = rawArgument.trim();
+    if (trimmedArgument.length === 0) {
       await sendMessage({ chatId, text: messages.missingTarget, replyToMessageId: messageId });
       return undefined;
     }
-    const usernameMatch = USERNAME_ARG_PATTERN.exec(rawArgument);
+    const usernameMatch = USERNAME_ARG_PATTERN.exec(trimmedArgument);
     if (!usernameMatch) {
-      await sendMessage({ chatId, text: messages.invalidUsername(rawArgument), replyToMessageId: messageId });
+      await sendMessage({ chatId, text: messages.invalidUsername(trimmedArgument), replyToMessageId: messageId });
       return undefined;
     }
     rawUsername = usernameMatch[1]!;
@@ -54,7 +75,7 @@ export async function resolveCommandTarget(
   }
 
   // 不能把本天才自己设成目标：/copy 会自己套自己没完没了，/kick 更是无稽之谈。
-  if (targetUser.id === ctx.me.id) {
+  if (targetUser.id === botUserId) {
     await sendMessage({ chatId, text: messages.selfTarget, replyToMessageId: messageId });
     return undefined;
   }

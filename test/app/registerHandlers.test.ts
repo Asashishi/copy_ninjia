@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Bot, Context } from "grammy";
 import { registerHandlers } from "../../packages/app/registerHandlers";
+import { CJK_ACTION_COMMAND_PATTERN } from "../../packages/consts/commands";
 
 type TestMiddleware = (ctx: Context, next: () => Promise<void>) => unknown;
 
 interface FakeBot {
   use(handler: TestMiddleware): FakeBot;
   command(command: string, handler: unknown): FakeBot;
+  hears(trigger: RegExp, handler: unknown): FakeBot;
   on(update: unknown, handler: unknown): FakeBot;
   catch(handler: unknown): FakeBot;
 }
@@ -15,6 +17,7 @@ describe("application handler registration", () => {
   test("导入不注册；显式调用一次后安装完整更新链并追踪最大 update_id", async () => {
     const middleware: TestMiddleware[] = [];
     const commands: string[] = [];
+    const hearsTriggers: RegExp[] = [];
     const updates: unknown[] = [];
     let catchCount: number = 0;
     let caughtHandler: ((error: { ctx: Context; error: unknown }) => void) | undefined;
@@ -25,6 +28,10 @@ describe("application handler registration", () => {
       },
       command(command: string, _handler: unknown): FakeBot {
         commands.push(command);
+        return fakeBot;
+      },
+      hears(trigger: RegExp, _handler: unknown): FakeBot {
+        hearsTriggers.push(trigger);
         return fakeBot;
       },
       on(update: unknown, _handler: unknown): FakeBot {
@@ -56,7 +63,11 @@ describe("application handler registration", () => {
       "quiet",
       "unquiet",
       "send",
+      "x",
     ]);
+    // 单字中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
+    // 消息兜底之前，否则会被当成普通消息进入 AI/复读流水线。
+    expect(hearsTriggers).toEqual([CJK_ACTION_COMMAND_PATTERN]);
     expect(updates).toHaveLength(8);
     expect(catchCount).toBe(1);
 

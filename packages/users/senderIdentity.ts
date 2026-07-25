@@ -15,9 +15,10 @@ import { visibleSenderChat } from "./visibleSender";
  * 解析出一条消息发送者的 CachedUser 形态身份：可能是真实 Telegram 用户
  * （`from`），也可能是通过 `sender_chat` 或纯粹的 `channel_post`（这种情况下
  * 没有 `sender_chat`，帖子自身的 `chat` 就是该频道）体现的频道身份。既用于
- * 填充 username 缓存，也用于直接从被回复的消息中解析出 /copy 目标。
+ * 填充 username 缓存，也用于直接从被回复的消息中解析出 /copy 目标，以及为
+ * 单字中文动作命令取出发起人身份（见 commands/cjkAction.ts）。
  */
-function resolveSenderIdentity(message: Message): CachedUser | undefined {
+export function resolveSenderIdentity(message: Message): CachedUser | undefined {
   const fromUser = message.from;
   const senderChat = visibleSenderChat(message);
 

@@ -50,7 +50,7 @@ Worker crashes are rate-limited and self-healing, but the hosts have two impleme
 4. **Per-chat serialization**—`sequentialize` preserves message order within a chat. Reaction synchronization uses a separate coalescing queue and does not occupy the chat lane.
 5. **Private-chat gateway**—private chats allow only the `/send` entry point and active relay sessions. Relay messages short-circuit into the message pipeline so their text is not interpreted as commands.
 6. **Join verification**—must run before command handlers, or commands sent by pending users would not be tracked for cleanup.
-7. **Command registration**—13 `bot.command(...)` registrations; see [06 Common Modification Recipes](06-modification-guide.md#adding-a-slash-command).
+7. **Command registration**—14 `bot.command(...)` registrations (including the no-op `/x` placeholder that exists only to advertise the single-CJK-character action commands in the menu); see [06 Common Modification Recipes](06-modification-guide.md#adding-a-slash-command).
 8. **Automatic-message pipeline**—[`packages/auto/`](../../packages/auto) handles copying, AI transcription and trigger decisions, reaction synchronization, and other non-command behavior.
 
 After an AI trigger, the main thread evaluates the activity-based probability or direct trigger, dispatches to the AI Worker, and the Worker assembles the three-part Gemini input: reference memory, current conversation, and the reply task. Gemini then performs multi-turn tool calls—messages, stickers, reactions, and image generation, all executed through main-thread proxies—before the result is written back to rolling memory and periodically snapshotted.

@@ -23,6 +23,12 @@
 7. **测试**：`test/commands/xxx.test.ts`，至少覆盖权限拒绝、参数解析与主路径。
 8. **文档**：根 README「命令与权限」表加一行。
 
+非 ASCII 命令名（`/咬` 这类单字中文动作命令）走另一条路：Telegram 只为 ASCII 命令生成 `bot_command` 实体，`bot.command` 永远匹配不到，必须用 `bot.hears(正则, ...)` 按消息原文匹配，并注册在消息兜底处理器 `bot.on(["message", "channel_post"], ...)` 之前，否则会被当作普通消息进入 AI/复读流水线。这类 handler 拿到的是普通 `Context` 而非 `CommandContext`，目标解析改为直接给 [`targetResolution.ts`](../packages/commands/targetResolution.ts) 的 `resolveCommandTarget` 传 `ResolveCommandTargetParams`；不认领的形态（`/咬@OtherBot`、消息形态异常）必须 `next()` 放行，不能静默吞掉更新。BotFather 的命令名同样只收 ASCII（拉丁字母、数字、下划线，最长 32 字符），因此它们不能进 `BOT_COMMANDS` 菜单——`setMyCommands` 是整体提交，混入一个非法名会让整份菜单以 `BOT_COMMAND_INVALID` 失败，而注册失败只记日志不阻断启动，菜单会静默消失；想在菜单里曝光用法，就加一条 ASCII 占位说明项（现有的 `/x`），把语法写在 description 里。这类占位项必须注册成不做任何事的空 handler：点菜单会真的把命令发出去，不注册就会落到消息兜底、被当成普通消息进入 AI/复读流水线。另外，没有命令菜单那层天然约束的命令（谁都能随手造一个动作字）必须自带全局限流：窗口与上限进 `packages/consts/commands.ts`，时间戳队列进 `packages/cache/<domain>.ts`，判定复用 [`libs/slidingWindowRateLimit.ts`](../packages/libs/slidingWindowRateLimit.ts)（纯函数，就地维护调用方传入的队列，本身不持有状态）。现成范例：[`cjkAction.ts`](../packages/commands/cjkAction.ts)。
+
+## 在回复里加链接或格式
+
+`sendMessage` 一律不设 `parse_mode`——用户昵称、消息内容里的标记字符不能有机会变成格式或链接。确实需要富文本时，由调用方把文本按段拼好、自己算出 `entities` 偏移传进 `sendMessage`（见 [`infra/telegram/actions.ts`](../packages/infra/telegram/actions.ts)）。偏移按 Telegram 的 UTF-16 code unit 口径计，正好等于 JS 的 `String#length`，昵称里的 emoji（代理对）自然占 2 个单位，不必额外换算；长度为 0 的实体会让 Telegram 整条拒收，空文本段不要挂实体。范例见 `cjkAction.ts` 的 `buildActionMessage`。
+
 ## 调整行为参数
 
 参数全部集中在 `packages/consts/`，改值不动业务代码。常用位置：
@@ -36,7 +42,7 @@
 | 心情时长与开关超时 | `packages/consts/aiChat/mood.ts` |
 | 工具动作/查询上限、模型名、请求超时 | `packages/consts/aiChat/tools.ts` |
 | 验证窗口、刷屏阈值、追加/收敛策略 | `packages/consts/antiRaid/` |
-| copy 冷却、/quiet 范围、用户名规则 | `packages/consts/commands.ts` |
+| copy 冷却、/quiet 范围、用户名规则、动作命令限流 | `packages/consts/commands.ts` |
 | 随机触发的发言人冷却 | `packages/consts/auto.ts` |
 
 步骤：改常量 → 更新它的中文 JSDoc（不变量变了就改说明）→ 检查根 README 是否引用了该数值并同步 → `bun run check`。

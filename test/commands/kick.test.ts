@@ -30,6 +30,8 @@ function context(userId: number | undefined = 100): never {
     chat: { id: -1001 },
     from: userId === undefined ? undefined : { id: userId, first_name: "Admin", username: "admin" },
     msgId: 10,
+    msg: { message_id: 10 },
+    me: { id: 999 },
     match: "@alice",
   } as never;
 }

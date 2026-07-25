@@ -17,7 +17,7 @@
 | 路径 | 职责 | 典型文件 |
 | :--- | :--- | :--- |
 | `packages/app/` | 启动/退出生命周期、handler 注册、命令菜单、update runner | `lifecycle.ts`、`registerHandlers.ts`、`updateRunner.ts` |
-| `packages/commands/` | 显式命令处理，一命令一文件 | `copy.ts`、`kick.ts`、`send.ts`、`targetResolution.ts` |
+| `packages/commands/` | 显式命令处理，一命令一文件 | `copy.ts`、`kick.ts`、`cjkAction.ts`、`send.ts`、`targetResolution.ts` |
 | `packages/auto/` | 非命令的自动行为：复读、AI 转录与触发、反应同步 | `message/`、`triggerPolicy.ts` |
 | `packages/aiChat/` | AI 闲聊主线程代理：Worker 监督入口与记忆镜像 | `index.ts`、`memoryMirror.ts` |
 | `packages/antiRaid/` | Anti-Raid 主线程代理：Worker 监督入口、lockdown 恢复与待验证镜像接收 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts` |

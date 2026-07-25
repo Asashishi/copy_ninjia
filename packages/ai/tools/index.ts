@@ -1,5 +1,6 @@
 import { currentTokyoWeather } from "../weather";
-import { GET_TOKYO_WEATHER_TOOL } from "../../consts/tools";
+import { GET_TOKYO_WEATHER_TOOL, unknownToolError } from "../../consts/tools";
+import { toolError } from "../utils/toolResult";
 import type { ToolDefinition } from "../../types/tools";
 
 /**
@@ -32,6 +33,6 @@ export function callTool(name: string): string {
       return JSON.stringify(result ?? { error: "Weather data not available yet" });
     }
     default:
-      return JSON.stringify({ error: `Unknown tool: ${name}` });
+      return toolError(unknownToolError(name));
   }
 }

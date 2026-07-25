@@ -17,7 +17,7 @@ This page answers “where does this code live, and where should new code go?”
 | Path | Responsibility | Representative files |
 | :--- | :--- | :--- |
 | `packages/app/` | Startup/shutdown lifecycle, handler registration, command menu, update runner | `lifecycle.ts`, `registerHandlers.ts`, `updateRunner.ts` |
-| `packages/commands/` | Explicit command handling, one command per file | `copy.ts`, `kick.ts`, `send.ts`, `targetResolution.ts` |
+| `packages/commands/` | Explicit command handling, one command per file | `copy.ts`, `kick.ts`, `cjkAction.ts`, `send.ts`, `targetResolution.ts` |
 | `packages/auto/` | Automatic non-command behavior: copying, AI transcription and triggers, reaction synchronization | `message/`, `triggerPolicy.ts` |
 | `packages/aiChat/` | Main-thread AI chat proxy: Worker supervision entry point and memory mirror | `index.ts`, `memoryMirror.ts` |
 | `packages/antiRaid/` | Main-thread Anti-Raid proxy: Worker supervision entry point, lockdown recovery, and pending-verification mirror intake | `index.ts`, `lockdownMirror.ts`, `verificationMirror.ts` |

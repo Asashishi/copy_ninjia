@@ -23,6 +23,7 @@
 - `state.json`、`bot.lock`、`logs/`、`memory/` はすべて 1 つの実行時データルートから導出します。production の既定値はプロジェクトルートです。テスト preload は production モジュールを import する前に isolate ごとの一時ルートを注入し、実ファイル I/O が production キャッシュへアクセスできないようにします。
 - 低優先度のグループタイトル保守は、コマンドメニュー、`bot.init()`、Worker hydrate、acknowledgement-safe runner の準備完了後にだけ開始します。title owner の `getChat` は現在最大 15 並列で、履歴補完が共有 throttler を先頭から占有する量を制限し、ライフサイクルの quiesce/abort signal を受け取ります。
 - 汎用 JSON API request は `JSON_API_ALLOWED_ORIGINS` に明記した HTTPS origin だけを許可し、redirect を無効にします。新しい caller は allowlist を明示的に拡張しなければなりません。Telegram avatar crawler は独立した経路を使い、この JSON allowlist へ誤って接続してはいけません。
+- 送信メッセージには `parse_mode` を一切設定しません。表示名やメッセージ本文は純テキストとしてのみ連結し、書式やリンクとして解釈される余地を残してはいけません。リッチテキストが必要な場合は、呼び出し側がテキストを段ごとに組み立て、`entities` を自ら与えます（offset は Telegram の UTF-16 code unit 基準で、JavaScript の `String#length` と同一。長さ 0 の entity はメッセージ全体が拒否されます）。新しい送信経路がこの制約を迂回するために `parse_mode` を使ってはいけません。
 
 ## Worker と状態の所有権
 

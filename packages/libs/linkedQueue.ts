@@ -46,6 +46,15 @@ export class LinkedQueue<T> {
     return this.head ? this.head.value : undefined;
   }
 
+  /** 整体清空。摘掉 head/tail 让整条链一起变成垃圾，O(1)，不必逐个 shift。
+   *  用于滑动窗口遇到系统时钟回拨时按新时间轴重建，见
+   *  libs/slidingWindowRateLimit.ts。 */
+  clear(): void {
+    this.head = null;
+    this.tail = null;
+    this.count = 0;
+  }
+
   /** 取队尾最近的 n 个元素，保持入队顺序；n 大于队列长度时返回全部。
    *  n=1 走 tail 指针 O(1) 特判（replyQueue 每次入队都取最新一条），其余
    *  情况单链表只能从头遍历。 */

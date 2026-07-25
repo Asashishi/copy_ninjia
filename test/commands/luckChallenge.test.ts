@@ -94,7 +94,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   beforeEach(() => {
     cache.dailyLuckCache.clear();
     cache.pendingLuckDraws.clear();
-    cache.recentCallTimestamps.length = 0;
+    cache.recentCallTimestamps.clear();
     luckChallenge.restoreLuckState(TEST_SECRET, null);
     postDiskIOMock.mockClear();
     logApiErrorMock.mockClear();
@@ -116,9 +116,10 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("限流内联回答失败只记录错误，不向 update handler 抛出", async () => {
-    cache.recentCallTimestamps.push(
-      ...Array.from({ length: RATE_LIMIT_MAX_CALLS_PER_WINDOW }, () => Date.now())
-    );
+    const filledAt: number = Date.now();
+    for (let filled: number = 0; filled < RATE_LIMIT_MAX_CALLS_PER_WINDOW; filled++) {
+      cache.recentCallTimestamps.push(filledAt);
+    }
     const error = new Error("query is too old");
     const ctx = {
       ...makeInlineCtx(102, ""),

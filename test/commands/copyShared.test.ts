@@ -142,11 +142,15 @@ describe("copy 命令共享冷却与头像串行器", () => {
   });
 
   test("目标解析器收到 copy 专用错误文案", async () => {
-    const ctx = { chat: { id: -1001 }, match: "@alice" } as never;
+    const ctx = { chat: { id: -1001 }, msg: { message_id: 9 }, me: { id: 999 }, match: "@alice" } as never;
     await expect(shared.resolveCopyCommandTarget(ctx, "/steal_icon")).resolves.toEqual({ id: 7, first_name: "Alice" });
-    const options = resolveCommandTarget.mock.calls[0]![1] as { missingTarget: string; selfTarget: string };
-    expect(options.missingTarget).toContain("/steal_icon");
-    expect(options.selfTarget).toContain("自己");
+    const params = resolveCommandTarget.mock.calls[0]![0] as {
+      rawArgument: string;
+      messages: { missingTarget: string; selfTarget: string };
+    };
+    expect(params.rawArgument).toBe("@alice");
+    expect(params.messages.missingTarget).toContain("/steal_icon");
+    expect(params.messages.selfTarget).toContain("自己");
   });
 
   test("头像全局并发度为 1，运行中只保留最新待执行目标与最新战报", async () => {

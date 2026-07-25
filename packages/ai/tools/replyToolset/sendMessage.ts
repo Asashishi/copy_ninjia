@@ -1,4 +1,6 @@
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
+import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../consts/tools";
+import { toolError } from "../../utils/toolResult";
 import { sendMessageWithResult } from "../../../infra/telegram";
 import { sleep } from "../../../libs/sleep";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
@@ -25,10 +27,10 @@ export function createSendMessageExecutor(
 ): (argumentsJson: string) => Promise<string> {
   return async (argumentsJson: string): Promise<string> => {
     if (!ctx.isActive()) {
-      return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+      return toolError(REPLY_INVALIDATED_TOOL_ERROR);
     }
     const text: string | null = parseCleanMessageText(argumentsJson);
-    if (!text) return JSON.stringify({ error: "Invalid or empty text" });
+    if (!text) return toolError("Invalid or empty text");
     if (isEmojiOnly(text)) {
       return JSON.stringify({
         error: "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead",
@@ -54,7 +56,7 @@ export function createSendMessageExecutor(
     ctx.chatAction.set("idle");
     await ctx.chatAction.settle();
     if (!ctx.isActive()) {
-      return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+      return toolError(REPLY_INVALIDATED_TOOL_ERROR);
     }
 
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
@@ -64,7 +66,7 @@ export function createSendMessageExecutor(
       text: typo.textToSend,
       replyToMessageId,
     });
-    if (sent === undefined) return JSON.stringify({ error: "Failed to send message" });
+    if (sent === undefined) return toolError("Failed to send message");
 
     recordSentMessage({
       ctx,

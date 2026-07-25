@@ -17,7 +17,8 @@ import {
   STICKER_INTENT_SELECTION_INSTRUCTION,
   VIEW_STICKER_PACK_TOOL_INSTRUCTION,
 } from "../../consts/aiChat/prompts/tools";
-import { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
+import { REPLY_INVALIDATED_TOOL_ERROR, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
+import { toolError } from "../utils/toolResult";
 import type { ChatActionControl } from "../../types/aiChat/chatAction";
 import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 import type { StickerCandidate, StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../../types/stickers/tools";
@@ -173,9 +174,9 @@ export async function viewStickerPackTool({
   state,
 }: ViewStickerPackToolParams): Promise<string> {
   const packIndex: number | null = parseIndexField(argumentsJson, "pack_index", menu.length);
-  if (packIndex === null) return JSON.stringify({ error: "Invalid pack_index" });
+  if (packIndex === null) return toolError("Invalid pack_index");
   const intent: string | null = parseStickerIntent(argumentsJson);
-  if (intent === null) return JSON.stringify({ error: `Invalid intent: provide a concrete non-empty intent within ${STICKER_INTENT_MAX_CHARS} characters` });
+  if (intent === null) return toolError(`Invalid intent: provide a concrete non-empty intent within ${STICKER_INTENT_MAX_CHARS} characters`);
   if (state.viewedPackIntents.has(packIndex)) {
     return JSON.stringify({
       error: "Sticker pack already viewed in this reply; do not view it again. Use its existing list, choose a different unviewed pack, or reply without a sticker",
@@ -250,24 +251,24 @@ export async function sendStickerTool({
   onSent,
   isActive = (): boolean => true,
 }: SendStickerToolParams): Promise<string> {
-  if (!isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+  if (!isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
   const packIndex: number | null = parseIndexField(argumentsJson, "pack_index", menu.length);
-  if (packIndex === null) return JSON.stringify({ error: "Invalid pack_index" });
+  if (packIndex === null) return toolError("Invalid pack_index");
   const pack: StickerPackCandidate = menu[packIndex - 1]!;
 
   const stickerIndex: number | null = parseIndexField(argumentsJson, "sticker_index", pack.stickers.length);
-  if (stickerIndex === null) return JSON.stringify({ error: "Invalid sticker_index" });
+  if (stickerIndex === null) return toolError("Invalid sticker_index");
 
   if (!state.viewedPackIntents.has(packIndex)) {
-    return JSON.stringify({ error: "Pack not viewed yet: call view_sticker_pack on this pack first" });
+    return toolError("Pack not viewed yet: call view_sticker_pack on this pack first");
   }
   if (state.sentStickerUids.size >= MAX_STICKERS_PER_REPLY) {
-    return JSON.stringify({ error: `Sticker limit reached: at most ${MAX_STICKERS_PER_REPLY} stickers per reply` });
+    return toolError(`Sticker limit reached: at most ${MAX_STICKERS_PER_REPLY} stickers per reply`);
   }
 
   const candidate: StickerCandidate = pack.stickers[stickerIndex - 1]!;
   if (state.sentStickerUids.has(candidate.sticker.file_unique_id)) {
-    return JSON.stringify({ error: "Duplicate sticker: already sent this exact sticker in this reply, pick a different one" });
+    return toolError("Duplicate sticker: already sent this exact sticker in this reply, pick a different one");
   }
 
   // 跨轮互斥（放在全部参数/限额校验之后、发送序列之前）：抢不到锁说明
@@ -275,7 +276,7 @@ export async function sendStickerTool({
   // 本轮的选择挡位，让模型改用文字（见函数头注）。
   if (!stickerLock.tryAcquire()) {
     chatAction.set("idle");
-    return JSON.stringify({ error: "Sticker throttled: a concurrent reply in this chat is already sending a sticker; do not retry, reply with text instead" });
+    return toolError("Sticker throttled: a concurrent reply in this chat is already sending a sticker; do not retry, reply with text instead");
   }
 
   if (chatAction.current() !== "choose_sticker") {
@@ -284,13 +285,13 @@ export async function sendStickerTool({
   }
   chatAction.set("idle");
   await chatAction.settle();
-  if (!isActive()) return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+  if (!isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
   const sentMessageId: number | undefined = await sendSticker(chatId, candidate.sticker.file_id);
   if (sentMessageId === undefined) {
     // 发送失败不把挡位续回选择贴纸：模型若换一枚重试，发送路径会自己重新
     // 拉起选择状态；若就此改口/放弃，续上的状态只会变成一段等不来贴纸的
     // 遗留。
-    return JSON.stringify({ error: "Failed to send sticker" });
+    return toolError("Failed to send sticker");
   }
 
   state.sentStickerUids.add(candidate.sticker.file_unique_id);

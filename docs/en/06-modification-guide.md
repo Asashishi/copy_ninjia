@@ -23,6 +23,12 @@ Each recipe names the files to touch and the order to follow. The universal prer
 7. **Tests**: add `test/commands/xxx.test.ts`, covering at least authorization rejection, argument parsing, and the main path.
 8. **Documentation**: add a row to the root README's “Commands and Permissions” table in every language.
 
+Non-ASCII command names (single-CJK-character action commands such as `/咬`) take a different route. Telegram only emits `bot_command` entities for ASCII commands, so `bot.command` can never match them; use `bot.hears(regex, ...)` against the raw message text and register it before the catch-all `bot.on(["message", "channel_post"], ...)`, otherwise the command falls into the AI/copy pipeline as an ordinary message. Such a handler receives a plain `Context` rather than a `CommandContext`, so target resolution passes `ResolveCommandTargetParams` directly to `resolveCommandTarget` in [`targetResolution.ts`](../../packages/commands/targetResolution.ts). Forms the handler does not claim (`/咬@OtherBot`, malformed messages) must call `next()` instead of silently swallowing the update. BotFather also accepts ASCII command names only (Latin letters, digits, underscores, up to 32 characters), so these commands cannot go into the `BOT_COMMANDS` menu — `setMyCommands` submits the whole list at once, so one invalid name fails the entire menu with `BOT_COMMAND_INVALID`, and since a failed registration is only logged and never blocks startup, the menu disappears silently. To advertise the syntax in the menu, add an ASCII placeholder entry (the existing `/x`) and put the syntax in its description. Such a placeholder must still be registered with a handler that does nothing: tapping a menu entry actually sends the command, so without a registered handler it reaches the catch-all and enters the AI/copy pipeline as an ordinary message. Additionally, a command with no command-menu constraint behind it (anyone can invent an action character on the spot) must carry its own global rate limit: window and ceiling go in `packages/consts/commands.ts`, the timestamp queue goes in `packages/cache/<domain>.ts`, and the decision reuses [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) — a pure function that mutates the caller-owned queue in place and holds no state of its own. Reference implementation: [`cjkAction.ts`](../../packages/commands/cjkAction.ts).
+
+## Adding Links or Formatting to a Reply
+
+`sendMessage` never sets `parse_mode` — markup characters inside display names or message content must never get a chance to become formatting or links. When rich text is genuinely needed, the caller assembles the text segment by segment, computes the `entities` offsets itself, and passes them to `sendMessage` (see [`infra/telegram/actions.ts`](../../packages/infra/telegram/actions.ts)). Offsets use Telegram's UTF-16 code unit convention, which is exactly JavaScript's `String#length`, so an emoji (surrogate pair) in a display name naturally counts as 2 with no extra conversion. A zero-length entity makes Telegram reject the whole message, so never attach an entity to an empty segment. See `buildActionMessage` in `cjkAction.ts`.
+
 ## Adjusting Behavioral Parameters
 
 All parameters are centralized under `packages/consts/`, so changing a value does not require editing business logic. Common locations:
@@ -36,7 +42,7 @@ All parameters are centralized under `packages/consts/`, so changing a value doe
 | Mood duration and command timeout | `packages/consts/aiChat/mood.ts` |
 | Tool action/lookup limits, model names, request timeouts | `packages/consts/aiChat/tools.ts` |
 | Verification window, spam threshold, append/compaction policy | `packages/consts/antiRaid/` |
-| Copy cooldown, `/quiet` range, username rules | `packages/consts/commands.ts` |
+| Copy cooldown, `/quiet` range, username rules, action-command rate limit | `packages/consts/commands.ts` |
 | Random-trigger cooldown per sender | `packages/consts/auto.ts` |
 
 Procedure: change the constant → update its Chinese JSDoc, including changed invariants → check whether the root READMEs quote the value and synchronize them → run `bun run check`.

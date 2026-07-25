@@ -16,7 +16,7 @@ export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
 export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 
 /** 贴纸目录单次 AI 调用失败后的跨请求退避序列。 */
-export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000, 120_000];
+export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = Object.freeze([15_000, 60_000, 120_000]);
 
 /** 整包简介与工具意图的领域约束。 */
 export const STICKER_PACK_SUMMARY_MAX_CHARS: number = 200;

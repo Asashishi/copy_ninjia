@@ -33,3 +33,15 @@ export const ACTION_TOOL_NAMES: readonly string[] = Object.freeze([
   SEND_STICKER_TOOL,
   GENERATE_IMAGE_TOOL,
 ]);
+
+/**
+ * 本轮回复已被 /ai_chat disable 作废时，所有动作工具统一返回的错误文案。
+ * 每个执行器在自己的每个 await 边界前后都要检查一次代数，因此这条文案在
+ * ai/tools/ 下出现近十次；它是喂给模型的协议文本，必须逐字一致，只在这里定义。
+ */
+export const REPLY_INVALIDATED_TOOL_ERROR: string = "Reply invalidated because AI chat was disabled";
+
+/** 模型调用了本轮工具集之外的名字时的统一错误文案（静态与按次组装的两个 dispatch 共用）。 */
+export function unknownToolError(name: string): string {
+  return `Unknown tool: ${name}`;
+}

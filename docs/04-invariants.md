@@ -23,6 +23,7 @@
 - `state.json`、`bot.lock`、`logs/` 与 `memory/` 全部从统一运行时数据根派生；生产缺省使用项目根目录，测试 preload 在任何生产模块 import 前注入逐隔离体的临时根，让真实文件 I/O 也不可能读写生产缓存。
 - 命令菜单、`bot.init()`、Worker hydrate 与 acknowledgement-safe runner 就绪后，才启动低优先级群标题维护；标题 owner 当前最多并发 15 个 `getChat`，限制历史回填在共享 throttler 中造成的队头阻塞，并接受生命周期的 quiesce/abort 信号。
 - 通用 JSON API 请求只允许访问 `JSON_API_ALLOWED_ORIGINS` 明列的 HTTPS origin，并禁用 redirect；新增调用方必须显式扩充白名单。Telegram 头像爬取使用独立入口，不得误接到该 JSON allowlist。
+- 出站消息一律不设 `parse_mode`：用户昵称与消息内容只能作为纯文本参与拼接，不得有机会被解析成格式或链接。需要富文本时由调用方按段拼好文本、自行给出 `entities`（偏移按 Telegram 的 UTF-16 code unit 口径，等价于 JS `String#length`；长度为 0 的实体会让整条消息被拒收）。新增发送路径不得改用 `parse_mode` 绕开这条约束。
 
 ## Worker 与状态所有权
 

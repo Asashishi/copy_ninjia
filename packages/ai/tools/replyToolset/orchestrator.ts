@@ -2,10 +2,12 @@ import type { FunctionDeclaration, Tool } from "@google/genai";
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
 import {
   ACTION_TOOL_NAMES,
+  REPLY_INVALIDATED_TOOL_ERROR,
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
   SEND_MESSAGE_TOOL,
   SEND_STICKER_TOOL,
+  unknownToolError,
   VIEW_STICKER_PACK_TOOL,
 } from "../../../consts/tools";
 import type { ReplyToolContext, ReplyToolset } from "../../../types/aiChat/replies";
@@ -28,6 +30,7 @@ import {
 import { createRoundMessageState } from "./messageState";
 import { createAddReactionExecutor } from "./reaction";
 import { createSendMessageExecutor } from "./sendMessage";
+import { toolError } from "../../utils/toolResult";
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
 export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {
@@ -82,7 +85,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
           isActive: ctx.isActive,
         });
       default:
-        return JSON.stringify({ error: `Unknown tool: ${name}` });
+        return toolError(unknownToolError(name));
     }
   }
 
@@ -92,7 +95,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     has: (name: string): boolean => names.has(name),
     execute: async (name: string, argumentsJson: string): Promise<string> => {
       if (!ctx.isActive()) {
-        return JSON.stringify({ error: "Reply invalidated because AI chat was disabled" });
+        return toolError(REPLY_INVALIDATED_TOOL_ERROR);
       }
       if (ACTION_TOOL_NAMES.includes(name) && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
         return JSON.stringify({
