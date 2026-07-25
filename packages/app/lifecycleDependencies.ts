@@ -39,6 +39,9 @@ import { runAcknowledgedUpdateBatches } from "./updateRunner";
  * 普通对象刻意不使用直接 re-export：Bun 的模块 mock 会追溯重绑定 re-export，
  * 从而把测试替身泄漏到 diskIO 等原始模块。对象快照让替换严格停留在本边界。
  */
+// 类型侧的 ApplicationLifecycleDependencies 是 `typeof lifecycleDependencies`
+// 反推出来的（见 types/lifecycle.ts），这里再写标注会成环。
+// eslint-disable-next-line @typescript-eslint/typedef -- 标注会与 typeof 推导成环
 export const lifecycleDependencies = {
   BOT_TOKEN,
   abortChatTitleRefresh,

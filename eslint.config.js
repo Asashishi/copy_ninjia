@@ -31,6 +31,12 @@ export default defineConfig(
       // 生产代码普遍把泛型写在显式类型标注上，例如 `const cache: Map<K, V> = new Map()`。
       "@typescript-eslint/consistent-generic-constructors": ["error", "type-annotation"],
       "@typescript-eslint/consistent-type-exports": "error",
+      // 返回类型不止导出函数要写：内部函数、回调箭头，以及能从上下文推出类型的
+      // 函数表达式同样要标注，因此两个 allow* 都关掉。
+      "@typescript-eslint/explicit-function-return-type": [
+        "error",
+        { allowExpressions: false, allowTypedFunctionExpressions: false },
+      ],
       "@typescript-eslint/explicit-module-boundary-types": "error",
       "@typescript-eslint/no-deprecated": "error",
       "@typescript-eslint/prefer-nullish-coalescing": [
@@ -42,6 +48,20 @@ export default defineConfig(
       "@typescript-eslint/switch-exhaustiveness-check": [
         "error",
         { considerDefaultExhaustiveForUnions: true },
+      ],
+      // 变量、形参、解构一律显式标注，不吃类型推导。规则本身跳过 `for...of` /
+      // `for...in` 的循环变量（TS 语法不允许标注）；初始化器已是箭头函数的
+      // const 由 variableDeclarationIgnoreFunction 放行，不重复写函数类型。
+      "@typescript-eslint/typedef": [
+        "error",
+        {
+          arrayDestructuring: true,
+          arrowParameter: true,
+          objectDestructuring: true,
+          parameter: true,
+          variableDeclaration: true,
+          variableDeclarationIgnoreFunction: true,
+        },
       ],
       "@typescript-eslint/unified-signatures": "error",
     },

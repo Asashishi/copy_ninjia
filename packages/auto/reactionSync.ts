@@ -26,8 +26,7 @@ export async function handleReaction(ctx: Context): Promise<void> {
   // Premium，一条消息只能设 1 个反应；目标（若是 Premium 用户）却可能同时
   // 点了 2~3 个：优先跟随本次新增的那个，没有新增（比如只是取消了其中一个）
   // 就退回仍点着的第一个；全空表示目标清掉了可复制的反应，跟着清除。
-  const reactions: ReturnType<typeof ctx.reactions> = ctx.reactions();
-  const { emoji, emojiAdded, emojiRemoved, customEmoji, customEmojiAdded, customEmojiRemoved } = reactions;
+  const { emoji, emojiAdded, emojiRemoved, customEmoji, customEmojiAdded, customEmojiRemoved }: ReturnType<typeof ctx.reactions> = ctx.reactions();
   let toApply: CopyableReaction[];
   if (emojiAdded.length > 0) {
     toApply = [{ type: "emoji", emoji: emojiAdded[0]! }];
