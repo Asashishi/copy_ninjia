@@ -65,6 +65,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Recipe 2: Adjusting system constants or timeouts
    - Recipe 3: Extending Gemini AI custom function tools
    - Recipe 4: Modifying config schemas or persistence structures (manual migration)
+   - Non-goal: no i18n — fork it to change languages
 
 7. **[07 Operations and Troubleshooting](07-operations.md)**
    - Recommended hardware specs and deployment options

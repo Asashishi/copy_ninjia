@@ -29,6 +29,16 @@
 
 `sendMessage` 一律不设 `parse_mode`——用户昵称、消息内容里的标记字符不能有机会变成格式或链接。确实需要富文本时，由调用方把文本按段拼好、自己算出 `entities` 偏移传进 `sendMessage`（见 [`infra/telegram/actions.ts`](../packages/infra/telegram/actions.ts)）。偏移按 Telegram 的 UTF-16 code unit 口径计，正好等于 JS 的 `String#length`，昵称里的 emoji（代理对）自然占 2 个单位，不必额外换算；长度为 0 的实体会让 Telegram 整条拒收，空文本段不要挂实体。范例见 `cjkAction.ts` 的 `buildActionMessage`。
 
+## 换成别的语言：不做 i18n，请自行 fork
+
+面向用户的文案只有简体中文一套，仓库不提供也不接受 i18n 层——文案不是能替换的字典项：
+
+- 大量回复由片段拼接而成，还要同时算出 Telegram `entities` 的 UTF-16 偏移（见上一节）。换语言意味着词序、长度、乃至句子该不该拆都变了，偏移必须跟着重算，key-value 词条表接不住这类文案。
+- `/咬` 这类单字中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
+- 人设、工具描述与提示词（[`prompt/persona.md`](../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
+
+需要别的语言就 fork 一份自己改。生产代码里含中文的字符串字面量约 525 处、分布在 52 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+
 ## 调整行为参数
 
 参数全部集中在 `packages/consts/`，改值不动业务代码。常用位置：

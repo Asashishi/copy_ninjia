@@ -29,6 +29,16 @@ Non-ASCII command names (single-CJK-character action commands such as `/咬`) ta
 
 `sendMessage` never sets `parse_mode` — markup characters inside display names or message content must never get a chance to become formatting or links. When rich text is genuinely needed, the caller assembles the text segment by segment, computes the `entities` offsets itself, and passes them to `sendMessage` (see [`infra/telegram/actions.ts`](../../packages/infra/telegram/actions.ts)). Offsets use Telegram's UTF-16 code unit convention, which is exactly JavaScript's `String#length`, so an emoji (surrogate pair) in a display name naturally counts as 2 with no extra conversion. A zero-length entity makes Telegram reject the whole message, so never attach an entity to an empty segment. See `buildActionMessage` in `cjkAction.ts`.
 
+## Switching Languages: No i18n Here — Fork It
+
+User-facing copy exists in Simplified Chinese only. This repository neither ships nor accepts an i18n layer, because the copy is not a set of swappable dictionary entries:
+
+- Many replies are assembled from fragments while simultaneously computing UTF-16 offsets for Telegram `entities` (see the previous section). Changing language changes word order, length, and even whether a sentence should be split at all; every offset has to be recomputed, and a key-value catalogue cannot carry that.
+- Single-character Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
+- The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
+
+If you need another language, fork it and change it yourself. Production code holds roughly 525 string literals containing Chinese across 52 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+
 ## Adjusting Behavioral Parameters
 
 All parameters are centralized under `packages/consts/`, so changing a value does not require editing business logic. Common locations:
