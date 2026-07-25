@@ -131,6 +131,48 @@ describe("Anti-Raid cache owners", () => {
     expect(chatAdmins.get(-1002)?.adminIds).toEqual(new Set([41]));
   });
 
+  test("拉取在途期间到达的增量重放在快照之上，不被迟到的 resolve 覆盖", async () => {
+    let resolveAdmins!: (admins: { user: { id: number }; is_anonymous: boolean }[]) => void;
+    getChatAdministrators.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveAdmins = resolve; })
+    );
+
+    const fetching = adminCache.fetchAdminIds(-1003);
+    // 快照还在路上时 chat_member 已经权威地告知：42 升管理员、41 被撤。
+    adminCache.applyAdminChange(-1003, 42, true);
+    adminCache.applyAdminChange(-1003, 41, false);
+    resolveAdmins([{ user: { id: 41 }, is_anonymous: false }]);
+
+    await expect(fetching).resolves.toEqual(new Set([42]));
+    expect(chatAdmins.get(-1003)?.adminIds).toEqual(new Set([42]));
+    expect(pendingAdminChangesDuringFetch.has(-1003)).toBeFalse();
+  });
+
+  test("拉取失败连同尚未重放的增量一起丢弃，不留没有基底的孤立增量", async () => {
+    getChatAdministrators.mockImplementationOnce(async () => {
+      throw new Error("getChatAdministrators failed");
+    });
+
+    const failing = adminCache.fetchAdminIds(-1004);
+    adminCache.applyAdminChange(-1004, 42, true);
+
+    await expect(failing).rejects.toThrow("getChatAdministrators failed");
+    expect(pendingAdminChangesDuringFetch.has(-1004)).toBeFalse();
+    expect(chatAdmins.has(-1004)).toBeFalse();
+  });
+
+  test("增量只原地改已有快照；没拉取过的群不建条目也不留增量", () => {
+    cacheAdminIds(-1005, new Set([41]), Date.now());
+
+    adminCache.applyAdminChange(-1005, 42, true);
+    adminCache.applyAdminChange(-1005, 41, false);
+    expect(chatAdmins.get(-1005)?.adminIds).toEqual(new Set([42]));
+
+    adminCache.applyAdminChange(-1006, 42, true);
+    expect(chatAdmins.has(-1006)).toBeFalse();
+    expect(pendingAdminChangesDuringFetch.has(-1006)).toBeFalse();
+  });
+
   test("关联频道 owner 去重在途请求并在 settle 后释放槽位", async () => {
     let resolveFetch!: () => void;
     let createCalls: number = 0;

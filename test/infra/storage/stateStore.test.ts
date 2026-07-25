@@ -1,9 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StateStore } from "../../../src/infra/storage/stateStore";
-import type { StateFileSchema } from "../../../src/types/chatState";
+import {
+  StateStore,
+  getActiveProxySendTarget,
+  pruneDepartedChatState,
+} from "../../../src/infra/storage/stateStore";
+import { chatStates } from "../../../src/cache/storage";
+import type { LockdownRecord, StateFileSchema } from "../../../src/types/chatState";
 
 function schema(chatId: number): StateFileSchema {
   return {
@@ -352,5 +357,43 @@ describe("StateStore", () => {
     expect(attempts).toBe(attemptsAfterFlush);
     store.dispose();
     await save;
+  });
+});
+
+/**
+ * 内存镜像上的纯查询/裁剪门面。业务侧测试普遍 mock 掉这些函数，这里直接打
+ * 真实现，避免各处替身与真语义悄悄漂移。
+ */
+describe("群级状态门面", () => {
+  afterEach(() => {
+    chatStates.clear();
+  });
+
+  test("退群清理普通配置，但保留尚需恢复的 lockdown 记录", () => {
+    const lockdown: LockdownRecord = {
+      phase: "active",
+      intentId: 3,
+      originalPermissions: { can_invite_users: true },
+      expiresAt: 1_700_000_000_000,
+    };
+    chatStates.set(-1001, { isAIChatEnabled: true, botIsAdmin: true });
+    chatStates.set(-1002, { isAIChatEnabled: true, botIsAdmin: true, lockdown });
+
+    pruneDepartedChatState(-1001);
+    pruneDepartedChatState(-1002);
+    // 没有任何记录的群不应被凭空建出条目。
+    pruneDepartedChatState(-1003);
+
+    expect(chatStates.has(-1001)).toBeFalse();
+    expect(chatStates.get(-1002)).toEqual({ lockdown });
+    expect(chatStates.has(-1003)).toBeFalse();
+  });
+
+  test("中转发送目标全局唯一，扫描全部群只认显式启用的那个", () => {
+    chatStates.set(-1001, { isAIChatEnabled: true });
+    expect(getActiveProxySendTarget()).toBeUndefined();
+
+    chatStates.set(-1002, { isProxySendEnabled: true });
+    expect(getActiveProxySendTarget()).toBe(-1002);
   });
 });

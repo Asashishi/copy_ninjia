@@ -16,10 +16,10 @@ const triggerReference = {
   text: "触发消息",
 };
 const replyReferenceForBufferedMessage = mock((_chatId: number, _messageId: number) => triggerReference);
+const botInfo = { id: 1, username: "copy_ninjia_bot", first_name: "Ninjia" };
+const botInfoState: { current: typeof botInfo | null } = { current: botInfo };
 
-mock.module("../../../src/cache/aiChat/identity", () => ({
-  botInfoState: { current: { id: 1, username: "copy_ninjia_bot", first_name: "Ninjia" } },
-}));
+mock.module("../../../src/cache/aiChat/identity", () => ({ botInfoState }));
 mock.module("../../../src/cache/aiChat/replies", () => ({
   activeReplyCounts: new Map<number, number>(),
   pendingOverflowNotices,
@@ -54,6 +54,7 @@ const baseRequest = {
 
 beforeEach(() => {
   decision = { action: "startRound" };
+  botInfoState.current = botInfo;
   pendingOverflowNotices.clear();
   for (const fn of [
     admitTrigger,
@@ -95,5 +96,65 @@ describe("AI reply admission pipeline", () => {
     generateAndSendReply(baseRequest);
     expect(startReplyRound).not.toHaveBeenCalled();
     expect(pushReplyTrigger).toHaveBeenCalledTimes(1);
+  });
+
+  test("排空队列时按原样启动排队触发，并在该轮结束后继续排空同群队列", () => {
+    generateAndSendReply(baseRequest);
+    startReplyRound.mock.calls[0]![1](-1001);
+    const startQueuedRound = drainQueuedReplies.mock.calls[0]![1];
+    const queued = {
+      triggerSenderId: 42,
+      replyToMessageId: 7,
+      imageGenerationRequested: true,
+      imageGenerationReference: { fileId: "f", fileUniqueId: "u", width: 512, height: 512 },
+      triggerReference,
+      senderName: "Alice",
+      text: "排队期间的触发原文",
+    };
+
+    startQueuedRound(queued);
+
+    // 排队轮一律不算随机触发，并把原触发对象带回给 replyRound 用于自录快照。
+    expect(startReplyRound).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      triggerSenderId: 42,
+      replyToMessageId: 7,
+      imageGenerationRequested: true,
+      imageGenerationReference: queued.imageGenerationReference,
+      triggerReference,
+      isRandomTrigger: false,
+      queuedTrigger: queued,
+    }, expect.any(Function));
+
+    startReplyRound.mock.calls[1]![1](-1001);
+    expect(drainQueuedReplies).toHaveBeenCalledTimes(2);
+  });
+
+  test("缺少图片引用或触发快照时不塞空字段进轮次参数", () => {
+    generateAndSendReply(baseRequest);
+    startReplyRound.mock.calls[0]![1](-1001);
+    const startQueuedRound = drainQueuedReplies.mock.calls[0]![1];
+
+    startQueuedRound({
+      triggerSenderId: 42,
+      replyToMessageId: 7,
+      imageGenerationRequested: false,
+      senderName: "Alice",
+      text: "排队期间的触发原文",
+    });
+
+    const roundParams = startReplyRound.mock.calls[1]![0] as Record<string, unknown>;
+    expect("imageGenerationReference" in roundParams).toBeFalse();
+    expect("triggerReference" in roundParams).toBeFalse();
+  });
+
+  test("身份尚未初始化时直接丢弃触发，不做任何准入判定", () => {
+    botInfoState.current = null;
+
+    generateAndSendReply(baseRequest);
+
+    expect(admitTrigger).not.toHaveBeenCalled();
+    expect(startReplyRound).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith("aiChatWorker received trigger before init message; dropping.");
   });
 });
