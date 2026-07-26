@@ -79,6 +79,13 @@ Synchronize the Tests/Coverage badges in all three READMEs; [`docs/assets/covera
 
 This repository does not rely on GitHub Actions. Release environments should make `bun run release:check` an explicit build or pre-deploy step. Networked environments should additionally run `bun run audit:release`; network failure means the audit was not completed, not that there are zero vulnerabilities. Any ignored CVE needs a recorded reason and expiration date. For releases with persistence-structure changes, first follow the migration process in [06 Common Modification Recipes](06-modification-guide.md#changing-a-persistence-schema).
 
+Every squash merge into `master` must produce one GitHub Release:
+
+1. Synchronize remote tags and read the current Latest Release tag through `gh release list`. Tags must use `MAJOR.MINOR.PATCH` without a `v` prefix. Select the version from the highest semantic impact in the complete change set: increment `MAJOR` for a breaking change (`1.0.9` → `2.0.0`), `MINOR` for backward-compatible functionality (`1.0.9` → `1.1.0`), and `PATCH` only for fixes, performance work, refactoring, or documentation (`1.0.9` → `1.0.10`).
+2. After pushing the `master` squash commit, create and push an immutable annotated version tag for that commit. Never overwrite, move, or reuse an existing tag.
+3. Create an English Release with `gh release create <tag> --verify-tag --target master ...`. Release notes must cover only the delta from the previous Latest Release tag to the current `master`, with at least Highlights, Compatibility / Migration Notes, and Validation. Gate metrics must come from the current run.
+4. If the tag push succeeded but Release creation failed, retry the same tag instead of incrementing again. Align `dev` with `master` as described in [`AGENTS.md`](../../AGENTS.md) only after `master`, the tag, and the Release are all confirmed.
+
 ---
 
 <div align="center">

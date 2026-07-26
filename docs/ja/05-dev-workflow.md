@@ -79,6 +79,13 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 このリポジトリは GitHub Actions に依存しません。リリース環境では `bun run release:check` を明示的な build または pre-deploy step としてください。ネットワーク接続可能な環境では `bun run audit:release` も実行します。ネットワーク失敗は監査未完了を意味し、脆弱性が 0 件という意味ではありません。CVE を無視する場合は理由と期限を記録します。永続化構造を変更するリリースでは、先に [06 よくある変更手順](06-modification-guide.md#永続化-schema-の変更) の migration を実行してください。
 
+`master` への squash merge ごとに GitHub Release を 1 つ作成します。
+
+1. remote tag を同期し、`gh release list` で現在の Latest Release tag を取得します。tag は `v` prefix を付けない `MAJOR.MINOR.PATCH` 形式に限定します。変更セット全体で最も高い semantic impact に従い、breaking change は `MAJOR`（`1.0.9` → `2.0.0`）、後方互換の新機能は `MINOR`（`1.0.9` → `1.1.0`）、修正・性能改善・refactoring・documentation のみの場合は `PATCH`（`1.0.9` → `1.0.10`）を増やします。
+2. `master` の squash commit を push した後、その commit を指す immutable な annotated version tag を作成して push します。既存 tag の上書き、移動、再利用は禁止です。
+3. `gh release create <tag> --verify-tag --target master ...` で英語の Release を作成します。Release notes は前回の Latest Release tag から現在の `master` までの差分だけを対象とし、少なくとも Highlights、Compatibility / Migration Notes、Validation を含めます。gate の数値は今回の実測値だけを使います。
+4. tag の push 後に Release 作成が失敗した場合は、version を再度増やさず同じ tag で再試行します。`master`、tag、Release のすべてを確認してから、[`AGENTS.md`](../../AGENTS.md) の手順に従って `dev` を `master` に揃えます。
+
 ---
 
 <div align="center">

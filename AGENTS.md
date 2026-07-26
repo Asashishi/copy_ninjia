@@ -12,7 +12,10 @@
 - 合并进 `master` 只用 squash（`git merge --squash` + 单次 `git commit`），一次改动收敛成一个提交，开发过程中的中间提交不进 `master` 历史。
 - squash 提交的信息要覆盖整个改动集，并说明「为什么这么改」而不只是「改了什么」。
 - 合并前必须 `bun run check` 全绿；碰到持久化、停机、Worker 生命周期相关代码时再补 `bun run test:fault-injection`。任一项失败不得合并。
-- 合并后把 `dev` 重新对齐到 `master` 再继续：先 `git diff dev master --quiet` 确认两边树一致，再 `git reset --hard master` 与 `git push --force-with-lease origin dev`。
+- 每次准备合并 `master` 时，先同步远端 tags，并用 `gh release list` 读取 GitHub 当前 Latest Release 的 tag；版本只允许不带 `v` 前缀的 `MAJOR.MINOR.PATCH`（例如 `1.0.9`）。新版本按本次完整改动的最高语义影响决定：破坏兼容升 `MAJOR`（`1.0.9` → `2.0.0`），向后兼容的新增功能升 `MINOR`（`1.0.9` → `1.1.0`），只有修复、性能、重构或文档时才升 `PATCH`（`1.0.9` → `1.0.10`）；混合改动取其中最高级别。不得凭本地旧 tag 猜版本；目标 tag 已存在时重新拉取 Release 状态并计算，禁止覆盖、移动或复用已有 tag。
+- `master` squash 提交经门禁确认后，先推送 `master`，再为该提交创建 annotated version tag 并单独推送。两次推送均成功后，用 `gh release create <tag> --verify-tag --target master ...` 创建 GitHub Release；Release 标题和说明使用英文，只介绍「上一个 Latest Release tag..本次 `master`」的最新增量，至少包含 Highlights、Compatibility / Migration Notes、Validation，测试数与覆盖率必须来自本次真实门禁输出。
+- tag 已推送但 GitHub Release 创建失败时，保留该 tag 并针对同一 tag 重试，不得再次递增版本。`master`、version tag、GitHub Release 任一步未确认成功，都不得宣称发布完成，也不得提前改写 `dev`。
+- `master`、version tag 与 GitHub Release 全部发布成功后，把 `dev` 重新对齐到 `master` 再继续：先 `git diff dev master --quiet` 确认两边树一致，再在 `dev` 上执行 `git reset --hard master` 与 `git push --force-with-lease origin dev`。
 - 覆盖率/测试数分散在徽章、`docs/assets/coverage_{light,dark}.svg`、README 的 `<img alt>` 与三份开发文档里：改动影响到它们时，按合并前那次 `bun run check` 的真实输出逐处同步，不要凭估计填。完整位置清单见 [`docs/05-dev-workflow.md`](docs/05-dev-workflow.md) 的「同步 README 指标」。
 
 ## 编码规范

@@ -79,6 +79,13 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 本仓库不依赖 GitHub Actions。发布环境把 `bun run release:check` 作为显式构建或 pre-deploy 步骤；联网环境追加 `bun run audit:release`（网络失败只表示审计未完成，不等于零漏洞；忽略 CVE 要记录原因与到期时间）。包含持久化结构变更的版本，先走 [06 常见修改配方](06-modification-guide.md#变更持久化-schema) 的迁移流程。
 
+每次 squash 合并进 `master` 都要创建一个 GitHub Release：
+
+1. 同步远端 tags，并通过 `gh release list` 读取当前 Latest Release tag。tag 严格使用不带 `v` 的 `MAJOR.MINOR.PATCH`；按本次完整改动的最高语义影响选择版本：破坏兼容升 `MAJOR`（`1.0.9` → `2.0.0`），向后兼容的新增功能升 `MINOR`（`1.0.9` → `1.1.0`），只有修复、性能、重构或文档时才升 `PATCH`（`1.0.9` → `1.0.10`）。
+2. 推送 `master` squash 提交后，为该提交创建、推送不可变的 annotated version tag；已有 tag 不得覆盖、移动或复用。
+3. 使用 `gh release create <tag> --verify-tag --target master ...` 创建英文 Release。Release notes 只总结上一个 Latest Release tag 到当前 `master` 的增量，至少包含 Highlights、Compatibility / Migration Notes、Validation；门禁数值使用本次真实输出。
+4. tag 推送成功但 Release 创建失败时，针对同一 tag 重试，不再递增版本。只有 `master`、tag 和 Release 都确认成功后，才按 [`AGENTS.md`](../AGENTS.md) 的流程把 `dev` 对齐到 `master`。
+
 ---
 
 <div align="center">
