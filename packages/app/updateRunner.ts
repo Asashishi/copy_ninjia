@@ -3,6 +3,10 @@ import type { Update } from "@grammyjs/types";
 import { BotError } from "grammy";
 import type { Bot, Context } from "grammy";
 import { logger } from "../infra/logger";
+import {
+  runWithUpdateAbortSignal,
+  throwIfUpdateAborted,
+} from "../infra/updateContext";
 
 export interface AcknowledgedUpdateRunner {
   /** 停止继续取数；已开始的 middleware 留给生命周期按 size() 做有界排空。 */
@@ -11,6 +15,8 @@ export interface AcknowledgedUpdateRunner {
   task(): Promise<void>;
   /** 当前仍在执行的 middleware 数。 */
   size(): number;
+  /** 中止全部活跃 update，并返回这次实际发出取消信号的数量。 */
+  abortActive(): number;
 }
 
 /**
@@ -31,16 +37,24 @@ export function runAcknowledgedUpdateBatches(
   const fetchUpdates: ReturnType<typeof createUpdateFetcher<Update, unknown>> =
     createUpdateFetcher(bot, { fetch: { allowed_updates: allowedUpdates } });
   let running: boolean = true;
-  let activeUpdates: number = 0;
+  const activeUpdateControllers: Set<AbortController> = new Set();
   let currentAbortController: AbortController | null = null;
   let resolveStop: (() => void) | undefined;
   const stopped: Promise<void> = new Promise((resolve: (value: void | PromiseLike<void>) => void): void => { resolveStop = resolve; });
 
   const handleUpdate = async (update: Update): Promise<void> => {
-    activeUpdates++;
+    const updateController: AbortController = new AbortController();
+    activeUpdateControllers.add(updateController);
     try {
-      await bot.handleUpdate(update);
+      await runWithUpdateAbortSignal(
+        updateController.signal,
+        (): Promise<void> => bot.handleUpdate(update)
+      );
+      // handler 可能没有 await 可取消操作；即便它恰好在 abort 后自行返回，
+      // 该 update 仍不能被当成成功完成并跨过 offset。
+      throwIfUpdateAborted(updateController.signal);
     } catch (error: unknown) {
+      if (updateController.signal.aborted) throw error;
       try {
         await bot.errorHandler(error as BotError<Context>);
       } catch (handlerError: unknown) {
@@ -57,7 +71,7 @@ export function runAcknowledgedUpdateBatches(
       // 应用生命周期停止进程，由 Telegram 在重启后重新投递。
       throw error;
     } finally {
-      activeUpdates--;
+      activeUpdateControllers.delete(updateController);
     }
   };
 
@@ -103,6 +117,18 @@ export function runAcknowledgedUpdateBatches(
       await task;
     },
     task: (): Promise<void> => task,
-    size: (): number => activeUpdates,
+    size: (): number => activeUpdateControllers.size,
+    abortActive: (): number => {
+      let aborted: number = 0;
+      for (const controller of activeUpdateControllers) {
+        if (controller.signal.aborted) continue;
+        controller.abort(new DOMException(
+          "Telegram update aborted because the shutdown drain budget was exhausted.",
+          "AbortError"
+        ));
+        aborted++;
+      }
+      return aborted;
+    },
   };
 }

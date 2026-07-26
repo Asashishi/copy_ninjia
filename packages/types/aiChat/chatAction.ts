@@ -11,6 +11,8 @@ export interface ChatActionControl {
 /** 单个群共享的聊天状态心跳运行态。 */
 export interface ChatActionHeartbeatEntry {
   timer: ReturnType<typeof setInterval>;
+  /** 拥有本条目的 AI generation；新 generation 会替换旧条目并中止旧请求。 */
+  signal?: AbortSignal;
   refCount: number;
   action: ChatActionPhase;
   owner: object | null;

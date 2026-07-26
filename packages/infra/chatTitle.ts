@@ -3,7 +3,7 @@ import { logger } from "./logger";
 import { bot } from "./telegram";
 import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage/stateStore";
 import { chatTitleRefreshRuntime } from "../cache/chatTitle";
-import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../consts/telegram";
+import { CHAT_TITLE_REFRESH_CONCURRENCY, CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE } from "../consts/telegram";
 import type { ChatState } from "../types/chatState";
 
 /**
@@ -25,12 +25,16 @@ import type { ChatState } from "../types/chatState";
  * 理由同 infra/botAdmin.ts 的 recordBotAdminStatus——不能让只是被拉进去、
  * 从没人管过的群凭空在 state.json 里长出条目。
  */
-function recordChatTitle(chatId: number, title: string): void {
-  if (getChatState(chatId).isInitEnabled !== true) return;
+function applyChatTitle(chatId: number, title: string): boolean {
+  if (getChatState(chatId).isInitEnabled !== true) return false;
   const chatState: ChatState = getOrCreateChatState(chatId);
-  if (chatState.title === title) return;
+  if (chatState.title === title) return false;
   chatState.title = title;
-  saveStateInBackground("chat title refresh");
+  return true;
+}
+
+function recordChatTitle(chatId: number, title: string): void {
+  if (applyChatTitle(chatId, title)) saveStateInBackground("chat title refresh");
 }
 
 /**
@@ -59,6 +63,15 @@ export async function refreshAllChatTitles(
   const startedAt: number = Date.now();
   let nextIndex: number = 0;
   let completed: number = 0;
+  // 攒批落盘：逐个群 save 会让启动期变成 O(群数²) 的主线程序列化+深校验，
+  // 正好压在 runner 刚开始投喂更新的窗口上（见 consts/telegram.ts 的
+  // CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE）。
+  let unsavedChanges: number = 0;
+  const saveBatchedTitles = (): void => {
+    if (unsavedChanges === 0) return;
+    unsavedChanges = 0;
+    saveStateInBackground("chat title refresh");
+  };
   logger.info(`Chat title refresh started: total=${total}, concurrency=${CHAT_TITLE_REFRESH_CONCURRENCY}.`);
 
   const workers: Promise<void>[] = Array.from(
@@ -74,7 +87,8 @@ export async function refreshAllChatTitles(
             signal as unknown as Parameters<typeof bot.api.getChat>[1]
           );
           if (!signal.aborted && (chat.type === "group" || chat.type === "supergroup")) {
-            recordChatTitle(chatId, chat.title);
+            if (applyChatTitle(chatId, chat.title)) unsavedChanges++;
+            if (unsavedChanges >= CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE) saveBatchedTitles();
           }
         } catch (error: unknown) {
           if (!signal.aborted) {
@@ -93,6 +107,10 @@ export async function refreshAllChatTitles(
     }
   );
   await Promise.allSettled(workers);
+  // 收尾的那一批。中途 abort 时也照落：改动已经在内存里，不落盘反而会让
+  // 最终快照跟内存不一致。quiescing 之后 save 会被拒，saveStateInBackground
+  // 自己记日志，不影响停机流程。
+  saveBatchedTitles();
   logger.info(
     `Chat title refresh ${signal.aborted ? "aborted" : "completed"}: ` +
     `${completed}/${total}, elapsed=${Date.now() - startedAt}ms.`

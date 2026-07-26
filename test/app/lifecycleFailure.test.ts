@@ -30,6 +30,8 @@ const loadPersistedData = mock(async () => ({
   luckDay: null,
   luckReceiptSecret: { day: "2026-07-19", secret: "test-secret" },
   verifications: new Map<string, never>(),
+  blockedUsers: new Map<number, true>(),
+  pendingBlockedRemovals: new Map(),
 }));
 type FlushResult = "flushed" | "timedOut" | "failed";
 const flushDiskIO = mock(async (): Promise<FlushResult> => { calls.push("flushDiskIO"); return "flushed"; });
@@ -56,6 +58,7 @@ const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiM
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
 const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
 const hydratePendingVerifications = mock((_value: unknown): void => { calls.push("hydrateVerifications"); });
+const hydrateBlocklist = mock((_value: unknown): void => { calls.push("hydrateBlocklist"); });
 const initAntiRaid = mock((): void => { calls.push("initAntiRaid"); });
 const restoreLuckState = mock((..._args: unknown[]): void => { calls.push("restoreLuck"); });
 const seedSenderCache = mock((_value: unknown): void => { calls.push("seedSender"); });
@@ -82,7 +85,13 @@ const bot = {
 const runnerStop = mock(async (): Promise<void> => { calls.push("runnerStop"); });
 const runnerTask = mock(async (): Promise<void> => {});
 const runnerSize = mock((): number => 0);
-const runnerHandle = { stop: runnerStop, task: runnerTask, size: runnerSize };
+const runnerAbortActive = mock((): number => 0);
+const runnerHandle = {
+  stop: runnerStop,
+  task: runnerTask,
+  size: runnerSize,
+  abortActive: runnerAbortActive,
+};
 const runAcknowledgedUpdateBatches = mock((_bot: unknown, _updates: unknown) => {
   calls.push("runUpdates");
   return runnerHandle;
@@ -109,6 +118,7 @@ const testDependencies = {
   getStickerConfig,
   hydrateAiMemory,
   hydratePendingVerifications,
+  hydrateBlocklist,
   hydrateStickerCatalog,
   initAvatarUpdates,
   initAiChat,
@@ -199,6 +209,7 @@ beforeEach(() => {
     hydrateStickerCatalog,
     initAiChat,
     hydratePendingVerifications,
+    hydrateBlocklist,
     initAntiRaid,
     restoreLuckState,
     seedSenderCache,
@@ -213,6 +224,7 @@ beforeEach(() => {
     runnerStop,
     runnerTask,
     runnerSize,
+    runnerAbortActive,
     runAcknowledgedUpdateBatches,
   ]) mocked.mockClear();
   acquireSingleInstanceLock.mockImplementation(async (): Promise<void> => { calls.push("acquireLock"); });
@@ -326,6 +338,25 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("drainTranslate")).toBeLessThan(calls.indexOf("closeTranslate"));
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));
     expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("terminateDiskIO"));
+  });
+
+  test("实例锁释放失败进入停机结果，重复 dispose 不会误报成功或重复释放", async () => {
+    releaseSingleInstanceLock.mockImplementationOnce(async (): Promise<void> => {
+      calls.push("releaseLock");
+      throw new Error("lock unlink failed");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.dispose();
+    await lifecycle.dispose();
+
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+    expect(loggerError).toHaveBeenCalledWith(
+      "Shutdown owner single-instance lock release threw during disposal:",
+      expect.any(Error)
+    );
   });
 
   test("dispose 在 Anti-Raid drain 落定前不得 flush 或终止任何业务 Worker", async () => {
@@ -694,7 +725,8 @@ describe("应用启动失败与退出清理", () => {
     }
 
     expect(getUpdates).not.toHaveBeenCalled();
-    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset will not be confirmed"));
+    expect(runnerAbortActive).toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("withholding their Telegram offset"));
   });
 
   test("并发 update 乱序完成时不会跨过仍在途的较小 update", async () => {

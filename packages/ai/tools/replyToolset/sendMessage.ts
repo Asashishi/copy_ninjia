@@ -53,7 +53,12 @@ export function createSendMessageExecutor(
     if (typo.shouldUseTypo) state.typoUsedThisRound = true;
 
     ctx.chatAction.set("typing");
-    await sleep(typingDelayMs(typo.textToSend));
+    try {
+      await sleep(typingDelayMs(typo.textToSend), ctx.signal);
+    } catch (error: unknown) {
+      if (ctx.signal?.aborted === true) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
+      throw error;
+    }
     ctx.chatAction.set("idle");
     await ctx.chatAction.settle();
     if (!ctx.isActive()) {
@@ -66,6 +71,7 @@ export function createSendMessageExecutor(
       chatId: ctx.chatId,
       text: typo.textToSend,
       replyToMessageId,
+      signal: ctx.signal,
     });
     if (sent === undefined) return toolError("Failed to send message");
 

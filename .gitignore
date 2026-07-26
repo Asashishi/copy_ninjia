@@ -44,6 +44,11 @@ memory
 # Finder (MacOS) folder config
 .DS_Store
 
+# /block blocklist (runtime data written by the bot, contains user ids;
+# same privacy tier as logs/ and memory/ — never source)
+config/blocklist.json
+config/.blocklist.json.*.tmp
+
 # runtime state (regenerated on start, not source)
 bot.lock
 bot.lock.*

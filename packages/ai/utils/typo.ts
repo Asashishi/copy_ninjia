@@ -3,6 +3,20 @@ import { isEmojiOnly } from "./replyText";
 
 export type TypoCorrectionMode = "quick" | "ignore";
 
+/**
+ * 按字素簇切分，而不是按码点。分解写法的日文假名（か + 浊点 = が）、带组合
+ * 标记的拉丁字母都是一个字素两个码点：按码点切会命中后面还挂着组合标记的
+ * 基字，替换后标记留在原地——轻则换出来的字跟模型说的「原字/错字」对不上，
+ * 重则组合标记落到一个压根不搭配的基字上，发出去是乱码。
+ */
+const GRAPHEME_SEGMENTER: Intl.Segmenter = new Intl.Segmenter("und", { granularity: "grapheme" });
+
+function splitGraphemes(text: string): string[] {
+  return [...GRAPHEME_SEGMENTER.segment(text)].map(
+    (segment: Intl.SegmentData): string => segment.segment
+  );
+}
+
 export interface CharacterTypo {
   readonly typoText: string;
   readonly expected: string;
@@ -31,8 +45,8 @@ export function pickTypoCorrectionMode(): TypoCorrectionMode {
  *   压根不在 text 里时返回 null。
  */
 export function buildCharacterTypo(text: string, originalChar: string, replacementChar: string): CharacterTypo | null {
-  const originalChars: string[] = Array.from(originalChar);
-  const replacementChars: string[] = Array.from(replacementChar);
+  const originalChars: string[] = splitGraphemes(originalChar);
+  const replacementChars: string[] = splitGraphemes(replacementChar);
   if (originalChars.length !== 1 || replacementChars.length !== 1) return null;
 
   const expected: string = originalChars[0]!;
@@ -42,7 +56,7 @@ export function buildCharacterTypo(text: string, originalChar: string, replaceme
   // 换成的字（以及被换掉的原字）本身不能是 emoji。
   if (isEmojiOnly(expected) || isEmojiOnly(typo)) return null;
 
-  const textChars: string[] = Array.from(text);
+  const textChars: string[] = splitGraphemes(text);
   const index: number = textChars.indexOf(expected);
   if (index === -1) return null;
 

@@ -28,7 +28,7 @@ interface ActionMessage {
 
 /** parseCjkActionCommand 的解析结果。 */
 export interface CjkActionCommand {
-  /** 动作字本身，如「咬」。 */
+  /** 动作词本身，1~2 个中文字，如「咬」「贴贴」。 */
   actionWord: string;
   /** `/咬@BotUsername` 里的定向后缀；没写 @ 时为 undefined。 */
   addressedBotUsername: string | undefined;
@@ -37,10 +37,10 @@ export interface CjkActionCommand {
 }
 
 /**
- * 从消息原文解析 `/<单个中文字>` 动作命令，兼容 `/咬@BotUsername` 写法。
+ * 从消息原文解析 `/<1~2 个中文字>` 动作命令，兼容 `/咬@BotUsername` 写法。
  * 与 bot.hears 用的是同一条正则（见 consts/commands.ts），因此能匹配进
  * handler 的消息在这里必定也能解析出来。
- * @returns 不是单字中文动作命令时为 undefined。
+ * @returns 不是中文动作命令时为 undefined。
  */
 export function parseCjkActionCommand(text: string | undefined): CjkActionCommand | undefined {
   if (text === undefined) return undefined;
@@ -54,7 +54,7 @@ export function parseCjkActionCommand(text: string | undefined): CjkActionComman
 }
 
 /**
- * 全局滑动窗口配额：任意一个中文字都能触发动作命令，没有命令菜单那层天然
+ * 全局滑动窗口配额：任意 1~2 个中文字都能触发动作命令，没有命令菜单那层天然
  * 约束，因此不分群、不分用户合并计数（窗口与上限见 consts/commands.ts，
  * 队列见 cache/cjkAction.ts）。超额立即拒绝、不排队。
  * @param now 当前时刻；默认取墙钟，测试可注入固定值。
@@ -91,7 +91,7 @@ function buildActionMessage(segments: readonly ActionSegment[]): ActionMessage {
 
 /**
  * 菜单占位项 `/x` 的处理器。`/x` 自己不是动作命令——它只为把「把 x 换成任意
- * 一个中文字」这个用法曝光进命令菜单（非 ASCII 命令名进不了菜单，见
+ * 1~2 个中文字」这个用法曝光进命令菜单（非 ASCII 命令名进不了菜单，见
  * consts/commands.ts 的 BOT_COMMANDS）。但点菜单会真的把 `/x` 发出去，所以它
  * 必须回一句用法：沉默会让用户完全不知道发生了什么；而放行到消息兜底则会让
  * 这条命令被当成普通消息进入 AI/复读流水线，正是注册它要避免的事。
@@ -101,19 +101,19 @@ export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
   if (chatId === undefined) return;
   await sendMessage({
     chatId,
-    text: `笨蛋，/x 只是菜单里的用法说明啦——把 x 换成任意一个中文字直接发，比如 /咬、/摸，再回复 TA 的消息或者加 @username 指定对象♡`,
+    text: `笨蛋，/x 只是菜单里的用法说明啦——把 x 换成任意 1~2 个中文字直接发，比如 /咬、/贴贴，再回复 TA 的消息或者加 @username 指定对象♡`,
     replyToMessageId: ctx.msg?.message_id,
   });
 }
 
 /**
- * 处理 `/<单个中文字>` 动作命令（`/咬`、`/摸`……）：回复「发起人 X了 目标！」，
+ * 处理 `/<1~2 个中文字>` 动作命令（`/咬`、`/贴贴`……）：回复「发起人 X了 目标！」，
  * 两个名字都用 first_name last_name 形式，并各自挂上 t.me 主页链接（只有公开
  * username 的人才有链接，其余是纯文本）。链接靠显式 entities 表达而非
  * parse_mode，昵称里的标记字符不会被解析（见 infra/telegram/actions.ts）。
- * 目标解析与 /copy、/kick 共用 targetResolution.ts：回复 TA 的消息优先，
+ * 目标解析与 /copy、/block 共用 targetResolution.ts：回复 TA 的消息优先，
  * 也可以写成 `/咬 @username`（要求本天才此前缓存过该用户）。
- * 动作字进不了 Telegram 命令菜单——命令名只收 ASCII，这类命令也因此拿不到
+ * 动作词进不了 Telegram 命令菜单——命令名只收 ASCII，这类命令也因此拿不到
  * bot_command 实体，只能由 bot.hears 按原文匹配；菜单里的 `/x` 只是一条不做
  * 任何处理的占位说明项，见 consts/commands.ts 的 BOT_COMMANDS。
  * @param next 命令并非发给本机器人（`/咬@OtherBot`）或消息形态异常时放行，

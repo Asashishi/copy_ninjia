@@ -94,6 +94,7 @@ export interface AiInvalidateChatMessage {
   type: "invalidateChat";
   chatId: number;
   purgeMemory: boolean;
+  requestId: number;
 }
 
 /** /switch_mood 的重抽请求：未过 deadlineAt 时 Worker 调 ai/mood.ts 的
@@ -143,6 +144,13 @@ export interface AiMemoryFlushedEvent {
   flushId: number;
 }
 
+/** Worker -> 主线程：旧 generation 的用户可见副作用已经全部收敛。 */
+export interface AiChatInvalidatedEvent {
+  type: "chatInvalidated";
+  chatId: number;
+  requestId: number;
+}
+
 /** switchMood 请求的回执：带回重抽结果，主线程凭 requestId 结算等待者。 */
 export interface AiMoodSwitchedEvent {
   type: "moodSwitched";
@@ -157,5 +165,6 @@ export type AiChatWorkerEvent =
   | AiMemoryEvent
   | AiMemoryDeletedEvent
   | AiMemoryFlushedEvent
+  | AiChatInvalidatedEvent
   | AiMoodSwitchedEvent
   | AiStickerCatalogEvent;

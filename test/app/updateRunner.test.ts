@@ -4,6 +4,7 @@ import { BotError } from "grammy";
 import type { Bot, Context } from "grammy";
 import { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
 import { logger } from "../../packages/infra/logger";
+import { currentUpdateAbortSignal } from "../../packages/infra/updateContext";
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve: (() => void) | undefined;
@@ -75,6 +76,44 @@ describe("acknowledgement-safe update runner", () => {
     gate.resolve();
     await Bun.sleep(0);
     expect(runner.size()).toBe(0);
+    expect(fetchOffsets).toEqual([0]);
+  });
+
+  test("abortActive 中止每个在途 update 的上下文，且取消不进入普通错误处理", async () => {
+    const fetchOffsets: number[] = [];
+    let observedSignal: AbortSignal | undefined;
+    let handledErrors: number = 0;
+    const fakeBot = {
+      api: {
+        getUpdates: async (args: { offset: number }): Promise<Update[]> => {
+          fetchOffsets.push(args.offset);
+          return [{ update_id: 25 }] as Update[];
+        },
+      },
+      handleUpdate: async (): Promise<void> => {
+        observedSignal = currentUpdateAbortSignal();
+        await new Promise<void>((_resolve, reject: (reason?: unknown) => void): void => {
+          observedSignal?.addEventListener(
+            "abort",
+            (): void => reject(observedSignal?.reason),
+            { once: true }
+          );
+        });
+      },
+      errorHandler: (): void => { handledErrors++; },
+    };
+
+    const runner = runAcknowledgedUpdateBatches(fakeBot as unknown as Bot, ["message"]);
+    await Bun.sleep(0);
+    await runner.stop();
+
+    expect(runner.size()).toBe(1);
+    expect(runner.abortActive()).toBe(1);
+    expect(runner.abortActive()).toBe(0);
+    await Bun.sleep(0);
+    expect(observedSignal?.aborted).toBeTrue();
+    expect(runner.size()).toBe(0);
+    expect(handledErrors).toBe(0);
     expect(fetchOffsets).toEqual([0]);
   });
 

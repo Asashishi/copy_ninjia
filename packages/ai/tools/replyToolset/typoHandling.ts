@@ -83,7 +83,10 @@ export async function applyQuickTypoCorrection(
   correctionText: string
 ): Promise<boolean> {
   try {
-    await sleep(randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS));
+    await sleep(
+      randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS),
+      ctx.signal
+    );
     const correctionMessageId: number | undefined = await sendDirectMessage({
       ctx,
       state,
@@ -93,6 +96,7 @@ export async function applyQuickTypoCorrection(
     state.sentCanonicalTexts.set(correctionMessageId, correctionText);
     return true;
   } catch (error: unknown) {
+    if (ctx.signal?.aborted === true) return false;
     logger.error("Error while applying quick typo correction:", error);
     return false;
   }

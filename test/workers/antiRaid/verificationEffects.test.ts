@@ -22,6 +22,7 @@ const sentTexts: string[] = [];
 const warnings: string[] = [];
 const loggedErrors: string[] = [];
 let nextSentMessageId: number | undefined = 900;
+let kickSucceeds: boolean = true;
 const getChatAdministrators = mock(async (): Promise<{ user: { id: number }; is_anonymous: boolean }[]> => []);
 
 Object.defineProperty(globalThis, "self", {
@@ -52,7 +53,7 @@ mock.module("../../../packages/infra/telegram", () => ({
   },
   kickChatMember: async (_chatId: number, userId: number): Promise<boolean> => {
     kickedUserIds.push(userId);
-    return true;
+    return kickSucceeds;
   },
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
@@ -124,6 +125,7 @@ beforeEach(() => {
   warnings.length = 0;
   loggedErrors.length = 0;
   nextSentMessageId = 900;
+  kickSucceeds = true;
   getChatAdministrators.mockClear();
   getChatAdministrators.mockResolvedValue([]);
 });
@@ -293,5 +295,51 @@ describe("同步副作用的逐条执行", () => {
 
     expect(deletedMessageIds).toEqual([11]);
     expect(autoDeleted).toEqual([]);
+  });
+});
+
+describe("踢人失败时的权限告警", () => {
+  function expellingState(): VerificationState & { kind: "expelling" } {
+    return { kind: "expelling", reason: "timeout", snapshot: snapshot() };
+  }
+
+  test("告警发出去了才置位 failureNoticeSent", async () => {
+    kickSucceeds = false;
+    const state = expellingState();
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(sentTexts[0]).toContain("没给本天才封禁权限");
+    expect(state.failureNoticeSent).toBeTrue();
+  });
+
+  test("告警自己也没发出去时不置位：否则这条诊断永远不再尝试", async () => {
+    // sendMessage 失败返回 undefined（错误被 infra/telegram/actions.ts 吞掉）。
+    // 机器人同时被禁言、或 429 熬过了 autoRetry 时就是这个组合。照样置位的话，
+    // 终态重试再跑 expelMember 时 shouldSendNotice 已是 false，「本天才没有封禁
+    // 权限」这条唯一的诊断就永远不再尝试——未验证成员留在群里，管理员什么都
+    // 不知道。
+    kickSucceeds = false;
+    nextSentMessageId = undefined;
+    const state = expellingState();
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(sentTexts).toHaveLength(1);
+    expect(state.failureNoticeSent).toBeUndefined();
+  });
+
+  test("本来就已发过时保持不变，不重复打扰", async () => {
+    kickSucceeds = false;
+    const state = expellingState();
+    state.failureNoticeSent = true;
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(sentTexts).toHaveLength(0);
+    expect(state.failureNoticeSent).toBeTrue();
   });
 });

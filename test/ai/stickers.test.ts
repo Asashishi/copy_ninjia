@@ -7,7 +7,11 @@ import { parseIndexField } from "../../packages/ai/utils/toolArgs";
  * 只关心 stickers.ts 自己的解析/组装/两层选择与每轮限额逻辑。
  */
 const realTelegram = await import("../../packages/infra/telegram");
-const sendStickerMock = mock(async (_chatId: number, _fileId: string): Promise<number | undefined> => 12345);
+const sendStickerMock = mock(async (_params: {
+  chatId: number;
+  fileId: string;
+  signal?: AbortSignal;
+}): Promise<number | undefined> => 12345);
 mock.module("../../packages/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
 // view_sticker_pack 会为模拟真人翻贴纸面板停顿 1.5~5 秒，单测里直接跳过。
 mock.module("../../packages/libs/sleep", () => ({ sleep: async (_ms: number): Promise<void> => {} }));
@@ -256,7 +260,11 @@ describe("ai/stickers sendStickerTool", () => {
       },
     });
 
-    expect(sendStickerMock).toHaveBeenCalledWith(123, "a2");
+    expect(sendStickerMock).toHaveBeenCalledWith({
+      chatId: 123,
+      fileId: "a2",
+      signal: undefined,
+    });
     expect(result).toBe(JSON.stringify({ success: true }));
     // 选择状态自 view 起一直维持着（current 报告 choose_sticker），发送前
     // 不需要重新拉起，只切 idle 等在途请求落定。
@@ -281,7 +289,11 @@ describe("ai/stickers sendStickerTool", () => {
     expect(result).toBe(JSON.stringify({ success: true }));
     expect(chatAction.set.mock.calls.map((call: unknown[]) => call[0])).toEqual(["choose_sticker", "idle"]);
     expect(chatAction.settle).toHaveBeenCalled();
-    expect(sendStickerMock).toHaveBeenCalledWith(123, "a2");
+    expect(sendStickerMock).toHaveBeenCalledWith({
+      chatId: 123,
+      fileId: "a2",
+      signal: undefined,
+    });
   });
 
   test("同一轮最多发 1 枚，第二枚被限额拒绝（跨包同样计数）", async () => {

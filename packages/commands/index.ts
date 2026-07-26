@@ -6,7 +6,8 @@ export { handleCjkActionCommand, handleCjkActionUsageCommand } from "./cjkAction
 export { handleCopyCommand, handleStopCommand } from "./copy";
 export { handleStealIconCommand } from "./stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./quiet";
-export { handleKickCommand } from "./kick";
+export { handleBlockCommand } from "./block";
+export { handleUnblockCommand } from "./unblock";
 export { handleAiChatCommand } from "./aiChat";
 export { handleSwitchMoodCommand } from "./switchMood";
 export { handleJaCopyCommand } from "./jaCopy";

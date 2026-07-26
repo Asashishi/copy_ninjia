@@ -62,7 +62,8 @@ describe("application handler registration", () => {
       "ja_copy",
       "steal_icon",
       "stop_copy",
-      "kick",
+      "block",
+      "unblock",
       "ai_chat",
       "switch_mood",
       "init",
@@ -71,7 +72,7 @@ describe("application handler registration", () => {
       "send",
       "x",
     ]);
-    // 单字中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
+    // 中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
     // 消息兜底之前，否则会被当成普通消息进入 AI/复读流水线。
     expect(hearsTriggers).toEqual([CJK_ACTION_COMMAND_PATTERN]);
     // 顺序是承重的，必须显式断言：把 hears 挪到消息兜底之后，上面所有断言依旧

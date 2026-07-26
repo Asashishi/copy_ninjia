@@ -18,7 +18,7 @@ export interface CommandTargetMessages {
 
 /**
  * resolveCommandTarget 的入参。这里只收命令消息本身与几个标量，不收 grammY 的
- * CommandContext：`/咬` 这类单字中文命令拿不到 bot_command 实体、走的是
+ * CommandContext：`/咬` 这类中文动作命令拿不到 bot_command 实体、走的是
  * bot.hears，根本没有 CommandContext 可传（见 commands/cjkAction.ts）。
  */
 export interface ResolveCommandTargetParams {
@@ -35,10 +35,27 @@ export interface ResolveCommandTargetParams {
 }
 
 /**
+ * 只读地看一眼命令目标：回复目标优先，其次查缓存里的 @username。**不发送任何
+ * 提示消息**，解析不出来就是 undefined。
+ *
+ * 用在「这条命令注定要被拒绝、只是想知道目标是谁来挑一句文案」的分支上。那种
+ * 地方不能调 resolveCommandTarget：它会为解析失败自己发一条「@x 都还没说过话
+ * 呢」然后返回 undefined，用户收到的是一句答非所问的拒绝，真正的原因反而
+ * 永远没说出口。
+ */
+export function peekCommandTarget(message: Message, rawArgument: string): CachedUser | undefined {
+  const replyTarget: CachedUser | undefined = resolveReplyTarget(message);
+  if (replyTarget) return replyTarget;
+  const usernameMatch: RegExpExecArray | null = USERNAME_ARG_PATTERN.exec(rawArgument.trim());
+  if (!usernameMatch) return undefined;
+  return resolveUsernameTarget(usernameMatch[1]!);
+}
+
+/**
  * 解析命令的目标用户/频道：回复目标的消息优先于参数里的 @username——这样
  * 即使对方没有公开 username、或者本天才还没缓存过 TA（比如 privacy mode
  * 没关导致漏听），只要能回复到 TA 发的一条消息就能直接锁定目标。
- * /copy 系、/kick 与单字中文动作命令共用同一套解析流程，只是失败时的嘲讽
+ * /copy 系、/block 与中文动作命令共用同一套解析流程，只是失败时的嘲讽
  * 文案不同。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
  */
@@ -74,7 +91,7 @@ export async function resolveCommandTarget({
     return undefined;
   }
 
-  // 不能把本天才自己设成目标：/copy 会自己套自己没完没了，/kick 更是无稽之谈。
+  // 不能把本天才自己设成目标：/copy 会自己套自己没完没了，/block 更是无稽之谈。
   if (targetUser.id === botUserId) {
     await sendMessage({ chatId, text: messages.selfTarget, replyToMessageId: messageId });
     return undefined;
@@ -82,7 +99,7 @@ export async function resolveCommandTarget({
 
   // 不在共享解析层拒绝 targetUser.id === chatId：匿名管理员以当前群为
   // sender_chat 时，/copy 必须保留该身份来复制群头像并复读同一皮套的消息。
-  // Telegram 不会提供皮套背后的真实用户；/kick 等破坏性命令应在调用处
+  // Telegram 不会提供皮套背后的真实用户；/block 等破坏性命令应在调用处
   // 按自己的语义拒绝，避免误把整个群组身份当作那名管理员。
   return targetUser;
 }

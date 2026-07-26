@@ -36,6 +36,35 @@ function dependencies(
 }
 
 describe("chatActionHeartbeat", () => {
+  test("generation signal 贯穿状态请求，新 generation 不复用旧代心跳", async () => {
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const sendTyping = mock(
+      async (_chatId: number, signal?: AbortSignal): Promise<boolean> => {
+        observedSignal = signal;
+        return await new Promise<boolean>(
+          (_resolve, reject: (reason?: unknown) => void): void => {
+            signal?.addEventListener("abort", (): void => reject(signal.reason), { once: true });
+          }
+        );
+      }
+    );
+    const deps = dependencies(sendTyping, async () => true);
+    const first = startChatActionHeartbeat(100, deps, firstController.signal);
+    first.set("typing");
+    await flush();
+
+    expect(observedSignal).toBe(firstController.signal);
+    firstController.abort(new DOMException("invalidated", "AbortError"));
+    await first.stop();
+
+    const second = startChatActionHeartbeat(100, deps, secondController.signal);
+    expect(deps.entries.get(100)?.signal).toBe(secondController.signal);
+    expect(first.current()).toBe("idle");
+    await second.stop();
+  });
+
   test("心跳从 idle 起步不发状态；切换挡位时补发对应状态，idle 后 settle 等齐在途请求", async () => {
     const choose = deferred<boolean>();
     const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);

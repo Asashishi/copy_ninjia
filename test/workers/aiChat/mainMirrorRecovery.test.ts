@@ -64,6 +64,8 @@ const {
   aiChatWorkerState,
   aiMemoryDeleteWaiters,
   aiMemoryRevisionCounters,
+  aiChatInvalidateRequestCounter,
+  aiChatInvalidateWaiters,
   latestAiMemoryRevisions,
   pendingAiMemoryDeletes,
   postPurgeAiMemoryPersistRevisions,
@@ -84,6 +86,9 @@ beforeEach(() => {
     for (const waiter of waiters) clearTimeout(waiter.timer);
   }
   aiMemoryDeleteWaiters.clear();
+  for (const waiter of aiChatInvalidateWaiters.values()) clearTimeout(waiter.timer);
+  aiChatInvalidateWaiters.clear();
+  aiChatInvalidateRequestCounter.current = 0;
   for (const waiter of moodSwitchWaiters.values()) clearTimeout(waiter.timer);
   moodSwitchWaiters.clear();
   moodSwitchRequestCounter.current = 0;
@@ -140,6 +145,14 @@ describe("AI main-thread persistence mirror", () => {
     expect(purgedAiMemoryChats.has(-1001)).toBeFalse();
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1001, revision: 2 });
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 2 });
+    const invalidateRequest: AiChatWorkerMessage | undefined =
+      workerPosts.find((message: AiChatWorkerMessage): boolean => message.type === "invalidateChat");
+    if (invalidateRequest?.type !== "invalidateChat") throw new Error("Expected an invalidateChat request");
+    supervisorOptions!.onEvent({
+      type: "chatInvalidated",
+      chatId: -1001,
+      requestId: invalidateRequest.requestId,
+    });
     await invalidated;
   });
 
@@ -164,8 +177,15 @@ describe("AI main-thread persistence mirror", () => {
   test("purge 后首份新记忆跨两级 Worker 立即持久化，确认后恢复普通批处理", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
     const invalidated = aiChat.invalidateAiChat(-1001, true);
+    const invalidateRequest: AiChatWorkerMessage | undefined = workerPosts.at(-1);
+    if (invalidateRequest?.type !== "invalidateChat") throw new Error("Expected an invalidateChat request");
     supervisorOptions!.onEvent({ type: "memoryDeleted", chatId: -1001 });
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+    supervisorOptions!.onEvent({
+      type: "chatInvalidated",
+      chatId: -1001,
+      requestId: invalidateRequest.requestId,
+    });
     await invalidated;
     workerPosts.length = 0;
     diskPosts.length = 0;
@@ -286,13 +306,15 @@ describe("AI main-thread persistence mirror", () => {
     expect(aiChatWorkerState.available).toBeFalse();
     expect(purgedAiMemoryChats.size).toBe(0);
     expect(pendingAiMemoryDeletes.get(-1001)).toBe(1);
+    await expect(firstDelete).rejects.toThrow(
+      "AI Worker gave up before completing chat invalidation."
+    );
 
     const secondDelete = aiChat.invalidateAiChat(-1002, true);
     expect(purgedAiMemoryChats.size).toBe(0);
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1002, revision: 1 });
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1002, revision: 1 });
-    await firstDelete;
     await secondDelete;
   });
 });

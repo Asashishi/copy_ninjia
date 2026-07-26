@@ -1,6 +1,6 @@
 import { logger } from "../infra/logger";
 import type { Context } from "grammy";
-import type { ChatMember, Message, ChatMemberUpdated, User, CallbackQuery } from "@grammyjs/types";
+import type { Message, ChatMemberUpdated, User, CallbackQuery } from "@grammyjs/types";
 import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "../infra/storage/stateStore";
 import { answerCallbackQuery } from "../infra/telegram/actions";
 import { isBotAdminIn, markBotAdminObserved } from "../infra/botAdmin";
@@ -11,6 +11,7 @@ import type { FlushResult } from "../types/lifecycle";
 import { isAdminStatus } from "../libs/chatMember";
 import { superviseWorker } from "../libs/supervisedWorker";
 import { verificationKey } from "../libs/verificationKey";
+import { WorkerUndeliveredError } from "../libs/workerDelivery";
 import { flushDiskIO, onDiskIORespawn, onVerificationPersisted, postDiskIO } from "../workers/antiRaid/persistence";
 import {
   buildAdoptLockdownsMessage,
@@ -24,6 +25,13 @@ import {
   acceptVerificationDelete,
   acceptVerificationUpsert,
 } from "./verificationMirror";
+import { claimBlockedJoiner, registerBlocklistRemoval } from "./blocklistGuard";
+import {
+  replayPendingBlockedRemovals,
+  settleBlockedRemoval,
+} from "../infra/blocklist";
+import { isActiveChatMember, isInviterExemptAdmin, pickMember } from "./memberFacts";
+import { prepareDurableAntiRaidMessages } from "./blocklistDelivery";
 import {
   activeVerificationSnapshots,
   antiRaidBarrier,
@@ -35,7 +43,7 @@ import {
   persistedVerificationRevisions,
   type PersistedLockdownFingerprint,
 } from "../cache/antiRaid";
-import type { AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidMember, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot, AdoptableLockdown } from "../types/antiRaid";
+import type { AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot, AdoptableLockdown } from "../types/antiRaid";
 import type { LockdownRecord } from "../types/chatState";
 import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
 import type { VerificationPersistedReply } from "../types/diskIO";
@@ -133,6 +141,9 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
       case "verificationDelete":
         if (acceptVerificationDelete(event)) antiRaidRuntimeState.persistenceVersion++;
         break;
+      case "blockedMembersRemoved":
+        settleBlockedRemoval(event);
+        break;
       case "barrierComplete": {
         antiRaidBarrier.settle(event.barrierId, "flushed");
         break;
@@ -169,6 +180,9 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
         logger.error("Anti-Raid Worker lockdown replay was rejected.");
       }
     }
+    // 黑名单处置没有状态机也没有计时器，崩溃时随 isolate 一起消失；未收到
+    // 落地回执的批次必须整批重投，否则那些人就一直坐在群里（重复 ban 幂等）。
+    replayPendingBlockedRemovals();
   },
   onGiveUp: (): void => {
     antiRaidBarrier.settleAll("failed");
@@ -178,8 +192,11 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
 
 function postAntiRaidOrThrow(message: AntiRaidWorkerMessage): void {
   if (post(message)) return;
-  throw new Error("Anti-Raid Worker is unavailable.");
+  throw new WorkerUndeliveredError("Anti-Raid Worker is unavailable.");
 }
+
+// 黑名单清扫的执行 owner（判定在 infra/blocklist.ts，执行在 Worker）。
+registerBlocklistRemoval(postAntiRaidDurably);
 
 registerChatTeardown("antiRaid", (chatId: number): void => {
   deactivateAntiRaidChat(chatId);
@@ -199,9 +216,19 @@ async function postAntiRaidDurably(
   messages: readonly AntiRaidWorkerMessage[],
   timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS
 ): Promise<void> {
+  let messagesToPost: readonly AntiRaidWorkerMessage[] = messages;
+  if (messages.some((message: AntiRaidWorkerMessage): boolean => message.type === "removeBlockedMembers")) {
+    // 黑名单处置是安全副作用：update 被确认前先把主线程镜像写入持久化 outbox。
+    // mailbox barrier 只证明 Worker 收到消息，不能替代跨进程恢复能力。
+    messagesToPost = await prepareDurableAntiRaidMessages(messages);
+  }
+  if (messagesToPost.length === 0) return;
   const persistenceVersionBefore: number = antiRaidRuntimeState.persistenceVersion;
-  for (const message of messages) {
-    if (!post(message)) throw new Error("Anti-Raid Worker is unavailable.");
+  for (const message of messagesToPost) {
+    // 只有这一条路径代表「Worker 压根没收到」。下面的屏障失败与落盘失败都
+    // 意味着它已经收下并在后台执行；两者仍要保留 durable 镜像，但错误类型
+    // 必须可区分，供调用方判断本次是否可能已启动副作用（见 workerDelivery.ts）。
+    if (!post(message)) throw new WorkerUndeliveredError("Anti-Raid Worker is unavailable.");
   }
   const barrierResult: FlushResult = await drainAntiRaid(timeoutMs);
   if (barrierResult !== "flushed") {
@@ -278,6 +305,9 @@ export function initAntiRaid(): void {
   try {
     initAntiRaidWorker();
     postAntiRaidOrThrow(buildAdoptVerificationsMessage(generation, true));
+    // 启动恢复的 outbox 已在 hydrateBlocklist 中按当前黑名单与管理状态过滤。
+    // 后台重放不阻塞 runner 启动；任务本身已经 durable，完整进程退出后仍可恢复。
+    replayPendingBlockedRemovals(false);
     const adopt: AdoptLockdownsMessage = buildAdoptLockdownsMessage();
     if (adopt.lockdowns.length === 0) return;
 
@@ -321,34 +351,6 @@ export function hydratePendingVerifications(records: Map<string, VerificationSna
   }
 }
 
-export interface PickMemberParams {
-  id: number;
-  username?: string;
-  first_name?: string;
-  is_bot?: boolean;
-}
-
-/** 从 grammY 的 User 对象里摘出投递给 Worker 的最小身份字段。 */
-function pickMember(user: PickMemberParams): AntiRaidMember {
-  return { id: user.id, username: user.username, first_name: user.first_name, isBot: user.is_bot === true };
-}
-
-/** 某个 ChatMember 是否实际还在聊天中（相对于已离开/已被踢出而言）。 */
-function isActiveChatMember(member: ChatMember): boolean {
-  if (member.status === "left" || member.status === "kicked") return false;
-  if (member.status === "restricted") return member.is_member;
-  return true; // "member" | "administrator" | "creator"
-}
-
-/**
- * 只有身份可归因的非匿名管理员才提供“邀请者免验证”。匿名管理员仍是
- * Telegram 管理员，也仍可因自身管理员身份免验证；这里只避免把匿名操作
- * 可能携带的脱敏/共享 actor 身份当作可信邀请者。
- */
-function isInviterExemptAdmin(member: ChatMember): boolean {
-  return isAdminStatus(member.status) && (!("is_anonymous" in member) || member.is_anonymous !== true);
-}
-
 /**
  * 处理 `chat_member` 更新：这是权威且始终会送达的入群/离群信号（不同于
  * `new_chat_members`/`left_chat_member` 服务消息——一旦群组开启了"隐藏入群/
@@ -390,11 +392,15 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   }
 
   if (!wasActive && isActive) {
-    // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径
-    // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
-    // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker
-    // 收到豁免后会将其撤销。
-    messages.push({ type: "join", chatId, member: pickMember(user), exempt: isAdmin, actorId: update.from.id });
+    // 黑名单优先于一切豁免，且取代 join 投递：Worker 不会为一个马上要被踢掉的人开窗口。
+    // 这一路没有入群公告（chat_member 更新不带服务消息），刷群计数由处置消息补记。
+    if (!claimBlockedJoiner({ chatId, userId: user.id, messages })) {
+      // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径
+      // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
+      // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker
+      // 收到豁免后会将其撤销。
+      messages.push({ type: "join", chatId, member: pickMember(user), exempt: isAdmin, actorId: update.from.id });
+    }
   } else if (wasActive && !isActive) {
     messages.push({ type: "left", chatId, userId: user.id });
   }
@@ -427,14 +433,23 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
   }
 
   if (message.new_chat_members && message.new_chat_members.length > 0) {
-    const joins: AntiRaidWorkerMessage[] = [];
+    const messages: AntiRaidWorkerMessage[] = [];
     for (const member of message.new_chat_members) {
       // 机器人不再豁免（走白名单用户代点验证的流程），只跳过本天才自己
       // ——自己既不能验证自己，也不该被自己踢出去。
       if (member.id === botId) continue;
-      joins.push({ type: "join", chatId: message.chat.id, member: pickMember(member), announcementMessageId: message.message_id, actorId: message.from?.id });
+      // 与 chat_member 那一路会为同一次入群各投一次处置；重复 ban 幂等，但两条都要拦
+      // ——隐藏入群消息的群只有 chat_member 会到，而 chat_member 又要管理员权限才送达。
+      if (claimBlockedJoiner({
+        chatId: message.chat.id,
+        userId: member.id,
+        messages,
+        // 服务消息这一路带得到入群公告；不投 join 就没人再管它，交给处置一并删。
+        announcementMessageId: message.message_id,
+      })) continue;
+      messages.push({ type: "join", chatId: message.chat.id, member: pickMember(member), announcementMessageId: message.message_id, actorId: message.from?.id });
     }
-    if (joins.length > 0) await postAntiRaidDurably(joins);
+    if (messages.length > 0) await postAntiRaidDurably(messages);
     return true;
   }
 

@@ -38,7 +38,7 @@ cp .env.example .env
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather が発行した token |
 | `GEMINI_API_KEY` | ✅ | Gemini API キー |
 | `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者を表す 1 つの十進ユーザー ID。`/init`、`/ai_chat`、`/switch_mood`、`/send` などはこのユーザーだけを認識します |
-| `PRIVILEGED_USERS_ID` | 空でも可 | カンマ区切りの許可ユーザー。copy のクールダウン免除、`/kick` の使用、ほかの Bot の認証保証が可能です |
+| `PRIVILEGED_USERS_ID` | 空でも可 | カンマ区切りの許可ユーザー。copy のクールダウン免除、`/block` の使用、ほかの Bot の認証保証が可能です |
 | `COPY_NINJIA_DATA_ROOT` | 空でも可 | 実行時データのルート。空の場合はプロジェクトルートに保存します。詳細は [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください |
 
 日本語翻訳を使う場合は、サービスアカウントキーをプロジェクトルートの `g-auth.json` に保存します。`.env` と `g-auth.json` はどちらも `.gitignore` の対象です。

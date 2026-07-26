@@ -16,7 +16,13 @@ import {
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
 import { switchMood } from "../ai/mood";
-import type { AiChatWorkerMessage, AiMemoryFlushedEvent, AiMoodSwitchedEvent } from "../types/aiChat/protocol";
+import type {
+  AiChatInvalidatedEvent,
+  AiChatWorkerMessage,
+  AiInvalidateChatMessage,
+  AiMemoryFlushedEvent,
+  AiMoodSwitchedEvent,
+} from "../types/aiChat/protocol";
 import type { AiStickerCatalogEvent } from "../types/stickers/protocol";
 import { initTelegramClients } from "../infra/telegram";
 
@@ -58,6 +64,23 @@ import { initTelegramClients } from "../infra/telegram";
 
 declare const self: Worker;
 
+function handleInvalidateChat(msg: AiInvalidateChatMessage): void {
+  // invalidateChatReplies 在返回 Promise 前已同步递增 generation 并 abort 旧代；
+  // purge 同样必须同步发生，避免随后 FIFO record 被迟到的清理删掉。
+  const drained: Promise<void> = invalidateChatReplies(msg.chatId);
+  if (msg.purgeMemory) {
+    purgeChatMemory(msg.chatId);
+    self.postMessage({ type: "memoryDeleted", chatId: msg.chatId });
+  }
+  void drained.then((): void => {
+    self.postMessage({
+      type: "chatInvalidated",
+      chatId: msg.chatId,
+      requestId: msg.requestId,
+    } satisfies AiChatInvalidatedEvent);
+  });
+}
+
 /** 路由一条主线程消息；独立导出便于验证协议而不启动真实 Worker。 */
 export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
   switch (msg.type) {
@@ -92,11 +115,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       self.postMessage({ type: "memoryFlushed", flushId: msg.flushId } satisfies AiMemoryFlushedEvent);
       break;
     case "invalidateChat":
-      invalidateChatReplies(msg.chatId);
-      if (msg.purgeMemory) {
-        purgeChatMemory(msg.chatId);
-        self.postMessage({ type: "memoryDeleted", chatId: msg.chatId });
-      }
+      handleInvalidateChat(msg);
       break;
     case "switchMood":
       // 主线程超时只会撤销 waiter，无法从 Worker 消息队列里召回已投递请求；

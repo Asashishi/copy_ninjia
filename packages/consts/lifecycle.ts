@@ -6,9 +6,19 @@ import type { FlushTimeouts } from "../types/lifecycle";
 export const RUNNER_DRAIN_TIMEOUT_MS: number = 5_000;
 /** 等待 runner 归零时的轮询间隔。 */
 export const RUNNER_DRAIN_POLL_INTERVAL_MS: number = 100;
+/**
+ * 正常 drain 超时并 abort 活跃 update 后，等待 handler 响应取消的附加预算。
+ * 所属模块：app/lifecycle.ts。
+ */
+export const RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS: number = 1_000;
 
 /** 正常停机时各持久化 owner 的独立 flush 预算。 */
 export const AI_MEMORY_FLUSH_TIMEOUT_MS: number = 2_000;
+/**
+ * /ai_chat disable 等待旧 generation 的模型、工具与 Telegram 副作用收敛的预算。
+ * 所属模块：aiChat/index.ts。
+ */
+export const AI_CHAT_INVALIDATE_TIMEOUT_MS: number = 10_000;
 /** 正常停机等待 Disk I/O Worker flush 的预算。 */
 export const DISK_IO_FLUSH_TIMEOUT_MS: number = 3_000;
 /** 正常停机等待 state 主/LKG 写入的预算。 */

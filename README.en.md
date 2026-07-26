@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-907_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.60%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1032_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.46%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -67,7 +67,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 907 tests passed, 123 test files, 8,505 expect() calls, 94.65% function coverage, 96.60% line coverage" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1032 tests passed, 132 test files, 8,870 expect() calls, 94.44% function coverage, 96.46% line coverage" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -115,7 +115,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 </td>
 <td align="left" valign="top">
   <p><b>🌐 Cross-group moderation</b></p>
-  <p><code>/kick</code> synchronously bans a target across every known group where the bot is an administrator, forming one coordinated defense.</p>
+  <p><code>/block</code> synchronously bans a target across every known group where the bot is an administrator and records the id in a persistent blocklist — any later join in any watched group is kicked on sight, and the moment a group has both an administrator bot and an enabled listener — in either order — it sweeps out anyone from the list who is already sitting there, forming one coordinated defense.</p>
 </td>
 </tr>
 </table>
@@ -135,7 +135,7 @@ The copy target is global: one instance can “become” only one target at a ti
 | `/steal_icon` | Copy only the avatar |
 | `/stop_copy` | Stop the global copy state |
 
-Choose a target by replying to their message or providing `@username`. Username lookup depends on the bot having observed the account previously; rename, username removal, or username reassignment immediately invalidates the old alias. When an anonymous administrator speaks as the current group, that group identity is the copy target, so copy modes can obtain the group avatar and reproduce that “skin”; `/kick` rejects the current group identity as a member target. For destructive operations such as `/kick`, prefer replying to the target rather than relying on historical usernames. Ordinary users have a 5-minute cooldown on copy-family commands; users in `PRIVILEGED_USERS_ID` are exempt.
+Choose a target by replying to their message or providing `@username`. Username lookup depends on the bot having observed the account previously; rename, username removal, or username reassignment immediately invalidates the old alias. When an anonymous administrator speaks as the current group, that group identity is the copy target, so copy modes can obtain the group avatar and reproduce that “skin”; `/block` rejects the current group identity as a member target. For destructive operations such as `/block`, prefer replying to the target rather than relying on historical usernames. Ordinary users have a 5-minute cooldown on copy-family commands; users in `PRIVILEGED_USERS_ID` are exempt.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -146,10 +146,11 @@ Choose a target by replying to their message or providing `@username`. Username 
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">Group member</td><td>Start respective copy mode</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">Group member</td><td>Stop current global copy state</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">Group member</td><td>Copy avatar only</td></tr>
-<tr><td><code>/&lt;single CJK char&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> replies "actor 咬了 target！"; both names render as first_name last_name and link to the profile when a public username exists</td></tr>
+<tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/贴贴</code> replies "actor 咬了 target！"; both names render as first_name last_name and link to the profile when a public username exists</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">Group member</td><td>Resume proactive behavior early</td></tr>
-<tr><td><code>/kick</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>Permanently ban target across all bot-managed groups</td></tr>
+<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>Blocklist the target: recorded permanently and banned across all bot-managed groups; any later join in a watched group is kicked on sight</td></tr>
+<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>(<code>all</code> is <code>SUPER_ADMIN_USER_ID</code> only)</td><td>Remove the id from the blocklist (the whole list is atomically rewritten back to disk); later joins are no longer kicked on sight. Existing per-group bans are left alone by default; add <code>all</code> to lift them across every bot-managed group</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle AI chat for the group</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Reroll current group mood immediately and reply with new mood name</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle Japanese translation mode for the group (disabled by default)</td></tr>
@@ -160,7 +161,7 @@ Choose a target by replying to their message or providing `@username`. Username 
 `/send` verifies target reachability before starting. If the target becomes unreachable during relay, the session ends and the super administrator is notified. Relay state persists in `state.json` across restarts. The command is omitted from Telegram's command menu and remains silent in groups or when invoked by any other user.
 
 > [!TIP]
-> Single-CJK-character action commands (`/咬`, `/摸`, …) need no registration — any single Chinese character works, and the target is picked the same way, by replying to their message or by `@username`. Telegram only accepts ASCII command names (Latin letters, digits, underscores), so these never appear in the command menu and get no autocompletion — the menu carries a single placeholder entry `/x` instead — the name `x` is the variable, prompting you to swap it for any Chinese character. It does nothing when invoked and is deliberately swallowed rather than falling through into the AI/copy pipeline; multi-character forms such as `/咬人` are not action commands and fall through to normal message handling. Precisely because anyone can invent one without registering it, these commands share a global sliding-window limit of 450 responses per 90 seconds, counted across all groups and users; anything over the quota is dropped silently with no notice.
+> CJK action commands (`/咬`, `/贴贴`, …) need no registration — any one or two Chinese characters work, and the target is picked the same way, by replying to their message or by `@username`. Telegram only accepts ASCII command names (Latin letters, digits, underscores), so these never appear in the command menu and get no autocompletion — the menu carries a single placeholder entry `/x` instead — the name `x` is the variable, prompting you to swap it for any one or two Chinese characters. It does nothing when invoked and is deliberately swallowed rather than falling through into the AI/copy pipeline; forms of three characters or more, such as `/咬人人`, are not action commands and fall through to normal message handling. Precisely because anyone can invent one without registering it, these commands share a global sliding-window limit of 450 responses per 90 seconds, counted across all groups and users; anything over the quota is dropped silently with no notice.
 
 > [!TIP]
 > `/luck_challenge` is not a slash command: type `@bot_username [query]` in any chat to use Inline Mode. Enable Inline Mode in BotFather; 100% result feedback is recommended. Inline queries share a global sliding-window limit of 300 responses per 90 seconds.
@@ -230,7 +231,7 @@ After the bot first joins a group, `SUPER_ADMIN_USER_ID` executes:
 /ai_chat enable
 ```
 
-> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and single-character Chinese commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 525 Chinese string literals across 52 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
+> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 525 Chinese string literals across 52 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 

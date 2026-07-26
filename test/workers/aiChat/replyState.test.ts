@@ -20,6 +20,8 @@ import {
   currentReplyGeneration,
   invalidateChatReplies,
   isReplyGenerationCurrent,
+  replyGenerationSignal,
+  trackReplyGenerationTask,
 } from "../../../packages/workers/aiChat/replyState";
 
 afterEach(() => {
@@ -27,7 +29,7 @@ afterEach(() => {
 });
 
 describe("AI 回复代际状态", () => {
-  test("失效操作递增代数，清除排队/限频/心跳，但保留在途计数到 finally", () => {
+  test("失效操作递增代数，清除排队/限频/心跳，但保留在途计数到 finally", async () => {
     const queue = new LinkedQueue<QueuedReplyTrigger>();
     queue.push({ triggerSenderId: 7, replyToMessageId: 1, imageGenerationRequested: false, senderName: "Alice", text: "hello" });
     pendingReplyTriggers.set(-1001, queue);
@@ -53,7 +55,7 @@ describe("AI 回复代际状态", () => {
     } satisfies ChatActionHeartbeatEntry);
     const captured: number = currentReplyGeneration(-1001);
 
-    invalidateChatReplies(-1001);
+    await invalidateChatReplies(-1001);
 
     expect(currentReplyGeneration(-1001)).toBe(captured + 1);
     expect(isReplyGenerationCurrent(-1001, captured)).toBe(false);
@@ -63,6 +65,29 @@ describe("AI 回复代际状态", () => {
     expect(rateLimitNoticeTimes.has(-1001)).toBe(false);
     expect(typingHeartbeats.has(-1001)).toBe(false);
     expect(activeReplyCounts.get(-1001)).toBe(1);
+  });
+
+  test("失效先中止旧代信号，并等待该代全部用户可见副作用 settle", async () => {
+    const chatId: number = -1006;
+    const generation: number = currentReplyGeneration(chatId);
+    const signal: AbortSignal = replyGenerationSignal(chatId, generation);
+    let settleTask: (() => void) | undefined;
+    const task: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      settleTask = resolve;
+    });
+    trackReplyGenerationTask(chatId, generation, task);
+
+    let invalidationSettled: boolean = false;
+    const invalidated: Promise<void> = invalidateChatReplies(chatId).then((): void => {
+      invalidationSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(signal.aborted).toBeTrue();
+    expect(invalidationSettled).toBeFalse();
+    settleTask?.();
+    await invalidated;
+    expect(invalidationSettled).toBeTrue();
   });
 
   test("Worker 重建清理边界会清空所有领域缓存并停止心跳 timer", () => {

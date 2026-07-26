@@ -35,11 +35,24 @@ mock.module("../../packages/commands/copyShared", () => ({
 const { handleCopyCommand, handleStopCommand } = await import("../../packages/commands/copy");
 const { handleStealIconCommand } = await import("../../packages/commands/stealIcon");
 
-function context(chatId: number = -1001): never {
+function context(chatId: number = -1001, replyToUserId?: number): never {
   return {
     chat: { id: chatId },
     from: { id: 8, first_name: "Caller" },
     msgId: 9,
+    // 槽位占用分支用 peekCommandTarget 只读地看一眼目标（回复优先），因此
+    // 这里必须是一条真实形状的消息。
+    msg: {
+      message_id: 9,
+      date: 1,
+      chat: { id: chatId, type: "supergroup" },
+      reply_to_message: replyToUserId === undefined ? undefined : {
+        message_id: 8,
+        date: 1,
+        chat: { id: chatId, type: "supergroup" },
+        from: { id: replyToUserId, is_bot: false, first_name: `User${replyToUserId}` },
+      },
+    },
     match: "",
   } as never;
 }
@@ -81,7 +94,7 @@ describe("copy 类命令生命周期", () => {
 
     target = { id: 7, first_name: "Alice" };
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
-    await handleCopyCommand(context());
+    await handleCopyCommand(context(-1001, 7));
     expect(releaseCopyCooldownClaim).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
@@ -90,7 +103,24 @@ describe("copy 类命令生命周期", () => {
     });
 
     target = { id: 8, first_name: "Bob" };
+    await handleCopyCommand(context(-1001, 8));
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("先 /stop_copy"),
+      replyToMessageId: 9,
+    });
+  });
+
+  test("槽位被占时只回一条拒绝，不触发带发送副作用的目标解析", async () => {
+    // 走完整解析的话，参数是未缓存的 @username 时它会自己发一条「@x 都还没
+    // 说过话呢」然后返回 undefined——用户收到的是「不认识这个用户名」，而真正
+    // 的原因（正在复读别人）永远没说出口。
+    globalCopy.copiedUser = { id: 7, first_name: "Alice" };
+
     await handleCopyCommand(context());
+
+    expect(resolveCopyCommandTarget).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("先 /stop_copy"),

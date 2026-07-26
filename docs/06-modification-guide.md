@@ -14,7 +14,7 @@
 
 ## 新增一个斜杠命令
 
-1. **handler**：在 `packages/commands/` 新建一文件，`function` 声明导出 `handleXxxCommand`，显式返回类型。权限门禁参考现成模式：白名单看 `kick.ts`，超管看 `superAdminToggle.ts` / `switchMood.ts`，仅私聊看 `send.ts`（非本人/非私聊静默 return，不回错误提示）。
+1. **handler**：在 `packages/commands/` 新建一文件，`function` 声明导出 `handleXxxCommand`，显式返回类型。权限门禁参考现成模式：白名单看 `block.ts`，超管看 `superAdminToggle.ts` / `switchMood.ts`，仅私聊看 `send.ts`（非本人/非私聊静默 return，不回错误提示）。
 2. **导出**：加入 `packages/commands/index.ts`。
 3. **注册**：在 [`packages/app/registerHandlers.ts`](../packages/app/registerHandlers.ts) 加 `bot.command("xxx", ...)`。注意注册点位于 init 网关、按群串行、私聊网关与入群验证 middleware 之后——新命令自动获得这些语义，不要在 handler 里重复做网关判断。
 4. **私聊网关**：新命令若要在私聊中使用，还必须同步调整 [`packages/infra/updateGate.ts`](../packages/infra/updateGate.ts) 并补网关测试；当前私聊中的斜杠命令只显式放行 `/send`，仅注册 handler 不会到达命令处理器。纯群聊命令无需改这里。
@@ -23,7 +23,7 @@
 7. **测试**：`test/commands/xxx.test.ts`，至少覆盖权限拒绝、参数解析与主路径。
 8. **文档**：根 README「命令与权限」表加一行。
 
-非 ASCII 命令名（`/咬` 这类单字中文动作命令）走另一条路：Telegram 只为 ASCII 命令生成 `bot_command` 实体，`bot.command` 永远匹配不到，必须用 `bot.hears(正则, ...)` 按消息原文匹配，并注册在消息兜底处理器 `bot.on(["message", "channel_post"], ...)` 之前，否则会被当作普通消息进入 AI/复读流水线。这类 handler 拿到的是普通 `Context` 而非 `CommandContext`，目标解析改为直接给 [`targetResolution.ts`](../packages/commands/targetResolution.ts) 的 `resolveCommandTarget` 传 `ResolveCommandTargetParams`；不认领的形态（`/咬@OtherBot`、只有 caption 的消息、消息形态异常）必须 `next()` 放行，不能静默吞掉更新。这里有两条容易漏掉的连带责任：其一，`bot.hears` 对 text 和 caption 都会匹配，但认领一条带图消息意味着它不再流进 `handleIncomingMessage`，那张图就不会进 AI 滚动记忆与视觉流水线——所以只认 `message.text`；其二，注册点在自动流水线**之前**，拿不到它那道自发消息门禁与 `cacheSender`，因此 handler 必须自己调 `isBotOwnMessage` 跳过机器人自己的消息（否则频道回弹会形成自问自答的刷屏循环），并自己把发起人写进 username 缓存。BotFather 的命令名同样只收 ASCII（拉丁字母、数字、下划线，最长 32 字符），因此它们不能进 `BOT_COMMANDS` 菜单——`setMyCommands` 是整体提交，混入一个非法名会让整份菜单以 `BOT_COMMAND_INVALID` 失败，而注册失败只记日志不阻断启动，菜单会静默消失；想在菜单里曝光用法，就加一条 ASCII 占位说明项（现有的 `/x`），把语法写在 description 里。这类占位项必须注册一个回用法提示、并就此终止链路的 handler：点菜单会真的把命令发出去，不注册就会落到消息兜底、被当成普通消息进入 AI/复读流水线；而注册成完全不做事的空 handler 又会让点了菜单的人只收到一片沉默。另外，没有命令菜单那层天然约束的命令（谁都能随手造一个动作字）必须自带全局限流：窗口与上限进 `packages/consts/commands.ts`，时间戳队列进 `packages/cache/<domain>.ts`，判定复用 [`libs/slidingWindowRateLimit.ts`](../packages/libs/slidingWindowRateLimit.ts)（纯函数，就地维护调用方传入的队列，本身不持有状态）。现成范例：[`cjkAction.ts`](../packages/commands/cjkAction.ts)。
+非 ASCII 命令名（`/咬`、`/贴贴` 这类中文动作命令，动作词收 1~2 个中文字）走另一条路：Telegram 只为 ASCII 命令生成 `bot_command` 实体，`bot.command` 永远匹配不到，必须用 `bot.hears(正则, ...)` 按消息原文匹配，并注册在消息兜底处理器 `bot.on(["message", "channel_post"], ...)` 之前，否则会被当作普通消息进入 AI/复读流水线。这类 handler 拿到的是普通 `Context` 而非 `CommandContext`，目标解析改为直接给 [`targetResolution.ts`](../packages/commands/targetResolution.ts) 的 `resolveCommandTarget` 传 `ResolveCommandTargetParams`；不认领的形态（`/咬@OtherBot`、只有 caption 的消息、消息形态异常）必须 `next()` 放行，不能静默吞掉更新。这里有两条容易漏掉的连带责任：其一，`bot.hears` 对 text 和 caption 都会匹配，但认领一条带图消息意味着它不再流进 `handleIncomingMessage`，那张图就不会进 AI 滚动记忆与视觉流水线——所以只认 `message.text`；其二，注册点在自动流水线**之前**，拿不到它那道自发消息门禁与 `cacheSender`，因此 handler 必须自己调 `isBotOwnMessage` 跳过机器人自己的消息（否则频道回弹会形成自问自答的刷屏循环），并自己把发起人写进 username 缓存。BotFather 的命令名同样只收 ASCII（拉丁字母、数字、下划线，最长 32 字符），因此它们不能进 `BOT_COMMANDS` 菜单——`setMyCommands` 是整体提交，混入一个非法名会让整份菜单以 `BOT_COMMAND_INVALID` 失败，而注册失败只记日志不阻断启动，菜单会静默消失；想在菜单里曝光用法，就加一条 ASCII 占位说明项（现有的 `/x`），把语法写在 description 里。这类占位项必须注册一个回用法提示、并就此终止链路的 handler：点菜单会真的把命令发出去，不注册就会落到消息兜底、被当成普通消息进入 AI/复读流水线；而注册成完全不做事的空 handler 又会让点了菜单的人只收到一片沉默。另外，没有命令菜单那层天然约束的命令（谁都能随手造一个动作词）必须自带全局限流：窗口与上限进 `packages/consts/commands.ts`，时间戳队列进 `packages/cache/<domain>.ts`，判定复用 [`libs/slidingWindowRateLimit.ts`](../packages/libs/slidingWindowRateLimit.ts)（纯函数，就地维护调用方传入的队列，本身不持有状态）。现成范例：[`cjkAction.ts`](../packages/commands/cjkAction.ts)。
 
 ## 在回复里加链接或格式
 
@@ -34,7 +34,7 @@
 面向用户的文案只有简体中文一套，仓库不提供也不接受 i18n 层——文案不是能替换的字典项：
 
 - 大量回复由片段拼接而成，还要同时算出 Telegram `entities` 的 UTF-16 偏移（见上一节）。换语言意味着词序、长度、乃至句子该不该拆都变了，偏移必须跟着重算，key-value 词条表接不住这类文案。
-- `/咬` 这类单字中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
+- `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
 需要别的语言就 fork 一份自己改。生产代码里含中文的字符串字面量约 525 处、分布在 52 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。

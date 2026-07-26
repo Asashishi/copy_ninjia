@@ -1,6 +1,10 @@
 import type { CommandContext, Context } from "grammy";
 import { clearChatStateField, getActiveProxySendTarget, getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { bot, logApiError, sendMessage } from "../infra/telegram";
+import {
+  currentUpdateAbortSignal,
+  throwIfUpdateAborted,
+} from "../infra/updateContext";
 import { isSuperAdmin } from "./superAdminToggle";
 import type { ChatFullInfo } from "@grammyjs/types";
 
@@ -42,12 +46,19 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   }
 
   try {
-    const targetChat: ChatFullInfo = await bot.api.getChat(targetChatId);
+    const signal: AbortSignal | undefined = currentUpdateAbortSignal();
+    const targetChat: ChatFullInfo = signal === undefined
+      ? await bot.api.getChat(targetChatId)
+      : await bot.api.getChat(
+        targetChatId,
+        signal as unknown as Parameters<typeof bot.api.getChat>[1]
+      );
     if (targetChat.type !== "group" && targetChat.type !== "supergroup") {
       await sendMessage({ chatId, text: `只能转发进群组呀，${targetChatId} 不是群组，检查一下 id♡`, replyToMessageId: messageId });
       return;
     }
   } catch (error: unknown) {
+    throwIfUpdateAborted();
     logApiError(`resolve /send target chat ${targetChatId}`, error);
     await sendMessage({ chatId, text: `连不上 ${targetChatId} 这个聊天呀，检查一下 id 对不对、本天才是不是已经在那边了♡`, replyToMessageId: messageId });
     return;

@@ -41,6 +41,20 @@ export const MOOD_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "mood.json"
 export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
 
 /**
+ * 运行时写入的 config/ 目录。与上面三份部署配置同名同级，但根目录不同：
+ * 部署配置是只读输入、跟着代码走 PROJECT_ROOT；黑名单是机器人自己写的
+ * 运行时数据，必须跟着 RUNTIME_DATA_ROOT，否则测试与多实例部署会写进
+ * 仓库里那一份。生产默认两者是同一个目录，落地形态就是 config/blocklist.json。
+ */
+export const RUNTIME_CONFIG_DIR: string = join(RUNTIME_DATA_ROOT, "config");
+/**
+ * /block 黑名单文件：顶层 JSON 对象，key 为用户 id，value 为
+ * BlockedUserRecord。追加写入，见 workers/diskIO/blocklistFile.ts。
+ * 含被拉黑者的 Telegram 用户 id，与 logs/ 同一敏感级别，不进 git。
+ */
+export const BLOCKLIST_FILE_PATH: string = join(RUNTIME_CONFIG_DIR, "blocklist.json");
+
+/**
  * memory/ 落盘目录：AI 记忆快照（ai/ 下按 chatId 一个 <chatId>.json）、每日
  * 运势缓存（luck/ 下按东京日期一个文件，只留当天）、白名单贴纸包的目录快照
  * （stickers/ 下按 pack short name 一个 <pack>.json，见 ai/stickers/catalog.ts），
@@ -59,6 +73,12 @@ export const LUCK_RECEIPT_SECRET_PATH: string = join(LUCK_MEMORY_DIR, "receipt-s
 export const STICKER_MEMORY_DIR: string = join(MEMORY_DIR, "stickers");
 /** Anti-Raid 待验证增量文件目录；按东京日期命名，只保留当天文件。 */
 export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");
+/**
+ * 尚未完成的黑名单成员移除任务。独立于权威黑名单文件，使用当前 version=1
+ * 全量快照；主进程退出后由启动恢复重放。
+ * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
+ */
+export const BLOCKLIST_REMOVAL_OUTBOX_PATH: string = join(MEMORY_DIR, "blocklist-removals.json");
 
 /** Google Cloud 服务账号密钥（/ja_copy 日语翻译用，已进 .gitignore）。 */
 export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");

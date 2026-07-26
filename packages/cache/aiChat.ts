@@ -1,6 +1,11 @@
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import { createFlushBarrier } from "../libs/flushBarrier";
 import type { AiInitMessage } from "../types/aiChat/protocol";
+import type {
+  AiChatInvalidateWaiter,
+  AiMemoryDeleteWaiter,
+  MoodSwitchWaiter,
+} from "../types/aiChat/waiters";
 
 /** AI 闲聊主线程侧代理（packages/aiChat/index.ts）的内存状态。 */
 
@@ -32,13 +37,6 @@ export const pendingAiMemoryDeletes: Map<number, number> = new Map();
  * durable。确认前保留，供 AI/Disk I/O Worker 重建时继续强制快速路径。
  */
 export const postPurgeAiMemoryPersistRevisions: Map<number, number | null> = new Map();
-/** 等待某群指定 AI 记忆删除 revision durable 的调用方。 */
-export interface AiMemoryDeleteWaiter {
-  revision: number;
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
 /** 只有显式禁用/teardown 会等待；LRU 删除只保留 pending tombstone。 */
 export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Map();
 /**
@@ -53,18 +51,16 @@ export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Ma
  * 独立拥有，不受这里清空影响。
  */
 export const purgedAiMemoryChats: Set<number> = new Set();
-/** 等待 /switch_mood 重抽回执（moodSwitched 事件）的调用方。 */
-export interface MoodSwitchWaiter {
-  resolve: (moodName: string) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
 /** 在途 switchMood 请求的等待表（requestId → waiter）：成功回执、超时或
  *  Worker 崩溃/终止时结算并删除（见 aiChat/index.ts 的 switchAiMood），容量受并发
  *  /switch_mood 命令数约束。 */
 export const moodSwitchWaiters: Map<number, MoodSwitchWaiter> = new Map();
 /** 本进程内已分配的最高 switchMood requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
 export const moodSwitchRequestCounter: { current: number } = { current: 0 };
+/** requestId → invalidate waiter；回执、超时、Worker 崩溃或终止时结算。 */
+export const aiChatInvalidateWaiters: Map<number, AiChatInvalidateWaiter> = new Map();
+/** 本进程内 invalidate 回执关联 ID。 */
+export const aiChatInvalidateRequestCounter: { current: number } = { current: 0 };
 /** Worker 是否仍可接收 invalidate 并回传 memoryDeleted；give-up 后显式关闭。 */
 export const aiChatWorkerState: { available: boolean } = { available: false };
 /** 各白名单贴纸包最新的目录快照镜像（同为序列化 JSON 文本），机制与

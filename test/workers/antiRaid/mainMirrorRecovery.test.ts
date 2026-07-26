@@ -56,10 +56,19 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
   flushStateToDisk,
   saveStateInBackground,
 }));
-mock.module("../../../packages/infra/telegram/actions", () => ({ answerCallbackQuery: async (): Promise<boolean> => true }));
+mock.module("../../../packages/infra/telegram/actions", () => ({
+  answerCallbackQuery: async (): Promise<boolean> => true,
+  // 黑名单秒踢与新晋管理员清扫用的，本文件不触发（名单为空），但整份模块
+  // 被替换掉时缺了它们会在 import 阶段就报 Export not found。
+  banChatMember: async (): Promise<boolean> => true,
+  banChatSenderChat: async (): Promise<boolean> => true,
+  isChatMember: async (): Promise<boolean> => true,
+}));
 mock.module("../../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "main-thread-test-api" } }));
 mock.module("../../../packages/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
-mock.module("../../../packages/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5 }));
+// JOIN_WINDOW_MS 原样透出：秒踢路径的入群计数去重用它当窗口宽度
+// （见 antiRaid/blocklistGuard.ts），整份模块被替换掉时缺了会在 import 阶段报错。
+mock.module("../../../packages/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5, JOIN_WINDOW_MS: 60_000 }));
 mock.module("../../../packages/infra/botAdmin", () => ({
   isBotAdminIn: async (): Promise<boolean> => true,
   markBotAdminObserved: async (): Promise<void> => {},

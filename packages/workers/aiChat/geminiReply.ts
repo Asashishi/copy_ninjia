@@ -164,6 +164,7 @@ export async function callGemini(
         contents,
         config: {
           systemInstruction: systemPrompt,
+          abortSignal: toolset.signal,
           tools: requestTools,
           // googleSearch 与函数工具混用时必须要求 SDK 把服务端工具调用记录
           // 接回 content；否则 Gemini API 会拒绝该组合或丢失搜索上下文。

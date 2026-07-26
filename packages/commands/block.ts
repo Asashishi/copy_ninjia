@@ -1,0 +1,187 @@
+import type { CommandContext, Context } from "grammy";
+import type { CachedUser } from "../types/chatState";
+import { sendMessage, banChatMember, banChatSenderChat, isChatMember, deleteMessageAfter } from "../infra/telegram";
+import { formatMockerLabel, formatUserLabel } from "../users/userLabel";
+import { PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
+import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
+import { resolveCommandTarget } from "./targetResolution";
+import { isBotAdminIn } from "../infra/botAdmin";
+import { blockUser, confirmBlocklistPersisted, ensureBlocklistEntryQueued, requestBlocklistResweep } from "../infra/blocklist";
+import { getAllChatStates } from "../infra/storage/stateStore";
+import type { User } from "@grammyjs/types";
+
+/**
+ * 处理 /block 指令：把目标写进持久化黑名单，并在所有「机器人是管理员」的群里
+ * 同时封禁（与入群验证/反刷群的自动踢出不同——那些踢而不 ban 以防误杀，这里
+ * 是管理员的手动判断，直接全网封死）。封禁对还没加入的群同样生效，目标之后
+ * 也进不去，但那终究不是「踢」——战报文案按目标此刻是否在场分别措辞
+ * （isChatMember）：真在场的算踢出去，压根没进过的群只算提前拉黑。群清单来自
+ * 各群 ChatState.botIsAdmin（见 infra/botAdmin.ts）。机器人在发起命令的这个群
+ * 里不是管理员时，本群自然踢不了，但对其它管理的群的连坐封禁照常执行，只在
+ * 回复里说明本群没踢；一个管理的群都没有才整体拒绝。
+ *
+ * 黑名单先于封禁写入，且即使一个群都没封成也照样保留：这两件事解决的不是
+ * 同一个问题——封禁只覆盖此刻已知且有管理权的群，黑名单覆盖的是「以后」，
+ * 包括机器人当时还没进、或还不是管理员的群。之后这个 id 出现在任何监听群的
+ * 入群更新里都会被秒踢（见 antiRaid/blocklistGuard.ts），名单本身落盘在
+ * config/blocklist.json（见 infra/blocklist.ts）。
+ *
+ * 目标解析和 /copy 一致：回复目标的一条消息优先，也可以用 /block @username
+ * 指定（要求本机器人此前缓存过该用户）。目标若是频道马甲（sender_chat），
+ * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限 PRIVILEGED_USERS_ID
+ * 白名单内的用户使用——其他任何人尝试都只会被嘲讽，指令本身不会执行。
+ */
+export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<void> {
+  const chatId: number = ctx.chat.id;
+  const messageId: number | undefined = ctx.msgId;
+  const fromUser: User | undefined = ctx.from;
+
+  if (!fromUser || !PRIVILEGED_USERS_ID.includes(fromUser.id)) {
+    const replyText: string = `就 ${formatMockerLabel(fromUser)} 也想 /block 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
+    await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+    return;
+  }
+
+  // 语义见函数顶部说明（本群非管理员不影响其它群连坐）。
+  const isAdminHere: boolean = await isBotAdminIn(chatId);
+
+  // 目标解析同 /copy：回复目标的消息优先于参数里的 @username（没有公开
+  // username 或没被缓存过的目标只能靠回复锁定），见 targetResolution.ts。
+  const targetUser: CachedUser | undefined = await resolveCommandTarget({
+    chatId,
+    message: ctx.msg,
+    botUserId: ctx.me.id,
+    rawArgument: ctx.match,
+    messages: {
+      missingTarget: `笨蛋，要么 /block @username，要么回复 TA 的一条消息再 /block，本天才可不会读心术♡`,
+      invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，别拿半截参数糊弄本天才♡`,
+      unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /block 吧♡`,
+      selfTarget: `笨蛋，本天才才不会把自己拉黑呢♡`,
+    },
+  });
+  if (!targetUser) return;
+
+  // 匿名管理员以当前群组身份发言时，Telegram 只提供 sender_chat=当前群，
+  // 不会暴露皮套背后的真实用户。该身份在 /copy 中必须保留用于头像和复读；
+  // 但 /block 若继续执行，只会尝试封禁整个群组身份，不能踢出那名管理员。
+  if (targetUser.isChannel === true && targetUser.id === chatId) {
+    await sendMessage({
+      chatId,
+      text: `匿名管理员拿这个群当皮套时，Telegram 不会告诉本天才皮套底下是谁；本天才不能把整个群当成那个人踢掉呀♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+
+  // 自己人不可拉黑。虽然 /unblock 已经提供了撤销路径，这道闸仍然保留：拉黑
+  // 会连带在所有管理群 banChatMember，而 /unblock 只把人从名单里划掉、不解除
+  // 那些群级封禁（见 commands/unblock.ts）。回错一条消息、或用了过期的
+  // @username 别名，就能把超级管理员或白名单成员踢出并封禁在所有监听群里，
+  // 事后要一个群一个群手动解封——值得在入口就挡住。
+  if (targetUser.id === SUPER_ADMIN_USER_ID || PRIVILEGED_USERS_ID.includes(targetUser.id)) {
+    await sendMessage({
+      chatId,
+      text: `笨蛋，${formatUserLabel(targetUser)} 可是自己人，本天才才不会把自己人写进小本本♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+
+  // 黑名单先写、且与封禁结果无关：封禁只能覆盖此刻已知且有管理权的群，名单
+  // 覆盖的是以后——包括机器人当时还没进的群。先写内存 Map 再落盘，见
+  // infra/blocklist.ts；重复 /block 同一个人时返回 false，不再重复落盘。
+  const newlyBlocked: boolean = blockUser(targetUser.id);
+  // 只有真的新增了记录才值得等这一次落盘回执：没落盘就不能把「永久」说出口。
+  // 重复 /block 时也要等：这个 id 若是本进程新增、上一次落盘又失败了，管理员
+  // 修好磁盘再跑一次正是最自然的重试动作，不能因为「Map 里已经有了」就静默
+  // 跳过——那会连着两次都告诉他成功了，而文件里根本没有这条记录。
+  const requeued: boolean = newlyBlocked ? false : ensureBlocklistEntryQueued(targetUser.id);
+  const persisted: boolean = newlyBlocked || requeued ? await confirmBlocklistPersisted() : true;
+
+  // 封禁清单：所有已记录「机器人是管理员」的群。本群是管理员时排最前
+  // （踢发起群里的目标最紧迫），不是管理员时不进清单——试也没用。共享
+  // bot.api 已安装限流与自动重试，但跨群封禁仍保持串行，避免一次命令制造
+  // 突发请求，也让成功/失败计数按确定顺序收敛。
+  const targetChatIds: number[] = isAdminHere ? [chatId] : [];
+  for (const [adminChatId, chatState] of getAllChatStates()) {
+    if (chatState.botIsAdmin === true && adminChatId !== chatId) {
+      targetChatIds.push(adminChatId);
+    }
+  }
+
+  const targetLabel: string = formatUserLabel(targetUser);
+  // 落盘失败必须说破：那条记录只活在本进程内存里，重启就没了，而管理员默认
+  // 理解的是「永久」。
+  const persistWarning: string = persisted ? "" : `（不过小本本没能写进硬盘，重启就忘了，杂鱼管理员快去查磁盘）`;
+  // 一个管理的群都没有时也已经记进黑名单了：现在踢不动，不代表以后进群时
+  // 也放过 TA。文案要说清这一点，否则管理员会以为这条命令完全没生效。
+  if (targetChatIds.length === 0) {
+    await sendMessage({
+      chatId,
+      text: `笨蛋，本天才连一个群的管理员都不是，${targetLabel} 现在踢也踢不动，不过已经记进小本本了${persistWarning}——再进本天才盯着的任何群就秒踢♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+
+  // 频道马甲（sender_chat）没有「成员」这个概念，banChatSenderChat 本来就
+  // 只是拉黑发言权，不存在「把它踢出去」一说，一律算封禁，不查成员状态。
+  let kickedCount: number = 0;
+  let preBannedCount: number = 0;
+  // 封禁失败的群要重新欠一次补扫：这个群若早就扫过，sweptAt 那道闩锁会让它
+  // 永不重扫，而入群秒踢只对之后的入群更新生效——被拉黑的人就这么在那个群里
+  // 待到进程结束（见 infra/blocklist.ts 的 requestBlocklistResweep）。
+  const resweepChatIds: number[] = [];
+  for (const targetChatId of targetChatIds) {
+    if (targetUser.isChannel) {
+      if (await banChatSenderChat(targetChatId, targetUser.id)) preBannedCount++;
+      else resweepChatIds.push(targetChatId);
+      continue;
+    }
+    // 先查目标此刻是否在这个群里，再决定战报里算「踢出去」还是「提前拉黑」——
+    // banChatMember 本身对两种情况效果一样（都会加入封禁名单），只是文案不能
+    // 把「根本没进过的群」也说成踢出去了。
+    const wasMember: boolean = await isChatMember(targetChatId, targetUser.id);
+    const banned: boolean = await banChatMember(targetChatId, targetUser.id);
+    if (banned) {
+      if (wasMember) kickedCount++;
+      else preBannedCount++;
+    } else {
+      resweepChatIds.push(targetChatId);
+    }
+    // 个别群失败（比如管理员身份记录已过时、缺封禁权限）不中断其余群：
+    // banChatMember/banChatSenderChat 内部已带群号记了日志，够排查。
+  }
+  // 权限恢复后由下一次管理员身份观测把这些群重扫一遍，不用管理员再跑一次 /block。
+  for (const resweepChatId of resweepChatIds) requestBlocklistResweep(resweepChatId);
+
+  const bannedCount: number = kickedCount + preBannedCount;
+  if (bannedCount === 0) {
+    const replyText: string = `呜……${targetLabel} 居然一个群都踢不动，是本天才没有封禁权限吧？杂鱼管理员快去检查——不过 TA 已经记进小本本了${persistWarning}，再进群就秒踢♡`;
+    await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+    return;
+  }
+
+  // 本群不是管理员时明确说清：本群这个人还留着，被拉黑的是其它群。
+  const notAdminHereNote: string = isAdminHere ? "" : `本天才在这个群不是管理员、这里踢不动 TA，不过——`;
+  const failedCount: number = targetChatIds.length - bannedCount;
+  const failedNote: string = failedCount > 0 ? `（还有 ${failedCount} 个群没踢动，杂鱼管理员快去检查权限）` : "";
+  // 踢出去/提前拉黑文案区分见函数顶部说明。
+  const kickedNote: string = kickedCount > 0 ? `从 ${kickedCount} 个群一脚踢出去还上了黑名单` : "";
+  const preBannedNote: string = preBannedCount > 0 ? `在 ${preBannedCount} 个群提前拉黑（根本没让 TA 进去过）` : "";
+  const actionNote: string = [kickedNote, preBannedNote].filter(Boolean).join("，");
+  // 本来就在名单里的人再 /block 一次不该被说成「刚记上」，但封禁照做一遍——
+  // 期间新加的群、上一次失败的群都靠这次补上。落盘警告两条路都要带：重复
+  // /block 正是上一次没写进硬盘时的重试动作，还没写成功就不能不说。
+  const blocklistNote: string = newlyBlocked
+    ? `，杂鱼永远别想回来了${persistWarning}`
+    : `（早就在小本本上了${persistWarning}）`;
+  const noticeMessageId: number | undefined = await sendMessage({
+    chatId,
+    text: `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}${blocklistNote}♡`,
+    replyToMessageId: messageId,
+  });
+  if (noticeMessageId !== undefined) {
+    deleteMessageAfter({ chatId, messageId: noticeMessageId, delayMs: KICK_NOTICE_AUTO_DELETE_MS });
+  }
+}

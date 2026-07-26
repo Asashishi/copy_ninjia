@@ -55,7 +55,11 @@ describe("AI 限频提示", () => {
     notifyRateLimited(CHAT_ID, NOW);
     await Bun.sleep(0);
 
-    expect(sendMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: RATE_LIMIT_NOTICE_TEXT });
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID,
+      text: RATE_LIMIT_NOTICE_TEXT,
+      signal: expect.any(AbortSignal),
+    });
     expect(postMessage).toHaveBeenCalledWith({ type: "sent", chatId: CHAT_ID, messageId: 501 });
     expect(recordChatMessage).toHaveBeenCalledWith({
       chatId: CHAT_ID,

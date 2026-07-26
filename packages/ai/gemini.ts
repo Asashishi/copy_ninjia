@@ -71,6 +71,9 @@ export async function requestGeminiResult(body: GenerateContentParameters, error
       },
     });
   } catch (error: unknown) {
+    if (body.config?.abortSignal?.aborted === true) {
+      return { ok: false, diagnostic: "request aborted" };
+    }
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
       logger.error(`${errorLabel} error: ${error.status} ${error.message}`);

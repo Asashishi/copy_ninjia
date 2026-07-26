@@ -51,6 +51,8 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 | `memory/stickers/` | Sticker-description catalog | Reconstructible by reconciling online packs |
 | `memory/luck/` | Fortune results + `receipt-secret.json` | Back up the key and current-day results in one consistent snapshot; never regenerate only the key |
 | `memory/anti-raid/` | Daily pending-verification state | Only the current Tokyo-day file is retained |
+| `memory/blocklist-removals.json` | Durable outbox for unfinished blocklist-removal batches | Back up with `state.json` and `config/blocklist.json`; startup strictly validates the current format |
+| `config/blocklist.json` | `/block` permanent blocklist (user ids + block time) | Must be backed up: losing it unblocks everyone. Hand-editing (the only way to unblock) must happen while the process is stopped and must leave valid JSON: unlike the logs, a damaged blocklist **refuses startup** instead of self-healing by truncation — silently dropping entries would let exactly those people back in. Keys must be plain decimal ids that round-trip exactly |
 | `logs/` | Error logs with English messages | As needed |
 | `bot.lock` and `.guard` / `.recovery` | Single-instance lock | Do not back up or edit manually |
 
@@ -76,6 +78,7 @@ The lock file has the strict format `v2:pid:starttime:boot_id:sha256(token)`, wh
 - **Another process is really running**: only a matching PID, starttime, and boot ID count as a live owner. Stop that process first. A data root is globally exclusive and cannot be used by two instances.
 - **Stale v2 lock** after a dead process or machine restart: the next startup or exit removes it automatically; no manual action is needed.
 - **Old or damaged format**: incompatible locks are not read, automatically migrated, or guessed from PID. After confirming that no related process is running, delete the old lock manually and restart.
+- **Release fails during shutdown**: the process exits nonzero and leaves the lock in place because ownership could not be verified or unlink failed. Resolve the reported filesystem or ownership error first; do not delete a lock whose owner may still be active.
 - `.candidate.*` files are candidates used by the hard-link lock protocol. `.tmp` files are temporary atomic rewrites of `state.json` or the lock registry. Normal operations remove them; current-format leftovers are reclaimed at startup after the owner is confirmed inactive or the instance lock is acquired.
 
 The token fingerprint identifies the lock owner; it is not a data-isolation boundary. Parallel bot deployments must use separate data-root directories.

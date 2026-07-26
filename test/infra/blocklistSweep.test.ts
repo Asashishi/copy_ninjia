@@ -1,0 +1,404 @@
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { BlockedMemberRemover } from "../../packages/types/blocklist";
+
+const states = new Map<number, Record<string, unknown>>();
+const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
+const persistAuthoritativeState = mock(async (): Promise<void> => {});
+/** 处置的执行 owner 替身：主线程侧只该「投出去」，不该自己打 API。 */
+const remover = mock(async (..._args: unknown[]): Promise<void> => {});
+
+mock.module("../../packages/infra/logger", () => ({
+  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+}));
+mock.module("../../packages/infra/telegram", () => ({
+  bot: { botInfo: { id: 99 }, api: { getChatMember } },
+}));
+mock.module("../../packages/infra/diskIO", () => ({
+  postDiskIO: (): boolean => true,
+  onDiskIORespawn: (): void => {},
+  relayLogMessage: (): boolean => true,
+  flushDiskIO: async (): Promise<string> => "flushed",
+  // /block 只等黑名单这一个领域的落盘回执（见 confirmBlocklistPersisted）。
+  flushDiskIODomain: async (): Promise<string> => "flushed",
+  lastFailedDiskIODomains: (): readonly string[] => [],
+}));
+mock.module("../../packages/infra/storage/stateStore", () => ({
+  getAllChatStates: (): ReadonlyMap<number, Record<string, unknown>> => states,
+  getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
+  getOrCreateChatState: (chatId: number): Record<string, unknown> => {
+    const current = states.get(chatId) ?? {};
+    states.set(chatId, current);
+    return current;
+  },
+  clearChatStateField: (): boolean => false,
+  pruneDepartedChatState: (): void => {},
+  persistAuthoritativeState,
+  saveStateInBackground: (): void => {},
+}));
+mock.module("../../packages/infra/chatTeardown", () => ({
+  teardownRegisteredChat: async (): Promise<void> => {},
+  registerChatTeardown: (): void => {},
+}));
+
+const {
+  forgetChatBlocklistWork,
+  registerBlockedMemberRemover,
+  replayPendingBlockedRemovals,
+  requestBlocklistResweep,
+  settleBlockedRemoval,
+  sweepBlockedMembers,
+  trackBlockedRemoval,
+} = await import("../../packages/infra/blocklist");
+const { WorkerUndeliveredError } = await import("../../packages/libs/workerDelivery");
+const {
+  BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
+  BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
+} = await import("../../packages/consts/antiRaid/blocklist");
+const { handleMyChatMemberUpdate, markBotAdminObserved } = await import("../../packages/infra/botAdmin");
+const {
+  blockedMemberRemoverHolder,
+  blockedUserIds,
+  blocklistSweepState,
+  pendingBlockedRemovals,
+} = await import("../../packages/cache/blocklist");
+
+/** 上一次投出去的那批处置的编号。 */
+function lastRemovalId(): number {
+  return (remover.mock.calls.at(-1)![0] as readonly { removalId: number }[])[0]!.removalId;
+}
+
+function expectLastRemoval(expected: Record<string, unknown>): void {
+  expect(remover.mock.calls.at(-1)?.[0]).toEqual([
+    expect.objectContaining(expected),
+  ]);
+}
+
+/** Worker 回执：这批处置全部落定 / 没能落定。 */
+function settleLast(complete: boolean, chatId: number = -1001): void {
+  settleBlockedRemoval({ type: "blockedMembersRemoved", chatId, removalId: lastRemovalId(), complete });
+}
+
+/** 一条机器人自身成员状态变化的 my_chat_member 更新。 */
+function promotion(newStatus: string, oldStatus: string): never {
+  return {
+    myChatMember: {
+      chat: { id: -1001, type: "supergroup" },
+      old_chat_member: { status: oldStatus },
+      new_chat_member: { status: newStatus },
+    },
+  } as never;
+}
+
+beforeEach(() => {
+  states.clear();
+  blockedUserIds.clear();
+  blocklistSweepState.clear();
+  pendingBlockedRemovals.clear();
+  remover.mockClear();
+  getChatMember.mockClear();
+  persistAuthoritativeState.mockClear();
+  remover.mockImplementation(async (): Promise<void> => {});
+  registerBlockedMemberRemover(remover as unknown as BlockedMemberRemover);
+});
+
+describe("黑名单清扫", () => {
+  test("只取名单快照交给执行 owner，主线程自己不打任何 Telegram API", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    blockedUserIds.set(-4004, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    await sweepBlockedMembers(-1001);
+
+    expect(remover).toHaveBeenCalledTimes(1);
+    // probeMembership=true：这是名单快照，不确定人在不在群里，Worker 必须
+    // 逐个探一次；那 O(名单长度) 次请求不该发生在主线程。
+    expect(remover).toHaveBeenCalledWith([{
+      chatId: -1001,
+      userIds: [7, -4004],
+      probeMembership: true,
+      removalId: expect.any(Number),
+    }]);
+    expect(getChatMember).not.toHaveBeenCalled();
+    // 回执之前批次一直挂在镜像里：Worker 崩溃时它是唯一的重放依据。
+    expect(pendingBlockedRemovals.size).toBe(1);
+  });
+
+  test("落地回执才销镜像：没落定的批次留着等重投", () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    void sweepBlockedMembers(-1001);
+    settleLast(false);
+    expect(pendingBlockedRemovals.size).toBe(1);
+
+    settleLast(true);
+    expect(pendingBlockedRemovals.size).toBe(0);
+  });
+
+  test("Worker 重建后整批重投未销账的处置", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001);
+    trackBlockedRemoval({ chatId: -1002, userIds: [8], probeMembership: false });
+    remover.mockClear();
+
+    replayPendingBlockedRemovals();
+
+    // 重复 ban 幂等，漏掉却意味着那个人一直坐在群里；重放必须合并成一次
+    // write-ahead/flush/barrier，不能按 outbox 条目重复序列化完整快照。
+    expect(remover).toHaveBeenCalledTimes(1);
+    expect(remover).toHaveBeenCalledWith([
+      expect.objectContaining({ chatId: -1001, userIds: [7] }),
+      expect.objectContaining({ chatId: -1002, userIds: [8] }),
+    ]);
+  });
+
+  test("Worker 没收到、屏障失败或落盘失败都保留 durable outbox 任务", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    // 屏障超时/落盘失败：消息已经进了 Worker 信箱，删镜像等于毁掉唯一的重放
+    // 依据，那批副作用就永远没人认领了。
+    remover.mockRejectedValueOnce(new Error("Anti-Raid Worker barrier timedOut."));
+    await expect(sweepBlockedMembers(-1001, 1_000)).rejects.toThrow("barrier timedOut");
+    expect(pendingBlockedRemovals.size).toBe(1);
+
+    pendingBlockedRemovals.clear();
+    blocklistSweepState.clear();
+
+    // post() 返回 false 时 update 会重投，但 outbox 是独立的跨进程恢复边界，
+    // 不能依赖 Telegram 仍保留旧 update 来替代它。
+    remover.mockRejectedValueOnce(new WorkerUndeliveredError("Anti-Raid Worker is unavailable."));
+    await expect(sweepBlockedMembers(-1001, 1_000)).rejects.toThrow("unavailable");
+    expect(pendingBlockedRemovals.size).toBe(1);
+  });
+
+  test("投递抛错时不踩掉抢先到达的回执", async () => {
+    // Worker 收下后同步派发完、主线程还卡在落盘屏障上时，complete 回执会先到。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    remover.mockImplementationOnce(async (...args: unknown[]): Promise<void> => {
+      const removals: readonly { removalId: number }[] =
+        args[0] as readonly { removalId: number }[];
+      settleBlockedRemoval({
+        type: "blockedMembersRemoved",
+        chatId: -1001,
+        removalId: removals[0]!.removalId,
+        complete: true,
+      });
+      throw new Error("Anti-Raid persistence failed.");
+    });
+
+    await expect(sweepBlockedMembers(-1001, 1_000)).rejects.toThrow("persistence failed");
+
+    // 回执写下的 sweptAt 不能被 catch 覆盖掉，否则这个群会被反复重扫。
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toEqual(expect.any(Number));
+  });
+
+  test("同群重试不沉积副本：新一轮补扫取代旧批次", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLast(false);
+    expect(pendingBlockedRemovals.size).toBe(1);
+
+    await sweepBlockedMembers(-1001, 1_000 + 300_000);
+
+    // 名单只增不减，新快照是旧批次的超集；不删就是每个退避窗口沉积一份完整
+    // userIds 副本，且每次 Worker 重建全量重投。
+    expect(pendingBlockedRemovals.size).toBe(1);
+  });
+
+  test("确认没落地达到告警阈值后仍保留 durable 任务", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    const removalId: number = lastRemovalId();
+
+    for (let attempt: number = 1; attempt <= BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS; attempt++) {
+      settleBlockedRemoval({ type: "blockedMembersRemoved", chatId: -1001, removalId, complete: false });
+      expect(pendingBlockedRemovals.size).toBe(1);
+    }
+    expect(pendingBlockedRemovals.get(removalId)?.attempts)
+      .toBe(BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS);
+    expect(pendingBlockedRemovals.get(removalId)?.lastFailure)
+      .toBe("side-effect-incomplete");
+  });
+
+  test("outbox 达到硬顶后背压新任务，不静默覆盖旧任务", () => {
+    for (let index: number = 0; index < BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES; index++) {
+      trackBlockedRemoval({
+        chatId: -1001,
+        userIds: [index + 1],
+        probeMembership: false,
+      });
+    }
+
+    expect(pendingBlockedRemovals.size).toBe(BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES);
+    expect((): void => {
+      trackBlockedRemoval({ chatId: -1001, userIds: [99_999], probeMembership: false });
+    }).toThrow("capacity");
+    expect(pendingBlockedRemovals.size).toBe(BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES);
+  });
+
+  test("停管连在途批次一起丢弃：重建后不在已放手的群里继续封人", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    expect(pendingBlockedRemovals.size).toBe(1);
+    remover.mockClear();
+
+    forgetChatBlocklistWork(-1001);
+    replayPendingBlockedRemovals();
+
+    // Worker 侧的处置世代只活在 isolate 里，重建即归零，拦不住重放——停管
+    // 必须由主线程权威判定。
+    expect(pendingBlockedRemovals.size).toBe(0);
+    expect(remover).not.toHaveBeenCalled();
+    expect(blocklistSweepState.has(-1001)).toBeFalse();
+  });
+
+  test("名单为空时连消息都不投", async () => {
+    await sweepBlockedMembers(-1001);
+    expect(remover).not.toHaveBeenCalled();
+  });
+
+  test("没有注册 owner 时是显式 no-op，不抛错", async () => {
+    blockedMemberRemoverHolder.current = (): Promise<void> => Promise.resolve();
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    await sweepBlockedMembers(-1001);
+
+    expect(remover).not.toHaveBeenCalled();
+  });
+});
+
+describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () => {
+  test("已初始化的群里被任命管理员：投出清扫", async () => {
+    states.set(-1001, { isInitEnabled: true });
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    await handleMyChatMemberUpdate(promotion("administrator", "member"));
+
+    expectLastRemoval({ chatId: -1001, userIds: [7], probeMembership: true });
+  });
+
+  test("扫过一次就不再重复扫：每条更新都重扫会把验证队列压死", async () => {
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    // 管理员权限变更（比如加了删消息权）也走 my_chat_member。第一次仍要补扫
+    // ——「早就是管理员」的群此前一次都没扫过，正是把边沿挂在身份变更上时
+    // 永远等不到的那一类。
+    await handleMyChatMemberUpdate(promotion("administrator", "administrator"));
+    expect(remover).toHaveBeenCalledTimes(1);
+    settleLast(true);
+
+    remover.mockClear();
+    await handleMyChatMemberUpdate(promotion("administrator", "administrator"));
+    expect(remover).not.toHaveBeenCalled();
+  });
+
+  test("没扫完不算扫过：退避窗口过去后再试一次", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLast(false);
+    remover.mockClear();
+
+    // 触发点是每条入群更新都会来的管理员身份观测：不设退避就是请求风暴。
+    await sweepBlockedMembers(-1001, 2_000);
+    expect(remover).not.toHaveBeenCalled();
+
+    await sweepBlockedMembers(-1001, 1_000 + 300_000);
+    expect(remover).toHaveBeenCalledTimes(1);
+  });
+
+  test("身份从未记录过、又观测到已是管理员：同样算成立的那一刻", async () => {
+    // /init enable 会作废身份记录，之后第一次确证（收到别人的 chat_member、
+    // 或按需现查）就是合取重新成立的边沿。
+    states.set(-1001, { isInitEnabled: true });
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    await markBotAdminObserved(-1001);
+
+    expectLastRemoval({ chatId: -1001, userIds: [7], probeMembership: true });
+
+    // 再观测一次不再扫。
+    remover.mockClear();
+    await markBotAdminObserved(-1001);
+    expect(remover).not.toHaveBeenCalled();
+  });
+
+  test("被撤管理员时不清扫：合取由成立变为不成立", async () => {
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    await handleMyChatMemberUpdate(promotion("member", "administrator"));
+
+    expect(remover).not.toHaveBeenCalled();
+  });
+
+  test("还没 /init enable 的群不清扫，哪怕这一刻成了管理员", async () => {
+    // my_chat_member 会绕过 isInitEnabled 网关送达，这里必须自己把关，
+    // 否则机器人一被拉进任何群当管理员就会在别人群里踢人。合取的另一半
+    // 之后由 /init enable 补上，那一刻才轮到清扫。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+
+    await handleMyChatMemberUpdate(promotion("administrator", "member"));
+
+    expect(remover).not.toHaveBeenCalled();
+  });
+
+  test("秒踢批次没落定：让这个群重新欠一次补扫，而不是只等 Worker 崩溃", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLast(true);
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toEqual(expect.any(Number));
+
+    // 秒踢那一路的批次编号跟补扫进度对不上；黑名单入群不开验证窗口、没有超时
+    // 踢人兜底，这批失败就是那个人留在群里的全部原因。
+    const kick = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false, joinedAt: 2_000 });
+    settleBlockedRemoval({ type: "blockedMembersRemoved", chatId: -1001, removalId: kick.removalId, complete: false });
+
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
+  });
+
+  test("/block 封禁失败的群被标回「欠一次」，退避过后重扫", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLast(true);
+    remover.mockClear();
+
+    // sweptAt 是永久闩锁，唯一的复位路径本来只有停管：那个群里被拉黑的人会
+    // 一直待到进程结束。
+    requestBlocklistResweep(-1001, 2_000);
+    await sweepBlockedMembers(-1001, 2_000);
+
+    expect(remover).toHaveBeenCalledTimes(1);
+  });
+
+  test("在途期间请求的重扫不会被随后的 complete 回执抹掉", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+
+    // /block 在这个群封禁失败时，补扫批次可能还在跑。回执若照常写 sweptAt，
+    // 这次请求就丢了——而它正是冲着「这个群里还留着人」来的。
+    requestBlocklistResweep(-1001, 1_500);
+    settleLast(true);
+
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
+    remover.mockClear();
+    await sweepBlockedMembers(-1001, 2_000);
+    expect(remover).toHaveBeenCalledTimes(1);
+  });
+
+  test("从没扫过的群不必记账：本来就欠着一次", () => {
+    requestBlocklistResweep(-1001, 2_000);
+    expect(blocklistSweepState.has(-1001)).toBeFalse();
+  });
+
+  test("先给管理员、后 /init enable：清扫在 enable 那一刻补上", async () => {
+    // 最常见的上线顺序。管理员那一跳发生时群还没初始化，扫不了；enable
+    // 之后身份记录被作废并重新判定，合取这时才成立。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await handleMyChatMemberUpdate(promotion("administrator", "member"));
+    expect(remover).not.toHaveBeenCalled();
+
+    states.set(-1001, { isInitEnabled: true });
+    await markBotAdminObserved(-1001);
+
+    expectLastRemoval({ chatId: -1001, userIds: [7], probeMembership: true });
+  });
+});

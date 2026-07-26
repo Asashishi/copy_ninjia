@@ -11,7 +11,15 @@ mock.module("../../packages/infra/logger", () => ({
 mock.module("../../packages/infra/telegram", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },
 }));
+mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
+// botAdmin -> blocklist 的新晋管理员清扫会取这三个；本文件不触发（名单为空）。
+mock.module("../../packages/infra/telegram/actions", () => ({
+  isChatMember: async (): Promise<boolean> => false,
+  banChatMember: async (): Promise<boolean> => true,
+  banChatSenderChat: async (): Promise<boolean> => true,
+}));
 mock.module("../../packages/infra/storage/stateStore", () => ({
+  getAllChatStates: (): ReadonlyMap<number, Record<string, unknown>> => states,
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
     let state = states.get(chatId);

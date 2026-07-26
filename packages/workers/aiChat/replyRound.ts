@@ -23,7 +23,13 @@ import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { callGemini } from "./geminiReply";
 import { buildReplyPromptSections, type MediaCommentContext } from "./promptContext";
 import { replyReferenceForBufferedMessage } from "./replyChain";
-import { currentReplyGeneration, isReplyGenerationCurrent, notifyRateLimited } from "./replyState";
+import {
+  currentReplyGeneration,
+  isReplyGenerationCurrent,
+  notifyRateLimited,
+  replyGenerationSignal,
+  trackReplyGenerationTask,
+} from "./replyState";
 import { recordChatMessage } from "./rollingMemory";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
 import type { ChatActionHeartbeatControl } from "../../types/aiChat/chatAction";
@@ -90,8 +96,10 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
   longTimes.push(now);
   activeReplyCounts.set(chatId, (activeReplyCounts.get(chatId) ?? 0) + 1);
 
-  void (async (): Promise<void> => {
-    const isActive = (): boolean => isReplyGenerationCurrent(chatId, generation);
+  const signal: AbortSignal = replyGenerationSignal(chatId, generation);
+  const task: Promise<void> = (async (): Promise<void> => {
+    const isActive = (): boolean =>
+      !signal.aborted && isReplyGenerationCurrent(chatId, generation);
     const stickerLock: StickerSendLockControl = createStickerSendLock(chatId);
     // 提示词和工具 schema 必须共用同一次抽签，否则配置概率不等于实际错字概率。
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
@@ -106,7 +114,8 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
       if (!promptSections) return;
 
       // 心跳从 idle 起步，只有具体发送工具临发前才显示输入或选择贴纸状态。
-      const heartbeat: ChatActionHeartbeatControl = startChatActionHeartbeat(chatId);
+      const heartbeat: ChatActionHeartbeatControl =
+        startChatActionHeartbeat(chatId, undefined, signal);
       try {
         /** 只为 Telegram 实际返回的回复目标建边；目标已滑出热区时退回轮次
          * 开始前捕获的触发快照。 */
@@ -126,6 +135,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           stickerLock,
           roundHasTypo,
           isActive,
+          signal,
           onMessageSent: (text: string, messageId: number, repliedToMessageId?: number): void => {
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
             if (isActive()) {
@@ -207,6 +217,8 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
       onFinished(chatId);
     }
   })().catch((error: unknown): void => {
+    if (signal.aborted) return;
     logger.error("Error in AI reply task:", error);
   });
+  trackReplyGenerationTask(chatId, generation, task);
 }

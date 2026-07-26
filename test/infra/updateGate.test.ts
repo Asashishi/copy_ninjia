@@ -126,7 +126,7 @@ describe("shouldPassPrivateCommandGate", () => {
   });
 
   test("caption 里的指令同样拦下：bot.hears 对 caption 也匹配", () => {
-    // bot.command 只认 text，但 `/咬` 这类单字中文动作命令走 bot.hears，text 和
+    // bot.command 只认 text，但 `/咬` 这类中文动作命令走 bot.hears，text 和
     // caption 都会匹配。网关只看 text 的话，一张 caption 写着指令的图片就能绕过
     // 私聊封锁，让任意陌生人驱使机器人在私聊里作答、并借回复差异探测缓存。
     const ctx = fakeCtx({

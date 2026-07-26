@@ -2,14 +2,20 @@ import { InputFile } from "grammy";
 import type { Api, InlineKeyboard } from "grammy";
 import type { Message, MessageEntity, ReactionTypeEmoji, ChatMember, MessageId } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
+import {
+  combineWithUpdateAbortSignal,
+  currentUpdateAbortSignal,
+  throwIfUpdateAborted,
+} from "../updateContext";
 import { bot, logApiError } from "./client";
 import type { TelegramSendResult } from "../../types/telegram";
 
-export interface RunTelegramActionParams<T, R> {
+interface RunTelegramActionParams<T, R> {
   action: string;
-  execute: () => Promise<T>;
+  execute: (signal?: AbortSignal) => Promise<T>;
   map: (result: T) => R;
   fallback: R;
+  signal?: AbortSignal;
   shouldLogError?: (error: unknown) => boolean;
 }
 
@@ -25,11 +31,22 @@ async function runTelegramAction<T, R>({
   execute,
   map,
   fallback,
+  signal,
   shouldLogError,
 }: RunTelegramActionParams<T, R>): Promise<R> {
+  const updateSignal: AbortSignal | undefined = currentUpdateAbortSignal();
+  const actionSignal: AbortSignal | undefined = combineWithUpdateAbortSignal(signal);
+  throwIfUpdateAborted(updateSignal);
   try {
-    return map(await execute());
+    const mapped: R = map(await execute(actionSignal));
+    // 远端可能在 abort 竞态中已经提交成功；先做 map 中最小的 self-sent
+    // 记账，再把 update 取消向上抛出，禁止 handler 继续后续业务写入。
+    throwIfUpdateAborted(updateSignal);
+    return mapped;
   } catch (error: unknown) {
+    if (updateSignal?.aborted === true) {
+      throwIfUpdateAborted(updateSignal);
+    }
     if (shouldLogError?.(error) !== false) logApiError(action, error);
     return fallback;
   }
@@ -49,12 +66,18 @@ function toSendResult(chatId: number, sent: Message): TelegramSendResult {
 }
 
 /** 执行只关心是否成功的 Telegram 动作。 */
-async function runBooleanTelegramAction(action: string, execute: () => Promise<unknown>): Promise<boolean> {
+async function runBooleanTelegramAction(
+  action: string,
+  execute: (signal?: AbortSignal) => Promise<unknown>,
+  signal?: AbortSignal
+): Promise<boolean> {
   return runTelegramAction({
     action,
     execute,
     map: (): boolean => true,
     fallback: false,
+    signal,
+    shouldLogError: (): boolean => combineWithUpdateAbortSignal(signal)?.aborted !== true,
   });
 }
 
@@ -92,20 +115,26 @@ export async function sendMessageWithResult({
 }: SendMessageParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send message",
-    execute: async (): Promise<Message.TextMessage> => {
+    execute: async (requestSignal?: AbortSignal): Promise<Message.TextMessage> => {
       const other: Parameters<Api["sendMessage"]>[2] = {
         ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
         ...(keyboard ? { reply_markup: keyboard } : {}),
         ...(entities && entities.length > 0 ? { entities: [...entities] } : {}),
         ...(disableLinkPreview ? { link_preview_options: { is_disabled: true } } : {}),
       };
-      return signal === undefined
+      return requestSignal === undefined
         ? api.sendMessage(chatId, text, other)
-        : api.sendMessage(chatId, text, other, signal as unknown as Parameters<Api["sendMessage"]>[3]);
+        : api.sendMessage(
+          chatId,
+          text,
+          other,
+          requestSignal as unknown as Parameters<Api["sendMessage"]>[3]
+        );
     },
     map: (sent: Message.TextMessage): TelegramSendResult | undefined => toSendResult(chatId, sent),
     fallback: undefined,
-    shouldLogError: (): boolean => signal?.aborted !== true,
+    signal,
+    shouldLogError: (): boolean => combineWithUpdateAbortSignal(signal)?.aborted !== true,
   });
 }
 
@@ -114,16 +143,61 @@ export async function sendMessage(params: SendMessageParams): Promise<number | u
   return (await sendMessageWithResult(params))?.messageId;
 }
 
-export async function sendTypingAction(chatId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction("send typing action", (): Promise<true> => api.sendChatAction(chatId, "typing"));
+export async function sendTypingAction(
+  chatId: number,
+  api: Api = bot.api,
+  signal?: AbortSignal
+): Promise<boolean> {
+  return runBooleanTelegramAction(
+    "send typing action",
+    (requestSignal?: AbortSignal): Promise<true> => requestSignal === undefined
+      ? api.sendChatAction(chatId, "typing")
+      : api.sendChatAction(
+        chatId,
+        "typing",
+        {},
+        requestSignal as unknown as Parameters<Api["sendChatAction"]>[3]
+      ),
+    signal
+  );
 }
 
-export async function sendUploadPhotoAction(chatId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction("send upload photo action", (): Promise<true> => api.sendChatAction(chatId, "upload_photo"));
+export async function sendUploadPhotoAction(
+  chatId: number,
+  api: Api = bot.api,
+  signal?: AbortSignal
+): Promise<boolean> {
+  return runBooleanTelegramAction(
+    "send upload photo action",
+    (requestSignal?: AbortSignal): Promise<true> => requestSignal === undefined
+      ? api.sendChatAction(chatId, "upload_photo")
+      : api.sendChatAction(
+        chatId,
+        "upload_photo",
+        {},
+        requestSignal as unknown as Parameters<Api["sendChatAction"]>[3]
+      ),
+    signal
+  );
 }
 
-export async function sendChooseStickerAction(chatId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction("send choose sticker action", (): Promise<true> => api.sendChatAction(chatId, "choose_sticker"));
+export async function sendChooseStickerAction(
+  chatId: number,
+  api: Api = bot.api,
+  signal?: AbortSignal
+): Promise<boolean> {
+  return runBooleanTelegramAction(
+    "send choose sticker action",
+    (requestSignal?: AbortSignal): Promise<true> => requestSignal === undefined
+      ? api.sendChatAction(chatId, "choose_sticker")
+      : api.sendChatAction(
+        chatId,
+        "choose_sticker",
+        {},
+        requestSignal as unknown as Parameters<Api["sendChatAction"]>[3]
+      ),
+    signal
+  );
 }
 
 export interface AnswerCallbackQueryParams {
@@ -141,21 +215,48 @@ export async function answerCallbackQuery({
 }: AnswerCallbackQueryParams): Promise<void> {
   return runTelegramAction({
     action: "answer callback query",
-    execute: (): Promise<true> => api.answerCallbackQuery(callbackQueryId, { text, show_alert: showAlert }),
+    execute: (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.answerCallbackQuery(callbackQueryId, { text, show_alert: showAlert })
+      : api.answerCallbackQuery(
+        callbackQueryId,
+        { text, show_alert: showAlert },
+        signal as unknown as Parameters<Api["answerCallbackQuery"]>[2]
+      ),
     map: (): undefined => undefined,
     fallback: undefined,
   });
 }
 
-export async function sendSticker(chatId: number, fileId: string, api: Api = bot.api): Promise<number | undefined> {
+export interface SendStickerParams {
+  chatId: number;
+  fileId: string;
+  api?: Api;
+  signal?: AbortSignal;
+}
+
+export async function sendSticker({
+  chatId,
+  fileId,
+  api = bot.api,
+  signal,
+}: SendStickerParams): Promise<number | undefined> {
   return runTelegramAction({
     action: "send sticker",
-    execute: (): Promise<Message.StickerMessage> => api.sendSticker(chatId, fileId),
+    execute: (requestSignal?: AbortSignal): Promise<Message.StickerMessage> => requestSignal === undefined
+      ? api.sendSticker(chatId, fileId)
+      : api.sendSticker(
+        chatId,
+        fileId,
+        {},
+        requestSignal as unknown as Parameters<Api["sendSticker"]>[3]
+      ),
     map: (sent: Message.StickerMessage): number | undefined => {
       markSelfSent(chatId, sent.message_id);
       return sent.message_id;
     },
     fallback: undefined,
+    signal,
+    shouldLogError: (): boolean => combineWithUpdateAbortSignal(signal)?.aborted !== true,
   });
 }
 
@@ -165,6 +266,7 @@ export interface SendPhotoParams {
   mimeType: "image/jpeg" | "image/png";
   replyToMessageId?: number;
   api?: Api;
+  signal?: AbortSignal;
 }
 
 /** 从内存上传一张图片并返回 Telegram 实际建立的回复关系；不落临时文件。 */
@@ -174,17 +276,28 @@ export async function sendPhotoWithResult({
   mimeType,
   replyToMessageId,
   api = bot.api,
+  signal,
 }: SendPhotoParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send photo",
-    execute: async (): Promise<Message.PhotoMessage> => {
+    execute: async (requestSignal?: AbortSignal): Promise<Message.PhotoMessage> => {
       const extension: string = mimeType === "image/jpeg" ? "jpg" : "png";
-      return api.sendPhoto(chatId, new InputFile(bytes, `generated.${extension}`), {
+      const other: Parameters<Api["sendPhoto"]>[2] = {
         ...(replyToMessageId ? { reply_parameters: { message_id: replyToMessageId, allow_sending_without_reply: true } } : {}),
-      });
+      };
+      return requestSignal === undefined
+        ? api.sendPhoto(chatId, new InputFile(bytes, `generated.${extension}`), other)
+        : api.sendPhoto(
+          chatId,
+          new InputFile(bytes, `generated.${extension}`),
+          other,
+          requestSignal as unknown as Parameters<Api["sendPhoto"]>[3]
+        );
     },
     map: (sent: Message.PhotoMessage): TelegramSendResult | undefined => toSendResult(chatId, sent),
     fallback: undefined,
+    signal,
+    shouldLogError: (): boolean => combineWithUpdateAbortSignal(signal)?.aborted !== true,
   });
 }
 
@@ -198,18 +311,43 @@ export interface SetMessageReactionParams {
   messageId: number;
   emoji: string;
   api?: Api;
+  signal?: AbortSignal;
 }
 
 /** 设置一个标准 emoji 反应，覆盖机器人在该消息上已有的反应；仅 API 落地成功时返回 true。 */
-export async function setMessageReaction({ chatId, messageId, emoji, api = bot.api }: SetMessageReactionParams): Promise<boolean> {
+export async function setMessageReaction({
+  chatId,
+  messageId,
+  emoji,
+  api = bot.api,
+  signal,
+}: SetMessageReactionParams): Promise<boolean> {
   return runBooleanTelegramAction(
     "set message reaction",
-    (): Promise<true> => api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }])
+    (requestSignal?: AbortSignal): Promise<true> => requestSignal === undefined
+      ? api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }])
+      : api.setMessageReaction(
+        chatId,
+        messageId,
+        [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }],
+        {},
+        requestSignal as unknown as Parameters<Api["setMessageReaction"]>[4]
+      ),
+    signal
   );
 }
 
 export async function deleteMessage(chatId: number, messageId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction("delete message", (): Promise<true> => api.deleteMessage(chatId, messageId));
+  return runBooleanTelegramAction(
+    "delete message",
+    (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.deleteMessage(chatId, messageId)
+      : api.deleteMessage(
+        chatId,
+        messageId,
+        signal as unknown as Parameters<Api["deleteMessage"]>[2]
+      )
+  );
 }
 
 export interface DeleteMessageAfterParams {
@@ -230,41 +368,141 @@ export function deleteMessageAfter({ chatId, messageId, delayMs, api = bot.api }
 export async function kickChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   return runBooleanTelegramAction(
     `kick chat member (chat ${chatId}, user ${userId})`,
-    (): Promise<true> => api.unbanChatMember(chatId, userId)
+    (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.unbanChatMember(chatId, userId)
+      : api.unbanChatMember(
+        chatId,
+        userId,
+        {},
+        signal as unknown as Parameters<Api["unbanChatMember"]>[3]
+      )
   );
 }
 
 export async function banChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   return runBooleanTelegramAction(
     `ban chat member (chat ${chatId}, user ${userId})`,
-    (): Promise<true> => api.banChatMember(chatId, userId)
+    (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.banChatMember(chatId, userId)
+      : api.banChatMember(
+        chatId,
+        userId,
+        {},
+        signal as unknown as Parameters<Api["banChatMember"]>[3]
+      )
   );
+}
+
+/**
+ * 解除某人在这个群的封禁。**`only_if_banned` 不能省**：Bot API 的
+ * unbanChatMember 对「当前就是群成员」的人语义是把他移出群聊——上面那个
+ * kickChatMember 正是靠这一点实现「只踢不封」的。不带这个标志去批量解封，
+ * 会把那些本来好端端待在群里的人一个个踢出去。
+ * @returns 调用成功为 true；本来就没被封禁也算成功（该标志下是 no-op）。
+ */
+export async function unbanChatMemberIfBanned(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
+  return runBooleanTelegramAction(
+    `unban chat member (chat ${chatId}, user ${userId})`,
+    (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.unbanChatMember(chatId, userId, { only_if_banned: true })
+      : api.unbanChatMember(
+        chatId,
+        userId,
+        { only_if_banned: true },
+        signal as unknown as Parameters<Api["unbanChatMember"]>[3]
+      )
+  );
+}
+
+function isPresentMember(member: ChatMember): boolean {
+  if (member.status === "restricted") return member.is_member;
+  return member.status === "creator" || member.status === "administrator" || member.status === "member";
 }
 
 /** 查询失败按非成员处理，避免在未确认时生成“已踢出”的错误战报。 */
 export async function isChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
   return runTelegramAction({
     action: `check chat membership (chat ${chatId}, user ${userId})`,
-    execute: (): Promise<ChatMember> => api.getChatMember(chatId, userId),
-    map: (member: ChatMember): boolean => {
-      if (member.status === "restricted") return member.is_member;
-      return member.status === "creator" || member.status === "administrator" || member.status === "member";
-    },
+    execute: (signal?: AbortSignal): Promise<ChatMember> => signal === undefined
+      ? api.getChatMember(chatId, userId)
+      : api.getChatMember(
+        chatId,
+        userId,
+        signal as unknown as Parameters<Api["getChatMember"]>[2]
+      ),
+    map: isPresentMember,
     fallback: false,
+  });
+}
+
+/**
+ * 同上，但把「确认不在群」与「查询失败」分开。isChatMember 那种 fail-closed
+ * 的 boolean 适合战报措辞（没确认就不吹嘘已踢出），却不能用来决定要不要执行
+ * 处置——一次 429 被当成「不在群」就等于静默放过一个该被清出去的人。
+ * @returns 在群 true、确认不在群 false、查询失败 undefined（调用方自行决定
+ *   未确认时的偏向）。
+ */
+export async function probeChatMembership(
+  chatId: number,
+  userId: number,
+  api: Api = bot.api
+): Promise<boolean | undefined> {
+  return runTelegramAction<ChatMember, boolean | undefined>({
+    action: `probe chat membership (chat ${chatId}, user ${userId})`,
+    execute: (signal?: AbortSignal): Promise<ChatMember> => signal === undefined
+      ? api.getChatMember(chatId, userId)
+      : api.getChatMember(
+        chatId,
+        userId,
+        signal as unknown as Parameters<Api["getChatMember"]>[2]
+      ),
+    map: isPresentMember,
+    fallback: undefined,
   });
 }
 
 export async function banChatSenderChat(chatId: number, senderChatId: number, api: Api = bot.api): Promise<boolean> {
   return runBooleanTelegramAction(
     `ban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
-    (): Promise<true> => api.banChatSenderChat(chatId, senderChatId)
+    (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.banChatSenderChat(chatId, senderChatId)
+      : api.banChatSenderChat(
+        chatId,
+        senderChatId,
+        signal as unknown as Parameters<Api["banChatSenderChat"]>[2]
+      )
+  );
+}
+
+/**
+ * 解除某个频道马甲在这个群的发言封禁。频道身份没有「成员」这一说，因此不存在
+ * unbanChatMember 那种「解封等于踢人」的陷阱，直接调即可。
+ */
+export async function unbanChatSenderChat(chatId: number, senderChatId: number, api: Api = bot.api): Promise<boolean> {
+  return runBooleanTelegramAction(
+    `unban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
+    (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.unbanChatSenderChat(chatId, senderChatId)
+      : api.unbanChatSenderChat(
+        chatId,
+        senderChatId,
+        signal as unknown as Parameters<Api["unbanChatSenderChat"]>[2]
+      )
   );
 }
 
 export async function copyMessage(chatId: number, fromChatId: number, messageId: number): Promise<number | undefined> {
   return runTelegramAction({
     action: "copy message",
-    execute: (): Promise<MessageId> => bot.api.copyMessage(chatId, fromChatId, messageId),
+    execute: (signal?: AbortSignal): Promise<MessageId> => signal === undefined
+      ? bot.api.copyMessage(chatId, fromChatId, messageId)
+      : bot.api.copyMessage(
+        chatId,
+        fromChatId,
+        messageId,
+        {},
+        signal as unknown as Parameters<Api["copyMessage"]>[4]
+      ),
     map: (copied: MessageId): number | undefined => {
       markSelfSent(chatId, copied.message_id);
       return copied.message_id;

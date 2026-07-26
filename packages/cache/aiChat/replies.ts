@@ -29,6 +29,13 @@ export const activeReplyCounts: Map<number, number> = new Map();
 export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> = new Map();
 /** 已安排溢出提示的群集合；提示任务 settle 或群失效时删除。 */
 export const pendingOverflowNotices: Set<number> = new Set();
+/**
+ * 每个 chat:generation 的取消控制器。回复轮或限频提示开始时创建，invalidate
+ * 同步 abort 旧代；该代任务全部 settle 后删除。
+ */
+export const replyAbortControllers: Map<string, AbortController> = new Map();
+/** 每个 chat:generation 尚未 settle 的用户可见副作用任务。 */
+export const replyGenerationTasks: Map<string, Set<Promise<void>>> = new Map();
 
 /** 读取某群当前回复代际；未登记或 Worker 重建后返回 0。 */
 export function cachedReplyGeneration(chatId: number): number {
@@ -67,4 +74,7 @@ export function resetAiChatReplyCache(): void {
   activeReplyCounts.clear();
   pendingReplyTriggers.clear();
   pendingOverflowNotices.clear();
+  for (const controller of replyAbortControllers.values()) controller.abort();
+  replyAbortControllers.clear();
+  replyGenerationTasks.clear();
 }

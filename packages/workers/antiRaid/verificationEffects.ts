@@ -328,7 +328,14 @@ async function expelMember({
       api: joinVerificationApi,
     })
     : undefined;
-  if (!kicked) expectedState.failureNoticeSent = true;
+  // 只有真的发出去了才置位。sendMessage 失败返回 undefined（错误被
+  // infra/telegram/actions.ts 吞掉）；踢人失败 + 公告也失败时若照样置位，
+  // 终态重试再跑 expelMember 时 shouldSendNotice 已是 false，「本天才没有封禁
+  // 权限」这条唯一的诊断就永远不再尝试——未验证成员留在群里，管理员什么都
+  // 不知道。本来就已发过（shouldSendNotice === false）时保持不变。
+  if (!kicked && (!shouldSendNotice || noticeMessageId !== undefined)) {
+    expectedState.failureNoticeSent = true;
+  }
   if (noticeMessageId !== undefined && kicked) {
     deleteMessageAfter({
       chatId,

@@ -51,6 +51,8 @@ describe("logger persistence routing boundary", () => {
           key: Buffer.alloc(32, 1).toString("base64url"),
         },
         verifications: new Map(),
+        blockedUsers: new Map(),
+        pendingBlockedRemovals: new Map(),
       } satisfies DiskIOReply } as MessageEvent<DiskIOReply>);
       await loaded;
       worker.messages.length = 0;

@@ -14,7 +14,10 @@ const states = new Map<number, Record<string, unknown>>();
 mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
 mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
-mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, teardownChatRuntime }));
+// /init enable 之后会重新判定一次管理员身份，好让「是管理员 && 已初始化」
+// 那道边沿触发黑名单清扫（见 infra/botAdmin.ts）。
+const isBotAdminIn = mock(async (_chatId: number): Promise<boolean> => false);
+mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, isBotAdminIn, teardownChatRuntime }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getOrCreateChatState(chatId: number): Record<string, unknown> {
     let state = states.get(chatId);
@@ -101,6 +104,11 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
     expect(invalidateBotAdminStatus).toHaveBeenCalledTimes(2);
     expect(saveStateInBackground).toHaveBeenCalledTimes(2);
+    // enable 必须立刻重新判定管理员身份：作废之后不重判，「是管理员 && 已初始化」
+    // 那道边沿就永远等不到，「先给管理员、后 /init enable」的群不会被补扫黑名单。
+    expect(isBotAdminIn).toHaveBeenCalledWith(-1001);
+    // disable 不重判——那一刻合取本来就不成立。
+    expect(isBotAdminIn).toHaveBeenCalledTimes(1);
   });
 
   test("/init disable 拆运行态失败仍持久化禁用状态，但不发送成功提示", async () => {

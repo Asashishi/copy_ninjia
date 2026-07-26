@@ -96,12 +96,20 @@ function extractGeneratedImage(data: GenerateContentResponse): GeneratedChatImag
   return null;
 }
 
+export interface GenerateChatImageParams {
+  prompt: string;
+  aspectRatio: ImageGenerationAspectRatio;
+  referenceImage?: VisionImage;
+  signal?: AbortSignal;
+}
+
 /** 调用独立图片模型生成一张 1K 图片；文本段与思考中间图一律忽略。 */
-export async function generateChatImage(
-  prompt: string,
-  aspectRatio: ImageGenerationAspectRatio,
-  referenceImage?: VisionImage
-): Promise<GeneratedChatImage | null> {
+export async function generateChatImage({
+  prompt,
+  aspectRatio,
+  referenceImage,
+  signal,
+}: GenerateChatImageParams): Promise<GeneratedChatImage | null> {
   const contents: GenerateContentParameters["contents"] = referenceImage
     ? [{
       role: "user",
@@ -116,6 +124,7 @@ export async function generateChatImage(
       model: GEMINI_IMAGE_GENERATION_MODEL,
       contents,
       config: {
+        abortSignal: signal,
         responseModalities: ["TEXT", "IMAGE"],
         imageConfig: { aspectRatio, imageSize: "1K" },
       },

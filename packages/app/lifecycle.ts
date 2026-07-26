@@ -2,6 +2,7 @@ import {
   EMERGENCY_FLUSH_TIMEOUTS,
   EMERGENCY_REUSED_DISPOSE_DEADLINE_MS,
   NORMAL_FLUSH_TIMEOUTS,
+  RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS,
   RUNNER_DRAIN_POLL_INTERVAL_MS,
   RUNNER_DRAIN_TIMEOUT_MS,
 } from "../consts/lifecycle";
@@ -49,6 +50,7 @@ export class ApplicationLifecycle {
   private processHandlersInstalled: boolean = false;
   private fatalExitStarted: boolean = false;
   private maintenanceQuiesced: boolean = false;
+  private runnerCancellationUnsettled: boolean = false;
 
   private readonly stopOnSignal = (): void => {
     this.stopRequested = true;
@@ -133,6 +135,8 @@ export class ApplicationLifecycle {
     this.dependencies.hydrateStickerCatalog(loaded.stickerCatalogs);
     this.dependencies.restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
     this.dependencies.hydratePendingVerifications(loaded.verifications);
+    // 必须早于 runner 开始投喂更新：启动瞬间进群的黑名单用户要能立刻被认出来。
+    this.dependencies.hydrateBlocklist(loaded.blockedUsers, loaded.pendingBlockedRemovals);
     this.dependencies.initAntiRaid();
     this.flags.antiRaidInitialized = true;
 
@@ -264,6 +268,7 @@ export class ApplicationLifecycle {
       .finally(async (): Promise<void> => {
         await this.dispose();
         this.removeProcessHandlers();
+        if (this.runnerCancellationUnsettled) process.exit(1);
       });
   }
 
@@ -332,10 +337,24 @@ export class ApplicationLifecycle {
       await this.dependencies.sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
     }
     if (runner.size() > 0) {
+      const activeAtDeadline: number = runner.size();
       this.dependencies.logger.error(
-        `Shutdown proceeding with ${runner.size()} update(s) still being processed after waiting ${timeoutMs}ms; ` +
-        "their Telegram offset will not be confirmed."
+        `Shutdown drain still had ${activeAtDeadline} active update(s) after ${timeoutMs}ms; ` +
+        "aborting them and withholding their Telegram offset."
       );
+      runner.abortActive();
+      const cancellationDeadline: number =
+        Date.now() + RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS;
+      while (runner.size() > 0 && Date.now() < cancellationDeadline) {
+        await this.dependencies.sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
+      }
+      if (runner.size() > 0) {
+        this.runnerCancellationUnsettled = true;
+        this.dependencies.logger.error(
+          `${runner.size()} update(s) ignored shutdown cancellation for ` +
+          `${RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS}ms; forcing a failed process exit after best-effort flush.`
+        );
+      }
       return false;
     }
     return true;

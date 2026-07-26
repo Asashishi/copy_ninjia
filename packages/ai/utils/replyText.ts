@@ -2,6 +2,37 @@ import { truncateInline } from "../../libs/text";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
 
 /**
+ * 首尾那对方向性引号是不是**同一对**（真包裹整段），而不是两对各出一半。
+ * 从第二个字符扫到倒数第二个，depth 自 1 起，遇 open 加、遇 close 减，中途
+ * 归 0 就说明开头那个已经在中间闭合了。
+ */
+function isWrappedPair(text: string, open: string, close: string): boolean {
+  let depth: number = 1;
+  for (let index: number = 1; index < text.length - 1; index++) {
+    const char: string = text[index]!;
+    if (char === open) depth++;
+    else if (char === close) depth--;
+    if (depth === 0) return false;
+  }
+  return true;
+}
+
+/**
+ * 整段是不是被一对引号包住。只看首末两个字符是不够的：
+ * `「早安」和「晚安」` 的首末确实是 `「` 和 `」`，但它们分属两对，剥掉就把
+ * 正文两头各啃掉一个字——而这个字符串就是最终发进群里的正文。
+ * ASCII `"` 没有方向，无从数嵌套，改判「全文恰好两个 `"` 且分别在首末」。
+ */
+function isQuoteWrapped(text: string): boolean {
+  const first: string = text[0]!;
+  const last: string = text[text.length - 1]!;
+  if (first === '"' && last === '"') return text.indexOf('"', 1) === text.length - 1;
+  if (first === "「" && last === "」") return isWrappedPair(text, "「", "」");
+  if (first === "“" && last === "”") return isWrappedPair(text, "“", "”");
+  return false;
+}
+
+/**
  * 清洗模型给出的消息文本，得到可直接发送的纯文本：去掉联网搜索可能附带的
  * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
  * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
@@ -25,12 +56,8 @@ export function cleanReply(raw: string): string | null {
     text = fenceMatch[1].trim();
   }
 
-  if (text.length >= 2) {
-    const first: string = text[0]!;
-    const last: string = text[text.length - 1]!;
-    if ((first === '"' && last === '"') || (first === "「" && last === "」") || (first === "“" && last === "”")) {
-      text = text.slice(1, -1).trim();
-    }
+  if (text.length >= 2 && isQuoteWrapped(text)) {
+    text = text.slice(1, -1).trim();
   }
 
   if (!text) return null;
@@ -38,11 +65,34 @@ export function cleanReply(raw: string): string | null {
 }
 
 /**
- * 文本是否是「纯 emoji 消息」：至少含一个图形 emoji，且除 emoji 本体/emoji
- * 组件（肤色、变体选择符、ZWJ 等）/空白外没有任何其它字符。这类消息被
- * send_message 拒绝——机器人不直接发表情，能直接发的画面表达只有贴纸，
- * 对消息表态用 add_reaction。
+ * keycap 序列：`1️⃣` = `1` + 变体选择符 + 结合用括围记号。基字是普通 ASCII
+ * 数字/`#`/`*`，判定前必须整体剥掉，否则「含图形 emoji」那一半永远不成立。
+ */
+const KEYCAP_SEQUENCE: RegExp = /[0-9#*]️?⃣/gu;
+
+/**
+ * emoji 的附属码点：肤色修饰符、变体选择符、ZWJ。
+ *
+ * 这里刻意不用 `\p{Emoji_Component}`——按 Unicode 定义它**包含 ASCII 数字
+ * `0-9` 与 `#`、`*`**，于是 `🎉2026`、`🎂 30`、`👍 #1`、`😂233` 这类完全正常
+ * 的回复全被判成纯表情。后果有两级：send_message 拒绝这类回复；更糟的是
+ * workers/aiChat/replyRound.ts 的最终正文兜底走同一个执行器，模型的全部输出
+ * 正好是这样一句时工具报错、actionsUsed() 停在 0，机器人对着一条 @ 提及
+ * 完全沉默。
+ */
+const EMOJI_ATTACHMENT: string = "\\p{Emoji_Modifier}\\uFE0F\\u200D";
+
+/**
+ * 文本是否是「纯 emoji 消息」：至少含一个图形 emoji（或完整 keycap 序列），
+ * 且除 emoji 本体/附属码点（肤色、变体选择符、ZWJ）/空白外没有任何其它字符。
+ * 这类消息被 send_message 拒绝——机器人不直接发表情，能直接发的画面表达只有
+ * 贴纸，对消息表态用 add_reaction。
  */
 export function isEmojiOnly(text: string): boolean {
-  return /\p{Extended_Pictographic}/u.test(text) && /^[\p{Extended_Pictographic}\p{Emoji_Component}\s]+$/u.test(text);
+  // 先剥 keycap：剥出来的算「图形 emoji」那一半，剩下的正文再按附属码点判定。
+  const withoutKeycaps: string = text.replace(KEYCAP_SEQUENCE, "");
+  const hasKeycap: boolean = withoutKeycaps.length !== text.length;
+  if (!hasKeycap && !/\p{Extended_Pictographic}/u.test(text)) return false;
+  if (withoutKeycaps.trim().length === 0) return hasKeycap;
+  return new RegExp(`^[\\p{Extended_Pictographic}${EMOJI_ATTACHMENT}\\s]+$`, "u").test(withoutKeycaps);
 }

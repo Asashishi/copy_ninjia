@@ -17,10 +17,10 @@ This page answers “where does this code live, and where should new code go?”
 | Path | Responsibility | Representative files |
 | :--- | :--- | :--- |
 | `packages/app/` | Startup/shutdown lifecycle, handler registration, command menu, update runner | `lifecycle.ts`, `registerHandlers.ts`, `updateRunner.ts` |
-| `packages/commands/` | Explicit command handling, one command per file | `copy.ts`, `kick.ts`, `cjkAction.ts`, `send.ts`, `targetResolution.ts` |
+| `packages/commands/` | Explicit command handling, one command per file | `copy.ts`, `block.ts`, `cjkAction.ts`, `send.ts`, `targetResolution.ts` |
 | `packages/auto/` | Automatic non-command behavior: copying, AI transcription and triggers, reaction synchronization | `message/`, `triggerPolicy.ts` |
 | `packages/aiChat/` | Main-thread AI chat proxy: Worker supervision entry point and memory mirror | `index.ts`, `memoryMirror.ts` |
-| `packages/antiRaid/` | Main-thread Anti-Raid proxy: Worker supervision entry point, lockdown recovery, and pending-verification mirror intake | `index.ts`, `lockdownMirror.ts`, `verificationMirror.ts` |
+| `packages/antiRaid/` | Main-thread Anti-Raid proxy: Worker supervision entry point, lockdown recovery, pending-verification mirror intake, and the blocklist join decision | `index.ts`, `lockdownMirror.ts`, `verificationMirror.ts`, `blocklistGuard.ts`, `memberFacts.ts` |
 | `packages/copy/` | Copy-mode transformations and execution queues for avatars, reactions, and translation | `copyModes.ts`, `avatarQueue.ts`, `reactionQueue.ts`, `translate.ts` |
 | `packages/users/` | Sender-identity cache, visible-sender resolution, user-label generation | `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts` |
 | `packages/states/` | **I/O-free** state transitions for verification, lockdown, and reply admission | `verification.ts`, `lockdown.ts` |

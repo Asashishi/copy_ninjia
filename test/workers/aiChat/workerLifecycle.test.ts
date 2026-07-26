@@ -30,7 +30,9 @@ const purgeChatMemory = mock((_chatId: number): void => { calls.push("purgeMemor
 const recordChatMessage = mock((..._args: unknown[]): void => { calls.push("record"); });
 const recordChatMedia = mock((_message: unknown): void => { calls.push("recordMedia"); });
 const generateAndSendReply = mock((..._args: unknown[]): void => { calls.push("trigger"); });
-const invalidateChatReplies = mock((_chatId: number): void => { calls.push("invalidate"); });
+const invalidateChatReplies = mock(async (_chatId: number): Promise<void> => {
+  calls.push("invalidate");
+});
 const initTelegramClients = mock((): void => { calls.push("telegram"); });
 const switchMood = mock((_chatId: number) => ({ name: "开心", weight: 1, instruction: "" }));
 
@@ -92,7 +94,7 @@ afterAll(() => {
 });
 
 describe("AI Chat Worker lifecycle", () => {
-  test("协议路由覆盖恢复、记录、触发、刷盘与可选记忆清除", () => {
+  test("协议路由覆盖恢复、记录、触发、刷盘与可选记忆清除", async () => {
     const messages: AiChatWorkerMessage[] = [
       { type: "init", botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" } },
       {
@@ -129,12 +131,13 @@ describe("AI Chat Worker lifecycle", () => {
       { type: "hydrate", memories: new Map<number, string>() },
       { type: "hydrateStickerCatalog", catalogs: new Map<string, string>() },
       { type: "flushMemory", flushId: 8 },
-      { type: "invalidateChat", chatId: -1001, purgeMemory: false },
-      { type: "invalidateChat", chatId: -1002, purgeMemory: true },
+      { type: "invalidateChat", chatId: -1001, purgeMemory: false, requestId: 1 },
+      { type: "invalidateChat", chatId: -1002, purgeMemory: true, requestId: 2 },
       { type: "switchMood", chatId: -1001, requestId: 3, deadlineAt: Number.MAX_SAFE_INTEGER },
     ];
 
     for (const message of messages) worker.handleAiChatWorkerMessage(message);
+    await Promise.resolve();
 
     expect(botInfoState.current?.id).toBe(99);
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
@@ -157,6 +160,8 @@ describe("AI Chat Worker lifecycle", () => {
     expect(purgeChatMemory).toHaveBeenCalledWith(-1002);
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 8 });
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1002 });
+    expect(postMessage).toHaveBeenCalledWith({ type: "chatInvalidated", chatId: -1001, requestId: 1 });
+    expect(postMessage).toHaveBeenCalledWith({ type: "chatInvalidated", chatId: -1002, requestId: 2 });
     expect(switchMood).toHaveBeenCalledWith(-1001);
     expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", chatId: -1001, requestId: 3, moodName: "开心" });
   });

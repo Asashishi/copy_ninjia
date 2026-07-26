@@ -38,7 +38,7 @@ The project reads exactly five environment variables; there are no undocumented 
 | `TELEGRAM_BOT_TOKEN` | ✅ | Token issued by BotFather |
 | `GEMINI_API_KEY` | ✅ | Gemini API key |
 | `SUPER_ADMIN_USER_ID` | ✅ | The super administrator, as one decimal user ID; `/init`, `/ai_chat`, `/switch_mood`, `/send`, and similar commands recognize only this user |
-| `PRIVILEGED_USERS_ID` | May be empty | Comma-separated allowlisted users; exempt from copy cooldowns, allowed to use `/kick`, and allowed to vouch for other bots during verification |
+| `PRIVILEGED_USERS_ID` | May be empty | Comma-separated allowlisted users; exempt from copy cooldowns, allowed to use `/block`, and allowed to vouch for other bots during verification |
 | `COPY_NINJIA_DATA_ROOT` | May be empty | Runtime data root; when empty, data is stored in the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root) |
 
 For Japanese translation, save the service-account key as `g-auth.json` in the project root. Both `.env` and `g-auth.json` are covered by `.gitignore`.

@@ -31,8 +31,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-907_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.60%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1032_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.46%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -69,7 +69,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 907 件のテストが全て成功 / テストファイル 123 件 / expect() 呼び出し 8,505 回 / 関数カバレッジ 94.65% / 行カバレッジ 96.60%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1032 件のテストが全て成功 / テストファイル 132 件 / expect() 呼び出し 8,870 回 / 関数カバレッジ 94.44% / 行カバレッジ 96.46%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -119,7 +119,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🌐 複数グループ連携</b></p>
-  <p><code>/kick</code> コマンドで Bot が管理者である全グループから対象を同期 BAN し、統合防衛線を形成。</p>
+  <p><code>/block</code> コマンドで Bot が管理者である全グループから対象を同期 BAN し、さらに id を永続ブロックリストへ記録。以降は監視中のどのグループに入室しても即 kick され、あるグループで「管理者権限がある」と「初期化済み」が揃った瞬間には（どちらが先でも）、すでに在室しているリスト該当者もまとめて掃除します。こうして統合防衛線を形成します。</p>
 </td>
 </tr>
 </table>
@@ -141,7 +141,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 | `/steal_icon` | アバターのみコピー |
 | `/stop_copy` | グローバル copy 状態を停止 |
 
-対象は「メッセージへの返信」または `@username` で指定します。ユーザー名での検索には、Bot がそのアカウントを以前に観測している必要があります。改名、ユーザー名の削除、ユーザー名の再割り当てが行われると、古い別名は直ちに無効になります。匿名管理者が現在のグループとして発言した場合、そのグループ自体が copy 対象となるため、グループのアバターを取得してその「外見」を再現できます。`/kick` は現在のグループをメンバー対象として扱うことを拒否します。`/kick` のような破壊的操作では、過去のユーザー名に頼らず対象メッセージへの返信を優先してください。一般ユーザーの copy 系コマンドには 5 分間のグローバル cooldown があり、`PRIVILEGED_USERS_ID` の許可リストは対象外です。
+対象は「メッセージへの返信」または `@username` で指定します。ユーザー名での検索には、Bot がそのアカウントを以前に観測している必要があります。改名、ユーザー名の削除、ユーザー名の再割り当てが行われると、古い別名は直ちに無効になります。匿名管理者が現在のグループとして発言した場合、そのグループ自体が copy 対象となるため、グループのアバターを取得してその「外見」を再現できます。`/block` は現在のグループをメンバー対象として扱うことを拒否します。`/block` のような破壊的操作では、過去のユーザー名に頼らず対象メッセージへの返信を優先してください。一般ユーザーの copy 系コマンドには 5 分間のグローバル cooldown があり、`PRIVILEGED_USERS_ID` の許可リストは対象外です。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
@@ -154,10 +154,11 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">メンバー</td><td>各 copy モードを開始</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">メンバー</td><td>現在のグローバル copy を停止</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">メンバー</td><td>アバターのみ取得</td></tr>
-<tr><td><code>/&lt;漢字 1 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> で「実行者 咬了 対象！」と応答。名前は first_name last_name 形式で、公開ユーザー名があればプロフィールへリンク</td></tr>
+<tr><td><code>/&lt;漢字 1~2 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> や <code>/贴贴</code> で「実行者 咬了 対象！」と応答。名前は first_name last_name 形式で、公開ユーザー名があればプロフィールへリンク</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">メンバー</td><td>自発的発言を N 分間停止（既定 3 分）</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">メンバー</td><td>静寂モードを早期解除</td></tr>
-<tr><td><code>/kick</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>全管理グループで対象を永久 BAN</td></tr>
+<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>ブロックリスト登録：永続的に記録し、全管理グループで BAN。以降は監視中のグループに入室しても即 kick</td></tr>
+<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>（<code>all</code> は <code>SUPER_ADMIN_USER_ID</code> のみ）</td><td>ブロックリストから id を削除（リスト全体をファイルへ原子的に書き直し）。以降の入室で即 kick されなくなります。既定では各グループの BAN はそのまま。<code>all</code> を付けると全管理グループで BAN も解除します</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの AI チャットを切り替え</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>AI 有効グループの気分を即時再抽選して応答</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>日本語翻訳機能を切り替え（既定 OFF）</td></tr>
@@ -168,7 +169,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 `/send` は開始前に対象へ到達できるか確認します。転送中に対象へ到達できなくなった場合はセッションを終了し、スーパー管理者へ通知します。転送状態は `state.json` に保存され、再起動後も復元されます。このコマンドは Telegram のコマンドメニューには表示されず、グループ内や他のユーザーから呼び出されても応答しません。
 
 > [!TIP]
-> 漢字 1 文字のアクションコマンド（`/咬`、`/摸` など）は事前登録が不要で、どの漢字でも使えます。対象の指定方法は他のコマンドと同じで、返信または `@username` です。Telegram のコマンド名は ASCII（ラテン文字・数字・アンダースコア）のみのため、コマンドメニューにも補完にも現れません。メニューにはプレースホルダー項目 `/x` だけを置いています。コマンド名の `x` がその変数であり、任意の漢字 1 文字に置き換えることを示します。実行しても何も起こらず、通常メッセージとして AI/copy pipeline へ流れることもないよう意図的に握り潰します。`/咬人` のような複数文字はアクションコマンドとして扱わず、通常のメッセージ処理へ流します。登録不要で誰でも自由に作れるため、グローバルな sliding window 制限があり、グループ・ユーザーを合算して 90 秒あたり最大 450 回まで応答します。超過分は通知なしで黙って破棄されます。
+> 漢字 1~2 文字のアクションコマンド（`/咬`、`/贴贴` など）は事前登録が不要で、どの漢字でも使えます。対象の指定方法は他のコマンドと同じで、返信または `@username` です。Telegram のコマンド名は ASCII（ラテン文字・数字・アンダースコア）のみのため、コマンドメニューにも補完にも現れません。メニューにはプレースホルダー項目 `/x` だけを置いています。コマンド名の `x` がその変数であり、任意の漢字 1~2 文字に置き換えることを示します。実行しても何も起こらず、通常メッセージとして AI/copy pipeline へ流れることもないよう意図的に握り潰します。`/咬人人` のような 3 文字以上はアクションコマンドとして扱わず、通常のメッセージ処理へ流します。登録不要で誰でも自由に作れるため、グローバルな sliding window 制限があり、グループ・ユーザーを合算して 90 秒あたり最大 450 回まで応答します。超過分は通知なしで黙って破棄されます。
 
 > [!TIP]
 > `/luck_challenge` はスラッシュコマンドではありません。任意のチャットで `@Botのユーザー名 [お願い]` と入力して Inline Mode を使用します。BotFather で Inline Mode を有効にし、`/setinlinefeedback` を 100% に設定することをお勧めします。Inline query にはグローバルな sliding window 制限があり、応答は 90 秒あたり最大 300 回です。
@@ -240,7 +241,7 @@ Bot を初めてグループに追加した後、`SUPER_ADMIN_USER_ID` がグル
 /ai_chat enable
 ```
 
-> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような 1 文字の中国語コマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードに中国語の文字列リテラルが 52 ファイルへ約 525 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](docs/ja/06-modification-guide.md) にあります。
+> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードに中国語の文字列リテラルが 52 ファイルへ約 525 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](docs/ja/06-modification-guide.md) にあります。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 

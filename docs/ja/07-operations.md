@@ -51,6 +51,8 @@ WantedBy=multi-user.target
 | `memory/stickers/` | スタンプ説明カタログ | オンラインパックとの照合から再構築可能 |
 | `memory/luck/` | 運勢結果 + `receipt-secret.json` | キーと当日結果を同じ整合 snapshot に含め、key だけを再生成しない |
 | `memory/anti-raid/` | 日別の認証待ち状態 | 東京日付の当日ファイルだけを保持 |
+| `memory/blocklist-removals.json` | 未完了 blocklist removal batch の durable outbox | `state.json` と `config/blocklist.json` と同じ整合点で backup。起動時は現行形式を厳密に検証 |
+| `config/blocklist.json` | `/block` の永続ブロックリスト（ユーザー id とブロック時刻） | 必ずバックアップ：失うと全員のブロックが解除されたのと同じ。手編集（ブロック解除の唯一の手段）は停止中に行い、編集後も正しい JSON である必要があります。ログと違い、このファイルが壊れていると末尾を切り詰めて自動復旧するのではなく**起動を拒否**します。黙って数件落とすことは、その人たちを部屋に戻すことだからです。キーはそのまま復元できる 10 進の id でなければなりません |
 | `logs/` | 英語メッセージのエラーログ | 必要に応じて |
 | `bot.lock` と `.guard` / `.recovery` | 単一インスタンスロック | バックアップも手動編集もしない |
 
@@ -76,6 +78,7 @@ lock file の形式は厳密な `v2:pid:starttime:boot_id:sha256(token)` です�
 - **別プロセスが実際に動作中**：PID、starttime、boot ID がすべて一致する場合だけ active owner と見なします。先にそのプロセスを停止してください。同じデータルートを 2 つのインスタンスで使うことはできません。
 - **プロセス停止または再起動後の stale v2 lock**：次回の起動または終了時に自動削除するため、手作業は不要です。
 - **旧形式または破損形式**：非互換 lock は読み取らず、自動 migration せず、PID から推測して削除もしません。関連プロセスが存在しないことを確認してから、旧 lock を手動削除して再起動します。
+- **停止時の release 失敗**：owner を検証できない、または unlink に失敗したため、process は非ゼロで終了して lock を残します。先に報告された filesystem または ownership error を解消し、owner が動作中かもしれない lock を削除しないでください。
 - `.candidate.*` は hard-link lock protocol の候補ファイルです。`.tmp` は `state.json` または lock registry のアトミック書き換えに使う一時ファイルです。通常操作で削除され、現行形式の残存物は owner が inactive と確認できた後、またはインスタンスロック取得後に起動処理が回収します。
 
 token fingerprint は lock owner の識別用であり、データ隔離境界ではありません。複数 Bot の並列デプロイでは別々のデータルートを使用してください。

@@ -4,7 +4,6 @@ import { dirname } from "node:path";
 import { BOT_LOCK_LINE_PATTERN, LINUX_BOOT_ID_PATTERN, PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { LOCK_FILE_PATH } from "../../consts/paths";
 import { atomicWriteText, syncDirectory } from "../../libs/atomicFile";
-import { logger } from "../logger";
 import { prepareRuntimeDataRoot } from "./dataRoot";
 import type { FileHandle } from "node:fs/promises";
 
@@ -329,20 +328,18 @@ export async function releaseSingleInstanceLock(
   options: InstanceLockOptions = {}
 ): Promise<void> {
   const tokenFingerprint: string = getBotTokenFingerprint(botToken);
-  try {
-    const readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null> = options.readProcessIdentity ?? readLinuxProcessIdentity;
-    const currentIdentity: ProcessIdentity = await resolveCurrentIdentity({ ...options, readProcessIdentity });
-    await withBotLockGuard(lockFilePath, { currentIdentity, readProcessIdentity }, async (): Promise<void> => {
-      const remaining: BotLockRecord[] = [];
-      for (const record of await readBotLockRecords(lockFilePath)) {
-        const active: boolean = await isProcessIdentityActive(record, readProcessIdentity);
-        if (active && !(sameProcessIdentity(record, currentIdentity) && record.tokenFingerprint === tokenFingerprint)) {
-          remaining.push(record);
-        }
+  const readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null> =
+    options.readProcessIdentity ?? readLinuxProcessIdentity;
+  const currentIdentity: ProcessIdentity =
+    await resolveCurrentIdentity({ ...options, readProcessIdentity });
+  await withBotLockGuard(lockFilePath, { currentIdentity, readProcessIdentity }, async (): Promise<void> => {
+    const remaining: BotLockRecord[] = [];
+    for (const record of await readBotLockRecords(lockFilePath)) {
+      const active: boolean = await isProcessIdentityActive(record, readProcessIdentity);
+      if (active && !(sameProcessIdentity(record, currentIdentity) && record.tokenFingerprint === tokenFingerprint)) {
+        remaining.push(record);
       }
-      await writeBotLockRecords(lockFilePath, remaining);
-    });
-  } catch (error: unknown) {
-    logger.error("Failed to release bot instance lock:", error);
-  }
+    }
+    await writeBotLockRecords(lockFilePath, remaining);
+  });
 }

@@ -16,7 +16,7 @@ export function formatUserLabel(user: CachedUser): string {
 }
 
 /**
- * 「first_name last_name」形式的展示名，供单字中文动作命令这类需要念出人名
+ * 「first_name last_name」形式的展示名，供中文动作命令这类需要念出人名
  * 的场景使用（见 commands/cjkAction.ts）；`@username` 只在完全没有姓名时兜底。
  * 频道/匿名管理员没有姓名，退化为 title。昵称里的换行与连续空白会被压成
  * 单个空格，避免一句话被撑成多行。
@@ -42,7 +42,7 @@ export function formatProfileUrl(user: CachedUser): string | undefined {
 
 /**
  * 权限校验失败时嘲讽文案里的发起人标签：ctx.from 可能缺失（极端更新形态），
- * 此时退化为泛指。/kick 与超管开关命令共用。
+ * 此时退化为泛指。/block 与超管开关命令共用。
  * @param fromUser 发起命令的 ctx.from（可能为 undefined）。
  */
 export function formatMockerLabel(fromUser: { id: number; username?: string; first_name?: string } | undefined): string {

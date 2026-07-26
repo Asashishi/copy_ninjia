@@ -4,12 +4,12 @@ import { handleIncomingMessage, handleReaction } from "../auto";
 import {
   confirmLuckDraw,
   handleAiChatCommand,
+  handleBlockCommand,
   handleCjkActionCommand,
   handleCjkActionUsageCommand,
   handleCopyCommand,
   handleInitCommand,
   handleJaCopyCommand,
-  handleKickCommand,
   handleLuckChallengeInlineQuery,
   handleLuckChosenInlineResult,
   handleQuietCommand,
@@ -17,6 +17,7 @@ import {
   handleStealIconCommand,
   handleStopCommand,
   handleSwitchMoodCommand,
+  handleUnblockCommand,
   handleUnquietCommand,
 } from "../commands";
 import {
@@ -91,19 +92,20 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("ja_copy", (ctx: CommandContext<Context>): Promise<void> => handleJaCopyCommand(ctx));
   bot.command("steal_icon", (ctx: CommandContext<Context>): Promise<void> => handleStealIconCommand(ctx));
   bot.command("stop_copy", (ctx: CommandContext<Context>): Promise<void> => handleStopCommand(ctx));
-  bot.command("kick", (ctx: CommandContext<Context>): Promise<void> => handleKickCommand(ctx));
+  bot.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
+  bot.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
   bot.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
   bot.command("switch_mood", (ctx: CommandContext<Context>): Promise<void> => handleSwitchMoodCommand(ctx));
   bot.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
   bot.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx: CommandContext<Context>): Promise<void> => handleUnquietCommand(ctx));
   bot.command("send", (ctx: CommandContext<Context>): Promise<void> => handleSendCommand(ctx));
-  // 菜单占位项：它只为在命令菜单里曝光「/<单个中文字>」这个用法（那类命令名
+  // 菜单占位项：它只为在命令菜单里曝光「/<1~2 个中文字>」这个用法（那类命令名
   // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
   // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
   // 流水线；但也不能什么都不回，否则点了菜单的人只会得到一片沉默。
   bot.command("x", (ctx: CommandContext<Context>): Promise<void> => handleCjkActionUsageCommand(ctx));
-  // `/咬` 这类单字中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
+  // `/咬`、`/贴贴` 这类中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
   // 匹配不到，只能按消息原文 hears。必须排在消息兜底处理器之前，否则会被当成
   // 普通消息进入 AI/复读流水线；不认领的形态由 handler 自己 next() 放行。
   bot.hears(CJK_ACTION_COMMAND_PATTERN, (ctx: HearsContext<Context>, next: NextFunction): Promise<void> => handleCjkActionCommand(ctx, next));

@@ -165,6 +165,7 @@ export interface ViewStickerPackToolParams {
   menu: StickerPackCandidate[];
   argumentsJson: string;
   state: StickerRoundState;
+  signal?: AbortSignal;
 }
 
 export async function viewStickerPackTool({
@@ -172,6 +173,7 @@ export async function viewStickerPackTool({
   menu,
   argumentsJson,
   state,
+  signal,
 }: ViewStickerPackToolParams): Promise<string> {
   const packIndex: number | null = parseIndexField(argumentsJson, "pack_index", menu.length);
   if (packIndex === null) return toolError("Invalid pack_index");
@@ -191,7 +193,10 @@ export async function viewStickerPackTool({
   // 切挡立即补发一次 choose_sticker，之后由心跳按间隔重发维持（间隔小于
   // 约 5 秒的状态过期时间，显示连续）。
   chatAction.set("choose_sticker");
-  await sleep(STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS);
+  await sleep(
+    STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS,
+    signal
+  );
 
   const candidate: StickerPackCandidate = menu[packIndex - 1]!;
   state.viewedPackIntents.set(packIndex, intent);
@@ -239,6 +244,7 @@ export interface SendStickerToolParams {
   state: StickerRoundState;
   onSent: (stickerDescription: string, messageId: number) => void;
   isActive?: () => boolean;
+  signal?: AbortSignal;
 }
 
 export async function sendStickerTool({
@@ -250,6 +256,7 @@ export async function sendStickerTool({
   state,
   onSent,
   isActive = (): boolean => true,
+  signal,
 }: SendStickerToolParams): Promise<string> {
   if (!isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
   const packIndex: number | null = parseIndexField(argumentsJson, "pack_index", menu.length);
@@ -281,12 +288,24 @@ export async function sendStickerTool({
 
   if (chatAction.current() !== "choose_sticker") {
     chatAction.set("choose_sticker");
-    await sleep(STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS);
+    try {
+      await sleep(
+        STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS,
+        signal
+      );
+    } catch (error: unknown) {
+      if (signal?.aborted === true) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
+      throw error;
+    }
   }
   chatAction.set("idle");
   await chatAction.settle();
   if (!isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-  const sentMessageId: number | undefined = await sendSticker(chatId, candidate.sticker.file_id);
+  const sentMessageId: number | undefined = await sendSticker({
+    chatId,
+    fileId: candidate.sticker.file_id,
+    signal,
+  });
   if (sentMessageId === undefined) {
     // 发送失败不把挡位续回选择贴纸：模型若换一枚重试，发送路径会自己重新
     // 拉起选择状态；若就此改口/放弃，续上的状态只会变成一段等不来贴纸的

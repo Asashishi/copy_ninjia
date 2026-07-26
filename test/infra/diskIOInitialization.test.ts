@@ -88,6 +88,8 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
+        blockedUsers: new Map(),
+        pendingBlockedRemovals: new Map(),
       } } as MessageEvent<DiskIOReply>);
       expect(await loadedPromise).toMatchObject({
         aiMemories: new Map([[1, "memory"]]),
@@ -114,11 +116,37 @@ describe("explicit Worker initialization", () => {
       const failedFlushPromise = diskIO.flushDiskIO(1_000);
       const failedFlush = first.messages.at(-1)!;
       expect(failedFlush.type).toBe("flush");
-      first.onmessage!({ data: {
+      // 回执按领域回报失败，让 /block 这类只关心自己那个领域的调用方不被
+      // 无关领域误导（见 workers/diskIOWorker.ts 的 flushAll）。
+      const failedReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: failedFlush.type === "flush" ? failedFlush.flushId : -1,
-      } } as MessageEvent<DiskIOReply>);
+        failedDomains: ["aiMemory"],
+      };
+      first.onmessage!({ data: failedReply } as MessageEvent<DiskIOReply>);
       expect(await failedFlushPromise).toBe("failed");
+
+      const unrelatedDomainFlushPromise = diskIO.flushDiskIODomain("blocklist", 1_000);
+      const unrelatedDomainFlush = first.messages.at(-1)!;
+      expect(unrelatedDomainFlush.type).toBe("flush");
+      const unrelatedDomainReply: DiskIOReply = {
+        type: "flushFailed",
+        flushedId: unrelatedDomainFlush.type === "flush" ? unrelatedDomainFlush.flushId : -1,
+        failedDomains: ["aiMemory"],
+      };
+      first.onmessage!({ data: unrelatedDomainReply } as MessageEvent<DiskIOReply>);
+      expect(await unrelatedDomainFlushPromise).toBe("flushed");
+
+      const targetDomainFlushPromise = diskIO.flushDiskIODomain("blocklist", 1_000);
+      const targetDomainFlush = first.messages.at(-1)!;
+      expect(targetDomainFlush.type).toBe("flush");
+      const targetDomainReply: DiskIOReply = {
+        type: "flushFailed",
+        flushedId: targetDomainFlush.type === "flush" ? targetDomainFlush.flushId : -1,
+        failedDomains: ["blocklist"],
+      };
+      first.onmessage!({ data: targetDomainReply } as MessageEvent<DiskIOReply>);
+      expect(await targetDomainFlushPromise).toBe("failed");
 
       const persisted: VerificationPersistedReply[] = [];
       diskIO.onVerificationPersisted((reply) => { persisted.push(reply); });
@@ -161,6 +189,8 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
+        blockedUsers: new Map(),
+        pendingBlockedRemovals: new Map(),
       } } as MessageEvent<DiskIOReply>);
       expect(respawns).toBe(1);
       expect(second.messages).toEqual([{ type: "load" }, luckDraw]);
@@ -180,6 +210,8 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret: null,
         verifications: new Map(),
+        blockedUsers: new Map(),
+        pendingBlockedRemovals: new Map(),
         error: "verification file is corrupt",
       } } as MessageEvent<DiskIOReply>);
       await Promise.resolve();
@@ -222,6 +254,8 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
+        blockedUsers: new Map(),
+        pendingBlockedRemovals: new Map(),
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
@@ -257,6 +291,8 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
+        blockedUsers: new Map(),
+        pendingBlockedRemovals: new Map(),
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
@@ -293,6 +329,8 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
+        blockedUsers: new Map(),
+        pendingBlockedRemovals: new Map(),
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
@@ -303,6 +341,7 @@ describe("explicit Worker initialization", () => {
 
       worker.rejectedTypes.add("flush");
       await expect(diskIO.flushDiskIO(60_000)).resolves.toBe("failed");
+      await expect(diskIO.flushDiskIODomain("blocklist", 60_000)).resolves.toBe("failed");
 
       worker.rejectedTypes.add("log");
       expect(diskIO.relayLogMessage({ timestamp: 1, level: "error", args: ["boom"] })).toBe(false);
@@ -336,5 +375,11 @@ describe("explicit Worker initialization", () => {
       error.mockRestore();
       globalThis.Worker = originalWorker;
     }
+  });
+
+  test("Worker 未初始化时领域 flush 不会复用旧回执误报成功", async () => {
+    await diskIO.terminateDiskIO();
+    expect(diskIO.lastFailedDiskIODomains()).toEqual([]);
+    await expect(diskIO.flushDiskIODomain("blocklist", 1_000)).resolves.toBe("failed");
   });
 });

@@ -1,18 +1,22 @@
 /**
- * 通用的"按天 JSON 对象文件、末尾追加"落盘机制：文件内容始终是一个顶层
+ * 通用的"JSON 对象文件、末尾追加"落盘机制：文件内容始终是一个顶层
  * JSON 对象 { "key1": value1, "key2": value2, ... }，新增条目不整文件重写，
  * 而是覆写文件结尾的「\n}」两字节、按位置追加，写入量只与本批条数有关，
  * 与文件大小无关。原是 loggerWorker.ts 专属逻辑，现抽成通用机制，调用方
  * 是 diskIO/logFiles.ts（日志）、diskIO/snapshotFiles.ts 的
- * appendLuckEntries（每日运势）与 diskIO/verificationFiles.ts（待验证）；
- * 调用方各自负责 key/value 怎么序列化、
+ * appendLuckEntries（每日运势）、diskIO/verificationFiles.ts（待验证）与
+ * diskIO/blocklistFile.ts（黑名单）；调用方各自负责 key/value 怎么序列化、
  * 多久 flush 一次、保留策略等领域逻辑，这里只管字节层面的
  * 打开/探测/追加/损坏修复。
+ *
+ * 两层 API：openAppendOnlyFile/appendToAppendOnlyFile 直接按完整路径操作，
+ * 供黑名单这类固定单文件使用；openDayFile/appendToDayFile 是它们在
+ * `<dir>/<day>.json` 命名约定上的薄封装，供按天滚动的三个领域使用。
  */
 
 import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import type { DayFileState } from "../../types/diskIO/storage";
+import type { AppendOnlyFileState, DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 
@@ -39,11 +43,11 @@ export interface WriteBufferFullyParams {
   write?: SyncBufferWriter;
 }
 
-/** 日文件不是可安全追记的当前格式；调用方必须阻止写入并安排人工恢复。 */
-export class DayFileFormatError extends Error {
+/** 目标文件不是可安全追记的当前格式；调用方必须阻止写入并安排人工恢复。 */
+export class AppendOnlyFileFormatError extends Error {
   constructor(path: string, reason: string) {
     super(`${path} ${reason}`);
-    this.name = "DayFileFormatError";
+    this.name = "AppendOnlyFileFormatError";
   }
 }
 
@@ -88,16 +92,19 @@ function atomicRewrite(path: string, content: string, mode?: number): void {
 }
 
 /**
- * 打开（或接管）某天的文件并校验其可追加性。文件不存在或为空对象视作
- * 空文件；内容合法但结尾形态不符（比如被人手动编辑过）就按标准格式重写
- * 一次；解析失败（断电等原因导致结尾写了一半）先尝试 repairTruncated
+ * 打开（或接管）一个追加型 JSON 对象文件并校验其可追加性。文件不存在或为
+ * 空对象视作空文件；内容合法但结尾形态不符（比如被人手动编辑过）就按标准
+ * 格式重写一次；解析失败（断电等原因导致结尾写了一半）先尝试 repairTruncated
  * 裁掉末尾残片修复；顶层不是普通对象或无法修复时抛错并保留原始字节。
  * size 一律以 fs.statSync 读到的物理文件大小为准，不信任内存里算出来的
  * 字节数。完整扫描只发生在打开/恢复阶段，成功后的追记热路径仍为 O(1)。
+ * @param repair 解析失败时是否允许裁掉末尾残片自愈。日志/运势/待验证这类
+ *   「丢掉最后几条不影响正确性」的领域用默认的 true；黑名单必须传 false
+ *   ——裁掉的每一条都是一个被放回群里的人，宁可拒绝启动等人工恢复，也不能
+ *   静默少几条继续跑（见 ../../../docs/04-invariants.md）。
  */
-export function openDayFile(dir: string, day: string, mode?: number): DayFileState {
-  const path: string = join(dir, `${day}.json`);
-  const state: DayFileState = { day, size: 0, empty: true };
+export function openAppendOnlyFile(path: string, mode?: number, repair: boolean = true): AppendOnlyFileState {
+  const state: AppendOnlyFileState = { size: 0, empty: true };
   if (!existsSync(path)) return state;
   // 调用方显式要求 mode 时，接管旧文件也修正曾被严格 umask
   // 收紧的权限。日志路径不传 mode，保持原有部署权限策略。
@@ -109,13 +116,18 @@ export function openDayFile(dir: string, day: string, mode?: number): DayFileSta
   try {
     parsed = JSON.parse(content);
   } catch {
+    // 不允许自愈的领域在这里就停：repairTruncated 是「裁掉末尾残片」，
+    // 对黑名单而言等同于静默解除拉黑，必须原样保留字节交给人工。
+    if (!repair) {
+      throw new AppendOnlyFileFormatError(path, "could not be parsed; refusing to repair this file.");
+    }
     const repaired: string | null = repairTruncated(content);
     if (repaired === null) {
-      throw new DayFileFormatError(path, "could not be parsed or repaired.");
+      throw new AppendOnlyFileFormatError(path, "could not be parsed or repaired.");
     }
     const repairedParsed: unknown = JSON.parse(repaired);
     if (!isRecord(repairedParsed)) {
-      throw new DayFileFormatError(path, "must contain a top-level JSON object.");
+      throw new AppendOnlyFileFormatError(path, "must contain a top-level JSON object.");
     }
     atomicRewrite(path, repaired, mode);
     state.size = statSync(path).size;
@@ -123,7 +135,7 @@ export function openDayFile(dir: string, day: string, mode?: number): DayFileSta
     return state;
   }
   if (!isRecord(parsed)) {
-    throw new DayFileFormatError(path, "must contain a top-level JSON object.");
+    throw new AppendOnlyFileFormatError(path, "must contain a top-level JSON object.");
   }
   if (Object.keys(parsed).length === 0) return state;
   if (!content.endsWith("\n}")) {
@@ -134,15 +146,20 @@ export function openDayFile(dir: string, day: string, mode?: number): DayFileSta
   return state;
 }
 
+/** openAppendOnlyFile 在 `<dir>/<day>.json` 命名约定上的薄封装（按天滚动的三个领域用）。 */
+export function openDayFile(dir: string, day: string, mode?: number): DayFileState {
+  return { day, ...openAppendOnlyFile(join(dir, `${day}.json`), mode) };
+}
+
 /**
- * 修复被截断的日文件：先试着直接补一个「\n}」收尾（只是丢了最后的收尾
+ * 修复被截断的追加型文件：先试着直接补一个「\n}」收尾（只是丢了最后的收尾
  * 括号这种最常见情况）；不行的话，结构化扫描字符串转义与括号深度，找出
  * 顶层对象成员之间的逗号。最后一个这类逗号之前就是最后一条完整记录，值
  * 无论是对象、数组还是 null 等基础类型都适用；裁掉其后的撕裂记录、补上
  * 「\n}」并以 JSON.parse 复核。
  * @returns 修复后的完整 JSON 文本；所有候选都无效时返回 null，表示无法修复
- *   ——调用方（openDayFile）据此抛 DayFileFormatError 阻止写入并原样保留字节，
- *   等待人工恢复，绝不从空文件重新开始覆盖原数据。
+ *   ——调用方（openAppendOnlyFile）据此抛 AppendOnlyFileFormatError 阻止写入并原样
+ *   保留字节，等待人工恢复，绝不从空文件重新开始覆盖原数据。
  * @see ../../../docs/04-invariants.md
  */
 function repairTruncated(content: string): string | null {
@@ -192,27 +209,34 @@ function repairTruncated(content: string): string | null {
   return null;
 }
 
-export interface AppendToDayFileParams {
-  dir: string;
-  state: DayFileState;
+export interface AppendToAppendOnlyFileParams {
+  path: string;
+  state: AppendOnlyFileState;
   chunk: string;
   mode?: number;
+  /** 追加失败后重新探测文件时是否允许自愈；语义同 openAppendOnlyFile。 */
+  repair?: boolean;
   /** 仅供故障注入测试；生产使用 node:fs writeSync。 */
   write?: SyncBufferWriter;
   /** 仅供故障注入测试；生产在成功回执前 fsync 当前批次。 */
   sync?: SyncFile;
 }
 
-/** 把一段已序列化好的条目文本追加到某天的文件末尾（覆写结尾的「\n}」）。 */
-export function appendToDayFile({
-  dir,
+export interface AppendToDayFileParams extends Omit<AppendToAppendOnlyFileParams, "path" | "state"> {
+  dir: string;
+  state: DayFileState;
+}
+
+/** 把一段已序列化好的条目文本追加到文件末尾（覆写结尾的「\n}」）。 */
+export function appendToAppendOnlyFile({
+  path,
   state,
   chunk,
   mode,
+  repair = true,
   write = nodeWriteBuffer,
   sync = fsyncSync,
-}: AppendToDayFileParams): void {
-  const path: string = join(dir, `${state.day}.json`);
+}: AppendToAppendOnlyFileParams): void {
   if (state.empty) {
     const content: string = `{\n${chunk}\n}`;
     // 首条也走原子替换；传入 mode 时临时文件会在 rename 前
@@ -240,13 +264,19 @@ export function appendToDayFile({
   }
   if (failure !== null) {
     // 可能已有前缀落盘，旧 size 与物理文件都不再可信。fd 已关闭后重新
-    // 探测并尽力裁掉残片；绝不能按完整 data 的长度推进游标。
-    const recovered: DayFileState = openDayFile(dir, state.day, mode);
+    // 探测并尽力裁掉残片；绝不能按完整 data 的长度推进游标。不允许自愈的
+    // 领域这里会再抛一次，调用方据此把游标作废、条目留在缓冲里等人工恢复。
+    const recovered: AppendOnlyFileState = openAppendOnlyFile(path, mode, repair);
     state.size = recovered.size;
     state.empty = recovered.empty;
     throw failure instanceof Error ? failure : new Error("Append failed with a non-Error value.");
   }
   state.size = state.size - 2 + data.length;
+}
+
+/** appendToAppendOnlyFile 在 `<dir>/<day>.json` 命名约定上的薄封装。 */
+export function appendToDayFile({ dir, state, ...rest }: AppendToDayFileParams): void {
+  appendToAppendOnlyFile({ path: join(dir, `${state.day}.json`), state, ...rest });
 }
 
 /**

@@ -1,13 +1,14 @@
 /**
  * 进程唯一的共享数据 Disk I/O Worker 宿主（主线程侧）：统一承载日志、AI/贴纸快照、
- * 每日运势与待验证当日增量 JSON——由 diskIOWorker 在单一 Worker 线程里
+ * 每日运势、待验证当日增量 JSON 与 /block 黑名单——由 diskIOWorker 在单一 Worker 线程里
  * 串行执行，避免多个业务 Worker 并发写坏共享文件。state.json 是明确例外，
  * 由主线程的 infra/storage/stateStore.ts 独立异步读写与 flush。
  *
  * Worker 拥有权、flush/load 握手与对外投递语义收在本文件；Worker 创建、
  * 回执路由与崩溃自愈的重启节流在 infra/diskIO/host.ts。
  * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
- * aiChat/index.ts、commands/luckChallenge/cache.ts 与 antiRaid/index.ts 经 postDiskIO 投递。
+ * aiChat/index.ts、commands/luckChallenge/cache.ts、antiRaid/index.ts 与
+ * infra/blocklist.ts 经 postDiskIO 投递。
  *
  * 本模块自身的错误一律 console.error（由进程控制台日志兜底）——它就是落盘终点，
  * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是
@@ -19,6 +20,7 @@
 import {
   diskIOFlushBarrier,
   diskIORuntime,
+  pendingFlushFailedDomains,
   pendingLoad,
   pendingLuckSecrets,
 } from "../cache/diskIO";
@@ -36,6 +38,7 @@ import type {
   AiMemoryPersistedReply,
   DiskBusinessMessage,
   DiskFlushRequest,
+  DiskIODomain,
   EnsureLuckSecretRequest,
   LoadRequest,
   LoadedReply,
@@ -44,7 +47,8 @@ import type {
   VerificationPersistedReply,
 } from "../types/diskIO";
 import type { VerificationSnapshot } from "../types/antiRaid";
-import type { LuckDayCache, LuckReceiptSecret } from "../types/diskIO/storage";
+import type { PendingBlockedRemoval } from "../types/blocklist";
+import type { BlockedUserRecord, LuckDayCache, LuckReceiptSecret } from "../types/diskIO/storage";
 
 const isMainThread: boolean = Bun.isMainThread;
 export interface DiskIOInitOptions {
@@ -140,7 +144,7 @@ export function postDiskIO(
   const worker: Worker | null = diskIORuntime.worker;
   if (worker === null) return false;
   if (!diskIORuntime.writable) {
-    if (diskIORuntime.pendingBusinessMessages.length >= diskIORuntime.maxPendingBusinessMessages) {
+    if (diskIORuntime.pendingBusinessMessages.size >= diskIORuntime.maxPendingBusinessMessages) {
       stopWorkerAfterLoadFailure(
         worker,
         `buffered business message limit (${diskIORuntime.maxPendingBusinessMessages}) exceeded during recovery`,
@@ -165,6 +169,8 @@ export interface LoadedData {
   luckDay: LuckDayCache | null;
   luckReceiptSecret: LuckReceiptSecret;
   verifications: Map<string, VerificationSnapshot>;
+  blockedUsers: Map<number, BlockedUserRecord>;
+  pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
 }
 
 /**
@@ -205,6 +211,8 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         luckDay: reply.luckDay,
         luckReceiptSecret: reply.luckReceiptSecret,
         verifications: reply.verifications,
+        blockedUsers: reply.blockedUsers,
+        pendingBlockedRemovals: reply.pendingBlockedRemovals,
       });
     };
     const request: LoadRequest = { type: "load" };
@@ -255,13 +263,58 @@ export function ensureLuckReceiptSecret(
  * flush 期间崩溃，onerror 会立即以 failed 结算并记录数据未落盘。
  */
 export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
+  return requestDiskIOFlush(timeoutMs).then(
+    (outcome: DiskIOFlushOutcome): FlushResult => outcome.result
+  );
+}
+
+interface DiskIOFlushOutcome {
+  result: FlushResult;
+  /** 仅在 Worker 明确回复本次请求部分失败时存在。 */
+  failedDomains?: readonly DiskIODomain[];
+}
+
+async function requestDiskIOFlush(
+  timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
+): Promise<DiskIOFlushOutcome> {
   requirePositiveFinite(timeoutMs, "Disk I/O flush timeout");
   const worker: Worker | null = diskIORuntime.worker;
-  if (!worker || !diskIORuntime.writable) return Promise.resolve("failed");
-  return diskIOFlushBarrier.begin((id: number): boolean => {
+  if (!worker || !diskIORuntime.writable) return { result: "failed" };
+  let flushId: number | null = null;
+  const result: FlushResult = await diskIOFlushBarrier.begin((id: number): boolean => {
+    flushId = id;
     const request: DiskFlushRequest = { type: "flush", flushId: id };
     return safePostDiskIO(worker, request, "flush request");
   }, timeoutMs);
+  if (flushId === null) return { result };
+  const failedDomains: readonly DiskIODomain[] | undefined =
+    pendingFlushFailedDomains.get(flushId);
+  pendingFlushFailedDomains.delete(flushId);
+  return failedDomains === undefined ? { result } : { result, failedDomains };
+}
+
+/**
+ * 只关心某一个领域有没有落盘的 flush。仍然触发统一 flush（Worker 那边本来
+ * 就是七个领域一起刷），但把「无关领域失败」判成成功。
+ *
+ * 存在的理由：`flushAll` 是七个领域的合取，任何一个失败（典型是某群
+ * `memory/ai/<chat>.json` 部署后属主不对）都会让 /block 报「小本本没能写进
+ * 硬盘」，把运维引向一个其实没坏的文件。
+ * @returns 该领域已 durable 为 "flushed"；"timedOut"/"failed" 表示没写进去。
+ */
+export async function flushDiskIODomain(
+  domain: DiskIODomain,
+  timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
+): Promise<FlushResult> {
+  const outcome: DiskIOFlushOutcome = await requestDiskIOFlush(timeoutMs);
+  if (outcome.result !== "failed") return outcome.result;
+  if (outcome.failedDomains === undefined) return "failed";
+  return outcome.failedDomains.includes(domain) ? "failed" : "flushed";
+}
+
+/** 最近一次 flush 回执里没能落盘的领域，供调用方把真正坏掉的那个记进日志。 */
+export function lastFailedDiskIODomains(): readonly DiskIODomain[] {
+  return diskIORuntime.lastFlushFailedDomains;
 }
 
 /** 终止落盘 Worker；返回后旧实例不可能再 rename/append 共享文件。 */
@@ -276,9 +329,11 @@ export function terminateDiskIO(): Promise<void> {
   diskIORuntime.fatalSignaled = false;
   diskIORuntime.runtimeRecoveryTimeoutMs = LOAD_TIMEOUT_MS;
   diskIORuntime.maxPendingBusinessMessages = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
-  diskIORuntime.pendingBusinessMessages.length = 0;
+  diskIORuntime.pendingBusinessMessages.clear();
   diskIORuntime.nextLuckSecretRequestId = 1;
+  diskIORuntime.lastFlushFailedDomains = [];
   diskIOFlushBarrier.settleAll("failed");
+  pendingFlushFailedDomains.clear();
   const terminationError: Error = new Error("Persistence Worker terminated before the request completed.");
   if (pendingLoad.timer !== null) clearTimeout(pendingLoad.timer);
   pendingLoad.timer = null;

@@ -136,7 +136,12 @@ describe("generate_image 工具执行器", () => {
     const result = JSON.parse(await execute(JSON.stringify({ prompt: "  日落下的纸飞机  ", aspect_ratio: "7:5" })));
 
     expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", resolution: "1K" });
-    expect(generateChatImage).toHaveBeenCalledWith("日落下的纸飞机", "4:3");
+    expect(generateChatImage).toHaveBeenCalledWith({
+      prompt: "日落下的纸飞机",
+      aspectRatio: "4:3",
+      referenceImage: undefined,
+      signal: undefined,
+    });
     expect(sendPhotoWithResult).toHaveBeenCalledWith({
       chatId: -1001,
       bytes: generatedBytes,
@@ -157,7 +162,12 @@ describe("generate_image 工具执行器", () => {
       logLabel: "image generation reference",
     });
     expect(runMediaTask).toHaveBeenCalledTimes(1);
-    expect(generateChatImage).toHaveBeenCalledWith("把原图改成油画", "16:9", referenceVisionImage);
+    expect(generateChatImage).toHaveBeenCalledWith({
+      prompt: "把原图改成油画",
+      aspectRatio: "16:9",
+      referenceImage: referenceVisionImage,
+      signal: undefined,
+    });
     expect(result.aspect_ratio).toBe("16:9");
     expect(result.reference_image_used).toBe(true);
     expect(ctx.onImageSent).toHaveBeenCalledWith("（参考素材生成并发送了一张图片：把原图改成油画）", 77, 42);
@@ -172,7 +182,12 @@ describe("generate_image 工具执行器", () => {
     })));
 
     expect(result.aspect_ratio).toBe("4:3");
-    expect(generateChatImage).toHaveBeenCalledWith("把原图改成油画", "4:3", referenceVisionImage);
+    expect(generateChatImage).toHaveBeenCalledWith({
+      prompt: "把原图改成油画",
+      aspectRatio: "4:3",
+      referenceImage: referenceVisionImage,
+      signal: undefined,
+    });
   });
 
   test("参考图下载失败时不调用图片模型，也会收起正在发送图片状态", async () => {

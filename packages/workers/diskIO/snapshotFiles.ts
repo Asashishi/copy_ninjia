@@ -30,7 +30,7 @@ import { DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { AI_MEMORY_FILE_PATTERN, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO/snapshots";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat/memory";
-import { DayFileFormatError, appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
+import { AppendOnlyFileFormatError, appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
 
 /**
@@ -276,7 +276,7 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
     parsed = JSON.parse(content);
   }
   if (!isRecord(parsed)) {
-    throw new DayFileFormatError(todayPath, "must contain a top-level JSON object.");
+    throw new AppendOnlyFileFormatError(todayPath, "must contain a top-level JSON object.");
   }
   const raw: Record<string, unknown> = parsed;
   const entries: Map<string, LuckDrawRecord> = new Map();

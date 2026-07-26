@@ -24,7 +24,12 @@ export function createAddReactionExecutor(
         `Reaction limit reached: at most ${MAX_REACTIONS_PER_REPLY} reaction per reply`
       );
     }
-    const sent: boolean = await setMessageReaction({ chatId: ctx.chatId, messageId: ctx.replyToMessageId, emoji });
+    const sent: boolean = await setMessageReaction({
+      chatId: ctx.chatId,
+      messageId: ctx.replyToMessageId,
+      emoji,
+      signal: ctx.signal,
+    });
     if (!sent) return toolError("Failed to set reaction");
     reactionCount++;
     return JSON.stringify({ success: true });

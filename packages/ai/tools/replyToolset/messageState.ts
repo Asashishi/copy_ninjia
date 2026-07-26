@@ -59,6 +59,7 @@ export async function sendDirectMessage({
     chatId: ctx.chatId,
     text,
     replyToMessageId,
+    signal: ctx.signal,
   });
   if (sent !== undefined) {
     recordSentMessage({

@@ -6,6 +6,8 @@ import { postDiskIO } from "../ai/persistence";
 import { nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
 import {
   aiChatWorkerState,
+  aiChatInvalidateRequestCounter,
+  aiChatInvalidateWaiters,
   aiMemoryFlushBarrier,
   aiMemoryRevisionCounters,
   lastInitState,
@@ -16,9 +18,11 @@ import {
   moodSwitchWaiters,
   postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
-  type MoodSwitchWaiter,
 } from "../cache/aiChat";
-import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import {
+  AI_CHAT_INVALIDATE_TIMEOUT_MS,
+  AI_MEMORY_FLUSH_TIMEOUT_MS,
+} from "../consts/lifecycle";
 import { MOOD_SWITCH_TIMEOUT_MS } from "../consts/aiChat/mood";
 import type { FlushResult } from "../types/lifecycle";
 import { getChatState } from "../infra/storage/stateStore";
@@ -31,6 +35,10 @@ import type {
   AiRecordMessage,
   AiTriggerMessage,
 } from "../types/aiChat/protocol";
+import type {
+  AiChatInvalidateWaiter,
+  MoodSwitchWaiter,
+} from "../types/aiChat/waiters";
 import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
 
 /** 在途 switchMood 请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
@@ -41,6 +49,15 @@ function rejectAllMoodSwitchWaiters(reason: string): void {
     waiter.reject(new Error(reason));
   }
   moodSwitchWaiters.clear();
+}
+
+/** Worker 崩溃/终止时旧实例不可能再发送 invalidate 回执。 */
+function rejectAllAiChatInvalidateWaiters(reason: string): void {
+  for (const waiter of aiChatInvalidateWaiters.values()) {
+    clearTimeout(waiter.timer);
+    waiter.reject(new Error(reason));
+  }
+  aiChatInvalidateWaiters.clear();
 }
 
 /**
@@ -112,6 +129,19 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
         aiMemoryFlushBarrier.settle(event.flushId, "flushed");
         break;
       }
+      case "chatInvalidated": {
+        const waiter: AiChatInvalidateWaiter | undefined =
+          aiChatInvalidateWaiters.get(event.requestId);
+        if (!waiter) break;
+        aiChatInvalidateWaiters.delete(event.requestId);
+        clearTimeout(waiter.timer);
+        if (waiter.chatId !== event.chatId) {
+          waiter.reject(new Error("AI Worker returned a mismatched chat invalidate receipt."));
+        } else {
+          waiter.resolve();
+        }
+        break;
+      }
       case "moodSwitched": {
         const waiter: MoodSwitchWaiter | undefined = moodSwitchWaiters.get(event.requestId);
         if (!waiter) break;
@@ -125,6 +155,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
   onRespawn: (postToNext: (message: AiChatWorkerMessage) => boolean): void => {
     aiMemoryFlushBarrier.settleAll("failed");
     rejectAllMoodSwitchWaiters("AI Worker crashed before acknowledging the mood switch.");
+    rejectAllAiChatInvalidateWaiters("AI Worker crashed before completing chat invalidation.");
     // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
     // 重启发生在 initAiChat 调用之前的话 lastInitState.current 仍是 null，
     // 没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
@@ -145,6 +176,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
   onGiveUp: (): void => {
     aiChatWorkerState.available = false;
     rejectAllMoodSwitchWaiters("AI Worker gave up restarting before acknowledging the mood switch.");
+    rejectAllAiChatInvalidateWaiters("AI Worker gave up before completing chat invalidation.");
     // 已终止实例不可能再回传旧 memory；purged 只负责拒绝旧 Worker 快照。
     // pendingAiMemoryDeletes 由 Disk I/O durable 回执拥有，绝不能在这里清空。
     purgedAiMemoryChats.clear();
@@ -237,6 +269,7 @@ export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): P
 export async function terminateAiChat(): Promise<void> {
   aiMemoryFlushBarrier.settleAll("failed");
   rejectAllMoodSwitchWaiters("AI Worker is shutting down before acknowledging the mood switch.");
+  rejectAllAiChatInvalidateWaiters("AI Worker is shutting down before completing chat invalidation.");
   aiChatWorkerState.available = false;
   purgedAiMemoryChats.clear();
   postPurgeAiMemoryPersistRevisions.clear();
@@ -404,10 +437,33 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
     if (aiChatWorkerState.available) purgedAiMemoryChats.add(chatId);
     persistedDelete = requestAiMemoryDelete(chatId, true);
   }
-  if (aiChatWorkerState.available && !post({ type: "invalidateChat", chatId, purgeMemory })) {
-    throw new Error("AI Worker is unavailable while invalidating chat runtime.");
+  let workerInvalidated: Promise<void> | undefined;
+  if (aiChatWorkerState.available) {
+    const requestId: number = ++aiChatInvalidateRequestCounter.current;
+    workerInvalidated = new Promise(
+      (resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
+        const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
+          aiChatInvalidateWaiters.delete(requestId);
+          reject(new Error(
+            `AI chat invalidation for chat ${chatId} timed out after ${AI_CHAT_INVALIDATE_TIMEOUT_MS}ms.`
+          ));
+        }, AI_CHAT_INVALIDATE_TIMEOUT_MS);
+        aiChatInvalidateWaiters.set(requestId, { chatId, resolve, reject, timer });
+      }
+    );
+    if (!post({ type: "invalidateChat", chatId, purgeMemory, requestId })) {
+      const waiter: AiChatInvalidateWaiter | undefined = aiChatInvalidateWaiters.get(requestId);
+      aiChatInvalidateWaiters.delete(requestId);
+      if (waiter !== undefined) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error("AI Worker is unavailable while invalidating chat runtime."));
+      }
+    }
   }
-  await persistedDelete;
+  await Promise.all([
+    persistedDelete ?? Promise.resolve(),
+    workerInvalidated ?? Promise.resolve(),
+  ]);
 }
 
 registerChatTeardown("aiChat", (chatId: number): Promise<void> => invalidateAiChat(chatId, true));

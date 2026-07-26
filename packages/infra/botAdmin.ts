@@ -14,9 +14,14 @@ import {
   botAdminGenerationUsers,
 } from "../cache/botAdmin";
 import { isAdminStatus } from "../libs/chatMember";
+import { forgetChatBlocklistWork, sweepBlockedMembers } from "./blocklist";
 import { teardownRegisteredChat } from "./chatTeardown";
 import type { ChatState } from "../types/chatState";
 import type { ChatMember, ChatMemberUpdated } from "@grammyjs/types";
+import {
+  currentUpdateAbortSignal,
+  throwIfUpdateAborted,
+} from "./updateContext";
 
 async function completeAfterTeardown(
   teardown: Promise<void>,
@@ -56,11 +61,11 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
 }
 
 /**
- * 机器人自己在各群的管理员身份追踪。入群守卫（antiRaid）和 /kick 都需要
+ * 机器人自己在各群的管理员身份追踪。入群守卫（antiRaid）和 /block 都需要
  * 管理员权限才有意义：不是管理员时收不到别人的 chat_member 更新、踢不了人
  * 也删不了消息，硬跑只会刷一堆注定失败的 API 报错——所以这两处都以这里的
  * 判定做门控。身份记在各群的 ChatState.botIsAdmin 里（随 state.json 持久
- * 化）：Bot API 无法枚举机器人所在的群，这份记录同时也是「/kick 在所有
+ * 化）：Bot API 无法枚举机器人所在的群，这份记录同时也是「/block 在所有
  * 管理员群同步生效」的群清单，必须落盘才能跨重启存活。
  *
  * 维护路径有三条，互为补充：
@@ -71,7 +76,9 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
  * 3. 两者都没来过的存量群（比如此功能上线前就已是管理员的群），首次判定
  *    时按需 getChatMember 现查一次并回填（isBotAdminIn）。
  *
- * 三条路径最终都经 recordBotAdminStatus 落盘，而它只认已 /init enable 过
+ * 三条路径最终都经 recordBotAdminStatus 落盘。它同时是「机器人在这个群可以
+ * 干活了」这个合取（是管理员 && 已 /init enable）的边沿：任一边发生变更、
+ * 合取由不成立变为成立时，在那里补一次 /block 黑名单清扫。它只认已 /init enable 过
  * 的群：my_chat_member 更新会绕过 app/registerHandlers.ts 的 isInitEnabled
  * 网关（机器人被拉进任何群，不管有没有人 /init，Telegram 都会推送），若
  * 不在这里把关，
@@ -93,15 +100,34 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
 async function recordBotAdminStatus(chatId: number, isAdmin: boolean): Promise<void> {
   if (getChatState(chatId).isInitEnabled !== true) return;
   const chatState: ChatState = getOrCreateChatState(chatId);
-  if (chatState.botIsAdmin === isAdmin) return;
-  chatState.botIsAdmin = isAdmin;
-  await persistAuthoritativeState("bot admin status refresh");
+  if (chatState.botIsAdmin !== isAdmin) {
+    chatState.botIsAdmin = isAdmin;
+    await persistAuthoritativeState("bot admin status refresh");
+    // 不再是管理员：这个群欠的那次清扫作废，在途批次一并丢弃（继续在一个
+    // 已经放手的群里封人是越权），重新拿到权限后重新欠一次。
+    if (!isAdmin) forgetChatBlocklistWork(chatId);
+  }
+  if (!isAdmin) return;
+  // 「是管理员 && 已初始化」成立：补一次黑名单清扫。本函数是三条管理员发现
+  // 路径的唯一收口，因此每次确证身份都在这里问一次；「这个群扫过了没有」由
+  // sweepBlockedMembers 自己按 blocklistSweepState 记账（O(1) 早退），而不是
+  // 由这里的「值变没变」代表——把边沿消耗在投递那一刻，一次限流失败就等于
+  // 那些人永久坐在群里。/init enable 那一边的变更同样落到这里：它会先作废
+  // 身份记录与清扫进度，随后的重新判定走回本函数（见 commands/init.ts）。
+  // 失败只记日志不上抛：管理员身份已经记好了，补扫失败不该把整条 update 判成
+  // 失败——退避窗口过去后，下一次身份观测会再试一次。
+  try {
+    await sweepBlockedMembers(chatId);
+  } catch (error: unknown) {
+    logger.error(`Failed to sweep blocklisted members from chat ${chatId} after gaining admin rights:`, error);
+  }
 }
 
 /**
  * 处理 my_chat_member 更新（机器人自己在某个聊天里的成员状态变化）：
  * 被授予/撤销管理员、被移出群聊时刷新本群的 botIsAdmin 记录。这类更新
  * 必须显式列进 allowed_updates 才会送达（见 app/lifecycle.ts）。
+ * 非管理员 -> 管理员的那一跳会经 recordBotAdminStatus 触发一次黑名单清扫。
  */
 export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
   const update: ChatMemberUpdated | undefined = ctx.myChatMember;
@@ -114,6 +140,7 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
       async (): Promise<void> => {
         // 普通配置删除；若 lockdown 尚未恢复则保留 write-ahead owner，避免群权限
         // 因退群而永久卡住。重新入群后 initAntiRaid/Worker 重建会继续接管。
+        forgetChatBlocklistWork(update.chat.id);
         pruneDepartedChatState(update.chat.id);
         await persistAuthoritativeState(`chat ${update.chat.id} state pruned after bot left/kicked`);
       },
@@ -154,13 +181,17 @@ export function invalidateBotAdminStatus(chatId: number): void {
   }
   botAdminFetches.delete(chatId);
   clearChatStateField(chatId, "botIsAdmin");
+  // /init 一关一开之间机器人可能已经不是管理员、群里也可能换了人：这个群
+  // 欠的那次黑名单清扫重新算，由 enable 之后的重新判定再触发一次。在途批次
+  // 同时丢弃——被 disable 中断的那批不能在重新接管前继续跑。
+  forgetChatBlocklistWork(chatId);
 }
 
 /**
  * 机器人在某群是否为管理员。已有记录（无论真假）直接同步返回；从未记录过
  * 的群现查一次 getChatMember 并回填（带在途去重，同群并发判定共享同一次
  * 请求）。现查失败按「不是管理员」处理（fail closed：门控宁可漏跑一次守卫
- * /拒一次 /kick，也不带着没权限的身份硬跑），且不落盘——下次照常重查。
+ * /拒一次 /block，也不带着没权限的身份硬跑），且不落盘——下次照常重查。
  *
  * 现查在途期间，若 my_chat_member/chat_member 的权威信号（本文件顶部注释
  * 的路径 1/2）先一步落地：本地事件处理顺序不保证跟 Telegram 内部时序完全
@@ -175,9 +206,16 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
   let inFlight: Promise<boolean> | undefined = botAdminFetches.get(chatId);
   if (!inFlight) {
     const generation: number = botAdminGenerations.get(chatId) ?? 0;
+    const signal: AbortSignal | undefined = currentUpdateAbortSignal();
     botAdminGenerationUsers.set(chatId, (botAdminGenerationUsers.get(chatId) ?? 0) + 1);
-    const request: Promise<boolean> = bot.api
-      .getChatMember(chatId, bot.botInfo.id)
+    const getMember: Promise<ChatMember> = signal === undefined
+      ? bot.api.getChatMember(chatId, bot.botInfo.id)
+      : bot.api.getChatMember(
+        chatId,
+        bot.botInfo.id,
+        signal as unknown as Parameters<typeof bot.api.getChatMember>[2]
+      );
+    const request: Promise<boolean> = getMember
       .then(async (member: ChatMember): Promise<boolean> => {
         // /init 在请求期间切换过：这个响应属于旧一代，不回填，
         // 改用新一代的查询结果。
@@ -191,6 +229,7 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
         return isAdmin;
       })
       .catch((error: unknown): boolean => {
+        throwIfUpdateAborted(signal);
         logger.error(`Failed to check bot's own admin status in chat ${chatId}:`, error);
         return false;
       })

@@ -69,7 +69,7 @@ export interface ChatState {
   /**
    * 机器人自己在本群是否为管理员。由 my_chat_member 更新近实时维护，未知时
    * 按需 getChatMember 现查回填（见 packages/infra/botAdmin.ts）。这是入群守卫和
-   * /kick 的权限门控依据，也是「/kick 在所有管理员群同步生效」的群清单来源
+   * /block 的权限门控依据，也是「/block 在所有管理员群同步生效」的群清单来源
    * ——Bot API 无法枚举机器人所在的群，只能这样记下来。
    */
   botIsAdmin?: boolean;

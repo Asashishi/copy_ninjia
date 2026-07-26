@@ -6,6 +6,7 @@ import { registerChatTeardown } from "../infra/chatTeardown";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
 import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
+import { peekCommandTarget } from "./targetResolution";
 import {
   cancelPendingCopySlot,
   cancelPendingCopySlotOwnedBy,
@@ -57,9 +58,12 @@ export async function handleCopyCommand(
       });
       return;
     }
-    const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, "/copy");
-    if (!targetUser) return;
-    const replyText: string = slotDecision.copiedUser.id === targetUser.id
+    // 这条 /copy 已经注定被拒，这里只想知道目标是谁好挑一句文案——必须用不带
+    // 发送副作用的只读查询。走完整解析的话，参数是未缓存的 @username 时它会
+    // 自己发一条「@x 都还没说过话呢」并返回 undefined，用户收到的是「不认识
+    // 这个用户名」，而真正的原因（正在复读别人）永远没说。
+    const targetUser: CachedUser | undefined = peekCommandTarget(ctx.msg, ctx.match);
+    const replyText: string = slotDecision.copiedUser.id === targetUser?.id
       ? `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`
       : `本天才手上已经有猎物啦，想换人的话先 /stop_copy 呀，笨蛋♡`;
     await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });

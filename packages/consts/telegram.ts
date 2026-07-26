@@ -48,6 +48,15 @@ export const API_RETRY_MAX_DELAY_SECONDS: number = 5;
 export const CHAT_TITLE_REFRESH_CONCURRENCY: number = 15;
 
 /**
+ * 启动期标题回填累计改动多少个群才落一次盘。逐个群落盘会把启动期变成
+ * O(群数²) 的主线程 CPU——StateStore.save 每次都要对**全部**群做一遍
+ * 序列化 + 解析 + 深校验，而 LatestValueRunner 只合并磁盘写、不合并这段工作。
+ * 群名称不参与任何业务判断（见 infra/chatTitle.ts），中途崩溃丢掉几个标题
+ * 没有副作用，因此可以放心攒批。
+ */
+export const CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE: number = 50;
+
+/**
  * 自发消息登记表（见 infra/selfSentTracker.ts）的存活时长：只需覆盖「发送 →
  * 更新原样弹回」的往返时间（频道帖自回环、转发进关联讨论组的副本），
  * 未被命中的登记项到期自动清理，不值得长期占内存。

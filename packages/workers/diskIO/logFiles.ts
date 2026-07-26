@@ -25,7 +25,7 @@ import { DAY_MS } from "../../consts/diskIO/common";
 import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
 import {
-  DayFileFormatError,
+  AppendOnlyFileFormatError,
   appendToDayFile,
   openDayFile,
   serializeDayFileEntry,
@@ -63,7 +63,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function assertLogFileSchema(path: string, parsed: unknown): void {
   if (!isRecord(parsed)) {
-    throw new DayFileFormatError(path, "must contain a top-level JSON object.");
+    throw new AppendOnlyFileFormatError(path, "must contain a top-level JSON object.");
   }
   for (const [key, value] of Object.entries(parsed)) {
     if (
@@ -72,7 +72,7 @@ function assertLogFileSchema(path: string, parsed: unknown): void {
       typeof value.message !== "string" ||
       (value.args !== undefined && !Array.isArray(value.args))
     ) {
-      throw new DayFileFormatError(path, `contains an invalid log record for key ${key}.`);
+      throw new AppendOnlyFileFormatError(path, `contains an invalid log record for key ${key}.`);
     }
   }
 }

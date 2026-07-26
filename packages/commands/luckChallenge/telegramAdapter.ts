@@ -6,6 +6,10 @@ import { LUCK_RESULT_IDS } from "../../consts/luckChallenge";
 import { logApiError } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
 import {
+  currentUpdateAbortSignal,
+  throwIfUpdateAborted,
+} from "../../infra/updateContext";
+import {
   ensureLuckCacheFreshForToday,
   getOrDrawLuck,
   promotePendingDraw,
@@ -44,8 +48,14 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
 
   if (!tryConsumeLuckRateLimit()) {
     try {
-      await ctx.answerInlineQuery([buildRateLimitedResult()], { cache_time: 1, is_personal: true });
+      await ctx.answerInlineQuery(
+        [buildRateLimitedResult()],
+        { cache_time: 1, is_personal: true },
+        currentUpdateAbortSignal() as unknown as
+          Parameters<Context["answerInlineQuery"]>[2]
+      );
     } catch (error: unknown) {
+      throwIfUpdateAborted();
       logApiError("answer rate-limited luck inline query", error);
     }
     return;
@@ -74,8 +84,14 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     ];
 
   try {
-    await ctx.answerInlineQuery(results, { cache_time: 0, is_personal: true });
+    await ctx.answerInlineQuery(
+      results,
+      { cache_time: 0, is_personal: true },
+      currentUpdateAbortSignal() as unknown as
+        Parameters<Context["answerInlineQuery"]>[2]
+    );
   } catch (error: unknown) {
+    throwIfUpdateAborted();
     logApiError("answer luck inline query", error);
   }
 }

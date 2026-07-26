@@ -2,3 +2,4 @@
 export type * from "./aiChat/memory";
 export type * from "./aiChat/protocol";
 export type * from "./aiChat/speaker";
+export type * from "./aiChat/waiters";

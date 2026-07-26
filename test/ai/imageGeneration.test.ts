@@ -56,7 +56,7 @@ describe("Gemini 图片生成适配器", () => {
       }],
     });
 
-    const image = await generateChatImage("一只纸飞机", "16:9");
+    const image = await generateChatImage({ prompt: "一只纸飞机", aspectRatio: "16:9" });
 
     expect(requestGeminiResponse).toHaveBeenCalledWith({
       model: GEMINI_IMAGE_GENERATION_MODEL,
@@ -80,7 +80,11 @@ describe("Gemini 图片生成适配器", () => {
       }],
     });
 
-    await generateChatImage("把原图改成水彩", "4:3", { bytes: referenceBytes, mime: "image/jpeg" });
+    await generateChatImage({
+      prompt: "把原图改成水彩",
+      aspectRatio: "4:3",
+      referenceImage: { bytes: referenceBytes, mime: "image/jpeg" },
+    });
 
     expect(requestGeminiResponse).toHaveBeenCalledWith({
       model: GEMINI_IMAGE_GENERATION_MODEL,
@@ -103,7 +107,7 @@ describe("Gemini 图片生成适配器", () => {
       candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: { mimeType: "image/webp", data: "AAAA" } }] } }],
     });
 
-    await expect(generateChatImage("test", "1:1")).resolves.toBeNull();
+    await expect(generateChatImage({ prompt: "test", aspectRatio: "1:1" })).resolves.toBeNull();
   });
 
   test("异常结束原因即使夹带图片 payload 也不会返回", async () => {
@@ -112,7 +116,7 @@ describe("Gemini 图片生成适配器", () => {
       requestGeminiResponse.mockResolvedValueOnce({
         candidates: [{ finishReason, content: { parts: [{ inlineData: { mimeType: "image/png", data: encoded } }] } }],
       });
-      await expect(generateChatImage("test", "1:1")).resolves.toBeNull();
+      await expect(generateChatImage({ prompt: "test", aspectRatio: "1:1" })).resolves.toBeNull();
     }
   });
 
@@ -123,7 +127,7 @@ describe("Gemini 图片生成适配器", () => {
         content: { parts: [{ inlineData: { mimeType: "image/png", data: "not-base64!" } }] },
       }],
     });
-    await expect(generateChatImage("bad base64", "1:1")).resolves.toBeNull();
+    await expect(generateChatImage({ prompt: "bad base64", aspectRatio: "1:1" })).resolves.toBeNull();
 
     requestGeminiResponse.mockResolvedValueOnce({
       candidates: [{
@@ -131,7 +135,7 @@ describe("Gemini 图片生成适配器", () => {
         content: { parts: [{ inlineData: { mimeType: "image/png", data: Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString("base64") } }] },
       }],
     });
-    await expect(generateChatImage("wrong signature", "1:1")).resolves.toBeNull();
+    await expect(generateChatImage({ prompt: "wrong signature", aspectRatio: "1:1" })).resolves.toBeNull();
   });
 
   test("编码长度已证明解码后可能超限时不分配图片 Buffer", async () => {
@@ -143,6 +147,6 @@ describe("Gemini 图片生成适配器", () => {
       }],
     });
 
-    await expect(generateChatImage("oversized", "1:1")).resolves.toBeNull();
+    await expect(generateChatImage({ prompt: "oversized", aspectRatio: "1:1" })).resolves.toBeNull();
   });
 });

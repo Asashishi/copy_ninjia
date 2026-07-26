@@ -73,7 +73,13 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       case GENERATE_IMAGE_TOOL:
         return executeGenerateImage(argumentsJson);
       case VIEW_STICKER_PACK_TOOL:
-        return viewStickerPackTool({ chatAction: ctx.chatAction, menu, argumentsJson, state: stickerState });
+        return viewStickerPackTool({
+          chatAction: ctx.chatAction,
+          menu,
+          argumentsJson,
+          state: stickerState,
+          signal: ctx.signal,
+        });
       case SEND_STICKER_TOOL:
         return sendStickerTool({
           chatAction: ctx.chatAction,
@@ -84,6 +90,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
           state: stickerState,
           onSent: ctx.onStickerSent,
           isActive: ctx.isActive,
+          signal: ctx.signal,
         });
       default:
         return toolError(unknownToolError(name));
@@ -125,5 +132,6 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
     },
     actionsUsed: (): number => actionsUsed,
     isActive: ctx.isActive,
+    signal: ctx.signal,
   };
 }

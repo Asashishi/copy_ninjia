@@ -9,6 +9,7 @@ export interface DownloadTelegramVisionImageParams {
   fileId: string;
   /** 只用于固定格式诊断日志，不得包含用户文本、URL 或 token。 */
   logLabel: string;
+  signal?: AbortSignal;
 }
 
 /**
@@ -19,16 +20,24 @@ export interface DownloadTelegramVisionImageParams {
 export async function downloadTelegramVisionImage({
   fileId,
   logLabel,
+  signal,
 }: DownloadTelegramVisionImageParams): Promise<VisionImage | null> {
   try {
-    const file: TelegramFile = await bot.api.getFile(fileId);
+    const timeoutSignal: AbortSignal = AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS);
+    const requestSignal: AbortSignal = signal === undefined
+      ? timeoutSignal
+      : AbortSignal.any([signal, timeoutSignal]);
+    const file: TelegramFile = await bot.api.getFile(
+      fileId,
+      requestSignal as unknown as Parameters<typeof bot.api.getFile>[1]
+    );
     if (!file.file_path) {
       logger.error(`getFile for ${logLabel} ${fileId} returned no file_path`);
       return null;
     }
 
     const response: Response = await fetch(buildFileDownloadUrl(file.file_path), {
-      signal: AbortSignal.timeout(MEDIA_DOWNLOAD_TIMEOUT_MS),
+      signal: requestSignal,
     });
     if (!response.ok) {
       logger.error(`Failed to download ${logLabel} (${response.status}): ${file.file_path}`);
@@ -52,6 +61,7 @@ export async function downloadTelegramVisionImage({
     }
     return image;
   } catch (error: unknown) {
+    if (signal?.aborted === true) return null;
     logger.error(`Error loading ${logLabel}:`, error);
     return null;
   }

@@ -6,7 +6,7 @@ import { visibleSenderChat } from "./visibleSender";
 
 /**
  * 消息发送者的身份解析与缓存。自动流程（packages/auto/message/ 靠 cacheSender
- * 刷新 username 缓存）和命令处理（packages/commands 下的 /copy、/kick 靠
+ * 刷新 username 缓存）和命令处理（packages/commands 下的 /copy、/block 靠
  * resolveReplyTarget 从被回复的消息定位目标，靠 resolveUsernameTarget 按
  * @username 定位目标）共用这一份逻辑。缓存状态见 cache/senderIdentity.ts。
  */
@@ -16,7 +16,7 @@ import { visibleSenderChat } from "./visibleSender";
  * （`from`），也可能是通过 `sender_chat` 或纯粹的 `channel_post`（这种情况下
  * 没有 `sender_chat`，帖子自身的 `chat` 就是该频道）体现的频道身份。既用于
  * 填充 username 缓存，也用于直接从被回复的消息中解析出 /copy 目标，以及为
- * 单字中文动作命令取出发起人身份（见 commands/cjkAction.ts）。
+ * 中文动作命令取出发起人身份（见 commands/cjkAction.ts）。
  */
 export function resolveSenderIdentity(message: Message): CachedUser | undefined {
   const fromUser: User | undefined = message.from;
@@ -114,14 +114,14 @@ export function resolveReplyTarget(message: Message): CachedUser | undefined {
 }
 
 /** 按 @username 参数（不带 @，大小写不敏感）在缓存里查找目标，供
- *  /copy、/kick 等命令解析 @username 形式的目标，见
+ *  /copy、/block 等命令解析 @username 形式的目标，见
  *  commands/targetResolution.ts 的 resolveCommandTarget。 */
 export function resolveUsernameTarget(username: string): CachedUser | undefined {
   const normalizedUsername: string = username.toLowerCase();
   const identity: CachedUser | undefined = userCache.get(normalizedUsername);
   if (!identity) return undefined;
 
-  // 已知不一致的 alias 一律拒绝，并顺手清除坏的正向记录。/kick 等破坏性命令
+  // 已知不一致的 alias 一律拒绝，并顺手清除坏的正向记录。/block 等破坏性命令
   // 因此不会继续相信仅存在于单边缓存中的陈旧身份；提示层会建议回复消息定位。
   if (senderUsernameCache.get(identity.id) !== normalizedUsername) {
     userCache.delete(normalizedUsername);

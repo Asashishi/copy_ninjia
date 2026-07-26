@@ -19,7 +19,7 @@ export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 export const GEMINI_API_KEY: string = requireEnv("GEMINI_API_KEY");
 
 /**
- * 免受 /copy 冷却限制、可使用 /kick，且可为其他机器人代点入群验证的
+ * 免受 /copy 冷却限制、可使用 /block，且可为其他机器人代点入群验证的
  * 用户 ID 白名单（逗号分割）；真人验证始终只能由本人点击。
  */
 export const PRIVILEGED_USERS_ID: readonly number[] = parseTelegramUserIdList(requireEnv("PRIVILEGED_USERS_ID", true), "PRIVILEGED_USERS_ID");

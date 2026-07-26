@@ -34,6 +34,8 @@ const flushAiMemorySnapshots = mock((): boolean => true);
 const flushStickerCatalogs = mock((): boolean => true);
 const flushLuckAppends = mock((): boolean => true);
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
+const flushBlocklistRemovalOutbox = mock((): boolean => true);
+const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
 
 mock.module("../../packages/workers/diskIO/logFiles", () => ({
@@ -68,6 +70,11 @@ mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
   hydrateStickerCatalogs: (): Map<string, string> => new Map(),
   markStickerCatalogSnapshotDirty,
 }));
+mock.module("../../packages/workers/diskIO/blocklistRemovalOutbox", () => ({
+  flushBlocklistRemovalOutbox,
+  handleBlocklistRemovalsMessage,
+  hydrateBlocklistRemovalOutbox: (): Map<number, never> => new Map<number, never>(),
+}));
 
 const workerGlobal = globalThis as typeof globalThis & { postMessage: (message: unknown) => void };
 const originalPostMessage = workerGlobal.postMessage;
@@ -92,6 +99,8 @@ beforeEach(() => {
     flushStickerCatalogs,
     flushLuckAppends,
     flushVerificationChanges,
+    flushBlocklistRemovalOutbox,
+    handleBlocklistRemovalsMessage,
     postMessage,
     hydrateLuckDay,
   ]) fn.mockClear();
@@ -104,6 +113,7 @@ beforeEach(() => {
   flushStickerCatalogs.mockReturnValue(true);
   flushLuckAppends.mockReturnValue(true);
   flushVerificationChanges.mockReturnValue(true);
+  flushBlocklistRemovalOutbox.mockReturnValue(true);
 });
 
 function route(message: DiskIOMessage): void {
@@ -124,6 +134,7 @@ describe("Disk I/O Worker protocol router", () => {
     route({ type: "stickerCatalog", pack: "pack", snapshot: "catalog" });
     route({ type: "luckDraw", day: "2026-07-22", key: "42", label: "大吉", fortunePercent: 99 });
     route({ type: "verificationDelete", chatId: -1, userId: 42, generation: 1, revision: 4 });
+    route({ type: "blocklistRemovals", removals: [] });
 
     expect(handleLogMessage).toHaveBeenCalledTimes(1);
     expect(markAiMemorySnapshotDirty).toHaveBeenCalledWith({
@@ -136,6 +147,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(markStickerCatalogSnapshotDirty).toHaveBeenCalledWith("pack", "catalog");
     expect(handleLuckDrawMessage).toHaveBeenCalledTimes(1);
     expect(handleVerificationDelete).toHaveBeenCalledTimes(1);
+    expect(handleBlocklistRemovalsMessage).toHaveBeenCalledTimes(1);
   });
 
   test("密钥请求总有显式成功或失败回执", () => {
@@ -207,13 +219,41 @@ describe("Disk I/O Worker protocol router", () => {
     }));
   });
 
-  test("flush 不短路其它 owner，并按总体结果选择回执", () => {
+  test("flush 不短路其它 owner，并按领域回报失败", () => {
     flushAiMemorySnapshots.mockReturnValueOnce(false);
     route({ type: "flush", flushId: 11 });
 
-    for (const fn of [flushLogBuffer, flushAiMemorySnapshots, flushStickerCatalogs, flushLuckAppends, flushVerificationChanges]) {
+    for (const fn of [
+      flushLogBuffer,
+      flushAiMemorySnapshots,
+      flushStickerCatalogs,
+      flushLuckAppends,
+      flushVerificationChanges,
+      flushBlocklistRemovalOutbox,
+    ]) {
       expect(fn).toHaveBeenCalledTimes(1);
     }
-    expect(postMessage).toHaveBeenLastCalledWith({ type: "flushFailed", flushedId: 11 });
+    // 按领域而不是一个合取布尔：等自己那条记录落盘的调用方（/block）不该被
+    // 无关领域的失败误导——那会把运维引向一个其实没坏的文件，而真正坏掉的
+    // 领域按设计只有 console.error，永远进不了 logs/。
+    expect(postMessage).toHaveBeenLastCalledWith({
+      type: "flushFailed",
+      flushedId: 11,
+      failedDomains: ["aiMemory"],
+    });
+
+    flushBlocklistRemovalOutbox.mockReturnValueOnce(false);
+    route({ type: "flush", flushId: 12 });
+    expect(postMessage).toHaveBeenLastCalledWith({
+      type: "flushFailed",
+      flushedId: 12,
+      failedDomains: ["blocklistRemovalOutbox"],
+    });
+  });
+
+  test("七个领域全部成功时回执不带失败领域", () => {
+    route({ type: "flush", flushId: 13 });
+
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 13 });
   });
 });

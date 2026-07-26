@@ -8,7 +8,7 @@ describe("application command menu", () => {
   test("命令名全部满足 Telegram 的字符集与长度限制", () => {
     // setMyCommands 是整体提交：任何一项非法都会让整份菜单以
     // BOT_COMMAND_INVALID 失败，而注册失败只记日志、不阻断启动，
-    // 于是菜单会静默消失。单字中文动作命令因此只能靠 /x 占位说明项曝光。
+    // 于是菜单会静默消失。中文动作命令因此只能靠 /x 占位说明项曝光。
     for (const { command, description } of BOT_COMMANDS) {
       expect(command).toMatch(/^[a-z0-9_]{1,32}$/);
       expect(description.length).toBeGreaterThan(0);

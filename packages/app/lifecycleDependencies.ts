@@ -1,5 +1,6 @@
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, terminateAiChat } from "../aiChat";
 import { drainAntiRaid, hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
+import { hydrateBlocklist } from "../infra/blocklist";
 import { restoreLuckState } from "../commands";
 import { getMoodConfig } from "../config/mood";
 import { getReactionConfig } from "../config/reactions";
@@ -62,6 +63,7 @@ export const lifecycleDependencies = {
   getReactionConfig,
   getStickerConfig,
   hydrateAiMemory,
+  hydrateBlocklist,
   hydratePendingVerifications,
   hydrateStickerCatalog,
   initAvatarUpdates,

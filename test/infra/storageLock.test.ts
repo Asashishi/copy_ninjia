@@ -48,8 +48,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await releaseSingleInstanceLock(TOKEN_A, lockFilePath);
-  await releaseSingleInstanceLock(TOKEN_B, lockFilePath);
+  // 部分用例刻意留下需要人工处理的损坏锁；生产 release 必须传播错误，
+  // 测试夹具清理则直接删除整个临时目录，不把预期错误变成 afterEach 失败。
+  await releaseSingleInstanceLock(TOKEN_A, lockFilePath).catch((): undefined => undefined);
+  await releaseSingleInstanceLock(TOKEN_B, lockFilePath).catch((): undefined => undefined);
   rmSync(testDir, { recursive: true, force: true });
 });
 
@@ -190,6 +192,21 @@ describe("single instance lock registry", () => {
     };
 
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options)).rejects.toThrow("proc unavailable");
+    expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
+  });
+
+  test("释放时身份读取异常向调用方传播，并原样保留 owner", async () => {
+    const current: ProcessIdentity = identity(process.pid, "601");
+    writeFileSync(lockFilePath, registryText(current, TOKEN_A));
+    const options: InstanceLockOptions = {
+      currentIdentity: current,
+      readProcessIdentity: async (): Promise<never> => {
+        throw new Error("release proc unavailable");
+      },
+    };
+
+    await expect(releaseSingleInstanceLock(TOKEN_A, lockFilePath, options))
+      .rejects.toThrow("release proc unavailable");
     expect(readFileSync(lockFilePath, "utf8")).toBe(registryText(current, TOKEN_A));
   });
 

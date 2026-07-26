@@ -31,6 +31,9 @@ mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({
 mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
   applyAdminChange(): void { calls.push("adminsChanged"); },
 }));
+mock.module("../../../packages/workers/antiRaid/blocklistEffects", () => ({
+  handleRemoveBlockedMembers(): void { calls.push("removeBlockedMembers"); },
+}));
 const sweepRecentComments = mock((_now: number): number => 0);
 mock.module("../../../packages/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
 const initTelegramClients = mock((): void => {});
@@ -79,12 +82,14 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "adoptVerifications", generation: 1, verifications: [] },
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isInviterExempt: true },
+      { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
       { type: "barrier", barrierId: 99 },
     ];
     for (const message of messages) workerSelf.onmessage!({ data: message } as MessageEvent<AntiRaidWorkerMessage>);
     expect(calls).toEqual([
       "join", "left", "deactivateVerification", "deactivateLockdown", "message", "callback",
       "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
+      "removeBlockedMembers",
     ]);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
 

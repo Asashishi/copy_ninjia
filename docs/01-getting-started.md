@@ -38,7 +38,7 @@ cp .env.example .env
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather 下发的 token |
 | `GEMINI_API_KEY` | ✅ | Gemini API 密钥 |
 | `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员，单个十进制用户 ID；`/init`、`/ai_chat`、`/switch_mood`、`/send` 等只认它 |
-| `PRIVILEGED_USERS_ID` | 可空 | 白名单用户，逗号分隔；豁免 copy 冷却、可用 `/kick`、可为其他机器人担保验证 |
+| `PRIVILEGED_USERS_ID` | 可空 | 白名单用户，逗号分隔；豁免 copy 冷却、可用 `/block`、可为其他机器人担保验证 |
 | `COPY_NINJIA_DATA_ROOT` | 可空 | 运行时数据根目录；留空时数据落在项目根。详见 [07 运维与排障](07-operations.md#数据根) |
 
 如需日语翻译，把服务账号密钥存为项目根目录的 `g-auth.json`。`.env` 与 `g-auth.json` 都已在 `.gitignore` 中。

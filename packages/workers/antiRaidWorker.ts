@@ -15,12 +15,14 @@ import {
   stopLockdownRuntime,
 } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
+import { handleRemoveBlockedMembers } from "./antiRaid/blocklistEffects";
+import { bumpBlocklistRemovalEpoch } from "../cache/antiRaid/blocklist";
 import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
 import { resetAdminCache, sweepAdminCache } from "../cache/antiRaid/admins";
 import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/antiRaid/linkedChannels";
 import { recentChannelComments } from "../cache/antiRaid/recentComments";
 import { sweepVerificationRevisionCache } from "../cache/antiRaid/verification";
-import type { AntiRaidWorkerMessage } from "../types/antiRaid";
+import type { AntiRaidWorkerMessage, BlockedMembersRemovedEvent } from "../types/antiRaid";
 import { initTelegramClients } from "../infra/telegram/client";
 import { sweepRecentComments } from "./antiRaid/recentComments";
 import { antiRaidCacheSweepTimer } from "../cache/antiRaid/worker";
@@ -35,6 +37,8 @@ import { antiRaidCacheSweepTimer } from "../cache/antiRaid/worker";
  * verificationEffects.ts、verificationReminders.ts；私密模式位于
  * antiRaid/lockdownRuntime.ts。五类状态各自由 cache/antiRaid/ 下的领域
  * 模块持有。本文件只剩消息路由与缓存 sweep 调度。
+ * /block 黑名单的处置副作用（antiRaid/blocklistEffects.ts）也挂在本线程：
+ * 它不带状态机，判定在主线程做完，这里只执行踢人这一步网络动作。
  * 关键约定（详见各 runtime 模块头）：
  * - dispatch 里状态更替是同步的，副作用（网络请求）一律事后执行——消息
  *   按 FIFO 逐条处理，同一波刷屏入群的后续投递不会被网络往返卡住，
@@ -66,6 +70,8 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "deactivateChat":
       deactivateVerificationChat(msg.chatId);
       deactivateLockdownChat(msg.chatId);
+      // 在途的黑名单补扫可能还要跑几分钟；停管之后继续在这个群里封人是越权。
+      bumpBlocklistRemovalEpoch(msg.chatId);
       break;
     case "message":
       handleTrackedMessage(msg);
@@ -87,6 +93,14 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       break;
     case "adminsChanged":
       applyAdminChange(msg.chatId, msg.userId, msg.isInviterExempt);
+      break;
+    case "removeBlockedMembers":
+      // 判定已在主线程做完（名单是主线程状态），这里只执行网络动作；
+      // 同步返回、请求事后跑，不阻塞 mailbox。落地结果经回执回主线程销镜像。
+      handleRemoveBlockedMembers({
+        msg,
+        publish: (event: BlockedMembersRemovedEvent): void => self.postMessage(event),
+      });
       break;
     case "barrier":
       self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });

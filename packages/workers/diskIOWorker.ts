@@ -1,8 +1,8 @@
 /**
  * 磁盘 IO 线程（Bun Worker）：共享业务数据的磁盘 IO 收在这一条线程里串行执行——
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
- * 目录快照、每日运势缓存与待验证当日增量 JSON 都由进程唯一的统一持久化
- * Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
+ * 目录快照、每日运势缓存、待验证当日增量 JSON 与 /block 黑名单都由进程唯一的
+ * 统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
  * 互相踩坏。state.json 是明确例外，由主线程 StateStore 独立异步维护。
  * 本 Worker 原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
  *
@@ -10,9 +10,11 @@
  * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/aiMemoryFiles.ts（AI 记忆）、
  * diskIO/stickerCatalogFiles.ts（贴纸目录）、diskIO/luckFiles.ts（运势的缓冲/
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
- * diskIO/verificationFiles.ts（待验证按日增量）与
- * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势
- * 和待验证数据共用 appendOnlyDayFile.ts 的按位置追加/截断修复机制。
+ * diskIO/verificationFiles.ts（待验证按日增量）、
+ * diskIO/blocklistFile.ts（/block 黑名单）与
+ * diskIO/blocklistRemovalOutbox.ts（未完成处置 outbox）、
+ * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
+ * 与黑名单共用 appendOnlyDayFile.ts 的按位置追加/截断修复机制。
  *
  * 原则：磁盘只在启动恢复（load）时被读一次；此后 cache/diskIO/ 下各领域 owner
  * 是唯一事实源，写是「缓存 -> 磁盘」的单向定时同步。本线程自身的内部错误
@@ -20,6 +22,12 @@
  * 转发的日志落盘自己的错误，那是一场递归。
  */
 
+import { flushBlocklistAppends, handleBlockUserMessage, handleUnblockUserMessage, hydrateBlocklist } from "./diskIO/blocklistFile";
+import {
+  flushBlocklistRemovalOutbox,
+  handleBlocklistRemovalsMessage,
+  hydrateBlocklistRemovalOutbox,
+} from "./diskIO/blocklistRemovalOutbox";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import { flushLuckAppends, handleLuckDrawMessage, hydrateLuckDay } from "./diskIO/luckFiles";
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
@@ -39,31 +47,38 @@ import { aiMemoryCache } from "../cache/diskIO/snapshots";
 import { stickerCatalogCache } from "../cache/diskIO/stickers";
 import { luckWorkerCache } from "../cache/diskIO/luck";
 import type { VerificationSnapshot } from "../types/antiRaid";
-import type { DiskFlushFailedReply, DiskFlushReply, DiskIOMessage, LoadedReply, LuckSecretReply, VerificationPersistedReply, AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../types/diskIO";
-import type { LuckReceiptSecret } from "../types/diskIO/storage";
+import type { PendingBlockedRemoval } from "../types/blocklist";
+import type { DiskFlushFailedReply, DiskFlushReply, DiskIODomain, DiskIOMessage, LoadedReply, LuckSecretReply, VerificationPersistedReply, AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../types/diskIO";
+import type { BlockedUserRecord, LuckReceiptSecret } from "../types/diskIO/storage";
 
 declare const self: Worker;
 
-/** 统一 flush：日志缓冲、AI 记忆/贴纸目录快照、运势与待验证追加缓冲全部立即落盘（进程退出前
+/** 统一 flush：日志缓冲、AI 记忆/贴纸目录快照、运势、待验证与黑名单追加缓冲全部立即落盘（进程退出前
  *  的最后一刷，各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
  *  该刷的都立即刷）。 */
-function flushAll(): boolean {
+function flushAll(): readonly DiskIODomain[] {
   // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
-  const results: boolean[] = [
-    flushLogBuffer(),
-    flushAiMemorySnapshots(),
-    flushStickerCatalogs(),
-    flushLuckAppends(),
-    flushVerificationChanges((reply: VerificationPersistedReply): void => self.postMessage(reply)),
+  const results: readonly (readonly [DiskIODomain, boolean])[] = [
+    ["log", flushLogBuffer()],
+    ["aiMemory", flushAiMemorySnapshots()],
+    ["stickerCatalog", flushStickerCatalogs()],
+    ["luck", flushLuckAppends()],
+    ["verification", flushVerificationChanges((reply: VerificationPersistedReply): void => self.postMessage(reply))],
+    ["blocklist", flushBlocklistAppends()],
+    ["blocklistRemovalOutbox", flushBlocklistRemovalOutbox()],
   ];
-  return results.every(Boolean);
+  // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
+  // 的失败误导，而那个领域的真实错误按设计只有 console.error。
+  return results
+    .filter(([, flushed]: readonly [DiskIODomain, boolean]): boolean => !flushed)
+    .map(([domain]: readonly [DiskIODomain, boolean]): DiskIODomain => domain);
 }
 
 /**
  * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
  * 建目录、扫描解析校验 memory/ai/、memory/stickers/、memory/luck/（含当天
- * 回执密钥）与当天待验证增量文件，先灌进自己的缓存，再把缓存内容作为
- * loaded 回执发给主线程。任何恢复失败都会在回执中显式报告；主线程启动
+ * 回执密钥）、当天待验证增量文件与 config/blocklist.json，先灌进自己的缓存，
+ * 再把缓存内容作为 loaded 回执发给主线程。任何恢复失败都会在回执中显式报告；主线程启动
  * 握手据此拒绝以部分/空状态继续运行。
  * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
  * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）；
@@ -73,6 +88,8 @@ function flushAll(): boolean {
 function handleLoad(): void {
   let loadError: string | undefined;
   let verifications: Map<string, VerificationSnapshot> = new Map();
+  let blockedUsers: Map<number, BlockedUserRecord> = new Map();
+  let pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Map();
   let luckReceiptSecret: LuckReceiptSecret | null = null;
   try {
     hydrateAiMemorySnapshots();
@@ -85,6 +102,8 @@ function handleLoad(): void {
     });
     verifications = recoverVerificationDay(todayKey);
     scheduleVerificationRollover((reply: VerificationPersistedReply): void => self.postMessage(reply));
+    blockedUsers = hydrateBlocklist();
+    pendingBlockedRemovals = hydrateBlocklistRemovalOutbox();
   } catch (error: unknown) {
     loadError = error instanceof Error ? error.message : String(error);
     console.error("[diskIOWorker] startup recovery failed:", error);
@@ -97,6 +116,8 @@ function handleLoad(): void {
     luckDay: luckWorkerCache.current,
     luckReceiptSecret,
     verifications,
+    blockedUsers,
+    pendingBlockedRemovals,
     error: loadError,
   };
   self.postMessage(reply);
@@ -174,13 +195,26 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
     case "verificationDelete":
       handleVerificationDelete({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
       break;
+    case "blockUser":
+      // 收到即写，不进合并窗口：拉黑低频且关键，主线程那边内存 Map 已经先
+      // 更新过，磁盘落后一个批量窗口就意味着这段时间内重启会丢掉这条记录。
+      handleBlockUserMessage(msg);
+      break;
+    case "unblockUser":
+      // 追加型文件删不掉已有条目：按主线程送来的完整名单整文件原子重写。
+      handleUnblockUserMessage(msg);
+      break;
+    case "blocklistRemovals":
+      handleBlocklistRemovalsMessage(msg);
+      break;
     case "load":
       handleLoad();
       break;
     case "flush": {
-      const reply: DiskFlushReply | DiskFlushFailedReply = flushAll()
+      const failedDomains: readonly DiskIODomain[] = flushAll();
+      const reply: DiskFlushReply | DiskFlushFailedReply = failedDomains.length === 0
         ? { type: "flushed", flushedId: msg.flushId }
-        : { type: "flushFailed", flushedId: msg.flushId };
+        : { type: "flushFailed", flushedId: msg.flushId, failedDomains };
       self.postMessage(reply);
       break;
     }

@@ -1,3 +1,4 @@
+import type { RemoveBlockedMembersParams } from "./blocklist";
 import type { ChatPermissions } from "@grammyjs/types";
 export type * from "./antiRaid/internal";
 
@@ -172,6 +173,15 @@ export interface LockdownPersistedMessage {
   intentId: number;
 }
 
+/**
+ * 主线程 -> Worker：把这些 id 从本群清出去（/block 黑名单）。判定留在主线程、
+ * 执行放 Worker 的理由见 docs/04-invariants.md。字段与执行 owner 的入参同形，
+ * 直接复用 types/blocklist.ts 的定义。
+ */
+export interface RemoveBlockedMembersMessage extends RemoveBlockedMembersParams {
+  type: "removeBlockedMembers";
+}
+
 /** 主线程 -> Worker：FIFO mailbox barrier；此前消息完成同步状态转移后回执。 */
 export interface AntiRaidBarrierMessage {
   type: "barrier";
@@ -189,7 +199,21 @@ export type AntiRaidWorkerMessage =
   | VerificationPersistedMessage
   | LockdownPersistedMessage
   | AdminsChangedMessage
+  | RemoveBlockedMembersMessage
   | AntiRaidBarrierMessage;
+
+/**
+ * Worker -> 主线程：一批黑名单处置已经走完。complete 为 true 才允许主线程
+ * 销掉镜像并把「这个群已清扫过」记进状态：处置没落地却把边沿消耗掉，等于
+ * 让那些人永久坐在群里（见 infra/blocklist.ts 与 infra/botAdmin.ts）。
+ */
+export interface BlockedMembersRemovedEvent {
+  type: "blockedMembersRemoved";
+  chatId: number;
+  removalId: number;
+  /** 每个 id 都已确定结局（封成功、或确认不在群）为 true；有一个没落定就是 false。 */
+  complete: boolean;
+}
 
 /** Worker -> 主线程：写入 applying/active/restoring 的持久化阶段。 */
 export interface LockdownEvent {
@@ -233,4 +257,5 @@ export type AntiRaidWorkerEvent =
   | UnlockEvent
   | VerificationUpsertEvent
   | VerificationDeleteEvent
+  | BlockedMembersRemovedEvent
   | AntiRaidBarrierCompleteEvent;

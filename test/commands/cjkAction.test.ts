@@ -51,12 +51,13 @@ beforeEach(() => {
 });
 
 describe("parseCjkActionCommand 与 hears 匹配", () => {
-  test("单个中文字才算动作命令，多字、拼音、纯符号都不匹配", () => {
-    for (const text of ["/咬", "/摸 @alice", "/踢\n@alice", "/㐀", "/豈"]) {
+  test("1~2 个中文字才算动作命令，三字及以上、拼音、纯符号都不匹配", () => {
+    for (const text of ["/咬", "/摸 @alice", "/踢\n@alice", "/㐀", "/豈", "/贴贴", "/摸摸 @alice", "/咬人"]) {
       expect(hears(text)).toBe(true);
       expect(parseCjkActionCommand(text)?.actionWord).toBeTruthy();
     }
-    for (const text of ["/咬人", "/copy", "/", "//咬", "咬", "/。", "/1", "/咬人 @alice"]) {
+    // 三字及以上会先按 2 个字试、再回溯到 1 个字，两次都接不上空白或结束而失配。
+    for (const text of ["/咬人人", "/copy", "/", "//咬", "咬", "/。", "/1", "/咬人人 @alice", "/贴贴贴"]) {
       expect(hears(text)).toBe(false);
       expect(parseCjkActionCommand(text)).toBeUndefined();
     }
@@ -78,11 +79,17 @@ describe("parseCjkActionCommand 与 hears 匹配", () => {
       addressedBotUsername: "MyBot",
       rawArgument: "@alice",
     });
+    // 两字动作词同样吃得下 @BotUsername 后缀与参数，动作词不会把第二个字漏掉。
+    expect(parseCjkActionCommand("/贴贴@MyBot @alice")).toEqual({
+      actionWord: "贴贴",
+      addressedBotUsername: "MyBot",
+      rawArgument: "@alice",
+    });
     expect(parseCjkActionCommand(undefined)).toBeUndefined();
   });
 });
 
-describe("/<单字> 动作命令", () => {
+describe("/<1~2 个中文字> 动作命令", () => {
   test("回复目标时输出「发起人 X了 目标!」，两个名字各自挂 t.me 链接", async () => {
     await handleCjkActionCommand(context("/咬"), next);
 
@@ -103,6 +110,23 @@ describe("/<单字> 动作命令", () => {
     // 实体必须精确覆盖两个名字，否则链接会错位到旁边的文字上。
     expect(text.slice(0, 6)).toBe("ネオン アサ");
     expect(text.slice(10, 10 + 17)).toBe("冷曦[Hiyase] 🏳️‍🌈");
+  });
+
+  test("两字动作词整体念进句子，目标名的实体偏移随之右移", async () => {
+    target = { id: 7, first_name: "Bob", username: "bob" };
+    await handleCjkActionCommand(context("/贴贴", { id: 100, first_name: "Alice", username: "alice" }), next);
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: "Alice 贴贴了 Bob！",
+      replyToMessageId: 10,
+      // 动作词多一个字，目标名的 offset 就得跟着从 9 挪到 10，否则链接会错位。
+      entities: [
+        { type: "text_link", offset: 0, length: 5, url: "https://t.me/alice" },
+        { type: "text_link", offset: 10, length: 3, url: "https://t.me/bob" },
+      ],
+      disableLinkPreview: true,
+    });
   });
 
   test("参数原样交给共享目标解析，错误文案带上动作字", async () => {

@@ -1,6 +1,6 @@
 import { LinkedQueue } from "../libs/linkedQueue";
 
-/** 单字中文动作命令（packages/commands/cjkAction.ts）的内存状态。 */
+/** 中文动作命令（packages/commands/cjkAction.ts）的内存状态。 */
 
 /**
  * 动作命令的全局滑动窗口频率限制：最近 CJK_ACTION_RATE_LIMIT_WINDOW_MS

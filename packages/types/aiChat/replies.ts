@@ -42,6 +42,8 @@ export interface ReplyToolContext {
   stickerLock: StickerSendLockControl;
   roundHasTypo: boolean;
   isActive: () => boolean;
+  /** 本轮 generation 的取消信号；模型、等待和 Telegram 调用必须沿用。 */
+  signal?: AbortSignal;
   /** repliedToMessageId 是这次发送实际挂上的回复目标（send_message 由模型的
    *  reply_to_trigger 决定、图片请求固定指向触发消息）；Telegram 因目标已删除
    *  而退化为普通发送时省略。供 Worker 自录记忆时带上「回复了谁」，让机器
@@ -59,6 +61,8 @@ export interface ReplyToolset {
   execute(name: string, argumentsJson: string): Promise<string>;
   actionsUsed(): number;
   isActive(): boolean;
+  /** 与 ReplyToolContext 相同的 generation 取消信号。 */
+  signal?: AbortSignal;
 }
 
 /** 让 replies.ts 对贴纸候选类型形成明确的领域依赖并可直接重导出。 */

@@ -39,7 +39,7 @@ export function isSelfSent(chatId: number, messageId: number): boolean {
 /**
  * 识别机器人自己发送内容的频道/关联讨论组回弹。任何会对消息产生输出的入口
  * 都必须先过这一关，否则机器人会对自己的帖子作出反应，形成自说自话的循环
- * （见本文件头注）。原先只有自动流水线用它，`/<单字>` 动作命令注册在流水线
+ * （见本文件头注）。原先只有自动流水线用它，`/<中文字>` 动作命令注册在流水线
  * 之前、也会发消息，因此从 auto/message/guards.ts 下沉到这里共用。
  */
 export function isBotOwnMessage(message: Message): boolean {

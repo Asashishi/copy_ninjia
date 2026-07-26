@@ -10,28 +10,49 @@ export interface ChatActionHeartbeatDependencies {
   entries: Map<number, ChatActionHeartbeatEntry>;
   intervalMs: number;
   maxConsecutiveFailures: number;
-  sendTyping(chatId: number): Promise<boolean>;
-  sendUploadPhoto(chatId: number): Promise<boolean>;
-  sendChooseSticker(chatId: number): Promise<boolean>;
+  sendTyping(chatId: number, signal?: AbortSignal): Promise<boolean>;
+  sendUploadPhoto(chatId: number, signal?: AbortSignal): Promise<boolean>;
+  sendChooseSticker(chatId: number, signal?: AbortSignal): Promise<boolean>;
 }
 
 const DEFAULT_DEPENDENCIES: ChatActionHeartbeatDependencies = {
   entries: typingHeartbeats,
   intervalMs: TYPING_ACTION_INTERVAL_MS,
   maxConsecutiveFailures: CHAT_ACTION_MAX_CONSECUTIVE_FAILURES,
-  sendTyping: sendTypingAction,
-  sendUploadPhoto: sendUploadPhotoAction,
-  sendChooseSticker: sendChooseStickerAction,
+  sendTyping: (chatId: number, signal?: AbortSignal): Promise<boolean> =>
+    sendTypingAction(chatId, undefined, signal),
+  sendUploadPhoto: (chatId: number, signal?: AbortSignal): Promise<boolean> =>
+    sendUploadPhotoAction(chatId, undefined, signal),
+  sendChooseSticker: (chatId: number, signal?: AbortSignal): Promise<boolean> =>
+    sendChooseStickerAction(chatId, undefined, signal),
 };
 
-function sendChatActionPhase(
-  phase: Exclude<ChatActionPhase, "idle">,
-  chatId: number,
-  dependencies: ChatActionHeartbeatDependencies
-): Promise<boolean> {
-  if (phase === "typing") return dependencies.sendTyping(chatId);
-  if (phase === "upload_photo") return dependencies.sendUploadPhoto(chatId);
-  return dependencies.sendChooseSticker(chatId);
+interface SendChatActionPhaseParams {
+  phase: Exclude<ChatActionPhase, "idle">;
+  chatId: number;
+  dependencies: ChatActionHeartbeatDependencies;
+  signal?: AbortSignal;
+}
+
+function sendChatActionPhase({
+  phase,
+  chatId,
+  dependencies,
+  signal,
+}: SendChatActionPhaseParams): Promise<boolean> {
+  if (phase === "typing") {
+    return signal === undefined
+      ? dependencies.sendTyping(chatId)
+      : dependencies.sendTyping(chatId, signal);
+  }
+  if (phase === "upload_photo") {
+    return signal === undefined
+      ? dependencies.sendUploadPhoto(chatId)
+      : dependencies.sendUploadPhoto(chatId, signal);
+  }
+  return signal === undefined
+    ? dependencies.sendChooseSticker(chatId)
+    : dependencies.sendChooseSticker(chatId, signal);
 }
 
 /**
@@ -77,7 +98,12 @@ export function pumpChatAction({
     if (deduplicable && entry.lastSentPhase === phase && Date.now() - entry.lastSentAt < dependencies.intervalMs) return;
     let ok: boolean;
     try {
-      ok = await sendChatActionPhase(phase, chatId, dependencies);
+      ok = await sendChatActionPhase({
+        phase,
+        chatId,
+        dependencies,
+        signal: entry.signal,
+      });
     } catch {
       ok = false;
     }
@@ -120,9 +146,17 @@ export function pumpChatAction({
  */
 export function startChatActionHeartbeat(
   chatId: number,
-  dependencies: ChatActionHeartbeatDependencies = DEFAULT_DEPENDENCIES
+  dependencies: ChatActionHeartbeatDependencies = DEFAULT_DEPENDENCIES,
+  signal?: AbortSignal
 ): ChatActionHeartbeatControl {
   let entry: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
+  if (entry !== undefined && entry.signal !== signal) {
+    // invalidate 已同步 abort 旧 generation，但新 generation 可以在旧任务 settle
+    // 前开始。两代不能共享 timer/请求链；旧句柄的 stop 会识别 Map 已换代。
+    clearInterval(entry.timer);
+    dependencies.entries.delete(chatId);
+    entry = undefined;
+  }
   if (!entry) {
     const timer: ReturnType<typeof setInterval> = setInterval((): void => {
       const live: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
@@ -131,6 +165,7 @@ export function startChatActionHeartbeat(
     }, dependencies.intervalMs);
     entry = {
       timer,
+      signal,
       refCount: 0,
       action: "idle",
       owner: null,

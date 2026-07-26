@@ -12,6 +12,7 @@ mock.module("../../packages/infra/telegram/client", () => ({
 mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
 
 const actions = await import("../../packages/infra/telegram/actions");
+const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
 
 function apiWithSuccesses(): Api {
   return {
@@ -26,6 +27,7 @@ function apiWithSuccesses(): Api {
     banChatMember: mock(async (..._args: unknown[]) => true),
     getChatMember: mock(async (..._args: unknown[]) => ({ status: "creator" })),
     banChatSenderChat: mock(async (..._args: unknown[]) => true),
+    unbanChatSenderChat: mock(async (..._args: unknown[]) => true),
   } as unknown as Api;
 }
 
@@ -45,6 +47,7 @@ function apiWithFailures(): Api {
     banChatMember: reject,
     getChatMember: reject,
     banChatSenderChat: reject,
+    unbanChatSenderChat: reject,
   } as unknown as Api;
 }
 
@@ -65,7 +68,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendUploadPhotoAction(-1001, api)).toBe(true);
     expect(await actions.sendChooseStickerAction(-1001, api)).toBe(true);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
-    expect(await actions.sendSticker(-1001, "file", api)).toBe(12);
+    expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBe(12);
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBe(13);
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(true);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
@@ -73,6 +76,8 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.banChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.isChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(true);
+    expect(await actions.unbanChatMemberIfBanned(-1001, 7, api)).toBe(true);
+    expect(await actions.unbanChatSenderChat(-1001, -2002, api)).toBe(true);
     expect(await actions.copyMessage(-1001, -2002, 8)).toBe(91);
     expect(markSelfSent.mock.calls).toEqual([[-1001, 11], [-1001, 12], [-1001, 13], [-1001, 91]]);
     expect(logApiError).not.toHaveBeenCalled();
@@ -86,7 +91,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendUploadPhotoAction(-1001, api)).toBe(false);
     expect(await actions.sendChooseStickerAction(-1001, api)).toBe(false);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", api })).resolves.toBeUndefined();
-    expect(await actions.sendSticker(-1001, "file", api)).toBeUndefined();
+    expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBeUndefined();
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBeUndefined();
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(false);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(false);
@@ -94,10 +99,12 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.banChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.isChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(false);
+    expect(await actions.unbanChatMemberIfBanned(-1001, 7, api)).toBe(false);
+    expect(await actions.unbanChatSenderChat(-1001, -2002, api)).toBe(false);
 
     copyMessageApi.mockRejectedValueOnce(new Error("copy failed"));
     expect(await actions.copyMessage(-1001, -2002, 8)).toBeUndefined();
-    expect(logApiError).toHaveBeenCalledTimes(14);
+    expect(logApiError).toHaveBeenCalledTimes(16);
     expect(markSelfSent).not.toHaveBeenCalled();
   });
 
@@ -116,6 +123,65 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(markSelfSent).not.toHaveBeenCalled();
   });
 
+  test("主动 signal 进入带 other 参数 API 的正确取消槽位", async () => {
+    const sendChatAction = mock(async (..._args: unknown[]): Promise<true> => true);
+    const setMessageReaction = mock(async (..._args: unknown[]): Promise<true> => true);
+    const api: Api = { sendChatAction, setMessageReaction } as unknown as Api;
+    const signal: AbortSignal = new AbortController().signal;
+
+    await actions.sendTypingAction(-1001, api, signal);
+    await actions.setMessageReaction({
+      chatId: -1001,
+      messageId: 3,
+      emoji: "👍",
+      api,
+      signal,
+    });
+
+    expect(sendChatAction).toHaveBeenCalledWith(-1001, "typing", {}, signal);
+    expect(setMessageReaction).toHaveBeenCalledWith(
+      -1001,
+      3,
+      [{ type: "emoji", emoji: "👍" }],
+      {},
+      signal
+    );
+  });
+
+  test("停机取消当前 update 时 abort Telegram 请求并向上解开 handler", async () => {
+    const controller: AbortController = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const sendMessage = mock(
+      async (...args: unknown[]): Promise<never> => {
+        requestSignal = args[3] as AbortSignal | undefined;
+        return await new Promise<never>((_resolve, reject: (reason?: unknown) => void): void => {
+          requestSignal?.addEventListener(
+            "abort",
+            (): void => reject(requestSignal?.reason),
+            { once: true }
+          );
+        });
+      }
+    );
+    const api: Api = { sendMessage } as unknown as Api;
+
+    const sending: Promise<number | undefined> = runWithUpdateAbortSignal(
+      controller.signal,
+      (): Promise<number | undefined> => actions.sendMessage({
+        chatId: -1001,
+        text: "hello",
+        api,
+      })
+    );
+    await Promise.resolve();
+    controller.abort(new DOMException("shutdown", "AbortError"));
+
+    await expect(sending).rejects.toThrow("shutdown");
+    expect(requestSignal).toBe(controller.signal);
+    expect(logApiError).not.toHaveBeenCalled();
+    expect(markSelfSent).not.toHaveBeenCalled();
+  });
+
   test("成功响应后的映射失败仍按原动作归一化", async () => {
     const api: Api = apiWithSuccesses();
     const mappingError: Error = new Error("self-sent tracking failed");
@@ -123,7 +189,7 @@ describe("Telegram 动作适配层失败归一化", () => {
       throw mappingError;
     });
 
-    expect(await actions.sendSticker(-1001, "file", api)).toBeUndefined();
+    expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBeUndefined();
     expect(logApiError).toHaveBeenCalledWith("send sticker", mappingError);
   });
 
@@ -146,5 +212,21 @@ describe("Telegram 动作适配层失败归一化", () => {
     } finally {
       globalThis.setTimeout = originalSetTimeout;
     }
+  });
+});
+
+describe("解除封禁必须带 only_if_banned", () => {
+  test("unbanChatMemberIfBanned 传 only_if_banned，kickChatMember 刻意不传", async () => {
+    // Bot API 的 unbanChatMember 对「当前就是群成员」的人语义是把他移出群聊
+    // ——kickChatMember 的「只踢不封」正是靠这一点。跨群批量解封若漏了这个
+    // 标志，会把本来好端端待在群里的人一个个踢出去。
+    const unbanChatMember = mock(async (..._args: unknown[]) => true);
+    const api: Api = { unbanChatMember } as unknown as Api;
+
+    await actions.unbanChatMemberIfBanned(-1001, 7, api);
+    expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, { only_if_banned: true });
+
+    await actions.kickChatMember(-1001, 7, api);
+    expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7);
   });
 });

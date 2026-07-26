@@ -17,10 +17,10 @@
 | 路径 | 职责 | 典型文件 |
 | :--- | :--- | :--- |
 | `packages/app/` | 启动/退出生命周期、handler 注册、命令菜单、update runner | `lifecycle.ts`、`registerHandlers.ts`、`updateRunner.ts` |
-| `packages/commands/` | 显式命令处理，一命令一文件 | `copy.ts`、`kick.ts`、`cjkAction.ts`、`send.ts`、`targetResolution.ts` |
+| `packages/commands/` | 显式命令处理，一命令一文件 | `copy.ts`、`block.ts`、`cjkAction.ts`、`send.ts`、`targetResolution.ts` |
 | `packages/auto/` | 非命令的自动行为：复读、AI 转录与触发、反应同步 | `message/`、`triggerPolicy.ts` |
 | `packages/aiChat/` | AI 闲聊主线程代理：Worker 监督入口与记忆镜像 | `index.ts`、`memoryMirror.ts` |
-| `packages/antiRaid/` | Anti-Raid 主线程代理：Worker 监督入口、lockdown 恢复与待验证镜像接收 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts` |
+| `packages/antiRaid/` | Anti-Raid 主线程代理：Worker 监督入口、lockdown 恢复、待验证镜像接收与黑名单入群判定 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts`、`blocklistGuard.ts`、`memberFacts.ts` |
 | `packages/copy/` | 复读模式变换与头像/反应/翻译的执行队列 | `copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、`translate.ts` |
 | `packages/users/` | 发送者身份缓存、可见发送者判定、用户标签生成 | `senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts` |
 | `packages/states/` | **无 I/O** 的纯状态转移：验证、锁定、回复准入 | `verification.ts`、`lockdown.ts` |

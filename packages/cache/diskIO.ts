@@ -2,11 +2,13 @@ import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../const
 import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
 import { createFlushBarrier } from "../libs/flushBarrier";
+import { LinkedQueue } from "../libs/linkedQueue";
 import { createRestartThrottle } from "../libs/restartThrottle";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
   DiskBusinessMessage,
+  DiskIODomain,
   LoadedReply,
   VerificationPersistedReply,
 } from "../types/diskIO";
@@ -31,6 +33,13 @@ export const pendingLuckSecrets: Map<number, {
   timer: ReturnType<typeof setTimeout>;
 }> = new Map();
 
+/**
+ * Worker 明确回复为部分失败、且正在等待调用方消费的 flush 回执。
+ * host 只在对应 barrier 仍在途时填充，infra/diskIO.ts 在同一次请求恢复后立即删除；
+ * 传输失败、超时、Worker 崩溃不会产生条目，因而不能被误判成某领域成功。
+ */
+export const pendingFlushFailedDomains: Map<number, readonly DiskIODomain[]> = new Map();
+
 interface DiskIORuntime {
   worker: Worker | null;
   initialized: boolean;
@@ -41,12 +50,17 @@ interface DiskIORuntime {
   maxPendingBusinessMessages: number;
   fatalHandler: ((error: Error) => void) | undefined;
   fatalSignaled: boolean;
-  pendingBusinessMessages: DiskBusinessMessage[];
+  pendingBusinessMessages: LinkedQueue<DiskBusinessMessage>;
   respawnListeners: (() => void)[];
   verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[];
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
   nextLuckSecretRequestId: number;
+  /**
+   * 最近一次 flush 回执里没能落盘的领域。仅供日志与诊断展示；业务成功判断
+   * 必须使用 pendingFlushFailedDomains 中与请求 ID 绑定的回执。
+   */
+  lastFlushFailedDomains: readonly DiskIODomain[];
 }
 
 /**
@@ -64,12 +78,13 @@ export const diskIORuntime: DiskIORuntime = {
   maxPendingBusinessMessages: DEFAULT_MAX_PENDING_BUSINESS_MESSAGES,
   fatalHandler: undefined,
   fatalSignaled: false,
-  pendingBusinessMessages: [],
+  pendingBusinessMessages: new LinkedQueue<DiskBusinessMessage>(),
   respawnListeners: [],
   verificationPersistedListeners: [],
   aiMemoryDeletedPersistedListeners: [],
   aiMemoryPersistedListeners: [],
   nextLuckSecretRequestId: 1,
+  lastFlushFailedDomains: [],
 };
 
 /**

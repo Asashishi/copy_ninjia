@@ -154,6 +154,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
           referenceImage = await runMediaTask((): Promise<VisionImage | null> => downloadTelegramVisionImage({
             fileId: referenceFileId,
             logLabel: "image generation reference",
+            signal: ctx.signal,
           })) ?? undefined;
           referenceUnavailable = referenceImage === undefined;
         }
@@ -164,9 +165,12 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
             return toolError(REPLY_INVALIDATED_TOOL_ERROR);
           }
           modelRequestStarted = true;
-          image = referenceImage
-            ? await generateChatImage(parsed.prompt, parsed.aspectRatio, referenceImage)
-            : await generateChatImage(parsed.prompt, parsed.aspectRatio);
+          image = await generateChatImage({
+            prompt: parsed.prompt,
+            aspectRatio: parsed.aspectRatio,
+            referenceImage,
+            signal: ctx.signal,
+          });
         }
       } finally {
         // 与 send_message 落地前的处理一致：先阻止新的 upload_photo tick，再
@@ -189,6 +193,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
         bytes: image.bytes,
         mimeType: image.mimeType,
         replyToMessageId: ctx.replyToMessageId,
+        signal: ctx.signal,
       });
       if (sent === undefined) {
         consecutiveFailures++;

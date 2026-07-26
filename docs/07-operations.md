@@ -51,6 +51,8 @@ WantedBy=multi-user.target
 | `memory/stickers/` | 贴纸描述目录 | 可由线上对账重建 |
 | `memory/luck/` | 运势结果 + `receipt-secret.json` | 密钥与当天结果必须在同一一致性备份中；不可只重建密钥 |
 | `memory/anti-raid/` | 待验证状态按日文件 | 只保留东京当天 |
+| `memory/blocklist-removals.json` | 尚未完成的黑名单成员移除 outbox | 必须与 `config/blocklist.json` 一起备份；启动时按当前名单与群管理状态过滤后重放 |
+| `config/blocklist.json` | `/block` 永久黑名单（用户 id + 拉黑时刻） | 必须备份：丢了等于全员解除拉黑。手工编辑（解除拉黑的唯一途径）必须在停机时做，且改完仍是合法 JSON：与日志不同，这个文件损坏时会**拒绝启动**而不是自动截断修复——静默丢掉几条就等于放那几个人回群。键必须是能原样还原的十进制 id |
 | `logs/` | 错误日志（英文文案） | 按需 |
 | `bot.lock`（及 `.guard`/`.recovery`） | 单实例锁 | 不备份、不手工编辑 |
 
@@ -76,6 +78,7 @@ WantedBy=multi-user.target
 - **另一个进程真的在跑**：PID、starttime、boot ID 全匹配才算活跃 owner——先停掉它。数据目录全局独占，同一数据根不允许两个实例。
 - **stale v2 锁**（进程死了/机器重启过）：下一次启动或退出时自动清理，无需干预。
 - **旧格式/损坏格式**：不兼容读取、不自动迁移、不按 PID 猜测清理。确认没有相关进程在跑之后，手工删除旧锁文件再启动。
+- **退出时释放失败**：进程会保留非零退出状态并报告锁释放 owner 失败，不会把失败伪装成干净退出；先排查 `/proc`、目录权限与 guard 文件，再确认旧进程已结束后处理残留。
 - `.candidate.*` 是 hard-link 锁协议的候选文件，`.tmp` 是 `state.json` / 锁注册表原子重写的临时文件；正常操作都会删除，当前格式的残留会在确认 owner 不活跃或取得实例锁后由启动清理回收。
 
 token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并行部署必须使用不同的数据根目录。

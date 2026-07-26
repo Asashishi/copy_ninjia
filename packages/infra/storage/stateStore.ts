@@ -10,6 +10,7 @@ import { createLatestValueRunner, type LatestValueRunner } from "../../libs/late
 import { decodeStateFile } from "../../libs/stateFileCodec";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../../types/chatState";
 import { logger } from "../logger";
+import { throwIfUpdateAborted } from "../updateContext";
 
 export interface StateStoreOptions {
   stateFilePath?: string;
@@ -407,9 +408,12 @@ export function saveState(): Promise<void> {
  * 返回的 Promise 只会在对应 revision（或更新 revision）主、备两份都落盘后完成。
  */
 export async function persistAuthoritativeState(context: string): Promise<void> {
+  throwIfUpdateAborted();
   try {
     await sharedStateStore().save(currentStateSnapshot());
+    throwIfUpdateAborted();
   } catch (error: unknown) {
+    throwIfUpdateAborted();
     const reason: Error = error instanceof Error ? error : new Error(String(error));
     throw new Error(`Failed to persist authoritative state update (${context}): ${reason.message}`, { cause: error });
   }
@@ -420,6 +424,7 @@ export function setStatePersistenceFatalHandler(handler: ((error: Error) => void
 }
 
 export function saveStateInBackground(context: string): void {
+  throwIfUpdateAborted();
   void sharedStateStore().save(currentStateSnapshot(), { waitForPersistence: false }).catch((error: unknown): void => {
     logger.error(`Failed to persist background state update (${context}):`, error);
   });

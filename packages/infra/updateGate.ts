@@ -39,7 +39,7 @@ export function isSendCommandText(text: string): boolean {
  * 拦下，两处例外：/send 指令本身；有 /send 中转会话在跑时放行全部消息，
  * 好让 handleIncomingMessage 的转发分支收得到。
  * 判定同时看 text 与 caption：bot.command 只认 text，但 bot.hears（`/咬` 这类
- * 单字中文动作命令，见 commands/cjkAction.ts）两者都匹配。只看 text 的话，
+ * 中文动作命令，见 commands/cjkAction.ts）两者都匹配。只看 text 的话，
  * 一张 caption 写着 `/咬` 的图片就能绕过本网关，让任意陌生人在私聊里驱使
  * 机器人作答、并借回复文案的差异探测 username 缓存里有谁。
  * 会话是否在跑走全局的 getActiveProxySendTarget（不针对某个 chatId 查），
@@ -56,7 +56,7 @@ export function shouldPassPrivateCommandGate(ctx: Context): boolean {
 
 /**
  * 活动中的 /send 私聊消息必须在注册命令之前直接交给中转流水线。否则消息
- * 恰好以 /copy、/kick 等已注册命令开头时，会先被 grammY 的 command handler
+ * 恰好以 /copy、/block 等已注册命令开头时，会先被 grammY 的 command handler
  * 截获并真的执行，而不是作为消息内容转发。/send 本身仍留给命令处理器，供
  * 超管切换目标或结束会话。
  */
