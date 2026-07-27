@@ -34,7 +34,7 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **1051 tests / 132 files / 8923 `expect()` calls**; full-source **function coverage 94.46% / line coverage 96.47%**. The root README's Coverage badge displays line coverage.
+`bun run test:coverage`: **1063 tests / 134 files / 8966 `expect()` calls**; full-source **function coverage 94.56% / line coverage 96.47%**. The root README's Coverage badge displays line coverage.
 
 ## Test Isolation
 

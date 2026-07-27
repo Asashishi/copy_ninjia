@@ -31,7 +31,7 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1051_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1063_Passed-2ea44f?style=flat-square" alt="Tests"></a>
   <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.47%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
@@ -69,7 +69,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1051 件のテストが全て成功 / テストファイル 132 件 / expect() 呼び出し 8,923 回 / 関数カバレッジ 94.46% / 行カバレッジ 96.47%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1063 件のテストが全て成功 / テストファイル 134 件 / expect() 呼び出し 8,966 回 / 関数カバレッジ 94.56% / 行カバレッジ 96.47%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 

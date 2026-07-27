@@ -2,6 +2,13 @@
 export const ANTI_RAID_BARRIER_TIMEOUT_MS: number = 3_000;
 
 /**
+ * 停机 drain 在「落盘镜像 → Worker 执行副作用 → 发布新镜像」之间最多对账轮数。
+ * 状态机阶段有限，正常一至两轮收敛；上限防止异常状态永久阻塞停机。
+ * 所属模块：antiRaid/index.ts。
+ */
+export const ANTI_RAID_DRAIN_MAX_ROUNDS: number = 5;
+
+/**
  * lockdown 意图落盘时，「存下去 → 再看一眼还是不是同一份」的对账最多重来几轮。
  *
  * 正常情况下一轮就够：指纹只含 phase + intentId，重来意味着状态机真的推进了一个

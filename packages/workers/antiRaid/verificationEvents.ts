@@ -27,6 +27,7 @@ import type {
   VerificationState,
 } from "../../types/states/verification";
 import { freshAdminIds } from "./adminCache";
+import { trackAntiRaidTask } from "./taskTracker";
 import {
   cachedChatHasLinkedChannel,
   fetchChatHasLinkedChannel,
@@ -155,21 +156,23 @@ function confirmThreadComment({
   }
   confirmations.add(confirmation);
 
-  void fetchChatHasLinkedChannel(message.chatId).then((hasLinked: boolean | undefined): void => {
-    const activeConfirmations: Set<ThreadCommentConfirmation> | undefined = threadCommentConfirmations.get(key);
-    activeConfirmations?.delete(confirmation);
-    if (activeConfirmations?.size === 0) threadCommentConfirmations.delete(key);
-    if (hasLinked !== true) return;
+  void trackAntiRaidTask({
+    task: fetchChatHasLinkedChannel(message.chatId).then((hasLinked: boolean | undefined): void => {
+      const activeConfirmations: Set<ThreadCommentConfirmation> | undefined = threadCommentConfirmations.get(key);
+      activeConfirmations?.delete(confirmation);
+      if (activeConfirmations?.size === 0) threadCommentConfirmations.delete(key);
+      if (hasLinked !== true) return;
 
-    const currentState: VerificationState | undefined =
-      verificationEntries.get(key)?.state;
-    if (currentState !== confirmation.expectedState) return;
-    if (currentState === undefined && confirmation.boundToJoin) return;
-    rememberOrDispatchConfirmedComment({
-      message,
-      observedAt: confirmation.observedAt,
-      dispatchVerification,
-    });
+      const currentState: VerificationState | undefined =
+        verificationEntries.get(key)?.state;
+      if (currentState !== confirmation.expectedState) return;
+      if (currentState === undefined && confirmation.boundToJoin) return;
+      rememberOrDispatchConfirmedComment({
+        message,
+        observedAt: confirmation.observedAt,
+        dispatchVerification,
+      });
+    }),
   });
 }
 
@@ -238,11 +241,13 @@ export function handleVerificationCallbackEvent({
   dispatchVerification,
 }: HandleVerificationCallbackEventParams): void {
   if (message.chatId === undefined) {
-    void answerCallbackQuery({
-      callbackQueryId: message.callbackQueryId,
-      api: joinVerificationApi,
-    }).catch((error: unknown): void => {
-      logger.error("Error answering join verification callback:", error);
+    void trackAntiRaidTask({
+      task: answerCallbackQuery({
+        callbackQueryId: message.callbackQueryId,
+        api: joinVerificationApi,
+      }).catch((error: unknown): void => {
+        logger.error("Error answering join verification callback:", error);
+      }),
     });
     return;
   }

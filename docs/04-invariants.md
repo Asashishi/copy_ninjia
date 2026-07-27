@@ -17,12 +17,12 @@
 ## 启动与 import 边界
 
 - 生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入。
-- 主进程先递归创建并预检运行时数据根的写入、文件 fsync、hard link、原子 rename 与目录 fsync，再取得 `bot.lock`；随后校验 `config/`、清理顶层孤儿临时文件并严格恢复 `state.json`，这些步骤发生在任何联网和 Worker 创建之前。之后才初始化 Telegram 客户端与 Disk I/O Worker、恢复 `memory/` 数据、完成 handler/命令菜单/`bot.init()` 握手，最后初始化并 hydrate AI/Anti-Raid Worker、启动 acknowledgement-safe runner。
+- 主进程先递归创建并预检运行时数据根的写入、文件 fsync、hard link、原子 rename 与目录 fsync，再取得 `bot.lock`；显式配置 `COPY_NINJIA_DATA_ROOT` 时还要求目录 mode 为 `0750` 或更严格，已有目录只校验、不自动 chmod。随后校验 `config/`、清理顶层孤儿临时文件并严格恢复 `state.json`，这些步骤发生在任何联网和 Worker 创建之前。之后才初始化 Telegram 客户端与 Disk I/O Worker、恢复 `memory/` 数据、完成 handler/命令菜单/`bot.init()` 握手，最后初始化并 hydrate AI/Anti-Raid Worker、启动 acknowledgement-safe runner。
 - 初始化失败和正常退出都由 `ApplicationLifecycle` 收口；只有已取得的资源才会释放或 flush。
 - 配置解析器本身无 I/O；`getStickerConfig()` / `getReactionConfig()` / `getMoodConfig()` 在业务首次使用时惰性加载，主进程会在持锁后预热，以便部署错误在联网前暴露。
 - `state.json`、`bot.lock`、`logs/` 与 `memory/` 全部从统一运行时数据根派生；生产缺省使用项目根目录，测试 preload 在任何生产模块 import 前注入逐隔离体的临时根，让真实文件 I/O 也不可能读写生产缓存。
 - 命令菜单、`bot.init()`、Worker hydrate 与 acknowledgement-safe runner 就绪后，才启动低优先级群标题维护；标题 owner 当前最多并发 15 个 `getChat`，限制历史回填在共享 throttler 中造成的队头阻塞，并接受生命周期的 quiesce/abort 信号。
-- 通用 JSON API 请求只允许访问 `JSON_API_ALLOWED_ORIGINS` 明列的 HTTPS origin，并禁用 redirect；新增调用方必须显式扩充白名单。Telegram 头像爬取使用独立入口，不得误接到该 JSON allowlist。
+- 通用 JSON API 请求只允许访问 `JSON_API_ALLOWED_ORIGINS` 明列的 HTTPS origin，并禁用 redirect；新增调用方必须显式扩充白名单。Telegram 头像爬取使用独立入口与 Telegram 自有资产域后缀 allowlist，但复用同一套「HTTPS、无凭据、标签边界匹配」URL 策略并同样禁用 redirect；不得误接到 JSON allowlist，也不得恢复成任意 HTTPS 图片。
 - 出站消息一律不设 `parse_mode`：用户昵称与消息内容只能作为纯文本参与拼接，不得有机会被解析成格式或链接。需要富文本时由调用方按段拼好文本、自行给出 `entities`（偏移按 Telegram 的 UTF-16 code unit 口径，等价于 JS `String#length`；长度为 0 的实体会让整条消息被拒收）。新增发送路径不得改用 `parse_mode` 绕开这条约束。
 
 ## Worker 与状态所有权
@@ -59,12 +59,13 @@
 - AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`（当前为 149 条逐字消息与 7 轮冷摘要）从快照尾部截取最新数据；调整容量常量部署前，应在旧进程停止后以同一恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。
 - 回复链索引（`chatReplyChainIndexes`）是滚动缓存的纯派生索引，不落盘、内层值与缓存共享对象引用；登记/删除只允许发生在消息进出热区的物理位置（`rollingMemory.ts` 的 push/轮换/hydrate），任何其它模块只读。索引因此永远只覆盖仍在热区的消息，容量受滚动缓存上限约束，无独立淘汰；机器人发送自录只按 Telegram 返回的实际 `reply_to_message` 建边，目标在生成/排队期间滑出热区时使用轮次开始前捕获的有界触发快照兜底，不扩张索引覆盖范围。模型可见的回溯深度、单个链节点正文和触发快照分别受 `REPLY_CHAIN_MAX_DEPTH`、`REPLY_CHAIN_NODE_MAX_CHARS`、`REPLY_REFERENCE_MAX_CHARS` 约束（当前为 15 跳、500 字、500 字）。
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败必须返回失败、阻止最终 offset 确认并以非零状态退出。**停机时被放弃的那一批同样算数**：取数循环在停机信号到达后不再等待在途批次（middleware 可能悬挂，排空交给生命周期按 size() 有界完成），因此那批里失败的 update 只能由 runner 的显式标记表达——它在 handleUpdate 抛错的同一个同步段里写下，`size()` 归零时必然已经生效。生命周期必须在确认最终 offset 前读它，为真时不确认 offset 并以非零状态退出，让 Telegram 在重启后重投；只看 `task()` 是否正常 resolve 会把一条从未成功处理的 update 一并确认掉。
+- Anti-Raid 的 mailbox barrier 只证明此前消息已经进入调度器，不等待调度器启动的 Telegram 网络副作用；update 热路径继续使用这条轻量边界。生命周期 drain 另发 `drain` 协议并等待 Worker 登记的在途任务集合清空，且在前后穿插 mailbox barrier 与持久化 flush 做有限轮次的固定点对账；不能把普通 barrier 回执解释成网络任务已经结束。黑名单处置世代只在该群仍有在途移除任务时保留，最后一个任务结算或 Worker stop 时必须清除，停管过的历史群不得永久堆在 Map 中。
 - 每个活跃 update 由 runner 分配独立 `AbortController` 并通过异步上下文交给主线程 Telegram 适配层。正常 drain 预算耗尽时，生命周期必须 abort 全部活跃 update，再给出短而有界的取消收敛窗口；生命周期取消不得被 Telegram fallback 吞掉，必须向上解开 handler。取消后仍不退出的 handler 会阻止 offset 与实例锁释放，完成最佳努力 flush 后强制非零退出。
 - 正常与异常停机都先 quiesce 标题/反应/头像/翻译入口并停止 runner，再有界 drain。四个 quiesce 调用必须逐项捕获失败：任一入口抛错时仍须尝试其余入口，未全部成功不得缓存静默完成，且该次失败必须阻止最终 offset 确认和实例锁释放；后续 `wait()`/`dispose()` 可重试所有幂等入口。翻译客户端只在首次真实请求时惰性构造，单次 RPC 有项目级短超时，drain 后显式 `close()` 并清理 project parent/客户端引用。翻译 drain 超时或 close 失败与其它关键 owner 一样阻止释放实例锁。正常路径必须在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore」收尾。若致命异常发生时普通 dispose 已在途，异常路径可以复用该 Promise，但必须另设当前 15 秒的绝对强制退出 deadline，不能被既有 drain 无限拖住。预算耗尽时 abort 仍在进行的 Telegram 请求、媒体下载和 429 sleep，结算尚未开始的队列；abort 后不得再发送消息、改头像或写入群标题。异常退出路径的维护预算为 0：drain 必须把「预算为 0」当成合法输入，空闲直接结算为 `flushed`，仍有在途工作则立即 abort 并结算为 `timedOut`，绝不能因参数校验抛错；未结束的标题刷新在跳过时同样必须 abort。dispose 的每个 owner 也要各自失败隔离，异常一律折算为 `failed` 参与结算，任何单点抛错都不得跳过其后的 owner、`flushStateToDisk` 与实例锁处置。
 - Worker flush 与 mailbox barrier 统一使用 `packages/libs/flushBarrier.ts` 管理 ID、等待表、超时、迟到回执和崩溃批量结算；领域缓存不得重新暴露 resolver Map。
 - 领域 flush 的成功只能来自同一 request ID 的 Worker 回执：本次 `flushFailed.failedDomains` 不含目标领域时，该领域才可成功；Worker 不可用、投递失败、超时、崩溃或旧请求留下的诊断状态都不能被重新解释为成功。实例锁释放同样不得在底层吞错；只有真实释放成功后生命周期才清除 `lockAcquired`，失败必须进入停机结果并保留锁状态。
-- 当前部署基线是单租户云原生环境，开发工作区同时就是生产工作区；编辑器、自动化工具与运行时可能以不同容器 UID 共同维护同一挂载卷，因此项目目录和受管文件必须允许这些进程原地修改。隔离租户内的宽松 Unix mode 本身不视为越权暴露；若迁移到共享主机、共享卷或其它跨信任边界的部署形态，必须在上线前重新设计 owner、group 与权限。
-- `memory/` 产物统一为 `0644`：属主可写、普通系统用户可读。敏感性由云实例的单租户边界、部署隔离和备份策略控制，不通过制造不可读文件解决。
+- 当前部署基线允许开发工作区本身保持协作所需的权限；但显式配置的独立数据根是敏感数据边界，启动时强制不宽于 `0750`，禁止 group 写与任何 other 访问。部署工具负责 owner/group 与已有目录的手工迁移，运行时不得擅自 chmod。
+- `memory/` 产物统一为 `0644`；其 other 位受上层不可被 other 遍历的数据根隔离。敏感性由数据根权限、部署隔离和备份策略共同控制。
 - 持久化 schema 不做猜测式自动迁移；不兼容输入会阻止启动，避免空状态覆盖原数据。
 - lockdown 落盘握手的指纹只由 `phase` 与 `intentId` 组成——它们才是一次锁定意图的身份。指纹里不得含 `expiresAt`：私密模式生效期间，每条越过阈值的入群都会让 Worker 重发一次 `lockdown` 事件，而其中的 `expiresAt` 是当场按墙钟算出来的，每次都不一样；把它算进去，主线程「存下去 → 再看一眼还是不是同一份」的对账循环永远等不到相等，每轮一次带 fsync 的 `state.json` + LKG 整文件重写，入群比写盘更快时循环不终止，既写不下指纹也发不出落盘回执。倒计时本身照常落在镜像的 `expiresAt` 里，adopt 时据此换算剩余时长。该对账循环另有轮次上限兜底，用尽只暂停这个群的握手并留下错误日志，下一条 lockdown 事件会重新进来。
 - 当前 lockdown 镜像要求 `phase` 与正数 `intentId`；待验证 active 记录要求 `phase` 与 `trackedMessageTimes`。reminder ID 仍是业务可选字段：缺失只表示提醒尚未成功落地，恢复后走可靠补发。其它缺失或不兼容字段必须在旧进程停止期间人工迁移，生产读取路径不保留兼容逻辑。

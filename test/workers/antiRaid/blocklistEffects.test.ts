@@ -201,24 +201,29 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     expect(banChatSenderChat).toHaveBeenCalledWith(-1001, -4004, guardApi);
   });
 
-  test("同步返回、不等网络往返落定：一波刷屏入群时 mailbox 不被卡住", async () => {
+  test("返回在途任务但由 mailbox 调度器后台登记：一波刷屏入群时不阻塞路由", async () => {
     let settleBan!: (banned: boolean) => void;
-    banChatMember.mockImplementation((): Promise<boolean> =>
-      new Promise((resolve: (banned: boolean) => void): void => { settleBan = resolve; }));
+    let firstCall: boolean = true;
+    banChatMember.mockImplementation((): Promise<boolean> => {
+      if (!firstCall) return Promise.resolve(true);
+      firstCall = false;
+      return new Promise((resolve: (banned: boolean) => void): void => { settleBan = resolve; });
+    });
 
-    const returned: void = handleRemoveBlockedMembers({
+    const returned: Promise<void> = handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8], probeMembership: false, removalId: 9 },
       publish,
     });
 
-    // 调用方拿到的是 void 而不是待 await 的 Promise：dispatch 立刻回到 mailbox。
-    expect(returned).toBeUndefined();
+    let settled: boolean = false;
+    void returned.finally((): void => { settled = true; });
     await Bun.sleep(0);
+    expect(settled).toBeFalse();
     // 第一条还悬着，第二条就不该发出——同批内部仍是串行，不并发轰 API。
     expect(banChatMember).toHaveBeenCalledTimes(1);
 
     settleBan(true);
-    await Bun.sleep(0);
+    await returned;
     expect(banChatMember).toHaveBeenCalledTimes(2);
   });
 

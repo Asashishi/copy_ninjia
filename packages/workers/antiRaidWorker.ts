@@ -26,6 +26,11 @@ import type { AntiRaidWorkerMessage, BlockedMembersRemovedEvent } from "../types
 import { initTelegramClients } from "../infra/telegram/client";
 import { sweepRecentComments } from "./antiRaid/recentComments";
 import { antiRaidCacheSweepTimer } from "../cache/antiRaid/worker";
+import {
+  drainAntiRaidTasks,
+  resetAntiRaidTaskTracker,
+  trackAntiRaidTask,
+} from "./antiRaid/taskTracker";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
@@ -96,14 +101,22 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       break;
     case "removeBlockedMembers":
       // 判定已在主线程做完（名单是主线程状态），这里只执行网络动作；
-      // 同步返回、请求事后跑，不阻塞 mailbox。落地结果经回执回主线程销镜像。
-      handleRemoveBlockedMembers({
-        msg,
-        publish: (event: BlockedMembersRemovedEvent): void => self.postMessage(event),
+      // 任务交给跟踪器后台等待，不阻塞 mailbox。落地结果经回执回主线程销镜像。
+      void trackAntiRaidTask({
+        task: handleRemoveBlockedMembers({
+          msg,
+          publish: (event: BlockedMembersRemovedEvent): void => self.postMessage(event),
+        }),
+        blocklistChatId: msg.chatId,
       });
       break;
     case "barrier":
       self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });
+      break;
+    case "drain":
+      void drainAntiRaidTasks().then((): void => {
+        self.postMessage({ type: "drainComplete", drainId: msg.drainId });
+      });
       break;
   }
 }
@@ -139,6 +152,7 @@ export function stopAntiRaidWorker(): void {
   resetAdminCache();
   resetLinkedChannelCache();
   recentChannelComments.clear();
+  resetAntiRaidTaskTracker();
   self.onmessage = null;
   process.off("exit", stopAntiRaidWorker);
 }

@@ -6,7 +6,11 @@ import { answerCallbackQuery } from "../infra/telegram/actions";
 import { isBotAdminIn, markBotAdminObserved } from "../infra/botAdmin";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { VERIFY_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
-import { ANTI_RAID_BARRIER_TIMEOUT_MS, LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS } from "../consts/antiRaid/protocol";
+import {
+  ANTI_RAID_BARRIER_TIMEOUT_MS,
+  ANTI_RAID_DRAIN_MAX_ROUNDS,
+  LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS,
+} from "../consts/antiRaid/protocol";
 import type { FlushResult } from "../types/lifecycle";
 import { isAdminStatus } from "../libs/chatMember";
 import { superviseWorker } from "../libs/supervisedWorker";
@@ -162,6 +166,10 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
         antiRaidBarrier.settle(event.barrierId, "flushed");
         break;
       }
+      case "drainComplete": {
+        antiRaidBarrier.settle(event.drainId, "flushed");
+        break;
+      }
     }
   },
   // 崩溃的 Worker 带走了所有计时器；先用主线程待验证镜像重建验证，再把
@@ -216,13 +224,71 @@ registerChatTeardown("antiRaid", (chatId: number): void => {
   deactivateAntiRaidChat(chatId);
 });
 
-/** FIFO barrier：回执前 Worker 已同步处理完此前消息，镜像事件也已先到主线程。 */
-export function drainAntiRaid(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS): Promise<FlushResult> {
+/** FIFO mailbox barrier：只证明此前消息已同步路由，不等待后台网络副作用。 */
+function barrierAntiRaidMailbox(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS): Promise<FlushResult> {
   if (!antiRaidRuntimeState.initialized) return Promise.resolve("flushed");
   return antiRaidBarrier.begin(
     (barrierId: number): boolean => post({ type: "barrier", barrierId }),
     timeoutMs
   );
+}
+
+/** 等待 Worker 此前启动的异步副作用全部结算，不处理跨线程持久化握手。 */
+function drainAntiRaidWorkerTasks(timeoutMs: number): Promise<FlushResult> {
+  if (!antiRaidRuntimeState.initialized) return Promise.resolve("flushed");
+  return antiRaidBarrier.begin(
+    (drainId: number): boolean => post({ type: "drain", drainId }),
+    timeoutMs
+  );
+}
+
+function remainingDrainTime(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
+}
+
+/**
+ * 停机排空：先让已有镜像落盘并把持久化回执交回 Worker，再等待由回执放行的
+ * 网络副作用；若副作用又发布了新镜像则重复，直到固定点或达到轮数上限。
+ */
+export async function drainAntiRaid(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS): Promise<FlushResult> {
+  if (!antiRaidRuntimeState.initialized) return "flushed";
+  const deadline: number = Date.now() + timeoutMs;
+  for (let round: number = 0; round < ANTI_RAID_DRAIN_MAX_ROUNDS; round++) {
+    const initialBarrier: FlushResult = await barrierAntiRaidMailbox(remainingDrainTime(deadline));
+    if (initialBarrier !== "flushed") return initialBarrier;
+
+    const persistenceResults: [PromiseSettledResult<FlushResult>, PromiseSettledResult<FlushResult>] =
+      await Promise.allSettled([
+        flushDiskIO(remainingDrainTime(deadline)),
+        flushStateToDisk(remainingDrainTime(deadline)),
+      ]);
+    if (persistenceResults.some((result: PromiseSettledResult<FlushResult>): boolean =>
+      result.status === "rejected")) {
+      return "failed";
+    }
+    const diskResult: FlushResult =
+      (persistenceResults[0] as PromiseFulfilledResult<FlushResult>).value;
+    const stateResult: FlushResult =
+      (persistenceResults[1] as PromiseFulfilledResult<FlushResult>).value;
+    if (diskResult !== "flushed") return diskResult;
+    if (stateResult !== "flushed") return stateResult;
+
+    // flush 回执本身会投回 Worker 并启动下一阶段副作用；第二道 FIFO barrier
+    // 确保这些消息已路由，随后才能对真实在途任务做 drain。
+    const receiptBarrier: FlushResult = await barrierAntiRaidMailbox(remainingDrainTime(deadline));
+    if (receiptBarrier !== "flushed") return receiptBarrier;
+    const persistenceVersionBeforeTasks: number = antiRaidRuntimeState.persistenceVersion;
+    const taskResult: FlushResult =
+      await drainAntiRaidWorkerTasks(remainingDrainTime(deadline));
+    if (taskResult !== "flushed") return taskResult;
+    if (antiRaidRuntimeState.persistenceVersion === persistenceVersionBeforeTasks) {
+      return "flushed";
+    }
+  }
+  logger.error(
+    `Anti-Raid drain did not converge after ${ANTI_RAID_DRAIN_MAX_ROUNDS} persistence rounds.`
+  );
+  return "failed";
 }
 
 /** update 安全交接：处理 mailbox 后，仅在镜像变化时同步两类持久化 owner。 */
@@ -244,7 +310,7 @@ async function postAntiRaidDurably(
     // 必须可区分，供调用方判断本次是否可能已启动副作用（见 workerDelivery.ts）。
     if (!post(message)) throw new WorkerUndeliveredError("Anti-Raid Worker is unavailable.");
   }
-  const barrierResult: FlushResult = await drainAntiRaid(timeoutMs);
+  const barrierResult: FlushResult = await barrierAntiRaidMailbox(timeoutMs);
   if (barrierResult !== "flushed") {
     throw new Error(`Anti-Raid Worker barrier ${barrierResult}.`);
   }

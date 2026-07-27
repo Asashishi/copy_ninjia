@@ -111,17 +111,46 @@ function record(generation: number, revision: number): VerificationSnapshot {
   };
 }
 
+async function settleAntiRaidDrain(
+  result: Promise<FlushResult>,
+  firstBoundaryIndex: number,
+  onDrain?: () => void
+): Promise<FlushResult> {
+  let cursor: number = firstBoundaryIndex;
+  let settled: boolean = false;
+  void result.finally((): void => { settled = true; });
+  for (let turn: number = 0; turn < 20; turn++) {
+    await Bun.sleep(0);
+    while (cursor < workerPosts.length) {
+      const message: AntiRaidWorkerMessage = workerPosts[cursor++]!;
+      if (message.type === "barrier") {
+        supervisorOptions!.onEvent({
+          type: "barrierComplete",
+          barrierId: message.barrierId,
+        });
+      } else if (message.type === "drain") {
+        onDrain?.();
+        supervisorOptions!.onEvent({
+          type: "drainComplete",
+          drainId: message.drainId,
+        });
+      }
+    }
+    if (settled) return result;
+  }
+  throw new Error("Anti-Raid drain test helper did not observe completion.");
+}
+
 describe("Anti-Raid main-thread persistence mirror", () => {
   test("replays active and unconfirmed deletes while rejecting old generations", async () => {
     antiRaid.hydratePendingVerifications(new Map([["-1001:42", record(9, 1)]]));
     antiRaid.initAntiRaid();
-    const barrier = antiRaid.drainAntiRaid(1_000);
-    const barrierMessage = workerPosts.at(-1);
-    expect(barrierMessage?.type).toBe("barrier");
-    if (barrierMessage?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrierMessage.barrierId });
-    }
-    await expect(barrier).resolves.toBe("flushed");
+    const firstBoundaryIndex: number = workerPosts.length;
+    const drain = antiRaid.drainAntiRaid(1_000);
+    await expect(settleAntiRaidDrain(drain, firstBoundaryIndex)).resolves.toBe("flushed");
+    expect(workerPosts.slice(firstBoundaryIndex).map(
+      (message: AntiRaidWorkerMessage): string => message.type
+    )).toEqual(["barrier", "barrier", "drain"]);
     supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(1, 2) });
     supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(0, 99) });
     supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 3 });
@@ -155,6 +184,32 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       verifications: [expect.objectContaining({ revision: 4 })],
     })]);
     expect(activeVerificationSnapshots.get("-1001:42")?.revision).toBe(4);
+  });
+
+  test("真实 drain 期间产生新持久化镜像时会再跑一轮固定点对账", async () => {
+    antiRaid.initAntiRaid();
+    const firstBoundaryIndex: number = workerPosts.length;
+    let injected: boolean = false;
+    const result: Promise<FlushResult> = antiRaid.drainAntiRaid(1_000);
+    await expect(settleAntiRaidDrain(result, firstBoundaryIndex, (): void => {
+      if (injected) return;
+      injected = true;
+      supervisorOptions!.onEvent({
+        type: "lockdown",
+        chatId: -9090,
+        phase: "applying",
+        intentId: 9090,
+        originalPermissions: { can_invite_users: true },
+        expiresAt: 123_456,
+      });
+    })).resolves.toBe("flushed");
+
+    expect(workerPosts.slice(firstBoundaryIndex)
+      .filter((message: AntiRaidWorkerMessage): boolean =>
+        message.type === "barrier" || message.type === "drain")
+      .map((message: AntiRaidWorkerMessage): string => message.type))
+      .toEqual(["barrier", "barrier", "drain", "barrier", "barrier", "drain"]);
+    chatStates.delete(-9090);
   });
 
   test("Worker 重建不会把尚未完成 saveState 的 lockdown 镜像当成已持久化", async () => {
@@ -418,25 +473,27 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(flushStateToDisk).not.toHaveBeenCalled();
   });
 
-  test("barrier 超时会清理 waiter，迟到回执不能改变失败结果", async () => {
+  test("drain 超时会清理 waiter，迟到回执不能改变失败结果", async () => {
     workerPosts.length = 0;
     const result = antiRaid.drainAntiRaid(1);
-    const barrier = workerPosts.at(-1);
+    const firstBarrier = workerPosts.at(-1);
 
     await expect(result).resolves.toBe("timedOut");
+    const nextBoundaryIndex: number = workerPosts.length;
     const nextResult = antiRaid.drainAntiRaid(1_000);
-    const nextBarrier = workerPosts.at(-1);
     let nextSettled: boolean = false;
     void nextResult.finally(() => { nextSettled = true; });
-    if (barrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
+    if (firstBarrier?.type === "barrier") {
+      supervisorOptions!.onEvent({
+        type: "barrierComplete",
+        barrierId: firstBarrier.barrierId,
+      });
     }
     await Bun.sleep(0);
     expect(nextSettled).toBeFalse();
-    if (nextBarrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: nextBarrier.barrierId });
-    }
-    await expect(nextResult).resolves.toBe("flushed");
+    await expect(
+      settleAntiRaidDrain(nextResult, nextBoundaryIndex)
+    ).resolves.toBe("flushed");
   });
 
   test("服务消息与验证按钮入口都把各自 barrier 纳入返回 Promise", async () => {

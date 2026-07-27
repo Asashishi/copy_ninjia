@@ -29,6 +29,19 @@ export const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
 export const AVATAR_MAX_DOWNLOAD_BYTES: number = 10 * 1024 * 1024;
 /** t.me 公开主页响应允许读入内存的最大字节数。 */
 export const PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES: number = 1024 * 1024;
+/**
+ * t.me / telegram.me 公开主页允许返回头像资源的 Telegram 自有域。后缀由
+ * packages/libs/httpUrlPolicy.ts 按 DNS label 边界匹配，不能用字符串包含
+ * 判断；这里只限制轻量出站能力，不承担 DNS/IP 级 SSRF 防护。
+ */
+export const TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES: readonly string[] = Object.freeze([
+  "t.me",
+  "telegram.me",
+  "telegram.org",
+  "telegram-cdn.org",
+  "cdn-telegram.org",
+  "telesco.pe",
+]);
 /** getUserProfilePhotos 单页最多能返回的张数，Bot API 本身的硬上限。 */
 export const USER_PROFILE_PHOTOS_LIMIT: number = 100;
 

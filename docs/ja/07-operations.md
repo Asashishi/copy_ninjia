@@ -38,6 +38,8 @@ WantedBy=multi-user.target
 
 データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` を container の一時 layer に置かないでください。
 
+この permission gate を含む版へ既存 deployment を更新する前に、すべての instance を停止して手動 migration します：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。program は data root と `config/`、`logs/`、`memory/` を `0750` で作成し、runtime UID の所有であることを検証します。既存 directory が `0750` より広い場合は起動を拒否し、暗黙の chmod は行いません。必要なら実際の owner/group に置き換え、runtime user の書き込み権限を維持してください。
+
 プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 
 ## データルート
@@ -64,7 +66,7 @@ Bot 停止中または storage snapshot の整合境界で、データルート�
 
 | 症状 | 原因 | 対応 |
 | :--- | :--- | :--- |
-| パス付きでデータルート事前検査が失敗 | ディレクトリへ書き込めない、または filesystem が fsync、hard link、アトミック rename をサポートしない | ローカル filesystem のパスへ変更。ネットワーク storage や一部 container layer は必要な semantics を満たしません |
+| パス付きでデータルート事前検査が失敗 | mode が `0750` より広い、ディレクトリへ書き込めない、または filesystem が fsync、hard link、アトミック rename をサポートしない | 全 instance を停止し、owner/group を修正して `chmod 0750 <data-root>` を実行。それでも失敗する場合は必要な semantics を持つ local filesystem を使用 |
 | `bot.lock` が起動を拒否 | 次の section を参照 | 次の section に従う |
 | config schema 検証失敗 | `config/*.json` または `.env` が不正 | 指摘された field を修正。mood の重みは合計 100、スタンプパックは最大 5 個 |
 | state の 2 コピーが両方無効 | schema 変更版をデータ migration なしでデプロイした | [06 永続化 schema の変更](06-modification-guide.md#永続化-schema-の変更) に従って migration してから起動。プログラムは元ファイルを変更しません |

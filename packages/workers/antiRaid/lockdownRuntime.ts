@@ -18,6 +18,7 @@ import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
 import type { LockdownEntry } from "../../cache/antiRaid/lockdown";
 import type { JoinWindow } from "../../types/antiRaid/internal";
+import { trackAntiRaidTask } from "./taskTracker";
 
 declare const self: Worker;
 
@@ -108,17 +109,21 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
         self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
         break;
       case "announceLockdown":
-        void sendMessage({
-          chatId,
-          text: lockdownAnnouncementText(effect.joinCount),
-          api: joinVerificationApi,
+        void trackAntiRaidTask({
+          task: sendMessage({
+            chatId,
+            text: lockdownAnnouncementText(effect.joinCount),
+            api: joinVerificationApi,
+          }),
         });
         break;
       case "announceUnlock":
-        void sendMessage({
-          chatId,
-          text: `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`,
-          api: joinVerificationApi,
+        void trackAntiRaidTask({
+          task: sendMessage({
+            chatId,
+            text: `${LOCKDOWN_MS / 60_000} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`,
+            api: joinVerificationApi,
+          }),
         });
         break;
     }
@@ -182,7 +187,7 @@ function restrictedPermissions(permissions: ChatPermissions): ChatPermissions {
  * task 自身兜错，链永不因此中断。
  */
 function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
-  void lockdownApiRunner.run(chatId, task);
+  void trackAntiRaidTask({ task: lockdownApiRunner.run(chatId, task) });
 }
 
 /**

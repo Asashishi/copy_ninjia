@@ -38,6 +38,8 @@ WantedBy=multi-user.target
 
 Pre-create the data root with the deployment tool: `sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`. For containers, mount that same directory as persistent storage and set its owner on the host or in an init container. Do not place `memory/` on the container's ephemeral layer.
 
+Before upgrading an existing deployment to a version with this permission gate, stop every instance and migrate the directory manually: `sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`. The program creates the data root plus `config/`, `logs/`, and `memory/` with mode `0750` and verifies that they belong to the runtime UID. It refuses an existing directory broader than `0750` and never chmods it silently. Substitute the deployment's real owner/group when needed; the runtime user must remain able to write.
+
 Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification, lockdown timers, AI memory, and unacknowledged Telegram updates resume according to the recovery semantics in [04 Authoritative Runtime Invariants](04-invariants.md#persistence).
 
 ## Data Root
@@ -64,7 +66,7 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
 
 | Symptom | Cause | Action |
 | :--- | :--- | :--- |
-| Data-root preflight fails with a path | Directory is not writable, or the filesystem lacks fsync, hard links, or atomic rename | Use a local-filesystem path; network storage and some container layers do not provide the required semantics |
+| Data-root preflight fails with a path | Mode is broader than `0750`, the directory is not writable, or the filesystem lacks fsync, hard links, or atomic rename | Stop all instances, fix owner/group, and run `chmod 0750 <data-root>`; if it still fails, use a local filesystem with the required semantics |
 | `bot.lock` refuses startup | See the next section | Follow the next section |
 | Configuration schema validation fails | Invalid `config/*.json` or `.env` | Fix the named field; mood weights must total exactly 100 and at most 5 sticker packs are allowed |
 | Both state copies are invalid | A schema-changing version was deployed without migrating data | Migrate using [06 Changing a Persistence Schema](06-modification-guide.md#changing-a-persistence-schema), then restart; the program does not modify the originals |

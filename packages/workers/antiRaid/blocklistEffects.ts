@@ -32,6 +32,7 @@ import {
 import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import type { BlockedMembersRemovedEvent, RemoveBlockedMembersMessage } from "../../types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../types/blocklist";
+import { trackAntiRaidTask } from "./taskTracker";
 
 /** 单个 id 的处置结局：封成功、确认不在群（无需处置）、或没能落定。 */
 type RemovalOutcome = "removed" | "absent" | "failed";
@@ -127,11 +128,12 @@ export interface HandleRemoveBlockedMembersParams {
 }
 
 /**
- * 处置入口：同步返回，网络请求在后台跑完，结束后回执。回执带 complete——
- * 主线程只在 complete 时销镜像并把群标成已清扫，否则留着等重投或下一次边沿。
+ * 处置入口：立即启动并返回登记过的后台任务，mailbox 调度器不 await；结束后
+ * 回执。回执带 complete——主线程只在 complete 时销镜像并把群标成已清扫，
+ * 否则留着等重投或下一次边沿。
  */
-export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlockedMembersParams): void {
-  void removeBlockedMembers(msg)
+export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlockedMembersParams): Promise<void> {
+  const task: Promise<void> = removeBlockedMembers(msg)
     .then((complete: boolean): void => {
       publish({ type: "blockedMembersRemoved", chatId: msg.chatId, removalId: msg.removalId, complete });
     })
@@ -139,4 +141,5 @@ export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlocked
       logger.error(`Failed to remove blocklisted members from chat ${msg.chatId}:`, error);
       publish({ type: "blockedMembersRemoved", chatId: msg.chatId, removalId: msg.removalId, complete: false });
     });
+  return trackAntiRaidTask({ task, blocklistChatId: msg.chatId });
 }

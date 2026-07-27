@@ -188,6 +188,12 @@ export interface AntiRaidBarrierMessage {
   barrierId: number;
 }
 
+/** 主线程 -> Worker：等待此前启动的异步副作用全部结算后回执。 */
+export interface AntiRaidDrainMessage {
+  type: "drain";
+  drainId: number;
+}
+
 export type AntiRaidWorkerMessage =
   | NewMemberMessage
   | MemberLeftMessage
@@ -200,7 +206,8 @@ export type AntiRaidWorkerMessage =
   | LockdownPersistedMessage
   | AdminsChangedMessage
   | RemoveBlockedMembersMessage
-  | AntiRaidBarrierMessage;
+  | AntiRaidBarrierMessage
+  | AntiRaidDrainMessage;
 
 /**
  * Worker -> 主线程：一批黑名单处置已经走完。complete 为 true 才允许主线程
@@ -252,10 +259,17 @@ export interface AntiRaidBarrierCompleteEvent {
   barrierId: number;
 }
 
+/** Worker -> 主线程：drain 之前启动的异步副作用均已结算。 */
+export interface AntiRaidDrainCompleteEvent {
+  type: "drainComplete";
+  drainId: number;
+}
+
 export type AntiRaidWorkerEvent =
   | LockdownEvent
   | UnlockEvent
   | VerificationUpsertEvent
   | VerificationDeleteEvent
   | BlockedMembersRemovedEvent
-  | AntiRaidBarrierCompleteEvent;
+  | AntiRaidBarrierCompleteEvent
+  | AntiRaidDrainCompleteEvent;

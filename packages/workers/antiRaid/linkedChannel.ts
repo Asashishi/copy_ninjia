@@ -8,6 +8,7 @@ import {
 } from "../../cache/antiRaid/linkedChannels";
 import type { LinkedChannelCache } from "../../types/antiRaid/internal";
 import type { ChatFullInfo } from "@grammyjs/types";
+import { trackAntiRaidTask } from "./taskTracker";
 
 /** 只读取未过期缓存。undefined 表示必须异步确认，不能据此豁免。 */
 export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined {
@@ -21,7 +22,7 @@ export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined 
  * undefined，让本次消息保持普通待验证语义；下一条消息仍可重新查询。
  */
 export function fetchChatHasLinkedChannel(chatId: number): Promise<boolean | undefined> {
-  return getOrCreateLinkedChannelFetch(chatId, (): Promise<void> =>
+  const task: Promise<boolean | undefined> = getOrCreateLinkedChannelFetch(chatId, (): Promise<void> =>
     joinVerificationApi
       .getChat(chatId)
       .then((chat: ChatFullInfo): void => {
@@ -31,4 +32,5 @@ export function fetchChatHasLinkedChannel(chatId: number): Promise<boolean | und
         logger.error(`Error fetching linked channel info for chat ${chatId}:`, error);
       })
   ).then((): boolean | undefined => cachedChatHasLinkedChannel(chatId));
+  return trackAntiRaidTask({ task });
 }

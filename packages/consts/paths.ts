@@ -15,6 +15,8 @@ export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
  */
 /** 环境变量解析出的可选数据根；空白值按未配置处理。 */
 const CONFIGURED_DATA_ROOT: string | undefined = process.env[RUNTIME_DATA_ROOT_ENV]?.trim() || undefined;
+/** 是否由部署者显式配置了独立运行时数据根；用于启用生产权限门禁。 */
+export const RUNTIME_DATA_ROOT_IS_CONFIGURED: boolean = CONFIGURED_DATA_ROOT !== undefined;
 /** 当前进程实际使用的运行时数据根目录。 */
 export const RUNTIME_DATA_ROOT: string = CONFIGURED_DATA_ROOT === undefined
   ? PROJECT_ROOT

@@ -10,6 +10,7 @@ import {
 } from "../../cache/antiRaid/admins";
 import type { ChatAdminCache } from "../../types/antiRaid/internal";
 import type { ChatMemberAdministrator, ChatMemberOwner } from "@grammyjs/types";
+import { trackAntiRaidTask } from "./taskTracker";
 
 /**
  * 各群非匿名管理员邀请豁免缓存：按需全量拉取 + TTL 缓存 + 拉取在途期间
@@ -28,7 +29,7 @@ export function freshAdminIds(chatId: number): Set<number> | undefined {
 
 /** 全量拉取某群非匿名管理员并落缓存（带进行中去重，见 adminFetches）。 */
 export function fetchAdminIds(chatId: number): Promise<Set<number>> {
-  return getOrCreateAdminFetch(chatId, (): Promise<Set<number>> =>
+  const task: Promise<Set<number>> = getOrCreateAdminFetch(chatId, (): Promise<Set<number>> =>
     joinVerificationApi
       .getChatAdministrators(chatId)
       .then((admins: (ChatMemberOwner | ChatMemberAdministrator)[]): Set<number> => {
@@ -55,6 +56,7 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
         throw error;
       })
   );
+  return trackAntiRaidTask({ task });
 }
 
 /**

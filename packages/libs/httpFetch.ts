@@ -5,21 +5,12 @@ import {
   JSON_API_MAX_RESPONSE_BYTES,
 } from "../consts/httpFetch";
 import { readBoundedResponseBytes } from "./boundedResponse";
+import { parseAllowedHttpsUrl } from "./httpUrlPolicy";
 import type { BoundedResponseResult } from "./boundedResponse";
 
 function boundedErrorPreview(text: string): string {
   if (text.length <= JSON_API_ERROR_LOG_MAX_CHARS) return text;
   return `${text.slice(0, JSON_API_ERROR_LOG_MAX_CHARS)}…`;
-}
-
-function allowedRequestUrl(input: string | URL): URL | null {
-  try {
-    const url: URL = new URL(input);
-    if (url.username !== "" || url.password !== "") return null;
-    return JSON_API_ALLOWED_ORIGINS.includes(url.origin) ? url : null;
-  } catch (_error: unknown) {
-    return null;
-  }
 }
 
 /**
@@ -45,7 +36,10 @@ export async function fetchJsonWithTimeout({
   timeoutMs,
   errorLabel,
 }: FetchJsonWithTimeoutParams): Promise<unknown> {
-  const requestUrl: URL | null = allowedRequestUrl(input);
+  const requestUrl: URL | null = parseAllowedHttpsUrl({
+    input,
+    policy: { allowedOrigins: JSON_API_ALLOWED_ORIGINS },
+  });
   if (requestUrl === null) {
     logger.error(`${errorLabel} request URL is not in the configured allowlist.`);
     return null;

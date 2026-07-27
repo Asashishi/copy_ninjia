@@ -3,6 +3,7 @@ import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../packag
 
 const calls: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
+let removeBlockedMembersTask: Promise<void> = Promise.resolve();
 const workerSelf: {
   onmessage: ((event: MessageEvent<AntiRaidWorkerMessage>) => void) | null;
   postMessage: (event: AntiRaidWorkerEvent) => void;
@@ -32,7 +33,10 @@ mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
   applyAdminChange(): void { calls.push("adminsChanged"); },
 }));
 mock.module("../../../packages/workers/antiRaid/blocklistEffects", () => ({
-  handleRemoveBlockedMembers(): void { calls.push("removeBlockedMembers"); },
+  handleRemoveBlockedMembers(): Promise<void> {
+    calls.push("removeBlockedMembers");
+    return removeBlockedMembersTask;
+  },
 }));
 const sweepRecentComments = mock((_now: number): number => 0);
 mock.module("../../../packages/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
@@ -49,12 +53,17 @@ const {
   linkedChannels,
 } = await import("../../../packages/cache/antiRaid/linkedChannels");
 const { verificationRevisions } = await import("../../../packages/cache/antiRaid/verification");
+const {
+  blocklistRemovalEpochs,
+  blocklistRemovalTaskCounts,
+} = await import("../../../packages/cache/antiRaid/blocklist");
 const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } = await import("../../../packages/consts/antiRaid");
 
 beforeEach(() => {
   worker.stopAntiRaidWorker();
   calls.length = 0;
   workerEvents.length = 0;
+  removeBlockedMembersTask = Promise.resolve();
   initTelegramClients.mockClear();
   sweepRecentComments.mockClear();
   adminFetches.clear();
@@ -65,7 +74,7 @@ beforeEach(() => {
 });
 
 describe("Anti-Raid Worker lifecycle", () => {
-  test("启动幂等、路由完整，停止后清除 handler 与唯一 sweeper", () => {
+  test("启动幂等、路由完整，停止后清除 handler 与唯一 sweeper", async () => {
     worker.startAntiRaidWorker();
     worker.startAntiRaidWorker();
     expect(initTelegramClients).toHaveBeenCalledTimes(1);
@@ -92,12 +101,55 @@ describe("Anti-Raid Worker lifecycle", () => {
       "removeBlockedMembers",
     ]);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
+    await Bun.sleep(0);
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();
     expect(calls.slice(-2)).toEqual(["stopVerification", "stopLockdown"]);
     worker.startAntiRaidWorker();
     expect(initTelegramClients).toHaveBeenCalledTimes(2);
+    worker.stopAntiRaidWorker();
+  });
+
+  test("mailbox barrier 不等网络任务，真实 drain 必须等在途任务结算", async () => {
+    let releaseRemoval!: () => void;
+    removeBlockedMembersTask = new Promise<void>((resolve: () => void): void => {
+      releaseRemoval = resolve;
+    });
+    worker.startAntiRaidWorker();
+
+    workerSelf.onmessage!({
+      data: {
+        type: "removeBlockedMembers",
+        chatId: -1001,
+        userIds: [42],
+        probeMembership: false,
+        removalId: 1,
+      },
+    } as MessageEvent<AntiRaidWorkerMessage>);
+    workerSelf.onmessage!({
+      data: { type: "deactivateChat", chatId: -1001 },
+    } as MessageEvent<AntiRaidWorkerMessage>);
+    workerSelf.onmessage!({
+      data: { type: "barrier", barrierId: 10 },
+    } as MessageEvent<AntiRaidWorkerMessage>);
+    workerSelf.onmessage!({
+      data: { type: "drain", drainId: 11 },
+    } as MessageEvent<AntiRaidWorkerMessage>);
+
+    await Bun.sleep(0);
+    expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 10 }]);
+    expect(blocklistRemovalTaskCounts.get(-1001)).toBe(1);
+    expect(blocklistRemovalEpochs.get(-1001)).toBe(1);
+
+    releaseRemoval();
+    await Bun.sleep(0);
+    expect(workerEvents).toEqual([
+      { type: "barrierComplete", barrierId: 10 },
+      { type: "drainComplete", drainId: 11 },
+    ]);
+    expect(blocklistRemovalTaskCounts.has(-1001)).toBeFalse();
+    expect(blocklistRemovalEpochs.has(-1001)).toBeFalse();
     worker.stopAntiRaidWorker();
   });
 
@@ -116,5 +168,13 @@ describe("Anti-Raid Worker lifecycle", () => {
     expect([...linkedChannels.keys()]).toEqual([2]);
     expect([...verificationRevisions.keys()]).toEqual(["active"]);
     expect(sweepRecentComments).toHaveBeenCalledWith(now);
+  });
+
+  test("没有在途处置时，高基数停管不会留下历史群世代", () => {
+    for (let chatId: number = -1; chatId >= -1_000; chatId--) {
+      worker.handleAntiRaidWorkerMessage({ type: "deactivateChat", chatId });
+    }
+    expect(blocklistRemovalTaskCounts.size).toBe(0);
+    expect(blocklistRemovalEpochs.size).toBe(0);
   });
 });

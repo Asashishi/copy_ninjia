@@ -12,8 +12,18 @@
  */
 export const blocklistRemovalEpochs: Map<number, number> = new Map();
 
+/**
+ * 各群正在执行的黑名单处置任务数。任务注册时递增、settle 时递减；归零后
+ * 连同处置世代删除，容量受真实在途群数约束。
+ */
+export const blocklistRemovalTaskCounts: Map<number, number> = new Map();
+
 /** 群停管：让该群所有在途处置在下一次比对时放弃。 */
 export function bumpBlocklistRemovalEpoch(chatId: number): void {
+  if ((blocklistRemovalTaskCounts.get(chatId) ?? 0) === 0) {
+    blocklistRemovalEpochs.delete(chatId);
+    return;
+  }
   blocklistRemovalEpochs.set(chatId, (blocklistRemovalEpochs.get(chatId) ?? 0) + 1);
 }
 

@@ -4,9 +4,11 @@ import {
   AVATAR_FETCH_TIMEOUT_MS,
   AVATAR_MAX_DOWNLOAD_BYTES,
   PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES,
+  TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES,
   USER_PROFILE_PHOTOS_LIMIT,
 } from "../../consts/telegram";
 import { readBoundedResponseBytes, readBoundedResponseText, type BoundedResponseResult } from "../../libs/boundedResponse";
+import { parseAllowedHttpsUrl } from "../../libs/httpUrlPolicy";
 import { logger } from "../logger";
 import { bot, buildFileDownloadUrl, logApiError } from "./client";
 import type { ChatFullInfo, PhotoSize, UserProfilePhotos, File as TelegramFile } from "@grammyjs/types";
@@ -109,6 +111,14 @@ function parseHttpsUrl(value: string | undefined): URL | undefined {
   }
 }
 
+function parseTelegramAssetUrl(value: string | undefined): URL | undefined {
+  if (!value) return undefined;
+  return parseAllowedHttpsUrl({
+    input: value.trim(),
+    policy: { allowedHostnameSuffixes: TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES },
+  }) ?? undefined;
+}
+
 function hasAttributeToken(attributes: ReadonlyMap<string, string>, name: string, expected: string): boolean {
   return attributes.get(name)?.split(/\s+/).some((token: string): boolean => token.toLowerCase() === expected) ?? false;
 }
@@ -180,7 +190,7 @@ export function extractAvatarUrlFromProfileHtml(html: string, expectedUsername?:
   const tags: ParsedHtmlTag[] = parseRelevantHtmlTags(html);
   for (const { name, attributes } of tags) {
     if (name !== "img" || !hasAttributeToken(attributes, "class", "tgme_page_photo_image")) continue;
-    const photoUrl: URL | undefined = parseHttpsUrl(attributes.get("src"));
+    const photoUrl: URL | undefined = parseTelegramAssetUrl(attributes.get("src"));
     if (photoUrl) return photoUrl.href;
   }
 
@@ -189,7 +199,7 @@ export function extractAvatarUrlFromProfileHtml(html: string, expectedUsername?:
   for (const metaKind of ["og:image", "twitter:image"] as const) {
     for (const { name, attributes } of tags) {
       if (name !== "meta" || !isMetaKind(attributes, metaKind)) continue;
-      const photoUrl: URL | undefined = parseHttpsUrl(attributes.get("content"));
+      const photoUrl: URL | undefined = parseTelegramAssetUrl(attributes.get("content"));
       if (photoUrl) return photoUrl.href;
     }
   }
@@ -223,6 +233,7 @@ async function resolvePublicUsernameFromChat(
 export async function fetchAvatarFromWebProfile(username: string, signal?: AbortSignal): Promise<Uint8Array | null> {
   try {
     const pageRes: Response = await fetch(`https://telegram.me/${encodeURIComponent(username)}`, {
+      redirect: "error",
       signal: avatarFetchSignal(signal),
     });
     if (!pageRes.ok) {
@@ -241,7 +252,10 @@ export async function fetchAvatarFromWebProfile(username: string, signal?: Abort
       return null;
     }
 
-    const imgRes: Response = await fetch(photoUrl, { signal: avatarFetchSignal(signal) });
+    const imgRes: Response = await fetch(photoUrl, {
+      redirect: "error",
+      signal: avatarFetchSignal(signal),
+    });
     if (!imgRes.ok) {
       logger.error(`Failed to download avatar from ${photoUrl}: ${imgRes.status}`);
       return null;

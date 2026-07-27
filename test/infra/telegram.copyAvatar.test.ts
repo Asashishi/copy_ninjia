@@ -49,10 +49,10 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
       if (url === "https://telegram.me/YunaSakagami") {
         return new Response(`
           <meta property="al:ios:url" content="tg://resolve?domain=YunaSakagami">
-          <meta property="og:image" content="https://cdn.example/avatar.jpg">
+          <meta property="og:image" content="https://cdn1.telesco.pe/avatar.jpg">
         `);
       }
-      if (url === "https://cdn.example/avatar.jpg") {
+      if (url === "https://cdn1.telesco.pe/avatar.jpg") {
         return new Response(new Uint8Array([1, 2, 3]));
       }
       return new Response("", { status: 404 });

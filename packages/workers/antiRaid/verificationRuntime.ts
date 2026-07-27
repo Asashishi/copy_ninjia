@@ -41,6 +41,7 @@ import {
   clearReminderDeliveries,
   ensurePendingReminder,
 } from "./verificationReminders";
+import { trackAntiRaidTask } from "./taskTracker";
 import type { VerificationEntry } from "../../cache/antiRaid/verification";
 
 declare const self: Worker;
@@ -127,14 +128,16 @@ export function dispatchVerification(
     publishVerificationChange(chatId, userId, previousWasPersisted);
   }
   if (effects.length > 0) {
-    void runVerificationEffects({
-      chatId,
-      userId,
-      effects,
-      dispatchVerification,
-      publishVerificationChange,
-    }).catch((error: unknown): void => {
-      logger.error("Error running join verification effects:", error);
+    void trackAntiRaidTask({
+      task: runVerificationEffects({
+        chatId,
+        userId,
+        effects,
+        dispatchVerification,
+        publishVerificationChange,
+      }).catch((error: unknown): void => {
+        logger.error("Error running join verification effects:", error);
+      }),
     });
   }
 }

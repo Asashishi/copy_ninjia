@@ -34,7 +34,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**1051 tests / 132 files / 8923 `expect()` calls**。全ソースコードの**関数カバレッジは 94.46%、行カバレッジは 96.47%**です。ルート README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**1063 tests / 134 files / 8966 `expect()` calls**。全ソースコードの**関数カバレッジは 94.56%、行カバレッジは 96.47%**です。ルート README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 

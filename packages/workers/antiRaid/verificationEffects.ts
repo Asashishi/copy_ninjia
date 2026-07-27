@@ -30,6 +30,7 @@ import {
   sendReplyReminder,
   sendVerificationReminder,
 } from "./verificationReminders";
+import { trackAntiRaidTask } from "./taskTracker";
 import type { VerificationEntry } from "../../cache/antiRaid/verification";
 
 type VerificationChangePublisher = (
@@ -234,19 +235,21 @@ function startAdminCheck({
   const key: string = verificationKey(chatId, userId);
   const captured: VerificationState | undefined = verificationEntries.get(key)?.state;
   if (captured?.kind !== "pending") return;
-  void fetchAdminIds(chatId)
-    .then((adminIds: Set<number>): void => {
-      if (!adminIds.has(actorId)) return;
-      if (verificationEntries.get(key)?.state === captured) {
-        dispatchVerification(chatId, userId, { type: "adminCheckResolved" });
-      }
-    })
-    .catch((error: unknown): void => {
-      logger.error(
-        `Error fetching chat admins for admin-invite exemption in chat ${chatId}:`,
-        error
-      );
-    });
+  void trackAntiRaidTask({
+    task: fetchAdminIds(chatId)
+      .then((adminIds: Set<number>): void => {
+        if (!adminIds.has(actorId)) return;
+        if (verificationEntries.get(key)?.state === captured) {
+          dispatchVerification(chatId, userId, { type: "adminCheckResolved" });
+        }
+      })
+      .catch((error: unknown): void => {
+        logger.error(
+          `Error fetching chat admins for admin-invite exemption in chat ${chatId}:`,
+          error
+        );
+      }),
+  });
 }
 
 interface RecheckInviterThenSettleParams {

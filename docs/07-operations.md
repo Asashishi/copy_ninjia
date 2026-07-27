@@ -38,6 +38,8 @@ WantedBy=multi-user.target
 
 数据根目录先由部署工具预建：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。容器部署把同一目录作为持久卷挂载，owner 由宿主或 init container 设置；`memory/` 不要放容器临时层。
 
+升级到带权限门禁的版本前先停掉所有实例，再检查并迁移已有目录：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。程序会以 `0750` 补建数据根及 `config/`、`logs/`、`memory/`，并校验这些目录属于运行 UID；已有目录若比 `0750` 更宽会拒绝启动，不会擅自 chmod。若部署需要不同 owner/group，请替换命令中的账户，但仍须保证运行用户可写且 mode 不宽于 `0750`。
+
 进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
 
 ## 数据根
@@ -64,7 +66,7 @@ WantedBy=multi-user.target
 
 | 症状 | 原因 | 处理 |
 | :--- | :--- | :--- |
-| 数据根预检失败（带路径） | 目录不可写，或文件系统不支持 fsync / hard link / 原子 rename | 换本地文件系统路径；网络盘与部分容器层不满足能力要求 |
+| 数据根预检失败（带路径） | 目录 mode 宽于 `0750`、不可写，或文件系统不支持 fsync / hard link / 原子 rename | 停掉所有实例后修正 owner/group 并 `chmod 0750 <数据根>`；若仍失败则改用满足能力要求的本地文件系统 |
 | `bot.lock` 拒绝启动 | 见下节 | 见下节 |
 | config schema 校验失败 | `config/*.json` 或 `.env` 不合法 | 按报错字段修正；mood 权重和必须恰好 100，贴纸最多 5 包 |
 | 两份 state 副本均无效 | 部署了 schema 变更但没迁移数据 | 按 [06 变更持久化 schema](06-modification-guide.md#变更持久化-schema) 迁移后再启；程序不会改动原文件 |
