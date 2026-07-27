@@ -86,11 +86,13 @@ const runnerStop = mock(async (): Promise<void> => { calls.push("runnerStop"); }
 const runnerTask = mock(async (): Promise<void> => {});
 const runnerSize = mock((): number => 0);
 const runnerAbortActive = mock((): number => 0);
+const runnerHasFailedUpdate = mock((): boolean => false);
 const runnerHandle = {
   stop: runnerStop,
   task: runnerTask,
   size: runnerSize,
   abortActive: runnerAbortActive,
+  hasFailedUpdate: runnerHasFailedUpdate,
 };
 const runAcknowledgedUpdateBatches = mock((_bot: unknown, _updates: unknown) => {
   calls.push("runUpdates");
@@ -225,6 +227,7 @@ beforeEach(() => {
     runnerTask,
     runnerSize,
     runnerAbortActive,
+    runnerHasFailedUpdate,
     runAcknowledgedUpdateBatches,
   ]) mocked.mockClear();
   acquireSingleInstanceLock.mockImplementation(async (): Promise<void> => { calls.push("acquireLock"); });
@@ -240,6 +243,7 @@ beforeEach(() => {
   closeTranslate.mockImplementation(async () => { calls.push("closeTranslate"); return "flushed" as const; });
   runnerTask.mockImplementation(async (): Promise<void> => {});
   runnerSize.mockImplementation((): number => 0);
+  runnerHasFailedUpdate.mockImplementation((): boolean => false);
 });
 
 afterEach(() => {
@@ -705,6 +709,25 @@ describe("应用启动失败与退出清理", () => {
 
     expect(getUpdates).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("final Telegram update offset will not be confirmed"));
+  });
+
+  test("停机时有 update 处理失败：不确认 offset 并以非零状态退出", async () => {
+    // 停机路径放弃在途批次后 task() 会正常 resolve，排空也会归零，光靠这两者
+    // 无法发现那批里失败的 update。漏掉就等于替 Telegram 确认了一条从未成功
+    // 处理的 update，重启后不会再收到它。
+    lastSeenUpdateId = 888;
+    runnerHasFailedUpdate.mockReturnValue(true);
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.wait();
+
+    expect(getUpdates).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringContaining("Withholding the final Telegram offset")
+    );
+    await lifecycle.dispose();
   });
 
   test("排空超时且仍有 update 在处理时不确认 offset", async () => {

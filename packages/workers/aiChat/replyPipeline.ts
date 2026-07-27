@@ -23,9 +23,13 @@ export {
  * 管理。本文件保留 Worker 对外调用入口，并桥接“轮结束后继续排队补跑”。
  */
 
-/** 启动一条排队触发，并在该轮结束时继续排空同群队列。 */
-function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): void {
-  startReplyRound(
+/**
+ * 启动一条排队触发，并在该轮结束时继续排空同群队列。
+ * @returns 本次真的开了一轮为 true；被限频闸拒绝为 false，此时这条触发要留在
+ *   队首等下一次 drain（见 replyQueue.ts）。
+ */
+function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean {
+  return startReplyRound(
     {
       chatId,
       triggerSenderId: trigger.triggerSenderId,
@@ -41,7 +45,7 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): void {
 }
 
 function drainReplyQueue(chatId: number): void {
-  drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): void => startQueuedRound(chatId, trigger));
+  drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));
 }
 
 /**

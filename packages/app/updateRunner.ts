@@ -15,6 +15,16 @@ export interface AcknowledgedUpdateRunner {
   task(): Promise<void>;
   /** 当前仍在执行的 middleware 数。 */
   size(): number;
+  /**
+   * 是否有 update 以抛错结束。为真时**不得**确认最终 Telegram offset：那条
+   * update 必须留给 Telegram 在重启后重投。
+   *
+   * 单独暴露这个标记是因为停机路径会放弃在途批次、不再 await 它的汇总（见
+   * 下方取数循环），那次 rejection 之后再没有观察者；而正常路径靠 task() 的
+   * rejection 就能表达。标记在 handleUpdate 抛错的同一个同步段里写下，因此
+   * size() 归零时它必然已经生效。
+   */
+  hasFailedUpdate(): boolean;
   /** 中止全部活跃 update，并返回这次实际发出取消信号的数量。 */
   abortActive(): number;
 }
@@ -37,6 +47,7 @@ export function runAcknowledgedUpdateBatches(
   const fetchUpdates: ReturnType<typeof createUpdateFetcher<Update, unknown>> =
     createUpdateFetcher(bot, { fetch: { allowed_updates: allowedUpdates } });
   let running: boolean = true;
+  let failedUpdate: boolean = false;
   const activeUpdateControllers: Set<AbortController> = new Set();
   let currentAbortController: AbortController | null = null;
   let resolveStop: (() => void) | undefined;
@@ -54,6 +65,11 @@ export function runAcknowledgedUpdateBatches(
       // 该 update 仍不能被当成成功完成并跨过 offset。
       throwIfUpdateAborted(updateController.signal);
     } catch (error: unknown) {
+      // 记在这里、而不是等 batch 汇总：任何以抛错离开本函数的 update 都不能被
+      // 确认，而停机时取数循环会放弃在途批次，那次汇总 rejection 已经没有观察
+      // 者了。放在 catch 的第一句是为了同时覆盖下面两条 throw；这一句与 finally
+      // 里的 delete 处在同一个同步段，因此 size() 归零时它必然已经写好。
+      failedUpdate = true;
       if (updateController.signal.aborted) throw error;
       try {
         await bot.errorHandler(error as BotError<Context>);
@@ -101,6 +117,10 @@ export function runAcknowledgedUpdateBatches(
         if (failures.length > 1) throw new AggregateError(failures, "Multiple Telegram updates failed.");
       });
       await Promise.race([batch, stopped]);
+      // 停机：不等这批走完（middleware 可能悬挂），交给生命周期按 size() 做有界
+      // 排空。这批里失败的 update 因此只能靠 failedUpdate 表达——放弃 await 之后
+      // batch 的 rejection 再没有观察者，光凭 task() 正常 resolve 会让生命周期
+      // 把失败的那条一起确认掉。
       if (!running) return;
       await batch;
       // 只有走到这里，createUpdateFetcher 内部已推进的 offset 才会在下一轮
@@ -118,6 +138,7 @@ export function runAcknowledgedUpdateBatches(
     },
     task: (): Promise<void> => task,
     size: (): number => activeUpdateControllers.size,
+    hasFailedUpdate: (): boolean => failedUpdate,
     abortActive: (): number => {
       let aborted: number = 0;
       for (const controller of activeUpdateControllers) {

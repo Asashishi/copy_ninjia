@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { AntiRaidWorkerEvent } from "../../../packages/types";
 import type {
   ExpelSnapshot,
@@ -341,5 +341,36 @@ describe("踢人失败时的权限告警", () => {
 
     expect(sentTexts).toHaveLength(0);
     expect(state.failureNoticeSent).toBeTrue();
+  });
+
+  test("连续失败按指数退避拉长重试间隔，记录仍然保留", async () => {
+    // 机器人是管理员却没有封禁权限、或目标本人就是这个群的管理员时，这条重试
+    // 永远不会成功。记录按设计不能删（删了就等于把没处置的成员当成已完成），
+    // 因此能收敛的只有节奏：固定 30 秒一轮的话，一次刷群留下的每个未验证成员
+    // 都会永久占住一个 30 秒循环，各自不停打 deleteMessage + kickChatMember
+    // 并往 logs/ 刷同一行报错，Worker 重建后还照单重新武装。
+    const delays: number[] = [];
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+      ((_handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
+        delays.push(delayMs ?? 0);
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof globalThis.setTimeout
+    );
+    try {
+      kickSucceeds = false;
+      const state = expellingState();
+      setState(state);
+
+      for (let attempt: number = 0; attempt < 3; attempt++) {
+        await run([{ kind: "expel", snapshot: state.snapshot }]);
+      }
+
+      expect(delays).toEqual([30_000, 60_000, 120_000]);
+      expect(verificationEntries.get(KEY)?.terminalRetries).toBe(3);
+      // 退避不是放弃：记录必须留着，权限修好之后还要继续处置。
+      expect(verificationEntries.has(KEY)).toBeTrue();
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 });

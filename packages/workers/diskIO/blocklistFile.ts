@@ -112,6 +112,16 @@ export function hydrateBlocklist(): Map<number, BlockedUserRecord> {
 }
 
 /**
+ * 让已知 id 集合与某份权威快照对齐。写盘成功与失败都要调用：失败时它代表的
+ * 是「这份还没落地的快照里有谁」，成功时代表「文件里有谁」——两种情形下
+ * handleBlockUserMessage 的重复判定读的都必须是最新那份内容。
+ */
+function adoptKnownIds(userIds: Iterable<number>): void {
+  blocklistKnownIds.clear();
+  for (const userId of userIds) blocklistKnownIds.add(userId);
+}
+
+/**
  * 按主线程送来的完整名单整文件重写。/unblock 走这条路：追加型文件删不掉
  * 已有条目，唯一的办法是把删除后的内存 Map 整份写回去。
  *
@@ -140,13 +150,18 @@ export function rewriteBlocklist(records: Map<number, BlockedUserRecord>): boole
     // 于是 /unblock 告诉管理员「划掉了」而文件里那条还在。
     blocklistFileState.current = null;
     blocklistPendingRewrite.current = new Map(records);
+    // 已知 id 必须跟着这份待重写快照走，不能停在文件里那份旧内容上。停在旧内容
+    // 上的话，紧接着重新拉黑一个刚被解除的 id 会在 handleBlockUserMessage 第一行
+    // 被当成重复投递直接早退：既不追加，也进不到「并进 pendingRewrite」那条分支。
+    // 于是重试重写用的还是不含他的快照，而 flush 会照常报成功，/block 把「永久」
+    // 说出口——文件里根本没有这条记录，重启后那个人可以随意回群。
+    adoptKnownIds(records.keys());
     console.error("[diskIOWorker] failed to rewrite the blocklist file:", error);
     return false;
   }
   blocklistPendingRewrite.current = null;
   blocklistPendingEntries.length = 0;
-  blocklistKnownIds.clear();
-  for (const userId of userIds) blocklistKnownIds.add(userId);
+  adoptKnownIds(userIds);
   // 重新探测而不是凭内容长度推算 size：以物理文件大小为准是本机制的一贯要求。
   blocklistFileState.current = openAppendOnlyFile(BLOCKLIST_FILE_PATH, PERSISTED_FILE_MODE, false);
   return true;

@@ -54,8 +54,10 @@ export interface ReplyRoundRequest {
 /**
  * 过滑动窗口限频闸并启动一轮异步回复。占位、贴纸锁和聊天状态心跳均在
  * 本函数内成对获取/释放；完成回调用于让编排层继续排空等候队列。
+ * @returns 本次真的开了一轮为 true；被代际失效或限频闸拒绝为 false。
+ *   排队补跑那一路据此决定要不要把这条触发留在队首（见 replyQueue.ts）。
  */
-export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId: number) => void): void {
+export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId: number) => void): boolean {
   const {
     chatId,
     triggerSenderId,
@@ -68,7 +70,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     queuedTrigger,
   }: ReplyRoundRequest = request;
   const generation: number = request.generation ?? currentReplyGeneration(chatId);
-  if (!isReplyGenerationCurrent(chatId, generation)) return;
+  if (!isReplyGenerationCurrent(chatId, generation)) return false;
 
   // 自动插话与随机媒体评价永远不得生图。这里在工具上下文
   // 边界再做一次强制收紧，不依赖各入口永远正确传 false；用户直接
@@ -78,7 +80,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     (mediaComment === undefined || mediaComment.directTriggerReason !== undefined);
 
   const selfInfo: AiBotInfo | null = botInfoState.current;
-  if (!selfInfo) return;
+  if (!selfInfo) return false;
 
   const now: number = Date.now();
   let longTimes: LinkedQueue<number> | undefined = longTriggerTimes.get(chatId);
@@ -90,7 +92,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
   trimSlidingWindow({ timestamps: longTimes, windowMs: RATE_LIMIT_LONG_WINDOW_MS, now });
   if (admitRound({ windowCount: longTimes.size }).action === "rateLimited") {
     notifyRateLimited(chatId, now, generation);
-    return;
+    return false;
   }
 
   longTimes.push(now);
@@ -221,4 +223,5 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     logger.error("Error in AI reply task:", error);
   });
   trackReplyGenerationTask(chatId, generation, task);
+  return true;
 }

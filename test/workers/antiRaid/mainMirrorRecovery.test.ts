@@ -205,11 +205,12 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       originalPermissions: { can_invite_users: true },
       expiresAt: 200_000,
     });
+    // 真正推进了一个阶段：这才是「完成后要补写」的那种变化。
     supervisorOptions!.onEvent({
       type: "lockdown",
       chatId: -2003,
-      phase: "active",
-      intentId: 88,
+      phase: "restoring",
+      intentId: 89,
       originalPermissions: { can_invite_users: true },
       expiresAt: 300_000,
     });
@@ -223,9 +224,40 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(workerPosts.filter((message) => message.type === "lockdownPersisted" && message.chatId === -2003)).toEqual([{
       type: "lockdownPersisted",
       chatId: -2003,
-      phase: "active",
-      intentId: 88,
+      phase: "restoring",
+      intentId: 89,
     }]);
+  });
+
+  test("倒计时刷新不再多花一轮整文件重写：指纹只认 phase + intentId", async () => {
+    // 私密模式生效期间，每条越过阈值的入群都会让 Worker 重发一次 lockdown 事件，
+    // 而事件里的 expiresAt 是当场 Date.now() + LOCKDOWN_MS 算出来的，每次都不一样。
+    // 把它算进指纹的话，对账循环永远等不到「存下去的还是当前这份」，每轮一次带
+    // fsync 的 state.json + .bak 整文件重写；入群比这两次写更快时循环不终止，
+    // 既写不下指纹也发不出 lockdownPersisted，紧急封锁的握手就此卡死。
+    workerPosts.length = 0;
+    saveState.mockClear();
+
+    for (const expiresAt of [400_000, 500_000, 600_000]) {
+      supervisorOptions!.onEvent({
+        type: "lockdown",
+        chatId: -2004,
+        phase: "active",
+        intentId: 90,
+        originalPermissions: { can_invite_users: true },
+        expiresAt,
+      });
+      await Bun.sleep(0);
+      await Bun.sleep(0);
+    }
+
+    // 每条事件各自一次落盘，但没有任何一条因为倒计时变了而重来一轮。
+    expect(saveState).toHaveBeenCalledTimes(3);
+    expect(workerPosts.filter((message) => message.type === "lockdownPersisted" && message.chatId === -2004)).toEqual([
+      { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
+      { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
+      { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
+    ]);
   });
 
   test("chat_member update 必须依次跨过 Worker barrier 与两类落盘后才结算", async () => {

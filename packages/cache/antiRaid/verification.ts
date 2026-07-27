@@ -8,6 +8,17 @@ import type { VerificationState } from "../../types/states/verification";
 export interface VerificationEntry {
   state: VerificationState;
   timer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * 终态处置（踢人/删消息）连续失败了几次，只用于按次数拉长本地重试间隔
+   * （见 workers/antiRaid/verificationEffects.ts）。
+   *
+   * 放在解释器条目上而不是状态机状态里：它既不参与状态转移，也不该进持久化
+   * 快照——记录本身按设计不能因为重试耗尽被删掉（删了就等于把没处置的成员当
+   * 成已完成，见 states/verification.ts 的 left 分支），能收敛的只有重试节奏。
+   * 生命周期：随条目创建为空、每次失败自增、条目删除即消失；Worker 重建后从
+   * 头计数，最多多试几次。
+   */
+  terminalRetries?: number;
 }
 
 /** 以 "chatId:userId" 为键，同一个人在不同群里独立追踪。 */

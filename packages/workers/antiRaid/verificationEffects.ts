@@ -9,6 +9,7 @@ import {
 } from "../../infra/telegram";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../../consts/telegram";
 import {
+  VERIFICATION_TERMINAL_RETRY_MAX_MS,
   VERIFICATION_TERMINAL_RETRY_MS,
   VERIFICATION_TIMEOUT_MS,
   WELCOME_AUTO_DELETE_MS,
@@ -103,9 +104,18 @@ export async function runVerificationEffects({
           const entry: VerificationEntry | undefined = verificationEntries.get(verificationKey(chatId, userId));
           if (entry !== undefined) {
             if (entry.timer !== undefined) clearTimeout(entry.timer);
+            // 指数退避（同 verificationReminders.ts 的做法），不是固定 30 秒一轮：
+            // 有些失败注定不会好转——机器人是管理员却没有封禁权限，或目标本人就是
+            // 这个群的管理员。记录按设计不能删（删了就等于把没处置的成员当成已
+            // 完成，见 states/verification.ts 的 left 分支），因此能收敛的只有节奏。
+            // 固定间隔时，一次刷群留下的每个未验证成员都会永久占住一个 30 秒循环，
+            // 各自不停打 deleteMessage + kickChatMember 并往 logs/ 刷同一行报错。
+            // 退避有上限：管理员补上权限后最迟一个上限周期内自愈，不必重启进程。
+            const retries: number = entry.terminalRetries ?? 0;
+            entry.terminalRetries = retries + 1;
             entry.timer = setTimeout(
               (): void => dispatchVerification(chatId, userId, { type: "terminalPersisted" }),
-              VERIFICATION_TERMINAL_RETRY_MS
+              Math.min(VERIFICATION_TERMINAL_RETRY_MS * (2 ** retries), VERIFICATION_TERMINAL_RETRY_MAX_MS)
             );
           }
         }

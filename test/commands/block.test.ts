@@ -251,7 +251,7 @@ describe("/block 的黑名单落盘", () => {
     // sweptAt 是永久闩锁，唯一的复位路径本来只有停管：这个群若早就扫过，
     // 被拉黑的人会一直待到进程结束——入群秒踢只对之后的入群更新生效。
     chatStates.set(-2002, { botIsAdmin: true });
-    blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false });
+    blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0 });
     banChatMember.mockResolvedValue(false);
 
     await handleBlockCommand(context());
@@ -261,7 +261,7 @@ describe("/block 的黑名单落盘", () => {
 
   test("封禁成功的群不必重扫", async () => {
     chatStates.set(-2002, { botIsAdmin: true });
-    blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false });
+    blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0 });
 
     await handleBlockCommand(context());
 

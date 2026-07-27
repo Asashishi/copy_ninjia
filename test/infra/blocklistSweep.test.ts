@@ -6,6 +6,7 @@ const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "
 const persistAuthoritativeState = mock(async (): Promise<void> => {});
 /** 处置的执行 owner 替身：主线程侧只该「投出去」，不该自己打 API。 */
 const remover = mock(async (..._args: unknown[]): Promise<void> => {});
+const postDiskIO = mock((..._args: unknown[]): boolean => true);
 
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
@@ -14,7 +15,7 @@ mock.module("../../packages/infra/telegram", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },
 }));
 mock.module("../../packages/infra/diskIO", () => ({
-  postDiskIO: (): boolean => true,
+  postDiskIO,
   onDiskIORespawn: (): void => {},
   relayLogMessage: (): boolean => true,
   flushDiskIO: async (): Promise<string> => "flushed",
@@ -54,7 +55,7 @@ const {
   BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
   BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
 } = await import("../../packages/consts/antiRaid/blocklist");
-const { handleMyChatMemberUpdate, markBotAdminObserved } = await import("../../packages/infra/botAdmin");
+const { handleMyChatMemberUpdate, isBotAdminIn, markBotAdminObserved } = await import("../../packages/infra/botAdmin");
 const {
   blockedMemberRemoverHolder,
   blockedUserIds,
@@ -95,8 +96,10 @@ beforeEach(() => {
   blocklistSweepState.clear();
   pendingBlockedRemovals.clear();
   remover.mockClear();
+  postDiskIO.mockClear();
   getChatMember.mockClear();
   persistAuthoritativeState.mockClear();
+  postDiskIO.mockImplementation((): boolean => true);
   remover.mockImplementation(async (): Promise<void> => {});
   registerBlockedMemberRemover(remover as unknown as BlockedMemberRemover);
 });
@@ -305,6 +308,62 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     expect(remover).toHaveBeenCalledTimes(1);
   });
 
+  test("连续没落定就逐次拉长退避：永远封不掉的目标不会每 5 分钟重扫一次整份名单", async () => {
+    // 目标自己就是这个群的管理员、或机器人是管理员却没有封禁权限时，每一轮
+    // 补扫都注定 complete:false。固定 5 分钟一轮的话，这个群会在进程存活期间
+    // 永久地每 5 分钟做一次 O(名单长度) 的探测 + 封禁，而它们与验证超时踢人
+    // 共用同一条限流队列，正常踢人会被一直顶在后面。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLast(false);
+
+    // 第一次退避仍是 5 分钟。
+    await sweepBlockedMembers(-1001, 301_000);
+    expect(remover).toHaveBeenCalledTimes(2);
+    settleLast(false);
+
+    remover.mockClear();
+    // 再过 5 分钟还不够：这一次的窗口已经涨到 10 分钟。
+    await sweepBlockedMembers(-1001, 601_000);
+    expect(remover).not.toHaveBeenCalled();
+
+    await sweepBlockedMembers(-1001, 901_000);
+    expect(remover).toHaveBeenCalledTimes(1);
+  });
+
+  test("落定回执把退避清零：权限恢复后立刻回到正常节奏", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLast(false);
+    expect(blocklistSweepState.get(-1001)?.failedSweeps).toBe(1);
+
+    await sweepBlockedMembers(-1001, 301_000);
+    settleLast(true);
+
+    expect(blocklistSweepState.get(-1001)?.failedSweeps).toBe(0);
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toEqual(expect.any(Number));
+  });
+
+  test("没落定的回执不逐条排完整 outbox 快照：那是 O(n²)", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    const removalId: number = lastRemovalId();
+    postDiskIO.mockClear();
+
+    // 一轮重放会回来 N 份「没落定」回执；每份都排一次全表深拷贝 + 整文件
+    // fsync 的话，合起来就是 replayPendingBlockedRemovals 注释里点名禁止的
+    // O(n²)。这里变的只有诊断字段，任务本身没有增删。
+    for (let attempt: number = 1; attempt < BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS; attempt++) {
+      settleBlockedRemoval({ type: "blockedMembersRemoved", chatId: -1001, removalId, complete: false });
+    }
+    expect(postDiskIO).not.toHaveBeenCalled();
+
+    // 跨越告警阈值那一次仍要立刻落盘：「已经失败到该报警了」必须跨重启存活。
+    settleBlockedRemoval({ type: "blockedMembersRemoved", chatId: -1001, removalId, complete: false });
+    expect(postDiskIO).toHaveBeenCalledTimes(1);
+    expect(pendingBlockedRemovals.get(removalId)?.attempts).toBe(BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS);
+  });
+
   test("身份从未记录过、又观测到已是管理员：同样算成立的那一刻", async () => {
     // /init enable 会作废身份记录，之后第一次确证（收到别人的 chat_member、
     // 或按需现查）就是合取重新成立的边沿。
@@ -328,6 +387,44 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     await handleMyChatMemberUpdate(promotion("member", "administrator"));
 
     expect(remover).not.toHaveBeenCalled();
+  });
+
+  test("停管的在途批次先丢弃再落盘：落盘失败也不会把它们留到下次重启", async () => {
+    // 停管是 Telegram 已经告知的权威事实，不会因为 state.json 没写成而撤销。
+    // 清理排在落盘之后的话，persistAuthoritativeState 一拒绝这行就不执行、
+    // 进程随即退出，而 state.json 里 botIsAdmin 还是 true——启动恢复那道
+    // `botIsAdmin !== true` 过滤同样兜不住，这批注定失败的处置会在每次重启和
+    // 每次 Worker 重建时原样重投。
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
+    expect(pendingBlockedRemovals.size).toBe(1);
+    persistAuthoritativeState.mockRejectedValueOnce(new Error("state store quiesced"));
+
+    await expect(handleMyChatMemberUpdate(promotion("member", "administrator")))
+      .rejects.toThrow("state store quiesced");
+
+    expect(pendingBlockedRemovals.size).toBe(0);
+  });
+
+  test("状态落盘失败不得被折算成「不是管理员」", async () => {
+    // Telegram 侧明明查到了管理员身份，只是状态没写进硬盘。折算成 false 的话，
+    // 调用方按非管理员早退：这一批 new_chat_members 不开验证窗口、不被消息
+    // 跟踪、超时也不踢，一整批刷群就这么走进来，而唯一的诊断把锅指向 Telegram
+    // API，下一次调用又从内存读到 true，现象根本复现不了。
+    states.set(-1001, { isInitEnabled: true });
+    persistAuthoritativeState.mockRejectedValueOnce(new Error("state store quiesced"));
+
+    await expect(isBotAdminIn(-1001)).rejects.toThrow("state store quiesced");
+  });
+
+  test("getChatMember 本身失败仍按「不是管理员」兜底，且不落盘", async () => {
+    states.set(-1001, { isInitEnabled: true });
+    getChatMember.mockRejectedValueOnce(new Error("Bad Request: chat not found"));
+
+    expect(await isBotAdminIn(-1001)).toBeFalse();
+    expect(persistAuthoritativeState).not.toHaveBeenCalled();
+    expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
   });
 
   test("还没 /init enable 的群不清扫，哪怕这一刻成了管理员", async () => {

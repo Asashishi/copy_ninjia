@@ -29,6 +29,7 @@ import {
   BLOCKLIST_SWEEP_BATCH_PAUSE_MS,
   BLOCKLIST_SWEEP_BATCH_SIZE,
 } from "../../consts/antiRaid/blocklist";
+import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import type { BlockedMembersRemovedEvent, RemoveBlockedMembersMessage } from "../../types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../types/blocklist";
 
@@ -82,7 +83,20 @@ async function removeBlockedMembers({
 }: RemoveBlockedMembersParams): Promise<boolean> {
   // 入群计数是同步的、与网络无关，先记：黑名单入群不再投 join，若不在这里
   // 补记，一波以黑名单账号为主的刷群就凑不够反刷群窗口的阈值。
-  if (joinedAt !== undefined) recordJoin(chatId, joinedAt);
+  //
+  // 记的是**本线程观测到的时刻**，不是 joinedAt 本身。recordJoin 把第二个参数
+  // 当成「现在」交给 trimSlidingWindow，而后者按契约会把所有落在「未来」的队尾
+  // 判成系统时钟回拨并丢掉（见 libs/slidingWindowRateLimit.ts）。joinedAt 是主
+  // 线程在 durable outbox flush **之前**取的，必然早于本线程随后用自己的
+  // Date.now() 记下的那些入群——直接传进去，一次补记就能把同一批里刚记下的真实
+  // 入群整段抹掉，窗口计数永远爬不到 ANTI_RAID_PER_MINUTE_LIMIT，紧急私密模式
+  // 再也不会触发。差价只有一次 flush 的时间，方向也偏向「更晚出窗口」。
+  if (joinedAt !== undefined) {
+    const now: number = Date.now();
+    // 已经滑出窗口的补记直接丢弃：跨进程重放（启动恢复、Worker 重生）带来的
+    // joinedAt 属于上一个进程的入群潮，把它对齐到现在就是凭空多算一次入群。
+    if (now - joinedAt < JOIN_WINDOW_MS) recordJoin(chatId, now);
+  }
   const epoch: number = currentBlocklistRemovalEpoch(chatId);
   let removed: number = 0;
   let complete: boolean = true;

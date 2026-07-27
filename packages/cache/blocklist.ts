@@ -76,6 +76,14 @@ export interface BlocklistSweepRecord {
    * 重扫请求就这么丢了（见 infra/blocklist.ts 的 settleBlockedRemoval）。
    */
   resweepRequested: boolean;
+  /**
+   * 这个群连续有多少次补扫没能全部落定；`complete` 回执把它清零。只用于按
+   * 次数放大退避（见 infra/blocklist.ts 的 sweepRetryDelayMs）：目标自己是群
+   * 管理员、或机器人是管理员但没有封禁权限时，每一轮补扫都注定失败，固定
+   * 间隔就等于永久每 5 分钟重扫一次整份名单。退避顶到
+   * BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS 之后不再自增，计数因此有界。
+   */
+  failedSweeps: number;
 }
 
 /**

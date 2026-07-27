@@ -181,12 +181,25 @@ export class ApplicationLifecycle {
     if (!maintenanceQuiesceSucceeded) process.exitCode = 1;
     const persistenceFlushed: boolean = await this.flushAllToDisk(NORMAL_FLUSH_TIMEOUTS);
 
+    // 停机时取数循环会放弃在途批次、不再 await 它的汇总，那批里失败的 update
+    // 只有 runner 的这个标记能证明（task() 会正常 resolve）。失败的 update 必须
+    // 留给 Telegram 重投，绝不能被最终 offset 一起确认，见
+    // docs/04-invariants.md「Telegram update 只有在对应 middleware 完成后才可
+    // 推进确认边界」。读在 waitForRunnerDrain 之后：标记与 size() 归零同步。
+    const failedUpdateWithheld: boolean = runner.hasFailedUpdate();
+    if (failedUpdateWithheld) {
+      process.exitCode = 1;
+      this.dependencies.logger.error(
+        "Withholding the final Telegram offset: at least one update failed and must be redelivered after restart."
+      );
+    }
     const lastSeenUpdateId: number = this.handlers?.getLastSeenUpdateId() ?? 0;
     if (
       maintenanceQuiesceSucceeded &&
       runnerDrained &&
       maintenanceSettled &&
       persistenceFlushed &&
+      !failedUpdateWithheld &&
       lastSeenUpdateId > 0
     ) {
       try {

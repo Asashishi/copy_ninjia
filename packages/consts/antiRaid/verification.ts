@@ -10,8 +10,19 @@ export const VERIFICATION_TIMEOUT_MS: number = 90 * 1000;
 export const VERIFICATION_REMINDER_RETRY_INITIAL_MS: number = 1_000;
 /** 验证提醒指数退避允许增长到的最大间隔。 */
 export const VERIFICATION_REMINDER_RETRY_MAX_MS: number = 15_000;
-/** 终态踢人失败后的重试间隔；记录保持持久化，不能把未处置成员当作已完成。 */
+/** 终态踢人失败后的**首次**重试间隔；记录保持持久化，不能把未处置成员当作已完成。 */
 export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
+/**
+ * 终态重试指数退避的上限。
+ *
+ * 有些失败注定不会好转：机器人是管理员却没有封禁权限，或目标本人就是这个群的
+ * 管理员。记录按设计不能删，于是固定 30 秒一轮就意味着——一次刷群留下的**每个**
+ * 未验证成员各占一个永久的 30 秒循环，各自不停打 deleteMessage + kickChatMember，
+ * 并往 logs/ 里刷同一行报错，Worker 重建和进程重启后还会照单重新武装。
+ * 退避到上限而不是放弃：管理员补上封禁权限后，最迟一个上限周期内自愈。
+ * 所属模块：workers/antiRaid/verificationEffects.ts。
+ */
+export const VERIFICATION_TERMINAL_RETRY_MAX_MS: number = 30 * 60 * 1000;
 /**
  * 私密模式下直接踢人的占位记录存活时长：只是给 chat_member 更新和
  * new_chat_members 服务消息（针对同一次入群各自触发）留出去重窗口，

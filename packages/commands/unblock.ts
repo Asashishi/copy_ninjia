@@ -76,6 +76,22 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   });
   if (!targetUser) return;
 
+  // 与 /block 同一道闸（见 commands/block.ts 与 docs/04-invariants.md 的
+  // 「破坏性的成员操作必须拒绝把当前群 identity 当作用户目标」）：匿名管理员拿
+  // 当前群当皮套时，resolveCommandTarget 按设计返回的是这个群自己的 identity。
+  // 放它过去的话，unbanChatSenderChat(chatId, chatId) 自解封必然报错、落进
+  // failedCount，管理员会收到一条「已在 N 个群解开、还有 1 个群没解开，快去检查
+  // 权限」——一份关于「根本没被碰过的人」的假战报，还把运维引向一个其实没坏的群。
+  // 只挡当前群自己：在群里发言的关联频道 sender_chat 是另一个 id，照常可解。
+  if (targetUser.isChannel === true && targetUser.id === chatId) {
+    await sendMessage({
+      chatId,
+      text: `匿名管理员拿这个群当皮套时，Telegram 不会告诉本天才皮套底下是谁；本天才没法把整个群当成那个人从小本本上划掉呀♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+
   const targetLabel: string = formatUserLabel(targetUser);
   // 先删内存 Map、再投递重写——顺序不能反。反过来的话，两步之间到达的入群
   // 更新会查到一个还没解除的名单，那个人白白被秒踢一次。

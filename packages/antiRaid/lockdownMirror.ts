@@ -31,18 +31,21 @@ export function lockdownFingerprint(record: LockdownRecord): PersistedLockdownFi
   return {
     phase: record.phase,
     intentId: record.intentId,
-    expiresAt: record.expiresAt,
   };
 }
 
+/**
+ * 这条记录是否还是指纹记下的那次锁定意图。只比 phase 与 intentId：倒计时
+ * （expiresAt）在私密模式生效期间每来一条越阈值的入群就会刷新一次，把它算进
+ * 来只会让「意图没变」永远不成立，理由见 cache/antiRaid.ts 的类型说明。
+ */
 export function lockdownFingerprintMatches(
   record: LockdownRecord,
   fingerprint: PersistedLockdownFingerprint | undefined
 ): boolean {
   const current: PersistedLockdownFingerprint = lockdownFingerprint(record);
   return fingerprint?.phase === current.phase &&
-    fingerprint.intentId === current.intentId &&
-    fingerprint.expiresAt === current.expiresAt;
+    fingerprint.intentId === current.intentId;
 }
 
 function toAdoptableLockdown(
@@ -182,8 +185,7 @@ function startEmergencyLockdownRecovery(chatId: number, record: LockdownRecord):
   if (existing !== undefined) {
     if (
       existing.fingerprint.phase === fingerprint.phase &&
-      existing.fingerprint.intentId === fingerprint.intentId &&
-      existing.fingerprint.expiresAt === fingerprint.expiresAt
+      existing.fingerprint.intentId === fingerprint.intentId
     ) return;
     finishEmergencyLockdownRecovery(chatId, existing);
   }

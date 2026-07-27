@@ -261,4 +261,22 @@ describe("重写失败后的重试", () => {
     expect(flushBlocklistAppends()).toBeTrue();
     expect(readBlocklist()).toEqual({ "9": { isBlocked: true, blockedAt: "2026/07/25 20:00:00" } });
   });
+
+  test("重写待落地期间重新拉黑刚解除的同一个 id：并进快照，不被当成重复投递早退", () => {
+    hydrateBlocklist();
+    handleBlockUserMessage({ type: "blockUser", userId: 7, blockedAt: "2026/07/25 19:38:09" });
+
+    withMissingConfigDir((): void => {
+      handleUnblockUserMessage({ type: "unblockUser", userId: 7, blocked: [] });
+      // 已知 id 必须跟着待重写快照走。停在「解除之前」的那份的话，下面这条会在
+      // handleBlockUserMessage 第一行被当成重复投递直接早退：既不追加、也进不到
+      // 并进 pendingRewrite 的分支，重试重写用的还是不含他的空名单——而 flush
+      // 照常报成功，/block 把「永久」说出口，文件里根本没有这条记录。
+      expect(blocklistKnownIds.has(7)).toBeFalse();
+      handleBlockUserMessage({ type: "blockUser", userId: 7, blockedAt: "2026/07/25 20:05:00" });
+    });
+
+    expect(flushBlocklistAppends()).toBeTrue();
+    expect(readBlocklist()).toEqual({ "7": { isBlocked: true, blockedAt: "2026/07/25 20:05:00" } });
+  });
 });

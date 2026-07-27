@@ -6,7 +6,7 @@ import { answerCallbackQuery } from "../infra/telegram/actions";
 import { isBotAdminIn, markBotAdminObserved } from "../infra/botAdmin";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { VERIFY_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
-import { ANTI_RAID_BARRIER_TIMEOUT_MS } from "../consts/antiRaid/protocol";
+import { ANTI_RAID_BARRIER_TIMEOUT_MS, LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS } from "../consts/antiRaid/protocol";
 import type { FlushResult } from "../types/lifecycle";
 import { isAdminStatus } from "../libs/chatMember";
 import { superviseWorker } from "../libs/supervisedWorker";
@@ -78,11 +78,21 @@ function buildAdoptVerificationsMessage(generation: number, resumePersistedTermi
   return { type: "adoptVerifications", generation, verifications: [...activeVerificationSnapshots.values()], resumePersistedTerminals };
 }
 
+/**
+ * 把这个群当前的锁定意图写进 state.json，落定后回执给 Worker。
+ *
+ * 循环是「存下去 → 再看一眼还是不是同一份意图」的对账：不是就带着新意图重存
+ * 一次。指纹只含 phase + intentId（见 cache/antiRaid.ts），因此重来一轮意味着
+ * 状态机真的推进了一个阶段——事件驱动、次数有界。轮次上限只是兜底：万一将来
+ * 有谁把一个高频变动的字段加回指纹，宁可这个群的握手停下并留一行错误日志，
+ * 也不能让主线程陷在「每轮两次带 fsync 的整文件重写」里出不来。停下不是终局，
+ * 下一条 lockdown 事件会重新进来。
+ */
 function persistCurrentLockdown(chatId: number): void {
   if (pendingLockdownPersistence.has(chatId)) return;
   pendingLockdownPersistence.add(chatId);
   void (async (): Promise<void> => {
-    while (true) {
+    for (let round: number = 0; round < LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS; round++) {
       const expected: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
       if (expected === undefined) return;
       const expectedFingerprint: PersistedLockdownFingerprint = lockdownFingerprint(expected);
@@ -99,6 +109,10 @@ function persistCurrentLockdown(chatId: number): void {
       });
       return;
     }
+    logger.error(
+      `Anti-raid lockdown intent for chat ${chatId} kept changing across ` +
+      `${LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS} durability rounds; giving up until the next lockdown event.`
+    );
   })()
     .catch((error: unknown): void => {
       logger.error(`Failed to persist anti-raid lockdown intent for chat ${chatId}:`, error);

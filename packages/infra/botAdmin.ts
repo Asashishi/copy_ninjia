@@ -102,10 +102,17 @@ async function recordBotAdminStatus(chatId: number, isAdmin: boolean): Promise<v
   const chatState: ChatState = getOrCreateChatState(chatId);
   if (chatState.botIsAdmin !== isAdmin) {
     chatState.botIsAdmin = isAdmin;
-    await persistAuthoritativeState("bot admin status refresh");
     // 不再是管理员：这个群欠的那次清扫作废，在途批次一并丢弃（继续在一个
     // 已经放手的群里封人是越权），重新拿到权限后重新欠一次。
+    //
+    // 必须排在落盘**之前**（与下面离群那一路同序）：停管是 Telegram 已经告知的
+    // 权威事实，它不会因为 state.json 没写成而撤销。放在落盘之后的话，一旦
+    // persistAuthoritativeState 拒绝（StateStore 重试耗尽、或解码校验失败），这一
+    // 行根本不执行、进程随即退出，而 state.json 里 botIsAdmin 还是 true——启动
+    // 恢复那道 `botIsAdmin !== true` 过滤同样兜不住，那批注定失败的处置会在每次
+    // 重启和每次 Worker 重建时原样重投，白占 outbox 容量并无休止地刷错误日志。
     if (!isAdmin) forgetChatBlocklistWork(chatId);
+    await persistAuthoritativeState("bot admin status refresh");
   }
   if (!isAdmin) return;
   // 「是管理员 && 已初始化」成立：补一次黑名单清扫。本函数是三条管理员发现
@@ -216,7 +223,23 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
         signal as unknown as Parameters<typeof bot.api.getChatMember>[2]
       );
     const request: Promise<boolean> = getMember
-      .then(async (member: ChatMember): Promise<boolean> => {
+      // catch 只罩着这一次 getChatMember。罩住下面那段的话，
+      // recordBotAdminStatus 里 persistAuthoritativeState 的 rejection 会被一起
+      // 折算成「不是管理员」：Telegram 侧明明查到了管理员身份，只是状态没写进
+      // 硬盘，调用方却按非管理员早退——这一批 new_chat_members 不开验证窗口、不
+      // 被消息跟踪、超时也不踢，一整批刷群就这么走进来了；`/block` 同时回一句
+      // 「本天才连一个群的管理员都不是」并跳过本群封禁。而唯一的诊断把锅指向
+      // Telegram API，下一次调用又从内存里读到 true，现象根本复现不了。
+      // 落盘失败按不变量是 fatal durability failure（见 docs/04-invariants.md），
+      // 必须原样上抛：这条 update 不能被确认。
+      .catch((error: unknown): null => {
+        throwIfUpdateAborted(signal);
+        logger.error(`Failed to check bot's own admin status in chat ${chatId}:`, error);
+        return null;
+      })
+      .then(async (member: ChatMember | null): Promise<boolean> => {
+        // 现查失败按「不是管理员」处理（fail closed），且不落盘——下次照常重查。
+        if (member === null) return false;
         // /init 在请求期间切换过：这个响应属于旧一代，不回填，
         // 改用新一代的查询结果。
         if ((botAdminGenerations.get(chatId) ?? 0) !== generation) {
@@ -227,11 +250,6 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
         const isAdmin: boolean = isAdminStatus(member.status);
         await recordBotAdminStatus(chatId, isAdmin);
         return isAdmin;
-      })
-      .catch((error: unknown): boolean => {
-        throwIfUpdateAborted(signal);
-        logger.error(`Failed to check bot's own admin status in chat ${chatId}:`, error);
-        return false;
       })
       .finally((): void => {
         if (botAdminFetches.get(chatId) === request) botAdminFetches.delete(chatId);

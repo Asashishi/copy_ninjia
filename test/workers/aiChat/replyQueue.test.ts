@@ -121,12 +121,36 @@ describe("AI 回复触发队列", () => {
     activeReplyCounts.set(-1001, REPLY_ROUND_MAX_CONCURRENT - 1);
     const started: number[] = [];
 
-    drainReplyQueue(-1001, (trigger: QueuedReplyTrigger) => {
+    drainReplyQueue(-1001, (trigger: QueuedReplyTrigger): boolean => {
       started.push(trigger.replyToMessageId);
       activeReplyCounts.set(-1001, REPLY_ROUND_MAX_CONCURRENT);
+      return true;
     });
 
     expect(started).toEqual([1]);
     expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(2);
+  });
+
+  test("被限频拒绝时停下并把这条留在队首，不整队丢弃", () => {
+    // 限频闸只看这个群 5 分钟窗口内的轮数，跟具体是哪一条触发无关：第一条被拒
+    // 就意味着后面每一条都会被拒。而被拒时并发计数不增长，循环条件永远为真——
+    // 继续往下走就是在同一个同步 tick 里把整队 @提及/回复 shift 掉全部丢弃，
+    // 那些人一句回复都收不到。
+    const queue = new LinkedQueue<QueuedReplyTrigger>();
+    for (let index: number = 1; index <= 3; index++) {
+      queue.push({ triggerSenderId: index, replyToMessageId: index, imageGenerationRequested: false, senderName: "A", text: "x" });
+    }
+    pendingReplyTriggers.set(-1001, queue);
+    activeReplyCounts.delete(-1001);
+    const attempted: number[] = [];
+
+    drainReplyQueue(-1001, (trigger: QueuedReplyTrigger): boolean => {
+      attempted.push(trigger.replyToMessageId);
+      return false;
+    });
+
+    expect(attempted).toEqual([1]);
+    expect(pendingReplyTriggers.get(-1001)?.size).toBe(3);
+    expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(1);
   });
 });

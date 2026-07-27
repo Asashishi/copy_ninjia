@@ -32,6 +32,7 @@ import {
   BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
   BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
   BLOCKLIST_SWEEP_RETRY_INTERVAL_MS,
+  BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS,
 } from "../consts/antiRaid/blocklist";
 import type {
   BlockedMemberRemover,
@@ -326,7 +327,33 @@ export function requestBlocklistResweep(chatId: number, nextRetryAt: number = Da
     sweptAt: null,
     nextRetryAt,
     resweepRequested: progress.removalId !== null,
+    failedSweeps: progress.failedSweeps,
   });
+}
+
+/**
+ * 这个群下一次允许重扫要等多久：按连续失败次数线性放大，顶到
+ * BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS 为止。
+ *
+ * 固定间隔兜不住「永远封不掉」的目标：目标自己就是这个群的管理员、或机器人是
+ * 管理员却没有封禁权限时，每一轮补扫都注定 `complete: false`，于是每个退避窗口
+ * 末尾都要重扫一次整份名单——O(名单长度) 次探测 + 封禁，且与验证超时踢人共用
+ * joinVerificationApi 队列，正常的踢人请求会被永久顶在后面。
+ * 上限不能去掉：`sweptAt` 那道闩锁必须始终有打开的路径，权限修好之后不能等到
+ * 进程重启才重扫（见 docs/04-invariants.md）。
+ */
+function sweepRetryDelayMs(failedSweeps: number): number {
+  return Math.min(
+    BLOCKLIST_SWEEP_RETRY_INTERVAL_MS * (failedSweeps + 1),
+    BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS
+  );
+}
+
+/** 退避已经顶到上限后不再自增：这个计数只用于算延迟，没必要无界增长。 */
+function nextFailedSweeps(failedSweeps: number): number {
+  return sweepRetryDelayMs(failedSweeps) >= BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS
+    ? failedSweeps
+    : failedSweeps + 1;
 }
 
 /** 丢掉该群上一轮没落定的补扫批次；新一轮的名单快照是它的超集。 */
@@ -372,12 +399,14 @@ export async function sweepBlockedMembers(chatId: number, now: number = Date.now
   // 不删的话每次退避重试都在镜像里沉积一份完整 userIds 副本，且每次 Worker
   // 重建都把这些副本全部重投一遍。
   forgetChatSweepBatches(chatId);
+  const failedSweeps: number = progress?.failedSweeps ?? 0;
   const params: RemoveBlockedMembersParams = trackBlockedRemoval({ chatId, userIds, probeMembership: true });
   blocklistSweepState.set(chatId, {
     removalId: params.removalId,
     sweptAt: null,
-    nextRetryAt: now + BLOCKLIST_SWEEP_RETRY_INTERVAL_MS,
+    nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
     resweepRequested: false,
+    failedSweeps,
   });
   try {
     await blockedMemberRemoverHolder.current([params]);
@@ -392,8 +421,9 @@ export async function sweepBlockedMembers(chatId: number, now: number = Date.now
       blocklistSweepState.set(chatId, {
         removalId: null,
         sweptAt: null,
-        nextRetryAt: now + BLOCKLIST_SWEEP_RETRY_INTERVAL_MS,
+        nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
         resweepRequested: false,
+        failedSweeps,
       });
     }
     throw error;
@@ -425,20 +455,29 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
     // 秒踢那一路的回执不动补扫进度，但没落定时要让这个群重新欠一次清扫——
     // 补扫是那个人被清出去的下一次机会，不能只指望 Worker 恰好崩溃。带退避是
     // 因为黑名单账号可能反复回流，每次失败都立刻触发 O(名单长度) 次成员探测
-    // 就是一场请求风暴。
+    // 就是一场请求风暴；退避按这个群连续失败的补扫次数放大，否则一个永远封不
+    // 掉的目标会把「秒踢失败 → 重扫 → 重扫也失败」这个环固定在 5 分钟一轮。
     if (!event.complete) {
-      requestBlocklistResweep(event.chatId, Date.now() + BLOCKLIST_SWEEP_RETRY_INTERVAL_MS);
+      requestBlocklistResweep(
+        event.chatId,
+        Date.now() + sweepRetryDelayMs(progress?.failedSweeps ?? 0)
+      );
     }
     return;
   }
   // 在途期间有人请求过重扫（比如 /block 在这个群封禁失败）：哪怕这批回执说
   // 全部落定，也不能把 sweptAt 写下去——那个请求正是冲着「这个群里还留着人」
   // 来的。nextRetryAt 原样保留：请求方已经把「最早什么时候能重扫」写进去了。
+  // 没落定只累计失败次数，退避的放大留到下一次真正投递时按它换算（见
+  // sweepBlockedMembers）：连续失败的群于是按 5、10、15…分钟逐次拉开，而不是
+  // 永远 5 分钟一轮地重扫整份名单。落定则清零，权限恢复后立刻回到正常节奏。
+  const failedSweeps: number = event.complete ? 0 : nextFailedSweeps(progress.failedSweeps);
   blocklistSweepState.set(event.chatId, {
     removalId: null,
     sweptAt: event.complete && !progress.resweepRequested ? Date.now() : null,
     nextRetryAt: progress.nextRetryAt,
     resweepRequested: false,
+    failedSweeps,
   });
 }
 
@@ -464,15 +503,28 @@ function updatePendingRemovalFailure(
   return true;
 }
 
+/**
+ * 记一次「这批没落地」，并只在跨越告警阈值那一次把整份镜像排队写回。
+ *
+ * 这里变的只有诊断字段（attempts / lastFailure），任务本身没有增删——因此不能
+ * 逐条排完整快照：一轮重放会回来 N 份「没落定」回执，每份都做一次 O(n) 的全表
+ * 深拷贝 + 校验 + stringify 加一次整文件 fsync，合起来就是 O(n²)，正是
+ * replayPendingBlockedRemovals 注释里点名禁止的形态（N 可以一直涨到
+ * BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES）。丢掉中间那些计数只影响诊断精度：
+ * 值会由下一次权威快照顺带写回（完成回执、`/unblock`、停管、新批次的
+ * write-ahead、Worker 重建重放），而任务本身的 params/createdAt 早在投递前的
+ * write-ahead 里就已经 durable。
+ * 跨越阈值那一次仍立刻落盘：`达到告警阈值只升级日志、不得删除任务` 这条判断
+ * 本身要跨重启存活，否则每次重启都要重新从零累计才会再报警。
+ */
 function recordPendingRemovalFailure(
   removalId: number,
   chatId: number,
   failure: BlocklistRemovalFailure
 ): void {
-  if (
-    updatePendingRemovalFailure(removalId, chatId, failure) &&
-    !queuePendingBlockedRemovalsSnapshot()
-  ) {
+  if (!updatePendingRemovalFailure(removalId, chatId, failure)) return;
+  if (pendingBlockedRemovals.get(removalId)?.attempts !== BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS) return;
+  if (!queuePendingBlockedRemovalsSnapshot()) {
     logger.error(`Failed to queue blocklist removal retry state ${removalId}.`);
   }
 }

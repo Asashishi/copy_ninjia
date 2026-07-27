@@ -142,6 +142,34 @@ describe("guard 归属判定的真实实现", () => {
     expect(existsSync(join(testDir, recycledPid))).toBe(false);
   });
 
+  test("0 字节 candidate 按文件名里的 PID 判活：属主已死就回收，还活着就保留", async () => {
+    // candidate 是先 open(wx) 建空文件、再写身份行的，中间被 SIGKILL/OOM/掉电
+    // 打断就留下 0 字节孤儿。只按内容判的话它永远回收不掉，每次启动还照着报
+    // 一行「属主还活着或格式不对」——而两半都不成立。
+    const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
+    const deadOwner: string = candidateName(DEAD_PID, "66666666-6666-4666-8666-666666666666");
+    const liveOwner: string = candidateName(current.pid, "77777777-7777-4777-8777-777777777777");
+    writeCandidate(deadOwner, "");
+    writeCandidate(liveOwner, "");
+
+    await cleanupOrphanedTempFiles({ stateFilePath, lockFilePath });
+
+    expect(existsSync(join(testDir, deadOwner))).toBe(false);
+    // PID 还活着（可能是原属主，也可能是复用）：方向只能错向「拒绝删除」。
+    expect(existsSync(join(testDir, liveOwner))).toBe(true);
+  });
+
+  test("bot.lock.guard.recovery 内容为空时仍然保留：文件名里没有 PID 可兜底", async () => {
+    // recovery 是从已经写好并 fsync 过的 candidate hard link 出来的，本来不会
+    // 是 0 字节；真出现了也没有第二个身份来源，只能维持 fail-closed。
+    const recoveryPath: string = join(testDir, "bot.lock.guard.recovery");
+    writeFileSync(recoveryPath, "");
+
+    await cleanupOrphanedTempFiles({ stateFilePath, lockFilePath });
+
+    expect(existsSync(recoveryPath)).toBe(true);
+  });
+
   test("bot.lock.guard.recovery 同样按归属判定，读不出内容时保留", async () => {
     const recoveryPath: string = join(testDir, "bot.lock.guard.recovery");
     writeFileSync(recoveryPath, `v2:${DEAD_PID}:1234:${BOOT_ID}`);

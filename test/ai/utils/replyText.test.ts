@@ -18,6 +18,18 @@ describe("isEmojiOnly", () => {
     }
   });
 
+  test("旗帜（区域指示符）也算 emoji 本体", () => {
+    // 区域指示符既不是 Extended_Pictographic、也不在附属码点里，漏列时 send_message
+    // 的拦截失效，机器人会直接把一条纯表情文本发进群里。
+    for (const text of ["🇯🇵", "👍🇯🇵", "🇯🇵🇺🇸", "🇯🇵 👍"]) {
+      expect(isEmojiOnly(text)).toBeTrue();
+    }
+    // 旗帜混在正文里仍然不是纯表情。
+    for (const text of ["日本🇯🇵", "🇯🇵 加油"]) {
+      expect(isEmojiOnly(text)).toBeFalse();
+    }
+  });
+
   test("没有任何图形 emoji 的文本不是纯表情", () => {
     for (const text of ["", "   ", "abc", "1", "#", "233"]) {
       expect(isEmojiOnly(text)).toBeFalse();

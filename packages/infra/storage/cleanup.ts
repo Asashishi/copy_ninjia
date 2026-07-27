@@ -17,10 +17,41 @@ function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
+/**
+ * guard candidate 文件名尾部带着创建者的 PID：`<lock>.guard.candidate.<pid>.<uuid>`。
+ * 只在文件里连一行身份都没有时用它兜底，见 hasInactiveCurrentFormatOwner。
+ */
+const CANDIDATE_OWNER_PID_PATTERN: RegExp =
+  /\.guard\.candidate\.([1-9]\d*)\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/**
+ * 按 guard candidate 文件名里的 PID 判定属主是否已死：只有 /proc 下查不到这个
+ * PID 才算死。PID 被别的活进程复用、或本来就还活着时一律返回 false，因此这条
+ * 兜底只可能错向「拒绝删除」，不可能删掉一个仍然活着的属主留下的文件。
+ * candidate 本身也从不是已发布的 guard——cleanupOrphanedTempFiles 不扫
+ * `<lock>.guard`，删掉一个 candidate 不影响任何实例锁。
+ */
+async function hasDeadCandidateFilenameOwner(path: string): Promise<boolean> {
+  const named: RegExpExecArray | null = CANDIDATE_OWNER_PID_PATTERN.exec(basename(path));
+  if (!named) return false;
+  const pid: number = Number(named[1]);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  return await readLinuxProcessIdentity(pid) === null;
+}
+
 async function hasInactiveCurrentFormatOwner(path: string): Promise<boolean> {
   const content: string = await readFile(path, "utf8");
   const match: RegExpExecArray | null = PROCESS_IDENTITY_PATTERN.exec(content);
-  if (!match) return false;
+  if (!match) {
+    // 0 字节孤儿：candidate 是先 `open(..., "wx")` 建空文件、再写身份行的（见
+    // instanceLock.ts 的 acquirePidFileLock），这中间被 SIGKILL/OOM/掉电打断就
+    // 留下这个形态。内容里什么都没有，但足以证明属主已死的 PID 就明明白白写在
+    // 文件名上——只按内容判的话这种孤儿一个都回收不掉，每次启动还照着报一行
+    // 「属主还活着或格式不对」，而两半都不成立。
+    // 非空却认不出的内容不走这条路：那是「不认识的格式」，仍按人工修复处理。
+    if (content.trim().length > 0) return false;
+    return await hasDeadCandidateFilenameOwner(path);
+  }
   const owner: ProcessIdentity = {
     pid: Number(match[1]),
     startTimeTicks: match[2]!,
@@ -65,7 +96,7 @@ export async function cleanupOrphanedTempFiles({
     try {
       if (isGuardOrphan && !await isInactiveLockOwner(path)) {
         logger.error(
-          `Refusing to remove lock helper ${entry}: owner is active or not in the current strict format.`
+          `Refusing to remove lock helper ${entry}: its owner is still active or could not be determined.`
         );
         continue;
       }

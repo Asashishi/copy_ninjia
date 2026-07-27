@@ -91,17 +91,28 @@ export function pushReplyTrigger({
 }
 
 /**
- * 在并发位空出后按 FIFO 补跑直接触发。启动回调会同步占用并发位；被限频
- * 拒绝时计数不增长，循环因此继续检查下一项。
+ * 在并发位空出后按 FIFO 补跑直接触发。启动回调会同步占用并发位，并回报本次
+ * 是否真的开了一轮；没开成就停下，把这条留在队首。
+ *
+ * 「没开成就继续看下一项」是错的：限频闸只看这个群 5 分钟窗口内的轮数，与
+ * 具体是哪一条触发无关（见 states/replyAdmission.ts 的 admitRound），第一条被
+ * 拒就意味着后面每一条都会被拒。而被拒时并发计数不增长，循环条件永远为真——
+ * 一次 drain 会在同一个同步 tick 里把队列上限 25 条 @提及/回复整队 shift 掉
+ * 全部丢弃，那 25 个人一句回复都收不到，还只收得到一条限频提示（提示本身有
+ * 60 秒冷却）。留在队首则等窗口空出来后由下一轮结束时的 drain 补跑。
  */
-export function drainReplyQueue(chatId: number, startQueuedRound: (trigger: QueuedReplyTrigger) => void): void {
+export function drainReplyQueue(chatId: number, startQueuedRound: (trigger: QueuedReplyTrigger) => boolean): void {
   if (pendingOverflowNotices.delete(chatId)) {
     notifyRateLimited(chatId, Date.now());
   }
   const queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
   if (!queue) return;
   while (queue.size > 0 && (activeReplyCounts.get(chatId) ?? 0) < REPLY_ROUND_MAX_CONCURRENT) {
-    startQueuedRound(queue.shift()!);
+    // 先 peek、开成了再出队：拒绝的那一条不能被吞掉。回调是同步的（真正的
+    // 生成发送 fire-and-forget，onFinished 至少晚一个微任务），因此这里不会
+    // 被自己重入。
+    if (!startQueuedRound(queue.peek()!)) break;
+    queue.shift();
   }
   if (queue.size === 0) pendingReplyTriggers.delete(chatId);
 }

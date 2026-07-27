@@ -125,6 +125,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
 
   test("秒踢路径补记入群计数并清掉入群公告", async () => {
     // 不投 join 就没人替这次入群记刷群计数、也没人删那条公告。
+    const before: number = Date.now();
     handleRemoveBlockedMembers({
       msg: {
         type: "removeBlockedMembers",
@@ -132,15 +133,41 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
         userIds: [7],
         probeMembership: false,
         removalId: 6,
-        joinedAt: 1_700_000_000_000,
+        // 主线程在 durable outbox flush 之前取的时刻：必然早于本线程随后记下的
+        // 那些入群。
+        joinedAt: before - 1_000,
         announcementMessageId: 88,
       },
       publish,
     });
     await settle();
 
-    expect(recordJoin).toHaveBeenCalledWith(-1001, 1_700_000_000_000);
+    // 记的必须是本线程观测到的时刻。直接把 joinedAt 当「现在」交给 recordJoin
+    // 的话，trimSlidingWindow 会把同一批里刚记下的、时间戳更新的真实入群全部
+    // 当成时钟回拨丢掉，反刷群阈值再也凑不满。
+    expect(recordJoin).toHaveBeenCalledTimes(1);
+    const [recordedChatId, recordedAt] = recordJoin.mock.calls[0] as [number, number];
+    expect(recordedChatId).toBe(-1001);
+    expect(recordedAt).toBeGreaterThanOrEqual(before);
     expect(deleteMessage).toHaveBeenCalledWith(-1001, 88, guardApi);
+  });
+
+  test("已经滑出窗口的 joinedAt 不再补记：跨进程重放不该凭空多算一次入群", async () => {
+    handleRemoveBlockedMembers({
+      msg: {
+        type: "removeBlockedMembers",
+        chatId: -1001,
+        userIds: [7],
+        probeMembership: false,
+        removalId: 9,
+        // 上一个进程的入群潮：启动恢复与 Worker 重生都会原样重投这条。
+        joinedAt: Date.now() - 10 * 60_000,
+      },
+      publish,
+    });
+    await settle();
+
+    expect(recordJoin).not.toHaveBeenCalled();
   });
 
   test("群被停管后整批放弃：不在已经不归自己管的群里继续封人", async () => {

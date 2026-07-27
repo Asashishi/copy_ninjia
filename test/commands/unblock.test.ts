@@ -147,6 +147,34 @@ describe("/unblock", () => {
     expect(blockedUserIds.has(-4004)).toBeFalse();
     expect(sessionUnblockedIds.has(-4004)).toBeTrue();
   });
+
+  test("匿名管理员皮套被拒：那是整个群，不是某个人", async () => {
+    // 与 /block 同一道闸。放它过去的话 unbanChatSenderChat(chatId, chatId)
+    // 自解封必然失败、落进 failedCount，管理员会收到一份关于「根本没被碰过的
+    // 人」的假战报，还附带一条把运维引向没坏的群的权限诊断。
+    target = { id: -1001, first_name: "Group", isChannel: true };
+    blockedUserIds.set(-1001, { isBlocked: true, blockedAt: "2026/07/25 19:41:00" });
+
+    await handleUnblockCommand(context());
+
+    expect(blockedUserIds.has(-1001)).toBeTrue();
+    expect(postDiskIO).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("皮套"),
+      replyToMessageId: 10,
+    });
+  });
+
+  test("匿名管理员皮套带 all 时也被拒：不能拿整个群去跨群解封", async () => {
+    target = { id: -1001, first_name: "Group", isChannel: true };
+    chatStates.set(-2002, { botIsAdmin: true });
+
+    await handleUnblockCommand(context(1, "all"));
+
+    expect(unbanChatSenderChat).not.toHaveBeenCalled();
+    expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
+  });
 });
 
 describe("/unblock all（跨群解封）", () => {

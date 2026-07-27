@@ -83,16 +83,34 @@ const KEYCAP_SEQUENCE: RegExp = /[0-9#*]️?⃣/gu;
 const EMOJI_ATTACHMENT: string = "\\p{Emoji_Modifier}\\uFE0F\\u200D";
 
 /**
+ * 旗帜的区域指示符（U+1F1E6–U+1F1FF）。它既**不是** `Extended_Pictographic`、
+ * 也不属于上面那批附属码点，因此必须单独列进「算 emoji 本体」的那一半：漏掉
+ * 它时 `🇯🇵`、`👍🇯🇵` 全都判不成纯表情，send_message 的拦截失效，机器人直接
+ * 发出一条纯表情文本——那正是这条拦截要防的输出。它不含 ASCII 数字，因此补进
+ * 来不会把上面 `\p{Emoji_Component}` 的误判重新引进来。
+ */
+const REGIONAL_INDICATOR: string = "\\p{Regional_Indicator}";
+
+/** 「至少含一个图形 emoji」那一半：图形 emoji 本体，或组成旗帜的区域指示符。 */
+const GRAPHIC_EMOJI: RegExp = new RegExp(`[\\p{Extended_Pictographic}${REGIONAL_INDICATOR}]`, "u");
+
+/** 纯表情正文：只由 emoji 本体、旗帜、附属码点与空白组成。 */
+const EMOJI_ONLY_BODY: RegExp = new RegExp(
+  `^[\\p{Extended_Pictographic}${REGIONAL_INDICATOR}${EMOJI_ATTACHMENT}\\s]+$`,
+  "u"
+);
+
+/**
  * 文本是否是「纯 emoji 消息」：至少含一个图形 emoji（或完整 keycap 序列），
- * 且除 emoji 本体/附属码点（肤色、变体选择符、ZWJ）/空白外没有任何其它字符。
- * 这类消息被 send_message 拒绝——机器人不直接发表情，能直接发的画面表达只有
- * 贴纸，对消息表态用 add_reaction。
+ * 且除 emoji 本体/旗帜/附属码点（肤色、变体选择符、ZWJ）/空白外没有任何其它
+ * 字符。这类消息被 send_message 拒绝——机器人不直接发表情，能直接发的画面
+ * 表达只有贴纸，对消息表态用 add_reaction。
  */
 export function isEmojiOnly(text: string): boolean {
   // 先剥 keycap：剥出来的算「图形 emoji」那一半，剩下的正文再按附属码点判定。
   const withoutKeycaps: string = text.replace(KEYCAP_SEQUENCE, "");
   const hasKeycap: boolean = withoutKeycaps.length !== text.length;
-  if (!hasKeycap && !/\p{Extended_Pictographic}/u.test(text)) return false;
+  if (!hasKeycap && !GRAPHIC_EMOJI.test(text)) return false;
   if (withoutKeycaps.trim().length === 0) return hasKeycap;
-  return new RegExp(`^[\\p{Extended_Pictographic}${EMOJI_ATTACHMENT}\\s]+$`, "u").test(withoutKeycaps);
+  return EMOJI_ONLY_BODY.test(withoutKeycaps);
 }

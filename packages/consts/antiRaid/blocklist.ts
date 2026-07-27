@@ -106,3 +106,16 @@ export const BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS: number = 5;
  * 所属模块：infra/blocklist.ts。
  */
 export const BLOCKLIST_SWEEP_RETRY_INTERVAL_MS: number = 300_000;
+
+/**
+ * 连续没落定的补扫，退避按失败次数线性放大后的上限。
+ *
+ * 固定 5 分钟一轮兜不住「永远封不掉」的目标：目标自己就是这个群的管理员、或
+ * 机器人是管理员但没有封禁权限时，每一轮补扫都注定 `complete: false`，于是每
+ * 5 分钟就重扫一次整份名单——O(名单长度) 次 getChatMember + banChatMember，
+ * 而它们与验证超时踢人共用 joinVerificationApi 队列，真正的踢人请求会被永久
+ * 顶在后面几分钟。退避必须有上限：`sweptAt` 那道闩锁始终要有打开的路径，
+ * 权限修好之后不能等到进程重启才重扫（见 docs/04-invariants.md）。
+ * 所属模块：infra/blocklist.ts。
+ */
+export const BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS: number = 21_600_000;

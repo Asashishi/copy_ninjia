@@ -13,11 +13,21 @@ export const antiRaidBarrier: ReturnType<typeof createFlushBarrier> = createFlus
   timeoutMs: ANTI_RAID_BARRIER_TIMEOUT_MS,
 });
 
-/** 主线程判断 lockdown 落盘回执是否仍对应当前意图的指纹。 */
+/**
+ * 主线程判断 lockdown 落盘回执是否仍对应当前意图的指纹。
+ *
+ * 只由 `phase` + `intentId` 组成——它们才是一次锁定意图的身份。刻意**不含**
+ * `expiresAt`：私密模式生效期间，每一条越过阈值的入群都会让 Worker 重发一次
+ * `lockdown` 事件，而那条事件的 `expiresAt` 是当场 `Date.now() + LOCKDOWN_MS`
+ * 算出来的，每次都不一样（见 workers/antiRaid/lockdownRuntime.ts 的
+ * publishLockdownState）。把它算进指纹，antiRaid/index.ts 的对账循环就永远等不到
+ * 一次「存下去的还是当前这份」——每轮一次带 fsync 的 state.json + .bak 整文件
+ * 重写，入群比这两次写更快时循环不终止，既写不下指纹也发不出 lockdownPersisted。
+ * 倒计时本身照常落在 ChatState.lockdown.expiresAt 里，adopt 时按它换算剩余时长。
+ */
 export interface PersistedLockdownFingerprint {
   phase: "applying" | "active" | "restoring";
   intentId: number;
-  expiresAt: number;
 }
 
 /** Anti-Raid 主线程代理的代际与初始化状态。 */
