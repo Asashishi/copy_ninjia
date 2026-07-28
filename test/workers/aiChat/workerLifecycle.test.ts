@@ -11,6 +11,9 @@ Object.defineProperty(globalThis, "self", { configurable: true, value: workerSel
 
 const calls: string[] = [];
 const ensureStickerCatalogs = mock((_packs: readonly string[]): void => { calls.push("ensureCatalogs"); });
+const retryIncompleteStickerCatalogs = mock((_packs: readonly string[], _now?: number): void => {
+  calls.push("retryCatalogs");
+});
 const flushDirtyStickerCatalogs = mock((emit: (event: unknown) => void): void => {
   calls.push("flushCatalogs");
   emit({ type: "stickerCatalogSnapshot", name: "pack" });
@@ -30,6 +33,7 @@ const purgeChatMemory = mock((_chatId: number): void => { calls.push("purgeMemor
 const recordChatMessage = mock((..._args: unknown[]): void => { calls.push("record"); });
 const recordChatMedia = mock((_message: unknown): void => { calls.push("recordMedia"); });
 const generateAndSendReply = mock((..._args: unknown[]): void => { calls.push("trigger"); });
+const drainPendingReplyQueues = mock((_now: number): void => { calls.push("drainReplyQueues"); });
 const invalidateChatReplies = mock(async (_chatId: number): Promise<void> => {
   calls.push("invalidate");
 });
@@ -40,6 +44,7 @@ mock.module("../../../packages/ai/stickers/catalog", () => ({
   ensureStickerCatalogs,
   flushDirtyStickerCatalogs,
   hydrateStickerCatalogs,
+  retryIncompleteStickerCatalogs,
 }));
 mock.module("../../../packages/config/stickers", () => ({ getStickerConfig }));
 mock.module("../../../packages/ai/weather", () => ({ startWeatherRefreshLoop, stopWeatherRefreshLoop }));
@@ -53,7 +58,11 @@ mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
   recordChatMessage,
 }));
 mock.module("../../../packages/workers/aiChat/mediaIngest", () => ({ recordChatMedia }));
-mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({ generateAndSendReply, invalidateChatReplies }));
+mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
+  generateAndSendReply,
+  invalidateChatReplies,
+  drainPendingReplyQueues,
+}));
 mock.module("../../../packages/infra/telegram", () => ({ initTelegramClients }));
 mock.module("../../../packages/ai/mood", () => ({ switchMood }));
 

@@ -5,16 +5,34 @@ import type { TriggerKind } from "../../packages/types/states/replyAdmission";
 
 const ALL_KINDS: TriggerKind[] = ["direct", "random", "mediaDirect", "mediaRandom"];
 
-describe("admitTrigger：并发未满", () => {
+describe("admitTrigger：并发未满且队列已空", () => {
   for (const kind of ALL_KINDS) {
-    test(`kind=${kind} 且 activeRounds 低于上限 → startRound，不看队列`, () => {
-      const decision = admitTrigger({ activeRounds: REPLY_ROUND_MAX_CONCURRENT - 1, queueSize: REPLY_TRIGGER_QUEUE_MAX, kind });
+    test(`kind=${kind} 且 activeRounds 低于上限 → startRound`, () => {
+      const decision = admitTrigger({ activeRounds: REPLY_ROUND_MAX_CONCURRENT - 1, queueSize: 0, kind });
       expect(decision).toEqual({ action: "startRound" });
     });
   }
 
   test("activeRounds 为 0 → startRound", () => {
     expect(admitTrigger({ activeRounds: 0, queueSize: 0, kind: "direct" })).toEqual({ action: "startRound" });
+  });
+});
+
+describe("admitTrigger：并发未满但队列非空", () => {
+  // 队列非空只可能是限频闸拦下过补跑。让新触发抢在队里那些人前面，就把队列的
+  // FIFO 语义整个反过来了——窗口一放开，先跑的会是刚到的这条，而队里的人已经
+  // 等了几分钟。空并发位由补跑消费。
+  test("kind=direct → enqueue，不插队", () => {
+    expect(admitTrigger({ activeRounds: 0, queueSize: 1, kind: "direct" })).toEqual({ action: "enqueue" });
+  });
+
+  test("kind=random → dropSilently：随机触发本就不排队", () => {
+    expect(admitTrigger({ activeRounds: 0, queueSize: 1, kind: "random" })).toEqual({ action: "dropSilently" });
+  });
+
+  test("队列已满 → enqueueOverflow", () => {
+    expect(admitTrigger({ activeRounds: 0, queueSize: REPLY_TRIGGER_QUEUE_MAX, kind: "direct" }))
+      .toEqual({ action: "enqueueOverflow" });
   });
 });
 

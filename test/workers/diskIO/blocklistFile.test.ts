@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { BLOCKLIST_FILE_PATH, RUNTIME_CONFIG_DIR } from "../../../packages/consts/paths";
+import { BLOCKLIST_FILE_PATH, BLOCKLIST_MEMORY_DIR } from "../../../packages/consts/paths";
 import type { BlockedUserRecord } from "../../../packages/types/diskIO/storage";
 import {
   flushBlocklistAppends,
@@ -21,11 +21,12 @@ function readBlocklist(): Record<string, { isBlocked: boolean; blockedAt: string
 beforeEach(() => {
   resetBlocklistCache();
   rmSync(BLOCKLIST_FILE_PATH, { force: true });
-  mkdirSync(RUNTIME_CONFIG_DIR, { recursive: true });
+  mkdirSync(BLOCKLIST_MEMORY_DIR, { recursive: true });
 });
 
 describe("黑名单文件的追加落盘", () => {
   test("首条走原子重写建文件，后续按位置追加，格式与整份 stringify 一致", () => {
+    expect(BLOCKLIST_FILE_PATH).toBe(`${BLOCKLIST_MEMORY_DIR}/blocklist.json`);
     hydrateBlocklist();
     handleBlockUserMessage({ type: "blockUser", userId: 7, blockedAt: "2026/07/25 19:38:09" });
     handleBlockUserMessage({ type: "blockUser", userId: -4004, blockedAt: "2026/07/25 19:40:00" });
@@ -91,10 +92,10 @@ describe("黑名单文件的追加落盘", () => {
   });
 
   test("落盘文件按 0644 建立，孤儿临时文件在启动恢复时清掉", () => {
-    // config/ 还放着手工维护的 mood/stickers/reactions，只能按自己的文件名
-    // 前缀清扫，不能按后缀无差别删。
-    const orphan: string = `${RUNTIME_CONFIG_DIR}/.blocklist.json.999.abc.tmp`;
-    const foreign: string = `${RUNTIME_CONFIG_DIR}/.mood.json.999.abc.tmp`;
+    // 同目录还有 removals.json outbox；只能按自己的文件名前缀清扫，不能按
+    // 后缀无差别删掉另一个 owner 的原子写临时文件。
+    const orphan: string = `${BLOCKLIST_MEMORY_DIR}/.blocklist.json.999.abc.tmp`;
+    const foreign: string = `${BLOCKLIST_MEMORY_DIR}/.removals.json.999.abc.tmp`;
     writeFileSync(orphan, "{}");
     writeFileSync(foreign, "{}");
 
@@ -123,14 +124,14 @@ describe("黑名单文件的追加落盘", () => {
     handleBlockUserMessage({ type: "blockUser", userId: 7, blockedAt: "2026/07/25 19:38:09" });
     // 目录整体挪走（不是删掉——已落盘的记录必须原样还在）：追加必然失败，
     // 未落盘的条目不能就此丢掉。
-    const stashed: string = `${RUNTIME_CONFIG_DIR}.stashed`;
-    renameSync(RUNTIME_CONFIG_DIR, stashed);
+    const stashed: string = `${BLOCKLIST_MEMORY_DIR}.stashed`;
+    renameSync(BLOCKLIST_MEMORY_DIR, stashed);
 
     handleBlockUserMessage({ type: "blockUser", userId: 8, blockedAt: "2026/07/25 19:39:00" });
     expect(blocklistPendingEntries).toHaveLength(1);
     expect(flushBlocklistAppends()).toBeFalse();
 
-    renameSync(stashed, RUNTIME_CONFIG_DIR);
+    renameSync(stashed, BLOCKLIST_MEMORY_DIR);
     expect(flushBlocklistAppends()).toBeTrue();
     expect(Object.keys(readBlocklist())).toEqual(["7", "8"]);
   });
@@ -205,15 +206,15 @@ describe("解除拉黑的全量重写", () => {
 });
 
 describe("重写失败后的重试", () => {
-  /** 把 config/ 整体挪走：写入必然失败，已落盘的记录原样还在。 */
-  function withMissingConfigDir(run: () => void): void {
-    const stashed: string = `${RUNTIME_CONFIG_DIR}.stashed`;
-    renameSync(RUNTIME_CONFIG_DIR, stashed);
+  /** 把 memory/blocklist/ 整体挪走：写入必然失败，已落盘的记录原样还在。 */
+  function withMissingBlocklistDir(run: () => void): void {
+    const stashed: string = `${BLOCKLIST_MEMORY_DIR}.stashed`;
+    renameSync(BLOCKLIST_MEMORY_DIR, stashed);
     try {
       run();
     } finally {
-      rmSync(RUNTIME_CONFIG_DIR, { recursive: true, force: true });
-      renameSync(stashed, RUNTIME_CONFIG_DIR);
+      rmSync(BLOCKLIST_MEMORY_DIR, { recursive: true, force: true });
+      renameSync(stashed, BLOCKLIST_MEMORY_DIR);
     }
   }
 
@@ -224,7 +225,7 @@ describe("重写失败后的重试", () => {
     hydrateBlocklist();
     handleBlockUserMessage({ type: "blockUser", userId: 7, blockedAt: "2026/07/25 19:38:09" });
 
-    withMissingConfigDir((): void => {
+    withMissingBlocklistDir((): void => {
       handleUnblockUserMessage({ type: "unblockUser", userId: 7, blocked: [] });
       expect(flushBlocklistAppends()).toBeFalse();
     });
@@ -235,7 +236,7 @@ describe("重写失败后的重试", () => {
     handleBlockUserMessage({ type: "blockUser", userId: 7, blockedAt: "2026/07/25 19:38:09" });
     handleBlockUserMessage({ type: "blockUser", userId: 8, blockedAt: "2026/07/25 19:38:10" });
 
-    withMissingConfigDir((): void => {
+    withMissingBlocklistDir((): void => {
       handleUnblockUserMessage({
         type: "unblockUser",
         userId: 7,
@@ -251,7 +252,7 @@ describe("重写失败后的重试", () => {
     hydrateBlocklist();
     handleBlockUserMessage({ type: "blockUser", userId: 7, blockedAt: "2026/07/25 19:38:09" });
 
-    withMissingConfigDir((): void => {
+    withMissingBlocklistDir((): void => {
       handleUnblockUserMessage({ type: "unblockUser", userId: 7, blocked: [] });
       // 这条若只进追加缓冲，重试重写时用的还是旧快照（空名单），刚拉黑的
       // 9 号会被直接挤掉——名单里没有他，而主线程以为有。
@@ -266,7 +267,7 @@ describe("重写失败后的重试", () => {
     hydrateBlocklist();
     handleBlockUserMessage({ type: "blockUser", userId: 7, blockedAt: "2026/07/25 19:38:09" });
 
-    withMissingConfigDir((): void => {
+    withMissingBlocklistDir((): void => {
       handleUnblockUserMessage({ type: "unblockUser", userId: 7, blocked: [] });
       // 已知 id 必须跟着待重写快照走。停在「解除之前」的那份的话，下面这条会在
       // handleBlockUserMessage 第一行被当成重复投递直接早退：既不追加、也进不到

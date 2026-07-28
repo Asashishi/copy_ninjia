@@ -94,4 +94,46 @@ describe("logger persistence routing boundary", () => {
       consoleError.mockRestore();
     }
   });
+
+  test("env 首尾空白不会让请求实际使用的规范化密钥逃过脱敏", () => {
+    const originalSecrets: Readonly<Record<string, string | undefined>> = {
+      TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+      DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+    };
+    const normalizedSecrets: readonly string[] = [
+      "normalized-telegram-token",
+      "normalized-gemini-key",
+      "normalized-deepseek-key",
+    ];
+    process.env.TELEGRAM_BOT_TOKEN = `  ${normalizedSecrets[0]}\r`;
+    process.env.GEMINI_API_KEY = `\t${normalizedSecrets[1]}  `;
+    process.env.DEEPSEEK_API_KEY = `${normalizedSecrets[2]}\n`;
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logger.error(
+        `request failed: ${normalizedSecrets.join(" / ")}`,
+        Object.assign(new Error("fetch failed"), {
+          path: `https://api.telegram.org/file/bot${normalizedSecrets[0]}/photo.jpg`,
+          details: { apiKey: normalizedSecrets[1], cause: normalizedSecrets[2] },
+        })
+      );
+
+      const stringArg: unknown = consoleError.mock.calls.at(-1)![0];
+      const errorArg: unknown = consoleError.mock.calls.at(-1)![1];
+      expect(stringArg).toBe("request failed: [REDACTED] / [REDACTED] / [REDACTED]");
+      expect(errorArg).toMatchObject({
+        path: "https://api.telegram.org/file/bot[REDACTED]/photo.jpg",
+        details: { apiKey: "[REDACTED]", cause: "[REDACTED]" },
+      });
+      const serialized: string = JSON.stringify([stringArg, errorArg]);
+      for (const secret of normalizedSecrets) expect(serialized).not.toContain(secret);
+    } finally {
+      consoleError.mockRestore();
+      for (const [name, value] of Object.entries(originalSecrets)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
 });

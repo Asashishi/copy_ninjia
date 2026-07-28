@@ -4,6 +4,7 @@ import {
 } from "../imageGeneration";
 import { AI_MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
+import { IMAGE_SENT_TAG_HINT, STICKER_SENT_TAG_HINT } from "./transcript";
 
 /** 模型从已查看贴纸清单按意图选择的约束。 */
 export const STICKER_INTENT_SELECTION_INSTRUCTION: string =
@@ -23,7 +24,7 @@ export const SEND_STICKER_TOOL_INSTRUCTION: string =
   "绝不要试图用 send_message 发贴纸链接、文件 ID 或纯 emoji 来代替贴纸。" +
   "必须先用 view_sticker_pack 查看过那个包的贴纸清单，" +
   `再按清单里的编号发送。每轮回复最多发 ${MAX_STICKERS_PER_REPLY} 枚——选最应景的那枚，` +
-  "没有合适的就不发。转录里「（发了一枚贴纸：…）」的行也包括你自己发过的贴纸：" +
+  `没有合适的就不发。转录里「${STICKER_SENT_TAG_HINT}」的行也包括你自己发过的贴纸：` +
   "最近几条里你已经发过的那枚不要再发；连续想表达同一种情绪时，优先从清单里换一枚没用过的同类情绪贴纸，换不出来就不发贴纸、改用文字或表情反应。";
 
 /** send_message 工具的模型可见使用说明。手滑轮与普通轮共用这段文案，
@@ -39,7 +40,11 @@ export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "想对触发消息表个态就扣反应（add_reaction）。reply_to_trigger 填 true 时这条消息会以" +
   "「回复」形式挂在触发你这次回复的那条消息上，挂不挂由你判断（对方明确在跟你说话、或" +
   "群里消息多怕别人看不出你在回谁时，建议挂上）。text 永远写正确完整内容。" +
-  "同一轮里已经发过的话绝不要原样再发一遍——内容完全相同的调用会被执行侧直接拒绝。";
+  "同一轮里已经发过的话绝不要原样再发一遍——内容完全相同的调用会被执行侧直接拒绝。" +
+  `绝不能用 text 描述一个你没真做的动作：转录里「${STICKER_SENT_TAG_HINT}」「${IMAGE_SENT_TAG_HINT}」这类括号行，` +
+  "是执行侧在动作**真正落地之后**替你写下的记录，不是你可以自己打出来的话。" +
+  "工具没调、或者调了没成功（比如生图正在冷却），就直接用自己的话说这次发不了，" +
+  "绝不要打一段听起来像已经发过图/发过贴纸的文字；这种正文会被执行侧拒绝。";
 
 /** 手滑替换字必须满足的形、音或输入法邻近规则。 */
 export const TYPO_SUBSTITUTION_RULE: string =

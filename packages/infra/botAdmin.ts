@@ -13,8 +13,8 @@ import {
   botAdminGenerations,
   botAdminGenerationUsers,
 } from "../cache/botAdmin";
-import { isAdminStatus } from "../libs/chatMember";
-import { forgetChatBlocklistWork, sweepBlockedMembers } from "./blocklist";
+import { canRestrictMembers, isAdminStatus } from "../libs/chatMember";
+import { forgetChatBlocklistWork, noteBanPermissionObserved, sweepBlockedMembers } from "./blocklist";
 import { teardownRegisteredChat } from "./chatTeardown";
 import type { ChatState } from "../types/chatState";
 import type { ChatMember, ChatMemberUpdated } from "@grammyjs/types";
@@ -97,7 +97,11 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
  * （见本文件顶部注释的第 3 条路径）会在真正需要时现查一次并正确落盘，
  * 这里的省略不损失任何信息。
  */
-async function recordBotAdminStatus(chatId: number, isAdmin: boolean): Promise<void> {
+async function recordBotAdminStatus(
+  chatId: number,
+  isAdmin: boolean,
+  canRestrict?: boolean
+): Promise<void> {
   if (getChatState(chatId).isInitEnabled !== true) return;
   const chatState: ChatState = getOrCreateChatState(chatId);
   if (chatState.botIsAdmin !== isAdmin) {
@@ -115,6 +119,10 @@ async function recordBotAdminStatus(chatId: number, isAdmin: boolean): Promise<v
     await persistAuthoritativeState("bot admin status refresh");
   }
   if (!isAdmin) return;
+  // 被权限卡住的群只认这一条解锁边沿：Telegram 亲口说「现在能封人了」。
+  // canRestrict 为 undefined 表示本次观测拿不到权限位（比如收到别人的
+  // chat_member 更新那一路只能推出「我是管理员」），保持卡住不动。
+  if (canRestrict !== undefined) noteBanPermissionObserved(chatId, canRestrict);
   // 「是管理员 && 已初始化」成立：补一次黑名单清扫。本函数是三条管理员发现
   // 路径的唯一收口，因此每次确证身份都在这里问一次；「这个群扫过了没有」由
   // sweepBlockedMembers 自己按 blocklistSweepState 记账（O(1) 早退），而不是
@@ -165,7 +173,7 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
     );
     return;
   }
-  await recordBotAdminStatus(update.chat.id, isAdmin);
+  await recordBotAdminStatus(update.chat.id, isAdmin, canRestrictMembers(update.new_chat_member));
 }
 
 /**
@@ -248,7 +256,7 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
         const currentKnown: boolean | undefined = getChatState(chatId).botIsAdmin;
         if (currentKnown !== undefined) return currentKnown;
         const isAdmin: boolean = isAdminStatus(member.status);
-        await recordBotAdminStatus(chatId, isAdmin);
+        await recordBotAdminStatus(chatId, isAdmin, canRestrictMembers(member));
         return isAdmin;
       })
       .finally((): void => {

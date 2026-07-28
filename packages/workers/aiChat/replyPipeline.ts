@@ -1,7 +1,15 @@
 import { botInfoState } from "../../cache/aiChat/identity";
-import { activeReplyCounts, pendingOverflowNotices, pendingReplyTriggers } from "../../cache/aiChat/replies";
+import {
+  activeReplyCounts,
+  longTriggerTimes,
+  pendingOverflowNotices,
+  pendingReplyTriggers,
+} from "../../cache/aiChat/replies";
+import { RATE_LIMIT_LONG_WINDOW_MS } from "../../consts/aiChat/rateLimit";
 import { logger } from "../../infra/logger";
-import { admitTrigger } from "../../states/replyAdmission";
+import type { LinkedQueue } from "../../libs/linkedQueue";
+import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
+import { admitRound, admitTrigger } from "../../states/replyAdmission";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AdmitDecision } from "../../types/states/replyAdmission";
@@ -15,6 +23,7 @@ export {
   currentReplyGeneration,
   invalidateChatReplies,
   isReplyGenerationCurrent,
+  trackReplyGenerationTask,
 } from "./replyState";
 
 /**
@@ -46,6 +55,37 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean 
 
 function drainReplyQueue(chatId: number): void {
   drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));
+}
+
+/**
+ * 只在 5 分钟窗口确实有余量时推一次队列。
+ *
+ * 窗口仍然满的群直接跳过，不做无用的尝试：startReplyRound 每被拒一次就会发一条
+ * 限频提示（自带 60 秒冷却），空转就等于每分钟往群里刷一句。
+ */
+function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
+  const times: LinkedQueue<number> | undefined = longTriggerTimes.get(chatId);
+  if (times !== undefined) {
+    trimSlidingWindow({ timestamps: times, windowMs: RATE_LIMIT_LONG_WINDOW_MS, now });
+    if (admitRound({ windowCount: times.size }).action === "rateLimited") return;
+  }
+  drainReplyQueue(chatId);
+}
+
+/**
+ * 维护节拍的兜底排空（由 aiChatWorker.ts 的 runAiChatWorkerMaintenance 调用）。
+ *
+ * 队列的推力有两处：轮次结束时的 onFinished，以及新触发入队后立刻试的那一次。
+ * 两处都可能推不动——限频闸拒绝时 startReplyRound 根本没建任务，也就永远不会有
+ * onFinished；而入队那一次撞上仍然满的窗口同样只会跳过。没有这道兜底，撞上
+ * 5 分钟窗口上限的群会把最多 REPLY_TRIGGER_QUEUE_MAX 条 @提及连同它们的快照
+ * （正文片段、图片引用）无限期扣在内存里，直到某次无关触发恰好完整跑完一轮
+ * 才被顺带带出来。
+ */
+export function drainPendingReplyQueues(now: number = Date.now()): void {
+  for (const chatId of [...pendingReplyTriggers.keys()]) {
+    drainReplyQueueIfWindowAllows(chatId, now);
+  }
 }
 
 /**
@@ -113,6 +153,11 @@ export function generateAndSendReply({
         triggerReference,
         mediaTrigger: mediaComment,
       });
+      // 入队之后立刻按 FIFO 试着推一次：并发位可能本来就是空的（上一批轮次
+      // 结束时 drain 撞上限频闸停了下来，此后就没人再碰过这个队列），那时不推
+      // 的话队首那些人要一直等到 30 秒的维护节拍才轮得上。先入队再推，顺序仍
+      // 是先来先跑，新触发不会插到等了更久的人前面。
+      drainReplyQueueIfWindowAllows(chatId, Date.now());
       break;
     case "enqueueOverflow":
       // 等当前轮收尾后再发提示，避免插进同一轮的连续短句中间。

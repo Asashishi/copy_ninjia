@@ -3,6 +3,7 @@ import { sequentialize } from "@grammyjs/runner";
 import { handleIncomingMessage, handleReaction } from "../auto";
 import {
   confirmLuckDraw,
+  handleAdDetectCommand,
   handleAiChatCommand,
   handleBlockCommand,
   handleCjkActionCommand,
@@ -95,6 +96,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
   bot.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
   bot.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
+  bot.command("ad_detect", (ctx: CommandContext<Context>): Promise<void> => handleAdDetectCommand(ctx));
   bot.command("switch_mood", (ctx: CommandContext<Context>): Promise<void> => handleSwitchMoodCommand(ctx));
   bot.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
   bot.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));

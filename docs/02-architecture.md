@@ -21,7 +21,7 @@ flowchart TD
 
     MAIN["🧵 主线程<br/>grammY runner + 按群 sequentialize<br/>命令与自动消息流水线<br/>StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>Gemini 多轮工具调用<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
-    RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置"]:::worker
+    RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置 / 广告检测"]:::worker
     DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 运势 / 验证文件 / 黑名单"]:::worker
 
     MAIN --> AI
@@ -33,8 +33,10 @@ flowchart TD
 
 - **主线程**持有 Telegram runner、三个 Worker 的监督句柄，以及 `StateStore` 维护的 `state.json` 内存镜像（群开关、copy 状态、锁定镜像等权威状态）。
 - **AI Worker** 独占群聊记忆、回复准入、媒体描述流水线、群心情与贴纸目录的运行时状态。
-- **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。/block 黑名单的踢人也在这条线程执行（它不带状态机，判定在主线程做完后投过来），与验证超时踢人共用同一条请求队列。未收到落地回执的处置批次同时保存在主线程镜像与 `memory/blocklist-removals.json` outbox：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
-- **Disk I/O Worker** 独占共享目录（`logs/`、`memory/`、`config/blocklist.json`）的串行读写；`state.json` 是唯一例外，由主线程 `StateStore` 直接原子写。
+- **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。`/ad_detect` 广告检测的整条流水线（按发送者归并 90 秒消息串、每秒一批送 DeepSeek 判定、命中后删消息并在群里播报封禁理由）同样跑在这条线程上，判定结果回投主线程换成一次与 /block 等价的拉黑 + 各群封禁。/block 黑名单的踢人也在这条线程执行（它不带状态机，判定在主线程做完后投过来），与验证超时踢人共用同一条请求队列。未收到落地回执的处置批次同时保存在主线程镜像与 `memory/blocklist/removals.json` outbox：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
+- **Disk I/O Worker** 独占共享目录的串行读写：`logs/`，以及 `memory/` 下的 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/` 六个领域目录；`state.json` 是唯一例外，由主线程 `StateStore` 直接原子写。各文件形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
+
+广告检测按「投递门禁在主线程、判定与副作用在 Worker、不可丢的拉黑与封禁回主线程」三段分工，见 [`packages/antiRaid/adDetect.ts`](../packages/antiRaid/adDetect.ts) 与 [`packages/workers/antiRaid/adDetect/`](../packages/workers/antiRaid/adDetect/)。
 
 Anti-Raid 主线程入口由 [`packages/antiRaid/index.ts`](../packages/antiRaid/index.ts) 编排，lockdown 恢复与验证镜像接收分别下沉到 [`packages/antiRaid/lockdownMirror.ts`](../packages/antiRaid/lockdownMirror.ts) 和 [`packages/antiRaid/verificationMirror.ts`](../packages/antiRaid/verificationMirror.ts)。Worker 侧验证解释器则按核心状态/恢复、入站事件翻译、Telegram 副作用、提醒投递 owner 拆在 [`packages/workers/antiRaid/`](../packages/workers/antiRaid/) 中；这些模块共享同一个 dispatcher，不改变状态机与 revision 的单一权威入口。
 
@@ -101,7 +103,7 @@ flowchart TD
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
 3. **预热配置并恢复 StateStore**：校验 `config/` 三个 JSON，清理顶层孤儿临时文件，再严格校验并恢复 `state.json` 主备副本；这些步骤都发生在联网和 Worker 创建之前。
-4. 初始化 Telegram 客户端与 **Disk I/O Worker**，再恢复 `memory/` 下的 AI、贴纸、运势、待验证数据与黑名单移除 outbox，以及 `config/blocklist.json` 里的 /block 黑名单；任何领域恢复失败都拒绝以部分状态启动。
+4. 初始化 Telegram 客户端与 **Disk I/O Worker**，再恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，以及 `memory/blocklist/` 下的 `/block` 权威名单 `blocklist.json` 与未完成移除 outbox `removals.json`；任何领域恢复失败都拒绝以部分状态启动。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
 6. 初始化 **AI Worker**，只 hydrate `state.json` 中明确启用 AI 的群；随后恢复运势与待验证镜像、初始化 **Anti-Raid Worker**，最后启动 acknowledgement-safe runner。
 7. 一切就绪后才起**低优先级群标题回填**（受并发上限约束，不挤占共享限流器）。

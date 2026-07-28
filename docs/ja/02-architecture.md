@@ -21,7 +21,7 @@ flowchart TD
 
     MAIN["🧵 メインスレッド<br/>grammY runner + グループ単位の sequentialize<br/>コマンドと自動メッセージ処理<br/>StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>Gemini の複数ターン・ツール呼び出し<br/>ローリングメモリ · 要約圧縮 · ムード"]:::worker
-    RAID["🛡️ Anti-Raid Worker<br/>認証とロックダウンの状態機械 / ブロックリスト処置"]:::worker
+    RAID["🛡️ Anti-Raid Worker<br/>認証とロックダウンの状態機械 / ブロックリスト処置 / 広告検出"]:::worker
     DISK["💾 Disk I/O Worker<br/>ログ / メモリスナップショット / 運勢 / 認証ファイル / ブロックリスト"]:::worker
 
     MAIN --> AI
@@ -33,8 +33,8 @@ flowchart TD
 
 - **メインスレッド**は Telegram runner、3 つの Worker の監視ハンドル、`StateStore` が管理する `state.json` のメモリミラーを所有します。ミラーにはグループのスイッチ、copy 状態、ロックダウンのミラーなどの正式な状態が含まれます。
 - **AI Worker**はグループチャットのメモリ、返信の受け入れ制御、メディア説明パイプライン、グループごとのムード、スタンプカタログの実行時状態を排他的に所有します。
-- **Anti-Raid Worker**は認証・ロックダウン状態機械とタイマーを排他的に所有し、メインスレッドは復元可能なミラーだけを保持します。ブロックリストの処置もこのスレッドで実行します（状態機械を持たず、メインスレッドが判定して投げるだけです）。request queue は認証 timeout の kick と共通です。状態機械がないからこそ、着地の受領が返っていない batch はメインスレッドのミラーが保持し、送信前に durable Disk I/O outbox へ snapshot を保存し、process 起動時または Worker 再生成時に丸ごと再投入します。
-- **Disk I/O Worker**は `logs/`、`memory/`、`config/blocklist.json` など共有パスの読み書きを直列化して排他的に扱います。唯一の例外は `state.json` で、メインスレッドの `StateStore` が直接アトミックに書き込みます。
+- **Anti-Raid Worker**は認証・ロックダウン状態機械とタイマーを排他的に所有し、メインスレッドは復元可能なミラーだけを保持します。`/ad_detect` の広告検出パイプライン（送信者ごとに 90 秒間のメッセージ列をまとめ、毎秒 1 バッチを DeepSeek へ送って判定し、命中したらメッセージを削除してグループに BAN 理由を告知する）も同じスレッドで動き、判定結果はメインスレッドへ返されて /block と同等のブロックリスト登録と各グループ BAN に変換されます。ブロックリストの処置もこのスレッドで実行します（状態機械を持たず、メインスレッドが判定して投げるだけです）。request queue は認証 timeout の kick と共通です。状態機械がないからこそ、着地の受領が返っていない batch はメインスレッドのミラーが保持し、送信前に durable Disk I/O outbox へ snapshot を保存し、process 起動時または Worker 再生成時に丸ごと再投入します。
+- **Disk I/O Worker**は `logs/` と、`memory/` 配下の 6 ドメイン `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/` の読み書きを直列化して排他的に扱います。唯一の例外は `state.json` で、メインスレッドの `StateStore` が直接アトミックに書き込みます。全ファイル形態と復元・保持の役割は [07 データルート](07-operations.md#データルート) を参照してください。
 
 メインスレッド側 Anti-Raid の入口は引き続き [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) が編成し、ロックダウン復旧と認証ミラー受信は [`packages/antiRaid/lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) と [`packages/antiRaid/verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts) が担当します。Worker 内の認証 interpreter は [`packages/workers/antiRaid/`](../../packages/workers/antiRaid/) で、状態・復元の core、受信 event 変換、Telegram 副作用、reminder delivery owner に分割されています。各モジュールは同じ dispatcher を共有し、状態機械と revision の正式な入口を 1 つに保ちます。
 
@@ -101,7 +101,7 @@ flowchart TD
 1. データルートを再帰的に作成して**事前検査**します。書き込み、ファイル fsync、同一ディレクトリ内 hard link、アトミック rename、ディレクトリ fsync のどれかが失敗すると、実パスを示して起動を拒否します。
 2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
 3. **設定を事前読み込みし StateStore を復元**します。`config/` の 3 つの JSON を検証し、トップレベルの孤立した一時ファイルを削除してから、`state.json` の主・副コピーを厳密に検証して復元します。すべてネットワーク接続や Worker 作成より前です。
-4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ち、未完了 blocklist removal データと `config/blocklist.json` の `/block` ブロックリストを復元します。どれかのドメインで復元に失敗すると、部分状態での起動を拒否します。
+4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータに加え、`memory/blocklist/blocklist.json` の `/block` 正式リストと `memory/blocklist/removals.json` の未完了 removal outbox を復元します。どれかのドメインで復元に失敗すると、部分状態での起動を拒否します。
 5. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
 6. **AI Worker** を初期化し、`state.json` で AI が明示的に有効なグループだけを hydrate します。その後、運勢と認証待ちのミラーを復元し、**Anti-Raid Worker** を初期化して、最後に acknowledgement-safe runner を開始します。
 7. すべての準備完了後にだけ、共有レート制限を占有しないよう上限を設けた**低優先度のグループタイトル補完**を開始します。

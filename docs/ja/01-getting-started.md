@@ -31,13 +31,14 @@ cp .env.example .env
 
 ## `.env` の設定
 
-プロジェクトが読む環境変数は次の 5 つだけで、未記載のスイッチはありません。資格情報と権限に関する 4 項目は [`packages/infra/config.ts`](../../packages/infra/config.ts) が解析します。`COPY_NINJIA_DATA_ROOT` は実行時パス定数が確定する前に反映する必要があるため、[`packages/consts/paths.ts`](../../packages/consts/paths.ts) が先に読み取ります。
+プロジェクトが読む環境変数は次の 6 つだけで、未記載のスイッチはありません。資格情報と権限に関する 5 項目は [`packages/infra/config.ts`](../../packages/infra/config.ts) が解析します。`COPY_NINJIA_DATA_ROOT` は実行時パス定数が確定する前に反映する必要があるため、[`packages/consts/paths.ts`](../../packages/consts/paths.ts) が先に読み取ります。
 
 | 変数 | 必須 | 説明 |
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather が発行した token |
-| `GEMINI_API_KEY` | ✅ | Gemini API キー |
-| `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者を表す 1 つの十進ユーザー ID。`/init`、`/ai_chat`、`/switch_mood`、`/send` などはこのユーザーだけを認識します |
+| `GEMINI_API_KEY` | ✅ | Gemini API キー。AI 雑談エージェント専用で、`/ai_chat` の返信生成・画像理解・記憶圧縮が使用します |
+| `DEEPSEEK_API_KEY` | 空でも可 | DeepSeek API キー（OpenAI 互換エンドポイント）。広告検出専用で、`/ad_detect` の判定が使用します。空の場合は `/ad_detect enable` が拒否され、ほかの機能はそのまま動作します |
+| `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者を表す 1 つの十進ユーザー ID。`/init`、`/ai_chat`、`/ad_detect`、`/switch_mood`、`/send` などはこのユーザーだけを認識します |
 | `PRIVILEGED_USERS_ID` | 空でも可 | カンマ区切りの許可ユーザー。copy のクールダウン免除、`/block` の使用、ほかの Bot の認証保証が可能です |
 | `COPY_NINJIA_DATA_ROOT` | 空でも可 | 実行時データのルート。空の場合はプロジェクトルートに保存します。詳細は [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください |
 
@@ -51,8 +52,9 @@ cp .env.example .env
 | [`config/stickers.json`](../../config/stickers.json) | AI が使えるスタンプパック、最大 5 個 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
 | [`config/reactions.json`](../../config/reactions.json) | AI が使える絵文字リアクション | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
 | [`config/mood.json`](../../config/mood.json) | ムードの文面、重み、天気・時間帯の倍率 | [`packages/config/mood.ts`](../../packages/config/mood.ts)。重みは正の整数で、合計がちょうど 100 でなければなりません |
+| [`config/ad_samples.json`](../../config/ad_samples.json) | 広告検出の判定基準となる例文。ファイル自体が文字列配列です | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts)。空文字と重複は不可、最大 500 件 |
 
-3 つの JSON はすべて厳密な schema 検証を受け、起動時のネットワーク接続より前に事前読み込みされます。設定が不正なら該当フィールドを示して起動を拒否し、不完全な状態では実行しません。
+4 つの JSON はすべて厳密な schema 検証を受け、起動時のネットワーク接続より前に事前読み込みされます。設定が不正なら該当フィールドを示して起動を拒否し、不完全な状態では実行しません。
 
 ## Telegram 側の設定（BotFather とグループ）
 
@@ -73,6 +75,7 @@ bun run start     # ロングポーリングを開始
 ```text
 /init enable      # グループの業務処理入口を有効化。未初期化グループの通常 update はゲートウェイで破棄されます
 /ai_chat enable   # 任意：このグループの AI チャットを有効化
+/ad_detect enable # 任意：広告検出を有効化。Bot がこのグループの管理者のときだけ実際に発火します
 ```
 
 ## 動作確認

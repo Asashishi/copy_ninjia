@@ -12,6 +12,7 @@ import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage
 import type { LuckDraw, LuckTier } from "../../types/luckChallenge";
 import { deriveLuckDraw } from "./draw";
 import { ensureLuckReceiptSecret, onDiskIORespawn, postDiskIO } from "./persistence";
+import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /** 进程内是否发生过跨东京零点的日切换（即 adoptLuckSecret 清空过前一天的
  *  pending）。见 promotePendingDraw：切换后 pending 未命中不再允许重建派生。 */
@@ -70,11 +71,12 @@ export function getOrDrawLuck(cacheKey: string): LuckDraw {
   if (pending) return pending;
 
   const draw: LuckDraw = deriveLuckDraw(currentLuckSecret(), cacheKey);
-  if (pendingLuckDraws.size >= PENDING_LUCK_CACHE_MAX) {
-    const evictedKey: string | undefined = pendingLuckDraws.keys().next().value;
-    if (evictedKey !== undefined) pendingLuckDraws.delete(evictedKey);
-  }
-  pendingLuckDraws.set(cacheKey, draw);
+  setBoundedMapValue({
+    map: pendingLuckDraws,
+    key: cacheKey,
+    value: draw,
+    maxEntries: PENDING_LUCK_CACHE_MAX,
+  });
   return draw;
 }
 

@@ -23,7 +23,10 @@ const warnings: string[] = [];
 const loggedErrors: string[] = [];
 let nextSentMessageId: number | undefined = 900;
 let kickSucceeds: boolean = true;
+let membershipPresent: boolean | undefined = true;
 const getChatAdministrators = mock(async (): Promise<{ user: { id: number }; is_anonymous: boolean }[]> => []);
+const probeChatMembership = mock(async (): Promise<boolean | undefined> => membershipPresent);
+const joinVerificationApi = { getChatAdministrators };
 
 Object.defineProperty(globalThis, "self", {
   configurable: true,
@@ -39,7 +42,7 @@ mock.module("../../../packages/infra/logger", () => ({
   },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: { getChatAdministrators },
+  joinVerificationApi,
   sendMessage: async (message: { text: string }): Promise<number | undefined> => {
     sentTexts.push(message.text);
     return nextSentMessageId;
@@ -55,6 +58,7 @@ mock.module("../../../packages/infra/telegram", () => ({
     kickedUserIds.push(userId);
     return kickSucceeds;
   },
+  probeChatMembership,
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 
@@ -97,6 +101,15 @@ function checkingInviterState(expelSnapshot: ExpelSnapshot): VerificationState {
   return { kind: "checkingInviter", inviterId: INVITER_ID, snapshot: expelSnapshot };
 }
 
+function kickPendingState(): VerificationState {
+  return {
+    kind: "kickPending",
+    label: "待验证成员",
+    isBot: false,
+    requestedAt: 1_000,
+  };
+}
+
 function setState(state: VerificationState): VerificationState {
   verificationEntries.set(KEY, { state, timer: undefined });
   return state;
@@ -115,6 +128,9 @@ function run(effects: VerificationEffect[]): Promise<void> {
 }
 
 beforeEach(() => {
+  for (const entry of verificationEntries.values()) {
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+  }
   verificationEntries.clear();
   resetAdminCache();
   dispatched.length = 0;
@@ -126,6 +142,8 @@ beforeEach(() => {
   loggedErrors.length = 0;
   nextSentMessageId = 900;
   kickSucceeds = true;
+  membershipPresent = true;
+  probeChatMembership.mockClear();
   getChatAdministrators.mockClear();
   getChatAdministrators.mockResolvedValue([]);
 });
@@ -262,7 +280,7 @@ describe("超时踢人前的拉人者最终复核", () => {
 
 describe("同步副作用的逐条执行", () => {
   test("先删两条提醒再踢人，欢迎语落地后安排自动删除", async () => {
-    setState(pendingState());
+    setState(kickPendingState());
 
     await run([
       { kind: "deleteReminders", reminderMessageId: 11, replyReminderMessageId: 12 },
@@ -274,14 +292,18 @@ describe("同步副作用的逐条执行", () => {
         fromLabel: "Alice",
         anchorMessageId: 5,
       },
-      { kind: "logStaleKickedExemption", label: "Alice" },
+      { kind: "logUncancelableKickExemption", label: "Alice" },
     ]);
 
     expect(deletedMessageIds).toEqual([11, 12]);
     expect(kickedUserIds).toEqual([USER_ID]);
+    expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeTrue();
     expect(sentTexts[0]).toContain("Alice 通过验证啦");
     expect(autoDeleted).toEqual([{ messageId: 900, delayMs: WELCOME_AUTO_DELETE_MS }]);
-    expect(warnings[0]).toContain("was already kicked");
+    // 必须落在 error 上：Worker 只向主线程中继 error，warn 到不了 logs/，
+    // 而这条正是「合法成员被误踢了、请人工拉回来」的唯一线索。
+    expect(warnings).toEqual([]);
+    expect(loggedErrors.some((line) => line.includes("had already been sent or completed"))).toBeTrue();
   });
 
   test("欢迎语没发出去时不安排删除，缺失的提醒 ID 也不误删", async () => {
@@ -302,6 +324,51 @@ describe("踢人失败时的权限告警", () => {
   function expellingState(): VerificationState & { kind: "expelling" } {
     return { kind: "expelling", reason: "timeout", snapshot: snapshot() };
   }
+
+  test("终态踢人前现查成员；确认已离群就直接收尾且不发错误战报", async () => {
+    membershipPresent = false;
+    const state = expellingState();
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, joinVerificationApi);
+    expect(kickedUserIds).toEqual([]);
+    expect(sentTexts).toEqual([]);
+    expect(dispatched).toContainEqual({ userId: USER_ID, event: { type: "expelSettled" } });
+  });
+
+  test("成员查询失败时不贸然踢人，保留终态进入既有退避重试", async () => {
+    membershipPresent = undefined;
+    const state = expellingState();
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(kickedUserIds).toEqual([]);
+    expect(sentTexts[0]).toContain("没能确认");
+    expect(dispatched).not.toContainEqual({ userId: USER_ID, event: { type: "expelSettled" } });
+    expect(verificationEntries.has(KEY)).toBeTrue();
+    const timer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get(KEY)?.timer;
+    expect(timer).toBeDefined();
+    if (timer !== undefined) clearTimeout(timer);
+  });
+
+  test("成员查询期间终态被替换时丢弃迟到结果，不再踢人或发战报", async () => {
+    const state = expellingState();
+    setState(state);
+    probeChatMembership.mockImplementationOnce(async (): Promise<boolean> => {
+      setState(pendingState());
+      return true;
+    });
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(kickedUserIds).toEqual([]);
+    expect(sentTexts).toEqual([]);
+    expect(dispatched).toEqual([]);
+    expect(verificationEntries.get(KEY)?.state.kind).toBe("pending");
+  });
 
   test("告警发出去了才置位 failureNoticeSent", async () => {
     kickSucceeds = false;

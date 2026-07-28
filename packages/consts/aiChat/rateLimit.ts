@@ -10,9 +10,6 @@ export const AI_REPLY_ACTIVITY_MAX_TIMESTAMPS: number =
 /** 活跃度表最多保留的群数；超额淘汰最久未活动群。 */
 export const AI_REPLY_ACTIVITY_MAX_CHATS: number = 500;
 
-/** replyGenerations 有界 LRU 的容量。 */
-export const REPLY_GENERATIONS_MAX: number = 3_500;
-
 /** 单群五分钟滚动窗口及其触发上限。 */
 export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
 /** 单群长窗口内允许启动的最大回复轮数。 */

@@ -24,3 +24,8 @@ export const failedEntries: Map<string, Set<string>> = new Map();
 
 /** 正在后台生成中的包，防止 init 消息重放（Worker 崩溃重启）时重复发起。 */
 export const generatingPacks: Set<string> = new Set();
+
+/** 上一次「目录仍不完整」的周期重试时刻（见 ai/stickers/catalog.ts 的
+ *  retryIncompleteStickerCatalogs）。0 表示本进程还没试过，第一次维护节拍
+ *  就会补一次；只在主线程之外的 AI 闲聊线程里被读写。 */
+export const stickerCatalogRetryState: { lastAttemptAt: number } = { lastAttemptAt: 0 };

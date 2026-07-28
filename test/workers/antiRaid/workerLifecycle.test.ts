@@ -38,6 +38,14 @@ mock.module("../../../packages/workers/antiRaid/blocklistEffects", () => ({
     return removeBlockedMembersTask;
   },
 }));
+mock.module("../../../packages/workers/antiRaid/adDetect/queue", () => ({
+  enqueueAdCandidate(): void { calls.push("adCandidate"); },
+  clearChatAdDetect(): void { calls.push("clearAdDetect"); },
+  sweepAdDetect(): void { calls.push("sweepAdDetect"); },
+  quiesceAdDetectQueue(): void { calls.push("quiesceAdDetect"); },
+  startAdDetectQueue(): void { calls.push("startAdDetect"); },
+  stopAdDetectQueue(): void { calls.push("stopAdDetect"); },
+}));
 const sweepRecentComments = mock((_now: number): number => 0);
 mock.module("../../../packages/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
 const initTelegramClients = mock((): void => {});
@@ -92,20 +100,27 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isInviterExempt: true },
       { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
+      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, text: "买号加我", linkUrls: [], label: "@spam", isChannel: false, justJoined: true },
+      { type: "clearAdDetect", chatId: -1001 },
       { type: "barrier", barrierId: 99 },
     ];
     for (const message of messages) workerSelf.onmessage!({ data: message } as MessageEvent<AntiRaidWorkerMessage>);
     expect(calls).toEqual([
-      "join", "left", "deactivateVerification", "deactivateLockdown", "message", "callback",
+      // startAntiRaidWorker 先登记广告判定的回投通道与节拍，随后才接消息。
+      "startAdDetect",
+      "join", "left", "deactivateVerification", "deactivateLockdown",
+      // 停管连待检的广告消息串一起丢：不再替这个群判定，也不再在那里删消息。
+      "clearAdDetect",
+      "message", "callback",
       "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
-      "removeBlockedMembers",
+      "removeBlockedMembers", "adCandidate", "clearAdDetect",
     ]);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
     await Bun.sleep(0);
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();
-    expect(calls.slice(-2)).toEqual(["stopVerification", "stopLockdown"]);
+    expect(calls.slice(-3)).toEqual(["stopVerification", "stopLockdown", "stopAdDetect"]);
     worker.startAntiRaidWorker();
     expect(initTelegramClients).toHaveBeenCalledTimes(2);
     worker.stopAntiRaidWorker();

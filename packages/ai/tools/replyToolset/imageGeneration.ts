@@ -13,6 +13,7 @@ import {
   type ImageGenerationAspectRatio,
 } from "../../../consts/aiChat/imageGeneration";
 import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../consts/aiChat/prompts/tools";
+import { imageSentTagTemplate } from "../../../consts/aiChat/prompts/transcript";
 import { GENERATE_IMAGE_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
 import { sendPhotoWithResult } from "../../../infra/telegram";
@@ -206,7 +207,7 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
       // allow_sending_without_reply 可能让图片在目标已删除时退化为普通消息，
       // 自录只采用 Telegram 返回的实际回复关系。
       ctx.onImageSent(
-        `（${ctx.imageGenerationReference ? "参考素材" : ""}生成并发送了一张图片：${memoryPrompt}）`,
+        imageSentTagTemplate(memoryPrompt, ctx.imageGenerationReference !== undefined),
         sent.messageId,
         sent.repliedToMessageId
       );

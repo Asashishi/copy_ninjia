@@ -1,9 +1,9 @@
+import { antiRaidRuntimeState } from "../cache/antiRaid/proxy";
 import {
   activeVerificationSnapshots,
-  antiRaidRuntimeState,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
-} from "../cache/antiRaid";
+} from "../cache/antiRaid/verificationMirror";
 import { verificationKey } from "../libs/verificationKey";
 import { postDiskIO } from "../workers/antiRaid/persistence";
 import type {

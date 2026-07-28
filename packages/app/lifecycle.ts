@@ -112,6 +112,7 @@ export class ApplicationLifecycle {
     this.dependencies.getStickerConfig();
     this.dependencies.getReactionConfig();
     this.dependencies.getMoodConfig();
+    this.dependencies.getAdSampleConfig();
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
 

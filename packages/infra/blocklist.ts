@@ -1,6 +1,7 @@
 /**
  * /block 黑名单的主线程侧入口：一份内存 Map 负责「这个人在不在名单里」的
- * 同步判定，落盘交给唯一的 Disk I/O Worker 追加写 config/blocklist.json
+ * 同步判定，落盘交给唯一的 Disk I/O Worker 追加写
+ * memory/blocklist/blocklist.json
  * （见 workers/diskIO/blocklistFile.ts）。
  *
  * 判定必须是同步的：入群更新到达时要立刻决定踢不踢，不能等一次跨线程往返
@@ -19,6 +20,8 @@ import {
   blocklistRemovalCounter,
   blocklistSweepState,
   clearBlocklistSweepState,
+  confirmedKickedUserIdsByChat,
+  confirmedKickedUsersDay,
   pendingBlockedRemovals,
   sessionBlockedAt,
   sessionUnblockedIds,
@@ -27,7 +30,7 @@ import {
 import { flushDiskIODomain, lastFailedDiskIODomains, onDiskIORespawn, postDiskIO } from "./diskIO";
 import { logger } from "./logger";
 import { getAllChatStates } from "./storage/stateStore";
-import { formatTokyoTime } from "../libs/time";
+import { formatTokyoTime, getTokyoDateKey } from "../libs/time";
 import {
   BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
   BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
@@ -50,6 +53,55 @@ import type {
   UnblockUserDiskMessage,
 } from "../types/diskIO";
 import type { FlushResult } from "../types/lifecycle";
+
+/** 跨东京自然日时整表轮换；懒清理避免为这份命令侧缓存单独常驻 timer。 */
+function rotateConfirmedKickedUsers(day: string): void {
+  if (confirmedKickedUsersDay.current === day) return;
+  confirmedKickedUserIdsByChat.clear();
+  confirmedKickedUsersDay.current = day;
+}
+
+/**
+ * 这个用户今天是否已经由 `/block` 在该群确证踢出。
+ * 可选 day 只供确定性测试；生产调用统一使用当前东京日期。
+ */
+export function wasUserConfirmedKickedInChat(
+  chatId: number,
+  userId: number,
+  day: string = getTokyoDateKey()
+): boolean {
+  rotateConfirmedKickedUsers(day);
+  return confirmedKickedUserIdsByChat.get(chatId)?.has(userId) === true;
+}
+
+/** 记录一次“查到在群且封禁成功”的 `/block` 结局。 */
+export function recordUserConfirmedKickedInChat(
+  chatId: number,
+  userId: number,
+  day: string = getTokyoDateKey()
+): void {
+  rotateConfirmedKickedUsers(day);
+  let userIds: Set<number> | undefined = confirmedKickedUserIdsByChat.get(chatId);
+  if (userIds === undefined) {
+    userIds = new Set();
+    confirmedKickedUserIdsByChat.set(chatId, userIds);
+  }
+  userIds.add(userId);
+}
+
+/**
+ * `/unblock` 后提前失效这个用户的所有群缓存。即使默认模式不解除 Telegram
+ * 封禁，也宁可让下一次 `/block` 重新确认，避免 `all` 解封后同日重拉黑时误跳过。
+ */
+export function forgetUserConfirmedKicked(userId: number): void {
+  // `/unblock` 也是这份 cache 的一次访问；跨日后先整表轮换，不能为了删一个
+  // 当前用户而继续扫描、保留上一东京自然日的群集合。
+  rotateConfirmedKickedUsers(getTokyoDateKey());
+  for (const [chatId, userIds] of confirmedKickedUserIdsByChat) {
+    userIds.delete(userId);
+    if (userIds.size === 0) confirmedKickedUserIdsByChat.delete(chatId);
+  }
+}
 
 /**
  * 启动恢复：把 diskIOWorker 读回的黑名单整份灌入内存 Map。必须在 runner
@@ -285,6 +337,15 @@ export function trackBlockedRemoval(params: Omit<RemoveBlockedMembersParams, "re
 }
 
 /**
+ * 把已登记镜像的一批处置交给执行 owner（Anti-Raid Worker）。调用方负责先用
+ * trackBlockedRemoval 登记，本函数不做登记也不在失败时销账——durable outbox
+ * 是独立于本次调用的恢复边界（见 docs/04-invariants.md）。
+ */
+export function dispatchBlockedRemovals(removals: readonly RemoveBlockedMembersParams[]): Promise<void> {
+  return blockedMemberRemoverHolder.current(removals);
+}
+
+/**
  * 群不再由本机器人看管（/init disable、被撤管理员、被移出群）：连同在途批次
  * 一起丢弃，而不只是清补扫进度。
  *
@@ -317,17 +378,74 @@ export function forgetChatBlocklistWork(chatId: number): void {
  * 有批次在途时不直接改 sweptAt，改记 resweepRequested：那批的回执可能晚于
  * 本次请求到达，`complete: true` 会把 sweptAt 写回去，请求就丢了。
  * 从没有过补扫记录的群直接返回——它本来就欠着一次，下一次身份观测会扫。
+ * 已确认卡在权限上的群同样直接返回：请求重扫的意思是「再试一次」，而那个群
+ * 缺的不是重试次数，是权限；解除只能来自一次确证的权限变更观测。
  * @param nextRetryAt 最早允许重扫的时刻，缺省立即。
  */
 export function requestBlocklistResweep(chatId: number, nextRetryAt: number = Date.now()): void {
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
-  if (progress === undefined) return;
+  if (progress === undefined || progress.permissionBlocked) return;
   blocklistSweepState.set(chatId, {
     removalId: progress.removalId,
     sweptAt: null,
     nextRetryAt,
     resweepRequested: progress.removalId !== null,
     failedSweeps: progress.failedSweeps,
+    permissionBlocked: false,
+  });
+}
+
+/**
+ * 记下「这个群缺封禁权限」，并把 outbox 里对应批次标成 missing-permission。
+ *
+ * 这是唯一会让一个群停掉按时间重试的地方。标记同时落在两处，各有各的用处：
+ * 内存里的 permissionBlocked 管住重试，durable outbox 里的 lastFailure 让这
+ * 条卡住的批次**自解释**——运维打开文件就知道该去补权限，而不是去查网络或磁盘。
+ *
+ * 没有补扫记录时要**补建**一条最小记录，不能直接返回：补扫记录只由
+ * sweepBlockedMembers 创建，而从没扫过的群（机器人从来就没有 can_restrict_members，
+ * 补扫第一次投递就失败）恰恰是最需要这个标记的一类。丢掉标记的后果是秒踢路径
+ * 的权限拒绝永远记不下来——`replayPendingBlockedRemovals` 每次 Worker 重生都把
+ * 这批注定失败的处置重投一遍（三次 ban + 退避 + 一批新报错），而
+ * `noteBanPermissionObserved` 那条唯一的解锁边沿没有记录可以解锁。
+ */
+function notePermissionBlocked(chatId: number, removalId: number): void {
+  recordPendingRemovalFailure(removalId, chatId, "missing-permission");
+  const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
+  blocklistSweepState.set(chatId, progress === undefined
+    ? {
+      removalId: null,
+      // sweptAt 仍是 null：这个群从来没被完整扫过，权限补上之后欠的那一次
+      // 补扫必须照旧欠着。
+      sweptAt: null,
+      nextRetryAt: Date.now(),
+      resweepRequested: false,
+      failedSweeps: 0,
+      permissionBlocked: true,
+    }
+    : { ...progress, permissionBlocked: true });
+}
+
+/**
+ * 一次确证的封禁权限观测（my_chat_member 更新，或按需 getChatMember）。
+ *
+ * 这是被权限卡住的群唯一的解锁边沿：只有在 Telegram 亲口说「现在有权限了」
+ * 之后重试才有意义。观测到仍然没有权限时什么都不做——保持卡住，别把它退化成
+ * 又一条按时间的重试路径。解除后立刻欠一次补扫，由调用方随后的 sweep 落地。
+ * @param canRestrict 机器人此刻在这个群是否有封禁成员的权限。
+ */
+export function noteBanPermissionObserved(chatId: number, canRestrict: boolean): void {
+  if (!canRestrict) return;
+  const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
+  if (progress?.permissionBlocked !== true) return;
+  logger.log(`Ban rights restored in chat ${chatId}; re-arming the blocklist sweep.`);
+  blocklistSweepState.set(chatId, {
+    removalId: progress.removalId,
+    sweptAt: null,
+    nextRetryAt: Date.now(),
+    resweepRequested: progress.removalId !== null,
+    failedSweeps: 0,
+    permissionBlocked: false,
   });
 }
 
@@ -357,10 +475,10 @@ function nextFailedSweeps(failedSweeps: number): number {
 }
 
 /** 丢掉该群上一轮没落定的补扫批次；新一轮的名单快照是它的超集。 */
-function forgetChatSweepBatches(chatId: number): void {
+function forgetChatSweepBatches(chatId: number, exceptRemovalId?: number): void {
   let changed: boolean = false;
   for (const [removalId, pending] of pendingBlockedRemovals) {
-    if (pending.params.chatId === chatId && pending.params.probeMembership) {
+    if (pending.params.chatId === chatId && pending.params.probeMembership && removalId !== exceptRemovalId) {
       pendingBlockedRemovals.delete(removalId);
       changed = true;
     }
@@ -387,26 +505,52 @@ function forgetChatSweepBatches(chatId: number): void {
  */
 export async function sweepBlockedMembers(chatId: number, now: number = Date.now()): Promise<void> {
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
-  // 已经完整扫过、有批次在途、或上次没扫完还在退避窗口里：都不重投。这道
-  // 判断必须排在取名单快照之前——调用方每观测到一次管理员身份就会来问一次，
-  // 而那是每条入群更新都会发生的事，不能每次都把整份名单拷一遍。
-  if (progress !== undefined && (progress.sweptAt !== null || progress.removalId !== null || now < progress.nextRetryAt)) {
+  // 已经完整扫过、有批次在途、上次没扫完还在退避窗口里、或已确认卡在权限上：
+  // 都不重投。这道判断必须排在取名单快照之前——调用方每观测到一次管理员身份
+  // 就会来问一次，而那是每条入群更新都会发生的事，不能每次都把整份名单拷一遍。
+  // permissionBlocked 那一档没有时间出口：重扫一次是 O(名单长度) 次注定失败的
+  // 请求，只有确证的权限变更才该把它放开（见 noteBanPermissionObserved）。
+  if (progress !== undefined && (
+    progress.sweptAt !== null ||
+    progress.removalId !== null ||
+    progress.permissionBlocked ||
+    now < progress.nextRetryAt
+  )) {
     return;
   }
   const userIds: number[] = [...blockedUserIds.keys()];
   if (userIds.length === 0) return;
+  const failedSweeps: number = progress?.failedSweeps ?? 0;
+  let params: RemoveBlockedMembersParams;
+  try {
+    params = trackBlockedRemoval({ chatId, userIds, probeMembership: true });
+  } catch (error: unknown) {
+    // outbox 满或 id 空间耗尽：就地降级不上抛（见
+    // BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES）。退避照记——本函数由每条入群都会来
+    // 一次的管理员身份观测调用，不记就每次重付一份完整名单快照。
+    logger.error(`Failed to queue the blocklist sweep of chat ${chatId}:`, error);
+    blocklistSweepState.set(chatId, {
+      removalId: null,
+      sweptAt: null,
+      nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
+      resweepRequested: false,
+      failedSweeps,
+      permissionBlocked: false,
+    });
+    return;
+  }
   // 上一轮没落定的补扫批次由这一批完整取代：名单只增不减，新快照是它的超集。
   // 不删的话每次退避重试都在镜像里沉积一份完整 userIds 副本，且每次 Worker
-  // 重建都把这些副本全部重投一遍。
-  forgetChatSweepBatches(chatId);
-  const failedSweeps: number = progress?.failedSweeps ?? 0;
-  const params: RemoveBlockedMembersParams = trackBlockedRemoval({ chatId, userIds, probeMembership: true });
+  // 重建都把这些副本全部重投一遍。排在登记**之后**：先删再登记的话，登记一抛出
+  // 就是旧批次没了、新批次没建起来，这个群的在途处置凭空蒸发。
+  forgetChatSweepBatches(chatId, params.removalId);
   blocklistSweepState.set(chatId, {
     removalId: params.removalId,
     sweptAt: null,
     nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
     resweepRequested: false,
     failedSweeps,
+    permissionBlocked: false,
   });
   try {
     await blockedMemberRemoverHolder.current([params]);
@@ -424,6 +568,7 @@ export async function sweepBlockedMembers(chatId: number, now: number = Date.now
         nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
         resweepRequested: false,
         failedSweeps,
+        permissionBlocked: false,
       });
     }
     throw error;
@@ -442,11 +587,19 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
     ) {
       logger.error(`Failed to queue completed blocklist removal cleanup ${event.removalId}.`);
     }
-  } else {
     // 「未落定」必须留下记录，且要排在下面的 removalId 对账之前：秒踢那一路
     // 的批次跟补扫进度对不上，会提前返回。而黑名单入群不开验证窗口、没有超时
     // 踢人兜底，这批失败就是那个人留在群里的全部原因——logs/ 里不能一个字都
     // 没有。
+  } else if (event.permissionDenied === true) {
+    // 权限不够是唯一「重试没有意义」的失败：标记留在 outbox 供运维定位，
+    // 这个群的按时间重试就此停下，只等一次确证的权限变更把它放开。
+    logger.error(
+      `Blocklist removal ${event.removalId} for chat ${event.chatId} is blocked by missing ban rights; ` +
+      "it stays pending until the bot's permissions there change."
+    );
+    notePermissionBlocked(event.chatId, event.removalId);
+  } else {
     logger.error(`Blocklist removal ${event.removalId} for chat ${event.chatId} did not fully settle; it will be retried.`);
     recordPendingRemovalFailure(event.removalId, event.chatId, "side-effect-incomplete");
   }
@@ -457,7 +610,11 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
     // 因为黑名单账号可能反复回流，每次失败都立刻触发 O(名单长度) 次成员探测
     // 就是一场请求风暴；退避按这个群连续失败的补扫次数放大，否则一个永远封不
     // 掉的目标会把「秒踢失败 → 重扫 → 重扫也失败」这个环固定在 5 分钟一轮。
-    if (!event.complete) {
+    // 权限卡住的群不排重扫：requestBlocklistResweep 自己也会拒绝，这里显式
+    // 早退只是省掉一次注定落空的调用，并让读者看到两条路是同一个判断。
+    // targetIsAdmin 与 complete 正交：这批不必重投，但群里确实还留着人，
+    // 同样得欠一次补扫，否则那个人要等到自己重新入群才有下一次机会。
+    if ((!event.complete || event.targetIsAdmin === true) && event.permissionDenied !== true) {
       requestBlocklistResweep(
         event.chatId,
         Date.now() + sweepRetryDelayMs(progress?.failedSweeps ?? 0)
@@ -471,13 +628,22 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
   // 没落定只累计失败次数，退避的放大留到下一次真正投递时按它换算（见
   // sweepBlockedMembers）：连续失败的群于是按 5、10、15…分钟逐次拉开，而不是
   // 永远 5 分钟一轮地重扫整份名单。落定则清零，权限恢复后立刻回到正常节奏。
-  const failedSweeps: number = event.complete ? 0 : nextFailedSweeps(progress.failedSweeps);
+  // targetIsAdmin 与「在途期间有人请求过重扫」同一档：这个群还留着一个封不掉
+  // 的黑名单成员，sweptAt 不能落。退避照样累计——不累计的话，一个长期挂着管理
+  // 身份的黑名单目标会把整份名单的补扫钉死在 5 分钟一轮。
+  const stillOwesSweep: boolean = progress.resweepRequested || event.targetIsAdmin === true;
+  const failedSweeps: number = event.complete && !stillOwesSweep
+    ? 0
+    : nextFailedSweeps(progress.failedSweeps);
   blocklistSweepState.set(event.chatId, {
     removalId: null,
-    sweptAt: event.complete && !progress.resweepRequested ? Date.now() : null,
+    sweptAt: event.complete && !stillOwesSweep ? Date.now() : null,
     nextRetryAt: progress.nextRetryAt,
     resweepRequested: false,
     failedSweeps,
+    // 上面的 notePermissionBlocked 可能刚把它置真；这里是同一条回执的收尾，
+    // 不能用一个字面 false 把它抹掉。
+    permissionBlocked: blocklistSweepState.get(event.chatId)?.permissionBlocked === true,
   });
 }
 
@@ -538,6 +704,9 @@ function recordPendingRemovalFailure(
 export function replayPendingBlockedRemovals(countPreviousAttempt: boolean = true): void {
   const removals: RemoveBlockedMembersParams[] = [];
   for (const [removalId, pending] of [...pendingBlockedRemovals]) {
+    // 已确认卡在权限上的群不跟着重放：Worker 重建不是权限变更，重投只会把同
+    // 一条报错再刷一遍。任务本身照常留在 outbox 里等那次真正的权限观测。
+    if (blocklistSweepState.get(pending.params.chatId)?.permissionBlocked === true) continue;
     if (countPreviousAttempt) {
       updatePendingRemovalFailure(removalId, pending.params.chatId, "worker-restarted");
     }
@@ -559,10 +728,17 @@ onDiskIORespawn((): void => {
   // 「删除」。只能整份重写一次——它同时覆盖了本进程新增的那些，不必再逐条
   // 追加。代价是一次 O(名单长度) 的写，而 Worker 重建本来就很罕见。
   if (sessionUnblockedIds.size > 0) {
-    postDiskIO({ type: "unblockUser", blocked: [...blockedUserIds] } satisfies UnblockUserDiskMessage);
+    // 与本文件其余投递点一样检查返回值：这是 append-only 文件表达「删除」的
+    // 唯一途径，被拒（Worker 又不可用/重放缓冲拒收）时 /unblock 永远落不了盘，
+    // 下次重启那个人被重新水合回名单、入群即踢，而 logs/ 里一个字都没有。
+    if (!postDiskIO({ type: "unblockUser", blocked: [...blockedUserIds] } satisfies UnblockUserDiskMessage)) {
+      logger.error("Failed to replay the blocklist rewrite after persistence Worker recovery; this session's /unblock will not survive a restart.");
+    }
     return;
   }
   for (const [userId, blockedAt] of sessionBlockedAt) {
-    postDiskIO({ type: "blockUser", userId, blockedAt } satisfies BlockUserDiskMessage);
+    if (!postDiskIO({ type: "blockUser", userId, blockedAt } satisfies BlockUserDiskMessage)) {
+      logger.error(`Failed to replay the blocklist entry of user ${userId} after persistence Worker recovery.`);
+    }
   }
 });

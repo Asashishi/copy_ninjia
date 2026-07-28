@@ -1,5 +1,10 @@
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
-import { KICKED_REJOIN_GRACE_MS, VERIFICATION_TIMEOUT_MS } from "../consts/antiRaid/verification";
+import {
+  KICKED_REJOIN_GRACE_MS,
+  VERIFICATION_REMINDER_UNDELIVERED_MAX_MS,
+  VERIFICATION_TIMEOUT_MS,
+  VERIFICATION_TRACKED_MESSAGE_IDS_MAX,
+} from "../consts/antiRaid/verification";
 import type {
   ExpelSnapshot,
   JoinEvent,
@@ -23,16 +28,19 @@ import type {
  * 状态图（ABSENT = Map 里没有这个 key）：
  *
  *   ABSENT ──身份豁免/白名单拉人/管理员缓存命中/评论区活动──> EXEMPT
- *   ABSENT ──私密模式期间入群──────────────────────────────> KICKED
+ *   ABSENT ──私密模式期间入群──────────────────────────> KICK_PENDING
+ *   KICK_PENDING ──踢人请求结算────────────────────────────> KICKED
+ *   KICK_PENDING ──请求发出前收到权威豁免──────────────────> EXEMPT
  *   ABSENT ──普通入群──────────────────────────────────────> PENDING
  *   PENDING ──评论区活动 / 异步管理员核查通过────────────────> EXEMPT
  *   PENDING ──验证按钮通过 / 中途离群────────────────────────> ABSENT
  *   PENDING ──超时/刷屏──> CHECKING_INVITER / EXPELLING（落盘后执行）
  *   CHECKING_INVITER ──管理员──> EXEMPT；非管理员──> EXPELLING
  *   EXPELLING ──处置完成──────────────────────────────────────> ABSENT
- *   EXEMPT/KICKED ──去重窗口到期 / 离群──────────────────────> ABSENT
+ *   EXEMPT/KICKED ──去重窗口到期 / 离群────────────────────> ABSENT
  *
- * EXEMPT/KICKED 是 chat_member 与服务消息双路投递之间的短期去重占位。
+ * EXEMPT/KICK_PENDING/KICKED 是 chat_member 与服务消息双路投递之间的
+ * 短期去重占位。
  * 同 kind 字段更新原地修改并原样返回；kind 变化才返回新对象，解释器据此管理
  * 计时器，异步回调也依赖对象同一性拒绝迟到结果。
  */
@@ -63,6 +71,7 @@ function snapshotOf(state: PendingState): ExpelSnapshot {
     label: state.label,
     isBot: state.isBot,
     messageIds: state.messageIds,
+    announcementMessageId: state.announcementMessageId,
     reminderMessageId: state.reminderMessageId,
     replyReminderMessageId: state.replyReminderMessageId,
     joinedAt: state.joinedAt,
@@ -87,13 +96,37 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
   if (exempt) {
     // 已有豁免占位时不动它，也不刷新其去重计时——与旧实现一致。
     if (state?.kind === "exempt") return { next: state, effects: [] };
+    if (state?.kind === "kickPending") {
+      if (state.executionStarted === true) {
+        // Telegram 调用已经同步发出，后来的身份证明无法再撤销；等待请求结算
+        // 后进入正常去重窗口，并留下诊断供管理员人工纠正。
+        return {
+          next: state,
+          effects: [{ kind: "logUncancelableKickExemption", label: event.label }],
+        };
+      }
+      // 删除公告等前置 await 尚未完成：用新对象替换执行 token，旧副作用在
+      // kickMember 前的对象同一性复核会自行失效。
+      return {
+        next: { kind: "exempt", label: event.label, isBot: event.isBot },
+        // 只撤销确实计过数的那一格：重进补踢建出的 kickPending 没有对应的
+        // recordJoin（见 KickPendingState.countedJoinAt），凭 requestedAt 撤
+        // 会删掉同一 tick 里另一名合法计数成员，把刷群窗口压到阈值之下。
+        effects: state.countedJoinAt === undefined
+          ? []
+          : [{ kind: "retractJoinCount", joinedAt: state.countedJoinAt }],
+      };
+    }
     if (state?.kind === "kicked") {
       // 已经踢出去了（私密模式秒踢，或超时踢人后 KICKED_REJOIN_GRACE_MS 去重
       // 窗口内的另一路投递），但这次事件带着确凿的豁免证明（比如姗姗来迟的
       // 管理员身份证明）——踢的动作已经执行完毕，Telegram 没有"撤销踢出"
       // 这回事，占位本身仍不动、去重语义不变，唯一能做的是留一条日志，方便
       // 管理员发现后手动把人重新拉回来。
-      return { next: state, effects: [{ kind: "logStaleKickedExemption", label: event.label }] };
+      return {
+        next: state,
+        effects: [{ kind: "logUncancelableKickExemption", label: event.label }],
+      };
     }
     const effects: VerificationEffect[] = [];
     // 服务消息那一路先到、已开了真实验证窗口：撤销并删提醒（还在限流队列
@@ -118,22 +151,43 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     const effects: VerificationEffect[] = [];
     let snapshotChanged: boolean = false;
     if (event.announcementMessageId !== undefined) {
-      if (state.kind === "kicked") {
-        // 人已在私密模式下被踢出，姗姗来迟的入群公告顺手清理。
+      if (state.kind === "kickPending" || state.kind === "kicked") {
+        // 人正在或已经被私密模式踢出，姗姗来迟的入群公告顺手清理。
         effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
-      } else if (state.kind === "pending") {
+      } else if (state.kind === "pending" && state.announcementMessageId === undefined) {
+        // 先到的是 chat_member 那一路（没带公告），这条服务消息才带来公告 id。
+        // 记进独立字段而不是 messageIds，理由见 PendingState.announcementMessageId。
+        state.announcementMessageId = event.announcementMessageId;
+        snapshotChanged = true;
+      } else if (state.kind === "pending" && state.announcementMessageId !== event.announcementMessageId) {
+        // 同一次入群只该有一条服务消息，真出现第二条也得进清理列表：那道字段
+        // 只留一条，落在外面的就成了唯一没人删的痕迹。
         state.messageIds.push(event.announcementMessageId);
         snapshotChanged = true;
       }
     }
-    if (state.kind === "kicked" && event.now - state.kickedAt > KICKED_REJOIN_GRACE_MS) {
+    if (
+      (state.kind === "kickPending" || state.kind === "kicked") &&
+      event.now - (state.kind === "kickPending" ? state.requestedAt : state.kickedAt) >
+        KICKED_REJOIN_GRACE_MS
+    ) {
       // 距上次踢出已经超过"两路投递同一次入群"的合理误差范围，说明这是
       // TA 真的重新申请了入群（kickChatMember 只踢不封，本就能立刻
       // 重进）——不是同一次物理入群的第二条投递，得补一次真正的踢人效果。
       // 返回新对象而非原地改字段：解释器按对象同一性判断要不要换计时器，
       // 这里就是要换——让这次新入群拥有自己完整的一份去重窗口，覆盖它
       // 自己两条投递之间的间隔，而不是共用旧占位所剩无几的窗口。
-      return { next: { kind: "kicked", label: state.label, isBot: state.isBot, kickedAt: event.now }, effects: [...effects, { kind: "kickMember" }] };
+      // countedJoinAt 留空：这一路 joinCreatesNewRecord 为 false（状态已存在），
+      // 调用方没有为这次重进 recordJoin，也就没有任何一格可撤。
+      return {
+        next: {
+          kind: "kickPending",
+          label: state.label,
+          isBot: state.isBot,
+          requestedAt: event.now,
+        },
+        effects: [...effects, { kind: "kickMember" }],
+      };
     }
     // 两路投递携带的 actor 不保证一致：本路带着拉人者而验证窗口还开着时补挂
     // 异步核查。缓存热时不必挂——resolveJoinExemption 的同步快路径刚查过，
@@ -155,14 +209,26 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     const effects: VerificationEffect[] = [];
     if (event.announcementMessageId !== undefined) effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
     effects.push({ kind: "kickMember" });
-    return { next: { kind: "kicked", label: event.label, isBot: event.isBot, kickedAt: event.now }, effects };
+    // 全新入群走到这里，调用方必然已 recordJoin(event.now)（joinCreatesNewRecord
+    // 对 undefined/终态且未豁免为真），因此这一格可以被后来的豁免精确撤销。
+    return {
+      next: {
+        kind: "kickPending",
+        label: event.label,
+        isBot: event.isBot,
+        requestedAt: event.now,
+        countedJoinAt: event.now,
+      },
+      effects,
+    };
   }
 
   const pending: PendingState = {
     kind: "pending",
     label: event.label,
     isBot: event.isBot,
-    messageIds: event.announcementMessageId !== undefined ? [event.announcementMessageId] : [],
+    messageIds: [],
+    announcementMessageId: event.announcementMessageId,
     trackedMessageTimes: [],
     invitedBy: invitedByOther ? event.actorId : undefined,
     replyReminderRequested: false,
@@ -202,11 +268,17 @@ function handleTrackedMessage(
 
   // 频道评论区活动在上方先完成豁免，不能进入刷屏计数。其余待验证消息按
   // 成员自己的滑动窗口统计；第 46 条同步删除状态，迟到事件因查无记录不会
-  // 再产生第二次踢人。messageIds 不截断，确保已制造的痕迹仍全部进入清理。
+  // 再产生第二次踢人。
   const cutoff: number = event.now - JOIN_WINDOW_MS;
   state.trackedMessageTimes = state.trackedMessageTimes.filter((timestamp: number): boolean => timestamp > cutoff);
   state.trackedMessageTimes.push(event.now);
   state.messageIds.push(event.messageId);
+  // 常规窗口里根本到不了这个上限（刷屏在第 46 条就转成踢人），它兜的是提醒
+  // 一直发不出去、记录被反复续期那条退化路径：数组每次快照都整份重写并落盘，
+  // 不设上限就按该成员的发言数无限增长（见 consts 里的同名常量）。丢的只会是
+  // 该成员自己最早的几条发言——入群公告在 announcementMessageId 里单独存着，
+  // 不在这条队列上，撑满多少次都不会被挤掉。
+  while (state.messageIds.length > VERIFICATION_TRACKED_MESSAGE_IDS_MAX) state.messageIds.shift();
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
     return {
       next: { kind: "expelling", reason: "flood", snapshot: snapshotOf(state) },
@@ -285,7 +357,17 @@ function handleVerifyTimeout(
 
   // 没有任何一条带按钮提醒成功落地，就不能把“未点击”解释为成员拒绝验证。
   // 延长一个完整窗口并继续补发；只有成员确实获得过可见按钮后才允许踢人。
-  if (state.reminderMessageId === undefined && state.replyReminderMessageId === undefined) {
+  //
+  // 但续期到入群后 VERIFICATION_REMINDER_UNDELIVERED_MAX_MS 就停：那之后仍然
+  // 一条都发不出去，说明这个群里机器人已经根本发不了消息（论坛 General 话题
+  // 关闭、被禁言却仍能限制成员），再等下去只会让每个入群者各留下一条永不过期
+  // 的记录常驻内存与每日快照。超限按普通超时结算——踢人本就只踢不封，人随时
+  // 能重进。
+  if (
+    state.reminderMessageId === undefined &&
+    state.replyReminderMessageId === undefined &&
+    event.now - state.joinedAt < VERIFICATION_REMINDER_UNDELIVERED_MAX_MS
+  ) {
     state.expiresAt = event.now + VERIFICATION_TIMEOUT_MS;
     const canReply: boolean = state.replyReminderRequested && state.welcomeAnchorMessageId !== undefined;
     if (!canReply) {
@@ -397,10 +479,23 @@ export function transitionVerification(state: VerificationState | undefined, eve
     case "expelSettled":
       if (state?.kind === "expelling") return { next: undefined, effects: [] };
       return { next: state, effects: [] };
+    case "kickSettled":
+      if (state?.kind !== "kickPending") return { next: state, effects: [] };
+      return {
+        next: {
+          kind: "kicked",
+          label: state.label,
+          isBot: state.isBot,
+          kickedAt: event.now,
+        },
+        effects: [],
+      };
     case "reminderLanded":
       return handleReminderLanded(state, event);
     case "dedupeExpired":
-      if (state?.kind === "exempt" || state?.kind === "kicked") return { next: undefined, effects: [] };
+      if (state?.kind === "exempt" || state?.kind === "kicked") {
+        return { next: undefined, effects: [] };
+      }
       return { next: state, effects: [] };
   }
 }

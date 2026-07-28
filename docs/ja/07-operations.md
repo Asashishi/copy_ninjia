@@ -38,7 +38,7 @@ WantedBy=multi-user.target
 
 データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` を container の一時 layer に置かないでください。
 
-この permission gate を含む版へ既存 deployment を更新する前に、すべての instance を停止して手動 migration します：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。program は data root と `config/`、`logs/`、`memory/` を `0750` で作成し、runtime UID の所有であることを検証します。既存 directory が `0750` より広い場合は起動を拒否し、暗黙の chmod は行いません。必要なら実際の owner/group に置き換え、runtime user の書き込み権限を維持してください。
+この permission gate を含む版へ既存 deployment を更新する前に、すべての instance を停止して手動 migration します：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。program は data root と `logs/`、`memory/` を `0750` で作成し、runtime UID の所有であることを検証します。`config/` は project tree 内の読み取り専用 deployment input であり、独立した runtime data root の一部ではありません。既存 directory が `0750` より広い場合は起動を拒否し、暗黙の chmod は行いません。必要なら実際の owner/group に置き換え、runtime user の書き込み権限を維持してください。
 
 プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 
@@ -49,16 +49,29 @@ WantedBy=multi-user.target
 | パス | 内容 | バックアップ時の注意 |
 | :--- | :--- | :--- |
 | `state.json` + `state.json.bak` | グループスイッチ、copy、ロックダウンミラーなどの正式な状態 | 主・副を同時にバックアップ |
-| `memory/ai/` | グループごとの AI メモリ snapshot | グループチャットの逐語内容を含み、機密 |
-| `memory/stickers/` | スタンプ説明カタログ | オンラインパックとの照合から再構築可能 |
-| `memory/luck/` | 運勢結果 + `receipt-secret.json` | キーと当日結果を同じ整合 snapshot に含め、key だけを再生成しない |
-| `memory/anti-raid/` | 日別の認証待ち状態 | 東京日付の当日ファイルだけを保持 |
-| `memory/blocklist-removals.json` | 未完了 blocklist removal batch の durable outbox | `state.json` と `config/blocklist.json` と同じ整合点で backup。起動時は現行形式を厳密に検証 |
-| `config/blocklist.json` | `/block` の永続ブロックリスト（ユーザー id とブロック時刻） | 必ずバックアップ：失うと全員のブロックが解除されたのと同じ。手編集（ブロック解除の唯一の手段）は停止中に行い、編集後も正しい JSON である必要があります。ログと違い、このファイルが壊れていると末尾を切り詰めて自動復旧するのではなく**起動を拒否**します。黙って数件落とすことは、その人たちを部屋に戻すことだからです。キーはそのまま復元できる 10 進の id でなければなりません |
+| `memory/ai/<chatId>.json` | チャットごとの version=1 AI メモリ原子 snapshot。直近の逐語メッセージ、過去の要約、要約待ち内容、保存時刻を保持 | 機密のグループチャット本文を含む。チャットのメモリ purge 時に削除し、起動時は chat ID ごとに復元 |
+| `memory/stickers/<pack>.json` | allowlist 対象スタンプパック 1 件の version=1 カタログ。`file_unique_id` ごとの emoji/説明とパック要約を保持 | オンラインパックとの照合で再構築可能。`config/stickers.json` から外れたパックのファイルは起動復元時に削除 |
+| `memory/luck/<YYYY-MM-DD>.json` | 東京当日の運勢結果。key はユーザー ID で、質問付きの場合は質問 digest も含む | 当日分だけ保持。下記 receipt key と同じ整合時点でバックアップ |
+| `memory/luck/receipt-secret.json` | 当日の署名付き運勢 receipt 用 version=1 HMAC key（日付 + 32 byte key） | 既存結果と別に削除・再生成・復元してはいけない |
+| `memory/anti-raid/<YYYY-MM-DD>.json` | Challenge 認証待ち状態の当日追記ログ。active snapshot、同一 key の revision、終端 tombstone を含む | 復元時は `chatId:userId` ごとの最後の値だけを採用。当日だけを保持し、履歴 10,000 件または 4 MiB で active snapshot へ compact |
+| `memory/blocklist/blocklist.json` | `/block` の正式な恒久リスト（ユーザー id とブロック時刻） | 必ずバックアップ。失うと全員のブロックが解除されたのと同じです。通常の解除は `/unblock` を使い、緊急の手編集は停止中に正しい JSON を保って行います。破損時は末尾を切り詰めず**起動を拒否**し、キーはそのまま復元できる 10 進 id でなければなりません |
+| `memory/blocklist/removals.json` | 未完了のチャット別 BAN task を持つ durable outbox | リストの複製ではありません。`blocklist.json` と `state.json` と同じ整合点でバックアップします。起動時に正式リストとチャット状態で filter して再投入し、task の着地後に削除します |
+| `memory/ad-detected/sample.json` | 広告判定ヒットの生サンプル（時刻、メッセージ ID と本文、判定理由、引用/返信コンテキスト） | **純粋なバイパスで、プロセスは決して読みません**。失っても挙動は変わらず、`config/ad_samples.json` を調整するための素材が減るだけです。8 MiB 到達時に `sample.<東京日付>[.<連番>].json` へ自動ローテーションし、アーカイブは当日を含む直近 15 東京暦日だけ自動保持します |
+| `memory/ad-detected/sample.<YYYY-MM-DD>[.<連番>].json` | `sample.json` のローテーション済みアーカイブ。同日 2 個目は `.2` から増加 | 厳密な名前の通常ファイルだけを直近 15 東京暦日保持。不明な名前、ディレクトリ、シンボリックリンクは自動削除しない |
 | `logs/` | 英語メッセージのエラーログ | 必要に応じて |
 | `bot.lock` と `.guard` / `.recovery` | 単一インスタンスロック | バックアップも手動編集もしない |
 
+`memory/` 直下にはファイルを置かず、6 ドメインがそれぞれ 1 つのサブディレクトリを所有します。起動復元は `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/` を必要に応じて作成し、`ad-detected/` は最初の広告検出ヒット後にだけ現れます。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。
+
+### `memory/` の補助ファイルとプロセス内限定状態
+
+- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。`ai/`、`stickers/`、`luck/` は起動時に `*.tmp` を清掃します。`blocklist/` の 2 owner は自分の `.blocklist.json.*.tmp` / `.removals.json.*.tmp` prefix だけを清掃し、`ad-detected/` は最初の書き込み前に `.sample.json.*.tmp` を清掃します。現在の `anti-raid/` 復元はこの種のファイルを無視しますが、自動削除はしません。復元には使われないため、Bot を停止し、名前が原子書き込み形式へ厳密に一致すると確認した後だけ孤児として削除できます。
+- `memory/ai/<chatId>.json.corrupt` と `memory/stickers/<pack>.json.corrupt` は JSON を parse できず隔離されたファイルです。通常復元の対象外で、自動削除もしません。parse はできても現行 version=1 schema に合わないファイルは隔離せず起動を拒否し、[06](06-modification-guide.md#永続化-schema-の変更) に従う手動 migration が必要です。
+- `/block` の `confirmedKickedUserIdsByChat`、Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。特に東京日付単位の確認済み kick cache は日付変更またはプロセス再起動で空になり、`blocklist.json` や `removals.json` から推測して復元しません。
+
 Bot 停止中または storage snapshot の整合境界で、データルート全体をバックアップします。`memory/` は機密データとして扱ってください。単一 tenant デプロイ基準では file mode が緩い `0644` です。詳細は [04](04-invariants.md#永続化) を参照し、アクセス制御はデータルートの owner・permission と host account の隔離で行います。
+
+まだ `config/blocklist.json` を使う旧版から更新する場合、runtime 互換分岐は残しません。Bot を停止し、旧ファイルと既存の `memory/blocklist/` をバックアップしてから、旧ファイルを `memory/blocklist/blocklist.json` へ手動移動します。`removals.json` と結合してはいけません。前者は「誰を恒久的にブロックすべきか」、後者は「どのチャット別処置が未完了か」だけを表します。バックアップと移動先 JSON の一致を確認してから再起動してください。
 
 ## 起動失敗の調査
 
@@ -71,7 +84,7 @@ Bot 停止中または storage snapshot の整合境界で、データルート�
 | config schema 検証失敗 | `config/*.json` または `.env` が不正 | 指摘された field を修正。mood の重みは合計 100、スタンプパックは最大 5 個 |
 | state の 2 コピーが両方無効 | schema 変更版をデータ migration なしでデプロイした | [06 永続化 schema の変更](06-modification-guide.md#永続化-schema-の変更) に従って migration してから起動。プログラムは元ファイルを変更しません |
 | 運勢結果と receipt key が不整合 | 当日結果と `receipt-secret.json` が異なる backup 時点から復元された、または片方だけを復元した | Bot を停止し、同じ整合時点の `memory/luck/` 全体を復元。key だけを削除・再生成しない |
-| `*.corrupt` ファイルが現れる | 壊れた state copy 1 件を隔離し、もう一方へ切り替えた | 正常な自己修復経路。原因調査後に隔離ファイルを削除可能 |
+| `*.corrupt` ファイルが現れる | state copy 1 件が壊れて隔離されたか、parse 不能な AI/スタンプ JSON が復元集合から外された | 元のファイル名から owner を特定し、先に破損原因を調査。state は別 copy が有効なら自己復旧できますが、AI/スタンプの隔離ファイルは自動復元も自動削除もしません |
 
 ### `bot.lock` が起動を拒否する場合
 

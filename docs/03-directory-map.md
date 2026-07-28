@@ -20,14 +20,15 @@
 | `packages/commands/` | 显式命令处理，一命令一文件 | `copy.ts`、`block.ts`、`cjkAction.ts`、`send.ts`、`targetResolution.ts` |
 | `packages/auto/` | 非命令的自动行为：复读、AI 转录与触发、反应同步 | `message/`、`triggerPolicy.ts` |
 | `packages/aiChat/` | AI 闲聊主线程代理：Worker 监督入口与记忆镜像 | `index.ts`、`memoryMirror.ts` |
-| `packages/antiRaid/` | Anti-Raid 主线程代理：Worker 监督入口、lockdown 恢复、待验证镜像接收与黑名单入群判定 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts`、`blocklistGuard.ts`、`memberFacts.ts` |
+| `packages/antiRaid/` | Anti-Raid 主线程代理：Worker 监督入口、lockdown 恢复、待验证镜像接收、黑名单入群判定与广告判定的投递/处置 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts`、`blocklistGuard.ts`、`adDetect.ts`、`memberFacts.ts` |
 | `packages/copy/` | 复读模式变换与头像/反应/翻译的执行队列 | `copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、`translate.ts` |
 | `packages/users/` | 发送者身份缓存、可见发送者判定、用户标签生成 | `senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts` |
 | `packages/states/` | **无 I/O** 的纯状态转移：验证、锁定、回复准入 | `verification.ts`、`lockdown.ts` |
-| `packages/config/` | `config/*.json` 的严格 schema、惰性加载与启动校验 | `stickers.ts`、`reactions.ts`、`mood.ts` |
+| `packages/config/` | `config/*.json` 的严格 schema、惰性加载与启动校验 | `stickers.ts`、`reactions.ts`、`mood.ts`、`adSamples.ts` |
 | `packages/libs/` | 领域无关的基础设施：原子文件、有界 I/O、并发工具 | `flushBarrier.ts`、`linkedQueue.ts`、`text.ts` |
-| `packages/workers/` | 三个 Worker 的线程内实现 | `aiChatWorker.ts` + `aiChat/`、`antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts`、`diskIOWorker.ts` + `diskIO/` |
-| `packages/ai/` | Gemini 客户端、视觉描述、生图、贴纸目录、工具实现 | `gemini.ts`、`tools/replyToolset/`、`imageGeneration.ts` |
+| `packages/workers/` | 三个 Worker 的线程内实现 | `aiChatWorker.ts` + `aiChat/`、`antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts` + `antiRaid/adDetect/`、`diskIOWorker.ts` + `diskIO/` |
+| `packages/ai/` | 各家模型的收发入口与 AI 能力实现：Gemini 客户端、DeepSeek 客户端、视觉描述、生图、贴纸目录、工具实现 | `gemini.ts`、`deepseek.ts`、`tools/replyToolset/`、`imageGeneration.ts` |
+| `packages/workers/antiRaid/adDetect/` | 广告检测流水线（DeepSeek）：排队批处理、判定与命中处置 | `queue.ts`、`classifier.ts`、`disposal.ts` |
 | `packages/infra/` | Telegram 客户端、Worker 宿主、logger、env 配置 | `telegram/`、`config.ts`、`workerSupervisor.ts` |
 | `packages/infra/storage/` | 数据根预检、实例锁、StateStore、启动清理 | `dataRoot.ts`、`instanceLock.ts`、`stateStore.ts` |
 | `packages/cache/` | 按领域拆分的进程内可变状态容器 | `aiChat/`、`copy/`、`senderIdentity.ts` |

@@ -1,4 +1,4 @@
-import type { VerificationSnapshot } from "./antiRaid";
+import type { AdSampleMessage, VerificationSnapshot } from "./antiRaid";
 import type { PendingBlockedRemoval } from "./blocklist";
 import type { BlockedUserRecord, LuckDayCache, LuckReceiptSecret } from "./diskIO/storage";
 export type * from "./diskIO/storage";
@@ -124,6 +124,28 @@ export interface BlocklistRemovalsDiskMessage {
   removals: readonly (readonly [number, PendingBlockedRemoval])[];
 }
 
+/**
+ * 主线程 -> diskIOWorker：一条广告判定命中样本，追加进 memory/ad-detected/sample.json。
+ *
+ * 这是整个持久化里唯一**只写不读**的一类：进程从不加载它，启动恢复也不碰，
+ * 丢了不影响任何运行时状态。它存在的唯一目的是让人回头翻原始素材、据此调
+ * config/ad_samples.json 的判定口径（见 workers/diskIO/adSampleFile.ts）。
+ */
+export interface AdSampleDiskMessage {
+  type: "adSample";
+  chatId: number;
+  /** 用户 id；频道马甲发言时是该频道的负数 id。 */
+  senderId: number;
+  /** 处置播报里的展示标签，人翻样本时用来认人。 */
+  label: string;
+  /** 命中时刻的东京时间「YYYY/MM/DD HH:mm:ss」，由主线程算好带过来。 */
+  detectedAt: string;
+  /** 模型给出的判定理由。 */
+  reason: string;
+  /** 本次判定依据的整串消息（正文，外加只给人看的引用/回复上下文）。 */
+  messages: readonly AdSampleMessage[];
+}
+
 /** 运行时恢复窗口允许暂存并按序重放的业务持久化消息。 */
 export type DiskBusinessMessage =
   | AiMemoryDiskMessage
@@ -134,7 +156,8 @@ export type DiskBusinessMessage =
   | VerificationDeleteDiskMessage
   | BlockUserDiskMessage
   | UnblockUserDiskMessage
-  | BlocklistRemovalsDiskMessage;
+  | BlocklistRemovalsDiskMessage
+  | AdSampleDiskMessage;
 
 /** diskIOWorker 短窗口内按 key 合并后的最终变化。 */
 export interface VerificationFileChange {
@@ -174,6 +197,7 @@ export type DiskIOMessage =
   | BlockUserDiskMessage
   | UnblockUserDiskMessage
   | BlocklistRemovalsDiskMessage
+  | AdSampleDiskMessage
   | EnsureLuckSecretRequest
   | LoadRequest
   | DiskFlushRequest;

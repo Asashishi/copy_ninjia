@@ -47,7 +47,17 @@ mock.module("../../packages/infra/diskIO", () => ({
 }));
 
 const { handleBlockCommand } = await import("../../packages/commands/block");
-const { blockedUserIds, blocklistSweepState, sessionBlockedAt } = await import("../../packages/cache/blocklist");
+const {
+  blockedUserIds,
+  blocklistSweepState,
+  confirmedKickedUserIdsByChat,
+  confirmedKickedUsersDay,
+  sessionBlockedAt,
+} = await import("../../packages/cache/blocklist");
+const {
+  recordUserConfirmedKickedInChat,
+  wasUserConfirmedKickedInChat,
+} = await import("../../packages/infra/blocklist");
 
 function context(userId: number | undefined = 100): never {
   return {
@@ -78,6 +88,8 @@ beforeEach(() => {
   blockedUserIds.clear();
   sessionBlockedAt.clear();
   blocklistSweepState.clear();
+  confirmedKickedUserIdsByChat.clear();
+  confirmedKickedUsersDay.current = null;
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 55);
   banChatMember.mockImplementation(async (): Promise<boolean> => true);
   banChatSenderChat.mockImplementation(async (): Promise<boolean> => true);
@@ -132,6 +144,46 @@ describe("/block 跨群封禁与黑名单", () => {
     });
   });
 
+  test("只复用当天确证踢出的群用户，不从权威名单或预封禁结局推断", async () => {
+    isBotAdminIn.mockResolvedValue(true);
+    isChatMember.mockResolvedValue(true);
+
+    await handleBlockCommand(context());
+    expect(isChatMember).toHaveBeenCalledTimes(1);
+    expect(banChatMember).toHaveBeenCalledTimes(1);
+
+    isChatMember.mockClear();
+    banChatMember.mockClear();
+    await handleBlockCommand(context());
+
+    // 第二次 /block 仍会重试名单落盘，但已确证的群级踢出无需再查、再封。
+    expect(isChatMember).not.toHaveBeenCalled();
+    expect(banChatMember).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringMatching(/从 1 个群一脚踢出去.*早就在小本本上了/),
+      replyToMessageId: 10,
+    });
+
+    // 到下一个东京自然日整表清空；缓存不从任何落盘文件恢复。
+    recordUserConfirmedKickedInChat(-2002, 8, "2026-07-28");
+    expect(wasUserConfirmedKickedInChat(-2002, 8, "2026-07-28")).toBeTrue();
+    expect(wasUserConfirmedKickedInChat(-2002, 8, "2026-07-29")).toBeFalse();
+    expect(confirmedKickedUserIdsByChat.size).toBe(0);
+  });
+
+  test("确认不在群的预封禁不进缓存，重复命令仍重新确认", async () => {
+    isBotAdminIn.mockResolvedValue(true);
+    isChatMember.mockResolvedValue(false);
+
+    await handleBlockCommand(context());
+    await handleBlockCommand(context());
+
+    expect(isChatMember).toHaveBeenCalledTimes(2);
+    expect(banChatMember).toHaveBeenCalledTimes(2);
+    expect(confirmedKickedUserIdsByChat.size).toBe(0);
+  });
+
   test("频道马甲只调用 banChatSenderChat，不查询成员状态", async () => {
     target = { id: -4004, first_name: "Channel", isChannel: true };
     isBotAdminIn.mockResolvedValueOnce(true);
@@ -171,6 +223,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
     await handleBlockCommand(context());
 
+    expect(confirmedKickedUserIdsByChat.size).toBe(0);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringMatching(/一个群都踢不动.*已经记进小本本了/),
@@ -202,7 +255,7 @@ describe("/block 的黑名单落盘", () => {
     expect(message.blockedAt).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
   });
 
-  test("重复拉黑同一个人会补投落盘，封禁也照做一遍", async () => {
+  test("重复拉黑同一个人会补投落盘，未确证踢出的群仍重新封禁", async () => {
     isBotAdminIn.mockResolvedValue(true);
     await handleBlockCommand(context());
     expect(postDiskIO).toHaveBeenCalledTimes(1);
@@ -212,8 +265,8 @@ describe("/block 的黑名单落盘", () => {
 
     // 这个 id 是本进程新增的（在 sessionBlockedAt 里），上一次落盘可能压根没
     // 成功——管理员修好磁盘再跑一次 /block 正是最自然的重试动作，不能因为
-    // 「Map 里已经有了」就静默跳过。封禁也重来一次：期间新加的群、上次失败
-    // 的群靠这次补上。
+    // 「Map 里已经有了」就静默跳过。默认替身把成员判成不在群，因此不会进入
+    // “确证踢出”缓存，封禁也会重来一次：新加的群、上次失败/预封禁的群靠它补上。
     expect(postDiskIO).toHaveBeenCalledTimes(2);
     expect(banChatMember).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -251,7 +304,7 @@ describe("/block 的黑名单落盘", () => {
     // sweptAt 是永久闩锁，唯一的复位路径本来只有停管：这个群若早就扫过，
     // 被拉黑的人会一直待到进程结束——入群秒踢只对之后的入群更新生效。
     chatStates.set(-2002, { botIsAdmin: true });
-    blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0 });
+    blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0, permissionBlocked: false });
     banChatMember.mockResolvedValue(false);
 
     await handleBlockCommand(context());
@@ -261,7 +314,7 @@ describe("/block 的黑名单落盘", () => {
 
   test("封禁成功的群不必重扫", async () => {
     chatStates.set(-2002, { botIsAdmin: true });
-    blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0 });
+    blocklistSweepState.set(-2002, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0, permissionBlocked: false });
 
     await handleBlockCommand(context());
 

@@ -8,7 +8,12 @@ import type { AiRecordMediaMessage, ImageGenerationReference } from "../../types
 import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";
 import { buildBufferedMessage } from "./bufferedMessage";
 import { pushBufferedMessage } from "./rollingMemory";
-import { currentReplyGeneration, generateAndSendReply, isReplyGenerationCurrent } from "./replyPipeline";
+import {
+  currentReplyGeneration,
+  generateAndSendReply,
+  isReplyGenerationCurrent,
+  trackReplyGenerationTask,
+} from "./replyPipeline";
 import { replyReferenceForBufferedEntry } from "./replyChain";
 import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 
@@ -115,7 +120,11 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
   // describeMedia 内部兜住一切异常只返回 null，这条异步链不会 reject；
   // 同一份媒体按 file_unique_id 去重，不同媒体则经过全局有界执行器，避免
   // 洪峰同时启动无界的下载、转码和视觉请求。
-  void describeMedia(msg.kind, msg.fileId, msg.fileUniqueId).then((description: string | null): void => {
+  const task: Promise<void> = describeMedia(
+    msg.kind,
+    msg.fileId,
+    msg.fileUniqueId
+  ).then((description: string | null): void => {
     if (!isReplyGenerationCurrent(msg.chatId, generation)) return;
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。
@@ -161,4 +170,5 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
       });
     }
   });
+  trackReplyGenerationTask(msg.chatId, generation, task);
 }

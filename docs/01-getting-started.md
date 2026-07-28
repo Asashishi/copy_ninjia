@@ -31,13 +31,14 @@ cp .env.example .env
 
 ## 配置 `.env`
 
-项目只读取下面 5 个环境变量，不存在未文档化的开关。其中 4 项凭据/权限配置由 [`packages/infra/config.ts`](../packages/infra/config.ts) 解析；`COPY_NINJIA_DATA_ROOT` 必须在运行时路径常量冻结前生效，因此由 [`packages/consts/paths.ts`](../packages/consts/paths.ts) 提前读取：
+项目只读取下面 6 个环境变量，不存在未文档化的开关。其中 5 项凭据/权限配置由 [`packages/infra/config.ts`](../packages/infra/config.ts) 解析；`COPY_NINJIA_DATA_ROOT` 必须在运行时路径常量冻结前生效，因此由 [`packages/consts/paths.ts`](../packages/consts/paths.ts) 提前读取：
 
 | 变量 | 必填 | 说明 |
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather 下发的 token |
-| `GEMINI_API_KEY` | ✅ | Gemini API 密钥 |
-| `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员，单个十进制用户 ID；`/init`、`/ai_chat`、`/switch_mood`、`/send` 等只认它 |
+| `GEMINI_API_KEY` | ✅ | Gemini API 密钥，AI 闲聊 agent 专用：`/ai_chat` 的回复生成、图片理解、记忆压缩 |
+| `DEEPSEEK_API_KEY` | 可空 | DeepSeek API 密钥（OpenAI 兼容接口），广告检测专用：`/ad_detect` 的判定。留空时 `/ad_detect enable` 被拒绝，其余功能照常运行 |
+| `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员，单个十进制用户 ID；`/init`、`/ai_chat`、`/ad_detect`、`/switch_mood`、`/send` 等只认它 |
 | `PRIVILEGED_USERS_ID` | 可空 | 白名单用户，逗号分隔；豁免 copy 冷却、可用 `/block`、可为其他机器人担保验证 |
 | `COPY_NINJIA_DATA_ROOT` | 可空 | 运行时数据根目录；留空时数据落在项目根。详见 [07 运维与排障](07-operations.md#数据根) |
 
@@ -51,8 +52,9 @@ cp .env.example .env
 | [`config/stickers.json`](../config/stickers.json) | AI 可用的贴纸包，最多 5 个 | [`packages/config/stickers.ts`](../packages/config/stickers.ts) |
 | [`config/reactions.json`](../config/reactions.json) | AI 可用的 emoji 反应集合 | [`packages/config/reactions.ts`](../packages/config/reactions.ts) |
 | [`config/mood.json`](../config/mood.json) | 心情档位：文案、权重与天气/时段倍率 | [`packages/config/mood.ts`](../packages/config/mood.ts)；权重必须是正整数且总和恰好 100 |
+| [`config/ad_samples.json`](../config/ad_samples.json) | 广告检测的判定口径示例，顶层就是字符串数组 | [`packages/config/adSamples.ts`](../packages/config/adSamples.ts)；条目非空、不重复，最多 500 条 |
 
-三个 JSON 都走严格 schema 校验，启动时在联网之前预热；配错会直接拒绝启动并说明字段，不会带病运行。
+四个 JSON 都走严格 schema 校验，启动时在联网之前预热；配错会直接拒绝启动并说明字段，不会带病运行。
 
 ## Telegram 侧配置（BotFather 与群内）
 
@@ -73,6 +75,7 @@ bun run start     # 启动长轮询
 ```text
 /init enable      # 打开本群业务入口；未 init 的群普通业务 update 在入口网关直接丢弃
 /ai_chat enable   # （可选）打开本群 AI 闲聊
+/ad_detect enable # （可选）打开本群广告检测；需要机器人在本群是管理员才会真正触发
 ```
 
 ## 验证跑通了

@@ -21,7 +21,7 @@ flowchart TD
 
     MAIN["🧵 Main thread<br/>grammY runner + per-chat sequentialize<br/>Commands and automatic-message pipeline<br/>StateStore (state.json)"]:::main
     AI["🤖 AI Worker<br/>Multi-turn Gemini tool calls<br/>Rolling memory · summarization · moods"]:::worker
-    RAID["🛡️ Anti-Raid Worker<br/>Verification and lockdown state machines / blocklist removal"]:::worker
+    RAID["🛡️ Anti-Raid Worker<br/>Verification and lockdown state machines / blocklist removal / ad detection"]:::worker
     DISK["💾 Disk I/O Worker<br/>Logs / memory snapshots / fortunes / verification files / blocklist"]:::worker
 
     MAIN --> AI
@@ -33,8 +33,8 @@ The organizing principle is **exclusive state ownership**: every piece of runtim
 
 - The **main thread** owns the Telegram runner, supervision handles for all three Workers, and the in-memory `state.json` mirror managed by `StateStore`—including group switches, copy state, and lockdown mirrors.
 - The **AI Worker** exclusively owns group-chat memory, reply admission, the media-description pipeline, per-group moods, and runtime sticker-catalog state.
-- The **Anti-Raid Worker** exclusively owns the verification/lockdown state machines and their timers. The main thread keeps only recoverable mirrors. Blocklist removals also execute on this thread (they carry no state machine — the main thread decides and posts the work), sharing the request queue with verification-timeout kicks. Precisely because there is no state machine, batches without a landing receipt stay in a main-thread mirror, are snapshotted to the durable Disk I/O outbox before dispatch, and are reposted after either process startup or Worker respawn.
-- The **Disk I/O Worker** exclusively serializes reads and writes to shared paths such as `logs/`, `memory/`, and `config/blocklist.json`. `state.json` is the sole exception and is written atomically by the main-thread `StateStore`.
+- The **Anti-Raid Worker** exclusively owns the verification/lockdown state machines and their timers. The main thread keeps only recoverable mirrors. The entire `/ad_detect` pipeline also runs on this thread (bundling 90 seconds of messages per sender, sending one batch per second to DeepSeek, then deleting the messages and announcing the ban reason in the chat on a hit); the verdict is posted back to the main thread, which turns it into the same blocklist entry plus per-chat bans that `/block` produces. Blocklist removals also execute on this thread (they carry no state machine — the main thread decides and posts the work), sharing the request queue with verification-timeout kicks. Precisely because there is no state machine, batches without a landing receipt stay in a main-thread mirror, are snapshotted to the durable Disk I/O outbox before dispatch, and are reposted after either process startup or Worker respawn.
+- The **Disk I/O Worker** exclusively serializes reads and writes to `logs/` and to the six domains under `memory/`: `ai/`, `stickers/`, `luck/`, `anti-raid/`, `blocklist/`, and `ad-detected/`. `state.json` is the sole exception and is written atomically by the main-thread `StateStore`. See [07 Data Root](07-operations.md#data-root) for every file shape and its recovery and retention role.
 
 The main-thread Anti-Raid entry point remains [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts), while lockdown recovery and verification-mirror intake live in [`packages/antiRaid/lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) and [`packages/antiRaid/verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts). Inside the Worker, the verification interpreter is split under [`packages/workers/antiRaid/`](../../packages/workers/antiRaid/) into core state/recovery, inbound event translation, Telegram effects, and the reminder-delivery owner. Those modules share one dispatcher, preserving a single authoritative state-machine and revision entry point.
 
@@ -101,7 +101,7 @@ The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycl
 1. Recursively create and **preflight the data root**: write, file fsync, same-directory hard link, atomic rename, and directory fsync. Any failure aborts startup with the actual path.
 2. Acquire the **`bot.lock`** single-instance lock. See [07 Operations and Troubleshooting](07-operations.md#botlock-refuses-startup) for its format and cleanup rules.
 3. **Warm configuration and restore StateStore**: validate all three JSON files under `config/`, remove orphaned top-level temporary files, then strictly validate and restore the primary and backup `state.json` copies. All of this occurs before network access or Worker creation.
-4. Initialize the Telegram client and **Disk I/O Worker**, then restore AI, sticker, fortune, pending-verification, and pending blocklist-removal data under `memory/`, plus the `/block` blocklist in `config/blocklist.json`. A failure in any domain prevents startup with partial state.
+4. Initialize the Telegram client and **Disk I/O Worker**, then restore AI, sticker, fortune, and pending-verification data under `memory/`, plus the authoritative `/block` list at `memory/blocklist/blocklist.json` and unfinished-removal outbox at `memory/blocklist/removals.json`. A failure in any domain prevents startup with partial state.
 5. Register handlers, set the command menu, and run `bot.init()`.
 6. Initialize the **AI Worker**, hydrating only groups explicitly enabled in `state.json`; then restore fortune and pending-verification mirrors, initialize the **Anti-Raid Worker**, and finally start the acknowledgement-safe runner.
 7. Only after everything is ready, start the **low-priority group-title backfill**, bounded so it cannot monopolize the shared rate limiter.

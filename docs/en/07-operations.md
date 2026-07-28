@@ -38,7 +38,7 @@ WantedBy=multi-user.target
 
 Pre-create the data root with the deployment tool: `sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`. For containers, mount that same directory as persistent storage and set its owner on the host or in an init container. Do not place `memory/` on the container's ephemeral layer.
 
-Before upgrading an existing deployment to a version with this permission gate, stop every instance and migrate the directory manually: `sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`. The program creates the data root plus `config/`, `logs/`, and `memory/` with mode `0750` and verifies that they belong to the runtime UID. It refuses an existing directory broader than `0750` and never chmods it silently. Substitute the deployment's real owner/group when needed; the runtime user must remain able to write.
+Before upgrading an existing deployment to a version with this permission gate, stop every instance and migrate the directory manually: `sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`. The program creates the data root plus `logs/` and `memory/` with mode `0750` and verifies that they belong to the runtime UID; `config/` contains read-only deployment inputs in the project tree and is not part of a separate runtime-data root. It refuses an existing directory broader than `0750` and never chmods it silently. Substitute the deployment's real owner/group when needed; the runtime user must remain able to write.
 
 Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification, lockdown timers, AI memory, and unacknowledged Telegram updates resume according to the recovery semantics in [04 Authoritative Runtime Invariants](04-invariants.md#persistence).
 
@@ -49,16 +49,29 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 | Path | Contents | Backup notes |
 | :--- | :--- | :--- |
 | `state.json` + `state.json.bak` | Authoritative group switches, copy state, lockdown mirrors, and related state | Back up primary and backup together |
-| `memory/ai/` | Per-group AI-memory snapshots | Contains verbatim group-chat content; sensitive |
-| `memory/stickers/` | Sticker-description catalog | Reconstructible by reconciling online packs |
-| `memory/luck/` | Fortune results + `receipt-secret.json` | Back up the key and current-day results in one consistent snapshot; never regenerate only the key |
-| `memory/anti-raid/` | Daily pending-verification state | Only the current Tokyo-day file is retained |
-| `memory/blocklist-removals.json` | Durable outbox for unfinished blocklist-removal batches | Back up with `state.json` and `config/blocklist.json`; startup strictly validates the current format |
-| `config/blocklist.json` | `/block` permanent blocklist (user ids + block time) | Must be backed up: losing it unblocks everyone. Hand-editing (the only way to unblock) must happen while the process is stopped and must leave valid JSON: unlike the logs, a damaged blocklist **refuses startup** instead of self-healing by truncation — silently dropping entries would let exactly those people back in. Keys must be plain decimal ids that round-trip exactly |
+| `memory/ai/<chatId>.json` | Per-chat version=1 atomic AI-memory snapshot: recent verbatim messages, historical summaries, pending summary, and save time | Contains sensitive group-chat text; deleted when that chat's memory is purged and restored by chat ID at startup |
+| `memory/stickers/<pack>.json` | Version=1 catalog for one allowlisted sticker pack: emoji/description entries keyed by `file_unique_id`, plus a pack summary | Reconstructible by reconciling the live pack; startup deletes files for packs no longer listed in `config/stickers.json` |
+| `memory/luck/<YYYY-MM-DD>.json` | Fortune results for the current Tokyo day; keys are user IDs, optionally suffixed with a digest of the requested subject | Only today's file is retained; back it up at the same consistency point as the receipt key below |
+| `memory/luck/receipt-secret.json` | Version=1 HMAC key for the current day's signed fortune receipts (day + 32-byte key) | Never delete, regenerate, or restore it separately from existing results |
+| `memory/anti-raid/<YYYY-MM-DD>.json` | Current-day append log for pending Challenge verification, including active snapshots, repeated revisions, and terminal tombstones | Recovery keeps the last value per `chatId:userId`; only the current Tokyo day is retained, and 10,000 historical entries or 4 MiB triggers compaction to active snapshots |
+| `memory/blocklist/blocklist.json` | Authoritative permanent `/block` list (user ids + block time) | Must be backed up: losing it unblocks everyone. Use `/unblock` normally; emergency hand edits require a stopped process and valid JSON. Damage **refuses startup** rather than self-healing by truncation; keys must be plain decimal ids that round-trip exactly |
+| `memory/blocklist/removals.json` | Durable outbox for unfinished per-chat ban tasks | Not a list copy; back it up at the same consistency point as `blocklist.json` and `state.json`. Startup filters it against authoritative list/chat state and replays it; settled tasks are removed |
+| `memory/ad-detected/sample.json` | Raw samples of ad-detection hits (time, message ids and text, verdict reason, quote/reply context) | **Pure side channel; the process never reads it.** Losing it changes no behaviour — only the material you use to retune `config/ad_samples.json`. At 8 MiB it rotates automatically to `sample.<Tokyo date>[.<sequence>].json`; archives are retained automatically for the latest 15 Tokyo calendar days, including today |
+| `memory/ad-detected/sample.<YYYY-MM-DD>[.<sequence>].json` | Rotated `sample.json` archives; the second archive on one day starts at `.2` | Strictly named regular files are retained for the latest 15 Tokyo calendar days; unknown names, directories, and symlinks are never auto-deleted |
 | `logs/` | Error logs with English messages | As needed |
 | `bot.lock` and `.guard` / `.recovery` | Single-instance lock | Do not back up or edit manually |
 
+No files live directly at the top of `memory/`; each of the six domains owns one subdirectory. Startup recovery creates `ai/`, `stickers/`, `luck/`, `anti-raid/`, and `blocklist/` as needed. `ad-detected/` appears only after the first ad-detection hit. Physically, `anti-raid/<day>.json` is an append log rather than a plain active list: creation and updates append full snapshots, settlement appends a `null` tombstone for the same key, and recovery folds that history into the currently active Challenges.
+
+### `memory/` Support Files and Process-Only State
+
+- Atomic replacement briefly creates `.<target-name>.<pid>.<uuid>.tmp`, which disappears after `fsync + rename`; only a hard kill between those steps should leave one behind. `ai/`, `stickers/`, and `luck/` sweep `*.tmp` at startup. The two `blocklist/` owners sweep only their own `.blocklist.json.*.tmp` and `.removals.json.*.tmp` prefixes. `ad-detected/` sweeps `.sample.json.*.tmp` before its first write. Current `anti-raid/` recovery ignores but does not remove these files; they do not participate in recovery and should be treated as orphans only after the bot is stopped and the name exactly matches the atomic-write pattern.
+- `memory/ai/<chatId>.json.corrupt` and `memory/stickers/<pack>.json.corrupt` are quarantined files whose JSON could not be parsed. They are excluded from normal recovery and never auto-deleted. A parseable file that fails the current version=1 schema is not quarantined; it fails startup and must be migrated manually under [06](06-modification-guide.md#changing-a-persistence-schema).
+- `/block`'s `confirmedKickedUserIdsByChat`, Challenge timers, the ad-detection admission queue/deduplication set, and short-lived Telegram member/admin caches are process-only and have no files. In particular, the per-Tokyo-day confirmed-kick cache clears on day rollover or process restart and is never inferred from `blocklist.json` or `removals.json`.
+
 Back up the complete data root while the bot is stopped or at a storage-snapshot consistency boundary. Treat `memory/` as sensitive. Files use permissive mode `0644` under the single-tenant deployment baseline described in [04](04-invariants.md#persistence); access control relies on the data-root owner and permissions plus host-account isolation.
+
+When upgrading from a version that still uses `config/blocklist.json`, do not keep a runtime compatibility branch. Stop the bot, back up the old file and existing `memory/blocklist/`, then manually move the old file to `memory/blocklist/blocklist.json`. Never merge it with `removals.json`: the former answers “who must remain permanently blocked,” while the latter only tracks unfinished per-chat actions. Restart only after verifying the target JSON against the backup.
 
 ## Startup Failures
 
@@ -71,7 +84,7 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
 | Configuration schema validation fails | Invalid `config/*.json` or `.env` | Fix the named field; mood weights must total exactly 100 and at most 5 sticker packs are allowed |
 | Both state copies are invalid | A schema-changing version was deployed without migrating data | Migrate using [06 Changing a Persistence Schema](06-modification-guide.md#changing-a-persistence-schema), then restart; the program does not modify the originals |
 | Fortune results and receipt key are inconsistent | The current-day results and `receipt-secret.json` came from different backup points, or only one was restored | Stop the bot and restore the complete `memory/luck/` directory from one consistency point; do not delete or regenerate only the key |
-| A `*.corrupt` file appears | One damaged state copy was quarantined and the other took over | This is normal self-recovery; remove the quarantined file after investigating the cause |
+| A `*.corrupt` file appears | Either one damaged state copy was quarantined, or an unparseable AI/sticker JSON file was removed from its recovery set | Identify the owner from the original name and investigate the damage first. State can self-recover when its other copy is valid; AI/sticker quarantine files are neither restored nor deleted automatically |
 
 ### `bot.lock` Refuses Startup
 

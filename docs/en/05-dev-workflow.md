@@ -30,11 +30,11 @@
 - **The coverage denominator includes all source code**: `bun run check` adds every production runtime module to the denominator. Modules untouched by any test count as 0% covered. Both function and line coverage must remain at least 90%, so adding an untested module directly lowers global coverage.
 - **ESLint + fully strict tsc**: `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters` are all enabled. `any` is forbidden in production code but exempted in tests.
 - **Explicit type annotations are lint-enforced**: in production code (`index.ts`, `packages/`, `scripts/`), variables, parameters, and destructuring must be annotated via `@typescript-eslint/typedef`, and function and callback return types via `@typescript-eslint/explicit-function-return-type` — neither accepts contextual inference. TypeScript forbids annotating `for...of` / `for...in` loop variables, so the rule skips them automatically; consts whose initializer is already an arrow function are also exempt. Test files are not subject to this.
-- **Convention checks**: `check:conventions` checks code-placement and similar repository rules before lint runs.
+- **Convention checks**: `check:conventions` checks code placement, local Markdown targets, and executable permissions on tracked non-script files before lint runs.
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **1063 tests / 134 files / 8966 `expect()` calls**; full-source **function coverage 94.56% / line coverage 96.47%**. The root README's Coverage badge displays line coverage.
+`bun run test:coverage`: **1200 tests / 142 files / 9443 `expect()` calls**; full-source **function coverage 94.82% / line coverage 96.52%**. The root README's Coverage badge displays line coverage.
 
 ## Test Isolation
 
@@ -73,7 +73,7 @@ bun run test:coverage 2>&1 | tail -5           # test count, file count, expect(
 bun run test:coverage 2>&1 | grep 'All files'  # function and line coverage
 ```
 
-Synchronize the Tests/Coverage badges in all three READMEs; [`docs/assets/coverage_light.svg`](assets/coverage_light.svg) and [`coverage_dark.svg`](assets/coverage_dark.svg), referenced from the “Project Quality” block in each README's “Pure AI Development” section—one pair is shared by all three READMEs (like the banner), so both theme files need the new figures, as does the equivalent `<img alt>` text in all three READMEs (the graphic loads as an image, so the SVG's own `<title>`/`aria-label` never reaches a screen reader and the alt is the only accessible path); and “Measurements for This Documentation Version” in all three workflow documents. These all carry the same measured figures, so updating one obliges updating every one. The Coverage badge always uses the `All files` line-coverage value. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
+Synchronize the Tests/Coverage badges in all three READMEs; [`docs/assets/coverage_light.svg`](../assets/coverage_light.svg) and [`coverage_dark.svg`](../assets/coverage_dark.svg), referenced from the “Project Quality” block in each README's “Pure AI Development” section—one pair is shared by all three READMEs (like the banner), so both theme files need the new figures, as does the equivalent `<img alt>` text in all three READMEs (the graphic loads as an image, so the SVG's own `<title>`/`aria-label` never reaches a screen reader and the alt is the only accessible path); and “Measurements for This Documentation Version” in all three workflow documents. These all carry the same measured figures, so updating one obliges updating every one. The Coverage badge always uses the `All files` line-coverage value. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release
 

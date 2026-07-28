@@ -33,7 +33,7 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
   expect(memoryCache.chatBuffers.has(-1)).toBe(false);
   expect(postMessageMock).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1 });
 
-  replyCache.replyGenerations.set(-2, 7);
+  const evictedGeneration: number = replyCache.cachedReplyGeneration(-2);
   pushBufferedMessage(-999, {
     messageId: 999,
     id: 999,
@@ -45,7 +45,8 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
   expect(memoryCache.chatBuffers.size).toBe(AI_MEMORY_MAX_CHATS);
   expect(memoryCache.chatBuffers.has(-2)).toBe(false);
   expect(memoryCache.chatBuffers.has(-999)).toBe(true);
-  expect(replyCache.cachedReplyGeneration(-2)).toBe(8);
+  expect(replyCache.replyGenerations.has(-2)).toBe(false);
+  expect(replyCache.cachedReplyGeneration(-2)).not.toBe(evictedGeneration);
   expect(postMessageMock).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -2 });
 });
 

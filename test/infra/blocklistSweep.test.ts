@@ -80,14 +80,28 @@ function settleLast(complete: boolean, chatId: number = -1001): void {
 }
 
 /** 一条机器人自身成员状态变化的 my_chat_member 更新。 */
-function promotion(newStatus: string, oldStatus: string): never {
+function promotion(newStatus: string, oldStatus: string, canRestrict?: boolean): never {
   return {
     myChatMember: {
       chat: { id: -1001, type: "supergroup" },
       old_chat_member: { status: oldStatus },
-      new_chat_member: { status: newStatus },
+      new_chat_member: {
+        status: newStatus,
+        ...(canRestrict === undefined ? {} : { can_restrict_members: canRestrict }),
+      },
     },
   } as never;
+}
+
+/** Worker 回执：这批因为机器人没有封禁权限而没落定。 */
+function settleLastAsForbidden(chatId: number = -1001): void {
+  settleBlockedRemoval({
+    type: "blockedMembersRemoved",
+    chatId,
+    removalId: lastRemovalId(),
+    complete: false,
+    permissionDenied: true,
+  });
 }
 
 beforeEach(() => {
@@ -329,6 +343,88 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
 
     await sweepBlockedMembers(-1001, 901_000);
     expect(remover).toHaveBeenCalledTimes(1);
+  });
+
+  test("权限不够时停掉按时间的重试，只等一次确证的权限变更", async () => {
+    // 退避拉长仍然是「按时间重试」：机器人没有封禁权限时，每个窗口末尾照样
+    // 要把整份名单重扫一遍，换来的只是同一条报错再刷一次。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    const removalId: number = lastRemovalId();
+    settleLastAsForbidden();
+
+    expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeTrue();
+    // outbox 里留下自解释的标记：运维看到它就知道该去补权限。
+    expect(pendingBlockedRemovals.get(removalId)?.lastFailure).toBe("missing-permission");
+
+    remover.mockClear();
+    // 时间过去再久也不再重扫。
+    await sweepBlockedMembers(-1001, 1_000 + 86_400_000);
+    expect(remover).not.toHaveBeenCalled();
+    // 「这个群里还留着人」的信号同样不再排新的重扫窗口。
+    requestBlocklistResweep(-1001);
+    await sweepBlockedMembers(-1001, 1_000 + 86_400_001);
+    expect(remover).not.toHaveBeenCalled();
+  });
+
+  test("确证拿到封禁权限后立刻解锁并重扫", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLastAsForbidden();
+    remover.mockClear();
+
+    // 仍然没有封禁权限的观测不解锁：那不是「再试有意义」的边沿。
+    await handleMyChatMemberUpdate(promotion("administrator", "administrator", false));
+    expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeTrue();
+    expect(remover).not.toHaveBeenCalled();
+
+    // Telegram 亲口说现在能封人了：解锁并立刻补一次扫。
+    await handleMyChatMemberUpdate(promotion("administrator", "administrator", true));
+    expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeFalse();
+    expect(remover).toHaveBeenCalledTimes(1);
+  });
+
+  test("从没扫过的群也要记下权限受阻，而不是把标记丢掉", async () => {
+    // 补扫记录只由 sweepBlockedMembers 创建，而机器人从来就没有封禁权限的群
+    // 恰恰是最需要这个标记的一类：秒踢那一路的权限拒绝若记不下来，
+    // replayPendingBlockedRemovals 每次 Worker 重生都会把这批注定失败的处置
+    // 重投一遍，而唯一的解锁边沿没有记录可以解锁。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    const params = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
+    expect(blocklistSweepState.has(-1001)).toBeFalse();
+
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      chatId: -1001,
+      removalId: params.removalId,
+      complete: false,
+      permissionDenied: true,
+    });
+
+    expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeTrue();
+    // 补建的是最小记录：这个群从来没被完整扫过，那一次照旧欠着。
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
+    replayPendingBlockedRemovals();
+    expect(remover).not.toHaveBeenCalled();
+
+    // 解锁边沿照常能打开它。
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    await handleMyChatMemberUpdate(promotion("administrator", "administrator", true));
+    expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeFalse();
+    expect(remover).toHaveBeenCalledTimes(1);
+  });
+
+  test("被权限卡住的群不跟着 Worker 重建重放：那不是权限变更", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLastAsForbidden();
+    remover.mockClear();
+
+    replayPendingBlockedRemovals();
+    expect(remover).not.toHaveBeenCalled();
+    // 任务本身照常留着，等那次真正的权限观测。
+    expect(pendingBlockedRemovals.size).toBe(1);
   });
 
   test("落定回执把退避清零：权限恢复后立刻回到正常节奏", async () => {

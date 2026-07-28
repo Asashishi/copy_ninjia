@@ -25,6 +25,7 @@ export const BOT_COMMANDS: readonly BotCommand[] = Object.freeze([
   Object.freeze({ command: "block", description: "拉黑：写进永久黑名单并在所有本天才管理的群里踢出封禁，之后再进群秒踢（仅白名单用户可用）" }),
   Object.freeze({ command: "unblock", description: "解除拉黑：把人从永久黑名单里划掉，之后进群不再秒踢；加 all 参数连各群封禁一起解（仅白名单用户可用，all 仅超级管理员）" }),
   Object.freeze({ command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" }),
+  Object.freeze({ command: "ad_detect", description: "开关本群广告检测，enable/disable；命中即拉黑并全群封禁删消息（仅限定用户可用）" }),
   Object.freeze({ command: "switch_mood", description: "重新抽一个本群 AI 的当前心情（仅限定用户可用）" }),
   Object.freeze({ command: "init", description: "开关本群的机器人监听/初始化，enable/disable（仅限定用户可用）" }),
   Object.freeze({ command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" }),

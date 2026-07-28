@@ -346,10 +346,14 @@ async function attemptCopyUserProfilePhoto(
 }
 
 /**
- * 复制用户或频道的当前头像。优先通过 Bot API 精确匹配当前头像，失败后使用
- * 调用方提供或 getChat 补查到的公开 username 抓取 t.me 页面兜底。
+ * 复制用户或频道的当前头像。优先通过 Bot API 精确匹配当前头像，失败后用
+ * getChat 现查一次公开 username 抓取 t.me 页面兜底。
  */
 export interface CopyUserProfilePhotoOptions {
+  /**
+   * 调用方上下文里带的 username（回复目标、身份缓存），**只作诊断线索**，不作
+   * 抓取目标——理由见 copyUserProfilePhoto 里那段注释。
+   */
   username?: string;
   signal?: AbortSignal;
 }
@@ -368,10 +372,13 @@ export async function copyUserProfilePhoto(
     if (result === "permanent-failure") break;
   }
 
-  const providedUsername: string | undefined = normalizePublicUsername(username);
-  const lookup: PublicUsernameLookupResult = providedUsername
-    ? { username: providedUsername, failed: false }
-    : await resolvePublicUsernameFromChat(targetId, isChannel, signal);
+  // 抓取目标只认 getChat 现查的结果，绝不用调用方给的那个。provided 值来自
+  // reply_to_message（可能是三个月前的消息）或身份缓存，而 Telegram 用户名释放
+  // 之后可以被任何人重新注册；抓取页面时的 hasMatchingProfileIdentity 只能证明
+  // 「这个页面属于 @name」，证明不了「@name 此刻仍指向 targetId」。短路掉权威
+  // 查询的后果是把**现任 @handle 持有者**的头像顶成机器人头像，而成功提示里
+  // 写着原目标——一次谁都发现不了的张冠李戴。
+  const lookup: PublicUsernameLookupResult = await resolvePublicUsernameFromChat(targetId, isChannel, signal);
   const fallbackUsername: string | undefined = lookup.username;
   if (fallbackUsername) {
     logger.error(`Falling back to t.me web profile scrape for @${fallbackUsername}`);
@@ -389,10 +396,15 @@ export async function copyUserProfilePhoto(
       }
     }
   } else {
+    // 命令上下文里的那个 username 只进日志：它可能已经易主，不能拿来抓页面。
+    const providedUsername: string | undefined = normalizePublicUsername(username);
+    const hint: string = providedUsername === undefined
+      ? ""
+      : ` (command context suggested @${providedUsername}, not used because it cannot be proven to still belong to this id)`;
     logger.error(
       lookup.failed
-        ? `Skipping t.me web profile scrape fallback: ${isChannel ? "channel" : "user"} ${targetId} has no public username available from command context, and getChat lookup failed`
-        : `Skipping t.me web profile scrape fallback: ${isChannel ? "channel" : "user"} ${targetId} has no public username available`
+        ? `Skipping t.me web profile scrape fallback: getChat lookup for ${isChannel ? "channel" : "user"} ${targetId} failed${hint}`
+        : `Skipping t.me web profile scrape fallback: ${isChannel ? "channel" : "user"} ${targetId} has no public username${hint}`
     );
   }
   return false;

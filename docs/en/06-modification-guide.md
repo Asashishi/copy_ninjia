@@ -79,7 +79,7 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 ## Changing the Persona or JSON Configuration
 
 - Persona: edit [`prompt/persona.md`](../../prompt/persona.md); changes take effect after restart. Runtime interaction rules coupled to transcript formatting and identity/recipient markers are injected by code and do not belong in the persona file.
-- `config/stickers.json`, `reactions.json`, and `mood.json`: schemas live in the corresponding `packages/config/` files and are strictly validated at startup. At most 5 sticker packs are allowed; mood weights must be positive integers totaling exactly 100. When changing structure, update the schema under `packages/config/` and the types under `packages/types/` before updating JSON. Invalid configuration blocks startup.
+- `config/stickers.json`, `reactions.json`, `mood.json`, and `ad_samples.json`: schemas live in the corresponding `packages/config/` files and are strictly validated at startup. At most 5 sticker packs are allowed; mood weights must be positive integers totaling exactly 100; ad samples are a bare string array whose entries must be non-blank, unique, and at most 500 in number. When changing structure, update the schema under `packages/config/` and the types under `packages/types/` before updating JSON. Invalid configuration blocks startup.
 
 ## Adding an Environment Variable
 

@@ -51,6 +51,12 @@ export const KICK_NOTICE_AUTO_DELETE_MS: number = 30 * 1000;
 /** Telegram 文本消息的硬性长度上限（字符），超出会被 Bot API 拒绝。 */
 export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;
 
+/**
+ * `deleteMessages` 单次能带的消息 id 数上限，Bot API 本身的硬上限。
+ * 超出整批被拒（该接口只有整体成败），因此由调用方按这个数分片。
+ */
+export const TELEGRAM_DELETE_MESSAGES_BATCH_MAX: number = 100;
+
 /** 遇到 429 时的自动重试参数（配合 apiThrottler 排队使用），bot.api 与
  *  joinVerificationApi 两个客户端共用同一套。 */
 export const API_RETRY_MAX_ATTEMPTS: number = 3;

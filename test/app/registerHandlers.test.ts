@@ -65,6 +65,7 @@ describe("application handler registration", () => {
       "block",
       "unblock",
       "ai_chat",
+      "ad_detect",
       "switch_mood",
       "init",
       "quiet",

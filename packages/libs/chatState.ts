@@ -9,8 +9,8 @@ export function isQuietUntilActive(quietUntil: number | undefined, now: number =
 
 /**
  * 把单群状态收敛到唯一的持久化表示。布尔开关统一只保存偏离缺省值的状态：
- * AI、初始化、日语翻译和中转均缺省关闭，因此 false 不落盘；botIsAdmin 的
- * false 表示“已确认不是管理员”，与未知状态不同，必须保留。
+ * AI、初始化、日语翻译、广告检测和中转均缺省关闭，因此 false 不落盘；
+ * botIsAdmin 的 false 表示“已确认不是管理员”，与未知状态不同，必须保留。
  *
  * 已过期的 quietUntil 不再影响业务，也在这里回收。lockdown 即使已到期也
  * 不能删除：反刷群恢复流程仍需用其 originalPermissions 执行解锁。
@@ -19,7 +19,7 @@ export function normalizeChatState(chatState: ChatState, now: number = Date.now(
   if (chatState.quietUntil !== undefined && !isQuietUntilActive(chatState.quietUntil, now)) {
     delete chatState.quietUntil;
   }
-  for (const toggle of ["isAIChatEnabled", "isJATranslationEnabled", "isInitEnabled", "isProxySendEnabled"] as const) {
+  for (const toggle of ["isAIChatEnabled", "isJATranslationEnabled", "isAdDetectEnabled", "isInitEnabled", "isProxySendEnabled"] as const) {
     if (chatState[toggle] === false) delete chatState[toggle];
   }
 

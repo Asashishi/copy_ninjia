@@ -27,12 +27,21 @@ import type {
 
 /**
  * 并发闸判定：同群在途轮数达到上限时，能否再开一轮／要不要排队等。
+ *
+ * 队列非空时即使有空并发位也一律入队。队列是 FIFO 的，让新触发插到已经等了
+ * 一轮的人前面就把这个语义整个反过来了——限频窗口一放开，最先跑起来的会是
+ * 刚到的那一条，而队里那些人已经等了几分钟。空并发位由补跑负责消费：轮次结束
+ * 的 onFinished、入队之后立刻试的那一次，以及维护节拍的兜底排空（都在
+ * workers/aiChat/replyPipeline.ts）。入队后那一次不能省——上一批 drain 撞上限频
+ * 闸停下之后，这个群就会停在「零在途 + 非空队列」上，没人再碰它。
  * @param input.activeRounds 该群当前在途的回复轮数。
  * @param input.queueSize 该群当前排队等待补跑的直接触发数。
  * @param input.kind 本次触发的种类。
  */
 export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
-  if (input.activeRounds < REPLY_ROUND_MAX_CONCURRENT) return { action: "startRound" };
+  if (input.queueSize === 0 && input.activeRounds < REPLY_ROUND_MAX_CONCURRENT) {
+    return { action: "startRound" };
+  }
   if (input.kind === "random" || input.kind === "mediaRandom") return { action: "dropSilently" };
   if (input.queueSize >= REPLY_TRIGGER_QUEUE_MAX) return { action: "enqueueOverflow" };
   return { action: "enqueue" };

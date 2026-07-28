@@ -33,6 +33,7 @@ mock.module("../../../packages/infra/telegram", () => ({
   },
   deleteMessageAfter(): void {},
   kickChatMember: async (): Promise<boolean> => { kicks++; return true; },
+  probeChatMembership: async (): Promise<boolean> => true,
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 
@@ -233,5 +234,122 @@ describe("Anti-Raid Worker verification recovery", () => {
     expect(recovered?.kind === "pending" ? recovered.expiresAt : 0).toBeGreaterThanOrEqual(before + 90_000);
 
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 10, verifications: [] });
+  });
+
+  test("私密模式删公告期间到达的管理员豁免会失效旧踢人动作", async () => {
+    const baselineKicks: number = kicks;
+    blockNextDelete = true;
+    runtime.dispatchVerification(-2001, 80, {
+      type: "join",
+      memberId: 80,
+      label: "管理员",
+      isBot: false,
+      announcementMessageId: 80,
+      identityExempt: false,
+      actorSyncExempt: false,
+      adminCacheFresh: true,
+      lockdownActive: true,
+      now: 80_000,
+    });
+    await Bun.sleep(0);
+    expect(verificationEntries.get("-2001:80")?.state.kind).toBe("kickPending");
+
+    runtime.dispatchVerification(-2001, 80, {
+      type: "join",
+      memberId: 80,
+      label: "管理员",
+      isBot: false,
+      identityExempt: true,
+      actorSyncExempt: false,
+      adminCacheFresh: true,
+      lockdownActive: true,
+      now: 80_001,
+    });
+    expect(verificationEntries.get("-2001:80")?.state.kind).toBe("exempt");
+
+    releaseBlockedDelete!();
+    await Bun.sleep(0);
+    expect(kicks).toBe(baselineKicks);
+    runtime.deactivateVerificationChat(-2001);
+  });
+
+  test("停管会失效仍在删除公告的私密模式踢人动作", async () => {
+    const baselineKicks: number = kicks;
+    blockNextDelete = true;
+    runtime.dispatchVerification(-2002, 81, {
+      type: "join",
+      memberId: 81,
+      label: "待踢成员",
+      isBot: false,
+      announcementMessageId: 81,
+      identityExempt: false,
+      actorSyncExempt: false,
+      adminCacheFresh: true,
+      lockdownActive: true,
+      now: 81_000,
+    });
+    await Bun.sleep(0);
+
+    runtime.deactivateVerificationChat(-2002);
+    releaseBlockedDelete!();
+    await Bun.sleep(0);
+    expect(kicks).toBe(baselineKicks);
+    expect(verificationEntries.has("-2002:81")).toBeFalse();
+  });
+
+  test("同 userId 新一代记录会失效旧踢人动作，正常路径仍只踢一次", async () => {
+    const baselineKicks: number = kicks;
+    blockNextDelete = true;
+    runtime.dispatchVerification(-2003, 82, {
+      type: "join",
+      memberId: 82,
+      label: "旧一代",
+      isBot: false,
+      announcementMessageId: 82,
+      identityExempt: false,
+      actorSyncExempt: false,
+      adminCacheFresh: true,
+      lockdownActive: true,
+      now: 82_000,
+    });
+    await Bun.sleep(0);
+
+    runtime.dispatchVerification(-2003, 82, { type: "left" });
+    runtime.dispatchVerification(-2003, 82, {
+      type: "join",
+      memberId: 82,
+      label: "新一代",
+      isBot: false,
+      identityExempt: false,
+      actorSyncExempt: false,
+      adminCacheFresh: true,
+      lockdownActive: false,
+      // 这一路建的是 pending，解释器按 `expiresAt - Date.now()` 起验证计时器。
+      // 合成的小时间戳会让 expiresAt 早已过期、计时器以 0 ms 触发，下面那句
+      // 断言就得和它抢同一个宏任务——机器一慢（覆盖率插桩时尤其）状态就已经
+      // 转成 expelling 了。用真实时钟起算，让记录在断言期间稳稳停在 pending。
+      now: Date.now(),
+    });
+    releaseBlockedDelete!();
+    await Bun.sleep(0);
+    expect(kicks).toBe(baselineKicks);
+    expect(verificationEntries.get("-2003:82")?.state.kind).toBe("pending");
+    runtime.deactivateVerificationChat(-2003);
+
+    runtime.dispatchVerification(-2004, 83, {
+      type: "join",
+      memberId: 83,
+      label: "正常秒踢",
+      isBot: false,
+      identityExempt: false,
+      actorSyncExempt: false,
+      adminCacheFresh: true,
+      lockdownActive: true,
+      now: 83_000,
+    });
+    await Bun.sleep(0);
+    expect(kicks).toBe(baselineKicks + 1);
+    expect(verificationEntries.get("-2004:83")?.state.kind).toBe("kicked");
+    runtime.deactivateVerificationChat(-2004);
   });
 });

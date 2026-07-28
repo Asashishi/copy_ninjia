@@ -1,11 +1,88 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { extname, join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, extname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
 const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
 const CONSTS_ROOT: string = join(PROJECT_ROOT, "packages", "consts");
 const SOURCE_ROOT: string = join(PROJECT_ROOT, "packages");
+
+/** 读取 Git 跟踪清单；约定检查只约束会进入提交的文件。 */
+function trackedFiles(): string[] {
+  const result: ReturnType<typeof Bun.spawnSync> = Bun.spawnSync({
+    cmd: [
+      "git",
+      "-c",
+      `safe.directory=${PROJECT_ROOT}`,
+      "ls-files",
+      "-z",
+    ],
+    cwd: PROJECT_ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) {
+    const stderr: string = result.stderr === undefined
+      ? ""
+      : new TextDecoder().decode(result.stderr);
+    throw new Error(
+      `Failed to enumerate tracked files: ${stderr.trim()}`
+    );
+  }
+  const stdout: string = result.stdout === undefined
+    ? ""
+    : new TextDecoder().decode(result.stdout);
+  return stdout.split("\0").filter(
+    (path: string): boolean => path.length > 0
+  );
+}
+
+/** 去掉 fenced code block 内容但保留换行和下标，避免把示例语法当成真实链接。 */
+function withoutMarkdownCodeFences(source: string): string {
+  return source.replace(
+    /(^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\2(?=\n|$)/g,
+    (block: string): string => block.replace(/[^\n]/g, " ")
+  );
+}
+
+/** 检查 Markdown inline/reference link 与 HTML href/src 的本地目标。 */
+function checkMarkdownLocalLinks(path: string, failures: string[]): void {
+  const source: string = readFileSync(path, "utf8");
+  const searchable: string = withoutMarkdownCodeFences(source);
+  const patterns: readonly RegExp[] = [
+    /!?\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^)]*["'])?\s*\)/g,
+    /(?:href|src)=["']([^"']+)["']/g,
+    /^\s*\[[^\]\n]+\]:\s*<?(\S+?)>?(?:\s+["'(].*)?$/gm,
+  ];
+  for (const pattern of patterns) {
+    for (const match of searchable.matchAll(pattern)) {
+      const target: string | undefined = match[1];
+      if (
+        target === undefined ||
+        target.startsWith("#") ||
+        target.startsWith("/") ||
+        target.startsWith("//") ||
+        /^[a-z][a-z0-9+.-]*:/i.test(target)
+      ) {
+        continue;
+      }
+      const targetWithoutFragment: string = target.split(/[?#]/, 1)[0] ?? "";
+      if (targetWithoutFragment.length === 0) continue;
+      let decodedTarget: string;
+      try {
+        decodedTarget = decodeURIComponent(targetWithoutFragment);
+      } catch {
+        decodedTarget = targetWithoutFragment;
+      }
+      if (existsSync(resolve(dirname(path), decodedTarget))) continue;
+      const line: number =
+        searchable.slice(0, match.index).split("\n").length;
+      failures.push(
+        `${relative(PROJECT_ROOT, path)}:${line} local link target does not exist: ${target}`
+      );
+    }
+  }
+}
 
 function sourceFilesUnder(root: string): string[] {
   const files: string[] = [];
@@ -108,6 +185,28 @@ function declarationName(node: ts.Node): string {
 }
 
 const failures: string[] = [];
+const tracked: string[] = trackedFiles();
+for (const trackedPath of tracked) {
+  const path: string = join(PROJECT_ROOT, trackedPath);
+  // 允许尚未 stage 的正常删除；其它门禁会从最终工作树/索引确认变更范围。
+  if (!existsSync(path)) continue;
+  if (extname(path) === ".md") {
+    checkMarkdownLocalLinks(path, failures);
+  }
+  const extension: string = extname(path);
+  if (
+    ![".ts", ".json", ".md", ".yaml", ".yml"].includes(extension) ||
+    !statSync(path).isFile() ||
+    (statSync(path).mode & 0o111) === 0
+  ) {
+    continue;
+  }
+  if (readFileSync(path, "utf8").startsWith("#!")) continue;
+  failures.push(
+    `${trackedPath} is a tracked non-script ${extension} file with executable permissions`
+  );
+}
+
 for (const path of sourceFilesUnder(CACHE_ROOT)) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,

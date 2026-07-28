@@ -3,12 +3,11 @@ import type { Animation, Message, PhotoSize } from "@grammyjs/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../packages/consts/aiChat";
 import {
   hasCopyableContent,
-  isBotMentioned,
   isReplyToSelf,
-  mentionsOtherUser,
   pickAnimationVisionSource,
   pickPhotoFile,
   resolveForwardOrigin,
+  resolveMentionFacts,
   resolveReplyReference,
   resolveSpeaker,
 } from "../../packages/auto/message/facts";
@@ -46,24 +45,24 @@ describe("auto/message/facts", () => {
   });
 
   test("mention 判定同时覆盖文本、caption、大小写与 text_mention", () => {
-    expect(isBotMentioned(message({
+    expect(resolveMentionFacts(message({
       text: "Hi @Test_Bot",
       entities: [{ type: "mention", offset: 3, length: 9 }],
-    }), "test_bot")).toBe(true);
+    }), 999, "test_bot").isMentioned).toBe(true);
 
-    expect(isBotMentioned(message({
+    expect(resolveMentionFacts(message({
       caption: "看 @test_bot",
       caption_entities: [{ type: "mention", offset: 2, length: 9 }],
-    }), "test_bot")).toBe(true);
+    }), 999, "test_bot").isMentioned).toBe(true);
 
-    expect(mentionsOtherUser(message({
+    expect(resolveMentionFacts(message({
       text: "找 Bob",
       entities: [{ type: "text_mention", offset: 2, length: 3, user: { id: 456, is_bot: false, first_name: "Bob" } }],
-    }), 999, "test_bot")).toBe(true);
-    expect(mentionsOtherUser(message({
+    }), 999, "test_bot").hasOtherMention).toBe(true);
+    expect(resolveMentionFacts(message({
       text: "找 bot",
       entities: [{ type: "text_mention", offset: 2, length: 3, user: { id: 999, is_bot: true, first_name: "Bot" } }],
-    }), 999, "test_bot")).toBe(false);
+    }), 999, "test_bot").hasOtherMention).toBe(false);
   });
 
   test("自回复按可见发送身份判断，身份缺失或回复别人时不误判", () => {

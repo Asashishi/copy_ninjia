@@ -6,6 +6,7 @@ const describeMedia = mock(async (..._args: unknown[]): Promise<string | null> =
 const getCatalogEntry = mock((_fileUniqueId: string): StickerCatalogEntry | undefined => undefined);
 const pushBufferedMessage = mock((..._args: unknown[]): void => {});
 const generateAndSendReply = mock((..._args: unknown[]): void => {});
+const trackReplyGenerationTask = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/ai/imageDescription", () => ({ describeMedia }));
 mock.module("../../../packages/ai/stickers/catalog", () => ({ getCatalogEntry }));
@@ -14,6 +15,7 @@ mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
   currentReplyGeneration: () => 0,
   generateAndSendReply,
   isReplyGenerationCurrent: () => true,
+  trackReplyGenerationTask,
 }));
 
 const { recordChatMedia } = await import("../../../packages/workers/aiChat/mediaIngest");
@@ -56,6 +58,7 @@ beforeEach(() => {
   getCatalogEntry.mockClear();
   pushBufferedMessage.mockClear();
   generateAndSendReply.mockClear();
+  trackReplyGenerationTask.mockClear();
 });
 
 describe("AI 媒体触发的生图参考图", () => {
@@ -63,6 +66,7 @@ describe("AI 媒体触发的生图参考图", () => {
     recordChatMedia({ ...photoMessage(), forwardedFrom: "频道 [id:-100666] 东京日报" });
     await Promise.resolve();
 
+    expect(trackReplyGenerationTask).toHaveBeenCalledWith(-1001, 0, expect.any(Promise));
     expect(generateAndSendReply).toHaveBeenCalledWith(expect.objectContaining({
       chatId: -1001,
       replyToMessageId: 10,

@@ -1,9 +1,7 @@
 import type { LinkedQueue } from "../../libs/linkedQueue";
-import { LruCache } from "../../libs/lruCache";
 import {
   RATE_LIMIT_LONG_WINDOW_MS,
   RATE_LIMIT_NOTICE_COOLDOWN_MS,
-  REPLY_GENERATIONS_MAX,
 } from "../../consts/aiChat/rateLimit";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
@@ -16,9 +14,19 @@ import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
  * cache/aiChat/index.ts 的门面函数，由 replyState.ts/rollingMemory.ts 调用。
  */
 
-/** 回复调度的唯一运行时 owner。全部状态不落盘，Worker 重建时清空。代际表
- * 使用有界 LRU；窗口队列、提示冷却和待处理队列都按群主动清理。 */
-export const replyGenerations: LruCache<number, number> = new LruCache(REPLY_GENERATIONS_MAX);
+/**
+ * 每群当前的唯一回复 epoch。首次接纳该群的异步工作时分配；群失效时删除，Worker
+ * 重建时随 isolate 清空，因此容量只随当前有回复工作的群数增长，不保留历史群。
+ *
+ * epoch 在同一 isolate 内绝不复用：在途回复轮、限频提示、媒体描述与记忆压缩捕获
+ * 旧值后，即使本群条目已回收并重新启用，也不可能重新匹配旧任务。
+ */
+export const replyGenerations: Map<number, number> = new Map();
+/**
+ * 回复 epoch 的单调分配器；Worker 重建时从零开始。测试隔离的 cache reset 刻意
+ * 不回退它，防止 reset 前尚未回调的异步工作与 reset 后的新工作复用同一个 epoch。
+ */
+export const replyGenerationCounter: { current: number } = { current: 0 };
 /** 每群最近一次限频提示时刻；周期 sweep 删除过期项，Worker 重建后清空。 */
 export const rateLimitNoticeTimes: Map<number, number> = new Map();
 /** 每群长窗口触发时刻队列；周期 sweep 删除过期项，长度受窗口请求上限约束。 */
@@ -34,25 +42,36 @@ export const pendingOverflowNotices: Set<number> = new Set();
  * 同步 abort 旧代；该代任务全部 settle 后删除。
  */
 export const replyAbortControllers: Map<string, AbortController> = new Map();
-/** 每个 chat:generation 尚未 settle 的用户可见副作用任务。 */
+/** 每个 chat:generation 尚未 settle 的回复、提示、媒体描述与记忆压缩任务。 */
 export const replyGenerationTasks: Map<string, Set<Promise<void>>> = new Map();
 
-/** 读取某群当前回复代际；未登记或 Worker 重建后返回 0。 */
+/** 读取某群当前回复 epoch；未登记时分配一个本 isolate 内唯一的新值。 */
 export function cachedReplyGeneration(chatId: number): number {
-  return replyGenerations.get(chatId) ?? 0;
+  const cached: number | undefined = replyGenerations.get(chatId);
+  if (cached !== undefined) return cached;
+  if (replyGenerationCounter.current >= Number.MAX_SAFE_INTEGER) {
+    throw new Error("AI reply generation epoch exhausted.");
+  }
+  replyGenerationCounter.current += 1;
+  const generation: number = replyGenerationCounter.current;
+  replyGenerations.set(chatId, generation);
+  return generation;
+}
+
+/** 无副作用地核对捕获的 epoch；条目已回收时一律视为旧任务。 */
+export function isCachedReplyGenerationCurrent(chatId: number, generation: number): boolean {
+  return replyGenerations.get(chatId) === generation;
 }
 
 /** 使旧异步工作失效，并清理尚未启动的工作与本群限频历史。activeReplyCounts
  * 刻意保留到各在途轮 finally 自行释放，避免禁用/重启用之间复用并发位时，
  * 旧轮的迟到 finally 把新轮计数误减掉。 */
-export function invalidateChatReplyCache(chatId: number): number {
-  const generation: number = cachedReplyGeneration(chatId) + 1;
-  replyGenerations.set(chatId, generation);
+export function invalidateChatReplyCache(chatId: number): void {
+  replyGenerations.delete(chatId);
   pendingReplyTriggers.delete(chatId);
   pendingOverflowNotices.delete(chatId);
   longTriggerTimes.delete(chatId);
   rateLimitNoticeTimes.delete(chatId);
-  return generation;
 }
 
 /** 定时收掉已过期的限频窗口和提示冷却记录。 */

@@ -12,6 +12,7 @@ import {
 } from "../../cache/auto";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
+import { setBoundedMapValue } from "../../libs/boundedMap";
 
 function pruneEntry(entry: AiReplyActivityEntry, now: number): void {
   trimSlidingWindow({ timestamps: entry.timestamps, windowMs: AI_REPLY_ACTIVITY_WINDOW_MS, now });
@@ -63,10 +64,8 @@ function probabilityFromCount(recentMessageCount: number): number {
 export function observeGroupMessageForAiReply(chatId: number, now: number = Date.now()): number {
   let entry: AiReplyActivityEntry | undefined = aiReplyActivityByChat.get(chatId);
   if (!entry) {
-    if (aiReplyActivityByChat.size >= AI_REPLY_ACTIVITY_MAX_CHATS) {
-      const oldestChatId: number | undefined = aiReplyActivityByChat.keys().next().value;
-      if (oldestChatId !== undefined) aiReplyActivityByChat.delete(oldestChatId);
-    }
+    // 容量淘汰交给下面那次 setBoundedMapValue：这条路径上 chatId 必定不在表里，
+    // 共享实现的「新增键越界才淘汰最早项」与在这里先淘汰再插入完全等价。
     entry = { timestamps: new LinkedQueue<number>(), lastObservedAt: now };
   } else {
     // Date.now() 因系统校时短暂回退时仍保持队列单调，避免过期修剪失序。
@@ -78,7 +77,14 @@ export function observeGroupMessageForAiReply(chatId: number, now: number = Date
   entry.timestamps.push(now);
   entry.lastObservedAt = now;
   while (entry.timestamps.size > AI_REPLY_ACTIVITY_MAX_TIMESTAMPS) entry.timestamps.shift();
-  aiReplyActivityByChat.set(chatId, entry);
+  // 上面两条分支都保证此刻 chatId 不在表里（新群本来就没有，老群刚 delete 过），
+  // 因此这一次写入既完成 LRU 热度刷新，也承担新增键的容量淘汰。
+  setBoundedMapValue({
+    map: aiReplyActivityByChat,
+    key: chatId,
+    value: entry,
+    maxEntries: AI_REPLY_ACTIVITY_MAX_CHATS,
+  });
   scheduleNextSweep(now);
   return probabilityFromCount(entry.timestamps.size);
 }

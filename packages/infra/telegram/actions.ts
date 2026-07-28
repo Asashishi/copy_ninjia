@@ -1,7 +1,8 @@
-import { InputFile } from "grammy";
+import { GrammyError, InputFile } from "grammy";
 import type { Api, InlineKeyboard } from "grammy";
 import type { Message, MessageEntity, ReactionTypeEmoji, ChatMember, MessageId } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
+import { isAdminStatus } from "../../libs/chatMember";
 import {
   combineWithUpdateAbortSignal,
   currentUpdateAbortSignal,
@@ -16,7 +17,12 @@ interface RunTelegramActionParams<T, R> {
   map: (result: T) => R;
   fallback: R;
   signal?: AbortSignal;
-  shouldLogError?: (error: unknown) => boolean;
+  /**
+   * 第二个参数是 runTelegramAction 已算好的复合信号，直接复用。自己再调一次
+   * combineWithUpdateAbortSignal 只为读一次 .aborted，却要新建一个
+   * AbortSignal.any 并挂到调用方那个长生命周期 controller 上。
+   */
+  shouldLogError?: (error: unknown, actionSignal: AbortSignal | undefined) => boolean;
 }
 
 /**
@@ -47,7 +53,7 @@ async function runTelegramAction<T, R>({
     if (updateSignal?.aborted === true) {
       throwIfUpdateAborted(updateSignal);
     }
-    if (shouldLogError?.(error) !== false) logApiError(action, error);
+    if (shouldLogError?.(error, actionSignal) !== false) logApiError(action, error);
     return fallback;
   }
 }
@@ -77,7 +83,7 @@ async function runBooleanTelegramAction(
     map: (): boolean => true,
     fallback: false,
     signal,
-    shouldLogError: (): boolean => combineWithUpdateAbortSignal(signal)?.aborted !== true,
+    shouldLogError: (_error: unknown, actionSignal: AbortSignal | undefined): boolean => actionSignal?.aborted !== true,
   });
 }
 
@@ -134,7 +140,7 @@ export async function sendMessageWithResult({
     map: (sent: Message.TextMessage): TelegramSendResult | undefined => toSendResult(chatId, sent),
     fallback: undefined,
     signal,
-    shouldLogError: (): boolean => combineWithUpdateAbortSignal(signal)?.aborted !== true,
+    shouldLogError: (_error: unknown, actionSignal: AbortSignal | undefined): boolean => actionSignal?.aborted !== true,
   });
 }
 
@@ -256,7 +262,7 @@ export async function sendSticker({
     },
     fallback: undefined,
     signal,
-    shouldLogError: (): boolean => combineWithUpdateAbortSignal(signal)?.aborted !== true,
+    shouldLogError: (_error: unknown, actionSignal: AbortSignal | undefined): boolean => actionSignal?.aborted !== true,
   });
 }
 
@@ -297,7 +303,7 @@ export async function sendPhotoWithResult({
     map: (sent: Message.PhotoMessage): TelegramSendResult | undefined => toSendResult(chatId, sent),
     fallback: undefined,
     signal,
-    shouldLogError: (): boolean => combineWithUpdateAbortSignal(signal)?.aborted !== true,
+    shouldLogError: (_error: unknown, actionSignal: AbortSignal | undefined): boolean => actionSignal?.aborted !== true,
   });
 }
 
@@ -350,6 +356,32 @@ export async function deleteMessage(chatId: number, messageId: number, api: Api 
   );
 }
 
+/**
+ * 一次删掉同一个群里的多条消息。单次上限 100 条，且与 deleteMessage 一样只能删
+ * 48 小时内的；超出由调用方分片，删不掉的个别消息 Telegram 自行跳过。
+ *
+ * 存在的理由是**请求条数**而非速度：调用方与验证超时踢人共用一条限流队列，
+ * 逐条删会把一次处置放大成几十个往返顶在踢人前面（见 adDetect/disposal.ts）。
+ * @returns 整批是否成功；该接口只返回整体成败，不分条回执。
+ */
+export async function deleteMessages(
+  chatId: number,
+  messageIds: readonly number[],
+  api: Api = bot.api
+): Promise<boolean> {
+  if (messageIds.length === 0) return true;
+  return runBooleanTelegramAction(
+    "delete messages",
+    (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.deleteMessages(chatId, [...messageIds])
+      : api.deleteMessages(
+        chatId,
+        [...messageIds],
+        signal as unknown as Parameters<Api["deleteMessages"]>[2]
+      )
+  );
+}
+
 export interface DeleteMessageAfterParams {
   chatId: number;
   messageId: number;
@@ -379,18 +411,67 @@ export async function kickChatMember(chatId: number, userId: number, api: Api = 
   );
 }
 
-export async function banChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction(
-    `ban chat member (chat ${chatId}, user ${userId})`,
-    (signal?: AbortSignal): Promise<true> => signal === undefined
-      ? api.banChatMember(chatId, userId)
+/**
+ * 一次封禁尝试的结局。`forbidden` 与 `failed` 必须分开：前者是「再试一次也
+ * 一样」，后者是限流/网络抖动这类值得退避重试的失败。调用方据此决定是继续按
+ * 时间重试，还是等权限变更。
+ *
+ * `forbidden` 本身还混着两种成因——机器人没有封禁权限，与目标本身是管理员
+ * ——Telegram 对两者返回的是同一句 400 `not enough rights`。只有前者是整个群
+ * 的问题，调用方必须再用 `probeChatAdmin` 分辨一次，不能拿一个封不掉的管理员
+ * 把整个群的清扫闩死（见 workers/antiRaid/blocklistEffects.ts）。
+ */
+export type BanChatMemberOutcome = "banned" | "forbidden" | "failed";
+
+/** Telegram 是否明确拒绝了这次操作的权限，而不是偶发失败。 */
+function isPermissionDenied(error: unknown): boolean {
+  if (!(error instanceof GrammyError)) return false;
+  // 403 一律算：不在群、被踢出、没有权限，共同点是「这次调用永远不会成功」。
+  // 400 只认点名权限的那一句：同为 400 的「用户不存在」「聊天不存在」不该
+  // 被当成权限问题，那会让一个本可重试的批次被永久挂起等一个不会来的授权。
+  if (error.error_code === 403) return true;
+  return error.error_code === 400 && /not enough rights/i.test(error.description);
+}
+
+/**
+ * 封禁一名成员，并连带删除 TA 在这个群发过的全部消息（`revoke_messages`）。
+ *
+ * 这条路径只服务于黑名单处置——`/block`、黑名单成员入群秒踢、新晋管理员后的
+ * 补扫、以及广告检测命中，四者都是「管理员认定这个人不该留下任何痕迹」的判断，
+ * 消息一并清掉才是完整处置。反刷群的自动踢出走 kickChatMember（只踢不封，防
+ * 误杀），本来就不经过这里。
+ * @returns 结局三态；只关心成败的调用方用下面的 banChatMember。
+ */
+export async function banChatMemberWithOutcome(
+  chatId: number,
+  userId: number,
+  api: Api = bot.api
+): Promise<BanChatMemberOutcome> {
+  let permissionDenied: boolean = false;
+  const banned: boolean = await runTelegramAction({
+    action: `ban chat member (chat ${chatId}, user ${userId})`,
+    execute: (signal?: AbortSignal): Promise<true> => signal === undefined
+      ? api.banChatMember(chatId, userId, { revoke_messages: true })
       : api.banChatMember(
         chatId,
         userId,
-        {},
+        { revoke_messages: true },
         signal as unknown as Parameters<Api["banChatMember"]>[3]
-      )
-  );
+      ),
+    map: (): boolean => true,
+    fallback: false,
+    shouldLogError: (error: unknown): boolean => {
+      permissionDenied = isPermissionDenied(error);
+      return true;
+    },
+  });
+  if (banned) return "banned";
+  return permissionDenied ? "forbidden" : "failed";
+}
+
+/** 只关心成败的封禁入口；权限与偶发失败的区分见 banChatMemberWithOutcome。 */
+export async function banChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
+  return (await banChatMemberWithOutcome(chatId, userId, api)) === "banned";
 }
 
 /**
@@ -461,17 +542,72 @@ export async function probeChatMembership(
   });
 }
 
-export async function banChatSenderChat(chatId: number, senderChatId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction(
-    `ban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
-    (signal?: AbortSignal): Promise<true> => signal === undefined
+/**
+ * 目标此刻是不是这个群的管理员/群主。
+ *
+ * 用来给一次 `forbidden` 的封禁结局定性：Telegram 对「机器人没有封禁权限」和
+ * 「目标本身是管理员」返回的是同一句 400 `not enough rights`，只看报错分不开，
+ * 而两者的处置天差地别——前者是整个群卡住、要等一次权限变更，后者只是这一个
+ * 目标封不掉。这里直接问 Telegram 那个目标的身份，比翻管理员缓存精确（匿名
+ * 管理员按设计不进缓存，见 workers/antiRaid/adminCache.ts）。
+ * @returns 确认是管理员 true、确认不是 false、查询失败 undefined。
+ */
+export async function probeChatAdmin(
+  chatId: number,
+  userId: number,
+  api: Api = bot.api
+): Promise<boolean | undefined> {
+  return runTelegramAction<ChatMember, boolean | undefined>({
+    action: `probe chat admin (chat ${chatId}, user ${userId})`,
+    execute: (signal?: AbortSignal): Promise<ChatMember> => signal === undefined
+      ? api.getChatMember(chatId, userId)
+      : api.getChatMember(
+        chatId,
+        userId,
+        signal as unknown as Parameters<Api["getChatMember"]>[2]
+      ),
+    map: (member: ChatMember): boolean => isAdminStatus(member.status),
+    fallback: undefined,
+  });
+}
+
+/**
+ * 封禁一个频道马甲在本群的发言权，并把「机器人缺封禁权限」从偶发失败里分出来。
+ * 结局语义同 banChatMemberWithOutcome，少了 targetIsAdmin 那一档——频道身份不是
+ * 群成员，probeChatAdmin 走的 getChatMember 描述不了它，没有可再拆细的确证。
+ *
+ * 只返回布尔值不够：调用方拿不到 forbidden 就只能结算成 failed，那个群的
+ * permissionBlocked 闩锁永远 arm 不了，批次转而无限重试注定失败的请求。
+ */
+export async function banChatSenderChatWithOutcome(
+  chatId: number,
+  senderChatId: number,
+  api: Api = bot.api
+): Promise<BanChatMemberOutcome> {
+  let permissionDenied: boolean = false;
+  const banned: boolean = await runTelegramAction({
+    action: `ban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
+    execute: (signal?: AbortSignal): Promise<true> => signal === undefined
       ? api.banChatSenderChat(chatId, senderChatId)
       : api.banChatSenderChat(
         chatId,
         senderChatId,
         signal as unknown as Parameters<Api["banChatSenderChat"]>[2]
-      )
-  );
+      ),
+    map: (): boolean => true,
+    fallback: false,
+    shouldLogError: (error: unknown): boolean => {
+      permissionDenied = isPermissionDenied(error);
+      return true;
+    },
+  });
+  if (banned) return "banned";
+  return permissionDenied ? "forbidden" : "failed";
+}
+
+/** 只关心成败的频道马甲封禁入口；权限与偶发失败的区分见 banChatSenderChatWithOutcome。 */
+export async function banChatSenderChat(chatId: number, senderChatId: number, api: Api = bot.api): Promise<boolean> {
+  return (await banChatSenderChatWithOutcome(chatId, senderChatId, api)) === "banned";
 }
 
 /**

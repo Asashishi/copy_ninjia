@@ -16,13 +16,21 @@ import {
 } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
 import { handleRemoveBlockedMembers } from "./antiRaid/blocklistEffects";
+import {
+  clearChatAdDetect,
+  enqueueAdCandidate,
+  quiesceAdDetectQueue,
+  startAdDetectQueue,
+  stopAdDetectQueue,
+  sweepAdDetect,
+} from "./antiRaid/adDetect/queue";
 import { bumpBlocklistRemovalEpoch } from "../cache/antiRaid/blocklist";
 import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
 import { resetAdminCache, sweepAdminCache } from "../cache/antiRaid/admins";
 import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/antiRaid/linkedChannels";
 import { recentChannelComments } from "../cache/antiRaid/recentComments";
 import { sweepVerificationRevisionCache } from "../cache/antiRaid/verification";
-import type { AntiRaidWorkerMessage, BlockedMembersRemovedEvent } from "../types/antiRaid";
+import type { AdDetectedEvent, AntiRaidWorkerMessage, BlockedMembersRemovedEvent } from "../types/antiRaid";
 import { initTelegramClients } from "../infra/telegram/client";
 import { sweepRecentComments } from "./antiRaid/recentComments";
 import { antiRaidCacheSweepTimer } from "../cache/antiRaid/worker";
@@ -44,6 +52,9 @@ import {
  * 模块持有。本文件只剩消息路由与缓存 sweep 调度。
  * /block 黑名单的处置副作用（antiRaid/blocklistEffects.ts）也挂在本线程：
  * 它不带状态机，判定在主线程做完，这里只执行踢人这一步网络动作。
+ * /ad_detect 广告检测（antiRaid/adDetect/）整条流水线同样挂在这里：按发送者
+ * 归并消息串、固定节拍批量送 DeepSeek 判定、命中后删消息并播报，判定结果回投
+ * 主线程换成一次与 /block 等价的拉黑 + 各群封禁。
  * 关键约定（详见各 runtime 模块头）：
  * - dispatch 里状态更替是同步的，副作用（网络请求）一律事后执行——消息
  *   按 FIFO 逐条处理，同一波刷屏入群的后续投递不会被网络往返卡住，
@@ -77,6 +88,8 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       deactivateLockdownChat(msg.chatId);
       // 在途的黑名单补扫可能还要跑几分钟；停管之后继续在这个群里封人是越权。
       bumpBlocklistRemovalEpoch(msg.chatId);
+      // 待检的广告消息串同理：停管之后不再替这个群判定，也不再在这里删消息。
+      clearChatAdDetect(msg.chatId);
       break;
     case "message":
       handleTrackedMessage(msg);
@@ -110,10 +123,20 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
         blocklistChatId: msg.chatId,
       });
       break;
+    case "adCandidate":
+      // 只做同步入队；判定与处置由固定节拍的批处理驱动，见 adDetect/queue.ts。
+      enqueueAdCandidate(msg);
+      break;
+    case "clearAdDetect":
+      clearChatAdDetect(msg.chatId);
+      break;
     case "barrier":
       self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });
       break;
     case "drain":
+      // drain 只发生在停机路径上：先停掉广告判定的节拍，别在退出前又开一批新的
+      // LLM 请求、又去删一轮消息。在途的那次不在等待集合里，不会拖住 drain。
+      quiesceAdDetectQueue();
       void drainAntiRaidTasks().then((): void => {
         self.postMessage({ type: "drainComplete", drainId: msg.drainId });
       });
@@ -127,12 +150,14 @@ export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
   sweepLinkedChannelCache(now);
   sweepVerificationRevisionCache(now);
   sweepRecentComments(now);
+  sweepAdDetect(now);
 }
 
 /** Worker 线程启动入口；主线程导入本模块时不得注册 handler 或 sweeper。 */
 export function startAntiRaidWorker(): void {
   if (antiRaidCacheSweepTimer.current !== null) return;
   initTelegramClients();
+  startAdDetectQueue((event: AdDetectedEvent): void => self.postMessage(event));
   self.onmessage = (event: MessageEvent<AntiRaidWorkerMessage>): void => {
     handleAntiRaidWorkerMessage(event.data);
   };
@@ -149,6 +174,7 @@ export function stopAntiRaidWorker(): void {
   }
   stopVerificationRuntime();
   stopLockdownRuntime();
+  stopAdDetectQueue();
   resetAdminCache();
   resetLinkedChannelCache();
   recentChannelComments.clear();

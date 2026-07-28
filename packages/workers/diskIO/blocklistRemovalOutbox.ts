@@ -27,8 +27,8 @@ import {
 } from "../../consts/antiRaid/blocklist";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import {
+  BLOCKLIST_MEMORY_DIR,
   BLOCKLIST_REMOVAL_OUTBOX_PATH,
-  MEMORY_DIR,
   TMP_FILE_SUFFIX,
 } from "../../consts/paths";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
@@ -173,10 +173,10 @@ function clonePending(pending: PendingBlockedRemoval): PendingBlockedRemoval {
 
 function sweepOrphanedTemps(): void {
   const prefix: string = `.${basename(BLOCKLIST_REMOVAL_OUTBOX_PATH)}.`;
-  for (const name of readdirSync(MEMORY_DIR)) {
+  for (const name of readdirSync(BLOCKLIST_MEMORY_DIR)) {
     if (!name.startsWith(prefix) || !name.endsWith(TMP_FILE_SUFFIX)) continue;
     try {
-      unlinkSync(join(MEMORY_DIR, name));
+      unlinkSync(join(BLOCKLIST_MEMORY_DIR, name));
     } catch (error: unknown) {
       console.error(`[diskIOWorker] failed to remove orphaned blocklist removal temp ${name}:`, error);
     }
@@ -212,7 +212,7 @@ function writeCurrentOutbox(): boolean {
 /** 启动恢复；文件不存在表示当前没有尚未完成的任务。 */
 export function hydrateBlocklistRemovalOutbox(): Map<number, PendingBlockedRemoval> {
   resetBlocklistRemovalOutboxCache();
-  mkdirSync(MEMORY_DIR, { recursive: true });
+  mkdirSync(BLOCKLIST_MEMORY_DIR, { recursive: true });
   sweepOrphanedTemps();
   if (!existsSync(BLOCKLIST_REMOVAL_OUTBOX_PATH)) return new Map();
   const decoded: Map<number, PendingBlockedRemoval> = decodeOutbox(

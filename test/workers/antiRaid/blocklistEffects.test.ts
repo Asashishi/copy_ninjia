@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { BlockedMembersRemovedEvent } from "../../../packages/types/antiRaid";
 
 const probeChatMembership = mock(async (..._args: unknown[]): Promise<boolean | undefined> => true);
-const banChatMember = mock(async (..._args: unknown[]): Promise<boolean> => true);
-const banChatSenderChat = mock(async (..._args: unknown[]): Promise<boolean> => true);
+const banChatMemberWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "banned");
+const banChatSenderChatWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "banned");
+const probeChatAdmin = mock(async (..._args: unknown[]): Promise<boolean | undefined> => false);
 const deleteMessage = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const recordJoin = mock((..._args: unknown[]): void => {});
 /** 入群守卫专用客户端的替身：断言处置没有落到默认客户端的队列上。 */
@@ -14,8 +15,9 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 mock.module("../../../packages/infra/telegram", () => ({
   probeChatMembership,
-  banChatMember,
-  banChatSenderChat,
+  probeChatAdmin,
+  banChatMemberWithOutcome,
+  banChatSenderChatWithOutcome,
   deleteMessage,
   joinVerificationApi: guardApi,
 }));
@@ -40,12 +42,13 @@ function settle(): Promise<void> {
 }
 
 beforeEach(() => {
-  for (const mocked of [probeChatMembership, banChatMember, banChatSenderChat, deleteMessage, recordJoin]) {
+  for (const mocked of [probeChatMembership, probeChatAdmin, banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, recordJoin]) {
     mocked.mockClear();
   }
+  probeChatAdmin.mockImplementation(async (): Promise<boolean | undefined> => false);
   probeChatMembership.mockImplementation(async (): Promise<boolean | undefined> => true);
-  banChatMember.mockImplementation(async (): Promise<boolean> => true);
-  banChatSenderChat.mockImplementation(async (): Promise<boolean> => true);
+  banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "banned");
+  banChatSenderChatWithOutcome.mockImplementation(async (): Promise<string> => "banned");
   deleteMessage.mockImplementation(async (): Promise<boolean> => true);
   events.length = 0;
   blocklistRemovalEpochs.clear();
@@ -62,8 +65,8 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
 
     expect(probeChatMembership).not.toHaveBeenCalled();
     // 与验证超时踢人共用 joinVerificationApi，不占默认客户端的额度。
-    expect(banChatMember).toHaveBeenCalledWith(-1001, 42, guardApi);
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 1, complete: true }]);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42, guardApi);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 1, complete: true, permissionDenied: false, targetIsAdmin: false }]);
   });
 
   test("probeMembership=true 时逐个探测，只封此刻真在群里的人", async () => {
@@ -76,8 +79,8 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(probeChatMembership.mock.calls.map((call) => call[1])).toEqual([7, 8]);
-    expect(banChatMember).toHaveBeenCalledTimes(1);
-    expect(banChatMember).toHaveBeenCalledWith(-1001, 7, guardApi);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 7, guardApi);
     // 确认不在群不算失败：这批算完整落定。
     expect(events[0]?.complete).toBeTrue();
   });
@@ -91,13 +94,13 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(banChatMember).toHaveBeenCalledWith(-1001, 7, guardApi);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 7, guardApi);
     expect(events[0]?.complete).toBeTrue();
   });
 
   test("封禁失败按退避重试，最终仍失败时回执 complete=false", async () => {
     // 黑名单入群不开验证窗口，没有超时踢人兜底——这次处置是唯一的机会。
-    banChatMember.mockImplementation(async (): Promise<boolean> => false);
+    banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "failed");
 
     handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7], probeMembership: false, removalId: 4 },
@@ -105,13 +108,53 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(banChatMember).toHaveBeenCalledTimes(3);
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 4, complete: false }]);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(3);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 4, complete: false, permissionDenied: false, targetIsAdmin: false }]);
+  });
+
+  test("「目标是管理员」只结算这个 id，不把整个群标成权限受阻", async () => {
+    // Telegram 对「机器人没权限」和「目标本身是管理员」返回的是同一句 400。
+    // 混在一起就意味着一个封不掉的管理员会把整个群的清扫永久闩死：此后补扫
+    // 早退、重扫请求被拒、每次重启跳过重放，而唯一的解锁边沿是「机器人的封禁
+    // 权限变了」——那件事根本不会发生。
+    banChatMemberWithOutcome.mockImplementation(async (..._args: unknown[]): Promise<string> =>
+      _args[1] === 7 ? "forbidden" : "banned");
+    probeChatAdmin.mockImplementation(async (..._args: unknown[]): Promise<boolean | undefined> => _args[1] === 7);
+
+    handleRemoveBlockedMembers({
+      msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8], probeMembership: false, removalId: 41 },
+      publish,
+    });
+    await settle();
+
+    expect(probeChatAdmin).toHaveBeenCalledWith(-1001, 7, guardApi);
+    // 同批其余 id 照常处置完，整批就此落定——不留给按时间的重试，也不闩住群。
+    expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 8, guardApi);
+    expect(events).toEqual([
+      { type: "blockedMembersRemoved", chatId: -1001, removalId: 41, complete: true, permissionDenied: false, targetIsAdmin: true },
+    ]);
+  });
+
+  test("确证不了目标身份时维持原判：仍按机器人缺权限上报", async () => {
+    // 没有确证就把群级闩锁降级成逐个重试，等于把「永远封不掉」重新变成
+    // 每个退避窗口一次 O(名单长度) 的请求风暴。
+    banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "forbidden");
+    probeChatAdmin.mockImplementation(async (): Promise<boolean | undefined> => undefined);
+
+    handleRemoveBlockedMembers({
+      msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7], probeMembership: false, removalId: 42 },
+      publish,
+    });
+    await settle();
+
+    expect(events).toEqual([
+      { type: "blockedMembersRemoved", chatId: -1001, removalId: 42, complete: false, permissionDenied: true, targetIsAdmin: false },
+    ]);
   });
 
   test("重试期间恢复正常就算落定", async () => {
     let attempts: number = 0;
-    banChatMember.mockImplementation(async (): Promise<boolean> => ++attempts >= 2);
+    banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => ++attempts >= 2 ? "banned" : "failed");
 
     handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7], probeMembership: false, removalId: 5 },
@@ -119,7 +162,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(banChatMember).toHaveBeenCalledTimes(2);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(2);
     expect(events[0]?.complete).toBeTrue();
   });
 
@@ -171,9 +214,9 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("群被停管后整批放弃：不在已经不归自己管的群里继续封人", async () => {
-    let releaseFirst!: (banned: boolean) => void;
-    banChatMember.mockImplementationOnce((): Promise<boolean> =>
-      new Promise((resolve: (banned: boolean) => void): void => { releaseFirst = resolve; }));
+    let releaseFirst!: (outcome: string) => void;
+    banChatMemberWithOutcome.mockImplementationOnce((): Promise<string> =>
+      new Promise((resolve: (outcome: string) => void): void => { releaseFirst = resolve; }));
 
     handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8, 9], probeMembership: false, removalId: 7 },
@@ -182,12 +225,12 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await Bun.sleep(0);
     // 第一条还悬着的时候 /init disable：补扫可能还要跑几分钟，必须立刻收手。
     bumpBlocklistRemovalEpoch(-1001);
-    releaseFirst(true);
+    releaseFirst("banned");
     await settle();
 
-    expect(banChatMember).toHaveBeenCalledTimes(1);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
     // 没扫完，回执必须说清楚——重新接管后还要再欠一次。
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 7, complete: false }]);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 7, complete: false, permissionDenied: false, targetIsAdmin: false }]);
   });
 
   test("频道身份没有「成员」一说：直接封发言权，不做成员探测", async () => {
@@ -198,16 +241,50 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(probeChatMembership).not.toHaveBeenCalled();
-    expect(banChatSenderChat).toHaveBeenCalledWith(-1001, -4004, guardApi);
+    expect(banChatSenderChatWithOutcome).toHaveBeenCalledWith(-1001, -4004, guardApi);
+  });
+
+  test("频道身份也要能报权限受阻：否则那批只会一直按时间重试注定失败的请求", async () => {
+    banChatSenderChatWithOutcome.mockImplementation(async (): Promise<string> => "forbidden");
+
+    handleRemoveBlockedMembers({
+      msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [-4004], probeMembership: false, removalId: 20 },
+      publish,
+    });
+    await settle();
+
+    // 权限不够不消耗剩余尝试，也不该退化成 failed——permissionDenied 才是那道
+    // 「停掉按时间重试、只等权限变更」的闩锁的唯一入口。
+    expect(banChatSenderChatWithOutcome).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([
+      { type: "blockedMembersRemoved", chatId: -1001, removalId: 20, complete: false, permissionDenied: true, targetIsAdmin: false },
+    ]);
+  });
+
+  test("确认封不了人后立刻收手，不把整份名单的注定失败请求压进共用队列", async () => {
+    banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "forbidden");
+
+    handleRemoveBlockedMembers({
+      msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [1, 2, 3, 4, 5], probeMembership: false, removalId: 21 },
+      publish,
+    });
+    await settle();
+
+    // 只为第一个 id 付一次 banChatMember + 一次 probeChatAdmin；剩下四个不再发。
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
+    expect(probeChatAdmin).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([
+      { type: "blockedMembersRemoved", chatId: -1001, removalId: 21, complete: false, permissionDenied: true, targetIsAdmin: false },
+    ]);
   });
 
   test("返回在途任务但由 mailbox 调度器后台登记：一波刷屏入群时不阻塞路由", async () => {
-    let settleBan!: (banned: boolean) => void;
+    let settleBan!: (outcome: string) => void;
     let firstCall: boolean = true;
-    banChatMember.mockImplementation((): Promise<boolean> => {
-      if (!firstCall) return Promise.resolve(true);
+    banChatMemberWithOutcome.mockImplementation((): Promise<string> => {
+      if (!firstCall) return Promise.resolve("banned");
       firstCall = false;
-      return new Promise((resolve: (banned: boolean) => void): void => { settleBan = resolve; });
+      return new Promise((resolve: (outcome: string) => void): void => { settleBan = resolve; });
     });
 
     const returned: Promise<void> = handleRemoveBlockedMembers({
@@ -220,15 +297,15 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await Bun.sleep(0);
     expect(settled).toBeFalse();
     // 第一条还悬着，第二条就不该发出——同批内部仍是串行，不并发轰 API。
-    expect(banChatMember).toHaveBeenCalledTimes(1);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
 
-    settleBan(true);
+    settleBan("banned");
     await returned;
-    expect(banChatMember).toHaveBeenCalledTimes(2);
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(2);
   });
 
   test("抛错被兜住，不冒泡成 Worker 的未处理拒绝，且照样回执", async () => {
-    banChatMember.mockImplementation(async (): Promise<boolean> => { throw new Error("network down"); });
+    banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => { throw new Error("network down"); });
 
     handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 10 },
@@ -236,6 +313,6 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 10, complete: false }]);
+    expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 10, complete: false, permissionDenied: false, targetIsAdmin: false }]);
   });
 });

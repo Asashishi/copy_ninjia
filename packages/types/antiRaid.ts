@@ -1,6 +1,7 @@
 import type { RemoveBlockedMembersParams } from "./blocklist";
 import type { ChatPermissions } from "@grammyjs/types";
 export type * from "./antiRaid/internal";
+export type * from "./antiRaid/adDetect";
 
 /** 主线程投递给入群守卫 Worker 的成员身份（生成展示标签所需的最小字段）。 */
 export interface AntiRaidMember {
@@ -117,6 +118,8 @@ export interface VerificationSnapshot {
   label: string;
   isBot: boolean;
   messageIds: number[];
+  /** 入群公告 id；与 messageIds 分开存，不参与上限截断（见 PendingState）。 */
+  announcementMessageId?: number;
   /** 最近一分钟的待验证成员消息时间戳。 */
   trackedMessageTimes: number[];
   invitedBy?: number;
@@ -133,6 +136,10 @@ export interface VerificationSnapshot {
   expelReason?: "timeout" | "flood";
   /** 成功处置播报已发送；仅 expelling 终态可携带。 */
   successNoticeSent?: boolean;
+  /** 「踢不动」告警已发送；仅 expelling 终态可携带（见 ExpellingState）。 */
+  failureNoticeSent?: boolean;
+  /** 「没能确认还在不在群里」告警已发送；仅 expelling 终态可携带。 */
+  unconfirmedNoticeSent?: boolean;
 }
 
 /** 主线程 -> Worker：Worker 重建时接管尚未结束的验证。 */
@@ -182,6 +189,55 @@ export interface RemoveBlockedMembersMessage extends RemoveBlockedMembersParams 
   type: "removeBlockedMembers";
 }
 
+/**
+ * 主线程 -> Worker：一条待广告判定的群消息。只有本群开了 /ad_detect enable、
+ * 机器人是本群管理员、且发送者不是自己人时才投递（见 antiRaid/adDetect.ts）。
+ * Worker 侧按发送者归并成消息串排队送检，见 workers/antiRaid/adDetect/queue.ts。
+ */
+export interface AdCandidateMessage {
+  type: "adCandidate";
+  chatId: number;
+  /** 用户 id；频道马甲发言时是该频道的负数 id。 */
+  senderId: number;
+  messageId: number;
+  /** 已清洗成单行的正文（文本或图片说明）。 */
+  text: string;
+  /**
+   * 只写进命中样本文件、**绝不参与判定**的上下文（被引用段与被回复原文）。
+   *
+   * 判定文本只取发送者自己写的那部分——引用别人的广告吐槽不该让吐槽的人背锅，
+   * 而那条原消息在它自己发出时已经判过一次（见 docs/04-invariants.md）。但人
+   * 回头翻样本、调 config/ad_samples.json 时，「它当时在回谁、引了什么」往往
+   * 正是判断误判与否的关键，所以另开一个字段带过来，与 text 严格分开。
+   */
+  sampleContext?: AdSampleContext;
+  /**
+   * 正文里看不见的 text_link 落地页 URL，已清洗并按 AD_DETECT_LINK_URL_MAX_CHARS
+   * 截断。与正文分开带：拼进正文的话，Worker 侧按字数从头保留的截断正好切掉
+   * 尾部这几个 URL（见 antiRaid/adDetect.ts 的 collectHiddenLinkUrls）。
+   */
+  linkUrls: string[];
+  /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
+  label: string;
+  /** 发送者是频道马甲（sender_chat）而非真人。 */
+  isChannel: boolean;
+  /**
+   * 该发送者此刻是否仍在入群验证窗口内（主线程按待验证镜像判定）。这是模型
+   * 自己看不到的事实——群聊转录里没有入群时间——只能由这里喂进去，见
+   * consts/antiRaid/adDetect.ts 的 AD_DETECT_JUST_JOINED_FACT。
+   */
+  justJoined: boolean;
+}
+
+/**
+ * 主线程 -> Worker：丢掉这个群尚未送检的广告判定队列。/ad_detect disable、
+ * 停管与群 teardown 都会发；已经在途的那一次判定由 Worker 侧自行作废。
+ */
+export interface ClearAdDetectMessage {
+  type: "clearAdDetect";
+  chatId: number;
+}
+
 /** 主线程 -> Worker：FIFO mailbox barrier；此前消息完成同步状态转移后回执。 */
 export interface AntiRaidBarrierMessage {
   type: "barrier";
@@ -206,6 +262,8 @@ export type AntiRaidWorkerMessage =
   | LockdownPersistedMessage
   | AdminsChangedMessage
   | RemoveBlockedMembersMessage
+  | AdCandidateMessage
+  | ClearAdDetectMessage
   | AntiRaidBarrierMessage
   | AntiRaidDrainMessage;
 
@@ -220,6 +278,19 @@ export interface BlockedMembersRemovedEvent {
   removalId: number;
   /** 每个 id 都已确定结局（封成功、或确认不在群）为 true；有一个没落定就是 false。 */
   complete: boolean;
+  /**
+   * 没落定的原因里包含「权限不够」。这一档必须与其它失败分开：网络抖动值得按
+   * 时间退避重试，而缺封禁权限时重试多少次都一样，只有权限本身变了才有意义
+   * （见 docs/04-invariants.md）。
+   */
+  permissionDenied?: boolean;
+  /**
+   * 批次里有目标因**自身的管理员身份**没被封掉。这一档与 complete 正交：那个
+   * id 在这个批次里已经结算（重投同一批只会再撞一次同样的 400），但这个群里
+   * 确实还留着一个黑名单成员，因此不能把它记成「已扫干净」——否则 sweptAt 那
+   * 道闩锁就此关死，目标降级为普通成员之后再也没有补扫会去清他。
+   */
+  targetIsAdmin?: boolean;
 }
 
 /** Worker -> 主线程：写入 applying/active/restoring 的持久化阶段。 */
@@ -265,11 +336,49 @@ export interface AntiRaidDrainCompleteEvent {
   drainId: number;
 }
 
+/**
+ * Worker -> 主线程：这个发送者被判成广告，请按 /block 同样的处置办。
+ * Worker 已经删掉那一串消息并在群里播报过；名单与跨群封禁必须回主线程
+ * （名单是主线程的同步安全边界，封禁批次要进 durable outbox）。
+ */
+export interface AdDetectedEvent {
+  type: "adDetected";
+  chatId: number;
+  senderId: number;
+  isChannel: boolean;
+  label: string;
+  /** 模型给出的简短理由，只进日志、播报与命中样本；不参与任何控制流。 */
+  reason: string;
+  /**
+   * 本次判定依据的整串消息，原样带回主线程写进命中样本文件（见
+   * workers/diskIO/adSampleFile.ts）。判定看的是整串而不是某一条，样本因此也
+   * 按串记录——只留触发那一条的话，人回头看到的是一句孤立的话，根本复现不出
+   * 模型当时读到的东西。
+   */
+  messages: readonly AdSampleMessage[];
+}
+
+/** 命中样本里的一条消息：判定读到的正文，以及只给人看的上下文。 */
+export interface AdSampleMessage extends AdSampleContext {
+  messageId: number;
+  /** 送检时的正文（已截断、已补上 text_link 落地页），与模型读到的完全一致。 */
+  text: string;
+}
+
+/** 只写进命中样本、不参与判定的上下文。两项都可能缺席。 */
+export interface AdSampleContext {
+  /** 这条消息里被引用的那一段（message.quote）。 */
+  quote?: string;
+  /** 这条消息回复的那条原消息的正文。 */
+  replyTo?: string;
+}
+
 export type AntiRaidWorkerEvent =
   | LockdownEvent
   | UnlockEvent
   | VerificationUpsertEvent
   | VerificationDeleteEvent
   | BlockedMembersRemovedEvent
+  | AdDetectedEvent
   | AntiRaidBarrierCompleteEvent
   | AntiRaidDrainCompleteEvent;

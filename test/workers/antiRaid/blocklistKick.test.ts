@@ -15,6 +15,7 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
+  getChatState: () => ({}),
   getAllChatStates: () => new Map(),
   getOrCreateChatState: () => ({}),
   saveState: async (): Promise<void> => {},
@@ -23,6 +24,10 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
 }));
 mock.module("../../../packages/infra/telegram/actions", () => ({
   answerCallbackQuery: async (): Promise<boolean> => true,
+  // 广告处置的群内播报用的，本文件不触发；整份模块被替换掉时缺了它们会在
+  // import 阶段就报 Export not found。
+  sendMessage: async (): Promise<number | undefined> => undefined,
+  deleteMessageAfter: (): void => {},
 }));
 mock.module("../../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
 mock.module("../../../packages/infra/botAdmin", () => ({
@@ -46,6 +51,11 @@ mock.module("../../../packages/infra/diskIO", () => ({
   lastFailedDiskIODomains: (): readonly string[] => [],
   onDiskIORespawn: (): void => {},
   postDiskIO: (message: DiskBusinessMessage): boolean => {
+    diskPosts.push(message);
+    deliveryOrder.push(`disk-${message.type}`);
+    return true;
+  },
+  postDiskIODiagnostic: (message: DiskBusinessMessage): boolean => {
     diskPosts.push(message);
     deliveryOrder.push(`disk-${message.type}`);
     return true;

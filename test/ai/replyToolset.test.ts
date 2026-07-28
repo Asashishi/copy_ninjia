@@ -527,6 +527,46 @@ describe("send_message 重复消息去重", () => {
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
   });
 
+  test("用文字伪造一次动作会被拒发，动作预算也不消耗", async () => {
+    // 生图撞上群冷却时，模型有概率不说「发不了」，而是照着转录里见过的形状打一段
+    // 「（…生成并发送了一张图片：…）」出来：群友收到一条声称配了图、实际什么都没有
+    // 的消息，记忆里还会留下一条假的动作记录，下一轮它自己也会当真。
+    const toolset = await createReplyToolset(buildContext(false));
+
+    const forgedImage = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      text: "（参考上传的素材生成并发送了一张图片：橙色云朵弧线加蓝色光纤流光）",
+    })));
+    const forgedSticker = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      text: "（发了一枚贴纸：情绪含义 😂）",
+    })));
+
+    expect(forgedImage.error).toContain("must not narrate an action");
+    expect(forgedSticker.error).toContain("must not narrate an action");
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(toolset.actionsUsed()).toBe(0);
+
+    // 老老实实说发不了的那句话照发不误。
+    const honest = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      text: "生图还在冷却，等会儿再帮你画喵~",
+    })));
+    expect(honest.success).toBe(true);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("括号外只是提到这两个词的正常回答不算伪造", async () => {
+    // 「发了一枚贴纸」「生成并发送了一张图片」本身是日常中文。按裸子串拦的话，
+    // 群友直接问起时模型照常作答就会被硬拒，而本轮兜底文本走同一个执行器会被
+    // 再拒一次——结果是对着一条 @ 提及完全沉默。
+    const toolset = await createReplyToolset(buildContext(false));
+
+    const answer = JSON.parse(await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({
+      text: "本天才才没有生成并发送了一张图片呢，笨蛋♡",
+    })));
+
+    expect(answer.success).toBe(true);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+  });
+
   test("错字轮按本意文本判重：可见消息是错字版本，重发同一句正确原文仍被拒绝", async () => {
     const originalRandom = Math.random;
     Math.random = () => 0;

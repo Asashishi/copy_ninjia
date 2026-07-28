@@ -19,9 +19,13 @@ import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
 import { botInfoState } from "../../cache/aiChat/identity";
 import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/aiChat/memory";
 import { compactionPendingCounts, compactionRunner } from "../../cache/aiChat/compaction";
-import { cachedReplyGeneration } from "../../cache/aiChat/replies";
+import {
+  cachedReplyGeneration,
+  isCachedReplyGenerationCurrent,
+} from "../../cache/aiChat/replies";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import { currentTimeSentence } from "./timeSentence";
+import { trackReplyGenerationTask } from "./replyGeneration";
 
 /**
  * 中期记忆的轮换/压缩：镜像块攒满后串行执行「晋升上一轮摘要 + AI 压缩新
@@ -56,6 +60,7 @@ export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[],
     promoteFirst,
     generation,
   }));
+  trackReplyGenerationTask(chatId, generation, next);
   void next.then(
     (): void => finishCompactionTask(chatId),
     (): void => finishCompactionTask(chatId)
@@ -85,12 +90,12 @@ async function rotateCompaction({
   generation,
 }: RotateCompactionParams): Promise<void> {
   try {
-    if (cachedReplyGeneration(chatId) !== generation) return;
+    if (!isCachedReplyGenerationCurrent(chatId, generation)) return;
     if (promoteFirst) {
       promotePendingSummary(chatId);
     }
     const summary: string | null = await summarizeBatchWithRetry(chatId, mirrorBatch);
-    if (cachedReplyGeneration(chatId) !== generation) return;
+    if (!isCachedReplyGenerationCurrent(chatId, generation)) return;
     if (summary) {
       pendingSummaries.set(chatId, summary);
       dirtyMemoryChats.add(chatId);

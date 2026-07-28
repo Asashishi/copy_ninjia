@@ -7,7 +7,11 @@ import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { UNBLOCK_ALL_FLAG } from "../consts/commands";
 import { resolveCommandTarget } from "./targetResolution";
 import { isBotAdminIn } from "../infra/botAdmin";
-import { confirmBlocklistPersisted, unblockUser } from "../infra/blocklist";
+import {
+  confirmBlocklistPersisted,
+  forgetUserConfirmedKicked,
+  unblockUser,
+} from "../infra/blocklist";
 import { getAllChatStates } from "../infra/storage/stateStore";
 import type { User } from "@grammyjs/types";
 
@@ -93,6 +97,9 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   }
 
   const targetLabel: string = formatUserLabel(targetUser);
+  // 这份缓存只证明 `/block` 今天曾在某群确证踢出过，并不代表此刻仍被封。
+  // 尤其 `all` 会真的跨群解封；先失效，随后同日重新 /block 才会重新查成员并封禁。
+  forgetUserConfirmedKicked(targetUser.id);
   // 先删内存 Map、再投递重写——顺序不能反。反过来的话，两步之间到达的入群
   // 更新会查到一个还没解除的名单，那个人白白被秒踢一次。
   const removedFromList: boolean = unblockUser(targetUser.id);
@@ -128,6 +135,10 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   }
 
   const { unbannedCount, failedCount }: UnbanOutcome = await unbanEverywhereFor(targetUser, chatId);
+  // runner 只按 chat 串行：其它群里的 `/block` 可能在上面逐群 await 解封期间
+  // 回填新的“确证踢出”。解封结局在时序上更晚，完成边界必须再失效一次；
+  // 否则同日下一次 `/block` 会拿解封前的迟到结果跳过成员查询与重新封禁。
+  forgetUserConfirmedKicked(targetUser.id);
   if (unbannedCount === 0 && failedCount === 0) {
     await replyAndScheduleDelete({
       chatId,

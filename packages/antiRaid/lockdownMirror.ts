@@ -7,16 +7,16 @@ import {
 import { joinVerificationApi } from "../infra/telegram/client";
 import { restoreLockdownInvitePermission } from "../infra/telegram/lockdownPermissions";
 import { RESTORE_RETRY_MS } from "../consts/antiRaid/lockdown";
+import { antiRaidRuntimeState } from "../cache/antiRaid/proxy";
 import {
-  antiRaidRuntimeState,
   emergencyLockdownRecoveries,
   emergencyLockdownRecoveryRuntime,
   persistedLockdownFingerprints,
-} from "../cache/antiRaid";
+} from "../cache/antiRaid/lockdownMirror";
 import type {
   EmergencyLockdownRecovery,
   PersistedLockdownFingerprint,
-} from "../cache/antiRaid";
+} from "../cache/antiRaid/lockdownMirror";
 import type { AdoptableLockdown, AdoptLockdownsMessage } from "../types/antiRaid";
 import type { LockdownRecord } from "../types/chatState";
 

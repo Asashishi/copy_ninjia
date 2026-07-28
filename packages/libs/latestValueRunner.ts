@@ -12,6 +12,8 @@ export interface LatestValueRunner<T> {
 export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>): LatestValueRunner<T> {
   let pending: { value: T } | null = null;
   let running: Promise<void> | null = null;
+  // 「drain 还没自己收尾」。用来分辨 drain 是否一路同步跑完，见 push。
+  let draining: boolean = false;
 
   const drain = async (): Promise<void> => {
     let latestError: unknown;
@@ -34,6 +36,7 @@ export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>)
     }
     // 必须在 drain 自己返回前同步清空；若放在 promise.finally，循环结束与
     // finally 执行之间的微任务缝隙会让新 push 误接到已完成的旧 promise。
+    draining = false;
     running = null;
     if (latestFailed) throw latestError;
   };
@@ -41,8 +44,16 @@ export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>)
   return {
     push(value: T): Promise<void> {
       pending = { value };
-      running ??= drain();
-      return running;
+      if (running !== null) return running;
+      draining = true;
+      const started: Promise<void> = drain();
+      // drain 一路同步跑完时（consume 在第一个挂起点之前就抛出，或哪天被改成
+      // 非 async），上面那句已经把 draining 置回 false：这次 push 其实已经结算
+      // 完了，绝不能再把这个 settled promise 挂回 running——那样此后每次 push 都
+      // 看到 running !== null，只置 pending 并返回同一个陈旧拒绝，drain 再也不会
+      // 重启，对唯一的生产使用方 stateStore 而言就是 state.json 彻底停写。
+      if (draining) running = started;
+      return started;
     },
   };
 }

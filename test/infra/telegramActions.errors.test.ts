@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { GrammyError } from "grammy";
 import type { Api } from "grammy";
 
 const logApiError = mock((..._args: unknown[]): void => {});
@@ -228,5 +229,46 @@ describe("解除封禁必须带 only_if_banned", () => {
 
     await actions.kickChatMember(-1001, 7, api);
     expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7);
+  });
+});
+
+describe("黑名单封禁必须连带删除该成员的消息", () => {
+  test("权限不足与偶发失败必须分成两档", async () => {
+    // 缺封禁权限时重试多少次都一样，只有权限本身变了才有意义；把它跟限流、
+    // 网络抖动混成一个 false，主线程就只能按时间盲目重试（见 infra/blocklist.ts）。
+    const banChatMember = mock(async (..._args: unknown[]) => true);
+    const api: Api = { banChatMember } as unknown as Api;
+    expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("banned");
+
+    banChatMember.mockImplementation((): never => {
+      throw new GrammyError("x", { ok: false, error_code: 400, description: "Bad Request: not enough rights to restrict/unrestrict chat member" }, "banChatMember", {});
+    });
+    expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("forbidden");
+
+    banChatMember.mockImplementation((): never => {
+      throw new GrammyError("x", { ok: false, error_code: 403, description: "Forbidden: bot was kicked" }, "banChatMember", {});
+    });
+    expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("forbidden");
+
+    // 同为 400 的其它错误不能被当成权限问题：那会让一批本可重试的处置永久
+    // 挂起，等一个不会到来的授权。
+    banChatMember.mockImplementation((): never => {
+      throw new GrammyError("x", { ok: false, error_code: 400, description: "Bad Request: user not found" }, "banChatMember", {});
+    });
+    expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("failed");
+
+    banChatMember.mockImplementation((): never => { throw new Error("socket hang up"); });
+    expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("failed");
+  });
+
+  test("banChatMember 传 revoke_messages", async () => {
+    // /block、秒踢、补扫与广告检测命中都走这一条：管理员认定这个人不该留下
+    // 任何痕迹，消息一并清掉才是完整处置。反刷群的自动踢出走 kickChatMember，
+    // 本来就不经过这里。
+    const banChatMember = mock(async (..._args: unknown[]) => true);
+    const api: Api = { banChatMember } as unknown as Api;
+
+    await actions.banChatMember(-1001, 7, api);
+    expect(banChatMember).toHaveBeenLastCalledWith(-1001, 7, { revoke_messages: true });
   });
 });

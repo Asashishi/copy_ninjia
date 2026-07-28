@@ -5,6 +5,7 @@ import {
   deleteMessageAfter,
   joinVerificationApi,
   kickChatMember,
+  probeChatMembership,
   sendMessage,
 } from "../../infra/telegram";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../../consts/telegram";
@@ -55,14 +56,32 @@ export async function runVerificationEffects({
   dispatchVerification,
   publishVerificationChange,
 }: RunVerificationEffectsParams): Promise<void> {
+  const key: string = verificationKey(chatId, userId);
+  const transitionState: VerificationState | undefined =
+    verificationEntries.get(key)?.state;
   for (const effect of effects) {
     switch (effect.kind) {
       case "deleteMessage":
         await deleteMessage(chatId, effect.messageId, joinVerificationApi);
         break;
-      case "kickMember":
+      case "kickMember": {
+        // 状态对象就是这批不可逆动作的执行 token。删除公告等前置 await 期间，
+        // 豁免、停管或新一代记录都会替换/删除它；调用 Telegram 前的同步复核
+        // 保证旧批次不会继续踢人。
+        if (
+          transitionState?.kind !== "kickPending" ||
+          verificationEntries.get(key)?.state !== transitionState
+        ) break;
+        transitionState.executionStarted = true;
         await kickChatMember(chatId, userId, joinVerificationApi);
+        if (verificationEntries.get(key)?.state === transitionState) {
+          dispatchVerification(chatId, userId, {
+            type: "kickSettled",
+            now: Date.now(),
+          });
+        }
         break;
+      }
       case "deleteReminders":
         if (effect.reminderMessageId !== undefined) {
           await deleteMessage(chatId, effect.reminderMessageId, joinVerificationApi);
@@ -207,10 +226,14 @@ export async function runVerificationEffects({
       case "retractJoinCount":
         retractJoin(chatId, effect.joinedAt);
         break;
-      case "logStaleKickedExemption":
-        logger.warn(
-          `Member ${effect.label} (chat ${chatId}, user ${userId}) was already kicked (anti-raid lockdown or the join-dedupe window) ` +
-          `when exemption proof (admin/whitelist identity) arrived; the kick cannot be undone automatically — ` +
+      case "logUncancelableKickExemption":
+        // 必须是 error：Worker 只向主线程中继 error 级别的日志信封，warn 只会
+        // 留在本线程的临时 stdout 里（见 infra/logger.ts 与 libs/supervisedWorker.ts）。
+        // 而这条正是「一个合法成员被误踢了、请人工拉回来」的唯一线索，事后翻
+        // logs/ 看不到它，那个人就一直在群外。
+        logger.error(
+          `The kick request for member ${effect.label} (chat ${chatId}, user ${userId}) had already been sent or completed ` +
+          `when exemption proof (admin/whitelist identity) arrived; it cannot be undone automatically — ` +
           "an admin may need to manually re-invite them if this was a false positive."
         );
         break;
@@ -297,7 +320,30 @@ interface ExpelMemberParams {
   publishVerificationChange: VerificationChangePublisher;
 }
 
-/** 清理超时/刷屏成员的消息并踢出，成功播报先写入新 revision 再收尾。 */
+type ExpelRemovalOutcome = "kicked" | "absent" | "unconfirmed" | "failed" | "stale";
+
+/**
+ * challenge 终态可能晚于入群更新几十秒甚至跨过落盘重放；踢人前必须重新确认
+ * 目标此刻仍在群里。查询失败不等于“不在群”，但也没有得到执行破坏性成员操作
+ * 所需的确认，因此本轮不踢、保留终态给既有退避重试。成员查询本身又引入一个
+ * await 边界，返回后必须复核终态仍是同一对象；否则 teardown 或新状态已接管时，
+ * 迟到结果会把合法成员踢掉。
+ */
+async function kickPresentMember(
+  chatId: number,
+  userId: number,
+  isCurrent: () => boolean
+): Promise<ExpelRemovalOutcome> {
+  const present: boolean | undefined =
+    await probeChatMembership(chatId, userId, joinVerificationApi);
+  if (present === false) return "absent";
+  if (present === undefined) return "unconfirmed";
+  // 检查与 API 调用之间没有 await，确保一旦确认仍是当前终态就立刻发起处置。
+  if (!isCurrent()) return "stale";
+  return await kickChatMember(chatId, userId, joinVerificationApi) ? "kicked" : "failed";
+}
+
+/** 清理超时/刷屏成员的消息并按现查结果踢出，成功播报先写入新 revision 再收尾。 */
 async function expelMember({
   chatId,
   userId,
@@ -308,10 +354,19 @@ async function expelMember({
 }: ExpelMemberParams): Promise<boolean> {
   const stillCurrent = (): boolean =>
     verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState;
-  let kicked: boolean = false;
+  let removalOutcome: ExpelRemovalOutcome = "failed";
   if (!stillCurrent()) return false;
   if (reason === "flood") {
-    kicked = await kickChatMember(chatId, userId, joinVerificationApi);
+    removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
+    if (removalOutcome === "stale") return false;
+  }
+  // 入群公告排在最前：它是这条记录里最早的一条痕迹，也是唯一一条机器人自己
+  // 制造、除本路径外没人会去删的消息（见 PendingState.announcementMessageId）。
+  // 同下面每条一样先复核记录仍是当前的：flood 那一路的踢人 await 之后状态可能
+  // 已被替换，而被豁免成员的入群公告是**不该**删的（见 states/verification.ts）。
+  if (snapshot.announcementMessageId !== undefined) {
+    if (!stillCurrent()) return false;
+    await deleteMessage(chatId, snapshot.announcementMessageId, joinVerificationApi);
   }
   for (const messageId of snapshot.messageIds) {
     if (!stillCurrent()) return false;
@@ -319,21 +374,33 @@ async function expelMember({
   }
   if (!stillCurrent()) return false;
   if (reason === "timeout") {
-    kicked = await kickChatMember(chatId, userId, joinVerificationApi);
+    removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
+    if (removalOutcome === "stale") return false;
   }
+  // Telegram 已确认人不在群：处置目标已经满足，不发“踢出成功”或“权限失败”
+  // 的错误战报，直接让状态机删除这条终态记录。
+  if (removalOutcome === "absent") return stillCurrent();
+  const kicked: boolean = removalOutcome === "kicked";
   const noticeText: string = !kicked
-    ? reason === "flood"
-      ? `啧，${snapshot.label} 没完成验证还在刷屏，本天才想把 TA 踢出去却没踢动……管理员快检查本天才的封禁权限！`
-      : `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
+    ? removalOutcome === "unconfirmed"
+      ? `啧，本天才没能确认 ${snapshot.label} 现在还在不在群里，所以这次没有贸然踢人；会继续重试，杂鱼管理员也检查下网络和本天才的成员查询权限！`
+      : reason === "flood"
+        ? `啧，${snapshot.label} 没完成验证还在刷屏，本天才想把 TA 踢出去却没踢动……管理员快检查本天才的封禁权限！`
+        : `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
     : reason === "flood"
       ? `啧，${snapshot.label} 验证都没过就开始刷屏，本天才已经先把 TA 踢出去、再把痕迹清干净啦♡`
       : snapshot.isBot
         ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
         : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
   if (!stillCurrent()) return false;
+  // 三条文案各记各的名额：探测抖动发出的「没能确认还在不在群里」不能把
+  // 「踢不动，去检查封禁权限」那条唯一指出真实原因的诊断顶掉（见
+  // ExpellingState.failureNoticeSent）。
   const shouldSendNotice: boolean = kicked
     ? expectedState.successNoticeSent !== true
-    : expectedState.failureNoticeSent !== true;
+    : removalOutcome === "unconfirmed"
+      ? expectedState.unconfirmedNoticeSent !== true
+      : expectedState.failureNoticeSent !== true;
   const noticeMessageId: number | undefined = shouldSendNotice
     ? await sendMessage({
       chatId,
@@ -347,7 +414,11 @@ async function expelMember({
   // 权限」这条唯一的诊断就永远不再尝试——未验证成员留在群里，管理员什么都
   // 不知道。本来就已发过（shouldSendNotice === false）时保持不变。
   if (!kicked && (!shouldSendNotice || noticeMessageId !== undefined)) {
-    expectedState.failureNoticeSent = true;
+    if (removalOutcome === "unconfirmed") expectedState.unconfirmedNoticeSent = true;
+    else expectedState.failureNoticeSent = true;
+    // 失败诊断不自删，必须跟着快照落盘：不持久化的话每次 Worker 重生都会
+    // 重发一条，同一个卡住的成员在群里越堆越多（见 ExpellingState）。
+    publishVerificationChange(chatId, userId, true);
   }
   if (noticeMessageId !== undefined && kicked) {
     deleteMessageAfter({

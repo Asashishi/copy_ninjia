@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { joinCreatesNewRecord, transitionVerification } from "../../packages/states/verification";
 import type { JoinEvent, PendingState, VerificationState } from "../../packages/types/states/verification";
-import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, VERIFICATION_TIMEOUT_MS } from "../../packages/consts/antiRaid";
+import {
+  ANTI_RAID_PER_MINUTE_LIMIT,
+  JOIN_WINDOW_MS,
+  VERIFICATION_REMINDER_UNDELIVERED_MAX_MS,
+  VERIFICATION_TIMEOUT_MS,
+  VERIFICATION_TRACKED_MESSAGE_IDS_MAX,
+} from "../../packages/consts/antiRaid";
 
 /** 造一个 join 事件，默认是「自主入群、无豁免、无锁定」，用覆盖项表达各场景。 */
 function joinEvent(overrides: Partial<JoinEvent> = {}): JoinEvent {
@@ -21,6 +27,18 @@ function joinEvent(overrides: Partial<JoinEvent> = {}): JoinEvent {
 
 function kickedState(overrides: Partial<VerificationState & { kind: "kicked" }> = {}): VerificationState {
   return { kind: "kicked", label: "杂鱼A", isBot: false, kickedAt: 0, ...overrides };
+}
+
+function kickPendingState(
+  overrides: Partial<VerificationState & { kind: "kickPending" }> = {}
+): VerificationState {
+  return {
+    kind: "kickPending",
+    label: "杂鱼A",
+    isBot: false,
+    requestedAt: 0,
+    ...overrides,
+  };
 }
 
 function pendingState(overrides: Partial<PendingState> = {}): PendingState {
@@ -48,7 +66,10 @@ describe("join：ABSENT 起步", () => {
     expect(joinCreatesNewRecord(undefined, event)).toBe(true);
     const { next, effects } = transitionVerification(undefined, event);
     expect(next?.kind).toBe("pending");
-    expect((next as PendingState).messageIds).toEqual([7]);
+    // 公告单独存：混进 messageIds 的话，上限一满第一个被挤掉的就是它，而除了
+    // 处置路径没人会再删它（见 PendingState.announcementMessageId）。
+    expect((next as PendingState).messageIds).toEqual([]);
+    expect((next as PendingState).announcementMessageId).toBe(7);
     expect((next as PendingState).invitedBy).toBeUndefined();
     expect((next as PendingState).expiresAt).toBe(VERIFICATION_TIMEOUT_MS);
     expect(effectKinds(effects)).toEqual(["sendReminder"]);
@@ -82,11 +103,11 @@ describe("join：ABSENT 起步", () => {
     expect(effects).toEqual([{ kind: "sendWelcome", variant: "channelComment", targetLabel: "杂鱼A", anchorMessageId: 55 }]);
   });
 
-  test("私密模式期间、没有评论区活动的普通入群 → KICKED，删公告后踢出", () => {
+  test("私密模式期间、没有评论区活动的普通入群 → KICK_PENDING，删公告后踢出", () => {
     const event = joinEvent({ lockdownActive: true, announcementMessageId: 7 });
     expect(joinCreatesNewRecord(undefined, event)).toBe(true); // 秒踢的入群也计入刷群统计
     const { next, effects } = transitionVerification(undefined, event);
-    expect(next?.kind).toBe("kicked");
+    expect(next?.kind).toBe("kickPending");
     expect(effects).toEqual([
       { kind: "deleteMessage", messageId: 7 },
       { kind: "kickMember" },
@@ -110,11 +131,13 @@ describe("join：ABSENT 起步", () => {
 });
 
 describe("join：重复投递（chat_member 与服务消息各到一次）", () => {
-  test("PENDING 上的迟到公告 → 只补充消息 ID，不重发提醒", () => {
+  test("PENDING 上的迟到公告 → 记进独立字段，不重发提醒", () => {
     const state = pendingState({ messageIds: [1] });
     const { next, effects } = transitionVerification(state, joinEvent({ announcementMessageId: 9 }));
     expect(next).toBe(state);
-    expect(state.messageIds).toEqual([1, 9]);
+    // 追踪队列里只放该成员自己的发言，公告不与它们抢那个上限。
+    expect(state.messageIds).toEqual([1]);
+    expect(state.announcementMessageId).toBe(9);
     expect(effects).toEqual([]);
   });
 
@@ -130,18 +153,23 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
     expect(effects).toEqual([]);
   });
 
-  test("KICKED 上的迟到公告（去重宽限期内）→ 顺手删除，不重复踢", () => {
-    const state = kickedState({ kickedAt: 0 });
+  test("KICK_PENDING 上的迟到公告（去重宽限期内）→ 顺手删除，不重复踢", () => {
+    const state = kickPendingState({ requestedAt: 0 });
     const { next, effects } = transitionVerification(state, joinEvent({ announcementMessageId: 9, now: 1000 }));
     expect(next).toBe(state);
     expect(effects).toEqual([{ kind: "deleteMessage", messageId: 9 }]);
   });
 
-  test("KICKED 占位遇到真的重新入群（超过去重宽限期）→ 补踢一次并刷新占位时刻", () => {
+  test("KICKED 占位遇到真的重新入群（超过去重宽限期）→ 补踢一次并换成待执行状态", () => {
     const state = kickedState({ kickedAt: 0 });
     const { next, effects } = transitionVerification(state, joinEvent({ now: 10_000 }));
     expect(next).not.toBe(state);
-    expect(next).toEqual({ kind: "kicked", label: "杂鱼A", isBot: false, kickedAt: 10_000 });
+    expect(next).toEqual({
+      kind: "kickPending",
+      label: "杂鱼A",
+      isBot: false,
+      requestedAt: 10_000,
+    });
     expect(effects).toEqual([{ kind: "kickMember" }]);
   });
 
@@ -155,11 +183,35 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
     ]);
   });
 
-  test("豁免入群撞上已有 KICKED 占位 → 保持占位不动（踢已执行、无法撤销），只留一条日志方便人工纠正", () => {
+  test("豁免入群在踢人请求发出前到达 → 失效旧动作并撤销刷群计数", () => {
+    const state = kickPendingState({ requestedAt: 12_345, countedJoinAt: 12_345 });
+    const { next, effects } = transitionVerification(state, joinEvent({ identityExempt: true }));
+    expect(next).toEqual({ kind: "exempt", label: "杂鱼A", isBot: false });
+    expect(effects).toEqual([{ kind: "retractJoinCount", joinedAt: 12_345 }]);
+  });
+
+  test("重进补踢建出的占位没计过数 → 晚到的豁免一格都不撤", () => {
+    // 这一路 joinCreatesNewRecord 为 false（状态已存在），调用方没有 recordJoin。
+    // 凭 requestedAt 去撤，删掉的会是同一 tick 里另一名合法计数成员那一格——
+    // 刷群窗口因此差一个而不触发私密模式，正是这个计数要挡的事。
+    const state = kickPendingState({ requestedAt: 12_345 });
+    const { next, effects } = transitionVerification(state, joinEvent({ identityExempt: true }));
+    expect(next).toEqual({ kind: "exempt", label: "杂鱼A", isBot: false });
+    expect(effects).toEqual([]);
+  });
+
+  test("豁免入群在踢人请求已发出后到达 → 保持占位并记录不可撤销诊断", () => {
+    const state = kickPendingState({ executionStarted: true });
+    const { next, effects } = transitionVerification(state, joinEvent({ identityExempt: true }));
+    expect(next).toBe(state);
+    expect(effects).toEqual([{ kind: "logUncancelableKickExemption", label: "杂鱼A" }]);
+  });
+
+  test("豁免入群撞上已有 KICKED 占位 → 保持占位不动，只留一条日志方便人工纠正", () => {
     const state = kickedState();
     const { next, effects } = transitionVerification(state, joinEvent({ identityExempt: true }));
     expect(next).toBe(state);
-    expect(effects).toEqual([{ kind: "logStaleKickedExemption", label: "杂鱼A" }]);
+    expect(effects).toEqual([{ kind: "logUncancelableKickExemption", label: "杂鱼A" }]);
   });
 
   test("豁免入群撞上已有 EXEMPT 占位 → 保持占位不动，无需额外日志（本就已经豁免，没有被误踢）", () => {
@@ -207,6 +259,21 @@ describe("trackedMessage", () => {
     const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 41, inCommentThread: false, now: 1_000 });
     expect(state.messageIds).toEqual([41]);
     expect(effects).toEqual([]);
+  });
+
+  test("待清理消息 id 有上界，超出时丢最早的那条", () => {
+    // 常规窗口里根本到不了这个上限（刷屏第 46 条就转成踢人）。它兜的是「提醒
+    // 一直发不出去、记录被反复续期」那条退化路径：数组每次快照都整份重写并
+    // 落盘，没有上限就按该成员的发言数无限增长。
+    const state = pendingState({
+      replyReminderRequested: true,
+      messageIds: Array.from({ length: VERIFICATION_TRACKED_MESSAGE_IDS_MAX }, (_unused, index) => index + 1),
+    });
+    transitionVerification(state, { type: "trackedMessage", messageId: 9_999, inCommentThread: false, now: 1_000 });
+
+    expect(state.messageIds).toHaveLength(VERIFICATION_TRACKED_MESSAGE_IDS_MAX);
+    expect(state.messageIds[0]).toBe(2);
+    expect(state.messageIds.at(-1)).toBe(9_999);
   });
 
   test("评论区活动 → 转 EXEMPT + 欢迎，且撤销此前记的那次刷群计数", () => {
@@ -270,6 +337,25 @@ describe("trackedMessage", () => {
     const { next, effects } = transitionVerification(state, { type: "trackedMessage", messageId: 43, inCommentThread: false, now: 1_000 });
     expect(next).toBe(state);
     expect(effects).toEqual([]);
+  });
+});
+
+describe("私密模式踢人结算", () => {
+  test("只有当前 KICK_PENDING 才转为 KICKED 并从结算时刻开始去重", () => {
+    const state = kickPendingState();
+    const settled = transitionVerification(state, { type: "kickSettled", now: 5_000 });
+    expect(settled.next).toEqual({
+      kind: "kicked",
+      label: "杂鱼A",
+      isBot: false,
+      kickedAt: 5_000,
+    });
+    expect(settled.effects).toEqual([]);
+
+    const replacement = pendingState();
+    expect(
+      transitionVerification(replacement, { type: "kickSettled", now: 6_000 }).next
+    ).toBe(replacement);
   });
 });
 
@@ -354,6 +440,22 @@ describe("超时与拉人者终核", () => {
     expect(result.next).toBe(state);
     expect(result.effects).toEqual([{ kind: "sendReplyReminder", label: "杂鱼A", targetMessageId: 88 }]);
     expect(state.expiresAt).toBe(2_000 + VERIFICATION_TIMEOUT_MS);
+  });
+
+  test("提醒一直发不出去时续期有尽头，超过总时长按普通超时结算", () => {
+    // 某群 sendMessage 持续失败（论坛 General 话题被关、机器人被禁言却仍能限制
+    // 成员）时，无限续期会让每个入群者留下一条不朽记录：常驻待验证表、常驻主
+    // 线程镜像、每次快照都重写一遍日文件，而日文件还按该成员的发言数膨胀。
+    const state = pendingState({ joinedAt: 1_000 });
+    const late: number = 1_000 + VERIFICATION_REMINDER_UNDELIVERED_MAX_MS;
+
+    const { next, effects } = transitionVerification(state, { type: "verifyTimeout", now: late });
+    expect(next).toMatchObject({ kind: "expelling", reason: "timeout" });
+    expect(effects).toEqual([]);
+
+    // 上限之内照常续期。
+    const fresh = pendingState({ joinedAt: 1_000 });
+    expect(transitionVerification(fresh, { type: "verifyTimeout", now: late - 1 }).next).toBe(fresh);
   });
 
   test("超时且非被拉入群 → 先持久化 expelling，再收尾踢人", () => {

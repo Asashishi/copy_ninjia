@@ -64,8 +64,11 @@ const { startReplyRound } = await import("../../../packages/workers/aiChat/reply
 const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
 const {
   activeReplyCounts,
+  cachedReplyGeneration,
+  isCachedReplyGenerationCurrent,
   longTriggerTimes,
   rateLimitNoticeTimes,
+  replyGenerations,
   resetAiChatReplyCache,
 } = await import("../../../packages/cache/aiChat/replies");
 const { invalidateChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
@@ -308,6 +311,24 @@ describe("AI 单轮回复生命周期", () => {
     expect(stickerLockRelease).toHaveBeenCalledTimes(1);
     expect(activeReplyCounts.has(-1001)).toBe(false);
     expect(logError).toHaveBeenCalledWith("Error in AI reply task:", expect.any(Error));
+  });
+
+  test("唯一 epoch 允许回收大量历史群，旧任务也不会在群重新启用后复活", () => {
+    const captured: number = cachedReplyGeneration(-1001);
+    invalidateChatReplyCache(-1001);
+    expect(replyGenerations.has(-1001)).toBe(false);
+    expect(isCachedReplyGenerationCurrent(-1001, captured)).toBe(false);
+
+    // 每个群都先真正捕获 epoch，再模拟 disable/teardown；历史项应全部释放。
+    for (let chatId: number = -9000; chatId > -14_000; chatId--) {
+      cachedReplyGeneration(chatId);
+      invalidateChatReplyCache(chatId);
+    }
+
+    expect(replyGenerations.size).toBe(0);
+    const replacement: number = cachedReplyGeneration(-1001);
+    expect(replacement).not.toBe(captured);
+    expect(isCachedReplyGenerationCurrent(-1001, captured)).toBe(false);
   });
 
   test("捕获代际已失效或身份尚未初始化时不占用任何资源", () => {

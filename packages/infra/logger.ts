@@ -27,15 +27,27 @@ declare const self: Worker;
 const isMainThread: boolean = Bun.isMainThread;
 
 /**
+ * 需要脱敏的环境变量名。每新增一个密钥类 env（见 infra/config.ts）都必须
+ * 同步登记到这里，否则携带该值的错误对象会原样落进 logs/ 和 journal。
+ * 这里只写变量名而不 import infra/config.ts：那个模块在 env 缺失时会在
+ * 求值期抛错，而 logger 必须在校验失败时也能照常记录。
+ */
+const SECRET_ENV_NAMES: readonly string[] = [
+  "TELEGRAM_BOT_TOKEN",
+  "GEMINI_API_KEY",
+  "DEEPSEEK_API_KEY",
+];
+
+/**
  * 本次调用要脱敏的敏感值。每条日志取一次而不是每个参数取一次；不提到模块
  * 加载期，是为了不依赖「logger 首次 import 时 env 已就绪」这个额外前提
  * （logger 必须在 infra/config.ts 的 env 校验失败时也能照常记录）。
  */
 function currentSecrets(): string[] {
-  return [
-    process.env.TELEGRAM_BOT_TOKEN ?? "",
-    process.env.GEMINI_API_KEY ?? "",
-  ];
+  // config.ts 的 requireEnv() 返回 trim 后的值，请求实际使用的也是那一份。
+  // 这里若保留 env 原文，systemd/CRLF 带来的尾随空白会让脱敏目标与 URL 里的
+  // token 不同，恰好把真正发出去的凭据漏进 journal 与 logs/。
+  return SECRET_ENV_NAMES.map((name: string): string => process.env[name]?.trim() ?? "");
 }
 
 /**
@@ -54,21 +66,32 @@ function serializeArg(arg: unknown, secrets: readonly string[]): unknown {
   // 路径反而会因为转义后不再字面匹配而漏脱敏，直接脱敏没有这个问题。
   if (typeof arg === "string") return redactSecretsInText(arg, secrets);
 
-  let serializable: unknown;
-  if (arg instanceof Error) {
-    serializable = {
-      name: arg.name,
-      message: arg.message,
-      stack: arg.stack,
-      ...JSON.parse(safeStringify({ ...arg })),
-    };
-  } else if (arg === null || typeof arg !== "object") {
-    serializable = arg;
-  } else {
-    serializable = JSON.parse(safeStringify(arg));
-  }
+  const serializable: unknown = arg instanceof Error
+    ? { name: arg.name, message: arg.message, stack: arg.stack, ...ownEnumerableProperties(arg) }
+    // 非 Error 不预先做一轮 stringify/parse：下面那一轮的结果与先往返一次
+    // 完全相同（safeStringify 的兜底对两条路径同样降级），白付一次全量序列化。
+    : arg;
 
   return JSON.parse(redactSecretsInText(safeStringify(serializable), secrets));
+}
+
+/**
+ * Error 自有的可枚举属性（GrammyError.payload、Bun fetch 的 code/path 等），
+ * 逐个属性独立降级：某个值不可序列化（循环引用、BigInt）时只让它自己退化成
+ * 字符串，不会连累整条记录。不能整体 `{...JSON.parse(safeStringify({...arg}))}`
+ * ——safeStringify 走 `String(value)` 兜底时返回的是字符串，展开进对象字面量
+ * 会炸成 `{"0":"[","1":"o",...}` 一串下标键，把真正要看的 code/path 冲掉。
+ */
+function ownEnumerableProperties(error: Error): Record<string, unknown> {
+  const own: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries({ ...error })) {
+    // 值为 undefined 的键整体丢掉，与「先整份 stringify 再 parse」的旧行为一致
+    // ——JSON 本来就表达不了 undefined，逐个降级时若不显式跳过，会把它变成一个
+    // 凭空多出来的 null 字段。
+    if (value === undefined) continue;
+    own[key] = JSON.parse(safeStringify(value));
+  }
+  return own;
 }
 
 function safeStringify(value: unknown): string {

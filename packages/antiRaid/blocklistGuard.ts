@@ -1,4 +1,9 @@
-import { isUserBlocked, registerBlockedMemberRemover, trackBlockedRemoval } from "../infra/blocklist";
+import {
+  isUserBlocked,
+  registerBlockedMemberRemover,
+  requestBlocklistResweep,
+  trackBlockedRemoval,
+} from "../infra/blocklist";
 import { logger } from "../infra/logger";
 import { recentBlockedJoinCounts } from "../cache/antiRaid/blocklistGuard";
 import { verificationKey } from "../libs/verificationKey";
@@ -30,6 +35,10 @@ export interface ClaimBlockedJoinerParams {
 /**
  * 淘汰过期的入群记账，并兜住表的上界。写入侧保证插入顺序即时间顺序，因此
  * 碰到第一个还在窗口内的条目就可以停。
+ *
+ * 这是一次「先按时间清、再把表压回上界」的独立修剪，与 libs/boundedMap.ts 的
+ * setBoundedMapValue（写入某个键时顺带淘汰一项）不是同一件事：它跑在插入之前、
+ * 不知道要写哪个键，也需要一次能压掉多条。
  */
 function pruneRecentBlockedJoins(now: number): void {
   for (const [key, countedAt] of recentBlockedJoinCounts) {
@@ -70,6 +79,13 @@ function claimBlockedJoinCount(chatId: number, userId: number, now: number): boo
  * 但 joinedAt 每次物理入群只带一次——两条投递路径的去重见
  * claimBlockedJoinCount；公告 id 照常带，删公告本来就是幂等的。
  * 批次经 trackBlockedRemoval 登记镜像，Worker 崩溃后由主线程重投。
+ *
+ * 登记失败（outbox 满、id 空间耗尽）必须就地降级，**不能让异常逃出去**：本函数
+ * 跑在更新中间件里，抛出去会让整批 update 失败、扣住 offset、进程非零退出，
+ * systemd 重启后 Telegram 重投同一条 update 再抛一次——那是一个只能靠手改
+ * memory/blocklist/removals.json 解开的重启循环，而 outbox 满本身通常正是一批
+ * 永远封不掉的处置堆出来的。降级后这个人暂时留在群里，但仍算「已按黑名单
+ * 处置」：名单判定没变，不该反过来给他开一个入群验证窗口。
  * @returns 已按黑名单处置、调用方应就此打住为 true。
  */
 export function claimBlockedJoiner({
@@ -80,13 +96,22 @@ export function claimBlockedJoiner({
   now = Date.now(),
 }: ClaimBlockedJoinerParams): boolean {
   if (!isUserBlocked(userId)) return false;
-  const params: RemoveBlockedMembersParams = trackBlockedRemoval({
-    chatId,
-    userIds: [userId],
-    probeMembership: false,
-    joinedAt: claimBlockedJoinCount(chatId, userId, now) ? now : undefined,
-    announcementMessageId,
-  });
+  let params: RemoveBlockedMembersParams;
+  try {
+    params = trackBlockedRemoval({
+      chatId,
+      userIds: [userId],
+      probeMembership: false,
+      joinedAt: claimBlockedJoinCount(chatId, userId, now) ? now : undefined,
+      announcementMessageId,
+    });
+  } catch (error: unknown) {
+    logger.error(`Failed to queue removal of blocklisted user ${userId} in chat ${chatId}:`, error);
+    // 让这个群重新欠一次补扫：outbox 腾出位置后，下一次管理员身份观测会把
+    // 这个人一并清出去。
+    requestBlocklistResweep(chatId);
+    return true;
+  }
   messages.push({ type: "removeBlockedMembers", ...params });
   logger.log(`Blocklisted user ${userId} rejoined chat ${chatId}; queued removal.`);
   return true;

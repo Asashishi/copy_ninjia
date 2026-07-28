@@ -3,7 +3,7 @@ import { markSelfSent } from "../infra/selfSentTracker";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { logger } from "../infra/logger";
 import { postDiskIO } from "../ai/persistence";
-import { nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
+import { forgetAiMemoryRevisionCounter, nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
 import {
   aiChatWorkerState,
   aiChatInvalidateRequestCounter,
@@ -175,6 +175,9 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
   },
   onGiveUp: (): void => {
     aiChatWorkerState.available = false;
+    // 同 onRespawn/terminateAiChat：不结算的话等待者只能等定时器过期，停机白等
+    // 一整份 flush 预算，还会挤占紧急退出路径上共享的那份时间。
+    aiMemoryFlushBarrier.settleAll("failed");
     rejectAllMoodSwitchWaiters("AI Worker gave up restarting before acknowledging the mood switch.");
     rejectAllAiChatInvalidateWaiters("AI Worker gave up before completing chat invalidation.");
     // 已终止实例不可能再回传旧 memory；purged 只负责拒绝旧 Worker 快照。
@@ -466,4 +469,8 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
   ]);
 }
 
-registerChatTeardown("aiChat", (chatId: number): Promise<void> => invalidateAiChat(chatId, true));
+registerChatTeardown("aiChat", async (chatId: number): Promise<void> => {
+  await invalidateAiChat(chatId, true);
+  // AI 记忆这套状态里唯一没有容量上界的一张表；只有 teardown 能摘，见该函数。
+  forgetAiMemoryRevisionCounter(chatId);
+});

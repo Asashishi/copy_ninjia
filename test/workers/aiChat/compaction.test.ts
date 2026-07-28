@@ -27,10 +27,11 @@ const { scheduleRotation } = await import("../../../packages/workers/aiChat/comp
 const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
 const { compactionChains, compactionPendingCounts } = await import("../../../packages/cache/aiChat/compaction");
 const { chatSummaries, dirtyMemoryChats, pendingSummaries } = await import("../../../packages/cache/aiChat/memory");
-const { invalidateChatReplyCache, resetAiChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
+const { resetAiChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
 const { resetAiChatCompactionCache } = await import("../../../packages/cache/aiChat/compaction");
 const { resetAiChatMemoryCache } = await import("../../../packages/cache/aiChat/memory");
 const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../packages/consts/aiChat/memory");
+const { invalidateChatReplies } = await import("../../../packages/workers/aiChat/replyGeneration");
 
 const batch: BufferedMessage[] = [{
   messageId: 7,
@@ -103,7 +104,7 @@ describe("AI 中期记忆压缩", () => {
     expect(pendingSummaries.get(-1002)).toBe("重试得到的摘要");
   });
 
-  test("请求在途时群代际失效，迟到摘要不会污染新状态", async () => {
+  test("请求在途时群代际失效会等待压缩 settle，迟到摘要不会污染新状态", async () => {
     let resolveRequest!: (value: GenerateContentResponse) => void;
     requestGeminiResponse.mockImplementationOnce(() => new Promise((resolve) => {
       resolveRequest = resolve;
@@ -113,11 +114,18 @@ describe("AI 中期记忆压缩", () => {
     const chain: Promise<void> | undefined = compactionChains.get(-1003);
     expect(chain).toBeDefined();
     await Promise.resolve();
-    invalidateChatReplyCache(-1003);
+    let invalidationSettled: boolean = false;
+    const invalidated: Promise<void> = invalidateChatReplies(-1003).then((): void => {
+      invalidationSettled = true;
+    });
+    await Promise.resolve();
+    expect(invalidationSettled).toBe(false);
     resolveRequest(response("已经失效的摘要"));
     await chain;
+    await invalidated;
     await Promise.resolve();
 
+    expect(invalidationSettled).toBe(true);
     expect(pendingSummaries.has(-1003)).toBe(false);
     expect(dirtyMemoryChats.has(-1003)).toBe(false);
   });

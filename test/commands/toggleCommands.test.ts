@@ -9,11 +9,18 @@ const invalidateBotAdminStatus = mock((chatId: number): void => {
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const persistAuthoritativeState = mock(async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); });
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
+const clearAdDetection = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 
-mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
+mock.module("../../packages/infra/config", () => ({
+  SUPER_ADMIN_USER_ID: 100,
+  PRIVILEGED_USERS_ID: [],
+  // 广告检测的凭据；缺这一项 /ad_detect enable 会被拒（见 commands/adDetect.ts）。
+  DEEPSEEK_API_KEY: "test-deepseek-key",
+}));
 mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
+mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 // /init enable 之后会重新判定一次管理员身份，好让「是管理员 && 已初始化」
 // 那道边沿触发黑名单清扫（见 infra/botAdmin.ts）。
 const isBotAdminIn = mock(async (_chatId: number): Promise<boolean> => false);
@@ -32,6 +39,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));
 
+const { handleAdDetectCommand } = await import("../../packages/commands/adDetect");
 const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
 const { handleInitCommand } = await import("../../packages/commands/init");
 const { handleJaCopyCommand } = await import("../../packages/commands/jaCopy");
@@ -58,6 +66,7 @@ beforeEach(() => {
     saveStateInBackground(...args);
   });
   handleCopyCommand.mockClear();
+  clearAdDetection.mockClear();
 });
 
 describe("超级管理员开关命令", () => {
@@ -88,6 +97,26 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isAIChatEnabled).toBe(false);
     expect(invalidateAiChat).toHaveBeenCalledWith(-1001, true);
     expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("/ad_detect enable/disable 写入统一状态，disable 同步清掉 Worker 待检队列", async () => {
+    await handleAdDetectCommand(context("enable"));
+    expect(states.get(-1001)?.isAdDetectEnabled).toBe(true);
+    expect(saveStateInBackground).toHaveBeenLastCalledWith("ad_detect toggled");
+    expect(clearAdDetection).not.toHaveBeenCalled();
+
+    await handleAdDetectCommand(context("disable"));
+    expect(states.get(-1001)?.isAdDetectEnabled).toBe(false);
+    // 主线程这道门禁只拦得住之后的消息；不清队列的话，关掉开关之后还会有人
+    // 被排在 Worker 里的旧消息串判成广告拉黑。
+    expect(clearAdDetection).toHaveBeenCalledWith(-1001);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("/ad_detect 拒绝非超级管理员，不改任何状态", async () => {
+    await handleAdDetectCommand(context("enable", 101));
+    expect(states.size).toBe(0);
+    expect(clearAdDetection).not.toHaveBeenCalled();
   });
 
   test("/init disable 同时失效 AI，enable 恢复群更新入口", async () => {

@@ -18,6 +18,17 @@ export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 /** 贴纸目录单次 AI 调用失败后的跨请求退避序列。 */
 export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = Object.freeze([15_000, 60_000, 120_000]);
 
+/**
+ * 目录仍不完整的包在维护节拍上的重试间隔（见 ai/stickers/catalog.ts 的
+ * retryIncompleteStickerCatalogs）。
+ *
+ * 只在启动时对账一次是不够的：`getStickerSet` 失败会让 generatePackCatalog 整包
+ * 放弃，而进程按 systemd 托管可以连跑几周——首次部署撞上一次网络抖动，两个贴纸
+ * 工具就会对所有回复返回 null 直到下次重启。间隔取分钟级而不是跟着 30 秒的
+ * 维护节拍走：包名配错这类永远好不了的情形下，重试本身也要跟着记一条错误日志。
+ */
+export const STICKER_CATALOG_RETRY_INTERVAL_MS: number = 5 * 60_000;
+
 /** 整包简介与工具意图的领域约束。 */
 export const STICKER_PACK_SUMMARY_MAX_CHARS: number = 200;
 /** 整包简介生成请求允许的最大输出 token。 */

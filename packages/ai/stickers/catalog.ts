@@ -7,13 +7,25 @@ import { requestGeminiResponse } from "../gemini";
 import { extractOutputText } from "../utils/geminiResponse";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
 import { sleep } from "../../libs/sleep";
-import { catalogs, dirtyPacks, failedEntries, generatingPacks, packSummaries } from "../../cache/stickers/catalog";
+import {
+  catalogs,
+  dirtyPacks,
+  failedEntries,
+  generatingPacks,
+  packSummaries,
+  stickerCatalogRetryState,
+} from "../../cache/stickers/catalog";
 import { transientDescriptionCache } from "../../cache/imageDescription";
 import {
   GEMINI_SUMMARY_MODEL,
   SUMMARY_TEMPERATURE,
 } from "../../consts/aiChat/memory";
-import { STICKER_CATALOG_RETRY_DELAYS_MS, STICKER_PACK_SUMMARY_MAX_CHARS, STICKER_PACK_SUMMARY_MAX_TOKENS } from "../../consts/aiChat/stickers";
+import {
+  STICKER_CATALOG_RETRY_DELAYS_MS,
+  STICKER_CATALOG_RETRY_INTERVAL_MS,
+  STICKER_PACK_SUMMARY_MAX_CHARS,
+  STICKER_PACK_SUMMARY_MAX_TOKENS,
+} from "../../consts/aiChat/stickers";
 import { STICKER_PACK_SUMMARY_PROMPT } from "../../consts/aiChat/prompts/media";
 import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../types/stickers/catalog";
 import type { AiStickerCatalogEvent } from "../../types/stickers/protocol";
@@ -165,6 +177,37 @@ export function ensureStickerCatalogs(packs: readonly string[]): void {
     generatingPacks.add(pack);
     void generatePackCatalog(pack).finally((): boolean => generatingPacks.delete(pack));
   }
+}
+
+/**
+ * 维护节拍上的补账：把还没建起来的包再对账一次。
+ *
+ * `ensureStickerCatalogs` 生产路径上只有 Worker 收到 init 那一次调用，而
+ * `generatePackCatalog` 在 `getStickerSet` 失败时是整包放弃的——首次部署
+ * （memory/stickers/ 为空）撞上一次几秒的网络抖动，`catalogs` 就永久为空：
+ * `buildStickerPackMenu` 每个包都在「没有贴纸」处丢掉，view_sticker_pack 与
+ * send_sticker 两个工具对所有回复返回 null，而 systemd 托管的进程可能几周都
+ * 不重启。整包简介缺失同理——那条日志自己写着「等下次对账」，可下次对账
+ * 在改这里之前根本不存在。
+ *
+ * 只挑「目录为空或没有简介」的包重试：正常跑起来之后这里每轮都是一次
+ * O(包数) 的判空，不打任何请求（贴纸集合在本进程内是无 TTL 缓存）。
+ * @param now 注入时钟，便于测试。
+ */
+export function retryIncompleteStickerCatalogs(packs: readonly string[], now: number = Date.now()): void {
+  // 0 表示本进程还没在这条路上试过（init 那次不算）：第一个维护节拍就补一次，
+  // 不等满一个间隔——启动时整包失败的话，那一个间隔全程两个贴纸工具都是废的。
+  if (
+    stickerCatalogRetryState.lastAttemptAt !== 0 &&
+    now - stickerCatalogRetryState.lastAttemptAt < STICKER_CATALOG_RETRY_INTERVAL_MS
+  ) {
+    return;
+  }
+  const incomplete: string[] = packs.filter((pack: string): boolean =>
+    (catalogs.get(pack)?.size ?? 0) === 0 || !packSummaries.has(pack));
+  if (incomplete.length === 0) return;
+  stickerCatalogRetryState.lastAttemptAt = now;
+  ensureStickerCatalogs(incomplete);
 }
 
 /**

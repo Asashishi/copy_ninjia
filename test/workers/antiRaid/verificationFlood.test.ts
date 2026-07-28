@@ -29,6 +29,7 @@ mock.module("../../../packages/infra/telegram", () => ({
     actions.push("kick");
     return kickSucceeds;
   },
+  probeChatMembership: async (): Promise<boolean> => true,
   answerCallbackQuery: async (): Promise<void> => {},
 }));
 
@@ -100,6 +101,8 @@ describe("Anti-Raid pending-member flood handling", () => {
       generation: terminal.record.generation,
       revision: terminal.record.revision,
     });
+    // 终态现在先 await 一次 getChatMember 确认仍在群，kick 不再与回执处理同 tick。
+    await Bun.sleep(0);
     expect(actions[0]).toBe("kick");
 
     await Bun.sleep(10);
@@ -202,11 +205,21 @@ describe("Anti-Raid pending-member flood handling", () => {
     expect(workerEvents.some((event) => event.type === "verificationDelete")).toBeFalse();
 
     kickSucceeds = true;
+    // 「踢不动」那条告警置位时会发布一次新 revision（告警不自删，必须落盘，
+    // 见 ExpellingState.failureNoticeSent）。重试要认的是那一版的落盘回执，
+    // 旧 revision 已经过期。
+    const failurePersist = workerEvents.findLast((event) =>
+      event.type === "verificationUpsert" &&
+      event.record.chatId === -1002 &&
+      event.record.userId === 43
+    );
+    if (failurePersist?.type !== "verificationUpsert") throw new Error("missing failure-notice upsert");
+    expect(failurePersist.record.failureNoticeSent).toBe(true);
     runtime.handleVerificationPersisted({
       type: "verificationPersisted",
       key: "-1002:43",
-      generation: 1,
-      revision: 1,
+      generation: failurePersist.record.generation,
+      revision: failurePersist.record.revision,
     });
     await Bun.sleep(0);
 

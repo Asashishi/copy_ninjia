@@ -9,6 +9,7 @@ export { handleQuietCommand, handleUnquietCommand } from "./quiet";
 export { handleBlockCommand } from "./block";
 export { handleUnblockCommand } from "./unblock";
 export { handleAiChatCommand } from "./aiChat";
+export { handleAdDetectCommand } from "./adDetect";
 export { handleSwitchMoodCommand } from "./switchMood";
 export { handleJaCopyCommand } from "./jaCopy";
 export { handleInitCommand } from "./init";

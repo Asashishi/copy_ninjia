@@ -79,7 +79,7 @@
 ## 修改人设与 JSON 配置
 
 - 人设：改 [`prompt/persona.md`](../prompt/persona.md)，重启生效。与转录格式、身份标记耦合的互动规则由代码注入，不写进人设文件。
-- `config/stickers.json` / `reactions.json` / `mood.json`：schema 在 `packages/config/` 对应文件，启动时严格校验（贴纸包最多 5 个；mood 权重必须为正整数且总和恰好 100）。改结构时先改 `packages/config/` 的 schema 与 `packages/types/`，再改 JSON，配错会拒绝启动。
+- `config/stickers.json` / `reactions.json` / `mood.json` / `ad_samples.json`：schema 在 `packages/config/` 对应文件，启动时严格校验（贴纸包最多 5 个；mood 权重必须为正整数且总和恰好 100；广告示例顶层就是字符串数组，条目非空、不重复、最多 500 条）。改结构时先改 `packages/config/` 的 schema 与 `packages/types/`，再改 JSON，配错会拒绝启动。
 
 ## 新增环境变量
 

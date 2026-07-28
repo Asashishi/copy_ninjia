@@ -36,7 +36,18 @@ mock.module("../../packages/infra/diskIO", () => ({
 }));
 
 const { handleUnblockCommand } = await import("../../packages/commands/unblock");
-const { blockedUserIds, sessionBlockedAt, sessionUnblockedIds } = await import("../../packages/cache/blocklist");
+const {
+  blockedUserIds,
+  confirmedKickedUserIdsByChat,
+  confirmedKickedUsersDay,
+  sessionBlockedAt,
+  sessionUnblockedIds,
+} = await import("../../packages/cache/blocklist");
+const {
+  recordUserConfirmedKickedInChat,
+  wasUserConfirmedKickedInChat,
+} = await import("../../packages/infra/blocklist");
+const { getTokyoDateKey } = await import("../../packages/libs/time");
 
 function context(userId: number | undefined = 100, match: string = "@alice"): never {
   return {
@@ -65,6 +76,8 @@ beforeEach(() => {
   blockedUserIds.clear();
   sessionBlockedAt.clear();
   sessionUnblockedIds.clear();
+  confirmedKickedUserIdsByChat.clear();
+  confirmedKickedUsersDay.current = null;
 });
 
 describe("/unblock", () => {
@@ -102,6 +115,20 @@ describe("/unblock", () => {
       text: expect.stringMatching(/划掉.*各群解封/),
       replyToMessageId: 10,
     });
+  });
+
+  test("解除时失效该用户所有群的当日确证踢出缓存", async () => {
+    const todayKey: string = getTokyoDateKey();
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
+    recordUserConfirmedKickedInChat(-1001, 7, todayKey);
+    recordUserConfirmedKickedInChat(-2002, 7, todayKey);
+    recordUserConfirmedKickedInChat(-2002, 8, todayKey);
+
+    await handleUnblockCommand(context());
+
+    expect(wasUserConfirmedKickedInChat(-1001, 7, todayKey)).toBeFalse();
+    expect(wasUserConfirmedKickedInChat(-2002, 7, todayKey)).toBeFalse();
+    expect(wasUserConfirmedKickedInChat(-2002, 8, todayKey)).toBeTrue();
   });
 
   test("本来就不在名单里时不投递任何重写", async () => {
@@ -212,6 +239,21 @@ describe("/unblock all（跨群解封）", () => {
       text: expect.stringMatching(/划掉.*在 3 个群把封禁一并解开/),
       replyToMessageId: 10,
     });
+  });
+
+  test("跨群解封完成时再次失效等待期间迟到的确证踢出缓存", async () => {
+    const todayKey: string = getTokyoDateKey();
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
+    chatStates.set(-2002, { botIsAdmin: true });
+    unbanChatMemberIfBanned.mockImplementationOnce(async (): Promise<boolean> => {
+      // 模拟另一个 chat lane 的 `/block` 在本命令 await Telegram 期间完成。
+      recordUserConfirmedKickedInChat(-2002, 7, todayKey);
+      return true;
+    });
+
+    await handleUnblockCommand(context(1, "@alice all"));
+
+    expect(wasUserConfirmedKickedInChat(-2002, 7, todayKey)).toBeFalse();
   });
 
   test("不带 all 时一个群都不碰", async () => {

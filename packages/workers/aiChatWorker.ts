@@ -1,4 +1,9 @@
-import { ensureStickerCatalogs, flushDirtyStickerCatalogs, hydrateStickerCatalogs } from "../ai/stickers/catalog";
+import {
+  ensureStickerCatalogs,
+  flushDirtyStickerCatalogs,
+  hydrateStickerCatalogs,
+  retryIncompleteStickerCatalogs,
+} from "../ai/stickers/catalog";
 import { getStickerConfig } from "../config/stickers";
 import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
@@ -14,7 +19,7 @@ import {
   recordChatMessage,
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
-import { generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
+import { drainPendingReplyQueues, generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
 import { switchMood } from "../ai/mood";
 import type {
   AiChatInvalidatedEvent,
@@ -65,7 +70,7 @@ import { initTelegramClients } from "../infra/telegram";
 declare const self: Worker;
 
 function handleInvalidateChat(msg: AiInvalidateChatMessage): void {
-  // invalidateChatReplies 在返回 Promise 前已同步递增 generation 并 abort 旧代；
+  // invalidateChatReplies 在返回 Promise 前已同步撤销旧 epoch 并 abort 旧代；
   // purge 同样必须同步发生，避免随后 FIFO record 被迟到的清理删掉。
   const drained: Promise<void> = invalidateChatReplies(msg.chatId);
   if (msg.purgeMemory) {
@@ -138,7 +143,13 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
 // 退出为止，不需要引用计数/按需启停，无条目时两个 flush 都直接空转返回。
 export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
   sweepAiChatReplyCache(now);
+  // 限频窗口一空出来就把积压的直接触发补跑掉：那条路上的轮次从没开始过，
+  // 没有 onFinished 会来推队列（见 aiChat/replyPipeline.ts）。
+  drainPendingReplyQueues(now);
   sweepImageGenerationCache(now);
+  // 启动那次对账整包失败的（拉贴纸集合时网络抖了一下）在这里补回来：
+  // 没有它，一次瞬时失败就等于两个贴纸工具在整个进程生命周期里失效。
+  retryIncompleteStickerCatalogs(getStickerConfig().packs, now);
   flushDirtyMemories();
   flushDirtyStickerCatalogs((event: AiStickerCatalogEvent): void => self.postMessage(event));
 }

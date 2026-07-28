@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1063_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.47%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1200_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.52%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1063 件のテストが全て成功 / テストファイル 134 件 / expect() 呼び出し 8,966 回 / 関数カバレッジ 94.56% / 行カバレッジ 96.47%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1200 件のテストが全て成功 / テストファイル 142 件 / expect() 呼び出し 9,443 回 / 関数カバレッジ 94.82% / 行カバレッジ 96.52%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -162,6 +162,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>ブロックリスト登録：永続的に記録し、全管理グループで BAN。以降は監視中のグループに入室しても即 kick</td></tr>
 <tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>（<code>all</code> は <code>SUPER_ADMIN_USER_ID</code> のみ）</td><td>ブロックリストから id を削除（リスト全体をファイルへ原子的に書き直し）。以降の入室で即 kick されなくなります。既定では各グループの BAN はそのまま。<code>all</code> を付けると全管理グループで BAN も解除します</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの AI チャットを切り替え</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの広告検出を切り替え：送信者ごとに 90 秒間のメッセージ列へまとめ、DeepSeek が判定します。命中時は <code>/block</code> と同じ処分（恒久ブロックリスト登録と、管理下の全グループでの BAN＋当該メンバーのメッセージ削除）を行い、発火したグループに BAN 理由を告知します（30 秒後に自動削除）。Bot がそのグループの管理者のときだけ発火し、判定基準は <a href="config/ad_samples.json"><code>config/ad_samples.json</code></a> です</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>AI 有効グループの気分を即時再抽選して応答</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>日本語翻訳機能を切り替え（既定 OFF）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの主要処理ゲートを切り替え</td></tr>
@@ -216,7 +217,7 @@ cp .env.example .env
 
 ### 3. 設定
 
-[`.env.example`](.env.example) にしたがって `.env` を記入します。`TELEGRAM_BOT_TOKEN`、`GEMINI_API_KEY`、10 進数のユーザー ID を 1 つ指定する `SUPER_ADMIN_USER_ID` は必須です。`PRIVILEGED_USERS_ID` は空でも構いません。複数の ID は半角カンマで区切ります。
+[`.env.example`](.env.example) にしたがって `.env` を記入します。`TELEGRAM_BOT_TOKEN`、`GEMINI_API_KEY`（AI 雑談エージェント専用）、10 進数のユーザー ID を 1 つ指定する `SUPER_ADMIN_USER_ID` は必須です。`DEEPSEEK_API_KEY`（広告検出専用）と `PRIVILEGED_USERS_ID` は空でも構いません。複数の ID は半角カンマで区切ります。`DEEPSEEK_API_KEY` が空の場合は `/ad_detect enable` が拒否され、ほかの機能はそのまま動作します。
 
 `COPY_NINJIA_DATA_ROOT` を指定すると、実行時データを別のルートへ配置できます。設定時は `state.json`、`bot.lock`、`logs/`、`memory/` がそのディレクトリから派生します。ペルソナ、スタンプ、リアクション、気分の設定と `g-auth.json` は引き続きプロジェクトルートから読み込みます。未指定の場合、実行時データはプロジェクトルートに置かれます。
 

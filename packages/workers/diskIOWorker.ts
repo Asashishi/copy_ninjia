@@ -22,6 +22,7 @@
  * 转发的日志落盘自己的错误，那是一场递归。
  */
 
+import { handleAdSampleMessage } from "./diskIO/adSampleFile";
 import { flushBlocklistAppends, handleBlockUserMessage, handleUnblockUserMessage, hydrateBlocklist } from "./diskIO/blocklistFile";
 import {
   flushBlocklistRemovalOutbox,
@@ -77,8 +78,9 @@ function flushAll(): readonly DiskIODomain[] {
 /**
  * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
  * 建目录、扫描解析校验 memory/ai/、memory/stickers/、memory/luck/（含当天
- * 回执密钥）、当天待验证增量文件与 config/blocklist.json，先灌进自己的缓存，
- * 再把缓存内容作为 loaded 回执发给主线程。任何恢复失败都会在回执中显式报告；主线程启动
+ * 回执密钥）、当天待验证增量文件与 memory/blocklist/blocklist.json，先灌进
+ * 自己的缓存，再把缓存内容作为 loaded 回执发给主线程。任何恢复失败都会在回执
+ * 中显式报告；主线程启动
  * 握手据此拒绝以部分/空状态继续运行。
  * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
  * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）；
@@ -206,6 +208,11 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       break;
     case "blocklistRemovals":
       handleBlocklistRemovalsMessage(msg);
+      break;
+    case "adSample":
+      // 纯旁路素材：收到即写，不进合并窗口、不进统一 flush、失败即弃
+      // （见 diskIO/adSampleFile.ts 的文件头）。
+      handleAdSampleMessage(msg);
       break;
     case "load":
       handleLoad();

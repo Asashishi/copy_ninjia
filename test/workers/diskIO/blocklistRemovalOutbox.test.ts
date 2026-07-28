@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import {
   BLOCKLIST_REMOVAL_OUTBOX_PATH,
-  MEMORY_DIR,
+  BLOCKLIST_MEMORY_DIR,
 } from "../../../packages/consts/paths";
 import {
   blocklistRemovalOutbox,
@@ -39,7 +39,7 @@ const pending: PendingBlockedRemoval = {
 beforeEach(() => {
   resetBlocklistRemovalOutboxCache();
   rmSync(BLOCKLIST_REMOVAL_OUTBOX_PATH, { recursive: true, force: true });
-  mkdirSync(MEMORY_DIR, { recursive: true });
+  mkdirSync(BLOCKLIST_MEMORY_DIR, { recursive: true });
 });
 
 describe("黑名单成员移除 outbox", () => {
@@ -131,8 +131,9 @@ describe("黑名单成员移除 outbox", () => {
   });
 
   test("启动恢复只清理自己的孤儿临时文件", () => {
-    const orphan: string = `${MEMORY_DIR}/.blocklist-removals.json.99.outbox.tmp`;
-    const foreign: string = `${MEMORY_DIR}/.foreign.json.99.outbox.tmp`;
+    const orphan: string = `${BLOCKLIST_MEMORY_DIR}/.removals.json.99.outbox.tmp`;
+    // 同目录下的外来临时文件也不能碰：前缀是这道清扫唯一的归属判据。
+    const foreign: string = `${BLOCKLIST_MEMORY_DIR}/.foreign.json.99.outbox.tmp`;
     writeFileSync(orphan, "{}");
     writeFileSync(foreign, "{}");
 

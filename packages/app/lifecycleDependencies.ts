@@ -2,6 +2,7 @@ import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, term
 import { drainAntiRaid, hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
 import { hydrateBlocklist } from "../infra/blocklist";
 import { restoreLuckState } from "../commands";
+import { getAdSampleConfig } from "../config/adSamples";
 import { getMoodConfig } from "../config/mood";
 import { getReactionConfig } from "../config/reactions";
 import { getStickerConfig } from "../config/stickers";
@@ -57,6 +58,7 @@ export const lifecycleDependencies = {
   flushAiMemory,
   flushDiskIO,
   flushStateToDisk,
+  getAdSampleConfig,
   getAllChatStates,
   getGlobalCopyState,
   getMoodConfig,

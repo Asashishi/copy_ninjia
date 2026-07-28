@@ -105,13 +105,14 @@ function chatState(value: unknown, path: string): ChatState {
   const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, [
     "quietUntil", "lockdown", "isAIChatEnabled", "isJATranslationEnabled",
-    "isInitEnabled", "botIsAdmin", "title", "isProxySendEnabled",
+    "isAdDetectEnabled", "isInitEnabled", "botIsAdmin", "title", "isProxySendEnabled",
   ], path);
   return {
     quietUntil: optionalTimestamp(raw, "quietUntil", path),
     lockdown: raw.lockdown === undefined ? undefined : lockdown(raw.lockdown, `${path}.lockdown`),
     isAIChatEnabled: optionalBoolean(raw, "isAIChatEnabled", path),
     isJATranslationEnabled: optionalBoolean(raw, "isJATranslationEnabled", path),
+    isAdDetectEnabled: optionalBoolean(raw, "isAdDetectEnabled", path),
     isInitEnabled: optionalBoolean(raw, "isInitEnabled", path),
     botIsAdmin: optionalBoolean(raw, "botIsAdmin", path),
     title: optionalString(raw, "title", path),

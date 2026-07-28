@@ -98,4 +98,34 @@ export class LinkedQueue<T> {
     }
     return false;
   }
+
+  /**
+   * 一次线性扫描移除所有满足条件的节点，并保持其余元素的相对顺序。
+   *
+   * 适合 teardown 这类低频的批量撤销；不能拿到高频容量淘汰热路径里反复调用，
+   * 否则每删一个值都重扫整条链，会退化成 O(n²)。
+   * @returns 实际移除的节点数。
+   */
+  removeWhere(predicate: (value: T) => boolean): number {
+    let previous: QueueNode<T> | null = null;
+    let node: QueueNode<T> | null = this.head;
+    let removed: number = 0;
+    while (node !== null) {
+      const next: QueueNode<T> | null = node.next;
+      if (predicate(node.value)) {
+        if (previous === null) {
+          this.head = next;
+        } else {
+          previous.next = next;
+        }
+        if (this.tail === node) this.tail = previous;
+        this.count -= 1;
+        removed += 1;
+      } else {
+        previous = node;
+      }
+      node = next;
+    }
+    return removed;
+  }
 }

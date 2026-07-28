@@ -74,9 +74,21 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
     .map(([name, count]: [string, number]): string => `${name}:${count}`).join(",") || "none";
 }
 
-/** 人设文本存放在仓库根目录的 prompt/persona.md，修改人设不需要碰代码。
- *  只在这里读一次（模块加载时）——callGemini 是它唯一的消费者。 */
-const SYSTEM_PROMPT: string = readFileSync(PERSONA_PATH, "utf8").trim();
+/**
+ * 人设文本存放在仓库根目录的 prompt/persona.md，修改人设不需要碰代码。
+ * 惰性读一次并缓存——callGemini 是它唯一的消费者。
+ *
+ * 不在模块加载时读：那样文件缺失或不可读会在 aiChat Worker 的模块求值期抛出，
+ * 监督者只看到一个不透明的 worker error 并按 WORKER_MAX_RESTARTS 反复重启，
+ * 没有任何一行指向 prompt/persona.md。同 config/adSamples.ts 的约定
+ * （「模块 import 本身不访问文件系统」），配置类读盘一律推迟到第一次真正要用时。
+ */
+const systemPromptHolder: { current: string | null } = { current: null };
+
+function systemPrompt(): string {
+  systemPromptHolder.current ??= readFileSync(PERSONA_PATH, "utf8").trim();
+  return systemPromptHolder.current;
+}
 
 /**
  * 调用 Gemini 的 generateContent 接口跑完一轮回复对话（收发与响应解析在
@@ -114,7 +126,7 @@ export async function callGemini(
   // CHAT_INTERACTION_INSTRUCTION 自带 Markdown 标题，其余运行时段落在此补
   // 同级的 ## 标题，避免按 Markdown 层级全部挂进「上下文与互动规则」小节。
   const systemPromptPrefix: string =
-    `${SYSTEM_PROMPT}\n\n${CHAT_INTERACTION_INSTRUCTION}\n\n` +
+    `${systemPrompt()}\n\n${CHAT_INTERACTION_INSTRUCTION}\n\n` +
     `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
     `## 今天的状态\n${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
     `## 当前时间\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;

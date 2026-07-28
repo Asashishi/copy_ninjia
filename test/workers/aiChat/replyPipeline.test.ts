@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AdmitDecision } from "../../../packages/types/states/replyAdmission";
+import type { AdmitDecision, RoundDecision } from "../../../packages/types/states/replyAdmission";
+import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 
 let decision: AdmitDecision = { action: "startRound" };
 const admitTrigger = mock((_input: unknown): AdmitDecision => decision);
+let roundDecision: RoundDecision = { action: "run" };
+const admitRound = mock((_input: unknown): RoundDecision => roundDecision);
 const startReplyRound = mock((_input: unknown, _drain: (chatId: number) => void): void => {});
 const pushReplyTrigger = mock((_input: unknown): void => {});
 const drainQueuedReplies = mock((_chatId: number, _start: (trigger: unknown) => void): void => {});
 const loggerError = mock((_message: string): void => {});
 const pendingOverflowNotices = new Set<number>();
+const pendingReplyTriggers = new Map<number, { size: number }>();
+const longTriggerTimes = new Map<number, LinkedQueue<number>>();
 const triggerReference = {
   messageId: 7,
   id: 42,
@@ -22,13 +27,14 @@ const botInfoState: { current: typeof botInfo | null } = { current: botInfo };
 mock.module("../../../packages/cache/aiChat/identity", () => ({ botInfoState }));
 mock.module("../../../packages/cache/aiChat/replies", () => ({
   activeReplyCounts: new Map<number, number>(),
+  longTriggerTimes,
   pendingOverflowNotices,
-  pendingReplyTriggers: new Map<number, { size: number }>(),
+  pendingReplyTriggers,
 }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: { error: loggerError },
 }));
-mock.module("../../../packages/states/replyAdmission", () => ({ admitTrigger }));
+mock.module("../../../packages/states/replyAdmission", () => ({ admitTrigger, admitRound }));
 mock.module("../../../packages/workers/aiChat/replyQueue", () => ({
   drainReplyQueue: drainQueuedReplies,
   pushReplyTrigger,
@@ -42,7 +48,7 @@ mock.module("../../../packages/workers/aiChat/replyState", () => ({
   isReplyGenerationCurrent: (): boolean => true,
 }));
 
-const { generateAndSendReply } = await import("../../../packages/workers/aiChat/replyPipeline");
+const { drainPendingReplyQueues, generateAndSendReply } = await import("../../../packages/workers/aiChat/replyPipeline");
 
 const baseRequest = {
   chatId: -1001,
@@ -54,13 +60,17 @@ const baseRequest = {
 
 beforeEach(() => {
   decision = { action: "startRound" };
+  roundDecision = { action: "run" };
   botInfoState.current = botInfo;
   pendingOverflowNotices.clear();
+  pendingReplyTriggers.clear();
+  longTriggerTimes.clear();
   for (const fn of [
     admitTrigger,
     startReplyRound,
     pushReplyTrigger,
     drainQueuedReplies,
+    admitRound,
     loggerError,
     replyReferenceForBufferedMessage,
   ]) fn.mockClear();
@@ -146,6 +156,25 @@ describe("AI reply admission pipeline", () => {
     const roundParams = startReplyRound.mock.calls[1]![0] as Record<string, unknown>;
     expect("imageGenerationReference" in roundParams).toBeFalse();
     expect("triggerReference" in roundParams).toBeFalse();
+  });
+
+  test("维护节拍在限频窗口空出来后补跑积压，窗口仍满时不空转", () => {
+    // 队列的常规推力只有轮次结束的 onFinished，而限频闸拒绝时那一轮根本没建
+    // 任务、也就永远不会有那次回调：没有这道兜底，撞上 5 分钟窗口上限的群会把
+    // 最多 25 条 @提及连同快照无限期扣在内存里。
+    pendingReplyTriggers.set(-1001, { size: 3 });
+    const times: LinkedQueue<number> = new LinkedQueue<number>();
+    times.push(900);
+    longTriggerTimes.set(-1001, times);
+
+    roundDecision = { action: "rateLimited" };
+    drainPendingReplyQueues(1_000);
+    // 空转一次就等于每分钟往群里刷一条限频提示（提示自带 60 秒冷却）。
+    expect(drainQueuedReplies).not.toHaveBeenCalled();
+
+    roundDecision = { action: "run" };
+    drainPendingReplyQueues(1_000);
+    expect(drainQueuedReplies).toHaveBeenCalledWith(-1001, expect.any(Function));
   });
 
   test("身份尚未初始化时直接丢弃触发，不做任何准入判定", () => {

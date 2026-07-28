@@ -20,14 +20,15 @@ This page answers “where does this code live, and where should new code go?”
 | `packages/commands/` | Explicit command handling, one command per file | `copy.ts`, `block.ts`, `cjkAction.ts`, `send.ts`, `targetResolution.ts` |
 | `packages/auto/` | Automatic non-command behavior: copying, AI transcription and triggers, reaction synchronization | `message/`, `triggerPolicy.ts` |
 | `packages/aiChat/` | Main-thread AI chat proxy: Worker supervision entry point and memory mirror | `index.ts`, `memoryMirror.ts` |
-| `packages/antiRaid/` | Main-thread Anti-Raid proxy: Worker supervision entry point, lockdown recovery, pending-verification mirror intake, and the blocklist join decision | `index.ts`, `lockdownMirror.ts`, `verificationMirror.ts`, `blocklistGuard.ts`, `memberFacts.ts` |
+| `packages/antiRaid/` | Main-thread Anti-Raid proxy: Worker supervision entry point, lockdown recovery, pending-verification mirror intake, the blocklist join decision, and ad-detection submission/disposal | `index.ts`, `lockdownMirror.ts`, `verificationMirror.ts`, `blocklistGuard.ts`, `adDetect.ts`, `memberFacts.ts` |
 | `packages/copy/` | Copy-mode transformations and execution queues for avatars, reactions, and translation | `copyModes.ts`, `avatarQueue.ts`, `reactionQueue.ts`, `translate.ts` |
 | `packages/users/` | Sender-identity cache, visible-sender resolution, user-label generation | `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts` |
 | `packages/states/` | **I/O-free** state transitions for verification, lockdown, and reply admission | `verification.ts`, `lockdown.ts` |
-| `packages/config/` | Strict schemas, lazy loading, and startup validation for `config/*.json` | `stickers.ts`, `reactions.ts`, `mood.ts` |
+| `packages/config/` | Strict schemas, lazy loading, and startup validation for `config/*.json` | `stickers.ts`, `reactions.ts`, `mood.ts`, `adSamples.ts` |
 | `packages/libs/` | Domain-independent infrastructure: atomic files, bounded I/O, concurrency utilities | `flushBarrier.ts`, `linkedQueue.ts`, `text.ts` |
-| `packages/workers/` | In-thread implementations for all three Workers | `aiChatWorker.ts` + `aiChat/`, `antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts`, `diskIOWorker.ts` + `diskIO/` |
-| `packages/ai/` | Gemini client, vision descriptions, image generation, sticker catalog, tool implementations | `gemini.ts`, `tools/replyToolset/`, `imageGeneration.ts` |
+| `packages/workers/` | In-thread implementations for all three Workers | `aiChatWorker.ts` + `aiChat/`, `antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts` + `antiRaid/adDetect/`, `diskIOWorker.ts` + `diskIO/` |
+| `packages/ai/` | Model transport entry points and AI capabilities: Gemini client, DeepSeek client, vision descriptions, image generation, sticker catalog, tool implementations | `gemini.ts`, `deepseek.ts`, `tools/replyToolset/`, `imageGeneration.ts` |
+| `packages/workers/antiRaid/adDetect/` | Ad-detection pipeline (DeepSeek): batched queue, verdicts, and disposal on a hit | `queue.ts`, `classifier.ts`, `disposal.ts` |
 | `packages/infra/` | Telegram client, Worker hosts, logger, environment configuration | `telegram/`, `config.ts`, `workerSupervisor.ts` |
 | `packages/infra/storage/` | Data-root preflight, instance lock, StateStore, startup cleanup | `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts` |
 | `packages/cache/` | Domain-specific containers for mutable in-process state | `aiChat/`, `copy/`, `senderIdentity.ts` |

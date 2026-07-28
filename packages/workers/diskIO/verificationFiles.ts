@@ -82,6 +82,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
       value.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT ||
       !value.trackedMessageTimes.every(isSafeTimestamp)
     ) ||
+    !isOptionalPositiveId(value.announcementMessageId) ||
     !isOptionalPositiveId(value.invitedBy) ||
     !isOptionalPositiveId(value.reminderMessageId) ||
     !isOptionalPositiveId(value.replyReminderMessageId) ||
@@ -94,15 +95,23 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     (value.phase === "checkingInviter" && (
       !isPositiveId(value.terminalInviterId) ||
       value.expelReason !== undefined ||
-      value.successNoticeSent !== undefined
+      value.successNoticeSent !== undefined ||
+      value.failureNoticeSent !== undefined ||
+      value.unconfirmedNoticeSent !== undefined
     )) ||
     (value.phase === "expelling" && (
       (value.expelReason !== "timeout" && value.expelReason !== "flood") ||
       value.terminalInviterId !== undefined ||
-      (value.successNoticeSent !== undefined && typeof value.successNoticeSent !== "boolean")
+      (value.successNoticeSent !== undefined && typeof value.successNoticeSent !== "boolean") ||
+      (value.failureNoticeSent !== undefined && typeof value.failureNoticeSent !== "boolean") ||
+      (value.unconfirmedNoticeSent !== undefined && typeof value.unconfirmedNoticeSent !== "boolean")
     )) ||
     (value.phase === "pending" && (
-      value.terminalInviterId !== undefined || value.expelReason !== undefined || value.successNoticeSent !== undefined
+      value.terminalInviterId !== undefined ||
+      value.expelReason !== undefined ||
+      value.successNoticeSent !== undefined ||
+      value.failureNoticeSent !== undefined ||
+      value.unconfirmedNoticeSent !== undefined
     )) ||
     key !== verificationKey(value.chatId, value.userId)
   ) return null;
@@ -116,6 +125,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     label: value.label,
     isBot: value.isBot,
     messageIds: [...value.messageIds],
+    announcementMessageId: value.announcementMessageId,
     trackedMessageTimes: [...value.trackedMessageTimes],
     invitedBy: value.invitedBy,
     reminderMessageId: value.reminderMessageId,
@@ -128,6 +138,8 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     terminalInviterId: value.terminalInviterId as number | undefined,
     expelReason: value.expelReason as "timeout" | "flood" | undefined,
     successNoticeSent: value.successNoticeSent as boolean | undefined,
+    failureNoticeSent: value.failureNoticeSent as boolean | undefined,
+    unconfirmedNoticeSent: value.unconfirmedNoticeSent as boolean | undefined,
   };
 }
 

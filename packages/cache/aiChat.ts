@@ -27,7 +27,18 @@ export const lastInitState: { current: AiInitMessage | null } = { current: null 
 export const latestAiMemories: Map<number, string> = new Map();
 /** latestAiMemories 中每份快照对应的运行时 revision。启动恢复快照统一从 0 开始。 */
 export const latestAiMemoryRevisions: Map<number, number> = new Map();
-/** 本进程内各 chat 已分配的最高 revision；进程重启后旧消息不存在，可安全从 0 重建。 */
+/**
+ * 本进程内各 chat 已分配的最高 revision；进程重启后旧消息不存在，可安全从 0 重建。
+ *
+ * 生命周期：nextAiMemoryRevision 与启动恢复填充，只在群 teardown 之后由
+ * forgetAiMemoryRevisionCounter 删除；Worker 崩溃重启**不重建也不清空**——它描述
+ * 的是本主线程进程内已分配到哪一号，与 Worker 存活无关。
+ *
+ * 不能按容量淘汰，也不能在 `/ai_chat disable` 时删：重置后的 revision 1 会与在途
+ * 墓碑撞号，一条过期的删除回执就能把新记忆判成已删；postMemoryRecord 还用
+ * 「计数器还在」表示「刚被 purge、下一条新记录要立刻落盘」。上界因此是「本进程
+ * 见过且尚未 teardown 的群数」，不是 AI_MEMORY_MAX_CHATS。
+ */
 export const aiMemoryRevisionCounters: Map<number, number> = new Map();
 /** 已投递但尚未收到 durable delete 回执的最新墓碑。 */
 export const pendingAiMemoryDeletes: Map<number, number> = new Map();

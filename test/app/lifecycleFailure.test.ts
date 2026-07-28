@@ -14,6 +14,7 @@ const releaseSingleInstanceLock = mock(async (): Promise<void> => { calls.push("
 const getStickerConfig = mock((): object => ({}));
 const getReactionConfig = mock((): object => ({}));
 const getMoodConfig = mock((): object => ({}));
+const getAdSampleConfig = mock((): readonly string[] => []);
 const initTelegramClients = mock((): void => { calls.push("initTelegram"); });
 let diskIOFatalHandler: ((error: Error) => void) | undefined;
 let businessWorkerFatalHandler: ((error: Error) => void) | undefined;
@@ -115,6 +116,7 @@ const testDependencies = {
   flushStateToDisk,
   getAllChatStates,
   getGlobalCopyState,
+  getAdSampleConfig,
   getMoodConfig,
   getReactionConfig,
   getStickerConfig,
@@ -181,6 +183,7 @@ beforeEach(() => {
     getStickerConfig,
     getReactionConfig,
     getMoodConfig,
+    getAdSampleConfig,
     initTelegramClients,
     initDiskIO,
     cleanupOrphanedTempFiles,
@@ -232,6 +235,7 @@ beforeEach(() => {
   ]) mocked.mockClear();
   acquireSingleInstanceLock.mockImplementation(async (): Promise<void> => { calls.push("acquireLock"); });
   getStickerConfig.mockImplementation((): object => ({}));
+  getAdSampleConfig.mockImplementation((): readonly string[] => []);
   refreshAllChatTitles.mockImplementation(async (): Promise<void> => { calls.push("refreshTitles"); });
   flushDiskIO.mockImplementation(async () => { calls.push("flushDiskIO"); return "flushed" as const; });
   flushStateToDisk.mockImplementation(async () => { calls.push("flushState"); return "flushed" as const; });

@@ -1,6 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { invalidateAiChat } from "../aiChat";
+import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
@@ -24,7 +25,17 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   // 关闭时同步清掉 Worker 侧已排队的触发：主线程停止投喂只拦得住之后的，
   // 递增状态代数并清队列，拦截排队和在途回复的后续副作用。
   await persistAuthoritativeState("ai_chat toggled");
-  if (arg === "disable") await invalidateAiChat(chatId, true);
+  if (arg === "disable") {
+    // 开关本身已经落盘，运行时清理是尽力而为：Worker 不可用（已放弃/重生中）
+    // 时这里会 reject，放它逃出去就是这条 update 判失败、最终 offset 被扣住、
+    // 重启后 Telegram 重投同一条 /ai_chat——而 Worker 正不可用，重投同样失败，
+    // 恰好把重启循环焊死。在途回复另有 generation 自检兜底，不会因此发出。
+    try {
+      await invalidateAiChat(chatId, true);
+    } catch (error: unknown) {
+      logger.error(`Failed to invalidate the AI chat runtime of chat ${chatId} after disabling it:`, error);
+    }
+  }
 
   const replyText: string = arg === "enable"
     ? `哼，那本天才就赏脸在这个群闲聊几句吧，杂鱼们好好珍惜♡`

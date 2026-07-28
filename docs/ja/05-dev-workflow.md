@@ -30,11 +30,11 @@
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 90% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置などのリポジトリ規約を lint より先に検査します。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、tracked 非スクリプトファイルの実行権限を lint より先に検査します。
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**1063 tests / 134 files / 8966 `expect()` calls**。全ソースコードの**関数カバレッジは 94.56%、行カバレッジは 96.47%**です。ルート README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**1200 tests / 142 files / 9443 `expect()` calls**。全ソースコードの**関数カバレッジは 94.82%、行カバレッジは 96.52%**です。ルート README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -73,7 +73,7 @@ bun run test:coverage 2>&1 | tail -5           # テスト数、ファイル数�
 bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 ```
 
-3 言語の README にある Tests / Coverage badge、各 README「純 AI 開発」節の「プロジェクト品質」が参照する [`docs/assets/coverage_light.svg`](assets/coverage_light.svg) と [`coverage_dark.svg`](assets/coverage_dark.svg)（banner と同様、1 組を 3 言語の README が共用します。両テーマのファイルの数値と、3 つの README の `<img alt>` 内の同等の文言を必ず一緒に更新してください。図は画像として読み込まれるため SVG 内部の `<title>`/`aria-label` は読み上げに届かず、alt が唯一の入口です）、そして 3 言語の本文にある「このドキュメント版の実測値」を同期します。いずれも同じ実測値なので、1 か所直したら全部直します。Coverage badge は常に `All files` の行カバレッジを使います。確率、容量、時間など README 内の動作値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
+3 言語の README にある Tests / Coverage badge、各 README「純 AI 開発」節の「プロジェクト品質」が参照する [`docs/assets/coverage_light.svg`](../assets/coverage_light.svg) と [`coverage_dark.svg`](../assets/coverage_dark.svg)（banner と同様、1 組を 3 言語の README が共用します。両テーマのファイルの数値と、3 つの README の `<img alt>` 内の同等の文言を必ず一緒に更新してください。図は画像として読み込まれるため SVG 内部の `<title>`/`aria-label` は読み上げに届かず、alt が唯一の入口です）、そして 3 言語の本文にある「このドキュメント版の実測値」を同期します。いずれも同じ実測値なので、1 か所直したら全部直します。Coverage badge は常に `All files` の行カバレッジを使います。確率、容量、時間など README 内の動作値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース
 

@@ -297,6 +297,32 @@ describe("AI main-thread persistence mirror", () => {
     expect(aiChatWorkerState.available).toBeFalse();
   });
 
+  test("revision 计数器只在 teardown 之后丢掉，还有在途墓碑时留着", async () => {
+    const { forgetAiMemoryRevisionCounter } = await import("../../../packages/aiChat/memoryMirror");
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+
+    const deleted = aiChat.invalidateAiChat(-1001, true);
+    // 墓碑还没拿到 durable 回执：这时清掉计数器，重置后的 revision 1 会与在途
+    // 的那一号撞车，一条过期回执就能把新记忆判成已删。
+    forgetAiMemoryRevisionCounter(-1001);
+    expect(aiMemoryRevisionCounters.get(-1001)).toBe(1);
+
+    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+    const invalidateRequest: AiChatWorkerMessage | undefined =
+      workerPosts.find((message: AiChatWorkerMessage): boolean => message.type === "invalidateChat");
+    if (invalidateRequest?.type !== "invalidateChat") throw new Error("Expected an invalidateChat request");
+    supervisorOptions!.onEvent({
+      type: "chatInvalidated",
+      chatId: -1001,
+      requestId: invalidateRequest.requestId,
+    });
+    await deleted;
+
+    // 全部结算之后才允许摘掉——这是 AI 记忆那套状态里唯一没有容量上界的表。
+    forgetAiMemoryRevisionCounter(-1001);
+    expect(aiMemoryRevisionCounters.has(-1001)).toBeFalse();
+  });
+
   test("Worker 放弃自愈只清 Worker purge guard，不丢未确认的 durable tombstone", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
     const firstDelete = aiChat.invalidateAiChat(-1001, true);

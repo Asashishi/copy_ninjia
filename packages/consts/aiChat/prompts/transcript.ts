@@ -55,3 +55,60 @@ export const TRANSCRIPT_LINE_FORMAT_HINT: string =
 export const REPLY_TAG_HINT: string = replyTagTemplate({ target: "[message_id:…] …", text: "…", forwardTag: "", quote: "" });
 /** 说明文案引用的转发来源占位形态。 */
 export const FORWARD_TAG_HINT: string = forwardTagTemplate("…");
+
+/**
+ * 机器人自己动作在转录里的记号——这些行由**执行侧在动作真正落地之后**写入
+ * （见 ai/tools/replyToolset/imageGeneration.ts 与 ai/stickers/sets.ts 的自录），
+ * 模型只能读到、绝不能自己产出。
+ *
+ * 两个模板与下面的 SELF_ACTION_TAG_MARKERS 必须共用同一份字面量：记号是
+ * 「这个动作确实发生过」的唯一凭据，执行侧写一份、拦截侧再手抄一份，两边一漂移
+ * 就等于凭据失效。生图撞上群冷却时模型有概率不说「发不了」，而是照着转录里见过
+ * 的这个形状用 send_message 打一段「（…生成并发送了一张图片：…）」出来——群友看到
+ * 的是一条声称配了图、实际什么都没有的消息，而记忆里也会留下一条假的动作记录。
+ */
+export function stickerSentTagTemplate(detail: string): string {
+  return detail ? `（${SELF_STICKER_TAG_MARKER}：${detail}）` : `（${SELF_STICKER_TAG_MARKER}）`;
+}
+
+/** 同上，生图动作的记号。reference 为真时说明本次带了参考素材。 */
+export function imageSentTagTemplate(prompt: string, reference: boolean): string {
+  return `（${reference ? "参考素材" : ""}${SELF_IMAGE_TAG_MARKER}：${prompt}）`;
+}
+
+/** 贴纸自录记号的固定词。 */
+export const SELF_STICKER_TAG_MARKER: string = "发了一枚贴纸";
+/** 生图自录记号的固定词。 */
+export const SELF_IMAGE_TAG_MARKER: string = "生成并发送了一张图片";
+
+/**
+ * 拦截侧用的记号清单：只用来把命中的那个词写进报错文案，判定看的是下面的
+ * SELF_ACTION_TAG_PATTERNS。
+ */
+export const SELF_ACTION_TAG_MARKERS: readonly string[] = Object.freeze([
+  SELF_STICKER_TAG_MARKER,
+  SELF_IMAGE_TAG_MARKER,
+]);
+
+/**
+ * 拦截侧的判定式：模型给 send_message 的正文里命中其中任何一条，就是在用文字
+ * 伪造一次执行侧动作，必须拒发（见 ai/tools/replyToolset/sendMessage.ts）。
+ *
+ * 锚定的是上面两个模板的**整体形状**而不是裸短语：记号要出现在一对全角括号
+ * 里、紧跟着 `：` 或收尾的 `）`，中间只允许一小段没跨过 `）` 的前缀（模型仿写
+ * 时会把「参考素材」改成「参考上传的素材」这类说法，只认字面模板等于没拦）。
+ *
+ * 不能用裸子串：「发了一枚贴纸」「生成并发送了一张图片」本身都是日常中文，
+ * 群友问一句「你刚刚生成并发送了一张图片吗？」模型照常作答就会命中而被硬拒，
+ * 本轮兜底文本走的又是同一个执行器、会被再拒一次，结果是对着一条 @ 提及完全
+ * 沉默。括号外提到这两个词一律放行，括号内摆成凭据形状的一律拦下。
+ */
+export const SELF_ACTION_TAG_PATTERNS: readonly RegExp[] = Object.freeze([
+  new RegExp(`（[^）]{0,20}${SELF_STICKER_TAG_MARKER}(?:：|）)`),
+  new RegExp(`（[^）]{0,20}${SELF_IMAGE_TAG_MARKER}(?:：|）)`),
+]);
+
+/** 说明文案里引用的贴纸自录占位形态。 */
+export const STICKER_SENT_TAG_HINT: string = stickerSentTagTemplate("…");
+/** 说明文案里引用的生图自录占位形态。 */
+export const IMAGE_SENT_TAG_HINT: string = imageSentTagTemplate("…", false);

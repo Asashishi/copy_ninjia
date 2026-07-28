@@ -35,6 +35,7 @@
     "@grammyjs/runner": "^2.0.3",
     "@grammyjs/transformer-throttler": "^1.2.1",
     "grammy": "^1.44.0",
+    "openai": "^6.49.0",
     "sharp": "^0.35.3"
   }
 }

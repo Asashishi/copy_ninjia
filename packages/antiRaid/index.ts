@@ -30,24 +30,26 @@ import {
   acceptVerificationUpsert,
 } from "./verificationMirror";
 import { claimBlockedJoiner, registerBlocklistRemoval } from "./blocklistGuard";
+import { buildAdCandidate, drainAdDisposals, handleAdDetected } from "./adDetect";
 import {
   replayPendingBlockedRemovals,
   settleBlockedRemoval,
 } from "../infra/blocklist";
 import { isActiveChatMember, isInviterExemptAdmin, pickMember } from "./memberFacts";
 import { prepareDurableAntiRaidMessages } from "./blocklistDelivery";
+import { antiRaidBarrier, antiRaidRuntimeState } from "../cache/antiRaid/proxy";
 import {
-  activeVerificationSnapshots,
-  antiRaidBarrier,
-  antiRaidRuntimeState,
   emergencyLockdownRecoveryRuntime,
   pendingLockdownPersistence,
-  pendingVerificationDeletes,
   persistedLockdownFingerprints,
-  persistedVerificationRevisions,
   type PersistedLockdownFingerprint,
-} from "../cache/antiRaid";
-import type { AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot, AdoptableLockdown } from "../types/antiRaid";
+} from "../cache/antiRaid/lockdownMirror";
+import {
+  activeVerificationSnapshots,
+  pendingVerificationDeletes,
+  persistedVerificationRevisions,
+} from "../cache/antiRaid/verificationMirror";
+import type { AdCandidateMessage, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot, AdoptableLockdown } from "../types/antiRaid";
 import type { LockdownRecord } from "../types/chatState";
 import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
 import type { VerificationPersistedReply } from "../types/diskIO";
@@ -162,6 +164,9 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
       case "blockedMembersRemoved":
         settleBlockedRemoval(event);
         break;
+      case "adDetected":
+        handleAdDetected(event);
+        break;
       case "barrierComplete": {
         antiRaidBarrier.settle(event.barrierId, "flushed");
         break;
@@ -247,13 +252,34 @@ function remainingDrainTime(deadline: number): number {
 }
 
 /**
- * 停机排空：先让已有镜像落盘并把持久化回执交回 Worker，再等待由回执放行的
- * 网络副作用；若副作用又发布了新镜像则重复，直到固定点或达到轮数上限。
+ * 停机排空：先 quiesce Worker 广告判定并取得 FIFO drain 回执，再等待主线程
+ * 广告处置；随后让已有镜像落盘并把持久化回执交回 Worker，等待由回执放行的
+ * 网络副作用。若副作用又发布了新镜像则重复，直到固定点或达到轮数上限。
  */
 export async function drainAntiRaid(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS): Promise<FlushResult> {
   if (!antiRaidRuntimeState.initialized) return "flushed";
   const deadline: number = Date.now() + timeoutMs;
+  // Worker 在处理 drain 时先关闭广告判定节拍；同一端口 FIFO 保证更早发布的
+  // adDetected 已先在主线程登记，回执之后在途判定因 stopping 门禁不再发布。
+  // 因此只有拿到这道回执后，inFlightAdDisposals 的第一次快照才是稳定边界。
+  const quiesceResult: FlushResult =
+    await drainAntiRaidWorkerTasks(remainingDrainTime(deadline));
+  if (quiesceResult !== "flushed") {
+    // 回执拿不到（Worker 已放弃或正在重生）时，主线程侧仍可能有处置卡在
+    // confirmBlocklistPersisted 上——那正是「拉黑已入队、还没落盘」的窗口，
+    // 直接 return 会连同待写的黑名单一起丢掉。因此用剩余预算再排空一次；
+    // 没有回执就没有稳定边界，这一轮只覆盖此刻在途的那批，属尽力而为，
+    // 结果不改写返回值：失败原因仍是 quiesce 本身。
+    await drainAdDisposals(remainingDrainTime(deadline));
+    return quiesceResult;
+  }
   for (let round: number = 0; round < ANTI_RAID_DRAIN_MAX_ROUNDS; round++) {
+    // 广告判定命中后的主线程处置（拉黑落盘 + 登记封禁批次）收进本轮对账：
+    // 它自己会再投一次 removeBlockedMembers，落在下面的 barrier 与 flush 之前。
+    // 与本轮其余每一步一样吃同一份剩余预算——裸等的话，预算为 0 的异常退出
+    // 路径会被它一路拖到强制退出线（见 adDetect.ts 的 drainAdDisposals）。
+    const disposalResult: FlushResult = await drainAdDisposals(remainingDrainTime(deadline));
+    if (disposalResult !== "flushed") return disposalResult;
     const initialBarrier: FlushResult = await barrierAntiRaidMailbox(remainingDrainTime(deadline));
     if (initialBarrier !== "flushed") return initialBarrier;
 
@@ -405,6 +431,15 @@ export function deactivateAntiRaidChat(chatId: number): void {
   postAntiRaidOrThrow({ type: "deactivateChat", chatId });
 }
 
+/**
+ * `/ad_detect disable` 的运行态收尾：丢掉这个群还排在 Worker 里的待检消息串。
+ * 投递失败必须上抛——主线程这道门禁只拦得住之后的消息，已经排进队列的那些
+ * 若继续判定，关掉开关之后还会有人被拉黑。
+ */
+export function clearAdDetection(chatId: number): void {
+  postAntiRaidOrThrow({ type: "clearAdDetect", chatId });
+}
+
 /** 停机时终止 Worker；验证/lockdown 的 write-ahead 镜像已在主线程持有。 */
 export async function terminateAntiRaid(): Promise<void> {
   antiRaidBarrier.settleAll("failed");
@@ -510,6 +545,14 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
   // 入群公告照样吞掉（服务消息本来就不该流进复读/AI 流水线），只是不投递。
   if (!(await isBotAdminIn(message.chat.id))) {
     return !!(message.new_chat_members && message.new_chat_members.length > 0);
+  }
+
+  // 广告检测与入群守卫共用上面那道管理员判定：不是管理员就删不掉广告也封不了
+  // 人，判一次纯属白烧额度。投递是尽力而为的——Worker 不可用只意味着它正在
+  // 重建，而待检队列本来就随 isolate 一起清空，不值得为它拒收这条 update。
+  const adCandidate: AdCandidateMessage | undefined = buildAdCandidate(message, botId);
+  if (adCandidate !== undefined && !post(adCandidate)) {
+    logger.error(`Anti-Raid Worker rejected an ad detection candidate from chat ${message.chat.id}.`);
   }
 
   if (message.new_chat_members && message.new_chat_members.length > 0) {

@@ -31,13 +31,14 @@ cp .env.example .env
 
 ## Configuring `.env`
 
-The project reads exactly five environment variables; there are no undocumented switches. Four credential/authorization settings are parsed by [`packages/infra/config.ts`](../../packages/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`packages/consts/paths.ts`](../../packages/consts/paths.ts) reads it earlier:
+The project reads exactly six environment variables; there are no undocumented switches. Five credential/authorization settings are parsed by [`packages/infra/config.ts`](../../packages/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`packages/consts/paths.ts`](../../packages/consts/paths.ts) reads it earlier:
 
 | Variable | Required | Description |
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | Token issued by BotFather |
-| `GEMINI_API_KEY` | ✅ | Gemini API key |
-| `SUPER_ADMIN_USER_ID` | ✅ | The super administrator, as one decimal user ID; `/init`, `/ai_chat`, `/switch_mood`, `/send`, and similar commands recognize only this user |
+| `GEMINI_API_KEY` | ✅ | Gemini API key, used exclusively by the AI chat agent: `/ai_chat` reply generation, image understanding, and memory compaction |
+| `DEEPSEEK_API_KEY` | May be empty | DeepSeek API key (OpenAI-compatible endpoint), used exclusively by ad detection: the `/ad_detect` classifier. When empty, `/ad_detect enable` is rejected and everything else keeps running |
+| `SUPER_ADMIN_USER_ID` | ✅ | The super administrator, as one decimal user ID; `/init`, `/ai_chat`, `/ad_detect`, `/switch_mood`, `/send`, and similar commands recognize only this user |
 | `PRIVILEGED_USERS_ID` | May be empty | Comma-separated allowlisted users; exempt from copy cooldowns, allowed to use `/block`, and allowed to vouch for other bots during verification |
 | `COPY_NINJIA_DATA_ROOT` | May be empty | Runtime data root; when empty, data is stored in the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root) |
 
@@ -51,8 +52,9 @@ For Japanese translation, save the service-account key as `g-auth.json` in the p
 | [`config/stickers.json`](../../config/stickers.json) | Sticker packs available to the AI, up to 5 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
 | [`config/reactions.json`](../../config/reactions.json) | Emoji reactions available to the AI | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
 | [`config/mood.json`](../../config/mood.json) | Mood tiers: copy, weights, and weather/time multipliers | [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must be positive integers totaling exactly 100 |
+| [`config/ad_samples.json`](../../config/ad_samples.json) | Ad-detection reference samples; the file itself is a string array | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts); entries must be non-blank and unique, at most 500 |
 
-All three JSON files undergo strict schema validation and are warmed up before any network access during startup. Invalid configuration fails startup with the offending field instead of running in a degraded state.
+All four JSON files undergo strict schema validation and are warmed up before any network access during startup. Invalid configuration fails startup with the offending field instead of running in a degraded state.
 
 ## Telegram-Side Configuration (BotFather and the Group)
 
@@ -73,6 +75,7 @@ After startup succeeds, have `SUPER_ADMIN_USER_ID` run the following in the targ
 ```text
 /init enable      # enable the group's business-processing entry point; ordinary updates from uninitialized groups are dropped at the gateway
 /ai_chat enable   # optional: enable AI chat in this group
+/ad_detect enable # optional: enable ad detection; it only fires while the bot is an administrator here
 ```
 
 ## Verifying the Setup

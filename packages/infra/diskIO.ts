@@ -137,6 +137,22 @@ export function relayLogMessage(message: LogMessage): boolean {
   return safePostDiskIO(worker, { type: "log", ...message } satisfies LogEnvelope, "log message");
 }
 
+/**
+ * 主线程 -> diskIOWorker：投递一条**允许丢**的诊断消息（目前只有广告命中样本）。
+ *
+ * 与 postDiskIO 的差别只在失败语义：Worker 不可写时直接丢，既不占
+ * pendingBusinessMessages 的恢复预算，也绝不触发 stopWorkerAfterLoadFailure
+ * ——同 relayLogMessage 的取舍。这类消息体积最大、命中时最密集，走 postDiskIO
+ * 就是拿一个契约上「丢了也不影响任何行为」的诊断去抢安全任务的恢复缓冲，
+ * 触顶还会把进程连同未确认的 update 一起带走。
+ * @returns 是否真的投出去了；调用方只用来记一行日志，不据此重试。
+ */
+export function postDiskIODiagnostic(message: DiskBusinessMessage): boolean {
+  const worker: Worker | null = diskIORuntime.worker;
+  if (worker === null || !diskIORuntime.writable) return false;
+  return safePostDiskIO(worker, message, `${message.type} diagnostic message`);
+}
+
 /** 主线程 -> diskIOWorker：统一的快照或增量写入。 */
 export function postDiskIO(
   message: DiskBusinessMessage

@@ -79,7 +79,7 @@
 ## ペルソナまたは JSON 設定の変更
 
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
-- `config/stickers.json`、`reactions.json`、`mood.json`：schema は対応する `packages/config/` ファイルにあり、起動時に厳密検証されます。スタンプパックは最大 5 個、mood の重みは正の整数で合計がちょうど 100 です。構造変更では、先に `packages/config/` の schema と `packages/types/` の型を変更してから JSON を変更します。不正な設定は起動を拒否します。
+- `config/stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json`：schema は対応する `packages/config/` ファイルにあり、起動時に厳密検証されます。スタンプパックは最大 5 個、mood の重みは正の整数で合計がちょうど 100、広告例文はファイル自体が文字列配列で各要素は空文字不可・重複不可・最大 500 件です。構造変更では、先に `packages/config/` の schema と `packages/types/` の型を変更してから JSON を変更します。不正な設定は起動を拒否します。
 
 ## 環境変数の追加
 

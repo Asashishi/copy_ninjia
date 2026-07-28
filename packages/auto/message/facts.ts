@@ -73,18 +73,6 @@ export function resolveMentionFacts(message: Message, botId: number, botUsername
   return facts;
 }
 
-/** 只判定「@ 到机器人」单个事实的便捷形态，语义见 MentionFacts.isMentioned。 */
-export function isBotMentioned(message: Message, botUsername: string | undefined): boolean {
-  if (!botUsername) return false;
-  // botId 只影响 hasOtherMention，这里用不到，传 0 即可。
-  return resolveMentionFacts(message, 0, botUsername).isMentioned;
-}
-
-/** 只判定「提及了别人」单个事实的便捷形态，语义见 MentionFacts.hasOtherMention。 */
-export function mentionsOtherUser(message: Message, botId: number, botUsername: string | undefined): boolean {
-  return resolveMentionFacts(message, botId, botUsername).hasOtherMention;
-}
-
 /** 消息在群里显示的发送者 id；拿不到时返回 undefined，不伪造相等关系。 */
 function visibleSenderId(message: Message): number | undefined {
   return visibleSenderChat(message)?.id ?? message.from?.id;

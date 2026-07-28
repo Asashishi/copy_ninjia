@@ -5,6 +5,7 @@ import {
   pendingOverflowNotices,
   pendingReplyTriggers,
   rateLimitNoticeTimes,
+  replyGenerations,
   sweepAiChatReplyCache,
 } from "../../../packages/cache/aiChat/replies";
 import { RATE_LIMIT_LONG_WINDOW_MS, RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../../../packages/consts/aiChat";
@@ -29,7 +30,7 @@ afterEach(() => {
 });
 
 describe("AI 回复代际状态", () => {
-  test("失效操作递增代数，清除排队/限频/心跳，但保留在途计数到 finally", async () => {
+  test("失效操作回收旧 epoch，清除排队/限频/心跳，但保留在途计数到 finally", async () => {
     const queue = new LinkedQueue<QueuedReplyTrigger>();
     queue.push({ triggerSenderId: 7, replyToMessageId: 1, imageGenerationRequested: false, senderName: "Alice", text: "hello" });
     pendingReplyTriggers.set(-1001, queue);
@@ -57,8 +58,9 @@ describe("AI 回复代际状态", () => {
 
     await invalidateChatReplies(-1001);
 
-    expect(currentReplyGeneration(-1001)).toBe(captured + 1);
+    expect(replyGenerations.has(-1001)).toBe(false);
     expect(isReplyGenerationCurrent(-1001, captured)).toBe(false);
+    expect(currentReplyGeneration(-1001)).not.toBe(captured);
     expect(pendingReplyTriggers.has(-1001)).toBe(false);
     expect(pendingOverflowNotices.has(-1001)).toBe(false);
     expect(longTriggerTimes.has(-1001)).toBe(false);
@@ -67,7 +69,7 @@ describe("AI 回复代际状态", () => {
     expect(activeReplyCounts.get(-1001)).toBe(1);
   });
 
-  test("失效先中止旧代信号，并等待该代全部用户可见副作用 settle", async () => {
+  test("失效先中止旧代信号，并等待该代全部 generation-sensitive 任务 settle", async () => {
     const chatId: number = -1006;
     const generation: number = currentReplyGeneration(chatId);
     const signal: AbortSignal = replyGenerationSignal(chatId, generation);

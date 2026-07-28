@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1063_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.47%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1200_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.52%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -69,7 +69,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage：1063 项测试全部通过 / 134 个测试文件 / 8,966 次 expect() 调用 / 函数覆盖率 94.56% / 行覆盖率 96.47%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：1200 项测试全部通过 / 142 个测试文件 / 9,443 次 expect() 调用 / 函数覆盖率 94.82% / 行覆盖率 96.52%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -154,6 +154,7 @@
 <tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；之后再进任何监听群都会被秒踢</td></tr>
 <tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>（<code>all</code> 仅 <code>SUPER_ADMIN_USER_ID</code>）</td><td>解除拉黑：把 id 从黑名单里划掉（整份名单原子重写回文件），之后进群不再秒踢。默认不动各群已有的封禁；加 <code>all</code> 则在所有机器人管理的群中一并解封</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群 AI 闲聊</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群广告检测：每条消息按发送者归并成 90 秒消息串，交 DeepSeek 判定；命中即执行与 <code>/block</code> 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发；判定口径见 <a href="config/ad_samples.json"><code>config/ad_samples.json</code></a></td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>为已开启 AI 闲聊的群立即重抽当前心情，并在 Worker 明确回执后回复新心情名</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群日语翻译能力（默认关闭）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群的业务处理总入口</td></tr>
@@ -206,7 +207,7 @@ cp .env.example .env
 
 ### 3. 配置
 
-按 [`.env.example`](.env.example) 填写 `.env`：`TELEGRAM_BOT_TOKEN`、`GEMINI_API_KEY` 和表示单个十进制用户 ID 的 `SUPER_ADMIN_USER_ID` 必填；`PRIVILEGED_USERS_ID` 可留空，多项之间用英文逗号分隔。
+按 [`.env.example`](.env.example) 填写 `.env`：`TELEGRAM_BOT_TOKEN`、`GEMINI_API_KEY`（AI 闲聊 agent 专用）和表示单个十进制用户 ID 的 `SUPER_ADMIN_USER_ID` 必填；`DEEPSEEK_API_KEY`（广告检测专用）与 `PRIVILEGED_USERS_ID` 可留空，多项之间用英文逗号分隔。留空 `DEEPSEEK_API_KEY` 时 `/ad_detect enable` 会被拒绝，其余功能照常运行。
 
 `COPY_NINJIA_DATA_ROOT` 可选，用于单独指定运行时数据根目录。设置后，`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；人设、贴纸/反应/心情配置与 `g-auth.json` 仍从项目根目录读取。留空时，运行时数据直接位于项目根目录。
 

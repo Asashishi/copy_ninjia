@@ -1,9 +1,10 @@
 /**
  * /block 黑名单的落盘逻辑：文件是一个顶层 JSON 对象
  * { "<userId>": { "isBlocked": true, "blockedAt": "2026/07/25 19:38:09" }, ... }，
- * 位于 config/blocklist.json（见 consts/paths.ts）。写入方式与日志一致——复用
- * appendOnlyDayFile.ts 的按位置追加，只覆写结尾的「\n}」，不整文件重写；
- * 差别是黑名单只有一个固定文件，不按天滚动，也永不过期清理。
+ * 位于 memory/blocklist/blocklist.json（见 consts/paths.ts）。写入方式与日志
+ * 一致——复用 appendOnlyDayFile.ts 的按位置追加，只覆写结尾的「\n}」，不整
+ * 文件重写；差别是黑名单只有一个固定文件，不按天滚动，也永不过期清理。
+ * 同目录的 removals.json 是待执行处置 outbox，不是名单副本。
  *
  * 时序由主线程定：先更新内存 Map（cache/blocklist.ts），再投递本消息追加落盘。
  * 因此内存永远不落后于磁盘；反过来若先落盘再更新内存，两步之间进来的入群
@@ -22,7 +23,7 @@ import { mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { BlockUserDiskMessage, UnblockUserDiskMessage } from "../../types/diskIO";
 import type { AppendOnlyFileState, BlockedUserRecord } from "../../types/diskIO/storage";
-import { BLOCKLIST_FILE_PATH, RUNTIME_CONFIG_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
+import { BLOCKLIST_FILE_PATH, BLOCKLIST_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
@@ -74,16 +75,15 @@ function decodeBlocklist(parsed: unknown): Map<number, BlockedUserRecord> {
 }
 
 /**
- * 清掉本文件原子写被中断留下的临时文件。config/ 与其它落盘目录不同——它同时
- * 放着手工维护的 mood/stickers/reactions，因此只认自己这个文件名前缀，绝不
- * 按后缀无差别清扫。
+ * 清掉本文件原子写被中断留下的临时文件。同目录还有 removals.json 及其临时
+ * 文件，因此只认权威名单自己的文件名前缀，绝不按后缀无差别清扫。
  */
 function sweepOrphanedBlocklistTemps(): void {
   const prefix: string = `.${basename(BLOCKLIST_FILE_PATH)}.`;
-  for (const name of readdirSync(RUNTIME_CONFIG_DIR)) {
+  for (const name of readdirSync(BLOCKLIST_MEMORY_DIR)) {
     if (!name.startsWith(prefix) || !name.endsWith(TMP_FILE_SUFFIX)) continue;
     try {
-      unlinkSync(join(RUNTIME_CONFIG_DIR, name));
+      unlinkSync(join(BLOCKLIST_MEMORY_DIR, name));
     } catch (error: unknown) {
       console.error(`[diskIOWorker] failed to remove orphaned blocklist temp file ${name}:`, error);
     }
@@ -101,7 +101,7 @@ function sweepOrphanedBlocklistTemps(): void {
  */
 export function hydrateBlocklist(): Map<number, BlockedUserRecord> {
   resetBlocklistCache();
-  mkdirSync(RUNTIME_CONFIG_DIR, { recursive: true });
+  mkdirSync(BLOCKLIST_MEMORY_DIR, { recursive: true });
   sweepOrphanedBlocklistTemps();
   const state: AppendOnlyFileState = openAppendOnlyFile(BLOCKLIST_FILE_PATH, PERSISTED_FILE_MODE, false);
   blocklistFileState.current = state;

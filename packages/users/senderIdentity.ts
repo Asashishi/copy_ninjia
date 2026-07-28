@@ -78,6 +78,9 @@ function updateCachedIdentity(identity: CachedUser): void {
   }
 
   // 只有新增正向 key 才占容量。同名资料刷新和 username 换绑都不增长条数。
+  // 这里不能换成 libs/boundedMap.ts 的 setBoundedMapValue：淘汰要连带摘掉
+  // senderUsernameCache 里的反向索引（deleteAlias），而共享实现只认识单张 Map，
+  // 用它会留下一批指向已淘汰 username 的悬空反查项。
   if (!previousIdentity && userCache.size >= USER_CACHE_MAX) {
     const oldestUsername: string | undefined = userCache.keys().next().value;
     if (oldestUsername !== undefined) deleteAlias(oldestUsername);

@@ -41,6 +41,7 @@ mock.module("../../../packages/infra/telegram", () => ({
   deleteMessage: async (): Promise<boolean> => true,
   deleteMessageAfter(): void {},
   kickChatMember: async (): Promise<boolean> => true,
+  probeChatMembership: async (): Promise<boolean> => true,
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 

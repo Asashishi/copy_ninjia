@@ -19,6 +19,21 @@ export const AI_MEMORY_FLUSH_TIMEOUT_MS: number = 2_000;
  * 所属模块：aiChat/index.ts。
  */
 export const AI_CHAT_INVALIDATE_TIMEOUT_MS: number = 10_000;
+/**
+ * Worker 侧等待旧 generation 任务 settle 的预算，到点即降级放行并回执。
+ *
+ * 必须**明显小于** AI_CHAT_INVALIDATE_TIMEOUT_MS：主线程那道 10 秒是从投出
+ * invalidateChat 起算的，Worker 拖满自己的预算之后还要留出回执路由的时间，
+ * 否则主线程先超时 reject，异常一路逃进 grammY 中间件——那条 update 判失败、
+ * 最终 offset 被扣住，重启后 Telegram 重投同一条指令。
+ *
+ * 降级是安全的：登记进来的任务全部按 generation 自检（见 compaction.ts 的
+ * rotateCompaction），失效之后即使跑完也不会再写任何东西；等待只是想让停顿
+ * 看起来干净，不是正确性前提。记忆压缩那条链尤其等不起——summarizeBatchWithRetry
+ * 拿不到 AbortSignal，重试间隔加请求超时最坏能跑好几分钟。
+ * 所属模块：workers/aiChat/replyGeneration.ts。
+ */
+export const AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS: number = 7_000;
 /** 正常停机等待 Disk I/O Worker flush 的预算。 */
 export const DISK_IO_FLUSH_TIMEOUT_MS: number = 3_000;
 /** 正常停机等待 state 主/LKG 写入的预算。 */

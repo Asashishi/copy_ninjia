@@ -36,6 +36,28 @@ export function nextAiMemoryRevision(chatId: number): number {
   return revision;
 }
 
+/**
+ * 群彻底不再由本机器人看管之后，丢掉它的 revision 计数器。
+ *
+ * 只有 teardown 能做，`/ai_chat disable` 不行：计数器要在一个 chat 的整个生命
+ * 周期里单调递增，归零后的 revision 1 会与在途墓碑撞号；postMemoryRecord 还用
+ * 「计数器还在」表示「刚被 purge、下一条新记录要立刻落盘」，disable 后重新开启
+ * 正需要它。teardown 时调用方已 await 过 durable 删除，群再回来等同于新群。
+ *
+ * 还有任何在途状态就跳过，留给下一次：它们都按 revision 比大小。
+ */
+export function forgetAiMemoryRevisionCounter(chatId: number): void {
+  if (
+    pendingAiMemoryDeletes.has(chatId) ||
+    aiMemoryDeleteWaiters.has(chatId) ||
+    postPurgeAiMemoryPersistRevisions.has(chatId) ||
+    latestAiMemories.has(chatId)
+  ) {
+    return;
+  }
+  aiMemoryRevisionCounters.delete(chatId);
+}
+
 function removeDeleteWaiter(chatId: number, waiter: AiMemoryDeleteWaiter): void {
   const waiters: AiMemoryDeleteWaiter[] | undefined = aiMemoryDeleteWaiters.get(chatId);
   if (!waiters) return;

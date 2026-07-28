@@ -47,6 +47,7 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
     return true;
   },
   getAllChatStates: () => chatStates,
+  getChatState: (chatId: number) => chatStates.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number) => {
     const current = chatStates.get(chatId) ?? {};
     chatStates.set(chatId, current);
@@ -63,6 +64,9 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
   banChatMember: async (): Promise<boolean> => true,
   banChatSenderChat: async (): Promise<boolean> => true,
   isChatMember: async (): Promise<boolean> => true,
+  // 广告处置的群内播报用的，同理。
+  sendMessage: async (): Promise<number | undefined> => undefined,
+  deleteMessageAfter: (): void => {},
 }));
 mock.module("../../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "main-thread-test-api" } }));
 mock.module("../../../packages/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
@@ -91,7 +95,8 @@ mock.module("../../../packages/workers/antiRaid/persistence", () => ({
 }));
 
 const antiRaid = await import("../../../packages/antiRaid");
-const { activeVerificationSnapshots, pendingVerificationDeletes } = await import("../../../packages/cache/antiRaid");
+const { activeVerificationSnapshots, pendingVerificationDeletes } = await import("../../../packages/cache/antiRaid/verificationMirror");
+const { inFlightAdDisposals } = await import("../../../packages/cache/antiRaid/adDisposal");
 
 function record(generation: number, revision: number): VerificationSnapshot {
   return {
@@ -150,7 +155,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     await expect(settleAntiRaidDrain(drain, firstBoundaryIndex)).resolves.toBe("flushed");
     expect(workerPosts.slice(firstBoundaryIndex).map(
       (message: AntiRaidWorkerMessage): string => message.type
-    )).toEqual(["barrier", "barrier", "drain"]);
+    )).toEqual(["drain", "barrier", "barrier", "drain"]);
     supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(1, 2) });
     supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(0, 99) });
     supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 3 });
@@ -189,11 +194,12 @@ describe("Anti-Raid main-thread persistence mirror", () => {
   test("真实 drain 期间产生新持久化镜像时会再跑一轮固定点对账", async () => {
     antiRaid.initAntiRaid();
     const firstBoundaryIndex: number = workerPosts.length;
-    let injected: boolean = false;
+    let drainCount: number = 0;
     const result: Promise<FlushResult> = antiRaid.drainAntiRaid(1_000);
     await expect(settleAntiRaidDrain(result, firstBoundaryIndex, (): void => {
-      if (injected) return;
-      injected = true;
+      drainCount++;
+      // 第一次是广告流水线 quiesce；第二次才是本轮持久化回执放行后的任务 drain。
+      if (drainCount !== 2) return;
       supervisorOptions!.onEvent({
         type: "lockdown",
         chatId: -9090,
@@ -208,8 +214,47 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       .filter((message: AntiRaidWorkerMessage): boolean =>
         message.type === "barrier" || message.type === "drain")
       .map((message: AntiRaidWorkerMessage): string => message.type))
-      .toEqual(["barrier", "barrier", "drain", "barrier", "barrier", "drain"]);
+      .toEqual([
+        "drain",
+        "barrier", "barrier", "drain",
+        "barrier", "barrier", "drain",
+      ]);
     chatStates.delete(-9090);
+  });
+
+  test("初始 Worker drain 边界登记的广告处置必须结算后才能返回 flushed", async () => {
+    antiRaid.initAntiRaid();
+    const firstBoundaryIndex: number = workerPosts.length;
+    const disposal = deferred<void>();
+    const disposalTask: Promise<void> = disposal.promise.finally((): void => {
+      inFlightAdDisposals.delete(disposalTask);
+    });
+    const result: Promise<FlushResult> = antiRaid.drainAntiRaid(1_000);
+    let settled: boolean = false;
+    void result.finally((): void => { settled = true; });
+
+    await Bun.sleep(0);
+    const initialDrain: AntiRaidWorkerMessage | undefined =
+      workerPosts[firstBoundaryIndex];
+    expect(initialDrain?.type).toBe("drain");
+    inFlightAdDisposals.add(disposalTask);
+    if (initialDrain?.type === "drain") {
+      supervisorOptions!.onEvent({
+        type: "drainComplete",
+        drainId: initialDrain.drainId,
+      });
+    }
+
+    await Bun.sleep(0);
+    expect(settled).toBeFalse();
+    expect(inFlightAdDisposals.has(disposalTask)).toBeTrue();
+
+    const remainingBoundaryIndex: number = workerPosts.length;
+    disposal.resolve();
+    await expect(
+      settleAntiRaidDrain(result, remainingBoundaryIndex)
+    ).resolves.toBe("flushed");
+    expect(inFlightAdDisposals.has(disposalTask)).toBeFalse();
   });
 
   test("Worker 重建不会把尚未完成 saveState 的 lockdown 镜像当成已持久化", async () => {
@@ -323,7 +368,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     const stateGate = deferred<FlushResult>();
     flushDiskIO.mockImplementationOnce(() => diskGate.promise);
     flushStateToDisk.mockImplementationOnce(() => stateGate.promise);
-    const { antiRaidRuntimeState } = await import("../../../packages/cache/antiRaid");
+    const { antiRaidRuntimeState } = await import("../../../packages/cache/antiRaid/proxy");
     let settled: boolean = false;
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
@@ -427,7 +472,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
   test("barrier 后任一持久化 owner 失败，安全 update 必须 reject", async () => {
     workerPosts.length = 0;
     flushDiskIO.mockResolvedValueOnce("failed");
-    const { antiRaidRuntimeState } = await import("../../../packages/cache/antiRaid");
+    const { antiRaidRuntimeState } = await import("../../../packages/cache/antiRaid/proxy");
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
       chatMember: {
@@ -717,7 +762,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
       (input as { chatId: number }).chatId === stoppedChatId
     )).toHaveLength(1);
-    const { emergencyLockdownRecoveries, emergencyLockdownRecoveryRuntime } = await import("../../../packages/cache/antiRaid");
+    const { emergencyLockdownRecoveries, emergencyLockdownRecoveryRuntime } = await import("../../../packages/cache/antiRaid/lockdownMirror");
     expect(emergencyLockdownRecoveries.size).toBe(0);
     expect(emergencyLockdownRecoveryRuntime.stopped).toBeTrue();
     expect(chatStates.get(stoppedChatId)?.lockdown?.intentId).toBe(104);

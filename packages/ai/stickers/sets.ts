@@ -3,6 +3,7 @@ import { logger } from "../../infra/logger";
 import { bot } from "../../infra/telegram";
 import { failedPacks, inflightStickerSets, stickerSetCache } from "../../cache/stickers/sets";
 import { STICKER_SET_FAILURE_RETRY_MS } from "../../consts/aiChat/stickers";
+import { stickerSentTagTemplate } from "../../consts/aiChat/prompts/transcript";
 import type { TelegramVisionSource } from "../../types/media";
 
 interface StickerSetApi {
@@ -95,5 +96,5 @@ export function describeStickerForContext(sticker: DescribeStickerForContextPara
   if (visualDescription) parts.push(`画面：${visualDescription}`);
   if (sticker.emoji) parts.push(`情绪含义 ${sticker.emoji}`);
   if (sticker.set_name) parts.push(`来自贴纸包「${sticker.set_name}」`);
-  return parts.length > 0 ? `（发了一枚贴纸：${parts.join("，")}）` : "（发了一枚贴纸）";
+  return stickerSentTagTemplate(parts.join("，"));
 }

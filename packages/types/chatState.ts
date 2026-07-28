@@ -56,6 +56,12 @@ export interface ChatState {
    */
   isJATranslationEnabled?: boolean;
   /**
+   * 本群是否启用广告检测（每条消息经 DeepSeek 判定，命中即按 /block 处置）。
+   * 缺省视为禁用，需通过 /ad_detect enable 显式开启（仅 SUPER_ADMIN_USER_ID
+   * 本人可用该指令，见 commands/adDetect.ts）。判断时必须使用 === true。
+   */
+  isAdDetectEnabled?: boolean;
+  /**
    * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化（false），
    * 需通过 /init enable 显式开启（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
    * commands/init.ts）。未初始化的群，其更新在

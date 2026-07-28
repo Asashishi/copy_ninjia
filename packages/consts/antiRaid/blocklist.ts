@@ -30,11 +30,30 @@ export const BLOCKLIST_SWEEP_BATCH_PAUSE_MS: number = 1_000;
 export const BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES: number = 5_000;
 
 /**
- * 持久化黑名单移除 outbox 的批次数硬顶。达到上限时拒绝确认新 update，
- * 由 Telegram 重投形成背压，绝不静默丢弃安全任务。
+ * 持久化黑名单移除 outbox 的批次数硬顶。达到上限时 `trackBlockedRemoval` 抛错。
+ *
+ * 这个抛错**不构成背压**，绝不能逃到 update 边界去：满仓通常正是一批永远封不掉
+ * 的处置堆出来的，扣住 offset 只会变成「重投 -> 再抛 -> 非零退出」的重启循环，
+ * 只能靠手改 removals.json 解开（见 blocklistGuard.ts 的 claimBlockedJoiner）。
+ * 调用方一律就地降级：记一行点名日志，再用 requestBlocklistResweep 把这个群挂
+ * 回补扫，等 outbox 腾出位置后补做。已登记的批次留在 outbox，没登记上的由补扫
+ * 覆盖，两边都不丢任务。
  * 所属模块：infra/blocklist.ts。
  */
 export const BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES: number = 10_000;
+
+/**
+ * 处置消息投递前，「落盘 → 再看一眼权威镜像还是不是同一批」的对账最多重来几轮。
+ *
+ * 正常一轮就够：重来意味着 flush 等待期间真的有 `/unblock` 或停管裁剪了这批，
+ * 那是人为操作、次数有界。这道闸是兜底——每一轮都是一次整份 outbox 深拷贝 +
+ * 带 fsync 的整文件重写，而本函数跑在 update 处理里面；没有上限的话，一个持续
+ * 变动的镜像就能让这条 update 一直转下去，把 runner drain 拖到超时、扣住
+ * Telegram offset、整批 update 重投。用尽只是这一次投递放弃并留一行错误日志，
+ * outbox 里的任务不受影响，下一次边沿会重投。
+ * 所属模块：antiRaid/blocklistDelivery.ts。
+ */
+export const BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS: number = 5;
 
 type BlocklistRemovalOutboxVersion = 1;
 /**
@@ -51,11 +70,17 @@ export const BLOCKLIST_REMOVAL_OUTBOX_VERSION: BlocklistRemovalOutboxVersion = 1
 export const BLOCKLIST_REMOVAL_FAILURE_TYPES: readonly [
   "delivery-boundary",
   "side-effect-incomplete",
-  "worker-restarted"
+  "worker-restarted",
+  "missing-permission"
 ] = Object.freeze([
   "delivery-boundary",
   "side-effect-incomplete",
   "worker-restarted",
+  // 机器人在那个群没有封禁权限（或目标本身是管理员）：与其它几档的区别在于
+  // 「再试一次也没用」。它是 outbox 里一条批次卡住的**唯一自解释标记**——运维
+  // 看到它就知道该去补权限，而不是去查网络或磁盘；主线程据此停掉这个群按时间
+  // 的重试，只等一次确证的权限变更（见 infra/blocklist.ts）。
+  "missing-permission",
 ]);
 
 /**

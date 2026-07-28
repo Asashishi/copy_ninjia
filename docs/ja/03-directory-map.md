@@ -20,14 +20,15 @@
 | `packages/commands/` | 明示的なコマンド処理。1 コマンド 1 ファイル | `copy.ts`、`block.ts`、`cjkAction.ts`、`send.ts`、`targetResolution.ts` |
 | `packages/auto/` | コマンド以外の自動動作：copy、AI の文字起こしとトリガー、リアクション同期 | `message/`、`triggerPolicy.ts` |
 | `packages/aiChat/` | メインスレッド側 AI チャット代理：Worker 監督の入口とメモリミラー | `index.ts`、`memoryMirror.ts` |
-| `packages/antiRaid/` | メインスレッド側 Anti-Raid 代理：Worker 監督の入口、ロックダウン復旧、認証待ちミラー受信、ブロックリストの入室判定 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts`、`blocklistGuard.ts`、`memberFacts.ts` |
+| `packages/antiRaid/` | メインスレッド側 Anti-Raid 代理：Worker 監督の入口、ロックダウン復旧、認証待ちミラー受信、ブロックリストの入室判定、広告判定の送出と処分 | `index.ts`、`lockdownMirror.ts`、`verificationMirror.ts`、`blocklistGuard.ts`、`adDetect.ts`、`memberFacts.ts` |
 | `packages/copy/` | copy モードの変換と、アバター・リアクション・翻訳の実行キュー | `copyModes.ts`、`avatarQueue.ts`、`reactionQueue.ts`、`translate.ts` |
 | `packages/users/` | 送信者 identity キャッシュ、表示上の送信者判定、ユーザーラベル生成 | `senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts` |
 | `packages/states/` | **I/O を行わない**認証、ロックダウン、返信受け入れの純粋な状態遷移 | `verification.ts`、`lockdown.ts` |
-| `packages/config/` | `config/*.json` の厳密な schema、遅延読み込み、起動時検証 | `stickers.ts`、`reactions.ts`、`mood.ts` |
+| `packages/config/` | `config/*.json` の厳密な schema、遅延読み込み、起動時検証 | `stickers.ts`、`reactions.ts`、`mood.ts`、`adSamples.ts` |
 | `packages/libs/` | ドメイン非依存の基盤：アトミックファイル、上限付き I/O、並行処理ツール | `flushBarrier.ts`、`linkedQueue.ts`、`text.ts` |
-| `packages/workers/` | 3 つの Worker のスレッド内実装 | `aiChatWorker.ts` + `aiChat/`、`antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts`、`diskIOWorker.ts` + `diskIO/` |
-| `packages/ai/` | Gemini クライアント、画像説明、画像生成、スタンプカタログ、ツール実装 | `gemini.ts`、`tools/replyToolset/`、`imageGeneration.ts` |
+| `packages/workers/` | 3 つの Worker のスレッド内実装 | `aiChatWorker.ts` + `aiChat/`、`antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts` + `antiRaid/adDetect/`、`diskIOWorker.ts` + `diskIO/` |
+| `packages/ai/` | 各モデルの送受信入口と AI 機能：Gemini クライアント、DeepSeek クライアント、画像説明、画像生成、スタンプカタログ、ツール実装 | `gemini.ts`、`deepseek.ts`、`tools/replyToolset/`、`imageGeneration.ts` |
+| `packages/workers/antiRaid/adDetect/` | 広告検出パイプライン（DeepSeek）：バッチキュー、判定、命中時の処分 | `queue.ts`、`classifier.ts`、`disposal.ts` |
 | `packages/infra/` | Telegram クライアント、Worker ホスト、logger、環境変数設定 | `telegram/`、`config.ts`、`workerSupervisor.ts` |
 | `packages/infra/storage/` | データルート事前検査、インスタンスロック、StateStore、起動時の清掃 | `dataRoot.ts`、`instanceLock.ts`、`stateStore.ts` |
 | `packages/cache/` | ドメイン別のプロセス内可変状態コンテナ | `aiChat/`、`copy/`、`senderIdentity.ts` |

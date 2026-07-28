@@ -48,7 +48,7 @@ export interface BlockedUserRecord {
   blockedAt: string;
 }
 
-/** memory/blocklist-removals.json 的当前 schema。 */
+/** memory/blocklist/removals.json 的当前 schema。 */
 export interface BlocklistRemovalOutboxFile {
   version: typeof BLOCKLIST_REMOVAL_OUTBOX_VERSION;
   entries: PendingBlockedRemoval[];

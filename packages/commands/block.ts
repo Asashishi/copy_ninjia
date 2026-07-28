@@ -6,7 +6,14 @@ import { PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { resolveCommandTarget } from "./targetResolution";
 import { isBotAdminIn } from "../infra/botAdmin";
-import { blockUser, confirmBlocklistPersisted, ensureBlocklistEntryQueued, requestBlocklistResweep } from "../infra/blocklist";
+import {
+  blockUser,
+  confirmBlocklistPersisted,
+  ensureBlocklistEntryQueued,
+  recordUserConfirmedKickedInChat,
+  requestBlocklistResweep,
+  wasUserConfirmedKickedInChat,
+} from "../infra/blocklist";
 import { getAllChatStates } from "../infra/storage/stateStore";
 import type { User } from "@grammyjs/types";
 
@@ -24,7 +31,7 @@ import type { User } from "@grammyjs/types";
  * 同一个问题——封禁只覆盖此刻已知且有管理权的群，黑名单覆盖的是「以后」，
  * 包括机器人当时还没进、或还不是管理员的群。之后这个 id 出现在任何监听群的
  * 入群更新里都会被秒踢（见 antiRaid/blocklistGuard.ts），名单本身落盘在
- * config/blocklist.json（见 infra/blocklist.ts）。
+ * memory/blocklist/blocklist.json（见 infra/blocklist.ts）。
  *
  * 目标解析和 /copy 一致：回复目标的一条消息优先，也可以用 /block @username
  * 指定（要求本机器人此前缓存过该用户）。目标若是频道马甲（sender_chat），
@@ -99,9 +106,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   const persisted: boolean = newlyBlocked || requeued ? await confirmBlocklistPersisted() : true;
 
   // 封禁清单：所有已记录「机器人是管理员」的群。本群是管理员时排最前
-  // （踢发起群里的目标最紧迫），不是管理员时不进清单——试也没用。共享
-  // bot.api 已安装限流与自动重试，但跨群封禁仍保持串行，避免一次命令制造
-  // 突发请求，也让成功/失败计数按确定顺序收敛。
+  // （踢发起群里的目标最紧迫），不是管理员时不进清单——试也没用。
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];
   for (const [adminChatId, chatState] of getAllChatStates()) {
     if (chatState.botIsAdmin === true && adminChatId !== chatId) {
@@ -132,25 +137,36 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 永不重扫，而入群秒踢只对之后的入群更新生效——被拉黑的人就这么在那个群里
   // 待到进程结束（见 infra/blocklist.ts 的 requestBlocklistResweep）。
   const resweepChatIds: number[] = [];
-  for (const targetChatId of targetChatIds) {
-    if (targetUser.isChannel) {
-      if (await banChatSenderChat(targetChatId, targetUser.id)) preBannedCount++;
-      else resweepChatIds.push(targetChatId);
-      continue;
-    }
-    // 先查目标此刻是否在这个群里，再决定战报里算「踢出去」还是「提前拉黑」——
-    // banChatMember 本身对两种情况效果一样（都会加入封禁名单），只是文案不能
-    // 把「根本没进过的群」也说成踢出去了。
-    const wasMember: boolean = await isChatMember(targetChatId, targetUser.id);
-    const banned: boolean = await banChatMember(targetChatId, targetUser.id);
-    if (banned) {
-      if (wasMember) kickedCount++;
-      else preBannedCount++;
-    } else {
-      resweepChatIds.push(targetChatId);
-    }
-    // 个别群失败（比如管理员身份记录已过时、缺封禁权限）不中断其余群：
-    // banChatMember/banChatSenderChat 内部已带群号记了日志，够排查。
+  // 各群之间并发：群内那两步是真实依赖（先查在不在，再封），群与群之间不是，
+  // 而它们共用同一条装了 throttler 的 bot.api 队列，实际速率仍由它管。逐群串行
+  // 的话 40 个群就是 80 次串行往返、约 16 秒里 update 中间件一直不返回，ack 边界
+  // 被推后，停机时更容易把 runner drain 拖超时。
+  // 个别群失败（管理员身份记录过时、缺封禁权限）不中断其余群：被调函数内部已
+  // 带群号记了日志，够排查。
+  const perChatOutcomes: ("kicked" | "preBanned" | "failed")[] = await Promise.all(
+    targetChatIds.map(async (targetChatId: number): Promise<"kicked" | "preBanned" | "failed"> => {
+      if (targetUser.isChannel) {
+        return await banChatSenderChat(targetChatId, targetUser.id) ? "preBanned" : "failed";
+      }
+      // 只复用“今天在这个群查到确实在场、并且 ban 成功”的命令侧结局。
+      // 权威名单与 durable outbox 都不能代替它：前者只说明该不该封，后者还
+      // 可能在重试/重踢；拿它们跳过 API 会把尚未落定的成员静默留在群里。
+      if (wasUserConfirmedKickedInChat(targetChatId, targetUser.id)) return "kicked";
+      // 先查目标此刻是否在这个群里，再决定战报里算「踢出去」还是「提前拉黑」——
+      // banChatMember 本身对两种情况效果一样（都会加入封禁名单），只是文案不能
+      // 把「根本没进过的群」也说成踢出去了。
+      const wasMember: boolean = await isChatMember(targetChatId, targetUser.id);
+      const banned: boolean = await banChatMember(targetChatId, targetUser.id);
+      if (!banned) return "failed";
+      if (wasMember) recordUserConfirmedKickedInChat(targetChatId, targetUser.id);
+      return wasMember ? "kicked" : "preBanned";
+    })
+  );
+  for (let index: number = 0; index < perChatOutcomes.length; index++) {
+    const outcome: "kicked" | "preBanned" | "failed" | undefined = perChatOutcomes[index];
+    if (outcome === "kicked") kickedCount++;
+    else if (outcome === "preBanned") preBannedCount++;
+    else resweepChatIds.push(targetChatIds[index]!);
   }
   // 权限恢复后由下一次管理员身份观测把这些群重扫一遍，不用管理员再跑一次 /block。
   for (const resweepChatId of resweepChatIds) requestBlocklistResweep(resweepChatId);
@@ -170,9 +186,10 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   const kickedNote: string = kickedCount > 0 ? `从 ${kickedCount} 个群一脚踢出去还上了黑名单` : "";
   const preBannedNote: string = preBannedCount > 0 ? `在 ${preBannedCount} 个群提前拉黑（根本没让 TA 进去过）` : "";
   const actionNote: string = [kickedNote, preBannedNote].filter(Boolean).join("，");
-  // 本来就在名单里的人再 /block 一次不该被说成「刚记上」，但封禁照做一遍——
-  // 期间新加的群、上一次失败的群都靠这次补上。落盘警告两条路都要带：重复
-  // /block 正是上一次没写进硬盘时的重试动作，还没写成功就不能不说。
+  // 本来就在名单里的人再 /block 一次不该被说成「刚记上」。各群仍重新处置，
+  // 但当天已经确证踢出的 `(chatId, userId)` 可命中命令侧缓存；新加的群、上次
+  // 失败或只做过预封禁的群仍会真正查、封。落盘警告两条路都要带：重复 /block
+  // 正是上一次没写进硬盘时的重试动作，还没写成功就不能不说。
   const blocklistNote: string = newlyBlocked
     ? `，杂鱼永远别想回来了${persistWarning}`
     : `（早就在小本本上了${persistWarning}）`;

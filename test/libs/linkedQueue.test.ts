@@ -117,4 +117,31 @@ describe("LinkedQueue", () => {
       expect(q.peek()).toBe(7);
     });
   });
+
+  describe("removeWhere", () => {
+    test("一次移除头中尾多个节点并保持其余顺序", () => {
+      const queue = new LinkedQueue<number>();
+      [1, 2, 3, 4, 5, 6].forEach((value: number): void => queue.push(value));
+
+      expect(queue.removeWhere((value: number): boolean => value % 2 === 0)).toBe(3);
+      expect(queue.size).toBe(3);
+      expect(queue.last(3)).toEqual([1, 3, 5]);
+      expect(queue.shift()).toBe(1);
+      expect(queue.shift()).toBe(3);
+      expect(queue.shift()).toBe(5);
+    });
+
+    test("全删与零命中都正确维护 head/tail", () => {
+      const queue = new LinkedQueue<number>();
+      [1, 2].forEach((value: number): void => queue.push(value));
+      expect(queue.removeWhere((): boolean => false)).toBe(0);
+      expect(queue.last(2)).toEqual([1, 2]);
+
+      expect(queue.removeWhere((): boolean => true)).toBe(2);
+      expect(queue.size).toBe(0);
+      queue.push(9);
+      expect(queue.peek()).toBe(9);
+      expect(queue.last(1)).toEqual([9]);
+    });
+  });
 });

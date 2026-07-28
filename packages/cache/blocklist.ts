@@ -41,6 +41,26 @@ export const sessionBlockedAt: Map<number, string> = new Map();
 export const sessionUnblockedIds: Set<number> = new Set();
 
 /**
+ * `/block` 命令本进程内已确证踢出的用户：chatId → user id Set。
+ *
+ * 这里只在 `isChatMember` 明确返回 true、随后 `banChatMember` 又成功时写入；
+ * “本来不在群而提前封禁”与查询失败都不进缓存。重复 `/block` 可据此省掉同群
+ * 的成员查询与封禁请求，同时继续把原结局计作“已踢出”。
+ *
+ * 生命周期：只活在主线程进程内，不从 blocklist.json 或 removals.json 恢复，
+ * 也不参与 Anti-Raid Worker 的处置重试；东京自然日变化时由
+ * infra/blocklist.ts 在下一次访问时整表清空，`/unblock` 还会提前删掉该用户。
+ * 按需求不设容量上限，容量至多是当天各管理群中被 `/block` 确证踢出的人数。
+ */
+export const confirmedKickedUserIdsByChat: Map<number, Set<number>> = new Map();
+
+/**
+ * 上述命令缓存所属的东京自然日；null 表示本进程尚未访问过缓存。
+ * 使用 holder，避免导出可变 let。
+ */
+export const confirmedKickedUsersDay: { current: string | null } = { current: null };
+
+/**
  * 已投给入群守卫线程、但还没收到落地回执的处置批次（removalId → 入参 + 投递
  * 计数）。
  *
@@ -84,6 +104,17 @@ export interface BlocklistSweepRecord {
    * BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS 之后不再自增，计数因此有界。
    */
   failedSweeps: number;
+  /**
+   * 这个群的处置已确认卡在「机器人没有封禁权限」上（Telegram 明确回了权限
+   * 不足，见 infra/telegram/actions.ts 的 banChatMemberWithOutcome）。
+   *
+   * 置真后，这个群的按时间重试与新一轮补扫全部停下——重试多少次都一样，只是
+   * 把同一条报错刷进日志，还要为此把整份名单重扫一遍。唯一的解除路径是一次
+   * **确证的权限变更观测**（my_chat_member 更新或按需 getChatMember，见
+   * infra/botAdmin.ts），那才是「这次再试有意义」的真实边沿。durable outbox
+   * 里对应的条目同时被标成 `missing-permission`，运维一眼能看出该去补权限。
+   */
+  permissionBlocked: boolean;
 }
 
 /**

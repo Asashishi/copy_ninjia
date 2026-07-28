@@ -9,3 +9,33 @@ export const DEFAULT_MAX_PENDING_BUSINESS_MESSAGES: number = 10_000;
 
 /** 公历日的固定毫秒数；只与固定 UTC+9 偏移配合，不用于有夏令时的时区。 */
 export const DAY_MS: number = 24 * 60 * 60 * 1_000;
+
+/**
+ * 广告命中样本文件超过这个大小就轮转成一个带时间戳的归档，重新从空文件写起。
+ *
+ * 轮转的理由不是磁盘占用，是**读回成本**：追加游标在 Worker 重建后与每次追加
+ * 失败后都会作废，下一条命中因此要对整份文件重跑一次同步 readFileSync +
+ * JSON.parse（必要时还要加一次截断修复的全扫），压在唯一那条串行 I/O 线程上。
+ * 不设上界的话，攒上几个月就能把同期的 `/block` 落盘确认拖过
+ * DISK_IO_FLUSH_TIMEOUT_MS，让管理员看到「小本本没能写进硬盘」——而那条黑名单
+ * 其实完全写得进去。
+ *
+ * 归档按 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 保留，限制旁路素材的总磁盘占用。
+ * 所属模块：workers/diskIO/adSampleFile.ts。
+ */
+export const AD_SAMPLE_FILE_MAX_BYTES: number = 8 * 1_024 * 1_024;
+
+/**
+ * 广告样本归档保留的东京自然日数量，包含当天。
+ * 所属模块：workers/diskIO/adSampleFile.ts。
+ */
+export const AD_SAMPLE_ARCHIVE_RETENTION_DAYS: number = 15;
+
+/**
+ * 广告样本归档的严格文件名格式：无序号或带正整数序号；日期本身还要由调用方
+ * 做公历有效性校验。无 g 标志，跨调用复用 exec 时不会保存 lastIndex。
+ * 所属模块：workers/diskIO/adSampleFile.ts。
+ */
+export const AD_SAMPLE_ARCHIVE_FILENAME_PATTERN: Readonly<RegExp> = Object.freeze(
+  /^sample\.(\d{4}-\d{2}-\d{2})(?:\.([1-9]\d*))?\.json$/
+);

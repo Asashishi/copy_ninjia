@@ -29,8 +29,16 @@ mock.module("../../../packages/libs/sleep", () => ({ sleep: mock(async (_ms: num
 const realGemini = await import("../../../packages/ai/gemini");
 mock.module("../../../packages/ai/gemini", () => ({ ...realGemini, requestGeminiResponse: requestGeminiResponseMock }));
 
-const { generatePackCatalog, getCatalogEntry, getPackSummary, hydrateStickerCatalogs } = await import("../../../packages/ai/stickers/catalog");
+const {
+  generatePackCatalog,
+  getCatalogEntry,
+  getPackSummary,
+  hydrateStickerCatalogs,
+  retryIncompleteStickerCatalogs,
+} = await import("../../../packages/ai/stickers/catalog");
 const { transientDescriptionCache } = await import("../../../packages/cache/imageDescription");
+const { stickerCatalogRetryState } = await import("../../../packages/cache/stickers/catalog");
+const { STICKER_CATALOG_RETRY_INTERVAL_MS } = await import("../../../packages/consts/aiChat/stickers");
 
 function sticker(fileUniqueId: string, emoji: string): any {
   return { file_id: `id-${fileUniqueId}`, file_unique_id: fileUniqueId, emoji, is_animated: false, is_video: false };
@@ -156,5 +164,38 @@ describe("ai/stickers/catalog generatePackCatalog 对账", () => {
     expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(2);
     expect(getCatalogEntry("retry-uid")).toEqual({ emoji: "😂", description: "第二次成功的描述" });
     expect(getPackSummary("pack_retry")).toBe("重试出的简介");
+  });
+
+  test("目录还没建起来的包在维护节拍上按间隔重试，建好之后不再打扰", async () => {
+    // 生产路径上 ensureStickerCatalogs 只有 init 那一次调用，而拉贴纸集合失败
+    // 是整包放弃的：一次几秒的网络抖动就能让 catalogs 永久为空，两个贴纸工具
+    // 对所有回复返回 null，而 systemd 托管的进程可能几周都不重启。
+    getStickerSetMock.mockClear();
+    getStickerSetMock.mockImplementation(async () => null);
+    stickerCatalogRetryState.lastAttemptAt = 0;
+
+    retryIncompleteStickerCatalogs(["pack_periodic"], 10_000);
+    await Bun.sleep(1);
+    expect(getStickerSetMock).toHaveBeenCalledTimes(1);
+
+    // 间隔没到不重复打请求：包名配错这类永远好不了的情形下，每次重试都要跟着
+    // 记一条错误日志。
+    retryIncompleteStickerCatalogs(["pack_periodic"], 10_001);
+    await Bun.sleep(1);
+    expect(getStickerSetMock).toHaveBeenCalledTimes(1);
+
+    // 间隔到了就再试一次，这次拉到了。
+    getStickerSetMock.mockImplementation(async () => ({ title: "补回来的包", stickers: [sticker("late-uid", "😂")] }));
+    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "补出来的描述");
+    requestGeminiResponseMock.mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "补出来的简介" }] } }] }));
+    retryIncompleteStickerCatalogs(["pack_periodic"], 10_000 + STICKER_CATALOG_RETRY_INTERVAL_MS);
+    await Bun.sleep(1);
+    expect(getStickerSetMock).toHaveBeenCalledTimes(2);
+    expect(getCatalogEntry("late-uid")).toEqual({ emoji: "😂", description: "补出来的描述" });
+
+    // 目录与简介都齐了：此后每一轮都是一次判空，不再发请求。
+    retryIncompleteStickerCatalogs(["pack_periodic"], 10_000 + STICKER_CATALOG_RETRY_INTERVAL_MS * 2);
+    await Bun.sleep(1);
+    expect(getStickerSetMock).toHaveBeenCalledTimes(2);
   });
 });

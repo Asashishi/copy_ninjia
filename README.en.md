@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1063_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.47%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1200_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.52%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -69,7 +69,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1063 tests passed, 134 test files, 8,966 expect() calls, 94.56% function coverage, 96.47% line coverage" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1200 tests passed, 142 test files, 9,443 expect() calls, 94.82% function coverage, 96.52% line coverage" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -154,6 +154,7 @@ Choose a target by replying to their message or providing `@username`. Username 
 <tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>Blocklist the target: recorded permanently and banned across all bot-managed groups; any later join in a watched group is kicked on sight</td></tr>
 <tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>(<code>all</code> is <code>SUPER_ADMIN_USER_ID</code> only)</td><td>Remove the id from the blocklist (the whole list is atomically rewritten back to disk); later joins are no longer kicked on sight. Existing per-group bans are left alone by default; add <code>all</code> to lift them across every bot-managed group</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle AI chat for the group</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle ad detection for the group: messages are bundled per sender over a 90-second window and judged by DeepSeek; a hit triggers the same disposal as <code>/block</code> (permanent blocklist entry plus a ban that deletes the sender's messages in every administered chat) and announces the ban reason in the triggering chat (self-deleting after 30 seconds). It only fires while the bot is an administrator there; the reference samples live in <a href="config/ad_samples.json"><code>config/ad_samples.json</code></a></td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Reroll current group mood immediately and reply with new mood name</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle Japanese translation mode for the group (disabled by default)</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle the group's main processing gate</td></tr>
@@ -206,7 +207,7 @@ cp .env.example .env
 
 ### 3. Configuration
 
-Fill in `.env` according to [`.env.example`](.env.example): `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, and `SUPER_ADMIN_USER_ID` containing one decimal user ID are required. `PRIVILEGED_USERS_ID` may be empty; separate multiple IDs with ASCII commas.
+Fill in `.env` according to [`.env.example`](.env.example): `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY` (AI chat agent only), and `SUPER_ADMIN_USER_ID` containing one decimal user ID are required. `DEEPSEEK_API_KEY` (ad detection only) and `PRIVILEGED_USERS_ID` may be empty; separate multiple IDs with ASCII commas. With `DEEPSEEK_API_KEY` empty, `/ad_detect enable` is rejected and everything else keeps running.
 
 `COPY_NINJIA_DATA_ROOT` optionally selects a separate runtime-data root. When set, `state.json`, `bot.lock`, `logs/`, and `memory/` are derived from it; persona, sticker, reaction, and mood configuration plus `g-auth.json` remain under the project root. When omitted, runtime data stays in the project root.
 

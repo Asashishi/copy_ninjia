@@ -1,21 +1,11 @@
 import { TYPO_QUICK_CORRECTION_PROBABILITY } from "../../consts/aiChat/tools";
+import { splitGraphemes } from "../../libs/text";
 import { isEmojiOnly } from "./replyText";
 
 export type TypoCorrectionMode = "quick" | "ignore";
 
-/**
- * 按字素簇切分，而不是按码点。分解写法的日文假名（か + 浊点 = が）、带组合
- * 标记的拉丁字母都是一个字素两个码点：按码点切会命中后面还挂着组合标记的
- * 基字，替换后标记留在原地——轻则换出来的字跟模型说的「原字/错字」对不上，
- * 重则组合标记落到一个压根不搭配的基字上，发出去是乱码。
- */
-const GRAPHEME_SEGMENTER: Intl.Segmenter = new Intl.Segmenter("und", { granularity: "grapheme" });
-
-function splitGraphemes(text: string): string[] {
-  return [...GRAPHEME_SEGMENTER.segment(text)].map(
-    (segment: Intl.SegmentData): string => segment.segment
-  );
-}
+// 字素簇切分复用 libs/text.ts，不另起一份：那边的 Segmenter 是惰性构造 +
+// try/catch 降级的，模块作用域直接 new 会让 ICU 不全的运行时连 import 都失败。
 
 export interface CharacterTypo {
   readonly typoText: string;

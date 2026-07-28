@@ -55,7 +55,7 @@ declare const self: Worker;
  * dispatcher 回投，保持状态对象同一性和单一 revision 发布入口。
  */
 
-/** pending 起验证超时计时，exempt/kicked 起去重窗口计时。 */
+/** pending 起验证超时计时，exempt/kicked 起去重窗口；kickPending 等调用结算。 */
 function startVerificationTimer(
   chatId: number,
   userId: number,
@@ -71,7 +71,11 @@ function startVerificationTimer(
       Math.max(0, state.expiresAt - Date.now())
     );
   }
-  if (state.kind === "checkingInviter" || state.kind === "expelling") {
+  if (
+    state.kind === "kickPending" ||
+    state.kind === "checkingInviter" ||
+    state.kind === "expelling"
+  ) {
     return undefined;
   }
   return setTimeout(
@@ -166,6 +170,7 @@ function verificationSnapshot({
     label: source.label,
     isBot: source.isBot,
     messageIds: [...source.messageIds],
+    announcementMessageId: source.announcementMessageId,
     trackedMessageTimes:
       state.kind === "pending" ? [...state.trackedMessageTimes] : [],
     invitedBy: state.kind === "pending" ? state.invitedBy : undefined,
@@ -184,6 +189,12 @@ function verificationSnapshot({
     expelReason: state.kind === "expelling" ? state.reason : undefined,
     successNoticeSent:
       state.kind === "expelling" ? state.successNoticeSent : undefined,
+    // 两条失败告警都不会自删，必须跟着快照走：不落盘的话每次 Worker 重生
+    // 都会为同一个卡住的成员再发一条（见 ExpellingState.failureNoticeSent）。
+    failureNoticeSent:
+      state.kind === "expelling" ? state.failureNoticeSent : undefined,
+    unconfirmedNoticeSent:
+      state.kind === "expelling" ? state.unconfirmedNoticeSent : undefined,
   };
 }
 
@@ -242,6 +253,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
       label: record.label,
       isBot: record.isBot,
       messageIds: [...record.messageIds],
+      announcementMessageId: record.announcementMessageId,
       reminderMessageId: record.reminderMessageId,
       replyReminderMessageId: record.replyReminderMessageId,
       joinedAt: record.joinedAt,
@@ -259,12 +271,15 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
           reason: record.expelReason!,
           snapshot: expelSnapshot,
           successNoticeSent: record.successNoticeSent,
+          failureNoticeSent: record.failureNoticeSent,
+          unconfirmedNoticeSent: record.unconfirmedNoticeSent,
         }
         : {
           kind: "pending",
           label: record.label,
           isBot: record.isBot,
           messageIds: [...record.messageIds],
+          announcementMessageId: record.announcementMessageId,
           trackedMessageTimes: record.trackedMessageTimes.filter(
             (timestamp: number): boolean => timestamp > now - JOIN_WINDOW_MS
           ),

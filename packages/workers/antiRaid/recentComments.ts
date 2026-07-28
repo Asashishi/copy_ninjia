@@ -2,6 +2,7 @@ import { verificationKey } from "../../libs/verificationKey";
 import { recentChannelComments } from "../../cache/antiRaid/recentComments";
 import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../consts/antiRaid/cache";
 import type { RecentChannelComment } from "../../types/antiRaid/internal";
+import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /**
  * 频道评论区留言的暂存：评论先到、入群更新后到时的关联缓冲，供
@@ -32,20 +33,17 @@ export function rememberRecentComment({
   const existing: RecentChannelComment | undefined = recentChannelComments.get(key);
   if (existing !== undefined) recentChannelComments.delete(key);
 
-  if (recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX) {
-    sweepRecentComments(observedAt);
-    if (recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX) {
-      // 每次更新都是「先 delete 旧 key 再 set」，Map 的插入序即观察时间序
-      // （observedAt 随调用单调不减），最早项恒为迭代器第一项，O(1) 淘汰，
-      // 不必线性扫描——raid 高峰持续触顶时这条路径每次插入都会走到。
-      const earliestKey: string | undefined = recentChannelComments.keys().next().value;
-      if (earliestKey !== undefined) recentChannelComments.delete(earliestKey);
-    }
-  }
-
-  recentChannelComments.set(key, {
-    messageId,
-    observedAt,
+  // 先按时间清一遍：能靠过期回收就不必淘汰还在窗口内的条目。
+  if (recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX) sweepRecentComments(observedAt);
+  // 清完仍触顶时由共享实现淘汰最早插入项。每次更新都是「先 delete 旧 key 再
+  // set」，Map 的插入序即观察时间序（observedAt 随调用单调不减），最早项恒为
+  // 迭代器第一项，O(1) 淘汰，不必线性扫描——raid 高峰持续触顶时这条路径每次
+  // 插入都会走到。
+  setBoundedMapValue({
+    map: recentChannelComments,
+    key,
+    value: { messageId, observedAt },
+    maxEntries: RECENT_COMMENT_CACHE_MAX,
   });
 }
 
