@@ -1,8 +1,9 @@
 import { typingHeartbeats } from "../cache/aiChat/heartbeat";
 import { CHAT_ACTION_MAX_CONSECUTIVE_FAILURES, TYPING_ACTION_INTERVAL_MS } from "../consts/aiChat/tools";
-import { sendChooseStickerAction, sendTypingAction, sendUploadPhotoAction } from "../infra/telegram";
+import { sendChatAction } from "../infra/telegram";
 import { settleInflight, trackInflight } from "../libs/inflight";
 import type { ChatActionHeartbeatControl, ChatActionHeartbeatEntry, ChatActionPhase } from "../types/aiChat/chatAction";
+import type { TelegramChatAction } from "../types/telegram";
 
 /** 依赖可注入只为让心跳的并发/失败时序能用确定性的单测覆盖；生产调用使用
  *  下方默认值，仍共享 Worker 内的 typingHeartbeats。 */
@@ -10,50 +11,18 @@ export interface ChatActionHeartbeatDependencies {
   entries: Map<number, ChatActionHeartbeatEntry>;
   intervalMs: number;
   maxConsecutiveFailures: number;
-  sendTyping(chatId: number, signal?: AbortSignal): Promise<boolean>;
-  sendUploadPhoto(chatId: number, signal?: AbortSignal): Promise<boolean>;
-  sendChooseSticker(chatId: number, signal?: AbortSignal): Promise<boolean>;
+  /** 只有一个发送口：每个挡位各开一个依赖方法的话，新增挡位要同时改依赖接口、
+   *  默认值与分发分支，而漏掉分发那处对现有挡位照样编译通过。 */
+  sendChatAction(action: TelegramChatAction, chatId: number, signal?: AbortSignal): Promise<boolean>;
 }
 
 const DEFAULT_DEPENDENCIES: ChatActionHeartbeatDependencies = {
   entries: typingHeartbeats,
   intervalMs: TYPING_ACTION_INTERVAL_MS,
   maxConsecutiveFailures: CHAT_ACTION_MAX_CONSECUTIVE_FAILURES,
-  sendTyping: (chatId: number, signal?: AbortSignal): Promise<boolean> =>
-    sendTypingAction(chatId, undefined, signal),
-  sendUploadPhoto: (chatId: number, signal?: AbortSignal): Promise<boolean> =>
-    sendUploadPhotoAction(chatId, undefined, signal),
-  sendChooseSticker: (chatId: number, signal?: AbortSignal): Promise<boolean> =>
-    sendChooseStickerAction(chatId, undefined, signal),
+  sendChatAction: (action: TelegramChatAction, chatId: number, signal?: AbortSignal): Promise<boolean> =>
+    sendChatAction({ chatId, action, ...(signal ? { signal } : {}) }),
 };
-
-interface SendChatActionPhaseParams {
-  phase: Exclude<ChatActionPhase, "idle">;
-  chatId: number;
-  dependencies: ChatActionHeartbeatDependencies;
-  signal?: AbortSignal;
-}
-
-function sendChatActionPhase({
-  phase,
-  chatId,
-  dependencies,
-  signal,
-}: SendChatActionPhaseParams): Promise<boolean> {
-  if (phase === "typing") {
-    return signal === undefined
-      ? dependencies.sendTyping(chatId)
-      : dependencies.sendTyping(chatId, signal);
-  }
-  if (phase === "upload_photo") {
-    return signal === undefined
-      ? dependencies.sendUploadPhoto(chatId)
-      : dependencies.sendUploadPhoto(chatId, signal);
-  }
-  return signal === undefined
-    ? dependencies.sendChooseSticker(chatId)
-    : dependencies.sendChooseSticker(chatId, signal);
-}
 
 /**
  * 把一发状态请求排进本群的串行链。执行时才重读当下挡位：挡位已切走的排队
@@ -98,12 +67,7 @@ export function pumpChatAction({
     if (deduplicable && entry.lastSentPhase === phase && Date.now() - entry.lastSentAt < dependencies.intervalMs) return;
     let ok: boolean;
     try {
-      ok = await sendChatActionPhase({
-        phase,
-        chatId,
-        dependencies,
-        signal: entry.signal,
-      });
+      ok = await dependencies.sendChatAction(phase, chatId, entry.signal);
     } catch {
       ok = false;
     }

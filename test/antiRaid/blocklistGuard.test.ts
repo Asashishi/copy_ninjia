@@ -40,24 +40,42 @@ beforeEach(() => {
   trackFails = false;
 });
 
+function joinMessage(chatId: number, userId: number): AntiRaidWorkerMessage {
+  return { type: "join", chatId, member: { id: userId, first_name: "Joiner" } };
+}
+
 describe("黑名单入群秒踢的投递侧", () => {
   test("名单里的人就地登记一批处置，同一次物理入群只补记一次入群计数", () => {
     blockedIds.add(42);
     const messages: AntiRaidWorkerMessage[] = [];
+    const replacedJoins = new Map<number, AntiRaidWorkerMessage>();
+    const replacedJoin = joinMessage(-1001, 42);
 
-    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, now: 1_000 })).toBeTrue();
-    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, now: 1_050 })).toBeTrue();
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins, now: 1_000 })).toBeTrue();
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins, now: 1_050 })).toBeTrue();
 
     expect(messages).toHaveLength(2);
     // 两条投递路径（chat_member 与 new_chat_members）会为同一次入群各来一次；
     // 两条都带 joinedAt 就是记两次，阈值对黑名单账号实际减半。
     expect(messages.map((message) => (message as RemoveBlockedMembersParams).joinedAt)).toEqual([1_000, undefined]);
+    // 每批处置都登记下它取代掉的那条 join：批次被并发 /unblock 取消时，
+    // durable 对账要靠它把验证窗口补回来（见 blocklistDelivery.ts）。
+    expect([...replacedJoins.keys()]).toEqual([1, 2]);
+    expect(replacedJoins.get(1)).toBe(replacedJoin);
   });
 
   test("不在名单里的人原样放行给普通入群守卫", () => {
     const messages: AntiRaidWorkerMessage[] = [];
-    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages })).toBeFalse();
+    const replacedJoins = new Map<number, AntiRaidWorkerMessage>();
+    expect(claimBlockedJoiner({
+      chatId: -1001,
+      userId: 42,
+      messages,
+      replacedJoin: joinMessage(-1001, 42),
+      replacedJoins,
+    })).toBeFalse();
     expect(messages).toHaveLength(0);
+    expect(replacedJoins.size).toBe(0);
   });
 
   test("登记失败不上抛：那会在更新中间件里换来一个重启循环", () => {
@@ -68,8 +86,17 @@ describe("黑名单入群秒踢的投递侧", () => {
     trackFails = true;
     const messages: AntiRaidWorkerMessage[] = [];
 
-    expect(() => claimBlockedJoiner({ chatId: -1001, userId: 42, messages })).not.toThrow();
+    const replacedJoins = new Map<number, AntiRaidWorkerMessage>();
+    expect(() => claimBlockedJoiner({
+      chatId: -1001,
+      userId: 42,
+      messages,
+      replacedJoin: joinMessage(-1001, 42),
+      replacedJoins,
+    })).not.toThrow();
     expect(messages).toHaveLength(0);
+    // 登记失败时也不能留下兜底 join：名单判定没变，不该给他开验证窗口。
+    expect(replacedJoins.size).toBe(0);
     expect(errorLogs.some((line) => line.includes("Failed to queue removal of blocklisted user 42"))).toBeTrue();
     // 仍算「已按黑名单处置」：名单判定没变，不该反过来给他开一个验证窗口。
     // 位置留给补扫：outbox 腾出空间后由下一次管理员身份观测接上。

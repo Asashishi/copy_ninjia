@@ -1,7 +1,9 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
+import { jaTranslateConfigReadiness } from "../config/readiness";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
+import { refuseIfConfigBroken } from "./configGate";
 import { handleCopyCommand } from "./copy";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 
@@ -31,6 +33,19 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
 
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
+  // 服务账号密钥缺席或写坏时拒绝开启（同 /ai_chat、/ad_detect 的前提判定）：
+  // 翻译失败会静默退化成原文照发，群里看不出与「翻译服务抖了一下」的区别，
+  // 开着就是一个看着已生效、实际只会复读原文的开关。关闭方向不拦。
+  if (toggleArg === "enable") {
+    const refused: boolean = await refuseIfConfigBroken({
+      readiness: jaTranslateConfigReadiness(),
+      chatId,
+      messageId,
+      feature: "Japanese translation",
+      text: (file: string): string => `本天才的 ${file} 不见了或写坏了，拿什么翻日语呀？补好再重启，笨蛋♡`,
+    });
+    if (refused) return;
+  }
   const state: ChatState = getOrCreateChatState(chatId);
   state.isJATranslationEnabled = toggleArg === "enable";
   await persistAuthoritativeState("ja_copy toggled");

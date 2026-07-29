@@ -3,7 +3,7 @@ export const GEMINI_IMAGE_GENERATION_MODEL: string = "gemini-3.1-flash-lite-imag
 /** 普通用户按群共享的生图冷却时长。 */
 export const IMAGE_GENERATION_COOLDOWN_MS: number = 180_000;
 /** 当前生图请求正文允许传给模型的最大字符数。 */
-export const IMAGE_GENERATION_PROMPT_MAX_CHARS: number = 2_000;
+export const IMAGE_GENERATION_PROMPT_MAX_CHARS: number = 2_048;
 /** 从滚动记忆拼入生图提示的最大字符数。 */
 export const IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS: number = 275;
 /** Gemini 生图结果解码后的最大字节数。 */

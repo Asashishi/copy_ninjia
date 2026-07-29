@@ -31,7 +31,7 @@ export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
  */
 export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 10_000;
 /** 单个媒体下载允许读入内存的最大字节数。 */
-export const MEDIA_MAX_DOWNLOAD_BYTES: number = 8 * 1024 * 1024;
+export const MEDIA_MAX_DOWNLOAD_BYTES: number = 16 * 1024 * 1024;
 /** 非目录媒体描述的全局 LRU 上限。 */
 export const MEDIA_DESCRIPTION_CACHE_MAX: number = 1_500;
 /** 下载、转码、视觉 API 共用执行器的并发与排队硬顶。 */

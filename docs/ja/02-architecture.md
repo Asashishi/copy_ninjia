@@ -100,7 +100,7 @@ flowchart TD
 
 1. データルートを再帰的に作成して**事前検査**します。書き込み、ファイル fsync、同一ディレクトリ内 hard link、アトミック rename、ディレクトリ fsync のどれかが失敗すると、実パスを示して起動を拒否します。
 2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
-3. **設定を事前読み込みし StateStore を復元**します。`config/` の 3 つの JSON を検証し、トップレベルの孤立した一時ファイルを削除してから、`state.json` の主・副コピーを厳密に検証して復元します。すべてネットワーク接続や Worker 作成より前です。
+3. **StateStore を復元**します。トップレベルの孤立した一時ファイルを削除してから、`state.json` の主・副コピーを厳密に検証して復元します。すべてネットワーク接続や Worker 作成より前です。`config/` の 4 つの JSON は**ここでは事前読み込みしません**。いずれもチャットごとの opt-in 機能に属するため、検証は対応するトグルコマンドへ移しました（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) を参照）。`state.json` の復元後にもう一度照合します。いずれかのチャットで有効なままの任意機能は資格情報と設定が揃っている必要があり、欠けていればチャット id を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。
 4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータに加え、`memory/blocklist/blocklist.json` の `/block` 正式リストと `memory/blocklist/removals.json` の未完了 removal outbox を復元します。どれかのドメインで復元に失敗すると、部分状態での起動を拒否します。
 5. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
 6. **AI Worker** を初期化し、`state.json` で AI が明示的に有効なグループだけを hydrate します。その後、運勢と認証待ちのミラーを復元し、**Anti-Raid Worker** を初期化して、最後に acknowledgement-safe runner を開始します。
@@ -110,7 +110,18 @@ flowchart TD
 
 ## 停止順序
 
-正常停止と異常停止は同じライフサイクルに合流します。最初にタイトル、リアクション、アバター、翻訳の入口を **quiesce** して runner を止め、次に各キューと mailbox を**上限付きで drain**します。4 つの quiesce 入口は個別に失敗隔離されます。1 つが例外を投げても残りの入口を閉じ、すべて成功するまでは quiesce 完了として記録しません。正常経路では最終 Telegram offset の確認前に AI、Disk I/O、StateStore の順で flush します。実行中の update handler が drain deadline を超えた場合、runner は各 update の signal を abort して最後の上限付き settle 時間を与えます。それでも settle しない handler は最終 offset の確認を止め、best-effort dispose 後の非ゼロ終了を強制します。最終 dispose の順序は「AI を flush → AI を終了 → Disk I/O を flush → Anti-Raid と Disk I/O を終了 → StateStore を flush → インスタンスロックを解放」で固定です。重要な quiesce、drain、flush、lock release が 1 つでも失敗すると最終 offset の確認を行わず、未確認 update の再配信または保持された lock の operator 対応を促すため非ゼロで終了します。通常 dispose の進行中に fatal error が発生した場合、emergency 経路は同じ Promise を再利用しますが、独立した絶対 15 秒の deadline で最終強制終了を保証します。時間予算を使い切った場合は実行中の要求を abort してから未開始作業を精算し、abort 後はメッセージを送信しません。異常終了経路の maintenance 予算はちょうど 0 で、drain は待たずに直ちに abort して精算します。dispose の各 owner も個別に失敗隔離され、1 か所の throw は `failed` として記録されるだけで、後続 owner、`flushStateToDisk`、インスタンスロックの処理を飛ばしません。
+正常停止と異常停止は同じライフサイクルに合流し、順序は固定です。
+
+1. **Quiesce**：タイトル、リアクション、アバター、翻訳の入口を閉じ、runner を止めます。4 つの quiesce 入口は個別に失敗隔離され、1 つが例外を投げても残りの入口を閉じます。すべて成功するまでは quiesce 完了として記録しません。
+2. **上限付き drain**：各キューと mailbox を drain します。runner は update ごとの cancellation signal を持ち、実行中の handler が drain deadline を超えた場合はそれらを abort して最後の上限付き settle 時間を与えます。それでも settle しない handler は最終 offset の確認を止め、best-effort dispose 後の非ゼロ終了を強制します。
+3. **Flush と dispose**：正常経路では最終 Telegram offset の確認前に AI、Disk I/O、StateStore の順で flush します。最終 dispose の順序は「AI を flush → AI を終了 → Disk I/O を flush → Anti-Raid と Disk I/O を終了 → StateStore を flush → インスタンスロックを解放」で固定です。
+
+失敗時のセマンティクス：
+
+- 重要な quiesce、drain、flush、lock release が 1 つでも失敗すると最終 offset の確認を行わず、未確認 update の再配信または保持された lock の operator 対応を促すため非ゼロで終了します。
+- 通常 dispose の進行中に fatal error が発生した場合、emergency 経路は同じ Promise を再利用しますが、独立した絶対 15 秒の deadline で最終強制終了を保証します。時間予算を使い切った場合は実行中の要求を abort してから未開始作業を精算し、abort 後はメッセージを送信しません。
+- 異常終了経路の maintenance 予算はちょうど 0 で、drain は待たずに直ちに abort して精算します。
+- dispose の各 owner も個別に失敗隔離され、1 か所の throw は `failed` として記録されるだけで、後続 owner、`flushStateToDisk`、インスタンスロックの処理を飛ばしません。
 
 どの失敗が fatal か、どの順序を入れ替えられないかを含む完全な規則は [04 実行時の正式な不変条件](04-invariants.md) を参照してください。
 

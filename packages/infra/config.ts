@@ -34,20 +34,31 @@ export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 /**
  * Google Gemini API 密钥，AI 闲聊 agent 独占：回复生成、图片理解、记忆压缩
  * （packages/workers/aiChatWorker.ts、packages/ai/gemini.ts）。与广告检测的
- * DEEPSEEK_API_KEY 职责不重叠，两条线各用各的凭据，互不回退。
+ * AD_DETECT_DEEPSEEK_API_KEY 职责不重叠，两条线各用各的凭据，互不回退。
+ *
+ * 变量名以所服务的功能（`/ai_chat`）打头而不是以供应商打头：读 `.env` 的人
+ * 关心的是「缺这一把会瘸哪个功能」，而不是「这把 key 是谁家发的」——同一家
+ * 供应商日后完全可能同时服务两个功能，那时按供应商命名就再也分不开了。
+ *
+ * 可选。AI 闲聊是按群 opt-in、缺省关闭的附加功能，缺这把密钥不该让 copy、
+ * 抽奖、入群验证、黑名单一起起不来（理由同下方 DeepSeek 那把，见
+ * docs/04-invariants.md）。未配置时 /ai_chat enable 与 /switch_mood 直接拒绝、
+ * AI Worker 根本不启动，已经开着的群也不再投喂消息与触发
+ * （packages/aiChat/availability.ts 是唯一判定入口）。
  */
-export const GEMINI_API_KEY: string = requireEnv("GEMINI_API_KEY");
+export const AI_CHAT_GEMINI_API_KEY: string | undefined = optionalEnv("AI_CHAT_GEMINI_API_KEY");
 
 /**
  * DeepSeek API 密钥（OpenAI 兼容接口），广告检测独占：入群守卫线程里的判定
  * （packages/workers/antiRaid/adDetect/）。AI 闲聊一律走 Gemini，不会用到它。
+ * 变量名同样以功能（`/ad_detect`）打头，理由见上方那把。
  *
  * 可选。广告检测是按群 opt-in、缺省关闭的附加功能，缺这把密钥不该让 copy、
  * 抽奖、入群验证、黑名单一起起不来。未配置时 /ad_detect enable 直接拒绝
  * （packages/commands/adDetect.ts），已经开着的群也不再投递待检消息
  * （packages/antiRaid/adDetect.ts 的 buildAdCandidate）。
  */
-export const DEEPSEEK_API_KEY: string | undefined = optionalEnv("DEEPSEEK_API_KEY");
+export const AD_DETECT_DEEPSEEK_API_KEY: string | undefined = optionalEnv("AD_DETECT_DEEPSEEK_API_KEY");
 
 /**
  * 免受 /copy 冷却限制、可使用 /block，且可为其他机器人代点入群验证的

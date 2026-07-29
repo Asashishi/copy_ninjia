@@ -37,6 +37,11 @@ const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolea
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
 const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
+const hydrateStickerCatalogs = mock((_packs: readonly string[] | null): Map<string, string> => new Map());
+// 贴纸白名单是全进程唯一无条件读 config/stickers.json 的地方；写坏时必须整体
+// 跳过对账（见 diskIOWorker.ts 的 activeStickerPacks）。
+let stickerConfigFailure: string | null = null;
+const consoleError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../packages/workers/diskIO/logFiles", () => ({
   flushLogBuffer,
@@ -67,8 +72,14 @@ mock.module("../../packages/workers/diskIO/aiMemoryFiles", () => ({
 }));
 mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
   flushStickerCatalogs,
-  hydrateStickerCatalogs: (): Map<string, string> => new Map(),
+  hydrateStickerCatalogs,
   markStickerCatalogSnapshotDirty,
+}));
+mock.module("../../packages/config/stickers", () => ({
+  getStickerConfig: (): { packs: readonly string[] } => {
+    if (stickerConfigFailure !== null) throw new Error(stickerConfigFailure);
+    return { packs: ["pack_a"] };
+  },
 }));
 mock.module("../../packages/workers/diskIO/blocklistRemovalOutbox", () => ({
   flushBlocklistRemovalOutbox,
@@ -103,7 +114,10 @@ beforeEach(() => {
     handleBlocklistRemovalsMessage,
     postMessage,
     hydrateLuckDay,
+    hydrateStickerCatalogs,
+    consoleError,
   ]) fn.mockClear();
+  stickerConfigFailure = null;
   luckWorkerCache.current = null;
   hydratedLuckEntries = new Map();
   recoverLuckReceiptSecret.mockReset();
@@ -217,6 +231,36 @@ describe("Disk I/O Worker protocol router", () => {
       luckReceiptSecret: expect.objectContaining({ key: "secret" }),
       error: undefined,
     }));
+  });
+
+  test("贴纸白名单写坏时降级成只读不删，其余恢复照常并不报启动失败", () => {
+    stickerConfigFailure = "Invalid stickers config: boom";
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      route({ type: "load" });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    // null 而不是 []：后者会让 recoverStickerCatalogs 把不在白名单里的持久化
+    // 文件当孤儿删掉，一个逗号写错就等于清空 memory/stickers/。也不能整步跳过
+    // ——那会让内存里的目录停在空表，而磁盘上明明躺着完好的快照。
+    expect(hydrateStickerCatalogs).toHaveBeenCalledTimes(1);
+    expect(hydrateStickerCatalogs).toHaveBeenCalledWith(null);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    // 其余 owner 照常恢复；这一份坏文件不该把整个进程拦在启动阶段。
+    expect(hydrateLuckDay).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "loaded",
+      error: undefined,
+    }));
+  });
+
+  test("白名单可读时原样传下去，孤儿清理照常生效", () => {
+    route({ type: "load" });
+
+    expect(hydrateStickerCatalogs).toHaveBeenCalledWith(["pack_a"]);
   });
 
   test("flush 不短路其它 owner，并按领域回报失败", () => {

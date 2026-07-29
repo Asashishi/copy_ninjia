@@ -11,7 +11,7 @@
 
 import OpenAI from "openai";
 import { deepSeekClientHolder } from "../cache/deepseek";
-import { DEEPSEEK_API_KEY } from "../infra/config";
+import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
 import { logger } from "../infra/logger";
 import {
   DEEPSEEK_API_BASE_URL,
@@ -29,11 +29,11 @@ import {
  * 不能让一次凭据缺失变成凭空拉黑。
  */
 function getDeepSeekClient(): OpenAI {
-  if (DEEPSEEK_API_KEY === undefined) {
-    throw new Error("DEEPSEEK_API_KEY is not configured; ad detection cannot run.");
+  if (AD_DETECT_DEEPSEEK_API_KEY === undefined) {
+    throw new Error("AD_DETECT_DEEPSEEK_API_KEY is not configured; ad detection cannot run.");
   }
   deepSeekClientHolder.current ??= new OpenAI({
-    apiKey: DEEPSEEK_API_KEY,
+    apiKey: AD_DETECT_DEEPSEEK_API_KEY,
     baseURL: DEEPSEEK_API_BASE_URL,
     timeout: DEEPSEEK_REQUEST_TIMEOUT_MS,
     maxRetries: DEEPSEEK_REQUEST_MAX_RETRIES,

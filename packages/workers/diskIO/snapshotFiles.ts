@@ -192,10 +192,14 @@ function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot 
  * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
  *   ai/stickers/config.ts），用于判定哪些持久化文件已经是孤儿。
  */
-export function recoverStickerCatalogs(activePacks: readonly string[]): Map<string, string> {
+export function recoverStickerCatalogs(activePacks: readonly string[] | null): Map<string, string> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
-  const activePackSet: Set<string> = new Set(activePacks);
+  // null = 降级模式：白名单本身读不出来（config/stickers.json 写坏），本次恢复
+  // 对「哪些包还该留着」没有发言权。此时只读不删、也不因为形状不认识而拒绝
+  // 启动——两种处置都需要一份可信的白名单来背书，而它恰恰是缺的那一个。
+  const activePackSet: Set<string> | null = activePacks === null ? null : new Set(activePacks);
   const result: Map<string, string> = new Map();
+  let skippedWhileDegraded: number = 0;
   for (const name of readdirSync(STICKER_MEMORY_DIR)) {
     const path: string = join(STICKER_MEMORY_DIR, name);
     if (name.endsWith(TMP_FILE_SUFFIX)) {
@@ -206,7 +210,7 @@ export function recoverStickerCatalogs(activePacks: readonly string[]): Map<stri
     if (!match) continue; // 非 <pack>.json 形态（含 .corrupt 隔离文件），跳过不动
     ensurePersistedFileMode(path);
     const pack: string = match[1]!;
-    if (!activePackSet.has(pack)) {
+    if (activePackSet !== null && !activePackSet.has(pack)) {
       // 白名单已经不包含这个包：孤儿文件，清掉，不进 result（不载入内存）。
       tryUnlink(path);
       continue;
@@ -215,15 +219,32 @@ export function recoverStickerCatalogs(activePacks: readonly string[]): Map<stri
     try {
       parsed = JSON.parse(readFileSync(path, "utf8"));
     } catch (error: unknown) {
+      if (activePackSet === null) {
+        // 降级模式下连隔离都不做：改名同样是破坏性的，而这一轮本就不该动盘。
+        skippedWhileDegraded++;
+        continue;
+      }
       quarantine(path);
       console.error(`[diskIOWorker] sticker catalog file ${name} failed to parse, quarantined as .corrupt:`, error);
       continue;
     }
     const snapshot: StickerCatalogSnapshot | null = rebuildStickerCatalogSnapshot(parsed);
     if (!snapshot) {
+      if (activePackSet === null) {
+        // 正常模式下这是「手动迁移后再启动」的硬停机信号；降级模式下不行——
+        // 那等于让一份写坏的白名单顺带把 schema 不匹配升级成拒绝启动，而这个
+        // 包此刻可能根本已经不在白名单里、正常路径下会被直接删掉。
+        skippedWhileDegraded++;
+        continue;
+      }
       throw new Error(`Sticker catalog file ${name} does not match the current version=1 schema; migrate it manually before starting the bot`);
     }
     result.set(pack, JSON.stringify(snapshot, null, 2));
+  }
+  if (skippedWhileDegraded > 0) {
+    console.error(
+      `[diskIOWorker] left ${skippedWhileDegraded} unreadable sticker catalog file(s) untouched because the whitelist is unusable.`
+    );
   }
   return result;
 }

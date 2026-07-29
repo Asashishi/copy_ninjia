@@ -222,6 +222,15 @@ export interface AdCandidateMessage {
   /** 发送者是频道马甲（sender_chat）而非真人。 */
   isChannel: boolean;
   /**
+   * 该发送者此刻已经在永久黑名单里（封禁多半还没落地）。
+   *
+   * 名单是主线程的同步安全边界，Worker 侧没有镜像，只能随投递带过来。真人在
+   * 主线程就被挡掉了、不会带着 true 走到这里；频道马甲则必须投过来——它的封禁
+   * 走 banChatSenderChat，没有 revoke_messages，这段落地空档里发出来的广告只有
+   * Worker 侧的 deleteStraggler 这一条清理路径（见 states/adDetectAdmission.ts）。
+   */
+  blocked: boolean;
+  /**
    * 该发送者此刻是否仍在入群验证窗口内（主线程按待验证镜像判定）。这是模型
    * 自己看不到的事实——群聊转录里没有入群时间——只能由这里喂进去，见
    * consts/antiRaid/adDetect.ts 的 AD_DETECT_JUST_JOINED_FACT。

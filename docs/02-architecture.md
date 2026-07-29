@@ -102,7 +102,7 @@ flowchart TD
 
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
-3. **预热配置并恢复 StateStore**：校验 `config/` 三个 JSON，清理顶层孤儿临时文件，再严格校验并恢复 `state.json` 主备副本；这些步骤都发生在联网和 Worker 创建之前。
+3. **恢复 StateStore**：清理顶层孤儿临时文件，再严格校验并恢复 `state.json` 主备副本；这些步骤都发生在联网和 Worker 创建之前。`config/` 下的四份 JSON **不在这里预热**——它们各属一个按群 opt-in 的可选功能，校验挪到了对应的开关命令上（见 [`packages/config/readiness.ts`](../packages/config/readiness.ts)）。恢复完 `state.json` 后再核对一次：还有群开着的可选功能，其凭据与配置必须齐备，否则带着群 id 拒绝启动（见 [`packages/app/featurePreflight.ts`](../packages/app/featurePreflight.ts)）。
 4. 初始化 Telegram 客户端与 **Disk I/O Worker**，再恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，以及 `memory/blocklist/` 下的 `/block` 权威名单 `blocklist.json` 与未完成移除 outbox `removals.json`；任何领域恢复失败都拒绝以部分状态启动。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
 6. 初始化 **AI Worker**，只 hydrate `state.json` 中明确启用 AI 的群；随后恢复运势与待验证镜像、初始化 **Anti-Raid Worker**，最后启动 acknowledgement-safe runner。
@@ -112,7 +112,18 @@ flowchart TD
 
 ## 停机顺序
 
-正常与异常停机由同一个生命周期收口：先 **quiesce** 标题/反应/头像/翻译入口并停止 runner，再 **有界 drain** 各队列与 mailbox。runner 为每个 update 持有独立取消 signal；正常 drain 超时会 abort 仍在途的 Telegram 请求并等待一个短的取消收敛阶段，仍不合作的 handler 在最佳努力 flush 后触发强制非零退出。正常路径会在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 固定按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」收尾。任一关键 quiesce、drain、flush 或锁释放失败都会阻止最终 offset 确认和实例锁释放，并以非零状态退出；未确认的 update 由 Telegram 重投。普通 dispose 已在途时若又发生致命异常，异常路径虽复用同一 Promise，但由独立的 15 秒绝对 deadline 保证最终强制退出。dispose 的每个 owner 各自失败隔离：单点抛错只记为 `failed`，不会跳过后续 owner、`flushStateToDisk` 与实例锁处置。
+正常与异常停机由同一个生命周期收口，顺序固定：
+
+1. **Quiesce**：停下标题/反应/头像/翻译入口，并停止 runner。四个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口，未全部成功不得缓存为已完成。
+2. **有界 drain**：排空各队列与 mailbox。runner 为每个 update 持有独立取消 signal；在途 handler 超过 drain 期限时 abort 这些 signal 并给最后一段有界收敛时间，仍不收敛的 handler 会阻止最终 offset 确认，并在最佳努力 dispose 后强制非零退出。
+3. **Flush 与 dispose**：正常路径在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 固定按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」收尾。
+
+失败语义：
+
+- 任一关键 quiesce、drain、flush 或锁释放失败都会阻止最终 offset 确认，并以非零状态退出，让 Telegram 重投未确认的 update、或由运维处理仍被持有的锁。
+- 普通 dispose 已在途时若又发生致命异常，异常路径复用同一 Promise，但由独立的 15 秒绝对 deadline 保证最终强制退出。时间预算耗尽时先 abort 在途请求再结算未开始的工作，abort 之后不再发送任何消息。
+- 异常退出路径的维护预算恰好为 0，drain 不再等待，直接 abort 并立即结算。
+- dispose 的每个 owner 各自失败隔离：单点抛错只记为 `failed`，不会跳过后续 owner、`flushStateToDisk` 与实例锁处置。
 
 各步骤的完整不变量（哪些失败必须 fatal、哪些顺序不可交换）见 [04 运行时权威约束](04-invariants.md)。
 

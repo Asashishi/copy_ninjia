@@ -1,9 +1,12 @@
 import type { CommandContext, Context } from "grammy";
 import { switchAiMood } from "../aiChat";
+import { aiChatConfigReadiness } from "../config/readiness";
+import { AI_CHAT_GEMINI_API_KEY } from "../infra/config";
 import { getChatState } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
 import { sendMessage } from "../infra/telegram";
 import { formatMockerLabel } from "../users/userLabel";
+import { refuseIfConfigBroken } from "./configGate";
 import { isSuperAdmin } from "./superAdminToggle";
 
 /**
@@ -25,6 +28,26 @@ export async function handleSwitchMoodCommand(ctx: CommandContext<Context>): Pro
     });
     return;
   }
+
+  // 前提不齐时 AI Worker 根本没启动，post 只会同步失败并把 Worker 标成不可用；
+  // 先点名到底缺什么，别让运维在「Worker 没回话」的兜底文案里猜原因。两道前提
+  // 分开报，理由同 /ai_chat：一个要改 .env，一个要改配置文件。
+  if (AI_CHAT_GEMINI_API_KEY === undefined) {
+    await sendMessage({
+      chatId,
+      text: `本天才没有 Gemini 的 key，哪来的心情给你换呀？去 .env 里补上 AI_CHAT_GEMINI_API_KEY 再重启，笨蛋♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+  const refused: boolean = await refuseIfConfigBroken({
+    readiness: aiChatConfigReadiness(),
+    chatId,
+    messageId,
+    feature: "AI mood switch",
+    text: (file: string): string => `本天才的 ${file} 写坏了，连心情表都读不出来还换什么？修好再重启，笨蛋♡`,
+  });
+  if (refused) return;
 
   if (getChatState(chatId).isAIChatEnabled !== true) {
     await sendMessage({

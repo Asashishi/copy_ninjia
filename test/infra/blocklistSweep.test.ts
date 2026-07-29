@@ -139,6 +139,47 @@ describe("黑名单清扫", () => {
     expect(pendingBlockedRemovals.size).toBe(1);
   });
 
+  test("补扫在 outbox 里不冻结名单：条目不随名单长度增长，投递时才现算", async () => {
+    // outbox 每次变更都要整份重写并 fsync，而 N 个群的补扫条目装的是同一份
+    // 名单——冻进去就是 O(群数² × 名单长度) 的落盘，`removals.json` 也会成为
+    // 整个持久化里唯一一个大小随黑名单长度增长的文件，偏偏它在启动恢复的
+    // 关键路径上（见 types/blocklist.ts 的 PendingBlockedRemovalParams）。
+    for (let index: number = 0; index < 50; index++) {
+      blockedUserIds.set(index + 1, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    }
+
+    await sweepBlockedMembers(-1001);
+    await sweepBlockedMembers(-1002);
+
+    // 镜像/落盘的那一份只有任务本身。
+    for (const pending of pendingBlockedRemovals.values()) {
+      expect(pending.params.probeMembership).toBeTrue();
+      expect("userIds" in pending.params).toBeFalse();
+    }
+    // 投出去的那一份照常带着完整名单。
+    const dispatched = remover.mock.calls.at(-1)![0] as { userIds: number[] }[];
+    expect(dispatched[0]!.userIds).toHaveLength(50);
+  });
+
+  test("补扫投递前现算：登记之后新增的黑名单条目也一起扫", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001);
+    const removalId: number = lastRemovalId();
+
+    // 批次还没落定期间又拉黑了一个人：重放时该扫的是**此刻**的名单，而不是
+    // 登记那一刻的快照。
+    blockedUserIds.set(8, { isBlocked: true, blockedAt: "2026/07/26 00:00:01" });
+    remover.mockClear();
+    replayPendingBlockedRemovals();
+
+    expect(remover.mock.calls[0]![0]).toEqual([{
+      chatId: -1001,
+      userIds: [7, 8],
+      probeMembership: true,
+      removalId,
+    }]);
+  });
+
   test("落地回执才销镜像：没落定的批次留着等重投", () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 

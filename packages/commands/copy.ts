@@ -3,7 +3,10 @@ import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
 import { getChatState, getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { registerChatTeardown } from "../infra/chatTeardown";
+import { isJaTranslationConfigured } from "../copy/availability";
 import { describeCopyModeEffect } from "../copy/copyModes";
+import { jaTranslateConfigReadiness } from "../config/readiness";
+import { refuseIfConfigBroken } from "./configGate";
 import { formatUserLabel } from "../users/userLabel";
 import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
 import { peekCommandTarget } from "./targetResolution";
@@ -37,14 +40,29 @@ export async function handleCopyCommand(
   const globalCopy: GlobalCopyState = getGlobalCopyState();
 
   // 日语翻译与其它功能开关一致：缺省关闭，只有超级管理员显式 enable 后
-  // 才允许启动 /ja_copy。
-  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled !== true) {
-    await sendMessage({
-      chatId,
-      text: `本天才在这个群的日语翻译功能被关掉啦，杂鱼去找超级管理员 /ja_copy enable 一下吧♡`,
-      replyToMessageId: messageId,
-    });
-    return;
+  // 才允许启动 /ja_copy。两道前提分开报——「本群没开」要找超级管理员，
+  // 「密钥坏了」要改文件加重启，混成一句只会让人去敲一条不解决问题的命令。
+  if (mode === "ja") {
+    // 密钥不可用时不能放行：翻译失败的降级是静默的（原样发出未翻译的原文），
+    // 群里看不出与「翻译服务抖了一下」的区别，见 copy/availability.ts。
+    if (!isJaTranslationConfigured()) {
+      await refuseIfConfigBroken({
+        readiness: jaTranslateConfigReadiness(),
+        chatId,
+        messageId,
+        feature: "Japanese translation",
+        text: (file: string): string => `本天才的 ${file} 不见了或写坏了，翻不了日语呀。补好再重启，笨蛋♡`,
+      });
+      return;
+    }
+    if (getChatState(chatId).isJATranslationEnabled !== true) {
+      await sendMessage({
+        chatId,
+        text: `本天才在这个群的日语翻译功能被关掉啦，杂鱼去找超级管理员 /ja_copy enable 一下吧♡`,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
   }
 
   // 不同群的 update 会并发执行；必须在第一个 await 之前同步占住全局槽。

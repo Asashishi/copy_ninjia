@@ -11,8 +11,13 @@ import type { LuckDraw } from "../types/luckChallenge";
  * memory/luck/（只留当天一份文件），重启由 restoreLuckState 灌回，见
  * commands/luckChallenge/cache.ts。 */
 export const luckCacheState: { dayKey: string } = { dayKey: "" };
-/** 当日已确认抽签结果；启动恢复填充，跨日整体清空，容量受当日唯一 key 数约束。 */
+/** 当日已确认抽签结果；启动恢复填充，跨日整体清空。
+ *  容量上限 DAILY_LUCK_CACHE_MAX：key 里带着用户随手输入的问题原文哈希，
+ *  「当日唯一 key 数」是攻击者选的数字而不是自然上界，撑满时拒绝新 key
+ *  （理由与取舍见 consts/luckChallenge.ts 的同名常量）。 */
 export const dailyLuckCache: Map<string, LuckDraw> = new Map();
+/** 当日容量撑满是否已经记过一行日志；跨日随缓存一起复位，避免逐条刷屏。 */
+export const dailyLuckCacheSaturated: { current: boolean } = { current: false };
 
 /** 尚未确认的抽签结果：inline_query 应答（预览）阶段抽到、但还没等到用户
  * 真的选中发出，见 commands/luckChallenge/cache.ts 的 getOrDrawLuck 与

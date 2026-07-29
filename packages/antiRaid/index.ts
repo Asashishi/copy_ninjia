@@ -320,13 +320,14 @@ export async function drainAntiRaid(timeoutMs: number = ANTI_RAID_BARRIER_TIMEOU
 /** update 安全交接：处理 mailbox 后，仅在镜像变化时同步两类持久化 owner。 */
 async function postAntiRaidDurably(
   messages: readonly AntiRaidWorkerMessage[],
+  replacedJoins: ReadonlyMap<number, AntiRaidWorkerMessage> = new Map(),
   timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS
 ): Promise<void> {
   let messagesToPost: readonly AntiRaidWorkerMessage[] = messages;
   if (messages.some((message: AntiRaidWorkerMessage): boolean => message.type === "removeBlockedMembers")) {
     // 黑名单处置是安全副作用：update 被确认前先把主线程镜像写入持久化 outbox。
     // mailbox barrier 只证明 Worker 收到消息，不能替代跨进程恢复能力。
-    messagesToPost = await prepareDurableAntiRaidMessages(messages);
+    messagesToPost = await prepareDurableAntiRaidMessages(messages, replacedJoins);
   }
   if (messagesToPost.length === 0) return;
   const persistenceVersionBefore: number = antiRaidRuntimeState.persistenceVersion;
@@ -506,20 +507,30 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
     messages.push({ type: "adminsChanged", chatId, userId: user.id, isInviterExempt });
   }
 
+  const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
   if (!wasActive && isActive) {
+    // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径
+    // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
+    // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker
+    // 收到豁免后会将其撤销。
+    const joinMessage: AntiRaidWorkerMessage = {
+      type: "join",
+      chatId,
+      member: pickMember(user),
+      exempt: isAdmin,
+      actorId: update.from.id,
+    };
     // 黑名单优先于一切豁免，且取代 join 投递：Worker 不会为一个马上要被踢掉的人开窗口。
     // 这一路没有入群公告（chat_member 更新不带服务消息），刷群计数由处置消息补记。
-    if (!claimBlockedJoiner({ chatId, userId: user.id, messages })) {
-      // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径
-      // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
-      // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker
-      // 收到豁免后会将其撤销。
-      messages.push({ type: "join", chatId, member: pickMember(user), exempt: isAdmin, actorId: update.from.id });
+    // 被取代的 join 一并登记：处置在 durable 对账里被 /unblock 取消掉时改投它，
+    // 否则这个人既没有移除也没有验证窗口（见 blocklistDelivery.ts）。
+    if (!claimBlockedJoiner({ chatId, userId: user.id, messages, replacedJoin: joinMessage, replacedJoins })) {
+      messages.push(joinMessage);
     }
   } else if (wasActive && !isActive) {
     messages.push({ type: "left", chatId, userId: user.id });
   }
-  if (messages.length > 0) await postAntiRaidDurably(messages);
+  if (messages.length > 0) await postAntiRaidDurably(messages, replacedJoins);
 }
 
 /**
@@ -557,22 +568,32 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
 
   if (message.new_chat_members && message.new_chat_members.length > 0) {
     const messages: AntiRaidWorkerMessage[] = [];
+    const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
     for (const member of message.new_chat_members) {
       // 机器人不再豁免（走白名单用户代点验证的流程），只跳过本天才自己
       // ——自己既不能验证自己，也不该被自己踢出去。
       if (member.id === botId) continue;
+      const joinMessage: AntiRaidWorkerMessage = {
+        type: "join",
+        chatId: message.chat.id,
+        member: pickMember(member),
+        announcementMessageId: message.message_id,
+        actorId: message.from?.id,
+      };
       // 与 chat_member 那一路会为同一次入群各投一次处置；重复 ban 幂等，但两条都要拦
       // ——隐藏入群消息的群只有 chat_member 会到，而 chat_member 又要管理员权限才送达。
       if (claimBlockedJoiner({
         chatId: message.chat.id,
         userId: member.id,
         messages,
+        replacedJoin: joinMessage,
+        replacedJoins,
         // 服务消息这一路带得到入群公告；不投 join 就没人再管它，交给处置一并删。
         announcementMessageId: message.message_id,
       })) continue;
-      messages.push({ type: "join", chatId: message.chat.id, member: pickMember(member), announcementMessageId: message.message_id, actorId: message.from?.id });
+      messages.push(joinMessage);
     }
-    if (messages.length > 0) await postAntiRaidDurably(messages);
+    if (messages.length > 0) await postAntiRaidDurably(messages, replacedJoins);
     return true;
   }
 

@@ -80,7 +80,7 @@ export const BLOCKLIST_MEMORY_DIR: string = join(MEMORY_DIR, "blocklist");
  */
 export const BLOCKLIST_FILE_PATH: string = join(BLOCKLIST_MEMORY_DIR, "blocklist.json");
 /**
- * 尚未完成的黑名单成员移除任务。独立于权威黑名单文件，使用当前 version=1
+ * 尚未完成的黑名单成员移除任务。独立于权威黑名单文件，使用当前 version=2
  * 全量快照；主进程退出后由启动恢复重放。
  * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
  */

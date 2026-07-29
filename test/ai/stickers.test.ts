@@ -13,8 +13,13 @@ const sendStickerMock = mock(async (_params: {
   signal?: AbortSignal;
 }): Promise<number | undefined> => 12345);
 mock.module("../../packages/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
-// view_sticker_pack 会为模拟真人翻贴纸面板停顿 1.5~5 秒，单测里直接跳过。
-mock.module("../../packages/libs/sleep", () => ({ sleep: async (_ms: number): Promise<void> => {} }));
+// view_sticker_pack 会为模拟真人翻贴纸面板停顿 1.5~5 秒，单测里直接跳过；
+// 但要保留「已 abort 就以 abort 原因 reject」这一半，那正是作废路径的入口。
+mock.module("../../packages/libs/sleep", () => ({
+  sleep: async (_ms: number, signal?: AbortSignal): Promise<void> => {
+    if (signal?.aborted === true) throw signal.reason;
+  },
+}));
 
 const {
   buildSendStickerToolDefinition,
@@ -24,7 +29,7 @@ const {
   sendStickerTool,
   viewStickerPackTool,
 } = await import("../../packages/ai/tools/stickers");
-const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../packages/consts/tools");
+const { REPLY_INVALIDATED_TOOL_ERROR, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../packages/consts/tools");
 const { MAX_STICKER_PACK_VIEWS_PER_REPLY, STICKER_INTENT_MAX_CHARS } = await import("../../packages/consts/aiChat/stickers");
 const { createStickerSendLock } = await import("../../packages/ai/stickers/sendLock");
 
@@ -161,6 +166,29 @@ describe("ai/stickers viewStickerPackTool", () => {
     expect(result.stickers).toContain("2. 😭 一只猫哭泣");
     expect(state.viewedPackIntents.get(1)).toBe("表达被逗笑，但不要显得在嘲讽对方");
     expect(chatAction.set).toHaveBeenCalledWith("choose_sticker");
+  });
+
+  test("停顿期间轮次被作废：返回工具错误，不让 reject 逃出 execute", async () => {
+    // orchestrator 的 dispatch/execute 与 callGemini 的 await toolset.execute(...)
+    // 都没有 try/catch：逃出去展开的是整个 functionCalls 循环——同一轮里模型发出
+    // 的其余调用一个都不执行，contents 里还留下一个带未应答 functionCall 的
+    // model 轮。同轮的 send_message / send_sticker 走的是同一个共用停顿。
+    const chatAction = chatActionMock();
+    const state = createStickerRoundState();
+    const controller = new AbortController();
+    controller.abort(new Error("chat teardown"));
+
+    const result = await viewStickerPackTool({
+      chatAction,
+      menu: MENU,
+      argumentsJson: '{"pack_index": 1, "intent":"表达被逗笑，但不要显得在嘲讽对方"}',
+      state,
+      signal: controller.signal,
+    });
+
+    expect(JSON.parse(result).error).toBe(REPLY_INVALIDATED_TOOL_ERROR);
+    // 作废的这一轮不该把包记成「已看过」，否则重开一轮时它就被锁死了。
+    expect(state.viewedPackIntents.size).toBe(0);
   });
 
   test("没有 emoji 的贴纸用占位文案，不留空", async () => {

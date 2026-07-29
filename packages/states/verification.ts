@@ -1,4 +1,5 @@
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
+import { trimSlidingWindowArray } from "../libs/slidingWindowRateLimit";
 import {
   KICKED_REJOIN_GRACE_MS,
   VERIFICATION_REMINDER_UNDELIVERED_MAX_MS,
@@ -269,8 +270,15 @@ function handleTrackedMessage(
   // 频道评论区活动在上方先完成豁免，不能进入刷屏计数。其余待验证消息按
   // 成员自己的滑动窗口统计；第 46 条同步删除状态，迟到事件因查无记录不会
   // 再产生第二次踢人。
-  const cutoff: number = event.now - JOIN_WINDOW_MS;
-  state.trackedMessageTimes = state.trackedMessageTimes.filter((timestamp: number): boolean => timestamp > cutoff);
+  // 走共享的窗口修剪，不再手写 filter：手写那版只砍「太旧」的一侧，时钟往回
+  // 跳一次之后旧时间戳全部落在「未来」、永远满足 ts > now - windowMs，一个从没
+  // 刷过屏的人只要再发几条就会被判成 flood 删消息加踢出。同一个 60 秒 / 45 条
+  // 阈值的另一半（lockdownRuntime 的入群窗口）本来就走这条共享判定。
+  state.trackedMessageTimes = trimSlidingWindowArray({
+    timestamps: state.trackedMessageTimes,
+    windowMs: JOIN_WINDOW_MS,
+    now: event.now,
+  });
   state.trackedMessageTimes.push(event.now);
   state.messageIds.push(event.messageId);
   // 常规窗口里根本到不了这个上限（刷屏在第 46 条就转成踢人），它兜的是提醒

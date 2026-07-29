@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../../packages/cache/diskIO/logs";
+import {
+  flushBuffer,
+  loggerFileState,
+  loggerReopenState,
+  markLogDirty,
+  resetLogCache,
+} from "../../../packages/cache/diskIO/logs";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../../packages/consts/paths";
 import { getTokyoDateKey } from "../../../packages/libs/time";
 import {
@@ -105,5 +111,31 @@ describe("diskIO/logFiles 启动恢复", () => {
     expect(flushBuffer.entries).toHaveLength(0);
     expect(loggerFileState.current).toBeNull();
     expect(readFileSync(todayPath, "utf8")).toBe(original);
+  });
+
+  test("追加失败后按退避间隔才重开日文件，而不是每次 flush 都整文件重读", () => {
+    // 重开一次要把整个日文件 readFileSync + JSON.parse 两遍、逐条走 schema 校验、
+    // 再扫一遍目录，而磁盘满/卷转只读这类故障不会在一个 flush 周期内自愈。不退避
+    // 的话每个周期都按日文件大小付一次这个代价，而这条线程同时持有 state.json、
+    // 黑名单、移除 outbox 与 AI 记忆快照。
+    const today: string = getTokyoDateKey();
+    const todayPath: string = join(LOGS_DIR, `${today}.json`);
+    writeFileSync(todayPath, "[]");
+    markLogDirty({ day: today, text: serializeDayFileEntry("a", { level: "error", message: "boom" }) });
+    expect(flushLogBuffer()).toBeFalse();
+    expect(loggerReopenState.retryAt).toBeGreaterThan(0);
+
+    // 文件此刻已经修好，但仍在退避窗口内：这一批照样丢弃，不去重开。
+    writeFileSync(todayPath, "{}");
+    markLogDirty({ day: today, text: serializeDayFileEntry("b", { level: "error", message: "again" }) });
+    expect(flushLogBuffer()).toBeFalse();
+    expect(readFileSync(todayPath, "utf8")).toBe("{}");
+
+    // 退避到期后才重试；接管成功即清掉退避标记。
+    loggerReopenState.retryAt = Date.now() - 1;
+    markLogDirty({ day: today, text: serializeDayFileEntry("c", { level: "error", message: "recovered" }) });
+    expect(flushLogBuffer()).toBeTrue();
+    expect(loggerReopenState.retryAt).toBe(0);
+    expect(Object.keys(JSON.parse(readFileSync(todayPath, "utf8")) as Record<string, unknown>)).toEqual(["c"]);
   });
 });

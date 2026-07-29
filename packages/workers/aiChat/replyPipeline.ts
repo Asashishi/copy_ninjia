@@ -14,7 +14,12 @@ import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AdmitDecision } from "../../types/states/replyAdmission";
 import type { MediaCommentContext } from "./promptContext";
-import { drainReplyQueue as drainQueuedReplies, pushReplyTrigger, triggerKindFor } from "./replyQueue";
+import {
+  drainReplyQueue as drainQueuedReplies,
+  flushOverflowNotice,
+  pushReplyTrigger,
+  triggerKindFor,
+} from "./replyQueue";
 import { startReplyRound } from "./replyRound";
 import { currentReplyGeneration } from "./replyState";
 import { replyReferenceForBufferedMessage } from "./replyChain";
@@ -49,19 +54,17 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean 
       isRandomTrigger: false,
       queuedTrigger: trigger,
     },
-    drainReplyQueue
+    onReplyRoundFinished
   );
 }
 
-function drainReplyQueue(chatId: number): void {
-  drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));
-}
-
 /**
- * 只在 5 分钟窗口确实有余量时推一次队列。
+ * 只在 5 分钟窗口确实有余量时推一次队列。**队列的三处推力都只能走这里。**
  *
  * 窗口仍然满的群直接跳过，不做无用的尝试：startReplyRound 每被拒一次就会发一条
- * 限频提示（自带 60 秒冷却），空转就等于每分钟往群里刷一句。
+ * 限频提示（自带 60 秒冷却），空转就等于每分钟往群里刷一句。撞满窗口的群里轮次
+ * 还在一轮接一轮地结束，不设闸的那条推力于是每轮都空转一次——刷屏由此持续整个
+ * 饱和期，见 docs/04-invariants.md。
  */
 function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
   const times: LinkedQueue<number> | undefined = longTriggerTimes.get(chatId);
@@ -69,7 +72,18 @@ function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
     trimSlidingWindow({ timestamps: times, windowMs: RATE_LIMIT_LONG_WINDOW_MS, now });
     if (admitRound({ windowCount: times.size }).action === "rateLimited") return;
   }
-  drainReplyQueue(chatId);
+  drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));
+}
+
+/**
+ * 一轮结束时的推力：先把欠下的溢出提示补出去，再按窗口余量推队列。
+ *
+ * 两件事分开做。提示是欠着群成员的一句话，窗口满不满都要发；推队列则必须设闸，
+ * 理由见 drainReplyQueueIfWindowAllows。
+ */
+function onReplyRoundFinished(chatId: number): void {
+  flushOverflowNotice(chatId);
+  drainReplyQueueIfWindowAllows(chatId, Date.now());
 }
 
 /**
@@ -138,7 +152,7 @@ export function generateAndSendReply({
           mediaComment,
           generation,
         },
-        drainReplyQueue
+        onReplyRoundFinished
       );
       break;
     case "dropSilently":

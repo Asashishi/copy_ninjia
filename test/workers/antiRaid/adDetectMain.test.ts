@@ -35,7 +35,7 @@ mock.module("../../../packages/infra/logger", () => ({
   },
 }));
 mock.module("../../../packages/infra/config", () => ({
-  DEEPSEEK_API_KEY: "test-deepseek-key",
+  AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
   PRIVILEGED_USERS_ID: [100],
   SUPER_ADMIN_USER_ID: 1,
 }));
@@ -131,6 +131,7 @@ describe("广告检测投递门禁", () => {
       linkUrls: [],
       label: "@spammer",
       isChannel: false,
+      blocked: false,
       justJoined: false,
     });
     // 图片只看说明文字。
@@ -233,11 +234,25 @@ describe("广告检测投递门禁", () => {
     expect(buildAdCandidate(message(), 999)?.justJoined).toBe(true);
   });
 
-  test("已经在黑名单里的人不再送检", () => {
+  test("已经在黑名单里的真人不再送检", () => {
     // 处置早就排上了，他还在说话只是因为封禁尚未落地；继续送检只会把额度烧在
-    // 一个注定要被清出去的人身上，还会换来一次完全相同的处置。
+    // 一个注定要被清出去的人身上，还会换来一次完全相同的处置。真人的封禁走
+    // banChatMember，带 revoke_messages，这段空档里的消息会随封禁一起撤掉。
     blockedIds.add(7);
     expect(buildAdCandidate(message(), 999)).toBeUndefined();
+  });
+
+  test("已经在黑名单里的频道马甲照常投递，带着 blocked 交给判定线程删", () => {
+    // 频道身份的封禁走 banChatSenderChat，那个接口没有 revoke_messages：在主线程
+    // 就吞掉的话，它在封禁落地之前抢发的每一条广告都没有任何清理路径，会永久
+    // 留在群里且没有任何日志。投递闸认得 blocked，会直接删掉而不进判定额度。
+    blockedIds.add(-1005);
+    const candidate = buildAdCandidate(
+      message({ sender_chat: { id: -1005, type: "channel", title: "广告频道" } }),
+      999
+    );
+    expect(candidate?.senderId).toBe(-1005);
+    expect(candidate?.blocked).toBe(true);
   });
 
   test("频道马甲发言按频道身份投递", () => {

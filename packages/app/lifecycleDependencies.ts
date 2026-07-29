@@ -2,10 +2,6 @@ import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, term
 import { drainAntiRaid, hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
 import { hydrateBlocklist } from "../infra/blocklist";
 import { restoreLuckState } from "../commands";
-import { getAdSampleConfig } from "../config/adSamples";
-import { getMoodConfig } from "../config/mood";
-import { getReactionConfig } from "../config/reactions";
-import { getStickerConfig } from "../config/stickers";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainReactionQueue, initReactionQueue, quiesceReactionQueue } from "../copy/reactionQueue";
 import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../copy/translate";
@@ -31,6 +27,7 @@ import {
 import { bot, initTelegramClients } from "../infra/telegram";
 import { sleep } from "../libs/sleep";
 import { seedSenderCache } from "../users/senderIdentity";
+import { preflightEnabledFeatures } from "./featurePreflight";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers } from "./registerHandlers";
 import { runAcknowledgedUpdateBatches } from "./updateRunner";
@@ -58,12 +55,8 @@ export const lifecycleDependencies = {
   flushAiMemory,
   flushDiskIO,
   flushStateToDisk,
-  getAdSampleConfig,
   getAllChatStates,
   getGlobalCopyState,
-  getMoodConfig,
-  getReactionConfig,
-  getStickerConfig,
   hydrateAiMemory,
   hydrateBlocklist,
   hydratePendingVerifications,
@@ -79,6 +72,7 @@ export const lifecycleDependencies = {
   loadPersistedData,
   loadState,
   logger,
+  preflightEnabledFeatures,
   refreshAllChatTitles,
   registerCommandMenu,
   registerHandlers,

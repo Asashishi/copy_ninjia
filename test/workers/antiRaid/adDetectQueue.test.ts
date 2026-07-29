@@ -38,7 +38,6 @@ mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
 const {
   clearChatAdDetect,
   enqueueAdCandidate,
-  formatAdBundleText,
   quiesceAdDetectQueue,
   rotateAdDetectDedupWindow,
   runAdDetectBatch,
@@ -46,6 +45,8 @@ const {
   stopAdDetectQueue,
   sweepAdDetect,
 } = await import("../../../packages/workers/antiRaid/adDetect/queue");
+// 消息串的整形（裁剪/收容量/拼正文）拆在 bundle.ts，见该文件头注。
+const { formatAdBundleText } = await import("../../../packages/workers/antiRaid/adDetect/bundle");
 const { antiRaidInFlightTasks } = await import("../../../packages/cache/antiRaid/tasks");
 const {
   adDetectDedupTimer,
@@ -60,6 +61,7 @@ const {
 } = await import("../../../packages/cache/antiRaid/adDetect");
 const {
   AD_DETECT_BATCH_SIZE,
+  AD_DETECT_BUNDLE_MAX_CHARS,
   AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS,
   AD_DETECT_LINK_URL_MAX_CHARS,
   AD_DETECT_MAX_IN_FLIGHT,
@@ -79,6 +81,7 @@ function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandidateMess
     linkUrls: [],
     label: "@spammer",
     isChannel: false,
+    blocked: false,
     justJoined: false,
     ...overrides,
   };
@@ -364,12 +367,36 @@ describe("广告判定队列", () => {
     expect(pendingAdMessages.get("-1001:8")?.entries.map((entry) => entry.messageId)).toEqual([3]);
   });
 
-  test("拼串从最新一条往回取，预算用完即停", () => {
+  test("拼串只负责编号，取舍由 selectAdBundleEntries 定完再交过来", () => {
     expect(formatAdBundleText([
       { messageId: 1, seq: 1, text: "第一条", receivedAt: 1 },
       { messageId: 2, seq: 2, text: "第二条", receivedAt: 2 },
     ])).toBe("1. 第一条\n2. 第二条");
     expect(formatAdBundleText([])).toBe("");
+  });
+
+  test("送检预算装不下时按序判定，没送审的条目不算判过", async () => {
+    // 一条广告后面跟一串灌水撑爆 AD_DETECT_BUNDLE_MAX_CHARS。水位只能推到这一拍
+    // 真正送检的最后一条：从最新一条往回取的话，最旧的那条广告会夹在水位下面被
+    // 记成判过再被 pruneConsumedContext 裁掉——模型从没读过它，也就永远判不出来。
+    const filler: string = "填".repeat(AD_DETECT_MESSAGE_MAX_CHARS);
+    const fillerCount: number = Math.ceil(AD_DETECT_BUNDLE_MAX_CHARS / AD_DETECT_MESSAGE_MAX_CHARS) + 1;
+    enqueueAdCandidate(candidate({ messageId: 1, text: "日入过千 加V xxx996" }), 1_000);
+    for (let index: number = 0; index < fillerCount; index++) {
+      enqueueAdCandidate(candidate({ messageId: index + 2, text: filler }), 1_000 + index);
+    }
+
+    await runAdDetectBatch(1_000);
+    const bundle = pendingAdMessages.get("-1001:7")!;
+    // 第一拍读到的是最旧那批（广告在其中），而不是被预算挤剩的尾巴。
+    expect(classifiedTexts[0]).toContain("日入过千");
+    expect(bundle.checkedSeq).toBeLessThan(fillerCount + 1);
+    expect(bundle.entries.some((entry) => entry.seq > bundle.checkedSeq)).toBe(true);
+
+    // 剩下的未判条目在去重窗口轮换后照样判得到，一条都不落。
+    rotateAdDetectDedupWindow();
+    await runAdDetectBatch(1_000 + AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS + 1);
+    expect(bundle.checkedSeq).toBe(fillerCount + 1);
   });
 
   test("引用与回复只跟着条目走，绝不进送检文本", async () => {
@@ -451,6 +478,26 @@ describe("广告判定队列", () => {
     enqueueAdCandidate(candidate({ messageId: 3, text: "加我微信" }), 1_500);
     await runAdDetectBatch(1_500);
     expect(deleteStragglerAdMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("已拉黑的频道马甲跨窗口照样删，不占判定额度", () => {
+    // recentlyDisposedAdKeys 只活一个去重窗口，而「已拉黑但封禁没落地」可以跨
+    // 窗口存在（秒踢、补扫、上个窗口判定登记的封禁批次都是先写名单再等 outbox
+    // 落盘与 mailbox 屏障）。窗口一轮换就只剩 blocked 这一个判据认得它。
+    rotateAdDetectDedupWindow();
+    expect(recentlyDisposedAdKeys.size).toBe(0);
+
+    enqueueAdCandidate(candidate({
+      senderId: -1006,
+      isChannel: true,
+      blocked: true,
+      messageId: 4,
+      text: "换汇加我",
+    }), 2_000);
+
+    expect(deleteStragglerAdMessage).toHaveBeenCalledWith(-1001, 4);
+    expect(pendingAdMessages.has("-1001:-1006")).toBe(false);
+    expect(adDetectQueue.size).toBe(0);
   });
 
   test("群管理员即使被判成广告也不处置", async () => {

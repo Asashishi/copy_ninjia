@@ -3,6 +3,7 @@ import { markSelfSent } from "../infra/selfSentTracker";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { logger } from "../infra/logger";
 import { postDiskIO } from "../ai/persistence";
+import { isAiChatConfigured } from "./availability";
 import { forgetAiMemoryRevisionCounter, nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
 import {
   aiChatWorkerState,
@@ -25,7 +26,7 @@ import {
 } from "../consts/lifecycle";
 import { MOOD_SWITCH_TIMEOUT_MS } from "../consts/aiChat/mood";
 import type { FlushResult } from "../types/lifecycle";
-import { getChatState } from "../infra/storage/stateStore";
+import { getAllChatStates, getChatState } from "../infra/storage/stateStore";
 import type {
   AiBotInfo,
   AiChatWorkerEvent,
@@ -203,8 +204,18 @@ function postAiChatOrThrow(message: AiChatWorkerMessage): void {
  * record/trigger 到达。Worker 靠它在转录里认出自己并自录自己发的消息。
  * 顺带记一份 lastInitState：Worker 崩溃重启后要重放这条消息，新 Worker 才能
  * 重新认出自己。
+ *
+ * 缺 Gemini 凭据时整条线不启动：连线程都不建，lastInitState 保持 null，停机
+ * 路径上的 flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker
+ * 也是 no-op（见 libs/supervisedWorker.ts），生命周期那边不必分岔。判定放在
+ * 这里而不是 app/lifecycle.ts：那边只认注入进来的 dependencies，把「这个功能
+ * 配没配」的知识摊到编排层等于每加一个可选功能都要改一次生命周期。
  */
 export function initAiChat(botInfo: AiBotInfo): void {
+  if (!isAiChatConfigured()) {
+    logger.log("AI_CHAT_GEMINI_API_KEY is not configured; the AI chat worker stays down and /ai_chat enable is refused.");
+    return;
+  }
   initAiChatWorker();
   const message: AiInitMessage = {
     type: "init",
@@ -220,11 +231,32 @@ export function initAiChat(botInfo: AiBotInfo): void {
  * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
  * initAiChat 之后、runner 开始投喂更新之前调用（见 app/lifecycle.ts），FIFO 保证
  * hydrate 消息先于一切 record/trigger 到达。
+ *
+ * 顺带回收磁盘残留：本群已经关掉 AI 闲聊，它那份记忆就该跟着走。这一步是
+ * **不可逆的删除**，因此判据收得很紧——只有在下面两个前提都成立时才动手，
+ * 任何一个不成立都宁可留着文件（留下的是可回收的垃圾，删错的是找不回来的数据）：
+ *
+ * 1. 进程侧前提齐备（isAiChatConfigured）。缺 key 时每个群看起来都是关的，
+ *    不拦的话一次临时抽掉密钥的重启就把所有群的记忆一起抹掉。
+ * 2. `state.json` 确实认识这个群。「群在状态表里、但开关不是 true」才是管理员
+ *    关掉了它；「群根本不在状态表里」说明状态自己丢了（LKG 回滚等），这时
+ *    没有任何权威依据支持删除——那恰恰是最该保住记忆的时刻。
+ *
+ * 两类结果都记一行日志：删除本身没有别的痕迹，出了事连"删过什么"都查不到。
  */
 export function hydrateAiMemory(memories: Map<number, string>): void {
+  if (!isAiChatConfigured()) return;
+  const knownChats: ReadonlyMap<number, unknown> = getAllChatStates();
   const enabledMemories: Map<number, string> = new Map();
+  const dropped: number[] = [];
+  const keptWithoutChatState: number[] = [];
   for (const [chatId, snapshot] of memories) {
     if (getChatState(chatId).isAIChatEnabled !== true) {
+      if (!knownChats.has(chatId)) {
+        keptWithoutChatState.push(chatId);
+        continue;
+      }
+      dropped.push(chatId);
       requestAiMemoryDelete(chatId, false);
       continue;
     }
@@ -232,6 +264,15 @@ export function hydrateAiMemory(memories: Map<number, string>): void {
     latestAiMemoryRevisions.set(chatId, 0);
     aiMemoryRevisionCounters.set(chatId, 0);
     enabledMemories.set(chatId, snapshot);
+  }
+  if (dropped.length > 0) {
+    logger.log(`Dropping the persisted AI memory of ${dropped.length} chat(s) with AI chat disabled: ${dropped.join(", ")}.`);
+  }
+  if (keptWithoutChatState.length > 0) {
+    logger.error(
+      `Keeping the persisted AI memory of ${keptWithoutChatState.length} chat(s) absent from state.json ` +
+      `(${keptWithoutChatState.join(", ")}); restore or re-enter those chats, or delete the files by hand.`
+    );
   }
   if (enabledMemories.size > 0) {
     postAiChatOrThrow({ type: "hydrate", memories: enabledMemories });
@@ -246,6 +287,7 @@ export function hydrateAiMemory(memories: Map<number, string>): void {
  * 恢复的条目、不重复调视觉模型。
  */
 export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
+  if (!isAiChatConfigured()) return;
   for (const [pack, snapshot] of catalogs) {
     latestStickerCatalogs.set(pack, snapshot);
   }

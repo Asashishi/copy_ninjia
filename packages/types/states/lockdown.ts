@@ -1,9 +1,20 @@
 import type { ChatPermissions } from "@grammyjs/types";
 
+/**
+ * announced：本次锁定有没有真的在群里公告过。
+ *
+ * 公告只在 applyResult(ok) 那一步发出（APPLYING → ACTIVE），而 RESTORING 有
+ * 两个入口：正常到期/手动解除（来自 ACTIVE，公告过）与加锁调用失败后的补偿
+ * 对账（applyResult(!ok)，从未公告过）。少了这面旗，后一条路恢复成功时会往
+ * 群里发一条「限制解除」——而那个群从头到尾没收到过封锁公告，读起来是句没头
+ * 没尾的话。这面旗只活在内存里，不进 state.json：持久化记录的形状是
+ * {phase,intentId,originalPermissions,expiresAt}，为一条公告文案改盘上格式
+ * 不划算，adopt 时按 phase 取最常见的那一侧（见 states/lockdown.ts 的 adopt）。
+ */
 export type LockdownState =
   | { kind: "applying"; originalPermissions?: ChatPermissions; joinCount?: number; intentId?: number }
-  | { kind: "active"; originalPermissions: ChatPermissions; intentId: number }
-  | { kind: "restoring"; originalPermissions: ChatPermissions; intentId: number };
+  | { kind: "active"; originalPermissions: ChatPermissions; intentId: number; announced: boolean }
+  | { kind: "restoring"; originalPermissions: ChatPermissions; intentId: number; announced: boolean };
 
 export type LockdownMachineEvent =
   | { type: "thresholdExceeded"; joinCount: number }

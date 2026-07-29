@@ -5,7 +5,12 @@ const switchAiMood = mock(async (_chatId: number): Promise<string> => "开心");
 const loggerError = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 
-mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 100, PRIVILEGED_USERS_ID: [] }));
+// AI 闲聊的凭据；缺这一项 /switch_mood 会在读群状态之前就被拒（见 aiChat/availability.ts）。
+mock.module("../../packages/infra/config", () => ({
+  SUPER_ADMIN_USER_ID: 100,
+  PRIVILEGED_USERS_ID: [],
+  AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
+}));
 mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../packages/aiChat", () => ({ switchAiMood }));
 mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));

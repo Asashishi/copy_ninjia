@@ -49,8 +49,16 @@ export const AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS: number = 90_000;
 /**
  * 已接纳的待检发送者 key 容量上限。达到上限后拒绝新的不同 key，不淘汰已经
  * 入队的旧 key；同一 key 的后续消息仍受单 key 条数/字符上限约束。
+ *
+ * 这个数字直接乘出入群守卫线程 isolate 的常驻上界：每个 key 最多
+ * AD_DETECT_MAX_MESSAGES_PER_SENDER 条，每条最多 AD_DETECT_MESSAGE_MAX_CHARS 正文
+ * 加 AD_DETECT_MAX_LINK_URLS × AD_DETECT_LINK_URL_MAX_CHARS 的 URL 段、再加两段
+ * AD_SAMPLE_CONTEXT_MAX_CHARS 的样本上下文。撑满不是 OOM 一个启发式那么简单——
+ * 入群验证、封锁、黑名单执行都在同一个 isolate 里，跟着一起死，supervisedWorker
+ * 烧完 WORKER_MAX_RESTARTS 后验证就静默失效了。上限因此按「撑满也还活着」定，
+ * 而不是按「能接纳多少人」定。
  */
-export const AD_DETECT_MAX_PENDING_SENDERS: number = 31_500;
+export const AD_DETECT_MAX_PENDING_SENDERS: number = 11_500;
 
 /**
  * 单个键最多保留的**完整**消息条数（正文 + 样本上下文）；越界时丢弃最早的一条。
@@ -76,10 +84,17 @@ export const AD_DETECT_MAX_PENDING_DELETE_IDS: number = 500;
  * URL 不占这份额度（见 AD_DETECT_MAX_LINK_URLS 与 AD_DETECT_LINK_URL_MAX_CHARS）
  * ——共用额度的话，一段填充文本就能把 URL 顶出去。
  */
-export const AD_DETECT_MESSAGE_MAX_CHARS: number = 600;
+export const AD_DETECT_MESSAGE_MAX_CHARS: number = 512;
 
-/** 一次送检的整串消息最大字符数；从最新一条往回取，超出即停。 */
-export const AD_DETECT_BUNDLE_MAX_CHARS: number = 4_000;
+/**
+ * 一次送检的整串消息最大字符数。
+ *
+ * 装不下不等于跳过：未判定的内容从最旧一条起按序装，超预算的留到下一次判定，
+ * 剩余预算再补已判过的上下文（见 workers/antiRaid/adDetect/bundle.ts 的
+ * selectAdBundleEntries）。这个上限因此只决定「一拍判到哪里」，不决定「哪些
+ * 消息会被判」。
+ */
+export const AD_DETECT_BUNDLE_MAX_CHARS: number = 4_096;
 
 /**
  * 单条消息最多补进几个 text_link 实体里的 URL。

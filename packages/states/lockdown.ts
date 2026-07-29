@@ -14,8 +14,8 @@ import type {
  *
  *   INACTIVE ──入群超阈值──────────────> APPLYING（占位，权限限制尚未落地）
  *   INACTIVE ──adopt（重启接管）────────> ACTIVE
- *   APPLYING ──intent 落盘、setChatPermissions 成功──> ACTIVE
- *   APPLYING ──setChatPermissions 失败──> INACTIVE
+ *   APPLYING ──intent 落盘、setChatPermissions 成功──> ACTIVE（并发出封锁公告）
+ *   APPLYING ──setChatPermissions 抛错──> RESTORING（结果不确定，补一次恢复对账）
  *   ACTIVE   ──到期恢复成功─────────────> INACTIVE
  *   ACTIVE   ──到期恢复失败─────────────> RESTORING（按 RESTORE_RETRY_MS 重试）
  *   RESTORING ──重试恢复成功────────────> INACTIVE
@@ -26,6 +26,10 @@ import type {
  * 分支，且反复触发只延长倒计时、不重复调用 API。APPLYING 期间恢复计时器
  * 到期也绝不能拿空的 originalPermissions 去「恢复」——setChatPermissions
  * 会把省略的字段全部当 false，等于把全群禁言——只能按短间隔轮询等落地。
+ *
+ * announced 标志沿 ACTIVE ──> RESTORING 传递，也带过 RESTORING ──再次超阈值──>
+ * ACTIVE 这条回头路（那一步不重发封锁公告，因此不能在那里重置）。它决定解锁
+ * 公告发不发，完整理由与落盘取舍见 docs/04-invariants.md 的「状态机契约」。
  *
  * 恢复调用在途期间若新峰值把状态从 RESTORING 推回 ACTIVE（倒计时给满）：
  * 稍后到达的 restoreResult 按其真实结果处理——
@@ -53,7 +57,14 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
       if (state.kind === "active" || state.kind === "restoring") {
         const next: LockdownState = state.kind === "active"
           ? state
-          : { kind: "active", originalPermissions: state.originalPermissions, intentId: state.intentId };
+          : {
+            kind: "active",
+            originalPermissions: state.originalPermissions,
+            intentId: state.intentId,
+            // 回到 ACTIVE 不会重发封锁公告（下面没有 announceLockdown），
+            // 因此「公告过没有」原样带过来，不能在这里重置成 true。
+            announced: state.announced,
+          };
         effects.push({ kind: "scheduleRestore", delayMs: LOCKDOWN_MS }, { kind: "persistState" });
         return { next, effects };
       }
@@ -92,13 +103,20 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
         return { next: state, effects: [] };
       }
       if (!event.ok) {
+        // 写操作结果不确定（可能已经生效），补一次恢复对账。这一路从未公告过，
+        // 恢复成功时也就不该发解锁公告。
         return {
-          next: { kind: "restoring", originalPermissions: state.originalPermissions, intentId: event.restoreIntentId },
+          next: {
+            kind: "restoring",
+            originalPermissions: state.originalPermissions,
+            intentId: event.restoreIntentId,
+            announced: false,
+          },
           effects: [{ kind: "persistState" }],
         };
       }
       return {
-        next: { kind: "active", originalPermissions: state.originalPermissions, intentId: state.intentId },
+        next: { kind: "active", originalPermissions: state.originalPermissions, intentId: state.intentId, announced: true },
         effects: [
           { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
           { kind: "persistState" },
@@ -111,7 +129,12 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
     case "restoreTimerFired":
       if (state?.kind !== "active") return { next: state, effects: [] };
       return {
-        next: { kind: "restoring", originalPermissions: state.originalPermissions, intentId: event.intentId },
+        next: {
+          kind: "restoring",
+          originalPermissions: state.originalPermissions,
+          intentId: event.intentId,
+          announced: state.announced,
+        },
         effects: [{ kind: "persistState" }],
       };
     case "restoreRetryFired":
@@ -128,6 +151,8 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
           kind: "restoring",
           originalPermissions: state.originalPermissions!,
           intentId: event.intentId,
+          // 从 APPLYING 被解除：加锁公告还没发出去过。
+          announced: state.kind === "applying" ? false : state.announced,
         },
         effects: [{ kind: "persistState" }],
       };
@@ -140,7 +165,12 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
           // 状态/计时器都不动，不当成解锁处理。
           return { next: state, effects: [{ kind: "reapplyRestriction", originalPermissions: state.originalPermissions }] };
         }
-        return { next: undefined, effects: [{ kind: "reportUnlock" }, { kind: "announceUnlock" }] };
+        return {
+          next: undefined,
+          effects: state.announced
+            ? [{ kind: "reportUnlock" }, { kind: "announceUnlock" }]
+            : [{ kind: "reportUnlock" }],
+        };
       }
       if (state.kind === "active") {
         // 这次失败回执对应的是旧的恢复尝试：它在途期间新峰值已把状态从
@@ -166,7 +196,15 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
       }
       if (event.phase === "restoring") {
         return {
-          next: { kind: "restoring", originalPermissions: event.originalPermissions, intentId: event.intentId },
+          next: {
+            kind: "restoring",
+            originalPermissions: event.originalPermissions,
+            intentId: event.intentId,
+            // 持久化记录不带 announced（见 types/states/lockdown.ts）。RESTORING
+            // 绝大多数来自「ACTIVE 到期」，那条路公告过；只有「加锁抛错后崩溃、
+            // 重启才接管」这条复合罕见路径会因此多发一句解锁公告。取常见的那一侧。
+            announced: true,
+          },
           effects: [
             { kind: "prefetchAdmins", onlyIfCold: false },
             ...(event.persisted === false
@@ -176,7 +214,8 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
         };
       }
       return {
-        next: { kind: "active", originalPermissions: event.originalPermissions, intentId: event.intentId },
+        // 落盘的 ACTIVE 意味着上个进程加锁成功过，而加锁成功必然伴随封锁公告。
+        next: { kind: "active", originalPermissions: event.originalPermissions, intentId: event.intentId, announced: true },
         effects: [
           { kind: "prefetchAdmins", onlyIfCold: false },
           { kind: "scheduleRestore", delayMs: event.remainingMs },

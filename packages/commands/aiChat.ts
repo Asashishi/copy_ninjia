@@ -1,15 +1,24 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { invalidateAiChat } from "../aiChat";
+import { aiChatConfigReadiness } from "../config/readiness";
+import { AI_CHAT_GEMINI_API_KEY } from "../infra/config";
 import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
+import { refuseIfConfigBroken } from "./configGate";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 
 /**
  * 处理 /ai_chat enable|disable 指令：按群开关 AI 闲聊功能（见 ChatState.isAIChatEnabled，
  * 缺省禁用）。仅 SUPER_ADMIN_USER_ID 本人可用，不走 PRIVILEGED_USERS_ID 白名单——
  * 这是单独一批权限，其他任何人尝试都只会被嘲讽，指令本身不会执行。
+ *
+ * 开启前两道前提各判一次，且分开报（同 /ad_detect）：缺 AI_CHAT_GEMINI_API_KEY 与
+ * config/{stickers,reactions,mood}.json 写坏是两种完全不同的运维动作，混成一句
+ * 「没配好」只会让人去查错文件。任一不满足都拒绝——AI Worker 压根没启动，
+ * 开着也永远不会有回复，不留一个看着已生效、实际什么都不做的开关。关闭方向
+ * 两道都不拦：前提被破坏之后仍要能把残留的开关和记忆清干净。
  */
 export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
@@ -20,6 +29,24 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
 
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
+  if (arg === "enable") {
+    if (AI_CHAT_GEMINI_API_KEY === undefined) {
+      await sendMessage({
+        chatId,
+        text: `本天才没有 Gemini 的 key，拿什么跟你们闲聊呀？去 .env 里补上 AI_CHAT_GEMINI_API_KEY 再重启，笨蛋♡`,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
+    const refused: boolean = await refuseIfConfigBroken({
+      readiness: aiChatConfigReadiness(),
+      chatId,
+      messageId,
+      feature: "AI chat",
+      text: (file: string): string => `本天才的 ${file} 写坏了，读都读不动还闲什么聊？修好再重启，笨蛋♡`,
+    });
+    if (refused) return;
+  }
   const state: ChatState = getOrCreateChatState(chatId);
   state.isAIChatEnabled = arg === "enable";
   // 关闭时同步清掉 Worker 侧已排队的触发：主线程停止投喂只拦得住之后的，

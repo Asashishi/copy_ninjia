@@ -15,8 +15,10 @@ const states = new Map<number, Record<string, unknown>>();
 mock.module("../../packages/infra/config", () => ({
   SUPER_ADMIN_USER_ID: 100,
   PRIVILEGED_USERS_ID: [],
+  // AI 闲聊的凭据；缺这一项 /ai_chat enable 会被拒（见 aiChat/availability.ts）。
+  AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
   // 广告检测的凭据；缺这一项 /ad_detect enable 会被拒（见 commands/adDetect.ts）。
-  DEEPSEEK_API_KEY: "test-deepseek-key",
+  AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
 }));
 mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
@@ -33,6 +35,11 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
       states.set(chatId, state);
     }
     return state;
+  },
+  // aiChat/availability.ts 的按群判定要读它；这里的命令只关心开关本身，
+  // 读到空对象即可（等价于「本群还没开过」）。
+  getChatState(chatId: number): Record<string, unknown> {
+    return states.get(chatId) ?? {};
   },
   persistAuthoritativeState,
   saveStateInBackground,

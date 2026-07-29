@@ -22,6 +22,11 @@ export interface OwnerInitFlags {
 export interface ShutdownResults {
   runnerDrained: boolean;
   maintenanceSettled: boolean;
+  /**
+   * 已处理 update 的最终确认边界是否安全完成；没有待确认 update 时同样为 true。
+   * wait() 一旦确认失败或因关键 gate 未完成而跳过，就保持 false 到进程退出。
+   */
+  offsetConfirmed: boolean;
   avatar: FlushResult;
   reaction: FlushResult;
   translate: FlushResult;
@@ -33,7 +38,10 @@ export interface ShutdownResults {
 }
 
 /** owner 结果部分（不含 runner/维护两项，它们由主文件在调用前算出）。 */
-export type OwnerShutdownResults = Omit<ShutdownResults, "runnerDrained" | "maintenanceSettled">;
+export type OwnerShutdownResults = Omit<
+  ShutdownResults,
+  "runnerDrained" | "maintenanceSettled" | "offsetConfirmed"
+>;
 
 /** 把单个 owner 的异常折算成兜底值并记录，绝不让它中断整段停机。 */
 export interface OwnerSettler {
@@ -149,6 +157,7 @@ export async function runShutdownOwners({
 export function isCleanShutdown(results: ShutdownResults): boolean {
   return results.runnerDrained &&
     results.maintenanceSettled &&
+    results.offsetConfirmed &&
     results.avatar === "flushed" &&
     results.reaction === "flushed" &&
     results.translate === "flushed" &&
@@ -162,6 +171,7 @@ export function isCleanShutdown(results: ShutdownResults): boolean {
 /** 停机结果的单行诊断文案（英文，见 AGENTS.md 日志约定）。 */
 export function formatShutdownResults(results: ShutdownResults): string {
   return `runner=${results.runnerDrained}, maintenance=${results.maintenanceSettled}, ` +
+    `offset=${results.offsetConfirmed}, ` +
     `avatar=${results.avatar}, reaction=${results.reaction}, translate=${results.translate}, ` +
     `antiRaid=${results.antiRaid}, ai=${results.ai}, disk=${results.disk}, ` +
     `terminate=${results.terminate}, state=${results.state}`;

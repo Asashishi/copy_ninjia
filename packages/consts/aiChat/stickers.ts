@@ -19,6 +19,18 @@ export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = Object.freeze([15_000, 60_000, 120_000]);
 
 /**
+ * 单枚贴纸描述在退避序列也用完之后的负缓存时长（见 cache/stickers/catalog.ts 的
+ * failedEntries）。
+ *
+ * 比 STICKER_CATALOG_RETRY_INTERVAL_MS 长得多：这张表兜的是「这一枚现在描述不
+ * 出来」，而对账本身每 5 分钟就会走一遍，TTL 跟着对账走等于每轮都把整包重描一遍。
+ * 又不能没有——视觉端点的故障常常是分钟级到小时级的（配额、密钥轮换），永久闩死
+ * 会让首次部署撞上一次故障的包再也建不起目录。半小时是「故障恢复后自愈够快、
+ * 永远好不了的包每小时最多多花两轮」的折中。
+ */
+export const STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS: number = 30 * 60_000;
+
+/**
  * 目录仍不完整的包在维护节拍上的重试间隔（见 ai/stickers/catalog.ts 的
  * retryIncompleteStickerCatalogs）。
  *

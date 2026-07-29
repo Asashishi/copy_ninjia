@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { EMERGENCY_FLUSH_TIMEOUTS, EMERGENCY_REUSED_DISPOSE_DEADLINE_MS } from "../../packages/consts/lifecycle";
+import {
+  EMERGENCY_FLUSH_TIMEOUTS,
+  EMERGENCY_REUSED_DISPOSE_DEADLINE_MS,
+  FINAL_OFFSET_CONFIRM_TIMEOUT_MS,
+} from "../../packages/consts/lifecycle";
 import type { ApplicationLifecycleDependencies } from "../../packages/types/lifecycle";
 
 const calls: string[] = [];
@@ -11,10 +15,6 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 
 const acquireSingleInstanceLock = mock(async (): Promise<void> => { calls.push("acquireLock"); });
 const releaseSingleInstanceLock = mock(async (): Promise<void> => { calls.push("releaseLock"); });
-const getStickerConfig = mock((): object => ({}));
-const getReactionConfig = mock((): object => ({}));
-const getMoodConfig = mock((): object => ({}));
-const getAdSampleConfig = mock((): readonly string[] => []);
 const initTelegramClients = mock((): void => { calls.push("initTelegram"); });
 let diskIOFatalHandler: ((error: Error) => void) | undefined;
 let businessWorkerFatalHandler: ((error: Error) => void) | undefined;
@@ -23,6 +23,7 @@ const initDiskIO = mock((options?: { onFatal?: (error: Error) => void }): void =
   diskIOFatalHandler = options?.onFatal;
 });
 const cleanupOrphanedTempFiles = mock(async (): Promise<void> => { calls.push("cleanupTemps"); });
+const preflightEnabledFeatures = mock((): void => { calls.push("preflightFeatures"); });
 const loadState = mock(async (): Promise<void> => { calls.push("loadState"); });
 const refreshAllChatTitles = mock(async (): Promise<void> => { calls.push("refreshTitles"); });
 const loadPersistedData = mock(async () => ({
@@ -75,7 +76,10 @@ const setBusinessWorkerFatalHandler = mock((handler: ((error: Error) => void) | 
   businessWorkerFatalHandler = handler;
 });
 const loggerError = mock((..._args: unknown[]): void => {});
-const getUpdates = mock(async (): Promise<unknown[]> => { calls.push("getUpdates"); return []; });
+const getUpdates = mock(async (
+  _params?: { offset: number; limit: number; timeout: number },
+  _signal?: AbortSignal
+): Promise<unknown[]> => { calls.push("getUpdates"); return []; });
 const botInit = mock(async (): Promise<void> => { calls.push("botInit"); });
 const bot = {
   botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot", is_bot: true },
@@ -116,10 +120,6 @@ const testDependencies = {
   flushStateToDisk,
   getAllChatStates,
   getGlobalCopyState,
-  getAdSampleConfig,
-  getMoodConfig,
-  getReactionConfig,
-  getStickerConfig,
   hydrateAiMemory,
   hydratePendingVerifications,
   hydrateBlocklist,
@@ -140,6 +140,7 @@ const testDependencies = {
     error: loggerError,
   },
   loadState,
+  preflightEnabledFeatures,
   refreshAllChatTitles,
   registerCommandMenu,
   registerHandlers,
@@ -180,13 +181,10 @@ beforeEach(() => {
   for (const mocked of [
     acquireSingleInstanceLock,
     releaseSingleInstanceLock,
-    getStickerConfig,
-    getReactionConfig,
-    getMoodConfig,
-    getAdSampleConfig,
     initTelegramClients,
     initDiskIO,
     cleanupOrphanedTempFiles,
+    preflightEnabledFeatures,
     loadState,
     refreshAllChatTitles,
     loadPersistedData,
@@ -234,8 +232,6 @@ beforeEach(() => {
     runAcknowledgedUpdateBatches,
   ]) mocked.mockClear();
   acquireSingleInstanceLock.mockImplementation(async (): Promise<void> => { calls.push("acquireLock"); });
-  getStickerConfig.mockImplementation((): object => ({}));
-  getAdSampleConfig.mockImplementation((): readonly string[] => []);
   refreshAllChatTitles.mockImplementation(async (): Promise<void> => { calls.push("refreshTitles"); });
   flushDiskIO.mockImplementation(async () => { calls.push("flushDiskIO"); return "flushed" as const; });
   flushStateToDisk.mockImplementation(async () => { calls.push("flushState"); return "flushed" as const; });
@@ -248,6 +244,10 @@ beforeEach(() => {
   runnerTask.mockImplementation(async (): Promise<void> => {});
   runnerSize.mockImplementation((): number => 0);
   runnerHasFailedUpdate.mockImplementation((): boolean => false);
+  getUpdates.mockImplementation(async (): Promise<unknown[]> => {
+    calls.push("getUpdates");
+    return [];
+  });
 });
 
 afterEach(() => {
@@ -257,8 +257,13 @@ afterEach(() => {
 });
 
 describe("应用启动失败与退出清理", () => {
-  test("取得单实例锁后配置校验失败，run 仍刷 state、释放锁并移除进程监听器", async () => {
-    getStickerConfig.mockImplementationOnce((): never => { throw new Error("invalid stickers.json"); });
+  // 部署配置不再在这里预热（见 config/readiness.ts），因此这条「持锁之后 init
+  // 抛错」的路径改由临时文件清理注入失败——它是持锁与 initDiskIO 之间仍然存在的
+  // 那一步，断言的收尾语义与原来完全一致。
+  test("取得单实例锁后 init 抛错，run 仍刷 state、释放锁并移除进程监听器", async () => {
+    cleanupOrphanedTempFiles.mockImplementationOnce(async (): Promise<never> => {
+      throw new Error("temp cleanup failed");
+    });
     const beforeSigint: number = process.listenerCount("SIGINT");
     const beforeSigterm: number = process.listenerCount("SIGTERM");
     const lifecycle = new ApplicationLifecycle(testDependencies);
@@ -649,7 +654,10 @@ describe("应用启动失败与退出清理", () => {
     await lifecycle.dispose();
 
     expect(sleep).toHaveBeenCalledTimes(1);
-    expect(getUpdates).toHaveBeenCalledWith({ offset: 322, limit: 1, timeout: 0 });
+    expect(getUpdates).toHaveBeenCalledWith(
+      { offset: 322, limit: 1, timeout: 0 },
+      expect.any(AbortSignal)
+    );
     expect(flushAiMemory).toHaveBeenCalledTimes(2);
     expect(flushDiskIO).toHaveBeenCalledTimes(2);
     expect(flushStateToDisk).toHaveBeenCalledTimes(2);
@@ -684,8 +692,93 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("flushDiskIO"));
     expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("flushState"));
     expect(calls.indexOf("flushState")).toBeLessThan(calls.indexOf("getUpdates"));
-    expect(getUpdates).toHaveBeenCalledWith({ offset: 655, limit: 1, timeout: 0 });
+    expect(getUpdates).toHaveBeenCalledWith(
+      { offset: 655, limit: 1, timeout: 0 },
+      expect.any(AbortSignal)
+    );
     await lifecycle.dispose();
+  });
+
+  test("最终 offset 确认失败会非零退出并阻止干净释放实例锁", async () => {
+    lastSeenUpdateId = 432;
+    getUpdates.mockRejectedValueOnce(new Error("confirmation failed"));
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.wait();
+    await lifecycle.dispose();
+
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(
+      "Failed to confirm update offset on shutdown:",
+      expect.any(Error)
+    );
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset=false"));
+  });
+
+  test("永不自行 settle 的最终确认受专用 AbortSignal 截断", async () => {
+    lastSeenUpdateId = 543;
+    const originalTimeout: typeof AbortSignal.timeout = AbortSignal.timeout;
+    let requestedTimeoutMs: number | undefined;
+    AbortSignal.timeout = ((timeoutMs: number): AbortSignal => {
+      requestedTimeoutMs = timeoutMs;
+      return AbortSignal.abort(new DOMException("confirmation timed out", "TimeoutError"));
+    }) as typeof AbortSignal.timeout;
+    getUpdates.mockImplementationOnce(async (
+      _params?: { offset: number; limit: number; timeout: number },
+      signal?: AbortSignal
+    ): Promise<unknown[]> => {
+      calls.push("getUpdates");
+      if (signal?.aborted === true) throw signal.reason;
+      return new Promise<unknown[]>(() => {});
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    try {
+      await lifecycle.init();
+      await lifecycle.wait();
+      await lifecycle.dispose();
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+
+    expect(requestedTimeoutMs).toBe(FINAL_OFFSET_CONFIRM_TIMEOUT_MS);
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+  });
+
+  test("wait 首次维护超时后即使 dispose 时落定也不能改写未确认结果", async () => {
+    const maintenance = deferred<void>();
+    refreshAllChatTitles.mockImplementationOnce((): Promise<void> => maintenance.promise);
+    lastSeenUpdateId = 654;
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
+    const originalClearTimeout: typeof clearTimeout = globalThis.clearTimeout;
+    const timeoutToken = {} as ReturnType<typeof setTimeout>;
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void): ReturnType<typeof setTimeout> => {
+      queueMicrotask(callback);
+      return timeoutToken;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((_timer: ReturnType<typeof setTimeout>): void => {}) as typeof clearTimeout;
+    try {
+      await lifecycle.wait();
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+
+    maintenance.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await lifecycle.dispose();
+
+    expect(getUpdates).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset=false"));
   });
 
   test("确认前 Anti-Raid drain 超时会阻止 offset，并把失败传播到退出状态", async () => {

@@ -49,6 +49,18 @@ export const USERNAME_ARG_PATTERN: RegExp = new RegExp(
 );
 
 /**
+ * 「这不是合法用户名」提示里回显参数原文的最大字符数。
+ *
+ * 参数原文只受 Telegram 单条消息 4096 字符的限制，而提示语还要在它前后拼上固定
+ * 文案——原样插回去拼出的就是一条超过 4096 的出站消息，Telegram 直接 400，
+ * `runTelegramAction` 把它吞进日志后返回 undefined：用户收到的是彻底的沉默而不是
+ * 这句嘲讽，而命令的限频名额早就在调用方扣掉了。上限取用户名最大长度的两倍
+ * ——回显只是为了让人看清自己打错了什么，比合法用户名长一截就足够了。
+ * 所属模块：commands/targetResolution.ts。
+ */
+export const INVALID_USERNAME_ECHO_MAX_CHARS: number = TELEGRAM_USERNAME_MAX_LENGTH * 2;
+
+/**
  * `/unblock` 的「连各群封禁一起解」标志。作为独立的一个词出现，与用户名不会
  * 混淆：Telegram 用户名至少 TELEGRAM_USERNAME_MIN_LENGTH 个字符，三个字母的
  * all 永远过不了 USERNAME_ARG_PATTERN。所属模块：commands/unblock.ts。

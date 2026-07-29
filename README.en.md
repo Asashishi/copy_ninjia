@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1200_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.52%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1281_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.84%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -69,7 +69,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1200 tests passed, 142 test files, 9,443 expect() calls, 94.82% function coverage, 96.52% line coverage" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1281 tests passed, 151 test files, 20,170 expect() calls, 95.10% function coverage, 96.84% line coverage" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -89,7 +89,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI group chat</b></p>
-  <p>Gemini persona-based replies with live search and tool calls, handling text, stickers, reactions, and related interactions through one pipeline.</p>
+  <p>Gemini persona-driven autonomy: speaking, stickers, reactions, and image generation are all tools, and the model decides how many to use per round and in what order.</p>
 </td>
 </tr>
 <tr>
@@ -98,18 +98,32 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <p>Understands images, animated stickers, and GIF frames, and can generate new images or intelligently edit existing media on request.</p>
 </td>
 <td align="left" valign="top">
-  <p><b>🧠 Group-chat memory</b></p>
-  <p>Maintains bounded verbatim context and multi-round compressed summaries, tracks bounded multi-level reply chains, and recovers reliably through atomic persistence.</p>
+  <p><b>🔎 Live fact-checking</b></p>
+  <p>Wired to Google Search and tools such as Tokyo weather; once a round has searched, the sampling temperature drops so answers follow the results.</p>
 </td>
 <td align="left" valign="top">
-  <p><b>🛡️ Join verification</b></p>
-  <p>Gives new members a 90-second button challenge. Human members must click for themselves; only bots may be vouched for by allowlisted users. Attributable non-anonymous administrator invitations and discussion-group activity remain exempt.</p>
+  <p><b>🧠 Group-chat memory</b></p>
+  <p>Maintains bounded verbatim context and multi-round compressed summaries, tracks bounded multi-level reply chains, and recovers reliably through atomic persistence.</p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
+  <p><b>🎭 Mood and human touches</b></p>
+  <p>Group mood rerolls every 2–4 hours, weighted by Tokyo weather and time of day; replies pause for a length-scaled typing delay and occasionally mistype, then correct themselves.</p>
+</td>
+<td align="left" valign="top">
+  <p><b>🛡️ Join verification</b></p>
+  <p>A 90-second button challenge for new members: humans must click for themselves, only bots may be vouched for by allowlisted users; attributable non-anonymous administrator invitations and linked-channel discussion activity are exempt.</p>
+</td>
+<td align="left" valign="top">
   <p><b>🚨 Anti-Raid</b></p>
   <p>Monitors join rates, locks group invitations and removes suspicious members at the threshold, then restores state seamlessly after restart.</p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>📮 Ad detection</b></p>
+  <p>Bundles each sender's messages over a 90-second window for DeepSeek to judge; a hit gets the same disposal as <code>/block</code>, with the ban reason announced in the triggering chat.</p>
 </td>
 <td align="left" valign="top">
   <p><b>🎲 Daily fortune</b></p>
@@ -117,7 +131,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 </td>
 <td align="left" valign="top">
   <p><b>🌐 Cross-group moderation</b></p>
-  <p><code>/block</code> synchronously bans a target across every known group where the bot is an administrator and records the id in a persistent blocklist — any later join in any watched group is kicked on sight, and the moment a group has both an administrator bot and an enabled listener — in either order — it sweeps out anyone from the list who is already sitting there, forming one coordinated defense.</p>
+  <p>One <code>/block</code> bans the target across every administered group and records the id in a persistent blocklist, so any later join in a watched group is kicked on sight — newly administered groups get swept too.</p>
 </td>
 </tr>
 </table>
@@ -137,7 +151,11 @@ The copy target is global: one instance can “become” only one target at a ti
 | `/steal_icon` | Copy only the avatar |
 | `/stop_copy` | Stop the global copy state |
 
-Choose a target by replying to their message or providing `@username`. Username lookup depends on the bot having observed the account previously; rename, username removal, or username reassignment immediately invalidates the old alias. When an anonymous administrator speaks as the current group, that group identity is the copy target, so copy modes can obtain the group avatar and reproduce that “skin”; `/block` rejects the current group identity as a member target. For destructive operations such as `/block`, prefer replying to the target rather than relying on historical usernames. Ordinary users have a 5-minute cooldown on copy-family commands; users in `PRIVILEGED_USERS_ID` are exempt.
+Choose a target by replying to their message or providing `@username`:
+
+- **Username lookup depends on the bot having observed the account previously**; rename, username removal, or username reassignment immediately invalidates the old alias. For destructive operations such as `/block`, prefer replying to the target rather than relying on historical usernames.
+- **When an anonymous administrator speaks as the current group, that group identity is the copy target**, so copy modes can obtain the group avatar and reproduce that “skin”; `/block` rejects the current group identity as a member target.
+- **Ordinary users have a 5-minute cooldown on copy-family commands**; users in `PRIVILEGED_USERS_ID` are exempt.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -148,26 +166,34 @@ Choose a target by replying to their message or providing `@username`. Username 
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">Group member</td><td>Start respective copy mode</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">Group member</td><td>Stop current global copy state</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">Group member</td><td>Copy avatar only</td></tr>
-<tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/贴贴</code> replies "actor 咬了 target！"; both names render as first_name last_name and link to the profile when a public username exists</td></tr>
+<tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/贴贴</code> replies "actor 咬了 target！"</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">Group member</td><td>Resume proactive behavior early</td></tr>
-<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>Blocklist the target: recorded permanently and banned across all bot-managed groups; any later join in a watched group is kicked on sight</td></tr>
-<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>(<code>all</code> is <code>SUPER_ADMIN_USER_ID</code> only)</td><td>Remove the id from the blocklist (the whole list is atomically rewritten back to disk); later joins are no longer kicked on sight. Existing per-group bans are left alone by default; add <code>all</code> to lift them across every bot-managed group</td></tr>
+<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>Blocklist the target: recorded permanently and banned across all bot-managed groups</td></tr>
+<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>(<code>all</code> is <code>SUPER_ADMIN_USER_ID</code> only)</td><td>Remove the id from the blocklist; existing per-group bans are left alone unless <code>all</code> is given</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle AI chat for the group</td></tr>
-<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle ad detection for the group: messages are bundled per sender over a 90-second window and judged by DeepSeek; a hit triggers the same disposal as <code>/block</code> (permanent blocklist entry plus a ban that deletes the sender's messages in every administered chat) and announces the ban reason in the triggering chat (self-deleting after 30 seconds). It only fires while the bot is an administrator there; the reference samples live in <a href="config/ad_samples.json"><code>config/ad_samples.json</code></a></td></tr>
-<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Reroll current group mood immediately and reply with new mood name</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle ad detection for the group; a hit gets the same disposal as <code>/block</code></td></tr>
+<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Reroll current group mood immediately and reply with the new mood name</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle Japanese translation mode for the group (disabled by default)</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle the group's main processing gate</td></tr>
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code> (PM only)</td><td>Start or finish a relay session from the bot's private chat to the target group</td></tr>
 </table>
 
-`/send` verifies target reachability before starting. If the target becomes unreachable during relay, the session ends and the super administrator is notified. Relay state persists in `state.json` across restarts. The command is omitted from Telegram's command menu and remains silent in groups or when invoked by any other user.
+### Behavior details
+
+- **Action commands**: both names render as `first_name last_name` and link to the profile when a public username exists; the target is picked the same way, by replying to their message or by `@username`.
+- **`/block` blocklist**: once the id lands in the persistent blocklist, the target is kicked on sight from any join update in any watched group. The moment a group has both an administrator bot and an enabled `/init` — in either order — anyone from the list already sitting there gets swept out too. `/unblock` atomically rewrites the whole list back to disk.
+- **`/ad_detect` ad detection**: messages are bundled per sender over a 90-second window and judged by DeepSeek; a hit triggers the same disposal as `/block` (permanent blocklist entry plus a ban that deletes the sender's messages in every administered chat) and announces the ban reason in the triggering chat (self-deleting after 30 seconds). It only fires while the bot is an administrator there; the reference samples live in [`config/ad_samples.json`](config/ad_samples.json).
+- **`/send` relay**: reachability is probed before starting, every message the super administrator sends is relayed to the target group once, and the session ends with a notification if the target becomes unreachable. Relay state persists in `state.json` across restarts. The command is omitted from Telegram's command menu and remains silent in groups or when invoked by any other user.
 
 > [!TIP]
-> CJK action commands (`/咬`, `/贴贴`, …) need no registration — any one or two Chinese characters work, and the target is picked the same way, by replying to their message or by `@username`. Telegram only accepts ASCII command names (Latin letters, digits, underscores), so these never appear in the command menu and get no autocompletion — the menu carries a single placeholder entry `/x` instead — the name `x` is the variable, prompting you to swap it for any one or two Chinese characters. It does nothing when invoked and is deliberately swallowed rather than falling through into the AI/copy pipeline; forms of three characters or more, such as `/咬人人`, are not action commands and fall through to normal message handling. Precisely because anyone can invent one without registering it, these commands share a global sliding-window limit of 450 responses per 90 seconds, counted across all groups and users; anything over the quota is dropped silently with no notice.
+> **CJK action commands need no registration** — any one or two Chinese characters work. Telegram only accepts ASCII command names (Latin letters, digits, underscores), so:
+> - These commands never appear in the command menu and get no autocompletion. The menu carries a single placeholder entry `/x` instead — the name `x` is the variable, prompting you to swap it for any one or two Chinese characters. The placeholder does nothing when invoked and is deliberately swallowed rather than falling through into the AI/copy pipeline.
+> - Forms of three characters or more, such as `/咬人人`, are not action commands and fall through to normal message handling.
+> - Precisely because anyone can invent one without registering it, these commands share a global sliding-window limit of 450 responses per 90 seconds, counted across all groups and users; anything over the quota is dropped silently with no notice.
 
 > [!TIP]
-> `/luck_challenge` is not a slash command: type `@bot_username [query]` in any chat to use Inline Mode. Enable Inline Mode in BotFather; 100% result feedback is recommended. Inline queries share a global sliding-window limit of 300 responses per 90 seconds.
+> **`/luck_challenge` is not a slash command**: type `@bot_username [query]` in any chat to use Inline Mode. Enable Inline Mode in BotFather; 100% result feedback is recommended. Inline queries share a global sliding-window limit of 300 responses per 90 seconds.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -207,9 +233,23 @@ cp .env.example .env
 
 ### 3. Configuration
 
-Fill in `.env` according to [`.env.example`](.env.example): `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY` (AI chat agent only), and `SUPER_ADMIN_USER_ID` containing one decimal user ID are required. `DEEPSEEK_API_KEY` (ad detection only) and `PRIVILEGED_USERS_ID` may be empty; separate multiple IDs with ASCII commas. With `DEEPSEEK_API_KEY` empty, `/ad_detect enable` is rejected and everything else keeps running.
+Fill in `.env` according to [`.env.example`](.env.example):
 
-`COPY_NINJIA_DATA_ROOT` optionally selects a separate runtime-data root. When set, `state.json`, `bot.lock`, `logs/`, and `memory/` are derived from it; persona, sticker, reaction, and mood configuration plus `g-auth.json` remain under the project root. When omitted, runtime data stays in the project root.
+| Variable | Required | Description |
+| :--- | :---: | :--- |
+| `TELEGRAM_BOT_TOKEN` | ✅ | Bot token issued by BotFather |
+| `SUPER_ADMIN_USER_ID` | ✅ | A single decimal user ID for the super administrator |
+| `AI_CHAT_GEMINI_API_KEY` | — | AI chat agent only; when empty the AI Worker never starts and `/ai_chat enable` and `/switch_mood` are rejected |
+| `AD_DETECT_DEEPSEEK_API_KEY` | — | Ad detection only; when empty `/ad_detect enable` is rejected |
+| `PRIVILEGED_USERS_ID` | — | Allowlisted user IDs, separated by ASCII commas |
+| `COPY_NINJIA_DATA_ROOT` | — | Runtime-data root; when omitted the project root is used |
+
+**Optional prerequisites degrade per feature.** Both AI key names are prefixed with the feature they serve, so a missing key only cripples that one feature and everything else keeps running. `config/*.json` and `g-auth.json` behave the same way: they are not warmed up at startup, and a broken file refuses only the matching toggle command.
+
+> [!IMPORTANT]
+> There is one exception: if a feature is still switched on in `state.json` while its key or configuration was removed, that switch is something an administrator deliberately turned on, so the process refuses to start naming the chat ids and what is missing instead of quietly doing nothing. Disable it first, or restore the prerequisite.
+
+When `COPY_NINJIA_DATA_ROOT` is set, `state.json`, `bot.lock`, `logs/`, and `memory/` are derived from it; persona, sticker, reaction, and mood configuration plus `g-auth.json` remain under the project root.
 
 For Japanese translation, save the Google Cloud service account key as `g-auth.json` in the project root. Both `.env` and `g-auth.json` are ignored by Git.
 
@@ -234,7 +274,7 @@ After the bot first joins a group, `SUPER_ADMIN_USER_ID` executes:
 /ai_chat enable
 ```
 
-> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 525 Chinese string literals across 52 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
+> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 465 Chinese string literals across 56 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 

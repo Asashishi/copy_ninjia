@@ -1,5 +1,6 @@
 import { logger } from "../../infra/logger";
 import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
+import { trimSlidingWindowArray } from "../../libs/slidingWindowRateLimit";
 import {
   LOCKDOWN_KICK_DEDUPE_MS,
 } from "../../consts/antiRaid/verification";
@@ -280,9 +281,14 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
           isBot: record.isBot,
           messageIds: [...record.messageIds],
           announcementMessageId: record.announcementMessageId,
-          trackedMessageTimes: record.trackedMessageTimes.filter(
-            (timestamp: number): boolean => timestamp > now - JOIN_WINDOW_MS
-          ),
+          // 与 states/verification.ts 的刷屏窗口共用同一份边界判定：手写 filter
+          // 会漏掉时钟回拨后落在「未来」的那些，恢复出来的记录带着一整窗永不
+          // 过期的时间戳，接着几条发言就能把人判成 flood。
+          trackedMessageTimes: trimSlidingWindowArray({
+            timestamps: record.trackedMessageTimes,
+            windowMs: JOIN_WINDOW_MS,
+            now,
+          }),
           invitedBy: record.invitedBy,
           reminderMessageId: record.reminderMessageId,
           replyReminderMessageId: record.replyReminderMessageId,

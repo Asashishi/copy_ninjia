@@ -52,8 +52,9 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 
 4. **[04 Authoritative Runtime Invariants](04-invariants.md)**
    - Authoritative constraints across modules and lifecycles (source `@see` comments point here)
-   - State isolation, concurrency limits, cache eviction bounds, and locking
-   - Atomic persistence, Anti-Raid verification state machine, and fortune HMAC key consistency
+   - Startup and import boundaries: startup order, optional-credential degradation, data root, outbound request and message safety
+   - Worker and state ownership: thread ownership, state-machine contracts, AI chat runtime, join verification and terminal disposal
+   - Persistence: durability and snapshot contracts, blocklist and ad detection, acknowledgement boundary and shutdown, file permissions
 
 5. **[05 Development Workflow and Quality Gates](05-dev-workflow.md)**
    - `bun run check` 4-stage validation: conventions + lint + typecheck + full test suite with coverage

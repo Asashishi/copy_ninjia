@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1200_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.52%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1281_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.84%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -69,7 +69,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage：1200 项测试全部通过 / 142 个测试文件 / 9,443 次 expect() 调用 / 函数覆盖率 94.82% / 行覆盖率 96.52%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：1281 项测试全部通过 / 151 个测试文件 / 20,170 次 expect() 调用 / 函数覆盖率 95.10% / 行覆盖率 96.84%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -89,7 +89,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI 群聊</b></p>
-  <p>基于 Gemini 人设进行智能回复，集成实时搜索与工具调用，统一处理文字、贴纸、反应等交互。</p>
+  <p>基于 Gemini 人设自主决策：发言、贴纸、表情反应、生图都是工具，由模型自行决定这一轮做几件事、按什么顺序做。</p>
 </td>
 </tr>
 <tr>
@@ -98,18 +98,32 @@
   <p>支持识别图片、动态贴纸和 GIF 帧，能按需生成新图片或对现有素材进行智能编辑。</p>
 </td>
 <td align="left" valign="top">
-  <p><b>🧠 群聊记忆</b></p>
-  <p>滚动维护有界逐字上下文与多轮压缩摘要，追踪有界多层回复链，并通过原子落盘可靠恢复。</p>
+  <p><b>🔎 实时查证</b></p>
+  <p>接入 Google 搜索与东京天气等工具；查证过的轮次自动压低采样温度，让回答照着搜索结果讲。</p>
 </td>
 <td align="left" valign="top">
-  <p><b>🛡️ 入群验证</b></p>
-  <p>提供新成员 90 秒限时按钮验证；真人只能本人点击，机器人账号仅允许白名单用户代点担保，并支持可归属的非匿名管理员邀请免验和评论区感知。</p>
+  <p><b>🧠 群聊记忆</b></p>
+  <p>滚动维护有界逐字上下文与多轮压缩摘要，追踪有界多层回复链，并通过原子落盘可靠恢复。</p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
+  <p><b>🎭 心情与拟人化</b></p>
+  <p>群心情每 2~4 小时随机轮换，权重受东京天气与时段影响；发言前按字数模拟打字停顿，偶尔还会打错字再补正。</p>
+</td>
+<td align="left" valign="top">
+  <p><b>🛡️ 入群验证</b></p>
+  <p>新成员 90 秒限时按钮验证：真人只能本人点击，机器人账号仅限白名单代点担保；可归属的非匿名管理员邀请与关联频道评论区活动免验。</p>
+</td>
+<td align="left" valign="top">
   <p><b>🚨 Anti-Raid</b></p>
   <p>监测入群频率，达到阈值后关闭群组邀请并处置异常入群成员，重启后可恢复状态。</p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>📮 广告检测</b></p>
+  <p>按发送者归并 90 秒消息串交 DeepSeek 判定，命中即按 <code>/block</code> 同权处置，并在触发群播报封禁理由。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🎲 今日运势</b></p>
@@ -117,7 +131,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🌐 跨群管理</b></p>
-  <p><code>/block</code> 可在机器人已知且具备管理权限的所有群中联动封禁目标，并把 id 写进持久化黑名单——之后 TA 出现在任何监听群的入群更新里都会被秒踢；机器人在某个群里「拿到管理权限且已初始化」这两件事凑齐的那一刻，还会把名单里已经在群里的人补清一遍（先给权限后初始化、或反过来，两种顺序都算），形成一体化群组防线。</p>
+  <p><code>/block</code> 一条命令即可在所有管理群联动封禁并写入持久化黑名单，之后进任何监听群都会被秒踢；新接管的群还会自动补扫。</p>
 </td>
 </tr>
 </table>
@@ -137,7 +151,11 @@
 | `/steal_icon` | 只复制头像 |
 | `/stop_copy` | 停止全局复读状态 |
 
-目标可通过「回复 TA 的消息」或 `@username` 指定。按用户名查找依赖机器人此前观察到该账号；改名、移除用户名或用户名换绑会立即使旧别名失效。匿名管理员以当前群身份发言时，复读目标就是当前群，因而可取得群头像并复读这层「皮套」；`/block` 会拒绝把当前群身份当作成员目标。对 `/block` 这类破坏性操作，优先回复目标消息，不要依赖历史用户名。普通用户执行 copy 类命令时受 5 分钟全局冷却限制，`PRIVILEGED_USERS_ID` 白名单不受限。
+目标可通过「回复 TA 的消息」或 `@username` 指定：
+
+- **按用户名查找依赖机器人此前观察到该账号**；改名、移除用户名或用户名换绑会立即使旧别名失效。对 `/block` 这类破坏性操作，优先回复目标消息，不要依赖历史用户名。
+- **匿名管理员以当前群身份发言时，复读目标就是当前群**，因而可取得群头像并复读这层「皮套」；`/block` 会拒绝把当前群身份当作成员目标。
+- **普通用户执行 copy 类命令时受 5 分钟全局冷却限制**，`PRIVILEGED_USERS_ID` 白名单不受限。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
@@ -148,26 +166,34 @@
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">群成员</td><td>启动相应复读模式</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">群成员</td><td>停止当前全局复读</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">群成员</td><td>只偷头像</td></tr>
-<tr><td><code>/&lt;1~2 个中文字&gt;</code></td><td align="center">群成员</td><td>动作命令，如 <code>/咬</code>、<code>/贴贴</code> 回复「发起人 咬了 目标！」；姓名用 first_name last_name 形式，有公开用户名的一方挂上主页链接</td></tr>
+<tr><td><code>/&lt;1~2 个中文字&gt;</code></td><td align="center">群成员</td><td>动作命令，如 <code>/咬</code>、<code>/贴贴</code> 回复「发起人 咬了 目标！」</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">群成员</td><td>暂停随机插话、随机复读等主动行为，默认 3 分钟</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
-<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；之后再进任何监听群都会被秒踢</td></tr>
-<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>（<code>all</code> 仅 <code>SUPER_ADMIN_USER_ID</code>）</td><td>解除拉黑：把 id 从黑名单里划掉（整份名单原子重写回文件），之后进群不再秒踢。默认不动各群已有的封禁；加 <code>all</code> 则在所有机器人管理的群中一并解封</td></tr>
+<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标</td></tr>
+<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>（<code>all</code> 仅 <code>SUPER_ADMIN_USER_ID</code>）</td><td>解除拉黑：把 id 从黑名单里划掉；默认不动各群已有封禁，加 <code>all</code> 则一并解封</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群 AI 闲聊</td></tr>
-<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群广告检测：每条消息按发送者归并成 90 秒消息串，交 DeepSeek 判定；命中即执行与 <code>/block</code> 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发；判定口径见 <a href="config/ad_samples.json"><code>config/ad_samples.json</code></a></td></tr>
-<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>为已开启 AI 闲聊的群立即重抽当前心情，并在 Worker 明确回执后回复新心情名</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群广告检测，命中按 <code>/block</code> 同权处置</td></tr>
+<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群日语翻译能力（默认关闭）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群的业务处理总入口</td></tr>
-<tr><td><code>/send &lt;群组 ID&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>在机器人私聊中开始或结束中转；期间超级管理员发送的每条消息都会原样转发到目标群一次</td></tr>
+<tr><td><code>/send &lt;群组 ID&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>在机器人私聊中开始或结束向目标群的中转</td></tr>
 </table>
 
-`/send` 开启前会先探测目标是否可达；中转期间目标失联时会自动终止并通知超级管理员。中转状态随 `state.json` 持久化，重启后仍可恢复。该命令不进入 Telegram 命令菜单；在群内调用或由其他用户触发时均不响应。
+### 行为细节
+
+- **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。
+- **`/block` 黑名单**：id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 移除时整份名单原子重写回文件。
+- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 DeepSeek 判定；命中即执行与 `/block` 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config/ad_samples.json)。
+- **`/send` 中转**：开启前先探测目标是否可达，期间超级管理员发送的每条消息都会原样转发到目标群一次；目标失联时自动终止并通知。中转状态随 `state.json` 持久化，重启后仍可恢复。该命令不进入 Telegram 命令菜单，在群内调用或由其他用户触发时均不响应。
 
 > [!TIP]
-> 中文动作命令（`/咬`、`/贴贴`……）不需要预先登记：任意 1~2 个中文字都能用，目标同样通过「回复 TA 的消息」或 `@username` 指定。Telegram 的命令名只收 ASCII（只能用拉丁字母、数字、下划线），因此这类命令既不出现在命令菜单里、也不会有输入补全——菜单里只放了一条占位说明项 `/x`——命令名 `x` 就是那个变量，提示把它换成任意 1~2 个中文字；它本身不做任何处理，点了不会有反应，也不会被当成普通消息进入 AI/复读流水线；`/咬人人` 这种三字及以上的写法不算动作命令，会按普通消息处理。正因为不需要登记、谁都能随手造一个，它采用全局滑动窗口限流，每 90 秒最多应答 450 次，不分群、不分用户合并计数；超额直接静默丢弃，不回提示。
+> **中文动作命令不需要预先登记**，任意 1~2 个中文字都能用。Telegram 的命令名只收 ASCII（拉丁字母、数字、下划线），因此：
+> - 这类命令既不出现在命令菜单里，也不会有输入补全；菜单里只放了一条占位说明项 `/x`，命令名 `x` 就是那个变量，提示把它换成任意 1~2 个中文字。占位项本身不做任何处理，点了不会有反应，也不会被当成普通消息进入 AI/复读流水线。
+> - `/咬人人` 这种三字及以上的写法不算动作命令，会按普通消息处理。
+> - 正因为谁都能随手造一个，它采用全局滑动窗口限流：每 90 秒最多应答 450 次，不分群、不分用户合并计数，超额直接静默丢弃、不回提示。
 
 > [!TIP]
-> `/luck_challenge` 不是斜杠命令：在任意聊天输入 `@机器人用户名 [所求事项]` 即可使用 Inline Mode。需在 BotFather 中开启 Inline Mode，并建议通过 `/setinlinefeedback` 开启 100% 结果反馈。内联查询采用全局滑动窗口限流，每 90 秒最多应答 300 次。
+> **`/luck_challenge` 不是斜杠命令**：在任意聊天输入 `@机器人用户名 [所求事项]` 即可使用 Inline Mode。需在 BotFather 中开启 Inline Mode，并建议通过 `/setinlinefeedback` 开启 100% 结果反馈。内联查询采用全局滑动窗口限流，每 90 秒最多应答 300 次。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
@@ -207,9 +233,23 @@ cp .env.example .env
 
 ### 3. 配置
 
-按 [`.env.example`](.env.example) 填写 `.env`：`TELEGRAM_BOT_TOKEN`、`GEMINI_API_KEY`（AI 闲聊 agent 专用）和表示单个十进制用户 ID 的 `SUPER_ADMIN_USER_ID` 必填；`DEEPSEEK_API_KEY`（广告检测专用）与 `PRIVILEGED_USERS_ID` 可留空，多项之间用英文逗号分隔。留空 `DEEPSEEK_API_KEY` 时 `/ad_detect enable` 会被拒绝，其余功能照常运行。
+按 [`.env.example`](.env.example) 填写 `.env`：
 
-`COPY_NINJIA_DATA_ROOT` 可选，用于单独指定运行时数据根目录。设置后，`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；人设、贴纸/反应/心情配置与 `g-auth.json` 仍从项目根目录读取。留空时，运行时数据直接位于项目根目录。
+| 变量 | 必填 | 说明 |
+| :--- | :---: | :--- |
+| `TELEGRAM_BOT_TOKEN` | ✅ | BotFather 发放的 Bot Token |
+| `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员的单个十进制用户 ID |
+| `AI_CHAT_GEMINI_API_KEY` | — | AI 闲聊 agent 专用；留空则 AI Worker 不启动，`/ai_chat enable` 与 `/switch_mood` 被拒 |
+| `AD_DETECT_DEEPSEEK_API_KEY` | — | 广告检测专用；留空则 `/ad_detect enable` 被拒 |
+| `PRIVILEGED_USERS_ID` | — | 白名单用户 ID，多个用英文逗号分隔 |
+| `COPY_NINJIA_DATA_ROOT` | — | 运行时数据根目录；留空时使用项目根目录 |
+
+**可选项按功能降级**：两把 AI key 的变量名都以所服务的功能打头，缺哪一把就只瘸对应的那个功能，其余照常运行。`config/*.json` 与 `g-auth.json` 同理，不在启动时统一预热，坏掉只拒绝对应的开关命令。
+
+> [!IMPORTANT]
+> 只有一种情况例外：某个功能在 `state.json` 里还开着，却把它的 key 或配置撤掉了——那是管理员明确按下过的开关，进程会带着群 id 与缺失项拒绝启动，而不是悄悄变成不干活。先 `disable` 再撤，或者把前提补回去。
+
+设置 `COPY_NINJIA_DATA_ROOT` 后，`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；人设、贴纸/反应/心情配置与 `g-auth.json` 仍从项目根目录读取。
 
 如需日语翻译，将 Google Cloud 服务账号密钥保存为项目根目录的 `g-auth.json`。`.env` 与 `g-auth.json` 均已加入 `.gitignore`。
 
@@ -234,7 +274,7 @@ bun run start     # 启动长轮询
 /ai_chat enable
 ```
 
-> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 525 处中文字符串、分布在 52 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/06-modification-guide.md)。
+> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 465 处中文字符串、分布在 56 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/06-modification-guide.md)。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 

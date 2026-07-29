@@ -37,7 +37,7 @@ const {
   retryIncompleteStickerCatalogs,
 } = await import("../../../packages/ai/stickers/catalog");
 const { transientDescriptionCache } = await import("../../../packages/cache/imageDescription");
-const { stickerCatalogRetryState } = await import("../../../packages/cache/stickers/catalog");
+const { failedEntries, stickerCatalogRetryState } = await import("../../../packages/cache/stickers/catalog");
 const { STICKER_CATALOG_RETRY_INTERVAL_MS } = await import("../../../packages/consts/aiChat/stickers");
 
 function sticker(fileUniqueId: string, emoji: string): any {
@@ -197,5 +197,35 @@ describe("ai/stickers/catalog generatePackCatalog 对账", () => {
     retryIncompleteStickerCatalogs(["pack_periodic"], 10_000 + STICKER_CATALOG_RETRY_INTERVAL_MS * 2);
     await Bun.sleep(1);
     expect(getStickerSetMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("整包描述全失败不永久闩死：失败负缓存到期后对账真的会重描", async () => {
+    // 首次部署撞上一次视觉端点故障（配额耗尽/密钥刚轮换）时整包每一枚都失败。
+    // 失败桶若是永久闩，retryIncompleteStickerCatalogs 每 5 分钟正确选中这个包也
+    // 只会原地跳过每一枚，目录永远填不起来——两个贴纸工具对所有回复返回 null，
+    // 而 systemd 托管的进程可以连跑几周。
+    getStickerSetMock.mockImplementation(async () => ({ title: "闩死包", stickers: [sticker("latch-uid", "😂")] }));
+    describeMediaForStickerCatalogMock.mockClear();
+    describeMediaForStickerCatalogMock.mockImplementation(async () => null);
+
+    await generatePackCatalog("pack_latch");
+    // 1 次 + 3 次退避重试全部失败，这一枚进失败桶，整包目录仍为空。
+    expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(4);
+    expect(getCatalogEntry("latch-uid")).toBeUndefined();
+
+    // 负缓存生效期内不重复打视觉调用。
+    await generatePackCatalog("pack_latch");
+    expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(4);
+
+    // 到期之后必须真的再试一次，并把目录补起来。
+    failedEntries.get("pack_latch")!.set("latch-uid", Date.now() - 1);
+    describeMediaForStickerCatalogMock.mockImplementation(async () => "终于描述出来了");
+    requestGeminiResponseMock.mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "自愈出来的简介" }] } }] }));
+
+    await generatePackCatalog("pack_latch");
+
+    expect(getCatalogEntry("latch-uid")).toEqual({ emoji: "😂", description: "终于描述出来了" });
+    expect(getPackSummary("pack_latch")).toBe("自愈出来的简介");
+    expect(failedEntries.has("pack_latch")).toBe(false);
   });
 });

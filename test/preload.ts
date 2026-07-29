@@ -8,8 +8,8 @@ const previousDataRoot: string | undefined = process.env[RUNTIME_DATA_ROOT_ENV];
 const testDataRoot: string = mkdtempSync(join(tmpdir(), "copy-ninjia-test-data-"));
 const testEnvironment: Readonly<Record<string, string>> = {
   TELEGRAM_BOT_TOKEN: "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi",
-  GEMINI_API_KEY: "test-gemini-key",
-  DEEPSEEK_API_KEY: "test-deepseek-key",
+  AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
+  AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
   PRIVILEGED_USERS_ID: "",
   SUPER_ADMIN_USER_ID: "1",
 };

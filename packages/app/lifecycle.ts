@@ -1,6 +1,7 @@
 import {
   EMERGENCY_FLUSH_TIMEOUTS,
   EMERGENCY_REUSED_DISPOSE_DEADLINE_MS,
+  FINAL_OFFSET_CONFIRM_TIMEOUT_MS,
   NORMAL_FLUSH_TIMEOUTS,
   RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS,
   RUNNER_DRAIN_POLL_INTERVAL_MS,
@@ -51,6 +52,12 @@ export class ApplicationLifecycle {
   private fatalExitStarted: boolean = false;
   private maintenanceQuiesced: boolean = false;
   private runnerCancellationUnsettled: boolean = false;
+  /**
+   * 最终 Telegram offset gate 的进程级闩锁。没有待确认 update 时保持 true；
+   * wait() 一旦发现确认失败/超时或关键前置未完成，就永久置 false，后续 dispose
+   * 不能因 owner 第二次恰好排空而把这次未确认伪装成干净停机。
+   */
+  private finalOffsetGateSucceeded: boolean = true;
 
   private readonly stopOnSignal = (): void => {
     this.stopRequested = true;
@@ -107,14 +114,18 @@ export class ApplicationLifecycle {
     this.dependencies.initTranslate();
     this.flags.translateInitialized = true;
 
-    // 配置文件属于不可信部署输入：持锁后、启动 Worker/联网前统一校验，失败时
-    // 由 finally 释放实例锁；各 Worker 在自己的 isolate 中复用同一解析器。
-    this.dependencies.getStickerConfig();
-    this.dependencies.getReactionConfig();
-    this.dependencies.getMoodConfig();
-    this.dependencies.getAdSampleConfig();
+    // 配置文件属于不可信部署输入，但**不在这里统一预热**：那样一份写坏的贴纸
+    // 白名单就能让 copy、抽奖、入群验证、黑名单——全部按群 opt-in 之外的核心
+    // 能力——跟着离线，systemd 还会照着重启循环。校验挪到各功能自己的 enable
+    // 分支（见 config/readiness.ts 与 commands/configGate.ts），坏了只拒绝那一个
+    // 功能；各 Worker 在自己的 isolate 中复用同一解析器。
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
+    // 状态就绪、还没碰网络与 Worker 时核对一次：state.json 里还开着的可选功能，
+    // 前提必须齐备。缺了就按老规矩拒绝启动——把管理员明确开过的功能悄悄降级成
+    // 「静默不干活」，群里只会看到机器人从某次重启起再也不理人（见
+    // app/featurePreflight.ts）。谁都没开的功能缺前提不在这里拦。
+    this.dependencies.preflightEnabledFeatures();
 
     // state 主副本已经严格校验并建立 LKG 后，才创建运行时 Worker 和会安装
     // 心跳 timer 的 Telegram transformer；恢复失败不会留下半初始化组件。
@@ -179,8 +190,8 @@ export class ApplicationLifecycle {
     const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(
       NORMAL_FLUSH_TIMEOUTS.maintenanceMs
     );
-    if (!maintenanceQuiesceSucceeded) process.exitCode = 1;
     const persistenceFlushed: boolean = await this.flushAllToDisk(NORMAL_FLUSH_TIMEOUTS);
+    if (!maintenanceQuiesceSucceeded || !runnerDrained || !maintenanceSettled) process.exitCode = 1;
 
     // 停机时取数循环会放弃在途批次、不再 await 它的汇总，那批里失败的 update
     // 只有 runner 的这个标记能证明（task() 会正常 resolve）。失败的 update 必须
@@ -195,19 +206,30 @@ export class ApplicationLifecycle {
       );
     }
     const lastSeenUpdateId: number = this.handlers?.getLastSeenUpdateId() ?? 0;
-    if (
+    const confirmationPrerequisitesMet: boolean =
       maintenanceQuiesceSucceeded &&
       runnerDrained &&
       maintenanceSettled &&
       persistenceFlushed &&
-      !failedUpdateWithheld &&
-      lastSeenUpdateId > 0
-    ) {
+      !failedUpdateWithheld;
+    if (lastSeenUpdateId > 0 && confirmationPrerequisitesMet) {
       try {
-        await this.dependencies.bot.api.getUpdates({ offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 });
+        await this.dependencies.bot.api.getUpdates(
+          { offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 },
+          AbortSignal.timeout(FINAL_OFFSET_CONFIRM_TIMEOUT_MS) as unknown as
+            Parameters<typeof this.dependencies.bot.api.getUpdates>[1]
+        );
       } catch (error: unknown) {
+        this.finalOffsetGateSucceeded = false;
+        process.exitCode = 1;
         this.dependencies.logger.error("Failed to confirm update offset on shutdown:", error);
       }
+    } else if (lastSeenUpdateId > 0) {
+      this.finalOffsetGateSucceeded = false;
+      process.exitCode = 1;
+      this.dependencies.logger.error(
+        "Withholding the final Telegram offset because a shutdown prerequisite did not settle cleanly."
+      );
     }
   }
 
@@ -232,6 +254,7 @@ export class ApplicationLifecycle {
       const results: ShutdownResults = {
         runnerDrained,
         maintenanceSettled: maintenanceQuiesceSucceeded && backgroundMaintenanceSettled,
+        offsetConfirmed: this.finalOffsetGateSucceeded,
         ...await runShutdownOwners({
           dependencies: this.dependencies,
           flags: this.flags,

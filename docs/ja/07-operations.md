@@ -71,6 +71,49 @@ WantedBy=multi-user.target
 
 Bot 停止中または storage snapshot の整合境界で、データルート全体をバックアップします。`memory/` は機密データとして扱ってください。単一 tenant デプロイ基準では file mode が緩い `0644` です。詳細は [04](04-invariants.md#永続化) を参照し、アクセス制御はデータルートの owner・permission と host account の隔離で行います。
 
+### `removals.json` v1 → v2
+
+outbox v1 から v2 へ更新する前に Bot を停止し、手動で migration します。新版は v1 を厳密に拒否し、runtime 互換や自動書き換えを行いません。ファイルが存在しない場合、または既に v2 の場合は不要です。データルートを current directory として次を実行します。
+
+```bash
+outbox=memory/blocklist/removals.json
+backup=memory/blocklist/removals.json.v1.bak
+candidate=memory/blocklist/removals.json.v2
+cp -a "$outbox" "$backup"
+jq -e '
+  if .version != 1 or (.entries | type) != "array" then
+    error("expected removals.json version=1")
+  else
+    .version = 2
+    | .entries |= map(
+        if .params.probeMembership == true then
+          .params |= del(.userIds, .joinedAt, .announcementMessageId)
+        else
+          .
+        end
+      )
+  end
+' "$outbox" > "$candidate"
+chmod --reference="$outbox" "$candidate"
+chown --reference="$outbox" "$candidate"
+test "$(jq '.entries | length' "$backup")" = "$(jq '.entries | length' "$candidate")"
+diff -u \
+  <(jq -S '[.entries[].params.removalId] | sort' "$backup") \
+  <(jq -S '[.entries[].params.removalId] | sort' "$candidate")
+jq -e '
+  .version == 2
+  and all(.entries[];
+    if .params.probeMembership == true then
+      (.params | has("userIds") or has("joinedAt") or has("announcementMessageId")) | not
+    else
+      (.params.userIds | type == "array" and length > 0)
+    end
+  )
+' "$candidate" > /dev/null
+```
+
+変更するのは sweep task だけです。`probeMembership: true` は「現在の blocklist でこの chat を走査する」という task なので、固定された `userIds`、`joinedAt`、`announcementMessageId` を削除します。`probeMembership: false` の即時 kick / 広告処置は、空でない `userIds` をそのまま保持しなければなりません。上記コマンドは version 2、entry 数と全 `removalId` の一致、sweep に上記 3 field がないこと、非 sweep に list が残ることも検証します。いずれかが非ゼロ終了した場合は置換しません。すべて通過した後だけ `mv "$candidate" "$outbox"` を実行して新版を deploy します。起動復元に失敗した場合は service を停止して `$backup` を戻し、復元と replay が正常だと確認してからだけ backup を削除します。Release の Compatibility / Migration Notes にもこの手順を必ず記載してください。
+
 まだ `config/blocklist.json` を使う旧版から更新する場合、runtime 互換分岐は残しません。Bot を停止し、旧ファイルと既存の `memory/blocklist/` をバックアップしてから、旧ファイルを `memory/blocklist/blocklist.json` へ手動移動します。`removals.json` と結合してはいけません。前者は「誰を恒久的にブロックすべきか」、後者は「どのチャット別処置が未完了か」だけを表します。バックアップと移動先 JSON の一致を確認してから再起動してください。
 
 ## 起動失敗の調査

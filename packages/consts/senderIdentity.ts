@@ -8,4 +8,4 @@
  * 取值远高于 README 建议的单实例群规模（约 15 群以内）在正常社群密度下的活跃发言
  * 用户数量级，正常运行基本不会触达，纯粹是防御性护栏。
  */
-export const USER_CACHE_MAX: number = 4_500;
+export const USER_CACHE_MAX: number = 15_000;

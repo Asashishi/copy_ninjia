@@ -39,6 +39,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 
 const {
   blockUser,
+  getPendingBlockedRemovalParams,
   hydrateBlocklist,
   isUserBlocked,
   registerBlockedMemberRemover,
@@ -84,24 +85,23 @@ describe("解除拉黑", () => {
     hydrateBlocklist(
       new Map([[7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }]]),
       new Map([
+        // 补扫：不带名单，恢复时没有可裁剪的东西，原样留下。
         [12, {
-          params: {
-            chatId: -1001,
-            userIds: [7, 8],
-            probeMembership: true,
-            removalId: 12,
-          },
+          params: { chatId: -1001, probeMembership: true, removalId: 12 },
           createdAt: 1_000,
           attempts: 1,
           lastFailure: "side-effect-incomplete",
         }],
+        // 冻结名单的批次：8 已经不在名单里（停机期间被 /unblock），要裁掉。
+        [14, {
+          params: { chatId: -1001, probeMembership: false, userIds: [7, 8], removalId: 14 },
+          createdAt: 1_500,
+          attempts: 0,
+          lastFailure: null,
+        }],
+        // 群已经 /init disable：整条丢弃。
         [15, {
-          params: {
-            chatId: -1002,
-            userIds: [7],
-            probeMembership: false,
-            removalId: 15,
-          },
+          params: { chatId: -1002, probeMembership: false, userIds: [7], removalId: 15 },
           createdAt: 2_000,
           attempts: 0,
           lastFailure: null,
@@ -109,24 +109,24 @@ describe("解除拉黑", () => {
       ])
     );
 
-    expect([...pendingBlockedRemovals]).toEqual([[
-      12,
-      {
-        params: {
-          chatId: -1001,
-          userIds: [7],
-          probeMembership: true,
-          removalId: 12,
-        },
+    expect([...pendingBlockedRemovals]).toEqual([
+      [12, {
+        params: { chatId: -1001, probeMembership: true, removalId: 12 },
         createdAt: 1_000,
         attempts: 1,
         lastFailure: "side-effect-incomplete",
-      },
-    ]]);
+      }],
+      [14, {
+        params: { chatId: -1001, probeMembership: false, userIds: [7], removalId: 14 },
+        createdAt: 1_500,
+        attempts: 0,
+        lastFailure: null,
+      }],
+    ]);
     expect(blocklistRemovalCounter.current).toBe(15);
     expect(diskMessages.at(-1)).toMatchObject({
       type: "blocklistRemovals",
-      removals: [[12, expect.any(Object)]],
+      removals: [[12, expect.any(Object)], [14, expect.any(Object)]],
     });
   });
 
@@ -184,27 +184,111 @@ describe("解除拉黑", () => {
     expect(loggedErrors.some((message: string): boolean => message.includes("still on disk"))).toBeTrue();
   });
 
-  test("把这个 id 从在途处置批次里摘掉，重放不会再封他一次", async () => {
-    hydrateBlocklist(new Map([
-      [7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }],
-      [8, { isBlocked: true, blockedAt: "2026/07/25 19:38:10" }],
-    ]));
-    await sweepBlockedMembers(-1001, 1_000);
-    expect(pendingBlockedRemovals.size).toBe(1);
+  test("把这个 id 从冻结名单的在途批次里摘掉，重放不会再封他一次", () => {
+    chatStates.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    hydrateBlocklist(
+      new Map([
+        [7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }],
+        [8, { isBlocked: true, blockedAt: "2026/07/25 19:38:10" }],
+      ]),
+      new Map([[21, {
+        params: { chatId: -1001, probeMembership: false, userIds: [7, 8], removalId: 21 },
+        createdAt: 1_000,
+        attempts: 0,
+        lastFailure: null,
+      }]])
+    );
 
     unblockUser(7);
 
     // 批次里还剩 8，整批不能丢；但 7 必须摘掉，否则 Worker 重建后的重放会
     // 拿着这份旧批次把刚解除的人重新封掉。
-    expect([...pendingBlockedRemovals.values()][0]!.params.userIds).toEqual([8]);
+    const remaining = [...pendingBlockedRemovals.values()][0]!.params;
+    expect(remaining.probeMembership === false ? remaining.userIds : []).toEqual([8]);
   });
 
-  test("批次里只剩他一个时整批销账", () => {
+  test("冻结名单的批次里只剩他一个时整批销账", () => {
+    chatStates.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    hydrateBlocklist(
+      new Map([[7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }]]),
+      new Map([[21, {
+        params: { chatId: -1001, probeMembership: false, userIds: [7], removalId: 21 },
+        createdAt: 1_000,
+        attempts: 0,
+        lastFailure: null,
+      }]])
+    );
+
+    unblockUser(7);
+
+    expect(pendingBlockedRemovals.size).toBe(0);
+  });
+
+  test("补扫批次不必改写：它本来就不冻结名单，投递时现算已排除解除的人", async () => {
+    hydrateBlocklist(new Map([
+      [7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }],
+      [8, { isBlocked: true, blockedAt: "2026/07/25 19:38:10" }],
+    ]));
+    await sweepBlockedMembers(-1001, 1_000);
+    const before = pendingBlockedRemovals.get(1);
+    expect(before?.params.probeMembership).toBeTrue();
+
+    unblockUser(7);
+
+    // 条目原样留着（连对象都没换过），而它下一次投递/重放算出来的名单只剩 8。
+    expect(pendingBlockedRemovals.get(1)).toBe(before!);
+    expect(getPendingBlockedRemovalParams(1)?.userIds).toEqual([8]);
+  });
+
+  test("名单被清空时补扫批次整条销账，不在 outbox 里长住", async () => {
+    // 现算恒为空集之后这条任务再也投不出去，留着只会白占 outbox 容量、还跨重启
+    // 永生（恢复路径无条件保留补扫）。与冻结名单批次被裁空后销账是同一条规矩。
     hydrateBlocklist(new Map([[7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }]]));
-    void sweepBlockedMembers(-1001, 1_000);
+    await sweepBlockedMembers(-1001, 1_000);
     expect(pendingBlockedRemovals.size).toBe(1);
 
     unblockUser(7);
+
+    expect(pendingBlockedRemovals.size).toBe(0);
+  });
+
+  test("补扫批次销账时放掉在途占位，这个群还扫得动", async () => {
+    // removalId 非 null 是「这个群有一批在跑」的唯一凭据，sweepBlockedMembers
+    // 开头据此早退。销账（而不是落定）之后不放掉它，回执永远不会来，这个群在
+    // 本进程内再也扫不了——requestBlocklistResweep 也救不回来，它在有批次在途时
+    // 只记 resweepRequested、把 removalId 原样留着。
+    chatStates.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    hydrateBlocklist(new Map([[7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }]]));
+    await sweepBlockedMembers(-1001, 1_000);
+    expect(blocklistSweepState.get(-1001)?.removalId).not.toBeNull();
+
+    // 名单被清空 → 那条补扫再也投不出去 → 整条销账。
+    unblockUser(7);
+
+    expect(pendingBlockedRemovals.size).toBe(0);
+    const progress = blocklistSweepState.get(-1001);
+    expect(progress?.removalId).toBeNull();
+    // 没扫成，欠着的那次仍然欠着。
+    expect(progress?.sweptAt).toBeNull();
+
+    // 再有人被拉黑时，这个群照常还能排上补扫（退避到点之后）。
+    blockUser(9);
+    await sweepBlockedMembers(-1001, 1_000 + 10 * 60_000);
+    expect(pendingBlockedRemovals.size).toBe(1);
+  });
+
+  test("启动恢复同样丢弃名单为空时的补扫条目", () => {
+    chatStates.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+
+    hydrateBlocklist(
+      new Map(),
+      new Map([[21, {
+        params: { chatId: -1001, probeMembership: true, removalId: 21 },
+        createdAt: 1_000,
+        attempts: 0,
+        lastFailure: null,
+      }]])
+    );
 
     expect(pendingBlockedRemovals.size).toBe(0);
   });

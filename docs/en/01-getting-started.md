@@ -17,8 +17,8 @@ This page takes a clean environment all the way to “the bot works normally in 
 - **Linux with a readable `/proc`**: the instance lock depends on `/proc/<pid>/stat` and the boot ID. It fails closed on other platforms.
 - **Bun 1.3+**: install it with `curl -fsSL https://bun.sh/install | bash`. Every project script, test, and runtime path uses Bun; Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
-- **Gemini API Key**: obtain one from [Google AI Studio](https://aistudio.google.com/).
-- **Optional Google Cloud service-account JSON**: only required by `/ja_copy` for Japanese translation.
+- **Optional Gemini API Key**: obtain one from [Google AI Studio](https://aistudio.google.com/); only `/ai_chat` needs it.
+- **Optional Google Cloud service-account JSON**: only required by `/ja_copy` for Japanese translation; store it as `g-auth.json` in the project root. When it is missing or malformed, `/ja_copy` refuses and names the file, the ja transform on the automatic copy path falls back to a plain copy, and if any chat still has `/ja_copy enable` on, startup is refused.
 
 ## Installation
 
@@ -31,13 +31,13 @@ cp .env.example .env
 
 ## Configuring `.env`
 
-The project reads exactly six environment variables; there are no undocumented switches. Five credential/authorization settings are parsed by [`packages/infra/config.ts`](../../packages/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`packages/consts/paths.ts`](../../packages/consts/paths.ts) reads it earlier:
+The project reads exactly six environment variables; there are no undocumented switches. Each name is prefixed with the feature it serves (`AI_CHAT_` / `AD_DETECT_`), so a missing key only disables that one feature. Five credential/authorization settings are parsed by [`packages/infra/config.ts`](../../packages/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`packages/consts/paths.ts`](../../packages/consts/paths.ts) reads it earlier:
 
 | Variable | Required | Description |
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | Token issued by BotFather |
-| `GEMINI_API_KEY` | ✅ | Gemini API key, used exclusively by the AI chat agent: `/ai_chat` reply generation, image understanding, and memory compaction |
-| `DEEPSEEK_API_KEY` | May be empty | DeepSeek API key (OpenAI-compatible endpoint), used exclusively by ad detection: the `/ad_detect` classifier. When empty, `/ad_detect enable` is rejected and everything else keeps running |
+| `AI_CHAT_GEMINI_API_KEY` | May be empty | Gemini API key, used exclusively by the AI chat agent: `/ai_chat` reply generation, image understanding, and memory compaction. When empty the AI worker never starts, `/ai_chat enable` and `/switch_mood` are rejected, the AI memories on disk are left untouched, and everything else keeps running |
+| `AD_DETECT_DEEPSEEK_API_KEY` | May be empty | DeepSeek API key (OpenAI-compatible endpoint), used exclusively by ad detection: the `/ad_detect` classifier. When empty, `/ad_detect enable` is rejected and everything else keeps running |
 | `SUPER_ADMIN_USER_ID` | ✅ | The super administrator, as one decimal user ID; `/init`, `/ai_chat`, `/ad_detect`, `/switch_mood`, `/send`, and similar commands recognize only this user |
 | `PRIVILEGED_USERS_ID` | May be empty | Comma-separated allowlisted users; exempt from copy cooldowns, allowed to use `/block`, and allowed to vouch for other bots during verification |
 | `COPY_NINJIA_DATA_ROOT` | May be empty | Runtime data root; when empty, data is stored in the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root) |
@@ -54,7 +54,9 @@ For Japanese translation, save the service-account key as `g-auth.json` in the p
 | [`config/mood.json`](../../config/mood.json) | Mood tiers: copy, weights, and weather/time multipliers | [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must be positive integers totaling exactly 100 |
 | [`config/ad_samples.json`](../../config/ad_samples.json) | Ad-detection reference samples; the file itself is a string array | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts); entries must be non-blank and unique, at most 500 |
 
-All four JSON files undergo strict schema validation and are warmed up before any network access during startup. Invalid configuration fails startup with the offending field instead of running in a degraded state.
+All four JSON files undergo strict schema validation, but they are **not warmed up at startup**: one malformed sticker whitelist must not take copy, luck, join verification, and the blocklist offline with it. Validation happens in the matching toggle command instead — `/ai_chat enable` reads the first three, `/ad_detect enable` reads `ad_samples.json`, and `/ja_copy enable` reads `g-auth.json`. Anything unreadable refuses only that one toggle, names the offending file in the reply, and leaves an English diagnostic in the log. Chats that already had the feature on stop too, so nothing runs in a degraded state. Each verdict is cached per process, so a fixed file takes effect on the next restart.
+
+**One exception: startup still fails while the feature is switched on.** That `true` in `state.json` is something an administrator deliberately turned on, and silently downgrading it to "quietly does nothing" means the group just sees the bot stop chatting, stop catching ads, or stop translating from one restart onward. So startup checks once: every optional feature that is still enabled in some chat must have its credential and configuration present, and a missing prerequisite aborts startup naming the chat ids and what is missing (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)). The way out is to restore the prerequisite, or run `/ai_chat disable`, `/ad_detect disable`, or `/ja_copy disable` before removing it.
 
 ## Telegram-Side Configuration (BotFather and the Group)
 

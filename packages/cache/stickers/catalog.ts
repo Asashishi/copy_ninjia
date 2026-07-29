@@ -16,11 +16,20 @@ export const packSummaries: Map<string, string> = new Map();
 /** 自上次上报后有更新、待上报给主线程落盘的包。 */
 export const dirtyPacks: Set<string> = new Set();
 
-/** pack short name -> 已知生成失败的贴纸（file_unique_id）：退避重试用完仍
- *  失败才进来（见 ai/stickers/catalog.ts 的 callWithRetry），本进程内不再试
- *  （重启后再试）。按包分桶，让对账剪枝能把已被移出包的贴纸的失败记录
- *  一并清掉，不必滞留到 Worker 重启。 */
-export const failedEntries: Map<string, Set<string>> = new Map();
+/** pack short name -> (贴纸 file_unique_id -> 可以再试的最早时刻)：退避重试用完
+ *  仍失败才进来（见 ai/stickers/catalog.ts 的 callWithRetry），到期之前的对账
+ *  跳过这枚贴纸。
+ *
+ *  **必须带 TTL、不能是永久闩**：首次部署撞上一次视觉端点故障（配额耗尽、密钥
+ *  刚轮换、runMediaTask 饱和）会让整包每一枚都描述不出来、全部进这张表，此后
+ *  retryIncompleteStickerCatalogs 虽然每 5 分钟正确地重新选中这个包，
+ *  generatePackCatalog 却会把每一枚都原地跳过——目录永远填不起来，两个贴纸工具
+ *  对所有回复返回 null 直到进程重启，而 systemd 托管的进程可以连跑几周。理由同
+ *  cache/stickers/sets.ts 的 failedPacks 用负缓存而不是永久表。
+ *
+ *  按包分桶，让对账剪枝能把已被移出包的贴纸的失败记录一并清掉，不必滞留到
+ *  Worker 重启。 */
+export const failedEntries: Map<string, Map<string, number>> = new Map();
 
 /** 正在后台生成中的包，防止 init 消息重放（Worker 崩溃重启）时重复发起。 */
 export const generatingPacks: Set<string> = new Set();

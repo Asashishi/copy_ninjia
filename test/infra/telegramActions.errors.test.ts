@@ -65,9 +65,9 @@ describe("Telegram 动作适配层失败归一化", () => {
     const keyboard = { inline_keyboard: [[{ text: "确认", callback_data: "ok" }]] };
 
     expect(await actions.sendMessage({ chatId: -1001, text: "hello", api, keyboard: keyboard as never })).toBe(11);
-    expect(await actions.sendTypingAction(-1001, api)).toBe(true);
-    expect(await actions.sendUploadPhotoAction(-1001, api)).toBe(true);
-    expect(await actions.sendChooseStickerAction(-1001, api)).toBe(true);
+    expect(await actions.sendChatAction({ chatId: -1001, action: "typing", api })).toBe(true);
+    expect(await actions.sendChatAction({ chatId: -1001, action: "upload_photo", api })).toBe(true);
+    expect(await actions.sendChatAction({ chatId: -1001, action: "choose_sticker", api })).toBe(true);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
     expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBe(12);
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBe(13);
@@ -88,9 +88,9 @@ describe("Telegram 动作适配层失败归一化", () => {
     const api: Api = apiWithFailures();
 
     expect(await actions.sendMessage({ chatId: -1001, text: "hello", api })).toBeUndefined();
-    expect(await actions.sendTypingAction(-1001, api)).toBe(false);
-    expect(await actions.sendUploadPhotoAction(-1001, api)).toBe(false);
-    expect(await actions.sendChooseStickerAction(-1001, api)).toBe(false);
+    expect(await actions.sendChatAction({ chatId: -1001, action: "typing", api })).toBe(false);
+    expect(await actions.sendChatAction({ chatId: -1001, action: "upload_photo", api })).toBe(false);
+    expect(await actions.sendChatAction({ chatId: -1001, action: "choose_sticker", api })).toBe(false);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", api })).resolves.toBeUndefined();
     expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBeUndefined();
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBeUndefined();
@@ -130,7 +130,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     const api: Api = { sendChatAction, setMessageReaction } as unknown as Api;
     const signal: AbortSignal = new AbortController().signal;
 
-    await actions.sendTypingAction(-1001, api, signal);
+    await actions.sendChatAction({ chatId: -1001, action: "typing", api, signal });
     await actions.setMessageReaction({
       chatId: -1001,
       messageId: 3,
@@ -228,7 +228,8 @@ describe("解除封禁必须带 only_if_banned", () => {
     expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, { only_if_banned: true });
 
     await actions.kickChatMember(-1001, 7, api);
-    expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7);
+    // 空 options 与不传等价，关键是**没有** only_if_banned。
+    expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, {});
   });
 });
 

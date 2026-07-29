@@ -1,12 +1,19 @@
 import type { Message } from "@grammyjs/types";
 import type { CopyMode } from "../../types/chatState";
-import { getActiveCopyIn, getChatState } from "../../infra/storage/stateStore";
+import { isJaTranslationActiveIn } from "../../copy/availability";
+import { getActiveCopyIn } from "../../infra/storage/stateStore";
 import { copyMessage, sendMessage } from "../../infra/telegram";
 import { applyCopyModeTransform } from "../../copy/copyModes";
 
-/** ja 模式关闭时只取消翻译变换，复读本身仍退化为原样复制。 */
+/**
+ * ja 模式跑不起来时只取消翻译变换，复读本身仍退化为原样复制。
+ *
+ * 「跑不起来」含本群没开和进程侧密钥不可用两种（见 copy/availability.ts）：
+ * 后者若不在这里挡住，翻译会在底层静默失败并原样发出中文原文——那与
+ * 「翻译服务抖了一下」不可区分，而这里退化成普通复制至少行为是确定的。
+ */
 export function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefined): CopyMode | undefined {
-  if (mode === "ja" && getChatState(chatId).isJATranslationEnabled !== true) return undefined;
+  if (mode === "ja" && !isJaTranslationActiveIn(chatId)) return undefined;
   return mode;
 }
 

@@ -223,6 +223,28 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
 });
 
 describe("trackedMessage", () => {
+  test("时钟回拨后落在未来的时间戳照样驱逐，没刷屏的人不会被判成 flood", () => {
+    // 手写的 filter(ts > now - 60_000) 只砍「太旧」的一侧：NTP 往回跳一次之后，
+    // 此前记下的时间戳全部落在「未来」，永远满足这个条件、再也不会被驱逐。攒了
+    // 40 条的人再慢慢发几条就能越过 45 条/分钟的阈值——消息全删、人被踢出，而
+    // 他根本没刷过屏。同一个阈值的另一半（lockdownRuntime 的入群窗口）本来就
+    // 走共享的窗口判定，两边不能对回拨给出两种语义。
+    const now: number = 1_000_000;
+    const state = pendingState({
+      // 全部「来自未来」：时钟往回跳超过一个窗口之后就是这个形态。
+      trackedMessageTimes: Array.from(
+        { length: ANTI_RAID_PER_MINUTE_LIMIT },
+        (_unused: unknown, index: number): number => now + JOIN_WINDOW_MS + index
+      ),
+    });
+
+    const { next } = transitionVerification(state, { type: "trackedMessage", messageId: 41, inCommentThread: false, now });
+
+    expect(next?.kind).toBe("pending");
+    // 只剩本次这一条：越界的全被驱逐，没有凭空多出来的配额消耗。
+    expect((next as PendingState).trackedMessageTimes).toEqual([now]);
+  });
+
   test("待验证成员的普通发言 → 追踪 + 提醒改锚（不重置计时）", () => {
     const state = pendingState({ messageIds: [30], reminderMessageId: 30 });
     const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 40, inCommentThread: false, now: 1_000 });

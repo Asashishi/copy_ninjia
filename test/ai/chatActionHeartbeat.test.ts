@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from "bun:test";
 const { startChatActionHeartbeat, pumpChatAction } = await import("../../packages/ai/chatActionHeartbeat");
 import type { ChatActionHeartbeatDependencies } from "../../packages/ai/chatActionHeartbeat";
 import type { ChatActionHeartbeatEntry } from "../../packages/types";
+import type { TelegramChatAction } from "../../packages/types/telegram";
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
@@ -20,19 +21,27 @@ function flush(): Promise<void> {
   });
 }
 
+type PhaseSender = (chatId: number, signal?: AbortSignal) => Promise<boolean>;
+
+/** 心跳只有一个发送口（sendChatAction），按挡位分发是本文件自己的事：这样各用例
+ *  仍能对「哪个挡位发出去了」单独设桩与断言。 */
 function dependencies(
-  sendTyping: (chatId: number) => Promise<boolean>,
-  sendChooseSticker: (chatId: number) => Promise<boolean>,
+  sendTyping: PhaseSender,
+  sendChooseSticker: PhaseSender,
   maxConsecutiveFailures: number = 3
-): ChatActionHeartbeatDependencies {
-  return {
+): ChatActionHeartbeatDependencies & { sendUploadPhoto: PhaseSender } {
+  const deps: ChatActionHeartbeatDependencies & { sendUploadPhoto: PhaseSender } = {
     entries: new Map<number, ChatActionHeartbeatEntry>(),
     intervalMs: 60_000,
     maxConsecutiveFailures,
-    sendTyping,
-    sendUploadPhoto: async () => true,
-    sendChooseSticker,
+    sendUploadPhoto: async (): Promise<boolean> => true,
+    sendChatAction: (action: TelegramChatAction, chatId: number, signal?: AbortSignal): Promise<boolean> => {
+      if (action === "typing") return sendTyping(chatId, signal);
+      if (action === "upload_photo") return deps.sendUploadPhoto(chatId, signal);
+      return sendChooseSticker(chatId, signal);
+    },
   };
+  return deps;
 }
 
 describe("chatActionHeartbeat", () => {
@@ -82,17 +91,17 @@ describe("chatActionHeartbeat", () => {
     heartbeat.set("typing");
     expect(heartbeat.current()).toBe("typing");
     await flush();
-    expect(sendTyping).toHaveBeenCalledWith(123);
+    expect(sendTyping).toHaveBeenCalledWith(123, undefined);
 
     heartbeat.set("upload_photo");
     expect(heartbeat.current()).toBe("upload_photo");
     await flush();
-    expect(sendUploadPhoto).toHaveBeenCalledWith(123);
+    expect(sendUploadPhoto).toHaveBeenCalledWith(123, undefined);
 
     heartbeat.set("choose_sticker");
     expect(heartbeat.current()).toBe("choose_sticker");
     await flush();
-    expect(sendChooseSticker).toHaveBeenCalledWith(123);
+    expect(sendChooseSticker).toHaveBeenCalledWith(123, undefined);
 
     heartbeat.set("idle");
     let settled: boolean = false;

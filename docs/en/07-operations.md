@@ -71,6 +71,49 @@ No files live directly at the top of `memory/`; each of the six domains owns one
 
 Back up the complete data root while the bot is stopped or at a storage-snapshot consistency boundary. Treat `memory/` as sensitive. Files use permissive mode `0644` under the single-tenant deployment baseline described in [04](04-invariants.md#persistence); access control relies on the data-root owner and permissions plus host-account isolation.
 
+### `removals.json` v1 → v2
+
+Stop the bot and migrate manually before upgrading a v1 outbox to v2. The new build strictly rejects v1 and contains no runtime compatibility or automatic rewrite. Skip this section when the file does not exist or is already v2. Run the following from the data root:
+
+```bash
+outbox=memory/blocklist/removals.json
+backup=memory/blocklist/removals.json.v1.bak
+candidate=memory/blocklist/removals.json.v2
+cp -a "$outbox" "$backup"
+jq -e '
+  if .version != 1 or (.entries | type) != "array" then
+    error("expected removals.json version=1")
+  else
+    .version = 2
+    | .entries |= map(
+        if .params.probeMembership == true then
+          .params |= del(.userIds, .joinedAt, .announcementMessageId)
+        else
+          .
+        end
+      )
+  end
+' "$outbox" > "$candidate"
+chmod --reference="$outbox" "$candidate"
+chown --reference="$outbox" "$candidate"
+test "$(jq '.entries | length' "$backup")" = "$(jq '.entries | length' "$candidate")"
+diff -u \
+  <(jq -S '[.entries[].params.removalId] | sort' "$backup") \
+  <(jq -S '[.entries[].params.removalId] | sort' "$candidate")
+jq -e '
+  .version == 2
+  and all(.entries[];
+    if .params.probeMembership == true then
+      (.params | has("userIds") or has("joinedAt") or has("announcementMessageId")) | not
+    else
+      (.params.userIds | type == "array" and length > 0)
+    end
+  )
+' "$candidate" > /dev/null
+```
+
+Only sweep tasks change: `probeMembership: true` means “scan this chat against the current blocklist,” so remove its frozen `userIds`, `joinedAt`, and `announcementMessageId`. Instant-kick/ad-disposal tasks with `probeMembership: false` must retain their non-empty `userIds` unchanged. The commands also verify version 2, identical entry counts and `removalId` sets, no three forbidden fields on sweeps, and a retained list on every non-sweep; do not replace the file if any command exits non-zero. After all checks pass, run `mv "$candidate" "$outbox"` and deploy the new build. If startup recovery fails, stop the service and restore `$backup`; delete it only after recovery and replay are confirmed. Repeat this requirement in the Release Compatibility / Migration Notes.
+
 When upgrading from a version that still uses `config/blocklist.json`, do not keep a runtime compatibility branch. Stop the bot, back up the old file and existing `memory/blocklist/`, then manually move the old file to `memory/blocklist/blocklist.json`. Never merge it with `removals.json`: the former answers “who must remain permanently blocked,” while the latter only tracks unfinished per-chat actions. Restart only after verifying the target JSON against the backup.
 
 ## Startup Failures

@@ -2,8 +2,8 @@ import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../consts/aiChat/tools";
 import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../consts/tools";
 import { SELF_ACTION_TAG_MARKERS, SELF_ACTION_TAG_PATTERNS } from "../../../consts/aiChat/prompts/transcript";
 import { toolError } from "../../utils/toolResult";
+import { pauseForToolAction } from "../../utils/toolPause";
 import { sendMessageWithResult } from "../../../infra/telegram";
-import { sleep } from "../../../libs/sleep";
 import type { ReplyToolContext } from "../../../types/aiChat/replies";
 import type { TelegramSendResult } from "../../../types/telegram";
 import { isEmojiOnly } from "../../utils/replyText";
@@ -72,12 +72,11 @@ export function createSendMessageExecutor(
     if (typo.shouldUseTypo) state.typoUsedThisRound = true;
 
     ctx.chatAction.set("typing");
-    try {
-      await sleep(typingDelayMs(typo.textToSend), ctx.signal);
-    } catch (error: unknown) {
-      if (ctx.signal?.aborted === true) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-      throw error;
-    }
+    const invalidated: string | null = await pauseForToolAction({
+      delayMs: typingDelayMs(typo.textToSend),
+      signal: ctx.signal,
+    });
+    if (invalidated !== null) return invalidated;
     ctx.chatAction.set("idle");
     await ctx.chatAction.settle();
     if (!ctx.isActive()) {

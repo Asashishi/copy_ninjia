@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1200_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.52%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1281_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.84%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1200 件のテストが全て成功 / テストファイル 142 件 / expect() 呼び出し 9,443 回 / 関数カバレッジ 94.82% / 行カバレッジ 96.52%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1281 件のテストが全て成功 / テストファイル 151 件 / expect() 呼び出し 20,170 回 / 関数カバレッジ 95.10% / 行カバレッジ 96.84%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -93,7 +93,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI チャット</b></p>
-  <p>Gemini ペルソナに基づいて応答します。リアルタイム検索やツール呼び出しを統合し、テキスト、スタンプ、リアクションを処理します。</p>
+  <p>Gemini ペルソナに基づく自律行動。発言、スタンプ、リアクション、画像生成はすべてツールで、そのラウンドで何をいくつどの順に行うかはモデル自身が決めます。</p>
 </td>
 </tr>
 <tr>
@@ -102,18 +102,32 @@
   <p>画像、動くスタンプ、GIF フレームを理解し、要求に応じて新規画像生成や既存素材の編集を実行。</p>
 </td>
 <td align="left" valign="top">
-  <p><b>🧠 コンテキスト記憶</b></p>
-  <p>上限付きの逐語コンテキストと複数ラウンドの圧縮要約を保持し、多層の返信チェーンを追跡します。アトミックな永続化により確実に復元できます。</p>
+  <p><b>🔎 リアルタイム事実確認</b></p>
+  <p>Google 検索や東京の天気などのツールに接続。検索済みのラウンドではサンプリング温度を下げ、結果に沿って回答させます。</p>
 </td>
 <td align="left" valign="top">
-  <p><b>🛡️ 参加認証</b></p>
-  <p>新規メンバーに 90 秒のボタン認証を提供します。人間は本人だけがクリックでき、Bot アカウントに限り許可リストのユーザーが代理認証できます。招待者を特定できる非匿名管理者からの招待と、連携ディスカッショングループでの活動は免除されます。</p>
+  <p><b>🧠 コンテキスト記憶</b></p>
+  <p>上限付きの逐語コンテキストと複数ラウンドの圧縮要約を保持し、多層の返信チェーンを追跡します。アトミックな永続化により確実に復元できます。</p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
+  <p><b>🎭 気分と人間らしさ</b></p>
+  <p>グループの気分は 2〜4 時間ごとに再抽選され、東京の天気と時間帯で重み付けされます。発言前には文字数に応じた入力の間を挟み、たまにタイプミスして直します。</p>
+</td>
+<td align="left" valign="top">
+  <p><b>🛡️ 参加認証</b></p>
+  <p>新規メンバーに 90 秒のボタン認証。人間は本人だけがクリックでき、Bot アカウントに限り許可リストのユーザーが代理認証できます。招待者を特定できる非匿名管理者からの招待と、連携ディスカッショングループでの活動は免除されます。</p>
+</td>
+<td align="left" valign="top">
   <p><b>🚨 Anti-Raid</b></p>
   <p>参加頻度を監視し、閾値に達するとグループへの招待を停止して異常な参加者を処置します。再起動後も状態を復元できます。</p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top">
+  <p><b>📮 広告検出</b></p>
+  <p>送信者ごとに 90 秒間のメッセージ列へまとめて DeepSeek が判定。命中時は <code>/block</code> と同じ処分を行い、発火したグループに BAN 理由を告知します。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🎲 今日のおみくじ</b></p>
@@ -121,7 +135,7 @@
 </td>
 <td align="left" valign="top">
   <p><b>🌐 複数グループ連携</b></p>
-  <p><code>/block</code> コマンドで Bot が管理者である全グループから対象を同期 BAN し、さらに id を永続ブロックリストへ記録。以降は監視中のどのグループに入室しても即 kick され、あるグループで「管理者権限がある」と「初期化済み」が揃った瞬間には（どちらが先でも）、すでに在室しているリスト該当者もまとめて掃除します。こうして統合防衛線を形成します。</p>
+  <p><code>/block</code> 一つで管理下の全グループから同期 BAN し、id を永続ブロックリストへ記録。以降は監視中のどのグループに入室しても即 kick され、新たに管理者になったグループも自動で掃除します。</p>
 </td>
 </tr>
 </table>
@@ -143,7 +157,11 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 | `/steal_icon` | アバターのみコピー |
 | `/stop_copy` | グローバル copy 状態を停止 |
 
-対象は「メッセージへの返信」または `@username` で指定します。ユーザー名での検索には、Bot がそのアカウントを以前に観測している必要があります。改名、ユーザー名の削除、ユーザー名の再割り当てが行われると、古い別名は直ちに無効になります。匿名管理者が現在のグループとして発言した場合、そのグループ自体が copy 対象となるため、グループのアバターを取得してその「外見」を再現できます。`/block` は現在のグループをメンバー対象として扱うことを拒否します。`/block` のような破壊的操作では、過去のユーザー名に頼らず対象メッセージへの返信を優先してください。一般ユーザーの copy 系コマンドには 5 分間のグローバル cooldown があり、`PRIVILEGED_USERS_ID` の許可リストは対象外です。
+対象は「メッセージへの返信」または `@username` で指定します。
+
+- **ユーザー名での検索には、Bot がそのアカウントを以前に観測している必要があります。** 改名、ユーザー名の削除、ユーザー名の再割り当てが行われると、古い別名は直ちに無効になります。`/block` のような破壊的操作では、過去のユーザー名に頼らず対象メッセージへの返信を優先してください。
+- **匿名管理者が現在のグループとして発言した場合、そのグループ自体が copy 対象**となるため、グループのアバターを取得してその「外見」を再現できます。`/block` は現在のグループをメンバー対象として扱うことを拒否します。
+- **一般ユーザーの copy 系コマンドには 5 分間のグローバル cooldown があり**、`PRIVILEGED_USERS_ID` の許可リストは対象外です。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
@@ -156,26 +174,34 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">メンバー</td><td>各 copy モードを開始</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">メンバー</td><td>現在のグローバル copy を停止</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">メンバー</td><td>アバターのみ取得</td></tr>
-<tr><td><code>/&lt;漢字 1~2 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> や <code>/贴贴</code> で「実行者 咬了 対象！」と応答。名前は first_name last_name 形式で、公開ユーザー名があればプロフィールへリンク</td></tr>
+<tr><td><code>/&lt;漢字 1~2 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> や <code>/贴贴</code> で「実行者 咬了 対象！」と応答</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">メンバー</td><td>自発的発言を N 分間停止（既定 3 分）</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">メンバー</td><td>静寂モードを早期解除</td></tr>
-<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>ブロックリスト登録：永続的に記録し、全管理グループで BAN。以降は監視中のグループに入室しても即 kick</td></tr>
-<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>（<code>all</code> は <code>SUPER_ADMIN_USER_ID</code> のみ）</td><td>ブロックリストから id を削除（リスト全体をファイルへ原子的に書き直し）。以降の入室で即 kick されなくなります。既定では各グループの BAN はそのまま。<code>all</code> を付けると全管理グループで BAN も解除します</td></tr>
+<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>ブロックリスト登録：永続的に記録し、全管理グループで BAN</td></tr>
+<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>（<code>all</code> は <code>SUPER_ADMIN_USER_ID</code> のみ）</td><td>ブロックリストから id を削除。既定では各グループの BAN はそのままで、<code>all</code> を付けると解除まで行います</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの AI チャットを切り替え</td></tr>
-<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの広告検出を切り替え：送信者ごとに 90 秒間のメッセージ列へまとめ、DeepSeek が判定します。命中時は <code>/block</code> と同じ処分（恒久ブロックリスト登録と、管理下の全グループでの BAN＋当該メンバーのメッセージ削除）を行い、発火したグループに BAN 理由を告知します（30 秒後に自動削除）。Bot がそのグループの管理者のときだけ発火し、判定基準は <a href="config/ad_samples.json"><code>config/ad_samples.json</code></a> です</td></tr>
-<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>AI 有効グループの気分を即時再抽選して応答</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの広告検出を切り替え。命中時は <code>/block</code> と同じ処分</td></tr>
+<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>AI 有効グループの気分を即時再抽選し、新しい気分名を応答</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>日本語翻訳機能を切り替え（既定 OFF）</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの主要処理ゲートを切り替え</td></tr>
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（PM 限定）</td><td>Bot との個人チャットから指定グループへの転送セッションを開始/終了</td></tr>
 </table>
 
-`/send` は開始前に対象へ到達できるか確認します。転送中に対象へ到達できなくなった場合はセッションを終了し、スーパー管理者へ通知します。転送状態は `state.json` に保存され、再起動後も復元されます。このコマンドは Telegram のコマンドメニューには表示されず、グループ内や他のユーザーから呼び出されても応答しません。
+### 挙動の詳細
+
+- **アクションコマンド**：名前は `first_name last_name` 形式で、公開ユーザー名があればプロフィールへリンクします。対象の指定方法は他のコマンドと同じで、返信または `@username` です。
+- **`/block` ブロックリスト**：id が永続ブロックリストに入ると、監視中のどのグループの入室更新でも即 kick されます。あるグループで「管理者権限がある」と「`/init enable` 済み」が揃った瞬間には（どちらが先でも）、すでに在室しているリスト該当者もまとめて掃除します。`/unblock` はリスト全体をファイルへ原子的に書き直します。
+- **`/ad_detect` 広告検出**：送信者ごとに 90 秒間のメッセージ列へまとめ、DeepSeek が判定します。命中時は `/block` と同じ処分（恒久ブロックリスト登録と、管理下の全グループでの BAN＋当該メンバーのメッセージ削除）を行い、発火したグループに BAN 理由を告知します（30 秒後に自動削除）。Bot がそのグループの管理者のときだけ発火し、判定基準は [`config/ad_samples.json`](config/ad_samples.json) です。
+- **`/send` 転送**：開始前に対象へ到達できるか確認し、期間中はスーパー管理者の各メッセージを対象グループへ 1 回ずつ転送します。到達できなくなった場合はセッションを終了して通知します。転送状態は `state.json` に保存され、再起動後も復元されます。このコマンドは Telegram のコマンドメニューには表示されず、グループ内や他のユーザーから呼び出されても応答しません。
 
 > [!TIP]
-> 漢字 1~2 文字のアクションコマンド（`/咬`、`/贴贴` など）は事前登録が不要で、どの漢字でも使えます。対象の指定方法は他のコマンドと同じで、返信または `@username` です。Telegram のコマンド名は ASCII（ラテン文字・数字・アンダースコア）のみのため、コマンドメニューにも補完にも現れません。メニューにはプレースホルダー項目 `/x` だけを置いています。コマンド名の `x` がその変数であり、任意の漢字 1~2 文字に置き換えることを示します。実行しても何も起こらず、通常メッセージとして AI/copy pipeline へ流れることもないよう意図的に握り潰します。`/咬人人` のような 3 文字以上はアクションコマンドとして扱わず、通常のメッセージ処理へ流します。登録不要で誰でも自由に作れるため、グローバルな sliding window 制限があり、グループ・ユーザーを合算して 90 秒あたり最大 450 回まで応答します。超過分は通知なしで黙って破棄されます。
+> **漢字 1~2 文字のアクションコマンドは事前登録が不要**で、どの漢字でも使えます。Telegram のコマンド名は ASCII（ラテン文字・数字・アンダースコア）のみのため：
+> - コマンドメニューにも補完にも現れません。メニューにはプレースホルダー項目 `/x` だけを置いています。コマンド名の `x` がその変数であり、任意の漢字 1~2 文字に置き換えることを示します。実行しても何も起こらず、通常メッセージとして AI/copy pipeline へ流れることもないよう意図的に握り潰します。
+> - `/咬人人` のような 3 文字以上はアクションコマンドとして扱わず、通常のメッセージ処理へ流します。
+> - 登録不要で誰でも自由に作れるため、グローバルな sliding window 制限があり、グループ・ユーザーを合算して 90 秒あたり最大 450 回まで応答します。超過分は通知なしで黙って破棄されます。
 
 > [!TIP]
-> `/luck_challenge` はスラッシュコマンドではありません。任意のチャットで `@Botのユーザー名 [お願い]` と入力して Inline Mode を使用します。BotFather で Inline Mode を有効にし、`/setinlinefeedback` を 100% に設定することをお勧めします。Inline query にはグローバルな sliding window 制限があり、応答は 90 秒あたり最大 300 回です。
+> **`/luck_challenge` はスラッシュコマンドではありません。** 任意のチャットで `@Botのユーザー名 [お願い]` と入力して Inline Mode を使用します。BotFather で Inline Mode を有効にし、`/setinlinefeedback` を 100% に設定することをお勧めします。Inline query にはグローバルな sliding window 制限があり、応答は 90 秒あたり最大 300 回です。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
@@ -217,9 +243,23 @@ cp .env.example .env
 
 ### 3. 設定
 
-[`.env.example`](.env.example) にしたがって `.env` を記入します。`TELEGRAM_BOT_TOKEN`、`GEMINI_API_KEY`（AI 雑談エージェント専用）、10 進数のユーザー ID を 1 つ指定する `SUPER_ADMIN_USER_ID` は必須です。`DEEPSEEK_API_KEY`（広告検出専用）と `PRIVILEGED_USERS_ID` は空でも構いません。複数の ID は半角カンマで区切ります。`DEEPSEEK_API_KEY` が空の場合は `/ad_detect enable` が拒否され、ほかの機能はそのまま動作します。
+[`.env.example`](.env.example) にしたがって `.env` を記入します。
 
-`COPY_NINJIA_DATA_ROOT` を指定すると、実行時データを別のルートへ配置できます。設定時は `state.json`、`bot.lock`、`logs/`、`memory/` がそのディレクトリから派生します。ペルソナ、スタンプ、リアクション、気分の設定と `g-auth.json` は引き続きプロジェクトルートから読み込みます。未指定の場合、実行時データはプロジェクトルートに置かれます。
+| 変数 | 必須 | 説明 |
+| :--- | :---: | :--- |
+| `TELEGRAM_BOT_TOKEN` | ✅ | BotFather が発行する Bot Token |
+| `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者の 10 進数ユーザー ID を 1 つ |
+| `AI_CHAT_GEMINI_API_KEY` | — | AI 雑談エージェント専用。空の場合 AI Worker は起動せず、`/ai_chat enable` と `/switch_mood` が拒否されます |
+| `AD_DETECT_DEEPSEEK_API_KEY` | — | 広告検出専用。空の場合 `/ad_detect enable` が拒否されます |
+| `PRIVILEGED_USERS_ID` | — | 許可リストのユーザー ID。複数は半角カンマ区切り |
+| `COPY_NINJIA_DATA_ROOT` | — | 実行時データのルート。未指定ならプロジェクトルート |
+
+**任意の前提条件は機能ごとに縮退します。** 2 つの AI キーは担当する機能を変数名の先頭に付けており、欠けた鍵はその機能だけを止め、ほかの機能はそのまま動作します。`config/*.json` と `g-auth.json` も同様に起動時の事前読み込みを行わず、壊れていても対応するトグルコマンドだけを拒否します。
+
+> [!IMPORTANT]
+> 例外は 1 つだけです。`state.json` で機能が有効なままなのに鍵や設定を取り除いた場合、そのスイッチは管理者が明確に入れたものなので、プロセスはチャット id と欠落項目を示して起動を拒否し、黙って何もしない状態にはなりません。先に `disable` するか、前提を復旧してください。
+
+`COPY_NINJIA_DATA_ROOT` を指定すると、`state.json`、`bot.lock`、`logs/`、`memory/` がそのディレクトリから派生します。ペルソナ、スタンプ、リアクション、気分の設定と `g-auth.json` は引き続きプロジェクトルートから読み込みます。
 
 日本語翻訳を使用する場合は、サービスアカウントキーを `g-auth.json` としてプロジェクトルートに保存します。`.env` と `g-auth.json` はどちらも `.gitignore` の対象です。
 
@@ -244,7 +284,7 @@ Bot を初めてグループに追加した後、`SUPER_ADMIN_USER_ID` がグル
 /ai_chat enable
 ```
 
-> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードに中国語の文字列リテラルが 52 ファイルへ約 525 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](docs/ja/06-modification-guide.md) にあります。
+> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードに中国語の文字列リテラルが 56 ファイルへ約 465 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](docs/ja/06-modification-guide.md) にあります。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 

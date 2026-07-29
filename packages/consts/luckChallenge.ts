@@ -70,3 +70,20 @@ export const LUCK_RESULT_IDS: ReadonlySet<string> = new Set([
  * 生效的上限防止忙碌的一天里被打字预览堆到很大。签名回执（libs/luckReceipt.ts）
  * 是自描述验签，不占用任何反向索引，不受此上限约束。 */
 export const PENDING_LUCK_CACHE_MAX: number = 15_000;
+
+/**
+ * dailyLuckCache（见 cache/luckChallenge.ts）当日已确认结果的数量上限。
+ *
+ * key 是 `userId:sha256(问题原文)`，**问题原文由用户随手输入**，所以「当日唯一 key
+ * 数」不是自然上界而是攻击者选的数字：反复用新问题串点选内联结果，就能让主线程
+ * 这张 Map、Disk I/O Worker 侧的当日镜像与 `memory/luck/<day>.json` 三处一起整天
+ * 长下去，而下次启动 `restoreLuckState` 还要把整个文件逐条按 LUCK_TIERS 校验一遍
+ * 才能开始收 update。
+ *
+ * 撑满时**拒绝新的 key、不淘汰已有的**（同 AD_DETECT_MAX_PENDING_SENDERS 的取舍）：
+ * 淘汰最旧等于让一个刷子把当天正常用户的记录顶掉，而拒绝新的只是让越界的那些
+ * 「今天测过」记不住——抽签派生是确定性的（同一密钥同一 key 必得同一结果），
+ * 重新预览拿到的仍是同一条，用户可见行为不变。这道闸同时兜住了落盘：越界的
+ * key 根本不会产生 luckDraw 消息。
+ */
+export const DAILY_LUCK_CACHE_MAX: number = 15_000;

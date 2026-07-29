@@ -100,7 +100,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isInviterExempt: true },
       { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
-      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, text: "买号加我", linkUrls: [], label: "@spam", isChannel: false, justJoined: true },
+      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, text: "买号加我", linkUrls: [], label: "@spam", isChannel: false, blocked: false, justJoined: true },
       { type: "clearAdDetect", chatId: -1001 },
       { type: "barrier", barrierId: 99 },
     ];

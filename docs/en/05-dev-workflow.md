@@ -34,7 +34,7 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **1200 tests / 142 files / 9443 `expect()` calls**; full-source **function coverage 94.82% / line coverage 96.52%**. The root README's Coverage badge displays line coverage.
+`bun run test:coverage`: **1281 tests / 151 files / 20170 `expect()` calls**; full-source **function coverage 95.10% / line coverage 96.84%**. The root README's Coverage badge displays line coverage.
 
 ## Test Isolation
 
@@ -73,7 +73,17 @@ bun run test:coverage 2>&1 | tail -5           # test count, file count, expect(
 bun run test:coverage 2>&1 | grep 'All files'  # function and line coverage
 ```
 
-Synchronize the Tests/Coverage badges in all three READMEs; [`docs/assets/coverage_light.svg`](../assets/coverage_light.svg) and [`coverage_dark.svg`](../assets/coverage_dark.svg), referenced from the “Project Quality” block in each README's “Pure AI Development” section—one pair is shared by all three READMEs (like the banner), so both theme files need the new figures, as does the equivalent `<img alt>` text in all three READMEs (the graphic loads as an image, so the SVG's own `<title>`/`aria-label` never reaches a screen reader and the alt is the only accessible path); and “Measurements for This Documentation Version” in all three workflow documents. These all carry the same measured figures, so updating one obliges updating every one. The Coverage badge always uses the `All files` line-coverage value. Behavioral figures such as probabilities, capacities, and durations must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
+These places all carry the same measured figures, so updating one obliges updating every one:
+
+- **The Tests/Coverage badges in all three READMEs.** The Coverage badge always uses the `All files` line-coverage value.
+- **The coverage graphics**: [`docs/assets/coverage_light.svg`](../assets/coverage_light.svg) and [`coverage_dark.svg`](../assets/coverage_dark.svg), referenced from the “Project Quality” block in each README's “Pure AI Development” section. One pair is shared by all three READMEs (like the banner), so both theme files need the new figures.
+- **The equivalent `<img alt>` text in all three READMEs.** The graphic loads as an image, so the SVG's own `<title>` / `aria-label` never reaches a screen reader and the alt is the only accessible path.
+- **“Measurements for This Documentation Version” in all three workflow documents.**
+
+Two more sets of measured figures drift just as silently, independently of coverage:
+
+- **The Chinese string-literal count** (currently ~465 across 56 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy; count string literals only, excluding comments.
+- **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release
 

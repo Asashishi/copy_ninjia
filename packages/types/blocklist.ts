@@ -2,7 +2,13 @@
 
 import type { BLOCKLIST_REMOVAL_FAILURE_TYPES } from "../consts/antiRaid/blocklist";
 
-/** BlockedMemberRemover 的入参。 */
+/**
+ * BlockedMemberRemover 的入参，也是投给 Worker 的 wire 形态。
+ *
+ * **投递出去的批次一定带着一份具体名单**——`userIds` 在这里是必填的。补扫在
+ * outbox 里不冻结名单（见 PendingBlockedRemovalParams），那一份是投递/重放的
+ * 那一刻按当时的黑名单现算出来的。
+ */
 export interface RemoveBlockedMembersParams {
   /** 要清理的群。 */
   chatId: number;
@@ -31,6 +37,53 @@ export interface RemoveBlockedMembersParams {
   announcementMessageId?: number;
 }
 
+/**
+ * outbox 里**持久化并镜像**的那一份任务参数，按 `probeMembership` 分成两种形态。
+ *
+ * 补扫（`probeMembership: true`）刻意不带 `userIds`：它欠的活是「拿黑名单把这个群
+ * 扫一遍」，不是「拿这 1000 个具体 id 把这个群扫一遍」。冻一份 id 列表进来有三个
+ * 坏处——
+ * 1. **写盘量按群数 × 名单长度放大**：每次变更都要整份 outbox 重写，而 N 个群的
+ *    补扫条目装的是同一份内容，加起来就是 O(N² × 名单长度) 的落盘，正是
+ *    docs/04-invariants.md 点名要避开的形态；`removals.json` 也因此成为整个持久化
+ *    里唯一一个大小随黑名单长度增长的文件，而它在启动恢复的关键路径上。
+ * 2. **重放时那份快照可能已经过期**：Worker 重建后重投的应该是「用**此刻**的名单
+ *    扫这个群」，而不是当初那一份。
+ * 3. **`/unblock` 被迫改写它**：`forgetUserBlocklistRemovals` 要把这个 id 从每一条
+ *    批次里滤掉再整份重新落盘，而这件事只是因为当初冻了一份不该冻的列表。
+ *
+ * 秒踢与广告处置（`probeMembership: false`）相反，名单**必须**随任务冻结：那批人
+ * 是「此刻确定在群里的这几个」，与名单当前内容无关，现算会扫到一群不相干的人。
+ */
+export type PendingBlockedRemovalParams =
+  | {
+    readonly chatId: number;
+    readonly probeMembership: true;
+    readonly removalId: number;
+  }
+  | {
+    readonly chatId: number;
+    readonly probeMembership: false;
+    readonly userIds: number[];
+    readonly removalId: number;
+    readonly joinedAt?: number;
+    readonly announcementMessageId?: number;
+  };
+
+/**
+ * trackBlockedRemoval 的入参。用判别联合而不是「userIds 可选」：补扫带上名单、
+ * 或秒踢漏掉名单，都该是编译期就过不去的写法。
+ */
+export type TrackBlockedRemovalInput =
+  | { readonly chatId: number; readonly probeMembership: true }
+  | {
+    readonly chatId: number;
+    readonly probeMembership: false;
+    readonly userIds: number[];
+    readonly joinedAt?: number;
+    readonly announcementMessageId?: number;
+  };
+
 /** durable outbox 最近一次已知失败所处的边界。 */
 export type BlocklistRemovalFailure =
   (typeof BLOCKLIST_REMOVAL_FAILURE_TYPES)[number];
@@ -40,8 +93,8 @@ export type BlocklistRemovalFailure =
  * 元数据随任务一起持久化，但任务必须保留到完成或被权威状态判定为不再需要。
  */
 export interface PendingBlockedRemoval {
-  /** 原样入参，重投时直接复用。 */
-  params: RemoveBlockedMembersParams;
+  /** 任务参数；补扫不含名单，投递前由 materializeRemovalParams 现算。 */
+  params: PendingBlockedRemovalParams;
   /** 首次登记任务的 Unix 毫秒时间戳；重放和更新诊断信息时保持不变。 */
   createdAt: number;
   /** 已确认未落地的次数；达到阈值会告警，但不会删除任务。 */

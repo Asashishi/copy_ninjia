@@ -8,7 +8,6 @@ import {
   pendingOverflowNotices,
   pendingReplyTriggers,
 } from "../../cache/aiChat/replies";
-import { chatBuffers } from "../../cache/aiChat/memory";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { truncateInline } from "../../libs/text";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
@@ -17,7 +16,7 @@ import type { TriggerKind } from "../../types/states/replyAdmission";
 import type { MediaCommentContext } from "./promptContext";
 import { resolvedTagFor } from "./mediaText";
 import { notifyRateLimited } from "./replyState";
-import { replyReferenceForBufferedEntry } from "./replyChain";
+import { lookupBufferedMessage, replyReferenceForBufferedEntry } from "./replyChain";
 
 /** 分类顺序与原短路判断一致：随机触发优先于媒体触发。 */
 export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaCommentContext | undefined): TriggerKind {
@@ -28,7 +27,14 @@ export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaComm
 
 /**
  * 保存直接触发的必要快照。媒体解析可能异步完成，直接使用已解析的发送人和
- * 描述；文本触发则读取刚写入滚动缓存的尾部消息。
+ * 描述；文本触发按 replyToMessageId 到热区索引里取那一条。
+ *
+ * **不能取缓冲区尾条**：主线程把 `record` 与 `trigger` 作为两条独立消息投过来，
+ * 两者之间在途轮次的 `onMessageSent` 完全可能把机器人自己的消息推进 chatBuffers。
+ * 那时尾条就是机器人自己那句，排队轮跑起来后提示词会渲染成「XX 也在跟你说话
+ * （TA 说的是：「机器人上一句」）」——模型对着自己编造的内容回复。触发消息的
+ * id 调用方已经解析好了，直接按 id 取（同 generateAndSendReply 的
+ * replyReferenceForBufferedMessage）。
  */
 export interface PushReplyTriggerParams {
   chatId: number;
@@ -74,7 +80,7 @@ export function pushReplyTrigger({
     return;
   }
 
-  const triggerEntry: BufferedMessage | undefined = chatBuffers.get(chatId)?.last(1)[0];
+  const triggerEntry: BufferedMessage | undefined = lookupBufferedMessage(chatId, replyToMessageId);
   const capturedTriggerReference: BufferedReplyReference | undefined = triggerReference ??
     (triggerEntry ? replyReferenceForBufferedEntry(replyToMessageId, triggerEntry) : undefined);
   queue.push({
@@ -91,6 +97,20 @@ export function pushReplyTrigger({
 }
 
 /**
+ * 把「队列已满、等当前这一轮收尾再提示」欠下的那条溢出提示补发出去。
+ *
+ * **必须与推队列分开**：这条提示是欠着群成员的一句话，窗口满不满都得发；而推
+ * 队列在窗口仍然满时必须跳过（见 replyPipeline.ts 的 drainReplyQueueIfWindowAllows）。
+ * 两件事写在一起的话，要么提示跟着被跳过、永远发不出去，要么推队列跟着不设闸、
+ * 每轮结束空转一次限频闸，变成每分钟往群里刷一条限频提示。
+ */
+export function flushOverflowNotice(chatId: number): void {
+  if (pendingOverflowNotices.delete(chatId)) {
+    notifyRateLimited(chatId, Date.now());
+  }
+}
+
+/**
  * 在并发位空出后按 FIFO 补跑直接触发。启动回调会同步占用并发位，并回报本次
  * 是否真的开了一轮；没开成就停下，把这条留在队首。
  *
@@ -102,9 +122,6 @@ export function pushReplyTrigger({
  * 60 秒冷却）。留在队首则等窗口空出来后由下一轮结束时的 drain 补跑。
  */
 export function drainReplyQueue(chatId: number, startQueuedRound: (trigger: QueuedReplyTrigger) => boolean): void {
-  if (pendingOverflowNotices.delete(chatId)) {
-    notifyRateLimited(chatId, Date.now());
-  }
   const queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
   if (!queue) return;
   while (queue.size > 0 && (activeReplyCounts.get(chatId) ?? 0) < REPLY_ROUND_MAX_CONCURRENT) {

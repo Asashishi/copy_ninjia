@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import type { Message } from "@grammyjs/types";
+import { isAiChatActiveIn } from "../../aiChat/availability";
 import { AI_REPLY_PROBABILITY_BASE_INITIAL } from "../../consts/aiChat/rateLimit";
 import { recordChatTitleFromChat } from "../../infra/chatTitle";
 import { getActiveCopyIn, getChatState } from "../../infra/storage/stateStore";
@@ -69,7 +70,9 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   }
 
   const isQuiet: boolean = isQuietUntilActive(state.quietUntil);
-  const aiChatEnabled: boolean = state.isAIChatEnabled === true;
+  // 凭据缺失时这里恒为 false：既不投喂 Worker（它根本没启动），也让下面的
+  // 主动行为回到「AI 关闭」那条分支——随机复读仍照常，见 aiChat/availability.ts。
+  const aiChatEnabled: boolean = isAiChatActiveIn(chatId);
 
   if (!activeCopy && aiChatEnabled) {
     const triggerContext: MessageTriggerContext = createMessageTriggerContext({

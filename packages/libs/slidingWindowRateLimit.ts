@@ -50,6 +50,36 @@ export function trimSlidingWindow({
   }
 }
 
+/** trimSlidingWindowArray 的入参。 */
+export interface TrimSlidingWindowArrayParams {
+  /** 按时间升序的时间戳数组；本函数不就地修改，返回修剪后的新数组。 */
+  timestamps: readonly number[];
+  /** 滑动窗口时长（ms）。 */
+  windowMs: number;
+  /** 当前时刻；默认取墙钟，测试可注入固定值。 */
+  now?: number;
+}
+
+/**
+ * 数组形态的窗口修剪，边界语义与 trimSlidingWindow 逐字一致：保留
+ * `(now - windowMs, now]`，同时丢掉时钟回拨后落在未来的那些。
+ *
+ * 单独一个数组版本、而不是让调用方改用 LinkedQueue：入群验证那边的窗口挂在
+ * **要随记录一起快照并落盘**的状态对象上（`trackedMessageTimes`），换成链表就得
+ * 连持久化形状一起改。两个版本必须共用同一份边界定义——历史上这类窗口各处
+ * 手写 `filter(ts > cutoff)`，漏掉的正是「未来」这一侧：NTP 往回跳一次，
+ * 那些时间戳就永远满足 `ts > now - windowMs`、再也不会被驱逐，同一个
+ * 45 条/分钟的阈值于是把一个根本没刷屏的人判成刷屏。
+ */
+export function trimSlidingWindowArray({
+  timestamps,
+  windowMs,
+  now = Date.now(),
+}: TrimSlidingWindowArrayParams): number[] {
+  const cutoff: number = now - windowMs;
+  return timestamps.filter((at: number): boolean => at > cutoff && at <= now);
+}
+
 /** tryConsumeSlidingWindow 的入参。 */
 export interface TryConsumeSlidingWindowParams {
   /** 调用方持有的时间戳队列，按时间升序，就地修改。 */

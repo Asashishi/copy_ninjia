@@ -59,7 +59,11 @@ mock.module("../../packages/libs/time", () => ({
 
 const luckChallenge = await import("../../packages/commands/luckChallenge");
 const cache = await import("../../packages/cache/luckChallenge");
-const { LUCK_TIERS, RATE_LIMIT_MAX_CALLS_PER_WINDOW } = await import("../../packages/consts/luckChallenge");
+const {
+  DAILY_LUCK_CACHE_MAX,
+  LUCK_TIERS,
+  RATE_LIMIT_MAX_CALLS_PER_WINDOW,
+} = await import("../../packages/consts/luckChallenge");
 const { getTokyoDateKey } = await import("../../packages/libs/time");
 const TEST_SECRET = { version: 1 as const, day: getTokyoDateKey(), key: Buffer.alloc(32, 7).toString("base64url") };
 
@@ -309,6 +313,36 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "888" });
     expect(cache.dailyLuckCache.has("888")).toBe(true);
+  });
+
+  test("当日已确认结果撑满上限后拒收新 key，也不再落盘", async () => {
+    // key 是 `userId:sha256(问题原文)`，问题原文由用户随手输入——「当日唯一 key
+    // 数」是攻击者选的数字而不是自然上界。不设闸的话，主线程这张 Map、Disk I/O
+    // Worker 侧的当日镜像与 memory/luck/<day>.json 会一起整天长下去，而下次启动
+    // 还要把整个文件逐条按 LUCK_TIERS 校验一遍才能开始收 update。
+    const tier = LUCK_TIERS[0]!;
+    for (let index: number = 0; index < DAILY_LUCK_CACHE_MAX; index++) {
+      cache.dailyLuckCache.set(`filler:${index}`, { tier, fortunePercent: tier.fortunePercentRange[0] });
+    }
+    const ctx = makeInlineCtx(999, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+    postDiskIOMock.mockClear();
+
+    await confirmResult(ctx.results[0]);
+
+    // 撑满时连落盘消息都不投：那正是 Worker 侧镜像与当日文件无界增长的入口。
+    expect(postDiskIOMock).not.toHaveBeenCalled();
+    expect(cache.dailyLuckCache.has("999")).toBe(false);
+    expect(cache.dailyLuckCache.size).toBe(DAILY_LUCK_CACHE_MAX);
+    // 撑满只记一行，不逐条刷屏。
+    expect(loggerErrorMock.mock.calls.filter(
+      (call: unknown[]): boolean => String(call[0]).includes("Daily luck cache reached")
+    )).toHaveLength(1);
+
+    await confirmResult(ctx.results[0]);
+    expect(loggerErrorMock.mock.calls.filter(
+      (call: unknown[]): boolean => String(call[0]).includes("Daily luck cache reached")
+    )).toHaveLength(1);
   });
 
   test("两个用户有独立自描述回执，可分别准确确认", async () => {

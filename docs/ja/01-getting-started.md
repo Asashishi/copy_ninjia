@@ -17,8 +17,8 @@
 - **`/proc` を読み取れる Linux**：インスタンスロックは `/proc/<pid>/stat` と boot ID に依存します。ほかのプラットフォームでは fail-closed で起動を拒否します。
 - **Bun 1.3+**：`curl -fsSL https://bun.sh/install | bash` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
-- **Gemini API Key**：[Google AI Studio](https://aistudio.google.com/) から取得します。
-- **任意：Google Cloud サービスアカウント JSON**：`/ja_copy` の日本語翻訳を使う場合だけ必要です。
+- **任意：Gemini API Key**：[Google AI Studio](https://aistudio.google.com/) から取得します。`/ai_chat` の AI 雑談を使う場合だけ必要です。
+- **任意：Google Cloud サービスアカウント JSON**：`/ja_copy` の日本語翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落や破損時は `/ja_copy` がこのファイルを名指しして拒否し、自動 copy の ja 変換は通常の copy に退化します。いずれかのチャットで `/ja_copy enable` が有効なままなら起動を拒否します。
 
 ## インストール
 
@@ -31,13 +31,13 @@ cp .env.example .env
 
 ## `.env` の設定
 
-プロジェクトが読む環境変数は次の 6 つだけで、未記載のスイッチはありません。資格情報と権限に関する 5 項目は [`packages/infra/config.ts`](../../packages/infra/config.ts) が解析します。`COPY_NINJIA_DATA_ROOT` は実行時パス定数が確定する前に反映する必要があるため、[`packages/consts/paths.ts`](../../packages/consts/paths.ts) が先に読み取ります。
+プロジェクトが読む環境変数は次の 6 つだけで、未記載のスイッチはありません。変数名は担当する機能を先頭に付けており（`AI_CHAT_` / `AD_DETECT_`）、欠けた鍵はその機能だけを止めます。資格情報と権限に関する 5 項目は [`packages/infra/config.ts`](../../packages/infra/config.ts) が解析します。`COPY_NINJIA_DATA_ROOT` は実行時パス定数が確定する前に反映する必要があるため、[`packages/consts/paths.ts`](../../packages/consts/paths.ts) が先に読み取ります。
 
 | 変数 | 必須 | 説明 |
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather が発行した token |
-| `GEMINI_API_KEY` | ✅ | Gemini API キー。AI 雑談エージェント専用で、`/ai_chat` の返信生成・画像理解・記憶圧縮が使用します |
-| `DEEPSEEK_API_KEY` | 空でも可 | DeepSeek API キー（OpenAI 互換エンドポイント）。広告検出専用で、`/ad_detect` の判定が使用します。空の場合は `/ad_detect enable` が拒否され、ほかの機能はそのまま動作します |
+| `AI_CHAT_GEMINI_API_KEY` | 空でも可 | Gemini API キー。AI 雑談エージェント専用で、`/ai_chat` の返信生成・画像理解・記憶圧縮が使用します。空の場合は AI Worker が起動せず、`/ai_chat enable` と `/switch_mood` は拒否され、ディスク上の AI 記憶はそのまま保持され、ほかの機能は通常どおり動作します |
+| `AD_DETECT_DEEPSEEK_API_KEY` | 空でも可 | DeepSeek API キー（OpenAI 互換エンドポイント）。広告検出専用で、`/ad_detect` の判定が使用します。空の場合は `/ad_detect enable` が拒否され、ほかの機能はそのまま動作します |
 | `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者を表す 1 つの十進ユーザー ID。`/init`、`/ai_chat`、`/ad_detect`、`/switch_mood`、`/send` などはこのユーザーだけを認識します |
 | `PRIVILEGED_USERS_ID` | 空でも可 | カンマ区切りの許可ユーザー。copy のクールダウン免除、`/block` の使用、ほかの Bot の認証保証が可能です |
 | `COPY_NINJIA_DATA_ROOT` | 空でも可 | 実行時データのルート。空の場合はプロジェクトルートに保存します。詳細は [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください |
@@ -54,7 +54,9 @@ cp .env.example .env
 | [`config/mood.json`](../../config/mood.json) | ムードの文面、重み、天気・時間帯の倍率 | [`packages/config/mood.ts`](../../packages/config/mood.ts)。重みは正の整数で、合計がちょうど 100 でなければなりません |
 | [`config/ad_samples.json`](../../config/ad_samples.json) | 広告検出の判定基準となる例文。ファイル自体が文字列配列です | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts)。空文字と重複は不可、最大 500 件 |
 
-4 つの JSON はすべて厳密な schema 検証を受け、起動時のネットワーク接続より前に事前読み込みされます。設定が不正なら該当フィールドを示して起動を拒否し、不完全な状態では実行しません。
+4 つの JSON はすべて厳密な schema 検証を受けますが、**起動時には事前読み込みしません**。壊れたスタンプ許可リスト 1 つのために copy、抽選、入室認証、ブロックリストまで停止させるべきではないからです。検証は対応するトグルコマンドで行います——`/ai_chat enable` は前 3 つ、`/ad_detect enable` は `ad_samples.json`、`/ja_copy enable` は `g-auth.json` を読みます。読めなければそのトグルだけを拒否し、返信で該当ファイル名を示し、ログに英語の診断を残します。すでに有効だったチャットも停止するため、不完全な状態で動き続けることはありません。判定結果はプロセス単位でキャッシュされるので、ファイルを直しても次回の再起動で反映されます。
+
+**例外として、機能が有効なままの場合は従来どおり起動を拒否します。** `state.json` の `true` は管理者が明確に有効化したものであり、これを黙って「何もしない」状態に格下げすると、グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えません。そこで起動時に一度だけ照合します。いずれかのチャットで有効なままの任意機能は、資格情報と設定が揃っていなければならず、欠けていればチャット id と欠落項目を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。対処は前提を復旧するか、取り除く前に `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` を実行することです。
 
 ## Telegram 側の設定（BotFather とグループ）
 

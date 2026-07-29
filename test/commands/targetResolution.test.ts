@@ -12,7 +12,11 @@ mock.module("../../packages/users/senderIdentity", () => ({
 }));
 
 const { resolveCommandTarget } = await import("../../packages/commands/targetResolution");
-const { TELEGRAM_USERNAME_MIN_LENGTH, TELEGRAM_USERNAME_MAX_LENGTH } = await import("../../packages/consts/commands");
+const {
+  INVALID_USERNAME_ECHO_MAX_CHARS,
+  TELEGRAM_USERNAME_MIN_LENGTH,
+  TELEGRAM_USERNAME_MAX_LENGTH,
+} = await import("../../packages/consts/commands");
 
 const messages = {
   missingTarget: "missing",
@@ -70,6 +74,21 @@ describe("resolveCommandTarget", () => {
       expect(await resolveCommandTarget(params(argument))).toBeUndefined();
       expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: `invalid:${argument}`, replyToMessageId: 7 });
     }
+  });
+
+  test("回显的参数原文按上限截断并压成单行，出站文案不会撑爆单条消息上限", async () => {
+    // 参数原文可以长到近 4096 字符（命令词之后的全部内容）。原样插回提示语拼出的
+    // 就是一条超过 Telegram 单条上限的消息，发不出去、被吞进日志，用户收到的是
+    // 彻底的沉默——而命令的限频名额早就扣掉了。
+    const huge: string = "长".repeat(4_000);
+    expect(await resolveCommandTarget(params(huge))).toBeUndefined();
+    const sent = sendMessageMock.mock.calls.at(-1)![0] as { text: string };
+    expect(sent.text).toBe(`invalid:${"长".repeat(INVALID_USERNAME_ECHO_MAX_CHARS)}`);
+
+    // 多行参数压成单行后再截断，不把一整块贴图糊进嘲讽里。
+    sendMessageMock.mockClear();
+    expect(await resolveCommandTarget(params("@bad\n\n  name"))).toBeUndefined();
+    expect(sendMessageMock).toHaveBeenLastCalledWith({ chatId: -1001, text: "invalid:@bad name", replyToMessageId: 7 });
   });
 
   test("用户名长度边界为 5~32，边界内合法、边界外拒绝", async () => {

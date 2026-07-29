@@ -98,8 +98,8 @@ describe("logger persistence routing boundary", () => {
   test("env 首尾空白不会让请求实际使用的规范化密钥逃过脱敏", () => {
     const originalSecrets: Readonly<Record<string, string | undefined>> = {
       TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
-      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-      DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
+      AI_CHAT_GEMINI_API_KEY: process.env.AI_CHAT_GEMINI_API_KEY,
+      AD_DETECT_DEEPSEEK_API_KEY: process.env.AD_DETECT_DEEPSEEK_API_KEY,
     };
     const normalizedSecrets: readonly string[] = [
       "normalized-telegram-token",
@@ -107,8 +107,8 @@ describe("logger persistence routing boundary", () => {
       "normalized-deepseek-key",
     ];
     process.env.TELEGRAM_BOT_TOKEN = `  ${normalizedSecrets[0]}\r`;
-    process.env.GEMINI_API_KEY = `\t${normalizedSecrets[1]}  `;
-    process.env.DEEPSEEK_API_KEY = `${normalizedSecrets[2]}\n`;
+    process.env.AI_CHAT_GEMINI_API_KEY = `\t${normalizedSecrets[1]}  `;
+    process.env.AD_DETECT_DEEPSEEK_API_KEY = `${normalizedSecrets[2]}\n`;
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
     try {
       logger.error(

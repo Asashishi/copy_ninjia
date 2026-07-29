@@ -8,10 +8,10 @@
 export const DEEPSEEK_API_BASE_URL: string = "https://api.deepseek.com";
 
 /** 单次请求的整体超时（也是 SDK 内部每次重试各自的预算）。 */
-export const DEEPSEEK_REQUEST_TIMEOUT_MS: number = 20_000;
+export const DEEPSEEK_REQUEST_TIMEOUT_MS: number = 30_000;
 
 /** 单次请求的 SDK 内部重试次数；调用方都是尽力而为的判定，不值得长时间重试。 */
-export const DEEPSEEK_REQUEST_MAX_RETRIES: number = 1;
+export const DEEPSEEK_REQUEST_MAX_RETRIES: number = 2;
 
 /**
  * 「HTTP 成功但没拿到可用正文」时的总尝试次数（含第一次）。

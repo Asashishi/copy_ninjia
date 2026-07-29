@@ -11,6 +11,14 @@ export const RUNNER_DRAIN_POLL_INTERVAL_MS: number = 100;
  * 所属模块：app/lifecycle.ts。
  */
 export const RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS: number = 1_000;
+/**
+ * 正常停机时确认最终 Telegram update offset 的本地网络截止。
+ *
+ * Bot API 的 `timeout: 0` 只关闭服务端 long polling，不限制 DNS、建连或响应体
+ * 读取；必须另带 AbortSignal，避免一次网络半开让正常停机永远卡在最终确认。
+ * 所属模块：app/lifecycle.ts。
+ */
+export const FINAL_OFFSET_CONFIRM_TIMEOUT_MS: number = 3_000;
 
 /** 正常停机时各持久化 owner 的独立 flush 预算。 */
 export const AI_MEMORY_FLUSH_TIMEOUT_MS: number = 2_000;

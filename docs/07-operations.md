@@ -71,6 +71,49 @@ WantedBy=multi-user.target
 
 备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成。`memory/` 视为敏感数据：文件 mode 是宽松的 `0644`（单租户部署基线，见 [04](04-invariants.md#持久化)），访问控制靠目录 owner/权限与主机账户隔离。
 
+### `removals.json` v1 → v2
+
+从 outbox v1 升级到 v2 前必须停 Bot 并手工迁移；新版严格拒绝 v1，不在运行时兼容或自动改写。文件不存在或已经是 v2 时跳过。以下命令以数据根为当前目录：
+
+```bash
+outbox=memory/blocklist/removals.json
+backup=memory/blocklist/removals.json.v1.bak
+candidate=memory/blocklist/removals.json.v2
+cp -a "$outbox" "$backup"
+jq -e '
+  if .version != 1 or (.entries | type) != "array" then
+    error("expected removals.json version=1")
+  else
+    .version = 2
+    | .entries |= map(
+        if .params.probeMembership == true then
+          .params |= del(.userIds, .joinedAt, .announcementMessageId)
+        else
+          .
+        end
+      )
+  end
+' "$outbox" > "$candidate"
+chmod --reference="$outbox" "$candidate"
+chown --reference="$outbox" "$candidate"
+test "$(jq '.entries | length' "$backup")" = "$(jq '.entries | length' "$candidate")"
+diff -u \
+  <(jq -S '[.entries[].params.removalId] | sort' "$backup") \
+  <(jq -S '[.entries[].params.removalId] | sort' "$candidate")
+jq -e '
+  .version == 2
+  and all(.entries[];
+    if .params.probeMembership == true then
+      (.params | has("userIds") or has("joinedAt") or has("announcementMessageId")) | not
+    else
+      (.params.userIds | type == "array" and length > 0)
+    end
+  )
+' "$candidate" > /dev/null
+```
+
+迁移只改变补扫任务：`probeMembership: true` 表示“用当前黑名单扫这个群”，因此删除其中冻结的 `userIds`、`joinedAt`、`announcementMessageId`；`probeMembership: false` 的秒踢/广告处置必须原样保留非空 `userIds`。上述命令同时核对候选文件版本为 2、entry 数量与全部 `removalId` 和备份一致、补扫不再带上述三字段、非补扫仍带名单；任一步非零退出都不要替换。全部通过后执行 `mv "$candidate" "$outbox"`，再部署新版。启动恢复报错时停止服务并用 `$backup` 回滚；确认恢复和重放正常后才删除备份。Release 的 Compatibility / Migration Notes 必须重复说明这一步。
+
 从仍使用 `config/blocklist.json` 的旧版本升级时，不保留运行时兼容分支：先停 Bot，备份旧文件与现有 `memory/blocklist/`，再把旧文件手工移动为 `memory/blocklist/blocklist.json`。不要与 `removals.json` 合并：前者回答“谁应永久封禁”，后者只回答“哪些群级处置还没完成”。确认目标 JSON 与备份一致后再启动新版本。
 
 ## 启动失败排查

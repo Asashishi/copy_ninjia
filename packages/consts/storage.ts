@@ -38,7 +38,6 @@ export const RUNTIME_DATA_ROOT_MAX_MODE: number = 0o750;
  * 这些边界；更深层文件即使是 0644，也不能绕过顶层目录权限。
  */
 export const RUNTIME_SENSITIVE_DIRECTORY_NAMES: readonly string[] = Object.freeze([
-  "config",
   "logs",
   "memory",
 ]);

@@ -34,7 +34,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**1200 tests / 142 files / 9443 `expect()` calls**。全ソースコードの**関数カバレッジは 94.82%、行カバレッジは 96.52%**です。ルート README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**1281 tests / 151 files / 20170 `expect()` calls**。全ソースコードの**関数カバレッジは 95.10%、行カバレッジは 96.84%**です。ルート README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -73,7 +73,17 @@ bun run test:coverage 2>&1 | tail -5           # テスト数、ファイル数�
 bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 ```
 
-3 言語の README にある Tests / Coverage badge、各 README「純 AI 開発」節の「プロジェクト品質」が参照する [`docs/assets/coverage_light.svg`](../assets/coverage_light.svg) と [`coverage_dark.svg`](../assets/coverage_dark.svg)（banner と同様、1 組を 3 言語の README が共用します。両テーマのファイルの数値と、3 つの README の `<img alt>` 内の同等の文言を必ず一緒に更新してください。図は画像として読み込まれるため SVG 内部の `<title>`/`aria-label` は読み上げに届かず、alt が唯一の入口です）、そして 3 言語の本文にある「このドキュメント版の実測値」を同期します。いずれも同じ実測値なので、1 か所直したら全部直します。Coverage badge は常に `All files` の行カバレッジを使います。確率、容量、時間など README 内の動作値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
+以下はいずれも同じ実測値なので、1 か所直したら全部直します。
+
+- **3 言語の README にある Tests / Coverage badge。** Coverage badge は常に `All files` の行カバレッジを使います。
+- **カバレッジ図**：各 README「純 AI 開発」節の「プロジェクト品質」が参照する [`docs/assets/coverage_light.svg`](../assets/coverage_light.svg) と [`coverage_dark.svg`](../assets/coverage_dark.svg)。banner と同様、1 組を 3 言語の README が共用するため、両テーマのファイルの数値を一緒に更新します。
+- **3 つの README の `<img alt>` 内の同等の文言。** 図は画像として読み込まれるため SVG 内部の `<title>` / `aria-label` は読み上げに届かず、alt が唯一の入口です。
+- **3 言語の本文にある「このドキュメント版の実測値」。**
+
+カバレッジとは別に、同じく静かに古くなる実測値が 2 組あります。
+
+- **中国語の文字列リテラル数**（現在およそ 465 箇所 / 56 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、文字列リテラルだけを数えます。
+- **動作値**（確率、容量、時間）：README 内のこれらの数値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース
 

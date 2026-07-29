@@ -76,6 +76,31 @@ function flushAll(): readonly DiskIODomain[] {
 }
 
 /**
+ * 取白名单贴纸包；配置写坏时返回 null，恢复随即降级成「只读不删」。
+ *
+ * 这里是全进程唯一无条件读 config/stickers.json 的地方：AI 闲聊那侧读它的入口
+ * 都在「功能已启用」之后（见 aiChat/availability.ts），而启动恢复不问功能开没开。
+ * 让它抛出等于一份写坏的白名单又把整个进程按在启动阶段——正是把校验挪出
+ * ApplicationLifecycle 要避免的事（见 config/readiness.ts）。
+ *
+ * **绝不能退化成空白名单**：recoverStickerCatalogs 会把不在白名单里的持久化
+ * 文件当孤儿删掉，传空数组就是把 memory/stickers/ 整个清空——一个逗号写错换来
+ * 全部贴纸目录重新调视觉模型生成。null 与空数组因此是两件事：前者表示「这一轮
+ * 对『哪些包该留着』没有发言权」，后者表示「一个包都不该留」。
+ */
+function activeStickerPacks(): readonly string[] | null {
+  try {
+    return getStickerConfig().packs;
+  } catch (error: unknown) {
+    console.error(
+      "[diskIOWorker] sticker whitelist is unusable; recovering catalogs without pruning any file:",
+      error
+    );
+    return null;
+  }
+}
+
+/**
  * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
  * 建目录、扫描解析校验 memory/ai/、memory/stickers/、memory/luck/（含当天
  * 回执密钥）、当天待验证增量文件与 memory/blocklist/blocklist.json，先灌进
@@ -83,7 +108,8 @@ function flushAll(): readonly DiskIODomain[] {
  * 中显式报告；主线程启动
  * 握手据此拒绝以部分/空状态继续运行。
  * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
- * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）；
+ * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）。
+ * 白名单本身读不出来时这一步降级成只读不删（见上方 activeStickerPacks）。
  * 包内部「哪些贴纸还在线上」的对账则在 aiChatWorker 那侧的
  * ai/stickers/catalog.ts 做（需要现查 Telegram，本线程没有 bot.api）。
  */
@@ -95,7 +121,9 @@ function handleLoad(): void {
   let luckReceiptSecret: LuckReceiptSecret | null = null;
   try {
     hydrateAiMemorySnapshots();
-    hydrateStickerCatalogs(getStickerConfig().packs);
+    // 白名单读不出来时照样恢复，只是不做任何删除/隔离：跳过整步会让内存里的
+    // 目录停在空表，而磁盘上明明躺着完好的快照——白白让崩溃重放少一份来源。
+    hydrateStickerCatalogs(activeStickerPacks());
     const todayKey: string = getTokyoDateKey();
     hydrateLuckDay(todayKey);
     luckReceiptSecret = recoverLuckReceiptSecret({

@@ -1,11 +1,12 @@
 import {
   dailyLuckCache,
+  dailyLuckCacheSaturated,
   luckCacheState,
   luckReceiptSecretState,
   luckRuntimeState,
   pendingLuckDraws,
 } from "../../cache/luckChallenge";
-import { LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../consts/luckChallenge";
+import { DAILY_LUCK_CACHE_MAX, LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../consts/luckChallenge";
 import { logger } from "../../infra/logger";
 import { getTokyoDateKey } from "../../libs/time";
 import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage";
@@ -24,7 +25,31 @@ function adoptLuckSecret(secret: LuckReceiptSecret): void {
   luckReceiptSecretState.current = secret;
   luckCacheState.dayKey = secret.day;
   dailyLuckCache.clear();
+  dailyLuckCacheSaturated.current = false;
   pendingLuckDraws.clear();
+}
+
+/**
+ * 收下一条当日已确认结果，撑满时拒收并只记一行日志。
+ *
+ * 拒收而不是淘汰最旧：淘汰等于让一个刷子把当天正常用户的记录顶掉。被拒的 key
+ * 只是「今天测过」记不住——派生是确定性的，重新预览仍是同一条结果（取舍见
+ * consts/luckChallenge.ts 的 DAILY_LUCK_CACHE_MAX）。
+ * @returns 真的收下了为 true；撑满拒收为 false，调用方据此决定要不要落盘。
+ */
+function admitDailyLuckEntry(cacheKey: string, draw: LuckDraw): boolean {
+  if (!dailyLuckCache.has(cacheKey) && dailyLuckCache.size >= DAILY_LUCK_CACHE_MAX) {
+    if (!dailyLuckCacheSaturated.current) {
+      dailyLuckCacheSaturated.current = true;
+      logger.error(
+        `Daily luck cache reached its ${DAILY_LUCK_CACHE_MAX}-entry ceiling for ${luckCacheState.dayKey}; ` +
+        "further confirmed draws will not be remembered or persisted until the Tokyo day rolls over."
+      );
+    }
+    return false;
+  }
+  dailyLuckCache.set(cacheKey, draw);
+  return true;
 }
 
 /** 跨东京零点时向唯一磁盘线程取得新日密钥，并整体切换日缓存。 */
@@ -102,7 +127,9 @@ export function promotePendingDraw(cacheKey: string, confirmedForToday: boolean 
   if (!pending && luckRuntimeState.daySwitchedInProcess && !confirmedForToday) return;
   const draw: LuckDraw = pending ?? deriveLuckDraw(currentLuckSecret(), cacheKey);
 
-  dailyLuckCache.set(cacheKey, draw);
+  // 撑满时连落盘消息都不投：那正是 Worker 侧当日镜像与 memory/luck/<day>.json
+  // 一起无界增长的入口。
+  if (!admitDailyLuckEntry(cacheKey, draw)) return;
   postDiskIO({
     type: "luckDraw",
     day: luckCacheState.dayKey,
@@ -161,6 +188,7 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
       );
       continue;
     }
-    dailyLuckCache.set(key, { tier, fortunePercent: record.fortunePercent });
+    // 恢复同样过闸：磁盘上那份可能是上一版本留下的、超过当前上限的文件。
+    if (!admitDailyLuckEntry(key, { tier, fortunePercent: record.fortunePercent })) break;
   }
 }

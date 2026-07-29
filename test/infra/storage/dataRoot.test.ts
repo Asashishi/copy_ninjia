@@ -22,7 +22,8 @@ describe("runtime data root preflight", () => {
 
     expect(existsSync(nested)).toBeTrue();
     expect((statSync(nested).mode & 0o777) & ~0o750).toBe(0);
-    expect(readdirSync(nested).sort()).toEqual(["config", "logs", "memory"]);
+    expect(readdirSync(nested).sort()).toEqual(["logs", "memory"]);
+    expect(existsSync(join(nested, "config"))).toBeFalse();
   });
 
   test("普通文件占位时给出包含实际路径的可操作错误", async () => {

@@ -1,7 +1,6 @@
 import type { StickerSet } from "@grammyjs/types";
 import { getStickerConfig } from "../../config/stickers";
 import { sendSticker } from "../../infra/telegram";
-import { sleep } from "../../libs/sleep";
 import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
 import { parseIndexField } from "../utils/toolArgs";
 import {
@@ -19,6 +18,12 @@ import {
 } from "../../consts/aiChat/prompts/tools";
 import { REPLY_INVALIDATED_TOOL_ERROR, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } from "../../consts/tools";
 import { toolError } from "../utils/toolResult";
+import {
+  stickerMenuCache,
+  stickerMenuInflight,
+  stickerMenuRevision,
+} from "../../cache/stickers/menu";
+import { pauseForToolAction } from "../utils/toolPause";
 import type { ChatActionControl } from "../../types/aiChat/chatAction";
 import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 import type { StickerCandidate, StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../../types/stickers/tools";
@@ -58,7 +63,33 @@ export function createStickerRoundState(): StickerRoundState {
  * 一枚可用贴纸都没有的包整个跳过；简介还没生成出来的包用占位文案，包内
  * 清单照常可看。
  */
-export async function buildStickerPackMenu(): Promise<StickerPackCandidate[]> {
+export function buildStickerPackMenu(): Promise<readonly StickerPackCandidate[]> {
+  const revision: number = stickerMenuRevision.current;
+  const cached: typeof stickerMenuCache.current = stickerMenuCache.current;
+  if (cached?.revision === revision) return Promise.resolve(cached.menu);
+  const inflight: typeof stickerMenuInflight.current = stickerMenuInflight.current;
+  if (inflight?.revision === revision) return inflight.promise;
+
+  const promise: Promise<readonly StickerPackCandidate[]> = rebuildStickerPackMenu(revision);
+  stickerMenuInflight.current = { revision, promise };
+  return promise;
+}
+
+/** 真正重建一次菜单，并在期间没有再次失效时写回记忆化缓存。 */
+async function rebuildStickerPackMenu(revision: number): Promise<readonly StickerPackCandidate[]> {
+  try {
+    const menu: readonly StickerPackCandidate[] = await collectStickerPackMenu();
+    // 构建期间目录又变过就不落缓存：这一份已经是旧的，下一次取会重建。
+    if (stickerMenuRevision.current === revision) {
+      stickerMenuCache.current = { revision, menu };
+    }
+    return menu;
+  } finally {
+    if (stickerMenuInflight.current?.revision === revision) stickerMenuInflight.current = null;
+  }
+}
+
+async function collectStickerPackMenu(): Promise<StickerPackCandidate[]> {
   const packs: readonly string[] = getStickerConfig().packs;
   // 各包拉取互不依赖，并发进行，避免冷启动/负缓存刚过期时把多个包的网络
   // 延迟串联进同一轮回复。用 allSettled 而非 all：任何一个包的意外异常都
@@ -92,7 +123,7 @@ export function formatPackStickerList(candidate: StickerPackCandidate): string {
  * 整包简介），pack_index 按菜单长度约束取值范围。菜单为空（白名单为空、
  * 或目录还没生成出任何描述）时返回 null——两层工具一起不提供。
  */
-export function buildViewStickerPackToolDefinition(menu: StickerPackCandidate[]): ToolDefinition | null {
+export function buildViewStickerPackToolDefinition(menu: readonly StickerPackCandidate[]): ToolDefinition | null {
   if (menu.length === 0) return null;
 
   const listText: string = menu.map((p: StickerPackCandidate, i: number): string => `${i + 1}. 「${p.title}」（${p.stickers.length} 枚）：${p.summary}`).join("\n");
@@ -115,7 +146,7 @@ export function buildViewStickerPackToolDefinition(menu: StickerPackCandidate[])
 }
 
 /** 构造 send_sticker 的工具定义（两层选择的第二层），菜单为空时返回 null。 */
-export function buildSendStickerToolDefinition(menu: StickerPackCandidate[]): ToolDefinition | null {
+export function buildSendStickerToolDefinition(menu: readonly StickerPackCandidate[]): ToolDefinition | null {
   if (menu.length === 0) return null;
 
   return {
@@ -162,7 +193,7 @@ export function parseStickerIntent(argumentsJson: string): string | null {
  */
 export interface ViewStickerPackToolParams {
   chatAction: ChatActionControl;
-  menu: StickerPackCandidate[];
+  menu: readonly StickerPackCandidate[];
   argumentsJson: string;
   state: StickerRoundState;
   signal?: AbortSignal;
@@ -193,10 +224,11 @@ export async function viewStickerPackTool({
   // 切挡立即补发一次 choose_sticker，之后由心跳按间隔重发维持（间隔小于
   // 约 5 秒的状态过期时间，显示连续）。
   chatAction.set("choose_sticker");
-  await sleep(
-    STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS,
-    signal
-  );
+  const invalidated: string | null = await pauseForToolAction({
+    delayMs: STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS,
+    signal,
+  });
+  if (invalidated !== null) return invalidated;
 
   const candidate: StickerPackCandidate = menu[packIndex - 1]!;
   state.viewedPackIntents.set(packIndex, intent);
@@ -239,7 +271,7 @@ export interface SendStickerToolParams {
   chatAction: ChatActionControl;
   stickerLock: StickerSendLockControl;
   chatId: number;
-  menu: StickerPackCandidate[];
+  menu: readonly StickerPackCandidate[];
   argumentsJson: string;
   state: StickerRoundState;
   onSent: (stickerDescription: string, messageId: number) => void;
@@ -288,15 +320,11 @@ export async function sendStickerTool({
 
   if (chatAction.current() !== "choose_sticker") {
     chatAction.set("choose_sticker");
-    try {
-      await sleep(
-        STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS,
-        signal
-      );
-    } catch (error: unknown) {
-      if (signal?.aborted === true) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-      throw error;
-    }
+    const invalidated: string | null = await pauseForToolAction({
+      delayMs: STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS,
+      signal,
+    });
+    if (invalidated !== null) return invalidated;
   }
   chatAction.set("idle");
   await chatAction.settle();

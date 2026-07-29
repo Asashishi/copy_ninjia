@@ -14,10 +14,17 @@ const globalCopy: {
   copyChatId?: number;
 } = { copiedUser: null };
 let jaEnabled: boolean = true;
+// g-auth.json 的可用性；坏掉时 /ja_copy 必须点名文件而不是让翻译静默失败。
+let jaReadiness: { ok: true } | { ok: false; failure: { file: string; reason: string } } = { ok: true };
 
 const claimCopyCooldownOrReject = mock(async () => cooldownRejected ? { rejected: true as const } : claim);
 const resolveCopyCommandTarget = mock(async (): Promise<CachedUser | undefined> => target);
 
+const loggerError = mock((..._args: unknown[]): void => {});
+mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
+mock.module("../../packages/config/readiness", () => ({
+  jaTranslateConfigReadiness: () => jaReadiness,
+}));
 mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: () => ({ isJATranslationEnabled: jaEnabled }),
@@ -61,6 +68,8 @@ beforeEach(() => {
   cooldownRejected = false;
   target = { id: 7, first_name: "Alice", username: "alice" };
   jaEnabled = true;
+  jaReadiness = { ok: true };
+  loggerError.mockClear();
   globalCopy.copiedUser = null;
   delete globalCopy.copyMode;
   delete globalCopy.copyChatId;
@@ -85,6 +94,28 @@ describe("copy 类命令生命周期", () => {
     cooldownRejected = true;
     await handleCopyCommand(context());
     expect(resolveCopyCommandTarget).not.toHaveBeenCalled();
+  });
+
+  test("服务账号密钥坏掉时 /ja_copy 点名文件，而不是让翻译静默退化成原文", async () => {
+    // 本群开着（密钥是后来才坏的）：仍必须拒绝。翻译失败的降级是静默的
+    // ——原样发出未翻译的原文，群里看不出与「翻译服务抖了一下」的区别。
+    jaReadiness = { ok: false, failure: { file: "g-auth.json", reason: "Invalid g-auth.json: boom" } };
+    await handleCopyCommand(context(), "ja");
+
+    expect(claimCopyCooldownOrReject).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("g-auth.json"),
+      replyToMessageId: 9,
+    });
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Invalid g-auth.json"));
+  });
+
+  test("密钥可用时其余 copy 模式不受这道判定影响", async () => {
+    jaReadiness = { ok: false, failure: { file: "g-auth.json", reason: "Invalid g-auth.json: boom" } };
+    await handleCopyCommand(context(), "nya");
+
+    expect(claimCopyCooldownOrReject).toHaveBeenCalledTimes(1);
   });
 
   test("目标解析失败或已有复制目标时回滚本次冷却占位", async () => {

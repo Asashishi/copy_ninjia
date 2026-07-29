@@ -14,8 +14,9 @@
  */
 
 import type { Message } from "@grammyjs/types";
+import { adDetectConfigReadiness } from "../config/readiness";
 import { logger } from "../infra/logger";
-import { DEEPSEEK_API_KEY, PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
+import { AD_DETECT_DEEPSEEK_API_KEY, PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
 import {
   blockUser,
   confirmBlocklistPersisted,
@@ -112,10 +113,13 @@ function buildSampleContext(message: Message): AdSampleContext | undefined {
 export function buildAdCandidate(message: Message, botId: number): AdCandidateMessage | undefined {
   const chatId: number | undefined = message.chat?.id;
   if (chatId === undefined || message.chat.type === "private") return undefined;
-  // 凭据缺失时整条流水线停摆，而不是让每条群消息都去 Worker 里换一次
-  // 「DeepSeek 没配」的错误日志：/ad_detect enable 已经拦在前面，这里兜的是
-  // 「开关先前开着、之后密钥被从 .env 里撤掉」这条路径。
-  if (DEEPSEEK_API_KEY === undefined) return undefined;
+  // 前提不齐时整条流水线停摆，而不是让每条群消息都去 Worker 里换一次
+  // 「DeepSeek 没配」的错误日志、或让判定线程读示例清单时当场抛出：
+  // /ad_detect enable 已经拦在前面，这里兜的是「开关先前开着、之后密钥被从
+  // .env 里撤掉或 config/ad_samples.json 被改坏」这条路径。readiness 的结论
+  // 按进程缓存，因此这道门禁只是一次布尔比较，不会每条消息读一次盘。
+  if (AD_DETECT_DEEPSEEK_API_KEY === undefined) return undefined;
+  if (!adDetectConfigReadiness().ok) return undefined;
   if (getChatState(chatId).isAdDetectEnabled !== true) return undefined;
 
   // 关联频道推到讨论组的自动转发不参与判定。那条消息的发送者是频道本身，
@@ -134,7 +138,14 @@ export function buildAdCandidate(message: Message, botId: number): AdCandidateMe
   // 已经在黑名单里的人不必再判：处置早就排上了（秒踢、补扫或本次判定登记的
   // 封禁批次），此刻他还在说话只是因为封禁尚未落地。继续送检只会把额度烧在
   // 一个注定要被清出去的人身上，还会换来一次与上一次完全相同的处置。
-  if (isUserBlocked(senderId)) return undefined;
+  //
+  // **但频道马甲不能在这里吞掉**：真人的封禁走 banChatMember，带
+  // revoke_messages，落地时会把这段空档里的消息一起撤掉；频道身份走
+  // banChatSenderChat，那个接口没有 revoke_messages，它抢发的每一条都没有任何
+  // 清理路径。这些照常投给判定线程——那边的投递闸认得 blocked，会直接删掉而
+  // 不进判定额度（见 states/adDetectAdmission.ts 的 admitAdCandidate）。
+  const blocked: boolean = isUserBlocked(senderId);
+  if (blocked && senderChat === undefined) return undefined;
 
   // 图片/视频只看说明文字：广告图本身的识别是另一套流水线，这里不因为拿不到
   // 正文就把整条消息当成空判定。
@@ -166,6 +177,7 @@ export function buildAdCandidate(message: Message, botId: number): AdCandidateMe
     ...(sampleContext ? { sampleContext } : {}),
     label,
     isChannel: senderChat !== undefined,
+    blocked,
     // 「刚进群还没通过验证」是模型自己看不到的事实：群聊转录里没有入群时间，
     // 让它去推只会推出一个编造的理由。待验证镜像正好是主线程的同步状态，
     // 顺手取一次即可；频道马甲不走入群验证，这里恒为 false。

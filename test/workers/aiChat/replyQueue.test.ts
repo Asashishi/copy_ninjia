@@ -9,6 +9,7 @@ import { QUEUED_TRIGGER_SNIPPET_MAX_CHARS, REPLY_ROUND_MAX_CONCURRENT } from "..
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
 import { drainReplyQueue, pushReplyTrigger, triggerKindFor } from "../../../packages/workers/aiChat/replyQueue";
+import { indexBufferedMessage } from "../../../packages/workers/aiChat/replyChain";
 
 afterEach(() => {
   resetAiChatReplyCache();
@@ -25,10 +26,14 @@ describe("AI 回复触发队列", () => {
     expect(triggerKindFor(false, { ...media, directTriggerReason: "reply" })).toBe("mediaDirect");
   });
 
-  test("文本触发快照读取滚动缓存尾部，保留回复对象并截断正文", () => {
+  test("文本触发快照按 replyToMessageId 定位触发消息，不取缓冲尾条", () => {
+    // 主线程把 record 与 trigger 作为两条独立消息投过来，两者之间在途轮次的
+    // onMessageSent 完全可能把机器人自己的消息推进 chatBuffers。取尾条的话，
+    // 排队轮的提示词会渲染成「XX 也在跟你说话（TA 说的是：「机器人上一句」）」
+    // ——模型对着自己编造的内容回复。
     const messages = new LinkedQueue<BufferedMessage>();
-    messages.push({ messageId: 87, id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" });
-    messages.push({
+    const older: BufferedMessage = { messageId: 87, id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" };
+    const trigger: BufferedMessage = {
       messageId: 88,
       id: 2,
       firstName: "Alice",
@@ -37,7 +42,13 @@ describe("AI 回复触发队列", () => {
       forwardedFrom: "频道 [id:-100666] 东京日报",
       replyTo: { messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" },
       at: "",
-    });
+    };
+    // 触发消息之后又落进来一条机器人自己的发言：尾条从此不再是触发消息。
+    const selfSent: BufferedMessage = { messageId: 89, id: 99, firstName: "Ninjia", lastName: "", text: "本天才刚说的话", at: "" };
+    for (const entry of [older, trigger, selfSent]) {
+      messages.push(entry);
+      indexBufferedMessage(-1001, entry);
+    }
     chatBuffers.set(-1001, messages);
 
     pushReplyTrigger({

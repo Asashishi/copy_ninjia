@@ -2,7 +2,8 @@ import type { Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
 import { sendMessage } from "../infra/telegram";
 import { resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
-import { USERNAME_ARG_PATTERN } from "../consts/commands";
+import { sanitizeInline, truncateInline } from "../libs/text";
+import { INVALID_USERNAME_ECHO_MAX_CHARS, USERNAME_ARG_PATTERN } from "../consts/commands";
 
 /** 目标解析失败时按场景发送的提示文案，由调用方（各命令）定制措辞。 */
 export interface CommandTargetMessages {
@@ -79,7 +80,12 @@ export async function resolveCommandTarget({
     }
     const usernameMatch: RegExpExecArray | null = USERNAME_ARG_PATTERN.exec(trimmedArgument);
     if (!usernameMatch) {
-      await sendMessage({ chatId, text: messages.invalidUsername(trimmedArgument), replyToMessageId: messageId });
+      // 回显前压成单行再收进长度上限：参数原文可以长到近 4096 字符，原样插回
+      // 提示语就会拼出一条超过 Telegram 单条上限的消息，发不出去，用户只收到
+      // 沉默（理由见 consts/commands.ts 的 INVALID_USERNAME_ECHO_MAX_CHARS）。
+      // 收在这一层而不是各命令的文案里：四条命令共用同一份 rawArgument。
+      const echoed: string = truncateInline(sanitizeInline(trimmedArgument), INVALID_USERNAME_ECHO_MAX_CHARS);
+      await sendMessage({ chatId, text: messages.invalidUsername(echoed), replyToMessageId: messageId });
       return undefined;
     }
     rawUsername = usernameMatch[1]!;

@@ -16,11 +16,13 @@ import {
   stickerCatalogRetryState,
 } from "../../cache/stickers/catalog";
 import { transientDescriptionCache } from "../../cache/imageDescription";
+import { invalidateStickerMenu } from "../../cache/stickers/menu";
 import {
   GEMINI_SUMMARY_MODEL,
   SUMMARY_TEMPERATURE,
 } from "../../consts/aiChat/memory";
 import {
+  STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS,
   STICKER_CATALOG_RETRY_DELAYS_MS,
   STICKER_CATALOG_RETRY_INTERVAL_MS,
   STICKER_PACK_SUMMARY_MAX_CHARS,
@@ -93,14 +95,30 @@ function getPackMap(pack: string): Map<string, StickerCatalogEntry> {
   return map;
 }
 
-/** 把一枚贴纸记进所属包的失败桶（见 cache/stickers/catalog.ts 的 failedEntries）。 */
+/** 把一枚贴纸记进所属包的失败桶，并压上负缓存到期时刻（见
+ *  cache/stickers/catalog.ts 的 failedEntries）。 */
 function markEntryFailed(pack: string, fileUniqueId: string): void {
-  let failed: Set<string> | undefined = failedEntries.get(pack);
+  let failed: Map<string, number> | undefined = failedEntries.get(pack);
   if (!failed) {
-    failed = new Set();
+    failed = new Map();
     failedEntries.set(pack, failed);
   }
-  failed.add(fileUniqueId);
+  failed.set(fileUniqueId, Date.now() + STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS);
+}
+
+/**
+ * 这枚贴纸的失败记录是否还在退避期内。已经到期的顺手清掉，让本轮对账当场就能
+ * 重描——这正是整包描述失败后目录能自愈的那一步，见 failedEntries 的头注。
+ */
+function isEntryFailureActive(pack: string, fileUniqueId: string): boolean {
+  const failed: Map<string, number> | undefined = failedEntries.get(pack);
+  if (failed === undefined) return false;
+  const retryAt: number | undefined = failed.get(fileUniqueId);
+  if (retryAt === undefined) return false;
+  if (Date.now() < retryAt) return true;
+  failed.delete(fileUniqueId);
+  if (failed.size === 0) failedEntries.delete(pack);
+  return false;
 }
 
 /** 启动时（或本 Worker 崩溃重启后）灌入持久化的贴纸目录。只对内存里还没
@@ -117,6 +135,7 @@ export function hydrateStickerCatalogs(snapshots: Map<string, string>): void {
       if (!isStickerCatalogSnapshot(parsed)) throw new Error("unexpected sticker catalog snapshot shape");
       const snapshot: StickerCatalogSnapshot = parsed;
       catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
+      invalidateStickerMenu();
       // Worker 重启前或极端 FIFO 竞态下，同一 ID 可能曾以普通群贴纸身份进入
       // 临时缓存；常驻目录恢复后立即移除临时副本，保证只有一个权威来源。
       for (const fileUniqueId of Object.keys(snapshot.entries)) {
@@ -242,20 +261,21 @@ export async function generatePackCatalog(pack: string): Promise<void> {
         transientDescriptionCache.delete(fileUniqueId);
         entriesChanged = true;
         dirtyPacks.add(pack);
+        invalidateStickerMenu();
       }
     }
     // 失败记录同样按线上集合剪枝：贴纸被移出包后，它的失败记录留着只会
     // 白占内存（该 id 不会再出现在补齐循环里），一并清掉。
-    const failed: Set<string> | undefined = failedEntries.get(pack);
+    const failed: Map<string, number> | undefined = failedEntries.get(pack);
     if (failed) {
-      for (const fileUniqueId of failed) {
+      for (const fileUniqueId of failed.keys()) {
         if (!liveIds.has(fileUniqueId)) failed.delete(fileUniqueId);
       }
       if (failed.size === 0) failedEntries.delete(pack);
     }
 
     for (const sticker of set.stickers) {
-      if (map.has(sticker.file_unique_id) || failedEntries.get(pack)?.has(sticker.file_unique_id)) continue;
+      if (map.has(sticker.file_unique_id) || isEntryFailureActive(pack, sticker.file_unique_id)) continue;
 
       const source: { fileId: string; fileUniqueId: string } | null = pickStickerVisionSource(sticker);
       if (!source) {
@@ -277,6 +297,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       transientDescriptionCache.delete(sticker.file_unique_id);
       entriesChanged = true;
       dirtyPacks.add(pack);
+      invalidateStickerMenu();
     }
 
     // 整包简介：包内容有增删（简介可能过时）或者还没有简介（首次生成/上次
@@ -290,6 +311,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       if (summary) {
         packSummaries.set(pack, summary);
         dirtyPacks.add(pack);
+        invalidateStickerMenu();
       } else {
         logger.error(`Failed to generate pack summary for sticker pack "${pack}" after retries; layer-1 sticker tool will show a placeholder until next reconcile.`);
       }

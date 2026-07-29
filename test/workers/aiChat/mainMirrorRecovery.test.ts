@@ -49,8 +49,14 @@ mock.module("../../../packages/ai/persistence", () => ({
   },
   onDiskIORespawn: (callback: () => void): void => { diskRespawn = callback; },
 }));
+// hydrate 的删除判据要求 state.json 确实认识这个群（见 aiChat/index.ts）：
+// 只在状态表里、开关不是 true 的群才回收磁盘残留。开着的群必然在表里，
+// 因此这里取两个集合的并集。
+const knownChats = new Set<number>();
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
+  getAllChatStates: (): Map<number, unknown> =>
+    new Map([...aiEnabledChats, ...knownChats].map((chatId: number): [number, unknown] => [chatId, {}])),
 }));
 
 const aiChat = await import("../../../packages/aiChat");
@@ -96,6 +102,7 @@ beforeEach(() => {
   purgedAiMemoryChats.clear();
   aiChatWorkerState.available = false;
   aiEnabledChats.clear();
+  knownChats.clear();
   workerPostAccepted = true;
 });
 
@@ -158,6 +165,8 @@ describe("AI main-thread persistence mirror", () => {
 
   test("启动恢复不会 hydrate 已关闭群，并为磁盘残留安排 durable 删除", () => {
     aiEnabledChats.add(-1002);
+    // -1001 在 state.json 里，只是开关不是 true —— 这才是管理员关掉了它。
+    knownChats.add(-1001);
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
     aiChat.hydrateAiMemory(new Map([
@@ -172,6 +181,26 @@ describe("AI main-thread persistence mirror", () => {
     expect(latestAiMemories).toEqual(new Map([[-1002, "enabled-memory"]]));
     expect(pendingAiMemoryDeletes.get(-1001)).toBe(1);
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1001, revision: 1 });
+  });
+
+  test("state.json 不认识的群：留着文件并点名，不当成「已关闭」删掉", () => {
+    // 「群在状态表里、开关不是 true」是管理员关掉了它；「群根本不在状态表里」
+    // 说明状态自己丢了（LKG 回滚等），这时没有任何权威依据支持删除——而那
+    // 恰恰是最该保住记忆的时刻。留下的是可回收的垃圾，删错的是找不回来的数据。
+    aiEnabledChats.add(-1002);
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+
+    aiChat.hydrateAiMemory(new Map([
+      [-1001, "orphaned-memory"],
+      [-1002, "enabled-memory"],
+    ]));
+
+    expect(pendingAiMemoryDeletes.size).toBe(0);
+    expect(diskPosts.every((message: AiDiskMessage): boolean => message.type !== "deleteAiMemory")).toBeTrue();
+    expect(workerPosts.at(-1)).toEqual({
+      type: "hydrate",
+      memories: new Map([[-1002, "enabled-memory"]]),
+    });
   });
 
   test("purge 后首份新记忆跨两级 Worker 立即持久化，确认后恢复普通批处理", async () => {

@@ -20,9 +20,15 @@ import { join } from "node:path";
 import type { LogMessage } from "../../types/diskIO";
 import type { DayFileState } from "../../types/diskIO/storage";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
-import { DAY_FILE_PATTERN, FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES, RETENTION_DAYS } from "../../consts/diskIO/appendOnly";
+import {
+  DAY_FILE_PATTERN,
+  FLUSH_INTERVAL_MS,
+  FLUSH_MAX_ENTRIES,
+  LOG_REOPEN_RETRY_MS,
+  RETENTION_DAYS,
+} from "../../consts/diskIO/appendOnly";
 import { DAY_MS } from "../../consts/diskIO/common";
-import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";
+import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
 import {
   AppendOnlyFileFormatError,
@@ -80,7 +86,8 @@ function assertLogFileSchema(path: string, parsed: unknown): void {
 /**
  * 接管某日日志前校验领域 schema。可解析的错误结构在通用格式化发生前就拒绝，
  * 保证原字节不变；截断内容则先由 openDayFile 修复，再校验修复结果。两次完整
- * 读取最多发生在启动/跨日打开时，追加热路径不调用本函数。
+ * 读取只发生在启动、跨日打开，以及追加失败后按 LOG_REOPEN_RETRY_MS 退避的那次
+ * 重试上；追加热路径不调用本函数。
  */
 function openLogDay(day: string): DayFileState {
   const path: string = join(LOGS_DIR, `${day}.json`);
@@ -155,6 +162,14 @@ function cleanupOldLogs(): void {
 
 function writeDay(day: string, texts: string[]): boolean {
   if (texts.length === 0) return true;
+  const now: number = Date.now();
+  // 上一次追加失败后还在退避窗口内：直接丢这一批，不重走 openLogDay。磁盘满、
+  // 卷转只读这类故障不会在一个 flush 周期内自愈，而重开一次要把整个日文件读两
+  // 遍、逐条校验 schema、再扫一遍目录——不退避的话每个周期都要按日文件大小付
+  // 一次这个代价，且故障期本身制造的 logger.error 还会把节拍压得更密。这条线程
+  // 同时持有 state.json、黑名单、移除 outbox 与 AI 记忆快照（见
+  // consts/diskIO/appendOnly.ts 的 LOG_REOPEN_RETRY_MS）。
+  if (loggerFileState.current === null && now < loggerReopenState.retryAt) return false;
   try {
     if (loggerFileState.current?.day !== day) {
       loggerFileState.current = openLogDay(day);
@@ -165,11 +180,13 @@ function writeDay(day: string, texts: string[]): boolean {
       state: loggerFileState.current,
       chunk: texts.join(",\n"),
     });
+    loggerReopenState.retryAt = 0;
     return true;
   } catch (err: unknown) {
     // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
     // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。
     loggerFileState.current = null;
+    loggerReopenState.retryAt = now + LOG_REOPEN_RETRY_MS;
     console.error("[diskIOWorker] flush to disk failed:", err);
     return false;
   }

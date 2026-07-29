@@ -20,7 +20,7 @@ export interface DisposeAdSenderParams {
   bundle: AdMessageBundle;
   verdict: AdVerdict;
   /**
-   * 送检那一刻真正交给模型的条目（见 queue.ts 的 selectAdBundleEntries）。与
+   * 送检那一刻真正交给模型的条目（见 bundle.ts 的 selectAdBundleEntries）。与
    * `bundle.entries` 分开传：后者是活对象，往返期间会并进新消息、也可能被裁掉
    * 几条。样本记这一份，删除取两者的并集。
    */

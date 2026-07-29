@@ -46,77 +46,37 @@ import {
 } from "../../../cache/antiRaid/adDetect";
 import {
   AD_DETECT_BATCH_SIZE,
-  AD_DETECT_BUNDLE_MAX_CHARS,
   AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS,
-  AD_DETECT_LINK_URL_MAX_CHARS,
   AD_DETECT_MAX_IN_FLIGHT,
-  AD_DETECT_MAX_LINK_URLS,
-  AD_DETECT_MAX_MESSAGES_PER_SENDER,
-  AD_DETECT_MAX_PENDING_DELETE_IDS,
   AD_DETECT_MAX_PENDING_SENDERS,
   AD_DETECT_MESSAGE_MAX_CHARS,
   AD_DETECT_QUEUE_TICK_MS,
-  AD_SAMPLE_CONTEXT_MAX_CHARS,
 } from "../../../consts/antiRaid/adDetect";
 import { sanitizeInline } from "../../../libs/text";
+import {
+  admitAdBundleStorage,
+  admitAdCandidate,
+  admitAdDispatch,
+  admitAdRequeue,
+} from "../../../states/adDetectAdmission";
+import {
+  appendLinkUrls,
+  boundSampleContext,
+  enforceBundleCapacity,
+  formatAdBundleText,
+  latestSeq,
+  pruneConsumedContext,
+  selectAdBundleEntries,
+} from "./bundle";
+import type { AdBundleSelection } from "./bundle";
 import { verificationKey } from "../../../libs/verificationKey";
-import type { AdCandidateMessage, AdDetectedEvent, AdSampleContext } from "../../../types/antiRaid";
+import type { AdCandidateMessage, AdDetectedEvent } from "../../../types/antiRaid";
 import type { AdCandidateEntry, AdMessageBundle, AdVerdict } from "../../../types/antiRaid/adDetect";
-
-/**
- * 裁掉去重窗口外、并且已经判过的旧上下文。尚未判定的条目即使等待超过一个
- * 窗口也必须留到消费；entries 按序号与时间入队，碰到未消费或仍在窗口内的
- * 第一条就可以停。
- */
-function pruneConsumedContext(bundle: AdMessageBundle, now: number): void {
-  while (bundle.entries.length > 0) {
-    const oldest: AdCandidateEntry | undefined = bundle.entries[0];
-    if (
-      oldest === undefined ||
-      oldest.seq > bundle.checkedSeq ||
-      now - oldest.receivedAt < AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS
-    ) break;
-    bundle.entries.shift();
-  }
-}
-
-/**
- * 把消息串收进单 key 条数上限。
- *
- * 先挤已经判过的旧上下文——同 pruneConsumedContext 的规矩，只不过这里是按条数
- * 而不是按窗口。整串都还没判过时（爆发式刷屏能在第一个节拍到来之前就撑满）
- * 只剩没判过的可丢：正文不再留，但 id 转进 pendingDeleteIds，否则这条广告
- * 既不会被判定读到、也不会进处置的删除集合，会永久留在群里。
- */
-function enforceBundleCapacity(bundle: AdMessageBundle): void {
-  while (
-    bundle.entries.length > AD_DETECT_MAX_MESSAGES_PER_SENDER &&
-    (bundle.entries[0]?.seq ?? Number.POSITIVE_INFINITY) <= bundle.checkedSeq
-  ) {
-    bundle.entries.shift();
-  }
-  while (bundle.entries.length > AD_DETECT_MAX_MESSAGES_PER_SENDER) {
-    const evicted: AdCandidateEntry = bundle.entries.shift()!;
-    if (bundle.pendingDeleteIds.length >= AD_DETECT_MAX_PENDING_DELETE_IDS) {
-      // 每个发送者只记一次：溢出之后每条新消息都会再挤掉一个，逐条记等于刷屏。
-      if (bundle.pendingDeleteOverflowed !== true) {
-        bundle.pendingDeleteOverflowed = true;
-        logger.error(
-          `Ad detection filled the ${AD_DETECT_MAX_PENDING_DELETE_IDS}-id pending-delete list of ` +
-          `sender ${bundle.senderId} in chat ${bundle.chatId}; the oldest ad messages will stay in ` +
-          "the chat even if the sender is flagged."
-        );
-      }
-      bundle.pendingDeleteIds.shift();
-    }
-    bundle.pendingDeleteIds.push(evicted.messageId);
-  }
-}
-
-/** 这一串里最新一条消息的序号；空串返回 0（= 没有任何待判定内容）。 */
-function latestSeq(bundle: AdMessageBundle): number {
-  return bundle.entries[bundle.entries.length - 1]?.seq ?? 0;
-}
+import type {
+  AdBundleStorageDecision,
+  AdCandidateDecision,
+  AdRequeueDecision,
+} from "../../../types/states/adDetectAdmission";
 
 /**
  * 键已经不在队列里、且还有没判过的消息时排队；在途的键与本窗口已经排过的键
@@ -124,13 +84,20 @@ function latestSeq(bundle: AdMessageBundle): number {
  * 并进消息串，等窗口轮换时连同上下文一起判。
  */
 function requeueIfUnchecked(key: string, bundle: AdMessageBundle): void {
-  if (latestSeq(bundle) <= bundle.checkedSeq) return;
-  if (queuedAdDetectKeys.has(key) || inFlightAdDetectKeys.has(key)) return;
-  if (recentlyEnqueuedAdKeys.has(key)) return;
-  if (recentlyEnqueuedAdKeys.size >= AD_DETECT_MAX_PENDING_SENDERS) {
+  const decision: AdRequeueDecision = admitAdRequeue({
+    hasUncheckedContent: latestSeq(bundle) > bundle.checkedSeq,
+    queued: queuedAdDetectKeys.has(key),
+    inFlight: inFlightAdDetectKeys.has(key),
+    recentlyEnqueued: recentlyEnqueuedAdKeys.has(key),
+    dedupWindowSize: recentlyEnqueuedAdKeys.size,
+  });
+  if (decision.action === "skip") return;
+  if (decision.action === "rejectAtCapacity") {
     noteAdDetectCapacitySaturation(true);
     return;
   }
+  // 三张表一起动，缺一张就会让「谁在待检」出现两个互相矛盾的答案，
+  // 见 docs/04-invariants.md。
   recentlyEnqueuedAdKeys.add(key);
   queuedAdDetectKeys.add(key);
   adDetectQueue.push(key);
@@ -141,13 +108,12 @@ function requeueIfUnchecked(key: string, bundle: AdMessageBundle): void {
  * 因此拒绝新的不同 key，而不是淘汰队首。返回 false 时调用方不得再写队列/Set。
  */
 function storeBundle(key: string, bundle: AdMessageBundle): boolean {
-  if (
-    !pendingAdMessages.has(key) &&
-    (
-      pendingAdMessages.size >= AD_DETECT_MAX_PENDING_SENDERS ||
-      recentlyEnqueuedAdKeys.size >= AD_DETECT_MAX_PENDING_SENDERS
-    )
-  ) {
+  const decision: AdBundleStorageDecision = admitAdBundleStorage({
+    alreadyStored: pendingAdMessages.has(key),
+    pendingSize: pendingAdMessages.size,
+    dedupWindowSize: recentlyEnqueuedAdKeys.size,
+  });
+  if (decision.action === "rejectAtCapacity") {
     noteAdDetectCapacitySaturation(true);
     return false;
   }
@@ -172,41 +138,6 @@ export function rotateAdDetectDedupWindow(): void {
 }
 
 /**
- * 把隐藏的落地页 URL 接到已截断的正文后面。
- *
- * URL 段有自己的配额、不占正文的 AD_DETECT_MESSAGE_MAX_CHARS：正文截断从头部
- * 保留，先拼后截就等于给了发送者一个零成本绕过手段——七百字废话把 URL 顶出
- * 额度，「有没有把人带离本群的落点」这条最硬的规则当场失效。上限在这里再收一
- * 次而不是只信主线程：跨线程消息的形状由本函数所在的这一侧兜底。
- */
-function appendLinkUrls(text: string, linkUrls: readonly string[]): string {
-  const urls: string[] = [];
-  for (const raw of linkUrls) {
-    if (urls.length >= AD_DETECT_MAX_LINK_URLS) break;
-    const url: string = sanitizeInline(raw).slice(0, AD_DETECT_LINK_URL_MAX_CHARS);
-    if (url.length === 0 || text.includes(url) || urls.includes(url)) continue;
-    urls.push(url);
-  }
-  if (urls.length === 0) return text;
-  return text.length === 0 ? urls.join(" ") : `${text} ${urls.join(" ")}`;
-}
-
-/**
- * 在 Worker 侧再收一次样本上下文的长度，理由同 appendLinkUrls：跨线程消息的
- * 形状由本侧兜底。原样展开的话这两个字段是整条流水线上唯一没有 Worker 侧上界
- * 的部分，而它们跟着每条 entry 常驻内存，条数按待检表容量放大。
- */
-function boundSampleContext(context: AdSampleContext | undefined): AdSampleContext {
-  if (context === undefined) return {};
-  const quote: string = sanitizeInline(context.quote ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
-  const replyTo: string = sanitizeInline(context.replyTo ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
-  return {
-    ...(quote.length > 0 ? { quote } : {}),
-    ...(replyTo.length > 0 ? { replyTo } : {}),
-  };
-}
-
-/**
  * 收下一条待判定消息：并进该发送者的消息串，并保证他在队列里排着。
  * 判定本身是异步的，这里只做同步记账，不阻塞 mailbox。
  */
@@ -215,25 +146,22 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     sanitizeInline(message.text).slice(0, AD_DETECT_MESSAGE_MAX_CHARS),
     message.linkUrls
   );
-  if (text.length === 0) return;
-
-  // 群管理员/群主的发言不进判定：处置与 /block 同权且不可逆（永久黑名单 + 每个
-  // 托管群封禁 + revoke_messages 抹掉近期消息），而管理员转发合作方链接、玩笑说
-  // 「加我微信」都足以被读成推广。缓存冷时照常送检，判定命中后还有一道以
-  // getChatAdministrators 为准的确证闸（见 detectOne）；这里只是把已知管理员的
-  // 消息挡在额度之外。
-  if (!message.isChannel && freshAdminIds(message.chatId)?.has(message.senderId) === true) return;
-
   const key: string = verificationKey(message.chatId, message.senderId);
-  // 这一轮刚判过他是广告：处置已经发出，主线程正在把人写进黑名单。那之前抢跑
-  // 进来的消息不必再攒一串重判一次——重判只会换来第二次完全相同的处置。
-  if (recentlyDisposedAdKeys.has(key)) {
-    // 频道马甲例外：banChatSenderChat 没有 revoke_messages（见
-    // docs/04-invariants.md），这段空档里频道新发的广告既不会被那次封禁带走，
-    // 也不会再有第二次判定来删它——不在这里删掉就永久留在群里。
-    if (message.isChannel) deleteStragglerAdMessage(message.chatId, message.messageId);
+  // 三道投递闸（没有可判定正文、已知管理员、本窗口刚处置过）收在
+  // states/adDetectAdmission.ts 里；这里只执行结论。
+  const decision: AdCandidateDecision = admitAdCandidate({
+    textLength: text.length,
+    isChannel: message.isChannel,
+    knownAdmin: freshAdminIds(message.chatId)?.has(message.senderId) === true,
+    recentlyDisposed: recentlyDisposedAdKeys.has(key),
+    blocked: message.blocked,
+  });
+  if (decision.action === "deleteStraggler") {
+    deleteStragglerAdMessage(message.chatId, message.messageId);
     return;
   }
+  if (decision.action === "ignore") return;
+
   const existing: AdMessageBundle | undefined = pendingAdMessages.get(key);
   const bundle: AdMessageBundle = existing ?? {
     chatId: message.chatId,
@@ -268,36 +196,6 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
 }
 
 /**
- * 从最新一条往回取，直到 char 预算用完——预算不够时优先保留最近的话，引流话术
- * 的收口句通常在最后。
- *
- * 单独拆出来是因为**命中样本要记的正是这一份**：被预算挡在外面的旧消息模型根本
- * 没读过。对已入选的清单再调一次是幂等的（总长必然仍在预算内）。
- */
-export function selectAdBundleEntries(entries: readonly AdCandidateEntry[]): AdCandidateEntry[] {
-  const selected: AdCandidateEntry[] = [];
-  let budget: number = AD_DETECT_BUNDLE_MAX_CHARS;
-  for (let index: number = entries.length - 1; index >= 0; index--) {
-    const entry: AdCandidateEntry | undefined = entries[index];
-    if (entry === undefined) continue;
-    if (entry.text.length > budget) break;
-    budget -= entry.text.length;
-    selected.push(entry);
-  }
-  return selected.reverse();
-}
-
-/**
- * 把一串消息拼成模型可读的编号清单，取舍见 selectAdBundleEntries。
- * 导出仅为可测试性。
- */
-export function formatAdBundleText(entries: readonly AdCandidateEntry[]): string {
-  return selectAdBundleEntries(entries)
-    .map((entry: AdCandidateEntry, index: number): string => `${index + 1}. ${entry.text}`)
-    .join("\n");
-}
-
-/**
  * 处置前的最后一道身份闸：这个发送者此刻是不是本群管理员。
  *
  * 判定命中才查，且优先用缓存——绝大多数命中都是普通刷屏号，缓存在入群守卫
@@ -323,16 +221,18 @@ async function isAdminSender(bundle: AdMessageBundle): Promise<boolean | undefin
  * 判定一个键并按结果处置。失败与「不是广告」都只推进 checkedSeq：前者是
  * 为了不在故障期间反复重试，后者是正常的放行。
  */
-async function detectOne(key: string, bundle: AdMessageBundle, checkedToSeq: number): Promise<void> {
+async function detectOne(key: string, bundle: AdMessageBundle): Promise<void> {
   let verdict: AdVerdict | null;
   // 管理员豁免：处置是不可逆的（永久黑名单 + 每个托管群封禁 + revoke_messages），
   // 恢复要人工 /unblock 再逐群解封，因此「拿不准」一律按不处置办——查不出身份
   // 时放过一条广告，代价远小于误封群主。
   let isAdmin: boolean | undefined;
-  // 送检那一刻真正入选的条目，**必须在 await 之前定格**：bundle 是活对象，这次
-  // 往返期间新消息会并进同一个 entries 数组、裁剪也可能从头部去掉几条。拿处置
-  // 时的现场当「判定依据」写进样本，复现出来的就是模型没读过的一串。
-  const judged: readonly AdCandidateEntry[] = selectAdBundleEntries(bundle.entries);
+  // 送检那一刻真正入选的条目与它对应的水位，**必须在 await 之前定格**：bundle 是
+  // 活对象，这次往返期间新消息会并进同一个 entries 数组、裁剪也可能从头部去掉几条。
+  // 拿处置时的现场当「判定依据」写进样本，复现出来的就是模型没读过的一串；水位同理
+  // ——按结算时的 latestSeq 推进，就会把这期间新说的话一并记成判过。
+  const selection: AdBundleSelection = selectAdBundleEntries(bundle);
+  const judged: readonly AdCandidateEntry[] = selection.entries;
   try {
     verdict = await classifyAdText({ text: formatAdBundleText(judged), justJoined: bundle.justJoined });
     // 确证也要待在 in-flight 标记之内：标记一放，同一个键就可能被下一拍取走
@@ -349,7 +249,9 @@ async function detectOne(key: string, bundle: AdMessageBundle, checkedToSeq: num
   // 期间这个群可能被停管/关开关，整串已被丢弃或换成了新对象；旧引用对不上就
   // 放弃（同本线程其余异步回调的「状态对象同一性」惯例）。
   if (pendingAdMessages.get(key) !== bundle) return;
-  bundle.checkedSeq = Math.max(bundle.checkedSeq, checkedToSeq);
+  // 只推到本次真正送检的最后一条。预算装不下的那部分仍是未判内容，requeueIfUnchecked
+  // 会把这个键留到去重窗口轮换时再判一次（见 rotateAdDetectDedupWindow）。
+  bundle.checkedSeq = Math.max(bundle.checkedSeq, selection.checkedToSeq);
   if (verdict?.isAd !== true) {
     requeueIfUnchecked(key, bundle);
     return;
@@ -430,10 +332,10 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
   const tasks: Promise<void>[] = [];
   let saturated: boolean = false;
   for (let taken: number = 0; taken < AD_DETECT_BATCH_SIZE; taken++) {
-    // 全局在途闸：批大小只限每拍**起**多少个，拦不住「上一批还没回来就再起
-    // 一批」。判断排在 shift 之前——先取出来再发现发不掉，那个键就从队列里
-    // 消失了，而它未必还有下一条新消息把自己重新排进来。
-    if (inFlightAdDetectKeys.size >= AD_DETECT_MAX_IN_FLIGHT) {
+    // 全局在途闸（判定见 states/adDetectAdmission.ts）：判断排在 shift 之前——
+    // 先取出来再发现发不掉，那个键就从队列里消失了，而它未必还有下一条新消息
+    // 把自己重新排进来。
+    if (admitAdDispatch({ inFlight: inFlightAdDetectKeys.size }).action === "saturated") {
       saturated = true;
       break;
     }
@@ -451,10 +353,9 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
     // 上一次判定还没回来（上一个节拍的请求超时了）：让它自己收尾并重新入队，
     // 同一个人不并发送检两次。
     if (inFlightAdDetectKeys.has(key)) continue;
-    const checkedToSeq: number = latestSeq(bundle);
-    if (checkedToSeq <= bundle.checkedSeq) continue;
+    if (latestSeq(bundle) <= bundle.checkedSeq) continue;
     inFlightAdDetectKeys.add(key);
-    tasks.push(detectOne(key, bundle, checkedToSeq));
+    tasks.push(detectOne(key, bundle));
   }
   noteAdDetectSaturation(saturated);
   if (tasks.length === 0) return Promise.resolve();

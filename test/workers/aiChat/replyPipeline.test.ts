@@ -9,6 +9,7 @@ const admitRound = mock((_input: unknown): RoundDecision => roundDecision);
 const startReplyRound = mock((_input: unknown, _drain: (chatId: number) => void): void => {});
 const pushReplyTrigger = mock((_input: unknown): void => {});
 const drainQueuedReplies = mock((_chatId: number, _start: (trigger: unknown) => void): void => {});
+const flushOverflowNotice = mock((chatId: number): void => { pendingOverflowNotices.delete(chatId); });
 const loggerError = mock((_message: string): void => {});
 const pendingOverflowNotices = new Set<number>();
 const pendingReplyTriggers = new Map<number, { size: number }>();
@@ -37,6 +38,7 @@ mock.module("../../../packages/infra/logger", () => ({
 mock.module("../../../packages/states/replyAdmission", () => ({ admitTrigger, admitRound }));
 mock.module("../../../packages/workers/aiChat/replyQueue", () => ({
   drainReplyQueue: drainQueuedReplies,
+  flushOverflowNotice,
   pushReplyTrigger,
   triggerKindFor: (random: boolean, media: unknown): string => media ? "mediaDirect" : random ? "random" : "direct",
 }));
@@ -70,6 +72,7 @@ beforeEach(() => {
     startReplyRound,
     pushReplyTrigger,
     drainQueuedReplies,
+    flushOverflowNotice,
     admitRound,
     loggerError,
     replyReferenceForBufferedMessage,
@@ -175,6 +178,28 @@ describe("AI reply admission pipeline", () => {
     roundDecision = { action: "run" };
     drainPendingReplyQueues(1_000);
     expect(drainQueuedReplies).toHaveBeenCalledWith(-1001, expect.any(Function));
+  });
+
+  test("轮次结束的推力同样设闸：窗口仍满时只补溢出提示，不空转队列", () => {
+    // 三处推力必须都过闸。轮次结束这一处不设闸的话，撞满 5 分钟窗口且队列非空的
+    // 群里每一轮结束都会空转一次 startReplyRound，被限频闸拒绝时它自己会发一条
+    // 限频提示（自带 60 秒冷却）——整个饱和期每分钟往群里刷一句。
+    pendingReplyTriggers.set(-1001, { size: 3 });
+    const times: LinkedQueue<number> = new LinkedQueue<number>();
+    times.push(900);
+    longTriggerTimes.set(-1001, times);
+    generateAndSendReply(baseRequest);
+    const onFinished = startReplyRound.mock.calls[0]![1];
+    drainQueuedReplies.mockClear();
+
+    roundDecision = { action: "rateLimited" };
+    pendingOverflowNotices.add(-1001);
+    onFinished(-1001);
+
+    expect(drainQueuedReplies).not.toHaveBeenCalled();
+    // 欠着群成员的那条溢出提示不跟着被跳过：它与推队列是两条独立的路径。
+    expect(flushOverflowNotice).toHaveBeenCalledWith(-1001);
+    expect(pendingOverflowNotices.has(-1001)).toBeFalse();
   });
 
   test("身份尚未初始化时直接丢弃触发，不做任何准入判定", () => {

@@ -1,9 +1,11 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { clearAdDetection } from "../antiRaid";
-import { DEEPSEEK_API_KEY } from "../infra/config";
+import { adDetectConfigReadiness } from "../config/readiness";
+import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
+import { refuseIfConfigBroken } from "./configGate";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 
 /**
@@ -14,9 +16,11 @@ import { resolveSuperAdminToggleArg } from "./superAdminToggle";
  * 仅 SUPER_ADMIN_USER_ID 本人可用，与 /ai_chat、/ja_copy、/init 同一批权限。
  *
  * 机器人不是本群管理员时判定根本不会触发（删不掉广告也封不了人），开关照样
- * 可以先开着：补上管理员身份之后立刻生效。缺 DEEPSEEK_API_KEY 则不同——那是
- * 判定本身没有凭据，开着也永远不会有结论，因此这里直接拒绝开启，不留一个
- * 看着已生效、实际什么都不做的开关。
+ * 可以先开着：补上管理员身份之后立刻生效。缺 AD_DETECT_DEEPSEEK_API_KEY 或
+ * config/ad_samples.json 写坏则不同——那是判定本身没有凭据/没有口径，开着也
+ * 永远不会有结论，因此这里直接拒绝开启，不留一个看着已生效、实际什么都不做
+ * 的开关。两道前提分开报：一个要改 .env，一个要改配置文件，混成一句只会让人
+ * 去查错地方。
  */
 export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
@@ -27,13 +31,23 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
 
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  if (arg === "enable" && DEEPSEEK_API_KEY === undefined) {
-    await sendMessage({
+  if (arg === "enable") {
+    if (AD_DETECT_DEEPSEEK_API_KEY === undefined) {
+      await sendMessage({
+        chatId,
+        text: `本天才没有 DeepSeek 的 key，拿什么抓广告呀？去 .env 里补上 AD_DETECT_DEEPSEEK_API_KEY 再重启，笨蛋♡`,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
+    const refused: boolean = await refuseIfConfigBroken({
+      readiness: adDetectConfigReadiness(),
       chatId,
-      text: `本天才没有 DeepSeek 的钥匙，拿什么抓广告呀？去 .env 里补上 DEEPSEEK_API_KEY 再重启，笨蛋♡`,
-      replyToMessageId: messageId,
+      messageId,
+      feature: "Ad detection",
+      text: (file: string): string => `本天才的 ${file} 写坏了，判定口径都读不出来还抓什么广告？修好再重启，笨蛋♡`,
     });
-    return;
+    if (refused) return;
   }
   const state: ChatState = getOrCreateChatState(chatId);
   state.isAdDetectEnabled = arg === "enable";

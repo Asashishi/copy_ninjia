@@ -3,6 +3,7 @@ import { logger } from "../../infra/logger";
 import { bot } from "../../infra/telegram";
 import { failedPacks, inflightStickerSets, stickerSetCache } from "../../cache/stickers/sets";
 import { STICKER_SET_FAILURE_RETRY_MS } from "../../consts/aiChat/stickers";
+import { invalidateStickerMenu } from "../../cache/stickers/menu";
 import { stickerSentTagTemplate } from "../../consts/aiChat/prompts/transcript";
 import type { TelegramVisionSource } from "../../types/media";
 
@@ -40,6 +41,8 @@ export async function getStickerSet(packName: string, api: StickerSetApi = bot.a
     try {
       const set: StickerSet = await api.getStickerSet(packName);
       stickerSetCache.set(packName, set);
+      // 拉到一个此前拿不到的包会让贴纸菜单多出一项，记忆化的那份就旧了。
+      invalidateStickerMenu();
       failedPacks.delete(packName);
       return set;
     } catch (error: unknown) {

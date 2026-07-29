@@ -25,7 +25,7 @@ mock.module("@google/genai", () => ({
     HARM_CATEGORY_DANGEROUS_CONTENT: "HARM_CATEGORY_DANGEROUS_CONTENT",
   },
 }));
-mock.module("../../packages/infra/config", () => ({ GEMINI_API_KEY: "test-key" }));
+mock.module("../../packages/infra/config", () => ({ AI_CHAT_GEMINI_API_KEY: "test-key" }));
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
