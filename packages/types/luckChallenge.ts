@@ -13,7 +13,7 @@ export interface LuckTier {
 }
 
 /** 一次完整的抽签结果：抽中的吉凶档 + 该档区间内浮动出的行大运具体数值。是
- * dailyLuckCache（packages/cache/luckChallenge.ts）的元素类型，也是落盘往返（见
+ * dailyLuckCache（packages/cache/main/luckChallenge.ts）的元素类型，也是落盘往返（见
  * types/diskIO.ts 的 LuckDrawRecord）在主线程内存里的对应形状。 */
 export interface LuckDraw {
   tier: LuckTier;

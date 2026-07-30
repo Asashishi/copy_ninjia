@@ -53,7 +53,7 @@ const {
   confirmedKickedUserIdsByChat,
   confirmedKickedUsersDay,
   sessionBlockedAt,
-} = await import("../../packages/cache/blocklist");
+} = await import("../../packages/cache/main/blocklist");
 const {
   recordUserConfirmedKickedInChat,
   wasUserConfirmedKickedInChat,
@@ -104,6 +104,19 @@ describe("/block 跨群封禁与黑名单", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(isBotAdminIn).not.toHaveBeenCalled();
     expect(resolveCommandTarget).not.toHaveBeenCalled();
+  });
+
+  test("按裸 id 拉黑时战报念出 id，不写成泛指的兜底称呼", async () => {
+    // resolveCommandTarget 对只给 id 的参数返回只带 id 的最小身份（缓存里没有
+    // 这个人）。战报里必须能看出打的是哪个 id，否则打错一位数字没人看得出来。
+    target = { id: 4242 };
+    chatStates.set(-2002, { botIsAdmin: true });
+
+    await handleBlockCommand(context());
+
+    const replies = sendMessage.mock.calls.map((call) => (call[0] as { text: string }).text);
+    expect(replies.at(-1)).toContain("用户 4242");
+    expect(replies.at(-1)).not.toContain("这个杂鱼");
   });
 
   test("目标解析失败或没有任何管理员群时不调用封禁 API", async () => {

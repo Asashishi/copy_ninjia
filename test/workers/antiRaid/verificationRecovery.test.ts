@@ -13,6 +13,16 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage: (event: AntiRaidWorkerEvent): void => { workerEvents.push(event); } },
 });
 
+/** 两个删除入口共用一份实现：清痕迹那条路走三态版，其余路径只看成败。 */
+async function recordDelete(messageId: number): Promise<string> {
+  deletedMessageIds.push(messageId);
+  if (blockNextDelete) {
+    blockNextDelete = false;
+    await new Promise<void>((resolve) => { releaseBlockedDelete = resolve; });
+  }
+  return messageId === 10 ? "failed" : "deleted";
+}
+
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
@@ -23,22 +33,21 @@ mock.module("../../../packages/infra/telegram", () => ({
     reminderAttempts++;
     return reminderResults.shift();
   },
-  deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> => {
-    deletedMessageIds.push(messageId);
-    if (blockNextDelete) {
-      blockNextDelete = false;
-      await new Promise<void>((resolve) => { releaseBlockedDelete = resolve; });
-    }
-    return messageId !== 10;
-  },
+  deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> =>
+    (await recordDelete(messageId)) === "deleted",
+  deleteMessageWithOutcome: async (_chatId: number, messageId: number): Promise<string> => recordDelete(messageId),
   deleteMessageAfter(): void {},
   kickChatMember: async (): Promise<boolean> => { kicks++; return true; },
+  kickChatMemberWithOutcome: async (): Promise<"kicked"> => {
+    kicks++;
+    return "kicked";
+  },
   probeChatMembership: async (): Promise<boolean> => true,
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 
 const runtime = await import("../../../packages/workers/antiRaid/verificationRuntime");
-const { verificationEntries } = await import("../../../packages/cache/antiRaid/verification");
+const { verificationEntries } = await import("../../../packages/cache/workers/antiRaid/verification");
 
 function record(userId: number, expiresAt: number): VerificationSnapshot {
   return {

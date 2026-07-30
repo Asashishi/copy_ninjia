@@ -22,7 +22,7 @@
  * 一批记成已检：绝不猜一个 true 出来，也绝不无限重试——后者在 DeepSeek 侧
  * 故障时就是一场每秒 15 发的请求风暴。
  *
- * 状态全在 cache/antiRaid/adDetect.ts，随 Worker isolate 生死；崩溃重建后队列
+ * 状态全在 cache/workers/antiRaid/adDetect.ts，随 Worker isolate 生死；崩溃重建后队列
  * 清空，主线程不做镜像（判定是尽力而为的启发式，不构成安全边界）。
  */
 
@@ -43,7 +43,7 @@ import {
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
   recentlyEnqueuedAdKeys,
-} from "../../../cache/antiRaid/adDetect";
+} from "../../../cache/workers/antiRaid/adDetect";
 import {
   AD_DETECT_BATCH_SIZE,
   AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS,
@@ -62,6 +62,7 @@ import {
 import {
   appendLinkUrls,
   boundSampleContext,
+  claimSampleContextParts,
   enforceBundleCapacity,
   formatAdBundleText,
   latestSeq,
@@ -70,7 +71,7 @@ import {
 } from "./bundle";
 import type { AdBundleSelection } from "./bundle";
 import { verificationKey } from "../../../libs/verificationKey";
-import type { AdCandidateMessage, AdDetectedEvent } from "../../../types/antiRaid";
+import type { AdCandidateMessage, AdDetectedEvent, AdSampleContext } from "../../../types/antiRaid";
 import type { AdCandidateEntry, AdMessageBundle, AdVerdict } from "../../../types/antiRaid/adDetect";
 import type {
   AdBundleStorageDecision,
@@ -142,11 +143,23 @@ export function rotateAdDetectDedupWindow(): void {
  * 判定本身是异步的，这里只做同步记账，不阻塞 mailbox。
  */
 export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Date.now()): void {
-  const text: string = appendLinkUrls(
-    sanitizeInline(message.text).slice(0, AD_DETECT_MESSAGE_MAX_CHARS),
-    message.linkUrls
-  );
   const key: string = verificationKey(message.chatId, message.senderId);
+  const existing: AdMessageBundle | undefined = pendingAdMessages.get(key);
+  // 裁剪提到接纳判定之前：下面那道引文去重要按「裁完之后这一串还剩哪些条目」算，
+  // 否则会把一段引文认领给本次就要被回收的 entry，新来的这条跟着丢掉它。
+  if (existing !== undefined) pruneConsumedContext(existing, now);
+  // 被引用段/被回复原文与正文一起送检：广告的主流形态是「先发正常消息 → 隔一段
+  // 时间编辑成广告 → 用回复/引用把它顶上来」，广告正文永远不在新消息的 text 里
+  // （详见 bundle.ts 的 claimSampleContextParts，连坐的代价与跨条去重也写在那里）。
+  const context: AdSampleContext = boundSampleContext(message.sampleContext);
+  const text: string = claimSampleContextParts(
+    appendLinkUrls(
+      sanitizeInline(message.text).slice(0, AD_DETECT_MESSAGE_MAX_CHARS),
+      message.linkUrls
+    ),
+    context,
+    existing?.entries ?? []
+  );
   // 三道投递闸（没有可判定正文、已知管理员、本窗口刚处置过）收在
   // states/adDetectAdmission.ts 里；这里只执行结论。
   const decision: AdCandidateDecision = admitAdCandidate({
@@ -162,7 +175,6 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
   }
   if (decision.action === "ignore") return;
 
-  const existing: AdMessageBundle | undefined = pendingAdMessages.get(key);
   const bundle: AdMessageBundle = existing ?? {
     chatId: message.chatId,
     senderId: message.senderId,
@@ -175,7 +187,6 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     checkedSeq: 0,
   };
   if (existing !== undefined) {
-    pruneConsumedContext(bundle, now);
     // 昵称随时可改；播报要用最新的那个。
     bundle.label = message.label;
     // 取并集而不是覆盖：验证会在窗口内通过，先发广告后点验证的人不该洗白。
@@ -186,9 +197,9 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     seq: bundle.nextSeq++,
     text,
     receivedAt: now,
-    // 只随命中样本落盘，判定读的始终只有 text（见 antiRaid/adDetect.ts 的
-    // buildSampleContext）。长度在本线程再收一次，理由见 boundSampleContext。
-    ...boundSampleContext(message.sampleContext),
+    // 两段上下文已经并进上面的 text 参与判定；这里再留一份独立的，只服务命中
+    // 样本——人回头查误判时要分得清哪一段是他自己写的、哪一段是引来的。
+    ...context,
   });
   enforceBundleCapacity(bundle);
   if (!storeBundle(key, bundle)) return;

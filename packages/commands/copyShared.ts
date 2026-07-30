@@ -125,6 +125,8 @@ export async function resolveCopyCommandTarget(
         `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 ${commandName} @username，别在后面夹垃圾♡`,
       unknownUsername: (rawUsername: string): string =>
         `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 ${commandName} 呀♡`,
+      conflictingTarget: (rawArgument: string): string =>
+        `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该盯上哪个杂鱼呀？只留一个再来♡`,
       selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
     },
   });

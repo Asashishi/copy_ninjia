@@ -3,7 +3,14 @@ import type { Context } from "grammy";
 import type { Message, ChatMemberUpdated, User, CallbackQuery } from "@grammyjs/types";
 import { clearChatStateField, flushStateToDisk, getAllChatStates, getOrCreateChatState, saveState, saveStateInBackground } from "../infra/storage/stateStore";
 import { answerCallbackQuery } from "../infra/telegram/actions";
-import { isBotAdminIn, markBotAdminObserved } from "../infra/botAdmin";
+import {
+  ensureBotChatPermissions,
+  isBotAdminIn,
+  markBotAdminObserved,
+  registerBotPermissionObserver,
+} from "../infra/botAdmin";
+import { botChatPermissions } from "../cache/main/botAdmin";
+import type { BotChatPermissions } from "../types/telegram";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { VERIFY_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
 import {
@@ -31,25 +38,26 @@ import {
 } from "./verificationMirror";
 import { claimBlockedJoiner, registerBlocklistRemoval } from "./blocklistGuard";
 import { buildAdCandidate, drainAdDisposals, handleAdDetected } from "./adDetect";
+import { buildFloodCandidate } from "./floodControl";
 import {
   replayPendingBlockedRemovals,
   settleBlockedRemoval,
 } from "../infra/blocklist";
 import { isActiveChatMember, isInviterExemptAdmin, pickMember } from "./memberFacts";
 import { prepareDurableAntiRaidMessages } from "./blocklistDelivery";
-import { antiRaidBarrier, antiRaidRuntimeState } from "../cache/antiRaid/proxy";
+import { antiRaidBarrier, antiRaidRuntimeState } from "../cache/main/antiRaid/proxy";
 import {
   emergencyLockdownRecoveryRuntime,
   pendingLockdownPersistence,
   persistedLockdownFingerprints,
   type PersistedLockdownFingerprint,
-} from "../cache/antiRaid/lockdownMirror";
+} from "../cache/main/antiRaid/lockdownMirror";
 import {
   activeVerificationSnapshots,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
-} from "../cache/antiRaid/verificationMirror";
-import type { AdCandidateMessage, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidWorkerEvent, AntiRaidWorkerMessage, VerificationSnapshot, AdoptableLockdown } from "../types/antiRaid";
+} from "../cache/main/antiRaid/verificationMirror";
+import type { AdCandidateMessage, AdoptLockdownsMessage, AdoptVerificationsMessage, AntiRaidWorkerEvent, AntiRaidWorkerMessage, FloodCandidateMessage, VerificationSnapshot, AdoptableLockdown } from "../types/antiRaid";
 import type { LockdownRecord } from "../types/chatState";
 import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
 import type { VerificationPersistedReply } from "../types/diskIO";
@@ -88,7 +96,7 @@ function buildAdoptVerificationsMessage(generation: number, resumePersistedTermi
  * 把这个群当前的锁定意图写进 state.json，落定后回执给 Worker。
  *
  * 循环是「存下去 → 再看一眼还是不是同一份意图」的对账：不是就带着新意图重存
- * 一次。指纹只含 phase + intentId（见 cache/antiRaid.ts），因此重来一轮意味着
+ * 一次。指纹只含 phase + intentId（见 cache/main/antiRaid/lockdownMirror.ts），因此重来一轮意味着
  * 状态机真的推进了一个阶段——事件驱动、次数有界。轮次上限只是兜底：万一将来
  * 有谁把一个高频变动的字段加回指纹，宁可这个群的握手停下并留一行错误日志，
  * 也不能让主线程陷在「每轮两次带 fsync 的整文件重写」里出不来。停下不是终局，
@@ -189,6 +197,12 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
         persistedVerificationRevisions.set(key, { generation, revision: record.revision });
       }
     }
+    // 权限镜像排在第一次投递：新 isolate 的那张表是空的，而空表按契约等于
+    // 「什么都做不了」。FIFO 保证它先于随后的 adopt 与新到的刷屏计数生效。
+    // **必须排在代际提升与快照重打之后**：那两步在原实现里是无条件执行的，
+    // 提前 return 会让本次重生既没提升代际、也没重打快照，而 activeVerification-
+    // Snapshots 仍带着旧 Worker 的代际——迟到事件的代际比对因此失去分辨力。
+    if (!replayBotPermissions(postToNext)) return;
     if (!postToNext(buildAdoptVerificationsMessage(generation))) return;
     for (const [key, record] of activeVerificationSnapshots) {
       if (record.phase !== "checkingInviter" && record.phase !== "expelling") continue;
@@ -224,6 +238,26 @@ function postAntiRaidOrThrow(message: AntiRaidWorkerMessage): void {
 
 // 黑名单清扫的执行 owner（判定在 infra/blocklist.ts，执行在 Worker）。
 registerBlocklistRemoval(postAntiRaidDurably);
+
+/**
+ * 把机器人自己的权限位镜像给 Worker：观测只发生在主线程（my_chat_member 与
+ * 按需现查），而踢人/禁言/删消息都在 Worker 里执行。
+ *
+ * 投递失败不补偿也不记错误日志：`post` 返回 false 只发生在 Worker 已放弃或正在
+ * 重建时，而 onRespawn 会整表重放（见 replayBotPermissions）。为一次必然被
+ * 重放覆盖的失败刷一行 error，只会把真正的故障淹掉。
+ */
+registerBotPermissionObserver((chatId: number, permissions: BotChatPermissions | undefined): void => {
+  post({ type: "botPermissionsChanged", chatId, ...(permissions !== undefined ? { permissions } : {}) });
+});
+
+/** 把当前整份权限镜像交给（新）Worker；任一条投递被拒即停止，由下一次重建重放。 */
+function replayBotPermissions(postToNext: (message: AntiRaidWorkerMessage) => boolean): boolean {
+  for (const [chatId, permissions] of botChatPermissions) {
+    if (!postToNext({ type: "botPermissionsChanged", chatId, permissions })) return false;
+  }
+  return true;
+}
 
 registerChatTeardown("antiRaid", (chatId: number): void => {
   deactivateAntiRaidChat(chatId);
@@ -411,6 +445,10 @@ export function initAntiRaid(): void {
   const generation: number = nextAntiRaidGeneration();
   try {
     initAntiRaidWorker();
+    // 进程刚起来时这张表通常是空的（权限位要等 my_chat_member 或首次按需现查），
+    // 重放仍然照做：它让「Worker 每次(重)启动后都持有当前镜像」这条不变量无条件
+    // 成立，不必依赖调用顺序去论证某一次为空。
+    replayBotPermissions(post);
     postAntiRaidOrThrow(buildAdoptVerificationsMessage(generation, true));
     // 启动恢复的 outbox 已在 hydrateBlocklist 中按当前黑名单与管理状态过滤。
     // 后台重放不阻塞 runner 启动；任务本身已经 durable，完整进程退出后仍可恢复。
@@ -434,8 +472,16 @@ export function deactivateAntiRaidChat(chatId: number): void {
 
 /**
  * `/ad_detect disable` 的运行态收尾：丢掉这个群还排在 Worker 里的待检消息串。
- * 投递失败必须上抛——主线程这道门禁只拦得住之后的消息，已经排进队列的那些
- * 若继续判定，关掉开关之后还会有人被拉黑。
+ * 主线程那道门禁只拦得住之后的消息，已经排进队列的那些若继续判定，关掉开关
+ * 之后还会有人被拉黑。
+ *
+ * **投递失败必须由调用方兜住，不能让它逃出 update handler**（见
+ * commands/adDetect.ts，同 commands/aiChat.ts 的 invalidateAiChat）。`post()` 只在
+ * 两种状态下返回 false——Worker 用尽重启预算被放弃，或正在重生——而这两种状态下
+ * 那个待检队列本来就跟着旧 isolate 一起没了，没有任何东西需要清。反过来放它抛
+ * 出去的代价是实打实的：开关已经落盘，这条 update 却被判失败，最终 offset 扣住
+ * 不确认、进程非零退出，重启后 Telegram 重投同一条 `/ad_detect disable`——而
+ * Worker 仍然不可用，重投同样失败，恰好把重启循环焊死。
  */
 export function clearAdDetection(chatId: number): void {
   postAntiRaidOrThrow({ type: "clearAdDetect", chatId });
@@ -600,6 +646,22 @@ export async function handleGroupJoinVerification(message: Message, botId: numbe
   if (message.left_chat_member) {
     await postAntiRaidDurably([{ type: "left", chatId: message.chat.id, userId: message.left_chat_member.id }]);
     return false;
+  }
+
+  // 刷屏计数投递：与广告检测同一形态，主线程只做同步门禁 + 一次尽力而为的
+  // post，窗口与禁言都在 Worker 侧（见 workers/antiRaid/floodControl.ts）。排在
+  // 服务消息两条分支之后——入群/离群公告不是谁的「发言」，不该计进那个人的窗口。
+  const floodCandidate: FloodCandidateMessage | undefined = buildFloodCandidate(message, botId);
+  if (floodCandidate !== undefined) {
+    // 顺手把这个群的权限位补齐一次（已知或已在途时是一次 Map 查找）：Worker 侧
+    // 的禁言闸只认镜像过去的权限，而 my_chat_member 未必在本进程生命周期内到过。
+    ensureBotChatPermissions(floodCandidate.chatId);
+    // 投递被拒不记日志，与广告检测那条刻意不同：那一路只在 /ad_detect enable 的
+    // 群上跑，而这一路每条群消息都走。post 返回 false 只有「Worker 正在重建」与
+    // 「已放弃重建」两种成因，前者是亚秒级的、后者在 supervisor 那里已经带着
+    // giveUpConsequence 响过一次；在这里逐条补一行 error，只会按群消息量把
+    // logs/ 刷满，把真正的故障淹掉。丢掉的只是计数，窗口本来就随 isolate 生死。
+    post(floodCandidate);
   }
 
   const userId: number | undefined = message.from?.id;

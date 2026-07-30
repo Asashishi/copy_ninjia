@@ -6,7 +6,7 @@ import {
   resetStickerCatalogCache,
   stickerCatalogCache,
   stickerFlushState,
-} from "../../cache/diskIO/stickers";
+} from "../../cache/workers/diskIO/stickers";
 import { flushDirtyEntries } from "./dirtyFlush";
 import { recoverStickerCatalogs, writeStickerCatalogFile } from "./snapshotFiles";
 import type { StickerCatalogFileDependencies } from "../../types/diskIO/snapshotOwners";

@@ -27,7 +27,7 @@ mock.module("../../packages/infra/logger", () => ({
 }));
 
 const { describeMedia, describeMediaForStickerCatalog } = await import("../../packages/ai/imageDescription");
-const { transientDescriptionCache } = await import("../../packages/cache/imageDescription");
+const { transientDescriptionCache } = await import("../../packages/cache/workers/aiChat/imageDescription");
 const { MEDIA_MAX_DOWNLOAD_BYTES } = await import("../../packages/consts/aiChat/media");
 const originalFetch: typeof fetch = globalThis.fetch;
 const fetchMock = mock(async (..._args: unknown[]): Promise<Response> => new Response("image"));

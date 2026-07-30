@@ -7,6 +7,7 @@ import {
   VERIFICATION_TRACKED_MESSAGE_IDS_MAX,
 } from "../consts/antiRaid/verification";
 import type {
+  ConfirmedThreadCommentEvent,
   ExpelSnapshot,
   JoinEvent,
   PendingState,
@@ -82,6 +83,16 @@ function snapshotOf(state: PendingState): ExpelSnapshot {
 
 function remindersOf(source: Pick<PendingState, "reminderMessageId" | "replyReminderMessageId">): VerificationEffect {
   return { kind: "deleteReminders", reminderMessageId: source.reminderMessageId, replyReminderMessageId: source.replyReminderMessageId };
+}
+
+/** 所有 messageIds 写入口共用同一容量边界，避免迟到提醒绕过普通发言路径。 */
+function appendTrackedMessageId(state: PendingState, messageId: number): void {
+  state.messageIds.push(messageId);
+  while (
+    state.messageIds.length > VERIFICATION_TRACKED_MESSAGE_IDS_MAX
+  ) {
+    state.messageIds.shift();
+  }
 }
 
 function handleJoin(state: VerificationState | undefined, event: JoinEvent): VerificationTransition {
@@ -163,7 +174,7 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
       } else if (state.kind === "pending" && state.announcementMessageId !== event.announcementMessageId) {
         // 同一次入群只该有一条服务消息，真出现第二条也得进清理列表：那道字段
         // 只留一条，落在外面的就成了唯一没人删的痕迹。
-        state.messageIds.push(event.announcementMessageId);
+        appendTrackedMessageId(state, event.announcementMessageId);
         snapshotChanged = true;
       }
     }
@@ -280,13 +291,12 @@ function handleTrackedMessage(
     now: event.now,
   });
   state.trackedMessageTimes.push(event.now);
-  state.messageIds.push(event.messageId);
+  appendTrackedMessageId(state, event.messageId);
   // 常规窗口里根本到不了这个上限（刷屏在第 46 条就转成踢人），它兜的是提醒
   // 一直发不出去、记录被反复续期那条退化路径：数组每次快照都整份重写并落盘，
   // 不设上限就按该成员的发言数无限增长（见 consts 里的同名常量）。丢的只会是
   // 该成员自己最早的几条发言——入群公告在 announcementMessageId 里单独存着，
   // 不在这条队列上，撑满多少次都不会被挤掉。
-  while (state.messageIds.length > VERIFICATION_TRACKED_MESSAGE_IDS_MAX) state.messageIds.shift();
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
     return {
       next: { kind: "expelling", reason: "flood", snapshot: snapshotOf(state) },
@@ -315,6 +325,46 @@ function handleTrackedMessage(
     state.reminderMessageId = undefined;
   }
   return { next: state, effects, snapshotChanged: true };
+}
+
+function handleConfirmedThreadComment(
+  state: VerificationState | undefined,
+  event: ConfirmedThreadCommentEvent
+): VerificationTransition {
+  if (state?.kind === "pending") {
+    return handleTrackedMessage(state, {
+      type: "trackedMessage",
+      messageId: event.messageId,
+      inCommentThread: true,
+      now: event.now,
+    });
+  }
+  if (
+    state?.kind !== "expelling" ||
+    state.reason !== "flood" ||
+    state.executionStarted === true ||
+    !event.allowFloodTerminalExemption
+  ) {
+    return { next: state, effects: [] };
+  }
+  const snapshot: ExpelSnapshot = state.snapshot;
+  return {
+    next: {
+      kind: "exempt",
+      label: snapshot.label,
+      isBot: snapshot.isBot,
+    },
+    effects: [
+      remindersOf(snapshot),
+      { kind: "retractJoinCount", joinedAt: snapshot.joinedAt },
+      {
+        kind: "sendWelcome",
+        variant: "channelComment",
+        targetLabel: snapshot.label,
+        anchorMessageId: event.messageId,
+      },
+    ],
+  };
 }
 
 function handleCallback(
@@ -433,7 +483,7 @@ function handleReminderLanded(
     // 原始提醒还没落地就已被回复式提醒取代（TA 抢先开口说话了），落地即自删。
     return { next: state, effects: [{ kind: "deleteMessage", messageId: event.messageId }] };
   }
-  state.messageIds.push(event.messageId);
+  appendTrackedMessageId(state, event.messageId);
   if (event.reminderKind === "original") state.reminderMessageId = event.messageId;
   else state.replyReminderMessageId = event.messageId;
   // 验证窗口从按钮真正可见时重新给满；网络/限流排队不能蚕食用户可用时间。
@@ -455,6 +505,8 @@ export function transitionVerification(state: VerificationState | undefined, eve
       return { next: undefined, effects: [] };
     case "trackedMessage":
       return handleTrackedMessage(state, event);
+    case "confirmedThreadComment":
+      return handleConfirmedThreadComment(state, event);
     case "callback":
       return handleCallback(state, event);
     case "adminCheckResolved":
@@ -487,6 +539,14 @@ export function transitionVerification(state: VerificationState | undefined, eve
     case "expelSettled":
       if (state?.kind === "expelling") return { next: undefined, effects: [] };
       return { next: state, effects: [] };
+    case "kickRetry":
+      if (
+        state?.kind !== "kickPending" ||
+        state.executionStarted === true
+      ) {
+        return { next: state, effects: [] };
+      }
+      return { next: state, effects: [{ kind: "kickMember" }] };
     case "kickSettled":
       if (state?.kind !== "kickPending") return { next: state, effects: [] };
       return {

@@ -58,7 +58,7 @@ mock.module("../../packages/libs/time", () => ({
 }));
 
 const luckChallenge = await import("../../packages/commands/luckChallenge");
-const cache = await import("../../packages/cache/luckChallenge");
+const cache = await import("../../packages/cache/main/luckChallenge");
 const {
   DAILY_LUCK_CACHE_MAX,
   LUCK_TIERS,

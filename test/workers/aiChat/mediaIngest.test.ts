@@ -19,7 +19,7 @@ mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
 }));
 
 const { recordChatMedia } = await import("../../../packages/workers/aiChat/mediaIngest");
-const { dirtyMemoryChats } = await import("../../../packages/cache/aiChat/memory");
+const { dirtyMemoryChats } = await import("../../../packages/cache/workers/aiChat/memory");
 
 function photoMessage(): AiRecordMediaMessage {
   return {

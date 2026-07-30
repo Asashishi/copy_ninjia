@@ -53,7 +53,7 @@ WantedBy=multi-user.target
 | `memory/stickers/<pack>.json` | 每个白名单贴纸包的 version=1 描述目录：按 `file_unique_id` 保存 emoji/描述及整包摘要 | 可由线上贴纸包重新对账；不再位于 `config/stickers.json` 白名单中的包会在启动恢复时删除 |
 | `memory/luck/<YYYY-MM-DD>.json` | 东京当天运势结果，key 是用户 id，带所求事项时还含事项摘要 | 只保留当天；必须与下方回执密钥处于同一一致性备份中 |
 | `memory/luck/receipt-secret.json` | 当天运势回执的 version=1 HMAC 密钥（日期 + 32 字节 key） | 不可单独删除、重建或从另一备份时点恢复，否则已有结果与回执会不一致 |
-| `memory/anti-raid/<YYYY-MM-DD>.json` | Challenge 待验证状态的当日追加日志；包含 active 快照、重复 revision 与终结 tombstone | 逻辑上只恢复每个 `chatId:userId` 的最后状态；只保留东京当天，达到 10,000 条历史或 4 MiB 时压缩成 active 快照 |
+| `memory/anti-raid/<YYYY-MM-DD>.json` | Challenge 待验证状态的当日追加日志；包含 active 快照、重复 revision 与终结 tombstone | 跨午夜启动先把最新旧日与当天合并（当天 active/tombstone 优先），原子发布成功后才删旧日；稳态只保留东京当天，达到 10,000 条历史或 4 MiB 时压缩成 active 快照 |
 | `memory/blocklist/blocklist.json` | `/block` 永久权威名单（用户 id + 拉黑时刻） | 必须备份：丢了等于全员解除拉黑。正常解除使用 `/unblock`；紧急手工编辑必须停机并保留合法 JSON。文件损坏会**拒绝启动**而不截断自愈；键必须是能原样还原的十进制 id |
 | `memory/blocklist/removals.json` | 尚未完成的群级封禁任务 outbox | 不是名单副本；必须与 `blocklist.json`、`state.json` 处于同一备份一致点。启动时按权威名单与群管理状态过滤后重放，任务落定后删除 |
 | `memory/ad-detected/sample.json` | 广告判定命中的原始样本（时间、消息 id 与正文、判定理由、引用/回复上下文） | **纯旁路，进程从不读它**：丢了不影响任何行为，只影响人回头调 `config/ad_samples.json` 的素材。达到 8 MiB 时自动轮转为 `sample.<东京日期>[.<序号>].json`；归档按文件名日期自动保留今天在内最近 15 个东京自然日 |
@@ -61,7 +61,7 @@ WantedBy=multi-user.target
 | `logs/` | 错误日志（英文文案） | 按需 |
 | `bot.lock`（及 `.guard`/`.recovery`） | 单实例锁 | 不备份、不手工编辑 |
 
-`memory/` 顶层不直接放文件，上述六个领域各占一个子目录。`ai/`、`stickers/`、`luck/`、`anti-raid/` 与 `blocklist/` 会在启动恢复时按需建目录；`ad-detected/` 只在第一次广告命中后建立。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。
+`memory/` 顶层不直接放文件，上述六个领域各占一个子目录。`ai/`、`stickers/`、`luck/`、`anti-raid/` 与 `blocklist/` 会在启动恢复时按需建目录；`ad-detected/` 只在第一次广告命中后建立。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有当天原子快照落地成功才清理旧日。
 
 ### `memory/` 辅助文件与纯内存状态
 

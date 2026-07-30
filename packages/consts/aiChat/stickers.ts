@@ -19,7 +19,7 @@ export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = Object.freeze([15_000, 60_000, 120_000]);
 
 /**
- * 单枚贴纸描述在退避序列也用完之后的负缓存时长（见 cache/stickers/catalog.ts 的
+ * 单枚贴纸描述在退避序列也用完之后的负缓存时长（见 cache/workers/aiChat/stickers/catalog.ts 的
  * failedEntries）。
  *
  * 比 STICKER_CATALOG_RETRY_INTERVAL_MS 长得多：这张表兜的是「这一枚现在描述不

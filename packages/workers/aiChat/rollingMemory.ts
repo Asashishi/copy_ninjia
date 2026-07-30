@@ -10,10 +10,10 @@ import {
   dirtyMemoryChats,
   hasChatMemory,
   pendingSummaries,
-} from "../../cache/aiChat/memory";
-import { clearChatMoodCache } from "../../cache/aiChat/mood";
-import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
-import { activeReplyCounts } from "../../cache/aiChat/replies";
+} from "../../cache/workers/aiChat/memory";
+import { clearChatMoodCache } from "../../cache/workers/aiChat/mood";
+import { invalidateChatRuntimeCache } from "../../cache/workers/aiChat/index";
+import { activeReplyCounts } from "../../cache/workers/aiChat/replies";
 import type { AiMemorySnapshot, BufferedMessage } from "../../types/aiChat/memory";
 
 /** 启动恢复时解析成功、等待按 savedAt 排序的一条群快照。 */
@@ -40,7 +40,7 @@ declare const self: Worker;
  * 条目对象的引用以便异步回填描述，所以入队和构造条目分开。
  *
  * 各群「最后一次有动静」的时间戳也在这里更新（chatLastActivityTimes，见
- * cache/aiChat/memory.ts）：不论文字/媒体、也不论这条消息最终是否触发了
+ * cache/workers/aiChat/memory.ts）：不论文字/媒体、也不论这条消息最终是否触发了
  * AI 回复，只要记进了滚动缓存就算——仅用于容量满时 ensureMemoryCapacity
  * 的 LRU 淘汰排序，心情系统不看群活跃度（见 ai/mood.ts）。
  */
@@ -231,7 +231,7 @@ export function hydrateMemories(memories: Map<number, string>): void {
     const buf: LinkedQueue<BufferedMessage> = new LinkedQueue<BufferedMessage>();
     for (const message of snapshot.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)) {
       buf.push(message);
-      // 回复链索引不落盘，恢复热区的同时同源重建（见 cache/aiChat/memory.ts）。
+      // 回复链索引不落盘，恢复热区的同时同源重建（见 cache/workers/aiChat/memory.ts）。
       indexBufferedMessage(chatId, message);
     }
     if (buf.size > 0) chatBuffers.set(chatId, buf);

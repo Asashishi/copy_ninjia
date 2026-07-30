@@ -5,7 +5,7 @@ import {
   luckReceiptSecretState,
   luckRuntimeState,
   pendingLuckDraws,
-} from "../../cache/luckChallenge";
+} from "../../cache/main/luckChallenge";
 import { DAILY_LUCK_CACHE_MAX, LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../consts/luckChallenge";
 import { logger } from "../../infra/logger";
 import { getTokyoDateKey } from "../../libs/time";

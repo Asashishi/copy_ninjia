@@ -21,7 +21,7 @@ import {
   blocklistRemovalOutbox,
   blocklistRemovalOutboxDirty,
   resetBlocklistRemovalOutboxCache,
-} from "../../cache/diskIO/blocklistRemovals";
+} from "../../cache/workers/diskIO/blocklistRemovals";
 import {
   BLOCKLIST_REMOVAL_ENTRY_KEYS,
   BLOCKLIST_REMOVAL_FILE_KEYS,

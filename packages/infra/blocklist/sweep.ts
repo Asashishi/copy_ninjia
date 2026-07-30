@@ -11,7 +11,7 @@ import {
   blockedUserIds,
   blocklistSweepState,
   pendingBlockedRemovals,
-} from "../../cache/blocklist";
+} from "../../cache/main/blocklist";
 import {
   BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
   BLOCKLIST_SWEEP_RETRY_INTERVAL_MS,
@@ -23,7 +23,7 @@ import {
   queuePendingBlockedRemovalsSnapshot,
   trackBlockedRemoval,
 } from "./outbox";
-import type { BlocklistSweepRecord } from "../../cache/blocklist";
+import type { BlocklistSweepRecord } from "../../cache/main/blocklist";
 import type { BlockedMembersRemovedEvent } from "../../types/antiRaid";
 import type {
   BlocklistRemovalFailure,
@@ -88,6 +88,11 @@ export function noteBanPermissionObserved(chatId: number, canRestrict: boolean):
     failedSweeps: 0,
     permissionBlocked: false,
   });
+  // frozen 秒踢/广告批次各自还带着独立 removalId，新的全名单补扫不会替它们
+  // 回执销账。权限边沿到达时先整批重新交给 Worker，让各批按自己的 complete
+  // 回执收敛；随后 recordBotAdminStatus 仍会调用 sweepBlockedMembers，覆盖
+  // `/block` 直接封禁失败但从未建立 frozen pending 的成员。
+  replayPendingBlockedRemovalsForChat(chatId);
 }
 
 /** 按连续失败次数线性放大重扫间隔，并封顶。 */
@@ -103,6 +108,30 @@ function nextFailedSweeps(failedSweeps: number): number {
   return sweepRetryDelayMs(failedSweeps) >= BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS
     ? failedSweeps
     : failedSweeps + 1;
+}
+
+/**
+ * 「这一轮没成，排下一次」的统一记账：清掉 claim、按当前计数排期、把计数推进一格。
+ *
+ * 收成一处而不是在各失败路径各写一份六字段字面量——散着写正是退避永不增长的成因：
+ * `sweepBlockedMembers` 的两条降级路径（登记不进 outbox、投递边界抛错）原样回写
+ * failedSweeps，而 nextFailedSweeps 此前只在回执结算里调用。执行 owner 持续抛错
+ * （Worker 不可用、outbox 满）时，每次重试都按基础间隔 BLOCKLIST_SWEEP_RETRY_INTERVAL_MS
+ * 排期、永远走不到 BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS，每一轮还烧掉一个 outbox
+ * id 加一行错误日志。
+ *
+ * nextRetryAt 用**推进前**的计数算，与回执那条路径保持同一口径（那边排期用的是
+ * 派发时写下的 nextRetryAt，计数留给下一轮）。
+ */
+function noteSweepAttemptFailed(chatId: number, failedSweeps: number, now: number): void {
+  blocklistSweepState.set(chatId, {
+    removalId: null,
+    sweptAt: null,
+    nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
+    resweepRequested: false,
+    failedSweeps: nextFailedSweeps(failedSweeps),
+    permissionBlocked: false,
+  });
 }
 
 /** 新一轮补扫完整取代同群旧批次，避免 outbox 与重放量随失败轮次增长。 */
@@ -148,14 +177,7 @@ export async function sweepBlockedMembers(
   } catch (error: unknown) {
     // 满仓或 id 耗尽必须在 update 内就地降级；抛出去会形成重投/重启循环。
     logger.error(`Failed to queue the blocklist sweep of chat ${chatId}:`, error);
-    blocklistSweepState.set(chatId, {
-      removalId: null,
-      sweptAt: null,
-      nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
-      resweepRequested: false,
-      failedSweeps,
-      permissionBlocked: false,
-    });
+    noteSweepAttemptFailed(chatId, failedSweeps, now);
     return;
   }
   // 先成功登记新任务，再删旧任务，避免登记异常时把唯一恢复依据提前销掉。
@@ -174,14 +196,9 @@ export async function sweepBlockedMembers(
     // 回执可能抢先到达；只有这批仍是当前 claim 时才写回失败，避免踩掉 sweptAt。
     if (blocklistSweepState.get(chatId)?.removalId === params.removalId) {
       recordPendingRemovalFailure(params.removalId, chatId, "delivery-boundary");
-      blocklistSweepState.set(chatId, {
-        removalId: null,
-        sweptAt: null,
-        nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
-        resweepRequested: false,
-        failedSweeps,
-        permissionBlocked: false,
-      });
+      // 这批任务不会再有回执来推进退避（claim 已清空，迟到的回执走
+      // requestBlocklistResweep 那条不动计数的路），因此必须在这里推进。
+      noteSweepAttemptFailed(chatId, failedSweeps, now);
     }
     throw error;
   }
@@ -279,6 +296,30 @@ function recordPendingRemovalFailure(
   if (!queuePendingBlockedRemovalsSnapshot()) {
     logger.error(`Failed to queue blocklist removal retry state ${removalId}.`);
   }
+}
+
+function replayPendingBlockedRemovalsForChat(chatId: number): void {
+  const removals: RemoveBlockedMembersParams[] = [];
+  for (const pending of pendingBlockedRemovals.values()) {
+    if (
+      pending.params.chatId !== chatId ||
+      pending.params.probeMembership
+    ) {
+      continue;
+    }
+    const params: RemoveBlockedMembersParams | undefined =
+      materializeRemovalParams(pending.params);
+    if (params !== undefined) removals.push(params);
+  }
+  if (removals.length === 0) return;
+  void blockedMemberRemoverHolder.current(removals).catch(
+    (error: unknown): void => {
+      logger.error(
+        `Failed to replay ${removals.length} permission-blocked removal batch(es) for chat ${chatId}:`,
+        error
+      );
+    }
+  );
 }
 
 /**

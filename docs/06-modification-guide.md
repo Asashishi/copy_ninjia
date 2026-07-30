@@ -33,7 +33,7 @@
 - **自己补上流水线的前置动作**：注册点在自动流水线**之前**，拿不到它那道自发消息门禁与 `cacheSender`。handler 必须自己调 `isBotOwnMessage` 跳过机器人自己的消息（否则频道回弹会形成自问自答的刷屏循环），并自己把发起人写进 username 缓存。
 - **不能进 `BOT_COMMANDS` 菜单**：BotFather 的命令名同样只收 ASCII（拉丁字母、数字、下划线，最长 32 字符）。`setMyCommands` 是整体提交，混入一个非法名会让整份菜单以 `BOT_COMMAND_INVALID` 失败，而注册失败只记日志不阻断启动，菜单会静默消失。想在菜单里曝光用法，就加一条 ASCII 占位说明项（现有的 `/x`），把语法写在 description 里。
 - **占位项必须注册 handler**：点菜单会真的把命令发出去，不注册就会落到消息兜底、被当成普通消息进入 AI/复读流水线；而注册成完全不做事的空 handler 又会让点了菜单的人只收到一片沉默。正确做法是回一条用法提示并就此终止链路。
-- **必须自带全局限流**：这类命令没有命令菜单那层天然约束，谁都能随手造一个动作词。窗口与上限进 `packages/consts/commands.ts`，时间戳队列进 `packages/cache/<domain>.ts`，判定复用 [`libs/slidingWindowRateLimit.ts`](../packages/libs/slidingWindowRateLimit.ts)（纯函数，就地维护调用方传入的队列，本身不持有状态）。
+- **必须自带全局限流**：这类命令没有命令菜单那层天然约束，谁都能随手造一个动作词。窗口与上限进 `packages/consts/commands.ts`，时间戳队列进 `packages/cache/main/<domain>.ts`，判定复用 [`libs/slidingWindowRateLimit.ts`](../packages/libs/slidingWindowRateLimit.ts)（纯函数，就地维护调用方传入的队列，本身不持有状态）。
 
 ## 在回复里加链接或格式
 
@@ -47,7 +47,7 @@
 - `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文的字符串字面量约 465 处、分布在 56 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+需要别的语言就 fork 一份自己改。生产代码里含中文的字符串字面量约 486 处、分布在 58 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
 
 ## 调整行为参数
 
@@ -99,7 +99,7 @@
 
 ## 新增运行时缓存
 
-1. 放 `packages/cache/<domain>/`（或领域文件），文件头注明 owner 模块；可变单例用 holder 对象 `{ current: T | null }`。
+1. 放 `packages/cache/<owner 线程>/<domain>`（线程目录见 [03 目录导览](03-directory-map.md#缓存按线程分权)），文件头注明 owner 模块；可变单例用 holder 对象 `{ current: T | null }`。
 2. 每个导出写 JSDoc 生命周期：何时填充、何时清理、Worker 崩溃重启后如何重建。
 3. 给出容量上限与清理策略，并核对 [04 运行时权威约束](04-invariants.md#worker-与状态所有权) 对长期容器的要求（有界、有 owner、有重建语义）。
 4. 需要随停机 flush/结算的，统一走 `packages/libs/flushBarrier.ts`，不自建 resolver Map。
@@ -117,7 +117,7 @@
 
 ## 改动 Worker 间协议
 
-`packages/types/` 持有跨线程消息协议。改协议时同步三处：类型定义、主线程侧代理（`packages/infra/` 或 `packages/cache/` 对应模块）、Worker 侧处理（`packages/workers/<domain>/`）。请求/回执式交互遵循 [04](04-invariants.md#worker-与状态所有权) 的 waiter 先登记再投递、超时/崩溃统一结算模式（现成范例：`/switch_mood` 握手）。
+`packages/types/` 持有跨线程消息协议。改协议时同步三处：类型定义、主线程侧代理（`packages/infra/` 或 `packages/cache/main/` 对应模块）、Worker 侧处理（`packages/workers/<domain>/`）。请求/回执式交互遵循 [04](04-invariants.md#worker-与状态所有权) 的 waiter 先登记再投递、超时/崩溃统一结算模式（现成范例：`/switch_mood` 握手）。
 
 ---
 

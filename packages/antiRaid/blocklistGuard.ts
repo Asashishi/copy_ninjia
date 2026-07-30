@@ -5,7 +5,7 @@ import {
   trackBlockedRemoval,
 } from "../infra/blocklist";
 import { logger } from "../infra/logger";
-import { recentBlockedJoinCounts } from "../cache/antiRaid/blocklistGuard";
+import { recentBlockedJoinCounts } from "../cache/main/antiRaid/blocklistGuard";
 import { verificationKey } from "../libs/verificationKey";
 import { BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES } from "../consts/antiRaid/blocklist";
 import { JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
@@ -68,7 +68,7 @@ function pruneRecentBlockedJoins(now: number): void {
  * 这次入群是否还欠一笔反刷群计数。同一次物理入群会经 chat_member 与
  * new_chat_members 两条路径各来一次，只有第一次该带 joinedAt——处置这一路
  * 没有 joinCreatesNewRecord 那道去重闸，两条都带就是记两次
- * （见 cache/antiRaid/blocklistGuard.ts）。
+ * （见 cache/main/antiRaid/blocklistGuard.ts）。
  */
 function claimBlockedJoinCount(chatId: number, userId: number, now: number): boolean {
   pruneRecentBlockedJoins(now);

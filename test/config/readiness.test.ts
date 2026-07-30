@@ -36,7 +36,7 @@ const {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
   jaTranslateConfigReadinessCache,
-} = await import("../../packages/cache/config");
+} = await import("../../packages/cache/main/configReadiness");
 
 function writeAuthFile(content: string): void {
   writeFileSync(authFilePath, content, "utf8");

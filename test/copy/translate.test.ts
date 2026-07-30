@@ -33,7 +33,7 @@ const {
   quiesceTranslate,
   translateToJapanese,
 } = await import("../../packages/copy/translate");
-const { translateParentCache } = await import("../../packages/cache/translate");
+const { translateParentCache } = await import("../../packages/cache/main/translate");
 
 beforeEach(async () => {
   await closeTranslate();

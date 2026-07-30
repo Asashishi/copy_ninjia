@@ -1,20 +1,46 @@
 import type { Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
 import { sendMessage } from "../infra/telegram";
-import { resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
-import { sanitizeInline, truncateInline } from "../libs/text";
-import { INVALID_USERNAME_ECHO_MAX_CHARS, USERNAME_ARG_PATTERN } from "../consts/commands";
+import { resolveIdTarget, resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
+import { sanitizeDisplayName, truncateInline } from "../libs/text";
+import {
+  CHAT_ID_ARG_PATTERN,
+  INVALID_USERNAME_ECHO_MAX_CHARS,
+  USERNAME_ARG_PATTERN,
+  USER_ID_ARG_PATTERN,
+} from "../consts/commands";
 
 /** 目标解析失败时按场景发送的提示文案，由调用方（各命令）定制措辞。 */
 export interface CommandTargetMessages {
   /** 既没有回复消息、也没给 @username 参数。 */
   missingTarget: string;
-  /** 给了非空参数，但它不是一整个合法的 Telegram @username。 */
+  /** 给了非空参数，但它既不是合法 @username、也不是（按开关）合法的用户 id / 会话 id。 */
   invalidUsername: (rawArgument: string) => string;
   /** 给了 @username，但本天才没缓存过这个人（未曾在群里发言过）。 */
   unknownUsername: (rawUsername: string) => string;
+  /**
+   * 回复了一条消息、同时又给了参数，而两者指向的不是同一个目标。
+   *
+   * 措辞必须让人看出「有两个目标、本天才没挑」——静默取一的那条路正是这类命令
+   * 最容易踩的坑，见 resolveCommandTarget。
+   */
+  conflictingTarget: (rawArgument: string) => string;
   /** 解析出的目标是机器人自己。 */
   selfTarget: string;
+}
+
+/** 参数那一路的解析结果；三态各自对应一句不同的提示。 */
+type ArgumentTarget =
+  | { readonly kind: "resolved"; readonly user: CachedUser }
+  /** 形态就不对：既不是合法 @username，也不是（按开关放行的）id。 */
+  | { readonly kind: "malformed" }
+  /** 是合法 @username，但缓存里没有这个人。 */
+  | { readonly kind: "unknownUsername"; readonly username: string };
+
+interface ResolveArgumentTargetParams {
+  trimmedArgument: string;
+  acceptUserId: boolean;
+  acceptChatId: boolean;
 }
 
 /**
@@ -33,6 +59,83 @@ export interface ResolveCommandTargetParams {
   rawArgument: string;
   /** 解析失败时发送的提示文案。 */
   messages: CommandTargetMessages;
+  /**
+   * 是否接受裸用户 id 作为目标（缺省不接受）。
+   *
+   * 逐命令 opt-in，不做成全局行为：`/block`、`/unblock` 处置的是一个 id，用 id
+   * 指定反而比 @username 更准——用户名可以被释放后由别人重新注册，而 id 不会
+   * 改指另一个人。`/copy` 与中文动作命令则相反，它们要的是一份有名字、有头像的
+   * 身份，拿一个没在本天才见过的群里说过话的裸 id 只能复读出一具空壳。
+   */
+  acceptUserId?: boolean;
+  /**
+   * 是否接受裸会话 id（频道/群的负数 id）作为目标（缺省不接受）。
+   *
+   * 只有 `/unblock` 开。频道马甲的 id 本来就会被写进黑名单（`/block` 回复频道
+   * 消息、广告检测命中 `sender_chat`），可把它划掉此前只有回复消息和 `@username`
+   * 两条路，而广告检测正好会删掉那条消息、没有公开 username 的频道也查不到——
+   * 名单上于是存在划不掉的条目。`/block` 不开这条：粘错一个会话 id 会把处置改
+   * 成封掉整个会话身份，而那条命令不可逆；`/unblock` 是恢复方向，指错至多是一次
+   * 空解封。详见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN。
+   */
+  acceptChatId?: boolean;
+}
+
+/**
+ * 把参数解析成 Telegram 用户 id；不是合法 id 时返回 undefined 交给用户名那条路。
+ *
+ * 正则之外还要过一次安全整数：`99999999999999999999` 完全匹配「十进制正整数」，
+ * 而 `Number` 之后已经不是那个数了，拿它去封人封的是另一个 id。
+ */
+function parseUserIdArgument(argument: string): number | undefined {
+  if (!USER_ID_ARG_PATTERN.test(argument)) return undefined;
+  const userId: number = Number(argument);
+  return Number.isSafeInteger(userId) ? userId : undefined;
+}
+
+/**
+ * 把参数解析成 Telegram 会话 id（频道/群的负数 id）；不合法时返回 undefined。
+ * 安全整数那道闸的理由同 parseUserIdArgument，只是方向朝负。
+ */
+function parseChatIdArgument(argument: string): number | undefined {
+  if (!CHAT_ID_ARG_PATTERN.test(argument)) return undefined;
+  const chatId: number = Number(argument);
+  return Number.isSafeInteger(chatId) ? chatId : undefined;
+}
+
+/**
+ * 把参数原文解析成目标。不发送任何提示、不看回复目标：调用方要先拿这个结果与
+ * 回复目标比对，才判断得出「两个目标撞了」。
+ */
+function resolveArgumentTarget({
+  trimmedArgument,
+  acceptUserId,
+  acceptChatId,
+}: ResolveArgumentTargetParams): ArgumentTarget {
+  // 裸 id 先认：它与用户名的形态互斥（用户名必须字母开头），谁先试都一样，
+  // 但 id 这条路命中即成立——不查缓存，也就不存在「这个人还没说过话」。
+  // 正负两条路各自按开关放行，形态同样互斥（只有会话 id 带负号）。
+  const targetId: number | undefined = (acceptUserId ? parseUserIdArgument(trimmedArgument) : undefined) ??
+    (acceptChatId ? parseChatIdArgument(trimmedArgument) : undefined);
+  if (targetId !== undefined) return { kind: "resolved", user: resolveIdTarget(targetId) };
+  const usernameMatch: RegExpExecArray | null = USERNAME_ARG_PATTERN.exec(trimmedArgument);
+  if (usernameMatch === null) return { kind: "malformed" };
+  const username: string = usernameMatch[1]!;
+  const user: CachedUser | undefined = resolveUsernameTarget(username);
+  return user === undefined ? { kind: "unknownUsername", username } : { kind: "resolved", user };
+}
+
+/**
+ * 把用户完全可控的参数原文压成能安全插进提示语的一段。
+ *
+ * 先压成单行再收长度：参数原文可以长到近 4096 字符，原样插回提示语就会拼出一条
+ * 超过 Telegram 单条上限的消息，发不出去，用户只收到沉默（理由见 consts/commands.ts
+ * 的 INVALID_USERNAME_ECHO_MAX_CHARS）。用 sanitizeDisplayName 而不是 sanitizeInline：
+ * 这段要被拼进机器人自己写的句子中间，和昵称是同一处境——一个 RLO 就能让整句的
+ * 其余部分反向渲染（理由见 libs/text.ts 的 sanitizeDisplayName）。
+ */
+function echoArgument(trimmedArgument: string): string {
+  return truncateInline(sanitizeDisplayName(trimmedArgument), INVALID_USERNAME_ECHO_MAX_CHARS);
 }
 
 /**
@@ -53,11 +156,18 @@ export function peekCommandTarget(message: Message, rawArgument: string): Cached
 }
 
 /**
- * 解析命令的目标用户/频道：回复目标的消息优先于参数里的 @username——这样
- * 即使对方没有公开 username、或者本天才还没缓存过 TA（比如 privacy mode
- * 没关导致漏听），只要能回复到 TA 发的一条消息就能直接锁定目标。
- * /copy 系、/block 与中文动作命令共用同一套解析流程，只是失败时的嘲讽
- * 文案不同。
+ * 解析命令的目标用户/频道：只给了回复目标时用它——这样即使对方没有公开
+ * username、或者本天才还没缓存过 TA（比如 privacy mode 没关导致漏听），只要能
+ * 回复到 TA 发的一条消息就能直接锁定目标。/copy 系、/block 与中文动作命令共用
+ * 同一套解析流程，只是失败时的嘲讽文案不同。
+ *
+ * **回复目标与参数同时给出、又指向不同的人时报错，绝不静默取一。** 这类命令最
+ * 自然的用法恰恰会撞上它：管理员看到群里有人贴出「请封 123456789」，对着那条
+ * 消息点回复再发 `/block 123456789`。静默优先取回复目标的话，被永久拉黑并在每个
+ * 托管群带 `revoke_messages` 封禁的是贴出这串 id 的同事，而回执里显示的正是那位
+ * 同事的名字，读起来像一次成功确认——「对着别人贴出的 id 动手」本来就是 id 那条
+ * 路被引入的场景（见 acceptUserId）。参数解析不出目标时同样按冲突报错，不再说
+ * 「这不是合法用户名」：那句话会让人以为参数被忽略掉、回复目标生效了。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
  */
 export async function resolveCommandTarget({
@@ -66,35 +176,45 @@ export async function resolveCommandTarget({
   botUserId,
   rawArgument,
   messages,
+  acceptUserId = false,
+  acceptChatId = false,
 }: ResolveCommandTargetParams): Promise<CachedUser | undefined> {
   const messageId: number = message.message_id;
+  const replyTarget: CachedUser | undefined = resolveReplyTarget(message);
+  const trimmedArgument: string = rawArgument.trim();
+  // 回显收在这一层而不是各命令的文案里：四条命令共用同一份 rawArgument。
+  const argument: ArgumentTarget | undefined = trimmedArgument.length === 0
+    ? undefined
+    : resolveArgumentTarget({ trimmedArgument, acceptUserId, acceptChatId });
 
-  let targetUser: CachedUser | undefined = resolveReplyTarget(message);
-  let rawUsername: string | undefined;
-
-  if (!targetUser) {
-    const trimmedArgument: string = rawArgument.trim();
-    if (trimmedArgument.length === 0) {
-      await sendMessage({ chatId, text: messages.missingTarget, replyToMessageId: messageId });
+  let targetUser: CachedUser;
+  if (replyTarget !== undefined) {
+    // 参数与回复指向同一个人是无害的重复（回复某人、又把他的 id 打了一遍），
+    // 照常放行；其余情形一律报冲突，理由见函数头注。
+    if (argument !== undefined && (argument.kind !== "resolved" || argument.user.id !== replyTarget.id)) {
+      await sendMessage({
+        chatId,
+        text: messages.conflictingTarget(echoArgument(trimmedArgument)),
+        replyToMessageId: messageId,
+      });
       return undefined;
     }
-    const usernameMatch: RegExpExecArray | null = USERNAME_ARG_PATTERN.exec(trimmedArgument);
-    if (!usernameMatch) {
-      // 回显前压成单行再收进长度上限：参数原文可以长到近 4096 字符，原样插回
-      // 提示语就会拼出一条超过 Telegram 单条上限的消息，发不出去，用户只收到
-      // 沉默（理由见 consts/commands.ts 的 INVALID_USERNAME_ECHO_MAX_CHARS）。
-      // 收在这一层而不是各命令的文案里：四条命令共用同一份 rawArgument。
-      const echoed: string = truncateInline(sanitizeInline(trimmedArgument), INVALID_USERNAME_ECHO_MAX_CHARS);
-      await sendMessage({ chatId, text: messages.invalidUsername(echoed), replyToMessageId: messageId });
-      return undefined;
-    }
-    rawUsername = usernameMatch[1]!;
-    targetUser = resolveUsernameTarget(rawUsername);
-  }
-
-  if (!targetUser) {
-    await sendMessage({ chatId, text: messages.unknownUsername(rawUsername!), replyToMessageId: messageId });
+    targetUser = replyTarget;
+  } else if (argument === undefined) {
+    await sendMessage({ chatId, text: messages.missingTarget, replyToMessageId: messageId });
     return undefined;
+  } else if (argument.kind === "malformed") {
+    await sendMessage({
+      chatId,
+      text: messages.invalidUsername(echoArgument(trimmedArgument)),
+      replyToMessageId: messageId,
+    });
+    return undefined;
+  } else if (argument.kind === "unknownUsername") {
+    await sendMessage({ chatId, text: messages.unknownUsername(argument.username), replyToMessageId: messageId });
+    return undefined;
+  } else {
+    targetUser = argument.user;
   }
 
   // 不能把本天才自己设成目标：/copy 会自己套自己没完没了，/block 更是无稽之谈。

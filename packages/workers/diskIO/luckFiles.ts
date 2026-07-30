@@ -6,7 +6,7 @@
  * 一组窗口阈值（见 consts/diskIO/appendOnly.ts），只是缓冲区、定时器、落盘目标各自
  * 独立，互不影响。按位置追加/损坏修复的字节机制见 appendOnlyDayFile.ts，
  * 追加/清理的纯函数在 snapshotFiles.ts；本文件持有的是「什么时候刷、刷
- * 什么」的领域状态调度（状态本体在 cache/diskIO/luck.ts）。
+ * 什么」的领域状态调度（状态本体在 cache/workers/diskIO/luck.ts）。
  *
  * 本文件运行在磁盘 IO 线程里，自身错误一律 console.error（journal 兜底），
  * 理由见 workers/diskIOWorker.ts 模块头。
@@ -21,7 +21,7 @@ import {
   luckWorkerCache,
   markLuckDirty,
   startLuckDay,
-} from "../../cache/diskIO/luck";
+} from "../../cache/workers/diskIO/luck";
 import { appendLuckEntries, cleanupStaleLuckFiles, recoverLuckDay } from "./snapshotFiles";
 import type { LuckDrawDiskMessage } from "../../types/diskIO";
 import type { LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";

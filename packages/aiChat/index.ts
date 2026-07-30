@@ -19,7 +19,7 @@ import {
   moodSwitchWaiters,
   postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
-} from "../cache/aiChat";
+} from "../cache/main/aiChat";
 import {
   AI_CHAT_INVALIDATE_TIMEOUT_MS,
   AI_MEMORY_FLUSH_TIMEOUT_MS,
@@ -323,7 +323,7 @@ export async function terminateAiChat(): Promise<void> {
 
 /**
  * /switch_mood：要求 aiChatWorker 立即重抽某群的心情（心情缓存在 Worker 内，
- * 见 cache/aiChat/mood.ts），并等待带回执的新心情名。回复由调用方（主线程
+ * 见 cache/workers/aiChat/mood.ts），并等待带回执的新心情名。回复由调用方（主线程
  * 命令处理器）自行发送，Worker 不发 Telegram 消息。Worker 不可用、崩溃或
  * 回执超时（MOOD_SWITCH_TIMEOUT_MS）时 reject，由调用方兜底回复；同一超时
  * 也作为请求的绝对截止时刻，Worker 不执行积压到过期的重抽。
@@ -419,7 +419,7 @@ export function recordChatMessage(
  * @param messageId 这条消息的 message_id（评价回复挂引用用）。
  * @param commentOnResolve 是否在解析成功后评价这份媒体。
  * @param stickerFallbackText kind 为 "sticker" 时解析失败的兜底文本（现有
- *   元数据行，见 ai/stickers/sets.ts 的 describeStickerForContext）；其余
+ *   元数据行，见 ai/stickers/describe.ts 的 describeStickerForContext）；其余
  *   kind 不传。
  * @param directTrigger 这份媒体是在明确跟机器人说话（回复机器人，或 caption
  *   里 @ 机器人）：描述就绪（命中缓存或解析完成，失败用兜底文本）后必触发

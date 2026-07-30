@@ -72,15 +72,17 @@ describe("shouldPassInitGate", () => {
     }
   });
 
-  test("回归用例：从未 /init 过的群里，/luck_challenge 选中后的 via_bot 确认消息仍要放行，" +
-    "否则 handleIncomingMessage 永远够不到 confirmLuckDraw，抽签能看见却永远不落盘", () => {
+  test("回归用例：从未 /init 过的群里，指向自己的 via_bot 内联结果一样拦下——inline 模式对所有人" +
+    "开放，放行等于把「每条消息换一次没有缓存的 getChatMember」的触发权交给任意用户", () => {
     const chatId = -1001111111114;
     const ctx = fakeCtx({
       chat: { id: chatId, type: "supergroup" },
       message: { text: "你好，@someone\n汝的今日运势: 小凶\n有点不太妙哦，杂鱼小心点走路♡", via_bot: { id: ME.id } },
     });
     ctx.msg = ctx.message;
-    expect(shouldPassInitGate(ctx)).toBe(true);
+    // 运势回执不受影响：confirmLuckDraw 是 registerHandlers.ts 里排在本网关之前
+    // 的一道 bot.use（转发副本也要认），从来不靠这条豁免够到。
+    expect(shouldPassInitGate(ctx)).toBe(false);
   });
 
   test("未初始化的群里，别的机器人发的 via_bot 消息（不是自己）：仍然拦下", () => {
@@ -91,6 +93,21 @@ describe("shouldPassInitGate", () => {
     });
     ctx.msg = ctx.message;
     expect(shouldPassInitGate(ctx)).toBe(false);
+  });
+
+  test("已 /init 过的群里，指向自己的 via_bot 内联结果照常放行（走的是 isInitEnabled 那一行）", () => {
+    const chatId = -1001111111117;
+    getOrCreateChatState(chatId).isInitEnabled = true;
+    try {
+      const ctx = fakeCtx({
+        chat: { id: chatId, type: "supergroup" },
+        message: { text: "内联结果", via_bot: { id: ME.id } },
+      });
+      ctx.msg = ctx.message;
+      expect(shouldPassInitGate(ctx)).toBe(true);
+    } finally {
+      getOrCreateChatState(chatId).isInitEnabled = undefined;
+    }
   });
 });
 

@@ -16,7 +16,7 @@ import {
   blocklistRemovalOutbox,
   blocklistRemovalOutboxDirty,
   resetBlocklistRemovalOutboxCache,
-} from "../../../packages/cache/diskIO/blocklistRemovals";
+} from "../../../packages/cache/workers/diskIO/blocklistRemovals";
 import {
   flushBlocklistRemovalOutbox,
   handleBlocklistRemovalsMessage,

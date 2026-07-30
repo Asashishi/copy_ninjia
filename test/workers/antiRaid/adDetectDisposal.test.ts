@@ -25,7 +25,7 @@ mock.module("../../../packages/infra/telegram", () => ({
 }));
 
 const { disposeAdSender } = await import("../../../packages/workers/antiRaid/adDetect/disposal");
-const { adDetectPublishHolder } = await import("../../../packages/cache/antiRaid/adDetect");
+const { adDetectPublishHolder } = await import("../../../packages/cache/workers/antiRaid/adDetect");
 
 function bundle(): AdMessageBundle {
   return {

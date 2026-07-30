@@ -16,7 +16,7 @@
  * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
  * 与黑名单共用 appendOnlyDayFile.ts 的按位置追加/截断修复机制。
  *
- * 原则：磁盘只在启动恢复（load）时被读一次；此后 cache/diskIO/ 下各领域 owner
+ * 原则：磁盘只在启动恢复（load）时被读一次；此后 cache/workers/diskIO/ 下各领域 owner
  * 是唯一事实源，写是「缓存 -> 磁盘」的单向定时同步。本线程自身的内部错误
  * 一律 console.error（journal 兜底）——它就是落盘终点，不能再指望被自己
  * 转发的日志落盘自己的错误，那是一场递归。
@@ -44,9 +44,9 @@ import {
 import { flushStickerCatalogs, hydrateStickerCatalogs, markStickerCatalogSnapshotDirty } from "./diskIO/stickerCatalogFiles";
 import { getStickerConfig } from "../config/stickers";
 import { getTokyoDateKey } from "../libs/time";
-import { aiMemoryCache } from "../cache/diskIO/snapshots";
-import { stickerCatalogCache } from "../cache/diskIO/stickers";
-import { luckWorkerCache } from "../cache/diskIO/luck";
+import { aiMemoryCache } from "../cache/workers/diskIO/snapshots";
+import { stickerCatalogCache } from "../cache/workers/diskIO/stickers";
+import { luckWorkerCache } from "../cache/workers/diskIO/luck";
 import type { VerificationSnapshot } from "../types/antiRaid";
 import type { PendingBlockedRemoval } from "../types/blocklist";
 import type { DiskFlushFailedReply, DiskFlushReply, DiskIODomain, DiskIOMessage, LoadedReply, LuckSecretReply, VerificationPersistedReply, AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../types/diskIO";

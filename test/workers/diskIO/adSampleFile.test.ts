@@ -7,7 +7,7 @@ import {
   adSampleArchiveSweepDay,
   adSampleFileState,
   adSampleTempsSwept,
-} from "../../../packages/cache/diskIO/adSample";
+} from "../../../packages/cache/workers/diskIO/adSample";
 import {
   handleAdSampleMessage,
   sweepExpiredAdSampleArchives,

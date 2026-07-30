@@ -1,4 +1,4 @@
-import { pendingCopySlotClaim } from "../cache/copy/slot";
+import { pendingCopySlotClaim } from "../cache/main/copy/slot";
 import type { GlobalCopyState } from "../types/chatState";
 import type { CopySlotClaim, CopySlotDecision, CopySlotTarget } from "../types/copy/slot";
 

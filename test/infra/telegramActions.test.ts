@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { InputFile, type Api } from "grammy";
-import { sentMessages } from "../../packages/cache/selfSentTracker";
+import { GrammyError, InputFile, type Api } from "grammy";
+import { sentMessages } from "../../packages/cache/perThread/selfSentTracker";
+import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import {
   isChatMember,
+  kickChatMemberWithOutcome,
+  muteChatMemberWithOutcome,
   sendMessageWithResult,
   sendPhotoWithResult,
 } from "../../packages/infra/telegram/actions";
@@ -101,5 +104,84 @@ describe("Telegram 常规动作封装", () => {
     expect(await isChatMember(-1001, 3, apiFor({ status: "restricted", is_member: true }))).toBe(true);
     expect(await isChatMember(-1001, 4, apiFor({ status: "restricted", is_member: false }))).toBe(false);
     expect(await isChatMember(-1001, 5, apiFor({ status: "left" }))).toBe(false);
+  });
+
+  test("禁言收走全部发言权限，截止时刻向上取整到秒", async () => {
+    const restrictMock = mock(async (..._args: unknown[]) => true as const);
+    const api = { restrictChatMember: restrictMock } as unknown as Api;
+
+    // 1500 ms 落在两秒之间：向下取整会把时长抹短，而 Bot API 把「距现在不足
+    // 30 秒」的 until_date 当成永久限制，边界上宁可多一秒。
+    expect(await muteChatMemberWithOutcome({ chatId: -1001, userId: 7, mutedUntil: 1_500, api })).toBe("muted");
+    expect(restrictMock).toHaveBeenCalledWith(-1001, 7, MUTED_CHAT_PERMISSIONS, { until_date: 2 });
+    // 权限集里不允许有任何一项为真，否则那不叫禁言。
+    expect(Object.values(MUTED_CHAT_PERMISSIONS).every((allowed: boolean | undefined): boolean => allowed === false))
+      .toBe(true);
+  });
+
+  test("明确的拒绝与偶发失败分成两档，调用方据此决定要不要重试", async () => {
+    const failWith = (error: unknown): Api => ({
+      restrictChatMember: mock(async (..._args: unknown[]) => { throw error; }),
+    }) as unknown as Api;
+    const mute = (api: Api): Promise<string> =>
+      muteChatMemberWithOutcome({ chatId: -1001, userId: 7, mutedUntil: 60_000, api });
+
+    // 缺 can_restrict_members 与「目标本身是管理员」共用这一句 400；两者都是
+    // 「再试一次也一样」，归到 forbidden。
+    expect(await mute(failWith(new GrammyError(
+      "Bad Request: not enough rights",
+      { ok: false, error_code: 400, description: "Bad Request: not enough rights" },
+      "restrictChatMember",
+      {}
+    )))).toBe("forbidden");
+    // 403 一律算：不在群、被踢出，共同点是这次调用永远不会成功。
+    expect(await mute(failWith(new GrammyError(
+      "Forbidden: bot was kicked",
+      { ok: false, error_code: 403, description: "Forbidden: bot was kicked" },
+      "restrictChatMember",
+      {}
+    )))).toBe("forbidden");
+    // 限流/网络抖动值得等一等再来，不能和上面混成一档。
+    expect(await mute(failWith(new Error("socket hang up")))).toBe("failed");
+    expect(await mute(failWith(new GrammyError(
+      "Too Many Requests",
+      { ok: false, error_code: 429, description: "Too Many Requests: retry after 3" },
+      "restrictChatMember",
+      {}
+    )))).toBe("failed");
+  });
+
+  test("踢人结果保留成功、权限拒绝与瞬时失败三态", async () => {
+    const kickWith = (result: true | unknown): Api => ({
+      unbanChatMember: mock(async (..._args: unknown[]): Promise<true> => {
+        if (result !== true) throw result;
+        return true;
+      }),
+    }) as unknown as Api;
+
+    expect(await kickChatMemberWithOutcome(
+      -1001,
+      7,
+      kickWith(true)
+    )).toBe("kicked");
+    expect(await kickChatMemberWithOutcome(
+      -1001,
+      7,
+      kickWith(new GrammyError(
+        "Bad Request: not enough rights",
+        {
+          ok: false,
+          error_code: 400,
+          description: "Bad Request: not enough rights",
+        },
+        "unbanChatMember",
+        {}
+      ))
+    )).toBe("forbidden");
+    expect(await kickChatMemberWithOutcome(
+      -1001,
+      7,
+      kickWith(new Error("socket hang up"))
+    )).toBe("failed");
   });
 });

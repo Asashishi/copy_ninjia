@@ -5,7 +5,7 @@ import {
   pendingFlushFailedDomains,
   pendingLoad,
   pendingLuckSecrets,
-} from "../../cache/diskIO";
+} from "../../cache/main/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../../consts/workerSupervisor";
 import type {
   DiskBusinessMessage,

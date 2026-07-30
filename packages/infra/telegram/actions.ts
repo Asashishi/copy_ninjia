@@ -2,6 +2,7 @@ import { GrammyError, InputFile } from "grammy";
 import type { Api, InlineKeyboard } from "grammy";
 import type { Message, MessageEntity, ReactionTypeEmoji, ChatMember, MessageId } from "@grammyjs/types";
 import { markSelfSent } from "../selfSentTracker";
+import { MUTED_CHAT_PERMISSIONS } from "../../consts/telegram";
 import { isAdminStatus } from "../../libs/chatMember";
 import {
   combineWithUpdateAbortSignal,
@@ -304,11 +305,61 @@ export async function setMessageReaction({
   );
 }
 
+/**
+ * 一次删除尝试的结局。`gone` 与 `failed` 必须分开：调用方拿删除结果去写群内
+ * 文案或错误日志时，「这条消息已经不在了」和「本机器人删不动它」是两件相反的
+ * 事，混成一个布尔就会让「管理员自己先手删了那条消息」变成一句公开的「快看看
+ * 本天才有没有删消息的权限」（见 workers/antiRaid/verificationEffects.ts）。
+ *
+ * `gone` 覆盖两种成因：消息本来就不存在（已被别人删掉），以及超过 48 小时、
+ * 机器人再也删不掉的旧消息。两者的共同点是「痕迹不用清也清不了，且与权限无关，
+ * 重试一万次都一样」，对文案与日志的意义完全一致，不必再分。
+ */
+export type DeleteMessageOutcome = "deleted" | "gone" | "forbidden" | "failed";
+
+/** Telegram 是否明确说了「这条消息不存在或不可删」，而不是拒绝权限或偶发失败。 */
+function isMessageGone(error: unknown): boolean {
+  if (!(error instanceof GrammyError) || error.error_code !== 400) return false;
+  return /message to delete not found|message can'?t be deleted/i.test(error.description);
+}
+
+/**
+ * 删一条消息并带回三态结局；只关心成败的调用方用下面的 deleteMessage。
+ *
+ * 用得上三态的是那些「删除结果要出现在群内文案或错误日志里」的路径：删不动的
+ * 原因究竟是权限还是消息早就没了，决定了那条公告是在指出真问题，还是在冤枉一个
+ * 权限配置完全正确的管理员。
+ */
+export async function deleteMessageWithOutcome(
+  chatId: number,
+  messageId: number,
+  api: Api = bot.api
+): Promise<DeleteMessageOutcome> {
+  let gone: boolean = false;
+  let permissionDenied: boolean = false;
+  const deleted: boolean = await runTelegramAction({
+    action: "delete message",
+    execute: (signal?: AbortSignal): Promise<true> => api.deleteMessage(chatId, messageId, ...signalArgs(signal)),
+    map: (): boolean => true,
+    fallback: false,
+    shouldLogError: (error: unknown): boolean => {
+      gone = isMessageGone(error);
+      permissionDenied = isPermissionDenied(error);
+      // 「消息已经不在了」不是故障：删痕迹这条路上它甚至是常态（管理员比超时
+      // 更快手删），逐条记一行只会把日志变成噪音。
+      return !gone;
+    },
+  });
+  if (deleted) return "deleted";
+  if (gone) return "gone";
+  return permissionDenied ? "forbidden" : "failed";
+}
+
 export async function deleteMessage(chatId: number, messageId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction(
-    "delete message",
-    (signal?: AbortSignal): Promise<true> => api.deleteMessage(chatId, messageId, ...signalArgs(signal))
-  );
+  const outcome: DeleteMessageOutcome = await deleteMessageWithOutcome(chatId, messageId, api);
+  // 「消息已经不在了」对只看成败的调用方就是成功：它们要的是「这条消息不在群里」
+  // 这个结果，而不是「这次调用改变了什么」。
+  return outcome === "deleted" || outcome === "gone";
 }
 
 /**
@@ -345,12 +396,95 @@ export function deleteMessageAfter({ chatId, messageId, delayMs, api = bot.api }
   }, delayMs).unref();
 }
 
-/** 原子地将成员移出群聊但不加入封禁名单。 */
-export async function kickChatMember(chatId: number, userId: number, api: Api = bot.api): Promise<boolean> {
-  return runBooleanTelegramAction(
-    `kick chat member (chat ${chatId}, user ${userId})`,
-    (signal?: AbortSignal): Promise<true> => api.unbanChatMember(chatId, userId, {}, ...signalArgs(signal))
-  );
+export interface MuteChatMemberParams {
+  chatId: number;
+  userId: number;
+  /** 禁言结束的绝对时刻（ms）；这里换算成 Bot API 的 until_date（秒）。 */
+  mutedUntil: number;
+  api?: Api;
+  signal?: AbortSignal;
+}
+
+/**
+ * 一次禁言尝试的结局，三态的理由同 BanChatMemberOutcome：`forbidden` 是
+ * 「再试一次也一样」（缺 `can_restrict_members`，或目标本身是管理员——Telegram
+ * 对两者回的是同一句 400 `not enough rights`），`failed` 是限流/网络抖动这类
+ * 值得等一等再来的失败。调用方据此决定是就地放弃还是安排重试。
+ */
+export type MuteChatMemberOutcome = "muted" | "forbidden" | "failed";
+
+/**
+ * 临时收走一名成员在本群的全部发言权限（到点由 Telegram 自动恢复）。
+ *
+ * 与踢人/封禁分开一个入口：那两者是不可逆处置，这条只是把人按下去几分钟，
+ * 目前只服务刷屏禁言（见 workers/antiRaid/floodControl.ts）。权限集固定为
+ * MUTED_CHAT_PERMISSIONS，调用方不得自带——「禁言」在本仓库只有一种含义。
+ *
+ * `until_date` 向上取整到秒：Bot API 把「距现在不足 30 秒」当成永久限制，
+ * 向下取整在边界上会把时长抹短，宁可多一秒也不能少。
+ * @returns 三态结局；失败原因已由统一错误边界记进日志。
+ */
+export async function muteChatMemberWithOutcome({
+  chatId,
+  userId,
+  mutedUntil,
+  api = bot.api,
+  signal,
+}: MuteChatMemberParams): Promise<MuteChatMemberOutcome> {
+  let permissionDenied: boolean = false;
+  const muted: boolean = await runTelegramAction({
+    action: `mute chat member (chat ${chatId}, user ${userId})`,
+    execute: (requestSignal?: AbortSignal): Promise<true> => api.restrictChatMember(
+      chatId,
+      userId,
+      MUTED_CHAT_PERMISSIONS,
+      { until_date: Math.ceil(mutedUntil / 1000) },
+      ...signalArgs(requestSignal)
+    ),
+    map: (): boolean => true,
+    fallback: false,
+    signal,
+    shouldLogError: (error: unknown, actionSignal: AbortSignal | undefined): boolean => {
+      permissionDenied = isPermissionDenied(error);
+      return actionSignal?.aborted !== true;
+    },
+  });
+  if (muted) return "muted";
+  return permissionDenied ? "forbidden" : "failed";
+}
+
+/** 一次只踢不封请求的结局；权限拒绝与瞬时失败必须由长生命周期调用方区别处理。 */
+export type KickChatMemberOutcome = "kicked" | "forbidden" | "failed";
+
+/** 原子地将成员移出群聊但不加入封禁名单，并保留失败类别。 */
+export async function kickChatMemberWithOutcome(
+  chatId: number,
+  userId: number,
+  api: Api = bot.api
+): Promise<KickChatMemberOutcome> {
+  let permissionDenied: boolean = false;
+  const kicked: boolean = await runTelegramAction({
+    action: `kick chat member (chat ${chatId}, user ${userId})`,
+    execute: (signal?: AbortSignal): Promise<true> =>
+      api.unbanChatMember(chatId, userId, {}, ...signalArgs(signal)),
+    map: (): boolean => true,
+    fallback: false,
+    shouldLogError: (error: unknown): boolean => {
+      permissionDenied = isPermissionDenied(error);
+      return true;
+    },
+  });
+  if (kicked) return "kicked";
+  return permissionDenied ? "forbidden" : "failed";
+}
+
+/** 只关心是否踢成功的兼容入口。 */
+export async function kickChatMember(
+  chatId: number,
+  userId: number,
+  api: Api = bot.api
+): Promise<boolean> {
+  return (await kickChatMemberWithOutcome(chatId, userId, api)) === "kicked";
 }
 
 /**

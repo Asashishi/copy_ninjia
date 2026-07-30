@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { defaultAdSampleConfigCache } from "../cache/config";
+import { defaultAdSampleConfigCache } from "../cache/perThread/config";
 import { AD_SAMPLE_MAX_CHARS, MAX_CONFIGURED_AD_SAMPLES } from "../consts/antiRaid/adDetect";
 import { AD_SAMPLES_CONFIG_PATH } from "../consts/paths";
 

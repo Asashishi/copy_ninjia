@@ -16,7 +16,7 @@
 - `master` squash 提交经门禁确认后，先推送 `master`，再为该提交创建 annotated version tag 并单独推送。两次推送均成功后，用 `gh release create <tag> --verify-tag --target master ...` 创建 GitHub Release；Release 标题和说明使用英文，只介绍「上一个 Latest Release tag..本次 `master`」的最新增量，至少包含 Highlights、Compatibility / Migration Notes、Validation，测试数与覆盖率必须来自本次真实门禁输出。
 - tag 已推送但 GitHub Release 创建失败时，保留该 tag 并针对同一 tag 重试，不得再次递增版本。`master`、version tag、GitHub Release 任一步未确认成功，都不得宣称发布完成，也不得提前改写 `dev`。
 - `master`、version tag 与 GitHub Release 全部发布成功后，把 `dev` 重新对齐到 `master` 再继续：先 `git diff dev master --quiet` 确认两边树一致，再在 `dev` 上执行 `git reset --hard master` 与 `git push --force-with-lease origin dev`。
-- 覆盖率/测试数分散在徽章、`docs/assets/coverage_{light,dark}.svg`、README 的 `<img alt>` 与三份开发文档里：改动影响到它们时，按合并前那次 `bun run check` 的真实输出逐处同步，不要凭估计填。完整位置清单见 [`docs/05-dev-workflow.md`](docs/05-dev-workflow.md) 的「同步 README 指标」。
+- 覆盖率/测试数分散在徽章、`docs/assets/coverage_{light,dark}.svg`、README 的 `<img alt>` 与三份开发文档里：仅在用户明确要求同步文档或指标时，才按合并前那次 `bun run check` 的真实输出逐处同步，不要凭估计填；未明确要求时不改这些文件，只在交付时提醒用户指标已变化并列出待同步位置。完整位置清单见 [`docs/05-dev-workflow.md`](docs/05-dev-workflow.md) 的「同步 README 指标」。
 
 ## 编码规范
 - 当一个文件的代码行数超过 500 行，考虑拆分成多个文件；超过 1000 行，必须拆分。
@@ -29,10 +29,22 @@
 - 领域变大后拆成 `packages/consts/<domain>/` 子模块，原 `<domain>.ts` 降级为兼容入口（`export * from`），新代码直接从子模块导入。
 
 ### 缓存（进程内存状态）
-- 长期存活的 Map/Set/队列/timer/单例引用放 `packages/cache/<domain>.ts`（或 `<domain>/`），文件头注明 owner 模块，如「AI 闲聊主线程侧代理（packages/aiChat/index.ts）的内存状态」。
+- 长期存活的 Map/Set/队列/timer/单例引用放 `packages/cache/`，**第一层目录必须是 owner 线程**：`main/`、`workers/aiChat/`、`workers/antiRaid/`、`workers/diskIO/`、`perThread/`（每线程各一份、彼此无关的状态）。文件头注明 owner 模块，如「AI 闲聊主线程侧代理（packages/aiChat/index.ts）的内存状态」。
+- 一份缓存只能被它所属的那条线程 import——跨线程只传消息不共享内存，别的线程拿到的是同一份代码的另一个实例，写进去对面永远读不到。`bun run check:conventions` 会从四个线程入口算运行时 import 闭包核对这件事，违例时打印完整引入链；完整规则见 `docs/04-invariants.md` 的「线程与状态归属」。
 - 可变单例用 holder 对象 `{ current: T | null }`，不用 `export let`。
 - 每个导出带 JSDoc 说明生命周期：何时填充、何时清理、Worker 崩溃重启后如何重建；容量与清理策略须满足 `docs/04-invariants.md` 的约束。
 - 泛型写在类型标注上：`const cache: Map<number, string> = new Map()`。
+
+#### 新增缓存的最低跨线程要求
+按顺序过这几条，前一条能满足就不要往下走：
+
+1. **先定 owner：谁写它就归谁。** 判不出唯一写者，说明这不该是一份缓存，而是两份。目录第一层写上这条线程，门禁按真实模块图核对。
+2. **默认不许为一份新缓存新增任何跨线程消息。** 先问「能不能放在用它的那条线程」——能就放那儿，到此为止。绝大多数缓存止于这一条。
+3. **只有观测点与使用点天生不在同一条线程时才允许镜像**（例如只有主线程收得到 Telegram update，只有 Anti-Raid Worker 发得出踢人请求）。允许的形态只有两种：owner 侧**变更时推送**、使用侧只读；或为了不丢数据的**持久化回执**往返。
+4. **禁止「按需向对面要」（每次读取一条 request/reply）。** 一次内存访问换一次 IPC 往返，量级差着数个数量级；真需要这么做，说明缓存放错了线程，回到第 2 条重选，而不是加协议。
+5. **每条群消息级的高频路径上不得新增镜像同步。** 判定要的字段直接放进那条消息里——现成范例是 `floodCandidate`/`adCandidate` 的 `label` 由主线程算好带过去，Worker 不为此另养一份身份缓存。
+6. **镜像的 JSDoc 必须写清四件事，缺一不可**：权威副本在哪条线程；何时推、推全量还是增量；Worker 崩溃重建与进程重启后由谁重放补齐；**「没有条目」表示什么**——必须落在安全的那一侧（「此刻未知 / 这个动作做不了」），绝不能折算成沿用旧值。现成范例见 `packages/cache/workers/antiRaid/botPermissions.ts`。
+7. **别让纯函数和别的线程的缓存同住一个文件。** 主线程 import 一个纯函数，就会把同文件里 Worker 独占的 Map 在主线程也实例化一份、且永远是空的。拆成不碰缓存的叶子模块，范例见 `packages/ai/stickers/describe.ts`。
 
 ### 类型安全
 - 变量类型应该显式写明，不依赖类型推导；函数参数、返回值、对象属性、数组元素等都要标注类型，包括 for (let i: number)。三处例外：`for...of` / `for...in` 的循环变量（TS 语法不允许标注）、初始化器已是全标注箭头函数的 const（不再重复写一遍函数类型）、类型定义反过来引用自身的 `typeof` 常量。
@@ -53,4 +65,6 @@
 
 ### 文档
 - 代码中涉及的约束、流程、设计理念等，写在 `docs/` 下的 Markdown 文档里；代码里只写必要的 JSDoc 注释。
-- 更新代码时，若涉及约束、流程、设计理念，相关参数的变更，必须同步更新 `docs/` 下的文档。
+- 本节是文档改动的执行门禁；仓库其他文件中“需同步”“应更新”等说明只用于定位待同步范围，不构成用户未明确要求时主动修改文档的授权。
+- 用户未显式要求修改或同步文档时，不主动改动 `docs/`、README、文档资产或其他说明文件；若代码变更导致文档、参数说明或实测指标失真，只在交付时明确提醒用户有哪些内容需要同步。
+- 只有用户明确提出“更新文档”“同步文档 / README / 指标”等要求时，才在本次任务中同步；同步内容必须依据本次真实代码与门禁输出，不得凭估计填写。

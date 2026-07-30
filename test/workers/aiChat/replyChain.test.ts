@@ -21,8 +21,8 @@ const {
   chatReplyChainIndexes,
   clearChatMemoryCache,
   resetAiChatMemoryCache,
-} = await import("../../../packages/cache/aiChat/memory");
-const { resetAiChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
+} = await import("../../../packages/cache/workers/aiChat/memory");
+const { resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
 const {
   COMPACT_BATCH_SIZE,
   REPLY_CHAIN_MAX_DEPTH,

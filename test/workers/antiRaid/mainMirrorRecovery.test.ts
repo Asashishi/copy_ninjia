@@ -76,6 +76,11 @@ mock.module("../../../packages/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY
 mock.module("../../../packages/infra/botAdmin", () => ({
   isBotAdminIn: async (): Promise<boolean> => true,
   markBotAdminObserved: async (): Promise<void> => {},
+  botChatPermissionsIn: async (): Promise<undefined> => undefined,
+  // 权限位镜像的注册与按需补齐；本文件不触发，但整份模块被替换掉时缺了
+  // 会在 import 阶段就报 Export not found。
+  registerBotPermissionObserver: (): void => {},
+  ensureBotChatPermissions: (): void => {},
 }));
 mock.module("../../../packages/libs/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
@@ -95,8 +100,8 @@ mock.module("../../../packages/workers/antiRaid/persistence", () => ({
 }));
 
 const antiRaid = await import("../../../packages/antiRaid");
-const { activeVerificationSnapshots, pendingVerificationDeletes } = await import("../../../packages/cache/antiRaid/verificationMirror");
-const { inFlightAdDisposals } = await import("../../../packages/cache/antiRaid/adDisposal");
+const { activeVerificationSnapshots, pendingVerificationDeletes } = await import("../../../packages/cache/main/antiRaid/verificationMirror");
+const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
 
 function record(generation: number, revision: number): VerificationSnapshot {
   return {
@@ -368,7 +373,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     const stateGate = deferred<FlushResult>();
     flushDiskIO.mockImplementationOnce(() => diskGate.promise);
     flushStateToDisk.mockImplementationOnce(() => stateGate.promise);
-    const { antiRaidRuntimeState } = await import("../../../packages/cache/antiRaid/proxy");
+    const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
     let settled: boolean = false;
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
@@ -472,7 +477,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
   test("barrier 后任一持久化 owner 失败，安全 update 必须 reject", async () => {
     workerPosts.length = 0;
     flushDiskIO.mockResolvedValueOnce("failed");
-    const { antiRaidRuntimeState } = await import("../../../packages/cache/antiRaid/proxy");
+    const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
       chatMember: {
@@ -762,7 +767,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
       (input as { chatId: number }).chatId === stoppedChatId
     )).toHaveLength(1);
-    const { emergencyLockdownRecoveries, emergencyLockdownRecoveryRuntime } = await import("../../../packages/cache/antiRaid/lockdownMirror");
+    const { emergencyLockdownRecoveries, emergencyLockdownRecoveryRuntime } = await import("../../../packages/cache/main/antiRaid/lockdownMirror");
     expect(emergencyLockdownRecoveries.size).toBe(0);
     expect(emergencyLockdownRecoveryRuntime.stopped).toBeTrue();
     expect(chatStates.get(stoppedChatId)?.lockdown?.intentId).toBe(104);

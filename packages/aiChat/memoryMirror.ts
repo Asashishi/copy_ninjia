@@ -12,7 +12,7 @@ import {
   latestStickerCatalogs,
   pendingAiMemoryDeletes,
   postPurgeAiMemoryPersistRevisions,
-} from "../cache/aiChat";
+} from "../cache/main/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import type { AiMemoryDeleteWaiter } from "../types/aiChat/waiters";
 import type { AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../types/diskIO";

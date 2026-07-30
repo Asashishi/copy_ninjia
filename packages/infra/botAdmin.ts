@@ -12,11 +12,18 @@ import {
   botAdminFetches,
   botAdminGenerations,
   botAdminGenerationUsers,
-} from "../cache/botAdmin";
-import { canRestrictMembers, isAdminStatus } from "../libs/chatMember";
+  botChatPermissions,
+  botPermissionFetches,
+  botPermissionGenerations,
+  botPermissionObserver,
+  botPermissionProbeBackoff,
+} from "../cache/main/botAdmin";
+import { BOT_PERMISSION_PROBE_RETRY_MS } from "../consts/botAdmin";
+import { isAdminStatus, readBotChatPermissions } from "../libs/chatMember";
 import { forgetChatBlocklistWork, noteBanPermissionObserved, sweepBlockedMembers } from "./blocklist";
 import { teardownRegisteredChat } from "./chatTeardown";
 import type { ChatState } from "../types/chatState";
+import type { BotChatPermissions } from "../types/telegram";
 import type { ChatMember, ChatMemberUpdated } from "@grammyjs/types";
 import {
   currentUpdateAbortSignal,
@@ -100,7 +107,7 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
 async function recordBotAdminStatus(
   chatId: number,
   isAdmin: boolean,
-  canRestrict?: boolean
+  permissions?: BotChatPermissions
 ): Promise<void> {
   if (getChatState(chatId).isInitEnabled !== true) return;
   const chatState: ChatState = getOrCreateChatState(chatId);
@@ -118,11 +125,20 @@ async function recordBotAdminStatus(
     if (!isAdmin) forgetChatBlocklistWork(chatId);
     await persistAuthoritativeState("bot admin status refresh");
   }
-  if (!isAdmin) return;
+  if (!isAdmin) {
+    // 不再是管理员就一个权限位都不剩了。留着旧记录会让禁言/删消息这类判定
+    // 拿着一份已经作废的快照放行，白打一串注定 403 的请求。
+    forgetBotChatPermissions(chatId);
+    return;
+  }
   // 被权限卡住的群只认这一条解锁边沿：Telegram 亲口说「现在能封人了」。
-  // canRestrict 为 undefined 表示本次观测拿不到权限位（比如收到别人的
-  // chat_member 更新那一路只能推出「我是管理员」），保持卡住不动。
-  if (canRestrict !== undefined) noteBanPermissionObserved(chatId, canRestrict);
+  // permissions 为 undefined 表示本次观测拿不到权限位（比如收到别人的
+  // chat_member 更新那一路只能推出「我是管理员」），保持卡住不动，也不写缓存
+  // ——「没观测到」与「观测到没有」必须可区分。
+  if (permissions !== undefined) {
+    publishBotChatPermissions(chatId, permissions);
+    noteBanPermissionObserved(chatId, permissions.canRestrictMembers);
+  }
   // 「是管理员 && 已初始化」成立：补一次黑名单清扫。本函数是三条管理员发现
   // 路径的唯一收口，因此每次确证身份都在这里问一次；「这个群扫过了没有」由
   // sweepBlockedMembers 自己按 blocklistSweepState 记账（O(1) 早退），而不是
@@ -150,6 +166,8 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
   // 私聊没有管理员概念，频道里机器人不做任何守卫/踢人，都不记录。
   if (update.chat.type !== "group" && update.chat.type !== "supergroup") return;
   if (update.new_chat_member.status === "left" || update.new_chat_member.status === "kicked") {
+    // 人都不在这个群了，权限位当场作废；重新入群走按需现查重建。
+    forgetBotChatPermissions(update.chat.id);
     await completeAfterTeardown(
       teardownChatRuntime(update.chat.id),
       async (): Promise<void> => {
@@ -173,7 +191,9 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
     );
     return;
   }
-  await recordBotAdminStatus(update.chat.id, isAdmin, canRestrictMembers(update.new_chat_member));
+  // 权限开关被改动（仍是管理员、只是少勾了一项）同样以 my_chat_member 送达，
+  // 这条路径因此也是权限缓存的近实时维护点，不只是身份记录。
+  await recordBotAdminStatus(update.chat.id, isAdmin, readBotChatPermissions(update.new_chat_member));
 }
 
 /**
@@ -195,6 +215,7 @@ export function invalidateBotAdminStatus(chatId: number): void {
     botAdminGenerations.delete(chatId);
   }
   botAdminFetches.delete(chatId);
+  forgetBotChatPermissions(chatId);
   clearChatStateField(chatId, "botIsAdmin");
   // /init 一关一开之间机器人可能已经不是管理员、群里也可能换了人：这个群
   // 欠的那次黑名单清扫重新算，由 enable 之后的重新判定再触发一次。在途批次
@@ -256,7 +277,7 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
         const currentKnown: boolean | undefined = getChatState(chatId).botIsAdmin;
         if (currentKnown !== undefined) return currentKnown;
         const isAdmin: boolean = isAdminStatus(member.status);
-        await recordBotAdminStatus(chatId, isAdmin, canRestrictMembers(member));
+        await recordBotAdminStatus(chatId, isAdmin, readBotChatPermissions(member));
         return isAdmin;
       })
       .finally((): void => {
@@ -273,4 +294,164 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
     botAdminFetches.set(chatId, request);
   }
   return inFlight;
+}
+
+/**
+ * 丢掉某个群的权限位记录，并作废此刻仍在途的那次现查。
+ *
+ * 在途时提升代际而不是只删缓存：那次请求发出时看到的还是旧身份，等它回来直接
+ * 回填，就会把刚被撤掉的权限重新写回表里。「有没有在途」看的是代际条目而不是
+ * botPermissionFetches——后者要等请求真的挂起才登记得上，而代际是在发请求之前
+ * 同步占的位，两者之间那一小段里到达的失效不能漏掉。没有在途请求时代际本身
+ * 没有读者，保持删除状态，免得这张表随历史群无限增长。
+ */
+export function forgetBotChatPermissions(chatId: number): void {
+  const had: boolean = botChatPermissions.delete(chatId);
+  botPermissionProbeBackoff.delete(chatId);
+  const inFlightGeneration: number | undefined = botPermissionGenerations.get(chatId);
+  if (inFlightGeneration !== undefined) botPermissionGenerations.set(chatId, inFlightGeneration + 1);
+  // 只在真的丢掉了一份已知值时广播「现在未知」：teardown 路径会对同一个群
+  // 反复调用，无条件广播就是往 Worker mailbox 里灌重复消息。
+  if (had) notifyBotPermissionObserver(chatId, undefined);
+}
+
+/**
+ * 登记权限位变化的下游观察者（当前是 Anti-Raid Worker 的投递口）。
+ *
+ * 反向注册而不是直接 import：infra 不得静态依赖 Anti-Raid 业务模块
+ * （见 docs/04-invariants.md），与 `registerChatTeardown` 同一形态。单槽位，
+ * 重复注册以最后一次为准。
+ */
+export function registerBotPermissionObserver(
+  observe: (chatId: number, permissions: BotChatPermissions | undefined) => void
+): void {
+  botPermissionObserver.current = observe;
+}
+
+/** 写入一份确证的权限位并广播给下游（当前是 Anti-Raid Worker）。 */
+function publishBotChatPermissions(chatId: number, permissions: BotChatPermissions): void {
+  botPermissionProbeBackoff.delete(chatId);
+  const previous: BotChatPermissions | undefined = botChatPermissions.get(chatId);
+  botChatPermissions.set(chatId, permissions);
+  // 逐位相同就不广播：`my_chat_member` 会为任何一次成员变动送达（改群名片、
+  // 换自定义头衔都算），每次都往 Worker mailbox 里塞一条一模一样的消息没有意义。
+  if (
+    previous?.canRestrictMembers === permissions.canRestrictMembers &&
+    previous?.canDeleteMessages === permissions.canDeleteMessages
+  ) {
+    return;
+  }
+  notifyBotPermissionObserver(chatId, permissions);
+}
+
+/**
+ * 广播一次权限位变化。观察者是反向注册的单槽位（见 cache/main/botAdmin.ts）：
+ * 没人注册时是 no-op，注册方抛错也只记日志——权限记录本身已经更新，不能因为
+ * 下游投递失败把整条 update 判成失败。
+ */
+function notifyBotPermissionObserver(chatId: number, permissions: BotChatPermissions | undefined): void {
+  try {
+    botPermissionObserver.current?.(chatId, permissions);
+  } catch (error: unknown) {
+    logger.error(`Failed to publish the bot's permission change for chat ${chatId}:`, error);
+  }
+}
+
+/**
+ * 保证这个群的权限位已经被观测过一次，供热路径在不 await 的前提下调用。
+ *
+ * 已知（缓存命中）或已有现查在途时立即返回，因此稳定状态下就是一次 Map 查找。
+ * 只有从未观测过的群才在后台现查一次，结果经上面的广播抵达 Worker。**必须带
+ * 退避**：`state.json` 记着是管理员而实际已经不是、或 `getChatMember` 持续失败
+ * 时，`botChatPermissionsIn` 按约定不落缓存，没有退避就等于那种群里每条消息
+ * 都换一次注定失败的现查。
+ */
+export function ensureBotChatPermissions(chatId: number, now: number = Date.now()): void {
+  if (botChatPermissions.has(chatId) || botPermissionGenerations.has(chatId)) return;
+  const retryAt: number | undefined = botPermissionProbeBackoff.get(chatId);
+  if (retryAt !== undefined && now < retryAt) return;
+  botPermissionProbeBackoff.set(chatId, now + BOT_PERMISSION_PROBE_RETRY_MS);
+  void botChatPermissionsIn(chatId).catch((): void => {
+    // 现查内部已经记过日志；这里只是不让后台补齐变成未处理的 rejection
+    // （update 取消时它会以 abort 形式抛出）。
+  });
+}
+
+/**
+ * 机器人在某群持有的破坏性动作权限位。已记录的群直接同步命中；从未记录过的
+ * 群现查一次 getChatMember 并回填（带在途去重，同群并发判定共享同一次请求）。
+ *
+ * 存在的理由是**先判后打**：踢人、禁言、删消息在缺权限时都只换回一句 400
+ * `not enough rights`，而那句话与「目标本身是管理员」共用同一个错误码，事后
+ * 看日志分不开（见 infra/telegram/actions.ts 的 banChatMemberWithOutcome）。
+ * 有了这份缓存，绝大多数判定是一次 Map 查找，只有进程刚起来、还没收到过任何
+ * my_chat_member 的群才付一次现查——此后由 my_chat_member 近实时维护。
+ * @returns 确证的权限位；不是管理员、现查失败或结果已被失效作废时为 undefined。
+ *   调用方一律把 undefined 当作「这个动作现在做不了」，不得折算成有权限。
+ */
+export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermissions | undefined> {
+  const known: BotChatPermissions | undefined = botChatPermissions.get(chatId);
+  if (known !== undefined) return known;
+
+  const pending: Promise<BotChatPermissions | undefined> | undefined = botPermissionFetches.get(chatId);
+  if (pending !== undefined) return pending;
+
+  // 代际占位必须早于任何 await：它同时是 forgetBotChatPermissions 判断「有没有
+  // 现查在途」的唯一依据，晚一步登记就会漏掉这段窗口里到达的失效。
+  const generation: number = 0;
+  botPermissionGenerations.set(chatId, generation);
+  const signal: AbortSignal | undefined = currentUpdateAbortSignal();
+  const request: Promise<BotChatPermissions | undefined> = (async (): Promise<BotChatPermissions | undefined> => {
+    let member: ChatMember;
+    try {
+      member = signal === undefined
+        ? await bot.api.getChatMember(chatId, bot.botInfo.id)
+        : await bot.api.getChatMember(
+          chatId,
+          bot.botInfo.id,
+          signal as unknown as Parameters<typeof bot.api.getChatMember>[2]
+        );
+    } catch (error: unknown) {
+      // update 已被取消时不记日志、原样上抛，与其余 Telegram 调用同一约定。
+      throwIfUpdateAborted(signal);
+      logger.error(`Failed to read the bot's own permissions in chat ${chatId}:`, error);
+      return undefined;
+    }
+    // 失效发生在请求期间：这份快照描述的是失效前的身份，既不回填也不作数。
+    // 不在这里重新发起——递归会撞上下面那次 finally 之前的自引用；调用方下一次
+    // 需要时自然会开一次新的现查。
+    if (botPermissionGenerations.get(chatId) !== generation) return undefined;
+    // 现查在途期间 my_chat_member 先一步落地过：那条是权威信号，而这次响应
+    // 反映的可能是它到达之前的旧快照，直接回填会把刚生效的权限改动顶掉。
+    // 同 isBotAdminIn 的「权威信号已经赢了就采用它」。
+    const authoritative: BotChatPermissions | undefined = botChatPermissions.get(chatId);
+    if (authoritative !== undefined) return authoritative;
+    if (!isAdminStatus(member.status)) {
+      // 走 forget 而不是裸 delete：连同代际作废与下游广播一起收敛在一处。
+      forgetBotChatPermissions(chatId);
+      // 「其实已经不是管理员」是一次权威身份观测，写回去纠正 state.json 里过期的
+      // botIsAdmin: true（进程停机期间被撤管理员时收不到 my_chat_member，那份 true
+      // 会一直留着）。不写的话 isBotAdminIn 每条群消息都放行、每条都重新走到这里。
+      await recordBotAdminStatus(chatId, false);
+      // 退避必须**最后**钉上：上面两步都会清掉它——forget 收敛的是「权威信号刚到、
+      // 该立刻重新观测」那一路，而这次的结论恰好相反，刚探测完、确认没权限。顺序
+      // 反了就等于这次探测把自己的退避擦掉，5 分钟一次退化成每条消息一次；未
+      // /init enable 的群 recordBotAdminStatus 直接早退，退避更是唯一的节流。
+      botPermissionProbeBackoff.set(chatId, Date.now() + BOT_PERMISSION_PROBE_RETRY_MS);
+      return undefined;
+    }
+    const permissions: BotChatPermissions = readBotChatPermissions(member);
+    // 与 recordBotAdminStatus 同一条门禁：没 /init enable 的群不留内存条目，
+    // 免得光是被拉进一堆群就长出一张表。
+    if (getChatState(chatId).isInitEnabled === true) publishBotChatPermissions(chatId, permissions);
+    return permissions;
+  })();
+  const tracked: Promise<BotChatPermissions | undefined> = request.finally((): void => {
+    if (botPermissionFetches.get(chatId) !== tracked) return;
+    botPermissionFetches.delete(chatId);
+    // 代际只服务于在途请求；这次已经结算，留着只是让表随历史群增长。
+    botPermissionGenerations.delete(chatId);
+  });
+  botPermissionFetches.set(chatId, tracked);
+  return tracked;
 }

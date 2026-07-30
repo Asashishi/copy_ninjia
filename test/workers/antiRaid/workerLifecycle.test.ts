@@ -46,25 +46,42 @@ mock.module("../../../packages/workers/antiRaid/adDetect/queue", () => ({
   startAdDetectQueue(): void { calls.push("startAdDetect"); },
   stopAdDetectQueue(): void { calls.push("stopAdDetect"); },
 }));
+mock.module("../../../packages/workers/antiRaid/floodControl", () => ({
+  handleFloodCandidate(): void { calls.push("floodCandidate"); },
+  clearChatFloodWindows(): void { calls.push("clearFloodWindows"); },
+  sweepFloodWindows(): number { calls.push("sweepFloodWindows"); return 0; },
+  resetFloodWindows(): void { calls.push("resetFloodWindows"); },
+}));
+mock.module("../../../packages/workers/antiRaid/botPermissions", () => ({
+  applyBotPermissionsChange(): void { calls.push("botPermissionsChanged"); },
+  forgetWorkerBotPermissions(): void { calls.push("forgetBotPermissions"); },
+  resetWorkerBotPermissions(): void { calls.push("resetBotPermissions"); },
+}));
 const sweepRecentComments = mock((_now: number): number => 0);
 mock.module("../../../packages/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
 const initTelegramClients = mock((): void => {});
 mock.module("../../../packages/infra/telegram/client", () => ({ initTelegramClients }));
+// 与上面几个叶子模块同样的理由：真实实现会经 infra/telegram 的桶文件把整套
+// Telegram 客户端拉进来，而本文件只关心 Worker 生命周期把它接在了哪一步。
+mock.module("../../../packages/workers/antiRaid/noticeCleanup", () => ({
+  flushPendingNoticeDeletions(): number { calls.push("flushNotices"); return 0; },
+  resetPendingNoticeDeletions(): void { calls.push("resetNotices"); },
+}));
 
 const worker = await import("../../../packages/workers/antiRaidWorker");
 const {
   adminFetches,
   chatAdmins,
-} = await import("../../../packages/cache/antiRaid/admins");
+} = await import("../../../packages/cache/workers/antiRaid/admins");
 const {
   linkedChannelFetches,
   linkedChannels,
-} = await import("../../../packages/cache/antiRaid/linkedChannels");
-const { verificationRevisions } = await import("../../../packages/cache/antiRaid/verification");
+} = await import("../../../packages/cache/workers/antiRaid/linkedChannels");
+const { verificationRevisions } = await import("../../../packages/cache/workers/antiRaid/verification");
 const {
   blocklistRemovalEpochs,
   blocklistRemovalTaskCounts,
-} = await import("../../../packages/cache/antiRaid/blocklist");
+} = await import("../../../packages/cache/workers/antiRaid/blocklist");
 const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } = await import("../../../packages/consts/antiRaid");
 
 beforeEach(() => {
@@ -102,6 +119,8 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
       { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, text: "买号加我", linkUrls: [], label: "@spam", isChannel: false, blocked: false, justJoined: true },
       { type: "clearAdDetect", chatId: -1001 },
+      { type: "floodCandidate", chatId: -1001, userId: 1, label: "@noisy" },
+      { type: "botPermissionsChanged", chatId: -1001, permissions: { canRestrictMembers: true, canDeleteMessages: true } },
       { type: "barrier", barrierId: 99 },
     ];
     for (const message of messages) workerSelf.onmessage!({ data: message } as MessageEvent<AntiRaidWorkerMessage>);
@@ -111,16 +130,22 @@ describe("Anti-Raid Worker lifecycle", () => {
       "join", "left", "deactivateVerification", "deactivateLockdown",
       // 停管连待检的广告消息串一起丢：不再替这个群判定，也不再在那里删消息。
       "clearAdDetect",
+      // 刷屏计数与权限镜像同理：重新接管时主线程会重新镜像，计数从零开始。
+      "clearFloodWindows", "forgetBotPermissions",
       "message", "callback",
       "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
       "removeBlockedMembers", "adCandidate", "clearAdDetect",
+      "floodCandidate", "botPermissionsChanged",
     ]);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
     await Bun.sleep(0);
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();
-    expect(calls.slice(-3)).toEqual(["stopVerification", "stopLockdown", "stopAdDetect"]);
+    expect(calls.slice(-6)).toEqual([
+      "stopVerification", "stopLockdown", "stopAdDetect",
+      "resetFloodWindows", "resetNotices", "resetBotPermissions",
+    ]);
     worker.startAntiRaidWorker();
     expect(initTelegramClients).toHaveBeenCalledTimes(2);
     worker.stopAntiRaidWorker();
@@ -154,6 +179,10 @@ describe("Anti-Raid Worker lifecycle", () => {
 
     await Bun.sleep(0);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 10 }]);
+    // drain 必须先兑现待删的群内公告：定时器活在本 isolate 里，退出即丢，
+    // 留下的是一条永久点着某人名字的公开公告（见 antiRaid/noticeCleanup.ts）。
+    // 排在 drain 之前才能让那次删除登记进在途集合、被下面这次等待覆盖。
+    expect(calls.indexOf("flushNotices")).toBeGreaterThan(calls.indexOf("quiesceAdDetect"));
     expect(blocklistRemovalTaskCounts.get(-1001)).toBe(1);
     expect(blocklistRemovalEpochs.get(-1001)).toBe(1);
 

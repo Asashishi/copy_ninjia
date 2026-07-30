@@ -16,7 +16,8 @@
 import type { Message } from "@grammyjs/types";
 import { adDetectConfigReadiness } from "../config/readiness";
 import { logger } from "../infra/logger";
-import { AD_DETECT_DEEPSEEK_API_KEY, PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
+import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
+import { isProtectedSender } from "./memberFacts";
 import {
   blockUser,
   confirmBlocklistPersisted,
@@ -30,10 +31,10 @@ import { postDiskIODiagnostic } from "../infra/diskIO";
 import { deleteMessageAfter, sendMessage } from "../infra/telegram/actions";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
-import { activeVerificationSnapshots } from "../cache/antiRaid/verificationMirror";
-import { inFlightAdDisposals } from "../cache/antiRaid/adDisposal";
+import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
+import { inFlightAdDisposals } from "../cache/main/antiRaid/adDisposal";
 import { verificationKey } from "../libs/verificationKey";
-import { sanitizeInline } from "../libs/text";
+import { sanitizeInline, truncateInline } from "../libs/text";
 import { formatTokyoTime } from "../libs/time";
 import { formatUserLabel } from "../users/userLabel";
 import { visibleSenderChat } from "../users/visibleSender";
@@ -47,11 +48,6 @@ import type { RemoveBlockedMembersParams } from "../types/blocklist";
 import type { AdSampleDiskMessage } from "../types/diskIO";
 import type { FlushResult } from "../types/lifecycle";
 import type { Chat, MessageEntity } from "@grammyjs/types";
-
-/** 自己人永远不进判定，也永远不被处置——名单不可逆，见 docs/04-invariants.md。 */
-function isProtectedSender(senderId: number): boolean {
-  return senderId === SUPER_ADMIN_USER_ID || PRIVILEGED_USERS_ID.includes(senderId);
-}
 
 /**
  * 摘出 text_link 实体里的 URL，与正文分开随投递带给 Worker。
@@ -75,7 +71,7 @@ function collectHiddenLinkUrls(text: string, entities: readonly MessageEntity[] 
   for (const entity of entities) {
     if (urls.length >= AD_DETECT_MAX_LINK_URLS) break;
     if (entity.type !== "text_link") continue;
-    const url: string = sanitizeInline(entity.url).slice(0, AD_DETECT_LINK_URL_MAX_CHARS);
+    const url: string = truncateInline(sanitizeInline(entity.url), AD_DETECT_LINK_URL_MAX_CHARS);
     if (url.length === 0 || text.includes(url) || urls.includes(url)) continue;
     urls.push(url);
   }
@@ -83,18 +79,38 @@ function collectHiddenLinkUrls(text: string, entities: readonly MessageEntity[] 
 }
 
 /**
- * 摘出只给人看的上下文：这条消息引用了哪一段、回复了哪条消息的正文。
+ * 摘出这条消息引用了哪一段、回复了哪条消息的正文。
  *
- * **这两样绝不能进送检文本**——它们是别人的内容，并进判定就等于让引用广告来
- * 吐槽的群友替广告主背锅，而那条原消息在它自己发出时已经判过一次
- * （见 docs/04-invariants.md）。它们只随命中样本落盘：人回头翻样本、调
- * config/ad_samples.json 的口径时，「它当时在回谁、引了什么」往往正是判断
- * 这一条到底算不算误判的关键。因此单独一个字段，与 text 严格分开传。
+ * **这两样和正文一起参与判定**（Worker 侧由 claimSampleContextParts 接进送检文本）。
+ * 理由是广告最主流的那条发法：先发一条完全正常的消息骗过判定，隔一段时间把它
+ * **编辑**成广告，再用回复/引用把它顶到群里——广告正文自始至终不在任何一条新
+ * 消息的 text 里，只读 text 的话这条路对检测完全免疫。编辑不会重新投递判定，
+ * 原消息「发出时已经判过一次」这件事对编辑后的内容不成立。
+ *
+ * 连坐的代价是有意接受的：引用广告来吐槽的群友会跟着被判。判定分不出「转述
+ * 广告来骂它」和「借引用把广告顶上来」，宁可误伤也不放过，口径由部署方在
+ * config/ad_samples.json 里继续收（详见 workers/antiRaid/adDetect/bundle.ts 的
+ * claimSampleContextParts 与 docs/04-invariants.md）。
+ *
+ * **但关联频道推到讨论组的自动转发贴不算引文。** 讨论组评论区里每条顶层评论的
+ * reply_to_message 都是同一条频道贴，抄进来就等于拿频道自己的推广文案去判每一个
+ * 评论者——一条频道推广能把整个评论区的人逐个连坐拉黑。频道贴该不该发由频道
+ * 管理员决定，不归讨论组的广告检测管（同 buildAdCandidate 里那道
+ * is_automatic_forward 豁免）。quote 是从被回复消息里截的片段，因此一并丢掉。
+ *
+ * 仍然与 text 分成两个字段跨线程传，有两条各自独立的理由：判定侧要在正文按
+ * AD_DETECT_MESSAGE_MAX_CHARS 截断**之后**再接，否则几百字废话就能把引文顶出
+ * 额度；样本侧要留一份没并进正文的原样，人回头查误判时才分得清哪一段是他自己
+ * 写的、哪一段是引来的。
  */
 function buildSampleContext(message: Message): AdSampleContext | undefined {
-  const quote: string = sanitizeInline(message.quote?.text ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
   const replied: Message | undefined = message.reply_to_message;
-  const replyTo: string = sanitizeInline(replied?.text ?? replied?.caption ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  if (replied?.is_automatic_forward === true) return undefined;
+  const quote: string = truncateInline(sanitizeInline(message.quote?.text ?? ""), AD_SAMPLE_CONTEXT_MAX_CHARS);
+  const replyTo: string = truncateInline(
+    sanitizeInline(replied?.text ?? replied?.caption ?? ""),
+    AD_SAMPLE_CONTEXT_MAX_CHARS
+  );
   if (quote.length === 0 && replyTo.length === 0) return undefined;
   return {
     ...(quote.length > 0 ? { quote } : {}),
@@ -151,8 +167,12 @@ export function buildAdCandidate(message: Message, botId: number): AdCandidateMe
   // 正文就把整条消息当成空判定。
   const text: string = sanitizeInline(message.text ?? message.caption ?? "");
   const linkUrls: string[] = collectHiddenLinkUrls(text, message.entities ?? message.caption_entities);
-  if (text.length === 0 && linkUrls.length === 0) return undefined;
   const sampleContext: AdSampleContext | undefined = buildSampleContext(message);
+  // 三样都空才算「没有可判定内容」。上下文单独成立也要放行：把广告顶上来的那条
+  // 消息完全可以自己没有正文（一张表情、一句 caption 为空的图），广告全在被引用
+  // 段/被回复原文里——只看 text 的话，「回复一条编辑成广告的旧消息」这条路只要
+  // 不打字就能绕过去（见 buildSampleContext）。
+  if (text.length === 0 && linkUrls.length === 0 && sampleContext === undefined) return undefined;
 
   const label: string = senderChat === undefined
     ? formatUserLabel({
@@ -295,7 +315,7 @@ async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
       `Ad detection has no chat to enforce the block of sender ${event.senderId} in ` +
       `(${failedChats} chat(s) failed to queue); the blocklist entry still applies to future joins.`
     );
-    await announceAdDisposal(event, 0);
+    await announceAdDisposal(event, 0, failedChats);
     return;
   }
   if (failedChats > 0) {
@@ -309,7 +329,18 @@ async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
     `Ad detection blocked sender ${event.senderId} (${event.reason || "no reason given"}) ` +
     `and queued removals in ${removals.length} chat(s).`
   );
-  await announceAdDisposal(event, removals.length);
+  await announceAdDisposal(event, removals.length, failedChats);
+}
+
+export interface FormatAdNoticeParams {
+  /** 发送者的展示标签（昵称/频道名 + id），由 Worker 侧算好带回。 */
+  label: string;
+  /** 模型给的判定理由；空串走兜底文案。 */
+  reason: string;
+  /** 真正登记上封禁批次的群数。 */
+  enforcedChats: number;
+  /** 登记失败、改由补扫接手的群数。 */
+  failedChats: number;
 }
 
 /**
@@ -317,15 +348,30 @@ async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
  * 模型没给理由时用兜底文案——这条消息存在的意义就是说清「为什么这个人没了」，
  * 不能空着。导出仅为可测试性。
  *
- * 文案按**真正登记上的封禁群数**分岔。一个群都没登记上时（outbox 触顶、刚被
- * 撤管理员、`/init disable`）人根本没被踢走，这时再说「在所有盯着的群里一起
- * 封掉了」就是一条与事实相反的公告；那种情况改成点名请管理员介入。
+ * 文案按**真正登记上的封禁群数**分三岔，一个群都不能多说：
+ * - 一个都没登记上（outbox 触顶、刚被撤管理员、`/init disable`）时人根本没被踢走，
+ *   这时说「在所有盯着的群里一起封掉了」就是一条与事实相反的公告，改成点名请
+ *   管理员介入；
+ * - 部分群登记失败时那些群里人还坐着，只报真正封上的群数并把欠账说出来——否则
+ *   「在所有盯着的群里」同样是假话，而唯一的线索只是一行没人看的日志；
+ * - 全部登记上才是那句「一起封掉了」。
+ *
+ * **不提删消息**。删除跑在判定线程上、排在本事件回投之后，主线程压根不知道它
+ * 成没成；而机器人完全可能是「有 can_restrict_members、没有 can_delete_messages」
+ * 的管理员，那种群里广告原封不动挂着、公告却写着「已经删干净」，是一条群成员
+ * 一眼就能证伪的假话。只说这边确证得了的两件事：记进名单、封了几个群。
+ * 删除失败由判定线程自己记日志（见 workers/antiRaid/adDetect/disposal.ts）。
  */
-export function formatAdNotice(label: string, reason: string, enforcedChats: number): string {
+export function formatAdNotice({ label, reason, enforcedChats, failedChats }: FormatAdNoticeParams): string {
   const head: string = `哼，${label} 被本天才当广告封了，理由：${reason || "整串消息通篇都是推广引流"}。`;
-  return enforcedChats === 0
-    ? `${head}这些消息已经删干净，人也记进小本本了；可本天才现在一个群都封不动，杂鱼管理员快来看看本天才的权限♡`
-    : `${head}这些消息已经删干净，人也记进小本本、在所有盯着的群里一起封掉了♡`;
+  if (enforcedChats === 0) {
+    return `${head}人已经记进小本本了；可本天才现在一个群都封不动，杂鱼管理员快来看看本天才的权限♡`;
+  }
+  if (failedChats > 0) {
+    return `${head}人已经记进小本本、在 ${enforcedChats} 个群封掉了，还有 ${failedChats} 个群没封动，` +
+      "杂鱼管理员快来看看本天才在那边的权限♡";
+  }
+  return `${head}人已经记进小本本、在所有盯着的群里一起封掉了♡`;
 }
 
 /**
@@ -336,10 +382,14 @@ export function formatAdNotice(label: string, reason: string, enforcedChats: num
  * workers/antiRaid/adDetect/disposal.ts 的 disposeAdSender）。整段尽力而为，
  * 失败不影响已经落定的拉黑与封禁登记。
  */
-async function announceAdDisposal(event: AdDetectedEvent, enforcedChats: number): Promise<void> {
+async function announceAdDisposal(
+  event: AdDetectedEvent,
+  enforcedChats: number,
+  failedChats: number
+): Promise<void> {
   const noticeMessageId: number | undefined = await sendMessage({
     chatId: event.chatId,
-    text: formatAdNotice(event.label, event.reason, enforcedChats),
+    text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats }),
   });
   if (noticeMessageId === undefined) return;
   deleteMessageAfter({
@@ -351,7 +401,7 @@ async function announceAdDisposal(event: AdDetectedEvent, enforcedChats: number)
 
 /**
  * Worker 回投的判定命中：登记成在途处置任务。事件回调是同步的，而处置要等
- * 落盘与投递屏障，因此挂进 cache/antiRaid/adDisposal.ts 的集合里，由停机 drain
+ * 落盘与投递屏障，因此挂进 cache/main/antiRaid/adDisposal.ts 的集合里，由停机 drain
  * 统一等待，不让它在半路被丢掉。
  */
 export function handleAdDetected(event: AdDetectedEvent): void {

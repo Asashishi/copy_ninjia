@@ -47,7 +47,7 @@ const {
 } = await import("../../../packages/workers/antiRaid/adDetect/queue");
 // 消息串的整形（裁剪/收容量/拼正文）拆在 bundle.ts，见该文件头注。
 const { formatAdBundleText } = await import("../../../packages/workers/antiRaid/adDetect/bundle");
-const { antiRaidInFlightTasks } = await import("../../../packages/cache/antiRaid/tasks");
+const { antiRaidInFlightTasks } = await import("../../../packages/cache/workers/antiRaid/tasks");
 const {
   adDetectDedupTimer,
   adDetectQueue,
@@ -58,7 +58,7 @@ const {
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
   recentlyEnqueuedAdKeys,
-} = await import("../../../packages/cache/antiRaid/adDetect");
+} = await import("../../../packages/cache/workers/antiRaid/adDetect");
 const {
   AD_DETECT_BATCH_SIZE,
   AD_DETECT_BUNDLE_MAX_CHARS,
@@ -69,6 +69,7 @@ const {
   AD_DETECT_MAX_MESSAGES_PER_SENDER,
   AD_DETECT_MAX_PENDING_SENDERS,
   AD_DETECT_MESSAGE_MAX_CHARS,
+  AD_SAMPLE_CONTEXT_MAX_CHARS,
 } = await import("../../../packages/consts/antiRaid/adDetect");
 
 function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandidateMessage {
@@ -399,9 +400,10 @@ describe("广告判定队列", () => {
     expect(bundle.checkedSeq).toBe(fillerCount + 1);
   });
 
-  test("引用与回复只跟着条目走，绝不进送检文本", async () => {
-    // 它们是别人的内容：并进判定就等于让引用广告来吐槽的群友替广告主背锅，
-    // 而那条原消息在它自己发出时已经判过一次。样本里留着是另一回事。
+  test("引用与回复接进送检文本一起判定：广告主流形态是「编辑旧消息 + 回复/引用顶上来」，" +
+    "广告正文永远不在新消息的 text 里", async () => {
+    // quote 与 replyTo 完全重合（引用的正是所回复消息的片段）时只接一遍，
+    // 重复接只是白烧送检预算。
     enqueueAdCandidate(candidate({
       messageId: 1,
       text: "这种广告真烦",
@@ -409,12 +411,66 @@ describe("广告判定队列", () => {
     }), 1_000);
 
     const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;
-    expect(entry.text).toBe("这种广告真烦");
+    expect(entry.text).toBe("这种广告真烦 日入过千 加V xxx996");
+    // 样本侧仍留一份没并进正文的原样：人回头查误判时要分得清哪段是他自己写的。
     expect(entry.quote).toBe("日入过千 加V xxx996");
     expect(entry.replyTo).toBe("日入过千 加V xxx996");
 
     await runAdDetectBatch(1_000);
-    expect(classifiedTexts).toEqual(["1. 这种广告真烦"]);
+    expect(classifiedTexts).toEqual(["1. 这种广告真烦 日入过千 加V xxx996"]);
+  });
+
+  test("同一段引文整串只接一份：拆开发的碎片才凑得进同一份清单，不被重复引文吃掉预算", async () => {
+    // 广告号把话术拆成三条、每条都回复同一条（已被编辑成广告的）消息。
+    const replyTo: string = "日".repeat(AD_SAMPLE_CONTEXT_MAX_CHARS);
+    for (const [index, own] of ["加我", "微 信", "xxx996"].entries()) {
+      enqueueAdCandidate(candidate({ messageId: index + 1, text: own, sampleContext: { replyTo } }), 1_000);
+    }
+
+    const entries = pendingAdMessages.get("-1001:7")!.entries;
+    expect(entries.map((entry): string => entry.text)).toEqual([`加我 ${replyTo}`, "微 信", "xxx996"]);
+    // 样本侧照旧每条都留一份原样：判定去重了，取证不能跟着丢。
+    expect(entries.map((entry): string | undefined => entry.replyTo)).toEqual([replyTo, replyTo, replyTo]);
+
+    await runAdDetectBatch(1_000);
+    // 三个碎片与那段引文一起进同一次判定，而不是被切成好几轮各判一个无害片段。
+    expect(classifiedTexts).toEqual([`1. 加我 ${replyTo}\n2. 微 信\n3. xxx996`]);
+  });
+
+  test("认领者被裁掉后引文重新认领：串里再没人带着它时，下一条候选自己接一份", async () => {
+    const replyTo: string = "日入过千 加V xxx996";
+    enqueueAdCandidate(candidate({ messageId: 1, text: "看这个", sampleContext: { replyTo } }), 1_000);
+    await runAdDetectBatch(1_000);
+
+    // 第一条判过又出了去重窗口，pruneConsumedContext 会把它连引文一起裁掉。
+    const later: number = 1_000 + AD_DETECT_ENQUEUE_DEDUP_WINDOW_MS + 1;
+    enqueueAdCandidate(candidate({ messageId: 2, text: "再看这个", sampleContext: { replyTo } }), later);
+
+    const entries = pendingAdMessages.get("-1001:7")!.entries;
+    expect(entries.map((entry): string => entry.text)).toEqual([`再看这个 ${replyTo}`]);
+  });
+
+  test("引用段与被回复原文不同时两段都接，且不带「引用：」这类可被伪造的系统措辞", async () => {
+    enqueueAdCandidate(candidate({
+      messageId: 1,
+      text: "真的假的",
+      sampleContext: { quote: "日入过千", replyTo: "加V xxx996" },
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+    expect(classifiedTexts).toEqual(["1. 真的假的 日入过千 加V xxx996"]);
+  });
+
+  test("上下文接在正文截断之后，几百字废话顶不掉引文", async () => {
+    // 先拼后截就是一条零成本绕过：填充文本把引文挤出 AD_DETECT_MESSAGE_MAX_CHARS。
+    enqueueAdCandidate(candidate({
+      messageId: 1,
+      text: "废".repeat(AD_DETECT_MESSAGE_MAX_CHARS + 200),
+      sampleContext: { quote: "日入过千 加V xxx996" },
+    }), 1_000);
+
+    const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;
+    expect(entry.text).toBe(`${"废".repeat(AD_DETECT_MESSAGE_MAX_CHARS)} 日入过千 加V xxx996`);
   });
 
   test("落地页 URL 有独立配额，填充文本顶不掉它", () => {

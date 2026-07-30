@@ -19,7 +19,7 @@ const {
   startWeatherRefreshLoop,
   stopWeatherRefreshLoop,
 } = await import("../../packages/ai/weather");
-const { weatherCache } = await import("../../packages/cache/weather");
+const { weatherCache } = await import("../../packages/cache/workers/aiChat/weather");
 const { WEATHER_API_URL, WEATHER_CODE_DESCRIPTIONS, WEATHER_REFRESH_INTERVAL_MS } = await import("../../packages/consts/weather");
 
 async function flushRefresh(): Promise<void> {

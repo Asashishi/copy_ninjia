@@ -39,7 +39,7 @@ const {
   pendingReactionWaiters,
   pendingTasks,
   reactionDrainWaiters,
-} = await import("../../packages/cache/reactionQueue");
+} = await import("../../packages/cache/main/reactionQueue");
 
 async function waitForIdle(): Promise<void> {
   for (let attempt: number = 0; attempt < 30; attempt++) {

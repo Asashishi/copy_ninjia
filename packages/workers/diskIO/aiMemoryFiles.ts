@@ -12,7 +12,7 @@ import {
   markAiMemoryDeleted,
   markAiMemoryDirty,
   resetAiMemoryCache,
-} from "../../cache/diskIO/snapshots";
+} from "../../cache/workers/diskIO/snapshots";
 import { deleteAiMemoryFile, recoverAiMemories, writeAiMemoryFile } from "./snapshotFiles";
 import type { AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../../types/diskIO";
 import type { AiMemorySnapshotFileDependencies } from "../../types/diskIO/snapshotOwners";

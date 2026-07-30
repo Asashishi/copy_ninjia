@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { defaultMoodConfigCache } from "../cache/config";
+import { defaultMoodConfigCache } from "../cache/perThread/config";
 import {
   MOOD_ENTRY_OPTIONAL_KEYS,
   MOOD_ENTRY_REQUIRED_KEYS,

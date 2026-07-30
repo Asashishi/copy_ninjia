@@ -2,7 +2,7 @@ import {
   claimImageGeneration,
   getImageGenerationAvailability,
   releaseImageGenerationClaim,
-} from "../../../cache/aiChat/imageGeneration";
+} from "../../../cache/workers/aiChat/imageGeneration";
 import {
   DEFAULT_IMAGE_GENERATION_ASPECT_RATIO,
   IMAGE_GENERATION_ASPECT_RATIOS,

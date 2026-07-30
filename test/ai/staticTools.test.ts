@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { weatherCache } from "../../packages/cache/weather";
+import { weatherCache } from "../../packages/cache/workers/aiChat/weather";
 import { GET_TOKYO_WEATHER_TOOL } from "../../packages/consts/tools";
 import { callTool, TOOL_DEFINITIONS } from "../../packages/ai/tools";
 

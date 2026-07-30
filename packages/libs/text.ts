@@ -4,13 +4,24 @@
  */
 
 /**
+ * 折叠为一个空格的「空白」集合：JS 的 `\s`，外加 U+0085 (NEL)。
+ *
+ * `\s` 是 ECMAScript 自己的定义，**不含 U+0085**，而 Unicode 把 NEL 列为强制
+ * 换行符（UAX #14 的 BK 类）。也就是说光靠 `\s` 折叠，NEL 会原样活到下游：
+ * 转录与广告判定的提示词都按 `\n` 拼行，模型侧的规范化又把 NEL 当换行读，
+ * 于是一条消息还是能撑成两行。补进来才对得上 sanitizeInline 的契约。
+ */
+const INLINE_WHITESPACE_PATTERN: RegExp = /[\s\u0085]+/g;
+
+/**
  * 把要写进转录的文本压成单行：所有空白串（含换行）折叠为一个空格。
  * 这是防转录注入的关键——转录按「一行 = 一条消息」拼装，若用户消息或
  * 自己改的昵称里带换行，就能伪造出「[id:x] 某人：……」的假发言行，
  * 给别人栽赃。折叠换行后一条消息永远只占一行，该向量彻底失效。
+ * 同一条契约也护着广告判定的提示词（formatAdBundleText 按序号逐行拼装）。
  */
 export function sanitizeInline(raw: string): string {
-  return raw.replace(/\s+/g, " ").trim();
+  return raw.replace(INLINE_WHITESPACE_PATTERN, " ").trim();
 }
 
 /**

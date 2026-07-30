@@ -1,4 +1,4 @@
-import { stickerSendLocks } from "../../cache/stickers/sendLock";
+import { stickerSendLocks } from "../../cache/workers/aiChat/stickers/sendLock";
 import type { StickerSendLockControl } from "../../types/stickers/tools";
 
 /**
@@ -15,7 +15,7 @@ import type { StickerSendLockControl } from "../../types/stickers/tools";
  */
 
 /** 为一轮回复创建本群发贴纸锁的句柄。locks 可注入仅为单测隔离；生产调用
- *  共享 cache/stickers/sendLock.ts 内、随 Worker 重启清空的 stickerSendLocks。 */
+ *  共享 cache/workers/aiChat/stickers/sendLock.ts 内、随 Worker 重启清空的 stickerSendLocks。 */
 export function createStickerSendLock(chatId: number, locks: Map<number, object> = stickerSendLocks): StickerSendLockControl {
   const token: object = {};
   let released: boolean = false;

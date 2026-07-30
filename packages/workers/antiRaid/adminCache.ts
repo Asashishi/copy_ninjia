@@ -7,7 +7,7 @@ import {
   discardPendingAdminChanges,
   getOrCreateAdminFetch,
   takePendingAdminChanges,
-} from "../../cache/antiRaid/admins";
+} from "../../cache/workers/antiRaid/admins";
 import type { ChatAdminCache } from "../../types/antiRaid/internal";
 import type { ChatMemberAdministrator, ChatMemberOwner } from "@grammyjs/types";
 import { trackAntiRaidTask } from "./taskTracker";

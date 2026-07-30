@@ -2,7 +2,7 @@ import { Api, Bot, GrammyError } from "grammy";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { API_RETRY_MAX_ATTEMPTS, API_RETRY_MAX_DELAY_SECONDS } from "../../consts/telegram";
-import { telegramClientInitialization } from "../../cache/telegram";
+import { telegramClientInitialization } from "../../cache/perThread/telegram";
 import { BOT_TOKEN } from "../config";
 import { logger } from "../logger";
 

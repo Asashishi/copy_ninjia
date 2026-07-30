@@ -1,5 +1,5 @@
 import { verificationKey } from "../../libs/verificationKey";
-import { recentChannelComments } from "../../cache/antiRaid/recentComments";
+import { recentChannelComments } from "../../cache/workers/antiRaid/recentComments";
 import { COMMENT_JOIN_CORRELATE_MS, RECENT_COMMENT_CACHE_MAX } from "../../consts/antiRaid/cache";
 import type { RecentChannelComment } from "../../types/antiRaid/internal";
 import { setBoundedMapValue } from "../../libs/boundedMap";

@@ -28,7 +28,7 @@ import {
   RETENTION_DAYS,
 } from "../../consts/diskIO/appendOnly";
 import { DAY_MS } from "../../consts/diskIO/common";
-import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/diskIO/logs";
+import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/workers/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
 import {
   AppendOnlyFileFormatError,
@@ -36,7 +36,7 @@ import {
   openDayFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
-import type { BufferedLogEntry } from "../../cache/diskIO/logs";
+import type { BufferedLogEntry } from "../../cache/workers/diskIO/logs";
 
 interface LogRecord {
   level: string;

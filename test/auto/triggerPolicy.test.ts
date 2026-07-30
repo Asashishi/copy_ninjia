@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { userReplyTriggerTimes } from "../../packages/cache/auto";
+import { userReplyTriggerTimes } from "../../packages/cache/main/auto";
 import { USER_REPLY_TRIGGER_COOLDOWN_MS } from "../../packages/consts/auto";
 import { tryClaimUserReplyTrigger } from "../../packages/auto/message/triggerPolicy";
 

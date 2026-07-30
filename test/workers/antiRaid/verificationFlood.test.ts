@@ -10,6 +10,12 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage(event: AntiRaidWorkerEvent): void { workerEvents.push(event); } },
 });
 
+/** 两个删除入口共用一份实现：清痕迹那条路走三态版，其余路径只看成败。 */
+function recordDelete(messageId: number): string {
+  actions.push(`delete:${messageId}`);
+  return messageId === 2 ? "failed" : "deleted";
+}
+
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
@@ -20,14 +26,17 @@ mock.module("../../../packages/infra/telegram", () => ({
     actions.push("notice");
     return 900;
   },
-  deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> => {
-    actions.push(`delete:${messageId}`);
-    return messageId !== 2;
-  },
+  deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> =>
+    recordDelete(messageId) === "deleted",
+  deleteMessageWithOutcome: async (_chatId: number, messageId: number): Promise<string> => recordDelete(messageId),
   deleteMessageAfter(): void { actions.push("schedule-notice-delete"); },
   kickChatMember: async (): Promise<boolean> => {
     actions.push("kick");
     return kickSucceeds;
+  },
+  kickChatMemberWithOutcome: async (): Promise<"kicked" | "failed"> => {
+    actions.push("kick");
+    return kickSucceeds ? "kicked" : "failed";
   },
   probeChatMembership: async (): Promise<boolean> => true,
   answerCallbackQuery: async (): Promise<void> => {},
@@ -38,7 +47,7 @@ const {
   verificationEntries,
   verificationGeneration,
   verificationRevisions,
-} = await import("../../../packages/cache/antiRaid/verification");
+} = await import("../../../packages/cache/workers/antiRaid/verification");
 
 beforeEach(() => {
   for (const entry of verificationEntries.values()) {

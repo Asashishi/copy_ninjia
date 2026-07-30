@@ -53,7 +53,7 @@ const {
   pendingBlockedRemovals,
   sessionBlockedAt,
   sessionUnblockedIds,
-} = await import("../../packages/cache/blocklist");
+} = await import("../../packages/cache/main/blocklist");
 
 /** 落盘端收到的最后一条 unblockUser 消息。 */
 function lastRewrite(): { userId: number; blocked: readonly (readonly [number, unknown])[] } {

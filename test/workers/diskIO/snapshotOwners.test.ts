@@ -36,12 +36,12 @@ const {
   aiMemoryFlushState,
   deletedAiMemoryChats,
   dirtyChats,
-} = await import("../../../packages/cache/diskIO/snapshots");
+} = await import("../../../packages/cache/workers/diskIO/snapshots");
 const {
   dirtyStickerPacks,
   stickerCatalogCache,
   stickerFlushState,
-} = await import("../../../packages/cache/diskIO/stickers");
+} = await import("../../../packages/cache/workers/diskIO/stickers");
 
 beforeEach(() => {
   resetAiMemoryFiles();

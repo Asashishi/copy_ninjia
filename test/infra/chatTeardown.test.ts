@@ -47,7 +47,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 
 const botAdmin = await import("../../packages/infra/botAdmin");
-const botAdminCache = await import("../../packages/cache/botAdmin");
+const botAdminCache = await import("../../packages/cache/main/botAdmin");
 const chatTeardown = await import("../../packages/infra/chatTeardown");
 
 function memberContext(newStatus: string, oldStatus: string = "administrator"): never {

@@ -51,7 +51,7 @@ mock.module("../../../packages/infra/blocklist", () => ({
   requestBlocklistResweep,
   trackBlockedRemoval,
 }));
-mock.module("../../../packages/cache/antiRaid/verificationMirror", () => ({ activeVerificationSnapshots }));
+mock.module("../../../packages/cache/main/antiRaid/verificationMirror", () => ({ activeVerificationSnapshots }));
 mock.module("../../../packages/infra/diskIO", () => ({ postDiskIODiagnostic: postDiskIO }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getAllChatStates: () => chatStates,
@@ -61,9 +61,9 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
 const { buildAdCandidate, drainAdDisposals, formatAdNotice, handleAdDetected } =
   await import("../../../packages/antiRaid/adDetect");
 const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
-const { inFlightAdDisposals } = await import("../../../packages/cache/antiRaid/adDisposal");
+const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
 const { markSelfSent } = await import("../../../packages/infra/selfSentTracker");
-const { sentMessages } = await import("../../../packages/cache/selfSentTracker");
+const { sentMessages } = await import("../../../packages/cache/perThread/selfSentTracker");
 
 function message(overrides: Partial<Message> = {}): Message {
   return {
@@ -165,9 +165,10 @@ describe("广告检测投递门禁", () => {
     expect(candidate?.text).toBe("加我微信");
   });
 
-  test("被引用的原文不进判定：谁引用广告吐槽，谁就会被当成广告", () => {
-    // 引用段与被回复消息都是**别人**的内容。把它们并进判定文本，等于让转发吐槽
-    // 「这种广告真烦」的群友替广告主背锅——那条原消息在它自己发出时已经判过了。
+  test("被引用的原文与 text 分成两个字段跨线程传，但两样都参与判定", () => {
+    // 分开传不是为了让判定读不到，而是因为接的时机不同：Worker 侧必须在正文按
+    // AD_DETECT_MESSAGE_MAX_CHARS 截断之后再接（先拼后截等于零成本绕过），
+    // 样本侧则要留一份没并进正文的原样。连坐的理由见 buildSampleContext。
     const candidate = buildAdCandidate(message({
       text: "这种广告真烦",
       quote: { text: "日入过千 加V xxx996", position: 0, is_manual: true },
@@ -180,12 +181,21 @@ describe("广告检测投递门禁", () => {
       },
     }), 999);
     expect(candidate?.text).toBe("这种广告真烦");
-    // 但它们照样随命中样本落盘：人回头判断这一条算不算误判时，「当时在回谁、
-    // 引了什么」往往正是关键。与 text 严格分开，判定读不到。
     expect(candidate?.sampleContext).toEqual({
       quote: "日入过千 加V xxx996",
       replyTo: "日入过千 加V xxx996",
     });
+  });
+
+  test("回归用例：自己一个字都不打、只靠引用把编辑成广告的旧消息顶上来，照样送检", () => {
+    // 只看 text 的话，不打字就能绕过去——而「编辑旧消息 + 回复/引用顶上来」
+    // 正是当前最主流的广告形态。正文、URL、上下文三样全空才算没有可判定内容。
+    const candidate = buildAdCandidate(message({
+      text: undefined,
+      quote: { text: "日入过千 加V xxx996", position: 0, is_manual: true },
+    }), 999);
+    expect(candidate?.text).toBe("");
+    expect(candidate?.sampleContext).toEqual({ quote: "日入过千 加V xxx996" });
   });
 
   test("超链接背后的落地页与正文分开带，裸链接不重复", () => {
@@ -388,8 +398,38 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("模型没给理由时播报用兜底文案，不留空", () => {
-    expect(formatAdNotice("@spammer", "", 2)).toContain("整串消息通篇都是推广引流");
-    expect(formatAdNotice("@spammer", "卖号", 2)).toContain("理由：卖号");
+    expect(formatAdNotice({ label: "@spammer", reason: "", enforcedChats: 2, failedChats: 0 }))
+      .toContain("整串消息通篇都是推广引流");
+    expect(formatAdNotice({ label: "@spammer", reason: "卖号", enforcedChats: 2, failedChats: 0 }))
+      .toContain("理由：卖号");
+  });
+
+  test("部分群登记失败时只报封上的群数，不说「在所有盯着的群里」", () => {
+    // 那些登记失败的群里人还坐着，说「所有」同样是假话。
+    const notice: string = formatAdNotice({
+      label: "@spammer",
+      reason: "卖号",
+      enforcedChats: 3,
+      failedChats: 2,
+    });
+    expect(notice).not.toContain("在所有盯着的群里一起封掉了");
+    expect(notice).toContain("在 3 个群封掉了");
+    expect(notice).toContain("2 个群没封动");
+  });
+
+  test("回归用例：播报不断言删消息——删除跑在判定线程上、排在事件回投之后，" +
+    "主线程根本不知道它成没成，机器人也可能压根没有 can_delete_messages", () => {
+    // 只说这边确证得了的两件事：记进名单、封了几个群。
+    for (const enforcedChats of [0, 2]) {
+      const notice: string = formatAdNotice({
+        label: "@spammer",
+        reason: "卖号",
+        enforcedChats,
+        failedChats: 0,
+      });
+      expect(notice).not.toContain("删干净");
+      expect(notice).toContain("记进小本本");
+    }
   });
 
   test("播报发送失败时不安排删除", async () => {

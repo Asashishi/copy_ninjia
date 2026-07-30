@@ -9,14 +9,14 @@ import {
   lockdownApiChains,
   lockdownApiRunner,
   lockdownEntries,
-} from "../../cache/antiRaid/lockdown";
+} from "../../cache/workers/antiRaid/lockdown";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { AdoptableLockdown, LockdownEvent, LockdownPersistedMessage, UnlockEvent } from "../../types/antiRaid";
 import { transitionLockdown } from "../../states/lockdown";
 import type { LockdownEffect, LockdownMachineEvent, LockdownTransition, LockdownState } from "../../types/states/lockdown";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
-import type { LockdownEntry } from "../../cache/antiRaid/lockdown";
+import type { LockdownEntry } from "../../cache/workers/antiRaid/lockdown";
 import type { JoinWindow } from "../../types/antiRaid/internal";
 import { trackAntiRaidTask } from "./taskTracker";
 

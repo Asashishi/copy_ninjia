@@ -9,7 +9,7 @@ import {
   aiReplyActivityByChat,
   aiReplyActivitySweepState,
   type AiReplyActivityEntry,
-} from "../../cache/auto";
+} from "../../cache/main/auto";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
 import { setBoundedMapValue } from "../../libs/boundedMap";

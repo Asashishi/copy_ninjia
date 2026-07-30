@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { defaultStickerConfigCache } from "../cache/config";
+import { defaultStickerConfigCache } from "../cache/perThread/config";
 import { MAX_CONFIGURED_STICKER_PACKS, STICKER_PACK_NAME_PATTERN } from "../consts/aiChat/stickers";
 import { STICKERS_CONFIG_PATH } from "../consts/paths";
 import { hasExactKeys, isPlainRecord } from "../libs/runtimeConfig";

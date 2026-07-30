@@ -31,7 +31,7 @@ mock.module("../../../packages/consts/antiRaid/blocklist", () => ({
 }));
 
 const { handleRemoveBlockedMembers } = await import("../../../packages/workers/antiRaid/blocklistEffects");
-const { bumpBlocklistRemovalEpoch, blocklistRemovalEpochs } = await import("../../../packages/cache/antiRaid/blocklist");
+const { bumpBlocklistRemovalEpoch, blocklistRemovalEpochs } = await import("../../../packages/cache/workers/antiRaid/blocklist");
 
 const events: BlockedMembersRemovedEvent[] = [];
 const publish = (event: BlockedMembersRemovedEvent): void => { events.push(event); };

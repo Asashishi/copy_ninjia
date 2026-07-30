@@ -19,7 +19,7 @@ const {
   hydrateLuckDay,
 } = await import("../../../packages/workers/diskIO/luckFiles");
 const { recoverLuckDay } = await import("../../../packages/workers/diskIO/snapshotFiles");
-const { luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache, resetLuckCache } = await import("../../../packages/cache/diskIO/luck");
+const { luckFileState, luckFlushTimer, luckPendingAppends, luckWorkerCache, resetLuckCache } = await import("../../../packages/cache/workers/diskIO/luck");
 const { FLUSH_MAX_ENTRIES } = await import("../../../packages/consts/diskIO");
 import type { LuckDrawDiskMessage } from "../../../packages/types";
 

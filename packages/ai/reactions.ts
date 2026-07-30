@@ -1,4 +1,4 @@
-import { reactionEmojiCache } from "../cache/reactions";
+import { reactionEmojiCache } from "../cache/workers/aiChat/reactions";
 import { getReactionConfig } from "../config/reactions";
 
 /**

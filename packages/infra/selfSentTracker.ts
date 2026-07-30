@@ -1,6 +1,6 @@
 import type { Message, MessageOrigin } from "@grammyjs/types";
 import { SELF_SENT_MESSAGE_TTL_MS } from "../consts/telegram";
-import { sentMessages } from "../cache/selfSentTracker";
+import { sentMessages } from "../cache/perThread/selfSentTracker";
 
 /**
  * 登记「机器人自己刚发出的消息」，供自动流水线（packages/auto/message/）识别

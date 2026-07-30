@@ -4,13 +4,14 @@ import {
   answerCallbackQuery,
   joinVerificationApi,
 } from "../../infra/telegram";
-import { lockdownEntries } from "../../cache/antiRaid/lockdown";
+import { lockdownEntries } from "../../cache/workers/antiRaid/lockdown";
 import {
   threadCommentConfirmations,
   verificationEntries,
-} from "../../cache/antiRaid/verification";
+} from "../../cache/workers/antiRaid/verification";
 import { formatUserLabel } from "../../users/userLabel";
 import { verificationKey } from "../../libs/verificationKey";
+import { THREAD_COMMENT_CONFIRMATION_MAX } from "../../consts/antiRaid/cache";
 import type {
   AntiRaidMember,
   NewMemberMessage,
@@ -95,14 +96,15 @@ export function handleJoinEvent({
   const key: string = verificationKey(chatId, member.id);
   const currentState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
-  const confirmations: Set<ThreadCommentConfirmation> | undefined = threadCommentConfirmations.get(key);
-  if (confirmations && currentState !== undefined) {
-    for (const confirmation of confirmations) {
-      if (!confirmation.boundToJoin) {
-        confirmation.expectedState = currentState;
-        confirmation.boundToJoin = true;
-      }
-    }
+  const confirmation: ThreadCommentConfirmation | undefined =
+    threadCommentConfirmations.get(key);
+  if (
+    confirmation !== undefined &&
+    currentState !== undefined &&
+    !confirmation.boundToJoin
+  ) {
+    confirmation.expectedState = currentState;
+    confirmation.boundToJoin = true;
   }
 }
 
@@ -110,6 +112,10 @@ interface ConfirmedCommentParams {
   message: TrackedChatMessage;
   observedAt: number;
   dispatchVerification: VerificationDispatcher;
+}
+
+interface ConfirmThreadCommentParams extends ConfirmedCommentParams {
+  allowFloodTerminalExemption: boolean;
 }
 
 function rememberOrDispatchConfirmedComment({
@@ -139,38 +145,71 @@ function confirmThreadComment({
   message,
   observedAt,
   dispatchVerification,
-}: ConfirmedCommentParams): void {
+  allowFloodTerminalExemption,
+}: ConfirmThreadCommentParams): void {
   const key: string = verificationKey(message.chatId, message.userId);
   const expectedState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
+  const existing: ThreadCommentConfirmation | undefined =
+    threadCommentConfirmations.get(key);
+  if (existing !== undefined) {
+    const sameStateToken: boolean = existing.expectedState === expectedState;
+    existing.messageId = message.messageId;
+    existing.observedAt = observedAt;
+    existing.expectedState = expectedState;
+    existing.boundToJoin = expectedState !== undefined;
+    existing.allowFloodTerminalExemption =
+      allowFloodTerminalExemption ||
+      (
+        sameStateToken &&
+        existing.allowFloodTerminalExemption
+      );
+    return;
+  }
+  // 淘汰 Map 项并不能释放已挂到共享 Promise 上的 then closure；满载时必须
+  // 直接拒绝新 owner，才是真正的全局常驻上限。该消息已按普通消息 fail closed。
+  if (
+    threadCommentConfirmations.size >=
+    THREAD_COMMENT_CONFIRMATION_MAX
+  ) {
+    return;
+  }
   const confirmation: ThreadCommentConfirmation = {
     messageId: message.messageId,
     observedAt,
     expectedState,
     boundToJoin: expectedState !== undefined,
+    allowFloodTerminalExemption,
   };
-  let confirmations: Set<ThreadCommentConfirmation> | undefined = threadCommentConfirmations.get(key);
-  if (!confirmations) {
-    confirmations = new Set();
-    threadCommentConfirmations.set(key, confirmations);
-  }
-  confirmations.add(confirmation);
+  threadCommentConfirmations.set(key, confirmation);
 
   void trackAntiRaidTask({
     task: fetchChatHasLinkedChannel(message.chatId).then((hasLinked: boolean | undefined): void => {
-      const activeConfirmations: Set<ThreadCommentConfirmation> | undefined = threadCommentConfirmations.get(key);
-      activeConfirmations?.delete(confirmation);
-      if (activeConfirmations?.size === 0) threadCommentConfirmations.delete(key);
+      // 群停管、adopt、容量淘汰或同键新 owner 都会替换/删除 token；迟到结果
+      // 必须在写 recent comment 或回投状态机之前止步。
+      if (threadCommentConfirmations.get(key) !== confirmation) return;
+      threadCommentConfirmations.delete(key);
       if (hasLinked !== true) return;
 
       const currentState: VerificationState | undefined =
         verificationEntries.get(key)?.state;
       if (currentState !== confirmation.expectedState) return;
       if (currentState === undefined && confirmation.boundToJoin) return;
-      rememberOrDispatchConfirmedComment({
-        message,
-        observedAt: confirmation.observedAt,
-        dispatchVerification,
+      if (currentState === undefined) {
+        rememberRecentComment({
+          chatId: message.chatId,
+          userId: message.userId,
+          messageId: confirmation.messageId,
+          observedAt: confirmation.observedAt,
+        });
+        return;
+      }
+      dispatchVerification(message.chatId, message.userId, {
+        type: "confirmedThreadComment",
+        messageId: confirmation.messageId,
+        now: confirmation.observedAt,
+        allowFloodTerminalExemption:
+          confirmation.allowFloodTerminalExemption,
       });
     }),
   });
@@ -207,6 +246,10 @@ export function handleTrackedMessageEvent({
       return;
     }
     // 冷缓存先 fail closed；确认有关联频道后再以状态对象同一性升级为豁免。
+    const previousState: VerificationState | undefined =
+      verificationEntries.get(
+        verificationKey(message.chatId, message.userId)
+      )?.state;
     dispatchVerification(message.chatId, message.userId, {
       type: "trackedMessage",
       messageId: message.messageId,
@@ -214,10 +257,18 @@ export function handleTrackedMessageEvent({
       now: observedAt,
     });
     if (cachedHasLinked === undefined) {
+      const currentState: VerificationState | undefined =
+        verificationEntries.get(
+          verificationKey(message.chatId, message.userId)
+        )?.state;
       confirmThreadComment({
         message,
         observedAt,
         dispatchVerification,
+        allowFloodTerminalExemption:
+          previousState?.kind === "pending" &&
+          currentState?.kind === "expelling" &&
+          currentState.reason === "flood",
       });
     }
     return;

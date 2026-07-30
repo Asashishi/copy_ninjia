@@ -1,22 +1,22 @@
-import type { Sticker, StickerSet, PhotoSize } from "@grammyjs/types";
+import type { StickerSet } from "@grammyjs/types";
 import { logger } from "../../infra/logger";
 import { bot } from "../../infra/telegram";
-import { failedPacks, inflightStickerSets, stickerSetCache } from "../../cache/stickers/sets";
+import { failedPacks, inflightStickerSets, stickerSetCache } from "../../cache/workers/aiChat/stickers/sets";
 import { STICKER_SET_FAILURE_RETRY_MS } from "../../consts/aiChat/stickers";
-import { invalidateStickerMenu } from "../../cache/stickers/menu";
-import { stickerSentTagTemplate } from "../../consts/aiChat/prompts/transcript";
-import type { TelegramVisionSource } from "../../types/media";
+import { invalidateStickerMenu } from "../../cache/workers/aiChat/stickers/menu";
 
 interface StickerSetApi {
   getStickerSet(packName: string): Promise<StickerSet>;
 }
 
 /**
- * 贴纸领域的公共积木：白名单贴纸包的拉取与缓存（getStickerSet，按 pack
- * short name）、贴纸转描述行（describeStickerForContext）、挑选视觉解析
- * 素材来源（pickStickerVisionSource）。
+ * 白名单贴纸包的拉取与缓存（getStickerSet，按 pack short name）。
  * packages/ai/tools/stickers.ts（两层贴纸工具）、packages/ai/stickers/catalog.ts（贴纸目录
  * 生成）都用。
+ *
+ * 本模块持有 AI 闲聊 Worker 独占的贴纸集合缓存，因此**只能在那条线程里
+ * 加载**；主线程也要用的两个纯函数在 ai/stickers/describe.ts，理由见该文件
+ * 模块头注。
  */
 
 /** 拉取（或复用缓存）单个包的贴纸集合；失败返回 null（而非空集合），供
@@ -55,49 +55,4 @@ export async function getStickerSet(packName: string, api: StickerSetApi = bot.a
   })();
   inflightStickerSets.set(packName, request);
   return request;
-}
-
-/**
- * 选出一枚贴纸用于视觉解析的下载素材：静态贴纸（is_animated/is_video 均为
- * false）本体就是 webp 图片，直接下载；动态贴纸（tgs，Lottie 矢量动画）和
- * 视频贴纸（webm）都没有能直接喂视觉模型的静态画面，本项目也没有解码
- * 能力，改用 Telegram 自带的缩略图（webp 或 jpg）代替；两者都没有则放弃
- * 视觉解析，返回 null。
- *
- * 返回的 fileUniqueId 恒为贴纸自身的 file_unique_id（贴纸的身份），与实际
- * 下载来源（本体或缩略图）解耦——保证同一枚贴纸无论走哪条素材来源，描述
- * 都记在同一个缓存/目录键下，见 ai/imageDescription.ts 的 describeMedia、
- * ai/stickers/catalog.ts 的目录条目键。
- */
-export function pickStickerVisionSource(sticker: Sticker): TelegramVisionSource | null {
-  const source: PhotoSize | undefined = !sticker.is_animated && !sticker.is_video ? sticker : sticker.thumbnail;
-  if (!source) return null;
-  return {
-    fileId: source.file_id,
-    fileUniqueId: sticker.file_unique_id,
-    width: source.width,
-    height: source.height,
-  };
-}
-
-/**
- * 把一枚贴纸描述成 AI 对话缓存里的一行文本，带上模型能参考的元数据：
- * 贴纸的情绪 emoji 和所属贴纸包名，以及（若有）画面描述。三者都可能缺失
- * （无 emoji 的贴纸、不属于任何包的贴纸、没有目录/视觉解析结果的贴纸），
- * 按有什么写什么。群友发的贴纸和机器人自己发的贴纸都用这个格式记录。
- * @param visualDescription 画面描述（贴纸目录条目或视觉解析结果，见
- *   ai/stickers/catalog.ts、ai/imageDescription.ts 的 describeMedia）；没有则
- *   省略这部分，退化为原有的纯元数据行。
- */
-export interface DescribeStickerForContextParams {
-  emoji?: string;
-  set_name?: string;
-}
-
-export function describeStickerForContext(sticker: DescribeStickerForContextParams, visualDescription?: string): string {
-  const parts: string[] = [];
-  if (visualDescription) parts.push(`画面：${visualDescription}`);
-  if (sticker.emoji) parts.push(`情绪含义 ${sticker.emoji}`);
-  if (sticker.set_name) parts.push(`来自贴纸包「${sticker.set_name}」`);
-  return stickerSentTagTemplate(parts.join("，"));
 }

@@ -34,7 +34,7 @@ mock.module("../../packages/ai/telegramImage", () => ({ downloadTelegramVisionIm
 mock.module("../../packages/ai/mediaTaskRunner", () => ({ runMediaTask }));
 
 const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../packages/ai/tools/replyToolset/imageGeneration");
-const { claimImageGeneration, resetImageGenerationCache } = await import("../../packages/cache/aiChat/imageGeneration");
+const { claimImageGeneration, resetImageGenerationCache } = await import("../../packages/cache/workers/aiChat/imageGeneration");
 
 function buildContext(
   chatId: number = -1001,

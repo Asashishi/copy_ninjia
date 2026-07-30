@@ -24,21 +24,34 @@ import {
   stopAdDetectQueue,
   sweepAdDetect,
 } from "./antiRaid/adDetect/queue";
-import { bumpBlocklistRemovalEpoch } from "../cache/antiRaid/blocklist";
+import {
+  clearChatFloodWindows,
+  handleFloodCandidate,
+  resetFloodWindows,
+  sweepFloodWindows,
+} from "./antiRaid/floodControl";
+import {
+  applyBotPermissionsChange,
+  forgetWorkerBotPermissions,
+  resetWorkerBotPermissions,
+} from "./antiRaid/botPermissions";
+import { bumpBlocklistRemovalEpoch } from "../cache/workers/antiRaid/blocklist";
 import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
-import { resetAdminCache, sweepAdminCache } from "../cache/antiRaid/admins";
-import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/antiRaid/linkedChannels";
-import { recentChannelComments } from "../cache/antiRaid/recentComments";
-import { sweepVerificationRevisionCache } from "../cache/antiRaid/verification";
+import { resetAdminCache, sweepAdminCache } from "../cache/workers/antiRaid/admins";
+import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/workers/antiRaid/linkedChannels";
+import { recentChannelComments } from "../cache/workers/antiRaid/recentComments";
+import { sweepVerificationRevisionCache } from "../cache/workers/antiRaid/verification";
 import type { AdDetectedEvent, AntiRaidWorkerMessage, BlockedMembersRemovedEvent } from "../types/antiRaid";
 import { initTelegramClients } from "../infra/telegram/client";
 import { sweepRecentComments } from "./antiRaid/recentComments";
-import { antiRaidCacheSweepTimer } from "../cache/antiRaid/worker";
+import { antiRaidCacheSweepTimer } from "../cache/workers/antiRaid/worker";
 import {
   drainAntiRaidTasks,
+  quiesceAntiRaidDispatch,
   resetAntiRaidTaskTracker,
   trackAntiRaidTask,
 } from "./antiRaid/taskTracker";
+import { flushPendingNoticeDeletions, resetPendingNoticeDeletions } from "./antiRaid/noticeCleanup";
 
 /**
  * 入群守卫线程（Bun Worker）：入群验证 + 反刷群私密模式的合并流水线。
@@ -48,7 +61,7 @@ import {
  * 入口：入群验证核心、事件翻译、副作用和提醒 owner 分别位于
  * antiRaid/verificationRuntime.ts、verificationEvents.ts、
  * verificationEffects.ts、verificationReminders.ts；私密模式位于
- * antiRaid/lockdownRuntime.ts。五类状态各自由 cache/antiRaid/ 下的领域
+ * antiRaid/lockdownRuntime.ts。五类状态各自由 cache/workers/antiRaid/ 下的领域
  * 模块持有。本文件只剩消息路由与缓存 sweep 调度。
  * /block 黑名单的处置副作用（antiRaid/blocklistEffects.ts）也挂在本线程：
  * 它不带状态机，判定在主线程做完，这里只执行踢人这一步网络动作。
@@ -90,6 +103,10 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       bumpBlocklistRemovalEpoch(msg.chatId);
       // 待检的广告消息串同理：停管之后不再替这个群判定，也不再在这里删消息。
       clearChatAdDetect(msg.chatId);
+      // 刷屏计数与权限镜像一并丢掉：重新接管时主线程会重新观测并镜像过来，
+      // 计数也该从零开始，不能拿停管之前攒的窗口在新一轮里凑出一次禁言。
+      clearChatFloodWindows(msg.chatId);
+      forgetWorkerBotPermissions(msg.chatId);
       break;
     case "message":
       handleTrackedMessage(msg);
@@ -130,6 +147,13 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "clearAdDetect":
       clearChatAdDetect(msg.chatId);
       break;
+    case "floodCandidate":
+      // 同步记账；只有越过阈值那一条才派生后台任务去禁言，见 antiRaid/floodControl.ts。
+      handleFloodCandidate(msg);
+      break;
+    case "botPermissionsChanged":
+      applyBotPermissionsChange(msg.chatId, msg.permissions);
+      break;
     case "barrier":
       self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });
       break;
@@ -137,6 +161,14 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       // drain 只发生在停机路径上：先停掉广告判定的节拍，别在退出前又开一批新的
       // LLM 请求、又去删一轮消息。在途的那次不在等待集合里，不会拖住 drain。
       quiesceAdDetectQueue();
+      // 再撤掉还在按群限流桶里排队的尽力而为请求（刷屏禁言按设计能排 4 分钟，
+      // 而 drain 的预算是秒级）。排在公告 flush 之前是有意的：那一步是 drain
+      // 期间刻意要发出去的请求，这里正是把限流额度让给它（见 ./antiRaid/taskTracker.ts）。
+      quiesceAntiRaidDispatch();
+      // 还没到点的公告就地兑现：定时器活在本 isolate 里，退出即丢，留下的是
+      // 一条永久点着某人名字的公开公告（见 antiRaid/noticeCleanup.ts）。必须
+      // 排在 drain 之前——它把删除动作登记进在途集合，好让下面这次等到它结算。
+      flushPendingNoticeDeletions();
       void drainAntiRaidTasks().then((): void => {
         self.postMessage({ type: "drainComplete", drainId: msg.drainId });
       });
@@ -151,6 +183,7 @@ export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
   sweepVerificationRevisionCache(now);
   sweepRecentComments(now);
   sweepAdDetect(now);
+  sweepFloodWindows(now);
 }
 
 /** Worker 线程启动入口；主线程导入本模块时不得注册 handler 或 sweeper。 */
@@ -178,6 +211,9 @@ export function stopAntiRaidWorker(): void {
   resetAdminCache();
   resetLinkedChannelCache();
   recentChannelComments.clear();
+  resetFloodWindows();
+  resetPendingNoticeDeletions();
+  resetWorkerBotPermissions();
   resetAntiRaidTaskTracker();
   self.onmessage = null;
   process.off("exit", stopAntiRaidWorker);

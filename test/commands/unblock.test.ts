@@ -42,7 +42,7 @@ const {
   confirmedKickedUsersDay,
   sessionBlockedAt,
   sessionUnblockedIds,
-} = await import("../../packages/cache/blocklist");
+} = await import("../../packages/cache/main/blocklist");
 const {
   recordUserConfirmedKickedInChat,
   wasUserConfirmedKickedInChat,
@@ -279,6 +279,50 @@ describe("/unblock all（跨群解封）", () => {
     // 目标来自回复（resolveCommandTarget 替身），传下去的参数已经把 all 摘掉。
     expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({ rawArgument: "" }));
     expect(unbanChatMemberIfBanned).toHaveBeenCalledTimes(1);
+  });
+
+  test("裸 id 与 all 混在一起时各自摘清楚，id 原样传给目标解析", async () => {
+    // all 不是十进制数字也不够 5 个字符，既撞不上 USER_ID_ARG_PATTERN 也撞不上
+    // USERNAME_ARG_PATTERN；摘掉它剩下的就是目标参数，顺序无关。
+    target = { id: 4242 };
+    blockedUserIds.set(4242, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
+    chatStates.set(-2002, { botIsAdmin: true });
+
+    await handleUnblockCommand(context(1, "all 4242"));
+
+    expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({
+      rawArgument: "4242",
+      acceptUserId: true,
+    }));
+    expect(unbanChatMemberIfBanned).toHaveBeenCalledWith(-2002, 4242);
+    // 缓存里没有这个人时回执念出 id，不写成泛指的兜底称呼。
+    const replies = sendMessage.mock.calls.map((call) => (call[0] as { text: string }).text);
+    expect(replies.at(-1)).toContain("用户 4242");
+  });
+
+  test("按频道的负数 id 划掉：这条命令单独开了 acceptChatId", async () => {
+    // 频道马甲的 id 本来就会进名单（/block 回复频道消息、广告检测命中
+    // sender_chat），可广告检测会删掉那条消息、没有公开 username 的频道也查不到
+    // 缓存——不认负数 id 的话，这类条目永远划不掉，只能手改 blocklist.json。
+    target = { id: -1002233445566, isChannel: true };
+    blockedUserIds.set(-1002233445566, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
+    chatStates.set(-2002, { botIsAdmin: true });
+
+    await handleUnblockCommand(context(1, "-1002233445566 all"));
+
+    expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({
+      rawArgument: "-1002233445566",
+      acceptUserId: true,
+      acceptChatId: true,
+    }));
+    expect(blockedUserIds.has(-1002233445566)).toBeFalse();
+    // isChannel 决定接口：拿负数去调成员解封会报错，被记进 failedCount 变成
+    // 一份关于「根本没被碰过的目标」的假战报。
+    expect(unbanChatSenderChat).toHaveBeenCalledWith(-2002, -1002233445566);
+    expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
+    // 缓存落空时回执念成频道而不是用户，管理员才看得出目标被当成了哪一类。
+    const replies = sendMessage.mock.calls.map((call) => (call[0] as { text: string }).text);
+    expect(replies.at(-1)).toContain("频道 -1002233445566");
   });
 
   test("本来就不在名单里时，all 照样解封：那是这个参数的全部意义", async () => {

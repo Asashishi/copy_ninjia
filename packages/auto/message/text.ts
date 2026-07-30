@@ -1,5 +1,5 @@
 import { generateAndSendReply, recordChatMessage } from "../../aiChat";
-import { pickStickerVisionSource } from "../../ai/stickers/sets";
+import { pickStickerVisionSource } from "../../ai/stickers/describe";
 import { pickPhotoFile, resolveSpeaker } from "./facts";
 import { buildAiRecordContext } from "./recordContext";
 import type { MessageTriggerContext } from "./triggerContext";

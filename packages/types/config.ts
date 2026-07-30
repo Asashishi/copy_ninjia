@@ -1,6 +1,6 @@
 /**
  * 部署配置可用性判定的共享类型（判定本身见 packages/config/readiness.ts，
- * 缓存 holder 见 packages/cache/config.ts）。
+ * 缓存 holder 见 packages/cache/perThread/config.ts）。
  */
 
 /** 一份坏掉的部署文件：文件名给人看，诊断给日志看。 */

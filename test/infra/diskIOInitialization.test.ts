@@ -6,7 +6,7 @@ import type {
   LuckDrawDiskMessage,
   VerificationPersistedReply,
 } from "../../packages/types";
-import { pendingLoad, pendingLuckSecrets } from "../../packages/cache/diskIO";
+import { pendingLoad, pendingLuckSecrets } from "../../packages/cache/main/diskIO";
 
 const diskIO = await import("../../packages/infra/diskIO");
 const { superviseWorker } = await import("../../packages/libs/supervisedWorker");

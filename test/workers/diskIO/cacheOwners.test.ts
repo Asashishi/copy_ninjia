@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../../packages/cache/diskIO/logs";
+import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../../packages/cache/workers/diskIO/logs";
 import {
   hydrateLuckCache,
   luckFileState,
@@ -8,7 +8,7 @@ import {
   luckWorkerCache,
   markLuckDirty,
   resetLuckCache,
-} from "../../../packages/cache/diskIO/luck";
+} from "../../../packages/cache/workers/diskIO/luck";
 import {
   resetVerificationPersistenceCache,
   verificationFileState,
@@ -16,7 +16,7 @@ import {
   verificationPendingChanges,
   verificationRolloverTimer,
   verificationWorkerCache,
-} from "../../../packages/cache/diskIO/verification";
+} from "../../../packages/cache/workers/diskIO/verification";
 
 afterEach(() => {
   resetLogCache();

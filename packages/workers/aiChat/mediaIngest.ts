@@ -2,7 +2,7 @@ import { sanitizeInline } from "../../libs/text";
 import { displayBufferedMessageName } from "../../ai/utils/chatTranscript";
 import { getCatalogEntry } from "../../ai/stickers/catalog";
 import { describeMedia } from "../../ai/imageDescription";
-import { dirtyMemoryChats } from "../../cache/aiChat/memory";
+import { dirtyMemoryChats } from "../../cache/workers/aiChat/memory";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import type { AiRecordMediaMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
 import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";

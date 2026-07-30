@@ -29,7 +29,7 @@ mock.module("../../packages/infra/blocklist", () => ({
 }));
 
 const { claimBlockedJoiner } = await import("../../packages/antiRaid/blocklistGuard");
-const { recentBlockedJoinCounts } = await import("../../packages/cache/antiRaid/blocklistGuard");
+const { recentBlockedJoinCounts } = await import("../../packages/cache/main/antiRaid/blocklistGuard");
 
 beforeEach(() => {
   blockedIds.clear();

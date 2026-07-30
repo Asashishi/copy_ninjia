@@ -10,7 +10,7 @@ import {
 } from "../../consts/aiChat/prompts/memory";
 import { forwardPathTemplate } from "../../consts/aiChat/prompts/transcript";
 import { REPLY_ACTION_INSTRUCTION, TYPO_REQUIRED_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
-import { chatBuffers, chatSummaries } from "../../cache/aiChat/memory";
+import { chatBuffers, chatSummaries } from "../../cache/workers/aiChat/memory";
 import { collectReplyChain, lookupBufferedMessage } from "./replyChain";
 import { resolvedTagFor } from "./mediaText";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
@@ -99,7 +99,7 @@ export interface UserContentOptions {
  * 当前会话和本轮回复任务。geminiReply.ts 会保持这个顺序，把它们映射成同一个
  * user Content 下的三个 text Part，而不是伪造成 user/model 历史轮次。
  * @param chatId 群聊 ID。
- * @param selfInfo 机器人自己的账号身份（见 cache/aiChat/identity.ts 的 botInfoState），用于转录里的自我认知。
+ * @param selfInfo 机器人自己的账号身份（见 cache/workers/aiChat/identity.ts 的 botInfoState），用于转录里的自我认知。
  * @returns 拼好的三个区块；缓存为空时返回 null。
  */
 export function buildReplyPromptSections(
@@ -170,7 +170,7 @@ export function buildReplyPromptSections(
   // 明确告诉模型「你自己」在这个群里的账号身份：转录里 @ 你的 username、
   // 回复你的消息、以及标着你自己 id 的行（见发送后的 recordChatMessage 自录）
   // 都要能认出来是你自己，不能当成第三个人。username/id 来自主线程在
-  // bot.init() 之后注入的 init 消息（见 cache/aiChat/identity.ts 的 botInfoState），不写死在代码里。
+  // bot.init() 之后注入的 init 消息（见 cache/workers/aiChat/identity.ts 的 botInfoState），不写死在代码里。
   const selfIdentity: string =
     `本群中你的 Telegram 账号身份是 @${selfInfo.username}（[id:${selfInfo.id}]）。` +
     `转录里标着这个 id 的行是你自己之前说过的话；` +

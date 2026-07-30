@@ -6,7 +6,7 @@ import {
   CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW,
   CJK_ACTION_RATE_LIMIT_WINDOW_MS,
 } from "../consts/commands";
-import { recentActionCallTimestamps } from "../cache/cjkAction";
+import { recentActionCallTimestamps } from "../cache/main/cjkAction";
 import { sendMessage } from "../infra/telegram";
 import { tryConsumeSlidingWindow } from "../libs/slidingWindowRateLimit";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
@@ -56,7 +56,7 @@ export function parseCjkActionCommand(text: string | undefined): CjkActionComman
 /**
  * 全局滑动窗口配额：任意 1~2 个中文字都能触发动作命令，没有命令菜单那层天然
  * 约束，因此不分群、不分用户合并计数（窗口与上限见 consts/commands.ts，
- * 队列见 cache/cjkAction.ts）。超额立即拒绝、不排队。
+ * 队列见 cache/main/cjkAction.ts）。超额立即拒绝、不排队。
  * @param now 当前时刻；默认取墙钟，测试可注入固定值。
  * @returns 仍在配额内为 true，本次调用已记账；超额为 false。
  */
@@ -168,6 +168,8 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
         `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，本天才可不会对着空气 ${actionWord}♡`,
       unknownUsername: (rawUsername: string): string =>
         `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息再 ${actionWord} 吧♡`,
+      conflictingTarget: (rawArgument: string): string =>
+        `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该 ${actionWord} 哪个呀？只留一个再来♡`,
       selfTarget: `哼，本天才可不给杂鱼 ${actionWord}，想得美♡`,
     },
   });

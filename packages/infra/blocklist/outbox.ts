@@ -16,7 +16,7 @@ import {
   pendingBlockedRemovals,
   sessionBlockedAt,
   sessionUnblockedIds,
-} from "../../cache/blocklist";
+} from "../../cache/main/blocklist";
 import { BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES } from "../../consts/antiRaid/blocklist";
 import { flushDiskIODomain, onDiskIORespawn, postDiskIO } from "../diskIO";
 import { logger } from "../logger";
@@ -36,7 +36,7 @@ import type {
   UnblockUserDiskMessage,
 } from "../../types/diskIO";
 import type { FlushResult } from "../../types/lifecycle";
-import type { BlocklistSweepRecord } from "../../cache/blocklist";
+import type { BlocklistSweepRecord } from "../../cache/main/blocklist";
 
 /**
  * 启动恢复：把权威黑名单与当前格式 outbox 一并灌入主线程镜像。必须在 runner

@@ -33,7 +33,7 @@ CJK action commands such as `/咬` and `/贴贴` (whose action word is one or tw
 - **Reproduce the pipeline's prerequisites yourself.** The handler is registered *before* the automatic pipeline, so it is not covered by that pipeline's self-sent guard or its `cacheSender` call. It must call `isBotOwnMessage` itself to skip the bot's own messages (otherwise a channel bounce turns into a self-replying flood loop) and must record the sender identity itself.
 - **These names cannot go into the `BOT_COMMANDS` menu.** BotFather also accepts ASCII command names only (Latin letters, digits, underscores, up to 32 characters). `setMyCommands` submits the whole list at once, so one invalid name fails the entire menu with `BOT_COMMAND_INVALID`, and since a failed registration is only logged and never blocks startup, the menu disappears silently. To advertise the syntax in the menu, add an ASCII placeholder entry (the existing `/x`) and put the syntax in its description.
 - **The placeholder still needs a handler.** Tapping a menu entry actually sends the command, so without a registered handler it reaches the catch-all and enters the AI/copy pipeline as an ordinary message — while a handler that does nothing at all leaves whoever tapped the menu with complete silence. Answer with a usage hint and terminate the chain there.
-- **Carry your own global rate limit.** These commands have no command-menu constraint behind them; anyone can invent an action word on the spot. Window and ceiling go in `packages/consts/commands.ts`, the timestamp queue goes in `packages/cache/<domain>.ts`, and the decision reuses [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) — a pure function that mutates the caller-owned queue in place and holds no state of its own.
+- **Carry your own global rate limit.** These commands have no command-menu constraint behind them; anyone can invent an action word on the spot. Window and ceiling go in `packages/consts/commands.ts`, the timestamp queue goes in `packages/cache/main/<domain>.ts`, and the decision reuses [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) — a pure function that mutates the caller-owned queue in place and holds no state of its own.
 
 ## Adding Links or Formatting to a Reply
 
@@ -47,7 +47,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code holds roughly 525 string literals containing Chinese across 52 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code holds roughly 486 string literals containing Chinese across 58 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -99,7 +99,7 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 
 ## Adding a Runtime Cache
 
-1. Put it in `packages/cache/<domain>/` or a domain file, with a file header naming the owner module. Use a holder object such as `{ current: T | null }` for mutable singletons.
+1. Put it in `packages/cache/<owning thread>/<domain>` (thread directories are listed in [03 Directory Map](03-directory-map.md#cache-partitioned-by-owning-thread)), with a file header naming the owner module. Use a holder object such as `{ current: T | null }` for mutable singletons.
 2. Give every export lifecycle JSDoc: when it is populated, when it is cleared, and how it is rebuilt after a Worker crash and restart.
 3. Define a capacity bound and cleanup policy, then verify the long-lived-container requirements in [04 Authoritative Runtime Invariants](04-invariants.md#worker-and-state-ownership): bounded, owned, and reconstructible.
 4. If it must flush or settle during shutdown, use `packages/libs/flushBarrier.ts`; do not create another resolver Map.
@@ -117,7 +117,7 @@ The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#pers
 
 ## Changing an Inter-Worker Protocol
 
-`packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the `/switch_mood` handshake is the reference implementation.
+`packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the `/switch_mood` handshake is the reference implementation.
 
 ---
 

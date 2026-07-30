@@ -22,7 +22,7 @@ import {
   stickerMenuCache,
   stickerMenuInflight,
   stickerMenuRevision,
-} from "../../cache/stickers/menu";
+} from "../../cache/workers/aiChat/stickers/menu";
 import { pauseForToolAction } from "../utils/toolPause";
 import type { ChatActionControl } from "../../types/aiChat/chatAction";
 import type { StickerCatalogEntry } from "../../types/stickers/catalog";

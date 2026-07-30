@@ -23,7 +23,7 @@ import {
   pendingFlushFailedDomains,
   pendingLoad,
   pendingLuckSecrets,
-} from "../cache/diskIO";
+} from "../cache/main/diskIO";
 import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
 import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import {

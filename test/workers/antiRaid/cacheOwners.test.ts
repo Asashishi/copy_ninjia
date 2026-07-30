@@ -9,15 +9,15 @@ import {
   pendingAdminChangesDuringFetch,
   resetAdminCache,
   takePendingAdminChanges,
-} from "../../../packages/cache/antiRaid/admins";
+} from "../../../packages/cache/workers/antiRaid/admins";
 import {
   cacheLinkedChannel,
   getOrCreateLinkedChannelFetch,
   linkedChannelFetches,
   linkedChannels,
   resetLinkedChannelCache,
-} from "../../../packages/cache/antiRaid/linkedChannels";
-import { joinWindows, lockdownApiChains, lockdownEntries } from "../../../packages/cache/antiRaid/lockdown";
+} from "../../../packages/cache/workers/antiRaid/linkedChannels";
+import { joinWindows, lockdownApiChains, lockdownEntries } from "../../../packages/cache/workers/antiRaid/lockdown";
 import type { AntiRaidWorkerEvent } from "../../../packages/types";
 
 const lockdownEvents: AntiRaidWorkerEvent[] = [];

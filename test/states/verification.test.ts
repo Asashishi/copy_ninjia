@@ -31,7 +31,7 @@ function kickedState(overrides: Partial<VerificationState & { kind: "kicked" }> 
 
 function kickPendingState(
   overrides: Partial<VerificationState & { kind: "kickPending" }> = {}
-): VerificationState {
+): VerificationState & { kind: "kickPending" } {
   return {
     kind: "kickPending",
     label: "杂鱼A",
@@ -335,6 +335,81 @@ describe("trackedMessage", () => {
     expect(effectKinds(persisted.effects)).toEqual(["expelFlood"]);
   });
 
+  test("冷缓存确认可撤回由同一消息触发、但尚未开始执行的 flood 终态", () => {
+    const state = pendingState({
+      reminderMessageId: 30,
+      trackedMessageTimes: Array(ANTI_RAID_PER_MINUTE_LIMIT).fill(10_000),
+    });
+    const overflow = transitionVerification(state, {
+      type: "trackedMessage",
+      messageId: 46,
+      inCommentThread: false,
+      now: 10_000,
+    });
+    expect(overflow.next?.kind).toBe("expelling");
+
+    const confirmed = transitionVerification(overflow.next, {
+      type: "confirmedThreadComment",
+      messageId: 46,
+      now: 10_000,
+      allowFloodTerminalExemption: true,
+    });
+    expect(confirmed.next).toEqual({
+      kind: "exempt",
+      label: "杂鱼A",
+      isBot: false,
+    });
+    expect(confirmed.effects).toEqual([
+      {
+        kind: "deleteReminders",
+        reminderMessageId: 30,
+        replyReminderMessageId: undefined,
+      },
+      { kind: "retractJoinCount", joinedAt: 0 },
+      {
+        kind: "sendWelcome",
+        variant: "channelComment",
+        targetLabel: "杂鱼A",
+        anchorMessageId: 46,
+      },
+    ]);
+  });
+
+  test("冷缓存确认不能撤回已开始执行或不属于该 owner 的 flood 终态", () => {
+    const terminal = transitionVerification(
+      pendingState({
+        trackedMessageTimes:
+          Array(ANTI_RAID_PER_MINUTE_LIMIT).fill(10_000),
+      }),
+      {
+        type: "trackedMessage",
+        messageId: 46,
+        inCommentThread: false,
+        now: 10_000,
+      }
+    ).next;
+    expect(terminal?.kind).toBe("expelling");
+    if (terminal?.kind !== "expelling") throw new Error("expected expelling");
+
+    expect(
+      transitionVerification(terminal, {
+        type: "confirmedThreadComment",
+        messageId: 46,
+        now: 10_000,
+        allowFloodTerminalExemption: false,
+      }).next
+    ).toBe(terminal);
+    terminal.executionStarted = true;
+    expect(
+      transitionVerification(terminal, {
+        type: "confirmedThreadComment",
+        messageId: 46,
+        now: 10_000,
+        allowFloodTerminalExemption: true,
+      }).next
+    ).toBe(terminal);
+  });
+
   test("窗口修剪一分钟外的旧消息，且不同成员/群各自持有独立计数", () => {
     const first = pendingState({ replyReminderRequested: true, trackedMessageTimes: [0, 1_000] });
     transitionVerification(first, {
@@ -378,6 +453,23 @@ describe("私密模式踢人结算", () => {
     expect(
       transitionVerification(replacement, { type: "kickSettled", now: 6_000 }).next
     ).toBe(replacement);
+  });
+
+  test("kickRetry 只为尚未执行的 KICK_PENDING 重新产生踢人效果", () => {
+    const state = kickPendingState();
+    expect(transitionVerification(state, { type: "kickRetry" })).toEqual({
+      next: state,
+      effects: [{ kind: "kickMember" }],
+    });
+
+    state.executionStarted = true;
+    expect(transitionVerification(state, { type: "kickRetry" })).toEqual({
+      next: state,
+      effects: [],
+    });
+    expect(
+      transitionVerification(pendingState(), { type: "kickRetry" }).effects
+    ).toEqual([]);
   });
 });
 
@@ -576,6 +668,35 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     const state = pendingState({ reminderSuperseded: true });
     transitionVerification(state, { type: "reminderLanded", reminderKind: "reply", messageId: 31, now: 1_000 });
     expect(state.replyReminderMessageId).toBe(31);
+  });
+
+  test("original/reply 迟到提醒都遵守待清理消息 id 上限", () => {
+    for (const reminderKind of ["original", "reply"] as const) {
+      const state = pendingState({
+        messageIds: Array.from(
+          { length: VERIFICATION_TRACKED_MESSAGE_IDS_MAX },
+          (_unused, index) => index + 1
+        ),
+      });
+
+      transitionVerification(state, {
+        type: "reminderLanded",
+        reminderKind,
+        messageId: 9_999,
+        now: 1_000,
+      });
+
+      expect(state.messageIds).toHaveLength(
+        VERIFICATION_TRACKED_MESSAGE_IDS_MAX
+      );
+      expect(state.messageIds[0]).toBe(2);
+      expect(state.messageIds.at(-1)).toBe(9_999);
+      expect(
+        reminderKind === "original"
+          ? state.reminderMessageId
+          : state.replyReminderMessageId
+      ).toBe(9_999);
+    }
   });
 
   test("去重窗口到期 → 占位清除；PENDING 不受影响", () => {

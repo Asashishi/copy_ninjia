@@ -27,7 +27,7 @@ import { banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, 
 import type { BanChatMemberOutcome } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
 import { recordJoin } from "./lockdownRuntime";
-import { currentBlocklistRemovalEpoch } from "../../cache/antiRaid/blocklist";
+import { currentBlocklistRemovalEpoch } from "../../cache/workers/antiRaid/blocklist";
 import {
   BLOCKLIST_REMOVAL_MAX_ATTEMPTS,
   BLOCKLIST_REMOVAL_RETRY_DELAY_MS,

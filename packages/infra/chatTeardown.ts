@@ -1,4 +1,4 @@
-import { chatTeardownCallbacks } from "../cache/chatTeardown";
+import { chatTeardownCallbacks } from "../cache/main/chatTeardown";
 import type { ChatRuntimeOwner, ChatTeardownCallback } from "../types/chatTeardown";
 
 /** 上层 owner 反向注册 teardown；本叶子注册表不静态依赖任何业务领域。 */

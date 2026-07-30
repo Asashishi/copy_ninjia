@@ -4,9 +4,9 @@ import { AI_MEMORY_MAX_CHATS } from "../../packages/consts/aiChat";
 const postMessageMock = mock((..._args: unknown[]): void => {});
 (globalThis as unknown as { self: { postMessage: typeof postMessageMock } }).self = { postMessage: postMessageMock };
 
-const memoryCache = await import("../../packages/cache/aiChat/memory");
-const moodCache = await import("../../packages/cache/aiChat/mood");
-const replyCache = await import("../../packages/cache/aiChat/replies");
+const memoryCache = await import("../../packages/cache/workers/aiChat/memory");
+const moodCache = await import("../../packages/cache/workers/aiChat/mood");
+const replyCache = await import("../../packages/cache/workers/aiChat/replies");
 const { hydrateMemories, pushBufferedMessage } = await import("../../packages/workers/aiChat/rollingMemory");
 
 beforeEach(() => {

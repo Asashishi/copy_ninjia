@@ -24,12 +24,12 @@ mock.module("../../../packages/workers/aiChat/timeSentence", () => ({
 }));
 
 const { scheduleRotation } = await import("../../../packages/workers/aiChat/compaction");
-const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
-const { compactionChains, compactionPendingCounts } = await import("../../../packages/cache/aiChat/compaction");
-const { chatSummaries, dirtyMemoryChats, pendingSummaries } = await import("../../../packages/cache/aiChat/memory");
-const { resetAiChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
-const { resetAiChatCompactionCache } = await import("../../../packages/cache/aiChat/compaction");
-const { resetAiChatMemoryCache } = await import("../../../packages/cache/aiChat/memory");
+const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
+const { compactionChains, compactionPendingCounts } = await import("../../../packages/cache/workers/aiChat/compaction");
+const { chatSummaries, dirtyMemoryChats, pendingSummaries } = await import("../../../packages/cache/workers/aiChat/memory");
+const { resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
+const { resetAiChatCompactionCache } = await import("../../../packages/cache/workers/aiChat/compaction");
+const { resetAiChatMemoryCache } = await import("../../../packages/cache/workers/aiChat/memory");
 const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../packages/consts/aiChat/memory");
 const { invalidateChatReplies } = await import("../../../packages/workers/aiChat/replyGeneration");
 

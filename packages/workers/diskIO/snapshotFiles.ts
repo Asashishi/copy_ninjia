@@ -1,7 +1,7 @@
 /**
  * memory/ai/、memory/stickers/ 与 memory/luck/ 的启动恢复读取、结构校验与落盘。被
  * diskIOWorker.ts 调用；本文件不持有任何状态，纯函数式的读写辅助——文件
- * 当前的 DayFileState/待写缓冲由调用方在 cache/diskIO/ 下的领域 owner 持有，
+ * 当前的 DayFileState/待写缓冲由调用方在 cache/workers/diskIO/ 下的领域 owner 持有，
  * 按参数传进来。
  *
  * AI 记忆快照是整份覆盖写：先写 <file>.tmp、fsync、再 rename，rename 在
@@ -320,7 +320,7 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
 
 /**
  * 把一批新确认的运势条目追加到当天文件末尾（按位置追加，不整文件重写，
- * 机制见 appendOnlyDayFile.ts）。fileState 由调用方（cache/diskIO/luck.ts）
+ * 机制见 appendOnlyDayFile.ts）。fileState 由调用方（cache/workers/diskIO/luck.ts）
  * 持有并传入：为 null 或 day 对不上（本次运行第一次写、
  * 或刚跨天）时，先探测/接管一次对应日期的文件。pending 为空是防御性早退
  * ——调用方按 dirty 判断只在非空时才会调用，这里不该真的走到。

@@ -7,7 +7,7 @@ import {
   loggerReopenState,
   markLogDirty,
   resetLogCache,
-} from "../../../packages/cache/diskIO/logs";
+} from "../../../packages/cache/workers/diskIO/logs";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../../packages/consts/paths";
 import { getTokyoDateKey } from "../../../packages/libs/time";
 import {

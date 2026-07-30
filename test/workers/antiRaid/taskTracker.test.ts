@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   blocklistRemovalEpochs,
   blocklistRemovalTaskCounts,
-} from "../../../packages/cache/antiRaid/blocklist";
-import { antiRaidInFlightTasks } from "../../../packages/cache/antiRaid/tasks";
+} from "../../../packages/cache/workers/antiRaid/blocklist";
+import { antiRaidInFlightTasks } from "../../../packages/cache/workers/antiRaid/tasks";
 import {
   drainAntiRaidTasks,
   resetAntiRaidTaskTracker,

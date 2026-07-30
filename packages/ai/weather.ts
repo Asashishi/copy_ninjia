@@ -7,7 +7,7 @@ import {
   WEATHER_REFRESH_INTERVAL_MS,
   WEATHER_REQUEST_TIMEOUT_MS,
 } from "../consts/weather";
-import { weatherCache, weatherRefreshTimer } from "../cache/weather";
+import { weatherCache, weatherRefreshTimer } from "../cache/workers/aiChat/weather";
 import { fetchJsonWithTimeout } from "../libs/httpFetch";
 import type { TokyoWeatherResult } from "../types/tools";
 

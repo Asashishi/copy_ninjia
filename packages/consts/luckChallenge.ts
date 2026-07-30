@@ -61,7 +61,7 @@ export const LUCK_RESULT_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * pendingLuckDraws（见 cache/luckChallenge.ts）的 key 数量上限，超出按插入
+ * pendingLuckDraws（见 cache/main/luckChallenge.ts）的 key 数量上限，超出按插入
  * 顺序淘汰最旧的（同 ai/imageDescription.ts 的 descriptionCache 一个道理）。
  * 这个 Map 记的是"预览阶段抽到、但还没被用户选中确认"的结果——inline_query
  * 是打字即触发的预览，用户每敲一个字符都可能新增一条从未被选中过的 key，
@@ -72,7 +72,7 @@ export const LUCK_RESULT_IDS: ReadonlySet<string> = new Set([
 export const PENDING_LUCK_CACHE_MAX: number = 15_000;
 
 /**
- * dailyLuckCache（见 cache/luckChallenge.ts）当日已确认结果的数量上限。
+ * dailyLuckCache（见 cache/main/luckChallenge.ts）当日已确认结果的数量上限。
  *
  * key 是 `userId:sha256(问题原文)`，**问题原文由用户随手输入**，所以「当日唯一 key
  * 数」不是自然上界而是攻击者选的数字：反复用新问题串点选内联结果，就能让主线程

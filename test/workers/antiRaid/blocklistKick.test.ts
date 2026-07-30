@@ -3,6 +3,8 @@ import type { AntiRaidWorkerMessage } from "../../../packages/types";
 import type { DiskBusinessMessage } from "../../../packages/types/diskIO";
 
 const workerPosts: AntiRaidWorkerMessage[] = [];
+/** 被要求补齐权限位的群，验证刷屏投递顺手触发了那次按需现查。 */
+const ensuredPermissionChats: number[] = [];
 const diskPosts: DiskBusinessMessage[] = [];
 const deliveryOrder: string[] = [];
 const flushDiskIODomain = mock(async (): Promise<string> => {
@@ -33,6 +35,9 @@ mock.module("../../../packages/infra/telegram/client", () => ({ joinVerification
 mock.module("../../../packages/infra/botAdmin", () => ({
   isBotAdminIn: async (): Promise<boolean> => true,
   markBotAdminObserved: async (): Promise<void> => {},
+  botChatPermissionsIn: async (): Promise<undefined> => undefined,
+  registerBotPermissionObserver: (): void => {},
+  ensureBotChatPermissions: (chatId: number): void => { ensuredPermissionChats.push(chatId); },
 }));
 mock.module("../../../packages/libs/supervisedWorker", () => ({
   superviseWorker: () => ({
@@ -69,8 +74,8 @@ mock.module("../../../packages/workers/antiRaid/persistence", () => ({
 }));
 
 const { handleChatMemberUpdate, handleGroupJoinVerification } = await import("../../../packages/antiRaid");
-const { blockedUserIds, pendingBlockedRemovals } = await import("../../../packages/cache/blocklist");
-const { recentBlockedJoinCounts } = await import("../../../packages/cache/antiRaid/blocklistGuard");
+const { blockedUserIds, pendingBlockedRemovals } = await import("../../../packages/cache/main/blocklist");
+const { recentBlockedJoinCounts } = await import("../../../packages/cache/main/antiRaid/blocklistGuard");
 const { unblockUser } = await import("../../../packages/infra/blocklist");
 
 /** 一条「从不在群里变成群成员」的 chat_member 更新。 */
@@ -99,6 +104,7 @@ function joins(): AntiRaidWorkerMessage[] {
 
 beforeEach(() => {
   workerPosts.length = 0;
+  ensuredPermissionChats.length = 0;
   diskPosts.length = 0;
   deliveryOrder.length = 0;
   flushDiskIODomain.mockClear();
@@ -272,5 +278,74 @@ describe("黑名单成员入群秒踢", () => {
     await handleChatMemberUpdate(joinUpdate(42, "administrator"));
 
     expect(workerPosts.map((message) => message.type)).toEqual(["adminsChanged", "removeBlockedMembers"]);
+  });
+});
+
+/** 本次投给 Worker 的刷屏计数消息。 */
+function floodCandidates(): AntiRaidWorkerMessage[] {
+  return workerPosts.filter((message) => message.type === "floodCandidate");
+}
+
+describe("刷屏计数的主线程投递接线", () => {
+  test("普通超级群消息收敛成一条 floodCandidate，并顺手补齐该群权限位", async () => {
+    await handleGroupJoinVerification({
+      message_id: 11,
+      date: 1,
+      chat: { id: -1001, type: "supergroup" },
+      from: { id: 7, is_bot: false, first_name: "刷屏怪", username: "noisy" },
+      text: "spam",
+    } as never, 999);
+
+    expect(floodCandidates()).toEqual([
+      { type: "floodCandidate", chatId: -1001, userId: 7, label: "@noisy" },
+    ]);
+    // Worker 侧的禁言闸只认镜像过去的权限，而 my_chat_member 未必在本进程
+    // 生命周期内到过这个群。
+    expect(ensuredPermissionChats).toEqual([-1001]);
+  });
+
+  test("入群公告不是谁的「发言」，不进任何人的窗口", async () => {
+    await handleGroupJoinVerification({
+      message_id: 12,
+      date: 1,
+      chat: { id: -1001, type: "supergroup" },
+      from: { id: 5, is_bot: false, first_name: "Inviter" },
+      new_chat_members: [{ id: 43, is_bot: false, first_name: "Normal" }],
+    } as never, 999);
+
+    expect(floodCandidates()).toBeEmpty();
+    expect(ensuredPermissionChats).toBeEmpty();
+  });
+
+  test("离群公告同理不计数", async () => {
+    await handleGroupJoinVerification({
+      message_id: 13,
+      date: 1,
+      chat: { id: -1001, type: "supergroup" },
+      from: { id: 5, is_bot: false, first_name: "Inviter" },
+      left_chat_member: { id: 43, is_bot: false, first_name: "Normal" },
+    } as never, 999);
+
+    expect(floodCandidates()).toBeEmpty();
+  });
+
+  test("机器人自己与频道马甲不投递", async () => {
+    await handleGroupJoinVerification({
+      message_id: 14,
+      date: 1,
+      chat: { id: -1001, type: "supergroup" },
+      from: { id: 999, is_bot: true, first_name: "本天才" },
+      text: "spam",
+    } as never, 999);
+    await handleGroupJoinVerification({
+      message_id: 15,
+      date: 1,
+      chat: { id: -1001, type: "supergroup" },
+      from: { id: 7, is_bot: false, first_name: "刷屏怪" },
+      sender_chat: { id: -1009, type: "channel", title: "马甲" },
+      text: "spam",
+    } as never, 999);
+
+    expect(floodCandidates()).toBeEmpty();
   });
 });

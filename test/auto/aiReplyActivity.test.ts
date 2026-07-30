@@ -4,7 +4,7 @@ import {
   AI_REPLY_ACTIVITY_MAX_TIMESTAMPS,
   AI_REPLY_ACTIVITY_WINDOW_MS,
 } from "../../packages/consts/aiChat";
-import { aiReplyActivityByChat } from "../../packages/cache/auto";
+import { aiReplyActivityByChat } from "../../packages/cache/main/auto";
 import {
   clearAiReplyActivity,
   observeGroupMessageForAiReply,

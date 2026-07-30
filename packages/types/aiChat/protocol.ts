@@ -103,7 +103,7 @@ export interface AiInvalidateChatMessage {
 export interface AiSwitchMoodMessage {
   type: "switchMood";
   chatId: number;
-  /** 主线程分配的单调递增回执关联 id（见 cache/aiChat.ts 的 moodSwitchRequestCounter）。 */
+  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 moodSwitchRequestCounter）。 */
   requestId: number;
   /** 请求的绝对截止时刻；Worker 收到时已过期则不得再改写群心情。 */
   deadlineAt: number;

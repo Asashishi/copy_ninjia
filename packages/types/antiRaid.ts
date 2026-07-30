@@ -1,4 +1,5 @@
 import type { RemoveBlockedMembersParams } from "./blocklist";
+import type { BotChatPermissions } from "./telegram";
 import type { ChatPermissions } from "@grammyjs/types";
 export type * from "./antiRaid/internal";
 export type * from "./antiRaid/adDetect";
@@ -203,12 +204,14 @@ export interface AdCandidateMessage {
   /** 已清洗成单行的正文（文本或图片说明）。 */
   text: string;
   /**
-   * 只写进命中样本文件、**绝不参与判定**的上下文（被引用段与被回复原文）。
+   * 被引用段与被回复原文。**与 text 一起参与判定**，同时原样留进命中样本。
    *
-   * 判定文本只取发送者自己写的那部分——引用别人的广告吐槽不该让吐槽的人背锅，
-   * 而那条原消息在它自己发出时已经判过一次（见 docs/04-invariants.md）。但人
-   * 回头翻样本、调 config/ad_samples.json 时，「它当时在回谁、引了什么」往往
-   * 正是判断误判与否的关键，所以另开一个字段带过来，与 text 严格分开。
+   * 与 text 分成两个字段跨线程传，两条理由各自独立：判定侧要在正文按
+   * AD_DETECT_MESSAGE_MAX_CHARS 截断**之后**再接上（先拼后截等于给发送者一个
+   * 零成本绕过手段），样本侧要留一份没并进正文的原样（人回头翻样本、调
+   * config/ad_samples.json 时得分得清哪一段是他自己写的、哪一段是引来的）。
+   * 为什么必须连坐见 docs/04-invariants.md 与 workers/antiRaid/adDetect/bundle.ts
+   * 的 claimSampleContextParts。
    */
   sampleContext?: AdSampleContext;
   /**
@@ -247,6 +250,39 @@ export interface ClearAdDetectMessage {
   chatId: number;
 }
 
+/**
+ * 主线程 -> Worker：一条参与刷屏计数的群消息。
+ *
+ * 只有超级群、真实用户（非频道马甲/匿名管理员）、非机器人自身、非自己人的
+ * 消息才投递（见 antiRaid/floodControl.ts）；计数窗口与禁言执行都在 Worker 侧，
+ * 见 workers/antiRaid/floodControl.ts。投递走普通 post 而非 durable 边界——窗口
+ * 随 isolate 生死，为每条群消息加一道跨线程屏障换不来任何恢复能力。
+ */
+export interface FloodCandidateMessage {
+  type: "floodCandidate";
+  chatId: number;
+  userId: number;
+  /** 禁言通知里的展示标签，由主线程按可见发送者算好（同 AdCandidateMessage）。 */
+  label: string;
+}
+
+/**
+ * 主线程 -> Worker：机器人自己在某群的破坏性动作权限位发生了变化。
+ *
+ * 权限只有主线程观测得到（`my_chat_member` 更新与按需 `getChatMember` 现查都
+ * 落在那边），而踢人/禁言/删消息都在本线程执行，因此按变更镜像过来。Worker
+ * 重建与进程启动时由主线程整表重放。
+ */
+export interface BotPermissionsChangedMessage {
+  type: "botPermissionsChanged";
+  chatId: number;
+  /**
+   * 省略表示「此刻未知」——撤管理员、离群、`/init` 切换或现查失败都会这样发。
+   * Worker 必须按「这个动作做不了」处理，不得沿用上一次的值。
+   */
+  permissions?: BotChatPermissions;
+}
+
 /** 主线程 -> Worker：FIFO mailbox barrier；此前消息完成同步状态转移后回执。 */
 export interface AntiRaidBarrierMessage {
   type: "barrier";
@@ -273,6 +309,8 @@ export type AntiRaidWorkerMessage =
   | RemoveBlockedMembersMessage
   | AdCandidateMessage
   | ClearAdDetectMessage
+  | FloodCandidateMessage
+  | BotPermissionsChangedMessage
   | AntiRaidBarrierMessage
   | AntiRaidDrainMessage;
 
@@ -374,7 +412,7 @@ export interface AdSampleMessage extends AdSampleContext {
   text: string;
 }
 
-/** 只写进命中样本、不参与判定的上下文。两项都可能缺席。 */
+/** 参与判定、同时写进命中样本的上下文。两项都可能缺席。 */
 export interface AdSampleContext {
   /** 这条消息里被引用的那一段（message.quote）。 */
   quote?: string;

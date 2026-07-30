@@ -9,7 +9,7 @@ import {
   verificationEntries,
   verificationGeneration,
   verificationRevisions,
-} from "../../cache/antiRaid/verification";
+} from "../../cache/workers/antiRaid/verification";
 import type {
   AdoptVerificationsMessage,
   NewMemberMessage,
@@ -43,7 +43,7 @@ import {
   ensurePendingReminder,
 } from "./verificationReminders";
 import { trackAntiRaidTask } from "./taskTracker";
-import type { VerificationEntry } from "../../cache/antiRaid/verification";
+import type { VerificationEntry } from "../../cache/workers/antiRaid/verification";
 
 declare const self: Worker;
 

@@ -48,8 +48,8 @@ mock.module("../../../packages/ai/stickers/catalog", () => ({
 }));
 mock.module("../../../packages/config/stickers", () => ({ getStickerConfig }));
 mock.module("../../../packages/ai/weather", () => ({ startWeatherRefreshLoop, stopWeatherRefreshLoop }));
-mock.module("../../../packages/cache/aiChat/replies", () => ({ sweepAiChatReplyCache }));
-mock.module("../../../packages/cache/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
+mock.module("../../../packages/cache/workers/aiChat/replies", () => ({ sweepAiChatReplyCache }));
+mock.module("../../../packages/cache/workers/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
   flushDirtyMemories,
   flushMemorySnapshot,
@@ -67,7 +67,7 @@ mock.module("../../../packages/infra/telegram", () => ({ initTelegramClients }))
 mock.module("../../../packages/ai/mood", () => ({ switchMood }));
 
 const worker = await import("../../../packages/workers/aiChatWorker");
-const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
+const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
 
 beforeEach(() => {
   worker.stopAiChatWorker();

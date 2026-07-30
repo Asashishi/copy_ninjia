@@ -1,10 +1,10 @@
-import { botInfoState } from "../../cache/aiChat/identity";
+import { botInfoState } from "../../cache/workers/aiChat/identity";
 import {
   activeReplyCounts,
   longTriggerTimes,
   pendingOverflowNotices,
   pendingReplyTriggers,
-} from "../../cache/aiChat/replies";
+} from "../../cache/workers/aiChat/replies";
 import { RATE_LIMIT_LONG_WINDOW_MS } from "../../consts/aiChat/rateLimit";
 import { logger } from "../../infra/logger";
 import type { LinkedQueue } from "../../libs/linkedQueue";

@@ -3,6 +3,7 @@ import type { ChatState } from "../types/chatState";
 import { clearAdDetection } from "../antiRaid";
 import { adDetectConfigReadiness } from "../config/readiness";
 import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
+import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
 import { refuseIfConfigBroken } from "./configGate";
@@ -54,7 +55,19 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
   await persistAuthoritativeState("ad_detect toggled");
   // 关掉之后 Worker 里可能还排着这个群的待检消息串。主线程这道门禁只拦得住
   // 之后的消息，不清队列的话，关掉开关之后还会有人被判成广告拉黑。
-  if (arg === "disable") clearAdDetection(chatId);
+  //
+  // 开关本身已经落盘，运行时清理是尽力而为：Worker 不可用（已放弃/正在重生）时
+  // 这里会抛，放它逃出去就是这条 update 判失败、最终 offset 被扣住、重启后
+  // Telegram 重投同一条 /ad_detect disable——而 Worker 仍然不可用，重投同样失败，
+  // 恰好把重启循环焊死。那两种状态下待检队列本来就随旧 isolate 一起没了，没有
+  // 任何东西需要清（同 commands/aiChat.ts 的 invalidateAiChat）。
+  if (arg === "disable") {
+    try {
+      clearAdDetection(chatId);
+    } catch (error: unknown) {
+      logger.error(`Failed to clear the queued ad detection of chat ${chatId} after disabling it:`, error);
+    }
+  }
 
   const replyText: string = arg === "enable"
     ? `哼，本天才这就盯着这个群的广告，敢发的杂鱼一个都别想留下♡`

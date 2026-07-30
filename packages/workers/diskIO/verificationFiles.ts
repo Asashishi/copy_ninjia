@@ -28,7 +28,7 @@ import {
   verificationPendingChanges,
   verificationRolloverTimer,
   verificationWorkerCache,
-} from "../../cache/diskIO/verification";
+} from "../../cache/workers/diskIO/verification";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { getTokyoDateKey } from "../../libs/time";
 import { verificationKey } from "../../libs/verificationKey";
@@ -42,6 +42,7 @@ import type { VerificationSnapshot } from "../../types/antiRaid";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 type ReplySink = (reply: VerificationPersistedReply) => void;
+type VerificationDayValue = VerificationSnapshot | null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -147,12 +148,62 @@ function storedSnapshot(snapshot: VerificationSnapshot): Record<string, unknown>
   return { version: 1, ...snapshot };
 }
 
-/** 只删除本目录中明确匹配日期命名的旧 JSON，不碰临时文件或其它资产。 */
+function decodeVerificationDay(
+  path: string,
+  content: string
+): Map<string, VerificationDayValue> {
+  const parsed: unknown = JSON.parse(content);
+  if (!isRecord(parsed)) throw new Error(`${path} must contain a JSON object.`);
+
+  const decoded: Map<string, VerificationDayValue> = new Map();
+  for (const [key, value] of Object.entries(parsed)) {
+    if (value === null) {
+      decoded.set(key, null);
+      continue;
+    }
+    const snapshot: VerificationSnapshot | null =
+      decodeVerificationSnapshot(key, value);
+    if (snapshot === null) {
+      throw new Error(
+        `${path} contains an invalid active pending verification record for key ${key}.`
+      );
+    }
+    decoded.set(key, snapshot);
+  }
+  return decoded;
+}
+
+function latestPriorVerificationDay(day: string, dir: string): string | undefined {
+  let latest: string | undefined;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(entry.name);
+    const candidate: string | undefined = match?.[1];
+    if (
+      candidate === undefined ||
+      candidate >= day ||
+      (latest !== undefined && candidate <= latest)
+    ) {
+      continue;
+    }
+    latest = candidate;
+  }
+  return latest;
+}
+
+/**
+ * 只删除本目录中明确匹配日期命名的旧 JSON，不碰临时文件或其它资产。
+ * 从最旧删到最新：若中途失败，最新旧日仍是下次恢复的权威基线；不能先删它，
+ * 否则更早残留文件会在当天 active-only 快照上复活已经 tombstone 的成员。
+ */
 export function removeOldVerificationDays(day: string, dir: string = VERIFICATION_MEMORY_DIR): void {
+  const oldDays: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile() || !DAY_FILE_PATTERN.test(entry.name) || entry.name === `${day}.json`) continue;
-    unlinkSync(join(dir, entry.name));
+    oldDays.push(entry.name);
   }
+  oldDays.sort();
+  for (const name of oldDays) unlinkSync(join(dir, name));
 }
 
 /** 把当前 active 镜像原子写成指定日期的规范对象；维护路径才整份重写。 */
@@ -170,7 +221,7 @@ export function compactVerificationDay(day: string, dir: string = VERIFICATION_M
   verificationFileState.appendedBytes = 0;
 }
 
-/** 启动只读取东京当天文件；旧日文件随即清理。 */
+/** 启动恢复东京当天；若停机跨日，先合并最新旧日并原子发布，再清理旧日。 */
 export function recoverVerificationDay(
   day: string = getTokyoDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
@@ -179,6 +230,55 @@ export function recoverVerificationDay(
   resetVerificationPersistenceCache();
 
   const path: string = join(dir, `${day}.json`);
+  const priorDay: string | undefined = latestPriorVerificationDay(day, dir);
+  if (priorDay !== undefined) {
+    const priorPath: string = join(dir, `${priorDay}.json`);
+    // 跨午夜停机时旧日是唯一恢复来源。它必须原样严格解码：若字节损坏，
+    // 宁可拒绝启动并保留新旧文件，也不能裁掉尾部后迁移一个不完整的安全状态。
+    const priorValues: Map<string, VerificationDayValue> =
+      decodeVerificationDay(priorPath, readFileSync(priorPath, "utf8"));
+    const merged: Map<string, VerificationSnapshot> = new Map();
+    for (const [key, value] of priorValues) {
+      if (value !== null) merged.set(key, value);
+    }
+
+    if (existsSync(path)) {
+      let currentContent: string = readFileSync(path, "utf8");
+      try {
+        JSON.parse(currentContent);
+      } catch {
+        // 当天文件沿用既有尾部截断修复；旧日已经在上方严格通过，修不好仍抛出，
+        // 且旧日不会被清理。
+        verificationFileState.current = openDayFile(
+          dir,
+          day,
+          PERSISTED_FILE_MODE
+        );
+        currentContent = readFileSync(path, "utf8");
+      }
+      const currentValues: Map<string, VerificationDayValue> =
+        decodeVerificationDay(path, currentContent);
+      // 新日是更晚的权威增量；null tombstone 必须压过旧日 active，不能复活。
+      for (const [key, value] of currentValues) {
+        if (value === null) merged.delete(key);
+        else merged.set(key, value);
+      }
+    }
+
+    for (const [key, snapshot] of merged) {
+      verificationWorkerCache.set(key, snapshot);
+    }
+    try {
+      // 先把合并结果原子发布到当天，再删除旧日；任一步抛错都不能宣称迁移完成。
+      compactVerificationDay(day, dir);
+      removeOldVerificationDays(day, dir);
+    } catch (error: unknown) {
+      resetVerificationPersistenceCache();
+      throw error;
+    }
+    return new Map(verificationWorkerCache);
+  }
+
   if (!existsSync(path)) {
     verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
     removeOldVerificationDays(day, dir);
@@ -186,25 +286,17 @@ export function recoverVerificationDay(
   }
 
   let content: string = readFileSync(path, "utf8");
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(content);
+    JSON.parse(content);
   } catch {
     // 仅对字节级尾部截断沿用通用修复；修复不了仍由下次 parse fail closed。
     verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
     content = readFileSync(path, "utf8");
-    parsed = JSON.parse(content);
+    JSON.parse(content);
   }
-  if (!isRecord(parsed)) throw new Error(`${path} must contain a JSON object.`);
-
   const recovered: Map<string, VerificationSnapshot> = new Map();
-  for (const [key, value] of Object.entries(parsed)) {
-    if (value === null) continue;
-    const snapshot: VerificationSnapshot | null = decodeVerificationSnapshot(key, value);
-    if (snapshot === null) {
-      throw new Error(`${path} contains an invalid active pending verification record for key ${key}.`);
-    }
-    recovered.set(key, snapshot);
+  for (const [key, value] of decodeVerificationDay(path, content)) {
+    if (value !== null) recovered.set(key, value);
   }
 
   // 全部 active 记录通过后才发布缓存、接管文件及清理旧日；单条损坏不能

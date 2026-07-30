@@ -7,7 +7,7 @@ import {
   activeReplyCounts,
   pendingOverflowNotices,
   pendingReplyTriggers,
-} from "../../cache/aiChat/replies";
+} from "../../cache/workers/aiChat/replies";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { truncateInline } from "../../libs/text";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";

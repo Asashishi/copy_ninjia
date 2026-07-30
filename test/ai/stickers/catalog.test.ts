@@ -17,6 +17,8 @@ const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<any>
 
 mock.module("../../../packages/ai/stickers/sets", () => ({
   getStickerSet: getStickerSetMock,
+}));
+mock.module("../../../packages/ai/stickers/describe", () => ({
   pickStickerVisionSource: (sticker: any) => ({ fileId: `${sticker.file_id}`, fileUniqueId: sticker.file_unique_id }),
 }));
 mock.module("../../../packages/ai/imageDescription", () => ({
@@ -36,8 +38,8 @@ const {
   hydrateStickerCatalogs,
   retryIncompleteStickerCatalogs,
 } = await import("../../../packages/ai/stickers/catalog");
-const { transientDescriptionCache } = await import("../../../packages/cache/imageDescription");
-const { failedEntries, stickerCatalogRetryState } = await import("../../../packages/cache/stickers/catalog");
+const { transientDescriptionCache } = await import("../../../packages/cache/workers/aiChat/imageDescription");
+const { failedEntries, stickerCatalogRetryState } = await import("../../../packages/cache/workers/aiChat/stickers/catalog");
 const { STICKER_CATALOG_RETRY_INTERVAL_MS } = await import("../../../packages/consts/aiChat/stickers");
 
 function sticker(fileUniqueId: string, emoji: string): any {

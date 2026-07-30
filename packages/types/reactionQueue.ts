@@ -9,7 +9,7 @@ import type { ReactionTypeCustomEmoji, ReactionTypeEmoji } from "@grammyjs/types
 export type CopyableReaction = ReactionTypeEmoji | ReactionTypeCustomEmoji;
 
 /**
- * 反应同步队列（packages/cache/reactionQueue.ts）里的一条任务：某条消息「最新」
+ * 反应同步队列（packages/cache/main/reactionQueue.ts）里的一条任务：某条消息「最新」
  * 想要的反应状态。
  */
 export interface ReactionTask {

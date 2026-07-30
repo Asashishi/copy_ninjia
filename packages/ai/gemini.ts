@@ -20,7 +20,7 @@
 
 import { ApiError, GoogleGenAI } from "@google/genai";
 import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
-import { geminiClientHolder } from "../cache/gemini";
+import { geminiClientHolder } from "../cache/workers/aiChat/gemini";
 import { logger } from "../infra/logger";
 import { AI_CHAT_GEMINI_API_KEY } from "../infra/config";
 import { GEMINI_REQUEST_TIMEOUT_MS, GEMINI_SAFETY_SETTINGS } from "../consts/aiChat/tools";
@@ -39,7 +39,7 @@ export type GeminiRequestResult =
 
 /**
  * 取得线程内唯一 Gemini 客户端。timeout 是每次请求/每次 SDK 重试各自的预算，
- * Worker 线程各自拥有独立实例，崩溃重建后由 cache/gemini.ts 的空 holder 重建。
+ * Worker 线程各自拥有独立实例，崩溃重建后由 cache/workers/aiChat/gemini.ts 的空 holder 重建。
  *
  * 密钥是可选 env（见 infra/config.ts）：没配时 AI Worker 根本不会启动、
  * /ai_chat enable 与投喂门禁也都把请求挡在外面（aiChat/availability.ts），

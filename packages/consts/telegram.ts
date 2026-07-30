@@ -1,3 +1,5 @@
+import type { ChatPermissions } from "@grammyjs/types";
+
 /** Telegram API 封装（packages/infra/telegram/）的调参常量。 */
 
 /** 长轮询订阅的完整 update 类型集合。 */
@@ -47,6 +49,35 @@ export const USER_PROFILE_PHOTOS_LIMIT: number = 100;
 
 /** 踢人公告在被自动清理前保持可见的时长。 */
 export const KICK_NOTICE_AUTO_DELETE_MS: number = 30 * 1000;
+
+/**
+ * 禁言一名成员时写给 `restrictChatMember` 的权限集：全部收走。
+ *
+ * 每一项都显式写出、不靠缺省：Bot API 对缺省字段确实按 false 处理，但这份
+ * 常量同时是「禁言到底关掉了什么」的唯一说明，漏写一项在代码里看不出来，
+ * 只能靠翻 Telegram 文档倒推。`can_react_to_messages` 尤其不能省——它缺省
+ * 跟随 `can_send_messages`，写出来才看得见它也被关了。
+ *
+ * 全项为 false 时也不必带 `use_independent_chat_permissions`：那个标志只影响
+ * 「某一项为 true 时会不会连带打开另几项」，这里没有任何一项为 true。
+ */
+export const MUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = Object.freeze({
+  can_send_messages: false,
+  can_send_audios: false,
+  can_send_documents: false,
+  can_send_photos: false,
+  can_send_videos: false,
+  can_send_video_notes: false,
+  can_send_voice_notes: false,
+  can_send_polls: false,
+  can_send_other_messages: false,
+  can_add_web_page_previews: false,
+  can_react_to_messages: false,
+  can_change_info: false,
+  can_invite_users: false,
+  can_pin_messages: false,
+  can_manage_topics: false,
+});
 
 /** Telegram 文本消息的硬性长度上限（字符），超出会被 Bot API 拒绝。 */
 export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;

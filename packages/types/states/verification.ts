@@ -154,6 +154,15 @@ export interface TrackedMessageEvent {
   now: number;
 }
 
+/** 冷缓存 getChat 回来后，对精确状态 token 投递的权威评论区确认。 */
+export interface ConfirmedThreadCommentEvent {
+  type: "confirmedThreadComment";
+  messageId: number;
+  now: number;
+  /** 只允许撤回由本 owner 覆盖消息同步触发、且尚未开始执行的 flood 终态。 */
+  allowFloodTerminalExemption: boolean;
+}
+
 export interface VerificationCallbackEvent {
   type: "callback";
   callbackQueryId: string;
@@ -183,12 +192,14 @@ export type VerificationEvent =
   | JoinEvent
   | { type: "left" }
   | TrackedMessageEvent
+  | ConfirmedThreadCommentEvent
   | VerificationCallbackEvent
   | { type: "adminCheckResolved" }
   | VerifyTimeoutEvent
   | { type: "terminalPersisted" }
   | TimeoutInviterVerdictEvent
   | { type: "expelSettled" }
+  | { type: "kickRetry" }
   | { type: "kickSettled"; now: number }
   | ReminderLandedEvent
   | { type: "dedupeExpired" };

@@ -53,7 +53,7 @@ WantedBy=multi-user.target
 | `memory/stickers/<pack>.json` | allowlist 対象スタンプパック 1 件の version=1 カタログ。`file_unique_id` ごとの emoji/説明とパック要約を保持 | オンラインパックとの照合で再構築可能。`config/stickers.json` から外れたパックのファイルは起動復元時に削除 |
 | `memory/luck/<YYYY-MM-DD>.json` | 東京当日の運勢結果。key はユーザー ID で、質問付きの場合は質問 digest も含む | 当日分だけ保持。下記 receipt key と同じ整合時点でバックアップ |
 | `memory/luck/receipt-secret.json` | 当日の署名付き運勢 receipt 用 version=1 HMAC key（日付 + 32 byte key） | 既存結果と別に削除・再生成・復元してはいけない |
-| `memory/anti-raid/<YYYY-MM-DD>.json` | Challenge 認証待ち状態の当日追記ログ。active snapshot、同一 key の revision、終端 tombstone を含む | 復元時は `chatId:userId` ごとの最後の値だけを採用。当日だけを保持し、履歴 10,000 件または 4 MiB で active snapshot へ compact |
+| `memory/anti-raid/<YYYY-MM-DD>.json` | Challenge 認証待ち状態の当日追記ログ。active snapshot、同一 key の revision、終端 tombstone を含む | 日付をまたぐ起動では最新旧日と当日を merge（当日の active/tombstone が優先）し、原子的な公開成功後だけ旧日を削除。定常時は当日だけ保持し、履歴 10,000 件または 4 MiB で compact |
 | `memory/blocklist/blocklist.json` | `/block` の正式な恒久リスト（ユーザー id とブロック時刻） | 必ずバックアップ。失うと全員のブロックが解除されたのと同じです。通常の解除は `/unblock` を使い、緊急の手編集は停止中に正しい JSON を保って行います。破損時は末尾を切り詰めず**起動を拒否**し、キーはそのまま復元できる 10 進 id でなければなりません |
 | `memory/blocklist/removals.json` | 未完了のチャット別 BAN task を持つ durable outbox | リストの複製ではありません。`blocklist.json` と `state.json` と同じ整合点でバックアップします。起動時に正式リストとチャット状態で filter して再投入し、task の着地後に削除します |
 | `memory/ad-detected/sample.json` | 広告判定ヒットの生サンプル（時刻、メッセージ ID と本文、判定理由、引用/返信コンテキスト） | **純粋なバイパスで、プロセスは決して読みません**。失っても挙動は変わらず、`config/ad_samples.json` を調整するための素材が減るだけです。8 MiB 到達時に `sample.<東京日付>[.<連番>].json` へ自動ローテーションし、アーカイブは当日を含む直近 15 東京暦日だけ自動保持します |
@@ -61,7 +61,7 @@ WantedBy=multi-user.target
 | `logs/` | 英語メッセージのエラーログ | 必要に応じて |
 | `bot.lock` と `.guard` / `.recovery` | 単一インスタンスロック | バックアップも手動編集もしない |
 
-`memory/` 直下にはファイルを置かず、6 ドメインがそれぞれ 1 つのサブディレクトリを所有します。起動復元は `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/` を必要に応じて作成し、`ad-detected/` は最初の広告検出ヒット後にだけ現れます。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。
+`memory/` 直下にはファイルを置かず、6 ドメインがそれぞれ 1 つのサブディレクトリを所有します。起動復元は `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/` を必要に応じて作成し、`ad-detected/` は最初の広告検出ヒット後にだけ現れます。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、当日の原子 snapshot が成功した後だけ旧日を清掃します。
 
 ### `memory/` の補助ファイルとプロセス内限定状態
 

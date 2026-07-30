@@ -1,6 +1,6 @@
 import type { CachedUser } from "../types/chatState";
 import type { Message, User, Chat } from "@grammyjs/types";
-import { senderUsernameCache, userCache } from "../cache/senderIdentity";
+import { senderUsernameCache, userCache } from "../cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../consts/senderIdentity";
 import { visibleSenderChat } from "./visibleSender";
 
@@ -8,7 +8,7 @@ import { visibleSenderChat } from "./visibleSender";
  * 消息发送者的身份解析与缓存。自动流程（packages/auto/message/ 靠 cacheSender
  * 刷新 username 缓存）和命令处理（packages/commands 下的 /copy、/block 靠
  * resolveReplyTarget 从被回复的消息定位目标，靠 resolveUsernameTarget 按
- * @username 定位目标）共用这一份逻辑。缓存状态见 cache/senderIdentity.ts。
+ * @username 定位目标）共用这一份逻辑。缓存状态见 cache/main/senderIdentity.ts。
  */
 
 /**
@@ -132,6 +132,34 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
   }
 
   return identity;
+}
+
+/**
+ * 按裸 id 取目标身份，供 `/block`、`/unblock` 解析 id 形式的参数，见
+ * commands/targetResolution.ts。
+ *
+ * **与 @username 那条路的关键差别：查不到不是失败。** id 本身就是权威目标，
+ * 缓存只用来给回执配一个人类可读的标签；而用户名是会被释放、被别人重新注册的
+ * ——那正是「破坏性操作优先回复消息、别信历史用户名」这条建议的由来（同
+ * `/steal_icon` 的现查要求，见 docs/04-invariants.md）。按 id 下的命令没有这个
+ * 问题，因此这里在缓存落空时返回只带 id 的最小身份，让命令照常执行。
+ *
+ * 负数 id 一律标成频道身份。这不是猜的：负 id 只可能来自 `sender_chat`，处置侧
+ * 也早就按同一个符号分派（见 workers/antiRaid/blocklistEffects.ts 的 removeOne）。
+ * 这个标记是承重的——`/unblock ... all` 靠它决定走 unbanChatSenderChat 还是
+ * unbanChatMemberIfBanned，漏标就会拿一个负数去调后者，报错记进 failedCount，
+ * 管理员收到一份「还有 N 个群没解开」的假战报。缓存命中那条路不必重复标：
+ * 负 id 的缓存条目只由 resolveSenderIdentity 产出，那里已经带上了 isChannel。
+ *
+ * 双向一致才采信缓存里的那份，理由同 resolveUsernameTarget：单边残留的别名
+ * 会把标签写成另一个人的名字。
+ */
+export function resolveIdTarget(targetId: number): CachedUser {
+  const minimalIdentity: CachedUser = targetId < 0 ? { id: targetId, isChannel: true } : { id: targetId };
+  const normalizedUsername: string | undefined = senderUsernameCache.get(targetId);
+  if (normalizedUsername === undefined) return minimalIdentity;
+  const identity: CachedUser | undefined = userCache.get(normalizedUsername);
+  return identity?.id === targetId ? identity : minimalIdentity;
 }
 
 /**

@@ -23,6 +23,14 @@ const warnings: string[] = [];
 const loggedErrors: string[] = [];
 let nextSentMessageId: number | undefined = 900;
 let kickSucceeds: boolean = true;
+/** 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。 */
+let deleteSucceeds: boolean = true;
+/**
+ * 清痕迹那条路上每次 deleteMessageWithOutcome 的结局，按调用顺序消费，用尽后
+ * 回落到 "deleted"。三态是有意义的：`gone`（已被别人手删/超过 48 小时）不该被
+ * 折算成「删不动」，否则战报会冤枉一个权限齐全的管理员。
+ */
+const traceDeleteOutcomes: string[] = [];
 let membershipPresent: boolean | undefined = true;
 const getChatAdministrators = mock(async (): Promise<{ user: { id: number }; is_anonymous: boolean }[]> => []);
 const probeChatMembership = mock(async (): Promise<boolean | undefined> => membershipPresent);
@@ -49,7 +57,11 @@ mock.module("../../../packages/infra/telegram", () => ({
   },
   deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> => {
     deletedMessageIds.push(messageId);
-    return true;
+    return deleteSucceeds;
+  },
+  deleteMessageWithOutcome: async (_chatId: number, messageId: number): Promise<string> => {
+    deletedMessageIds.push(messageId);
+    return traceDeleteOutcomes.shift() ?? "deleted";
   },
   deleteMessageAfter(params: { messageId: number; delayMs: number }): void {
     autoDeleted.push({ messageId: params.messageId, delayMs: params.delayMs });
@@ -58,14 +70,28 @@ mock.module("../../../packages/infra/telegram", () => ({
     kickedUserIds.push(userId);
     return kickSucceeds;
   },
+  kickChatMemberWithOutcome: async (
+    _chatId: number,
+    userId: number
+  ): Promise<"kicked" | "failed"> => {
+    kickedUserIds.push(userId);
+    return kickSucceeds ? "kicked" : "failed";
+  },
   probeChatMembership,
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 
 const { runVerificationEffects } = await import("../../../packages/workers/antiRaid/verificationEffects");
-const { verificationEntries } = await import("../../../packages/cache/antiRaid/verification");
-const { cacheAdminIds, resetAdminCache } = await import("../../../packages/cache/antiRaid/admins");
-const { WELCOME_AUTO_DELETE_MS } = await import("../../../packages/consts/antiRaid/verification");
+const { verificationEntries } = await import("../../../packages/cache/workers/antiRaid/verification");
+const { cacheAdminIds, resetAdminCache } = await import("../../../packages/cache/workers/antiRaid/admins");
+const {
+  VERIFICATION_TERMINAL_RETRY_MS,
+  WELCOME_AUTO_DELETE_MS,
+} = await import("../../../packages/consts/antiRaid/verification");
+const {
+  applyBotPermissionsChange,
+  resetWorkerBotPermissions,
+} = await import("../../../packages/workers/antiRaid/botPermissions");
 
 const CHAT_ID: number = -1001;
 const USER_ID: number = 42;
@@ -101,7 +127,7 @@ function checkingInviterState(expelSnapshot: ExpelSnapshot): VerificationState {
   return { kind: "checkingInviter", inviterId: INVITER_ID, snapshot: expelSnapshot };
 }
 
-function kickPendingState(): VerificationState {
+function kickPendingState(): VerificationState & { kind: "kickPending" } {
   return {
     kind: "kickPending",
     label: "待验证成员",
@@ -142,6 +168,8 @@ beforeEach(() => {
   loggedErrors.length = 0;
   nextSentMessageId = 900;
   kickSucceeds = true;
+  deleteSucceeds = true;
+  traceDeleteOutcomes.length = 0;
   membershipPresent = true;
   probeChatMembership.mockClear();
   getChatAdministrators.mockClear();
@@ -318,6 +346,58 @@ describe("同步副作用的逐条执行", () => {
     expect(deletedMessageIds).toEqual([11]);
     expect(autoDeleted).toEqual([]);
   });
+
+  test("私密模式踢人失败且成员仍在群时保留 KICK_PENDING 并退避重试", async () => {
+    const delays: number[] = [];
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+      ((...args: Parameters<typeof setTimeout>): ReturnType<typeof setTimeout> => {
+        delays.push(args[1] ?? 0);
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout
+    );
+    kickSucceeds = false;
+    membershipPresent = true;
+    const state = kickPendingState();
+    setState(state);
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeFalse();
+    expect(verificationEntries.get(KEY)?.state).toBe(state);
+    expect(state.executionStarted).toBeFalse();
+    expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
+    expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
+    timeoutSpy.mockRestore();
+  });
+
+  test("私密模式踢人请求失败但成员已离群时允许结算", async () => {
+    kickSucceeds = false;
+    membershipPresent = false;
+    setState(kickPendingState());
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(dispatched).toContainEqual({
+      userId: USER_ID,
+      event: { type: "kickSettled", now: expect.any(Number) },
+    });
+  });
+
+  test("私密模式失败后的成员探测期间 token 被替换时丢弃迟到结果", async () => {
+    kickSucceeds = false;
+    const state = kickPendingState();
+    setState(state);
+    probeChatMembership.mockImplementationOnce(async (): Promise<boolean> => {
+      setState(pendingState());
+      return true;
+    });
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(verificationEntries.get(KEY)?.state.kind).toBe("pending");
+    expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeFalse();
+    expect(verificationEntries.get(KEY)?.terminalRetries).toBeUndefined();
+  });
 });
 
 describe("踢人失败时的权限告警", () => {
@@ -379,6 +459,91 @@ describe("踢人失败时的权限告警", () => {
 
     expect(sentTexts[0]).toContain("没给本天才封禁权限");
     expect(state.failureNoticeSent).toBeTrue();
+  });
+
+  test("回归用例：确证没有 can_delete_messages 时一条删除请求都不发——" +
+    "它们与踢人共用同一条限流队列，几十个注定 400 的往返会把真正的踢人顶到验证窗口之后", async () => {
+    // 主线程镜像过来的是「是管理员、能限制成员、不能删消息」这一档配置。
+    applyBotPermissionsChange(CHAT_ID, { canRestrictMembers: true, canDeleteMessages: false });
+    const state = expellingState();
+    state.snapshot.messageIds = [21, 22];
+    state.snapshot.announcementMessageId = 20;
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(deletedMessageIds).toEqual([]);
+    expect(kickedUserIds).toEqual([USER_ID]);
+    expect(sentTexts[0]).toContain("删不动");
+    resetWorkerBotPermissions();
+  });
+
+  test("镜像里「没观测到」不当成没权限：照常发删除请求，由 Telegram 当裁判", async () => {
+    // 主线程对「现查失败」（撞一次 429 就退避几分钟）发的也是「删掉条目」，
+    // 把它折算成没权限，那几分钟里的痕迹就全留在群里了。
+    const state = expellingState();
+    state.snapshot.messageIds = [21];
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(deletedMessageIds).toEqual([21]);
+  });
+
+  test("回归用例：消息一条都删不掉时，成功战报不能再断言「痕迹清干净」——" +
+    "群里还挂着的正是文案声称已经清掉的那批垃圾", async () => {
+    // 有 can_restrict_members、没有 can_delete_messages 的管理员配置：人踢走了，
+    // 入群公告和他拖延期间发的每条消息都还在。
+    traceDeleteOutcomes.push("forbidden", "forbidden", "forbidden");
+    const state = expellingState();
+    // 这个人拖延期间发过消息，还有一条机器人自己发的入群公告：正是文案声称
+    // 已经清掉的那批。删不掉时它们全都还挂在群里。
+    state.snapshot.messageIds = [21, 22];
+    state.snapshot.announcementMessageId = 20;
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(kickedUserIds).toEqual([USER_ID]);
+    expect(sentTexts[0]).not.toContain("痕迹清干净");
+    expect(sentTexts[0]).toContain("删不动");
+    // 权限配错要留下可诊断的线索，否则运维永远查不到 can_delete_messages。
+    expect(loggedErrors.some((line: string): boolean => line.includes("can_delete_messages"))).toBeTrue();
+  });
+
+  test("回归用例：消息早就不在了不算删不动——管理员比超时更快手删，不该被公开指责没给权限", async () => {
+    // 「message to delete not found」与超过 48 小时的旧消息都收敛成 gone：那批
+    // 消息确实不在群里了，痕迹就是清干净的。折算成失败的话，一个权限齐全的
+    // 机器人会把管理员送去排查一个配置完全正确的 can_delete_messages。
+    traceDeleteOutcomes.push("gone", "gone", "gone");
+    const state = expellingState();
+    state.snapshot.messageIds = [21, 22];
+    state.snapshot.announcementMessageId = 20;
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(sentTexts[0]).toContain("痕迹清干净");
+    expect(sentTexts[0]).not.toContain("删不动");
+    expect(loggedErrors.some((line: string): boolean => line.includes("can_delete_messages"))).toBeFalse();
+  });
+
+  test("回归用例：几条里只失败一条时不说「一条都删不动」，非权限失败也不点管理员", async () => {
+    // 一次瞬时网络错误：三条里删掉两条。旧实现是全有全无布尔，任一条失败即翻，
+    // 文案照样声称一条都删不动，并把管理员送去查权限。
+    traceDeleteOutcomes.push("deleted", "failed", "deleted");
+    const state = expellingState();
+    state.snapshot.messageIds = [21, 22];
+    state.snapshot.announcementMessageId = 20;
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(sentTexts[0]).toContain("只有 1 条没清掉");
+    expect(sentTexts[0]).not.toContain("删消息的权限");
+    // 线索仍要留，但不能指向一个没被证伪的权限。
+    expect(loggedErrors.some((line: string): boolean => line.includes("1 of 3"))).toBeTrue();
+    expect(loggedErrors.some((line: string): boolean => line.includes("can_delete_messages"))).toBeFalse();
   });
 
   test("告警自己也没发出去时不置位：否则这条诊断永远不再尝试", async () => {

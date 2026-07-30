@@ -184,6 +184,115 @@ function declarationName(node: ts.Node): string {
   return ts.SyntaxKind[node.kind];
 }
 
+/**
+ * 一条 import/export 说明符是不是**运行时**依赖边。`import type` 与「具名项
+ * 全部标了 type」的形态都会被 TypeScript 整条擦掉，不会让目标模块在本线程里
+ * 求值，因此不算边；副作用 import（没有 importClause）永远算。
+ */
+function isRuntimeModuleEdge(node: ts.ImportDeclaration | ts.ExportDeclaration): boolean {
+  if (ts.isExportDeclaration(node)) return !node.isTypeOnly;
+  const clause: ts.ImportClause | undefined = node.importClause;
+  if (clause === undefined) return true;
+  if (clause.phaseModifier === ts.SyntaxKind.TypeKeyword) return false;
+  if (clause.name !== undefined) return true;
+  const bindings: ts.NamedImportBindings | undefined = clause.namedBindings;
+  if (bindings === undefined || !ts.isNamedImports(bindings)) return true;
+  return bindings.elements.some((element: ts.ImportSpecifier): boolean => !element.isTypeOnly);
+}
+
+/** 把相对说明符解析成仓库内的 .ts 文件；解析不到（npm 包等）返回 undefined。 */
+function resolveRelativeModule(specifier: string, fromFile: string): string | undefined {
+  if (!specifier.startsWith(".")) return undefined;
+  const base: string = resolve(dirname(fromFile), specifier);
+  for (const candidate of [`${base}.ts`, join(base, "index.ts"), base]) {
+    if (candidate.endsWith(".ts") && existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * 本文件在**同一条线程内**会拉起哪些模块。刻意不跟 `new Worker(new URL(...))`：
+ * 那正是线程边界，跟过去就把四条线程的模块图糊成一张。
+ */
+function runtimeDependencies(path: string): string[] {
+  const source: ts.SourceFile = ts.createSourceFile(
+    path,
+    readFileSync(path, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const targets: string[] = [];
+  function visit(node: ts.Node): void {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      isRuntimeModuleEdge(node)
+    ) {
+      const resolved: string | undefined = resolveRelativeModule(node.moduleSpecifier.text, path);
+      if (resolved !== undefined) targets.push(resolved);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] !== undefined &&
+      ts.isStringLiteral(node.arguments[0])
+    ) {
+      const resolved: string | undefined = resolveRelativeModule(node.arguments[0].text, path);
+      if (resolved !== undefined) targets.push(resolved);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return targets;
+}
+
+/** 四条线程各自的入口，以及从入口出发能加载到的模块闭包（含最短引入路径）。 */
+const THREAD_ENTRIES: Readonly<Record<string, string>> = Object.freeze({
+  main: join(PROJECT_ROOT, "index.ts"),
+  aiChat: join(PROJECT_ROOT, "packages", "workers", "aiChatWorker.ts"),
+  antiRaid: join(PROJECT_ROOT, "packages", "workers", "antiRaidWorker.ts"),
+  diskIO: join(PROJECT_ROOT, "packages", "workers", "diskIOWorker.ts"),
+});
+
+function threadModuleClosure(entry: string): Map<string, string[]> {
+  const trail: Map<string, string[]> = new Map([[entry, [entry]]]);
+  const queue: string[] = [entry];
+  while (queue.length > 0) {
+    const current: string = queue.shift()!;
+    const path: string[] = trail.get(current)!;
+    for (const dependency of runtimeDependencies(current)) {
+      if (trail.has(dependency)) continue;
+      trail.set(dependency, [...path, dependency]);
+      queue.push(dependency);
+    }
+  }
+  return trail;
+}
+
+/**
+ * `packages/cache/` 的目录名就是这份状态的 owner 线程，见
+ * docs/04-invariants.md「缓存的线程归属」。这里用真实模块图核对声明与事实是否
+ * 一致：一份只属于某条线程的状态被别的线程 import，那条线程拿到的是一份永远
+ * 对不上的空副本——静态看不出来，运行起来只是「缓存莫名其妙不命中」。
+ */
+const CACHE_OWNER_BY_PREFIX: readonly (readonly [string, string])[] = Object.freeze([
+  [join("packages", "cache", "main") + "/", "main"],
+  [join("packages", "cache", "workers", "aiChat") + "/", "aiChat"],
+  [join("packages", "cache", "workers", "antiRaid") + "/", "antiRaid"],
+  [join("packages", "cache", "workers", "diskIO") + "/", "diskIO"],
+]);
+
+/**
+ * 唯一的归属豁免：infra/logger.ts 静态 import infra/diskIO.ts 取 relayLogMessage，
+ * 而四条线程都要能记 error 日志。Worker isolate 里那份状态恒为初始值、一次也不
+ * 会被读写，理由见 packages/cache/main/diskIO.ts 的模块头注。
+ */
+const CACHE_OWNER_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  [join("packages", "cache", "main", "diskIO.ts")]: Object.freeze(["aiChat", "antiRaid"]),
+});
+
 const failures: string[] = [];
 const tracked: string[] = trackedFiles();
 for (const trackedPath of tracked) {
@@ -235,6 +344,44 @@ for (const path of sourceFilesUnder(CACHE_ROOT)) {
         failures.push(`${relative(PROJECT_ROOT, path)}:${source.getLineAndCharacterOfPosition(statement.getStart()).line + 1} export ${declarationName(statement)} lacks JSDoc`);
       }
     }
+  }
+}
+
+const threadClosures: Map<string, Map<string, string[]>> = new Map(
+  Object.entries(THREAD_ENTRIES).map(
+    ([thread, entry]: [string, string]): [string, Map<string, string[]>] => [thread, threadModuleClosure(entry)]
+  )
+);
+
+for (const path of sourceFilesUnder(CACHE_ROOT)) {
+  const relativePath: string = relative(PROJECT_ROOT, path);
+  const perThread: boolean = relativePath.startsWith(join("packages", "cache", "perThread") + "/");
+  const owner: string | undefined = CACHE_OWNER_BY_PREFIX.find(
+    ([prefix]: readonly [string, string]): boolean => relativePath.startsWith(prefix)
+  )?.[1];
+  if (owner === undefined && !perThread) {
+    failures.push(
+      `${relativePath} is not under a cache owner directory ` +
+      `(expected packages/cache/{main,workers/<thread>,perThread}/)`
+    );
+    continue;
+  }
+
+  const allowed: ReadonlySet<string> = new Set(
+    owner === undefined
+      ? Object.keys(THREAD_ENTRIES)
+      : [owner, ...(CACHE_OWNER_EXEMPTIONS[relativePath] ?? [])]
+  );
+  for (const [thread, closure] of threadClosures) {
+    if (allowed.has(thread)) continue;
+    const trail: string[] | undefined = closure.get(path);
+    if (trail === undefined) continue;
+    const chain: string = trail
+      .map((step: string): string => relative(PROJECT_ROOT, step))
+      .join(" -> ");
+    failures.push(
+      `${relativePath} is owned by the ${owner} thread but is loaded by the ${thread} thread: ${chain}`
+    );
   }
 }
 

@@ -2,7 +2,7 @@ import { logger } from "../infra/logger";
 import { v3 as GoogleTranslate } from "@google-cloud/translate";
 import type { protos } from "@google-cloud/translate";
 import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
-import { translateParentCache, translateRuntime } from "../cache/translate";
+import { translateParentCache, translateRuntime } from "../cache/main/translate";
 import { TRANSLATE_REQUEST_TIMEOUT_MS } from "../consts/lifecycle";
 import { withTimeout } from "../libs/withTimeout";
 import type { FlushResult } from "../types/lifecycle";
@@ -30,7 +30,7 @@ function getTranslateClient(): GoogleTranslate.TranslationServiceClient {
 }
 
 // v3 请求作用域限定在 "projects/{project}/locations/{location}" 下；project
-// 解析与缓存见 getTranslateParent（缓存原因见 cache/translate.ts）。
+// 解析与缓存见 getTranslateParent（缓存原因见 cache/main/translate.ts）。
 function ensureTranslateGeneration(expectedGeneration: number): void {
   if (expectedGeneration !== translateRuntime.generation) {
     throw new Error("Google Translation owner was closed while the request was in flight");

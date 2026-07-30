@@ -11,8 +11,10 @@ mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<undefined> => undefined,
   deleteMessage: async (): Promise<boolean> => true,
+  deleteMessageWithOutcome: async (): Promise<string> => "deleted",
   deleteMessageAfter(): void {},
   kickChatMember: async (): Promise<boolean> => true,
+  kickChatMemberWithOutcome: async (): Promise<"kicked"> => "kicked",
   probeChatMembership: async (): Promise<boolean> => true,
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
@@ -26,7 +28,7 @@ const runtime = await import(
   "../../../packages/workers/antiRaid/verificationRuntime"
 );
 const { verificationEntries } = await import(
-  "../../../packages/cache/antiRaid/verification"
+  "../../../packages/cache/workers/antiRaid/verification"
 );
 
 function pendingRecord(userId: number, isBot: boolean): VerificationSnapshot {

@@ -7,7 +7,7 @@ import {
   releaseImageGenerationClaim,
   resetImageGenerationCache,
   sweepImageGenerationCache,
-} from "../../packages/cache/aiChat/imageGeneration";
+} from "../../packages/cache/workers/aiChat/imageGeneration";
 
 afterEach(() => {
   resetImageGenerationCache();

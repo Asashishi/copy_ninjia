@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "bun:test";
-import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/aiChat/memory";
+import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
 import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../packages/consts/aiChat/prompts/memory";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";

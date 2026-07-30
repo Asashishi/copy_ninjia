@@ -4,13 +4,21 @@ import { SUPER_ADMIN_USER_ID } from "./config";
 
 /**
  * isInitEnabled 的低成本前置网关，见 app/registerHandlers.ts。未初始化群的
- * 更新在这里被挡下，只放行 my_chat_member / 私聊 / 指向自己的 via_bot
- * 消息 / /init 指令本身。
+ * 更新在这里被挡下，只放行 my_chat_member / 私聊 / /init 指令本身。
+ *
+ * 指向自己的 via_bot 消息**不**豁免。曾经有过这么一条，理由是「否则运势回执
+ * 够不到 confirmLuckDraw」，但那个前提早就不成立了：回执是 registerHandlers.ts
+ * 里排在本网关**之前**的一道 bot.use，转发副本也要认，从来不经过这里。留着它
+ * 只对「从没 /init enable 过」的群有效果（已启用的群下一行本来就放行），而
+ * inline 模式是公开的——任何人 `@bot <query>` 选一条结果，就能让这条更新进
+ * sequentialize、入群守卫和刷屏流水线，每条都换一次没有缓存的 getChatMember
+ * （recordBotAdminStatus 对未初始化的群不落盘，见 infra/botAdmin.ts），频率由
+ * 对方控制。收益是零：唯一的下游 recordSelfInlineResult 要求本群开着 AI 闲聊，
+ * 而 /ai_chat enable 本身就在网关之后。
  */
 export function shouldPassInitGate(ctx: Context): boolean {
   if (ctx.myChatMember) return true;
   if (!ctx.chat || ctx.chat.type === "private") return true;
-  if (ctx.msg?.via_bot?.id === ctx.me.id) return true;
   if (getChatState(ctx.chat.id).isInitEnabled === true) return true;
   // 未初始化群的低成本网关必须在进入 sequentialize/入群守卫之前完成权限
   // 与目标 bot 校验。否则任意用户可用 /init（甚至 /init@OtherBot）反复触发

@@ -54,7 +54,7 @@ mock.module("../../packages/workers/diskIO/luckFiles", () => ({
   hydrateLuckDay,
 }));
 mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({ recoverLuckReceiptSecret }));
-mock.module("../../packages/cache/diskIO/luck", () => ({ luckWorkerCache }));
+mock.module("../../packages/cache/workers/diskIO/luck", () => ({ luckWorkerCache }));
 mock.module("../../packages/workers/diskIO/verificationFiles", () => ({
   flushVerificationChanges,
   handleVerificationDelete,

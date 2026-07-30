@@ -61,7 +61,7 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 
 const { startReplyRound } = await import("../../../packages/workers/aiChat/replyRound");
-const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
+const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
 const {
   activeReplyCounts,
   cachedReplyGeneration,
@@ -70,8 +70,8 @@ const {
   rateLimitNoticeTimes,
   replyGenerations,
   resetAiChatReplyCache,
-} = await import("../../../packages/cache/aiChat/replies");
-const { invalidateChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
+} = await import("../../../packages/cache/workers/aiChat/replies");
+const { invalidateChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
 const { LinkedQueue } = await import("../../../packages/libs/linkedQueue");
 const { RATE_LIMIT_LONG_MAX_TRIGGERS } = await import("../../../packages/consts/aiChat/rateLimit");
 const { SUPER_ADMIN_USER_ID } = await import("../../../packages/infra/config");

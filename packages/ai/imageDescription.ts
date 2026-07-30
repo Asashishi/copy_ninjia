@@ -14,7 +14,7 @@ import { logger } from "../infra/logger";
 import { requestGeminiResponse } from "./gemini";
 import { extractOutputText } from "./utils/geminiResponse";
 import { sanitizeInline, truncateAtClauseBoundary } from "../libs/text";
-import { transientDescriptionCache } from "../cache/imageDescription";
+import { transientDescriptionCache } from "../cache/workers/aiChat/imageDescription";
 import {
   GEMINI_MEDIA_MODEL,
   IMAGE_DESCRIPTION_MAX_CHARS,
@@ -54,7 +54,7 @@ function maxCharsFor(kind: MediaKind): number {
  * 由调用方先查 stickerCatalog 的常驻目录，不会走到这里。
  * @param kind 媒体类型，决定用哪份视觉提示词与描述长度上限。
  * @param fileId 要下载的 Telegram file_id：图片是本体；贴纸是本体（静态）
- *   或缩略图（动态/视频，见 ai/stickers/sets.ts 的 pickStickerVisionSource）；
+ *   或缩略图（动态/视频，见 ai/stickers/describe.ts 的 pickStickerVisionSource）；
  *   GIF 是缩略图（本项目无法解码 mp4/gif 抽帧，只能分析封面帧）。
  * @param fileUniqueId 缓存去重键：图片用同档位的 file_unique_id；贴纸/GIF
  *   固定用媒体自身（而非缩略图）的 file_unique_id，保证同一份贴纸/GIF
@@ -81,7 +81,7 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
     return result;
   });
   // 写入即满足容量上限的淘汰（超容量删最久未使用的一个），见
-  // cache/imageDescription.ts 的 LruCache 用法。
+  // cache/workers/aiChat/imageDescription.ts 的 LruCache 用法。
   transientDescriptionCache.set(fileUniqueId, pending);
   return pending;
 }

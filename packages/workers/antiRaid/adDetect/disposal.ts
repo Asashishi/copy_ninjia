@@ -11,7 +11,8 @@
 
 import { deleteMessage, deleteMessages, joinVerificationApi } from "../../../infra/telegram";
 import { logger } from "../../../infra/logger";
-import { adDetectPublishHolder } from "../../../cache/antiRaid/adDetect";
+import { adDetectPublishHolder } from "../../../cache/workers/antiRaid/adDetect";
+import { botCanDeleteIn } from "../botPermissions";
 import { TELEGRAM_DELETE_MESSAGES_BATCH_MAX } from "../../../consts/telegram";
 import type { AdDetectedEvent, AdSampleMessage } from "../../../types/antiRaid";
 import type { AdCandidateEntry, AdMessageBundle, AdVerdict } from "../../../types/antiRaid/adDetect";
@@ -63,6 +64,10 @@ function disposalMessageIds(
  * 部分一样是尽力而为，不登记进停机 drain 的在途集合。
  */
 export function deleteStragglerAdMessage(chatId: number, messageId: number): void {
+  // 确证没有删消息权限就别打：这些请求与验证超时踢人共用一条限流队列，一场
+  // 广告突袭能把几十个注定 400 的删除顶在真正的踢人前面。三态里只拦确证的
+  // false，「没观测到」照常发（理由见 ../botPermissions.ts）。
+  if (botCanDeleteIn(chatId) === false) return;
   void deleteMessage(chatId, messageId, joinVerificationApi);
 }
 
@@ -129,13 +134,34 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
  * 按 Telegram 的单次上限分片删除。并集含 pendingDeleteIds 之后可以远超 100
  * （见 AD_DETECT_MAX_PENDING_DELETE_IDS），而 deleteMessages 只有整体成败：
  * 一次带满整份 id 会让整批被拒，一条都删不掉——比不转存那些 id 还糟。
+ *
+ * 有分片失败时记一条明确指向权限的错误：机器人可以是「有 can_restrict_members、
+ * 没有 can_delete_messages」的管理员，那种配置下这里每次都全军覆没，而统一错误
+ * 边界记的是 Telegram 那句通用的 400。不额外重试——超过 48 小时的消息本来就删
+ * 不掉，重试只是在共用队列上再堆一轮注定失败的请求。
  */
 async function deleteAdMessages(chatId: number, messageIds: readonly number[]): Promise<void> {
+  // 同 deleteStragglerAdMessage：确证没权限时一次分片都不必发。一次处置的并集
+  // 可以远超 100 条，全打出去就是 ceil(N/100) 个注定失败的往返压在踢人前面。
+  if (botCanDeleteIn(chatId) === false) {
+    logger.error(
+      `Ad disposal skipped deleting ${messageIds.length} message(s) in chat ${chatId}: ` +
+      "the bot is known to lack can_delete_messages there."
+    );
+    return;
+  }
+  let failedBatches: number = 0;
   for (let start: number = 0; start < messageIds.length; start += TELEGRAM_DELETE_MESSAGES_BATCH_MAX) {
-    await deleteMessages(
+    const deleted: boolean = await deleteMessages(
       chatId,
       messageIds.slice(start, start + TELEGRAM_DELETE_MESSAGES_BATCH_MAX),
       joinVerificationApi
     );
+    if (!deleted) failedBatches++;
   }
+  if (failedBatches === 0) return;
+  logger.error(
+    `Ad disposal could not delete ${failedBatches} batch(es) of ${messageIds.length} message(s) ` +
+    `in chat ${chatId}: the bot may lack can_delete_messages, or the messages are older than 48h.`
+  );
 }

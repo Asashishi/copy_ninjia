@@ -64,7 +64,7 @@ const {
   latestStickerCatalogs,
   aiMemoryRevisionCounters,
   pendingAiMemoryDeletes,
-} = await import("../../../packages/cache/aiChat");
+} = await import("../../../packages/cache/main/aiChat");
 
 beforeEach(() => {
   workerPosts.length = 0;

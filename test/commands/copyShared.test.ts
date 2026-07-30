@@ -32,7 +32,7 @@ const {
   initAvatarUpdates,
   quiesceAvatarUpdates,
 } = await import("../../packages/copy/avatarQueue");
-const { avatarUpdateState } = await import("../../packages/cache/copy/avatar");
+const { avatarUpdateState } = await import("../../packages/cache/main/copy/avatar");
 const { COPY_COOLDOWN_MS } = await import("../../packages/consts/commands");
 const originalDateNow: () => number = Date.now;
 

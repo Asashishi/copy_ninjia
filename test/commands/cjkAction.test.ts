@@ -15,9 +15,9 @@ const {
   CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW,
   CJK_ACTION_RATE_LIMIT_WINDOW_MS,
 } = await import("../../packages/consts/commands");
-const { recentActionCallTimestamps } = await import("../../packages/cache/cjkAction");
+const { recentActionCallTimestamps } = await import("../../packages/cache/main/cjkAction");
 const { markSelfSent } = await import("../../packages/infra/selfSentTracker");
-const { sentMessages } = await import("../../packages/cache/selfSentTracker");
+const { sentMessages } = await import("../../packages/cache/perThread/selfSentTracker");
 const { resolveUsernameTarget } = await import("../../packages/users/senderIdentity");
 const { handleCjkActionUsageCommand } = await import("../../packages/commands/cjkAction");
 

@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import { sendMessage, banChatMember, banChatSenderChat, isChatMember, deleteMessageAfter } from "../infra/telegram";
-import { formatMockerLabel, formatUserLabel } from "../users/userLabel";
+import { formatMockerLabel, formatTargetLabel } from "../users/userLabel";
 import { PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { resolveCommandTarget } from "./targetResolution";
@@ -33,8 +33,11 @@ import type { User } from "@grammyjs/types";
  * 入群更新里都会被秒踢（见 antiRaid/blocklistGuard.ts），名单本身落盘在
  * memory/blocklist/blocklist.json（见 infra/blocklist.ts）。
  *
- * 目标解析和 /copy 一致：回复目标的一条消息优先，也可以用 /block @username
- * 指定（要求本机器人此前缓存过该用户）。目标若是频道马甲（sender_chat），
+ * 目标有三种指定方式：回复目标的一条消息（优先）、`/block @username`（要求本
+ * 机器人此前缓存过该用户）、`/block <用户 id>`。**id 那条最可靠**：用户名可以被
+ * 释放后由别人重新注册，而 id 不会改指另一个人；这条命令又是不可逆的，因此
+ * 拿不准用户名新鲜度时应当用 id 或回复消息。id 只认正整数——群/频道的负数 id
+ * 会让处置改去封整个会话身份，那是另一回事。目标若是频道马甲（sender_chat），
  * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限 PRIVILEGED_USERS_ID
  * 白名单内的用户使用——其他任何人尝试都只会被嘲讽，指令本身不会执行。
  */
@@ -59,10 +62,14 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     message: ctx.msg,
     botUserId: ctx.me.id,
     rawArgument: ctx.match,
+    // 处置的对象本来就是一个 id，用 id 指定比 @username 更准（用户名会被释放
+    // 后重新注册，而这条命令不可逆），见 targetResolution.ts 的 acceptUserId。
+    acceptUserId: true,
     messages: {
-      missingTarget: `笨蛋，要么 /block @username，要么回复 TA 的一条消息再 /block，本天才可不会读心术♡`,
-      invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，别拿半截参数糊弄本天才♡`,
+      missingTarget: `笨蛋，要么 /block @username 或 /block 用户id，要么回复 TA 的一条消息再 /block，本天才可不会读心术♡`,
+      invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数，群和频道那种负数 id 不算），别拿半截参数糊弄本天才♡`,
       unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /block 吧♡`,
+      conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；封人这事本天才可不猜——想封谁就只留一个，要么删掉参数、要么别回复♡`,
       selfTarget: `笨蛋，本天才才不会把自己拉黑呢♡`,
     },
   });
@@ -88,7 +95,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   if (targetUser.id === SUPER_ADMIN_USER_ID || PRIVILEGED_USERS_ID.includes(targetUser.id)) {
     await sendMessage({
       chatId,
-      text: `笨蛋，${formatUserLabel(targetUser)} 可是自己人，本天才才不会把自己人写进小本本♡`,
+      text: `笨蛋，${formatTargetLabel(targetUser)} 可是自己人，本天才才不会把自己人写进小本本♡`,
       replyToMessageId: messageId,
     });
     return;
@@ -114,7 +121,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     }
   }
 
-  const targetLabel: string = formatUserLabel(targetUser);
+  const targetLabel: string = formatTargetLabel(targetUser);
   // 落盘失败必须说破：那条记录只活在本进程内存里，重启就没了，而管理员默认
   // 理解的是「永久」。
   const persistWarning: string = persisted ? "" : `（不过小本本没能写进硬盘，重启就忘了，杂鱼管理员快去查磁盘）`;

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Message } from "@grammyjs/types";
-import { senderUsernameCache, userCache } from "../../packages/cache/senderIdentity";
+import { senderUsernameCache, userCache } from "../../packages/cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../../packages/consts/senderIdentity";
 import {
   cacheSender,
+  resolveIdTarget,
   resolveReplyTarget,
   resolveUsernameTarget,
   seedSenderCache,
@@ -148,5 +149,37 @@ describe("sender identity cache", () => {
 
     expect(resolveUsernameTarget("STALE_NAME")).toBeUndefined();
     expect(userCache.has("stale_name")).toBe(false);
+  });
+});
+
+describe("按裸 id 解析目标", () => {
+  test("缓存里有就沿用那份身份，回执才有名字可念", () => {
+    cacheSender(userMessage(42, "Alice_1"));
+    expect(resolveIdTarget(42)).toEqual({ id: 42, username: "Alice_1", first_name: "User 42" });
+  });
+
+  test("缓存落空不是失败：id 本身就是权威目标，退化成只带 id 的最小身份", () => {
+    // 与 @username 那条路的关键差别——用户名会被释放后由别人重新注册，
+    // 而 id 不会改指另一个人，因此按 id 下的命令不必要求「这个人说过话」。
+    expect(resolveIdTarget(4242)).toEqual({ id: 4242 });
+  });
+
+  test("负数 id 退化时带上 isChannel：解封接口按这个标记分派", () => {
+    // 漏标就会拿一个负数去调 unbanChatMemberIfBanned，报错记进 failedCount，
+    // 管理员收到一份关于「根本没被碰过的目标」的假战报（见 commands/unblock.ts）。
+    expect(resolveIdTarget(-1002233445566)).toEqual({ id: -1002233445566, isChannel: true });
+  });
+
+  test("双向关系对不上时不采信残留别名，免得回执写成另一个人的名字", () => {
+    cacheSender(userMessage(42, "Alice_1"));
+    // 模拟单边残留：正向记录还指着 42，反向记录已经改名。
+    senderUsernameCache.set(42, "someone_else");
+    expect(resolveIdTarget(42)).toEqual({ id: 42 });
+  });
+
+  test("负数 id 落进残留别名那一档时，最小身份仍然带 isChannel", () => {
+    cacheSender(senderChatMessage(-1002233445566, "Ad_Channel"));
+    senderUsernameCache.set(-1002233445566, "someone_else");
+    expect(resolveIdTarget(-1002233445566)).toEqual({ id: -1002233445566, isChannel: true });
   });
 });

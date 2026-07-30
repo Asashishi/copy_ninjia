@@ -22,12 +22,12 @@ mock.module("../../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
 
 const { currentReplyGeneration, notifyRateLimited } = await import("../../../packages/workers/aiChat/replyState");
-const { botInfoState } = await import("../../../packages/cache/aiChat/identity");
+const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
 const {
   invalidateChatReplyCache,
   rateLimitNoticeTimes,
   resetAiChatReplyCache,
-} = await import("../../../packages/cache/aiChat/replies");
+} = await import("../../../packages/cache/workers/aiChat/replies");
 const { RATE_LIMIT_NOTICE_COOLDOWN_MS, RATE_LIMIT_NOTICE_TEXT } =
   await import("../../../packages/consts/aiChat/rateLimit");
 

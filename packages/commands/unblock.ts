@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import { sendMessage, deleteMessageAfter, unbanChatMemberIfBanned, unbanChatSenderChat } from "../infra/telegram";
-import { formatMockerLabel, formatUserLabel } from "../users/userLabel";
+import { formatMockerLabel, formatTargetLabel } from "../users/userLabel";
 import { PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { UNBLOCK_ALL_FLAG } from "../consts/commands";
@@ -31,7 +31,16 @@ import type { User } from "@grammyjs/types";
  * 都能做的：跨群解封会在每一个管理群里放开一个此前被判定为需要永久隔离的人，
  * 波及面比「以后不再秒踢」大一档，值得单独收紧一级。
  *
- * 目标解析同 /block：回复目标的一条消息优先，也可以用 /unblock @username。
+ * 目标解析比 /block 多一档：回复目标的一条消息优先，也可以用 /unblock @username、
+ * /unblock <用户 id> 或 /unblock <频道的负数 id>。id 不必在缓存里见过——解除
+ * 拉黑处置的同样是一个 id，缓存只用来给回执配个人类可读的标签。
+ *
+ * 负数 id 只有这条命令认，`/block` 仍然拒绝：频道马甲的 id 本来就会进名单
+ * （`/block` 回复一条频道消息、广告检测命中 sender_chat），可要把它划掉，此前
+ * 只有回复消息与 `@username` 两条路——前者在广告检测删掉原消息后就没了，后者
+ * 要求频道有公开 username 且没被挤出缓存，两条都断掉的频道会永远留在名单上。
+ * 反方向不开是因为代价不对等：`/block` 粘错一个会话 id 就是封掉整个会话身份且
+ * 不可逆，而这里指错至多是一次空解封。
  */
 export async function handleUnblockCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -48,9 +57,10 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     return;
   }
 
-  // `all` 是独立的一个词，不可能和用户名混淆：Telegram 用户名至少
+  // `all` 是独立的一个词，不可能和目标参数混淆：Telegram 用户名至少
   // TELEGRAM_USERNAME_MIN_LENGTH 个字符，三个字母的 all 永远过不了
-  // USERNAME_ARG_PATTERN。摘掉它，剩下的才是目标参数。
+  // USERNAME_ARG_PATTERN；它也不是十进制数字，同样过不了 USER_ID_ARG_PATTERN。
+  // 摘掉它，剩下的才是目标参数。
   const tokens: string[] = ctx.match.trim().split(/\s+/).filter(Boolean);
   const unbanEverywhere: boolean = tokens.some((token: string): boolean => token.toLowerCase() === UNBLOCK_ALL_FLAG);
   const targetArgument: string = tokens
@@ -71,10 +81,15 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     message: ctx.msg,
     botUserId: ctx.me.id,
     rawArgument: targetArgument,
+    // 同 /block：解除的对象也是一个 id，允许直接给 id。
+    acceptUserId: true,
+    // 只有这条命令认负数 id，理由见函数顶部说明与 targetResolution.ts。
+    acceptChatId: true,
     messages: {
-      missingTarget: `笨蛋，要么 /unblock @username，要么回复 TA 的一条消息再 /unblock，本天才可不会读心术♡（加个 all 才会顺手把各群的封禁也解了）`,
-      invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名，别拿半截参数糊弄本天才♡`,
+      missingTarget: `笨蛋，要么 /unblock @username 或 /unblock 用户id（频道就给那串负数 id），要么回复 TA 的一条消息再 /unblock，本天才可不会读心术♡（加个 all 才会顺手把各群的封禁也解了）`,
+      invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是 id（用户是正整数，频道是那串负数），别拿半截参数糊弄本天才♡`,
       unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /unblock 吧♡`,
+      conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想解封谁就只留一个，要么删掉参数、要么别回复♡`,
       selfTarget: `笨蛋，本天才本来就没把自己拉黑呀♡`,
     },
   });
@@ -87,16 +102,18 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   // failedCount，管理员会收到一条「已在 N 个群解开、还有 1 个群没解开，快去检查
   // 权限」——一份关于「根本没被碰过的人」的假战报，还把运维引向一个其实没坏的群。
   // 只挡当前群自己：在群里发言的关联频道 sender_chat 是另一个 id，照常可解。
+  // 开了 acceptChatId 之后这道闸多守一种手滑——把本群的 id 直接粘进参数，
+  // 落点与匿名管理员皮套完全相同，文案因此要把两条路都念到。
   if (targetUser.isChannel === true && targetUser.id === chatId) {
     await sendMessage({
       chatId,
-      text: `匿名管理员拿这个群当皮套时，Telegram 不会告诉本天才皮套底下是谁；本天才没法把整个群当成那个人从小本本上划掉呀♡`,
+      text: `笨蛋，这是本群自己的身份呀——匿名管理员拿它当皮套时，Telegram 也不会告诉本天才皮套底下是谁；本天才没法把整个群当成那个人从小本本上划掉♡`,
       replyToMessageId: messageId,
     });
     return;
   }
 
-  const targetLabel: string = formatUserLabel(targetUser);
+  const targetLabel: string = formatTargetLabel(targetUser);
   // 这份缓存只证明 `/block` 今天曾在某群确证踢出过，并不代表此刻仍被封。
   // 尤其 `all` 会真的跨群解封；先失效，随后同日重新 /block 才会重新查成员并封禁。
   forgetUserConfirmedKicked(targetUser.id);

@@ -7,10 +7,10 @@ import {
 import { getStickerConfig } from "../config/stickers";
 import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
-import { botInfoState } from "../cache/aiChat/identity";
-import { sweepImageGenerationCache } from "../cache/aiChat/imageGeneration";
-import { sweepAiChatReplyCache } from "../cache/aiChat/replies";
-import { aiChatMaintenanceTimer } from "../cache/aiChat/worker";
+import { botInfoState } from "../cache/workers/aiChat/identity";
+import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
+import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
+import { aiChatMaintenanceTimer } from "../cache/workers/aiChat/worker";
 import {
   flushDirtyMemories,
   flushMemorySnapshot,
@@ -44,7 +44,7 @@ import { initTelegramClients } from "../infra/telegram";
  * 做哪几样、什么顺序。发往 Telegram 的调用不回主线程绕路——本线程 import
  * infra/telegram/ 时会得到自己独立的 grammY Api 客户端（那个 Bot 实例只用其
  * bot.api 发请求，从不 init/轮询；机器人自己的账号身份改由主线程在
- * bot.init() 后经 init 消息注入，见 cache/aiChat/identity.ts 的 botInfoState）。
+ * bot.init() 后经 init 消息注入，见 cache/workers/aiChat/identity.ts 的 botInfoState）。
  * error 日志经 logger.ts 的转发模式回传主线程统一落盘。本文件只剩消息路由、
  * 定时 sweep 与启动编排。
  *
@@ -60,7 +60,7 @@ import { initTelegramClients } from "../infra/telegram";
  * 心情系统：各群心情按随机寿命（几小时量级）自然到期轮换，到期后下次
  * 拼系统提示词时重抽叠加进去，与群是否活跃无关，模拟真人聊天号状态会变
  * 的感觉；重抽时还按当前东京天气/时段微调各心情的概率，见 ai/mood.ts；
- * 两个内存缓存（cache/aiChat/mood.ts
+ * 两个内存缓存（cache/workers/aiChat/mood.ts
  * 的 chatMoods/chatMoodExpiresAts）都不落盘，随 Worker 重启清空。天气
  * 数据由 ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
  * startWeatherRefreshLoop 调用），get_tokyo_weather 工具与心情系统都只

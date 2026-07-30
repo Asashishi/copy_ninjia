@@ -13,7 +13,7 @@ import {
   resetVerificationPersistenceCache,
   verificationFileState,
   verificationPendingChanges,
-} from "../../../packages/cache/diskIO/verification";
+} from "../../../packages/cache/workers/diskIO/verification";
 import type {
   VerificationDeleteDiskMessage,
   VerificationPersistedReply,
@@ -24,6 +24,7 @@ import { VERIFICATION_FILE_COMPACT_BYTES } from "../../../packages/consts/diskIO
 
 const DAY_ONE = "2026-07-19";
 const DAY_TWO = "2026-07-20";
+const DAY_ZERO = "2026-07-18";
 
 let dir: string;
 let replies: VerificationPersistedReply[];
@@ -218,6 +219,96 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
     const recovered = recoverVerificationDay(DAY_TWO, dir);
     expect([...recovered.keys()].sort()).toEqual(["-1001:42", "-1001:43"]);
+  });
+
+  test("跨午夜停机后从最新旧日迁移 active，再删除旧日", () => {
+    resetVerificationPersistenceCache();
+    writeFileSync(
+      join(dir, `${DAY_ONE}.json`),
+      JSON.stringify({ "-1001:42": { version: 1, ...snapshot(1) } }, null, 2)
+    );
+
+    const recovered: Map<string, VerificationSnapshot> =
+      recoverVerificationDay(DAY_TWO, dir);
+
+    expect(recovered.get("-1001:42")).toMatchObject({ revision: 1 });
+    expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
+    expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))
+      .toEqual({ "-1001:42": { version: 1, ...snapshot(1) } });
+  });
+
+  test("只以最新旧日为迁移基线，不从更早残留复活已终结成员", () => {
+    resetVerificationPersistenceCache();
+    writeFileSync(
+      join(dir, `${DAY_ZERO}.json`),
+      JSON.stringify({ "-1001:42": { version: 1, ...snapshot(1) } }, null, 2)
+    );
+    // 最新旧日的 active 快照已不含 user 42，等价于更早记录已经终结。
+    writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({}, null, 2));
+
+    const recovered: Map<string, VerificationSnapshot> =
+      recoverVerificationDay(DAY_TWO, dir);
+
+    expect(recovered.has("-1001:42")).toBeFalse();
+    expect(existsSync(join(dir, `${DAY_ZERO}.json`))).toBeFalse();
+    expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
+    expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))
+      .toEqual({});
+  });
+
+  test("跨午夜停机恢复以新日 active 和 tombstone 覆盖旧日", () => {
+    resetVerificationPersistenceCache();
+    writeFileSync(
+      join(dir, `${DAY_ONE}.json`),
+      JSON.stringify({
+        "-1001:42": { version: 1, ...snapshot(1) },
+        "-1001:43": {
+          version: 1,
+          ...snapshot(1, { userId: 43, label: "旧日成员" }),
+        },
+      }, null, 2)
+    );
+    writeFileSync(
+      join(dir, `${DAY_TWO}.json`),
+      JSON.stringify({
+        "-1001:42": null,
+        "-1001:43": {
+          version: 1,
+          ...snapshot(2, { userId: 43, label: "新日成员" }),
+        },
+      }, null, 2)
+    );
+
+    const recovered: Map<string, VerificationSnapshot> =
+      recoverVerificationDay(DAY_TWO, dir);
+
+    expect(recovered.has("-1001:42")).toBeFalse();
+    expect(recovered.get("-1001:43")).toMatchObject({
+      revision: 2,
+      label: "新日成员",
+    });
+    expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
+  });
+
+  test("待迁移旧日损坏时不改写新旧文件，也不清理旧日", () => {
+    resetVerificationPersistenceCache();
+    const oldContent: string = "{\"-1001:42\":";
+    const currentContent: string = JSON.stringify({
+      "-1001:43": {
+        version: 1,
+        ...snapshot(1, { userId: 43, label: "新日成员" }),
+      },
+    }, null, 2);
+    const oldPath: string = join(dir, `${DAY_ONE}.json`);
+    const currentPath: string = join(dir, `${DAY_TWO}.json`);
+    writeFileSync(oldPath, oldContent);
+    writeFileSync(currentPath, currentContent);
+
+    expect((): Map<string, VerificationSnapshot> =>
+      recoverVerificationDay(DAY_TWO, dir)
+    ).toThrow();
+    expect(readFileSync(oldPath, "utf8")).toBe(oldContent);
+    expect(readFileSync(currentPath, "utf8")).toBe(currentContent);
   });
 
   test("压缩前后恢复结果一致，并移除重复 key 与 null 历史", () => {

@@ -2,7 +2,7 @@ import type { Chat, ChatFullInfo } from "@grammyjs/types";
 import { logger } from "./logger";
 import { bot } from "./telegram";
 import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage/stateStore";
-import { chatTitleRefreshRuntime } from "../cache/chatTitle";
+import { chatTitleRefreshRuntime } from "../cache/main/chatTitle";
 import { CHAT_TITLE_REFRESH_CONCURRENCY, CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE } from "../consts/telegram";
 import type { ChatState } from "../types/chatState";
 

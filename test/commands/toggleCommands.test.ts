@@ -120,6 +120,23 @@ describe("超级管理员开关命令", () => {
     expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
+  test("回归用例：Worker 不可用时 /ad_detect disable 不把异常抛出去——那会焊出一个重启循环", async () => {
+    // post() 只在「Worker 用尽重启预算被放弃」与「正在重生」两种状态下失败，而
+    // 那两种状态下待检队列本来就随旧 isolate 一起没了，没有任何东西需要清。放异常
+    // 逃出 handler 的代价是：开关已经落盘，这条 update 却被判失败，最终 offset 扣住
+    // 不确认、进程非零退出，重启后 Telegram 重投同一条命令——Worker 仍不可用。
+    clearAdDetection.mockImplementationOnce((): never => {
+      throw new Error("Anti-Raid Worker is unavailable.");
+    });
+    states.set(-1001, { isAdDetectEnabled: true });
+
+    await handleAdDetectCommand(context("disable"));
+
+    expect(states.get(-1001)?.isAdDetectEnabled).toBe(false);
+    // 开关照样关掉，回执照样发出去。
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   test("/ad_detect 拒绝非超级管理员，不改任何状态", async () => {
     await handleAdDetectCommand(context("enable", 101));
     expect(states.size).toBe(0);

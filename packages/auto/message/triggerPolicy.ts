@@ -1,4 +1,4 @@
-import { userReplyTriggerTimes } from "../../cache/auto";
+import { userReplyTriggerTimes } from "../../cache/main/auto";
 import { USER_REPLY_TRIGGER_COOLDOWN_MS } from "../../consts/auto";
 import type { AiDirectTriggerReason } from "../../types/aiChat/protocol";
 import type { MessageTriggerContext } from "./triggerContext";

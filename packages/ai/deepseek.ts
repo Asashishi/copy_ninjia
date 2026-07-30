@@ -6,11 +6,11 @@
  *
  * 走官方 SDK 而不是手写 fetch，理由同 Gemini 那边：超时与瞬时失败重试由 SDK
  * 内建，不必自己维护一份 AbortController。客户端是线程内单例，Worker 崩溃
- * 重建后由 cache/deepseek.ts 的空 holder 重新构造。
+ * 重建后由 cache/workers/antiRaid/deepseek.ts 的空 holder 重新构造。
  */
 
 import OpenAI from "openai";
-import { deepSeekClientHolder } from "../cache/deepseek";
+import { deepSeekClientHolder } from "../cache/workers/antiRaid/deepseek";
 import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
 import { logger } from "../infra/logger";
 import {

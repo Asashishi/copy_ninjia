@@ -1,7 +1,7 @@
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import type { BunFile } from "bun";
 import type { FlushResult } from "../../types/lifecycle";
-import { chatStates, globalCopyState, stateStoreHolder } from "../../cache/storage";
+import { chatStates, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
 import { CORRUPT_FILE_SUFFIX, STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
 import { DEFAULT_CHAT_STATE, STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
 import { atomicWriteText, durableRename } from "../../libs/atomicFile";

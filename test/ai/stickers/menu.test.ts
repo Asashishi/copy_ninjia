@@ -25,13 +25,13 @@ mock.module("../../../packages/config/stickers", () => ({
 }));
 
 const { buildStickerPackMenu } = await import("../../../packages/ai/tools/stickers");
-const { catalogs } = await import("../../../packages/cache/stickers/catalog");
+const { catalogs } = await import("../../../packages/cache/workers/aiChat/stickers/catalog");
 const {
   invalidateStickerMenu,
   stickerMenuCache,
   stickerMenuInflight,
   stickerMenuRevision,
-} = await import("../../../packages/cache/stickers/menu");
+} = await import("../../../packages/cache/workers/aiChat/stickers/menu");
 
 function sticker(fileUniqueId: string): any {
   return { file_id: `id-${fileUniqueId}`, file_unique_id: fileUniqueId, emoji: "😂", is_animated: false, is_video: false };

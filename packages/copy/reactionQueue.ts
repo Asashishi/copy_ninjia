@@ -16,7 +16,7 @@ import {
   pendingTasks,
   reactionDrainWaiters,
   reactionQueueRuntime,
-} from "../cache/reactionQueue";
+} from "../cache/main/reactionQueue";
 import { drainWithWaiter } from "../libs/drainWaiter";
 import type { FlushResult } from "../types/lifecycle";
 import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
@@ -32,7 +32,7 @@ import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
  * 3. 队列按 chat 拆分：限流（及其 retry_after）基本是按 chat 生效的，一个群
  *    被限流只暂停该群自己的消费循环，不头部阻塞其他群的反应同步。
  *
- * 队列状态（pendingTasks / chatQueues / consumingChats）见 cache/reactionQueue.ts。
+ * 队列状态（pendingTasks / chatQueues / consumingChats）见 cache/main/reactionQueue.ts。
  */
 
 /**

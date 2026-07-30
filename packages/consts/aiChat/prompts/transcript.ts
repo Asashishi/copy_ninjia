@@ -58,7 +58,7 @@ export const FORWARD_TAG_HINT: string = forwardTagTemplate("…");
 
 /**
  * 机器人自己动作在转录里的记号——这些行由**执行侧在动作真正落地之后**写入
- * （见 ai/tools/replyToolset/imageGeneration.ts 与 ai/stickers/sets.ts 的自录），
+ * （见 ai/tools/replyToolset/imageGeneration.ts 与 ai/stickers/describe.ts 的自录），
  * 模型只能读到、绝不能自己产出。
  *
  * 两个模板与下面的 SELF_ACTION_TAG_MARKERS 必须共用同一份字面量：记号是

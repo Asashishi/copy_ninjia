@@ -4,8 +4,8 @@ import {
 } from "../../consts/aiChat/rateLimit";
 import {
   rateLimitNoticeTimes,
-} from "../../cache/aiChat/replies";
-import { botInfoState } from "../../cache/aiChat/identity";
+} from "../../cache/workers/aiChat/replies";
+import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { buildSelfRecordContext } from "../../ai/utils/selfRecord";
 import { sendMessage } from "../../infra/telegram";
 import type { AiSentMessage } from "../../types/aiChat/protocol";

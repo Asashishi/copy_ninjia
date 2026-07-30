@@ -20,8 +20,8 @@ const {
   chatLastActivityTimes,
   dirtyMemoryChats,
   resetAiChatMemoryCache,
-} = await import("../../../packages/cache/aiChat/memory");
-const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../packages/cache/aiChat/replies");
+} = await import("../../../packages/cache/workers/aiChat/memory");
+const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
 const { AI_MEMORY_MAX_CHATS } = await import("../../../packages/consts/aiChat/memory");
 
 function entry(text: string): BufferedMessage {

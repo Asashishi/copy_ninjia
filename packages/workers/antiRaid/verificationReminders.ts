@@ -12,7 +12,7 @@ import {
   VERIFICATION_TIMEOUT_MS,
   VERIFY_CALLBACK_PREFIX,
 } from "../../consts/antiRaid/verification";
-import { reminderDeliveries, verificationEntries } from "../../cache/antiRaid/verification";
+import { reminderDeliveries, verificationEntries } from "../../cache/workers/antiRaid/verification";
 import { formatMinSec } from "../../libs/time";
 import { verificationKey } from "../../libs/verificationKey";
 import type {

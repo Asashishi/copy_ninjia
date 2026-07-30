@@ -1,4 +1,4 @@
-import { chatMoodExpiresAts, chatMoods } from "../cache/aiChat/mood";
+import { chatMoodExpiresAts, chatMoods } from "../cache/workers/aiChat/mood";
 import { getMoodConfig } from "../config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../consts/aiChat/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../consts/weather";
@@ -19,7 +19,7 @@ interface WeightedMood {
  * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等）。心情档位
  * 的文案、base weight 与倍率来自部署配置 config/mood.json（严格解码见
  * config/mood.ts，主进程持锁后预热、Worker 首次抽取时惰性加载）。两个内存缓存
- * （chatMoods/chatMoodExpiresAts，见 cache/aiChat/mood.ts）都不落盘，
+ * （chatMoods/chatMoodExpiresAts，见 cache/workers/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空、下次用到时重抽。
  *
  * 天气数据经 ai/weather.ts 的 currentTokyoWeather 读取——这里只读现有
@@ -107,7 +107,7 @@ function pickMood(): MoodOption {
  * 手动切换（aiChatWorker.ts 的 switchMood 消息路由）共用这一条路径。
  * @param chatId 群聊 ID。
  * @param moods/expiresAts 可注入仅为单测隔离；生产调用共享 Worker 内的
- *   chatMoods/chatMoodExpiresAts（见 cache/aiChat/mood.ts）。
+ *   chatMoods/chatMoodExpiresAts（见 cache/workers/aiChat/mood.ts）。
  */
 export function switchMood(
   chatId: number,
@@ -126,7 +126,7 @@ export function switchMood(
  * 只依赖时间区间，与群是否活跃无关。
  * @param chatId 群聊 ID。
  * @param moods/expiresAts 可注入仅为单测隔离；生产调用共享 Worker 内的
- *   chatMoods/chatMoodExpiresAts（见 cache/aiChat/mood.ts）。
+ *   chatMoods/chatMoodExpiresAts（见 cache/workers/aiChat/mood.ts）。
  */
 export function currentMoodInstruction(
   chatId: number,

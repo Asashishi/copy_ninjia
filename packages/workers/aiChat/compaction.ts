@@ -16,13 +16,13 @@ import {
   SUMMARY_TEMPERATURE,
 } from "../../consts/aiChat/memory";
 import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
-import { botInfoState } from "../../cache/aiChat/identity";
-import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/aiChat/memory";
-import { compactionPendingCounts, compactionRunner } from "../../cache/aiChat/compaction";
+import { botInfoState } from "../../cache/workers/aiChat/identity";
+import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/workers/aiChat/memory";
+import { compactionPendingCounts, compactionRunner } from "../../cache/workers/aiChat/compaction";
 import {
   cachedReplyGeneration,
   isCachedReplyGenerationCurrent,
-} from "../../cache/aiChat/replies";
+} from "../../cache/workers/aiChat/replies";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import { currentTimeSentence } from "./timeSentence";
 import { trackReplyGenerationTask } from "./replyGeneration";

@@ -102,9 +102,70 @@ export function appendLinkUrls(text: string, linkUrls: readonly string[]): strin
 }
 
 /**
+ * 把被引用段与被回复原文接到已截断的正文后面，一并交给模型判定。
+ *
+ * **这两样是「别人的内容」，但必须连坐。** 现实里大量广告正是这么发的：先发一条
+ * 完全正常的消息（那一刻判定放行，且判过之后 checkedSeq 就把它盖住了），隔一段
+ * 时间把它**编辑**成广告，再用回复/引用把它顶到群里。广告正文自始至终不在任何
+ * 一条「新消息」的 text 里，只活在被引用段和被回复原文中——不读它们，这条路
+ * 对广告检测完全免疫，而它恰恰是当前最主流的形态。
+ *
+ * 代价是明知的、并且是有意接受的：引用广告来吐槽的群友会跟着一起被判。判定
+ * 拿不到「这段引文是谁写的」之外的任何信号，无法区分「转述广告来骂它」和
+ * 「借引用把广告顶上来」，因此这里选择宁可误伤也不放过（口径由部署方在
+ * config/ad_samples.json 里继续收）。
+ *
+ * 接法与 appendLinkUrls 完全一致，两条理由同样成立：
+ * - **接在截断之后、各有各的配额**（AD_SAMPLE_CONTEXT_MAX_CHARS）。先拼后截等于
+ *   给发送者一个零成本绕过手段——几百字废话就能把引文顶出正文额度。
+ * - **不带任何系统措辞**（不写「引用：」这类前缀）。那会给正文引入可被伪造的
+ *   结构：发送者只要把同样的字打进自己的正文，就能假装某段话是别人说的。
+ *
+ * 与正文重复的段落跳过，最常见的就是「引用了所回复消息的一个片段」——quote 与
+ * replyTo 此时高度重合，原样接两遍只是白烧送检预算。
+ * 上限在这里再收一次而不是只信主线程：跨线程消息的形状由本侧兜底。
+ *
+ * **去重要跨整串算，不能只在这一条里算**（entries 就是为此传进来的）。合并送检
+ * 的全部意义在于把拆开发的「加我 / 微 信 / xxx996」凑到同一份清单里判——而这种
+ * 发法几乎总是每条都回复同一条消息，一段 200 字的引文按条复制的话，单条能占到
+ * 512 正文 + 1000 URL + 400 上下文，AD_DETECT_BUNDLE_MAX_CHARS 那 4096 的预算被
+ * 重复引文吃掉近一半，本该一起判的碎片被 selectAdBundleEntries 切成好几轮，模型
+ * 每轮只看到一个单独无害的片段。同一段引文在整串里只留最早那一份，后来的那些
+ * 消息照常凭自己的正文入选，读到的仍是同一份完整引文。
+ *
+ * 反过来说，一条消息自己一个字没写、引文又已经被串里更早那条认领时，它的
+ * textLength 会是 0，投递闸（states/adDetectAdmission.ts 的 admitAdCandidate）
+ * 按「没有可判定内容」忽略掉——这是对的：它没往判定里加任何新东西，而它想顶上来
+ * 的那段广告已经在同一份清单里等着判了，认领它的那条消息会替它把人送进处置。
+ */
+export function claimSampleContextParts(
+  text: string,
+  context: AdSampleContext,
+  entries: readonly AdCandidateEntry[]
+): string {
+  const parts: string[] = [];
+  for (const raw of [context.quote, context.replyTo]) {
+    const part: string = sanitizeInline(raw ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+    if (part.length === 0 || text.includes(part) || parts.includes(part)) continue;
+    // 认领者被 enforceBundleCapacity 挤掉时这段引文会跟着从串里消失。那条路径
+    // 本来就是「只剩没判过的可丢」的既定取舍（见文件头），而且是自愈的：串里
+    // 再没人带着这段引文，下一条回复原消息的候选就会重新认领一份。
+    if (entries.some((entry: AdCandidateEntry): boolean => entry.text.includes(part))) continue;
+    parts.push(part);
+  }
+  if (parts.length === 0) return text;
+  return text.length === 0 ? parts.join(" ") : `${text} ${parts.join(" ")}`;
+}
+
+/**
  * 在 Worker 侧再收一次样本上下文的长度，理由同 appendLinkUrls：跨线程消息的
  * 形状由本侧兜底。原样展开的话这两个字段是整条流水线上唯一没有 Worker 侧上界
  * 的部分，而它们跟着每条 entry 常驻内存，条数按待检表容量放大。
+ *
+ * 判定文本那一份由 claimSampleContextParts 另行接进 text；这里保留的独立字段只
+ * 服务命中样本——人回头看「这条为什么被判成广告」时，需要分得清哪一段是他自己
+ * 写的、哪一段是引来的。**因此这一份不跨条去重**：判定侧同一段引文整串只留一份，
+ * 样本侧每条都要如实记下它当时引的是什么。
  */
 export function boundSampleContext(context: AdSampleContext | undefined): AdSampleContext {
   if (context === undefined) return {};

@@ -6,7 +6,7 @@
  * 文件重写；差别是黑名单只有一个固定文件，不按天滚动，也永不过期清理。
  * 同目录的 removals.json 是待执行处置 outbox，不是名单副本。
  *
- * 时序由主线程定：先更新内存 Map（cache/blocklist.ts），再投递本消息追加落盘。
+ * 时序由主线程定：先更新内存 Map（cache/main/blocklist.ts），再投递本消息追加落盘。
  * 因此内存永远不落后于磁盘；反过来若先落盘再更新内存，两步之间进来的入群
  * 更新就会漏踢。
  *
@@ -33,7 +33,7 @@ import {
   blocklistPendingEntries,
   blocklistPendingRewrite,
   resetBlocklistCache,
-} from "../../cache/diskIO/blocklist";
+} from "../../cache/workers/diskIO/blocklist";
 import {
   AppendOnlyFileFormatError,
   appendToAppendOnlyFile,

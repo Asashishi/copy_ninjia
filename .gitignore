@@ -41,6 +41,11 @@ memory
 .agents
 .codex
 
+# 本地临时的任务/审查笔记，不进版本库
+todo.md
+plan.md
+review.md
+
 # Finder (MacOS) folder config
 .DS_Store
 

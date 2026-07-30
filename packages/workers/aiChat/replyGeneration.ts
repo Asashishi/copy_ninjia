@@ -3,8 +3,8 @@ import {
   isCachedReplyGenerationCurrent,
   replyAbortControllers,
   replyGenerationTasks,
-} from "../../cache/aiChat/replies";
-import { invalidateChatRuntimeCache } from "../../cache/aiChat/index";
+} from "../../cache/workers/aiChat/replies";
+import { invalidateChatRuntimeCache } from "../../cache/workers/aiChat/index";
 import { AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS } from "../../consts/lifecycle";
 import { logger } from "../../infra/logger";
 

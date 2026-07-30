@@ -36,7 +36,7 @@ import {
   adSampleArchiveSweepDay,
   adSampleFileState,
   adSampleTempsSwept,
-} from "../../cache/diskIO/adSample";
+} from "../../cache/workers/diskIO/adSample";
 import { getTokyoDateKey } from "../../libs/time";
 import { appendToAppendOnlyFile, openAppendOnlyFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 

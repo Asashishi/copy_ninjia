@@ -1,4 +1,4 @@
-import { avatarDrainWaiters, avatarUpdateRuntime, avatarUpdateState } from "../cache/copy/avatar";
+import { avatarDrainWaiters, avatarUpdateRuntime, avatarUpdateState } from "../cache/main/copy/avatar";
 import type { FlushResult } from "../types/lifecycle";
 import { drainWithWaiter } from "../libs/drainWaiter";
 import { logger } from "../infra/logger";

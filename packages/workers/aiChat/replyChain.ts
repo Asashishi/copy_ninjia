@@ -1,11 +1,11 @@
 import { REPLY_CHAIN_MAX_DEPTH, REPLY_REFERENCE_MAX_CHARS } from "../../consts/aiChat/memory";
-import { chatReplyChainIndexes } from "../../cache/aiChat/memory";
+import { chatReplyChainIndexes } from "../../cache/workers/aiChat/memory";
 import { truncateInline } from "../../libs/text";
 import type { BufferedMessage, BufferedReplyReference, ReplyChainLink } from "../../types/aiChat/memory";
 
 /**
  * 热区消息的 message_id 索引与多层回复链回溯。索引本体在
- * cache/aiChat/memory.ts 的 chatReplyChainIndexes，登记/删除只由
+ * cache/workers/aiChat/memory.ts 的 chatReplyChainIndexes，登记/删除只由
  * rollingMemory.ts 在消息进出热区的两个物理位置调用，保证索引内容与
  * chatBuffers 严格一致；本文件不持有任何状态。
  */

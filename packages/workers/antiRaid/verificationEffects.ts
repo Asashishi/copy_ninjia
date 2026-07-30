@@ -3,8 +3,10 @@ import {
   answerCallbackQuery,
   deleteMessage,
   deleteMessageAfter,
+  deleteMessageWithOutcome,
   joinVerificationApi,
   kickChatMember,
+  kickChatMemberWithOutcome,
   probeChatMembership,
   sendMessage,
 } from "../../infra/telegram";
@@ -15,9 +17,13 @@ import {
   VERIFICATION_TIMEOUT_MS,
   WELCOME_AUTO_DELETE_MS,
 } from "../../consts/antiRaid/verification";
-import { verificationEntries } from "../../cache/antiRaid/verification";
+import { verificationEntries } from "../../cache/workers/antiRaid/verification";
 import { formatMinSec } from "../../libs/time";
 import { verificationKey } from "../../libs/verificationKey";
+import type {
+  DeleteMessageOutcome,
+  KickChatMemberOutcome,
+} from "../../infra/telegram";
 import type { VerificationDispatcher } from "../../types/antiRaid/internal";
 import type {
   ExpelSnapshot,
@@ -26,13 +32,14 @@ import type {
   VerificationTerminalState,
 } from "../../types/states/verification";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
+import { botCanDeleteIn } from "./botPermissions";
 import { retractJoin } from "./lockdownRuntime";
 import {
   sendReplyReminder,
   sendVerificationReminder,
 } from "./verificationReminders";
 import { trackAntiRaidTask } from "./taskTracker";
-import type { VerificationEntry } from "../../cache/antiRaid/verification";
+import type { VerificationEntry } from "../../cache/workers/antiRaid/verification";
 
 type VerificationChangePublisher = (
   chatId: number,
@@ -46,6 +53,34 @@ export interface RunVerificationEffectsParams {
   effects: VerificationEffect[];
   dispatchVerification: VerificationDispatcher;
   publishVerificationChange: VerificationChangePublisher;
+}
+
+interface ScheduleKickRetryParams {
+  chatId: number;
+  userId: number;
+  state: VerificationState & { kind: "kickPending" };
+  dispatchVerification: VerificationDispatcher;
+}
+
+function scheduleKickRetry({
+  chatId,
+  userId,
+  state,
+  dispatchVerification,
+}: ScheduleKickRetryParams): void {
+  const key: string = verificationKey(chatId, userId);
+  const entry: VerificationEntry | undefined = verificationEntries.get(key);
+  if (entry?.state !== state) return;
+  if (entry.timer !== undefined) clearTimeout(entry.timer);
+  const retries: number = entry.terminalRetries ?? 0;
+  entry.terminalRetries = retries + 1;
+  entry.timer = setTimeout(
+    (): void => dispatchVerification(chatId, userId, { type: "kickRetry" }),
+    Math.min(
+      VERIFICATION_TERMINAL_RETRY_MS * (2 ** retries),
+      VERIFICATION_TERMINAL_RETRY_MAX_MS
+    )
+  );
 }
 
 /** 按序执行一次转移返回的副作用；同一列表内先删后踢再通知的顺序有意义。 */
@@ -73,13 +108,44 @@ export async function runVerificationEffects({
           verificationEntries.get(key)?.state !== transitionState
         ) break;
         transitionState.executionStarted = true;
-        await kickChatMember(chatId, userId, joinVerificationApi);
-        if (verificationEntries.get(key)?.state === transitionState) {
+        const outcome: KickChatMemberOutcome =
+          await kickChatMemberWithOutcome(
+            chatId,
+            userId,
+            joinVerificationApi
+          );
+        if (verificationEntries.get(key)?.state !== transitionState) break;
+        if (outcome === "kicked") {
           dispatchVerification(chatId, userId, {
             type: "kickSettled",
             now: Date.now(),
           });
+          break;
         }
+        // 请求已经失败，后续到达的权威豁免重新可以替换 token；成员探测在途时
+        // 也不得把状态继续伪装成“不可撤销动作仍在执行”。
+        transitionState.executionStarted = false;
+        const memberPresent: boolean | undefined =
+          await probeChatMembership(chatId, userId, joinVerificationApi);
+        if (verificationEntries.get(key)?.state !== transitionState) break;
+        if (memberPresent === false) {
+          dispatchVerification(chatId, userId, {
+            type: "kickSettled",
+            now: Date.now(),
+          });
+          break;
+        }
+        logger.error(
+          outcome === "forbidden"
+            ? `Lockdown kick for user ${userId} in chat ${chatId} was forbidden by Telegram permissions or member status; retaining the pending action for retry.`
+            : `Lockdown kick for user ${userId} in chat ${chatId} did not settle; retaining the pending action for retry.`
+        );
+        scheduleKickRetry({
+          chatId,
+          userId,
+          state: transitionState,
+          dispatchVerification,
+        });
         break;
       }
       case "deleteReminders":
@@ -364,13 +430,48 @@ async function expelMember({
   // 制造、除本路径外没人会去删的消息（见 PendingState.announcementMessageId）。
   // 同下面每条一样先复核记录仍是当前的：flood 那一路的踢人 await 之后状态可能
   // 已被替换，而被豁免成员的入群公告是**不该**删的（见 states/verification.ts）。
-  if (snapshot.announcementMessageId !== undefined) {
-    if (!stillCurrent()) return false;
-    await deleteMessage(chatId, snapshot.announcementMessageId, joinVerificationApi);
+  // 逐条记下删没删成，供下面的战报措辞用：成功文案断言的正是「痕迹清干净了」，
+  // 而机器人完全可能是「有 can_restrict_members、没有 can_delete_messages」的
+  // 管理员——那种群里这批消息一条不少地挂着，照发原文案就是群成员一眼就能证伪
+  // 的假话，而挂着的恰恰是文案声称已经清掉的垃圾。
+  //
+  // 确证没有删消息权限时一条请求都不发：它们与踢人共用 joinVerificationApi 的
+  // 限流队列，一场突袭里几十个注定 400 的删除会把真正的踢人顶到验证窗口之后。
+  // 三态里只拦确证的 false，「没观测到」照常发（理由见 ./botPermissions.ts）。
+  // 本来就没有痕迹要清时（列表为空）不算失败，战报也就不该说「删不动」。
+  const traceMessageIds: readonly number[] = snapshot.announcementMessageId !== undefined
+    ? [snapshot.announcementMessageId, ...snapshot.messageIds]
+    : snapshot.messageIds;
+  // **「删不动」只算真的删不动的那些。** 这批 id 里天天都会混进已经不存在的消息：
+  // 管理员（或本人）比超时更快手删了那条发言、入群公告已被别人清掉、消息超过
+  // 48 小时。deleteMessageWithOutcome 的 gone 把这些认出来，算清干净——它们确实
+  // 不在群里了。把它们折进失败的代价是一句公开的假话：一个权限齐全的机器人会
+  // 指名让管理员去排查一个配置完全正确的 can_delete_messages。
+  //
+  // 计数而不是布尔：N 条里失败 1 条时，「一条都删不动」同样是假话。
+  let missedTraces: number = 0;
+  let permissionDenied: boolean = false;
+  if (traceMessageIds.length > 0 && botCanDeleteIn(chatId) === false) {
+    missedTraces = traceMessageIds.length;
+    permissionDenied = true;
+  } else {
+    for (const messageId of traceMessageIds) {
+      if (!stillCurrent()) return false;
+      const outcome: DeleteMessageOutcome = await deleteMessageWithOutcome(chatId, messageId, joinVerificationApi);
+      if (outcome === "deleted" || outcome === "gone") continue;
+      missedTraces++;
+      if (outcome === "forbidden") permissionDenied = true;
+    }
   }
-  for (const messageId of snapshot.messageIds) {
-    if (!stillCurrent()) return false;
-    await deleteMessage(chatId, messageId, joinVerificationApi);
+  const tracesCleared: boolean = missedTraces === 0;
+  if (!tracesCleared) {
+    logger.error(
+      `Verification expel could not delete ${missedTraces} of ${traceMessageIds.length} tracked message(s) ` +
+      `of user ${userId} in chat ${chatId}: ` +
+      (permissionDenied
+        ? "Telegram denied the deletion, so the bot most likely lacks can_delete_messages."
+        : "the deletions failed without a permission error, so this is most likely transient.")
+    );
   }
   if (!stillCurrent()) return false;
   if (reason === "timeout") {
@@ -387,11 +488,19 @@ async function expelMember({
       : reason === "flood"
         ? `啧，${snapshot.label} 没完成验证还在刷屏，本天才想把 TA 踢出去却没踢动……管理员快检查本天才的封禁权限！`
         : `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
-    : reason === "flood"
-      ? `啧，${snapshot.label} 验证都没过就开始刷屏，本天才已经先把 TA 踢出去、再把痕迹清干净啦♡`
-      : snapshot.isBot
-        ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
-        : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
+    : !tracesCleared
+      // 人是踢走了，但有痕迹没清掉——照发「痕迹清干净了」就是假话，而群里还挂着
+      // 的那些正好是文案声称已经清掉的东西。**只有 Telegram 真的拒了权限才点管理员**：
+      // 那批 id 里天天混着已被手删、或超过 48 小时的消息，把它们折进失败就等于让
+      // 一个权限齐全的机器人把管理员送去排查一个配置完全正确的权限。
+      ? permissionDenied
+        ? `啧，${snapshot.label} 没通过验证，本天才把 TA 踢出去了，可 TA 留下的 ${traceMessageIds.length} 条痕迹里有 ${missedTraces} 条删不动……杂鱼管理员快看看本天才有没有删消息的权限♡`
+        : `啧，${snapshot.label} 没通过验证，本天才把 TA 踢出去、痕迹也清了，只有 ${missedTraces} 条没清掉，多半是网络抽了一下♡`
+      : reason === "flood"
+        ? `啧，${snapshot.label} 验证都没过就开始刷屏，本天才已经先把 TA 踢出去、再把痕迹清干净啦♡`
+        : snapshot.isBot
+          ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
+          : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
   if (!stillCurrent()) return false;
   // 三条文案各记各的名额：探测抖动发出的「没能确认还在不在群里」不能把
   // 「踢不动，去检查封禁权限」那条唯一指出真实原因的诊断顶掉（见

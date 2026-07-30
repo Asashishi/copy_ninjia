@@ -21,7 +21,7 @@ export interface RemoveBlockedMembersParams {
   probeMembership: boolean;
   /**
    * 本批处置的幂等编号。主线程按它保留镜像，Worker 处置完回执后才销账；
-   * Worker 崩溃重建时未销账的批次整批重投（见 cache/blocklist.ts）。
+   * Worker 崩溃重建时未销账的批次整批重投（见 cache/main/blocklist.ts）。
    */
   removalId: number;
   /**

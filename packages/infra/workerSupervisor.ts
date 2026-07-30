@@ -1,4 +1,4 @@
-import { businessWorkerFatalHandler } from "../cache/workerSupervisor";
+import { businessWorkerFatalHandler } from "../cache/main/workerSupervisor";
 import type { BusinessWorkerFatalHandler } from "../types/workerSupervisor";
 
 /** 注册或清除当前应用生命周期的业务 Worker fatal 接收者。 */

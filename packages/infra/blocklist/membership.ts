@@ -14,7 +14,7 @@ import {
   confirmedKickedUsersDay,
   sessionBlockedAt,
   sessionUnblockedIds,
-} from "../../cache/blocklist";
+} from "../../cache/main/blocklist";
 import { formatTokyoTime, getTokyoDateKey } from "../../libs/time";
 import { flushDiskIODomain, lastFailedDiskIODomains, postDiskIO } from "../diskIO";
 import { logger } from "../logger";

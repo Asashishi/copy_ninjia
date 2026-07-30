@@ -1,14 +1,18 @@
 import { logger } from "../../infra/logger";
 import { joinVerificationApi } from "../../infra/telegram";
-import { LINKED_CHANNEL_TTL_MS } from "../../consts/antiRaid/cache";
+import {
+  LINKED_CHANNEL_FETCH_TIMEOUT_MS,
+  LINKED_CHANNEL_TTL_MS,
+} from "../../consts/antiRaid/cache";
 import {
   cacheLinkedChannel,
   getOrCreateLinkedChannelFetch,
   linkedChannels,
-} from "../../cache/antiRaid/linkedChannels";
+} from "../../cache/workers/antiRaid/linkedChannels";
 import type { LinkedChannelCache } from "../../types/antiRaid/internal";
 import type { ChatFullInfo } from "@grammyjs/types";
 import { trackAntiRaidTask } from "./taskTracker";
+import { withTimeout } from "../../libs/withTimeout";
 
 /** 只读取未过期缓存。undefined 表示必须异步确认，不能据此豁免。 */
 export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined {
@@ -23,8 +27,11 @@ export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined 
  */
 export function fetchChatHasLinkedChannel(chatId: number): Promise<boolean | undefined> {
   const task: Promise<boolean | undefined> = getOrCreateLinkedChannelFetch(chatId, (): Promise<void> =>
-    joinVerificationApi
-      .getChat(chatId)
+    withTimeout(
+      joinVerificationApi.getChat(chatId),
+      LINKED_CHANNEL_FETCH_TIMEOUT_MS,
+      `Linked-channel lookup for chat ${chatId}`
+    )
       .then((chat: ChatFullInfo): void => {
         cacheLinkedChannel(chatId, "linked_chat_id" in chat && chat.linked_chat_id !== undefined);
       })

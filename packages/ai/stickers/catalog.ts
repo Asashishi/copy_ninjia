@@ -1,7 +1,8 @@
 import { logger } from "../../infra/logger";
 import type { Sticker, StickerSet } from "@grammyjs/types";
 import type { GenerateContentResponse } from "@google/genai";
-import { getStickerSet, pickStickerVisionSource } from "./sets";
+import { getStickerSet } from "./sets";
+import { pickStickerVisionSource } from "./describe";
 import { describeMediaForStickerCatalog } from "../imageDescription";
 import { requestGeminiResponse } from "../gemini";
 import { extractOutputText } from "../utils/geminiResponse";
@@ -14,9 +15,9 @@ import {
   generatingPacks,
   packSummaries,
   stickerCatalogRetryState,
-} from "../../cache/stickers/catalog";
-import { transientDescriptionCache } from "../../cache/imageDescription";
-import { invalidateStickerMenu } from "../../cache/stickers/menu";
+} from "../../cache/workers/aiChat/stickers/catalog";
+import { transientDescriptionCache } from "../../cache/workers/aiChat/imageDescription";
+import { invalidateStickerMenu } from "../../cache/workers/aiChat/stickers/menu";
 import {
   GEMINI_SUMMARY_MODEL,
   SUMMARY_TEMPERATURE,
@@ -67,7 +68,7 @@ function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapsh
  * workers/diskIO/snapshotFiles.ts 的 recoverStickerCatalogs。
  *
  * 内存态（catalogs/dirtyPacks/failedEntries/generatingPacks）见
- * cache/stickers/catalog.ts。本模块是这些原始集合唯一的业务写入方；外部
+ * cache/workers/aiChat/stickers/catalog.ts。本模块是这些原始集合唯一的业务写入方；外部
  * 调用方只能通过本文件导出的查询、恢复与刷盘函数改变目录生命周期。
  */
 
@@ -96,7 +97,7 @@ function getPackMap(pack: string): Map<string, StickerCatalogEntry> {
 }
 
 /** 把一枚贴纸记进所属包的失败桶，并压上负缓存到期时刻（见
- *  cache/stickers/catalog.ts 的 failedEntries）。 */
+ *  cache/workers/aiChat/stickers/catalog.ts 的 failedEntries）。 */
 function markEntryFailed(pack: string, fileUniqueId: string): void {
   let failed: Map<string, number> | undefined = failedEntries.get(pack);
   if (!failed) {
@@ -256,7 +257,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
         map.delete(fileUniqueId);
         // 对账删除必须同时清掉这枚贴纸可能在目录生成前留下的临时描述，
         // 否则消息记录紧接着可能从临时 LRU 缓存读回已经失效的旧值——现行
-        // 缓存没有 TTL（见 cache/imageDescription.ts），不删会一直错到被
+        // 缓存没有 TTL（见 cache/workers/aiChat/imageDescription.ts），不删会一直错到被
         // 容量淘汰为止。
         transientDescriptionCache.delete(fileUniqueId);
         entriesChanged = true;

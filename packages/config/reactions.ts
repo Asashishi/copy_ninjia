@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { allowedReactionEmojis } from "../cache/reactions";
-import { defaultReactionConfigCache } from "../cache/config";
+import { TELEGRAM_REACTION_EMOJI_SET } from "../consts/reactions";
+import { defaultReactionConfigCache } from "../cache/perThread/config";
 import { REACTIONS_CONFIG_PATH } from "../consts/paths";
 import type { ReactionEmoji } from "../consts/reactions";
 import { hasExactKeys, isNonEmptyStringArray, isPlainRecord } from "../libs/runtimeConfig";
@@ -19,7 +19,7 @@ export function parseReactionConfig(value: unknown): ReactionConfig {
 
   const emotionKeywords: Partial<Record<ReactionEmoji, readonly string[]>> = Object.create(null) as Partial<Record<ReactionEmoji, readonly string[]>>;
   for (const [emoji, keywords] of Object.entries(value.emotionKeywords)) {
-    if (!allowedReactionEmojis.has(emoji)) {
+    if (!TELEGRAM_REACTION_EMOJI_SET.has(emoji)) {
       throw new Error(`Unsupported Telegram reaction emoji in reactions config: ${JSON.stringify(emoji)}`);
     }
     if (!isNonEmptyStringArray(keywords)) {

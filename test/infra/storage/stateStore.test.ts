@@ -7,7 +7,7 @@ import {
   getActiveProxySendTarget,
   pruneDepartedChatState,
 } from "../../../packages/infra/storage/stateStore";
-import { chatStates } from "../../../packages/cache/storage";
+import { chatStates } from "../../../packages/cache/main/storage";
 import type { LockdownRecord, StateFileSchema } from "../../../packages/types/chatState";
 
 function schema(chatId: number): StateFileSchema {

@@ -11,7 +11,7 @@ import type { AiBotInfo, AiRecordContext, AiReplyReference } from "../../types/a
  */
 export interface SelfRecordContextParams {
   chatId: number;
-  /** 机器人自己的账号身份，来源见 cache/aiChat/identity.ts 的 botInfoState。 */
+  /** 机器人自己的账号身份，来源见 cache/workers/aiChat/identity.ts 的 botInfoState。 */
   self: AiBotInfo;
   /** 刚发出的那条消息的 message_id。 */
   messageId: number;

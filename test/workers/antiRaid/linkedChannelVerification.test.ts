@@ -39,18 +39,27 @@ mock.module("../../../packages/infra/telegram", () => ({
   },
   sendMessage: async (): Promise<undefined> => undefined,
   deleteMessage: async (): Promise<boolean> => true,
+  deleteMessageWithOutcome: async (): Promise<string> => "deleted",
   deleteMessageAfter(): void {},
   kickChatMember: async (): Promise<boolean> => true,
+  kickChatMemberWithOutcome: async (): Promise<"kicked"> => "kicked",
   probeChatMembership: async (): Promise<boolean> => true,
   answerCallbackQuery: async (): Promise<boolean> => true,
 }));
 
 const runtime = await import("../../../packages/workers/antiRaid/verificationRuntime");
-const { verificationEntries, verificationGeneration, verificationRevisions } =
-  await import("../../../packages/cache/antiRaid/verification");
+const {
+  threadCommentConfirmations,
+  verificationEntries,
+  verificationGeneration,
+  verificationRevisions,
+} = await import("../../../packages/cache/workers/antiRaid/verification");
 const { resetLinkedChannelCache, linkedChannels } =
-  await import("../../../packages/cache/antiRaid/linkedChannels");
-const { recentChannelComments } = await import("../../../packages/cache/antiRaid/recentComments");
+  await import("../../../packages/cache/workers/antiRaid/linkedChannels");
+const { recentChannelComments } = await import("../../../packages/cache/workers/antiRaid/recentComments");
+const { THREAD_COMMENT_CONFIRMATION_MAX } = await import(
+  "../../../packages/consts/antiRaid/cache"
+);
 
 function pendingRecord(userId: number, generation: number): VerificationSnapshot {
   return {
@@ -82,6 +91,7 @@ beforeEach(() => {
   }
   verificationEntries.clear();
   verificationRevisions.clear();
+  threadCommentConfirmations.clear();
   verificationGeneration.current = 0;
   resetLinkedChannelCache();
   recentChannelComments.clear();
@@ -213,5 +223,168 @@ describe("cold linked-channel verification", () => {
     chatRequests[2]!.resolve({ id: -1001, type: "supergroup", linked_chat_id: -2001 });
     await settleAsyncWork();
     expect(verificationEntries.get("-1001:46")?.state.kind).toBe("exempt");
+  });
+
+  test("第 46 条冷缓存楼中楼回复确认后撤回尚未执行的 flood 终态", async () => {
+    const record: VerificationSnapshot = pendingRecord(47, 6);
+    const observedAt: number = Date.now();
+    record.trackedMessageTimes = Array(45).fill(observedAt);
+    record.messageIds = Array.from({ length: 45 }, (_unused, index) => index + 1);
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 6,
+      verifications: [record],
+    });
+
+    runtime.handleTrackedMessage({
+      type: "message",
+      chatId: -1001,
+      userId: 47,
+      messageId: 46,
+      isThreadReply: true,
+    });
+
+    expect(verificationEntries.get("-1001:47")?.state).toMatchObject({
+      kind: "expelling",
+      reason: "flood",
+    });
+    expect(
+      threadCommentConfirmations.get("-1001:47")
+        ?.allowFloodTerminalExemption
+    ).toBeTrue();
+
+    chatRequests[0]!.resolve({
+      id: -1001,
+      type: "supergroup",
+      linked_chat_id: -2001,
+    });
+    await settleAsyncWork();
+
+    expect(verificationEntries.get("-1001:47")?.state.kind).toBe("exempt");
+    expect(
+      workerEvents.some((event) =>
+        event.type === "verificationDelete" &&
+        event.userId === 47
+      )
+    ).toBeTrue();
+  });
+
+  test("同一成员高频楼中楼消息只保留一个可更新确认 owner", async () => {
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 7,
+      verifications: [pendingRecord(48, 7)],
+    });
+
+    for (let messageId: number = 800; messageId < 820; messageId++) {
+      runtime.handleTrackedMessage({
+        type: "message",
+        chatId: -1001,
+        userId: 48,
+        messageId,
+        isThreadReply: true,
+      });
+    }
+
+    expect(chatRequests).toHaveLength(1);
+    expect(threadCommentConfirmations.size).toBe(1);
+    expect(
+      threadCommentConfirmations.get("-1001:48")?.messageId
+    ).toBe(819);
+
+    chatRequests[0]!.resolve({ id: -1001, type: "supergroup" });
+    await settleAsyncWork();
+    expect(threadCommentConfirmations.size).toBe(0);
+  });
+
+  test("群停管后 getChat 迟到成功也不能再写 recent comment", async () => {
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 8,
+      verifications: [],
+    });
+    runtime.handleTrackedMessage({
+      type: "message",
+      chatId: -1001,
+      userId: 49,
+      messageId: 900,
+      isThreadReply: true,
+    });
+    expect(threadCommentConfirmations.has("-1001:49")).toBeTrue();
+
+    runtime.deactivateVerificationChat(-1001);
+    chatRequests[0]!.resolve({
+      id: -1001,
+      type: "supergroup",
+      linked_chat_id: -2001,
+    });
+    await settleAsyncWork();
+
+    expect(threadCommentConfirmations.has("-1001:49")).toBeFalse();
+    expect(recentChannelComments.has("-1001:49")).toBeFalse();
+  });
+
+  test("同 key 新 owner 不接受停管前旧回调的消息", async () => {
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 9,
+      verifications: [],
+    });
+    runtime.handleTrackedMessage({
+      type: "message",
+      chatId: -1001,
+      userId: 50,
+      messageId: 901,
+      isThreadReply: true,
+    });
+    runtime.deactivateVerificationChat(-1001);
+    runtime.handleTrackedMessage({
+      type: "message",
+      chatId: -1001,
+      userId: 50,
+      messageId: 902,
+      isThreadReply: true,
+    });
+    expect(chatRequests).toHaveLength(1);
+
+    chatRequests[0]!.resolve({
+      id: -1001,
+      type: "supergroup",
+      linked_chat_id: -2001,
+    });
+    await settleAsyncWork();
+
+    expect(recentChannelComments.get("-1001:50")?.messageId).toBe(902);
+  });
+
+  test("确认 owner 达到全局硬顶后拒绝新增并保持 fail-closed", () => {
+    for (
+      let index: number = 0;
+      index < THREAD_COMMENT_CONFIRMATION_MAX;
+      index++
+    ) {
+      threadCommentConfirmations.set(`full:${index}`, {
+        messageId: index,
+        observedAt: 0,
+        expectedState: undefined,
+        boundToJoin: false,
+        allowFloodTerminalExemption: false,
+      });
+    }
+
+    runtime.handleTrackedMessage({
+      type: "message",
+      chatId: -1001,
+      userId: 51,
+      messageId: 903,
+      isThreadReply: true,
+    });
+
+    expect(threadCommentConfirmations.size).toBe(
+      THREAD_COMMENT_CONFIRMATION_MAX
+    );
+    expect(threadCommentConfirmations.has("-1001:51")).toBeFalse();
+    expect(chatRequests).toHaveLength(0);
+    expect(recentChannelComments.has("-1001:51")).toBeFalse();
   });
 });

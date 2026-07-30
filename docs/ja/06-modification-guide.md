@@ -33,7 +33,7 @@
 - **パイプラインの前提を自分で用意する。** 登録位置は自動パイプラインより**前**なので、そのパイプラインの自己送信ガードと `cacheSender` の恩恵を受けられません。handler 自身が `isBotOwnMessage` で Bot 自身のメッセージを除外し（さもないとチャンネルの跳ね返りが自問自答の連投ループになります）、送信者 ID のキャッシュも自分で行う必要があります。
 - **`BOT_COMMANDS` メニューには入れられない。** BotFather のコマンド名も ASCII 限定（ラテン文字・数字・アンダースコア、最長 32 文字）です。`setMyCommands` はリスト全体を一括送信するので、1 件でも不正な名前が混ざるとメニュー全体が `BOT_COMMAND_INVALID` で失敗します。登録失敗はログに残るだけで起動を止めないため、メニューが黙って消えます。メニューで使い方を見せたい場合は ASCII のプレースホルダー項目（既存の `/x`）を追加し、構文は description に書きます。
 - **プレースホルダーにも handler が要る。** メニューをタップすると実際にコマンドが送信されるため、登録しないとフォールバックに到達し、通常メッセージとして AI/copy pipeline に流れてしまいます。かといって何もしない空の handler にすると、タップした人には完全な沈黙しか返りません。使い方を 1 行返してチェーンを終了させます。
-- **自前のグローバル rate limit を備える。** これらのコマンドはコマンドメニューという自然な制約を持たず、アクション語は誰でもその場で作れます。window と上限は `packages/consts/commands.ts`、タイムスタンプ列は `packages/cache/<domain>.ts` に置き、判定は [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) を再利用します（呼び出し側が渡した列をその場で更新する純関数で、自身は状態を持ちません）。
+- **自前のグローバル rate limit を備える。** これらのコマンドはコマンドメニューという自然な制約を持たず、アクション語は誰でもその場で作れます。window と上限は `packages/consts/commands.ts`、タイムスタンプ列は `packages/cache/main/<domain>.ts` に置き、判定は [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) を再利用します（呼び出し側が渡した列をその場で更新する純関数で、自身は状態を持ちません）。
 
 ## 応答にリンクや書式を付ける
 
@@ -47,7 +47,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列リテラルが 52 ファイルに約 525 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列リテラルが 58 ファイルに約 486 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 
@@ -99,7 +99,7 @@
 
 ## 実行時 cache の追加
 
-1. `packages/cache/<domain>/` またはドメインファイルに置き、ファイル先頭で owner モジュールを示します。可変 singleton は `{ current: T | null }` のような holder object を使います。
+1. `packages/cache/<所有スレッド>/<domain>` に置き（スレッドディレクトリは [03 ディレクトリ案内](03-directory-map.md#スレッド別に分けたキャッシュ) を参照）、ファイル先頭で owner モジュールを示します。可変 singleton は `{ current: T | null }` のような holder object を使います。
 2. 各 export にライフサイクル JSDoc を付けます。いつ格納し、いつ削除し、Worker crash/restart 後にどう再構築するかを記載します。
 3. 容量上限と削除方針を定め、[04 実行時の正式な不変条件](04-invariants.md#worker-と状態の所有権) の長寿命コンテナ要件、すなわち bounded、owner あり、再構築可能を満たすか確認します。
 4. 停止時に flush または精算する必要があるなら `packages/libs/flushBarrier.ts` を使い、新しい resolver Map を作りません。
@@ -117,7 +117,7 @@
 
 ## Worker 間 protocol の変更
 
-スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/switch_mood` の handshake が実装例です。
+スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/main/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/switch_mood` の handshake が実装例です。
 
 ---
 

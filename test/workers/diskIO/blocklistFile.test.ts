@@ -12,7 +12,7 @@ import {
   blocklistKnownIds,
   blocklistPendingEntries,
   resetBlocklistCache,
-} from "../../../packages/cache/diskIO/blocklist";
+} from "../../../packages/cache/workers/diskIO/blocklist";
 
 function readBlocklist(): Record<string, { isBlocked: boolean; blockedAt: string }> {
   return JSON.parse(readFileSync(BLOCKLIST_FILE_PATH, "utf8"));

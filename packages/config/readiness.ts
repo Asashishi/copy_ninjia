@@ -13,7 +13,7 @@
  * 失败就等于每条消息一次 readFileSync。修好文件后要重启才生效，与
  * `config/*.json` 一贯的「读一次、进程内不再重载」语义一致，拒绝文案里也点明了。
  *
- * 缓存是每 isolate 一份（见 cache/config.ts）：Worker 各自判各自的，与四份
+ * 缓存是每 isolate 一份（见 cache/perThread/config.ts）：Worker 各自判各自的，与四份
  * 底层 loader 的单例缓存同一口径。
  */
 
@@ -26,7 +26,7 @@ import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
   jaTranslateConfigReadinessCache,
-} from "../cache/config";
+} from "../cache/main/configReadiness";
 import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
 import { isPlainRecord } from "../libs/runtimeConfig";
 import type { ConfigReadiness, ConfigReadinessCache, DeploymentFileProbe } from "../types/config";

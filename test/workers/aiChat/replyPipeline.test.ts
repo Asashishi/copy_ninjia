@@ -25,8 +25,8 @@ const replyReferenceForBufferedMessage = mock((_chatId: number, _messageId: numb
 const botInfo = { id: 1, username: "copy_ninjia_bot", first_name: "Ninjia" };
 const botInfoState: { current: typeof botInfo | null } = { current: botInfo };
 
-mock.module("../../../packages/cache/aiChat/identity", () => ({ botInfoState }));
-mock.module("../../../packages/cache/aiChat/replies", () => ({
+mock.module("../../../packages/cache/workers/aiChat/identity", () => ({ botInfoState }));
+mock.module("../../../packages/cache/workers/aiChat/replies", () => ({
   activeReplyCounts: new Map<number, number>(),
   longTriggerTimes,
   pendingOverflowNotices,
