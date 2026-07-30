@@ -1,5 +1,6 @@
 import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
+import { BoundedDeque } from "../../libs/boundedDeque";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, AI_MEMORY_MAX_CHATS, COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../consts/aiChat/memory";
 import {
   chatBuffers,
@@ -42,14 +43,14 @@ declare const self: Worker;
  * 各群「最后一次有动静」的时间戳也在这里更新（chatLastActivityTimes，见
  * cache/workers/aiChat/memory.ts）：不论文字/媒体、也不论这条消息最终是否触发了
  * AI 回复，只要记进了滚动缓存就算——仅用于容量满时 ensureMemoryCapacity
- * 的 LRU 淘汰排序，心情系统不看群活跃度（见 ai/mood.ts）。
+ * 的 LRU 淘汰排序，心情系统不看群活跃度（见 aiChat/ai/mood.ts）。
  */
 export function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
   if (!hasChatMemory(chatId)) ensureMemoryCapacity(chatId);
   chatLastActivityTimes.set(chatId, Date.now());
-  let buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
+  let buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf) {
-    buf = new LinkedQueue<BufferedMessage>();
+    buf = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
     chatBuffers.set(chatId, buf);
   }
   buf.push(entry);
@@ -133,7 +134,7 @@ function ensureMemoryCapacity(excludeChatId: number): void {
  *  types/aiChat.ts 的 AiMemoryEvent.snapshot）。缩进固定 2 空格，与磁盘
  *  文件历史格式逐字节一致。 */
 export function buildMemorySnapshot(chatId: number): string {
-  const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
+  const buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
   const snapshot: AiMemorySnapshot = {
     version: 1,
@@ -176,14 +177,14 @@ export function flushDirtyMemories(): void {
  *
  * buffer 只恢复最新 AI_MEMORY_HYDRATE_BUFFER_MAX（= VERBATIM_CONTEXT_MAX - 1）
  * 条：recordChatMessage 靠严格等值 `size === VERBATIM_CONTEXT_MAX` 触发轮换，
- * 若恰好灌回整 VERBATIM_CONTEXT_MAX 条，下一次 push 后 size 会越过该判等，
- * 缓存无界增长。`=== COMPACT_BATCH_SIZE` 分支对恢复后 size 已达到该值的群不再
- * 触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块摘要粒度
- * 略有漂移，可接受，不为此复刻轮换状态机。
+ * 若恰好灌回整 VERBATIM_CONTEXT_MAX 条，下一次 push 会先撞上 deque 的领域硬
+ * 上限，也没有机会执行轮换。`=== COMPACT_BATCH_SIZE` 分支对恢复后 size 已达到
+ * 该值的群不再触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块
+ * 摘要粒度略有漂移，可接受，不为此复刻轮换状态机。
  *
  * chatLastActivityTimes 以快照的 savedAt 近似播种，让恢复出来的群在 LRU
  * 淘汰排序里保持合理的新旧顺序；心情不落盘也不在这里播种，下次拼系统
- * 提示词时由 ai/mood.ts 的 currentMoodInstruction 现抽。
+ * 提示词时由 aiChat/ai/mood.ts 的 currentMoodInstruction 现抽。
  */
 export function hydrateMemories(memories: Map<number, string>): void {
   const parsedMemories: ParsedChatMemory[] = [];
@@ -228,7 +229,8 @@ export function hydrateMemories(memories: Map<number, string>): void {
       continue;
     }
 
-    const buf: LinkedQueue<BufferedMessage> = new LinkedQueue<BufferedMessage>();
+    const buf: BoundedDeque<BufferedMessage> =
+      new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
     for (const message of snapshot.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)) {
       buf.push(message);
       // 回复链索引不落盘，恢复热区的同时同源重建（见 cache/workers/aiChat/memory.ts）。

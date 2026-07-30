@@ -38,7 +38,10 @@ import type {
   VerificationPersistedReply,
   VerificationUpsertDiskMessage,
 } from "../../types/diskIO";
-import type { VerificationSnapshot } from "../../types/antiRaid";
+import type {
+  VerificationSnapshot,
+  VerificationSnapshotBase,
+} from "../../types/antiRaid";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 
 type ReplySink = (reply: VerificationPersistedReply) => void;
@@ -117,12 +120,11 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     key !== verificationKey(value.chatId, value.userId)
   ) return null;
 
-  return {
+  const base: VerificationSnapshotBase = {
     chatId: value.chatId,
     userId: value.userId,
     generation: value.generation,
     revision: value.revision,
-    phase: value.phase,
     label: value.label,
     isBot: value.isBot,
     messageIds: [...value.messageIds],
@@ -136,12 +138,26 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     reminderSuperseded: value.reminderSuperseded,
     joinedAt: value.joinedAt,
     expiresAt: value.expiresAt,
-    terminalInviterId: value.terminalInviterId as number | undefined,
-    expelReason: value.expelReason as "timeout" | "flood" | undefined,
-    successNoticeSent: value.successNoticeSent as boolean | undefined,
-    failureNoticeSent: value.failureNoticeSent as boolean | undefined,
-    unconfirmedNoticeSent: value.unconfirmedNoticeSent as boolean | undefined,
   };
+  if (value.phase === "checkingInviter") {
+    return {
+      ...base,
+      phase: "checkingInviter",
+      terminalInviterId: value.terminalInviterId as number,
+    };
+  }
+  if (value.phase === "expelling") {
+    return {
+      ...base,
+      phase: "expelling",
+      expelReason: value.expelReason as "timeout" | "flood",
+      successNoticeSent: value.successNoticeSent as boolean | undefined,
+      failureNoticeSent: value.failureNoticeSent as boolean | undefined,
+      unconfirmedNoticeSent:
+        value.unconfirmedNoticeSent as boolean | undefined,
+    };
+  }
+  return { ...base, phase: "pending" };
 }
 
 function storedSnapshot(snapshot: VerificationSnapshot): Record<string, unknown> {

@@ -76,15 +76,15 @@ export interface KickedState {
 
 /** 供终核与最终清理使用的不可变语义快照。 */
 export interface ExpelSnapshot {
-  label: string;
-  isBot: boolean;
-  messageIds: number[];
+  readonly label: string;
+  readonly isBot: boolean;
+  readonly messageIds: readonly number[];
   /** 入群公告 id；与 messageIds 分开的理由见 PendingState 同名字段。 */
-  announcementMessageId?: number;
-  reminderMessageId?: number;
-  replyReminderMessageId?: number;
-  joinedAt: number;
-  expiresAt: number;
+  readonly announcementMessageId?: number;
+  readonly reminderMessageId?: number;
+  readonly replyReminderMessageId?: number;
+  readonly joinedAt: number;
+  readonly expiresAt: number;
 }
 
 /** 已持久化后才可执行拉人者终核；Worker/进程重建会继续本阶段。 */

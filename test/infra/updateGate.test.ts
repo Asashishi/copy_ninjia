@@ -54,6 +54,22 @@ describe("shouldPassInitGate", () => {
     }))).toBe(false);
   });
 
+  test("频道白名单身份也不能在未初始化群首次启用", () => {
+    const chatId = -1001111111118;
+    const channelId = -1002222222222;
+    const message = {
+      text: "/init enable",
+      sender_chat: { id: channelId, type: "channel", title: "Trusted Channel" },
+    };
+    const ctx = fakeCtx({
+      chat: { id: chatId, type: "supergroup" },
+      from: { id: SUPER_ADMIN_USER_ID + 1 },
+      message,
+      msg: message,
+    });
+    expect(shouldPassInitGate(ctx)).toBe(false);
+  });
+
   test("已 /init 过的群 + 普通消息：放行", () => {
     const chatId = -1001111111113;
     getOrCreateChatState(chatId).isInitEnabled = true;

@@ -1,4 +1,5 @@
 import type { LinkedQueue } from "./linkedQueue";
+import type { TimestampDeque } from "./timestampDeque";
 
 /**
  * 全局滑动窗口限流的共用判定。本模块不持有任何状态：时间戳队列由调用方在
@@ -36,8 +37,7 @@ export function trimSlidingWindow({
   windowMs,
   now = Date.now(),
 }: TrimSlidingWindowParams): void {
-  // last(1) 走 tail 指针，是 LinkedQueue 特判过的 O(1) 路径。
-  if ((timestamps.last(1)[0] ?? now) > now) {
+  if ((timestamps.peekLast() ?? now) > now) {
     // 队列单调升序，落在未来的必然是连续的一段队尾；整条重建最直观，且只在
     // 罕见的回拨路径上付这一次 O(n)。
     const kept: number[] = timestamps.last(timestamps.size).filter((at: number): boolean => at <= now);
@@ -48,6 +48,18 @@ export function trimSlidingWindow({
   while (timestamps.size > 0 && timestamps.peek()! <= cutoff) {
     timestamps.shift();
   }
+}
+
+/**
+ * TimestampDeque 形态的同边界热路径。参数保持原始值传递，避免每条消息创建
+ * options 对象；回拨时直接从队尾原地删除，不再重建整条窗口。
+ */
+export function trimTimestampWindow(
+  timestamps: TimestampDeque,
+  windowMs: number,
+  now: number = Date.now()
+): void {
+  timestamps.trim(windowMs, now);
 }
 
 /** trimSlidingWindowArray 的入参。 */

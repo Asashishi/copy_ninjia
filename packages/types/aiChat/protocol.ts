@@ -97,7 +97,7 @@ export interface AiInvalidateChatMessage {
   requestId: number;
 }
 
-/** /switch_mood 的重抽请求：未过 deadlineAt 时 Worker 调 ai/mood.ts 的
+/** /switch_mood 的重抽请求：未过 deadlineAt 时 Worker 调 aiChat/ai/mood.ts 的
  *  switchMood，再以同 requestId 的 moodSwitched 回执带回结果；过期请求
  *  不得产生副作用，回复由主线程命令处理器发出。 */
 export interface AiSwitchMoodMessage {

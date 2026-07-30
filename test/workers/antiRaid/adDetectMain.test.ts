@@ -36,8 +36,12 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 mock.module("../../../packages/infra/config", () => ({
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
-  PRIVILEGED_USERS_ID: [100],
   SUPER_ADMIN_USER_ID: 1,
+}));
+mock.module("../../../packages/config/whitelist", () => ({
+  hasWhitelistPermission: (id: number, key: string): boolean =>
+    (id === 100 || id === -200) && key === "isCanBypassAdDetection",
+  isWhitelisted: (id: number): boolean => id === 100 || id === -200,
 }));
 mock.module("../../../packages/infra/telegram/actions", () => ({
   sendMessage,
@@ -128,7 +132,6 @@ describe("广告检测投递门禁", () => {
       senderId: 7,
       messageId: 10,
       text: "加我微信",
-      linkUrls: [],
       label: "@spammer",
       isChannel: false,
       blocked: false,
@@ -154,6 +157,16 @@ describe("广告检测投递门禁", () => {
       message({ sender_chat: { id: -1001, type: "supergroup", title: "群" } }),
       999
     )).toBeUndefined();
+  });
+
+  test("频道白名单可按频道 ID 绕过广告检测", () => {
+    expect(buildAdCandidate(message({
+      sender_chat: {
+        id: -200,
+        type: "channel",
+        title: "Trusted Channel",
+      },
+    }), 999)).toBeUndefined();
   });
 
   test("回复消息照常判定：正文在 message.text 里，回复关系不影响取值", () => {
@@ -223,7 +236,7 @@ describe("广告检测投递门禁", () => {
         { type: "url", offset: 2, length: 15 },
         { type: "text_link", offset: 0, length: 1, url: "https://t.me/x" },
       ],
-    }), 999)?.linkUrls).toEqual([]);
+    }), 999)?.linkUrls).toBeUndefined();
   });
 
   test("关联频道的自动转发与机器人自己的帖子回弹都不判定", () => {

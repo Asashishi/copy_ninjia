@@ -44,32 +44,34 @@ export interface ChatState {
   lockdown?: LockdownRecord;
   /**
    * 本群是否启用 AI 闲聊功能（对话缓存、随机插话、回复/@ 机器人触发的回复）。
-   * 缺省视为禁用，需通过 /ai_chat enable 显式开启（仅 SUPER_ADMIN_USER_ID
-   * 本人可用该指令，见 commands/aiChat.ts）。
+   * 缺省视为禁用，需通过 /ai_chat enable 显式开启（超级管理员或获授
+   * isCanControllAIPermission 的白名单身份可用，见 commands/aiChat.ts）。
    */
   isAIChatEnabled?: boolean;
   /**
    * 本群 /ja_copy 的日语翻译功能是否启用。缺省视为禁用，需通过
-   * /ja_copy enable 显式开启（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
-   * commands/jaCopy.ts）。判断时必须使用 === true；false 与缺省等价，
+   * /ja_copy enable 显式开启（超级管理员或获授
+   * isCanControllJATranslatePermission 的白名单身份可用，见 commands/jaCopy.ts）。
+   * 判断时必须使用 === true；false 与缺省等价，
    * 保存时会被规范化删除。
    */
   isJATranslationEnabled?: boolean;
   /**
    * 本群是否启用广告检测（每条消息经 DeepSeek 判定，命中即按 /block 处置）。
-   * 缺省视为禁用，需通过 /ad_detect enable 显式开启（仅 SUPER_ADMIN_USER_ID
-   * 本人可用该指令，见 commands/adDetect.ts）。判断时必须使用 === true。
+   * 缺省视为禁用，需通过 /ad_detect enable 显式开启（超级管理员或获授
+   * isCanControllAdDetectPermission 的白名单身份可用，见 commands/adDetect.ts）。
+   * 判断时必须使用 === true。
    */
   isAdDetectEnabled?: boolean;
   /**
    * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化（false），
-   * 需通过 /init enable 显式开启（仅 SUPER_ADMIN_USER_ID 本人可用该指令，见
-   * commands/init.ts）。未初始化的群，其更新在
-   * app/registerHandlers.ts 最前端的网关中间件
-   * 处直接丢弃（除 /init 本身和机器人自身的 my_chat_member 更新外），不进入
-   * 入群验证、指令匹配、AI 调用等任何后续处理——Bot API 长轮询没有「取消
-   * 订阅某个群」的机制，这是应用层面能做到的最接近「不监听」的效果，避免
-   * 被拉进大量群时被拖垮。
+   * 需由超级管理员通过 /init enable 显式开启（见 commands/init.ts）。未初始化
+   * 群的更新在
+   * app/registerHandlers.ts 的前置网关处直接丢弃（除 /init、本群无关的
+   * my_chat_member，以及网关前独立处理的 /permission 外），不进入入群验证、
+   * 普通指令匹配、AI 调用等后续处理——Bot API 长轮询没有「取消订阅某个群」
+   * 的机制，这是应用层面能做到的最接近「不监听」的效果，避免被拉进大量群时
+   * 被拖垮。
    */
   isInitEnabled?: boolean;
   /**

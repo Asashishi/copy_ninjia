@@ -22,11 +22,14 @@ export interface QueuedReplyTrigger {
   text: string;
 }
 
-/** 一轮回复交给 Gemini 的三个有序初始上下文区块。区块保持领域语义，直到
- * geminiReply.ts 的 SDK 边界才映射成同一个 user Content 下的 text Parts。 */
+/** 一轮回复交给 Gemini 的有序初始上下文区块。直接 @/回复触发时，
+ * invokerFocus 作为独立 text Part 插在完整转录与回复任务之间；随机触发和
+ * 随机媒体评价不携带。区块保持领域语义，直到 geminiReply.ts 的 SDK 边界
+ * 才映射成同一个 user Content 下的 text Parts。 */
 export interface ReplyPromptSections {
   readonly referenceMemory: string;
   readonly currentConversation: string;
+  readonly invokerFocus?: string;
   readonly replyTask: string;
 }
 

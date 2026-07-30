@@ -8,7 +8,9 @@ const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUse
 const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
 
-mock.module("../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [100] }));
+mock.module("../../packages/config/whitelist", () => ({
+  isWhitelisted: (id: number): boolean => id === 100,
+}));
 mock.module("../../packages/infra/telegram/actions", () => ({ sendMessage }));
 mock.module("../../packages/infra/telegram/avatar", () => ({ copyUserProfilePhoto }));
 mock.module("../../packages/infra/storage/stateStore", () => ({

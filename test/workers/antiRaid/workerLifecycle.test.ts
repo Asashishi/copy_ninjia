@@ -106,11 +106,22 @@ describe("Anti-Raid Worker lifecycle", () => {
     expect(workerSelf.onmessage).not.toBeNull();
 
     const messages: AntiRaidWorkerMessage[] = [
-      { type: "join", chatId: -1001, member: { id: 1 } },
+      {
+        type: "join",
+        chatId: -1001,
+        member: { id: 1 },
+        actorIsWhitelisted: false,
+      },
       { type: "left", chatId: -1001, userId: 1 },
       { type: "deactivateChat", chatId: -1001 },
       { type: "message", chatId: -1001, userId: 1, messageId: 10 },
-      { type: "callback", callbackQueryId: "q", targetUserId: 1, from: { id: 1 } },
+      {
+        type: "callback",
+        callbackQueryId: "q",
+        targetUserId: 1,
+        from: { id: 1 },
+        fromIsWhitelisted: false,
+      },
       { type: "adopt", lockdowns: [] },
       { type: "lockdownPersisted", chatId: -1001, phase: "applying", intentId: 1 },
       { type: "adoptVerifications", generation: 1, verifications: [] },

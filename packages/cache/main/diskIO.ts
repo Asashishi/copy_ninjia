@@ -9,6 +9,7 @@ import type {
   AiMemoryPersistedReply,
   DiskBusinessMessage,
   DiskIODomain,
+  DiskIORespawnRegistration,
   LoadedReply,
   VerificationPersistedReply,
 } from "../../types/diskIO";
@@ -60,7 +61,7 @@ interface DiskIORuntime {
   fatalHandler: ((error: Error) => void) | undefined;
   fatalSignaled: boolean;
   pendingBusinessMessages: LinkedQueue<DiskBusinessMessage>;
-  respawnListeners: (() => void)[];
+  respawnListeners: DiskIORespawnRegistration[];
   verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[];
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];

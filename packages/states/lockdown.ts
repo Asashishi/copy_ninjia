@@ -1,4 +1,5 @@
 import { LOCKDOWN_MS, RESTORE_RETRY_MS } from "../consts/antiRaid/lockdown";
+import type { ChatPermissions } from "@grammyjs/types";
 import type {
   LockdownEffect,
   LockdownMachineEvent,
@@ -46,7 +47,7 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
     case "thresholdExceeded": {
       if (state === undefined) {
         return {
-          next: { kind: "applying" },
+          next: { kind: "applying", stage: "preparing" },
           effects: [
             { kind: "prefetchAdmins", onlyIfCold: true },
             { kind: "prepareApply", joinCount: event.joinCount },
@@ -71,10 +72,13 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
       return { next: state, effects };
     }
     case "applyPrepared":
-      if (state?.kind !== "applying" || state.originalPermissions !== undefined) return { next: state, effects: [] };
+      if (state?.kind !== "applying" || state.stage !== "preparing") {
+        return { next: state, effects: [] };
+      }
       return {
         next: {
           kind: "applying",
+          stage: "prepared",
           originalPermissions: event.originalPermissions,
           joinCount: event.joinCount,
           intentId: event.intentId,
@@ -82,24 +86,36 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
         effects: [{ kind: "persistState" }],
       };
     case "applyPreparationFailed":
-      if (state?.kind !== "applying" || state.originalPermissions !== undefined) return { next: state, effects: [] };
+      if (state?.kind !== "applying" || state.stage !== "preparing") {
+        return { next: state, effects: [] };
+      }
       return { next: undefined, effects: [] };
     case "applyCommitPreparationFailed":
-      if (state?.kind !== "applying" || state.originalPermissions === undefined) return { next: state, effects: [] };
+      if (state?.kind !== "applying" || state.stage !== "prepared") {
+        return { next: state, effects: [] };
+      }
       // applying intent 已经落盘，但 Telegram 写操作尚未开始；删除 owner 即可，
       // 不能走恢复路径，否则可能用 T0 快照覆盖管理员刚改过的 invite 权限。
       return { next: undefined, effects: [{ kind: "reportUnlock" }] };
-    case "statePersisted":
-      if (state?.kind !== event.phase || state.intentId !== event.intentId) return { next: state, effects: [] };
-      if (state.kind === "applying" && state.originalPermissions !== undefined) {
+    case "statePersisted": {
+      if (state?.kind !== event.phase) return { next: state, effects: [] };
+      if (state.kind === "applying") {
+        if (
+          state.stage !== "prepared" ||
+          state.intentId !== event.intentId
+        ) {
+          return { next: state, effects: [] };
+        }
         return { next: state, effects: [{ kind: "commitApply" }] };
       }
+      if (state.intentId !== event.intentId) return { next: state, effects: [] };
       if (state.kind === "restoring") {
         return { next: state, effects: [{ kind: "beginRestore", originalPermissions: state.originalPermissions }] };
       }
       return { next: state, effects: [] };
+    }
     case "applyResult":
-      if (state?.kind !== "applying" || state.originalPermissions === undefined || state.intentId === undefined) {
+      if (state?.kind !== "applying" || state.stage !== "prepared") {
         return { next: state, effects: [] };
       }
       if (!event.ok) {
@@ -140,22 +156,25 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
     case "restoreRetryFired":
       if (state?.kind !== "restoring") return { next: state, effects: [] };
       return { next: state, effects: [{ kind: "beginRestore", originalPermissions: state.originalPermissions }] };
-    case "deactivate":
+    case "deactivate": {
       if (state === undefined) return { next: state, effects: [] };
-      if (state.kind === "applying" && state.originalPermissions === undefined) {
+      if (state.kind === "applying" && state.stage === "preparing") {
         // 尚未形成 intent、更没改过 Telegram，直接撤销占位即可。
         return { next: undefined, effects: [] };
       }
+      const originalPermissions: ChatPermissions =
+        state.originalPermissions;
       return {
         next: {
           kind: "restoring",
-          originalPermissions: state.originalPermissions!,
+          originalPermissions,
           intentId: event.intentId,
           // 从 APPLYING 被解除：加锁公告还没发出去过。
           announced: state.kind === "applying" ? false : state.announced,
         },
         effects: [{ kind: "persistState" }],
       };
+    }
     case "restoreResult": {
       if (state === undefined || state.kind === "applying") return { next: state, effects: [] };
       if (event.ok) {
@@ -185,7 +204,12 @@ export function transitionLockdown(state: LockdownState | undefined, event: Lock
       if (state !== undefined) return { next: state, effects: [] };
       if (event.phase === "applying") {
         return {
-          next: { kind: "applying", originalPermissions: event.originalPermissions, intentId: event.intentId },
+          next: {
+            kind: "applying",
+            stage: "prepared",
+            originalPermissions: event.originalPermissions,
+            intentId: event.intentId,
+          },
           effects: [
             { kind: "prefetchAdmins", onlyIfCold: false },
             ...(event.persisted === false

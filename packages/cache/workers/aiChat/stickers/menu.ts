@@ -1,7 +1,7 @@
 import type { StickerPackCandidate } from "../../../../types/stickers/tools";
 
 /**
- * 贴纸包菜单（packages/ai/tools/stickers.ts 的 buildStickerPackMenu）的记忆化状态。
+ * 贴纸包菜单（packages/aiChat/ai/tools/stickers.ts 的 buildStickerPackMenu）的记忆化状态。
  * 只由该文件读写；随 AI 闲聊 Worker isolate 生死，崩溃重启后从 0 重建。
  *
  * 菜单的两个输入——贴纸集合缓存（cache/workers/aiChat/stickers/sets.ts）与画面描述目录/整包简介

@@ -27,34 +27,44 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 cp .env.example .env
+cp -r config_example config
 ```
 
 ## Configuring `.env`
 
-The project reads exactly six environment variables; there are no undocumented switches. Each name is prefixed with the feature it serves (`AI_CHAT_` / `AD_DETECT_`), so a missing key only disables that one feature. Five credential/authorization settings are parsed by [`packages/infra/config.ts`](../../packages/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`packages/consts/paths.ts`](../../packages/consts/paths.ts) reads it earlier:
+The project reads exactly five environment variables; there are no undocumented switches. Each name is prefixed with the feature it serves (`AI_CHAT_` / `AD_DETECT_`), so a missing key only disables that one feature. Four credential/identity settings are parsed by [`packages/infra/config.ts`](../../packages/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`packages/consts/paths.ts`](../../packages/consts/paths.ts) reads it earlier:
 
 | Variable | Required | Description |
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | Token issued by BotFather |
 | `AI_CHAT_GEMINI_API_KEY` | May be empty | Gemini API key, used exclusively by the AI chat agent: `/ai_chat` reply generation, image understanding, and memory compaction. When empty the AI worker never starts, `/ai_chat enable` and `/switch_mood` are rejected, the AI memories on disk are left untouched, and everything else keeps running |
 | `AD_DETECT_DEEPSEEK_API_KEY` | May be empty | DeepSeek API key (OpenAI-compatible endpoint), used exclusively by ad detection: the `/ad_detect` classifier. When empty, `/ad_detect enable` is rejected and everything else keeps running |
-| `SUPER_ADMIN_USER_ID` | ✅ | The super administrator, as one decimal user ID; `/init`, `/ai_chat`, `/ad_detect`, `/switch_mood`, `/send`, and similar commands recognize only this user |
-| `PRIVILEGED_USERS_ID` | May be empty | Comma-separated allowlisted users; exempt from copy cooldowns, allowed to use `/block`, and allowed to vouch for other bots during verification |
+| `SUPER_ADMIN_USER_ID` | ✅ | One decimal super-administrator user ID; it has every command permission, and only it can use `/init`, `/permission`, `/white`, and `/send` |
 | `COPY_NINJIA_DATA_ROOT` | May be empty | Runtime data root; when empty, data is stored in the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root) |
 
 For Japanese translation, save the service-account key as `g-auth.json` in the project root. Both `.env` and `g-auth.json` are covered by `.gitignore`.
 
 ## Project Configuration Files
 
+`config/` is deployment-owned and excluded from Git. Copy it from `config_example/` once, then edit only `config/`; the example directory is not the runtime configuration.
+
 | File | Contents | Validation |
 | :--- | :--- | :--- |
 | [`prompt/persona.md`](../../prompt/persona.md) | Base persona for AI chat | Plain text; no schema |
-| [`config/stickers.json`](../../config/stickers.json) | Sticker packs available to the AI, up to 5 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
-| [`config/reactions.json`](../../config/reactions.json) | Emoji reactions available to the AI | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
-| [`config/mood.json`](../../config/mood.json) | Mood tiers: copy, weights, and weather/time multipliers | [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must be positive integers totaling exactly 100 |
-| [`config/ad_samples.json`](../../config/ad_samples.json) | Ad-detection reference samples; the file itself is a string array | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts); entries must be non-blank and unique, at most 500 |
+| `config/whitelist.json` ([example](../../config_example/whitelist.json)) | User/channel allowlist and granular permissions; membership itself also grants copy-cooldown exemption, bot-verification vouching, and protection from automatic enforcement | [`packages/config/whitelist.ts`](../../packages/config/whitelist.ts); loaded strictly before network access, so a missing or malformed file aborts startup |
+| `config/blocklist.json` ([example](../../config_example/blocklist.json)) | Deployment-managed static user/channel blocklist IDs | [`packages/config/blocklist.ts`](../../packages/config/blocklist.ts); loaded strictly before network access and merged with the dynamic `memory/` layer |
+| `config/stickers.json` ([example](../../config_example/stickers.json)) | Sticker packs available to the AI, up to 5 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
+| `config/reactions.json` ([example](../../config_example/reactions.json)) | Emoji reactions available to the AI | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
+| `config/mood.json` ([example](../../config_example/mood.json)) | Mood tiers: copy, weights, and weather/time multipliers | [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must be positive integers totaling exactly 100 |
+| `config/ad_samples.json` ([example](../../config_example/ad_samples.json)) | Ad-detection reference samples; the file itself is a string array | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts); entries must be non-blank and unique, at most 500 |
 
-All four JSON files undergo strict schema validation, but they are **not warmed up at startup**: one malformed sticker whitelist must not take copy, luck, join verification, and the blocklist offline with it. Validation happens in the matching toggle command instead — `/ai_chat enable` reads the first three, `/ad_detect enable` reads `ad_samples.json`, and `/ja_copy enable` reads `g-auth.json`. Anything unreadable refuses only that one toggle, names the offending file in the reply, and leaves an English diagnostic in the log. Chats that already had the feature on stop too, so nothing runs in a degraded state. Each verdict is cached per process, so a fixed file takes effect on the next restart.
+`whitelist.json` and `blocklist.json` are global security boundaries and are loaded strictly before any network or Worker startup. The other four JSON files are validated lazily by feature: one malformed sticker configuration must not take copy, luck, join verification, and the blocklist offline together. `/ai_chat enable` reads the first three optional files, `/ad_detect enable` reads `ad_samples.json`, and `/ja_copy enable` reads `g-auth.json`; an unreadable file refuses only its matching toggle. Results are cached per process, so a repaired file takes effect after restart.
+
+### Upgrading from 2.1.0
+
+Stop the old process and back up the complete `config/` directory first. From 3.0.0 onward that directory is no longer tracked by Git, so updating the worktree removes the four files tracked by the old release. After updating, restore `stickers.json`, `reactions.json`, `mood.json`, and `ad_samples.json` from the backup, then add `whitelist.json` and `blocklist.json` from `config_example/`.
+
+Manually turn every ID in the old `.env` variable `PRIVILEGED_USERS_ID` into a key in `whitelist.json`, then remove that variable. Use an empty object `{}` when the identity only needs copy-cooldown exemption, bot-verification vouching, and protection from automatic enforcement. To retain the old `/block` and `/unblock` capabilities, explicitly set `"isCanBlock": true` and `"isCanUnBlock": true`; enable other permissions only as needed. The super administrator can run `/permission help` for the complete key catalog. `/white` and `/permission` atomically rewrite this file, so the runtime user needs write access to the `config/` directory; every other configuration file may remain read-only.
 
 **One exception: startup still fails while the feature is switched on.** That `true` in `state.json` is something an administrator deliberately turned on, and silently downgrading it to "quietly does nothing" means the group just sees the bot stop chatting, stop catching ads, or stop translating from one restart onward. So startup checks once: every optional feature that is still enabled in some chat must have its credential and configuration present, and a missing prerequisite aborts startup naming the chat ids and what is missing (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)). The way out is to restore the prerequisite, or run `/ai_chat disable`, `/ad_detect disable`, or `/ja_copy disable` before removing it.
 

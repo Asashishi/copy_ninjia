@@ -3,9 +3,9 @@ import {
   flushDirtyStickerCatalogs,
   hydrateStickerCatalogs,
   retryIncompleteStickerCatalogs,
-} from "../ai/stickers/catalog";
+} from "../aiChat/ai/stickers/catalog";
 import { getStickerConfig } from "../config/stickers";
-import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../ai/weather";
+import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState } from "../cache/workers/aiChat/identity";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
@@ -20,7 +20,7 @@ import {
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { drainPendingReplyQueues, generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
-import { switchMood } from "../ai/mood";
+import { switchMood } from "../aiChat/ai/mood";
 import type {
   AiChatInvalidatedEvent,
   AiChatWorkerMessage,
@@ -40,7 +40,7 @@ import { initTelegramClients } from "../infra/telegram";
  * googleSearch，aiChat/geminiReply.ts）、以及回复准入控制（并发闸 + 5 分钟
  * 滑动窗口限频 + 溢出排队补跑，aiChat/replyPipeline.ts）。发言/消息反应/
  * 应景贴纸与生图全部工具化（send_message / add_reaction / view_sticker_pack +
- * send_sticker / generate_image，见 ai/tools/replyToolset/）：模型在同一次对话里自主决定
+ * send_sticker / generate_image，见 aiChat/ai/tools/replyToolset/）：模型在同一次对话里自主决定
  * 做哪几样、什么顺序。发往 Telegram 的调用不回主线程绕路——本线程 import
  * infra/telegram/ 时会得到自己独立的 grammY Api 客户端（那个 Bot 实例只用其
  * bot.api 发请求，从不 init/轮询；机器人自己的账号身份改由主线程在
@@ -53,16 +53,16 @@ import { initTelegramClients } from "../infra/telegram";
  * aiChat/compaction.ts 的 scheduleRotation/rotateCompaction 实现。
  *
  * 贴纸目录：白名单贴纸包（机器人自己要发的那些）的画面描述目录由
- * ai/stickers/catalog.ts 生成/持久化，init 消息到达时后台启动生成（见
+ * aiChat/ai/stickers/catalog.ts 生成/持久化，init 消息到达时后台启动生成（见
  * ensureStickerCatalogs），与本文件的 dirty 记忆快照共用同一条上报/落盘
  * 节奏（见文件底部的 setInterval 与 flushMemory 分支）。
  *
  * 心情系统：各群心情按随机寿命（几小时量级）自然到期轮换，到期后下次
  * 拼系统提示词时重抽叠加进去，与群是否活跃无关，模拟真人聊天号状态会变
- * 的感觉；重抽时还按当前东京天气/时段微调各心情的概率，见 ai/mood.ts；
+ * 的感觉；重抽时还按当前东京天气/时段微调各心情的概率，见 aiChat/ai/mood.ts；
  * 两个内存缓存（cache/workers/aiChat/mood.ts
  * 的 chatMoods/chatMoodExpiresAts）都不落盘，随 Worker 重启清空。天气
- * 数据由 ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
+ * 数据由 aiChat/ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
  * startWeatherRefreshLoop 调用），get_tokyo_weather 工具与心情系统都只
  * 读现有缓存、不各自发请求。
  */
@@ -92,7 +92,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
     case "init":
       botInfoState.current = msg.botInfo;
       // 白名单贴纸包的目录生成后台启动，不阻塞后续 record/trigger 的处理，
-      // 见 ai/stickers/catalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
+      // 见 aiChat/ai/stickers/catalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
       // 的条目再继续 diff（见该函数注释）。
       ensureStickerCatalogs(getStickerConfig().packs);
@@ -163,8 +163,8 @@ export function startAiChatWorker(): void {
   };
   aiChatMaintenanceTimer.current = setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);
   aiChatMaintenanceTimer.current.unref();
-  // 东京天气的后台定时刷新（见 ai/weather.ts）：get_tokyo_weather 工具与
-  // 心情系统（ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
+  // 东京天气的后台定时刷新（见 aiChat/ai/weather.ts）：get_tokyo_weather 工具与
+  // 心情系统（aiChat/ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
   // 读不发请求。全进程只应调用一次——重复调用会叠加出多个定时器。
   startWeatherRefreshLoop();
   process.once("exit", stopAiChatWorker);

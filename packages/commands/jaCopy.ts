@@ -12,8 +12,8 @@ import { resolveSuperAdminToggleArg } from "./superAdminToggle";
  * handleCopyCommand 的 "ja" mode）；带 enable/disable 参数则按群开关
  * 这个翻译功能本身（见 ChatState.isJATranslationEnabled，
  * 缺省禁用）。两种用法共用同一个命令名，靠有没有参数区分。enable/disable
- * 仅 SUPER_ADMIN_USER_ID 本人可用，不走 PRIVILEGED_USERS_ID 白名单——与
- * /ai_chat /init 共用同一批权限。
+ * 超级管理员恒可用，白名单身份可通过
+ * isCanControllJATranslatePermission 单独获权。
  */
 export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise<void> {
   // 只有字面量 enable/disable 才是开关指令；空参数、@username、回复目标等
@@ -28,6 +28,7 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
   const toggleArg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
     rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想管本天才要不要翻译日语？哪来的资格呀，笨蛋♡`,
     usage: `笨蛋，/ja_copy 不带参数是复读翻译，要开关这个功能就 /ja_copy enable 或 /ja_copy disable，说清楚呀♡`,
+    permission: "isCanControllJATranslatePermission",
   });
   if (!toggleArg) return;
 

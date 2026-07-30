@@ -1,4 +1,5 @@
 import type { LinkedQueue } from "../../../libs/linkedQueue";
+import type { BoundedDeque } from "../../../libs/boundedDeque";
 import type { BufferedMessage } from "../../../types/aiChat/memory";
 
 /**
@@ -9,7 +10,7 @@ import type { BufferedMessage } from "../../../types/aiChat/memory";
  */
 
 /** 可持久化 AI 记忆的唯一内存 owner；快照恢复/刷盘由 rollingMemory.ts 编排。 */
-export const chatBuffers: Map<number, LinkedQueue<BufferedMessage>> = new Map();
+export const chatBuffers: Map<number, BoundedDeque<BufferedMessage>> = new Map();
 /** 每群已完成的冷历史摘要；轮换压缩填充，快照恢复，群淘汰时删除。 */
 export const chatSummaries: Map<number, LinkedQueue<string>> = new Map();
 /** 每群尚未合并进 summaries 的摘要文本；压缩 settle 或群淘汰时清除。 */

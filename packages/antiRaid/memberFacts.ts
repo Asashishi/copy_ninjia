@@ -1,4 +1,8 @@
-import { PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
+import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import {
+  hasWhitelistPermission,
+  isWhitelisted,
+} from "../config/whitelist";
 import { isAdminStatus } from "../libs/chatMember";
 import type { ChatMember } from "@grammyjs/types";
 import type { AntiRaidMember } from "../types/antiRaid";
@@ -11,13 +15,17 @@ import type { AntiRaidMember } from "../types/antiRaid";
 /**
  * 自己人：不参与任何自动处置，也不该被送进判定。
  *
- * `SUPER_ADMIN_USER_ID` 与 `PRIVILEGED_USERS_ID` 是部署方亲手写进 `.env` 的两批
- * 身份，机器人自动作出的判断（广告命中、刷屏计数）不该反过来收拾他们——广告
- * 那条处置更是不可逆的（见 docs/04-invariants.md）。判定收在这里一处，别让
- * 每个自动处置各写一份、迟早有一处漏掉其中一批。
+ * `SUPER_ADMIN_USER_ID` 与 config/whitelist.json 是部署方亲手配置的身份，
+ * 刷屏计数不该反过来收拾他们。广告检测另受 isCanBypassAdDetection 控制。
  */
 export function isProtectedSender(senderId: number): boolean {
-  return senderId === SUPER_ADMIN_USER_ID || PRIVILEGED_USERS_ID.includes(senderId);
+  return senderId === SUPER_ADMIN_USER_ID || isWhitelisted(senderId);
+}
+
+/** 广告检测专用豁免：超级管理员恒豁免，白名单按逐项权限决定。 */
+export function canBypassAdDetection(senderId: number): boolean {
+  return senderId === SUPER_ADMIN_USER_ID ||
+    hasWhitelistPermission(senderId, "isCanBypassAdDetection");
 }
 
 export interface PickMemberParams {

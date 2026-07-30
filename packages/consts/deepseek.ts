@@ -1,5 +1,5 @@
 /**
- * DeepSeek 客户端（OpenAI 兼容接口）的传输层调参常量，见 packages/ai/deepseek.ts。
+ * DeepSeek 客户端（OpenAI 兼容接口）的传输层调参常量，见 packages/antiRaid/ai/deepseek.ts。
  * 「用哪个模型、采样温度多少、输出多长」属于各调用方自己的判断，留在各自领域的
  * consts 里（如 consts/antiRaid/adDetect.ts），不集中到这里。
  */

@@ -2,9 +2,10 @@
  * /block 黑名单的主线程同步名单与命令侧确证缓存。
  *
  * 判定必须是同步的：入群更新到达时要立刻决定踢不踢，不能等跨线程往返。
- * 磁盘只在启动时读一次，此后 blockedUserIds 是事实源，写保持「先内存、后
- * Disk I/O Worker」的单向同步。durable removal outbox 由同目录 outbox.ts
- * 持有，本模块只在 /unblock 时请求它裁剪相关任务。
+ * 磁盘与静态配置都只在启动时读一次，此后 identities.ts 提供两层并集；
+ * blockedUserIds 只承载可变的 memory 层，写保持「先内存、后 Disk I/O Worker」
+ * 的单向同步。durable removal outbox 由同目录 outbox.ts 持有，本模块只在
+ * /unblock 时请求它裁剪相关任务。
  * @see ../../../docs/04-invariants.md
  */
 
@@ -18,6 +19,10 @@ import {
 import { formatTokyoTime, getTokyoDateKey } from "../../libs/time";
 import { flushDiskIODomain, lastFailedDiskIODomains, postDiskIO } from "../diskIO";
 import { logger } from "../logger";
+import {
+  isBlockedIdentity,
+  isConfiguredBlockedIdentity,
+} from "./identities";
 import { forgetUserBlocklistRemovals } from "./outbox";
 import type {
   BlockUserDiskMessage,
@@ -77,7 +82,12 @@ export function forgetUserConfirmedKicked(userId: number): void {
 
 /** 该用户/频道身份是否在黑名单里。入群秒踢与 /block 去重都走这一条。 */
 export function isUserBlocked(userId: number): boolean {
-  return blockedUserIds.has(userId);
+  return isBlockedIdentity(userId);
+}
+
+/** 身份是否来自人工维护的静态配置层；该层不能由 /unblock 覆盖。 */
+export function isUserConfiguredBlocked(userId: number): boolean {
+  return isConfiguredBlockedIdentity(userId);
 }
 
 /**
@@ -86,7 +96,7 @@ export function isUserBlocked(userId: number): boolean {
  * @returns 本次真的新增了记录为 true；已经在名单里为 false（不重复落盘）。
  */
 export function blockUser(userId: number): boolean {
-  if (blockedUserIds.has(userId)) return false;
+  if (isBlockedIdentity(userId)) return false;
   const blockedAt: string = formatTokyoTime(Date.now());
   blockedUserIds.set(userId, { isBlocked: true, blockedAt });
   sessionBlockedAt.set(userId, blockedAt);
@@ -144,6 +154,7 @@ export function ensureBlocklistEntryQueued(userId: number): boolean {
  * @returns 本次真的移除了记录为 true；本来就不在名单里为 false。
  */
 export function unblockUser(userId: number): boolean {
+  if (isConfiguredBlockedIdentity(userId)) return false;
   if (!blockedUserIds.delete(userId)) return false;
   sessionBlockedAt.delete(userId);
   sessionUnblockedIds.add(userId);

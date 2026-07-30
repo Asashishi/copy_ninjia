@@ -151,15 +151,19 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
   // 被引用段/被回复原文与正文一起送检：广告的主流形态是「先发正常消息 → 隔一段
   // 时间编辑成广告 → 用回复/引用把它顶上来」，广告正文永远不在新消息的 text 里
   // （详见 bundle.ts 的 claimSampleContextParts，连坐的代价与跨条去重也写在那里）。
-  const context: AdSampleContext = boundSampleContext(message.sampleContext);
-  const text: string = claimSampleContextParts(
-    appendLinkUrls(
-      sanitizeInline(message.text).slice(0, AD_DETECT_MESSAGE_MAX_CHARS),
-      message.linkUrls
-    ),
-    context,
-    existing?.entries ?? []
+  const context: AdSampleContext | undefined =
+    boundSampleContext(message.sampleContext);
+  const textWithLinks: string = appendLinkUrls(
+    sanitizeInline(message.text).slice(0, AD_DETECT_MESSAGE_MAX_CHARS),
+    message.linkUrls
   );
+  const text: string = context === undefined
+    ? textWithLinks
+    : claimSampleContextParts(
+      textWithLinks,
+      context,
+      existing?.entries ?? []
+    );
   // 三道投递闸（没有可判定正文、已知管理员、本窗口刚处置过）收在
   // states/adDetectAdmission.ts 里；这里只执行结论。
   const decision: AdCandidateDecision = admitAdCandidate({
@@ -192,15 +196,17 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     // 取并集而不是覆盖：验证会在窗口内通过，先发广告后点验证的人不该洗白。
     bundle.justJoined ||= message.justJoined;
   }
-  bundle.entries.push({
+  const entry: AdCandidateEntry = {
     messageId: message.messageId,
     seq: bundle.nextSeq++,
     text,
     receivedAt: now,
-    // 两段上下文已经并进上面的 text 参与判定；这里再留一份独立的，只服务命中
-    // 样本——人回头查误判时要分得清哪一段是他自己写的、哪一段是引来的。
-    ...context,
-  });
+  };
+  // 两段上下文已经并进上面的 text 参与判定；这里再留一份独立的，只服务命中
+  // 样本——人回头查误判时要分得清哪一段是他自己写的、哪一段是引来的。
+  if (context?.quote !== undefined) entry.quote = context.quote;
+  if (context?.replyTo !== undefined) entry.replyTo = context.replyTo;
+  bundle.entries.push(entry);
   enforceBundleCapacity(bundle);
   if (!storeBundle(key, bundle)) return;
   requeueIfUnchecked(key, bundle);

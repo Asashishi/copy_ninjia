@@ -1,5 +1,5 @@
 import { generateAndSendReply, recordChatMessage } from "../../aiChat";
-import { pickStickerVisionSource } from "../../ai/stickers/describe";
+import { pickStickerVisionSource } from "../../aiChat/ai/stickers/describe";
 import { pickPhotoFile, resolveSpeaker } from "./facts";
 import { buildAiRecordContext } from "./recordContext";
 import type { MessageTriggerContext } from "./triggerContext";
@@ -38,12 +38,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
     return true;
   }
 
-  const isRandomTrigger: boolean = shouldAttemptRandomTrigger({
-    isQuiet: context.isQuiet,
-    hasOtherMention: context.hasOtherMention,
-    repliesToSelf: context.repliesToSelf,
-    probability: context.aiReplyProbability,
-  });
+  const isRandomTrigger: boolean = shouldAttemptRandomTrigger(context);
   if (!isRandomTrigger) return false;
   if (tryClaimUserReplyTrigger(chatId, speaker.id)) {
     generateAndSendReply({

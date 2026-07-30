@@ -3,7 +3,7 @@
  * 从环境变量读取（Bun 会自动加载 `.env`），绝不使用写死在代码里的默认值。
  */
 
-import { parseTelegramUserId, parseTelegramUserIdList } from "../libs/runtimeConfig";
+import { parseTelegramUserId } from "../libs/runtimeConfig";
 
 /**
  * 读取必需的环境变量。返回的是 trim 之后的值——校验和取用必须是同一个字符串：
@@ -33,7 +33,7 @@ export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 
 /**
  * Google Gemini API 密钥，AI 闲聊 agent 独占：回复生成、图片理解、记忆压缩
- * （packages/workers/aiChatWorker.ts、packages/ai/gemini.ts）。与广告检测的
+ * （packages/workers/aiChatWorker.ts、packages/aiChat/ai/gemini.ts）。与广告检测的
  * AD_DETECT_DEEPSEEK_API_KEY 职责不重叠，两条线各用各的凭据，互不回退。
  *
  * 变量名以所服务的功能（`/ai_chat`）打头而不是以供应商打头：读 `.env` 的人
@@ -60,13 +60,7 @@ export const AI_CHAT_GEMINI_API_KEY: string | undefined = optionalEnv("AI_CHAT_G
  */
 export const AD_DETECT_DEEPSEEK_API_KEY: string | undefined = optionalEnv("AD_DETECT_DEEPSEEK_API_KEY");
 
-/**
- * 免受 /copy 冷却限制、可使用 /block，且可为其他机器人代点入群验证的
- * 用户 ID 白名单（逗号分割）；真人验证始终只能由本人点击。
- */
-export const PRIVILEGED_USERS_ID: readonly number[] = parseTelegramUserIdList(requireEnv("PRIVILEGED_USERS_ID", true), "PRIVILEGED_USERS_ID");
-
-/** 唯一可使用 /ai_chat、/ja_copy enable|disable、/init enable|disable、/ad_detect enable|disable 的用户 ID——独立一批权限，不走 PRIVILEGED_USERS_ID 白名单。 */
+/** 超级管理员用户 ID；白名单与逐项权限改由 config/whitelist.json 管理。 */
 export const SUPER_ADMIN_USER_ID: number = ((): number => {
   const raw: string = requireEnv("SUPER_ADMIN_USER_ID");
   return parseTelegramUserId(raw, "SUPER_ADMIN_USER_ID");

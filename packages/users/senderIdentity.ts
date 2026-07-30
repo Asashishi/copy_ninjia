@@ -98,10 +98,26 @@ function updateCachedIdentity(identity: CachedUser): void {
  */
 export function cacheSender(message: Message): number | undefined {
   const identity: CachedUser | undefined = resolveSenderIdentity(message);
-  if (!identity) return undefined;
-
+  if (identity === undefined) return undefined;
+  const previousUsername: string | undefined =
+    senderUsernameCache.get(identity.id);
+  if (identity.username === undefined && previousUsername === undefined) {
+    return identity.id;
+  }
+  const cached: CachedUser | undefined = previousUsername === undefined
+    ? undefined
+    : userCache.get(previousUsername);
+  if (
+    cached?.id === identity.id &&
+    cached.username === identity.username &&
+    cached.first_name === identity.first_name &&
+    cached.last_name === identity.last_name &&
+    cached.title === identity.title &&
+    cached.isChannel === identity.isChannel
+  ) {
+    return identity.id;
+  }
   updateCachedIdentity(identity);
-
   return identity.id;
 }
 
@@ -135,8 +151,8 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
 }
 
 /**
- * 按裸 id 取目标身份，供 `/block`、`/unblock` 解析 id 形式的参数，见
- * commands/targetResolution.ts。
+ * 按裸 id 取目标身份，供 `/block`、`/unblock`、`/permission` 与 `/white`
+ * 解析 id 形式的参数，见 commands/targetResolution.ts。
  *
  * **与 @username 那条路的关键差别：查不到不是失败。** id 本身就是权威目标，
  * 缓存只用来给回执配一个人类可读的标签；而用户名是会被释放、被别人重新注册的

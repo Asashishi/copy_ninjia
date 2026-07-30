@@ -5,6 +5,7 @@ import {
   FINAL_OFFSET_CONFIRM_TIMEOUT_MS,
 } from "../../packages/consts/lifecycle";
 import type { ApplicationLifecycleDependencies } from "../../packages/types/lifecycle";
+import type { BlocklistConfig } from "../../packages/types/blocklist";
 
 const calls: string[] = [];
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
@@ -60,8 +61,9 @@ const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiM
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
 const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
 const hydratePendingVerifications = mock((_value: unknown): void => { calls.push("hydrateVerifications"); });
-const hydrateBlocklist = mock((_value: unknown): void => { calls.push("hydrateBlocklist"); });
+const hydrateBlocklist = mock((..._args: unknown[]): void => { calls.push("hydrateBlocklist"); });
 const initAntiRaid = mock((): void => { calls.push("initAntiRaid"); });
+const sweepManagedBlocklistChats = mock(async (): Promise<void> => { calls.push("sweepBlocklist"); });
 const restoreLuckState = mock((..._args: unknown[]): void => { calls.push("restoreLuck"); });
 const seedSenderCache = mock((_value: unknown): void => { calls.push("seedSender"); });
 const registerCommandMenu = mock(async (): Promise<void> => { calls.push("registerMenu"); });
@@ -70,6 +72,14 @@ const registerHandlers = mock(() => ({ getLastSeenUpdateId: (): number => lastSe
 const getAllChatStates = mock(() => new Map<number, unknown>());
 let copiedUser: object | null = null;
 const getGlobalCopyState = mock(() => ({ copiedUser }));
+const getWhitelistConfig = mock(() => {
+  calls.push("loadWhitelist");
+  return new Map();
+});
+const loadBlocklistConfig = mock((): BlocklistConfig => {
+  calls.push("loadBlocklist");
+  return { blockedIds: [7, -4004] };
+});
 const sleep = mock(async (): Promise<void> => {});
 const setStatePersistenceFatalHandler = mock((_handler: ((error: Error) => void) | undefined): void => {});
 const setBusinessWorkerFatalHandler = mock((handler: ((error: Error) => void) | undefined): void => {
@@ -120,6 +130,7 @@ const testDependencies = {
   flushStateToDisk,
   getAllChatStates,
   getGlobalCopyState,
+  getWhitelistConfig,
   hydrateAiMemory,
   hydratePendingVerifications,
   hydrateBlocklist,
@@ -132,6 +143,7 @@ const testDependencies = {
   initChatTitleRefresh,
   initReactionQueue,
   initTranslate,
+  loadBlocklistConfig,
   loadPersistedData,
   logger: {
     log: mock((..._args: unknown[]): void => {}),
@@ -155,6 +167,7 @@ const testDependencies = {
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
+  sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,
   terminateDiskIO,
@@ -185,6 +198,8 @@ beforeEach(() => {
     initDiskIO,
     cleanupOrphanedTempFiles,
     preflightEnabledFeatures,
+    getWhitelistConfig,
+    loadBlocklistConfig,
     loadState,
     refreshAllChatTitles,
     loadPersistedData,
@@ -214,6 +229,7 @@ beforeEach(() => {
     hydratePendingVerifications,
     hydrateBlocklist,
     initAntiRaid,
+    sweepManagedBlocklistChats,
     restoreLuckState,
     seedSenderCache,
     setBusinessWorkerFatalHandler,
@@ -281,13 +297,55 @@ describe("应用启动失败与退出清理", () => {
     expect(loggerError).toHaveBeenCalledWith("Unhandled error in bot main runner:", expect.any(Error));
   });
 
+  test("白名单配置损坏时在联网和 Worker 启动前拒绝启动", async () => {
+    getWhitelistConfig.mockImplementationOnce((): never => {
+      throw new Error("Invalid whitelist config");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+    await lifecycle.dispose();
+
+    expect(initTelegramClients).not.toHaveBeenCalled();
+    expect(initDiskIO).not.toHaveBeenCalled();
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
+  test("静态黑名单配置损坏时同样在联网和 Worker 启动前拒绝启动", async () => {
+    loadBlocklistConfig.mockImplementationOnce((): never => {
+      throw new Error("Invalid blocklist config");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+    await lifecycle.dispose();
+
+    expect(initTelegramClients).not.toHaveBeenCalled();
+    expect(initDiskIO).not.toHaveBeenCalled();
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
   test("state 清理与 LKG 恢复完成后才初始化 Telegram 和 Disk I/O Worker", async () => {
     const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
     expect(calls.indexOf("cleanupTemps")).toBeLessThan(calls.indexOf("loadState"));
+    expect(calls.indexOf("acquireLock")).toBeLessThan(calls.indexOf("loadWhitelist"));
+    expect(calls.indexOf("loadWhitelist")).toBeLessThan(calls.indexOf("initTelegram"));
+    expect(calls.indexOf("loadBlocklist")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initDiskIO"));
+    expect(hydrateBlocklist).toHaveBeenCalledWith(
+      expect.any(Map),
+      expect.any(Map),
+      [7, -4004]
+    );
+    expect(calls.indexOf("initAntiRaid")).toBeLessThan(
+      calls.indexOf("sweepBlocklist")
+    );
+    expect(calls.indexOf("sweepBlocklist")).toBeLessThan(
+      calls.indexOf("runUpdates")
+    );
     expect(calls.indexOf("botInit")).toBeLessThan(calls.indexOf("runUpdates"));
     expect(calls.indexOf("runUpdates")).toBeLessThan(calls.indexOf("refreshTitles"));
     await lifecycle.dispose();

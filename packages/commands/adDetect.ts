@@ -14,7 +14,8 @@ import { resolveSuperAdminToggleArg } from "./superAdminToggle";
  * ChatState.isAdDetectEnabled，缺省禁用）。开启后本群每条带文字的消息都会经
  * 入群守卫线程送 DeepSeek 判定，命中即按 /block 同样的处置办——写进永久黑名单、
  * 在所有在管群封禁并删掉这个人发过的消息（见 antiRaid/adDetect.ts）。
- * 仅 SUPER_ADMIN_USER_ID 本人可用，与 /ai_chat、/ja_copy、/init 同一批权限。
+ * 超级管理员恒可用，白名单身份可通过
+ * isCanControllAdDetectPermission 单独获权。
  *
  * 机器人不是本群管理员时判定根本不会触发（删不掉广告也封不了人），开关照样
  * 可以先开着：补上管理员身份之后立刻生效。缺 AD_DETECT_DEEPSEEK_API_KEY 或
@@ -27,6 +28,7 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
     rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想管本天才抓不抓广告？哪来的资格呀，笨蛋♡`,
     usage: `笨蛋，要 /ad_detect enable 还是 /ad_detect disable，说清楚呀♡`,
+    permission: "isCanControllAdDetectPermission",
   });
   if (!arg) return;
 

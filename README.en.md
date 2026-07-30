@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1390_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.90%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1475_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.70%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -69,7 +69,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1390 tests passed, 156 test files, 20,565 expect() calls, 95.30% function coverage, 96.90% line coverage" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1475 tests passed, 163 test files, 25,995 expect() calls, 95.18% function coverage, 96.70% line coverage" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -155,7 +155,7 @@ Choose a target by replying to their message or providing `@username`:
 
 - **Username lookup depends on the bot having observed the account previously**; rename, username removal, or username reassignment immediately invalidates the old alias. For destructive operations such as `/block` and `/unblock`, prefer replying to the target or passing the user id directly (those two commands additionally accept a bare id) rather than relying on historical usernames.
 - **When an anonymous administrator speaks as the current group, that group identity is the copy target**, so copy modes can obtain the group avatar and reproduce that “skin”; `/block` rejects the current group identity as a member target.
-- **Ordinary users have a 5-minute cooldown on copy-family commands**; users in `PRIVILEGED_USERS_ID` are exempt.
+- **Ordinary users have a 5-minute cooldown on copy-family commands**; identities in `config/whitelist.json` are exempt.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -169,13 +169,16 @@ Choose a target by replying to their message or providing `@username`:
 <tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/贴贴</code> replies "actor 咬了 target！"</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">Group member</td><td>Resume proactive behavior early</td></tr>
-<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>Blocklist the target: recorded permanently and banned across all bot-managed groups; name the target by replying to a message, by <code>@username</code>, or by user id</td></tr>
-<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>(<code>all</code> is <code>SUPER_ADMIN_USER_ID</code> only)</td><td>Remove the id from the blocklist; the target is named the same way as for <code>/block</code>, plus the negative id of a channel; existing per-group bans are left alone unless <code>all</code> is given</td></tr>
-<tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle AI chat for the group</td></tr>
-<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle ad detection for the group; a hit gets the same disposal as <code>/block</code></td></tr>
-<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Reroll current group mood immediately and reply with the new mood name</td></tr>
-<tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle Japanese translation mode for the group (disabled by default)</td></tr>
+<tr><td><code>/mute … &lt;duration&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>Temporarily mute or unmute a member in a supergroup; reply, <code>@username</code>, and user-id targets are supported, with <code>m/h/d</code> durations</td></tr>
+<tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>Blocklist the target: recorded permanently and banned across all bot-managed groups; name the target by replying to a message, by <code>@username</code>, or by user id</td></tr>
+<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>isCanUnBlock</code><br>(<code>all</code> also needs <code>isCanUnBlockAll</code>)</td><td>Remove the id from the blocklist; the target is named the same way as for <code>/block</code>, plus the negative id of a channel; existing per-group bans are left alone unless <code>all</code> is given. The super administrator implicitly has both permissions</td></tr>
+<tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>Toggle AI chat for the group; the super administrator is implicitly allowed</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>Toggle ad detection for the group; a hit gets the same disposal as <code>/block</code>; the super administrator is implicitly allowed</td></tr>
+<tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>Reroll current group mood immediately; the super administrator is implicitly allowed</td></tr>
+<tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>Toggle Japanese translation mode for the group (disabled by default); the super administrator is implicitly allowed</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle the group's main processing gate</td></tr>
+<tr><td><code>/permission help</code><br><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>List permission descriptions as JSON or change one permission on an existing allowlisted user/channel; <code>all</code> enables every permission</td></tr>
+<tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Add or remove an allowlisted user/channel by reply, <code>@username</code>, user id, or channel id</td></tr>
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code> (PM only)</td><td>Start or finish a relay session from the bot's private chat to the target group</td></tr>
 </table>
 
@@ -183,8 +186,8 @@ Choose a target by replying to their message or providing `@username`:
 
 - **Action commands**: both names render as `first_name last_name` and link to the profile when a public username exists; the target is picked the same way, by replying to their message or by `@username`.
 - **`/block` blocklist**: name the target by replying to their message, by `@username`, or by passing a user id directly (a positive integer; the negative ids of groups and channels do not count) - the id form is the most reliable one, since a released username can be re-registered by somebody else while this command is irreversible. Once the id lands in the persistent blocklist, the target is kicked on sight from any join update in any watched group. The moment a group has both an administrator bot and an enabled `/init` — in either order — anyone from the list already sitting there gets swept out too. `/unblock` atomically rewrites the whole list back to disk. `/unblock` accepts one target form `/block` does not: **the negative id of a channel**. Channel vests enter the list as a `sender_chat` (a `/block` on a reply to a channel message, or an ad-detection hit), and since ad detection deletes the original message while a channel without a public username is never in the cache, refusing negative ids would leave such entries permanently unremovable. The reverse is not opened because a mispasted chat id in `/block` bans a whole chat identity, irreversibly.
-- **`/ad_detect` ad detection**: messages are bundled per sender over a 90-second window and judged by DeepSeek; a hit triggers the same disposal as `/block` (permanent blocklist entry plus a ban that deletes the sender's messages in every administered chat) and announces the ban reason in the triggering chat (self-deleting after 30 seconds). It only fires while the bot is an administrator there; the reference samples live in [`config/ad_samples.json`](config/ad_samples.json).
-- **Flood muting**: 35 messages from one person within one minute in one supergroup gets them muted for 5 minutes, with a one-line notice that self-deletes when the mute expires. Telegram lifts the mute on its own; nothing is blocklisted and no message is deleted. It only fires when the bot actually holds the "restrict members" right; owners/administrators, `SUPER_ADMIN_USER_ID`, `PRIVILEGED_USERS_ID`, channel identities and anonymous administrators are never counted.
+- **`/ad_detect` ad detection**: messages are bundled per sender over a 90-second window and judged by DeepSeek; a hit triggers the same disposal as `/block` (permanent blocklist entry plus a ban that deletes the sender's messages in every administered chat) and announces the ban reason in the triggering chat (self-deleting after 30 seconds). It only fires while the bot is an administrator there; the reference samples live in [`config/ad_samples.json`](config_example/ad_samples.json).
+- **Flood muting**: 21 messages from one person within one minute in one supergroup gets them muted for 5 minutes, with a one-line notice that self-deletes when the mute expires. Telegram lifts the mute on its own; nothing is blocklisted and no message is deleted. It only fires when the bot actually holds the "restrict members" right; owners/administrators, `SUPER_ADMIN_USER_ID`, identities in `config/whitelist.json`, channel identities and anonymous administrators are never counted.
 - **`/send` relay**: reachability is probed before starting, every message the super administrator sends is relayed to the target group once, and the session ends with a notification if the target becomes unreachable. Relay state persists in `state.json` across restarts. The command is omitted from Telegram's command menu and remains silent in groups or when invoked by any other user.
 
 > [!TIP]
@@ -230,6 +233,7 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 cp .env.example .env
+cp -r config_example config
 ```
 
 ### 3. Configuration
@@ -242,15 +246,14 @@ Fill in `.env` according to [`.env.example`](.env.example):
 | `SUPER_ADMIN_USER_ID` | ✅ | A single decimal user ID for the super administrator |
 | `AI_CHAT_GEMINI_API_KEY` | — | AI chat agent only; when empty the AI Worker never starts and `/ai_chat enable` and `/switch_mood` are rejected |
 | `AD_DETECT_DEEPSEEK_API_KEY` | — | Ad detection only; when empty `/ad_detect enable` is rejected |
-| `PRIVILEGED_USERS_ID` | — | Allowlisted user IDs, separated by ASCII commas |
 | `COPY_NINJIA_DATA_ROOT` | — | Runtime-data root; when omitted the project root is used |
 
-**Optional prerequisites degrade per feature.** Both AI key names are prefixed with the feature they serve, so a missing key only cripples that one feature and everything else keeps running. `config/*.json` and `g-auth.json` behave the same way: they are not warmed up at startup, and a broken file refuses only the matching toggle command.
+`config/` is deployment-owned and excluded from Git, so a fresh install must copy it from `config_example/`. `whitelist.json` and `blocklist.json` are loaded strictly before network access; the other four JSON files and `g-auth.json` are validated lazily per feature, so a broken optional file refuses only its matching toggle command.
 
 > [!IMPORTANT]
 > There is one exception: if a feature is still switched on in `state.json` while its key or configuration was removed, that switch is something an administrator deliberately turned on, so the process refuses to start naming the chat ids and what is missing instead of quietly doing nothing. Disable it first, or restore the prerequisite.
 
-When `COPY_NINJIA_DATA_ROOT` is set, `state.json`, `bot.lock`, `logs/`, and `memory/` are derived from it; persona, sticker, reaction, and mood configuration plus `g-auth.json` remain under the project root.
+When `COPY_NINJIA_DATA_ROOT` is set, `state.json`, `bot.lock`, `logs/`, and `memory/` are derived from it; `config/`, the persona, and `g-auth.json` remain under the project root.
 
 For Japanese translation, save the Google Cloud service account key as `g-auth.json` in the project root. Both `.env` and `g-auth.json` are ignored by Git.
 

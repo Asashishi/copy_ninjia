@@ -62,7 +62,7 @@ export const LUCK_RESULT_IDS: ReadonlySet<string> = new Set([
 
 /**
  * pendingLuckDraws（见 cache/main/luckChallenge.ts）的 key 数量上限，超出按插入
- * 顺序淘汰最旧的（同 ai/imageDescription.ts 的 descriptionCache 一个道理）。
+ * 顺序淘汰最旧的（同 aiChat/ai/imageDescription.ts 的 descriptionCache 一个道理）。
  * 这个 Map 记的是"预览阶段抽到、但还没被用户选中确认"的结果——inline_query
  * 是打字即触发的预览，用户每敲一个字符都可能新增一条从未被选中过的 key，
  * 只有到东京零点跨天才会整体清空（见 commands/luckChallenge/cache.ts 的

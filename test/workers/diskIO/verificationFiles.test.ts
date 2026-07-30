@@ -15,9 +15,11 @@ import {
   verificationPendingChanges,
 } from "../../../packages/cache/workers/diskIO/verification";
 import type {
+  PendingVerificationSnapshot,
   VerificationDeleteDiskMessage,
   VerificationPersistedReply,
   VerificationSnapshot,
+  VerificationSnapshotBase,
   VerificationUpsertDiskMessage,
 } from "../../../packages/types";
 import { VERIFICATION_FILE_COMPACT_BYTES } from "../../../packages/consts/diskIO";
@@ -29,7 +31,10 @@ const DAY_ZERO = "2026-07-18";
 let dir: string;
 let replies: VerificationPersistedReply[];
 
-function snapshot(revision: number, overrides: Partial<VerificationSnapshot> = {}): VerificationSnapshot {
+function snapshot(
+  revision: number,
+  overrides: Partial<VerificationSnapshotBase> = {}
+): PendingVerificationSnapshot {
   return {
     chatId: -1001,
     userId: 42,
@@ -417,21 +422,43 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("成功播报标记只允许出现在 expelling 终态并可完整恢复", () => {
+    const { phase: _phase, ...pending } = snapshot(1);
     upsert({
       type: "verificationUpsert",
-      record: snapshot(1, {
+      record: {
+        ...pending,
         phase: "expelling",
         expelReason: "timeout",
         successNoticeSent: true,
-      }),
+      },
       critical: true,
     });
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.successNoticeSent).toBe(true);
 
-    const invalidPending = snapshot(2, { successNoticeSent: true });
+    const invalidPending: Record<string, unknown> = {
+      ...snapshot(2),
+      successNoticeSent: true,
+    };
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
       "-1001:42": { version: 1, ...invalidPending },
     }));
     expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("invalid active pending verification record");
+  });
+
+  test("checkingInviter 阶段可完整持久化并恢复", () => {
+    const { phase: _phase, ...pending } = snapshot(1);
+    const record: VerificationSnapshot = {
+      ...pending,
+      phase: "checkingInviter",
+      terminalInviterId: 88,
+    };
+
+    upsert({
+      type: "verificationUpsert",
+      record,
+      critical: true,
+    });
+
+    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")).toEqual(record);
   });
 });

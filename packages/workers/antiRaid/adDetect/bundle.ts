@@ -89,7 +89,11 @@ export function latestSeq(bundle: AdMessageBundle): number {
  * 额度，「有没有把人带离本群的落点」这条最硬的规则当场失效。上限在这里再收一
  * 次而不是只信主线程：跨线程消息的形状由本函数所在的这一侧兜底。
  */
-export function appendLinkUrls(text: string, linkUrls: readonly string[]): string {
+export function appendLinkUrls(
+  text: string,
+  linkUrls: readonly string[] | undefined
+): string {
+  if (linkUrls === undefined || linkUrls.length === 0) return text;
   const urls: string[] = [];
   for (const raw of linkUrls) {
     if (urls.length >= AD_DETECT_MAX_LINK_URLS) break;
@@ -143,18 +147,36 @@ export function claimSampleContextParts(
   context: AdSampleContext,
   entries: readonly AdCandidateEntry[]
 ): string {
-  const parts: string[] = [];
-  for (const raw of [context.quote, context.replyTo]) {
-    const part: string = sanitizeInline(raw ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
-    if (part.length === 0 || text.includes(part) || parts.includes(part)) continue;
-    // 认领者被 enforceBundleCapacity 挤掉时这段引文会跟着从串里消失。那条路径
-    // 本来就是「只剩没判过的可丢」的既定取舍（见文件头），而且是自愈的：串里
-    // 再没人带着这段引文，下一条回复原消息的候选就会重新认领一份。
-    if (entries.some((entry: AdCandidateEntry): boolean => entry.text.includes(part))) continue;
-    parts.push(part);
+  let quote: string = sanitizeInline(context.quote ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  if (
+    quote.length === 0 ||
+    text.includes(quote) ||
+    entries.some((entry: AdCandidateEntry): boolean => entry.text.includes(quote))
+  ) {
+    quote = "";
   }
-  if (parts.length === 0) return text;
-  return text.length === 0 ? parts.join(" ") : `${text} ${parts.join(" ")}`;
+  let replyTo: string = sanitizeInline(context.replyTo ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  if (
+    replyTo.length === 0 ||
+    text.includes(replyTo) ||
+    replyTo === quote ||
+    entries.some((entry: AdCandidateEntry): boolean => entry.text.includes(replyTo))
+  ) {
+    replyTo = "";
+  }
+  // 认领者被 enforceBundleCapacity 挤掉时这段引文会跟着从串里消失。那条路径
+  // 本来就是「只剩没判过的可丢」的既定取舍（见文件头），而且是自愈的：串里
+  // 再没人带着这段引文，下一条回复原消息的候选就会重新认领一份。
+  if (quote.length === 0) {
+    if (replyTo.length === 0) return text;
+    return text.length === 0 ? replyTo : `${text} ${replyTo}`;
+  }
+  if (replyTo.length === 0) {
+    return text.length === 0 ? quote : `${text} ${quote}`;
+  }
+  return text.length === 0
+    ? `${quote} ${replyTo}`
+    : `${text} ${quote} ${replyTo}`;
 }
 
 /**
@@ -167,14 +189,16 @@ export function claimSampleContextParts(
  * 写的、哪一段是引来的。**因此这一份不跨条去重**：判定侧同一段引文整串只留一份，
  * 样本侧每条都要如实记下它当时引的是什么。
  */
-export function boundSampleContext(context: AdSampleContext | undefined): AdSampleContext {
-  if (context === undefined) return {};
+export function boundSampleContext(
+  context: AdSampleContext | undefined
+): AdSampleContext | undefined {
+  if (context === undefined) return undefined;
   const quote: string = sanitizeInline(context.quote ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
   const replyTo: string = sanitizeInline(context.replyTo ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
-  return {
-    ...(quote.length > 0 ? { quote } : {}),
-    ...(replyTo.length > 0 ? { replyTo } : {}),
-  };
+  if (quote.length === 0 && replyTo.length === 0) return undefined;
+  if (quote.length === 0) return { replyTo };
+  if (replyTo.length === 0) return { quote };
+  return { quote, replyTo };
 }
 
 /** 一次送检的取舍结果。 */

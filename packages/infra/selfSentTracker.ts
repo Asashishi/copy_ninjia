@@ -33,6 +33,7 @@ export function markSelfSent(chatId: number, messageId: number): void {
 
 /** 某条消息是否是机器人自己刚发出的。 */
 export function isSelfSent(chatId: number, messageId: number): boolean {
+  if (sentMessages.size === 0) return false;
   return sentMessages.has(key(chatId, messageId));
 }
 

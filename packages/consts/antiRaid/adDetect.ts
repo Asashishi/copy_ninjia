@@ -111,7 +111,7 @@ export const AD_DETECT_LINK_URL_MAX_CHARS: number = 200;
 
 /**
  * 判定使用的 DeepSeek 模型（deepseek-chat 已弃用）。端点、超时与重试属于传输层，
- * 在 consts/deepseek.ts，见 packages/ai/deepseek.ts。
+ * 在 consts/deepseek.ts，见 packages/antiRaid/ai/deepseek.ts。
  */
 export const AD_DETECT_MODEL: string = "deepseek-v4-flash";
 
@@ -128,7 +128,7 @@ export const AD_DETECT_MAX_OUTPUT_TOKENS: number = 16_384;
 
 /**
  * 采样温度。判定要的是稳定，但**不能取 0**：贪心解码在推理模型上更容易走进
- * 空转（只产出推理、正文为空），而 ai/deepseek.ts 那次空正文重试正是靠重新
+ * 空转（只产出推理、正文为空），而 antiRaid/ai/deepseek.ts 那次空正文重试正是靠重新
  * 采样翻盘的——温度为 0 时重试只会逐字复现同一条空结果，那道兜底等于不存在。
  */
 export const AD_DETECT_TEMPERATURE: number = 0.5;

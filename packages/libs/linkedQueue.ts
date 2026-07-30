@@ -46,6 +46,11 @@ export class LinkedQueue<T> {
     return this.head ? this.head.value : undefined;
   }
 
+  /** 查看队尾元素但不出队；队列为空时返回 undefined。 */
+  peekLast(): T | undefined {
+    return this.tail ? this.tail.value : undefined;
+  }
+
   /** 整体清空。摘掉 head/tail 让整条链一起变成垃圾，O(1)，不必逐个 shift。
    *  用于滑动窗口遇到系统时钟回拨时按新时间轴重建，见
    *  libs/slidingWindowRateLimit.ts。 */

@@ -20,9 +20,11 @@ const states = new Map<number, Record<string, unknown>>();
 // 两把可选 key 都缺席：mock 里根本不导出它们，等价于 .env 留空。
 mock.module("../../packages/infra/config", () => ({
   SUPER_ADMIN_USER_ID: 100,
-  PRIVILEGED_USERS_ID: [],
   AI_CHAT_GEMINI_API_KEY: undefined,
   AD_DETECT_DEEPSEEK_API_KEY: undefined,
+}));
+mock.module("../../packages/config/whitelist", () => ({
+  hasWhitelistPermission: (): boolean => false,
 }));
 mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat, switchAiMood }));

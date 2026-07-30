@@ -6,6 +6,7 @@ export { handleCjkActionCommand, handleCjkActionUsageCommand } from "./cjkAction
 export { handleCopyCommand, handleStopCommand } from "./copy";
 export { handleStealIconCommand } from "./stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./quiet";
+export { handleMuteCommand, handleUnmuteCommand } from "./mute";
 export { handleBlockCommand } from "./block";
 export { handleUnblockCommand } from "./unblock";
 export { handleAiChatCommand } from "./aiChat";
@@ -14,4 +15,6 @@ export { handleSwitchMoodCommand } from "./switchMood";
 export { handleJaCopyCommand } from "./jaCopy";
 export { handleInitCommand } from "./init";
 export { handleSendCommand } from "./send";
+export { handlePermissionCommand } from "./permission";
+export { handleWhiteCommand } from "./white";
 export { confirmLuckDraw, handleLuckChallengeInlineQuery, handleLuckChosenInlineResult, restoreLuckState } from "./luckChallenge";

@@ -9,6 +9,7 @@ import {
 } from "../consts/lifecycle";
 import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
 import type { CachedUser } from "../types/chatState";
+import type { BlocklistConfig } from "../types/blocklist";
 import type { LoadedData } from "../infra/diskIO";
 import type { ApplicationLifecycleDependencies, FlushResult, FlushTimeouts } from "../types/lifecycle";
 import type { HandlerRegistration } from "./registerHandlers";
@@ -106,6 +107,13 @@ export class ApplicationLifecycle {
 
     await this.dependencies.acquireSingleInstanceLock(this.dependencies.BOT_TOKEN);
     this.lockAcquired = true;
+    // 白名单是所有管理命令与自动处置的安全边界，坏配置不能等到第一条更新
+    // 才暴露。持锁后、任何 Worker 或 Telegram 客户端启动前严格加载一次。
+    this.dependencies.getWhitelistConfig();
+    // 静态黑名单同样是核心安全输入：先严格加载并保留本次启动的不可变快照，
+    // 等动态 memory 层恢复后再一次性合并，避免两次读盘之间配置发生漂移。
+    const blocklistConfig: BlocklistConfig =
+      this.dependencies.loadBlocklistConfig();
     this.dependencies.setBusinessWorkerFatalHandler(this.handleBusinessWorkerFatal);
     this.dependencies.setStatePersistenceFatalHandler(this.handleDiskIOFatal);
     this.dependencies.initAvatarUpdates();
@@ -148,9 +156,16 @@ export class ApplicationLifecycle {
     this.dependencies.restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
     this.dependencies.hydratePendingVerifications(loaded.verifications);
     // 必须早于 runner 开始投喂更新：启动瞬间进群的黑名单用户要能立刻被认出来。
-    this.dependencies.hydrateBlocklist(loaded.blockedUsers, loaded.pendingBlockedRemovals);
+    this.dependencies.hydrateBlocklist(
+      loaded.blockedUsers,
+      loaded.pendingBlockedRemovals,
+      blocklistConfig.blockedIds
+    );
     this.dependencies.initAntiRaid();
     this.flags.antiRaidInitialized = true;
+    // 新增到静态配置层的身份没有对应 outbox；在 runner 接收新 update 前，对
+    // 所有已初始化且已确证管理员的群补一轮，频道 ID 会由 Worker 走封发言权路径。
+    await this.dependencies.sweepManagedBlocklistChats();
 
     this.dependencies.logger.log(
       `Bot started as @${this.dependencies.bot.botInfo.username}. ` +

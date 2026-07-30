@@ -1,6 +1,6 @@
 import type { Message } from "@grammyjs/types";
 import { recordChatMessage } from "../../aiChat";
-import { buildSelfRecordContext } from "../../ai/utils/selfRecord";
+import { buildSelfRecordContext } from "../../aiChat/ai/utils/selfRecord";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,

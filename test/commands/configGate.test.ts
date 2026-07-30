@@ -32,7 +32,6 @@ mock.module("../../packages/config/readiness", () => ({
 // optionalApiKeys.test.ts。
 mock.module("../../packages/infra/config", () => ({
   SUPER_ADMIN_USER_ID: 100,
-  PRIVILEGED_USERS_ID: [],
   AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
 }));

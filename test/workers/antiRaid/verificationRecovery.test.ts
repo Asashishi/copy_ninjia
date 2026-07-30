@@ -1,5 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { AntiRaidWorkerEvent, VerificationSnapshot, VerificationUpsertEvent } from "../../../packages/types";
+import type {
+  AntiRaidWorkerEvent,
+  PendingVerificationSnapshot,
+  VerificationSnapshot,
+  VerificationUpsertEvent,
+} from "../../../packages/types";
 
 let kicks: number = 0;
 const deletedMessageIds: number[] = [];
@@ -26,7 +31,6 @@ async function recordDelete(messageId: number): Promise<string> {
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
 mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<number | undefined> => {
@@ -49,7 +53,10 @@ mock.module("../../../packages/infra/telegram", () => ({
 const runtime = await import("../../../packages/workers/antiRaid/verificationRuntime");
 const { verificationEntries } = await import("../../../packages/cache/workers/antiRaid/verification");
 
-function record(userId: number, expiresAt: number): VerificationSnapshot {
+function record(
+  userId: number,
+  expiresAt: number
+): PendingVerificationSnapshot {
   return {
     chatId: -1001,
     userId,
@@ -137,8 +144,9 @@ describe("Anti-Raid Worker verification recovery", () => {
   test("恢复部分完成的 expelling，并在同 userId 新一代入群后停止旧踢人", async () => {
     const baselineKicks: number = kicks;
     deletedMessageIds.length = 0;
+    const { phase: _phase, ...pending } = record(50, Date.now());
     const terminal: VerificationSnapshot = {
-      ...record(50, Date.now()),
+      ...pending,
       generation: 5,
       phase: "expelling",
       expelReason: "timeout",

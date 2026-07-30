@@ -1,6 +1,6 @@
 /**
  * 广告判定的领域逻辑：拼提示词、发一次请求、把模型输出收窄成判定结果。
- * 传输层（客户端单例、超时、重试、错误日志）在 ai/deepseek.ts，本文件不碰。
+ * 传输层（客户端单例、超时、重试、错误日志）在 antiRaid/ai/deepseek.ts，本文件不碰。
  *
  * 判定是尽力而为的启发式：请求失败、超时、返回形状不对，一律返回 null 让调用
  * 方原样跳过这一批——绝不猜一个 true 出来，那等于凭一次网络抖动把人拉黑。
@@ -12,7 +12,7 @@
  * 前缀，不参与任何控制流。
  */
 
-import { requestDeepSeekJson } from "../../../ai/deepseek";
+import { requestDeepSeekJson } from "../../../antiRaid/ai/deepseek";
 import { getAdSampleConfig } from "../../../config/adSamples";
 import { logger } from "../../../infra/logger";
 import {

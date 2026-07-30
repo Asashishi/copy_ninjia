@@ -12,7 +12,12 @@ const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => t
 const chatStates = new Map<number, { botIsAdmin?: boolean }>();
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 
-mock.module("../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [100], SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/whitelist", () => ({
+  isWhitelisted: (id: number): boolean => id === 100 || id === -500,
+  hasWhitelistPermission: (id: number, key: string): boolean =>
+    (id === 100 || id === -500) && key === "isCanBlock",
+}));
 mock.module("../../packages/infra/telegram", () => ({
   sendMessage,
   banChatMember,
@@ -104,6 +109,21 @@ describe("/block 跨群封禁与黑名单", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(isBotAdminIn).not.toHaveBeenCalled();
     expect(resolveCommandTarget).not.toHaveBeenCalled();
+  });
+
+  test("频道白名单按 sender_chat 身份授权，不误用附带的 from 用户", async () => {
+    const ctx = context(101) as unknown as {
+      msg: { message_id: number; sender_chat?: object };
+    };
+    ctx.msg.sender_chat = {
+      id: -500,
+      type: "channel",
+      title: "Trusted Channel",
+    };
+
+    await handleBlockCommand(ctx as never);
+
+    expect(resolveCommandTarget).toHaveBeenCalledTimes(1);
   });
 
   test("按裸 id 拉黑时战报念出 id，不写成泛指的兜底称呼", async () => {

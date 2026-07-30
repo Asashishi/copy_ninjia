@@ -43,10 +43,12 @@ mock.module("../../packages/infra/chatTeardown", () => ({
 
 const {
   forgetChatBlocklistWork,
+  hydrateBlocklist,
   registerBlockedMemberRemover,
   replayPendingBlockedRemovals,
   requestBlocklistResweep,
   settleBlockedRemoval,
+  sweepManagedBlocklistChats,
   sweepBlockedMembers,
   trackBlockedRemoval,
 } = await import("../../packages/infra/blocklist");
@@ -60,6 +62,7 @@ const {
   blockedMemberRemoverHolder,
   blockedUserIds,
   blocklistSweepState,
+  configuredBlockedIds,
   pendingBlockedRemovals,
 } = await import("../../packages/cache/main/blocklist");
 
@@ -107,6 +110,7 @@ function settleLastAsForbidden(chatId: number = -1001): void {
 beforeEach(() => {
   states.clear();
   blockedUserIds.clear();
+  configuredBlockedIds.clear();
   blocklistSweepState.clear();
   pendingBlockedRemovals.clear();
   remover.mockClear();
@@ -119,6 +123,38 @@ beforeEach(() => {
 });
 
 describe("黑名单清扫", () => {
+  test("启动时只批量补扫已 init 且已确证管理员的群，静态频道走同一名单链路", async () => {
+    configuredBlockedIds.add(-4004);
+    blockedUserIds.set(7, {
+      isBlocked: true,
+      blockedAt: "2026/07/26 00:00:00",
+    });
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    states.set(-1002, { isInitEnabled: false, botIsAdmin: true });
+    states.set(-1003, { isInitEnabled: true, botIsAdmin: false });
+    states.set(-1004, { isInitEnabled: true, botIsAdmin: true });
+
+    await sweepManagedBlocklistChats(1_000);
+
+    expect(remover).toHaveBeenCalledTimes(1);
+    expect(remover).toHaveBeenCalledWith([
+      {
+        chatId: -1001,
+        userIds: [-4004, 7],
+        probeMembership: true,
+        removalId: expect.any(Number),
+      },
+      {
+        chatId: -1004,
+        userIds: [-4004, 7],
+        probeMembership: true,
+        removalId: expect.any(Number),
+      },
+    ]);
+    expect(blocklistSweepState.has(-1002)).toBeFalse();
+    expect(blocklistSweepState.has(-1003)).toBeFalse();
+  });
+
   test("只取名单快照交给执行 owner，主线程自己不打任何 Telegram API", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     blockedUserIds.set(-4004, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
@@ -567,6 +603,55 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     expect(remover).not.toHaveBeenCalled();
     // 任务本身照常留着，等那次真正的权限观测。
     expect(pendingBlockedRemovals.size).toBe(1);
+  });
+
+  test("重启恢复权限闩锁：静态名单仍在也不空转，权限恢复后用新补扫取代旧任务", async () => {
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    hydrateBlocklist(
+      new Map(),
+      new Map([
+        [
+          21,
+          {
+            params: {
+              chatId: -1001,
+              probeMembership: true,
+              removalId: 21,
+            },
+            createdAt: 1_000,
+            attempts: 2,
+            lastFailure: "missing-permission",
+          },
+        ],
+      ]),
+      [-4004]
+    );
+
+    expect(blocklistSweepState.get(-1001)).toEqual({
+      removalId: null,
+      sweptAt: null,
+      nextRetryAt: 1_000,
+      resweepRequested: false,
+      failedSweeps: 2,
+      permissionBlocked: true,
+    });
+    replayPendingBlockedRemovals(false);
+    expect(remover).not.toHaveBeenCalled();
+    expect(pendingBlockedRemovals.has(21)).toBeTrue();
+
+    await handleMyChatMemberUpdate(
+      promotion("administrator", "administrator", true)
+    );
+
+    expect(remover).toHaveBeenCalledTimes(1);
+    expect(remover.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({
+        chatId: -1001,
+        userIds: [-4004],
+        probeMembership: true,
+      }),
+    ]);
+    expect(pendingBlockedRemovals.has(21)).toBeFalse();
   });
 
   test("落定回执把退避清零：权限恢复后立刻回到正常节奏", async () => {

@@ -27,7 +27,6 @@ Object.defineProperty(globalThis, "self", {
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
 mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {
     getChat(): Promise<Record<string, unknown>> {
@@ -187,6 +186,7 @@ describe("cold linked-channel verification", () => {
       type: "join",
       chatId: -1001,
       member: { id: 45, first_name: "User 45" },
+      actorIsWhitelisted: false,
     });
     expect(verificationEntries.get("-1001:45")?.state.kind).toBe("pending");
 

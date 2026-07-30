@@ -27,9 +27,3 @@ export function parseTelegramUserId(raw: string, source: string): number {
   }
   return id;
 }
-
-/** 解析逗号分隔的 Telegram 用户 ID；允许整项为空，并对重复 ID 去重。 */
-export function parseTelegramUserIdList(raw: string, source: string): readonly number[] {
-  if (raw.trim() === "") return Object.freeze([]);
-  return Object.freeze([...new Set(raw.split(",").map((part: string): number => parseTelegramUserId(part.trim(), source)))]);
-}

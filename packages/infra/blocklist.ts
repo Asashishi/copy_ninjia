@@ -15,6 +15,7 @@ export {
   ensureBlocklistEntryQueued,
   forgetUserConfirmedKicked,
   isUserBlocked,
+  isUserConfiguredBlocked,
   recordUserConfirmedKickedInChat,
   unblockUser,
   wasUserConfirmedKickedInChat,
@@ -33,5 +34,6 @@ export {
   replayPendingBlockedRemovals,
   requestBlocklistResweep,
   settleBlockedRemoval,
+  sweepManagedBlocklistChats,
   sweepBlockedMembers,
 } from "./blocklist/sweep";

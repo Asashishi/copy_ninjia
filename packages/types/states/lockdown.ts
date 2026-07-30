@@ -1,5 +1,21 @@
 import type { ChatPermissions } from "@grammyjs/types";
 
+/** 尚在读取原权限、没有形成可持久化 intent 的同步占位。 */
+export interface LockdownPreparingState {
+  kind: "applying";
+  stage: "preparing";
+}
+
+/** 已取得原权限并形成完整 intent，等待落盘回执或 Telegram 写入结果。 */
+export interface LockdownPreparedState {
+  kind: "applying";
+  stage: "prepared";
+  originalPermissions: ChatPermissions;
+  /** Worker 重建接管时无法恢复触发瞬间的入群人数。 */
+  joinCount?: number;
+  intentId: number;
+}
+
 /**
  * announced：本次锁定有没有真的在群里公告过。
  *
@@ -12,7 +28,8 @@ import type { ChatPermissions } from "@grammyjs/types";
  * 不划算，adopt 时按 phase 取最常见的那一侧（见 states/lockdown.ts 的 adopt）。
  */
 export type LockdownState =
-  | { kind: "applying"; originalPermissions?: ChatPermissions; joinCount?: number; intentId?: number }
+  | LockdownPreparingState
+  | LockdownPreparedState
   | { kind: "active"; originalPermissions: ChatPermissions; intentId: number; announced: boolean }
   | { kind: "restoring"; originalPermissions: ChatPermissions; intentId: number; announced: boolean };
 

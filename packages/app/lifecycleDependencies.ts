@@ -1,6 +1,9 @@
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, terminateAiChat } from "../aiChat";
 import { drainAntiRaid, hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
-import { hydrateBlocklist } from "../infra/blocklist";
+import {
+  hydrateBlocklist,
+  sweepManagedBlocklistChats,
+} from "../infra/blocklist";
 import { restoreLuckState } from "../commands";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainReactionQueue, initReactionQueue, quiesceReactionQueue } from "../copy/reactionQueue";
@@ -28,6 +31,8 @@ import { bot, initTelegramClients } from "../infra/telegram";
 import { sleep } from "../libs/sleep";
 import { seedSenderCache } from "../users/senderIdentity";
 import { preflightEnabledFeatures } from "./featurePreflight";
+import { getWhitelistConfig } from "../config/whitelist";
+import { loadBlocklistConfig } from "../config/blocklist";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers } from "./registerHandlers";
 import { runAcknowledgedUpdateBatches } from "./updateRunner";
@@ -57,6 +62,7 @@ export const lifecycleDependencies = {
   flushStateToDisk,
   getAllChatStates,
   getGlobalCopyState,
+  getWhitelistConfig,
   hydrateAiMemory,
   hydrateBlocklist,
   hydratePendingVerifications,
@@ -70,6 +76,7 @@ export const lifecycleDependencies = {
   initTranslate,
   initTelegramClients,
   loadPersistedData,
+  loadBlocklistConfig,
   loadState,
   logger,
   preflightEnabledFeatures,
@@ -87,6 +94,7 @@ export const lifecycleDependencies = {
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
   sleep,
+  sweepManagedBlocklistChats,
   terminateAiChat,
   terminateAntiRaid,
   terminateDiskIO,

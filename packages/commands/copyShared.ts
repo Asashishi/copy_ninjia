@@ -2,7 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import type { CachedUser, GlobalCopyState } from "../types/chatState";
 import { getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram/actions";
-import { PRIVILEGED_USERS_ID } from "../infra/config";
+import { isWhitelisted } from "../config/whitelist";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
 import { queueAvatarUpdate } from "../copy/avatarQueue";
@@ -58,7 +58,7 @@ export async function claimCopyCooldownOrReject(
   messageId: number | undefined
 ): Promise<CopyCooldownClaim> {
   const globalCopyState: GlobalCopyState = getGlobalCopyState();
-  const isExempted: boolean = !!fromUser && PRIVILEGED_USERS_ID.includes(fromUser.id);
+  const isExempted: boolean = !!fromUser && isWhitelisted(fromUser.id);
   if (!isExempted && globalCopyState.lastCopyTime) {
     const elapsed: number = Date.now() - globalCopyState.lastCopyTime;
     // 墙钟回拨时 elapsed 为负；把旧时间戳视为已过期，随后本次 claim 会用

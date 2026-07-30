@@ -17,6 +17,7 @@ import type {
   VerificationDeleteEvent,
   VerificationPersistedMessage,
   VerificationSnapshot,
+  VerificationSnapshotBase,
   VerificationUpsertEvent,
   VerifyCallbackMessage,
 } from "../../types/antiRaid";
@@ -162,12 +163,11 @@ function verificationSnapshot({
 }: VerificationSnapshotParams): VerificationSnapshot {
   const source: PendingState | ExpelSnapshot =
     state.kind === "pending" ? state : state.snapshot;
-  return {
+  const base: VerificationSnapshotBase = {
     chatId,
     userId,
     generation: verificationGeneration.current,
     revision,
-    phase: state.kind,
     label: source.label,
     isBot: source.isBot,
     messageIds: [...source.messageIds],
@@ -185,17 +185,24 @@ function verificationSnapshot({
       state.kind === "pending" ? state.reminderSuperseded : true,
     joinedAt: source.joinedAt,
     expiresAt: source.expiresAt,
-    terminalInviterId:
-      state.kind === "checkingInviter" ? state.inviterId : undefined,
-    expelReason: state.kind === "expelling" ? state.reason : undefined,
-    successNoticeSent:
-      state.kind === "expelling" ? state.successNoticeSent : undefined,
+  };
+  if (state.kind === "pending") return { ...base, phase: "pending" };
+  if (state.kind === "checkingInviter") {
+    return {
+      ...base,
+      phase: "checkingInviter",
+      terminalInviterId: state.inviterId,
+    };
+  }
+  return {
+    ...base,
+    phase: "expelling",
+    expelReason: state.reason,
+    successNoticeSent: state.successNoticeSent,
     // 两条失败告警都不会自删，必须跟着快照走：不落盘的话每次 Worker 重生
     // 都会为同一个卡住的成员再发一条（见 ExpellingState.failureNoticeSent）。
-    failureNoticeSent:
-      state.kind === "expelling" ? state.failureNoticeSent : undefined,
-    unconfirmedNoticeSent:
-      state.kind === "expelling" ? state.unconfirmedNoticeSent : undefined,
+    failureNoticeSent: state.failureNoticeSent,
+    unconfirmedNoticeSent: state.unconfirmedNoticeSent,
   };
 }
 
@@ -263,13 +270,13 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
     const state: VerificationState = record.phase === "checkingInviter"
       ? {
         kind: "checkingInviter",
-        inviterId: record.terminalInviterId!,
+        inviterId: record.terminalInviterId,
         snapshot: expelSnapshot,
       }
       : record.phase === "expelling"
         ? {
           kind: "expelling",
-          reason: record.expelReason!,
+          reason: record.expelReason,
           snapshot: expelSnapshot,
           successNoticeSent: record.successNoticeSent,
           failureNoticeSent: record.failureNoticeSent,

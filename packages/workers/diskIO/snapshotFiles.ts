@@ -187,10 +187,10 @@ function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot 
  * 原子写、解析失败隔离为 .corrupt），只是文件名形态不同（pack short name
  * 而非 chatId）；多一步 activePacks 对账——config/stickers.json 的白名单
  * 已经不包含的包，其持久化文件视为孤儿，直接删除、不载入内存，既不再占
- * 磁盘空间，也不会让 ai/stickers/catalog.ts 的 getCatalogEntry 继续拿一个
+ * 磁盘空间，也不会让 aiChat/ai/stickers/catalog.ts 的 getCatalogEntry 继续拿一个
  * 已下架包的旧描述去匹配群友发的贴纸。
  * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
- *   ai/stickers/config.ts），用于判定哪些持久化文件已经是孤儿。
+ *   aiChat/ai/stickers/config.ts），用于判定哪些持久化文件已经是孤儿。
  */
 export function recoverStickerCatalogs(activePacks: readonly string[] | null): Map<string, string> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });

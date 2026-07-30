@@ -8,8 +8,8 @@ const pushBufferedMessage = mock((..._args: unknown[]): void => {});
 const generateAndSendReply = mock((..._args: unknown[]): void => {});
 const trackReplyGenerationTask = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../packages/ai/imageDescription", () => ({ describeMedia }));
-mock.module("../../../packages/ai/stickers/catalog", () => ({ getCatalogEntry }));
+mock.module("../../../packages/aiChat/ai/imageDescription", () => ({ describeMedia }));
+mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({ getCatalogEntry }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ pushBufferedMessage }));
 mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
   currentReplyGeneration: () => 0,

@@ -136,7 +136,7 @@ function publishLockdownState(chatId: number): void {
   let intentId: number;
   let originalPermissions: ChatPermissions;
   if (state.kind === "applying") {
-    if (state.originalPermissions === undefined || state.intentId === undefined) return;
+    if (state.stage !== "prepared") return;
     intentId = state.intentId;
     originalPermissions = state.originalPermissions;
   } else {

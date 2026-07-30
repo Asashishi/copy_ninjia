@@ -17,7 +17,7 @@ import type { Message } from "@grammyjs/types";
 import { adDetectConfigReadiness } from "../config/readiness";
 import { logger } from "../infra/logger";
 import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
-import { isProtectedSender } from "./memberFacts";
+import { canBypassAdDetection } from "./memberFacts";
 import {
   blockUser,
   confirmBlocklistPersisted,
@@ -65,14 +65,18 @@ import type { Chat, MessageEntity } from "@grammyjs/types";
  * 带出去的是消息自身携带的 URL、不带任何系统措辞，因此不会给正文引入可以被伪造
  * 的结构——发送者把「https://…」直接打进正文，得到的也是同样的文本。
  */
-function collectHiddenLinkUrls(text: string, entities: readonly MessageEntity[] | undefined): string[] {
-  if (entities === undefined) return [];
-  const urls: string[] = [];
+function collectHiddenLinkUrls(
+  text: string,
+  entities: readonly MessageEntity[] | undefined
+): string[] | undefined {
+  if (entities === undefined) return undefined;
+  let urls: string[] | undefined;
   for (const entity of entities) {
-    if (urls.length >= AD_DETECT_MAX_LINK_URLS) break;
+    if ((urls?.length ?? 0) >= AD_DETECT_MAX_LINK_URLS) break;
     if (entity.type !== "text_link") continue;
     const url: string = truncateInline(sanitizeInline(entity.url), AD_DETECT_LINK_URL_MAX_CHARS);
-    if (url.length === 0 || text.includes(url) || urls.includes(url)) continue;
+    if (url.length === 0 || text.includes(url) || urls?.includes(url) === true) continue;
+    urls ??= [];
     urls.push(url);
   }
   return urls;
@@ -106,16 +110,23 @@ function collectHiddenLinkUrls(text: string, entities: readonly MessageEntity[] 
 function buildSampleContext(message: Message): AdSampleContext | undefined {
   const replied: Message | undefined = message.reply_to_message;
   if (replied?.is_automatic_forward === true) return undefined;
-  const quote: string = truncateInline(sanitizeInline(message.quote?.text ?? ""), AD_SAMPLE_CONTEXT_MAX_CHARS);
+  const rawQuote: string | undefined = message.quote?.text;
+  const rawReplyTo: string | undefined = replied?.text ?? replied?.caption;
+  if (
+    (rawQuote === undefined || rawQuote.length === 0) &&
+    (rawReplyTo === undefined || rawReplyTo.length === 0)
+  ) {
+    return undefined;
+  }
+  const quote: string = truncateInline(sanitizeInline(rawQuote ?? ""), AD_SAMPLE_CONTEXT_MAX_CHARS);
   const replyTo: string = truncateInline(
-    sanitizeInline(replied?.text ?? replied?.caption ?? ""),
+    sanitizeInline(rawReplyTo ?? ""),
     AD_SAMPLE_CONTEXT_MAX_CHARS
   );
   if (quote.length === 0 && replyTo.length === 0) return undefined;
-  return {
-    ...(quote.length > 0 ? { quote } : {}),
-    ...(replyTo.length > 0 ? { replyTo } : {}),
-  };
+  if (quote.length === 0) return { replyTo };
+  if (replyTo.length === 0) return { quote };
+  return { quote, replyTo };
 }
 
 /**
@@ -150,7 +161,7 @@ export function buildAdCandidate(message: Message, botId: number): AdCandidateMe
   const senderId: number | undefined = senderChat?.id ?? message.from?.id;
   if (senderId === undefined || senderId === botId) return undefined;
   if (senderChat?.id === chatId) return undefined;
-  if (isProtectedSender(senderId)) return undefined;
+  if (canBypassAdDetection(senderId)) return undefined;
   // 已经在黑名单里的人不必再判：处置早就排上了（秒踢、补扫或本次判定登记的
   // 封禁批次），此刻他还在说话只是因为封禁尚未落地。继续送检只会把额度烧在
   // 一个注定要被清出去的人身上，还会换来一次与上一次完全相同的处置。
@@ -166,13 +177,14 @@ export function buildAdCandidate(message: Message, botId: number): AdCandidateMe
   // 图片/视频只看说明文字：广告图本身的识别是另一套流水线，这里不因为拿不到
   // 正文就把整条消息当成空判定。
   const text: string = sanitizeInline(message.text ?? message.caption ?? "");
-  const linkUrls: string[] = collectHiddenLinkUrls(text, message.entities ?? message.caption_entities);
+  const linkUrls: string[] | undefined =
+    collectHiddenLinkUrls(text, message.entities ?? message.caption_entities);
   const sampleContext: AdSampleContext | undefined = buildSampleContext(message);
   // 三样都空才算「没有可判定内容」。上下文单独成立也要放行：把广告顶上来的那条
   // 消息完全可以自己没有正文（一张表情、一句 caption 为空的图），广告全在被引用
   // 段/被回复原文里——只看 text 的话，「回复一条编辑成广告的旧消息」这条路只要
   // 不打字就能绕过去（见 buildSampleContext）。
-  if (text.length === 0 && linkUrls.length === 0 && sampleContext === undefined) return undefined;
+  if (text.length === 0 && linkUrls === undefined && sampleContext === undefined) return undefined;
 
   const label: string = senderChat === undefined
     ? formatUserLabel({
@@ -187,14 +199,12 @@ export function buildAdCandidate(message: Message, botId: number): AdCandidateMe
       isChannel: true,
     });
 
-  return {
+  const candidate: AdCandidateMessage = {
     type: "adCandidate",
     chatId,
     senderId,
     messageId: message.message_id,
     text,
-    linkUrls,
-    ...(sampleContext ? { sampleContext } : {}),
     label,
     isChannel: senderChat !== undefined,
     blocked,
@@ -203,6 +213,9 @@ export function buildAdCandidate(message: Message, botId: number): AdCandidateMe
     // 顺手取一次即可；频道马甲不走入群验证，这里恒为 false。
     justJoined: activeVerificationSnapshots.has(verificationKey(chatId, senderId)),
   };
+  if (linkUrls !== undefined) candidate.linkUrls = linkUrls;
+  if (sampleContext !== undefined) candidate.sampleContext = sampleContext;
+  return candidate;
 }
 
 /** 处置目标所在的群清单：机器人已初始化且是管理员的群，同 /block 的连坐范围。 */
@@ -265,7 +278,7 @@ function recordAdSample(event: AdDetectedEvent): void {
  * 修好磁盘后的人为重试，这条路是刷屏号自己触发的，两者不该共用一套代价。
  */
 async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
-  if (isProtectedSender(event.senderId)) {
+  if (canBypassAdDetection(event.senderId)) {
     logger.error(
       `Ad detection flagged privileged sender ${event.senderId} in chat ${event.chatId}; ignoring the verdict.`
     );

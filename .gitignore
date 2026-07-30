@@ -28,6 +28,9 @@ memory
 .env.production.local
 .env.local
 
+# deployment configuration (copy and customize config_example/)
+config
+
 # caches
 .eslintcache
 .cache

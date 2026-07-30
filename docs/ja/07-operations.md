@@ -38,7 +38,7 @@ WantedBy=multi-user.target
 
 データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` を container の一時 layer に置かないでください。
 
-この permission gate を含む版へ既存 deployment を更新する前に、すべての instance を停止して手動 migration します：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。program は data root と `logs/`、`memory/` を `0750` で作成し、runtime UID の所有であることを検証します。`config/` は project tree 内の読み取り専用 deployment input であり、独立した runtime data root の一部ではありません。既存 directory が `0750` より広い場合は起動を拒否し、暗黙の chmod は行いません。必要なら実際の owner/group に置き換え、runtime user の書き込み権限を維持してください。
+この permission gate を含む版へ既存 deployment を更新する前に、すべての instance を停止して手動 migration します：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。program は data root と `logs/`、`memory/` を `0750` で作成し、runtime UID の所有であることを検証します。`config/` は project tree 内の deployment input で、独立した runtime data root の一部ではありません。ただし `/white` と `/permission` は `whitelist.json` を atomic rewrite するため、runtime user はこの directory で一時 file を作成して rename できる必要があります。その他の設定 file は read-only のままで構いません。既存 data-root directory が `0750` より広い場合は起動を拒否し、暗黙の chmod は行いません。必要なら実際の owner/group に置き換え、runtime user の書き込み権限を維持してください。
 
 プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 

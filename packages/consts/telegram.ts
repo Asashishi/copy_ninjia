@@ -79,6 +79,34 @@ export const MUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = Object.freeze({
   can_manage_topics: false,
 });
 
+/**
+ * 解除禁言时写给 `restrictChatMember` 的权限集：全部放开。
+ *
+ * Bot API 对「解除限制」的说法就是把所有权限传 true——成员的实际权限仍与群
+ * 默认权限取交集，所以这份全 true 不会赋予超出群设置的能力，只是把
+ * MUTED_CHAT_PERMISSIONS 收走的那层个人限制整个摘掉。逐项显式写出的理由同
+ * 上：这份常量也是「解除禁言到底恢复了什么」的唯一说明，必须与禁言集逐项
+ * 对得上。全项为 true 时 `use_independent_chat_permissions` 同样不必带——
+ * 联动打开的那几项本来就都要打开。
+ */
+export const UNMUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = Object.freeze({
+  can_send_messages: true,
+  can_send_audios: true,
+  can_send_documents: true,
+  can_send_photos: true,
+  can_send_videos: true,
+  can_send_video_notes: true,
+  can_send_voice_notes: true,
+  can_send_polls: true,
+  can_send_other_messages: true,
+  can_add_web_page_previews: true,
+  can_react_to_messages: true,
+  can_change_info: true,
+  can_invite_users: true,
+  can_pin_messages: true,
+  can_manage_topics: true,
+});
+
 /** Telegram 文本消息的硬性长度上限（字符），超出会被 Bot API 拒绝。 */
 export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;
 

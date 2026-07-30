@@ -11,8 +11,8 @@ import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 
 /**
  * 处理 /ai_chat enable|disable 指令：按群开关 AI 闲聊功能（见 ChatState.isAIChatEnabled，
- * 缺省禁用）。仅 SUPER_ADMIN_USER_ID 本人可用，不走 PRIVILEGED_USERS_ID 白名单——
- * 这是单独一批权限，其他任何人尝试都只会被嘲讽，指令本身不会执行。
+ * 缺省禁用）。超级管理员恒可用，白名单身份可通过
+ * isCanControllAIPermission 单独获权；其他身份只会被嘲讽。
  *
  * 开启前两道前提各判一次，且分开报（同 /ad_detect）：缺 AI_CHAT_GEMINI_API_KEY 与
  * config/{stickers,reactions,mood}.json 写坏是两种完全不同的运维动作，混成一句
@@ -24,6 +24,7 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
     rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想管本天才要不要闲聊？哪来的资格呀，笨蛋♡`,
     usage: `笨蛋，要 /ai_chat enable 还是 /ai_chat disable，说清楚呀♡`,
+    permission: "isCanControllAIPermission",
   });
   if (!arg) return;
 

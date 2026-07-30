@@ -2,11 +2,16 @@ import { describe, expect, spyOn, test } from "bun:test";
 import type {
   AiMemoryPersistedReply,
   DiskIOMessage,
+  DiskIORecoveryTransport,
   DiskIOReply,
   LuckDrawDiskMessage,
   VerificationPersistedReply,
 } from "../../packages/types";
-import { pendingLoad, pendingLuckSecrets } from "../../packages/cache/main/diskIO";
+import {
+  diskIORuntime,
+  pendingLoad,
+  pendingLuckSecrets,
+} from "../../packages/cache/main/diskIO";
 
 const diskIO = await import("../../packages/infra/diskIO");
 const { superviseWorker } = await import("../../packages/libs/supervisedWorker");
@@ -49,6 +54,27 @@ const luckReceiptSecret = {
   key: Buffer.alloc(32, 7).toString("base64url"),
 };
 
+function emitSuccessfulLoad(worker: FakeWorker): void {
+  worker.onmessage!({ data: {
+    type: "loaded",
+    aiMemories: new Map(),
+    stickerCatalogs: new Map(),
+    luckDay: null,
+    luckReceiptSecret,
+    verifications: new Map(),
+    blockedUsers: new Map(),
+    pendingBlockedRemovals: new Map(),
+  } } as MessageEvent<DiskIOReply>);
+}
+
+function deferredVoid(): { promise: Promise<void>; resolve(): void } {
+  let resolve: (() => void) | undefined;
+  const promise: Promise<void> = new Promise<void>((done: () => void): void => {
+    resolve = done;
+  });
+  return { promise, resolve: (): void => resolve?.() };
+}
+
 describe("explicit Worker initialization", () => {
   test("拒绝非正有限恢复预算和非法待写容量，且不留下半初始化状态", async () => {
     FakeWorker.instances.length = 0;
@@ -72,6 +98,7 @@ describe("explicit Worker initialization", () => {
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     const error = spyOn(console, "error").mockImplementation(() => {});
     const fatalErrors: Error[] = [];
+    const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
     try {
       expect(FakeWorker.instances).toHaveLength(0);
       diskIO.initDiskIO({ onFatal: (fatal) => { fatalErrors.push(fatal); } });
@@ -171,9 +198,9 @@ describe("explicit Worker initialization", () => {
       expect(aiMemoryPersisted).toEqual([aiMemoryAck]);
 
       let respawns: number = 0;
-      diskIO.onDiskIORespawn(() => {
+      diskIO.onDiskIORespawn("test mirror", (transport: DiskIORecoveryTransport): boolean => {
         respawns++;
-        diskIO.postDiskIO(luckDraw);
+        return transport.post(luckDraw);
       });
       first.onerror!({ message: "boom" } as ErrorEvent);
       expect(FakeWorker.instances).toHaveLength(2);
@@ -233,6 +260,217 @@ describe("explicit Worker initialization", () => {
       await handle.terminate();
       expect(supervised.terminated).toBe(true);
     } finally {
+      diskIORuntime.respawnListeners.length = respawnListenerCount;
+      await diskIO.terminateDiskIO();
+      error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("异步镜像完成前保持不可写，完成后先重放镜像再排空业务缓冲", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const gate = deferredVoid();
+    const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
+    const bufferedDraw: LuckDrawDiskMessage = { ...luckDraw, key: "buffered" };
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loadedPromise;
+      await Bun.sleep(0);
+      worker.messages.length = 0;
+
+      diskIO.onDiskIORespawn("delayed mirror", async (
+        transport: DiskIORecoveryTransport
+      ): Promise<boolean> => {
+        await gate.promise;
+        return transport.post(luckDraw);
+      });
+      diskIORuntime.writable = false;
+      diskIORuntime.runtimeRecoveryWorker = worker as unknown as Worker;
+      expect(diskIO.postDiskIO(bufferedDraw)).toBeTrue();
+      emitSuccessfulLoad(worker);
+      await Promise.resolve();
+
+      expect(diskIORuntime.writable).toBeFalse();
+      expect(worker.messages).toEqual([]);
+      expect(diskIORuntime.pendingBusinessMessages.size).toBe(1);
+      expect(await diskIO.flushDiskIO(10)).toBe("failed");
+
+      gate.resolve();
+      await Bun.sleep(0);
+      expect(worker.messages).toEqual([luckDraw, bufferedDraw]);
+      expect(diskIORuntime.pendingBusinessMessages.size).toBe(0);
+      expect(diskIORuntime.writable).toBeTrue();
+    } finally {
+      diskIORuntime.respawnListeners.length = respawnListenerCount;
+      gate.resolve();
+      await diskIO.terminateDiskIO();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("镜像等待期间再次崩溃时，旧代际迟到成功不能激活或写入新实例", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    const fatalErrors: Error[] = [];
+    const oldGate = deferredVoid();
+    const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
+    let invocations: number = 0;
+    const currentDraw: LuckDrawDiskMessage = { ...luckDraw, key: "current-generation" };
+    const staleDraw: LuckDrawDiskMessage = { ...luckDraw, key: "stale-generation" };
+    try {
+      diskIO.initDiskIO({ onFatal: (fatal: Error): void => { fatalErrors.push(fatal); } });
+      const first: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(first);
+      await loadedPromise;
+      await Bun.sleep(0);
+      diskIO.onDiskIORespawn("generation mirror", async (
+        transport: DiskIORecoveryTransport
+      ): Promise<boolean> => {
+        invocations++;
+        if (invocations === 1) {
+          await oldGate.promise;
+          return transport.post(staleDraw);
+        }
+        return transport.post(currentDraw);
+      });
+
+      first.onerror!({ message: "first runtime crash" } as ErrorEvent);
+      const staleRecovery: FakeWorker = FakeWorker.instances[1]!;
+      emitSuccessfulLoad(staleRecovery);
+      await Promise.resolve();
+      expect(invocations).toBe(1);
+
+      staleRecovery.onerror!({ message: "recovery crashed during mirror" } as ErrorEvent);
+      const currentRecovery: FakeWorker = FakeWorker.instances[2]!;
+      emitSuccessfulLoad(currentRecovery);
+      await Bun.sleep(0);
+      expect(invocations).toBe(2);
+      expect(currentRecovery.messages).toEqual([{ type: "load" }, currentDraw]);
+      expect(diskIORuntime.writable).toBeTrue();
+
+      oldGate.resolve();
+      await Bun.sleep(0);
+      expect(staleRecovery.messages).toEqual([{ type: "load" }]);
+      expect(currentRecovery.messages).toEqual([{ type: "load" }, currentDraw]);
+      expect(diskIORuntime.worker).toBe(currentRecovery as unknown as Worker);
+      expect(diskIORuntime.writable).toBeTrue();
+      expect(fatalErrors).toHaveLength(0);
+    } finally {
+      diskIORuntime.respawnListeners.length = respawnListenerCount;
+      oldGate.resolve();
+      await diskIO.terminateDiskIO();
+      error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("镜像返回 false 或抛错都会 fail closed 并指出失败领域", async () => {
+    const scenarios: readonly {
+      owner: string;
+      listener: (transport: DiskIORecoveryTransport) => boolean | Promise<boolean>;
+      expected: string;
+    }[] = [
+      {
+        owner: "false mirror",
+        listener: (): boolean => false,
+        expected: "reported failure",
+      },
+      {
+        owner: "throwing mirror",
+        listener: (): boolean => { throw new Error("synchronous replay failure"); },
+        expected: "synchronous replay failure",
+      },
+      {
+        owner: "rejecting mirror",
+        listener: async (): Promise<never> => {
+          throw new Error("asynchronous replay failure");
+        },
+        expected: "asynchronous replay failure",
+      },
+    ];
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const scenario of scenarios) {
+        FakeWorker.instances.length = 0;
+        const fatalErrors: Error[] = [];
+        const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
+        try {
+          diskIO.initDiskIO({ onFatal: (fatal: Error): void => { fatalErrors.push(fatal); } });
+          const worker: FakeWorker = FakeWorker.instances[0]!;
+          const loadedPromise = diskIO.loadPersistedData(1_000);
+          emitSuccessfulLoad(worker);
+          await loadedPromise;
+          await Bun.sleep(0);
+          diskIO.onDiskIORespawn(scenario.owner, scenario.listener);
+          diskIORuntime.writable = false;
+          diskIORuntime.runtimeRecoveryWorker = worker as unknown as Worker;
+          expect(diskIO.postDiskIO(luckDraw)).toBeTrue();
+
+          emitSuccessfulLoad(worker);
+          await Bun.sleep(0);
+
+          expect(worker.terminated).toBeTrue();
+          expect(diskIORuntime.writable).toBeFalse();
+          expect(diskIORuntime.pendingBusinessMessages.size).toBe(0);
+          expect(fatalErrors).toHaveLength(1);
+          expect(fatalErrors[0]?.message).toContain(scenario.owner);
+          expect(fatalErrors[0]?.message).toContain(scenario.expected);
+        } finally {
+          diskIORuntime.respawnListeners.length = respawnListenerCount;
+          await diskIO.terminateDiskIO();
+        }
+      }
+    } finally {
+      error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("scoped transport 投递被同步拒绝时不会继续后续镜像", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    const fatalErrors: Error[] = [];
+    const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
+    let laterMirrorRan: boolean = false;
+    try {
+      diskIO.initDiskIO({ onFatal: (fatal: Error): void => { fatalErrors.push(fatal); } });
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loadedPromise;
+      await Bun.sleep(0);
+      worker.rejectedTypes.add("luckDraw");
+      diskIO.onDiskIORespawn("rejected mirror", (
+        transport: DiskIORecoveryTransport
+      ): boolean => transport.post(luckDraw));
+      diskIO.onDiskIORespawn("later mirror", (): boolean => {
+        laterMirrorRan = true;
+        return true;
+      });
+      diskIORuntime.writable = false;
+      diskIORuntime.runtimeRecoveryWorker = worker as unknown as Worker;
+
+      emitSuccessfulLoad(worker);
+      await Bun.sleep(0);
+
+      expect(laterMirrorRan).toBeFalse();
+      expect(worker.terminated).toBeTrue();
+      expect(fatalErrors).toHaveLength(1);
+      expect(fatalErrors[0]?.message).toContain("rejected mirror");
+    } finally {
+      diskIORuntime.respawnListeners.length = respawnListenerCount;
       await diskIO.terminateDiskIO();
       error.mockRestore();
       globalThis.Worker = originalWorker;
@@ -271,12 +509,14 @@ describe("explicit Worker initialization", () => {
     }
   });
 
-  test("运行时 load 握手超时会终止不可用 Worker 并发出 fatal 信号", async () => {
+  test("运行时恢复 timer 覆盖永不结束的异步镜像并清空业务缓冲", async () => {
     FakeWorker.instances.length = 0;
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     const error = spyOn(console, "error").mockImplementation(() => {});
     const fatalErrors: Error[] = [];
+    const gate = deferredVoid();
+    const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
     try {
       diskIO.initDiskIO({
         onFatal: (fatal) => { fatalErrors.push(fatal); },
@@ -296,16 +536,28 @@ describe("explicit Worker initialization", () => {
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
+      diskIO.onDiskIORespawn("hung mirror", async (): Promise<boolean> => {
+        await gate.promise;
+        return true;
+      });
       first.onerror!({ message: "runtime crash" } as ErrorEvent);
       const recovery: FakeWorker = FakeWorker.instances[1]!;
       expect(recovery.messages).toEqual([{ type: "load" }]);
+      expect(diskIO.postDiskIO(luckDraw)).toBeTrue();
+      emitSuccessfulLoad(recovery);
+      await Promise.resolve();
+      expect(diskIORuntime.writable).toBeFalse();
+      expect(diskIORuntime.pendingBusinessMessages.size).toBe(1);
       await Bun.sleep(10);
 
       expect(recovery.terminated).toBe(true);
+      expect(diskIORuntime.pendingBusinessMessages.size).toBe(0);
       expect(fatalErrors).toHaveLength(1);
       expect(fatalErrors[0]?.message).toContain("timed out");
       expect(await diskIO.flushDiskIO(10)).toBe("failed");
     } finally {
+      diskIORuntime.respawnListeners.length = respawnListenerCount;
+      gate.resolve();
       await diskIO.terminateDiskIO();
       error.mockRestore();
       globalThis.Worker = originalWorker;

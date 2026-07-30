@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1390_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.90%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1475_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.70%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -69,7 +69,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage：1390 项测试全部通过 / 156 个测试文件 / 20,565 次 expect() 调用 / 函数覆盖率 95.30% / 行覆盖率 96.90%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：1475 项测试全部通过 / 163 个测试文件 / 25,995 次 expect() 调用 / 函数覆盖率 95.18% / 行覆盖率 96.70%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -155,7 +155,7 @@
 
 - **按用户名查找依赖机器人此前观察到该账号**；改名、移除用户名或用户名换绑会立即使旧别名失效。对 `/block`、`/unblock` 这类破坏性操作，优先回复目标消息或直接给用户 id（那两条命令额外接受裸 id），不要依赖历史用户名。
 - **匿名管理员以当前群身份发言时，复读目标就是当前群**，因而可取得群头像并复读这层「皮套」；`/block` 会拒绝把当前群身份当作成员目标。
-- **普通用户执行 copy 类命令时受 5 分钟全局冷却限制**，`PRIVILEGED_USERS_ID` 白名单不受限。
+- **普通用户执行 copy 类命令时受 5 分钟全局冷却限制**，`config/whitelist.json` 中的白名单身份不受限。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
@@ -169,13 +169,16 @@
 <tr><td><code>/&lt;1~2 个中文字&gt;</code></td><td align="center">群成员</td><td>动作命令，如 <code>/咬</code>、<code>/贴贴</code> 回复「发起人 咬了 目标！」</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">群成员</td><td>暂停随机插话、随机复读等主动行为，默认 3 分钟</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
-<tr><td><code>/block</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
-<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>PRIVILEGED_USERS_ID</code><br>（<code>all</code> 仅 <code>SUPER_ADMIN_USER_ID</code>）</td><td>解除拉黑：把 id 从黑名单里划掉；目标指定方式同 <code>/block</code>，另外还接受频道的负数 id；默认不动各群已有封禁，加 <code>all</code> 则一并解封</td></tr>
-<tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群 AI 闲聊</td></tr>
-<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群广告检测，命中按 <code>/block</code> 同权处置</td></tr>
-<tr><td><code>/switch_mood</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名</td></tr>
-<tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群日语翻译能力（默认关闭）</td></tr>
+<tr><td><code>/mute … &lt;时长&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>在超级群临时禁言或提前解除；目标支持回复、<code>@username</code>、用户 id，时长支持 <code>m/h/d</code></td></tr>
+<tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
+<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>isCanUnBlock</code><br>（<code>all</code> 还需 <code>isCanUnBlockAll</code>）</td><td>解除拉黑：把 id 从黑名单里划掉；目标指定方式同 <code>/block</code>，另外还接受频道的负数 id；默认不动各群已有封禁，加 <code>all</code> 则一并解封。超级管理员自动拥有两项权限</td></tr>
+<tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊；超级管理员自动放行</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，命中按 <code>/block</code> 同权处置；超级管理员自动放行</td></tr>
+<tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名；超级管理员自动放行</td></tr>
+<tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>开关本群日语翻译能力（默认关闭）；超级管理员自动放行</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群的业务处理总入口</td></tr>
+<tr><td><code>/permission help</code><br><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>以 JSON 列出权限说明，或修改已有白名单用户/频道的一项权限；<code>all</code> 可全部打开</td></tr>
+<tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>新增或删除白名单用户/频道；支持回复、<code>@username</code>、用户 id 与频道 id</td></tr>
 <tr><td><code>/send &lt;群组 ID&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>在机器人私聊中开始或结束向目标群的中转</td></tr>
 </table>
 
@@ -183,8 +186,8 @@
 
 - **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。
 - **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 移除时整份名单原子重写回文件。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
-- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 DeepSeek 判定；命中即执行与 `/block` 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config/ad_samples.json)。
-- **刷屏禁言**：同一个人在同一个超级群内一分钟发言达到 21 条，就地禁言 5 分钟并在群里说明一句（公告在禁言解除时自撤）。到点由 Telegram 自动解除，不写黑名单也不删消息。仅在机器人确有「限制成员」权限时触发；群主/管理员、`SUPER_ADMIN_USER_ID` 与 `PRIVILEGED_USERS_ID`、频道马甲与匿名管理员都不计数。
+- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 DeepSeek 判定；命中即执行与 `/block` 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
+- **刷屏禁言**：同一个人在同一个超级群内一分钟发言达到 21 条，就地禁言 5 分钟并在群里说明一句（公告在禁言解除时自撤）。到点由 Telegram 自动解除，不写黑名单也不删消息。仅在机器人确有「限制成员」权限时触发；群主/管理员、`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json` 白名单身份、频道马甲与匿名管理员都不计数。
 - **`/send` 中转**：开启前先探测目标是否可达，期间超级管理员发送的每条消息都会原样转发到目标群一次；目标失联时自动终止并通知。中转状态随 `state.json` 持久化，重启后仍可恢复。该命令不进入 Telegram 命令菜单，在群内调用或由其他用户触发时均不响应。
 
 > [!TIP]
@@ -230,6 +233,7 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 cp .env.example .env
+cp -r config_example config
 ```
 
 ### 3. 配置
@@ -242,15 +246,14 @@ cp .env.example .env
 | `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员的单个十进制用户 ID |
 | `AI_CHAT_GEMINI_API_KEY` | — | AI 闲聊 agent 专用；留空则 AI Worker 不启动，`/ai_chat enable` 与 `/switch_mood` 被拒 |
 | `AD_DETECT_DEEPSEEK_API_KEY` | — | 广告检测专用；留空则 `/ad_detect enable` 被拒 |
-| `PRIVILEGED_USERS_ID` | — | 白名单用户 ID，多个用英文逗号分隔 |
 | `COPY_NINJIA_DATA_ROOT` | — | 运行时数据根目录；留空时使用项目根目录 |
 
-**可选项按功能降级**：两把 AI key 的变量名都以所服务的功能打头，缺哪一把就只瘸对应的那个功能，其余照常运行。`config/*.json` 与 `g-auth.json` 同理，不在启动时统一预热，坏掉只拒绝对应的开关命令。
+`config/` 是不受 Git 追踪的部署配置，初次安装必须从 `config_example/` 复制。`whitelist.json` 与 `blocklist.json` 在联网前严格加载；其余四份 JSON 和 `g-auth.json` 按功能惰性校验，坏掉只拒绝对应的开关命令。
 
 > [!IMPORTANT]
 > 只有一种情况例外：某个功能在 `state.json` 里还开着，却把它的 key 或配置撤掉了——那是管理员明确按下过的开关，进程会带着群 id 与缺失项拒绝启动，而不是悄悄变成不干活。先 `disable` 再撤，或者把前提补回去。
 
-设置 `COPY_NINJIA_DATA_ROOT` 后，`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；人设、贴纸/反应/心情配置与 `g-auth.json` 仍从项目根目录读取。
+设置 `COPY_NINJIA_DATA_ROOT` 后，`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；`config/`、人设与 `g-auth.json` 仍从项目根目录读取。
 
 如需日语翻译，将 Google Cloud 服务账号密钥保存为项目根目录的 `g-auth.json`。`.env` 与 `g-auth.json` 均已加入 `.gitignore`。
 

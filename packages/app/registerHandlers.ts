@@ -13,13 +13,17 @@ import {
   handleJaCopyCommand,
   handleLuckChallengeInlineQuery,
   handleLuckChosenInlineResult,
+  handleMuteCommand,
+  handlePermissionCommand,
   handleQuietCommand,
   handleSendCommand,
   handleStealIconCommand,
   handleStopCommand,
   handleSwitchMoodCommand,
   handleUnblockCommand,
+  handleUnmuteCommand,
   handleUnquietCommand,
+  handleWhiteCommand,
 } from "../commands";
 import {
   handleChatMemberUpdate,
@@ -67,14 +71,21 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
-  // 未初始化群在最前端终止，避免继续进入串行队列、验证、命令与 AI 链路。
+  // /permission 与 /white 是恢复/维护授权的全局管理入口，不依赖本群是否
+  // 初始化，也不能被私聊 /send 中转抢走。放在两道网关之前直接按 grammY 的
+  // command entity 匹配；并发写入由 config/whitelist.ts 的全局串行链负责。
+  bot.command("permission", (ctx: CommandContext<Context>): Promise<void> => handlePermissionCommand(ctx));
+  bot.command("white", (ctx: CommandContext<Context>): Promise<void> => handleWhiteCommand(ctx));
+
+  // 除上面两条全局管理入口外，未初始化群在这里终止，避免继续进入串行队列、
+  // 验证、普通命令与 AI 链路。
   bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => (shouldPassInitGate(ctx) ? next() : undefined));
 
   // 普通聊天按 chat 串行；反应同步有自己的合并队列，不占用聊天车道。
   bot.use(sequentialize((ctx: Context): string[] => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
 
-  // 私聊只放行 /send 入口和活动中的中转会话。中转消息在命令注册之前直接
-  // 短路到消息流水线，避免 /copy 等文本被当成真实命令执行。
+  // 私聊只放行 /send 入口和活动中的中转会话。除全局 /permission、/white 外，
+  // 中转消息在普通命令注册之前直接短路到消息流水线，避免 /copy 等文本被真的执行。
   bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     if (!shouldPassPrivateCommandGate(ctx)) return undefined;
     if (shouldRoutePrivateProxyMessage(ctx)) return handleIncomingMessage(ctx);
@@ -101,6 +112,8 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
   bot.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx: CommandContext<Context>): Promise<void> => handleUnquietCommand(ctx));
+  bot.command("mute", (ctx: CommandContext<Context>): Promise<void> => handleMuteCommand(ctx));
+  bot.command("unmute", (ctx: CommandContext<Context>): Promise<void> => handleUnmuteCommand(ctx));
   bot.command("send", (ctx: CommandContext<Context>): Promise<void> => handleSendCommand(ctx));
   // 菜单占位项：它只为在命令菜单里曝光「/<1~2 个中文字>」这个用法（那类命令名
   // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把

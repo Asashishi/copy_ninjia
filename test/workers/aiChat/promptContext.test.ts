@@ -1,6 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
 import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
+import { COMPACT_BATCH_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../packages/consts/aiChat/prompts/memory";
+import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
 import type { ReplyPromptSections } from "../../../packages/types/aiChat/replies";
@@ -9,8 +11,102 @@ import { indexBufferedMessage } from "../../../packages/workers/aiChat/replyChai
 
 beforeEach(resetAiChatMemoryCache);
 
+test("直接唤起者按用户 id 独立聚焦，且只复制最热消息", () => {
+  const invokerId: number = 7;
+  const otherId: number = 8;
+  const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
+  const total: number = COMPACT_BATCH_SIZE + 2;
+  for (let index: number = 0; index < total; index++) {
+    const messageId: number = index + 1;
+    const isEarlierInvoker: boolean = messageId === 1;
+    const isHotInvoker: boolean = messageId === total - 1 || messageId === total;
+    messages.push({
+      messageId,
+      id: isEarlierInvoker || isHotInvoker ? invokerId : otherId,
+      firstName: isEarlierInvoker || isHotInvoker ? "Alice" : "Bob",
+      lastName: "",
+      text: isEarlierInvoker
+        ? "较早区里的唤起者消息，不应复制"
+        : isHotInvoker
+        ? `最热区里的唤起者消息 ${messageId}`
+        : `其他人的最热消息 ${messageId}`,
+      ...(messageId === total - 2
+        ? {
+          replyTo: {
+            messageId: total - 3,
+            id: invokerId,
+            firstName: "Alice",
+            lastName: "",
+            text: "被其他人回复的 Alice 消息",
+          },
+        }
+        : {}),
+      at: `2026/07/30 12:00:${String(index).padStart(2, "0")}`,
+    });
+  }
+  chatBuffers.set(-1001, messages);
+
+  const sections: ReplyPromptSections = buildReplyPromptSections(
+    -1001,
+    { id: 99, first_name: "Ninja", username: "ninja_bot" },
+    {
+      triggerMessageId: total,
+      directInvokerId: invokerId,
+      isRandomTrigger: false,
+      roundHasTypo: false,
+    }
+  )!;
+
+  expect(sections.invokerFocus).toStartWith(
+    `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.invokerFocus}]\n${REPLY_CONTEXT_SECTION_TEXT.invokerFocus.header}`
+  );
+  expect(sections.invokerFocus).toContain(`本轮由 [id:${invokerId}] 明确 @ 或回复你而唤起`);
+  expect(sections.invokerFocus).toContain(`[message_id:${total - 1}] [id:${invokerId}] Alice：最热区里的唤起者消息 ${total - 1}`);
+  expect(sections.invokerFocus).toContain(`[message_id:${total}] [id:${invokerId}] Alice：最热区里的唤起者消息 ${total}`);
+  expect(sections.invokerFocus).not.toContain("较早区里的唤起者消息，不应复制");
+  expect(sections.invokerFocus).not.toContain(`其他人的最热消息 ${total - 2}`);
+  expect(sections.invokerFocus).not.toContain("被其他人回复的 Alice 消息");
+  expect(sections.invokerFocus).toEndWith(`[END ${REPLY_CONTEXT_SECTION_NAMES.invokerFocus}]`);
+  // 完整转录仍保持原样；重点区块只是独立的按 id 热区视图。
+  expect(sections.currentConversation).toContain("较早区里的唤起者消息，不应复制");
+  expect(sections.currentConversation).toContain(`其他人的最热消息 ${total - 2}`);
+});
+
+test("直接唤起者在最热窗口没有记录时不从较早区补造", () => {
+  const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
+  for (let index: number = 0; index <= COMPACT_BATCH_SIZE; index++) {
+    messages.push({
+      messageId: index + 1,
+      id: index === 0 ? 7 : 8,
+      firstName: index === 0 ? "Alice" : "Bob",
+      lastName: "",
+      text: index === 0 ? "已经滑出最热窗口的 Alice 消息" : `Bob 消息 ${index + 1}`,
+      at: "2026/07/30 12:00:00",
+    });
+  }
+  chatBuffers.set(-1001, messages);
+
+  const sections: ReplyPromptSections = buildReplyPromptSections(
+    -1001,
+    { id: 99, first_name: "Ninja", username: "ninja_bot" },
+    {
+      triggerMessageId: COMPACT_BATCH_SIZE + 1,
+      directInvokerId: 7,
+      isRandomTrigger: false,
+      roundHasTypo: false,
+    }
+  )!;
+
+  expect(sections.invokerFocus).toContain("TA 的发言已滑出【最热记忆】窗口，本段没有可复制的条目");
+  expect(sections.invokerFocus).toContain("请回到上一段完整转录（含【较早逐字记录】）里按 [id:7] 找 TA 说过的话");
+  expect(sections.invokerFocus).not.toContain("已经滑出最热窗口的 Alice 消息");
+  // 空区块不能再拼「下列条目……」那套阅读说明，否则等于让模型去读不存在的
+  // 条目，还会把「别用较早记录补造」误读成不许看转录里的较早逐字记录。
+  expect(sections.invokerFocus).not.toContain("是同一批消息的副本");
+});
+
 test("排队触发独立携带回复对象和转发路径，不依赖原消息仍留在滚动缓存", () => {
-  const messages = new LinkedQueue<BufferedMessage>();
+  const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
   messages.push({
     messageId: 81,
     id: 1,
@@ -91,7 +187,7 @@ test("触发消息处在多层回复链上时回复任务补全链标注", () =>
     replyTo: { messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "接着追问" },
     at: "2026/07/22 12:00:00",
   };
-  const messages = new LinkedQueue<BufferedMessage>();
+  const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
   for (const entry of [root, middle, trigger]) {
     messages.push(entry);
     indexBufferedMessage(-1001, entry);
@@ -110,7 +206,7 @@ test("触发消息处在多层回复链上时回复任务补全链标注", () =>
 });
 
 test("媒体特殊回复任务明确标出来源到当前发送者的转发路径", () => {
-  const messages = new LinkedQueue<BufferedMessage>();
+  const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
   messages.push({
     messageId: 82,
     id: 3,

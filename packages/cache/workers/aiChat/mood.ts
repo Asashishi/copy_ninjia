@@ -1,6 +1,6 @@
 import type { MoodOption } from "../../../types/aiChat/mood";
 
-/** AI 心情抽取与到期（packages/ai/mood.ts）的内存状态。 */
+/** AI 心情抽取与到期（packages/aiChat/ai/mood.ts）的内存状态。 */
 
 /** 心情及其到期时刻都不落盘，随 Worker 重启清空、下次拼提示词时重抽。 */
 export const chatMoods: Map<number, MoodOption> = new Map();

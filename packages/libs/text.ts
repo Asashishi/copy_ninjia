@@ -1,6 +1,6 @@
 /**
  * AI 流水线共用的文本清洗工具。原是 workers/aiChatWorker.ts 的私有函数，
- * 图片描述（ai/imageDescription.ts）也需要同一套清洗后抽到这里共用。
+ * 图片描述（aiChat/ai/imageDescription.ts）也需要同一套清洗后抽到这里共用。
  */
 
 /**

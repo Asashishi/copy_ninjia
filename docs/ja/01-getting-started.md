@@ -27,34 +27,44 @@ git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
 cp .env.example .env
+cp -r config_example config
 ```
 
 ## `.env` の設定
 
-プロジェクトが読む環境変数は次の 6 つだけで、未記載のスイッチはありません。変数名は担当する機能を先頭に付けており（`AI_CHAT_` / `AD_DETECT_`）、欠けた鍵はその機能だけを止めます。資格情報と権限に関する 5 項目は [`packages/infra/config.ts`](../../packages/infra/config.ts) が解析します。`COPY_NINJIA_DATA_ROOT` は実行時パス定数が確定する前に反映する必要があるため、[`packages/consts/paths.ts`](../../packages/consts/paths.ts) が先に読み取ります。
+プロジェクトが読む環境変数は次の 5 つだけで、未記載のスイッチはありません。変数名は担当する機能を先頭に付けており（`AI_CHAT_` / `AD_DETECT_`）、欠けた鍵はその機能だけを止めます。資格情報と identity に関する 4 項目は [`packages/infra/config.ts`](../../packages/infra/config.ts) が解析します。`COPY_NINJIA_DATA_ROOT` は実行時パス定数が確定する前に反映する必要があるため、[`packages/consts/paths.ts`](../../packages/consts/paths.ts) が先に読み取ります。
 
 | 変数 | 必須 | 説明 |
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather が発行した token |
 | `AI_CHAT_GEMINI_API_KEY` | 空でも可 | Gemini API キー。AI 雑談エージェント専用で、`/ai_chat` の返信生成・画像理解・記憶圧縮が使用します。空の場合は AI Worker が起動せず、`/ai_chat enable` と `/switch_mood` は拒否され、ディスク上の AI 記憶はそのまま保持され、ほかの機能は通常どおり動作します |
 | `AD_DETECT_DEEPSEEK_API_KEY` | 空でも可 | DeepSeek API キー（OpenAI 互換エンドポイント）。広告検出専用で、`/ad_detect` の判定が使用します。空の場合は `/ad_detect enable` が拒否され、ほかの機能はそのまま動作します |
-| `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者を表す 1 つの十進ユーザー ID。`/init`、`/ai_chat`、`/ad_detect`、`/switch_mood`、`/send` などはこのユーザーだけを認識します |
-| `PRIVILEGED_USERS_ID` | 空でも可 | カンマ区切りの許可ユーザー。copy のクールダウン免除、`/block` の使用、ほかの Bot の認証保証が可能です |
+| `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者を表す 1 つの十進ユーザー ID。すべての command permission を持ち、`/init`、`/permission`、`/white`、`/send` はこのユーザーだけが使用できます |
 | `COPY_NINJIA_DATA_ROOT` | 空でも可 | 実行時データのルート。空の場合はプロジェクトルートに保存します。詳細は [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください |
 
 日本語翻訳を使う場合は、サービスアカウントキーをプロジェクトルートの `g-auth.json` に保存します。`.env` と `g-auth.json` はどちらも `.gitignore` の対象です。
 
 ## プロジェクト側の設定ファイル
 
+`config/` は deployment 固有の設定ディレクトリで、Git の追跡対象外です。初回だけ `config_example/` からコピーし、その後は `config/` だけを編集してください。example ディレクトリは実行時設定ではありません。
+
 | ファイル | 内容 | 検証 |
 | :--- | :--- | :--- |
 | [`prompt/persona.md`](../../prompt/persona.md) | AI チャットの基本ペルソナ | プレーンテキスト、schema なし |
-| [`config/stickers.json`](../../config/stickers.json) | AI が使えるスタンプパック、最大 5 個 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
-| [`config/reactions.json`](../../config/reactions.json) | AI が使える絵文字リアクション | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
-| [`config/mood.json`](../../config/mood.json) | ムードの文面、重み、天気・時間帯の倍率 | [`packages/config/mood.ts`](../../packages/config/mood.ts)。重みは正の整数で、合計がちょうど 100 でなければなりません |
-| [`config/ad_samples.json`](../../config/ad_samples.json) | 広告検出の判定基準となる例文。ファイル自体が文字列配列です | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts)。空文字と重複は不可、最大 500 件 |
+| `config/whitelist.json`（[example](../../config_example/whitelist.json)） | ユーザー／チャンネル allowlist と個別 permission。membership 自体も copy cooldown 免除、Bot 認証の代行保証、自動処分からの保護を与えます | [`packages/config/whitelist.ts`](../../packages/config/whitelist.ts)。network 接続前に厳密ロードし、欠落・破損時は起動を拒否 |
+| `config/blocklist.json`（[example](../../config_example/blocklist.json)） | deployment が手動管理する静的ユーザー／チャンネル blocklist ID | [`packages/config/blocklist.ts`](../../packages/config/blocklist.ts)。network 接続前に厳密ロードし、動的な `memory/` layer と結合 |
+| `config/stickers.json`（[example](../../config_example/stickers.json)） | AI が使えるスタンプパック、最大 5 個 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
+| `config/reactions.json`（[example](../../config_example/reactions.json)） | AI が使える絵文字リアクション | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
+| `config/mood.json`（[example](../../config_example/mood.json)） | ムードの文面、重み、天気・時間帯の倍率 | [`packages/config/mood.ts`](../../packages/config/mood.ts)。重みは正の整数で、合計がちょうど 100 でなければなりません |
+| `config/ad_samples.json`（[example](../../config_example/ad_samples.json)） | 広告検出の判定基準となる例文。ファイル自体が文字列配列です | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts)。空文字と重複は不可、最大 500 件 |
 
-4 つの JSON はすべて厳密な schema 検証を受けますが、**起動時には事前読み込みしません**。壊れたスタンプ許可リスト 1 つのために copy、抽選、入室認証、ブロックリストまで停止させるべきではないからです。検証は対応するトグルコマンドで行います——`/ai_chat enable` は前 3 つ、`/ad_detect enable` は `ad_samples.json`、`/ja_copy enable` は `g-auth.json` を読みます。読めなければそのトグルだけを拒否し、返信で該当ファイル名を示し、ログに英語の診断を残します。すでに有効だったチャットも停止するため、不完全な状態で動き続けることはありません。判定結果はプロセス単位でキャッシュされるので、ファイルを直しても次回の再起動で反映されます。
+`whitelist.json` と `blocklist.json` は global security boundary なので、network 接続や Worker 起動より前に厳密ロードします。残り 4 つの JSON は feature ごとに遅延検証します。壊れたスタンプ設定 1 つのために copy、抽選、入室認証、blocklist まで同時に停止させないためです。`/ai_chat enable` は前 3 つの optional file、`/ad_detect enable` は `ad_samples.json`、`/ja_copy enable` は `g-auth.json` を読み、読めなければ対応する toggle だけを拒否します。結果は process 単位で cache されるため、修復後は再起動が必要です。
+
+### 2.1.0 からのアップグレード
+
+旧 process を停止し、`config/` 全体を先に backup してください。3.0.0 以降、この directory は Git の追跡対象外になるため、worktree を更新すると旧 release が追跡していた 4 file は削除されます。更新後、backup から `stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json` を戻し、`config_example/` から `whitelist.json` と `blocklist.json` を追加します。
+
+旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID を `whitelist.json` の key へ手動移行し、その環境変数を削除します。copy cooldown 免除、Bot 認証の代行保証、自動処分からの保護だけが必要なら値は空 object `{}` で構いません。旧 `/block` と `/unblock` の能力を維持するには `"isCanBlock": true` と `"isCanUnBlock": true` を明示し、その他は必要な permission だけ有効にします。全 key はスーパー管理者の `/permission help` で確認できます。`/white` と `/permission` はこの file を atomic rewrite するため、runtime user には `config/` directory の write permission が必要です。その他の設定は read-only のままで構いません。
 
 **例外として、機能が有効なままの場合は従来どおり起動を拒否します。** `state.json` の `true` は管理者が明確に有効化したものであり、これを黙って「何もしない」状態に格下げすると、グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えません。そこで起動時に一度だけ照合します。いずれかのチャットで有効なままの任意機能は、資格情報と設定が揃っていなければならず、欠けていればチャット id と欠落項目を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。対処は前提を復旧するか、取り除く前に `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` を実行することです。
 

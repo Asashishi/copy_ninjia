@@ -1,4 +1,4 @@
-/** 非本地贴纸目录媒体描述（packages/ai/imageDescription.ts）的临时内存缓存。 */
+/** 非本地贴纸目录媒体描述（packages/aiChat/ai/imageDescription.ts）的临时内存缓存。 */
 
 import { LruCache } from "../../../libs/lruCache";
 import { MEDIA_DESCRIPTION_CACHE_MAX } from "../../../consts/aiChat/media";

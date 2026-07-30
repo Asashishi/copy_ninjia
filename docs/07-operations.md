@@ -38,7 +38,7 @@ WantedBy=multi-user.target
 
 数据根目录先由部署工具预建：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。容器部署把同一目录作为持久卷挂载，owner 由宿主或 init container 设置；`memory/` 不要放容器临时层。
 
-升级到带权限门禁的版本前先停掉所有实例，再检查并迁移已有目录：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。程序会以 `0750` 补建数据根及 `logs/`、`memory/`，并校验这些目录属于运行 UID；`config/` 是项目内只读部署配置，不属于独立运行时数据根。已有目录若比 `0750` 更宽会拒绝启动，不会擅自 chmod。若部署需要不同 owner/group，请替换命令中的账户，但仍须保证运行用户可写且 mode 不宽于 `0750`。
+升级到带权限门禁的版本前先停掉所有实例，再检查并迁移已有目录：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。程序会以 `0750` 补建数据根及 `logs/`、`memory/`，并校验这些目录属于运行 UID；`config/` 是项目内的部署配置，不属于独立运行时数据根，其中 `whitelist.json` 会被 `/white` 与 `/permission` 原子改写，因此运行用户必须能在该目录创建临时文件并 rename，其余配置可保持只读。已有数据根若比 `0750` 更宽会拒绝启动，不会擅自 chmod。若部署需要不同 owner/group，请替换命令中的账户，但仍须保证运行用户可写且 mode 不宽于 `0750`。
 
 进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
 

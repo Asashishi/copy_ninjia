@@ -73,12 +73,12 @@
 ## AI ツールの追加
 
 1. **名前定数**：[`packages/consts/tools.ts`](../../packages/consts/tools.ts) にツール名を定義します。目に見える副作用がある場合は `ACTION_TOOL_NAMES` に含めるべきか確認します。
-2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`packages/ai/tools/index.ts`](../../packages/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator がドメイン定義を SDK の `FunctionDeclaration` に変換します。
-3. **実装**：`packages/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
-4. **登録**：静的 query tool は `packages/ai/tools/index.ts` の dispatch へ、action tool は `packages/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
+2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator がドメイン定義を SDK の `FunctionDeclaration` に変換します。
+3. **実装**：`packages/aiChat/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
+4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
 5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、Google Search、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
 6. **Prompt**：必要なら `packages/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
-7. **テスト + 文書**：`test/ai/` または対応する Worker パスにテストを追加し、必要ならルート README のツール行を更新します。
+7. **テスト + 文書**：`test/aiChat/ai/` または対応する feature／Worker パスにテストを追加し、必要ならルート README のツール行を更新します。
 
 ## 汎用 JSON API 呼び出しの追加
 
@@ -89,7 +89,7 @@
 ## ペルソナまたは JSON 設定の変更
 
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
-- `config/stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json`：schema は対応する `packages/config/` ファイルにあり、起動時に厳密検証されます。スタンプパックは最大 5 個、mood の重みは正の整数で合計がちょうど 100、広告例文はファイル自体が文字列配列で各要素は空文字不可・重複不可・最大 500 件です。構造変更では、先に `packages/config/` の schema と `packages/types/` の型を変更してから JSON を変更します。不正な設定は起動を拒否します。
+- deployment 固有の変更は Git ignore 対象の `config/` だけに行います。`config_example/` は clean deployment 用 template で、schema または default example が変わるときだけ同期します。`whitelist.json` と `blocklist.json` は network 接続前に厳密ロードし、前者は `/white` と `/permission` が atomic rewrite します。`stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json` は feature ごとに遅延検証します。スタンプパックは最大 5 個、mood の重みは正の整数で合計 100、広告例文は空文字・重複不可で最大 500 件です。構造変更では先に `packages/config/` の schema と `packages/types/` の型を更新してから JSON を変更します。
 
 ## 環境変数の追加
 

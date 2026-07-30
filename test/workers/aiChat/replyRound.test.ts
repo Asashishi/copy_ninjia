@@ -45,9 +45,9 @@ const buildReplyPromptSections = mock((..._args: unknown[]): ReplyPromptSections
 const recordChatMessage = mock((..._args: unknown[]): void => {});
 const logError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../packages/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat }));
-mock.module("../../../packages/ai/stickers/sendLock", () => ({ createStickerSendLock }));
-mock.module("../../../packages/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
+mock.module("../../../packages/aiChat/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat }));
+mock.module("../../../packages/aiChat/ai/stickers/sendLock", () => ({ createStickerSendLock }));
+mock.module("../../../packages/aiChat/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
 mock.module("../../../packages/workers/aiChat/geminiReply", () => ({ callGemini }));
 mock.module("../../../packages/workers/aiChat/promptContext", () => ({ buildReplyPromptSections }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
@@ -289,6 +289,36 @@ describe("AI 单轮回复生命周期", () => {
     });
 
     expect(capturedContext?.imageGenerationRequested).toBe(true);
+  });
+
+  test("仅回复或 @ 直接触发把发送者 id 交给唤起者重点区块", async () => {
+    await runRound({ triggerSenderId: 7 });
+    expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).toEqual(
+      expect.objectContaining({ directInvokerId: 7 })
+    );
+
+    await runRound({ triggerSenderId: 8, isRandomTrigger: true });
+    expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).not.toHaveProperty("directInvokerId");
+
+    await runRound({
+      triggerSenderId: 9,
+      mediaComment: { kind: "photo", senderId: 9, senderName: "Carol", description: "一张夜景" },
+    });
+    expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).not.toHaveProperty("directInvokerId");
+
+    await runRound({
+      triggerSenderId: 10,
+      mediaComment: {
+        kind: "photo",
+        senderId: 10,
+        senderName: "Dave",
+        description: "一张夜景",
+        directTriggerReason: "reply",
+      },
+    });
+    expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).toEqual(
+      expect.objectContaining({ directInvokerId: 10 })
+    );
   });
 
   test("构造上下文失败仍释放贴纸锁与并发位，但不会启动心跳", async () => {

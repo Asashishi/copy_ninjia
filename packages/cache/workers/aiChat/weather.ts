@@ -2,9 +2,9 @@ import type { TimedCache } from "../../../types/cache";
 import type { TokyoWeatherResult } from "../../../types/tools";
 
 /**
- * 东京天气服务（packages/ai/weather.ts）的内存缓存：仅存最近一次成功结果及其
+ * 东京天气服务（packages/aiChat/ai/weather.ts）的内存缓存：仅存最近一次成功结果及其
  * 时刻（失败不缓存，下次照常重试）。get_tokyo_weather 工具与心情系统
- * （ai/mood.ts）都经 ai/weather.ts 的 currentTokyoWeather 读取，不直接
+ * （aiChat/ai/mood.ts）都经 aiChat/ai/weather.ts 的 currentTokyoWeather 读取，不直接
  * import 这个对象；刷新节奏见 consts/weather.ts 的 WEATHER_REFRESH_INTERVAL_MS。
  */
 export const weatherCache: TimedCache<TokyoWeatherResult> = {

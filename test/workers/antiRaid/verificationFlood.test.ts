@@ -19,7 +19,6 @@ function recordDelete(messageId: number): string {
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../packages/infra/config", () => ({ PRIVILEGED_USERS_ID: [] }));
 mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<number> => {

@@ -43,6 +43,7 @@ const replacedJoin: AntiRaidWorkerMessage = {
   type: "join",
   chatId: -1001,
   member: { id: 42, first_name: "Joiner" },
+  actorIsWhitelisted: false,
 };
 
 beforeEach(() => {

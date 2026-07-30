@@ -14,6 +14,7 @@ import type {
   AiMemoryDeleteDiskMessage,
   AiMemoryDiskMessage,
   AiMemoryPersistedReply,
+  DiskIORespawnListener,
   StickerCatalogDiskMessage,
 } from "../../../packages/types/diskIO";
 
@@ -44,11 +45,11 @@ mock.module("../../../packages/libs/supervisedWorker", () => ({
     terminate: async (): Promise<void> => {},
   }),
 }));
-mock.module("../../../packages/ai/persistence", () => ({
+mock.module("../../../packages/aiChat/ai/persistence", () => ({
   postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
   onAiMemoryDeletedPersisted: (_callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {},
   onAiMemoryPersisted: (_callback: (reply: AiMemoryPersistedReply) => void): void => {},
-  onDiskIORespawn: (_callback: () => void): void => {},
+  onDiskIORespawn: (_owner: string, _listener: DiskIORespawnListener): void => {},
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),

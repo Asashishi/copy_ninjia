@@ -41,7 +41,12 @@ beforeEach(() => {
 });
 
 function joinMessage(chatId: number, userId: number): AntiRaidWorkerMessage {
-  return { type: "join", chatId, member: { id: userId, first_name: "Joiner" } };
+  return {
+    type: "join",
+    chatId,
+    member: { id: userId, first_name: "Joiner" },
+    actorIsWhitelisted: false,
+  };
 }
 
 describe("黑名单入群秒踢的投递侧", () => {

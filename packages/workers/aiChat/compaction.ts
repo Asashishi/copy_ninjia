@@ -3,9 +3,9 @@ import { sleep } from "../../libs/sleep";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { GenerateContentResponse } from "@google/genai";
 import { sanitizeInline, truncateInline } from "../../libs/text";
-import { formatBufferedMessageLine } from "../../ai/utils/chatTranscript";
-import { requestGeminiResponse } from "../../ai/gemini";
-import { extractOutputText } from "../../ai/utils/geminiResponse";
+import { formatBufferedMessageLine } from "../../aiChat/ai/utils/chatTranscript";
+import { requestGeminiResponse } from "../../aiChat/ai/gemini";
+import { extractOutputText } from "../../aiChat/ai/utils/geminiResponse";
 import {
   COMPACTION_MAX_PENDING_PER_CHAT,
   GEMINI_SUMMARY_MODEL,

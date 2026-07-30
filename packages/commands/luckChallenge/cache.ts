@@ -9,6 +9,7 @@ import {
 import { DAILY_LUCK_CACHE_MAX, LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../consts/luckChallenge";
 import { logger } from "../../infra/logger";
 import { getTokyoDateKey } from "../../libs/time";
+import type { DiskIORecoveryTransport } from "../../types/diskIO";
 import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw, LuckTier } from "../../types/luckChallenge";
 import { deriveLuckDraw } from "./draw";
@@ -52,32 +53,76 @@ function admitDailyLuckEntry(cacheKey: string, draw: LuckDraw): boolean {
   return true;
 }
 
-/** 跨东京零点时向唯一磁盘线程取得新日密钥，并整体切换日缓存。 */
-export async function ensureLuckCacheFreshForToday(): Promise<void> {
-  const todayKey: string = getTokyoDateKey();
-  if (todayKey === luckCacheState.dayKey && luckReceiptSecretState.current?.day === todayKey) return;
-  if (luckRuntimeState.dayRefreshPromise !== null) return luckRuntimeState.dayRefreshPromise;
+type LuckSecretLoader = (day: string) => Promise<LuckReceiptSecret>;
 
-  luckRuntimeState.dayRefreshPromise = (async (): Promise<void> => {
-    let requestedDay: string = todayKey;
-    for (;;) {
-      const secret: LuckReceiptSecret = await ensureLuckReceiptSecret(requestedDay);
-      if (secret.day !== requestedDay) {
-        throw new Error(`Disk I/O Worker returned luck secret for ${secret.day}, expected ${requestedDay}`);
-      }
-      const currentDay: string = getTokyoDateKey();
-      if (currentDay === requestedDay) {
-        adoptLuckSecret(secret);
-        return;
-      }
-      requestedDay = currentDay;
+interface EnsureLuckCacheFreshOptions {
+  loadSecret: LuckSecretLoader;
+  retryAfterSharedFailure: boolean;
+}
+
+async function rotateLuckCache(
+  requestedDay: string,
+  loadSecret: LuckSecretLoader
+): Promise<void> {
+  let targetDay: string = requestedDay;
+  for (;;) {
+    const secret: LuckReceiptSecret = await loadSecret(targetDay);
+    if (secret.day !== targetDay) {
+      throw new Error(`Disk I/O Worker returned luck secret for ${secret.day}, expected ${targetDay}`);
     }
-  })();
-  try {
-    await luckRuntimeState.dayRefreshPromise;
-  } finally {
-    luckRuntimeState.dayRefreshPromise = null;
+    const currentDay: string = getTokyoDateKey();
+    if (currentDay === targetDay) {
+      adoptLuckSecret(secret);
+      return;
+    }
+    targetDay = currentDay;
   }
+}
+
+async function ensureLuckCacheFresh({
+  loadSecret,
+  retryAfterSharedFailure,
+}: EnsureLuckCacheFreshOptions): Promise<void> {
+  for (;;) {
+    const todayKey: string = getTokyoDateKey();
+    if (
+      todayKey === luckCacheState.dayKey &&
+      luckReceiptSecretState.current?.day === todayKey
+    ) {
+      return;
+    }
+    const sharedRefresh: Promise<void> | null = luckRuntimeState.dayRefreshPromise;
+    if (sharedRefresh !== null) {
+      try {
+        await sharedRefresh;
+      } catch (error: unknown) {
+        if (!retryAfterSharedFailure) throw error;
+      } finally {
+        if (luckRuntimeState.dayRefreshPromise === sharedRefresh) {
+          luckRuntimeState.dayRefreshPromise = null;
+        }
+      }
+      continue;
+    }
+    const refresh: Promise<void> = rotateLuckCache(todayKey, loadSecret);
+    luckRuntimeState.dayRefreshPromise = refresh;
+    try {
+      await refresh;
+      return;
+    } finally {
+      if (luckRuntimeState.dayRefreshPromise === refresh) {
+        luckRuntimeState.dayRefreshPromise = null;
+      }
+    }
+  }
+}
+
+/** 跨东京零点时向唯一磁盘线程取得新日密钥，并整体切换日缓存。 */
+export function ensureLuckCacheFreshForToday(): Promise<void> {
+  return ensureLuckCacheFresh({
+    loadSecret: ensureLuckReceiptSecret,
+    retryAfterSharedFailure: false,
+  });
 }
 
 function currentLuckSecret(): LuckReceiptSecret {
@@ -142,22 +187,25 @@ export function promotePendingDraw(cacheKey: string, confirmedForToday: boolean 
 function initializeRespawnRecovery(): void {
   if (luckRuntimeState.respawnRecoveryInitialized) return;
   luckRuntimeState.respawnRecoveryInitialized = true;
-  onDiskIORespawn((): void => {
-    void ensureLuckCacheFreshForToday()
-      .then((): void => {
-        for (const [key, draw] of dailyLuckCache) {
-          postDiskIO({
-            type: "luckDraw",
-            day: luckCacheState.dayKey,
-            key,
-            label: draw.tier.label,
-            fortunePercent: draw.fortunePercent,
-          });
-        }
-      })
-      .catch((error: unknown): void => {
-        logger.error("Failed to restore daily luck secret after Disk I/O Worker respawn:", error);
-      });
+  onDiskIORespawn("daily luck", async (
+    transport: DiskIORecoveryTransport
+  ): Promise<boolean> => {
+    await ensureLuckCacheFresh({
+      loadSecret: transport.ensureLuckReceiptSecret,
+      retryAfterSharedFailure: true,
+    });
+    for (const [key, draw] of dailyLuckCache) {
+      if (!transport.post({
+        type: "luckDraw",
+        day: luckCacheState.dayKey,
+        key,
+        label: draw.tier.label,
+        fortunePercent: draw.fortunePercent,
+      })) {
+        return false;
+      }
+    }
+    return true;
   });
 }
 

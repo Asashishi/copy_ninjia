@@ -18,6 +18,7 @@ import {
   releaseCopySlot,
 } from "./copySlot";
 import type { CopySlotDecision } from "../types/copy/slot";
+import { resolveCommandActor } from "./commandActor";
 
 /**
  * 处理 /copy、/r_copy、/nya_copy 和 /ja_copy 指令。目标既可以通过 @username
@@ -92,7 +93,7 @@ export async function handleCopyCommand(
   let slotCommitted: boolean = false;
   let targetUser: CachedUser | undefined;
   try {
-    cooldownClaim = await claimCopyCooldownOrReject(ctx.from, chatId, messageId);
+    cooldownClaim = await claimCopyCooldownOrReject(resolveCommandActor(ctx), chatId, messageId);
     if (cooldownClaim.rejected) return;
 
     targetUser = await resolveCopyCommandTarget(ctx, "/copy");

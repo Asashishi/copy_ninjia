@@ -38,7 +38,7 @@ flowchart TD
 
 メインスレッド側 Anti-Raid の入口は引き続き [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) が編成し、ロックダウン復旧と認証ミラー受信は [`packages/antiRaid/lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) と [`packages/antiRaid/verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts) が担当します。Worker 内の認証 interpreter は [`packages/workers/antiRaid/`](../../packages/workers/antiRaid/) で、状態・復元の core、受信 event 変換、Telegram 副作用、reminder delivery owner に分割されています。各モジュールは同じ dispatcher を共有し、状態機械と revision の正式な入口を 1 つに保ちます。
 
-Worker のクラッシュはレート制限付きで自己修復しますが、ホスト実装は 2 系統です。AI と Anti-Raid は [`packages/libs/supervisedWorker.ts`](../../packages/libs/supervisedWorker.ts) を共有します。Disk I/O 自身はディスクへ書く logger に依存できないため、[`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) に console-only の独自復旧処理があります。再構築後はメインスレッドのミラーまたはディスクスナップショットから再生します。再起動予算を使い切ると、[`packages/infra/workerSupervisor.ts`](../../packages/infra/workerSupervisor.ts) などの fatal 境界がライフサイクルへ停止を通知します。
+Worker のクラッシュはレート制限付きで自己修復しますが、ホスト実装は 2 系統です。AI と Anti-Raid は [`packages/libs/supervisedWorker.ts`](../../packages/libs/supervisedWorker.ts) を共有します。Disk I/O 自身はディスクへ書く logger に依存できないため、[`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) に console-only の独自復旧処理があります。再構築後はメインスレッドのミラーまたはディスクスナップショットから再生します。Disk I/O は recovery load、全 domain mirror の replay、復旧窓の FIFO 排出がすべて成功するまで writable にならず、どれか 1 つでも失敗すればその世代を終了して fatal shutdown を要求します。再起動予算を使い切ると、[`packages/infra/workerSupervisor.ts`](../../packages/infra/workerSupervisor.ts) などの fatal 境界がライフサイクルへ停止を通知します。
 
 ## 1 件のメッセージが通る経路
 
@@ -100,7 +100,7 @@ flowchart TD
 
 1. データルートを再帰的に作成して**事前検査**します。書き込み、ファイル fsync、同一ディレクトリ内 hard link、アトミック rename、ディレクトリ fsync のどれかが失敗すると、実パスを示して起動を拒否します。
 2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
-3. **StateStore を復元**します。トップレベルの孤立した一時ファイルを削除してから、`state.json` の主・副コピーを厳密に検証して復元します。すべてネットワーク接続や Worker 作成より前です。`config/` の 4 つの JSON は**ここでは事前読み込みしません**。いずれもチャットごとの opt-in 機能に属するため、検証は対応するトグルコマンドへ移しました（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) を参照）。`state.json` の復元後にもう一度照合します。いずれかのチャットで有効なままの任意機能は資格情報と設定が揃っている必要があり、欠けていればチャット id を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。
+3. **StateStore と global security configuration を復元**します。トップレベルの孤立した一時ファイルを削除し、`state.json` の主・副コピーを厳密に検証して復元するとともに、`config/whitelist.json` と `config/blocklist.json` をロードします。global input のいずれかが不正なら network 接続や Worker 作成より前に起動を拒否します。`config/` の残り 4 つの optional feature JSON は**ここでは事前読み込みしません**。chat ごとの opt-in feature に属するため、検証は対応する toggle command へ移しました（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) を参照）。`state.json` の復元後にもう一度照合し、有効なままの optional feature に credential または設定が欠けていれば chat id を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。
 4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータに加え、`memory/blocklist/blocklist.json` の `/block` 正式リストと `memory/blocklist/removals.json` の未完了 removal outbox を復元します。どれかのドメインで復元に失敗すると、部分状態での起動を拒否します。
 5. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
 6. **AI Worker** を初期化し、`state.json` で AI が明示的に有効なグループだけを hydrate します。その後、運勢と認証待ちのミラーを復元し、**Anti-Raid Worker** を初期化して、最後に acknowledgement-safe runner を開始します。

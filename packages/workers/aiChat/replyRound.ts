@@ -1,7 +1,7 @@
-import { startChatActionHeartbeat } from "../../ai/chatActionHeartbeat";
-import { createStickerSendLock } from "../../ai/stickers/sendLock";
-import { createReplyToolset } from "../../ai/tools/replyToolset/orchestrator";
-import { buildSelfRecordContext } from "../../ai/utils/selfRecord";
+import { startChatActionHeartbeat } from "../../aiChat/ai/chatActionHeartbeat";
+import { createStickerSendLock } from "../../aiChat/ai/stickers/sendLock";
+import { createReplyToolset } from "../../aiChat/ai/tools/replyToolset/orchestrator";
+import { buildSelfRecordContext } from "../../aiChat/ai/utils/selfRecord";
 import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { activeReplyCounts, longTriggerTimes } from "../../cache/workers/aiChat/replies";
 import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";
@@ -78,6 +78,13 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
   const imageGenerationAllowed: boolean = imageGenerationRequested &&
     !isRandomTrigger &&
     (mediaComment === undefined || mediaComment.directTriggerReason !== undefined);
+  // 随机媒体评价也以 isRandomTrigger=false 进入，因此直接唤起不能只看这一位。
+  // 判据与上面的生图资格边界一致：普通文字非随机触发必为回复/@，媒体轮则
+  // 还必须显式带 directTriggerReason。
+  const directInvokerId: number | undefined =
+    !isRandomTrigger && (mediaComment === undefined || mediaComment.directTriggerReason !== undefined)
+      ? triggerSenderId
+      : undefined;
 
   const selfInfo: AiBotInfo | null = botInfoState.current;
   if (!selfInfo) return false;
@@ -108,6 +115,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
     try {
       const promptSections: ReplyPromptSections | null = buildReplyPromptSections(chatId, selfInfo, {
         triggerMessageId: replyToMessageId,
+        ...(directInvokerId !== undefined ? { directInvokerId } : {}),
         isRandomTrigger,
         mediaComment,
         queuedTrigger,

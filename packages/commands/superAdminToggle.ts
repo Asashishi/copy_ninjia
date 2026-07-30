@@ -1,8 +1,15 @@
 import type { CommandContext, Context } from "grammy";
 import type { User } from "@grammyjs/types";
 import { sendMessage } from "../infra/telegram";
-import { formatMockerLabel } from "../users/userLabel";
+import { formatUserLabel } from "../users/userLabel";
 import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import type { WhitelistPermissionKey } from "../types/whitelist";
+import type { CachedUser } from "../types/chatState";
+import {
+  hasCommandPermission,
+  isSuperAdminActor,
+  resolveCommandActor,
+} from "./commandActor";
 
 /**
  * 发起人是否是 SUPER_ADMIN_USER_ID 本人。/ai_chat、/ja_copy、/init、/send
@@ -19,13 +26,14 @@ export function isSuperAdmin(fromUser: User | undefined): boolean {
 export interface SuperAdminToggleMessages {
   rejection: (mockerLabel: string) => string;
   usage: string;
+  /** 省略时仅允许超级管理员；提供时允许拥有该项白名单权限的身份。 */
+  permission?: WhitelistPermissionKey;
 }
 
 /**
- * /ai_chat、/ja_copy（开关分支）、/init 共用的权限与参数校验：发起人必须是
- * SUPER_ADMIN_USER_ID 本人，且 ctx.match 必须是 enable/disable 之一。任一
- * 校验不过时按对应文案回复嘲讽/用法提示并返回 undefined，调用方直接 return；
- * 全部通过时返回解析出的 arg，调用方只需处理各自的状态字段与成功文案。
+ * /ai_chat、/ja_copy（开关分支）、/init、/ad_detect 共用的权限与参数校验：
+ * 超级管理员恒可用；提供 messages.permission 时，白名单身份也可单独获权，
+ * 省略时则保持超级管理员独占。ctx.match 还必须是 enable/disable 之一。
  */
 export async function resolveSuperAdminToggleArg(
   ctx: CommandContext<Context>,
@@ -33,12 +41,15 @@ export async function resolveSuperAdminToggleArg(
 ): Promise<"enable" | "disable" | undefined> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const fromUser: User | undefined = ctx.from;
+  const actor: CachedUser | undefined = resolveCommandActor(ctx);
+  const isAuthorized: boolean = messages.permission === undefined
+    ? isSuperAdminActor(ctx)
+    : hasCommandPermission(ctx, messages.permission, true);
 
-  if (!isSuperAdmin(fromUser)) {
+  if (!actor || !isAuthorized) {
     await sendMessage({
       chatId,
-      text: messages.rejection(formatMockerLabel(fromUser)),
+      text: messages.rejection(actor ? formatUserLabel(actor) : "哪个杂鱼"),
       replyToMessageId: messageId,
     });
     return undefined;

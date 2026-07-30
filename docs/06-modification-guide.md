@@ -73,12 +73,12 @@
 ## 新增一个 AI 工具
 
 1. **名称常量**：在 [`packages/consts/tools.ts`](../packages/consts/tools.ts) 定义工具名；若工具产生可见副作用，确认是否应加入 `ACTION_TOOL_NAMES`。
-2. **定义**：无状态的静态查询工具把 `ToolDefinition` 放进 [`packages/ai/tools/index.ts`](../packages/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一转换成 SDK `FunctionDeclaration`。
-3. **实现**：在 `packages/ai/tools/` 实现执行逻辑；面向 Telegram 的副作用经主线程代理执行，Worker 内不直接持有 Bot 实例。
-4. **注册**：静态查询工具接入 `packages/ai/tools/index.ts` 的分发；行动工具接入 `packages/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
+2. **定义**：无状态的静态查询工具把 `ToolDefinition` 放进 [`packages/aiChat/ai/tools/index.ts`](../packages/aiChat/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一转换成 SDK `FunctionDeclaration`。
+3. **实现**：在 `packages/aiChat/ai/tools/` 实现执行逻辑；面向 Telegram 的副作用经主线程代理执行，Worker 内不直接持有 Bot 实例。
+4. **注册**：静态查询工具接入 `packages/aiChat/ai/tools/index.ts` 的分发；行动工具接入 `packages/aiChat/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
 5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、Google Search，以及贴纸/反应/生成图片各一次成功）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
 6. **提示词**：如需使用规则，在 `packages/consts/aiChat/prompts/` 补充；涉及转录格式的必须复用 `transcript.ts` 共享模板，两侧不得各自手写。
-7. **测试 + 文档**：`test/ai/`（或对应 workers 路径）补测试；根 README「工具」行按需更新。
+7. **测试 + 文档**：`test/aiChat/ai/`（或对应功能/Worker 路径）补测试；根 README「工具」行按需更新。
 
 ## 新增一个通用 JSON API 调用
 
@@ -89,7 +89,7 @@
 ## 修改人设与 JSON 配置
 
 - 人设：改 [`prompt/persona.md`](../prompt/persona.md)，重启生效。与转录格式、身份标记耦合的互动规则由代码注入，不写进人设文件。
-- `config/stickers.json` / `reactions.json` / `mood.json` / `ad_samples.json`：schema 在 `packages/config/` 对应文件，启动时严格校验（贴纸包最多 5 个；mood 权重必须为正整数且总和恰好 100；广告示例顶层就是字符串数组，条目非空、不重复、最多 500 条）。改结构时先改 `packages/config/` 的 schema 与 `packages/types/`，再改 JSON，配错会拒绝启动。
+- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`whitelist.json` / `blocklist.json` 在联网前严格加载，前者还会被 `/white` 与 `/permission` 原子改写；`stickers.json` / `reactions.json` / `mood.json` / `ad_samples.json` 按功能惰性校验（贴纸包最多 5 个；mood 权重必须为正整数且总和恰好 100；广告示例顶层就是字符串数组，条目非空、不重复、最多 500 条）。改结构时先改 `packages/config/` 的 schema 与 `packages/types/`，再改 JSON。
 
 ## 新增环境变量
 

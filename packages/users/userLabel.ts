@@ -16,14 +16,15 @@ export function formatUserLabel(user: CachedUser): string {
 }
 
 /**
- * 破坏性命令（`/block`、`/unblock`）回执里的目标标签。
+ * 接受裸 id 的管理命令回执里的目标标签。
  *
  * 与 formatUserLabel 只差兜底那一档：什么身份字段都没有时退化成「用户 <id>」
  * 而不是泛指的「这个杂鱼」。按裸 id 下的命令正是这一档——那个人可能从没在
  * 本天才见过的群里说过话，缓存里自然什么都没有。回执必须把 id 原样念出来，
  * 否则打错一位数字，管理员从「已经把这个杂鱼踢出去了」里根本看不出来。
- * 频道身份念成「频道 <id>」：`/unblock` 按负数 id 划掉的正是频道马甲，管理员
- * 该从回执里看出本天才把它当成了哪一类目标（决定走哪个解封接口的也是它）。
+ * 频道身份念成「频道 <id>」：`/unblock`、`/permission` 与 `/white` 都接受负数
+ * id，管理员该从回执里看出本天才把它当成了哪一类目标；`/unblock` 还据此决定
+ * 走哪个解封接口。
  * @param user 目标用户/频道；只带 id 的最小身份也接受。
  */
 export function formatTargetLabel(user: CachedUser): string {

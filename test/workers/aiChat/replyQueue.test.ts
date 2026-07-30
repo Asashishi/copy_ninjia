@@ -5,7 +5,8 @@ import {
   resetAiChatReplyCache,
 } from "../../../packages/cache/workers/aiChat/replies";
 import { chatBuffers, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
-import { QUEUED_TRIGGER_SNIPPET_MAX_CHARS, REPLY_ROUND_MAX_CONCURRENT } from "../../../packages/consts/aiChat";
+import { QUEUED_TRIGGER_SNIPPET_MAX_CHARS, REPLY_ROUND_MAX_CONCURRENT, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat";
+import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
 import { drainReplyQueue, pushReplyTrigger, triggerKindFor } from "../../../packages/workers/aiChat/replyQueue";
@@ -31,7 +32,7 @@ describe("AI 回复触发队列", () => {
     // onMessageSent 完全可能把机器人自己的消息推进 chatBuffers。取尾条的话，
     // 排队轮的提示词会渲染成「XX 也在跟你说话（TA 说的是：「机器人上一句」）」
     // ——模型对着自己编造的内容回复。
-    const messages = new LinkedQueue<BufferedMessage>();
+    const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
     const older: BufferedMessage = { messageId: 87, id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" };
     const trigger: BufferedMessage = {
       messageId: 88,

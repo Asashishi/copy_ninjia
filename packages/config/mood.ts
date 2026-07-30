@@ -15,7 +15,7 @@ export interface MoodConfig {
 }
 
 /** 解码倍率表：键必须是对应维度的合法桶名，倍率必须是正有限数——
- *  computeAdjustedWeight 假定倍率乘完权重仍为正（见 ai/mood.ts）。
+ *  computeAdjustedWeight 假定倍率乘完权重仍为正（见 aiChat/ai/mood.ts）。
  *  @param context 报错定位串，如 `weatherMultipliers of "开心"`。 */
 function parseMultipliers<Bucket extends string>(
   value: unknown,

@@ -57,8 +57,8 @@ function cachedReadiness(cache: ConfigReadinessCache, probes: readonly Deploymen
 
 /**
  * AI 闲聊要读的三份部署配置：贴纸白名单、反应词表、心情表。三份缺一不可
- * ——回复流水线在 Worker 里同步取用它们（ai/tools/stickers.ts、ai/reactions.ts、
- * ai/mood.ts），任一份解析失败都会让那条线程当场抛出而不是降级。
+ * ——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、aiChat/ai/reactions.ts、
+ * aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场抛出而不是降级。
  */
 export function aiChatConfigReadiness(): ConfigReadiness {
   return cachedReadiness(aiChatConfigReadinessCache, [

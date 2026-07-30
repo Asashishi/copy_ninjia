@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
@@ -22,7 +22,10 @@ const {
   resetAiChatMemoryCache,
 } = await import("../../../packages/cache/workers/aiChat/memory");
 const { activeReplyCounts, resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
-const { AI_MEMORY_MAX_CHATS } = await import("../../../packages/consts/aiChat/memory");
+const {
+  AI_MEMORY_MAX_CHATS,
+  VERBATIM_CONTEXT_MAX,
+} = await import("../../../packages/consts/aiChat/memory");
 
 function entry(text: string): BufferedMessage {
   return { messageId: 1, id: 1, firstName: "Alice", lastName: "", text, at: "00:00" };
@@ -117,7 +120,10 @@ describe("AI rolling-memory capacity", () => {
   test("LRU 淘汰优先跳过仍有回复轮次在途的最老群", () => {
     for (let index: number = 0; index < AI_MEMORY_MAX_CHATS; index++) {
       const chatId: number = -10_000 - index;
-      chatBuffers.set(chatId, new LinkedQueue<BufferedMessage>());
+      chatBuffers.set(
+        chatId,
+        new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX)
+      );
       chatLastActivityTimes.set(chatId, index);
     }
     const activeOldestChatId: number = -10_000;
@@ -135,7 +141,10 @@ describe("AI rolling-memory capacity", () => {
   test("所有候选群都有在途回复时退化为淘汰最老群", () => {
     for (let index: number = 0; index < AI_MEMORY_MAX_CHATS; index++) {
       const chatId: number = -30_000 - index;
-      chatBuffers.set(chatId, new LinkedQueue<BufferedMessage>());
+      chatBuffers.set(
+        chatId,
+        new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX)
+      );
       chatLastActivityTimes.set(chatId, index);
       activeReplyCounts.set(chatId, 1);
     }

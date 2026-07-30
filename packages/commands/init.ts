@@ -10,8 +10,7 @@ import { invalidateBotAdminStatus, isBotAdminIn, teardownChatRuntime } from "../
  * ChatState.isInitEnabled，缺省未初始化）。禁用/未初始化时，这个群的更新在
  * app/registerHandlers.ts 最前端的网关中间件处直接丢弃，不做任何监听/
  * 复读/AI 相关工作
- * ——仅 SUPER_ADMIN_USER_ID 本人可用，不走 PRIVILEGED_USERS_ID 白名单，与
- * /ai_chat /ja_copy 共用同一批权限。
+ * ——只有超级管理员可以控制这个总开关。
  */
 export async function handleInitCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {

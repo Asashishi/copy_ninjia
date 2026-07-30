@@ -1,5 +1,4 @@
 import { logger } from "../../infra/logger";
-import { PRIVILEGED_USERS_ID } from "../../infra/config";
 import {
   answerCallbackQuery,
   joinVerificationApi,
@@ -62,26 +61,29 @@ export function handleJoinEvent({
   dispatchVerification,
 }: HandleJoinEventParams): void {
   const { chatId, member }: NewMemberMessage = message;
+  const key: string = verificationKey(chatId, member.id);
   const entryState: VerificationState | undefined =
-    verificationEntries.get(verificationKey(chatId, member.id))?.state;
+    verificationEntries.get(key)?.state;
+  const actorId: number | undefined = message.actorId;
   const invitedByOther: boolean =
-    message.actorId !== undefined && message.actorId !== member.id;
+    actorId !== undefined && actorId !== member.id;
+  const adminIds: Set<number> | undefined = freshAdminIds(chatId);
   const event: JoinEvent = {
     type: "join",
     memberId: member.id,
     label: memberLabel(member),
     isBot: member.isBot === true,
     announcementMessageId: message.announcementMessageId,
-    actorId: message.actorId,
+    actorId,
     identityExempt: message.exempt === true,
     // 私密模式期间只认同步命中的白名单或新鲜管理员缓存。
     actorSyncExempt: invitedByOther &&
       (
-        PRIVILEGED_USERS_ID.includes(message.actorId!) ||
-        freshAdminIds(chatId)?.has(message.actorId!) === true
+        message.actorIsWhitelisted ||
+        (actorId !== undefined && adminIds?.has(actorId) === true)
       ),
-    adminCacheFresh: freshAdminIds(chatId) !== undefined,
-    lockdownActive: false,
+    adminCacheFresh: adminIds !== undefined,
+    lockdownActive: lockdownEntries.has(chatId),
     recentComment: takeRecentComment(chatId, member.id),
     now: Date.now(),
   };
@@ -89,11 +91,9 @@ export function handleJoinEvent({
     // joinedAt 与滑动窗口使用同一个时间戳，retractJoin 才能按值精确撤销。
     recordJoin(chatId, event.now);
   }
-  event.lockdownActive = lockdownEntries.has(chatId);
   dispatchVerification(chatId, member.id, event);
 
   // 把早到的楼中楼确认绑定到本次 join 的精确状态对象。
-  const key: string = verificationKey(chatId, member.id);
   const currentState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
   const confirmation: ThreadCommentConfirmation | undefined =
@@ -115,6 +115,7 @@ interface ConfirmedCommentParams {
 }
 
 interface ConfirmThreadCommentParams extends ConfirmedCommentParams {
+  key: string;
   allowFloodTerminalExemption: boolean;
 }
 
@@ -145,9 +146,9 @@ function confirmThreadComment({
   message,
   observedAt,
   dispatchVerification,
+  key,
   allowFloodTerminalExemption,
 }: ConfirmThreadCommentParams): void {
-  const key: string = verificationKey(message.chatId, message.userId);
   const expectedState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
   const existing: ThreadCommentConfirmation | undefined =
@@ -235,6 +236,7 @@ export function handleTrackedMessageEvent({
   }
 
   if (message.isThreadReply === true) {
+    const key: string = verificationKey(message.chatId, message.userId);
     const cachedHasLinked: boolean | undefined =
       cachedChatHasLinkedChannel(message.chatId);
     if (cachedHasLinked === true) {
@@ -247,9 +249,7 @@ export function handleTrackedMessageEvent({
     }
     // 冷缓存先 fail closed；确认有关联频道后再以状态对象同一性升级为豁免。
     const previousState: VerificationState | undefined =
-      verificationEntries.get(
-        verificationKey(message.chatId, message.userId)
-      )?.state;
+      verificationEntries.get(key)?.state;
     dispatchVerification(message.chatId, message.userId, {
       type: "trackedMessage",
       messageId: message.messageId,
@@ -258,13 +258,12 @@ export function handleTrackedMessageEvent({
     });
     if (cachedHasLinked === undefined) {
       const currentState: VerificationState | undefined =
-        verificationEntries.get(
-          verificationKey(message.chatId, message.userId)
-        )?.state;
+        verificationEntries.get(key)?.state;
       confirmThreadComment({
         message,
         observedAt,
         dispatchVerification,
+        key,
         allowFloodTerminalExemption:
           previousState?.kind === "pending" &&
           currentState?.kind === "expelling" &&
@@ -306,7 +305,7 @@ export function handleVerificationCallbackEvent({
     type: "callback",
     callbackQueryId: message.callbackQueryId,
     isSelf: message.from.id === message.targetUserId,
-    fromIsPrivileged: PRIVILEGED_USERS_ID.includes(message.from.id),
+    fromIsPrivileged: message.fromIsWhitelisted,
     fromLabel: memberLabel(message.from),
   });
 }

@@ -1,10 +1,12 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import { sendMessage, banChatMember, banChatSenderChat, isChatMember, deleteMessageAfter } from "../infra/telegram";
-import { formatMockerLabel, formatTargetLabel } from "../users/userLabel";
-import { PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
+import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
+import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import { isWhitelisted } from "../config/whitelist";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { resolveCommandTarget } from "./targetResolution";
+import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import { isBotAdminIn } from "../infra/botAdmin";
 import {
   blockUser,
@@ -15,7 +17,6 @@ import {
   wasUserConfirmedKickedInChat,
 } from "../infra/blocklist";
 import { getAllChatStates } from "../infra/storage/stateStore";
-import type { User } from "@grammyjs/types";
 
 /**
  * 处理 /block 指令：把目标写进持久化黑名单，并在所有「机器人是管理员」的群里
@@ -38,16 +39,16 @@ import type { User } from "@grammyjs/types";
  * 释放后由别人重新注册，而 id 不会改指另一个人；这条命令又是不可逆的，因此
  * 拿不准用户名新鲜度时应当用 id 或回复消息。id 只认正整数——群/频道的负数 id
  * 会让处置改去封整个会话身份，那是另一回事。目标若是频道马甲（sender_chat），
- * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限 PRIVILEGED_USERS_ID
- * 白名单内的用户使用——其他任何人尝试都只会被嘲讽，指令本身不会执行。
+ * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限白名单中
+ * isCanBlock=true 的用户或频道身份使用。
  */
 export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const fromUser: User | undefined = ctx.from;
+  const actor: CachedUser | undefined = resolveCommandActor(ctx);
 
-  if (!fromUser || !PRIVILEGED_USERS_ID.includes(fromUser.id)) {
-    const replyText: string = `就 ${formatMockerLabel(fromUser)} 也想 /block 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
+  if (!actor || !hasCommandPermission(ctx, "isCanBlock", false)) {
+    const replyText: string = `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /block 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
     await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -92,7 +93,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 那些群级封禁（见 commands/unblock.ts）。回错一条消息、或用了过期的
   // @username 别名，就能把超级管理员或白名单成员踢出并封禁在所有监听群里，
   // 事后要一个群一个群手动解封——值得在入口就挡住。
-  if (targetUser.id === SUPER_ADMIN_USER_ID || PRIVILEGED_USERS_ID.includes(targetUser.id)) {
+  if (targetUser.id === SUPER_ADMIN_USER_ID || isWhitelisted(targetUser.id)) {
     await sendMessage({
       chatId,
       text: `笨蛋，${formatTargetLabel(targetUser)} 可是自己人，本天才才不会把自己人写进小本本♡`,

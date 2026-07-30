@@ -30,11 +30,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
   if (!message) return;
 
   recordChatTitleFromChat(message.chat);
-  const botIdentity: AiBotInfo = {
-    id: ctx.me.id,
-    first_name: ctx.me.first_name,
-    username: ctx.me.username,
-  };
+  const botIdentity: AiBotInfo = ctx.me;
 
   // 内联结果要自录入上下文但不触发主动行为；普通自发消息回弹则完全忽略。
   if (message.via_bot?.id === botIdentity.id) {

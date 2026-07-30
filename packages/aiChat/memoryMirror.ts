@@ -3,7 +3,7 @@ import {
   onAiMemoryPersisted,
   onDiskIORespawn,
   postDiskIO,
-} from "../ai/persistence";
+} from "./ai/persistence";
 import {
   aiMemoryDeleteWaiters,
   aiMemoryRevisionCounters,
@@ -15,7 +15,11 @@ import {
 } from "../cache/main/aiChat";
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import type { AiMemoryDeleteWaiter } from "../types/aiChat/waiters";
-import type { AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../types/diskIO";
+import type {
+  AiMemoryDeletedPersistedReply,
+  AiMemoryPersistedReply,
+  DiskIORecoveryTransport,
+} from "../types/diskIO";
 
 /**
  * AI 记忆的主线程镜像侧（owner 是 packages/aiChat/index.ts）：按 chat 单调递增的
@@ -136,15 +140,15 @@ onAiMemoryPersisted((reply: AiMemoryPersistedReply): void => {
 
 // diskIOWorker 崩溃重建后，把当前记忆/贴纸目录镜像整份重发给它，补齐上
 // 一次成功落盘之后的增量（见 infra/diskIO.ts 的 onDiskIORespawn 注释）。
-onDiskIORespawn((): void => {
+onDiskIORespawn("AI memory", (transport: DiskIORecoveryTransport): boolean => {
   for (const [chatId, revision] of pendingAiMemoryDeletes) {
-    postDiskIO({ type: "deleteAiMemory", chatId, revision });
+    if (!transport.post({ type: "deleteAiMemory", chatId, revision })) return false;
   }
   for (const [chatId, snapshot] of latestAiMemories) {
     const revision: number = latestAiMemoryRevisions.get(chatId) ?? 0;
     const immediateRevision: number | null | undefined =
       postPurgeAiMemoryPersistRevisions.get(chatId);
-    postDiskIO({
+    if (!transport.post({
       type: "aiMemory",
       chatId,
       revision,
@@ -154,9 +158,12 @@ onDiskIORespawn((): void => {
       revision >= immediateRevision
         ? { persistImmediately: true }
         : {}),
-    });
+    })) {
+      return false;
+    }
   }
   for (const [pack, snapshot] of latestStickerCatalogs) {
-    postDiskIO({ type: "stickerCatalog", pack, snapshot });
+    if (!transport.post({ type: "stickerCatalog", pack, snapshot })) return false;
   }
+  return true;
 });

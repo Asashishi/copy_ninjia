@@ -12,14 +12,25 @@ import type { BlockedUserRecord } from "../../types/diskIO/storage";
  * 的结构必须是完整的（见 workers/diskIO/blocklistFile.ts 的 decodeBlocklist）。
  * 判定路径只用 has()，多存的那点文本不进热路径。
  *
- * 生命周期：启动时由 app/lifecycle.ts 用 diskIOWorker 读回的黑名单文件一次性
- * 灌入（hydrateBlocklist），此后由 /block 增量写入、`/unblock` 删除——都是
- * 先更新本 Map，再投递落盘消息，因此内存永远不落后于磁盘，且本 Map 始终是
- * 名单的权威副本。进程重启后从文件重建；diskIOWorker 崩溃重启不影响本 Map
- * （它是主线程状态，丢失的增量由 infra/blocklist.ts 的 respawn 重放补齐）。
- * 容量随拉黑次数增长，只有 `/unblock` 会让它变小。
+ * 生命周期：启动时由 app/lifecycle.ts 用 diskIOWorker 读回的动态黑名单文件
+ * 一次性灌入（hydrateBlocklist），此后由 /block 增量写入、`/unblock` 删除——
+ * 都是先更新本 Map，再投递落盘消息，因此内存永远不落后于磁盘。本 Map 只对
+ * memory 层权威；完整黑名单还要与 configuredBlockedIds 取并集。进程重启后
+ * 从文件重建；diskIOWorker 崩溃重启不影响本 Map（它是主线程状态，丢失的
+ * 增量由 infra/blocklist.ts 的 respawn 重放补齐）。容量随运行时拉黑次数增长，
+ * 只有 `/unblock` 会让它变小。
  */
 export const blockedUserIds: Map<number, BlockedUserRecord> = new Map();
+
+/**
+ * config/blocklist.json 的静态黑名单 ID。
+ *
+ * 生命周期：应用取得单实例锁后同步加载配置，随后由 hydrateBlocklist 一次性填充；
+ * 进程内只读，修改配置后必须重启。正数是用户，负数是频道身份。它不进入
+ * memory/blocklist/blocklist.json，也不能被 /unblock 覆盖；查询与补扫通过
+ * infra/blocklist/identities.ts 读取它和 blockedUserIds 的并集。
+ */
+export const configuredBlockedIds: Set<number> = new Set();
 
 /**
  * 本进程启动之后新拉黑的 id → 其 blockedAt 文本。只为 diskIOWorker 崩溃重建后

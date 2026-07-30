@@ -2,7 +2,7 @@ import { IMAGE_GENERATION_COOLDOWN_MS } from "../../../consts/aiChat/imageGenera
 import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../../types/aiChat/imageGeneration";
 
 /**
- * AI 生图工具冷却占位（packages/ai/tools/replyToolset/imageGeneration.ts）的
+ * AI 生图工具冷却占位（packages/aiChat/ai/tools/replyToolset/imageGeneration.ts）的
  * 内存状态；aiChatWorker.ts 只驱动周期性 sweepImageGenerationCache 维护。
  */
 

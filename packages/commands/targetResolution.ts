@@ -62,21 +62,20 @@ export interface ResolveCommandTargetParams {
   /**
    * 是否接受裸用户 id 作为目标（缺省不接受）。
    *
-   * 逐命令 opt-in，不做成全局行为：`/block`、`/unblock` 处置的是一个 id，用 id
-   * 指定反而比 @username 更准——用户名可以被释放后由别人重新注册，而 id 不会
-   * 改指另一个人。`/copy` 与中文动作命令则相反，它们要的是一份有名字、有头像的
-   * 身份，拿一个没在本天才见过的群里说过话的裸 id 只能复读出一具空壳。
+   * 逐命令 opt-in，不做成全局行为：`/block`、`/unblock`、`/permission` 与
+   * `/white` 操作的权威目标都是 id，用 id 指定反而比 @username 更准——用户名
+   * 可以被释放后由别人重新注册，而 id 不会改指另一个人。`/copy` 与中文动作命令
+   * 则相反，它们要的是一份有名字、有头像的身份，拿一个没在本天才见过的群里
+   * 说过话的裸 id 只能复读出一具空壳。
    */
   acceptUserId?: boolean;
   /**
    * 是否接受裸会话 id（频道/群的负数 id）作为目标（缺省不接受）。
    *
-   * 只有 `/unblock` 开。频道马甲的 id 本来就会被写进黑名单（`/block` 回复频道
-   * 消息、广告检测命中 `sender_chat`），可把它划掉此前只有回复消息和 `@username`
-   * 两条路，而广告检测正好会删掉那条消息、没有公开 username 的频道也查不到——
-   * 名单上于是存在划不掉的条目。`/block` 不开这条：粘错一个会话 id 会把处置改
-   * 成封掉整个会话身份，而那条命令不可逆；`/unblock` 是恢复方向，指错至多是一次
-   * 空解封。详见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN。
+   * `/unblock`、`/permission` 与 `/white` 开这条路：前者需要保证黑名单里的频道
+   * 身份始终能被划掉，后两者需要直接管理频道白名单及权限。`/block` 不开这条：
+   * 粘错一个会话 id 会把处置改成封掉整个会话身份，而那条命令不可逆；其余三条
+   * 都是可恢复的配置操作。详见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN。
    */
   acceptChatId?: boolean;
 }
@@ -182,7 +181,7 @@ export async function resolveCommandTarget({
   const messageId: number = message.message_id;
   const replyTarget: CachedUser | undefined = resolveReplyTarget(message);
   const trimmedArgument: string = rawArgument.trim();
-  // 回显收在这一层而不是各命令的文案里：四条命令共用同一份 rawArgument。
+  // 回显收在这一层而不是各命令的文案里：所有目标型命令共用同一份 rawArgument。
   const argument: ArgumentTarget | undefined = trimmedArgument.length === 0
     ? undefined
     : resolveArgumentTarget({ trimmedArgument, acceptUserId, acceptChatId });

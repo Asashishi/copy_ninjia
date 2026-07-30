@@ -15,7 +15,9 @@ import { botInfoState } from "../../../packages/cache/workers/aiChat/identity";
 import { chatBuffers, chatLastActivityTimes, dirtyMemoryChats } from "../../../packages/cache/workers/aiChat/memory";
 import { chatMoodExpiresAts, chatMoods } from "../../../packages/cache/workers/aiChat/mood";
 import { compactionChains, compactionPendingCounts } from "../../../packages/cache/workers/aiChat/compaction";
+import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import { VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../packages/types";
 import {
   currentReplyGeneration,
@@ -94,7 +96,7 @@ describe("AI 回复代际状态", () => {
 
   test("Worker 重建清理边界会清空所有领域缓存并停止心跳 timer", () => {
     botInfoState.current = { id: 1, username: "bot", first_name: "Bot" };
-    const messages = new LinkedQueue<BufferedMessage>();
+    const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
     messages.push({ messageId: 2, id: 2, firstName: "Alice", lastName: "", text: "hi", at: "" });
     chatBuffers.set(-1002, messages);
     dirtyMemoryChats.add(-1002);

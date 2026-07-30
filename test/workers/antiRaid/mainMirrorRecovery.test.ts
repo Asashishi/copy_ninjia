@@ -2,6 +2,9 @@ import { describe, expect, mock, test } from "bun:test";
 import type {
   AntiRaidWorkerEvent,
   AntiRaidWorkerMessage,
+  DiskBusinessMessage,
+  DiskIORecoveryTransport,
+  DiskIORespawnListener,
   VerificationDeleteDiskMessage,
   VerificationPersistedReply,
   VerificationSnapshot,
@@ -15,7 +18,7 @@ let supervisorOptions: {
   onRespawn: (post: (message: AntiRaidWorkerMessage) => boolean) => void;
   onGiveUp: () => void;
 } | undefined;
-let diskRespawn: (() => void) | undefined;
+let diskRespawn: DiskIORespawnListener | undefined;
 let persistedAck: ((reply: VerificationPersistedReply) => void) | undefined;
 const chatStates = new Map<number, { lockdown?: {
   phase?: "applying" | "active" | "restoring";
@@ -95,7 +98,9 @@ mock.module("../../../packages/libs/supervisedWorker", () => ({
 mock.module("../../../packages/workers/antiRaid/persistence", () => ({
   flushDiskIO,
   postDiskIO: (message: VerificationUpsertDiskMessage | VerificationDeleteDiskMessage): void => { diskPosts.push(message); },
-  onDiskIORespawn: (callback: () => void): void => { diskRespawn = callback; },
+  onDiskIORespawn: (_owner: string, listener: DiskIORespawnListener): void => {
+    diskRespawn = listener;
+  },
   onVerificationPersisted: (callback: (reply: VerificationPersistedReply) => void): void => { persistedAck = callback; },
 }));
 
@@ -164,7 +169,20 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(1, 2) });
     supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(0, 99) });
     supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 3 });
-    diskRespawn!();
+    const recoveryTransport: DiskIORecoveryTransport = {
+      post: (message: DiskBusinessMessage): boolean => {
+        diskPosts.push(message as VerificationUpsertDiskMessage | VerificationDeleteDiskMessage);
+        return true;
+      },
+      ensureLuckReceiptSecret: async (): Promise<never> => {
+        throw new Error("Unexpected luck secret request.");
+      },
+    };
+    expect(await diskRespawn!(recoveryTransport)).toBeTrue();
+    expect(await diskRespawn!({
+      ...recoveryTransport,
+      post: (): boolean => false,
+    })).toBeFalse();
     expect(pendingVerificationDeletes.size).toBe(1);
     persistedAck!({ type: "verificationPersisted", key: "-1001:42", generation: 1, revision: 3, deleted: true });
     expect(pendingVerificationDeletes.size).toBe(0);

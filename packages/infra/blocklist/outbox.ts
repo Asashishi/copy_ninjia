@@ -13,6 +13,7 @@ import {
   blocklistRemovalCounter,
   blocklistSweepState,
   clearBlocklistSweepState,
+  configuredBlockedIds,
   pendingBlockedRemovals,
   sessionBlockedAt,
   sessionUnblockedIds,
@@ -21,6 +22,11 @@ import { BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES } from "../../consts/antiRaid/bloc
 import { flushDiskIODomain, onDiskIORespawn, postDiskIO } from "../diskIO";
 import { logger } from "../logger";
 import { getAllChatStates } from "../storage/stateStore";
+import {
+  hasBlockedIdentities,
+  isBlockedIdentity,
+  listBlockedIdentityIds,
+} from "./identities";
 import type {
   BlockedMemberRemover,
   PendingBlockedRemoval,
@@ -33,24 +39,53 @@ import type {
   BlocklistRemovalsDiskMessage,
   BlockUserDiskMessage,
   BlockedUserRecord,
+  DiskIORecoveryTransport,
   UnblockUserDiskMessage,
 } from "../../types/diskIO";
 import type { FlushResult } from "../../types/lifecycle";
 import type { BlocklistSweepRecord } from "../../cache/main/blocklist";
 
+/** 恢复出的权限闩锁不重投；等确证权限恢复后以一条新补扫取代旧任务。 */
+function restorePermissionBlockedSweep(
+  chatId: number,
+  pending: PendingBlockedRemoval
+): void {
+  const current: BlocklistSweepRecord | undefined =
+    blocklistSweepState.get(chatId);
+  blocklistSweepState.set(chatId, {
+    removalId: null,
+    sweptAt: null,
+    nextRetryAt: Math.min(
+      current?.nextRetryAt ?? pending.createdAt,
+      pending.createdAt
+    ),
+    resweepRequested: false,
+    failedSweeps: Math.max(
+      current?.failedSweeps ?? 0,
+      pending.attempts
+    ),
+    permissionBlocked: true,
+  });
+}
+
 /**
- * 启动恢复：把权威黑名单与当前格式 outbox 一并灌入主线程镜像。必须在 runner
- * 开始投喂更新之前完成，否则启动瞬间进群的黑名单用户会漏踢。
+ * 启动恢复：把静态配置层、动态 memory 层与当前格式 outbox 一并灌入主线程
+ * 镜像。必须在 runner 开始投喂更新之前完成，否则启动瞬间进群的黑名单用户
+ * 会漏踢。
  */
 export function hydrateBlocklist(
   blocked: Map<number, BlockedUserRecord>,
-  recoveredRemovals: Map<number, PendingBlockedRemoval> = new Map()
+  recoveredRemovals: Map<number, PendingBlockedRemoval> = new Map(),
+  configuredIds: readonly number[] = []
 ): void {
   blockedUserIds.clear();
+  configuredBlockedIds.clear();
   sessionBlockedAt.clear();
   sessionUnblockedIds.clear();
   pendingBlockedRemovals.clear();
+  blocklistSweepState.clear();
   blocklistRemovalCounter.current = 0;
+  for (const id of configuredIds) configuredBlockedIds.add(id);
   for (const [userId, record] of blocked) blockedUserIds.set(userId, { ...record });
   let filtered: boolean = false;
   for (const [removalId, pending] of recoveredRemovals) {
@@ -62,16 +97,30 @@ export function hydrateBlocklist(
     }
     // 补扫不带名单，投递时按当前名单现算；名单为空时任务已没有目标，应销账。
     if (pending.params.probeMembership) {
-      if (blockedUserIds.size === 0) {
+      if (!hasBlockedIdentities()) {
         filtered = true;
         continue;
       }
       pendingBlockedRemovals.set(removalId, { ...pending });
+      if (pending.lastFailure === "missing-permission") {
+        restorePermissionBlockedSweep(pending.params.chatId, pending);
+      } else if (
+        blocklistSweepState.get(pending.params.chatId)?.permissionBlocked !== true
+      ) {
+        blocklistSweepState.set(pending.params.chatId, {
+          removalId,
+          sweptAt: null,
+          nextRetryAt: pending.createdAt,
+          resweepRequested: false,
+          failedSweeps: pending.attempts,
+          permissionBlocked: false,
+        });
+      }
       continue;
     }
     // 冻结名单批次按当前权威名单裁剪：停机期间可能已经人工解除了一部分。
     const userIds: number[] = pending.params.userIds.filter(
-      (userId: number): boolean => blockedUserIds.has(userId)
+      (userId: number): boolean => isBlockedIdentity(userId)
     );
     if (userIds.length === 0) {
       filtered = true;
@@ -84,6 +133,9 @@ export function hydrateBlocklist(
       attempts: pending.attempts,
       lastFailure: pending.lastFailure,
     });
+    if (pending.lastFailure === "missing-permission") {
+      restorePermissionBlockedSweep(pending.params.chatId, pending);
+    }
   }
   if (filtered && !queuePendingBlockedRemovalsSnapshot()) {
     logger.error("Failed to queue the filtered blocklist removal outbox after startup recovery.");
@@ -95,8 +147,12 @@ export function hydrateBlocklist(
  * 其后的领域 flush 才是 durable 边界；这里不做 structured clone 之外的深拷贝。
  * @internal 供同目录 sweep owner 合并权威变更。
  */
-export function queuePendingBlockedRemovalsSnapshot(): boolean {
-  return postDiskIO({
+type BlocklistSnapshotPoster = (message: BlocklistRemovalsDiskMessage) => boolean;
+
+export function queuePendingBlockedRemovalsSnapshot(
+  postMessage: BlocklistSnapshotPoster = postDiskIO
+): boolean {
+  return postMessage({
     type: "blocklistRemovals",
     removals: [...pendingBlockedRemovals],
   } satisfies BlocklistRemovalsDiskMessage);
@@ -124,7 +180,7 @@ export function materializeRemovalParams(
   if (!params.probeMembership) {
     return { ...params, userIds: [...params.userIds] };
   }
-  const userIds: number[] = [...blockedUserIds.keys()];
+  const userIds: number[] = listBlockedIdentityIds();
   if (userIds.length === 0) return undefined;
   return { chatId: params.chatId, probeMembership: true, removalId: params.removalId, userIds };
 }
@@ -157,7 +213,7 @@ function releaseSweepClaim(chatId: number, removalId: number): void {
  */
 export function forgetUserBlocklistRemovals(userId: number): void {
   let changed: boolean = false;
-  const blocklistEmptied: boolean = blockedUserIds.size === 0;
+  const blocklistEmptied: boolean = !hasBlockedIdentities();
   for (const [removalId, pending] of pendingBlockedRemovals) {
     if (pending.params.probeMembership) {
       if (!blocklistEmptied) continue;
@@ -245,30 +301,21 @@ export function forgetChatBlocklistWork(chatId: number): void {
 }
 
 // Disk I/O Worker 重建后恢复当前进程内尚未落定的增删与完整 outbox 镜像。
-onDiskIORespawn((): void => {
-  if (!queuePendingBlockedRemovalsSnapshot()) {
-    logger.error("Failed to replay the blocklist removal outbox after persistence Worker recovery.");
-  }
+onDiskIORespawn("blocklist", (transport: DiskIORecoveryTransport): boolean => {
+  if (!queuePendingBlockedRemovalsSnapshot(transport.post)) return false;
   // 追加文件无法表达删除：本进程只要解除过一次，就必须整份重写当前名单。
   if (sessionUnblockedIds.size > 0) {
-    if (!postDiskIO({
+    return transport.post({
       type: "unblockUser",
       blocked: [...blockedUserIds],
-    } satisfies UnblockUserDiskMessage)) {
-      logger.error(
-        "Failed to replay the blocklist rewrite after persistence Worker recovery; " +
-        "this session's /unblock will not survive a restart."
-      );
-    }
-    return;
+    } satisfies UnblockUserDiskMessage);
   }
   for (const [userId, blockedAt] of sessionBlockedAt) {
-    if (!postDiskIO({
+    if (!transport.post({
       type: "blockUser",
       userId,
       blockedAt,
-    } satisfies BlockUserDiskMessage)) {
-      logger.error(`Failed to replay the blocklist entry of user ${userId} after persistence Worker recovery.`);
-    }
+    } satisfies BlockUserDiskMessage)) return false;
   }
+  return true;
 });

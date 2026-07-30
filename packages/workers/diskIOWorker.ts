@@ -111,7 +111,7 @@ function activeStickerPacks(): readonly string[] | null {
  * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）。
  * 白名单本身读不出来时这一步降级成只读不删（见上方 activeStickerPacks）。
  * 包内部「哪些贴纸还在线上」的对账则在 aiChatWorker 那侧的
- * ai/stickers/catalog.ts 做（需要现查 Telegram，本线程没有 bot.api）。
+ * aiChat/ai/stickers/catalog.ts 做（需要现查 Telegram，本线程没有 bot.api）。
  */
 function handleLoad(): void {
   let loadError: string | undefined;

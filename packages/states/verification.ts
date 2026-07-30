@@ -72,7 +72,7 @@ function snapshotOf(state: PendingState): ExpelSnapshot {
   return {
     label: state.label,
     isBot: state.isBot,
-    messageIds: state.messageIds,
+    messageIds: [...state.messageIds],
     announcementMessageId: state.announcementMessageId,
     reminderMessageId: state.reminderMessageId,
     replyReminderMessageId: state.replyReminderMessageId,

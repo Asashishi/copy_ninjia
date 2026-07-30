@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { BlockedMemberRemover } from "../../packages/types/blocklist";
-import type { DiskBusinessMessage } from "../../packages/types/diskIO";
+import type {
+  DiskBusinessMessage,
+  DiskIORecoveryTransport,
+  DiskIORespawnListener,
+} from "../../packages/types/diskIO";
 
 /**
  * `/unblock` 的主线程侧：内存 Map 先删、再把删除之后的**整份** Map 投给落盘
@@ -8,7 +12,7 @@ import type { DiskBusinessMessage } from "../../packages/types/diskIO";
  */
 
 const diskMessages: DiskBusinessMessage[] = [];
-const respawnListeners: (() => void)[] = [];
+const respawnListeners: DiskIORespawnListener[] = [];
 let postSucceeds: boolean = true;
 const remover = mock(async (..._args: unknown[]): Promise<void> => {});
 const loggedErrors: string[] = [];
@@ -26,7 +30,9 @@ mock.module("../../packages/infra/diskIO", () => ({
     if (postSucceeds) diskMessages.push(message);
     return postSucceeds;
   },
-  onDiskIORespawn: (callback: () => void): void => { respawnListeners.push(callback); },
+  onDiskIORespawn: (_owner: string, listener: DiskIORespawnListener): void => {
+    respawnListeners.push(listener);
+  },
   relayLogMessage: (): boolean => true,
   flushDiskIO: async (): Promise<string> => "flushed",
   flushDiskIODomain: async (): Promise<string> => "flushed",
@@ -50,10 +56,21 @@ const {
   blockedUserIds,
   blocklistRemovalCounter,
   blocklistSweepState,
+  configuredBlockedIds,
   pendingBlockedRemovals,
   sessionBlockedAt,
   sessionUnblockedIds,
 } = await import("../../packages/cache/main/blocklist");
+
+const recoveryTransport: DiskIORecoveryTransport = {
+  post: (message: DiskBusinessMessage): boolean => {
+    if (postSucceeds) diskMessages.push(message);
+    return postSucceeds;
+  },
+  ensureLuckReceiptSecret: async (): Promise<never> => {
+    throw new Error("Unexpected luck secret request.");
+  },
+};
 
 /** 落盘端收到的最后一条 unblockUser 消息。 */
 function lastRewrite(): { userId: number; blocked: readonly (readonly [number, unknown])[] } {
@@ -69,6 +86,7 @@ beforeEach(() => {
   loggedErrors.length = 0;
   postSucceeds = true;
   blockedUserIds.clear();
+  configuredBlockedIds.clear();
   sessionBlockedAt.clear();
   sessionUnblockedIds.clear();
   blocklistSweepState.clear();
@@ -79,6 +97,25 @@ beforeEach(() => {
 });
 
 describe("解除拉黑", () => {
+  test("读取时合并静态与动态两层，静态用户和频道都不能被运行时解除", () => {
+    hydrateBlocklist(
+      new Map([[8, {
+        isBlocked: true,
+        blockedAt: "2026/07/25 19:38:10",
+      }]]),
+      new Map(),
+      [7, -4004]
+    );
+
+    expect(isUserBlocked(7)).toBeTrue();
+    expect(isUserBlocked(-4004)).toBeTrue();
+    expect(isUserBlocked(8)).toBeTrue();
+    expect(unblockUser(7)).toBeFalse();
+    expect(unblockUser(-4004)).toBeFalse();
+    expect(diskMessages).toHaveLength(0);
+    expect(blockedUserIds.has(8)).toBeTrue();
+  });
+
   test("启动恢复只保留仍在黑名单且仍受管理的任务，并从最大历史 ID 继续编号", () => {
     chatStates.set(-1001, { isInitEnabled: true, botIsAdmin: true });
     chatStates.set(-1002, { isInitEnabled: false, botIsAdmin: true });
@@ -295,7 +332,7 @@ describe("解除拉黑", () => {
 });
 
 describe("解除拉黑与落盘 Worker 重建", () => {
-  test("本进程解除过：重建后整份重写，而不是只补投增量", () => {
+  test("本进程解除过：重建后整份重写，而不是只补投增量", async () => {
     hydrateBlocklist(new Map([
       [7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }],
       [8, { isBlocked: true, blockedAt: "2026/07/25 19:38:10" }],
@@ -303,7 +340,14 @@ describe("解除拉黑与落盘 Worker 重建", () => {
     unblockUser(7);
     diskMessages.length = 0;
 
-    for (const listener of respawnListeners) listener();
+    for (const listener of respawnListeners) {
+      expect(await listener(recoveryTransport)).toBeTrue();
+    }
+    postSucceeds = false;
+    for (const listener of respawnListeners) {
+      expect(await listener(recoveryTransport)).toBeFalse();
+    }
+    postSucceeds = true;
 
     // 新 Worker 从文件 hydrate，7 号那条还在里面；追加补不回「删除」，
     // 只有整份重写能让磁盘重新等于内存。
@@ -312,24 +356,28 @@ describe("解除拉黑与落盘 Worker 重建", () => {
     expect(lastRewrite().blocked).toEqual([[8, { isBlocked: true, blockedAt: "2026/07/25 19:38:10" }]]);
   });
 
-  test("没解除过就走原来的增量补投，不做 O(名单长度) 的重写", () => {
+  test("没解除过就走原来的增量补投，不做 O(名单长度) 的重写", async () => {
     hydrateBlocklist(new Map([[8, { isBlocked: true, blockedAt: "2026/07/25 19:38:10" }]]));
     blockUser(7);
     diskMessages.length = 0;
 
-    for (const listener of respawnListeners) listener();
+    for (const listener of respawnListeners) {
+      expect(await listener(recoveryTransport)).toBeTrue();
+    }
 
     expect(diskMessages.filter((message: DiskBusinessMessage): boolean => message.type === "blockUser")).toHaveLength(1);
     expect(diskMessages).toContainEqual(expect.objectContaining({ type: "blockUser", userId: 7 }));
   });
 
-  test("先解除又重新拉黑：两张 session 表互斥，重放后他仍在名单上", () => {
+  test("先解除又重新拉黑：两张 session 表互斥，重放后他仍在名单上", async () => {
     hydrateBlocklist(new Map([[7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }]]));
     unblockUser(7);
     blockUser(7);
     diskMessages.length = 0;
 
-    for (const listener of respawnListeners) listener();
+    for (const listener of respawnListeners) {
+      expect(await listener(recoveryTransport)).toBeTrue();
+    }
 
     // 重新拉黑把他从 sessionUnblockedIds 里摘了，两张表因此重新互斥：不再欠
     // 一次整份重写，重放退回便宜的增量追加，而他确实还在名单上。两张表若不

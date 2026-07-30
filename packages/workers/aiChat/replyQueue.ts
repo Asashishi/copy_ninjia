@@ -1,4 +1,4 @@
-import { displayBufferedMessageName } from "../../ai/utils/chatTranscript";
+import { displayBufferedMessageName } from "../../aiChat/ai/utils/chatTranscript";
 import {
   QUEUED_TRIGGER_SNIPPET_MAX_CHARS,
   REPLY_ROUND_MAX_CONCURRENT,

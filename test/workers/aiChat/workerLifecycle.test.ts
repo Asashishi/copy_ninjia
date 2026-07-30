@@ -40,14 +40,14 @@ const invalidateChatReplies = mock(async (_chatId: number): Promise<void> => {
 const initTelegramClients = mock((): void => { calls.push("telegram"); });
 const switchMood = mock((_chatId: number) => ({ name: "开心", weight: 1, instruction: "" }));
 
-mock.module("../../../packages/ai/stickers/catalog", () => ({
+mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({
   ensureStickerCatalogs,
   flushDirtyStickerCatalogs,
   hydrateStickerCatalogs,
   retryIncompleteStickerCatalogs,
 }));
 mock.module("../../../packages/config/stickers", () => ({ getStickerConfig }));
-mock.module("../../../packages/ai/weather", () => ({ startWeatherRefreshLoop, stopWeatherRefreshLoop }));
+mock.module("../../../packages/aiChat/ai/weather", () => ({ startWeatherRefreshLoop, stopWeatherRefreshLoop }));
 mock.module("../../../packages/cache/workers/aiChat/replies", () => ({ sweepAiChatReplyCache }));
 mock.module("../../../packages/cache/workers/aiChat/imageGeneration", () => ({ sweepImageGenerationCache }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
@@ -64,7 +64,7 @@ mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
   drainPendingReplyQueues,
 }));
 mock.module("../../../packages/infra/telegram", () => ({ initTelegramClients }));
-mock.module("../../../packages/ai/mood", () => ({ switchMood }));
+mock.module("../../../packages/aiChat/ai/mood", () => ({ switchMood }));
 
 const worker = await import("../../../packages/workers/aiChatWorker");
 const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");

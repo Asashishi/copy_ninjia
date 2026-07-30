@@ -12,7 +12,7 @@ mock.module("../../../packages/infra/logger", () => ({
     error(message: unknown): void { errorLogs.push(String(message)); },
   },
 }));
-mock.module("../../../packages/ai/deepseek", () => ({ requestDeepSeekJson }));
+mock.module("../../../packages/antiRaid/ai/deepseek", () => ({ requestDeepSeekJson }));
 mock.module("../../../packages/config/adSamples", () => ({
   getAdSampleConfig: (): readonly string[] => ["加溦拉群"],
 }));

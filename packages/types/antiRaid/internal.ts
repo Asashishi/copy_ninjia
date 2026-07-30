@@ -1,5 +1,6 @@
 import type { Api } from "grammy";
 import type { LinkedQueue } from "../../libs/linkedQueue";
+import type { TimestampDeque } from "../../libs/timestampDeque";
 import type {
   PendingState,
   VerificationEvent,
@@ -39,7 +40,7 @@ export interface FloodWindowEntry {
    * 判定），也是失败时的天然退避（这次没禁成就得再刷满一整个窗口才会重来）。
    * 因此队列长度恒不超过 FLOOD_MESSAGE_LIMIT。
    */
-  timestamps: LinkedQueue<number>;
+  timestamps: TimestampDeque;
   /** 上一次观测到的时刻；系统校时回拨时用它保持队列单调，也用于空闲清扫。 */
   lastObservedAt: number;
   /**

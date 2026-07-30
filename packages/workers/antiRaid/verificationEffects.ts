@@ -522,11 +522,13 @@ async function expelMember({
   // 终态重试再跑 expelMember 时 shouldSendNotice 已是 false，「本天才没有封禁
   // 权限」这条唯一的诊断就永远不再尝试——未验证成员留在群里，管理员什么都
   // 不知道。本来就已发过（shouldSendNotice === false）时保持不变。
-  if (!kicked && (!shouldSendNotice || noticeMessageId !== undefined)) {
+  if (!kicked && shouldSendNotice && noticeMessageId !== undefined) {
     if (removalOutcome === "unconfirmed") expectedState.unconfirmedNoticeSent = true;
     else expectedState.failureNoticeSent = true;
     // 失败诊断不自删，必须跟着快照落盘：不持久化的话每次 Worker 重生都会
     // 重发一条，同一个卡住的成员在群里越堆越多（见 ExpellingState）。
+    // 已经发过时不再走这里：标记与快照都没变化，发布新 revision 只会让
+    // 永久失败成员每个退避周期重复写入一份完全相同的终态。
     publishVerificationChange(chatId, userId, true);
   }
   if (noticeMessageId !== undefined && kicked) {

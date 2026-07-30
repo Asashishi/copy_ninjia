@@ -1,0 +1,26 @@
+{
+  "123456789": {
+    "isCanMute": false,
+    "isCanUnMute": false,
+    "isCanBlock": false,
+    "isCanUnBlock": false,
+    "isCanUnBlockAll": false,
+    "isCanSwitchMood": false,
+    "isCanBypassAdDetection": true,
+    "isCanControllAIPermission": false,
+    "isCanControllAdDetectPermission": false,
+    "isCanControllJATranslatePermission": false
+  },
+  "-1001234567890": {
+    "isCanMute": false,
+    "isCanUnMute": false,
+    "isCanBlock": false,
+    "isCanUnBlock": false,
+    "isCanUnBlockAll": false,
+    "isCanSwitchMood": false,
+    "isCanBypassAdDetection": true,
+    "isCanControllAIPermission": false,
+    "isCanControllAdDetectPermission": false,
+    "isCanControllJATranslatePermission": false
+  }
+}

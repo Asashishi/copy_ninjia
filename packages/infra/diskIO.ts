@@ -29,6 +29,7 @@ import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import {
   clearRuntimeRecoveryTimer,
   createDiskIOWorker,
+  requestLuckSecretFromWorker,
   safePostDiskIO,
   stopWorkerAfterLoadFailure,
 } from "./diskIO/host";
@@ -39,7 +40,7 @@ import type {
   DiskBusinessMessage,
   DiskFlushRequest,
   DiskIODomain,
-  EnsureLuckSecretRequest,
+  DiskIORespawnListener,
   LoadRequest,
   LoadedReply,
   LogEnvelope,
@@ -104,13 +105,14 @@ export function isDiskIOInitialized(): boolean {
 }
 
 /**
- * 注册一个回调：diskIOWorker 崩溃重建后调用，用于把主线程侧的镜像
+ * 注册一个恢复 listener：diskIOWorker 崩溃重建后调用，用于把主线程侧的镜像
  * （AI 记忆 latestAiMemories、运势 dailyLuckCache、待验证 active/终结变化）
- * 重新投递给新实例，补齐上一次成功落盘之后的增量。落盘 Worker 是唯一的
- * 单例，各领域各自登记一个回调即可。
+ * 重新投递给新实例，补齐上一次成功落盘之后的增量。listener 必须等待本领域
+ * 全部异步工作并明确返回成败；普通 postDiskIO 会进入恢复缓冲，镜像重放只能
+ * 使用传入的 scoped transport。落盘 Worker 是唯一单例，各领域登记一次即可。
  */
-export function onDiskIORespawn(callback: () => void): void {
-  diskIORuntime.respawnListeners.push(callback);
+export function onDiskIORespawn(owner: string, listener: DiskIORespawnListener): void {
+  diskIORuntime.respawnListeners.push({ owner, listener });
 }
 
 /** 注册待验证增量 JSON 真正写入后的确认回调。 */
@@ -252,22 +254,11 @@ export function ensureLuckReceiptSecret(
   if (!worker || !diskIORuntime.writable) {
     return Promise.reject(new Error("Persistence Worker is unavailable; cannot rotate luck receipt secret."));
   }
-  const requestId: number = diskIORuntime.nextLuckSecretRequestId++;
-  return new Promise((resolve: (value: LuckReceiptSecret | PromiseLike<LuckReceiptSecret>) => void, reject: (reason?: unknown) => void): void => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
-      pendingLuckSecrets.delete(requestId);
-      reject(new Error(`[diskIO] luck receipt secret request timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-    pendingLuckSecrets.set(requestId, { resolve, reject, timer });
-    if (!safePostDiskIO(
-      worker,
-      { type: "ensureLuckSecret", requestId, day } satisfies EnsureLuckSecretRequest,
-      "luck receipt secret request"
-    )) {
-      pendingLuckSecrets.delete(requestId);
-      clearTimeout(timer);
-      reject(new Error("[diskIO] persistence Worker rejected the luck receipt secret request."));
-    }
+  return requestLuckSecretFromWorker({
+    worker,
+    day,
+    timeoutMs,
+    context: "luck receipt secret request",
   });
 }
 

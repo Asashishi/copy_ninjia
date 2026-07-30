@@ -30,9 +30,7 @@ import {
   FLOOD_WINDOW_MS,
 } from "../../consts/antiRaid/flood";
 import { floodWindowsByMember } from "../../cache/workers/antiRaid/flood";
-import { LinkedQueue } from "../../libs/linkedQueue";
-import { setBoundedMapValue } from "../../libs/boundedMap";
-import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
+import { TimestampDeque } from "../../libs/timestampDeque";
 import { verificationKey } from "../../libs/verificationKey";
 import { botCanRestrictIn } from "./botPermissions";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
@@ -53,9 +51,13 @@ import type { MuteChatMemberOutcome } from "../../infra/telegram";
 export function observeMemberMessage(key: string, now: number = Date.now()): FloodWindowEntry | undefined {
   let entry: FloodWindowEntry | undefined = floodWindowsByMember.get(key);
   if (entry === undefined) {
-    // 容量淘汰交给下面那次 setBoundedMapValue：这条路径上 key 必定不在表里，
-    // 共享实现的「新增键越界才淘汰最早项」与在这里先淘汰再插入完全等价。
-    entry = { timestamps: new LinkedQueue<number>(), lastObservedAt: now, suppressedUntil: 0 };
+    // 容量淘汰交给下面的专用写回：这条路径上 key 必定不在表里，
+    // 「新增键越界才淘汰最早项」与在这里先淘汰再插入完全等价。
+    entry = {
+      timestamps: new TimestampDeque(FLOOD_MESSAGE_LIMIT),
+      lastObservedAt: now,
+      suppressedUntil: 0,
+    };
   } else {
     // Date.now() 因系统校时短暂回退时仍保持队列单调，避免过期修剪失序。
     now = Math.max(now, entry.lastObservedAt);
@@ -64,18 +66,18 @@ export function observeMemberMessage(key: string, now: number = Date.now()): Flo
   entry.lastObservedAt = now;
   // 上面两条分支都保证此刻 key 不在表里（新成员本来就没有，老条目刚 delete 过），
   // 因此这一次写入既完成 LRU 热度刷新，也承担新增键的容量淘汰。
-  setBoundedMapValue({
-    map: floodWindowsByMember,
-    key,
-    value: entry,
-    maxEntries: FLOOD_WINDOW_MAX_MEMBERS,
-  });
+  if (floodWindowsByMember.size >= FLOOD_WINDOW_MAX_MEMBERS) {
+    const oldestKey: string | undefined =
+      floodWindowsByMember.keys().next().value;
+    if (oldestKey !== undefined) floodWindowsByMember.delete(oldestKey);
+  }
+  floodWindowsByMember.set(key, entry);
 
   // 抑制期内到达的消息一律不计数：要么人已经被按住了（那几条是禁言落地前
   // 就在路上的），要么上一次判定的结论是确定性的，重判换不来新结果。
   if (now < entry.suppressedUntil) return undefined;
 
-  trimSlidingWindow({ timestamps: entry.timestamps, windowMs: FLOOD_WINDOW_MS, now });
+  entry.timestamps.trim(FLOOD_WINDOW_MS, now);
   entry.timestamps.push(now);
   if (entry.timestamps.size < FLOOD_MESSAGE_LIMIT) return undefined;
   entry.timestamps.clear();

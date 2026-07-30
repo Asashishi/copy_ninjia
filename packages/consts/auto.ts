@@ -9,6 +9,12 @@ import type { CopyMode } from "../types/chatState";
  */
 export const USER_REPLY_TRIGGER_COOLDOWN_MS: number = 15_000;
 
+/**
+ * 主线程随机回复个人冷却表的硬顶。达到上限且没有过期条目可清时，宁可
+ * 放弃新的随机回复，也不淘汰仍生效的冷却、让高基数流量绕过限频。
+ */
+export const USER_REPLY_TRIGGER_CACHE_MAX: number = 5_000;
+
 /** 没有复读对象时，随机复读一条新消息的概率。 */
 export const RANDOM_ECHO_PROBABILITY: number = 1 / 100;
 

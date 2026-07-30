@@ -1,4 +1,4 @@
-/** 「今日心情」与基础人设的显式从属关系：拼在心情句（ai/mood.ts 的
+/** 「今日心情」与基础人设的显式从属关系：拼在心情句（aiChat/ai/mood.ts 的
  * currentMoodInstruction）之前，写明心情在哪些维度上覆盖、哪些核心设定
  * 不受影响，让模型按声明的优先级取舍，而不是自行调和两套并行指令。 */
 export const MOOD_STATE_PRECEDENCE_INSTRUCTION: string =

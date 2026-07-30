@@ -30,6 +30,10 @@ export const BOT_COMMANDS: readonly BotCommand[] = Object.freeze([
   Object.freeze({ command: "init", description: "开关本群的机器人监听/初始化，enable/disable（仅限定用户可用）" }),
   Object.freeze({ command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" }),
   Object.freeze({ command: "unquiet", description: "提前解除 /quiet 静默" }),
+  Object.freeze({ command: "mute", description: "禁言：收走目标的发言权一段时间，时长必填，如 10m、2h、1d（1 分钟~366 天，到点自动恢复）；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" }),
+  Object.freeze({ command: "unmute", description: "提前解除禁言；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" }),
+  Object.freeze({ command: "permission", description: "修改已有白名单用户或频道的逐项权限（仅超级管理员可用）" }),
+  Object.freeze({ command: "white", description: "新增或删除白名单用户/频道，首次加入使用默认权限（仅超级管理员可用）" }),
 ]);
 
 /** copy 类命令的公共冷却时长（白名单用户豁免，见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
@@ -64,14 +68,12 @@ export const USER_ID_ARG_PATTERN: RegExp = /^[1-9]\d*$/;
  * 命令参数中裸会话 id（频道/群）的完整匹配规则：带负号的十进制整数，同样不接受
  * 前导零、指数与小数，位数边界仍由调用方的 `Number.isSafeInteger` 兜底。
  *
- * **只有 `/unblock` 打开这条路**（`acceptChatId`）。频道马甲的 id 本来就会进黑
- * 名单——`/block` 回复一条频道消息，以及广告检测命中 `sender_chat` 时都会写
- * 进去——但把它划掉此前只能靠回复它的消息或 `@username`：前者在广告检测删掉
- * 原消息后就没了，后者要求频道有公开 username 且还没被 USER_CACHE_MAX 挤出
- * 缓存。两条都断掉的频道会永远留在名单上，只能手改 blocklist.json。
+ * `/unblock`、`/permission` 与 `/white` 按需打开这条路（`acceptChatId`）。
+ * 前者必须保证黑名单里的频道马甲始终能被划掉；后两者管理的白名单本来就允许
+ * 负数频道 ID，不能强迫管理员依赖一条仍存在的频道消息或公开 username。
  *
  * 反方向的 `/block` 继续拒绝负数：把粘错的会话 id 当目标会改去封整个会话身份，
- * 而那条命令不可逆；`/unblock` 是恢复方向，指错目标至多是一次空解封。
+ * 而那条命令不可逆；其余三条都是可恢复的配置操作。
  * 不限定 `-100` 前缀：这条口子存在的意义正是「名单上的东西一定划得掉」，
  * 不该再留下一类划不掉的 id。
  */
@@ -123,6 +125,39 @@ export const CJK_ACTION_COMMAND_PATTERN: RegExp =
 export const CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW: number = 450;
 /** 动作命令全局滑动限频窗口时长。 */
 export const CJK_ACTION_RATE_LIMIT_WINDOW_MS: number = 90_000;
+
+/**
+ * `/mute` 时长参数的完整匹配规则：正整数（不接受前导零/小数/正负号）紧跟
+ * 一个单位字母，m=分钟、h=小时、d=天，大小写均可。捕获组 1 是数值、组 2 是
+ * 单位。数值位数不设限：正则挡不住安全整数边界，换算成毫秒后由
+ * MUTE_MAX_DURATION_MS 的收敛兜底（见 commands/mute.ts）。
+ */
+export const MUTE_DURATION_ARG_PATTERN: RegExp = /^([1-9]\d*)([mhd])$/i;
+
+/**
+ * `/mute` 时长单位到毫秒的换算表，键集合与 MUTE_DURATION_ARG_PATTERN 的单位
+ * 捕获组一一对应，新增单位两处要同步改。所属模块：commands/mute.ts。
+ */
+export const MUTE_DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> = Object.freeze({
+  m: 60_000,
+  h: 60 * 60_000,
+  d: 24 * 60 * 60_000,
+});
+
+/**
+ * `/mute` 允许的最短时长。Bot API 对 restrictChatMember 的约定是 `until_date`
+ * 距现在不足 30 秒按永久禁言处理；时长单位最小是分钟，1 分钟天然越过这条
+ * 线，同时给「命令处理到请求真正发出」之间的排队留出余量——被收成永久禁言
+ * 的话本进程不排恢复计时器，只能人工解除。所属模块：commands/mute.ts。
+ */
+export const MUTE_MIN_DURATION_MS: number = 60_000;
+
+/**
+ * `/mute` 允许的最长时长。Bot API 同一条约定的另一头：`until_date` 距现在
+ * 超过 366 天同样按永久禁言处理，收敛在 366 天整正好落在临时禁言的合法区间
+ * 内。所属模块：commands/mute.ts。
+ */
+export const MUTE_MAX_DURATION_MS: number = 366 * 24 * 60 * 60_000;
 
 /** /quiet 未传时长时使用的分钟数。 */
 export const QUIET_DEFAULT_MINUTES: number = 3;

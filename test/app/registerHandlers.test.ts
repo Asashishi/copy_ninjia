@@ -27,6 +27,7 @@ describe("application handler registration", () => {
     const fakeBot: FakeBot = {
       use(handler: TestMiddleware): FakeBot {
         middleware.push(handler);
+        registrationOrder.push(`use:${middleware.length}`);
         return fakeBot;
       },
       command(command: string, _handler: unknown): FakeBot {
@@ -56,6 +57,8 @@ describe("application handler registration", () => {
 
     expect(middleware).toHaveLength(5);
     expect(commands).toEqual([
+      "permission",
+      "white",
       "copy",
       "r_copy",
       "nya_copy",
@@ -70,9 +73,19 @@ describe("application handler registration", () => {
       "init",
       "quiet",
       "unquiet",
+      "mute",
+      "unmute",
       "send",
       "x",
     ]);
+    // /permission 与 /white 是不依赖群初始化、也不能被私聊 /send 中转吞掉的
+    // 授权入口：必须位于 update 追踪/运势回执之后、init 与 private 两道网关之前。
+    for (const command of ["permission", "white"]) {
+      expect(registrationOrder.indexOf(`command:${command}`))
+        .toBeGreaterThan(registrationOrder.indexOf("use:2"));
+      expect(registrationOrder.indexOf(`command:${command}`))
+        .toBeLessThan(registrationOrder.indexOf("use:3"));
+    }
     // 中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
     // 消息兜底之前，否则会被当成普通消息进入 AI/复读流水线。
     expect(hearsTriggers).toEqual([CJK_ACTION_COMMAND_PATTERN]);

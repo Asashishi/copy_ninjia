@@ -1,4 +1,4 @@
-/** AI 反应工具（packages/ai/reactions.ts）的内存状态。 */
+/** AI 反应工具（packages/aiChat/ai/reactions.ts）的内存状态。 */
 
 /**
  * AI 反应工具从部署配置派生出的进程内只读缓存：首次取用时从 reactions.json

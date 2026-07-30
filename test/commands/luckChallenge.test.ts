@@ -560,6 +560,27 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
       // 东京零点翻页：下一次确认路径进入时整体切换日缓存、清空 pending。
       mockTodayOverride = "2030-01-02";
+      const registration: unknown[] = onDiskIORespawnMock.mock.calls[0]!;
+      expect(registration[0]).toBe("daily luck");
+      const respawnListener = registration[1] as (transport: {
+        post(message: unknown): boolean;
+        ensureLuckReceiptSecret(day: string): Promise<typeof TEST_SECRET>;
+      }) => Promise<boolean>;
+      const recoverySecretDays: string[] = [];
+      const recoveryPosts: unknown[] = [];
+      expect(await respawnListener({
+        post: (message: unknown): boolean => {
+          recoveryPosts.push(message);
+          return true;
+        },
+        ensureLuckReceiptSecret: async (day: string): Promise<typeof TEST_SECRET> => {
+          recoverySecretDays.push(day);
+          return { ...TEST_SECRET, day };
+        },
+      })).toBeTrue();
+      expect(recoverySecretDays).toEqual(["2030-01-02"]);
+      expect(recoveryPosts).toEqual([]);
+      expect(cache.pendingLuckDraws.size).toBe(0);
 
       // 迟到的 chosen 回执没有任何日期证明：不得用新一天的密钥重派生落盘。
       await luckChallenge.handleLuckChosenInlineResult({

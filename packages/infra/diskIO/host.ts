@@ -11,6 +11,8 @@ import type {
   DiskBusinessMessage,
   DiskIOMessage,
   DiskIOReply,
+  DiskIORecoveryTransport,
+  EnsureLuckSecretRequest,
   LoadRequest,
   LoadedReply,
 } from "../../types/diskIO";
@@ -59,6 +61,54 @@ function signalDiskIOFatal(error: Error): void {
   }
 }
 
+function rejectPendingLuckSecrets(error: Error): void {
+  for (const pending of pendingLuckSecrets.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+  pendingLuckSecrets.clear();
+}
+
+/**
+ * 向指定代际请求运势密钥。公开入口与恢复 scoped transport 共用同一套 waiter
+ * 记账，Worker 崩溃或恢复失败时由宿主统一拒绝。
+ */
+export interface RequestLuckSecretParams {
+  worker: Worker;
+  day: string;
+  timeoutMs: number;
+  context: string;
+}
+
+export function requestLuckSecretFromWorker({
+  worker,
+  day,
+  timeoutMs,
+  context,
+}: RequestLuckSecretParams): Promise<LuckReceiptSecret> {
+  const requestId: number = diskIORuntime.nextLuckSecretRequestId++;
+  return new Promise((
+    resolve: (value: LuckReceiptSecret | PromiseLike<LuckReceiptSecret>) => void,
+    reject: (reason?: unknown) => void
+  ): void => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
+      pendingLuckSecrets.delete(requestId);
+      reject(new Error(`[diskIO] luck receipt secret request timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    pendingLuckSecrets.set(requestId, { resolve, reject, timer });
+    if (safePostDiskIO(
+      worker,
+      { type: "ensureLuckSecret", requestId, day } satisfies EnsureLuckSecretRequest,
+      context
+    )) {
+      return;
+    }
+    pendingLuckSecrets.delete(requestId);
+    clearTimeout(timer);
+    reject(new Error(`[diskIO] persistence Worker rejected the ${context}.`));
+  });
+}
+
 /**
  * 恢复失败的统一收口：让存储保持不可写、结算所有等待方并终止该实例。
  * @param fatal 是否升级为需要进程重启的致命失败（运行时恢复路径为 true）。
@@ -74,6 +124,9 @@ export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal
   diskIORuntime.writable = false;
   diskIORuntime.pendingBusinessMessages.clear();
   diskIOFlushBarrier.settleAll("failed");
+  rejectPendingLuckSecrets(new Error(
+    `Persistence Worker became unavailable during recovery: ${reason}`
+  ));
   try {
     void Promise.resolve(worker.terminate()).catch((error: unknown): void => {
       console.error("[diskIO] failed to terminate unusable persistence Worker:", error);
@@ -88,23 +141,105 @@ function isSuccessfulLoad(reply: LoadedReply): boolean {
   return reply.error === undefined && reply.luckReceiptSecret !== null;
 }
 
-function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): void {
-  if (diskIORuntime.worker !== worker) return;
-  clearRuntimeRecoveryTimer();
-  diskIORuntime.runtimeRecoveryWorker = null;
-  diskIORuntime.writable = true;
-  if (replayMirrors) {
-    // load 已完整成功，此时才允许各领域把崩溃窗口内的主线程镜像补齐。
-    for (const listener of diskIORuntime.respawnListeners) {
-      try {
-        listener();
-      } catch (error: unknown) {
-        console.error("[diskIO] failed to replay a persistence mirror after recovery:", error);
+function isCurrentRecoveryWorker(worker: Worker): boolean {
+  return diskIORuntime.worker === worker &&
+    diskIORuntime.runtimeRecoveryWorker === worker &&
+    !diskIORuntime.writable;
+}
+
+interface RecoveryTransportScope {
+  transport: DiskIORecoveryTransport;
+  deactivate(): void;
+  failed(): boolean;
+}
+
+function createRecoveryTransportScope(worker: Worker): RecoveryTransportScope {
+  let active: boolean = true;
+  let transportFailed: boolean = false;
+  const isUsable = (): boolean => active && isCurrentRecoveryWorker(worker);
+  const transport: DiskIORecoveryTransport = Object.freeze({
+    post: (message: DiskBusinessMessage): boolean => {
+      if (!isUsable()) {
+        transportFailed = true;
+        return false;
       }
-      if (diskIORuntime.worker !== worker || !diskIORuntime.writable) return;
+      const posted: boolean = safePostDiskIO(
+        worker,
+        message,
+        `recovery replay ${message.type}`
+      );
+      if (!posted) transportFailed = true;
+      return posted;
+    },
+    ensureLuckReceiptSecret: async (day: string): Promise<LuckReceiptSecret> => {
+      if (!isUsable()) {
+        transportFailed = true;
+        throw new Error("Disk I/O recovery transport is no longer active.");
+      }
+      try {
+        const secret: LuckReceiptSecret = await requestLuckSecretFromWorker({
+          worker,
+          day,
+          timeoutMs: diskIORuntime.runtimeRecoveryTimeoutMs,
+          context: "recovery luck receipt secret request",
+        });
+        if (!isUsable()) {
+          transportFailed = true;
+          throw new Error("Disk I/O recovery generation changed while loading the luck secret.");
+        }
+        return secret;
+      } catch (error: unknown) {
+        transportFailed = true;
+        throw error;
+      }
+    },
+  });
+  return {
+    transport,
+    deactivate: (): void => { active = false; },
+    failed: (): boolean => transportFailed,
+  };
+}
+
+function describeRecoveryError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): Promise<void> {
+  if (diskIORuntime.worker !== worker) return;
+  if (replayMirrors) {
+    // 按登记顺序等待各领域镜像；整个握手保持不可写，恢复 timer 继续覆盖
+    // 异步 listener，普通业务增量则留在有硬顶的 FIFO 缓冲里。
+    for (const registration of diskIORuntime.respawnListeners) {
+      const scope: RecoveryTransportScope = createRecoveryTransportScope(worker);
+      let replayed: boolean;
+      try {
+        replayed = await registration.listener(scope.transport);
+      } catch (error: unknown) {
+        scope.deactivate();
+        if (!isCurrentRecoveryWorker(worker)) return;
+        stopWorkerAfterLoadFailure(
+          worker,
+          `${registration.owner} mirror replay failed: ${describeRecoveryError(error)}`,
+          true
+        );
+        return;
+      }
+      scope.deactivate();
+      if (!isCurrentRecoveryWorker(worker)) return;
+      if (!replayed || scope.failed()) {
+        stopWorkerAfterLoadFailure(
+          worker,
+          `${registration.owner} mirror replay reported failure`,
+          true
+        );
+        return;
+      }
     }
   }
   while (diskIORuntime.pendingBusinessMessages.size > 0) {
+    if (replayMirrors && !isCurrentRecoveryWorker(worker)) return;
+    if (!replayMirrors && diskIORuntime.worker !== worker) return;
     const message: DiskBusinessMessage = diskIORuntime.pendingBusinessMessages.peek()!;
     if (!safePostDiskIO(worker, message, `replay ${message.type}`)) {
       stopWorkerAfterLoadFailure(worker, `Worker rejected ${message.type} during recovery replay`, true);
@@ -112,6 +247,11 @@ function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): void {
     }
     diskIORuntime.pendingBusinessMessages.shift();
   }
+  if (replayMirrors && !isCurrentRecoveryWorker(worker)) return;
+  if (!replayMirrors && diskIORuntime.worker !== worker) return;
+  clearRuntimeRecoveryTimer();
+  diskIORuntime.runtimeRecoveryWorker = null;
+  diskIORuntime.writable = true;
 }
 
 function beginRuntimeRecovery(worker: Worker): void {
@@ -189,7 +329,7 @@ export function createDiskIOWorker(): Worker {
       if (pendingLoad.timer !== null) clearTimeout(pendingLoad.timer);
       pendingLoad.timer = null;
       resolve(data);
-      if (isSuccessfulLoad(data)) activateDiskIOWorker(w, false);
+      if (isSuccessfulLoad(data)) void activateDiskIOWorker(w, false);
       else stopWorkerAfterLoadFailure(w, data.error ?? "no luck receipt secret returned", false);
       return;
     }
@@ -198,7 +338,7 @@ export function createDiskIOWorker(): Worker {
       stopWorkerAfterLoadFailure(w, data.error ?? "no luck receipt secret returned", true);
       return;
     }
-    activateDiskIOWorker(w, true);
+    void activateDiskIOWorker(w, true);
   };
   w.onerror = (event: ErrorEvent): void => {
     // 已替换旧实例的迟到/重复错误不能再启动第二条并行重建链。
@@ -225,14 +365,9 @@ export function createDiskIOWorker(): Worker {
       );
       diskIOFlushBarrier.settleAll("failed");
     }
-    if (pendingLuckSecrets.size > 0) {
-      const error: Error = new Error("Persistence Worker crashed while loading the daily luck receipt secret.");
-      for (const pending of pendingLuckSecrets.values()) {
-        clearTimeout(pending.timer);
-        pending.reject(error);
-      }
-      pendingLuckSecrets.clear();
-    }
+    rejectPendingLuckSecrets(
+      new Error("Persistence Worker crashed while loading the daily luck receipt secret.")
+    );
     if (diskIORestartThrottle.shouldGiveUp()) {
       console.error(
         `[diskIO] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +

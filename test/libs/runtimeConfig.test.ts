@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseTelegramUserId, parseTelegramUserIdList } from "../../packages/libs/runtimeConfig";
+import { parseTelegramUserId } from "../../packages/libs/runtimeConfig";
 
 describe("runtime config validation", () => {
   test("only accepts positive decimal safe Telegram user IDs", () => {
@@ -7,11 +7,5 @@ describe("runtime config validation", () => {
     for (const raw of ["0", "-1", "1.5", "1e3", " 1", "9007199254740992"]) {
       expect(() => parseTelegramUserId(raw, "TEST")).toThrow("Invalid Telegram user ID");
     }
-  });
-
-  test("accepts an empty privileged list, deduplicates IDs and rejects empty segments", () => {
-    expect(parseTelegramUserIdList("", "TEST")).toEqual([]);
-    expect(parseTelegramUserIdList("1, 2,1", "TEST")).toEqual([1, 2]);
-    expect(() => parseTelegramUserIdList("1,,2", "TEST")).toThrow("Invalid Telegram user ID");
   });
 });

@@ -2,7 +2,7 @@ import { superviseWorker } from "../libs/supervisedWorker";
 import { markSelfSent } from "../infra/selfSentTracker";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { logger } from "../infra/logger";
-import { postDiskIO } from "../ai/persistence";
+import { postDiskIO } from "./ai/persistence";
 import { isAiChatConfigured } from "./availability";
 import { forgetAiMemoryRevisionCounter, nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
 import {
@@ -65,7 +65,7 @@ function rejectAllAiChatInvalidateWaiters(reason: string): void {
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
  * 贴纸/GIF 占位与异步描述、限频、拼装上下文、调 Gemini（含 function
  * calling 往返与内置 googleSearch）、工具化的发言/消息反应/两层应景贴纸
- * （见 packages/ai/tools/replyToolset/）、白名单贴纸目录与整包简介生成——全部在独立
+ * （见 packages/aiChat/ai/tools/replyToolset/）、白名单贴纸目录与整包简介生成——全部在独立
  * 的 Bun Worker（packages/workers/aiChatWorker.ts）里
  * 执行；主线程只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
  * 让 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
@@ -368,10 +368,12 @@ function postMemoryRecord(
     postPurgeAiMemoryPersistRevisions.set(message.chatId, null);
   }
   try {
-    postAiChatOrThrow({
-      ...message,
-      ...(shouldArm || armedRevision === null ? { persistImmediately: true } : {}),
-    });
+    if (shouldArm || armedRevision === null) {
+      // 两个公开记录入口传来的都是本次投递新建的协议对象；罕见的 purge
+      // 首条记录就地补字段，常见路径不再完整复制一次 payload。
+      message.persistImmediately = true;
+    }
+    postAiChatOrThrow(message);
   } catch (error: unknown) {
     if (shouldArm) postPurgeAiMemoryPersistRevisions.delete(message.chatId);
     throw error;
@@ -419,7 +421,7 @@ export function recordChatMessage(
  * @param messageId 这条消息的 message_id（评价回复挂引用用）。
  * @param commentOnResolve 是否在解析成功后评价这份媒体。
  * @param stickerFallbackText kind 为 "sticker" 时解析失败的兜底文本（现有
- *   元数据行，见 ai/stickers/describe.ts 的 describeStickerForContext）；其余
+ *   元数据行，见 aiChat/ai/stickers/describe.ts 的 describeStickerForContext）；其余
  *   kind 不传。
  * @param directTrigger 这份媒体是在明确跟机器人说话（回复机器人，或 caption
  *   里 @ 机器人）：描述就绪（命中缓存或解析完成，失败用兜底文本）后必触发

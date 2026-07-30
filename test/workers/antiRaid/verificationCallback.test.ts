@@ -4,9 +4,6 @@ import type { VerificationSnapshot } from "../../../packages/types/antiRaid";
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../../packages/infra/config", () => ({
-  PRIVILEGED_USERS_ID: [900],
-}));
 mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<undefined> => undefined,
@@ -72,6 +69,7 @@ describe("verification callback ownership", () => {
       chatId: -1001,
       targetUserId: 42,
       from: { id: 43, first_name: "Other" },
+      fromIsWhitelisted: false,
     });
     expect(verificationEntries.get("-1001:42")?.state.kind).toBe("pending");
 
@@ -81,6 +79,7 @@ describe("verification callback ownership", () => {
       chatId: -1001,
       targetUserId: 42,
       from: { id: 42, first_name: "Self" },
+      fromIsWhitelisted: false,
     });
     expect(verificationEntries.has("-1001:42")).toBeFalse();
   });
@@ -94,6 +93,7 @@ describe("verification callback ownership", () => {
       chatId: -1001,
       targetUserId: 44,
       from: { id: 900, first_name: "Privileged" },
+      fromIsWhitelisted: true,
     });
 
     expect(verificationEntries.get("-1001:44")?.state.kind).toBe("pending");
@@ -108,6 +108,7 @@ describe("verification callback ownership", () => {
       chatId: -1001,
       targetUserId: 45,
       from: { id: 46, first_name: "Ordinary" },
+      fromIsWhitelisted: false,
     });
     expect(verificationEntries.get("-1001:45")?.state.kind).toBe("pending");
 
@@ -117,6 +118,7 @@ describe("verification callback ownership", () => {
       chatId: -1001,
       targetUserId: 45,
       from: { id: 900, first_name: "Privileged" },
+      fromIsWhitelisted: true,
     });
     expect(verificationEntries.has("-1001:45")).toBeFalse();
   });

@@ -55,7 +55,7 @@ export const CHAT_ACTION_MAX_CONSECUTIVE_FAILURES: number = 3;
 export const AI_TEXT_TYPO_PROBABILITY: number = 0.15;
 /** 采纳一次手滑要求的最少剩余动作预算：错字消息本体之外，还得给可能的
  *  快速补正确单字留一个动作，见
- *  ai/tools/replyToolset/typoHandling.ts 的 decideMessageTypo。 */
+ *  aiChat/ai/tools/replyToolset/typoHandling.ts 的 decideMessageTypo。 */
 export const TYPO_MIN_REMAINING_ACTIONS: number = 2;
 /** 出错后补发正确单字的概率；剩余 10% 视为没发现。 */
 export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.9;

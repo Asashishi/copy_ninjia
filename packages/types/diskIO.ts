@@ -159,6 +159,30 @@ export type DiskBusinessMessage =
   | BlocklistRemovalsDiskMessage
   | AdSampleDiskMessage;
 
+/**
+ * Disk I/O Worker 运行时重建期间的代际限定投递器。
+ *
+ * 只在当前 respawn listener 返回的 Promise 结算前有效；listener 不得把恢复
+ * 工作 fire-and-forget。任一方法失败都必须让本轮恢复保持不可写。领域镜像
+ * 不得回退到普通 postDiskIO，否则消息会进入恢复缓冲，无法证明镜像先于缓冲
+ * 业务完成。
+ */
+export interface DiskIORecoveryTransport {
+  post(this: void, message: DiskBusinessMessage): boolean;
+  ensureLuckReceiptSecret(this: void, day: string): Promise<LuckReceiptSecret>;
+}
+
+/** 一个必须完整成功，Disk I/O Worker 才能重新公开 writable 的领域镜像。 */
+export type DiskIORespawnListener = (
+  transport: DiskIORecoveryTransport
+) => boolean | Promise<boolean>;
+
+/** 带诊断 owner 的运行时恢复镜像登记。 */
+export interface DiskIORespawnRegistration {
+  owner: string;
+  listener: DiskIORespawnListener;
+}
+
 /** diskIOWorker 短窗口内按 key 合并后的最终变化。 */
 export interface VerificationFileChange {
   chatId: number;

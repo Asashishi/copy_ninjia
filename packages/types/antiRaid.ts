@@ -27,6 +27,11 @@ export interface NewMemberMessage {
   exempt?: boolean;
   /** 触发该入群事件的操作者 ID。 */
   actorId?: number;
+  /**
+   * 主线程在投递当刻判定操作者是否在白名单。权限配置只归主线程读取，
+   * Worker 不维护跨线程副本；false 同时表示无操作者或不在白名单。
+   */
+  actorIsWhitelisted: boolean;
 }
 
 /** 主线程 -> Worker：某成员离开了群聊（取消其待验证记录）。 */
@@ -75,6 +80,8 @@ export interface VerifyCallbackMessage {
   targetUserId: number;
   /** 实际点击按钮的用户。 */
   from: AntiRaidMember;
+  /** 主线程在投递当刻判定点击者是否在白名单；Worker 不自行读取部署配置。 */
+  fromIsWhitelisted: boolean;
 }
 
 /** adopt 重放里的一条私密模式记录（见 AdoptLockdownsMessage）。 */
@@ -103,19 +110,14 @@ export interface AdoptLockdownsMessage {
   lockdowns: AdoptableLockdown[];
 }
 
-/**
- * pending 验证的纯数据快照。主线程持有镜像、Disk I/O Worker 按日落盘；
- * 计时器、Promise 和 API 在途状态由业务 Worker 按 expiresAt 重建。
- */
-export interface VerificationSnapshot {
+/** 验证持久化快照的各 phase 共享字段。 */
+export interface VerificationSnapshotBase {
   chatId: number;
   userId: number;
   /** 当前 Anti-Raid Worker 代际；主线程据此拒绝旧实例的迟到事件。 */
   generation: number;
   /** 同一代际、同一 key 内单调递增的状态修订号。 */
   revision: number;
-  /** 当前持久化阶段；终态必须在落盘确认后才能执行外部处置。 */
-  phase: "pending" | "checkingInviter" | "expelling";
   label: string;
   isBot: boolean;
   messageIds: number[];
@@ -131,10 +133,37 @@ export interface VerificationSnapshot {
   reminderSuperseded: boolean;
   joinedAt: number;
   expiresAt: number;
+}
+
+/** 正在等待按钮或超时的可恢复验证快照。 */
+export interface PendingVerificationSnapshot extends VerificationSnapshotBase {
+  phase: "pending";
+  terminalInviterId?: never;
+  expelReason?: never;
+  successNoticeSent?: never;
+  failureNoticeSent?: never;
+  unconfirmedNoticeSent?: never;
+}
+
+/** 已落盘后等待拉人者最终核查的可恢复终态。 */
+export interface CheckingInviterVerificationSnapshot
+  extends VerificationSnapshotBase {
+  phase: "checkingInviter";
   /** checkingInviter 终态的最终核查对象。 */
-  terminalInviterId?: number;
+  terminalInviterId: number;
+  expelReason?: never;
+  successNoticeSent?: never;
+  failureNoticeSent?: never;
+  unconfirmedNoticeSent?: never;
+}
+
+/** 已落盘后等待踢人/清理结算的可恢复终态。 */
+export interface ExpellingVerificationSnapshot
+  extends VerificationSnapshotBase {
+  phase: "expelling";
+  terminalInviterId?: never;
   /** expelling 终态的处置原因。 */
-  expelReason?: "timeout" | "flood";
+  expelReason: "timeout" | "flood";
   /** 成功处置播报已发送；仅 expelling 终态可携带。 */
   successNoticeSent?: boolean;
   /** 「踢不动」告警已发送；仅 expelling 终态可携带（见 ExpellingState）。 */
@@ -142,6 +171,16 @@ export interface VerificationSnapshot {
   /** 「没能确认还在不在群里」告警已发送；仅 expelling 终态可携带。 */
   unconfirmedNoticeSent?: boolean;
 }
+
+/**
+ * pending 验证的纯数据快照。主线程持有镜像、Disk I/O Worker 按日落盘；
+ * 计时器、Promise 和 API 在途状态由业务 Worker 按 expiresAt 重建。phase
+ * 同时约束每类终态的必填/禁用字段，非法恢复组合不能在类型层构造。
+ */
+export type VerificationSnapshot =
+  | PendingVerificationSnapshot
+  | CheckingInviterVerificationSnapshot
+  | ExpellingVerificationSnapshot;
 
 /** 主线程 -> Worker：Worker 重建时接管尚未结束的验证。 */
 export interface AdoptVerificationsMessage {
@@ -219,7 +258,7 @@ export interface AdCandidateMessage {
    * 截断。与正文分开带：拼进正文的话，Worker 侧按字数从头保留的截断正好切掉
    * 尾部这几个 URL（见 antiRaid/adDetect.ts 的 collectHiddenLinkUrls）。
    */
-  linkUrls: string[];
+  linkUrls?: string[];
   /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
   label: string;
   /** 发送者是频道马甲（sender_chat）而非真人。 */

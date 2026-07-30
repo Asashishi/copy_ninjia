@@ -27,6 +27,15 @@ describe("LinkedQueue", () => {
     expect(q.size).toBe(2);
   });
 
+  test("peekLast 查看队尾但不创建数组或出队", () => {
+    const q = new LinkedQueue<number>();
+    expect(q.peekLast()).toBeUndefined();
+    q.push(10);
+    q.push(20);
+    expect(q.peekLast()).toBe(20);
+    expect(q.size).toBe(2);
+  });
+
   test("clear 整体清空，之后 push 接在新链上而非已丢弃的旧队尾", () => {
     const queue = new LinkedQueue<number>();
     for (const value of [1, 2, 3]) queue.push(value);

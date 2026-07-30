@@ -11,14 +11,25 @@ const persistAuthoritativeState = mock(async (...args: unknown[]): Promise<void>
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
 const clearAdDetection = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
+const delegatedPermissions: Map<number, Set<string>> = new Map<number, Set<string>>();
 
 mock.module("../../packages/infra/config", () => ({
   SUPER_ADMIN_USER_ID: 100,
-  PRIVILEGED_USERS_ID: [],
   // AI 闲聊的凭据；缺这一项 /ai_chat enable 会被拒（见 aiChat/availability.ts）。
   AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
   // 广告检测的凭据；缺这一项 /ad_detect enable 会被拒（见 commands/adDetect.ts）。
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
+}));
+mock.module("../../packages/config/whitelist", () => ({
+  hasWhitelistPermission: (id: number, key: string): boolean =>
+    delegatedPermissions.get(id)?.has(key) === true,
+}));
+// 开关命令测试只验证授权与状态变化；部署文件的失败分支由 configGate 与
+// featurePreflight 专门覆盖，不能让本机 g-auth.json 是否存在左右这里的结果。
+mock.module("../../packages/config/readiness", () => ({
+  adDetectConfigReadiness: (): { ok: true } => ({ ok: true }),
+  aiChatConfigReadiness: (): { ok: true } => ({ ok: true }),
+  jaTranslateConfigReadiness: (): { ok: true } => ({ ok: true }),
 }));
 mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
@@ -63,10 +74,13 @@ function context(argument: string, userId: number | undefined = 100): never {
 
 beforeEach(() => {
   states.clear();
+  delegatedPermissions.clear();
   sendMessage.mockClear();
   invalidateAiChat.mockClear();
   teardownChatRuntime.mockClear();
   invalidateBotAdminStatus.mockClear();
+  isBotAdminIn.mockClear();
+  isBotAdminIn.mockImplementation(async (_chatId: number): Promise<boolean> => false);
   saveStateInBackground.mockClear();
   persistAuthoritativeState.mockClear();
   persistAuthoritativeState.mockImplementation(async (...args: unknown[]): Promise<void> => {
@@ -82,7 +96,11 @@ describe("超级管理员开关命令", () => {
     expect(isSuperAdmin({ id: 101 } as never)).toBe(false);
     expect(isSuperAdmin({ id: 100 } as never)).toBe(true);
 
-    const messages = { rejection: (label: string): string => `reject:${label}`, usage: "usage" };
+    const messages = {
+      rejection: (label: string): string => `reject:${label}`,
+      usage: "usage",
+      permission: "isCanControllAIPermission" as const,
+    };
     await expect(resolveSuperAdminToggleArg(context("enable", 101), messages)).resolves.toBeUndefined();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
@@ -141,6 +159,30 @@ describe("超级管理员开关命令", () => {
     await handleAdDetectCommand(context("enable", 101));
     expect(states.size).toBe(0);
     expect(clearAdDetection).not.toHaveBeenCalled();
+  });
+
+  test("白名单身份可控制获授的普通开关，但 /init 始终由超级管理员独占", async () => {
+    delegatedPermissions.set(200, new Set(["isCanControllAIPermission"]));
+
+    await handleInitCommand(context("enable", 200));
+    expect(states.get(-1001)?.isInitEnabled).toBeUndefined();
+
+    await handleAiChatCommand(context("enable", 200));
+    expect(states.get(-1001)?.isAIChatEnabled).toBe(true);
+  });
+
+  test("频道白名单按 sender_chat 取得委派权限", async () => {
+    delegatedPermissions.set(-500, new Set(["isCanControllAdDetectPermission"]));
+    const ctx = context("enable", 201) as unknown as {
+      msg: { sender_chat: object };
+    };
+    ctx.msg = {
+      sender_chat: { id: -500, type: "channel", title: "Trusted Channel" },
+    };
+
+    await handleAdDetectCommand(ctx as never);
+
+    expect(states.get(-1001)?.isAdDetectEnabled).toBe(true);
   });
 
   test("/init disable 同时失效 AI，enable 恢复群更新入口", async () => {

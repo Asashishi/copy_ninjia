@@ -31,7 +31,7 @@ export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = Object.freeze(
 export const STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS: number = 30 * 60_000;
 
 /**
- * 目录仍不完整的包在维护节拍上的重试间隔（见 ai/stickers/catalog.ts 的
+ * 目录仍不完整的包在维护节拍上的重试间隔（见 aiChat/ai/stickers/catalog.ts 的
  * retryIncompleteStickerCatalogs）。
  *
  * 只在启动时对账一次是不够的：`getStickerSet` 失败会让 generatePackCatalog 整包

@@ -581,6 +581,17 @@ describe("超时与拉人者终核", () => {
     expect(transitionVerification(next, { type: "terminalPersisted" }).effects).toEqual([]);
   });
 
+  test("终态快照与原待验证状态的消息数组隔离", () => {
+    const state = pendingState({ messageIds: [1, 2], reminderMessageId: 2 });
+    const { next } = transitionVerification(state, { type: "verifyTimeout", now: 120_000 });
+    if (next?.kind !== "expelling") {
+      throw new Error("Expected expelling state");
+    }
+
+    state.messageIds.push(3);
+    expect(next.snapshot.messageIds).toEqual([1, 2]);
+  });
+
   test("超时且被拉入群 → 先持久化 checkingInviter，再做终核", () => {
     const state = pendingState({ invitedBy: 999, reminderMessageId: 30 });
     const { next, effects } = transitionVerification(state, { type: "verifyTimeout", now: 120_000 });

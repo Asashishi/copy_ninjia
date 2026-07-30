@@ -1,10 +1,20 @@
 import type { LinkedQueue } from "../../libs/linkedQueue";
-import { buildColdMemoryBlock, buildTieredVerbatimTranscript, formatReplyChain, formatReplyReference } from "../../ai/utils/chatTranscript";
+import type { BoundedDeque } from "../../libs/boundedDeque";
 import {
+  buildColdMemoryBlock,
+  buildTieredVerbatimTranscript,
+  formatBufferedMessageLine,
+  formatReplyChain,
+  formatReplyReference,
+} from "../../aiChat/ai/utils/chatTranscript";
+import {
+  COMPACT_BATCH_SIZE,
   MAX_SUMMARY_ROUNDS,
   VERBATIM_CONTEXT_MAX,
 } from "../../consts/aiChat/memory";
 import {
+  directInvokerFocusInstruction,
+  emptyDirectInvokerFocus,
   REPLY_CONTEXT_SECTION_NAMES,
   REPLY_CONTEXT_SECTION_TEXT,
 } from "../../consts/aiChat/prompts/memory";
@@ -71,6 +81,9 @@ export interface UserContentOptions {
    *  的 replyToMessageId）：用于从热区索引回溯它所在的多层回复链，并在链
    *  标注里点名触发消息本身。 */
   triggerMessageId: number;
+  /** 明确 @/回复机器人的唤起者 id。仅直接触发传入；随机文字插话和随机媒体
+   *  评价省略。用于从【最热记忆】按发送者 id 提取独立重点区块。 */
+  directInvokerId?: number;
   /** 是否是随机插话触发（见 replyPipeline.ts 的 generateAndSendReply 的
    *  isRandomTrigger）：没有人在叫机器人，怎么接（挂不挂 reply_to_trigger、
    *  要不要称呼对方）由模型自主判断，但必须回应（说话/贴纸/扣反应都算）——
@@ -105,9 +118,16 @@ export interface UserContentOptions {
 export function buildReplyPromptSections(
   chatId: number,
   selfInfo: AiBotInfo,
-  { triggerMessageId, isRandomTrigger, mediaComment, queuedTrigger, roundHasTypo }: UserContentOptions
+  {
+    triggerMessageId,
+    directInvokerId,
+    isRandomTrigger,
+    mediaComment,
+    queuedTrigger,
+    roundHasTypo,
+  }: UserContentOptions
 ): ReplyPromptSections | null {
-  const buf: LinkedQueue<BufferedMessage> | undefined = chatBuffers.get(chatId);
+  const buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf || buf.size === 0) return null;
 
   const recent: BufferedMessage[] = buf.last(VERBATIM_CONTEXT_MAX);
@@ -139,7 +159,7 @@ export function buildReplyPromptSections(
 
   // 按触发类型给引导，行动说明（REPLY_ACTION_INSTRUCTION）统一拼在最后：
   // 发言/贴纸/反应全部工具化，做什么、什么顺序由模型自己决定（见
-  // ai/tools/replyToolset/）。
+  // aiChat/ai/tools/replyToolset/）。
   // - 拿媒体直接叫机器人：对方用贴纸/图片/GIF 回复机器人，或在 caption 里
   //   @ 机器人（见 MediaCommentContext 的 directTriggerReason），语气同
   //   回复/@ 触发——别已读不回；描述可能是解析结果也可能是元数据兜底，模型
@@ -202,6 +222,30 @@ export function buildReplyPromptSections(
     transcript +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]`;
+  // 唤起者重点区块只复制最新一个压缩块里的匹配发送者行：不从较早逐字区、
+  // 冷摘要、回复快照或排队快照补齐。这样它只是【最热记忆】的按 id 视图，
+  // 不会悄悄形成第三套上下文权威来源。热区内该 id 的发言按原行全量复制，
+  // 切片边界与 buildTieredVerbatimTranscript 的【最热记忆】完全一致。
+  let invokerFocus: string | undefined;
+  if (directInvokerId !== undefined) {
+    const invokerMessages: BufferedMessage[] = recent
+      .slice(-COMPACT_BATCH_SIZE)
+      .filter((message: BufferedMessage): boolean => message.id === directInvokerId);
+    // 一条都没有时整段换成替代文案，而不是让阅读说明配空条目——那等于让
+    // 模型去读不存在的内容，见 consts/aiChat/prompts/memory.ts 的两个文案函数。
+    const invokerBody: string = invokerMessages.length > 0
+      ? directInvokerFocusInstruction(directInvokerId) +
+        "\n" +
+        invokerMessages.map(formatBufferedMessageLine).join("\n")
+      : emptyDirectInvokerFocus(directInvokerId);
+    invokerFocus =
+      `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.invokerFocus}]\n` +
+      REPLY_CONTEXT_SECTION_TEXT.invokerFocus.header +
+      "\n" +
+      invokerBody +
+      "\n" +
+      `[END ${REPLY_CONTEXT_SECTION_NAMES.invokerFocus}]`;
+  }
   const replyTask: string =
     `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n` +
     REPLY_CONTEXT_SECTION_TEXT.replyTask.header +
@@ -215,5 +259,10 @@ export function buildReplyPromptSections(
     (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "") +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`;
-  return { referenceMemory, currentConversation, replyTask };
+  return {
+    referenceMemory,
+    currentConversation,
+    ...(invokerFocus ? { invokerFocus } : {}),
+    replyTask,
+  };
 }

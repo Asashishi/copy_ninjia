@@ -5,6 +5,9 @@ import type {
   AiMemoryDeleteDiskMessage,
   AiMemoryDiskMessage,
   AiMemoryPersistedReply,
+  DiskBusinessMessage,
+  DiskIORecoveryTransport,
+  DiskIORespawnListener,
   StickerCatalogDiskMessage,
 } from "../../../packages/types/diskIO";
 
@@ -20,7 +23,7 @@ let supervisorOptions: {
   onRespawn: (post: (message: AiChatWorkerMessage) => boolean) => void;
   onGiveUp: () => void;
 } | undefined;
-let diskRespawn: (() => void) | undefined;
+let diskRespawn: DiskIORespawnListener | undefined;
 let diskDeletePersisted: ((reply: AiMemoryDeletedPersistedReply) => void) | undefined;
 let diskMemoryPersisted: ((reply: AiMemoryPersistedReply) => void) | undefined;
 const aiEnabledChats = new Set<number>();
@@ -39,7 +42,7 @@ mock.module("../../../packages/libs/supervisedWorker", () => ({
     };
   },
 }));
-mock.module("../../../packages/ai/persistence", () => ({
+mock.module("../../../packages/aiChat/ai/persistence", () => ({
   postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
   onAiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
     diskDeletePersisted = callback;
@@ -47,7 +50,9 @@ mock.module("../../../packages/ai/persistence", () => ({
   onAiMemoryPersisted: (callback: (reply: AiMemoryPersistedReply) => void): void => {
     diskMemoryPersisted = callback;
   },
-  onDiskIORespawn: (callback: () => void): void => { diskRespawn = callback; },
+  onDiskIORespawn: (_owner: string, listener: DiskIORespawnListener): void => {
+    diskRespawn = listener;
+  },
 }));
 // hydrate 的删除判据要求 state.json 确实认识这个群（见 aiChat/index.ts）：
 // 只在状态表里、开关不是 true 的群才回收磁盘残留。开着的群必然在表里，
@@ -132,7 +137,20 @@ describe("AI main-thread persistence mirror", () => {
     ]);
 
     diskPosts.length = 0;
-    diskRespawn!();
+    const recoveryTransport: DiskIORecoveryTransport = {
+      post: (message: DiskBusinessMessage): boolean => {
+        diskPosts.push(message as AiDiskMessage);
+        return true;
+      },
+      ensureLuckReceiptSecret: async (): Promise<never> => {
+        throw new Error("Unexpected luck secret request.");
+      },
+    };
+    expect(await diskRespawn!(recoveryTransport)).toBeTrue();
+    expect(await diskRespawn!({
+      ...recoveryTransport,
+      post: (): boolean => false,
+    })).toBeFalse();
     expect(diskPosts).toEqual([
       { type: "aiMemory", chatId: -1001, revision: 1, snapshot: "latest-memory" },
       { type: "stickerCatalog", pack: "pack_a", snapshot: "latest-catalog" },
@@ -251,7 +269,20 @@ describe("AI main-thread persistence mirror", () => {
     expect(postPurgeAiMemoryPersistRevisions.get(-1001)).toBe(2);
 
     diskPosts.length = 0;
-    diskRespawn!();
+    const recoveryTransport: DiskIORecoveryTransport = {
+      post: (message: DiskBusinessMessage): boolean => {
+        diskPosts.push(message as AiDiskMessage);
+        return true;
+      },
+      ensureLuckReceiptSecret: async (): Promise<never> => {
+        throw new Error("Unexpected luck secret request.");
+      },
+    };
+    expect(await diskRespawn!(recoveryTransport)).toBeTrue();
+    expect(await diskRespawn!({
+      ...recoveryTransport,
+      post: (): boolean => false,
+    })).toBeFalse();
     expect(diskPosts).toEqual([{
       type: "aiMemory",
       chatId: -1001,

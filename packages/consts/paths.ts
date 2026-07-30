@@ -1,5 +1,8 @@
 import { join, resolve } from "node:path";
-import { RUNTIME_DATA_ROOT_ENV } from "./environment";
+import {
+  CONFIG_ROOT_ENV,
+  RUNTIME_DATA_ROOT_ENV,
+} from "./environment";
 
 /**
  * 项目内所有文件/目录路径的集中定义。各模块统一从这里取，不再各自散落
@@ -32,14 +35,23 @@ export const LOCK_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "bot.lock");
 /** AI 闲聊人设文本（Markdown，修改人设不需要碰代码）。 */
 export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
 
+/** 部署配置目录；测试会显式指向受版本控制的 config_example/。 */
+export const CONFIG_ROOT: string = resolve(
+  process.env[CONFIG_ROOT_ENV]?.trim() || join(PROJECT_ROOT, "config")
+);
+
 /** 应景贴纸包白名单配置文件。 */
-export const STICKERS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "stickers.json");
+export const STICKERS_CONFIG_PATH: string = join(CONFIG_ROOT, "stickers.json");
 /** Telegram 反应集合部署配置文件。 */
-export const REACTIONS_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "reactions.json");
+export const REACTIONS_CONFIG_PATH: string = join(CONFIG_ROOT, "reactions.json");
 /** AI 心情档位配置（文案、base weight、天气/时段倍率），见 packages/config/mood.ts。 */
-export const MOOD_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "mood.json");
+export const MOOD_CONFIG_PATH: string = join(CONFIG_ROOT, "mood.json");
 /** 广告检测的部署者示例清单（纯字符串数组），见 packages/config/adSamples.ts。 */
-export const AD_SAMPLES_CONFIG_PATH: string = join(PROJECT_ROOT, "config", "ad_samples.json");
+export const AD_SAMPLES_CONFIG_PATH: string = join(CONFIG_ROOT, "ad_samples.json");
+/** 用户/频道白名单及逐项权限配置，见 packages/config/whitelist.ts。 */
+export const WHITELIST_CONFIG_PATH: string = join(CONFIG_ROOT, "whitelist.json");
+/** 人工维护的静态黑名单 ID 配置，启动时与 memory/blocklist/blocklist.json 合并。 */
+export const BLOCKLIST_CONFIG_PATH: string = join(CONFIG_ROOT, "blocklist.json");
 
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
 export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
@@ -47,7 +59,7 @@ export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
 /**
  * memory/ 落盘目录：AI 记忆快照（ai/ 下按 chatId 一个 <chatId>.json）、每日
  * 运势缓存（luck/ 下按东京日期一个文件，只留当天）、白名单贴纸包的目录快照
- * （stickers/ 下按 pack short name 一个 <pack>.json，见 ai/stickers/catalog.ts）、
+ * （stickers/ 下按 pack short name 一个 <pack>.json，见 aiChat/ai/stickers/catalog.ts）、
  * 待验证当日增量（anti-raid/ 下只保留东京当天），以及权威黑名单与未完成移除
  * outbox（blocklist/），均由 diskIOWorker 落盘，见
  * packages/workers/diskIOWorker.ts。每一类数据各占一个子目录，顶层不放单个

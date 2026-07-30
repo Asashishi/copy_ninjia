@@ -64,7 +64,7 @@ const TOKYO_HOUR_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US
 
 /**
  * 东京时区的小时数（0~23）。心情系统按时段调整心情抽选概率用（见
- * ai/mood.ts），接受可选的 date 参数仅为可测试性，生产调用省略即取当前时刻。
+ * aiChat/ai/mood.ts），接受可选的 date 参数仅为可测试性，生产调用省略即取当前时刻。
  */
 export function getTokyoHour(date: Date = new Date()): number {
   const hourPart: string | undefined = TOKYO_HOUR_FORMATTER.formatToParts(date).find((part: Intl.DateTimeFormatPart): boolean => part.type === "hour")?.value;

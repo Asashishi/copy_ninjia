@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import type { Message } from "@grammyjs/types";
 import { senderUsernameCache, userCache } from "../../packages/cache/main/senderIdentity";
 import { USER_CACHE_MAX } from "../../packages/consts/senderIdentity";
+import type { CachedUser } from "../../packages/types/chatState";
 import {
   cacheSender,
   resolveIdTarget,
@@ -87,6 +88,26 @@ describe("sender identity cache", () => {
     expect(senderUsernameCache.has(1)).toBe(false);
     expect(senderUsernameCache.get(2)).toBe("sharedname");
     expect(userCache.size).toBe(1);
+  });
+
+  test("身份未变化时保留同一缓存对象，避免消息级重复刷新", () => {
+    const message: Message = userMessage(3, "StableName");
+    cacheSender(message);
+    const cached: CachedUser | undefined = userCache.get("stablename");
+
+    cacheSender(message);
+
+    expect(userCache.get("stablename")).toBe(cached);
+    expect(senderUsernameCache.get(3)).toBe("stablename");
+  });
+
+  test("无 username 的稳定发送者不进入任一索引", () => {
+    const message: Message = userMessage(4);
+
+    expect(cacheSender(message)).toBe(4);
+    expect(cacheSender(message)).toBe(4);
+    expect(userCache.size).toBe(0);
+    expect(senderUsernameCache.size).toBe(0);
   });
 
   test("频道 sender_chat 改名和去名时同步清理 alias", () => {

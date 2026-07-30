@@ -1,7 +1,7 @@
 import type { Message } from "@grammyjs/types";
 import { recordChatMessage } from "../../aiChat";
 import { isAiChatActiveIn } from "../../aiChat/availability";
-import { buildSelfRecordContext } from "../../ai/utils/selfRecord";
+import { buildSelfRecordContext } from "../../aiChat/ai/utils/selfRecord";
 import { getActiveCopyIn } from "../../infra/storage/stateStore";
 import { stripLuckReceipt } from "../../libs/luckReceipt";
 import type { AiBotInfo } from "../../types/aiChat/protocol";

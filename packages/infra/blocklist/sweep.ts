@@ -8,7 +8,6 @@
 
 import {
   blockedMemberRemoverHolder,
-  blockedUserIds,
   blocklistSweepState,
   pendingBlockedRemovals,
 } from "../../cache/main/blocklist";
@@ -18,6 +17,8 @@ import {
   BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS,
 } from "../../consts/antiRaid/blocklist";
 import { logger } from "../logger";
+import { getAllChatStates } from "../storage/stateStore";
+import { hasBlockedIdentities } from "./identities";
 import {
   materializeRemovalParams,
   queuePendingBlockedRemovalsSnapshot,
@@ -30,6 +31,7 @@ import type {
   PendingBlockedRemoval,
   RemoveBlockedMembersParams,
 } from "../../types/blocklist";
+import type { ChatState } from "../../types/chatState";
 
 /**
  * 让这个群重新欠一次补扫，打开 sweptAt 闩锁。有批次在途时只记
@@ -152,14 +154,18 @@ function forgetChatSweepBatches(chatId: number, exceptRemovalId?: number): void 
   }
 }
 
-/**
- * 把当前黑名单在某个已管理群中补扫一遍。只登记 durable 任务并交给执行 owner；
- * 具体名单由 outbox 在投递时现算，全部 Telegram 请求都在 Anti-Raid Worker。
- */
-export async function sweepBlockedMembers(
+interface PreparedBlocklistSweep {
+  chatId: number;
+  params: RemoveBlockedMembersParams;
+  failedSweeps: number;
+  now: number;
+}
+
+/** 建立一条补扫 claim；无需补扫或登记失败时返回 null。 */
+function prepareBlocklistSweep(
   chatId: number,
   now: number = Date.now()
-): Promise<void> {
+): PreparedBlocklistSweep | null {
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
   if (progress !== undefined && (
     progress.sweptAt !== null ||
@@ -167,9 +173,9 @@ export async function sweepBlockedMembers(
     progress.permissionBlocked ||
     now < progress.nextRetryAt
   )) {
-    return;
+    return null;
   }
-  if (blockedUserIds.size === 0) return;
+  if (!hasBlockedIdentities()) return null;
   const failedSweeps: number = progress?.failedSweeps ?? 0;
   let params: RemoveBlockedMembersParams;
   try {
@@ -178,7 +184,7 @@ export async function sweepBlockedMembers(
     // 满仓或 id 耗尽必须在 update 内就地降级；抛出去会形成重投/重启循环。
     logger.error(`Failed to queue the blocklist sweep of chat ${chatId}:`, error);
     noteSweepAttemptFailed(chatId, failedSweeps, now);
-    return;
+    return null;
   }
   // 先成功登记新任务，再删旧任务，避免登记异常时把唯一恢复依据提前销掉。
   forgetChatSweepBatches(chatId, params.removalId);
@@ -190,18 +196,81 @@ export async function sweepBlockedMembers(
     failedSweeps,
     permissionBlocked: false,
   });
+  return { chatId, params, failedSweeps, now };
+}
+
+/** 把已登记的多群补扫合成一次 durable outbox flush 与 Worker 投递。 */
+async function deliverPreparedSweeps(
+  sweeps: readonly PreparedBlocklistSweep[]
+): Promise<void> {
+  if (sweeps.length === 0) return;
   try {
-    await blockedMemberRemoverHolder.current([params]);
+    await blockedMemberRemoverHolder.current(
+      sweeps.map((sweep: PreparedBlocklistSweep): RemoveBlockedMembersParams =>
+        sweep.params
+      )
+    );
   } catch (error: unknown) {
-    // 回执可能抢先到达；只有这批仍是当前 claim 时才写回失败，避免踩掉 sweptAt。
-    if (blocklistSweepState.get(chatId)?.removalId === params.removalId) {
-      recordPendingRemovalFailure(params.removalId, chatId, "delivery-boundary");
-      // 这批任务不会再有回执来推进退避（claim 已清空，迟到的回执走
-      // requestBlocklistResweep 那条不动计数的路），因此必须在这里推进。
-      noteSweepAttemptFailed(chatId, failedSweeps, now);
+    for (const sweep of sweeps) {
+      // 回执可能抢先到达；只有这批仍是当前 claim 时才写回失败，避免踩掉 sweptAt。
+      if (
+        blocklistSweepState.get(sweep.chatId)?.removalId ===
+        sweep.params.removalId
+      ) {
+        recordPendingRemovalFailure(
+          sweep.params.removalId,
+          sweep.chatId,
+          "delivery-boundary"
+        );
+        // 这批任务不会再有回执来推进退避（claim 已清空，迟到的回执走
+        // requestBlocklistResweep 那条不动计数的路），因此必须在这里推进。
+        noteSweepAttemptFailed(
+          sweep.chatId,
+          sweep.failedSweeps,
+          sweep.now
+        );
+      }
     }
     throw error;
   }
+}
+
+/**
+ * 把当前黑名单在某个已管理群中补扫一遍。只登记 durable 任务并交给执行 owner；
+ * 具体名单由 outbox 在投递时现算，全部 Telegram 请求都在 Anti-Raid Worker。
+ */
+export async function sweepBlockedMembers(
+  chatId: number,
+  now: number = Date.now()
+): Promise<void> {
+  const sweep: PreparedBlocklistSweep | null =
+    prepareBlocklistSweep(chatId, now);
+  if (sweep === null) return;
+  await deliverPreparedSweeps([sweep]);
+}
+
+/**
+ * 启动时补扫所有已 /init 且机器人管理员身份已确证的群。多群任务一次性交给
+ * durable 投递边界，避免逐群重写不断增长的 outbox；恢复出的在途 claim 会早退。
+ */
+export async function sweepManagedBlocklistChats(
+  now: number = Date.now()
+): Promise<void> {
+  if (!hasBlockedIdentities()) return;
+  const sweeps: PreparedBlocklistSweep[] = [];
+  for (const [chatId, state] of getAllChatStates()) {
+    const chatState: ChatState = state;
+    if (
+      chatState.isInitEnabled !== true ||
+      chatState.botIsAdmin !== true
+    ) {
+      continue;
+    }
+    const sweep: PreparedBlocklistSweep | null =
+      prepareBlocklistSweep(chatId, now);
+    if (sweep !== null) sweeps.push(sweep);
+  }
+  await deliverPreparedSweeps(sweeps);
 }
 
 /**

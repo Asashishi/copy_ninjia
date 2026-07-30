@@ -40,7 +40,7 @@ flowchart TD
 
 Anti-Raid 主线程入口由 [`packages/antiRaid/index.ts`](../packages/antiRaid/index.ts) 编排，lockdown 恢复与验证镜像接收分别下沉到 [`packages/antiRaid/lockdownMirror.ts`](../packages/antiRaid/lockdownMirror.ts) 和 [`packages/antiRaid/verificationMirror.ts`](../packages/antiRaid/verificationMirror.ts)。Worker 侧验证解释器则按核心状态/恢复、入站事件翻译、Telegram 副作用、提醒投递 owner 拆在 [`packages/workers/antiRaid/`](../packages/workers/antiRaid/) 中；这些模块共享同一个 dispatcher，不改变状态机与 revision 的单一权威入口。
 
-Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`packages/libs/supervisedWorker.ts`](../packages/libs/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`packages/infra/diskIO.ts`](../packages/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；重启预算耗尽再由 [`packages/infra/workerSupervisor.ts`](../packages/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
+Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`packages/libs/supervisedWorker.ts`](../packages/libs/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`packages/infra/diskIO.ts`](../packages/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；Disk I/O 在恢复 load、各领域镜像重放与恢复窗口 FIFO 排空全部成功前保持不可写，任一步失败都会终止该代际并触发 fatal 停机。重启预算耗尽再由 [`packages/infra/workerSupervisor.ts`](../packages/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
 
 ## 一条消息的旅程
 
@@ -102,7 +102,7 @@ flowchart TD
 
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
-3. **恢复 StateStore**：清理顶层孤儿临时文件，再严格校验并恢复 `state.json` 主备副本；这些步骤都发生在联网和 Worker 创建之前。`config/` 下的四份 JSON **不在这里预热**——它们各属一个按群 opt-in 的可选功能，校验挪到了对应的开关命令上（见 [`packages/config/readiness.ts`](../packages/config/readiness.ts)）。恢复完 `state.json` 后再核对一次：还有群开着的可选功能，其凭据与配置必须齐备，否则带着群 id 拒绝启动（见 [`packages/app/featurePreflight.ts`](../packages/app/featurePreflight.ts)）。
+3. **恢复 StateStore 与全局安全配置**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，同时加载 `config/whitelist.json` 与 `config/blocklist.json`；任一全局输入损坏都在联网和 Worker 创建前拒绝启动。`config/` 下其余四份可选业务 JSON **不在这里预热**——它们各属一个按群 opt-in 的功能，校验挪到了对应的开关命令上（见 [`packages/config/readiness.ts`](../packages/config/readiness.ts)）。恢复完 `state.json` 后再核对一次：还有群开着的可选功能，其凭据与配置必须齐备，否则带着群 id 拒绝启动（见 [`packages/app/featurePreflight.ts`](../packages/app/featurePreflight.ts)）。
 4. 初始化 Telegram 客户端与 **Disk I/O Worker**，再恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，以及 `memory/blocklist/` 下的 `/block` 权威名单 `blocklist.json` 与未完成移除 outbox `removals.json`；任何领域恢复失败都拒绝以部分状态启动。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
 6. 初始化 **AI Worker**，只 hydrate `state.json` 中明确启用 AI 的群；随后恢复运势与待验证镜像、初始化 **Anti-Raid Worker**，最后启动 acknowledgement-safe runner。

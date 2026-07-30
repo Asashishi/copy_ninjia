@@ -25,15 +25,15 @@ import {
   WEB_SEARCH_EXHAUSTED_INSTRUCTION,
 } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
-import { currentMoodInstruction } from "../../ai/mood";
-import { requestGeminiResult, type GeminiRequestResult } from "../../ai/gemini";
+import { currentMoodInstruction } from "../../aiChat/ai/mood";
+import { requestGeminiResult, type GeminiRequestResult } from "../../aiChat/ai/gemini";
 import {
   countGoogleSearchCalls,
   extractFunctionCalls,
   extractOutputText,
   isTruncatedByTokenLimit,
-} from "../../ai/utils/geminiResponse";
-import { callTool } from "../../ai/tools";
+} from "../../aiChat/ai/utils/geminiResponse";
+import { callTool } from "../../aiChat/ai/tools";
 import { isPlainRecord } from "../../libs/runtimeConfig";
 import type { ReplyPromptSections, ReplyToolset } from "../../types/aiChat/replies";
 import type { ExtractedFunctionCall } from "../../types/tools";
@@ -92,22 +92,23 @@ function systemPrompt(): string {
 
 /**
  * 调用 Gemini 的 generateContent 接口跑完一轮回复对话（收发与响应解析在
- * ai/gemini.ts）。toolset.tools 带三类，组装见 ai/tools/replyToolset/orchestrator.ts 的
+ * aiChat/ai/gemini.ts）。toolset.tools 带三类，组装见 aiChat/ai/tools/replyToolset/orchestrator.ts 的
  * createReplyToolset：内置的 googleSearch（Google 服务器侧自动执行，模型
- * 自主决定要不要联网查证）+ packages/ai/tools 里的静态自定义函数（目前是查东京
+ * 自主决定要不要联网查证）+ packages/aiChat/ai/tools 里的静态自定义函数（目前是查东京
  * 天气）+ 按次回复现组装的行动工具集（发言/反应/两层贴纸——发消息、发贴纸
  * 这些副作用动作都在工具执行时当场发生，不再等最终文本）。自定义函数由
  * 模型以 functionCall part 抛回来，执行后把上一轮模型的整个 content 原样
  * 接回 contents、附上 functionResponse 再续跑（content 里的 thought
  * signature 也要一并带回，缺了会丢思考上下文），直到模型不再要工具或达到
  * 轮数上限。查时间不走工具：当前时间默认拼进每次请求的系统提示词（见
- * 下方），转录行也自带每条消息的发送时间（见 ai/utils/chatTranscript.ts 的
+ * 下方），转录行也自带每条消息的发送时间（见 aiChat/ai/utils/chatTranscript.ts 的
  * formatBufferedMessageLine）。心情同样现查现拼：该群当前抽中的心情由
- * ai/mood.ts 维护，currentMoodInstruction 读取时顺带处理到期重抽（只按
+ * aiChat/ai/mood.ts 维护，currentMoodInstruction 读取时顺带处理到期重抽（只按
  * 随机寿命的时间区间轮换，与群是否活跃无关）。
- * @param chatId 群聊 ID，用于取该群当前的心情（见 ai/mood.ts 的
+ * @param chatId 群聊 ID，用于取该群当前的心情（见 aiChat/ai/mood.ts 的
  *   currentMoodInstruction）。
- * @param promptSections promptContext.ts 拼好的只读参考记忆、当前会话与回复任务。
+ * @param promptSections promptContext.ts 拼好的只读参考记忆、当前会话、可选的
+ *   直接唤起者重点记录与回复任务。
  * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
  *   副作用（发消息/贴纸/反应/图片）都发生在它内部；toolset.tools 直接透传给
  *   请求，本函数不再自己组装。
@@ -130,13 +131,15 @@ export async function callGemini(
     `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
     `## 今天的状态\n${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
     `## 当前时间\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
+  const initialParts: Part[] = [
+    { text: promptSections.referenceMemory },
+    { text: promptSections.currentConversation },
+    ...(promptSections.invokerFocus ? [{ text: promptSections.invokerFocus }] : []),
+    { text: promptSections.replyTask },
+  ];
   const contents: Content[] = [{
     role: "user",
-    parts: [
-      { text: promptSections.referenceMemory },
-      { text: promptSections.currentConversation },
-      { text: promptSections.replyTask },
-    ],
+    parts: initialParts,
   }];
   const hasGoogleSearch: boolean = toolset.tools.some((tool: Tool): boolean => tool.googleSearch !== undefined);
   let googleSearchCalls: number = 0;
@@ -252,7 +255,7 @@ export async function callGemini(
         if (toolset.actionsUsed() >= HARD_MAX_ACTIONS_PER_REPLY) {
           for (const name of ACTION_TOOL_NAMES) disabledFunctionNames.add(name);
         }
-        // 工具实现返回的都是 JSON 字符串（见 packages/ai/tools），
+        // 工具实现返回的都是 JSON 字符串（见 packages/aiChat/ai/tools），
         // functionResponse.response 要求对象，解析回来直接挂上。
         const response: unknown = JSON.parse(toolResult);
         if (!isPlainRecord(response)) throw new Error(`Tool ${call.name} returned a non-object JSON value`);
@@ -269,7 +272,7 @@ export async function callGemini(
     }
 
     // 写到一半被 maxOutputTokens 腰斩的半句话，宁可不要，也不把断掉的句子
-    // 当兜底回复发到群里——真人不会发一半句子就没下文，见 ai/gemini.ts 的
+    // 当兜底回复发到群里——真人不会发一半句子就没下文，见 aiChat/ai/gemini.ts 的
     // isTruncatedByTokenLimit。googleSearch 命中时尤其容易撞进这种情况。
     if (isTruncatedByTokenLimit(data)) return null;
 

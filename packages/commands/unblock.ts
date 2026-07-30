@@ -1,19 +1,22 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import { sendMessage, deleteMessageAfter, unbanChatMemberIfBanned, unbanChatSenderChat } from "../infra/telegram";
-import { formatMockerLabel, formatTargetLabel } from "../users/userLabel";
-import { PRIVILEGED_USERS_ID, SUPER_ADMIN_USER_ID } from "../infra/config";
+import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { UNBLOCK_ALL_FLAG } from "../consts/commands";
 import { resolveCommandTarget } from "./targetResolution";
+import {
+  hasCommandPermission,
+  resolveCommandActor,
+} from "./commandActor";
 import { isBotAdminIn } from "../infra/botAdmin";
 import {
   confirmBlocklistPersisted,
   forgetUserConfirmedKicked,
+  isUserConfiguredBlocked,
   unblockUser,
 } from "../infra/blocklist";
 import { getAllChatStates } from "../infra/storage/stateStore";
-import type { User } from "@grammyjs/types";
 
 /**
  * 处理 /unblock 指令：把目标从持久化黑名单里移除，与 /block 互为逆操作。
@@ -27,9 +30,9 @@ import type { User } from "@grammyjs/types";
  * 「以后再进群不会被本天才秒踢」。要连群级封禁一起解，加 `all` 参数
  * （`/unblock @username all`，或回复 TA 的消息后 `/unblock all`）。
  *
- * `all` 只有超级管理员能用，而普通的移出名单是整个 PRIVILEGED_USERS_ID 白名单
- * 都能做的：跨群解封会在每一个管理群里放开一个此前被判定为需要永久隔离的人，
- * 波及面比「以后不再秒踢」大一档，值得单独收紧一级。
+ * `all` 需要 isCanUnBlockAll，而普通移出名单需要 isCanUnBlock；超级管理员
+ * 保留两项既有权限。跨群解封会在每一个管理群里放开一个此前被判定为需要永久
+ * 隔离的人，波及面比「以后不再秒踢」大一档，值得单独收紧一级。
  *
  * 目标解析比 /block 多一档：回复目标的一条消息优先，也可以用 /unblock @username、
  * /unblock <用户 id> 或 /unblock <频道的负数 id>。id 不必在缓存里见过——解除
@@ -45,14 +48,10 @@ import type { User } from "@grammyjs/types";
 export async function handleUnblockCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const fromUser: User | undefined = ctx.from;
+  const actor: CachedUser | undefined = resolveCommandActor(ctx);
 
-  // 超级管理员单列一条：SUPER_ADMIN_USER_ID 是独立的一批权限，按设计不走
-  // PRIVILEGED_USERS_ID 白名单（见 infra/config.ts）。不在这里放行的话，一旦
-  // 部署里两者不重叠，唯一有资格用 all 的人反而会被这道门挡在外面。
-  const isSuperAdmin: boolean = fromUser?.id === SUPER_ADMIN_USER_ID;
-  if (!fromUser || !(isSuperAdmin || PRIVILEGED_USERS_ID.includes(fromUser.id))) {
-    const replyText: string = `就 ${formatMockerLabel(fromUser)} 也想 /unblock 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
+  if (!actor || !hasCommandPermission(ctx, "isCanUnBlock", true)) {
+    const replyText: string = `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /unblock 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
     await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -67,10 +66,10 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     .filter((token: string): boolean => token.toLowerCase() !== UNBLOCK_ALL_FLAG)
     .join(" ");
 
-  if (unbanEverywhere && !isSuperAdmin) {
+  if (unbanEverywhere && !hasCommandPermission(ctx, "isCanUnBlockAll", true)) {
     await sendMessage({
       chatId,
-      text: `笨蛋，${formatMockerLabel(fromUser)} 还没资格让本天才把人从所有群里放出来，那是超级管理员才能下的令♡`,
+      text: `笨蛋，${formatUserLabel(actor)} 还没资格让本天才把人从所有群里放出来，要单独授予 isCanUnBlockAll 才行♡`,
       replyToMessageId: messageId,
     });
     return;
@@ -114,6 +113,17 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   }
 
   const targetLabel: string = formatTargetLabel(targetUser);
+  // 静态层只能由部署者改 config/blocklist.json 后重启。允许 /unblock 继续往下
+  // 只会制造“内存里划掉了、下一次查询却仍然命中”的假成功；带 all 时更不能
+  // 一边保留黑名单、一边把各群 Telegram 封禁解开。
+  if (isUserConfiguredBlocked(targetUser.id)) {
+    await sendMessage({
+      chatId,
+      text: `笨蛋，${targetLabel} 是写在 config/blocklist.json 里的固定黑名单，/unblock 可划不掉；先改配置再重启呀♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
   // 这份缓存只证明 `/block` 今天曾在某群确证踢出过，并不代表此刻仍被封。
   // 尤其 `all` 会真的跨群解封；先失效，随后同日重新 /block 才会重新查成员并封禁。
   forgetUserConfirmedKicked(targetUser.id);

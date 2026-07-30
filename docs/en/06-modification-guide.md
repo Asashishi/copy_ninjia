@@ -73,12 +73,12 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 ## Adding an AI Tool
 
 1. **Name constant**: define the tool name in [`packages/consts/tools.ts`](../../packages/consts/tools.ts). If it has visible side effects, determine whether it belongs in `ACTION_TOOL_NAMES`.
-2. **Definition**: put stateless static-query `ToolDefinition` values in [`packages/ai/tools/index.ts`](../../packages/ai/tools/index.ts). For action tools that need chat context, dynamic schemas, or per-round state, provide a definition builder under `packages/ai/tools/replyToolset/`. The reply-toolset orchestrator converts these domain definitions into SDK `FunctionDeclaration` values.
-3. **Implementation**: implement execution under `packages/ai/tools/`. Telegram-facing side effects run through main-thread proxies; the Worker must not hold a Bot instance directly.
-4. **Registration**: connect static query tools to dispatch in `packages/ai/tools/index.ts`; connect action tools to definitions, dispatch, and per-round state under `packages/ai/tools/replyToolset/`.
+2. **Definition**: put stateless static-query `ToolDefinition` values in [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts). For action tools that need chat context, dynamic schemas, or per-round state, provide a definition builder under `packages/aiChat/ai/tools/replyToolset/`. The reply-toolset orchestrator converts these domain definitions into SDK `FunctionDeclaration` values.
+3. **Implementation**: implement execution under `packages/aiChat/ai/tools/`. Telegram-facing side effects run through main-thread proxies; the Worker must not hold a Bot instance directly.
+4. **Registration**: connect static query tools to dispatch in `packages/aiChat/ai/tools/index.ts`; connect action tools to definitions, dispatch, and per-round state under `packages/aiChat/ai/tools/replyToolset/`.
 5. **Budgets**: visible side-effect tools belong in the unified action budget; do not add a per-tool call limit by default. Create an independent limit only for a domain-specific reason—the current cases are sticker-pack viewing, Google Search, and one successful sticker, reaction, or generated image per round. The whole-round custom-function loop guard still applies; see [04](04-invariants.md#worker-and-state-ownership).
 6. **Prompt**: add usage rules under `packages/consts/aiChat/prompts/` if needed. Anything coupled to transcript format must reuse shared templates from `transcript.ts`; never hand-write the same format on both sides.
-7. **Tests + docs**: add tests under `test/ai/` or the corresponding Worker path, and update the root README's Tools row when relevant.
+7. **Tests + docs**: add tests under `test/aiChat/ai/` or the corresponding feature/Worker path, and update the root README's Tools row when relevant.
 
 ## Adding a Generic JSON API Call
 
@@ -89,7 +89,7 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 ## Changing the Persona or JSON Configuration
 
 - Persona: edit [`prompt/persona.md`](../../prompt/persona.md); changes take effect after restart. Runtime interaction rules coupled to transcript formatting and identity/recipient markers are injected by code and do not belong in the persona file.
-- `config/stickers.json`, `reactions.json`, `mood.json`, and `ad_samples.json`: schemas live in the corresponding `packages/config/` files and are strictly validated at startup. At most 5 sticker packs are allowed; mood weights must be positive integers totaling exactly 100; ad samples are a bare string array whose entries must be non-blank, unique, and at most 500 in number. When changing structure, update the schema under `packages/config/` and the types under `packages/types/` before updating JSON. Invalid configuration blocks startup.
+- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `whitelist.json` and `blocklist.json` load strictly before network access, and `/white` plus `/permission` atomically rewrite the former. `stickers.json`, `reactions.json`, `mood.json`, and `ad_samples.json` are validated lazily by feature. At most 5 sticker packs are allowed; mood weights must be positive integers totaling exactly 100; ad samples are a bare string array whose entries must be non-blank, unique, and at most 500 in number. When changing structure, update the schema under `packages/config/` and the types under `packages/types/` before updating JSON.
 
 ## Adding an Environment Variable
 

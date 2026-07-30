@@ -9,7 +9,7 @@ const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<Generate
 const sleep = mock(async (..._args: unknown[]): Promise<void> => {});
 const logError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../packages/ai/gemini", () => ({ requestGeminiResponse }));
+mock.module("../../../packages/aiChat/ai/gemini", () => ({ requestGeminiResponse }));
 mock.module("../../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: {

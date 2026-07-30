@@ -1,4 +1,4 @@
-/** 群聊转录行内标注的共享模板。拼装侧（ai/utils/chatTranscript.ts 的
+/** 群聊转录行内标注的共享模板。拼装侧（aiChat/ai/utils/chatTranscript.ts 的
  * formatReplyReference/formatForwardTag）与说明文案侧（本目录 memory.ts 的
  * SUMMARY_SYSTEM_PROMPT、转录段首格式说明）共用同一模板，防止格式与说明
  * 各改各的漂移；说明里引用的占位形态直接以「…」代入模板生成，参照
@@ -34,7 +34,7 @@ export const REPLY_CHAIN_SNAPSHOT_TAG: string = "[仅回复快照]";
 
 /** 多层回复链标注模板。triggerMessageId 是本轮触发消息的 message_id，links
  *  是已格式化的各跳行——第 1 行是触发消息直接回复的对象，逐级向更早追溯
- *  （见 ai/utils/chatTranscript.ts 的 formatReplyChain）。 */
+ *  （见 aiChat/ai/utils/chatTranscript.ts 的 formatReplyChain）。 */
 export function replyChainTemplate(triggerMessageId: number, links: string[]): string {
   return (
     `补充：本轮触发消息（[message_id:${triggerMessageId}]）处在一条多层回复链上——它回复了下面第 1 条，第 1 条又回复了第 2 条，依此类推。` +
@@ -44,10 +44,10 @@ export function replyChainTemplate(triggerMessageId: number, links: string[]): s
   );
 }
 
-/** 转录行基础格式的占位形态。逐字转录段首的格式说明（ai/utils/chatTranscript.ts
+/** 转录行基础格式的占位形态。逐字转录段首的格式说明（aiChat/ai/utils/chatTranscript.ts
  * 的 buildTieredVerbatimTranscript）与压缩摘要系统提示（本目录 memory.ts 的
  * SUMMARY_SYSTEM_PROMPT）共用同一字符串，防止行格式与说明各改各的漂移；
- * 实际行的拼装见 ai/utils/chatTranscript.ts 的 formatBufferedMessageLine。 */
+ * 实际行的拼装见 aiChat/ai/utils/chatTranscript.ts 的 formatBufferedMessageLine。 */
 export const TRANSCRIPT_LINE_FORMAT_HINT: string =
   "「[年/月/日 时:分:秒] [message_id:消息ID] [id:用户ID] [username:@公开用户名] 名字：内容」";
 
@@ -58,7 +58,7 @@ export const FORWARD_TAG_HINT: string = forwardTagTemplate("…");
 
 /**
  * 机器人自己动作在转录里的记号——这些行由**执行侧在动作真正落地之后**写入
- * （见 ai/tools/replyToolset/imageGeneration.ts 与 ai/stickers/describe.ts 的自录），
+ * （见 aiChat/ai/tools/replyToolset/imageGeneration.ts 与 aiChat/ai/stickers/describe.ts 的自录），
  * 模型只能读到、绝不能自己产出。
  *
  * 两个模板与下面的 SELF_ACTION_TAG_MARKERS 必须共用同一份字面量：记号是
@@ -92,7 +92,7 @@ export const SELF_ACTION_TAG_MARKERS: readonly string[] = Object.freeze([
 
 /**
  * 拦截侧的判定式：模型给 send_message 的正文里命中其中任何一条，就是在用文字
- * 伪造一次执行侧动作，必须拒发（见 ai/tools/replyToolset/sendMessage.ts）。
+ * 伪造一次执行侧动作，必须拒发（见 aiChat/ai/tools/replyToolset/sendMessage.ts）。
  *
  * 锚定的是上面两个模板的**整体形状**而不是裸短语：记号要出现在一对全角括号
  * 里、紧跟着 `：` 或收尾的 `）`，中间只允许一小段没跨过 `）` 的前缀（模型仿写
