@@ -47,7 +47,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code holds roughly 486 string literals containing Chinese across 58 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code holds roughly 582 string literals containing Chinese across 63 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 

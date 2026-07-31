@@ -47,7 +47,7 @@ describe("mood config", () => {
     expect(() => parseMoodConfig({ moods: [{ name: "", weight: 100, instruction: "很开心。" }] })).toThrow("name must be a non-empty string");
   });
 
-  test("拒绝未知倍率桶和非正倍率", () => {
+  test("拒绝未知倍率桶、非正倍率和异常大的倍率", () => {
     expect(() => parseMoodConfig({
       moods: [{ name: "开心", weight: 100, instruction: "很开心。", weatherMultipliers: { sunny: 1.5 } }],
     })).toThrow("Unknown bucket in weatherMultipliers");
@@ -57,5 +57,13 @@ describe("mood config", () => {
     expect(() => parseMoodConfig({
       moods: [{ name: "开心", weight: 100, instruction: "很开心。", timeMultipliers: { night: 0 } }],
     })).toThrow("expected a positive finite number");
+    expect(() => parseMoodConfig({
+      moods: [{
+        name: "开心",
+        weight: 100,
+        instruction: "很开心。",
+        weatherMultipliers: { clear: Number.MAX_VALUE },
+      }],
+    })).toThrow("no greater than 100");
   });
 });

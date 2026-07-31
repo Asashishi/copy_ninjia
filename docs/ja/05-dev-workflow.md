@@ -22,6 +22,7 @@
 | `bun run check:conventions` | `scripts/checkProjectConventions.ts` でリポジトリ規約を検査 |
 | `bun run check` | conventions + lint + typecheck + coverage。**コミット前に必須** |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
+| `bun run perf:join-log` | 入室ログ 250,000 件上限で独立 process の比較 benchmark を実行 |
 | `bun run release:check` | frozen lockfile install + check + fault injection。リリース前に必須 |
 | `bun run audit:release` | moderate 以上の依存関係脆弱性を監査 |
 
@@ -34,7 +35,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**1475 tests / 163 files / 25995 `expect()` calls**。全ソースコードの**関数カバレッジは 95.18%、行カバレッジは 96.70%**です。ルート README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**1516 tests / 165 files / 27474 `expect()` calls**。全ソースコードの**関数カバレッジは 95.16%、行カバレッジは 96.58%**です。ルート README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -54,6 +55,10 @@
 ## Fault injection suite
 
 `bun run test:fault-injection` は crash recovery と永続化境界を重点的に検証します。ライフサイクル失敗、update runner の確認境界、StateStore と cleanup、AI/Anti-Raid Worker のミラーとライフサイクル、Disk I/O の追記・snapshot・ログファイル、flush barrier などが対象です。完全な一覧は [`package.json`](../../package.json) の script 定義を参照してください。[04 実行時の正式な不変条件](04-invariants.md) に関わる経路を変更した場合、この suite は必ず成功しなければなりません。
+
+## 入室ログ性能 benchmark
+
+`bun run perf:join-log` は入力を容量 250,000 件、overflow 300 件、warm-up 10,000 件に固定し、snapshot と capacity の baseline/current をそれぞれ 5 個の独立 Bun process で実行します。出力には完全な Bun version/revision、所要時間の中央値と範囲、強制 GC 前後の JSC heap/object 変化を記録します。baseline は最適化前の Map 全体 copy、全件 sort、完全な JSON 文字列生成を、同一 Bun build 内の前後比較専用として固定したものです。`Bun.gc(true)` はこの benchmark にしか存在せず、production control flow には入りません。入室 index、容量裁剪、snapshot serialization、分割 atomic write を変更した場合は必ず実行し、差が 5 sample の範囲に表れる noise より十分大きいことを確認します。
 
 ## コミット手順
 
@@ -82,7 +87,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 カバレッジとは別に、同じく静かに古くなる実測値が 2 組あります。
 
-- **中国語の文字列リテラル数**（現在およそ 486 箇所 / 58 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、文字列リテラルだけを数えます。
+- **中国語の文字列リテラル数**（現在およそ 582 箇所 / 63 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、文字列リテラルだけを数えます。
 - **動作値**（確率、容量、時間）：README 内のこれらの数値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース

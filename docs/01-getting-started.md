@@ -34,13 +34,21 @@ cp -r config_example config
 
 项目只读取下面 5 个环境变量，不存在未文档化的开关。变量名以所服务的功能打头（`AI_CHAT_` / `AD_DETECT_`），缺哪一把就只瘸对应的那个功能。其中 4 项凭据/身份配置由 [`packages/infra/config.ts`](../packages/infra/config.ts) 解析；`COPY_NINJIA_DATA_ROOT` 必须在运行时路径常量冻结前生效，因此由 [`packages/consts/paths.ts`](../packages/consts/paths.ts) 提前读取：
 
-| 变量 | 必填 | 说明 |
-| :--- | :---: | :--- |
-| `TELEGRAM_BOT_TOKEN` | ✅ | BotFather 下发的 token |
-| `AI_CHAT_GEMINI_API_KEY` | 可空 | Gemini API 密钥，AI 闲聊 agent 专用：`/ai_chat` 的回复生成、图片理解、记忆压缩。留空时 AI Worker 不启动、`/ai_chat enable` 与 `/switch_mood` 被拒绝，磁盘上的 AI 记忆原样保留，其余功能照常运行 |
-| `AD_DETECT_DEEPSEEK_API_KEY` | 可空 | DeepSeek API 密钥（OpenAI 兼容接口），广告检测专用：`/ad_detect` 的判定。留空时 `/ad_detect enable` 被拒绝，其余功能照常运行 |
-| `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员，单个十进制用户 ID；拥有全部命令权限，且只有它能使用 `/init`、`/permission`、`/white` 与 `/send` |
-| `COPY_NINJIA_DATA_ROOT` | 可空 | 运行时数据根目录；留空时数据落在项目根。详见 [07 运维与排障](07-operations.md#数据根) |
+- **`TELEGRAM_BOT_TOKEN`**（必填）
+  - BotFather 下发的 token。
+- **`AI_CHAT_GEMINI_API_KEY`**（可空）
+  - Gemini API 密钥，AI 闲聊 agent 专用：`/ai_chat` 的回复生成、图片理解与记忆压缩。
+    留空时 AI Worker 不启动，`/ai_chat enable` 与 `/switch_mood` 被拒绝；磁盘上的
+    AI 记忆原样保留，其余功能照常运行。
+- **`AD_DETECT_DEEPSEEK_API_KEY`**（可空）
+  - DeepSeek API 密钥（OpenAI 兼容接口），供 `/ad_detect` 广告判定使用。留空时
+    `/ad_detect enable` 被拒绝，其余功能照常运行。
+- **`SUPER_ADMIN_USER_ID`**（必填）
+  - 单个十进制超级管理员用户 ID；拥有全部命令权限，且只有它能使用 `/init`、
+    `/batch_kick`、`/permission`、`/white` 与 `/send`。
+- **`COPY_NINJIA_DATA_ROOT`**（可空）
+  - 运行时数据根目录；留空时数据落在项目根。详见
+    [07 运维与排障](07-operations.md#数据根)。
 
 如需日语翻译，把服务账号密钥存为项目根目录的 `g-auth.json`。`.env` 与 `g-auth.json` 都已在 `.gitignore` 中。
 
@@ -48,15 +56,32 @@ cp -r config_example config
 
 `config/` 是部署方自己的配置目录，已从 Git 追踪中排除；初次安装从 `config_example/` 复制，之后只改 `config/`，不要直接把示例目录当运行时配置。
 
-| 文件 | 内容 | 校验 |
-| :--- | :--- | :--- |
-| [`prompt/persona.md`](../prompt/persona.md) | AI 闲聊的基础人设 | 纯文本，无 schema |
-| `config/whitelist.json`（[示例](../config_example/whitelist.json)） | 用户/频道白名单及逐项权限；身份存在本身还代表 copy 冷却豁免、验证代点与自动处置保护 | [`packages/config/whitelist.ts`](../packages/config/whitelist.ts)；联网前严格加载，缺失或损坏会拒绝启动 |
-| `config/blocklist.json`（[示例](../config_example/blocklist.json)） | 部署方手工维护的静态用户/频道黑名单 ID 数组 | [`packages/config/blocklist.ts`](../packages/config/blocklist.ts)；联网前严格加载，并与 `memory/` 动态层合并 |
-| `config/stickers.json`（[示例](../config_example/stickers.json)） | AI 可用的贴纸包，最多 5 个 | [`packages/config/stickers.ts`](../packages/config/stickers.ts) |
-| `config/reactions.json`（[示例](../config_example/reactions.json)） | AI 可用的 emoji 反应集合 | [`packages/config/reactions.ts`](../packages/config/reactions.ts) |
-| `config/mood.json`（[示例](../config_example/mood.json)） | 心情档位：文案、权重与天气/时段倍率 | [`packages/config/mood.ts`](../packages/config/mood.ts)；权重必须是正整数且总和恰好 100 |
-| `config/ad_samples.json`（[示例](../config_example/ad_samples.json)） | 广告检测的判定口径示例，顶层就是字符串数组 | [`packages/config/adSamples.ts`](../packages/config/adSamples.ts)；条目非空、不重复，最多 500 条 |
+- **[`prompt/persona.md`](../prompt/persona.md)**
+  - **内容**：AI 闲聊的基础人设。
+  - **校验**：纯文本，无 schema。
+- **`config/whitelist.json`**（[示例](../config_example/whitelist.json)）
+  - **内容**：用户/频道白名单及逐项权限；身份存在本身还代表 copy 冷却豁免、
+    验证代点与自动处置保护。
+  - **校验**：[`packages/config/whitelist.ts`](../packages/config/whitelist.ts)；
+    联网前严格加载，缺失或损坏会拒绝启动。
+- **`config/blocklist.json`**（[示例](../config_example/blocklist.json)）
+  - **内容**：部署方手工维护的静态用户/频道黑名单 ID 数组。
+  - **校验**：[`packages/config/blocklist.ts`](../packages/config/blocklist.ts)；
+    联网前严格加载，并与 `memory/` 动态层合并。
+- **`config/stickers.json`**（[示例](../config_example/stickers.json)）
+  - **内容**：AI 可用的贴纸包，最多 5 个。
+  - **校验**：[`packages/config/stickers.ts`](../packages/config/stickers.ts)。
+- **`config/reactions.json`**（[示例](../config_example/reactions.json)）
+  - **内容**：AI 可用的 emoji 反应集合。
+  - **校验**：[`packages/config/reactions.ts`](../packages/config/reactions.ts)。
+- **`config/mood.json`**（[示例](../config_example/mood.json)）
+  - **内容**：心情档位，包括文案、权重与天气/时段倍率。
+  - **校验**：[`packages/config/mood.ts`](../packages/config/mood.ts)；权重必须是正整数，
+    且总和恰好 100。
+- **`config/ad_samples.json`**（[示例](../config_example/ad_samples.json)）
+  - **内容**：广告检测的判定口径示例，顶层就是字符串数组。
+  - **校验**：[`packages/config/adSamples.ts`](../packages/config/adSamples.ts)；条目非空、
+    不重复，最多 500 条。
 
 `whitelist.json` 与 `blocklist.json` 是全局安全边界，必须在联网和 Worker 启动前严格加载。其余四个 JSON 按功能惰性校验：一份写坏的贴纸配置不该让 copy、抽奖、入群验证和黑名单一起离线。`/ai_chat enable` 读前三份可选配置，`/ad_detect enable` 读 `ad_samples.json`，`/ja_copy enable` 读 `g-auth.json`；任一份读不动只拒绝对应开关。结论按进程缓存，修好文件要重启才生效。
 

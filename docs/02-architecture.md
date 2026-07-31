@@ -22,7 +22,7 @@ flowchart TD
     MAIN["🧵 主线程<br/>grammY runner + 按群 sequentialize<br/>命令与自动消息流水线<br/>StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>Gemini 多轮工具调用<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置 / 广告检测"]:::worker
-    DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 运势 / 验证文件 / 黑名单"]:::worker
+    DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 运势 / 验证文件 / 黑名单 / 入群日志"]:::worker
 
     MAIN --> AI
     MAIN --> RAID
@@ -34,7 +34,7 @@ flowchart TD
 - **主线程**持有 Telegram runner、三个 Worker 的监督句柄，以及 `StateStore` 维护的 `state.json` 内存镜像（群开关、copy 状态、锁定镜像等权威状态）。
 - **AI Worker** 独占群聊记忆、回复准入、媒体描述流水线、群心情与贴纸目录的运行时状态。
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。`/ad_detect` 广告检测的整条流水线（按发送者归并 90 秒消息串、每秒一批送 DeepSeek 判定、命中后删消息并在群里播报封禁理由）同样跑在这条线程上，判定结果回投主线程换成一次与 /block 等价的拉黑 + 各群封禁。/block 黑名单的踢人也在这条线程执行（它不带状态机，判定在主线程做完后投过来），与验证超时踢人共用同一条请求队列。未收到落地回执的处置批次同时保存在主线程镜像与 `memory/blocklist/removals.json` outbox：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
-- **Disk I/O Worker** 独占共享目录的串行读写：`logs/`，以及 `memory/` 下的 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/` 六个领域目录；`state.json` 是唯一例外，由主线程 `StateStore` 直接原子写。各文件形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
+- **Disk I/O Worker** 独占共享目录的串行读写：`logs/`，以及 `memory/` 下的 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/`、`joinlog/` 七个领域目录；`state.json` 是唯一例外，由主线程 `StateStore` 直接原子写。各文件形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
 
 广告检测按「投递门禁在主线程、判定与副作用在 Worker、不可丢的拉黑与封禁回主线程」三段分工，见 [`packages/antiRaid/adDetect.ts`](../packages/antiRaid/adDetect.ts) 与 [`packages/workers/antiRaid/adDetect/`](../packages/workers/antiRaid/adDetect/)。
 
@@ -52,7 +52,7 @@ Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共
 4. **按群串行**——`sequentialize` 保证同群消息顺序处理；反应同步走独立合并队列，不占聊天车道。
 5. **私聊网关**——私聊只放行 `/send` 入口与进行中的中转会话；中转消息短路进消息流水线，避免文本被当成命令。
 6. **入群验证**——必须早于命令处理，否则待验证用户发的命令不会被追踪清理。
-7. **命令注册**——14 个 `bot.command(...)`，见 [06 常见修改配方](06-modification-guide.md#新增一个斜杠命令)。其中 `/x` 是菜单占位项：它只为曝光中文动作命令的用法，收到时回一句用法说明并就此终止链路。
+7. **命令注册**——所有 `bot.command(...)` 在这里逐项注册，见 [06 常见修改配方](06-modification-guide.md#新增一个斜杠命令)。其中 `/x` 是菜单占位项：它只为曝光中文动作命令的用法，收到时回一句用法说明并就此终止链路。
 8. **中文动作命令**——`/咬`、`/贴贴` 这类命令（动作词收 1~2 个中文字）拿不到 Telegram 的 `bot_command` 实体，`bot.command` 匹配不到，只能用 `bot.hears` 按消息原文匹配（见 [`packages/commands/cjkAction.ts`](../packages/commands/cjkAction.ts)）。**必须排在下一步的消息兜底之前**——排在后面就会被当成普通消息进入 AI/复读流水线，整个特性静默失效。因为它排在自动流水线之前，那条流水线的自发消息门禁对它无效，handler 自己要跳过机器人自己的消息；也因为被它认领的消息不再往下走，handler 要自己补上发送者身份缓存。不认领的形态（`/咬@OtherBot`、caption 形态、消息形态异常）一律 `next()` 放行。
 9. **自动消息流水线**——[`packages/auto/`](../packages/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
 

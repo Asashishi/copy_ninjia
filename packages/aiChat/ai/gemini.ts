@@ -25,17 +25,7 @@ import { logger } from "../../infra/logger";
 import { AI_CHAT_GEMINI_API_KEY } from "../../infra/config";
 import { GEMINI_REQUEST_TIMEOUT_MS, GEMINI_SAFETY_SETTINGS } from "../../consts/aiChat/tools";
 import { abnormalFinishDiagnostic, extractFinishMessage, extractFinishReason, extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
-
-export type GeminiRequestResult =
-  | { ok: true; response: GenerateContentResponse }
-  | {
-    ok: false;
-    diagnostic: string;
-    finishReason?: string;
-    finishMessage?: string;
-    /** 仅供异常分支做预算/重试判断；不得解析其中的文本或 functionCall。 */
-    response?: GenerateContentResponse;
-  };
+import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 
 /**
  * 取得线程内唯一 Gemini 客户端。timeout 是每次请求/每次 SDK 重试各自的预算，

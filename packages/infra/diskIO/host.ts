@@ -3,6 +3,7 @@ import {
   diskIORestartThrottle,
   diskIORuntime,
   pendingFlushFailedDomains,
+  pendingJoinLogReads,
   pendingLoad,
   pendingLuckSecrets,
 } from "../../cache/main/diskIO";
@@ -13,10 +14,12 @@ import type {
   DiskIOReply,
   DiskIORecoveryTransport,
   EnsureLuckSecretRequest,
+  JoinLogReadReply,
   LoadRequest,
   LoadedReply,
+  ReadJoinLogRequest,
 } from "../../types/diskIO";
-import type { LuckReceiptSecret } from "../../types/diskIO/storage";
+import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
 
 /**
  * Disk I/O Worker 的宿主内核（owner 是 packages/infra/diskIO.ts）：Worker 创建、
@@ -69,6 +72,14 @@ function rejectPendingLuckSecrets(error: Error): void {
   pendingLuckSecrets.clear();
 }
 
+function rejectPendingJoinLogReads(error: Error): void {
+  for (const pending of pendingJoinLogReads.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+  pendingJoinLogReads.clear();
+}
+
 /**
  * 向指定代际请求运势密钥。公开入口与恢复 scoped transport 共用同一套 waiter
  * 记账，Worker 崩溃或恢复失败时由宿主统一拒绝。
@@ -109,6 +120,46 @@ export function requestLuckSecretFromWorker({
   });
 }
 
+/** 向当前可写代际按需读取本群滚动时间窗内的入群日志。 */
+export interface RequestJoinLogParams {
+  worker: Worker;
+  chatId: number;
+  since: number;
+  now: number;
+  timeoutMs: number;
+}
+
+export function requestJoinLogFromWorker({
+  worker,
+  chatId,
+  since,
+  now,
+  timeoutMs,
+}: RequestJoinLogParams): Promise<readonly JoinLogRecord[]> {
+  const requestId: number = diskIORuntime.nextJoinLogReadRequestId++;
+  return new Promise((
+    resolve: (value: readonly JoinLogRecord[] | PromiseLike<readonly JoinLogRecord[]>) => void,
+    reject: (reason?: unknown) => void
+  ): void => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
+      pendingJoinLogReads.delete(requestId);
+      reject(new Error(`[diskIO] join log request timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    pendingJoinLogReads.set(requestId, { resolve, reject, timer });
+    const request: ReadJoinLogRequest = {
+      type: "readJoinLog",
+      requestId,
+      chatId,
+      since,
+      now,
+    };
+    if (safePostDiskIO(worker, request, "join log read request")) return;
+    pendingJoinLogReads.delete(requestId);
+    clearTimeout(timer);
+    reject(new Error("[diskIO] persistence Worker rejected the join log read request."));
+  });
+}
+
 /**
  * 恢复失败的统一收口：让存储保持不可写、结算所有等待方并终止该实例。
  * @param fatal 是否升级为需要进程重启的致命失败（运行时恢复路径为 true）。
@@ -125,6 +176,9 @@ export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal
   diskIORuntime.pendingBusinessMessages.clear();
   diskIOFlushBarrier.settleAll("failed");
   rejectPendingLuckSecrets(new Error(
+    `Persistence Worker became unavailable during recovery: ${reason}`
+  ));
+  rejectPendingJoinLogReads(new Error(
     `Persistence Worker became unavailable during recovery: ${reason}`
   ));
   try {
@@ -291,7 +345,7 @@ export function createDiskIOWorker(): Worker {
       return;
     }
     if (data.type === "flushed" || data.type === "flushFailed") {
-      // 按领域记账供 flushDiskIODomain 查询：统一 flush 覆盖全部七个领域，
+      // 按领域记账供 flushDiskIODomain 查询：统一 flush 覆盖全部八个领域，
       // 因此后到的回执总是更新的真相，成功回执直接清空。失败领域名也要落进
       // 控制台——Worker 侧的写盘错误按设计只有 console.error，不带领域名的话
       // 运维根本看不出是哪个文件坏了。
@@ -317,6 +371,23 @@ export function createDiskIOWorker(): Worker {
         pending.reject(new Error(data.error ?? "Disk I/O Worker returned no luck receipt secret."));
       } else {
         pending.resolve(data.secret);
+      }
+      return;
+    }
+    if (data.type === "joinLogRead") {
+      const pending: {
+        resolve: (records: readonly JoinLogRecord[]) => void;
+        reject: (error: Error) => void;
+        timer: ReturnType<typeof setTimeout>;
+      } | undefined = pendingJoinLogReads.get(data.requestId);
+      if (!pending) return;
+      pendingJoinLogReads.delete(data.requestId);
+      clearTimeout(pending.timer);
+      const reply: JoinLogReadReply = data;
+      if (reply.error !== undefined || reply.records === undefined) {
+        pending.reject(new Error(reply.error ?? "Disk I/O Worker returned no join records."));
+      } else {
+        pending.resolve(reply.records);
       }
       return;
     }
@@ -367,6 +438,9 @@ export function createDiskIOWorker(): Worker {
     }
     rejectPendingLuckSecrets(
       new Error("Persistence Worker crashed while loading the daily luck receipt secret.")
+    );
+    rejectPendingJoinLogReads(
+      new Error("Persistence Worker crashed while reading join logs.")
     );
     if (diskIORestartThrottle.shouldGiveUp()) {
       console.error(

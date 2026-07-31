@@ -13,6 +13,7 @@
  */
 
 import { requestDeepSeekJson } from "../../../antiRaid/ai/deepseek";
+import { adDetectSystemPrompts } from "../../../cache/workers/antiRaid/adDetect";
 import { getAdSampleConfig } from "../../../config/adSamples";
 import { logger } from "../../../infra/logger";
 import {
@@ -76,13 +77,11 @@ export interface ClassifyAdTextParams {
  * AD_DETECT_BATCH_SIZE 次判定各重建一遍同样的字符串，纯粹是给 isolate 制造
  * GC 压力，而这条线程上还压着验证踢人与封禁。
  */
-const systemPrompts: Map<boolean, string> = new Map();
-
 function adDetectSystemPrompt(justJoined: boolean): string {
-  let prompt: string | undefined = systemPrompts.get(justJoined);
+  let prompt: string | undefined = adDetectSystemPrompts.get(justJoined);
   if (prompt === undefined) {
     prompt = buildAdDetectSystemPrompt(getAdSampleConfig(), justJoined);
-    systemPrompts.set(justJoined, prompt);
+    adDetectSystemPrompts.set(justJoined, prompt);
   }
   return prompt;
 }

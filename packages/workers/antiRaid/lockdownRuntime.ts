@@ -16,8 +16,7 @@ import { transitionLockdown } from "../../states/lockdown";
 import type { LockdownEffect, LockdownMachineEvent, LockdownTransition, LockdownState } from "../../types/states/lockdown";
 import { fetchAdminIds, freshAdminIds } from "./adminCache";
 import { trimSlidingWindow } from "../../libs/slidingWindowRateLimit";
-import type { LockdownEntry } from "../../cache/workers/antiRaid/lockdown";
-import type { JoinWindow } from "../../types/antiRaid/internal";
+import type { JoinWindow, LockdownEntry } from "../../types/antiRaid/internal";
 import { trackAntiRaidTask } from "./taskTracker";
 
 declare const self: Worker;
@@ -333,7 +332,7 @@ export function recordJoin(chatId: number, now: number): void {
  * joinedAt 必须是创建那条 PENDING 记录时 recordJoin 压进窗口的同一个时间戳
  * （见 verificationRuntime.ts 的 handleJoin 把 event.now 同时传给 recordJoin
  * 与状态机），按值精确移除，不能像早期实现那样无差别 shift 队首——
- * VERIFICATION_TIMEOUT_MS（90s）比 JOIN_WINDOW_MS（60s）长，超时终核这条
+ * VERIFICATION_TIMEOUT_MS（3 分钟）比 JOIN_WINDOW_MS（60s）长，超时终核这条
  * 路径触发时，这条 join 自己的时间戳几乎总是已经被期间其它入群的
  * recordJoin 自然修剪出窗口了；这时无差别 shift 队首会误删窗口内其它人
  * 仍然合法在场的时间戳，让统计总数比真实入群数更少，反而更难触发本该

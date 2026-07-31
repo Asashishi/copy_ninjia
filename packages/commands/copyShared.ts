@@ -1,5 +1,9 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, GlobalCopyState } from "../types/chatState";
+import type {
+  CopyCooldownClaim,
+  GrantedCopyCooldownClaim,
+} from "../types/copy/cooldown";
 import { getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram/actions";
 import { isWhitelisted } from "../config/whitelist";
@@ -16,21 +20,9 @@ import { resolveCommandTarget } from "./targetResolution";
 /** claimCopyCooldownOrReject 的返回值：拒绝时只有 rejected；放行时附带占用前
  * 的旧时间戳与本次占用写入的时间戳，供调用方在这次尝试最终没有真正开始复制时
  * 用 releaseCopyCooldownClaim 回滚。 */
-export interface CopyCommandUser {
+interface CopyCommandUser {
   id: number;
 }
-
-export interface RejectedCopyCooldownClaim {
-  rejected: true;
-}
-
-export interface GrantedCopyCooldownClaim {
-  rejected: false;
-  previousLastCopyTime: number | undefined;
-  claimedAt: number;
-}
-
-export type CopyCooldownClaim = RejectedCopyCooldownClaim | GrantedCopyCooldownClaim;
 
 /**
  * copy 类命令的公共冷却检查 + 原子占用。全局共享一份 lastCopyTime 冷却时钟

@@ -39,7 +39,7 @@ import {
   sendVerificationReminder,
 } from "./verificationReminders";
 import { trackAntiRaidTask } from "./taskTracker";
-import type { VerificationEntry } from "../../cache/workers/antiRaid/verification";
+import type { VerificationEntry } from "../../types/antiRaid/internal";
 
 type VerificationChangePublisher = (
   chatId: number,

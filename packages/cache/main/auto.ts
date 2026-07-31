@@ -1,4 +1,4 @@
-import type { TimestampDeque } from "../../libs/timestampDeque";
+import type { AiReplyActivityEntry } from "../../types/auto";
 
 /** 消息自动流水线（packages/auto）的内存状态。 */
 
@@ -16,13 +16,6 @@ export const userReplyTriggerTimes: Map<string, number> = new Map();
 export const userReplyTriggerSweepState: {
   timer: ReturnType<typeof setTimeout> | null;
 } = { timer: null };
-
-/** 单群随机 AI 触发概率所需的最近活跃窗口。 */
-export interface AiReplyActivityEntry {
-  /** 只保留足以计算 1/10 下限的最新消息时间戳。 */
-  timestamps: TimestampDeque;
-  lastObservedAt: number;
-}
 
 /** 按群的一小时滑动活跃度；纯内存、Map 顺序同时是 LRU 顺序。 */
 export const aiReplyActivityByChat: Map<number, AiReplyActivityEntry> = new Map();

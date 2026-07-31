@@ -1,12 +1,6 @@
-import type { DayFileState } from "../../../types/diskIO/storage";
+import type { BufferedLogEntry, DayFileState } from "../../../types/diskIO/storage";
 
 /** 日志落盘（packages/workers/diskIO/logFiles.ts）的内存状态。 */
-
-/** 一条尚未刷盘的日志序列化文本及其东京日期。 */
-export interface BufferedLogEntry {
-  day: string;
-  text: string;
-}
 
 /** 当前日志追加目标；Worker 重建后由下一次写入重新探测。 */
 export const loggerFileState: { current: DayFileState | null } = { current: null };

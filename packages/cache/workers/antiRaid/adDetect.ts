@@ -48,6 +48,15 @@ export const recentlyDisposedAdKeys: Set<string> = new Set<string>();
 export const pendingAdMessages: Map<string, AdMessageBundle> = new Map();
 
 /**
+ * 广告判定 system prompt 的两个静态变体，键为发送者是否仍在入群窗口。
+ *
+ * classifier.ts 首次使用对应变体时填充；部署配置在进程内不变，因此不失效。
+ * Anti-Raid Worker 崩溃后从空表重建。没有条目表示该变体尚未构造，调用方应
+ * 用当前已严格加载的广告样本生成。键域只有 boolean，容量固定为两条。
+ */
+export const adDetectSystemPrompts: Map<boolean, string> = new Map();
+
+/**
  * 正在等待 DeepSeek 判定的键；防止同一个人被并发送检两次，同时它的 size 就是
  * 全局在途计数，由 AD_DETECT_MAX_IN_FLIGHT 兜住上界（见 adDetect/queue.ts 的
  * runAdDetectBatch）。派发时插入，detectOne 的 finally 里删除，因此 Worker

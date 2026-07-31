@@ -12,14 +12,8 @@ import {
 } from "../../libs/luckReceipt";
 import { logger } from "../../infra/logger";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
+import type { SignedLuckResult } from "../../types/luckChallenge";
 import { ensureLuckCacheFreshForToday, promotePendingDraw } from "./cache";
-
-export interface SignedLuckResult {
-  text: string;
-  receiptOffset: number;
-  receiptLength: number;
-  receiptUrl: string;
-}
 
 /** 正文直接展示回执的定长 HMAC；自描述签名回执放在同范围的 text_link 元数据中。 */
 export function signLuckResultText(bodyText: string, cacheKey: string): SignedLuckResult {

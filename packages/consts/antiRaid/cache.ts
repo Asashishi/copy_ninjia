@@ -14,9 +14,10 @@ export const ANTI_RAID_CHAT_CACHE_MAX: number = 500;
 export const ANTI_RAID_CACHE_SWEEP_INTERVAL_MS: number = 5 * 60 * 1000;
 /**
  * “评论区留言 → 自动拉群”两个事件的关联窗口。实际间隔是毫秒级，取分钟级
- * 给限流和网络抖动留出余量。
+ * 给限流和网络抖动留出余量；与入群验证窗口同为三分钟，避免帖子路径提前
+ * 丢掉仍应关联的评论。
  */
-export const COMMENT_JOIN_CORRELATE_MS: number = 2 * 60 * 1000;
+export const COMMENT_JOIN_CORRELATE_MS: number = 3 * 60_000;
 /** 最近评论关联缓存的全局条目硬顶；满载时优先清过期，再淘汰最早到期项。 */
 export const RECENT_COMMENT_CACHE_MAX: number = 5_000;
 /**

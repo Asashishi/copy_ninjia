@@ -2,8 +2,9 @@ import type { Tool } from "@google/genai";
 import type { ToolDefinition } from "../tools";
 import type { StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../stickers/tools";
 import type { ChatActionControl } from "./chatAction";
-import type { ImageGenerationReference } from "./protocol";
+import type { AiDirectTriggerReason, ImageGenerationReference } from "./protocol";
 import type { BufferedReplyReference } from "./memory";
+import type { MediaKind } from "../media";
 
 /** 同群并发位占满时排队补跑的直接触发快照。 */
 export interface QueuedReplyTrigger {
@@ -66,6 +67,42 @@ export interface ReplyToolset {
   isActive(): boolean;
   /** 与 ReplyToolContext 相同的 generation 取消信号。 */
   signal?: AbortSignal;
+}
+
+/** 一轮行动工具内的已发送消息与错字占用状态。 */
+export interface RoundMessageState {
+  messageCount: number;
+  typoUsedThisRound: boolean;
+  sentCanonicalTexts: Map<number, string>;
+  /** 执行侧已接管的错字纠正单字；防止模型从工具结果自行补发。 */
+  reservedCorrectionText: string | null;
+}
+
+/**
+ * 评价触发的附加上下文：发送人显示名、解析出的描述与媒体类型。
+ * kind 决定拼进提示词的措辞（“一张图片”/“一枚贴纸”/“一个 GIF”）。
+ */
+export interface MediaCommentContext {
+  kind: MediaKind;
+  senderId: number;
+  senderName: string;
+  description: string;
+  /**
+   * 当前媒体消息自身的快照；视觉解析或排队期间滑出热区后，发送自录仍可
+   * 保留实际回复边。
+   */
+  triggerReference?: BufferedReplyReference;
+  /** 当前媒体是转发时的来源；用于在特殊回复任务中明确来源到转发者的路径。 */
+  forwardedFrom?: string;
+  /** 已清洗的媒体转录整行（视觉描述 + caption），供排队快照保留原请求。 */
+  triggerText?: string;
+  /**
+   * 用户是拿这份媒体明确在跟机器人说话（回复机器人，或 caption 里 @ 机器人）：
+   * 回复指令改为必回语气，并发闸打满时按直接触发排队补跑而非丢弃。
+   */
+  directTriggerReason?: AiDirectTriggerReason;
+  /** 排队时随触发快照保存，避免原转录条目滑出后丢失回复对象。 */
+  replyTo?: BufferedReplyReference;
 }
 
 /** 让 replies.ts 对贴纸候选类型形成明确的领域依赖并可直接重导出。 */

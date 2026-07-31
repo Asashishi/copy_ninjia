@@ -1,4 +1,8 @@
-import type { BlockedMemberRemover, PendingBlockedRemoval } from "../../types/blocklist";
+import type {
+  BlockedMemberRemover,
+  BlocklistSweepRecord,
+  PendingBlockedRemoval,
+} from "../../types/blocklist";
 import type { BlockedUserRecord } from "../../types/diskIO/storage";
 
 /** 黑名单查询（packages/infra/blocklist.ts）的主线程侧内存状态。 */
@@ -91,42 +95,6 @@ export const pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Ma
 
 /** 处置批次编号发号器；只在主线程自增，用于回执对账。 */
 export const blocklistRemovalCounter: { current: number } = { current: 0 };
-
-/** 单个群的补扫进度。 */
-export interface BlocklistSweepRecord {
-  /** 在途批次的编号；null 表示当前没有批次在跑。 */
-  removalId: number | null;
-  /** 已完整扫过一次的时刻；null 表示还没扫成功过，仍欠这个群一次。 */
-  sweptAt: number | null;
-  /** 上一次没能全部落定后，允许再试的最早时刻。 */
-  nextRetryAt: number;
-  /**
-   * 在途批次落定后必须立刻再欠一次（`/block` 在本群封禁失败、或秒踢批次没
-   * 落定）。用显式标志而不是直接把 sweptAt 置 null，是为了不跟在途批次抢写：
-   * 那批的 `complete: true` 回执若晚于重扫请求到达，会把 sweptAt 写回去，
-   * 重扫请求就这么丢了（见 infra/blocklist.ts 的 settleBlockedRemoval）。
-   */
-  resweepRequested: boolean;
-  /**
-   * 这个群连续有多少次补扫没能全部落定；`complete` 回执把它清零。只用于按
-   * 次数放大退避（见 infra/blocklist.ts 的 sweepRetryDelayMs）：目标自己是群
-   * 管理员、或机器人是管理员但没有封禁权限时，每一轮补扫都注定失败，固定
-   * 间隔就等于永久每 5 分钟重扫一次整份名单。退避顶到
-   * BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS 之后不再自增，计数因此有界。
-   */
-  failedSweeps: number;
-  /**
-   * 这个群的处置已确认卡在「机器人没有封禁权限」上（Telegram 明确回了权限
-   * 不足，见 infra/telegram/actions.ts 的 banChatMemberWithOutcome）。
-   *
-   * 置真后，这个群的按时间重试与新一轮补扫全部停下——重试多少次都一样，只是
-   * 把同一条报错刷进日志，还要为此把整份名单重扫一遍。唯一的解除路径是一次
-   * **确证的权限变更观测**（my_chat_member 更新或按需 getChatMember，见
-   * infra/botAdmin.ts），那才是「这次再试有意义」的真实边沿。durable outbox
-   * 里对应的条目同时被标成 `missing-permission`，运维一眼能看出该去补权限。
-   */
-  permissionBlocked: boolean;
-}
 
 /**
  * 各群的补扫进度。「是管理员 && 已 /init enable」成立时补扫一次，成功才记

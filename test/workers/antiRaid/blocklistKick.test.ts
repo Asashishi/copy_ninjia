@@ -108,6 +108,10 @@ beforeEach(() => {
   diskPosts.length = 0;
   deliveryOrder.length = 0;
   flushDiskIODomain.mockClear();
+  flushDiskIODomain.mockImplementation(async (): Promise<string> => {
+    deliveryOrder.push("disk-flush");
+    return "flushed";
+  });
   blockedUserIds.clear();
   pendingBlockedRemovals.clear();
   recentBlockedJoinCounts.clear();
@@ -130,6 +134,13 @@ describe("黑名单成员入群秒踢", () => {
       // 不投 join 就没人替这次入群记刷群计数，处置消息必须把时刻带上。
       joinedAt: expect.any(Number),
     });
+    expect(diskPosts).toContainEqual({
+      type: "joinLog",
+      chatId: -1001,
+      userId: 42,
+      joinedAt: 1_000,
+      day: "1970-01-01",
+    });
     // 未销账的批次要能被重投，编号是它的身份。
     expect(pendingBlockedRemovals.size).toBe(1);
     expect(joins()).toHaveLength(0);
@@ -139,12 +150,13 @@ describe("黑名单成员入群秒踢", () => {
         params: expect.objectContaining({ chatId: -1001, userIds: [42] }),
       })]],
     });
-    expect(deliveryOrder.indexOf("disk-blocklistRemovals")).toBeLessThan(
-      deliveryOrder.indexOf("disk-flush")
-    );
-    expect(deliveryOrder.indexOf("disk-flush")).toBeLessThan(
-      deliveryOrder.indexOf("worker-removeBlockedMembers")
-    );
+    expect(deliveryOrder).toEqual([
+      "disk-joinLog",
+      "disk-flush",
+      "disk-blocklistRemovals",
+      "disk-flush",
+      "worker-removeBlockedMembers",
+    ]);
   });
 
   test("管理员身份也救不了：黑名单优先于一切入群豁免", async () => {
@@ -158,6 +170,7 @@ describe("黑名单成员入群秒踢", () => {
 
   test("outbox 未落盘时不把处置投给 Worker，也不确认这条 update", async () => {
     blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    flushDiskIODomain.mockResolvedValueOnce("flushed");
     flushDiskIODomain.mockResolvedValueOnce("failed");
 
     await expect(handleChatMemberUpdate(joinUpdate(42))).rejects.toThrow(
@@ -169,24 +182,52 @@ describe("黑名单成员入群秒踢", () => {
     expect(diskPosts.at(-1)?.type).toBe("blocklistRemovals");
   });
 
+  test("入群日志未落盘时不继续投递验证或黑名单处置", async () => {
+    blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    flushDiskIODomain.mockResolvedValueOnce("failed");
+
+    await expect(handleChatMemberUpdate(joinUpdate(42))).rejects.toThrow(
+      "Persistence Worker rejected join log event"
+    );
+
+    expect(removals()).toHaveLength(0);
+    expect(joins()).toHaveLength(0);
+    expect(pendingBlockedRemovals).toHaveLength(0);
+    expect(diskPosts).toEqual([{
+      type: "joinLog",
+      chatId: -1001,
+      userId: 42,
+      joinedAt: 1_000,
+      day: "1970-01-01",
+    }]);
+  });
+
   test("outbox flush 等待期间解除拉黑时，先持久化取消且不投递旧处置", async () => {
     blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    let releaseFirstFlush: ((result: string) => void) | undefined;
+    let releaseOutboxFlush: ((result: string) => void) | undefined;
+    flushDiskIODomain.mockResolvedValueOnce("flushed");
     flushDiskIODomain.mockImplementationOnce(
       (): Promise<string> => new Promise<string>((resolve: (result: string) => void): void => {
-        releaseFirstFlush = resolve;
+        releaseOutboxFlush = resolve;
       })
     );
 
     const handling: Promise<void> = handleChatMemberUpdate(joinUpdate(42));
-    // markBotAdminObserved 与 write-ahead 各跨一个 microtask；等第一轮 snapshot
-    // 已排队且 flush 真正挂起，再模拟并发到达的 /unblock。
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(flushDiskIODomain).toHaveBeenCalledTimes(1);
+    // 先跨过 joinLog durable flush，再等 write-ahead snapshot 的领域 flush 真正
+    // 挂起，才模拟并发到达的 /unblock。
+    for (
+      let turn: number = 0;
+      turn < 20 && flushDiskIODomain.mock.calls.length < 2;
+      turn++
+    ) {
+      await Bun.sleep(0);
+    }
+    expect(flushDiskIODomain).toHaveBeenCalledTimes(2);
     expect(unblockUser(42)).toBeTrue();
-    if (releaseFirstFlush === undefined) throw new Error("Expected the first outbox flush to be pending.");
-    releaseFirstFlush("flushed");
+    if (releaseOutboxFlush === undefined) {
+      throw new Error("Expected the outbox flush to be pending.");
+    }
+    releaseOutboxFlush("flushed");
 
     await handling;
 
@@ -194,7 +235,7 @@ describe("黑名单成员入群秒踢", () => {
     expect(pendingBlockedRemovals.size).toBe(0);
     // 发现权威任务已取消后还要再 flush 一次空快照，不能只依赖 /unblock
     // 排队但尚未确认的 cleanup。
-    expect(flushDiskIODomain).toHaveBeenCalledTimes(2);
+    expect(flushDiskIODomain).toHaveBeenCalledTimes(3);
     expect(diskPosts.at(-1)).toMatchObject({
       type: "blocklistRemovals",
       removals: [],

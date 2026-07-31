@@ -17,8 +17,8 @@ import {
   setWhitelistPermission,
 } from "../config/whitelist";
 import { sendMessage } from "../infra/telegram";
-import { formatTargetLabel } from "../users/userLabel";
-import { isSuperAdminActor } from "./commandActor";
+import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
+import { isSuperAdminActor, resolveCommandActor } from "./commandActor";
 import { resolveCommandTarget } from "./targetResolution";
 
 /** /permission 的固定用法；支持回复目标，或显式给用户/频道 ID 与 @username。 */
@@ -87,10 +87,18 @@ export function parsePermissionBoolean(raw: string): boolean | undefined {
 export async function handlePermissionCommand(
   ctx: CommandContext<Context>
 ): Promise<void> {
-  if (!isSuperAdminActor(ctx)) return;
-
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
+  if (!isSuperAdminActor(ctx)) {
+    const actor: CachedUser | undefined = resolveCommandActor(ctx);
+    await sendMessage({
+      chatId,
+      text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想改本天才的权限配置？哪来的资格呀，笨蛋♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+
   const tokens: string[] = ctx.match.trim()
     .split(/\s+/)
     .filter((token: string): boolean => token.length > 0);

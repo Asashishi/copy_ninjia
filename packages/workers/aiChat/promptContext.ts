@@ -24,32 +24,13 @@ import { chatBuffers, chatSummaries } from "../../cache/workers/aiChat/memory";
 import { collectReplyChain, lookupBufferedMessage } from "./replyChain";
 import { resolvedTagFor } from "./mediaText";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
-import type { AiBotInfo, AiDirectTriggerReason } from "../../types/aiChat/protocol";
-import type { QueuedReplyTrigger, ReplyPromptSections } from "../../types/aiChat/replies";
+import type { AiBotInfo } from "../../types/aiChat/protocol";
+import type {
+  MediaCommentContext,
+  QueuedReplyTrigger,
+  ReplyPromptSections,
+} from "../../types/aiChat/replies";
 import type { MediaKind } from "../../types/media";
-
-/** 评价触发的附加上下文：发送人显示名 + 解析出的描述 + 媒体类型，见
- *  mediaIngest.ts 的 recordChatMedia。kind 决定拼进提示词的措辞（"一张图片"/
- *  "一枚贴纸"/"一个 GIF"）。 */
-export interface MediaCommentContext {
-  kind: MediaKind;
-  senderId: number;
-  senderName: string;
-  description: string;
-  /** 当前媒体消息自身的快照；视觉解析或排队期间滑出热区后，发送自录仍可
-   * 保留实际回复边。 */
-  triggerReference?: BufferedReplyReference;
-  /** 当前媒体是转发时的来源；用于在特殊回复任务中明确来源到转发者的路径。 */
-  forwardedFrom?: string;
-  /** 已清洗的媒体转录整行（视觉描述 + caption），供排队快照保留原请求。 */
-  triggerText?: string;
-  /** 用户是拿这份媒体明确在跟机器人说话（回复机器人，或 caption 里 @ 机器人）：
-   *  回复指令改为必回语气（不许已读不回），并发闸打满时按直接触发排队补跑
-   *  而非丢弃。 */
-  directTriggerReason?: AiDirectTriggerReason;
-  /** 排队时随触发快照保存，避免原转录条目滑出后丢失回复对象。 */
-  replyTo?: BufferedReplyReference;
-}
 
 /** 按媒体类型给出提示词里要用的名词短语与转录行标签，见 replyInstruction
  *  的拼装。 */

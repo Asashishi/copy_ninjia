@@ -9,6 +9,7 @@ import type {
 } from "../../packages/types";
 import {
   diskIORuntime,
+  pendingJoinLogReads,
   pendingLoad,
   pendingLuckSecrets,
 } from "../../packages/cache/main/diskIO";
@@ -503,6 +504,54 @@ describe("explicit Worker initialization", () => {
 
       expect(await pendingSecret).toBeInstanceOf(Error);
       expect(worker.terminated).toBeTrue();
+    } finally {
+      await diskIO.terminateDiskIO();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("入群日志请求按 requestId 路由，终止时立即拒绝并清理等待表", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loadedPromise;
+
+      const readPromise = diskIO.readJoinLog({
+        chatId: -1001,
+        since: 123,
+        now: 789,
+        timeoutMs: 1_000,
+      });
+      const request = worker.messages.at(-1)!;
+      expect(request).toMatchObject({
+        type: "readJoinLog",
+        chatId: -1001,
+        since: 123,
+        now: 789,
+      });
+      worker.onmessage!({ data: {
+        type: "joinLogRead",
+        requestId: request.type === "readJoinLog" ? request.requestId : -1,
+        records: [{ userId: 42, joinedAt: 456 }],
+      } } as unknown as MessageEvent<DiskIOReply>);
+      await expect(readPromise).resolves.toEqual([{ userId: 42, joinedAt: 456 }]);
+      expect(pendingJoinLogReads.size).toBe(0);
+
+      const pendingRead = diskIO.readJoinLog({
+        chatId: -1001,
+        since: 0,
+        now: 789,
+        timeoutMs: 60_000,
+      }).then(() => null, (error: unknown) => error);
+      expect(pendingJoinLogReads.size).toBe(1);
+      await diskIO.terminateDiskIO();
+      expect(await pendingRead).toBeInstanceOf(Error);
+      expect(pendingJoinLogReads.size).toBe(0);
     } finally {
       await diskIO.terminateDiskIO();
       globalThis.Worker = originalWorker;

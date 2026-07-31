@@ -87,11 +87,15 @@ describe("/white", () => {
     expect(parseWhiteAction("true")).toBeUndefined();
   });
 
-  test("非超级管理员静默拒绝，不暴露也不修改白名单", async () => {
+  test("非超级管理员收到权限提示，且不修改白名单", async () => {
     await handleWhiteCommand(context(2, "100 enable"));
 
     expect(setWhitelistMembership).not.toHaveBeenCalled();
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("哪来的资格"),
+      replyToMessageId: 10,
+    });
   });
 
   test("支持 @username、用户 ID 与频道 ID", async () => {

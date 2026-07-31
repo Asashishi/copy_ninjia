@@ -3,7 +3,8 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import * as realFsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { InstanceLockOptions, ProcessIdentity } from "../../packages/infra/storage/instanceLock";
+import type { InstanceLockOptions } from "../../packages/infra/storage/instanceLock";
+import type { ProcessIdentity } from "../../packages/types/storage";
 
 /**
  * guard 协议的 candidate 是用 link() 直接发布成 bot.lock.guard 的，没有 rename

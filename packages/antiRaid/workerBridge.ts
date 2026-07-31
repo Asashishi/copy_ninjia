@@ -44,7 +44,6 @@ import {
   emergencyLockdownRecoveryRuntime,
   pendingLockdownPersistence,
   persistedLockdownFingerprints,
-  type PersistedLockdownFingerprint,
 } from "../cache/main/antiRaid/lockdownMirror";
 import {
   activeVerificationSnapshots,
@@ -59,6 +58,7 @@ import type {
   AntiRaidWorkerMessage,
   VerificationSnapshot,
 } from "../types/antiRaid";
+import type { PersistedLockdownFingerprint } from "../types/antiRaid/internal";
 import type { LockdownRecord } from "../types/chatState";
 import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
 import type {

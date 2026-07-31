@@ -5,16 +5,14 @@ import { visibleSenderChat } from "../../users/visibleSender";
 import type { TelegramVisionSource } from "../../types/media";
 import type { AiReplyReference } from "../../types/aiChat/protocol";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
-
-/** 一条消息在 AI 转录中使用的发送者身份。 */
-export type MessageSpeaker = AiSpeakerSnapshot;
+import type { MentionFacts } from "../../types/auto";
 
 /**
  * 解析发言人的稳定身份字段。sender_chat 优先于 from，使频道马甲和匿名管理
  * 身份与群内实际展示一致；频道帖没有 sender_chat 时退回频道自身（判定见
  * users/visibleSender.ts，与 users/senderIdentity.ts 共用）。
  */
-export function resolveSpeaker(message: Message): MessageSpeaker {
+export function resolveSpeaker(message: Message): AiSpeakerSnapshot {
   const fromUser: User | undefined = message.from;
   const senderChat: Chat | undefined = visibleSenderChat(message);
   if (senderChat) {
@@ -40,16 +38,6 @@ function messageEntitySource(message: Message): { text: string; entities: Messag
     return { text: message.caption, entities: message.caption_entities };
   }
   return null;
-}
-
-/** 提及相关的两个触发事实，见 resolveMentionFacts。 */
-export interface MentionFacts {
-  /** 消息里 @ 到了机器人自己（只按 Telegram entity 精确识别，不做子串匹配）。 */
-  isMentioned: boolean;
-  /** 消息提及了机器人以外的用户：显式 `@username` 和 Telegram 的隐藏用户名
-   *  提及 `text_mention` 都算，会阻止随机 AI 插话；同时提及机器人时仍由
-   *  调用方的直接触发分支优先处理。 */
-  hasOtherMention: boolean;
 }
 
 /**

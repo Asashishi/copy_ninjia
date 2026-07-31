@@ -1,3 +1,5 @@
+import type { ImageGenerationAspectRatio } from "../../types/aiChat/imageGeneration";
+
 /** AI 生图模型与每群独立冷却。模型只支持 1K，分辨率不做成可变参数。 */
 export const GEMINI_IMAGE_GENERATION_MODEL: string = "gemini-3.1-flash-lite-image";
 /** 普通用户按群共享的生图冷却时长。 */
@@ -16,10 +18,6 @@ export const PNG_SIGNATURE: readonly number[] = Object.freeze([0x89, 0x50, 0x4e,
 export const IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY: number = 2;
 /** 单轮回复最多成功生成并发送一张图片；该图片同时占用一个共享可见动作。 */
 export const MAX_GENERATED_IMAGES_PER_REPLY: number = 1;
-
-/** Gemini 生图模型支持的宽高比。 */
-export type ImageGenerationAspectRatio =
-  | "1:1" | "3:2" | "2:3" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
 
 /** 生图模型接受的全部官方宽高比，供校验和工具说明共用；两个调用方共享同一
  *  数组引用，冻结防止一方误改动影响另一方。 */

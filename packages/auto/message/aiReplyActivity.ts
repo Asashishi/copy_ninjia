@@ -8,9 +8,9 @@ import {
 import {
   aiReplyActivityByChat,
   aiReplyActivitySweepState,
-  type AiReplyActivityEntry,
 } from "../../cache/main/auto";
 import { TimestampDeque } from "../../libs/timestampDeque";
+import type { AiReplyActivityEntry } from "../../types/auto";
 
 function pruneEntry(entry: AiReplyActivityEntry, now: number): void {
   entry.timestamps.trim(AI_REPLY_ACTIVITY_WINDOW_MS, now);

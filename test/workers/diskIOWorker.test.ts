@@ -8,6 +8,11 @@ const markStickerCatalogSnapshotDirty = mock((_pack: string, _snapshot: string):
 const handleLuckDrawMessage = mock((_message: unknown): void => {});
 const handleVerificationUpsert = mock((_input: unknown): void => {});
 const handleVerificationDelete = mock((_input: unknown): void => {});
+const handleJoinLogMessage = mock((_message: unknown): void => {});
+const readJoinLog = mock((_message: unknown): readonly {
+  userId: number;
+  joinedAt: number;
+}[] => [{ userId: 42, joinedAt: 1_000 }]);
 interface LuckSecretRecoveryInput {
   day: string;
   confirmedResultCount: number;
@@ -35,6 +40,7 @@ const flushStickerCatalogs = mock((): boolean => true);
 const flushLuckAppends = mock((): boolean => true);
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
+const flushJoinLogBuffer = mock((): boolean => true);
 const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
 const hydrateStickerCatalogs = mock((_packs: readonly string[] | null): Map<string, string> => new Map());
@@ -61,6 +67,11 @@ mock.module("../../packages/workers/diskIO/verificationFiles", () => ({
   handleVerificationUpsert,
   recoverVerificationDay: (): Map<string, unknown> => new Map(),
   scheduleVerificationRollover: (): void => {},
+}));
+mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
+  flushJoinLogBuffer,
+  handleJoinLogMessage,
+  readJoinLog,
 }));
 mock.module("../../packages/workers/diskIO/aiMemoryFiles", () => ({
   configureAiMemoryDeletePersistedReply: (): void => {},
@@ -105,12 +116,15 @@ beforeEach(() => {
     handleLuckDrawMessage,
     handleVerificationUpsert,
     handleVerificationDelete,
+    handleJoinLogMessage,
+    readJoinLog,
     flushLogBuffer,
     flushAiMemorySnapshots,
     flushStickerCatalogs,
     flushLuckAppends,
     flushVerificationChanges,
     flushBlocklistRemovalOutbox,
+    flushJoinLogBuffer,
     handleBlocklistRemovalsMessage,
     postMessage,
     hydrateLuckDay,
@@ -128,6 +142,8 @@ beforeEach(() => {
   flushLuckAppends.mockReturnValue(true);
   flushVerificationChanges.mockReturnValue(true);
   flushBlocklistRemovalOutbox.mockReturnValue(true);
+  flushJoinLogBuffer.mockReturnValue(true);
+  readJoinLog.mockImplementation(() => [{ userId: 42, joinedAt: 1_000 }]);
 });
 
 function route(message: DiskIOMessage): void {
@@ -149,6 +165,13 @@ describe("Disk I/O Worker protocol router", () => {
     route({ type: "luckDraw", day: "2026-07-22", key: "42", label: "大吉", fortunePercent: 99 });
     route({ type: "verificationDelete", chatId: -1, userId: 42, generation: 1, revision: 4 });
     route({ type: "blocklistRemovals", removals: [] });
+    route({
+      type: "joinLog",
+      chatId: -1,
+      userId: 42,
+      joinedAt: 1_000,
+      day: "1970-01-01",
+    });
 
     expect(handleLogMessage).toHaveBeenCalledTimes(1);
     expect(markAiMemorySnapshotDirty).toHaveBeenCalledWith({
@@ -162,6 +185,38 @@ describe("Disk I/O Worker protocol router", () => {
     expect(handleLuckDrawMessage).toHaveBeenCalledTimes(1);
     expect(handleVerificationDelete).toHaveBeenCalledTimes(1);
     expect(handleBlocklistRemovalsMessage).toHaveBeenCalledTimes(1);
+    expect(handleJoinLogMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("入群日志查询总有显式成功或失败回执", () => {
+    route({
+      type: "readJoinLog",
+      requestId: 15,
+      chatId: -1,
+      since: 1,
+      now: 1_000,
+    });
+    expect(postMessage).toHaveBeenLastCalledWith({
+      type: "joinLogRead",
+      requestId: 15,
+      records: [{ userId: 42, joinedAt: 1_000 }],
+    });
+
+    readJoinLog.mockImplementationOnce(() => {
+      throw new Error("corrupt join log");
+    });
+    route({
+      type: "readJoinLog",
+      requestId: 16,
+      chatId: -1,
+      since: 1,
+      now: 1_000,
+    });
+    expect(postMessage).toHaveBeenLastCalledWith({
+      type: "joinLogRead",
+      requestId: 16,
+      error: "corrupt join log",
+    });
   });
 
   test("密钥请求总有显式成功或失败回执", () => {
@@ -274,6 +329,7 @@ describe("Disk I/O Worker protocol router", () => {
       flushLuckAppends,
       flushVerificationChanges,
       flushBlocklistRemovalOutbox,
+      flushJoinLogBuffer,
     ]) {
       expect(fn).toHaveBeenCalledTimes(1);
     }
@@ -295,7 +351,7 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  test("七个领域全部成功时回执不带失败领域", () => {
+  test("八个领域全部成功时回执不带失败领域", () => {
     route({ type: "flush", flushId: 13 });
 
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 13 });

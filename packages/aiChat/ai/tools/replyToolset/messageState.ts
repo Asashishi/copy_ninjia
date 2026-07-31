@@ -1,14 +1,9 @@
 import { sendMessageWithResult } from "../../../../infra/telegram";
-import type { ReplyToolContext } from "../../../../types/aiChat/replies";
+import type {
+  ReplyToolContext,
+  RoundMessageState,
+} from "../../../../types/aiChat/replies";
 import type { TelegramSendResult } from "../../../../types/telegram";
-
-export interface RoundMessageState {
-  messageCount: number;
-  typoUsedThisRound: boolean;
-  sentCanonicalTexts: Map<number, string>;
-  /** 执行侧已接管的错字纠正单字；防止模型从工具结果自行补发。 */
-  reservedCorrectionText: string | null;
-}
 
 export function createRoundMessageState(): RoundMessageState {
   return {

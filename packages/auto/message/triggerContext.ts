@@ -1,23 +1,11 @@
 import type { Message } from "@grammyjs/types";
-import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference, type MentionFacts } from "./facts";
-import type { DirectTrigger } from "./triggerPolicy";
-import type { AiBotInfo, AiReplyReference } from "../../types/aiChat/protocol";
-
-export interface MessageTriggerContext {
-  message: Message;
-  chatId: number;
-  bot: AiBotInfo;
-  isQuiet: boolean;
-  aiReplyProbability: number;
-  repliedTo?: Message;
-  replyReference?: AiReplyReference;
-  /** 当前消息本身是转发时的来源标注；非转发省略。 */
-  forwardedFrom?: string;
-  isMentioned: boolean;
-  hasOtherMention: boolean;
-  repliesToSelf: boolean;
-  directTrigger?: DirectTrigger;
-}
+import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference } from "./facts";
+import type { AiBotInfo } from "../../types/aiChat/protocol";
+import type {
+  DirectTrigger,
+  MentionFacts,
+  MessageTriggerContext,
+} from "../../types/auto";
 
 export interface CreateMessageTriggerContextParams {
   message: Message;

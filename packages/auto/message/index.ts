@@ -6,6 +6,7 @@ import { recordChatTitleFromChat } from "../../infra/chatTitle";
 import { getActiveCopyIn, getChatState } from "../../infra/storage/stateStore";
 import { isQuietUntilActive } from "../../libs/chatState";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
+import type { MessageTriggerContext } from "../../types/auto";
 import type { ChatState, CachedUser, CopyMode } from "../../types/chatState";
 import { cacheSender } from "../../users/senderIdentity";
 import { handleAnimationMessage } from "./animation";
@@ -18,7 +19,7 @@ import { handleProactiveMessageActions } from "./proactive";
 import { handlePrivateProxySend } from "./proxySend";
 import { handleStickerMessage } from "./sticker";
 import { handleTextMessage } from "./text";
-import { createMessageTriggerContext, type MessageTriggerContext } from "./triggerContext";
+import { createMessageTriggerContext } from "./triggerContext";
 
 /**
  * 消息自动流水线的编排层。各载荷 handler 只负责自己的记录与触发语义；这里

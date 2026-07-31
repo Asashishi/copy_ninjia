@@ -9,6 +9,7 @@ import {
   CONFIG_ROOT,
   LOCK_FILE_PATH,
   LOGS_DIR,
+  JOIN_LOG_MEMORY_DIR,
   MEMORY_DIR,
   MOOD_CONFIG_PATH,
   PROJECT_ROOT,
@@ -21,7 +22,14 @@ import {
 
 test("测试环境的真实运行时文件与生产数据根完全隔离", () => {
   expect(RUNTIME_DATA_ROOT).not.toBe(PROJECT_ROOT);
-  for (const path of [STATE_FILE_PATH, LOCK_FILE_PATH, LOGS_DIR, MEMORY_DIR, AI_MEMORY_DIR]) {
+  for (const path of [
+    STATE_FILE_PATH,
+    LOCK_FILE_PATH,
+    LOGS_DIR,
+    MEMORY_DIR,
+    AI_MEMORY_DIR,
+    JOIN_LOG_MEMORY_DIR,
+  ]) {
     expect(path.startsWith(`${RUNTIME_DATA_ROOT}/`)).toBeTrue();
     expect(path.startsWith(`${PROJECT_ROOT}/`)).toBeFalse();
   }

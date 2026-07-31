@@ -119,7 +119,7 @@ export function blockUser(userId: number): boolean {
  * @returns 已 durable 为 true；false 表示这条记录目前只活在内存里，重启就没了。
  */
 export async function confirmBlocklistPersisted(): Promise<boolean> {
-  // 只看黑名单这一个领域：统一 flush 是七个领域的合取，某群 AI 记忆快照写不
+  // 只看黑名单这一个领域：统一 flush 是八个领域的合取，某群 AI 记忆快照写不
   // 进去也会让这里报「小本本没能写进硬盘」，把运维引向一个其实没坏的文件。
   const result: FlushResult = await flushDiskIODomain("blocklist");
   if (result === "flushed") return true;

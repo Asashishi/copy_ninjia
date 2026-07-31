@@ -124,6 +124,31 @@ function isObjectFreezeCall(expression: ts.Expression): boolean {
 }
 
 /**
+ * 模块顶层 Map/Set 与 holder 都是跨调用长期存活的状态，必须进入带 owner 的
+ * packages/cache/。consts 下的 ReadonlySet 是静态查找表，不属于运行时缓存。
+ */
+function moduleCacheInitializerKind(expression: ts.Expression): string | null {
+  const initializer: ts.Expression = unwrapTypeWrappers(expression);
+  if (
+    ts.isNewExpression(initializer) &&
+    ts.isIdentifier(initializer.expression) &&
+    ["Map", "Set", "WeakMap", "WeakSet"].includes(initializer.expression.text)
+  ) {
+    return initializer.expression.text;
+  }
+  if (!ts.isObjectLiteralExpression(initializer)) return null;
+  const hasCurrent: boolean = initializer.properties.some(
+    (property: ts.ObjectLiteralElementLike): boolean =>
+      ts.isPropertyAssignment(property) &&
+      (
+        (ts.isIdentifier(property.name) && property.name.text === "current") ||
+        (ts.isStringLiteral(property.name) && property.name.text === "current")
+      )
+  );
+  return hasCurrent ? "holder" : null;
+}
+
+/**
  * 声明类型是不是「容器」。用于判断一个非 Object.freeze 的调用结果该不该被要求
  * 冻结：`Math.ceil(...)` 返回 number，不该管；`buildList()` 声明成 readonly T[]
  * 就该管——它返回的是一份全新的可变数组。
@@ -424,6 +449,31 @@ for (const path of sourceFilesUnder(CONSTS_ROOT)) {
           failures.push(`${location} constant ${name} is a shared container built by a call and must be wrapped in Object.freeze`);
         }
       }
+    }
+  }
+}
+
+for (const path of sourceFilesUnder(SOURCE_ROOT)) {
+  if (path.startsWith(CACHE_ROOT) || path.startsWith(CONSTS_ROOT)) continue;
+  const source: ts.SourceFile = ts.createSourceFile(
+    path,
+    readFileSync(path, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (declaration.initializer === undefined) continue;
+      const kind: string | null =
+        moduleCacheInitializerKind(declaration.initializer);
+      if (kind === null) continue;
+      failures.push(
+        `${relative(PROJECT_ROOT, path)}:` +
+        `${source.getLineAndCharacterOfPosition(declaration.getStart()).line + 1} ` +
+        `module-level ${kind} ${declarationName(declaration)} must be declared under packages/cache/<owner>/`
+      );
     }
   }
 }

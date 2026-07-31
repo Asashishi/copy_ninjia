@@ -42,6 +42,9 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
+mock.module("../../../packages/infra/joinLog", () => ({
+  recordJoinLog: async (): Promise<boolean> => true,
+}));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (chatId: number, field: "lockdown"): boolean => {
     const state = chatStates.get(chatId);

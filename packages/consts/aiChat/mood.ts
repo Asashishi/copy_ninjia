@@ -16,6 +16,12 @@ export const MOOD_REROLL_MAX_MS: number = 4 * 60 * 60_000;
  *  完成、正常毫秒级返回，积压至截止时刻后的请求不得再改写群心情。 */
 export const MOOD_SWITCH_TIMEOUT_MS: number = 5_000;
 
+/**
+ * 部署配置中单个天气/时段倍率的硬上限。倍率只用于微调概率，超过该值通常是
+ * 配置笔误；在启动阶段拒绝可同时保证权重连乘与总和保持有限。
+ */
+export const MOOD_MULTIPLIER_MAX: number = 100;
+
 // 天气/时段桶的运行时全集，供部署配置（config/mood.json）的倍率表键做运行时
 // 校验。从 satisfies Record<Bucket, true> 的键派生而非手写数组：
 // types/aiChat/mood.ts 的联合类型增删桶而这里没跟上时直接编译报错，不靠人工同步。

@@ -5,6 +5,7 @@ import {
   confirmLuckDraw,
   handleAdDetectCommand,
   handleAiChatCommand,
+  handleBatchKickCommand,
   handleBlockCommand,
   handleCjkActionCommand,
   handleCjkActionUsageCommand,
@@ -46,10 +47,7 @@ import type {
   HearsContext,
   NextFunction,
 } from "grammy";
-
-export interface HandlerRegistration {
-  getLastSeenUpdateId(): number;
-}
+import type { HandlerRegistration } from "../types/lifecycle";
 
 /**
  * 显式安装完整的 grammY 更新链。模块导入本身不修改 Bot；调用一次本函数才
@@ -71,23 +69,25 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
-  // /permission 与 /white 是恢复/维护授权的全局管理入口，不依赖本群是否
-  // 初始化，也不能被私聊 /send 中转抢走。放在两道网关之前直接按 grammY 的
-  // command entity 匹配；并发写入由 config/whitelist.ts 的全局串行链负责。
+  // 未初始化群和不允许的私聊命令在这里终止，避免继续进入授权维护、串行队列、
+  // 验证、命令与 AI 链路。群内只有首次 /init 与 my_chat_member 等网关自身
+  // 明确放行的更新能越过初始化状态；私聊只接受超级管理员的 /send。
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined =>
+    shouldPassInitGate(ctx) && shouldPassPrivateCommandGate(ctx) ? next() : undefined
+  );
+
+  // /permission 与 /white 必须通过本群初始化网关，但无需占用聊天串行车道；
+  // 私聊限制已经在上面的前置网关生效。白名单并发写入由
+  // config/whitelist.ts 的全局串行链负责。
   bot.command("permission", (ctx: CommandContext<Context>): Promise<void> => handlePermissionCommand(ctx));
   bot.command("white", (ctx: CommandContext<Context>): Promise<void> => handleWhiteCommand(ctx));
-
-  // 除上面两条全局管理入口外，未初始化群在这里终止，避免继续进入串行队列、
-  // 验证、普通命令与 AI 链路。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => (shouldPassInitGate(ctx) ? next() : undefined));
 
   // 普通聊天按 chat 串行；反应同步有自己的合并队列，不占用聊天车道。
   bot.use(sequentialize((ctx: Context): string[] => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
 
-  // 私聊只放行 /send 入口和活动中的中转会话。除全局 /permission、/white 外，
-  // 中转消息在普通命令注册之前直接短路到消息流水线，避免 /copy 等文本被真的执行。
+  // 私聊命令已在前置网关统一收口；活动中的 /send 中转会话只把非命令消息
+  // 直接短路到消息流水线。
   bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
-    if (!shouldPassPrivateCommandGate(ctx)) return undefined;
     if (shouldRoutePrivateProxyMessage(ctx)) return handleIncomingMessage(ctx);
     return next();
   });
@@ -105,6 +105,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("steal_icon", (ctx: CommandContext<Context>): Promise<void> => handleStealIconCommand(ctx));
   bot.command("stop_copy", (ctx: CommandContext<Context>): Promise<void> => handleStopCommand(ctx));
   bot.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
+  bot.command("batch_kick", (ctx: CommandContext<Context>): Promise<void> => handleBatchKickCommand(ctx));
   bot.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
   bot.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
   bot.command("ad_detect", (ctx: CommandContext<Context>): Promise<void> => handleAdDetectCommand(ctx));

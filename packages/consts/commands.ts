@@ -32,6 +32,7 @@ export const BOT_COMMANDS: readonly BotCommand[] = Object.freeze([
   Object.freeze({ command: "unquiet", description: "提前解除 /quiet 静默" }),
   Object.freeze({ command: "mute", description: "禁言：收走目标的发言权一段时间，时长必填，如 10m、2h、1d（1 分钟~366 天，到点自动恢复）；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" }),
   Object.freeze({ command: "unmute", description: "提前解除禁言；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" }),
+  Object.freeze({ command: "batch_kick", description: "批量踢出本群滚动时间窗内加入的人，如 30m、2h、1d；只踢不拉黑（仅超级管理员可用）" }),
   Object.freeze({ command: "permission", description: "修改已有白名单用户或频道的逐项权限（仅超级管理员可用）" }),
   Object.freeze({ command: "white", description: "新增或删除白名单用户/频道，首次加入使用默认权限（仅超级管理员可用）" }),
 ]);
@@ -158,6 +159,32 @@ export const MUTE_MIN_DURATION_MS: number = 60_000;
  * 内。所属模块：commands/mute.ts。
  */
 export const MUTE_MAX_DURATION_MS: number = 366 * 24 * 60 * 60_000;
+
+/**
+ * `/batch_kick` 回溯时长的完整匹配规则：正整数加 m/h/d，大小写均可。
+ * 入群日志提供滚动 24 小时窗口，因此换算后超过一天的参数由命令拒绝。
+ */
+export const BATCH_KICK_DURATION_ARG_PATTERN: RegExp = /^([1-9]\d*)([mhd])$/i;
+
+/** `/batch_kick` 时长单位到毫秒的换算表。 */
+export const BATCH_KICK_DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> =
+  Object.freeze({
+    m: 60_000,
+    h: 60 * 60_000,
+    d: 24 * 60 * 60_000,
+  });
+
+/** `/batch_kick` 最短回溯窗口，避免零长度或秒级误操作。 */
+export const BATCH_KICK_MIN_DURATION_MS: number = 60_000;
+
+/** `/batch_kick` 最长回溯窗口；查询最多合并两个东京自然日。 */
+export const BATCH_KICK_MAX_DURATION_MS: number = 24 * 60 * 60_000;
+
+/**
+ * `/batch_kick` 同时执行的 Telegram 成员查询/踢出任务数。
+ * 命令是低频管理操作，固定小并发可避免大群清理时瞬间打满 Bot API。
+ */
+export const BATCH_KICK_CONCURRENCY: number = 5;
 
 /** /quiet 未传时长时使用的分钟数。 */
 export const QUIET_DEFAULT_MINUTES: number = 3;

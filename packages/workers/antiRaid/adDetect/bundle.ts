@@ -24,7 +24,11 @@ import {
   AD_SAMPLE_CONTEXT_MAX_CHARS,
 } from "../../../consts/antiRaid/adDetect";
 import type { AdSampleContext } from "../../../types/antiRaid";
-import type { AdCandidateEntry, AdMessageBundle } from "../../../types/antiRaid/adDetect";
+import type {
+  AdBundleSelection,
+  AdCandidateEntry,
+  AdMessageBundle,
+} from "../../../types/antiRaid/adDetect";
 
 /**
  * 裁掉去重窗口外、并且已经判过的旧上下文。尚未判定的条目即使等待超过一个
@@ -199,14 +203,6 @@ export function boundSampleContext(
   if (quote.length === 0) return { replyTo };
   if (replyTo.length === 0) return { quote };
   return { quote, replyTo };
-}
-
-/** 一次送检的取舍结果。 */
-export interface AdBundleSelection {
-  /** 本次真正交给模型的条目，按时间先后排列（已判上下文在前，未判内容在后）。 */
-  entries: AdCandidateEntry[];
-  /** 本次判到的最新未判条目序号；整串都已判过时等于 bundle.checkedSeq。 */
-  checkedToSeq: number;
 }
 
 /**

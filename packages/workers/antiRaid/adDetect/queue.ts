@@ -69,7 +69,7 @@ import {
   pruneConsumedContext,
   selectAdBundleEntries,
 } from "./bundle";
-import type { AdBundleSelection } from "./bundle";
+import type { AdBundleSelection } from "../../../types/antiRaid/adDetect";
 import { verificationKey } from "../../../libs/verificationKey";
 import type { AdCandidateMessage, AdDetectedEvent, AdSampleContext } from "../../../types/antiRaid";
 import type { AdCandidateEntry, AdMessageBundle, AdVerdict } from "../../../types/antiRaid/adDetect";

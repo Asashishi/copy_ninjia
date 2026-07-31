@@ -2,7 +2,7 @@ import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../
 import { describeStickerForContext, pickStickerVisionSource } from "../../aiChat/ai/stickers/describe";
 import { resolveSpeaker } from "./facts";
 import { buildAiRecordContext } from "./recordContext";
-import type { MessageTriggerContext } from "./triggerContext";
+import type { MessageTriggerContext } from "../../types/auto";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { TelegramVisionSource } from "../../types/media";

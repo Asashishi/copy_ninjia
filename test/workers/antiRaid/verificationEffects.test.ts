@@ -83,7 +83,10 @@ mock.module("../../../packages/infra/telegram", () => ({
 }));
 
 const { runVerificationEffects } = await import("../../../packages/workers/antiRaid/verificationEffects");
-const { verificationEntries } = await import("../../../packages/cache/workers/antiRaid/verification");
+const {
+  reminderDeliveries,
+  verificationEntries,
+} = await import("../../../packages/cache/workers/antiRaid/verification");
 const { cacheAdminIds, resetAdminCache } = await import("../../../packages/cache/workers/antiRaid/admins");
 const {
   VERIFICATION_TERMINAL_RETRY_MS,
@@ -161,7 +164,11 @@ beforeEach(() => {
   for (const entry of verificationEntries.values()) {
     if (entry.timer !== undefined) clearTimeout(entry.timer);
   }
+  for (const delivery of reminderDeliveries.values()) {
+    if (delivery.timer !== undefined) clearTimeout(delivery.timer);
+  }
   verificationEntries.clear();
+  reminderDeliveries.clear();
   resetAdminCache();
   dispatched.length = 0;
   kickedUserIds.length = 0;
@@ -312,6 +319,28 @@ describe("超时踢人前的拉人者最终复核", () => {
 });
 
 describe("同步副作用的逐条执行", () => {
+  test("真人、机器人和回复式验证提醒都明确给出三分钟", async () => {
+    setState(pendingState());
+    await run([
+      { kind: "sendReminder", label: "真人杂鱼", isBot: false },
+    ]);
+    expect(sentTexts[0]).toContain("3分钟内");
+
+    setState(pendingState());
+    await run([
+      { kind: "sendReminder", label: "铁皮杂鱼", isBot: true },
+    ]);
+    expect(sentTexts[1]).toContain("3分钟内");
+
+    setState(pendingState());
+    await run([{
+      kind: "sendReplyReminder",
+      label: "话多杂鱼",
+      targetMessageId: 7,
+    }]);
+    expect(sentTexts[2]).toContain("3分钟内");
+  });
+
   test("先删两条提醒再踢人，欢迎语落地后安排自动删除", async () => {
     setState(kickPendingState());
 
@@ -427,6 +456,22 @@ describe("踢人失败时的权限告警", () => {
     expect(kickedUserIds).toEqual([]);
     expect(sentTexts).toEqual([]);
     expect(dispatched).toContainEqual({ userId: USER_ID, event: { type: "expelSettled" } });
+  });
+
+  test("真人和机器人验证超时成功战报都明确报告三分钟", async () => {
+    const humanState = expellingState();
+    setState(humanState);
+
+    await run([{ kind: "expel", snapshot: humanState.snapshot }]);
+    expect(sentTexts[0]).toContain("3分钟");
+
+    const botState = expellingState({
+      label: "待验证机器人",
+      isBot: true,
+    });
+    setState(botState);
+    await run([{ kind: "expel", snapshot: botState.snapshot }]);
+    expect(sentTexts[1]).toContain("3分钟");
   });
 
   test("成员查询失败时不贸然踢人，保留终态进入既有退避重试", async () => {

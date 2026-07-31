@@ -1,11 +1,11 @@
 import type { AiRecordContext } from "../../types/aiChat/protocol";
-import type { MessageSpeaker } from "./facts";
-import type { MessageTriggerContext } from "./triggerContext";
+import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
+import type { MessageTriggerContext } from "../../types/auto";
 
 /** 文字与各媒体 handler 共用的 Worker 记录字段，集中保持身份和回复关系一致。 */
 export function buildAiRecordContext(
   context: MessageTriggerContext,
-  speaker: MessageSpeaker
+  speaker: AiSpeakerSnapshot
 ): AiRecordContext {
   return {
     chatId: context.chatId,

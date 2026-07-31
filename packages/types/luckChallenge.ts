@@ -20,3 +20,11 @@ export interface LuckDraw {
   /** tier.fortunePercentRange 内滚动出的具体值（%，两位小数），语义见该字段注释。 */
   fortunePercent: number;
 }
+
+/** 带隐藏验签回执的一条内联抽签正文。 */
+export interface SignedLuckResult {
+  text: string;
+  receiptOffset: number;
+  receiptLength: number;
+  receiptUrl: string;
+}

@@ -1,6 +1,8 @@
 import type { Api } from "grammy";
+import type { ChatPermissions } from "@grammyjs/types";
 import type { LinkedQueue } from "../../libs/linkedQueue";
 import type { TimestampDeque } from "../../libs/timestampDeque";
+import type { LockdownState } from "../states/lockdown";
 import type {
   PendingState,
   VerificationEvent,
@@ -13,6 +15,43 @@ export type VerificationDispatcher = (
   userId: number,
   event: VerificationEvent
 ) => void;
+
+/**
+ * 主线程判断 lockdown 落盘回执是否仍对应当前意图的指纹。
+ *
+ * 只由 phase + intentId 组成；expiresAt 会被持续入群刷新，不属于意图身份。
+ * 把它纳入会让高频入群期间的落盘对账永远追不上当前记录。
+ */
+export interface PersistedLockdownFingerprint {
+  phase: "applying" | "active" | "restoring";
+  intentId: number;
+}
+
+/** Worker 永久不可用后，单群主线程权限恢复链的运行态。 */
+export interface EmergencyLockdownRecovery {
+  fingerprint: PersistedLockdownFingerprint;
+  originalPermissions: ChatPermissions;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  inFlight: Promise<void> | null;
+}
+
+/** 一条私密模式状态机条目：纯状态 + 解释器持有的恢复计时器。 */
+export interface LockdownEntry {
+  state: LockdownState;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
+
+/** 一条验证状态机条目：纯状态 + 解释器持有的活动计时器。 */
+export interface VerificationEntry {
+  state: VerificationState;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * 终态处置（踢人/删消息）连续失败次数；只调节本地重试节奏，不进入状态机
+   * 或持久化快照。记录不能因重试耗尽被删除，否则等于把未处置成员当成完成；
+   * 条目删除即消失，Worker 重建后从头计数。
+   */
+  terminalRetries?: number;
+}
 
 /**
  * 一条已发出、等着到点自删的群内公告。停机时按它把删除动作提前执行，

@@ -43,7 +43,7 @@ import type {
   UnblockUserDiskMessage,
 } from "../../types/diskIO";
 import type { FlushResult } from "../../types/lifecycle";
-import type { BlocklistSweepRecord } from "../../cache/main/blocklist";
+import type { BlocklistSweepRecord } from "../../types/blocklist";
 
 /** 恢复出的权限闩锁不重投；等确证权限恢复后以一条新补扫取代旧任务。 */
 function restorePermissionBlockedSweep(

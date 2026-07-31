@@ -7,27 +7,7 @@ import {
   runWithUpdateAbortSignal,
   throwIfUpdateAborted,
 } from "../infra/updateContext";
-
-export interface AcknowledgedUpdateRunner {
-  /** 停止继续取数；已开始的 middleware 留给生命周期按 size() 做有界排空。 */
-  stop(): Promise<void>;
-  /** 取数循环结束（不代表已开始的 middleware 全部结束）。 */
-  task(): Promise<void>;
-  /** 当前仍在执行的 middleware 数。 */
-  size(): number;
-  /**
-   * 是否有 update 以抛错结束。为真时**不得**确认最终 Telegram offset：那条
-   * update 必须留给 Telegram 在重启后重投。
-   *
-   * 单独暴露这个标记是因为停机路径会放弃在途批次、不再用它的汇总结果决定
-   * 退出状态（见下方取数循环）；正常路径则由 task() 的 rejection 表达失败。
-   * 标记在 handleUpdate 抛错的同一个同步段里写下，因此 size() 归零时它必然
-   * 已经生效。
-   */
-  hasFailedUpdate(): boolean;
-  /** 中止全部活跃 update，并返回这次实际发出取消信号的数量。 */
-  abortActive(): number;
-}
+import type { AcknowledgedUpdateRunner } from "../types/lifecycle";
 
 /**
  * Telegram 只有在下一次 getUpdates 携带更高 offset 时，才会确认上一批 update。

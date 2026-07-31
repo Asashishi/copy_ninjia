@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { logger } from "../infra/logger";
+import type { VisionImage } from "../types/media";
 
 /**
  * 把任意支持的图片字节转成 Gemini 视觉接口稳妥能收的格式：只认 jpg/jpeg 或 png
@@ -19,11 +20,6 @@ export function sniffImageFormat(bytes: Buffer): SniffedImageFormat {
   if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
   if (bytes.length >= 6 && (bytes.subarray(0, 6).toString("ascii") === "GIF87a" || bytes.subarray(0, 6).toString("ascii") === "GIF89a")) return "gif";
   return "unknown";
-}
-
-export interface VisionImage {
-  bytes: Buffer;
-  mime: "image/jpeg" | "image/png";
 }
 
 /**

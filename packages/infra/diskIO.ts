@@ -21,6 +21,7 @@ import {
   diskIOFlushBarrier,
   diskIORuntime,
   pendingFlushFailedDomains,
+  pendingJoinLogReads,
   pendingLoad,
   pendingLuckSecrets,
 } from "../cache/main/diskIO";
@@ -29,6 +30,7 @@ import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import {
   clearRuntimeRecoveryTimer,
   createDiskIOWorker,
+  requestJoinLogFromWorker,
   requestLuckSecretFromWorker,
   safePostDiskIO,
   stopWorkerAfterLoadFailure,
@@ -42,14 +44,16 @@ import type {
   DiskIODomain,
   DiskIORespawnListener,
   LoadRequest,
+  LoadedData,
   LoadedReply,
   LogEnvelope,
   LogMessage,
   VerificationPersistedReply,
 } from "../types/diskIO";
-import type { VerificationSnapshot } from "../types/antiRaid";
-import type { PendingBlockedRemoval } from "../types/blocklist";
-import type { BlockedUserRecord, LuckDayCache, LuckReceiptSecret } from "../types/diskIO/storage";
+import type {
+  JoinLogRecord,
+  LuckReceiptSecret,
+} from "../types/diskIO/storage";
 
 const isMainThread: boolean = Bun.isMainThread;
 export interface DiskIOInitOptions {
@@ -178,19 +182,6 @@ export function postDiskIO(
   return false;
 }
 
-/** 两张快照表的值是序列化 JSON 文本（与消息协议同形态，见 types/aiChat.ts
- *  的 AiMemoryEvent.snapshot），hydrate 链路直接透传，解析发生在 aiChatWorker
- *  侧的灌入点。 */
-export interface LoadedData {
-  aiMemories: Map<number, string>;
-  stickerCatalogs: Map<string, string>;
-  luckDay: LuckDayCache | null;
-  luckReceiptSecret: LuckReceiptSecret;
-  verifications: Map<string, VerificationSnapshot>;
-  blockedUsers: Map<number, BlockedUserRecord>;
-  pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
-}
-
 /**
  * 启动恢复：向 diskIOWorker 请求上一次成功落盘的全部状态，带超时兜底。
  * 必须在 runner 开始投喂更新之前调用并等待完成（见 app/lifecycle.ts）——尤其是
@@ -262,6 +253,39 @@ export function ensureLuckReceiptSecret(
   });
 }
 
+export interface ReadJoinLogParams {
+  chatId: number;
+  since: number;
+  now: number;
+  timeoutMs?: number;
+}
+
+/**
+ * 仅供 `/batch_kick` 按需读取本群滚动 24 小时入群日志；Worker 会先提交更早到达的
+ * 追写缓冲，因此返回值覆盖命令请求之前已经处理的全部入群事件。
+ */
+export function readJoinLog({
+  chatId,
+  since,
+  now,
+  timeoutMs = LOAD_TIMEOUT_MS,
+}: ReadJoinLogParams): Promise<readonly JoinLogRecord[]> {
+  requirePositiveFinite(timeoutMs, "Join log read timeout");
+  const worker: Worker | null = diskIORuntime.worker;
+  if (!worker || !diskIORuntime.writable) {
+    return Promise.reject(
+      new Error("Persistence Worker is unavailable; cannot read join logs.")
+    );
+  }
+  return requestJoinLogFromWorker({
+    worker,
+    chatId,
+    since,
+    now,
+    timeoutMs,
+  });
+}
+
 /**
  * 要求 diskIOWorker 立即把所有 dirty 数据（含待验证增量）全部落盘，
  * 并等待完成。用于进程退出前的最后一刷。带超时兜底：
@@ -302,9 +326,9 @@ async function requestDiskIOFlush(
 
 /**
  * 只关心某一个领域有没有落盘的 flush。仍然触发统一 flush（Worker 那边本来
- * 就是七个领域一起刷），但把「无关领域失败」判成成功。
+ * 就是八个领域一起刷），但把「无关领域失败」判成成功。
  *
- * 存在的理由：`flushAll` 是七个领域的合取，任何一个失败（典型是某群
+ * 存在的理由：`flushAll` 是八个领域的合取，任何一个失败（典型是某群
  * `memory/ai/<chat>.json` 部署后属主不对）都会让 /block 报「小本本没能写进
  * 硬盘」，把运维引向一个其实没坏的文件。
  * @returns 该领域已 durable 为 "flushed"；"timedOut"/"failed" 表示没写进去。
@@ -338,6 +362,7 @@ export function terminateDiskIO(): Promise<void> {
   diskIORuntime.maxPendingBusinessMessages = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
   diskIORuntime.pendingBusinessMessages.clear();
   diskIORuntime.nextLuckSecretRequestId = 1;
+  diskIORuntime.nextJoinLogReadRequestId = 1;
   diskIORuntime.lastFlushFailedDomains = [];
   diskIOFlushBarrier.settleAll("failed");
   pendingFlushFailedDomains.clear();
@@ -352,6 +377,11 @@ export function terminateDiskIO(): Promise<void> {
     pending.reject(terminationError);
   }
   pendingLuckSecrets.clear();
+  for (const pending of pendingJoinLogReads.values()) {
+    clearTimeout(pending.timer);
+    pending.reject(terminationError);
+  }
+  pendingJoinLogReads.clear();
   if (worker === null) return Promise.resolve();
   try {
     worker.terminate();

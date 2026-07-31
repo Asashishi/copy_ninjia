@@ -1,17 +1,13 @@
 import { TYPO_QUICK_CORRECTION_PROBABILITY } from "../../../consts/aiChat/tools";
 import { splitGraphemes } from "../../../libs/text";
 import { isEmojiOnly } from "./replyText";
-
-export type TypoCorrectionMode = "quick" | "ignore";
+import type {
+  CharacterTypo,
+  TypoCorrectionMode,
+} from "../../../types/aiChat/typo";
 
 // 字素簇切分复用 libs/text.ts，不另起一份：那边的 Segmenter 是惰性构造 +
 // try/catch 降级的，模块作用域直接 new 会让 ICU 不全的运行时连 import 都失败。
-
-export interface CharacterTypo {
-  readonly typoText: string;
-  readonly expected: string;
-  readonly typo: string;
-}
 
 /**
  * 出错分支里修正方式由代码侧按概率决定，模型不参与（见 consts/aiChat.ts

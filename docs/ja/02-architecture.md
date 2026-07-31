@@ -22,7 +22,7 @@ flowchart TD
     MAIN["🧵 メインスレッド<br/>grammY runner + グループ単位の sequentialize<br/>コマンドと自動メッセージ処理<br/>StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>Gemini の複数ターン・ツール呼び出し<br/>ローリングメモリ · 要約圧縮 · ムード"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>認証とロックダウンの状態機械 / ブロックリスト処置 / 広告検出"]:::worker
-    DISK["💾 Disk I/O Worker<br/>ログ / メモリスナップショット / 運勢 / 認証ファイル / ブロックリスト"]:::worker
+    DISK["💾 Disk I/O Worker<br/>ログ / メモリスナップショット / 運勢 / 認証ファイル / ブロックリスト / 入室ログ"]:::worker
 
     MAIN --> AI
     MAIN --> RAID
@@ -34,7 +34,7 @@ flowchart TD
 - **メインスレッド**は Telegram runner、3 つの Worker の監視ハンドル、`StateStore` が管理する `state.json` のメモリミラーを所有します。ミラーにはグループのスイッチ、copy 状態、ロックダウンのミラーなどの正式な状態が含まれます。
 - **AI Worker**はグループチャットのメモリ、返信の受け入れ制御、メディア説明パイプライン、グループごとのムード、スタンプカタログの実行時状態を排他的に所有します。
 - **Anti-Raid Worker**は認証・ロックダウン状態機械とタイマーを排他的に所有し、メインスレッドは復元可能なミラーだけを保持します。`/ad_detect` の広告検出パイプライン（送信者ごとに 90 秒間のメッセージ列をまとめ、毎秒 1 バッチを DeepSeek へ送って判定し、命中したらメッセージを削除してグループに BAN 理由を告知する）も同じスレッドで動き、判定結果はメインスレッドへ返されて /block と同等のブロックリスト登録と各グループ BAN に変換されます。ブロックリストの処置もこのスレッドで実行します（状態機械を持たず、メインスレッドが判定して投げるだけです）。request queue は認証 timeout の kick と共通です。状態機械がないからこそ、着地の受領が返っていない batch はメインスレッドのミラーが保持し、送信前に durable Disk I/O outbox へ snapshot を保存し、process 起動時または Worker 再生成時に丸ごと再投入します。
-- **Disk I/O Worker**は `logs/` と、`memory/` 配下の 6 ドメイン `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/` の読み書きを直列化して排他的に扱います。唯一の例外は `state.json` で、メインスレッドの `StateStore` が直接アトミックに書き込みます。全ファイル形態と復元・保持の役割は [07 データルート](07-operations.md#データルート) を参照してください。
+- **Disk I/O Worker**は `logs/` と、`memory/` 配下の 7 ドメイン `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/`、`joinlog/` の読み書きを直列化して排他的に扱います。唯一の例外は `state.json` で、メインスレッドの `StateStore` が直接アトミックに書き込みます。全ファイル形態と復元・保持の役割は [07 データルート](07-operations.md#データルート) を参照してください。
 
 メインスレッド側 Anti-Raid の入口は引き続き [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) が編成し、ロックダウン復旧と認証ミラー受信は [`packages/antiRaid/lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) と [`packages/antiRaid/verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts) が担当します。Worker 内の認証 interpreter は [`packages/workers/antiRaid/`](../../packages/workers/antiRaid/) で、状態・復元の core、受信 event 変換、Telegram 副作用、reminder delivery owner に分割されています。各モジュールは同じ dispatcher を共有し、状態機械と revision の正式な入口を 1 つに保ちます。
 
@@ -50,7 +50,7 @@ Worker のクラッシュはレート制限付きで自己修復しますが、�
 4. **グループ単位の直列化** — `sequentialize` が同一チャット内のメッセージ順を保証します。リアクション同期は独立した結合キューを使い、チャットレーンを占有しません。
 5. **プライベートチャット・ゲートウェイ** — プライベートチャットでは `/send` の入口と進行中の中継セッションだけを許可します。中継メッセージはメッセージパイプラインへ直接入り、本文がコマンドとして解釈されるのを防ぎます。
 6. **参加認証** — コマンド処理より前でなければなりません。後ろに置くと、認証待ちユーザーのコマンドを追跡して削除できません。
-7. **コマンド登録** — 14 個の `bot.command(...)`。詳細は [06 よくある変更手順](06-modification-guide.md#スラッシュコマンドの追加) を参照してください。うち `/x` はメニュー用のプレースホルダーで、漢字アクションコマンドの使い方を見せるためだけに存在し、受信時は使い方を 1 行返してチェーンを終了します。
+7. **コマンド登録** — すべての `bot.command(...)` handler をここで明示的に登録します。詳細は [06 よくある変更手順](06-modification-guide.md#スラッシュコマンドの追加) を参照してください。うち `/x` はメニュー用のプレースホルダーで、漢字アクションコマンドの使い方を見せるためだけに存在し、受信時は使い方を 1 行返してチェーンを終了します。
 8. **漢字アクションコマンド** — `/咬` や `/贴贴` のようなコマンド（アクション語は漢字 1~2 文字）は Telegram の `bot_command` エンティティを得られず `bot.command` では一致しないため、`bot.hears` でメッセージ原文と照合します（[`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts) を参照）。**次のメッセージ・フォールバックより前に登録しなければなりません**。後ろに置くと通常メッセージとして AI／copy パイプラインに飲み込まれ、機能全体が静かに動かなくなります。自動パイプラインより前にあるため、そのパイプラインの自己送信ガードは効かず、handler 自身が Bot 自身のメッセージを除外する必要があります。また受理したメッセージは先へ進まないので、送信者 ID のキャッシュも handler 自身が行います。受理しない形（`/咬@OtherBot`、caption のみ、不正な update）は `next()` で通します。
 9. **自動メッセージパイプライン** — [`packages/auto/`](../../packages/auto) が copy、AI の文字起こしとトリガー判定、リアクション同期などコマンド以外の動作を処理します。
 

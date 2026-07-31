@@ -13,7 +13,7 @@ import { admitRound, admitTrigger } from "../../states/replyAdmission";
 import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AdmitDecision } from "../../types/states/replyAdmission";
-import type { MediaCommentContext } from "./promptContext";
+import type { MediaCommentContext } from "../../types/aiChat/replies";
 import {
   drainReplyQueue as drainQueuedReplies,
   flushOverflowNotice,

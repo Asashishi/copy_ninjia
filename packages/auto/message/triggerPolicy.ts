@@ -6,12 +6,7 @@ import {
   USER_REPLY_TRIGGER_CACHE_MAX,
   USER_REPLY_TRIGGER_COOLDOWN_MS,
 } from "../../consts/auto";
-import type { AiDirectTriggerReason } from "../../types/aiChat/protocol";
-import type { MessageTriggerContext } from "./triggerContext";
-
-export interface DirectTrigger {
-  reason: AiDirectTriggerReason;
-}
+import type { MessageTriggerContext } from "../../types/auto";
 
 /** 文本和三类媒体共用的随机搭话/评价掷骰条件。 */
 export function shouldAttemptRandomTrigger(context: MessageTriggerContext): boolean {

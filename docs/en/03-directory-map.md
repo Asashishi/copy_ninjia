@@ -14,29 +14,95 @@ This page answers “where does this code live, and where should new code go?”
 
 ## Directory Responsibilities
 
-| Path | Responsibility | Representative files |
-| :--- | :--- | :--- |
-| `packages/app/` | Startup/shutdown lifecycle, startup prerequisite check for enabled features, handler registration, command menu, update runner | `lifecycle.ts`, `featurePreflight.ts`, `registerHandlers.ts`, `updateRunner.ts` |
-| `packages/commands/` | Explicit command handling, one command per file; the permission and configuration gates shared by toggle commands live in their own files | `copy.ts`, `block.ts`, `mute.ts`, `permission.ts`, `white.ts`, `targetResolution.ts`, `configGate.ts` |
-| `packages/auto/` | Automatic non-command behavior: copying, AI transcription and triggers, reaction synchronization | `message/`, `triggerPolicy.ts` |
-| `packages/aiChat/` | AI-chat main-thread proxy and model capabilities: Worker supervision, memory mirror, availability, Gemini, stickers, tools, and media | `index.ts`, `memoryMirror.ts`, `availability.ts`, `ai/` |
-| `packages/antiRaid/` | Anti-Raid main-thread proxy and ad model capability: Worker supervision, durable handoff, update ingress, and blocklist/verification/ad/flood orchestration | `index.ts`, `workerBridge.ts`, `durableDelivery.ts`, `updateIngress.ts`, `ai/` |
-| `packages/copy/` | Copy-mode transformations, execution queues for avatars, reactions, and translation, plus the single decision point for whether Japanese translation is live | `copyModes.ts`, `avatarQueue.ts`, `reactionQueue.ts`, `translate.ts`, `availability.ts` |
-| `packages/users/` | Sender-identity cache, visible-sender resolution, user-label generation | `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts` |
-| `packages/states/` | **I/O-free** state transitions and admission rules: verification, lockdown, AI reply admission, ad-detection admission | `verification.ts`, `lockdown.ts`, `replyAdmission.ts`, `adDetectAdmission.ts` |
-| `packages/config/` | Strict schemas for `config/*.json`; startup-loaded allow/blocklists, lazy feature files, and per-feature readiness verdicts | `whitelist.ts`, `blocklist.ts`, `stickers.ts`, `adSamples.ts`, `readiness.ts` |
-| `packages/libs/` | Domain-independent infrastructure: atomic files, bounded I/O, concurrency utilities | `flushBarrier.ts`, `linkedQueue.ts`, `text.ts` |
-| `packages/workers/` | In-thread implementations for all three Workers | `aiChatWorker.ts` + `aiChat/`, `antiRaidWorker.ts` + `antiRaid/verification{Runtime,Events,Effects,Reminders}.ts` + `antiRaid/adDetect/` + `antiRaid/{floodControl,botPermissions}.ts`, `diskIOWorker.ts` + `diskIO/` |
-| `packages/aiChat/ai/` / `packages/antiRaid/ai/` | Model transports and capabilities live under their owning feature so thread and lifecycle ownership stays explicit | `gemini.ts`, `tools/replyToolset/`, `deepseek.ts` |
-| `packages/workers/antiRaid/adDetect/` | Ad-detection pipeline (DeepSeek): batched queue, per-sender bundle shaping, verdicts, and disposal on a hit | `queue.ts`, `bundle.ts`, `classifier.ts`, `disposal.ts` |
-| `packages/infra/` | Telegram client, Worker hosts, logger, environment configuration | `telegram/`, `config.ts`, `workerSupervisor.ts` |
-| `packages/infra/blocklist/` | Main-thread blocklist infrastructure split into synchronous membership, durable outbox, and per-chat sweep logic; `infra/blocklist.ts` remains only as a compatibility export | `membership.ts`, `outbox.ts`, `sweep.ts` |
-| `packages/infra/storage/` | Data-root preflight, instance lock, StateStore, startup cleanup | `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts` |
-| `packages/cache/` | Containers for mutable in-process state; **the first directory level names the owning thread** | `main/`, `workers/aiChat/`, `perThread/` |
-| `packages/consts/` | Literal constants and tunable parameters, split by domain | `commands.ts`, `aiChat/rateLimit.ts`, `antiRaid/` |
-| `packages/types/` | Cross-module protocols, domain types, state-machine contracts under `types/states/` | `chatState.ts`, `lifecycle.ts` |
-| `test/` | Bun unit tests mirroring `packages/` | `test/commands/copyShared.test.ts` |
-| `scripts/` | Repository self-check scripts | `checkProjectConventions.ts` |
+- **`packages/app/`**
+  - **Responsibility**: startup/shutdown lifecycle, startup prerequisite checks for enabled
+    features, handler registration, command menu, and update runner.
+  - **Representative files**: `lifecycle.ts`, `featurePreflight.ts`, `registerHandlers.ts`,
+    `updateRunner.ts`.
+- **`packages/commands/`**
+  - **Responsibility**: explicit command handling, one command per file; shared permission and
+    configuration gates for toggle commands live in separate files.
+  - **Representative files**: `copy.ts`, `block.ts`, `mute.ts`, `batchKick.ts`,
+    `targetResolution.ts`, `configGate.ts`.
+- **`packages/auto/`**
+  - **Responsibility**: automatic non-command behavior, including copying, AI transcription
+    and triggers, and reaction synchronization.
+  - **Representative files**: `message/`, `triggerPolicy.ts`.
+- **`packages/aiChat/`**
+  - **Responsibility**: AI-chat main-thread proxy and model capabilities, including Worker
+    supervision, memory mirror, availability, Gemini, stickers, tools, and media.
+  - **Representative files**: `index.ts`, `memoryMirror.ts`, `availability.ts`, `ai/`.
+- **`packages/antiRaid/`**
+  - **Responsibility**: Anti-Raid main-thread proxy and ad model capability, including Worker
+    supervision, durable handoff, update ingress, and blocklist/verification/ad/flood
+    orchestration.
+  - **Representative files**: `index.ts`, `workerBridge.ts`, `durableDelivery.ts`,
+    `updateIngress.ts`, `ai/`.
+- **`packages/copy/`**
+  - **Responsibility**: copy-mode transformations, execution queues for avatars, reactions,
+    and translation, plus the single decision point for whether Japanese translation is live.
+  - **Representative files**: `copyModes.ts`, `avatarQueue.ts`, `reactionQueue.ts`,
+    `translate.ts`, `availability.ts`.
+- **`packages/users/`**
+  - **Responsibility**: sender-identity cache, visible-sender resolution, and user-label
+    generation.
+  - **Representative files**: `senderIdentity.ts`, `visibleSender.ts`, `userLabel.ts`.
+- **`packages/states/`**
+  - **Responsibility**: **I/O-free** state transitions and admission rules for verification,
+    lockdown, AI replies, and ad detection.
+  - **Representative files**: `verification.ts`, `lockdown.ts`, `replyAdmission.ts`,
+    `adDetectAdmission.ts`.
+- **`packages/config/`**
+  - **Responsibility**: strict schemas for `config/*.json`, with startup-loaded allow/blocklists,
+    lazy feature files, and per-feature readiness verdicts.
+  - **Representative files**: `whitelist.ts`, `blocklist.ts`, `stickers.ts`, `adSamples.ts`,
+    `readiness.ts`.
+- **`packages/libs/`**
+  - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
+    and concurrency utilities.
+  - **Representative files**: `flushBarrier.ts`, `linkedQueue.ts`, `text.ts`.
+- **`packages/workers/`**
+  - **Responsibility**: in-thread implementations for all three Workers.
+  - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`, and
+    the `aiChat/`, `antiRaid/`, and `diskIO/` subdirectories.
+- **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
+  - **Responsibility**: model transports and capabilities live under their owning feature so
+    thread and lifecycle ownership stays explicit.
+  - **Representative files**: `gemini.ts`, `tools/replyToolset/`, `deepseek.ts`.
+- **`packages/workers/antiRaid/adDetect/`**
+  - **Responsibility**: DeepSeek ad-detection pipeline, including the batched queue, per-sender
+    bundle shaping, verdicts, and disposal on a hit.
+  - **Representative files**: `queue.ts`, `bundle.ts`, `classifier.ts`, `disposal.ts`.
+- **`packages/infra/`**
+  - **Responsibility**: Telegram client, Worker hosts, logger, environment configuration, and
+    main-thread I/O proxies.
+  - **Representative files**: `telegram/`, `config.ts`, `joinLog.ts`, `workerSupervisor.ts`.
+- **`packages/infra/blocklist/`**
+  - **Responsibility**: main-thread blocklist infrastructure split into synchronous membership,
+    durable outbox, and per-chat sweep logic; `infra/blocklist.ts` remains only as a
+    compatibility export.
+  - **Representative files**: `membership.ts`, `outbox.ts`, `sweep.ts`.
+- **`packages/infra/storage/`**
+  - **Responsibility**: data-root preflight, instance lock, StateStore, and startup cleanup.
+  - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`.
+- **`packages/cache/`**
+  - **Responsibility**: containers for mutable in-process state; **the first directory level
+    names the owning thread**.
+  - **Representative directories**: `main/`, `workers/aiChat/`, `workers/antiRaid/`,
+    `workers/diskIO/`, `perThread/`.
+- **`packages/consts/`**
+  - **Responsibility**: literal constants and tunable parameters, split by domain.
+  - **Representative files**: `commands.ts`, `aiChat/rateLimit.ts`, `antiRaid/`.
+- **`packages/types/`**
+  - **Responsibility**: cross-module protocols, domain types, and state-machine contracts under
+    `types/states/`.
+  - **Representative files**: `chatState.ts`, `lifecycle.ts`, `diskIO.ts`.
+- **`test/`**
+  - **Responsibility**: Bun unit tests mirroring `packages/`.
+  - **Representative file**: `test/commands/copyShared.test.ts`.
+- **`scripts/`**
+  - **Responsibility**: repository self-checks and performance benchmarks.
+  - **Representative files**: `checkProjectConventions.ts`, `perf/joinLog.ts`.
 
 ## Deciding Where New Code Belongs
 
@@ -54,13 +120,25 @@ Anti-patterns removed during earlier reviews include module-level Maps growing i
 
 The first directory level under `packages/cache/` declares which thread owns that state. Threads exchange messages and never share memory, so a cache module imported by two threads is simply two unrelated instances:
 
-| Directory | Owner | Contents |
-| :--- | :--- | :--- |
-| `main/` | Main thread | Command and automatic-pipeline state, the `StateStore` in-memory mirror, the Disk I/O host, and the **main-thread proxies and mirrors of the Workers** (`main/aiChat.ts`, `main/antiRaid/`) |
-| `workers/aiChat/` | AI chat Worker | Rolling memory, reply admission, mood, sticker catalog and sets, Gemini client |
-| `workers/antiRaid/` | Anti-Raid Worker | Verification/lockdown state machines, flood windows, ad-detection queue, DeepSeek client |
-| `workers/diskIO/` | Disk I/O Worker | Per-domain write buffers and dirty markers |
-| `perThread/` | One copy per thread | Telegram client, deployment-config singletons, self-sent message tracking — the same module instantiated independently in each thread, never meant to be shared |
+- **`main/`**
+  - **Owner**: main thread.
+  - **Contents**: command and automatic-pipeline state, the `StateStore` in-memory mirror, the
+    Disk I/O host, and the **main-thread proxies and mirrors of the Workers**
+    (`main/aiChat.ts`, `main/antiRaid/`).
+- **`workers/aiChat/`**
+  - **Owner**: AI chat Worker.
+  - **Contents**: rolling memory, reply admission, mood, sticker catalog and sets, Gemini client.
+- **`workers/antiRaid/`**
+  - **Owner**: Anti-Raid Worker.
+  - **Contents**: verification/lockdown state machines, flood windows, ad-detection queue,
+    DeepSeek client.
+- **`workers/diskIO/`**
+  - **Owner**: Disk I/O Worker.
+  - **Contents**: per-domain write buffers, indexes, and dirty markers.
+- **`perThread/`**
+  - **Owner**: one copy per thread.
+  - **Contents**: Telegram client, deployment-config singletons, and self-sent message tracking;
+    the same module is instantiated independently in each thread and is never meant to be shared.
 
 Note that `main/antiRaid/` and `workers/antiRaid/` are **two sets of state that share nothing**: the authoritative state machines live inside the Worker, while the main-thread copy is pure data kept for crash replay. Choosing the wrong directory is not a style issue — whatever you write there can never be read on the other side. `bun run check:conventions` verifies this ownership against the real module graph (see [04 Authoritative Runtime Invariants](04-invariants.md#thread-and-state-ownership)) and prints the full import chain on a violation.
 

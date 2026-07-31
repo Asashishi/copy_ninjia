@@ -21,7 +21,8 @@ import type {
 } from "../../types/aiChat/replies";
 import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { callGemini } from "./geminiReply";
-import { buildReplyPromptSections, type MediaCommentContext } from "./promptContext";
+import { buildReplyPromptSections } from "./promptContext";
+import type { MediaCommentContext } from "../../types/aiChat/replies";
 import { replyReferenceForBufferedMessage } from "./replyChain";
 import {
   currentReplyGeneration,

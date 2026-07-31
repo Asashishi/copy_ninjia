@@ -46,26 +46,69 @@ WantedBy=multi-user.target
 
 `COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（留空则为项目根目录）：
 
-| 路径 | 内容 | 备份要点 |
-| :--- | :--- | :--- |
-| `state.json` + `state.json.bak` | 群开关、copy、锁定镜像等权威状态 | 主备一起备份 |
-| `memory/ai/<chatId>.json` | 每群 AI 记忆的 version=1 原子快照：最近逐字消息、历史摘要、待合并摘要与保存时间 | 含群聊逐字内容，敏感；清空该群记忆时删除，启动按 chatId 恢复 |
-| `memory/stickers/<pack>.json` | 每个白名单贴纸包的 version=1 描述目录：按 `file_unique_id` 保存 emoji/描述及整包摘要 | 可由线上贴纸包重新对账；不再位于 `config/stickers.json` 白名单中的包会在启动恢复时删除 |
-| `memory/luck/<YYYY-MM-DD>.json` | 东京当天运势结果，key 是用户 id，带所求事项时还含事项摘要 | 只保留当天；必须与下方回执密钥处于同一一致性备份中 |
-| `memory/luck/receipt-secret.json` | 当天运势回执的 version=1 HMAC 密钥（日期 + 32 字节 key） | 不可单独删除、重建或从另一备份时点恢复，否则已有结果与回执会不一致 |
-| `memory/anti-raid/<YYYY-MM-DD>.json` | Challenge 待验证状态的当日追加日志；包含 active 快照、重复 revision 与终结 tombstone | 跨午夜启动先把最新旧日与当天合并（当天 active/tombstone 优先），原子发布成功后才删旧日；稳态只保留东京当天，达到 10,000 条历史或 4 MiB 时压缩成 active 快照 |
-| `memory/blocklist/blocklist.json` | `/block` 永久权威名单（用户 id + 拉黑时刻） | 必须备份：丢了等于全员解除拉黑。正常解除使用 `/unblock`；紧急手工编辑必须停机并保留合法 JSON。文件损坏会**拒绝启动**而不截断自愈；键必须是能原样还原的十进制 id |
-| `memory/blocklist/removals.json` | 尚未完成的群级封禁任务 outbox | 不是名单副本；必须与 `blocklist.json`、`state.json` 处于同一备份一致点。启动时按权威名单与群管理状态过滤后重放，任务落定后删除 |
-| `memory/ad-detected/sample.json` | 广告判定命中的原始样本（时间、消息 id 与正文、判定理由、引用/回复上下文） | **纯旁路，进程从不读它**：丢了不影响任何行为，只影响人回头调 `config/ad_samples.json` 的素材。达到 8 MiB 时自动轮转为 `sample.<东京日期>[.<序号>].json`；归档按文件名日期自动保留今天在内最近 15 个东京自然日 |
-| `memory/ad-detected/sample.<YYYY-MM-DD>[.<序号>].json` | `sample.json` 的轮转归档；同日第二份从 `.2` 起递增 | 严格按文件名日期保留最近 15 个东京自然日；未知命名、目录与符号链接不进入自动删除路径 |
-| `logs/` | 错误日志（英文文案） | 按需 |
-| `bot.lock`（及 `.guard`/`.recovery`） | 单实例锁 | 不备份、不手工编辑 |
+- **`state.json` + `state.json.bak`**
+  - **内容**：群开关、copy、锁定镜像等权威状态。
+  - **备份**：主备一起备份。
+- **`memory/ai/<chatId>.json`**
+  - **内容**：每群 AI 记忆的 version=1 原子快照，包括最近逐字消息、历史摘要、
+    待合并摘要与保存时间。
+  - **备份**：含群聊逐字内容，属于敏感数据；清空该群记忆时删除，启动按 chatId 恢复。
+- **`memory/stickers/<pack>.json`**
+  - **内容**：每个白名单贴纸包的 version=1 描述目录，按 `file_unique_id` 保存
+    emoji/描述及整包摘要。
+  - **备份**：可由线上贴纸包重新对账；不再位于 `config/stickers.json` 白名单中的包
+    会在启动恢复时删除。
+- **`memory/luck/<YYYY-MM-DD>.json`**
+  - **内容**：东京当天运势结果，key 是用户 id，带所求事项时还含事项摘要。
+  - **备份**：只保留当天；必须与下方回执密钥处于同一一致性备份中。
+- **`memory/luck/receipt-secret.json`**
+  - **内容**：当天运势回执的 version=1 HMAC 密钥（日期 + 32 字节 key）。
+  - **备份**：不可单独删除、重建或从另一备份时点恢复，否则已有结果与回执会不一致。
+- **`memory/anti-raid/<YYYY-MM-DD>.json`**
+  - **内容**：Challenge 待验证状态的当日追加日志，包含 active 快照、重复 revision
+    与终结 tombstone。
+  - **备份**：跨午夜启动先把最新旧日与当天合并（当天 active/tombstone 优先），
+    原子发布成功后才删旧日；稳态只保留东京当天，达到 10,000 条历史或 4 MiB 时
+    压缩成 active 快照。
+- **`memory/joinlog/<chatId>.<YYYY-MM-DD>.json`**
+  - **内容**：权威 `chat_member` 入群事实；`/batch_kick` 按滚动窗口读取。
+  - **备份**：含用户 id 与时间戳，按敏感数据备份；保留最近三个东京自然日以覆盖
+    跨午夜在途查询。精确重投不重复追加，历史按用户最新值压缩；单群单日最多保留
+    最新 250,000 人。
+- **`memory/blocklist/blocklist.json`**
+  - **内容**：`/block` 永久权威名单（用户 id + 拉黑时刻）。
+  - **备份**：必须备份，丢了等于全员解除拉黑。正常解除使用 `/unblock`；紧急手工
+    编辑必须停机并保留合法 JSON。文件损坏会**拒绝启动**而不截断自愈；键必须是能
+    原样还原的十进制 id。
+- **`memory/blocklist/removals.json`**
+  - **内容**：尚未完成的群级封禁任务 outbox。
+  - **备份**：不是名单副本；必须与 `blocklist.json`、`state.json` 处于同一备份
+    一致点。启动时按权威名单与群管理状态过滤后重放，任务落定后删除。
+- **`memory/ad-detected/sample.json`**
+  - **内容**：广告判定命中的原始样本，包括时间、消息 id 与正文、判定理由、
+    引用/回复上下文。
+  - **备份**：**纯旁路，进程从不读它**。丢失不影响行为，只影响回头调整
+    `config/ad_samples.json` 的素材。达到 8 MiB 时自动轮转为
+    `sample.<东京日期>[.<序号>].json`；归档按文件名日期自动保留今天在内最近
+    15 个东京自然日。
+- **`memory/ad-detected/sample.<YYYY-MM-DD>[.<序号>].json`**
+  - **内容**：`sample.json` 的轮转归档；同日第二份从 `.2` 起递增。
+  - **备份**：严格按文件名日期保留最近 15 个东京自然日；未知命名、目录与符号链接
+    不进入自动删除路径。
+- **`logs/`**
+  - **内容**：英文错误日志。
+  - **备份**：按需。
+- **`bot.lock`**（及 `.guard`/`.recovery`）
+  - **内容**：单实例锁。
+  - **备份**：不备份、不手工编辑。
 
-`memory/` 顶层不直接放文件，上述六个领域各占一个子目录。`ai/`、`stickers/`、`luck/`、`anti-raid/` 与 `blocklist/` 会在启动恢复时按需建目录；`ad-detected/` 只在第一次广告命中后建立。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有当天原子快照落地成功才清理旧日。
+`memory/` 顶层不直接放文件，上述七个领域各占一个子目录。`ai/`、`stickers/`、`luck/`、`anti-raid/` 与 `blocklist/` 会在启动恢复时按需建目录；`ad-detected/` 只在第一次广告命中后建立，`joinlog/` 则只在首条入群事实或首次查询时建立，启动恢复不扫描它。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有当天原子快照落地成功才清理旧日。
+
+`joinlog/` 的一次查询最多读取覆盖 `[since, now]` 的两个群日文件，并按用户取窗口内最后一次入群；第三个保留日只服务于 23:59 发起、跨午夜才进入 Worker 的在途查询。文件在 10,000 条冗余历史或新增 4 MiB 后评估压缩，预计至少回收 512 KiB 才原子重写。可解析但 schema 错误的文件会原样拒绝本次读写；仅末尾截断残片可由追加层修复。
 
 ### `memory/` 辅助文件与纯内存状态
 
-- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。`ai/`、`stickers/`、`luck/` 在启动时清理 `*.tmp`，`blocklist/` 的两个 owner 只按各自 `.blocklist.json.*.tmp` / `.removals.json.*.tmp` 前缀清理，`ad-detected/` 在首次写样本前清理 `.sample.json.*.tmp`。当前 `anti-raid/` 恢复只忽略这类文件而不主动清理；它们不参与恢复，确认 Bot 已停止且名称精确匹配上述原子写格式后才可作为孤儿删除。
+- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。`ai/`、`stickers/`、`luck/` 在启动时清理 `*.tmp`，`blocklist/` 的两个 owner 只按各自 `.blocklist.json.*.tmp` / `.removals.json.*.tmp` 前缀清理，`ad-detected/` 在首次写样本前清理 `.sample.json.*.tmp`，`joinlog/` 在首次接管当日目录时清理 `*.tmp`。当前 `anti-raid/` 恢复只忽略这类文件而不主动清理；它们不参与恢复，确认 Bot 已停止且名称精确匹配上述原子写格式后才可作为孤儿删除。
 - `memory/ai/<chatId>.json.corrupt` 与 `memory/stickers/<pack>.json.corrupt` 是 JSON 无法解析时保留的隔离件，不参与正常恢复也不自动删除。字段能解析但不符合当前 version=1 schema 时不会隔离，而是直接拒绝启动，要求按 [06](06-modification-guide.md#变更持久化-schema) 手工迁移。
 - `/block` 的 `confirmedKickedUserIdsByChat`、Challenge timer、广告检测待判队列/去重 Set、Telegram 成员/管理员短缓存都只存在于进程内，没有对应文件。尤其“当日逐群确证踢出”缓存按东京日或进程重启清空，绝不从 `blocklist.json` 或 `removals.json` 推断恢复。
 
@@ -120,14 +163,31 @@ jq -e '
 
 程序的启动失败都是**有意的快速失败**，报错自带原因；对照处理，不要绕过：
 
-| 症状 | 原因 | 处理 |
-| :--- | :--- | :--- |
-| 数据根预检失败（带路径） | 目录 mode 宽于 `0750`、不可写，或文件系统不支持 fsync / hard link / 原子 rename | 停掉所有实例后修正 owner/group 并 `chmod 0750 <数据根>`；若仍失败则改用满足能力要求的本地文件系统 |
-| `bot.lock` 拒绝启动 | 见下节 | 见下节 |
-| config schema 校验失败 | `config/*.json` 或 `.env` 不合法 | 按报错字段修正；mood 权重和必须恰好 100，贴纸最多 5 包 |
-| 两份 state 副本均无效 | 部署了 schema 变更但没迁移数据 | 按 [06 变更持久化 schema](06-modification-guide.md#变更持久化-schema) 迁移后再启；程序不会改动原文件 |
-| 运势结果与回执密钥不一致 | 当日结果和 `receipt-secret.json` 来自不同备份时点，或只恢复了其中一项 | 停止 Bot，恢复同一一致性时点的完整 `memory/luck/`；不要删除或重新生成单独的密钥 |
-| 出现 `*.corrupt` 文件 | 可能是单份 state 副本损坏被隔离，也可能是 AI/贴纸 JSON 解析失败后被移出恢复集合 | 先按原文件名定位 owner 并调查损坏原因；state 有另一份副本时可自愈，AI/贴纸隔离件不会自动恢复或删除 |
+- **数据根预检失败（带路径）**
+  - **原因**：目录 mode 宽于 `0750`、不可写，或文件系统不支持 fsync、hard link、
+    原子 rename。
+  - **处理**：停掉所有实例后修正 owner/group，并执行 `chmod 0750 <数据根>`；
+    若仍失败，改用满足能力要求的本地文件系统。
+- **`bot.lock` 拒绝启动**
+  - **原因与处理**：见下节。
+- **config schema 校验失败**
+  - **原因**：`config/*.json` 或 `.env` 不合法。
+  - **处理**：按报错字段修正；mood 权重和必须恰好 100、天气/时段倍率不得超过 100，
+    贴纸最多 5 包。
+- **两份 state 副本均无效**
+  - **原因**：部署了 schema 变更但没迁移数据。
+  - **处理**：按
+    [06 变更持久化 schema](06-modification-guide.md#变更持久化-schema)
+    迁移后再启动；程序不会改动原文件。
+- **运势结果与回执密钥不一致**
+  - **原因**：当日结果和 `receipt-secret.json` 来自不同备份时点，或只恢复了其中一项。
+  - **处理**：停止 Bot，恢复同一一致性时点的完整 `memory/luck/`；不要删除或重新生成
+    单独的密钥。
+- **出现 `*.corrupt` 文件**
+  - **原因**：可能是单份 state 副本损坏被隔离，也可能是 AI/贴纸 JSON 解析失败后
+    被移出恢复集合。
+  - **处理**：先按原文件名定位 owner 并调查损坏原因；state 有另一份副本时可自愈，
+    AI/贴纸隔离件不会自动恢复或删除。
 
 ### `bot.lock` 拒绝启动
 
@@ -143,9 +203,23 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 
 ## 升级发布
 
-1. `bun run release:check` 全绿（frozen lockfile + 全量检查 + 故障注入）；联网环境加 `bun run audit:release`。
-2. 版本包含持久化结构变更的，先按 [06 变更持久化 schema](06-modification-guide.md#变更持久化-schema) 停机迁移。
-3. 重启服务（systemd 部署即 `systemctl restart <unit>`），观察启动日志与 `logs/`。
+1. `bun run release:check` 全绿（frozen lockfile + 全量检查 + 故障注入）；联网环境加
+   `bun run audit:release`。
+2. 在任何会改写工作树的 Git 操作前，检查 `git status --short`、当前版本到目标版本的
+   `git diff --name-status`，以及 `git ls-files config .env g-auth.json`。`config/`、
+   `.env`、`g-auth.json` 与运行时状态都是部署数据，不能拿目标提交或
+   `config_example/` 当备份。
+3. 如果 systemd 的 `WorkingDirectory` 就是仓库目录，优先在独立 clone/worktree
+   完成合并、测试、tag 与发布。确需原地更新时，先停止服务并确认 inactive；目标版本
+   会删除、重命名或忽略部署路径时，先在工作树外备份文件清单、权限/属主与 SHA-256，
+   更新后再逐文件恢复和迁移，不能用 `config_example/` 覆盖现有配置。
+4. 版本包含持久化结构变更的，按
+   [06 变更持久化 schema](06-modification-guide.md#变更持久化-schema)
+   手工迁移，不在运行时代码里保留旧格式兼容。
+5. 部署配置与运行时状态全部就位、严格解析与权限检查通过后再启动服务。systemd 部署
+   至少确认 `ActiveState=active`、`SubState=running`，观察不少于两个
+   `RestartSec` 间隔，并确认 `NRestarts` 不再增长、journal 没有新的非零退出。
+   所有检查完成前保留外部备份。
 
 ## 日常观察点
 

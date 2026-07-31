@@ -24,10 +24,10 @@ import {
   queuePendingBlockedRemovalsSnapshot,
   trackBlockedRemoval,
 } from "./outbox";
-import type { BlocklistSweepRecord } from "../../cache/main/blocklist";
 import type { BlockedMembersRemovedEvent } from "../../types/antiRaid";
 import type {
   BlocklistRemovalFailure,
+  BlocklistSweepRecord,
   PendingBlockedRemoval,
   RemoveBlockedMembersParams,
 } from "../../types/blocklist";

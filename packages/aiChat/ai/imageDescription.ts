@@ -26,7 +26,7 @@ import type { MediaKind } from "../../types/media";
 import type { GenerateContentResponse } from "@google/genai";
 import { downloadTelegramVisionImage } from "./telegramImage";
 import { runMediaTask } from "./mediaTaskRunner";
-import type { VisionImage } from "../../libs/image";
+import type { VisionImage } from "../../types/media";
 
 /** 按媒体类型选喂给视觉模型的描述指令，三者风格/侧重点不同。 */
 function promptFor(kind: MediaKind): string {

@@ -5,25 +5,22 @@ import {
   TYPO_QUICK_CORRECTION_MAX_MS,
   TYPO_QUICK_CORRECTION_MIN_MS,
 } from "../../../../consts/aiChat/tools";
-import type { ReplyToolContext } from "../../../../types/aiChat/replies";
+import type {
+  ReplyToolContext,
+  RoundMessageState,
+} from "../../../../types/aiChat/replies";
+import type {
+  CharacterTypo,
+  TypoDecision,
+} from "../../../../types/aiChat/typo";
 import { cleanReply, isEmojiOnly } from "../../utils/replyText";
 import {
   buildCharacterTypo,
   pickTypoCorrectionMode,
-  type CharacterTypo,
-  type TypoCorrectionMode,
 } from "../../utils/typo";
 import { randomDelayMs } from "../../utils/timing";
 import { parseStringField } from "../../utils/toolArgs";
-import { sendDirectMessage, type RoundMessageState } from "./messageState";
-
-export interface TypoDecision {
-  shouldUseTypo: boolean;
-  textToSend: string;
-  correctionText: string | null;
-  mode: TypoCorrectionMode | null;
-  rejectedReason: string | null;
-}
+import { sendDirectMessage } from "./messageState";
 
 export interface DecideMessageTypoParams {
   argumentsJson: string;

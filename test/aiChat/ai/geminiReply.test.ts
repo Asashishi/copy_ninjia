@@ -18,7 +18,7 @@ import {
   VIEW_STICKER_PACK_TOOL,
 } from "../../../packages/consts/tools";
 import type { ReplyPromptSections, ReplyToolset } from "../../../packages/types/aiChat/replies";
-import type { GeminiRequestResult } from "../../../packages/aiChat/ai/gemini";
+import type { GeminiRequestResult } from "../../../packages/types/aiChat/gemini";
 
 const replies: unknown[] = [];
 const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => {

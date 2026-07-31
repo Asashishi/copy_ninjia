@@ -22,6 +22,7 @@
 | `bun run check:conventions` | Check repository conventions with `scripts/checkProjectConventions.ts` |
 | `bun run check` | Run conventions + lint + typecheck + coverage; **required before every commit** |
 | `bun run test:fault-injection` | Run the deterministic fault-injection suite |
+| `bun run perf:join-log` | Run the independent-process comparison at the 250,000-record join-log limit |
 | `bun run release:check` | Run frozen-lockfile install + check + fault injection; required before release |
 | `bun run audit:release` | Audit dependencies for moderate-or-higher vulnerabilities |
 
@@ -34,7 +35,7 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **1475 tests / 163 files / 25995 `expect()` calls**; full-source **function coverage 95.18% / line coverage 96.70%**. The root README's Coverage badge displays line coverage.
+`bun run test:coverage`: **1516 tests / 165 files / 27474 `expect()` calls**; full-source **function coverage 95.16% / line coverage 96.58%**. The root README's Coverage badge displays line coverage.
 
 ## Test Isolation
 
@@ -54,6 +55,10 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 ## Fault-Injection Suite
 
 `bun run test:fault-injection` concentrates on crash recovery and persistence boundaries: lifecycle failure, update-runner acknowledgement boundaries, StateStore and cleanup, AI/Anti-Raid Worker mirrors and lifecycles, Disk I/O append/snapshot/log files, flush barriers, and more. See the scripts in [`package.json`](../../package.json) for the complete list. This suite must pass whenever a changed path is covered by [04 Authoritative Runtime Invariants](04-invariants.md).
+
+## Join-Log Performance Benchmark
+
+`bun run perf:join-log` fixes the input at a 250,000-record capacity, 300-record overflow, and 10,000-record warm-up. Baseline and current variants of both snapshot and capacity paths run in five independent Bun processes each. The report records the complete Bun version/revision, median and range of elapsed time, and JSC heap/object changes before and after forced GC. The baseline freezes the pre-optimization whole-Map copy, full sort, and complete-JSON-string algorithms solely for before/after comparison within the same Bun build; `Bun.gc(true)` exists only in this benchmark and never in production control flow. Run it whenever join indexing, capacity trimming, snapshot serialization, or chunked atomic writes change, and verify that the difference is materially larger than the noise shown by the five-sample ranges.
 
 ## Commit Workflow
 
@@ -82,7 +87,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~486 across 58 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy; count string literals only, excluding comments.
+- **The Chinese string-literal count** (currently ~582 across 63 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy; count string literals only, excluding comments.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

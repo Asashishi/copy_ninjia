@@ -3,10 +3,7 @@ import { defaultStickerConfigCache } from "../cache/perThread/config";
 import { MAX_CONFIGURED_STICKER_PACKS, STICKER_PACK_NAME_PATTERN } from "../consts/aiChat/stickers";
 import { STICKERS_CONFIG_PATH } from "../consts/paths";
 import { hasExactKeys, isPlainRecord } from "../libs/runtimeConfig";
-
-export interface StickerConfig {
-  readonly packs: readonly string[];
-}
+import type { StickerConfig } from "../types/config";
 
 /** 严格解码 stickers.json，并拒绝超量、非法或重复的贴纸包 short name。 */
 export function parseStickerConfig(value: unknown): StickerConfig {

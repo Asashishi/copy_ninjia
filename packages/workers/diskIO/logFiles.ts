@@ -36,7 +36,7 @@ import {
   openDayFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
-import type { BufferedLogEntry } from "../../cache/workers/diskIO/logs";
+import type { BufferedLogEntry } from "../../types/diskIO/storage";
 
 interface LogRecord {
   level: string;

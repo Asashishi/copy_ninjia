@@ -12,14 +12,14 @@ import { parseBooleanField } from "../../utils/toolArgs";
 import {
   isDuplicateOfSentMessage,
   recordSentMessage,
-  type RoundMessageState,
 } from "./messageState";
 import {
   applyQuickTypoCorrection,
   decideMessageTypo,
   parseCleanMessageText,
 } from "./typoHandling";
-import type { TypoDecision } from "./typoHandling";
+import type { RoundMessageState } from "../../../../types/aiChat/replies";
+import type { TypoDecision } from "../../../../types/aiChat/typo";
 
 /** 构造本轮 send_message 执行器；总动作计数仍由外层编排器统一结算。 */
 export function createSendMessageExecutor(

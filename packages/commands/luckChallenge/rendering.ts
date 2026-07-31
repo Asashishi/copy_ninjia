@@ -7,11 +7,10 @@ import {
   RATE_LIMIT_WINDOW_MS,
   SAME_QUESTION_LABEL_MAX_LEN,
 } from "../../consts/luckChallenge";
-import type { LuckDraw } from "../../types/luckChallenge";
+import type { LuckDraw, SignedLuckResult } from "../../types/luckChallenge";
 import { splitGraphemes } from "../../libs/text";
 import { luckCacheKey } from "./key";
 import { signLuckResultText } from "./receipt";
-import type { SignedLuckResult } from "./receipt";
 
 function pickDominantProbability(draw: LuckDraw): { label: string; percent: number } {
   const misfortunePercent: number = Math.round((100 - draw.fortunePercent) * 100) / 100;

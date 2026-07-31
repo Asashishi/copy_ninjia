@@ -4,4 +4,4 @@ export {
   loadStickerConfig,
   parseStickerConfig,
 } from "../../../config/stickers";
-export type { StickerConfig } from "../../../config/stickers";
+export type { StickerConfig } from "../../../types/config";

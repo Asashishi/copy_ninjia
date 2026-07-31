@@ -3,7 +3,8 @@ import { MEDIA_DOWNLOAD_TIMEOUT_MS, MEDIA_FILE_METADATA_TIMEOUT_MS, MEDIA_MAX_DO
 import { logger } from "../../infra/logger";
 import { bot, buildFileDownloadUrl } from "../../infra/telegram";
 import { readBoundedResponseBytes, type BoundedResponseResult } from "../../libs/boundedResponse";
-import { prepareVisionImage, type VisionImage } from "../../libs/image";
+import { prepareVisionImage } from "../../libs/image";
+import type { VisionImage } from "../../types/media";
 
 export interface DownloadTelegramVisionImageParams {
   fileId: string;

@@ -1,8 +1,8 @@
 /**
  * 磁盘 IO 线程（Bun Worker）：共享业务数据的磁盘 IO 收在这一条线程里串行执行——
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
- * 目录快照、每日运势缓存、待验证当日增量 JSON 与 /block 黑名单都由进程唯一的
- * 统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
+ * 目录快照、每日运势缓存、待验证当日增量 JSON、/block 黑名单与入群日志都由
+ * 进程唯一的统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
  * 互相踩坏。state.json 是明确例外，由主线程 StateStore 独立异步维护。
  * 本 Worker 原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
  *
@@ -13,13 +13,16 @@
  * diskIO/verificationFiles.ts（待验证按日增量）、
  * diskIO/blocklistFile.ts（/block 黑名单）与
  * diskIO/blocklistRemovalOutbox.ts（未完成处置 outbox）、
+ * diskIO/joinLogFiles.ts（滚动入群追写与命令按需读取）、
  * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
  * 与黑名单共用 appendOnlyDayFile.ts 的按位置追加/截断修复机制。
  *
- * 原则：磁盘只在启动恢复（load）时被读一次；此后 cache/workers/diskIO/ 下各领域 owner
- * 是唯一事实源，写是「缓存 -> 磁盘」的单向定时同步。本线程自身的内部错误
- * 一律 console.error（journal 兜底）——它就是落盘终点，不能再指望被自己
- * 转发的日志落盘自己的错误，那是一场递归。
+ * 原则：恢复型状态只在启动恢复（load）时读一次；此后
+ * cache/workers/diskIO/ 下各领域 owner 是唯一事实源，写是「缓存 -> 磁盘」
+ * 的单向定时同步。入群日志是明确例外：启动不读，仅收到入群事实或
+ * `/batch_kick` 请求时按群日接管文件；查询前先刷缓冲并读取滚动窗口。本线程自身的内部错误一律
+ * console.error（journal 兜底）——它就是落盘终点，不能再指望被自己转发
+ * 的日志落盘自己的错误，那是一场递归。
  */
 
 import { handleAdSampleMessage } from "./diskIO/adSampleFile";
@@ -32,6 +35,11 @@ import {
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import { flushLuckAppends, handleLuckDrawMessage, hydrateLuckDay } from "./diskIO/luckFiles";
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
+import {
+  flushJoinLogBuffer,
+  handleJoinLogMessage,
+  readJoinLog,
+} from "./diskIO/joinLogFiles";
 import { flushVerificationChanges, handleVerificationDelete, handleVerificationUpsert, recoverVerificationDay, scheduleVerificationRollover } from "./diskIO/verificationFiles";
 import {
   configureAiMemoryDeletePersistedReply,
@@ -49,8 +57,23 @@ import { stickerCatalogCache } from "../cache/workers/diskIO/stickers";
 import { luckWorkerCache } from "../cache/workers/diskIO/luck";
 import type { VerificationSnapshot } from "../types/antiRaid";
 import type { PendingBlockedRemoval } from "../types/blocklist";
-import type { DiskFlushFailedReply, DiskFlushReply, DiskIODomain, DiskIOMessage, LoadedReply, LuckSecretReply, VerificationPersistedReply, AiMemoryDeletedPersistedReply, AiMemoryPersistedReply } from "../types/diskIO";
-import type { BlockedUserRecord, LuckReceiptSecret } from "../types/diskIO/storage";
+import type {
+  AiMemoryDeletedPersistedReply,
+  AiMemoryPersistedReply,
+  DiskFlushFailedReply,
+  DiskFlushReply,
+  DiskIODomain,
+  DiskIOMessage,
+  JoinLogReadReply,
+  LoadedReply,
+  LuckSecretReply,
+  VerificationPersistedReply,
+} from "../types/diskIO";
+import type {
+  BlockedUserRecord,
+  JoinLogRecord,
+  LuckReceiptSecret,
+} from "../types/diskIO/storage";
 
 declare const self: Worker;
 
@@ -67,6 +90,7 @@ function flushAll(): readonly DiskIODomain[] {
     ["verification", flushVerificationChanges((reply: VerificationPersistedReply): void => self.postMessage(reply))],
     ["blocklist", flushBlocklistAppends()],
     ["blocklistRemovalOutbox", flushBlocklistRemovalOutbox()],
+    ["joinLog", flushJoinLogBuffer()],
   ];
   // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
   // 的失败误导，而那个领域的真实错误按设计只有 console.error。
@@ -242,6 +266,28 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       // （见 diskIO/adSampleFile.ts 的文件头）。
       handleAdSampleMessage(msg);
       break;
+    case "joinLog":
+      handleJoinLogMessage(msg);
+      break;
+    case "readJoinLog": {
+      let reply: JoinLogReadReply;
+      try {
+        const records: readonly JoinLogRecord[] = readJoinLog(msg);
+        reply = {
+          type: "joinLogRead",
+          requestId: msg.requestId,
+          records,
+        };
+      } catch (error: unknown) {
+        reply = {
+          type: "joinLogRead",
+          requestId: msg.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      self.postMessage(reply);
+      break;
+    }
     case "load":
       handleLoad();
       break;

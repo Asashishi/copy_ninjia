@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../../packages/cache/workers/diskIO/logs";
 import {
+  joinLogBuffer,
+  joinLogCleanupDay,
+  joinLogFileCaches,
+  joinLogRetryAt,
+  markJoinLogDirty,
+  resetJoinLogCache,
+} from "../../../packages/cache/workers/diskIO/joinLog";
+import {
   hydrateLuckCache,
   luckFileState,
   luckFlushTimer,
@@ -22,6 +30,7 @@ afterEach(() => {
   resetLogCache();
   resetLuckCache();
   resetVerificationPersistenceCache();
+  resetJoinLogCache();
 });
 
 describe("Disk I/O append-domain cache owners", () => {
@@ -87,5 +96,32 @@ describe("Disk I/O append-domain cache owners", () => {
     expect(verificationFileState).toEqual({ current: null, appendedEntries: 0, appendedBytes: 0 });
     expect(verificationFlushTimer.timer).toBeNull();
     expect(verificationRolloverTimer.timer).toBeNull();
+  });
+
+  test("入群日志 reset 同时清理缓冲、文件游标、退避与 timer", () => {
+    expect(markJoinLogDirty({
+      chatId: -1001,
+      day: "2026-07-31",
+      record: { userId: 42, joinedAt: 1 },
+    })).toBe(1);
+    joinLogFileCaches.set("-1001:2026-07-31", {
+      state: { size: 10, empty: false },
+      latestByUser: new Map([[42, { userId: 42, joinedAt: 1 }]]),
+      snapshotBytes: 63,
+      appendedBytesSinceCompaction: 0,
+      redundantEntries: 0,
+      capacityWarningEmitted: false,
+    });
+    joinLogRetryAt.set("-1001:2026-07-31", 99);
+    joinLogCleanupDay.current = "2026-07-31";
+    joinLogBuffer.timer = setTimeout((): void => {}, 60_000);
+
+    resetJoinLogCache();
+
+    expect(joinLogBuffer.entries).toHaveLength(0);
+    expect(joinLogBuffer.timer).toBeNull();
+    expect(joinLogFileCaches.size).toBe(0);
+    expect(joinLogRetryAt.size).toBe(0);
+    expect(joinLogCleanupDay.current).toBeNull();
   });
 });

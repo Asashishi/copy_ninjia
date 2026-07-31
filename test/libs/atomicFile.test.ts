@@ -18,6 +18,7 @@ const realRename = realFsPromisesSnapshot.rename;
 const realUnlink = realFsPromisesSnapshot.unlink;
 const realOpenSync = realFsSnapshot.openSync;
 const realWriteFileSync = realFsSnapshot.writeFileSync;
+const realWriteSync = realFsSnapshot.writeSync;
 const realFsyncSync = realFsSnapshot.fsyncSync;
 const realCloseSync = realFsSnapshot.closeSync;
 const realRenameSync = realFsSnapshot.renameSync;
@@ -31,6 +32,7 @@ interface InjectedFailure {
 
 const failures = new Map<string, InjectedFailure>();
 const callCounts = new Map<string, number>();
+const writeLengthLimits: number[] = [];
 /** 实际执行到的操作序列，用来断言清理确实发生过。 */
 const operations: string[] = [];
 
@@ -84,6 +86,25 @@ mock.module("node:fs", () => ({
     step("writeFileSync");
     realWriteFileSync(fd as number, data as string);
   },
+  writeSync: (...args: [
+    unknown,
+    unknown,
+    unknown,
+    unknown,
+    unknown
+  ]): number => {
+    const [fd, buffer, offset, length, position] = args;
+    step("writeSync");
+    const lengthLimit: number | undefined = writeLengthLimits.shift();
+    if (lengthLimit === 0) return 0;
+    return realWriteSync(
+      fd as number,
+      buffer as Buffer,
+      offset as number,
+      Math.min(length as number, lengthLimit ?? Number.POSITIVE_INFINITY),
+      position as number | null
+    );
+  },
   fsyncSync: (fd: unknown): void => {
     step("fsyncSync");
     realFsyncSync(fd as number);
@@ -102,7 +123,11 @@ mock.module("node:fs", () => ({
   },
 }));
 
-const { atomicWriteText, atomicWriteTextSync } = await import("../../packages/libs/atomicFile");
+const {
+  atomicWriteText,
+  atomicWriteTextChunksSync,
+  atomicWriteTextSync,
+} = await import("../../packages/libs/atomicFile");
 
 let testDir: string;
 let targetPath: string;
@@ -115,6 +140,7 @@ function leftoverTempFiles(): string[] {
 beforeEach(() => {
   failures.clear();
   callCounts.clear();
+  writeLengthLimits.length = 0;
   operations.length = 0;
   testDir = realFsSnapshot.mkdtempSync(join(tmpdir(), "atomic-file-test-"));
   targetPath = join(testDir, "state.json");
@@ -231,6 +257,67 @@ describe("atomicWriteTextSync 的失败清理", () => {
     // 不影响原始错误；目标文件已经发布，不能被删。
     expect(realFsSnapshot.existsSync(targetPath)).toBe(true);
     expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("payload");
+    expect(leftoverTempFiles()).toEqual([]);
+  });
+});
+
+describe("atomicWriteTextChunksSync 的分块与失败清理", () => {
+  test("逐块写出完整内容并返回准确字节数", () => {
+    const chunks: readonly string[] = ["{\n", "  \"值\": 1", "\n}"];
+
+    expect(atomicWriteTextChunksSync(targetPath, chunks)).toBe(
+      Buffer.byteLength(chunks.join(""))
+    );
+
+    expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe(
+      chunks.join("")
+    );
+    expect(callCounts.get("writeSync")).toBe(chunks.length);
+    expect(leftoverTempFiles()).toEqual([]);
+  });
+
+  test("中途分块写失败时保留原目标并清掉临时文件", () => {
+    realFsSnapshot.writeFileSync(targetPath, "original");
+    injectFailure("writeSync", "injected chunk write failure", 2);
+
+    expect(() => atomicWriteTextChunksSync(
+      targetPath,
+      ["first", "second", "third"]
+    )).toThrow("injected chunk write failure");
+
+    expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("original");
+    expect(operations).toContain("closeSync");
+    expect(operations).toContain("unlinkSync");
+    expect(operations).not.toContain("renameSync");
+    expect(leftoverTempFiles()).toEqual([]);
+  });
+
+  test("底层 short write 会循环写完当前块", () => {
+    writeLengthLimits.push(2);
+
+    expect(atomicWriteTextChunksSync(targetPath, ["abcdef"])).toBe(6);
+
+    expect(callCounts.get("writeSync")).toBe(2);
+    expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("abcdef");
+  });
+
+  test("底层零字节写快速失败且不发布半份目标", () => {
+    realFsSnapshot.writeFileSync(targetPath, "original");
+    writeLengthLimits.push(0);
+
+    expect(() => atomicWriteTextChunksSync(
+      targetPath,
+      ["payload"]
+    )).toThrow("no valid progress");
+
+    expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("original");
+    expect(operations).not.toContain("renameSync");
+    expect(leftoverTempFiles()).toEqual([]);
+  });
+
+  test("空 iterable 原子发布零字节文件", () => {
+    expect(atomicWriteTextChunksSync(targetPath, [])).toBe(0);
+    expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("");
     expect(leftoverTempFiles()).toEqual([]);
   });
 });

@@ -6,15 +6,13 @@ import {
   IMAGE_GENERATION_MAX_ENCODED_CHARS,
   IMAGE_GENERATION_MAX_BYTES,
   PNG_SIGNATURE,
-  type ImageGenerationAspectRatio,
 } from "../../consts/aiChat/imageGeneration";
 import { requestGeminiResponse } from "./gemini";
-import type { VisionImage } from "../../libs/image";
-
-export interface GeneratedChatImage {
-  bytes: Uint8Array;
-  mimeType: "image/jpeg" | "image/png";
-}
+import type { VisionImage } from "../../types/media";
+import type {
+  GeneratedChatImage,
+  ImageGenerationAspectRatio,
+} from "../../types/aiChat/imageGeneration";
 
 function ratioValue(ratio: ImageGenerationAspectRatio): number {
   const [width, height]: number[] = ratio.split(":").map(Number);

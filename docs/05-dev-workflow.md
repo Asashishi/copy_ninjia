@@ -22,6 +22,7 @@
 | `bun run check:conventions` | 仓库约定自检（`scripts/checkProjectConventions.ts`） |
 | `bun run check` | conventions + lint + typecheck + coverage，**提交前必跑** |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
+| `bun run perf:join-log` | 25 万项入群日志容量/快照的独立进程对照基准 |
 | `bun run release:check` | frozen lockfile 安装 + check + 故障注入，发布前必跑 |
 | `bun run audit:release` | 依赖漏洞审计（moderate 及以上） |
 
@@ -34,7 +35,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**1475 tests / 163 files / 25995 次 `expect()`**；全源码**函数覆盖率 95.18% / 行覆盖率 96.70%**。根 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**1516 tests / 165 files / 27474 次 `expect()`**；全源码**函数覆盖率 95.16% / 行覆盖率 96.58%**。根 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -54,6 +55,10 @@
 ## 故障注入套件
 
 `bun run test:fault-injection` 重点回归崩溃恢复与持久化边界：生命周期失败、update runner 确认边界、StateStore 与清理、AI/Anti-Raid Worker 的镜像恢复与生命周期、Disk I/O 的追加/快照/日志文件、flush barrier 等（完整清单见 [`package.json`](../package.json) 的脚本定义）。改动 [04 运行时权威约束](04-invariants.md) 涉及的路径时，本套件必须绿。
+
+## 入群日志性能基准
+
+`bun run perf:join-log` 固定使用 250,000 条容量、300 条溢出和 10,000 条预热输入；快照与容量路径的 baseline/current 各运行 5 个独立 Bun 进程。输出记录完整 Bun version/revision、耗时的中位数与范围，以及强制 GC 前后的 JSC heap/object 变化。baseline 固化的是分配优化前的整表复制、全量排序与完整 JSON 字符串算法，只用于同一 Bun build 内的前后对照；`Bun.gc(true)` 只存在于该基准，不进入生产控制流。改动入群索引、容量裁剪、快照序列化或分块原子写时必须运行，并确认差异明显大于 5 轮样本范围所显示的噪声。
 
 ## 提交流程
 
@@ -82,7 +87,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
 
-- **中文字符串统计**（当前约 486 处 / 58 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算，只统计字符串字面量、不含注释。
+- **中文字符串统计**（当前约 582 处 / 63 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算，只统计字符串字面量、不含注释。
 - **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布

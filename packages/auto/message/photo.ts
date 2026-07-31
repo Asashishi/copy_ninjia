@@ -1,7 +1,7 @@
 import { recordChatMedia } from "../../aiChat";
 import { pickPhotoFile, resolveSpeaker } from "./facts";
 import { buildAiRecordContext } from "./recordContext";
-import type { MessageTriggerContext } from "./triggerContext";
+import type { MessageTriggerContext } from "../../types/auto";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { TelegramVisionSource } from "../../types/media";

@@ -10,7 +10,6 @@ import {
   IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS,
   IMAGE_GENERATION_PROMPT_MAX_CHARS,
   MAX_GENERATED_IMAGES_PER_REPLY,
-  type ImageGenerationAspectRatio,
 } from "../../../../consts/aiChat/imageGeneration";
 import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../../consts/aiChat/prompts/tools";
 import { imageSentTagTemplate } from "../../../../consts/aiChat/prompts/transcript";
@@ -20,13 +19,18 @@ import { sendPhotoWithResult } from "../../../../infra/telegram";
 import { isPlainRecord } from "../../../../libs/runtimeConfig";
 import { sanitizeInline, truncateInline } from "../../../../libs/text";
 import type { ReplyToolContext } from "../../../../types/aiChat/replies";
-import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../../../types/aiChat/imageGeneration";
+import type {
+  GeneratedChatImage,
+  ImageGenerationAspectRatio,
+  ImageGenerationAvailability,
+  ImageGenerationClaim,
+} from "../../../../types/aiChat/imageGeneration";
 import type { TelegramSendResult } from "../../../../types/telegram";
 import type { ToolDefinition } from "../../../../types/tools";
-import { generateChatImage, normalizeImageAspectRatio, type GeneratedChatImage } from "../../imageGeneration";
+import { generateChatImage, normalizeImageAspectRatio } from "../../imageGeneration";
 import { downloadTelegramVisionImage } from "../../telegramImage";
 import { runMediaTask } from "../../mediaTaskRunner";
-import type { VisionImage } from "../../../../libs/image";
+import type { VisionImage } from "../../../../types/media";
 
 function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
   if (!reference || reference.width <= 0 || reference.height <= 0) return DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;

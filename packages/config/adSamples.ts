@@ -2,13 +2,7 @@ import { readFileSync } from "node:fs";
 import { defaultAdSampleConfigCache } from "../cache/perThread/config";
 import { AD_SAMPLE_MAX_CHARS, MAX_CONFIGURED_AD_SAMPLES } from "../consts/antiRaid/adDetect";
 import { AD_SAMPLES_CONFIG_PATH } from "../consts/paths";
-
-/**
- * 广告检测的部署者示例清单：config/ad_samples.json 是一个纯字符串数组，每条
- * 是一段「应当被判成广告」的原文。文件本身是判定口径的唯一可调旋钮，改它
- * 不需要动代码，见 workers/antiRaid/adDetect/classifier.ts。
- */
-export type AdSampleConfig = readonly string[];
+import type { AdSampleConfig } from "../types/config";
 
 /** 严格解码 ad_samples.json：顶层必须是字符串数组，拒绝空串、超长与重复。 */
 export function parseAdSampleConfig(value: unknown): AdSampleConfig {

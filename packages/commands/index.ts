@@ -8,6 +8,7 @@ export { handleStealIconCommand } from "./stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./quiet";
 export { handleMuteCommand, handleUnmuteCommand } from "./mute";
 export { handleBlockCommand } from "./block";
+export { handleBatchKickCommand } from "./batchKick";
 export { handleUnblockCommand } from "./unblock";
 export { handleAiChatCommand } from "./aiChat";
 export { handleAdDetectCommand } from "./adDetect";

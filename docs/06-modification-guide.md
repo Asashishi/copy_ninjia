@@ -47,7 +47,7 @@
 - `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文的字符串字面量约 486 处、分布在 58 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+需要别的语言就 fork 一份自己改。生产代码里含中文的字符串字面量约 582 处、分布在 63 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
 
 ## 调整行为参数
 

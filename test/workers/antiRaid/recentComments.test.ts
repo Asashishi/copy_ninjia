@@ -6,6 +6,10 @@ import { rememberRecentComment, sweepRecentComments, takeRecentComment } from ".
 beforeEach(() => recentChannelComments.clear());
 
 describe("recent channel comment cache", () => {
+  test("频道帖子评论与随后自动加群的关联窗口同样固定为三分钟", () => {
+    expect(COMMENT_JOIN_CORRELATE_MS).toBe(3 * 60_000);
+  });
+
   test("记录可被消费一次，过期项即使 sweeper 尚未运行也不会被误用", () => {
     rememberRecentComment({ chatId: -1001, userId: 42, messageId: 10, observedAt: 1_000 });
     expect(takeRecentComment(-1001, 42, 1_000 + COMMENT_JOIN_CORRELATE_MS - 1)).toEqual({

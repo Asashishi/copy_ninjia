@@ -6,6 +6,7 @@ import {
   renameSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { open, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -52,41 +53,22 @@ function syncDirectorySync(path: string): void {
   }
 }
 
-/** 原子替换文本文件，并同步文件数据和父目录项。 */
-export async function atomicWriteText(path: string, content: string): Promise<void> {
-  const tmpPath: string = temporaryPath(path);
-  const handle: FileHandle = await open(tmpPath, "wx");
-  try {
-    await handle.writeFile(content);
-    await handle.sync();
-  } catch (error: unknown) {
-    await handle.close().catch((): undefined => undefined);
-    await unlink(tmpPath).catch((): undefined => undefined);
-    throw error;
-  }
-  try {
-    await handle.close();
-  } catch (error: unknown) {
-    // close() 本身失败：不能再假设 tmp 文件完好可用，按失败路径清理，
-    // 不尝试 rename——否则 close 抛错时会跳过下面的清理，留下孤儿 .tmp。
-    await unlink(tmpPath).catch((): undefined => undefined);
-    throw error;
-  }
+type AtomicSyncWriter = (fd: number) => number;
 
-  try {
-    await durableRename(tmpPath, path);
-  } catch (error: unknown) {
-    await unlink(tmpPath).catch((): undefined => undefined);
-    throw error;
-  }
-}
-
-/** atomicWriteText 的同步版本，供唯一的磁盘 IO Worker 使用。 */
-export function atomicWriteTextSync(path: string, content: string, mode?: number): void {
+/**
+ * 同步原子写的公共生命周期。writer 返回已经写入的字节数，异常统一走
+ * close + unlink，避免文本与分块写各自维护一套容易漂移的失败路径。
+ */
+function atomicWriteSync(
+  path: string,
+  writer: AtomicSyncWriter,
+  mode?: number
+): number {
   const tmpPath: string = temporaryPath(path);
   const fd: number = openSync(tmpPath, "wx", mode);
+  let writtenBytes: number;
   try {
-    writeFileSync(fd, content);
+    writtenBytes = writer(fd);
     // open(2) 的 mode 会被进程 umask 收紧。在临时文件尚未 rename 可见前
     // 显式设回调用方要求的最终权限，避免目标曾短暂以 0600 出现。
     if (mode !== undefined) fchmodSync(fd, mode);
@@ -129,6 +111,84 @@ export function atomicWriteTextSync(path: string, content: string, mode?: number
     }
     throw error;
   }
+  return writtenBytes;
+}
+
+/** 原子替换文本文件，并同步文件数据和父目录项。 */
+export async function atomicWriteText(path: string, content: string): Promise<void> {
+  const tmpPath: string = temporaryPath(path);
+  const handle: FileHandle = await open(tmpPath, "wx");
+  try {
+    await handle.writeFile(content);
+    await handle.sync();
+  } catch (error: unknown) {
+    await handle.close().catch((): undefined => undefined);
+    await unlink(tmpPath).catch((): undefined => undefined);
+    throw error;
+  }
+  try {
+    await handle.close();
+  } catch (error: unknown) {
+    // close() 本身失败：不能再假设 tmp 文件完好可用，按失败路径清理，
+    // 不尝试 rename——否则 close 抛错时会跳过下面的清理，留下孤儿 .tmp。
+    await unlink(tmpPath).catch((): undefined => undefined);
+    throw error;
+  }
+
+  try {
+    await durableRename(tmpPath, path);
+  } catch (error: unknown) {
+    await unlink(tmpPath).catch((): undefined => undefined);
+    throw error;
+  }
+}
+
+/** atomicWriteText 的同步版本，供唯一的磁盘 IO Worker 使用。 */
+export function atomicWriteTextSync(path: string, content: string, mode?: number): void {
+  atomicWriteSync(path, (fd: number): number => {
+    writeFileSync(fd, content);
+    return Buffer.byteLength(content);
+  }, mode);
+}
+
+/**
+ * 逐块原子替换文本文件，并返回最终字节数。调用方必须让 iterable 可完整重放
+ * 一次；本函数不把所有 chunk 汇总成一个大字符串，单次只保留当前块的 Buffer。
+ */
+export function atomicWriteTextChunksSync(
+  path: string,
+  chunks: Iterable<string>,
+  mode?: number
+): number {
+  return atomicWriteSync(path, (fd: number): number => {
+    let writtenBytes: number = 0;
+    for (const chunk of chunks) {
+      if (chunk.length === 0) continue;
+      const buffer: Buffer = Buffer.from(chunk);
+      let offset: number = 0;
+      while (offset < buffer.length) {
+        const written: number = writeSync(
+          fd,
+          buffer,
+          offset,
+          buffer.length - offset,
+          null
+        );
+        if (
+          !Number.isSafeInteger(written) ||
+          written <= 0 ||
+          written > buffer.length - offset
+        ) {
+          throw new Error(
+            `Atomic chunk write made no valid progress (${written} byte(s) reported).`
+          );
+        }
+        offset += written;
+        writtenBytes += written;
+      }
+    }
+    return writtenBytes;
+  }, mode);
 }
 
 /** 删除文件并同步父目录；文件已不存在视为成功。 */

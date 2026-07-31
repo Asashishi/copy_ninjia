@@ -61,6 +61,12 @@ function effectKinds(effects: { kind: string }[]): string[] {
 }
 
 describe("join：ABSENT 起步", () => {
+  test("普通入群验证窗口固定为三分钟", () => {
+    expect(VERIFICATION_TIMEOUT_MS).toBe(3 * 60_000);
+    const { next } = transitionVerification(undefined, joinEvent({ now: 7_000 }));
+    expect((next as PendingState).expiresAt).toBe(7_000 + 3 * 60_000);
+  });
+
   test("普通自主入群 → PENDING + 发原始提醒，不挂管理员核查", () => {
     const event = joinEvent({ announcementMessageId: 7 });
     expect(joinCreatesNewRecord(undefined, event)).toBe(true);

@@ -34,13 +34,22 @@ cp -r config_example config
 
 The project reads exactly five environment variables; there are no undocumented switches. Each name is prefixed with the feature it serves (`AI_CHAT_` / `AD_DETECT_`), so a missing key only disables that one feature. Four credential/identity settings are parsed by [`packages/infra/config.ts`](../../packages/infra/config.ts). `COPY_NINJIA_DATA_ROOT` must take effect before runtime path constants are frozen, so [`packages/consts/paths.ts`](../../packages/consts/paths.ts) reads it earlier:
 
-| Variable | Required | Description |
-| :--- | :---: | :--- |
-| `TELEGRAM_BOT_TOKEN` | ✅ | Token issued by BotFather |
-| `AI_CHAT_GEMINI_API_KEY` | May be empty | Gemini API key, used exclusively by the AI chat agent: `/ai_chat` reply generation, image understanding, and memory compaction. When empty the AI worker never starts, `/ai_chat enable` and `/switch_mood` are rejected, the AI memories on disk are left untouched, and everything else keeps running |
-| `AD_DETECT_DEEPSEEK_API_KEY` | May be empty | DeepSeek API key (OpenAI-compatible endpoint), used exclusively by ad detection: the `/ad_detect` classifier. When empty, `/ad_detect enable` is rejected and everything else keeps running |
-| `SUPER_ADMIN_USER_ID` | ✅ | One decimal super-administrator user ID; it has every command permission, and only it can use `/init`, `/permission`, `/white`, and `/send` |
-| `COPY_NINJIA_DATA_ROOT` | May be empty | Runtime data root; when empty, data is stored in the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root) |
+- **`TELEGRAM_BOT_TOKEN`** (required)
+  - Token issued by BotFather.
+- **`AI_CHAT_GEMINI_API_KEY`** (may be empty)
+  - Gemini API key used exclusively for AI-chat reply generation, image understanding, and
+    memory compaction. When empty, the AI Worker does not start, `/ai_chat enable` and
+    `/switch_mood` are rejected, AI memories on disk remain untouched, and everything else
+    keeps running.
+- **`AD_DETECT_DEEPSEEK_API_KEY`** (may be empty)
+  - DeepSeek API key for the OpenAI-compatible `/ad_detect` classifier. When empty,
+    `/ad_detect enable` is rejected and everything else keeps running.
+- **`SUPER_ADMIN_USER_ID`** (required)
+  - One decimal super-administrator user ID. It has every command permission, and only it can
+    use `/init`, `/batch_kick`, `/permission`, `/white`, and `/send`.
+- **`COPY_NINJIA_DATA_ROOT`** (may be empty)
+  - Runtime data root; when empty, data is stored in the project root. See
+    [07 Operations and Troubleshooting](07-operations.md#data-root).
 
 For Japanese translation, save the service-account key as `g-auth.json` in the project root. Both `.env` and `g-auth.json` are covered by `.gitignore`.
 
@@ -48,15 +57,36 @@ For Japanese translation, save the service-account key as `g-auth.json` in the p
 
 `config/` is deployment-owned and excluded from Git. Copy it from `config_example/` once, then edit only `config/`; the example directory is not the runtime configuration.
 
-| File | Contents | Validation |
-| :--- | :--- | :--- |
-| [`prompt/persona.md`](../../prompt/persona.md) | Base persona for AI chat | Plain text; no schema |
-| `config/whitelist.json` ([example](../../config_example/whitelist.json)) | User/channel allowlist and granular permissions; membership itself also grants copy-cooldown exemption, bot-verification vouching, and protection from automatic enforcement | [`packages/config/whitelist.ts`](../../packages/config/whitelist.ts); loaded strictly before network access, so a missing or malformed file aborts startup |
-| `config/blocklist.json` ([example](../../config_example/blocklist.json)) | Deployment-managed static user/channel blocklist IDs | [`packages/config/blocklist.ts`](../../packages/config/blocklist.ts); loaded strictly before network access and merged with the dynamic `memory/` layer |
-| `config/stickers.json` ([example](../../config_example/stickers.json)) | Sticker packs available to the AI, up to 5 | [`packages/config/stickers.ts`](../../packages/config/stickers.ts) |
-| `config/reactions.json` ([example](../../config_example/reactions.json)) | Emoji reactions available to the AI | [`packages/config/reactions.ts`](../../packages/config/reactions.ts) |
-| `config/mood.json` ([example](../../config_example/mood.json)) | Mood tiers: copy, weights, and weather/time multipliers | [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must be positive integers totaling exactly 100 |
-| `config/ad_samples.json` ([example](../../config_example/ad_samples.json)) | Ad-detection reference samples; the file itself is a string array | [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts); entries must be non-blank and unique, at most 500 |
+- **[`prompt/persona.md`](../../prompt/persona.md)**
+  - **Contents**: base persona for AI chat.
+  - **Validation**: plain text; no schema.
+- **`config/whitelist.json`** ([example](../../config_example/whitelist.json))
+  - **Contents**: user/channel allowlist and granular permissions. Membership itself also
+    grants copy-cooldown exemption, bot-verification vouching, and protection from automatic
+    enforcement.
+  - **Validation**:
+    [`packages/config/whitelist.ts`](../../packages/config/whitelist.ts), loaded strictly
+    before network access; a missing or malformed file aborts startup.
+- **`config/blocklist.json`** ([example](../../config_example/blocklist.json))
+  - **Contents**: deployment-managed static user/channel blocklist IDs.
+  - **Validation**:
+    [`packages/config/blocklist.ts`](../../packages/config/blocklist.ts), loaded strictly
+    before network access and merged with the dynamic `memory/` layer.
+- **`config/stickers.json`** ([example](../../config_example/stickers.json))
+  - **Contents**: sticker packs available to the AI, up to 5.
+  - **Validation**: [`packages/config/stickers.ts`](../../packages/config/stickers.ts).
+- **`config/reactions.json`** ([example](../../config_example/reactions.json))
+  - **Contents**: emoji reactions available to the AI.
+  - **Validation**: [`packages/config/reactions.ts`](../../packages/config/reactions.ts).
+- **`config/mood.json`** ([example](../../config_example/mood.json))
+  - **Contents**: mood tiers, including copy, weights, and weather/time multipliers.
+  - **Validation**: [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must
+    be positive integers totaling exactly 100.
+- **`config/ad_samples.json`** ([example](../../config_example/ad_samples.json))
+  - **Contents**: ad-detection reference samples; the file itself is a string array.
+  - **Validation**:
+    [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts); entries must be
+    non-blank and unique, at most 500.
 
 `whitelist.json` and `blocklist.json` are global security boundaries and are loaded strictly before any network or Worker startup. The other four JSON files are validated lazily by feature: one malformed sticker configuration must not take copy, luck, join verification, and the blocklist offline together. `/ai_chat enable` reads the first three optional files, `/ad_detect enable` reads `ad_samples.json`, and `/ja_copy enable` reads `g-auth.json`; an unreadable file refuses only its matching toggle. Results are cached per process, so a repaired file takes effect after restart.
 

@@ -60,3 +60,11 @@ export interface AdVerdict {
   isAd: boolean;
   reason: string;
 }
+
+/** 一次广告消息串送检的取舍结果。 */
+export interface AdBundleSelection {
+  /** 本次真正交给模型的条目，按时间先后排列（已判上下文在前，未判内容在后）。 */
+  entries: AdCandidateEntry[];
+  /** 本次判到的最新未判条目序号；整串都已判过时等于 bundle.checkedSeq。 */
+  checkedToSeq: number;
+}

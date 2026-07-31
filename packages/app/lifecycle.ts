@@ -10,10 +10,17 @@ import {
 import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
 import type { CachedUser } from "../types/chatState";
 import type { BlocklistConfig } from "../types/blocklist";
-import type { LoadedData } from "../infra/diskIO";
-import type { ApplicationLifecycleDependencies, FlushResult, FlushTimeouts } from "../types/lifecycle";
-import type { HandlerRegistration } from "./registerHandlers";
-import type { AcknowledgedUpdateRunner } from "./updateRunner";
+import type { LoadedData } from "../types/diskIO";
+import type {
+  AcknowledgedUpdateRunner,
+  ApplicationLifecycleDependencies,
+  FlushResult,
+  FlushTimeouts,
+  HandlerRegistration,
+  OwnerInitFlags,
+  OwnerSettler,
+  ShutdownResults,
+} from "../types/lifecycle";
 import { lifecycleDependencies } from "./lifecycleDependencies";
 import {
   createOwnerSettler,
@@ -22,7 +29,6 @@ import {
   isCleanShutdown,
   runShutdownOwners,
 } from "./lifecycle/shutdown";
-import type { OwnerInitFlags, OwnerSettler, ShutdownResults } from "./lifecycle/shutdown";
 
 /**
  * 持有应用从取得单实例锁到释放锁的完整生命周期。所有会联网、创建 Worker、

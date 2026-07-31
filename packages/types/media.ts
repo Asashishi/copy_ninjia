@@ -14,3 +14,9 @@ export interface TelegramVisionSource {
   width: number;
   height: number;
 }
+
+/** 已转成 Gemini 视觉接口可直接接收的 JPEG/PNG 字节。 */
+export interface VisionImage {
+  bytes: Buffer;
+  mime: "image/jpeg" | "image/png";
+}

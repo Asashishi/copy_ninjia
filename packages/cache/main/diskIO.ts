@@ -13,7 +13,7 @@ import type {
   LoadedReply,
   VerificationPersistedReply,
 } from "../../types/diskIO";
-import type { LuckReceiptSecret } from "../../types/diskIO/storage";
+import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
 
 /**
  * 磁盘 IO 宿主（packages/infra/diskIO.ts）的内存状态：主线程侧的 flush/load 回执路由。
@@ -43,6 +43,13 @@ export const pendingLuckSecrets: Map<number, {
   timer: ReturnType<typeof setTimeout>;
 }> = new Map();
 
+/** `/batch_kick` 按需读取入群日志的逐请求等待表。 */
+export const pendingJoinLogReads: Map<number, {
+  resolve: (records: readonly JoinLogRecord[]) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}> = new Map();
+
 /**
  * Worker 明确回复为部分失败、且正在等待调用方消费的 flush 回执。
  * host 只在对应 barrier 仍在途时填充，infra/diskIO.ts 在同一次请求恢复后立即删除；
@@ -66,6 +73,7 @@ interface DiskIORuntime {
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
   nextLuckSecretRequestId: number;
+  nextJoinLogReadRequestId: number;
   /**
    * 最近一次 flush 回执里没能落盘的领域。仅供日志与诊断展示；业务成功判断
    * 必须使用 pendingFlushFailedDomains 中与请求 ID 绑定的回执。
@@ -94,6 +102,7 @@ export const diskIORuntime: DiskIORuntime = {
   aiMemoryDeletedPersistedListeners: [],
   aiMemoryPersistedListeners: [],
   nextLuckSecretRequestId: 1,
+  nextJoinLogReadRequestId: 1,
   lastFlushFailedDomains: [],
 };
 

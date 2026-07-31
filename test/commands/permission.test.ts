@@ -96,11 +96,15 @@ describe("/permission", () => {
     expect(parsePermissionBoolean("1")).toBeUndefined();
   });
 
-  test("非超级管理员静默拒绝，不暴露也不修改配置", async () => {
+  test("非超级管理员收到权限提示，且不修改配置", async () => {
     await handlePermissionCommand(context(2, "100 isCanMute true"));
     expect(setWhitelistPermission).not.toHaveBeenCalled();
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("哪来的资格"),
+      replyToMessageId: 10,
+    });
   });
 
   test("help 以 JSON 代码块列出全部权限与说明，且不触发写入", async () => {

@@ -1,7 +1,9 @@
-import type { AdSampleConfig } from "../../config/adSamples";
-import type { MoodConfig } from "../../config/mood";
-import type { ReactionConfig } from "../../config/reactions";
-import type { StickerConfig } from "../../config/stickers";
+import type {
+  AdSampleConfig,
+  MoodConfig,
+  ReactionConfig,
+  StickerConfig,
+} from "../../types/config";
 
 /**
  * 四份部署配置单例缓存的内存状态：defaultMoodConfigCache 属

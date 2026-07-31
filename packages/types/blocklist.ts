@@ -108,6 +108,31 @@ export interface PendingBlockedRemoval {
   lastFailure: BlocklistRemovalFailure | null;
 }
 
+/** 单个群的黑名单补扫进度。 */
+export interface BlocklistSweepRecord {
+  /** 在途批次的编号；null 表示当前没有批次在跑。 */
+  removalId: number | null;
+  /** 已完整扫过一次的时刻；null 表示还没扫成功过，仍欠这个群一次。 */
+  sweptAt: number | null;
+  /** 上一次没能全部落定后，允许再试的最早时刻。 */
+  nextRetryAt: number;
+  /**
+   * 在途批次落定后是否必须立刻再欠一次。显式标志避免迟到的 complete 回执
+   * 把新到达的重扫请求覆盖掉。
+   */
+  resweepRequested: boolean;
+  /**
+   * 连续未能全部落定的补扫次数，只用于放大退避；成功回执清零，达到最大
+   * 退避档后不再增长。
+   */
+  failedSweeps: number;
+  /**
+   * 是否已确认卡在机器人缺少封禁权限。置真后停止时间重试，只能由一次确证
+   * 的权限变更观测解除，避免永久重扫和重复错误日志。
+   */
+  permissionBlocked: boolean;
+}
+
 /**
  * 把一批黑名单 id 清出某个群的执行 owner。判定在主线程做完后调用它，真正的
  * 探测与封禁由入群守卫线程执行（见 workers/antiRaid/blocklistEffects.ts）。

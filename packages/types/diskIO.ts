@@ -1,6 +1,11 @@
 import type { AdSampleMessage, VerificationSnapshot } from "./antiRaid";
 import type { PendingBlockedRemoval } from "./blocklist";
-import type { BlockedUserRecord, LuckDayCache, LuckReceiptSecret } from "./diskIO/storage";
+import type {
+  BlockedUserRecord,
+  JoinLogRecord,
+  LuckDayCache,
+  LuckReceiptSecret,
+} from "./diskIO/storage";
 export type * from "./diskIO/storage";
 
 /**
@@ -146,6 +151,19 @@ export interface AdSampleDiskMessage {
   messages: readonly AdSampleMessage[];
 }
 
+/**
+ * 主线程 -> diskIOWorker：一条权威 `chat_member` 入群事实。
+ * Worker 按群、按东京日期追写；启动恢复不读取这类日志。
+ */
+export interface JoinLogDiskMessage {
+  type: "joinLog";
+  chatId: number;
+  userId: number;
+  joinedAt: number;
+  /** joinedAt 对应的东京日期，避免 Worker 重新解释事件时区。 */
+  day: string;
+}
+
 /** 运行时恢复窗口允许暂存并按序重放的业务持久化消息。 */
 export type DiskBusinessMessage =
   | AiMemoryDiskMessage
@@ -157,7 +175,8 @@ export type DiskBusinessMessage =
   | BlockUserDiskMessage
   | UnblockUserDiskMessage
   | BlocklistRemovalsDiskMessage
-  | AdSampleDiskMessage;
+  | AdSampleDiskMessage
+  | JoinLogDiskMessage;
 
 /**
  * Disk I/O Worker 运行时重建期间的代际限定投递器。
@@ -210,6 +229,15 @@ export interface DiskFlushRequest {
   flushId: number;
 }
 
+/** 主线程 -> diskIOWorker：按命令读取本群指定滚动时间窗内的入群记录。 */
+export interface ReadJoinLogRequest {
+  type: "readJoinLog";
+  requestId: number;
+  chatId: number;
+  since: number;
+  now: number;
+}
+
 export type DiskIOMessage =
   | LogEnvelope
   | AiMemoryDiskMessage
@@ -222,7 +250,9 @@ export type DiskIOMessage =
   | UnblockUserDiskMessage
   | BlocklistRemovalsDiskMessage
   | AdSampleDiskMessage
+  | JoinLogDiskMessage
   | EnsureLuckSecretRequest
+  | ReadJoinLogRequest
   | LoadRequest
   | DiskFlushRequest;
 
@@ -248,6 +278,20 @@ export interface LoadedReply {
   error?: string;
 }
 
+/**
+ * 启动恢复通过严格校验后交给应用生命周期的完整数据。AI 记忆与贴纸目录仍是
+ * 已校验后重新序列化的 JSON 文本，hydrate 链路直接透传给对应 Worker。
+ */
+export interface LoadedData {
+  aiMemories: Map<number, string>;
+  stickerCatalogs: Map<string, string>;
+  luckDay: LuckDayCache | null;
+  luckReceiptSecret: LuckReceiptSecret;
+  verifications: Map<string, VerificationSnapshot>;
+  blockedUsers: Map<number, BlockedUserRecord>;
+  pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
+}
+
 /** ensureLuckSecret 的逐请求回执；失败时不返回密钥，主线程不得继续抽签。 */
 export interface LuckSecretReply {
   type: "luckSecret";
@@ -256,8 +300,16 @@ export interface LuckSecretReply {
   error?: string;
 }
 
+/** diskIOWorker -> 主线程：`/batch_kick` 的按需入群日志查询结果。 */
+export interface JoinLogReadReply {
+  type: "joinLogRead";
+  requestId: number;
+  records?: readonly JoinLogRecord[];
+  error?: string;
+}
+
 /**
- * 统一 flush 覆盖的七个落盘领域。回执按领域拆开，是为了让「等自己这条记录
+ * 统一 flush 覆盖的八个落盘领域。回执按领域拆开，是为了让「等自己这条记录
  * 落盘」的调用方（典型是 /block）不会因为无关领域失败而误报——那会把运维
  * 引向一个其实没坏的文件，而真正坏掉的领域按设计只有 console.error，
  * 永远进不了 logs/（见 workers/diskIOWorker.ts 的 flushAll）。
@@ -269,9 +321,10 @@ export type DiskIODomain =
   | "luck"
   | "verification"
   | "blocklist"
-  | "blocklistRemovalOutbox";
+  | "blocklistRemovalOutbox"
+  | "joinLog";
 
-/** diskIOWorker -> 主线程：flush 已完成，七个领域全部落盘。 */
+/** diskIOWorker -> 主线程：flush 已完成，八个领域全部落盘。 */
 export interface DiskFlushReply {
   type: "flushed";
   flushedId: number;
@@ -312,6 +365,7 @@ export interface AiMemoryPersistedReply {
 export type DiskIOReply =
   | LoadedReply
   | LuckSecretReply
+  | JoinLogReadReply
   | DiskFlushReply
   | DiskFlushFailedReply
   | VerificationPersistedReply

@@ -31,7 +31,7 @@ import { createRoundMessageState } from "./messageState";
 import { createAddReactionExecutor } from "./reaction";
 import { createSendMessageExecutor } from "./sendMessage";
 import { toolError } from "../../utils/toolResult";
-import type { RoundMessageState } from "./messageState";
+import type { RoundMessageState } from "../../../../types/aiChat/replies";
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
 export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyToolset> {

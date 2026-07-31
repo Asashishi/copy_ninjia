@@ -3,6 +3,8 @@
  * 图片描述（aiChat/ai/imageDescription.ts）也需要同一套清洗后抽到这里共用。
  */
 
+import { graphemeSegmenterHolder } from "../cache/perThread/text";
+
 /**
  * 折叠为一个空格的「空白」集合：JS 的 `\s`，外加 U+0085 (NEL)。
  *
@@ -48,10 +50,8 @@ export function sanitizeDisplayName(raw: string): string {
  * 里几个 Intl.DateTimeFormat 提到模块级）。这里不能照搬 time.ts 在模块加载时
  * 直接构造——旧运行时没有 Intl.Segmenter，模块级构造抛错会让整个模块 import
  * 失败，而 splitGraphemes 的契约是「没有就退化为按码点切分」。
- * 不导出，也不跨模块共享，因此不属于 packages/cache/ 的范畴。
+ * holder 按 owner 约束放在 cache/perThread/text.ts；各线程只使用自己的副本。
  */
-const graphemeSegmenterHolder: { current: Intl.Segmenter | null } = { current: null };
-
 function graphemeSegmenter(): Intl.Segmenter | null {
   if (graphemeSegmenterHolder.current !== null) return graphemeSegmenterHolder.current;
   try {

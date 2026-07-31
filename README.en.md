@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1475_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.70%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1516_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.58%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -69,7 +69,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1475 tests passed, 163 test files, 25,995 expect() calls, 95.18% function coverage, 96.70% line coverage" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1516 tests passed, 165 test files, 27,474 expect() calls, 95.16% function coverage, 96.58% line coverage" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -177,6 +177,7 @@ Choose a target by replying to their message or providing `@username`:
 <tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>Reroll current group mood immediately; the super administrator is implicitly allowed</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>Toggle Japanese translation mode for the group (disabled by default); the super administrator is implicitly allowed</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle the group's main processing gate</td></tr>
+<tr><td><code>/batch_kick &lt;Nm|Nh|Nd&gt;</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>In a supergroup, kick members who joined within the selected rolling window of up to 24 hours and are still present; never blocklist them</td></tr>
 <tr><td><code>/permission help</code><br><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>List permission descriptions as JSON or change one permission on an existing allowlisted user/channel; <code>all</code> enables every permission</td></tr>
 <tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Add or remove an allowlisted user/channel by reply, <code>@username</code>, user id, or channel id</td></tr>
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code> (PM only)</td><td>Start or finish a relay session from the bot's private chat to the target group</td></tr>
@@ -184,15 +185,17 @@ Choose a target by replying to their message or providing `@username`:
 
 ### Behavior details
 
+- **Command entry gates**: group commands uniformly pass through `/init`. An uninitialized group accepts only the super administrator's `/init`, so `/permission` and `/white` must also run in an initialized group. `/send` is the only slash command admitted in private chat.
 - **Action commands**: both names render as `first_name last_name` and link to the profile when a public username exists; the target is picked the same way, by replying to their message or by `@username`.
 - **`/block` blocklist**: name the target by replying to their message, by `@username`, or by passing a user id directly (a positive integer; the negative ids of groups and channels do not count) - the id form is the most reliable one, since a released username can be re-registered by somebody else while this command is irreversible. Once the id lands in the persistent blocklist, the target is kicked on sight from any join update in any watched group. The moment a group has both an administrator bot and an enabled `/init` — in either order — anyone from the list already sitting there gets swept out too. `/unblock` atomically rewrites the whole list back to disk. `/unblock` accepts one target form `/block` does not: **the negative id of a channel**. Channel vests enter the list as a `sender_chat` (a `/block` on a reply to a channel message, or an ad-detection hit), and since ad detection deletes the original message while a channel without a public username is never in the cache, refusing negative ids would leave such entries permanently unremovable. The reverse is not opened because a mispasted chat id in `/block` bans a whole chat identity, irreversibly.
+- **`/batch_kick` slow-wave cleanup**: only the super administrator may use it, and only in an initialized supergroup. Its sole argument is a window such as `30m`, `2h`, or `1d`, capped at 24 hours. It reads the join log, keeps each user's latest join in the window, and kicks those still present with bounded concurrency and no blocklisting. The super administrator, allowlisted identities, and permanent-blocklist members are not treated as ordinary targets.
 - **`/ad_detect` ad detection**: messages are bundled per sender over a 90-second window and judged by DeepSeek; a hit triggers the same disposal as `/block` (permanent blocklist entry plus a ban that deletes the sender's messages in every administered chat) and announces the ban reason in the triggering chat (self-deleting after 30 seconds). It only fires while the bot is an administrator there; the reference samples live in [`config/ad_samples.json`](config_example/ad_samples.json).
 - **Flood muting**: 21 messages from one person within one minute in one supergroup gets them muted for 5 minutes, with a one-line notice that self-deletes when the mute expires. Telegram lifts the mute on its own; nothing is blocklisted and no message is deleted. It only fires when the bot actually holds the "restrict members" right; owners/administrators, `SUPER_ADMIN_USER_ID`, identities in `config/whitelist.json`, channel identities and anonymous administrators are never counted.
 - **`/send` relay**: reachability is probed before starting, every message the super administrator sends is relayed to the target group once, and the session ends with a notification if the target becomes unreachable. Relay state persists in `state.json` across restarts. The command is omitted from Telegram's command menu and remains silent in groups or when invoked by any other user.
 
 > [!TIP]
 > **CJK action commands need no registration** — any one or two Chinese characters work. Telegram only accepts ASCII command names (Latin letters, digits, underscores), so:
-> - These commands never appear in the command menu and get no autocompletion. The menu carries a single placeholder entry `/x` instead — the name `x` is the variable, prompting you to swap it for any one or two Chinese characters. The placeholder does nothing when invoked and is deliberately swallowed rather than falling through into the AI/copy pipeline.
+> - These commands never appear in the command menu and get no autocompletion. The menu carries a single placeholder entry `/x` instead — the name `x` is the variable, prompting you to swap it for any one or two Chinese characters. Invoking it returns a usage hint and terminates the chain rather than falling through into the AI/copy pipeline.
 > - Forms of three characters or more, such as `/咬人人`, are not action commands and fall through to normal message handling.
 > - Precisely because anyone can invent one without registering it, these commands share a global sliding-window limit of 450 responses per 90 seconds, counted across all groups and users; anything over the quota is dropped silently with no notice.
 
@@ -278,7 +281,7 @@ After the bot first joins a group, `SUPER_ADMIN_USER_ID` executes:
 /ai_chat enable
 ```
 
-> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 486 Chinese string literals across 58 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
+> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 582 Chinese string literals across 63 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 

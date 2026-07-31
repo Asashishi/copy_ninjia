@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cleanupOrphanedTempFiles } from "../../../packages/infra/storage/cleanup";
-import { readLinuxProcessIdentity, type ProcessIdentity } from "../../../packages/infra/storage/instanceLock";
+import { readLinuxProcessIdentity } from "../../../packages/infra/storage/instanceLock";
+import type { ProcessIdentity } from "../../../packages/types/storage";
 
 describe("storage startup cleanup", () => {
   test("只删除 state/lock 原子写临时文件，目录扫描与删除均可注入", async () => {

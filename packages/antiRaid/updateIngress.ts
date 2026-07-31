@@ -6,6 +6,7 @@ import type {
   User,
 } from "@grammyjs/types";
 import { logger } from "../infra/logger";
+import { recordJoinLog } from "../infra/joinLog";
 import { answerCallbackQuery } from "../infra/telegram/actions";
 import {
   ensureBotChatPermissions,
@@ -82,6 +83,19 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
 
   const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
   if (!wasActive && isActive) {
+    // 使用 Telegram 事件自带时间戳作为幂等 key 的一部分；落盘 Worker 在写前
+    // 按用户最新记录去重。同一 update 只有 joinLog 领域 durable 后才继续投递，
+    // 否则让 update 失败重投，不能静默漏掉慢速僵尸清理依据。
+    const joinLogged: boolean = await recordJoinLog({
+      chatId,
+      userId: user.id,
+      joinedAt: update.date * 1000,
+    });
+    if (!joinLogged) {
+      throw new Error(
+        `Persistence Worker rejected join log event for chat ${chatId}, user ${user.id}.`
+      );
+    }
     // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径
     // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
     // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker

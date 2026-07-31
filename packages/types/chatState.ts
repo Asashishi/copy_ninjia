@@ -67,9 +67,9 @@ export interface ChatState {
    * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化（false），
    * 需由超级管理员通过 /init enable 显式开启（见 commands/init.ts）。未初始化
    * 群的更新在
-   * app/registerHandlers.ts 的前置网关处直接丢弃（除 /init、本群无关的
-   * my_chat_member，以及网关前独立处理的 /permission 外），不进入入群验证、
-   * 普通指令匹配、AI 调用等后续处理——Bot API 长轮询没有「取消订阅某个群」
+   * app/registerHandlers.ts 的前置网关处直接丢弃（除 /init 与本群无关的
+   * my_chat_member 外），不进入授权维护、入群验证、普通指令匹配、AI 调用等
+   * 后续处理——Bot API 长轮询没有「取消订阅某个群」
    * 的机制，这是应用层面能做到的最接近「不监听」的效果，避免被拉进大量群时
    * 被拖垮。
    */

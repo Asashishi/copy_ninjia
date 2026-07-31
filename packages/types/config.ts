@@ -3,6 +3,34 @@
  * 缓存 holder 见 packages/cache/perThread/config.ts）。
  */
 
+import type { ReactionTypeEmoji } from "@grammyjs/types";
+import type { MoodOption } from "./aiChat/mood";
+
+/** Telegram Bot API 标准 emoji 反应的精确联合。 */
+export type ReactionEmoji = ReactionTypeEmoji["emoji"];
+
+/** reactions.json 的严格结构。 */
+export interface ReactionConfig {
+  readonly emotionKeywords: Readonly<Partial<Record<ReactionEmoji, readonly string[]>>>;
+}
+
+/** stickers.json 的严格结构。 */
+export interface StickerConfig {
+  readonly packs: readonly string[];
+}
+
+/** mood.json 的严格结构。 */
+export interface MoodConfig {
+  readonly moods: readonly MoodOption[];
+}
+
+/**
+ * 广告检测的部署者示例清单：config/ad_samples.json 是一个纯字符串数组，每条
+ * 是一段“应当被判成广告”的原文。文件本身是判定口径的唯一可调旋钮，改它
+ * 不需要动代码，见 workers/antiRaid/adDetect/classifier.ts。
+ */
+export type AdSampleConfig = readonly string[];
+
 /** 一份坏掉的部署文件：文件名给人看，诊断给日志看。 */
 export interface ConfigFailure {
   /** 相对项目根的路径，如 `config/stickers.json`；直接出现在命令的拒绝文案里。 */

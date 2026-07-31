@@ -1,4 +1,12 @@
-import type { ApplicationLifecycleDependencies, FlushResult, FlushTimeouts } from "../../types/lifecycle";
+import type {
+  ApplicationLifecycleDependencies,
+  FlushResult,
+  FlushTimeouts,
+  OwnerInitFlags,
+  OwnerSettler,
+  OwnerShutdownResults,
+  ShutdownResults,
+} from "../../types/lifecycle";
 
 /**
  * 停机时各持久化/后台 owner 的排空顺序与失败隔离（owner 是 packages/app/lifecycle.ts）。
@@ -9,49 +17,6 @@ import type { ApplicationLifecycleDependencies, FlushResult, FlushTimeouts } fro
  * 任何单个 owner 抛错都不允许跳过其后的 owner 与 flushStateToDisk。
  * @see ../../../docs/04-invariants.md
  */
-
-/** 各 owner 是否已初始化；停机据此跳过未启动的步骤，并在终止后就地置回 false。 */
-export interface OwnerInitFlags {
-  aiChatInitialized: boolean;
-  antiRaidInitialized: boolean;
-  diskIOInitialized: boolean;
-  translateInitialized: boolean;
-}
-
-/** 一次停机里各 owner 的结算结果，决定退出码与实例锁是否释放。 */
-export interface ShutdownResults {
-  runnerDrained: boolean;
-  maintenanceSettled: boolean;
-  /**
-   * 已处理 update 的最终确认边界是否安全完成；没有待确认 update 时同样为 true。
-   * wait() 一旦确认失败或因关键 gate 未完成而跳过，就保持 false 到进程退出。
-   */
-  offsetConfirmed: boolean;
-  avatar: FlushResult;
-  reaction: FlushResult;
-  translate: FlushResult;
-  antiRaid: FlushResult;
-  ai: FlushResult;
-  disk: FlushResult;
-  terminate: FlushResult;
-  state: FlushResult;
-}
-
-/** owner 结果部分（不含 runner/维护两项，它们由主文件在调用前算出）。 */
-export type OwnerShutdownResults = Omit<
-  ShutdownResults,
-  "runnerDrained" | "maintenanceSettled" | "offsetConfirmed"
->;
-
-/** 把单个 owner 的异常折算成兜底值并记录，绝不让它中断整段停机。 */
-export interface OwnerSettler {
-  /** 返回 FlushResult 的 owner；抛错记为 `"failed"`。 */
-  flush(owner: string, run: () => Promise<FlushResult>): Promise<FlushResult>;
-  /** 返回布尔门控的步骤（runner 排空、后台维护）；抛错记为 `false`。 */
-  gate(owner: string, run: () => Promise<boolean>): Promise<boolean>;
-  /** 返回 void 的终止型 owner；成功记为 `"flushed"`，抛错记为 `"failed"`。 */
-  terminate(owner: string, run: () => Promise<void>): Promise<FlushResult>;
-}
 
 /** 绑定一份 logger，生成本次停机使用的失败隔离器。 */
 export function createOwnerSettler(logger: ApplicationLifecycleDependencies["logger"]): OwnerSettler {

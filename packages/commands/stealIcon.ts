@@ -3,7 +3,7 @@ import type { CachedUser } from "../types/chatState";
 import { sendMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
-import type { CopyCooldownClaim } from "./copyShared";
+import type { CopyCooldownClaim } from "../types/copy/cooldown";
 import { resolveCommandActor } from "./commandActor";
 
 /**

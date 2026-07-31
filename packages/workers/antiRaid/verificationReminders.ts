@@ -219,7 +219,7 @@ export function sendReplyReminder({
   targetMessageId,
   dispatchVerification,
 }: SendReplyReminderParams): void {
-  const reminderText: string = `喂，${label}，话都说上了，下面的验证按钮倒是点一下啊杂鱼。` +
+  const reminderText: string = `喂，${label}，话都说上了，${formatMinSec(VERIFICATION_TIMEOUT_MS)}内把下面的验证按钮点一下啊杂鱼。` +
     `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
   sendReminderMessage({
     chatId,

@@ -1,4 +1,7 @@
-import type { ChatPermissions } from "@grammyjs/types";
+import type {
+  EmergencyLockdownRecovery,
+  PersistedLockdownFingerprint,
+} from "../../../types/antiRaid/internal";
 
 /**
  * 私密模式的主线程侧镜像与紧急恢复状态（owner 是
@@ -22,11 +25,6 @@ import type { ChatPermissions } from "@grammyjs/types";
  * 重写，入群比这两次写更快时循环不终止，既写不下指纹也发不出 lockdownPersisted。
  * 倒计时本身照常落在 ChatState.lockdown.expiresAt 里，adopt 时按它换算剩余时长。
  */
-export interface PersistedLockdownFingerprint {
-  phase: "applying" | "active" | "restoring";
-  intentId: number;
-}
-
 /**
  * 记录某群当前 lockdown 记录是否已确认落盘，而非 lockdown 本身——真正的
  * 私密模式状态在 ChatState.lockdown（stateStore 持有）。initAntiRaid 启动时
@@ -40,14 +38,6 @@ export const persistedLockdownFingerprints: Map<number, PersistedLockdownFingerp
 
 /** 每群至多保留一个 durability waiter；期间的新阶段由完成后的循环补写。 */
 export const pendingLockdownPersistence: Set<number> = new Set();
-
-/** Worker 永久不可用后，单群主线程权限恢复链的运行态。 */
-export interface EmergencyLockdownRecovery {
-  fingerprint: PersistedLockdownFingerprint;
-  originalPermissions: ChatPermissions;
-  retryTimer: ReturnType<typeof setTimeout> | null;
-  inFlight: Promise<void> | null;
-}
 
 /** Worker 放弃自愈后，主线程每群至多持有一条权限恢复链。 */
 export const emergencyLockdownRecoveries: Map<number, EmergencyLockdownRecovery> = new Map();

@@ -26,10 +26,12 @@ describe("shouldPassInitGate", () => {
     expect(shouldPassInitGate(ctx)).toBe(true);
   });
 
-  test("未初始化的群 + 普通消息：拦下", () => {
+  test("未初始化的群拦下普通消息和除 /init 外的各类命令入口", () => {
     const chatId = -1001111111111;
-    const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text: "随便说点什么" } });
-    expect(shouldPassInitGate(ctx)).toBe(false);
+    for (const text of ["随便说点什么", "/copy", "/permission", "/white", "/send", "/咬 @someone"]) {
+      const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text } });
+      expect(shouldPassInitGate(ctx)).toBe(false);
+    }
   });
 
   test("未初始化的群 + /init 指令本身：放行（否则永远没法首次初始化）", () => {
@@ -128,12 +130,13 @@ describe("shouldPassInitGate", () => {
 });
 
 describe("isSendCommandText", () => {
-  test("匹配 /send 及 /send@BotUsername 变体，不误配前缀相同的其它指令", () => {
-    expect(isSendCommandText("/send")).toBe(true);
-    expect(isSendCommandText("/send -100123")).toBe(true);
-    expect(isSendCommandText("/send@my_bot finish")).toBe(true);
-    expect(isSendCommandText("/sendx")).toBe(false);
-    expect(isSendCommandText("/copy")).toBe(false);
+  test("只匹配 /send 及发给当前机器人的 @BotUsername 变体", () => {
+    expect(isSendCommandText("/send", ME.username)).toBe(true);
+    expect(isSendCommandText("/send -100123", ME.username)).toBe(true);
+    expect(isSendCommandText("/send@Test_Bot finish", ME.username)).toBe(true);
+    expect(isSendCommandText("/send@other_bot finish", ME.username)).toBe(false);
+    expect(isSendCommandText("/sendx", ME.username)).toBe(false);
+    expect(isSendCommandText("/copy", ME.username)).toBe(false);
   });
 });
 
@@ -148,14 +151,39 @@ describe("shouldPassPrivateCommandGate", () => {
     expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
   });
 
-  test("私聊里的 /send 本身：放行，不管这个私聊有没有在中转", () => {
-    const ctx = fakeCtx({ chat: { id: 2, type: "private" }, message: { text: "/send -100123" } });
-    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
+  test("私聊只放行超级管理员发给当前机器人的 /send", () => {
+    const base = { chat: { id: SUPER_ADMIN_USER_ID, type: "private" } };
+    expect(shouldPassPrivateCommandGate(fakeCtx({
+      ...base,
+      from: { id: SUPER_ADMIN_USER_ID },
+      message: { text: "/send -100123" },
+    }))).toBe(true);
+    expect(shouldPassPrivateCommandGate(fakeCtx({
+      ...base,
+      from: { id: SUPER_ADMIN_USER_ID },
+      message: { text: "/send@Test_Bot finish" },
+    }))).toBe(true);
+    expect(shouldPassPrivateCommandGate(fakeCtx({
+      ...base,
+      from: { id: SUPER_ADMIN_USER_ID },
+      message: { text: "/send@other_bot finish" },
+    }))).toBe(false);
+    expect(shouldPassPrivateCommandGate(fakeCtx({
+      chat: { id: SUPER_ADMIN_USER_ID + 1, type: "private" },
+      from: { id: SUPER_ADMIN_USER_ID + 1 },
+      message: { text: "/send -100123" },
+    }))).toBe(false);
   });
 
-  test("私聊里 /send 以外的指令、且没有在中转：拦下", () => {
-    const ctx = fakeCtx({ chat: { id: 3, type: "private" }, message: { text: "/copy" } });
-    expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
+  test("私聊里 /send 以外的所有已注册命令入口都拦下", () => {
+    for (const text of ["/copy", "/permission", "/white", "/init enable", "/batch_kick 1h", "/咬 @someone"]) {
+      const ctx = fakeCtx({
+        chat: { id: SUPER_ADMIN_USER_ID, type: "private" },
+        from: { id: SUPER_ADMIN_USER_ID },
+        message: { text },
+      });
+      expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
+    }
   });
 
   test("caption 里的指令同样拦下：bot.hears 对 caption 也匹配", () => {
@@ -167,6 +195,11 @@ describe("shouldPassPrivateCommandGate", () => {
       message: { caption: "/咬 @someone", photo: [{ file_id: "f" }] },
     });
     expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
+    expect(shouldPassPrivateCommandGate(fakeCtx({
+      chat: { id: SUPER_ADMIN_USER_ID, type: "private" },
+      from: { id: SUPER_ADMIN_USER_ID },
+      message: { caption: "/send -100123", photo: [{ file_id: "f" }] },
+    }))).toBe(false);
   });
 
   test("私聊里的普通 caption（不以 / 开头）仍放行", () => {
@@ -177,50 +210,16 @@ describe("shouldPassPrivateCommandGate", () => {
     expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
   });
 
-  test("有 /send 中转会话时只放行超管的其它私聊指令，外部用户仍被拦截", () => {
-    // getActiveProxySendTarget 是全局扫描，不像 shouldPassInitGate 那样只看
-    // 单个 chatId：这里设的 true 若不清掉，会污染同进程里跑在它之后的其它
-    // 测试（包括其它测试文件——非隔离测试会在同进程共享 infra/storage 的
-    // 模块级 chatStates），务必 finally 里清回去。
-    const targetChatId = -1004444444444;
-    getOrCreateChatState(targetChatId).isProxySendEnabled = true;
-    try {
-      const adminCtx = fakeCtx({
-        chat: { id: SUPER_ADMIN_USER_ID, type: "private" },
-        from: { id: SUPER_ADMIN_USER_ID },
-        message: { text: "/home/user/looks-like-a-command" },
-      });
-      const outsiderCtx = fakeCtx({
-        chat: { id: SUPER_ADMIN_USER_ID + 1, type: "private" },
-        from: { id: SUPER_ADMIN_USER_ID + 1 },
-        message: { text: "/stop_copy" },
-      });
-      expect(shouldPassPrivateCommandGate(adminCtx)).toBe(true);
-      expect(shouldPassPrivateCommandGate(outsiderCtx)).toBe(false);
-    } finally {
-      getOrCreateChatState(targetChatId).isProxySendEnabled = false;
-    }
-  });
-
-  test("中转会话已经 finish（目标群的 isProxySendEnabled 变回 false）后，/ 开头消息重新被拦下", () => {
-    const targetChatId = -1005555555555;
-    getOrCreateChatState(targetChatId).isProxySendEnabled = true;
-    const ctx = fakeCtx({ chat: { id: SUPER_ADMIN_USER_ID, type: "private" }, from: { id: SUPER_ADMIN_USER_ID }, message: { text: "/whatever" } });
-    expect(shouldPassPrivateCommandGate(ctx)).toBe(true);
-
-    getOrCreateChatState(targetChatId).isProxySendEnabled = false;
-    expect(shouldPassPrivateCommandGate(ctx)).toBe(false);
-  });
 });
 
 describe("shouldRoutePrivateProxyMessage", () => {
-  test("活动中转会话的普通消息和撞名指令都在命令注册前短路，/send 本身除外", () => {
+  test("活动中转会话只路由超管的非命令消息", () => {
     const targetChatId = -1006666666666;
     getOrCreateChatState(targetChatId).isProxySendEnabled = true;
     try {
       const base = { chat: { id: SUPER_ADMIN_USER_ID, type: "private" }, from: { id: SUPER_ADMIN_USER_ID } };
       expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "普通文本" } }))).toBe(true);
-      expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "/stop_copy" } }))).toBe(true);
+      expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "/stop_copy" } }))).toBe(false);
       expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { photo: [{}] } }))).toBe(true);
       expect(shouldRoutePrivateProxyMessage(fakeCtx({ ...base, message: { text: "/send finish" } }))).toBe(false);
       expect(shouldRoutePrivateProxyMessage(fakeCtx({

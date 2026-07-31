@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool } from "@google/genai";
+import { systemPromptHolder } from "../../cache/workers/aiChat/prompts";
 import { PERSONA_PATH } from "../../consts/paths";
 import {
   GEMINI_REPLY_MODEL,
@@ -26,7 +27,7 @@ import {
 } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../aiChat/ai/mood";
-import { requestGeminiResult, type GeminiRequestResult } from "../../aiChat/ai/gemini";
+import { requestGeminiResult } from "../../aiChat/ai/gemini";
 import {
   countGoogleSearchCalls,
   extractFunctionCalls,
@@ -36,6 +37,7 @@ import {
 import { callTool } from "../../aiChat/ai/tools";
 import { isPlainRecord } from "../../libs/runtimeConfig";
 import type { ReplyPromptSections, ReplyToolset } from "../../types/aiChat/replies";
+import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { ExtractedFunctionCall } from "../../types/tools";
 import { currentTimeSentence } from "./timeSentence";
 
@@ -83,8 +85,6 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
  * 没有任何一行指向 prompt/persona.md。同 config/adSamples.ts 的约定
  * （「模块 import 本身不访问文件系统」），配置类读盘一律推迟到第一次真正要用时。
  */
-const systemPromptHolder: { current: string | null } = { current: null };
-
 function systemPrompt(): string {
   systemPromptHolder.current ??= readFileSync(PERSONA_PATH, "utf8").trim();
   return systemPromptHolder.current;

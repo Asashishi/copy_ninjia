@@ -3,7 +3,8 @@ import { basename, dirname, join } from "node:path";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { logger } from "../logger";
-import { readLinuxProcessIdentity, type ProcessIdentity } from "./instanceLock";
+import { readLinuxProcessIdentity } from "./instanceLock";
+import type { ProcessIdentity } from "../../types/storage";
 
 export interface StorageCleanupOptions {
   stateFilePath?: string;

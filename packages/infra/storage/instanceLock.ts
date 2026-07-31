@@ -6,12 +6,7 @@ import { LOCK_FILE_PATH, RUNTIME_DATA_ROOT_IS_CONFIGURED } from "../../consts/pa
 import { atomicWriteText, syncDirectory } from "../../libs/atomicFile";
 import { prepareRuntimeDataRoot } from "./dataRoot";
 import type { FileHandle } from "node:fs/promises";
-
-export interface ProcessIdentity {
-  pid: number;
-  startTimeTicks: string;
-  bootId: string;
-}
+import type { ProcessIdentity } from "../../types/storage";
 
 interface BotLockRecord extends ProcessIdentity {
   tokenFingerprint: string;

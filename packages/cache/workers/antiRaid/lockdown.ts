@@ -1,18 +1,11 @@
 import { createKeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner";
 import type { KeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner";
-import type { JoinWindow } from "../../../types/antiRaid/internal";
-import type { LockdownState } from "../../../types/states/lockdown";
+import type { JoinWindow, LockdownEntry } from "../../../types/antiRaid/internal";
 
 /**
  * 私密模式状态机（packages/workers/antiRaid/lockdownRuntime.ts）的内存状态；
  * verificationRuntime.ts 只读取 lockdownEntries 判断当前是否处于私密模式。
  */
-
-/** 一条私密模式状态机条目：纯状态 + 解释器持有的恢复计时器。 */
-export interface LockdownEntry {
-  state: LockdownState;
-  timer: ReturnType<typeof setTimeout> | undefined;
-}
 
 /** 每群最近入群滑窗；静默超时、群停用或 Worker 停止时清除。 */
 export const joinWindows: Map<number, JoinWindow> = new Map();
