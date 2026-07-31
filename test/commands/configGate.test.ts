@@ -35,7 +35,9 @@ mock.module("../../packages/infra/config", () => ({
   AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
 }));
-mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat: mock((): void => {}), switchAiMood }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));

@@ -1,30 +1,17 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { MAX_PENDING_TASKS_PER_CHAT } from "../../packages/consts/reactionQueue";
 
-class FakeGrammyError extends Error {
-  constructor(
-    readonly error_code: number,
-    readonly parameters: { retry_after?: number } = {}
-  ) {
-    super(`Telegram ${error_code}`);
-  }
-}
-
 const setMessageReaction = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const logApiError = mock((..._args: unknown[]): void => {});
-const sleep = mock(async (..._args: unknown[]): Promise<void> => {});
 const loggerLog = mock((..._args: unknown[]): void => {});
-const loggerWarn = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 
-mock.module("grammy", () => ({ GrammyError: FakeGrammyError }));
 mock.module("../../packages/infra/telegram", () => ({
   bot: { api: { setMessageReaction } },
   logApiError,
 }));
-mock.module("../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log: loggerLog, info: mock(() => {}), warn: loggerWarn, error: loggerError },
+  logger: { log: loggerLog, info: mock(() => {}), warn: mock(() => {}), error: loggerError },
 }));
 
 const {
@@ -56,9 +43,8 @@ beforeEach(() => {
   pendingReactionWaiters.clear();
   reactionDrainWaiters.clear();
   initReactionQueue();
-  for (const mocked of [setMessageReaction, logApiError, sleep, loggerLog, loggerWarn, loggerError]) mocked.mockClear();
+  for (const mocked of [setMessageReaction, logApiError, loggerLog, loggerError]) mocked.mockClear();
   setMessageReaction.mockImplementation(async (): Promise<boolean> => true);
-  sleep.mockImplementation(async (): Promise<void> => {});
 });
 
 afterEach(() => {
@@ -191,42 +177,11 @@ describe("Telegram reaction 同步队列", () => {
     await expect(drainReactionQueue(100)).resolves.toBe("flushed");
   });
 
-  test("429 按 retry_after 等待后重试，其它错误记录后放弃", async () => {
-    setMessageReaction
-      .mockRejectedValueOnce(new FakeGrammyError(429, { retry_after: 2 }))
-      .mockResolvedValueOnce(true);
-    enqueueReaction({ chatId: -1001, messageId: 10, reactions: [], updateId: 1, reactedAtUnix: 1 });
-    await waitForIdle();
-    expect(sleep).toHaveBeenCalledWith(2_000, expect.any(AbortSignal));
-    expect(loggerWarn).toHaveBeenCalledWith(expect.stringContaining("retry 2/3"));
-    expect(setMessageReaction).toHaveBeenCalledTimes(2);
-
+  test("API 错误记录后放弃当前版本", async () => {
     setMessageReaction.mockRejectedValueOnce(new Error("bad reaction"));
     enqueueReaction({ chatId: -1002, messageId: 20, reactions: [], updateId: 2, reactedAtUnix: 2 });
     await waitForIdle();
     expect(logApiError).toHaveBeenCalledWith("set message reaction", expect.any(Error));
     expect(pendingTasks.size).toBe(0);
-  });
-
-  test("停机预算耗尽会打断 429 sleep、清空队列且不再重试", async () => {
-    setMessageReaction.mockRejectedValueOnce(new FakeGrammyError(429, { retry_after: 999_999 }));
-    sleep.mockImplementationOnce(async (...args: unknown[]): Promise<void> => {
-      const signal = args[1] as AbortSignal | undefined;
-      await new Promise<void>((_resolve, reject) => {
-        signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
-      });
-    });
-    enqueueReaction({ chatId: -1003, messageId: 30, reactions: [], updateId: 3, reactedAtUnix: 3 });
-    await Bun.sleep(0);
-    expect(sleep).toHaveBeenCalledWith(5_000, expect.any(AbortSignal));
-
-    quiesceReactionQueue();
-    await expect(drainReactionQueue(1)).resolves.toBe("timedOut");
-    await waitForIdle();
-
-    expect(setMessageReaction).toHaveBeenCalledTimes(1);
-    expect(pendingTasks.size).toBe(0);
-    expect(pendingReactionWaiters.size).toBe(0);
-    expect(reactionDrainWaiters.size).toBe(0);
   });
 });

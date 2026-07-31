@@ -31,7 +31,7 @@ import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { AI_MEMORY_FILE_PATTERN, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO/snapshots";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat/memory";
 import { AppendOnlyFileFormatError, appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
-import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
+import { atomicWriteTextSync, durableUnlinkSync, syncDirectorySync } from "../../libs/atomicFile";
 
 /**
  * tmp + fsync + rename 的原子覆盖写。rename 前的 fsync 不能省：rename 只
@@ -52,13 +52,24 @@ function ensurePersistedFileMode(path: string): void {
   if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) chmodSync(path, PERSISTED_FILE_MODE);
 }
 
-/** 解析失败的文件重命名隔离，不静默删除——留排查线索（对齐 loadState 的做法）。 */
-function quarantine(path: string): void {
+/** 解析失败的文件用唯一名称持久隔离，不覆盖同一路径此前留下的排查证据。 */
+function quarantine(path: string): string | null {
+  const corruptPath: string =
+    `${path}.${Date.now()}.${crypto.randomUUID()}${CORRUPT_FILE_SUFFIX}`;
   try {
-    renameSync(path, `${path}${CORRUPT_FILE_SUFFIX}`);
+    renameSync(path, corruptPath);
   } catch (error: unknown) {
     console.error(`[diskIOWorker] failed to quarantine ${path}:`, error);
+    return null;
   }
+  try {
+    syncDirectorySync(corruptPath);
+  } catch (error: unknown) {
+    // rename 已发生，日志必须指向真实隔离路径；目录 fsync 失败只表示掉电持久性
+    // 未获确认，不能谎称原文件仍在原位。
+    console.error(`[diskIOWorker] failed to sync quarantine ${corruptPath}:`, error);
+  }
+  return corruptPath;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -130,8 +141,13 @@ export function recoverAiMemories(): Map<number, string> {
     try {
       parsed = JSON.parse(readFileSync(path, "utf8"));
     } catch (error: unknown) {
-      quarantine(path);
-      console.error(`[diskIOWorker] AI memory file ${name} failed to parse, quarantined as .corrupt:`, error);
+      const corruptPath: string | null = quarantine(path);
+      console.error(
+        corruptPath === null
+          ? `[diskIOWorker] AI memory file ${name} failed to parse and remains at ${path}:`
+          : `[diskIOWorker] AI memory file ${name} failed to parse, quarantined as ${corruptPath}:`,
+        error
+      );
       continue;
     }
     const snapshot: AiMemorySnapshot | null = rebuildAiMemorySnapshot(parsed);
@@ -224,8 +240,13 @@ export function recoverStickerCatalogs(activePacks: readonly string[] | null): M
         skippedWhileDegraded++;
         continue;
       }
-      quarantine(path);
-      console.error(`[diskIOWorker] sticker catalog file ${name} failed to parse, quarantined as .corrupt:`, error);
+      const corruptPath: string | null = quarantine(path);
+      console.error(
+        corruptPath === null
+          ? `[diskIOWorker] sticker catalog file ${name} failed to parse and remains at ${path}:`
+          : `[diskIOWorker] sticker catalog file ${name} failed to parse, quarantined as ${corruptPath}:`,
+        error
+      );
       continue;
     }
     const snapshot: StickerCatalogSnapshot | null = rebuildStickerCatalogSnapshot(parsed);

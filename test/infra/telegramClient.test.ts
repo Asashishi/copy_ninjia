@@ -5,6 +5,7 @@ const joinUse = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 const apiThrottler = mock(() => ({ kind: "throttler" }));
 const autoRetry = mock((options: unknown) => ({ kind: "retry", options }));
+const hydrateFiles = mock((token: string) => ({ kind: "files", token }));
 
 class FakeGrammyError extends Error {
   constructor(
@@ -36,6 +37,7 @@ class FakeApi {
 mock.module("grammy", () => ({ Api: FakeApi, Bot: FakeBot, GrammyError: FakeGrammyError }));
 mock.module("@grammyjs/transformer-throttler", () => ({ apiThrottler }));
 mock.module("@grammyjs/auto-retry", () => ({ autoRetry }));
+mock.module("@grammyjs/files", () => ({ hydrateFiles }));
 mock.module("../../packages/infra/config", () => ({ BOT_TOKEN: "token:secret" }));
 mock.module("../../packages/infra/logger", () => ({
   logger: {
@@ -49,14 +51,16 @@ mock.module("../../packages/infra/logger", () => ({
 const client = await import("../../packages/infra/telegram/client");
 
 describe("Telegram 客户端初始化", () => {
-  test("两个客户端各安装一次节流与重试 transformer，重复初始化幂等", () => {
+  test("默认客户端安装文件增强，两客户端各安装节流与重试，重复初始化幂等", () => {
     client.initTelegramClients();
     client.initTelegramClients();
 
-    expect(botUse).toHaveBeenCalledTimes(2);
+    expect(botUse).toHaveBeenCalledTimes(3);
     expect(joinUse).toHaveBeenCalledTimes(2);
     expect(apiThrottler).toHaveBeenCalledTimes(2);
     expect(autoRetry).toHaveBeenCalledTimes(2);
+    expect(hydrateFiles).toHaveBeenCalledTimes(1);
+    expect(hydrateFiles).toHaveBeenCalledWith("token:secret");
     expect((client.bot as unknown as FakeBot).token).toBe("token:secret");
     expect((client.joinVerificationApi as unknown as FakeApi).token).toBe("token:secret");
   });
@@ -69,10 +73,5 @@ describe("Telegram 客户端初始化", () => {
     const generic = new Error("socket closed");
     client.logApiError("send message", generic);
     expect(loggerError).toHaveBeenLastCalledWith("Error trying to send message:", generic);
-  });
-
-  test("文件下载 URL 按 Bot API 规范拼接", () => {
-    expect(client.buildFileDownloadUrl("photos/avatar.jpg"))
-      .toBe("https://api.telegram.org/file/bottoken:secret/photos/avatar.jpg");
   });
 });

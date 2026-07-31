@@ -6,13 +6,17 @@ const setWhitelistMembership = mock(async (): Promise<{
   changed: boolean;
   permissions: undefined;
 }> => ({ changed: true, permissions: undefined }));
+const isUserBlocked = mock((_id: number): boolean => false);
 
 mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
-mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/config/whitelist", () => ({
   hasWhitelistPermission: (): boolean => false,
   setWhitelistMembership,
 }));
+mock.module("../../packages/infra/blocklist", () => ({ isUserBlocked }));
 
 const {
   handleWhiteCommand,
@@ -25,6 +29,10 @@ const {
   senderUsernameCache,
   userCache,
 } = await import("../../packages/cache/main/senderIdentity");
+const { protectedIdentityMutationQueue } =
+  await import("../../packages/cache/main/blocklist");
+const { runProtectedIdentityMutation } =
+  await import("../../packages/infra/identityPolicy");
 
 function context(
   userId: number,
@@ -76,6 +84,9 @@ beforeEach(() => {
     changed: true,
     permissions: undefined,
   }));
+  isUserBlocked.mockClear();
+  isUserBlocked.mockImplementation((): boolean => false);
+  protectedIdentityMutationQueue.current = Promise.resolve();
   userCache.clear();
   senderUsernameCache.clear();
 });
@@ -173,6 +184,57 @@ describe("/white", () => {
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       text: expect.stringContaining("本来就不在白名单"),
     }));
+  });
+
+  test("黑名单身份必须先 /unblock，不能直接加入白名单", async () => {
+    isUserBlocked.mockImplementation(
+      (id: number): boolean => id === 100 || id === -1002233445566
+    );
+
+    await handleWhiteCommand(context(1, "100 enable"));
+
+    expect(setWhitelistMembership).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringContaining("先用 /unblock"),
+    }));
+
+    await handleWhiteCommand(context(1, "-1002233445566 enable"));
+    expect(setWhitelistMembership).not.toHaveBeenCalled();
+
+    await handleWhiteCommand(context(1, "100 disable"));
+    expect(setWhitelistMembership).toHaveBeenLastCalledWith({
+      id: 100,
+      enabled: false,
+    });
+  });
+
+  test("成员关系落盘期间阻止异步黑名单新增穿过同一策略串行边界", async () => {
+    let releaseWrite: (() => void) | undefined;
+    let markWriteStarted: (() => void) | undefined;
+    const writeStarted: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      markWriteStarted = resolve;
+    });
+    const writeBarrier: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      releaseWrite = resolve;
+    });
+    setWhitelistMembership.mockImplementationOnce(async () => {
+      markWriteStarted!();
+      await writeBarrier;
+      return { changed: true, permissions: undefined };
+    });
+
+    const whitelistUpdate: Promise<void> = handleWhiteCommand(context(1, "100 enable"));
+    await writeStarted;
+    let blockMutationRan: boolean = false;
+    const blockMutation: Promise<void> = runProtectedIdentityMutation((): void => {
+      blockMutationRan = true;
+    });
+    await Promise.resolve();
+    expect(blockMutationRan).toBeFalse();
+
+    releaseWrite!();
+    await Promise.all([whitelistUpdate, blockMutation]);
+    expect(blockMutationRan).toBeTrue();
   });
 
   test("落盘失败不发送成功回执，让 update 保持失败以便重投", async () => {

@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { FinishReason } from "@google/genai";
 import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
+import { geminiResponse } from "../../helpers/geminiResponse";
 
-const generateContent = mock(async (..._args: GenerateContentParameters[]): Promise<GenerateContentResponse> => ({
-  candidates: [{ finishReason: "STOP", content: { role: "model", parts: [{ text: "ok" }] } }],
-} as unknown as GenerateContentResponse));
+const generateContent = mock(async (..._args: GenerateContentParameters[]): Promise<GenerateContentResponse> => geminiResponse({
+  candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "ok" }] } }],
+}));
 const loggerError = mock((..._args: unknown[]): void => {});
 
 class FakeApiError extends Error {
@@ -12,17 +14,12 @@ class FakeApiError extends Error {
   }
 }
 
+const googleGenAi = await import("@google/genai");
 mock.module("@google/genai", () => ({
+  ...googleGenAi,
   ApiError: FakeApiError,
   GoogleGenAI: class {
     readonly models = { generateContent };
-  },
-  HarmBlockThreshold: { BLOCK_NONE: "BLOCK_NONE" },
-  HarmCategory: {
-    HARM_CATEGORY_HARASSMENT: "HARM_CATEGORY_HARASSMENT",
-    HARM_CATEGORY_HATE_SPEECH: "HARM_CATEGORY_HATE_SPEECH",
-    HARM_CATEGORY_SEXUALLY_EXPLICIT: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-    HARM_CATEGORY_DANGEROUS_CONTENT: "HARM_CATEGORY_DANGEROUS_CONTENT",
   },
 }));
 mock.module("../../../packages/infra/config", () => ({ AI_CHAT_GEMINI_API_KEY: "test-key" }));
@@ -36,9 +33,9 @@ describe("Gemini request safety settings", () => {
   beforeEach(() => {
     generateContent.mockClear();
     loggerError.mockClear();
-    generateContent.mockImplementation(async (): Promise<GenerateContentResponse> => ({
-      candidates: [{ finishReason: "STOP", content: { role: "model", parts: [{ text: "ok" }] } }],
-    } as unknown as GenerateContentResponse));
+    generateContent.mockImplementation(async (): Promise<GenerateContentResponse> => geminiResponse({
+      candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "ok" }] } }],
+    }));
   });
 
   test("所有调用统一关闭四类可调概率拦截，并保留调用方其它 config", async () => {
@@ -83,10 +80,10 @@ describe("Gemini request safety settings", () => {
   });
 
   test("安全拦截和 token 截断即使夹带内容也不会越过公共边界", async () => {
-    generateContent.mockResolvedValueOnce({
-      candidates: [{ finishReason: "MAX_TOKENS", content: { role: "model", parts: [{ text: "partial" }] } }],
+    generateContent.mockResolvedValueOnce(geminiResponse({
+      candidates: [{ finishReason: FinishReason.MAX_TOKENS, content: { role: "model", parts: [{ text: "partial" }] } }],
       usageMetadata: { thoughtsTokenCount: 12 },
-    } as unknown as GenerateContentResponse);
+    }));
     const truncated = await requestGeminiResponse({
       model: "gemini-test",
       contents: "hello",
@@ -96,19 +93,19 @@ describe("Gemini request safety settings", () => {
     expect(loggerError).toHaveBeenCalledTimes(2);
 
     loggerError.mockClear();
-    generateContent.mockResolvedValueOnce({ candidates: [{ finishReason: "SAFETY" }] } as unknown as GenerateContentResponse);
+    generateContent.mockResolvedValueOnce(geminiResponse({ candidates: [{ finishReason: FinishReason.SAFETY }] }));
     expect(await requestGeminiResponse({ model: "gemini-test", contents: "hello" }, "Gemini test")).toBeNull();
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("finishReason=SAFETY"));
   });
 
   test("判别结果保留未知 finish reason 与 finishMessage 供无副作用降级判断", async () => {
-    generateContent.mockResolvedValueOnce({
+    generateContent.mockResolvedValueOnce(geminiResponse({
       candidates: [{
-        finishReason: "TOO_MANY_TOOL_CALLS",
+        finishReason: "TOO_MANY_TOOL_CALLS" as FinishReason,
         finishMessage: "server tool limit",
         content: { parts: [{ text: "不得消费" }, { functionCall: { name: "send_message" } }] },
       }],
-    } as unknown as GenerateContentResponse);
+    }));
     const result = await requestGeminiResult({ model: "gemini-test", contents: "hello" }, "Gemini test");
     expect(result).toMatchObject({
       ok: false,

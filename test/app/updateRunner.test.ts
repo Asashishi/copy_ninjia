@@ -12,53 +12,39 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve: (): void => resolve?.() };
 }
 
-function within<T>(promise: Promise<T>, timeoutMs: number = 250): Promise<T> {
-  return Promise.race([
-    promise,
-    Bun.sleep(timeoutMs).then((): never => {
-      throw new Error(`Promise did not settle within ${timeoutMs}ms.`);
-    }),
-  ]);
-}
-
 describe("acknowledgement-safe update runner", () => {
-  test("整批 middleware 全部完成前不发起携带更高 offset 的下一次 getUpdates", async () => {
+  test("每次只取一条，middleware 完成前不发起携带更高 offset 的下一次 getUpdates", async () => {
     const first = deferred();
-    const second = deferred();
     const fetchOffsets: number[] = [];
+    const fetchLimits: number[] = [];
     let fetchCount: number = 0;
     const fakeBot = {
       api: {
-        getUpdates: async (args: { offset: number }, signal: AbortSignal): Promise<Update[]> => {
+        getUpdates: async (args: { offset: number; limit: number }, signal: AbortSignal): Promise<Update[]> => {
           fetchOffsets.push(args.offset);
+          fetchLimits.push(args.limit);
           fetchCount++;
           if (fetchCount === 1) {
-            return [{ update_id: 10 }, { update_id: 11 }] as Update[];
+            return [{ update_id: 10 }] as Update[];
           }
           return await new Promise<Update[]>((_resolve, reject) => {
             signal.addEventListener("abort", () => reject(new Error("aborted")));
           });
         },
       },
-      handleUpdate: async (update: Update): Promise<void> => {
-        await (update.update_id === 10 ? first.promise : second.promise);
-      },
+      handleUpdate: async (): Promise<void> => await first.promise,
       errorHandler: (): void => {},
     };
 
     const runner = runAcknowledgedUpdateBatches(fakeBot as unknown as Bot, ["message"]);
     await Bun.sleep(0);
     expect(fetchOffsets).toEqual([0]);
-    expect(runner.size()).toBe(2);
-
-    second.resolve();
-    await Bun.sleep(0);
-    expect(fetchOffsets).toEqual([0]);
     expect(runner.size()).toBe(1);
 
     first.resolve();
     await Bun.sleep(0);
-    expect(fetchOffsets).toEqual([0, 12]);
+    expect(fetchOffsets).toEqual([0, 11]);
+    expect(fetchLimits).toEqual([1, 1]);
     await runner.stop();
   });
 
@@ -146,76 +132,62 @@ describe("acknowledgement-safe update runner", () => {
     expect(fetchOffsets).toEqual([0]);
   });
 
-  test("同批首错会中止遵守 AbortSignal 的悬挂 sibling 并及时结束 runner", async () => {
+  test("后一条失败前已用独立 offset 确认前一条，不会重投其非幂等副作用", async () => {
     const fetchOffsets: number[] = [];
-    let siblingSignal: AbortSignal | undefined;
+    let fetchCount: number = 0;
+    let sentCopies: number = 0;
     let handledErrors: number = 0;
     const fakeBot = {
       api: {
-        getUpdates: async (args: { offset: number }): Promise<Update[]> => {
+        getUpdates: async (args: { offset: number; limit: number }): Promise<Update[]> => {
           fetchOffsets.push(args.offset);
-          return [{ update_id: 31 }, { update_id: 32 }] as Update[];
+          expect(args.limit).toBe(1);
+          fetchCount++;
+          return [{ update_id: fetchCount === 1 ? 31 : 32 }] as Update[];
         },
       },
       handleUpdate: async (update: Update): Promise<void> => {
-        if (update.update_id === 31) throw new Error("first update failed");
-        siblingSignal = currentUpdateAbortSignal();
-        await new Promise<void>((_resolve, reject: (reason?: unknown) => void): void => {
-          siblingSignal?.addEventListener(
-            "abort",
-            (): void => reject(siblingSignal?.reason),
-            { once: true }
-          );
-        });
+        if (update.update_id === 31) {
+          sentCopies++;
+          return;
+        }
+        throw new Error("second update failed");
       },
       errorHandler: (): void => { handledErrors++; },
     };
 
     const runner = runAcknowledgedUpdateBatches(fakeBot as unknown as Bot, ["message"]);
-    await expect(within(runner.task())).rejects.toThrow("first update failed");
-    await Bun.sleep(0);
+    await expect(runner.task()).rejects.toThrow("second update failed");
 
-    expect(siblingSignal?.aborted).toBeTrue();
     expect(runner.size()).toBe(0);
     expect(runner.hasFailedUpdate()).toBeTrue();
     expect(handledErrors).toBe(1);
-    expect(fetchOffsets).toEqual([0]);
+    expect(sentCopies).toBe(1);
+    expect(fetchOffsets).toEqual([0, 32]);
   });
 
-  test("sibling 忽略 AbortSignal 时首错仍及时结束，活跃项留给有界 drain", async () => {
-    const gate = deferred();
-    const fetchOffsets: number[] = [];
-    let siblingSignal: AbortSignal | undefined;
+  test("取数端若违反 limit 契约，在执行任何 update 副作用前失败", async () => {
+    let handledUpdates: number = 0;
     const fakeBot = {
       api: {
-        getUpdates: async (args: { offset: number }): Promise<Update[]> => {
-          fetchOffsets.push(args.offset);
-          return [{ update_id: 33 }, { update_id: 34 }] as Update[];
-        },
+        getUpdates: async (): Promise<Update[]> => [
+          { update_id: 33 },
+          { update_id: 34 },
+        ] as Update[],
       },
-      handleUpdate: async (update: Update): Promise<void> => {
-        if (update.update_id === 33) throw new Error("batch root failure");
-        siblingSignal = currentUpdateAbortSignal();
-        await gate.promise;
-      },
+      handleUpdate: async (): Promise<void> => { handledUpdates++; },
       errorHandler: (): void => {},
     };
 
     const runner = runAcknowledgedUpdateBatches(fakeBot as unknown as Bot, ["message"]);
-    await expect(within(runner.task())).rejects.toThrow("batch root failure");
-
-    expect(siblingSignal?.aborted).toBeTrue();
-    expect(runner.size()).toBe(1);
-    expect(fetchOffsets).toEqual([0]);
-
-    gate.resolve();
-    await Bun.sleep(0);
+    await expect(runner.task()).rejects.toThrow("returned 2 updates");
+    expect(handledUpdates).toBe(0);
     expect(runner.size()).toBe(0);
-    expect(runner.hasFailedUpdate()).toBeTrue();
+    expect(runner.hasFailedUpdate()).toBeFalse();
   });
 
-  test("停机放弃在途批次时，失败的 update 仍由 hasFailedUpdate 挡住最终 offset", async () => {
-    // stop() 让取数循环赢下 Promise.race 并直接 return，之后 batch 的 rejection
+  test("停机放弃在途 update 时，随后失败仍由 hasFailedUpdate 挡住最终 offset", async () => {
+    // stop() 让取数循环赢下 Promise.race 并直接 return，之后 updateTask 的 rejection
     // 再没有观察者、task() 正常 resolve。只靠 task() 的话生命周期会照常确认最终
     // offset，把这条从未成功处理的 update 一并确认掉，Telegram 不再重投。
     const gate = deferred();

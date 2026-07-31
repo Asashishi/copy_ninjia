@@ -19,7 +19,6 @@ const realTelegram = await import("../../../packages/infra/telegram");
 mock.module("../../../packages/infra/telegram", () => ({
   ...realTelegram,
   bot: { api: { getStickerSet: mock(async (): Promise<null> => null), getFile: mock(async (): Promise<null> => null) } },
-  buildFileDownloadUrl: mock((_filePath: string): string => "https://example.invalid/file"),
   sendMessageWithResult: sendMessageMock,
   deleteMessage: deleteMessageMock,
   setMessageReaction: setMessageReactionMock,
@@ -70,7 +69,7 @@ test("工具集真实注册 googleSearch，并同时提供函数行动工具", a
   expect(toolset.tools).toHaveLength(2);
   expect(toolset.tools[0]?.googleSearch).toEqual({});
   expect(toolset.tools[1]?.functionDeclarations?.length).toBeGreaterThan(0);
-  expect(toolset.definitions.map((definition) => definition.name)).not.toContain("delete_own_message");
+  expect(toolset.has("delete_own_message")).toBe(false);
 });
 
 describe("add_reaction 成功动作计数", () => {

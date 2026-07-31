@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 import { invalidateBotAdminStatus, isBotAdminIn, teardownChatRuntime } from "../infra/botAdmin";
 
@@ -59,5 +59,5 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   const replyText: string = arg === "enable"
     ? `哼，那本天才就大发慈悲开始搭理这个群了，杂鱼们好好珍惜♡`
     : `本天才不想再理这个群了，爱干嘛干嘛去吧♡`;
-  await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

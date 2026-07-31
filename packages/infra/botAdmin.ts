@@ -378,6 +378,14 @@ export function ensureBotChatPermissions(chatId: number, now: number = Date.now(
 }
 
 /**
+ * 同步读取主线程已经观测到的删消息权限。`undefined` 只表示未知，调用方可以让
+ * Telegram 作为最终裁判；只有明确的 `false` 才适合跳过注定失败的删除请求。
+ */
+export function botCanDeleteMessagesIn(chatId: number): boolean | undefined {
+  return botChatPermissions.get(chatId)?.canDeleteMessages;
+}
+
+/**
  * 机器人在某群持有的破坏性动作权限位。已记录的群直接同步命中；从未记录过的
  * 群现查一次 getChatMember 并回填（带在途去重，同群并发判定共享同一次请求）。
  *

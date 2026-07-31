@@ -1,3 +1,4 @@
+import type { FunctionDeclaration } from "@google/genai";
 import {
   claimImageGeneration,
   getImageGenerationAvailability,
@@ -26,7 +27,6 @@ import type {
   ImageGenerationClaim,
 } from "../../../../types/aiChat/imageGeneration";
 import type { TelegramSendResult } from "../../../../types/telegram";
-import type { ToolDefinition } from "../../../../types/tools";
 import { generateChatImage, normalizeImageAspectRatio } from "../../imageGeneration";
 import { downloadTelegramVisionImage } from "../../telegramImage";
 import { runMediaTask } from "../../mediaTaskRunner";
@@ -39,7 +39,7 @@ function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationRefer
 
 export function buildGenerateImageToolDefinition(
   ctx: Pick<ReplyToolContext, "chatId" | "imageGenerationRequested" | "imageGenerationReference" | "bypassImageGenerationCooldown">
-): ToolDefinition {
+): FunctionDeclaration {
   const availability: ImageGenerationAvailability = getImageGenerationAvailability({
     chatId: ctx.chatId,
     bypassCooldown: ctx.bypassImageGenerationCooldown,
@@ -60,7 +60,7 @@ export function buildGenerateImageToolDefinition(
   return {
     name: GENERATE_IMAGE_TOOL,
     description: `${GENERATE_IMAGE_TOOL_INSTRUCTION}\n${availabilityInstruction}\n${referenceInstruction}`,
-    parameters: {
+    parametersJsonSchema: {
       type: "object",
       properties: {
         prompt: {

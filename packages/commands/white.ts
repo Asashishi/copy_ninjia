@@ -2,12 +2,18 @@ import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import type { SetWhitelistMembershipResult } from "../types/whitelist";
 import { setWhitelistMembership } from "../config/whitelist";
-import { sendMessage } from "../infra/telegram";
+import { isUserBlocked } from "../infra/blocklist";
+import { runProtectedIdentityMutation } from "../infra/identityPolicy";
+import { sendCommandMessage } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { isSuperAdminActor, resolveCommandActor } from "./commandActor";
 import { resolveCommandTarget } from "./targetResolution";
 
 type WhiteAction = "enable" | "disable";
+
+type WhiteMutationOutcome =
+  | { readonly kind: "blocked" }
+  | { readonly kind: "updated"; readonly result: SetWhitelistMembershipResult };
 
 /** /white 的固定用法；动作始终放在最后，回复目标时可省略身份参数。 */
 const WHITE_USAGE_TEXT: string =
@@ -34,7 +40,7 @@ export async function handleWhiteCommand(
   const messageId: number | undefined = ctx.msgId;
   if (!isSuperAdminActor(ctx)) {
     const actor: CachedUser | undefined = resolveCommandActor(ctx);
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想改本天才的白名单？哪来的资格呀，笨蛋♡`,
       replyToMessageId: messageId,
@@ -50,7 +56,7 @@ export async function handleWhiteCommand(
     ? undefined
     : parseWhiteAction(rawAction);
   if (action === undefined) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: WHITE_USAGE_TEXT,
       replyToMessageId: messageId,
@@ -80,10 +86,24 @@ export async function handleWhiteCommand(
   if (target === undefined) return;
 
   const enabled: boolean = action === "enable";
-  const result: SetWhitelistMembershipResult = await setWhitelistMembership({
-    id: target.id,
-    enabled,
-  });
+  const outcome: WhiteMutationOutcome = await runProtectedIdentityMutation(
+    async (): Promise<WhiteMutationOutcome> => {
+      if (enabled && isUserBlocked(target.id)) return { kind: "blocked" };
+      return {
+        kind: "updated",
+        result: await setWhitelistMembership({ id: target.id, enabled }),
+      };
+    }
+  );
+  if (outcome.kind === "blocked") {
+    await sendCommandMessage({
+      chatId,
+      text: `笨蛋，${formatTargetLabel(target)} 还在黑名单里；先用 /unblock 解除，再加入白名单呀♡`,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+  const result: SetWhitelistMembershipResult = outcome.result;
   const targetLabel: string = formatTargetLabel(target);
   const replyText: string = enabled
     ? result.changed
@@ -92,7 +112,7 @@ export async function handleWhiteCommand(
     : result.changed
       ? `哼，${targetLabel} 已经被本天才从白名单里踢出去啦♡`
       : `笨蛋，${targetLabel} 本来就不在白名单里，还想删什么呀♡`;
-  await sendMessage({
+  await sendCommandMessage({
     chatId,
     text: replyText,
     replyToMessageId: messageId,

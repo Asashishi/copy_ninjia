@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   enableAllWhitelistPermissions,
   getWhitelistConfig,
@@ -12,6 +15,7 @@ import {
 } from "../../packages/config/whitelist";
 import {
   whitelistConfigCache,
+  whitelistFileRevisionCache,
   whitelistMutationQueue,
 } from "../../packages/cache/main/whitelist";
 import type {
@@ -29,6 +33,7 @@ function oneEntry(
 
 beforeEach(() => {
   whitelistConfigCache.current = null;
+  whitelistFileRevisionCache.current = null;
   whitelistMutationQueue.current = Promise.resolve();
 });
 
@@ -44,7 +49,6 @@ describe("whitelist config", () => {
       isCanUnMute: false,
       isCanBlock: false,
       isCanUnBlock: false,
-      isCanUnBlockAll: false,
       isCanSwitchMood: false,
       isCanBypassAdDetection: true,
       isCanControllAIPermission: false,
@@ -315,5 +319,55 @@ describe("whitelist config", () => {
     expect(serialized.endsWith("\n")).toBe(true);
     expect(JSON.parse(serialized)["-1001"]).toHaveProperty("isCanBlock", false);
     expect(JSON.parse(serialized)["-1001"]).toHaveProperty("isCanUnBlock", false);
+  });
+
+  test("加载后文件被外部编辑时明确拒绝整份覆盖并保留外部字节", async () => {
+    const directory: string = mkdtempSync(join(tmpdir(), "whitelist-conflict-"));
+    const path: string = join(directory, "whitelist.json");
+    try {
+      writeFileSync(path, serializeWhitelistConfig(oneEntry(100)));
+      expect(getWhitelistConfig(path).has(100)).toBe(true);
+
+      const externallyEdited: WhitelistConfig = parseWhitelistConfig({
+        "100": { isCanMute: false },
+        "200": { isCanBlock: true },
+      });
+      const externalBytes: string = serializeWhitelistConfig(externallyEdited);
+      writeFileSync(path, externalBytes);
+
+      await expect(setWhitelistPermission(
+        { id: 100, key: "isCanMute", value: true },
+        { path }
+      )).rejects.toThrow("changed outside this process");
+      expect(readFileSync(path, "utf8")).toBe(externalBytes);
+      expect(getWhitelistConfig().has(200)).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("本进程连续写入会推进文件指纹，不误报自己的上一次修改", async () => {
+    const directory: string = mkdtempSync(join(tmpdir(), "whitelist-revision-"));
+    const path: string = join(directory, "whitelist.json");
+    try {
+      writeFileSync(path, serializeWhitelistConfig(oneEntry(100)));
+      getWhitelistConfig(path);
+
+      await setWhitelistPermission(
+        { id: 100, key: "isCanMute", value: true },
+        { path }
+      );
+      await setWhitelistMembership(
+        { id: 200, enabled: true },
+        { path }
+      );
+
+      const persisted: Record<string, WhitelistPermissions> =
+        JSON.parse(readFileSync(path, "utf8")) as Record<string, WhitelistPermissions>;
+      expect(persisted["100"]?.isCanMute).toBe(true);
+      expect(persisted["200"]).toEqual(DEFAULT_WHITELIST_PERMISSIONS);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

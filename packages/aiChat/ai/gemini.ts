@@ -12,19 +12,20 @@
  * content（含 thought signature）会原样接回 contents，再附上 functionResponse，见
  * workers/aiChat/geminiReply.ts 的 callGemini）。
  *
- * 响应形状的结构性解析（取正文/函数调用/是否被 token 上限腰斩）是纯函数，
- * 抽在 aiChat/ai/utils/geminiResponse.ts；本文件只管发请求、记错误日志。
+ * 正文与函数调用直接读取 SDK 的 text/functionCalls 访问器；应用侧只在
+ * aiChat/ai/utils/geminiResponse.ts 补充异常结束诊断与搜索调用计数。
+ * 本文件负责发请求、按业务结果分类并记录错误日志。
  * googleSearch 是服务端工具，搜索在 Google 侧自动执行，结果直接体现在
  * 最终文本里，不会以 functionCall 形式抛回来。
  */
 
-import { ApiError, GoogleGenAI } from "@google/genai";
-import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
+import { ApiError, FinishReason, GoogleGenAI } from "@google/genai";
+import type { Candidate, GenerateContentParameters, GenerateContentResponse } from "@google/genai";
 import { geminiClientHolder } from "../../cache/workers/aiChat/gemini";
 import { logger } from "../../infra/logger";
 import { AI_CHAT_GEMINI_API_KEY } from "../../infra/config";
 import { GEMINI_REQUEST_TIMEOUT_MS, GEMINI_SAFETY_SETTINGS } from "../../consts/aiChat/tools";
-import { abnormalFinishDiagnostic, extractFinishMessage, extractFinishReason, extractOutputText, isTruncatedByTokenLimit } from "./utils/geminiResponse";
+import { abnormalFinishDiagnostic } from "./utils/geminiResponse";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 
 /**
@@ -82,14 +83,15 @@ export async function requestGeminiResult(body: GenerateContentParameters, error
     return { ok: false, diagnostic: "request failed" };
   }
 
-  if (isTruncatedByTokenLimit(data)) {
+  const candidate: Candidate | undefined = data.candidates?.[0];
+  if (candidate?.finishReason === FinishReason.MAX_TOKENS) {
     // 被 maxOutputTokens 腰斩即便带着「已经写出半句话」的部分正文，上层照样
     // 会把这半句话当正常回复发出去，观感上就是消息突然断掉；思考型请求更
     // 容易在思考阶段就烧光额度、正文为空。不管有没有部分正文都记一条，
     // 方便观测这类「中途夭折」的频率。
     logger.error(
       `${errorLabel} response was truncated by maxOutputTokens ` +
-      `(hasPartialText=${!!extractOutputText(data)}, ` +
+      `(hasPartialText=${!!data.text}, ` +
       `thoughts_tokens=${data.usageMetadata?.thoughtsTokenCount ?? "?"}, ` +
       `max_output_tokens=${body.config?.maxOutputTokens ?? "?"}).`
     );
@@ -104,8 +106,8 @@ export async function requestGeminiResult(body: GenerateContentParameters, error
     return {
       ok: false,
       diagnostic: abnormal,
-      finishReason: extractFinishReason(data),
-      finishMessage: extractFinishMessage(data),
+      finishReason: candidate?.finishReason,
+      finishMessage: candidate?.finishMessage,
       response: data,
     };
   }

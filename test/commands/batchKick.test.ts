@@ -39,7 +39,7 @@ mock.module("../../packages/infra/logger", () => ({
   },
 }));
 mock.module("../../packages/infra/telegram", () => ({
-  sendMessage,
+  sendCommandMessage: sendMessage,
   probeChatMembership,
   kickChatMemberWithOutcome,
   banChatMemberWithOutcome,

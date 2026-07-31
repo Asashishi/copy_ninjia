@@ -69,7 +69,6 @@ function pendingRecord(userId: number, generation: number): VerificationSnapshot
     phase: "pending",
     label: `User ${userId}`,
     isBot: false,
-    messageIds: [],
     trackedMessageTimes: [],
     reminderMessageId: 500,
     replyReminderRequested: false,
@@ -116,7 +115,6 @@ describe("cold linked-channel verification", () => {
 
     expect(verificationEntries.get("-1001:42")?.state).toMatchObject({
       kind: "pending",
-      messageIds: [700],
       trackedMessageTimes: [expect.any(Number)],
     });
     expect(chatRequests).toHaveLength(1);
@@ -229,7 +227,6 @@ describe("cold linked-channel verification", () => {
     const record: VerificationSnapshot = pendingRecord(47, 6);
     const observedAt: number = Date.now();
     record.trackedMessageTimes = Array(45).fill(observedAt);
-    record.messageIds = Array.from({ length: 45 }, (_unused, index) => index + 1);
     runtime.adoptVerifications({
       type: "adoptVerifications",
       generation: 6,

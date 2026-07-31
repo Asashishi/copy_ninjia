@@ -12,7 +12,6 @@
 
 import { logger } from "../../infra/logger";
 import { requestGeminiResponse } from "./gemini";
-import { extractOutputText } from "./utils/geminiResponse";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
 import { transientDescriptionCache } from "../../cache/workers/aiChat/imageDescription";
 import {
@@ -117,7 +116,7 @@ async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<s
       "Gemini image understanding API"
     );
     if (!data) return null;
-    const description: string = sanitizeInline(extractOutputText(data));
+    const description: string = sanitizeInline(data.text ?? "");
     if (!description) return null;
     // 模型超限时收在子句边界而不是硬切——memory/stickers/ 里曾大批量出现
     // 「……以戏谑的口」式断在半句的目录条目，就是硬切造成的。

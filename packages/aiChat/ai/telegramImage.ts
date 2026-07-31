@@ -1,7 +1,7 @@
-import type { File as TelegramFile } from "@grammyjs/types";
 import { MEDIA_DOWNLOAD_TIMEOUT_MS, MEDIA_FILE_METADATA_TIMEOUT_MS, MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { logger } from "../../infra/logger";
-import { bot, buildFileDownloadUrl } from "../../infra/telegram";
+import { bot } from "../../infra/telegram";
+import type { HydratedTelegramFile } from "../../infra/telegram";
 import { readBoundedResponseBytes, type BoundedResponseResult } from "../../libs/boundedResponse";
 import { prepareVisionImage } from "../../libs/image";
 import type { VisionImage } from "../../types/media";
@@ -38,7 +38,7 @@ export async function downloadTelegramVisionImage({
     // autoRetry，一次 429 退避就可能耗掉几十秒，共用时下载只剩残额、几乎立刻
     // abort。invalidate signal 仍要贯穿两步（见 docs/04-invariants.md 的 AI
     // chat invalidate 约束）。
-    const file: TelegramFile = await bot.api.getFile(
+    const file: HydratedTelegramFile = await bot.api.getFile(
       fileId,
       withTimeout(signal, MEDIA_FILE_METADATA_TIMEOUT_MS) as unknown as Parameters<typeof bot.api.getFile>[1]
     );
@@ -47,7 +47,7 @@ export async function downloadTelegramVisionImage({
       return null;
     }
 
-    const response: Response = await fetch(buildFileDownloadUrl(file.file_path), {
+    const response: Response = await fetch(file.getUrl(), {
       signal: withTimeout(signal, MEDIA_DOWNLOAD_TIMEOUT_MS),
     });
     if (!response.ok) {

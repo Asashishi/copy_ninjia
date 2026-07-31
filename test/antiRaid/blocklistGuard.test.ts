@@ -5,8 +5,11 @@ import type { RemoveBlockedMembersParams } from "../../packages/types/blocklist"
 const blockedIds = new Set<number>();
 const errorLogs: string[] = [];
 const requestBlocklistResweep = mock((_chatId: number, _nextRetryAt?: number): void => {});
+const ensureBotChatPermissions = mock((_chatId: number): void => {});
+const deleteMessageWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "deleted");
 let removalCounter: number = 0;
 let trackFails: boolean = false;
+let canDeleteMessages: boolean | undefined = true;
 
 mock.module("../../packages/infra/logger", () => ({
   logger: {
@@ -27,8 +30,16 @@ mock.module("../../packages/infra/blocklist", () => ({
     return { ...params, removalId: ++removalCounter };
   },
 }));
+mock.module("../../packages/infra/botAdmin", () => ({
+  botCanDeleteMessagesIn: (): boolean | undefined => canDeleteMessages,
+  ensureBotChatPermissions,
+}));
+mock.module("../../packages/infra/telegram/actions", () => ({ deleteMessageWithOutcome }));
 
-const { claimBlockedJoiner } = await import("../../packages/antiRaid/blocklistGuard");
+const {
+  claimBlockedJoiner,
+  deleteBlockedSenderChatMessage,
+} = await import("../../packages/antiRaid/blocklistGuard");
 const { recentBlockedJoinCounts } = await import("../../packages/cache/main/antiRaid/blocklistGuard");
 
 beforeEach(() => {
@@ -36,8 +47,59 @@ beforeEach(() => {
   errorLogs.length = 0;
   recentBlockedJoinCounts.clear();
   requestBlocklistResweep.mockClear();
+  ensureBotChatPermissions.mockClear();
+  deleteMessageWithOutcome.mockClear();
+  deleteMessageWithOutcome.mockImplementation(async (): Promise<string> => "deleted");
   removalCounter = 0;
   trackFails = false;
+  canDeleteMessages = true;
+});
+
+describe("已拉黑频道身份的漏网消息", () => {
+  function senderChatMessage(senderChatId: number = -4004): never {
+    return {
+      message_id: 77,
+      chat: { id: -1001, type: "supergroup" },
+      sender_chat: { id: senderChatId, type: "channel", title: "Blocked Channel" },
+    } as never;
+  }
+
+  test("命中永久黑名单后直接删除并接管消息", async () => {
+    blockedIds.add(-4004);
+
+    expect(await deleteBlockedSenderChatMessage(senderChatMessage())).toBeTrue();
+
+    expect(ensureBotChatPermissions).toHaveBeenCalledWith(-1001);
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 77);
+  });
+
+  test("明确缺删除权限时不发送注定失败的请求，但仍阻止后续业务处理", async () => {
+    blockedIds.add(-4004);
+    canDeleteMessages = false;
+
+    expect(await deleteBlockedSenderChatMessage(senderChatMessage())).toBeTrue();
+
+    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
+    expect(errorLogs.some((line) => line.includes("can_delete_messages"))).toBeTrue();
+  });
+
+  test("权限未知时让 Telegram 裁决；删除失败也不把黑名单消息放回业务流水线", async () => {
+    blockedIds.add(-4004);
+    canDeleteMessages = undefined;
+    deleteMessageWithOutcome.mockResolvedValueOnce("failed");
+
+    expect(await deleteBlockedSenderChatMessage(senderChatMessage())).toBeTrue();
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 77);
+    expect(errorLogs.some((line) => line.includes("could not be deleted (failed)"))).toBeTrue();
+  });
+
+  test("非黑名单频道与当前群匿名管理员皮套原样放行", async () => {
+    expect(await deleteBlockedSenderChatMessage(senderChatMessage())).toBeFalse();
+
+    blockedIds.add(-1001);
+    expect(await deleteBlockedSenderChatMessage(senderChatMessage(-1001))).toBeFalse();
+    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
+  });
 });
 
 function joinMessage(chatId: number, userId: number): AntiRaidWorkerMessage {

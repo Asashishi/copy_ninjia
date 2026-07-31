@@ -385,7 +385,6 @@ export function hydratePendingVerifications(records: Map<string, VerificationSna
   for (const [key, record] of records) {
     activeVerificationSnapshots.set(key, {
       ...record,
-      messageIds: [...record.messageIds],
       trackedMessageTimes: [...record.trackedMessageTimes],
     });
     persistedVerificationRevisions.set(key, { generation: record.generation, revision: record.revision });

@@ -31,7 +31,7 @@
 ### 启动顺序与资源获取
 
 - 生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入。
-- 主进程先递归创建并预检运行时数据根的写入、文件 fsync、hard link、原子 rename 与目录 fsync，再取得 `bot.lock`；显式配置 `COPY_NINJIA_DATA_ROOT` 时还要求目录 mode 为 `0750` 或更严格，已有目录只校验、不自动 chmod。随后清理顶层孤儿临时文件并严格恢复 `state.json`，这些步骤发生在任何联网和 Worker 创建之前。
+- 主进程先递归创建并预检运行时数据根的写入、文件 fsync、hard link、原子 rename 与目录 fsync，再取得 `bot.lock`；数据根及敏感顶层 `memory/`、`logs/` 必须是实际目录，`lstat` 命中符号链接即 fail closed。显式配置 `COPY_NINJIA_DATA_ROOT` 时还要求目录 mode 为 `0750` 或更严格，已有目录只校验、不自动 chmod。随后清理顶层孤儿临时文件并严格恢复 `state.json`，这些步骤发生在任何联网和 Worker 创建之前。
 
   之后才初始化 Telegram 客户端与 Disk I/O Worker、恢复 `memory/` 数据、完成 handler/命令菜单/`bot.init()` 握手，最后初始化并 hydrate AI/Anti-Raid Worker、启动 acknowledgement-safe runner。
 - 初始化失败和正常退出都由 `ApplicationLifecycle` 收口；只有已取得的资源才会释放或 flush。
@@ -45,7 +45,7 @@
   已经开着的群由运行时门禁（`aiChat/availability.ts`、`antiRaid/adDetect.ts` 的 `buildAdCandidate`）一并停摆，不让 Worker 拿着读不动的配置反复崩溃。结论**连同失败一起**按进程缓存：这道判定挂在每条群消息的门禁上，不缓存失败就是每条消息一次 `readFileSync`；代价是修好文件要重启才生效，与四份 loader 的单例语义一致。
 
   唯一无条件读配置的地方是 Disk I/O Worker 的启动恢复（要拿贴纸白名单对账 `memory/stickers/`），它必须在读不动时**整体跳过对账**——绝不能退化成空白名单，那会把不在白名单里的持久化文件当孤儿删掉。
-- `config/whitelist.json` 与 `config/blocklist.json` 不属于上一条的可选配置：前者决定同步鉴权与自己人保护，后者是静态封禁安全边界，两者都必须在联网和 Worker 创建前严格加载，缺失、未知字段或非法 ID 一律拒绝启动。白名单只在实际变化时由 `/white`、`/permission` 原子全量重写，成功落盘后才发布新的主线程缓存；读路径始终只查这份内存副本。
+- `config/whitelist.json` 与 `config/blocklist.json` 不属于上一条的可选配置：前者决定同步鉴权与自己人保护，后者是静态封禁安全边界，两者都必须在联网和 Worker 创建前严格加载，缺失、未知字段或非法 ID 一律拒绝启动。白名单只在实际变化时由 `/white`、`/permission` 原子全量重写，成功落盘后才发布新的主线程缓存；读路径始终只查这份内存副本。启动读取同时记录文件 SHA-256，命令每次整份重写前复核原始字节；发现进程外编辑或文件不可读就拒绝覆盖并让 update 失败，禁止用旧缓存静默抹掉人工变更。
 
   静态黑名单只读，与 `memory/blocklist/blocklist.json` 的动态层在内存中取并集，`/unblock` 不得移除静态条目。
 - **只有整个进程都离不开的凭据才能在模块求值期 `requireEnv`**（`TELEGRAM_BOT_TOKEN`、`SUPER_ADMIN_USER_ID`）。只服务于某个按群 opt-in、缺省关闭的可选功能的密钥必须走 `optionalEnv`：`packages/infra/config.ts` 几乎被所有入口路径 import，在那里抛错等于进程还没开始拉取更新就退出、systemd 进入重启循环，copy、抽奖、入群验证、黑名单全部离线——只因为一个默认就没开的功能缺了 key。
@@ -223,7 +223,7 @@
 
   整段处置登记进 Worker 的在途任务集合、由停机 drain 等待结算，**但每个这类请求都必须订阅停机取消信号**（`antiRaidDispatchSignal`，权威说明在 `packages/cache/workers/antiRaid/tasks.ts`）：drain 的预算是 `ANTI_RAID_BARRIER_TIMEOUT_MS` 那一档的秒级数值，而禁言按设计能在限流桶里排上 `FLOOD_MUTE_DISPATCH_TIMEOUT_MS`（分钟级）。
 
-  停机恰好落在排队期间时，drain 等不到结算就超时，生命周期据此拒绝确认 Telegram offset 并非零退出——重启后整批 update 被重投（重复的验证踢人与通知），systemd 报单元失败。drain 到达时因此就地 abort 这些排队中的请求、并且不再开始新的处置；禁言本就是尽力而为的（到点由 Telegram 按 `until_date` 自行解除），丢一次不构成安全边界失守，与广告判定批次干脆不登记进这个集合是同一条理由。
+  停机恰好落在排队期间时，drain 等不到结算就超时，生命周期据此拒绝确认 Telegram offset 并非零退出——重启后该条 update 被重投（其中已发生的验证踢人与通知可能重复），systemd 报单元失败。drain 到达时因此就地 abort 这些排队中的请求、并且不再开始新的处置；禁言本就是尽力而为的（到点由 Telegram 按 `until_date` 自行解除），丢一次不构成安全边界失守，与广告判定批次干脆不登记进这个集合是同一条理由。
 
   **这个取消信号不覆盖 drain 自己要发的请求**：公告 flush 是停机期间必须发出去的，abort 排在它之前正是为了把限流额度让给它。
 
@@ -267,13 +267,13 @@
 
   反方向的 `/block` 必须继续拒绝负数：把粘错的会话 id 当目标会改去封整个会话身份，而那条命令不可逆；`/unblock` 是恢复方向，指错至多一次空解封。
 
-  **负数 id 一律带 `isChannel`**（`resolveIdTarget` 在最小身份上就标好，与 `workers/antiRaid/blocklistEffects.ts` 按符号分派同源）：`/unblock ... all` 靠它选 `unbanChatSenderChat` 而非 `unbanChatMemberIfBanned`，漏标会让解封报错记进 `failedCount`，回执变成一份关于「根本没被碰过的目标」的假战报。
+  **负数 id 一律带 `isChannel`**（`resolveIdTarget` 在最小身份上就标好，与 `workers/antiRaid/blocklistEffects.ts` 按符号分派同源）：`/unblock` 靠它选 `unbanChatSenderChat` 而非 `unbanChatMemberIfBanned`，漏标会让解封报错记进 `failedCount`，回执变成一份关于「根本没被碰过的目标」的假战报。
 - `/steal_icon` 的 t.me 主页抓取兜底**只认 `getChat(targetId)` 现查回来的 username**，不得用调用方上下文里带的那个短路掉这次查询。命令上下文的 username 来自 `reply_to_message`（可能是几个月前的消息）或身份缓存，而 Telegram 用户名释放之后可以被任何人重新注册；抓取时的页面身份校验只能证明「这个页面属于 @name」，证明不了「@name 此刻仍指向 targetId」。短路的后果是把**现任 handle 持有者**的头像顶成机器人头像，而成功提示里写的还是原目标。
 
   provided 值只作诊断线索进日志。
 - chat runtime teardown 的三个固定 owner 回调由 `packages/cache/main/chatTeardown.ts` 持有，上层领域经 `packages/infra/chatTeardown.ts` 反向注册；`packages/infra/botAdmin.ts` 不得静态依赖 `commands/`、AI 或 Anti-Raid 业务模块。
 - 成员现查本身是新的异步边界：`probeChatMembership` 返回“仍在群”后、真正调用 `kickChatMember` 前必须再次确认终态对象仍是发起查询时的同一引用，而且这次确认与 API 调用之间不得再有 `await`。否则 teardown、停管或状态替换已经取消的旧处置会消费迟到查询结果，把不再属于该终态的成员踢掉。
-- `/unblock all` 对命令侧“确证踢出”缓存的失效必须覆盖跨群解封的两个边界：开始前先清掉旧结局，全部 `unban` await 结束后再清一次等待期间迟到的 `/block` 回填。runner 只按 chat 串行，不同群的命令可交错；少掉后一次会让已被更晚解封的用户仍命中缓存，同日重跑 `/block` 时错误跳过成员查询与封禁。
+- `/unblock` 对命令侧“确证踢出”缓存的失效必须覆盖跨群解封的两个边界：开始前先清掉旧结局，全部 `unban` await 结束后再清一次等待期间迟到的 `/block` 回填。runner 只按 chat 串行，不同群的命令可交错；少掉后一次会让已被更晚解封的用户仍命中缓存，同日重跑 `/block` 时错误跳过成员查询与封禁。
 
 <p align="right"><a href="#快速导航">↑ 返回快速导航</a></p>
 
@@ -309,15 +309,15 @@
 
   落盘 Worker 崩溃重建后，只要本进程解除过（`sessionUnblockedIds` 非空）就必须整份重写一次而不是补投增量——追加补不回「删除」，新 Worker 从文件读回来的那些条目还在。`sessionBlockedAt` 与 `sessionUnblockedIds` 必须互斥（拉黑时从后者删、解除时从前者删），否则同一个 id 同时挂在两张表上，重放顺序就决定了他到底在不在名单里。
 
-  **`/unblock` 默认不解除各群的 Telegram 封禁**：`/block` 当时调的 `banChatMember` 是群级封禁，与本机器人的名单是两套东西，移出名单只保证「以后进群不再被秒踢」——回复文案必须说破这一点。要连群级封禁一起解，加 `all` 参数（`UNBLOCK_ALL_FLAG`），群清单与 `/block` 的连坐封禁同源（各群 `ChatState.botIsAdmin`），串行执行。
-
-  **`all` 要求 `isCanUnBlockAll`，移出名单则要求 `isCanUnBlock`；`SUPER_ADMIN_USER_ID` 显式拥有两者**。超级管理员按设计不需要进入白名单，因此命令入口那道门必须显式放行它——否则超级管理员未列入白名单时反而会被第一道门挡在外面：跨群解封会在每一个管理群里放开一个此前被判定为需要永久隔离的人，波及面比「以后不再秒踢」大一档；权限拒绝必须发生在动名单之前，不能先把人放出来再说没权限。
+  **`/unblock` 默认完整解除**：先从动态名单移除目标（若存在），再在所有 `ChatState.botIsAdmin` 的群解除 Telegram 封禁；目标不在动态名单里也照样跨群解封。命令只要求 `isCanUnBlock`，`SUPER_ADMIN_USER_ID` 仍显式放行；旧的额外 `all` 参数不再解析或兼容。静态 `config/blocklist.json` 身份必须在动名单和 Telegram API 之前 fail closed，因为命令不能改写部署配置，单独解开群级封禁只会制造自相矛盾的状态。
 
   **跨群解封必须走 `unbanChatMemberIfBanned`（带 `only_if_banned: true`）**：Bot API 的 `unbanChatMember` 对「当前就是群成员」的人语义是把他移出群聊——`kickChatMember` 的「只踢不封」正是靠这一点实现的，不带这个标志去批量解封，会把那些本来好端端待在群里的人一个个踢出去。频道马甲没有「成员」概念，走 `unbanChatSenderChat`，不存在这个陷阱。
 
-  带 `all` 时即使目标本来就不在名单里也照样解封——「把人彻底放回来」正是这个参数的意义，名单里没有他不代表各群没封他。解除时还要把该 id 从 `pendingBlockedRemovals` 的在途批次里摘掉（批次因此变空就整批销账），否则 Worker 重建后的重放会拿着旧批次把刚解除的人重新封回去；已经投出去、正在 Worker 里跑的那一批拦不住（判定是主线程状态，Worker 没有副本），那一小段窗口属于已知取舍。
+  解除时还要把该 id 从 `pendingBlockedRemovals` 的在途批次里摘掉（批次因此变空就整批销账），否则 Worker 重建后的重放会拿着旧批次把刚解除的人重新封回去；已经投出去、正在 Worker 里跑的那一批拦不住（判定是主线程状态，Worker 没有副本），那一小段窗口属于已知取舍。
 
-  **自己人不可拉黑**：`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json` 在 `/block` 入口就被挡回——名单不可逆，回错一条消息就能把自己人永久锁在所有监听群之外。启动恢复时任何一条记录形状不合规都整体拒绝启动：漏掉一条就等于放那个人重新进群。因此黑名单文件是唯一**不允许截断自愈**的追加型文件（`openAppendOnlyFile(..., repair=false)`）：日志/运势/待验证丢掉末尾残片不影响正确性，黑名单裁掉的每一条都是一个被放回群里的人，宁可拒绝启动、原样保留字节等人工恢复。
+  **自己人不可拉黑**：`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json` 在 `/block` 入口就被挡回；启动还会拒绝它们与静态配置、恢复出的动态黑名单的任何交集，`/white enable` 也拒绝仍在黑名单中的身份并要求先 `/unblock`。这不只是一组各自独立的前置检查：`runProtectedIdentityMutation` 通过主线程的 `protectedIdentityMutationQueue`，把 `/white` 的「检查成员关系 + 原子写入并发布白名单」与 `/block`、广告命中新增动态黑名单串行化。否则白名单写盘的异步窗口内仍可插入一次拉黑，让同一身份同时出现在两边并导致下次启动必然拒绝。临界区只包身份检查和权威状态变更，Telegram 副作用与后续落盘确认留在外面。
+
+  启动恢复时任何一条记录形状不合规都整体拒绝启动：漏掉一条就等于放那个人重新进群。因此黑名单文件是唯一**不允许截断自愈**的追加型文件（`openAppendOnlyFile(..., repair=false)`）：日志/运势/待验证丢掉末尾残片不影响正确性，黑名单裁掉的每一条都是一个被放回群里的人，宁可拒绝启动、原样保留字节等人工恢复。
 
   id 键必须 `String(Number(key)) === key` 原样还原——`Number` 认得 `0x1f4`/`1e3`/`7.0`/`""`，它们都是安全整数却指向另一个人。文件按 `PERSISTED_FILE_MODE` 建立；`memory/blocklist/` 同时有两个 owner，权威名单只清扫自己的 `.blocklist.json.*.tmp`，不得碰 `removals.json` 的临时文件。
 
@@ -385,7 +385,7 @@
 
   去重按 `(chatId, userId)` 记在 `recentBlockedJoinCounts`（`packages/cache/main/antiRaid/blocklistGuard.ts`），窗口取 `JOIN_WINDOW_MS`、容量由 `BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES` 兜住；公告 id 照常带，删公告本来就是幂等的。
 
-  **秒踢的登记失败（outbox 满、id 空间耗尽）必须就地降级，绝不能让异常逃出 `claimBlockedJoiner`**：它跑在更新中间件里，抛出去就是整批 update 失败 → 扣住 offset → 非零退出 → systemd 重启 → Telegram 重投同一条 update → 再抛，一个只能靠手改 `memory/blocklist/removals.json` 解开的重启循环，而 outbox 满本身通常正是一批永远封不掉的处置堆出来的。
+  **秒踢的登记失败（outbox 满、id 空间耗尽）必须就地降级，绝不能让异常逃出 `claimBlockedJoiner`**：它跑在更新中间件里，抛出去就是该条 update 失败 → 扣住 offset → 非零退出 → systemd 重启 → Telegram 重投同一条 update → 再抛，一个只能靠手改 `memory/blocklist/removals.json` 解开的重启循环，而 outbox 满本身通常正是一批永远封不掉的处置堆出来的。
 
   降级要点名记日志并让该群重新欠一次补扫，同时仍返回「已按黑名单处置」——名单判定没变，不该反过来给他开一个入群验证窗口。
 
@@ -411,9 +411,9 @@
 
 #### 广告检测的准入、判定与处置
 
-- `/ad_detect` 广告检测是**尽力而为的启发式**，不是安全边界，但它的处置与 `/block` 完全同权，因此边界必须划清。投递门禁是三者的合取：本群 `ChatState.isAdDetectEnabled === true`、机器人是本群管理员（与入群守卫共用同一道 `isBotAdminIn` 判定——不是管理员就删不掉广告也封不了人，判一次纯属白烧额度）、发送者不是自己人（`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json` 在投递入口与处置入口各挡一次；
+- `/ad_detect` 广告检测是**尽力而为的启发式**，不是安全边界，但它的处置与 `/block` 完全同权，因此边界必须划清。投递门禁是三者的合取：本群 `ChatState.isAdDetectEnabled === true`、机器人是本群管理员（与入群守卫共用同一道 `isBotAdminIn` 判定——不是管理员就删不掉广告也封不了人，判一次纯属白烧额度）、发送者不具备广告检测豁免。`SUPER_ADMIN_USER_ID` 恒豁免；白名单则由 `isCanBypassAdDetection` 单项决定，设为 false 的成员仍会送检，Worker 也可能删除本批命中消息。
 
-  名单不可逆，自己人连送进判定的机会都不该有）。拿本群当皮套的匿名管理员（`sender_chat.id === chat.id`）同样跳过，理由同 `/block`：Telegram 不暴露皮套底下是谁，处置只会尝试封掉整个群身份。
+  **白名单成员关系仍无条件保护永久黑名单**：判定结果回到主线程时，处置会在与 `/white`、`/block` 共用的 `runProtectedIdentityMutation` 临界区内重新调用 `isProtectedSender`。候选排队后刚加入白名单，或本来就在白名单但关闭了广告检测豁免，两种情况都拒绝 `blockUser`、跨群封禁与封禁播报；只有 Worker 已完成的本批消息删除保留。拿本群当皮套的匿名管理员（`sender_chat.id === chat.id`）同样跳过，理由同 `/block`：Telegram 不暴露皮套底下是谁，处置只会尝试封掉整个群身份。
 
   **关联频道推进讨论组的自动转发（`is_automatic_forward`）与机器人自己帖子的回弹（`isBotOwnMessage`）也一律跳过**：那条消息的发送者是频道本身，处置会走 `userId < 0` 分支在每个托管群 `banChatSenderChat`——因为频道自己的一条推广贴，整个评论区被连根拔掉；机器人发在自己频道里的帖子回弹进来时更是能把自己的频道拉黑。频道贴该不该发由频道管理员决定，不归讨论组的广告检测管。
 
@@ -553,8 +553,8 @@
 
 - Telegram update 只有在对应 middleware 完成后才可推进确认边界；Anti-Raid mailbox、反应/头像后台 owner 与 StateStore、AI Worker、Disk I/O Worker 的 flush 都有显式有界 drain。任一关键 flush 失败必须返回失败、阻止最终 offset 确认并以非零状态退出。
 
-  **停机时被放弃的那一批同样算数**：取数循环在停机信号到达后不再等待在途批次（middleware 可能悬挂，排空交给生命周期按 size() 有界完成），因此那批里失败的 update 只能由 runner 的显式标记表达——它在 handleUpdate 抛错的同一个同步段里写下，`size()` 归零时必然已经生效。生命周期必须在确认最终 offset 前读它，为真时不确认 offset 并以非零状态退出，让 Telegram 在重启后重投；只看 `task()` 是否正常 resolve 会把一条从未成功处理的 update 一并确认掉。
-- 同一批 update 仍可并发处理，但首个 `handleUpdate` 在错误处理完成后 reject 时，runner 必须立即 abort 该批其它活跃 update 并传播原始首错，不能等待一个永久悬挂的 sibling 才停止取数。所有 update Promise 仍由独立的 `allSettled` 观察者消费迟到结果，避免未处理 rejection；忽略取消的 sibling 继续留在 `size()` 中，交给生命周期既有的有界 drain，不得阻塞首错传播。失败后不得 fetch 下一批或推进 offset。
+  **停机时被放弃的那一条同样算数**：取数循环在停机信号到达后不再等待在途 middleware（它可能悬挂，排空交给生命周期按 size() 有界完成），因此随后失败的 update 只能由 runner 的显式标记表达——它在 handleUpdate 抛错的同一个同步段里写下，`size()` 归零时必然已经生效。生命周期必须在确认最终 offset 前读它，为真时不确认 offset 并以非零状态退出，让 Telegram 在重启后重投；只看 `task()` 是否正常 resolve 会把一条从未成功处理的 update 一并确认掉。
+- runner 的每次 `getUpdates` 固定 `limit: 1`，本条 middleware 成功后才发起带更高 offset 的下一次取数。这样后一条失败时，前一条非幂等副作用已经在独立确认边界内落定，不会因“兄弟 update”一起重投；取数端若违反 limit 返回多条，必须在执行任何 handler 前 fail closed。失败后不得 fetch 下一条或推进 offset。
 - 最终 offset 的 `getUpdates(timeout: 0)` 仍是一次网络请求：`timeout: 0` 只关闭 Telegram 服务端 long polling，不限制 DNS、建连或响应读取，必须另带 `FINAL_OFFSET_CONFIRM_TIMEOUT_MS` 的本地 `AbortSignal`。确认失败、超时，或因 runner/维护/落盘任一前置未完成而跳过时，生命周期要把这道 gate 永久记为失败、非零退出并阻止实例锁被当作干净停机释放；
 
   后续 `dispose()` 即使第二次等到了迟到 owner，也不得覆盖这次未确认事实。没有已处理 update 时不需要调用 API，这道 gate 视为成功。

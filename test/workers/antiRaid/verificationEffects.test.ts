@@ -26,8 +26,8 @@ let kickSucceeds: boolean = true;
 /** 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。 */
 let deleteSucceeds: boolean = true;
 /**
- * 清痕迹那条路上每次 deleteMessageWithOutcome 的结局，按调用顺序消费，用尽后
- * 回落到 "deleted"。三态是有意义的：`gone`（已被别人手删/超过 48 小时）不该被
+ * 清理机器人验证消息时每次 deleteMessageWithOutcome 的结局，按调用顺序消费，用尽后
+ * 回落到 "deleted"。三态是有意义的：`gone`（已被别人手删）不该被
  * 折算成「删不动」，否则战报会冤枉一个权限齐全的管理员。
  */
 const traceDeleteOutcomes: string[] = [];
@@ -107,7 +107,6 @@ function pendingState(): VerificationState {
     kind: "pending",
     label: "待验证成员",
     isBot: false,
-    messageIds: [],
     trackedMessageTimes: [],
     invitedBy: INVITER_ID,
     replyReminderRequested: false,
@@ -121,7 +120,6 @@ function snapshot(overrides: Partial<ExpelSnapshot> = {}): ExpelSnapshot {
   return {
     label: "待验证成员",
     isBot: false,
-    messageIds: [],
     joinedAt: 1_000,
     expiresAt: 1_000 + 90_000,
     ...overrides,
@@ -525,8 +523,9 @@ describe("踢人失败时的权限告警", () => {
     // 主线程镜像过来的是「是管理员、能限制成员、不能删消息」这一档配置。
     applyBotPermissionsChange(CHAT_ID, { canRestrictMembers: true, canDeleteMessages: false });
     const state = expellingState({
-      messageIds: [21, 22],
       announcementMessageId: 20,
+      reminderMessageId: 21,
+      replyReminderMessageId: 22,
     });
     setState(state);
 
@@ -540,8 +539,8 @@ describe("踢人失败时的权限告警", () => {
 
   test("镜像里「没观测到」不当成没权限：照常发删除请求，由 Telegram 当裁判", async () => {
     // 主线程对「现查失败」（撞一次 429 就退避几分钟）发的也是「删掉条目」，
-    // 把它折算成没权限，那几分钟里的痕迹就全留在群里了。
-    const state = expellingState({ messageIds: [21] });
+    // 把它折算成没权限，那几分钟里的验证提醒就全留在群里了。
+    const state = expellingState({ reminderMessageId: 21 });
     setState(state);
 
     await run([{ kind: "expel", snapshot: state.snapshot }]);
@@ -549,42 +548,40 @@ describe("踢人失败时的权限告警", () => {
     expect(deletedMessageIds).toEqual([21]);
   });
 
-  test("回归用例：消息一条都删不掉时，成功战报不能再断言「痕迹清干净」——" +
-    "群里还挂着的正是文案声称已经清掉的那批垃圾", async () => {
+  test("回归用例：机器人验证消息删不掉时，成功战报必须独立说明", async () => {
     // 有 can_restrict_members、没有 can_delete_messages 的管理员配置：人踢走了，
-    // 入群公告和他拖延期间发的每条消息都还在。
+    // 入群公告和两条机器人提醒都还在；成员发言从未进入删除列表。
     traceDeleteOutcomes.push("forbidden", "forbidden", "forbidden");
     const state = expellingState({
-      messageIds: [21, 22],
       announcementMessageId: 20,
+      reminderMessageId: 21,
+      replyReminderMessageId: 22,
     });
-    // 这个人拖延期间发过消息，还有一条机器人自己发的入群公告：正是文案声称
-    // 已经清掉的那批。删不掉时它们全都还挂在群里。
     setState(state);
 
     await run([{ kind: "expel", snapshot: state.snapshot }]);
 
     expect(kickedUserIds).toEqual([USER_ID]);
-    expect(sentTexts[0]).not.toContain("痕迹清干净");
+    expect(deletedMessageIds).toEqual([20, 21, 22]);
     expect(sentTexts[0]).toContain("删不动");
     // 权限配错要留下可诊断的线索，否则运维永远查不到 can_delete_messages。
     expect(loggedErrors.some((line: string): boolean => line.includes("can_delete_messages"))).toBeTrue();
   });
 
-  test("回归用例：消息早就不在了不算删不动——管理员比超时更快手删，不该被公开指责没给权限", async () => {
-    // 「message to delete not found」与超过 48 小时的旧消息都收敛成 gone：那批
-    // 消息确实不在群里了，痕迹就是清干净的。折算成失败的话，一个权限齐全的
+  test("回归用例：验证消息早就不在了不算删不动——管理员更快手删不该被公开指责", async () => {
+    // 「message to delete not found」收敛成 gone：那批消息确实不在群里了。
+    // 折算成失败的话，一个权限齐全的
     // 机器人会把管理员送去排查一个配置完全正确的 can_delete_messages。
     traceDeleteOutcomes.push("gone", "gone", "gone");
     const state = expellingState({
-      messageIds: [21, 22],
       announcementMessageId: 20,
+      reminderMessageId: 21,
+      replyReminderMessageId: 22,
     });
     setState(state);
 
     await run([{ kind: "expel", snapshot: state.snapshot }]);
 
-    expect(sentTexts[0]).toContain("痕迹清干净");
     expect(sentTexts[0]).not.toContain("删不动");
     expect(loggedErrors.some((line: string): boolean => line.includes("can_delete_messages"))).toBeFalse();
   });
@@ -594,14 +591,15 @@ describe("踢人失败时的权限告警", () => {
     // 文案照样声称一条都删不动，并把管理员送去查权限。
     traceDeleteOutcomes.push("deleted", "failed", "deleted");
     const state = expellingState({
-      messageIds: [21, 22],
       announcementMessageId: 20,
+      reminderMessageId: 21,
+      replyReminderMessageId: 22,
     });
     setState(state);
 
     await run([{ kind: "expel", snapshot: state.snapshot }]);
 
-    expect(sentTexts[0]).toContain("只有 1 条没清掉");
+    expect(sentTexts[0]).toContain("还有 1 条没清掉");
     expect(sentTexts[0]).not.toContain("删消息的权限");
     // 线索仍要留，但不能指向一个没被证伪的权限。
     expect(loggedErrors.some((line: string): boolean => line.includes("1 of 3"))).toBeTrue();

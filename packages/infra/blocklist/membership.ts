@@ -67,8 +67,8 @@ export function recordUserConfirmedKickedInChat(
 }
 
 /**
- * `/unblock` 后提前失效这个用户的所有群缓存。即使默认模式不解除 Telegram
- * 封禁，也宁可让下一次 `/block` 重新确认，避免 `all` 解封后同日重拉黑时误跳过。
+ * `/unblock` 跨群解封前后失效这个用户的所有群缓存，宁可让下一次 `/block`
+ * 重新确认，也不能让同日重拉黑误命中解封前或等待期间迟到的旧结局。
  */
 export function forgetUserConfirmedKicked(userId: number): void {
   // `/unblock` 也是这份 cache 的一次访问；跨日后先整表轮换，不能为了删一个

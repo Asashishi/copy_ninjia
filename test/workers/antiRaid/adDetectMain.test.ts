@@ -41,7 +41,7 @@ mock.module("../../../packages/infra/config", () => ({
 mock.module("../../../packages/config/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
     (id === 100 || id === -200) && key === "isCanBypassAdDetection",
-  isWhitelisted: (id: number): boolean => id === 100 || id === -200,
+  isWhitelisted: (id: number): boolean => id === 100 || id === 101 || id === -200,
 }));
 mock.module("../../../packages/infra/telegram/actions", () => ({
   sendMessage,
@@ -167,6 +167,12 @@ describe("广告检测投递门禁", () => {
         title: "Trusted Channel",
       },
     }), 999)).toBeUndefined();
+  });
+
+  test("关闭广告绕过权限的白名单成员仍可送检，但不会因此失去 protected 身份", () => {
+    expect(buildAdCandidate(message({
+      from: { id: 101, is_bot: false, first_name: "Audited Member" },
+    }), 999)).toMatchObject({ senderId: 101 });
   });
 
   test("回复消息照常判定：正文在 message.text 里，回复关系不影响取值", () => {
@@ -460,7 +466,17 @@ describe("广告判定命中后的处置", () => {
 
     expect(blockUser).not.toHaveBeenCalled();
     expect(dispatched).toHaveLength(0);
-    expect(errorLogs.some((line) => line.includes("privileged sender"))).toBe(true);
+    expect(errorLogs.some((line) => line.includes("protected sender"))).toBe(true);
+  });
+
+  test("白名单关闭广告绕过权限后即使命中，也不得写入永久黑名单", async () => {
+    handleAdDetected(detected({ senderId: 101 }));
+    await drainAdDisposals(5_000);
+
+    expect(blockUser).not.toHaveBeenCalled();
+    expect(dispatched).toHaveLength(0);
+    expect(diskMessages).toHaveLength(0);
+    expect(errorLogs.some((line) => line.includes("protected sender 101"))).toBe(true);
   });
 
   test("一个可执行的群都没有时只留名单与日志，不投空批次", async () => {
@@ -521,7 +537,11 @@ describe("广告判定命中后的处置", () => {
     expect(await drainAdDisposals(0)).toBe("timedOut");
     expect(inFlightAdDisposals.size).toBe(1);
 
-    release?.();
+    // protected-identity 串行边界与落盘确认各让步一次；零预算 drain 本身不会
+    // 等这些 microtask，先让处置推进到故意悬挂的投递点再释放。
+    await Bun.sleep(0);
+    expect(release).toBeFunction();
+    release!();
     expect(await drainAdDisposals(5_000)).toBe("flushed");
     expect(inFlightAdDisposals.size).toBe(0);
   });

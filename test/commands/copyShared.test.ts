@@ -11,7 +11,9 @@ const globalCopyState: { lastCopyTime?: number } = {};
 mock.module("../../packages/config/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 100,
 }));
-mock.module("../../packages/infra/telegram/actions", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/infra/telegram/avatar", () => ({ copyUserProfilePhoto }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getGlobalCopyState: () => globalCopyState,

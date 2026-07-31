@@ -54,6 +54,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 
 const {
+  botCanDeleteMessagesIn,
   botChatPermissionsIn,
   ensureBotChatPermissions,
   forgetBotChatPermissions,
@@ -103,6 +104,14 @@ function myChatMemberContext(newMember: Partial<ChatMember>, oldStatus: string =
 }
 
 describe("机器人自身权限位缓存", () => {
+  test("同步删除权限读取保留 true/false/unknown 三态", () => {
+    expect(botCanDeleteMessagesIn(CHAT_ID)).toBeUndefined();
+    botChatPermissions.set(CHAT_ID, { canRestrictMembers: true, canDeleteMessages: false });
+    expect(botCanDeleteMessagesIn(CHAT_ID)).toBeFalse();
+    botChatPermissions.set(CHAT_ID, { canRestrictMembers: true, canDeleteMessages: true });
+    expect(botCanDeleteMessagesIn(CHAT_ID)).toBeTrue();
+  });
+
   test("my_chat_member 落地后判定是纯内存命中，不打 getChatMember", async () => {
     await handleMyChatMemberUpdate(myChatMemberContext({
       status: "administrator",

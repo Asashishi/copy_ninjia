@@ -4,7 +4,6 @@ export interface WhitelistPermissions {
   isCanUnMute: boolean;
   isCanBlock: boolean;
   isCanUnBlock: boolean;
-  isCanUnBlockAll: boolean;
   isCanSwitchMood: boolean;
   isCanBypassAdDetection: boolean;
   isCanControllAIPermission: boolean;

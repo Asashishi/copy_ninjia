@@ -80,15 +80,15 @@ describe("application handler registration", () => {
       "x",
     ]);
     // use:3 同时承载 init 与私聊命令门禁；全部命令都必须注册在它之后，避免
-    // 新命令以后又意外绕过。/permission 与 /white 仍位于 sequentialize 前，
-    // 不占用聊天串行车道。
+    // 新命令以后又意外绕过。授权维护必须位于 use:4 的 sequentialize 后，
+    // 否则权限检查和持久化修改会与同群更新交错。
     for (const command of commands) {
       expect(registrationOrder.indexOf(`command:${command}`))
         .toBeGreaterThan(registrationOrder.indexOf("use:3"));
     }
     for (const command of ["permission", "white"]) {
       expect(registrationOrder.indexOf(`command:${command}`))
-        .toBeLessThan(registrationOrder.indexOf("use:4"));
+        .toBeGreaterThan(registrationOrder.indexOf("use:4"));
     }
     // 中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
     // 消息兜底之前，否则会被当成普通消息进入 AI/复读流水线。
@@ -117,5 +117,57 @@ describe("application handler registration", () => {
       ctx: { update: { update_id: 13 } } as Context,
       error: durabilityError,
     })).toThrow(durabilityError);
+  });
+
+  test("同一 chat 的并发更新不能穿过授权维护所在的串行车道", async () => {
+    const middleware: TestMiddleware[] = [];
+    const fakeBot: FakeBot = {
+      use(handler: TestMiddleware): FakeBot {
+        middleware.push(handler);
+        return fakeBot;
+      },
+      command(): FakeBot {
+        return fakeBot;
+      },
+      hears(): FakeBot {
+        return fakeBot;
+      },
+      on(): FakeBot {
+        return fakeBot;
+      },
+      catch(): FakeBot {
+        return fakeBot;
+      },
+    };
+    registerHandlers(fakeBot as unknown as Bot);
+
+    const sequentialMiddleware: TestMiddleware = middleware[3]!;
+    const events: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const firstBarrier: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      releaseFirst = resolve;
+    });
+    const firstUpdate: Promise<unknown> = Promise.resolve(sequentialMiddleware(
+      { update: { update_id: 1 }, chat: { id: -1001, type: "supergroup" } } as Context,
+      async (): Promise<void> => {
+        events.push("first:start");
+        await firstBarrier;
+        events.push("first:end");
+      }
+    ));
+    const secondUpdate: Promise<unknown> = Promise.resolve(sequentialMiddleware(
+      { update: { update_id: 2 }, chat: { id: -1001, type: "supergroup" } } as Context,
+      async (): Promise<void> => {
+        events.push("second:start");
+        events.push("second:end");
+      }
+    ));
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toEqual(["first:start"]);
+    releaseFirst!();
+    await Promise.all([firstUpdate, secondUpdate]);
+    expect(events).toEqual(["first:start", "first:end", "second:start", "second:end"]);
   });
 });

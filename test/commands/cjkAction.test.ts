@@ -5,7 +5,9 @@ const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined
 let target: CachedUser | undefined;
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => target);
 
-mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 
 const { handleCjkActionCommand, parseCjkActionCommand, tryConsumeCjkActionRateLimit } =

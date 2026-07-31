@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -71,12 +71,33 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     expect(existsSync(join(stickerDir, "orphan_pack.json"))).toBe(false);
   });
 
-  test("损坏的 JSON 文件即使属于白名单内的包，也按原逻辑隔离为 .corrupt 而不是当孤儿删除", () => {
+  test("损坏的 JSON 文件即使属于白名单内的包，也用唯一 .corrupt 名隔离而不是当孤儿删除", () => {
     mkdirSync(stickerDir, { recursive: true });
     writeFileSync(join(stickerDir, "pack_a.json"), "{not valid json");
     const result = recoverStickerCatalogs(["pack_a"]);
     expect(result.has("pack_a")).toBe(false);
-    expect(existsSync(join(stickerDir, "pack_a.json.corrupt"))).toBe(true);
+    expect(readdirSync(stickerDir).filter((name: string): boolean =>
+      /^pack_a\.json\.\d+\.[^.]+\.corrupt$/.test(name)
+    )).toHaveLength(1);
+  });
+
+  test("同一路径连续两次损坏会保留两份原始字节，不覆盖旧隔离证据", () => {
+    mkdirSync(stickerDir, { recursive: true });
+    const sourcePath: string = join(stickerDir, "pack_a.json");
+    writeFileSync(sourcePath, "first broken bytes");
+    recoverStickerCatalogs(["pack_a"]);
+    writeFileSync(sourcePath, "second broken bytes");
+    recoverStickerCatalogs(["pack_a"]);
+
+    const quarantinedNames: string[] = readdirSync(stickerDir)
+      .filter((name: string): boolean =>
+        /^pack_a\.json\.\d+\.[^.]+\.corrupt$/.test(name)
+      );
+    expect(quarantinedNames).toHaveLength(2);
+    expect(new Set(quarantinedNames.map((name: string): string =>
+      readFileSync(join(stickerDir, name), "utf8")
+    ))).toEqual(new Set(["first broken bytes", "second broken bytes"]));
+    expect(existsSync(sourcePath)).toBe(false);
   });
 
   test("空白名单时所有持久化包都被当孤儿清掉", () => {

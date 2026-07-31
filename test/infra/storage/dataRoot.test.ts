@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareRuntimeDataRoot } from "../../../packages/infra/storage/dataRoot";
@@ -98,5 +98,36 @@ describe("runtime data root preflight", () => {
       enforcePrivatePermissions: false,
     })).resolves.toBeUndefined();
     expect(readdirSync(projectRoot)).toEqual([]);
+  });
+
+  test("数据根 symlink 即使指向可写私有目录也 fail closed", async () => {
+    const target: string = join(testDir, "linked-root-target");
+    const linkedRoot: string = join(testDir, "linked-root");
+    mkdirSync(target, { mode: 0o750 });
+    symlinkSync(target, linkedRoot, "dir");
+
+    await expect(prepareRuntimeDataRoot(linkedRoot)).rejects.toThrow("symbolic link");
+    await expect(prepareRuntimeDataRoot(linkedRoot, {
+      enforcePrivatePermissions: false,
+    })).rejects.toThrow("symbolic link");
+    expect(readdirSync(target)).toEqual([]);
+  });
+
+  test("memory 或 logs 敏感子目录不能用 symlink 逃出数据根", async () => {
+    const root: string = join(testDir, "real-root");
+    await prepareRuntimeDataRoot(root);
+    const externalTarget: string = join(testDir, "external-memory");
+    mkdirSync(externalTarget, { mode: 0o750 });
+    const memoryPath: string = join(root, "memory");
+    rmSync(memoryPath, { recursive: true });
+    symlinkSync(externalTarget, memoryPath, "dir");
+
+    await expect(prepareRuntimeDataRoot(root)).rejects.toThrow(
+      `${memoryPath} is a symbolic link`
+    );
+    await expect(prepareRuntimeDataRoot(root, {
+      enforcePrivatePermissions: false,
+    })).rejects.toThrow(`${memoryPath} is a symbolic link`);
+    expect(readdirSync(externalTarget)).toEqual([]);
   });
 });

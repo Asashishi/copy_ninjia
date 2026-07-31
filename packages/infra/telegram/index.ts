@@ -5,4 +5,5 @@
 export * from "./client";
 export * from "./avatar";
 export * from "./actions";
+export * from "./commandMessages";
 export * from "./lockdownPermissions";

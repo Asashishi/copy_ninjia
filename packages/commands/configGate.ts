@@ -8,7 +8,7 @@
  */
 
 import { logger } from "../infra/logger";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import type { ConfigReadiness } from "../types/config";
 
 export interface RefuseIfConfigBrokenParams {
@@ -39,6 +39,6 @@ export async function refuseIfConfigBroken({
   logger.error(
     `${feature} is unavailable in chat ${chatId}: ${readiness.failure.file} is unusable — ${readiness.failure.reason}`
   );
-  await sendMessage({ chatId, text: text(readiness.failure.file), replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: text(readiness.failure.file), replyToMessageId: messageId });
   return true;
 }

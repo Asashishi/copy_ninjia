@@ -69,6 +69,7 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
   // 被替换掉时缺了它们会在 import 阶段就报 Export not found。
   banChatMember: async (): Promise<boolean> => true,
   banChatSenderChat: async (): Promise<boolean> => true,
+  deleteMessageWithOutcome: async (): Promise<"deleted"> => "deleted",
   isChatMember: async (): Promise<boolean> => true,
   // 广告处置的群内播报用的，同理。
   sendMessage: async (): Promise<number | undefined> => undefined,
@@ -87,6 +88,7 @@ mock.module("../../../packages/infra/botAdmin", () => ({
   // 会在 import 阶段就报 Export not found。
   registerBotPermissionObserver: (): void => {},
   ensureBotChatPermissions: (): void => {},
+  botCanDeleteMessagesIn: (): undefined => undefined,
 }));
 mock.module("../../../packages/libs/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
@@ -120,7 +122,6 @@ function record(generation: number, revision: number): VerificationSnapshot {
     phase: "pending",
     label: "待验证成员",
     isBot: false,
-    messageIds: [10],
     trackedMessageTimes: [],
     replyReminderRequested: false,
     reminderSuperseded: false,

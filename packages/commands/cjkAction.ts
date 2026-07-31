@@ -7,7 +7,7 @@ import {
   CJK_ACTION_RATE_LIMIT_WINDOW_MS,
 } from "../consts/commands";
 import { recentActionCallTimestamps } from "../cache/main/cjkAction";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { tryConsumeSlidingWindow } from "../libs/slidingWindowRateLimit";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { resolveSenderIdentity, seedSenderCache } from "../users/senderIdentity";
@@ -99,7 +99,7 @@ function buildActionMessage(segments: readonly ActionSegment[]): ActionMessage {
 export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
   const chatId: number | undefined = ctx.chat?.id;
   if (chatId === undefined) return;
-  await sendMessage({
+  await sendCommandMessage({
     chatId,
     text: `笨蛋，/x 只是菜单里的用法说明啦——把 x 换成任意 1~2 个中文字直接发，比如 /咬、/贴贴，再回复 TA 的消息或者加 @username 指定对象♡`,
     replyToMessageId: ctx.msg?.message_id,
@@ -181,7 +181,7 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
     { text: formatFullName(target), url: formatProfileUrl(target) },
     { text: "！", url: undefined },
   ]);
-  await sendMessage({
+  await sendCommandMessage({
     chatId,
     text,
     entities,

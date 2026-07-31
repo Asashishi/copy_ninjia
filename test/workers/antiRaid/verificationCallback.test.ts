@@ -37,7 +37,6 @@ function pendingRecord(userId: number, isBot: boolean): VerificationSnapshot {
     phase: "pending",
     label: isBot ? "待验证机器人" : "待验证成员",
     isBot,
-    messageIds: [500],
     trackedMessageTimes: [],
     reminderMessageId: 500,
     replyReminderRequested: false,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { GenerateContentResponse } from "@google/genai";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
+import { geminiResponse } from "../../helpers/geminiResponse";
 
 const responses: (GenerateContentResponse | null)[] = [];
 const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<GenerateContentResponse | null> =>
@@ -44,9 +45,9 @@ const batch: BufferedMessage[] = [{
 }];
 
 function response(text: string): GenerateContentResponse {
-  return {
+  return geminiResponse({
     candidates: [{ content: { role: "model", parts: [{ text }] } }],
-  } as GenerateContentResponse;
+  });
 }
 
 async function waitForRotation(chatId: number): Promise<void> {

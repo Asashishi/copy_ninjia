@@ -6,7 +6,9 @@ let replyTarget: CachedUser | undefined;
 const knownTargets = new Map<string, CachedUser>();
 const knownIdTargets = new Map<number, CachedUser>();
 
-mock.module("../../packages/infra/telegram", () => ({ sendMessage: sendMessageMock }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessageMock,
+}));
 mock.module("../../packages/users/senderIdentity", () => ({
   resolveReplyTarget: (): CachedUser | undefined => replyTarget,
   resolveUsernameTarget: (username: string): CachedUser | undefined => knownTargets.get(username.toLowerCase()),
@@ -187,7 +189,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("开了 acceptChatId 后负数 id 成立，并带上决定解封接口的 isChannel", async () => {
-    // 这个标记是承重的：/unblock ... all 靠它选 unbanChatSenderChat，漏标就会拿
+    // 这个标记是承重的：/unblock 靠它选 unbanChatSenderChat，漏标就会拿
     // 负数去调 unbanChatMemberIfBanned，报错记进 failedCount 变成假战报。
     expect(await resolveCommandTarget(params("-1002233445566", true, true)))
       .toEqual({ id: -1002233445566, isChannel: true });

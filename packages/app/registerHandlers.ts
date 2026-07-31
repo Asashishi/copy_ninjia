@@ -76,14 +76,13 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     shouldPassInitGate(ctx) && shouldPassPrivateCommandGate(ctx) ? next() : undefined
   );
 
-  // /permission 与 /white 必须通过本群初始化网关，但无需占用聊天串行车道；
-  // 私聊限制已经在上面的前置网关生效。白名单并发写入由
-  // config/whitelist.ts 的全局串行链负责。
+  // 普通聊天按 chat 串行；授权维护命令也必须进入本车道，保证权限检查与
+  // 随后的持久化修改不会同本群另一条更新交错。反应同步有自己的合并队列，
+  // 不占用聊天车道。
+  bot.use(sequentialize((ctx: Context): string[] => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
+
   bot.command("permission", (ctx: CommandContext<Context>): Promise<void> => handlePermissionCommand(ctx));
   bot.command("white", (ctx: CommandContext<Context>): Promise<void> => handleWhiteCommand(ctx));
-
-  // 普通聊天按 chat 串行；反应同步有自己的合并队列，不占用聊天车道。
-  bot.use(sequentialize((ctx: Context): string[] => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
 
   // 私聊命令已在前置网关统一收口；活动中的 /send 中转会话只把非命令消息
   // 直接短路到消息流水线。

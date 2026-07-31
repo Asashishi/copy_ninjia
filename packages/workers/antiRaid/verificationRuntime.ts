@@ -170,7 +170,6 @@ function verificationSnapshot({
     revision,
     label: source.label,
     isBot: source.isBot,
-    messageIds: [...source.messageIds],
     announcementMessageId: source.announcementMessageId,
     trackedMessageTimes:
       state.kind === "pending" ? [...state.trackedMessageTimes] : [],
@@ -260,7 +259,6 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
     const expelSnapshot: ExpelSnapshot = {
       label: record.label,
       isBot: record.isBot,
-      messageIds: [...record.messageIds],
       announcementMessageId: record.announcementMessageId,
       reminderMessageId: record.reminderMessageId,
       replyReminderMessageId: record.replyReminderMessageId,
@@ -286,7 +284,6 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
           kind: "pending",
           label: record.label,
           isBot: record.isBot,
-          messageIds: [...record.messageIds],
           announcementMessageId: record.announcementMessageId,
           // 与 states/verification.ts 的刷屏窗口共用同一份边界判定：手写 filter
           // 会漏掉时钟回拨后落在「未来」的那些，恢复出来的记录带着一整窗永不

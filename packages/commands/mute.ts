@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import type { MuteChatMemberOutcome, UnmuteChatMemberOutcome } from "../infra/telegram";
-import { muteChatMemberWithOutcome, sendMessage, unmuteChatMemberWithOutcome } from "../infra/telegram";
+import { muteChatMemberWithOutcome, sendCommandMessage, unmuteChatMemberWithOutcome } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { SUPER_ADMIN_USER_ID } from "../infra/config";
 import { isWhitelisted } from "../config/whitelist";
@@ -67,7 +67,7 @@ async function passesMuteCommandGate(ctx: CommandContext<Context>, command: "mut
     command === "mute" ? "isCanMute" : "isCanUnMute";
 
   if (!actor || !hasCommandPermission(ctx, permission, false)) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /${command} 人？哪来的资格呀，笨蛋，洗洗睡吧♡`,
       replyToMessageId: messageId,
@@ -76,7 +76,7 @@ async function passesMuteCommandGate(ctx: CommandContext<Context>, command: "mut
   }
 
   if (ctx.chat.type !== "supergroup") {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `笨蛋，Telegram 只让在超级群里捂人嘴巴，这里本天才有力也使不出呀♡`,
       replyToMessageId: messageId,
@@ -108,7 +108,7 @@ async function rejectUnrestrictableTarget(
   targetUser: CachedUser
 ): Promise<boolean> {
   if (targetUser.isChannel !== true) return false;
-  await sendMessage({
+  await sendCommandMessage({
     chatId: ctx.chat.id,
     text: `${formatTargetLabel(targetUser)} 是频道皮套，皮套没有嘴可捂，Telegram 也不告诉本天才底下是谁呀♡`,
     replyToMessageId: ctx.msgId,
@@ -146,7 +146,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   const durationToken: string | undefined = tokens.at(-1);
   const durationMs: number | undefined = durationToken === undefined ? undefined : parseMuteDurationMs(durationToken);
   if (durationMs === undefined) {
-    await sendMessage({ chatId, text: MUTE_USAGE_TEXT, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: MUTE_USAGE_TEXT, replyToMessageId: messageId });
     return;
   }
 
@@ -166,7 +166,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   // 自己人不可禁言：部署方亲手配的身份不该被机器人按住（口径同
   // isProtectedSender），回错消息也只损失一句嘲讽。
   if (targetUser.id === SUPER_ADMIN_USER_ID || isWhitelisted(targetUser.id)) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `笨蛋，${formatTargetLabel(targetUser)} 可是自己人，本天才才不捂自己人的嘴♡`,
       replyToMessageId: messageId,
@@ -181,7 +181,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     mutedUntil: Date.now() + durationMs,
   });
   if (outcome === "muted") {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `哼，${targetLabel} 被本天才捂住嘴 ${formatMuteDuration(durationMs)}，到点自动松开；等不及就找管理员 /unmute 吧♡`,
       replyToMessageId: messageId,
@@ -194,7 +194,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   const failureText: string = outcome === "forbidden"
     ? `呜……${targetLabel} 捂不住：要么本天才没有「限制成员」的权限，要么 TA 是管理员，杂鱼管理员自己去看看吧♡`
     : `呜……Telegram 这会儿不理本天才，${targetLabel} 没捂住，稍后再试一次吧♡`;
-  await sendMessage({ chatId, text: failureText, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: failureText, replyToMessageId: messageId });
 }
 
 /**
@@ -228,7 +228,7 @@ export async function handleUnmuteCommand(ctx: CommandContext<Context>): Promise
     userId: targetUser.id,
   });
   if (outcome === "unmuted") {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `哼，本天才大发慈悲把 ${targetLabel} 的嘴松开了，下次注意点哦杂鱼♡`,
       replyToMessageId: messageId,
@@ -238,5 +238,5 @@ export async function handleUnmuteCommand(ctx: CommandContext<Context>): Promise
   const failureText: string = outcome === "forbidden"
     ? `呜……${targetLabel} 松不开：要么本天才没有「限制成员」的权限，要么 TA 是管理员（管理员本来也没被捂着呀），杂鱼管理员自己去看看吧♡`
     : `呜……Telegram 这会儿不理本天才，${targetLabel} 还没松开，稍后再试一次吧♡`;
-  await sendMessage({ chatId, text: failureText, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: failureText, replyToMessageId: messageId });
 }

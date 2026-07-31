@@ -13,7 +13,9 @@ mock.module("../../packages/infra/config", () => ({
 mock.module("../../packages/config/whitelist", () => ({
   hasWhitelistPermission: (): boolean => false,
 }));
-mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/aiChat", () => ({ switchAiMood }));
 mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
 mock.module("../../packages/infra/storage/stateStore", () => ({

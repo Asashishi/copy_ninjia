@@ -1,14 +1,7 @@
 import { logger } from "../infra/logger";
-import { GrammyError } from "grammy";
 import { bot, logApiError } from "../infra/telegram";
 import { LinkedQueue } from "../libs/linkedQueue";
-import { sleep } from "../libs/sleep";
-import {
-  DEFAULT_RETRY_AFTER_SECONDS,
-  MAX_ATTEMPTS,
-  MAX_PENDING_TASKS_PER_CHAT,
-  MAX_RETRY_AFTER_SECONDS,
-} from "../consts/reactionQueue";
+import { MAX_PENDING_TASKS_PER_CHAT } from "../consts/reactionQueue";
 import {
   chatQueues,
   consumingChats,
@@ -25,12 +18,12 @@ import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
  * 反应同步的可靠性保障层。经实测确认，复制反应的延迟大头在 Telegram 生成并
  * 投递 message_reaction 更新（日志里的 delivery），队列本身的耗时（queue）
  * 正常情况下只是一次 HTTP 往返，429 限流下会叠加 retry_after 的等待——因此
- * 这一层不为提速，只为三个保障：
+ * 这一层不为提速，只为两个保障：
  * 1. 同一条消息的多次反应变化（点了又取消、换了个表情）以 chatId:messageId
  *    为键合并，只保留最新状态，消除乱序写回过期反应的竞态。
- * 2. 429 限流按 retry_after 等待后重试，而不是直接丢弃。
- * 3. 队列按 chat 拆分：限流（及其 retry_after）基本是按 chat 生效的，一个群
- *    被限流只暂停该群自己的消费循环，不头部阻塞其他群的反应同步。
+ * 2. 队列按 chat 拆分：一个群的 API 长尾只暂停该群自己的消费循环，不头部
+ *    阻塞其他群的反应同步。429/网络/5xx 重试由 bot.api 的官方 auto-retry
+ *    transformer 统一处理，不在队列里再叠一层。
  *
  * 队列状态（pendingTasks / chatQueues / consumingChats）见 cache/main/reactionQueue.ts。
  */
@@ -83,7 +76,7 @@ export function enqueueReaction({
       order = new LinkedQueue<string>();
       chatQueues.set(chatId, order);
     }
-    // Telegram 429 或网络停顿期间，目标可以继续在不同消息上刷反应。每个 key
+    // Telegram API 长尾期间，目标可以继续在不同消息上刷反应。每个 key
     // 都永久排队会让内存随刷屏量增长；达到硬顶时丢最旧的未开始任务，优先
     // 保留较新的用户动作。当前正在处理的 key 已从 order 取出，不会被误删。
     if (order.size >= MAX_PENDING_TASKS_PER_CHAT) {
@@ -156,7 +149,7 @@ export function quiesceReactionQueue(): void {
   reactionQueueRuntime.accepting = false;
 }
 
-/** drain 超时后的取消阶段：打断 API/sleep，结算所有尚未开始的任务。 */
+/** drain 超时后的取消阶段：打断 API，结算所有尚未开始的任务。 */
 export function abortReactionQueue(): void {
   reactionQueueRuntime.accepting = false;
   if (!reactionQueueRuntime.controller.signal.aborted) reactionQueueRuntime.controller.abort();
@@ -172,9 +165,8 @@ async function consumeChatQueue(chatId: number): Promise<void> {
     const order: LinkedQueue<string> | undefined = chatQueues.get(chatId);
     while (order && order.size > 0) {
       const key: string = order.shift()!;
-      // 不在出队时就删 pendingTasks[key]：处理期间（尤其是 429 重试的等待
-      // 中，也可能是发起 setMessageReaction 那次网络往返本身）若又有更新的
-      // 反应变化到达同一条消息，enqueueReaction 会看到这个 key 仍在
+      // 不在出队时就删 pendingTasks[key]：发起 setMessageReaction 的网络往返
+      // 期间若又有更新的反应变化到达同一条消息，enqueueReaction 会看到这个 key 仍在
       // pendingTasks 里、原地覆盖成新版本，而不是重新入队——这正是我们要的
       // 合并语义，但也意味着 applyReaction 已经在途的这次调用可能是拿着
       // 旧版本发出去的。applyReaction 返回 false 表示这种情况发生了：把
@@ -201,8 +193,8 @@ async function consumeChatQueue(chatId: number): Promise<void> {
 /**
  * 应用一次反应同步。每次实际发起 setMessageReaction 调用前都重新读取
  * pendingTasks[key] 的当下版本（而不是在函数入口处只读一次、全程沿用同一份
- * 快照）——它可能在上一轮 429 重试的睡眠期间，或本次调用的网络往返期间，
- * 被 enqueueReaction 原地更新成更新的版本（见 consumeChatQueue 注释）。
+ * 快照）——它可能在本次调用的网络往返期间被 enqueueReaction 原地更新成
+ * 更新的版本（见 consumeChatQueue 注释）。
  * @returns 本次调用结束时，pendingTasks[key] 是否仍是发起这次真正 API 调用
  *   时读到的那个版本——true 表示可以放心删除（要么确实是最新版本、要么已
  *   彻底放弃重试），false 表示处理期间被更新的版本覆盖过，调用方需要把这
@@ -210,53 +202,33 @@ async function consumeChatQueue(chatId: number): Promise<void> {
  */
 async function applyReaction(key: string): Promise<boolean> {
   const signal: AbortSignal = reactionQueueRuntime.controller.signal;
-  for (let attempt: number = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  if (signal.aborted) return true;
+  const task: ReactionTask | undefined = pendingTasks.get(key);
+  if (!task) return true; // 理论不可达（key 还在处理中就不该被删掉），防御性放行。
+  try {
+    await bot.api.setMessageReaction(
+      task.chatId,
+      task.messageId,
+      task.reactions,
+      {},
+      signal as unknown as Parameters<typeof bot.api.setMessageReaction>[4]
+    );
+    // 延迟拆解：delivery = 目标点反应到更新抵达机器人（Telegram 侧 + 轮询，
+    // 我们控制不了），queue = 入队到调用完成（我们这边的耗时）。delivery 用
+    // 本地时钟减 Telegram 服务器时间，轻微时钟偏差可能出现负数，夹到 0。
+    const nowMs: number = Date.now();
+    const deliveryMs: number = Math.max(0, task.enqueuedAtMs - task.reactedAtUnix * 1000);
+    logger.log(
+      `Reaction synced (chat ${task.chatId}, msg ${task.messageId}): ` +
+      `delivery ${(deliveryMs / 1000).toFixed(1)}s, queue ${((nowMs - task.enqueuedAtMs) / 1000).toFixed(1)}s`
+    );
+    return pendingTasks.get(key) === task;
+  } catch (error: unknown) {
     if (signal.aborted) return true;
-    const task: ReactionTask | undefined = pendingTasks.get(key);
-    if (!task) return true; // 理论不可达（key 还在处理中就不该被删掉），防御性放行。
-    try {
-      await bot.api.setMessageReaction(
-        task.chatId,
-        task.messageId,
-        task.reactions,
-        {},
-        signal as unknown as Parameters<typeof bot.api.setMessageReaction>[4]
-      );
-      // 延迟拆解：delivery = 目标点反应到更新抵达机器人（Telegram 侧 + 轮询，
-      // 我们控制不了），queue = 入队到调用完成（我们这边的耗时）。delivery 用
-      // 本地时钟减 Telegram 服务器时间，轻微时钟偏差可能出现负数，夹到 0。
-      const nowMs: number = Date.now();
-      const deliveryMs: number = Math.max(0, task.enqueuedAtMs - task.reactedAtUnix * 1000);
-      logger.log(
-        `Reaction synced (chat ${task.chatId}, msg ${task.messageId}): ` +
-        `delivery ${(deliveryMs / 1000).toFixed(1)}s, queue ${((nowMs - task.enqueuedAtMs) / 1000).toFixed(1)}s`
-      );
-      return pendingTasks.get(key) === task;
-    } catch (error: unknown) {
-      if (signal.aborted) return true;
-      if (error instanceof GrammyError && error.error_code === 429 && attempt < MAX_ATTEMPTS) {
-        const rawRetryAfter: number | undefined = error.parameters.retry_after;
-        const retryAfterSeconds: number = rawRetryAfter !== undefined && Number.isFinite(rawRetryAfter) && rawRetryAfter > 0
-          ? Math.min(rawRetryAfter, MAX_RETRY_AFTER_SECONDS)
-          : DEFAULT_RETRY_AFTER_SECONDS;
-        logger.warn(
-          `setMessageReaction rate limited (chat ${task.chatId}, msg ${task.messageId}), ` +
-          `waiting ${retryAfterSeconds}s before retry ${attempt + 1}/${MAX_ATTEMPTS}`
-        );
-        try {
-          await sleep(retryAfterSeconds * 1000, signal);
-        } catch {
-          if (signal.aborted) return true;
-          throw error;
-        }
-        continue; // 下一轮循环开头会重新读取 pendingTasks[key]，天然拿到最新版本。
-      }
-      // 目标点完立刻取消时，自定义表情不再「存在于消息上」，这里会收到
-      // 400；属于正常竞态，记录后放弃即可。若处理期间已经被更新的版本覆盖
-      // 过，交回调用方重新排队、用新版本再试一遍，而不是连同新版本一起放弃。
-      logApiError("set message reaction", error);
-      return pendingTasks.get(key) === task;
-    }
+    // 目标点完立刻取消时，自定义表情不再「存在于消息上」，这里会收到
+    // 400；属于正常竞态，记录后放弃即可。若处理期间已经被更新的版本覆盖
+    // 过，交回调用方重新排队、用新版本再试一遍，而不是连同新版本一起放弃。
+    logApiError("set message reaction", error);
+    return pendingTasks.get(key) === task;
   }
-  return true;
 }

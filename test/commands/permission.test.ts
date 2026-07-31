@@ -10,6 +10,7 @@ interface SentMessageEntity {
 interface SentMessage {
   text: string;
   entities?: readonly SentMessageEntity[];
+  preserveInGroup?: boolean;
 }
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
@@ -24,7 +25,9 @@ const enableAllWhitelistPermissions = mock(async (): Promise<{
 const whitelistIds: Set<number> = new Set<number>();
 
 mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
-mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/config/whitelist", () => ({
   hasWhitelistPermission: (): boolean => false,
   enableAllWhitelistPermissions,
@@ -118,6 +121,7 @@ describe("/permission", () => {
       | undefined;
     const text: string = message?.text ?? "";
     const codeEntity: SentMessageEntity | undefined = message?.entities?.[0];
+    expect(message?.preserveInGroup).toBeTrue();
     expect(codeEntity).toMatchObject({
       type: "pre",
       language: "json",

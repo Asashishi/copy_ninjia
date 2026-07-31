@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
-const deleteMessageAfter = mock((..._args: unknown[]): void => {});
 const unbanChatMemberIfBanned = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const unbanChatSenderChat = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const isBotAdminIn = mock(async (_chatId: number): Promise<boolean> => false);
@@ -12,20 +11,16 @@ const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => t
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 const flushDiskIO = mock(async (): Promise<string> => "flushed");
 
-// 100 是普通白名单成员，1 是超级管理员：all 只有后者能用。
+// 100/200 是白名单成员，1 是超级管理员；三者都只凭 isCanUnBlock 完整解封。
 // 故意让超级管理员不在白名单里；两者不重叠的部署必须照样能用。
 mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/config/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 100 || id === 200,
   hasWhitelistPermission: (id: number, key: string): boolean =>
-    (id === 100 && key === "isCanUnBlock") ||
-    (id === 200 && (key === "isCanUnBlock" || key === "isCanUnBlockAll")),
+    (id === 100 || id === 200) && key === "isCanUnBlock",
 }));
 mock.module("../../packages/infra/telegram", () => ({
-  sendMessage, deleteMessageAfter, unbanChatMemberIfBanned, unbanChatSenderChat,
-}));
-mock.module("../../packages/infra/telegram/actions", () => ({
-  sendMessage, deleteMessageAfter, unbanChatMemberIfBanned, unbanChatSenderChat,
+  sendCommandMessage: sendMessage, unbanChatMemberIfBanned, unbanChatSenderChat,
 }));
 mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
 mock.module("../../packages/infra/botAdmin", () => ({ isBotAdminIn }));
@@ -70,7 +65,7 @@ beforeEach(() => {
   target = { id: 7, first_name: "Alice", username: "alice" };
   chatStates.clear();
   for (const mocked of [
-    sendMessage, deleteMessageAfter, resolveCommandTarget, postDiskIO, flushDiskIO,
+    sendMessage, resolveCommandTarget, postDiskIO, flushDiskIO,
     unbanChatMemberIfBanned, unbanChatSenderChat, isBotAdminIn,
   ]) mocked.mockClear();
   flushDiskIO.mockImplementation(async (): Promise<string> => "flushed");
@@ -88,12 +83,12 @@ beforeEach(() => {
 });
 
 describe("/unblock", () => {
-  test("静态配置层不能被 /unblock 或 all 绕过，频道身份同样拒绝解封", async () => {
+  test("静态配置层不能被 /unblock 绕过，频道身份同样拒绝解封", async () => {
     target = { id: -4004, first_name: "Channel", isChannel: true };
     configuredBlockedIds.add(-4004);
     chatStates.set(-2002, { botIsAdmin: true });
 
-    await handleUnblockCommand(context(1, "-4004 all"));
+    await handleUnblockCommand(context(1, "-4004"));
 
     expect(configuredBlockedIds.has(-4004)).toBeTrue();
     expect(postDiskIO).not.toHaveBeenCalled();
@@ -115,9 +110,10 @@ describe("/unblock", () => {
     expect(postDiskIO).not.toHaveBeenCalled();
   });
 
-  test("从内存 Map 删掉并投出整份重写，战报说清各群封禁不受影响", async () => {
+  test("从内存 Map 删掉并投出整份重写，随后默认解除各群封禁", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
     blockedUserIds.set(8, { isBlocked: true, blockedAt: "2026/07/25 19:38:10" });
+    chatStates.set(-2002, { botIsAdmin: true });
     // 投递时内存必须已经删好：两步之间到达的入群更新查的就是这个 Map，
     // 顺序反了那个人还会白挨一次秒踢。
     postDiskIO.mockImplementation((): boolean => {
@@ -132,11 +128,10 @@ describe("/unblock", () => {
     expect(message.type).toBe("unblockUser");
     expect(message.userId).toBe(7);
     expect(message.blocked).toEqual([[8, { isBlocked: true, blockedAt: "2026/07/25 19:38:10" }]]);
-    // 名单只管「以后进群踢不踢」，各群已有的 Telegram 封禁是另一套东西，
-    // 不说破的话管理员会以为人已经能回来了。
+    expect(unbanChatMemberIfBanned).toHaveBeenCalledWith(-2002, 7);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringMatching(/划掉.*各群解封/),
+      text: expect.stringMatching(/划掉.*在 1 个群把封禁一并解开/),
       replyToMessageId: 10,
     });
   });
@@ -155,13 +150,15 @@ describe("/unblock", () => {
     expect(wasUserConfirmedKickedInChat(-2002, 8, todayKey)).toBeTrue();
   });
 
-  test("本来就不在名单里时不投递任何重写", async () => {
+  test("本来就不在名单里时不重写，但仍默认解除各群封禁", async () => {
+    chatStates.set(-2002, { botIsAdmin: true });
     await handleUnblockCommand(context());
 
     expect(postDiskIO).not.toHaveBeenCalled();
+    expect(unbanChatMemberIfBanned).toHaveBeenCalledWith(-2002, 7);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("本来就不在本天才的小本本上"),
+      text: expect.stringMatching(/本来就不在小本本上.*在 1 个群把封禁一并解开/),
       replyToMessageId: 10,
     });
   });
@@ -192,11 +189,13 @@ describe("/unblock", () => {
   test("频道马甲同样可以解除：id 就是 sender_chat 的 id", async () => {
     target = { id: -4004, first_name: "Channel", isChannel: true };
     blockedUserIds.set(-4004, { isBlocked: true, blockedAt: "2026/07/25 19:40:00" });
+    chatStates.set(-2002, { botIsAdmin: true });
 
     await handleUnblockCommand(context());
 
     expect(blockedUserIds.has(-4004)).toBeFalse();
     expect(sessionUnblockedIds.has(-4004)).toBeTrue();
+    expect(unbanChatSenderChat).toHaveBeenCalledWith(-2002, -4004);
   });
 
   test("匿名管理员皮套被拒：那是整个群，不是某个人", async () => {
@@ -217,41 +216,26 @@ describe("/unblock", () => {
     });
   });
 
-  test("匿名管理员皮套带 all 时也被拒：不能拿整个群去跨群解封", async () => {
-    target = { id: -1001, first_name: "Group", isChannel: true };
+  test("旧 all 语法不再摘除或兼容，交给目标解析拒绝", async () => {
+    target = undefined;
     chatStates.set(-2002, { botIsAdmin: true });
 
     await handleUnblockCommand(context(1, "all"));
 
+    expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({ rawArgument: "all" }));
     expect(unbanChatSenderChat).not.toHaveBeenCalled();
     expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
   });
 });
 
-describe("/unblock all（跨群解封）", () => {
-  test("普通白名单成员用不了 all：波及面比「以后不再秒踢」大一档", async () => {
+describe("/unblock 默认跨群解封", () => {
+  test("只授予 isCanUnBlock 的白名单成员可以完整解封", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
     chatStates.set(-2002, { botIsAdmin: true });
 
-    await handleUnblockCommand(context(100, "@alice all"));
+    await handleUnblockCommand(context(100, "@alice"));
 
-    // 拒绝要发生在动名单之前：不能先把人放出来再说没权限。
-    expect(blockedUserIds.has(7)).toBeTrue();
-    expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
-    expect(resolveCommandTarget).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      chatId: -1001,
-      text: expect.stringContaining("isCanUnBlockAll"),
-      replyToMessageId: 10,
-    });
-  });
-
-  test("白名单成员获授 isCanUnBlockAll 后可以跨群解封", async () => {
-    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
-    chatStates.set(-2002, { botIsAdmin: true });
-
-    await handleUnblockCommand(context(200, "@alice all"));
-
+    expect(blockedUserIds.has(7)).toBeFalse();
     expect(unbanChatMemberIfBanned).toHaveBeenCalledWith(-2002, 7);
   });
 
@@ -262,7 +246,7 @@ describe("/unblock all（跨群解封）", () => {
     chatStates.set(-4004, { botIsAdmin: false });
     isBotAdminIn.mockResolvedValueOnce(true);
 
-    await handleUnblockCommand(context(1, "@alice all"));
+    await handleUnblockCommand(context(1, "@alice"));
 
     expect(blockedUserIds.has(7)).toBeFalse();
     // 本群排最前；botIsAdmin 不为 true 的群不进清单。
@@ -284,44 +268,17 @@ describe("/unblock all（跨群解封）", () => {
       return true;
     });
 
-    await handleUnblockCommand(context(1, "@alice all"));
+    await handleUnblockCommand(context(1, "@alice"));
 
     expect(wasUserConfirmedKickedInChat(-2002, 7, todayKey)).toBeFalse();
   });
 
-  test("不带 all 时一个群都不碰", async () => {
-    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
-    chatStates.set(-2002, { botIsAdmin: true });
-
-    await handleUnblockCommand(context(1));
-
-    expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      chatId: -1001,
-      text: expect.stringContaining("各群解封"),
-      replyToMessageId: 10,
-    });
-  });
-
-  test("回复目标消息时 all 是唯一参数，仍能解析出目标", async () => {
-    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
-    chatStates.set(-2002, { botIsAdmin: true });
-
-    await handleUnblockCommand(context(1, "all"));
-
-    // 目标来自回复（resolveCommandTarget 替身），传下去的参数已经把 all 摘掉。
-    expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({ rawArgument: "" }));
-    expect(unbanChatMemberIfBanned).toHaveBeenCalledTimes(1);
-  });
-
-  test("裸 id 与 all 混在一起时各自摘清楚，id 原样传给目标解析", async () => {
-    // all 不是十进制数字也不够 5 个字符，既撞不上 USER_ID_ARG_PATTERN 也撞不上
-    // USERNAME_ARG_PATTERN；摘掉它剩下的就是目标参数，顺序无关。
+  test("裸 id 原样传给目标解析并默认完整解封", async () => {
     target = { id: 4242 };
     blockedUserIds.set(4242, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
     chatStates.set(-2002, { botIsAdmin: true });
 
-    await handleUnblockCommand(context(1, "all 4242"));
+    await handleUnblockCommand(context(1, "4242"));
 
     expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({
       rawArgument: "4242",
@@ -341,7 +298,7 @@ describe("/unblock all（跨群解封）", () => {
     blockedUserIds.set(-1002233445566, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
     chatStates.set(-2002, { botIsAdmin: true });
 
-    await handleUnblockCommand(context(1, "-1002233445566 all"));
+    await handleUnblockCommand(context(1, "-1002233445566"));
 
     expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({
       rawArgument: "-1002233445566",
@@ -358,10 +315,10 @@ describe("/unblock all（跨群解封）", () => {
     expect(replies.at(-1)).toContain("频道 -1002233445566");
   });
 
-  test("本来就不在名单里时，all 照样解封：那是这个参数的全部意义", async () => {
+  test("本来就不在名单里时照样解封", async () => {
     chatStates.set(-2002, { botIsAdmin: true });
 
-    await handleUnblockCommand(context(1, "@alice all"));
+    await handleUnblockCommand(context(1, "@alice"));
 
     expect(unbanChatMemberIfBanned).toHaveBeenCalledWith(-2002, 7);
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -377,7 +334,7 @@ describe("/unblock all（跨群解封）", () => {
     chatStates.set(-3003, { botIsAdmin: true });
     unbanChatMemberIfBanned.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
-    await handleUnblockCommand(context(1, "@alice all"));
+    await handleUnblockCommand(context(1, "@alice"));
 
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
@@ -389,7 +346,7 @@ describe("/unblock all（跨群解封）", () => {
   test("一个管理群都没有时说清解不了", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
 
-    await handleUnblockCommand(context(1, "@alice all"));
+    await handleUnblockCommand(context(1, "@alice"));
 
     expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -404,7 +361,7 @@ describe("/unblock all（跨群解封）", () => {
     blockedUserIds.set(-4004, { isBlocked: true, blockedAt: "2026/07/25 19:40:00" });
     chatStates.set(-2002, { botIsAdmin: true });
 
-    await handleUnblockCommand(context(1, "@alice all"));
+    await handleUnblockCommand(context(1, "@alice"));
 
     expect(unbanChatSenderChat).toHaveBeenCalledWith(-2002, -4004);
     expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
@@ -420,11 +377,11 @@ describe("超级管理员不在白名单里的部署", () => {
     expect(blockedUserIds.has(7)).toBeFalse();
   });
 
-  test("仍能用 all：否则唯一有资格的人反而被第一道门挡住", async () => {
+  test("只凭超级管理员身份仍能默认完整解封", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
     chatStates.set(-2002, { botIsAdmin: true });
 
-    await handleUnblockCommand(context(1, "@alice all"));
+    await handleUnblockCommand(context(1, "@alice"));
 
     expect(unbanChatMemberIfBanned).toHaveBeenCalledWith(-2002, 7);
   });

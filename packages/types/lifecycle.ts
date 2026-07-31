@@ -31,7 +31,7 @@ export interface AcknowledgedUpdateRunner {
    * 是否有 update 以抛错结束。为真时**不得**确认最终 Telegram offset：那条
    * update 必须留给 Telegram 在重启后重投。
    *
-   * 单独暴露这个标记是因为停机路径会放弃在途批次、不再用它的汇总结果决定
+   * 单独暴露这个标记是因为停机路径会放弃在途 update、不再用它的结算结果决定
    * 退出状态；正常路径则由 task() 的 rejection 表达失败。标记在
    * handleUpdate 抛错的同一个同步段里写下，因此 size() 归零时它必然已生效。
    */

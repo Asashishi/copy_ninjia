@@ -29,7 +29,6 @@ export function acceptVerificationUpsert(
     snapshot.phase === "expelling";
   activeVerificationSnapshots.set(key, {
     ...snapshot,
-    messageIds: [...snapshot.messageIds],
     trackedMessageTimes: [...snapshot.trackedMessageTimes],
   });
   pendingVerificationDeletes.delete(key);

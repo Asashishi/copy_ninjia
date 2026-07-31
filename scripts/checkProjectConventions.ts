@@ -6,6 +6,7 @@ const PROJECT_ROOT: string = join(import.meta.dir, "..");
 const CACHE_ROOT: string = join(PROJECT_ROOT, "packages", "cache");
 const CONSTS_ROOT: string = join(PROJECT_ROOT, "packages", "consts");
 const SOURCE_ROOT: string = join(PROJECT_ROOT, "packages");
+const COMMANDS_ROOT: string = join(SOURCE_ROOT, "commands");
 
 /** 读取 Git 跟踪清单；约定检查只约束会进入提交的文件。 */
 function trackedFiles(): string[] {
@@ -476,6 +477,76 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
       );
     }
   }
+}
+
+/**
+ * 群聊命令文本必须经统一的 30 秒清理边界发送。头像更新结果虽在 copy owner
+ * 内异步落地，但只由 /copy 与 /steal_icon 触发，因此同样纳入检查。
+ */
+const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = Object.freeze([
+  ...sourceFilesUnder(COMMANDS_ROOT),
+  join(SOURCE_ROOT, "copy", "avatarQueue.ts"),
+]);
+for (const path of COMMAND_TEXT_OUTPUT_FILES) {
+  const source: ts.SourceFile = ts.createSourceFile(
+    path,
+    readFileSync(path, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  function visit(node: ts.Node): void {
+    if (
+      ts.isImportSpecifier(node) &&
+      (node.propertyName?.text ?? node.name.text) === "sendMessage"
+    ) {
+      failures.push(
+        `${relative(PROJECT_ROOT, path)}:` +
+        `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
+        "command text must use sendCommandMessage so group prompts are deleted"
+      );
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
+/**
+ * 入群验证按钮由状态机在点击、离群、豁免或超时结算时删除；inline 运势由
+ * Telegram inline API 生成。二者都不能误接命令文本的固定延迟清理边界。
+ */
+const FIXED_DELAY_DELETE_EXEMPT_FILES: readonly string[] = Object.freeze([
+  join(COMMANDS_ROOT, "luckChallenge.ts"),
+  ...sourceFilesUnder(join(COMMANDS_ROOT, "luckChallenge")),
+  join(
+    SOURCE_ROOT,
+    "workers",
+    "antiRaid",
+    "verificationReminders.ts"
+  ),
+]);
+for (const path of FIXED_DELAY_DELETE_EXEMPT_FILES) {
+  const source: ts.SourceFile = ts.createSourceFile(
+    path,
+    readFileSync(path, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  function visit(node: ts.Node): void {
+    if (
+      ts.isImportSpecifier(node) &&
+      (node.propertyName?.text ?? node.name.text) === "sendCommandMessage"
+    ) {
+      failures.push(
+        `${relative(PROJECT_ROOT, path)}:` +
+        `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
+        "state-owned button messages and inline luck results must not use fixed-delay command cleanup"
+      );
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
 }
 
 for (const path of sourceFilesUnder(SOURCE_ROOT)) {

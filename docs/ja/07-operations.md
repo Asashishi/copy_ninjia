@@ -38,7 +38,9 @@ WantedBy=multi-user.target
 
 データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` を container の一時 layer に置かないでください。
 
-この permission gate を含む版へ既存 deployment を更新する前に、すべての instance を停止して手動 migration します：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。program は data root と `logs/`、`memory/` を `0750` で作成し、runtime UID の所有であることを検証します。`config/` は project tree 内の deployment input で、独立した runtime data root の一部ではありません。ただし `/white` と `/permission` は `whitelist.json` を atomic rewrite するため、runtime user はこの directory で一時 file を作成して rename できる必要があります。その他の設定 file は read-only のままで構いません。既存 data-root directory が `0750` より広い場合は起動を拒否し、暗黙の chmod は行いません。必要なら実際の owner/group に置き換え、runtime user の書き込み権限を維持してください。
+この permission gate を含む版へ既存 deployment を更新する前に、すべての instance を停止して手動 migration します：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。program は data root と `logs/`、`memory/` を `0750` で作成し、runtime UID の所有であることを検証し、3 path のシンボリックリンクを拒否します。`config/` は project tree 内の deployment input で、独立した runtime data root の一部ではありません。ただし `/white` と `/permission` は `whitelist.json` を atomic rewrite するため、runtime user はこの directory で一時 file を作成して rename できる必要があります。その他の設定 file は read-only のままで構いません。実行中に `whitelist.json` を外部編集すると、次の authorization command は上書きを拒否します。停止中に再起動して新しい file から cache を作り直してください。既存 data-root directory が `0750` より広い場合は起動を拒否し、暗黙の chmod は行いません。必要なら実際の owner/group に置き換え、runtime user の書き込み権限を維持してください。
+
+`/unblock all` を削除する release への upgrade は strict configuration migration です。すべての instance を停止し、`config/whitelist.json` を worktree 外へ backup して、inventory・owner/mode・SHA-256 を記録します。各 entry から `isCanUnBlockAll` を手作業で削除し、現行の strict schema で parse できること、allowlist（`SUPER_ADMIN_USER_ID` を含む）と静的・動的 blocklist に交差がないことを確認します。期待する owner/mode を復元してから起動してください。旧 field は互換読込せず意図的に拒否するため、この変更は MAJOR release として扱います。backup と検証の出力に allowlist の内容を含めてはいけません。
 
 プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 
@@ -115,7 +117,7 @@ WantedBy=multi-user.target
 ### `memory/` の補助ファイルとプロセス内限定状態
 
 - 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。`ai/`、`stickers/`、`luck/` は起動時に `*.tmp` を清掃します。`blocklist/` の 2 owner は自分の `.blocklist.json.*.tmp` / `.removals.json.*.tmp` prefix だけを清掃し、`ad-detected/` は最初の書き込み前に `.sample.json.*.tmp`、`joinlog/` は当日の directory を最初に接管するとき `*.tmp` を清掃します。現在の `anti-raid/` 復元はこの種のファイルを無視しますが、自動削除はしません。復元には使われないため、Bot を停止し、名前が原子書き込み形式へ厳密に一致すると確認した後だけ孤児として削除できます。
-- `memory/ai/<chatId>.json.corrupt` と `memory/stickers/<pack>.json.corrupt` は JSON を parse できず隔離されたファイルです。通常復元の対象外で、自動削除もしません。parse はできても現行 version=1 schema に合わないファイルは隔離せず起動を拒否し、[06](06-modification-guide.md#永続化-schema-の変更) に従う手動 migration が必要です。
+- `memory/ai/<chatId>.json.<timestamp>.<uuid>.corrupt` と `memory/stickers/<pack>.json.<timestamp>.<uuid>.corrupt` は JSON を parse できず一意名で隔離されたファイルです。通常復元の対象外で、自動削除もしません。同じ元 path が再び壊れた場合は旧証拠を上書きせず新しい隔離件を残します。parse はできても現行 version=1 schema に合わないファイルは隔離せず起動を拒否し、[06](06-modification-guide.md#永続化-schema-の変更) に従う手動 migration が必要です。
 - `/block` の `confirmedKickedUserIdsByChat`、Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。特に東京日付単位の確認済み kick cache は日付変更またはプロセス再起動で空になり、`blocklist.json` や `removals.json` から推測して復元しません。
 
 Bot 停止中または storage snapshot の整合境界で、データルート全体をバックアップします。`memory/` は機密データとして扱ってください。単一 tenant デプロイ基準では file mode が緩い `0644` です。詳細は [04](04-invariants.md#永続化) を参照し、アクセス制御はデータルートの owner・permission と host account の隔離で行います。
@@ -170,8 +172,9 @@ jq -e '
 起動失敗は**意図的な fail-fast**で、原因を含みます。検査を迂回せず、原因に合わせて対応してください。
 
 - **パス付きでデータルート事前検査が失敗**
-  - **原因**：mode が `0750` より広い、ディレクトリへ書き込めない、または
-    filesystem が fsync、hard link、アトミック rename をサポートしない。
+  - **原因**：data root・`memory`・`logs` がシンボリックリンク、mode が `0750`
+    より広い、ディレクトリへ書き込めない、または filesystem が fsync、hard link、
+    アトミック rename をサポートしない。
   - **対応**：全 instance を停止し、owner/group を修正して
     `chmod 0750 <data-root>` を実行。それでも失敗する場合は、必要な semantics を
     持つ local filesystem を使用。

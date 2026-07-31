@@ -16,7 +16,7 @@ import {
   isWhitelisted,
   setWhitelistPermission,
 } from "../config/whitelist";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { isSuperAdminActor, resolveCommandActor } from "./commandActor";
 import { resolveCommandTarget } from "./targetResolution";
@@ -91,7 +91,7 @@ export async function handlePermissionCommand(
   const messageId: number | undefined = ctx.msgId;
   if (!isSuperAdminActor(ctx)) {
     const actor: CachedUser | undefined = resolveCommandActor(ctx);
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想改本天才的权限配置？哪来的资格呀，笨蛋♡`,
       replyToMessageId: messageId,
@@ -107,18 +107,19 @@ export async function handlePermissionCommand(
     tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_HELP_COMMAND
   ) {
     const helpMessage: PermissionHelpMessage = formatPermissionHelpMessage();
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: helpMessage.text,
       entities: helpMessage.entities,
       replyToMessageId: messageId,
+      preserveInGroup: true,
     });
     return;
   }
   const isEnableAll: boolean =
     tokens.at(-1)?.toLowerCase() === WHITELIST_PERMISSION_ALL_COMMAND;
   if (!isEnableAll && tokens.length < 2) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: PERMISSION_USAGE_TEXT,
       replyToMessageId: messageId,
@@ -134,7 +135,7 @@ export async function handlePermissionCommand(
     key = parseWhitelistPermissionKey(rawKey);
     value = parsePermissionBoolean(rawValue);
     if (key === undefined || value === undefined) {
-      await sendMessage({
+      await sendCommandMessage({
         chatId,
         text: `${PERMISSION_USAGE_TEXT}\n可用权限键：${WHITELIST_PERMISSION_KEYS.join(", ")}`,
         replyToMessageId: messageId,
@@ -166,7 +167,7 @@ export async function handlePermissionCommand(
   });
   if (target === undefined) return;
   if (!isWhitelisted(target.id)) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `${formatTargetLabel(target)} 还不在白名单里；先用 /white 把 TA 加进去再改权限呀，笨蛋♡`,
       replyToMessageId: messageId,
@@ -180,7 +181,7 @@ export async function handlePermissionCommand(
     const replyText: string = result.changed
       ? `哼，${formatTargetLabel(target)} 的权限已经被本天才全部打开啦，可别拿去乱来哦♡`
       : `笨蛋，${formatTargetLabel(target)} 的权限本来就是全开的，还想让本天才开几次呀♡`;
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: replyText,
       replyToMessageId: messageId,
@@ -197,7 +198,7 @@ export async function handlePermissionCommand(
     value,
   });
   const stateText: string = result.changed ? "已设为" : "原本就是";
-  await sendMessage({
+  await sendCommandMessage({
     chatId,
     text: `哼，${formatTargetLabel(target)} 的 ${key} ${stateText} ${String(value)} 啦♡`,
     replyToMessageId: messageId,

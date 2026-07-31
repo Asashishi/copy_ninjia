@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { Content, FunctionDeclaration, GenerateContentResponse, Part, Tool } from "@google/genai";
+import type { Content, FunctionCall, FunctionDeclaration, GenerateContentResponse, Part, Tool } from "@google/genai";
 import { systemPromptHolder } from "../../cache/workers/aiChat/prompts";
 import { PERSONA_PATH } from "../../consts/paths";
 import {
@@ -28,17 +28,11 @@ import {
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../aiChat/ai/mood";
 import { requestGeminiResult } from "../../aiChat/ai/gemini";
-import {
-  countGoogleSearchCalls,
-  extractFunctionCalls,
-  extractOutputText,
-  isTruncatedByTokenLimit,
-} from "../../aiChat/ai/utils/geminiResponse";
+import { countGoogleSearchCalls } from "../../aiChat/ai/utils/geminiResponse";
 import { callTool } from "../../aiChat/ai/tools";
 import { isPlainRecord } from "../../libs/runtimeConfig";
 import type { ReplyPromptSections, ReplyToolset } from "../../types/aiChat/replies";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
-import type { ExtractedFunctionCall } from "../../types/tools";
 import { currentTimeSentence } from "./timeSentence";
 
 export interface AvailableToolsParams {
@@ -231,7 +225,9 @@ export async function callGemini(
       }
     }
 
-    const functionCalls: ExtractedFunctionCall[] = extractFunctionCalls(data);
+    const functionCalls: (FunctionCall & { name: string })[] = (data.functionCalls ?? []).filter(
+      (call: FunctionCall): call is FunctionCall & { name: string } => typeof call.name === "string"
+    );
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
       // 模型这一轮的 content 原样接回（缺了 thought signature 会丢思考
       // 上下文），随后所有函数结果合并成一个 user turn 的 functionResponse
@@ -271,12 +267,7 @@ export async function callGemini(
       logger.error(`AI reply for chat ${chatId} hit the tool-round limit (${MAX_TOOL_ROUNDS}) with ${functionCalls.length} unexecuted tool call(s); ending the round.`);
     }
 
-    // 写到一半被 maxOutputTokens 腰斩的半句话，宁可不要，也不把断掉的句子
-    // 当兜底回复发到群里——真人不会发一半句子就没下文，见 aiChat/ai/gemini.ts 的
-    // isTruncatedByTokenLimit。googleSearch 命中时尤其容易撞进这种情况。
-    if (isTruncatedByTokenLimit(data)) return null;
-
-    return extractOutputText(data) || null;
+    return data.text || null;
   }
 
   return null;

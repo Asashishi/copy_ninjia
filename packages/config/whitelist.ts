@@ -1,8 +1,13 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import {
   whitelistConfigCache,
+  whitelistFileRevisionCache,
   whitelistMutationQueue,
 } from "../cache/main/whitelist";
+import type { WhitelistFileRevision } from "../cache/main/whitelist";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
   WHITELIST_PERMISSION_KEYS,
@@ -22,7 +27,57 @@ import type {
 
 export interface WhitelistMutationOptions {
   path?: string;
+  readBytes?: (path: string) => Promise<Uint8Array>;
   writeText?: (path: string, content: string) => Promise<void>;
+}
+
+/** 对白名单原始字节计算稳定指纹，不把部署配置内容写入日志或错误。 */
+function whitelistContentSha256(content: string | Uint8Array): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+async function readWhitelistBytes(path: string): Promise<Uint8Array> {
+  return await readFile(path);
+}
+
+/**
+ * 若当前 cache 是从同一路径加载的，落盘前复核原始字节未被外部修改。
+ * 返回 true 表示本次写入应继续维护该路径的指纹；测试手工注入的无来源 cache
+ * 不伪造磁盘 revision。
+ */
+async function assertWhitelistFileUnchanged(
+  path: string,
+  readBytes: (path: string) => Promise<Uint8Array>
+): Promise<boolean> {
+  const revision: WhitelistFileRevision | null =
+    whitelistFileRevisionCache.current;
+  if (revision?.path !== resolve(path)) return false;
+
+  let content: Uint8Array;
+  try {
+    content = await readBytes(path);
+  } catch (error: unknown) {
+    throw new Error(
+      `Whitelist config ${path} became unavailable; refusing to overwrite the cached snapshot`,
+      { cause: error }
+    );
+  }
+  if (whitelistContentSha256(content) !== revision.sha256) {
+    throw new Error(
+      `Whitelist config ${path} changed outside this process; refusing to overwrite it`
+    );
+  }
+  return true;
+}
+
+function publishWhitelistFileRevision(
+  path: string,
+  content: string | Uint8Array
+): void {
+  whitelistFileRevisionCache.current = {
+    path: resolve(path),
+    sha256: whitelistContentSha256(content),
+  };
 }
 
 /** Telegram 白名单身份允许正用户 ID 或负频道 ID，禁止零、前导零与非安全整数。 */
@@ -89,8 +144,15 @@ export function loadWhitelistConfig(path: string = WHITELIST_CONFIG_PATH): White
  * 取得本进程的白名单配置。生命周期会在联网前预热；这里保留惰性兜底，
  * 供独立单元调用与命令测试使用。
  */
-export function getWhitelistConfig(): WhitelistConfig {
-  whitelistConfigCache.current ??= loadWhitelistConfig();
+export function getWhitelistConfig(
+  path: string = WHITELIST_CONFIG_PATH
+): WhitelistConfig {
+  if (whitelistConfigCache.current === null) {
+    const content: Uint8Array = readFileSync(path);
+    whitelistConfigCache.current =
+      parseWhitelistConfig(JSON.parse(Buffer.from(content).toString("utf8")) as unknown);
+    publishWhitelistFileRevision(path, content);
+  }
   return whitelistConfigCache.current;
 }
 
@@ -129,11 +191,14 @@ export function setWhitelistPermission({
   value,
 }: SetWhitelistPermissionParams, {
   path = WHITELIST_CONFIG_PATH,
+  readBytes = readWhitelistBytes,
   writeText = atomicWriteText,
 }: WhitelistMutationOptions = {}): Promise<SetWhitelistPermissionResult> {
   let result: SetWhitelistPermissionResult | undefined;
   const mutation: Promise<void> = whitelistMutationQueue.current.then(async (): Promise<void> => {
     const current: WhitelistConfig = getWhitelistConfig();
+    const trackFileRevision: boolean =
+      await assertWhitelistFileUnchanged(path, readBytes);
     const existing: Readonly<WhitelistPermissions> | undefined = current.get(id);
     if (existing === undefined) {
       throw new Error(`Whitelist identity ${id} does not exist`);
@@ -149,8 +214,10 @@ export function setWhitelistPermission({
     });
     const next: Map<number, Readonly<WhitelistPermissions>> = new Map(current);
     next.set(id, permissions);
-    await writeText(path, serializeWhitelistConfig(next));
+    const content: string = serializeWhitelistConfig(next);
+    await writeText(path, content);
     whitelistConfigCache.current = next;
+    if (trackFileRevision) publishWhitelistFileRevision(path, content);
     result = { changed: true, permissions };
   });
   whitelistMutationQueue.current = mutation.catch((): void => undefined);
@@ -170,12 +237,15 @@ export function enableAllWhitelistPermissions(
   id: number,
   {
     path = WHITELIST_CONFIG_PATH,
+    readBytes = readWhitelistBytes,
     writeText = atomicWriteText,
   }: WhitelistMutationOptions = {}
 ): Promise<SetWhitelistPermissionResult> {
   let result: SetWhitelistPermissionResult | undefined;
   const mutation: Promise<void> = whitelistMutationQueue.current.then(async (): Promise<void> => {
     const current: WhitelistConfig = getWhitelistConfig();
+    const trackFileRevision: boolean =
+      await assertWhitelistFileUnchanged(path, readBytes);
     const existing: Readonly<WhitelistPermissions> | undefined = current.get(id);
     if (existing === undefined) {
       throw new Error(`Whitelist identity ${id} does not exist`);
@@ -194,8 +264,10 @@ export function enableAllWhitelistPermissions(
       Object.freeze(nextPermissions);
     const next: Map<number, Readonly<WhitelistPermissions>> = new Map(current);
     next.set(id, permissions);
-    await writeText(path, serializeWhitelistConfig(next));
+    const content: string = serializeWhitelistConfig(next);
+    await writeText(path, content);
     whitelistConfigCache.current = next;
+    if (trackFileRevision) publishWhitelistFileRevision(path, content);
     result = { changed: true, permissions };
   });
   whitelistMutationQueue.current = mutation.catch((): void => undefined);
@@ -217,11 +289,14 @@ export function setWhitelistMembership({
   enabled,
 }: SetWhitelistMembershipParams, {
   path = WHITELIST_CONFIG_PATH,
+  readBytes = readWhitelistBytes,
   writeText = atomicWriteText,
 }: WhitelistMutationOptions = {}): Promise<SetWhitelistMembershipResult> {
   let result: SetWhitelistMembershipResult | undefined;
   const mutation: Promise<void> = whitelistMutationQueue.current.then(async (): Promise<void> => {
     const current: WhitelistConfig = getWhitelistConfig();
+    const trackFileRevision: boolean =
+      await assertWhitelistFileUnchanged(path, readBytes);
     const existing: Readonly<WhitelistPermissions> | undefined = current.get(id);
     if (enabled && existing !== undefined) {
       result = { changed: false, permissions: existing };
@@ -240,8 +315,10 @@ export function setWhitelistMembership({
     } else {
       next.delete(id);
     }
-    await writeText(path, serializeWhitelistConfig(next));
+    const content: string = serializeWhitelistConfig(next);
+    await writeText(path, content);
     whitelistConfigCache.current = next;
+    if (trackFileRevision) publishWhitelistFileRevision(path, content);
     result = { changed: true, permissions };
   });
   whitelistMutationQueue.current = mutation.catch((): void => undefined);

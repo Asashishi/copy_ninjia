@@ -1,5 +1,4 @@
 import type { Tool } from "@google/genai";
-import type { ToolDefinition } from "../tools";
 import type { StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../stickers/tools";
 import type { ChatActionControl } from "./chatAction";
 import type { AiDirectTriggerReason, ImageGenerationReference } from "./protocol";
@@ -59,7 +58,6 @@ export interface ReplyToolContext {
 
 /** 一轮 AI 回复的函数工具集与执行状态。 */
 export interface ReplyToolset {
-  definitions: ToolDefinition[];
   tools: Tool[];
   has(name: string): boolean;
   execute(name: string, argumentsJson: string): Promise<string>;

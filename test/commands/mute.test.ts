@@ -15,7 +15,7 @@ mock.module("../../packages/config/whitelist", () => ({
     id === 100 && (key === "isCanMute" || key === "isCanUnMute"),
 }));
 mock.module("../../packages/infra/telegram", () => ({
-  sendMessage,
+  sendCommandMessage: sendMessage,
   muteChatMemberWithOutcome,
   unmuteChatMemberWithOutcome,
 }));

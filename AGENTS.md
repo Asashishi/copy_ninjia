@@ -1,93 +1,85 @@
 # 项目须知
 
-## 改文件前先备份重要状态
-改动运行时状态/数据文件（`state.json`、`memory/` 快照、`bot.lock` 等），或改动会触发代码路径写这类文件时，先 `cp` 备份一份（或读出内容存进 scratchpad）再动手，确认无误后清理备份。一切可能被运行中进程读写、或没有版本控制兜底的文件都适用。
+## 数据、配置与发布安全
 
-## 部署配置与原地发布保护
-- `config/`、`.env`、`g-auth.json` 与运行时状态同属**部署方数据**。即使其中某个文件当前仍被 Git 跟踪，也不能把 Git 历史、目标分支或 `config_example/` 当成部署备份；示例内容可能与线上配置完全不同。
-- 仓库目录同时被 systemd/其它 supervisor 用作 `WorkingDirectory` 时，优先在独立 clone/worktree 中完成合并、测试、打 tag 与发布，不能让发布用的 `checkout`/`reset` 改写正在运行的工作树。确需原地更新时，先停止服务并确认已 inactive；没有停服务权限就暂停并向用户说明，禁止让 supervisor 在半迁移工作树上反复拉起进程。
-- 执行任何可能改写工作树的 Git 操作前（包括 `pull`、`checkout`/`switch`、`merge`、`reset`、`rebase`、`clean`），必须先检查当前状态、目标差异与部署文件跟踪关系：至少查看 `git status --short`、`git diff --name-status <current>..<target>`、`git ls-files config .env g-auth.json`。只要部署路径出现在新增/删除/重命名中、`.gitignore` 将发生变化，或文件会从“受跟踪”变为“忽略”，就进入下面的强制迁移流程。
-- 强制迁移流程开始时，先用 `mktemp -d` 在**工作树之外**建立临时备份目录，再复制当前部署文件；记录文件清单、权限/属主和 SHA-256。复制命令即使只因无法保留属主而返回非零，也必须逐文件核对备份哈希，不能凭目录存在就认定备份成功。敏感文件不得复制进仓库、提交或输出正文。
-- 从“受跟踪”迁移为“忽略”的文件尤其危险：目标提交里的删除/重命名会在 `checkout`、`merge`、`reset` 或后续 `pull` 时删除当前工作树中的干净文件，**目标分支已经忽略它并不会阻止删除**。必须在第一次切换到该提交之前完成外部备份；迁移属于破坏性部署变更，Release 的 Compatibility / Migration Notes 必须明确写出备份、恢复与权限步骤。
-- Git 操作完成后，先恢复部署文件，再按新结构手工迁移；不能用 `cp -r config_example config` 覆盖已有部署配置。只补缺失文件也要使用不覆盖语义或逐文件确认。恢复后逐文件核对哈希/预期差异、严格解析结果与访问权限；会被 `/white`、`/permission` 等运行时命令原子改写的 `config/` 目录及目标文件，必须对服务账号可写。
-- 只有部署配置与运行时状态全部就位后才能启动服务。启动后至少确认 `ActiveState=active`、`SubState=running`，观察不少于两个 supervisor 重启间隔，并确认 `NRestarts` 不再增长、journal 没有新的非零退出；不能把“一次 start 成功”当成恢复完成。
-- 外部备份只能在文件哈希/迁移结果、配置校验、服务稳定性都确认后清理。任一步失败都保留备份和现场，停止继续合并、发布或对齐分支。
+- 改动运行时状态/数据（`state.json`、`memory/`、`bot.lock` 等），或会触发相关写路径前，先 `cp` 备份或读入 scratchpad；所有可能被运行进程写入、且无版本控制兜底的文件同理，确认无误后再清理备份。
+- `config/`、`.env`、`g-auth.json` 和运行时状态都是部署方数据；即使受 Git 跟踪，也不能用 Git 历史、目标分支或 `config_example/` 代替部署备份。
+- 仓库若是 systemd/supervisor 的 `WorkingDirectory`，优先在独立 clone/worktree 合并、测试、打 tag、发布。确需原地更新，必须先停服务并确认 inactive；无权限则暂停并说明，禁止 supervisor 在半迁移工作树上反复拉起。
+- 执行 `pull`、`checkout`/`switch`、`merge`、`reset`、`rebase`、`clean` 等改写工作树的 Git 操作前，至少检查：`git status --short`、`git diff --name-status <current>..<target>`、`git ls-files config .env g-auth.json`。部署路径有新增/删除/重命名、`.gitignore` 变化，或文件将从“受跟踪”变为“忽略”时，必须走下列迁移流程。
+- 迁移前用 `mktemp -d` 在工作树外备份部署文件，并记录清单、权限/属主、SHA-256；复制仅因无法保留属主而非零时也要逐文件核对哈希。敏感内容不得进入仓库、提交或输出正文。
+- “受跟踪 → 忽略”的文件可能在首次切换到目标提交时被删除，目标分支已忽略它也不会阻止删除；必须提前外部备份，并在 Release 的 Compatibility / Migration Notes 写明备份、恢复和权限步骤。
+- Git 操作后先恢复部署文件，再按新结构手工迁移；禁止 `cp -r config_example config` 覆盖现有配置。补缺也须使用不覆盖语义或逐项确认，并核对哈希/预期差异、严格解析与权限；`/white`、`/permission` 等会原子改写的目录和文件须对服务账号可写。
+- 配置和状态全部就位后才能启动。启动后确认 `ActiveState=active`、`SubState=running`，观察至少两个 supervisor 重启间隔，并确认 `NRestarts` 不增长、journal 无新非零退出。只有哈希/迁移、配置校验和服务稳定性均确认后才能删外部备份；任一步失败都保留备份与现场并停止发布。
+- 文件结构变化只做手工迁移，不在代码中保留旧格式兼容逻辑。
 
-## 新旧文件格式兼容性
-文件结构变化时，手动把旧文件迁移到新格式，不在代码中保留任何兼容逻辑。
+## 功能实现前先核查依赖
 
-## 分支与提交
-- 仓库只有 `master` 与 `dev` 两个分支，不开功能分支。一切开发在 `dev` 上进行，不直接向 `master` 提交。
-- 每次 `git commit` 前先 `git branch --show-current` 确认所在分支：`master` 上只允许 `git merge --squash` 之后的那一次提交，其余一律在 `dev` 上。误提交到 `master` 且尚未推送时，用 `git cherry-pick` 把提交搬到 `dev`、`git branch -f master origin/master` 复位，再走正常 squash 流程。
-- 合并进 `master` 只用 squash（`git merge --squash` + 单次 `git commit`），一次改动收敛成一个提交，开发过程中的中间提交不进 `master` 历史。
-- squash 提交的信息要覆盖整个改动集，并说明「为什么这么改」而不只是「改了什么」。
-- 合并前必须 `bun run check` 全绿；碰到持久化、停机、Worker 生命周期相关代码时再补 `bun run test:fault-injection`。任一项失败不得合并。
-- 每次准备合并 `master` 时，先同步远端 tags，并用 `gh release list` 读取 GitHub 当前 Latest Release 的 tag；版本只允许不带 `v` 前缀的 `MAJOR.MINOR.PATCH`（例如 `1.0.9`）。新版本按本次完整改动的最高语义影响决定：破坏兼容升 `MAJOR`（`1.0.9` → `2.0.0`），向后兼容的新增功能升 `MINOR`（`1.0.9` → `1.1.0`），只有修复、性能、重构或文档时才升 `PATCH`（`1.0.9` → `1.0.10`）；混合改动取其中最高级别。不得凭本地旧 tag 猜版本；目标 tag 已存在时重新拉取 Release 状态并计算，禁止覆盖、移动或复用已有 tag。
-- `master` squash 提交经门禁确认后，先推送 `master`，再为该提交创建 annotated version tag 并单独推送。两次推送均成功后，用 `gh release create <tag> --verify-tag --target master ...` 创建 GitHub Release；Release 标题和说明使用英文，只介绍「上一个 Latest Release tag..本次 `master`」的最新增量，至少包含 Highlights、Compatibility / Migration Notes、Validation，测试数与覆盖率必须来自本次真实门禁输出。
-- tag 已推送但 GitHub Release 创建失败时，保留该 tag 并针对同一 tag 重试，不得再次递增版本。`master`、version tag、GitHub Release 任一步未确认成功，都不得宣称发布完成，也不得提前改写 `dev`。
-- `master`、version tag 与 GitHub Release 全部发布成功后，把 `dev` 重新对齐到 `master` 再继续：先 `git diff dev master --quiet` 确认两边树一致，再在 `dev` 上执行 `git reset --hard master` 与 `git push --force-with-lease origin dev`。
-- 覆盖率/测试数分散在徽章、`docs/assets/coverage_{light,dark}.svg`、README 的 `<img alt>` 与三份开发文档里：仅在用户明确要求同步文档或指标时，才按合并前那次 `bun run check` 的真实输出逐处同步，不要凭估计填；未明确要求时不改这些文件，只在交付时提醒用户指标已变化并列出待同步位置。完整位置清单见 [`docs/05-dev-workflow.md`](docs/05-dev-workflow.md) 的「同步 README 指标」。
+- 先查 `package.json`、锁文件、已安装版本的本地类型声明/源码及官方文档，确认当前技术栈和精确版本；OpenAI、Telegram/grammY 等 SDK 必须优先查官方文档，不凭记忆猜接口，也不引入无关或版本不匹配的实现。
+- 若库或平台 API 已完整覆盖所需职责、行为和生命周期，直接调用 API，不得复制、重写或套一层等价功能；同时清理失去用途的实现、常量、缓存、类型、测试和说明。
+- 仅当 API 缺少项目特有的组合语义、错误归一化、权限边界或生命周期约束时，才增加复用底层 API 的最薄适配层，并用实现和测试明确覆盖真实差异。
+
+## Telegram 提示留存
+
+- Bot 发到群里的非功能性提示（含命令校验失败、权限拒绝、用法提示、操作回执）发送成功后必须统一在 **30 秒后删除**；统一复用发送/清理边界，不得遗漏旁路或重复实现定时删除。
+- 唯一长期保留的命令提示是 `/permission help`。新增例外须由用户明确授权，并在调用点和测试中显式标记。
+- 删除任务不得阻止进程退出；发送失败不创建删除任务，删除失败走统一 Telegram 错误日志。私聊和功能性内容不受此规则约束；入群验证等带按钮消息由按钮/状态机自己的路径删除，inline 运势由 inline API 生成，二者都禁止挂固定延迟删除。
+
+## 分支、提交与发布
+
+- 只使用 `master`、`dev`，不开功能分支；开发一律在 `dev`，不直接提交到 `master`。
+- 每次 commit 前运行 `git branch --show-current`。`master` 只允许 `git merge --squash` 后的单次提交；误提交且未推送时，先 cherry-pick 到 `dev`，再以 `git branch -f master origin/master` 复位并走正常 squash。
+- 合入 `master` 只能 `git merge --squash` + 单次 commit；提交信息覆盖完整改动集并说明“为什么”。合并前 `bun run check` 必须全绿；涉及持久化、停机或 Worker 生命周期时再跑 `bun run test:fault-injection`，失败不得合并。
+- 发布前同步远端 tags，并用 `gh release list` 读取 GitHub Latest Release。版本仅用无 `v` 前缀的 `MAJOR.MINOR.PATCH`：破坏兼容升 MAJOR、兼容新增升 MINOR、仅修复/性能/重构/文档升 PATCH，混合改动取最高级。不得根据本地旧 tag 猜版本；目标 tag 已存在时重新读取 Release 状态并重算，禁止覆盖、移动或复用。
+- 门禁通过后依次：推送 `master`；为该提交创建并单独推送 annotated version tag；执行 `gh release create <tag> --verify-tag --target master ...`。Release 标题和说明用英文，仅描述“上一个 Latest tag..本次 `master`”的增量，至少含 Highlights、Compatibility / Migration Notes、Validation；测试数与覆盖率必须来自本次门禁。
+- tag 已推送但 Release 创建失败时保留并重试同一 tag，不再递增。`master`、tag、Release 任一未确认成功，都不得宣称发布完成或改写 `dev`。
+- 全部发布成功后，先以 `git diff dev master --quiet` 确认树一致，再在 `dev` 执行 `git reset --hard master` 和 `git push --force-with-lease origin dev`。
+- 仅当用户明确要求同步文档/指标时，才按合并前真实 `bun run check` 输出更新徽章、`docs/assets/coverage_{light,dark}.svg`、README `<img alt>` 和三份开发文档；否则不改，只在交付时列出待同步位置。完整清单见 `docs/05-dev-workflow.md` 的“同步 README 指标”。
 
 ## 编码规范
-- 当一个文件的代码行数超过 500 行，考虑拆分成多个文件；超过 1000 行，必须拆分。
-- 风格细则（引号、缩进、逗号、空格等）由 eslint 强制；提交前跑 `bun run lint && bun run typecheck`（或全量 `bun run check`）。以下是放置位置与写法约定，未列出的以现有代码为准；跨模块、跨生命周期的权威约束见 `docs/04-invariants.md`。
+
+- 文件超过 500 行考虑拆分，超过 1000 行必须拆分。风格由 eslint 决定；提交前跑 `bun run lint && bun run typecheck` 或全量 `bun run check`。跨模块/生命周期约束以 `docs/04-invariants.md` 为准。
 
 ### 常量
-- 字面量常量集中在 `packages/consts/<domain>.ts`，不散落在业务模块；env 派生的配置是例外，统一在 `packages/infra/config.ts`。
-- SCREAMING_SNAKE_CASE，显式类型标注（`STATE_SAVE_MAX_ATTEMPTS: number`）；容器用 `readonly` / `Readonly<T>`，跨调用方共享的对象常量 `Object.freeze`。
-- 每个常量带中文 JSDoc 说明用途与不变量，指明所属模块；长数值字面量用 `_` 分隔（`30_000`）。
-- 领域变大后拆成 `packages/consts/<domain>/` 子模块，原 `<domain>.ts` 降级为兼容入口（`export * from`），新代码直接从子模块导入。
 
-### 缓存（进程内存状态）
-- 长期存活的 Map/Set/队列/timer/单例引用放 `packages/cache/`，**第一层目录必须是 owner 线程**：`main/`、`workers/aiChat/`、`workers/antiRaid/`、`workers/diskIO/`、`perThread/`（每线程各一份、彼此无关的状态）。文件头注明 owner 模块，如「AI 闲聊主线程侧代理（packages/aiChat/index.ts）的内存状态」。
-- 一份缓存只能被它所属的那条线程 import——跨线程只传消息不共享内存，别的线程拿到的是同一份代码的另一个实例，写进去对面永远读不到。`bun run check:conventions` 会从四个线程入口算运行时 import 闭包核对这件事，违例时打印完整引入链；完整规则见 `docs/04-invariants.md` 的「线程与状态归属」。
-- 可变单例用 holder 对象 `{ current: T | null }`，不用 `export let`。
-- 每个导出带 JSDoc 说明生命周期：何时填充、何时清理、Worker 崩溃重启后如何重建；容量与清理策略须满足 `docs/04-invariants.md` 的约束。
-- 泛型写在类型标注上：`const cache: Map<number, string> = new Map()`。
+- 字面量常量放 `packages/consts/<domain>.ts`；env 派生配置放 `packages/infra/config.ts`。使用 `SCREAMING_SNAKE_CASE` 和显式类型；容器用 `readonly`/`Readonly<T>`，共享对象用 `Object.freeze`，长数值用 `_`。
+- 每个常量带中文 JSDoc，说明用途、不变量和所属模块。领域变大时拆为 `packages/consts/<domain>/`；原文件仅作 `export * from` 兼容入口，新代码直接导入子模块。
 
-#### 新增缓存的最低跨线程要求
-按顺序过这几条，前一条能满足就不要往下走：
+### 缓存（进程内状态）
 
-1. **先定 owner：谁写它就归谁。** 判不出唯一写者，说明这不该是一份缓存，而是两份。目录第一层写上这条线程，门禁按真实模块图核对。
-2. **默认不许为一份新缓存新增任何跨线程消息。** 先问「能不能放在用它的那条线程」——能就放那儿，到此为止。绝大多数缓存止于这一条。
-3. **只有观测点与使用点天生不在同一条线程时才允许镜像**（例如只有主线程收得到 Telegram update，只有 Anti-Raid Worker 发得出踢人请求）。允许的形态只有两种：owner 侧**变更时推送**、使用侧只读；或为了不丢数据的**持久化回执**往返。
-4. **禁止「按需向对面要」（每次读取一条 request/reply）。** 一次内存访问换一次 IPC 往返，量级差着数个数量级；真需要这么做，说明缓存放错了线程，回到第 2 条重选，而不是加协议。
-5. **每条群消息级的高频路径上不得新增镜像同步。** 判定要的字段直接放进那条消息里——现成范例是 `floodCandidate`/`adCandidate` 的 `label` 由主线程算好带过去，Worker 不为此另养一份身份缓存。
-6. **镜像的 JSDoc 必须写清四件事，缺一不可**：权威副本在哪条线程；何时推、推全量还是增量；Worker 崩溃重建与进程重启后由谁重放补齐；**「没有条目」表示什么**——必须落在安全的那一侧（「此刻未知 / 这个动作做不了」），绝不能折算成沿用旧值。现成范例见 `packages/cache/workers/antiRaid/botPermissions.ts`。
-7. **别让纯函数和别的线程的缓存同住一个文件。** 主线程 import 一个纯函数，就会把同文件里 Worker 独占的 Map 在主线程也实例化一份、且永远是空的。拆成不碰缓存的叶子模块，范例见 `packages/aiChat/ai/stickers/describe.ts`。
+- 长期 Map/Set/队列/timer/单例放 `packages/cache/<owner>/`；第一层 owner 只能是 `main/`、`workers/aiChat/`、`workers/antiRaid/`、`workers/diskIO/`、`perThread/`。文件头注明 owner。
+- 缓存只能被 owner 线程 import；跨线程只传消息，不共享内存。`bun run check:conventions` 会按线程入口的真实 import 闭包检查；完整规则见 `docs/04-invariants.md`“线程与状态归属”。
+- 可变单例用 `{ current: T | null }` holder，不用 `export let`；泛型写在类型标注上。每个导出须用 JSDoc 说明填充/清理时机、Worker 崩溃重建方式、容量与清理策略。
 
-### 性能、内存分配与 Bun/JSC JIT
-- 正确性、状态机不变量、生命周期与可维护性优先于性能。Bun 的运行时基于 JavaScriptCore；这里的目标是让真实高频路径保持稳定、容易被 JIT 持续优化，并减少无意义的短命对象和 GC 压力，不以牺牲语义或扩大无界常驻内存来换取表面上的少分配。
-- 优化前先定位真实热点。优先检查每条消息、每次队列循环、每次 Worker 消息都会执行的路径；冷启动、低频管理命令和 I/O 等待路径没有测量证据时不做微优化。
-- 热调用点的参数与返回值类型要稳定，同一字段不要在不同调用中混用互不相关的类型。高频对象应一次性按固定顺序初始化所需字段，避免创建后再增删属性或让同一调用点长期接收多种对象 shape；不得仅为统一 shape 给所有对象补大量无用字段。
-- 高频循环和消息链路中，能直接读取现有值时不创建投影对象、临时数组、复合键字符串或一次性闭包；谨慎使用对象展开、数组展开以及只为串联处理而产生中间数组的 `map` / `filter` / `flatMap`。超过 3 个位置参数时仍遵守 options 对象规范，但优先传递已有上下文对象，避免再复制一层同构 options。
-- 跨线程只发送接收方完成工作所需的最终载荷，避免在发送前后反复展开、深拷贝或重建同一数据。不得为了减少 structured clone 改成跨线程共享可变内存，也不得在每条群消息的高频路径上新增同步往返。
-- 对重复的规范化、解析、序列化与复合键构造，只有在输入不变且失效边界明确时才缓存结果；缓存必须有 owner、容量上限、清理时机和 Worker 重建策略，禁止用无界缓存把 GC 压力转化为常驻内存泄漏。
-- 有界高频队列、滑动窗口和数值缓冲区优先评估连续存储、环形缓冲区或 TypedArray，避免为每个元素额外创建节点对象；是否采用必须由基准与内存数据决定，不能破坏现有容量、顺序、淘汰和停机语义。
-- 热函数保持职责单一、控制流清晰、异常路径与 I/O 路径易于隔离；不要为了猜测 JIT 的内联行为把逻辑拆成大量薄包装，也不要把多个领域状态塞进一个巨型函数。
-- 性能改动必须有可复现的前后对照：固定 Bun 版本与输入，先预热再采样，使用独立进程重复运行，记录吞吐或延迟以及堆占用 / GC 变化；差异必须明显高于测量噪声。CPU 与堆分析优先使用 Bun 自带 profiler、`performance.now()` / `Bun.nanoseconds()` 和 `bun:jsc` 的堆统计能力。
-- `Bun.gc()`、强制 GC、`--smol`、人为延长对象生命周期只允许用于诊断或基准，不得进入生产控制流。禁止无证据引入对象池，尤其不得复用消息载荷、状态机事件、权限结果等可能逃逸或跨异步边界的可变对象。
-- 每次性能优化都要保留语义测试，并针对被优化热路径补基准或压力验证；如果收益依赖改变持久化格式、状态机顺序、权限边界或 Worker 生命周期，按对应变更处理，不能以“触发 JIT”为理由绕过迁移与门禁。
+新增缓存按顺序满足，前一项可行就不进入下一项：
 
-### 类型安全
-- 变量类型应该显式写明，不依赖类型推导；函数参数、返回值、对象属性、数组元素等都要标注类型，包括 for (let i: number)。三处例外：`for...of` / `for...in` 的循环变量（TS 语法不允许标注）、初始化器已是全标注箭头函数的 const（不再重复写一遍函数类型）、类型定义反过来引用自身的 `typeof` 常量。
-- 共享类型按领域放 `packages/types/<domain>.ts`；`packages/types/index.ts` 汇总入口只留给测试与渐进迁移，生产代码从领域文件直接导入。
-- 类型导入用独立的 `import type` 语句，与值导入分开。
-- 导出函数显式标注返回类型（含 `Promise<T>`）；`catch (error: unknown)`。
-- 生产代码禁 `any`（测试文件豁免）；tsconfig 全严格且开 `noUncheckedIndexedAccess`，索引访问要处理 `undefined`。
+1. 谁写谁是 owner；没有唯一写者就拆成两份缓存。
+2. 默认不新增跨线程消息；缓存能放在使用线程就放在那里。
+3. 仅当观测点与使用点天然跨线程时允许镜像，且只能“owner 变更时推送、使用侧只读”或“为防丢失的持久化回执”。
+4. 禁止每次读取都 request/reply；需要这样做说明 owner 选错，应回到第 2 项。
+5. 每条群消息的高频路径禁止镜像同步；把接收方需要的最终字段放进现有消息（如 `floodCandidate`/`adCandidate.label`）。
+6. 镜像 JSDoc 必须写清权威线程、推送时机与全量/增量、Worker/进程重启的重放者，以及“无条目”的 fail-safe 含义；不得把缺失解释为沿用旧值。范例：`packages/cache/workers/antiRaid/botPermissions.ts`。
+7. 纯函数不得与另一线程独占缓存同文件；拆为不接触缓存的叶子模块。范例：`packages/aiChat/ai/stickers/describe.ts`。
 
-### 传参
-- 位置参数最多 3 个（eslint `max-params`）；超过就收敛成单个 options 对象，类型用导出的 `XxxParams` interface 定义在函数旁，函数签名处解构。
-- 可选项在 interface 上标 `?`，默认值写在解构处（`api = bot.api`）。
-- 导出函数用 `function` 声明；箭头函数只用于回调和 IIFE。
+### 性能、内存与 Bun/JSC JIT
 
-### 注释与日志
-- 注释用中文，解释局部不变量和「为什么」；涉及跨模块约束时引用 `docs/04-invariants.md`，不重复叙述。
-- 日志一律使用 `logger`，不直接 `console.log`；`packages/workers/diskIOWorker.ts` 与 `packages/workers/diskIO/` 自身的报错例外，用 `console.error`。
-- `logger.error` 等错误日志文案一律英文。
+- 正确性、状态机、生命周期和可维护性优先。先定位每消息、队列循环、Worker 消息等真实热点；无测量证据不优化冷启动、低频命令或 I/O 等待路径。
+- 热调用点保持类型和对象 shape 稳定；按固定顺序一次初始化所需字段，不事后增删，也不为统一 shape 补大量无用字段。
+- 高频路径能直接读现值就不创建投影对象、临时数组、复合键、一次性闭包或 `map`/`filter`/`flatMap` 中间结果；超过 3 参数仍用 options，但优先传现有上下文而非复制同构对象。
+- 跨线程只传最终所需载荷，不反复展开/深拷贝/重建；禁止用共享可变内存减少 clone，也禁止在每条群消息路径增加同步往返。
+- 仅在输入稳定且失效边界明确时缓存重复解析/序列化/规范化/复合键；缓存须有 owner、容量、清理与 Worker 重建策略。高频有界队列/窗口/数值缓冲仅在基准支持时采用连续存储、环形缓冲或 TypedArray，且不得改变容量、顺序、淘汰或停机语义。
+- 热函数保持单一职责和清晰控制流，不为猜测内联而堆薄包装，也不合并成巨型函数。性能对照须固定 Bun 和输入、预热、独立进程重复，记录吞吐/延迟与堆/GC，差异须高于噪声；优先用 Bun profiler、`performance.now()`/`Bun.nanoseconds()`、`bun:jsc`。
+- `Bun.gc()`、强制 GC、`--smol`、人为延长对象生命周期仅用于诊断/基准，不进生产；无证据禁止对象池，尤其不得复用会逃逸或跨异步边界的可变载荷/事件/权限结果。
+- 性能改动保留语义测试，并为热点补基准/压力验证；若收益依赖持久化格式、状态机顺序、权限或 Worker 生命周期变化，按对应变更处理，不得以 JIT 为由绕过门禁。
 
-### 文档
-- 代码中涉及的约束、流程、设计理念等，写在 `docs/` 下的 Markdown 文档里；代码里只写必要的 JSDoc 注释。
-- 本节是文档改动的执行门禁；仓库其他文件中“需同步”“应更新”等说明只用于定位待同步范围，不构成用户未明确要求时主动修改文档的授权。
-- 用户未显式要求修改或同步文档时，不主动改动 `docs/`、README、文档资产或其他说明文件；若代码变更导致文档、参数说明或实测指标失真，只在交付时明确提醒用户有哪些内容需要同步。
-- 只有用户明确提出“更新文档”“同步文档 / README / 指标”等要求时，才在本次任务中同步；同步内容必须依据本次真实代码与门禁输出，不得凭估计填写。
+### 类型与接口
+
+- 变量、参数、返回值、对象属性、数组元素和普通 `for` 变量显式标注类型。仅豁免：`for...of`/`for...in` 变量、初始化器已是全标注箭头函数的 `const`、自引用 `typeof` 常量。
+- 共享类型按领域放 `packages/types/<domain>.ts`；生产代码直接导入领域文件，`packages/types/index.ts` 只供测试和渐进迁移。类型导入单独使用 `import type`。
+- 导出函数标注返回类型（含 `Promise<T>`）；使用 `catch (error: unknown)`。生产代码禁 `any`（测试豁免）；保持 strict 与 `noUncheckedIndexedAccess`，处理索引的 `undefined`。
+- 位置参数最多 3 个；更多参数改为函数旁导出的 options interface，并在签名处解构。可选项用 `?`，默认值写在解构处。导出函数用 `function`，箭头函数仅用于回调/IIFE。
+
+### 注释、日志与文档
+
+- 注释和 JSDoc 用中文，解释不变量与“为什么”；跨模块约束引用 `docs/04-invariants.md`，不重复全文。
+- 日志统一用 `logger`，不直接 `console.log`；仅 `packages/workers/diskIOWorker.ts`、`packages/workers/diskIO/` 内错误可用 `console.error`。`logger.error` 等错误文案用英文。
+- 约束、流程、设计写入 `docs/`，代码只留必要 JSDoc。除用户明确要求更新文档/README/指标外，不主动修改；其它文件的“需同步”仅用于定位，不构成授权。若代码使文档失真，交付时列出待同步项；获授权后也只能依据真实代码与门禁输出更新。

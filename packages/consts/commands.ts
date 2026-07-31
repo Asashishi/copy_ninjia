@@ -1,5 +1,8 @@
 import type { BotCommand } from "@grammyjs/types";
 
+/** 群聊命令文本发送后自动清理的最长保留时间。 */
+export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
+
 /** 命令处理（packages/commands）的调参常量。 */
 
 /**
@@ -23,7 +26,7 @@ export const BOT_COMMANDS: readonly BotCommand[] = Object.freeze([
   // 放行到消息兜底（会被当成普通消息进入 AI/复读流水线）。
   Object.freeze({ command: "x", description: "动作命令：把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 的消息或加 @username 指定对象" }),
   Object.freeze({ command: "block", description: "拉黑：写进永久黑名单并在所有本天才管理的群里踢出封禁，之后再进群秒踢；回复消息、@username 或直接给用户 id 指定目标（仅白名单用户可用）" }),
-  Object.freeze({ command: "unblock", description: "解除拉黑：把人从永久黑名单里划掉，之后进群不再秒踢；支持回复消息、@username、用户 id 或频道的负数 id；加 all 参数连各群封禁一起解（仅白名单用户可用，all 仅超级管理员）" }),
+  Object.freeze({ command: "unblock", description: "完整解除拉黑：移出永久黑名单并解除所有托管群封禁；支持回复消息、@username、用户 id 或频道的负数 id（仅白名单用户可用）" }),
   Object.freeze({ command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" }),
   Object.freeze({ command: "ad_detect", description: "开关本群广告检测，enable/disable；命中即拉黑并全群封禁删消息（仅限定用户可用）" }),
   Object.freeze({ command: "switch_mood", description: "重新抽一个本群 AI 的当前心情（仅限定用户可用）" }),
@@ -91,15 +94,6 @@ export const CHAT_ID_ARG_PATTERN: RegExp = /^-[1-9]\d*$/;
  * 所属模块：commands/targetResolution.ts。
  */
 export const INVALID_USERNAME_ECHO_MAX_CHARS: number = TELEGRAM_USERNAME_MAX_LENGTH * 2;
-
-/**
- * `/unblock` 的「连各群封禁一起解」标志。作为独立的一个词出现，与任何一种目标
- * 参数都不会混淆：Telegram 用户名至少 TELEGRAM_USERNAME_MIN_LENGTH 个字符，
- * 三个字母的 all 永远过不了 USERNAME_ARG_PATTERN；它也不含数字、不带负号，
- * USER_ID_ARG_PATTERN 与 CHAT_ID_ARG_PATTERN 同样接不住它。
- * 所属模块：commands/unblock.ts。
- */
-export const UNBLOCK_ALL_FLAG: string = "all";
 
 /**
  * 中文动作命令（`/咬`、`/贴贴` 等）的匹配规则，见 commands/cjkAction.ts。

@@ -143,14 +143,16 @@ describe("aiChat/ai/stickers 工具定义组装", () => {
     expect(def?.description).toContain("1. 「猫猫包」（2 枚）：一包搞笑猫猫");
     expect(def?.description).toContain("2. 「狗狗包」（1 枚）：一包卖萌狗狗");
     expect(def?.description).toContain(`最多查看 ${MAX_STICKER_PACK_VIEWS_PER_REPLY} 个不同贴纸包，每个包只能查看一次`);
-    expect(def?.parameters.required).toEqual(["pack_index", "intent"]);
-    expect((def?.parameters.properties.intent as { maxLength?: number }).maxLength).toBe(STICKER_INTENT_MAX_CHARS);
+    const schema = def?.parametersJsonSchema as { required?: string[]; properties?: Record<string, unknown> } | undefined;
+    expect(schema?.required).toEqual(["pack_index", "intent"]);
+    expect((schema?.properties?.intent as { maxLength?: number }).maxLength).toBe(STICKER_INTENT_MAX_CHARS);
   });
 
   test("send_sticker 需要包编号 + 贴纸编号两个参数", () => {
     const def = buildSendStickerToolDefinition(MENU);
     expect(def?.name).toBe(SEND_STICKER_TOOL);
-    expect(def?.parameters.required).toEqual(["pack_index", "sticker_index"]);
+    const schema = def?.parametersJsonSchema as { required?: string[] } | undefined;
+    expect(schema?.required).toEqual(["pack_index", "sticker_index"]);
   });
 });
 

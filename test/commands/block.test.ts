@@ -5,8 +5,10 @@ const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined
 const banChatMember = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const banChatSenderChat = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const isChatMember = mock(async (..._args: unknown[]): Promise<boolean> => false);
-const deleteMessageAfter = mock((..._args: unknown[]): void => {});
+const deleteMessageWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "deleted");
 const isBotAdminIn = mock(async (_chatId: number): Promise<boolean> => false);
+const ensureBotChatPermissions = mock((_chatId: number): void => {});
+let canDeleteMessages: boolean | undefined = true;
 let target: CachedUser | undefined;
 const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => target);
 const chatStates = new Map<number, { botIsAdmin?: boolean }>();
@@ -19,23 +21,21 @@ mock.module("../../packages/config/whitelist", () => ({
     (id === 100 || id === -500) && key === "isCanBlock",
 }));
 mock.module("../../packages/infra/telegram", () => ({
-  sendMessage,
+  sendCommandMessage: sendMessage,
   banChatMember,
   banChatSenderChat,
   isChatMember,
-  deleteMessageAfter,
-}));
-// commands/block.ts 走 barrel，infra/blocklist.ts 直接走 actions 子模块；
-// 两处都指向同一批替身，免得真实 client 被拉进来。
-mock.module("../../packages/infra/telegram/actions", () => ({
-  sendMessage,
-  banChatMember,
-  banChatSenderChat,
-  isChatMember,
-  deleteMessageAfter,
+  deleteMessageWithOutcome,
 }));
 mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
-mock.module("../../packages/infra/botAdmin", () => ({ isBotAdminIn }));
+mock.module("../../packages/infra/botAdmin", () => ({
+  botCanDeleteMessagesIn: (): boolean | undefined => canDeleteMessages,
+  ensureBotChatPermissions,
+  isBotAdminIn,
+}));
+mock.module("../../packages/infra/logger", () => ({
+  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+}));
 mock.module("../../packages/infra/storage/stateStore", () => ({ getAllChatStates: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 const flushDiskIO = mock(async (): Promise<string> => "flushed");
@@ -83,8 +83,9 @@ beforeEach(() => {
     banChatMember,
     banChatSenderChat,
     isChatMember,
-    deleteMessageAfter,
+    deleteMessageWithOutcome,
     isBotAdminIn,
+    ensureBotChatPermissions,
     resolveCommandTarget,
     postDiskIO,
     flushDiskIO,
@@ -100,6 +101,8 @@ beforeEach(() => {
   banChatSenderChat.mockImplementation(async (): Promise<boolean> => true);
   isChatMember.mockImplementation(async (): Promise<boolean> => false);
   isBotAdminIn.mockImplementation(async (): Promise<boolean> => false);
+  deleteMessageWithOutcome.mockImplementation(async (): Promise<string> => "deleted");
+  canDeleteMessages = true;
   postDiskIO.mockImplementation((): boolean => true);
 });
 
@@ -170,11 +173,6 @@ describe("/block 跨群封禁与黑名单", () => {
       text: expect.stringMatching(/这个群不是管理员.*从 1 个群一脚踢出去.*还有 1 个群没踢动/),
       replyToMessageId: 10,
     });
-    expect(deleteMessageAfter).toHaveBeenCalledWith({
-      chatId: -1001,
-      messageId: 55,
-      delayMs: expect.any(Number),
-    });
   });
 
   test("只复用当天确证踢出的群用户，不从权威名单或预封禁结局推断", async () => {
@@ -226,9 +224,87 @@ describe("/block 跨群封禁与黑名单", () => {
     expect(banChatSenderChat).toHaveBeenCalledWith(-1001, -4004);
     expect(isChatMember).not.toHaveBeenCalled();
     expect(banChatMember).not.toHaveBeenCalled();
+    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("提前拉黑"),
+      replyToMessageId: 10,
+    });
+  });
+
+  test("回复频道消息执行 /block：封禁与已知消息删除分别成功并写进战报", async () => {
+    target = { id: -4004, title: "Channel", isChannel: true };
+    isBotAdminIn.mockResolvedValueOnce(true);
+    const ctx = context() as unknown as {
+      msg: { message_id: number; reply_to_message: { message_id: number } };
+    };
+    ctx.msg.reply_to_message = { message_id: 77 };
+
+    await handleBlockCommand(ctx as never);
+
+    expect(banChatSenderChat).toHaveBeenCalledWith(-1001, -4004);
+    expect(ensureBotChatPermissions).toHaveBeenCalledWith(-1001);
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 77);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("回复的那条频道消息也被本天才顺手清掉啦，想留垃圾也没门呀♡"),
+      replyToMessageId: 10,
+    });
+  });
+
+  test("频道封禁成功但回复消息缺删除权限：不发送注定失败的删除并独立告警", async () => {
+    target = { id: -4004, title: "Channel", isChannel: true };
+    isBotAdminIn.mockResolvedValueOnce(true);
+    canDeleteMessages = false;
+    const ctx = context() as unknown as {
+      msg: { message_id: number; reply_to_message: { message_id: number } };
+    };
+    ctx.msg.reply_to_message = { message_id: 77 };
+
+    await handleBlockCommand(ctx as never);
+
+    expect(banChatSenderChat).toHaveBeenCalledTimes(1);
+    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("杂鱼管理员是不是又忘了给本天才删消息权限呀♡"),
+      replyToMessageId: 10,
+    });
+  });
+
+  test("回复消息删除瞬时失败时按雌小鬼语气引导管理员查日志", async () => {
+    target = { id: -4004, title: "Channel", isChannel: true };
+    isBotAdminIn.mockResolvedValueOnce(true);
+    deleteMessageWithOutcome.mockResolvedValueOnce("failed");
+    const ctx = context() as unknown as {
+      msg: { message_id: number; reply_to_message: { message_id: number } };
+    };
+    ctx.msg.reply_to_message = { message_id: 77 };
+
+    await handleBlockCommand(ctx as never);
+
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("杂鱼管理员自己去日志里找原因吧♡"),
+      replyToMessageId: 10,
+    });
+  });
+
+  test("频道封禁失败但回复消息删除成功：两项结果互不覆盖", async () => {
+    target = { id: -4004, title: "Channel", isChannel: true };
+    isBotAdminIn.mockResolvedValueOnce(true);
+    banChatSenderChat.mockResolvedValueOnce(false);
+    const ctx = context() as unknown as {
+      msg: { message_id: number; reply_to_message: { message_id: number } };
+    };
+    ctx.msg.reply_to_message = { message_id: 77 };
+
+    await handleBlockCommand(ctx as never);
+
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 77);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringMatching(/一个群都踢不动.*回复的那条频道消息也被本天才顺手清掉啦/),
       replyToMessageId: 10,
     });
   });
@@ -262,7 +338,6 @@ describe("/block 跨群封禁与黑名单", () => {
       text: expect.stringMatching(/一个群都踢不动.*已经记进小本本了/),
       replyToMessageId: 10,
     });
-    expect(deleteMessageAfter).not.toHaveBeenCalled();
   });
 });
 

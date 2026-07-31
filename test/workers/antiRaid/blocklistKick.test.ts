@@ -5,6 +5,8 @@ import type { DiskBusinessMessage } from "../../../packages/types/diskIO";
 const workerPosts: AntiRaidWorkerMessage[] = [];
 /** 被要求补齐权限位的群，验证刷屏投递顺手触发了那次按需现查。 */
 const ensuredPermissionChats: number[] = [];
+/** 在主线程入口被黑名单频道守卫删除的已知消息。 */
+const deletedMessages: { chatId: number; messageId: number }[] = [];
 const diskPosts: DiskBusinessMessage[] = [];
 const deliveryOrder: string[] = [];
 const flushDiskIODomain = mock(async (): Promise<string> => {
@@ -30,6 +32,13 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
   // import 阶段就报 Export not found。
   sendMessage: async (): Promise<number | undefined> => undefined,
   deleteMessageAfter: (): void => {},
+  deleteMessageWithOutcome: async (
+    chatId: number,
+    messageId: number
+  ): Promise<"deleted"> => {
+    deletedMessages.push({ chatId, messageId });
+    return "deleted";
+  },
 }));
 mock.module("../../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
 mock.module("../../../packages/infra/botAdmin", () => ({
@@ -38,6 +47,7 @@ mock.module("../../../packages/infra/botAdmin", () => ({
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   registerBotPermissionObserver: (): void => {},
   ensureBotChatPermissions: (chatId: number): void => { ensuredPermissionChats.push(chatId); },
+  botCanDeleteMessagesIn: (): true => true,
 }));
 mock.module("../../../packages/libs/supervisedWorker", () => ({
   superviseWorker: () => ({
@@ -105,6 +115,7 @@ function joins(): AntiRaidWorkerMessage[] {
 beforeEach(() => {
   workerPosts.length = 0;
   ensuredPermissionChats.length = 0;
+  deletedMessages.length = 0;
   diskPosts.length = 0;
   deliveryOrder.length = 0;
   flushDiskIODomain.mockClear();
@@ -319,6 +330,27 @@ describe("黑名单成员入群秒踢", () => {
     await handleChatMemberUpdate(joinUpdate(42, "administrator"));
 
     expect(workerPosts.map((message) => message.type)).toEqual(["adminsChanged", "removeBlockedMembers"]);
+  });
+});
+
+describe("黑名单频道消息入口", () => {
+  test("广告未启用时仍先删除当前已知消息，并阻止其进入后续流水线", async () => {
+    blockedUserIds.set(-1009, {
+      isBlocked: true,
+      blockedAt: "2026/07/26 00:00:00",
+    });
+
+    const claimed: boolean = await handleGroupJoinVerification({
+      message_id: 16,
+      date: 1,
+      chat: { id: -1001, type: "supergroup" },
+      sender_chat: { id: -1009, type: "channel", title: "Blocked Channel" },
+      text: "blocked payload",
+    } as never, 999);
+
+    expect(claimed).toBeTrue();
+    expect(deletedMessages).toEqual([{ chatId: -1001, messageId: 16 }]);
+    expect(workerPosts).toBeEmpty();
   });
 });
 

@@ -1,4 +1,4 @@
-import { link, mkdir, open, rename, stat, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import {
   RUNTIME_DATA_ROOT_MAX_MODE,
   RUNTIME_SENSITIVE_DIRECTORY_NAMES,
@@ -7,16 +7,20 @@ import type { FileHandle } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Stats } from "node:fs";
 
+function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
 export interface DataRootProbeDependencies {
   mkdir: typeof mkdir;
-  stat: typeof stat;
+  lstat: typeof lstat;
   open: typeof open;
   link: typeof link;
   rename: typeof rename;
   unlink: typeof unlink;
 }
 
-const DEFAULT_DEPENDENCIES: DataRootProbeDependencies = { mkdir, stat, open, link, rename, unlink };
+const DEFAULT_DEPENDENCIES: DataRootProbeDependencies = { mkdir, lstat, open, link, rename, unlink };
 
 export interface PrepareRuntimeDataRootOptions {
   dependencies?: Partial<DataRootProbeDependencies>;
@@ -33,6 +37,9 @@ function assertPrivateDirectory(
   stats: Stats,
   expectedOwnerUid: number | undefined
 ): void {
+  if (stats.isSymbolicLink()) {
+    throw new Error(`${path} is a symbolic link; runtime data directories must be real directories`);
+  }
   if (!stats.isDirectory()) throw new Error(`${path} exists but is not a directory`);
   if (expectedOwnerUid !== undefined && stats.uid !== expectedOwnerUid) {
     throw new Error(
@@ -75,21 +82,32 @@ export async function prepareRuntimeDataRoot(
 
   try {
     await fs.mkdir(root, { recursive: true, mode: RUNTIME_DATA_ROOT_MAX_MODE });
-    const rootStat: Stats = await fs.stat(root);
+    const rootStat: Stats = await fs.lstat(root);
+    if (rootStat.isSymbolicLink()) {
+      throw new Error("path is a symbolic link; runtime data roots must be real directories");
+    }
     if (!rootStat.isDirectory()) throw new Error("path exists but is not a directory");
-    if (enforcePrivatePermissions) {
-      assertPrivateDirectory(root, rootStat, expectedOwnerUid);
-      for (const directoryName of RUNTIME_SENSITIVE_DIRECTORY_NAMES) {
-        const directoryPath: string = join(root, directoryName);
+    if (enforcePrivatePermissions) assertPrivateDirectory(root, rootStat, expectedOwnerUid);
+    for (const directoryName of RUNTIME_SENSITIVE_DIRECTORY_NAMES) {
+      const directoryPath: string = join(root, directoryName);
+      let directoryStat: Stats;
+      try {
+        directoryStat = await fs.lstat(directoryPath);
+      } catch (error: unknown) {
+        if (!isErrno(error, "ENOENT")) throw error;
+        if (!enforcePrivatePermissions) continue;
         await fs.mkdir(directoryPath, {
           recursive: true,
           mode: RUNTIME_DATA_ROOT_MAX_MODE,
         });
-        assertPrivateDirectory(
-          directoryPath,
-          await fs.stat(directoryPath),
-          expectedOwnerUid
-        );
+        directoryStat = await fs.lstat(directoryPath);
+      }
+      if (enforcePrivatePermissions) {
+        assertPrivateDirectory(directoryPath, directoryStat, expectedOwnerUid);
+      } else if (directoryStat.isSymbolicLink()) {
+        throw new Error(`${directoryPath} is a symbolic link; runtime data directories must be real directories`);
+      } else if (!directoryStat.isDirectory()) {
+        throw new Error(`${directoryPath} exists but is not a directory`);
       }
     }
 

@@ -5,7 +5,6 @@ import type { GenerateContentResponse } from "@google/genai";
 import { sanitizeInline, truncateInline } from "../../libs/text";
 import { formatBufferedMessageLine } from "../../aiChat/ai/utils/chatTranscript";
 import { requestGeminiResponse } from "../../aiChat/ai/gemini";
-import { extractOutputText } from "../../aiChat/ai/utils/geminiResponse";
 import {
   COMPACTION_MAX_PENDING_PER_CHAT,
   GEMINI_SUMMARY_MODEL,
@@ -166,7 +165,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
     "Gemini summarize API"
   );
   if (!data) return null;
-  const sanitized: string = sanitizeInline(extractOutputText(data));
+  const sanitized: string = sanitizeInline(data.text ?? "");
   if (!sanitized) return null;
   return truncateInline(sanitized, SUMMARY_MAX_CHARS);
 }

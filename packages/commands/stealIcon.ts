@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
 import type { CopyCooldownClaim } from "../types/copy/cooldown";
@@ -34,7 +34,7 @@ export async function handleStealIconCommand(ctx: CommandContext<Context>): Prom
   // persistAuthoritativeState 调用），这里不需要再落一次。
 
   const targetLabel: string = formatUserLabel(targetUser);
-  await sendMessage({
+  await sendCommandMessage({
     chatId,
     text: `收到收到，本天才这就去把 ${targetLabel} 的脸皮扒下来戴上，杂鱼稍安勿躁~♡`,
     replyToMessageId: messageId,

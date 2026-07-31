@@ -1,16 +1,24 @@
+import type { Chat, Message } from "@grammyjs/types";
 import {
   isUserBlocked,
   registerBlockedMemberRemover,
   requestBlocklistResweep,
   trackBlockedRemoval,
 } from "../infra/blocklist";
+import {
+  botCanDeleteMessagesIn,
+  ensureBotChatPermissions,
+} from "../infra/botAdmin";
 import { logger } from "../infra/logger";
+import { deleteMessageWithOutcome } from "../infra/telegram/actions";
 import { recentBlockedJoinCounts } from "../cache/main/antiRaid/blocklistGuard";
 import { verificationKey } from "../libs/verificationKey";
 import { BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES } from "../consts/antiRaid/blocklist";
 import { JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
+import { visibleSenderChat } from "../users/visibleSender";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
+import type { DeleteMessageOutcome } from "../infra/telegram/actions";
 
 /**
  * /block 黑名单在入群守卫主线程侧的那一半：判定与投递。真正的探测/封禁在
@@ -20,6 +28,46 @@ import type { RemoveBlockedMembersParams } from "../types/blocklist";
 
 /** 把一批处置投给 Worker 的方式；由 index.ts 在注册时把 postAntiRaidDurably 传进来。 */
 export type DurableAntiRaidPost = (messages: readonly AntiRaidWorkerMessage[]) => Promise<void>;
+
+/**
+ * 已拉黑频道身份仍能发出消息时就地删除。权威名单与 Telegram update 都在主线程，
+ * 因此不为这一条低频拒绝路径新增 Worker 消息；返回 true 表示消息已被黑名单门禁
+ * 接管，调用方无论删除成败都不得再把它送进广告、刷屏或普通消息流水线。
+ */
+export async function deleteBlockedSenderChatMessage(message: Message): Promise<boolean> {
+  const senderChat: Chat | undefined = visibleSenderChat(message);
+  const chatId: number = message.chat.id;
+  if (
+    senderChat === undefined ||
+    senderChat.id === chatId ||
+    !isUserBlocked(senderChat.id)
+  ) {
+    return false;
+  }
+
+  // 稳定态是一次 Map 命中；冷缓存只在后台补齐。未知时仍发删除请求，让 Telegram
+  // 作最终裁判，不能把「尚未观测」折算成「明确没有权限」。
+  ensureBotChatPermissions(chatId);
+  if (botCanDeleteMessagesIn(chatId) === false) {
+    logger.error(
+      `Blocked sender chat message ${message.message_id} in chat ${chatId} could not be deleted: ` +
+      "the bot is known to lack can_delete_messages."
+    );
+    return true;
+  }
+
+  const outcome: DeleteMessageOutcome = await deleteMessageWithOutcome(
+    chatId,
+    message.message_id
+  );
+  if (outcome === "forbidden" || outcome === "failed") {
+    logger.error(
+      `Blocked sender chat message ${message.message_id} from ${senderChat.id} in chat ${chatId} ` +
+      `could not be deleted (${outcome}).`
+    );
+  }
+  return true;
+}
 
 export interface ClaimBlockedJoinerParams {
   chatId: number;

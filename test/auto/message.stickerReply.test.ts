@@ -17,7 +17,6 @@ mock.module("../../packages/infra/telegram", () => ({
   copyMessage: copyMessageMock,
   sendMessage: async (): Promise<undefined> => undefined,
   bot: { api: {} },
-  buildFileDownloadUrl: () => "",
   logApiError: () => {},
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({

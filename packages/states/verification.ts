@@ -4,7 +4,6 @@ import {
   KICKED_REJOIN_GRACE_MS,
   VERIFICATION_REMINDER_UNDELIVERED_MAX_MS,
   VERIFICATION_TIMEOUT_MS,
-  VERIFICATION_TRACKED_MESSAGE_IDS_MAX,
 } from "../consts/antiRaid/verification";
 import type {
   ConfirmedThreadCommentEvent,
@@ -72,7 +71,6 @@ function snapshotOf(state: PendingState): ExpelSnapshot {
   return {
     label: state.label,
     isBot: state.isBot,
-    messageIds: [...state.messageIds],
     announcementMessageId: state.announcementMessageId,
     reminderMessageId: state.reminderMessageId,
     replyReminderMessageId: state.replyReminderMessageId,
@@ -83,16 +81,6 @@ function snapshotOf(state: PendingState): ExpelSnapshot {
 
 function remindersOf(source: Pick<PendingState, "reminderMessageId" | "replyReminderMessageId">): VerificationEffect {
   return { kind: "deleteReminders", reminderMessageId: source.reminderMessageId, replyReminderMessageId: source.replyReminderMessageId };
-}
-
-/** 所有 messageIds 写入口共用同一容量边界，避免迟到提醒绕过普通发言路径。 */
-function appendTrackedMessageId(state: PendingState, messageId: number): void {
-  state.messageIds.push(messageId);
-  while (
-    state.messageIds.length > VERIFICATION_TRACKED_MESSAGE_IDS_MAX
-  ) {
-    state.messageIds.shift();
-  }
 }
 
 function handleJoin(state: VerificationState | undefined, event: JoinEvent): VerificationTransition {
@@ -168,14 +156,12 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
         effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
       } else if (state.kind === "pending" && state.announcementMessageId === undefined) {
         // 先到的是 chat_member 那一路（没带公告），这条服务消息才带来公告 id。
-        // 记进独立字段而不是 messageIds，理由见 PendingState.announcementMessageId。
         state.announcementMessageId = event.announcementMessageId;
         snapshotChanged = true;
       } else if (state.kind === "pending" && state.announcementMessageId !== event.announcementMessageId) {
-        // 同一次入群只该有一条服务消息，真出现第二条也得进清理列表：那道字段
-        // 只留一条，落在外面的就成了唯一没人删的痕迹。
-        appendTrackedMessageId(state, event.announcementMessageId);
-        snapshotChanged = true;
+        // 同一次入群只该有一条服务消息；真出现第二条就立即删除，不把它与成员
+        // 发言混进一份终态清理列表。
+        effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
       }
     }
     if (
@@ -239,7 +225,6 @@ function handleJoin(state: VerificationState | undefined, event: JoinEvent): Ver
     kind: "pending",
     label: event.label,
     isBot: event.isBot,
-    messageIds: [],
     announcementMessageId: event.announcementMessageId,
     trackedMessageTimes: [],
     invitedBy: invitedByOther ? event.actorId : undefined,
@@ -279,8 +264,8 @@ function handleTrackedMessage(
   }
 
   // 频道评论区活动在上方先完成豁免，不能进入刷屏计数。其余待验证消息按
-  // 成员自己的滑动窗口统计；第 46 条同步删除状态，迟到事件因查无记录不会
-  // 再产生第二次踢人。
+  // 成员自己的滑动窗口统计；第 46 条同步转入终态，迟到事件不会再产生
+  // 第二次踢人。
   // 走共享的窗口修剪，不再手写 filter：手写那版只砍「太旧」的一侧，时钟往回
   // 跳一次之后旧时间戳全部落在「未来」、永远满足 ts > now - windowMs，一个从没
   // 刷过屏的人只要再发几条就会被判成 flood 删消息加踢出。同一个 60 秒 / 45 条
@@ -291,12 +276,6 @@ function handleTrackedMessage(
     now: event.now,
   });
   state.trackedMessageTimes.push(event.now);
-  appendTrackedMessageId(state, event.messageId);
-  // 常规窗口里根本到不了这个上限（刷屏在第 46 条就转成踢人），它兜的是提醒
-  // 一直发不出去、记录被反复续期那条退化路径：数组每次快照都整份重写并落盘，
-  // 不设上限就按该成员的发言数无限增长（见 consts 里的同名常量）。丢的只会是
-  // 该成员自己最早的几条发言——入群公告在 announcementMessageId 里单独存着，
-  // 不在这条队列上，撑满多少次都不会被挤掉。
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
     return {
       next: { kind: "expelling", reason: "flood", snapshot: snapshotOf(state) },
@@ -317,10 +296,7 @@ function handleTrackedMessage(
   // 状态转移的同一 tick 内同步执行，不受后面的 await 影响。
   effects.push({ kind: "sendReplyReminder", label: state.label, targetMessageId: event.messageId });
   if (state.reminderMessageId !== undefined) {
-    // 原提醒被取代，立刻删除（顺手从待清理列表去掉，免得过期清理时再对它
-    // 多打一次注定失败的删除调用）。
-    const reminderIndex: number = state.messageIds.indexOf(state.reminderMessageId);
-    if (reminderIndex >= 0) state.messageIds.splice(reminderIndex, 1);
+    // 原提醒被取代，立刻删除；终态只保留显式的当前提醒 id。
     effects.push({ kind: "deleteMessage", messageId: state.reminderMessageId });
     state.reminderMessageId = undefined;
   }
@@ -483,7 +459,6 @@ function handleReminderLanded(
     // 原始提醒还没落地就已被回复式提醒取代（TA 抢先开口说话了），落地即自删。
     return { next: state, effects: [{ kind: "deleteMessage", messageId: event.messageId }] };
   }
-  appendTrackedMessageId(state, event.messageId);
   if (event.reminderKind === "original") state.reminderMessageId = event.messageId;
   else state.replyReminderMessageId = event.messageId;
   // 验证窗口从按钮真正可见时重新给满；网络/限流排队不能蚕食用户可用时间。

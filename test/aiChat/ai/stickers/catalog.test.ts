@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { geminiResponse } from "../../../helpers/geminiResponse";
 
 /**
  * aiChat/ai/stickers/sets.ts（真实拉取贴纸集合）、aiChat/ai/imageDescription.ts（真实调
@@ -11,7 +12,7 @@ const getStickerSetMock = mock(async (_pack: string): Promise<any> => null);
 const describeMediaMock = mock(async (..._args: unknown[]): Promise<string | null> => null);
 const describeMediaForStickerCatalogMock = mock(async (..._args: unknown[]): Promise<string | null> => null);
 // 整包简介生成：默认返回一条固定简介文本，可按用例改写/断言调用次数。
-const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<any> => ({
+const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<any> => geminiResponse({
   candidates: [{ content: { parts: [{ text: "一包默认简介" }] } }],
 }));
 
@@ -64,7 +65,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     transientDescriptionCache.set("new-uid", Promise.resolve("临时旧描述"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "新包", stickers: [sticker("new-uid", "😂")] }));
     describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "一只猫大笑");
-    requestGeminiResponseMock.mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "一包猫猫表情" }] } }] }));
+    requestGeminiResponseMock.mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "一包猫猫表情" }] } }] }));
 
     await generatePackCatalog("pack_add");
 
@@ -125,7 +126,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   test("条目没变化但还没有简介：补生成简介", async () => {
     hydrateStickerCatalogs(persisted("pack_summary_backfill", { "uid-b": { emoji: "👍", description: "描述B" } }, null));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "待补简介包", stickers: [sticker("uid-b", "👍")] }));
-    requestGeminiResponseMock.mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "补出来的简介" }] } }] }));
+    requestGeminiResponseMock.mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "补出来的简介" }] } }] }));
 
     await generatePackCatalog("pack_summary_backfill");
 
@@ -159,7 +160,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
       .mockImplementationOnce(async () => "第二次成功的描述");
     requestGeminiResponseMock
       .mockImplementationOnce(async () => null)
-      .mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "重试出的简介" }] } }] }));
+      .mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "重试出的简介" }] } }] }));
 
     await generatePackCatalog("pack_retry");
 
@@ -189,7 +190,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     // 间隔到了就再试一次，这次拉到了。
     getStickerSetMock.mockImplementation(async () => ({ title: "补回来的包", stickers: [sticker("late-uid", "😂")] }));
     describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "补出来的描述");
-    requestGeminiResponseMock.mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "补出来的简介" }] } }] }));
+    requestGeminiResponseMock.mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "补出来的简介" }] } }] }));
     retryIncompleteStickerCatalogs(["pack_periodic"], 10_000 + STICKER_CATALOG_RETRY_INTERVAL_MS);
     await Bun.sleep(1);
     expect(getStickerSetMock).toHaveBeenCalledTimes(2);
@@ -222,7 +223,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     // 到期之后必须真的再试一次，并把目录补起来。
     failedEntries.get("pack_latch")!.set("latch-uid", Date.now() - 1);
     describeMediaForStickerCatalogMock.mockImplementation(async () => "终于描述出来了");
-    requestGeminiResponseMock.mockImplementationOnce(async () => ({ candidates: [{ content: { parts: [{ text: "自愈出来的简介" }] } }] }));
+    requestGeminiResponseMock.mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "自愈出来的简介" }] } }] }));
 
     await generatePackCatalog("pack_latch");
 

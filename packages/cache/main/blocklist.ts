@@ -37,6 +37,20 @@ export const blockedUserIds: Map<number, BlockedUserRecord> = new Map();
 export const configuredBlockedIds: Set<number> = new Set();
 
 /**
+ * 白名单成员关系与动态黑名单新增共用的主线程串行链。
+ *
+ * `/white enable` 的「确认未拉黑 -> 原子写入并发布白名单」会跨越异步磁盘 I/O；
+ * 同时广告判定可从 Worker 回投并同步 `blockUser`。两者若各自排队，同一身份会
+ * 在白名单写盘期间被拉黑，留下启动门禁下一次必然拒绝的矛盾状态。
+ *
+ * 所有调用都必须经 packages/infra/identityPolicy.ts；失败会被尾链吸收，下一次
+ * 操作仍可继续。队列只保存一个 Promise，不随身份数增长，进程重启后自然重建。
+ */
+export const protectedIdentityMutationQueue: { current: Promise<void> } = {
+  current: Promise.resolve(),
+};
+
+/**
  * 本进程启动之后新拉黑的 id → 其 blockedAt 文本。只为 diskIOWorker 崩溃重建后
  * 的重放：新 Worker 会先从文件重新 hydrate，已在文件里的 id 由它自己去重，
  * 因此只需补投「本进程期间产生、可能还没落盘」的这批。启动时 hydrate 进来的

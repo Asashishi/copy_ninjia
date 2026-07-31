@@ -8,7 +8,6 @@ mock.module("../../packages/infra/telegram", () => ({
   copyMessage: async (): Promise<undefined> => undefined,
   sendMessage: async (): Promise<undefined> => undefined,
   bot: { api: {} },
-  buildFileDownloadUrl: () => "",
   logApiError: () => {},
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({

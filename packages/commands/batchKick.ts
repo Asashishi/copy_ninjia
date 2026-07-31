@@ -23,7 +23,7 @@ import {
   banChatMemberWithOutcome,
   kickChatMemberWithOutcome,
   probeChatMembership,
-  sendMessage,
+  sendCommandMessage,
 } from "../infra/telegram";
 import type { JoinLogRecord } from "../types/diskIO/storage";
 import { isSuperAdminActor } from "./commandActor";
@@ -203,7 +203,7 @@ export async function handleBatchKickCommand(
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   if (!isSuperAdminActor(ctx)) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: "就你也想批量踢人？/batch_kick 只听超级管理员本人的，杂鱼退散啦♡",
       replyToMessageId: messageId,
@@ -211,7 +211,7 @@ export async function handleBatchKickCommand(
     return;
   }
   if (ctx.chat.type !== "supergroup") {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: "笨蛋，/batch_kick 只能在超级群里使用♡",
       replyToMessageId: messageId,
@@ -226,7 +226,7 @@ export async function handleBatchKickCommand(
     ? parseBatchKickDurationMs(tokens[0]!)
     : undefined;
   if (durationMs === undefined) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: BATCH_KICK_USAGE_TEXT,
       replyToMessageId: messageId,
@@ -247,7 +247,7 @@ export async function handleBatchKickCommand(
       `Failed to read join logs for /batch_kick in chat ${chatId}:`,
       error
     );
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: "呜……入群日志暂时读不了，本次一个人都没动，稍后再试吧♡",
       replyToMessageId: messageId,
@@ -256,7 +256,7 @@ export async function handleBatchKickCommand(
   }
 
   if (records.length === 0) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `最近 ${formatBatchKickDuration(durationMs)} 没有记录到新成员，本次没有踢人，也没有写入黑名单♡`,
       replyToMessageId: messageId,
@@ -265,7 +265,7 @@ export async function handleBatchKickCommand(
   }
 
   const stats: BatchKickStats = await runBatchKick({ chatId, records });
-  await sendMessage({
+  await sendCommandMessage({
     chatId,
     text:
       `已扫描最近 ${formatBatchKickDuration(durationMs)} 的 ${records.length} 条入群记录：` +

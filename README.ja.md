@@ -127,7 +127,7 @@
 <tr>
 <td align="left" valign="top">
   <p><b>📮 広告検出</b></p>
-  <p>送信者ごとに 90 秒間のメッセージ列へまとめて DeepSeek が判定。命中時は <code>/block</code> と同じ処分を行い、発火したグループに BAN 理由を告知します。</p>
+  <p>送信者ごとに 90 秒間のメッセージ列へまとめて DeepSeek が判定。protected identity 以外が命中した場合は <code>/block</code> と同じ処分を行い、発火したグループに BAN 理由を告知します。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🎲 今日のおみくじ</b></p>
@@ -179,9 +179,9 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/unquiet</code></td><td align="center">メンバー</td><td>静寂モードを早期解除</td></tr>
 <tr><td><code>/mute … &lt;期間&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>スーパーグループで一時ミュート／早期解除。返信、<code>@username</code>、user id を対象にでき、期間は <code>m/h/d</code> で指定します</td></tr>
 <tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>ブロックリスト登録：永続的に記録し、全管理グループで BAN。対象はメッセージへの返信・<code>@username</code>・ユーザー id のいずれでも指定できます</td></tr>
-<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>isCanUnBlock</code><br>（<code>all</code> は <code>isCanUnBlockAll</code> も必要）</td><td>ブロックリストから id を削除。対象の指定方法は <code>/block</code> と同じで、加えてチャンネルの負の id も受け付けます。既定では各グループの BAN はそのままで、<code>all</code> を付けると解除まで行います。スーパー管理者は両 permission を暗黙に持ちます</td></tr>
+<tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>完全解除：動的ブロックリストから id を削除し、Bot が管理する全グループの BAN を解除します。対象指定は <code>/block</code> と同じで、チャンネルの負の id も受け付けます。静的ブロックリストの identity は拒否し、スーパー管理者は暗黙に許可します</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>このグループの AI チャットを切り替え。スーパー管理者は暗黙に許可</td></tr>
-<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>このグループの広告検出を切り替え。命中時は <code>/block</code> と同じ処分。スーパー管理者は暗黙に許可</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>このグループの広告検出を切り替え。protected identity 以外の命中時は <code>/block</code> と同じ処分。スーパー管理者は暗黙に許可</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>AI 有効グループの気分を即時再抽選。スーパー管理者は暗黙に許可</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>日本語翻訳機能を切り替え（既定 OFF）。スーパー管理者は暗黙に許可</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの主要処理ゲートを切り替え</td></tr>
@@ -195,9 +195,9 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 
 - **コマンドの入口ゲート**：グループコマンドは一律 `/init` ゲートを通ります。未初期化グループで受け付けるのはスーパー管理者の `/init` だけなので、`/permission` と `/white` も初期化済みグループで使う必要があります。private chat で許可される slash command は `/send` だけです。
 - **アクションコマンド**：名前は `first_name last_name` 形式で、公開ユーザー名があればプロフィールへリンクします。対象の指定方法は他のコマンドと同じで、返信または `@username` です。
-- **`/block` ブロックリスト**：対象は返信・`@username`・ユーザー id の直接指定（正の整数。グループやチャンネルの負の id は対象外）で指名できます。id が最も確実です——手放されたユーザー名は他人が再登録でき、一方このコマンドは取り消せません。id が永続ブロックリストに入ると、監視中のどのグループの入室更新でも即 kick されます。あるグループで「管理者権限がある」と「`/init enable` 済み」が揃った瞬間には（どちらが先でも）、すでに在室しているリスト該当者もまとめて掃除します。`/unblock` はリスト全体をファイルへ原子的に書き直します。`/unblock` は `/block` にはない指定方法をもう 1 つ受け付けます——**チャンネルの負の id** です。チャンネル被りは `sender_chat` としてリストに入りますが（チャンネルのメッセージへ返信しての `/block`、広告検出の命中）、広告検出は元メッセージを削除し、公開 username の無いチャンネルはキャッシュにも載りません。負の id を拒否したままだと、そうした項目は二度と消せなくなります。逆方向を開かないのは、`/block` で会話 id を貼り間違えると会話 identity 全体を、しかも取り消せない形で BAN してしまうからです。
+- **`/block` ブロックリスト**：対象は返信・`@username`・ユーザー id の直接指定（正の整数。グループやチャンネルの負の id は対象外）で指名できます。id が最も確実です——手放されたユーザー名は他人が再登録でき、一方このコマンドは取り消せません。id が永続ブロックリストに入ると、監視中のどのグループの入室更新でも即 kick されます。あるグループで「管理者権限がある」と「`/init enable` 済み」が揃った瞬間には（どちらが先でも）、すでに在室しているリスト該当者もまとめて掃除します。`/unblock` はリスト全体をファイルへ原子的に書き直し、既定で Bot が管理する全グループの BAN も解除します。対象が動的リストにいなくてもチャット横断解除は実行します。`/unblock` は `/block` にはない指定方法をもう 1 つ受け付けます——**チャンネルの負の id** です。チャンネル被りは `sender_chat` としてリストに入りますが（チャンネルのメッセージへ返信しての `/block`、広告検出の命中）、広告検出は元メッセージを削除し、公開 username の無いチャンネルはキャッシュにも載りません。負の id を拒否したままだと、そうした項目は二度と消せなくなります。逆方向を開かないのは、`/block` で会話 id を貼り間違えると会話 identity 全体を、しかも取り消せない形で BAN してしまうからです。
 - **`/batch_kick` の低速 wave cleanup**：初期化済みスーパーグループでスーパー管理者だけが使用できます。引数は `30m`、`2h`、`1d` のような 24 時間以内の window 1 個です。入室ログから window 内の user ごとの最終入室を取り、まだ在室している対象を小さい固定並行数で kick します。blocklist へは追加せず、スーパー管理者・allowlist identity・恒久 blocklist の対象は通常の kick 対象として扱いません。
-- **`/ad_detect` 広告検出**：送信者ごとに 90 秒間のメッセージ列へまとめ、DeepSeek が判定します。命中時は `/block` と同じ処分（恒久ブロックリスト登録と、管理下の全グループでの BAN＋当該メンバーのメッセージ削除）を行い、発火したグループに BAN 理由を告知します（30 秒後に自動削除）。Bot がそのグループの管理者のときだけ発火し、判定基準は [`config/ad_samples.json`](config_example/ad_samples.json) です。
+- **`/ad_detect` 広告検出**：送信者ごとに 90 秒間のメッセージ列へまとめ、DeepSeek が判定します。protected identity 以外の命中時は `/block` と同じ処分（恒久ブロックリスト登録と、管理下の全グループでの BAN＋当該メンバーのメッセージ削除）を行い、発火したグループに BAN 理由を告知します（30 秒後に自動削除）。スーパー管理者は常に検出を bypass します。allowlist identity は `isCanBypassAdDetection` を無効にすると判定と当該 message bundle の削除対象になりますが、恒久 blocklist には入りません。Bot がそのグループの管理者のときだけ発火し、判定基準は [`config/ad_samples.json`](config_example/ad_samples.json) です。
 - **連投ミュート**：同一人物が同一スーパーグループで 1 分以内に 21 件発言すると、その場で 5 分間ミュートし、グループに一言告知します（告知はミュート解除時に自動削除）。解除は Telegram 側が自動で行い、ブロックリストにも載せず、メッセージも削除しません。Bot が実際に「メンバーを制限」権限を持つときだけ発火し、オーナー/管理者、`SUPER_ADMIN_USER_ID`、`config/whitelist.json` の allowlist identity、チャンネル名義と匿名管理者はカウントしません。
 - **`/send` 転送**：開始前に対象へ到達できるか確認し、期間中はスーパー管理者の各メッセージを対象グループへ 1 回ずつ転送します。到達できなくなった場合はセッションを終了して通知します。転送状態は `state.json` に保存され、再起動後も復元されます。このコマンドは Telegram のコマンドメニューには表示されず、グループ内や他のユーザーから呼び出されても応答しません。
 

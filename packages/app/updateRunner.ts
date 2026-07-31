@@ -10,11 +10,11 @@ import {
 import type { AcknowledgedUpdateRunner } from "../types/lifecycle";
 
 /**
- * Telegram 只有在下一次 getUpdates 携带更高 offset 时，才会确认上一批 update。
- * @grammyjs/runner 的默认 concurrent sink 会在旧 update 仍在执行时继续取下一批，
- * 因而天然允许“已确认但 middleware 尚未完成”的窗口。本 runner 仍并发执行
- * Telegram 单次返回的整批 update，但整批全部成功前不再调用 getUpdates；
- * 任一 update 失败则立即取消同批其它 update 并向生命周期传播首个错误。
+ * Telegram 只有在下一次 getUpdates 携带更高 offset 时，才会确认上一条 update。
+ * @grammyjs/runner 的默认 concurrent sink 会在旧 update 仍在执行时继续取数，
+ * 因而天然允许“已确认但 middleware 尚未完成”的窗口。这里固定每次只取一条，
+ * 且该条成功前不再调用 getUpdates：后一条失败时，前一条已经用独立 offset
+ * 确认，不会作为同批兄弟再次投递非幂等副作用。
  *
  * 停机时 stop 会立即结束取数循环，而不是等待可能悬挂的 middleware；调用方可
  * 用 size() 有界排空。只有排空成功后，生命周期才显式确认最后一个 update id。
@@ -56,8 +56,8 @@ export function runAcknowledgedUpdateBatches(
       // 该 update 仍不能被当成成功完成并跨过 offset。
       throwIfUpdateAborted(updateController.signal);
     } catch (error: unknown) {
-      // 记在这里、而不是等 batch 汇总：任何以抛错离开本函数的 update 都不能被
-      // 确认，而停机时取数循环会放弃在途批次，那次汇总 rejection 已经没有观察
+      // 记在这里、而不是等取数循环汇总：任何以抛错离开本函数的 update 都不能被
+      // 确认，而停机时取数循环会放弃在途任务，那次 rejection 已经没有观察
       // 者了。放在 catch 的第一句是为了同时覆盖下面两条 throw；这一句与 finally
       // 里的 delete 处在同一个同步段，因此 size() 归零时它必然已经写好。
       failedUpdate = true;
@@ -74,7 +74,7 @@ export function runAcknowledgedUpdateBatches(
           logger.error("Bot update error handler failed:", handlerError);
         }
       }
-      // 处理失败的 update 不能被下一轮 getUpdates 确认；让整批失败并交给
+      // 处理失败的 update 不能被下一轮 getUpdates 确认；让 runner 失败并交给
       // 应用生命周期停止进程，由 Telegram 在重启后重新投递。
       throw error;
     } finally {
@@ -89,7 +89,7 @@ export function runAcknowledgedUpdateBatches(
       let updates: Update[];
       try {
         updates = await fetchUpdates(
-          100,
+          1,
           controller.signal as unknown as Parameters<typeof fetchUpdates>[1]
         );
       } catch (error: unknown) {
@@ -99,47 +99,23 @@ export function runAcknowledgedUpdateBatches(
         if (currentAbortController === controller) currentAbortController = null;
       }
       if (!running) return;
-
-      let firstFailureSignaled: boolean = false;
-      let rejectFirstFailure: ((reason?: unknown) => void) | undefined;
-      const firstFailure: Promise<void> = new Promise((
-        _resolve: (value: void | PromiseLike<void>) => void,
-        reject: (reason?: unknown) => void
-      ): void => {
-        rejectFirstFailure = reject;
-      });
-      const updateTasks: Promise<void>[] = updates.map(handleUpdate);
-      for (const updateTask of updateTasks) {
-        // 单独观察首错，让失败不再被同批永久悬挂的 middleware 遮住。
-        void updateTask.catch((error: unknown): void => {
-          if (firstFailureSignaled) return;
-          firstFailureSignaled = true;
-          abortActiveUpdates(new DOMException(
-            "Telegram update aborted because another update in the batch failed.",
-            "AbortError"
-          ));
-          rejectFirstFailure?.(error);
-        });
+      if (updates.length === 0) continue;
+      // createUpdateFetcher 会把 batchSize 限制为 Telegram 的 limit；本 runner 的
+      // 正确性依赖一次只返回一条。异常响应必须在执行任何副作用前 fail closed。
+      if (updates.length !== 1) {
+        throw new Error(`Telegram returned ${updates.length} updates for a single-update fetch.`);
       }
-      // 即便首错已让 runner 退出，仍持续观察所有 sibling 的迟到结果，避免
-      // 忽略 AbortSignal 的 middleware 最终 rejection 变成 unhandledRejection。
-      const allSettled: Promise<void> = Promise.allSettled(updateTasks).then((results: PromiseSettledResult<void>[]): void => {
-        const failures: unknown[] = results
-          .filter((result: PromiseSettledResult<void>): result is PromiseRejectedResult => result.status === "rejected")
-          .map((result: PromiseRejectedResult): unknown => result.reason as unknown);
-        if (failures.length === 1) throw failures[0];
-        if (failures.length > 1) throw new AggregateError(failures, "Multiple Telegram updates failed.");
-      });
-      const batch: Promise<void> = Promise.race([firstFailure, allSettled]);
-      await Promise.race([batch, stopped]);
-      // 停机：不等这批走完（middleware 可能悬挂），交给生命周期按 size() 做有界
-      // 排空。这批里失败的 update 因此只能靠 failedUpdate 表达——放弃 await 之后
-      // 取数循环不再用 batch 的结算结果决定退出状态，光凭 task() 正常 resolve
+
+      const updateTask: Promise<void> = handleUpdate(updates[0]!);
+      await Promise.race([updateTask, stopped]);
+      // 停机：不等这条走完（middleware 可能悬挂），交给生命周期按 size() 做有界
+      // 排空。这条若随后失败只能靠 failedUpdate 表达——放弃 await 之后取数循环
+      // 不再用 updateTask 的结算结果决定退出状态，光凭 task() 正常 resolve
       // 会让生命周期把失败的那条一起确认掉。
       if (!running) return;
-      await batch;
+      await updateTask;
       // 只有走到这里，createUpdateFetcher 内部已推进的 offset 才会在下一轮
-      // getUpdates 中真正发给 Telegram，确认整批 update。
+      // getUpdates 中真正发给 Telegram，确认这一条 update。
     }
   })();
 

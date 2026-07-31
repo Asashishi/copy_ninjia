@@ -5,7 +5,7 @@ import type {
   GrantedCopyCooldownClaim,
 } from "../types/copy/cooldown";
 import { getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
-import { sendMessage } from "../infra/telegram/actions";
+import { sendCommandMessage } from "../infra/telegram";
 import { isWhitelisted } from "../config/whitelist";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
@@ -56,7 +56,7 @@ export async function claimCopyCooldownOrReject(
     // 墙钟回拨时 elapsed 为负；把旧时间戳视为已过期，随后本次 claim 会用
     // 当前时钟重建冷却起点，避免额外冻结到时钟追平。
     if (elapsed >= 0 && elapsed < COPY_COOLDOWN_MS) {
-      await sendMessage({
+      await sendCommandMessage({
         chatId,
         text: `急什么呀笨蛋，还要等 ${formatMinSec(COPY_COOLDOWN_MS - elapsed)} 才能用 copy 类命令哦，乖乖等着吧♡`,
         replyToMessageId: messageId,

@@ -9,17 +9,7 @@ export interface PendingState {
   label: string;
   isBot: boolean;
   /**
-   * 超时踢出时要删除的提醒和等待期间发言。有上限
-   * （VERIFICATION_TRACKED_MESSAGE_IDS_MAX），满了从最旧的开始丢。
-   */
-  messageIds: number[];
-  /**
    * 入群公告的消息 id（机器人自己制造的那条痕迹）。
-   *
-   * 单独存而不混进 messageIds：它是最早入列的一条，混在一起时上限一满第一个
-   * 被丢掉的就是它，而除了处置路径没有任何地方会再删它——提醒发不出去、记录
-   * 被反复续期那条退化路径下，成员足以发够几百条把上限撑满，公告于是永远留在
-   * 群里。单独存就与成员发言数彻底无关。
    */
   announcementMessageId?: number;
   /** 最近 JOIN_WINDOW_MS 内由该成员发送的消息时间。 */
@@ -78,8 +68,7 @@ export interface KickedState {
 export interface ExpelSnapshot {
   readonly label: string;
   readonly isBot: boolean;
-  readonly messageIds: readonly number[];
-  /** 入群公告 id；与 messageIds 分开的理由见 PendingState 同名字段。 */
+  /** 入群公告 id；只清理机器人/Telegram 制造的验证痕迹，不删除成员发言。 */
   readonly announcementMessageId?: number;
   readonly reminderMessageId?: number;
   readonly replyReminderMessageId?: number;
@@ -96,7 +85,7 @@ export interface CheckingInviterState {
   executionStarted?: boolean;
 }
 
-/** 已持久化后才可执行删消息/踢人；这些 API 均按幂等方式重放。 */
+/** 已持久化后才可执行验证痕迹清理/踢人；这些 API 均按幂等方式重放。 */
 export interface ExpellingState {
   kind: "expelling";
   reason: "timeout" | "flood";

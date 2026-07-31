@@ -1,13 +1,26 @@
 import type { CommandContext, Context } from "grammy";
+import type { Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
-import { sendMessage, banChatMember, banChatSenderChat, isChatMember, deleteMessageAfter } from "../infra/telegram";
+import type { DeleteMessageOutcome } from "../infra/telegram";
+import {
+  sendCommandMessage,
+  banChatMember,
+  banChatSenderChat,
+  isChatMember,
+  deleteMessageWithOutcome,
+} from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { SUPER_ADMIN_USER_ID } from "../infra/config";
 import { isWhitelisted } from "../config/whitelist";
-import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
-import { isBotAdminIn } from "../infra/botAdmin";
+import {
+  botCanDeleteMessagesIn,
+  ensureBotChatPermissions,
+  isBotAdminIn,
+} from "../infra/botAdmin";
+import { logger } from "../infra/logger";
+import { runProtectedIdentityMutation } from "../infra/identityPolicy";
 import {
   blockUser,
   confirmBlocklistPersisted,
@@ -17,6 +30,73 @@ import {
   wasUserConfirmedKickedInChat,
 } from "../infra/blocklist";
 import { getAllChatStates } from "../infra/storage/stateStore";
+
+type SenderChatReplyCleanupOutcome =
+  | "notApplicable"
+  | "deleted"
+  | "forbidden"
+  | "failed";
+
+interface CleanupSenderChatReplyParams {
+  chatId: number;
+  commandMessage: Message;
+  targetUser: CachedUser;
+  isAdminHere: boolean;
+}
+
+interface BlockAdmission {
+  readonly protected: boolean;
+  readonly newlyBlocked: boolean;
+}
+
+/** 手动回复频道消息执行 /block 时，独立结算这条已知消息的删除。 */
+async function cleanupSenderChatReply({
+  chatId,
+  commandMessage,
+  targetUser,
+  isAdminHere,
+}: CleanupSenderChatReplyParams): Promise<SenderChatReplyCleanupOutcome> {
+  const targetMessageId: number | undefined =
+    commandMessage.reply_to_message?.message_id;
+  if (
+    targetUser.isChannel !== true ||
+    targetMessageId === undefined ||
+    !isAdminHere
+  ) {
+    return "notApplicable";
+  }
+
+  ensureBotChatPermissions(chatId);
+  if (botCanDeleteMessagesIn(chatId) === false) {
+    logger.error(
+      `Blocked sender chat reply ${targetMessageId} in chat ${chatId} could not be deleted: ` +
+      "the bot is known to lack can_delete_messages."
+    );
+    return "forbidden";
+  }
+
+  const outcome: DeleteMessageOutcome = await deleteMessageWithOutcome(
+    chatId,
+    targetMessageId
+  );
+  if (outcome === "deleted" || outcome === "gone") return "deleted";
+  return outcome;
+}
+
+function senderChatCleanupNote(
+  outcome: SenderChatReplyCleanupOutcome
+): string {
+  switch (outcome) {
+    case "deleted":
+      return "；回复的那条频道消息也被本天才顺手清掉啦，想留垃圾也没门呀";
+    case "forbidden":
+      return "；可回复的那条频道消息没清掉——杂鱼管理员是不是又忘了给本天才删消息权限呀";
+    case "failed":
+      return "；可回复的那条频道消息暂时没清掉，杂鱼管理员自己去日志里找原因吧";
+    case "notApplicable":
+      return "";
+  }
+}
 
 /**
  * 处理 /block 指令：把目标写进持久化黑名单，并在所有「机器人是管理员」的群里
@@ -49,7 +129,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
 
   if (!actor || !hasCommandPermission(ctx, "isCanBlock", false)) {
     const replyText: string = `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /block 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
-    await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
@@ -80,7 +160,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 不会暴露皮套背后的真实用户。该身份在 /copy 中必须保留用于头像和复读；
   // 但 /block 若继续执行，只会尝试封禁整个群组身份，不能踢出那名管理员。
   if (targetUser.isChannel === true && targetUser.id === chatId) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `匿名管理员拿这个群当皮套时，Telegram 不会告诉本天才皮套底下是谁；本天才不能把整个群当成那个人踢掉呀♡`,
       replyToMessageId: messageId,
@@ -89,12 +169,20 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   }
 
   // 自己人不可拉黑。虽然 /unblock 已经提供了撤销路径，这道闸仍然保留：拉黑
-  // 会连带在所有管理群 banChatMember，而 /unblock 只把人从名单里划掉、不解除
-  // 那些群级封禁（见 commands/unblock.ts）。回错一条消息、或用了过期的
+  // 会连带在所有管理群 banChatMember；虽然 /unblock 会默认跨群解除，误操作到
+  // 修复之间自己人仍会被逐群踢出。回错一条消息、或用了过期的
   // @username 别名，就能把超级管理员或白名单成员踢出并封禁在所有监听群里，
   // 事后要一个群一个群手动解封——值得在入口就挡住。
-  if (targetUser.id === SUPER_ADMIN_USER_ID || isWhitelisted(targetUser.id)) {
-    await sendMessage({
+  const admission: BlockAdmission = await runProtectedIdentityMutation(
+    (): BlockAdmission => {
+      if (targetUser.id === SUPER_ADMIN_USER_ID || isWhitelisted(targetUser.id)) {
+        return { protected: true, newlyBlocked: false };
+      }
+      return { protected: false, newlyBlocked: blockUser(targetUser.id) };
+    }
+  );
+  if (admission.protected) {
+    await sendCommandMessage({
       chatId,
       text: `笨蛋，${formatTargetLabel(targetUser)} 可是自己人，本天才才不会把自己人写进小本本♡`,
       replyToMessageId: messageId,
@@ -105,7 +193,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 黑名单先写、且与封禁结果无关：封禁只能覆盖此刻已知且有管理权的群，名单
   // 覆盖的是以后——包括机器人当时还没进的群。先写内存 Map 再落盘，见
   // infra/blocklist.ts；重复 /block 同一个人时返回 false，不再重复落盘。
-  const newlyBlocked: boolean = blockUser(targetUser.id);
+  const newlyBlocked: boolean = admission.newlyBlocked;
   // 只有真的新增了记录才值得等这一次落盘回执：没落盘就不能把「永久」说出口。
   // 重复 /block 时也要等：这个 id 若是本进程新增、上一次落盘又失败了，管理员
   // 修好磁盘再跑一次正是最自然的重试动作，不能因为「Map 里已经有了」就静默
@@ -129,7 +217,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 一个管理的群都没有时也已经记进黑名单了：现在踢不动，不代表以后进群时
   // 也放过 TA。文案要说清这一点，否则管理员会以为这条命令完全没生效。
   if (targetChatIds.length === 0) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `笨蛋，本天才连一个群的管理员都不是，${targetLabel} 现在踢也踢不动，不过已经记进小本本了${persistWarning}——再进本天才盯着的任何群就秒踢♡`,
       replyToMessageId: messageId,
@@ -151,7 +239,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 被推后，停机时更容易把 runner drain 拖超时。
   // 个别群失败（管理员身份记录过时、缺封禁权限）不中断其余群：被调函数内部已
   // 带群号记了日志，够排查。
-  const perChatOutcomes: ("kicked" | "preBanned" | "failed")[] = await Promise.all(
+  const perChatOutcomesPromise: Promise<("kicked" | "preBanned" | "failed")[]> = Promise.all(
     targetChatIds.map(async (targetChatId: number): Promise<"kicked" | "preBanned" | "failed"> => {
       if (targetUser.isChannel) {
         return await banChatSenderChat(targetChatId, targetUser.id) ? "preBanned" : "failed";
@@ -170,6 +258,18 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
       return wasMember ? "kicked" : "preBanned";
     })
   );
+  const cleanupPromise: Promise<SenderChatReplyCleanupOutcome> =
+    cleanupSenderChatReply({
+      chatId,
+      commandMessage: ctx.msg,
+      targetUser,
+      isAdminHere,
+    });
+  const [perChatOutcomes, cleanupOutcome]: [
+    ("kicked" | "preBanned" | "failed")[],
+    SenderChatReplyCleanupOutcome
+  ] = await Promise.all([perChatOutcomesPromise, cleanupPromise]);
+  const cleanupNote: string = senderChatCleanupNote(cleanupOutcome);
   for (let index: number = 0; index < perChatOutcomes.length; index++) {
     const outcome: "kicked" | "preBanned" | "failed" | undefined = perChatOutcomes[index];
     if (outcome === "kicked") kickedCount++;
@@ -181,8 +281,8 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
 
   const bannedCount: number = kickedCount + preBannedCount;
   if (bannedCount === 0) {
-    const replyText: string = `呜……${targetLabel} 居然一个群都踢不动，是本天才没有封禁权限吧？杂鱼管理员快去检查——不过 TA 已经记进小本本了${persistWarning}，再进群就秒踢♡`;
-    await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+    const replyText: string = `呜……${targetLabel} 居然一个群都踢不动，是本天才没有封禁权限吧？杂鱼管理员快去检查——不过 TA 已经记进小本本了${persistWarning}，再进群就秒踢${cleanupNote}♡`;
+    await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
@@ -201,12 +301,9 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   const blocklistNote: string = newlyBlocked
     ? `，杂鱼永远别想回来了${persistWarning}`
     : `（早就在小本本上了${persistWarning}）`;
-  const noticeMessageId: number | undefined = await sendMessage({
+  await sendCommandMessage({
     chatId,
-    text: `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}${blocklistNote}♡`,
+    text: `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}${blocklistNote}${cleanupNote}♡`,
     replyToMessageId: messageId,
   });
-  if (noticeMessageId !== undefined) {
-    deleteMessageAfter({ chatId, messageId: noticeMessageId, delayMs: KICK_NOTICE_AUTO_DELETE_MS });
-  }
 }

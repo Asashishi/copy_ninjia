@@ -1,86 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import {
-  countGoogleSearchCalls,
-  extractFinishReason,
-  extractFunctionCalls,
-  extractOutputText,
-  isTruncatedByTokenLimit,
-} from "../../../../packages/aiChat/ai/utils/geminiResponse";
-
-/** 按 generateContent 响应形状裁剪的夹具（思考段/正文段/functionCall 混排）。 */
-const RESPONSE_FIXTURE = {
-  candidates: [
-    {
-      content: {
-        role: "model",
-        parts: [
-          { text: "thinking...", thought: true },
-          { text: "今天东京" },
-          { text: "晴。" },
-          { functionCall: { id: "call-abc-0", name: "get_current_time", args: {} } },
-          { text: "热死了。" },
-        ],
-      },
-      finishReason: "STOP",
-    },
-  ],
-};
+import { ToolType } from "@google/genai";
+import { countGoogleSearchCalls } from "../../../../packages/aiChat/ai/utils/geminiResponse";
+import { geminiResponse } from "../../../helpers/geminiResponse";
 
 describe("aiChat/ai/utils/geminiResponse", () => {
-  test("extractOutputText：按序拼接全部非思考 text 段（thought: true 的不算正文）", () => {
-    expect(extractOutputText(RESPONSE_FIXTURE)).toBe("今天东京晴。热死了。");
-  });
-
-  test("extractOutputText：无 text 段 / 形状异常时返回空串", () => {
-    expect(extractOutputText({ candidates: [{ content: { parts: [{ thought: true, text: "只想不说" }] } }] })).toBe("");
-    expect(extractOutputText({ candidates: [] })).toBe("");
-    expect(extractOutputText({})).toBe("");
-    expect(extractOutputText(null)).toBe("");
-  });
-
-  test("extractFunctionCalls：只取带 functionCall 的 part，返回 functionCall 对象本身", () => {
-    const calls = extractFunctionCalls(RESPONSE_FIXTURE);
-    expect(calls.length).toBe(1);
-    expect(calls[0]!.id).toBe("call-abc-0");
-    expect(calls[0]!.name).toBe("get_current_time");
-    expect(calls[0]!.args).toEqual({});
-  });
-
-  test("extractFunctionCalls：无调用时返回空数组", () => {
-    expect(extractFunctionCalls({ candidates: [{ content: { parts: [] } }] })).toEqual([]);
-    expect(extractFunctionCalls(undefined)).toEqual([]);
-  });
-
-  test("isTruncatedByTokenLimit：只认 finishReason=MAX_TOKENS", () => {
-    expect(isTruncatedByTokenLimit(RESPONSE_FIXTURE)).toBe(false);
-    expect(isTruncatedByTokenLimit({ candidates: [{ finishReason: "MAX_TOKENS" }] })).toBe(true);
-    expect(isTruncatedByTokenLimit({ candidates: [{ finishReason: "SAFETY" }] })).toBe(false);
-    expect(isTruncatedByTokenLimit(undefined)).toBe(false);
-  });
-
-  test("extractFinishReason：保留 SDK 尚未声明的新服务端枚举值", () => {
-    expect(extractFinishReason(RESPONSE_FIXTURE)).toBe("STOP");
-    expect(extractFinishReason({ candidates: [{ finishReason: "TOO_MANY_TOOL_CALLS" }] })).toBe("TOO_MANY_TOOL_CALLS");
-    expect(extractFinishReason({ candidates: [] })).toBeUndefined();
-  });
-
   test("countGoogleSearchCalls：优先统计 server-side toolCall，并用查询元数据兜底", () => {
-    expect(countGoogleSearchCalls({
+    expect(countGoogleSearchCalls(geminiResponse({
       candidates: [{
         groundingMetadata: { webSearchQueries: ["不应重复计数"] },
         content: {
           parts: [
-            { toolCall: { toolType: "GOOGLE_SEARCH_WEB" } },
-            { toolResponse: { toolType: "GOOGLE_SEARCH_WEB" } },
-            { toolCall: { toolType: "URL_CONTEXT" } },
-            { toolCall: { toolType: "GOOGLE_SEARCH_WEB" } },
+            { toolCall: { toolType: ToolType.GOOGLE_SEARCH_WEB } },
+            { toolResponse: { toolType: ToolType.GOOGLE_SEARCH_WEB } },
+            { toolCall: { toolType: ToolType.URL_CONTEXT } },
+            { toolCall: { toolType: ToolType.GOOGLE_SEARCH_WEB } },
           ],
         },
       }],
-    })).toBe(2);
-    expect(countGoogleSearchCalls({
+    }))).toBe(2);
+    expect(countGoogleSearchCalls(geminiResponse({
       candidates: [{ groundingMetadata: { webSearchQueries: ["q1", "q2", "q3"] } }],
-    })).toBe(3);
-    expect(countGoogleSearchCalls(undefined)).toBe(0);
+    }))).toBe(3);
+    expect(countGoogleSearchCalls(geminiResponse())).toBe(0);
   });
 });

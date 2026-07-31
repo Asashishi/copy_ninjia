@@ -5,7 +5,6 @@ import { getStickerSet } from "./sets";
 import { pickStickerVisionSource } from "./describe";
 import { describeMediaForStickerCatalog } from "../imageDescription";
 import { requestGeminiResponse } from "../gemini";
-import { extractOutputText } from "../utils/geminiResponse";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../../libs/text";
 import { sleep } from "../../../libs/sleep";
 import {
@@ -348,7 +347,7 @@ async function summarizePack(title: string, descriptions: string[]): Promise<str
     "Gemini sticker pack summary API"
   );
   if (!data) return null;
-  const sanitized: string = sanitizeInline(extractOutputText(data));
+  const sanitized: string = sanitizeInline(data.text ?? "");
   if (!sanitized) return null;
   return truncateAtClauseBoundary(sanitized, STICKER_PACK_SUMMARY_MAX_CHARS);
 }

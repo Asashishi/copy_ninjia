@@ -14,7 +14,7 @@ import {
   quiesceChatTitleRefresh,
   refreshAllChatTitles,
 } from "../infra/chatTitle";
-import { BOT_TOKEN } from "../infra/config";
+import { BOT_TOKEN, SUPER_ADMIN_USER_ID } from "../infra/config";
 import { flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO } from "../infra/diskIO";
 import { logger } from "../infra/logger";
 import { setBusinessWorkerFatalHandler } from "../infra/workerSupervisor";
@@ -48,6 +48,7 @@ import { runAcknowledgedUpdateBatches } from "./updateRunner";
 // eslint-disable-next-line @typescript-eslint/typedef -- 标注会与 typeof 推导成环
 export const lifecycleDependencies = {
   BOT_TOKEN,
+  SUPER_ADMIN_USER_ID,
   abortChatTitleRefresh,
   acquireSingleInstanceLock,
   bot,

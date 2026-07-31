@@ -18,7 +18,7 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage: (event: AntiRaidWorkerEvent): void => { workerEvents.push(event); } },
 });
 
-/** 两个删除入口共用一份实现：清痕迹那条路走三态版，其余路径只看成败。 */
+/** 两个删除入口共用一份实现：终态清理走三态版，其余路径只看成败。 */
 async function recordDelete(messageId: number): Promise<string> {
   deletedMessageIds.push(messageId);
   if (blockNextDelete) {
@@ -65,7 +65,6 @@ function record(
     phase: "pending",
     label: "待验证成员",
     isBot: false,
-    messageIds: [10],
     trackedMessageTimes: [],
     reminderMessageId: 10,
     replyReminderRequested: false,
@@ -150,7 +149,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       generation: 5,
       phase: "expelling",
       expelReason: "timeout",
-      messageIds: [10, 11],
+      replyReminderMessageId: 11,
     };
     runtime.adoptVerifications({
       type: "adoptVerifications",
@@ -159,7 +158,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       resumePersistedTerminals: true,
     });
     await Bun.sleep(0);
-    // 10 代表崩溃前已经删除过、恢复时 API 返回“目标不存在”；仍会继续 11 和踢人。
+    // 10 代表崩溃前已经删除过、恢复时 API 返回“目标不存在”；仍会继续清理 11 并踢人。
     expect(deletedMessageIds).toEqual([10, 11]);
     expect(kicks).toBe(baselineKicks + 1);
 
@@ -168,7 +167,6 @@ describe("Anti-Raid Worker verification recovery", () => {
       userId: 51,
       generation: 6,
       revision: 1,
-      messageIds: [20],
     };
     blockNextDelete = true;
     runtime.adoptVerifications({
@@ -229,7 +227,6 @@ describe("Anti-Raid Worker verification recovery", () => {
       ...record(70, before + 10_000),
       generation: 9,
       reminderMessageId: undefined,
-      messageIds: [],
     };
 
     runtime.adoptVerifications({

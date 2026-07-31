@@ -12,8 +12,7 @@ import {
 } from "../../../../consts/tools";
 import type { ReplyToolContext, ReplyToolset } from "../../../../types/aiChat/replies";
 import type { StickerPackCandidate, StickerRoundState } from "../../../../types/stickers/tools";
-import type { ToolDefinition } from "../../../../types/tools";
-import { TOOL_DEFINITIONS } from "../index";
+import { TOOL_DECLARATIONS } from "../index";
 import {
   buildSendStickerToolDefinition,
   buildStickerPackMenu,
@@ -40,25 +39,22 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   const messageState: RoundMessageState = createRoundMessageState();
   let actionsUsed: number = 0;
 
-  const viewDefinition: ToolDefinition | null = buildViewStickerPackToolDefinition(menu);
-  const sendStickerDefinition: ToolDefinition | null = buildSendStickerToolDefinition(menu);
-  const addReactionDefinition: ToolDefinition | null = buildAddReactionToolDefinition();
-  const definitions: ToolDefinition[] = [
+  const viewDefinition: FunctionDeclaration | null = buildViewStickerPackToolDefinition(menu);
+  const sendStickerDefinition: FunctionDeclaration | null = buildSendStickerToolDefinition(menu);
+  const addReactionDefinition: FunctionDeclaration | null = buildAddReactionToolDefinition();
+  const declarations: FunctionDeclaration[] = [
     buildSendMessageToolDefinition(ctx.roundHasTypo),
     buildGenerateImageToolDefinition(ctx),
     ...(addReactionDefinition ? [addReactionDefinition] : []),
     ...(viewDefinition ? [viewDefinition] : []),
     ...(sendStickerDefinition ? [sendStickerDefinition] : []),
   ];
-  const names: Set<string> = new Set(definitions.map((definition: ToolDefinition): string => definition.name));
-  const sdkDeclarations: FunctionDeclaration[] = [...TOOL_DEFINITIONS, ...definitions].map(
-    (definition: ToolDefinition): FunctionDeclaration => ({
-      name: definition.name,
-      description: definition.description,
-      parametersJsonSchema: definition.parameters,
-    })
+  const names: Set<string> = new Set(
+    declarations.flatMap((declaration: FunctionDeclaration): string[] =>
+      declaration.name === undefined ? [] : [declaration.name]
+    )
   );
-  const tools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: sdkDeclarations }];
+  const tools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: [...TOOL_DECLARATIONS, ...declarations] }];
 
   const executeSendMessage: (argumentsJson: string) => Promise<string> = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
   const executeAddReaction: (argumentsJson: string) => Promise<string> = createAddReactionExecutor(ctx);
@@ -98,7 +94,6 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   }
 
   return {
-    definitions,
     tools,
     has: (name: string): boolean => names.has(name),
     execute: async (name: string, argumentsJson: string): Promise<string> => {

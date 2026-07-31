@@ -34,6 +34,7 @@
     "@google-cloud/translate": "^9.4.2",
     "@google/genai": "^2.12.0",
     "@grammyjs/auto-retry": "^2.0.2",
+    "@grammyjs/files": "^1.2.0",
     "@grammyjs/runner": "^2.0.3",
     "@grammyjs/transformer-throttler": "^1.2.1",
     "grammy": "^1.44.0",

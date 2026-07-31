@@ -69,7 +69,6 @@ describe("Disk I/O append-domain cache owners", () => {
       phase: "pending",
       label: "pending",
       isBot: false,
-      messageIds: [],
       trackedMessageTimes: [],
       replyReminderRequested: false,
       reminderSuperseded: false,

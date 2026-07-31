@@ -1,3 +1,4 @@
+import type { FunctionDeclaration } from "@google/genai";
 import {
   ADD_REACTION_TOOL_INSTRUCTION,
   SEND_MESSAGE_TOOL_INSTRUCTION,
@@ -7,10 +8,9 @@ import {
   ADD_REACTION_TOOL,
   SEND_MESSAGE_TOOL,
 } from "../../../../consts/tools";
-import type { ToolDefinition } from "../../../../types/tools";
 import { getReactionEmojis } from "../../reactions";
 
-export function buildSendMessageToolDefinition(roundHasTypo: boolean): ToolDefinition {
+export function buildSendMessageToolDefinition(roundHasTypo: boolean): FunctionDeclaration {
   const properties: Record<string, unknown> = {
     text: { type: "string", description: "要发到群里的消息文本。" },
     reply_to_trigger: {
@@ -36,18 +36,18 @@ export function buildSendMessageToolDefinition(roundHasTypo: boolean): ToolDefin
   return {
     name: SEND_MESSAGE_TOOL,
     description: SEND_MESSAGE_TOOL_INSTRUCTION,
-    parameters: { type: "object", properties, required },
+    parametersJsonSchema: { type: "object", properties, required },
   };
 }
 
 /** 反应白名单为空时不向模型提供反应工具。 */
-export function buildAddReactionToolDefinition(): ToolDefinition | null {
+export function buildAddReactionToolDefinition(): FunctionDeclaration | null {
   const reactionEmojis: readonly string[] = getReactionEmojis();
   if (reactionEmojis.length === 0) return null;
   return {
     name: ADD_REACTION_TOOL,
     description: ADD_REACTION_TOOL_INSTRUCTION + reactionEmojis.join(" "),
-    parameters: {
+    parametersJsonSchema: {
       type: "object",
       properties: {
         emoji: { type: "string", description: "要扣的反应 emoji，必须是清单里列出的其中一个。" },

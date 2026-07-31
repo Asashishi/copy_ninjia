@@ -25,7 +25,9 @@ mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError
 mock.module("../../packages/config/readiness", () => ({
   jaTranslateConfigReadiness: () => jaReadiness,
 }));
-mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: () => ({ isJATranslationEnabled: jaEnabled }),
   getGlobalCopyState: () => globalCopy,

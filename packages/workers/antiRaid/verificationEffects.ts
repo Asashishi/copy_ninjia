@@ -409,7 +409,7 @@ async function kickPresentMember(
   return await kickChatMember(chatId, userId, joinVerificationApi) ? "kicked" : "failed";
 }
 
-/** 清理超时/刷屏成员的消息并按现查结果踢出，成功播报先写入新 revision 再收尾。 */
+/** 清理机器人验证痕迹并按现查结果踢出，成功播报先写入新 revision 再收尾。 */
 async function expelMember({
   chatId,
   userId,
@@ -426,48 +426,48 @@ async function expelMember({
     removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
     if (removalOutcome === "stale") return false;
   }
-  // 入群公告排在最前：它是这条记录里最早的一条痕迹，也是唯一一条机器人自己
-  // 制造、除本路径外没人会去删的消息（见 PendingState.announcementMessageId）。
+  // 这里只清理由机器人/Telegram 制造的验证痕迹：入群公告、原始提醒和回复式
+  // 提醒。成员自己的发言不进入快照，纯 kick 永远不附带删除目标消息。
   // 同下面每条一样先复核记录仍是当前的：flood 那一路的踢人 await 之后状态可能
-  // 已被替换，而被豁免成员的入群公告是**不该**删的（见 states/verification.ts）。
-  // 逐条记下删没删成，供下面的战报措辞用：成功文案断言的正是「痕迹清干净了」，
-  // 而机器人完全可能是「有 can_restrict_members、没有 can_delete_messages」的
-  // 管理员——那种群里这批消息一条不少地挂着，照发原文案就是群成员一眼就能证伪
-  // 的假话，而挂着的恰恰是文案声称已经清掉的垃圾。
+  // 已被替换，而被豁免成员的验证痕迹是**不该**删的（见 states/verification.ts）。
   //
   // 确证没有删消息权限时一条请求都不发：它们与踢人共用 joinVerificationApi 的
   // 限流队列，一场突袭里几十个注定 400 的删除会把真正的踢人顶到验证窗口之后。
   // 三态里只拦确证的 false，「没观测到」照常发（理由见 ./botPermissions.ts）。
   // 本来就没有痕迹要清时（列表为空）不算失败，战报也就不该说「删不动」。
-  const traceMessageIds: readonly number[] = snapshot.announcementMessageId !== undefined
-    ? [snapshot.announcementMessageId, ...snapshot.messageIds]
-    : snapshot.messageIds;
-  // **「删不动」只算真的删不动的那些。** 这批 id 里天天都会混进已经不存在的消息：
-  // 管理员（或本人）比超时更快手删了那条发言、入群公告已被别人清掉、消息超过
-  // 48 小时。deleteMessageWithOutcome 的 gone 把这些认出来，算清干净——它们确实
-  // 不在群里了。把它们折进失败的代价是一句公开的假话：一个权限齐全的机器人会
-  // 指名让管理员去排查一个配置完全正确的 can_delete_messages。
+  const cleanupMessageIds: number[] = [];
+  for (const messageId of [
+    snapshot.announcementMessageId,
+    snapshot.reminderMessageId,
+    snapshot.replyReminderMessageId,
+  ]) {
+    if (messageId !== undefined && !cleanupMessageIds.includes(messageId)) {
+      cleanupMessageIds.push(messageId);
+    }
+  }
+  // **「删不动」只算真的删不动的那些。** 管理员可能已经手动清理验证消息，
+  // deleteMessageWithOutcome 的 gone 把这种情况认成已达成目标，不能冤枉权限配置。
   //
   // 计数而不是布尔：N 条里失败 1 条时，「一条都删不动」同样是假话。
-  let missedTraces: number = 0;
+  let missedCleanup: number = 0;
   let permissionDenied: boolean = false;
-  if (traceMessageIds.length > 0 && botCanDeleteIn(chatId) === false) {
-    missedTraces = traceMessageIds.length;
+  if (cleanupMessageIds.length > 0 && botCanDeleteIn(chatId) === false) {
+    missedCleanup = cleanupMessageIds.length;
     permissionDenied = true;
   } else {
-    for (const messageId of traceMessageIds) {
+    for (const messageId of cleanupMessageIds) {
       if (!stillCurrent()) return false;
       const outcome: DeleteMessageOutcome = await deleteMessageWithOutcome(chatId, messageId, joinVerificationApi);
       if (outcome === "deleted" || outcome === "gone") continue;
-      missedTraces++;
+      missedCleanup++;
       if (outcome === "forbidden") permissionDenied = true;
     }
   }
-  const tracesCleared: boolean = missedTraces === 0;
-  if (!tracesCleared) {
+  const cleanupCleared: boolean = missedCleanup === 0;
+  if (!cleanupCleared) {
     logger.error(
-      `Verification expel could not delete ${missedTraces} of ${traceMessageIds.length} tracked message(s) ` +
-      `of user ${userId} in chat ${chatId}: ` +
+      `Verification expel could not delete ${missedCleanup} of ${cleanupMessageIds.length} ` +
+      `verification-owned message(s) for user ${userId} in chat ${chatId}: ` +
       (permissionDenied
         ? "Telegram denied the deletion, so the bot most likely lacks can_delete_messages."
         : "the deletions failed without a permission error, so this is most likely transient.")
@@ -488,19 +488,17 @@ async function expelMember({
       : reason === "flood"
         ? `啧，${snapshot.label} 没完成验证还在刷屏，本天才想把 TA 踢出去却没踢动……管理员快检查本天才的封禁权限！`
         : `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
-    : !tracesCleared
-      // 人是踢走了，但有痕迹没清掉——照发「痕迹清干净了」就是假话，而群里还挂着
-      // 的那些正好是文案声称已经清掉的东西。**只有 Telegram 真的拒了权限才点管理员**：
-      // 那批 id 里天天混着已被手删、或超过 48 小时的消息，把它们折进失败就等于让
-      // 一个权限齐全的机器人把管理员送去排查一个配置完全正确的权限。
+    : !cleanupCleared
+      // 人是踢走了，但机器人的验证消息没清完。**只有 Telegram 真的拒了权限才
+      // 点管理员**；瞬时失败只说明网络/接口抖动，不能误诊权限。
       ? permissionDenied
-        ? `啧，${snapshot.label} 没通过验证，本天才把 TA 踢出去了，可 TA 留下的 ${traceMessageIds.length} 条痕迹里有 ${missedTraces} 条删不动……杂鱼管理员快看看本天才有没有删消息的权限♡`
-        : `啧，${snapshot.label} 没通过验证，本天才把 TA 踢出去、痕迹也清了，只有 ${missedTraces} 条没清掉，多半是网络抽了一下♡`
+        ? `啧，${snapshot.label} 没通过验证，本天才把 TA 踢出去了，可本天才自己的 ${cleanupMessageIds.length} 条验证消息里还有 ${missedCleanup} 条删不动……杂鱼管理员快看看本天才有没有删消息的权限♡`
+        : `啧，${snapshot.label} 没通过验证，本天才把 TA 踢出去了，不过本天才自己的验证消息还有 ${missedCleanup} 条没清掉，多半是网络抽了一下♡`
       : reason === "flood"
-        ? `啧，${snapshot.label} 验证都没过就开始刷屏，本天才已经先把 TA 踢出去、再把痕迹清干净啦♡`
+        ? `啧，${snapshot.label} 验证都没过就开始刷屏，本天才已经把 TA 踢出去啦♡`
         : snapshot.isBot
-          ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩连痕迹一起清出去啦♡`
-          : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 的痕迹清干净、顺手踢出去啦，杂鱼动作太慢咯♡`;
+          ? `啧，${formatMinSec(VERIFICATION_TIMEOUT_MS)} 过去了都没有白名单大人愿意为机器人 ${snapshot.label} 作保，本天才把这个来路不明的铁疙瘩踢出去啦♡`
+          : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 踢出去啦，杂鱼动作太慢咯♡`;
   if (!stillCurrent()) return false;
   // 三条文案各记各的名额：探测抖动发出的「没能确认还在不在群里」不能把
   // 「踢不动，去检查封禁权限」那条唯一指出真实原因的诊断顶掉（见

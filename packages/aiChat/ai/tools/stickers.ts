@@ -1,4 +1,5 @@
 import type { StickerSet } from "@grammyjs/types";
+import type { FunctionDeclaration } from "@google/genai";
 import { getStickerConfig } from "../../../config/stickers";
 import { sendSticker } from "../../../infra/telegram";
 import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
@@ -27,7 +28,6 @@ import { pauseForToolAction } from "../utils/toolPause";
 import type { ChatActionControl } from "../../../types/aiChat/chatAction";
 import type { StickerCatalogEntry } from "../../../types/stickers/catalog";
 import type { StickerCandidate, StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../../../types/stickers/tools";
-import type { ToolDefinition } from "../../../types/tools";
 
 /**
  * 应景贴纸的两层选择工具：
@@ -123,14 +123,14 @@ export function formatPackStickerList(candidate: StickerPackCandidate): string {
  * 整包简介），pack_index 按菜单长度约束取值范围。菜单为空（白名单为空、
  * 或目录还没生成出任何描述）时返回 null——两层工具一起不提供。
  */
-export function buildViewStickerPackToolDefinition(menu: readonly StickerPackCandidate[]): ToolDefinition | null {
+export function buildViewStickerPackToolDefinition(menu: readonly StickerPackCandidate[]): FunctionDeclaration | null {
   if (menu.length === 0) return null;
 
   const listText: string = menu.map((p: StickerPackCandidate, i: number): string => `${i + 1}. 「${p.title}」（${p.stickers.length} 枚）：${p.summary}`).join("\n");
   return {
     name: VIEW_STICKER_PACK_TOOL,
     description: VIEW_STICKER_PACK_TOOL_INSTRUCTION + listText,
-    parameters: {
+    parametersJsonSchema: {
       type: "object",
       properties: {
         pack_index: { type: "integer", description: `要查看的贴纸包在清单里的编号，1 到 ${menu.length} 之间。` },
@@ -146,13 +146,13 @@ export function buildViewStickerPackToolDefinition(menu: readonly StickerPackCan
 }
 
 /** 构造 send_sticker 的工具定义（两层选择的第二层），菜单为空时返回 null。 */
-export function buildSendStickerToolDefinition(menu: readonly StickerPackCandidate[]): ToolDefinition | null {
+export function buildSendStickerToolDefinition(menu: readonly StickerPackCandidate[]): FunctionDeclaration | null {
   if (menu.length === 0) return null;
 
   return {
     name: SEND_STICKER_TOOL,
     description: SEND_STICKER_TOOL_INSTRUCTION,
-    parameters: {
+    parametersJsonSchema: {
       type: "object",
       properties: {
         pack_index: { type: "integer", description: `贴纸包在 view_sticker_pack 清单里的编号，1 到 ${menu.length} 之间。` },

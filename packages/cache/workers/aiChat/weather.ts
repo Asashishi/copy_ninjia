@@ -1,5 +1,5 @@
 import type { TimedCache } from "../../../types/cache";
-import type { TokyoWeatherResult } from "../../../types/tools";
+import type { TokyoWeatherResult } from "../../../types/aiChat/weather";
 
 /**
  * 东京天气服务（packages/aiChat/ai/weather.ts）的内存缓存：仅存最近一次成功结果及其

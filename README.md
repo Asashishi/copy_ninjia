@@ -123,7 +123,7 @@
 <tr>
 <td align="left" valign="top">
   <p><b>📮 广告检测</b></p>
-  <p>按发送者归并 90 秒消息串交 DeepSeek 判定，命中即按 <code>/block</code> 同权处置，并在触发群播报封禁理由。</p>
+  <p>按发送者归并 90 秒消息串交 DeepSeek 判定，非受保护身份命中后按 <code>/block</code> 同权处置，并在触发群播报封禁理由。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🎲 今日运势</b></p>
@@ -171,9 +171,9 @@
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
 <tr><td><code>/mute … &lt;时长&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>在超级群临时禁言或提前解除；目标支持回复、<code>@username</code>、用户 id，时长支持 <code>m/h/d</code></td></tr>
 <tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
-<tr><td><code>/unblock</code> <code>/unblock … all</code></td><td align="center"><code>isCanUnBlock</code><br>（<code>all</code> 还需 <code>isCanUnBlockAll</code>）</td><td>解除拉黑：把 id 从黑名单里划掉；目标指定方式同 <code>/block</code>，另外还接受频道的负数 id；默认不动各群已有封禁，加 <code>all</code> 则一并解封。超级管理员自动拥有两项权限</td></tr>
+<tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>完整解除拉黑：把 id 从动态黑名单里划掉，并在所有机器人管理的群中解除封禁；目标指定方式同 <code>/block</code>，另外还接受频道的负数 id。静态黑名单身份拒绝解除；超级管理员自动放行</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊；超级管理员自动放行</td></tr>
-<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，命中按 <code>/block</code> 同权处置；超级管理员自动放行</td></tr>
+<tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，非受保护身份命中后按 <code>/block</code> 同权处置；超级管理员自动放行</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名；超级管理员自动放行</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>开关本群日语翻译能力（默认关闭）；超级管理员自动放行</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群的业务处理总入口</td></tr>
@@ -187,9 +187,9 @@
 
 - **命令入口**：群命令统一经过 `/init` 网关；未初始化群只接受超级管理员的 `/init`，所以 `/permission`、`/white` 也必须在已初始化群中使用。私聊斜杠命令只放行 `/send`。
 - **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。
-- **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 移除时整份名单原子重写回文件。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
+- **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 移除时整份名单原子重写回文件，并默认在所有机器人管理的群解除封禁；即使目标不在动态名单里也仍会跨群解封。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
 - **`/batch_kick` 慢速清理**：只允许超级管理员在已初始化的超级群中使用，参数是 `30m`、`2h`、`1d` 这类不超过 24 小时的单个窗口。命令按入群日志找出窗口内最后一次加入且仍在群中的成员，小并发执行只踢不封；超级管理员、白名单身份和永久黑名单成员都不会被这条命令当作普通目标处理。
-- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 DeepSeek 判定；命中即执行与 `/block` 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
+- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 DeepSeek 判定；非受保护身份命中后执行与 `/block` 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。超级管理员恒不送检；白名单的 `isCanBypassAdDetection` 关闭后可以送检和删除本批消息，但仍不会进入永久黑名单。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
 - **刷屏禁言**：同一个人在同一个超级群内一分钟发言达到 21 条，就地禁言 5 分钟并在群里说明一句（公告在禁言解除时自撤）。到点由 Telegram 自动解除，不写黑名单也不删消息。仅在机器人确有「限制成员」权限时触发；群主/管理员、`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json` 白名单身份、频道马甲与匿名管理员都不计数。
 - **`/send` 中转**：开启前先探测目标是否可达，期间超级管理员发送的每条消息都会原样转发到目标群一次；目标失联时自动终止并通知。中转状态随 `state.json` 持久化，重启后仍可恢复。该命令不进入 Telegram 命令菜单，在群内调用或由其他用户触发时均不响应。
 

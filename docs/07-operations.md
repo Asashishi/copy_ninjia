@@ -38,7 +38,9 @@ WantedBy=multi-user.target
 
 数据根目录先由部署工具预建：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。容器部署把同一目录作为持久卷挂载，owner 由宿主或 init container 设置；`memory/` 不要放容器临时层。
 
-升级到带权限门禁的版本前先停掉所有实例，再检查并迁移已有目录：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。程序会以 `0750` 补建数据根及 `logs/`、`memory/`，并校验这些目录属于运行 UID；`config/` 是项目内的部署配置，不属于独立运行时数据根，其中 `whitelist.json` 会被 `/white` 与 `/permission` 原子改写，因此运行用户必须能在该目录创建临时文件并 rename，其余配置可保持只读。已有数据根若比 `0750` 更宽会拒绝启动，不会擅自 chmod。若部署需要不同 owner/group，请替换命令中的账户，但仍须保证运行用户可写且 mode 不宽于 `0750`。
+升级到带权限门禁的版本前先停掉所有实例，再检查并迁移已有目录：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。程序会以 `0750` 补建数据根及 `logs/`、`memory/`，并校验这些目录属于运行 UID；三者都不支持符号链接。`config/` 是项目内的部署配置，不属于独立运行时数据根，其中 `whitelist.json` 会被 `/white` 与 `/permission` 原子改写，因此运行用户必须能在该目录创建临时文件并 rename，其余配置可保持只读。运行中若外部编辑 `whitelist.json`，下一条授权命令会拒绝覆盖；停服重启后才从新文件建立缓存。已有数据根若比 `0750` 更宽会拒绝启动，不会擅自 chmod。若部署需要不同 owner/group，请替换命令中的账户，但仍须保证运行用户可写且 mode 不宽于 `0750`。
+
+升级到移除 `/unblock all` 的版本属于严格配置迁移：先停掉所有实例，把 `config/whitelist.json` 备份到工作树外，并记录清单、owner/mode 与 SHA-256；随后手工删除每个条目的 `isCanUnBlockAll`，用当前严格 schema 解析验证，并确认白名单（含 `SUPER_ADMIN_USER_ID`）与静态、动态黑名单没有交集。恢复预期 owner/mode 后才能启动。旧字段会被有意拒绝，不保留兼容读取；此变更按 MAJOR 版本发布。备份及校验输出不得包含白名单正文。
 
 进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
 
@@ -109,7 +111,7 @@ WantedBy=multi-user.target
 ### `memory/` 辅助文件与纯内存状态
 
 - 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。`ai/`、`stickers/`、`luck/` 在启动时清理 `*.tmp`，`blocklist/` 的两个 owner 只按各自 `.blocklist.json.*.tmp` / `.removals.json.*.tmp` 前缀清理，`ad-detected/` 在首次写样本前清理 `.sample.json.*.tmp`，`joinlog/` 在首次接管当日目录时清理 `*.tmp`。当前 `anti-raid/` 恢复只忽略这类文件而不主动清理；它们不参与恢复，确认 Bot 已停止且名称精确匹配上述原子写格式后才可作为孤儿删除。
-- `memory/ai/<chatId>.json.corrupt` 与 `memory/stickers/<pack>.json.corrupt` 是 JSON 无法解析时保留的隔离件，不参与正常恢复也不自动删除。字段能解析但不符合当前 version=1 schema 时不会隔离，而是直接拒绝启动，要求按 [06](06-modification-guide.md#变更持久化-schema) 手工迁移。
+- `memory/ai/<chatId>.json.<时间戳>.<uuid>.corrupt` 与 `memory/stickers/<pack>.json.<时间戳>.<uuid>.corrupt` 是 JSON 无法解析时保留的唯一命名隔离件，不参与正常恢复也不自动删除；同一路径再次损坏会新增证据，不覆盖旧件。字段能解析但不符合当前 version=1 schema 时不会隔离，而是直接拒绝启动，要求按 [06](06-modification-guide.md#变更持久化-schema) 手工迁移。
 - `/block` 的 `confirmedKickedUserIdsByChat`、Challenge timer、广告检测待判队列/去重 Set、Telegram 成员/管理员短缓存都只存在于进程内，没有对应文件。尤其“当日逐群确证踢出”缓存按东京日或进程重启清空，绝不从 `blocklist.json` 或 `removals.json` 推断恢复。
 
 备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成。`memory/` 视为敏感数据：文件 mode 是宽松的 `0644`（单租户部署基线，见 [04](04-invariants.md#持久化)），访问控制靠目录 owner/权限与主机账户隔离。
@@ -164,8 +166,8 @@ jq -e '
 程序的启动失败都是**有意的快速失败**，报错自带原因；对照处理，不要绕过：
 
 - **数据根预检失败（带路径）**
-  - **原因**：目录 mode 宽于 `0750`、不可写，或文件系统不支持 fsync、hard link、
-    原子 rename。
+  - **原因**：数据根/`memory`/`logs` 是符号链接、目录 mode 宽于 `0750`、不可写，
+    或文件系统不支持 fsync、hard link、原子 rename。
   - **处理**：停掉所有实例后修正 owner/group，并执行 `chmod 0750 <数据根>`；
     若仍失败，改用满足能力要求的本地文件系统。
 - **`bot.lock` 拒绝启动**

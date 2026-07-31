@@ -1,7 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
 import { getChatState, getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { isJaTranslationConfigured } from "../copy/availability";
 import { describeCopyModeEffect } from "../copy/copyModes";
@@ -57,7 +57,7 @@ export async function handleCopyCommand(
       return;
     }
     if (getChatState(chatId).isJATranslationEnabled !== true) {
-      await sendMessage({
+      await sendCommandMessage({
         chatId,
         text: `本天才在这个群的日语翻译功能被关掉啦，杂鱼去找超级管理员 /ja_copy enable 一下吧♡`,
         replyToMessageId: messageId,
@@ -70,7 +70,7 @@ export async function handleCopyCommand(
   const slotDecision: CopySlotDecision = claimCopySlot(globalCopy, chatId);
   if (!slotDecision.claimed) {
     if (slotDecision.reason === "pending") {
-      await sendMessage({
+      await sendCommandMessage({
         chatId,
         text: `本天才正在处理另一条 /copy 啦，杂鱼别同时抢本天才的手♡`,
         replyToMessageId: messageId,
@@ -85,7 +85,7 @@ export async function handleCopyCommand(
     const replyText: string = slotDecision.copiedUser.id === targetUser?.id
       ? `早就在复读 ${formatUserLabel(targetUser)} 啦，杂鱼，是没听清楚吗♡`
       : `本天才手上已经有猎物啦，想换人的话先 /stop_copy 呀，笨蛋♡`;
-    await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
 
@@ -105,7 +105,7 @@ export async function handleCopyCommand(
       copyChatId: chatId,
     });
     if (!slotCommitted) {
-      await sendMessage({
+      await sendCommandMessage({
         chatId,
         text: `这轮 /copy 已经被 /stop_copy 取消啦，杂鱼想玩就重新来一次♡`,
         replyToMessageId: messageId,
@@ -127,7 +127,7 @@ export async function handleCopyCommand(
 
   const targetLabel: string = formatUserLabel(targetUser);
   const startText: string = `正在把 ${targetLabel} 的脸皮扒下来当本天才的头像哦${describeCopyModeEffect(mode)}，杂鱼乖乖等一下~♡`;
-  await sendMessage({ chatId, text: startText, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: startText, replyToMessageId: messageId });
 
   // 头像复制放在后台执行：copiedUser 已经写入，复读逻辑立即生效。
   stealAvatarInBackground({
@@ -149,7 +149,7 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
 
   const pendingCancelled: boolean = cancelPendingCopySlot();
   if (!globalCopy.copiedUser && !pendingCancelled) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: `本天才现在什么杂鱼都没盯着呢，笨蛋要 /stop_copy 什么呀♡`,
       replyToMessageId: messageId,
@@ -164,7 +164,7 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
     await persistAuthoritativeState("copy stopped");
   }
 
-  await sendMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });
 }
 
 /** teardown 专用：只停止由指定源群持有的全局 copy，不在这里单独落盘。 */

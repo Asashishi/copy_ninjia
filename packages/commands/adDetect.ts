@@ -5,7 +5,7 @@ import { adDetectConfigReadiness } from "../config/readiness";
 import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
 import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { refuseIfConfigBroken } from "./configGate";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 
@@ -36,7 +36,7 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
   const messageId: number | undefined = ctx.msgId;
   if (arg === "enable") {
     if (AD_DETECT_DEEPSEEK_API_KEY === undefined) {
-      await sendMessage({
+      await sendCommandMessage({
         chatId,
         text: `本天才没有 DeepSeek 的 key，拿什么抓广告呀？去 .env 里补上 AD_DETECT_DEEPSEEK_API_KEY 再重启，笨蛋♡`,
         replyToMessageId: messageId,
@@ -74,5 +74,5 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
   const replyText: string = arg === "enable"
     ? `哼，本天才这就盯着这个群的广告，敢发的杂鱼一个都别想留下♡`
     : `不抓广告了，随便你们刷吧，本天才可懒得管♡`;
-  await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

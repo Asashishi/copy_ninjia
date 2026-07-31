@@ -1,7 +1,8 @@
+import type { FunctionDeclaration } from "@google/genai";
 import { currentTokyoWeather } from "../weather";
 import { GET_TOKYO_WEATHER_TOOL, unknownToolError } from "../../../consts/tools";
 import { toolError } from "../utils/toolResult";
-import type { ToolDefinition, TokyoWeatherResult } from "../../../types/tools";
+import type { TokyoWeatherResult } from "../../../types/aiChat/weather";
 
 /**
  * AI 回复流水线的工具目录（packages/aiChat/ai/tools/）。本文件是其中「静态查询工具」的
@@ -15,11 +16,11 @@ import type { ToolDefinition, TokyoWeatherResult } from "../../../types/tools";
  * 同目录的 replyToolset/ / stickers.ts。
  */
 
-export const TOOL_DEFINITIONS: ToolDefinition[] = [
+export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: GET_TOKYO_WEATHER_TOOL,
     description: "获取东京今天的实时天气状况与气温（摄氏度）。",
-    parameters: { type: "object", properties: {}, required: [] },
+    parametersJsonSchema: { type: "object", properties: {}, required: [] },
   },
 ];
 

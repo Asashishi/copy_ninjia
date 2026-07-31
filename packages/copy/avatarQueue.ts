@@ -3,7 +3,7 @@ import type { FlushResult } from "../types/lifecycle";
 import { drainWithWaiter } from "../libs/drainWaiter";
 import { logger } from "../infra/logger";
 import { copyUserProfilePhoto } from "../infra/telegram/avatar";
-import { sendMessage } from "../infra/telegram/actions";
+import { sendCommandMessage } from "../infra/telegram";
 import type { AvatarUpdateRequest, AvatarUpdateTask } from "../types/copy/avatar";
 
 function notifyAvatarDrainIfIdle(): void {
@@ -30,7 +30,7 @@ async function consumeAvatarUpdates(): Promise<void> {
         // 在途任务不能取消，但新目标到达后旧战报已经过期；最终只让最新目标
         // 报告结果，随后单一执行槽继续处理最新 pending。
         if (!signal.aborted && task.generation === avatarUpdateState.latestGeneration) {
-          await sendMessage({
+          await sendCommandMessage({
             chatId: task.chatId,
             text: updated ? task.successText : task.failureText,
             signal,

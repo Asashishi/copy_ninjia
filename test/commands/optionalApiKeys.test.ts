@@ -26,7 +26,9 @@ mock.module("../../packages/infra/config", () => ({
 mock.module("../../packages/config/whitelist", () => ({
   hasWhitelistPermission: (): boolean => false,
 }));
-mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat, switchAiMood }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));

@@ -26,7 +26,6 @@ let capturedContext: ReplyToolContext | null = null;
 const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyToolset> => {
   capturedContext = ctx;
   return {
-    definitions: [],
     tools: [],
     has: (): boolean => true,
     execute,

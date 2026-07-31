@@ -4,7 +4,8 @@
  *
  * 主线程只做两件事：
  * - 投递：每条群消息在入群守卫入口顺带判一次门禁（本群开了 /ad_detect enable、
- *   机器人是本群管理员、发送者不是自己人），通过就把清洗后的正文投给 Worker。
+ *   机器人是本群管理员、发送者没有广告检测豁免），通过就把清洗后的正文投给
+ *   Worker。白名单可单独关闭该豁免，但永久黑名单仍受白名单成员关系保护。
  *   投递走普通 post 而非 durable 边界——判定是尽力而为的启发式，丢一条待检
  *   消息不构成安全边界失守，不值得为它给每条群消息加一次跨线程屏障。
  * - 处置：Worker 判成广告后回投事件，这里执行与 /block 完全相同的那套动作
@@ -17,7 +18,7 @@ import type { Message } from "@grammyjs/types";
 import { adDetectConfigReadiness } from "../config/readiness";
 import { logger } from "../infra/logger";
 import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
-import { canBypassAdDetection } from "./memberFacts";
+import { canBypassAdDetection, isProtectedSender } from "./memberFacts";
 import {
   blockUser,
   confirmBlocklistPersisted,
@@ -38,6 +39,7 @@ import { sanitizeInline, truncateInline } from "../libs/text";
 import { formatTokyoTime } from "../libs/time";
 import { formatUserLabel } from "../users/userLabel";
 import { visibleSenderChat } from "../users/visibleSender";
+import { runProtectedIdentityMutation } from "../infra/identityPolicy";
 import {
   AD_DETECT_LINK_URL_MAX_CHARS,
   AD_DETECT_MAX_LINK_URLS,
@@ -278,14 +280,23 @@ function recordAdSample(event: AdDetectedEvent): void {
  * 修好磁盘后的人为重试，这条路是刷屏号自己触发的，两者不该共用一套代价。
  */
 async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
-  if (canBypassAdDetection(event.senderId)) {
+  const newlyBlocked: boolean | null = await runProtectedIdentityMutation(
+    (): boolean | null => {
+      // 候选入队后管理员可能刚把该身份加入白名单；而关闭广告绕过权限的白名单
+      // 成员仍可能被模型判定并清掉这批消息。两种情况都不能写进永久黑名单，
+      // 否则与启动时的 protected-identity 交集门禁自相矛盾。
+      if (isProtectedSender(event.senderId)) return null;
+      recordAdSample(event);
+      return blockUser(event.senderId);
+    }
+  );
+  if (newlyBlocked === null) {
     logger.error(
-      `Ad detection flagged privileged sender ${event.senderId} in chat ${event.chatId}; ignoring the verdict.`
+      `Ad detection flagged protected sender ${event.senderId} in chat ${event.chatId}; ` +
+      "refusing to add the identity to the permanent blocklist."
     );
     return;
   }
-  recordAdSample(event);
-  const newlyBlocked: boolean = blockUser(event.senderId);
   if (newlyBlocked && !await confirmBlocklistPersisted()) {
     logger.error(
       `Ad detection blocklist entry for sender ${event.senderId} is memory-only; ` +

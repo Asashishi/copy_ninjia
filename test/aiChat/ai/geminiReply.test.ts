@@ -19,11 +19,14 @@ import {
 } from "../../../packages/consts/tools";
 import type { ReplyPromptSections, ReplyToolset } from "../../../packages/types/aiChat/replies";
 import type { GeminiRequestResult } from "../../../packages/types/aiChat/gemini";
+import type { GeminiResponseFixture } from "../../helpers/geminiResponse";
+import { geminiResponse } from "../../helpers/geminiResponse";
 
 const replies: unknown[] = [];
 const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => {
-  const response: GenerateContentResponse | undefined = replies.shift() as GenerateContentResponse | undefined;
-  if (!response) return { ok: false, diagnostic: "request failed" };
+  const fixture: GeminiResponseFixture | undefined = replies.shift() as GeminiResponseFixture | undefined;
+  if (!fixture) return { ok: false, diagnostic: "request failed" };
+  const response: GenerateContentResponse = geminiResponse(fixture);
   const finishReason: string | undefined = response.candidates?.[0]?.finishReason as string | undefined;
   if (finishReason !== undefined && finishReason !== "STOP") {
     return { ok: false, diagnostic: `finishReason=${finishReason}`, finishReason, response };
@@ -75,7 +78,6 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   const registeredTools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }];
   const execute = mock(async (..._args: unknown[]): Promise<string> => JSON.stringify({ success: true }));
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: registeredTools,
     has: (name: string): boolean => name === "send_message",
     execute,
@@ -118,7 +120,6 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
 test("非直接触发不插入唤起者重点 Part", async () => {
   replies.push({ candidates: [{ content: { role: "model", parts: [{ text: "随机插话" }] } }] });
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
@@ -175,7 +176,6 @@ test("搜索额度跑满后，后续工具轮移除 googleSearch", async () => {
   const registeredTools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }];
   const execute = mock(async (): Promise<string> => JSON.stringify({ success: true }));
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: registeredTools,
     has: (name: string): boolean => name === "send_message",
     execute,
@@ -203,7 +203,6 @@ test("搜过且仍有额度时，联网查证说明切到结果纪律并降温",
 
   const registeredTools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }];
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: registeredTools,
     has: (name: string): boolean => name === "send_message",
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
@@ -240,7 +239,6 @@ test("服务端先报 TOO_MANY_TOOL_CALLS 时，零动作轮关闭搜索后只�
   );
 
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
@@ -283,7 +281,6 @@ test("同一模型响应中的多个行动工具严格按返回顺序串行执�
     return JSON.stringify({ success: true });
   });
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "generate_image" }, { name: "send_message" }] }],
     has: (name: string): boolean => name === "generate_image" || name === "send_message",
     execute,
@@ -313,7 +310,6 @@ test("最终输出被 token 上限截断时返回 null", async () => {
     }],
   });
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
@@ -329,12 +325,11 @@ test("请求在途时被禁用，响应回来后不再执行任何行动", async
   let active: boolean = true;
   requestGeminiResponseMock.mockImplementationOnce(async (): Promise<GeminiRequestResult> => {
     active = false;
-    return { ok: true, response: {
+    return { ok: true, response: geminiResponse({
       candidates: [{ content: { role: "model", parts: [{ text: "迟到的搜索资料" }] } }],
-    } as unknown as GenerateContentResponse };
+    }) };
   });
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
@@ -360,7 +355,6 @@ test("不存在通用单工具四次上限，无效调用只受整轮总预算�
   replies.push({ candidates: [{ content: { role: "model", parts: [{ text: "不再重试" }] } }] });
   const execute = mock(async (): Promise<string> => JSON.stringify({ error: "invalid arguments" }));
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ functionDeclarations: [{ name: VIEW_STICKER_PACK_TOOL }] }],
     has: (): boolean => true,
     execute,
@@ -405,7 +399,6 @@ test("四类可见动作共享十一动作硬顶，达到后一起移除但保�
     { name: VIEW_STICKER_PACK_TOOL },
   ];
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ functionDeclarations: declarations }],
     has: (): boolean => true,
     execute,
@@ -438,7 +431,6 @@ test("同一响应多调用计入总预算，达到硬顶后在下一请求移�
   replies.push({ candidates: [{ content: { role: "model", parts: [{ text: "预算收敛" }] } }] });
   const execute = mock(async (): Promise<string> => JSON.stringify({ error: "failed" }));
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ functionDeclarations: names.map((name) => ({ name })) }],
     has: (): boolean => true,
     execute,
@@ -462,7 +454,6 @@ test("异常 candidate 夹带文本和 functionCall 时零执行、零最终文�
   });
   const execute = mock(async (): Promise<string> => JSON.stringify({ success: true }));
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => true,
     execute,
@@ -478,7 +469,6 @@ test("异常 candidate 夹带文本和 functionCall 时零执行、零最终文�
 test("已经产生外部副作用后遇到 TOO_MANY_TOOL_CALLS 不做降级重试", async () => {
   replies.push({ candidates: [{ finishReason: "TOO_MANY_TOOL_CALLS", content: { role: "model", parts: [] } }] });
   const toolset: ReplyToolset = {
-    definitions: [],
     tools: [{ googleSearch: {} }, { functionDeclarations: [{ name: "send_message" }] }],
     has: (): boolean => false,
     execute: async (): Promise<string> => JSON.stringify({ success: true }),

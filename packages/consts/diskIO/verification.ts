@@ -2,6 +2,8 @@
 
 import { DAY_FILE_JSON_INDENT } from "./appendOnly";
 
+/** 当前待验证日文件记录版本；结构变化只接受手工迁移后的新版本。 */
+export const VERIFICATION_FILE_VERSION: number = 2;
 /** 东京标准时相对 UTC 的固定毫秒偏移，用于计算下一次本地午夜。 */
 export const TOKYO_OFFSET_MS: number = 9 * 60 * 60 * 1_000;
 /** 匹配按约定缩进序列化的顶层 JSON 条目，用于统计追加历史。 */
@@ -10,7 +12,7 @@ export const VERIFICATION_TOP_LEVEL_ENTRY_PATTERN: RegExp = new RegExp(
   "gm"
 );
 
-/** 普通消息 ID/提醒回填变化的短合并窗口；创建与终结立即追加。 */
+/** 普通状态/提醒回填变化的短合并窗口；创建与终结立即追加。 */
 export const VERIFICATION_FLUSH_INTERVAL_MS: number = 250;
 /** 单次验证增量合并达到后立即刷盘的 key 数阈值。 */
 export const VERIFICATION_FLUSH_MAX_KEYS: number = 100;
@@ -18,8 +20,6 @@ export const VERIFICATION_FLUSH_MAX_KEYS: number = 100;
 export const VERIFICATION_FILE_COMPACT_ENTRIES: number = 10_000;
 /** 待验证当日文件触发 active 快照收敛的字节阈值。 */
 export const VERIFICATION_FILE_COMPACT_BYTES: number = 4 * 1024 * 1024;
-/** 读取损坏/手工修改文件时的防御上限；运行时消息窗口会另设更小上限。 */
-export const VERIFICATION_FILE_MAX_MESSAGE_IDS: number = 5_000;
 /**
  * 快照 label 字段的防御性长度上限。正常取值来自 Telegram username（≤32）、
  * first_name（≤64）或频道标题（≤128），远小于此值；这里只用于拒绝损坏/篡改

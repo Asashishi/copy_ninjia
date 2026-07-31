@@ -2,7 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { jaTranslateConfigReadiness } from "../config/readiness";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { refuseIfConfigBroken } from "./configGate";
 import { handleCopyCommand } from "./copy";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
@@ -54,5 +54,5 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
   const replyText: string = toggleArg === "enable"
     ? `哼，那本天才就赏脸继续在这个群用 /ja_copy 翻译日语吧，杂鱼们好好珍惜♡`
     : `本天才不想再给你们这群杂鱼翻译日语了，/ja_copy 到此为止♡`;
-  await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

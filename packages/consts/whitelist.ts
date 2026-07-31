@@ -11,8 +11,6 @@ const DEFAULT_IS_CAN_UNMUTE: boolean = false;
 const DEFAULT_IS_CAN_BLOCK: boolean = false;
 /** 白名单条目缺省不可移出永久黑名单。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_UNBLOCK: boolean = false;
-/** 白名单条目缺省不可跨群解除 Telegram 封禁。所属模块：packages/config/whitelist.ts。 */
-const DEFAULT_IS_CAN_UNBLOCK_ALL: boolean = false;
 /** 白名单条目缺省不可重抽 AI 心情。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_SWITCH_MOOD: boolean = false;
 /** 白名单条目缺省绕过广告检测。所属模块：packages/config/whitelist.ts。 */
@@ -33,7 +31,6 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = Obj
   isCanUnMute: DEFAULT_IS_CAN_UNMUTE,
   isCanBlock: DEFAULT_IS_CAN_BLOCK,
   isCanUnBlock: DEFAULT_IS_CAN_UNBLOCK,
-  isCanUnBlockAll: DEFAULT_IS_CAN_UNBLOCK_ALL,
   isCanSwitchMood: DEFAULT_IS_CAN_SWITCH_MOOD,
   isCanBypassAdDetection: DEFAULT_IS_CAN_BYPASS_AD_DETECTION,
   isCanControllAIPermission: DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION,
@@ -47,7 +44,6 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = Obje
   "isCanUnMute",
   "isCanBlock",
   "isCanUnBlock",
-  "isCanUnBlockAll",
   "isCanSwitchMood",
   "isCanBypassAdDetection",
   "isCanControllAIPermission",
@@ -70,8 +66,7 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanMute: "让这号杂鱼也能用 /mute 临时捂住普通成员的嘴，别乱给哦♡",
   isCanUnMute: "让这号杂鱼也能用 /unmute 提前松开普通成员的嘴，勉强算有点用♡",
   isCanBlock: "让这号杂鱼能用 /block 把目标记进永久黑名单，还会在托管群里一起封掉哦♡",
-  isCanUnBlock: "让这号杂鱼能用 /unblock 把目标移出永久黑名单；默认可不会顺手解除各群封禁，笨蛋♡",
-  isCanUnBlockAll: "让 /unblock 带上 all 跨群解除封禁；还得同时有 isCanUnBlock，别漏了呀♡",
+  isCanUnBlock: "让这号杂鱼能用 /unblock 把目标移出永久黑名单，并解除所有托管群里的封禁哦♡",
   isCanSwitchMood: "让这号杂鱼能用 /switch_mood 重新抽取本天才现在的心情，可别把本天才折腾坏了♡",
   isCanBypassAdDetection: "让这个身份绕过广告检测与自动处置，本天才会当作没看见，别放广告杂鱼进来哦♡",
   isCanControllAIPermission: "让这号杂鱼能用 /ai_chat enable|disable 开关 AI 闲聊，别乱按呀♡",

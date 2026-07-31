@@ -162,7 +162,7 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
  *
  * 负数 id 一律标成频道身份。这不是猜的：负 id 只可能来自 `sender_chat`，处置侧
  * 也早就按同一个符号分派（见 workers/antiRaid/blocklistEffects.ts 的 removeOne）。
- * 这个标记是承重的——`/unblock ... all` 靠它决定走 unbanChatSenderChat 还是
+ * 这个标记是承重的——`/unblock` 靠它决定走 unbanChatSenderChat 还是
  * unbanChatMemberIfBanned，漏标就会拿一个负数去调后者，报错记进 failedCount，
  * 管理员收到一份「还有 N 个群没解开」的假战报。缓存命中那条路不必重复标：
  * 负 id 的缓存条目只由 resolveSenderIdentity 产出，那里已经带上了 isChannel。

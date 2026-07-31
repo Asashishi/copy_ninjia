@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { GenerateContentResponse } from "@google/genai";
+import { geminiResponse } from "../../helpers/geminiResponse";
 
-const getFile = mock(async (..._args: unknown[]) => ({ file_path: "photos/file.jpg" }));
-const buildFileDownloadUrl = mock((path: string): string => `https://download.invalid/${path}`);
-const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<GenerateContentResponse | null> => ({
+const getUrl = mock((): string => "https://download.invalid/photos/file.jpg");
+const getFile = mock(async (..._args: unknown[]) => ({ file_path: "photos/file.jpg", getUrl }));
+const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<GenerateContentResponse | null> => geminiResponse({
   candidates: [{ content: { role: "model", parts: [{ text: "一只挥手的猫" }] } }],
-} as GenerateContentResponse));
+}));
 const prepareVisionImage = mock(async (..._args: unknown[]) => ({ bytes: Buffer.from([1, 2, 3]), mime: "image/png" as const }));
 const readBoundedResponseBytes = mock(async (..._args: unknown[]) => ({ ok: true as const, bytes: new Uint8Array([1, 2, 3]) }));
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/infra/telegram", () => ({
   bot: { api: { getFile } },
-  buildFileDownloadUrl,
 }));
 mock.module("../../../packages/aiChat/ai/gemini", () => ({ requestGeminiResponse }));
 mock.module("../../../packages/libs/image", () => ({ prepareVisionImage }));
@@ -36,17 +36,18 @@ beforeEach(() => {
   transientDescriptionCache.clear();
   for (const mocked of [
     getFile,
-    buildFileDownloadUrl,
+    getUrl,
     requestGeminiResponse,
     prepareVisionImage,
     readBoundedResponseBytes,
     loggerError,
     fetchMock,
   ]) mocked.mockClear();
-  getFile.mockImplementation(async () => ({ file_path: "photos/file.jpg" }));
-  requestGeminiResponse.mockImplementation(async (): Promise<GenerateContentResponse> => ({
+  getFile.mockImplementation(async () => ({ file_path: "photos/file.jpg", getUrl }));
+  getUrl.mockImplementation((): string => "https://download.invalid/photos/file.jpg");
+  requestGeminiResponse.mockImplementation(async (): Promise<GenerateContentResponse> => geminiResponse({
     candidates: [{ content: { role: "model", parts: [{ text: "一只挥手的猫" }] } }],
-  } as GenerateContentResponse));
+  }));
   prepareVisionImage.mockImplementation(async () => ({ bytes: Buffer.from([1, 2, 3]), mime: "image/png" as const }));
   readBoundedResponseBytes.mockImplementation(async () => ({ ok: true as const, bytes: new Uint8Array([1, 2, 3]) }));
   fetchMock.mockImplementation(async (): Promise<Response> => new Response("image"));
@@ -114,9 +115,9 @@ describe("Telegram 媒体下载与 Gemini 描述适配层", () => {
     });
     await expect(describeMedia("photo", "expanded", "u5")).resolves.toBeNull();
 
-    requestGeminiResponse.mockResolvedValueOnce({
+    requestGeminiResponse.mockResolvedValueOnce(geminiResponse({
       candidates: [{ content: { role: "model", parts: [{ text: "   \n" }] } }],
-    } as GenerateContentResponse);
+    }));
     await expect(describeMedia("photo", "blank", "u6")).resolves.toBeNull();
     expect(loggerError).toHaveBeenCalledTimes(2);
   });

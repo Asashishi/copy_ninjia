@@ -13,7 +13,7 @@ import {
   TOKYO_OFFSET_MS,
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_COMPACT_ENTRIES,
-  VERIFICATION_FILE_MAX_MESSAGE_IDS,
+  VERIFICATION_FILE_VERSION,
   VERIFICATION_FLUSH_INTERVAL_MS,
   VERIFICATION_FLUSH_MAX_KEYS,
   VERIFICATION_LABEL_MAX_CHARS,
@@ -67,7 +67,7 @@ function isOptionalPositiveId(value: unknown): value is number | undefined {
 export function decodeVerificationSnapshot(key: string, value: unknown): VerificationSnapshot | null {
   if (!isRecord(value)) return null;
   if (
-    value.version !== 1 ||
+    value.version !== VERIFICATION_FILE_VERSION ||
     typeof value.chatId !== "number" ||
     !Number.isSafeInteger(value.chatId) ||
     value.chatId === 0 ||
@@ -79,9 +79,6 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     value.label.length === 0 ||
     value.label.length > VERIFICATION_LABEL_MAX_CHARS ||
     typeof value.isBot !== "boolean" ||
-    !Array.isArray(value.messageIds) ||
-    value.messageIds.length > VERIFICATION_FILE_MAX_MESSAGE_IDS ||
-    !value.messageIds.every(isPositiveId) ||
     (!Array.isArray(value.trackedMessageTimes) ||
       value.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT ||
       !value.trackedMessageTimes.every(isSafeTimestamp)
@@ -127,7 +124,6 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
     revision: value.revision,
     label: value.label,
     isBot: value.isBot,
-    messageIds: [...value.messageIds],
     announcementMessageId: value.announcementMessageId,
     trackedMessageTimes: [...value.trackedMessageTimes],
     invitedBy: value.invitedBy,
@@ -161,7 +157,7 @@ export function decodeVerificationSnapshot(key: string, value: unknown): Verific
 }
 
 function storedSnapshot(snapshot: VerificationSnapshot): Record<string, unknown> {
-  return { version: 1, ...snapshot };
+  return { version: VERIFICATION_FILE_VERSION, ...snapshot };
 }
 
 function decodeVerificationDay(
@@ -418,7 +414,6 @@ export function handleVerificationUpsert({
 
   const snapshot: VerificationSnapshot = {
     ...msg.record,
-    messageIds: [...msg.record.messageIds],
     trackedMessageTimes: [...msg.record.trackedMessageTimes],
   };
   verificationWorkerCache.set(key, snapshot);

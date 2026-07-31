@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { weatherCache } from "../../../packages/cache/workers/aiChat/weather";
 import { GET_TOKYO_WEATHER_TOOL } from "../../../packages/consts/tools";
-import { callTool, TOOL_DEFINITIONS } from "../../../packages/aiChat/ai/tools";
+import { callTool, TOOL_DECLARATIONS } from "../../../packages/aiChat/ai/tools";
 
 afterEach(() => {
   weatherCache.result = null;
@@ -10,7 +10,7 @@ afterEach(() => {
 
 describe("AI 静态查询工具", () => {
   test("天气缓存未就绪时返回可诊断错误", () => {
-    expect(TOOL_DEFINITIONS.map((definition) => definition.name)).toContain(GET_TOKYO_WEATHER_TOOL);
+    expect(TOOL_DECLARATIONS.map((declaration) => declaration.name)).toContain(GET_TOKYO_WEATHER_TOOL);
     expect(JSON.parse(callTool(GET_TOKYO_WEATHER_TOOL))).toEqual({ error: "Weather data not available yet" });
   });
 

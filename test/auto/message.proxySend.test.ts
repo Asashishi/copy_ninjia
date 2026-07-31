@@ -6,7 +6,6 @@ mock.module("../../packages/infra/telegram", () => ({
   copyMessage: copyMessageMock,
   sendMessage: sendMessageMock,
   bot: { api: {} },
-  buildFileDownloadUrl: () => "",
   logApiError: () => {},
 }));
 

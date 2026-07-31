@@ -11,6 +11,8 @@ import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
 import type { CachedUser } from "../types/chatState";
 import type { BlocklistConfig } from "../types/blocklist";
 import type { LoadedData } from "../types/diskIO";
+import type { WhitelistConfig } from "../types/whitelist";
+import { assertBlocklistProtectedIdentitiesDisjoint } from "../config/blocklist";
 import type {
   AcknowledgedUpdateRunner,
   ApplicationLifecycleDependencies,
@@ -115,11 +117,18 @@ export class ApplicationLifecycle {
     this.lockAcquired = true;
     // 白名单是所有管理命令与自动处置的安全边界，坏配置不能等到第一条更新
     // 才暴露。持锁后、任何 Worker 或 Telegram 客户端启动前严格加载一次。
-    this.dependencies.getWhitelistConfig();
+    const whitelistConfig: WhitelistConfig =
+      this.dependencies.getWhitelistConfig();
     // 静态黑名单同样是核心安全输入：先严格加载并保留本次启动的不可变快照，
     // 等动态 memory 层恢复后再一次性合并，避免两次读盘之间配置发生漂移。
     const blocklistConfig: BlocklistConfig =
       this.dependencies.loadBlocklistConfig();
+    assertBlocklistProtectedIdentitiesDisjoint({
+      blockedIds: blocklistConfig.blockedIds,
+      whitelistIds: whitelistConfig.keys(),
+      superAdminId: this.dependencies.SUPER_ADMIN_USER_ID,
+      source: "static blocklist config",
+    });
     this.dependencies.setBusinessWorkerFatalHandler(this.handleBusinessWorkerFatal);
     this.dependencies.setStatePersistenceFatalHandler(this.handleDiskIOFatal);
     this.dependencies.initAvatarUpdates();
@@ -148,6 +157,12 @@ export class ApplicationLifecycle {
     this.flags.diskIOInitialized = true;
 
     const loaded: LoadedData = await this.dependencies.loadPersistedData();
+    assertBlocklistProtectedIdentitiesDisjoint({
+      blockedIds: loaded.blockedUsers.keys(),
+      whitelistIds: whitelistConfig.keys(),
+      superAdminId: this.dependencies.SUPER_ADMIN_USER_ID,
+      source: "persisted dynamic blocklist",
+    });
     const restoredCopiedUser: CachedUser | null = this.dependencies.getGlobalCopyState().copiedUser;
     if (restoredCopiedUser) this.dependencies.seedSenderCache(restoredCopiedUser);
 
@@ -214,7 +229,7 @@ export class ApplicationLifecycle {
     const persistenceFlushed: boolean = await this.flushAllToDisk(NORMAL_FLUSH_TIMEOUTS);
     if (!maintenanceQuiesceSucceeded || !runnerDrained || !maintenanceSettled) process.exitCode = 1;
 
-    // 停机时取数循环会放弃在途批次、不再 await 它的汇总，那批里失败的 update
+    // 停机时取数循环会放弃在途 update、不再 await 它的结算，随后发生的失败
     // 只有 runner 的这个标记能证明（task() 会正常 resolve）。失败的 update 必须
     // 留给 Telegram 重投，绝不能被最终 offset 一起确认，见
     // docs/04-invariants.md「Telegram update 只有在对应 middleware 完成后才可

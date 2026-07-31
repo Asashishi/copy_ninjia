@@ -1,6 +1,6 @@
 import type { Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { resolveIdTarget, resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
 import { sanitizeDisplayName, truncateInline } from "../libs/text";
 import {
@@ -191,7 +191,7 @@ export async function resolveCommandTarget({
     // 参数与回复指向同一个人是无害的重复（回复某人、又把他的 id 打了一遍），
     // 照常放行；其余情形一律报冲突，理由见函数头注。
     if (argument !== undefined && (argument.kind !== "resolved" || argument.user.id !== replyTarget.id)) {
-      await sendMessage({
+      await sendCommandMessage({
         chatId,
         text: messages.conflictingTarget(echoArgument(trimmedArgument)),
         replyToMessageId: messageId,
@@ -200,17 +200,17 @@ export async function resolveCommandTarget({
     }
     targetUser = replyTarget;
   } else if (argument === undefined) {
-    await sendMessage({ chatId, text: messages.missingTarget, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: messages.missingTarget, replyToMessageId: messageId });
     return undefined;
   } else if (argument.kind === "malformed") {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: messages.invalidUsername(echoArgument(trimmedArgument)),
       replyToMessageId: messageId,
     });
     return undefined;
   } else if (argument.kind === "unknownUsername") {
-    await sendMessage({ chatId, text: messages.unknownUsername(argument.username), replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: messages.unknownUsername(argument.username), replyToMessageId: messageId });
     return undefined;
   } else {
     targetUser = argument.user;
@@ -218,7 +218,7 @@ export async function resolveCommandTarget({
 
   // 不能把本天才自己设成目标：/copy 会自己套自己没完没了，/block 更是无稽之谈。
   if (targetUser.id === botUserId) {
-    await sendMessage({ chatId, text: messages.selfTarget, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: messages.selfTarget, replyToMessageId: messageId });
     return undefined;
   }
 

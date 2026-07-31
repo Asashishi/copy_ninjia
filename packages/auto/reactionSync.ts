@@ -9,9 +9,9 @@ import type { CachedUser, CopyMode } from "../types/chatState";
  * 处理 message_reaction 更新：把复制目标的表情回应（普通 emoji 和自定义
  * emoji 都支持）同步到同一条消息上；目标移除了自己的回应时也会跟着清除。
  * 与复读一致，只在发起 /copy 的那个群里同步（判定统一走 getActiveCopyIn）。
- * 实际的 setMessageReaction 调用走 reactionQueue（429 重试、同消息合并、
- * 按 chat 隔离限流等待）；本 update 等到对应版本被应用、覆盖或按硬顶丢弃
- * 才结算，使下一轮取数不会提前确认仍在后台的反应。
+ * 实际的 setMessageReaction 调用走 reactionQueue（同消息合并、按 chat 隔离
+ * API 长尾；429/网络/5xx 由共享 auto-retry 处理）；本 update 等到对应版本被
+ * 应用、覆盖或按硬顶丢弃才结算，使下一轮取数不会提前确认仍在后台的反应。
  */
 export async function handleReaction(ctx: Context): Promise<void> {
   const reaction: MessageReactionUpdated | undefined = ctx.messageReaction;

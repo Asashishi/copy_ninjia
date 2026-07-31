@@ -17,22 +17,12 @@ export const VERIFICATION_REMINDER_RETRY_MAX_MS: number = 15_000;
  * 续期本身是对的：没人看得见按钮就不能把「没点」解释成拒绝验证。但它不能没有
  * 尽头——某个群 sendMessage 持续失败（论坛的 General 话题被关闭、机器人被禁言
  * 却仍保有限制成员的权限）时，每个入群者都会留下一条不朽记录：常驻待验证表、
- * 常驻主线程镜像、每次快照都重写一遍 memory/anti-raid/<day>.json，日文件还按该
- * 成员的发言数继续膨胀。超过这个总时长就按普通超时结算：踢人只踢不封
+ * 常驻主线程镜像、持续刷新 memory/anti-raid/<day>.json。超过这个总时长就按
+ * 普通超时结算：踢人只踢不封
  * （kickChatMember），人随时可以重进，而那时群本身多半已经不正常了。
  * 所属模块：states/verification.ts 的 handleVerifyTimeout。
  */
 export const VERIFICATION_REMINDER_UNDELIVERED_MAX_MS: number = 15 * 60 * 1000;
-/**
- * 单条待验证记录最多跟踪多少条消息 id。
- *
- * 踢人时要把这些消息一并删掉，因此正常情况下不截断——刷屏计数在
- * ANTI_RAID_PER_MINUTE_LIMIT 条就会同步转成踢人，一次验证窗口里根本攒不了几条。
- * 这个上限只兜住「提醒永远发不出去、记录被反复续期」那条退化路径：数组要随
- * 每次快照整份重写并落盘，没有上限就是按发言数无限增长。越界时丢最早的那条
- * ——它最可能已经被别人删掉或滑出可删窗口。
- */
-export const VERIFICATION_TRACKED_MESSAGE_IDS_MAX: number = 200;
 /** 终态踢人失败后的**首次**重试间隔；记录保持持久化，不能把未处置成员当作已完成。 */
 export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
 /**
@@ -40,7 +30,7 @@ export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
  *
  * 有些失败注定不会好转：机器人是管理员却没有封禁权限，或目标本人就是这个群的
  * 管理员。记录按设计不能删，于是固定 30 秒一轮就意味着——一次刷群留下的**每个**
- * 未验证成员各占一个永久的 30 秒循环，各自不停打 deleteMessage + kickChatMember，
+ * 未验证成员各占一个永久的 30 秒循环，各自不停打成员探测 + kickChatMember，
  * 并往 logs/ 里刷同一行报错，Worker 重建和进程重启后还会照单重新武装。
  * 退避到上限而不是放弃：管理员补上封禁权限后，最迟一个上限周期内自愈。
  * 所属模块：workers/antiRaid/verificationEffects.ts。

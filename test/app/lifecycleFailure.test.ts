@@ -116,6 +116,7 @@ const runAcknowledgedUpdateBatches = mock((_bot: unknown, _updates: unknown) => 
 
 const testDependencies = {
   BOT_TOKEN: "test-token",
+  SUPER_ADMIN_USER_ID: 1,
   abortChatTitleRefresh,
   acquireSingleInstanceLock,
   bot,
@@ -322,6 +323,44 @@ describe("应用启动失败与退出清理", () => {
 
     expect(initTelegramClients).not.toHaveBeenCalled();
     expect(initDiskIO).not.toHaveBeenCalled();
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
+  test("静态黑名单与白名单身份冲突时在联网和 Worker 启动前拒绝启动", async () => {
+    getWhitelistConfig.mockImplementationOnce(() => new Map([[7, {} as never]]));
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+    await lifecycle.dispose();
+
+    expect(initTelegramClients).not.toHaveBeenCalled();
+    expect(initDiskIO).not.toHaveBeenCalled();
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+    expect(loggerError).toHaveBeenCalledWith(
+      "Unhandled error in bot main runner:",
+      expect.objectContaining({ message: expect.stringContaining("protected identity 7") })
+    );
+  });
+
+  test("持久化动态黑名单包含超级管理员时拒绝启动 Telegram handler", async () => {
+    loadPersistedData.mockResolvedValueOnce({
+      aiMemories: new Map<number, string>(),
+      stickerCatalogs: new Map<string, string>(),
+      luckDay: null,
+      luckReceiptSecret: { day: "2026-07-19", secret: "test-secret" },
+      verifications: new Map<string, never>(),
+      blockedUsers: new Map<number, true>([[1, true]]),
+      pendingBlockedRemovals: new Map(),
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+    await lifecycle.dispose();
+
+    expect(initDiskIO).toHaveBeenCalledTimes(1);
+    expect(registerHandlers).not.toHaveBeenCalled();
+    expect(botInit).not.toHaveBeenCalled();
+    expect(hydrateBlocklist).not.toHaveBeenCalled();
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 

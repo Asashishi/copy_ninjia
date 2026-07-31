@@ -10,8 +10,9 @@ import {
 import { readBoundedResponseBytes, readBoundedResponseText, type BoundedResponseResult } from "../../libs/boundedResponse";
 import { parseAllowedHttpsUrl } from "../../libs/httpUrlPolicy";
 import { logger } from "../logger";
-import { bot, buildFileDownloadUrl, logApiError } from "./client";
-import type { ChatFullInfo, PhotoSize, UserProfilePhotos, File as TelegramFile } from "@grammyjs/types";
+import { bot, logApiError } from "./client";
+import type { HydratedTelegramFile } from "./client";
+import type { ChatFullInfo, PhotoSize, UserProfilePhotos } from "@grammyjs/types";
 
 interface PublicUsernameLookupResult {
   username?: string;
@@ -315,13 +316,13 @@ async function attemptCopyUserProfilePhoto(
       fileId = matchedPhoto.file_id;
     }
 
-    const file: TelegramFile = await bot.api.getFile(fileId, telegramSignal(signal));
+    const file: HydratedTelegramFile = await bot.api.getFile(fileId, telegramSignal(signal));
     if (!file.file_path) {
       logger.error(`getFile for target ${targetId}'s avatar returned no file_path`);
       return "permanent-failure";
     }
 
-    const downloadUrl: string = buildFileDownloadUrl(file.file_path);
+    const downloadUrl: string = file.getUrl();
     const imgRes: Response = await fetch(downloadUrl, { signal: avatarFetchSignal(signal) });
     if (!imgRes.ok) {
       logger.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);

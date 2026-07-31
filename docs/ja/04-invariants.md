@@ -31,7 +31,7 @@
 ### 起動順序とリソース取得
 
 - production モジュールを import しても Worker、timer、ネットワーク要求、共有ディレクトリへの書き込みを開始しません。
-- メインプロセスは実行時データルートを再帰的に作成し、書き込み、ファイル fsync、hard link、アトミック rename、ディレクトリ fsync を事前検査してから `bot.lock` を取得します。`COPY_NINJIA_DATA_ROOT` を明示設定した場合は mode が `0750` 以下であることも要求し、既存ディレクトリは検証するだけで自動 chmod は行いません。続いてトップレベルの孤立した一時ファイルを削除し、`state.json` を厳密に復元します。ここまではすべてネットワーク接続や Worker 作成より前です。
+- メインプロセスは実行時データルートを再帰的に作成し、書き込み、ファイル fsync、hard link、アトミック rename、ディレクトリ fsync を事前検査してから `bot.lock` を取得します。root と機密トップレベルの `memory/`、`logs/` は実ディレクトリでなければならず、`lstat` がシンボリックリンクを返した場合は fail closed します。`COPY_NINJIA_DATA_ROOT` を明示設定した場合は mode が `0750` 以下であることも要求し、既存ディレクトリは検証するだけで自動 chmod は行いません。続いてトップレベルの孤立した一時ファイルを削除し、`state.json` を厳密に復元します。ここまではすべてネットワーク接続や Worker 作成より前です。
 
   その後に Telegram クライアントと Disk I/O Worker を初期化し、`memory/` を復元し、handler・コマンドメニュー・`bot.init()` の handshake を完了します。最後に AI/Anti-Raid Worker を初期化して hydrate し、acknowledgement-safe runner を開始します。
 - 初期化失敗と正常終了はどちらも `ApplicationLifecycle` に合流し、実際に取得したリソースだけを解放または flush します。
@@ -49,7 +49,7 @@
   空の許可リストへ退化させるのは厳禁で、そうすると許可リストに無い永続ファイルをすべて孤児として削除してしまいます。
 - `config/whitelist.json` と `config/blocklist.json` は前項の optional file ではありません。前者は同期 authorization と insider protection、後者は静的 enforcement boundary です。どちらも network 接続や Worker 作成より前に厳密ロードし、欠落、未知 field、不正 ID は起動を拒否します。
 
-  `/white` と `/permission` は実際に変化した場合だけ allowlist 全体を atomic rewrite し、永続化成功後に新しい main-thread cache を公開します。read path は常にその memory copy だけを参照します。静的 blocklist は read-only のまま動的な `memory/blocklist/blocklist.json` layer と memory 上で union し、`/unblock` は静的 entry を削除できません。
+  `/white` と `/permission` は実際に変化した場合だけ allowlist 全体を atomic rewrite し、永続化成功後に新しい main-thread cache を公開します。read path は常にその memory copy だけを参照します。起動時には allowlist の元 byte の SHA-256 も記録し、各 command rewrite の直前に再検証します。外部編集または読み取り不能を検出した場合は、古い cache で黙って上書きせず mutation と update を失敗させます。静的 blocklist は read-only のまま動的な `memory/blocklist/blocklist.json` layer と memory 上で union し、`/unblock` は静的 entry を削除できません。
 - **モジュール評価時に `requireEnv` してよいのは、プロセス全体が欠かせない資格情報だけです**（`TELEGRAM_BOT_TOKEN`、`SUPER_ADMIN_USER_ID`）。チャットごとの opt-in でデフォルト無効な機能だけが使う鍵は `optionalEnv` を通します。
 
   `packages/infra/config.ts` はほぼすべての入口パスから import されるため、そこで throw するとプロセスは更新の取得を始める前に終了し、systemd が再起動ループに入ります——誰も有効化していない機能の鍵が 1 つ無いだけで、copy、抽選、入室認証、ブロックリストがまとめて停止します。2 つの AI 鍵はどちらも後者であり、**変数名には担当する機能を必ず先頭に付けます**（`AI_CHAT_GEMINI_API_KEY`、`AD_DETECT_DEEPSEEK_API_KEY`）。
@@ -283,7 +283,7 @@
 
   **ただしこの種のリクエストはすべて停止のキャンセル信号を購読しなければなりません**（`antiRaidDispatchSignal`。権威ある説明は `packages/cache/workers/antiRaid/tasks.ts`）：drain の予算は `ANTI_RAID_BARRIER_TIMEOUT_MS` の秒単位ですが、ミュートは設計上スロットリングバケットの中で `FLOOD_MUTE_DISPATCH_TIMEOUT_MS`（分単位）待ち得ます。
 
-  停止がちょうどその待ち時間に重なると drain は結算を待てずタイムアウトし、ライフサイクルはそれを根拠に Telegram offset の確認を拒んで非ゼロ終了します——再起動後は update のバッチ全体が再配信され（認証の強制退出と通知が二重に走る）、systemd はユニット失敗を報告します。したがって drain の到着時にはキュー待ちのそれらをその場で abort し、新しい処分も始めません。
+  停止がちょうどその待ち時間に重なると drain は結算を待てずタイムアウトし、ライフサイクルはそれを根拠に Telegram offset の確認を拒んで非ゼロ終了します——再起動後はその update が再配信され（そこですでに発生した認証の強制退出と通知は二重になり得ます）、systemd はユニット失敗を報告します。したがって drain の到着時にはキュー待ちのそれらをその場で abort し、新しい処分も始めません。
 
   ミュートはもともとベストエフォート（期限は Telegram が `until_date` で解除）であり、1 回失っても安全境界の破綻にはなりません——広告判定のバッチをこの集合に一切登録しないのと同じ理屈です。
 
@@ -335,13 +335,13 @@
 
   逆方向の `/block` は負の id を拒否し続けなければなりません：貼り間違えた会話 id を対象にすると処置が会話 identity 全体の BAN に変わり、しかもそのコマンドは取り消せません。`/unblock` は復旧方向であり、対象を誤っても高々 1 回の空振り解除で済みます。
 
-  **負の id には必ず `isChannel` が付きます**（`resolveIdTarget` が最小 identity の時点で付与。符号による振り分けは `workers/antiRaid/blocklistEffects.ts` と同源）：`/unblock ... all` はこれを見て `unbanChatMemberIfBanned` ではなく `unbanChatSenderChat` を選ぶため、付け忘れると解除が失敗して `failedCount` に計上され、応答は「一度も触れていない対象」についての虚偽の戦果報告になります。
+  **負の id には必ず `isChannel` が付きます**（`resolveIdTarget` が最小 identity の時点で付与。符号による振り分けは `workers/antiRaid/blocklistEffects.ts` と同源）：`/unblock` はこれを見て `unbanChatMemberIfBanned` ではなく `unbanChatSenderChat` を選ぶため、付け忘れると解除が失敗して `failedCount` に計上され、応答は「一度も触れていない対象」についての虚偽の戦果報告になります。
 - `/steal_icon` の t.me プロフィール取得フォールバックは、**`getChat(targetId)` でその場に問い合わせた username だけを採用します**。呼び出し側のコンテキストが持つ username でこの問い合わせを短絡してはいけません。その username は `reply_to_message`（数か月前のこともあります）や identity キャッシュ由来である一方、Telegram の username は手放されると誰でも取り直せます。
 
   取得時のページ身分照合が証明できるのは「このページは @name のものだ」までで、「@name はいま targetId を指す」は証明できません。短絡すると**現在の handle 保有者**のアバターを Bot のアバターに据えてしまい、成功通知には元の対象の名前が書かれたままになります。渡された値はログ上の診断ヒントとしてのみ使います。
 - chat runtime teardown の 3 つの固定 owner callback は `packages/cache/main/chatTeardown.ts` が保持します。上位ドメインは `packages/infra/chatTeardown.ts` を通じて逆向きに登録し、`packages/infra/botAdmin.ts` は `commands/`、AI、Anti-Raid の業務モジュールへ static dependency を持ってはいけません。
 - メンバー現状確認そのものが新しい非同期境界です。`probeChatMembership` が在室を返してから `kickChatMember` を呼ぶ前に、終端状態が照会開始時と同一オブジェクトのままか再確認し、その確認と API 呼び出しの間には新たな `await` を置いてはいけません。そうしないと teardown、管理停止、状態置換で取り消された旧処置が遅延結果を消費し、もはやその終端処置の対象ではないメンバーを kick できます。
-- `/unblock all` は、チャット横断 unban の両端でコマンド側「kick 確認済み」cache を無効化しなければなりません。開始前に旧結果を消し、すべての `unban` await が終わった後にも、その待機中に遅れて着地した `/block` の書き戻しをもう一度消します。runner の直列化は chat 単位だけなので、異なる chat のコマンドは交錯できます。
+- `/unblock` は、チャット横断 unban の両端でコマンド側「kick 確認済み」cache を無効化しなければなりません。開始前に旧結果を消し、すべての `unban` await が終わった後にも、その待機中に遅れて着地した `/block` の書き戻しをもう一度消します。runner の直列化は chat 単位だけなので、異なる chat のコマンドは交錯できます。
 
   後段の無効化がないと、より後に unban されたユーザーが cache hit のまま残り、同日の次回 `/block` がメンバー照会と BAN を誤って省略します。
 
@@ -385,21 +385,17 @@
 
   `sessionBlockedAt` と `sessionUnblockedIds` は互いに排他でなければなりません（ブロック時は後者から、解除時は前者から削る）。さもないと同じ id が両方の表に載り、再投入の順序でリストに載っているかどうかが決まってしまいます。
 
-  **`/unblock` は既定では各チャットの Telegram の BAN を解除しません。** `/block` が呼んだ `banChatMember` はチャット単位の BAN であり、この Bot のリストとは別物です。リストから外れることが保証するのは「以後の入室で即 kick されない」ことだけです——返信文でそれを明言します。チャット単位の BAN も一緒に解除するには `all` フラグ（`UNBLOCK_ALL_FLAG`）を付けます。
-
-  対象チャットの一覧は `/block` の連鎖 BAN と同じ出所（各チャットの `ChatState.botIsAdmin`）で、直列に実行します。
-
-  **`all` には `isCanUnBlockAll`、リストから外す操作には `isCanUnBlock` が必要で、`SUPER_ADMIN_USER_ID` は両方を明示的に持ちます。** スーパー管理者は allowlist entry を必要としないため、command gate では別途明示的に通します。そうしなければ最初の gate で弾かれます。チャット横断の BAN 解除は、恒久的な隔離が必要と判断された相手を全管理チャットで解き放つ操作であり、「以後即 kick されない」より一段影響範囲が広いためです。
-
-  権限の拒否はリストに触れる**前**に行わなければなりません。先に解放してから権限がないと言うことがあってはなりません。
+  **`/unblock` は既定で完全解除します。** 対象が動的リストにあれば削除し、その後 `ChatState.botIsAdmin` が true の全チャットで Telegram の BAN を解除します。対象が動的リストにいなくてもチャット横断解除は実行します。必要な permission は `isCanUnBlock` だけで、`SUPER_ADMIN_USER_ID` は引き続き明示的に通します。旧 `all` 引数は解析せず、互換 alias としても残しません。静的 `config/blocklist.json` の identity は、リストや Telegram API に触れる前に fail closed します。コマンドはデプロイ設定を書き換えられず、チャット BAN だけ解除すると矛盾した状態になるためです。
 
   **チャット横断の BAN 解除は必ず `unbanChatMemberIfBanned`（`only_if_banned: true` 付き）を通します。** Bot API の `unbanChatMember` は「現在メンバーである」相手に対してはチャットから退出させる意味になり、`kickChatMember` の「kick のみ」はまさにこれを利用しています。このフラグなしで一括解除すると、普通に在室していた人たちを次々と追い出してしまいます。
 
-  チャンネルの外見にはメンバーという概念がないため `unbanChatSenderChat` を使い、この罠はありません。`all` を付けた場合、対象がもともとリストに載っていなくても BAN 解除は実行します。「完全に戻れるようにする」ことがこのフラグの意義であり、リストにいないことは各チャットで BAN されていないことを意味しないからです。解除時には `pendingBlockedRemovals` の実行中 batch からもその id を取り除きます（空になった batch は丸ごと消し込む）。
+  チャンネルの外見にはメンバーという概念がないため `unbanChatSenderChat` を使い、この罠はありません。解除時には `pendingBlockedRemovals` の実行中 batch からもその id を取り除きます（空になった batch は丸ごと消し込む）。
 
   さもないと Worker 再生成時の再送が古い batch を持ち出し、解除したばかりの相手を再び BAN します。すでに投げて Worker 内で走っている batch は取り消せず（判定はメインスレッドの状態で Worker に複製がない）、その短い窓は既知のトレードオフです。
 
-  **身内はブロックできません。** `SUPER_ADMIN_USER_ID` と `config/whitelist.json` は `/block` の入口で弾きます。リストは不可逆なので、返信先を間違えるだけで身内を全監視チャットから永久に締め出せてしまいます。起動時の復元では 1 件でも形が不正なら起動を拒否します。1 件取りこぼすことは、その相手の再入室を許すことと同じだからです。
+  **身内はブロックできません。** `SUPER_ADMIN_USER_ID` と `config/whitelist.json` は `/block` の入口で弾きます。起動時にも、それら protected identity と静的設定・復元した動的ブロックリストの交差を拒否します。`/white enable` もまだブロック中の identity を拒否し、先に `/unblock` するよう案内します。これらは独立した事前 check だけではありません。`runProtectedIdentityMutation` はメインスレッドの `protectedIdentityMutationQueue` を使い、`/white` の「membership 確認 + allowlist の atomic write と publish」を `/block` および広告命中による動的 blocklist 追加と直列化します。この境界がないと、非同期の allowlist 書き込み中に block が割り込み、同じ identity が両方に残って次回起動が必ず失敗します。critical section に含めるのは identity check と正式状態の変更だけで、Telegram の副作用と後続の永続化確認は外に置きます。
+
+  起動時の復元では 1 件でも形が不正なら起動を拒否します。1 件取りこぼすことは、その相手の再入室を許すことと同じだからです。
 
   したがってブロックリストは追記型ファイルの中で唯一、**末尾の自動修復を許さない**ファイルです（`openAppendOnlyFile(..., repair=false)`）。ログ・おみくじ・保留中の認証は末尾の断片を切り捨てても正しさを損ないませんが、ブロックリストで切り捨てられた 1 件は部屋に戻される 1 人です。起動を拒否し、バイト列をそのまま残して人手の復旧を待ちます。id のキーは `String(Number(key)) === key` で元に戻せなければなりません。
 
@@ -489,7 +485,7 @@
 
   **入室即時処置の登録失敗（outbox 満杯、id 空間の枯渇）はその場で降格させ、例外を `claimBlockedJoiner` の外へ出してはいけません**。
 
-  この関数は update middleware の中で動くため、投げれば update バッチ全体が失敗し、offset を保留したまま非ゼロ終了し、systemd が再起動して同じ update を再投入し、また投げます——`memory/blocklist/removals.json` を手で直すまで抜けられない再起動ループであり、しかも outbox 満杯自体、たいていは永久に BAN できないバッチが積み上げた結果です。
+  この関数は update middleware の中で動くため、投げればその update が失敗し、offset を保留したまま非ゼロ終了し、systemd が再起動して同じ update を再投入し、また投げます——`memory/blocklist/removals.json` を手で直すまで抜けられない再起動ループであり、しかも outbox 満杯自体、たいていは永久に BAN できないバッチが積み上げた結果です。
 
   降格では名指しでログを残し、そのグループに再スキャンを 1 回負わせたうえで、それでも「ブロックリストとして処理済み」を返します。リスト判定は変わっていないので、代わりに入室認証 window を開いてはいけません。
 
@@ -523,7 +519,9 @@
 
 - `/ad_detect` の広告検出は**ベストエフォートのヒューリスティック**であり security boundary ではありませんが、処分の重さは `/block` と完全に同じなので境界は厳密に引きます。送出の門は 3 条件の連言です。当該グループが `ChatState.isAdDetectEnabled === true` であること、Bot がそのグループの管理者であること（参加ガードと同じ `isBotAdminIn` 判定を共有します。
 
-  管理者でなければ広告も消せず BAN もできず、判定は quota を焼くだけです）、送信者が身内でないこと（`SUPER_ADMIN_USER_ID` と `config/whitelist.json` は送出時と処分時の 2 箇所で弾きます。ブロックリストは不可逆であり、身内は判定に載ること自体があってはなりません）。現在のグループを皮として使う匿名管理者（`sender_chat.id === chat.id`）は `/block` と同じ理由でスキップします。
+  管理者でなければ広告も消せず BAN もできず、判定は quota を焼くだけです）、送信者に広告検出 bypass がないことです。`SUPER_ADMIN_USER_ID` は常に bypass し、allowlist identity は個別の `isCanBypassAdDetection` permission に従います。false に設定した identity は判定へ送られ、Worker が命中した message bundle を削除することがあります。
+
+  **allowlist membership は恒久 blocklist を無条件で保護します。** 判定結果がメインスレッドへ戻ると、処分側は `/white` と `/block` と同じ `runProtectedIdentityMutation` critical section 内で `isProtectedSender` を再確認します。判定中に allowlist へ追加された場合も、もともと allowlist で bypass を無効にしていた場合も、`blockUser`・チャット横断 BAN・BAN 告知を拒否し、Worker がすでに行った当該 bundle の削除だけを残します。現在のグループを皮として使う匿名管理者（`sender_chat.id === chat.id`）は `/block` と同じ理由でスキップします。
 
   皮の下が誰かを Telegram は明かさず、処分はグループ ID 全体を BAN しようとするだけだからです。
 
@@ -695,12 +693,10 @@
 
 - Telegram update が確認境界を進められるのは、対応する middleware が完了した後だけです。Anti-Raid mailbox、リアクション・アバターの background owner、StateStore、AI Worker、Disk I/O Worker の flush はすべて明示的な上限付き drain を持ちます。重要な flush の失敗は必ず失敗を返し、最終 offset の確認を止め、非ゼロで終了します。
 
-  **停止時に見捨てた batch も同じ扱いです。** 停止信号が届いた後、取得ループは実行中の batch を待ちません（middleware が宙吊りになり得るため、排出は lifecycle の上限付き `size()` ループに任せます）。したがってその batch で失敗した update は runner の明示的な印でしか表現できません。印は `handleUpdate` が throw するのと同じ同期区間で書かれるので、`size()` がゼロになった時点で必ず有効です。
+  **停止時に見捨てた update も同じ扱いです。** 停止信号が届いた後、取得ループは実行中の middleware を待ちません（宙吊りになり得るため、排出は lifecycle の上限付き `size()` ループに任せます）。したがって後から失敗した update は runner の明示的な印でしか表現できません。印は `handleUpdate` が throw するのと同じ同期区間で書かれるので、`size()` がゼロになった時点で必ず有効です。
 
   lifecycle は最終 offset を確認する前にこれを読み、立っていれば offset を確認せず非ゼロで終了して、再起動後に Telegram から再送させます。`task()` が正常に resolve したかだけで判断すると、一度も成功していない update をまとめて確認してしまいます。
-- 同一 batch 内の update は引き続き並行処理できますが、最初の `handleUpdate` が error handler 完了後に reject した時点で、runner は同じ batch のほかの active update を直ちに abort し、元の最初の error を伝播しなければなりません。永久に宙吊りになった sibling を待って fetch 停止が遅れてはいけません。別の `allSettled` observer がすべての遅延結果を消費し、未処理 rejection を防ぎます。
-
-  cancel を無視する sibling は lifecycle の既存の上限付き drain のため `size()` に残りますが、首エラーの伝播を妨げません。失敗後は次 batch を fetch せず、offset も進めません。
+- runner の各 `getUpdates` は `limit: 1` に固定し、現在の middleware が成功した後だけ、より高い offset の次 fetch を始めます。後の update が失敗しても、前の非冪等 side effect は独立した確認境界の内側ですでに確定しており、sibling として再配信されません。取得元が limit に反して複数 update を返した場合は、handler を 1 つも実行せず fail closed します。失敗後は次の update を fetch せず、offset も進めません。
 - 最終 offset の `getUpdates(timeout: 0)` も network request です。`timeout: 0` が無効にするのは Telegram server 側の long polling だけで、DNS、connection、response read は制限しません。そのため `FINAL_OFFSET_CONFIRM_TIMEOUT_MS` の local `AbortSignal` も必須です。
 
   確認の reject・timeout、または runner / maintenance / persistence の前提が未完了で skip した場合、この lifecycle gate はプロセス終了まで失敗のまま保持し、非ゼロ終了として instance lock の clean release を止めます。後続の `dispose()` が同じ owner を 2 回目の wait で完了できても、この未確認を上書きしてはいけません。処理済み update がなければ API 呼び出しは不要で、gate は成功と扱います。

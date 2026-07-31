@@ -1,6 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { User } from "@grammyjs/types";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
 import { SUPER_ADMIN_USER_ID } from "../infra/config";
 import type { WhitelistPermissionKey } from "../types/whitelist";
@@ -47,7 +47,7 @@ export async function resolveSuperAdminToggleArg(
     : hasCommandPermission(ctx, messages.permission, true);
 
   if (!actor || !isAuthorized) {
-    await sendMessage({
+    await sendCommandMessage({
       chatId,
       text: messages.rejection(actor ? formatUserLabel(actor) : "哪个杂鱼"),
       replyToMessageId: messageId,
@@ -57,7 +57,7 @@ export async function resolveSuperAdminToggleArg(
 
   const arg: string = ctx.match.trim().toLowerCase();
   if (arg !== "enable" && arg !== "disable") {
-    await sendMessage({ chatId, text: messages.usage, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: messages.usage, replyToMessageId: messageId });
     return undefined;
   }
 

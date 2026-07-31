@@ -19,7 +19,10 @@ import { verificationKey } from "../libs/verificationKey";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { isWhitelisted } from "../config/whitelist";
 import { buildAdCandidate } from "./adDetect";
-import { claimBlockedJoiner } from "./blocklistGuard";
+import {
+  claimBlockedJoiner,
+  deleteBlockedSenderChatMessage,
+} from "./blocklistGuard";
 import { buildFloodCandidate } from "./floodControl";
 import {
   isActiveChatMember,
@@ -132,11 +135,10 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
 /**
  * 消息事件的投递入口，在 app/registerHandlers.ts 里以中间件形式挂在所有
  * 命令处理器之前
- * ——这样待验证用户发的命令消息（/copy 之类）也会被追踪，超时踢人时
- * 一并清理，不给刷群脚本留「刷命令就删不掉」的空子。职责：在群组未隐藏
- * `new_chat_members`/`left_chat_member` 服务消息时顺带捕获它们（以便这些
- * 消息的 ID 也能被 Worker 追踪/清理），同时把每条消息的（chatId, userId,
- * messageId）投递给 Worker，用于追踪待验证用户在等待期间发送的消息。
+ * ——这样待验证用户发的命令消息（/copy 之类）也会计入刷屏窗口。职责：在群组
+ * 未隐藏 `new_chat_members`/`left_chat_member` 服务消息时顺带捕获它们，并把
+ * 每条消息的（chatId, userId, messageId）投递给 Worker；messageId 只用于回复式
+ * 提醒和频道评论豁免锚点，不会在纯 kick 时用于删除成员发言。
  * 入群/离群本身的检测由 handleChatMemberUpdate 驱动——与这些服务消息
  * 不同，它总是会触发。
  * @returns 若消息在此已被完全处理、调用方应跳过后续处理逻辑（入群公告），
@@ -159,6 +161,11 @@ export async function handleGroupJoinVerification(
       message.new_chat_members.length > 0
     );
   }
+
+  // 永久黑名单不依赖广告开关、模型密钥或样本配置。频道身份没有
+  // banChatMember.revoke_messages 可用，因此每条仍漏进来的消息必须在公共入口
+  // 就地删除；真人用户则由在途 banChatMember 的服务端全量撤回收口。
+  if (await deleteBlockedSenderChatMessage(message)) return true;
 
   // 广告检测与入群守卫共用上面那道管理员判定：不是管理员就删不掉广告也封不了
   // 人，判一次纯属白烧额度。投递是尽力而为的——Worker 不可用只意味着它正在

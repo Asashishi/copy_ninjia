@@ -14,7 +14,7 @@ const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undef
 const getChatMock = mock(async (chatId: number): Promise<any> => ({ id: chatId, type: "supergroup", title: "Test Group" }));
 const logApiErrorMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/telegram", () => ({
-  sendMessage: sendMessageMock,
+  sendCommandMessage: sendMessageMock,
   bot: { api: { getChat: getChatMock } },
   logApiError: logApiErrorMock,
 }));

@@ -6,7 +6,6 @@ import {
   JOIN_WINDOW_MS,
   VERIFICATION_REMINDER_UNDELIVERED_MAX_MS,
   VERIFICATION_TIMEOUT_MS,
-  VERIFICATION_TRACKED_MESSAGE_IDS_MAX,
 } from "../../packages/consts/antiRaid";
 
 /** 造一个 join 事件，默认是「自主入群、无豁免、无锁定」，用覆盖项表达各场景。 */
@@ -46,7 +45,6 @@ function pendingState(overrides: Partial<PendingState> = {}): PendingState {
     kind: "pending",
     label: "杂鱼A",
     isBot: false,
-    messageIds: [],
     replyReminderRequested: false,
     reminderSuperseded: false,
     joinedAt: 0,
@@ -72,9 +70,7 @@ describe("join：ABSENT 起步", () => {
     expect(joinCreatesNewRecord(undefined, event)).toBe(true);
     const { next, effects } = transitionVerification(undefined, event);
     expect(next?.kind).toBe("pending");
-    // 公告单独存：混进 messageIds 的话，上限一满第一个被挤掉的就是它，而除了
-    // 处置路径没人会再删它（见 PendingState.announcementMessageId）。
-    expect((next as PendingState).messageIds).toEqual([]);
+    // 公告显式持有；成员发言不会进入任何待删除 id 列表。
     expect((next as PendingState).announcementMessageId).toBe(7);
     expect((next as PendingState).invitedBy).toBeUndefined();
     expect((next as PendingState).expiresAt).toBe(VERIFICATION_TIMEOUT_MS);
@@ -138,13 +134,18 @@ describe("join：ABSENT 起步", () => {
 
 describe("join：重复投递（chat_member 与服务消息各到一次）", () => {
   test("PENDING 上的迟到公告 → 记进独立字段，不重发提醒", () => {
-    const state = pendingState({ messageIds: [1] });
+    const state = pendingState();
     const { next, effects } = transitionVerification(state, joinEvent({ announcementMessageId: 9 }));
     expect(next).toBe(state);
-    // 追踪队列里只放该成员自己的发言，公告不与它们抢那个上限。
-    expect(state.messageIds).toEqual([1]);
     expect(state.announcementMessageId).toBe(9);
     expect(effects).toEqual([]);
+  });
+
+  test("PENDING 上出现第二条入群公告 → 立即删掉多余服务消息", () => {
+    const state = pendingState({ announcementMessageId: 8 });
+    const { effects } = transitionVerification(state, joinEvent({ announcementMessageId: 9 }));
+    expect(state.announcementMessageId).toBe(8);
+    expect(effects).toEqual([{ kind: "deleteMessage", messageId: 9 }]);
   });
 
   test("PENDING + 本路带拉人者且缓存冷 → 补挂核查并记录 invitedBy", () => {
@@ -251,10 +252,11 @@ describe("trackedMessage", () => {
     expect((next as PendingState).trackedMessageTimes).toEqual([now]);
   });
 
-  test("待验证成员的普通发言 → 追踪 + 提醒改锚（不重置计时）", () => {
-    const state = pendingState({ messageIds: [30], reminderMessageId: 30 });
+  test("待验证成员的普通发言 → 只计数并改提醒锚点，不登记删除 id", () => {
+    const state = pendingState({ reminderMessageId: 30 });
     const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 40, inCommentThread: false, now: 1_000 });
-    expect(state.messageIds).toEqual([40]); // 原提醒 30 已被移出待清理列表
+    expect("messageIds" in state).toBeFalse();
+    expect(state.trackedMessageTimes).toEqual([1_000]);
     expect(state.reminderMessageId).toBeUndefined();
     expect(state.reminderSuperseded).toBe(true);
     expect(state.welcomeAnchorMessageId).toBe(40);
@@ -285,23 +287,8 @@ describe("trackedMessage", () => {
   test("连发多条只补发一次回复式提醒", () => {
     const state = pendingState({ replyReminderRequested: true });
     const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 41, inCommentThread: false, now: 1_000 });
-    expect(state.messageIds).toEqual([41]);
+    expect(state.trackedMessageTimes).toEqual([1_000]);
     expect(effects).toEqual([]);
-  });
-
-  test("待清理消息 id 有上界，超出时丢最早的那条", () => {
-    // 常规窗口里根本到不了这个上限（刷屏第 46 条就转成踢人）。它兜的是「提醒
-    // 一直发不出去、记录被反复续期」那条退化路径：数组每次快照都整份重写并
-    // 落盘，没有上限就按该成员的发言数无限增长。
-    const state = pendingState({
-      replyReminderRequested: true,
-      messageIds: Array.from({ length: VERIFICATION_TRACKED_MESSAGE_IDS_MAX }, (_unused, index) => index + 1),
-    });
-    transitionVerification(state, { type: "trackedMessage", messageId: 9_999, inCommentThread: false, now: 1_000 });
-
-    expect(state.messageIds).toHaveLength(VERIFICATION_TRACKED_MESSAGE_IDS_MAX);
-    expect(state.messageIds[0]).toBe(2);
-    expect(state.messageIds.at(-1)).toBe(9_999);
   });
 
   test("评论区活动 → 转 EXEMPT + 欢迎，且撤销此前记的那次刷群计数", () => {
@@ -334,8 +321,9 @@ describe("trackedMessage", () => {
     expect(overflow.next).toMatchObject({
       kind: "expelling",
       reason: "flood",
-      snapshot: { messageIds: Array.from({ length: ANTI_RAID_PER_MINUTE_LIMIT + 1 }, (_, index) => index + 1) },
     });
+    if (overflow.next?.kind !== "expelling") throw new Error("Expected expelling state");
+    expect("messageIds" in overflow.next.snapshot).toBeFalse();
     expect(overflow.effects).toEqual([]);
     const persisted = transitionVerification(overflow.next, { type: "terminalPersisted" });
     expect(effectKinds(persisted.effects)).toEqual(["expelFlood"]);
@@ -565,7 +553,7 @@ describe("超时与拉人者终核", () => {
   test("提醒一直发不出去时续期有尽头，超过总时长按普通超时结算", () => {
     // 某群 sendMessage 持续失败（论坛 General 话题被关、机器人被禁言却仍能限制
     // 成员）时，无限续期会让每个入群者留下一条不朽记录：常驻待验证表、常驻主
-    // 线程镜像、每次快照都重写一遍日文件，而日文件还按该成员的发言数膨胀。
+    // 线程镜像并持续刷新日文件。
     const state = pendingState({ joinedAt: 1_000 });
     const late: number = 1_000 + VERIFICATION_REMINDER_UNDELIVERED_MAX_MS;
 
@@ -579,23 +567,12 @@ describe("超时与拉人者终核", () => {
   });
 
   test("超时且非被拉入群 → 先持久化 expelling，再收尾踢人", () => {
-    const state = pendingState({ messageIds: [1, 2], reminderMessageId: 2 });
+    const state = pendingState({ reminderMessageId: 2 });
     const { next, effects } = transitionVerification(state, { type: "verifyTimeout", now: 120_000 });
-    expect(next).toMatchObject({ kind: "expelling", reason: "timeout", snapshot: { messageIds: [1, 2] } });
+    expect(next).toMatchObject({ kind: "expelling", reason: "timeout", snapshot: { reminderMessageId: 2 } });
     expect(effects).toEqual([]);
     expect(effectKinds(transitionVerification(next, { type: "terminalPersisted" }).effects)).toEqual(["expel"]);
     expect(transitionVerification(next, { type: "terminalPersisted" }).effects).toEqual([]);
-  });
-
-  test("终态快照与原待验证状态的消息数组隔离", () => {
-    const state = pendingState({ messageIds: [1, 2], reminderMessageId: 2 });
-    const { next } = transitionVerification(state, { type: "verifyTimeout", now: 120_000 });
-    if (next?.kind !== "expelling") {
-      throw new Error("Expected expelling state");
-    }
-
-    state.messageIds.push(3);
-    expect(next.snapshot.messageIds).toEqual([1, 2]);
   });
 
   test("超时且被拉入群 → 先持久化 checkingInviter，再做终核", () => {
@@ -608,7 +585,7 @@ describe("超时与拉人者终核", () => {
   });
 
   test("终核：拉人者确是管理员 → 补豁免占位，只删提醒不踢人，且按精确时刻撤销此前记的那次刷群计数", () => {
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 54_321, expiresAt: 120_000 };
+    const snapshot = { label: "杂鱼A", isBot: false, reminderMessageId: 30, replyReminderMessageId: undefined, joinedAt: 54_321, expiresAt: 120_000 };
     const checking: VerificationState = { kind: "checkingInviter", inviterId: 999, snapshot };
     const { next, effects } = transitionVerification(checking, { type: "timeoutInviterVerdict", inviterIsAdmin: true });
     expect(next?.kind).toBe("exempt");
@@ -625,7 +602,7 @@ describe("超时与拉人者终核", () => {
   });
 
   test("终核：拉人者不是管理员 → 先持久化 expelling，再收尾踢人", () => {
-    const snapshot = { label: "杂鱼A", isBot: false, messageIds: [1], reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0, expiresAt: 120_000 };
+    const snapshot = { label: "杂鱼A", isBot: false, reminderMessageId: undefined, replyReminderMessageId: undefined, joinedAt: 0, expiresAt: 120_000 };
     const checking: VerificationState = { kind: "checkingInviter", inviterId: 999, snapshot };
     const { next, effects } = transitionVerification(checking, { type: "timeoutInviterVerdict", inviterIsAdmin: false });
     expect(next).toMatchObject({ kind: "expelling", reason: "timeout", snapshot });
@@ -653,7 +630,7 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
   });
 
   test("待验证中途离群 → 删记录 + 只删提醒（公告/发言不动）", () => {
-    const state = pendingState({ reminderMessageId: 30, messageIds: [1, 30] });
+    const state = pendingState({ reminderMessageId: 30 });
     const { next, effects } = transitionVerification(state, { type: "left" });
     expect(next).toBeUndefined();
     expect(effects).toEqual([{ kind: "deleteReminders", reminderMessageId: 30, replyReminderMessageId: undefined }]);
@@ -669,7 +646,6 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     const state = pendingState();
     const result = transitionVerification(state, { type: "reminderLanded", reminderKind: "original", messageId: 30, now: 1_000 });
     expect(state.reminderMessageId).toBe(30);
-    expect(state.messageIds).toEqual([30]);
     expect(state.expiresAt).toBe(1_000 + VERIFICATION_TIMEOUT_MS);
     expect(result.rescheduleTimer).toBeTrue();
   });
@@ -687,14 +663,9 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     expect(state.replyReminderMessageId).toBe(31);
   });
 
-  test("original/reply 迟到提醒都遵守待清理消息 id 上限", () => {
+  test("original/reply 提醒只回填各自显式 id，不创建混合消息列表", () => {
     for (const reminderKind of ["original", "reply"] as const) {
-      const state = pendingState({
-        messageIds: Array.from(
-          { length: VERIFICATION_TRACKED_MESSAGE_IDS_MAX },
-          (_unused, index) => index + 1
-        ),
-      });
+      const state = pendingState();
 
       transitionVerification(state, {
         type: "reminderLanded",
@@ -703,11 +674,7 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
         now: 1_000,
       });
 
-      expect(state.messageIds).toHaveLength(
-        VERIFICATION_TRACKED_MESSAGE_IDS_MAX
-      );
-      expect(state.messageIds[0]).toBe(2);
-      expect(state.messageIds.at(-1)).toBe(9_999);
+      expect("messageIds" in state).toBeFalse();
       expect(
         reminderKind === "original"
           ? state.reminderMessageId

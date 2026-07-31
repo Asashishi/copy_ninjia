@@ -10,10 +10,10 @@ Object.defineProperty(globalThis, "self", {
   value: { postMessage(event: AntiRaidWorkerEvent): void { workerEvents.push(event); } },
 });
 
-/** 两个删除入口共用一份实现：清痕迹那条路走三态版，其余路径只看成败。 */
+/** 两个删除入口共用一份实现：终态清理走三态版，其余路径只看成败。 */
 function recordDelete(messageId: number): string {
   actions.push(`delete:${messageId}`);
-  return messageId === 2 ? "failed" : "deleted";
+  return "deleted";
 }
 
 mock.module("../../../packages/infra/logger", () => ({
@@ -61,7 +61,7 @@ beforeEach(() => {
 });
 
 describe("Anti-Raid pending-member flood handling", () => {
-  test("第 46 条先踢后清理，单条删除失败不中断，迟到消息不重复处置", async () => {
+  test("第 46 条先踢、只清理机器人提醒，迟到消息不重复处置", async () => {
     const record: VerificationSnapshot = {
       chatId: -1001,
       userId: 42,
@@ -70,7 +70,6 @@ describe("Anti-Raid pending-member flood handling", () => {
       phase: "pending",
       label: "刷屏者",
       isBot: false,
-      messageIds: [900],
       replyReminderMessageId: 900,
       trackedMessageTimes: [],
       replyReminderRequested: true,
@@ -117,10 +116,10 @@ describe("Anti-Raid pending-member flood handling", () => {
     expect(actions).toEqual([
       "kick",
       "delete:900",
-      ...Array.from({ length: ANTI_RAID_PER_MINUTE_LIMIT + 1 }, (_, index) => `delete:${index + 1}`),
       "notice",
       "schedule-notice-delete",
     ]);
+    expect(actions).not.toContain("delete:1");
     expect(verificationEntries.has("-1001:42")).toBeTrue();
     expect(verificationEntries.get("-1001:42")?.timer).toBeUndefined();
     const noticePersist = workerEvents.findLast((event) =>
@@ -157,7 +156,6 @@ describe("Anti-Raid pending-member flood handling", () => {
       successNoticeSent: true,
       label: "已经处置的成员",
       isBot: false,
-      messageIds: [101],
       trackedMessageTimes: [],
       replyReminderRequested: false,
       reminderSuperseded: true,
@@ -193,7 +191,6 @@ describe("Anti-Raid pending-member flood handling", () => {
       expelReason: "timeout",
       label: "暂时踢不动的成员",
       isBot: false,
-      messageIds: [],
       trackedMessageTimes: [],
       replyReminderRequested: false,
       reminderSuperseded: true,

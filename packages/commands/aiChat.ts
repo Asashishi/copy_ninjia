@@ -5,7 +5,7 @@ import { aiChatConfigReadiness } from "../config/readiness";
 import { AI_CHAT_GEMINI_API_KEY } from "../infra/config";
 import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
-import { sendMessage } from "../infra/telegram";
+import { sendCommandMessage } from "../infra/telegram";
 import { refuseIfConfigBroken } from "./configGate";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
 
@@ -32,7 +32,7 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   const messageId: number | undefined = ctx.msgId;
   if (arg === "enable") {
     if (AI_CHAT_GEMINI_API_KEY === undefined) {
-      await sendMessage({
+      await sendCommandMessage({
         chatId,
         text: `本天才没有 Gemini 的 key，拿什么跟你们闲聊呀？去 .env 里补上 AI_CHAT_GEMINI_API_KEY 再重启，笨蛋♡`,
         replyToMessageId: messageId,
@@ -68,5 +68,5 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   const replyText: string = arg === "enable"
     ? `哼，那本天才就赏脸在这个群闲聊几句吧，杂鱼们好好珍惜♡`
     : `本天才不想再理你们这群杂鱼了，闲聊到此为止♡`;
-  await sendMessage({ chatId, text: replyText, replyToMessageId: messageId });
+  await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

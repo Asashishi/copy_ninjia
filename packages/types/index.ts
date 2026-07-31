@@ -10,7 +10,7 @@ export type * from "./aiChat";
 export type * from "./aiChatWorker";
 export type * from "./antiRaid";
 export type * from "./blocklist";
-export type * from "./tools";
+export type * from "./aiChat/weather";
 export type * from "./luckChallenge";
 export type * from "./media";
 export type * from "./telegram";

@@ -22,7 +22,10 @@ import type {
   VerificationSnapshotBase,
   VerificationUpsertDiskMessage,
 } from "../../../packages/types";
-import { VERIFICATION_FILE_COMPACT_BYTES } from "../../../packages/consts/diskIO";
+import {
+  VERIFICATION_FILE_COMPACT_BYTES,
+  VERIFICATION_FILE_VERSION,
+} from "../../../packages/consts/diskIO";
 
 const DAY_ONE = "2026-07-19";
 const DAY_TWO = "2026-07-20";
@@ -43,7 +46,6 @@ function snapshot(
     phase: "pending",
     label: "@pending_user",
     isBot: false,
-    messageIds: [10],
     trackedMessageTimes: [1_000],
     replyReminderRequested: false,
     reminderSuperseded: false,
@@ -84,7 +86,7 @@ describe("pending verification daily append JSON", () => {
     for (let revision = 2; revision <= 500; revision++) {
       upsert({
         type: "verificationUpsert",
-        record: snapshot(revision, { messageIds: [10, revision] }),
+        record: snapshot(revision, { trackedMessageTimes: [revision] }),
         critical: false,
       });
     }
@@ -95,7 +97,7 @@ describe("pending verification daily append JSON", () => {
 
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")).toMatchObject({
       revision: 500,
-      messageIds: [10, 500],
+      trackedMessageTimes: [500],
     });
     expect(replies.map((reply) => reply.revision)).toEqual([1, 500]);
   });
@@ -140,7 +142,7 @@ describe("pending verification daily append JSON", () => {
     expect(content.match(/"-1001:43":/g)).toHaveLength(2);
     expect(JSON.parse(content)).toEqual({
       "-1001:42": null,
-      "-1001:43": { version: 1, ...snapshot(2, { userId: 43, label: "第二位" }) },
+      "-1001:43": { version: VERIFICATION_FILE_VERSION, ...snapshot(2, { userId: 43, label: "第二位" }) },
     });
     expect(recoverVerificationDay(DAY_ONE, dir).has("-1001:42")).toBeFalse();
   });
@@ -230,7 +232,7 @@ describe("pending verification daily append JSON", () => {
     resetVerificationPersistenceCache();
     writeFileSync(
       join(dir, `${DAY_ONE}.json`),
-      JSON.stringify({ "-1001:42": { version: 1, ...snapshot(1) } }, null, 2)
+      JSON.stringify({ "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) } }, null, 2)
     );
 
     const recovered: Map<string, VerificationSnapshot> =
@@ -239,14 +241,14 @@ describe("pending verification daily append JSON", () => {
     expect(recovered.get("-1001:42")).toMatchObject({ revision: 1 });
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
     expect(JSON.parse(readFileSync(join(dir, `${DAY_TWO}.json`), "utf8")))
-      .toEqual({ "-1001:42": { version: 1, ...snapshot(1) } });
+      .toEqual({ "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) } });
   });
 
   test("只以最新旧日为迁移基线，不从更早残留复活已终结成员", () => {
     resetVerificationPersistenceCache();
     writeFileSync(
       join(dir, `${DAY_ZERO}.json`),
-      JSON.stringify({ "-1001:42": { version: 1, ...snapshot(1) } }, null, 2)
+      JSON.stringify({ "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) } }, null, 2)
     );
     // 最新旧日的 active 快照已不含 user 42，等价于更早记录已经终结。
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({}, null, 2));
@@ -266,9 +268,9 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(
       join(dir, `${DAY_ONE}.json`),
       JSON.stringify({
-        "-1001:42": { version: 1, ...snapshot(1) },
+        "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) },
         "-1001:43": {
-          version: 1,
+          version: VERIFICATION_FILE_VERSION,
           ...snapshot(1, { userId: 43, label: "旧日成员" }),
         },
       }, null, 2)
@@ -278,7 +280,7 @@ describe("pending verification daily append JSON", () => {
       JSON.stringify({
         "-1001:42": null,
         "-1001:43": {
-          version: 1,
+          version: VERIFICATION_FILE_VERSION,
           ...snapshot(2, { userId: 43, label: "新日成员" }),
         },
       }, null, 2)
@@ -300,7 +302,7 @@ describe("pending verification daily append JSON", () => {
     const oldContent: string = "{\"-1001:42\":";
     const currentContent: string = JSON.stringify({
       "-1001:43": {
-        version: 1,
+        version: VERIFICATION_FILE_VERSION,
         ...snapshot(1, { userId: 43, label: "新日成员" }),
       },
     }, null, 2);
@@ -369,8 +371,8 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(join(dir, "2026-07-18.json"), "{}");
     writeFileSync(join(dir, "notes.json"), "{}");
     const original: string = JSON.stringify({
-      "-1001:99": { version: 1, ...snapshot(2, { userId: 99 }) },
-      "-1001:42": { version: 1, ...snapshot(1), expiresAt: "soon" },
+      "-1001:99": { version: VERIFICATION_FILE_VERSION, ...snapshot(2, { userId: 99 }) },
+      "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1), expiresAt: "soon" },
       "-1001:50": null,
     }, null, 2);
     writeFileSync(join(dir, `${DAY_ONE}.json`), original);
@@ -394,12 +396,25 @@ describe("pending verification daily append JSON", () => {
 
   test("旧下划线键不再兼容，必须手动改成冒号格式", () => {
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
-      "-1001_42": { version: 1, ...snapshot(1) },
+      "-1001_42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) },
     }, null, 2));
 
     expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
       "invalid active pending verification record for key -1001_42"
     );
+  });
+
+  test("旧版验证记录不在代码中兼容，必须停机后手工迁移", () => {
+    const path: string = join(dir, `${DAY_ONE}.json`);
+    const original: string = JSON.stringify({
+      "-1001:42": { version: 1, ...snapshot(1), messageIds: [7, 8] },
+    }, null, 2);
+    writeFileSync(path, original);
+
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
+      "invalid active pending verification record for key -1001:42"
+    );
+    expect(readFileSync(path, "utf8")).toBe(original);
   });
 
   test("消息窗口随当天快照恢复，缺失当前必填字段时拒绝启动", () => {
@@ -410,7 +425,7 @@ describe("pending verification daily append JSON", () => {
     });
     expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.trackedMessageTimes).toEqual([10_000, 20_000]);
 
-    const incompatible: Record<string, unknown> = { version: 1, ...snapshot(2) };
+    const incompatible: Record<string, unknown> = { version: VERIFICATION_FILE_VERSION, ...snapshot(2) };
     delete incompatible.trackedMessageTimes;
     const path: string = join(dir, `${DAY_ONE}.json`);
     const original: string = JSON.stringify({ "-1001:42": incompatible }, null, 2);
@@ -440,7 +455,7 @@ describe("pending verification daily append JSON", () => {
       successNoticeSent: true,
     };
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
-      "-1001:42": { version: 1, ...invalidPending },
+      "-1001:42": { version: VERIFICATION_FILE_VERSION, ...invalidPending },
     }));
     expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("invalid active pending verification record");
   });

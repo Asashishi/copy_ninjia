@@ -31,7 +31,9 @@ mock.module("../../packages/config/readiness", () => ({
   aiChatConfigReadiness: (): { ok: true } => ({ ok: true }),
   jaTranslateConfigReadiness: (): { ok: true } => ({ ok: true }),
 }));
-mock.module("../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../packages/infra/telegram", () => ({
+  sendCommandMessage: sendMessage,
+}));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 // /init enable 之后会重新判定一次管理员身份，好让「是管理员 && 已初始化」

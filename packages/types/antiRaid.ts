@@ -120,8 +120,7 @@ export interface VerificationSnapshotBase {
   revision: number;
   label: string;
   isBot: boolean;
-  messageIds: number[];
-  /** 入群公告 id；与 messageIds 分开存，不参与上限截断（见 PendingState）。 */
+  /** 入群公告 id；只清理机器人/Telegram 制造的验证痕迹，不删除成员发言。 */
   announcementMessageId?: number;
   /** 最近一分钟的待验证成员消息时间戳。 */
   trackedMessageTimes: number[];
