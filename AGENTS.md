@@ -27,12 +27,13 @@
 ## 分支、提交与发布
 
 - 只使用 `master`、`dev`，不开功能分支；开发一律在 `dev`，不直接提交到 `master`。
+- 每次发布必须完整走完且顺序固定：先在 `dev` 完成开发与门禁，再以 `git merge --squash` 合入 `master` 并创建单次提交；随后推送 `master`、创建 annotated version tag 和 GitHub Release；只有 Release 确认成功后，才把 `dev` reset 对齐到 `master` 并以 `--force-with-lease` 推送。禁止在 Release 前同步 `dev`，也禁止推完 `master` 就结束发布流程。
 - 每次 commit 前运行 `git branch --show-current`。`master` 只允许 `git merge --squash` 后的单次提交；误提交且未推送时，先 cherry-pick 到 `dev`，再以 `git branch -f master origin/master` 复位并走正常 squash。
 - 合入 `master` 只能 `git merge --squash` + 单次 commit；提交信息覆盖完整改动集并说明“为什么”。合并前 `bun run check` 必须全绿；涉及持久化、停机或 Worker 生命周期时再跑 `bun run test:fault-injection`，失败不得合并。
 - 发布前同步远端 tags，并用 `gh release list` 读取 GitHub Latest Release。版本仅用无 `v` 前缀的 `MAJOR.MINOR.PATCH`：破坏兼容升 MAJOR、兼容新增升 MINOR、仅修复/性能/重构/文档升 PATCH，混合改动取最高级。不得根据本地旧 tag 猜版本；目标 tag 已存在时重新读取 Release 状态并重算，禁止覆盖、移动或复用。
 - 门禁通过后依次：推送 `master`；为该提交创建并单独推送 annotated version tag；执行 `gh release create <tag> --verify-tag --target master ...`。Release 标题和说明用英文，仅描述“上一个 Latest tag..本次 `master`”的增量，至少含 Highlights、Compatibility / Migration Notes、Validation；测试数与覆盖率必须来自本次门禁。
 - tag 已推送但 Release 创建失败时保留并重试同一 tag，不再递增。`master`、tag、Release 任一未确认成功，都不得宣称发布完成或改写 `dev`。
-- 全部发布成功后，先以 `git diff dev master --quiet` 确认树一致，再在 `dev` 执行 `git reset --hard master` 和 `git push --force-with-lease origin dev`。
+- Release 已确认成功后，先以 `git diff dev master --quiet` 确认树一致，再在 `dev` 执行 `git reset --hard master` 和 `git push --force-with-lease origin dev`，最终确认本地与远端的 `dev`、`master` 全部指向同一提交；这一步是每次发布的必做收尾，不得遗漏。
 - 仅当用户明确要求同步文档/指标时，才按合并前真实 `bun run check` 输出更新徽章、`docs/assets/coverage_{light,dark}.svg`、README `<img alt>` 和三份开发文档；否则不改，只在交付时列出待同步位置。完整清单见 `docs/05-dev-workflow.md` 的“同步 README 指标”。
 
 ## 编码规范
