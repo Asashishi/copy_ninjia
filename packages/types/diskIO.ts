@@ -110,7 +110,7 @@ export interface BlockUserDiskMessage {
 /**
  * 主线程 -> diskIOWorker：解除拉黑。带的是**删除之后的完整名单**而不是被删的
  * 那个 id：黑名单文件是追加型的，删不掉已有条目，唯一的办法是整文件重写，
- * 而重写的内容只能来自主线程那份权威内存 Map（见 infra/blocklist.ts）。
+ * 而重写的内容只能来自主线程那份权威内存 Map（见 infra/blocklist/）。
  */
 export interface UnblockUserDiskMessage {
   type: "unblockUser";
@@ -199,6 +199,8 @@ export type DiskIORespawnListener = (
 /** 带诊断 owner 的运行时恢复镜像登记。 */
 export interface DiskIORespawnRegistration {
   owner: string;
+  /** 数值越小越先恢复；同优先级按 owner 稳定排序。 */
+  priority: number;
   listener: DiskIORespawnListener;
 }
 
@@ -269,7 +271,7 @@ export interface LoadedReply {
   /**
    * /block 黑名单：key 为用户 id，value 是文件里那条完整记录。带上 blockedAt
    * 而不只是「在不在」，是因为 /unblock 要把主线程内存 Map 整份重写回文件
-   * ——只读回 true 的话，重写会把所有人的拉黑时刻抹平（见 infra/blocklist.ts）。
+   * ——只读回 true 的话，重写会把所有人的拉黑时刻抹平（见 infra/blocklist/）。
    */
   blockedUsers: Map<number, BlockedUserRecord>;
   /** 未完成的黑名单成员移除 outbox；主线程过滤后在 Anti-Raid 初始化时重放。 */

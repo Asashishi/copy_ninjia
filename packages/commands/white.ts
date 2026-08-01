@@ -2,7 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import type { SetWhitelistMembershipResult } from "../types/whitelist";
 import { setWhitelistMembership } from "../config/whitelist";
-import { isUserBlocked } from "../infra/blocklist";
+import { isUserBlocked } from "../infra/blocklist/membership";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";

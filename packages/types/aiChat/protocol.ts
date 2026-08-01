@@ -103,9 +103,20 @@ export interface AiInvalidateChatMessage {
 export interface AiSwitchMoodMessage {
   type: "switchMood";
   chatId: number;
-  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 moodSwitchRequestCounter）。 */
+  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 moodRequestCounter）。 */
   requestId: number;
   /** 请求的绝对截止时刻；Worker 收到时已过期则不得再改写群心情。 */
+  deadlineAt: number;
+}
+
+/** /query_mood 的查询请求：未过 deadlineAt 时 Worker 读取本群当前有效心情，
+ * 再以同 requestId 的 moodQueried 回执带回结果；不得强制重抽未到期心情。 */
+export interface AiQueryMoodMessage {
+  type: "queryMood";
+  chatId: number;
+  /** 主线程分配的单调递增回执关联 id（与 switchMood 共用编号空间）。 */
+  requestId: number;
+  /** 请求的绝对截止时刻；Worker 收到时已过期则不再查询。 */
   deadlineAt: number;
 }
 
@@ -118,6 +129,7 @@ export type AiChatWorkerMessage =
   | AiHydrateStickerCatalogMessage
   | AiFlushMemoryMessage
   | AiInvalidateChatMessage
+  | AiQueryMoodMessage
   | AiSwitchMoodMessage;
 
 export interface AiSentMessage {
@@ -160,11 +172,21 @@ export interface AiMoodSwitchedEvent {
   moodName: string;
 }
 
+/** queryMood 请求的回执：带回当前有效心情，主线程凭 requestId 结算等待者。 */
+export interface AiMoodQueriedEvent {
+  type: "moodQueried";
+  chatId: number;
+  requestId: number;
+  /** 当前有效心情档位名（config/mood.json 的 name 字段）。 */
+  moodName: string;
+}
+
 export type AiChatWorkerEvent =
   | AiSentMessage
   | AiMemoryEvent
   | AiMemoryDeletedEvent
   | AiMemoryFlushedEvent
   | AiChatInvalidatedEvent
+  | AiMoodQueriedEvent
   | AiMoodSwitchedEvent
   | AiStickerCatalogEvent;

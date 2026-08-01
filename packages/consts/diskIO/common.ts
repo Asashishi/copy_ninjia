@@ -7,6 +7,22 @@ export const LOAD_TIMEOUT_MS: number = 5_000;
 /** Disk I/O Worker 重建期间主线程最多暂存的业务消息数。 */
 export const DEFAULT_MAX_PENDING_BUSINESS_MESSAGES: number = 10_000;
 
+/**
+ * Disk I/O Worker 重建时各主线程镜像的固定恢复顺序；数值越小越先执行。
+ * 显式排序避免模块 import 先后改变恢复协议，预留间隔便于新增领域插入。
+ */
+export const DISK_IO_RESPAWN_PRIORITIES: Readonly<{
+  BLOCKLIST: number;
+  AI_MEMORY: number;
+  ANTI_RAID_VERIFICATION: number;
+  DAILY_LUCK: number;
+}> = Object.freeze({
+  BLOCKLIST: 100,
+  AI_MEMORY: 200,
+  ANTI_RAID_VERIFICATION: 300,
+  DAILY_LUCK: 400,
+});
+
 /** 公历日的固定毫秒数；只与固定 UTC+9 偏移配合，不用于有夏令时的时区。 */
 export const DAY_MS: number = 24 * 60 * 60 * 1_000;
 

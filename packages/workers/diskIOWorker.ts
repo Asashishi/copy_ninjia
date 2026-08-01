@@ -10,7 +10,7 @@
  * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/aiMemoryFiles.ts（AI 记忆）、
  * diskIO/stickerCatalogFiles.ts（贴纸目录）、diskIO/luckFiles.ts（运势的缓冲/
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
- * diskIO/verificationFiles.ts（待验证按日增量）、
+ * diskIO/verificationRecovery.ts 与 verificationWrites.ts（待验证按日增量）、
  * diskIO/blocklistFile.ts（/block 黑名单）与
  * diskIO/blocklistRemovalOutbox.ts（未完成处置 outbox）、
  * diskIO/joinLogFiles.ts（滚动入群追写与命令按需读取）、
@@ -40,7 +40,13 @@ import {
   handleJoinLogMessage,
   readJoinLog,
 } from "./diskIO/joinLogFiles";
-import { flushVerificationChanges, handleVerificationDelete, handleVerificationUpsert, recoverVerificationDay, scheduleVerificationRollover } from "./diskIO/verificationFiles";
+import { recoverVerificationDay } from "./diskIO/verificationRecovery";
+import {
+  flushVerificationChanges,
+  handleVerificationDelete,
+  handleVerificationUpsert,
+  scheduleVerificationRollover,
+} from "./diskIO/verificationWrites";
 import {
   configureAiMemoryDeletePersistedReply,
   configureAiMemoryPersistedReply,

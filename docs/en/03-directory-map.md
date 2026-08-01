@@ -31,13 +31,14 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/aiChat/`**
   - **Responsibility**: AI-chat main-thread proxy and model capabilities, including Worker
     supervision, memory mirror, availability, Gemini, stickers, tools, and media.
-  - **Representative files**: `index.ts`, `memoryMirror.ts`, `availability.ts`, `ai/`.
+  - **Representative files**: `workerBridge.ts`, `messageIngress.ts`, `memoryMirror.ts`,
+    `availability.ts`, and `ai/`; `index.ts` is only a thin public entry point.
 - **`packages/antiRaid/`**
   - **Responsibility**: Anti-Raid main-thread proxy and ad model capability, including Worker
     supervision, durable handoff, update ingress, and blocklist/verification/ad/flood
     orchestration.
-  - **Representative files**: `index.ts`, `workerBridge.ts`, `durableDelivery.ts`,
-    `updateIngress.ts`, `ai/`.
+  - **Representative files**: `workerBridge.ts`, `durableDelivery.ts`, `updateIngress.ts`,
+    `adCandidate.ts`, and `ai/`; `index.ts` is only a thin public entry point.
 - **`packages/copy/`**
   - **Responsibility**: copy-mode transformations, execution queues for avatars, reactions,
     and translation, plus the single decision point for whether Japanese translation is live.
@@ -50,7 +51,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/states/`**
   - **Responsibility**: **I/O-free** state transitions and admission rules for verification,
     lockdown, AI replies, and ad detection.
-  - **Representative files**: `verification.ts`, `lockdown.ts`, `replyAdmission.ts`,
+  - **Representative files**: `verification.ts` plus `verification/`, `lockdown.ts`, `replyAdmission.ts`,
     `adDetectAdmission.ts`.
 - **`packages/config/`**
   - **Responsibility**: strict schemas for `config/*.json`, with startup-loaded allow/blocklists,
@@ -60,11 +61,11 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/libs/`**
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
-  - **Representative files**: `flushBarrier.ts`, `linkedQueue.ts`, `text.ts`.
+  - **Representative files**: `flushBarrier.ts`, `linkedQueue.ts`, `monotonicDeadline.ts`, `text.ts`.
 - **`packages/workers/`**
   - **Responsibility**: in-thread implementations for all three Workers.
-  - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`, and
-    the `aiChat/`, `antiRaid/`, and `diskIO/` subdirectories.
+  - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`,
+    `aiChat/`, `antiRaid/verificationEffects/`, and `diskIO/verification{Codec,Recovery,Writes}.ts`.
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **Responsibility**: model transports and capabilities live under their owning feature so
     thread and lifecycle ownership stays explicit.
@@ -79,9 +80,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `telegram/`, `config.ts`, `joinLog.ts`, `workerSupervisor.ts`.
 - **`packages/infra/blocklist/`**
   - **Responsibility**: main-thread blocklist infrastructure split into synchronous membership,
-    durable outbox, and per-chat sweep logic; `infra/blocklist.ts` remains only as a
-    compatibility export.
-  - **Representative files**: `membership.ts`, `outbox.ts`, `sweep.ts`.
+    identity checks, durable outbox, and per-chat sweep logic.
+  - **Representative files**: `identities.ts`, `membership.ts`, `outbox.ts`, `sweep.ts`.
 - **`packages/infra/storage/`**
   - **Responsibility**: data-root preflight, instance lock, StateStore, and startup cleanup.
   - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`.
@@ -146,16 +146,16 @@ Watch out for shared domain code such as `packages/aiChat/ai/`: if a pure functi
 
 ## Compatibility Entry-Point (Barrel) Convention
 
-When a large file is split into submodules, the original file becomes a pure `export * from` compatibility entry point—for example, `packages/consts/aiChat.ts` for `packages/consts/aiChat/`. The rules are:
+When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/consts/aiChat.ts` for `packages/consts/aiChat/`, or `verificationFiles.ts` for the split verification-file domain. The rules are:
 
 - Compatibility entry points exist only for gradual migration of old imports. **All new code imports directly from the domain submodule.**
 - A compatibility entry point must not own state, parse configuration, or introduce import-time side effects.
 - The same applies to `packages/types/index.ts`; it remains only for tests and gradual migration.
-- An in-package `index.ts` is a different thing: for modules such as the main-thread proxies, the entry point is the implementation itself (`packages/aiChat/index.ts`, `packages/antiRaid/index.ts`). Together with its sibling submodules it forms one package, and the three rules above do not apply to it.
+- An in-package `index.ts` is a stable public entry point only when callers genuinely need one package surface. The current `packages/aiChat/index.ts` and `packages/antiRaid/index.ts` contain only thin explicit exports and own no state. Production internals still import the appropriate owner leaf module directly and avoid unbounded `export *` surfaces.
 
 ## Mirrored Test Structure
 
-Paths under `test/` mirror `packages/`: when changing `packages/workers/diskIO/verificationFiles.ts`, use `test/workers/diskIO/verificationFiles.test.ts`. Create tests for new modules in the same structure. Shared test helpers live in `test/libs/helpers.ts`; see [05 Development Workflow](05-dev-workflow.md#test-isolation) for global isolation behavior.
+Paths under `test/` generally mirror `packages/`; one split domain may share a domain-level test. For example, `packages/workers/diskIO/verificationCodec.ts`, `verificationRecovery.ts`, and `verificationWrites.ts` are covered together by `test/workers/diskIO/verificationFiles.test.ts`. Create other new-module tests in the matching directory structure. Shared test helpers live in `test/libs/helpers.ts`; see [05 Development Workflow](05-dev-workflow.md#test-isolation) for global isolation behavior.
 
 ---
 

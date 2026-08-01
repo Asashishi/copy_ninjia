@@ -20,7 +20,11 @@ import {
 } from "../cache/main/botAdmin";
 import { BOT_PERMISSION_PROBE_RETRY_MS } from "../consts/botAdmin";
 import { isAdminStatus, readBotChatPermissions } from "../libs/chatMember";
-import { forgetChatBlocklistWork, noteBanPermissionObserved, sweepBlockedMembers } from "./blocklist";
+import { forgetChatBlocklistWork } from "./blocklist/outbox";
+import {
+  noteBanPermissionObserved,
+  sweepBlockedMembers,
+} from "./blocklist/sweep";
 import { teardownRegisteredChat } from "./chatTeardown";
 import type { ChatState } from "../types/chatState";
 import type { BotChatPermissions } from "../types/telegram";
@@ -81,7 +85,7 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
  * 2. 收到别人的 chat_member 更新本身就是管理员身份的证明（Telegram 只向
  *    管理员机器人推送），见 markBotAdminObserved，零成本自愈；
  * 3. 两者都没来过的存量群（比如此功能上线前就已是管理员的群），首次判定
- *    时按需 getChatMember 现查一次并回填（isBotAdminIn）。
+ *    时按需 getChatMember 现查一次并回填（resolveBotAdminStatus）。
  *
  * 三条路径最终都经 recordBotAdminStatus 落盘。它同时是「机器人在这个群可以
  * 干活了」这个合取（是管理员 && 已 /init enable）的边沿：任一边发生变更、
@@ -100,7 +104,7 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
  * 光是被拉进一个群、还没人 /init enable，state.json 就会凭空多出一条只有
  * botIsAdmin 的记录——先于任何超级管理员操作自己"写"进去了。用 getChatState
  * （只读）判定，不经过 getOrCreateChatState，未初始化的群连内存里的 Map
- * 条目都不建。群后续被 /init enable 后，isBotAdminIn 的按需回填分支
+ * 条目都不建。群后续被 /init enable 后，resolveBotAdminStatus 的按需回填分支
  * （见本文件顶部注释的第 3 条路径）会在真正需要时现查一次并正确落盘，
  * 这里的省略不损失任何信息。
  */
@@ -235,7 +239,7 @@ export function invalidateBotAdminStatus(chatId: number): void {
  * 一次当前值，非 undefined 就说明权威信号已经赢了，直接采用它（不用现查
  * 结果覆盖状态，也把它作为这次调用的返回值，保证跟落盘的状态一致）。
  */
-export async function isBotAdminIn(chatId: number): Promise<boolean> {
+export async function resolveBotAdminStatus(chatId: number): Promise<boolean> {
   const known: boolean | undefined = getChatState(chatId).botIsAdmin;
   if (known !== undefined) return known;
 
@@ -272,7 +276,7 @@ export async function isBotAdminIn(chatId: number): Promise<boolean> {
         // /init 在请求期间切换过：这个响应属于旧一代，不回填，
         // 改用新一代的查询结果。
         if ((botAdminGenerations.get(chatId) ?? 0) !== generation) {
-          return isBotAdminIn(chatId);
+          return resolveBotAdminStatus(chatId);
         }
         const currentKnown: boolean | undefined = getChatState(chatId).botIsAdmin;
         if (currentKnown !== undefined) return currentKnown;
@@ -431,7 +435,7 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
     if (botPermissionGenerations.get(chatId) !== generation) return undefined;
     // 现查在途期间 my_chat_member 先一步落地过：那条是权威信号，而这次响应
     // 反映的可能是它到达之前的旧快照，直接回填会把刚生效的权限改动顶掉。
-    // 同 isBotAdminIn 的「权威信号已经赢了就采用它」。
+    // 同 resolveBotAdminStatus 的「权威信号已经赢了就采用它」。
     const authoritative: BotChatPermissions | undefined = botChatPermissions.get(chatId);
     if (authoritative !== undefined) return authoritative;
     if (!isAdminStatus(member.status)) {
@@ -439,7 +443,7 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
       forgetBotChatPermissions(chatId);
       // 「其实已经不是管理员」是一次权威身份观测，写回去纠正 state.json 里过期的
       // botIsAdmin: true（进程停机期间被撤管理员时收不到 my_chat_member，那份 true
-      // 会一直留着）。不写的话 isBotAdminIn 每条群消息都放行、每条都重新走到这里。
+      // 会一直留着）。不写的话 resolveBotAdminStatus 每条群消息都放行、每条都重新走到这里。
       await recordBotAdminStatus(chatId, false);
       // 退避必须**最后**钉上：上面两步都会清掉它——forget 收敛的是「权威信号刚到、
       // 该立刻重新观测」那一路，而这次的结论恰好相反，刚探测完、确认没权限。顺序

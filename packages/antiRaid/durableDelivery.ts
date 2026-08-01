@@ -6,8 +6,12 @@ import {
   ANTI_RAID_BARRIER_TIMEOUT_MS,
   ANTI_RAID_DRAIN_MAX_ROUNDS,
 } from "../consts/antiRaid/protocol";
-import { flushDiskIO } from "../workers/antiRaid/persistence";
+import { flushDiskIO } from "../infra/diskIO";
 import { WorkerUndeliveredError } from "../libs/workerDelivery";
+import {
+  createMonotonicDeadline,
+  remainingMonotonicTime,
+} from "../libs/monotonicDeadline";
 import { antiRaidBarrier, antiRaidRuntimeState } from "../cache/main/antiRaid/proxy";
 import { drainAdDisposals } from "./adDetect";
 import { registerBlocklistRemoval } from "./blocklistGuard";
@@ -37,7 +41,7 @@ function drainAntiRaidWorkerTasks(timeoutMs: number): Promise<FlushResult> {
 }
 
 function remainingDrainTime(deadline: number): number {
-  return Math.max(0, deadline - Date.now());
+  return remainingMonotonicTime(deadline);
 }
 
 /**
@@ -49,7 +53,7 @@ export async function drainAntiRaid(
   timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS
 ): Promise<FlushResult> {
   if (!antiRaidRuntimeState.initialized) return "flushed";
-  const deadline: number = Date.now() + timeoutMs;
+  const deadline: number = createMonotonicDeadline(timeoutMs);
   // Worker 在处理 drain 时先关闭广告判定节拍；同一端口 FIFO 保证更早发布的
   // adDetected 已先在主线程登记，回执之后在途判定因 stopping 门禁不再发布。
   // 因此只有拿到这道回执后，inFlightAdDisposals 的第一次快照才是稳定边界。
@@ -192,5 +196,5 @@ export async function postAntiRaidDurably(
   }
 }
 
-// 黑名单清扫的执行 owner（判定在 infra/blocklist.ts，执行在 Worker）。
+// 黑名单清扫的执行 owner（判定在 infra/blocklist/，执行在 Worker）。
 registerBlocklistRemoval(postAntiRaidDurably);

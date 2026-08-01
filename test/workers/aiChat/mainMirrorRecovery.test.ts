@@ -42,7 +42,7 @@ mock.module("../../../packages/libs/supervisedWorker", () => ({
     };
   },
 }));
-mock.module("../../../packages/aiChat/ai/persistence", () => ({
+mock.module("../../../packages/infra/diskIO", () => ({
   postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
   onAiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
     diskDeletePersisted = callback;
@@ -50,9 +50,10 @@ mock.module("../../../packages/aiChat/ai/persistence", () => ({
   onAiMemoryPersisted: (callback: (reply: AiMemoryPersistedReply) => void): void => {
     diskMemoryPersisted = callback;
   },
-  onDiskIORespawn: (_owner: string, listener: DiskIORespawnListener): void => {
+  onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {
     diskRespawn = listener;
   },
+  relayLogMessage: (): boolean => true,
 }));
 // hydrate 的删除判据要求 state.json 确实认识这个群（见 aiChat/index.ts）：
 // 只在状态表里、开关不是 true 的群才回收磁盘残留。开着的群必然在表里，
@@ -69,8 +70,8 @@ const {
   lastInitState,
   latestAiMemories,
   latestStickerCatalogs,
-  moodSwitchRequestCounter,
-  moodSwitchWaiters,
+  moodRequestCounter,
+  moodRequestWaiters,
   purgedAiMemoryChats,
   aiChatWorkerState,
   aiMemoryDeleteWaiters,
@@ -100,9 +101,9 @@ beforeEach(() => {
   for (const waiter of aiChatInvalidateWaiters.values()) clearTimeout(waiter.timer);
   aiChatInvalidateWaiters.clear();
   aiChatInvalidateRequestCounter.current = 0;
-  for (const waiter of moodSwitchWaiters.values()) clearTimeout(waiter.timer);
-  moodSwitchWaiters.clear();
-  moodSwitchRequestCounter.current = 0;
+  for (const waiter of moodRequestWaiters.values()) clearTimeout(waiter.timer);
+  moodRequestWaiters.clear();
+  moodRequestCounter.current = 0;
   latestStickerCatalogs.clear();
   purgedAiMemoryChats.clear();
   aiChatWorkerState.available = false;
@@ -332,28 +333,36 @@ describe("AI main-thread persistence mirror", () => {
     supervisorOptions!.onEvent({ type: "memoryFlushed", flushId: timedOutRequest.flushId });
   });
 
-  test("switchMood 回执按 requestId 结算；崩溃重启与投递失败都立即 reject", async () => {
+  test("心情查询/重抽回执按 requestId 结算；崩溃重启与投递失败都立即 reject", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
-    const acknowledged = aiChat.switchAiMood(-1001);
-    const request = workerPosts.at(-1);
-    if (request?.type !== "switchMood") throw new Error("Expected a switchMood request");
-    expect(request.deadlineAt).toBeGreaterThan(Date.now());
-    supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: request.requestId, moodName: "摆烂" });
-    await expect(acknowledged).resolves.toBe("摆烂");
-    expect(moodSwitchWaiters.size).toBe(0);
+    const queried = aiChat.queryAiMood(-1001);
+    const queryRequest = workerPosts.at(-1);
+    if (queryRequest?.type !== "queryMood") throw new Error("Expected a queryMood request");
+    expect(queryRequest.deadlineAt).toBeGreaterThan(Date.now());
+    supervisorOptions!.onEvent({ type: "moodQueried", chatId: -1001, requestId: queryRequest.requestId, moodName: "平静" });
+    await expect(queried).resolves.toBe("平静");
+    expect(moodRequestWaiters.size).toBe(0);
+
+    const switched = aiChat.switchAiMood(-1001);
+    const switchRequest = workerPosts.at(-1);
+    if (switchRequest?.type !== "switchMood") throw new Error("Expected a switchMood request");
+    expect(switchRequest.deadlineAt).toBeGreaterThan(Date.now());
+    supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: switchRequest.requestId, moodName: "摆烂" });
+    await expect(switched).resolves.toBe("摆烂");
+    expect(moodRequestWaiters.size).toBe(0);
 
     // 迟到/重复回执不应产生副作用。
-    supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: request.requestId, moodName: "开心" });
+    supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: switchRequest.requestId, moodName: "开心" });
 
-    const crashed = aiChat.switchAiMood(-1001);
+    const crashed = aiChat.queryAiMood(-1001);
     supervisorOptions!.onRespawn(() => true);
-    await expect(crashed).rejects.toThrow("AI Worker crashed before acknowledging the mood switch.");
-    expect(moodSwitchWaiters.size).toBe(0);
+    await expect(crashed).rejects.toThrow("AI Worker crashed before acknowledging the mood request.");
+    expect(moodRequestWaiters.size).toBe(0);
 
     workerPostAccepted = false;
     await expect(aiChat.switchAiMood(-1001)).rejects.toThrow("AI Worker is unavailable.");
-    expect(moodSwitchWaiters.size).toBe(0);
+    expect(moodRequestWaiters.size).toBe(0);
     expect(aiChatWorkerState.available).toBeFalse();
   });
 

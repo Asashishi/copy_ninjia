@@ -5,6 +5,11 @@ import type { SafetySetting } from "@google/genai";
 export const GEMINI_REPLY_MODEL: string = "gemini-3.5-flash-lite";
 /** 单次 Gemini 回复/摘要请求的超时上限。 */
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
+/**
+ * Gemini SDK 对 408/429/5xx 的总尝试次数（包含首次请求）；显式传入才能启用
+ * SDK 2.12.0 的 retryOptions，所有调用方不得再重试这类请求失败。
+ */
+export const GEMINI_REQUEST_RETRY_ATTEMPTS: number = 5;
 /** 回复 token 上限包含思考 token。 */
 export const REPLY_MAX_TOKENS: number = 65_536;
 /** 闲聊回复生成温度：略高于中性，保留人设发挥。 */

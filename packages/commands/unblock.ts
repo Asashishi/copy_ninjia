@@ -7,13 +7,13 @@ import {
   hasCommandPermission,
   resolveCommandActor,
 } from "./commandActor";
-import { isBotAdminIn } from "../infra/botAdmin";
+import { resolveBotAdminStatus } from "../infra/botAdmin";
 import {
   confirmBlocklistPersisted,
   forgetUserConfirmedKicked,
   isUserConfiguredBlocked,
   unblockUser,
-} from "../infra/blocklist";
+} from "../infra/blocklist/membership";
 import { getAllChatStates } from "../infra/storage/stateStore";
 
 /**
@@ -21,7 +21,7 @@ import { getAllChatStates } from "../infra/storage/stateStore";
  *
  * 落盘方式和 /block 不一样：黑名单文件是追加型的，删不掉已有条目，所以这里
  * 是「先从主线程内存 Map 删掉这个 id，再把删除之后的整份 Map 投给落盘 Worker
- * 整文件原子重写」（见 infra/blocklist.ts 与 workers/diskIO/blocklistFile.ts）。
+ * 整文件原子重写」（见 infra/blocklist/ 与 workers/diskIO/blocklistFile.ts）。
  *
  * 命令默认完整解除：先把目标移出动态黑名单并确认重写落盘，再在所有已知管理群
  * 解除 Telegram 群级封禁。整条操作只认 isCanUnBlock；不再接受 `all` 参数，避免
@@ -151,7 +151,7 @@ interface UnbanOutcome {
  * 突发请求，也让计数按确定顺序收敛。
  */
 async function unbanEverywhereFor(targetUser: CachedUser, chatId: number): Promise<UnbanOutcome> {
-  const isAdminHere: boolean = await isBotAdminIn(chatId);
+  const isAdminHere: boolean = await resolveBotAdminStatus(chatId);
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];
   for (const [adminChatId, chatState] of getAllChatStates()) {
     if (chatState.botIsAdmin === true && adminChatId !== chatId) targetChatIds.push(adminChatId);

@@ -1,6 +1,65 @@
-/** 广告检测流水线（入群守卫线程侧）的纯数据形状。 */
+/** 广告检测流水线的跨线程协议与 Worker 内部纯数据形状。 */
 
-import type { AdSampleContext } from "../antiRaid";
+/** 参与判定、同时写进命中样本的上下文。两项都可能缺席。 */
+export interface AdSampleContext {
+  /** 这条消息里被引用的那一段（message.quote）。 */
+  quote?: string;
+  /** 这条消息回复的那条原消息的正文。 */
+  replyTo?: string;
+}
+
+/**
+ * 主线程 -> Worker：一条待广告判定的群消息。只有本群开了 /ad_detect enable、
+ * 机器人是本群管理员、且发送者不是自己人时才投递（见 antiRaid/adCandidate.ts）。
+ * Worker 侧按发送者归并成消息串排队送检，见 workers/antiRaid/adDetect/queue.ts。
+ */
+export interface AdCandidateMessage {
+  type: "adCandidate";
+  chatId: number;
+  /** 用户 id；频道马甲发言时是该频道的负数 id。 */
+  senderId: number;
+  messageId: number;
+  /** 已清洗成单行的正文（文本或图片说明）。 */
+  text: string;
+  /** 被引用段与被回复原文；与 text 一起参与判定并留进命中样本。 */
+  sampleContext?: AdSampleContext;
+  /** 正文里不可见的 text_link 落地页 URL。 */
+  linkUrls?: string[];
+  /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
+  label: string;
+  /** 发送者是频道马甲（sender_chat）而非真人。 */
+  isChannel: boolean;
+  /** 发送者此刻是否已经在永久黑名单里。 */
+  blocked: boolean;
+  /** 发送者此刻是否仍在入群验证窗口内。 */
+  justJoined: boolean;
+}
+
+/** 主线程 -> Worker：丢掉这个群尚未送检的广告判定队列。 */
+export interface ClearAdDetectMessage {
+  type: "clearAdDetect";
+  chatId: number;
+}
+
+/** 命中样本里的一条消息：判定读到的正文，以及只给人看的上下文。 */
+export interface AdSampleMessage extends AdSampleContext {
+  messageId: number;
+  /** 送检时的正文（已截断、已补上 text_link 落地页），与模型读到的完全一致。 */
+  text: string;
+}
+
+/** Worker -> 主线程：发送者被判成广告，请按 /block 同样的处置办。 */
+export interface AdDetectedEvent {
+  type: "adDetected";
+  chatId: number;
+  senderId: number;
+  isChannel: boolean;
+  label: string;
+  /** 模型给出的简短理由，只进日志、播报与命中样本；不参与控制流。 */
+  reason: string;
+  /** 本次判定依据的完整消息串。 */
+  messages: readonly AdSampleMessage[];
+}
 
 /** 一条参与广告判定的消息。 */
 export interface AdCandidateEntry extends AdSampleContext {

@@ -16,9 +16,9 @@ export const packSummaries: Map<string, string> = new Map();
 /** 自上次上报后有更新、待上报给主线程落盘的包。 */
 export const dirtyPacks: Set<string> = new Set();
 
-/** pack short name -> (贴纸 file_unique_id -> 可以再试的最早时刻)：退避重试用完
- *  仍失败才进来（见 aiChat/ai/stickers/catalog.ts 的 callWithRetry），到期之前的对账
- *  跳过这枚贴纸。
+/** pack short name -> (贴纸 file_unique_id -> 可以再试的最早时刻)：SDK 请求重试
+ *  或允许的业务重采样用完仍失败才进来（见 aiChat/ai/stickers/catalog.ts），
+ *  到期之前的对账跳过这枚贴纸。
  *
  *  **必须带 TTL、不能是永久闩**：首次部署撞上一次视觉端点故障（配额耗尽、密钥
  *  刚轮换、runMediaTask 饱和）会让整包每一枚都描述不出来、全部进这张表，此后

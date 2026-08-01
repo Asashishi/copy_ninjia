@@ -12,6 +12,7 @@ const persistAuthoritativeState = mock(async (..._args: unknown[]): Promise<void
 const loggerError = mock((..._args: unknown[]): void => {});
 const clearAdDetection = mock((..._args: unknown[]): void => {});
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
+const queryAiMood = mock(async (_chatId: number): Promise<string> => "平静");
 const switchAiMood = mock(async (_chatId: number): Promise<string> => "开心");
 const states = new Map<number, Record<string, unknown>>();
 
@@ -39,7 +40,7 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
-mock.module("../../packages/aiChat", () => ({ invalidateAiChat: mock((): void => {}), switchAiMood }));
+mock.module("../../packages/aiChat", () => ({ invalidateAiChat: mock((): void => {}), queryAiMood, switchAiMood }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
@@ -58,7 +59,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
 const { handleAdDetectCommand } = await import("../../packages/commands/adDetect");
 const { handleJaCopyCommand } = await import("../../packages/commands/jaCopy");
-const { handleSwitchMoodCommand } = await import("../../packages/commands/switchMood");
+const { handleQueryMoodCommand, handleSwitchMoodCommand } = await import("../../packages/commands/mood");
 
 function context(argument: string): never {
   return {
@@ -76,6 +77,7 @@ beforeEach(() => {
   loggerError.mockClear();
   clearAdDetection.mockClear();
   handleCopyCommand.mockClear();
+  queryAiMood.mockClear();
   switchAiMood.mockClear();
   aiChatVerdict = { ok: true };
   adDetectVerdict = { ok: true };
@@ -140,6 +142,19 @@ describe("部署配置写坏时的 enable 拒绝", () => {
     await handleSwitchMoodCommand(context(""));
 
     expect(switchAiMood).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("config/mood.json"),
+      replyToMessageId: 7,
+    });
+  });
+
+  test("/query_mood 也点名坏掉的心情表，不投递查询请求", async () => {
+    aiChatVerdict = broken("config/mood.json");
+    states.set(-1001, { isAIChatEnabled: true });
+    await handleQueryMoodCommand(context(""));
+
+    expect(queryAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("config/mood.json"),

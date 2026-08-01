@@ -8,7 +8,7 @@
  * 回执路由与崩溃自愈的重启节流在 infra/diskIO/host.ts。
  * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
  * aiChat/index.ts、commands/luckChallenge/cache.ts、antiRaid/index.ts 与
- * infra/blocklist.ts 经 postDiskIO 投递。
+ * infra/blocklist/ 经 postDiskIO 投递。
  *
  * 本模块自身的错误一律 console.error（由进程控制台日志兜底）——它就是落盘终点，
  * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是
@@ -43,6 +43,7 @@ import type {
   DiskFlushRequest,
   DiskIODomain,
   DiskIORespawnListener,
+  DiskIORespawnRegistration,
   LoadRequest,
   LoadedData,
   LoadedReply,
@@ -115,8 +116,30 @@ export function isDiskIOInitialized(): boolean {
  * 全部异步工作并明确返回成败；普通 postDiskIO 会进入恢复缓冲，镜像重放只能
  * 使用传入的 scoped transport。落盘 Worker 是唯一单例，各领域登记一次即可。
  */
-export function onDiskIORespawn(owner: string, listener: DiskIORespawnListener): void {
-  diskIORuntime.respawnListeners.push({ owner, listener });
+export function onDiskIORespawn(
+  owner: string,
+  priority: number,
+  listener: DiskIORespawnListener
+): void {
+  if (owner.length === 0) throw new RangeError("Disk I/O respawn listener owner must not be empty.");
+  if (!Number.isSafeInteger(priority)) {
+    throw new RangeError("Disk I/O respawn listener priority must be a safe integer.");
+  }
+  if (diskIORuntime.respawnListeners.some(
+    (registration: DiskIORespawnRegistration): boolean => registration.owner === owner
+  )) {
+    throw new Error(`Disk I/O respawn listener owner ${owner} is already registered.`);
+  }
+  const insertionIndex: number = diskIORuntime.respawnListeners.findIndex(
+    (registration: DiskIORespawnRegistration): boolean => registration.priority > priority ||
+      (registration.priority === priority && registration.owner.localeCompare(owner) > 0)
+  );
+  const registration: DiskIORespawnRegistration = { owner, priority, listener };
+  if (insertionIndex === -1) {
+    diskIORuntime.respawnListeners.push(registration);
+    return;
+  }
+  diskIORuntime.respawnListeners.splice(insertionIndex, 0, registration);
 }
 
 /** 注册待验证增量 JSON 真正写入后的确认回调。 */

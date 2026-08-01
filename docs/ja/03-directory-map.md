@@ -31,12 +31,13 @@
 - **`packages/aiChat/`**
   - **責務**：AI chat のメインスレッド代理と model capability。Worker 監督、
     memory mirror、availability、Gemini、sticker、tool、media を含む。
-  - **代表的なファイル**：`index.ts`、`memoryMirror.ts`、`availability.ts`、`ai/`。
+  - **代表的なファイル**：`workerBridge.ts`、`messageIngress.ts`、`memoryMirror.ts`、
+    `availability.ts`、`ai/`。`index.ts` は薄い公開入口だけを提供。
 - **`packages/antiRaid/`**
   - **責務**：Anti-Raid のメインスレッド代理と広告 model capability。Worker 監督、
     durable handoff、update ingress、blocklist／verification／ad／flood orchestration。
-  - **代表的なファイル**：`index.ts`、`workerBridge.ts`、`durableDelivery.ts`、
-    `updateIngress.ts`、`ai/`。
+  - **代表的なファイル**：`workerBridge.ts`、`durableDelivery.ts`、`updateIngress.ts`、
+    `adCandidate.ts`、`ai/`。`index.ts` は薄い公開入口だけを提供。
 - **`packages/copy/`**
   - **責務**：copy モード変換、アバター・リアクション・翻訳の実行キュー、
     および日本語翻訳が「いま動いているか」の唯一の判定。
@@ -48,7 +49,7 @@
 - **`packages/states/`**
   - **責務**：**I/O を行わない**純粋な状態遷移と、認証・ロックダウン・AI 返信・
     広告検出の受け入れ規則。
-  - **代表的なファイル**：`verification.ts`、`lockdown.ts`、`replyAdmission.ts`、
+  - **代表的なファイル**：`verification.ts` と `verification/`、`lockdown.ts`、`replyAdmission.ts`、
     `adDetectAdmission.ts`。
 - **`packages/config/`**
   - **責務**：`config/*.json` の厳密な schema。allow/blocklist は起動時、
@@ -58,11 +59,11 @@
 - **`packages/libs/`**
   - **責務**：アトミックファイル、上限付き I/O、並行処理ツールなど、
     ドメイン非依存の基盤。
-  - **代表的なファイル**：`flushBarrier.ts`、`linkedQueue.ts`、`text.ts`。
+  - **代表的なファイル**：`flushBarrier.ts`、`linkedQueue.ts`、`monotonicDeadline.ts`、`text.ts`。
 - **`packages/workers/`**
   - **責務**：3 つの Worker のスレッド内実装。
-  - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、
-    `diskIOWorker.ts` と、`aiChat/`、`antiRaid/`、`diskIO/` の各サブディレクトリ。
+  - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
+    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
@@ -77,9 +78,9 @@
   - **代表的なファイル**：`telegram/`、`config.ts`、`joinLog.ts`、
     `workerSupervisor.ts`。
 - **`packages/infra/blocklist/`**
-  - **責務**：メインスレッド側ブロックリスト基盤。同期 membership、durable outbox、
-    チャット掃除に分割し、`infra/blocklist.ts` は互換 export のみを残す。
-  - **代表的なファイル**：`membership.ts`、`outbox.ts`、`sweep.ts`。
+  - **責務**：メインスレッド側ブロックリスト基盤。identity 判定、同期 membership、
+    durable outbox、チャット掃除に分割。
+  - **代表的なファイル**：`identities.ts`、`membership.ts`、`outbox.ts`、`sweep.ts`。
 - **`packages/infra/storage/`**
   - **責務**：データルート事前検査、インスタンスロック、StateStore、起動時の清掃。
   - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`。
@@ -144,16 +145,16 @@
 
 ## 互換エントリ（barrel）の規約
 
-大きなファイルをサブモジュールへ分割した後、元ファイルは純粋な `export * from` 互換エントリにします。例：`packages/consts/aiChat/` に対する `packages/consts/aiChat.ts`。規則は次のとおりです。
+大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/consts/aiChat/` に対する `packages/consts/aiChat.ts`、または分割した認証ファイル domain に対する `verificationFiles.ts`。規則は次のとおりです。
 
 - 互換エントリは古い import を段階移行するためだけに存在します。**新しいコードは必ずドメインのサブファイルから直接 import します。**
 - 互換エントリは状態を所有せず、設定を解析せず、import 時の副作用を導入しません。
 - `packages/types/index.ts` も同様で、テストと段階移行のためだけに残します。
-- パッケージ内の `index.ts` は別物です。メインスレッド代理のようなモジュールでは入口そのものが実装であり（`packages/aiChat/index.ts`、`packages/antiRaid/index.ts`）、同じパッケージのサブモジュールと合わせて 1 つのパッケージを構成します。上記 3 条の対象外です。
+- パッケージ内の `index.ts` は、呼び出し側が単一 package surface を本当に必要とする場合だけ安定した公開入口にします。現在の `packages/aiChat/index.ts` と `packages/antiRaid/index.ts` は薄い明示的 export のみで、状態を所有しません。production 内部は引き続き owner の leaf module を直接 import し、無制限な `export *` surface を避けます。
 
 ## テストのミラー構造
 
-`test/` は `packages/` のパスに対応します。`packages/workers/diskIO/verificationFiles.ts` を変更するなら `test/workers/diskIO/verificationFiles.test.ts` を使います。新規モジュールのテストも同じ構造で作成してください。共通テスト補助は `test/libs/helpers.ts` に置き、全体の分離方式は [05 開発フロー](05-dev-workflow.md#テスト分離) を参照してください。
+`test/` は原則として `packages/` のパスに対応しますが、同じ分割 domain は domain-level test を共有できます。たとえば `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` は `test/workers/diskIO/verificationFiles.test.ts` でまとめて検証します。それ以外の新規モジュールのテストは同じ directory structure で作成してください。共通テスト補助は `test/libs/helpers.ts` に置き、全体の分離方式は [05 開発フロー](05-dev-workflow.md#テスト分離) を参照してください。
 
 ---
 

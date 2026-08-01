@@ -45,19 +45,21 @@ const {
   forgetChatBlocklistWork,
   hydrateBlocklist,
   registerBlockedMemberRemover,
+  trackBlockedRemoval,
+} = await import("../../packages/infra/blocklist/outbox");
+const {
   replayPendingBlockedRemovals,
   requestBlocklistResweep,
   settleBlockedRemoval,
   sweepManagedBlocklistChats,
   sweepBlockedMembers,
-  trackBlockedRemoval,
-} = await import("../../packages/infra/blocklist");
+} = await import("../../packages/infra/blocklist/sweep");
 const { WorkerUndeliveredError } = await import("../../packages/libs/workerDelivery");
 const {
   BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
   BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
 } = await import("../../packages/consts/antiRaid/blocklist");
-const { handleMyChatMemberUpdate, isBotAdminIn, markBotAdminObserved } = await import("../../packages/infra/botAdmin");
+const { handleMyChatMemberUpdate, resolveBotAdminStatus, markBotAdminObserved } = await import("../../packages/infra/botAdmin");
 const {
   blockedMemberRemoverHolder,
   blockedUserIds,
@@ -738,14 +740,14 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     states.set(-1001, { isInitEnabled: true });
     persistAuthoritativeState.mockRejectedValueOnce(new Error("state store quiesced"));
 
-    await expect(isBotAdminIn(-1001)).rejects.toThrow("state store quiesced");
+    await expect(resolveBotAdminStatus(-1001)).rejects.toThrow("state store quiesced");
   });
 
   test("getChatMember 本身失败仍按「不是管理员」兜底，且不落盘", async () => {
     states.set(-1001, { isInitEnabled: true });
     getChatMember.mockRejectedValueOnce(new Error("Bad Request: chat not found"));
 
-    expect(await isBotAdminIn(-1001)).toBeFalse();
+    expect(await resolveBotAdminStatus(-1001)).toBeFalse();
     expect(persistAuthoritativeState).not.toHaveBeenCalled();
     expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
   });

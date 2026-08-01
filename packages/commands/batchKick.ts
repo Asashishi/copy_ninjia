@@ -7,11 +7,11 @@ import {
   BATCH_KICK_MIN_DURATION_MS,
 } from "../consts/commands";
 import { isWhitelisted } from "../config/whitelist";
+import { isUserBlocked } from "../infra/blocklist/membership";
 import {
-  isUserBlocked,
   requestBlocklistResweep,
   sweepBlockedMembers,
-} from "../infra/blocklist";
+} from "../infra/blocklist/sweep";
 import { SUPER_ADMIN_USER_ID } from "../infra/config";
 import { readRecentJoinLog } from "../infra/joinLog";
 import { logger } from "../infra/logger";

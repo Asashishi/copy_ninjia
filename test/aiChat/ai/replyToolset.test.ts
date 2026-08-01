@@ -35,7 +35,7 @@ mock.module("../../../packages/libs/sleep", () => ({
 const { ADD_REACTION_TOOL, SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
 const { AI_MAX_ACTIONS_PER_REPLY, HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
 const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../../packages/consts/aiChat/prompts/tools");
-const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset");
+const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
 
 beforeEach(() => {
   nextMessageId = 100;

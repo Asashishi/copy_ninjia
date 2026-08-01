@@ -7,13 +7,14 @@ import {
   pendingLuckDraws,
 } from "../../cache/main/luckChallenge";
 import { DAILY_LUCK_CACHE_MAX, LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../consts/luckChallenge";
+import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import { logger } from "../../infra/logger";
 import { getTokyoDateKey } from "../../libs/time";
 import type { DiskIORecoveryTransport } from "../../types/diskIO";
 import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw, LuckTier } from "../../types/luckChallenge";
 import { deriveLuckDraw } from "./draw";
-import { ensureLuckReceiptSecret, onDiskIORespawn, postDiskIO } from "./persistence";
+import { ensureLuckReceiptSecret, onDiskIORespawn, postDiskIO } from "../../infra/diskIO";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /** 进程内是否发生过跨东京零点的日切换（即 adoptLuckSecret 清空过前一天的
@@ -187,7 +188,7 @@ export function promotePendingDraw(cacheKey: string, confirmedForToday: boolean 
 function initializeRespawnRecovery(): void {
   if (luckRuntimeState.respawnRecoveryInitialized) return;
   luckRuntimeState.respawnRecoveryInitialized = true;
-  onDiskIORespawn("daily luck", async (
+  onDiskIORespawn("daily luck", DISK_IO_RESPAWN_PRIORITIES.DAILY_LUCK, async (
     transport: DiskIORecoveryTransport
   ): Promise<boolean> => {
     await ensureLuckCacheFresh({

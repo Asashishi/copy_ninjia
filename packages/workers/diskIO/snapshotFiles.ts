@@ -206,7 +206,7 @@ function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot 
  * 磁盘空间，也不会让 aiChat/ai/stickers/catalog.ts 的 getCatalogEntry 继续拿一个
  * 已下架包的旧描述去匹配群友发的贴纸。
  * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
- *   aiChat/ai/stickers/config.ts），用于判定哪些持久化文件已经是孤儿。
+ *   config/stickers.ts），用于判定哪些持久化文件已经是孤儿。
  */
 export function recoverStickerCatalogs(activePacks: readonly string[] | null): Map<string, string> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });

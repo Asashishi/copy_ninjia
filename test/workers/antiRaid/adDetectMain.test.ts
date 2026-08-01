@@ -47,14 +47,16 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
   sendMessage,
   deleteMessageAfter,
 }));
-mock.module("../../../packages/infra/blocklist", () => ({
+mock.module("../../../packages/infra/blocklist/membership", () => ({
   blockUser,
   confirmBlocklistPersisted,
-  dispatchBlockedRemovals,
   isUserBlocked,
-  requestBlocklistResweep,
+}));
+mock.module("../../../packages/infra/blocklist/outbox", () => ({
+  dispatchBlockedRemovals,
   trackBlockedRemoval,
 }));
+mock.module("../../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
 mock.module("../../../packages/cache/main/antiRaid/verificationMirror", () => ({ activeVerificationSnapshots }));
 mock.module("../../../packages/infra/diskIO", () => ({ postDiskIODiagnostic: postDiskIO }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
@@ -62,7 +64,8 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => chatStates.get(chatId) ?? {},
 }));
 
-const { buildAdCandidate, drainAdDisposals, formatAdNotice, handleAdDetected } =
+const { buildAdCandidate } = await import("../../../packages/antiRaid/adCandidate");
+const { drainAdDisposals, formatAdNotice, handleAdDetected } =
   await import("../../../packages/antiRaid/adDetect");
 const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");

@@ -70,6 +70,7 @@ describe("application handler registration", () => {
       "unblock",
       "ai_chat",
       "ad_detect",
+      "query_mood",
       "switch_mood",
       "init",
       "quiet",

@@ -262,7 +262,7 @@ function describeRecoveryError(error: unknown): string {
 async function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): Promise<void> {
   if (diskIORuntime.worker !== worker) return;
   if (replayMirrors) {
-    // 按登记顺序等待各领域镜像；整个握手保持不可写，恢复 timer 继续覆盖
+    // 按显式优先级等待各领域镜像；整个握手保持不可写，恢复 timer 继续覆盖
     // 异步 listener，普通业务增量则留在有硬顶的 FIFO 缓冲里。
     for (const registration of diskIORuntime.respawnListeners) {
       const scope: RecoveryTransportScope = createRecoveryTransportScope(worker);

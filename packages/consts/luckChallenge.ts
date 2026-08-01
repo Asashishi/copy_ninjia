@@ -1,12 +1,12 @@
 import type { LuckTier } from "../types/luckChallenge";
 
-/** /luck_challenge 内联抽签（packages/commands/luckChallenge.ts）的调参常量。 */
+/** /luck_challenge 内联抽签（packages/commands/luckChallenge/）的调参常量。 */
 
 /**
  * 吉凶概率表：越靠两端（大吉/大凶）越稀有，中间几档更常见，仿传统抽签。
  * fortunePercentRange 是行大运概率的浮动区间（闭区间，%），每次抽到新结果时
  * 都在区间内重新滚动一次，不再是查表就唯一确定的固定值（见
- * commands/luckChallenge.ts 的 rollFortunePercent）。区间两两不重叠、按档递减，
+ * commands/luckChallenge/ 的 rollFortunePercent）。区间两两不重叠、按档递减，
  * 唯独「尚可」横跨 50（45~55）——半吉半凶的档位，行大运/倒大霉谁占上风本就该
  * 各半，浮动出来偶尔翻面是应有之义。
  */

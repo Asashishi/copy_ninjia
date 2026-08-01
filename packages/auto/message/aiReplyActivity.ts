@@ -7,6 +7,7 @@ import {
 } from "../../consts/aiChat/rateLimit";
 import {
   aiReplyActivityByChat,
+  aiReplyActivitySequenceState,
   aiReplyActivitySweepState,
 } from "../../cache/main/auto";
 import { TimestampDeque } from "../../libs/timestampDeque";
@@ -16,17 +17,28 @@ function pruneEntry(entry: AiReplyActivityEntry, now: number): void {
   entry.timestamps.trim(AI_REPLY_ACTIVITY_WINDOW_MS, now);
 }
 
-/** chatId 已不在表中时写回并维护 Map 顺序承载的 LRU 上限。 */
+/**
+ * 满载插入新群时扫描固定上限的表并淘汰 LRU。把 O(最多 500 群) 的工作留在
+ * 缓存 miss 冷路径，避免每条已有群消息通过 Map delete/set 制造短命桶对象。
+ */
+function evictLeastRecentlyUsedActivityEntry(): void {
+  let oldestChatId: number | undefined;
+  let oldestSequence: number = Number.POSITIVE_INFINITY;
+  for (const [candidateChatId, candidateEntry] of aiReplyActivityByChat) {
+    if (candidateEntry.lastAccessSequence >= oldestSequence) continue;
+    oldestChatId = candidateChatId;
+    oldestSequence = candidateEntry.lastAccessSequence;
+  }
+  if (oldestChatId !== undefined) aiReplyActivityByChat.delete(oldestChatId);
+}
+
+/** chatId 已不在表中时写回，并在硬上限处按严格访问次序淘汰 LRU。 */
 function storeActivityEntry(
   chatId: number,
   entry: AiReplyActivityEntry
 ): void {
   if (aiReplyActivityByChat.size >= AI_REPLY_ACTIVITY_MAX_CHATS) {
-    const oldestChatId: number | undefined =
-      aiReplyActivityByChat.keys().next().value;
-    if (oldestChatId !== undefined) {
-      aiReplyActivityByChat.delete(oldestChatId);
-    }
+    evictLeastRecentlyUsedActivityEntry();
   }
   aiReplyActivityByChat.set(chatId, entry);
 }
@@ -76,18 +88,17 @@ function probabilityFromCount(recentMessageCount: number): number {
  */
 export function observeGroupMessageForAiReply(chatId: number, now: number = Date.now()): number {
   let entry: AiReplyActivityEntry | undefined = aiReplyActivityByChat.get(chatId);
+  const isNewEntry: boolean = entry === undefined;
   if (!entry) {
-    // 容量淘汰交给下面的专用写回：这条路径上 chatId 必定不在表里，
-    // 「新增键越界才淘汰最早项」与在这里先淘汰再插入完全等价。
     entry = {
       timestamps: new TimestampDeque(AI_REPLY_ACTIVITY_MAX_TIMESTAMPS),
+      lastAccessSequence: 0,
       lastObservedAt: now,
     };
   } else {
     // Date.now() 因系统校时短暂回退时仍保持队列单调，避免过期修剪失序。
     now = Math.max(now, entry.lastObservedAt);
     pruneEntry(entry, now);
-    aiReplyActivityByChat.delete(chatId);
   }
 
   if (entry.timestamps.size === AI_REPLY_ACTIVITY_MAX_TIMESTAMPS) {
@@ -95,9 +106,9 @@ export function observeGroupMessageForAiReply(chatId: number, now: number = Date
   }
   entry.timestamps.push(now);
   entry.lastObservedAt = now;
-  // 上面两条分支都保证此刻 chatId 不在表里（新群本来就没有，老群刚 delete 过），
-  // 因此这一次写入既完成 LRU 热度刷新，也承担新增键的容量淘汰。
-  storeActivityEntry(chatId, entry);
+  aiReplyActivitySequenceState.current += 1;
+  entry.lastAccessSequence = aiReplyActivitySequenceState.current;
+  if (isNewEntry) storeActivityEntry(chatId, entry);
   scheduleNextSweep(now);
   return probabilityFromCount(entry.timestamps.size);
 }
@@ -109,4 +120,5 @@ export function clearAiReplyActivity(): void {
     aiReplyActivitySweepState.timer = null;
   }
   aiReplyActivityByChat.clear();
+  aiReplyActivitySequenceState.current = 0;
 }

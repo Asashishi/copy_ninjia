@@ -323,7 +323,10 @@ async function attemptCopyUserProfilePhoto(
     }
 
     const downloadUrl: string = file.getUrl();
-    const imgRes: Response = await fetch(downloadUrl, { signal: avatarFetchSignal(signal) });
+    const imgRes: Response = await fetch(downloadUrl, {
+      redirect: "error",
+      signal: avatarFetchSignal(signal),
+    });
     if (!imgRes.ok) {
       logger.error(`Failed to download avatar file (${imgRes.status}): ${file.file_path}`);
       return "transient-failure";

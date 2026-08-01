@@ -54,7 +54,7 @@ describe("sendCommandMessage", () => {
     expect(deleteMessageAfter).not.toHaveBeenCalled();
   });
 
-  test("明确标记的群聊帮助信息不会自动删除", async () => {
+  test("明确授权长期留存的群聊内容不会自动删除", async () => {
     await sendCommandMessage({
       chatId: -1001,
       text: "帮助",

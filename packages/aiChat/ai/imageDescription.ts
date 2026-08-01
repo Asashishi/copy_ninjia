@@ -11,7 +11,7 @@
  */
 
 import { logger } from "../../infra/logger";
-import { requestGeminiResponse } from "./gemini";
+import { requestGeminiTextResult } from "./gemini";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
 import { transientDescriptionCache } from "../../cache/workers/aiChat/imageDescription";
 import {
@@ -26,6 +26,7 @@ import type { GenerateContentResponse } from "@google/genai";
 import { downloadTelegramVisionImage } from "./telegramImage";
 import { runMediaTask } from "./mediaTaskRunner";
 import type { VisionImage } from "../../types/media";
+import type { GeminiTextGenerationResult } from "../../types/aiChat/gemini";
 
 /** 按媒体类型选喂给视觉模型的描述指令，三者风格/侧重点不同。 */
 function promptFor(kind: MediaKind): string {
@@ -64,10 +65,12 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
   const cached: Promise<string | null> | undefined = transientDescriptionCache.get(fileUniqueId);
   if (cached) return cached;
 
-  const pending: Promise<string | null> = runMediaTask((): Promise<string | null> => describeMediaUncached(kind, fileId)).then((description: string | null | undefined): string | null => {
+  const pending: Promise<string | null> = runMediaTask(
+    (): Promise<GeminiTextGenerationResult> => describeMediaUncached(kind, fileId)
+  ).then((attempt: GeminiTextGenerationResult | undefined): string | null => {
     // 执行槽位和等待队列都满时返回 undefined；按普通解析失败降级，不再
     // 启动下载、转码或视觉 API 请求。
-    const result: string | null = description ?? null;
+    const result: string | null = attempt?.ok === true ? attempt.text : null;
     // 按引用而非按 key 删，用 peek 而不是 get——不能让这次内部核对被当成
     // 一次真实访问去刷新淘汰顺位。这份 pending 在解析期间可能已经因为超过
     // 容量上限被淘汰、又被新的并发请求重新插入了一份新 pending，此时这里
@@ -89,17 +92,22 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
  * 为白名单贴纸目录生成一条常驻描述。目录自身负责按 file_unique_id 去重、
  * 持久化和线上变更对账，因此这里刻意绕过 transientDescriptionCache 临时
  * 缓存；成功后调用方会立即写入 stickerCatalog，消息记录随后可直接命中
- * 常驻目录。
+ * 常驻目录。失败结果额外声明目录层能否重新采样：SDK 已耗尽 HTTP 重试时
+ * 禁止再次套完整请求，下载/排队或成功响应正文不可用时则允许。
  */
-export function describeMediaForStickerCatalog(fileId: string): Promise<string | null> {
-  return runMediaTask((): Promise<string | null> => describeMediaUncached("sticker", fileId)).then((description: string | null | undefined): string | null => description ?? null);
+export function describeMediaForStickerCatalog(fileId: string): Promise<GeminiTextGenerationResult> {
+  return runMediaTask(
+    (): Promise<GeminiTextGenerationResult> => describeMediaUncached("sticker", fileId)
+  ).then((result: GeminiTextGenerationResult | undefined): GeminiTextGenerationResult =>
+    result ?? { ok: false, retryable: true }
+  );
 }
 
-async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<string | null> {
+async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<GeminiTextGenerationResult> {
   try {
     const image: VisionImage | null = await downloadTelegramVisionImage({ fileId, logLabel: `chat media (kind=${kind})` });
-    if (!image) return null;
-    const data: GenerateContentResponse | null = await requestGeminiResponse(
+    if (!image) return { ok: false, retryable: true };
+    return await requestGeminiTextResult(
       {
         model: GEMINI_MEDIA_MODEL,
         contents: [
@@ -113,16 +121,17 @@ async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<s
         ],
         config: { maxOutputTokens: MEDIA_DESCRIPTION_MAX_TOKENS },
       },
-      "Gemini image understanding API"
+      "Gemini image understanding API",
+      (data: GenerateContentResponse): string => {
+        const description: string = sanitizeInline(data.text ?? "");
+        if (!description) return "";
+        // 模型超限时收在子句边界而不是硬切——memory/stickers/ 里曾大批量出现
+        // 「……以戏谑的口」式断在半句的目录条目，就是硬切造成的。
+        return truncateAtClauseBoundary(description, maxCharsFor(kind));
+      }
     );
-    if (!data) return null;
-    const description: string = sanitizeInline(data.text ?? "");
-    if (!description) return null;
-    // 模型超限时收在子句边界而不是硬切——memory/stickers/ 里曾大批量出现
-    // 「……以戏谑的口」式断在半句的目录条目，就是硬切造成的。
-    return truncateAtClauseBoundary(description, maxCharsFor(kind));
   } catch (error: unknown) {
     logger.error(`Error describing chat media (kind=${kind}):`, error);
-    return null;
+    return { ok: false, retryable: false };
   }
 }

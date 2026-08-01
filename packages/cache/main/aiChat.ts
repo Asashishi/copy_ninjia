@@ -4,7 +4,7 @@ import type { AiInitMessage } from "../../types/aiChat/protocol";
 import type {
   AiChatInvalidateWaiter,
   AiMemoryDeleteWaiter,
-  MoodSwitchWaiter,
+  MoodRequestWaiter,
 } from "../../types/aiChat/waiters";
 
 /** AI 闲聊主线程侧代理（packages/aiChat/index.ts）的内存状态。 */
@@ -62,12 +62,12 @@ export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Ma
  * 独立拥有，不受这里清空影响。
  */
 export const purgedAiMemoryChats: Set<number> = new Set();
-/** 在途 switchMood 请求的等待表（requestId → waiter）：成功回执、超时或
- *  Worker 崩溃/终止时结算并删除（见 aiChat/index.ts 的 switchAiMood），容量受并发
- *  /switch_mood 命令数约束。 */
-export const moodSwitchWaiters: Map<number, MoodSwitchWaiter> = new Map();
-/** 本进程内已分配的最高 switchMood requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
-export const moodSwitchRequestCounter: { current: number } = { current: 0 };
+/** 在途心情查询/重抽请求的等待表（requestId → waiter）：成功回执、超时或
+ *  Worker 崩溃/终止时结算并删除（见 aiChat/index.ts），容量受并发
+ *  /query_mood 与 /switch_mood 命令数约束。 */
+export const moodRequestWaiters: Map<number, MoodRequestWaiter> = new Map();
+/** 本进程内已分配的最高心情请求 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
+export const moodRequestCounter: { current: number } = { current: 0 };
 /** requestId → invalidate waiter；回执、超时、Worker 崩溃或终止时结算。 */
 export const aiChatInvalidateWaiters: Map<number, AiChatInvalidateWaiter> = new Map();
 /** 本进程内 invalidate 回执关联 ID。 */

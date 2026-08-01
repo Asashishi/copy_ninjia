@@ -4,7 +4,7 @@ import type { CachedUser } from "../../packages/types/chatState";
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const unbanChatMemberIfBanned = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const unbanChatSenderChat = mock(async (..._args: unknown[]): Promise<boolean> => true);
-const isBotAdminIn = mock(async (_chatId: number): Promise<boolean> => false);
+const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
 const chatStates = new Map<number, { botIsAdmin?: boolean }>();
 let target: CachedUser | undefined;
 const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => target);
@@ -23,7 +23,7 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage, unbanChatMemberIfBanned, unbanChatSenderChat,
 }));
 mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
-mock.module("../../packages/infra/botAdmin", () => ({ isBotAdminIn }));
+mock.module("../../packages/infra/botAdmin", () => ({ resolveBotAdminStatus }));
 mock.module("../../packages/infra/storage/stateStore", () => ({ getAllChatStates: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
 mock.module("../../packages/infra/diskIO", () => ({
@@ -47,7 +47,7 @@ const {
 const {
   recordUserConfirmedKickedInChat,
   wasUserConfirmedKickedInChat,
-} = await import("../../packages/infra/blocklist");
+} = await import("../../packages/infra/blocklist/membership");
 const { getTokyoDateKey } = await import("../../packages/libs/time");
 
 function context(userId: number | undefined = 100, match: string = "@alice"): never {
@@ -66,14 +66,14 @@ beforeEach(() => {
   chatStates.clear();
   for (const mocked of [
     sendMessage, resolveCommandTarget, postDiskIO, flushDiskIO,
-    unbanChatMemberIfBanned, unbanChatSenderChat, isBotAdminIn,
+    unbanChatMemberIfBanned, unbanChatSenderChat, resolveBotAdminStatus,
   ]) mocked.mockClear();
   flushDiskIO.mockImplementation(async (): Promise<string> => "flushed");
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 55);
   postDiskIO.mockImplementation((): boolean => true);
   unbanChatMemberIfBanned.mockImplementation(async (): Promise<boolean> => true);
   unbanChatSenderChat.mockImplementation(async (): Promise<boolean> => true);
-  isBotAdminIn.mockImplementation(async (): Promise<boolean> => false);
+  resolveBotAdminStatus.mockImplementation(async (): Promise<boolean> => false);
   blockedUserIds.clear();
   configuredBlockedIds.clear();
   sessionBlockedAt.clear();
@@ -244,7 +244,7 @@ describe("/unblock 默认跨群解封", () => {
     chatStates.set(-2002, { botIsAdmin: true });
     chatStates.set(-3003, { botIsAdmin: true });
     chatStates.set(-4004, { botIsAdmin: false });
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
 
     await handleUnblockCommand(context(1, "@alice"));
 

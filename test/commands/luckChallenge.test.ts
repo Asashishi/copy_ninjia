@@ -34,7 +34,7 @@ mock.module("../../packages/infra/logger", () => ({
   },
 }));
 
-mock.module("../../packages/commands/luckChallenge/persistence", () => ({
+mock.module("../../packages/infra/diskIO", () => ({
   postDiskIO: postDiskIOMock,
   onDiskIORespawn: onDiskIORespawnMock,
   relayLogMessage: relayLogMessageMock,
@@ -57,7 +57,7 @@ mock.module("../../packages/libs/time", () => ({
     (mockTodayOverride === null || date ? realTime.getTokyoDateKey(date) : mockTodayOverride),
 }));
 
-const luckChallenge = await import("../../packages/commands/luckChallenge");
+const luckChallenge = await import("../../packages/commands/luckChallenge/index");
 const cache = await import("../../packages/cache/main/luckChallenge");
 const {
   DAILY_LUCK_CACHE_MAX,
@@ -562,7 +562,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       mockTodayOverride = "2030-01-02";
       const registration: unknown[] = onDiskIORespawnMock.mock.calls[0]!;
       expect(registration[0]).toBe("daily luck");
-      const respawnListener = registration[1] as (transport: {
+      expect(registration[1]).toBe(400);
+      const respawnListener = registration[2] as (transport: {
         post(message: unknown): boolean;
         ensureLuckReceiptSecret(day: string): Promise<typeof TEST_SECRET>;
       }) => Promise<boolean>;

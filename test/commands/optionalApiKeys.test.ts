@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
+const queryAiMood = mock(async (_chatId: number): Promise<string> => "平静");
 const switchAiMood = mock(async (_chatId: number): Promise<string> => "开心");
 const clearAdDetection = mock((..._args: unknown[]): void => {});
 const persistAuthoritativeState = mock(async (..._args: unknown[]): Promise<void> => {});
@@ -29,7 +30,7 @@ mock.module("../../packages/config/whitelist", () => ({
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
-mock.module("../../packages/aiChat", () => ({ invalidateAiChat, switchAiMood }));
+mock.module("../../packages/aiChat", () => ({ invalidateAiChat, queryAiMood, switchAiMood }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
@@ -47,7 +48,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 
 const { handleAdDetectCommand } = await import("../../packages/commands/adDetect");
 const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
-const { handleSwitchMoodCommand } = await import("../../packages/commands/switchMood");
+const { handleQueryMoodCommand, handleSwitchMoodCommand } = await import("../../packages/commands/mood");
 
 function context(argument: string, userId: number = 100): never {
   return {
@@ -62,6 +63,7 @@ beforeEach(() => {
   states.clear();
   sendMessage.mockClear();
   invalidateAiChat.mockClear();
+  queryAiMood.mockClear();
   switchAiMood.mockClear();
   clearAdDetection.mockClear();
   persistAuthoritativeState.mockClear();
@@ -98,6 +100,18 @@ describe("可选 AI 凭据缺席时的命令降级", () => {
     await handleSwitchMoodCommand(context(""));
 
     expect(switchAiMood).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringContaining("AI_CHAT_GEMINI_API_KEY"),
+      replyToMessageId: 7,
+    });
+  });
+
+  test("/query_mood 在读群开关之前就被拒，不投递查询请求", async () => {
+    states.set(-1001, { isAIChatEnabled: true });
+    await handleQueryMoodCommand(context("", 101));
+
+    expect(queryAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("AI_CHAT_GEMINI_API_KEY"),

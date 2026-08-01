@@ -3,7 +3,8 @@ import {
   onAiMemoryPersisted,
   onDiskIORespawn,
   postDiskIO,
-} from "./ai/persistence";
+} from "../infra/diskIO";
+import { DISK_IO_RESPAWN_PRIORITIES } from "../consts/diskIO/common";
 import {
   aiMemoryDeleteWaiters,
   aiMemoryRevisionCounters,
@@ -140,7 +141,7 @@ onAiMemoryPersisted((reply: AiMemoryPersistedReply): void => {
 
 // diskIOWorker 崩溃重建后，把当前记忆/贴纸目录镜像整份重发给它，补齐上
 // 一次成功落盘之后的增量（见 infra/diskIO.ts 的 onDiskIORespawn 注释）。
-onDiskIORespawn("AI memory", (transport: DiskIORecoveryTransport): boolean => {
+onDiskIORespawn("AI memory", DISK_IO_RESPAWN_PRIORITIES.AI_MEMORY, (transport: DiskIORecoveryTransport): boolean => {
   for (const [chatId, revision] of pendingAiMemoryDeletes) {
     if (!transport.post({ type: "deleteAiMemory", chatId, revision })) return false;
   }

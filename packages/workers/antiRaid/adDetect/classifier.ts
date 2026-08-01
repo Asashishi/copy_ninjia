@@ -5,7 +5,7 @@
  * 判定是尽力而为的启发式：请求失败、超时、返回形状不对，一律返回 null 让调用
  * 方原样跳过这一批——绝不猜一个 true 出来，那等于凭一次网络抖动把人拉黑。
  * 判定口径由部署配置 config/ad_samples.json 提供（见 config/adSamples.ts），
- * 提示词模板在 consts/antiRaid/adDetect.ts。
+ * 提示词模板在 consts/antiRaid/adCandidate.ts。
  *
  * 模型看到的群聊原文一律是数据：提示词里已声明其中的任何指令都不得执行，
  * 且输出被限制成一个只含 ad/reason 两个字段的 JSON，reason 只进日志与播报
@@ -52,7 +52,7 @@ export function parseAdVerdict(raw: string | null | undefined): AdVerdict | null
   // 把人永久拉黑，这里的宽容度必须是零。
   if (typeof verdict.ad !== "boolean") return null;
   // 走 truncateInline 而不是裸 slice：这段理由会被拼进群内播报直接发给 Telegram
-  // （见 antiRaid/adDetect.ts 的 formatAdNotice），而 slice 恰好切在代理对中间时
+  // （见 antiRaid/adCandidate.ts 的 formatAdNotice），而 slice 恰好切在代理对中间时
   // 留下的孤立高位代理会让整条 sendMessage 被 400 拒收——人已经拉黑封禁了，群里
   // 却收不到任何解释，正是那条播报存在的意义。
   const reason: string = typeof verdict.reason === "string"

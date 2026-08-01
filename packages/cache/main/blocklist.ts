@@ -5,7 +5,7 @@ import type {
 } from "../../types/blocklist";
 import type { BlockedUserRecord } from "../../types/diskIO/storage";
 
-/** 黑名单查询（packages/infra/blocklist.ts）的主线程侧内存状态。 */
+/** 黑名单查询（packages/infra/blocklist/）的主线程侧内存状态。 */
 
 /**
  * 已被 /block 拉黑的用户 id → 文件里那条完整记录。
@@ -21,7 +21,7 @@ import type { BlockedUserRecord } from "../../types/diskIO/storage";
  * 都是先更新本 Map，再投递落盘消息，因此内存永远不落后于磁盘。本 Map 只对
  * memory 层权威；完整黑名单还要与 configuredBlockedIds 取并集。进程重启后
  * 从文件重建；diskIOWorker 崩溃重启不影响本 Map（它是主线程状态，丢失的
- * 增量由 infra/blocklist.ts 的 respawn 重放补齐）。容量随运行时拉黑次数增长，
+ * 增量由 infra/blocklist/ 的 respawn 重放补齐）。容量随运行时拉黑次数增长，
  * 只有 `/unblock` 会让它变小。
  */
 export const blockedUserIds: Map<number, BlockedUserRecord> = new Map();
@@ -61,7 +61,7 @@ export const sessionBlockedAt: Map<number, string> = new Map();
 /**
  * 本进程启动之后被 `/unblock` 解除的 id。追加型文件补不回「删除」，所以
  * diskIOWorker 崩溃重建后不能只补投这些增量——只要这个集合非空，就必须整份
- * 重写一次文件（见 infra/blocklist.ts 的 onDiskIORespawn）。
+ * 重写一次文件（见 infra/blocklist/ 的 onDiskIORespawn）。
  *
  * 与 sessionBlockedAt 互斥：拉黑时从这里删、解除时往这里加，否则同一个 id
  * 同时出现在两张表里，重放顺序就决定了他到底在不在名单上。
@@ -78,7 +78,7 @@ export const sessionUnblockedIds: Set<number> = new Set();
  *
  * 生命周期：只活在主线程进程内，不从 blocklist.json 或 removals.json 恢复，
  * 也不参与 Anti-Raid Worker 的处置重试；东京自然日变化时由
- * infra/blocklist.ts 在下一次访问时整表清空，`/unblock` 还会提前删掉该用户。
+ * infra/blocklist/ 在下一次访问时整表清空，`/unblock` 还会提前删掉该用户。
  * 按需求不设容量上限，容量至多是当天各管理群中被 `/block` 确证踢出的人数。
  */
 export const confirmedKickedUserIdsByChat: Map<number, Set<number>> = new Map();
@@ -99,7 +99,7 @@ export const confirmedKickedUsersDay: { current: string | null } = { current: nu
  * 2. 权威状态取消：`/unblock` 摘掉用户，或 forgetChatBlocklistWork 停管群；
  * 3. 同群的补扫批次被新一轮补扫取代（名单只增不减，新快照是旧批次的超集）。
  * 投递拒绝、屏障超时、落盘失败与副作用失败都不删除：durable outbox 是独立
- * 于 Telegram update 重投的恢复边界（见 infra/blocklist.ts）。
+ * 于 Telegram update 重投的恢复边界（见 infra/blocklist/）。
  *
  * Worker 崩溃重建时整表重投——处置是纯副作用，重复 ban 幂等，漏掉却意味着
  * 那个人一直坐在群里。容量由 BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES 硬顶背压；
@@ -113,16 +113,16 @@ export const blocklistRemovalCounter: { current: number } = { current: 0 };
 /**
  * 各群的补扫进度。「是管理员 && 已 /init enable」成立时补扫一次，成功才记
  * sweptAt——把边沿消耗在投递那一刻、而不是落地那一刻，一次限流失败就等于
- * 那些人永久坐在群里（见 infra/blocklist.ts）。失败后的重试挂在管理员身份
+ * 那些人永久坐在群里（见 infra/blocklist/）。失败后的重试挂在管理员身份
  * 观测上，而那类更新每条入群都会来一次，因此必须有 nextRetryAt 这道闸。
  *
  * sweptAt 一旦写下就是个闩锁，只有两条路径能打开：停管后重新接管，或
- * infra/blocklist.ts 的 requestBlocklistResweep 显式请求重扫。后者是 `/block`
+ * infra/blocklist/ 的 requestBlocklistResweep 显式请求重扫。后者是 `/block`
  * 某个群封禁失败、秒踢批次没落定这类「这个群里还留着人」的信号——没有它，
  * 那个人就在那个群里待到进程结束。
  *
  * 生命周期：投递时写入，回执时更新；群被 /init disable、机器人被撤管理员或
- * 移出群时由 infra/blocklist.ts 的 forgetChatBlocklistWork 连同在途批次一起
+ * 移出群时由 infra/blocklist/ 的 forgetChatBlocklistWork 连同在途批次一起
  * 清掉，重新接管后照常再欠一次。
  * 容量按「本进程见过的管理员群」计，随停管即时释放。
  */
@@ -130,7 +130,7 @@ export const blocklistSweepState: Map<number, BlocklistSweepRecord> = new Map();
 
 /**
  * 群不再由本机器人看管：丢掉补扫进度，重新接管后重新欠一次。
- * 纯状态操作——在途批次的丢弃是业务判定，收在 infra/blocklist.ts 的
+ * 纯状态操作——在途批次的丢弃是业务判定，收在 infra/blocklist/ 的
  * forgetChatBlocklistWork 里，调用方一律用那个（cache 层不写业务逻辑）。
  */
 export function clearBlocklistSweepState(chatId: number): void {

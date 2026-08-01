@@ -516,7 +516,6 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
  * Telegram inline API 生成。二者都不能误接命令文本的固定延迟清理边界。
  */
 const FIXED_DELAY_DELETE_EXEMPT_FILES: readonly string[] = Object.freeze([
-  join(COMMANDS_ROOT, "luckChallenge.ts"),
   ...sourceFilesUnder(join(COMMANDS_ROOT, "luckChallenge")),
   join(
     SOURCE_ROOT,

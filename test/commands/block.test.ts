@@ -6,7 +6,7 @@ const banChatMember = mock(async (..._args: unknown[]): Promise<boolean> => true
 const banChatSenderChat = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const isChatMember = mock(async (..._args: unknown[]): Promise<boolean> => false);
 const deleteMessageWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "deleted");
-const isBotAdminIn = mock(async (_chatId: number): Promise<boolean> => false);
+const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
 const ensureBotChatPermissions = mock((_chatId: number): void => {});
 let canDeleteMessages: boolean | undefined = true;
 let target: CachedUser | undefined;
@@ -31,7 +31,7 @@ mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi
 mock.module("../../packages/infra/botAdmin", () => ({
   botCanDeleteMessagesIn: (): boolean | undefined => canDeleteMessages,
   ensureBotChatPermissions,
-  isBotAdminIn,
+  resolveBotAdminStatus,
 }));
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
@@ -62,7 +62,7 @@ const {
 const {
   recordUserConfirmedKickedInChat,
   wasUserConfirmedKickedInChat,
-} = await import("../../packages/infra/blocklist");
+} = await import("../../packages/infra/blocklist/membership");
 
 function context(userId: number | undefined = 100): never {
   return {
@@ -84,7 +84,7 @@ beforeEach(() => {
     banChatSenderChat,
     isChatMember,
     deleteMessageWithOutcome,
-    isBotAdminIn,
+    resolveBotAdminStatus,
     ensureBotChatPermissions,
     resolveCommandTarget,
     postDiskIO,
@@ -100,7 +100,7 @@ beforeEach(() => {
   banChatMember.mockImplementation(async (): Promise<boolean> => true);
   banChatSenderChat.mockImplementation(async (): Promise<boolean> => true);
   isChatMember.mockImplementation(async (): Promise<boolean> => false);
-  isBotAdminIn.mockImplementation(async (): Promise<boolean> => false);
+  resolveBotAdminStatus.mockImplementation(async (): Promise<boolean> => false);
   deleteMessageWithOutcome.mockImplementation(async (): Promise<string> => "deleted");
   canDeleteMessages = true;
   postDiskIO.mockImplementation((): boolean => true);
@@ -110,7 +110,7 @@ describe("/block 跨群封禁与黑名单", () => {
   test("非白名单用户只收到拒绝，不探测管理员身份或目标", async () => {
     await handleBlockCommand(context(101));
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(isBotAdminIn).not.toHaveBeenCalled();
+    expect(resolveBotAdminStatus).not.toHaveBeenCalled();
     expect(resolveCommandTarget).not.toHaveBeenCalled();
   });
 
@@ -176,7 +176,7 @@ describe("/block 跨群封禁与黑名单", () => {
   });
 
   test("只复用当天确证踢出的群用户，不从权威名单或预封禁结局推断", async () => {
-    isBotAdminIn.mockResolvedValue(true);
+    resolveBotAdminStatus.mockResolvedValue(true);
     isChatMember.mockResolvedValue(true);
 
     await handleBlockCommand(context());
@@ -204,7 +204,7 @@ describe("/block 跨群封禁与黑名单", () => {
   });
 
   test("确认不在群的预封禁不进缓存，重复命令仍重新确认", async () => {
-    isBotAdminIn.mockResolvedValue(true);
+    resolveBotAdminStatus.mockResolvedValue(true);
     isChatMember.mockResolvedValue(false);
 
     await handleBlockCommand(context());
@@ -217,7 +217,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
   test("频道马甲只调用 banChatSenderChat，不查询成员状态", async () => {
     target = { id: -4004, first_name: "Channel", isChannel: true };
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
 
     await handleBlockCommand(context());
 
@@ -234,7 +234,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
   test("回复频道消息执行 /block：封禁与已知消息删除分别成功并写进战报", async () => {
     target = { id: -4004, title: "Channel", isChannel: true };
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
     const ctx = context() as unknown as {
       msg: { message_id: number; reply_to_message: { message_id: number } };
     };
@@ -254,7 +254,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
   test("频道封禁成功但回复消息缺删除权限：不发送注定失败的删除并独立告警", async () => {
     target = { id: -4004, title: "Channel", isChannel: true };
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
     canDeleteMessages = false;
     const ctx = context() as unknown as {
       msg: { message_id: number; reply_to_message: { message_id: number } };
@@ -274,7 +274,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
   test("回复消息删除瞬时失败时按雌小鬼语气引导管理员查日志", async () => {
     target = { id: -4004, title: "Channel", isChannel: true };
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
     deleteMessageWithOutcome.mockResolvedValueOnce("failed");
     const ctx = context() as unknown as {
       msg: { message_id: number; reply_to_message: { message_id: number } };
@@ -292,7 +292,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
   test("频道封禁失败但回复消息删除成功：两项结果互不覆盖", async () => {
     target = { id: -4004, title: "Channel", isChannel: true };
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
     banChatSenderChat.mockResolvedValueOnce(false);
     const ctx = context() as unknown as {
       msg: { message_id: number; reply_to_message: { message_id: number } };
@@ -311,7 +311,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
   test("当前群组皮套仍可被解析，但 /block 不会把整个群误当作匿名管理员封禁", async () => {
     target = { id: -1001, title: "Test Group", isChannel: true };
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
     chatStates.set(-2002, { botIsAdmin: true });
 
     await handleBlockCommand(context());
@@ -327,7 +327,7 @@ describe("/block 跨群封禁与黑名单", () => {
   });
 
   test("所有群都封禁失败时给出权限诊断且不安排删除", async () => {
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
     banChatMember.mockResolvedValueOnce(false);
 
     await handleBlockCommand(context());
@@ -349,7 +349,7 @@ describe("/block 的黑名单落盘", () => {
       expect(blockedUserIds.has(7)).toBeTrue();
       return true;
     });
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
     banChatMember.mockResolvedValueOnce(false);
 
     await handleBlockCommand(context());
@@ -364,7 +364,7 @@ describe("/block 的黑名单落盘", () => {
   });
 
   test("重复拉黑同一个人会补投落盘，未确证踢出的群仍重新封禁", async () => {
-    isBotAdminIn.mockResolvedValue(true);
+    resolveBotAdminStatus.mockResolvedValue(true);
     await handleBlockCommand(context());
     expect(postDiskIO).toHaveBeenCalledTimes(1);
     banChatMember.mockClear();
@@ -385,7 +385,7 @@ describe("/block 的黑名单落盘", () => {
   });
 
   test("重复 /block 时落盘仍失败：战报照样说破，不能连着两次都说成功", async () => {
-    isBotAdminIn.mockResolvedValue(true);
+    resolveBotAdminStatus.mockResolvedValue(true);
     flushDiskIO.mockResolvedValue("failed");
 
     await handleBlockCommand(context());
@@ -399,7 +399,7 @@ describe("/block 的黑名单落盘", () => {
   });
 
   test("启动时从文件读回来的 id 不再补投：它本来就在磁盘上", async () => {
-    isBotAdminIn.mockResolvedValue(true);
+    resolveBotAdminStatus.mockResolvedValue(true);
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     await handleBlockCommand(context());
@@ -431,7 +431,7 @@ describe("/block 的黑名单落盘", () => {
 
   test("频道马甲同样进名单：id 就是 sender_chat 的 id", async () => {
     target = { id: -4004, first_name: "Channel", isChannel: true };
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
 
     await handleBlockCommand(context());
 
@@ -458,7 +458,7 @@ describe("/block 的黑名单落盘", () => {
 
   test("落盘没成功时不把「永远」说出口，战报里说破重启会忘", async () => {
     flushDiskIO.mockResolvedValueOnce("failed");
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
 
     await handleBlockCommand(context());
 
@@ -474,7 +474,7 @@ describe("/block 的黑名单落盘", () => {
 
   test("匿名管理员皮套被拒时不写名单：那是整个群，不是某个人", async () => {
     target = { id: -1001, title: "Test Group", isChannel: true };
-    isBotAdminIn.mockResolvedValueOnce(true);
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
 
     await handleBlockCommand(context());
 

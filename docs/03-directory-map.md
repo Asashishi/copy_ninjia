@@ -29,12 +29,13 @@
 - **`packages/aiChat/`**
   - **职责**：AI 闲聊主线程代理与模型能力，包括 Worker 监督、记忆镜像、可用性判定，
     以及 Gemini、贴纸、工具和媒体实现。
-  - **典型文件**：`index.ts`、`memoryMirror.ts`、`availability.ts`、`ai/`。
+  - **典型文件**：`workerBridge.ts`、`messageIngress.ts`、`memoryMirror.ts`、
+    `availability.ts`、`ai/`；`index.ts` 只提供薄公开入口。
 - **`packages/antiRaid/`**
   - **职责**：Anti-Raid 主线程代理与广告模型能力，包括 Worker 监督、持久化交接、
     update 入口，以及黑名单/验证/广告/刷屏编排。
-  - **典型文件**：`index.ts`、`workerBridge.ts`、`durableDelivery.ts`、
-    `updateIngress.ts`、`ai/`。
+  - **典型文件**：`workerBridge.ts`、`durableDelivery.ts`、`updateIngress.ts`、
+    `adCandidate.ts`、`ai/`；`index.ts` 只提供薄公开入口。
 - **`packages/copy/`**
   - **职责**：复读模式变换、头像/反应/翻译执行队列，以及日语翻译“此刻跑不跑”的
     唯一判定。
@@ -46,7 +47,7 @@
 - **`packages/states/`**
   - **职责**：**无 I/O** 的纯状态转移与准入规则，包括验证、锁定、AI 回复准入和
     广告检测准入。
-  - **典型文件**：`verification.ts`、`lockdown.ts`、`replyAdmission.ts`、
+  - **典型文件**：`verification.ts` 与 `verification/`、`lockdown.ts`、`replyAdmission.ts`、
     `adDetectAdmission.ts`。
 - **`packages/config/`**
   - **职责**：`config/*.json` 的严格 schema；白/黑名单启动加载，其余配置惰性加载，
@@ -55,11 +56,11 @@
     `readiness.ts`。
 - **`packages/libs/`**
   - **职责**：领域无关的基础设施，包括原子文件、有界 I/O 与并发工具。
-  - **典型文件**：`flushBarrier.ts`、`linkedQueue.ts`、`text.ts`。
+  - **典型文件**：`flushBarrier.ts`、`linkedQueue.ts`、`monotonicDeadline.ts`、`text.ts`。
 - **`packages/workers/`**
   - **职责**：三个 Worker 的线程内实现。
   - **典型文件**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`，以及
-    `aiChat/`、`antiRaid/`、`diskIO/` 子目录。
+    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **职责**：模型与能力按所属功能放置，避免共享目录模糊线程和生命周期边界。
   - **典型文件**：`gemini.ts`、`tools/replyToolset/`、`deepseek.ts`。
@@ -70,9 +71,8 @@
   - **职责**：Telegram 客户端、Worker 宿主、logger、env 配置与主线程 I/O 代理。
   - **典型文件**：`telegram/`、`config.ts`、`joinLog.ts`、`workerSupervisor.ts`。
 - **`packages/infra/blocklist/`**
-  - **职责**：黑名单主线程基础设施，按同步名单、durable outbox、群清扫拆分；
-    `infra/blocklist.ts` 只保留兼容导出。
-  - **典型文件**：`membership.ts`、`outbox.ts`、`sweep.ts`。
+  - **职责**：黑名单主线程基础设施，按身份判定、同步名单、durable outbox 与群清扫拆分。
+  - **典型文件**：`identities.ts`、`membership.ts`、`outbox.ts`、`sweep.ts`。
 - **`packages/infra/storage/`**
   - **职责**：数据根预检、实例锁、StateStore、启动清理。
   - **典型文件**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`。
@@ -133,16 +133,16 @@
 
 ## 兼容入口（barrel）约定
 
-大文件拆分成子模块后，原文件降级为纯 `export * from` 兼容入口（如 `packages/consts/aiChat.ts` 对 `packages/consts/aiChat/`）。规则：
+大文件拆分成子模块后，原文件可以降级为无状态的薄兼容导出入口（如 `packages/consts/aiChat.ts` 对 `packages/consts/aiChat/`，以及验证文件领域的 `verificationFiles.ts`）。规则：
 
 - 兼容入口只服务旧 import 的渐进迁移；**新代码一律直接从领域子文件导入**。
 - 兼容入口不得重新持有状态、解析配置或引入 import 副作用。
 - `packages/types/index.ts` 同理，仅为测试/渐进迁移保留。
-- 包内 `index.ts` 是另一回事：主线程代理这类模块的入口本身就是实现（如 `packages/aiChat/index.ts`、`packages/antiRaid/index.ts`），与同包的子模块一起构成一个包，不受上面三条约束。
+- 包内 `index.ts` 只有在调用方确实需要单一 package surface 时才作为稳定公开入口；当前 `packages/aiChat/index.ts` 与 `packages/antiRaid/index.ts` 都只做显式薄导出、不持有状态。生产代码内部仍直接 import 对应 owner 叶子模块，且不使用无边界的 `export *`。
 
 ## 测试的镜像结构
 
-`test/` 与 `packages/` 路径一一对应：改 `packages/workers/diskIO/verificationFiles.ts` 就去 `test/workers/diskIO/verificationFiles.test.ts`。新模块的测试文件跟随此结构创建，公共测试辅助在 `test/libs/helpers.ts`，全局隔离机制见 [05 开发流程](05-dev-workflow.md#测试隔离机制)。
+`test/` 与 `packages/` 路径原则上一一对应；同一拆分领域可以共享领域级测试，例如 `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` 统一由 `test/workers/diskIO/verificationFiles.test.ts` 覆盖。其余新模块的测试文件跟随目录结构创建，公共测试辅助在 `test/libs/helpers.ts`，全局隔离机制见 [05 开发流程](05-dev-workflow.md#测试隔离机制)。
 
 ---
 

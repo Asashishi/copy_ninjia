@@ -10,6 +10,8 @@ import type {
 export interface AiReplyActivityEntry {
   /** 只保留足以计算 1/10 下限的最新消息时间戳。 */
   timestamps: TimestampDeque;
+  /** 主线程内严格递增的访问序号；仅在满载插入新群时用于选择 LRU。 */
+  lastAccessSequence: number;
   lastObservedAt: number;
 }
 

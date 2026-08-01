@@ -17,7 +17,7 @@ import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import {
   botCanDeleteMessagesIn,
   ensureBotChatPermissions,
-  isBotAdminIn,
+  resolveBotAdminStatus,
 } from "../infra/botAdmin";
 import { logger } from "../infra/logger";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy";
@@ -26,9 +26,9 @@ import {
   confirmBlocklistPersisted,
   ensureBlocklistEntryQueued,
   recordUserConfirmedKickedInChat,
-  requestBlocklistResweep,
   wasUserConfirmedKickedInChat,
-} from "../infra/blocklist";
+} from "../infra/blocklist/membership";
+import { requestBlocklistResweep } from "../infra/blocklist/sweep";
 import { getAllChatStates } from "../infra/storage/stateStore";
 
 type SenderChatReplyCleanupOutcome =
@@ -112,7 +112,7 @@ function senderChatCleanupNote(
  * 同一个问题——封禁只覆盖此刻已知且有管理权的群，黑名单覆盖的是「以后」，
  * 包括机器人当时还没进、或还不是管理员的群。之后这个 id 出现在任何监听群的
  * 入群更新里都会被秒踢（见 antiRaid/blocklistGuard.ts），名单本身落盘在
- * memory/blocklist/blocklist.json（见 infra/blocklist.ts）。
+ * memory/blocklist/blocklist.json（见 infra/blocklist/）。
  *
  * 目标有三种指定方式：回复目标的一条消息（优先）、`/block @username`（要求本
  * 机器人此前缓存过该用户）、`/block <用户 id>`。**id 那条最可靠**：用户名可以被
@@ -134,7 +134,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   }
 
   // 语义见函数顶部说明（本群非管理员不影响其它群连坐）。
-  const isAdminHere: boolean = await isBotAdminIn(chatId);
+  const isAdminHere: boolean = await resolveBotAdminStatus(chatId);
 
   // 目标解析同 /copy：回复目标的消息优先于参数里的 @username（没有公开
   // username 或没被缓存过的目标只能靠回复锁定），见 targetResolution.ts。
@@ -192,7 +192,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
 
   // 黑名单先写、且与封禁结果无关：封禁只能覆盖此刻已知且有管理权的群，名单
   // 覆盖的是以后——包括机器人当时还没进的群。先写内存 Map 再落盘，见
-  // infra/blocklist.ts；重复 /block 同一个人时返回 false，不再重复落盘。
+  // infra/blocklist/；重复 /block 同一个人时返回 false，不再重复落盘。
   const newlyBlocked: boolean = admission.newlyBlocked;
   // 只有真的新增了记录才值得等这一次落盘回执：没落盘就不能把「永久」说出口。
   // 重复 /block 时也要等：这个 id 若是本进程新增、上一次落盘又失败了，管理员
@@ -231,7 +231,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   let preBannedCount: number = 0;
   // 封禁失败的群要重新欠一次补扫：这个群若早就扫过，sweptAt 那道闩锁会让它
   // 永不重扫，而入群秒踢只对之后的入群更新生效——被拉黑的人就这么在那个群里
-  // 待到进程结束（见 infra/blocklist.ts 的 requestBlocklistResweep）。
+  // 待到进程结束（见 infra/blocklist/ 的 requestBlocklistResweep）。
   const resweepChatIds: number[] = [];
   // 各群之间并发：群内那两步是真实依赖（先查在不在，再封），群与群之间不是，
   // 而它们共用同一条装了 throttler 的 bot.api 队列，实际速率仍由它管。逐群串行

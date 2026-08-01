@@ -1,10 +1,10 @@
 import type { Chat, Message } from "@grammyjs/types";
+import { isUserBlocked } from "../infra/blocklist/membership";
 import {
-  isUserBlocked,
   registerBlockedMemberRemover,
-  requestBlocklistResweep,
   trackBlockedRemoval,
-} from "../infra/blocklist";
+} from "../infra/blocklist/outbox";
+import { requestBlocklistResweep } from "../infra/blocklist/sweep";
 import {
   botCanDeleteMessagesIn,
   ensureBotChatPermissions,
@@ -182,7 +182,7 @@ export function claimBlockedJoiner({
 
 /**
  * 把「清扫某群的黑名单成员」这件事的执行 owner 注册给 infra 侧。反向注册是为了
- * 让 infra/blocklist.ts 不静态依赖本领域模块（同 infra/chatTeardown.ts 的做法）。
+ * 让 infra/blocklist/ 不静态依赖本领域模块（同 infra/chatTeardown.ts 的做法）。
  * @param postDurably 通常是 index.ts 的 postAntiRaidDurably。
  */
 export function registerBlocklistRemoval(postDurably: DurableAntiRaidPost): void {

@@ -4,7 +4,7 @@ import type { GenerateContentResponse } from "@google/genai";
 import { getStickerSet } from "./sets";
 import { pickStickerVisionSource } from "./describe";
 import { describeMediaForStickerCatalog } from "../imageDescription";
-import { requestGeminiResponse } from "../gemini";
+import { requestGeminiTextResult } from "../gemini";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../../libs/text";
 import { sleep } from "../../../libs/sleep";
 import {
@@ -31,6 +31,7 @@ import {
 import { STICKER_PACK_SUMMARY_PROMPT } from "../../../consts/aiChat/prompts/media";
 import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../../types/stickers/catalog";
 import type { AiStickerCatalogEvent } from "../../../types/stickers/protocol";
+import type { GeminiTextGenerationResult } from "../../../types/aiChat/gemini";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -71,17 +72,19 @@ function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapsh
  * 调用方只能通过本文件导出的查询、恢复与刷盘函数改变目录生命周期。
  */
 
-/** 跑一次贴纸目录的 AI 调用（逐枚视觉解析/整包简介），失败按
- *  STICKER_CATALOG_RETRY_DELAYS_MS 退避重试，间隔用完仍失败返回 null，
- *  由调用方按各自的放弃策略收尾。label 只进英文错误日志，用于定位是
- *  哪个包/哪枚贴纸在抖。 */
-async function callWithRetry(label: string, call: () => Promise<string | null>): Promise<string | null> {
+/** 跑一次贴纸目录的 AI 调用（逐枚视觉解析/整包简介）。只有下载/排队失败，
+ * 或 HTTP 成功但模型结果不可用时，才按 STICKER_CATALOG_RETRY_DELAYS_MS
+ * 重新采样；SDK 已耗尽 HTTP 重试的请求立即停止，避免乘法重试。 */
+async function callWithRetry(
+  label: string,
+  call: () => Promise<GeminiTextGenerationResult>
+): Promise<string | null> {
   for (let attempt: number = 0; ; attempt++) {
-    const result: string | null = await call();
-    if (result) return result;
-    if (attempt >= STICKER_CATALOG_RETRY_DELAYS_MS.length) return null;
+    const result: GeminiTextGenerationResult = await call();
+    if (result.ok) return result.text;
+    if (!result.retryable || attempt >= STICKER_CATALOG_RETRY_DELAYS_MS.length) return null;
     const delayMs: number = STICKER_CATALOG_RETRY_DELAYS_MS[attempt]!;
-    logger.error(`${label} attempt ${attempt + 1} failed; retrying in ${delayMs} ms.`);
+    logger.error(`${label} attempt ${attempt + 1} returned no usable text; resampling in ${delayMs} ms.`);
     await sleep(delayMs);
   }
 }
@@ -287,7 +290,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       // 读到旧描述。
       const description: string | null = await callWithRetry(
         `Sticker catalog description (pack "${pack}", sticker ${sticker.file_unique_id})`,
-        (): Promise<string | null> => describeMediaForStickerCatalog(source.fileId)
+        (): Promise<GeminiTextGenerationResult> => describeMediaForStickerCatalog(source.fileId)
       );
       if (!description) {
         markEntryFailed(pack, sticker.file_unique_id);
@@ -306,7 +309,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
     if (map.size > 0 && (entriesChanged || !packSummaries.has(pack))) {
       const summary: string | null = await callWithRetry(
         `Sticker pack summary (pack "${pack}")`,
-        (): Promise<string | null> => summarizePack(set.title, [...map.values()].map(formatEntryForSummary))
+        (): Promise<GeminiTextGenerationResult> => summarizePack(set.title, [...map.values()].map(formatEntryForSummary))
       );
       if (summary) {
         packSummaries.set(pack, summary);
@@ -331,10 +334,10 @@ function formatEntryForSummary(entry: StickerCatalogEntry): string {
  * 调 Gemini 把一个包内全部贴纸的画面描述（带情绪 emoji 元数据）压缩成一条
  * 整包简介（≤200 字，供两层贴纸工具的第一层挑包用，措辞要求见
  * STICKER_PACK_SUMMARY_PROMPT）。走与冷消息压缩相同的中性总结模型；
- * 产出压成单行并按子句边界截断。失败返回 null（已由 requestGeminiResponse 记日志）。
+ * 产出压成单行并按子句边界截断；结果同时声明业务层是否允许重新采样。
  */
-async function summarizePack(title: string, descriptions: string[]): Promise<string | null> {
-  const data: GenerateContentResponse | null = await requestGeminiResponse(
+async function summarizePack(title: string, descriptions: string[]): Promise<GeminiTextGenerationResult> {
+  return requestGeminiTextResult(
     {
       model: GEMINI_SUMMARY_MODEL,
       contents: [{ role: "user", parts: [{ text: `贴纸包「${title}」内每枚贴纸的画面描述：\n${descriptions.join("\n")}` }] }],
@@ -344,10 +347,10 @@ async function summarizePack(title: string, descriptions: string[]): Promise<str
         maxOutputTokens: STICKER_PACK_SUMMARY_MAX_TOKENS,
       },
     },
-    "Gemini sticker pack summary API"
+    "Gemini sticker pack summary API",
+    (data: GenerateContentResponse): string => {
+      const sanitized: string = sanitizeInline(data.text ?? "");
+      return sanitized ? truncateAtClauseBoundary(sanitized, STICKER_PACK_SUMMARY_MAX_CHARS) : "";
+    }
   );
-  if (!data) return null;
-  const sanitized: string = sanitizeInline(data.text ?? "");
-  if (!sanitized) return null;
-  return truncateAtClauseBoundary(sanitized, STICKER_PACK_SUMMARY_MAX_CHARS);
 }

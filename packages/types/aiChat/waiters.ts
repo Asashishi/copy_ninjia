@@ -8,8 +8,10 @@ export interface AiMemoryDeleteWaiter {
   timer: ReturnType<typeof setTimeout>;
 }
 
-/** 等待 `/switch_mood` 重抽回执的调用方。 */
-export interface MoodSwitchWaiter {
+/** 等待心情查询或重抽回执的调用方。 */
+export interface MoodRequestWaiter {
+  chatId: number;
+  expectedEventType: "moodQueried" | "moodSwitched";
   resolve: (moodName: string) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;

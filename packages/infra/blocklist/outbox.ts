@@ -19,6 +19,7 @@ import {
   sessionUnblockedIds,
 } from "../../cache/main/blocklist";
 import { BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES } from "../../consts/antiRaid/blocklist";
+import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import { flushDiskIODomain, onDiskIORespawn, postDiskIO } from "../diskIO";
 import { logger } from "../logger";
 import { getAllChatStates } from "../storage/stateStore";
@@ -301,7 +302,7 @@ export function forgetChatBlocklistWork(chatId: number): void {
 }
 
 // Disk I/O Worker 重建后恢复当前进程内尚未落定的增删与完整 outbox 镜像。
-onDiskIORespawn("blocklist", (transport: DiskIORecoveryTransport): boolean => {
+onDiskIORespawn("blocklist", DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST, (transport: DiskIORecoveryTransport): boolean => {
   if (!queuePendingBlockedRemovalsSnapshot(transport.post)) return false;
   // 追加文件无法表达删除：本进程只要解除过一次，就必须整份重写当前名单。
   if (sessionUnblockedIds.size > 0) {

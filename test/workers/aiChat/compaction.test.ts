@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { GenerateContentResponse } from "@google/genai";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
-import { geminiResponse } from "../../helpers/geminiResponse";
+import type { GeminiTextGenerationResult } from "../../../packages/types/aiChat/gemini";
 
-const responses: (GenerateContentResponse | null)[] = [];
-const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<GenerateContentResponse | null> =>
-  responses.shift() ?? null
+const responses: GeminiTextGenerationResult[] = [];
+const requestGeminiTextResult = mock(async (..._args: unknown[]): Promise<GeminiTextGenerationResult> =>
+  responses.shift() ?? { ok: false, retryable: false }
 );
 const sleep = mock(async (..._args: unknown[]): Promise<void> => {});
 const logError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../packages/aiChat/ai/gemini", () => ({ requestGeminiResponse }));
+mock.module("../../../packages/aiChat/ai/gemini", () => ({ requestGeminiTextResult }));
 mock.module("../../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: {
@@ -44,10 +43,8 @@ const batch: BufferedMessage[] = [{
   at: "2026/07/19 12:00:00",
 }];
 
-function response(text: string): GenerateContentResponse {
-  return geminiResponse({
-    candidates: [{ content: { role: "model", parts: [{ text }] } }],
-  });
+function response(text: string): GeminiTextGenerationResult {
+  return { ok: true, text };
 }
 
 async function waitForRotation(chatId: number): Promise<void> {
@@ -59,7 +56,7 @@ async function waitForRotation(chatId: number): Promise<void> {
 
 beforeEach(() => {
   responses.length = 0;
-  requestGeminiResponse.mockClear();
+  requestGeminiTextResult.mockClear();
   sleep.mockClear();
   logError.mockClear();
   resetAiChatCompactionCache();
@@ -77,7 +74,7 @@ afterEach(() => {
 
 describe("AI 中期记忆压缩", () => {
   test("同群轮换串行晋升上一轮摘要，并把新摘要留作待晋升项", async () => {
-    responses.push(response(" 第一轮摘要\n仍是一行 "), response("第二轮摘要"));
+    responses.push(response("第一轮摘要 仍是一行"), response("第二轮摘要"));
 
     scheduleRotation(-1001, batch, false);
     await waitForRotation(-1001);
@@ -93,21 +90,32 @@ describe("AI 中期记忆压缩", () => {
     expect(compactionChains.has(-1001)).toBe(false);
   });
 
-  test("空响应按退避策略重试，成功后正常保存", async () => {
-    responses.push(null, response("重试得到的摘要"));
+  test("成功请求中的空响应按退避策略重采样，随后正常保存", async () => {
+    responses.push({ ok: false, retryable: true }, response("重试得到的摘要"));
 
     scheduleRotation(-1002, batch, false);
     await waitForRotation(-1002);
 
-    expect(requestGeminiResponse).toHaveBeenCalledTimes(2);
+    expect(requestGeminiTextResult).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(15_000);
     expect(pendingSummaries.get(-1002)).toBe("重试得到的摘要");
   });
 
+  test("SDK 已耗尽请求重试时不再套业务层重试", async () => {
+    responses.push({ ok: false, retryable: false }, response("不应被调用"));
+
+    scheduleRotation(-1005, batch, false);
+    await waitForRotation(-1005);
+
+    expect(requestGeminiTextResult).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(pendingSummaries.has(-1005)).toBe(false);
+  });
+
   test("请求在途时群代际失效会等待压缩 settle，迟到摘要不会污染新状态", async () => {
-    let resolveRequest!: (value: GenerateContentResponse) => void;
-    requestGeminiResponse.mockImplementationOnce(() => new Promise((resolve) => {
+    let resolveRequest!: (value: GeminiTextGenerationResult) => void;
+    requestGeminiTextResult.mockImplementationOnce(() => new Promise((resolve) => {
       resolveRequest = resolve;
     }));
 
@@ -136,7 +144,7 @@ describe("AI 中期记忆压缩", () => {
 
     scheduleRotation(-1004, batch, false);
 
-    expect(requestGeminiResponse).not.toHaveBeenCalled();
+    expect(requestGeminiTextResult).not.toHaveBeenCalled();
     expect(compactionPendingCounts.get(-1004)).toBe(COMPACTION_MAX_PENDING_PER_CHAT);
     expect(logError).toHaveBeenCalledTimes(1);
   });

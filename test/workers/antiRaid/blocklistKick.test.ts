@@ -42,7 +42,7 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
 }));
 mock.module("../../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
 mock.module("../../../packages/infra/botAdmin", () => ({
-  isBotAdminIn: async (): Promise<boolean> => true,
+  resolveBotAdminStatus: async (): Promise<boolean> => true,
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   registerBotPermissionObserver: (): void => {},
@@ -65,6 +65,7 @@ mock.module("../../../packages/infra/diskIO", () => ({
   flushDiskIODomain,
   lastFailedDiskIODomains: (): readonly string[] => [],
   onDiskIORespawn: (): void => {},
+  onVerificationPersisted: (): void => {},
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     diskPosts.push(message);
     deliveryOrder.push(`disk-${message.type}`);
@@ -76,17 +77,10 @@ mock.module("../../../packages/infra/diskIO", () => ({
     return true;
   },
 }));
-mock.module("../../../packages/workers/antiRaid/persistence", () => ({
-  flushDiskIO: async (): Promise<string> => "flushed",
-  postDiskIO: (): void => {},
-  onDiskIORespawn: (): void => {},
-  onVerificationPersisted: (): void => {},
-}));
-
-const { handleChatMemberUpdate, handleGroupJoinVerification } = await import("../../../packages/antiRaid");
+const { handleChatMemberUpdate, handleAntiRaidMessageIngress } = await import("../../../packages/antiRaid");
 const { blockedUserIds, pendingBlockedRemovals } = await import("../../../packages/cache/main/blocklist");
 const { recentBlockedJoinCounts } = await import("../../../packages/cache/main/antiRaid/blocklistGuard");
-const { unblockUser } = await import("../../../packages/infra/blocklist");
+const { unblockUser } = await import("../../../packages/infra/blocklist/membership");
 
 /** 一条「从不在群里变成群成员」的 chat_member 更新。 */
 function joinUpdate(userId: number, status: "member" | "administrator" = "member"): never {
@@ -265,7 +259,7 @@ describe("黑名单成员入群秒踢", () => {
     // 需要管理员权限才送达，缺哪一条都会漏。
     blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
-    const claimed: boolean = await handleGroupJoinVerification({
+    const claimed: boolean = await handleAntiRaidMessageIngress({
       message_id: 10,
       date: 1,
       chat: { id: -1001, type: "supergroup" },
@@ -296,7 +290,7 @@ describe("黑名单成员入群秒踢", () => {
     blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     await handleChatMemberUpdate(joinUpdate(42));
-    await handleGroupJoinVerification({
+    await handleAntiRaidMessageIngress({
       message_id: 10,
       date: 1,
       chat: { id: -1001, type: "supergroup" },
@@ -340,7 +334,7 @@ describe("黑名单频道消息入口", () => {
       blockedAt: "2026/07/26 00:00:00",
     });
 
-    const claimed: boolean = await handleGroupJoinVerification({
+    const claimed: boolean = await handleAntiRaidMessageIngress({
       message_id: 16,
       date: 1,
       chat: { id: -1001, type: "supergroup" },
@@ -361,7 +355,7 @@ function floodCandidates(): AntiRaidWorkerMessage[] {
 
 describe("刷屏计数的主线程投递接线", () => {
   test("普通超级群消息收敛成一条 floodCandidate，并顺手补齐该群权限位", async () => {
-    await handleGroupJoinVerification({
+    await handleAntiRaidMessageIngress({
       message_id: 11,
       date: 1,
       chat: { id: -1001, type: "supergroup" },
@@ -378,7 +372,7 @@ describe("刷屏计数的主线程投递接线", () => {
   });
 
   test("入群公告不是谁的「发言」，不进任何人的窗口", async () => {
-    await handleGroupJoinVerification({
+    await handleAntiRaidMessageIngress({
       message_id: 12,
       date: 1,
       chat: { id: -1001, type: "supergroup" },
@@ -391,7 +385,7 @@ describe("刷屏计数的主线程投递接线", () => {
   });
 
   test("离群公告同理不计数", async () => {
-    await handleGroupJoinVerification({
+    await handleAntiRaidMessageIngress({
       message_id: 13,
       date: 1,
       chat: { id: -1001, type: "supergroup" },
@@ -403,14 +397,14 @@ describe("刷屏计数的主线程投递接线", () => {
   });
 
   test("机器人自己与频道马甲不投递", async () => {
-    await handleGroupJoinVerification({
+    await handleAntiRaidMessageIngress({
       message_id: 14,
       date: 1,
       chat: { id: -1001, type: "supergroup" },
       from: { id: 999, is_bot: true, first_name: "本天才" },
       text: "spam",
     } as never, 999);
-    await handleGroupJoinVerification({
+    await handleAntiRaidMessageIngress({
       message_id: 15,
       date: 1,
       chat: { id: -1001, type: "supergroup" },

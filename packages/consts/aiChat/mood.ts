@@ -11,10 +11,10 @@ export const MOOD_REROLL_MIN_MS: number = 2 * 60 * 60_000;
 /** 单次心情保持时长的随机上界。 */
 export const MOOD_REROLL_MAX_MS: number = 4 * 60 * 60_000;
 
-/** /switch_mood 主线程等待 Worker moodSwitched 回执的超时（见 packages/aiChat/index.ts 的
- *  switchAiMood），同时用于生成请求的绝对截止时刻：重抽在 Worker 侧同步
- *  完成、正常毫秒级返回，积压至截止时刻后的请求不得再改写群心情。 */
-export const MOOD_SWITCH_TIMEOUT_MS: number = 5_000;
+/** 心情查询/重抽命令等待 Worker 回执的超时（见 packages/aiChat/index.ts），
+ *  同时用于生成请求的绝对截止时刻：Worker 侧同步完成、正常毫秒级返回，
+ *  积压至截止时刻后的请求不再执行。 */
+export const MOOD_REQUEST_TIMEOUT_MS: number = 5_000;
 
 /**
  * 部署配置中单个天气/时段倍率的硬上限。倍率只用于微调概率，超过该值通常是

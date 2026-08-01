@@ -15,13 +15,14 @@ import { registerChatTeardown } from "../infra/chatTeardown";
 import {
   LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS,
 } from "../consts/antiRaid/protocol";
+import { DISK_IO_RESPAWN_PRIORITIES } from "../consts/diskIO/common";
 import { superviseWorker } from "../libs/supervisedWorker";
 import { WorkerUndeliveredError } from "../libs/workerDelivery";
 import {
   onDiskIORespawn,
   onVerificationPersisted,
   postDiskIO,
-} from "../workers/antiRaid/persistence";
+} from "../infra/diskIO";
 import {
   buildAdoptLockdownsMessage,
   lockdownFingerprint,
@@ -38,7 +39,7 @@ import { handleAdDetected } from "./adDetect";
 import {
   replayPendingBlockedRemovals,
   settleBlockedRemoval,
-} from "../infra/blocklist";
+} from "../infra/blocklist/sweep";
 import { antiRaidBarrier, antiRaidRuntimeState } from "../cache/main/antiRaid/proxy";
 import {
   emergencyLockdownRecoveryRuntime,
@@ -271,15 +272,19 @@ registerChatTeardown("antiRaid", (chatId: number): void => {
 
 // Disk I/O Worker 重建时，active 与尚未确认的终结变化一起重放；否则旧日
 // 文件里的 active 记录可能在下一次进程启动时复活。
-onDiskIORespawn("Anti-Raid verification", (transport: DiskIORecoveryTransport): boolean => {
-  for (const record of activeVerificationSnapshots.values()) {
-    if (!transport.post({ type: "verificationUpsert", record, critical: true })) return false;
+onDiskIORespawn(
+  "Anti-Raid verification",
+  DISK_IO_RESPAWN_PRIORITIES.ANTI_RAID_VERIFICATION,
+  (transport: DiskIORecoveryTransport): boolean => {
+    for (const record of activeVerificationSnapshots.values()) {
+      if (!transport.post({ type: "verificationUpsert", record, critical: true })) return false;
+    }
+    for (const deletion of pendingVerificationDeletes.values()) {
+      if (!transport.post({ type: "verificationDelete", ...deletion })) return false;
+    }
+    return true;
   }
-  for (const deletion of pendingVerificationDeletes.values()) {
-    if (!transport.post({ type: "verificationDelete", ...deletion })) return false;
-  }
-  return true;
-});
+);
 
 onVerificationPersisted((reply: VerificationPersistedReply): void => {
   if (!reply.deleted) {

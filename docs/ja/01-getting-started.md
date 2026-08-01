@@ -38,7 +38,7 @@ cp -r config_example config
   - BotFather が発行した token。
 - **`AI_CHAT_GEMINI_API_KEY`**（空でも可）
   - AI 雑談の返信生成・画像理解・記憶圧縮専用の Gemini API キー。空の場合は
-    AI Worker が起動せず、`/ai_chat enable` と `/switch_mood` は拒否されます。
+    AI Worker が起動せず、`/ai_chat enable`、`/query_mood`、`/switch_mood` は拒否されます。
     ディスク上の AI 記憶はそのまま保持し、ほかの機能は通常どおり動作します。
 - **`AD_DETECT_DEEPSEEK_API_KEY`**（空でも可）
   - OpenAI 互換の `/ad_detect` 判定に使う DeepSeek API キー。空の場合は

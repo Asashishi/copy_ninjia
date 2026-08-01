@@ -36,9 +36,9 @@ flowchart TD
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。`/ad_detect` 广告检测的整条流水线（按发送者归并 90 秒消息串、每秒一批送 DeepSeek 判定、命中后删消息并在群里播报封禁理由）同样跑在这条线程上，判定结果回投主线程换成一次与 /block 等价的拉黑 + 各群封禁。/block 黑名单的踢人也在这条线程执行（它不带状态机，判定在主线程做完后投过来），与验证超时踢人共用同一条请求队列。未收到落地回执的处置批次同时保存在主线程镜像与 `memory/blocklist/removals.json` outbox：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
 - **Disk I/O Worker** 独占共享目录的串行读写：`logs/`，以及 `memory/` 下的 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/`、`joinlog/` 七个领域目录；`state.json` 是唯一例外，由主线程 `StateStore` 直接原子写。各文件形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
 
-广告检测按「投递门禁在主线程、判定与副作用在 Worker、不可丢的拉黑与封禁回主线程」三段分工，见 [`packages/antiRaid/adDetect.ts`](../packages/antiRaid/adDetect.ts) 与 [`packages/workers/antiRaid/adDetect/`](../packages/workers/antiRaid/adDetect/)。
+[`packages/aiChat/index.ts`](../packages/aiChat/index.ts) 与 [`packages/antiRaid/index.ts`](../packages/antiRaid/index.ts) 都只是稳定公开面的薄显式导出，不再持有实现或状态。AI 的监督生命周期与跨线程代理归 [`workerBridge.ts`](../packages/aiChat/workerBridge.ts)，每消息入口归 [`messageIngress.ts`](../packages/aiChat/messageIngress.ts)；Anti-Raid 的监督生命周期归 [`workerBridge.ts`](../packages/antiRaid/workerBridge.ts)，durable 投递归 [`durableDelivery.ts`](../packages/antiRaid/durableDelivery.ts)，update 路由归 [`updateIngress.ts`](../packages/antiRaid/updateIngress.ts)。广告检测继续按「主线程投递门禁与候选字段投影、Worker 判定与副作用、不可丢的拉黑与封禁回主线程」分工，候选构造见 [`adCandidate.ts`](../packages/antiRaid/adCandidate.ts)，投递与排空见 [`adDetect.ts`](../packages/antiRaid/adDetect.ts)，Worker 流水线见 [`packages/workers/antiRaid/adDetect/`](../packages/workers/antiRaid/adDetect/)。
 
-Anti-Raid 主线程入口由 [`packages/antiRaid/index.ts`](../packages/antiRaid/index.ts) 编排，lockdown 恢复与验证镜像接收分别下沉到 [`packages/antiRaid/lockdownMirror.ts`](../packages/antiRaid/lockdownMirror.ts) 和 [`packages/antiRaid/verificationMirror.ts`](../packages/antiRaid/verificationMirror.ts)。Worker 侧验证解释器则按核心状态/恢复、入站事件翻译、Telegram 副作用、提醒投递 owner 拆在 [`packages/workers/antiRaid/`](../packages/workers/antiRaid/) 中；这些模块共享同一个 dispatcher，不改变状态机与 revision 的单一权威入口。
+验证领域仍由同一个 dispatcher 与 revision 入口保证单一权威，但纯状态转移已按 join、pending 与 terminal 生命周期拆到 [`packages/states/verification/`](../packages/states/verification/)，[`packages/states/verification.ts`](../packages/states/verification.ts) 只保留完整事件路由；Worker 的 Telegram 副作用进一步把踢人与终态处置拆到 [`packages/workers/antiRaid/verificationEffects/`](../packages/workers/antiRaid/verificationEffects/)。lockdown 恢复与验证镜像接收分别由 [`lockdownMirror.ts`](../packages/antiRaid/lockdownMirror.ts) 和 [`verificationMirror.ts`](../packages/antiRaid/verificationMirror.ts) 承担。
 
 Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`packages/libs/supervisedWorker.ts`](../packages/libs/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`packages/infra/diskIO.ts`](../packages/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；Disk I/O 在恢复 load、各领域镜像重放与恢复窗口 FIFO 排空全部成功前保持不可写，任一步失败都会终止该代际并触发 fatal 停机。重启预算耗尽再由 [`packages/infra/workerSupervisor.ts`](../packages/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
 
@@ -117,6 +117,8 @@ flowchart TD
 1. **Quiesce**：停下标题/反应/头像/翻译入口，并停止 runner。四个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口，未全部成功不得缓存为已完成。
 2. **有界 drain**：排空各队列与 mailbox。runner 为每个 update 持有独立取消 signal；在途 handler 超过 drain 期限时 abort 这些 signal 并给最后一段有界收敛时间，仍不收敛的 handler 会阻止最终 offset 确认，并在最佳努力 dispose 后强制非零退出。
 3. **Flush 与 dispose**：正常路径在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 固定按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」收尾。
+
+生命周期与 Anti-Raid drain 的进程内耗时预算统一通过 [`packages/libs/monotonicDeadline.ts`](../packages/libs/monotonicDeadline.ts) 和 `performance.now()` 计算，系统时钟回拨不能延长关停或排空期限；业务状态与持久化所需的绝对时间戳仍使用 `Date.now()`。
 
 失败语义：
 

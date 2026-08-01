@@ -14,7 +14,7 @@ Each recipe names the files to touch and the order to follow. The universal prer
 
 ## Adding a Slash Command
 
-1. **Handler**: create one file under `packages/commands/` and export `handleXxxCommand` with a `function` declaration and explicit return type. Follow existing authorization patterns: `block.ts` for allowlisted users, `superAdminToggle.ts` / `switchMood.ts` for the super administrator, and `send.ts` for private-chat-only commands, which silently return for the wrong user or chat instead of sending an error.
+1. **Handler**: create one file under `packages/commands/` and export `handleXxxCommand` with a `function` declaration and explicit return type. Follow existing authorization patterns: `block.ts` for allowlisted users, `superAdminToggle.ts` / `mood.ts` for the super administrator, and `send.ts` for private-chat-only commands, which silently return for the wrong user or chat instead of sending an error.
 2. **Export**: add it to `packages/commands/index.ts`.
 3. **Registration**: add `bot.command("xxx", ...)` in [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts). Registration occurs after the init gateway, per-chat serialization, private-chat gateway, and join-verification middleware, so new commands inherit those semantics. Do not duplicate gateway checks in the handler.
 4. **Private-chat gateway**: if the new command must work in private chats, also update [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) and add gateway tests. At present, only `/send` is explicitly allowed as a slash command in private chats; registering a handler alone will not reach it. Group-only commands need no change here.
@@ -31,6 +31,7 @@ CJK action commands such as `/咬` and `/贴贴` (whose action word is one or tw
 - **Target resolution takes a different entry point.** Such a handler receives a plain `Context` rather than a `CommandContext`, so it passes `ResolveCommandTargetParams` directly to `resolveCommandTarget` in [`targetResolution.ts`](../../packages/commands/targetResolution.ts). Forms the handler does not claim (`/咬@OtherBot`, caption-only messages, malformed messages) must call `next()` instead of silently swallowing the update.
 - **Match `message.text` only.** `bot.hears` matches both text and captions, but claiming a media message means it no longer reaches `handleIncomingMessage`, so the photo never enters AI rolling memory or the vision pipeline.
 - **Reproduce the pipeline's prerequisites yourself.** The handler is registered *before* the automatic pipeline, so it is not covered by that pipeline's self-sent guard or its `cacheSender` call. It must call `isBotOwnMessage` itself to skip the bot's own messages (otherwise a channel bounce turns into a self-replying flood loop) and must record the sender identity itself.
+- **Mark retention semantics explicitly.** A successful action result is user-authorized retained content and must pass `preserveInGroup: true` to `sendCommandMessage`. Missing-target, invalid-argument, and `/x` usage hints stay on the default path and self-delete 30 seconds after a successful group send.
 - **These names cannot go into the `BOT_COMMANDS` menu.** BotFather also accepts ASCII command names only (Latin letters, digits, underscores, up to 32 characters). `setMyCommands` submits the whole list at once, so one invalid name fails the entire menu with `BOT_COMMAND_INVALID`, and since a failed registration is only logged and never blocks startup, the menu disappears silently. To advertise the syntax in the menu, add an ASCII placeholder entry (the existing `/x`) and put the syntax in its description.
 - **The placeholder still needs a handler.** Tapping a menu entry actually sends the command, so without a registered handler it reaches the catch-all and enters the AI/copy pipeline as an ordinary message — while a handler that does nothing at all leaves whoever tapped the menu with complete silence. Answer with a usage hint and terminate the chain there.
 - **Carry your own global rate limit.** These commands have no command-menu constraint behind them; anyone can invent an action word on the spot. Window and ceiling go in `packages/consts/commands.ts`, the timestamp queue goes in `packages/cache/main/<domain>.ts`, and the decision reuses [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) — a pure function that mutates the caller-owned queue in place and holds no state of its own.
@@ -47,7 +48,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code holds roughly 582 string literals containing Chinese across 63 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 581 source lines containing Chinese string or template literals across 65 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -84,7 +85,7 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 
 1. Add the exact HTTPS origin explicitly to `JSON_API_ALLOWED_ORIGINS` in [`packages/consts/httpFetch.ts`](../../packages/consts/httpFetch.ts). Do not broaden it to arbitrary hosts, HTTP, or credential-bearing URLs.
 2. Reuse the bounded JSON reader in [`packages/libs/httpFetch.ts`](../../packages/libs/httpFetch.ts). Keep redirects disabled and preserve response-body and error-log limits.
-3. Add tests for origins, redirects, oversized responses, and failure logging. Telegram avatar crawling is a separate media path; do not reroute or restrict it merely to add a JSON API.
+3. Add tests for origins, redirects, oversized responses, and failure logging. Telegram avatar downloads are a separate media path: both the Bot API `file.getUrl()` primary path and the `t.me` page/image fallback must keep redirects disabled and reads bounded; do not reroute that path merely to add a JSON API.
 
 ## Changing the Persona or JSON Configuration
 
@@ -117,7 +118,7 @@ The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#pers
 
 ## Changing an Inter-Worker Protocol
 
-`packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the `/switch_mood` handshake is the reference implementation.
+`packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the shared `/query_mood` and `/switch_mood` mood handshake is the reference implementation.
 
 ---
 

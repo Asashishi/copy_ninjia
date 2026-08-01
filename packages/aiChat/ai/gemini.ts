@@ -5,7 +5,7 @@
  *
  * 收发走官方 @google/genai SDK（Google 现行的统一 GenAI JS SDK）而不是手写
  * fetch：SDK 自带每次请求的超时（httpOptions.timeout）与瞬时失败（网络错误/
- * 5xx/429）的自动重试（默认最多 5 次尝试），比自己维护一份 AbortController
+ * 5xx/429）的自动重试（显式限制为最多 5 次尝试），比自己维护一份 AbortController
  * 省心。回复请求同时注册内置 googleSearch 与自定义函数，并开启
  * includeServerSideToolInvocations 让搜索记录随 content 接回；视觉输入
  * （inlineData）与多轮函数调用往返均由同一 SDK 处理。上一轮模型的完整
@@ -24,13 +24,21 @@ import type { Candidate, GenerateContentParameters, GenerateContentResponse } fr
 import { geminiClientHolder } from "../../cache/workers/aiChat/gemini";
 import { logger } from "../../infra/logger";
 import { AI_CHAT_GEMINI_API_KEY } from "../../infra/config";
-import { GEMINI_REQUEST_TIMEOUT_MS, GEMINI_SAFETY_SETTINGS } from "../../consts/aiChat/tools";
+import {
+  GEMINI_REQUEST_RETRY_ATTEMPTS,
+  GEMINI_REQUEST_TIMEOUT_MS,
+  GEMINI_SAFETY_SETTINGS,
+} from "../../consts/aiChat/tools";
 import { abnormalFinishDiagnostic } from "./utils/geminiResponse";
-import type { GeminiRequestResult } from "../../types/aiChat/gemini";
+import type {
+  GeminiRequestResult,
+  GeminiTextGenerationResult,
+} from "../../types/aiChat/gemini";
 
 /**
- * 取得线程内唯一 Gemini 客户端。timeout 是每次请求/每次 SDK 重试各自的预算，
- * Worker 线程各自拥有独立实例，崩溃重建后由 cache/workers/aiChat/gemini.ts 的空 holder 重建。
+ * 取得线程内唯一 Gemini 客户端。timeout 是每次 SDK 尝试各自的预算，重试总数
+ * 由 GEMINI_REQUEST_RETRY_ATTEMPTS 显式约束。Worker 线程各自拥有独立实例，
+ * 崩溃重建后由 cache/workers/aiChat/gemini.ts 的空 holder 重建。
  *
  * 密钥是可选 env（见 infra/config.ts）：没配时 AI Worker 根本不会启动、
  * /ai_chat enable 与投喂门禁也都把请求挡在外面（aiChat/availability.ts），
@@ -44,7 +52,10 @@ function getGeminiClient(): GoogleGenAI {
   }
   geminiClientHolder.current ??= new GoogleGenAI({
     apiKey: AI_CHAT_GEMINI_API_KEY,
-    httpOptions: { timeout: GEMINI_REQUEST_TIMEOUT_MS },
+    httpOptions: {
+      timeout: GEMINI_REQUEST_TIMEOUT_MS,
+      retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
+    },
   });
   return geminiClientHolder.current;
 }
@@ -72,7 +83,7 @@ export async function requestGeminiResult(body: GenerateContentParameters, error
     });
   } catch (error: unknown) {
     if (body.config?.abortSignal?.aborted === true) {
-      return { ok: false, diagnostic: "request aborted" };
+      return { ok: false, failureKind: "request", diagnostic: "request aborted" };
     }
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
@@ -80,7 +91,7 @@ export async function requestGeminiResult(body: GenerateContentParameters, error
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }
-    return { ok: false, diagnostic: "request failed" };
+    return { ok: false, failureKind: "request", diagnostic: "request failed" };
   }
 
   const candidate: Candidate | undefined = data.candidates?.[0];
@@ -105,6 +116,7 @@ export async function requestGeminiResult(body: GenerateContentParameters, error
     logger.error(`${errorLabel} returned an unusable response: ${abnormal}.`);
     return {
       ok: false,
+      failureKind: "response",
       diagnostic: abnormal,
       finishReason: candidate?.finishReason,
       finishMessage: candidate?.finishMessage,
@@ -124,4 +136,24 @@ export async function requestGeminiResponse(
 ): Promise<GenerateContentResponse | null> {
   const result: GeminiRequestResult = await requestGeminiResult(body, errorLabel);
   return result.ok ? result.response : null;
+}
+
+/**
+ * 请求一段需要业务侧清洗的 Gemini 文本，并把跨请求重试边界显式带回调用方。
+ * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
+ * HTTP 成功但 candidate 异常或清洗后正文为空时，才允许按领域策略重新采样。
+ */
+export async function requestGeminiTextResult(
+  body: GenerateContentParameters,
+  errorLabel: string,
+  normalize: (response: GenerateContentResponse) => string
+): Promise<GeminiTextGenerationResult> {
+  const result: GeminiRequestResult = await requestGeminiResult(body, errorLabel);
+  if (!result.ok) {
+    return { ok: false, retryable: result.failureKind === "response" };
+  }
+  const text: string = normalize(result.response);
+  return text.length > 0
+    ? { ok: true, text }
+    : { ok: false, retryable: true };
 }

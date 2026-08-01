@@ -31,6 +31,10 @@ import {
   isCleanShutdown,
   runShutdownOwners,
 } from "./lifecycle/shutdown";
+import {
+  createMonotonicDeadline,
+  isMonotonicDeadlineExpired,
+} from "../libs/monotonicDeadline";
 
 /**
  * 持有应用从取得单实例锁到释放锁的完整生命周期。所有会联网、创建 Worker、
@@ -405,8 +409,14 @@ export class ApplicationLifecycle {
     runner: AcknowledgedUpdateRunner,
     timeoutMs: number = RUNNER_DRAIN_TIMEOUT_MS
   ): Promise<boolean> {
-    const deadline: number = Date.now() + timeoutMs;
-    while (runner.size() > 0 && Date.now() < deadline) {
+    const deadline: number = createMonotonicDeadline(
+      timeoutMs,
+      this.dependencies.monotonicNow
+    );
+    while (
+      runner.size() > 0 &&
+      !isMonotonicDeadlineExpired(deadline, this.dependencies.monotonicNow)
+    ) {
       await this.dependencies.sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
     }
     if (runner.size() > 0) {
@@ -416,9 +426,17 @@ export class ApplicationLifecycle {
         "aborting them and withholding their Telegram offset."
       );
       runner.abortActive();
-      const cancellationDeadline: number =
-        Date.now() + RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS;
-      while (runner.size() > 0 && Date.now() < cancellationDeadline) {
+      const cancellationDeadline: number = createMonotonicDeadline(
+        RUNNER_CANCELLATION_SETTLEMENT_TIMEOUT_MS,
+        this.dependencies.monotonicNow
+      );
+      while (
+        runner.size() > 0 &&
+        !isMonotonicDeadlineExpired(
+          cancellationDeadline,
+          this.dependencies.monotonicNow
+        )
+      ) {
         await this.dependencies.sleep(RUNNER_DRAIN_POLL_INTERVAL_MS);
       }
       if (runner.size() > 0) {

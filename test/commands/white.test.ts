@@ -16,7 +16,7 @@ mock.module("../../packages/config/whitelist", () => ({
   hasWhitelistPermission: (): boolean => false,
   setWhitelistMembership,
 }));
-mock.module("../../packages/infra/blocklist", () => ({ isUserBlocked }));
+mock.module("../../packages/infra/blocklist/membership", () => ({ isUserBlocked }));
 
 const {
   handleWhiteCommand,

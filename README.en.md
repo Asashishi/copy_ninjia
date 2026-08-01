@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1532_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.61%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1554_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.51%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -53,12 +53,12 @@ Message copying and personality mimicry are only the surface. Underneath is a mu
 Every line of production code, every test case, and this README itself was written by AI. The human does not write code, but has never left the room: they design the architecture and review every commit together with AI.
 
 <table width="100%">
-<tr><th width="14%" align="left">Stage</th><th width="32%" align="left">Who</th><th width="54%" align="left">What they do</th></tr>
+<tr><th width="18%" align="left">Stage</th><th width="32%" align="left">Who</th><th width="50%" align="left">What they do</th></tr>
 <tr><td>📐&nbsp;Architecture</td><td><b>Asashishi</b>, the project's only human</td><td>Designs and decides system boundaries, Worker decomposition, persistence, and recovery strategy</td></tr>
 <tr><td>⌨️&nbsp;Implementation</td><td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td><td>Writes 100% of production code, tests, and documentation</td></tr>
-<tr><td>🧾&nbsp;Commit review</td><td><b>Asashishi</b> × AI</td><td>Every commit is reviewed jointly by human and AI before entering the repository</td></tr>
-<tr><td>🔬&nbsp;Repository audits</td><td>Frontier models including <b>Fable 5</b>, <b>GPT-5.6 (Sol)</b> and <b>Opus 5</b></td><td>Conduct multiple cross-reviews of the entire codebase; findings become hardening commits</td></tr>
-<tr><td>🛰️&nbsp;Safety exercises</td><td>The same frontier models</td><td>Review production scenarios such as crash recovery, concurrency races, hostile input, and resource exhaustion</td></tr>
+<tr><td>🧾&nbsp;Commit&nbsp;review</td><td><b>Asashishi</b> × AI</td><td>Every commit is reviewed jointly by human and AI before entering the repository</td></tr>
+<tr><td>🔬&nbsp;Repository&nbsp;audits</td><td>Frontier models including <b>Fable 5</b>, <b>GPT-5.6 (Sol)</b> and <b>Opus 5</b></td><td>Conduct multiple cross-reviews of the entire codebase; findings become hardening commits</td></tr>
+<tr><td>🛰️&nbsp;Safety&nbsp;exercises</td><td>The same frontier models</td><td>Review production scenarios such as crash recovery, concurrency races, hostile input, and resource exhaustion</td></tr>
 </table>
 
 Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI review, repeated full-repository audits, and safety exercises flow back into new constraints.
@@ -69,7 +69,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1532 tests passed, 166 test files, 27,514 expect() calls, 95.29% function coverage, 96.61% line coverage" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1554 tests passed, 167 test files, 27,602 expect() calls, 95.08% function coverage, 96.51% line coverage" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -166,7 +166,7 @@ Choose a target by replying to their message or providing `@username`:
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">Group member</td><td>Start respective copy mode</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">Group member</td><td>Stop current global copy state</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">Group member</td><td>Copy avatar only</td></tr>
-<tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/贴贴</code> replies "actor 咬了 target！"</td></tr>
+<tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/揪住</code> replies "actor 咬了 target！"; successful results are retained</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">Group member</td><td>Resume proactive behavior early</td></tr>
 <tr><td><code>/mute … &lt;duration&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>Temporarily mute or unmute a member in a supergroup; reply, <code>@username</code>, and user-id targets are supported, with <code>m/h/d</code> durations</td></tr>
@@ -174,6 +174,7 @@ Choose a target by replying to their message or providing `@username`:
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>Fully unblock the target: remove the id from the dynamic blocklist and lift bans in every bot-managed group. Targets are named as for <code>/block</code>, plus negative channel ids. Static-blocklist identities are refused; the super administrator is implicitly allowed</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>Toggle AI chat for the group; the super administrator is implicitly allowed</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>Toggle ad detection for the group; a non-protected hit gets the same disposal as <code>/block</code>; the super administrator is implicitly allowed</td></tr>
+<tr><td><code>/query_mood</code></td><td align="center">Group member</td><td>Show the group's current effective AI mood without rerolling it</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>Reroll current group mood immediately; the super administrator is implicitly allowed</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>Toggle Japanese translation mode for the group (disabled by default); the super administrator is implicitly allowed</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Toggle the group's main processing gate</td></tr>
@@ -186,7 +187,7 @@ Choose a target by replying to their message or providing `@username`:
 ### Behavior details
 
 - **Command entry gates**: group commands uniformly pass through `/init`. An uninitialized group accepts only the super administrator's `/init`, so `/permission` and `/white` must also run in an initialized group. `/send` is the only slash command admitted in private chat.
-- **Action commands**: both names render as `first_name last_name` and link to the profile when a public username exists; the target is picked the same way, by replying to their message or by `@username`.
+- **Action commands**: both names render as `first_name last_name` and link to the profile when a public username exists; the target is picked the same way, by replying to their message or by `@username`. Successful action results are retained like `/permission help`; missing-target, invalid-argument, and `/x` usage hints still self-delete after 30 seconds.
 - **`/block` blocklist**: name the target by replying to their message, by `@username`, or by passing a user id directly (a positive integer; the negative ids of groups and channels do not count) - the id form is the most reliable one, since a released username can be re-registered by somebody else while this command is irreversible. Once the id lands in the persistent blocklist, the target is kicked on sight from any join update in any watched group. The moment a group has both an administrator bot and an enabled `/init` — in either order — anyone from the list already sitting there gets swept out too. `/unblock` atomically rewrites the whole list and lifts the target's ban in every bot-managed group by default; it still performs the cross-chat unban when the target is absent from the dynamic list. `/unblock` accepts one target form `/block` does not: **the negative id of a channel**. Channel vests enter the list as a `sender_chat` (a `/block` on a reply to a channel message, or an ad-detection hit), and since ad detection deletes the original message while a channel without a public username is never in the cache, refusing negative ids would leave such entries permanently unremovable. The reverse is not opened because a mispasted chat id in `/block` bans a whole chat identity, irreversibly.
 - **`/batch_kick` slow-wave cleanup**: only the super administrator may use it, and only in an initialized supergroup. Its sole argument is a window such as `30m`, `2h`, or `1d`, capped at 24 hours. It reads the join log, keeps each user's latest join in the window, and kicks those still present with bounded concurrency and no blocklisting. The super administrator, allowlisted identities, and permanent-blocklist members are not treated as ordinary targets.
 - **`/ad_detect` ad detection**: messages are bundled per sender over a 90-second window and judged by DeepSeek; a non-protected hit triggers the same disposal as `/block` (permanent blocklist entry plus a ban that deletes the sender's messages in every administered chat) and announces the ban reason in the triggering chat (self-deleting after 30 seconds). The super administrator always bypasses detection. An allowlisted identity with `isCanBypassAdDetection` disabled may be classified and have that message bundle deleted, but is still never added to the permanent blocklist. Detection only fires while the bot is an administrator there; the reference samples live in [`config/ad_samples.json`](config_example/ad_samples.json).
@@ -247,7 +248,7 @@ Fill in `.env` according to [`.env.example`](.env.example):
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | Bot token issued by BotFather |
 | `SUPER_ADMIN_USER_ID` | ✅ | A single decimal user ID for the super administrator |
-| `AI_CHAT_GEMINI_API_KEY` | — | AI chat agent only; when empty the AI Worker never starts and `/ai_chat enable` and `/switch_mood` are rejected |
+| `AI_CHAT_GEMINI_API_KEY` | — | AI chat agent only; when empty the AI Worker never starts and `/ai_chat enable`, `/query_mood`, and `/switch_mood` are rejected |
 | `AD_DETECT_DEEPSEEK_API_KEY` | — | Ad detection only; when empty `/ad_detect enable` is rejected |
 | `COPY_NINJIA_DATA_ROOT` | — | Runtime-data root; when omitted the project root is used |
 
@@ -281,7 +282,7 @@ After the bot first joins a group, `SUPER_ADMIN_USER_ID` executes:
 /ai_chat enable
 ```
 
-> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 582 Chinese string literals across 63 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
+> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 581 source lines containing Chinese string or template literals across 65 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 

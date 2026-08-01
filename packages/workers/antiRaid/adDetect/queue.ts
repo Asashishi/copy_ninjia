@@ -22,7 +22,7 @@
  * 一批记成已检：绝不猜一个 true 出来，也绝不无限重试——后者在 DeepSeek 侧
  * 故障时就是一场每秒 15 发的请求风暴。
  *
- * 状态全在 cache/workers/antiRaid/adDetect.ts，随 Worker isolate 生死；崩溃重建后队列
+ * 状态全在 cache/workers/antiRaid/adCandidate.ts，随 Worker isolate 生死；崩溃重建后队列
  * 清空，主线程不做镜像（判定是尽力而为的启发式，不构成安全边界）。
  */
 
@@ -222,7 +222,7 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
  */
 async function isAdminSender(bundle: AdMessageBundle): Promise<boolean | undefined> {
   // 频道马甲没有「群成员」身份，管理员表里不会有它；拿当前群当皮套的匿名
-  // 管理员在主线程投递入口就已经挡掉了（见 antiRaid/adDetect.ts）。
+  // 管理员在主线程投递入口就已经挡掉了（见 antiRaid/adCandidate.ts）。
   if (bundle.isChannel) return false;
   const cached: Set<number> | undefined = freshAdminIds(bundle.chatId);
   if (cached !== undefined) return cached.has(bundle.senderId);
@@ -342,7 +342,7 @@ function refreshAdDetectCapacitySaturation(): void {
  * ——生命周期据此拒绝确认 Telegram offset 并以非零状态退出，等于每次撞上都
  * 换来一次脏退出加一批 update 重投。判定是尽力而为的启发式，本来就不该扣着
  * 停机不放；真正不可丢的那一半（拉黑 + 各群封禁登记）在主线程，由
- * drainAntiRaid 每轮等待 inFlightAdDisposals 收口（见 antiRaid/adDetect.ts）。
+ * drainAntiRaid 每轮等待 inFlightAdDisposals 收口（见 antiRaid/adCandidate.ts）。
  * @returns 本批全部结算的 Promise；调用方（节拍与测试）自行决定要不要等。
  */
 export function runAdDetectBatch(now: number = Date.now()): Promise<void> {

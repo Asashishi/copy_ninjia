@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1532_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.61%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1554_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.51%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -55,12 +55,12 @@
 このリポジトリの production コード、テストケース、そして README 自体も、すべて AI が書いています。人間はコードを書きませんが、決して席を外してはいません。アーキテクチャを設計し、すべてのコミットを AI と共同でレビューします。
 
 <table width="100%">
-<tr><th width="14%" align="left">工程</th><th width="32%" align="left">担当者</th><th width="54%" align="left">役割</th></tr>
+<tr><th width="18%" align="left">工程</th><th width="32%" align="left">担当者</th><th width="50%" align="left">役割</th></tr>
 <tr><td>📐&nbsp;設計</td><td><b>Asashishi</b>（本プロジェクト唯一の人間）</td><td>システム境界、Worker 分割、永続化・復元戦略の決定</td></tr>
 <tr><td>⌨️&nbsp;実装</td><td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td><td>100% の production コード、テスト、ドキュメントを作成</td></tr>
-<tr><td>🧾&nbsp;レビュー</td><td><b>Asashishi</b> × AI</td><td>全コミットを人間と AI が共同レビューしたうえで取り込み</td></tr>
+<tr><td>🧾&nbsp;レ&#8288;ビ&#8288;ュ&#8288;ー</td><td><b>Asashishi</b> × AI</td><td>全コミットを人間と AI が共同レビューしたうえで取り込み</td></tr>
 <tr><td>🔬&nbsp;監査</td><td><b>Fable 5</b> · <b>GPT-5.6（Sol）</b> · <b>Opus 5</b> 等の先端モデル</td><td>リポジトリ全体の交差レビューを重ね、指摘項目を堅牢化コミットへ即時還元</td></tr>
-<tr><td>🛰️&nbsp;安全演習</td><td>同上の先端モデル群</td><td>クラッシュ復元・競合・悪意ある入力・資源枯渇などのシナリオ演習をすべて通過</td></tr>
+<tr><td>🛰️&nbsp;安&#8288;全&#8288;演&#8288;習</td><td>同上の先端モデル群</td><td>クラッシュ復元・競合・悪意ある入力・資源枯渇などのシナリオ演習をすべて通過</td></tr>
 </table>
 
 レビューは一回限りの儀式ではありません。毎回のコミットレビュー、先端モデルによるリポジトリ全体の監査、安全演習から得た知見を、新たな制約としてコードへ反映しています。
@@ -71,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1532 件のテストが全て成功 / テストファイル 166 件 / expect() 呼び出し 27,514 回 / 関数カバレッジ 95.29% / 行カバレッジ 96.61%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1554 件のテストが全て成功 / テストファイル 167 件 / expect() 呼び出し 27,602 回 / 関数カバレッジ 95.08% / 行カバレッジ 96.51%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -174,7 +174,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">メンバー</td><td>各 copy モードを開始</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">メンバー</td><td>現在のグローバル copy を停止</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">メンバー</td><td>アバターのみ取得</td></tr>
-<tr><td><code>/&lt;漢字 1~2 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> や <code>/贴贴</code> で「実行者 咬了 対象！」と応答</td></tr>
+<tr><td><code>/&lt;漢字 1~2 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> や <code>/揪住</code> で「実行者 咬了 対象！」と応答し、成功結果は長期保持</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">メンバー</td><td>自発的発言を N 分間停止（既定 3 分）</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">メンバー</td><td>静寂モードを早期解除</td></tr>
 <tr><td><code>/mute … &lt;期間&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>スーパーグループで一時ミュート／早期解除。返信、<code>@username</code>、user id を対象にでき、期間は <code>m/h/d</code> で指定します</td></tr>
@@ -182,6 +182,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>完全解除：動的ブロックリストから id を削除し、Bot が管理する全グループの BAN を解除します。対象指定は <code>/block</code> と同じで、チャンネルの負の id も受け付けます。静的ブロックリストの identity は拒否し、スーパー管理者は暗黙に許可します</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>このグループの AI チャットを切り替え。スーパー管理者は暗黙に許可</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>このグループの広告検出を切り替え。protected identity 以外の命中時は <code>/block</code> と同じ処分。スーパー管理者は暗黙に許可</td></tr>
+<tr><td><code>/query_mood</code></td><td align="center">メンバー</td><td>このグループで現在有効な AI の気分を、再抽選せずに表示</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>AI 有効グループの気分を即時再抽選。スーパー管理者は暗黙に許可</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>日本語翻訳機能を切り替え（既定 OFF）。スーパー管理者は暗黙に許可</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>このグループの主要処理ゲートを切り替え</td></tr>
@@ -194,7 +195,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 ### 挙動の詳細
 
 - **コマンドの入口ゲート**：グループコマンドは一律 `/init` ゲートを通ります。未初期化グループで受け付けるのはスーパー管理者の `/init` だけなので、`/permission` と `/white` も初期化済みグループで使う必要があります。private chat で許可される slash command は `/send` だけです。
-- **アクションコマンド**：名前は `first_name last_name` 形式で、公開ユーザー名があればプロフィールへリンクします。対象の指定方法は他のコマンドと同じで、返信または `@username` です。
+- **アクションコマンド**：名前は `first_name last_name` 形式で、公開ユーザー名があればプロフィールへリンクします。対象の指定方法は他のコマンドと同じで、返信または `@username` です。成功したアクション結果は `/permission help` と同様に長期保持し、対象不足・引数エラー・`/x` の使い方提示は引き続き 30 秒後に削除します。
 - **`/block` ブロックリスト**：対象は返信・`@username`・ユーザー id の直接指定（正の整数。グループやチャンネルの負の id は対象外）で指名できます。id が最も確実です——手放されたユーザー名は他人が再登録でき、一方このコマンドは取り消せません。id が永続ブロックリストに入ると、監視中のどのグループの入室更新でも即 kick されます。あるグループで「管理者権限がある」と「`/init enable` 済み」が揃った瞬間には（どちらが先でも）、すでに在室しているリスト該当者もまとめて掃除します。`/unblock` はリスト全体をファイルへ原子的に書き直し、既定で Bot が管理する全グループの BAN も解除します。対象が動的リストにいなくてもチャット横断解除は実行します。`/unblock` は `/block` にはない指定方法をもう 1 つ受け付けます——**チャンネルの負の id** です。チャンネル被りは `sender_chat` としてリストに入りますが（チャンネルのメッセージへ返信しての `/block`、広告検出の命中）、広告検出は元メッセージを削除し、公開 username の無いチャンネルはキャッシュにも載りません。負の id を拒否したままだと、そうした項目は二度と消せなくなります。逆方向を開かないのは、`/block` で会話 id を貼り間違えると会話 identity 全体を、しかも取り消せない形で BAN してしまうからです。
 - **`/batch_kick` の低速 wave cleanup**：初期化済みスーパーグループでスーパー管理者だけが使用できます。引数は `30m`、`2h`、`1d` のような 24 時間以内の window 1 個です。入室ログから window 内の user ごとの最終入室を取り、まだ在室している対象を小さい固定並行数で kick します。blocklist へは追加せず、スーパー管理者・allowlist identity・恒久 blocklist の対象は通常の kick 対象として扱いません。
 - **`/ad_detect` 広告検出**：送信者ごとに 90 秒間のメッセージ列へまとめ、DeepSeek が判定します。protected identity 以外の命中時は `/block` と同じ処分（恒久ブロックリスト登録と、管理下の全グループでの BAN＋当該メンバーのメッセージ削除）を行い、発火したグループに BAN 理由を告知します（30 秒後に自動削除）。スーパー管理者は常に検出を bypass します。allowlist identity は `isCanBypassAdDetection` を無効にすると判定と当該 message bundle の削除対象になりますが、恒久 blocklist には入りません。Bot がそのグループの管理者のときだけ発火し、判定基準は [`config/ad_samples.json`](config_example/ad_samples.json) です。
@@ -257,7 +258,7 @@ cp -r config_example config
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather が発行する Bot Token |
 | `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者の 10 進数ユーザー ID を 1 つ |
-| `AI_CHAT_GEMINI_API_KEY` | — | AI 雑談エージェント専用。空の場合 AI Worker は起動せず、`/ai_chat enable` と `/switch_mood` が拒否されます |
+| `AI_CHAT_GEMINI_API_KEY` | — | AI 雑談エージェント専用。空の場合 AI Worker は起動せず、`/ai_chat enable`、`/query_mood`、`/switch_mood` が拒否されます |
 | `AD_DETECT_DEEPSEEK_API_KEY` | — | 広告検出専用。空の場合 `/ad_detect enable` が拒否されます |
 | `COPY_NINJIA_DATA_ROOT` | — | 実行時データのルート。未指定ならプロジェクトルート |
 
@@ -291,7 +292,7 @@ Bot を初めてグループに追加した後、`SUPER_ADMIN_USER_ID` がグル
 /ai_chat enable
 ```
 
-> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードに中国語の文字列リテラルが 63 ファイルへ約 582 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](docs/ja/06-modification-guide.md) にあります。
+> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードでは中国語の文字列または template literal を含むソース行が 65 ファイルへ約 581 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](docs/ja/06-modification-guide.md) にあります。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 

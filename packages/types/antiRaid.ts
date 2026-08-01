@@ -1,6 +1,11 @@
 import type { RemoveBlockedMembersParams } from "./blocklist";
 import type { BotChatPermissions } from "./telegram";
 import type { ChatPermissions } from "@grammyjs/types";
+import type {
+  AdCandidateMessage,
+  AdDetectedEvent,
+  ClearAdDetectMessage,
+} from "./antiRaid/adDetect";
 export type * from "./antiRaid/internal";
 export type * from "./antiRaid/adDetect";
 
@@ -229,66 +234,6 @@ export interface RemoveBlockedMembersMessage extends RemoveBlockedMembersParams 
 }
 
 /**
- * 主线程 -> Worker：一条待广告判定的群消息。只有本群开了 /ad_detect enable、
- * 机器人是本群管理员、且发送者不是自己人时才投递（见 antiRaid/adDetect.ts）。
- * Worker 侧按发送者归并成消息串排队送检，见 workers/antiRaid/adDetect/queue.ts。
- */
-export interface AdCandidateMessage {
-  type: "adCandidate";
-  chatId: number;
-  /** 用户 id；频道马甲发言时是该频道的负数 id。 */
-  senderId: number;
-  messageId: number;
-  /** 已清洗成单行的正文（文本或图片说明）。 */
-  text: string;
-  /**
-   * 被引用段与被回复原文。**与 text 一起参与判定**，同时原样留进命中样本。
-   *
-   * 与 text 分成两个字段跨线程传，两条理由各自独立：判定侧要在正文按
-   * AD_DETECT_MESSAGE_MAX_CHARS 截断**之后**再接上（先拼后截等于给发送者一个
-   * 零成本绕过手段），样本侧要留一份没并进正文的原样（人回头翻样本、调
-   * config/ad_samples.json 时得分得清哪一段是他自己写的、哪一段是引来的）。
-   * 为什么必须连坐见 docs/04-invariants.md 与 workers/antiRaid/adDetect/bundle.ts
-   * 的 claimSampleContextParts。
-   */
-  sampleContext?: AdSampleContext;
-  /**
-   * 正文里看不见的 text_link 落地页 URL，已清洗并按 AD_DETECT_LINK_URL_MAX_CHARS
-   * 截断。与正文分开带：拼进正文的话，Worker 侧按字数从头保留的截断正好切掉
-   * 尾部这几个 URL（见 antiRaid/adDetect.ts 的 collectHiddenLinkUrls）。
-   */
-  linkUrls?: string[];
-  /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
-  label: string;
-  /** 发送者是频道马甲（sender_chat）而非真人。 */
-  isChannel: boolean;
-  /**
-   * 该发送者此刻已经在永久黑名单里（封禁多半还没落地）。
-   *
-   * 名单是主线程的同步安全边界，Worker 侧没有镜像，只能随投递带过来。真人在
-   * 主线程就被挡掉了、不会带着 true 走到这里；频道马甲则必须投过来——它的封禁
-   * 走 banChatSenderChat，没有 revoke_messages，这段落地空档里发出来的广告只有
-   * Worker 侧的 deleteStraggler 这一条清理路径（见 states/adDetectAdmission.ts）。
-   */
-  blocked: boolean;
-  /**
-   * 该发送者此刻是否仍在入群验证窗口内（主线程按待验证镜像判定）。这是模型
-   * 自己看不到的事实——群聊转录里没有入群时间——只能由这里喂进去，见
-   * consts/antiRaid/adDetect.ts 的 AD_DETECT_JUST_JOINED_FACT。
-   */
-  justJoined: boolean;
-}
-
-/**
- * 主线程 -> Worker：丢掉这个群尚未送检的广告判定队列。/ad_detect disable、
- * 停管与群 teardown 都会发；已经在途的那一次判定由 Worker 侧自行作废。
- */
-export interface ClearAdDetectMessage {
-  type: "clearAdDetect";
-  chatId: number;
-}
-
-/**
  * 主线程 -> Worker：一条参与刷屏计数的群消息。
  *
  * 只有超级群、真实用户（非频道马甲/匿名管理员）、非机器人自身、非自己人的
@@ -355,7 +300,7 @@ export type AntiRaidWorkerMessage =
 /**
  * Worker -> 主线程：一批黑名单处置已经走完。complete 为 true 才允许主线程
  * 销掉镜像并把「这个群已清扫过」记进状态：处置没落地却把边沿消耗掉，等于
- * 让那些人永久坐在群里（见 infra/blocklist.ts 与 infra/botAdmin.ts）。
+ * 让那些人永久坐在群里（见 infra/blocklist/ 与 infra/botAdmin.ts）。
  */
 export interface BlockedMembersRemovedEvent {
   type: "blockedMembersRemoved";
@@ -419,43 +364,6 @@ export interface AntiRaidBarrierCompleteEvent {
 export interface AntiRaidDrainCompleteEvent {
   type: "drainComplete";
   drainId: number;
-}
-
-/**
- * Worker -> 主线程：这个发送者被判成广告，请按 /block 同样的处置办。
- * Worker 已经删掉那一串消息并在群里播报过；名单与跨群封禁必须回主线程
- * （名单是主线程的同步安全边界，封禁批次要进 durable outbox）。
- */
-export interface AdDetectedEvent {
-  type: "adDetected";
-  chatId: number;
-  senderId: number;
-  isChannel: boolean;
-  label: string;
-  /** 模型给出的简短理由，只进日志、播报与命中样本；不参与任何控制流。 */
-  reason: string;
-  /**
-   * 本次判定依据的整串消息，原样带回主线程写进命中样本文件（见
-   * workers/diskIO/adSampleFile.ts）。判定看的是整串而不是某一条，样本因此也
-   * 按串记录——只留触发那一条的话，人回头看到的是一句孤立的话，根本复现不出
-   * 模型当时读到的东西。
-   */
-  messages: readonly AdSampleMessage[];
-}
-
-/** 命中样本里的一条消息：判定读到的正文，以及只给人看的上下文。 */
-export interface AdSampleMessage extends AdSampleContext {
-  messageId: number;
-  /** 送检时的正文（已截断、已补上 text_link 落地页），与模型读到的完全一致。 */
-  text: string;
-}
-
-/** 参与判定、同时写进命中样本的上下文。两项都可能缺席。 */
-export interface AdSampleContext {
-  /** 这条消息里被引用的那一段（message.quote）。 */
-  quote?: string;
-  /** 这条消息回复的那条原消息的正文。 */
-  replyTo?: string;
 }
 
 export type AntiRaidWorkerEvent =

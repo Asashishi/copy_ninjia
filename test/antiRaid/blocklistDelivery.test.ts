@@ -20,14 +20,14 @@ mock.module("../../packages/infra/logger", () => ({
     error(message: unknown): void { errorLogs.push(String(message)); },
   },
 }));
-mock.module("../../packages/infra/blocklist", () => ({
+mock.module("../../packages/infra/blocklist/outbox", () => ({
   getPendingBlockedRemovalParams: (removalId: number): RemoveBlockedMembersParams | undefined => {
     const params: RemoveBlockedMembersParams | undefined = authoritative.get(removalId);
     return params === undefined ? undefined : { ...params, userIds: [...params.userIds] };
   },
   persistPendingBlockedRemovals,
-  requestBlocklistResweep,
 }));
+mock.module("../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
 
 const { prepareDurableAntiRaidMessages } =
   await import("../../packages/antiRaid/blocklistDelivery");

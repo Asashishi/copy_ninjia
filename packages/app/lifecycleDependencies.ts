@@ -1,9 +1,7 @@
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, terminateAiChat } from "../aiChat";
 import { drainAntiRaid, hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
-import {
-  hydrateBlocklist,
-  sweepManagedBlocklistChats,
-} from "../infra/blocklist";
+import { hydrateBlocklist } from "../infra/blocklist/outbox";
+import { sweepManagedBlocklistChats } from "../infra/blocklist/sweep";
 import { restoreLuckState } from "../commands";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainReactionQueue, initReactionQueue, quiesceReactionQueue } from "../copy/reactionQueue";
@@ -29,6 +27,7 @@ import {
 } from "../infra/storage/stateStore";
 import { bot, initTelegramClients } from "../infra/telegram";
 import { sleep } from "../libs/sleep";
+import { monotonicNow } from "../libs/monotonicDeadline";
 import { seedSenderCache } from "../users/senderIdentity";
 import { preflightEnabledFeatures } from "./featurePreflight";
 import { getWhitelistConfig } from "../config/whitelist";
@@ -80,6 +79,7 @@ export const lifecycleDependencies = {
   loadBlocklistConfig,
   loadState,
   logger,
+  monotonicNow,
   preflightEnabledFeatures,
   refreshAllChatTitles,
   registerCommandMenu,

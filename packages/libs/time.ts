@@ -25,7 +25,7 @@ const TOKYO_DATE_KEY_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("e
 /**
  * 毫秒时间戳（缺省当前时刻）对应的东京时区日期串（YYYY-MM-DD）。
  * /luck_challenge 的每日缓存与 diskIOWorker 的运势落盘（按东京日期分文件）
- * 共用同一个日期划分，见 commands/luckChallenge.ts、workers/diskIOWorker.ts。
+ * 共用同一个日期划分，见 commands/luckChallenge/、workers/diskIOWorker.ts。
  */
 export function getTokyoDateKey(date: Date = new Date()): string {
   return TOKYO_DATE_KEY_FORMATTER.format(date);

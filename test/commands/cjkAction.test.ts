@@ -92,7 +92,7 @@ describe("parseCjkActionCommand 与 hears 匹配", () => {
 });
 
 describe("/<1~2 个中文字> 动作命令", () => {
-  test("回复目标时输出「发起人 X了 目标!」，两个名字各自挂 t.me 链接", async () => {
+  test("成功动作长期保留，并输出带双方 t.me 链接的「发起人 X了 目标!」", async () => {
     await handleCjkActionCommand(context("/咬"), next);
 
     expect(nextCalls).toBe(0);
@@ -108,19 +108,21 @@ describe("/<1~2 个中文字> 动作命令", () => {
       ],
       // 两个名字都挂 t.me 链接，必须关掉 Telegram 的自动预览卡片。
       disableLinkPreview: true,
+      // 用户明确授权成功动作与 /permission help 同为群内长期留存例外。
+      preserveInGroup: true,
     });
     // 实体必须精确覆盖两个名字，否则链接会错位到旁边的文字上。
     expect(text.slice(0, 6)).toBe("ネオン アサ");
     expect(text.slice(10, 10 + 17)).toBe("冷曦[Hiyase] 🏳️‍🌈");
   });
 
-  test("两字动作词整体念进句子，目标名的实体偏移随之右移", async () => {
+  test("/揪住 这类两字动作词整体念进句子，目标名的实体偏移随之右移", async () => {
     target = { id: 7, first_name: "Bob", username: "bob" };
-    await handleCjkActionCommand(context("/贴贴", { id: 100, first_name: "Alice", username: "alice" }), next);
+    await handleCjkActionCommand(context("/揪住", { id: 100, first_name: "Alice", username: "alice" }), next);
 
     expect(sendMessage).toHaveBeenCalledWith({
       chatId: -1001,
-      text: "Alice 贴贴了 Bob！",
+      text: "Alice 揪住了 Bob！",
       replyToMessageId: 10,
       // 动作词多一个字，目标名的 offset 就得跟着从 9 挪到 10，否则链接会错位。
       entities: [
@@ -128,6 +130,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
         { type: "text_link", offset: 10, length: 3, url: "https://t.me/bob" },
       ],
       disableLinkPreview: true,
+      preserveInGroup: true,
     });
   });
 
@@ -172,6 +175,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
       replyToMessageId: 10,
       entities: [],
       disableLinkPreview: true,
+      preserveInGroup: true,
     });
   });
 

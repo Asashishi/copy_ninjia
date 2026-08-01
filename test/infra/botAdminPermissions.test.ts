@@ -305,7 +305,7 @@ describe("机器人自身权限位缓存", () => {
     ensureBotChatPermissions(CHAT_ID, 1_000 + BOT_PERMISSION_PROBE_RETRY_MS - 1);
     expect(getChatMemberCalls).toBe(1);
 
-    // 顺带把过期的 botIsAdmin 纠正掉，让 isBotAdminIn 不再放行——这才是自愈的
+    // 顺带把过期的 botIsAdmin 纠正掉，让 resolveBotAdminStatus 不再放行——这才是自愈的
     // 那一半，光有退避只是把每条消息一次压成 5 分钟一次。
     expect(states.get(CHAT_ID)?.botIsAdmin).toBe(false);
   });

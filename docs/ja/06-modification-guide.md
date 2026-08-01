@@ -14,7 +14,7 @@
 
 ## スラッシュコマンドの追加
 
-1. **Handler**：`packages/commands/` に 1 ファイル作成し、`function` 宣言で `handleXxxCommand` を明示的な戻り値型付きで export します。権限 gate は既存パターンを参照します。許可ユーザーは `block.ts`、スーパー管理者は `superAdminToggle.ts` / `switchMood.ts`、プライベートチャット限定は `send.ts` です。後者は本人以外またはプライベートチャット以外ならエラーを返さず静かに return します。
+1. **Handler**：`packages/commands/` に 1 ファイル作成し、`function` 宣言で `handleXxxCommand` を明示的な戻り値型付きで export します。権限 gate は既存パターンを参照します。許可ユーザーは `block.ts`、スーパー管理者は `superAdminToggle.ts` / `mood.ts`、プライベートチャット限定は `send.ts` です。後者は本人以外またはプライベートチャット以外ならエラーを返さず静かに return します。
 2. **Export**：`packages/commands/index.ts` に追加します。
 3. **登録**：[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) に `bot.command("xxx", ...)` を追加します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
 4. **プライベートチャット gate**：新しいコマンドをプライベートチャットで使う場合は、[`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) も変更し、gate テストを追加します。現在、プライベートチャットのスラッシュコマンドは `/send` だけを明示的に許可しているため、handler 登録だけでは到達しません。グループ専用コマンドは変更不要です。
@@ -31,6 +31,7 @@
 - **対象解決は別の入口を通る。** この handler が受け取るのは `CommandContext` ではなく素の `Context` なので、[`targetResolution.ts`](../../packages/commands/targetResolution.ts) の `resolveCommandTarget` に `ResolveCommandTargetParams` を直接渡します。自分宛でない形（`/咬@OtherBot`、caption だけのメッセージ、異常なメッセージ形態）は `next()` で通し、update を黙って握り潰してはいけません。
 - **`message.text` だけを見る。** `bot.hears` は text と caption の両方に一致しますが、画像付きメッセージを受理するとそれは `handleIncomingMessage` に届かなくなり、その画像が AI のローリングメモリと視覚パイプラインに入りません。
 - **パイプラインの前提を自分で用意する。** 登録位置は自動パイプラインより**前**なので、そのパイプラインの自己送信ガードと `cacheSender` の恩恵を受けられません。handler 自身が `isBotOwnMessage` で Bot 自身のメッセージを除外し（さもないとチャンネルの跳ね返りが自問自答の連投ループになります）、送信者 ID のキャッシュも自分で行う必要があります。
+- **保持 semantics を明示する。** 成功した action result はユーザーが許可した長期保持 content なので、`sendCommandMessage` に `preserveInGroup: true` を明示します。対象不足・引数エラー・`/x` の使い方提示は既定経路のままとし、グループへの送信成功から 30 秒後に削除します。
 - **`BOT_COMMANDS` メニューには入れられない。** BotFather のコマンド名も ASCII 限定（ラテン文字・数字・アンダースコア、最長 32 文字）です。`setMyCommands` はリスト全体を一括送信するので、1 件でも不正な名前が混ざるとメニュー全体が `BOT_COMMAND_INVALID` で失敗します。登録失敗はログに残るだけで起動を止めないため、メニューが黙って消えます。メニューで使い方を見せたい場合は ASCII のプレースホルダー項目（既存の `/x`）を追加し、構文は description に書きます。
 - **プレースホルダーにも handler が要る。** メニューをタップすると実際にコマンドが送信されるため、登録しないとフォールバックに到達し、通常メッセージとして AI/copy pipeline に流れてしまいます。かといって何もしない空の handler にすると、タップした人には完全な沈黙しか返りません。使い方を 1 行返してチェーンを終了させます。
 - **自前のグローバル rate limit を備える。** これらのコマンドはコマンドメニューという自然な制約を持たず、アクション語は誰でもその場で作れます。window と上限は `packages/consts/commands.ts`、タイムスタンプ列は `packages/cache/main/<domain>.ts` に置き、判定は [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) を再利用します（呼び出し側が渡した列をその場で更新する純関数で、自身は状態を持ちません）。
@@ -47,7 +48,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列リテラルが 63 ファイルに約 582 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 65 ファイルに約 581 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 
@@ -84,7 +85,7 @@
 
 1. [`packages/consts/httpFetch.ts`](../../packages/consts/httpFetch.ts) の `JSON_API_ALLOWED_ORIGINS` に正確な HTTPS origin を明示的に追加します。任意 host、HTTP、credential を含む URL へ広げてはいけません。
 2. [`packages/libs/httpFetch.ts`](../../packages/libs/httpFetch.ts) の上限付き JSON reader を再利用します。redirect は無効のままにし、response body と error log の上限を維持します。
-3. origin、redirect、過大 response、失敗 log のテストを追加します。Telegram avatar crawler は独立した media 経路であり、JSON API 追加のために接続先を変えたり制限したりしません。
+3. origin、redirect、過大 response、失敗 log のテストを追加します。Telegram avatar download は独立した media 経路です。Bot API `file.getUrl()` の主経路と `t.me` の page/image fallback はどちらも redirect を無効にし、読み取り上限を維持します。JSON API 追加のためにこの経路を付け替えてはいけません。
 
 ## ペルソナまたは JSON 設定の変更
 
@@ -117,7 +118,7 @@
 
 ## Worker 間 protocol の変更
 
-スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/main/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/switch_mood` の handshake が実装例です。
+スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/main/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/query_mood` と `/switch_mood` が共有する mood handshake が実装例です。
 
 ---
 

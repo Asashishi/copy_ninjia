@@ -77,6 +77,35 @@ function deferredVoid(): { promise: Promise<void>; resolve(): void } {
 }
 
 describe("explicit Worker initialization", () => {
+  test("恢复监听器按显式优先级稳定排序，并拒绝重复 owner", () => {
+    const originalRegistrations = [...diskIORuntime.respawnListeners];
+    const listener = (): boolean => true;
+    try {
+      diskIO.onDiskIORespawn("later", 200, listener);
+      diskIO.onDiskIORespawn("first", 100, listener);
+      diskIO.onDiskIORespawn("same-z", 200, listener);
+      diskIO.onDiskIORespawn("same-a", 200, listener);
+
+      const addedOwners: string[] = diskIORuntime.respawnListeners
+        .map((registration) => registration.owner)
+        .filter((owner: string): boolean => ["first", "later", "same-a", "same-z"].includes(owner));
+      expect(addedOwners).toEqual([
+        "first",
+        "later",
+        "same-a",
+        "same-z",
+      ]);
+      expect(() => diskIO.onDiskIORespawn("later", 300, listener)).toThrow("already registered");
+      expect(() => diskIO.onDiskIORespawn("invalid", Number.NaN, listener)).toThrow("safe integer");
+    } finally {
+      diskIORuntime.respawnListeners.splice(
+        0,
+        diskIORuntime.respawnListeners.length,
+        ...originalRegistrations
+      );
+    }
+  });
+
   test("拒绝非正有限恢复预算和非法待写容量，且不留下半初始化状态", async () => {
     FakeWorker.instances.length = 0;
     const originalWorker: typeof Worker = globalThis.Worker;
@@ -199,7 +228,7 @@ describe("explicit Worker initialization", () => {
       expect(aiMemoryPersisted).toEqual([aiMemoryAck]);
 
       let respawns: number = 0;
-      diskIO.onDiskIORespawn("test mirror", (transport: DiskIORecoveryTransport): boolean => {
+      diskIO.onDiskIORespawn("test mirror", 1_000, (transport: DiskIORecoveryTransport): boolean => {
         respawns++;
         return transport.post(luckDraw);
       });
@@ -284,7 +313,7 @@ describe("explicit Worker initialization", () => {
       await Bun.sleep(0);
       worker.messages.length = 0;
 
-      diskIO.onDiskIORespawn("delayed mirror", async (
+      diskIO.onDiskIORespawn("delayed mirror", 1_000, async (
         transport: DiskIORecoveryTransport
       ): Promise<boolean> => {
         await gate.promise;
@@ -332,7 +361,7 @@ describe("explicit Worker initialization", () => {
       emitSuccessfulLoad(first);
       await loadedPromise;
       await Bun.sleep(0);
-      diskIO.onDiskIORespawn("generation mirror", async (
+      diskIO.onDiskIORespawn("generation mirror", 1_000, async (
         transport: DiskIORecoveryTransport
       ): Promise<boolean> => {
         invocations++;
@@ -412,7 +441,7 @@ describe("explicit Worker initialization", () => {
           emitSuccessfulLoad(worker);
           await loadedPromise;
           await Bun.sleep(0);
-          diskIO.onDiskIORespawn(scenario.owner, scenario.listener);
+          diskIO.onDiskIORespawn(scenario.owner, 1_000, scenario.listener);
           diskIORuntime.writable = false;
           diskIORuntime.runtimeRecoveryWorker = worker as unknown as Worker;
           expect(diskIO.postDiskIO(luckDraw)).toBeTrue();
@@ -453,10 +482,10 @@ describe("explicit Worker initialization", () => {
       await loadedPromise;
       await Bun.sleep(0);
       worker.rejectedTypes.add("luckDraw");
-      diskIO.onDiskIORespawn("rejected mirror", (
+      diskIO.onDiskIORespawn("rejected mirror", 1_000, (
         transport: DiskIORecoveryTransport
       ): boolean => transport.post(luckDraw));
-      diskIO.onDiskIORespawn("later mirror", (): boolean => {
+      diskIO.onDiskIORespawn("later mirror", 2_000, (): boolean => {
         laterMirrorRan = true;
         return true;
       });
@@ -585,7 +614,7 @@ describe("explicit Worker initialization", () => {
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
-      diskIO.onDiskIORespawn("hung mirror", async (): Promise<boolean> => {
+      diskIO.onDiskIORespawn("hung mirror", 1_000, async (): Promise<boolean> => {
         await gate.promise;
         return true;
       });

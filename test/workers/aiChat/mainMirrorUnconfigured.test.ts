@@ -45,11 +45,12 @@ mock.module("../../../packages/libs/supervisedWorker", () => ({
     terminate: async (): Promise<void> => {},
   }),
 }));
-mock.module("../../../packages/aiChat/ai/persistence", () => ({
+mock.module("../../../packages/infra/diskIO", () => ({
   postDiskIO: (message: AiDiskMessage): boolean => { diskPosts.push(message); return true; },
   onAiMemoryDeletedPersisted: (_callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {},
   onAiMemoryPersisted: (_callback: (reply: AiMemoryPersistedReply) => void): void => {},
-  onDiskIORespawn: (_owner: string, _listener: DiskIORespawnListener): void => {},
+  onDiskIORespawn: (_owner: string, _priority: number, _listener: DiskIORespawnListener): void => {},
+  relayLogMessage: (): boolean => true,
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),

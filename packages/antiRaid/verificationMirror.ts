@@ -5,7 +5,7 @@ import {
   persistedVerificationRevisions,
 } from "../cache/main/antiRaid/verificationMirror";
 import { verificationKey } from "../libs/verificationKey";
-import { postDiskIO } from "../workers/antiRaid/persistence";
+import { postDiskIO } from "../infra/diskIO";
 import type {
   VerificationDeleteEvent,
   VerificationSnapshot,

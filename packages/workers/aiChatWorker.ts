@@ -20,12 +20,13 @@ import {
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { drainPendingReplyQueues, generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
-import { switchMood } from "../aiChat/ai/mood";
+import { currentMood, switchMood } from "../aiChat/ai/mood";
 import type {
   AiChatInvalidatedEvent,
   AiChatWorkerMessage,
   AiInvalidateChatMessage,
   AiMemoryFlushedEvent,
+  AiMoodQueriedEvent,
   AiMoodSwitchedEvent,
 } from "../types/aiChat/protocol";
 import type { AiStickerCatalogEvent } from "../types/stickers/protocol";
@@ -122,12 +123,23 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
     case "invalidateChat":
       handleInvalidateChat(msg);
       break;
+    case "queryMood":
+      if (Date.now() >= msg.deadlineAt) break;
+      // /query_mood 只读取当前有效档位；自然到期由 currentMood 统一处理，
+      // 尚未到期时不产生 switch_mood 的强制重抽副作用。
+      self.postMessage({
+        type: "moodQueried",
+        chatId: msg.chatId,
+        requestId: msg.requestId,
+        moodName: currentMood(msg.chatId).name,
+      } satisfies AiMoodQueriedEvent);
+      break;
     case "switchMood":
       // 主线程超时只会撤销 waiter，无法从 Worker 消息队列里召回已投递请求；
       // 因此在副作用发生前检查绝对截止时刻，积压到过期的命令不得迟到改心情。
       if (Date.now() >= msg.deadlineAt) break;
       // /switch_mood：同步重抽后立刻回执结果；回复由主线程命令处理器发出，
-      // 本线程不发 Telegram 消息（见 commands/switchMood.ts）。
+      // 本线程不发 Telegram 消息（见 commands/mood.ts）。
       self.postMessage({
         type: "moodSwitched",
         chatId: msg.chatId,

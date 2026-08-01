@@ -10,7 +10,7 @@ import { recordJoinLog } from "../infra/joinLog";
 import { answerCallbackQuery } from "../infra/telegram/actions";
 import {
   ensureBotChatPermissions,
-  isBotAdminIn,
+  resolveBotAdminStatus,
   markBotAdminObserved,
 } from "../infra/botAdmin";
 import { VERIFY_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
@@ -18,7 +18,7 @@ import { isAdminStatus } from "../libs/chatMember";
 import { verificationKey } from "../libs/verificationKey";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { isWhitelisted } from "../config/whitelist";
-import { buildAdCandidate } from "./adDetect";
+import { buildAdCandidate } from "./adCandidate";
 import {
   claimBlockedJoiner,
   deleteBlockedSenderChatMessage,
@@ -144,7 +144,7 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
  * @returns 若消息在此已被完全处理、调用方应跳过后续处理逻辑（入群公告），
  * 返回 true；否则返回 false，让消息正常继续流转。
  */
-export async function handleGroupJoinVerification(
+export async function handleAntiRaidMessageIngress(
   message: Message,
   botId: number
 ): Promise<boolean> {
@@ -155,7 +155,7 @@ export async function handleGroupJoinVerification(
   // 过去只会让 Worker 开一堆注定失败的验证窗口、刷一堆权限报错。已有身份
   // 记录时这个判定是同步的（不打 API），只有从未记录过的群会现查一次。
   // 入群公告照样吞掉（服务消息本来就不该流进复读/AI 流水线），只是不投递。
-  if (!(await isBotAdminIn(message.chat.id))) {
+  if (!(await resolveBotAdminStatus(message.chat.id))) {
     return !!(
       message.new_chat_members &&
       message.new_chat_members.length > 0

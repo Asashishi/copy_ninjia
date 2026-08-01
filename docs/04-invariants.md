@@ -52,7 +52,7 @@
 
   两把 AI 密钥都属于后者，**变量名一律以所服务的功能打头**（`AI_CHAT_GEMINI_API_KEY`、`AD_DETECT_DEEPSEEK_API_KEY`）：读 `.env` 的人要能一眼看出「缺这一把会瘸哪个功能」，而同一家供应商日后完全可能同时服务两个功能，按供应商命名到那时就再也分不开了。缺 `AD_DETECT_DEEPSEEK_API_KEY` 时 `/ad_detect enable` 直接拒绝、已经开着的群也不再投递待检消息；
 
-  缺 `AI_CHAT_GEMINI_API_KEY` 时 AI Worker 根本不启动、`/ai_chat enable` 与 `/switch_mood` 直接拒绝、已经开着的群也不再投喂消息与触发。两把密钥职责不重叠、互不回退：Gemini 只服务 AI 闲聊 agent，DeepSeek 只服务广告检测。
+  缺 `AI_CHAT_GEMINI_API_KEY` 时 AI Worker 根本不启动、`/ai_chat enable`、`/query_mood` 与 `/switch_mood` 直接拒绝、已经开着的群也不再投喂消息与触发。两把密钥职责不重叠、互不回退：Gemini 只服务 AI 闲聊 agent，DeepSeek 只服务广告检测。
 
   **日语翻译同理，唯一判定入口是 `packages/copy/availability.ts`**（`g-auth.json` 可用 + 本群 opt-in），`/ja_copy` 与自动复读的 ja 变换都必须走它：这条线的降级是**静默**的——`translateToJapanese` 失败只返回 null，调用方原样发出未翻译的原文，群里看到的与「翻译服务抖了一下」完全不可区分，一次配置事故能这样连续伪装好几天。命令路径点名 `g-auth.json` 并拒绝，自动路径退化成普通复制，都不允许「假装翻译过」。
 
@@ -72,8 +72,9 @@
 
 ### 出站请求与消息安全
 
-- 通用 JSON API 请求只允许访问 `JSON_API_ALLOWED_ORIGINS` 明列的 HTTPS origin，并禁用 redirect；新增调用方必须显式扩充白名单。Telegram 头像爬取使用独立入口与 Telegram 自有资产域后缀 allowlist，但复用同一套「HTTPS、无凭据、标签边界匹配」URL 策略并同样禁用 redirect；不得误接到 JSON allowlist，也不得恢复成任意 HTTPS 图片。
+- 通用 JSON API 请求只允许访问 `JSON_API_ALLOWED_ORIGINS` 明列的 HTTPS origin，并禁用 redirect；新增调用方必须显式扩充白名单。Telegram 头像下载使用独立入口与 Telegram 自有资产域后缀 allowlist，但复用同一套「HTTPS、无凭据、标签边界匹配」URL 策略；Bot API `file.getUrl()` 主路径与 `t.me` 网页/图片回退都必须禁用 redirect 并保持有界读取，不得误接到 JSON allowlist，也不得恢复成任意 HTTPS 图片。
 - 出站消息一律不设 `parse_mode`：用户昵称与消息内容只能作为纯文本参与拼接，不得有机会被解析成格式或链接。需要富文本时由调用方按段拼好文本、自行给出 `entities`（偏移按 Telegram 的 UTF-16 code unit 口径，等价于 JS `String#length`；长度为 0 的实体会让整条消息被拒收）。新增发送路径不得改用 `parse_mode` 绕开这条约束。
+- 群内非功能性命令文本统一通过 `sendCommandMessage` 在发送成功 30 秒后删除，私聊不受影响。只有用户明确授权的 `/permission help` 与成功中文动作结果可以传 `preserveInGroup: true` 长期保留；动作命令的目标校验失败与 `/x` 用法提示仍必须自动清理。新增例外必须同时在调用点和测试中显式标记。
 
 <p align="right"><a href="#快速导航">↑ 返回快速导航</a></p>
 
@@ -108,14 +109,15 @@
 
 ### AI 闲聊运行时
 
-- `/switch_mood` 采用主线程 request/waiter 与 AI Worker 回执握手。主线程必须先登记 waiter 再投递，并在超时、Worker 崩溃、放弃重启和停机时统一结算；请求携带绝对截止时刻，AI Worker 必须在重抽这一副作用之前拒绝已经过期的积压请求。只有 `moodSwitched` 回执能宣称重抽成功；后续 Telegram 成功回复发送失败不得被改写成「重抽失败」。
+- `/query_mood` 与 `/switch_mood` 共用主线程 request/waiter 与 AI Worker 回执握手。前者允许任意群成员读取当前有效心情且不强制重抽，后者才检查 `isCanSwitchMood` 并执行重抽。主线程必须先登记 waiter 再投递，并在超时、Worker 崩溃、放弃重启和停机时统一结算；请求携带绝对截止时刻，AI Worker 必须在读取或重抽前拒绝已过期的积压请求。只有 request ID、chat ID 和预期事件类型都匹配的 `moodQueried` / `moodSwitched` 回执能证明结果；后续 Telegram 回复发送失败不得被改写成查询或重抽失败。
 - AI chat invalidate 是可等待的取消边界：每个群首次接纳 generation-sensitive 工作时取得本 Worker isolate 内永不复用的唯一 epoch；invalidate 同步删除当前 epoch、abort 旧代并清空未开始任务，再等待该 epoch 下已登记的回复轮、限频提示、媒体描述与记忆压缩 settle，最后按 request ID 回 `chatInvalidated`。
 
-  **这个等待必须有上限**（`AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS`，且明显小于主线程那道 `AI_CHAT_INVALIDATE_TIMEOUT_MS`）：登记进来的任务并非都收得住 abort——记忆压缩与媒体描述那两条链拿不到 `AbortSignal`（`requestGeminiResponse` 不接受），重试间隔加请求超时最坏能跑几分钟。
+  **这个等待必须有上限**（`AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS`，且明显小于主线程那道 `AI_CHAT_INVALIDATE_TIMEOUT_MS`）：登记进来的任务并非都收得住 abort——记忆压缩与媒体描述两条链当前没有接收并向 Gemini 请求传递本代 `AbortSignal`，重采样间隔加 SDK 请求超时最坏能跑几分钟。用于 `Promise.race` 的 unref 到期 timer 无论任务先完成还是超时先到，都必须在 `finally` 清除，不能继续保留已结束 invalidate 的闭包与 Promise。
 
   无上限地等，一次「`/ai_chat disable` 撞上镜像块轮转」就会让主线程先超时 reject，而那个异常会逃进 grammY 中间件：这条 update 判失败、最终 offset 被扣住，重启后 Telegram 重投同一条指令。到点降级放行并记一行错误日志，不影响正确性——这些任务全部按 generation 自检，失效之后跑完也不会再写任何东西。迟到任务只做无副作用 epoch 对账，条目回收或群重新启用都不能让旧 token 复活；epoch Map 因此只随当前活跃工作增长，不保留历史群。
 
   主线程必须同时等该回执与记忆删除 durable 才能宣称 `/ai_chat disable` 完成。Worker 崩溃、放弃重建、投递失败、超时或停机都必须 reject waiter。
+- Gemini 的传输、网络、429 与 5xx 重试只由官方 `@google/genai` SDK 的 `retryOptions` 负责（当前最多 5 次尝试）。调用方在一次请求已经以 `failureKind: "request"` 失败后不得再把整次请求重跑一层；领域级重采样只允许处理 SDK 请求成功但模型响应不可用或异常结束（`failureKind: "response"`），以及规范化后文本为空，避免乘法放大请求、延迟与临时对象。
 - AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；模型提示上限为 8，执行侧硬顶为 11。贴纸、反应与生成图片各最多成功一次；其它动作工具不设单工具调用上限。贴纸包查看和 Google Search 分别保留独立查询上限，所有自定义函数调用另有整轮防循环硬顶。仅在零成功动作时，最终正文才经 `send_message` 兜底；所有有意展示的文字必须由模型显式调用该工具。
 
   并发满载后排队的直接触发，在补跑时被限频闸拒绝必须停在队首、不得继续消费队列：限频只看该群窗口内的轮数、与是哪一条触发无关，第一条被拒就意味着后面每一条都会被拒，而被拒时并发计数不增长——继续往下走就是在同一个同步 tick 里把整队 @ 提及/回复全部丢弃，那些人一句回复都收不到。
@@ -128,6 +130,7 @@
   入队后那一次不能省——上一批排空撞上限频闸停下之后，这个群就停在「零在途 + 非空队列」上，此后每条新 @ 提及都只是继续入队，队首那些人要一直等到 30 秒的维护节拍才轮得上。三处推力都**只在窗口确实有余量时才推**（`drainReplyQueueIfWindowAllows`），窗口仍然满的群直接跳过——空转一次就会发一条限频提示（自带 60 秒冷却），等于每分钟往群里刷一句。撞满窗口的群里轮次还在一轮接一轮地结束，漏掉任何一处的闸都不是偶发空转，而是整个饱和期每分钟刷一句。
 
   **溢出提示的补发必须与推队列分开两条路径**（`flushOverflowNotice` 与 `drainReplyQueueIfWindowAllows`）：`enqueueOverflow` 欠下的那条提示是欠着群成员的一句话，窗口满不满都得发；写在同一个函数里的话，给推队列设闸会连提示一起跳过，不设闸又会把上面那条刷屏放回来。先入队再推，顺序仍是先来先跑。
+- 主线程的 AI 随机搭话活跃表是每条群消息都会命中的 JIT 热点：已有群命中时只原地更新固定 shape 的 `AiReplyActivityEntry`（`timestamps`、`lastAccessSequence`、`lastObservedAt`），不得通过 `Map.delete` + `Map.set` 重排，也不得创建临时复合 key 或投影对象。只有容量已满且插入新群的冷路径才扫描最多 500 项选择 LRU；窗口时间戳、容量、淘汰顺序与系统时钟回拨保护不得因性能优化改变。
 - 白名单贴纸包的目录对账不能只在 Worker 收到 `init` 时跑一次：`generatePackCatalog` 在 `getStickerSet` 失败时是整包放弃的，而进程按 systemd 托管可以连跑几周——首次部署（`memory/stickers/` 为空）撞上一次几秒的网络抖动，`catalogs` 就永久为空，`view_sticker_pack` 与 `send_sticker` 两个工具对所有回复返回 null。
 
   维护节拍因此按 `STICKER_CATALOG_RETRY_INTERVAL_MS` 重试**目录为空或整包简介缺失**的包（`retryIncompleteStickerCatalogs`）；正常跑起来之后每轮只是一次判空，不打任何请求。间隔取分钟级而不是跟着维护节拍走：包名配错这类永远好不了的情形下，每次重试都会跟着记一条错误日志。
@@ -574,6 +577,7 @@
   若致命异常发生时普通 dispose 已在途，异常路径可以复用该 Promise，但必须另设当前 15 秒的绝对强制退出 deadline，不能被既有 drain 无限拖住。预算耗尽时 abort 仍在进行的 Telegram 请求、媒体下载和 429 sleep，结算尚未开始的队列；abort 后不得再发送消息、改头像或写入群标题。异常退出路径的维护预算为 0：drain 必须把「预算为 0」当成合法输入，空闲直接结算为 `flushed`，仍有在途工作则立即 abort 并结算为 `timedOut`，绝不能因参数校验抛错；
 
   未结束的标题刷新在跳过时同样必须 abort。dispose 的每个 owner 也要各自失败隔离，异常一律折算为 `failed` 参与结算，任何单点抛错都不得跳过其后的 owner、`flushStateToDisk` 与实例锁处置。
+- lifecycle 与 Anti-Raid drain 的进程内耗时预算统一由 `packages/libs/monotonicDeadline.ts` 基于 `performance.now()` 计算，系统 wall clock 回拨不得延长排空、取消收敛或关停期限；业务状态、协议 deadline 与持久化绝对时间戳仍按各自语义使用 `Date.now()`。
 - Worker flush 与 mailbox barrier 统一使用 `packages/libs/flushBarrier.ts` 管理 ID、等待表、超时、迟到回执和崩溃批量结算；领域缓存不得重新暴露 resolver Map。
 - 领域 flush 的成功只能来自同一 request ID 的 Worker 回执：本次 `flushFailed.failedDomains` 不含目标领域时，该领域才可成功；Worker 不可用、投递失败、超时、崩溃或旧请求留下的诊断状态都不能被重新解释为成功。实例锁释放同样不得在底层吞错；只有真实释放成功后生命周期才清除 `lockAcquired`，失败必须进入停机结果并保留锁状态。
 

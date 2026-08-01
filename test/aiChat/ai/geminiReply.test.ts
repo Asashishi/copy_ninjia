@@ -26,11 +26,11 @@ import { geminiResponse } from "../../helpers/geminiResponse";
 const replies: unknown[] = [];
 const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => {
   const fixture: GeminiResponseFixture | undefined = replies.shift() as GeminiResponseFixture | undefined;
-  if (!fixture) return { ok: false, diagnostic: "request failed" };
+  if (!fixture) return { ok: false, failureKind: "request", diagnostic: "request failed" };
   const response: GenerateContentResponse = geminiResponse(fixture);
   const finishReason: string | undefined = response.candidates?.[0]?.finishReason as string | undefined;
   if (finishReason !== undefined && finishReason !== "STOP") {
-    return { ok: false, diagnostic: `finishReason=${finishReason}`, finishReason, response };
+    return { ok: false, failureKind: "response", diagnostic: `finishReason=${finishReason}`, finishReason, response };
   }
   return { ok: true, response };
 });

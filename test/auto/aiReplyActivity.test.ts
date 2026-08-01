@@ -62,4 +62,27 @@ describe("按群 AI 随机搭话活跃度", () => {
     expect(aiReplyActivityByChat.has(1)).toBe(true);
     expect(aiReplyActivityByChat.has(2)).toBe(false);
   });
+
+  test("相同毫秒内再次访问仍刷新严格 LRU 次序", () => {
+    for (let chatId = 1; chatId <= AI_REPLY_ACTIVITY_MAX_CHATS; chatId++) {
+      observeGroupMessageForAiReply(chatId, 1_000);
+    }
+    observeGroupMessageForAiReply(1, 1_000);
+    observeGroupMessageForAiReply(AI_REPLY_ACTIVITY_MAX_CHATS + 1, 1_000);
+
+    expect(aiReplyActivityByChat.has(1)).toBe(true);
+    expect(aiReplyActivityByChat.has(2)).toBe(false);
+  });
+
+  test("单群时钟回退不影响其 LRU 热度刷新", () => {
+    for (let chatId = 1; chatId <= AI_REPLY_ACTIVITY_MAX_CHATS; chatId++) {
+      observeGroupMessageForAiReply(chatId, 1_000);
+    }
+    observeGroupMessageForAiReply(1, 0);
+    observeGroupMessageForAiReply(AI_REPLY_ACTIVITY_MAX_CHATS + 1, 2_000);
+
+    expect(aiReplyActivityByChat.has(1)).toBe(true);
+    expect(aiReplyActivityByChat.has(2)).toBe(false);
+    expect(aiReplyActivityByChat.get(1)?.lastObservedAt).toBe(1_000);
+  });
 });

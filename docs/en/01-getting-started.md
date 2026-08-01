@@ -38,8 +38,8 @@ The project reads exactly five environment variables; there are no undocumented 
   - Token issued by BotFather.
 - **`AI_CHAT_GEMINI_API_KEY`** (may be empty)
   - Gemini API key used exclusively for AI-chat reply generation, image understanding, and
-    memory compaction. When empty, the AI Worker does not start, `/ai_chat enable` and
-    `/switch_mood` are rejected, AI memories on disk remain untouched, and everything else
+    memory compaction. When empty, the AI Worker does not start, `/ai_chat enable`,
+    `/query_mood`, and `/switch_mood` are rejected, AI memories on disk remain untouched, and everything else
     keeps running.
 - **`AD_DETECT_DEEPSEEK_API_KEY`** (may be empty)
   - DeepSeek API key for the OpenAI-compatible `/ad_detect` classifier. When empty,

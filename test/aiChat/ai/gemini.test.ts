@@ -1,12 +1,21 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { FinishReason } from "@google/genai";
-import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
+import type {
+  GenerateContentParameters,
+  GenerateContentResponse,
+  GoogleGenAIOptions,
+} from "@google/genai";
 import { geminiResponse } from "../../helpers/geminiResponse";
+import {
+  GEMINI_REQUEST_RETRY_ATTEMPTS,
+  GEMINI_REQUEST_TIMEOUT_MS,
+} from "../../../packages/consts/aiChat/tools";
 
 const generateContent = mock(async (..._args: GenerateContentParameters[]): Promise<GenerateContentResponse> => geminiResponse({
   candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "ok" }] } }],
 }));
 const loggerError = mock((..._args: unknown[]): void => {});
+const createdClientOptions: GoogleGenAIOptions[] = [];
 
 class FakeApiError extends Error {
   constructor(readonly status: number, message: string) {
@@ -19,6 +28,9 @@ mock.module("@google/genai", () => ({
   ...googleGenAi,
   ApiError: FakeApiError,
   GoogleGenAI: class {
+    constructor(options: GoogleGenAIOptions) {
+      createdClientOptions.push(options);
+    }
     readonly models = { generateContent };
   },
 }));
@@ -27,7 +39,11 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
 
-const { requestGeminiResponse, requestGeminiResult } = await import("../../../packages/aiChat/ai/gemini");
+const {
+  requestGeminiResponse,
+  requestGeminiResult,
+  requestGeminiTextResult,
+} = await import("../../../packages/aiChat/ai/gemini");
 
 describe("Gemini request safety settings", () => {
   beforeEach(() => {
@@ -46,6 +62,11 @@ describe("Gemini request safety settings", () => {
     }, "Gemini test");
 
     expect(result?.candidates?.[0]?.content?.parts?.[0]?.text).toBe("ok");
+    expect(createdClientOptions).toHaveLength(1);
+    expect(createdClientOptions[0]?.httpOptions).toEqual({
+      timeout: GEMINI_REQUEST_TIMEOUT_MS,
+      retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
+    });
     const request: GenerateContentParameters = generateContent.mock.calls[0]![0]!;
     expect(request.config?.temperature).toBe(0.7);
     expect(request.config?.safetySettings as unknown).toEqual([
@@ -109,8 +130,36 @@ describe("Gemini request safety settings", () => {
     const result = await requestGeminiResult({ model: "gemini-test", contents: "hello" }, "Gemini test");
     expect(result).toMatchObject({
       ok: false,
+      failureKind: "response",
       finishReason: "TOO_MANY_TOOL_CALLS",
       finishMessage: "server tool limit",
     });
+  });
+
+  test("文本业务重采样只接受成功请求中的不可用响应", async () => {
+    generateContent.mockRejectedValueOnce(new Error("network"));
+    await expect(requestGeminiTextResult(
+      { model: "gemini-test", contents: "hello" },
+      "Gemini test",
+      (response: GenerateContentResponse): string => response.text ?? ""
+    )).resolves.toEqual({ ok: false, retryable: false });
+
+    generateContent.mockResolvedValueOnce(geminiResponse({
+      candidates: [{ finishReason: FinishReason.SAFETY }],
+    }));
+    await expect(requestGeminiTextResult(
+      { model: "gemini-test", contents: "hello" },
+      "Gemini test",
+      (response: GenerateContentResponse): string => response.text ?? ""
+    )).resolves.toEqual({ ok: false, retryable: true });
+
+    generateContent.mockResolvedValueOnce(geminiResponse({
+      candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "  " }] } }],
+    }));
+    await expect(requestGeminiTextResult(
+      { model: "gemini-test", contents: "hello" },
+      "Gemini test",
+      (response: GenerateContentResponse): string => response.text?.trim() ?? ""
+    )).resolves.toEqual({ ok: false, retryable: true });
   });
 });

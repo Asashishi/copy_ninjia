@@ -16,6 +16,7 @@ import {
   handleLuckChosenInlineResult,
   handleMuteCommand,
   handlePermissionCommand,
+  handleQueryMoodCommand,
   handleQuietCommand,
   handleSendCommand,
   handleStealIconCommand,
@@ -28,7 +29,7 @@ import {
 } from "../commands";
 import {
   handleChatMemberUpdate,
-  handleGroupJoinVerification,
+  handleAntiRaidMessageIngress,
   handleVerificationCallback,
 } from "../antiRaid";
 import { handleMyChatMemberUpdate } from "../infra/botAdmin";
@@ -93,7 +94,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
 
   // 入群验证必须早于命令处理器，否则待验证用户发出的命令不会被追踪清理。
   bot.on("message", async (ctx: Filter<Context, "message">, next: NextFunction): Promise<void> => {
-    if (await handleGroupJoinVerification(ctx.message, ctx.me.id)) return;
+    if (await handleAntiRaidMessageIngress(ctx.message, ctx.me.id)) return;
     return next();
   });
 
@@ -108,6 +109,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
   bot.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
   bot.command("ad_detect", (ctx: CommandContext<Context>): Promise<void> => handleAdDetectCommand(ctx));
+  bot.command("query_mood", (ctx: CommandContext<Context>): Promise<void> => handleQueryMoodCommand(ctx));
   bot.command("switch_mood", (ctx: CommandContext<Context>): Promise<void> => handleSwitchMoodCommand(ctx));
   bot.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
   bot.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));

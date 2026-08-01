@@ -4,7 +4,7 @@ import { LinkedQueue } from "../../libs/linkedQueue";
 import type { GenerateContentResponse } from "@google/genai";
 import { sanitizeInline, truncateInline } from "../../libs/text";
 import { formatBufferedMessageLine } from "../../aiChat/ai/utils/chatTranscript";
-import { requestGeminiResponse } from "../../aiChat/ai/gemini";
+import { requestGeminiTextResult } from "../../aiChat/ai/gemini";
 import {
   COMPACTION_MAX_PENDING_PER_CHAT,
   GEMINI_SUMMARY_MODEL,
@@ -23,6 +23,7 @@ import {
   isCachedReplyGenerationCurrent,
 } from "../../cache/workers/aiChat/replies";
 import type { BufferedMessage } from "../../types/aiChat/memory";
+import type { GeminiTextGenerationResult } from "../../types/aiChat/gemini";
 import { currentTimeSentence } from "./timeSentence";
 import { trackReplyGenerationTask } from "./replyGeneration";
 
@@ -99,9 +100,9 @@ async function rotateCompaction({
       pendingSummaries.set(chatId, summary);
       dirtyMemoryChats.add(chatId);
     } else {
-      // 重试全败才放弃，且不回灌：镜像原文此刻还在逐字区，要到下一轮
-      // 滑出时这段中期记忆才真正缺失。
-      logger.error(`AI compaction failed: chat ${chatId}'s ${mirrorBatch.length} mirrored messages produced no summary after ${SUMMARY_RETRY_DELAYS_MS.length + 1} attempts; mid-term memory for this window will be missing once it slides out.`);
+      // SDK 请求重试或业务层重采样用尽后才放弃，且不回灌：镜像原文此刻还在
+      // 逐字区，要到下一轮滑出时这段中期记忆才真正缺失。
+      logger.error(`AI compaction failed: chat ${chatId}'s ${mirrorBatch.length} mirrored messages produced no summary after eligible retries; mid-term memory for this window will be missing once it slides out.`);
     }
   } catch (error: unknown) {
     logger.error("Error in chat compaction task:", error);
@@ -109,19 +110,18 @@ async function rotateCompaction({
 }
 
 /**
- * 带退避重试的镜像压缩：summarizeBatch 失败（返回 null）按
- * SUMMARY_RETRY_DELAYS_MS 逐次等待后重试，全败返回 null。这类失败多为
- * 瞬时（网络抖动/临时超载，重启后同一批就能压成功），跨请求重试通常能
- * 救回；重试期间镜像原文仍在逐字区，等得起。本函数在该群的轮换串行链上
- * 执行，等待只顺延本群后续轮换，不阻塞消息分发。
+ * 带退避重采样的镜像压缩：只有 HTTP 成功但 candidate 异常或清洗后正文为空
+ * 才按 SUMMARY_RETRY_DELAYS_MS 再发请求。网络/HTTP 失败已由 Gemini SDK 重试，
+ * 此处立即停止，避免两层次数相乘。等待期间镜像原文仍在逐字区；本函数在该群
+ * 的轮换串行链上执行，只顺延本群后续轮换，不阻塞消息分发。
  */
 async function summarizeBatchWithRetry(chatId: number, batch: BufferedMessage[]): Promise<string | null> {
   for (let attempt: number = 0; ; attempt++) {
-    const summary: string | null = await summarizeBatch(batch);
-    if (summary) return summary;
-    if (attempt >= SUMMARY_RETRY_DELAYS_MS.length) return null;
+    const result: GeminiTextGenerationResult = await summarizeBatch(batch);
+    if (result.ok) return result.text;
+    if (!result.retryable || attempt >= SUMMARY_RETRY_DELAYS_MS.length) return null;
     const delayMs: number = SUMMARY_RETRY_DELAYS_MS[attempt]!;
-    logger.error(`AI compaction attempt ${attempt + 1} produced no summary for chat ${chatId}; retrying in ${delayMs} ms.`);
+    logger.error(`AI compaction attempt ${attempt + 1} returned no usable summary for chat ${chatId}; resampling in ${delayMs} ms.`);
     await sleep(delayMs);
   }
 }
@@ -148,11 +148,11 @@ function promotePendingSummary(chatId: number): void {
  * 人设、不带工具），产出压成单行并截断——摘要虽是模型生成的，但源头是
  * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
  */
-async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> {
+async function summarizeBatch(batch: BufferedMessage[]): Promise<GeminiTextGenerationResult> {
   const selfNote: string = botInfoState.current
     ? `注意：[id:${botInfoState.current.id}] 是群里的聊天机器人「${botInfoState.current.first_name}」本人的发言，摘要里请以「${botInfoState.current.first_name}」称呼它。\n\n`
     : "";
-  const data: GenerateContentResponse | null = await requestGeminiResponse(
+  return requestGeminiTextResult(
     {
       model: GEMINI_SUMMARY_MODEL,
       contents: [{ role: "user", parts: [{ text: selfNote + batch.map(formatBufferedMessageLine).join("\n") }] }],
@@ -162,10 +162,10 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<string | null> 
         maxOutputTokens: SUMMARY_MAX_TOKENS,
       },
     },
-    "Gemini summarize API"
+    "Gemini summarize API",
+    (data: GenerateContentResponse): string => {
+      const sanitized: string = sanitizeInline(data.text ?? "");
+      return sanitized ? truncateInline(sanitized, SUMMARY_MAX_CHARS) : "";
+    }
   );
-  if (!data) return null;
-  const sanitized: string = sanitizeInline(data.text ?? "");
-  if (!sanitized) return null;
-  return truncateInline(sanitized, SUMMARY_MAX_CHARS);
 }

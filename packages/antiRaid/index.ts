@@ -8,6 +8,6 @@ export {
 export { drainAntiRaid } from "./durableDelivery";
 export {
   handleChatMemberUpdate,
-  handleGroupJoinVerification,
+  handleAntiRaidMessageIngress,
   handleVerificationCallback,
 } from "./updateIngress";

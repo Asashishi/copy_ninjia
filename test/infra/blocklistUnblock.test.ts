@@ -30,7 +30,7 @@ mock.module("../../packages/infra/diskIO", () => ({
     if (postSucceeds) diskMessages.push(message);
     return postSucceeds;
   },
-  onDiskIORespawn: (_owner: string, listener: DiskIORespawnListener): void => {
+  onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {
     respawnListeners.push(listener);
   },
   relayLogMessage: (): boolean => true,
@@ -45,13 +45,17 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 
 const {
   blockUser,
+  isUserBlocked,
+  unblockUser,
+} = await import("../../packages/infra/blocklist/membership");
+const {
   getPendingBlockedRemovalParams,
   hydrateBlocklist,
-  isUserBlocked,
   registerBlockedMemberRemover,
+} = await import("../../packages/infra/blocklist/outbox");
+const {
   sweepBlockedMembers,
-  unblockUser,
-} = await import("../../packages/infra/blocklist");
+} = await import("../../packages/infra/blocklist/sweep");
 const {
   blockedUserIds,
   blocklistRemovalCounter,

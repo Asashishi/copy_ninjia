@@ -61,11 +61,13 @@ mock.module("../../packages/workers/diskIO/luckFiles", () => ({
 }));
 mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({ recoverLuckReceiptSecret }));
 mock.module("../../packages/cache/workers/diskIO/luck", () => ({ luckWorkerCache }));
-mock.module("../../packages/workers/diskIO/verificationFiles", () => ({
+mock.module("../../packages/workers/diskIO/verificationRecovery", () => ({
+  recoverVerificationDay: (): Map<string, unknown> => new Map(),
+}));
+mock.module("../../packages/workers/diskIO/verificationWrites", () => ({
   flushVerificationChanges,
   handleVerificationDelete,
   handleVerificationUpsert,
-  recoverVerificationDay: (): Map<string, unknown> => new Map(),
   scheduleVerificationRollover: (): void => {},
 }));
 mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({

@@ -19,10 +19,11 @@ mock.module("../../packages/infra/logger", () => ({
     error(message: unknown): void { errorLogs.push(String(message)); },
   },
 }));
-mock.module("../../packages/infra/blocklist", () => ({
+mock.module("../../packages/infra/blocklist/membership", () => ({
   isUserBlocked: (userId: number): boolean => blockedIds.has(userId),
+}));
+mock.module("../../packages/infra/blocklist/outbox", () => ({
   registerBlockedMemberRemover: (): void => {},
-  requestBlocklistResweep,
   trackBlockedRemoval: (
     params: Omit<RemoveBlockedMembersParams, "removalId">
   ): RemoveBlockedMembersParams => {
@@ -30,6 +31,7 @@ mock.module("../../packages/infra/blocklist", () => ({
     return { ...params, removalId: ++removalCounter };
   },
 }));
+mock.module("../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
 mock.module("../../packages/infra/botAdmin", () => ({
   botCanDeleteMessagesIn: (): boolean | undefined => canDeleteMessages,
   ensureBotChatPermissions,

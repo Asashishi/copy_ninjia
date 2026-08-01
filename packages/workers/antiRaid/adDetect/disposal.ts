@@ -6,7 +6,7 @@
  * 封禁批次要进 durable outbox 才能跨进程重放（见 docs/04-invariants.md）。
  * 主线程收到事件后走的正是 /block 那条路径，而封禁本身又会被投回本线程执行，
  * 因此真正的网络请求仍然全部发生在这条线程上。群内播报同理跟着结果走，由
- * 主线程发（见 antiRaid/adDetect.ts 的 announceAdDisposal）。
+ * 主线程发（见 antiRaid/adCandidate.ts 的 announceAdDisposal）。
  */
 
 import { deleteMessage, deleteMessages, joinVerificationApi } from "../../../infra/telegram";
@@ -79,7 +79,7 @@ export function deleteStragglerAdMessage(chatId: number, messageId: number): voi
  * 群内播报**不在这里发**。它的文案要断言「在所有盯着的群里一起封掉了」，而
  * 那件事此刻还没发生：主线程可能因为 outbox 触顶、刚被撤管理员或 /init disable
  * 而一个群都登记不上。谁知道结果谁播报，因此挪到主线程的 disposeDetectedAd
- * （见 antiRaid/adDetect.ts）。
+ * （见 antiRaid/adCandidate.ts）。
  */
 export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSenderParams): Promise<void> {
   const messageIds: number[] = disposalMessageIds(judged, bundle.entries, bundle.pendingDeleteIds);

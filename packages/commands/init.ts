@@ -3,7 +3,7 @@ import type { ChatState } from "../types/chatState";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { resolveSuperAdminToggleArg } from "./superAdminToggle";
-import { invalidateBotAdminStatus, isBotAdminIn, teardownChatRuntime } from "../infra/botAdmin";
+import { invalidateBotAdminStatus, resolveBotAdminStatus, teardownChatRuntime } from "../infra/botAdmin";
 
 /**
  * 处理 /init enable|disable 指令：按群开关机器人是否处理这个群的更新（见
@@ -52,9 +52,9 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // 这个合取若因本次 enable 而成立，那道边沿就在那里触发一次黑名单清扫
   // （见 infra/botAdmin.ts）。不这么做的话，「先给管理员、后 /init enable」这个
   // 最常见的上线顺序永远等不到清扫：管理员那一跳发生时本群还没初始化。
-  // isBotAdminIn 自己吞掉所有错误（失败按非管理员处理），不会影响本命令成败。
+  // resolveBotAdminStatus 自己吞掉所有错误（失败按非管理员处理），不会影响本命令成败。
   // 已经是 enable 的群不重判：上面没作废记录，这里查也只会拿到同一个值。
-  if (isEnabled && !wasEnabled) await isBotAdminIn(chatId);
+  if (isEnabled && !wasEnabled) await resolveBotAdminStatus(chatId);
 
   const replyText: string = arg === "enable"
     ? `哼，那本天才就大发慈悲开始搭理这个群了，杂鱼们好好珍惜♡`

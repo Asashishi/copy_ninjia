@@ -17,8 +17,18 @@ export const userReplyTriggerSweepState: {
   timer: ReturnType<typeof setTimeout> | null;
 } = { timer: null };
 
-/** 按群的一小时滑动活跃度；纯内存、Map 顺序同时是 LRU 顺序。 */
+/**
+ * 按群的一小时滑动活跃度；权威副本只属于主线程自动消息流水线，最多保留
+ * AI_REPLY_ACTIVITY_MAX_CHATS 个群。命中路径不重排 Map；满载新增时按 entry
+ * 中的访问序号选择 LRU，进程重启从空表重建。
+ */
 export const aiReplyActivityByChat: Map<number, AiReplyActivityEntry> = new Map();
+
+/**
+ * 群活跃度表的进程内访问序号。每次观察递增，清空活跃度表时归零；它只为
+ * 满载新增群提供严格 LRU 次序，不参与持久化或跨线程消息。
+ */
+export const aiReplyActivitySequenceState: { current: number } = { current: 0 };
 
 /** 所有群共用一个到期计时器，不为每群/每消息创建 timer。 */
 export const aiReplyActivitySweepState: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };

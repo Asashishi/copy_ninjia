@@ -81,7 +81,7 @@ mock.module("../../../packages/infra/telegram/lockdownPermissions", () => ({ res
 // （见 antiRaid/blocklistGuard.ts），整份模块被替换掉时缺了会在 import 阶段报错。
 mock.module("../../../packages/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5, JOIN_WINDOW_MS: 60_000 }));
 mock.module("../../../packages/infra/botAdmin", () => ({
-  isBotAdminIn: async (): Promise<boolean> => true,
+  resolveBotAdminStatus: async (): Promise<boolean> => true,
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   // 权限位镜像的注册与按需补齐；本文件不触发，但整份模块被替换掉时缺了
@@ -100,10 +100,13 @@ mock.module("../../../packages/libs/supervisedWorker", () => ({
     };
   },
 }));
-mock.module("../../../packages/workers/antiRaid/persistence", () => ({
+mock.module("../../../packages/infra/diskIO", () => ({
   flushDiskIO,
+  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
+  lastFailedDiskIODomains: (): readonly string[] => [],
   postDiskIO: (message: VerificationUpsertDiskMessage | VerificationDeleteDiskMessage): void => { diskPosts.push(message); },
-  onDiskIORespawn: (_owner: string, listener: DiskIORespawnListener): void => {
+  postDiskIODiagnostic: (): boolean => true,
+  onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {
     diskRespawn = listener;
   },
   onVerificationPersisted: (callback: (reply: VerificationPersistedReply) => void): void => { persistedAck = callback; },
@@ -590,7 +593,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     }
 
     await expectOwnBarrier(
-      () => antiRaid.handleGroupJoinVerification({
+      () => antiRaid.handleAntiRaidMessageIngress({
         chat: { id: -5001 },
         from: { id: 20 },
         message_id: 60,
@@ -599,7 +602,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       "join"
     );
     await expectOwnBarrier(
-      () => antiRaid.handleGroupJoinVerification({
+      () => antiRaid.handleAntiRaidMessageIngress({
         chat: { id: -5002 },
         from: { id: 21 },
         message_id: 61,
@@ -622,7 +625,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
 
   test("入群事件晚到时仍转交直属评论与楼中楼线索，普通非待验证消息不进入 Worker", async () => {
     workerPosts.length = 0;
-    const comment = antiRaid.handleGroupJoinVerification({
+    const comment = antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
       from: { id: 88 },
       message_id: 55,
@@ -642,7 +645,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     await comment;
 
     workerPosts.length = 0;
-    const threadReply = antiRaid.handleGroupJoinVerification({
+    const threadReply = antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
       from: { id: 89 },
       message_id: 56,
@@ -662,7 +665,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     await threadReply;
 
     workerPosts.length = 0;
-    await antiRaid.handleGroupJoinVerification({
+    await antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
       from: { id: 90 },
       message_id: 57,
@@ -674,7 +677,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     workerPosts.length = 0;
     // 开了 topics 的超级群里每条普通消息都带 message_thread_id；只有关联频道
     // 讨论组的评论线程才算候选，论坛话题必须走普通非待验证语义。
-    await antiRaid.handleGroupJoinVerification({
+    await antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
       from: { id: 91 },
       message_id: 58,
@@ -689,7 +692,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     activeVerificationSnapshots.set("-4001:92", { ...record(1, 1), chatId: -4001, userId: 92 });
     workerPosts.length = 0;
 
-    const topicMessage = antiRaid.handleGroupJoinVerification({
+    const topicMessage = antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
       from: { id: 92 },
       message_id: 59,

@@ -6,7 +6,6 @@
  * Worker 独占缓存）。主线程要的两个纯函数一律直接 import
  * aiChat/ai/stickers/describe.ts，别走这里。 */
 export * from "./catalog";
-export * from "./config";
 export * from "./describe";
 export * from "./sendLock";
 export * from "./sets";

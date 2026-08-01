@@ -135,10 +135,12 @@ describe("join：ABSENT 起步", () => {
 describe("join：重复投递（chat_member 与服务消息各到一次）", () => {
   test("PENDING 上的迟到公告 → 记进独立字段，不重发提醒", () => {
     const state = pendingState();
-    const { next, effects } = transitionVerification(state, joinEvent({ announcementMessageId: 9 }));
+    const result = transitionVerification(state, joinEvent({ announcementMessageId: 9 }));
+    const { next, effects } = result;
     expect(next).toBe(state);
     expect(state.announcementMessageId).toBe(9);
     expect(effects).toEqual([]);
+    expect(result.snapshotChanged).toBeTrue();
   });
 
   test("PENDING 上出现第二条入群公告 → 立即删掉多余服务消息", () => {
@@ -150,9 +152,10 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
 
   test("PENDING + 本路带拉人者且缓存冷 → 补挂核查并记录 invitedBy", () => {
     const state = pendingState();
-    const { effects } = transitionVerification(state, joinEvent({ actorId: 999, adminCacheFresh: false }));
+    const result = transitionVerification(state, joinEvent({ actorId: 999, adminCacheFresh: false }));
     expect(state.invitedBy).toBe(999);
-    expect(effectKinds(effects)).toEqual(["startAdminCheck"]);
+    expect(effectKinds(result.effects)).toEqual(["startAdminCheck"]);
+    expect(result.snapshotChanged).toBeTrue();
   });
 
   test("PENDING + 缓存热（同步快路径已判过非管理员）→ 不再挂核查", () => {
@@ -254,7 +257,8 @@ describe("trackedMessage", () => {
 
   test("待验证成员的普通发言 → 只计数并改提醒锚点，不登记删除 id", () => {
     const state = pendingState({ reminderMessageId: 30 });
-    const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 40, inCommentThread: false, now: 1_000 });
+    const result = transitionVerification(state, { type: "trackedMessage", messageId: 40, inCommentThread: false, now: 1_000 });
+    const { effects } = result;
     expect("messageIds" in state).toBeFalse();
     expect(state.trackedMessageTimes).toEqual([1_000]);
     expect(state.reminderMessageId).toBeUndefined();
@@ -266,6 +270,7 @@ describe("trackedMessage", () => {
       { kind: "sendReplyReminder", label: "杂鱼A", targetMessageId: 40 },
       { kind: "deleteMessage", messageId: 30 },
     ]);
+    expect(result.snapshotChanged).toBeTrue();
   });
 
   test("入群更新先到、楼中楼回复后到 → 转 EXEMPT 并撤销此前入群计数", () => {
@@ -286,9 +291,10 @@ describe("trackedMessage", () => {
 
   test("连发多条只补发一次回复式提醒", () => {
     const state = pendingState({ replyReminderRequested: true });
-    const { effects } = transitionVerification(state, { type: "trackedMessage", messageId: 41, inCommentThread: false, now: 1_000 });
+    const result = transitionVerification(state, { type: "trackedMessage", messageId: 41, inCommentThread: false, now: 1_000 });
     expect(state.trackedMessageTimes).toEqual([1_000]);
-    expect(effects).toEqual([]);
+    expect(result.effects).toEqual([]);
+    expect(result.snapshotChanged).toBeTrue();
   });
 
   test("评论区活动 → 转 EXEMPT + 欢迎，且撤销此前记的那次刷群计数", () => {
@@ -647,6 +653,7 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     const result = transitionVerification(state, { type: "reminderLanded", reminderKind: "original", messageId: 30, now: 1_000 });
     expect(state.reminderMessageId).toBe(30);
     expect(state.expiresAt).toBe(1_000 + VERIFICATION_TIMEOUT_MS);
+    expect(result.snapshotChanged).toBeTrue();
     expect(result.rescheduleTimer).toBeTrue();
   });
 
@@ -659,8 +666,10 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
 
   test("回复式提醒落地回填不受取代标记影响", () => {
     const state = pendingState({ reminderSuperseded: true });
-    transitionVerification(state, { type: "reminderLanded", reminderKind: "reply", messageId: 31, now: 1_000 });
+    const result = transitionVerification(state, { type: "reminderLanded", reminderKind: "reply", messageId: 31, now: 1_000 });
     expect(state.replyReminderMessageId).toBe(31);
+    expect(result.snapshotChanged).toBeTrue();
+    expect(result.rescheduleTimer).toBeTrue();
   });
 
   test("original/reply 提醒只回填各自显式 id，不创建混合消息列表", () => {

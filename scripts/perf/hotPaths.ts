@@ -30,6 +30,7 @@ type ScenarioName =
   | "sender-no-username"
   | "sender-stable-username"
   | "ai-activity-window"
+  | "ai-activity-lru-miss"
   | "ad-empty-metadata"
   | "ad-wire-clone"
   | "array-timestamp-window"
@@ -251,6 +252,28 @@ function aiActivityScenario(): Scenario {
   };
 }
 
+function aiActivityLruMissScenario(): Scenario {
+  let now: number = 1_000_000;
+  let chatId: number = BENCHMARK_CHAT_ID;
+  return {
+    iterations: 20_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        now += 1;
+        chatId -= 1;
+        checksum += observeGroupMessageForAiReply(chatId, now);
+      }
+      return checksum;
+    },
+    reset: (): void => {
+      clearAiReplyActivity();
+      now = 1_000_000;
+      chatId = BENCHMARK_CHAT_ID;
+    },
+  };
+}
+
 function linkedTimestampWindowScenario(): Scenario {
   const timestamps: LinkedQueue<number> = new LinkedQueue();
   let now: number = 1_000_000;
@@ -405,6 +428,8 @@ function createScenario(name: ScenarioName): Scenario {
       return senderScenario("Stable_User");
     case "ai-activity-window":
       return aiActivityScenario();
+    case "ai-activity-lru-miss":
+      return aiActivityLruMissScenario();
     case "ad-empty-metadata":
       return adEmptyMetadataScenario();
     case "ad-wire-clone":
@@ -459,6 +484,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "sender-no-username":
     case "sender-stable-username":
     case "ai-activity-window":
+    case "ai-activity-lru-miss":
     case "ad-empty-metadata":
     case "ad-wire-clone":
     case "array-timestamp-window":
@@ -474,6 +500,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
       throw new Error(
         "Usage: bun run perf:hot-paths -- " +
         "<sender-no-username|sender-stable-username|ai-activity-window|ad-empty-metadata|" +
+        "ai-activity-lru-miss|" +
         "ad-wire-clone|array-timestamp-window|float64-timestamp-window|" +
         "array-timestamp-cold|float64-timestamp-cold|" +
         "linked-timestamp-window|linked-rolling-buffer|" +

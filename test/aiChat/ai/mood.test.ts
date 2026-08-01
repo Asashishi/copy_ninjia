@@ -3,6 +3,7 @@ import {
   classifyTimeBucket,
   classifyWeatherCodeBucket,
   computeAdjustedWeight,
+  currentMood,
   currentMoodInstruction,
   switchMood,
 } from "../../../packages/aiChat/ai/mood";
@@ -23,6 +24,15 @@ const FIRST_MOOD_NAME: string = MOOD_OPTIONS[0]!.name;
 const LAST_MOOD_NAME: string = MOOD_OPTIONS[MOOD_OPTIONS.length - 1]!.name;
 
 describe("aiChat/ai/mood currentMoodInstruction", () => {
+  test("查询未到期心情时返回同一缓存档位且不强制重抽", () => {
+    const cachedMood: MoodOption = { name: "平静", weight: 20, instruction: "慢慢来。" };
+    const moods = new Map<number, MoodOption>([[1, cachedMood]]);
+    const expiresAts = new Map<number, number>([[1, Date.now() + 60_000]]);
+
+    expect(currentMood(1, moods, expiresAts)).toBe(cachedMood);
+    expect(moods.get(1)).toBe(cachedMood);
+  });
+
   test("本群第一次用到时直接抽一次心情并按随机寿命记下到期时刻", () => {
     const moods = new Map<number, MoodOption>();
     const expiresAts = new Map<number, number>();

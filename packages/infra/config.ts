@@ -56,7 +56,7 @@ export const AI_CHAT_GEMINI_API_KEY: string | undefined = optionalEnv("AI_CHAT_G
  * 可选。广告检测是按群 opt-in、缺省关闭的附加功能，缺这把密钥不该让 copy、
  * 抽奖、入群验证、黑名单一起起不来。未配置时 /ad_detect enable 直接拒绝
  * （packages/commands/adDetect.ts），已经开着的群也不再投递待检消息
- * （packages/antiRaid/adDetect.ts 的 buildAdCandidate）。
+ * （packages/antiRaid/adCandidate.ts 的 buildAdCandidate）。
  */
 export const AD_DETECT_DEEPSEEK_API_KEY: string | undefined = optionalEnv("AD_DETECT_DEEPSEEK_API_KEY");
 

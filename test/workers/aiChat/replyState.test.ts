@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   activeReplyCounts,
   longTriggerTimes,
@@ -17,6 +17,7 @@ import { chatMoodExpiresAts, chatMoods } from "../../../packages/cache/workers/a
 import { compactionChains, compactionPendingCounts } from "../../../packages/cache/workers/aiChat/compaction";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import { logger } from "../../../packages/infra/logger";
 import { VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../packages/types";
 import {
@@ -81,17 +82,65 @@ describe("AI 回复代际状态", () => {
     });
     trackReplyGenerationTask(chatId, generation, task);
 
-    let invalidationSettled: boolean = false;
-    const invalidated: Promise<void> = invalidateChatReplies(chatId).then((): void => {
-      invalidationSettled = true;
-    });
-    await Promise.resolve();
+    const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+    try {
+      let invalidationSettled: boolean = false;
+      const invalidated: Promise<void> = invalidateChatReplies(chatId).then((): void => {
+        invalidationSettled = true;
+      });
+      await Promise.resolve();
 
-    expect(signal.aborted).toBeTrue();
-    expect(invalidationSettled).toBeFalse();
-    settleTask?.();
-    await invalidated;
-    expect(invalidationSettled).toBeTrue();
+      expect(signal.aborted).toBeTrue();
+      expect(invalidationSettled).toBeFalse();
+      settleTask?.();
+      await invalidated;
+      expect(invalidationSettled).toBeTrue();
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      clearTimeoutSpy.mockRestore();
+    }
+  });
+
+  test("失效等待到期时保留诊断并清理已经触发的 timer", async () => {
+    const chatId: number = -1007;
+    const generation: number = currentReplyGeneration(chatId);
+    let settleTask: (() => void) | undefined;
+    const task: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      settleTask = resolve;
+    });
+    trackReplyGenerationTask(chatId, generation, task);
+
+    const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
+    const originalClearTimeout: typeof clearTimeout = globalThis.clearTimeout;
+    let expire: (() => void) | undefined;
+    let timerCleared: boolean = false;
+    const timer = { unref(): void {} } as ReturnType<typeof setTimeout>;
+    const loggerErrorSpy = spyOn(logger, "error").mockImplementation(
+      (..._args: unknown[]): void => {}
+    );
+    globalThis.setTimeout = ((callback: () => void): ReturnType<typeof setTimeout> => {
+      expire = callback;
+      return timer;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((candidate: ReturnType<typeof setTimeout>): void => {
+      if (candidate === timer) timerCleared = true;
+    }) as typeof clearTimeout;
+
+    try {
+      const invalidated: Promise<void> = invalidateChatReplies(chatId);
+      expire?.();
+      await invalidated;
+
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`AI chat invalidation for chat ${chatId} gave up waiting`)
+      );
+      expect(timerCleared).toBeTrue();
+    } finally {
+      settleTask?.();
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+      loggerErrorSpy.mockRestore();
+    }
   });
 
   test("Worker 重建清理边界会清空所有领域缓存并停止心跳 timer", () => {

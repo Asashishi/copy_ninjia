@@ -1,8 +1,8 @@
 import {
   getPendingBlockedRemovalParams,
   persistPendingBlockedRemovals,
-  requestBlocklistResweep,
-} from "../infra/blocklist";
+} from "../infra/blocklist/outbox";
+import { requestBlocklistResweep } from "../infra/blocklist/sweep";
 import { logger } from "../infra/logger";
 import { BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS } from "../consts/antiRaid/blocklist";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid";

@@ -38,8 +38,8 @@ mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 // /init enable 之后会重新判定一次管理员身份，好让「是管理员 && 已初始化」
 // 那道边沿触发黑名单清扫（见 infra/botAdmin.ts）。
-const isBotAdminIn = mock(async (_chatId: number): Promise<boolean> => false);
-mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, isBotAdminIn, teardownChatRuntime }));
+const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
+mock.module("../../packages/infra/botAdmin", () => ({ invalidateBotAdminStatus, resolveBotAdminStatus, teardownChatRuntime }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getOrCreateChatState(chatId: number): Record<string, unknown> {
     let state = states.get(chatId);
@@ -81,8 +81,8 @@ beforeEach(() => {
   invalidateAiChat.mockClear();
   teardownChatRuntime.mockClear();
   invalidateBotAdminStatus.mockClear();
-  isBotAdminIn.mockClear();
-  isBotAdminIn.mockImplementation(async (_chatId: number): Promise<boolean> => false);
+  resolveBotAdminStatus.mockClear();
+  resolveBotAdminStatus.mockImplementation(async (_chatId: number): Promise<boolean> => false);
   saveStateInBackground.mockClear();
   persistAuthoritativeState.mockClear();
   persistAuthoritativeState.mockImplementation(async (...args: unknown[]): Promise<void> => {
@@ -203,9 +203,9 @@ describe("超级管理员开关命令", () => {
     expect(saveStateInBackground).toHaveBeenCalledTimes(2);
     // enable 必须立刻重新判定管理员身份：作废之后不重判，「是管理员 && 已初始化」
     // 那道边沿就永远等不到，「先给管理员、后 /init enable」的群不会被补扫黑名单。
-    expect(isBotAdminIn).toHaveBeenCalledWith(-1001);
+    expect(resolveBotAdminStatus).toHaveBeenCalledWith(-1001);
     // disable 不重判——那一刻合取本来就不成立。
-    expect(isBotAdminIn).toHaveBeenCalledTimes(1);
+    expect(resolveBotAdminStatus).toHaveBeenCalledTimes(1);
   });
 
   test("/init disable 拆运行态失败仍持久化禁用状态，但不发送成功提示", async () => {

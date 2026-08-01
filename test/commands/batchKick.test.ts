@@ -24,8 +24,8 @@ mock.module("../../packages/config/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 100,
   hasWhitelistPermission: (): boolean => false,
 }));
-mock.module("../../packages/infra/blocklist", () => ({
-  isUserBlocked,
+mock.module("../../packages/infra/blocklist/membership", () => ({ isUserBlocked }));
+mock.module("../../packages/infra/blocklist/sweep", () => ({
   requestBlocklistResweep,
   sweepBlockedMembers,
 }));

@@ -15,7 +15,7 @@ export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
 /** 贴纸选择停顿额外增加的随机时间上界。 */
 export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 
-/** 贴纸目录单次 AI 调用失败后的跨请求退避序列。 */
+/** 贴纸下载/排队失败或成功响应正文不可用时的业务重采样退避序列。 */
 export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = Object.freeze([15_000, 60_000, 120_000]);
 
 /**

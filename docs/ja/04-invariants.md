@@ -56,7 +56,7 @@
 
   `.env` を読む人は「この鍵が欠けるとどの機能が止まるか」を一目で判断できる必要があり、将来同じベンダーが 2 つの機能を担当することも十分あり得るため、ベンダー名を基準にすると区別できなくなります。`AD_DETECT_DEEPSEEK_API_KEY` が未設定なら `/ad_detect enable` を拒否し、すでに有効なチャットも判定対象の投入を止めます。
 
-  `AI_CHAT_GEMINI_API_KEY` が未設定なら AI Worker 自体を起動せず、`/ai_chat enable` と `/switch_mood` を拒否し、すでに有効なチャットへのメッセージ投入とトリガーも止めます。2 つの鍵は役割が重ならず、互いにフォールバックしません。Gemini は AI 雑談エージェント専用、DeepSeek は広告検出専用です。
+  `AI_CHAT_GEMINI_API_KEY` が未設定なら AI Worker 自体を起動せず、`/ai_chat enable`、`/query_mood`、`/switch_mood` を拒否し、すでに有効なチャットへのメッセージ投入とトリガーも止めます。2 つの鍵は役割が重ならず、互いにフォールバックしません。Gemini は AI 雑談エージェント専用、DeepSeek は広告検出専用です。
 
   **日本語翻訳も同様で、唯一の判定入口は `packages/copy/availability.ts`** です（`g-auth.json` が使えること + チャットごとの opt-in）。`/ja_copy` と自動 copy の ja 変換は必ずここを通します。この経路の劣化は**サイレント**だからです——`translateToJapanese` は失敗時に null を返すだけで、呼び出し側は未翻訳の原文をそのまま送出し、グループからは「翻訳サービスが一時的に不調」と区別が付きません。設定事故が何日も隠れ続けることになります。
 
@@ -80,10 +80,11 @@
 
 - 汎用 JSON API request は `JSON_API_ALLOWED_ORIGINS` に明記した HTTPS origin だけを許可し、redirect を無効にします。新しい caller は allowlist を明示的に拡張しなければなりません。
 
-  Telegram avatar crawler は Telegram 所有 asset domain suffix の独立 allowlist を使いますが、HTTPS・credential 禁止・DNS label 境界という同じ URL policy を再利用し、redirect も無効にします。JSON allowlist へ接続したり、任意の HTTPS 画像を受け付ける形へ戻したりしてはいけません。
+  Telegram avatar download は Telegram 所有 asset domain suffix の独立 allowlist を使いますが、HTTPS・credential 禁止・DNS label 境界という同じ URL policy を再利用します。Bot API `file.getUrl()` の主経路と `t.me` の page/image fallback はどちらも redirect を無効にし、読み取り上限を維持します。JSON allowlist へ接続したり、任意の HTTPS 画像を受け付ける形へ戻したりしてはいけません。
 - 送信メッセージには `parse_mode` を一切設定しません。表示名やメッセージ本文は純テキストとしてのみ連結し、書式やリンクとして解釈される余地を残してはいけません。リッチテキストが必要な場合は、呼び出し側がテキストを段ごとに組み立て、`entities` を自ら与えます（offset は Telegram の UTF-16 code unit 基準で、JavaScript の `String#length` と同一。長さ 0 の entity はメッセージ全体が拒否されます）。
 
   新しい送信経路がこの制約を迂回するために `parse_mode` を使ってはいけません。
+- グループ内の非機能的な command text は `sendCommandMessage` を通し、送信成功から 30 秒後に削除します。private chat は対象外です。ユーザーが明示的に許可した `/permission help` と成功した CJK action result だけが `preserveInGroup: true` で長期保持できます。action command の対象 validation failure と `/x` の使い方提示は引き続き自動削除します。新しい例外は呼び出し箇所とテストの両方で明示しなければなりません。
 
 <p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
 
@@ -124,20 +125,19 @@
 
 ### AI チャットの実行時
 
-- `/switch_mood` はメインスレッドの request/waiter と AI Worker の確認応答による handshake を使います。メインスレッドは送信前に waiter を登録し、timeout、Worker crash、再起動断念、停止時に統一して精算します。request は絶対 deadline を持ち、AI Worker はムード再抽選の副作用より前に、期限切れの待機 request を拒否しなければなりません。再抽選成功を示せるのは `moodSwitched` 応答だけです。
-
-  その後の Telegram 確認メッセージ送信失敗を「再抽選失敗」へ書き換えてはいけません。
+- `/query_mood` と `/switch_mood` は、メインスレッドの request/waiter と AI Worker acknowledgement による handshake を共有します。前者は任意のグループメンバーが現在有効な mood を強制再抽選なしで読み取り、後者だけが `isCanSwitchMood` を確認して再抽選します。メインスレッドは送信前に waiter を登録し、timeout、Worker crash、再起動断念、停止時に統一して精算します。request は絶対 deadline を持ち、Worker は読み取りまたは再抽選の前に期限切れ request を拒否します。request ID、chat ID、期待する event type がすべて一致する `moodQueried` / `moodSwitched` acknowledgement だけが結果を証明します。その後の Telegram reply 失敗を query または再抽選失敗へ書き換えてはいけません。
 - AI チャットの invalidate は、完了を待てる cancellation 境界です。各チャットで最初の generation-sensitive task を受け入れると、その Worker isolate 内で二度と再利用しない一意 epoch を割り当てます。
 
   invalidate は現在の epoch を同期的に削除し、旧 generation を abort して未開始作業を消去した後、その epoch に登録された返信 round、rate-limit 通知、media description、memory compaction の task が settle するのを待ってから `chatInvalidated` 応答を返します。
 
   **この待機には上限が必要です**（`AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS`。メインスレッド側の `AI_CHAT_INVALIDATE_TIMEOUT_MS` より明確に短くすること）。
 
-  登録された task がすべて abort を受け取れるわけではありません——memory compaction と media description の 2 本は `AbortSignal` を受け取れず（`requestGeminiResponse` が対応していません）、リトライ間隔とリクエストタイムアウトを合わせると最悪で数分走ります。
+  登録された task がすべて abort を受け取れるわけではありません——memory compaction と media description の 2 本は、現在この generation の `AbortSignal` を受け取って Gemini request へ伝播しておらず、resampling interval と SDK request timeout を合わせると最悪で数分走ります。`Promise.race` 用の unref expiry timer は、task と timeout のどちらが先に完了しても `finally` で clear し、完了済み invalidate の closure と Promise を deadline まで保持してはいけません。
 
   上限なしで待つと、`/ai_chat disable` がミラーブロックの rotation と重なった一度だけでメインスレッドが先に reject し、その例外が grammY のミドルウェアへ抜けます——その update は失敗扱いになり、最終 offset は保留され、再起動後に Telegram が同じコマンドを再配信します。時間切れでは降格して先へ進み、エラーログを 1 行残します。正しさは待機に依存していません——登録された task はすべて generation を自己照合し、無効化後は何も書き込めません。
 
   遅延 task は副作用のない epoch 照合だけを行い、entry 回収後やチャット再有効化後に古い token が復活することはありません。したがって epoch Map は過去のチャット総数ではなく現在の active work と同程度に保たれます。メインスレッドが invalidate 完了を報告できるのは、メモリ削除の永続化と Worker の確認応答が両方成功した後だけです。
+- Gemini の transport、network、429、5xx retry は公式 `@google/genai` SDK の `retryOptions` だけが所有します（現在は最大 5 attempts）。1 回の request が `failureKind: "request"` で失敗した後、caller が full request retry をもう一層重ねてはいけません。domain-level resampling は SDK request が成功しても model response が使用不能または異常終了した場合（`failureKind: "response"`）、あるいは normalize 後の text が空の場合だけに許可し、request 数、latency、一時 allocation の乗算を防ぎます。
 - AI 返信は、成功したテキスト、スタンプ、リアクション、画像だけを 1 つの統一 action budget に計上します。モデル向け prompt 上限は 8、実行側 hard cap は 11 です。スタンプ、リアクション、生成画像はそれぞれ最大 1 回だけ成功でき、その他の action tool に per-tool call cap はありません。スタンプパック表示と Google Search は独立した lookup cap を持ち、custom function call 全体にも round 単位の loop guard があります。
 
   成功 action が 0 件の場合だけ、最終本文を `send_message` から fallback 送信します。意図的に表示するすべての文字列は、モデルがこのツールを明示的に呼び出して送らなければなりません。並行枠が埋まって queue に入った直接 trigger は、追い出し実行中に rate limit の関門に拒否されたら queue の先頭に留め、そこで排出を止めなければなりません。rate limit はそのチャットの window 内の回数だけを見ており、どの trigger かとは無関係です。
@@ -156,6 +156,7 @@
   **溢れ通知の送出はキュー押し出しとは別経路でなければなりません**（`flushOverflowNotice` と `drainReplyQueueIfWindowAllows`）：`enqueueOverflow` がグループに負っているその 1 行は窓に余裕があるかどうかに関係なく出す必要があり、同じ関数にまとめると、ゲートを付ければ通知が永久に飲み込まれ、外せば上の連投が戻ってきます。
 
   窓がまだ満杯のグループは飛ばします——無駄に 1 回試すたびにレート制限の案内（自体 60 秒のクールダウン付き）が送られ、毎分 1 行グループに流すことになるからです。先に入れてから押すので、順番は先着順のままです。
+- メインスレッドの random AI activity table は全グループメッセージが通る JIT hot path です。既存 chat の hit は固定 shape の `AiReplyActivityEntry`（`timestamps`、`lastAccessSequence`、`lastObservedAt`）をその場で更新し、`Map.delete` + `Map.set` で並べ直したり、一時的な compound key や projection object を allocation したりしてはいけません。満杯の table へ新しい chat を挿入する cold path だけが最大 500 entries を scan して LRU を選びます。window timestamp、capacity、eviction order、wall-clock rollback protection は性能変更でも維持する semantics です。
 - ホワイトリストのスタンプパック目録の突き合わせを、Worker の `init` 受信時 1 回だけにしてはいけません。
 
   `generatePackCatalog` は `getStickerSet` に失敗するとそのパックを丸ごと諦めますが、systemd 管理のプロセスは数週間動き続け得ます——初回デプロイ（`memory/stickers/` が空）で数秒のネットワーク不調に当たると `catalogs` は永久に空になり、`view_sticker_pack` と `send_sticker` の 2 つの tool がすべての返信で null を返します。
@@ -724,6 +725,7 @@
   予算超過時は実行中の Telegram 要求、メディア download、429 sleep を abort し、未開始キューを精算します。abort 後はメッセージ送信、アバター変更、グループタイトル書き込みを行いません。異常終了経路の maintenance 予算は 0 なので、各 drain は「予算 0」を正当な入力として扱わなければなりません。idle ならそのまま `flushed`、実行中の作業が残っていれば直ちに abort して `timedOut` として精算し、引数検証で例外を投げてはいけません。
 
   未完了のタイトル更新も、skip する際に必ず abort します。dispose の各 owner も個別に失敗隔離し、例外は `failed` として集計に参加させます。1 か所の throw が後続 owner、`flushStateToDisk`、インスタンスロックの処理を飛ばすことは許されません。
+- lifecycle と Anti-Raid drain のプロセス内経過時間 budget は `packages/libs/monotonicDeadline.ts` が `performance.now()` を使って計算します。wall clock の巻き戻しで drain、cancellation settlement、shutdown の期限を延長してはいけません。業務状態、protocol deadline、永続化する絶対 timestamp はそれぞれの semantics に従って引き続き `Date.now()` を使います。
 - Worker flush と mailbox barrier はすべて `packages/libs/flushBarrier.ts` を使い、ID、waiter table、timeout、遅延応答、crash 時の一括精算を管理します。ドメイン cache が resolver Map を再公開してはいけません。
 - domain flush が成功へ読み替えられるのは、同じ確認済み flush request で別 domain だけが失敗した場合に限ります。古い global failure state や transport failure を成功へ変換してはいけません。instance lock の release も durability 境界であり、owner 検証または unlink の失敗は caller へ伝播し、lifecycle 上の lock-acquired 状態を維持し、非ゼロ終了を強制します。
 

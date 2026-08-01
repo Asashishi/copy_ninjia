@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-const { getOrCreateChatState } = await import("../../packages/infra/storage");
+const { getOrCreateChatState } = await import("../../packages/infra/storage/stateStore");
 const {
   isSendCommandText,
   shouldPassInitGate,

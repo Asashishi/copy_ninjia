@@ -172,10 +172,10 @@ describe("chat runtime teardown", () => {
     getChatMember.mockImplementationOnce(() => new Promise((resolve) => { releaseOld = resolve; }));
     states.set(-1001, { isInitEnabled: true });
 
-    const staleCheck = botAdmin.isBotAdminIn(-1001);
+    const staleCheck = botAdmin.resolveBotAdminStatus(-1001);
     botAdmin.invalidateBotAdminStatus(-1001);
     getChatMember.mockImplementationOnce(async () => ({ status: "member" }));
-    const freshCheck = botAdmin.isBotAdminIn(-1001);
+    const freshCheck = botAdmin.resolveBotAdminStatus(-1001);
 
     expect(await freshCheck).toBe(false);
     releaseOld({ status: "administrator" });

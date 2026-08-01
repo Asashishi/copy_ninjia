@@ -1,6 +1,6 @@
 /**
  * 广告判定命中后，主线程侧处置任务的在途集合（owner 是
- * packages/antiRaid/adDetect.ts）。
+ * packages/antiRaid/adCandidate.ts）。
  *
  * 处置本体是「拉黑落盘 + 为每个管理群登记一批封禁」，两步都各自 durable：
  * 名单进 memory/blocklist/blocklist.json，封禁批次进 memory/blocklist/removals.json，

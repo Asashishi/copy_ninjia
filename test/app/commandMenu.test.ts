@@ -17,6 +17,7 @@ describe("application command menu", () => {
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("x");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("white");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("batch_kick");
+    expect(BOT_COMMANDS.map(({ command }) => command)).toContain("query_mood");
   });
 
   test("显式注册公开命令且不暴露管理员私聊 /send", async () => {

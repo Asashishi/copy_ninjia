@@ -6,8 +6,8 @@ import type { SendMessageParams } from "./actions";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 
 /**
- * 命令文本发送参数。群聊默认自动清理；`preserveInGroup` 只允许用于产品明确要求
- * 长期保留的命令说明，当前唯一例外是 `/permission help`。
+ * 命令文本发送参数。群聊默认自动清理；`preserveInGroup` 只允许用于用户明确授权
+ * 长期保留的内容，当前是 `/permission help` 与成功的中文动作命令结果。
  */
 export interface SendCommandMessageParams extends SendMessageParams {
   preserveInGroup?: boolean;

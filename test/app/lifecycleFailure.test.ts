@@ -81,6 +81,8 @@ const loadBlocklistConfig = mock((): BlocklistConfig => {
   return { blockedIds: [7, -4004] };
 });
 const sleep = mock(async (): Promise<void> => {});
+let monotonicTime: number = 0;
+const monotonicNow = mock((): number => monotonicTime);
 const setStatePersistenceFatalHandler = mock((_handler: ((error: Error) => void) | undefined): void => {});
 const setBusinessWorkerFatalHandler = mock((handler: ((error: Error) => void) | undefined): void => {
   businessWorkerFatalHandler = handler;
@@ -152,6 +154,7 @@ const testDependencies = {
     warn: mock((..._args: unknown[]): void => {}),
     error: loggerError,
   },
+  monotonicNow,
   loadState,
   preflightEnabledFeatures,
   refreshAllChatTitles,
@@ -192,6 +195,7 @@ beforeEach(() => {
   copiedUser = null;
   lastSeenUpdateId = 0;
   process.exitCode = 0;
+  monotonicTime = 0;
   for (const mocked of [
     acquireSingleInstanceLock,
     releaseSingleInstanceLock,
@@ -238,6 +242,7 @@ beforeEach(() => {
     registerCommandMenu,
     registerHandlers,
     sleep,
+    monotonicNow,
     loggerError,
     getUpdates,
     botInit,
@@ -924,12 +929,15 @@ describe("应用启动失败与退出清理", () => {
     await lifecycle.dispose();
   });
 
-  test("排空超时且仍有 update 在处理时不确认 offset", async () => {
-    let now: number = 1_000;
+  test("墙钟回拨时排空仍按单调预算超时，且不确认 offset", async () => {
+    let wallNow: number = 1_000;
     const originalDateNow = Date.now;
-    Date.now = (): number => now;
+    Date.now = (): number => wallNow;
     runnerSize.mockReturnValue(2);
-    sleep.mockImplementation(async (): Promise<void> => { now += 5_000; });
+    sleep.mockImplementation(async (): Promise<void> => {
+      wallNow -= 60_000;
+      monotonicTime += 5_000;
+    });
     lastSeenUpdateId = 321;
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
@@ -947,22 +955,15 @@ describe("应用启动失败与退出清理", () => {
   });
 
   test("并发 update 乱序完成时不会跨过仍在途的较小 update", async () => {
-    let now: number = 2_000;
-    const originalDateNow = Date.now;
-    Date.now = (): number => now;
     // 较大的 update 已经完成，但较小的 update 仍占据 runner，因此 size 始终非零。
     runnerSize.mockReturnValue(1);
-    sleep.mockImplementation(async (): Promise<void> => { now += 5_000; });
+    sleep.mockImplementation(async (): Promise<void> => { monotonicTime += 5_000; });
     lastSeenUpdateId = 900;
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
-    try {
-      await lifecycle.init();
-      await lifecycle.wait();
-      await lifecycle.dispose();
-    } finally {
-      Date.now = originalDateNow;
-    }
+    await lifecycle.init();
+    await lifecycle.wait();
+    await lifecycle.dispose();
 
     expect(getUpdates).not.toHaveBeenCalled();
   });

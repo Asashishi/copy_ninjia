@@ -38,7 +38,7 @@ cp -r config_example config
   - BotFather 下发的 token。
 - **`AI_CHAT_GEMINI_API_KEY`**（可空）
   - Gemini API 密钥，AI 闲聊 agent 专用：`/ai_chat` 的回复生成、图片理解与记忆压缩。
-    留空时 AI Worker 不启动，`/ai_chat enable` 与 `/switch_mood` 被拒绝；磁盘上的
+    留空时 AI Worker 不启动，`/ai_chat enable`、`/query_mood` 与 `/switch_mood` 被拒绝；磁盘上的
     AI 记忆原样保留，其余功能照常运行。
 - **`AD_DETECT_DEEPSEEK_API_KEY`**（可空）
   - DeepSeek API 密钥（OpenAI 兼容接口），供 `/ad_detect` 广告判定使用。留空时

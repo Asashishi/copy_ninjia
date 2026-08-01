@@ -1,6 +1,6 @@
 /**
  * /block 黑名单的处置副作用（入群守卫线程侧）。判定不在这里——名单是主线程
- * 状态，`isUserBlocked` 在主线程同步查完才投递本消息（见 infra/blocklist.ts
+ * 状态，`isUserBlocked` 在主线程同步查完才投递本消息（见 infra/blocklist/
  * 与 antiRaid/blocklistGuard.ts）。本模块负责「把这些 id 清出这个群」这一步：
  * 探测、封禁、失败重试，以及秒踢路径顺带的入群计数与公告清理。
  *

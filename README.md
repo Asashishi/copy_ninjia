@@ -33,8 +33,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1532_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.61%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1554_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.51%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -53,12 +53,12 @@
 这个仓库里的每一行生产代码、每一个测试用例，连同这份 README 本身，都出自 AI 之手。人类不写代码，但从未离席：负责架构设计，并和 AI 一起审查了每一次提交。
 
 <table width="100%">
-<tr><th width="14%" align="left">环节</th><th width="32%" align="left">由谁完成</th><th width="54%" align="left">做了什么</th></tr>
-<tr><td>📐&nbsp;架构设计</td><td><b>Asashishi</b>（本项目唯一的人类）</td><td>系统边界、Worker 拆分、持久化与恢复策略的设计与裁决</td></tr>
-<tr><td>⌨️&nbsp;编码实现</td><td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td><td>100% 的生产代码、测试与文档</td></tr>
-<tr><td>🧾&nbsp;提交审查</td><td><b>Asashishi</b> × AI</td><td>每一次提交都经人类与 AI 共同审查后才落库</td></tr>
-<tr><td>🔬&nbsp;全仓审查</td><td><b>Fable 5</b> · <b>GPT-5.6（Sol）</b> · <b>Opus 5</b> 等尖端模型</td><td>多轮全仓代码交叉审查，发现的问题直接转化为加固提交</td></tr>
-<tr><td>🛰️&nbsp;安全推演</td><td>同一批尖端模型</td><td>推演生产环境中的安全场景：崩溃恢复、并发竞态、恶意输入、资源耗尽等逐一过审</td></tr>
+<tr><th width="18%" align="left">环节</th><th width="32%" align="left">由谁完成</th><th width="50%" align="left">做了什么</th></tr>
+<tr><td>📐&nbsp;架&#8288;构&#8288;设&#8288;计</td><td><b>Asashishi</b>（本项目唯一的人类）</td><td>系统边界、Worker 拆分、持久化与恢复策略的设计与裁决</td></tr>
+<tr><td>⌨️&nbsp;编&#8288;码&#8288;实&#8288;现</td><td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td><td>100% 的生产代码、测试与文档</td></tr>
+<tr><td>🧾&nbsp;提&#8288;交&#8288;审&#8288;查</td><td><b>Asashishi</b> × AI</td><td>每一次提交都经人类与 AI 共同审查后才落库</td></tr>
+<tr><td>🔬&nbsp;全&#8288;仓&#8288;审&#8288;查</td><td><b>Fable 5</b> · <b>GPT-5.6（Sol）</b> · <b>Opus 5</b> 等尖端模型</td><td>多轮全仓代码交叉审查，发现的问题直接转化为加固提交</td></tr>
+<tr><td>🛰️&nbsp;安&#8288;全&#8288;推&#8288;演</td><td>同一批尖端模型</td><td>推演生产环境中的安全场景：崩溃恢复、并发竞态、恶意输入、资源耗尽等逐一过审</td></tr>
 </table>
 
 审查不是一次性仪式：从逐条提交的人机共审，到尖端模型的多轮全仓审查与安全推演，每一层结论都会转化为新的约束。
@@ -69,7 +69,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage：1532 项测试全部通过 / 166 个测试文件 / 27,514 次 expect() 调用 / 函数覆盖率 95.29% / 行覆盖率 96.61%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：1554 项测试全部通过 / 167 个测试文件 / 27,602 次 expect() 调用 / 函数覆盖率 95.08% / 行覆盖率 96.51%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -166,7 +166,7 @@
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">群成员</td><td>启动相应复读模式</td></tr>
 <tr><td><code>/stop_copy</code></td><td align="center">群成员</td><td>停止当前全局复读</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">群成员</td><td>只偷头像</td></tr>
-<tr><td><code>/&lt;1~2 个中文字&gt;</code></td><td align="center">群成员</td><td>动作命令，如 <code>/咬</code>、<code>/贴贴</code> 回复「发起人 咬了 目标！」</td></tr>
+<tr><td><code>/&lt;1~2 个中文字&gt;</code></td><td align="center">群成员</td><td>动作命令，如 <code>/咬</code>、<code>/揪住</code> 回复「发起人 咬了 目标！」；成功结果长期保留</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">群成员</td><td>暂停随机插话、随机复读等主动行为，默认 3 分钟</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
 <tr><td><code>/mute … &lt;时长&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>在超级群临时禁言或提前解除；目标支持回复、<code>@username</code>、用户 id，时长支持 <code>m/h/d</code></td></tr>
@@ -174,6 +174,7 @@
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>完整解除拉黑：把 id 从动态黑名单里划掉，并在所有机器人管理的群中解除封禁；目标指定方式同 <code>/block</code>，另外还接受频道的负数 id。静态黑名单身份拒绝解除；超级管理员自动放行</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊；超级管理员自动放行</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，非受保护身份命中后按 <code>/block</code> 同权处置；超级管理员自动放行</td></tr>
+<tr><td><code>/query_mood</code></td><td align="center">群成员</td><td>查询本群 AI 当前有效心情，不触发重抽</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名；超级管理员自动放行</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>开关本群日语翻译能力（默认关闭）；超级管理员自动放行</td></tr>
 <tr><td><code>/init enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>开关本群的业务处理总入口</td></tr>
@@ -186,7 +187,7 @@
 ### 行为细节
 
 - **命令入口**：群命令统一经过 `/init` 网关；未初始化群只接受超级管理员的 `/init`，所以 `/permission`、`/white` 也必须在已初始化群中使用。私聊斜杠命令只放行 `/send`。
-- **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。
+- **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。成功的动作结果与 `/permission help` 一样长期保留；目标缺失、参数错误和 `/x` 用法提示仍在 30 秒后删除。
 - **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 移除时整份名单原子重写回文件，并默认在所有机器人管理的群解除封禁；即使目标不在动态名单里也仍会跨群解封。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
 - **`/batch_kick` 慢速清理**：只允许超级管理员在已初始化的超级群中使用，参数是 `30m`、`2h`、`1d` 这类不超过 24 小时的单个窗口。命令按入群日志找出窗口内最后一次加入且仍在群中的成员，小并发执行只踢不封；超级管理员、白名单身份和永久黑名单成员都不会被这条命令当作普通目标处理。
 - **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 DeepSeek 判定；非受保护身份命中后执行与 `/block` 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。超级管理员恒不送检；白名单的 `isCanBypassAdDetection` 关闭后可以送检和删除本批消息，但仍不会进入永久黑名单。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
@@ -247,7 +248,7 @@ cp -r config_example config
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather 发放的 Bot Token |
 | `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员的单个十进制用户 ID |
-| `AI_CHAT_GEMINI_API_KEY` | — | AI 闲聊 agent 专用；留空则 AI Worker 不启动，`/ai_chat enable` 与 `/switch_mood` 被拒 |
+| `AI_CHAT_GEMINI_API_KEY` | — | AI 闲聊 agent 专用；留空则 AI Worker 不启动，`/ai_chat enable`、`/query_mood` 与 `/switch_mood` 被拒 |
 | `AD_DETECT_DEEPSEEK_API_KEY` | — | 广告检测专用；留空则 `/ad_detect enable` 被拒 |
 | `COPY_NINJIA_DATA_ROOT` | — | 运行时数据根目录；留空时使用项目根目录 |
 
@@ -281,7 +282,7 @@ bun run start     # 启动长轮询
 /ai_chat enable
 ```
 
-> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 582 处中文字符串、分布在 63 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/06-modification-guide.md)。
+> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 581 个源码行含中文字符串或模板字面量，分布在 65 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/06-modification-guide.md)。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 

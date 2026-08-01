@@ -1,5 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
-import { geminiResponse } from "../../../helpers/geminiResponse";
+import type { GeminiTextGenerationResult } from "../../../../packages/types/aiChat/gemini";
+
+function generatedText(text: string): GeminiTextGenerationResult {
+  return { ok: true, text };
+}
+
+const retryableFailure: GeminiTextGenerationResult = { ok: false, retryable: true };
+const requestFailure: GeminiTextGenerationResult = { ok: false, retryable: false };
 
 /**
  * aiChat/ai/stickers/sets.ts（真实拉取贴纸集合）、aiChat/ai/imageDescription.ts（真实调
@@ -10,11 +17,9 @@ import { geminiResponse } from "../../../helpers/geminiResponse";
  */
 const getStickerSetMock = mock(async (_pack: string): Promise<any> => null);
 const describeMediaMock = mock(async (..._args: unknown[]): Promise<string | null> => null);
-const describeMediaForStickerCatalogMock = mock(async (..._args: unknown[]): Promise<string | null> => null);
+const describeMediaForStickerCatalogMock = mock(async (..._args: unknown[]): Promise<GeminiTextGenerationResult> => retryableFailure);
 // 整包简介生成：默认返回一条固定简介文本，可按用例改写/断言调用次数。
-const requestGeminiResponseMock = mock(async (..._args: unknown[]): Promise<any> => geminiResponse({
-  candidates: [{ content: { parts: [{ text: "一包默认简介" }] } }],
-}));
+const requestGeminiTextResultMock = mock(async (..._args: unknown[]): Promise<GeminiTextGenerationResult> => generatedText("一包默认简介"));
 
 mock.module("../../../../packages/aiChat/ai/stickers/sets", () => ({
   getStickerSet: getStickerSetMock,
@@ -29,8 +34,7 @@ mock.module("../../../../packages/aiChat/ai/imageDescription", () => ({
 // 单次调用失败会按 STICKER_CATALOG_RETRY_DELAYS_MS 退避重试；测试里把
 // 睡眠打成即时返回，失败用例才不会真等几分钟。
 mock.module("../../../../packages/libs/sleep", () => ({ sleep: mock(async (_ms: number): Promise<void> => {}) }));
-const realGemini = await import("../../../../packages/aiChat/ai/gemini");
-mock.module("../../../../packages/aiChat/ai/gemini", () => ({ ...realGemini, requestGeminiResponse: requestGeminiResponseMock }));
+mock.module("../../../../packages/aiChat/ai/gemini", () => ({ requestGeminiTextResult: requestGeminiTextResultMock }));
 
 const {
   generatePackCatalog,
@@ -64,8 +68,8 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   test("线上有、目录没有的补：生成描述并写入，随后生成整包简介", async () => {
     transientDescriptionCache.set("new-uid", Promise.resolve("临时旧描述"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "新包", stickers: [sticker("new-uid", "😂")] }));
-    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "一只猫大笑");
-    requestGeminiResponseMock.mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "一包猫猫表情" }] } }] }));
+    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => generatedText("一只猫大笑"));
+    requestGeminiTextResultMock.mockImplementationOnce(async () => generatedText("一包猫猫表情"));
 
     await generatePackCatalog("pack_add");
 
@@ -115,18 +119,18 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
   test("条目没变化且已有整包简介：不重新生成简介", async () => {
     hydrateStickerCatalogs(persisted("pack_summary_keep", { "uid-a": { emoji: "👍", description: "描述A" } }, "旧简介"));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "稳定包", stickers: [sticker("uid-a", "👍")] }));
-    requestGeminiResponseMock.mockClear();
+    requestGeminiTextResultMock.mockClear();
 
     await generatePackCatalog("pack_summary_keep");
 
-    expect(requestGeminiResponseMock).not.toHaveBeenCalled();
+    expect(requestGeminiTextResultMock).not.toHaveBeenCalled();
     expect(getPackSummary("pack_summary_keep")).toBe("旧简介");
   });
 
   test("条目没变化但还没有简介：补生成简介", async () => {
     hydrateStickerCatalogs(persisted("pack_summary_backfill", { "uid-b": { emoji: "👍", description: "描述B" } }, null));
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "待补简介包", stickers: [sticker("uid-b", "👍")] }));
-    requestGeminiResponseMock.mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "补出来的简介" }] } }] }));
+    requestGeminiTextResultMock.mockImplementationOnce(async () => generatedText("补出来的简介"));
 
     await generatePackCatalog("pack_summary_backfill");
 
@@ -137,30 +141,46 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     hydrateStickerCatalogs(persisted("pack_summary_fail", { "uid-c": { emoji: "👍", description: "描述C" } }, "旧简介仍在"));
     // 包内容有变化（新增一枚），简介要重生成，但首次和三次重试全部失败。
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "变动包", stickers: [sticker("uid-c", "👍"), sticker("uid-d", "😂")] }));
-    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "新贴纸描述");
-    requestGeminiResponseMock.mockClear();
-    requestGeminiResponseMock
-      .mockImplementationOnce(async () => null)
-      .mockImplementationOnce(async () => null)
-      .mockImplementationOnce(async () => null)
-      .mockImplementationOnce(async () => null);
+    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => generatedText("新贴纸描述"));
+    requestGeminiTextResultMock.mockClear();
+    requestGeminiTextResultMock
+      .mockImplementationOnce(async () => retryableFailure)
+      .mockImplementationOnce(async () => retryableFailure)
+      .mockImplementationOnce(async () => retryableFailure)
+      .mockImplementationOnce(async () => retryableFailure);
 
     await generatePackCatalog("pack_summary_fail");
 
     expect(getCatalogEntry("uid-d")).toEqual({ emoji: "😂", description: "新贴纸描述" });
-    expect(requestGeminiResponseMock).toHaveBeenCalledTimes(4);
+    expect(requestGeminiTextResultMock).toHaveBeenCalledTimes(4);
     expect(getPackSummary("pack_summary_fail")).toBe("旧简介仍在");
+  });
+
+  test("SDK 已耗尽请求重试时不再套目录业务重试", async () => {
+    hydrateStickerCatalogs(persisted("pack_request_fail", { "uid-e": { emoji: "👍", description: "描述E" } }, "旧简介保留"));
+    getStickerSetMock.mockImplementationOnce(async () => ({
+      title: "请求失败包",
+      stickers: [sticker("uid-e", "👍"), sticker("uid-f", "😂")],
+    }));
+    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => generatedText("新描述F"));
+    requestGeminiTextResultMock.mockClear();
+    requestGeminiTextResultMock.mockImplementationOnce(async () => requestFailure);
+
+    await generatePackCatalog("pack_request_fail");
+
+    expect(requestGeminiTextResultMock).toHaveBeenCalledTimes(1);
+    expect(getPackSummary("pack_request_fail")).toBe("旧简介保留");
   });
 
   test("单枚解析与简介生成瞬时失败：退避重试内成功即正常写入", async () => {
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "抖动包", stickers: [sticker("retry-uid", "😂")] }));
     describeMediaForStickerCatalogMock.mockClear();
     describeMediaForStickerCatalogMock
-      .mockImplementationOnce(async () => null)
-      .mockImplementationOnce(async () => "第二次成功的描述");
-    requestGeminiResponseMock
-      .mockImplementationOnce(async () => null)
-      .mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "重试出的简介" }] } }] }));
+      .mockImplementationOnce(async () => retryableFailure)
+      .mockImplementationOnce(async () => generatedText("第二次成功的描述"));
+    requestGeminiTextResultMock
+      .mockImplementationOnce(async () => retryableFailure)
+      .mockImplementationOnce(async () => generatedText("重试出的简介"));
 
     await generatePackCatalog("pack_retry");
 
@@ -189,8 +209,8 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
 
     // 间隔到了就再试一次，这次拉到了。
     getStickerSetMock.mockImplementation(async () => ({ title: "补回来的包", stickers: [sticker("late-uid", "😂")] }));
-    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => "补出来的描述");
-    requestGeminiResponseMock.mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "补出来的简介" }] } }] }));
+    describeMediaForStickerCatalogMock.mockImplementationOnce(async () => generatedText("补出来的描述"));
+    requestGeminiTextResultMock.mockImplementationOnce(async () => generatedText("补出来的简介"));
     retryIncompleteStickerCatalogs(["pack_periodic"], 10_000 + STICKER_CATALOG_RETRY_INTERVAL_MS);
     await Bun.sleep(1);
     expect(getStickerSetMock).toHaveBeenCalledTimes(2);
@@ -209,7 +229,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     // 而 systemd 托管的进程可以连跑几周。
     getStickerSetMock.mockImplementation(async () => ({ title: "闩死包", stickers: [sticker("latch-uid", "😂")] }));
     describeMediaForStickerCatalogMock.mockClear();
-    describeMediaForStickerCatalogMock.mockImplementation(async () => null);
+    describeMediaForStickerCatalogMock.mockImplementation(async () => retryableFailure);
 
     await generatePackCatalog("pack_latch");
     // 1 次 + 3 次退避重试全部失败，这一枚进失败桶，整包目录仍为空。
@@ -222,8 +242,8 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
 
     // 到期之后必须真的再试一次，并把目录补起来。
     failedEntries.get("pack_latch")!.set("latch-uid", Date.now() - 1);
-    describeMediaForStickerCatalogMock.mockImplementation(async () => "终于描述出来了");
-    requestGeminiResponseMock.mockImplementationOnce(async () => geminiResponse({ candidates: [{ content: { parts: [{ text: "自愈出来的简介" }] } }] }));
+    describeMediaForStickerCatalogMock.mockImplementation(async () => generatedText("终于描述出来了"));
+    requestGeminiTextResultMock.mockImplementationOnce(async () => generatedText("自愈出来的简介"));
 
     await generatePackCatalog("pack_latch");
 
