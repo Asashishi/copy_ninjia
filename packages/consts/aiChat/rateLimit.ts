@@ -17,7 +17,7 @@ export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
 /** 同群允许同时在途的最大回复轮数；心跳、贴纸发送等路径必须保持跨轮并发安全。 */
 export const REPLY_ROUND_MAX_CONCURRENT: number = 5;
 /** 同群直接触发在并发满载时允许排队的最大数量。 */
-export const REPLY_TRIGGER_QUEUE_MAX: number = 25;
+export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 /** 排队触发原文快照的截断上限。 */
 export const QUEUED_TRIGGER_SNIPPET_MAX_CHARS: number = 200;
 /** 限频提示本身的冷却与固定文案。 */

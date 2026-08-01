@@ -86,4 +86,4 @@ export const PENDING_LUCK_CACHE_MAX: number = 15_000;
  * 重新预览拿到的仍是同一条，用户可见行为不变。这道闸同时兜住了落盘：越界的
  * key 根本不会产生 luckDraw 消息。
  */
-export const DAILY_LUCK_CACHE_MAX: number = 15_000;
+export const DAILY_LUCK_CACHE_MAX: number = 45_000;

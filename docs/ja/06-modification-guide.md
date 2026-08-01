@@ -90,7 +90,7 @@
 ## ペルソナまたは JSON 設定の変更
 
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
-- deployment 固有の変更は Git ignore 対象の `config/` だけに行います。`config_example/` は clean deployment 用 template で、schema または default example が変わるときだけ同期します。`whitelist.json` と `blocklist.json` は network 接続前に厳密ロードし、前者は `/white` と `/permission` が atomic rewrite します。`stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json` は feature ごとに遅延検証します。スタンプパックは最大 5 個、mood の重みは正の整数で合計 100、広告例文は空文字・重複不可で最大 500 件です。構造変更では先に `packages/config/` の schema と `packages/types/` の型を更新してから JSON を変更します。
+- deployment 固有の変更は Git ignore 対象の `config/` だけに行います。`config_example/` は clean deployment 用 template で、schema または default example が変わるときだけ同期します。`whitelist.json` と `blocklist.json` は network 接続前に厳密ロードし、前者は `/white` と `/permission` が atomic rewrite します。`stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json` は feature ごとに遅延検証します。スタンプパックは最大 5 個、mood の重みは正の整数で合計 100、広告例文は空文字・重複不可、1 件あたり最大 1,024 文字、合計最大 500 件です。構造変更では先に `packages/config/` の schema と `packages/types/` の型を更新してから JSON を変更します。
 
 ## 環境変数の追加
 

@@ -232,7 +232,7 @@ This section covers [counting and enforcement boundaries](#counting-and-enforcem
 
 #### Counting and enforcement boundaries
 
-- **Flood counting and enforcement both live in the Anti-Raid Worker; the main thread only applies synchronous gates and makes one best-effort `post`.** When one member posts `FLOOD_MESSAGE_LIMIT` messages (currently 21) within one minute in one **supergroup**, they are muted for `FLOOD_MUTE_DURATION_MS` (currently 5 minutes).
+- **Flood counting and enforcement both live in the Anti-Raid Worker; the main thread only applies synchronous gates and makes one best-effort `post`.** When one member posts `FLOOD_MESSAGE_LIMIT` messages (currently 15) within one minute in one **supergroup**, they are muted for `FLOOD_MUTE_DURATION_MS` (currently 3 minutes).
 
   Supergroups only, because `restrictChatMember` is defined to work only there; counting in a basic group merely wastes memory — filling a whole window buys one request that is guaranteed to fail plus one misleading error line.
 
@@ -254,7 +254,7 @@ This section covers [counting and enforcement boundaries](#counting-and-enforcem
 
   **When that re-check fails, the whole disposal must abort, not merely the write-back**: `/init disable` and losing management both run `deactivateChat → clearChatFloodWindows`, dropping every window of that chat, while the bot most likely remains a Telegram administrator there — it can still mute and still speak.
 
-  Acting anyway means silencing a member for five minutes in a chat this process no longer manages and then calling them out publicly, with no unmute timer and nobody left accountable for it (same shape as the ad verdict's `pendingAdMessages.get(key) !== bundle` and the verification disposal's `stillCurrent`). The cost is one missed flood verdict when an LRU eviction happens to land inside that round trip, exactly the trade-off `FLOOD_WINDOW_MAX_MEMBERS` already spells out.
+  Acting anyway means silencing a member for three minutes in a chat this process no longer manages and then calling them out publicly, with no unmute timer and nobody left accountable for it (same shape as the ad verdict's `pendingAdMessages.get(key) !== bundle` and the verification disposal's `stillCurrent`). The cost is one missed flood verdict when an LRU eviction happens to land inside that round trip, exactly the trade-off `FLOOD_WINDOW_MAX_MEMBERS` already spells out.
 
   Clearing the whole window on a hit complements this: even if suppression is rolled back, stale timestamps cannot immediately produce another hit.
 
@@ -268,13 +268,13 @@ This section covers [counting and enforcement boundaries](#counting-and-enforcem
 
   Those two buckets are what closes the "mirror has not arrived" fallback: without them, a chat where the bot genuinely lacks the right would buy one doomed request per filled window.
 
-  They cannot be collapsed into "just try it": Telegram answers both "the bot lacks the right" and "the target is an administrator" with the same 400 `not enough rights`, so acting blind only pushes a misleading line into `logs/` that sends operators after a permission problem that does not exist — and muting the owner for five minutes costs far more than letting one flood through (the next message re-enters counting).
+  They cannot be collapsed into "just try it": Telegram answers both "the bot lacks the right" and "the target is an administrator" with the same 400 `not enough rights`, so acting blind only pushes a misleading line into `logs/` that sends operators after a permission problem that does not exist — and muting the owner for three minutes costs far more than letting one flood through (the next message re-enters counting).
 
   The mute request carries a `FLOOD_MUTE_DISPATCH_TIMEOUT_MS` timeout signal: `until_date` is computed before the request is queued, and the request still has to clear the per-chat throttling bucket; if it reaches Telegram less than 30 seconds before that deadline, the Bot API treats it as a **permanent** restriction — and this module schedules no unmute timer and persists no state, so the member is silenced forever until a human intervenes.
 
   Timing out abandons the mute instead (suppression rolls back, the next filled window retries), which costs far less.
 
-  The in-chat notice is sent only after the mute actually lands (its wording asserts exactly that the person has been silenced) and self-deletes the moment the mute expires, leaving no permanent announcement — that self-deletion is backed by a registered pending-deletion table (`scheduleNoticeDeletion`) which `flushPendingNoticeDeletions` cashes in before the shutdown drain (**batched per client and chat through `deleteMessages`**: every deletion in one chat queues behind the same rate-limit bucket, so N notices sent one by one take at least N seconds to settle while the drain budget is measured in seconds — a handful of members flooding the same chat within five minutes is enough to time the drain out, and the irony is that the step triggering it exists to make shutdown *tidier*;
+  The in-chat notice is sent only after the mute actually lands (its wording asserts exactly that the person has been silenced) and self-deletes the moment the mute expires, leaving no permanent announcement — that self-deletion is backed by a registered pending-deletion table (`scheduleNoticeDeletion`) which `flushPendingNoticeDeletions` cashes in before the shutdown drain (**batched per client and chat through `deleteMessages`**: every deletion in one chat queues behind the same rate-limit bucket, so N notices sent one by one take at least N seconds to settle while the drain budget is measured in seconds — a handful of members flooding the same chat within three minutes is enough to time the drain out, and the irony is that the step triggering it exists to make shutdown *tidier*;
 
   the reason to batch is the same as for ad disposal's bulk deletion — **request count**, not speed); a bare `setTimeout` lives in the Worker's isolate, so a crash-respawn or process restart would drop it along with the notice, leaving a permanent public callout.
 

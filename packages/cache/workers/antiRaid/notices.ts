@@ -10,7 +10,7 @@ import type { PendingNoticeDeletion } from "../../../types/antiRaid/internal";
  * 而不是留在群里。这张表存在的唯一理由就是这次 flush：`setTimeout(...).unref()`
  * 活在 Worker 的 isolate 里，崩溃重建、`stopAntiRaidWorker`、`systemctl restart`
  * 都会把它连同定时器一起丢掉，公告则永久留在群里点着某个成员的名——刷屏禁言
- * 的公告要挂满 FLOOD_MUTE_DURATION_MS（5 分钟），敞口是踢人战报（30 秒）的十倍。
+ * 的公告要挂满 FLOOD_MUTE_DURATION_MS（3 分钟），敞口是踢人战报（30 秒）的六倍。
  *
  * 纯内存、不落盘：进程重启后这批公告的删除责任就此丢失，属于已知取舍——
  * flush 覆盖的是有序停机，硬崩溃仍会漏。条目数天然被「同时在禁言中的人数」

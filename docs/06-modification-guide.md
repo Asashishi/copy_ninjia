@@ -90,7 +90,7 @@
 ## 修改人设与 JSON 配置
 
 - 人设：改 [`prompt/persona.md`](../prompt/persona.md)，重启生效。与转录格式、身份标记耦合的互动规则由代码注入，不写进人设文件。
-- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`whitelist.json` / `blocklist.json` 在联网前严格加载，前者还会被 `/white` 与 `/permission` 原子改写；`stickers.json` / `reactions.json` / `mood.json` / `ad_samples.json` 按功能惰性校验（贴纸包最多 5 个；mood 权重必须为正整数且总和恰好 100；广告示例顶层就是字符串数组，条目非空、不重复、最多 500 条）。改结构时先改 `packages/config/` 的 schema 与 `packages/types/`，再改 JSON。
+- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`whitelist.json` / `blocklist.json` 在联网前严格加载，前者还会被 `/white` 与 `/permission` 原子改写；`stickers.json` / `reactions.json` / `mood.json` / `ad_samples.json` 按功能惰性校验（贴纸包最多 5 个；mood 权重必须为正整数且总和恰好 100；广告示例顶层就是字符串数组，条目非空、不重复、单条最多 1,024 字符、总数最多 500 条）。改结构时先改 `packages/config/` 的 schema 与 `packages/types/`，再改 JSON。
 
 ## 新增环境变量
 

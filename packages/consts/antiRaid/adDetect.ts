@@ -107,7 +107,7 @@ export const AD_DETECT_BUNDLE_MAX_CHARS: number = 4_096;
 export const AD_DETECT_MAX_LINK_URLS: number = 5;
 
 /** 补进送检文本的单个 URL 最大字符数；带一长串跟踪参数的链接照样能认出域名。 */
-export const AD_DETECT_LINK_URL_MAX_CHARS: number = 200;
+export const AD_DETECT_LINK_URL_MAX_CHARS: number = 256;
 
 /**
  * 判定使用的 DeepSeek 模型（deepseek-chat 已弃用）。端点、超时与重试属于传输层，
@@ -137,7 +137,7 @@ export const AD_DETECT_TEMPERATURE: number = 0.5;
 export const MAX_CONFIGURED_AD_SAMPLES: number = 500;
 
 /** 单条广告示例允许的最大字符数。 */
-export const AD_SAMPLE_MAX_CHARS: number = 1_000;
+export const AD_SAMPLE_MAX_CHARS: number = 1_024;
 
 /** 判定理由在日志与播报里的最大展示字符数。 */
 export const AD_DETECT_REASON_MAX_CHARS: number = 80;

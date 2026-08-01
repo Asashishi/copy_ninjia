@@ -190,7 +190,7 @@
 
 #### 计数与执行边界
 
-- **刷屏禁言的计数与执行全在 Anti-Raid Worker，主线程只做同步门禁 + 一次尽力而为的 `post`**：同一成员在同一**超级群**内一分钟发言达到 `FLOOD_MESSAGE_LIMIT`（当前 21 条）即禁言 `FLOOD_MUTE_DURATION_MS`（当前 5 分钟）。只认超级群是因为 `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和一行误导性报错。
+- **刷屏禁言的计数与执行全在 Anti-Raid Worker，主线程只做同步门禁 + 一次尽力而为的 `post`**：同一成员在同一**超级群**内一分钟发言达到 `FLOOD_MESSAGE_LIMIT`（当前 15 条）即禁言 `FLOOD_MUTE_DURATION_MS`（当前 3 分钟）。只认超级群是因为 `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和一行误导性报错。
 
   主线程侧（`packages/antiRaid/floodControl.ts`）只判三件它独有的事实：是不是超级群、发言的是不是真实用户（频道马甲与匿名管理员没有可禁言的成员身份，`restrictChatMember` 只认真实用户，而皮套底下是谁 Telegram 并不暴露）、发送者是不是自己人（`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json`，判定收在 `antiRaid/memberFacts.ts` 的 `isProtectedSender`，与广告检测共用同一处），随后把 `floodCandidate` 投过去。
 
@@ -204,7 +204,7 @@
 
   回滚与对齐真实截止时刻之前都必须按「状态对象同一性」复核条目仍是发起这次判定的那一个：`await` 期间它可能已被 LRU 淘汰或随 `deactivateChat` 清掉。
 
-  **复核对不上时要中止的是整段处置，不只是那次回写**：`/init disable` 与停管会走 `deactivateChat → clearChatFloodWindows` 丢掉这个群的全部窗口，而机器人此刻多半仍是 Telegram 管理员——照样禁得动、也发得出话，那就是在一个本进程已经不再管理的群里把成员按住五分钟、再公开点名说一句「本天才把你禁言 5 分钟」，而这条处置没有恢复计时器、也没有任何人再为它负责（同广告判定的 `pendingAdMessages.get(key) !== bundle` 与验证处置的 `stillCurrent`）。
+  **复核对不上时要中止的是整段处置，不只是那次回写**：`/init disable` 与停管会走 `deactivateChat → clearChatFloodWindows` 丢掉这个群的全部窗口，而机器人此刻多半仍是 Telegram 管理员——照样禁得动、也发得出话，那就是在一个本进程已经不再管理的群里把成员按住三分钟、再公开点名说一句「本天才把你禁言 3 分钟」，而这条处置没有恢复计时器、也没有任何人再为它负责（同广告判定的 `pendingAdMessages.get(key) !== bundle` 与验证处置的 `stillCurrent`）。
 
   代价是 LRU 淘汰恰好撞在这次往返上时少判一次刷屏，与 `FLOOD_WINDOW_MAX_MEMBERS` 写明的取舍一致。命中时把窗口整体清空是这套抑制的补充：抑制万一被回滚，也不会拿旧时间戳立刻再凑出一次命中。
 
@@ -214,11 +214,11 @@
 
   禁言请求本身因此也返回三态（`muteChatMemberWithOutcome`，形态同 `banChatMemberWithOutcome`）：`forbidden` 是 Telegram 明确的拒绝（缺 `can_restrict_members`，或目标其实是管理员而那份缓存刚好没认出来），保留抑制位、不重打，具体原因由统一错误边界带着 Telegram 自己的说法进日志；`failed` 是限流/网络抖动，回滚抑制位等下一个满窗口。这两档正是「镜像还没到」那条兜底路径的收口——没有它，一个真的没有权限的群会每填满一个窗口换来一次注定失败的请求。
 
-  两者不能省成「直接试一次」——Telegram 对「机器人缺权限」与「目标本身是管理员」回的是同一句 400 `not enough rights`，混着打只会往 `logs/` 塞一条把运维引向权限配置的假线索，而把群主按住五分钟的代价远大于放过一次刷屏（下一条消息会重新计数）。禁言请求带 `FLOOD_MUTE_DISPATCH_TIMEOUT_MS` 的超时信号：`until_date` 是入队前算好的绝对时刻，而请求还要过每群的限流桶；
+  两者不能省成「直接试一次」——Telegram 对「机器人缺权限」与「目标本身是管理员」回的是同一句 400 `not enough rights`，混着打只会往 `logs/` 塞一条把运维引向权限配置的假线索，而把群主按住三分钟的代价远大于放过一次刷屏（下一条消息会重新计数）。禁言请求带 `FLOOD_MUTE_DISPATCH_TIMEOUT_MS` 的超时信号：`until_date` 是入队前算好的绝对时刻，而请求还要过每群的限流桶；
 
   排到它距当下不足 30 秒时 Bot API 会当成**永久限制**，而本模块不排恢复计时器也不落盘，那就是一次只能人工解除的永久禁言。超时即放弃这次禁言（抑制位回滚，下一个满窗口重来），代价远小于此。
 
-  群内通知只在禁言真的落地之后才发（文案断言的正是「人已经被按住了」），并在禁言解除那一刻自撤，不给群里留永久公告——这条自撤靠的是登记在册的待删表（`scheduleNoticeDeletion`），停机 drain 前由 `flushPendingNoticeDeletions` 就地兑现（**必须按「客户端 + 群」合批走 `deleteMessages`**：同一个群的删除全排在同一条限流桶里，逐条发 N 条至少要 N 秒才结算，而 drain 的预算是秒级——同群几名成员在五分钟内接连刷屏就能攒出四条公告，足以让 drain 超时，讽刺的是触发它的正是这个为了让停机更整洁才加的清理步骤；
+  群内通知只在禁言真的落地之后才发（文案断言的正是「人已经被按住了」），并在禁言解除那一刻自撤，不给群里留永久公告——这条自撤靠的是登记在册的待删表（`scheduleNoticeDeletion`），停机 drain 前由 `flushPendingNoticeDeletions` 就地兑现（**必须按「客户端 + 群」合批走 `deleteMessages`**：同一个群的删除全排在同一条限流桶里，逐条发 N 条至少要 N 秒才结算，而 drain 的预算是秒级——同群几名成员在三分钟内接连刷屏就能攒出四条公告，足以让 drain 超时，讽刺的是触发它的正是这个为了让停机更整洁才加的清理步骤；
 
   合批的理由与广告处置的批量删除一致，为的是**请求条数**而不是速度）；裸 `setTimeout` 活在 Worker 的 isolate 里，崩溃重建或进程重启就会把它连同公告一起丢掉，留下一条永久点名的公开公告。
 

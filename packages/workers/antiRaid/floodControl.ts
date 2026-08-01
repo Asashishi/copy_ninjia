@@ -104,7 +104,7 @@ export function formatFloodMuteNotice(label: string): string {
  * 才现拉一次全量。**确证不了一律按不处置办**：`restrictChatMember` 对管理员本来
  * 就会被拒，而 Telegram 回的那句 400 `not enough rights` 与「机器人自己缺权限」
  * 完全一样，照打只会往 `logs/` 塞一条把运维引向权限配置的假线索；把群主按住
- * 五分钟的代价也远大于放过一次刷屏（下一条消息会重新计数）。
+ * 三分钟的代价也远大于放过一次刷屏（下一条消息会重新计数）。
  * @returns true=确认是管理员；false=确认不是；undefined=没查出来。
  */
 async function isAdminMember(chatId: number, userId: number): Promise<boolean | undefined> {
@@ -147,8 +147,8 @@ function rollbackSuppression(key: string, entry: FloodWindowEntry): void {
  * **每个 await 之后都要复核这条窗口还在表里**（stillManaged）。停管、`/init disable`
  * 与群 teardown 都会走 deactivateChat → clearChatFloodWindows 把这个群的窗口全部
  * 丢掉，而机器人此刻多半仍是 Telegram 管理员：禁得动、也发得出话。对不上还照做，
- * 就是在一个本进程已经不再管理的群里把成员按住五分钟、再公开说一句「本天才把你
- * 禁言 5 分钟」——一次没人负责的处置，而本模块不排恢复计时器。同种情形下
+ * 就是在一个本进程已经不再管理的群里把成员按住三分钟、再公开说一句「本天才把你
+ * 禁言 3 分钟」——一次没人负责的处置，而本模块不排恢复计时器。同种情形下
  * adDetect/queue.ts（`pendingAdMessages.get(key) !== bundle`）与 verificationEffects.ts
  * 的 stillCurrent 都是就地中止。
  *
@@ -229,7 +229,7 @@ async function muteFlooder({ message, key, entry }: MuteFlooderParams): Promise<
   if (noticeMessageId === undefined) return;
   // 公告活到禁言解除那一刻为止：不给群里留永久公告（同踢人战报的约定），
   // 又不至于在人还被按着的时候就先撤掉、让后来的人看不懂他为什么不说话。
-  // 走登记版而不是 deleteMessageAfter：5 分钟的定时器活在本 Worker 的 isolate
+  // 走登记版而不是 deleteMessageAfter：3 分钟的定时器活在本 Worker 的 isolate
   // 里，崩溃重建或进程重启就把它丢了，公告则永久留在群里点着人名（理由与
   // 兜底见 ./noticeCleanup.ts）。
   scheduleNoticeDeletion({
