@@ -18,6 +18,7 @@ import {
   REPLY_CONTEXT_STRUCTURE_INSTRUCTION,
   TIME_AWARENESS_INSTRUCTION,
 } from "../../consts/aiChat/prompts/memory";
+import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../consts/aiChat/prompts/agent";
 import { ACTION_TOOL_NAMES } from "../../consts/tools";
 import { MOOD_STATE_PRECEDENCE_INSTRUCTION } from "../../consts/aiChat/prompts/mood";
 import {
@@ -121,7 +122,8 @@ export async function callGemini(
   // CHAT_INTERACTION_INSTRUCTION 自带 Markdown 标题，其余运行时段落在此补
   // 同级的 ## 标题，避免按 Markdown 层级全部挂进「上下文与互动规则」小节。
   const systemPromptPrefix: string =
-    `${systemPrompt()}\n\n${CHAT_INTERACTION_INSTRUCTION}\n\n` +
+    `${systemPrompt()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
+    `${CHAT_INTERACTION_INSTRUCTION}\n\n` +
     `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
     `## 今天的状态\n${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
     `## 当前时间\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;

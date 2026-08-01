@@ -1,6 +1,7 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
+import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/agent";
 import { CHAT_INTERACTION_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/memory";
 import {
   GROUNDED_REPLY_TEMPERATURE,
@@ -102,6 +103,7 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   expect(String(firstRequest.config?.systemInstruction)).toContain("唤起者只认真正那个 Part 里的那一条");
   expect(String(firstRequest.config?.systemInstruction)).toContain("聊天记忆只分两层仲裁");
   expect(String(firstRequest.config?.systemInstruction)).toContain("唤起者发送记录的按 id 副本");
+  expect(String(firstRequest.config?.systemInstruction)).toContain(AI_CHAT_AGENT_ROLE_INSTRUCTION);
   expect(String(firstRequest.config?.systemInstruction)).toContain(CHAT_INTERACTION_INSTRUCTION);
   expect(String(firstRequest.config?.systemInstruction)).toContain("叠加在基础人设上的今日状态");
   expect((firstRequest.contents as unknown[])[0]).toEqual({
@@ -144,11 +146,15 @@ test("非直接触发不插入唤起者重点 Part", async () => {
   });
 });
 
-test("上下文互动协议由代码注入，不混入可编辑的人设文件", () => {
+test("agent 身份权限边界与上下文协议由代码注入，不混入可编辑的人设文件", () => {
+  expect(AI_CHAT_AGENT_ROLE_INSTRUCTION).toContain("只以普通群友身份参与闲聊");
+  expect(AI_CHAT_AGENT_ROLE_INSTRUCTION).toContain("不具备直接调度、授予、撤销或修改任何权限的能力");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("[username:@用户名]");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("消息明确回复了你发出的某条消息");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("别把别人互相 at 错认成在叫你");
-  expect(readFileSync(PERSONA_PATH, "utf8")).not.toContain("## 上下文与互动规则");
+  const persona: string = readFileSync(PERSONA_PATH, "utf8");
+  expect(persona).not.toContain("## Agent 身份与权限边界");
+  expect(persona).not.toContain("## 上下文与互动规则");
 });
 
 /** 一轮里连续跑满 count 次服务端搜索的响应 parts，末尾附一次 send_message
