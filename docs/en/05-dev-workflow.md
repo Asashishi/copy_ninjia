@@ -35,7 +35,7 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **1581 tests / 169 files / 29945 `expect()` calls**; full-source **function coverage 95.15% / line coverage 96.54%**. The root README's Coverage badge displays line coverage.
+`bun run test:coverage`: **1591 tests / 169 files / 30060 `expect()` calls**; full-source **function coverage 95.16% / line coverage 96.56%**. The root README's Coverage badge displays line coverage.
 
 ## Test Isolation
 
@@ -87,7 +87,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~581 source lines across 65 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy; count source lines containing string or template literals, excluding comments.
+- **The Chinese string-literal count** (currently ~619 source lines across 70 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy; count source lines containing string or template literals, excluding comments.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

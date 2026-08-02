@@ -15,6 +15,7 @@ import {
 import {
   CHAT_INTERACTION_INSTRUCTION,
   CHAT_MEMORY_PRIORITY_INSTRUCTION,
+  MEMORY_MECHANISM_SILENCE_INSTRUCTION,
   REPLY_CONTEXT_STRUCTURE_INSTRUCTION,
   TIME_AWARENESS_INSTRUCTION,
 } from "../../consts/aiChat/prompts/memory";
@@ -124,7 +125,8 @@ export async function callGemini(
   const systemPromptPrefix: string =
     `${systemPrompt()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
     `${CHAT_INTERACTION_INSTRUCTION}\n\n` +
-    `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n\n` +
+    `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n` +
+    `${MEMORY_MECHANISM_SILENCE_INSTRUCTION}\n\n` +
     `## 今天的状态\n${MOOD_STATE_PRECEDENCE_INSTRUCTION}\n${currentMoodInstruction(chatId)}\n\n` +
     `## 当前时间\n${currentTimeSentence()}${TIME_AWARENESS_INSTRUCTION}`;
   const initialParts: Part[] = [

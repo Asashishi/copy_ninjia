@@ -2,7 +2,10 @@ import { beforeEach, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { GenerateContentParameters, GenerateContentResponse, Tool } from "@google/genai";
 import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/agent";
-import { CHAT_INTERACTION_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/memory";
+import {
+  CHAT_INTERACTION_INSTRUCTION,
+  MEMORY_MECHANISM_SILENCE_INSTRUCTION,
+} from "../../../packages/consts/aiChat/prompts/memory";
 import {
   GROUNDED_REPLY_TEMPERATURE,
   HARD_MAX_ACTIONS_PER_REPLY,
@@ -103,6 +106,7 @@ test("单轮请求同时注册 googleSearch 与函数工具，并强制先查证
   expect(String(firstRequest.config?.systemInstruction)).toContain("唤起者只认真正那个 Part 里的那一条");
   expect(String(firstRequest.config?.systemInstruction)).toContain("聊天记忆只分两层仲裁");
   expect(String(firstRequest.config?.systemInstruction)).toContain("唤起者发送记录的按 id 副本");
+  expect(String(firstRequest.config?.systemInstruction)).toContain(MEMORY_MECHANISM_SILENCE_INSTRUCTION);
   expect(String(firstRequest.config?.systemInstruction)).toContain(AI_CHAT_AGENT_ROLE_INSTRUCTION);
   expect(String(firstRequest.config?.systemInstruction)).toContain(CHAT_INTERACTION_INSTRUCTION);
   expect(String(firstRequest.config?.systemInstruction)).toContain("叠加在基础人设上的今日状态");

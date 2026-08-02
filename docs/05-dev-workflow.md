@@ -35,7 +35,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**1581 tests / 169 files / 29945 次 `expect()`**；全源码**函数覆盖率 95.15% / 行覆盖率 96.54%**。根 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**1591 tests / 169 files / 30060 次 `expect()`**；全源码**函数覆盖率 95.16% / 行覆盖率 96.56%**。根 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -87,7 +87,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
 
-- **中文字符串统计**（当前约 581 处 / 65 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算，只统计字符串与模板字面量所在源码行、不含注释。
+- **中文字符串统计**（当前约 619 处 / 70 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算，只统计字符串与模板字面量所在源码行、不含注释。
 - **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布
