@@ -13,33 +13,33 @@ export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
  * 这一条纯占位说明项来曝光用法，见 commands/cjkAction.ts。
  */
 export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
-  { command: "copy", description: "复读" },
-  { command: "r_copy", description: "复读并反转文本" },
-  { command: "nya_copy", description: "复读并加喵~" },
-  { command: "ja_copy", description: "复读并翻译为日语；enable/disable 开关本群该功能（仅限定用户可用）" },
-  { command: "stop_copy", description: "停止当前的复读" },
-  { command: "steal_icon", description: "偷取目标头像作为 bot 头像" },
+  { command: "copy", description: "让本天才复读你的消息，连这都要点菜单吗，杂鱼♡" },
+  { command: "r_copy", description: "让本天才反转文本再复读，倒着看可别把自己绕晕哦，杂鱼♡" },
+  { command: "nya_copy", description: "让本天才复读并加上喵~，这点可爱也要来蹭吗，杂鱼♡" },
+  { command: "ja_copy", description: "复读并翻成日语；enable/disable 开关本群功能，只有获授权者配碰，杂鱼别乱按♡" },
+  { command: "stop_copy", description: "停掉当前复读，终于发现自己很吵了吗，杂鱼♡" },
+  { command: "steal_icon", description: "偷取目标头像给本天才换上，连自己的头像都拿不出手吗，杂鱼♡" },
   // 占位说明项：命令名 x 就是那个「变量」，提示用户把它换成任意 1~2 个中文字。
   // 它存在的唯一目的是让中文动作命令在菜单里可见——那类命令名进不了菜单，
   // 见上方说明。收到时由 commands/cjkAction.ts 的 handleCjkActionUsageCommand
   // 回一句用法并终止链路：既不能沉默（点了菜单的人不知道发生了什么），也不能
   // 放行到消息兜底（会被当成普通消息进入 AI/复读流水线）。
-  { command: "x", description: "动作命令：把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 的消息或加 @username 指定对象" },
-  { command: "block", description: "拉黑：写进永久黑名单并在所有本天才管理的群里踢出封禁，之后再进群秒踢；回复消息、@username 或直接给用户 id 指定目标（仅白名单用户可用）" },
-  { command: "unblock", description: "完整解除拉黑：移出永久黑名单并解除所有托管群封禁；支持回复消息、@username、用户 id 或频道的负数 id（仅白名单用户可用）" },
-  { command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" },
-  { command: "ad_detect", description: "开关本群广告检测，enable/disable；命中即拉黑并全群封禁删消息（仅限定用户可用）" },
-  { command: "flood_control", description: "开关本群防刷屏禁言，enable/disable（仅限定用户可用）" },
-  { command: "query_mood", description: "查询本群 AI 的当前心情（群成员可用）" },
-  { command: "switch_mood", description: "重新抽一个本群 AI 的当前心情（仅限定用户可用）" },
-  { command: "init", description: "开关本群的机器人监听/初始化，enable/disable（仅限定用户可用）" },
-  { command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" },
-  { command: "unquiet", description: "提前解除 /quiet 静默" },
-  { command: "mute", description: "禁言：收走目标的发言权一段时间，时长必填，如 10m、2h、1d（1 分钟~366 天，到点自动恢复）；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" },
-  { command: "unmute", description: "提前解除禁言；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" },
-  { command: "batch_kick", description: "批量踢出本群滚动时间窗内加入的人，如 30m、2h、1d；只踢不拉黑（仅超级管理员可用）" },
-  { command: "permission", description: "query 查询自身权限，help 查看说明；修改白名单权限仅超级管理员可用" },
-  { command: "white", description: "新增或删除白名单用户/频道，首次加入使用默认权限（仅超级管理员可用）" },
+  { command: "x", description: "把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 或加 @username 指定目标，笨蛋♡" },
+  { command: "block", description: "把目标写进永久黑名单并在所有托管群封禁，之后再进群也秒踢；支持回复、@username 或用户 id，仅白名单用户配用，杂鱼别乱碰♡" },
+  { command: "unblock", description: "把目标移出永久黑名单并解除所有托管群封禁；支持回复、@username、用户 id 或频道负数 id，仅白名单用户配用，笨蛋♡" },
+  { command: "ai_chat", description: "用 enable/disable 开关本群 AI 闲聊，只有获授权者配使唤本天才，杂鱼别乱按♡" },
+  { command: "ad_detect", description: "用 enable/disable 开关本群广告检测；命中就拉黑并全群封禁删消息，只有获授权者配碰，杂鱼♡" },
+  { command: "flood_control", description: "用 enable/disable 开关本群防刷屏禁言，只有获授权者配碰，刷屏杂鱼可别手抖哦♡" },
+  { command: "query_mood", description: "偷看本群 AI 当前心情，群成员都能问，连本天才的脸色都不会看吗，杂鱼♡" },
+  { command: "switch_mood", description: "重新抽取本群 AI 心情，只有获授权者配左右本天才，杂鱼别得意♡" },
+  { command: "init", description: "用 enable/disable 开关本群机器人监听/初始化，只有限定用户配决定本天才管不管，杂鱼♡" },
+  { command: "quiet", description: "让本天才安静 1~15 分钟，默认 3 分钟；嫌吵就自己说清楚呀，笨蛋♡" },
+  { command: "unquiet", description: "提前解除 /quiet，让本天才重新开口；这么快就想我了吗，杂鱼♡" },
+  { command: "mute", description: "禁言目标一段时间，时长必填如 10m/2h/1d（1 分钟~366 天，到点恢复）；支持回复、@username 或用户 id，仅白名单用户配用，杂鱼♡" },
+  { command: "unmute", description: "提前解除目标禁言；支持回复、@username 或用户 id，仅白名单用户配用，连等到期都做不到吗，杂鱼♡" },
+  { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
+  { command: "permission", description: "query 偷看自己有几斤几两，help 看本天才的说明；改权限只有超级管理员配碰，杂鱼别乱按♡" },
+  { command: "white", description: "新增或删除白名单用户/频道，首次加入用默认权限；仅超级管理员配用，普通杂鱼别想偷偷混进来♡" },
 ];
 
 /** copy 类命令的公共冷却时长（白名单用户豁免，见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */

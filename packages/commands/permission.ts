@@ -26,10 +26,11 @@ import { resolveCommandTarget } from "./targetResolution";
 
 /** /permission 的固定用法；支持回复目标，或显式给用户/频道 ID 与 @username。 */
 const PERMISSION_USAGE_TEXT: string =
-  `笨蛋，用法是 /permission <用户id|频道id|@username> <权限键> <true|false>；` +
+  `哈？连这种命令都要本天才手把手教吗，杂鱼♡ ` +
+  `设置权限用 /permission <用户id|频道id|@username> <权限键> <true|false>；` +
   `回复白名单身份时可以省略目标，只写 /permission <权限键> <true|false>；` +
-  `全部权限打开用 /permission <用户id|频道id|@username> all，回复目标时只写 /permission all；` +
-  `白名单身份查询自身权限用 /permission query，查看权限说明用 /permission help♡`;
+  `想把全部权限打开就用 /permission <用户id|频道id|@username> all，回复目标时只写 /permission all；` +
+  `想偷看自己有几斤几两就用 /permission query，连权限说明都记不住就用 /permission help，笨蛋♡`;
 
 interface PermissionHelpMessage {
   text: string;
@@ -38,19 +39,20 @@ interface PermissionHelpMessage {
 
 /** 把权限键与说明渲染为可复制的 JSON 代码块，实体偏移按 UTF-16 code unit 计算。 */
 function formatPermissionHelpMessage(): PermissionHelpMessage {
-  const prefix: string = "可用权限如下；true 表示授予，false 表示收回：\n";
+  const prefix: string =
+    "哼，连权限名都记不住，还得本天才整理给你看吗？睁大眼睛看好啦：true 是赏给你的，false 就是没你的份，杂鱼♡\n";
   const permissionJson: string = JSON.stringify(WHITELIST_PERMISSION_HELP, null, 2);
   const suffix: string = [
     "",
-    "白名单身份查询自己的权限：",
+    "想知道自己有几斤几两就发：",
     "/permission query",
     "",
-    "以下修改操作仅限超级管理员：",
-    "设置已有白名单身份：",
+    "以下修改操作仅限超级管理员，白名单杂鱼看懂就好，别伸手乱碰哦♡",
+    "给已有白名单身份设置权限：",
     "/permission <用户id|频道id|@username> <权限键> <true|false>",
     "回复目标时可省略身份：/permission <权限键> <true|false>",
     "",
-    "把已有白名单身份的全部权限设为 true：",
+    "懒得一项项开，就把已有白名单身份的全部权限设为 true：",
     "/permission <用户id|频道id|@username> all",
     "回复目标时可省略身份：/permission all",
   ].join("\n");
@@ -71,7 +73,8 @@ function formatPermissionHelpMessage(): PermissionHelpMessage {
 function formatPermissionQueryMessage(
   permissions: Readonly<WhitelistPermissions>
 ): PermissionHelpMessage {
-  const prefix: string = "你的白名单权限如下：\n";
+  const prefix: string =
+    "哼，连自己有几斤几两都不知道吗？本天才勉为其难把你的白名单权限列出来：true 是赏给你的，false 就是你还不配，睁大眼睛看好啦，杂鱼♡\n";
   const permissionJson: string = JSON.stringify(permissions, null, 2);
   return {
     text: `${prefix}${permissionJson}`,
@@ -134,7 +137,7 @@ export async function handlePermissionCommand(
     if (!actorIsSuperAdmin && actorPermissions === undefined) {
       await sendCommandMessage({
         chatId,
-        text: `只有白名单身份才能查看权限；${actor ? formatUserLabel(actor) : "哪个杂鱼"} 还不在里面呀，笨蛋♡`,
+        text: `哈？${actor ? formatUserLabel(actor) : "哪个杂鱼"} 还不在里面，这种白名单门都没摸到的杂鱼也敢偷看本天才的权限说明？先拿到资格再来啦，笨蛋♡`,
         replyToMessageId: messageId,
       });
       return;
@@ -153,7 +156,7 @@ export async function handlePermissionCommand(
     if (actorPermissions === undefined) {
       await sendCommandMessage({
         chatId,
-        text: `超级管理员不通过白名单逐项授权，没有可查询的自身白名单权限对象哦♡`,
+        text: `哈？超级管理员可是本天才亲自认的，才不靠白名单那点逐项授权呢，所以没有可查询的自身白名单权限对象啦，笨蛋♡`,
         replyToMessageId: messageId,
       });
       return;

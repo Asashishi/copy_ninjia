@@ -163,6 +163,8 @@ describe("/permission", () => {
     }
     expect(text).toContain("/permission query");
     expect(text).toContain("以下修改操作仅限超级管理员");
+    expect(text).toContain("本天才");
+    expect(text).toContain("杂鱼♡");
     expect(text).toContain("/permission <用户id|频道id|@username>");
     expect(text).toContain("/permission <用户id|频道id|@username> all");
     expect(text.length).toBeLessThanOrEqual(4096);
@@ -187,6 +189,10 @@ describe("/permission", () => {
     );
     expect(codeEntity).toMatchObject({ type: "pre", language: "json" });
     expect(JSON.parse(permissionJson)).toEqual(expected);
+    expect(text).toContain("本天才勉为其难");
+    expect(text).toContain("true 是赏给你的");
+    expect(text).toContain("false 就是你还不配");
+    expect(text).toContain("杂鱼♡");
     expect(message?.preserveInGroup).toBeUndefined();
   });
 

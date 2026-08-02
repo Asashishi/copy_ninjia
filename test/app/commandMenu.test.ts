@@ -13,12 +13,16 @@ describe("application command menu", () => {
       expect(command).toMatch(/^[a-z0-9_]{1,32}$/);
       expect(description.length).toBeGreaterThan(0);
       expect(description.length).toBeLessThanOrEqual(256);
+      expect(description).toEndWith("♡");
+      expect(description).toMatch(/本天才|杂鱼|笨蛋/);
     }
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("x");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("white");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("batch_kick");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("query_mood");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("flood_control");
+    expect(BOT_COMMANDS.find(({ command }) => command === "permission")?.description)
+      .toContain("杂鱼别乱按♡");
   });
 
   test("显式注册公开命令且不暴露管理员私聊 /send", async () => {
