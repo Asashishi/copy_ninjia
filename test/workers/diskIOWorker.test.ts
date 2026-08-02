@@ -40,7 +40,7 @@ const flushStickerCatalogs = mock((): boolean => true);
 const flushLuckAppends = mock((): boolean => true);
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
-const flushJoinLogBuffer = mock((): boolean => true);
+const flushJoinLogDomain = mock((): boolean => true);
 const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
 const hydrateStickerCatalogs = mock((_packs: readonly string[] | null): Map<string, string> => new Map());
@@ -71,7 +71,7 @@ mock.module("../../packages/workers/diskIO/verificationWrites", () => ({
   scheduleVerificationRollover: (): void => {},
 }));
 mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
-  flushJoinLogBuffer,
+  flushJoinLogDomain,
   handleJoinLogMessage,
   readJoinLog,
 }));
@@ -104,6 +104,8 @@ const workerGlobal = globalThis as typeof globalThis & { postMessage: (message: 
 const originalPostMessage = workerGlobal.postMessage;
 workerGlobal.postMessage = postMessage;
 const { handleDiskIOWorkerMessage } = await import("../../packages/workers/diskIOWorker");
+// 拒收标记走真实的 owner 缓存：路由层的兜底就是靠它把失败传给统一 flush。
+const { consumeJoinLogRejection } = await import("../../packages/cache/workers/diskIO/joinLog");
 
 afterAll(() => {
   workerGlobal.postMessage = originalPostMessage;
@@ -126,7 +128,7 @@ beforeEach(() => {
     flushLuckAppends,
     flushVerificationChanges,
     flushBlocklistRemovalOutbox,
-    flushJoinLogBuffer,
+    flushJoinLogDomain,
     handleBlocklistRemovalsMessage,
     postMessage,
     hydrateLuckDay,
@@ -144,7 +146,7 @@ beforeEach(() => {
   flushLuckAppends.mockReturnValue(true);
   flushVerificationChanges.mockReturnValue(true);
   flushBlocklistRemovalOutbox.mockReturnValue(true);
-  flushJoinLogBuffer.mockReturnValue(true);
+  flushJoinLogDomain.mockReturnValue(true);
   readJoinLog.mockImplementation(() => [{ userId: 42, joinedAt: 1_000 }]);
 });
 
@@ -188,6 +190,32 @@ describe("Disk I/O Worker protocol router", () => {
     expect(handleVerificationDelete).toHaveBeenCalledTimes(1);
     expect(handleBlocklistRemovalsMessage).toHaveBeenCalledTimes(1);
     expect(handleJoinLogMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("入群事实的 owner 抛错不逸出 onmessage，改记拒收让统一 flush 回报失败", () => {
+    handleJoinLogMessage.mockImplementationOnce((): void => {
+      throw new Error("Failed to flush join logs before day rollover cleanup.");
+    });
+
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      // 逸出 onmessage 的异常会被 Bun 直接终止整条落盘线程：在途 flush 全按失败
+      // 结算、各领域缓冲随线程一起没了，反复触发还会把整个进程停掉。
+      expect((): void => route({
+        type: "joinLog",
+        chatId: -1,
+        userId: 42,
+        joinedAt: 1_000,
+        day: "1970-01-01",
+      })).not.toThrow();
+    } finally {
+      console.error = originalConsoleError;
+    }
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    // 代价只落在 joinLog 这一个领域：拒收标记让 recordJoinLog 紧接着那次
+    // flush 拿到 flushFailed，该 update 不被确认，Telegram 重投。
+    expect(consumeJoinLogRejection()).toBeTrue();
   });
 
   test("入群日志查询总有显式成功或失败回执", () => {
@@ -331,7 +359,7 @@ describe("Disk I/O Worker protocol router", () => {
       flushLuckAppends,
       flushVerificationChanges,
       flushBlocklistRemovalOutbox,
-      flushJoinLogBuffer,
+      flushJoinLogDomain,
     ]) {
       expect(fn).toHaveBeenCalledTimes(1);
     }

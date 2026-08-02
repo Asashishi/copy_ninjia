@@ -12,34 +12,34 @@ export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
  * 不是跳过那一项。中文动作命令因此进不了菜单，只能靠下面的 /x
  * 这一条纯占位说明项来曝光用法，见 commands/cjkAction.ts。
  */
-export const BOT_COMMANDS: readonly BotCommand[] = Object.freeze([
-  Object.freeze({ command: "copy", description: "复读" }),
-  Object.freeze({ command: "r_copy", description: "复读并反转文本" }),
-  Object.freeze({ command: "nya_copy", description: "复读并加喵~" }),
-  Object.freeze({ command: "ja_copy", description: "复读并翻译为日语；enable/disable 开关本群该功能（仅限定用户可用）" }),
-  Object.freeze({ command: "stop_copy", description: "停止当前的复读" }),
-  Object.freeze({ command: "steal_icon", description: "偷取目标头像作为 bot 头像" }),
+export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
+  { command: "copy", description: "复读" },
+  { command: "r_copy", description: "复读并反转文本" },
+  { command: "nya_copy", description: "复读并加喵~" },
+  { command: "ja_copy", description: "复读并翻译为日语；enable/disable 开关本群该功能（仅限定用户可用）" },
+  { command: "stop_copy", description: "停止当前的复读" },
+  { command: "steal_icon", description: "偷取目标头像作为 bot 头像" },
   // 占位说明项：命令名 x 就是那个「变量」，提示用户把它换成任意 1~2 个中文字。
   // 它存在的唯一目的是让中文动作命令在菜单里可见——那类命令名进不了菜单，
   // 见上方说明。收到时由 commands/cjkAction.ts 的 handleCjkActionUsageCommand
   // 回一句用法并终止链路：既不能沉默（点了菜单的人不知道发生了什么），也不能
   // 放行到消息兜底（会被当成普通消息进入 AI/复读流水线）。
-  Object.freeze({ command: "x", description: "动作命令：把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 的消息或加 @username 指定对象" }),
-  Object.freeze({ command: "block", description: "拉黑：写进永久黑名单并在所有本天才管理的群里踢出封禁，之后再进群秒踢；回复消息、@username 或直接给用户 id 指定目标（仅白名单用户可用）" }),
-  Object.freeze({ command: "unblock", description: "完整解除拉黑：移出永久黑名单并解除所有托管群封禁；支持回复消息、@username、用户 id 或频道的负数 id（仅白名单用户可用）" }),
-  Object.freeze({ command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" }),
-  Object.freeze({ command: "ad_detect", description: "开关本群广告检测，enable/disable；命中即拉黑并全群封禁删消息（仅限定用户可用）" }),
-  Object.freeze({ command: "query_mood", description: "查询本群 AI 的当前心情（群成员可用）" }),
-  Object.freeze({ command: "switch_mood", description: "重新抽一个本群 AI 的当前心情（仅限定用户可用）" }),
-  Object.freeze({ command: "init", description: "开关本群的机器人监听/初始化，enable/disable（仅限定用户可用）" }),
-  Object.freeze({ command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" }),
-  Object.freeze({ command: "unquiet", description: "提前解除 /quiet 静默" }),
-  Object.freeze({ command: "mute", description: "禁言：收走目标的发言权一段时间，时长必填，如 10m、2h、1d（1 分钟~366 天，到点自动恢复）；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" }),
-  Object.freeze({ command: "unmute", description: "提前解除禁言；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" }),
-  Object.freeze({ command: "batch_kick", description: "批量踢出本群滚动时间窗内加入的人，如 30m、2h、1d；只踢不拉黑（仅超级管理员可用）" }),
-  Object.freeze({ command: "permission", description: "修改已有白名单用户或频道的逐项权限（仅超级管理员可用）" }),
-  Object.freeze({ command: "white", description: "新增或删除白名单用户/频道，首次加入使用默认权限（仅超级管理员可用）" }),
-]);
+  { command: "x", description: "动作命令：把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 的消息或加 @username 指定对象" },
+  { command: "block", description: "拉黑：写进永久黑名单并在所有本天才管理的群里踢出封禁，之后再进群秒踢；回复消息、@username 或直接给用户 id 指定目标（仅白名单用户可用）" },
+  { command: "unblock", description: "完整解除拉黑：移出永久黑名单并解除所有托管群封禁；支持回复消息、@username、用户 id 或频道的负数 id（仅白名单用户可用）" },
+  { command: "ai_chat", description: "开关本群 AI 闲聊功能，enable/disable（仅限定用户可用）" },
+  { command: "ad_detect", description: "开关本群广告检测，enable/disable；命中即拉黑并全群封禁删消息（仅限定用户可用）" },
+  { command: "query_mood", description: "查询本群 AI 的当前心情（群成员可用）" },
+  { command: "switch_mood", description: "重新抽一个本群 AI 的当前心情（仅限定用户可用）" },
+  { command: "init", description: "开关本群的机器人监听/初始化，enable/disable（仅限定用户可用）" },
+  { command: "quiet", description: "让机器人安静一会（分钟数 1~15，默认 3）" },
+  { command: "unquiet", description: "提前解除 /quiet 静默" },
+  { command: "mute", description: "禁言：收走目标的发言权一段时间，时长必填，如 10m、2h、1d（1 分钟~366 天，到点自动恢复）；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" },
+  { command: "unmute", description: "提前解除禁言；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" },
+  { command: "batch_kick", description: "批量踢出本群滚动时间窗内加入的人，如 30m、2h、1d；只踢不拉黑（仅超级管理员可用）" },
+  { command: "permission", description: "修改已有白名单用户或频道的逐项权限（仅超级管理员可用）" },
+  { command: "white", description: "新增或删除白名单用户/频道，首次加入使用默认权限（仅超级管理员可用）" },
+];
 
 /** copy 类命令的公共冷却时长（白名单用户豁免，见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
 export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
@@ -134,11 +134,11 @@ export const MUTE_DURATION_ARG_PATTERN: RegExp = /^([1-9]\d*)([mhd])$/i;
  * `/mute` 时长单位到毫秒的换算表，键集合与 MUTE_DURATION_ARG_PATTERN 的单位
  * 捕获组一一对应，新增单位两处要同步改。所属模块：commands/mute.ts。
  */
-export const MUTE_DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> = Object.freeze({
+export const MUTE_DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> = {
   m: 60_000,
   h: 60 * 60_000,
   d: 24 * 60 * 60_000,
-});
+};
 
 /**
  * `/mute` 允许的最短时长。Bot API 对 restrictChatMember 的约定是 `until_date`
@@ -163,11 +163,11 @@ export const BATCH_KICK_DURATION_ARG_PATTERN: RegExp = /^([1-9]\d*)([mhd])$/i;
 
 /** `/batch_kick` 时长单位到毫秒的换算表。 */
 export const BATCH_KICK_DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> =
-  Object.freeze({
+  {
     m: 60_000,
     h: 60 * 60_000,
     d: 24 * 60 * 60_000,
-  });
+  };
 
 /** `/batch_kick` 最短回溯窗口，避免零长度或秒级误操作。 */
 export const BATCH_KICK_MIN_DURATION_MS: number = 60_000;

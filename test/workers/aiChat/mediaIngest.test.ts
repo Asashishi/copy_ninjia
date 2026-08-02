@@ -37,7 +37,12 @@ function photoMessage(): AiRecordMediaMessage {
     messageId: 10,
     commentOnResolve: false,
     imageGenerationRequested: true,
+    stickerFallbackText: undefined,
     directTrigger: { reason: "mention" },
+    username: undefined,
+    replyTo: undefined,
+    forwardedFrom: undefined,
+    persistImmediately: false,
   };
 }
 

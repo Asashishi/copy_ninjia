@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { TimestampDeque } from "../../packages/libs/timestampDeque";
-import { trimTimestampWindow } from "../../packages/libs/slidingWindowRateLimit";
 
 function contents(queue: TimestampDeque): number[] {
   const values: number[] = [];
@@ -48,7 +47,9 @@ describe("TimestampDeque", () => {
     const queue = new TimestampDeque(8);
     for (const value of [100, 900, 5_002]) queue.push(value);
 
-    trimTimestampWindow(queue, 1_000, 1_000);
+    // 与 slidingWindowRateLimit.ts 的通用实现同一边界定义：保留
+    // (now - windowMs, now]，并丢掉时钟回拨后落在未来的队尾。
+    queue.trim(1_000, 1_000);
 
     expect(contents(queue)).toEqual([100, 900]);
   });

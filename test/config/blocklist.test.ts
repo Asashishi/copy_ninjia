@@ -4,6 +4,7 @@ import {
   loadBlocklistConfig,
   parseBlocklistConfig,
 } from "../../packages/config/blocklist";
+import type { BlocklistConfig } from "../../packages/types/blocklist";
 import { loadWhitelistConfig } from "../../packages/config/whitelist";
 
 describe("static blocklist config", () => {
@@ -17,14 +18,27 @@ describe("static blocklist config", () => {
     const loaded = loadBlocklistConfig();
     expect(loaded.blockedIds).toContain(987654321);
     expect(loaded.blockedIds).toContain(-1009876543210);
-    expect(Object.isFrozen(loaded)).toBeTrue();
-    expect(Object.isFrozen(loaded.blockedIds)).toBeTrue();
     expect(() => assertBlocklistProtectedIdentitiesDisjoint({
       blockedIds: loaded.blockedIds,
       whitelistIds: loadWhitelistConfig().keys(),
       superAdminId: 1,
       source: "example configs",
     })).not.toThrow();
+  });
+
+  test("解析结果只读，调用方改不动共享单例", () => {
+    // 不可变性已从运行期 Object.freeze 移到类型上（见 AGENTS.md 的「常量」一节）：
+    // BlocklistConfig 的两层都是 readonly，写入在编译期就被拒。`@ts-expect-error`
+    // 本身就是断言——类型哪天被放宽成可写，这两行会因为「预期的错误没有发生」让
+    // typecheck 失败（反向验证过：把目标换成合法语句立刻报 TS2578）。
+    //
+    // **必须挑一份用完即弃的解析结果来试**：`@ts-expect-error` 只压制类型报错，
+    // 底下那行代码照样执行。拿共享单例来试就会把它真的改坏，后面的断言全被带偏。
+    const probe: BlocklistConfig = parseBlocklistConfig({ blockedIds: [1] });
+    // @ts-expect-error 黑名单快照不允许整体替换
+    probe.blockedIds = [];
+    // @ts-expect-error 黑名单快照不允许就地追加
+    probe.blockedIds.push(2);
   });
 
   test("拒绝错误结构、额外字段、零、小数、非数字、越界与重复 ID", () => {

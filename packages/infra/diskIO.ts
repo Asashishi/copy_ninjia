@@ -44,6 +44,7 @@ import type {
   DiskIODomain,
   DiskIORespawnListener,
   DiskIORespawnRegistration,
+  DomainFlushOutcome,
   LoadRequest,
   LoadedData,
   LoadedReply,
@@ -318,19 +319,13 @@ export function readJoinLog({
  */
 export function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   return requestDiskIOFlush(timeoutMs).then(
-    (outcome: DiskIOFlushOutcome): FlushResult => outcome.result
+    (outcome: DomainFlushOutcome): FlushResult => outcome.result
   );
-}
-
-interface DiskIOFlushOutcome {
-  result: FlushResult;
-  /** 仅在 Worker 明确回复本次请求部分失败时存在。 */
-  failedDomains?: readonly DiskIODomain[];
 }
 
 async function requestDiskIOFlush(
   timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
-): Promise<DiskIOFlushOutcome> {
+): Promise<DomainFlushOutcome> {
   requirePositiveFinite(timeoutMs, "Disk I/O flush timeout");
   const worker: Worker | null = diskIORuntime.worker;
   if (!worker || !diskIORuntime.writable) return { result: "failed" };
@@ -360,15 +355,37 @@ export async function flushDiskIODomain(
   domain: DiskIODomain,
   timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
 ): Promise<FlushResult> {
-  const outcome: DiskIOFlushOutcome = await requestDiskIOFlush(timeoutMs);
+  // 不经 flushDiskIODomainOutcome 转一手：这条是入群事实的 durable 屏障
+  // （infra/joinLog.ts），多套一层 async 就多一个 promise 和一个只为取 result
+  // 而生的临时对象。共用的只是下面那个同步判定。
+  return narrowFlushResultToDomain(await requestDiskIOFlush(timeoutMs), domain);
+}
+
+/**
+ * 同上，但把**本次请求**回执里的失败领域名一并带出，供调用方点名真正坏掉的
+ * 文件（Worker 侧的写盘错误按设计只有 console.error，不点名就没有一条进得了
+ * logs/）。超时或 Worker 崩溃中途结算时没有本次回执，failedDomains 保持
+ * undefined——那种情况下任何领域名都只是别的 flush 留下的旧值。
+ */
+export async function flushDiskIODomainOutcome(
+  domain: DiskIODomain,
+  timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
+): Promise<DomainFlushOutcome> {
+  const outcome: DomainFlushOutcome = await requestDiskIOFlush(timeoutMs);
+  const result: FlushResult = narrowFlushResultToDomain(outcome, domain);
+  return result === "failed" && outcome.failedDomains !== undefined
+    ? { result, failedDomains: outcome.failedDomains }
+    : { result };
+}
+
+/** 把整轮 flush 的结局收窄到单个领域：无关领域失败按成功计。 */
+function narrowFlushResultToDomain(
+  outcome: DomainFlushOutcome,
+  domain: DiskIODomain
+): FlushResult {
   if (outcome.result !== "failed") return outcome.result;
   if (outcome.failedDomains === undefined) return "failed";
   return outcome.failedDomains.includes(domain) ? "failed" : "flushed";
-}
-
-/** 最近一次 flush 回执里没能落盘的领域，供调用方把真正坏掉的那个记进日志。 */
-export function lastFailedDiskIODomains(): readonly DiskIODomain[] {
-  return diskIORuntime.lastFlushFailedDomains;
 }
 
 /** 终止落盘 Worker；返回后旧实例不可能再 rename/append 共享文件。 */
@@ -386,7 +403,6 @@ export function terminateDiskIO(): Promise<void> {
   diskIORuntime.pendingBusinessMessages.clear();
   diskIORuntime.nextLuckSecretRequestId = 1;
   diskIORuntime.nextJoinLogReadRequestId = 1;
-  diskIORuntime.lastFlushFailedDomains = [];
   diskIOFlushBarrier.settleAll("failed");
   pendingFlushFailedDomains.clear();
   const terminationError: Error = new Error("Persistence Worker terminated before the request completed.");

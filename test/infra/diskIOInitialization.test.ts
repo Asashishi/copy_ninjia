@@ -205,6 +205,23 @@ describe("explicit Worker initialization", () => {
       first.onmessage!({ data: targetDomainReply } as MessageEvent<DiskIOReply>);
       expect(await targetDomainFlushPromise).toBe("failed");
 
+      // 带回执的出口把领域名一并带出，且只带**本次请求**回执里的那一份：
+      // 上一次失败留下的 aiMemory 不得出现在这一次的诊断里，否则 /block 会
+      // 把运维引向一个跟本次失败毫无关系的文件。
+      const outcomePromise = diskIO.flushDiskIODomainOutcome("blocklist", 1_000);
+      const outcomeFlush = first.messages.at(-1)!;
+      expect(outcomeFlush.type).toBe("flush");
+      const outcomeReply: DiskIOReply = {
+        type: "flushFailed",
+        flushedId: outcomeFlush.type === "flush" ? outcomeFlush.flushId : -1,
+        failedDomains: ["blocklist", "joinLog"],
+      };
+      first.onmessage!({ data: outcomeReply } as MessageEvent<DiskIOReply>);
+      expect(await outcomePromise).toEqual({
+        result: "failed",
+        failedDomains: ["blocklist", "joinLog"],
+      });
+
       const persisted: VerificationPersistedReply[] = [];
       diskIO.onVerificationPersisted((reply) => { persisted.push(reply); });
       const ack: VerificationPersistedReply = {
@@ -709,7 +726,9 @@ describe("explicit Worker initialization", () => {
 
   test("Worker 未初始化时领域 flush 不会复用旧回执误报成功", async () => {
     await diskIO.terminateDiskIO();
-    expect(diskIO.lastFailedDiskIODomains()).toEqual([]);
     await expect(diskIO.flushDiskIODomain("blocklist", 1_000)).resolves.toBe("failed");
+    // 没有本次请求的回执时不得报出任何领域名：那只会是别的 flush 留下的旧值，
+    // 把运维引向一个跟本次失败无关的文件。
+    await expect(diskIO.flushDiskIODomainOutcome("blocklist", 1_000)).resolves.toEqual({ result: "failed" });
   });
 });

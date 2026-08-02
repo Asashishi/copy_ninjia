@@ -114,7 +114,7 @@ async function collectStickerPackMenu(): Promise<StickerPackCandidate[]> {
 }
 
 /** 包内贴纸的编号清单文本（每行「编号. emoji 画面描述」），一层工具的返回值用。 */
-export function formatPackStickerList(candidate: StickerPackCandidate): string {
+function formatPackStickerList(candidate: StickerPackCandidate): string {
   return candidate.stickers.map((c: StickerCandidate, i: number): string => `${i + 1}. ${c.emoji || "（无 emoji）"} ${c.description}`).join("\n");
 }
 

@@ -292,7 +292,7 @@
 
   启动恢复以 `state.json` 为准，只 hydrate 明确启用 AI 的群，并为关闭群的残留快照安排删除。当前快照中的每条热区消息必须包含正数 `messageId`；回复链索引由这些消息重建，不单独持久化。
 
-- `chat_member` 入群事实只有在 `flushDiskIODomain("joinLog")` 返回 `flushed` 后才能确认对应 update；投递成功不等于 durable。Worker 写失败必须把原分组放回缓冲并退避重试，不能清空后丢弃；待刷事实硬顶 1,200 条，满载必须快速失败并让尚未确认的 update 重投，不能把磁盘故障转成无界内存。群日 latest-by-user 索引最多常驻 64 份并按 LRU 淘汰，失败退避最多记 128 份；两者都可由权威文件/下一次重试安全重建，绝不能当成持久化成功的证据。
+- `chat_member` 入群事实只有在 `flushDiskIODomain("joinLog")` 返回 `flushed` 后才能确认对应 update；投递成功不等于 durable。Worker 写失败必须把原分组放回缓冲并退避重试，不能清空后丢弃；待刷事实硬顶 1,200 条，满载必须快速失败并让尚未确认的 update 重投，不能把磁盘故障转成无界内存。**这条快速失败必须由 Worker 的消息路由兜住**：异常一旦逸出 `onmessage`，Bun 会终止整条落盘线程，在途 flush 全按失败结算、各领域缓冲随线程一起丢，代价远超一条入群事实。路由捕获后记下拒收标记，由统一 flush 的 joinLog 出口消费一次并回报该领域失败——被拒的事实不在缓冲里，只看缓冲会把「什么都没写成」报成落盘成功。群日 latest-by-user 索引最多常驻 64 份并按 LRU 淘汰，失败退避最多记 128 份；两者都可由权威文件/下一次重试安全重建，绝不能当成持久化成功的证据。
 
   Telegram 重投的完全相同事件由磁盘恢复出的索引在追加前跳过。`/batch_kick` 读取的是 `[since, now]` 滚动窗口，跨东京午夜时合并两个群日文件，而不是截成“当天”。
 
@@ -570,7 +570,7 @@
 
   **那道前置回执拿不到时也不能直接 return**：Worker 已放弃或正在重生时 `post()` 同步失败、barrier 立刻结算成 `failed`，而主线程侧完全可能正有处置卡在 `confirmBlocklistPersisted` 上——那正是「拉黑已入队、还没落盘」的窗口，直接返回会连同待写的黑名单一起丢掉，重启后那个人不在名单里。因此失败路径仍要用剩余预算排空一次 `inFlightAdDisposals`（没有回执就没有稳定边界，这一轮只覆盖此刻在途的那批，属尽力而为），再把原始失败原因交回调用方——返回值不因这次补救而改写。
 - 每个活跃 update 由 runner 分配独立 `AbortController` 并通过异步上下文交给主线程 Telegram 适配层。正常 drain 预算耗尽时，生命周期必须 abort 全部活跃 update，再给出短而有界的取消收敛窗口；生命周期取消不得被 Telegram fallback 吞掉，必须向上解开 handler。取消后仍不退出的 handler 会阻止 offset 与实例锁释放，完成最佳努力 flush 后强制非零退出。
-- 正常与异常停机都先 quiesce 标题/反应/头像/翻译入口并停止 runner，再有界 drain。四个 quiesce 调用必须逐项捕获失败：任一入口抛错时仍须尝试其余入口，未全部成功不得缓存静默完成，且该次失败必须阻止最终 offset 确认和实例锁释放；后续 `wait()`/`dispose()` 可重试所有幂等入口。翻译客户端只在首次真实请求时惰性构造，单次 RPC 有项目级短超时，drain 后显式 `close()` 并清理 project parent/客户端引用。
+- 正常与异常停机都先 quiesce 标题/反应/头像/翻译入口并停止 runner，再有界 drain。四个 quiesce 调用必须逐项捕获失败：任一入口抛错时仍须尝试其余入口，且该次失败必须阻止最终 offset 确认和实例锁释放；后续 `wait()`/`dispose()` 可重试所有幂等入口。**「已经 quiesce 过」不得被缓存**——`init()` 会重新武装这四个 owner，启动期停止信号一旦把成功闩成一次性完成，后面每一次 quiesce 都被短路，owner 整个停机期间继续收活而结果照报成功。翻译客户端只在首次真实请求时惰性构造，单次 RPC 有项目级短超时，drain 后显式 `close()` 并清理 project parent/客户端引用。
 
   翻译 drain 超时或 close 失败与其它关键 owner 一样阻止释放实例锁。正常路径必须在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore」收尾。
 

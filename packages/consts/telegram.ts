@@ -12,7 +12,7 @@ export const TELEGRAM_ALLOWED_UPDATES: readonly (
   | "callback_query"
   | "inline_query"
   | "chosen_inline_result"
-)[] = Object.freeze([
+)[] = [
   "message",
   "channel_post",
   "message_reaction",
@@ -21,7 +21,7 @@ export const TELEGRAM_ALLOWED_UPDATES: readonly (
   "callback_query",
   "inline_query",
   "chosen_inline_result",
-] as const);
+] as const;
 
 /** 抓取目标头像（Bot API / t.me 兜底）的单次请求超时。 */
 export const AVATAR_FETCH_TIMEOUT_MS: number = 15_000;
@@ -36,14 +36,14 @@ export const PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES: number = 1024 * 1024;
  * packages/libs/httpUrlPolicy.ts 按 DNS label 边界匹配，不能用字符串包含
  * 判断；这里只限制轻量出站能力，不承担 DNS/IP 级 SSRF 防护。
  */
-export const TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES: readonly string[] = Object.freeze([
+export const TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES: readonly string[] = [
   "t.me",
   "telegram.me",
   "telegram.org",
   "telegram-cdn.org",
   "cdn-telegram.org",
   "telesco.pe",
-]);
+];
 /** getUserProfilePhotos 单页最多能返回的张数，Bot API 本身的硬上限。 */
 export const USER_PROFILE_PHOTOS_LIMIT: number = 100;
 
@@ -61,7 +61,7 @@ export const KICK_NOTICE_AUTO_DELETE_MS: number = 30 * 1000;
  * 全项为 false 时也不必带 `use_independent_chat_permissions`：那个标志只影响
  * 「某一项为 true 时会不会连带打开另几项」，这里没有任何一项为 true。
  */
-export const MUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = Object.freeze({
+export const MUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = {
   can_send_messages: false,
   can_send_audios: false,
   can_send_documents: false,
@@ -77,7 +77,7 @@ export const MUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = Object.freeze({
   can_invite_users: false,
   can_pin_messages: false,
   can_manage_topics: false,
-});
+};
 
 /**
  * 解除禁言时写给 `restrictChatMember` 的权限集：全部放开。
@@ -89,7 +89,7 @@ export const MUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = Object.freeze({
  * 对得上。全项为 true 时 `use_independent_chat_permissions` 同样不必带——
  * 联动打开的那几项本来就都要打开。
  */
-export const UNMUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = Object.freeze({
+export const UNMUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = {
   can_send_messages: true,
   can_send_audios: true,
   can_send_documents: true,
@@ -105,7 +105,7 @@ export const UNMUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = Object.freeze
   can_invite_users: true,
   can_pin_messages: true,
   can_manage_topics: true,
-});
+};
 
 /** Telegram 文本消息的硬性长度上限（字符），超出会被 Bot API 拒绝。 */
 export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;

@@ -74,11 +74,6 @@ interface DiskIORuntime {
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
   nextLuckSecretRequestId: number;
   nextJoinLogReadRequestId: number;
-  /**
-   * 最近一次 flush 回执里没能落盘的领域。仅供日志与诊断展示；业务成功判断
-   * 必须使用 pendingFlushFailedDomains 中与请求 ID 绑定的回执。
-   */
-  lastFlushFailedDomains: readonly DiskIODomain[];
 }
 
 /**
@@ -103,7 +98,6 @@ export const diskIORuntime: DiskIORuntime = {
   aiMemoryPersistedListeners: [],
   nextLuckSecretRequestId: 1,
   nextJoinLogReadRequestId: 1,
-  lastFlushFailedDomains: [],
 };
 
 /**

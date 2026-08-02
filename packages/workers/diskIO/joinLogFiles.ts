@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
+  consumeJoinLogRejection,
   joinLogBuffer,
   joinLogCleanupDay,
   joinLogFileCaches,
@@ -399,7 +400,25 @@ export function flushJoinLogBuffer(): boolean {
   return false;
 }
 
-/** 缓冲一条仍可能落在滚动 24 小时窗口内的入群事件。 */
+/**
+ * 统一 flush 的 joinLog 领域出口：缓冲全部写盘成功、且这一轮没有被拒收的入群
+ * 事实，才算该领域落盘成功。
+ *
+ * 与 flushJoinLogBuffer 分开的理由：跨日准备与按需读取用后者判断的是「缓冲里
+ * 这些条目写进去了没有」，不能被一条压根没进缓冲的事实反复卡住（那会让每一条
+ * 新入群事件都在同一个跨日检查上抛错）。拒收标记只在这一个出口消费。
+ */
+export function flushJoinLogDomain(): boolean {
+  const flushed: boolean = flushJoinLogBuffer();
+  return consumeJoinLogRejection() ? false : flushed;
+}
+
+/**
+ * 缓冲一条仍可能落在滚动 24 小时窗口内的入群事件。
+ *
+ * 本函数不吞异常：调用方（diskIOWorker 的 joinLog 分支）负责兜底并记下拒收，
+ * 缺了那层兜底异常会逸出 Worker 的 onmessage、被 Bun 直接终止整条落盘线程。
+ */
 export function handleJoinLogMessage(msg: JoinLogDiskMessage): void {
   const today: string = getTokyoDateKey();
   if (!isRecentJoinLogDay(msg.day, today, JOIN_LOG_ACCEPTED_EVENT_DAYS)) {

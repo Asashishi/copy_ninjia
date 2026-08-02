@@ -1,7 +1,7 @@
 import { generateAndSendReply, recordChatMessage } from "../../aiChat";
 import { pickStickerVisionSource } from "../../aiChat/ai/stickers/describe";
 import { pickPhotoFile, resolveSpeaker } from "./facts";
-import { buildAiRecordContext } from "./recordContext";
+import { buildAiRecordMessage } from "./recordContext";
 import type { MessageTriggerContext } from "../../types/auto";
 import { shouldAttemptRandomTrigger, tryClaimUserReplyTrigger } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
@@ -13,10 +13,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   if (typeof message.text !== "string" || message.text.startsWith("/")) return false;
 
   const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
-  recordChatMessage({
-    ...buildAiRecordContext(context, speaker),
-    text: message.text,
-  });
+  recordChatMessage(buildAiRecordMessage({ context, speaker, text: message.text }));
 
   if (context.directTrigger) {
     // 这里只确认当前消息确实直接叫了机器人；是否包含生图/修图意图由模型

@@ -31,7 +31,7 @@ mock.module("../../packages/infra/diskIO", () => ({
   onDiskIORespawn: (): void => {},
   relayLogMessage: (): boolean => true,
   flushDiskIODomain: flushDiskIO,
-  lastFailedDiskIODomains: (): readonly string[] => [],
+  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: await flushDiskIO() }),
   flushDiskIO,
 }));
 

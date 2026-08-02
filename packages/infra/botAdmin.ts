@@ -14,7 +14,7 @@ import {
   botAdminGenerationUsers,
   botChatPermissions,
   botPermissionFetches,
-  botPermissionGenerations,
+  botPermissionInvalidations,
   botPermissionObserver,
   botPermissionProbeBackoff,
 } from "../cache/main/botAdmin";
@@ -303,17 +303,17 @@ export async function resolveBotAdminStatus(chatId: number): Promise<boolean> {
 /**
  * 丢掉某个群的权限位记录，并作废此刻仍在途的那次现查。
  *
- * 在途时提升代际而不是只删缓存：那次请求发出时看到的还是旧身份，等它回来直接
- * 回填，就会把刚被撤掉的权限重新写回表里。「有没有在途」看的是代际条目而不是
- * botPermissionFetches——后者要等请求真的挂起才登记得上，而代际是在发请求之前
- * 同步占的位，两者之间那一小段里到达的失效不能漏掉。没有在途请求时代际本身
- * 没有读者，保持删除状态，免得这张表随历史群无限增长。
+ * 在途时把那次现查标成已作废而不是只删缓存：请求发出时看到的还是旧身份，等它
+ * 回来直接回填，就会把刚被撤掉的权限重新写回表里。「有没有在途」看的是
+ * botPermissionInvalidations 的条目而不是 botPermissionFetches——后者要等请求真的
+ * 挂起才登记得上，而作废标记是在发请求之前同步占的位，两者之间那一小段里到达的
+ * 失效不能漏掉。没有在途请求时这个标记没有读者，保持删除状态，免得这张表随历史
+ * 群无限增长。
  */
 export function forgetBotChatPermissions(chatId: number): void {
   const had: boolean = botChatPermissions.delete(chatId);
   botPermissionProbeBackoff.delete(chatId);
-  const inFlightGeneration: number | undefined = botPermissionGenerations.get(chatId);
-  if (inFlightGeneration !== undefined) botPermissionGenerations.set(chatId, inFlightGeneration + 1);
+  if (botPermissionInvalidations.has(chatId)) botPermissionInvalidations.set(chatId, true);
   // 只在真的丢掉了一份已知值时广播「现在未知」：teardown 路径会对同一个群
   // 反复调用，无条件广播就是往 Worker mailbox 里灌重复消息。
   if (had) notifyBotPermissionObserver(chatId, undefined);
@@ -370,11 +370,17 @@ function notifyBotPermissionObserver(chatId: number, permissions: BotChatPermiss
  * 时，`botChatPermissionsIn` 按约定不落缓存，没有退避就等于那种群里每条消息
  * 都换一次注定失败的现查。
  */
-export function ensureBotChatPermissions(chatId: number, now: number = Date.now()): void {
-  if (botChatPermissions.has(chatId) || botPermissionGenerations.has(chatId)) return;
+export function ensureBotChatPermissions(chatId: number, now?: number): void {
+  if (botChatPermissions.has(chatId) || botPermissionInvalidations.has(chatId)) return;
+  // 取钟必须留在早退之后。`now: number = Date.now()` 那种写法由 JSC 在函数
+  // prologue 里求值，也就是**缓存命中的那条路也照付一次 Date.now()**，而它紧接着
+  // 就被上面那行 return 丢掉。稳定状态下这个函数每条群消息都跑、且几乎总是命中，
+  // 实测热路径 55~63 ns/op 里约 98% 就是这次白取的钟（改成惰性后 0.75~1.13）。
+  // 调用方注入的值仍然原样生效，退避语义不变。
+  const observedAt: number = now ?? Date.now();
   const retryAt: number | undefined = botPermissionProbeBackoff.get(chatId);
-  if (retryAt !== undefined && now < retryAt) return;
-  botPermissionProbeBackoff.set(chatId, now + BOT_PERMISSION_PROBE_RETRY_MS);
+  if (retryAt !== undefined && observedAt < retryAt) return;
+  botPermissionProbeBackoff.set(chatId, observedAt + BOT_PERMISSION_PROBE_RETRY_MS);
   void botChatPermissionsIn(chatId).catch((): void => {
     // 现查内部已经记过日志；这里只是不让后台补齐变成未处理的 rejection
     // （update 取消时它会以 abort 形式抛出）。
@@ -408,10 +414,9 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
   const pending: Promise<BotChatPermissions | undefined> | undefined = botPermissionFetches.get(chatId);
   if (pending !== undefined) return pending;
 
-  // 代际占位必须早于任何 await：它同时是 forgetBotChatPermissions 判断「有没有
+  // 占位必须早于任何 await：它同时是 forgetBotChatPermissions 判断「有没有
   // 现查在途」的唯一依据，晚一步登记就会漏掉这段窗口里到达的失效。
-  const generation: number = 0;
-  botPermissionGenerations.set(chatId, generation);
+  botPermissionInvalidations.set(chatId, false);
   const signal: AbortSignal | undefined = currentUpdateAbortSignal();
   const request: Promise<BotChatPermissions | undefined> = (async (): Promise<BotChatPermissions | undefined> => {
     let member: ChatMember;
@@ -432,14 +437,14 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
     // 失效发生在请求期间：这份快照描述的是失效前的身份，既不回填也不作数。
     // 不在这里重新发起——递归会撞上下面那次 finally 之前的自引用；调用方下一次
     // 需要时自然会开一次新的现查。
-    if (botPermissionGenerations.get(chatId) !== generation) return undefined;
+    if (botPermissionInvalidations.get(chatId) !== false) return undefined;
     // 现查在途期间 my_chat_member 先一步落地过：那条是权威信号，而这次响应
     // 反映的可能是它到达之前的旧快照，直接回填会把刚生效的权限改动顶掉。
     // 同 resolveBotAdminStatus 的「权威信号已经赢了就采用它」。
     const authoritative: BotChatPermissions | undefined = botChatPermissions.get(chatId);
     if (authoritative !== undefined) return authoritative;
     if (!isAdminStatus(member.status)) {
-      // 走 forget 而不是裸 delete：连同代际作废与下游广播一起收敛在一处。
+      // 走 forget 而不是裸 delete：连同在途现查的作废与下游广播一起收敛在一处。
       forgetBotChatPermissions(chatId);
       // 「其实已经不是管理员」是一次权威身份观测，写回去纠正 state.json 里过期的
       // botIsAdmin: true（进程停机期间被撤管理员时收不到 my_chat_member，那份 true
@@ -461,8 +466,8 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
   const tracked: Promise<BotChatPermissions | undefined> = request.finally((): void => {
     if (botPermissionFetches.get(chatId) !== tracked) return;
     botPermissionFetches.delete(chatId);
-    // 代际只服务于在途请求；这次已经结算，留着只是让表随历史群增长。
-    botPermissionGenerations.delete(chatId);
+    // 作废标记只服务于在途请求；这次已经结算，留着只是让表随历史群增长。
+    botPermissionInvalidations.delete(chatId);
   });
   botPermissionFetches.set(chatId, tracked);
   return tracked;

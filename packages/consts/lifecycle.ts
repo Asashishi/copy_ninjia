@@ -61,17 +61,17 @@ export const EMERGENCY_FLUSH_TIMEOUT_MS: number = 1_000;
 export const EMERGENCY_REUSED_DISPOSE_DEADLINE_MS: number = 15_000;
 
 /** 正常停机与异常退出路径各自采用一组完整、不可拆散的时间预算。 */
-export const NORMAL_FLUSH_TIMEOUTS: Readonly<FlushTimeouts> = Object.freeze({
+export const NORMAL_FLUSH_TIMEOUTS: Readonly<FlushTimeouts> = {
   aiMemoryMs: AI_MEMORY_FLUSH_TIMEOUT_MS,
   diskIOMs: DISK_IO_FLUSH_TIMEOUT_MS,
   stateMs: STATE_FLUSH_TIMEOUT_MS,
   maintenanceMs: BACKGROUND_MAINTENANCE_TIMEOUT_MS,
-});
+};
 
 /** 未捕获异常路径采用的完整、短预算组合。 */
-export const EMERGENCY_FLUSH_TIMEOUTS: Readonly<FlushTimeouts> = Object.freeze({
+export const EMERGENCY_FLUSH_TIMEOUTS: Readonly<FlushTimeouts> = {
   aiMemoryMs: EMERGENCY_FLUSH_TIMEOUT_MS,
   diskIOMs: EMERGENCY_FLUSH_TIMEOUT_MS,
   stateMs: EMERGENCY_FLUSH_TIMEOUT_MS,
   maintenanceMs: 0,
-});
+};

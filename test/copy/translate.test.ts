@@ -125,6 +125,24 @@ describe("Google Translation 适配层", () => {
     expect(translateParentCache.parent).toBeNull();
   });
 
+  test("SDK 动态 import 期间发生 close：不给已失效的 owner 造客户端，避免泄漏永不关闭的 gRPC 通道", async () => {
+    // SDK 改成动态 import 之后，`await import(...)` 多出一个同步版本不存在的
+    // 交错窗口：closeTranslate 会在这期间把 client 置空并推进 generation，
+    // 而它已经拿着 null 走完了关闭流程。若此时照旧构造并写回，就留下一个谁也
+    // 不会去 close 的 gRPC 客户端——每次停机泄漏一个通道。
+    //
+    // 时序靠 closeTranslate 的同步前缀成立：它一进函数就 `generation += 1`，
+    // 发生在任何微任务排空之前，因此 import resolve 时看到的必然是新世代。
+    const translating = translateToJapanese("during dynamic import");
+    await expect(closeTranslate()).resolves.toBe("flushed");
+
+    await expect(translating).resolves.toBeNull();
+    expect(constructedClients).toBe(0);
+    expect(close).not.toHaveBeenCalled();
+    expect(getProjectId).not.toHaveBeenCalled();
+    expect(translateParentCache.parent).toBeNull();
+  });
+
   test("close 释放客户端和 parent，再次 init 创建全新客户端", async () => {
     await translateToJapanese("first");
     await expect(closeTranslate()).resolves.toBe("flushed");

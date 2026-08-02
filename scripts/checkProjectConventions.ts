@@ -150,56 +150,86 @@ function moduleCacheInitializerKind(expression: ts.Expression): string | null {
 }
 
 /**
- * 声明类型是不是「容器」。用于判断一个非 Object.freeze 的调用结果该不该被要求
- * 冻结：`Math.ceil(...)` 返回 number，不该管；`buildList()` 声明成 readonly T[]
- * 就该管——它返回的是一份全新的可变数组。
+ * 声明类型是不是「只读容器」。共享常量的不可变性由**类型**承担，因此数组/元组
+ * 必须带 readonly 修饰，对象必须包在 Readonly<> 里。
+ *
+ * 刻意不含 Map/Set：它们的数据在内部槽里，`Readonly<Map<…>>` 也拦不住 .set()，
+ * 该用的是 ReadonlyMap/ReadonlySet，那两个名字本身就在下面的白名单里。
  */
-function isContainerTypeNode(type: ts.TypeNode | undefined): boolean {
+function isReadonlyContainerTypeNode(type: ts.TypeNode | undefined): boolean {
   if (type === undefined) return false;
-  if (ts.isArrayTypeNode(type) || ts.isTupleTypeNode(type)) return true;
+  // `readonly T[]` / `readonly [A, B]` 都是 TypeOperator(readonly) 包着数组/元组。
   if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) return true;
   if (ts.isTypeReferenceNode(type)) {
-    // 刻意不含 Map/Set：Object.freeze 只冻结自有属性，Map/Set 的数据放在内部
-    // 槽里，冻完 .add()/.set() 照样能改。对它们要求冻结等于要求一个无效动作。
-    const CONTAINER_TYPE_NAMES: readonly string[] = ["Readonly", "ReadonlyArray", "Record", "Array"];
-    return CONTAINER_TYPE_NAMES.includes(type.typeName.getText());
+    const READONLY_TYPE_NAMES: readonly string[] = [
+      "Readonly", "ReadonlyArray", "ReadonlySet", "ReadonlyMap",
+    ];
+    return READONLY_TYPE_NAMES.includes(type.typeName.getText());
+  }
+  return false;
+}
+
+/** 裸的可变容器类型：`T[]`、`[A, B]`、`Record<…>`、`Array<…>`、`Set`/`Map`。 */
+function isMutableContainerTypeNode(type: ts.TypeNode | undefined): boolean {
+  if (type === undefined) return false;
+  if (ts.isArrayTypeNode(type) || ts.isTupleTypeNode(type)) return true;
+  if (ts.isTypeReferenceNode(type)) {
+    const MUTABLE_TYPE_NAMES: readonly string[] = ["Record", "Array", "Set", "Map"];
+    return MUTABLE_TYPE_NAMES.includes(type.typeName.getText());
   }
   return false;
 }
 
 /**
- * AGENTS.md 要求「跨调用方共享的对象常量 Object.freeze」。只认数组/对象字面量：
- * RegExp、`new X()` 与派生的标量计算不在此列——冻结正则会把 lastIndex 变成只读，
- * 对带 /g 的正则反而是引入 bug。
+ * 共享常量的不可变性检查。
  *
- * Object.freeze 是浅冻结，因此还要递归进已冻结容器的元素/属性值：`BOT_COMMANDS`
- * 那样的数组，外层冻了但每一项仍可被就地改写。
+ * **约定：编译期 readonly，运行期不 `Object.freeze`。** 常量本来就不会变，
+ * 运行期再冻一次买不到任何东西，却要为此付一大笔读取成本——JSC 对冻结数组的
+ * 下标读取和 for-of 都没有快路径：实测（Bun 1.3.14，三次独立进程复现）下标读
+ * 1.4~3.4 → 26.5~33.6 ns/op，for-of 18.5 → 194.1 ns/op，冻结对象的属性读也从
+ * 0.9 涨到 2.5 ns/op。生产上这些表是要被逐条扫的，`LUCK_TIERS` 那样一张 7 项
+ * 的权重表，解冻后加权抽选从 206~216 降到 12~13 ns/op。
+ *
+ * 因此这里改成两条：容器常量必须声明成只读类型（`readonly T[]`、`Readonly<T>`、
+ * `ReadonlyMap`…），且不得再出现 `Object.freeze`。RegExp、`new X()` 与派生的
+ * 标量计算不在此列——冻结正则还会把 lastIndex 变成只读，对带 /g 的正则是直接
+ * 引入 bug。
+ *
+ * **已知边界：只看得见容器这一层。** 本检查是纯 AST 的，判不了
+ * `readonly LuckTier[]` 里那个 `LuckTier` 的字段到底可不可写——要判得靠完整
+ * 的 TypeChecker，代价与误报风险都不划算。旧的逐层 `Object.freeze` 规则覆盖过
+ * 这一层，因此它由 `test/consts/immutability.test.ts` 用 `@ts-expect-error`
+ * 接管：元素类型被放宽成可写时，那里会因为「预期的错误没有发生」让 typecheck
+ * 失败。新增带对象元素的常量表时，记得在那个文件里补一行。
  * @returns 需要报告的问题描述；没问题则为空数组。
  */
-function collectUnfrozenLiterals(expression: ts.Expression, path: string): string[] {
+function collectSharedConstantProblems(
+  expression: ts.Expression,
+  type: ts.TypeNode | undefined,
+  path: string
+): string[] {
   const inner: ts.Expression = unwrapTypeWrappers(expression);
 
-  if (ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner)) {
-    return [`${path} is a shared container literal and must be wrapped in Object.freeze`];
-  }
-
   if (isObjectFreezeCall(inner)) {
-    const frozen: ts.Expression | undefined = (inner as ts.CallExpression).arguments[0];
-    if (frozen === undefined) return [];
-    const target: ts.Expression = unwrapTypeWrappers(frozen);
-    if (ts.isArrayLiteralExpression(target)) {
-      return target.elements.flatMap((element: ts.Expression, index: number): string[] =>
-        collectUnfrozenLiterals(element, `${path}[${index}]`));
-    }
-    if (ts.isObjectLiteralExpression(target)) {
-      return target.properties.flatMap((property: ts.ObjectLiteralElementLike): string[] =>
-        ts.isPropertyAssignment(property)
-          ? collectUnfrozenLiterals(property.initializer, `${path}.${property.name.getText()}`)
-          : []);
-    }
-    return [];
+    return [
+      `${path} must not use Object.freeze: shared constants rely on readonly types, ` +
+      "and freezing costs an order of magnitude on every read (see AGENTS.md 常量)",
+    ];
   }
 
+  const isContainerLiteral: boolean =
+    ts.isArrayLiteralExpression(inner) || ts.isObjectLiteralExpression(inner);
+  const isContainerCall: boolean =
+    (ts.isCallExpression(inner) || ts.isNewExpression(inner)) &&
+    (isReadonlyContainerTypeNode(type) || isMutableContainerTypeNode(type));
+  if (!isContainerLiteral && !isContainerCall) return [];
+
+  if (!isReadonlyContainerTypeNode(type)) {
+    return [
+      `${path} is a shared container and must be declared with a readonly type ` +
+      "(readonly T[] / Readonly<T> / ReadonlyArray<T> / ReadonlyMap / ReadonlySet)",
+    ];
+  }
   return [];
 }
 
@@ -275,12 +305,12 @@ function runtimeDependencies(path: string): string[] {
 }
 
 /** 四条线程各自的入口，以及从入口出发能加载到的模块闭包（含最短引入路径）。 */
-const THREAD_ENTRIES: Readonly<Record<string, string>> = Object.freeze({
+const THREAD_ENTRIES: Readonly<Record<string, string>> = {
   main: join(PROJECT_ROOT, "index.ts"),
   aiChat: join(PROJECT_ROOT, "packages", "workers", "aiChatWorker.ts"),
   antiRaid: join(PROJECT_ROOT, "packages", "workers", "antiRaidWorker.ts"),
   diskIO: join(PROJECT_ROOT, "packages", "workers", "diskIOWorker.ts"),
-});
+};
 
 function threadModuleClosure(entry: string): Map<string, string[]> {
   const trail: Map<string, string[]> = new Map([[entry, [entry]]]);
@@ -303,21 +333,21 @@ function threadModuleClosure(entry: string): Map<string, string[]> {
  * 一致：一份只属于某条线程的状态被别的线程 import，那条线程拿到的是一份永远
  * 对不上的空副本——静态看不出来，运行起来只是「缓存莫名其妙不命中」。
  */
-const CACHE_OWNER_BY_PREFIX: readonly (readonly [string, string])[] = Object.freeze([
+const CACHE_OWNER_BY_PREFIX: readonly (readonly [string, string])[] = [
   [join("packages", "cache", "main") + "/", "main"],
   [join("packages", "cache", "workers", "aiChat") + "/", "aiChat"],
   [join("packages", "cache", "workers", "antiRaid") + "/", "antiRaid"],
   [join("packages", "cache", "workers", "diskIO") + "/", "diskIO"],
-]);
+];
 
 /**
  * 唯一的归属豁免：infra/logger.ts 静态 import infra/diskIO.ts 取 relayLogMessage，
  * 而四条线程都要能记 error 日志。Worker isolate 里那份状态恒为初始值、一次也不
  * 会被读写，理由见 packages/cache/main/diskIO.ts 的模块头注。
  */
-const CACHE_OWNER_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  [join("packages", "cache", "main", "diskIO.ts")]: Object.freeze(["aiChat", "antiRaid"]),
-});
+const CACHE_OWNER_EXEMPTIONS: Readonly<Record<string, readonly string[]>> = {
+  [join("packages", "cache", "main", "diskIO.ts")]: ["aiChat", "antiRaid"],
+};
 
 const failures: string[] = [];
 const tracked: string[] = trackedFiles();
@@ -436,22 +466,49 @@ for (const path of sourceFilesUnder(CONSTS_ROOT)) {
         failures.push(`${location} constant ${name} lacks JSDoc`);
       }
       if (isExported(statement) && declaration.initializer !== undefined) {
-        for (const problem of collectUnfrozenLiterals(declaration.initializer, `constant ${name}`)) {
+        for (const problem of collectSharedConstantProblems(
+          declaration.initializer,
+          declaration.type,
+          `constant ${name}`
+        )) {
           failures.push(`${location} ${problem}`);
-        }
-        // 声明成容器类型、却由 Object.freeze 之外的调用产出：静态看不出返回的是不是
-        // 新的可变容器，一律要求显式冻结，别让「看起来只读」的类型标注糊弄过去。
-        const initializer: ts.Expression = unwrapTypeWrappers(declaration.initializer);
-        if (
-          isContainerTypeNode(declaration.type) &&
-          (ts.isCallExpression(initializer) || ts.isNewExpression(initializer)) &&
-          !isObjectFreezeCall(initializer)
-        ) {
-          failures.push(`${location} constant ${name} is a shared container built by a call and must be wrapped in Object.freeze`);
         }
       }
     }
   }
+}
+
+/**
+ * `Object.freeze` 在 packages/ 下一处都不许有。
+ *
+ * 常量、部署配置快照、句柄对象都一样：它们本来就不会变，运行期再冻一次买不到
+ * 任何东西，却要为此付一大笔读取成本（数字见 collectSharedConstantProblems 的
+ * 注释与 AGENTS.md 的「常量」一节）。不可变性一律由 `readonly`/`Readonly<T>`
+ * 在编译期表达——那是 0 成本、且能在写入点当场报错的那一份保护。
+ *
+ * 这条独立于 consts 的常量检查：解析结果和句柄对象不是 SCREAMING_SNAKE 常量，
+ * 走不到上面那段，但它们同样不该冻。
+ */
+function checkNoObjectFreeze(path: string, source: ts.SourceFile, failures: string[]): void {
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && isObjectFreezeCall(node)) {
+      const line: number = source.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+      failures.push(
+        `${relative(PROJECT_ROOT, path)}:${line} Object.freeze is not allowed: ` +
+        "express immutability with readonly types instead (see AGENTS.md 常量)"
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+}
+
+for (const path of sourceFilesUnder(SOURCE_ROOT)) {
+  checkNoObjectFreeze(
+    path,
+    ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS),
+    failures
+  );
 }
 
 for (const path of sourceFilesUnder(SOURCE_ROOT)) {
@@ -483,10 +540,10 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
  * 群聊命令文本必须经统一的 30 秒清理边界发送。头像更新结果虽在 copy owner
  * 内异步落地，但只由 /copy 与 /steal_icon 触发，因此同样纳入检查。
  */
-const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = Object.freeze([
+const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = [
   ...sourceFilesUnder(COMMANDS_ROOT),
   join(SOURCE_ROOT, "copy", "avatarQueue.ts"),
-]);
+];
 for (const path of COMMAND_TEXT_OUTPUT_FILES) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
@@ -515,7 +572,7 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
  * 入群验证按钮由状态机在点击、离群、豁免或超时结算时删除；inline 运势由
  * Telegram inline API 生成。二者都不能误接命令文本的固定延迟清理边界。
  */
-const FIXED_DELAY_DELETE_EXEMPT_FILES: readonly string[] = Object.freeze([
+const FIXED_DELAY_DELETE_EXEMPT_FILES: readonly string[] = [
   ...sourceFilesUnder(join(COMMANDS_ROOT, "luckChallenge")),
   join(
     SOURCE_ROOT,
@@ -523,7 +580,7 @@ const FIXED_DELAY_DELETE_EXEMPT_FILES: readonly string[] = Object.freeze([
     "antiRaid",
     "verificationReminders.ts"
   ),
-]);
+];
 for (const path of FIXED_DELAY_DELETE_EXEMPT_FILES) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,

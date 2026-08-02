@@ -21,14 +21,15 @@ export const GROUNDED_REPLY_TEMPERATURE: number = 0.7;
 
 /**
  * 所有 Gemini 请求统一携带的内容过滤设置；应用不按可调概率等级主动拒绝，
- * 仍受 API 不可关闭的核心安全策略约束。数组与条目均冻结，避免调用方漂移。
+ * 仍受 API 不可关闭的核心安全策略约束。数组与条目字段都由只读类型锁住，避免
+ * 调用方漂移（不可变性只在编译期表达，见 AGENTS.md 的「常量」一节）。
  */
-export const GEMINI_SAFETY_SETTINGS: readonly SafetySetting[] = Object.freeze([
-  Object.freeze({ category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE }),
-  Object.freeze({ category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE }),
-  Object.freeze({ category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }),
-  Object.freeze({ category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }),
-]);
+export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
 
 /** 告知模型的单轮动作上限；低于执行硬顶，为模型偏离提示留出安全余量。 */
 export const AI_MAX_ACTIONS_PER_REPLY: number = 8;

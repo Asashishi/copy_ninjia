@@ -116,8 +116,10 @@ describe("AI Chat Worker lifecycle", () => {
         lastName: "",
         username: "alice",
         messageId: 9,
-        text: "hi",
+        replyTo: undefined,
+        forwardedFrom: undefined,
         persistImmediately: true,
+        text: "hi",
       },
       {
         type: "recordMedia",

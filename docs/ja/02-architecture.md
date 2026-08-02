@@ -114,7 +114,7 @@ flowchart TD
 
 正常停止と異常停止は同じライフサイクルに合流し、順序は固定です。
 
-1. **Quiesce**：タイトル、リアクション、アバター、翻訳の入口を閉じ、runner を止めます。4 つの quiesce 入口は個別に失敗隔離され、1 つが例外を投げても残りの入口を閉じます。すべて成功するまでは quiesce 完了として記録しません。
+1. **Quiesce**：タイトル、リアクション、アバター、翻訳の入口を閉じ、runner を止めます。4 つの quiesce 入口は個別に失敗隔離され、1 つが例外を投げても残りの入口を閉じます。**「quiesce 済み」を cache してはなりません**：`init()` は 4 つの owner を再度武装するため、起動中に届いた停止シグナルで成功を一度きりの完了として記録すると、以降の quiesce はすべて短絡され、owner は停止処理の間ずっと新しい仕事を受け付け続けるのに結果はクリーンだと報告されます。4 つの呼び出しはいずれも冪等な代入なので、繰り返しても代償はありません。
 2. **上限付き drain**：各キューと mailbox を drain します。runner は update ごとの cancellation signal を持ち、実行中の handler が drain deadline を超えた場合はそれらを abort して最後の上限付き settle 時間を与えます。それでも settle しない handler は最終 offset の確認を止め、best-effort dispose 後の非ゼロ終了を強制します。
 3. **Flush と dispose**：正常経路では最終 Telegram offset の確認前に AI、Disk I/O、StateStore の順で flush します。最終 dispose の順序は「AI を flush → AI を終了 → Disk I/O を flush → Anti-Raid と Disk I/O を終了 → StateStore を flush → インスタンスロックを解放」で固定です。
 

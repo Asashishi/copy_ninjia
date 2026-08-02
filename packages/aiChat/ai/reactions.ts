@@ -11,8 +11,15 @@ import { getReactionConfig } from "../../config/reactions";
  * REACTION_INVALID，与是否有 Telegram Premium 无关，是 bot 账号的硬限制）。
  */
 
-/** add_reaction 工具允许的标准反应 emoji；首次业务调用时才读取配置。 */
+/**
+ * add_reaction 工具允许的标准反应 emoji；首次业务调用时才读取配置。
+ *
+ * 不 `Object.freeze`：这张表每轮回复要 `join(" ")` 拼进工具说明、每次 add_reaction
+ * 调用还要 `includes()` 查一遍，而 JSC 对冻结数组的下标读取和 for-of 都没有快
+ * 路径（同 consts 的取舍，见 AGENTS.md「常量」一节）。`readonly` 的编译期保护
+ * 已经拦住所有写入，本进程也没有任何代码会去改它。
+ */
 export function getReactionEmojis(): readonly string[] {
-  reactionEmojiCache.current ??= Object.freeze(Object.keys(getReactionConfig().emotionKeywords));
+  reactionEmojiCache.current ??= Object.keys(getReactionConfig().emotionKeywords);
   return reactionEmojiCache.current;
 }

@@ -362,7 +362,7 @@
 
   現行 snapshot の hot message はすべて正の `messageId` を持ち、返信チェーン index はそこから再構築して別途永続化しません。
 
-- `chat_member` の入室事実に対応する update を確認してよいのは、`flushDiskIODomain("joinLog")` が `flushed` を返した後だけです。post 成功は durable を意味しません。書き込み失敗時、Worker は元の group を buffer に戻して backoff 再試行し、消去して捨ててはなりません。未 flush の事実は 1,200 件を hard limit とし、飽和時は即座に失敗して未確認 update を再配信させます。
+- `chat_member` の入室事実に対応する update を確認してよいのは、`flushDiskIODomain("joinLog")` が `flushed` を返した後だけです。post 成功は durable を意味しません。書き込み失敗時、Worker は元の group を buffer に戻して backoff 再試行し、消去して捨ててはなりません。未 flush の事実は 1,200 件を hard limit とし、飽和時は即座に失敗して未確認 update を再配信させます。**この即時失敗は Worker のメッセージルータで受け止めなければなりません**：例外が `onmessage` を抜けると Bun は永続化スレッドごと終了させ、実行中の flush はすべて失敗として決着し、各ドメインの buffer もスレッドと一緒に失われます。入室事実 1 件の代償としては大きすぎます。ルータは代わりに拒否フラグを記録し、統一 flush の joinLog 出口がそれを一度だけ消費して当該ドメインの失敗として報告します。拒否された事実は buffer に入っていないため、buffer だけを見ると「何も書けていない」状態を flush 成功と報告してしまいます。
 
   disk 障害を無制限の memory 使用へ変えてはいけません。chat/day の latest-by-user index は LRU で最大 64 個、失敗 backoff table は最大 128 file を常駐させます。どちらも正式な file または次回 retry から安全に再構築でき、永続化成功の証拠にはできません。Telegram が完全に同じ event を再配信した場合は、disk から復元した index が追記前に除外します。
 
@@ -716,7 +716,7 @@
 
   したがって失敗経路でも残り予算で `inFlightAdDisposals` を 1 回は排出し（受領がない以上、安定した境界もないので、その 1 回はその時点で処理中のものだけを対象とするベストエフォートです）、そのうえで元の失敗理由を呼び出し側へ返します。この救済で戻り値を書き換えてはいけません。
 - 実行中の各 Telegram update は cancellation signal を所有します。通常の drain deadline を過ぎると、停止処理は全 handler を abort し、上限付きの settle 時間を与えます。Telegram 呼び出しと正式な state write はその signal を監視しなければなりません。それでも settle しない handler は最終 offset の確認を止め、best-effort dispose 後の非ゼロ終了を強制します。
-- 正常・異常停止のどちらでも、まずタイトル、リアクション、アバター、翻訳の入口を quiesce して runner を止め、その後に上限付き drain を行います。4 つの quiesce 呼び出しの失敗は個別に捕捉しなければなりません。1 つが例外を投げても残りを試行し、すべて成功するまでは quiesce 完了を cache せず、その回の失敗によって最終 offset の確認とインスタンスロック解放を止めます。後続の `wait()` または `dispose()` は、冪等な 4 つの入口を再試行できます。
+- 正常・異常停止のどちらでも、まずタイトル、リアクション、アバター、翻訳の入口を quiesce して runner を止め、その後に上限付き drain を行います。4 つの quiesce 呼び出しの失敗は個別に捕捉しなければなりません。1 つが例外を投げても残りを試行し、その回の失敗によって最終 offset の確認とインスタンスロック解放を止めます。後続の `wait()` または `dispose()` は、冪等な 4 つの入口を再試行できます。**「quiesce 済み」を cache してはなりません**——`init()` は同じ 4 つの owner を再武装するため、起動中の停止シグナルで成功を latch すると以降の quiesce がすべて短絡され、owner は停止処理の間ずっと仕事を受け付け続けるのに結果はクリーンだと報告されます。
 
   翻訳 client は最初の実要求でだけ遅延生成し、各 RPC にはプロジェクト共通の短い timeout を設け、drain 後に明示的な `close()` と project parent/client reference の削除を行います。翻訳 drain の timeout や close 失敗も、ほかの重要 owner と同様にインスタンスロック解放を妨げます。正常経路では最終 Telegram offset の確認前に AI、Disk I/O、StateStore を順番に flush しなければなりません。
 

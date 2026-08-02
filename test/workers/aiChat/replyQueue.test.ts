@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  bufferedMessageFixture,
+  bufferedReplyReferenceFixture,
+} from "../../helpers/aiMemoryFixtures";
+import {
   activeReplyCounts,
   pendingReplyTriggers,
   resetAiChatReplyCache,
@@ -33,19 +37,19 @@ describe("AI 回复触发队列", () => {
     // 排队轮的提示词会渲染成「XX 也在跟你说话（TA 说的是：「机器人上一句」）」
     // ——模型对着自己编造的内容回复。
     const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
-    const older: BufferedMessage = { messageId: 87, id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" };
-    const trigger: BufferedMessage = {
+    const older: BufferedMessage = bufferedMessageFixture({ messageId: 87, id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" });
+    const trigger: BufferedMessage = bufferedMessageFixture({
       messageId: 88,
       id: 2,
       firstName: "Alice",
       lastName: "Chen",
       text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS + 20),
       forwardedFrom: "频道 [id:-100666] 东京日报",
-      replyTo: { messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" },
+      replyTo: bufferedReplyReferenceFixture({ messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" }),
       at: "",
-    };
+    });
     // 触发消息之后又落进来一条机器人自己的发言：尾条从此不再是触发消息。
-    const selfSent: BufferedMessage = { messageId: 89, id: 99, firstName: "Ninjia", lastName: "", text: "本天才刚说的话", at: "" };
+    const selfSent: BufferedMessage = bufferedMessageFixture({ messageId: 89, id: 99, firstName: "Ninjia", lastName: "", text: "本天才刚说的话", at: "" });
     for (const entry of [older, trigger, selfSent]) {
       messages.push(entry);
       indexBufferedMessage(-1001, entry);
@@ -63,15 +67,15 @@ describe("AI 回复触发队列", () => {
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({
       replyToMessageId: 88,
       triggerSenderId: 2,
-      triggerReference: {
+      triggerReference: bufferedReplyReferenceFixture({
         messageId: 88,
         id: 2,
         firstName: "Alice",
         lastName: "Chen",
         text: "x".repeat(QUEUED_TRIGGER_SNIPPET_MAX_CHARS + 20),
         forwardedFrom: "频道 [id:-100666] 东京日报",
-      },
-      replyTo: { messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" },
+      }),
+      replyTo: bufferedReplyReferenceFixture({ messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" }),
       forwardedFrom: "频道 [id:-100666] 东京日报",
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "reply-photo", fileUniqueId: "reply-photo-unique", width: 1280, height: 960 },
@@ -92,32 +96,32 @@ describe("AI 回复触发队列", () => {
         senderName: "Bob",
         description: "挥手",
         triggerText: "[GIF：挥手] @bot 把它画成像素风",
-        triggerReference: {
+        triggerReference: bufferedReplyReferenceFixture({
           messageId: 89,
           id: 3,
           firstName: "Bob",
           lastName: "",
           text: "[GIF：挥手] @bot 把它画成像素风",
           forwardedFrom: "[id:6] Eve",
-        },
+        }),
         forwardedFrom: "[id:6] Eve",
         directTriggerReason: "mention",
-        replyTo: { messageId: 71, id: 5, firstName: "Dave", lastName: "", text: "[图片]" },
+        replyTo: bufferedReplyReferenceFixture({ messageId: 71, id: 5, firstName: "Dave", lastName: "", text: "[图片]" }),
       },
     });
 
     expect(pendingReplyTriggers.get(-1001)?.shift()).toEqual({
       replyToMessageId: 89,
       triggerSenderId: 3,
-      triggerReference: {
+      triggerReference: bufferedReplyReferenceFixture({
         messageId: 89,
         id: 3,
         firstName: "Bob",
         lastName: "",
         text: "[GIF：挥手] @bot 把它画成像素风",
         forwardedFrom: "[id:6] Eve",
-      },
-      replyTo: { messageId: 71, id: 5, firstName: "Dave", lastName: "", text: "[图片]" },
+      }),
+      replyTo: bufferedReplyReferenceFixture({ messageId: 71, id: 5, firstName: "Dave", lastName: "", text: "[图片]" }),
       forwardedFrom: "[id:6] Eve",
       imageGenerationRequested: true,
       senderName: "Bob",

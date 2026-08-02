@@ -42,7 +42,11 @@
 
 ### 常量
 
-- 字面量常量放 `packages/consts/<domain>.ts`；env 派生配置放 `packages/infra/config.ts`。使用 `SCREAMING_SNAKE_CASE` 和显式类型；容器用 `readonly`/`Readonly<T>`，共享对象用 `Object.freeze`，长数值用 `_`。
+- 字面量常量放 `packages/consts/<domain>.ts`；env 派生配置放 `packages/infra/config.ts`。使用 `SCREAMING_SNAKE_CASE` 和显式类型，长数值用 `_`。
+- **不可变性只在编译期表达，`packages/` 下一处 `Object.freeze` 都不许有。** 容器必须声明成只读类型（`readonly T[]`、`Readonly<T>`、`ReadonlyArray<T>`、`ReadonlyMap`/`ReadonlySet`）；元素是对象时用 `readonly Readonly<T>[]`，或直接把元素接口的字段写成 `readonly`（如 `LuckTier`、`MoodOption`），连元素字段一起锁住。
+- 这条同时管字面量常量、`packages/config/` 的部署配置解析结果和 `DiskIORecoveryTransport` 那样的句柄对象——它们都是构造完就只被读的东西，运行期再冻一次买不到任何东西，却要为此付一大笔读取成本：JSC 对冻结数组的下标读取和 `for...of` 都没有快路径（Bun 1.3.14 实测，三次独立进程复现，下标读 1.4~3.4 → 26.5~33.6 ns/op，`for...of` 18.5 → 194.1 ns/op，冻结对象属性读 0.9 → 2.5 ns/op）。生产样本：`LUCK_TIERS` 这张 7 项权重表解冻后，加权抽选 206~216 → 15~18 ns/op。
+- `bun run check:conventions` 三向强制：consts 容器常量缺只读类型报错、consts 出现 `Object.freeze` 报错、`packages/` 任意位置出现 `Object.freeze` 报错。但它是纯 AST 检查，只看得见容器那一层，判不了元素类型的字段可不可写；**带对象元素的常量表要同时在 `test/consts/immutability.test.ts` 补一行 `@ts-expect-error`**。
+- 想验证「调用方确实改不动」一律用 `@ts-expect-error` 断言（范例见 `test/consts/immutability.test.ts`、`test/config/adSamples.test.ts`）：类型被放宽时它会因为「预期的错误没有发生」让 typecheck 报 TS2578，比运行期 `Object.isFrozen` 更早也更准。注意它只压制类型报错、底下那行仍会执行，所以断言要么放进不调用的闭包里，要么挑一份用完即弃的对象来试，别拿共享单例。
 - 每个常量带中文 JSDoc，说明用途、不变量和所属模块。领域变大时拆为 `packages/consts/<domain>/`；原文件仅作 `export * from` 兼容入口，新代码直接导入子模块。
 
 ### 缓存（进程内状态）

@@ -16,7 +16,7 @@ export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
 export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;
 
 /** 贴纸下载/排队失败或成功响应正文不可用时的业务重采样退避序列。 */
-export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = Object.freeze([15_000, 60_000, 120_000]);
+export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000, 120_000];
 
 /**
  * 单枚贴纸描述在退避序列也用完之后的负缓存时长（见 cache/workers/aiChat/stickers/catalog.ts 的

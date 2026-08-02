@@ -114,7 +114,7 @@ The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycl
 
 Normal and abnormal shutdown converge on the same lifecycle, in a fixed order:
 
-1. **Quiesce**: close the title, reaction, avatar, and translation entry points and stop the runner. The four quiesce entry points are failure-isolated — a throw from one does not prevent the others from closing, and quiescence is not cached as complete until every entry point succeeds.
+1. **Quiesce**: close the title, reaction, avatar, and translation entry points and stop the runner. The four quiesce entry points are failure-isolated — a throw from one does not prevent the others from closing. **Quiescence must never be cached as done**: `init()` re-arms all four owners, so a stop signal that lands during startup would otherwise latch success and short-circuit every later quiesce, leaving the owners accepting work for the whole shutdown while the result still reports clean. All four calls are idempotent assignments, so repeating them costs nothing.
 2. **Bounded drain**: drain all queues and mailboxes. The runner holds a per-update cancellation signal; if active handlers exceed the drain deadline, it aborts those signals and grants one final bounded settlement window. A handler that still does not settle prevents final-offset acknowledgement and forces a nonzero exit after best-effort disposal.
 3. **Flush and dispose**: the normal path flushes AI, Disk I/O, and StateStore in order before acknowledging the final Telegram offset. Final disposal is fixed as: flush AI → terminate AI → flush Disk I/O → terminate Anti-Raid and Disk I/O → flush StateStore → release the instance lock.
 

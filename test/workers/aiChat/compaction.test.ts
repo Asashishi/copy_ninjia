@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import type { GeminiTextGenerationResult } from "../../../packages/types/aiChat/gemini";
 
@@ -33,7 +34,7 @@ const { resetAiChatMemoryCache } = await import("../../../packages/cache/workers
 const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../packages/consts/aiChat/memory");
 const { invalidateChatReplies } = await import("../../../packages/workers/aiChat/replyGeneration");
 
-const batch: BufferedMessage[] = [{
+const batch: BufferedMessage[] = [bufferedMessageFixture({
   messageId: 7,
   id: 7,
   firstName: "Alice",
@@ -41,7 +42,7 @@ const batch: BufferedMessage[] = [{
   username: "alice",
   text: "今天继续测试压缩",
   at: "2026/07/19 12:00:00",
-}];
+})];
 
 function response(text: string): GeminiTextGenerationResult {
   return { ok: true, text };

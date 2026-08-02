@@ -16,12 +16,12 @@ export const DISK_IO_RESPAWN_PRIORITIES: Readonly<{
   AI_MEMORY: number;
   ANTI_RAID_VERIFICATION: number;
   DAILY_LUCK: number;
-}> = Object.freeze({
+}> = {
   BLOCKLIST: 100,
   AI_MEMORY: 200,
   ANTI_RAID_VERIFICATION: 300,
   DAILY_LUCK: 400,
-});
+};
 
 /** 公历日的固定毫秒数；只与固定 UTC+9 偏移配合，不用于有夏令时的时区。 */
 export const DAY_MS: number = 24 * 60 * 60 * 1_000;
@@ -52,6 +52,5 @@ export const AD_SAMPLE_ARCHIVE_RETENTION_DAYS: number = 15;
  * 做公历有效性校验。无 g 标志，跨调用复用 exec 时不会保存 lastIndex。
  * 所属模块：workers/diskIO/adSampleFile.ts。
  */
-export const AD_SAMPLE_ARCHIVE_FILENAME_PATTERN: Readonly<RegExp> = Object.freeze(
-  /^sample\.(\d{4}-\d{2}-\d{2})(?:\.([1-9]\d*))?\.json$/
-);
+export const AD_SAMPLE_ARCHIVE_FILENAME_PATTERN: Readonly<RegExp> =
+  /^sample\.(\d{4}-\d{2}-\d{2})(?:\.([1-9]\d*))?\.json$/;

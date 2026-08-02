@@ -1,6 +1,6 @@
 import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../aiChat";
 import { pickAnimationVisionSource, resolveSpeaker } from "./facts";
-import { buildAiRecordContext } from "./recordContext";
+import { buildAiRecordMediaMessage, buildAiRecordMessage } from "./recordContext";
 import type { MessageTriggerContext } from "../../types/auto";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
@@ -15,10 +15,11 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
   const caption: string = typeof message.caption === "string" ? message.caption : "";
   const visionSource: TelegramVisionSource | null = pickAnimationVisionSource(message.animation);
   if (!visionSource) {
-    recordChatMessage({
-      ...buildAiRecordContext(context, speaker),
+    recordChatMessage(buildAiRecordMessage({
+      context,
+      speaker,
       text: caption ? `[GIF] ${caption}` : "[GIF]",
-    });
+    }));
     if (!directTrigger) return false;
     generateAndSendReply({
       chatId,
@@ -30,17 +31,20 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
   }
 
   const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger }: { candidate: boolean; claimed: boolean; } = claimRandomMediaTrigger(context, speaker.id);
-  recordChatMedia({
-    kind: "animation",
-    ...buildAiRecordContext(context, speaker),
-    caption,
-    fileId: visionSource.fileId,
-    fileUniqueId: visionSource.fileUniqueId,
-    width: visionSource.width,
-    height: visionSource.height,
-    commentOnResolve: claimedRandomTrigger,
-    imageGenerationRequested: directTrigger !== undefined,
-    directTrigger,
-  });
+  recordChatMedia(buildAiRecordMediaMessage({
+    context,
+    speaker,
+    media: {
+      kind: "animation",
+      caption,
+      fileId: visionSource.fileId,
+      fileUniqueId: visionSource.fileUniqueId,
+      width: visionSource.width,
+      height: visionSource.height,
+      commentOnResolve: claimedRandomTrigger,
+      imageGenerationRequested: directTrigger !== undefined,
+      stickerFallbackText: undefined,
+    },
+  }));
   return directTrigger !== undefined || commentOnResolveCandidate;
 }

@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 
 /**
  * 限频/溢出提示的投递路径（replyState.ts 的 notifyRateLimited）：按群冷却避免
@@ -61,7 +62,7 @@ describe("AI 限频提示", () => {
       signal: expect.any(AbortSignal),
     });
     expect(postMessage).toHaveBeenCalledWith({ type: "sent", chatId: CHAT_ID, messageId: 501 });
-    expect(recordChatMessage).toHaveBeenCalledWith({
+    expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: CHAT_ID,
       senderId: 99,
       firstName: "Ninja",
@@ -69,7 +70,7 @@ describe("AI 限频提示", () => {
       username: "ninja_bot",
       messageId: 501,
       text: RATE_LIMIT_NOTICE_TEXT,
-    });
+    }));
     expect(rateLimitNoticeTimes.get(CHAT_ID)).toBe(NOW);
   });
 

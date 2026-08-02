@@ -1,9 +1,9 @@
 import type { TimeBucket, WeatherBucket } from "../../types/aiChat/mood";
 
 /** 单条心情配置必须具有的字段，用于 config/mood.ts 的严格键校验。 */
-export const MOOD_ENTRY_REQUIRED_KEYS: readonly string[] = Object.freeze(["name", "weight", "instruction"]);
+export const MOOD_ENTRY_REQUIRED_KEYS: readonly string[] = ["name", "weight", "instruction"];
 /** 单条心情配置允许额外出现的可选字段。 */
-export const MOOD_ENTRY_OPTIONAL_KEYS: readonly string[] = Object.freeze(["weatherMultipliers", "timeMultipliers"]);
+export const MOOD_ENTRY_OPTIONAL_KEYS: readonly string[] = ["weatherMultipliers", "timeMultipliers"];
 
 /** 心情的随机寿命区间：抽到后过这么久自然到期重抽，与群是否活跃无关；
  *  心情与到期时刻均不落盘。 */
@@ -26,23 +26,23 @@ export const MOOD_MULTIPLIER_MAX: number = 100;
 // 校验。从 satisfies Record<Bucket, true> 的键派生而非手写数组：
 // types/aiChat/mood.ts 的联合类型增删桶而这里没跟上时直接编译报错，不靠人工同步。
 /** 天气桶联合类型的运行时全集，用于配置键校验。 */
-const WEATHER_BUCKET_FLAGS: Readonly<Record<WeatherBucket, true>> = Object.freeze({
+const WEATHER_BUCKET_FLAGS: Readonly<Record<WeatherBucket, true>> = {
   clear: true,
   cloudy: true,
   rain: true,
   snow: true,
   storm: true,
   fog: true,
-});
+};
 /** 部署配置允许使用的全部天气桶。 */
-export const WEATHER_BUCKETS: readonly WeatherBucket[] = Object.freeze(Object.keys(WEATHER_BUCKET_FLAGS) as WeatherBucket[]);
+export const WEATHER_BUCKETS: readonly WeatherBucket[] = Object.keys(WEATHER_BUCKET_FLAGS) as WeatherBucket[];
 /** 时段桶联合类型的运行时全集，用于配置键校验。 */
-const TIME_BUCKET_FLAGS: Readonly<Record<TimeBucket, true>> = Object.freeze({
+const TIME_BUCKET_FLAGS: Readonly<Record<TimeBucket, true>> = {
   lateNight: true,
   morning: true,
   daytime: true,
   evening: true,
   night: true,
-});
+};
 /** 部署配置允许使用的全部东京时段桶。 */
-export const TIME_BUCKETS: readonly TimeBucket[] = Object.freeze(Object.keys(TIME_BUCKET_FLAGS) as TimeBucket[]);
+export const TIME_BUCKETS: readonly TimeBucket[] = Object.keys(TIME_BUCKET_FLAGS) as TimeBucket[];

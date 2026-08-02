@@ -83,10 +83,16 @@ export function noteBanPermissionObserved(chatId: number, canRestrict: boolean):
   if (progress?.permissionBlocked !== true) return;
   logger.log(`Ban rights restored in chat ${chatId}; re-arming the blocklist sweep.`);
   blocklistSweepState.set(chatId, {
-    removalId: progress.removalId,
+    // claim 一律释放，不沿用闩锁期间记下的 removalId。那个 id 未必还有对应的
+    // 在途任务：闩锁一旦置真，Worker 重建时的 replayPendingBlockedRemovals 就
+    // 跳过这个群，被闩住之前投出去的补扫批次没人重投、也永远等不到回执；而下面
+    // 那次重投按设计只覆盖 frozen 批次（probeMembership 的补扫由新一轮重新登记）。
+    // 继续把它当成有效 claim，等于让 prepareBlocklistSweep 的 removalId !== null
+    // 早退永久成立——这个群从此再也补扫不了，群里的黑名单成员一直坐着。
+    removalId: null,
     sweptAt: null,
     nextRetryAt: Date.now(),
-    resweepRequested: progress.removalId !== null,
+    resweepRequested: false,
     failedSweeps: 0,
     permissionBlocked: false,
   });

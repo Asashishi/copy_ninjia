@@ -33,17 +33,38 @@ export function lookupBufferedMessage(chatId: number, messageId: number): Buffer
   return chatReplyChainIndexes.get(chatId)?.get(messageId);
 }
 
-/** 把一条热区消息转成链节点：正文取条目当前值（媒体描述回填后即为描述）。 */
+/** 把一条热区消息转成链节点：正文取条目当前值（媒体描述回填后即为描述）。
+ *  字段一次写全、缺省显式 undefined，与下面的快照分支同形（见
+ *  types/aiChat/memory.ts 的形状约束）；链节点会被 formatReplyChain 逐跳读。 */
 function chainLinkFor(messageId: number, message: BufferedMessage): ReplyChainLink {
   return {
     messageId,
     id: message.id,
     firstName: message.firstName,
     lastName: message.lastName,
-    ...(message.username ? { username: message.username } : {}),
+    username: message.username,
     text: message.text,
-    ...(message.forwardedFrom ? { forwardedFrom: message.forwardedFrom } : {}),
+    // 热区条目自己的引用不是「这一跳的引用」，链节点不携带 quote。
+    quote: undefined,
+    forwardedFrom: message.forwardedFrom,
     snapshotOnly: false,
+  };
+}
+
+/** 某跳已滑出热区时，用上一跳携带的快照收尾。字段顺序与 chainLinkFor 一致，
+ *  不能写成 `{ ...hop, snapshotOnly: true }`——展开会按 hop 自己的键序产出另一个
+ *  隐藏类，两条分支的节点又恰好会混在同一个链数组里被同一处代码读。 */
+function chainLinkFromSnapshot(hop: BufferedReplyReference): ReplyChainLink {
+  return {
+    messageId: hop.messageId,
+    id: hop.id,
+    firstName: hop.firstName,
+    lastName: hop.lastName,
+    username: hop.username,
+    text: hop.text,
+    quote: hop.quote,
+    forwardedFrom: hop.forwardedFrom,
+    snapshotOnly: true,
   };
 }
 
@@ -65,7 +86,7 @@ export function collectReplyChain(chatId: number, firstHop: BufferedReplyReferen
       chain.push(chainLinkFor(hop.messageId, resolved));
       hop = resolved.replyTo;
     } else {
-      chain.push({ ...hop, snapshotOnly: true });
+      chain.push(chainLinkFromSnapshot(hop));
       hop = undefined;
     }
   }
@@ -83,9 +104,11 @@ export function replyReferenceForBufferedEntry(
     id: target.id,
     firstName: target.firstName,
     lastName: target.lastName,
-    ...(target.username ? { username: target.username } : {}),
+    username: target.username,
     text: truncateInline(target.text, REPLY_REFERENCE_MAX_CHARS),
-    ...(target.forwardedFrom ? { forwardedFrom: target.forwardedFrom } : {}),
+    // 快照记的是「被回复的那条消息」，它自己被谁引用过与本快照无关。
+    quote: undefined,
+    forwardedFrom: target.forwardedFrom,
   };
 }
 

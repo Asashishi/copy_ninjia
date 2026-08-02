@@ -103,7 +103,7 @@ mock.module("../../../packages/libs/supervisedWorker", () => ({
 mock.module("../../../packages/infra/diskIO", () => ({
   flushDiskIO,
   flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
-  lastFailedDiskIODomains: (): readonly string[] => [],
+  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
   postDiskIO: (message: VerificationUpsertDiskMessage | VerificationDeleteDiskMessage): void => { diskPosts.push(message); },
   postDiskIODiagnostic: (): boolean => true,
   onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {

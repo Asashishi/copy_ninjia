@@ -303,6 +303,29 @@ describe("应用启动失败与退出清理", () => {
     expect(loggerError).toHaveBeenCalledWith("Unhandled error in bot main runner:", expect.any(Error));
   });
 
+  test("回归用例：启动期到达的停止信号不能把 quiesce 一次性闩死", async () => {
+    // 取锁期间收到 SIGTERM：这次 quiesce 发生在 init 用 initAvatarUpdates 等四个
+    // 入口把 owner 重新武装**之前**，把它记成「已经 quiesce 完了」就等于此后
+    // wait()/dispose() 的每一次调用都被短路——四个 owner 整个停机期间继续收活，
+    // 而停机结果照报 maintenance=true，最终 offset 照常确认，日志里什么都看不出来。
+    acquireSingleInstanceLock.mockImplementationOnce(async (): Promise<void> => {
+      calls.push("acquireLock");
+      process.emit("SIGTERM");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+
+    // init 尾部那次重新收口之后，wait()/dispose() 仍会各自再 quiesce 一遍。
+    expect(quiesceReactionQueue.mock.calls.length).toBeGreaterThan(1);
+    expect(quiesceAvatarUpdates.mock.calls.length).toBeGreaterThan(1);
+    expect(quiesceTranslate.mock.calls.length).toBeGreaterThan(1);
+    // 标题刷新只在入口同步查一次 accepting，因此重新收口必须排在它启动之前，
+    // 否则「已经要求停机」之后照样跑完整轮 getChat 扫描加批量落盘。
+    expect(calls.indexOf("quiesceTitles")).toBeGreaterThan(-1);
+    expect(calls.indexOf("quiesceTitles")).toBeLessThan(calls.indexOf("refreshTitles"));
+  });
+
   test("白名单配置损坏时在联网和 Worker 启动前拒绝启动", async () => {
     getWhitelistConfig.mockImplementationOnce((): never => {
       throw new Error("Invalid whitelist config");

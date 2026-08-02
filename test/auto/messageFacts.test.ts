@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { aiReplyReferenceFixture } from "../helpers/aiMemoryFixtures";
 import type { Animation, Message, PhotoSize } from "@grammyjs/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../packages/consts/aiChat";
 import {
@@ -88,7 +89,7 @@ describe("auto/message/facts", () => {
         text: "第一句\n第二句",
       }),
       quote: { text: "第二句", position: 4, is_manual: true },
-    }))).toEqual({
+    }))).toEqual(aiReplyReferenceFixture({
       messageId: 40,
       id: 456,
       firstName: "Bob",
@@ -96,7 +97,7 @@ describe("auto/message/facts", () => {
       username: "bob_dev",
       text: "第一句\n第二句",
       quote: "第二句",
-    });
+    }));
 
     expect(resolveReplyReference(message({
       reply_to_message: message({
@@ -156,7 +157,7 @@ describe("auto/message/facts", () => {
         forward_origin: { type: "hidden_user", date: 1, sender_user_name: "神秘人" },
         text: "转来的爆料",
       }),
-    }))).toEqual({
+    }))).toEqual(aiReplyReferenceFixture({
       messageId: 42,
       id: 456,
       firstName: "Bob",
@@ -164,7 +165,7 @@ describe("auto/message/facts", () => {
       username: "bob_dev",
       text: "转来的爆料",
       forwardedFrom: "神秘人",
-    });
+    }));
   });
 
   test("图片档位选最大未超限项，全超限时退回最小档", () => {

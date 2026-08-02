@@ -24,6 +24,11 @@ const stickerMessage: AiRecordMediaMessage = {
   commentOnResolve: false,
   imageGenerationRequested: false,
   stickerFallbackText: "[贴纸：🙂，来自 pack]",
+  directTrigger: undefined,
+  username: undefined,
+  replyTo: undefined,
+  forwardedFrom: undefined,
+  persistImmediately: false,
 };
 
 describe("AI 媒体转录文本", () => {

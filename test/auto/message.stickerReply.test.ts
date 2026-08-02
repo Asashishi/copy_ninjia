@@ -1,4 +1,9 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  aiRecordMediaMessageFixture,
+  aiRecordMessageFixture,
+  aiReplyReferenceFixture,
+} from "../helpers/aiMemoryFixtures";
 
 /** 「拿媒体直接叫机器人」的触发判定（见 packages/auto/message/ 的媒体分支）：
  * 有视觉素材时经 recordChatMedia 带 directTrigger 走「先试缓存、解析完成再
@@ -76,22 +81,22 @@ const botReply = {
   from: { id: botInfo.id, is_bot: true, first_name: "TestBot", username: "test_bot" },
   text: "机器人之前说的话",
 };
-const botReplyReference = {
+const botReplyReference = aiReplyReferenceFixture({
   messageId: 50,
   id: botInfo.id,
   firstName: "TestBot",
   lastName: "",
   username: "test_bot",
   text: "机器人之前说的话",
-};
-const selfReplyReference = {
+});
+const selfReplyReference = aiReplyReferenceFixture({
   messageId: 30,
   id: alice.id,
   firstName: "Alice",
   lastName: "Tester",
   username: "alice_dev",
   text: "我刚才说的",
-};
+});
 
 describe("媒体直接叫机器人", () => {
   beforeEach(() => {
@@ -124,7 +129,7 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMediaMock).toHaveBeenCalledWith({
+    expect(recordChatMediaMock).toHaveBeenCalledWith(aiRecordMediaMessageFixture({
       kind: "sticker",
       chatId: -100800,
       senderId: 123,
@@ -142,7 +147,7 @@ describe("媒体直接叫机器人", () => {
       imageGenerationRequested: true,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTrigger: { reason: "reply" },
-    });
+    }));
     // 触发在 Worker 侧等描述就绪后才发生，主线程不直接 trigger。
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
@@ -162,7 +167,7 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).not.toHaveBeenCalled();
-    expect(recordChatMessageMock).toHaveBeenCalledWith({
+    expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -100800,
       senderId: 123,
       firstName: "Alice",
@@ -171,7 +176,7 @@ describe("媒体直接叫机器人", () => {
       messageId: 12,
       text: "（发了一枚贴纸：情绪含义 😅）",
       replyTo: botReplyReference,
-    });
+    }));
     expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
     expect(generateAndSendReplyMock).toHaveBeenCalledWith({
       chatId: -100800,
@@ -219,7 +224,7 @@ describe("媒体直接叫机器人", () => {
       Math.random = originalRandom;
     }
 
-    expect(recordChatMediaMock).toHaveBeenCalledWith({
+    expect(recordChatMediaMock).toHaveBeenCalledWith(aiRecordMediaMessageFixture({
       kind: "sticker",
       chatId: -100800,
       senderId: 123,
@@ -236,7 +241,7 @@ describe("媒体直接叫机器人", () => {
       imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTrigger: undefined,
-    });
+    }));
     expect(copyMessageMock).not.toHaveBeenCalled();
   });
 
@@ -254,7 +259,7 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMediaMock).toHaveBeenCalledWith({
+    expect(recordChatMediaMock).toHaveBeenCalledWith(aiRecordMediaMessageFixture({
       kind: "sticker",
       chatId: -100800,
       senderId: 123,
@@ -262,13 +267,13 @@ describe("媒体直接叫机器人", () => {
       lastName: "Tester",
       username: "alice_dev",
       caption: "",
-      replyTo: {
+      replyTo: aiReplyReferenceFixture({
         messageId: 50,
         id: 456,
         firstName: "Bob",
         lastName: "",
         text: "机器人之前说的话",
-      },
+      }),
       fileId: "st-file",
       fileUniqueId: "st-uid",
       width: 512,
@@ -278,7 +283,7 @@ describe("媒体直接叫机器人", () => {
       imageGenerationRequested: false,
       stickerFallbackText: "（发了一枚贴纸：情绪含义 😂，来自贴纸包「cool_pack」）",
       directTrigger: undefined,
-    });
+    }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -297,7 +302,7 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMediaMock).toHaveBeenCalledWith({
+    expect(recordChatMediaMock).toHaveBeenCalledWith(aiRecordMediaMessageFixture({
       kind: "photo",
       chatId: -100800,
       senderId: 123,
@@ -313,7 +318,7 @@ describe("媒体直接叫机器人", () => {
       commentOnResolve: false,
       imageGenerationRequested: true,
       directTrigger: { reason: "mention" },
-    });
+    }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -418,7 +423,7 @@ describe("媒体直接叫机器人", () => {
       },
     } as any);
 
-    expect(recordChatMediaMock).toHaveBeenCalledWith({
+    expect(recordChatMediaMock).toHaveBeenCalledWith(aiRecordMediaMessageFixture({
       kind: "animation",
       chatId: -100800,
       senderId: 123,
@@ -435,7 +440,7 @@ describe("媒体直接叫机器人", () => {
       commentOnResolve: false,
       imageGenerationRequested: true,
       directTrigger: { reason: "reply" },
-    });
+    }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -460,7 +465,7 @@ describe("媒体直接叫机器人", () => {
     } as any);
 
     expect(recordChatMediaMock).not.toHaveBeenCalled();
-    expect(recordChatMessageMock).toHaveBeenCalledWith({
+    expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -100800,
       senderId: 123,
       firstName: "Alice",
@@ -469,7 +474,7 @@ describe("媒体直接叫机器人", () => {
       messageId: 16,
       text: "[GIF] 看这个",
       replyTo: botReplyReference,
-    });
+    }));
     expect(generateAndSendReplyMock).toHaveBeenCalledWith({
       chatId: -100800,
       triggerSenderId: 123,
@@ -504,7 +509,7 @@ describe("媒体直接叫机器人", () => {
       Math.random = originalRandom;
     }
 
-    expect(recordChatMessageMock).toHaveBeenCalledWith({
+    expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -100800,
       senderId: 123,
       firstName: "Alice",
@@ -513,7 +518,7 @@ describe("媒体直接叫机器人", () => {
       messageId: 31,
       text: "再补充一句",
       replyTo: selfReplyReference,
-    });
+    }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 
@@ -638,7 +643,7 @@ describe("媒体直接叫机器人", () => {
       Math.random = originalRandom;
     }
 
-    expect(recordChatMediaMock).toHaveBeenCalledWith({
+    expect(recordChatMediaMock).toHaveBeenCalledWith(aiRecordMediaMessageFixture({
       kind: "photo",
       chatId: -100800,
       senderId: 123,
@@ -655,7 +660,7 @@ describe("媒体直接叫机器人", () => {
       commentOnResolve: false,
       imageGenerationRequested: false,
       directTrigger: undefined,
-    });
+    }));
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 

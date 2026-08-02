@@ -31,9 +31,16 @@ describe("ad samples config", () => {
     );
   });
 
-  test("解析结果冻结，调用方改不动共享单例", () => {
-    const samples: readonly string[] = parseAdSampleConfig(["加微信"]);
-    expect(Object.isFrozen(samples)).toBe(true);
+  test("解析结果只读，调用方改不动共享单例", () => {
+    // 保护由类型承担而非运行期 Object.freeze（见 AGENTS.md 的「常量」一节）。
+    // `@ts-expect-error` 只压制类型报错、底下那行照样执行，因此只能拿这份用完
+    // 即弃的解析结果来试，绝不能拿 getAdSampleConfig() 的共享单例。
+    const probe: readonly string[] = parseAdSampleConfig(["加微信"]);
+    expect(probe).toEqual(["加微信"]);
+    // @ts-expect-error 示例表不允许就地追加
+    probe.push("x");
+    // @ts-expect-error 示例表不允许按下标改写
+    probe[0] = "x";
   });
 
   test("默认配置按进程惰性加载一次，之后复用同一份", () => {

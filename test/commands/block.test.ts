@@ -47,7 +47,8 @@ mock.module("../../packages/infra/diskIO", () => ({
   // /block 只等黑名单这一个领域的落盘回执：统一 flush 是八个领域的合取，
   // 无关领域失败不该让它报「小本本没能写进硬盘」（见 confirmBlocklistPersisted）。
   flushDiskIODomain: flushDiskIO,
-  lastFailedDiskIODomains: (): readonly string[] => [],
+  // confirmBlocklistPersisted 改用带回执的出口：失败领域名必须来自本次 flush。
+  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: await flushDiskIO() }),
   flushDiskIO,
 }));
 

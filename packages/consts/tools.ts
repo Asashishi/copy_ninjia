@@ -27,12 +27,12 @@ export const GENERATE_IMAGE_TOOL: string = "generate_image";
  * 会消耗整轮可见动作预算的工具名；查看贴纸包与查询类工具不计入。
  * 使用只读数组，调用方通过 includes 判断，避免共享 Set 被意外修改。
  */
-export const ACTION_TOOL_NAMES: readonly string[] = Object.freeze([
+export const ACTION_TOOL_NAMES: readonly string[] = [
   SEND_MESSAGE_TOOL,
   ADD_REACTION_TOOL,
   SEND_STICKER_TOOL,
   GENERATE_IMAGE_TOOL,
-]);
+];
 
 /**
  * 本轮回复已被 /ai_chat disable 作废时，所有动作工具统一返回的错误文案。

@@ -437,7 +437,14 @@ export function flushStateToDisk(
   return sharedStateStore().flush(timeoutMs, quiesce);
 }
 
-export function getChatState(chatId: number): ChatState {
+/**
+ * 只读地查一个群的状态。没有条目时返回全局共享的 `DEFAULT_CHAT_STATE`，因此
+ * 返回类型必须是 `Readonly<ChatState>`：写成可变的 `ChatState` 等于在类型层面
+ * 把那个共享单例交出去（TS 的 `readonly` 不参与可赋值性判定，声明成
+ * `Readonly<ChatState>` 的常量在这个边界会被静默放宽回可变），一次误写就污染
+ * 所有没有状态的群。要修改状态的调用方一律走 `getOrCreateChatState`。
+ */
+export function getChatState(chatId: number): Readonly<ChatState> {
   return chatStates.get(chatId) ?? DEFAULT_CHAT_STATE;
 }
 

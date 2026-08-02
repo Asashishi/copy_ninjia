@@ -5,7 +5,7 @@ export const SUMMARY_MAX_TOKENS: number = 49_152;
 /** 冷消息摘要生成温度。 */
 export const SUMMARY_TEMPERATURE: number = 0.5;
 /** HTTP 成功但摘要正文不可用时，两次业务重采样之间的退避。 */
-export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = Object.freeze([15_000, 60_000]);
+export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 
 /** 压缩块 = 热窗口 = 镜像窗口；逐字上下文最多保留两块。 */
 export const COMPACT_BATCH_SIZE: number = 75;

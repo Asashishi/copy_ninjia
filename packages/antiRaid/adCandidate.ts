@@ -126,7 +126,9 @@ export function buildAdCandidate(
     label,
     isChannel: senderChat !== undefined,
     blocked,
-    justJoined: activeVerificationSnapshots.has(verificationKey(chatId, senderId)),
+    // 同 updateIngress.ts：空表上不必先拼复合键，`has()` 本来也只会返回 false。
+    justJoined: activeVerificationSnapshots.size > 0 &&
+      activeVerificationSnapshots.has(verificationKey(chatId, senderId)),
   };
   if (linkUrls !== undefined) candidate.linkUrls = linkUrls;
   if (sampleContext !== undefined) candidate.sampleContext = sampleContext;

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
 import {
   activeReplyCounts,
   longTriggerTimes,
@@ -146,7 +147,7 @@ describe("AI 回复代际状态", () => {
   test("Worker 重建清理边界会清空所有领域缓存并停止心跳 timer", () => {
     botInfoState.current = { id: 1, username: "bot", first_name: "Bot" };
     const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
-    messages.push({ messageId: 2, id: 2, firstName: "Alice", lastName: "", text: "hi", at: "" });
+    messages.push(bufferedMessageFixture({ messageId: 2, id: 2, firstName: "Alice", lastName: "", text: "hi", at: "" }));
     chatBuffers.set(-1002, messages);
     dirtyMemoryChats.add(-1002);
     chatMoods.set(-1002, { name: "平静", weight: 1, instruction: "保持平静" });

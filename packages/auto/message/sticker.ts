@@ -1,7 +1,7 @@
 import { generateAndSendReply, recordChatMedia, recordChatMessage } from "../../aiChat";
 import { describeStickerForContext, pickStickerVisionSource } from "../../aiChat/ai/stickers/describe";
 import { resolveSpeaker } from "./facts";
-import { buildAiRecordContext } from "./recordContext";
+import { buildAiRecordMediaMessage, buildAiRecordMessage } from "./recordContext";
 import type { MessageTriggerContext } from "../../types/auto";
 import { claimRandomMediaTrigger } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
@@ -16,10 +16,7 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
   const fallbackText: string = describeStickerForContext(message.sticker);
   const visionSource: TelegramVisionSource | null = pickStickerVisionSource(message.sticker);
   if (!visionSource) {
-    recordChatMessage({
-      ...buildAiRecordContext(context, speaker),
-      text: fallbackText,
-    });
+    recordChatMessage(buildAiRecordMessage({ context, speaker, text: fallbackText }));
     if (!directTrigger) return false;
     generateAndSendReply({
       chatId,
@@ -31,18 +28,20 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
   }
 
   const { candidate: commentOnResolveCandidate, claimed: claimedRandomTrigger }: { candidate: boolean; claimed: boolean; } = claimRandomMediaTrigger(context, speaker.id);
-  recordChatMedia({
-    kind: "sticker",
-    ...buildAiRecordContext(context, speaker),
-    caption: "",
-    fileId: visionSource.fileId,
-    fileUniqueId: visionSource.fileUniqueId,
-    width: visionSource.width,
-    height: visionSource.height,
-    commentOnResolve: claimedRandomTrigger,
-    imageGenerationRequested: directTrigger !== undefined,
-    stickerFallbackText: fallbackText,
-    directTrigger,
-  });
+  recordChatMedia(buildAiRecordMediaMessage({
+    context,
+    speaker,
+    media: {
+      kind: "sticker",
+      caption: "",
+      fileId: visionSource.fileId,
+      fileUniqueId: visionSource.fileUniqueId,
+      width: visionSource.width,
+      height: visionSource.height,
+      commentOnResolve: claimedRandomTrigger,
+      imageGenerationRequested: directTrigger !== undefined,
+      stickerFallbackText: fallbackText,
+    },
+  }));
   return directTrigger !== undefined || commentOnResolveCandidate;
 }

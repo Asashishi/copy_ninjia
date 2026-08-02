@@ -1,4 +1,9 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  aiRecordMessageFixture,
+  aiReplyReferenceFixture,
+  bufferedReplyReferenceFixture,
+} from "../../helpers/aiMemoryFixtures";
 import type { ReplyPromptSections, ReplyToolContext, ReplyToolset } from "../../../packages/types/aiChat/replies";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
@@ -173,7 +178,7 @@ describe("AI 单轮回复生命周期", () => {
 
     await runRound({
       replyToMessageId: 555,
-      triggerReference: {
+      triggerReference: bufferedReplyReferenceFixture({
         messageId: 555,
         id: 7,
         firstName: "Alice",
@@ -181,17 +186,17 @@ describe("AI 单轮回复生命周期", () => {
         username: "alice_dev",
         text: "很早以前排队的触发消息",
         forwardedFrom: "频道 [id:-100666] 东京日报",
-      },
+      }),
     });
 
-    expect(recordChatMessage).toHaveBeenCalledWith({
+    expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -1001,
       senderId: 99,
       firstName: "Ninja",
       lastName: "",
       username: "ninja_bot",
       messageId: 104,
-      replyTo: {
+      replyTo: aiReplyReferenceFixture({
         messageId: 555,
         id: 7,
         firstName: "Alice",
@@ -199,9 +204,9 @@ describe("AI 单轮回复生命周期", () => {
         username: "alice_dev",
         text: "很早以前排队的触发消息",
         forwardedFrom: "频道 [id:-100666] 东京日报",
-      },
+      }),
       text: "排队后才发出的回复",
-    });
+    }));
   });
 
   test("Telegram 未实际挂回复时，即使有触发快照也不建立自录回复边", async () => {
@@ -213,16 +218,16 @@ describe("AI 单轮回复生命周期", () => {
 
     await runRound({
       replyToMessageId: 556,
-      triggerReference: {
+      triggerReference: bufferedReplyReferenceFixture({
         messageId: 556,
         id: 8,
         firstName: "Bob",
         lastName: "",
         text: "已经删除的触发消息",
-      },
+      }),
     });
 
-    expect(recordChatMessage).toHaveBeenCalledWith({
+    expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -1001,
       senderId: 99,
       firstName: "Ninja",
@@ -230,7 +235,7 @@ describe("AI 单轮回复生命周期", () => {
       username: "ninja_bot",
       messageId: 105,
       text: "退化成普通消息",
-    });
+    }));
   });
 
   test("仅 superAdmin 触发的轮次绕过图片生成冷却", async () => {

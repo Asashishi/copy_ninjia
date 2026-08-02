@@ -21,6 +21,8 @@ function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage): void
     aiMemoryRevisionCounters.has(message.chatId);
   if (shouldArm) postPurgeAiMemoryPersistRevisions.set(message.chatId, null);
   try {
+    // 只改已存在字段的值，不新增键：载荷在构造点已按协议顺序写全（含
+    // persistImmediately: false），这里补一个键会把它换成另一个隐藏类。
     if (shouldArm || armedRevision === null) message.persistImmediately = true;
     postAiChatOrThrow(message);
   } catch (error: unknown) {
@@ -29,20 +31,28 @@ function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage): void
   }
 }
 
-/** 记录一条群消息到 Worker 侧滚动上下文；主线程只负责保持 FIFO 投递顺序。 */
-export function recordChatMessage(
-  message: Omit<AiRecordMessage, "type" | "persistImmediately">
-): void {
+/**
+ * 记录一条群消息到 Worker 侧滚动上下文；主线程只负责保持 FIFO 投递顺序。
+ *
+ * 入参就是最终载荷，本函数不再 `{type, ...message}` 补一次型别——那次展开
+ * 是纯粹的属性重拷贝，且会把调用点刚定好的形状再洗一遍。载荷由
+ * auto/message/recordContext.ts 与 aiChat/ai/utils/selfRecord.ts 一次成型。
+ *
+ * **调用即交出所有权：** 少了那次拷贝之后，postMemoryRecord 的
+ * `persistImmediately` 置位改的就是调用方那个对象本身。生产上每个调用点都用
+ * builder 现造一份再传进来，天然不共享；但不要把同一个载荷对象攒起来投第二次
+ * ——上一次投递可能已经把它的即时持久化标志置上了，第二条会跟着白走一次
+ * durable 落盘。
+ */
+export function recordChatMessage(message: AiRecordMessage): void {
   purgedAiMemoryChats.delete(message.chatId);
-  postMemoryRecord({ type: "record", ...message });
+  postMemoryRecord(message);
 }
 
 /** 记录一条图片、贴纸或 GIF；媒体解析与可选评价都由 AI Worker 完成。 */
-export function recordChatMedia(
-  message: Omit<AiRecordMediaMessage, "type" | "persistImmediately">
-): void {
+export function recordChatMedia(message: AiRecordMediaMessage): void {
   purgedAiMemoryChats.delete(message.chatId);
-  postMemoryRecord({ type: "recordMedia", ...message });
+  postMemoryRecord(message);
 }
 
 /** 触发一次回复所需的主线程载荷；随机触发默认关闭。 */

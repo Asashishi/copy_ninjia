@@ -29,6 +29,7 @@ mock.module("../../../packages/consts/paths", () => ({
 
 const {
   flushJoinLogBuffer,
+  flushJoinLogDomain,
   handleJoinLogMessage,
   readJoinLog,
 } = await import("../../../packages/workers/diskIO/joinLogFiles");
@@ -44,6 +45,7 @@ const {
   joinLogFileCaches,
   joinLogRetryAt,
   markJoinLogDirty,
+  noteJoinLogRejected,
   resetJoinLogCache,
 } = await import("../../../packages/cache/workers/diskIO/joinLog");
 const {
@@ -464,6 +466,23 @@ describe("diskIO/joinLogFiles", () => {
       JOIN_LOG_MAX_BUFFERED_ENTRIES
     );
     expect(joinLogBuffer.entries[0]?.record.userId).toBe(1);
+  });
+
+  test("拒收标记只拖垮 joinLog 领域，且被统一 flush 消费一次后即清零", () => {
+    const day: string = getTokyoDateKey();
+    handleJoinLogMessage({ type: "joinLog", chatId: -31_000, userId: 7, joinedAt: 1_000, day });
+
+    // 缓冲里的条目照常写盘成功，但这一轮有事实压根没进来（缓冲满、跨日刷盘
+    // 失败、清理抛错都会走到这里），领域出口必须回报失败：主线程的 durability
+    // barrier 据此拒绝确认那条 update，Telegram 重投。
+    noteJoinLogRejected();
+    expect(flushJoinLogDomain()).toBeFalse();
+    expect(joinLogBuffer.entries).toHaveLength(0);
+
+    // 一次性消费：重投的下一条不该被上一条的失败连坐。
+    expect(flushJoinLogDomain()).toBeTrue();
+    // 内部调用方（跨日准备、按需读取）判断的始终只是「缓冲写进去了没有」。
+    expect(flushJoinLogBuffer()).toBeTrue();
   });
 
   test("单日判断不分配 Set 且覆盖锚点窗口边界", () => {

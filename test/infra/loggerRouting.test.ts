@@ -136,4 +136,27 @@ describe("logger persistence routing boundary", () => {
       }
     }
   });
+
+  test("密钥恰好是 JSON 结构字符时，脱敏后解析不了也不能让 logger 自己抛出去", () => {
+    const originalSecret: string | undefined = process.env.AD_DETECT_DEEPSEEK_API_KEY;
+    // optionalEnv 只要求 trim 后非空，`"` 是一个能通过校验的配错值：它会把整份
+    // 序列化文本里的每个引号都换成 [REDACTED]，产物不再是合法 JSON。
+    process.env.AD_DETECT_DEEPSEEK_API_KEY = "\"";
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // 这里若从 logger 内部抛出 SyntaxError，catch 块里的这句 logger.error 就会
+      // 顶掉原始错误：真实故障一条都不落盘，连 uncaughtException 处理器都会在
+      // 汇报退出原因时再炸一次。
+      expect((): void => logger.error("boom", new Error("fetch failed"))).not.toThrow();
+      const fallback: unknown = consoleError.mock.calls.at(-1)![1];
+      // 解析不了就退化成脱敏后的文本，敏感值仍然不得出现。
+      expect(typeof fallback).toBe("string");
+      expect(String(fallback)).toContain("fetch failed");
+      expect(String(fallback)).toContain("[REDACTED]");
+    } finally {
+      consoleError.mockRestore();
+      if (originalSecret === undefined) delete process.env.AD_DETECT_DEEPSEEK_API_KEY;
+      else process.env.AD_DETECT_DEEPSEEK_API_KEY = originalSecret;
+    }
+  });
 });

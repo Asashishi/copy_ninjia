@@ -211,7 +211,7 @@ function createRecoveryTransportScope(worker: Worker): RecoveryTransportScope {
   let active: boolean = true;
   let transportFailed: boolean = false;
   const isUsable = (): boolean => active && isCurrentRecoveryWorker(worker);
-  const transport: DiskIORecoveryTransport = Object.freeze({
+  const transport: DiskIORecoveryTransport = {
     post: (message: DiskBusinessMessage): boolean => {
       if (!isUsable()) {
         transportFailed = true;
@@ -247,7 +247,7 @@ function createRecoveryTransportScope(worker: Worker): RecoveryTransportScope {
         throw error;
       }
     },
-  });
+  };
   return {
     transport,
     deactivate: (): void => { active = false; },
@@ -345,11 +345,10 @@ export function createDiskIOWorker(): Worker {
       return;
     }
     if (data.type === "flushed" || data.type === "flushFailed") {
-      // 按领域记账供 flushDiskIODomain 查询：统一 flush 覆盖全部八个领域，
-      // 因此后到的回执总是更新的真相，成功回执直接清空。失败领域名也要落进
-      // 控制台——Worker 侧的写盘错误按设计只有 console.error，不带领域名的话
-      // 运维根本看不出是哪个文件坏了。
-      diskIORuntime.lastFlushFailedDomains = data.type === "flushed" ? [] : data.failedDomains;
+      // 失败领域名要落进控制台——Worker 侧的写盘错误按设计只有 console.error，
+      // 不带领域名的话运维根本看不出是哪个文件坏了。按领域的**判定**只走下面
+      // 那张按 flushId 记账的表：进程级的「最后一次回执」会让某次超时的 flush
+      // 报出另一次 flush 的失败领域。
       if (data.type === "flushFailed") {
         console.error(`[diskIO] flush failed for domain(s): ${data.failedDomains.join(", ")}.`);
       }

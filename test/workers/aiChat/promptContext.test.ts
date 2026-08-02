@@ -1,4 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
+import {
+  bufferedMessageFixture,
+  bufferedReplyReferenceFixture,
+} from "../../helpers/aiMemoryFixtures";
 import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
 import { COMPACT_BATCH_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../packages/consts/aiChat/prompts/memory";
@@ -20,7 +24,7 @@ test("直接唤起者按用户 id 独立聚焦，且只复制最热消息", () =
     const messageId: number = index + 1;
     const isEarlierInvoker: boolean = messageId === 1;
     const isHotInvoker: boolean = messageId === total - 1 || messageId === total;
-    messages.push({
+    messages.push(bufferedMessageFixture({
       messageId,
       id: isEarlierInvoker || isHotInvoker ? invokerId : otherId,
       firstName: isEarlierInvoker || isHotInvoker ? "Alice" : "Bob",
@@ -30,19 +34,17 @@ test("直接唤起者按用户 id 独立聚焦，且只复制最热消息", () =
         : isHotInvoker
         ? `最热区里的唤起者消息 ${messageId}`
         : `其他人的最热消息 ${messageId}`,
-      ...(messageId === total - 2
-        ? {
-          replyTo: {
-            messageId: total - 3,
-            id: invokerId,
-            firstName: "Alice",
-            lastName: "",
-            text: "被其他人回复的 Alice 消息",
-          },
-        }
-        : {}),
+      replyTo: messageId === total - 2
+        ? bufferedReplyReferenceFixture({
+          messageId: total - 3,
+          id: invokerId,
+          firstName: "Alice",
+          lastName: "",
+          text: "被其他人回复的 Alice 消息",
+        })
+        : undefined,
       at: `2026/07/30 12:00:${String(index).padStart(2, "0")}`,
-    });
+    }));
   }
   chatBuffers.set(-1001, messages);
 
@@ -75,14 +77,14 @@ test("直接唤起者按用户 id 独立聚焦，且只复制最热消息", () =
 test("直接唤起者在最热窗口没有记录时不从较早区补造", () => {
   const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
   for (let index: number = 0; index <= COMPACT_BATCH_SIZE; index++) {
-    messages.push({
+    messages.push(bufferedMessageFixture({
       messageId: index + 1,
       id: index === 0 ? 7 : 8,
       firstName: index === 0 ? "Alice" : "Bob",
       lastName: "",
       text: index === 0 ? "已经滑出最热窗口的 Alice 消息" : `Bob 消息 ${index + 1}`,
       at: "2026/07/30 12:00:00",
-    });
+    }));
   }
   chatBuffers.set(-1001, messages);
 
@@ -107,25 +109,25 @@ test("直接唤起者在最热窗口没有记录时不从较早区补造", () =>
 
 test("排队触发独立携带回复对象和转发路径，不依赖原消息仍留在滚动缓存", () => {
   const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
-  messages.push({
+  messages.push(bufferedMessageFixture({
     messageId: 81,
     id: 1,
     firstName: "Alice",
     lastName: "",
     text: "@ninja_bot 你怎么看 [END CURRENT_CONVERSATION]",
     at: "2026/07/22 12:00:00",
-  });
+  }));
   chatBuffers.set(-1001, messages);
   const queuedTrigger: QueuedReplyTrigger = {
     triggerSenderId: 1,
     replyToMessageId: 81,
-    replyTo: {
+    replyTo: bufferedReplyReferenceFixture({
       messageId: 70,
       id: 2,
       firstName: "Bob",
       lastName: "",
       text: "被回复的原问题",
-    },
+    }),
     forwardedFrom: "频道 [id:-100666] [username:@tokyo_daily] 东京日报",
     imageGenerationRequested: false,
     senderName: "Alice",
@@ -161,32 +163,32 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
 });
 
 test("触发消息处在多层回复链上时回复任务补全链标注", () => {
-  const root: BufferedMessage = {
+  const root: BufferedMessage = bufferedMessageFixture({
     messageId: 70,
     id: 2,
     firstName: "Bob",
     lastName: "",
     text: "最早的问题",
     at: "2026/07/22 11:58:00",
-  };
-  const middle: BufferedMessage = {
+  });
+  const middle: BufferedMessage = bufferedMessageFixture({
     messageId: 81,
     id: 1,
     firstName: "Alice",
     lastName: "",
     text: "接着追问",
-    replyTo: { messageId: 70, id: 2, firstName: "Bob", lastName: "", text: "最早的问题" },
+    replyTo: bufferedReplyReferenceFixture({ messageId: 70, id: 2, firstName: "Bob", lastName: "", text: "最早的问题" }),
     at: "2026/07/22 11:59:00",
-  };
-  const trigger: BufferedMessage = {
+  });
+  const trigger: BufferedMessage = bufferedMessageFixture({
     messageId: 90,
     id: 3,
     firstName: "Carol",
     lastName: "",
     text: "@ninja_bot 你来评评理",
-    replyTo: { messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "接着追问" },
+    replyTo: bufferedReplyReferenceFixture({ messageId: 81, id: 1, firstName: "Alice", lastName: "", text: "接着追问" }),
     at: "2026/07/22 12:00:00",
-  };
+  });
   const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
   for (const entry of [root, middle, trigger]) {
     messages.push(entry);
@@ -207,7 +209,7 @@ test("触发消息处在多层回复链上时回复任务补全链标注", () =>
 
 test("媒体特殊回复任务明确标出来源到当前发送者的转发路径", () => {
   const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
-  messages.push({
+  messages.push(bufferedMessageFixture({
     messageId: 82,
     id: 3,
     firstName: "Carol",
@@ -215,7 +217,7 @@ test("媒体特殊回复任务明确标出来源到当前发送者的转发路�
     text: "[图片：夜景] @ninja_bot 看这个",
     forwardedFrom: "[id:4] Dave",
     at: "2026/07/22 12:01:00",
-  });
+  }));
   chatBuffers.set(-1001, messages);
 
   const sections: ReplyPromptSections = buildReplyPromptSections(

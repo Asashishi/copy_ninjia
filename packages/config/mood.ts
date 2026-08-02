@@ -42,7 +42,7 @@ function parseMultipliers<Bucket extends string>(
     }
     multipliers[bucket as Bucket] = multiplier;
   }
-  return Object.freeze(multipliers);
+  return multipliers;
 }
 
 /** 解码单个心情档位；必填字段缺失、未知字段和非法取值都在启动阶段直接报错。 */
@@ -75,7 +75,7 @@ function parseMoodOption(value: unknown, index: number): MoodOption {
       ? { timeMultipliers: parseMultipliers<TimeBucket>(value.timeMultipliers, TIME_BUCKETS, `timeMultipliers of ${JSON.stringify(value.name)}`) }
       : {}),
   };
-  return Object.freeze(mood);
+  return mood;
 }
 
 /**
@@ -84,7 +84,7 @@ function parseMoodOption(value: unknown, index: number): MoodOption {
  */
 function validateAdjustedWeights(moods: readonly MoodOption[]): void {
   const weatherBuckets: readonly (WeatherBucket | null)[] =
-    Object.freeze([null, ...WEATHER_BUCKETS]);
+    [null, ...WEATHER_BUCKETS];
   for (const weather of weatherBuckets) {
     for (const time of TIME_BUCKETS) {
       let totalWeight: number = 0;
@@ -134,7 +134,7 @@ export function parseMoodConfig(value: unknown): MoodConfig {
     throw new Error(`Mood config weights must sum to 100, got ${weightSum}`);
   }
   validateAdjustedWeights(moods);
-  return Object.freeze({ moods: Object.freeze(moods) });
+  return { moods };
 }
 
 /** 从指定文件加载并校验；模块 import 本身不访问文件系统。 */
@@ -142,7 +142,13 @@ export function loadMoodConfig(path: string = MOOD_CONFIG_PATH): MoodConfig {
   return parseMoodConfig(JSON.parse(readFileSync(path, "utf8")) as unknown);
 }
 
-/** 默认部署配置按进程/Worker 惰性加载一次。主进程会在取得实例锁后预先调用。 */
+/**
+ * 默认部署配置按进程/Worker 惰性加载一次。**主进程不得在启动阶段统一预热**
+ * （见 docs/04-invariants.md 与 app/lifecycle.ts 的说明）：这些都是按群 opt-in
+ * 的可选功能配置，一份写坏的文件在启动阶段抛出，会连带 copy、抽奖、入群验证、
+ * 黑名单一起离线，systemd 还会照着重启循环。校验归各功能自己的 enable 分支
+ * （config/readiness.ts 与 commands/configGate.ts），坏了只拒绝那一个功能。
+ */
 export function getMoodConfig(): MoodConfig {
   defaultMoodConfigCache.current ??= loadMoodConfig();
   return defaultMoodConfigCache.current;

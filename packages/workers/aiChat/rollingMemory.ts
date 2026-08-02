@@ -23,7 +23,7 @@ interface ParsedChatMemory {
   snapshot: AiMemorySnapshot;
 }
 import type { AiMemoryDeletedEvent, AiMemoryEvent, AiRecordMessage } from "../../types/aiChat/protocol";
-import { buildBufferedMessage } from "./bufferedMessage";
+import { buildBufferedMessage, normalizeHydratedBufferedMessage } from "./bufferedMessage";
 import { scheduleRotation } from "./compaction";
 import { indexBufferedMessage, unindexBufferedMessage } from "./replyChain";
 
@@ -84,7 +84,7 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage): voi
  * @param forwardedFrom 当前消息是转发时的来源标注；非转发省略。
  * @param text 消息文本。
  */
-export function recordChatMessage(message: Omit<AiRecordMessage, "type">): void {
+export function recordChatMessage(message: AiRecordMessage): void {
   const entry: BufferedMessage | null = buildBufferedMessage(message, message.text);
   if (entry) pushBufferedMessage(message.chatId, entry);
 }
@@ -232,9 +232,12 @@ export function hydrateMemories(memories: Map<number, string>): void {
     const buf: BoundedDeque<BufferedMessage> =
       new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
     for (const message of snapshot.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)) {
-      buf.push(message);
+      // 形状归一后再入队：JSON.parse 出来的条目按各自记录时有没有可选字段分成
+      // 好几个隐藏类，直接灌进 deque 会让转录渲染在重启后长期读多种形状。
+      const normalized: BufferedMessage = normalizeHydratedBufferedMessage(message);
+      buf.push(normalized);
       // 回复链索引不落盘，恢复热区的同时同源重建（见 cache/workers/aiChat/memory.ts）。
-      indexBufferedMessage(chatId, message);
+      indexBufferedMessage(chatId, normalized);
     }
     if (buf.size > 0) chatBuffers.set(chatId, buf);
 

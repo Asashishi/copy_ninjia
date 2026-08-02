@@ -85,10 +85,10 @@ export const SELF_IMAGE_TAG_MARKER: string = "生成并发送了一张图片";
  * 拦截侧用的记号清单：只用来把命中的那个词写进报错文案，判定看的是下面的
  * SELF_ACTION_TAG_PATTERNS。
  */
-export const SELF_ACTION_TAG_MARKERS: readonly string[] = Object.freeze([
+export const SELF_ACTION_TAG_MARKERS: readonly string[] = [
   SELF_STICKER_TAG_MARKER,
   SELF_IMAGE_TAG_MARKER,
-]);
+];
 
 /**
  * 拦截侧的判定式：模型给 send_message 的正文里命中其中任何一条，就是在用文字
@@ -103,10 +103,10 @@ export const SELF_ACTION_TAG_MARKERS: readonly string[] = Object.freeze([
  * 本轮兜底文本走的又是同一个执行器、会被再拒一次，结果是对着一条 @ 提及完全
  * 沉默。括号外提到这两个词一律放行，括号内摆成凭据形状的一律拦下。
  */
-export const SELF_ACTION_TAG_PATTERNS: readonly RegExp[] = Object.freeze([
+export const SELF_ACTION_TAG_PATTERNS: readonly RegExp[] = [
   new RegExp(`（[^）]{0,20}${SELF_STICKER_TAG_MARKER}(?:：|）)`),
   new RegExp(`（[^）]{0,20}${SELF_IMAGE_TAG_MARKER}(?:：|）)`),
-]);
+];
 
 /** 说明文案里引用的贴纸自录占位形态。 */
 export const STICKER_SENT_TAG_HINT: string = stickerSentTagTemplate("…");

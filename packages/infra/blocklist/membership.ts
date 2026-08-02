@@ -17,7 +17,7 @@ import {
   sessionUnblockedIds,
 } from "../../cache/main/blocklist";
 import { formatTokyoTime, getTokyoDateKey } from "../../libs/time";
-import { flushDiskIODomain, lastFailedDiskIODomains, postDiskIO } from "../diskIO";
+import { flushDiskIODomainOutcome, postDiskIO } from "../diskIO";
 import { logger } from "../logger";
 import {
   isBlockedIdentity,
@@ -26,10 +26,9 @@ import {
 import { forgetUserBlocklistRemovals } from "./outbox";
 import type {
   BlockUserDiskMessage,
-  DiskIODomain,
+  DomainFlushOutcome,
   UnblockUserDiskMessage,
 } from "../../types/diskIO";
-import type { FlushResult } from "../../types/lifecycle";
 
 /** 跨东京自然日时整表轮换；懒清理避免为这份命令侧缓存单独常驻 timer。 */
 function rotateConfirmedKickedUsers(day: string): void {
@@ -121,13 +120,16 @@ export function blockUser(userId: number): boolean {
 export async function confirmBlocklistPersisted(): Promise<boolean> {
   // 只看黑名单这一个领域：统一 flush 是八个领域的合取，某群 AI 记忆快照写不
   // 进去也会让这里报「小本本没能写进硬盘」，把运维引向一个其实没坏的文件。
-  const result: FlushResult = await flushDiskIODomain("blocklist");
-  if (result === "flushed") return true;
-  const failedDomains: readonly DiskIODomain[] = lastFailedDiskIODomains();
-  // 带上真正坏掉的领域名：Worker 侧的写盘错误按设计只有 console.error，
-  // 不在这里点名就没有任何一条进得了 logs/。
-  const domainNote: string = failedDomains.length > 0 ? ` failed domains: ${failedDomains.join(", ")}.` : "";
-  logger.error(`Blocklist entry was not persisted to disk: flush ${result}.${domainNote}`);
+  const outcome: DomainFlushOutcome = await flushDiskIODomainOutcome("blocklist");
+  if (outcome.result === "flushed") return true;
+  // 领域名必须取自**这一次** flush 的回执：Worker 侧的写盘错误按设计只有
+  // console.error，不在这里点名就没有任何一条进得了 logs/，而点错名比不点名
+  // 更糟——超时/崩溃这两种没有回执的情况下，进程级的「最后一次失败领域」是
+  // 上一次无关 flush 留下的，会把运维支去修一个跟本次失败毫无关系的文件。
+  const domainNote: string = outcome.failedDomains === undefined
+    ? " no reply arrived for this flush; the persistence Worker timed out or crashed mid-flush."
+    : ` failed domains: ${outcome.failedDomains.join(", ")}.`;
+  logger.error(`Blocklist entry was not persisted to disk: flush ${outcome.result}.${domainNote}`);
   return false;
 }
 

@@ -96,6 +96,73 @@ describe("libs/text sanitizeInline", () => {
   });
 
   test("Unicode 里另外几个换行符照旧折叠，不因为新增字符类漏掉", () => {
-    expect(sanitizeInline("A B C\rD\nE")).toBe("A B C D E");
+    expect(sanitizeInline("A\u2028B\u2029C\rD\nE")).toBe("A B C D E");
+  });
+
+  test("已是规范形态的串原样返回同一个字符串对象，不重建", () => {
+    // 快路径的存在理由：折叠模式连单个空格也匹配，不加前置判定的话，每条含
+    // 空格的正常消息都会被 replace 整串重建一遍。
+    const canonical: string = "这是一条普通的群聊消息 with spaces";
+    expect(sanitizeInline(canonical)).toBe(canonical);
+    // 前置判定不能带 g 标志：带的话 test() 会推进 lastIndex，同一个串连续判定
+    // 交替真假，表现成「隔一次才清洗」。
+    for (let index: number = 0; index < 5; index += 1) {
+      expect(sanitizeInline(canonical)).toBe(canonical);
+    }
+  });
+
+  test("回归用例：前置判定漏判等于放行未清洗文本，因此对各形态与参考实现对拍", () => {
+    // 这条守的是防转录注入本身，不只是性能。前置判定一旦漏判（false negative），
+    // sanitizeInline 会把带换行的原文原样交出去，而「一行 = 一条消息」的拼装
+    // 正是靠折叠换行堵住伪造发言行。开发期确实写错过一次该正则，而当时全部既有
+    // 用例仍然全绿——它们只喂脏输入，两条路径的结果恰好一样。
+    const reference = (raw: string): string => raw.replace(/[\s\u0085]+/g, " ").trim();
+    const whitespace: string[] = [" ", "\n", "\t", "\r", "\f", "\v", "\u0085", "\u00a0", "\u1680", "\u2028", "\u2029", "\u3000", "\ufeff"];
+
+    // 判别性最强的一类：**孤立**的单个内部空白，两侧都是非空白。首尾空白与
+    // 连续空白各有自己的分支兜着，唯独这一类只能靠「非普通空格的空白」那一支
+    // 认出来；上面提到的那次写错，错的正是这一支。
+    for (const ws of whitespace) {
+      expect(sanitizeInline(`a${ws}b`)).toBe(reference(`a${ws}b`));
+      expect(sanitizeInline(`中${ws}文${ws}混排`)).toBe(reference(`中${ws}文${ws}混排`));
+    }
+
+    // 首尾空白：各由 `^`/`$` 那两支认出来。必须显式枚举——先前这两支只靠下面
+    // 的随机扫描碰巧撞到，把「测得到」寄托在随机性上，正是本用例要避免的脆弱。
+    for (const ws of whitespace) {
+      for (const sample of [`${ws}a`, `a${ws}`, `${ws}a${ws}`, `${ws}${ws}a`, `a${ws}${ws}`]) {
+        expect(sanitizeInline(sample)).toBe(reference(sample));
+      }
+    }
+
+    // 内部**连续**空白：这一类只有「连续空白」那一支认得出来。尤其 "a  b"
+    // 这种两个普通空格——首尾分支看不见它，「非普通空格的空白」那一支也不认
+    // （空格就是空格）。随机扫描给不出它：池子里普通空格只占十六分之一，要连
+    // 抽两次再夹在非空白之间，两万条样本里期望次数趋近于零。逐对枚举才盖得住。
+    for (const first of whitespace) {
+      for (const second of whitespace) {
+        const doubled: string = `a${first}${second}b`;
+        expect(sanitizeInline(doubled)).toBe(reference(doubled));
+      }
+    }
+    expect(sanitizeInline("a  b")).toBe("a b");
+    expect(sanitizeInline("a   b")).toBe("a b");
+    expect(sanitizeInline("前  后")).toBe("前 后");
+
+    // 最后叠一层去相关的伪随机扫描，兜住上面没枚举到的组合形态。它是**纵深
+    // 防御而非主力**：上面那几组显式用例已经独立盖住判定的每一支（逐支变异验证
+    // 过），所以这里两千轮足够，不必再跑两万轮。步长也必须去相关——早先用固定
+    // 步长时相邻位置锁死在同一类字符上，跑两万次断言却什么都测不到。
+    const pool: string[] = ["a", "中", "", ...whitespace];
+    let seed: number = 0x2f6e2b1;
+    for (let index: number = 0; index < 2000; index += 1) {
+      let sample: string = "";
+      const length: number = (index % 7) + 1;
+      for (let position: number = 0; position < length; position += 1) {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        sample += pool[(seed >>> 8) % pool.length]!;
+      }
+      expect(sanitizeInline(sample)).toBe(reference(sample));
+    }
   });
 });

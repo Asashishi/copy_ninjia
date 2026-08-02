@@ -22,27 +22,36 @@ export interface AiInitMessage {
 export interface AiReplyReference extends AiSpeakerSnapshot {
   messageId: number;
   text: string;
-  quote?: string;
+  /** 用户选中的精确引用片段；没有时为 undefined（形状约束见 AiSpeakerSnapshot）。 */
+  quote: string | undefined;
   /** 原消息是转发时的来源标注（见 auto/message/facts.ts 的 resolveForwardOrigin）。 */
-  forwardedFrom?: string;
+  forwardedFrom: string | undefined;
 }
 
-/** 文字与媒体记录协议共用的消息身份和回复关系。 */
+/**
+ * 文字与媒体记录协议共用的消息身份和回复关系。
+ *
+ * 全部字段必填（缺省显式 undefined），且构造点必须一次写全、按声明顺序。
+ * 这条协议每条 AI 群消息走一次，形状发散会同时打到主线程构造侧和 Worker
+ * 的消费侧；`persistImmediately` 尤其不能沿用「用到才补一个键」的写法——
+ * 事后加属性会当场把已经定型的对象改成另一个隐藏类。
+ */
 export interface AiRecordContext {
   chatId: number;
   senderId: number;
   firstName: string;
   lastName: string;
-  username?: string;
+  username: string | undefined;
   messageId: number;
-  replyTo?: AiReplyReference;
-  /** 当前消息本身是转发时的来源标注；非转发省略。 */
-  forwardedFrom?: string;
+  replyTo: AiReplyReference | undefined;
+  /** 当前消息本身是转发时的来源标注；非转发为 undefined。 */
+  forwardedFrom: string | undefined;
   /**
    * 主线程确认该群此前发生过 durable purge 时，要求这条记录形成的快照
-   * 绕过周期上报；仅由 aiChat/index.ts 注入，Telegram 入口不得自行设置。
+   * 绕过周期上报；仅由 aiChat/messageIngress.ts 置位，Telegram 入口一律先写
+   * false，不得省略该键。
    */
-  persistImmediately?: boolean;
+  persistImmediately: boolean;
 }
 
 export interface AiRecordMessage extends AiRecordContext {
@@ -62,10 +71,12 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   commentOnResolve: boolean;
   /** 当前媒体消息是否直接回复/@机器人，允许模型自行判断图片工具意图。 */
   imageGenerationRequested: boolean;
-  stickerFallbackText?: string;
-  directTrigger?: {
+  /** 贴纸取不到视觉源时的兜底文案；其余媒体为 undefined。 */
+  stickerFallbackText: string | undefined;
+  /** 直接触发的成因；随机/无触发为 undefined。 */
+  directTrigger: {
     reason: AiDirectTriggerReason;
-  };
+  } | undefined;
 }
 
 export interface AiTriggerMessage {

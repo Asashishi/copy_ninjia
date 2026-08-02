@@ -1,4 +1,5 @@
 import { beforeEach, expect, mock, test } from "bun:test";
+import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { AI_MEMORY_MAX_CHATS } from "../../../packages/consts/aiChat";
 
 const postMessageMock = mock((..._args: unknown[]): void => {});
@@ -34,14 +35,14 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
   expect(postMessageMock).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1 });
 
   const evictedGeneration: number = replyCache.cachedReplyGeneration(-2);
-  pushBufferedMessage(-999, {
+  pushBufferedMessage(-999, bufferedMessageFixture({
     messageId: 999,
     id: 999,
     firstName: "新用户",
     lastName: "",
     text: "新消息",
     at: "2026/07/18 00:00:01",
-  });
+  }));
   expect(memoryCache.chatBuffers.size).toBe(AI_MEMORY_MAX_CHATS);
   expect(memoryCache.chatBuffers.has(-2)).toBe(false);
   expect(memoryCache.chatBuffers.has(-999)).toBe(true);

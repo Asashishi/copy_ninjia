@@ -1,5 +1,6 @@
 import type { AdSampleMessage, VerificationSnapshot } from "./antiRaid";
 import type { PendingBlockedRemoval } from "./blocklist";
+import type { FlushResult } from "./lifecycle";
 import type {
   BlockedUserRecord,
   JoinLogRecord,
@@ -187,8 +188,10 @@ export type DiskBusinessMessage =
  * 业务完成。
  */
 export interface DiskIORecoveryTransport {
-  post(this: void, message: DiskBusinessMessage): boolean;
-  ensureLuckReceiptSecret(this: void, day: string): Promise<LuckReceiptSecret>;
+  // readonly：这两个句柄在 createRecoveryTransportScope 里一次绑定后只被调用，
+  // 不可变性由类型承担而不是运行期 Object.freeze（见 AGENTS.md 的「常量」一节）。
+  readonly post: (this: void, message: DiskBusinessMessage) => boolean;
+  readonly ensureLuckReceiptSecret: (this: void, day: string) => Promise<LuckReceiptSecret>;
 }
 
 /** 一个必须完整成功，Disk I/O Worker 才能重新公开 writable 的领域镜像。 */
@@ -325,6 +328,18 @@ export type DiskIODomain =
   | "blocklist"
   | "blocklistRemovalOutbox"
   | "joinLog";
+
+/**
+ * 单领域 flush 的结局，附带**发起这一次请求所收到的**失败领域名。
+ *
+ * failedDomains 只在 Worker 明确回复了本次 flushId 时存在；超时、传输失败、
+ * Worker 崩溃中途结算都没有回执，此时必须保持 undefined——把别的 flush 留下
+ * 的领域名安到这一次头上，会让运维照着一个其实与本次失败无关的文件去查。
+ */
+export interface DomainFlushOutcome {
+  result: FlushResult;
+  failedDomains?: readonly DiskIODomain[];
+}
 
 /** diskIOWorker -> 主线程：flush 已完成，八个领域全部落盘。 */
 export interface DiskFlushReply {

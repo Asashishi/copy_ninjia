@@ -1,52 +1,43 @@
 import { heapStats } from "bun:jsc";
-import type { Message } from "@grammyjs/types";
 import {
   aiReplyActivityByChat,
   aiReplyActivitySweepState,
 } from "../../packages/cache/main/auto";
-import {
-  senderUsernameCache,
-  userCache,
-} from "../../packages/cache/main/senderIdentity";
-import { sentMessages } from "../../packages/cache/perThread/selfSentTracker";
-import {
-  clearAiReplyActivity,
-  observeGroupMessageForAiReply,
-} from "../../packages/auto/message/aiReplyActivity";
-import { isSelfSent } from "../../packages/infra/selfSentTracker";
-import { BoundedDeque } from "../../packages/libs/boundedDeque";
-import { LinkedQueue } from "../../packages/libs/linkedQueue";
-import { trimSlidingWindow } from "../../packages/libs/slidingWindowRateLimit";
-import { cacheSender } from "../../packages/users/senderIdentity";
-import {
-  appendLinkUrls,
-  boundSampleContext,
-  claimSampleContextParts,
-} from "../../packages/workers/antiRaid/adDetect/bundle";
-import type { AdCandidateMessage, AdSampleContext } from "../../packages/types/antiRaid";
-import type { AdCandidateEntry } from "../../packages/types/antiRaid/adDetect";
+import { clearAiReplyActivity } from "../../packages/auto/message/aiReplyActivity";
+import { bot, joinVerificationApi } from "../../packages/infra/telegram";
+import type { Transformer } from "grammy";
+import { collectJitTiers, diffJitTiers } from "./hotPaths/jitTiers";
+import { createScenario } from "./hotPaths/scenarios";
+import type { JitTierCounts, JitTierStats, Scenario, ScenarioName } from "./hotPaths/types";
 
-type ScenarioName =
-  | "sender-no-username"
-  | "sender-stable-username"
-  | "ai-activity-window"
-  | "ai-activity-lru-miss"
-  | "ad-empty-metadata"
-  | "ad-wire-clone"
-  | "array-timestamp-window"
-  | "float64-timestamp-window"
-  | "array-timestamp-cold"
-  | "float64-timestamp-cold"
-  | "linked-timestamp-window"
-  | "linked-rolling-buffer"
-  | "bounded-rolling-buffer"
-  | "self-sent-empty";
-
-interface Scenario {
-  iterations: number;
-  run: (iterations: number) => number;
-  reset?: () => void;
+/**
+ * 出站硬闸：本脚本会 import 生产模块，而部署机上 bot 通常正在运行、用的是同一个
+ * token。任何一次真实出站都以线上机器人的身份发出，且无法撤回。所有场景按设计
+ * 都只碰进程内存，这里把两条出站通道都堵死，让越界变成一次响亮的失败。
+ *
+ * **必须装 grammY transformer，光换 globalThis.fetch 拦不住它。** grammY 在模块
+ * 加载时就把 fetch 绑到内部 shim 上（`node_modules/grammy/out/core/client.js` 里
+ * 的 `shim_node_js_1.fetch`），之后调用只认那个绑定；而静态 import 又先于模块体
+ * 执行，赋值再早也来不及。实测靠改 globalThis.fetch「保护」的一次基准，仍然向
+ * Telegram 发出了三万多次 getChatAdministrators。transformer 挂在 grammY 自己的
+ * 调用层，与传输实现无关，才是可靠的拦截点。
+ *
+ * globalThis.fetch 这道仍然保留，但它覆盖的是**另一类**调用：项目里直接写
+ * `fetch(...)` 的地方（头像抓取、JSON API）在调用时才解析全局，因此拦得住。
+ */
+function installOutboundGuards(): void {
+  const deny: Transformer = (_prev: unknown, method: string): never => {
+    throw new Error(`perf benchmark attempted Telegram API call '${method}'; scenarios must stay in-process`);
+  };
+  bot.api.config.use(deny);
+  joinVerificationApi.config.use(deny);
+  globalThis.fetch = ((...args: unknown[]): never => {
+    throw new Error(
+      `perf benchmark attempted a network call (${JSON.stringify(args[0])}); scenarios must stay in-process`
+    );
+  }) as unknown as typeof fetch;
 }
+installOutboundGuards();
 
 interface HeapSnapshot {
   heapSize: number;
@@ -62,12 +53,22 @@ interface BenchmarkResult {
   warmupIterations: number;
   samplesNsPerOp: number[];
   medianNsPerOp: number;
-  heapDeltaBeforeGc: number;
-  extraMemoryDeltaBeforeGc: number;
-  objectDeltaBeforeGc: number;
+  /**
+   * 采样期间**留存下来**的堆增量（采样前后各做一次 full GC 再读）。
+   *
+   * 这里只有 retained 一组，没有「GC 前」的对应项：`heapStats()` 的计数在 GC
+   * 边界才更新，采样后不 GC 直接读恒为 0（见 HeapSnapshot），那组数曾经存在过，
+   * 但它衡量不了任何东西，留着只会被误读成「这条路径不分配」。
+   *
+   * 也要清楚它**不度量分配速率**：采样中被回收的短命对象一律不计。要量某个
+   * 构造器每次调用的分配足迹，得改用「保留结果 + 两侧 GC」的口径，那是另一种
+   * 测法，不属于这个吞吐基准。
+   */
   retainedHeapDelta: number;
   retainedExtraMemoryDelta: number;
   retainedObjectDelta: number;
+  /** 采样结束时各热函数的 JSC 分层状态；键与 Scenario.probes 一致。 */
+  jit: Record<string, JitTierStats>;
   checksum: number;
 }
 
@@ -75,395 +76,6 @@ interface BenchmarkResult {
 const SAMPLE_COUNT: number = 7;
 /** 正式采样前的预热占比，确保热点有机会进入 JSC 高层级编译。 */
 const WARMUP_DIVISOR: number = 5;
-/** 基准群聊 id；仅用于进程内 Map，不产生任何 Telegram 或磁盘副作用。 */
-const BENCHMARK_CHAT_ID: number = -100_000_000_000_001;
-/** 广告无元数据路径的只读空输入，避免基准自身制造额外容器。 */
-const EMPTY_LINK_URLS: readonly string[] = Object.freeze([]);
-/** 广告无上下文路径的只读既有条目。 */
-const EMPTY_AD_ENTRIES: readonly AdCandidateEntry[] = Object.freeze([]);
-
-interface TimestampWindow {
-  readonly size: number;
-  push(value: number): void;
-  trim(windowMs: number, now: number): void;
-}
-
-interface RollingBuffer {
-  readonly size: number;
-  push(value: number): void;
-  shift(): number | undefined;
-  last(n: number): number[];
-  clear(): void;
-}
-
-class ArrayTimestampWindow implements TimestampWindow {
-  private values: number[];
-  private head: number = 0;
-  private count: number = 0;
-
-  constructor() {
-    this.values = new Array<number>(4);
-  }
-
-  get size(): number {
-    return this.count;
-  }
-
-  push(value: number): void {
-    if (this.count === this.values.length) this.grow();
-    const index: number = (this.head + this.count) % this.values.length;
-    this.values[index] = value;
-    this.count += 1;
-  }
-
-  trim(windowMs: number, now: number): void {
-    while (this.count > 0) {
-      const tailIndex: number =
-        (this.head + this.count - 1) % this.values.length;
-      if ((this.values[tailIndex] ?? now) <= now) break;
-      this.count -= 1;
-    }
-    const cutoff: number = now - windowMs;
-    while (
-      this.count > 0 &&
-      (this.values[this.head] ?? Number.POSITIVE_INFINITY) <= cutoff
-    ) {
-      this.head = (this.head + 1) % this.values.length;
-      this.count -= 1;
-    }
-    if (this.count === 0) this.head = 0;
-  }
-
-  private grow(): void {
-    const previous: number[] = this.values;
-    const replacement: number[] = new Array<number>(previous.length * 2);
-    for (let index: number = 0; index < this.count; index += 1) {
-      replacement[index] =
-        previous[(this.head + index) % previous.length] ?? 0;
-    }
-    this.values = replacement;
-    this.head = 0;
-  }
-}
-
-class Float64TimestampWindow implements TimestampWindow {
-  private values: Float64Array;
-  private head: number = 0;
-  private count: number = 0;
-
-  constructor() {
-    this.values = new Float64Array(4);
-  }
-
-  get size(): number {
-    return this.count;
-  }
-
-  push(value: number): void {
-    if (this.count === this.values.length) this.grow();
-    const index: number = (this.head + this.count) % this.values.length;
-    this.values[index] = value;
-    this.count += 1;
-  }
-
-  trim(windowMs: number, now: number): void {
-    while (this.count > 0) {
-      const tailIndex: number =
-        (this.head + this.count - 1) % this.values.length;
-      if ((this.values[tailIndex] ?? now) <= now) break;
-      this.count -= 1;
-    }
-    const cutoff: number = now - windowMs;
-    while (
-      this.count > 0 &&
-      (this.values[this.head] ?? Number.POSITIVE_INFINITY) <= cutoff
-    ) {
-      this.head = (this.head + 1) % this.values.length;
-      this.count -= 1;
-    }
-    if (this.count === 0) this.head = 0;
-  }
-
-  private grow(): void {
-    const previous: Float64Array = this.values;
-    const replacement: Float64Array = new Float64Array(previous.length * 2);
-    for (let index: number = 0; index < this.count; index += 1) {
-      replacement[index] =
-        previous[(this.head + index) % previous.length] ?? 0;
-    }
-    this.values = replacement;
-    this.head = 0;
-  }
-}
-
-function messageFixture(username?: string): Message {
-  return {
-    message_id: 1,
-    date: 1,
-    chat: {
-      id: BENCHMARK_CHAT_ID,
-      type: "supergroup",
-      title: "Performance fixture",
-    },
-    from: {
-      id: 42,
-      is_bot: false,
-      first_name: "Stable",
-      last_name: "Sender",
-      username,
-    },
-  };
-}
-
-function senderScenario(username?: string): Scenario {
-  const message: Message = messageFixture(username);
-  return {
-    iterations: 1_000_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        checksum += cacheSender(message) ?? 0;
-      }
-      return checksum;
-    },
-    reset: (): void => {
-      userCache.clear();
-      senderUsernameCache.clear();
-    },
-  };
-}
-
-function aiActivityScenario(): Scenario {
-  let now: number = 1_000_000;
-  return {
-    iterations: 500_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        now += 1;
-        checksum += observeGroupMessageForAiReply(BENCHMARK_CHAT_ID, now);
-      }
-      return checksum;
-    },
-    reset: (): void => {
-      clearAiReplyActivity();
-      now = 1_000_000;
-    },
-  };
-}
-
-function aiActivityLruMissScenario(): Scenario {
-  let now: number = 1_000_000;
-  let chatId: number = BENCHMARK_CHAT_ID;
-  return {
-    iterations: 20_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        now += 1;
-        chatId -= 1;
-        checksum += observeGroupMessageForAiReply(chatId, now);
-      }
-      return checksum;
-    },
-    reset: (): void => {
-      clearAiReplyActivity();
-      now = 1_000_000;
-      chatId = BENCHMARK_CHAT_ID;
-    },
-  };
-}
-
-function linkedTimestampWindowScenario(): Scenario {
-  const timestamps: LinkedQueue<number> = new LinkedQueue();
-  let now: number = 1_000_000;
-  return {
-    iterations: 1_000_000,
-    run: (iterations: number): number => {
-      for (let index: number = 0; index < iterations; index += 1) {
-        now += 1;
-        trimSlidingWindow({ timestamps, windowMs: 165, now });
-        timestamps.push(now);
-      }
-      return timestamps.size;
-    },
-    reset: (): void => {
-      timestamps.clear();
-      now = 1_000_000;
-    },
-  };
-}
-
-function timestampWindowScenario(
-  createWindow: () => TimestampWindow
-): Scenario {
-  const timestamps: TimestampWindow = createWindow();
-  let now: number = 1_000_000;
-  return {
-    iterations: 1_000_000,
-    run: (iterations: number): number => {
-      for (let index: number = 0; index < iterations; index += 1) {
-        now += 1;
-        timestamps.trim(165, now);
-        timestamps.push(now);
-      }
-      return timestamps.size;
-    },
-  };
-}
-
-function coldTimestampWindowScenario(
-  createWindow: () => TimestampWindow
-): Scenario {
-  const timestamps: TimestampWindow[] = [];
-  return {
-    iterations: 15_000,
-    run: (iterations: number): number => {
-      timestamps.length = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        const window: TimestampWindow = createWindow();
-        window.push(index);
-        timestamps.push(window);
-      }
-      return timestamps.length;
-    },
-    reset: (): void => {
-      timestamps.length = 0;
-    },
-  };
-}
-
-function rollingBufferScenario(
-  createBuffer: () => RollingBuffer
-): Scenario {
-  const buffer: RollingBuffer = createBuffer();
-  return {
-    iterations: 500_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        buffer.push(index);
-        if (buffer.size === 150) {
-          for (let removed: number = 0; removed < 75; removed += 1) {
-            checksum += buffer.shift() ?? 0;
-          }
-          checksum += buffer.last(75)[0] ?? 0;
-        } else if (buffer.size === 75) {
-          checksum += buffer.last(75)[0] ?? 0;
-        }
-      }
-      return checksum;
-    },
-    reset: (): void => {
-      buffer.clear();
-    },
-  };
-}
-
-function adEmptyMetadataScenario(): Scenario {
-  return {
-    iterations: 1_000_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        const linkedText: string = appendLinkUrls("ordinary message", EMPTY_LINK_URLS);
-        const context: AdSampleContext | undefined = boundSampleContext(undefined);
-        const text: string = context === undefined
-          ? linkedText
-          : claimSampleContextParts(linkedText, context, EMPTY_AD_ENTRIES);
-        checksum += text.length;
-      }
-      return checksum;
-    },
-  };
-}
-
-function adWireCloneScenario(): Scenario {
-  const message: AdCandidateMessage = {
-    type: "adCandidate",
-    chatId: BENCHMARK_CHAT_ID,
-    senderId: 42,
-    messageId: 1,
-    text: "ordinary message",
-    label: "@stable_user",
-    isChannel: false,
-    blocked: false,
-    justJoined: false,
-  };
-  return {
-    iterations: 200_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        const cloned: AdCandidateMessage = structuredClone(message);
-        checksum += cloned.text.length;
-      }
-      return checksum;
-    },
-  };
-}
-
-function selfSentEmptyScenario(): Scenario {
-  return {
-    iterations: 2_000_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        if (isSelfSent(BENCHMARK_CHAT_ID, index)) checksum += 1;
-      }
-      return checksum;
-    },
-    reset: (): void => {
-      for (const timer of sentMessages.values()) clearTimeout(timer);
-      sentMessages.clear();
-    },
-  };
-}
-
-function createScenario(name: ScenarioName): Scenario {
-  switch (name) {
-    case "sender-no-username":
-      return senderScenario();
-    case "sender-stable-username":
-      return senderScenario("Stable_User");
-    case "ai-activity-window":
-      return aiActivityScenario();
-    case "ai-activity-lru-miss":
-      return aiActivityLruMissScenario();
-    case "ad-empty-metadata":
-      return adEmptyMetadataScenario();
-    case "ad-wire-clone":
-      return adWireCloneScenario();
-    case "array-timestamp-window":
-      return timestampWindowScenario(
-        (): TimestampWindow => new ArrayTimestampWindow()
-      );
-    case "float64-timestamp-window":
-      return timestampWindowScenario(
-        (): TimestampWindow => new Float64TimestampWindow()
-      );
-    case "array-timestamp-cold":
-      return coldTimestampWindowScenario(
-        (): TimestampWindow => new ArrayTimestampWindow()
-      );
-    case "float64-timestamp-cold":
-      return coldTimestampWindowScenario(
-        (): TimestampWindow => new Float64TimestampWindow()
-      );
-    case "linked-timestamp-window":
-      return linkedTimestampWindowScenario();
-    case "linked-rolling-buffer":
-      return rollingBufferScenario(
-        (): RollingBuffer => new LinkedQueue<number>()
-      );
-    case "bounded-rolling-buffer":
-      return rollingBufferScenario(
-        (): RollingBuffer => new BoundedDeque<number>(150)
-      );
-    case "self-sent-empty":
-      return selfSentEmptyScenario();
-  }
-}
 
 function snapshotHeap(): HeapSnapshot {
   const stats: ReturnType<typeof heapStats> = heapStats();
@@ -495,6 +107,14 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "linked-rolling-buffer":
     case "bounded-rolling-buffer":
     case "self-sent-empty":
+    case "incoming-message-spine":
+    case "buffered-message-build":
+    case "transcript-render":
+    case "reply-reference":
+    case "mention-facts":
+    case "mention-facts-plain":
+    case "redact-clean-log":
+    case "luck-tier-table":
       return value;
     default:
       throw new Error(
@@ -504,30 +124,44 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "ad-wire-clone|array-timestamp-window|float64-timestamp-window|" +
         "array-timestamp-cold|float64-timestamp-cold|" +
         "linked-timestamp-window|linked-rolling-buffer|" +
-        "bounded-rolling-buffer|self-sent-empty>"
+        "bounded-rolling-buffer|self-sent-empty|incoming-message-spine|" +
+        "buffered-message-build|transcript-render|reply-reference|" +
+        "mention-facts|mention-facts-plain|redact-clean-log|luck-tier-table>"
       );
   }
 }
 
-function runBenchmark(name: ScenarioName): BenchmarkResult {
+/**
+ * 跑一轮并收敛成数字。同步场景在这里就地返回，绝不进微任务队列——否则每个
+ * 既有场景都要多付一次 await，历史读数不再可比；只有真正返回 Promise 的
+ * 编排层场景才走 await 分支。
+ */
+async function runOnce(scenario: Scenario, iterations: number): Promise<number> {
+  const result: number | Promise<number> = scenario.run(iterations);
+  return typeof result === "number" ? result : await result;
+}
+
+async function runBenchmark(name: ScenarioName): Promise<BenchmarkResult> {
   const scenario: Scenario = createScenario(name);
   const warmupIterations: number = Math.max(
     10_000,
     Math.floor(scenario.iterations / WARMUP_DIVISOR)
   );
   scenario.reset?.();
-  let checksum: number = scenario.run(warmupIterations);
+  let checksum: number = await runOnce(scenario, warmupIterations);
+  const tiersAfterWarmup: Record<string, JitTierCounts> = collectJitTiers(scenario);
   Bun.gc(true);
   const before: HeapSnapshot = snapshotHeap();
   const samplesNsPerOp: number[] = [];
   for (let sample: number = 0; sample < SAMPLE_COUNT; sample += 1) {
     const startedAt: number = Bun.nanoseconds();
-    checksum += scenario.run(scenario.iterations);
+    checksum += await runOnce(scenario, scenario.iterations);
     samplesNsPerOp.push(
       (Bun.nanoseconds() - startedAt) / scenario.iterations
     );
   }
-  const beforeGc: HeapSnapshot = snapshotHeap();
+  const jit: Record<string, JitTierStats> =
+    diffJitTiers(tiersAfterWarmup, collectJitTiers(scenario));
   Bun.gc(true);
   const retained: HeapSnapshot = snapshotHeap();
   scenario.reset?.();
@@ -540,20 +174,17 @@ function runBenchmark(name: ScenarioName): BenchmarkResult {
     warmupIterations,
     samplesNsPerOp,
     medianNsPerOp: median(samplesNsPerOp),
-    heapDeltaBeforeGc: beforeGc.heapSize - before.heapSize,
-    extraMemoryDeltaBeforeGc:
-      beforeGc.extraMemorySize - before.extraMemorySize,
-    objectDeltaBeforeGc: beforeGc.objectCount - before.objectCount,
     retainedHeapDelta: retained.heapSize - before.heapSize,
     retainedExtraMemoryDelta:
       retained.extraMemorySize - before.extraMemorySize,
     retainedObjectDelta: retained.objectCount - before.objectCount,
+    jit,
     checksum,
   };
 }
 
 const scenarioName: ScenarioName = parseScenarioName(process.argv[2]);
-const result: BenchmarkResult = runBenchmark(scenarioName);
+const result: BenchmarkResult = await runBenchmark(scenarioName);
 process.stdout.write(`${JSON.stringify(result)}\n`);
 
 if (aiReplyActivitySweepState.timer !== null || aiReplyActivityByChat.size > 0) {

@@ -1,4 +1,8 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  bufferedMessageFixture,
+  bufferedReplyReferenceFixture,
+} from "../../helpers/aiMemoryFixtures";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import type { AiMemorySnapshot } from "../../../packages/types/aiChat/memory";
 
@@ -34,17 +38,17 @@ const CHAT_ID = -1001;
 /** 发送者 id 固定为 messageId + 10，规避 max-params 又保持各条目发送者可区分。 */
 function message(messageId: number, text: string, replyToId?: number): BufferedMessage {
   const senderId: number = messageId + 10;
-  return {
+  return bufferedMessageFixture({
     messageId,
     id: senderId,
     firstName: `User${senderId}`,
     lastName: "",
     text,
-    ...(replyToId === undefined
-      ? {}
-      : { replyTo: { messageId: replyToId, id: 0, firstName: "快照", lastName: "", text: `快照-${replyToId}` } }),
+    replyTo: replyToId === undefined
+      ? undefined
+      : bufferedReplyReferenceFixture({ messageId: replyToId, id: 0, firstName: "快照", lastName: "", text: `快照-${replyToId}` }),
     at: "2026/07/23 00:00:00",
-  };
+  });
 }
 
 beforeEach(() => {
@@ -93,7 +97,7 @@ describe("回复链索引维护", () => {
     };
     hydrateMemories(new Map([[CHAT_ID, JSON.stringify(snapshot)]]));
     expect(lookupBufferedMessage(CHAT_ID, 1)?.text).toBe("第一条");
-    expect(collectReplyChain(CHAT_ID, { messageId: 2, id: 0, firstName: "", lastName: "", text: "" })
+    expect(collectReplyChain(CHAT_ID, bufferedReplyReferenceFixture({ messageId: 2, id: 0, firstName: "", lastName: "", text: "" }))
       .map((link) => link.messageId)).toEqual([2, 1]);
   });
 });
@@ -137,7 +141,7 @@ describe("回复链回溯", () => {
       pushBufferedMessage(CHAT_ID, message(messageId, `消息-${messageId}`, messageId - 1));
     }
     const firstHopId: number = REPLY_CHAIN_MAX_DEPTH + 3;
-    const chain = collectReplyChain(CHAT_ID, { messageId: firstHopId, id: 0, firstName: "", lastName: "", text: "" });
+    const chain = collectReplyChain(CHAT_ID, bufferedReplyReferenceFixture({ messageId: firstHopId, id: 0, firstName: "", lastName: "", text: "" }));
     expect(chain).toHaveLength(REPLY_CHAIN_MAX_DEPTH);
     expect(chain[0]!.messageId).toBe(firstHopId);
   });
@@ -148,7 +152,7 @@ describe("回复链回溯", () => {
     const second: BufferedMessage = message(11, "乙", 10);
     indexBufferedMessage(CHAT_ID, first);
     indexBufferedMessage(CHAT_ID, second);
-    const chain = collectReplyChain(CHAT_ID, { messageId: 10, id: 0, firstName: "", lastName: "", text: "" });
+    const chain = collectReplyChain(CHAT_ID, bufferedReplyReferenceFixture({ messageId: 10, id: 0, firstName: "", lastName: "", text: "" }));
     expect(chain.map((link) => link.messageId)).toEqual([10, 11]);
   });
 });
@@ -160,7 +164,7 @@ describe("机器人自发消息的回复引用还原", () => {
       username: "alice_dev",
       forwardedFrom: "[id:99] 频道",
     });
-    expect(replyReferenceForBufferedMessage(CHAT_ID, 5)).toEqual({
+    expect(replyReferenceForBufferedMessage(CHAT_ID, 5)).toEqual(bufferedReplyReferenceFixture({
       messageId: 5,
       id: 15,
       firstName: "User15",
@@ -168,7 +172,7 @@ describe("机器人自发消息的回复引用还原", () => {
       username: "alice_dev",
       text: "被回复的话",
       forwardedFrom: "[id:99] 频道",
-    });
+    }));
   });
 
   test("单纯热区查询在目标已滑出时返回 undefined，由轮次快照负责兜底", () => {

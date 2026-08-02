@@ -58,14 +58,3 @@ export function formatFullName(user: CachedUser): string {
 export function formatProfileUrl(user: CachedUser): string | undefined {
   return user.username ? `https://t.me/${user.username}` : undefined;
 }
-
-/**
- * 权限校验失败时嘲讽文案里的发起人标签：ctx.from 可能缺失（极端更新形态），
- * 此时退化为泛指。/block 与超管开关命令共用。
- * @param fromUser 发起命令的 ctx.from（可能为 undefined）。
- */
-export function formatMockerLabel(fromUser: { id: number; username?: string; first_name?: string } | undefined): string {
-  return fromUser
-    ? formatUserLabel({ id: fromUser.id, username: fromUser.username, first_name: fromUser.first_name })
-    : "哪个杂鱼";
-}

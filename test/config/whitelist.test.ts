@@ -321,6 +321,26 @@ describe("whitelist config", () => {
     expect(JSON.parse(serialized)["-1001"]).toHaveProperty("isCanUnBlock", false);
   });
 
+  test("回归用例：写出的文件按 id 升序，频道与大数用户 id 不被整数键重排顶到后面", () => {
+    // 塞进一个对象再整体 stringify 的话，"123456789" 是整数索引形态的键、会被
+    // 引擎提到最前面，负数频道 id 和超过 2^32 的新用户 id 反而排到它后面——
+    // 运维手工排过 config/whitelist.json，下一次白名单命令写盘就重排一次。
+    const config: WhitelistConfig = parseWhitelistConfig({
+      "123456789": {},
+      "-1001234567890": {},
+      "6000000000": {},
+    });
+    const serialized: string = serializeWhitelistConfig(config);
+    const keyOrder: string[] = [...serialized.matchAll(/^ {2}"(-?\d+)":/gm)]
+      .map((match: RegExpMatchArray): string => match[1]!);
+
+    expect(keyOrder).toEqual(["-1001234567890", "123456789", "6000000000"]);
+    // 仍然是能被原样读回来的合法 JSON，且排版与 JSON.stringify(value, null, 2) 一致。
+    expect(Object.keys(JSON.parse(serialized))).toHaveLength(3);
+    expect(serialized).toContain("  \"-1001234567890\": {\n    \"isCanMute\": false");
+    expect(serialized.endsWith("\n  }\n}\n")).toBe(true);
+  });
+
   test("加载后文件被外部编辑时明确拒绝整份覆盖并保留外部字节", async () => {
     const directory: string = mkdtempSync(join(tmpdir(), "whitelist-conflict-"));
     const path: string = join(directory, "whitelist.json");
@@ -341,6 +361,45 @@ describe("whitelist config", () => {
       )).rejects.toThrow("changed outside this process");
       expect(readFileSync(path, "utf8")).toBe(externalBytes);
       expect(getWhitelistConfig().has(200)).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("回归用例：改另一个文件时现读现改，不拿运行时那份去整份覆写", async () => {
+    const directory: string = mkdtempSync(join(tmpdir(), "whitelist-foreign-"));
+    const loadedPath: string = join(directory, "loaded.json");
+    const otherPath: string = join(directory, "other.json");
+    try {
+      // 运行时快照来自 loadedPath；otherPath 里有一个只存在于它自己的身份。
+      writeFileSync(loadedPath, serializeWhitelistConfig(oneEntry(100)));
+      writeFileSync(otherPath, serializeWhitelistConfig(parseWhitelistConfig({
+        "300": { isCanBlock: true },
+        "400": {},
+      })));
+      expect(getWhitelistConfig(loadedPath).has(100)).toBe(true);
+
+      await expect(setWhitelistPermission(
+        { id: 300, key: "isCanMute", value: true },
+        { path: otherPath }
+      )).resolves.toMatchObject({ changed: true });
+
+      // 目标文件保留自己的两个身份，且没有被 loadedPath 的 100 污染。
+      const persisted: Record<string, WhitelistPermissions> =
+        JSON.parse(readFileSync(otherPath, "utf8")) as Record<string, WhitelistPermissions>;
+      expect(Object.keys(persisted).sort()).toEqual(["300", "400"]);
+      expect(persisted["300"]?.isCanMute).toBe(true);
+      expect(persisted["300"]?.isCanBlock).toBe(true);
+      // 运行时判定仍来自 loadedPath：绝不能改成一个从未被要求加载的文件。
+      expect(isWhitelisted(100)).toBe(true);
+      expect(isWhitelisted(300)).toBe(false);
+      // loadedPath 一个字节都没动，指纹槽位仍指向它，后续写入照常复核。
+      expect(readFileSync(loadedPath, "utf8")).toBe(serializeWhitelistConfig(oneEntry(100)));
+      writeFileSync(loadedPath, serializeWhitelistConfig(oneEntry(100, { isCanBlock: true })));
+      await expect(setWhitelistPermission(
+        { id: 100, key: "isCanMute", value: true },
+        { path: loadedPath }
+      )).rejects.toThrow("changed outside this process");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

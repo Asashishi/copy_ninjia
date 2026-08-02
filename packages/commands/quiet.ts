@@ -50,7 +50,7 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
 
-  const state: ChatState = getChatState(chatId);
+  const state: Readonly<ChatState> = getChatState(chatId);
   if (!isQuietUntilActive(state.quietUntil)) {
     await sendCommandMessage({ chatId, text: `本天才本来就没在闭嘴呀，笨蛋要 /unquiet 什么呢♡`, replyToMessageId: messageId });
     return;

@@ -63,7 +63,6 @@ export class ApplicationLifecycle {
   private disposePromise: Promise<void> | null = null;
   private processHandlersInstalled: boolean = false;
   private fatalExitStarted: boolean = false;
-  private maintenanceQuiesced: boolean = false;
   private runnerCancellationUnsettled: boolean = false;
   /**
    * 最终 Telegram offset gate 的进程级闩锁。没有待确认 update 时保持 true；
@@ -202,6 +201,13 @@ export class ApplicationLifecycle {
       this.dependencies.bot,
       TELEGRAM_ALLOWED_UPDATES
     );
+    // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
+    // init 前段，而上面的 initAvatarUpdates/initReactionQueue/
+    // initChatTitleRefresh/initTranslate 又把四个 owner 重新置为接受工作。
+    // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
+    // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
+    // getChat 扫描加批量落盘。
+    if (this.stopRequested) this.stopOnSignal();
     // 关键 Bot API 握手、Worker hydrate 和 runner 入口全部就绪后，才让低优先级
     // 标题维护进入共享 throttler；小并发池由 chatTitle owner 自己保证。
     this.chatTitleRefreshSettled = false;
@@ -210,7 +216,6 @@ export class ApplicationLifecycle {
         this.dependencies.logger.error("Failed to complete chat title refresh:", error);
       })
       .finally((): void => { this.chatTitleRefreshSettled = true; });
-    if (this.stopRequested) this.stopOnSignal();
   }
 
   /** 等待轮询停止、在途 update 排空、后台维护结束，并确认最终 update offset。 */
@@ -475,8 +480,15 @@ export class ApplicationLifecycle {
     return settled;
   }
 
+  /**
+   * 让四个后台维护 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：init()
+   * 里的 initAvatarUpdates/initReactionQueue/initChatTitleRefresh/initTranslate
+   * 会把 accepting 重新置真，启动期到达的停止信号若把成功记成一次性完成，此后
+   * wait()/dispose() 的每一次调用都会被短路——四个 owner 整个停机期间继续收活，
+   * 而 maintenanceQuiesceSucceeded 仍报 true，最终 offset 照常确认，停机诊断里
+   * 一点痕迹都没有。四次调用都是幂等赋值，重复执行不花什么代价。
+   */
   private quiesceMaintenance(): boolean {
-    if (this.maintenanceQuiesced) return true;
     let succeeded: boolean = true;
     const quiesceOwner = (owner: string, run: () => void): void => {
       try {
@@ -487,13 +499,10 @@ export class ApplicationLifecycle {
       }
     };
     // 每个入口独立结算：前一个 owner 抛错不能让后续入口继续接受新工作。
-    // 只有全部成功才记为完成；否则下一次 wait/dispose 仍会重试，已成功的
-    // quiesce 都是幂等赋值，可以安全重复。
     quiesceOwner("avatar", (): void => this.dependencies.quiesceAvatarUpdates());
     quiesceOwner("reaction", (): void => this.dependencies.quiesceReactionQueue());
     quiesceOwner("chat-title", (): void => this.dependencies.quiesceChatTitleRefresh());
     quiesceOwner("translate", (): void => this.dependencies.quiesceTranslate());
-    this.maintenanceQuiesced = succeeded;
     return succeeded;
   }
 

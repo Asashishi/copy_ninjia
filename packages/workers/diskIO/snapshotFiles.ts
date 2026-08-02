@@ -187,7 +187,13 @@ function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot 
   if (raw.version !== 1 || !isRecord(raw.entries)) return null;
   if (raw.summary !== null && typeof raw.summary !== "string") return null;
   if (typeof raw.savedAt !== "number" || !Number.isFinite(raw.savedAt)) return null;
-  const entries: Record<string, StickerCatalogEntry> = {};
+  // 无原型对象：JSON.parse 会把 `__proto__` 建成普通自有属性，而写进 `{}` 时
+  // `entries["__proto__"] = value` 触发的是 Object.prototype 的 setter——改的是这个
+  // 对象的原型，条目根本没进去。那张贴纸于是通过校验、被报告为已恢复，却在重新
+  // 序列化后的快照里消失：描述永久丢失、catalog.ts 不再匹配得上，且既没有错误
+  // 日志也不会被隔离成 .corrupt。
+  const entries: Record<string, StickerCatalogEntry> =
+    Object.create(null) as Record<string, StickerCatalogEntry>;
   for (const [fileUniqueId, value] of Object.entries(raw.entries)) {
     if (!isStickerCatalogEntry(value)) return null;
     entries[fileUniqueId] = value;

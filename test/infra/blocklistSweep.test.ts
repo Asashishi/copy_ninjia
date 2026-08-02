@@ -21,7 +21,7 @@ mock.module("../../packages/infra/diskIO", () => ({
   flushDiskIO: async (): Promise<string> => "flushed",
   // /block 只等黑名单这一个领域的落盘回执（见 confirmBlocklistPersisted）。
   flushDiskIODomain: async (): Promise<string> => "flushed",
-  lastFailedDiskIODomains: (): readonly string[] => [],
+  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: "flushed" }),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getAllChatStates: (): ReadonlyMap<number, Record<string, unknown>> => states,
@@ -593,6 +593,53 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     expect(pendingBlockedRemovals.has(first.removalId)).toBeFalse();
     expect(pendingBlockedRemovals.has(second.removalId)).toBeFalse();
     expect(pendingBlockedRemovals.has(sweepRemovalId)).toBeTrue();
+  });
+
+  test("回归用例：权限恢复时释放补扫 claim，别的批次留下的闩锁不能把这个群永久卡死", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    // 补扫批次 R 已经占住 claim 并投出去。
+    await sweepBlockedMembers(-1001, 1_000);
+    const sweepRemovalId: number = lastRemovalId();
+
+    // R 还在途时，同群另一批 frozen 秒踢 F 带着「没有封禁权限」回来：闩锁置真，
+    // 但 R 的 claim 被原样保留。
+    const frozen = trackBlockedRemoval({
+      chatId: -1001,
+      userIds: [7],
+      probeMembership: false,
+    });
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      chatId: -1001,
+      removalId: frozen.removalId,
+      complete: false,
+      permissionDenied: true,
+    });
+    expect(blocklistSweepState.get(-1001)?.removalId).toBe(sweepRemovalId);
+
+    // Anti-Raid Worker 在 R 完成前死掉：被终止的 isolate 什么回执都发不出来，
+    // 而闩锁又让 Worker 重建时的整批重放跳过这个群，R 从此没人重投。
+    remover.mockClear();
+    replayPendingBlockedRemovals();
+    expect(remover).not.toHaveBeenCalled();
+
+    // 权限恢复：claim 必须一并释放。继续沿用 R 的话，
+    // replayPendingBlockedRemovalsForChat 按设计只重放 frozen 批次、不会重投 R，
+    // 而 prepareBlocklistSweep 又因为 removalId !== null 永久早退——这个群从此
+    // 再也补扫不了，黑名单成员就一直坐在里面。
+    await handleMyChatMemberUpdate(promotion("administrator", "administrator", true));
+    expect(blocklistSweepState.get(-1001)?.removalId).not.toBe(sweepRemovalId);
+    expect(remover.mock.calls.at(-1)?.[0]).toEqual([
+      expect.objectContaining({ probeMembership: true }),
+    ]);
+
+    // 后续按时间的重扫同样不再被幽灵 claim 挡住（这一批没落定，退避窗口过去
+    // 之后照常再来一轮）。
+    settleLast(false);
+    remover.mockClear();
+    await sweepBlockedMembers(-1001, Date.now() + 10_000_000);
+    expectLastRemoval({ chatId: -1001, probeMembership: true });
   });
 
   test("被权限卡住的群不跟着 Worker 重建重放：那不是权限变更", async () => {

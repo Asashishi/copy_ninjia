@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import type { AiChatWorkerEvent, AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 import type {
   AiMemoryDeletedPersistedReply,
@@ -238,20 +239,19 @@ describe("AI main-thread persistence mirror", () => {
     workerPosts.length = 0;
     diskPosts.length = 0;
 
-    const message = {
+    // 每次都现造一份载荷，与生产一致：recordChatMessage 会就地置位
+    // persistImmediately，复用同一个对象投第二次会把上一次的标志带过去
+    // （所有权约定见 aiChat/messageIngress.ts）。
+    const memory = (messageId: number, text: string) => aiRecordMessageFixture({
       chatId: -1001,
       senderId: 7,
       firstName: "Alice",
       lastName: "",
-      messageId: 10,
-      text: "new memory",
-    };
-    aiChat.recordChatMessage(message);
-    expect(workerPosts.at(-1)).toEqual({
-      type: "record",
-      ...message,
-      persistImmediately: true,
+      messageId,
+      text,
     });
+    aiChat.recordChatMessage(memory(10, "new memory"));
+    expect(workerPosts.at(-1)).toEqual({ ...memory(10, "new memory"), persistImmediately: true });
     expect(postPurgeAiMemoryPersistRevisions.get(-1001)).toBeNull();
 
     supervisorOptions!.onEvent({
@@ -293,14 +293,14 @@ describe("AI main-thread persistence mirror", () => {
     }]);
 
     // 快照已交给 Disk I/O 后由主线程镜像负责重放，后续记录恢复普通上报。
-    aiChat.recordChatMessage({ ...message, messageId: 11, text: "second memory" });
-    expect(workerPosts.at(-1)).not.toHaveProperty("persistImmediately");
+    aiChat.recordChatMessage(memory(11, "second memory"));
+    expect(workerPosts.at(-1)).toHaveProperty("persistImmediately", false);
 
     diskMemoryPersisted!({ type: "aiMemoryPersisted", chatId: -1001, revision: 2 });
     expect(postPurgeAiMemoryPersistRevisions.has(-1001)).toBeFalse();
 
-    aiChat.recordChatMessage({ ...message, messageId: 12, text: "normal memory" });
-    expect(workerPosts.at(-1)).not.toHaveProperty("persistImmediately");
+    aiChat.recordChatMessage(memory(12, "normal memory"));
+    expect(workerPosts.at(-1)).toHaveProperty("persistImmediately", false);
   });
 
   test("启动 init 投递被拒绝时不发布可用状态或可重放身份", () => {

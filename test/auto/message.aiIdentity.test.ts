@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { aiRecordMessageFixture, aiReplyReferenceFixture } from "../helpers/aiMemoryFixtures";
 
 const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 const recordChatMediaMock = mock((..._args: unknown[]): void => {});
@@ -52,7 +53,7 @@ describe("AI 缓存发送者 username 传递", () => {
     } as any);
 
     expect(recordChatMessageMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMessageMock).toHaveBeenCalledWith({
+    expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -100800,
       senderId: 123,
       firstName: "Alice",
@@ -60,7 +61,7 @@ describe("AI 缓存发送者 username 传递", () => {
       username: "alice_dev",
       messageId: 8,
       text: "hello @bob",
-    });
+    }));
   });
 
   test("转发文字消息把来源路径一并交给 AI", async () => {
@@ -81,7 +82,7 @@ describe("AI 缓存发送者 username 传递", () => {
       },
     } as any);
 
-    expect(recordChatMessageMock).toHaveBeenCalledWith({
+    expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -100800,
       senderId: 123,
       firstName: "Alice",
@@ -90,7 +91,7 @@ describe("AI 缓存发送者 username 传递", () => {
       messageId: 82,
       forwardedFrom: "频道 [id:-100666] [username:@tokyo_daily] 东京日报",
       text: "转来的消息",
-    });
+    }));
   });
 
   test("@ 机器人同时回复别人时把原消息引用一并交给 AI", async () => {
@@ -113,7 +114,7 @@ describe("AI 缓存发送者 username 传递", () => {
       },
     } as any);
 
-    expect(recordChatMessageMock).toHaveBeenCalledWith({
+    expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -100800,
       senderId: 123,
       firstName: "Alice",
@@ -121,15 +122,15 @@ describe("AI 缓存发送者 username 传递", () => {
       username: "alice_dev",
       messageId: 81,
       text: "@test_bot 你怎么看",
-      replyTo: {
+      replyTo: aiReplyReferenceFixture({
         messageId: 80,
         id: 456,
         firstName: "Bob",
         lastName: "",
         username: "bob_dev",
         text: "TypeScript 比 JavaScript 简单",
-      },
-    });
+      }),
+    }));
     expect(generateAndSendReplyMock).toHaveBeenCalledWith({
       chatId: -100800,
       triggerSenderId: 123,
@@ -150,7 +151,7 @@ describe("AI 缓存发送者 username 传递", () => {
     } as any);
 
     expect(recordChatMessageMock).toHaveBeenCalledTimes(1);
-    expect(recordChatMessageMock).toHaveBeenCalledWith({
+    expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -100900,
       senderId: -100900,
       firstName: "News Channel",
@@ -158,7 +159,7 @@ describe("AI 缓存发送者 username 传递", () => {
       username: "news_channel",
       messageId: 9,
       text: "channel post",
-    });
+    }));
   });
 
   test("媒体消息同样把发送者 username 交给 AI", async () => {
@@ -176,20 +177,25 @@ describe("AI 缓存发送者 username 传递", () => {
 
     expect(recordChatMediaMock).toHaveBeenCalledTimes(1);
     expect(recordChatMediaMock).toHaveBeenCalledWith({
-      kind: "photo",
+      type: "recordMedia",
       chatId: -100800,
       senderId: 123,
       firstName: "Alice",
       lastName: "Tester",
       username: "alice_dev",
+      messageId: 10,
+      replyTo: undefined,
+      forwardedFrom: undefined,
+      persistImmediately: false,
+      kind: "photo",
       caption: "photo caption",
       fileId: "photo-file",
       fileUniqueId: "photo-unique",
       width: 640,
       height: 480,
-      messageId: 10,
       commentOnResolve: false,
       imageGenerationRequested: false,
+      stickerFallbackText: undefined,
       directTrigger: undefined,
     });
   });

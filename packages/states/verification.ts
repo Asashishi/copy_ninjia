@@ -39,6 +39,9 @@ export { joinCreatesNewRecord };
  *   PENDING ──超时/刷屏──> CHECKING_INVITER / EXPELLING（落盘后执行）
  *   CHECKING_INVITER ──管理员──> EXEMPT；非管理员──> EXPELLING
  *   EXPELLING ──处置完成──────────────────────────────────────> ABSENT
+ *   EXPELLING（flood 且未开始执行）──权威评论区确认──────────> EXEMPT
+ *   CHECKING_INVITER/EXPELLING ──新一次物理入群──> 按 ABSENT 重新判定
+ *   KICK_PENDING/KICKED ──超出双路投递误差的重进──> KICK_PENDING（新 token）
  *   EXEMPT/KICKED ──去重窗口到期 / 离群────────────────────> ABSENT
  *
  * 同 kind 字段更新原地修改并原样返回；kind 变化才返回新对象。对象同一性既

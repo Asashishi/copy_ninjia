@@ -72,7 +72,18 @@ function serializeArg(arg: unknown, secrets: readonly string[]): unknown {
     // 完全相同（safeStringify 的兜底对两条路径同样降级），白付一次全量序列化。
     : arg;
 
-  return JSON.parse(redactSecretsInText(safeStringify(serializable), secrets));
+  const redacted: string = redactSecretsInText(safeStringify(serializable), secrets);
+  // 脱敏是对整份 JSON 文本做字面替换，敏感值本身是 JSON 结构字符（配错的 env
+  // 只要 trim 后非空就能通过 infra/config.ts 的校验，`"` 或 `,` 都是合法取值）
+  // 时，替换结果就不再是合法 JSON。裸 parse 会让这个 SyntaxError 从 logger 自己
+  // 的调用点抛出去：catch 块里那句 logger.error 顶掉原始错误、真实故障一条都不
+  // 落盘，连 uncaughtException 处理器都会在汇报退出原因时再炸一次。解析不了就
+  // 退化成脱敏后的文本，日志本身绝不能成为新的故障源。
+  try {
+    return JSON.parse(redacted);
+  } catch {
+    return redacted;
+  }
 }
 
 /**

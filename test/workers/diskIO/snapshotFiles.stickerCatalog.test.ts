@@ -43,6 +43,33 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     expect(parseRecovered(result, "pack_a")?.summary).toBe("一包搞笑猫猫贴纸");
   });
 
+  test("回归用例：键名恰好是 __proto__ 的条目照常恢复，不被原型 setter 吃掉", () => {
+    // JSON.parse 会把 __proto__ 建成普通自有属性，写进 `{}` 时却会触发
+    // Object.prototype 的 setter：条目没进对象、原型被改，那张贴纸通过了校验、
+    // 被报告为已恢复，却在重新序列化的快照里彻底消失，描述永久丢失且无任何日志。
+    mkdirSync(stickerDir, { recursive: true });
+    // 只能写字面 JSON 文本：对象字面量里的 `__proto__:` 同样会被当成设原型，
+    // 用 JSON.stringify 造出来的夹具压根不含这个键。
+    writeFileSync(join(stickerDir, "pack_a.json"), [
+      "{",
+      "  \"version\": 1,",
+      "  \"entries\": {",
+      "    \"__proto__\": { \"emoji\": \"😼\", \"description\": \"原型键贴纸\" },",
+      "    \"file-uid-1\": { \"emoji\": \"😂\", \"description\": \"普通贴纸\" }",
+      "  },",
+      "  \"summary\": null,",
+      "  \"savedAt\": 1700000000000",
+      "}",
+    ].join("\n"));
+
+    const result = recoverStickerCatalogs(["pack_a"]);
+
+    const recovered: StickerCatalogSnapshot | undefined = parseRecovered(result, "pack_a");
+    expect(Object.keys(recovered?.entries ?? {}).sort()).toEqual(["__proto__", "file-uid-1"]);
+    expect(recovered?.entries["__proto__"]?.description).toBe("原型键贴纸");
+    expect(recovered?.entries["file-uid-1"]?.description).toBe("普通贴纸");
+  });
+
   test("缺少当前必填 summary 字段的文件不自动迁移", () => {
     mkdirSync(stickerDir, { recursive: true });
     writeFileSync(join(stickerDir, "pack_a.json"), JSON.stringify({ version: 1, entries: { "file-uid-1": { emoji: "😂", description: "旧条目" } }, savedAt: 0 }));

@@ -24,7 +24,7 @@ export function parseStickerConfig(value: unknown): StickerConfig {
     seen.add(pack);
     packs.push(pack);
   }
-  return Object.freeze({ packs: Object.freeze(packs) });
+  return { packs };
 }
 
 /** 从指定文件加载并校验；模块 import 本身不访问文件系统。 */
@@ -32,7 +32,13 @@ export function loadStickerConfig(path: string = STICKERS_CONFIG_PATH): StickerC
   return parseStickerConfig(JSON.parse(readFileSync(path, "utf8")) as unknown);
 }
 
-/** 默认部署配置按进程/Worker 惰性加载一次。主进程会在取得实例锁后预先调用。 */
+/**
+ * 默认部署配置按进程/Worker 惰性加载一次。**主进程不得在启动阶段统一预热**
+ * （见 docs/04-invariants.md 与 app/lifecycle.ts 的说明）：这些都是按群 opt-in
+ * 的可选功能配置，一份写坏的文件在启动阶段抛出，会连带 copy、抽奖、入群验证、
+ * 黑名单一起离线，systemd 还会照着重启循环。校验归各功能自己的 enable 分支
+ * （config/readiness.ts 与 commands/configGate.ts），坏了只拒绝那一个功能。
+ */
 export function getStickerConfig(): StickerConfig {
   defaultStickerConfigCache.current ??= loadStickerConfig();
   return defaultStickerConfigCache.current;

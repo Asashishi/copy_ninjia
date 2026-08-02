@@ -36,7 +36,7 @@ import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFile
 import { flushLuckAppends, handleLuckDrawMessage, hydrateLuckDay } from "./diskIO/luckFiles";
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import {
-  flushJoinLogBuffer,
+  flushJoinLogDomain,
   handleJoinLogMessage,
   readJoinLog,
 } from "./diskIO/joinLogFiles";
@@ -61,6 +61,7 @@ import { getTokyoDateKey } from "../libs/time";
 import { aiMemoryCache } from "../cache/workers/diskIO/snapshots";
 import { stickerCatalogCache } from "../cache/workers/diskIO/stickers";
 import { luckWorkerCache } from "../cache/workers/diskIO/luck";
+import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
 import type { VerificationSnapshot } from "../types/antiRaid";
 import type { PendingBlockedRemoval } from "../types/blocklist";
 import type {
@@ -96,7 +97,7 @@ function flushAll(): readonly DiskIODomain[] {
     ["verification", flushVerificationChanges((reply: VerificationPersistedReply): void => self.postMessage(reply))],
     ["blocklist", flushBlocklistAppends()],
     ["blocklistRemovalOutbox", flushBlocklistRemovalOutbox()],
-    ["joinLog", flushJoinLogBuffer()],
+    ["joinLog", flushJoinLogDomain()],
   ];
   // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
   // 的失败误导，而那个领域的真实错误按设计只有 console.error。
@@ -273,7 +274,19 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       handleAdSampleMessage(msg);
       break;
     case "joinLog":
-      handleJoinLogMessage(msg);
+      try {
+        handleJoinLogMessage(msg);
+      } catch (error: unknown) {
+        // 缓冲满、跨日前刷盘失败、跨日清理抛错都会从这里逸出。异常一旦离开
+        // onmessage，Bun 会直接终止整条落盘线程（见 infra/diskIO/host.ts 的实测
+        // 注释）：在途 flush 全部按失败结算、各领域缓冲随线程一起没了，反复触发
+        // 还会顶到 diskIORestartThrottle 把整个进程停掉——为了一条入群事实。
+        // 按 cache/workers/diskIO/joinLog.ts 的约定只拖垮 joinLog 这一个领域：
+        // 记下拒收，recordJoinLog 紧接着那次 flush 就会拿到 flushFailed，该
+        // update 不被确认，Telegram 重投。
+        noteJoinLogRejected();
+        console.error("[diskIOWorker] failed to buffer a join log event:", error);
+      }
       break;
     case "readJoinLog": {
       let reply: JoinLogReadReply;

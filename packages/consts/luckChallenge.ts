@@ -10,15 +10,15 @@ import type { LuckTier } from "../types/luckChallenge";
  * 唯独「尚可」横跨 50（45~55）——半吉半凶的档位，行大运/倒大霉谁占上风本就该
  * 各半，浮动出来偶尔翻面是应有之义。
  */
-export const LUCK_TIERS: readonly LuckTier[] = Object.freeze([
-  Object.freeze({ label: "大吉", weight: 7, comment: "简直要飞升啦，杂鱼快让本天才蹭蹭欧气～♡", fortunePercentRange: Object.freeze([88, 97] as const) }),
-  Object.freeze({ label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercentRange: Object.freeze([72, 82] as const) }),
-  Object.freeze({ label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercentRange: Object.freeze([58, 67] as const) }),
-  Object.freeze({ label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercentRange: Object.freeze([45, 55] as const) }),
-  Object.freeze({ label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercentRange: Object.freeze([33, 42] as const) }),
-  Object.freeze({ label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercentRange: Object.freeze([18, 28] as const) }),
-  Object.freeze({ label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: Object.freeze([3, 12] as const) }),
-]);
+export const LUCK_TIERS: readonly LuckTier[] = [
+  { label: "大吉", weight: 7, comment: "简直要飞升啦，杂鱼快让本天才蹭蹭欧气～♡", fortunePercentRange: [88, 97] as const },
+  { label: "吉", weight: 15, comment: "运气不错嘛，本天才勉强夸你一句♡", fortunePercentRange: [72, 82] as const },
+  { label: "小吉", weight: 20, comment: "还算过得去啦，杂鱼继续加油♡", fortunePercentRange: [58, 67] as const },
+  { label: "尚可", weight: 26, comment: "平平淡淡才是真，别太贪心啦杂鱼♡", fortunePercentRange: [45, 55] as const },
+  { label: "小凶", weight: 17, comment: "有点不太妙哦，杂鱼小心点走路♡", fortunePercentRange: [33, 42] as const },
+  { label: "凶", weight: 10, comment: "呜哇，今天还是少折腾为好♡", fortunePercentRange: [18, 28] as const },
+  { label: "大凶", weight: 5, comment: "倒大霉预警！杂鱼你还是躺平一天吧♡", fortunePercentRange: [3, 12] as const },
+];
 
 // weight 必须凑满 100（drawLuckTier 按 1~100 掷骰累加匹配）：凑不满 100，
 // 最后一档会因兜底 return 吃到多余权重；超过 100，末尾档位会被挤到摇不出——

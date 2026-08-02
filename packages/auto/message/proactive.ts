@@ -1,6 +1,6 @@
 import type { Message } from "@grammyjs/types";
 import { recordChatMessage } from "../../aiChat";
-import { buildSelfRecordContext } from "../../aiChat/ai/utils/selfRecord";
+import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
 import {
   BATH_TRIGGER_MAX_MESSAGE_LENGTH,
   BATH_TRIGGER_PATTERN,
@@ -46,10 +46,12 @@ export async function handleProactiveMessageActions({
       replyToMessageId: message.message_id,
     });
     if (aiChatEnabled && sentMessageId !== undefined) {
-      recordChatMessage({
-        ...buildSelfRecordContext({ chatId, self: bot, messageId: sentMessageId }),
+      recordChatMessage(buildSelfRecordMessage({
+        chatId,
+        self: bot,
+        messageId: sentMessageId,
         text: BATH_TRIGGER_REPLY_TEXT,
-      });
+      }));
     }
     return;
   }

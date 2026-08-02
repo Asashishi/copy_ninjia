@@ -35,7 +35,7 @@ export function parseBlocklistConfig(value: unknown): BlocklistConfig {
     seen.add(id);
     blockedIds.push(id);
   }
-  return Object.freeze({ blockedIds: Object.freeze(blockedIds) });
+  return { blockedIds };
 }
 
 /** 从指定文件同步加载静态黑名单；模块 import 本身不访问文件系统。 */

@@ -1,7 +1,7 @@
 import { startChatActionHeartbeat } from "../../aiChat/ai/chatActionHeartbeat";
 import { createStickerSendLock } from "../../aiChat/ai/stickers/sendLock";
 import { createReplyToolset } from "../../aiChat/ai/tools/replyToolset/orchestrator";
-import { buildSelfRecordContext } from "../../aiChat/ai/utils/selfRecord";
+import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
 import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { activeReplyCounts, longTriggerTimes } from "../../cache/workers/aiChat/replies";
 import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";
@@ -153,19 +153,24 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
               // 挂了回复的自发消息把目标还原成回复引用一起自录：自己的发言
               // 在转录里同样带「回复了谁」，回复链也能穿过机器人的消息。
               const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
-              recordChatMessage({
-                ...buildSelfRecordContext({ chatId, self: selfInfo, messageId, ...(selfReplyTo ? { replyTo: selfReplyTo } : {}) }),
+              recordChatMessage(buildSelfRecordMessage({
+                chatId,
+                self: selfInfo,
+                messageId,
                 text,
-              });
+                replyTo: selfReplyTo,
+              }));
             }
           },
           onStickerSent: (stickerDescription: string, messageId: number): void => {
             self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
             if (isActive()) {
-              recordChatMessage({
-                ...buildSelfRecordContext({ chatId, self: selfInfo, messageId }),
+              recordChatMessage(buildSelfRecordMessage({
+                chatId,
+                self: selfInfo,
+                messageId,
                 text: stickerDescription,
-              });
+              }));
             }
           },
           onImageSent: (imageDescription: string, messageId: number, repliedToMessageId?: number): void => {
@@ -174,10 +179,13 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
               // 同 onMessageSent：图片请求固定指向触发消息，自录只采信服务端
               // 实际返回的回复关系。
               const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
-              recordChatMessage({
-                ...buildSelfRecordContext({ chatId, self: selfInfo, messageId, ...(selfReplyTo ? { replyTo: selfReplyTo } : {}) }),
+              recordChatMessage(buildSelfRecordMessage({
+                chatId,
+                self: selfInfo,
+                messageId,
                 text: imageDescription,
-              });
+                replyTo: selfReplyTo,
+              }));
             }
           },
         };

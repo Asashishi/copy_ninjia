@@ -21,12 +21,18 @@ export const botChatPermissions: Map<number, BotChatPermissions> = new Map();
 export const botPermissionFetches: Map<number, Promise<BotChatPermissions | undefined>> = new Map();
 
 /**
- * 每次权限失效都提升一代，使失效前发出的现查结果不能回填新一代。
+ * 在途权限现查的作废标记：`false` 表示这次现查仍然有效，`true` 表示它发出后
+ * 权限已被失效、结果不许回填。
  *
  * 条目的**存在与否**同时是「这个群有没有现查在途」的唯一依据：现查在发请求
  * 之前同步占位、settle 时连同 fetch 记录一起删除，因此这张表只随在途请求增长。
+ *
+ * 与同文件 `botAdminGenerations` 的单调代际不同，这里只需要布尔——同群的并发
+ * 现查由 `botPermissionFetches` 合并成一次，任一时刻至多一次在途，「作废过几次」
+ * 没有读者。写成计数器会让人误以为这里防的是 ABA，进而照着给它补引用计数，
+ * 或者反过来按它去简化 `botAdminGenerations`（那边的代际是真在用的）。
  */
-export const botPermissionGenerations: Map<number, number> = new Map();
+export const botPermissionInvalidations: Map<number, boolean> = new Map();
 
 /**
  * 按需补齐权限位失败后的退避时刻（ms），按 `BOT_PERMISSION_PROBE_RETRY_MS`。

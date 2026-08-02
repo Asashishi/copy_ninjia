@@ -77,7 +77,7 @@ export const BLOCKLIST_REMOVAL_FAILURE_TYPES: readonly [
   "side-effect-incomplete",
   "worker-restarted",
   "missing-permission"
-] = Object.freeze([
+] = [
   "delivery-boundary",
   "side-effect-incomplete",
   "worker-restarted",
@@ -86,40 +86,40 @@ export const BLOCKLIST_REMOVAL_FAILURE_TYPES: readonly [
   // 看到它就知道该去补权限，而不是去查网络或磁盘；主线程据此停掉这个群按时间
   // 的重试，只等一次确证的权限变更（见 infra/blocklist/）。
   "missing-permission",
-]);
+];
 
 /**
  * outbox 单条处置参数允许出现的字段；codec 据此拒绝未知格式。
  * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
  */
-export const BLOCKLIST_REMOVAL_PARAM_KEYS: readonly string[] = Object.freeze([
+export const BLOCKLIST_REMOVAL_PARAM_KEYS: readonly string[] = [
   "chatId",
   "userIds",
   "probeMembership",
   "removalId",
   "joinedAt",
   "announcementMessageId",
-]);
+];
 
 /**
  * outbox 单条任务允许出现的字段；codec 据此拒绝未知格式。
  * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
  */
-export const BLOCKLIST_REMOVAL_ENTRY_KEYS: readonly string[] = Object.freeze([
+export const BLOCKLIST_REMOVAL_ENTRY_KEYS: readonly string[] = [
   "params",
   "createdAt",
   "attempts",
   "lastFailure",
-]);
+];
 
 /**
  * outbox 顶层文件允许出现的字段；codec 据此拒绝未知格式。
  * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
  */
-export const BLOCKLIST_REMOVAL_FILE_KEYS: readonly string[] = Object.freeze([
+export const BLOCKLIST_REMOVAL_FILE_KEYS: readonly string[] = [
   "version",
   "entries",
-]);
+];
 
 /**
  * 同一批处置连续确认未落地达到该次数时升级诊断。任务仍留在 durable outbox，

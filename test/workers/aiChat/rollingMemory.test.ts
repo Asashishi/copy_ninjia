@@ -1,4 +1,9 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  aiReplyReferenceFixture,
+  bufferedMessageFixture,
+  bufferedReplyReferenceFixture,
+} from "../../helpers/aiMemoryFixtures";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 
@@ -28,7 +33,7 @@ const {
 } = await import("../../../packages/consts/aiChat/memory");
 
 function entry(text: string): BufferedMessage {
-  return { messageId: 1, id: 1, firstName: "Alice", lastName: "", text, at: "00:00" };
+  return bufferedMessageFixture({ messageId: 1, id: 1, firstName: "Alice", lastName: "", text, at: "00:00" });
 }
 
 beforeEach(() => {
@@ -53,14 +58,15 @@ describe("AI rolling-memory capacity", () => {
       lastName: "",
       username: "@alice",
       messageId: 10,
-      replyTo: {
+      replyTo: aiReplyReferenceFixture({
         messageId: 9,
         id: 2,
         firstName: "Bob",
         lastName: "",
         text: "原文\n第二行",
-      },
+      }),
       forwardedFrom: "[id:789]\nCarol",
+      persistImmediately: false,
     }, "当前\n消息", 0)).toEqual({
       messageId: 10,
       id: 1,
@@ -68,13 +74,13 @@ describe("AI rolling-memory capacity", () => {
       lastName: "",
       username: "alice",
       text: "当前 消息",
-      replyTo: {
+      replyTo: bufferedReplyReferenceFixture({
         messageId: 9,
         id: 2,
         firstName: "Bob",
         lastName: "",
         text: "原文 第二行",
-      },
+      }),
       forwardedFrom: "[id:789] Carol",
       at: expect.any(String),
     });

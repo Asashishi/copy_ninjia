@@ -23,10 +23,12 @@ const DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION: boolean = false;
 const DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION: boolean = false;
 
 /**
- * 白名单权限的完整默认值。跨调用方共享且冻结；配置文件允许只写需要覆盖的键，
- * 解析时统一从这里补齐。
+ * 白名单权限的完整默认值。跨调用方共享同一个对象，由 `Readonly<>` 在编译期
+ * 锁住全部字段（不可变性只在编译期表达，见 AGENTS.md 的「常量」一节；断言在
+ * `test/consts/immutability.test.ts`）。配置文件允许只写需要覆盖的键，解析时
+ * 统一从这里补齐。
  */
-export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = Object.freeze({
+export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: DEFAULT_IS_CAN_MUTE,
   isCanUnMute: DEFAULT_IS_CAN_UNMUTE,
   isCanBlock: DEFAULT_IS_CAN_BLOCK,
@@ -36,10 +38,10 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = Obj
   isCanControllAIPermission: DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION,
   isCanControllAdDetectPermission: DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION,
   isCanControllJATranslatePermission: DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION,
-});
+};
 
 /** 白名单配置与 /permission 共同接受的权限键全集。 */
-export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = Object.freeze([
+export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanMute",
   "isCanUnMute",
   "isCanBlock",
@@ -49,7 +51,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = Obje
   "isCanControllAIPermission",
   "isCanControllAdDetectPermission",
   "isCanControllJATranslatePermission",
-]);
+];
 
 /** /permission 的权限说明子命令。所属模块：packages/commands/permission.ts。 */
 export const WHITELIST_PERMISSION_HELP_COMMAND: string = "help";
@@ -62,7 +64,7 @@ export const WHITELIST_PERMISSION_ALL_COMMAND: string = "all";
  */
 export const WHITELIST_PERMISSION_HELP: Readonly<
   Record<WhitelistPermissionKey, string>
-> = Object.freeze({
+> = {
   isCanMute: "让这号杂鱼也能用 /mute 临时捂住普通成员的嘴，别乱给哦♡",
   isCanUnMute: "让这号杂鱼也能用 /unmute 提前松开普通成员的嘴，勉强算有点用♡",
   isCanBlock: "让这号杂鱼能用 /block 把目标记进永久黑名单，还会在托管群里一起封掉哦♡",
@@ -72,4 +74,4 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanControllAIPermission: "让这号杂鱼能用 /ai_chat enable|disable 开关 AI 闲聊，别乱按呀♡",
   isCanControllAdDetectPermission: "让这号杂鱼能用 /ad_detect enable|disable 开关广告检测，抓漏了就怪你哦♡",
   isCanControllJATranslatePermission: "让这号杂鱼能用 /ja_copy enable|disable 开关日语翻译，这点小事总看得懂吧♡",
-});
+};

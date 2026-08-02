@@ -36,7 +36,7 @@ mock.module("../../packages/infra/diskIO", () => ({
   relayLogMessage: (): boolean => true,
   flushDiskIO: async (): Promise<string> => "flushed",
   flushDiskIODomain: async (): Promise<string> => "flushed",
-  lastFailedDiskIODomains: (): readonly string[] => [],
+  flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: "flushed" }),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getAllChatStates: (): ReadonlyMap<number, { isInitEnabled?: boolean; botIsAdmin?: boolean }> =>

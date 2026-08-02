@@ -114,7 +114,7 @@ flowchart TD
 
 正常与异常停机由同一个生命周期收口，顺序固定：
 
-1. **Quiesce**：停下标题/反应/头像/翻译入口，并停止 runner。四个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口，未全部成功不得缓存为已完成。
+1. **Quiesce**：停下标题/反应/头像/翻译入口，并停止 runner。四个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这四个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，四个 owner 整个停机期间继续收活，而停机结果照报成功。四次调用都是幂等赋值，重复执行没有代价。
 2. **有界 drain**：排空各队列与 mailbox。runner 为每个 update 持有独立取消 signal；在途 handler 超过 drain 期限时 abort 这些 signal 并给最后一段有界收敛时间，仍不收敛的 handler 会阻止最终 offset 确认，并在最佳努力 dispose 后强制非零退出。
 3. **Flush 与 dispose**：正常路径在确认最终 Telegram offset 前依次 flush AI、Disk I/O 与 StateStore；最终 dispose 固定按「flush AI → 终止 AI → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」收尾。
 
