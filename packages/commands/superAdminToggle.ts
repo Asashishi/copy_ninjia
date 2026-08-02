@@ -31,7 +31,7 @@ export interface SuperAdminToggleMessages {
 }
 
 /**
- * /ai_chat、/ja_copy（开关分支）、/init、/ad_detect 共用的权限与参数校验：
+ * /ai_chat、/ja_copy（开关分支）、/init、/ad_detect、/flood_control 共用的权限与参数校验：
  * 超级管理员恒可用；提供 messages.permission 时，白名单身份也可单独获权，
  * 省略时则保持超级管理员独占。ctx.match 还必须是 enable/disable 之一。
  */

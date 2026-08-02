@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
   AntiRaidWorkerEvent,
   PendingVerificationSnapshot,
@@ -86,6 +86,23 @@ function settleLatestTerminal(userId: number): void {
     revision: event.record.revision,
   });
 }
+
+beforeEach(() => {
+  runtime.stopVerificationRuntime();
+  kicks = 0;
+  deletedMessageIds.length = 0;
+  blockNextDelete = false;
+  releaseBlockedDelete = undefined;
+  reminderResults.length = 0;
+  reminderAttempts = 0;
+  workerEvents.length = 0;
+});
+
+afterEach(async () => {
+  releaseBlockedDelete?.();
+  await Bun.sleep(0);
+  runtime.stopVerificationRuntime();
+});
 
 describe("Anti-Raid Worker verification recovery", () => {
   test("adopt uses remaining expiry, replaces old timers, and handles expired records immediately", async () => {

@@ -151,6 +151,9 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       // 同步记账；只有越过阈值那一条才派生后台任务去禁言，见 antiRaid/floodControl.ts。
       handleFloodCandidate(msg);
       break;
+    case "clearFloodControl":
+      clearChatFloodWindows(msg.chatId);
+      break;
     case "botPermissionsChanged":
       applyBotPermissionsChange(msg.chatId, msg.permissions);
       break;

@@ -19,7 +19,7 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
-  getChatState: () => ({}),
+  getChatState: () => ({ isFloodControlEnabled: true }),
   getAllChatStates: () => new Map(),
   getOrCreateChatState: () => ({}),
   saveState: async (): Promise<void> => {},

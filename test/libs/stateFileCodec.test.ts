@@ -28,6 +28,8 @@ describe("decodeStateFile", () => {
           },
           isAIChatEnabled: undefined,
           isJATranslationEnabled: undefined,
+          isAdDetectEnabled: undefined,
+          isFloodControlEnabled: undefined,
           isInitEnabled: true,
           botIsAdmin: undefined,
           title: undefined,
@@ -108,6 +110,17 @@ describe("decodeStateFile", () => {
       },
       globalCopy: { copiedUser: null },
     })).toThrow("multiple active proxy send targets: -1001, -1002");
+  });
+
+  test("防刷屏开关按当前字段严格解码，缺省保持关闭", () => {
+    expect(decodeStateFile({
+      chats: { "-1001": { isFloodControlEnabled: true } },
+      globalCopy: { copiedUser: null },
+    }).chats["-1001"]?.isFloodControlEnabled).toBe(true);
+    expect(() => decodeStateFile({
+      chats: { "-1001": { isFloodControlEnabled: "yes" } },
+      globalCopy: { copiedUser: null },
+    })).toThrow("state.chats.-1001.isFloodControlEnabled must be a boolean");
   });
 
   test("旧版功能开关字段拒绝加载，避免新旧命名混用", () => {

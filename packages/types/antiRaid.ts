@@ -236,10 +236,10 @@ export interface RemoveBlockedMembersMessage extends RemoveBlockedMembersParams 
 /**
  * 主线程 -> Worker：一条参与刷屏计数的群消息。
  *
- * 只有超级群、真实用户（非频道马甲/匿名管理员）、非机器人自身、非自己人的
- * 消息才投递（见 antiRaid/floodControl.ts）；计数窗口与禁言执行都在 Worker 侧，
- * 见 workers/antiRaid/floodControl.ts。投递走普通 post 而非 durable 边界——窗口
- * 随 isolate 生死，为每条群消息加一道跨线程屏障换不来任何恢复能力。
+ * 只有已开启防刷屏的超级群、真实用户（非频道马甲/匿名管理员）、非机器人自身、
+ * 不具备防刷屏豁免的消息才投递（见 antiRaid/floodControl.ts）；计数窗口与禁言
+ * 执行都在 Worker 侧，见 workers/antiRaid/floodControl.ts。投递走普通 post 而非
+ * durable 边界——窗口随 isolate 生死。
  */
 export interface FloodCandidateMessage {
   type: "floodCandidate";
@@ -247,6 +247,12 @@ export interface FloodCandidateMessage {
   userId: number;
   /** 禁言通知里的展示标签，由主线程按可见发送者算好（同 AdCandidateMessage）。 */
   label: string;
+}
+
+/** 主线程 -> Worker：关闭防刷屏后清除该群全部发言窗口。 */
+export interface ClearFloodControlMessage {
+  type: "clearFloodControl";
+  chatId: number;
 }
 
 /**
@@ -293,6 +299,7 @@ export type AntiRaidWorkerMessage =
   | AdCandidateMessage
   | ClearAdDetectMessage
   | FloodCandidateMessage
+  | ClearFloodControlMessage
   | BotPermissionsChangedMessage
   | AntiRaidBarrierMessage
   | AntiRaidDrainMessage;

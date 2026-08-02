@@ -96,9 +96,15 @@ function visibleBodyOf(result: any): string {
 
 describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   beforeEach(() => {
+    mockTodayOverride = null;
     cache.dailyLuckCache.clear();
+    cache.dailyLuckCacheSaturated.current = false;
     cache.pendingLuckDraws.clear();
     cache.recentCallTimestamps.clear();
+    cache.luckCacheState.dayKey = "";
+    cache.luckReceiptSecretState.current = null;
+    cache.luckRuntimeState.dayRefreshPromise = null;
+    cache.luckRuntimeState.daySwitchedInProcess = false;
     luckChallenge.restoreLuckState(TEST_SECRET, null);
     postDiskIOMock.mockClear();
     logApiErrorMock.mockClear();
@@ -538,9 +544,8 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(postDiskIOMock).not.toHaveBeenCalled();
   });
 
-  // 必须是本文件最后一个测试：进程内跨天会永久置位 cache.ts 的
-  // daySwitchedInProcess，此后 pending 未命中的确认一律 fail closed，会改变
-  // 前面依赖「重启后重建派生」的测试的行为。
+  // beforeEach 把进程级日切状态恢复成新进程初值；随机顺序下也不能把这条
+  // fail-closed 闩锁泄漏给依赖「同日重启后重建派生」的其它用例。
   test("进程内跨东京零点后：迟到确认 fail closed，当天新流程与带当日证明的回执不受影响", async () => {
     const luckDrawCalls = (): unknown[] =>
       postDiskIOMock.mock.calls.filter((call) => (call[0] as { type?: string }).type === "luckDraw");

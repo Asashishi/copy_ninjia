@@ -1,5 +1,6 @@
 export {
   clearAdDetection,
+  clearFloodControl,
   deactivateAntiRaidChat,
   hydratePendingVerifications,
   initAntiRaid,

@@ -69,6 +69,7 @@ describe("Telegram 媒体下载与 Gemini 描述适配层", () => {
     await expect(first).resolves.toBe("一只挥手的猫");
     expect(getFile).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith("https://download.invalid/photos/file.jpg", {
+      redirect: "error",
       signal: expect.any(AbortSignal),
     });
     expect(requestGeminiTextResult).toHaveBeenCalledTimes(1);
@@ -104,6 +105,17 @@ describe("Telegram 媒体下载与 Gemini 描述适配层", () => {
     expect(prepareVisionImage).not.toHaveBeenCalled();
     expect(requestGeminiTextResult).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledTimes(3);
+  });
+
+  test("Telegram 下载重定向失败时不读取响应、不转码也不请求 Gemini", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("fetch() encountered a redirect"));
+
+    await expect(describeMedia("photo", "redirect", "redirect-u")).resolves.toBeNull();
+
+    expect(readBoundedResponseBytes).not.toHaveBeenCalled();
+    expect(prepareVisionImage).not.toHaveBeenCalled();
+    expect(requestGeminiTextResult).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith("Error loading chat media (kind=photo):", expect.any(TypeError));
   });
 
   test("不支持的图片、转码后超限和空模型正文均安全降级", async () => {

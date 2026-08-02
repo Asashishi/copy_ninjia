@@ -371,6 +371,11 @@ export function clearAdDetection(chatId: number): void {
   postAntiRaidOrThrow({ type: "clearAdDetect", chatId });
 }
 
+/** `/flood_control disable` 的运行态收尾：丢掉该群全部发言窗口。 */
+export function clearFloodControl(chatId: number): void {
+  postAntiRaidOrThrow({ type: "clearFloodControl", chatId });
+}
+
 /** 停机时终止 Worker；验证/lockdown 的 write-ahead 镜像已在主线程持有。 */
 export async function terminateAntiRaid(): Promise<void> {
   antiRaidBarrier.settleAll("failed");

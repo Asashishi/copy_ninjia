@@ -1,6 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Message } from "@grammyjs/types";
 import { buildFloodCandidate } from "../../packages/antiRaid/floodControl";
+import { chatStates } from "../../packages/cache/main/storage";
+import { whitelistConfigCache } from "../../packages/cache/main/whitelist";
+import { parseWhitelistConfig } from "../../packages/config/whitelist";
 
 const BOT_ID: number = 99;
 
@@ -15,7 +18,26 @@ function groupMessage(overrides: Partial<Message> = {}): Message {
   } as Message;
 }
 
+beforeEach(() => {
+  chatStates.clear();
+  chatStates.set(-1001, { isFloodControlEnabled: true });
+  whitelistConfigCache.current = parseWhitelistConfig({});
+});
+
+afterEach(() => {
+  chatStates.clear();
+  whitelistConfigCache.current = null;
+});
+
 describe("刷屏计数的主线程投递门禁", () => {
+  test("按群缺省关闭，只有显式开启后才投递", () => {
+    chatStates.clear();
+    expect(buildFloodCandidate(groupMessage(), BOT_ID)).toBeUndefined();
+
+    chatStates.set(-1001, { isFloodControlEnabled: true });
+    expect(buildFloodCandidate(groupMessage(), BOT_ID)?.type).toBe("floodCandidate");
+  });
+
   test("超级群里的真实用户收敛成投递，标签按可见发送者算好", () => {
     expect(buildFloodCandidate(groupMessage(), BOT_ID)).toEqual({
       type: "floodCandidate",
@@ -55,7 +77,7 @@ describe("刷屏计数的主线程投递门禁", () => {
     )).toBeUndefined();
   });
 
-  test("机器人自己、没有发送者、以及自己人都不计数", () => {
+  test("机器人自己、没有发送者、超级管理员和获授豁免的白名单身份都不计数", () => {
     expect(buildFloodCandidate(
       groupMessage({ from: { id: BOT_ID, is_bot: true, first_name: "本天才" } } as Partial<Message>),
       BOT_ID
@@ -66,5 +88,12 @@ describe("刷屏计数的主线程投递门禁", () => {
       groupMessage({ from: { id: 1, is_bot: false, first_name: "超管" } } as Partial<Message>),
       BOT_ID
     )).toBeUndefined();
+
+    whitelistConfigCache.current = parseWhitelistConfig({ "7": {} });
+    expect(buildFloodCandidate(groupMessage(), BOT_ID)).toBeUndefined();
+    whitelistConfigCache.current = parseWhitelistConfig({
+      "7": { isCanBypassFloodControl: false },
+    });
+    expect(buildFloodCandidate(groupMessage(), BOT_ID)?.userId).toBe(7);
   });
 });

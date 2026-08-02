@@ -15,10 +15,14 @@ const DEFAULT_IS_CAN_UNBLOCK: boolean = false;
 const DEFAULT_IS_CAN_SWITCH_MOOD: boolean = false;
 /** 白名单条目缺省绕过广告检测。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_BYPASS_AD_DETECTION: boolean = true;
+/** 白名单条目缺省绕过防刷屏禁言。所属模块：packages/config/whitelist.ts。 */
+const DEFAULT_IS_CAN_BYPASS_FLOOD_CONTROL: boolean = true;
 /** 白名单条目缺省不可开关 AI 闲聊。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION: boolean = false;
 /** 白名单条目缺省不可开关广告检测。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION: boolean = false;
+/** 白名单条目缺省不可开关防刷屏禁言。所属模块：packages/config/whitelist.ts。 */
+const DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION: boolean = false;
 /** 白名单条目缺省不可开关日语翻译。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION: boolean = false;
 
@@ -35,8 +39,10 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanUnBlock: DEFAULT_IS_CAN_UNBLOCK,
   isCanSwitchMood: DEFAULT_IS_CAN_SWITCH_MOOD,
   isCanBypassAdDetection: DEFAULT_IS_CAN_BYPASS_AD_DETECTION,
+  isCanBypassFloodControl: DEFAULT_IS_CAN_BYPASS_FLOOD_CONTROL,
   isCanControllAIPermission: DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION,
   isCanControllAdDetectPermission: DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION,
+  isCanControllFloodControlPermission: DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION,
   isCanControllJATranslatePermission: DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION,
 };
 
@@ -48,8 +54,10 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanUnBlock",
   "isCanSwitchMood",
   "isCanBypassAdDetection",
+  "isCanBypassFloodControl",
   "isCanControllAIPermission",
   "isCanControllAdDetectPermission",
+  "isCanControllFloodControlPermission",
   "isCanControllJATranslatePermission",
 ];
 
@@ -71,7 +79,9 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanUnBlock: "让这号杂鱼能用 /unblock 把目标移出永久黑名单，并解除所有托管群里的封禁哦♡",
   isCanSwitchMood: "让这号杂鱼能用 /switch_mood 重新抽取本天才现在的心情，可别把本天才折腾坏了♡",
   isCanBypassAdDetection: "让这个身份绕过广告检测与自动处置，本天才会当作没看见，别放广告杂鱼进来哦♡",
+  isCanBypassFloodControl: "让这个身份绕过防刷屏计数与自动禁言，本天才不会按住 TA，别给刷屏杂鱼哦♡",
   isCanControllAIPermission: "让这号杂鱼能用 /ai_chat enable|disable 开关 AI 闲聊，别乱按呀♡",
   isCanControllAdDetectPermission: "让这号杂鱼能用 /ad_detect enable|disable 开关广告检测，抓漏了就怪你哦♡",
+  isCanControllFloodControlPermission: "让这号杂鱼能用 /flood_control enable|disable 开关防刷屏禁言，别乱按呀♡",
   isCanControllJATranslatePermission: "让这号杂鱼能用 /ja_copy enable|disable 开关日语翻译，这点小事总看得懂吧♡",
 };

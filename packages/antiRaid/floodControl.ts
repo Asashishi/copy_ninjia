@@ -2,9 +2,8 @@
  * 刷屏禁言在主线程侧的那一半：只有投递。
  *
  * 计数窗口、身份确证、禁言与群内通知全部在入群守卫线程执行，见
- * workers/antiRaid/floodControl.ts。这里只把一条群消息收敛成无状态的投递，
- * 判定所需的三件事——是不是超级群、发言的是不是真实用户、是不是自己人——
- * 都只有主线程拿得到（消息原文与 `.env` 名单），所以留在这道门禁里。
+ * workers/antiRaid/floodControl.ts。这里只把一条群消息收敛成无状态的投递；
+ * 按群开关、聊天类型、可禁言成员身份与白名单豁免均在创建候选对象前完成。
  *
  * 投递走普通 post 而非 durable 边界，与广告检测同理：窗口随 isolate 生死，
  * 为每条群消息加一道跨线程屏障换不来任何恢复能力。
@@ -12,7 +11,8 @@
 
 import { formatUserLabel } from "../users/userLabel";
 import { visibleSenderChat } from "../users/visibleSender";
-import { isProtectedSender } from "./memberFacts";
+import { getChatState } from "../infra/storage/stateStore";
+import { canBypassFloodControl } from "./memberFacts";
 import type { FloodCandidateMessage } from "../types/antiRaid";
 import type { Message, User } from "@grammyjs/types";
 
@@ -26,6 +26,8 @@ export function buildFloodCandidate(message: Message, botId: number): FloodCandi
   // 一行把运维引向权限配置的报错。普通群升级成超级群之后消息自带新的
   // chat.type，这道门禁随之自愈。
   if (message.chat.type !== "supergroup") return undefined;
+  // 缺省关闭；在任何身份解析、白名单查询和候选对象创建之前直接返回。
+  if (getChatState(message.chat.id).isFloodControlEnabled !== true) return undefined;
   // 频道马甲与匿名管理员没有可禁言的成员身份：restrictChatMember 只认真实用户，
   // 拿频道/群 id 去调只会换一句报错，而皮套底下是谁 Telegram 并不暴露——与
   // `/block` 拒绝把当前群身份当成员目标是同一条理由。
@@ -33,8 +35,7 @@ export function buildFloodCandidate(message: Message, botId: number): FloodCandi
 
   const sender: User | undefined = message.from;
   if (sender === undefined || sender.id === botId) return undefined;
-  // 自己人不计数：这批身份是部署方亲手配的，不该被机器人自己按住。
-  if (isProtectedSender(sender.id)) return undefined;
+  if (canBypassFloodControl(sender.id)) return undefined;
 
   return {
     type: "floodCandidate",

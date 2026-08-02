@@ -69,10 +69,13 @@ test("默认群状态单例与它的只读访问器都不许被写", () => {
   expect(() => { getChatState(-1).botIsAdmin = true; }).toBeDefined();
   // 读取照常。
   expect(DEFAULT_CHAT_STATE.isInitEnabled).toBeUndefined();
+  expect(DEFAULT_CHAT_STATE.isFloodControlEnabled).toBeUndefined();
 });
 
 test("常量表内容本身仍可正常读取", () => {
   expect(BOT_COMMANDS.length).toBeGreaterThan(0);
   expect(LUCK_TIERS.reduce((sum: number, tier): number => sum + tier.weight, 0)).toBe(100);
   expect(RANDOM_ECHO_MODES).toContain("nya");
+  expect(DEFAULT_WHITELIST_PERMISSIONS.isCanBypassFloodControl).toBe(true);
+  expect(DEFAULT_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(false);
 });

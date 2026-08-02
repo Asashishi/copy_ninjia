@@ -12,6 +12,7 @@ export { handleBatchKickCommand } from "./batchKick";
 export { handleUnblockCommand } from "./unblock";
 export { handleAiChatCommand } from "./aiChat";
 export { handleAdDetectCommand } from "./adDetect";
+export { handleFloodControlCommand } from "./floodControl";
 export { handleQueryMoodCommand, handleSwitchMoodCommand } from "./mood";
 export { handleJaCopyCommand } from "./jaCopy";
 export { handleInitCommand } from "./init";

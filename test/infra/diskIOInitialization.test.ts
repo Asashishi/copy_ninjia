@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type {
   AiMemoryPersistedReply,
   DiskIOMessage,
@@ -75,6 +75,10 @@ function deferredVoid(): { promise: Promise<void>; resolve(): void } {
   });
   return { promise, resolve: (): void => resolve?.() };
 }
+
+beforeEach(() => {
+  FakeWorker.instances.length = 0;
+});
 
 describe("explicit Worker initialization", () => {
   test("恢复监听器按显式优先级稳定排序，并拒绝重复 owner", () => {

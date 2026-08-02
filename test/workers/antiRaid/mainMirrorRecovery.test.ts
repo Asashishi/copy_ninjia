@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
   AntiRaidWorkerEvent,
   AntiRaidWorkerMessage,
@@ -113,8 +113,61 @@ mock.module("../../../packages/infra/diskIO", () => ({
 }));
 
 const antiRaid = await import("../../../packages/antiRaid");
-const { activeVerificationSnapshots, pendingVerificationDeletes } = await import("../../../packages/cache/main/antiRaid/verificationMirror");
+const {
+  activeVerificationSnapshots,
+  pendingVerificationDeletes,
+  persistedVerificationRevisions,
+} = await import("../../../packages/cache/main/antiRaid/verificationMirror");
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
+const { recentBlockedJoinCounts } = await import("../../../packages/cache/main/antiRaid/blocklistGuard");
+const {
+  emergencyLockdownRecoveries,
+  emergencyLockdownRecoveryRuntime,
+  pendingLockdownPersistence,
+  persistedLockdownFingerprints,
+} = await import("../../../packages/cache/main/antiRaid/lockdownMirror");
+const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
+
+async function resetAntiRaidTestState(): Promise<void> {
+  await antiRaid.terminateAntiRaid();
+  workerPosts.length = 0;
+  diskPosts.length = 0;
+  chatStates.clear();
+  activeVerificationSnapshots.clear();
+  pendingVerificationDeletes.clear();
+  persistedVerificationRevisions.clear();
+  inFlightAdDisposals.clear();
+  recentBlockedJoinCounts.clear();
+  persistedLockdownFingerprints.clear();
+  pendingLockdownPersistence.clear();
+  emergencyLockdownRecoveries.clear();
+  emergencyLockdownRecoveryRuntime.stopped = true;
+  antiRaidRuntimeState.generation = 0;
+  antiRaidRuntimeState.initialized = false;
+  antiRaidRuntimeState.persistenceVersion = 0;
+
+  saveState.mockReset();
+  saveState.mockImplementation(async (): Promise<void> => {});
+  saveStateInBackground.mockReset();
+  saveStateInBackground.mockImplementation((_context: string): void => {});
+  flushStateToDisk.mockReset();
+  flushStateToDisk.mockImplementation(async (): Promise<FlushResult> => "flushed");
+  flushDiskIO.mockReset();
+  flushDiskIO.mockImplementation(async (): Promise<FlushResult> => "flushed");
+  restoreLockdownInvitePermission.mockReset();
+  restoreLockdownInvitePermission.mockImplementation(async (..._args: unknown[]): Promise<void> => {});
+}
+
+beforeEach(async () => {
+  await resetAntiRaidTestState();
+  antiRaid.initAntiRaid();
+  workerPosts.length = 0;
+  diskPosts.length = 0;
+});
+
+afterEach(async () => {
+  await antiRaid.terminateAntiRaid();
+});
 
 function record(generation: number, revision: number): VerificationSnapshot {
   return {
@@ -165,6 +218,7 @@ async function settleAntiRaidDrain(
 
 describe("Anti-Raid main-thread persistence mirror", () => {
   test("replays active and unconfirmed deletes while rejecting old generations", async () => {
+    await resetAntiRaidTestState();
     antiRaid.hydratePendingVerifications(new Map([["-1001:42", record(9, 1)]]));
     antiRaid.initAntiRaid();
     const firstBoundaryIndex: number = workerPosts.length;

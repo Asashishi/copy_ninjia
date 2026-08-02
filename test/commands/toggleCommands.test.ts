@@ -10,6 +10,7 @@ const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const persistAuthoritativeState = mock(async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); });
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
 const clearAdDetection = mock((..._args: unknown[]): void => {});
+const clearFloodControl = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 const delegatedPermissions: Map<number, Set<string>> = new Map<number, Set<string>>();
 
@@ -35,7 +36,7 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
-mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
+mock.module("../../packages/antiRaid", () => ({ clearAdDetection, clearFloodControl }));
 // /init enable 之后会重新判定一次管理员身份，好让「是管理员 && 已初始化」
 // 那道边沿触发黑名单清扫（见 infra/botAdmin.ts）。
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
@@ -63,6 +64,7 @@ const { handleAdDetectCommand } = await import("../../packages/commands/adDetect
 const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
 const { handleInitCommand } = await import("../../packages/commands/init");
 const { handleJaCopyCommand } = await import("../../packages/commands/jaCopy");
+const { handleFloodControlCommand } = await import("../../packages/commands/floodControl");
 const { isSuperAdmin, resolveSuperAdminToggleArg } = await import("../../packages/commands/superAdminToggle");
 
 function context(argument: string, userId: number | undefined = 100): never {
@@ -90,6 +92,7 @@ beforeEach(() => {
   });
   handleCopyCommand.mockClear();
   clearAdDetection.mockClear();
+  clearFloodControl.mockClear();
 });
 
 describe("超级管理员开关命令", () => {
@@ -155,6 +158,42 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isAdDetectEnabled).toBe(false);
     // 开关照样关掉，回执照样发出去。
     expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("/flood_control 缺省关闭，enable 持久化开启，disable 清空该群计数窗口", async () => {
+    expect(states.get(-1001)?.isFloodControlEnabled).toBeUndefined();
+
+    await handleFloodControlCommand(context("enable"));
+    expect(states.get(-1001)?.isFloodControlEnabled).toBe(true);
+    expect(saveStateInBackground).toHaveBeenLastCalledWith("flood_control toggled");
+    expect(clearFloodControl).not.toHaveBeenCalled();
+
+    await handleFloodControlCommand(context("disable"));
+    expect(states.get(-1001)?.isFloodControlEnabled).toBe(false);
+    expect(clearFloodControl).toHaveBeenCalledWith(-1001);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("Worker 不可用时 /flood_control disable 仍完成关闭并发送回执", async () => {
+    clearFloodControl.mockImplementationOnce((): never => {
+      throw new Error("Anti-Raid Worker is unavailable.");
+    });
+    states.set(-1001, { isFloodControlEnabled: true });
+
+    await handleFloodControlCommand(context("disable"));
+
+    expect(states.get(-1001)?.isFloodControlEnabled).toBe(false);
+    expect(saveStateInBackground).toHaveBeenCalledWith("flood_control toggled");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("/flood_control 仅允许超级管理员或获授对应 Controll 权限的白名单身份", async () => {
+    await handleFloodControlCommand(context("enable", 201));
+    expect(states.size).toBe(0);
+
+    delegatedPermissions.set(200, new Set(["isCanControllFloodControlPermission"]));
+    await handleFloodControlCommand(context("enable", 200));
+    expect(states.get(-1001)?.isFloodControlEnabled).toBe(true);
   });
 
   test("/ad_detect 拒绝非超级管理员，不改任何状态", async () => {

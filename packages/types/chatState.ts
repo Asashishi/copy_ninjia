@@ -64,6 +64,12 @@ export interface ChatState {
    */
   isAdDetectEnabled?: boolean;
   /**
+   * 本群是否启用防刷屏禁言。缺省视为禁用，需通过 /flood_control enable
+   * 显式开启（超级管理员或获授 isCanControllFloodControlPermission 的白名单
+   * 身份可用，见 commands/floodControl.ts）。判断时必须使用 === true。
+   */
+  isFloodControlEnabled?: boolean;
+  /**
    * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化（false），
    * 需由超级管理员通过 /init enable 显式开启（见 commands/init.ts）。未初始化
    * 群的更新在

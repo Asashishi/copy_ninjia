@@ -6,8 +6,10 @@ export interface WhitelistPermissions {
   isCanUnBlock: boolean;
   isCanSwitchMood: boolean;
   isCanBypassAdDetection: boolean;
+  isCanBypassFloodControl: boolean;
   isCanControllAIPermission: boolean;
   isCanControllAdDetectPermission: boolean;
+  isCanControllFloodControlPermission: boolean;
   isCanControllJATranslatePermission: boolean;
 }
 

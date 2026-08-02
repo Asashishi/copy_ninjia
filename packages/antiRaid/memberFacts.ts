@@ -13,11 +13,12 @@ import type { AntiRaidMember } from "../types/antiRaid";
  */
 
 /**
- * 自己人：不得进入自动处置产生的永久黑名单，也不参与刷屏计数。
+ * 自己人：不得进入自动处置产生的永久黑名单。
  *
  * `SUPER_ADMIN_USER_ID` 与 config/whitelist.json 是部署方亲手配置的身份，
  * 广告检测送检另受 isCanBypassAdDetection 控制：关闭该权限的白名单成员仍可被
- * 判定并删除本批消息，但主线程处置会用本函数再次拒绝永久拉黑。
+ * 判定并删除本批消息；防刷屏另受 isCanBypassFloodControl 控制。两条自动处置的
+ * 最终拉黑边界仍会用本函数拒绝白名单身份。
  */
 export function isProtectedSender(senderId: number): boolean {
   return senderId === SUPER_ADMIN_USER_ID || isWhitelisted(senderId);
@@ -27,6 +28,12 @@ export function isProtectedSender(senderId: number): boolean {
 export function canBypassAdDetection(senderId: number): boolean {
   return senderId === SUPER_ADMIN_USER_ID ||
     hasWhitelistPermission(senderId, "isCanBypassAdDetection");
+}
+
+/** 防刷屏专用豁免：超级管理员恒豁免，白名单按逐项权限决定。 */
+export function canBypassFloodControl(senderId: number): boolean {
+  return senderId === SUPER_ADMIN_USER_ID ||
+    hasWhitelistPermission(senderId, "isCanBypassFloodControl");
 }
 
 export interface PickMemberParams {

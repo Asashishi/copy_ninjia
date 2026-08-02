@@ -8,6 +8,7 @@ describe("chat state normalization", () => {
       quietUntil: 999,
       isAIChatEnabled: false,
       isJATranslationEnabled: false,
+      isFloodControlEnabled: false,
       isInitEnabled: false,
       isProxySendEnabled: false,
       botIsAdmin: false,
@@ -26,6 +27,7 @@ describe("chat state normalization", () => {
       lockdown: { phase: "active", intentId: 1, originalPermissions: {}, expiresAt: 900 },
       isAIChatEnabled: true,
       isJATranslationEnabled: true,
+      isFloodControlEnabled: true,
       isInitEnabled: true,
       isProxySendEnabled: true,
     };
@@ -35,6 +37,7 @@ describe("chat state normalization", () => {
       lockdown: { phase: "active", intentId: 1, originalPermissions: {}, expiresAt: 900 },
       isAIChatEnabled: true,
       isJATranslationEnabled: true,
+      isFloodControlEnabled: true,
       isInitEnabled: true,
       isProxySendEnabled: true,
     });

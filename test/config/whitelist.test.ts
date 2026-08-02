@@ -51,11 +51,14 @@ describe("whitelist config", () => {
       isCanUnBlock: false,
       isCanSwitchMood: false,
       isCanBypassAdDetection: true,
+      isCanBypassFloodControl: true,
       isCanControllAIPermission: false,
       isCanControllAdDetectPermission: false,
+      isCanControllFloodControlPermission: false,
       isCanControllJATranslatePermission: false,
     });
     expect(config.get(-1002233445566)?.isCanBypassAdDetection).toBe(false);
+    expect(config.get(-1002233445566)?.isCanBypassFloodControl).toBe(true);
     const exampleConfig: WhitelistConfig = loadWhitelistConfig();
     expect(exampleConfig.has(123456789)).toBe(true);
     expect(exampleConfig.has(-1001234567890)).toBe(true);

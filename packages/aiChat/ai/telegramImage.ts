@@ -48,6 +48,7 @@ export async function downloadTelegramVisionImage({
     }
 
     const response: Response = await fetch(file.getUrl(), {
+      redirect: "error",
       signal: withTimeout(signal, MEDIA_DOWNLOAD_TIMEOUT_MS),
     });
     if (!response.ok) {

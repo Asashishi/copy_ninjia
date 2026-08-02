@@ -131,6 +131,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, text: "买号加我", linkUrls: [], label: "@spam", isChannel: false, blocked: false, justJoined: true },
       { type: "clearAdDetect", chatId: -1001 },
       { type: "floodCandidate", chatId: -1001, userId: 1, label: "@noisy" },
+      { type: "clearFloodControl", chatId: -1001 },
       { type: "botPermissionsChanged", chatId: -1001, permissions: { canRestrictMembers: true, canDeleteMessages: true } },
       { type: "barrier", barrierId: 99 },
     ];
@@ -146,7 +147,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       "message", "callback",
       "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
       "removeBlockedMembers", "adCandidate", "clearAdDetect",
-      "floodCandidate", "botPermissionsChanged",
+      "floodCandidate", "clearFloodWindows", "botPermissionsChanged",
     ]);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
     await Bun.sleep(0);

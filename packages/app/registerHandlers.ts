@@ -10,6 +10,7 @@ import {
   handleCjkActionCommand,
   handleCjkActionUsageCommand,
   handleCopyCommand,
+  handleFloodControlCommand,
   handleInitCommand,
   handleJaCopyCommand,
   handleLuckChallengeInlineQuery,
@@ -109,6 +110,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("unblock", (ctx: CommandContext<Context>): Promise<void> => handleUnblockCommand(ctx));
   bot.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
   bot.command("ad_detect", (ctx: CommandContext<Context>): Promise<void> => handleAdDetectCommand(ctx));
+  bot.command("flood_control", (ctx: CommandContext<Context>): Promise<void> => handleFloodControlCommand(ctx));
   bot.command("query_mood", (ctx: CommandContext<Context>): Promise<void> => handleQueryMoodCommand(ctx));
   bot.command("switch_mood", (ctx: CommandContext<Context>): Promise<void> => handleSwitchMoodCommand(ctx));
   bot.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));

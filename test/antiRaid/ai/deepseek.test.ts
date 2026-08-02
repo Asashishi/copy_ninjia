@@ -28,6 +28,7 @@ mock.module("openai", () => {
 });
 
 const { requestDeepSeekJson } = await import("../../../packages/antiRaid/ai/deepseek");
+const { deepSeekClientHolder } = await import("../../../packages/cache/workers/antiRaid/deepseek");
 const {
   DEEPSEEK_API_BASE_URL,
   DEEPSEEK_EMPTY_BODY_MAX_ATTEMPTS,
@@ -48,6 +49,7 @@ function request(overrides: Record<string, unknown> = {}): never {
 }
 
 beforeEach(() => {
+  deepSeekClientHolder.current = null;
   errorLogs.length = 0;
   constructions.length = 0;
   create.mockClear();
