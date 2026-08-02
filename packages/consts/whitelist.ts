@@ -63,6 +63,8 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
 
 /** /permission 的权限说明子命令。所属模块：packages/commands/permission.ts。 */
 export const WHITELIST_PERMISSION_HELP_COMMAND: string = "help";
+/** /permission 查询发起身份自身权限的子命令。所属模块：packages/commands/permission.ts。 */
+export const WHITELIST_PERMISSION_QUERY_COMMAND: string = "query";
 /** /permission 全开已有身份权限的子命令。所属模块：packages/commands/permission.ts。 */
 export const WHITELIST_PERMISSION_ALL_COMMAND: string = "all";
 

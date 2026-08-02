@@ -4,15 +4,18 @@ import type { CachedUser } from "../types/chatState";
 import type {
   SetWhitelistPermissionResult,
   WhitelistPermissionKey,
+  WhitelistPermissions,
 } from "../types/whitelist";
 import {
   WHITELIST_PERMISSION_ALL_COMMAND,
   WHITELIST_PERMISSION_HELP,
   WHITELIST_PERMISSION_HELP_COMMAND,
   WHITELIST_PERMISSION_KEYS,
+  WHITELIST_PERMISSION_QUERY_COMMAND,
 } from "../consts/whitelist";
 import {
   enableAllWhitelistPermissions,
+  getWhitelistConfig,
   isWhitelisted,
   setWhitelistPermission,
 } from "../config/whitelist";
@@ -26,7 +29,7 @@ const PERMISSION_USAGE_TEXT: string =
   `笨蛋，用法是 /permission <用户id|频道id|@username> <权限键> <true|false>；` +
   `回复白名单身份时可以省略目标，只写 /permission <权限键> <true|false>；` +
   `全部权限打开用 /permission <用户id|频道id|@username> all，回复目标时只写 /permission all；` +
-  `查看权限说明用 /permission help♡`;
+  `白名单身份查询自身权限用 /permission query，查看权限说明用 /permission help♡`;
 
 interface PermissionHelpMessage {
   text: string;
@@ -39,6 +42,10 @@ function formatPermissionHelpMessage(): PermissionHelpMessage {
   const permissionJson: string = JSON.stringify(WHITELIST_PERMISSION_HELP, null, 2);
   const suffix: string = [
     "",
+    "白名单身份查询自己的权限：",
+    "/permission query",
+    "",
+    "以下修改操作仅限超级管理员：",
     "设置已有白名单身份：",
     "/permission <用户id|频道id|@username> <权限键> <true|false>",
     "回复目标时可省略身份：/permission <权限键> <true|false>",
@@ -49,6 +56,25 @@ function formatPermissionHelpMessage(): PermissionHelpMessage {
   ].join("\n");
   return {
     text: `${prefix}${permissionJson}\n${suffix}`,
+    entities: [
+      {
+        type: "pre",
+        offset: prefix.length,
+        length: permissionJson.length,
+        language: "json",
+      },
+    ],
+  };
+}
+
+/** 把发起身份的完整权限渲染为 JSON 代码块；查询回执仍按普通群提示自动删除。 */
+function formatPermissionQueryMessage(
+  permissions: Readonly<WhitelistPermissions>
+): PermissionHelpMessage {
+  const prefix: string = "你的白名单权限如下：\n";
+  const permissionJson: string = JSON.stringify(permissions, null, 2);
+  return {
+    text: `${prefix}${permissionJson}`,
     entities: [
       {
         type: "pre",
@@ -79,7 +105,8 @@ export function parsePermissionBoolean(raw: string): boolean | undefined {
 }
 
 /**
- * 处理 /permission：仅超级管理员可修改已经存在的白名单条目。
+ * 处理 /permission：白名单身份可查询自身权限与查看说明；仅超级管理员可修改
+ * 已经存在的白名单条目。
  *
  * 新增/删除成员由同样仅限超级管理员的 /white 负责；本命令只修改已有身份的
  * 单项或全部权限，避免误发一条带陌生 ID 的消息就扩大整个白名单安全边界。
@@ -89,30 +116,64 @@ export async function handlePermissionCommand(
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  if (!isSuperAdminActor(ctx)) {
-    const actor: CachedUser | undefined = resolveCommandActor(ctx);
+  const actor: CachedUser | undefined = resolveCommandActor(ctx);
+  const actorIsSuperAdmin: boolean = isSuperAdminActor(ctx);
+  const tokens: string[] = ctx.match.trim()
+    .split(/\s+/)
+    .filter((token: string): boolean => token.length > 0);
+  const isHelp: boolean =
+    tokens.length === 1 &&
+    tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_HELP_COMMAND;
+  const isQuery: boolean =
+    tokens.length === 1 &&
+    tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_QUERY_COMMAND;
+
+  if (isHelp || isQuery) {
+    const actorPermissions: Readonly<WhitelistPermissions> | undefined =
+      actor === undefined ? undefined : getWhitelistConfig().get(actor.id);
+    if (!actorIsSuperAdmin && actorPermissions === undefined) {
+      await sendCommandMessage({
+        chatId,
+        text: `只有白名单身份才能查看权限；${actor ? formatUserLabel(actor) : "哪个杂鱼"} 还不在里面呀，笨蛋♡`,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
+    if (isHelp) {
+      const helpMessage: PermissionHelpMessage = formatPermissionHelpMessage();
+      await sendCommandMessage({
+        chatId,
+        text: helpMessage.text,
+        entities: helpMessage.entities,
+        replyToMessageId: messageId,
+        preserveInGroup: true,
+      });
+      return;
+    }
+    if (actorPermissions === undefined) {
+      await sendCommandMessage({
+        chatId,
+        text: `超级管理员不通过白名单逐项授权，没有可查询的自身白名单权限对象哦♡`,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
+    const queryMessage: PermissionHelpMessage =
+      formatPermissionQueryMessage(actorPermissions);
     await sendCommandMessage({
       chatId,
-      text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想改本天才的权限配置？哪来的资格呀，笨蛋♡`,
+      text: queryMessage.text,
+      entities: queryMessage.entities,
       replyToMessageId: messageId,
     });
     return;
   }
 
-  const tokens: string[] = ctx.match.trim()
-    .split(/\s+/)
-    .filter((token: string): boolean => token.length > 0);
-  if (
-    tokens.length === 1 &&
-    tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_HELP_COMMAND
-  ) {
-    const helpMessage: PermissionHelpMessage = formatPermissionHelpMessage();
+  if (!actorIsSuperAdmin) {
     await sendCommandMessage({
       chatId,
-      text: helpMessage.text,
-      entities: helpMessage.entities,
+      text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想改本天才的权限配置？哪来的资格呀，笨蛋♡`,
       replyToMessageId: messageId,
-      preserveInGroup: true,
     });
     return;
   }

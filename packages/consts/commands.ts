@@ -38,7 +38,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "mute", description: "禁言：收走目标的发言权一段时间，时长必填，如 10m、2h、1d（1 分钟~366 天，到点自动恢复）；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" },
   { command: "unmute", description: "提前解除禁言；回复消息、@username 或用户 id 指定目标（仅白名单用户可用）" },
   { command: "batch_kick", description: "批量踢出本群滚动时间窗内加入的人，如 30m、2h、1d；只踢不拉黑（仅超级管理员可用）" },
-  { command: "permission", description: "修改已有白名单用户或频道的逐项权限（仅超级管理员可用）" },
+  { command: "permission", description: "query 查询自身权限，help 查看说明；修改白名单权限仅超级管理员可用" },
   { command: "white", description: "新增或删除白名单用户/频道，首次加入使用默认权限（仅超级管理员可用）" },
 ];
 

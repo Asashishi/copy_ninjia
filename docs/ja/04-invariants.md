@@ -50,6 +50,8 @@
 - `config/whitelist.json` と `config/blocklist.json` は前項の optional file ではありません。前者は同期 authorization と insider protection、後者は静的 enforcement boundary です。どちらも network 接続や Worker 作成より前に厳密ロードし、欠落、未知 field、不正 ID は起動を拒否します。
 
   `/white` と `/permission` は実際に変化した場合だけ allowlist 全体を atomic rewrite し、永続化成功後に新しい main-thread cache を公開します。read path は常にその memory copy だけを参照します。起動時には allowlist の元 byte の SHA-256 も記録し、各 command rewrite の直前に再検証します。外部編集または読み取り不能を検出した場合は、古い cache で黙って上書きせず mutation と update を失敗させます。静的 blocklist は read-only のまま動的な `memory/blocklist/blocklist.json` layer と memory 上で union し、`/unblock` は静的 entry を削除できません。
+
+  `/permission query` と `/permission help` は read-only entry point です。allowlist の user／channel は command sender identity で同じ memory snapshot を読み、`query` は default 適用後の自身の完全な permission だけを返し、target を受け取らず write もしません。`help` はスーパー管理者の従来の access も維持します。permission の変更は引き続きスーパー管理者だけが実行できます。グループ内では `help` だけを長期保持し、`query`、拒否、usage hint は共通の 30 秒 cleanup に従います。
 - **モジュール評価時に `requireEnv` してよいのは、プロセス全体が欠かせない資格情報だけです**（`TELEGRAM_BOT_TOKEN`、`SUPER_ADMIN_USER_ID`）。チャットごとの opt-in でデフォルト無効な機能だけが使う鍵は `optionalEnv` を通します。
 
   `packages/infra/config.ts` はほぼすべての入口パスから import されるため、そこで throw するとプロセスは更新の取得を始める前に終了し、systemd が再起動ループに入ります——誰も有効化していない機能の鍵が 1 つ無いだけで、copy、抽選、入室認証、ブロックリストがまとめて停止します。2 つの AI 鍵はどちらも後者であり、**変数名には担当する機能を必ず先頭に付けます**（`AI_CHAT_GEMINI_API_KEY`、`AD_DETECT_DEEPSEEK_API_KEY`）。
@@ -236,11 +238,11 @@
 
 #### カウントと実行の境界
 
-- **連投のカウントも実行も Anti-Raid Worker 側に置き、メインスレッドは同期的な関門と 1 回のベストエフォートな `post` だけを行う**：同一メンバーが同一の**スーパーグループ**で 1 分以内に `FLOOD_MESSAGE_LIMIT`（現在 15 件）に達したら `FLOOD_MUTE_DURATION_MS`（現在 3 分）ミュートします。
+- **連投のカウントも実行も Anti-Raid Worker 側に置き、メインスレッドは同期的な関門と 1 回のベストエフォートな `post` だけを行う**：この機能は chat ごとに default off で、`ChatState.isFloodControlEnabled === true` の場合だけカウントします。スーパー管理者または `isCanControllFloodControlPermission` を持つ allowlist identity が `/flood_control enable|disable` で永続化された switch を変更でき、disable 時にはその chat の live window も消去します。同一メンバーが同一の**スーパーグループ**で 1 分以内に `FLOOD_MESSAGE_LIMIT`（現在 15 件）に達したら `FLOOD_MUTE_DURATION_MS`（現在 3 分）ミュートします。
 
   スーパーグループ限定なのは `restrictChatMember` が Bot API の定義上そこでしか効かないためで、通常グループでは数えること自体がメモリの無駄です——ウィンドウを埋め切っても、確実に失敗するリクエスト 1 回と誤解を招くエラー 1 行しか得られません。
 
-  メインスレッド側（`packages/antiRaid/floodControl.ts`）が判断するのは、そこにしかない 3 つの事実だけです：スーパーグループかどうか、発言者が実ユーザーかどうか（チャンネル名義と匿名管理者にはミュートできるメンバー身分がなく、`restrictChatMember` は実ユーザーしか受け付けませんし、着ぐるみの下が誰かを Telegram は明かしません）、送信者が身内かどうか（`SUPER_ADMIN_USER_ID` と `config/whitelist.json`、判定は `antiRaid/memberFacts.ts` の `isProtectedSender` に集約し広告検出と共用）。
+  メインスレッド側（`packages/antiRaid/floodControl.ts`）は candidate object を作る前に chat switch、スーパーグループ種別、発言者が実ユーザーか、送信者が flood-control bypass を持つかを順に判定します。チャンネル名義と匿名管理者にはミュートできるメンバー身分がなく、`restrictChatMember` は実ユーザーしか受け付けず、着ぐるみの下が誰かを Telegram は明かしません。`SUPER_ADMIN_USER_ID` は常に bypass し、allowlist identity は個別の `isCanBypassFloodControl` に従います。この permission は default `true` で、明示的に `false` にした場合だけカウント対象になります。
 
   そのうえで `floodCandidate` を送出します。送出は広告検出と同様に `postAntiRaidDurably` ではなく通常の `post` です：ウィンドウは isolate と生死を共にし、グループメッセージ 1 件ごとにスレッド跨ぎのバリアを挟んでも復旧能力は何も増えません。入退室のサービスメッセージは誰かの「発言」ではないため、送出の入口はその 2 分岐より後ろに置きます。
 

@@ -46,7 +46,9 @@ The project reads exactly five environment variables; there are no undocumented 
     `/ad_detect enable` is rejected and everything else keeps running.
 - **`SUPER_ADMIN_USER_ID`** (required)
   - One decimal super-administrator user ID. It has every command permission, and only it can
-    use `/init`, `/batch_kick`, `/permission`, `/white`, and `/send`.
+    use `/init`, `/batch_kick`, the mutation forms of `/permission`, `/white`, and `/send`.
+    Allowlisted identities may also use `/permission query` to inspect their own permissions
+    and `/permission help` to read the permission catalog.
 - **`COPY_NINJIA_DATA_ROOT`** (may be empty)
   - Runtime data root; when empty, data is stored in the project root. See
     [07 Operations and Troubleshooting](07-operations.md#data-root).
@@ -94,7 +96,7 @@ For Japanese translation, save the service-account key as `g-auth.json` in the p
 
 Stop the old process and back up the complete `config/` directory first. From 3.0.0 onward that directory is no longer tracked by Git, so updating the worktree removes the four files tracked by the old release. After updating, restore `stickers.json`, `reactions.json`, `mood.json`, and `ad_samples.json` from the backup, then add `whitelist.json` and `blocklist.json` from `config_example/`.
 
-Manually turn every ID in the old `.env` variable `PRIVILEGED_USERS_ID` into a key in `whitelist.json`, then remove that variable. Use an empty object `{}` when the identity only needs copy-cooldown exemption, bot-verification vouching, and protection from automatic enforcement. To retain the old `/block` and `/unblock` capabilities, explicitly set `"isCanBlock": true` and `"isCanUnBlock": true`; enable other permissions only as needed. The super administrator can run `/permission help` for the complete key catalog. `/white` and `/permission` atomically rewrite this file, so the runtime user needs write access to the `config/` directory; every other configuration file may remain read-only.
+Manually turn every ID in the old `.env` variable `PRIVILEGED_USERS_ID` into a key in `whitelist.json`, then remove that variable. Use an empty object `{}` when the identity only needs copy-cooldown exemption, bot-verification vouching, and protection from automatic enforcement. To retain the old `/block` and `/unblock` capabilities, explicitly set `"isCanBlock": true` and `"isCanUnBlock": true`; enable other permissions only as needed. Any allowlisted identity can run `/permission help` for the complete key catalog and `/permission query` for its own complete permissions after defaults are applied. The mutation forms of `/white` and `/permission` atomically rewrite this file, so the runtime user needs write access to the `config/` directory; every other configuration file may remain read-only.
 
 **One exception: startup still fails while the feature is switched on.** That `true` in `state.json` is something an administrator deliberately turned on, and silently downgrading it to "quietly does nothing" means the group just sees the bot stop chatting, stop catching ads, or stop translating from one restart onward. So startup checks once: every optional feature that is still enabled in some chat must have its credential and configuration present, and a missing prerequisite aborts startup naming the chat ids and what is missing (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)). The way out is to restore the prerequisite, or run `/ai_chat disable`, `/ad_detect disable`, or `/ja_copy disable` before removing it.
 

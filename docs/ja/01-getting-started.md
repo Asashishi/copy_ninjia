@@ -45,8 +45,9 @@ cp -r config_example config
     `/ad_detect enable` が拒否され、ほかの機能はそのまま動作します。
 - **`SUPER_ADMIN_USER_ID`**（必須）
   - スーパー管理者を表す 1 つの十進ユーザー ID。すべての command permission を
-    持ち、`/init`、`/batch_kick`、`/permission`、`/white`、`/send` はこのユーザー
-    だけが使えます。
+    持ち、`/init`、`/batch_kick`、`/permission` の変更操作、`/white`、`/send` は
+    このユーザーだけが使えます。allowlist identity は `/permission query` で自身の
+    permission を照会し、`/permission help` で説明を確認できます。
 - **`COPY_NINJIA_DATA_ROOT`**（空でも可）
   - 実行時データのルート。空の場合はプロジェクトルートに保存します。詳細は
     [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください。
@@ -93,7 +94,7 @@ cp -r config_example config
 
 旧 process を停止し、`config/` 全体を先に backup してください。3.0.0 以降、この directory は Git の追跡対象外になるため、worktree を更新すると旧 release が追跡していた 4 file は削除されます。更新後、backup から `stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json` を戻し、`config_example/` から `whitelist.json` と `blocklist.json` を追加します。
 
-旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID を `whitelist.json` の key へ手動移行し、その環境変数を削除します。copy cooldown 免除、Bot 認証の代行保証、自動処分からの保護だけが必要なら値は空 object `{}` で構いません。旧 `/block` と `/unblock` の能力を維持するには `"isCanBlock": true` と `"isCanUnBlock": true` を明示し、その他は必要な permission だけ有効にします。全 key はスーパー管理者の `/permission help` で確認できます。`/white` と `/permission` はこの file を atomic rewrite するため、runtime user には `config/` directory の write permission が必要です。その他の設定は read-only のままで構いません。
+旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID を `whitelist.json` の key へ手動移行し、その環境変数を削除します。copy cooldown 免除、Bot 認証の代行保証、自動処分からの保護だけが必要なら値は空 object `{}` で構いません。旧 `/block` と `/unblock` の能力を維持するには `"isCanBlock": true` と `"isCanUnBlock": true` を明示し、その他は必要な permission だけ有効にします。allowlist identity は `/permission help` で全 key と説明を確認し、`/permission query` で default 適用後の自身の完全な permission を照会できます。`/white` と `/permission` の変更操作はこの file を atomic rewrite するため、runtime user には `config/` directory の write permission が必要です。その他の設定は read-only のままで構いません。
 
 **例外として、機能が有効なままの場合は従来どおり起動を拒否します。** `state.json` の `true` は管理者が明確に有効化したものであり、これを黙って「何もしない」状態に格下げすると、グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えません。そこで起動時に一度だけ照合します。いずれかのチャットで有効なままの任意機能は、資格情報と設定が揃っていなければならず、欠けていればチャット id と欠落項目を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。対処は前提を復旧するか、取り除く前に `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` を実行することです。
 

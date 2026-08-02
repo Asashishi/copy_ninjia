@@ -47,6 +47,8 @@
   唯一无条件读配置的地方是 Disk I/O Worker 的启动恢复（要拿贴纸白名单对账 `memory/stickers/`），它必须在读不动时**整体跳过对账**——绝不能退化成空白名单，那会把不在白名单里的持久化文件当孤儿删掉。
 - `config/whitelist.json` 与 `config/blocklist.json` 不属于上一条的可选配置：前者决定同步鉴权与自己人保护，后者是静态封禁安全边界，两者都必须在联网和 Worker 创建前严格加载，缺失、未知字段或非法 ID 一律拒绝启动。白名单只在实际变化时由 `/white`、`/permission` 原子全量重写，成功落盘后才发布新的主线程缓存；读路径始终只查这份内存副本。启动读取同时记录文件 SHA-256，命令每次整份重写前复核原始字节；发现进程外编辑或文件不可读就拒绝覆盖并让 update 失败，禁止用旧缓存静默抹掉人工变更。
 
+  `/permission query` 与 `/permission help` 是只读入口：白名单用户或频道按发起身份读取上述内存副本，`query` 只返回解析并补齐默认值后的自身完整权限，不接受目标参数，也不触发写入；`help` 同时保留超级管理员原有访问。所有权限修改仍只允许超级管理员。群内 `help` 长期保留，`query` 与拒绝/用法提示仍按 30 秒统一清理。
+
   静态黑名单只读，与 `memory/blocklist/blocklist.json` 的动态层在内存中取并集，`/unblock` 不得移除静态条目。
 - **只有整个进程都离不开的凭据才能在模块求值期 `requireEnv`**（`TELEGRAM_BOT_TOKEN`、`SUPER_ADMIN_USER_ID`）。只服务于某个按群 opt-in、缺省关闭的可选功能的密钥必须走 `optionalEnv`：`packages/infra/config.ts` 几乎被所有入口路径 import，在那里抛错等于进程还没开始拉取更新就退出、systemd 进入重启循环，copy、抽奖、入群验证、黑名单全部离线——只因为一个默认就没开的功能缺了 key。
 
@@ -190,9 +192,9 @@
 
 #### 计数与执行边界
 
-- **刷屏禁言的计数与执行全在 Anti-Raid Worker，主线程只做同步门禁 + 一次尽力而为的 `post`**：同一成员在同一**超级群**内一分钟发言达到 `FLOOD_MESSAGE_LIMIT`（当前 15 条）即禁言 `FLOOD_MUTE_DURATION_MS`（当前 3 分钟）。只认超级群是因为 `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和一行误导性报错。
+- **刷屏禁言的计数与执行全在 Anti-Raid Worker，主线程只做同步门禁 + 一次尽力而为的 `post`**：本功能按群缺省关闭，只有 `ChatState.isFloodControlEnabled === true` 才进入计数；超级管理员或具备 `isCanControllFloodControlPermission` 的白名单身份可用 `/flood_control enable|disable` 修改并持久化开关，关闭时同步清掉该群现有窗口。同一成员在同一**超级群**内一分钟发言达到 `FLOOD_MESSAGE_LIMIT`（当前 15 条）即禁言 `FLOOD_MUTE_DURATION_MS`（当前 3 分钟）。只认超级群是因为 `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和一行误导性报错。
 
-  主线程侧（`packages/antiRaid/floodControl.ts`）只判三件它独有的事实：是不是超级群、发言的是不是真实用户（频道马甲与匿名管理员没有可禁言的成员身份，`restrictChatMember` 只认真实用户，而皮套底下是谁 Telegram 并不暴露）、发送者是不是自己人（`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json`，判定收在 `antiRaid/memberFacts.ts` 的 `isProtectedSender`，与广告检测共用同一处），随后把 `floodCandidate` 投过去。
+  主线程侧（`packages/antiRaid/floodControl.ts`）在创建候选对象前依次判定按群开关、超级群类型、发言者是否真实用户，以及发送者是否具备防刷屏豁免。频道马甲与匿名管理员没有可禁言的成员身份，`restrictChatMember` 只认真实用户，而皮套底下是谁 Telegram 并不暴露。`SUPER_ADMIN_USER_ID` 恒豁免；白名单身份只按自身 `isCanBypassFloodControl` 决定，缺省为 `true`，显式设为 `false` 后仍会参与计数。通过这些门禁后才投递 `floodCandidate`。
 
   投递与广告检测同理走普通 `post` 而非 `postAntiRaidDurably`：窗口随 isolate 生死，为每条群消息加一道跨线程屏障换不来任何恢复能力。入群/离群服务消息不算谁的「发言」，投递入口因此排在那两条分支之后。
 
