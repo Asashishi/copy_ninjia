@@ -18,6 +18,7 @@ This page takes a clean environment all the way to “the bot works normally in 
 - **Bun 1.3+**: install it with `curl -fsSL https://bun.sh/install | bash`. Every project script, test, and runtime path uses Bun; Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
 - **Optional Gemini API Key**: obtain one from [Google AI Studio](https://aistudio.google.com/); only `/ai_chat` needs it.
+- **Optional DeepSeek API Key**: obtain one from the [DeepSeek platform](https://platform.deepseek.com/); only `/ad_detect` ad detection needs it. Its responsibility does not overlap with the Gemini key, and neither falls back to the other.
 - **Optional Google Cloud service-account JSON**: only required by `/ja_copy` for Japanese translation; store it as `g-auth.json` in the project root. When it is missing or malformed, `/ja_copy` refuses and names the file, the ja transform on the automatic copy path falls back to a plain copy, and if any chat still has `/ja_copy enable` on, startup is refused.
 
 ## Installation

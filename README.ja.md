@@ -28,6 +28,7 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
+  <a href="https://api-docs.deepseek.com/"><img src="https://img.shields.io/badge/AI-DeepSeek-4d6bfe?style=flat-square&logo=deepseek&logoColor=white" alt="DeepSeek"></a>
 </p>
 
 <p align="center">
@@ -222,7 +223,8 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 - Linux（読み取り可能な `/proc` が必要。ほかのプラットフォームではインスタンスロックが fail closed）
 - Bun 1.3+
 - Telegram Bot Token
-- Gemini API Key
+- Gemini API Key（`/ai_chat` の AI 雑談を使う場合のみ）
+- DeepSeek API Key（`/ad_detect` の広告検出を使う場合のみ）
 - Google Cloud サービスアカウント JSON（`/ja_copy` 使用時のみ）
 
 <details>
@@ -236,7 +238,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td>全群 AI 有効かつ画像・スタンプ多数</td><td>4 vCPU / 8 GB RAM</td><td>メディア処理と Base64 符号化に十分な余裕を確保</td></tr>
 </table>
 
-単一インスタンスでは、上記規模のアクティブグループを約 15 個以内に抑えることを推奨します。主な制約は総メンバー数ではなく、単一の Telegram Bot API、Gemini の quota、実際のメッセージ/メディア流量です。
+単一インスタンスでは、上記規模のアクティブグループを約 15 個以内に抑えることを推奨します。主な制約は総メンバー数ではなく、単一の Telegram Bot API、Gemini と DeepSeek の quota、実際のメッセージ/メディア流量です。
 
 </details>
 

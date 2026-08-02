@@ -18,6 +18,7 @@
 - **Bun 1.3+**：`curl -fsSL https://bun.sh/install | bash`。项目所有脚本、测试与运行时都走 Bun，不需要 Node.js。
 - **Telegram Bot Token**：找 [@BotFather](https://t.me/BotFather) `/newbot` 创建。
 - **（可选）Gemini API Key**：从 [Google AI Studio](https://aistudio.google.com/) 获取；只有 `/ai_chat` AI 闲聊需要。
+- **（可选）DeepSeek API Key**：从 [DeepSeek 开放平台](https://platform.deepseek.com/) 获取；只有 `/ad_detect` 广告检测需要。它与 Gemini 那把职责不重叠、互不回退。
 - **（可选）Google Cloud 服务账号 JSON**：只有 `/ja_copy` 日语翻译需要，存为项目根的 `g-auth.json`。缺失或写坏时 `/ja_copy` 直接拒绝并点名这个文件，自动复读的 ja 变换退化成普通复制；若已有群开着 `/ja_copy enable`，则拒绝启动。
 
 ## 安装

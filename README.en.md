@@ -28,6 +28,7 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
+  <a href="https://api-docs.deepseek.com/"><img src="https://img.shields.io/badge/AI-DeepSeek-4d6bfe?style=flat-square&logo=deepseek&logoColor=white" alt="DeepSeek"></a>
 </p>
 
 <p align="center">
@@ -212,7 +213,8 @@ Choose a target by replying to their message or providing `@username`:
 - Linux (with readable `/proc`; instance lock fails closed on other platforms)
 - Bun 1.3+
 - Telegram Bot Token
-- Gemini API Key
+- Gemini API Key (required only for `/ai_chat`)
+- DeepSeek API Key (required only for `/ad_detect`)
 - Google Cloud Service Account JSON (required only for `/ja_copy`)
 
 <details>

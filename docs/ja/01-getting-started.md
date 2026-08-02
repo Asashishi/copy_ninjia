@@ -18,6 +18,7 @@
 - **Bun 1.3+**：`curl -fsSL https://bun.sh/install | bash` でインストールします。すべてのスクリプト、テスト、実行環境は Bun を使用し、Node.js は不要です。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
 - **任意：Gemini API Key**：[Google AI Studio](https://aistudio.google.com/) から取得します。`/ai_chat` の AI 雑談を使う場合だけ必要です。
+- **任意：DeepSeek API Key**：[DeepSeek プラットフォーム](https://platform.deepseek.com/) から取得します。`/ad_detect` の広告検出を使う場合だけ必要です。Gemini の鍵とは責務が重ならず、互いに fallback しません。
 - **任意：Google Cloud サービスアカウント JSON**：`/ja_copy` の日本語翻訳を使う場合だけ必要で、プロジェクトルートに `g-auth.json` として保存します。欠落や破損時は `/ja_copy` がこのファイルを名指しして拒否し、自動 copy の ja 変換は通常の copy に退化します。いずれかのチャットで `/ja_copy enable` が有効なままなら起動を拒否します。
 
 ## インストール

@@ -28,6 +28,7 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
+  <a href="https://api-docs.deepseek.com/"><img src="https://img.shields.io/badge/AI-DeepSeek-4d6bfe?style=flat-square&logo=deepseek&logoColor=white" alt="DeepSeek"></a>
 </p>
 
 <p align="center">
@@ -214,7 +215,8 @@
 - Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）
 - Bun 1.3+
 - Telegram Bot Token
-- Gemini API Key
+- Gemini API Key（仅 `/ai_chat` AI 闲聊需要）
+- DeepSeek API Key（仅 `/ad_detect` 广告检测需要）
 - Google Cloud 服务账号 JSON（仅 `/ja_copy` 需要）
 
 <details>
@@ -228,7 +230,7 @@
 <tr><td>全部群开启 AI 且图片、贴纸较多</td><td>4 vCPU / 8 GB RAM</td><td>给媒体下载、Base64 编码和图片转码预留峰值空间</td></tr>
 </table>
 
-单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自单个 Telegram Bot API、Gemini 配额和实际消息/媒体速率，而不是群成员总数。
+单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自单个 Telegram Bot API、Gemini 与 DeepSeek 配额和实际消息/媒体速率，而不是群成员总数。
 
 </details>
 
