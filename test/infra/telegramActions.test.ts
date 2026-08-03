@@ -95,6 +95,39 @@ describe("Telegram 常规动作封装", () => {
     expect(isSelfSent(-1001, 78)).toBe(true);
   });
 
+  test("图注按 caption 随图发出，不设置 parse_mode", async () => {
+    const sendPhotoMock = mock(async (..._args: unknown[]) => ({ message_id: 80 }));
+    const api = { sendPhoto: sendPhotoMock } as unknown as Api;
+
+    await sendPhotoWithResult({
+      chatId: -1001,
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "image/jpeg",
+      api,
+      caption: "照着你说的画了一张 <b>不该被解析</b>",
+    });
+
+    // 图注是自由文本，一旦按 HTML/Markdown 解析就会形成注入，并让未闭合的
+    // 实体把整条发送打回；这里必须只有 caption 一个字段。
+    expect(sendPhotoMock).toHaveBeenCalledWith(-1001, expect.any(InputFile), {
+      caption: "照着你说的画了一张 <b>不该被解析</b>",
+    });
+  });
+
+  test("没有图注时不带 caption 字段", async () => {
+    const sendPhotoMock = mock(async (..._args: unknown[]) => ({ message_id: 81 }));
+    const api = { sendPhoto: sendPhotoMock } as unknown as Api;
+
+    await sendPhotoWithResult({
+      chatId: -1001,
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "image/png",
+      api,
+    });
+
+    expect(sendPhotoMock.mock.calls[0]?.[2]).not.toHaveProperty("caption");
+  });
+
   test("正确区分当前成员、受限成员和已离开成员", async () => {
     const apiFor = (member: unknown): Api =>
       ({ getChatMember: mock(async (..._args: unknown[]) => member) }) as unknown as Api;

@@ -111,6 +111,14 @@ export const UNMUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = {
 export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;
 
 /**
+ * 媒体消息 caption 的硬性长度上限（字符），只有文本消息上限的四分之一，
+ * 超出同样被 Bot API 直接拒绝而不是截断。Bot API 计的是 UTF-16 code unit，
+ * 与 JS 的 `String.length` 同口径（代理对 emoji 各算 2），因此调用方直接用
+ * `.length` 判定即可，不要换成 grapheme 或 code point 计数。
+ */
+export const TELEGRAM_CAPTION_MAX_CHARS: number = 1024;
+
+/**
  * `deleteMessages` 单次能带的消息 id 数上限，Bot API 本身的硬上限。
  * 超出整批被拒（该接口只有整体成败），因此由调用方按这个数分片。
  */

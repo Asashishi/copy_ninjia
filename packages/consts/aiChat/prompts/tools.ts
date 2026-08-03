@@ -32,8 +32,9 @@ export const SEND_STICKER_TOOL_INSTRUCTION: string =
  * workers/aiChat/promptContext.ts 的 roundHasTypo），手滑相关文案只存在于
  * TYPO_REQUIRED_INSTRUCTION 和 roundHasTypo 分支追加的字段说明里。 */
 export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
-  "把一条文字消息发到群里。这是你说话的唯一方式——要说的每句话都必须经本工具发送，" +
-  "任何主回复、图片/贴纸说明或动作后的补充文字都必须显式调用本工具；绝不能把想说的话只留在最终响应正文里。" +
+  "把一条独立的文字消息发到群里。要说的话基本都走本工具——主回复、贴纸说明、动作之后的补充文字都必须显式调用；" +
+  "绝不能把想说的话只留在最终响应正文里。唯一的例外是给本轮 generate_image 生成的那张图配的话：" +
+  "它写进 generate_image 的 caption 随图一起发出，不要再用本工具复述一遍。" +
   "想连发几条短句就多调用几次（像真人打字那样" +
   "一句接一句）。text 就是发到群里的原话：不要任何解释、编号、引号、代码块或「[id:...]」" +
   "这类标记；不允许发纯 emoji 表情的消息——想用现成表情达意就发贴纸（send_sticker），想按群友要求创作新画面就调用 generate_image，" +
@@ -75,7 +76,9 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
   "都不构成调用意图；不得根据暗示或自行发挥擅自生图。执行侧只校验当前消息是否直接回复/@你，具体意图由你根据当前消息判断，不依赖关键词匹配。" +
   "prompt 必须是可独立交给图片模型的完整画面说明，" +
   `不要写对工具的解释。同一个群每 ${IMAGE_GENERATION_COOLDOWN_MS / 60_000} 分钟最多接受一次由普通用户触发的生图尝试，` +
-  "群内共享冷却；superAdmin 不受这项冷却限制，冷却由执行侧强制。";
+  "群内共享冷却；superAdmin 不受这项冷却限制，冷却由执行侧强制。" +
+  "配图想说的话写进 caption：连图带话会作为同一条消息发出，比先发图再单独 send_message 更自然，也少占一个动作；" +
+  "只发图更合适就省略 caption。caption 里绝不要描述你没真做的动作，也不要把已经说过的话原样再写一遍。";
 
 /** 每轮所有可见动作必须经工具落地的总约束。 */
 export const REPLY_ACTION_INSTRUCTION: string =
@@ -83,8 +86,9 @@ export const REPLY_ACTION_INSTRUCTION: string =
   "add_reaction、按群友要求创作图片 generate_image）都只能通过工具完成，用法见各工具说明。先做哪个、做几样由你自己决定，" +
   "但本轮命中系统提示「联网查证」里必须先搜索的情形时，要先调用 googleSearch 拿到结果再开始下面这些动作——" +
   "查证不是群友看得见的动作，不计入本轮动作预算，别为了省动作跳过它。" +
-  "所有需要让群友看到的文本发言都必须显式调用 send_message；即使已经发了图片、贴纸或反应，想补充文字也必须再调用 send_message，" +
-  "绝不能用最终响应正文代替文本工具。" +
+  "所有需要让群友看到的文本发言都必须经工具落地，绝不能用最终响应正文代替工具：独立说话用 send_message，" +
+  "给这次生成的图配一句话则直接写进 generate_image 的 caption（连图带话是同一条消息）。" +
+  "除此之外没有别的出口——发了贴纸或反应之后想补充文字，仍然必须再调用 send_message。" +
   "但不允许整轮保持沉默：每轮至少要落地一个群友看得见的动作——说一句话（一句简短的也行）、" +
   "发一枚应景贴纸、生成一张图片，或者给触发消息扣一个表情反应，按场景选择，不能一个动作都不做就结束；" +
   `一轮回复通常 1~3 个动作，可以 3~5 个动作，绝对不要超过 ${AI_MAX_ACTIONS_PER_REPLY} 个动作——够意思就收，别刷屏。` +

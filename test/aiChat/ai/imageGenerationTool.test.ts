@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { ReplyToolContext } from "../../../packages/types/aiChat/replies";
+import type { ReplyToolContext, RoundMessageState } from "../../../packages/types/aiChat/replies";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
@@ -21,20 +21,40 @@ const sendPhotoWithResult = mock(async (..._args: unknown[]): Promise<TelegramSe
   messageId: 77,
   repliedToMessageId: 42,
 }));
+// 超长图注降级时执行器会补发一条独立文本；这条走的是 sendMessageWithResult，
+// 不 mock 就会打到真实 Bot API。
+const sendMessageWithResult = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({
+  messageId: 78,
+  repliedToMessageId: 42,
+}));
+// 超长图注降级会走一次拟人停顿；停顿本身是 send_message 已覆盖的行为，这里
+// 只关心两条消息的落地顺序和结算，因此按 replyToolset 用例的惯例把 sleep 打掉。
+const sleepMock = mock(async (..._args: unknown[]): Promise<void> => {});
 const realImageGeneration = await import("../../../packages/aiChat/ai/imageGeneration");
 const realTelegram = await import("../../../packages/infra/telegram");
+
+mock.module("../../../packages/libs/sleep", () => ({ sleep: sleepMock }));
 
 mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({
   ...realImageGeneration,
   generateChatImage,
   normalizeImageAspectRatio,
 }));
-mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendPhotoWithResult }));
+mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendPhotoWithResult, sendMessageWithResult }));
 mock.module("../../../packages/aiChat/ai/telegramImage", () => ({ downloadTelegramVisionImage }));
 mock.module("../../../packages/aiChat/ai/mediaTaskRunner", () => ({ runMediaTask }));
 
 const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageGeneration");
+const { createRoundMessageState } = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
 const { claimImageGeneration, resetImageGenerationCache } = await import("../../../packages/cache/workers/aiChat/imageGeneration");
+
+/** 绝大多数用例不关心本轮已发消息状态，默认给一份全新的。 */
+function buildExecutor(
+  ctx: ReplyToolContext,
+  state: RoundMessageState = createRoundMessageState()
+): (argumentsJson: string) => Promise<string> {
+  return createGenerateImageExecutor(ctx, state);
+}
 
 function buildContext(
   chatId: number = -1001,
@@ -83,6 +103,9 @@ beforeEach(() => {
   runMediaTask.mockImplementation(async <T>(task: () => Promise<T>): Promise<T | undefined> => await task());
   sendPhotoWithResult.mockClear();
   sendPhotoWithResult.mockResolvedValue({ messageId: 77, repliedToMessageId: 42 });
+  sendMessageWithResult.mockClear();
+  sendMessageWithResult.mockResolvedValue({ messageId: 78, repliedToMessageId: 42 });
+  sleepMock.mockClear();
 });
 
 afterEach(() => {
@@ -118,7 +141,7 @@ describe("generate_image 工具执行器", () => {
 
   test("不是直接回复/@ 的触发由执行侧拒绝，且不消耗冷却", async () => {
     const deniedContext: ReplyToolContext = buildContext(-1001, false, false);
-    const denied = createGenerateImageExecutor(deniedContext);
+    const denied = buildExecutor(deniedContext);
 
     const result = JSON.parse(await denied(JSON.stringify({ prompt: "自行发挥画一张图" })));
 
@@ -126,16 +149,16 @@ describe("generate_image 工具执行器", () => {
     expect(result.retryable).toBe(false);
     expect(generateChatImage).not.toHaveBeenCalled();
     expect(deniedContext.chatAction.set).not.toHaveBeenCalled();
-    expect(JSON.parse(await createGenerateImageExecutor(buildContext(-1001))(JSON.stringify({ prompt: "明确请求" }))).success).toBe(true);
+    expect(JSON.parse(await buildExecutor(buildContext(-1001))(JSON.stringify({ prompt: "明确请求" }))).success).toBe(true);
   });
 
   test("归一化比例、回复触发消息并登记滚动记忆", async () => {
     const ctx: ReplyToolContext = buildContext();
-    const execute = createGenerateImageExecutor(ctx);
+    const execute = buildExecutor(ctx);
 
     const result = JSON.parse(await execute(JSON.stringify({ prompt: "  日落下的纸飞机  ", aspect_ratio: "7:5" })));
 
-    expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", resolution: "1K" });
+    expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", resolution: "1K", actions_used: 1 });
     expect(generateChatImage).toHaveBeenCalledWith({
       prompt: "日落下的纸飞机",
       aspectRatio: "4:3",
@@ -155,7 +178,7 @@ describe("generate_image 工具执行器", () => {
   test("参考图按需从 Telegram 下载并以内联图片交给生图模型", async () => {
     const ctx: ReplyToolContext = buildReferenceContext();
 
-    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "把原图改成油画" })));
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "把原图改成油画" })));
 
     expect(downloadTelegramVisionImage).toHaveBeenCalledWith({
       fileId: "reference-file",
@@ -176,7 +199,7 @@ describe("generate_image 工具执行器", () => {
   test("参考图下显式比例仍优先，非官方比例照常归一化", async () => {
     const ctx: ReplyToolContext = buildReferenceContext();
 
-    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
       prompt: "把原图改成油画",
       aspect_ratio: "7:5",
     })));
@@ -194,7 +217,7 @@ describe("generate_image 工具执行器", () => {
     downloadTelegramVisionImage.mockResolvedValueOnce(null);
     const ctx: ReplyToolContext = buildReferenceContext(-1001, true);
 
-    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "无法读取原图" })));
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "无法读取原图" })));
 
     expect(result.error).toContain("reference image");
     expect(generateChatImage).not.toHaveBeenCalled();
@@ -207,7 +230,7 @@ describe("generate_image 工具执行器", () => {
     runMediaTask.mockResolvedValueOnce(undefined);
     const ctx: ReplyToolContext = buildReferenceContext(-1001, true);
 
-    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "队列已满" })));
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "队列已满" })));
 
     expect(result.error).toContain("reference image");
     expect(downloadTelegramVisionImage).not.toHaveBeenCalled();
@@ -216,7 +239,7 @@ describe("generate_image 工具执行器", () => {
 
   test("普通用户在参考图前置阶段失败时回滚冷却，下一次可以立即重试", async () => {
     runMediaTask.mockResolvedValueOnce(undefined);
-    const execute = createGenerateImageExecutor(buildReferenceContext());
+    const execute = buildExecutor(buildReferenceContext());
 
     const failed = JSON.parse(await execute(JSON.stringify({ prompt: "队列暂时已满" })));
     const retried = JSON.parse(await execute(JSON.stringify({ prompt: "立即重试" })));
@@ -230,11 +253,11 @@ describe("generate_image 工具执行器", () => {
     sendPhotoWithResult.mockResolvedValueOnce(undefined);
     const ctx: ReplyToolContext = buildContext();
 
-    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "无法发送的图" })));
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "无法发送的图" })));
 
     expect(result.error).toContain("Failed to send");
     expect(ctx.onImageSent).not.toHaveBeenCalled();
-    const retry = JSON.parse(await createGenerateImageExecutor(buildContext())(JSON.stringify({ prompt: "不能立即再生成" })));
+    const retry = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "不能立即再生成" })));
     expect(retry.error).toContain("cooling down");
   });
 
@@ -242,10 +265,196 @@ describe("generate_image 工具执行器", () => {
     sendPhotoWithResult.mockResolvedValueOnce({ messageId: 77 });
     const ctx: ReplyToolContext = buildContext();
 
-    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "回复目标已删除" })));
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "回复目标已删除" })));
 
     expect(result.success).toBe(true);
     expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：回复目标已删除）", 77, undefined);
+  });
+
+  test("图注随图作为同一条消息发出，并合并进同一条自录", async () => {
+    const ctx: ReplyToolContext = buildContext();
+    const state: RoundMessageState = createRoundMessageState();
+
+    const result = JSON.parse(await buildExecutor(ctx, state)(JSON.stringify({
+      prompt: "日落下的纸飞机",
+      caption: "  照着你说的画了一张  ",
+    })));
+
+    expect(result.success).toBe(true);
+    expect(result.caption_delivery).toBe("inline");
+    expect(result.actions_used).toBe(1);
+    expect(sendPhotoWithResult).toHaveBeenCalledWith({
+      chatId: -1001,
+      bytes: generatedBytes,
+      mimeType: "image/png",
+      replyToMessageId: 42,
+      caption: "照着你说的画了一张",
+    });
+    // 一条消息只留一条自录：图记号和图注拼在同一个 message_id 上。
+    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：日落下的纸飞机）照着你说的画了一张", 77, 42);
+    expect(ctx.onMessageSent).not.toHaveBeenCalled();
+    expect(sendMessageWithResult).not.toHaveBeenCalled();
+    // 图注计入本轮已说过的话，模型随后复述会被 send_message 的去重拦下。
+    expect(state.sentCanonicalTexts.get(77)).toBe("照着你说的画了一张");
+  });
+
+  test("超过 caption 上限时降级成图片加独立文本两条消息，并结算两个动作", async () => {
+    const ctx: ReplyToolContext = buildContext();
+    const state: RoundMessageState = createRoundMessageState();
+    const longCaption: string = "长".repeat(1025);
+
+    const result = JSON.parse(await buildExecutor(ctx, state)(JSON.stringify({
+      prompt: "超长图注",
+      caption: longCaption,
+    })));
+
+    expect(result.success).toBe(true);
+    expect(result.caption_delivery).toBe("separate_message");
+    expect(result.actions_used).toBe(2);
+    // 图先按无图注发出，绝不把超长正文塞给 Bot API。
+    expect(sendPhotoWithResult).toHaveBeenCalledWith({
+      chatId: -1001,
+      bytes: generatedBytes,
+      mimeType: "image/png",
+      replyToMessageId: 42,
+    });
+    expect(sendMessageWithResult).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: longCaption,
+      replyToMessageId: 42,
+      signal: undefined,
+    });
+    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：超长图注）", 77, 42);
+    expect(ctx.onMessageSent).toHaveBeenCalledWith(longCaption, 78, 42);
+    expect(state.sentCanonicalTexts.get(78)).toBe(longCaption);
+  });
+
+  test("正好落在 caption 上限上的图注仍挂在图上", async () => {
+    const ctx: ReplyToolContext = buildContext();
+    const exactCaption: string = "长".repeat(1024);
+
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
+      prompt: "边界图注",
+      caption: exactCaption,
+    })));
+
+    expect(result.caption_delivery).toBe("inline");
+    expect(result.actions_used).toBe(1);
+    expect(sendPhotoWithResult.mock.calls[0]?.[0]).toMatchObject({ caption: exactCaption });
+    expect(sendMessageWithResult).not.toHaveBeenCalled();
+  });
+
+  test("降级补发的文本发送失败时图片仍按成功结算，只计一个动作", async () => {
+    sendMessageWithResult.mockResolvedValueOnce(undefined);
+    const ctx: ReplyToolContext = buildContext();
+
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
+      prompt: "补发失败",
+      caption: "长".repeat(1025),
+    })));
+
+    expect(result.success).toBe(true);
+    expect(result.caption_delivery).toBe("failed");
+    expect(result.actions_used).toBe(1);
+    expect(ctx.onMessageSent).not.toHaveBeenCalled();
+  });
+
+  test("图注伪造动作记号在生图之前就被拒，不消耗冷却", async () => {
+    const ctx: ReplyToolContext = buildContext();
+
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
+      prompt: "不该被生成",
+      caption: "（生成并发送了一张图片：日落）",
+    })));
+
+    expect(result.error).toContain("must not narrate an action");
+    expect(result.error).toContain("生成并发送了一张图片");
+    expect(result.retryable).toBe(false);
+    expect(generateChatImage).not.toHaveBeenCalled();
+    // 冷却没被消耗：改掉图注可以立即重试。
+    expect(JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "改好了" }))).success).toBe(true);
+  });
+
+  test("括号外提到动作记号的图注照常放行", async () => {
+    const ctx: ReplyToolContext = buildContext();
+
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
+      prompt: "正常生成",
+      caption: "你不是让我生成并发送了一张图片吗，喏",
+    })));
+
+    expect(result.caption_delivery).toBe("inline");
+    expect(sendPhotoWithResult.mock.calls[0]?.[0]).toMatchObject({
+      caption: "你不是让我生成并发送了一张图片吗，喏",
+    });
+  });
+
+  test("图注与本轮已发消息完全相同时拒绝，且不消耗冷却", async () => {
+    const state: RoundMessageState = createRoundMessageState();
+    state.sentCanonicalTexts.set(70, "画好了");
+
+    const result = JSON.parse(await buildExecutor(buildContext(), state)(JSON.stringify({
+      prompt: "重复图注",
+      caption: "画好了",
+    })));
+
+    expect(result.error).toContain("already sent in this round");
+    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "换一句" }))).success).toBe(true);
+  });
+
+  test("纯 emoji 图注照常放行，与 send_message 的纯 emoji 禁令无关", async () => {
+    const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({
+      prompt: "配一个表情",
+      caption: "😂",
+    })));
+
+    expect(result.caption_delivery).toBe("inline");
+    expect(sendPhotoWithResult.mock.calls[0]?.[0]).toMatchObject({ caption: "😂" });
+  });
+
+  test("caption 类型不对按参数错误拒绝，null 与清洗后为空都按只发图处理", async () => {
+    const wrongType = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({
+      prompt: "类型不对",
+      caption: 123,
+    })));
+    expect(wrongType.error).toContain("caption must be a string");
+    expect(generateChatImage).not.toHaveBeenCalled();
+
+    // 模型把可选参数填成 null 很常见，不能因此整条调用报参数错误。各用一个群，
+    // 避免前一次成功生图占掉后一次的群冷却。
+    const explicitNull = JSON.parse(await buildExecutor(buildContext(-1002))(JSON.stringify({
+      prompt: "显式 null",
+      caption: null,
+    })));
+    expect(explicitNull.success).toBe(true);
+    expect(explicitNull.caption_delivery).toBeUndefined();
+    expect(sendPhotoWithResult.mock.calls[0]?.[0]).not.toHaveProperty("caption");
+
+    const ctx: ReplyToolContext = buildContext(-1003);
+    const blank = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
+      prompt: "空图注",
+      caption: "   ",
+    })));
+    expect(blank.success).toBe(true);
+    expect(blank.caption_delivery).toBeUndefined();
+    expect(sendPhotoWithResult.mock.calls[1]?.[0]).not.toHaveProperty("caption");
+    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：空图注）", 77, 42);
+  });
+
+  test("工具说明告诉模型图注与图同属一条消息、超长会被拆开", () => {
+    const definition = buildGenerateImageToolDefinition(buildContext());
+    const schema = definition.parametersJsonSchema as {
+      properties: { caption: { description: string; maxLength: number } };
+      required: string[];
+    };
+
+    expect(definition.description).toContain("配图想说的话写进 caption");
+    expect(definition.description).toContain("同一条消息");
+    expect(schema.required).not.toContain("caption");
+    expect(schema.properties.caption.description).toContain("1024 字以内");
+    expect(schema.properties.caption.description).toContain("拆成");
+    expect(schema.properties.caption.maxLength).toBe(4096);
   });
 
   test("实际生图期间显示正在发送图片，并在发送图片前切回 idle、等待状态收敛", async () => {
@@ -266,7 +475,7 @@ describe("generate_image 工具执行器", () => {
       return { messageId: 77, repliedToMessageId: 42 };
     });
 
-    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "显示状态" })));
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "显示状态" })));
 
     expect(result.success).toBe(true);
     expect(events).toEqual(["upload_photo", "generated", "idle", "settled", "sent"]);
@@ -286,7 +495,7 @@ describe("generate_image 工具执行器", () => {
       return null;
     });
 
-    const result = JSON.parse(await createGenerateImageExecutor(ctx)(JSON.stringify({ prompt: "失败也收状态" })));
+    const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "失败也收状态" })));
 
     expect(result.error).toContain("failed");
     expect(events).toEqual(["upload_photo", "failed", "idle", "settled"]);
@@ -294,9 +503,9 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("普通用户同群第二次被拒绝，不同群独立放行", async () => {
-    const first = createGenerateImageExecutor(buildContext(-1001));
-    const sameChat = createGenerateImageExecutor(buildContext(-1001));
-    const otherChat = createGenerateImageExecutor(buildContext(-1002));
+    const first = buildExecutor(buildContext(-1001));
+    const sameChat = buildExecutor(buildContext(-1001));
+    const otherChat = buildExecutor(buildContext(-1002));
 
     expect(JSON.parse(await first(JSON.stringify({ prompt: "first" }))).success).toBe(true);
     const limited = JSON.parse(await sameChat(JSON.stringify({ prompt: "second" })));
@@ -311,11 +520,11 @@ describe("generate_image 工具执行器", () => {
 
   test("失败尝试仍占冷却，superAdmin 绕过冷却但每轮仍只能成功发送一张", async () => {
     generateChatImage.mockResolvedValueOnce(null);
-    const normal = createGenerateImageExecutor(buildContext(-1001));
+    const normal = buildExecutor(buildContext(-1001));
     expect(JSON.parse(await normal(JSON.stringify({ prompt: "failed" }))).error).toContain("failed");
     expect(JSON.parse(await normal(JSON.stringify({ prompt: "retry" }))).error).toContain("cooling down");
 
-    const superAdmin = createGenerateImageExecutor(buildContext(-1001, true));
+    const superAdmin = buildExecutor(buildContext(-1001, true));
     expect(JSON.parse(await superAdmin(JSON.stringify({ prompt: "admin one" }))).success).toBe(true);
     const limited = JSON.parse(await superAdmin(JSON.stringify({ prompt: "admin two" })));
     expect(limited.error).toContain("at most 1 generated image");
@@ -327,7 +536,7 @@ describe("generate_image 工具执行器", () => {
     generateChatImage
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
-    const execute = createGenerateImageExecutor(buildContext(-1001, true));
+    const execute = buildExecutor(buildContext(-1001, true));
 
     expect(JSON.parse(await execute(JSON.stringify({ prompt: "fail one" }))).error).toContain("failed");
     expect(JSON.parse(await execute(JSON.stringify({ prompt: "fail two" }))).error).toContain("failed");

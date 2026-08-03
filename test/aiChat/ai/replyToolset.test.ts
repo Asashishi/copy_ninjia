@@ -120,9 +120,14 @@ describe("add_reaction 成功动作计数", () => {
   });
 });
 
-test("回复提示明确要求所有可见文本经 send_message，最终响应不得夹带正文", () => {
-  expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("任何主回复、图片/贴纸说明或动作后的补充文字都必须显式调用本工具");
-  expect(REPLY_ACTION_INSTRUCTION).toContain("所有需要让群友看到的文本发言都必须显式调用 send_message");
+test("回复提示把可见文本限死在 send_message 与生图图注两个出口，最终响应不得夹带正文", () => {
+  expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("主回复、贴纸说明、动作之后的补充文字都必须显式调用");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("所有需要让群友看到的文本发言都必须经工具落地");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("绝不能用最终响应正文代替工具");
+  // 图注是唯一的第二个文本出口，两段提示必须一致地指向它，否则模型要么以为
+  // 配图也得再调一次 send_message，要么以为最终响应正文也能说话。
+  expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("写进 generate_image 的 caption");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("写进 generate_image 的 caption");
   expect(REPLY_ACTION_INSTRUCTION).toContain("最终响应保持空白");
 });
 

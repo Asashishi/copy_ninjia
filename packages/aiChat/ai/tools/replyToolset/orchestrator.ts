@@ -58,7 +58,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
 
   const executeSendMessage: (argumentsJson: string) => Promise<string> = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
   const executeAddReaction: (argumentsJson: string) => Promise<string> = createAddReactionExecutor(ctx);
-  const executeGenerateImage: (argumentsJson: string) => Promise<string> = createGenerateImageExecutor(ctx);
+  const executeGenerateImage: (argumentsJson: string) => Promise<string> = createGenerateImageExecutor(ctx, messageState);
 
   async function dispatch(name: string, argumentsJson: string): Promise<string> {
     switch (name) {

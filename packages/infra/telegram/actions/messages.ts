@@ -208,6 +208,12 @@ export interface SendPhotoParams {
   replyToMessageId?: number;
   api?: Api;
   signal?: AbortSignal;
+  /**
+   * 随图一起发出的图注，图和文字合成同一条消息（同一个 message_id）。
+   * 长度必须由调用方压到 TELEGRAM_CAPTION_MAX_CHARS 以内——Bot API 对超长
+   * caption 是整条拒绝而不是截断，这里不做兜底截断，免得悄悄吞掉正文。
+   */
+  caption?: string;
 }
 
 /** 从内存上传一张图片并返回 Telegram 实际建立的回复关系；不落临时文件。 */
@@ -218,6 +224,7 @@ export async function sendPhotoWithResult({
   replyToMessageId,
   api = bot.api,
   signal,
+  caption,
 }: SendPhotoParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
     action: "send photo",
@@ -226,7 +233,11 @@ export async function sendPhotoWithResult({
     ): Promise<Message.PhotoMessage> => {
       const extension: string =
         mimeType === "image/jpeg" ? "jpg" : "png";
+      // 与 sendMessageWithResult 一致地不设置 parse_mode：图注同样是模型或
+      // 用户产出的自由文本，一旦按 HTML/Markdown 解析，正文里的 `<`、`_`
+      // 就会变成格式或链接注入，并让整条发送因实体不闭合而失败。
       const other: Parameters<Api["sendPhoto"]>[2] = {
+        ...(caption ? { caption } : {}),
         ...(replyToMessageId
           ? {
             reply_parameters: {

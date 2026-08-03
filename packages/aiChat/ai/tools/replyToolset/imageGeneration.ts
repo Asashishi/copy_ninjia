@@ -13,13 +13,19 @@ import {
   MAX_GENERATED_IMAGES_PER_REPLY,
 } from "../../../../consts/aiChat/imageGeneration";
 import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../../consts/aiChat/prompts/tools";
-import { imageSentTagTemplate } from "../../../../consts/aiChat/prompts/transcript";
+import {
+  imageSentTagTemplate,
+  SELF_ACTION_TAG_MARKERS,
+  SELF_ACTION_TAG_PATTERNS,
+} from "../../../../consts/aiChat/prompts/transcript";
+import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../../../consts/telegram";
 import { GENERATE_IMAGE_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
+import { pauseForToolAction } from "../../utils/toolPause";
 import { sendPhotoWithResult } from "../../../../infra/telegram";
 import { isPlainRecord } from "../../../../libs/runtimeConfig";
 import { sanitizeInline, truncateInline } from "../../../../libs/text";
-import type { ReplyToolContext } from "../../../../types/aiChat/replies";
+import type { ReplyToolContext, RoundMessageState } from "../../../../types/aiChat/replies";
 import type {
   GeneratedChatImage,
   ImageGenerationAspectRatio,
@@ -31,6 +37,9 @@ import { generateChatImage, normalizeImageAspectRatio } from "../../imageGenerat
 import { downloadTelegramVisionImage } from "../../telegramImage";
 import { runMediaTask } from "../../mediaTaskRunner";
 import type { VisionImage } from "../../../../types/media";
+import { cleanReply } from "../../utils/replyText";
+import { typingDelayMs } from "../../utils/timing";
+import { isDuplicateOfSentMessage, sendDirectMessage } from "./messageState";
 
 function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
   if (!reference || reference.width <= 0 || reference.height <= 0) return DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
@@ -74,16 +83,32 @@ export function buildGenerateImageToolDefinition(
             `群友要求的宽高比，例如 16:9、7:5 或 1920x1080；省略则为 ${defaultAspectRatio}。官方比例为 ${IMAGE_GENERATION_ASPECT_RATIOS.join("、")}，` +
             "其它有效比例会由执行侧自动换成最接近的官方比例。",
         },
+        caption: {
+          type: "string",
+          maxLength: TELEGRAM_MESSAGE_MAX_CHARS,
+          description:
+            "随图一起发出的图注：连图带话是同一条消息，不用再单独调用 send_message 说一遍。" +
+            "写你想对群友说的原话，不要写画面描述或对工具的解释——画面说明属于 prompt。" +
+            `没什么要说的就省略，只发图。尽量控制在 ${TELEGRAM_CAPTION_MAX_CHARS} 字以内；` +
+            "超出这个长度 Telegram 不允许挂在图上，执行侧会自动拆成「图 + 一条独立文字消息」两条发出，多占一个动作。",
+        },
       },
       required: ["prompt"],
     },
   };
 }
 
+/** 解析后的生图入参；caption 已走过 send_message 同一套正文清洗，缺省为 null。 */
+interface ParsedImageArguments {
+  prompt: string;
+  aspectRatio: ImageGenerationAspectRatio;
+  caption: string | null;
+}
+
 function parseArguments(
   argumentsJson: string,
   defaultAspectRatio: ImageGenerationAspectRatio
-): { prompt: string; aspectRatio: ImageGenerationAspectRatio } | null {
+): ParsedImageArguments | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(argumentsJson);
@@ -94,14 +119,25 @@ function parseArguments(
   const prompt: string = parsed.prompt.trim();
   if (!prompt || prompt.length > IMAGE_GENERATION_PROMPT_MAX_CHARS) return null;
   if (parsed.aspect_ratio !== undefined && typeof parsed.aspect_ratio !== "string") return null;
+  // caption 是「省略就只发图」的纯可选字段，因此 null 和 undefined 一样按没写
+  // 处理：模型把可选参数填成 null 很常见，为此整条调用报参数错误会让它白跑一
+  // 轮，还得从一句「caption must be a string」里猜出自己其实什么都不用改。
+  if (parsed.caption !== undefined && parsed.caption !== null && typeof parsed.caption !== "string") return null;
   const requestedAspectRatio: string | undefined = parsed.aspect_ratio;
   const aspectRatio: ImageGenerationAspectRatio | null = requestedAspectRatio === undefined || requestedAspectRatio.trim() === ""
     ? defaultAspectRatio
     : normalizeImageAspectRatio(requestedAspectRatio);
-  return aspectRatio ? { prompt, aspectRatio } : null;
+  // 图注和 send_message 的 text 一样是群友直接看到的原话，因此共用 cleanReply：
+  // 去掉引用标记、代码围栏和整句包裹引号，并按文本消息上限兜底截断。清洗后
+  // 只剩空串时按「没写图注」处理，不当成参数错误——只发图本来就是合法调用。
+  const caption: string | null = typeof parsed.caption === "string" ? cleanReply(parsed.caption) : null;
+  return aspectRatio ? { prompt, aspectRatio, caption } : null;
 }
 
-export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJson: string) => Promise<string> {
+export function createGenerateImageExecutor(
+  ctx: ReplyToolContext,
+  state: RoundMessageState
+): (argumentsJson: string) => Promise<string> {
   let consecutiveFailures: number = 0;
   let generatedImages: number = 0;
   return async (argumentsJson: string): Promise<string> => {
@@ -118,11 +154,37 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
         { retryable: false }
       );
     }
-    const parsed: { prompt: string; aspectRatio: ImageGenerationAspectRatio; } | null = parseArguments(argumentsJson, defaultAspectRatioFor(ctx.imageGenerationReference));
+    const parsed: ParsedImageArguments | null = parseArguments(argumentsJson, defaultAspectRatioFor(ctx.imageGenerationReference));
     if (!parsed) {
       return toolError(
-        "Invalid image arguments: prompt must be non-empty and aspect_ratio must look like W:H, W/H, WxH, or W×H"
+        "Invalid image arguments: prompt must be non-empty, aspect_ratio must look like W:H, W/H, WxH, or W×H, and caption must be a string"
       );
+    }
+    const caption: string | null = parsed.caption;
+    if (caption !== null) {
+      // 图注要在生图之前就判死，别让模型白烧一次冷却：这两条都是重写 caption
+      // 就能过的错误，此时还没 claim 冷却，模型改完可以立即重试。
+      //
+      // 伪造动作记号在图注里同样拦截。这里图确实发出去了，字面上不算撒谎，但
+      // 记号的全部价值就在于「只有执行侧写得出来」——一旦模型也能合法产出这个
+      // 形状，send_message 那道拦截（见 replyToolset/sendMessage.ts）就等于失效，
+      // 下一轮它照样能在纯文本里照抄一遍。
+      const forgedIndex: number = SELF_ACTION_TAG_PATTERNS.findIndex(
+        (pattern: RegExp): boolean => pattern.test(caption)
+      );
+      if (forgedIndex >= 0) {
+        const forgedMarker: string = SELF_ACTION_TAG_MARKERS[forgedIndex] ?? "";
+        return toolError(
+          `caption must not narrate an action: "${forgedMarker}" is a transcript marker the execution side writes after the action really happened. ` +
+          "Just say what you want to say about the picture in your own words",
+          { retryable: false }
+        );
+      }
+      if (isDuplicateOfSentMessage(state, caption)) {
+        return toolError(
+          "An identical message was already sent in this round; write a different caption, or omit it and send the picture alone"
+        );
+      }
     }
 
     if (consecutiveFailures >= IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY) {
@@ -193,12 +255,17 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
         return toolError("Image generation failed or returned no usable image");
       }
 
+      // Bot API 对超过 caption 上限的图注是整条拒绝而不是截断，因此这里不赌：
+      // 挂不上的图注不进 sendPhoto，改由下面补一条独立文本消息发出。
+      const inlineCaption: string | null =
+        caption !== null && caption.length <= TELEGRAM_CAPTION_MAX_CHARS ? caption : null;
       const sent: TelegramSendResult | undefined = await sendPhotoWithResult({
         chatId: ctx.chatId,
         bytes: image.bytes,
         mimeType: image.mimeType,
         replyToMessageId: ctx.replyToMessageId,
         signal: ctx.signal,
+        ...(inlineCaption !== null ? { caption: inlineCaption } : {}),
       });
       if (sent === undefined) {
         consecutiveFailures++;
@@ -208,18 +275,60 @@ export function createGenerateImageExecutor(ctx: ReplyToolContext): (argumentsJs
       consecutiveFailures = 0;
       generatedImages++;
       const memoryPrompt: string = truncateInline(sanitizeInline(parsed.prompt), IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS);
+      // 带图注时图和话是同一条消息（同一个 message_id），自录也必须是同一条：
+      // 拆成 onImageSent + onMessageSent 会让一个 message_id 在转录里出现两次，
+      // 回复链回溯到它时无从判断指的是哪一条。
+      const imageTag: string = imageSentTagTemplate(memoryPrompt, ctx.imageGenerationReference !== undefined);
       // allow_sending_without_reply 可能让图片在目标已删除时退化为普通消息，
       // 自录只采用 Telegram 返回的实际回复关系。
       ctx.onImageSent(
-        imageSentTagTemplate(memoryPrompt, ctx.imageGenerationReference !== undefined),
+        inlineCaption !== null ? `${imageTag}${inlineCaption}` : imageTag,
         sent.messageId,
         sent.repliedToMessageId
       );
+      // 图注同样计入本轮已说过的话，模型随后再用 send_message 复述会被去重拦下。
+      if (inlineCaption !== null) state.sentCanonicalTexts.set(sent.messageId, inlineCaption);
+
+      // 超长图注的降级：图已经按无图注发出，这里补发一条独立文本。两条消息各
+      // 占一个可见动作，用 actions_used 交给编排器结算（与 send_message 的手滑
+      // 纠正同一条协议，见 replyToolset/orchestrator.ts）。
+      let actionsUsedByTool: number = 1;
+      let captionDelivery: "inline" | "separate_message" | "failed" | null =
+        inlineCaption !== null ? "inline" : null;
+      if (caption !== null && inlineCaption === null) {
+        ctx.chatAction.set("typing");
+        const invalidated: string | null = await pauseForToolAction({
+          delayMs: typingDelayMs(caption),
+          signal: ctx.signal,
+        });
+        ctx.chatAction.set("idle");
+        await ctx.chatAction.settle();
+        // 停顿期间轮次作废时不再补发，但图片本身已经落地，仍按成功返回——
+        // 这里返回作废错误会让编排器连那张图的动作也不计。
+        const captionMessageId: number | undefined = invalidated !== null
+          ? undefined
+          : await sendDirectMessage({
+            ctx,
+            state,
+            text: caption,
+            replyToMessageId: ctx.replyToMessageId,
+          });
+        if (captionMessageId === undefined) {
+          captionDelivery = "failed";
+        } else {
+          captionDelivery = "separate_message";
+          state.sentCanonicalTexts.set(captionMessageId, caption);
+          actionsUsedByTool++;
+        }
+      }
+
       return JSON.stringify({
         success: true,
         message_id: sent.messageId,
         aspect_ratio: parsed.aspectRatio,
         resolution: "1K",
+        actions_used: actionsUsedByTool,
+        ...(captionDelivery !== null ? { caption_delivery: captionDelivery } : {}),
         ...(ctx.imageGenerationReference ? { reference_image_used: true } : {}),
       });
     } finally {
