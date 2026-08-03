@@ -168,6 +168,7 @@ beforeEach(() => {
   verificationEntries.clear();
   reminderDeliveries.clear();
   resetAdminCache();
+  resetWorkerBotPermissions();
   dispatched.length = 0;
   kickedUserIds.length = 0;
   deletedMessageIds.length = 0;
@@ -402,6 +403,43 @@ describe("同步副作用的逐条执行", () => {
     timeoutSpy.mockRestore();
   });
 
+  test("私密模式确证没有限制成员权限时本轮零请求，权限恢复后下一轮继续踢人", async () => {
+    const delays: number[] = [];
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+      ((_handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
+        delays.push(delayMs ?? 0);
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof globalThis.setTimeout
+    );
+    try {
+      applyBotPermissionsChange(CHAT_ID, {
+        canRestrictMembers: false,
+        canDeleteMessages: true,
+      });
+      const state = kickPendingState();
+      setState(state);
+
+      await run([{ kind: "kickMember" }]);
+
+      expect(kickedUserIds).toEqual([]);
+      expect(probeChatMembership).not.toHaveBeenCalled();
+      expect(state.executionStarted).toBeFalse();
+      expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
+      expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
+
+      applyBotPermissionsChange(CHAT_ID, {
+        canRestrictMembers: true,
+        canDeleteMessages: true,
+      });
+      await run([{ kind: "kickMember" }]);
+
+      expect(kickedUserIds).toEqual([USER_ID]);
+      expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeTrue();
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
   test("私密模式踢人请求失败但成员已离群时允许结算", async () => {
     kickSucceeds = false;
     membershipPresent = false;
@@ -488,6 +526,50 @@ describe("踢人失败时的权限告警", () => {
     const timer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get(KEY)?.timer;
     expect(timer).toBeDefined();
     if (timer !== undefined) clearTimeout(timer);
+  });
+
+  test("确证没有限制成员权限时每轮只重建退避，权限恢复后才发送处置请求", async () => {
+    const delays: number[] = [];
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+      ((_handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
+        delays.push(delayMs ?? 0);
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof globalThis.setTimeout
+    );
+    try {
+      applyBotPermissionsChange(CHAT_ID, {
+        canRestrictMembers: false,
+        canDeleteMessages: true,
+      });
+      const state = expellingState({
+        announcementMessageId: 20,
+        reminderMessageId: 21,
+        replyReminderMessageId: 22,
+      });
+      setState(state);
+
+      await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+      expect(probeChatMembership).not.toHaveBeenCalled();
+      expect(kickedUserIds).toEqual([]);
+      expect(deletedMessageIds).toEqual([]);
+      expect(sentTexts).toEqual([]);
+      expect(state.executionStarted).toBeFalse();
+      expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
+      expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
+
+      applyBotPermissionsChange(CHAT_ID, {
+        canRestrictMembers: true,
+        canDeleteMessages: true,
+      });
+      await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+      expect(probeChatMembership).toHaveBeenCalledTimes(1);
+      expect(kickedUserIds).toEqual([USER_ID]);
+      expect(deletedMessageIds).toEqual([20, 21, 22]);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   test("成员查询期间终态被替换时丢弃迟到结果，不再踢人或发战报", async () => {

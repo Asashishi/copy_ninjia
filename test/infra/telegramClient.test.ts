@@ -59,6 +59,16 @@ describe("Telegram 客户端初始化", () => {
     expect(joinUse).toHaveBeenCalledTimes(2);
     expect(apiThrottler).toHaveBeenCalledTimes(2);
     expect(autoRetry).toHaveBeenCalledTimes(2);
+    expect(autoRetry).toHaveBeenNthCalledWith(1, {
+      maxRetryAttempts: 3,
+      maxDelaySeconds: 5,
+      rethrowHttpErrors: true,
+    });
+    expect(autoRetry).toHaveBeenNthCalledWith(2, {
+      maxRetryAttempts: 3,
+      maxDelaySeconds: 5,
+      rethrowHttpErrors: true,
+    });
     expect(hydrateFiles).toHaveBeenCalledTimes(1);
     expect(hydrateFiles).toHaveBeenCalledWith("token:secret");
     expect((client.bot as unknown as FakeBot).token).toBe("token:secret");

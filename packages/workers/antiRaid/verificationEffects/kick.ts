@@ -16,6 +16,7 @@ import type {
 } from "../../../types/antiRaid/internal";
 import type { VerificationState } from "../../../types/states/verification";
 import type { KickChatMemberOutcome } from "../../../infra/telegram";
+import { botCanRestrictIn } from "../botPermissions";
 
 interface ScheduleKickRetryParams {
   chatId: number;
@@ -68,6 +69,18 @@ export async function runKickMemberEffect({
     transitionState?.kind !== "kickPending" ||
     verificationEntries.get(key)?.state !== transitionState
   ) return;
+  // 与可恢复 expelling 共用同一权限语义：确证没有限制成员权限时，本轮只推进
+  // 本地退避，不发送成员探测或踢人请求；未知仍让 Telegram 作最终裁判。
+  if (botCanRestrictIn(chatId) === false) {
+    transitionState.executionStarted = false;
+    scheduleKickRetry({
+      chatId,
+      userId,
+      state: transitionState,
+      dispatchVerification,
+    });
+    return;
+  }
   transitionState.executionStarted = true;
   const outcome: KickChatMemberOutcome = await kickChatMemberWithOutcome(
     chatId,

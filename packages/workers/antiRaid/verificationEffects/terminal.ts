@@ -28,7 +28,7 @@ import type {
 } from "../../../types/states/verification";
 import type { DeleteMessageOutcome } from "../../../infra/telegram";
 import { fetchAdminIds, freshAdminIds } from "../adminCache";
-import { botCanDeleteIn } from "../botPermissions";
+import { botCanDeleteIn, botCanRestrictIn } from "../botPermissions";
 
 /** 终态原地标记变化后发布新 revision 的边界。 */
 export type VerificationChangePublisher = (
@@ -74,6 +74,35 @@ interface RunExpelEffectParams {
   publishVerificationChange: VerificationChangePublisher;
 }
 
+interface ScheduleExpelRetryParams {
+  chatId: number;
+  userId: number;
+  state: VerificationState & { kind: "expelling" };
+  dispatchVerification: VerificationDispatcher;
+}
+
+/** 为仍是当前 token 的未结算处置安排指数退避。 */
+function scheduleExpelRetry({
+  chatId,
+  userId,
+  state,
+  dispatchVerification,
+}: ScheduleExpelRetryParams): void {
+  const key: string = verificationKey(chatId, userId);
+  const entry: VerificationEntry | undefined = verificationEntries.get(key);
+  if (entry?.state !== state) return;
+  if (entry.timer !== undefined) clearTimeout(entry.timer);
+  const retries: number = entry.terminalRetries ?? 0;
+  entry.terminalRetries = retries + 1;
+  entry.timer = setTimeout(
+    (): void => dispatchVerification(chatId, userId, { type: "terminalPersisted" }),
+    Math.min(
+      VERIFICATION_TERMINAL_RETRY_MS * (2 ** retries),
+      VERIFICATION_TERMINAL_RETRY_MAX_MS
+    )
+  );
+}
+
 /** 执行仍匹配快照的处置终态，并为未结算动作安排有上限的指数退避。 */
 export async function runExpelEffect({
   chatId,
@@ -92,6 +121,20 @@ export async function runExpelEffect({
     expectedState.reason !== reason ||
     expectedState.snapshot !== effect.snapshot
   ) return;
+  // 权限镜像是三态：只有确证没有限制成员权限时才跳过。每轮保留一次 O(1)
+  // 判定并继续退避，权限恢复后下一轮自然重新执行；未知不能折算成没有权限。
+  // 短路必须位于所有 Telegram 副作用之前，否则一次注定踢不动的重试仍会先做
+  // 成员探测和验证消息清理，实际请求开销并没有消失。
+  if (botCanRestrictIn(chatId) === false) {
+    expectedState.executionStarted = false;
+    scheduleExpelRetry({
+      chatId,
+      userId,
+      state: expectedState,
+      dispatchVerification,
+    });
+    return;
+  }
   const settled: boolean = await expelMember({
     chatId,
     userId,
@@ -111,18 +154,12 @@ export async function runExpelEffect({
 
   // 成功播报已发送时等待落盘回执；只有未结算处置才进入本地指数退避。
   expectedState.executionStarted = false;
-  const entry: VerificationEntry | undefined = verificationEntries.get(key);
-  if (entry === undefined) return;
-  if (entry.timer !== undefined) clearTimeout(entry.timer);
-  const retries: number = entry.terminalRetries ?? 0;
-  entry.terminalRetries = retries + 1;
-  entry.timer = setTimeout(
-    (): void => dispatchVerification(chatId, userId, { type: "terminalPersisted" }),
-    Math.min(
-      VERIFICATION_TERMINAL_RETRY_MS * (2 ** retries),
-      VERIFICATION_TERMINAL_RETRY_MAX_MS
-    )
-  );
+  scheduleExpelRetry({
+    chatId,
+    userId,
+    state: expectedState,
+    dispatchVerification,
+  });
 }
 
 interface RecheckInviterThenSettleParams {

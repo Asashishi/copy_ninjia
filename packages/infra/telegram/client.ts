@@ -17,7 +17,10 @@ type FirstOverloadReturn<T> = T extends {
 /** 官方 files API flavor 中增强后的 getFile 返回值。 */
 export type HydratedTelegramFile = Awaited<FirstOverloadReturn<FileApiFlavor<Api>["getFile"]>>;
 
-/** 全仓默认 Telegram 客户端，统一启用文件结果增强、节流和瞬时错误重试。 */
+/**
+ * 全仓默认 Telegram 客户端，统一启用文件结果增强、节流和 429/5xx 有限重试；
+ * 网络级 HttpError 交还调用 owner，避免第三方 transformer 无期限退避。
+ */
 export const bot: Bot<Context, FileApiFlavor<Api>> = new Bot<Context, FileApiFlavor<Api>>(BOT_TOKEN);
 
 /**
@@ -27,18 +30,27 @@ export const bot: Bot<Context, FileApiFlavor<Api>> = new Bot<Context, FileApiFla
 export const joinVerificationApi: Api = new Api(BOT_TOKEN);
 
 /**
- * 集中安装文件结果增强、节流和重试 transformer；其中 throttler 会创建
- * Bottleneck 心跳计时器。主进程须在取得 bot.lock 后调用；业务 Worker 则在
- * 各自启动入口调用。模块导入本身只构造尚未联网的客户端，不创建计时器，
- * 重复调用幂等。
+ * 集中安装文件结果增强、节流和有限重试 transformer；其中 throttler 会创建
+ * Bottleneck 心跳计时器。autoRetry 只接管 Telegram 已返回的 429/5xx，网络级
+ * HttpError 必须返回各调用 owner，不能绕开 maxRetryAttempts 在内部无限退避。
+ * 主进程须在取得 bot.lock 后调用；业务 Worker 则在各自启动入口调用。模块导入
+ * 本身只构造尚未联网的客户端，不创建计时器，重复调用幂等。
  */
 export function initTelegramClients(): void {
   if (telegramClientInitialization.current) return;
   bot.api.config.use(hydrateFiles(bot.token));
   bot.api.config.use(apiThrottler());
-  bot.api.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
+  bot.api.config.use(autoRetry({
+    maxRetryAttempts: API_RETRY_MAX_ATTEMPTS,
+    maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS,
+    rethrowHttpErrors: true,
+  }));
   joinVerificationApi.config.use(apiThrottler());
-  joinVerificationApi.config.use(autoRetry({ maxRetryAttempts: API_RETRY_MAX_ATTEMPTS, maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS }));
+  joinVerificationApi.config.use(autoRetry({
+    maxRetryAttempts: API_RETRY_MAX_ATTEMPTS,
+    maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS,
+    rethrowHttpErrors: true,
+  }));
   telegramClientInitialization.current = true;
 }
 
