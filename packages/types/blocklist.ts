@@ -141,7 +141,15 @@ export interface BlocklistSweepRecord {
  *
  * Worker 未收到、屏障失败或落盘失败都会向调用方抛错，但都不得销毁 durable
  * outbox 条目；它与 Telegram update 重投共同提供恢复，不能互相替代。
+ *
+ * @returns **真正投给 Worker 的处置条数**。正常 resolve 不等于「都投出去了」：
+ *   durable 对账（antiRaid/blocklistDelivery.ts）在并发 `/unblock` 反复裁剪
+ *   同一批时会把整批 removeBlockedMembers 全部扣下、只留其余消息，随后 post
+ *   路径以 `length === 0` 早退并正常 resolve。调用方（infra/blocklist/sweep.ts）
+ *   必须据此把「一条都没投出去」判成失败并推进退避，否则 claim 里的 removalId
+ *   停在原值、回执永不会来，`prepareBlocklistSweep` 对这个群永久早退——本进程
+ *   生命周期内它再也不会被清扫。
  */
 export type BlockedMemberRemover = (
   removals: readonly RemoveBlockedMembersParams[]
-) => Promise<void>;
+) => Promise<number>;

@@ -137,8 +137,8 @@ export function clearBlocklistSweepState(chatId: number): void {
   blocklistSweepState.delete(chatId);
 }
 
-/** 未注册时的显式 no-op：没有 owner 就没人能执行处置。 */
-const noBlockedMemberRemover: BlockedMemberRemover = (): Promise<void> => Promise.resolve();
+/** 未注册时的显式 no-op：没有 owner 就没人能执行处置，因此投出去的条数恒为 0。 */
+const noBlockedMemberRemover: BlockedMemberRemover = (): Promise<number> => Promise.resolve(0);
 
 /**
  * 黑名单处置的执行 owner（入群守卫代理 packages/antiRaid/blocklistGuard.ts 在启动时

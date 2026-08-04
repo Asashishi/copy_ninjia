@@ -4,8 +4,13 @@ import type { BlockedMemberRemover } from "../../packages/types/blocklist";
 const states = new Map<number, Record<string, unknown>>();
 const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
 const persistAuthoritativeState = mock(async (): Promise<void> => {});
-/** 处置的执行 owner 替身：主线程侧只该「投出去」，不该自己打 API。 */
-const remover = mock(async (..._args: unknown[]): Promise<void> => {});
+/**
+ * 处置的执行 owner 替身：主线程侧只该「投出去」，不该自己打 API。
+ * 返回值是**真正投出去的条数**（见 types/blocklist.ts 的 BlockedMemberRemover）：
+ * 默认整批都投出去，零投递由个别用例单独 mock。
+ */
+const remover = mock(async (...args: unknown[]): Promise<number> =>
+  (args[0] as readonly unknown[]).length);
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 
 mock.module("../../packages/infra/logger", () => ({
@@ -120,7 +125,8 @@ beforeEach(() => {
   getChatMember.mockClear();
   persistAuthoritativeState.mockClear();
   postDiskIO.mockImplementation((): boolean => true);
-  remover.mockImplementation(async (): Promise<void> => {});
+  remover.mockImplementation(async (...args: unknown[]): Promise<number> =>
+    (args[0] as readonly unknown[]).length);
   registerBlockedMemberRemover(remover as unknown as BlockedMemberRemover);
 });
 
@@ -300,7 +306,7 @@ describe("黑名单清扫", () => {
   test("投递抛错时不踩掉抢先到达的回执", async () => {
     // Worker 收下后同步派发完、主线程还卡在落盘屏障上时，complete 回执会先到。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    remover.mockImplementationOnce(async (...args: unknown[]): Promise<void> => {
+    remover.mockImplementationOnce(async (...args: unknown[]): Promise<number> => {
       const removals: readonly { removalId: number }[] =
         args[0] as readonly { removalId: number }[];
       settleBlockedRemoval({
@@ -384,12 +390,38 @@ describe("黑名单清扫", () => {
   });
 
   test("没有注册 owner 时是显式 no-op，不抛错", async () => {
-    blockedMemberRemoverHolder.current = (): Promise<void> => Promise.resolve();
+    blockedMemberRemoverHolder.current = (): Promise<number> => Promise.resolve(0);
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     await sweepBlockedMembers(-1001);
 
     expect(remover).not.toHaveBeenCalled();
+    // 一条都没投出去 = claim 必须作废：留着的话这个群此后永远在
+    // prepareBlocklistSweep 的 `removalId !== null` 早退，再也不会被清扫。
+    expect(blocklistSweepState.get(-1001)?.removalId).toBeNull();
+  });
+
+  test("正常 resolve 但零投递按失败结算：作废 claim 并推进退避", async () => {
+    // durable 对账在并发 /unblock 反复裁剪同一批时会扣下整批 removeBlockedMembers，
+    // 投递路径于是拿着空数组早退并正常 resolve——没抛错，也没有任何消息在途。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    remover.mockImplementationOnce(async (): Promise<number> => 0);
+
+    await sweepBlockedMembers(-1001, 1_000);
+
+    expect(remover).toHaveBeenCalledTimes(1);
+    // claim 作废、退避推进：不这么记的话 removalId 停在原值，而回执永不会来。
+    expect(blocklistSweepState.get(-1001)?.removalId).toBeNull();
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
+    expect(blocklistSweepState.get(-1001)?.failedSweeps).toBe(1);
+    // durable 任务留在 outbox 里，等下一轮补扫或 Worker 重建重放。
+    expect(pendingBlockedRemovals.size).toBe(1);
+    expect(pendingBlockedRemovals.values().next().value?.lastFailure).toBe("delivery-boundary");
+
+    // 退避到点后可以重新认领：真正卡死的判据是这一步能不能再投出去。
+    remover.mockClear();
+    await sweepBlockedMembers(-1001, 1_000 + 300_000);
+    expect(remover).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -510,7 +542,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     const frozen = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
 
-    remover.mockImplementationOnce(async (): Promise<void> => {
+    remover.mockImplementationOnce(async (): Promise<number> => {
       settleBlockedRemoval({
         type: "blockedMembersRemoved",
         chatId: -1001,

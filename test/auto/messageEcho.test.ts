@@ -90,3 +90,53 @@ describe("复读的命令守卫", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
+
+/** 纯文本（无 entity）才会走文本变换分支。 */
+function plainTextMessage(text: string): Message {
+  return {
+    message_id: 9,
+    date: 1,
+    chat: { id: CHAT_ID, type: "supergroup", title: "Test Group" },
+    text,
+  } as unknown as Message;
+}
+
+describe("变换之后的文本同样要过命令守卫", () => {
+  test("reverse 把普通文本倒成行首命令时整条丢弃", async () => {
+    // 原文不以 `/` 开头，只对原文判定的守卫会放行；真正发出去的却是
+    // `/batch_kick 1d`，Telegram 会把它渲染成可点击的批量踢人链接。
+    const echoed: string | undefined = await echoMessage({
+      chatId: CHAT_ID,
+      message: plainTextMessage("d1 kcik_hctab/"),
+      mode: "reverse",
+    });
+
+    expect(echoed).toBeUndefined();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(copyMessage).not.toHaveBeenCalled();
+  });
+
+  test("命令被空白顶到第二位同样丢弃：bot_command 不只认行首", async () => {
+    // 只判 startsWith("/") 的话，原文末尾多打一个空格就能绕过去。
+    const echoed: string | undefined = await echoMessage({
+      chatId: CHAT_ID,
+      message: plainTextMessage("d1 kcik_hctab/ "),
+      mode: "reverse",
+    });
+
+    expect(echoed).toBeUndefined();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("变换结果里的 `/` 不构成命令时照常发出", async () => {
+    // 斜杠后面不是命令名的首字符，Telegram 不会渲染成命令。
+    const echoed: string | undefined = await echoMessage({
+      chatId: CHAT_ID,
+      message: plainTextMessage("b/a"),
+      mode: "reverse",
+    });
+
+    expect(echoed).toBe("a/b");
+    expect(sendMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: "a/b" });
+  });
+});

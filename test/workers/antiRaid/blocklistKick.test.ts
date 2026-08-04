@@ -63,6 +63,8 @@ mock.module("../../../packages/libs/supervisedWorker", () => ({
 mock.module("../../../packages/infra/diskIO", () => ({
   flushDiskIO: async (): Promise<string> => "flushed",
   flushDiskIODomain,
+  // 落盘 Worker 正常可写：这些用例考察的是 flush 结果本身，不是恢复握手期。
+  isDiskIOBuffering: (): boolean => false,
   flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: await flushDiskIODomain() }),
   onDiskIORespawn: (): void => {},
   onVerificationPersisted: (): void => {},

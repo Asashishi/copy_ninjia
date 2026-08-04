@@ -85,8 +85,19 @@ describe("/quiet 与 /unquiet", () => {
     expect(saveStateInBackground).toHaveBeenCalledWith("quiet cleared");
   });
 
-  test("墙钟回拨导致截止时间超过最大窗口时允许重建静默", async () => {
+  test("小幅回拨落在容差内时静默仍然生效，不允许叠加重设", async () => {
+    // 15 分钟上限 + 1 分钟容差 = 16 分钟以内都还算「在闭嘴」。没有这道容差的话，
+    // 顶格 /quiet 撞上一次 1 毫秒的 NTP 回拨就当场恢复说话。
     states.set(-1001, { quietUntil: 1_000_000 + 16 * 60_000 });
+
+    await handleQuietCommand(context("2"));
+
+    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + 16 * 60_000);
+    expect(saveStateInBackground).not.toHaveBeenCalled();
+  });
+
+  test("回拨幅度超过容差时允许重建静默", async () => {
+    states.set(-1001, { quietUntil: 1_000_000 + 20 * 60_000 });
 
     await handleQuietCommand(context("2"));
 

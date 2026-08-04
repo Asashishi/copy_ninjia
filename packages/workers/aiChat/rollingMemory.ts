@@ -216,10 +216,18 @@ export function hydrateMemories(memories: Map<number, string>): void {
   }
 
   parsedMemories.sort((left: ParsedChatMemory, right: ParsedChatMemory): number => right.snapshot.savedAt - left.snapshot.savedAt);
+  let skippedOverCapacity: number = 0;
   for (const { chatId, snapshot } of parsedMemories) {
     if (hasChatMemory(chatId)) continue;
     if (chatMemoryIds().size >= AI_MEMORY_MAX_CHATS) {
-      self.postMessage({ type: "memoryDeleted", chatId } satisfies AiMemoryDeletedEvent);
+      // 超出容量只是「这一轮装不下」，不是「这份记忆该没了」。这里发
+      // memoryDeleted 会被主线程路由到 requestAiMemoryDelete，最终 unlink 掉
+      // memory/ai/<chatId>.json：105 个群开着 AI 闲聊时，一次 systemctl restart
+      // 就让 savedAt 最旧的 5 个群的逐字缓冲、中期摘要和待处理摘要从磁盘永久
+      // 消失，且触发条件只是「重启」。对比运行期的淘汰路径 ensureMemoryCapacity
+      // ——它至少会跳过有回复在途的群。这里只跳过不加载，文件留在盘上；真要
+      // 回收得走独立的过期策略，不能挂在容量判定上。
+      skippedOverCapacity++;
       continue;
     }
 
@@ -249,7 +257,16 @@ export function hydrateMemories(memories: Map<number, string>): void {
     if (hasChatMemory(chatId)) {
       chatLastActivityTimes.set(chatId, snapshot.savedAt);
     } else {
+      // 与上面的超容量分支不同：这份快照解析、校验都过了，装进来却什么都没
+      // 留下（buffer 空、无摘要、无待处理摘要），文件本身已经没有内容可恢复，
+      // 删掉不损失任何东西。
       self.postMessage({ type: "memoryDeleted", chatId } satisfies AiMemoryDeletedEvent);
     }
+  }
+  if (skippedOverCapacity > 0) {
+    logger.error(
+      `Left the persisted AI memory of ${skippedOverCapacity} chat(s) on disk without hydrating it: ` +
+      `the in-memory ceiling of ${AI_MEMORY_MAX_CHATS} chat(s) was already reached.`
+    );
   }
 }

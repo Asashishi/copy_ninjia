@@ -36,7 +36,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "init", description: "用 enable/disable 开关本群机器人监听/初始化，只有限定用户配决定本天才管不管，杂鱼♡" },
   { command: "quiet", description: "让本天才安静 1~15 分钟，默认 3 分钟；嫌吵就自己说清楚呀，笨蛋♡" },
   { command: "unquiet", description: "提前解除 /quiet，让本天才重新开口；这么快就想我了吗，杂鱼♡" },
-  { command: "mute", description: "禁言目标一段时间，时长必填如 10m/2h/1d（1 分钟~366 天，到点恢复）；支持回复、@username 或用户 id，仅白名单用户配用，杂鱼♡" },
+  { command: "mute", description: "禁言目标一段时间，时长必填如 10m/2h/1d（1 分钟~365 天，到点恢复）；支持回复、@username 或用户 id，仅白名单用户配用，杂鱼♡" },
   { command: "unmute", description: "提前解除目标禁言；支持回复、@username 或用户 id，仅白名单用户配用，连等到期都做不到吗，杂鱼♡" },
   { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
   { command: "permission", description: "query 偷看自己有几斤几两，help 看本天才的说明；改权限只有超级管理员配碰，杂鱼别乱按♡" },
@@ -152,10 +152,17 @@ export const MUTE_MIN_DURATION_MS: number = 60_000;
 
 /**
  * `/mute` 允许的最长时长。Bot API 同一条约定的另一头：`until_date` 距现在
- * 超过 366 天同样按永久禁言处理，收敛在 366 天整正好落在临时禁言的合法区间
- * 内。所属模块：commands/mute.ts。
+ * 超过 366 天同样按永久禁言处理。
+ *
+ * 上限取 365 天而不是贴着 366 天的边：Bot API 是按**它收到请求的时刻**算这
+ * 个差值的，命令处理、每群限流排队和网络往返都会把 `until_date` 相对「现在」
+ * 往前推；而 muteChatMemberWithOutcome 还要向上取整到秒，又加最多 1 秒。贴顶
+ * 时这些余量全部溢出到 366 天之外，禁言被静默升级成永久——本进程不排恢复
+ * 计时器、不写任何持久化状态，除人工 /unmute 外永不解除，而战报却照常念
+ * 「到点自动松开」。留一整天余量把这条边界彻底移出可达范围。
+ * 所属模块：commands/mute.ts。
  */
-export const MUTE_MAX_DURATION_MS: number = 366 * 24 * 60 * 60_000;
+export const MUTE_MAX_DURATION_MS: number = 365 * 24 * 60 * 60_000;
 
 /**
  * `/batch_kick` 回溯时长的完整匹配规则：正整数加 m/h/d，大小写均可。
@@ -191,6 +198,20 @@ export const QUIET_MIN_MINUTES: number = 1;
 export const QUIET_MAX_MINUTES: number = 15;
 /** /quiet 的最大有效持续时间，用于抵御墙钟回拨导致的异常延长。 */
 export const QUIET_MAX_DURATION_MS: number = QUIET_MAX_MINUTES * 60_000;
+
+/**
+ * `/quiet` 剩余时长判定在最大值之上额外容忍的墙钟回拨量。
+ *
+ * `handleQuietCommand` 写的是 `Date.now() + minutes * 60_000`，顶格时
+ * `quietUntil - now` 恰好等于 QUIET_MAX_DURATION_MS，容差为零：主机时钟往回
+ * 跳哪怕 1 毫秒（NTP step、`chronyc makestep`、快照恢复、容器时钟同步——本仓
+ * 在 libs/slidingWindowRateLimit.ts 与 workers/antiRaid/floodControl.ts 里都把
+ * 回拨当作必须扛住的真实风险），顶格那条静默就整个失效。留出这一分钟让常见的
+ * 小幅回拨不改变任何判定；超出容差的大幅回拨由 libs/chatState.ts 的
+ * normalizeChatState 收敛到上限，而不是把字段删掉。
+ * 所属模块：commands/quiet.ts 与 libs/chatState.ts。
+ */
+export const QUIET_CLOCK_SKEW_TOLERANCE_MS: number = 60_000;
 
 /**
  * enable/disable 开关命令的对外文案表。

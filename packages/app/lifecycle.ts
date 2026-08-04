@@ -21,14 +21,15 @@ import type {
   HandlerRegistration,
   OwnerInitFlags,
   OwnerSettler,
+  ShutdownOutcome,
   ShutdownResults,
 } from "../types/lifecycle";
 import { lifecycleDependencies } from "./lifecycleDependencies";
 import {
+  classifyShutdown,
   createOwnerSettler,
   flushAllToDisk,
   formatShutdownResults,
-  isCleanShutdown,
   runShutdownOwners,
 } from "./lifecycle/shutdown";
 import {
@@ -225,6 +226,15 @@ export class ApplicationLifecycle {
 
     try {
       await runner.task();
+    } catch (error: unknown) {
+      // task() 抛错会让下面整段「确认最终 offset」的闸门被整体跳过，而
+      // finalOffsetGateSucceeded 还停在初始值 true。dispose() 用它组装
+      // ShutdownResults.offsetConfirmed，于是 classifyShutdown 判成 "clean"：
+      // 诊断行不输出，运维 grep 日志看到的是「一切正常」，实际这轮既没走确认、
+      // 也丢了一条更新，重启后的重复投递无从溯源。异常路径必须自己把闸门标记
+      // 按下去，让它落进 "offsetWithheld"。
+      this.finalOffsetGateSucceeded = false;
+      throw error;
     } finally {
       this.runnerTaskSettled = true;
     }
@@ -314,17 +324,29 @@ export class ApplicationLifecycle {
       } catch (error: unknown) {
         this.dependencies.logger.error("Shutdown owner fatal-handler teardown threw during disposal:", error);
       }
-      const clean: boolean = isCleanShutdown(results);
-      if (!clean) {
+      // 三态而不是「干净 / 不干净」：诊断与「能不能释放实例锁」是两个问题。
+      // 非 clean 一律报非零退出并打印诊断行；但只有「可能还有人在写共享数据」
+      // 那一档才扣住锁（见 lifecycle/shutdown.ts 的 classifyShutdown）。
+      const outcome: ShutdownOutcome = classifyShutdown(results);
+      if (outcome !== "clean") {
         process.exitCode = 1;
         this.dependencies.logger.error(`Shutdown drain/flush results: ${formatShutdownResults(results)}.`);
       }
       if (!this.lockAcquired) return;
-      if (!clean) {
+      if (outcome === "unsettled") {
         this.dependencies.logger.error(
           "Retaining the single-instance lock until process exit because a task did not drain or persistence did not flush."
         );
         return;
+      }
+      if (outcome === "offsetWithheld") {
+        // 锁照常释放：所有 owner 都已排空落盘、Worker 已终止，没有任何东西还会
+        // 写共享数据目录。留一行说清楚这次释放不代表 offset 也确认过了——重启后
+        // Telegram 会重投上次确认点之后的更新。
+        this.dependencies.logger.error(
+          "Releasing the single-instance lock even though the final Telegram offset was not confirmed: " +
+          "every owner drained and flushed, so expect redelivery after restart rather than a persistence problem."
+        );
       }
       const released: FlushResult = await settler.terminate(
         "single-instance lock release",

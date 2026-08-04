@@ -207,6 +207,21 @@ export function postDiskIO(
 }
 
 /**
+ * Worker 当前是否处在「不可写、但仍在受理」的恢复握手期。
+ *
+ * 这段窗口里 postDiskIO 返回的 true 与平时不是一个意思：消息没有发给 Worker，
+ * 而是进了有硬顶的 FIFO（pendingBusinessMessages），等 activateDiskIOWorker
+ * 握手完成后原序重放；重放失败会走 stopWorkerAfterLoadFailure 的统一 fatal。
+ * 同一窗口里 requestDiskIOFlush 直接短路成 `"failed"`——那是「此刻没人能刷盘」，
+ * 不是「写坏了」。需要 durable 屏障的调用方（infra/joinLog.ts）必须能把两者
+ * 分开，否则一次 Worker 崩溃自愈就会被放大成整进程退出。
+ * @returns worker 还在但不可写为 true；worker 已经没了（terminate 后）为 false。
+ */
+export function isDiskIOBuffering(): boolean {
+  return diskIORuntime.worker !== null && !diskIORuntime.writable;
+}
+
+/**
  * 启动恢复：向 diskIOWorker 请求上一次成功落盘的全部状态，带超时兜底。
  * 必须在 runner 开始投喂更新之前调用并等待完成（见 app/lifecycle.ts）——尤其是
  * 运势缓存与待验证记录都必须先恢复，避免重复抽签或遗漏超时处置。

@@ -139,6 +139,11 @@ export function openAppendOnlyFile(path: string, mode?: number, repair: boolean 
   }
   if (Object.keys(parsed).length === 0) return state;
   if (!content.endsWith("\n}")) {
+    // 只规范排版，不承诺保留原文件的键序：JSON.parse 建出来的普通对象已经把
+    // 「整数索引形态」的键提到最前，源文本的顺序在这一步就没了。这条路径只在
+    // 文件被手工编辑过（结尾形态不符）时触发，属异常态的一次性归一；黑名单
+    // 承诺的 id 升序由 blocklistFile.ts 的 rewriteBlocklist 重新建立，那边为此
+    // 刻意手拼 JSON 文本而不走这里的 stringify。
     atomicRewrite(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT), mode);
   }
   state.size = statSync(path).size;

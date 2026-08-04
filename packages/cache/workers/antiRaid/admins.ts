@@ -11,6 +11,21 @@ export const adminFetches: Map<number, Promise<Set<number>>> = new Map();
 /** 全量拉取在途期间到达的增量资格变化，待快照落地后重放。 */
 export const pendingAdminChangesDuringFetch: Map<number, Map<number, boolean>> = new Map();
 
+/**
+ * 整表世代号：`resetAdminCache()` 每次自增。在途的全量拉取用它判断自己那份
+ * 快照是不是已经被一次整表清空作废——清空同时丢掉了
+ * `pendingAdminChangesDuringFetch`，因此 reset 之后再把 reset 前的快照写回去，
+ * 等于让那段窗口里到达的管理员降权凭空消失。
+ * 填充/清理时机：只在 resetAdminCache 自增，永不回退；容量固定一个数字，
+ * Worker 崩溃重建后从 0 重新开始，届时在途拉取也随旧 isolate 一起没了。
+ */
+export const adminCacheGeneration: { current: number } = { current: 0 };
+
+/** 某次拉取启动时记下的世代号是否仍然有效（其间没有发生过整表清空）。 */
+export function isCurrentAdminCacheGeneration(generation: number): boolean {
+  return adminCacheGeneration.current === generation;
+}
+
 /** 在 500 群硬顶内落一份非匿名管理员豁免快照。 */
 export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: number = Date.now()): void {
   setBoundedMapValue({
@@ -21,11 +36,21 @@ export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: 
   });
 }
 
-/** 获取或创建同群唯一一次全量拉取；settle 后自动释放在途槽位。 */
+/**
+ * 获取或创建同群唯一一次全量拉取；settle 后释放**自己那个**在途槽位。
+ *
+ * 释放前必须比对身份（主线程侧的同类表 botAdminFetches/botPermissionFetches
+ * 都做了这道比对）：`resetAdminCache()` 会在拉取在途时清空整张表，随后新的
+ * `fetchAdminIds` 会为同一个群登记一条全新的 fetch。陈旧 fetch 结算时若无条件
+ * delete，删掉的是**新 fetch** 的槽位，去重随之失效——下一个调用者会在入群
+ * 验证的共享限流队列上发起第三次全量拉取。
+ */
 export function getOrCreateAdminFetch(chatId: number, create: () => Promise<Set<number>>): Promise<Set<number>> {
-  let inFlight: Promise<Set<number>> | undefined = adminFetches.get(chatId);
-  if (inFlight) return inFlight;
-  inFlight = create().finally((): boolean => adminFetches.delete(chatId));
+  const existing: Promise<Set<number>> | undefined = adminFetches.get(chatId);
+  if (existing) return existing;
+  const inFlight: Promise<Set<number>> = create().finally((): void => {
+    if (adminFetches.get(chatId) === inFlight) adminFetches.delete(chatId);
+  });
   adminFetches.set(chatId, inFlight);
   return inFlight;
 }
@@ -69,9 +94,10 @@ export function sweepAdminCache(now: number = Date.now()): number {
   return deleted;
 }
 
-/** Worker dispose/测试隔离时清空管理员缓存及其在途状态。 */
+/** Worker dispose/测试隔离时清空管理员缓存及其在途状态，并作废在途拉取的写回。 */
 export function resetAdminCache(): void {
   chatAdmins.clear();
   adminFetches.clear();
   pendingAdminChangesDuringFetch.clear();
+  adminCacheGeneration.current++;
 }

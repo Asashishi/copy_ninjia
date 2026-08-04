@@ -1,11 +1,13 @@
 import { joinVerificationApi } from "../../infra/telegram";
 import { ADMIN_CACHE_TTL_MS } from "../../consts/antiRaid/cache";
 import {
+  adminCacheGeneration,
   bufferAdminChangeDuringFetch,
   cacheAdminIds,
   chatAdmins,
   discardPendingAdminChanges,
   getOrCreateAdminFetch,
+  isCurrentAdminCacheGeneration,
   takePendingAdminChanges,
 } from "../../cache/workers/antiRaid/admins";
 import type { ChatAdminCache } from "../../types/antiRaid/internal";
@@ -29,6 +31,9 @@ export function freshAdminIds(chatId: number): Set<number> | undefined {
 
 /** 全量拉取某群非匿名管理员并落缓存（带进行中去重，见 adminFetches）。 */
 export function fetchAdminIds(chatId: number): Promise<Set<number>> {
+  // 记下启动时的整表世代号：resetAdminCache() 会在拉取在途时把 chatAdmins 与
+  // pendingAdminChangesDuringFetch 一起清空，此后这次拉取的一切写回都是过期的。
+  const generation: number = adminCacheGeneration.current;
   const task: Promise<Set<number>> = getOrCreateAdminFetch(chatId, (): Promise<Set<number>> =>
     joinVerificationApi
       .getChatAdministrators(chatId)
@@ -36,6 +41,12 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
         const adminIds: Set<number> = new Set(
           admins.filter((admin: ChatMemberOwner | ChatMemberAdministrator): boolean => admin.is_anonymous !== true).map((admin: ChatMemberOwner | ChatMemberAdministrator): number => admin.user.id)
         );
+        // 世代对不上就只把结果交给等待者，绝不写回缓存：整表已被清空一次，而
+        // 那次清空同时丢掉了本次拉取期间到达的增量。此刻把 reset 前的旧快照灌
+        // 进刚清空的表，等于让那段窗口里的管理员降权静默消失——被降权者会在
+        // 整个 ADMIN_CACHE_TTL_MS 内继续留在邀请人豁免集合里，他拉进来的人
+        // 全部免入群验证。
+        if (!isCurrentAdminCacheGeneration(generation)) return adminIds;
         // 拉取在途期间到达的增量变化比这份快照更新（chat_member 更新是
         // 近实时的权威信号），重放在其上，不能被这次 resolve 覆盖掉——见
         // pendingAdminChangesDuringFetch 注释。
@@ -52,7 +63,9 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
       .catch((error: unknown): never => {
         // 没有成功的全量快照就没有可重放增量的基底。下次拉取会取得更新的
         // 权威快照；继续留着只会让失败过的群永久占住这张 Map。
-        discardPendingAdminChanges(chatId);
+        // 同样要比对世代：整表清空之后这张 Map 里躺的是**新**一轮拉取积累的
+        // 增量，陈旧拉取的失败不该把它们一并丢掉。
+        if (isCurrentAdminCacheGeneration(generation)) discardPendingAdminChanges(chatId);
         throw error;
       })
   );

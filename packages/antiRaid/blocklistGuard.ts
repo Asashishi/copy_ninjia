@@ -27,7 +27,7 @@ import type { DeleteMessageOutcome } from "../infra/telegram/actions";
  */
 
 /** 把一批处置投给 Worker 的方式；由 index.ts 在注册时把 postAntiRaidDurably 传进来。 */
-export type DurableAntiRaidPost = (messages: readonly AntiRaidWorkerMessage[]) => Promise<void>;
+export type DurableAntiRaidPost = (messages: readonly AntiRaidWorkerMessage[]) => Promise<number>;
 
 /**
  * 已拉黑频道身份仍能发出消息时就地删除。权威名单与 Telegram update 都在主线程，
@@ -209,7 +209,7 @@ export function claimBlockedJoiner({
  */
 export function registerBlocklistRemoval(postDurably: DurableAntiRaidPost): void {
   registerBlockedMemberRemover(
-    (removals: readonly RemoveBlockedMembersParams[]): Promise<void> =>
+    (removals: readonly RemoveBlockedMembersParams[]): Promise<number> =>
       postDurably(removals.map(
         (params: RemoveBlockedMembersParams): AntiRaidWorkerMessage => ({
           type: "removeBlockedMembers",

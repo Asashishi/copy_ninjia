@@ -25,7 +25,6 @@ import type { BlockUserDiskMessage, UnblockUserDiskMessage } from "../../types/d
 import type { AppendOnlyFileState, BlockedUserRecord } from "../../types/diskIO/storage";
 import { BLOCKLIST_FILE_PATH, BLOCKLIST_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
-import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import {
   blocklistFileState,
@@ -132,16 +131,29 @@ function adoptKnownIds(userIds: Iterable<number>): void {
  * 丢弃——那些条目已经在本次全量内容里了（主线程 Map 是它们的超集）。
  */
 export function rewriteBlocklist(records: Map<number, BlockedUserRecord>): boolean {
-  const content: Record<string, BlockedUserRecord> = {};
   // 键按 id 升序，让人工核对文件时顺序稳定，也让重写结果可复现。
   const userIds: number[] = [...records.keys()].sort((a: number, b: number): number => a - b);
-  for (const userId of userIds) content[String(userId)] = records.get(userId)!;
+  // 逐条拼文本，不塞进一个对象再整体 stringify（同 config/whitelist.ts 的
+  // serializeWhitelistConfig，那边为同一个原因手拼）：JS 对象把「整数索引形态」
+  // 的键（0 ~ 2^32-2，正好覆盖旧式用户 id）提到最前并按数值升序，其余键才保持
+  // 插入序。名单里同时有正的用户 id 和负的频道 id（adDetect.ts 对频道马甲按其
+  // 负 chat id 调 blockUser）时，上面排好的升序会在 stringify 那一步被打乱，
+  // 上面那句注释承诺的「顺序稳定」当场失效——备份比对和 `git diff` 里无关条目
+  // 跟着跳位，掩盖真正被删掉的那个 id。
+  // 输出与 JSON.stringify(对象, null, DAY_FILE_JSON_INDENT) 逐字节同形（含空
+  // 名单的 "{}"）：serializeDayFileEntry 就是按这套排版切出来的单条文本，追加
+  // 路径写进同一个文件的也是它。
+  const content: string = userIds.length === 0
+    ? "{}"
+    : `{\n${userIds
+      .map((userId: number): string => serializeDayFileEntry(String(userId), records.get(userId)!))
+      .join(",\n")}\n}`;
   try {
     // 不在这里建目录：hydrateBlocklist 启动时已经建过，而追加路径同样不建。
     // 重写若因为目录不在而失败，那是真的失败，不该被一次 mkdir 掩盖过去。
     atomicWriteTextSync(
       BLOCKLIST_FILE_PATH,
-      JSON.stringify(content, null, DAY_FILE_JSON_INDENT),
+      content,
       PERSISTED_FILE_MODE
     );
   } catch (error: unknown) {

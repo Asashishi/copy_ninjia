@@ -49,7 +49,7 @@ export function formatMuteDuration(durationMs: number): string {
 
 /** `/mute` 的用法提示，参数缺失/不合法时统一回这一句。 */
 const MUTE_USAGE_TEXT: string =
-  `笨蛋，/mute 后面要带时长：数字加 m/h/d，比如 10m、2h、1d（1 分钟~366 天）；` +
+  `笨蛋，/mute 后面要带时长：数字加 m/h/d，比如 10m、2h、1d（1 分钟~365 天）；` +
   `回复 TA 的消息发 /mute 10m，或者 /mute @username 10m、/mute 用户id 10m♡`;
 
 /**

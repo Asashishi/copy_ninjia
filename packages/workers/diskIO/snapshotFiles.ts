@@ -136,6 +136,21 @@ export function recoverAiMemories(): Map<number, string> {
     }
     const match: RegExpExecArray | null = AI_MEMORY_FILE_PATTERN.exec(name);
     if (!match) continue; // 非 <chatId>.json 形态（含 .corrupt 隔离文件），跳过不动
+    const chatIdText: string = match[1]!;
+    const chatId: number = Number(chatIdText);
+    // 必须原样还原（同 blocklistFile.ts 的 decodeBlocklist）：正则只保证「一串
+    // 数字」，`-01001234567890.json`、`-1001234567890.json` 这种补零变体都能匹配，
+    // Number 后是同一个 key，于是 result.set 互相覆盖，胜者取决于 readdirSync 的
+    // 枚举顺序——该群的 AI 记忆静默回退到旧副本，而回写只用 `${chatId}.json`，
+    // 补零那份永不被改写或删除，每次重启继续顶替。位数超出安全整数的文件名
+    // （1e20 那种）同样在这里挡掉，否则水合出的 key 与任何真实 chatId 都对不上。
+    if (!Number.isSafeInteger(chatId) || String(chatId) !== chatIdText) {
+      console.error(
+        `[diskIOWorker] AI memory file ${name} does not round-trip to its chat id; skipping it. ` +
+        "Rename it to the canonical <chatId>.json form or remove it."
+      );
+      continue;
+    }
     ensurePersistedFileMode(path);
     let parsed: unknown;
     try {
@@ -154,7 +169,7 @@ export function recoverAiMemories(): Map<number, string> {
     if (!snapshot) {
       throw new Error(`AI memory file ${name} does not match the current version=1 schema; migrate it manually before starting the bot`);
     }
-    result.set(Number(match[1]), JSON.stringify(snapshot, null, 2));
+    result.set(chatId, JSON.stringify(snapshot, null, 2));
   }
   return result;
 }

@@ -92,42 +92,46 @@ export async function runKickMemberEffect({
     });
     return;
   }
-  // **重试才付这次成员探测，首发不付。** 首发紧跟刚到达的那条 join update，
-  // 那条 update 自己就证明了人在群里（见 docs/04-invariants.md 的终态处置一节），
-  // 刷群时每个进来的人都要走这条路，白付一次查询等于把该路径的调用量翻倍。
+  // **每一发都先付这次成员探测，首发也不例外。** 超级群的「只踢不封」映射到
+  // unbanChatMember，它不带 only_if_banned 时会**解除已有封禁**（见
+  // infra/telegram/actions/moderation.ts 的 kickChatMemberWithOutcome）。因此发这
+  // 一枪之前必须确认目标此刻真的还是在群的普通成员：`getChatMember` 报
+  // `kicked` 时 isPresentMember 为 false，人已经出去了，直接结算，绝不去碰那条
+  // 封禁。
   //
-  // 但退避重试那几轮不能沿用这个理由：join update 证明的是当时，而超级群的
-  // 「只踢不封」映射到 unbanChatMember，它不带 only_if_banned 时会**解除已有
-  // 封禁**（见 infra/telegram/actions/moderation.ts 的 kickChatMemberWithOutcome）。
-  // 首发瞬时失败、退避期间超管刚 /block 掉这个人的话，重试这一发就把刚落的封禁
-  // 解开、outcome 还报 "kicked"，而主线程那边的移除早已记成完成——人凭任意邀请
-  // 链接就能回来。查询失败（undefined）不等于不在群，也不足以授权这个调用，
-  // 照常退避重试。`kickPending` 不持久化，退避计数与状态同生共死，因此
-  // terminalRetries 就是「这是不是重试」的可靠依据。
-  if ((entry.terminalRetries ?? 0) > 0) {
-    const memberPresentBeforeKick: boolean | undefined =
-      await probeChatMembership(chatId, userId, joinVerificationApi);
-    if (verificationEntries.get(key)?.state !== transitionState) return;
-    if (memberPresentBeforeKick === false) {
-      dispatchVerification(chatId, userId, {
-        type: "kickSettled",
-        now: Date.now(),
-      });
-      return;
-    }
-    if (memberPresentBeforeKick === undefined) {
-      logger.error(
-        `Lockdown kick retry for user ${userId} in chat ${chatId} could not confirm the member is still present; ` +
-        "retaining the pending action rather than issuing a removal that would lift a ban placed in the meantime."
-      );
-      scheduleKickRetry({
-        chatId,
-        userId,
-        state: transitionState,
-        dispatchVerification,
-      });
-      return;
-    }
+  // 首发曾经豁免过这次探测，理由是「紧跟刚到达的那条 join update，那条 update
+  // 自己就证明了人在群里」。它证明的是**在场**，不是**没有在排队期间被封**：
+  // 锁群下的调用要排 joinVerificationApi 的每群限流队列，raid 期间那条队列前面
+  // 积着大量洪水通知和其他移除（见 consts/antiRaid/flood.ts 与 floodControl.ts
+  // 对队列深度的说明）；这段等待里人工管理员完全可能在客户端直接封禁这个人
+  // （不走 /block，也就不进本 bot 的 FIFO）。排到的那一发于是解除了管理员的
+  // 封禁，outcome 还报 "kicked"、kickSettled 上报成功，而那个人凭任意邀请链接
+  // 就能回群。刷群路径上多付一次 getChatMember 换掉这个后果是划算的——正确性
+  // 优先于调用量（见 AGENTS.md）。
+  //
+  // 查询失败（undefined）不等于不在群，也不足以授权这个调用，照常退避重试。
+  const memberPresentBeforeKick: boolean | undefined =
+    await probeChatMembership(chatId, userId, joinVerificationApi);
+  if (verificationEntries.get(key)?.state !== transitionState) return;
+  if (memberPresentBeforeKick === false) {
+    dispatchVerification(chatId, userId, {
+      type: "kickSettled",
+      now: Date.now(),
+    });
+    return;
+  }
+  if (memberPresentBeforeKick === undefined) {
+    logger.error(
+      `Lockdown kick for user ${userId} in chat ${chatId} could not confirm the member is still present; ` +
+      "retaining the pending action rather than issuing a removal that would lift a ban placed in the meantime."
+    );
+    scheduleKickRetry({
+      chatId,
+      userId,
+      state: transitionState,
+      dispatchVerification,
+    });
+    return;
   }
 
   transitionState.executionStarted = true;

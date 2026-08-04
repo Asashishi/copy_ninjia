@@ -123,12 +123,18 @@ export async function drainAntiRaid(
   return "failed";
 }
 
-/** update 安全交接：处理 mailbox 后，仅在镜像变化时同步两类持久化 owner。 */
+/**
+ * update 安全交接：处理 mailbox 后，仅在镜像变化时同步两类持久化 owner。
+ * @returns 真正投给 Worker 的消息条数。durable 对账可能把整批
+ *   removeBlockedMembers 扣下（见 prepareDurableAntiRaidMessages），此时本函数
+ *   正常 resolve 但一条都没投出去——调用方若把「没抛错」当成「已投递」就会
+ *   永久卡住自己的 claim，理由见 types/blocklist.ts 的 BlockedMemberRemover。
+ */
 export async function postAntiRaidDurably(
   messages: readonly AntiRaidWorkerMessage[],
   replacedJoins: ReadonlyMap<number, AntiRaidWorkerMessage> = new Map(),
   timeoutMs: number = ANTI_RAID_BARRIER_TIMEOUT_MS
-): Promise<void> {
+): Promise<number> {
   let messagesToPost: readonly AntiRaidWorkerMessage[] = messages;
   if (messages.some(
     (message: AntiRaidWorkerMessage): boolean =>
@@ -141,7 +147,8 @@ export async function postAntiRaidDurably(
       replacedJoins
     );
   }
-  if (messagesToPost.length === 0) return;
+  if (messagesToPost.length === 0) return 0;
+  const postedCount: number = messagesToPost.length;
   const persistenceVersionBefore: number =
     antiRaidRuntimeState.persistenceVersion;
   for (const message of messagesToPost) {
@@ -160,7 +167,7 @@ export async function postAntiRaidDurably(
   if (
     antiRaidRuntimeState.persistenceVersion === persistenceVersionBefore
   ) {
-    return;
+    return postedCount;
   }
   const persistenceResults: [
     PromiseSettledResult<FlushResult>,
@@ -194,6 +201,7 @@ export async function postAntiRaidDurably(
       `Anti-Raid persistence failed: disk=${diskResult}, state=${stateResult}.`
     );
   }
+  return postedCount;
 }
 
 // 黑名单清扫的执行 owner（判定在 infra/blocklist/，执行在 Worker）。

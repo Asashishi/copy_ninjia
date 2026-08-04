@@ -412,4 +412,21 @@ describe("AI main-thread persistence mirror", () => {
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1002, revision: 1 });
     await secondDelete;
   });
+
+  test("Worker 放弃自愈后停机 flush 直接短路，不扣住最终 offset", async () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    expect(lastInitState.current).not.toBeNull();
+
+    supervisorOptions!.onGiveUp();
+
+    // 身份注入记录必须跟着一起清掉：flushAiMemory 用它判断「这条线根本没起来」。
+    // 留着的话停机 flush 会越过短路、进 barrier 后因 post 失败结算成 "failed"，
+    // 于是 flushAllToDisk 返回 false、wait() 拒绝确认最终 offset，Telegram 重投
+    // 上次确认点之后的全部更新，重复执行复读/命令回执这些非幂等副作用。而本功能
+    // 既定的降级只是「AI 闲聊静默停用到下次重启」。
+    expect(lastInitState.current).toBeNull();
+    workerPosts.length = 0;
+    await expect(aiChat.flushAiMemory(1_000)).resolves.toBe("flushed");
+    expect(workerPosts).toEqual([]);
+  });
 });

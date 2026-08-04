@@ -431,7 +431,7 @@ describe("应用启动失败与退出清理", () => {
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("轮询任务异常后执行完整持久化顺序并只释放一次锁", async () => {
+  test("轮询任务异常后执行完整持久化顺序，报未确认 offset 但照常释放实例锁", async () => {
     runnerTask.mockRejectedValueOnce(new Error("polling failed"));
     copiedUser = { id: 7 };
     const lifecycle = new ApplicationLifecycle(testDependencies);
@@ -451,8 +451,23 @@ describe("应用启动失败与退出清理", () => {
     expect(terminateAiChat).toHaveBeenCalledTimes(1);
     expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
     expect(terminateDiskIO).toHaveBeenCalledTimes(1);
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(runnerStop).not.toHaveBeenCalled();
+    // task() 抛错会让整段确认前闸门被跳过。闸门标记若停在初始值 true，dispose()
+    // 组装出的 offsetConfirmed 就是真，这一轮会被判成干净停机：诊断行不输出，
+    // 运维 grep 日志看到的是「一切正常」，实际丢了一条更新且扣住了 offset。
+    // 跳过 = 记为失败（见 docs/04-invariants.md）。
+    expect(process.exitCode).toBe(1);
+    const errorLines: string[] = loggerError.mock.calls.map((call: unknown[]): string => String(call[0]));
+    expect(errorLines.some((line: string): boolean =>
+      line.startsWith("Shutdown drain/flush results:") && line.includes("offset=false")
+    )).toBeTrue();
+    // 但这一档只是 offset 没确认：runner 已排空、各 owner 已 flush、Worker 已
+    // terminate，没有任何东西还会写共享数据目录，锁必须照常释放。扣住锁会留下
+    // 一条陈旧的 bot.lock 记录，并把运维引向根本没坏的 Worker 和磁盘。
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+    expect(errorLines.some((line: string): boolean =>
+      line.startsWith("Releasing the single-instance lock even though")
+    )).toBeTrue();
   });
 
   test("主动 dispose 会先停止仍在运行的 runner，再排空 AI、磁盘和状态", async () => {
@@ -824,7 +839,7 @@ describe("应用启动失败与退出清理", () => {
     await lifecycle.dispose();
   });
 
-  test("最终 offset 确认失败会非零退出并阻止干净释放实例锁", async () => {
+  test("最终 offset 确认失败会非零退出并点名 offset，但不扣住实例锁", async () => {
     lastSeenUpdateId = 432;
     getUpdates.mockRejectedValueOnce(new Error("confirmation failed"));
     const lifecycle = new ApplicationLifecycle(testDependencies);
@@ -834,12 +849,14 @@ describe("应用启动失败与退出清理", () => {
     await lifecycle.dispose();
 
     expect(process.exitCode).toBe(1);
-    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith(
       "Failed to confirm update offset on shutdown:",
       expect.any(Error)
     );
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset=false"));
+    // offsetWithheld 档：各 owner 都排空落盘、Worker 已终止，没有任何东西还会写
+    // 共享数据目录，扣住锁只会留下一条陈旧 bot.lock 记录并误导排查方向。
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
   test("永不自行 settle 的最终确认受专用 AbortSignal 截断", async () => {
@@ -870,7 +887,8 @@ describe("应用启动失败与退出清理", () => {
 
     expect(requestedTimeoutMs).toBe(FINAL_OFFSET_CONFIRM_TIMEOUT_MS);
     expect(process.exitCode).toBe(1);
-    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    // 同上：确认超时属于 offsetWithheld，不是「还有人在写」，锁照常释放。
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
   test("wait 首次维护超时后即使 dispose 时落定也不能改写未确认结果", async () => {
@@ -902,8 +920,12 @@ describe("应用启动失败与退出清理", () => {
 
     expect(getUpdates).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
-    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset=false"));
+    // 迟到落定改写不了 offset 结论（上一条断言），但它确实证明了那个维护任务
+    // 已经结束：dispose 自己那轮 waitForBackgroundMaintenance 因此是 settled，
+    // 三态落在 offsetWithheld，锁可以释放。维护任务若到 dispose 仍未落定，
+    // dispose 那轮同样会超时，三态变成 unsettled，锁才扣住。
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
   test("确认前 Anti-Raid drain 超时会阻止 offset，并把失败传播到退出状态", async () => {

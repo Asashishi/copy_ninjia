@@ -8,7 +8,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { open, rename, unlink } from "node:fs/promises";
+import { open, rename, stat, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { TMP_FILE_SUFFIX } from "../consts/paths";
 import type { FileHandle } from "node:fs/promises";
@@ -115,12 +115,38 @@ function atomicWriteSync(
   return writtenBytes;
 }
 
-/** 原子替换文本文件，并同步文件数据和父目录项。 */
-export async function atomicWriteText(path: string, content: string): Promise<void> {
+/**
+ * 读出目标文件当前的权限位；文件还不存在时返回 undefined（首次创建没有可
+ * 沿用的权限，交给 open 的默认值）。ENOENT 之外的失败不吞：那时紧接着的
+ * open 同样写不进去，谎报「没有权限可沿用」只会把真正的错误推迟一步。
+ */
+async function currentFileMode(path: string): Promise<number | undefined> {
+  try {
+    return (await stat(path)).mode & 0o777;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/**
+ * 原子替换文本文件，并同步文件数据和父目录项。
+ *
+ * 权限必须显式接管：临时文件是新建的，`0666 & ~umask`（常见 0644）与目标
+ * 原有的权限没有任何关系，而 rename 直接把它替换上去——部署方 `chmod 0600`
+ * 过的 config/whitelist.json、state.json、bot.lock 会在一次普通写入后被静默
+ * 放宽，且不留日志。`mode` 显式传入时以它为准（同 atomicWriteSync）；不传
+ * 时沿用目标文件当前的权限，目标不存在才落到默认值上。
+ */
+export async function atomicWriteText(path: string, content: string, mode?: number): Promise<void> {
+  const targetMode: number | undefined = mode ?? await currentFileMode(path);
   const tmpPath: string = temporaryPath(path);
-  const handle: FileHandle = await open(tmpPath, "wx");
+  const handle: FileHandle = await open(tmpPath, "wx", targetMode);
   try {
     await handle.writeFile(content);
+    // open(2) 的 mode 会被进程 umask 收紧。在临时文件尚未 rename 可见前显式
+    // 设回要求的最终权限，理由同 atomicWriteSync。
+    if (targetMode !== undefined) await handle.chmod(targetMode);
     await handle.sync();
   } catch (error: unknown) {
     await handle.close().catch((): undefined => undefined);

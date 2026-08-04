@@ -14,7 +14,9 @@ import type {
 const diskMessages: DiskBusinessMessage[] = [];
 const respawnListeners: DiskIORespawnListener[] = [];
 let postSucceeds: boolean = true;
-const remover = mock(async (..._args: unknown[]): Promise<void> => {});
+/** 返回真正投出的条数（见 types/blocklist.ts 的 BlockedMemberRemover）：整批都投出去。 */
+const remover = mock(async (...args: unknown[]): Promise<number> =>
+  (args[0] as readonly unknown[]).length);
 const loggedErrors: string[] = [];
 const chatStates: Map<number, { isInitEnabled?: boolean; botIsAdmin?: boolean }> =
   new Map<number, { isInitEnabled?: boolean; botIsAdmin?: boolean }>();
@@ -96,7 +98,8 @@ beforeEach(() => {
   blocklistSweepState.clear();
   pendingBlockedRemovals.clear();
   remover.mockClear();
-  remover.mockImplementation(async (): Promise<void> => {});
+  remover.mockImplementation(async (...args: unknown[]): Promise<number> =>
+    (args[0] as readonly unknown[]).length);
   registerBlockedMemberRemover(remover as unknown as BlockedMemberRemover);
 });
 

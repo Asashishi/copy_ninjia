@@ -215,7 +215,26 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
   initializeRespawnRecovery();
   const todayKey: string = getTokyoDateKey();
   if (secret.day !== todayKey) {
-    throw new Error(`Loaded luck receipt secret is for ${secret.day}, expected ${todayKey}`);
+    // 进程恰好卡在东京 00:00 前后启动：Disk I/O Worker 在 handleLoad() 里算出的
+    // 是 D，主线程等到 load 回执时已经是 D+1。这不是坏数据，只是这套「两个线程
+    // 各算一次日期」天然带的竞态窗口。在这里抛错的话异常会逸出
+    // ApplicationLifecycle.init()（调用点没有 try/catch），run() 记一行日志并以
+    // 退出码 1 结束——一次日切让 bot 起不来，靠进程管理器重启才恢复，日志上留下
+    // 一次无从解释的启动失败。
+    //
+    // 正确处置是丢掉这份过期凭据而不是拒绝启动：不 adopt，缓存留空，首次用到
+    // 运势时由 ensureLuckCacheFreshForToday 向 Worker 重新取当天密钥（那条路本来
+    // 就是为跨天准备的，每个入口都会先 await 它）。同时标记「本进程内已跨日」，
+    // 让 promotePendingDraw 对拿不出当天证明的确认一律 fail closed——旧日 pending
+    // 根本没恢复过来，用新一天的密钥重派生出的是用户没见过的另一个结果。
+    // loaded 一并丢弃：它属于 secret.day 那一天，磁盘上那份也会被 Worker 侧的
+    // cleanupStaleLuckFiles 按新日期清掉。
+    logger.error(
+      `Loaded luck receipt secret is for ${secret.day} but the Tokyo day already rolled over to ${todayKey}; ` +
+      "discarding it and re-deriving today's secret on first use."
+    );
+    luckRuntimeState.daySwitchedInProcess = true;
+    return;
   }
   adoptLuckSecret(secret);
   if (loaded?.day !== todayKey) return;

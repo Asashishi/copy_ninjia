@@ -620,4 +620,48 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       mockTodayOverride = null;
     }
   });
+
+  test("启动时恰好卡在日切：丢弃过期凭据继续启动，不抛错拦下整个进程", async () => {
+    // Disk I/O Worker 在 handleLoad() 里算出的是 D，主线程等到 load 回执时已经
+    // 是 D+1。抛错的话异常会逸出 ApplicationLifecycle.init()（调用点没有
+    // try/catch），run() 记一行日志并以退出码 1 结束——一次日切让 bot 起不来。
+    try {
+      mockTodayOverride = "2030-01-02";
+      cache.luckCacheState.dayKey = "";
+      cache.luckReceiptSecretState.current = null;
+      cache.luckRuntimeState.daySwitchedInProcess = false;
+      loggerErrorMock.mockClear();
+
+      expect((): void => {
+        luckChallenge.restoreLuckState(
+          { version: 1 as const, day: "2030-01-01", key: TEST_SECRET.key },
+          {
+            day: "2030-01-01",
+            entries: new Map([["888", {
+              label: LUCK_TIERS[0]!.label,
+              fortunePercent: LUCK_TIERS[0]!.fortunePercentRange[0],
+            }]]),
+          }
+        );
+      }).not.toThrow();
+
+      // 过期凭据与它那天的已确认记录一并丢弃，缓存留空等首次使用时重新取密钥。
+      expect(cache.luckReceiptSecretState.current).toBeNull();
+      expect(cache.dailyLuckCache.size).toBe(0);
+      // 跨过了日界：没有当日证明的迟到确认此后一律 fail closed。
+      expect(cache.luckRuntimeState.daySwitchedInProcess).toBeTrue();
+      expect(loggerErrorMock).toHaveBeenCalled();
+
+      // 首次用到运势时照常向 Worker 取当天密钥，功能不降级。
+      ensureLuckReceiptSecretMock.mockClear();
+      const ctx = makeInlineCtx(888, "");
+      await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+      expect(ensureLuckReceiptSecretMock).toHaveBeenCalledWith("2030-01-02");
+      expect(cache.luckReceiptSecretState.current).not.toBeNull();
+      expect(cache.luckReceiptSecretState.current!.day).toBe("2030-01-02");
+      expect(ctx.results.length).toBeGreaterThan(0);
+    } finally {
+      mockTodayOverride = null;
+    }
+  });
 });

@@ -462,18 +462,35 @@ describe("同步副作用的逐条执行", () => {
     });
   });
 
-  test("私密模式首发不付成员探测：刚到达的 join update 已经证明人在群里", async () => {
-    // 刷群时每个进来的人都走这条路，白付一次查询等于把调用量翻倍
-    // （见 docs/04-invariants.md 的终态处置一节）。
+  test("私密模式首发也先探测：join update 证明的是在场，不是没被封", async () => {
+    // 曾经豁免过首发这次查询，理由是「紧跟刚到达的 join update」。但锁群下的
+    // 调用要排每群限流队列，raid 期间那条队列很深；等待期间人工管理员完全可能
+    // 在客户端直接封禁这个人，而超级群的「只踢不封」映射到不带 only_if_banned
+    // 的 unbanChatMember——排到的那一发会把管理员的封禁解开。
     setState(kickPendingState());
 
     await run([{ kind: "kickMember" }]);
 
-    expect(probeChatMembership).not.toHaveBeenCalled();
+    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, joinVerificationApi);
     expect(kickedUserIds).toEqual([USER_ID]);
   });
 
-  test("私密模式重试才先探测：人已经不在群里就直接结算，不发那个会解封的请求", async () => {
+  test("首发时人已经被管理员封掉：直接结算，绝不发那个会解封的请求", async () => {
+    // getChatMember 报 kicked 时 isPresentMember 为 false，人已经出去了，
+    // 移除的目的已经达成，不能再去碰那条封禁。
+    membershipPresent = false;
+    setState(kickPendingState());
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(kickedUserIds).toEqual([]);
+    expect(dispatched).toContainEqual({
+      userId: USER_ID,
+      event: { type: "kickSettled", now: expect.any(Number) },
+    });
+  });
+
+  test("私密模式重试同样先探测：人已经不在群里就直接结算，不发那个会解封的请求", async () => {
     // 超级群的「只踢不封」映射到 unbanChatMember，而它不带 only_if_banned 时
     // 会**解除已有封禁**：首发瞬时失败、退避期间超管刚 /block 掉这个人的话，
     // 重试这一发就把刚落的封禁解开了，人凭任意邀请链接就能回来。

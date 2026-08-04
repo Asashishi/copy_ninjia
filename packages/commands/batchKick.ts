@@ -38,6 +38,13 @@ interface BatchKickStats {
   blocked: number;
   forbidden: number;
   failed: number;
+  /**
+   * 其中「本命令一步都没做、纯粹交还给黑名单流程」的条数：命中黑名单后直接
+   * 早退的那两条分支。不进战报（对管理员而言它们都是「黑名单交回封禁」），
+   * 只用来决定整批结束后要不要真的请一次补扫——补封成功那条路已经自己把人
+   * 按住了，不该再白白惊动清扫。
+   */
+  blockedHandoffs: number;
 }
 
 /** 把 `/batch_kick` 的单个 m/h/d 参数严格换算为一天以内的毫秒数。 */
@@ -91,6 +98,7 @@ async function processJoinRecord({
   }
   if (isUserBlocked(record.userId)) {
     stats.blocked++;
+    stats.blockedHandoffs++;
     return;
   }
   const present: boolean | undefined = await probeChatMembership(
@@ -109,6 +117,7 @@ async function processJoinRecord({
   // 窗口；请求完成后再判一次并补封，保证先写内存名单的永久封禁最终获胜。
   if (isUserBlocked(record.userId)) {
     stats.blocked++;
+    stats.blockedHandoffs++;
     return;
   }
   // 本命令在入口就只接受超级群（见 handleBatchKickCommand），如实传 true 而不是
@@ -168,6 +177,7 @@ async function runBatchKick({
     blocked: 0,
     forbidden: 0,
     failed: 0,
+    blockedHandoffs: 0,
   };
   let nextIndex: number = 0;
   const workerCount: number = Math.min(
@@ -195,7 +205,8 @@ async function runBatchKick({
  * `/batch_kick <Nm|Nh|Nd>`：只允许超级管理员在超级群中执行；初始化状态由
  * app/registerHandlers.ts 的统一前置网关保证，本 handler 不重复判断或提示。
  * 按需读取本群滚动 24 小时入群追写日志，并踢出回溯窗口内仍在群的人。
- * 本命令不新增黑名单持久化；与并发 `/block` 冲突时会把成员交回既有封禁流程。
+ * 本命令不新增黑名单持久化；与并发 `/block` 冲突、或日志里的人本来就在黑名单上
+ * 时，本命令不自己处置，而是在整批结束后请一次补扫，把他们真正交回封禁流程。
  */
 export async function handleBatchKickCommand(
   ctx: CommandContext<Context>
@@ -265,6 +276,25 @@ export async function handleBatchKickCommand(
   }
 
   const stats: BatchKickStats = await runBatchKick({ chatId, records });
+  // 命中黑名单就直接早退的那几条，processJoinRecord 一步都没做——不探测、不移除，
+  // 回执却渲染成「黑名单交回封禁 N」。不在这里真的交回去，那句话就是空的：管理员
+  // 据此认为黑名单流程接手了，实际没有任何批次、清扫或重试存在。典型成因正是更早
+  // 的封禁批次在限流下被判 complete 而实际没生效，人还坐在群里。
+  // 只看 blockedHandoffs：并发拉黑后补封成功那条路已经把人按住了，不必再惊动清扫。
+  // 整批只派发一次：prepareBlocklistSweep 自带 claim 与 nextRetryAt 闸门，逐条
+  // 调用只是空转，还要在命令的固定小并发池里排队。
+  if (stats.blockedHandoffs > 0) {
+    requestBlocklistResweep(chatId);
+    try {
+      await sweepBlockedMembers(chatId);
+    } catch (error: unknown) {
+      // durable outbox 已经保留重放依据；战报照常发出，原因留在日志里。
+      logger.error(
+        `Failed to dispatch the blocklist sweep after /batch_kick in chat ${chatId}:`,
+        error
+      );
+    }
+  }
   await sendCommandMessage({
     chatId,
     text:

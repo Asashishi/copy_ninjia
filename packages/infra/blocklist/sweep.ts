@@ -211,40 +211,64 @@ function prepareBlocklistSweep(
   return { chatId, params, failedSweeps, now };
 }
 
+/**
+ * 一批补扫没能交出去时的统一记账：作废 claim、记诊断、推进退避。
+ * 抛错与「正常 resolve 但一条都没投出去」共用同一套善后——对这个群来说两者
+ * 后果完全一样：没有消息在途，也就永远等不到 blockedMembersRemoved 回执。
+ */
+function abandonPreparedSweeps(sweeps: readonly PreparedBlocklistSweep[]): void {
+  for (const sweep of sweeps) {
+    // 回执可能抢先到达；只有这批仍是当前 claim 时才写回失败，避免踩掉 sweptAt。
+    if (
+      blocklistSweepState.get(sweep.chatId)?.removalId ===
+      sweep.params.removalId
+    ) {
+      recordPendingRemovalFailure(
+        sweep.params.removalId,
+        sweep.chatId,
+        "delivery-boundary"
+      );
+      // 这批任务不会再有回执来推进退避（claim 已清空，迟到的回执走
+      // requestBlocklistResweep 那条不动计数的路），因此必须在这里推进。
+      noteSweepAttemptFailed(
+        sweep.chatId,
+        sweep.failedSweeps,
+        sweep.now
+      );
+    }
+  }
+}
+
 /** 把已登记的多群补扫合成一次 durable outbox flush 与 Worker 投递。 */
 async function deliverPreparedSweeps(
   sweeps: readonly PreparedBlocklistSweep[]
 ): Promise<void> {
   if (sweeps.length === 0) return;
+  let deliveredCount: number;
   try {
-    await blockedMemberRemoverHolder.current(
+    deliveredCount = await blockedMemberRemoverHolder.current(
       sweeps.map((sweep: PreparedBlocklistSweep): RemoveBlockedMembersParams =>
         sweep.params
       )
     );
   } catch (error: unknown) {
-    for (const sweep of sweeps) {
-      // 回执可能抢先到达；只有这批仍是当前 claim 时才写回失败，避免踩掉 sweptAt。
-      if (
-        blocklistSweepState.get(sweep.chatId)?.removalId ===
-        sweep.params.removalId
-      ) {
-        recordPendingRemovalFailure(
-          sweep.params.removalId,
-          sweep.chatId,
-          "delivery-boundary"
-        );
-        // 这批任务不会再有回执来推进退避（claim 已清空，迟到的回执走
-        // requestBlocklistResweep 那条不动计数的路），因此必须在这里推进。
-        noteSweepAttemptFailed(
-          sweep.chatId,
-          sweep.failedSweeps,
-          sweep.now
-        );
-      }
-    }
+    abandonPreparedSweeps(sweeps);
     throw error;
   }
+  if (deliveredCount > 0) return;
+  // 正常 resolve 不等于投出去了：并发 `/unblock` 在
+  // BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS 轮内持续改动 outbox 时，durable 对账
+  // 会扣下整批 removeBlockedMembers（antiRaid/blocklistDelivery.ts），纯补扫这批
+  // 于是只剩空数组，投递路径以 length === 0 早退并正常 resolve。不在这里判失败的
+  // 话：claim 里的 removalId 停在原值、诊断不记、退避不推进，而消息从未投出，
+  // blockedMembersRemoved 回执永不会来——此后 prepareBlocklistSweep 对这个群永远
+  // 在 `removalId !== null` 早退，本进程生命周期内它再也不会被清扫，只能靠整进程
+  // 重启走 hydrateBlocklist + replayPendingBlockedRemovals 捞回来。
+  abandonPreparedSweeps(sweeps);
+  logger.error(
+    `Blocklist sweep delivery posted nothing for ${sweeps.length} chat(s); ` +
+    "the batches stay in the durable outbox and the sweeps were rescheduled."
+  );
 }
 
 /**

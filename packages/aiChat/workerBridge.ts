@@ -178,6 +178,14 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
   },
   onGiveUp: (): void => {
     aiChatWorkerState.available = false;
+    // 身份注入记录必须一起清掉：flushAiMemory 用 `lastInitState.current === null`
+    // 判断「这条线根本没起来，没什么可刷的」并直接返回 flushed。放弃重启后
+    // worker 已经是 null，留着这份记录只会让停机时的 flushAiMemory 越过短路、
+    // 进 barrier 后因 post 失败结算成 "failed"，于是 flushAllToDisk 返回 false、
+    // wait() 拒绝确认最终 offset，Telegram 重投上次确认点之后的全部更新，重复
+    // 执行复读/命令回执这些非幂等副作用。而本功能既定的降级只是「AI 闲聊静默
+    // 停用到下次重启」，不该牵连整个停机的 offset 闸门。
+    lastInitState.current = null;
     // 同 onRespawn/terminateAiChat：不结算的话等待者只能等定时器过期，停机白等
     // 一整份 flush 预算，还会挤占紧急退出路径上共享的那份时间。
     aiMemoryFlushBarrier.settleAll("failed");

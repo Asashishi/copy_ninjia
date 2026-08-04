@@ -277,10 +277,10 @@ export function trackBlockedRemoval(input: TrackBlockedRemovalInput): RemoveBloc
   return tracked;
 }
 
-/** 把已登记镜像的一批处置交给当前 Anti-Raid 执行 owner。 */
+/** 把已登记镜像的一批处置交给当前 Anti-Raid 执行 owner；返回真正投出的条数。 */
 export function dispatchBlockedRemovals(
   removals: readonly RemoveBlockedMembersParams[]
-): Promise<void> {
+): Promise<number> {
   return blockedMemberRemoverHolder.current(removals);
 }
 

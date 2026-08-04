@@ -5,6 +5,7 @@ import type {
   OwnerInitFlags,
   OwnerSettler,
   OwnerShutdownResults,
+  ShutdownOutcome,
   ShutdownResults,
 } from "../../types/lifecycle";
 
@@ -118,11 +119,16 @@ export async function runShutdownOwners({
   return { avatar, reaction, translate, antiRaid, ai, disk, terminate, state };
 }
 
-/** 本次停机是否每个 owner 都干净收尾；任一项未 flushed 都要保留实例锁。 */
-export function isCleanShutdown(results: ShutdownResults): boolean {
+/**
+ * 本次停机每个**会写共享数据的** owner 是否都干净收尾。
+ *
+ * 刻意不看 `offsetConfirmed`：那道 gate 只决定 Telegram 会不会重投，与「此刻
+ * 还有没有人可能往数据目录里写」无关。两件事的处置也不同——见
+ * classifyShutdown。
+ */
+function allOwnersSettled(results: ShutdownResults): boolean {
   return results.runnerDrained &&
     results.maintenanceSettled &&
-    results.offsetConfirmed &&
     results.avatar === "flushed" &&
     results.reaction === "flushed" &&
     results.translate === "flushed" &&
@@ -131,6 +137,21 @@ export function isCleanShutdown(results: ShutdownResults): boolean {
     results.disk === "flushed" &&
     results.terminate === "flushed" &&
     results.state === "flushed";
+}
+
+/**
+ * 把停机结局分成三态（语义与取舍见 types/lifecycle.ts 的 `ShutdownOutcome`）。
+ *
+ * 中间那一态由三条路径产生：最终确认请求失败、前置未满足而跳过，或
+ * `runner.task()` 直接抛错把整段确认前闸门跳过。
+ *
+ * 判据必须是**调用方自己这一轮**的 `ShutdownResults`，不是 `wait()` 当时的观测：
+ * `wait()` 里 flush 失败、随后 `dispose()` 自己那次 flush 成功，正是「offset 该扣、
+ * 锁该放」的正当组合。
+ */
+export function classifyShutdown(results: ShutdownResults): ShutdownOutcome {
+  if (!allOwnersSettled(results)) return "unsettled";
+  return results.offsetConfirmed ? "clean" : "offsetWithheld";
 }
 
 /** 停机结果的单行诊断文案（英文，见 AGENTS.md 日志约定）。 */

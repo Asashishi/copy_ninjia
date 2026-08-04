@@ -203,6 +203,46 @@ describe("解除拉黑的全量重写", () => {
     expect([...restored.keys()]).toEqual([-4004]);
     expect(restored.get(-4004)).toEqual({ isBlocked: true, blockedAt: "2026/07/25 19:40:00" });
   });
+
+  test("正负 id 混在一起时落盘顺序仍然是 id 升序", () => {
+    // JS 对象把「整数索引形态」的键（0 ~ 2^32-2，正好覆盖旧式用户 id）提到最前
+    // 并按数值升序，其余键才保持插入序。塞进对象再整体 stringify 的话，只要名单
+    // 里有一个 <2^32 的旧式用户 id，负的频道 id 就会被甩到它后面，代码注释承诺的
+    // 「顺序稳定」当场失效——备份比对和 git diff 里无关条目跟着跳位，掩盖真正被
+    // 删掉的那个 id。
+    hydrateBlocklist();
+    const blocked: readonly (readonly [number, BlockedUserRecord])[] = [
+      [-1009876543210, { isBlocked: true, blockedAt: "2026/07/25 19:38:01" }],
+      [-1001234567890, { isBlocked: true, blockedAt: "2026/07/25 19:38:02" }],
+      [123456789, { isBlocked: true, blockedAt: "2026/07/25 19:38:03" }],
+      [7654321098, { isBlocked: true, blockedAt: "2026/07/25 19:38:04" }],
+    ];
+    for (const [userId, record] of blocked) {
+      handleBlockUserMessage({ type: "blockUser", userId, blockedAt: record.blockedAt });
+    }
+    handleBlockUserMessage({ type: "blockUser", userId: 999, blockedAt: "2026/07/25 19:38:05" });
+
+    handleUnblockUserMessage({
+      type: "unblockUser",
+      userId: 999,
+      blocked: [...blocked] as [number, BlockedUserRecord][],
+    });
+
+    // 顺序只能在**文件文本**上断言：JSON.parse 出来的普通对象会再重排一次，
+    // 拿 Object.keys(readBlocklist()) 去比，量的是 JS 的属性序而不是盘上的字节序。
+    const text: string = readFileSync(BLOCKLIST_FILE_PATH, "utf8");
+    expect([...text.matchAll(/^ {2}"(-?\d+)":/gm)].map((match: RegExpExecArray): string => match[1]!))
+      .toEqual(["-1009876543210", "-1001234567890", "123456789", "7654321098"]);
+    // 排版仍与一次性 stringify 逐字节同形，否则下次打开会被判成「结尾形态不符」
+    // 而被整份重写一遍。
+    expect(text).toBe(`{\n${blocked
+      .map(([userId, record]: readonly [number, BlockedUserRecord]): string =>
+        `  ${JSON.stringify(String(userId))}: ${JSON.stringify(record, null, 2).replaceAll("\n", "\n  ")}`)
+      .join(",\n")}\n}`);
+    // 严格解码照常读得回来（Map 的顺序随 JS 属性序，只比内容）。
+    expect([...hydrateBlocklist().keys()].sort((a: number, b: number): number => a - b))
+      .toEqual(blocked.map(([userId]: readonly [number, BlockedUserRecord]): number => userId));
+  });
 });
 
 describe("重写失败后的重试", () => {

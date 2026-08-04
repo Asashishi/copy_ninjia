@@ -27,7 +27,12 @@ export type MuteChatMemberOutcome =
 
 /**
  * 临时收走一名成员在本群的全部发言权限（到点由 Telegram 自动恢复）。
- * `until_date` 向上取整到秒，避免边界上被 Bot API 解释成永久限制。
+ *
+ * `until_date` 向上取整到秒，护的是**下**边界：Bot API 把「距现在不足 30 秒」
+ * 当永久限制，向下取整会把亚秒余数抹掉、让时长比调用方要的更短。上边界
+ * （超过 366 天同样按永久处理）不靠这里的取整方式兜，而由
+ * MUTE_MAX_DURATION_MS 留出的一整天余量兜——取整最多加 1 秒，排队和往返
+ * 的耗时也远小于那道余量，两头都不会滑出合法区间。
  */
 export async function muteChatMemberWithOutcome({
   chatId,

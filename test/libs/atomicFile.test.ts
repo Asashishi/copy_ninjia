@@ -61,6 +61,10 @@ mock.module("node:fs/promises", () => ({
         step("sync");
         await handle.sync();
       },
+      chmod: async (fileMode: unknown): Promise<void> => {
+        step("chmod");
+        await handle.chmod(fileMode as number);
+      },
       close: async (): Promise<void> => {
         // 即使注入失败也要真正释放 fd，否则测试进程会泄漏句柄。
         await handle.close();
@@ -198,6 +202,37 @@ describe("atomicWriteText 的失败清理", () => {
     injectFailure("unlink", "injected unlink failure");
 
     await expect(atomicWriteText(targetPath, "payload")).rejects.toThrow("injected write failure");
+  });
+});
+
+describe("atomicWriteText 的权限接管", () => {
+  test("沿用目标原有权限：部署方 chmod 0600 过的文件不被一次普通写入放宽", async () => {
+    // 临时文件是新建的，`0666 & ~umask`（常见 0644）与目标原有权限没有任何关系，
+    // 而 rename 直接把它替换上去——config/whitelist.json、state.json、bot.lock
+    // 都会在一次普通写入后被静默放宽，且不留日志。
+    realFsSnapshot.writeFileSync(targetPath, "old");
+    realFsSnapshot.chmodSync(targetPath, 0o600);
+
+    await atomicWriteText(targetPath, "new");
+
+    expect(realFsSnapshot.statSync(targetPath).mode & 0o777).toBe(0o600);
+    expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("new");
+  });
+
+  test("显式传入的 mode 压过目标现有权限（同 atomicWriteSync）", async () => {
+    realFsSnapshot.writeFileSync(targetPath, "old");
+    realFsSnapshot.chmodSync(targetPath, 0o600);
+
+    await atomicWriteText(targetPath, "new", 0o640);
+
+    expect(realFsSnapshot.statSync(targetPath).mode & 0o777).toBe(0o640);
+  });
+
+  test("目标还不存在时不强加权限，交给 open 的默认值", async () => {
+    await atomicWriteText(targetPath, "new");
+
+    expect(realFsSnapshot.existsSync(targetPath)).toBe(true);
+    expect(operations).not.toContain("chmod");
   });
 });
 

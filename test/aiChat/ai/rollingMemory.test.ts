@@ -32,7 +32,10 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
   hydrateMemories(memories);
   expect(memoryCache.chatBuffers.size).toBe(AI_MEMORY_MAX_CHATS);
   expect(memoryCache.chatBuffers.has(-1)).toBe(false);
-  expect(postMessageMock).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1 });
+  // 装不下 ≠ 该删：这里发 memoryDeleted 会一路 unlink 掉 memory/ai/-1.json，
+  // 一次重启就让 savedAt 最旧那几个群的逐字缓冲、中期摘要和待处理摘要永久消失。
+  // 只跳过不加载，文件留在盘上等独立的过期策略处理。
+  expect(postMessageMock).not.toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1 });
 
   const evictedGeneration: number = replyCache.cachedReplyGeneration(-2);
   pushBufferedMessage(-999, bufferedMessageFixture({

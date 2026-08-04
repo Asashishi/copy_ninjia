@@ -186,3 +186,27 @@ test("删除记忆文件幂等且不会留下快照", () => {
   expect(() => readFileSync(path, "utf8")).toThrow();
   expect(() => deleteAiMemoryFile(-100129)).not.toThrow();
 });
+
+test("文件名不能原样还原成 chatId 时跳过，不与规范文件抢同一个 key", () => {
+  // 正则只保证「一串数字」：补零变体也匹配，Number 之后是同一个 key，于是两份
+  // 快照互相覆盖、胜者取决于 readdirSync 的枚举顺序。而回写只用 `${chatId}.json`，
+  // 补零那份永不被改写或删除，每次重启继续顶替（同 blocklistFile.ts 的回环校验）。
+  writeFileSync(join(aiDir, "-100123.json"), currentBytes);
+  writeFileSync(join(aiDir, "-0100123.json"), JSON.stringify({
+    ...currentSnapshot,
+    summaries: ["补零文件里的旧摘要"],
+  }, null, 2));
+
+  const recovered = recoverAiMemories();
+
+  expect(recovered.size).toBe(1);
+  expect(JSON.parse(recovered.get(-100123)!).summaries).toEqual(currentSnapshot.summaries);
+});
+
+test("位数超出安全整数的文件名同样跳过", () => {
+  // 1e20 那种水合出来的 key 与任何真实 chatId 都对不上，下次落盘还会生成一个
+  // 全新文件，旧文件永远留在盘上。
+  writeFileSync(join(aiDir, "99999999999999999999.json"), currentBytes);
+
+  expect(recoverAiMemories().size).toBe(0);
+});

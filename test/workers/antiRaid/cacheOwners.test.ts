@@ -161,6 +161,42 @@ describe("Anti-Raid cache owners", () => {
     expect(chatAdmins.has(-1004)).toBeFalse();
   });
 
+  test("整表清空后陈旧拉取既不删新槽位，也不把旧快照写回去", async () => {
+    // resetAdminCache()（Worker 停机路径/测试隔离）会在拉取在途时清空整张表。
+    // finally 无条件 delete 的话删掉的是**新** fetch 的槽位，去重失效，下一个
+    // 调用者会在入群验证的共享限流队列上再发起一次全量拉取。
+    let resolveStale!: (admins: { user: { id: number }; is_anonymous: boolean }[]) => void;
+    getChatAdministrators.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveStale = resolve; })
+    );
+    const stale = adminCache.fetchAdminIds(-1010);
+    // 陈旧拉取期间到达的降权：reset 会把它一起丢掉。
+    adminCache.applyAdminChange(-1010, 42, false);
+
+    resetAdminCache();
+
+    let resolveFresh!: (admins: { user: { id: number }; is_anonymous: boolean }[]) => void;
+    getChatAdministrators.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveFresh = resolve; })
+    );
+    const fresh = adminCache.fetchAdminIds(-1010);
+    const freshSlot: Promise<Set<number>> | undefined = adminFetches.get(-1010);
+    expect(freshSlot).toBeDefined();
+
+    // 陈旧拉取此刻才 settle：既不能删掉新槽位（去重失效 = 共享限流队列上多一次
+    // 全量拉取），也不能把 reset 前的快照灌回刚清空的表——那样被降权者会在整个
+    // ADMIN_CACHE_TTL_MS 内继续留在邀请人豁免集合里，他拉进来的人全部免入群验证。
+    resolveStale([{ user: { id: 42 }, is_anonymous: false }]);
+    await expect(stale).resolves.toEqual(new Set([42]));
+    expect(adminFetches.get(-1010)).toBe(freshSlot!);
+    expect(chatAdmins.has(-1010)).toBeFalse();
+
+    resolveFresh([{ user: { id: 7 }, is_anonymous: false }]);
+    await expect(fresh).resolves.toEqual(new Set([7]));
+    expect(chatAdmins.get(-1010)?.adminIds).toEqual(new Set([7]));
+    expect(adminFetches.has(-1010)).toBeFalse();
+  });
+
   test("增量只原地改已有快照；没拉取过的群不建条目也不留增量", () => {
     cacheAdminIds(-1005, new Set([41]), Date.now());
 
