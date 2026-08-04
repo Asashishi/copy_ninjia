@@ -208,18 +208,14 @@
 - 那条诊断（`logUncancelableKickExemption`）必须走 `logger.error`：Worker 只把 error 级别的日志信封中继给主线程，warn 只留在本线程的临时 stdout 里，进不了 `logs/<day>.json`。它是「一个管理员/白名单成员被误踢了、请人工拉回来」的唯一线索，事后翻日志看不到它，那个人就一直在群外。
 - 验证提醒按成员只有一个投递 owner，发送失败有界退避。`reminderMessageId` / `replyReminderMessageId` 至少一个成功回填是超时踢人的前置不变量；从未落地时只续窗补发。
 
-  **但续窗必须有尽头**：入群后超过 `VERIFICATION_REMINDER_UNDELIVERED_MAX_MS` 仍一条都没落地，就按普通超时结算（踢人本就只踢不封，人随时能重进）。无限续期的代价是每个入群者留下一条不朽记录——某个群 `sendMessage` 持续失败（论坛 General 话题被关闭、机器人被禁言却仍保有限制成员权限）时，那些记录常驻待验证表与主线程镜像，每 90 秒重写一次当天文件，而 `messageIds` 还按该成员的发言数继续增长。
+  **但续窗必须有尽头**：入群后超过 `VERIFICATION_REMINDER_UNDELIVERED_MAX_MS` 仍一条都没落地，就按普通超时结算（踢人本就只踢不封，人随时能重进）。无限续期的代价是每个入群者留下一条不朽记录——某个群 `sendMessage` 持续失败（论坛 General 话题被关闭、机器人被禁言却仍保有限制成员权限）时，那些记录常驻待验证表与主线程镜像，每 90 秒重写一次当天文件。单条记录的体积本身是有界的（`trackedMessageTimes` 按 `JOIN_WINDOW_MS` 只留最近一分钟的时间戳，且到 `ANTI_RAID_PER_MINUTE_LIMIT` 就转终态），代价出在数量上：每个进过群的人各留一条，永不退休。
 
-  同理，`messageIds` 有 `VERIFICATION_TRACKED_MESSAGE_IDS_MAX` 这道上界：常规窗口里到不了（刷屏第 46 条就同步转成踢人），它只兜这条退化路径，越界丢最早的那条。
-
-  **入群公告不进这条队列**：它单独存在 `announcementMessageId` 里，不参与截断。混在一起时上限一满第一个被挤掉的就是它（它恒为最早入列的那条），而除了处置路径没有任何地方会再删它——恰恰在提醒发不出去、记录被反复续期的那条退化路径下，成员足以发够几百条把上限撑满，机器人自己制造的那条公告于是永远留在群里。处置时先删公告再删追踪到的发言。恢复时尚无 reminder ID 的当前格式快照复用同一 owner，状态替换、离群、teardown 和 Worker 终止均会撤销它；这里是未成功发送提醒的业务状态，不是旧格式兼容分支。
+  **成员自己的发言不进任何清理集合**：验证记录只存 `trackedMessageTimes` 这串时间戳——那是**待验证成员自己的** 60 秒滑窗（`JOIN_WINDOW_MS`），越过 `ANTI_RAID_PER_MINUTE_LIMIT` 的第 46 条就同步转 `expelling{reason:"flood"}` 直接踢人，与 `/flood_control` 那套「15 条 → 禁言 3 分钟」是两套独立机制——从不记成员的 message id；处置时删掉的只有机器人/Telegram 自己制造的三条痕迹——`announcementMessageId`、`reminderMessageId`、`replyReminderMessageId`。这条边界必须与提醒文案对得上：文案只说「不然本天才就一脚把你踢出去」，没有承诺抹掉发言，删了就是做一件从未向对方宣告过的破坏性动作，与自动处置「只踢不封、尽量少留痕」的整体口径也相反（要抹消息的是 `/block` 与黑名单秒踢那条带 `revoke_messages` 的路径，见下文）。恢复时尚无 reminder ID 的当前格式快照复用同一 owner，状态替换、离群、teardown 和 Worker 终止均会撤销它；这里是未成功发送提醒的业务状态，不是旧格式兼容分支。
 
 - 冷缓存评论区确认按 `chatId:userId` 只有一个可更新 owner，并受 `THREAD_COMMENT_CONFIRMATION_MAX` 全局背压与 `LINKED_CHANNEL_FETCH_TIMEOUT_MS` 结算上限约束；满载时保持普通待验证语义。群停管、adopt 或停止删除 owner 后，迟到回调必须以对象同一性止步，不能重写 recent comment。
 
   若 owner 覆盖的那条普通派发恰好把同一 `pending` 推到 `flood` 终态，只有在 `executionStarted !== true` 时，确认结果才可撤回该终态并发布 tombstone；不可逆处置一旦开始就不再假装能够取消。
 - `kickPending` 的 Telegram 请求结算不等于踢人成功：只有 `kickChatMemberWithOutcome === "kicked"`，或随后权威成员探测确认目标已离群，才能派发 `kickSettled`。`forbidden` / `failed` 必须清掉本次 `executionStarted`、保留同一 token 并按终态退避重试；状态被豁免、停管或新一代记录替换后，迟到结果与 timer 都不得继续处置。
-- `messageIds` 的容量约束覆盖每一个写入口，包括普通消息、重复入群公告与 original/reply reminder 的迟到落地；所有入口必须走同一个有界追加 helper，不能只在普通消息路径截断。
-
 ### 刷屏禁言与自身权限缓存
 
 本节依次说明 [计数与执行边界](#计数与执行边界)、[命中抑制与并发安全](#命中抑制与并发安全)、[动手前的权限闸](#动手前的权限闸)及[机器人自身权限镜像](#机器人自身权限镜像)。

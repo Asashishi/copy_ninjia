@@ -233,11 +233,9 @@
 
   **ただし延長には終わりが必要です**。入室から `VERIFICATION_REMINDER_UNDELIVERED_MAX_MS` を超えてもなお 1 件も届かないなら、通常の timeout として処理します（処置は kick のみで BAN はしないため、本人はいつでも入り直せます）。無限に延長する代償は、入室者ごとに不滅のレコードが 1 件ずつ残ることです。
 
-  あるグループで `sendMessage` が失敗し続ける状況（フォーラムの General トピックが閉じられている、Bot が発言禁止だがメンバー制限権限は残っている）では、それらが待機テーブルとメインスレッドのミラーに常駐し、90 秒ごとに当日ファイルを書き直し、`messageIds` はそのメンバーの発言数だけ増え続けます。同じ理由で `messageIds` にも `VERIFICATION_TRACKED_MESSAGE_IDS_MAX` の上限を置きます。
+  あるグループで `sendMessage` が失敗し続ける状況（フォーラムの General トピックが閉じられている、Bot が発言禁止だがメンバー制限権限は残っている）では、それらが待機テーブルとメインスレッドのミラーに常駐し、90 秒ごとに当日ファイルを書き直します。レコード 1 件あたりのサイズ自体は有界です（`trackedMessageTimes` は `JOIN_WINDOW_MS` により直近 1 分ぶんの timestamp だけを保持し、`ANTI_RAID_PER_MINUTE_LIMIT` に達した時点で終端状態へ移ります）。代償は件数の側にあり、入室したことのある人ごとに 1 件ずつ、退役せずに残ります。
 
-  通常の window では到達しません（連投は 46 件目で同期的に kick へ遷移します）。この退化経路だけを抑えるためのもので、超過時は最も古い id を落とします。
-
-  **入室アナウンスはこのキューに入れません**。`announcementMessageId` として別に保持し、切り詰めの対象外です。混ぜると上限到達時に最初に押し出されるのは必ずそれ（常に最も古い 1 件）であり、処置経路以外にそれを削除する場所はありません——reminder が送れず記録が繰り返し延長されるまさにこの退化経路では、メンバーが数百件発言して上限を埋められるため、ボット自身が作ったアナウンスがグループに永遠に残ります。処置時はアナウンスを先に削除し、その後で追跡した発言を削除します。
+  **メンバー自身の発言はどの削除集合にも入りません**。認証レコードが持つのは timestamp 列 `trackedMessageTimes` だけで、メンバーの message id は一切記録しません。これは**認証待ちメンバー自身**の 60 秒 window（`JOIN_WINDOW_MS`）であり、`ANTI_RAID_PER_MINUTE_LIMIT` を超える 46 件目で同期的に `expelling{reason:"flood"}` へ遷移して kick します。`/flood_control` の「15 件 → 3 分ミュート」とは別の独立した機構です。処置で削除するのは Bot / Telegram 自身が作った 3 件——`announcementMessageId`、`reminderMessageId`、`replyReminderMessageId`——だけです。この境界は reminder の文面と一致していなければいけません。文面は「蹴り出す」としか言っておらず発言の抹消は約束していないため、削除すれば本人に一度も予告していない破壊的操作を行うことになり、自動処置の「kick のみ・BAN せず・痕跡は最小限」という方針とも矛盾します（メッセージを消すのは `revoke_messages` を伴う `/block` と blocklist 即時 kick の経路です。後述）。
 
   reminder ID のない現行形式 snapshot を復元したときも同じ owner を再利用し、状態置換、退出、teardown、Worker 終了で取り消します。これは未送信 reminder を示す正規の業務状態であり、旧形式との互換分岐ではありません。
 
@@ -247,7 +245,6 @@
 - `kickPending` の Telegram request が settle したことは kick 成功の証拠ではありません。`kickChatMemberWithOutcome === "kicked"`、または後続の正式な member probe で退出済みと確認できた場合だけ `kickSettled` を投げます。`forbidden` / `failed` はその試行の `executionStarted` を下ろし、同じ token を保持して上限付き terminal backoff へ入れます。
 
   免除、teardown、または新しい物理入室が状態を置き換えた後は、遅延結果も timer も処置を続けてはいけません。
-- `messageIds` の容量制約は通常メッセージ、重複入室告知、original/reply reminder の遅延着地を含む全 write ingress に適用します。すべて同じ bounded append helper を通し、通常メッセージ経路だけを切り詰めてはいけません。
 
 ### 連投ミュートと自身の権限キャッシュ
 
