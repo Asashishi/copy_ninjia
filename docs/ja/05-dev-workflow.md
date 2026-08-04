@@ -35,7 +35,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**1643 tests / 170 files / 30375 `expect()` calls**。全ソースコードの**関数カバレッジは 95.53%、行カバレッジは 96.61%**です。ルート README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**1657 tests / 171 files / 30450 `expect()` calls**。全ソースコードの**関数カバレッジは 95.53%、行カバレッジは 96.61%**です。ルート README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -88,7 +88,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 カバレッジとは別に、同じく静かに古くなる実測値が 2 組あります。
 
-- **中国語の文字列リテラル数**（現在およそ 629 ソース行 / 64 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
+- **中国語の文字列リテラル数**（現在およそ 641 ソース行 / 64 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
 - **動作値**（確率、容量、時間）：README 内のこれらの数値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース
