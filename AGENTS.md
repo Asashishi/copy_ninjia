@@ -36,6 +36,16 @@
 - 库或平台 API 已完整覆盖所需职责、行为和生命周期时，必须直接调用该 API，不得复制、重写或包装等价功能，并清理失去用途的实现、常量、缓存、类型、测试和说明。
 - 仅在 API 缺少项目特有的组合语义、错误归一化、权限边界或生命周期约束时增加最薄适配层，并用实现和测试覆盖差异。
 
+### 供应链版本锁定 *重要*
+
+- 2026-08-04 keyv/cacheable 投毒事件的受害版本一律禁止安装：`keyv@6.0.0`、`flat-cache@6.1.24`、`file-entry-cache@11.1.6`、`file-entry-cache@11.1.7`、`cacheable-request@13.0.20`、`cache-manager@7.2.10`、`cacheable@2.5.1`、`@cacheable/memory@2.2.1`、`@cacheable/net@2.1.1`、`@cacheable/node-cache@3.1.2`、`@cacheable/utils@2.5.1`、`@keyv/redis@6.0.0`、`@keyv/sqlite@6.0.0`、`@keyv/mongo@6.0.0`、`@thiennq/docs-viewer@1.6.2`、`@thiennq/docs-viewer@1.6.3`、`@thiennq/docs-viewer@1.6.4`。
+- `keyv` 必须保持 `4.5.4`，`flat-cache` 必须保持 `4.0.1`，`file-entry-cache` 必须保持 `8.0.0`；不得通过 `bun update`、放宽 semver 范围或重新解析锁文件升级这三个包。
+- 三者均为 `eslint` 的传递依赖；升级 `eslint` 或 `typescript-eslint` 前必须先确认新依赖树不会把这三个包带入受害版本，确认不通过时不得升级。
+- 受害版本清单必须至少交叉两个独立来源，不得只信单一厂商：Wiz 的 `wiz-sec-public/wiz-research-iocs` 未收录 `@keyv/*` 作用域包，Socket 记录的 `file-entry-cache@11.1.7` 与 Wiz 的 `11.1.6` 不一致；来源冲突时取并集。
+- 解除上述锁定必须同时满足：目标版本不在任一来源的受害清单中，且目标版本的 `integrity` 与 npm registry 的发布记录一致。
+- 依赖变更后必须以 `bun install --frozen-lockfile` 复核；锁文件出现上述包的版本漂移时必须回退并说明原因。
+- 排查投毒不得只比对版本号，必须同时确认无 `setup.mjs`、`math_init.js`、`Math_Symbol.js`、`gh-token-monitor.sh`、`~/.config/gh-token-monitor/` 等载荷与持久化残留，并确认 `.claude/`、`.vscode/` 下未被植入 autostart hook。
+
 ## Telegram 提示留存
 
 - Bot 发到群里的非功能性提示发送成功后必须统一在 30 秒后删除，包括命令校验失败、权限拒绝、用法提示和操作回执。
