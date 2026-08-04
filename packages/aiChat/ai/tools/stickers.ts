@@ -179,6 +179,20 @@ export function parseStickerIntent(argumentsJson: string): string | null {
   return intent;
 }
 
+/** viewStickerPackTool 的入参。 */
+export interface ViewStickerPackToolParams {
+  /**
+   * 本轮聊天状态心跳的挡位切换句柄（见 aiChat/ai/chatActionHeartbeat.ts 的
+   * startChatActionHeartbeat）。
+   */
+  chatAction: ChatActionControl;
+  /** 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单。 */
+  menu: readonly StickerPackCandidate[];
+  argumentsJson: string;
+  state: StickerRoundState;
+  signal?: AbortSignal;
+}
+
 /**
  * 执行一次 view_sticker_pack 工具调用：校验包编号和表达意图、拒绝重复查看
  * 或超过每轮五个不同包的上限，首次查看时保存意图并返回包内贴纸的编号清单。合法调用会把聊天状态心跳切到
@@ -186,19 +200,8 @@ export function parseStickerIntent(argumentsJson: string): string | null {
  * 模拟真人翻贴纸面板的节奏；这一挡不随停顿结束切回——保持到贴纸真正发出
  * （或模型转头发消息/本轮结束）为止，模型挑选贴纸那轮往返的耗时也计入
  * 群友可见的「选择贴纸」时长。非法编号立即报错、不装样子。
- * @param chatAction 本轮聊天状态心跳的挡位切换句柄（见
- *   aiChat/ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）。
- * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单。
  * @returns 喂回模型的结果 JSON 字符串（包名 + 编号清单，或错误说明）。
  */
-export interface ViewStickerPackToolParams {
-  chatAction: ChatActionControl;
-  menu: readonly StickerPackCandidate[];
-  argumentsJson: string;
-  state: StickerRoundState;
-  signal?: AbortSignal;
-}
-
 export async function viewStickerPackTool({
   chatAction,
   menu,
@@ -240,6 +243,35 @@ export async function viewStickerPackTool({
   });
 }
 
+/** sendStickerTool 的入参。 */
+export interface SendStickerToolParams {
+  /**
+   * 本轮聊天状态心跳的挡位切换句柄（见 aiChat/ai/chatActionHeartbeat.ts 的
+   * startChatActionHeartbeat）。
+   */
+  chatAction: ChatActionControl;
+  /**
+   * 本轮的同群发贴纸锁句柄（见 aiChat/ai/stickers/sendLock.ts 的
+   * createStickerSendLock）。
+   */
+  stickerLock: StickerSendLockControl;
+  chatId: number;
+  /**
+   * 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单（与组装工具描述/
+   * 一层清单时用的编号一一对应，见模块头注）。
+   */
+  menu: readonly StickerPackCandidate[];
+  argumentsJson: string;
+  state: StickerRoundState;
+  /**
+   * 发送成功后的回调（描述行 + 消息 ID），供调用方自录记忆/登记自发消息
+   * （防频道自回环，见 infra/selfSentTracker.ts）。
+   */
+  onSent: (stickerDescription: string, messageId: number) => void;
+  isActive?: () => boolean;
+  signal?: AbortSignal;
+}
+
 /**
  * 执行一次 send_sticker 工具调用：校验编号与本轮限额（必须先看过包清单、
  * 每轮最多 MAX_STICKERS_PER_REPLY 枚、绝不重复同一枚），通过后发送贴纸。
@@ -256,29 +288,9 @@ export async function viewStickerPackTool({
  * ——锁要到持锁轮结束才释放，重试也抢不到，所以顺手把本轮的「正在选择
  * 贴纸…」收回 idle（set("idle") 只收自己持有的挡位），不让群友对着一个
  * 等不来贴纸的状态白等。
- * @param chatAction 本轮聊天状态心跳的挡位切换句柄（见
- *   aiChat/ai/chatActionHeartbeat.ts 的 startChatActionHeartbeat）。
- * @param stickerLock 本轮的同群发贴纸锁句柄（见 aiChat/ai/stickers/sendLock.ts 的
- *   createStickerSendLock）。
- * @param menu 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单
- *   （与组装工具描述/一层清单时用的编号一一对应，见模块头注）。
- * @param onSent 发送成功后的回调（描述行 + 消息 ID），供调用方自录记忆/
- *   登记自发消息（防频道自回环，见 infra/selfSentTracker.ts）。
  * @returns 喂回模型的结果 JSON 字符串（成功/失败的简短说明，供模型决定
  *   后续动作——如被限额拒绝，模型该知道贴纸没发出去）。
  */
-export interface SendStickerToolParams {
-  chatAction: ChatActionControl;
-  stickerLock: StickerSendLockControl;
-  chatId: number;
-  menu: readonly StickerPackCandidate[];
-  argumentsJson: string;
-  state: StickerRoundState;
-  onSent: (stickerDescription: string, messageId: number) => void;
-  isActive?: () => boolean;
-  signal?: AbortSignal;
-}
-
 export async function sendStickerTool({
   chatAction,
   stickerLock,

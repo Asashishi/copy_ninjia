@@ -44,29 +44,31 @@ export interface ChatState {
   lockdown?: LockdownRecord;
   /**
    * 本群是否启用 AI 闲聊功能（对话缓存、随机插话、回复/@ 机器人触发的回复）。
-   * 缺省视为禁用，需通过 /ai_chat enable 显式开启（超级管理员或获授
-   * isCanControllAIPermission 的白名单身份可用，见 commands/aiChat.ts）。
+   * 缺省视为禁用，需通过 /ai_chat enable 显式开启（仅持有
+   * isCanControllAIPermission 的身份可用，超级管理员恒持有，见
+   * commands/aiChat.ts）。
    */
   isAIChatEnabled?: boolean;
   /**
    * 本群 /ja_copy 的日语翻译功能是否启用。缺省视为禁用，需通过
-   * /ja_copy enable 显式开启（超级管理员或获授
-   * isCanControllJATranslatePermission 的白名单身份可用，见 commands/jaCopy.ts）。
+   * /ja_copy enable 显式开启（仅持有 isCanControllJATranslatePermission 的
+   * 身份可用，超级管理员恒持有，见 commands/jaCopy.ts）。
    * 判断时必须使用 === true；false 与缺省等价，
    * 保存时会被规范化删除。
    */
   isJATranslationEnabled?: boolean;
   /**
    * 本群是否启用广告检测（每条消息经 DeepSeek 判定，命中即按 /block 处置）。
-   * 缺省视为禁用，需通过 /ad_detect enable 显式开启（超级管理员或获授
-   * isCanControllAdDetectPermission 的白名单身份可用，见 commands/adDetect.ts）。
+   * 缺省视为禁用，需通过 /ad_detect enable 显式开启（仅持有
+   * isCanControllAdDetectPermission 的身份可用，超级管理员恒持有，见
+   * commands/adDetect.ts）。
    * 判断时必须使用 === true。
    */
   isAdDetectEnabled?: boolean;
   /**
    * 本群是否启用防刷屏禁言。缺省视为禁用，需通过 /flood_control enable
-   * 显式开启（超级管理员或获授 isCanControllFloodControlPermission 的白名单
-   * 身份可用，见 commands/floodControl.ts）。判断时必须使用 === true。
+   * 显式开启（仅持有 isCanControllFloodControlPermission 的身份可用，超级
+   * 管理员恒持有，见 commands/floodControl.ts）。判断时必须使用 === true。
    */
   isFloodControlEnabled?: boolean;
   /**

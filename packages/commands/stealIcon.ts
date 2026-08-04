@@ -1,4 +1,5 @@
 import type { CommandContext, Context } from "grammy";
+import { STEAL_ICON_TARGET_TEXTS } from "../consts/commands";
 import type { CachedUser } from "../types/chatState";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
@@ -24,7 +25,7 @@ export async function handleStealIconCommand(ctx: CommandContext<Context>): Prom
   );
   if (cooldownClaim.rejected) return;
 
-  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, "/steal_icon");
+  const targetUser: CachedUser | undefined = await resolveCopyCommandTarget(ctx, STEAL_ICON_TARGET_TEXTS);
   if (!targetUser) {
     await releaseCopyCooldownClaim(cooldownClaim);
     return;

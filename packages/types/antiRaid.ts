@@ -33,8 +33,9 @@ export interface NewMemberMessage {
   /** 触发该入群事件的操作者 ID。 */
   actorId?: number;
   /**
-   * 主线程在投递当刻判定操作者是否在白名单。权限配置只归主线程读取，
-   * Worker 不维护跨线程副本；false 同时表示无操作者或不在白名单。
+   * 主线程在投递当刻判定操作者是否在白名单边界内（config/whitelist.json 的
+   * 条目，或恒在边界内的 SUPER_ADMIN_USER_ID）。权限配置只归主线程读取，
+   * Worker 不维护跨线程副本；false 同时表示无操作者或不在边界内。
    */
   actorIsWhitelisted: boolean;
 }
@@ -85,7 +86,10 @@ export interface VerifyCallbackMessage {
   targetUserId: number;
   /** 实际点击按钮的用户。 */
   from: AntiRaidMember;
-  /** 主线程在投递当刻判定点击者是否在白名单；Worker 不自行读取部署配置。 */
+  /**
+   * 主线程在投递当刻判定点击者是否在白名单边界内（含恒在边界内的
+   * SUPER_ADMIN_USER_ID）；Worker 不自行读取部署配置。
+   */
   fromIsWhitelisted: boolean;
 }
 
@@ -147,6 +151,7 @@ export interface PendingVerificationSnapshot extends VerificationSnapshotBase {
   successNoticeSent?: never;
   failureNoticeSent?: never;
   unconfirmedNoticeSent?: never;
+  removalConfirmed?: never;
 }
 
 /** 已落盘后等待拉人者最终核查的可恢复终态。 */
@@ -159,6 +164,7 @@ export interface CheckingInviterVerificationSnapshot
   successNoticeSent?: never;
   failureNoticeSent?: never;
   unconfirmedNoticeSent?: never;
+  removalConfirmed?: never;
 }
 
 /** 已落盘后等待踢人/清理结算的可恢复终态。 */
@@ -174,6 +180,8 @@ export interface ExpellingVerificationSnapshot
   failureNoticeSent?: boolean;
   /** 「没能确认还在不在群里」告警已发送；仅 expelling 终态可携带。 */
   unconfirmedNoticeSent?: boolean;
+  /** 踢人已确认成功、成功播报还欠着；仅 expelling 终态可携带（见 ExpellingState）。 */
+  removalConfirmed?: boolean;
 }
 
 /**
@@ -272,6 +280,23 @@ export interface BotPermissionsChangedMessage {
   permissions?: BotChatPermissions;
 }
 
+/**
+ * 主线程 -> Worker：某个群是不是超级群。
+ *
+ * 只有主线程看得见 `chat.type`（每条 update 都带着它），而「只踢不封」在两类群
+ * 里是两个不同的 Bot API 方法——`unbanChatMember` 按官方文档只认超级群/频道，
+ * 普通群要用 `banChatMember`（那里它不产生持久封禁）。踢人在本 Worker 执行，
+ * 因此按变更镜像过来。Worker 重建与进程启动时由主线程整表重放。
+ *
+ * 群类型近乎恒定（只有普通群升级成超级群这一次单向跃迁），主线程按值去重后
+ * 才投递，不会每条群消息发一条。
+ */
+export interface ChatKindChangedMessage {
+  type: "chatKind";
+  chatId: number;
+  isSupergroup: boolean;
+}
+
 /** 主线程 -> Worker：FIFO mailbox barrier；此前消息完成同步状态转移后回执。 */
 export interface AntiRaidBarrierMessage {
   type: "barrier";
@@ -301,6 +326,7 @@ export type AntiRaidWorkerMessage =
   | FloodCandidateMessage
   | ClearFloodControlMessage
   | BotPermissionsChangedMessage
+  | ChatKindChangedMessage
   | AntiRaidBarrierMessage
   | AntiRaidDrainMessage;
 

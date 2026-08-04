@@ -20,10 +20,20 @@ export function indexBufferedMessage(chatId: number, entry: BufferedMessage): vo
   index.set(entry.messageId, entry);
 }
 
-/** 消息被轮换移出热区时删键；整群索引空了就连外层键一并回收。 */
+/**
+ * 消息被轮换移出热区时删键；整群索引空了就连外层键一并回收。
+ *
+ * 只删「这一条自己登记的那个槽位」：同一个 message_id 完全可能有两份条目同时
+ * 在热区（快照 hydrate 出来一份，Telegram 又重投了同一条 update 再记一份，
+ * 全链路没有 message_id 去重），此时 index 指向的是后登记的那份。按 id 无条件
+ * delete 会在旧副本滑出热区时把仍在热区的新副本一并抹掉，随后
+ * collectReplyChain 在那一跳截断成 snapshotOnly，正文明明还在缓存里，机器人
+ * 却按残缺的回复链作答。
+ */
 export function unindexBufferedMessage(chatId: number, entry: BufferedMessage): void {
   const index: Map<number, BufferedMessage> | undefined = chatReplyChainIndexes.get(chatId);
   if (!index) return;
+  if (index.get(entry.messageId) !== entry) return;
   index.delete(entry.messageId);
   if (index.size === 0) chatReplyChainIndexes.delete(chatId);
 }

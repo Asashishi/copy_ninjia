@@ -44,21 +44,36 @@ function latestPriorVerificationDay(day: string, dir: string): string | undefine
 }
 
 /**
- * 只删除本目录中明确匹配日期命名的旧 JSON，不碰临时文件或其它资产。
- * 从最旧删到最新：若中途失败，最新旧日仍是下次恢复的权威基线。
+ * 只删除本目录中明确匹配日期命名、且**严格早于** day 的 JSON，不碰临时文件
+ * 或其它资产。从最旧删到最新：若中途失败，最新旧日仍是下次恢复的权威基线。
+ *
+ * 晚于 day 的日文件一律保留：latestPriorVerificationDay 用 `candidate >= day`
+ * 明确拒绝把它们并进本次恢复（见上），删掉就等于把一整天的待验证记录未读丢弃
+ * ——宿主时钟快于真实时间（VM 恢复、NTP 同步前启动）时写出的那份就是这种文件。
+ * 留着它不会常驻：时钟走到那天时，它自己就是当天文件并被正常恢复。
  */
 export function removeOldVerificationDays(
   day: string,
   dir: string = VERIFICATION_MEMORY_DIR
 ): void {
   const oldDays: string[] = [];
+  let futureDays: number = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (
-      !entry.isFile() ||
-      !DAY_FILE_PATTERN.test(entry.name) ||
-      entry.name === `${day}.json`
-    ) continue;
+    if (!entry.isFile()) continue;
+    const candidate: string | undefined = DAY_FILE_PATTERN.exec(entry.name)?.[1];
+    if (candidate === undefined || candidate === day) continue;
+    if (candidate > day) {
+      futureDays++;
+      continue;
+    }
     oldDays.push(entry.name);
+  }
+  if (futureDays > 0) {
+    console.error(
+      `[diskIOWorker] kept ${futureDays} verification day file(s) dated after ${day}: ` +
+      "the host clock most likely stepped backwards, and these files hold pending " +
+      "verifications that this recovery refuses to merge."
+    );
   }
   oldDays.sort();
   for (const name of oldDays) unlinkSync(join(dir, name));

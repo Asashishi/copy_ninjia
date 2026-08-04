@@ -3,16 +3,16 @@ import type { CachedUser } from "../types/chatState";
 import type { MuteChatMemberOutcome, UnmuteChatMemberOutcome } from "../infra/telegram";
 import { muteChatMemberWithOutcome, sendCommandMessage, unmuteChatMemberWithOutcome } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
 import { isWhitelisted } from "../config/whitelist";
 import {
   MUTE_DURATION_ARG_PATTERN,
   MUTE_DURATION_UNIT_MS,
   MUTE_MAX_DURATION_MS,
   MUTE_MIN_DURATION_MS,
+  MUTE_TARGET_TEXTS,
+  UNMUTE_TARGET_TEXTS,
 } from "../consts/commands";
 import { resolveCommandTarget } from "./targetResolution";
-import type { CommandTargetMessages } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 
 /**
@@ -53,7 +53,7 @@ const MUTE_USAGE_TEXT: string =
   `回复 TA 的消息发 /mute 10m，或者 /mute @username 10m、/mute 用户id 10m♡`;
 
 /**
- * /mute 与 /unmute 共用的入口校验：发起人在白名单里、且本群是超级群。
+ * /mute 与 /unmute 共用的入口校验：发起人持有对应权限、且本群是超级群。
  * 任一不满足时回复嘲讽/说明并返回 false，调用方直接 return。
  * `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群与私聊里连
  * 目标都不必解析——打出去只会换一句报错（同 antiRaid/floodControl.ts 只在
@@ -66,7 +66,7 @@ async function passesMuteCommandGate(ctx: CommandContext<Context>, command: "mut
   const permission: "isCanMute" | "isCanUnMute" =
     command === "mute" ? "isCanMute" : "isCanUnMute";
 
-  if (!actor || !hasCommandPermission(ctx, permission, false)) {
+  if (!actor || !hasCommandPermission(ctx, permission)) {
     await sendCommandMessage({
       chatId,
       text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /${command} 人？哪来的资格呀，笨蛋，洗洗睡吧♡`,
@@ -85,17 +85,6 @@ async function passesMuteCommandGate(ctx: CommandContext<Context>, command: "mut
   }
 
   return true;
-}
-
-/** /mute 与 /unmute 的目标解析文案，除动词外与 /block 的口径一致。 */
-function muteTargetMessages(command: "mute" | "unmute"): CommandTargetMessages {
-  return {
-    missingTarget: `笨蛋，要么 /${command} @username 或 /${command} 用户id，要么回复 TA 的一条消息，本天才可不会读心术♡`,
-    invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数），别拿半截参数糊弄本天才♡`,
-    unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息再来吧♡`,
-    conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想对谁动手就只留一个，要么删掉参数、要么别回复♡`,
-    selfTarget: `笨蛋，本天才才不会捂自己的嘴呢♡`,
-  };
 }
 
 /**
@@ -124,14 +113,17 @@ async function rejectUnrestrictableTarget(
  *
  * 参数形态：时长必填且必须是最后一个 token（`数字+m/h/d`，见
  * parseMuteDurationMs），目标用回复消息、@username 或用户 id 指定（时长带
- * 单位字母、id 是纯数字，两者形态互斥，不会互相抢参数）。仅
- * 白名单内对应 isCanMute=true 的身份可用；目标是自己人（超级管理员或白名单
- * 成员）时拒绝——他们本来就不参与任何自动处置（见 antiRaid/memberFacts.ts
- * 的 isProtectedSender），手动命令也不该例外。
+ * 单位字母、id 是纯数字，两者形态互斥，不会互相抢参数）。仅持有 isCanMute 的
+ * 身份可用（超级管理员恒持有，见 config/whitelist.ts）；目标是自己人（白名单
+ * 边界内的身份，含超级管理员）时拒绝——他们本来就不参与任何自动处置（见
+ * antiRaid/memberFacts.ts 的 isProtectedSender），手动命令也不该例外。
  *
- * 战报不自动删除：/block 那类公告删的是「处置已完结」的战报，这条公告在
- * 禁言期内就是「TA 为什么不说话」的唯一现场说明；时长又长达 366 天，远超
- * setTimeout 的取值范围，定时删除本身都不可靠。
+ * 成功战报与失败提示一样走 sendCommandMessage 的默认路径，30 秒后自动删除：
+ * 群里的非功能性提示统一由那道边界回收，操作回执也在其内（见
+ * AGENTS.md 的「Telegram 提示留存」）。长期保留是需要显式授权的例外，`/mute`
+ * 不在其中——`preserveInGroup: true` 只出现在获授权的调用点（`/permission help`
+ * 与成功的中文动作命令）。禁言期内「TA 为什么不说话」由 Telegram 自己的成员
+ * 权限界面回答，不靠一条常驻群里的机器人消息。
  */
 export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -158,14 +150,15 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     // 禁言可逆，但目标照样用 id 指定最准（同 /block 的理由：用户名会被释放后
     // 重新注册）；时长 token 带单位字母，纯数字的 id 不会被它接住。
     acceptUserId: true,
-    messages: muteTargetMessages("mute"),
+    messages: MUTE_TARGET_TEXTS,
   });
   if (!targetUser) return;
   if (await rejectUnrestrictableTarget(ctx, targetUser)) return;
 
   // 自己人不可禁言：部署方亲手配的身份不该被机器人按住（口径同
-  // isProtectedSender），回错消息也只损失一句嘲讽。
-  if (targetUser.id === SUPER_ADMIN_USER_ID || isWhitelisted(targetUser.id)) {
+  // isProtectedSender；超级管理员已含在 isWhitelisted 内），回错消息也只损失
+  // 一句嘲讽。
+  if (isWhitelisted(targetUser.id)) {
     await sendCommandMessage({
       chatId,
       text: `笨蛋，${formatTargetLabel(targetUser)} 可是自己人，本天才才不捂自己人的嘴♡`,
@@ -217,7 +210,7 @@ export async function handleUnmuteCommand(ctx: CommandContext<Context>): Promise
     botUserId: ctx.me.id,
     rawArgument: ctx.match,
     acceptUserId: true,
-    messages: muteTargetMessages("unmute"),
+    messages: UNMUTE_TARGET_TEXTS,
   });
   if (!targetUser) return;
   if (await rejectUnrestrictableTarget(ctx, targetUser)) return;

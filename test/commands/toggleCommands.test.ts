@@ -21,9 +21,11 @@ mock.module("../../packages/infra/config", () => ({
   // 广告检测的凭据；缺这一项 /ad_detect enable 会被拒（见 commands/adDetect.ts）。
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
 }));
+// 超级管理员由身份直接持有全部白名单权限（见 packages/config/whitelist.ts 的
+// getEffectiveWhitelistPermissions），其余身份按逐项授权表决定。
 mock.module("../../packages/config/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
-    delegatedPermissions.get(id)?.has(key) === true,
+    id === 100 || delegatedPermissions.get(id)?.has(key) === true,
 }));
 // 开关命令测试只验证授权与状态变化；部署文件的失败分支由 configGate 与
 // featurePreflight 专门覆盖，不能让本机 g-auth.json 是否存在左右这里的结果。
@@ -102,8 +104,14 @@ describe("超级管理员开关命令", () => {
     expect(isSuperAdmin({ id: 100 } as never)).toBe(true);
 
     const messages = {
-      rejection: (label: string): string => `reject:${label}`,
-      usage: "usage",
+      texts: {
+        rejection: (label: string): string => `reject:${label}`,
+        usage: "usage",
+        enabled: "enabled",
+        disabled: "disabled",
+        alreadyEnabled: "alreadyEnabled",
+        alreadyDisabled: "alreadyDisabled",
+      },
       permission: "isCanControllAIPermission" as const,
     };
     await expect(resolveSuperAdminToggleArg(context("enable", 101), messages)).resolves.toBeUndefined();
@@ -247,16 +255,28 @@ describe("超级管理员开关命令", () => {
     expect(resolveBotAdminStatus).toHaveBeenCalledTimes(1);
   });
 
-  test("/init disable 拆运行态失败仍持久化禁用状态，但不发送成功提示", async () => {
+  test("/init disable 拆运行态失败仍持久化禁用状态，回执如实说没拆干净", async () => {
     const teardownError = new Error("chat teardown failed");
     states.set(-1001, { botIsAdmin: true });
     teardownChatRuntime.mockRejectedValueOnce(teardownError);
 
-    await expect(handleInitCommand(context("disable"))).rejects.toBe(teardownError);
+    // 不上抛：异常逸出会让 acknowledged runner 带非零码退出且不确认 offset，
+    // Telegram 重投同一条 /init disable，而那时 wasEnabled 已经是 false，
+    // 管理员反而会收到一句「本来就关着」（见 commands/init.ts）。
+    await handleInitCommand(context("disable"));
 
     expect(states.get(-1001)?.isInitEnabled).toBe(false);
     expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
+    expect(lastReplyText()).toContain("没能拆干净");
+  });
+
+  test("/init disable 落盘失败仍原样上抛，不确认这条 update", async () => {
+    const persistError = new Error("state store quiesced");
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+    persistAuthoritativeState.mockRejectedValueOnce(persistError);
+
+    await expect(handleInitCommand(context("disable"))).rejects.toBe(persistError);
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
@@ -296,5 +316,103 @@ describe("超级管理员开关命令", () => {
     releaseDelete();
     await command;
     expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** 每条开关命令的驱动方式与它写的那个 ChatState 字段。 */
+interface ToggleCase {
+  readonly name: string;
+  readonly field: string;
+  readonly run: (argument: string) => Promise<void>;
+}
+
+const TOGGLE_CASES: readonly ToggleCase[] = [
+  {
+    name: "/ai_chat",
+    field: "isAIChatEnabled",
+    run: (argument: string): Promise<void> => handleAiChatCommand(context(argument)),
+  },
+  {
+    name: "/ad_detect",
+    field: "isAdDetectEnabled",
+    run: (argument: string): Promise<void> => handleAdDetectCommand(context(argument)),
+  },
+  {
+    name: "/flood_control",
+    field: "isFloodControlEnabled",
+    run: (argument: string): Promise<void> => handleFloodControlCommand(context(argument)),
+  },
+  {
+    name: "/ja_copy",
+    field: "isJATranslationEnabled",
+    run: (argument: string): Promise<void> => handleJaCopyCommand(context(argument)),
+  },
+  {
+    name: "/init",
+    field: "isInitEnabled",
+    run: (argument: string): Promise<void> => handleInitCommand(context(argument)),
+  },
+];
+
+function lastReplyText(): string {
+  return (sendMessage.mock.calls.at(-1)?.[0] as { text: string }).text;
+}
+
+describe("开关命令的同状态重复执行", () => {
+  for (const toggle of TOGGLE_CASES) {
+    test(`${toggle.name} 同状态重复执行说破「本来就是」，不复用刚改完那句`, async () => {
+      for (const action of ["enable", "disable"] as const) {
+        const target: boolean = action === "enable";
+        states.clear();
+        // 先把状态推到相反一侧，保证紧接着那一次调用一定是真实变化。
+        if (!target) await toggle.run("enable");
+        sendMessage.mockClear();
+
+        await toggle.run(action);
+        const changedText: string = lastReplyText();
+        expect(states.get(-1001)?.[toggle.field]).toBe(target);
+
+        await toggle.run(action);
+        const repeatText: string = lastReplyText();
+        // 状态不动，但回执必须换一句：沿用刚改完那句等于报告了一次并不存在的
+        // 状态变化，管理员会以为自己刚刚才把它打开/关掉。
+        expect(states.get(-1001)?.[toggle.field]).toBe(target);
+        expect(repeatText).not.toBe(changedText);
+        expect(repeatText).toContain("本来就");
+      }
+    });
+  }
+
+  test("同状态重复 disable 仍落盘并重跑运行时清理：上一次 Worker 不可用时就靠它补做", async () => {
+    // 清理是尽力而为、失败只记日志（见 commands/adDetect.ts），所以「关掉之后
+    // 再关一次」正是管理员修好 Worker 后最自然的手工重试动作。回执如实说状态
+    // 没变，但这条路径本身不能因此被短路掉。
+    clearAdDetection.mockImplementationOnce((): never => {
+      throw new Error("Anti-Raid Worker is unavailable.");
+    });
+    states.set(-1001, { isAdDetectEnabled: true });
+
+    await handleAdDetectCommand(context("disable"));
+    expect(clearAdDetection).toHaveBeenCalledTimes(1);
+    saveStateInBackground.mockClear();
+
+    await handleAdDetectCommand(context("disable"));
+    expect(clearAdDetection).toHaveBeenCalledTimes(2);
+    expect(saveStateInBackground).toHaveBeenCalledWith("ad_detect toggled");
+    expect(lastReplyText()).toContain("本来就");
+  });
+
+  test("/init 重复 enable 仍不作废管理员记录，只是回执说破没变", async () => {
+    // 空操作照样作废的话，随后的重新判定会被 recordBotAdminStatus 当成一次全新
+    // 的 undefined -> true 边沿，把整份黑名单再清扫一遍（见 commands/init.ts）。
+    states.set(-1001, { isInitEnabled: true, botIsAdmin: true });
+
+    await handleInitCommand(context("enable"));
+
+    expect(invalidateBotAdminStatus).not.toHaveBeenCalled();
+    expect(resolveBotAdminStatus).not.toHaveBeenCalled();
+    expect(states.get(-1001)?.botIsAdmin).toBe(true);
+    expect(states.get(-1001)?.isInitEnabled).toBe(true);
+    expect(lastReplyText()).toContain("本来就");
   });
 });

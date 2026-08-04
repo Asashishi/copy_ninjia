@@ -137,6 +137,35 @@ describe("logger persistence routing boundary", () => {
     }
   });
 
+  test("Error 自带 __proto__ 自有属性时照常落进诊断字段，不命中原型访问器", () => {
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // 依赖抛出来的 Error 带上这个键并不稀奇（grammY/genai/sharp/gRPC 包装的
+      // payload 都可能）。累加对象若是普通 `{}`，`own[key] = ...` 命中的是
+      // Object.prototype 继承来的访问器：值是对象就静默换掉记录的原型，不是对象
+      // 就整句赋值失效——两种结局都让这个字段从 logs/ 的错误记录里消失，而它
+      // 往往正是唯一能解释本次故障的诊断。
+      const error: Error = new Error("dependency blew up");
+      Object.defineProperty(error, "__proto__", {
+        value: { hint: "from dependency" },
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+      logger.error("boom", error);
+
+      const serialized: unknown = consoleError.mock.calls.at(-1)![1];
+      expect(serialized).toMatchObject({
+        message: "dependency blew up",
+        ["__proto__"]: { hint: "from dependency" },
+      });
+      // 原型没有被换掉：记录仍是普通对象。
+      expect(Object.getPrototypeOf(serialized as object)).toBe(Object.prototype);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   test("密钥恰好是 JSON 结构字符时，脱敏后解析不了也不能让 logger 自己抛出去", () => {
     const originalSecret: string | undefined = process.env.AD_DETECT_DEEPSEEK_API_KEY;
     // optionalEnv 只要求 trim 后非空，`"` 是一个能通过校验的配错值：它会把整份

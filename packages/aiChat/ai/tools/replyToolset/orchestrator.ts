@@ -58,7 +58,7 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
 
   const executeSendMessage: (argumentsJson: string) => Promise<string> = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
   const executeAddReaction: (argumentsJson: string) => Promise<string> = createAddReactionExecutor(ctx);
-  const executeGenerateImage: (argumentsJson: string) => Promise<string> = createGenerateImageExecutor(ctx, messageState);
+  const executeGenerateImage: (argumentsJson: string) => Promise<string> = createGenerateImageExecutor(ctx, messageState, (): number => actionsUsed);
 
   async function dispatch(name: string, argumentsJson: string): Promise<string> {
     switch (name) {
@@ -100,14 +100,20 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       if (!ctx.isActive()) {
         return toolError(REPLY_INVALIDATED_TOOL_ERROR);
       }
-      if (ACTION_TOOL_NAMES.includes(name) && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
+      // 这道门禁只管「还有没有额度开始一次调用」。会落地第二个动作的两个工具
+      // （send_message 的手滑补字、generate_image 的超长图注独立补发）各自在
+      // 执行侧按剩余预算决定要不要发那一条，因此这里比调用前的已用数就够，不必
+      // 按最坏情况预留、白白吃掉最后一格（见 typoHandling.ts 的
+      // TYPO_MIN_REMAINING_ACTIONS 与 imageGeneration.ts 的同名口径）。
+      const isActionTool: boolean = ACTION_TOOL_NAMES.includes(name);
+      if (isActionTool && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
         return toolError(
           `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images) per reply`
         );
       }
 
       const result: string = await dispatch(name, argumentsJson);
-      if (ACTION_TOOL_NAMES.includes(name)) {
+      if (isActionTool) {
         try {
           const parsed: { success?: boolean; actions_used?: unknown; } = JSON.parse(result) as { success?: boolean; actions_used?: unknown };
           if (

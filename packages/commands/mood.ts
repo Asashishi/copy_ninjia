@@ -101,15 +101,15 @@ export async function handleQueryMoodCommand(ctx: CommandContext<Context>): Prom
  * 处理 /switch_mood 指令：立即重抽本群 AI 的当前心情并回复结果。心情缓存
  * 在 AI Worker 线程内（cache/workers/aiChat/mood.ts），主线程只 post 一条 switchMood
  * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat/index.ts 的 switchAiMood），
- * 回复固定从这里发出，不走 AI 回复流水线。超级管理员恒可用，白名单身份可通过
- * isCanSwitchMood 单独获权；其他人尝试只会被嘲讽。
+ * 回复固定从这里发出，不走 AI 回复流水线。仅持有 isCanSwitchMood 的身份可用；
+ * 超级管理员恒持有该权限（见 config/whitelist.ts），白名单身份可由 /permission 单独获权；其他人尝试只会被嘲讽。
  */
 export async function handleSwitchMoodCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
 
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  if (!actor || !hasCommandPermission(ctx, "isCanSwitchMood", true)) {
+  if (!actor || !hasCommandPermission(ctx, "isCanSwitchMood")) {
     await sendCommandMessage({
       chatId,
       text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想给本天才换心情？本天才的心情才轮不到杂鱼做主呀♡`,

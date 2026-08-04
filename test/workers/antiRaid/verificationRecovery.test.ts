@@ -35,7 +35,11 @@ mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {},
   sendMessage: async (): Promise<number | undefined> => {
     reminderAttempts++;
-    return reminderResults.shift();
+    // 队列为空按「发出去了」算。终态播报发不出去时不再算结算（见
+    // verificationEffects/terminal.ts 的 removalConfirmed），默认返回 undefined
+    // 会让每一个处置终态都停在等播报那一步；要模拟发送失败的用例自己往队列里
+    // 放一个 undefined。
+    return reminderResults.length > 0 ? reminderResults.shift() : 700;
   },
   deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> =>
     (await recordDelete(messageId)) === "deleted",
@@ -120,6 +124,11 @@ describe("Anti-Raid Worker verification recovery", () => {
     settleLatestTerminal(42);
     await Bun.sleep(0);
     expect(kicks).toBe(1);
+    // 踢完还要等那条成功播报：它先写进新 revision，收到那一版的落盘回执才结算
+    // （见 verificationEffects/terminal.ts）。播报没发出去时终态不结算，人不会
+    // 被静默地从群里抹掉而一句说明都没有。
+    settleLatestTerminal(42);
+    await Bun.sleep(0);
 
     const expired: VerificationSnapshot = record(43, Date.now() - 1);
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 3, verifications: [expired] });
@@ -127,6 +136,8 @@ describe("Anti-Raid Worker verification recovery", () => {
     settleLatestTerminal(43);
     await Bun.sleep(0);
     expect(kicks).toBe(2);
+    settleLatestTerminal(43);
+    await Bun.sleep(0);
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 3, verifications: [expired] });
     await Bun.sleep(0);
 
@@ -150,8 +161,10 @@ describe("Anti-Raid Worker verification recovery", () => {
       revision: event.revision,
       userId: event.userId,
     }))).toEqual([
-      { generation: 2, revision: 3, userId: 42 },
-      { generation: 3, revision: 3, userId: 43 },
+      // revision 比 44/45 多一格：处置终态在踢完之后还要为「成功播报已发出」
+      // 再写一版快照，收到那一版的回执才结算。
+      { generation: 2, revision: 4, userId: 42 },
+      { generation: 3, revision: 4, userId: 43 },
       { generation: 4, revision: 2, userId: 44 },
       { generation: 4, revision: 2, userId: 45 },
     ]);

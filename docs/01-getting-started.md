@@ -45,9 +45,14 @@ cp -r config_example config
   - DeepSeek API 密钥（OpenAI 兼容接口），供 `/ad_detect` 广告判定使用。留空时
     `/ad_detect enable` 被拒绝，其余功能照常运行。
 - **`SUPER_ADMIN_USER_ID`**（必填）
-  - 单个十进制超级管理员用户 ID；拥有全部命令权限，且只有它能使用 `/init`、
-    `/batch_kick`、`/permission` 的修改操作、`/white` 与 `/send`。白名单身份也可用
-    `/permission query` 查询自身权限，并用 `/permission help` 查看说明。
+  - 单个十进制超级管理员用户 ID。这个身份本身即持有 `whitelist.json` 能授予的
+    **全部**逐项权限，**不需要**在 `whitelist.json` 里另配一条；它同时恒在白名单
+    边界内，因此也享有 copy 冷却豁免、验证代点与自动处置保护，并且不可被 `/block`、
+    `/mute` 或 `/batch_kick` 处置。
+  - 另有五项只认身份、无法通过 `whitelist.json` 授予：`/init`、`/batch_kick`、
+    `/permission` 的修改操作、`/white` 与 `/send`。
+  - 白名单身份可用 `/permission query` 查询自身权限，并用 `/permission help` 查看说明；
+    超级管理员的 `query` 返回那份逐项全开的视图。
 - **`COPY_NINJIA_DATA_ROOT`**（可空）
   - 运行时数据根目录；留空时数据落在项目根。详见
     [07 运维与排障](07-operations.md#数据根)。
@@ -63,7 +68,8 @@ cp -r config_example config
   - **校验**：纯文本，无 schema。
 - **`config/whitelist.json`**（[示例](../config_example/whitelist.json)）
   - **内容**：用户/频道白名单及逐项权限；身份存在本身还代表 copy 冷却豁免、
-    验证代点与自动处置保护。
+    验证代点与自动处置保护。`SUPER_ADMIN_USER_ID` 不必也不应写进这里——它的
+    全部权限由身份直接给出，写进来的条目永远不会被读到。
   - **校验**：[`packages/config/whitelist.ts`](../packages/config/whitelist.ts)；
     联网前严格加载，缺失或损坏会拒绝启动。
 - **`config/blocklist.json`**（[示例](../config_example/blocklist.json)）
@@ -91,7 +97,7 @@ cp -r config_example config
 
 先停止旧进程并备份整个 `config/`；该目录从 3.0.0 起不再受 Git 追踪，直接更新工作树会移除旧版跟踪的四份文件。更新代码后，从备份恢复 `stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json`，并从 `config_example/` 新增 `whitelist.json` 与 `blocklist.json`。
 
-旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须手工改成 `whitelist.json` 的键，然后删除该环境变量。只需要保留 copy 冷却豁免、验证代点和自动处置保护的身份可写成空对象 `{}`；要保持旧版 `/block` 与 `/unblock` 能力则显式写入 `"isCanBlock": true`、`"isCanUnBlock": true`。其它权限按需开启；白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询解析默认值后的自身完整权限。`/white` 与 `/permission` 的修改操作会原子改写该文件，因此运行用户必须对 `config/` 目录拥有写权限；其余配置仍可只读。
+旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须手工改成 `whitelist.json` 的键，然后删除该环境变量。只需要保留 copy 冷却豁免、验证代点和自动处置保护的身份可写成空对象 `{}`；要保持旧版 `/block` 与 `/unblock` 能力则显式写入 `"isCanBlock": true`、`"isCanUnBlock": true`。其它权限按需开启；`SUPER_ADMIN_USER_ID` 不必迁进来，它的全部权限由身份直接给出（旧版把它写进白名单的部署可以留着不管，那条条目已经读不到了，也可以用 `/white <超管id> disable` 清掉）。白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询解析默认值后的自身完整权限。`/white` 与 `/permission` 的修改操作会原子改写该文件，因此运行用户必须对 `config/` 目录拥有写权限；其余配置仍可只读。
 
 **例外：功能已经开着的时候仍然拒绝启动。**`state.json` 里那个 `true` 是管理员当初明确按下的，把它悄悄降级成「静默不干活」，群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译。因此启动时会核对一次：凡是还有群开着的可选功能，凭据与配置必须齐备，缺了就带着群 id 和缺失项拒绝启动（见 [`packages/app/featurePreflight.ts`](../packages/app/featurePreflight.ts)）。出路是补回前提，或者先 `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` 再撤掉它。
 

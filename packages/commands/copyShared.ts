@@ -1,5 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, GlobalCopyState } from "../types/chatState";
+import type { CommandTargetMessages } from "../types/commands";
 import type {
   CopyCooldownClaim,
   GrantedCopyCooldownClaim,
@@ -99,45 +100,37 @@ export async function releaseCopyCooldownClaim(
  * copy 类命令的目标解析，见 targetResolution.ts 的 resolveCommandTarget（回复
  * 优先于 @username）。解析失败（没给目标、@username 没缓存、目标是机器人
  * 自己）时反馈已发送。
- * @param commandName 触发的命令名（如 "/copy"、"/steal_icon"），用于错误提示文案。
+ * @param messages 触发命令自己的目标解析文案表（见 consts/commands.ts）。
  * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
  */
 export async function resolveCopyCommandTarget(
   ctx: CommandContext<Context>,
-  commandName: string
+  messages: CommandTargetMessages
 ): Promise<CachedUser | undefined> {
   return resolveCommandTarget({
     chatId: ctx.chat.id,
     message: ctx.msg,
     botUserId: ctx.me.id,
     rawArgument: ctx.match,
-    messages: {
-      missingTarget: `笨蛋，要么 ${commandName} @username，要么直接回复 TA 的一条消息再 ${commandName}，本天才总得知道杂鱼是谁吧♡`,
-      invalidUsername: (rawArgument: string): string =>
-        `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 ${commandName} @username，别在后面夹垃圾♡`,
-      unknownUsername: (rawUsername: string): string =>
-        `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 ${commandName} 呀♡`,
-      conflictingTarget: (rawArgument: string): string =>
-        `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该盯上哪个杂鱼呀？只留一个再来♡`,
-      selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
-    },
+    messages,
   });
+}
+
+/** stealAvatarInBackground 的入参。 */
+export interface StealAvatarInBackgroundParams {
+  chatId: number;
+  target: CachedUser;
+  /** 头像更换成功时发送的文本。 */
+  successText: string;
+  /** 头像更换失败时发送的文本。 */
+  failureText: string;
 }
 
 /**
  * 在后台把目标的头像偷来设为机器人自己的头像，完成后按结果发送战报。
  * 不阻塞主消息处理：即使头像抓取失败或耗时很久，也不会卡住调用方的后续
  * 逻辑（比如 /copy 的复读已经生效）。
- * @param successText 头像更换成功时发送的文本。
- * @param failureText 头像更换失败时发送的文本。
  */
-export interface StealAvatarInBackgroundParams {
-  chatId: number;
-  target: CachedUser;
-  successText: string;
-  failureText: string;
-}
-
 export function stealAvatarInBackground({
   chatId,
   target,

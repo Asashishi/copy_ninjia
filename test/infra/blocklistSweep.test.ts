@@ -500,6 +500,38 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     ]);
   });
 
+  test("投递边界抛错时不得清掉 await 期间刚被并发回执置上的权限闩锁", async () => {
+    // 时序：A 群已有一批 frozen 秒踢在途；补扫认领了新的 removalId 并 await
+    // durable 投递；等待期间 Worker 回来一条属于**旧批次**的 permissionDenied
+    // 回执——notePermissionBlocked 置上闩锁后，因 removalId 对不上而提前返回，
+    // 闩锁是它留下的唯一痕迹。随后投递边界抛错，失败记账若原样写
+    // permissionBlocked: false，就把它抹掉了：此后每一次管理员身份观测都会
+    // 重新武装一整轮注定 400 的全名单补扫，与验证超时踢人抢同一条限流队列。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    const frozen = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
+
+    remover.mockImplementationOnce(async (): Promise<void> => {
+      settleBlockedRemoval({
+        type: "blockedMembersRemoved",
+        chatId: -1001,
+        removalId: frozen.removalId,
+        complete: false,
+        permissionDenied: true,
+      });
+      throw new WorkerUndeliveredError("Anti-Raid Worker is unavailable.");
+    });
+
+    await expect(sweepBlockedMembers(-1001, 1_000)).rejects.toThrow();
+
+    expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeTrue();
+    // 闩锁还在 → 不再按时间重扫，Worker 重生也不重投这批必败任务。
+    remover.mockClear();
+    await sweepBlockedMembers(-1001, 1_000 + 86_400_000);
+    expect(remover).not.toHaveBeenCalled();
+    replayPendingBlockedRemovals();
+    expect(remover).not.toHaveBeenCalled();
+  });
+
   test("从没扫过的群也要记下权限受阻，而不是把标记丢掉", async () => {
     // 补扫记录只由 sweepBlockedMembers 创建，而机器人从来就没有封禁权限的群
     // 恰恰是最需要这个标记的一类：秒踢那一路的权限拒绝若记不下来，

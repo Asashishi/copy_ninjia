@@ -6,7 +6,7 @@ const probeChatMembership = mock(
   async (_chatId: number, _userId: number): Promise<boolean | undefined> => true
 );
 const kickChatMemberWithOutcome = mock(
-  async (_chatId: number, _userId: number): Promise<string> => "kicked"
+  async (_params: { chatId: number; userId: number }): Promise<string> => "kicked"
 );
 const banChatMemberWithOutcome = mock(
   async (_chatId: number, _userId: number): Promise<string> => "banned"
@@ -19,10 +19,12 @@ const readRecentJoinLog = mock(
 );
 const loggerError = mock((..._args: unknown[]): void => {});
 
+// 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
+// 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
 mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/config/whitelist", () => ({
-  isWhitelisted: (id: number): boolean => id === 100,
-  hasWhitelistPermission: (): boolean => false,
+  isWhitelisted: (id: number): boolean => id === 1 || id === 100,
+  hasWhitelistPermission: (id: number): boolean => id === 1,
 }));
 mock.module("../../packages/infra/blocklist/membership", () => ({ isUserBlocked }));
 mock.module("../../packages/infra/blocklist/sweep", () => ({
@@ -184,7 +186,7 @@ describe("/batch_kick", () => {
       }
     );
     kickChatMemberWithOutcome.mockImplementation(
-      async (_chatId: number, userId: number): Promise<string> => {
+      async ({ userId }: { chatId: number; userId: number }): Promise<string> => {
         if (userId === 5) return "forbidden";
         if (userId === 6) return "failed";
         return "kicked";
@@ -195,7 +197,7 @@ describe("/batch_kick", () => {
 
     expect(probeChatMembership.mock.calls.map((call) => call[1]))
       .toEqual([2, 3, 4, 5, 6]);
-    expect(kickChatMemberWithOutcome.mock.calls.map((call) => call[1]))
+    expect(kickChatMemberWithOutcome.mock.calls.map((call) => call[0]?.userId))
       .toEqual([4, 5, 6]);
     expect(lastReplyText()).toContain("踢出 1");
     expect(lastReplyText()).toContain("已不在群 1");

@@ -117,16 +117,27 @@ function pruneRecentBlockedJoins(now: number): void {
  * new_chat_members 两条路径各来一次，只有第一次该带 joinedAt——处置这一路
  * 没有 joinCreatesNewRecord 那道去重闸，两条都带就是记两次
  * （见 cache/main/antiRaid/blocklistGuard.ts）。
+ *
+ * 只判定、不记账：真正消耗这条去重项的时机见 commitBlockedJoinCount。
  */
-function claimBlockedJoinCount(chatId: number, userId: number, now: number): boolean {
+function owesBlockedJoinCount(key: string, now: number): boolean {
   pruneRecentBlockedJoins(now);
-  const key: string = verificationKey(chatId, userId);
   const countedAt: number | undefined = recentBlockedJoinCounts.get(key);
-  if (countedAt !== undefined && now - countedAt < JOIN_WINDOW_MS) return false;
+  return countedAt === undefined || now - countedAt >= JOIN_WINDOW_MS;
+}
+
+/**
+ * 记下这次物理入群的计数已经交出去了。
+ *
+ * 与判定分开的理由：只有处置真的登记进 outbox，才会有人（Worker 侧的
+ * removeBlockedMembers）替这次入群 recordJoin。登记失败却把去重项消耗掉，
+ * 同一次入群的另一路投递就只能带 joinedAt: undefined，这次入群从反刷群滑动
+ * 窗口里彻底消失。
+ */
+function commitBlockedJoinCount(key: string, now: number): void {
   // 先删再插，让这条重新排到队尾，插入顺序才等于时间顺序。
   recentBlockedJoinCounts.delete(key);
   recentBlockedJoinCounts.set(key, now);
-  return true;
 }
 
 /**
@@ -137,7 +148,8 @@ function claimBlockedJoinCount(chatId: number, userId: number, now: number): boo
  * 处置消息带上 joinedAt 与入群公告 id：不投 join 就没人替这条入群记刷群计数、
  * 也没人清理那条公告，两件事都要在这里补给 Worker（见 blocklistEffects.ts）。
  * 但 joinedAt 每次物理入群只带一次——两条投递路径的去重见
- * claimBlockedJoinCount；公告 id 照常带，删公告本来就是幂等的。
+ * owesBlockedJoinCount / commitBlockedJoinCount；公告 id 照常带，删公告本来
+ * 就是幂等的。
  * 批次经 trackBlockedRemoval 登记镜像，Worker 崩溃后由主线程重投。
  *
  * 登记失败（outbox 满、id 空间耗尽）必须就地降级，**不能让异常逃出去**：本函数
@@ -158,13 +170,20 @@ export function claimBlockedJoiner({
   now = Date.now(),
 }: ClaimBlockedJoinerParams): boolean {
   if (!isUserBlocked(userId)) return false;
+  // 判定与记账分两步，中间隔着可能抛错的 trackBlockedRemoval：写在实参位置时，
+  // 登记失败走下面的降级返回，去重项却已经被消耗——同一次物理入群的另一路投递
+  // 随后只能带 joinedAt: undefined，这次入群从反刷群滑动窗口里整个消失，凑不满
+  // ANTI_RAID_PER_MINUTE_LIMIT 就不会进私密模式，紧随其后的非黑名单突袭号各自
+  // 拿满一个验证窗口而不是被秒踢。键只算一次，两步共用。
+  const dedupKey: string = verificationKey(chatId, userId);
+  const owesJoinCount: boolean = owesBlockedJoinCount(dedupKey, now);
   let params: RemoveBlockedMembersParams;
   try {
     params = trackBlockedRemoval({
       chatId,
       userIds: [userId],
       probeMembership: false,
-      joinedAt: claimBlockedJoinCount(chatId, userId, now) ? now : undefined,
+      joinedAt: owesJoinCount ? now : undefined,
       announcementMessageId,
     });
   } catch (error: unknown) {
@@ -174,6 +193,9 @@ export function claimBlockedJoiner({
     requestBlocklistResweep(chatId);
     return true;
   }
+  // 登记成功 = 这笔计数已经随 durable 任务交出去，Worker 侧的 removeBlockedMembers
+  // 会替它 recordJoin；此刻才轮到消耗去重项。
+  if (owesJoinCount) commitBlockedJoinCount(dedupKey, now);
   messages.push({ type: "removeBlockedMembers", ...params });
   replacedJoins.set(params.removalId, replacedJoin);
   logger.log(`Blocklisted user ${userId} rejoined chat ${chatId}; queued removal.`);
@@ -183,7 +205,7 @@ export function claimBlockedJoiner({
 /**
  * 把「清扫某群的黑名单成员」这件事的执行 owner 注册给 infra 侧。反向注册是为了
  * 让 infra/blocklist/ 不静态依赖本领域模块（同 infra/chatTeardown.ts 的做法）。
- * @param postDurably 通常是 index.ts 的 postAntiRaidDurably。
+ * @param postDurably 通常是 antiRaid/durableDelivery.ts 的 postAntiRaidDurably。
  */
 export function registerBlocklistRemoval(postDurably: DurableAntiRaidPost): void {
   registerBlockedMemberRemover(

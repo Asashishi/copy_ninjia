@@ -2,7 +2,7 @@ import { logger } from "../../infra/logger";
 import { sleep } from "../../libs/sleep";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { GenerateContentResponse } from "@google/genai";
-import { sanitizeInline, truncateInline } from "../../libs/text";
+import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
 import { formatBufferedMessageLine } from "../../aiChat/ai/utils/chatTranscript";
 import { requestGeminiTextResult } from "../../aiChat/ai/gemini";
 import {
@@ -147,6 +147,11 @@ function promotePendingSummary(chatId: number): void {
  * 调 Gemini 把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
  * 人设、不带工具），产出压成单行并截断——摘要虽是模型生成的，但源头是
  * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
+ *
+ * 截断用子句边界而不是硬切：SUMMARY_MAX_TOKENS 远大于 SUMMARY_MAX_CHARS，
+ * 上游不会把长度约束到这个量级附近，硬切留下的半句会被 buildMemorySnapshot
+ * 落进 memory/ai/<chat>.json，再作为中期记忆回喂模型最多 MAX_SUMMARY_ROUNDS 轮
+ * （truncateAtClauseBoundary 的 JSDoc 记的正是这类残留）。
  */
 async function summarizeBatch(batch: BufferedMessage[]): Promise<GeminiTextGenerationResult> {
   const selfNote: string = botInfoState.current
@@ -165,7 +170,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<GeminiTextGener
     "Gemini summarize API",
     (data: GenerateContentResponse): string => {
       const sanitized: string = sanitizeInline(data.text ?? "");
-      return sanitized ? truncateInline(sanitized, SUMMARY_MAX_CHARS) : "";
+      return sanitized ? truncateAtClauseBoundary(sanitized, SUMMARY_MAX_CHARS) : "";
     }
   );
 }

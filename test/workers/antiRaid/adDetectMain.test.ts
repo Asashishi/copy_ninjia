@@ -38,10 +38,13 @@ mock.module("../../../packages/infra/config", () => ({
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
   SUPER_ADMIN_USER_ID: 1,
 }));
+// 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
+// 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
 mock.module("../../../packages/config/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
-    (id === 100 || id === -200) && key === "isCanBypassAdDetection",
-  isWhitelisted: (id: number): boolean => id === 100 || id === 101 || id === -200,
+    id === 1 || ((id === 100 || id === -200) && key === "isCanBypassAdDetection"),
+  isWhitelisted: (id: number): boolean =>
+    id === 1 || id === 100 || id === 101 || id === -200,
 }));
 mock.module("../../../packages/infra/telegram/actions", () => ({
   sendMessage,
@@ -480,6 +483,23 @@ describe("广告判定命中后的处置", () => {
     expect(dispatched).toHaveLength(0);
     expect(diskMessages).toHaveLength(0);
     expect(errorLogs.some((line) => line.includes("protected sender 101"))).toBe(true);
+  });
+
+  test("处置排到写名单之前 /ad_detect disable 已经生效时，整条判定丢掉", async () => {
+    // 事件回调是同步的，而处置要先排过 identity 串行队列才轮到写名单——这中间
+    // 正好够管理员那条 /ad_detect disable 落地。clearAdDetection 只清得掉判定
+    // 线程里还没判的队列，够不到一条已经发布出来的判定，所以这道复查必须在
+    // 主线程这边（见 antiRaid/adDetect.ts）。
+    handleAdDetected(detected());
+    chatStates.set(-1001, { isAdDetectEnabled: false, isInitEnabled: true, botIsAdmin: true });
+    await drainAdDisposals(5_000);
+
+    expect(blockUser).not.toHaveBeenCalled();
+    expect(dispatched).toHaveLength(0);
+    expect(diskMessages).toHaveLength(0);
+    expect(sendMessage).not.toHaveBeenCalled();
+    // 这是预期内的竞态结局，不是错误：不该占用 protected sender 那条告警。
+    expect(errorLogs.some((line) => line.includes("protected sender"))).toBeFalse();
   });
 
   test("一个可执行的群都没有时只留名单与日志，不投空批次", async () => {

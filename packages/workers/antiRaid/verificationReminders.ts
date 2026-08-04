@@ -192,7 +192,10 @@ export function sendVerificationReminder({
       `不然本天才就把这个来路不明的铁皮杂鱼扔出去哦♡`
     : `喂，${label}，新来的杂鱼给本天才听好了，` +
       `${formatMinSec(VERIFICATION_TIMEOUT_MS)}内点下面的按钮证明你不是机器人，` +
-      `不然本天才就把你的发言全部抹掉再一脚把你踢出去哦♡`;
+      // 只承诺踢人：处置路径只清理机器人自己制造的验证痕迹，成员发言一概不动
+      // （见 verificationEffects/terminal.ts 的 expelMember）。承诺删发言而实际
+      // 不删，是群成员一眼就能证伪的假话。
+      `不然本天才就一脚把你踢出去哦♡`;
   sendReminderMessage({
     chatId,
     userId,
@@ -220,7 +223,8 @@ export function sendReplyReminder({
   dispatchVerification,
 }: SendReplyReminderParams): void {
   const reminderText: string = `喂，${label}，话都说上了，${formatMinSec(VERIFICATION_TIMEOUT_MS)}内把下面的验证按钮点一下啊杂鱼。` +
-    `再装看不见的话，本天才可要连人带消息一块清出去咯♡`;
+    // 同上：不承诺删发言，只承诺请人出去。
+    `再装看不见的话，本天才可要直接把你请出去咯♡`;
   sendReminderMessage({
     chatId,
     userId,

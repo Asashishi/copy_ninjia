@@ -108,6 +108,25 @@ export interface ExpellingState {
    * 重建不再重放踢人、删消息和成功播报。
    */
   successNoticeSent?: boolean;
+  /**
+   * 踢人请求已被 Telegram 确认成功，但那条成功播报还没发出去。
+   *
+   * 随快照持久化，且**只在播报发送失败时才写**（正常一轮里踢人与播报同轮结算，
+   * 不必多付一次落盘）。它存在的唯一理由是让下一轮认得出「人已经不在群里」的
+   * 来路：没有它的话，重试时的成员探测只会答「不在群里」，终态直接静默结算，
+   * 群里看着一个成员凭空消失，而那条唯一的说明再也不会出现。
+   */
+  removalConfirmed?: boolean;
+  /**
+   * 机器人自己的验证消息已经一条不剩地清理完毕。
+   *
+   * **Worker 本地幂等门，不持久化**（同 executionStarted）：重放一次删除是幂等
+   * 的，重发一条播报不是，所以这条不必跟着快照走。它只用来给
+   * verificationEffects/terminal.ts 里那道「确证没有封禁权限就不再发请求」的
+   * 短路加一个前提——清理还欠着账时不能短路，否则一条删除失败过的验证公告会
+   * 带着可点击的按钮永远挂在群里，再也没有任何一轮会重试它。
+   */
+  cleanupSettled?: boolean;
 }
 
 export type VerificationTerminalState = CheckingInviterState | ExpellingState;

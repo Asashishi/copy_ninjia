@@ -138,7 +138,13 @@ function noteSweepAttemptFailed(chatId: number, failedSweeps: number, now: numbe
     nextRetryAt: now + sweepRetryDelayMs(failedSweeps),
     resweepRequested: false,
     failedSweeps: nextFailedSweeps(failedSweeps),
-    permissionBlocked: false,
+    // 闩锁只由权限观测开合，本轮失败记账不得顺手清零——理由同 settleBlockedRemoval
+    // 的收尾。deliverPreparedSweeps 的 await 期间可能刚到过一条 permissionDenied
+    // 回执：它的 removalId 属于更早的批次，notePermissionBlocked 置真后就因
+    // removalId 不匹配提前返回，闩锁是它留下的唯一痕迹。清掉之后每次
+    // markBotAdminObserved 都会重新武装一整轮注定 400 的全名单补扫，与超时踢人
+    // 抢同一条 joinVerificationApi 队列，Worker 重建还会重投这些必败批次。
+    permissionBlocked: blocklistSweepState.get(chatId)?.permissionBlocked === true,
   });
 }
 

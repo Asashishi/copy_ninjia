@@ -6,7 +6,7 @@
  * 封禁批次要进 durable outbox 才能跨进程重放（见 docs/04-invariants.md）。
  * 主线程收到事件后走的正是 /block 那条路径，而封禁本身又会被投回本线程执行，
  * 因此真正的网络请求仍然全部发生在这条线程上。群内播报同理跟着结果走，由
- * 主线程发（见 antiRaid/adCandidate.ts 的 announceAdDisposal）。
+ * 主线程发（见 antiRaid/adDetect.ts 的 announceAdDisposal）。
  */
 
 import { deleteMessage, deleteMessages, joinVerificationApi } from "../../../infra/telegram";

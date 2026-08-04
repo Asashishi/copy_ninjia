@@ -4,6 +4,7 @@
  */
 export type * from "./cache";
 export type * from "./chatState";
+export type * from "./commands";
 export type * from "./reactionQueue";
 export type * from "./diskIO";
 export type * from "./aiChat";

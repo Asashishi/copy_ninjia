@@ -1,8 +1,10 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
+import { INIT_DISABLE_TEARDOWN_FAILED_TEXT, INIT_TOGGLE_TEXTS } from "../consts/commands";
+import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { resolveSuperAdminToggleArg } from "./superAdminToggle";
+import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle";
 import { invalidateBotAdminStatus, resolveBotAdminStatus, teardownChatRuntime } from "../infra/botAdmin";
 
 /**
@@ -14,8 +16,7 @@ import { invalidateBotAdminStatus, resolveBotAdminStatus, teardownChatRuntime } 
  */
 export async function handleInitCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
-    rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想让本天才在这个群干活？哪来的资格呀，笨蛋♡`,
-    usage: `笨蛋，要 /init enable 还是 /init disable，说清楚呀♡`,
+    texts: INIT_TOGGLE_TEXTS,
   });
   if (!arg) return;
 
@@ -31,20 +32,29 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // getChatMember 压进验证队列）。disable 一律作废——关掉之后这份权限记录
   // 本来就不该继续被信任。
   if (!(isEnabled && wasEnabled)) invalidateBotAdminStatus(chatId);
-  const teardownResults: PromiseSettledResult<void>[] = arg === "disable"
-    ? await Promise.allSettled([teardownChatRuntime(chatId)])
-    : [];
-  // disable 即使拆运行态失败也必须先落盘，确保重启后网关仍保持关闭；错误会在
-  // 持久化完成后继续上抛，因此不会发送成功提示或确认这条 update。
-  const persistenceResults: PromiseSettledResult<void>[] = await Promise.allSettled([
-    persistAuthoritativeState("init toggled"),
-  ]);
-  const failures: unknown[] = [...teardownResults, ...persistenceResults].flatMap(
-    (result: PromiseSettledResult<void>): unknown[] => result.status === "rejected" ? [result.reason] : []
-  );
-  if (failures.length === 1) throw failures[0];
-  if (failures.length > 1) {
-    throw new AggregateError(failures, `Failed to disable and persist chat ${chatId}.`);
+  // 拆运行态失败**不再上抛**。落盘就在下面、总开关照样 durable 地关掉，异常
+  // 逸出只会让 acknowledged runner 带非零码退出且不确认 offset：Telegram 重投
+  // 同一条 /init disable，而那时 wasEnabled 已经是 false，管理员第一次什么回执
+  // 都没收到、第二次却被告知「本来就关着」——正是这条命令要消除的那种歧义。
+  // 改成就地降级：记一行错误日志，回执如实说「关是关了，有几样没拆干净」。
+  let teardownFailed: boolean = false;
+  let teardownError: unknown;
+  if (arg === "disable") {
+    try {
+      await teardownChatRuntime(chatId);
+    } catch (error: unknown) {
+      teardownFailed = true;
+      teardownError = error;
+    }
+  }
+  // 落盘失败照旧原样上抛：那是 fatal durability failure，这条 update 不能被确认
+  // （见 docs/04-invariants.md）。
+  await persistAuthoritativeState("init toggled");
+  if (teardownFailed) {
+    logger.error(
+      `Failed to tear down the chat runtime for chat ${chatId}; the init gate is already persisted as disabled:`,
+      teardownError
+    );
   }
 
   // enable 之后立刻把管理员身份重新判定一次。上面的 invalidateBotAdminStatus 刚把
@@ -52,12 +62,23 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // 这个合取若因本次 enable 而成立，那道边沿就在那里触发一次黑名单清扫
   // （见 infra/botAdmin.ts）。不这么做的话，「先给管理员、后 /init enable」这个
   // 最常见的上线顺序永远等不到清扫：管理员那一跳发生时本群还没初始化。
-  // resolveBotAdminStatus 自己吞掉所有错误（失败按非管理员处理），不会影响本命令成败。
-  // 已经是 enable 的群不重判：上面没作废记录，这里查也只会拿到同一个值。
-  if (isEnabled && !wasEnabled) await resolveBotAdminStatus(chatId);
+  //
+  // 条件挂在「记录此刻是不是空的」上，而不是 !wasEnabled。两者在正常一轮里
+  // 完全等价（上面刚把记录作废），区别只在重投那一轮：这次调用**可能上抛**
+  // ——getChatMember 之后的状态落盘失败是有意向外传播的（见 infra/botAdmin.ts
+  // 与 docs/04-invariants.md，上面那句「自己吞掉所有错误」以前写反了）。进程
+  // 因此带非零码退出、Telegram 重投这条 /init enable 时 wasEnabled 已经是
+  // true，挂 !wasEnabled 的话管理员身份重判与它要触发的黑名单清扫就永远不会
+  // 再发生了；而作废过的记录此刻仍是空的，挂 botIsAdmin 就能自然接上。
+  // 记录已知的重复 enable 照旧跳过：那一刻合取没有发生任何变化。
+  if (isEnabled && state.botIsAdmin === undefined) await resolveBotAdminStatus(chatId);
 
-  const replyText: string = arg === "enable"
-    ? `哼，那本天才就大发慈悲开始搭理这个群了，杂鱼们好好珍惜♡`
-    : `本天才不想再理这个群了，爱干嘛干嘛去吧♡`;
+  const replyText: string = teardownFailed
+    ? INIT_DISABLE_TEARDOWN_FAILED_TEXT
+    : toggleReplyText({
+      isEnabled,
+      wasEnabled,
+      texts: INIT_TOGGLE_TEXTS,
+    });
   await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

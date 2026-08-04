@@ -14,11 +14,13 @@ const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => t
 const chatStates = new Map<number, { botIsAdmin?: boolean }>();
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 
+// 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
+// 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
 mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/config/whitelist", () => ({
-  isWhitelisted: (id: number): boolean => id === 100 || id === -500,
+  isWhitelisted: (id: number): boolean => id === 1 || id === 100 || id === -500,
   hasWhitelistPermission: (id: number, key: string): boolean =>
-    (id === 100 || id === -500) && key === "isCanBlock",
+    id === 1 || ((id === 100 || id === -500) && key === "isCanBlock"),
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
@@ -113,6 +115,15 @@ describe("/block 跨群封禁与黑名单", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(resolveBotAdminStatus).not.toHaveBeenCalled();
     expect(resolveCommandTarget).not.toHaveBeenCalled();
+  });
+
+  test("超级管理员不必在 config/whitelist.json 里配 isCanBlock 也能 /block", async () => {
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
+
+    await handleBlockCommand(context(1));
+
+    expect(resolveCommandTarget).toHaveBeenCalledTimes(1);
+    expect(blockedUserIds.has(7)).toBeTrue();
   });
 
   test("频道白名单按 sender_chat 身份授权，不误用附带的 from 用户", async () => {

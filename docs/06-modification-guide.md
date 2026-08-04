@@ -14,7 +14,7 @@
 
 ## 新增一个斜杠命令
 
-1. **handler**：在 `packages/commands/` 新建一文件，`function` 声明导出 `handleXxxCommand`，显式返回类型。权限门禁参考现成模式：白名单看 `block.ts`，超管看 `superAdminToggle.ts` / `mood.ts`，仅私聊看 `send.ts`（非本人/非私聊静默 return，不回错误提示）。
+1. **handler**：在 `packages/commands/` 新建一文件，`function` 声明导出 `handleXxxCommand`，显式返回类型。权限门禁参考现成模式：按权限键授权看 `block.ts` / `mood.ts`（一律 `hasCommandPermission(ctx, key)`，超级管理员恒持有全部权限键，不要再单独判身份）；只认超管身份、无法授权出去的看 `isSuperAdminActor`（`white.ts`、`batchKick.ts`）；仅私聊看 `send.ts`（非本人/非私聊静默 return，不回错误提示）。用户可见文案不写在 handler 里：放进所属领域的 `packages/consts/<domain>.ts` 文案表，类型放 `packages/types/`（见 `PERMISSION_COMMAND_TEXTS`、`BLOCK_TARGET_TEXTS`）——那既是给文案改动一个集中入口，也免掉每次调用现造一个对象加三个闭包。文案里要嵌无界的用户输入时才例外，`cjkAction.ts` 是唯一一处。
 2. **导出**：加入 `packages/commands/index.ts`。
 3. **注册**：在 [`packages/app/registerHandlers.ts`](../packages/app/registerHandlers.ts) 加 `bot.command("xxx", ...)`。注意注册点位于 init 网关、按群串行、私聊网关与入群验证 middleware 之后——新命令自动获得这些语义，不要在 handler 里重复做网关判断。
 4. **私聊网关**：新命令若要在私聊中使用，还必须同步调整 [`packages/infra/updateGate.ts`](../packages/infra/updateGate.ts) 并补网关测试；当前私聊中的斜杠命令只显式放行 `/send`，仅注册 handler 不会到达命令处理器。纯群聊命令无需改这里。
@@ -48,7 +48,7 @@
 - `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 619 处、分布在 70 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 629 处、分布在 64 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
 
 ## 调整行为参数
 

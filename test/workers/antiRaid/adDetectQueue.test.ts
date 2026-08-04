@@ -16,8 +16,14 @@ const fetchAdminIds = mock(async (chatId: number): Promise<Set<number>> => {
   return admins;
 });
 
+const errorLogs: string[] = [];
 mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: {
+    log(): void {},
+    info(): void {},
+    warn(): void {},
+    error(message: unknown): void { errorLogs.push(String(message)); },
+  },
 }));
 mock.module("../../../packages/workers/antiRaid/adDetect/classifier", () => ({
   classifyAdText: async (params: { text: string; justJoined: boolean }): Promise<AdVerdict | null> => {
@@ -90,6 +96,7 @@ function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandidateMess
 
 beforeEach(() => {
   stopAdDetectQueue();
+  errorLogs.length = 0;
   classifiedTexts.length = 0;
   classifiedFacts.length = 0;
   classifyAdText.mockClear();
@@ -199,6 +206,28 @@ describe("广告判定队列", () => {
 
     expect(classifiedTexts).toEqual(["1. 排队中的广告"]);
     expect(pendingAdMessages.get("-1001:7")?.checkedSeq).toBe(1);
+  });
+
+  test("判定抛错按「本次没判定」结算：记一行日志、推进水位，不静默死循环", async () => {
+    // classifyAdText 的同步准备阶段也会抛：它先调 adDetectSystemPrompt →
+    // getAdSampleConfig()，而后者只缓存成功结果——进程启动之后把
+    // config/ad_samples.json 改坏，每一次调用都重新抛同一个错。不接住的话异常
+    // 一路逃到 runAdDetectBatch 的 Promise.allSettled 被整个吞掉：checkedSeq
+    // 永不推进，这个键每轮去重窗口轮换都重判、每次都失败，全程一行日志都没有，
+    // 而 /ad_detect 仍然报告功能已启用。
+    classifyAdText.mockImplementationOnce((): Promise<AdVerdict | null> => {
+      throw new Error("config/ad_samples.json must contain a JSON object.");
+    });
+    enqueueAdCandidate(candidate({ messageId: 1, text: "加我微信" }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(errorLogs.some((line: string): boolean => line.includes("failed to classify sender 7 in chat -1001"))).toBeTrue();
+    // 与「模型抽风、响应形状不对」同一档：本次记成已检，不重试成请求风暴。
+    expect(pendingAdMessages.get("-1001:7")?.checkedSeq).toBe(1);
+    // in-flight 标记照常释放，这个键不会被永久钉住。
+    expect(inFlightAdDetectKeys.size).toBe(0);
+    expect(disposeAdSender).not.toHaveBeenCalled();
   });
 
   test("全局在途闸撑满时不再派发，被挡下的键留在队列里而不是凭空消失", async () => {

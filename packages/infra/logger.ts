@@ -12,7 +12,7 @@
  * 字节偏移并发追加同一个日志文件会互相踩踏写坏文件）。这里只是门面：主线程
  * 下 error 日志经 relayLogMessage 转投给它；Worker 线程里的 logger 处于「转发模式」：
  * error 日志包上 ForwardedLog 信封 postMessage 回主线程，由拥有该 Worker
- * 的主线程模块（见 aiChat/index.ts 的 onEvent）调用 relayLogMessage 转投唯一的
+ * 的主线程模块（见 aiChat/workerBridge.ts 与 antiRaid/workerBridge.ts 的 onEvent）调用 relayLogMessage 转投唯一的
  * 落盘线程。
  */
 
@@ -92,9 +92,15 @@ function serializeArg(arg: unknown, secrets: readonly string[]): unknown {
  * 字符串，不会连累整条记录。不能整体 `{...JSON.parse(safeStringify({...arg}))}`
  * ——safeStringify 走 `String(value)` 兜底时返回的是字符串，展开进对象字面量
  * 会炸成 `{"0":"[","1":"o",...}` 一串下标键，把真正要看的 code/path 冲掉。
+ *
+ * 累加对象必须无原型：键来自 error 自身，`__proto__` 一旦出现在里面，往普通
+ * `{}` 上赋值命中的是 Object.prototype 继承来的那个访问器——值是对象就静默换掉
+ * 本条记录的原型，不是对象就整句赋值失效。两种结局都一样：那个字段不会出现在
+ * logs/ 的错误记录里，运维排查时看不到唯一能解释这次故障的诊断。外层的对象
+ * 展开与 JSON.parse 都按数据属性定义，不吃这个亏，只有这里的下标赋值会。
  */
 function ownEnumerableProperties(error: Error): Record<string, unknown> {
-  const own: Record<string, unknown> = {};
+  const own: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   for (const [key, value] of Object.entries({ ...error })) {
     // 值为 undefined 的键整体丢掉，与「先整份 stringify 再 parse」的旧行为一致
     // ——JSON 本来就表达不了 undefined，逐个降级时若不显式跳过，会把它变成一个

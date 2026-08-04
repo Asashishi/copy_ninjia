@@ -45,9 +45,32 @@
   已经开着的群由运行时门禁（`aiChat/availability.ts`、`antiRaid/adDetect.ts` 的 `buildAdCandidate`）一并停摆，不让 Worker 拿着读不动的配置反复崩溃。结论**连同失败一起**按进程缓存：这道判定挂在每条群消息的门禁上，不缓存失败就是每条消息一次 `readFileSync`；代价是修好文件要重启才生效，与四份 loader 的单例语义一致。
 
   唯一无条件读配置的地方是 Disk I/O Worker 的启动恢复（要拿贴纸白名单对账 `memory/stickers/`），它必须在读不动时**整体跳过对账**——绝不能退化成空白名单，那会把不在白名单里的持久化文件当孤儿删掉。
-- `config/whitelist.json` 与 `config/blocklist.json` 不属于上一条的可选配置：前者决定同步鉴权与自己人保护，后者是静态封禁安全边界，两者都必须在联网和 Worker 创建前严格加载，缺失、未知字段或非法 ID 一律拒绝启动。白名单只在实际变化时由 `/white`、`/permission` 原子全量重写，成功落盘后才发布新的主线程缓存；读路径始终只查这份内存副本。启动读取同时记录文件 SHA-256，命令每次整份重写前复核原始字节；发现进程外编辑或文件不可读就拒绝覆盖并让 update 失败，禁止用旧缓存静默抹掉人工变更。
+- `config/whitelist.json` 与 `config/blocklist.json` 不属于上一条的可选配置：前者决定同步鉴权与自己人保护，后者是静态封禁安全边界，两者都必须在联网和 Worker 创建前严格加载，缺失、未知字段或非法 ID 一律拒绝启动。白名单只在实际变化时由 `/white`、`/permission` 原子全量重写，成功落盘后才发布新的主线程缓存；读路径始终只查这份内存副本。启动读取同时记录文件 SHA-256，命令每次整份重写前复核原始字节；发现进程外编辑或文件不可读就拒绝覆盖，禁止用旧缓存静默抹掉人工变更。
 
-  `/permission query` 与 `/permission help` 是只读入口：白名单用户或频道按发起身份读取上述内存副本，`query` 只返回解析并补齐默认值后的自身完整权限，不接受目标参数，也不触发写入；`help` 同时保留超级管理员原有访问。所有权限修改仍只允许超级管理员。群内 `help` 长期保留，`query` 与拒绝/用法提示仍按 30 秒统一清理。
+  **这次拒绝以及任何写盘失败都必须由命令自己兜住，不得逃出 update handler**：`bot.catch` 按设计原样重抛，acknowledged runner 随即扣住 offset 并非零退出，Telegram 重投同一条命令、同一处再抛——`config/` 不可写（EACCES/ENOSPC）时一条 `/permission` 就能把机器人锁进永久重启循环，所有群一起失能，而这类原因重投一万次也不会自愈。此刻配置一点没被改动（`commitWhitelistMutation` 只在写盘成功后才发布运行时快照），因此确认这条 update 是安全的；回执必须如实说「没写进硬盘」，降级语义同 `claimBlockedJoiner`。
+
+  **超级管理员的权限来自身份本身，不来自这份文件**：`packages/config/whitelist.ts` 的
+  `getEffectiveWhitelistPermissions` 是唯一来源——`SUPER_ADMIN_USER_ID` 直接取
+  `SUPER_ADMIN_WHITELIST_PERMISSIONS`（逐项全开），其余身份才查内存副本；`isWhitelisted`
+  与 `hasWhitelistPermission` 都经由它，因此调用方一律只问「有没有这项权限」，不再逐命令
+  判断是不是超管。覆盖**只发生在读取侧、永不落盘**：写路径 `prepareWhitelistMutation` 取的
+  是原始配置表，`/white`、`/permission` 的整份重写因此只会写出部署方自己配过的条目。换过
+  `SUPER_ADMIN_USER_ID` 之后文件里不会留下一条全开的旧身份，文件里若已有同 id 的历史残留也
+  改不动他的有效权限。两条命令都在入口拒绝以超级管理员为目标（`/white disable` 例外，用于
+  清掉这类残留），否则只会写进一条永远不被读到的条目。**那条例外的回执也要跟着改口**：它清
+  掉的只是文件里的残留条目，超级管理员的白名单身份与全开权限一样不受影响，沿用「已经从白名单
+  里踢出去啦」是一句紧接着 `/permission query` 就能证伪的假话。
+
+  **两条命令还必须拒绝把当前群自己的 identity 当目标**（`sender_chat.id === chat.id`，理由与
+  `/block`、`/unblock` 同源）：匿名管理员拿本群当皮套时 Telegram 只给出这个群的 identity，
+  共享解析层按设计原样返回它。把它写进白名单，该群匿名身份发的每一条消息都会绕过广告检测与
+  永久拉黑（`isProtectedSender`）；随后一条 `/permission <群 id> all` 就把 `/block`、`/mute`
+  与各功能开关交给这个群的任意匿名管理员，而 Telegram 从不告诉本进程皮套底下是谁。
+
+  `/permission query` 与 `/permission help` 是只读入口：按发起身份读取上述有效权限，`query`
+  只返回解析并补齐默认值后的自身完整权限（超级管理员拿到的是那份全开视图），不接受目标参数，
+  也不触发写入。所有权限修改仍只允许超级管理员。群内 `help` 长期保留，`query` 与拒绝/用法
+  提示仍按 30 秒统一清理。
 
   静态黑名单只读，与 `memory/blocklist/blocklist.json` 的动态层在内存中取并集，`/unblock` 不得移除静态条目。
 - **只有整个进程都离不开的凭据才能在模块求值期 `requireEnv`**（`TELEGRAM_BOT_TOKEN`、`SUPER_ADMIN_USER_ID`）。只服务于某个按群 opt-in、缺省关闭的可选功能的密钥必须走 `optionalEnv`：`packages/infra/config.ts` 几乎被所有入口路径 import，在那里抛错等于进程还没开始拉取更新就退出、systemd 进入重启循环，copy、抽奖、入群验证、黑名单全部离线——只因为一个默认就没开的功能缺了 key。
@@ -77,6 +100,9 @@
 - 通用 JSON API 请求只允许访问 `JSON_API_ALLOWED_ORIGINS` 明列的 HTTPS origin，并禁用 redirect；新增调用方必须显式扩充白名单。Telegram 头像下载使用独立入口与 Telegram 自有资产域后缀 allowlist，但复用同一套「HTTPS、无凭据、标签边界匹配」URL 策略；Bot API `file.getUrl()` 主路径与 `t.me` 网页/图片回退都必须禁用 redirect 并保持有界读取，不得误接到 JSON allowlist，也不得恢复成任意 HTTPS 图片。
 - 出站消息一律不设 `parse_mode`：用户昵称与消息内容只能作为纯文本参与拼接，不得有机会被解析成格式或链接。需要富文本时由调用方按段拼好文本、自行给出 `entities`（偏移按 Telegram 的 UTF-16 code unit 口径，等价于 JS `String#length`；长度为 0 的实体会让整条消息被拒收）。新增发送路径不得改用 `parse_mode` 绕开这条约束。
 - 群内非功能性命令文本统一通过 `sendCommandMessage` 在发送成功 30 秒后删除，私聊不受影响。只有用户明确授权的 `/permission help` 与成功中文动作结果可以传 `preserveInGroup: true` 长期保留；动作命令的目标校验失败与 `/x` 用法提示仍必须自动清理。新增例外必须同时在调用点和测试中显式标记。
+- **回执不得报告没有发生的状态变化**：`/init`、`/ai_chat`、`/ad_detect`、`/flood_control`、`/ja_copy` 五条开关命令都要在写入前读一次原值，同状态重复执行必须说破「本来就是这样」，不能沿用刚改完那句——否则管理员无从判断第一次到底生效没有。四种结局的文案收在 `ToggleCommandTexts`（`packages/types/commands.ts`）这个**四项必填**的结构里，由 `toggleReplyText` 统一选择；只写「开」「关」两句的新开关命令编译不过。`/quiet`、`/unquiet`、`/white`、`/permission` 是同一口径的既有实现。
+
+  判定只看「目标状态」与「原状态」，**不看落盘与运行时清理是否执行过**：那些清理是尽力而为、失败只记日志（`clearAdDetection`、`clearFloodControl`、`invalidateAiChat`，以及 `/init disable` 的 `teardownChatRuntime`——它失败时总开关照样已 durable 地关掉，回执改用点名「有几样没拆干净」的那句，绝不上抛；抛出去就是扣住 offset、重投时 `wasEnabled` 已是 false，管理员反而收到一句「本来就关着」），因此「关掉之后再关一次」正是 Worker 恢复后最自然的手工重试路径，同状态重复执行仍要照常落盘并重跑清理，只有回执如实说它没改变什么。`/init` 对已启用的群重复 `enable` 时仍不作废管理员身份记录——作废会让 `recordBotAdminStatus` 看到一次全新的 `undefined -> true` 边沿并重扫整份黑名单。
 
 <p align="right"><a href="#快速导航">↑ 返回快速导航</a></p>
 
@@ -105,6 +131,7 @@
   **形态分两种，按被判定对象有没有需要持久化的离散状态来选**：`verification`/`lockdown` 有（PENDING/ACTIVE 这类状态要存进 Map、被后续事件引用），走 `transition(state, event) → {next, effects}` 的单机形态；`replyAdmission`/`adDetectAdmission` 没有（判定吃的是调用方算好的标量，容器与计时留在运行时模块里），走一组纯函数的形态。
 
   把后者硬塞进单机形态，状态对象里会同时出现「我这一条」和「全线程一共多少」，两者生命周期完全不同，反而更难读。
+- **私密模式对群默认权限的每一次读改写都必须带 `use_independent_chat_permissions: true`**（加锁、到期恢复、迟到回执后的纠偏，以及主线程 onGiveUp 的紧急恢复，共用 `packages/infra/telegram/lockdownPermissions.ts` 与 `lockdownRuntime.ts` 两处边界）。这条路是把 `getChat().permissions` 原样读回来、只改 `can_invite_users` 再写回去，里面必然有为 true 的项；不带这个标志时 Bot API 会按蕴含规则把 `can_send_other_messages` 展开成 `can_send_messages`、`can_send_audios`、`can_send_documents`、`can_send_photos`、`can_send_videos`、`can_send_video_notes` 与 `can_send_voice_notes`（`can_send_polls` 蕴含 `can_send_messages`）。于是一个「只开表情/GIF、关掉图片视频文件」的群，每进出一次私密模式就被静默地把媒体权限全部打开，管理员那边没有任何提示——而这两处边界的契约恰恰是「其它默认权限一律以 Telegram 当前值为准」。
 - **私密模式的解锁公告只在真的公告过封锁时才发**（`LockdownState.announced`）。`RESTORING` 有两个入口：正常到期/手动解除（来自 `ACTIVE`，公告过）与 `setChatPermissions` 抛错后的补偿对账（`applyResult(!ok)`，从未公告过）。少了这面旗，后一条路恢复成功时会往群里发一句「限制解除」——而那个群从头到尾没收到过封锁公告，读起来是句没头没尾的话。
 
   `announced` 由 `ACTIVE` 一路带到 `RESTORING`，也带过 `RESTORING ──再次超阈值──> ACTIVE` 这条回头路（那一步不重发封锁公告，因此不能在那里重置成 true）。它只活在内存里、不进 `state.json`：持久化记录的形状是 `{phase,intentId,originalPermissions,expiresAt}`，为一条公告文案改盘上格式不划算，`adopt` 时按 phase 取最常见的那一侧。`reportUnlock` 与公告是两件事，任何一条路都照发——主线程要据此清掉持久化记录。
@@ -167,8 +194,8 @@
 - Anti-Raid 对关联频道评论区的直属评论和楼中楼回复采用同一豁免语义；评论关联缓存只保存消息 ID 与观察时间，不把已无行为差异的来源标记泄漏进状态机。只有关联频道讨论组的评论线程才是候选：`message_thread_id` 同时也出现在论坛（topics）群的每一条话题消息上，必须用 `is_topic_message !== true` 把论坛话题排除，它们一律走普通待验证语义，不触发 barrier 加投与关联频道探测。
 
   冷缓存的 `message_thread_id` 只是异步确认候选：查询落定前先按普通待验证消息处理，仅在确认 `linked_chat_id` 且状态对象/代际仍一致时撤销；查询失败 fail closed 并允许后续重试。
-- 真人的入群验证只接受本人点击：Worker 必须以可信的 `callback_query.from.id === callback_data` 目标 ID 计算本人关系，不能接受调用方直接声称。即使点击者在 `config/whitelist.json` 中，也不得替真人通过；唯一代点例外是当前待验证快照明确 `isBot === true` 且点击者在该白名单中。无状态、已终结或目标不匹配的点击只能应答失败，不得改变验证记录。
-- 终态处置（超时/刷屏踢人）执行 `kickChatMember` 前必须用 `probeChatMembership` 现查：确认仍在群才踢，确认已离群就直接结算且不发错误战报，查询失败则不做破坏性成员操作、保留终态进入既有退避。私密模式下由刚到达的 join update 同步产生的 `kickMember` 已由该 update 证明人在群里，不重复付一次查询。终态处置失败后按指数退避重试到上限，记录不因重试耗尽被删除——删了就等于把没处置的成员当成已完成。
+- 真人的入群验证只接受本人点击：Worker 必须以可信的 `callback_query.from.id === callback_data` 目标 ID 计算本人关系，不能接受调用方直接声称。即使点击者在白名单边界内（`config/whitelist.json` 的条目，或恒在边界内的 `SUPER_ADMIN_USER_ID`），也不得替真人通过；唯一代点例外是当前待验证快照明确 `isBot === true` 且点击者在该边界内。无状态、已终结或目标不匹配的点击只能应答失败，不得改变验证记录。
+- 终态处置（超时/刷屏踢人）执行 `kickChatMember` 前必须用 `probeChatMembership` 现查：确认仍在群才踢，确认已离群就直接结算且不发错误战报，查询失败则不做破坏性成员操作、保留终态进入既有退避。私密模式下由刚到达的 join update 同步产生的 `kickMember` 已由该 update 证明人在群里，**首发**不重复付一次查询（刷群时每个进来的人都走这条路，白付一次就是把该路径调用量翻倍）。**但退避重试那几轮必须补上探测**：join update 只证明得了当时，而超级群的「只踢不封」映射到不带 `only_if_banned` 的 `unbanChatMember`，退避期间超管落下的 `/block` 封禁会被这一发解开、outcome 还报 `kicked`，而主线程的移除早已记成完成——人凭任意邀请链接就能回来。`kickPending` 不持久化，退避计数与状态同生共死，因此它就是「这是不是重试」的可靠依据。终态处置失败后按指数退避重试到上限，记录不因重试耗尽被删除——删了就等于把没处置的成员当成已完成。
 
   固定间隔不行：机器人是管理员却没有封禁权限、或目标本人就是这个群的管理员时，这条重试永远不会成功，一次刷群留下的每个未验证成员都会各占一个永久的短周期循环，不停打删消息 + 踢人并往 `logs/` 刷同一行报错，Worker 重建与进程重启后还会照单重新武装。退避而不是放弃：管理员补上权限后最迟一个上限周期内自愈。
 - 私密模式秒踢先进入不持久化的 `kickPending`，该状态对象是同批不可逆动作的执行 token。删除公告等前置 `await` 之后、真正调用 `kickChatMember` 之前必须复核条目仍持有同一对象，复核与 API 调用之间不得再有 `await`；权威管理员豁免、离群、新一代入群记录或 chat teardown 替换/删除对象后，旧批次必须停在这里。API 请求同步发出时才置 `executionStarted`：此前到达的豁免转成 `exempt`，此后到达则只能保留诊断；
@@ -199,9 +226,9 @@
 
 #### 计数与执行边界
 
-- **刷屏禁言的计数与执行全在 Anti-Raid Worker，主线程只做同步门禁 + 一次尽力而为的 `post`**：本功能按群缺省关闭，只有 `ChatState.isFloodControlEnabled === true` 才进入计数；超级管理员或具备 `isCanControllFloodControlPermission` 的白名单身份可用 `/flood_control enable|disable` 修改并持久化开关，关闭时同步清掉该群现有窗口。同一成员在同一**超级群**内一分钟发言达到 `FLOOD_MESSAGE_LIMIT`（当前 15 条）即禁言 `FLOOD_MUTE_DURATION_MS`（当前 3 分钟）。只认超级群是因为 `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和一行误导性报错。
+- **刷屏禁言的计数与执行全在 Anti-Raid Worker，主线程只做同步门禁 + 一次尽力而为的 `post`**：本功能按群缺省关闭，只有 `ChatState.isFloodControlEnabled === true` 才进入计数；持有 `isCanControllFloodControlPermission` 的身份（超级管理员恒持有）可用 `/flood_control enable|disable` 修改并持久化开关，关闭时同步清掉该群现有窗口。同一成员在同一**超级群**内一分钟发言达到 `FLOOD_MESSAGE_LIMIT`（当前 15 条）即禁言 `FLOOD_MUTE_DURATION_MS`（当前 3 分钟）。只认超级群是因为 `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和一行误导性报错。
 
-  主线程侧（`packages/antiRaid/floodControl.ts`）在创建候选对象前依次判定按群开关、超级群类型、发言者是否真实用户，以及发送者是否具备防刷屏豁免。频道马甲与匿名管理员没有可禁言的成员身份，`restrictChatMember` 只认真实用户，而皮套底下是谁 Telegram 并不暴露。`SUPER_ADMIN_USER_ID` 恒豁免；白名单身份只按自身 `isCanBypassFloodControl` 决定，缺省为 `true`，显式设为 `false` 后仍会参与计数。通过这些门禁后才投递 `floodCandidate`。
+  主线程侧（`packages/antiRaid/floodControl.ts`）在创建候选对象前依次判定按群开关、超级群类型、发言者是否真实用户，以及发送者是否具备防刷屏豁免。频道马甲与匿名管理员没有可禁言的成员身份，`restrictChatMember` 只认真实用户，而皮套底下是谁 Telegram 并不暴露。豁免只看一项权限：`isCanBypassFloodControl`。白名单条目缺省为 `true`，显式设为 `false` 后仍会参与计数；`SUPER_ADMIN_USER_ID` 恒持有该权限因而恒豁免，判定处不再单独比对身份。通过这些门禁后才投递 `floodCandidate`。
 
   投递与广告检测同理走普通 `post` 而非 `postAntiRaidDurably`：窗口随 isolate 生死，为每条群消息加一道跨线程屏障换不来任何恢复能力。入群/离群服务消息不算谁的「发言」，投递入口因此排在那两条分支之后。
 
@@ -321,13 +348,13 @@
 
   落盘 Worker 崩溃重建后，只要本进程解除过（`sessionUnblockedIds` 非空）就必须整份重写一次而不是补投增量——追加补不回「删除」，新 Worker 从文件读回来的那些条目还在。`sessionBlockedAt` 与 `sessionUnblockedIds` 必须互斥（拉黑时从后者删、解除时从前者删），否则同一个 id 同时挂在两张表上，重放顺序就决定了他到底在不在名单里。
 
-  **`/unblock` 默认完整解除**：先从动态名单移除目标（若存在），再在所有 `ChatState.botIsAdmin` 的群解除 Telegram 封禁；目标不在动态名单里也照样跨群解封。命令只要求 `isCanUnBlock`，`SUPER_ADMIN_USER_ID` 仍显式放行；旧的额外 `all` 参数不再解析或兼容。静态 `config/blocklist.json` 身份必须在动名单和 Telegram API 之前 fail closed，因为命令不能改写部署配置，单独解开群级封禁只会制造自相矛盾的状态。
+  **`/unblock` 默认完整解除**：先从动态名单移除目标（若存在），再在所有 `ChatState.botIsAdmin` 的群解除 Telegram 封禁；目标不在动态名单里也照样跨群解封。命令只要求 `isCanUnBlock`（`SUPER_ADMIN_USER_ID` 恒持有该权限，无需另行放行）；旧的额外 `all` 参数不再解析或兼容。静态 `config/blocklist.json` 身份必须在动名单和 Telegram API 之前 fail closed，因为命令不能改写部署配置，单独解开群级封禁只会制造自相矛盾的状态。
 
   **跨群解封必须走 `unbanChatMemberIfBanned`（带 `only_if_banned: true`）**：Bot API 的 `unbanChatMember` 对「当前就是群成员」的人语义是把他移出群聊——`kickChatMember` 的「只踢不封」正是靠这一点实现的，不带这个标志去批量解封，会把那些本来好端端待在群里的人一个个踢出去。频道马甲没有「成员」概念，走 `unbanChatSenderChat`，不存在这个陷阱。
 
   解除时还要把该 id 从 `pendingBlockedRemovals` 的在途批次里摘掉（批次因此变空就整批销账），否则 Worker 重建后的重放会拿着旧批次把刚解除的人重新封回去；已经投出去、正在 Worker 里跑的那一批拦不住（判定是主线程状态，Worker 没有副本），那一小段窗口属于已知取舍。
 
-  **自己人不可拉黑**：`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json` 在 `/block` 入口就被挡回；启动还会拒绝它们与静态配置、恢复出的动态黑名单的任何交集，`/white enable` 也拒绝仍在黑名单中的身份并要求先 `/unblock`。这不只是一组各自独立的前置检查：`runProtectedIdentityMutation` 通过主线程的 `protectedIdentityMutationQueue`，把 `/white` 的「检查成员关系 + 原子写入并发布白名单」与 `/block`、广告命中新增动态黑名单串行化。否则白名单写盘的异步窗口内仍可插入一次拉黑，让同一身份同时出现在两边并导致下次启动必然拒绝。临界区只包身份检查和权威状态变更，Telegram 副作用与后续落盘确认留在外面。
+  **自己人不可拉黑**：`SUPER_ADMIN_USER_ID` 与 `config/whitelist.json` 在 `/block` 入口就被挡回——两者由同一次 `isWhitelisted` 覆盖，超级管理员恒在白名单边界内，`/mute` 与 `/batch_kick` 的自己人保护同理；启动还会拒绝它们与静态配置、恢复出的动态黑名单的任何交集，`/white enable` 也拒绝仍在黑名单中的身份并要求先 `/unblock`。这不只是一组各自独立的前置检查：`runProtectedIdentityMutation` 通过主线程的 `protectedIdentityMutationQueue`，把 `/white` 的「检查成员关系 + 原子写入并发布白名单」与 `/block`、广告命中新增动态黑名单串行化。否则白名单写盘的异步窗口内仍可插入一次拉黑，让同一身份同时出现在两边并导致下次启动必然拒绝。临界区只包身份检查和权威状态变更，Telegram 副作用与后续落盘确认留在外面。
 
   启动恢复时任何一条记录形状不合规都整体拒绝启动：漏掉一条就等于放那个人重新进群。因此黑名单文件是唯一**不允许截断自愈**的追加型文件（`openAppendOnlyFile(..., repair=false)`）：日志/运势/待验证丢掉末尾残片不影响正确性，黑名单裁掉的每一条都是一个被放回群里的人，宁可拒绝启动、原样保留字节等人工恢复。
 
@@ -423,7 +450,9 @@
 
 #### 广告检测的准入、判定与处置
 
-- `/ad_detect` 广告检测是**尽力而为的启发式**，不是安全边界，但它的处置与 `/block` 完全同权，因此边界必须划清。投递门禁是三者的合取：本群 `ChatState.isAdDetectEnabled === true`、机器人是本群管理员（与入群守卫共用同一道 `isBotAdminIn` 判定——不是管理员就删不掉广告也封不了人，判一次纯属白烧额度）、发送者不具备广告检测豁免。`SUPER_ADMIN_USER_ID` 恒豁免；白名单则由 `isCanBypassAdDetection` 单项决定，设为 false 的成员仍会送检，Worker 也可能删除本批命中消息。
+- `/ad_detect` 广告检测是**尽力而为的启发式**，不是安全边界，但它的处置与 `/block` 完全同权，因此边界必须划清。投递门禁是三者的合取：本群 `ChatState.isAdDetectEnabled === true`、机器人是本群管理员（与入群守卫共用同一道 `isBotAdminIn` 判定——不是管理员就删不掉广告也封不了人，判一次纯属白烧额度）、发送者不具备广告检测豁免。豁免由 `isCanBypassAdDetection` 单项决定，设为 false 的成员仍会送检，Worker 也可能删除本批命中消息；`SUPER_ADMIN_USER_ID` 恒持有该权限因而恒豁免，判定处不再单独比对身份。
+
+  **开关本身也要在同一个临界区内复查一次**：判定跑在 Worker 侧，事件回投主线程后还要排过 identity 串行队列才轮到写名单，这中间完全可能夹进一条 `/ad_detect disable`——而它能清的只有 Worker 里还没判的那串，够不到一条已经发布出来的判定。不复查就会在开关关掉之后仍然把人写进永久黑名单、在所有托管群封禁并公开点名。复查必须紧挨着 `blockUser`：再往后就过了不可逆点，那时候撤只会留下一条既成事实的名单条目却没有任何执行。这是预期内的竞态结局，按普通日志记录，不占 protected sender 那条告警。
 
   **白名单成员关系仍无条件保护永久黑名单**：判定结果回到主线程时，处置会在与 `/white`、`/block` 共用的 `runProtectedIdentityMutation` 临界区内重新调用 `isProtectedSender`。候选排队后刚加入白名单，或本来就在白名单但关闭了广告检测豁免，两种情况都拒绝 `blockUser`、跨群封禁与封禁播报；只有 Worker 已完成的本批消息删除保留。拿本群当皮套的匿名管理员（`sender_chat.id === chat.id`）同样跳过，理由同 `/block`：Telegram 不暴露皮套底下是谁，处置只会尝试封掉整个群身份。
 
@@ -605,6 +634,9 @@
 - **终态播报的「已发送」标志必须全部进快照**：`expelling` 记录带三个互不替代的标志——`successNoticeSent`（成功战报，本身 30 秒后自撤）、`failureNoticeSent`（踢不动、缺 `can_restrict_members`）、`unconfirmedNoticeSent`（没能确认人还在不在群里）。后两条都不自删，不落盘的话每次 Worker 重生或进程重启都会为同一个卡住的成员再发一条，群里越堆越多。
 
   三者也不能合并成一个名额：探测抖动先发出去的那条会把唯一点名「去检查封禁权限」的诊断永久顶掉，人留在群里而管理员被引向网络问题。置位时要立刻发布新 revision 让它落盘，终态重试认的是那一版的落盘回执。
+
+  **踢成功、成功战报却没发出去时不得结算**：结算等于删记录，群里看着一个成员凭空消失，而那句唯一的说明再也没有第二次机会。这一路要先把 `removalConfirmed` 写进快照再退避重试——它同样必须持久化，否则下一轮的成员探测只会答「人已经不在群里」，终态按「别人处置的」静默结算，等于把战报永久吞掉。它只在战报发送失败时才写，正常一轮里踢人与战报同轮结算，不多付一次落盘。
+- **「确证没有封禁权限就不再发请求」这道短路要以清理已经清完为前提**（`cleanupSettled`）。只认 `failureNoticeSent` 的话，一条因为网络抖动删失败过的验证公告会就此定格：此后每轮都在短路处返回，那段清理代码再也不会执行，群里于是永远挂着一条带可点击验证按钮的公告，而对应的成员根本没被踢走。清理还欠账时照常走完整条处置——踢人被 `canRestrict` 短路、战报被 `failureNoticeSent` 短路，确证没有 `can_delete_messages` 时删除也被镜像短路，因此「一个请求都不发」这条性质仍然成立。这个标志与 `executionStarted` 同属 **Worker 本地幂等门、不进快照**：重放一次删除是幂等的，重发一条战报不是。
 
 <p align="right"><a href="#快速导航">↑ 返回快速导航</a></p>
 

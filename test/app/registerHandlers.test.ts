@@ -92,6 +92,17 @@ describe("application handler registration", () => {
       expect(registrationOrder.indexOf(`command:${command}`))
         .toBeGreaterThan(registrationOrder.indexOf("use:4"));
     }
+    // 每一条命令都必须排在入群验证 ingress 之后，授权维护也不例外：命令
+    // handler 一律不调 next()，注册在 ingress 之前的那条就会整条绕开刷屏计数、
+    // 黑名单频道消息就地删除与待验证成员的消息追踪（见 antiRaid/updateIngress.ts
+    // 的函数头）。只断言 use:3/use:4 是拦不住这种漏网的。
+    const antiRaidIngressIndex: number =
+      registrationOrder.indexOf(`on:${JSON.stringify("message")}`);
+    expect(antiRaidIngressIndex).toBeGreaterThan(-1);
+    for (const command of commands) {
+      expect(registrationOrder.indexOf(`command:${command}`))
+        .toBeGreaterThan(antiRaidIngressIndex);
+    }
     // 中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
     // 消息兜底之前，否则会被当成普通消息进入 AI/复读流水线。
     expect(hearsTriggers).toEqual([CJK_ACTION_COMMAND_PATTERN]);

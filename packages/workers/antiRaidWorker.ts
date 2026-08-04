@@ -35,6 +35,11 @@ import {
   forgetWorkerBotPermissions,
   resetWorkerBotPermissions,
 } from "./antiRaid/botPermissions";
+import {
+  applyChatKindChange,
+  forgetWorkerChatKind,
+  resetWorkerChatKind,
+} from "./antiRaid/chatKind";
 import { bumpBlocklistRemovalEpoch } from "../cache/workers/antiRaid/blocklist";
 import { ANTI_RAID_CACHE_SWEEP_INTERVAL_MS } from "../consts/antiRaid/cache";
 import { resetAdminCache, sweepAdminCache } from "../cache/workers/antiRaid/admins";
@@ -107,6 +112,7 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       // 计数也该从零开始，不能拿停管之前攒的窗口在新一轮里凑出一次禁言。
       clearChatFloodWindows(msg.chatId);
       forgetWorkerBotPermissions(msg.chatId);
+      forgetWorkerChatKind(msg.chatId);
       break;
     case "message":
       handleTrackedMessage(msg);
@@ -156,6 +162,9 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       break;
     case "botPermissionsChanged":
       applyBotPermissionsChange(msg.chatId, msg.permissions);
+      break;
+    case "chatKind":
+      applyChatKindChange(msg.chatId, msg.isSupergroup);
       break;
     case "barrier":
       self.postMessage({ type: "barrierComplete", barrierId: msg.barrierId });
@@ -217,6 +226,7 @@ export function stopAntiRaidWorker(): void {
   resetFloodWindows();
   resetPendingNoticeDeletions();
   resetWorkerBotPermissions();
+  resetWorkerChatKind();
   resetAntiRaidTaskTracker();
   self.onmessage = null;
   process.off("exit", stopAntiRaidWorker);

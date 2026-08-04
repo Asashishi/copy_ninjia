@@ -7,6 +7,7 @@ import type {
   WhitelistPermissions,
 } from "../types/whitelist";
 import {
+  PERMISSION_COMMAND_TEXTS,
   WHITELIST_PERMISSION_ALL_COMMAND,
   WHITELIST_PERMISSION_HELP,
   WHITELIST_PERMISSION_HELP_COMMAND,
@@ -15,22 +16,16 @@ import {
 } from "../consts/whitelist";
 import {
   enableAllWhitelistPermissions,
-  getWhitelistConfig,
+  getEffectiveWhitelistPermissions,
   isWhitelisted,
   setWhitelistPermission,
 } from "../config/whitelist";
+import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { isSuperAdminActor, resolveCommandActor } from "./commandActor";
+import { resolveCommandActor } from "./commandActor";
 import { resolveCommandTarget } from "./targetResolution";
-
-/** /permission 的固定用法；支持回复目标，或显式给用户/频道 ID 与 @username。 */
-const PERMISSION_USAGE_TEXT: string =
-  `哈？连这种命令都要本天才手把手教吗，杂鱼♡ ` +
-  `设置权限用 /permission <用户id|频道id|@username> <权限键> <true|false>；` +
-  `回复白名单身份时可以省略目标，只写 /permission <权限键> <true|false>；` +
-  `想把全部权限打开就用 /permission <用户id|频道id|@username> all，回复目标时只写 /permission all；` +
-  `想偷看自己有几斤几两就用 /permission query，连权限说明都记不住就用 /permission help，笨蛋♡`;
 
 interface PermissionHelpMessage {
   text: string;
@@ -39,25 +34,10 @@ interface PermissionHelpMessage {
 
 /** 把权限键与说明渲染为可复制的 JSON 代码块，实体偏移按 UTF-16 code unit 计算。 */
 function formatPermissionHelpMessage(): PermissionHelpMessage {
-  const prefix: string =
-    "哼，连权限名都记不住，还得本天才整理给你看吗？睁大眼睛看好啦：true 是赏给你的，false 就是没你的份，杂鱼♡\n";
+  const prefix: string = PERMISSION_COMMAND_TEXTS.helpPrefix;
   const permissionJson: string = JSON.stringify(WHITELIST_PERMISSION_HELP, null, 2);
-  const suffix: string = [
-    "",
-    "想知道自己有几斤几两就发：",
-    "/permission query",
-    "",
-    "以下修改操作仅限超级管理员，白名单杂鱼看懂就好，别伸手乱碰哦♡",
-    "给已有白名单身份设置权限：",
-    "/permission <用户id|频道id|@username> <权限键> <true|false>",
-    "回复目标时可省略身份：/permission <权限键> <true|false>",
-    "",
-    "懒得一项项开，就把已有白名单身份的全部权限设为 true：",
-    "/permission <用户id|频道id|@username> all",
-    "回复目标时可省略身份：/permission all",
-  ].join("\n");
   return {
-    text: `${prefix}${permissionJson}\n${suffix}`,
+    text: `${prefix}${permissionJson}\n${PERMISSION_COMMAND_TEXTS.helpSuffix}`,
     entities: [
       {
         type: "pre",
@@ -73,8 +53,7 @@ function formatPermissionHelpMessage(): PermissionHelpMessage {
 function formatPermissionQueryMessage(
   permissions: Readonly<WhitelistPermissions>
 ): PermissionHelpMessage {
-  const prefix: string =
-    "哼，连自己有几斤几两都不知道吗？本天才勉为其难把你的白名单权限列出来：true 是赏给你的，false 就是你还不配，睁大眼睛看好啦，杂鱼♡\n";
+  const prefix: string = PERMISSION_COMMAND_TEXTS.queryPrefix;
   const permissionJson: string = JSON.stringify(permissions, null, 2);
   return {
     text: `${prefix}${permissionJson}`,
@@ -107,12 +86,55 @@ export function parsePermissionBoolean(raw: string): boolean | undefined {
   return undefined;
 }
 
+/** reportWhitelistMutationFailure 的入参。 */
+interface ReportWhitelistMutationFailureParams {
+  /** 回执发往的会话。 */
+  readonly chatId: number;
+  /** 命令消息 id，回执回复到它下面。 */
+  readonly messageId: number | undefined;
+  /** 本次要改的身份，只用于日志定位。 */
+  readonly targetId: number;
+  /** 写盘抛出的原始错误。 */
+  readonly error: unknown;
+}
+
 /**
- * 处理 /permission：白名单身份可查询自身权限与查看说明；仅超级管理员可修改
- * 已经存在的白名单条目。
+ * 白名单写盘失败时就地降级：记一行错误日志并如实回执。
+ *
+ * 不能让异常逸出 handler。bot.catch 按设计原样重抛（见 app/registerHandlers.ts），
+ * acknowledged runner 随即让进程带非零码退出且**不确认 offset**，Telegram 重投
+ * 同一条命令、同一处再抛——`config/` 不可写时一条 /permission 就能把机器人锁进
+ * 永久重启循环，所有群一起失能。配置此刻一点没被改动（commitWhitelistMutation
+ * 只在写盘成功后才发布运行时快照），因此确认这条 update 是安全的。降级语义与
+ * antiRaid/blocklistGuard.ts 的 claimBlockedJoiner 一致。
+ */
+async function reportWhitelistMutationFailure({
+  chatId,
+  messageId,
+  targetId,
+  error,
+}: ReportWhitelistMutationFailureParams): Promise<void> {
+  logger.error(
+    `Failed to persist the whitelist permission change for identity ${targetId}:`,
+    error
+  );
+  await sendCommandMessage({
+    chatId,
+    text: PERMISSION_COMMAND_TEXTS.mutationFailed,
+    replyToMessageId: messageId,
+  });
+}
+
+/**
+ * 处理 /permission：白名单边界内的身份可查询自身权限与查看说明；仅超级管理员
+ * 可修改已经存在的白名单条目。
  *
  * 新增/删除成员由同样仅限超级管理员的 /white 负责；本命令只修改已有身份的
  * 单项或全部权限，避免误发一条带陌生 ID 的消息就扩大整个白名单安全边界。
+ *
+ * 超级管理员在这条命令里出现在两个位置，语义相反：作为**发起人**他是唯一能改
+ * 权限的人；作为**目标**则一律被拒——他的权限来自身份、恒为全开，写进配置文件
+ * 的条目永远不会被读到（见 config/whitelist.ts 的 getEffectiveWhitelistPermissions）。
  */
 export async function handlePermissionCommand(
   ctx: CommandContext<Context>
@@ -120,7 +142,9 @@ export async function handlePermissionCommand(
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  const actorIsSuperAdmin: boolean = isSuperAdminActor(ctx);
+  // 直接比对上面已经解析出来的发起身份，不再调 isSuperAdminActor 重解析一遍：
+  // resolveCommandActor 对同一个 ctx 是纯函数，第二次调用只多造一个 CachedUser。
+  const actorIsSuperAdmin: boolean = actor?.id === SUPER_ADMIN_USER_ID;
   const tokens: string[] = ctx.match.trim()
     .split(/\s+/)
     .filter((token: string): boolean => token.length > 0);
@@ -132,12 +156,16 @@ export async function handlePermissionCommand(
     tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_QUERY_COMMAND;
 
   if (isHelp || isQuery) {
+    // 超级管理员由身份直接持有全部权限，getEffectiveWhitelistPermissions 会
+    // 替他补上全开视图，这里不必再单独判身份（见 config/whitelist.ts）。
     const actorPermissions: Readonly<WhitelistPermissions> | undefined =
-      actor === undefined ? undefined : getWhitelistConfig().get(actor.id);
-    if (!actorIsSuperAdmin && actorPermissions === undefined) {
+      actor === undefined ? undefined : getEffectiveWhitelistPermissions(actor.id);
+    if (actorPermissions === undefined) {
       await sendCommandMessage({
         chatId,
-        text: `哈？${actor ? formatUserLabel(actor) : "哪个杂鱼"} 还不在里面，这种白名单门都没摸到的杂鱼也敢偷看本天才的权限说明？先拿到资格再来啦，笨蛋♡`,
+        text: PERMISSION_COMMAND_TEXTS.outsiderRejection(
+          actor ? formatUserLabel(actor) : "哪个杂鱼"
+        ),
         replyToMessageId: messageId,
       });
       return;
@@ -150,14 +178,6 @@ export async function handlePermissionCommand(
         entities: helpMessage.entities,
         replyToMessageId: messageId,
         preserveInGroup: true,
-      });
-      return;
-    }
-    if (actorPermissions === undefined) {
-      await sendCommandMessage({
-        chatId,
-        text: `哈？超级管理员可是本天才亲自认的，才不靠白名单那点逐项授权呢，所以没有可查询的自身白名单权限对象啦，笨蛋♡`,
-        replyToMessageId: messageId,
       });
       return;
     }
@@ -175,7 +195,9 @@ export async function handlePermissionCommand(
   if (!actorIsSuperAdmin) {
     await sendCommandMessage({
       chatId,
-      text: `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想改本天才的权限配置？哪来的资格呀，笨蛋♡`,
+      text: PERMISSION_COMMAND_TEXTS.mutationRejection(
+        actor ? formatUserLabel(actor) : "哪个杂鱼"
+      ),
       replyToMessageId: messageId,
     });
     return;
@@ -185,7 +207,7 @@ export async function handlePermissionCommand(
   if (!isEnableAll && tokens.length < 2) {
     await sendCommandMessage({
       chatId,
-      text: PERMISSION_USAGE_TEXT,
+      text: PERMISSION_COMMAND_TEXTS.usage,
       replyToMessageId: messageId,
     });
     return;
@@ -201,7 +223,9 @@ export async function handlePermissionCommand(
     if (key === undefined || value === undefined) {
       await sendCommandMessage({
         chatId,
-        text: `${PERMISSION_USAGE_TEXT}\n可用权限键：${WHITELIST_PERMISSION_KEYS.join(", ")}`,
+        text: PERMISSION_COMMAND_TEXTS.usageWithKeys(
+          WHITELIST_PERMISSION_KEYS.join(", ")
+        ),
         replyToMessageId: messageId,
       });
       return;
@@ -218,33 +242,54 @@ export async function handlePermissionCommand(
     rawArgument: targetArgument,
     acceptUserId: true,
     acceptChatId: true,
-    messages: {
-      missingTarget: `笨蛋，要回复一个白名单身份，或者把用户/频道 id 写在 /permission 后面呀♡`,
-      invalidUsername: (rawArgument: string): string =>
-        `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户/频道 id♡`,
-      unknownUsername: (rawUsername: string): string =>
-        `笨蛋，@${rawUsername} 还没被本天才记住；回复 TA 的消息或直接给 id 吧♡`,
-      conflictingTarget: (rawArgument: string): string =>
-        `笨蛋，你回复了一个身份、又写了 ${rawArgument}，本天才不会猜要改谁的权限♡`,
-      selfTarget: `笨蛋，本天才自己的权限不归白名单配置管呀♡`,
-    },
+    messages: PERMISSION_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;
+  // 与 /block、/unblock、/white 同一道闸：匿名管理员拿当前群当皮套时
+  // resolveCommandTarget 按设计返回这个群自己的 identity（见
+  // targetResolution.ts 结尾）。这里必须自己拒绝——给它逐项发权限，等于把
+  // /block、/mute 与各功能开关交给这个群的任意匿名管理员，而 Telegram 从不
+  // 告诉本进程皮套底下是谁。
+  if (target.isChannel === true && target.id === chatId) {
+    await sendCommandMessage({
+      chatId,
+      text: PERMISSION_COMMAND_TEXTS.currentChatTarget,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+  // 超级管理员的权限来自身份本身、恒为全开，永远不落进 config/whitelist.json
+  // （见 consts/whitelist.ts 的 SUPER_ADMIN_WHITELIST_PERMISSIONS）。放行只会
+  // 写进一条永远不被读到的条目，换过 SUPER_ADMIN_USER_ID 后还会留成全开的旧
+  // 身份，所以在入口就挡住。
+  if (target.id === SUPER_ADMIN_USER_ID) {
+    await sendCommandMessage({
+      chatId,
+      text: PERMISSION_COMMAND_TEXTS.superAdminTarget,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
   if (!isWhitelisted(target.id)) {
     await sendCommandMessage({
       chatId,
-      text: `${formatTargetLabel(target)} 还不在白名单里；先用 /white 把 TA 加进去再改权限呀，笨蛋♡`,
+      text: PERMISSION_COMMAND_TEXTS.targetNotWhitelisted(formatTargetLabel(target)),
       replyToMessageId: messageId,
     });
     return;
   }
 
   if (isEnableAll) {
-    const result: SetWhitelistPermissionResult =
-      await enableAllWhitelistPermissions(target.id);
+    let result: SetWhitelistPermissionResult;
+    try {
+      result = await enableAllWhitelistPermissions(target.id);
+    } catch (error: unknown) {
+      await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
+      return;
+    }
     const replyText: string = result.changed
-      ? `哼，${formatTargetLabel(target)} 的权限已经被本天才全部打开啦，可别拿去乱来哦♡`
-      : `笨蛋，${formatTargetLabel(target)} 的权限本来就是全开的，还想让本天才开几次呀♡`;
+      ? PERMISSION_COMMAND_TEXTS.allEnabled(formatTargetLabel(target))
+      : PERMISSION_COMMAND_TEXTS.allAlreadyEnabled(formatTargetLabel(target));
     await sendCommandMessage({
       chatId,
       text: replyText,
@@ -256,15 +301,21 @@ export async function handlePermissionCommand(
     throw new Error("Permission mutation reached execution without a parsed key and value");
   }
 
-  const result: SetWhitelistPermissionResult = await setWhitelistPermission({
-    id: target.id,
-    key,
-    value,
-  });
-  const stateText: string = result.changed ? "已设为" : "原本就是";
+  let result: SetWhitelistPermissionResult;
+  try {
+    result = await setWhitelistPermission({ id: target.id, key, value });
+  } catch (error: unknown) {
+    await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
+    return;
+  }
   await sendCommandMessage({
     chatId,
-    text: `哼，${formatTargetLabel(target)} 的 ${key} ${stateText} ${String(value)} 啦♡`,
+    text: PERMISSION_COMMAND_TEXTS.permissionSet({
+      targetLabel: formatTargetLabel(target),
+      key,
+      value,
+      changed: result.changed,
+    }),
     replyToMessageId: messageId,
   });
 }

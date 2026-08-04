@@ -6,6 +6,7 @@ import {
   throwIfUpdateAborted,
 } from "../infra/updateContext";
 import { isSuperAdmin } from "./superAdminToggle";
+import { parseChatIdArgument } from "./targetResolution";
 import type { ChatFullInfo } from "@grammyjs/types";
 
 /**
@@ -34,8 +35,12 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  const targetChatId: number = Number(arg);
-  if (!arg || !Number.isSafeInteger(targetChatId)) {
+  // 与全仓其余 id 解析同一口径（正则 + 安全整数），不用裸 `Number()`：后者会把
+  // `-100123456789.0`、`0x2d` 这类非规范写法悄悄收下，而这条命令的结果会落进
+  // ChatState.isProxySendEnabled 开一个持久代发会话——超管此后每条私聊都转进
+  // 一个他从没输入过的群。
+  const targetChatId: number | undefined = parseChatIdArgument(arg);
+  if (targetChatId === undefined) {
     await sendCommandMessage({ chatId, text: `笨蛋，要 /send <群组id> 或者 /send finish，说清楚呀♡`, replyToMessageId: messageId });
     return;
   }

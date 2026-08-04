@@ -3,6 +3,7 @@ import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
 import { sendMessage, joinVerificationApi } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
+import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
 import {
   joinWindows,
   lastLockdownIntentId,
@@ -247,7 +248,11 @@ function commitApplyLockdown(chatId: number): void {
       return;
     }
     try {
-      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(currentPermissions));
+      await joinVerificationApi.setChatPermissions(
+        chatId,
+        restrictedPermissions(currentPermissions),
+        INDEPENDENT_CHAT_PERMISSIONS_OTHER
+      );
       dispatchLockdown(chatId, { type: "applyResult", ok: true });
     } catch (error: unknown) {
       logger.error("Error applying anti-raid lockdown; scheduling a restorative reconciliation:", error);
@@ -286,7 +291,11 @@ function reapplyLockdownRestriction(chatId: number, _originalPermissions: ChatPe
     try {
       const chat: ChatFullInfo = await joinVerificationApi.getChat(chatId);
       if (!("permissions" in chat) || !chat.permissions) throw new Error("getChat response missing permissions");
-      await joinVerificationApi.setChatPermissions(chatId, restrictedPermissions(chat.permissions));
+      await joinVerificationApi.setChatPermissions(
+        chatId,
+        restrictedPermissions(chat.permissions),
+        INDEPENDENT_CHAT_PERMISSIONS_OTHER
+      );
     } catch (error: unknown) {
       logger.error(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded:`, error);
     }

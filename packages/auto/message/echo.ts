@@ -35,8 +35,12 @@ export async function echoMessage({
   mode,
   expectedTargetId,
 }: EchoMessageParams): Promise<string | undefined> {
-  const text: string = message.text || "";
-  if (text.startsWith("/")) return undefined;
+  // caption 也要看：只读 message.text 的话，图片/动画/文件消息在这里恒为空串，
+  // 一条 caption 写着 `/batch_kick 1d` 的图片会一路走到下面的 copyMessage 被
+  // 原样重发，而 Telegram 会把机器人自己发出的那句 caption 渲染成可点击的命令
+  // 链接——等于本天才亲手给一条破坏性管理命令造了个一键入口。
+  const commandText: string = message.text ?? message.caption ?? "";
+  if (commandText.startsWith("/")) return undefined;
 
   const plainText: string | undefined =
     typeof message.text === "string" &&

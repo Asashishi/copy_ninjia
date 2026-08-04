@@ -74,15 +74,9 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage): voi
 /**
  * 记录一条群消息到该群的滚动缓存，供之后拼装成对话上下文喂给模型。
  * 文本与昵称都会被压成单行（见 sanitizeInline，防转录注入）。
- * @param chatId 群聊 ID。
- * @param senderId 发言人 id（真实用户 id，或频道马甲/频道帖的频道 id）。
- * @param firstName 发言人 first_name（频道则是 title）。
- * @param lastName 发言人 last_name（频道则为空）。
- * @param username 发言人的公开 username（不含 @，没有则为 undefined）。
- * @param messageId 这条 Telegram 消息的 message_id，供回复引用精确关联。
- * @param replyTo 当前消息显式回复的原消息快照；非回复消息省略。
- * @param forwardedFrom 当前消息是转发时的来源标注；非转发省略。
- * @param text 消息文本。
+ * @param message 主线程投递过来的整条记录载荷；逐字段语义见
+ *   packages/types/aiChat/protocol.ts 的 AiRecordContext / AiRecordMessage
+ *   （那里也写明了字段必须一次性齐备、不得事后补键的理由）。
  */
 export function recordChatMessage(message: AiRecordMessage): void {
   const entry: BufferedMessage | null = buildBufferedMessage(message, message.text);

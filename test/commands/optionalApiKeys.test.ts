@@ -24,8 +24,9 @@ mock.module("../../packages/infra/config", () => ({
   AI_CHAT_GEMINI_API_KEY: undefined,
   AD_DETECT_DEEPSEEK_API_KEY: undefined,
 }));
+// 超级管理员由身份直接持有全部白名单权限（见 packages/config/whitelist.ts）。
 mock.module("../../packages/config/whitelist", () => ({
-  hasWhitelistPermission: (): boolean => false,
+  hasWhitelistPermission: (id: number): boolean => id === 100,
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,

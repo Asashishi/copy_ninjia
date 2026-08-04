@@ -12,7 +12,6 @@ import {
   requestBlocklistResweep,
   sweepBlockedMembers,
 } from "../infra/blocklist/sweep";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
 import { readRecentJoinLog } from "../infra/joinLog";
 import { logger } from "../infra/logger";
 import type {
@@ -85,10 +84,8 @@ async function processJoinRecord({
   record,
   stats,
 }: ProcessJoinRecordParams): Promise<void> {
-  if (
-    record.userId === SUPER_ADMIN_USER_ID ||
-    isWhitelisted(record.userId)
-  ) {
+  // isWhitelisted 已经把超级管理员算进白名单边界（config/whitelist.ts）。
+  if (isWhitelisted(record.userId)) {
     stats.protected++;
     return;
   }
@@ -114,10 +111,13 @@ async function processJoinRecord({
     stats.blocked++;
     return;
   }
-  const outcome: KickChatMemberOutcome = await kickChatMemberWithOutcome(
+  // 本命令在入口就只接受超级群（见 handleBatchKickCommand），如实传 true 而不是
+  // 留空：这样各调用点交给同一个封装的都是同一种对象 shape。
+  const outcome: KickChatMemberOutcome = await kickChatMemberWithOutcome({
     chatId,
-    record.userId
-  );
+    userId: record.userId,
+    isSupergroup: true,
+  });
   // 网络失败也可能发生在 Telegram 已执行 unban 之后，因此不能只在明确
   // "kicked" 时补查；只要权威名单已变为 blocked，就一律把永久封禁补回。
   if (isUserBlocked(record.userId)) {

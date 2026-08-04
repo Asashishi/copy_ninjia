@@ -113,22 +113,52 @@ export type KickChatMemberOutcome =
   | "forbidden"
   | "failed";
 
+export interface KickChatMemberParams {
+  chatId: number;
+  userId: number;
+  /**
+   * 这个群是不是超级群；三态，**未知（省略）必须与确证的 false 区分**。
+   *
+   * 「只踢不封」在两类群里是两个不同的方法，Bot API 原文各自划定了作用域：
+   * - `unbanChatMember`：「unban a previously banned user **in a supergroup or
+   *   channel**」——普通群用不了；
+   * - `banChatMember`：「ban a user in **a group**, a supergroup or a channel」，
+   *   而「踢了就回不来」那句紧接着限定「**In the case of supergroups and
+   *   channels**」——所以普通群里它就是一次纯移除，不留持久封禁。
+   *
+   * 因此只有**确证是普通群**才改走 `banChatMember`。未知时一律按超级群办：
+   * 托管群绝大多数是超级群，把未知折算成普通群，代价是在超级群里打出一次真正
+   * 的持久封禁，而「除 /block 与黑名单秒踢外一律只踢不封」是这套自动处置的硬
+   * 约束（见 docs/04-invariants.md）。镜像来源见 antiRaid/chatKind.ts。
+   */
+  isSupergroup?: boolean;
+  api?: Api;
+}
+
 /** 原子地将成员移出群聊但不加入封禁名单，并保留失败类别。 */
-export async function kickChatMemberWithOutcome(
-  chatId: number,
-  userId: number,
-  api: Api = bot.api
-): Promise<KickChatMemberOutcome> {
+export async function kickChatMemberWithOutcome({
+  chatId,
+  userId,
+  isSupergroup,
+  api = bot.api,
+}: KickChatMemberParams): Promise<KickChatMemberOutcome> {
   let permissionDenied: boolean = false;
   const kicked: boolean = await runTelegramAction({
     action: `kick chat member (chat ${chatId}, user ${userId})`,
     execute: (signal?: AbortSignal): Promise<true> =>
-      api.unbanChatMember(
-        chatId,
-        userId,
-        {},
-        ...signalArgs(signal)
-      ),
+      isSupergroup === false
+        ? api.banChatMember(
+          chatId,
+          userId,
+          {},
+          ...signalArgs(signal)
+        )
+        : api.unbanChatMember(
+          chatId,
+          userId,
+          {},
+          ...signalArgs(signal)
+        ),
     map: (): boolean => true,
     fallback: false,
     shouldLogError: (error: unknown): boolean => {
@@ -142,13 +172,9 @@ export async function kickChatMemberWithOutcome(
 
 /** 只关心是否踢成功的兼容入口。 */
 export async function kickChatMember(
-  chatId: number,
-  userId: number,
-  api: Api = bot.api
+  params: KickChatMemberParams
 ): Promise<boolean> {
-  return (
-    await kickChatMemberWithOutcome(chatId, userId, api)
-  ) === "kicked";
+  return (await kickChatMemberWithOutcome(params)) === "kicked";
 }
 
 /**

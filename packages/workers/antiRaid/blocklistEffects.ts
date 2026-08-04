@@ -26,6 +26,7 @@
 import { banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, joinVerificationApi, probeChatAdmin, probeChatMembership } from "../../infra/telegram";
 import type { BanChatMemberOutcome } from "../../infra/telegram";
 import { logger } from "../../infra/logger";
+import { botCanDeleteIn } from "./botPermissions";
 import { recordJoin } from "./lockdownRuntime";
 import { currentBlocklistRemovalEpoch } from "../../cache/workers/antiRaid/blocklist";
 import {
@@ -180,7 +181,18 @@ async function removeBlockedMembers({
     } else if (outcome === "failed") complete = false;
   }
   // 入群公告：不投 join 就没人再管这条服务消息了，处置走完顺手删掉。
-  if (announcementMessageId !== undefined && currentBlocklistRemovalEpoch(chatId) === epoch) {
+  //
+  // 确证没有删消息权限时一条请求都不发（三态里只拦确证的 false，理由见
+  // ./botPermissions.ts）：机器人完全可能是「有 can_restrict_members、没有
+  // can_delete_messages」的管理员，那种群里每个黑名单入群都换来一次注定 400 的
+  // 删除，而这些请求排在与验证超时踢人共用的 joinVerificationApi FIFO 队列上——
+  // 一波协同入群时，它们会把真正的踢人顶到验证窗口之后，公告本身照样删不掉。
+  // 与 adDetect/disposal.ts 和验证处置路径共用同一道闸。
+  if (
+    announcementMessageId !== undefined &&
+    currentBlocklistRemovalEpoch(chatId) === epoch &&
+    botCanDeleteIn(chatId) !== false
+  ) {
     await deleteMessage(chatId, announcementMessageId, joinVerificationApi);
   }
   if (removed > 0) logger.log(`Removed ${removed} blocklisted member(s) from chat ${chatId}.`);

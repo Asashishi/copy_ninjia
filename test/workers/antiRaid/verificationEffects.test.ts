@@ -16,6 +16,8 @@ import type {
 
 const dispatched: { userId: number; event: VerificationEvent }[] = [];
 const kickedUserIds: number[] = [];
+/** 每次踢人调用带上的 isSupergroup（undefined = 未观测到，走 unbanChatMember）。 */
+const kickChatKinds: (boolean | undefined)[] = [];
 const deletedMessageIds: number[] = [];
 const autoDeleted: { messageId: number; delayMs: number }[] = [];
 const sentTexts: string[] = [];
@@ -67,15 +69,16 @@ mock.module("../../../packages/infra/telegram", () => ({
   deleteMessageAfter(params: { messageId: number; delayMs: number }): void {
     autoDeleted.push({ messageId: params.messageId, delayMs: params.delayMs });
   },
-  kickChatMember: async (_chatId: number, userId: number): Promise<boolean> => {
-    kickedUserIds.push(userId);
+  kickChatMember: async (params: { userId: number; isSupergroup?: boolean }): Promise<boolean> => {
+    kickedUserIds.push(params.userId);
+    kickChatKinds.push(params.isSupergroup);
     return kickSucceeds;
   },
   kickChatMemberWithOutcome: async (
-    _chatId: number,
-    userId: number
+    params: { userId: number; isSupergroup?: boolean }
   ): Promise<"kicked" | "failed"> => {
-    kickedUserIds.push(userId);
+    kickedUserIds.push(params.userId);
+    kickChatKinds.push(params.isSupergroup);
     return kickSucceeds ? "kicked" : "failed";
   },
   probeChatMembership,
@@ -96,6 +99,10 @@ const {
   applyBotPermissionsChange,
   resetWorkerBotPermissions,
 } = await import("../../../packages/workers/antiRaid/botPermissions");
+const {
+  applyChatKindChange,
+  resetWorkerChatKind,
+} = await import("../../../packages/workers/antiRaid/chatKind");
 
 const CHAT_ID: number = -1001;
 const USER_ID: number = 42;
@@ -169,8 +176,10 @@ beforeEach(() => {
   reminderDeliveries.clear();
   resetAdminCache();
   resetWorkerBotPermissions();
+  resetWorkerChatKind();
   dispatched.length = 0;
   kickedUserIds.length = 0;
+  kickChatKinds.length = 0;
   deletedMessageIds.length = 0;
   autoDeleted.length = 0;
   sentTexts.length = 0;
@@ -453,6 +462,53 @@ describe("同步副作用的逐条执行", () => {
     });
   });
 
+  test("私密模式首发不付成员探测：刚到达的 join update 已经证明人在群里", async () => {
+    // 刷群时每个进来的人都走这条路，白付一次查询等于把调用量翻倍
+    // （见 docs/04-invariants.md 的终态处置一节）。
+    setState(kickPendingState());
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(probeChatMembership).not.toHaveBeenCalled();
+    expect(kickedUserIds).toEqual([USER_ID]);
+  });
+
+  test("私密模式重试才先探测：人已经不在群里就直接结算，不发那个会解封的请求", async () => {
+    // 超级群的「只踢不封」映射到 unbanChatMember，而它不带 only_if_banned 时
+    // 会**解除已有封禁**：首发瞬时失败、退避期间超管刚 /block 掉这个人的话，
+    // 重试这一发就把刚落的封禁解开了，人凭任意邀请链接就能回来。
+    membershipPresent = false;
+    const state = kickPendingState();
+    setState(state);
+    verificationEntries.set(KEY, { state, timer: undefined, terminalRetries: 1 });
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, joinVerificationApi);
+    expect(kickedUserIds).toEqual([]);
+    expect(dispatched).toContainEqual({
+      userId: USER_ID,
+      event: { type: "kickSettled", now: expect.any(Number) },
+    });
+  });
+
+  test("私密模式重试时探测不出成员在不在群里，同样不发那个请求", async () => {
+    // 查询失败不等于不在群，也不足以授权一个可能解掉别人封禁的调用。
+    membershipPresent = undefined;
+    const state = kickPendingState();
+    setState(state);
+    verificationEntries.set(KEY, { state, timer: undefined, terminalRetries: 1 });
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(kickedUserIds).toEqual([]);
+    expect(state.executionStarted).toBeUndefined();
+    expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeFalse();
+    expect(verificationEntries.get(KEY)?.terminalRetries).toBe(2);
+    const timer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get(KEY)?.timer;
+    if (timer !== undefined) clearTimeout(timer);
+  });
+
   test("私密模式失败后的成员探测期间 token 被替换时丢弃迟到结果", async () => {
     kickSucceeds = false;
     const state = kickPendingState();
@@ -480,6 +536,31 @@ describe("踢人失败时的权限告警", () => {
       snapshot: snapshot(snapshotOverrides),
     };
   }
+
+  test("确证是普通群时改用 banChatMember 踢人；未观测到和超级群都走 unbanChatMember", async () => {
+    // 「只踢不封」在两类群里是两个方法：unbanChatMember 按官方文档只认超级群/
+    // 频道，普通群要用 banChatMember（那里它不产生持久封禁）。三态里只有确证的
+    // false 会改道——把未知折算成普通群，代价是在超级群里打出一次真正的封禁。
+    // 镜像取值原样传给封装（同一个调用点只产出一种对象 shape），由封装按
+    // `=== false` 分派；因此这里期望的就是镜像本身的三态。
+    for (const [kind, expected] of [
+      [undefined, undefined],
+      [true, true],
+      [false, false],
+    ] as const) {
+      resetWorkerChatKind();
+      if (kind !== undefined) applyChatKindChange(CHAT_ID, kind);
+      kickedUserIds.length = 0;
+      kickChatKinds.length = 0;
+      const state = expellingState();
+      setState(state);
+
+      await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+      expect(kickedUserIds).toEqual([USER_ID]);
+      expect(kickChatKinds).toEqual([expected]);
+    }
+  });
 
   test("终态踢人前现查成员；确认已离群就直接收尾且不发错误战报", async () => {
     membershipPresent = false;
@@ -528,7 +609,7 @@ describe("踢人失败时的权限告警", () => {
     if (timer !== undefined) clearTimeout(timer);
   });
 
-  test("确证没有限制成员权限时每轮只重建退避，权限恢复后才发送处置请求", async () => {
+  test("确证没有限制成员权限时不发踢人请求，但照常清痕迹并把原因说给群里，之后每轮只退避", async () => {
     const delays: number[] = [];
     const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(
       ((_handler: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
@@ -550,13 +631,30 @@ describe("踢人失败时的权限告警", () => {
 
       await run([{ kind: "expel", snapshot: state.snapshot }]);
 
+      // 踢人相关的请求一个不发……
+      expect(probeChatMembership).not.toHaveBeenCalled();
+      expect(kickedUserIds).toEqual([]);
+      // ……但痕迹照清，群里也必须收到那条唯一点名封禁权限的提示，否则管理员
+      // 拿不到任何信号，人就无限期留在群里。
+      expect(deletedMessageIds).toEqual([20, 21, 22]);
+      expect(sentTexts).toHaveLength(1);
+      expect(sentTexts[0]).toContain("封禁权限");
+      expect(state.failureNoticeSent).toBeTrue();
+      expect(loggedErrors.some((line: string): boolean => line.includes("can_restrict_members"))).toBeTrue();
+      expect(state.executionStarted).toBeFalse();
+      expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
+      expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
+
+      // 第二轮：诊断已经闩住，只推进退避，一个请求都不再发。
+      deletedMessageIds.length = 0;
+      sentTexts.length = 0;
+      await run([{ kind: "expel", snapshot: state.snapshot }]);
+
       expect(probeChatMembership).not.toHaveBeenCalled();
       expect(kickedUserIds).toEqual([]);
       expect(deletedMessageIds).toEqual([]);
       expect(sentTexts).toEqual([]);
-      expect(state.executionStarted).toBeFalse();
-      expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
-      expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
+      expect(verificationEntries.get(KEY)?.terminalRetries).toBe(2);
 
       applyBotPermissionsChange(CHAT_ID, {
         canRestrictMembers: true,
@@ -704,6 +802,74 @@ describe("踢人失败时的权限告警", () => {
     expect(sentTexts).toHaveLength(1);
     expect(state.failureNoticeSent).toBeUndefined();
     expect(publishedChanges).toBe(0);
+  });
+
+  test("踢成功但战报没发出去时不结算，下一轮凭 removalConfirmed 补发", async () => {
+    // 战报发不出去（429 熬过了 autoRetry / 网络抖动）时照样结算的话，记录当场
+    // 被删，群里看着一个成员凭空消失，而唯一的说明再也没有第二次机会。
+    nextSentMessageId = undefined;
+    const state = expellingState();
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(kickedUserIds).toEqual([USER_ID]);
+    expect(state.removalConfirmed).toBeTrue();
+    expect(state.successNoticeSent).toBeUndefined();
+    expect(publishedChanges).toBe(1);
+    expect(dispatched).not.toContainEqual({ userId: USER_ID, event: { type: "expelSettled" } });
+
+    // 下一轮探测只会答「人已经不在群里」——没有 removalConfirmed 的话这里会被
+    // 当成「别人处置的」而静默结算。有它就认得出那是本天才踢的，战报照样补发。
+    membershipPresent = false;
+    nextSentMessageId = 901;
+    sentTexts.length = 0;
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(kickedUserIds).toEqual([USER_ID]);
+    expect(sentTexts).toHaveLength(1);
+    expect(sentTexts[0]).toContain("踢出去啦");
+    expect(state.successNoticeSent).toBeTrue();
+    expect(autoDeleted.at(-1)?.messageId).toBe(901);
+    expect(publishedChanges).toBe(2);
+
+    const timer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get(KEY)?.timer;
+    if (timer !== undefined) clearTimeout(timer);
+  });
+
+  test("确证没有封禁权限时，清理还欠着账就不闩住：下一轮仍然重试删除", async () => {
+    // 只认 failureNoticeSent 的话，一条因为网络抖动删失败过的验证公告会就此
+    // 定格：此后每轮都在短路处返回，那条带可点击按钮的公告永远挂在群里，而
+    // 对应的成员根本没被踢走。
+    applyBotPermissionsChange(CHAT_ID, { canRestrictMembers: false, canDeleteMessages: true });
+    traceDeleteOutcomes.push("failed");
+    const state = expellingState({ announcementMessageId: 20 });
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(deletedMessageIds).toEqual([20]);
+    expect(state.failureNoticeSent).toBeTrue();
+    expect(state.cleanupSettled).toBeUndefined();
+
+    // 第二轮：告警闩住了不再重发，公告仍然要重试删除。
+    deletedMessageIds.length = 0;
+    sentTexts.length = 0;
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(deletedMessageIds).toEqual([20]);
+    expect(sentTexts).toEqual([]);
+    expect(state.cleanupSettled).toBeTrue();
+
+    // 第三轮：清干净之后才真正闩住，一个请求都不发。
+    deletedMessageIds.length = 0;
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(deletedMessageIds).toEqual([]);
+    expect(kickedUserIds).toEqual([]);
+
+    const timer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get(KEY)?.timer;
+    if (timer !== undefined) clearTimeout(timer);
   });
 
   test("本来就已发过时保持不变，不重复打扰", async () => {

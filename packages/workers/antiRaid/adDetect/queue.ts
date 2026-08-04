@@ -52,7 +52,7 @@ import {
   AD_DETECT_MESSAGE_MAX_CHARS,
   AD_DETECT_QUEUE_TICK_MS,
 } from "../../../consts/antiRaid/adDetect";
-import { sanitizeInline } from "../../../libs/text";
+import { sanitizeInline, truncateInline } from "../../../libs/text";
 import {
   admitAdBundleStorage,
   admitAdCandidate,
@@ -153,8 +153,12 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
   // （详见 bundle.ts 的 claimSampleContextParts，连坐的代价与跨条去重也写在那里）。
   const context: AdSampleContext | undefined =
     boundSampleContext(message.sampleContext);
+  // 按码元硬切会把切点落在代理对中间：留下的孤立高位代理进 DeepSeek 提示词时
+  // 被 UTF-8 编码换成 U+FFFD，还会原样写进 memory/ 的命中样本，运维复核误判时
+  // 看到的是乱码而不是对方真正发的那个字。与同管线的 classifier.ts 用同一个
+  // 代理对安全截断。
   const textWithLinks: string = appendLinkUrls(
-    sanitizeInline(message.text).slice(0, AD_DETECT_MESSAGE_MAX_CHARS),
+    truncateInline(sanitizeInline(message.text), AD_DETECT_MESSAGE_MAX_CHARS),
     message.linkUrls
   );
   const text: string = context === undefined
@@ -255,6 +259,21 @@ async function detectOne(key: string, bundle: AdMessageBundle): Promise<void> {
     // 确证也要待在 in-flight 标记之内：标记一放，同一个键就可能被下一拍取走
     // 再判一次，两次判定各自跑完一整套处置。
     if (verdict?.isAd === true) isAdmin = await isAdminSender(bundle);
+  } catch (error: unknown) {
+    // 判定的同步准备阶段也会抛：classifyAdText 先调 adDetectSystemPrompt →
+    // getAdSampleConfig()，而后者只缓存成功结果——进程启动之后把
+    // config/ad_samples.json 改坏或改成不可读，每一次调用都会重新抛出同一个错。
+    // 不在这里接住，异常就一路逃到 runAdDetectBatch 的 Promise.allSettled 被整个
+    // 吞掉：checkedSeq 永不推进，这个键每轮去重窗口轮换都重判一次、每次都失败，
+    // 全程一行日志都没有，而 /ad_detect 仍然报告功能已启用。
+    //
+    // 归到与「模型抽风、响应形状不对」同一档（见文件头）：本次当作没判定，
+    // 下面照常推进 checkedSeq，绝不重试成请求风暴。
+    logger.error(
+      `Ad detection failed to classify sender ${bundle.senderId} in chat ${bundle.chatId}:`,
+      error
+    );
+    verdict = null;
   } finally {
     inFlightAdDetectKeys.delete(key);
   }
@@ -337,7 +356,7 @@ function refreshAdDetectCapacitySaturation(): void {
  *
  * **刻意不登记进 Worker 的在途任务集合**（trackAntiRaidTask）：那个集合是停机
  * drain 的等待对象，而 drain 的预算是 ANTI_RAID_BARRIER_TIMEOUT_MS 这一档的秒级
- * 数值，一次判定请求却可以耗到 DEEPSEEK_REQUEST_TIMEOUT_MS（20 秒，还要乘上
+ * 数值，一次判定请求却可以耗到 DEEPSEEK_REQUEST_TIMEOUT_MS（30 秒，还要乘上
  * 空正文重试）。登记进去的话，凡是停机时恰好有一次判定在途，drain 必然超时
  * ——生命周期据此拒绝确认 Telegram offset 并以非零状态退出，等于每次撞上都
  * 换来一次脏退出加一批 update 重投。判定是尽力而为的启发式，本来就不该扣着

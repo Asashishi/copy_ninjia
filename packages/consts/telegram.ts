@@ -107,6 +107,27 @@ export const UNMUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = {
   can_manage_topics: true,
 };
 
+/**
+ * 读改写**群默认权限**（`setChatPermissions`）时固定带上的第三个参数。
+ *
+ * 与上面两份禁言常量相反，私密模式那条路是把 `getChat().permissions` 原样读
+ * 回来、只改 `can_invite_users` 再写回去，里面**必然有为 true 的项**。Bot API
+ * 对 `setChatPermissions` 的契约是：不传这个标志时 `can_send_other_messages`
+ * 会连带蕴含 `can_send_messages`、`can_send_audios`、`can_send_documents`、
+ * `can_send_photos`、`can_send_videos`、`can_send_video_notes` 与
+ * `can_send_voice_notes`，`can_send_polls` 蕴含 `can_send_messages`。于是一个
+ * 「只开表情/GIF、关掉图片视频文件」的群，每进出一次私密模式就会被静默地
+ * 把媒体权限全部打开，管理员那边没有任何提示。带上它才是一次保真的读改写。
+ *
+ * 所属模块：packages/infra/telegram/lockdownPermissions.ts 与
+ * packages/workers/antiRaid/lockdownRuntime.ts。
+ */
+export const INDEPENDENT_CHAT_PERMISSIONS_OTHER: Readonly<{
+  use_independent_chat_permissions: true;
+}> = {
+  use_independent_chat_permissions: true,
+};
+
 /** Telegram 文本消息的硬性长度上限（字符），超出会被 Bot API 拒绝。 */
 export const TELEGRAM_MESSAGE_MAX_CHARS: number = 4096;
 

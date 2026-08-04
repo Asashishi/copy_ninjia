@@ -10,6 +10,7 @@ import {
   registerBotPermissionObserver,
 } from "../infra/botAdmin";
 import { botChatPermissions } from "../cache/main/botAdmin";
+import { chatIsSupergroupById } from "../cache/main/antiRaid/chatKind";
 import type { BotChatPermissions } from "../types/telegram";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import {
@@ -208,6 +209,8 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
     // 提前 return 会让本次重生既没提升代际、也没重打快照，而 activeVerification-
     // Snapshots 仍带着旧 Worker 的代际——迟到事件的代际比对因此失去分辨力。
     if (!replayBotPermissions(postToNext)) return;
+    // 群类型同理，且同样必须先于 adopt：重放出来的终态可能立刻就要踢人。
+    if (!replayChatKinds(postToNext)) return;
     if (!postToNext(buildAdoptVerificationsMessage(generation))) return;
     for (const [key, record] of activeVerificationSnapshots) {
       if (record.phase !== "checkingInviter" && record.phase !== "expelling") continue;
@@ -266,8 +269,24 @@ function replayBotPermissions(postToNext: (message: AntiRaidWorkerMessage) => bo
   return true;
 }
 
+/**
+ * 把当前整份群类型镜像交给（新）Worker；语义同 replayBotPermissions。
+ *
+ * 新 isolate 的那张表是空的，而空表按契约等于「群类型未知」——未知会让踢人退回
+ * `unbanChatMember`，在普通群里就是踢不动。不重放的话，重生之后那些群要等到下
+ * 一条 update 才恢复，而恰恰是「没有新消息、只剩超时踢人」的群最需要它。
+ */
+function replayChatKinds(postToNext: (message: AntiRaidWorkerMessage) => boolean): boolean {
+  for (const [chatId, isSupergroup] of chatIsSupergroupById) {
+    if (!postToNext({ type: "chatKind", chatId, isSupergroup })) return false;
+  }
+  return true;
+}
+
 registerChatTeardown("antiRaid", (chatId: number): void => {
   deactivateAntiRaidChat(chatId);
+  // 与 Worker 侧的 forgetWorkerChatKind 对齐：重新接管时由第一条 update 重新观测。
+  chatIsSupergroupById.delete(chatId);
 });
 
 // Disk I/O Worker 重建时，active 与尚未确认的终结变化一起重放；否则旧日

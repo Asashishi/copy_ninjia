@@ -29,6 +29,7 @@ import type {
 import type { DeleteMessageOutcome } from "../../../infra/telegram";
 import { fetchAdminIds, freshAdminIds } from "../adminCache";
 import { botCanDeleteIn, botCanRestrictIn } from "../botPermissions";
+import { chatIsSupergroup } from "../chatKind";
 
 /** 终态原地标记变化后发布新 revision 的边界。 */
 export type VerificationChangePublisher = (
@@ -121,11 +122,33 @@ export async function runExpelEffect({
     expectedState.reason !== reason ||
     expectedState.snapshot !== effect.snapshot
   ) return;
-  // 权限镜像是三态：只有确证没有限制成员权限时才跳过。每轮保留一次 O(1)
-  // 判定并继续退避，权限恢复后下一轮自然重新执行；未知不能折算成没有权限。
-  // 短路必须位于所有 Telegram 副作用之前，否则一次注定踢不动的重试仍会先做
-  // 成员探测和验证消息清理，实际请求开销并没有消失。
-  if (botCanRestrictIn(chatId) === false) {
+  // 权限镜像是三态：只有确证没有限制成员权限时才跳过踢人请求。每轮保留一次
+  // O(1) 判定并继续退避，权限恢复后下一轮自然重新执行；未知不能折算成没有权限。
+  //
+  // **但只短路请求，不短路诊断。** 改动前这条路照常发踢人请求、吃下 Telegram
+  // 的 403/400，再发出那条唯一点名封禁权限的群内提示；把请求和提示一起省掉，
+  // 管理员就再也收不到任何信号：人无限期留在群里，退避一路静默涨到
+  // VERIFICATION_TERMINAL_RETRY_MAX_MS，机器人自己的验证提示也永远挂在群里。
+  //
+  // 因此第一次进这条分支时照常走一遍 expelMember——清机器人自己的验证消息、发出
+  // 那条提示、记一行日志，只是不发成员探测和踢人请求。之后由 failureNoticeSent
+  // 闩住：它随快照持久化，Worker 重生与进程重启后也不会重发，每轮重试只推进本地
+  // 退避，一个请求都不发。提示自己也没发出去时不置位（见 expelMember 收尾），
+  // 下一轮会重来。
+  //
+  // **清理还欠着账时不许短路**（cleanupSettled）。只认 failureNoticeSent 的话，
+  // 一条因为网络抖动删失败过的验证公告会就此定格：此后每一轮都在这里返回，
+  // 那段清理代码再也不会执行，群里于是永远挂着一条带可点击验证按钮的公告，而
+  // 对应的成员根本没被踢走。cleanupSettled 为假时照常走 expelMember——那条路上
+  // 踢人被 canRestrict 短路、播报被 failureNoticeSent 短路，机器人确证没有删除
+  // 权限时删除也被 botCanDeleteIn 短路，因此「一个请求都不发」这条性质仍然成立，
+  // 只有真的还能删、也确实该重试的那种情形才会发出请求。
+  const permissionBlocked: boolean = botCanRestrictIn(chatId) === false;
+  if (
+    permissionBlocked &&
+    expectedState.failureNoticeSent === true &&
+    expectedState.cleanupSettled === true
+  ) {
     expectedState.executionStarted = false;
     scheduleExpelRetry({
       chatId,
@@ -135,11 +158,19 @@ export async function runExpelEffect({
     });
     return;
   }
+  if (permissionBlocked) {
+    logger.error(
+      `Verification expel for user ${userId} in chat ${chatId} cannot kick: the bot is confirmed to lack ` +
+      "can_restrict_members there. Cleaning up the bot's own verification messages and notifying the chat once, then " +
+      "backing off without further requests until the permission returns."
+    );
+  }
   const settled: boolean = await expelMember({
     chatId,
     userId,
     snapshot: effect.snapshot,
     reason,
+    canRestrict: !permissionBlocked,
     expectedState,
     publishVerificationChange,
   });
@@ -203,6 +234,11 @@ interface ExpelMemberParams {
   userId: number;
   snapshot: ExpelSnapshot;
   reason: "timeout" | "flood";
+  /**
+   * 确证没有限制成员权限时为 false：跳过成员探测与踢人请求，其余（清理机器人
+   * 自己的验证消息、战报措辞、诊断名额）全部照旧，结局按「没踢动」结算。
+   */
+  canRestrict: boolean;
   expectedState: VerificationTerminalState & { kind: "expelling" };
   publishVerificationChange: VerificationChangePublisher;
 }
@@ -223,7 +259,15 @@ async function kickPresentMember(
   if (present === false) return "absent";
   if (present === undefined) return "unconfirmed";
   if (!isCurrent()) return "stale";
-  return await kickChatMember(chatId, userId, joinVerificationApi) ? "kicked" : "failed";
+  // 三态原样传下去：只有确证是普通群才换 banChatMember，未知按超级群办（判定
+  // 见该函数 JSDoc）。不用条件展开——那会让同一个调用点产出两种对象 shape，
+  // 还要为「未知」这条最常见的分支白造一个立即丢弃的空对象。
+  return await kickChatMember({
+    chatId,
+    userId,
+    isSupergroup: chatIsSupergroup(chatId),
+    api: joinVerificationApi,
+  }) ? "kicked" : "failed";
 }
 
 /** 清理机器人验证痕迹并按现查结果踢出，成功播报先写入新 revision 再收尾。 */
@@ -232,14 +276,17 @@ async function expelMember({
   userId,
   snapshot,
   reason,
+  canRestrict,
   expectedState,
   publishVerificationChange,
 }: ExpelMemberParams): Promise<boolean> {
   const stillCurrent = (): boolean =>
     verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState;
+  // canRestrict 为假时保持初值：没发请求就是没踢动，战报走「没给本天才封禁
+  // 权限」那条，与请求真的被 Telegram 403 掉时的结局一致。
   let removalOutcome: ExpelRemovalOutcome = "failed";
   if (!stillCurrent()) return false;
-  if (reason === "flood") {
+  if (reason === "flood" && canRestrict) {
     removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
     if (removalOutcome === "stale") return false;
   }
@@ -271,6 +318,8 @@ async function expelMember({
     }
   }
   const cleanupCleared: boolean = missedCleanup === 0;
+  // 只在真的一条不剩时置位；欠着账就留给下一轮重试（见 ExpellingState.cleanupSettled）。
+  if (cleanupCleared) expectedState.cleanupSettled = true;
   if (!cleanupCleared) {
     logger.error(
       `Verification expel could not delete ${missedCleanup} of ${cleanupMessageIds.length} ` +
@@ -281,13 +330,17 @@ async function expelMember({
     );
   }
   if (!stillCurrent()) return false;
-  if (reason === "timeout") {
+  if (reason === "timeout" && canRestrict) {
     removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
     if (removalOutcome === "stale") return false;
   }
-  if (removalOutcome === "absent") return stillCurrent();
-
-  const kicked: boolean = removalOutcome === "kicked";
+  // 「人已经不在群里」有两种来路，必须分开：本来就走了（照常静默结算，机器人
+  // 不认领别人的处置），以及上一轮确实是本天才踢掉的、只是那条播报没发出去
+  // （removalConfirmed 记着，见 ExpellingState）。后者仍要走播报那条路，否则
+  // 一次探测就把唯一的说明永久吞掉。
+  const kicked: boolean = removalOutcome === "kicked" ||
+    (removalOutcome === "absent" && expectedState.removalConfirmed === true);
+  if (removalOutcome === "absent" && !kicked) return stillCurrent();
   const noticeText: string = !kicked
     ? removalOutcome === "unconfirmed"
       ? `啧，本天才没能确认 ${snapshot.label} 现在还在不在群里，所以这次没有贸然踢人；会继续重试，杂鱼管理员也检查下网络和本天才的成员查询权限！`
@@ -332,6 +385,17 @@ async function expelMember({
     });
     expectedState.successNoticeSent = true;
     publishVerificationChange(chatId, userId, true);
+    return false;
+  }
+  // 踢成功了、那条播报却没发出去（429 排干净、网络抖动）。**不能就这么结算**：
+  // 结算等于删记录，群里看着一个人凭空消失，而唯一的说明再也不会有第二次机会。
+  // 先把「人确实是本天才踢走的」记进快照再退避重试，下一轮的成员探测才不会把
+  // 「不在群里」当成别人的处置（见上面 kicked 的两条来路）。
+  if (kicked && shouldSendNotice) {
+    if (expectedState.removalConfirmed !== true) {
+      expectedState.removalConfirmed = true;
+      publishVerificationChange(chatId, userId, true);
+    }
     return false;
   }
   return kicked && stillCurrent();

@@ -1,4 +1,5 @@
 import type { BotCommand } from "@grammyjs/types";
+import type { CommandTargetMessages, ToggleCommandTexts } from "../types/commands";
 
 /** 群聊命令文本发送后自动清理的最长保留时间。 */
 export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
@@ -42,7 +43,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "white", description: "新增或删除白名单用户/频道，首次加入用默认权限；仅超级管理员配用，普通杂鱼别想偷偷混进来♡" },
 ];
 
-/** copy 类命令的公共冷却时长（白名单用户豁免，见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
+/** copy 类命令的公共冷却时长（白名单边界内的身份豁免，含恒在边界内的超级管理员；见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
 export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
 
 /**
@@ -190,3 +191,157 @@ export const QUIET_MIN_MINUTES: number = 1;
 export const QUIET_MAX_MINUTES: number = 15;
 /** /quiet 的最大有效持续时间，用于抵御墙钟回拨导致的异常延长。 */
 export const QUIET_MAX_DURATION_MS: number = QUIET_MAX_MINUTES * 60_000;
+
+/**
+ * enable/disable 开关命令的对外文案表。
+ *
+ * 五条命令各一张，字段口径见 packages/types/commands.ts 的 ToggleCommandTexts：
+ * 拒绝、用法、以及四种状态结局各自的回执。它们跨调用方共享同一个对象，由
+ * `Readonly<>` 在编译期锁住全部字段（不可变性只在编译期表达，见 AGENTS.md 的
+ * 「常量」一节；断言在 `test/consts/immutability.test.ts`）。
+ * 所属模块：packages/commands/superAdminToggle.ts 与各开关命令。
+ */
+
+/** `/ai_chat enable|disable` 的全部文案。 */
+export const AI_CHAT_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
+  rejection: (mockerLabel: string): string =>
+    `就 ${mockerLabel} 也想管本天才要不要闲聊？哪来的资格呀，笨蛋♡`,
+  usage: `笨蛋，要 /ai_chat enable 还是 /ai_chat disable，说清楚呀♡`,
+  enabled: `哼，那本天才就赏脸在这个群闲聊几句吧，杂鱼们好好珍惜♡`,
+  disabled: `本天才不想再理你们这群杂鱼了，闲聊到此为止♡`,
+  alreadyEnabled: `笨蛋，本天才本来就在这个群陪你们闲聊呀，还要本天才答应几次？♡`,
+  alreadyDisabled: `本天才本来就没在这个群闲聊呀，笨蛋要关什么呢♡`,
+};
+
+/** `/ad_detect enable|disable` 的全部文案。 */
+export const AD_DETECT_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
+  rejection: (mockerLabel: string): string =>
+    `就 ${mockerLabel} 也想管本天才抓不抓广告？哪来的资格呀，笨蛋♡`,
+  usage: `笨蛋，要 /ad_detect enable 还是 /ad_detect disable，说清楚呀♡`,
+  enabled: `哼，本天才这就盯着这个群的广告，敢发的杂鱼一个都别想留下♡`,
+  disabled: `不抓广告了，随便你们刷吧，本天才可懒得管♡`,
+  alreadyEnabled: `笨蛋，本天才本来就盯着这个群的广告呢，还要本天才多长几只眼睛吗？♡`,
+  alreadyDisabled: `本天才本来就没在抓这个群的广告呀，笨蛋要关什么呢♡`,
+};
+
+/** `/flood_control enable|disable` 的全部文案。 */
+export const FLOOD_CONTROL_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
+  rejection: (mockerLabel: string): string =>
+    `就 ${mockerLabel} 也想管本天才抓不抓刷屏？哪来的资格呀，笨蛋♡`,
+  usage: `笨蛋，要 /flood_control enable 还是 /flood_control disable，说清楚呀♡`,
+  enabled: `哼，本天才开始盯着这个群的刷屏杂鱼了，刷太快就等着被按住吧♡`,
+  disabled: `防刷屏关掉了，随便你们吵吧，本天才懒得管♡`,
+  alreadyEnabled: `笨蛋，本天才本来就盯着这个群的刷屏杂鱼呢，急什么呀♡`,
+  alreadyDisabled: `防刷屏本来就是关着的呀，笨蛋要关几次才甘心♡`,
+};
+
+/**
+ * `/ja_copy enable|disable` 的全部文案。用法提示要额外说清不带参数是复读翻译：
+ * 这条命令的两种用法共用同一个命令名，靠有没有参数区分（见 commands/jaCopy.ts）。
+ */
+export const JA_COPY_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
+  rejection: (mockerLabel: string): string =>
+    `就 ${mockerLabel} 也想管本天才要不要翻译日语？哪来的资格呀，笨蛋♡`,
+  usage: `笨蛋，/ja_copy 不带参数是复读翻译，要开关这个功能就 /ja_copy enable 或 /ja_copy disable，说清楚呀♡`,
+  enabled: `哼，那本天才就赏脸继续在这个群用 /ja_copy 翻译日语吧，杂鱼们好好珍惜♡`,
+  disabled: `本天才不想再给你们这群杂鱼翻译日语了，/ja_copy 到此为止♡`,
+  alreadyEnabled: `笨蛋，本天才本来就在这个群翻日语呀，直接用 /ja_copy 不就好了♡`,
+  alreadyDisabled: `本天才本来就没在这个群翻日语呀，笨蛋要关什么呢♡`,
+};
+
+/** `/init enable|disable` 的全部文案；这条是超级管理员独占的群总开关。 */
+export const INIT_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
+  rejection: (mockerLabel: string): string =>
+    `就 ${mockerLabel} 也想让本天才在这个群干活？哪来的资格呀，笨蛋♡`,
+  usage: `笨蛋，要 /init enable 还是 /init disable，说清楚呀♡`,
+  enabled: `哼，那本天才就大发慈悲开始搭理这个群了，杂鱼们好好珍惜♡`,
+  disabled: `本天才不想再理这个群了，爱干嘛干嘛去吧♡`,
+  alreadyEnabled: `笨蛋，本天才本来就在搭理这个群呀，还要本天才答应几次？♡`,
+  alreadyDisabled: `本天才本来就没在理这个群呀，笨蛋要关什么呢♡`,
+};
+
+/**
+ * `/init disable` 已经落盘、但拆运行态失败时的回执。
+ *
+ * 这条路必须有自己的话：总开关此刻确实已经durable 地关掉了（重启后网关照样
+ * 拦住这个群），只是 copy 槽、AI 记忆或 Anti-Raid 那边有一样没拆干净。既不能
+ * 说成干净的成功，也不能把异常放出去——那会让 acknowledged runner 带非零码
+ * 退出且不确认 offset，Telegram 重投同一条命令，而那时 wasEnabled 已经是
+ * false，管理员反而会收到一句「本来就关着」。所属模块：packages/commands/init.ts。
+ */
+export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
+  `本天才不想再理这个群了，爱干嘛干嘛去吧——不过有几样运行态没能拆干净，` +
+  `日志里写着呢，杂鱼管理员去看一眼♡`;
+
+/**
+ * 各命令的目标解析提示文案表。
+ *
+ * 字段口径见 packages/types/commands.ts 的 CommandTargetMessages。抽成模块级
+ * 单例而不是每次调用现造：原来的写法每次命令调用都要新建一个对象加三个闭包，
+ * 而这些文案与本次调用的任何入参都无关。
+ *
+ * 注意 `/x` 那批中文动作命令**不在此列**：它们的提示里嵌着用户现打的动作词
+ * （任意 1~2 个中文字，见 CJK_ACTION_COMMAND_PATTERN），既没有有限的键集合可
+ * 建表，也不能按动作词缓存——那等于开一份键完全由外部输入决定的无界缓存。
+ * 所属模块：packages/commands/ 下各命令。
+ */
+
+/** `/block` 的目标解析提示；只认正整数用户 id，负数会话 id 另有语义。 */
+export const BLOCK_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
+  missingTarget: `笨蛋，要么 /block @username 或 /block 用户id，要么回复 TA 的一条消息再 /block，本天才可不会读心术♡`,
+  invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数，群和频道那种负数 id 不算），别拿半截参数糊弄本天才♡`,
+  unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /block 吧♡`,
+  conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；封人这事本天才可不猜——想封谁就只留一个，要么删掉参数、要么别回复♡`,
+  selfTarget: `笨蛋，本天才才不会把自己拉黑呢♡`,
+};
+
+/** `/unblock` 的目标解析提示；这条命令额外认频道的负数 id。 */
+export const UNBLOCK_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
+  missingTarget: `笨蛋，要么 /unblock @username 或 /unblock 用户id（频道就给那串负数 id），要么回复 TA 的一条消息再 /unblock，本天才可不会读心术♡`,
+  invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是 id（用户是正整数，频道是那串负数），别拿半截参数糊弄本天才♡`,
+  unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /unblock 吧♡`,
+  conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想解封谁就只留一个，要么删掉参数、要么别回复♡`,
+  selfTarget: `笨蛋，本天才本来就没把自己拉黑呀♡`,
+};
+
+/** `/mute` 的目标解析提示；除动词外与 /block 的口径一致。 */
+export const MUTE_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
+  missingTarget: `笨蛋，要么 /mute @username 或 /mute 用户id，要么回复 TA 的一条消息，本天才可不会读心术♡`,
+  invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数），别拿半截参数糊弄本天才♡`,
+  unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息再来吧♡`,
+  conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想对谁动手就只留一个，要么删掉参数、要么别回复♡`,
+  selfTarget: `笨蛋，本天才才不会捂自己的嘴呢♡`,
+};
+
+/** `/unmute` 的目标解析提示；与 MUTE_TARGET_TEXTS 只差命令名那一处动词。 */
+export const UNMUTE_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
+  missingTarget: `笨蛋，要么 /unmute @username 或 /unmute 用户id，要么回复 TA 的一条消息，本天才可不会读心术♡`,
+  invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数），别拿半截参数糊弄本天才♡`,
+  unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息再来吧♡`,
+  conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想对谁动手就只留一个，要么删掉参数、要么别回复♡`,
+  selfTarget: `笨蛋，本天才才不会捂自己的嘴呢♡`,
+};
+
+/** `/copy` 的目标解析提示。 */
+export const COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
+  missingTarget: `笨蛋，要么 /copy @username，要么直接回复 TA 的一条消息再 /copy，本天才总得知道杂鱼是谁吧♡`,
+  invalidUsername: (rawArgument: string): string =>
+    `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 /copy @username，别在后面夹垃圾♡`,
+  unknownUsername: (rawUsername: string): string =>
+    `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 /copy 呀♡`,
+  conflictingTarget: (rawArgument: string): string =>
+    `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该盯上哪个杂鱼呀？只留一个再来♡`,
+  selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
+};
+
+/** `/steal_icon` 的目标解析提示；与 COPY_TARGET_TEXTS 只差命令名。 */
+export const STEAL_ICON_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
+  missingTarget: `笨蛋，要么 /steal_icon @username，要么直接回复 TA 的一条消息再 /steal_icon，本天才总得知道杂鱼是谁吧♡`,
+  invalidUsername: (rawArgument: string): string =>
+    `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 /steal_icon @username，别在后面夹垃圾♡`,
+  unknownUsername: (rawUsername: string): string =>
+    `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 /steal_icon 呀♡`,
+  conflictingTarget: (rawArgument: string): string =>
+    `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该盯上哪个杂鱼呀？只留一个再来♡`,
+  selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
+};

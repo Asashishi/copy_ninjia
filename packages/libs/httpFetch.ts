@@ -13,6 +13,18 @@ function boundedErrorPreview(text: string): string {
   return `${text.slice(0, JSON_API_ERROR_LOG_MAX_CHARS)}…`;
 }
 
+/** fetchJsonWithTimeout 的入参。 */
+export interface FetchJsonWithTimeoutParams {
+  input: string | URL;
+  init: RequestInit;
+  timeoutMs: number;
+  /**
+   * 出现在错误日志里的接口名（如「Open-Meteo API」），用于区分是哪次调用
+   * 出的错。
+   */
+  errorLabel: string;
+}
+
 /**
  * 带超时和响应体硬上限的 JSON API 请求。成功/失败正文都经过同一个流式
  * bounded reader，不能因缺失或伪造 Content-Length 而无界占用内存。请求
@@ -20,16 +32,7 @@ function boundedErrorPreview(text: string): string {
  * 交给调用方。请求地址必须命中 JSON_API_ALLOWED_ORIGINS，且禁止自动跟随
  * 重定向，避免可信服务把通用请求能力转交给未经允许的目标。Telegram 头像
  * 爬取使用独立的 HTML/图片下载链路，不受此 JSON API 列表约束。
- * @param errorLabel 出现在错误日志里的接口名（如「Open-Meteo API」），
- *   用于区分是哪次调用出的错。
  */
-export interface FetchJsonWithTimeoutParams {
-  input: string | URL;
-  init: RequestInit;
-  timeoutMs: number;
-  errorLabel: string;
-}
-
 export async function fetchJsonWithTimeout({
   input,
   init,

@@ -68,21 +68,24 @@ export function decodeVerificationSnapshot(
       value.expelReason !== undefined ||
       value.successNoticeSent !== undefined ||
       value.failureNoticeSent !== undefined ||
-      value.unconfirmedNoticeSent !== undefined
+      value.unconfirmedNoticeSent !== undefined ||
+      value.removalConfirmed !== undefined
     )) ||
     (value.phase === "expelling" && (
       (value.expelReason !== "timeout" && value.expelReason !== "flood") ||
       value.terminalInviterId !== undefined ||
       (value.successNoticeSent !== undefined && typeof value.successNoticeSent !== "boolean") ||
       (value.failureNoticeSent !== undefined && typeof value.failureNoticeSent !== "boolean") ||
-      (value.unconfirmedNoticeSent !== undefined && typeof value.unconfirmedNoticeSent !== "boolean")
+      (value.unconfirmedNoticeSent !== undefined && typeof value.unconfirmedNoticeSent !== "boolean") ||
+      (value.removalConfirmed !== undefined && typeof value.removalConfirmed !== "boolean")
     )) ||
     (value.phase === "pending" && (
       value.terminalInviterId !== undefined ||
       value.expelReason !== undefined ||
       value.successNoticeSent !== undefined ||
       value.failureNoticeSent !== undefined ||
-      value.unconfirmedNoticeSent !== undefined
+      value.unconfirmedNoticeSent !== undefined ||
+      value.removalConfirmed !== undefined
     )) ||
     key !== verificationKey(value.chatId, value.userId)
   ) return null;
@@ -120,6 +123,7 @@ export function decodeVerificationSnapshot(
       successNoticeSent: value.successNoticeSent as boolean | undefined,
       failureNoticeSent: value.failureNoticeSent as boolean | undefined,
       unconfirmedNoticeSent: value.unconfirmedNoticeSent as boolean | undefined,
+      removalConfirmed: value.removalConfirmed as boolean | undefined,
     };
   }
   return { ...base, phase: "pending" };

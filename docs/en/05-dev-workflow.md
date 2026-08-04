@@ -35,14 +35,15 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **1608 tests / 170 files / 30142 `expect()` calls**; full-source **function coverage 95.17% / line coverage 96.56%**. The root README's Coverage badge displays line coverage.
+`bun run test:coverage`: **1643 tests / 170 files / 30375 `expect()` calls**; full-source **function coverage 95.53% / line coverage 96.61%**. The root README's Coverage badge displays line coverage.
 
 ## Test Isolation
 
-Tests must run through `bun run test`, which invokes `bun test --isolate`, with two layers of protection:
+Tests must run through `bun run test`, which invokes `bun test --isolate`, with three layers of protection:
 
 1. **File isolation**: Bun creates a fresh global object for every test file, so `mock.module` and module-level state do not contaminate other files. `--parallel` is not enabled, so this project does not claim that every file gets a separate process.
 2. **Temporary data root**: before any production module loads, `test/preload.ts` injects an independent temporary data root for each isolate. Even real, unmocked file I/O can read or write only that temporary directory and never production `state.json`, `bot.lock`, `logs/`, or `memory/`. The directory is removed afterward.
+3. **Read-only configuration root**: the same preload also points `COPY_NINJIA_CONFIG_ROOT` at the in-repo `config_example/` (see `CONFIG_ROOT` in `packages/consts/paths.ts`). The deployed `config/` is not version-controlled, so this layer both keeps a clean checkout runnable and stops tests and test Workers from reading or rewriting a developer's real `whitelist.json` and `blocklist.json`. That variable exists for tests only — it is not a deployment switch, which is why the README environment table omits it.
 
 Direct `bun test` runs are acceptable for debugging a single file, but the complete `bun run check` must pass before merge.
 
@@ -87,7 +88,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~619 source lines across 70 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy; count source lines containing string or template literals, excluding comments.
+- **The Chinese string-literal count** (currently ~629 source lines across 64 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

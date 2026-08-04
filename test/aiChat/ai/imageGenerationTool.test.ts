@@ -47,13 +47,18 @@ mock.module("../../../packages/aiChat/ai/mediaTaskRunner", () => ({ runMediaTask
 const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageGeneration");
 const { createRoundMessageState } = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
 const { claimImageGeneration, resetImageGenerationCache } = await import("../../../packages/cache/workers/aiChat/imageGeneration");
+const { HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
 
-/** 绝大多数用例不关心本轮已发消息状态，默认给一份全新的。 */
+/**
+ * 绝大多数用例不关心本轮已发消息状态，默认给一份全新的；动作预算默认按「整轮
+ * 还没用过动作」给满，只有验证图注补发预算闸的用例才传别的值。
+ */
 function buildExecutor(
   ctx: ReplyToolContext,
-  state: RoundMessageState = createRoundMessageState()
+  state: RoundMessageState = createRoundMessageState(),
+  actionsUsed: number = 0
 ): (argumentsJson: string) => Promise<string> {
-  return createGenerateImageExecutor(ctx, state);
+  return createGenerateImageExecutor(ctx, state, (): number => actionsUsed);
 }
 
 function buildContext(
@@ -327,6 +332,38 @@ describe("generate_image 工具执行器", () => {
     expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：超长图注）", 77, 42);
     expect(ctx.onMessageSent).toHaveBeenCalledWith(longCaption, 78, 42);
     expect(state.sentCanonicalTexts.get(78)).toBe(longCaption);
+  });
+
+  test("整轮只剩一个动作预算时不补发超长图注，图照发，硬顶不被顶破", async () => {
+    // 编排器的门禁只判断「还有没有额度开始这次调用」；这条补发若照发，一次
+    // 调用就会返回 actions_used: 2 把整轮顶过 HARD_MAX_ACTIONS_PER_REPLY，而
+    // 那个数正是工具错误文案对模型承诺的硬顶。丢图注不丢图：图才是主体。
+    const ctx: ReplyToolContext = buildContext();
+    const state: RoundMessageState = createRoundMessageState();
+    const longCaption: string = "长".repeat(1025);
+
+    const result = JSON.parse(await buildExecutor(ctx, state, HARD_MAX_ACTIONS_PER_REPLY - 1)(JSON.stringify({
+      prompt: "超长图注",
+      caption: longCaption,
+    })));
+
+    expect(result.success).toBe(true);
+    expect(result.actions_used).toBe(1);
+    expect(result.caption_delivery).toBe("no_action_budget");
+    expect(sendPhotoWithResult).toHaveBeenCalledTimes(1);
+    expect(sendMessageWithResult).not.toHaveBeenCalled();
+  });
+
+  test("发图失败时的错误不可重试：冷却已被这次真实模型请求占掉", async () => {
+    // 认领不释放（modelRequestStarted 已为真）却返回可重试错误，模型同轮重试
+    // 必然撞上自家冷却闸，那条分支的 required_action 会逼机器人向群里播报
+    // 「暂时不能使用生图」——群里根本没收到过任何图，那句话是假的。
+    sendPhotoWithResult.mockImplementationOnce(async (): Promise<undefined> => undefined);
+
+    const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "发不出去的图" })));
+
+    expect(result.error).toContain("Failed to send generated image");
+    expect(result.retryable).toBe(false);
   });
 
   test("正好落在 caption 上限上的图注仍挂在图上", async () => {

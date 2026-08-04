@@ -37,6 +37,14 @@ export function pickStickerVisionSource(sticker: Sticker): TelegramVisionSource 
   };
 }
 
+/** describeStickerForContext 读取的贴纸元数据；两项都可能缺失。 */
+export interface DescribeStickerForContextParams {
+  /** 贴纸的情绪 emoji。 */
+  emoji?: string;
+  /** 所属贴纸包名。 */
+  set_name?: string;
+}
+
 /**
  * 把一枚贴纸描述成 AI 对话缓存里的一行文本，带上模型能参考的元数据：
  * 贴纸的情绪 emoji 和所属贴纸包名，以及（若有）画面描述。三者都可能缺失
@@ -46,12 +54,6 @@ export function pickStickerVisionSource(sticker: Sticker): TelegramVisionSource 
  *   aiChat/ai/stickers/catalog.ts、aiChat/ai/imageDescription.ts 的 describeMedia）；没有则
  *   省略这部分，退化为原有的纯元数据行。
  */
-export interface DescribeStickerForContextParams {
-  emoji?: string;
-  set_name?: string;
-}
-
-/** 见 DescribeStickerForContextParams 上方的说明。 */
 export function describeStickerForContext(sticker: DescribeStickerForContextParams, visualDescription?: string): string {
   const parts: string[] = [];
   if (visualDescription) parts.push(`画面：${visualDescription}`);

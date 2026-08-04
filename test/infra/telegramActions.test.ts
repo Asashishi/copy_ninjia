@@ -192,15 +192,15 @@ describe("Telegram 常规动作封装", () => {
       }),
     }) as unknown as Api;
 
-    expect(await kickChatMemberWithOutcome(
-      -1001,
-      7,
-      kickWith(true)
-    )).toBe("kicked");
-    expect(await kickChatMemberWithOutcome(
-      -1001,
-      7,
-      kickWith(new GrammyError(
+    expect(await kickChatMemberWithOutcome({
+      chatId: -1001,
+      userId: 7,
+      api: kickWith(true),
+    })).toBe("kicked");
+    expect(await kickChatMemberWithOutcome({
+      chatId: -1001,
+      userId: 7,
+      api: kickWith(new GrammyError(
         "Bad Request: not enough rights",
         {
           ok: false,
@@ -209,12 +209,31 @@ describe("Telegram 常规动作封装", () => {
         },
         "unbanChatMember",
         {}
-      ))
-    )).toBe("forbidden");
-    expect(await kickChatMemberWithOutcome(
-      -1001,
-      7,
-      kickWith(new Error("socket hang up"))
-    )).toBe("failed");
+      )),
+    })).toBe("forbidden");
+    expect(await kickChatMemberWithOutcome({
+      chatId: -1001,
+      userId: 7,
+      api: kickWith(new Error("socket hang up")),
+    })).toBe("failed");
+  });
+
+  test("确证是普通群时走 banChatMember，未知与超级群都走 unbanChatMember", async () => {
+    // unbanChatMember 的官方说明是「unban a previously banned user in a
+    // supergroup or channel」，普通群用不了；banChatMember 覆盖「a group, a
+    // supergroup or a channel」，而「踢了回不来」那句只限超级群/频道，所以普通
+    // 群里它就是一次纯移除。只有确证是普通群才改道——未知按超级群办，否则会在
+    // 超级群里打出一次真正的持久封禁。
+    const calls: string[] = [];
+    const api = {
+      unbanChatMember: async (): Promise<true> => { calls.push("unban"); return true; },
+      banChatMember: async (): Promise<true> => { calls.push("ban"); return true; },
+    } as unknown as Api;
+
+    await kickChatMemberWithOutcome({ chatId: -1001, userId: 7, api });
+    await kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api });
+    await kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: false, api });
+
+    expect(calls).toEqual(["unban", "unban", "ban"]);
   });
 });

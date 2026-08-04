@@ -1,5 +1,6 @@
 import type { Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
+import type { CommandTargetMessages } from "../types/commands";
 import { sendCommandMessage } from "../infra/telegram";
 import { resolveIdTarget, resolveReplyTarget, resolveUsernameTarget } from "../users/senderIdentity";
 import { sanitizeDisplayName, truncateInline } from "../libs/text";
@@ -9,25 +10,6 @@ import {
   USERNAME_ARG_PATTERN,
   USER_ID_ARG_PATTERN,
 } from "../consts/commands";
-
-/** 目标解析失败时按场景发送的提示文案，由调用方（各命令）定制措辞。 */
-export interface CommandTargetMessages {
-  /** 既没有回复消息、也没给 @username 参数。 */
-  missingTarget: string;
-  /** 给了非空参数，但它既不是合法 @username、也不是（按开关）合法的用户 id / 会话 id。 */
-  invalidUsername: (rawArgument: string) => string;
-  /** 给了 @username，但本天才没缓存过这个人（未曾在群里发言过）。 */
-  unknownUsername: (rawUsername: string) => string;
-  /**
-   * 回复了一条消息、同时又给了参数，而两者指向的不是同一个目标。
-   *
-   * 措辞必须让人看出「有两个目标、本天才没挑」——静默取一的那条路正是这类命令
-   * 最容易踩的坑，见 resolveCommandTarget。
-   */
-  conflictingTarget: (rawArgument: string) => string;
-  /** 解析出的目标是机器人自己。 */
-  selfTarget: string;
-}
 
 /** 参数那一路的解析结果；三态各自对应一句不同的提示。 */
 type ArgumentTarget =
@@ -95,8 +77,11 @@ function parseUserIdArgument(argument: string): number | undefined {
 /**
  * 把参数解析成 Telegram 会话 id（频道/群的负数 id）；不合法时返回 undefined。
  * 安全整数那道闸的理由同 parseUserIdArgument，只是方向朝负。
+ *
+ * 导出给 commands/send.ts 复用：裸 `Number()` 会放过 `-100123456789.0`、`0x2d`
+ * 这类非规范写法，而那条命令拿解析结果去开持久代发会话。
  */
-function parseChatIdArgument(argument: string): number | undefined {
+export function parseChatIdArgument(argument: string): number | undefined {
   if (!CHAT_ID_ARG_PATTERN.test(argument)) return undefined;
   const chatId: number = Number(argument);
   return Number.isSafeInteger(chatId) ? chatId : undefined;

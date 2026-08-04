@@ -35,14 +35,15 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**1608 tests / 170 files / 30142 `expect()` calls**。全ソースコードの**関数カバレッジは 95.17%、行カバレッジは 96.56%**です。ルート README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**1643 tests / 170 files / 30375 `expect()` calls**。全ソースコードの**関数カバレッジは 95.53%、行カバレッジは 96.61%**です。ルート README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
-テストは必ず `bun run test`、つまり `bun test --isolate` から実行し、2 層で保護します。
+テストは必ず `bun run test`、つまり `bun test --isolate` から実行し、3 層で保護します。
 
 1. **ファイル分離**：Bun はテストファイルごとに新しい global object を作成するため、`mock.module` とモジュールレベル状態がほかのテストファイルを汚染しません。`--parallel` は有効にしていないので、各ファイルが別プロセスを占有するとは説明しません。
 2. **一時データルート**：`test/preload.ts` は production モジュールがロードされる前に isolate ごとの独立した一時データルートを注入します。mock されていない実ファイル I/O も一時ディレクトリだけを読み書きし、production の `state.json`、`bot.lock`、`logs/`、`memory/` には触れません。終了後に一時ディレクトリを削除します。
+3. **読み取り専用の設定ルート**：同じ preload は `COPY_NINJIA_CONFIG_ROOT` をリポジトリ内の `config_example/` に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実際の `whitelist.json`／`blocklist.json` を誤って読み書きするのを防ぎます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
 
 単一ファイルの debug で `bun test` を直接使うことはできますが、merge 前には必ず完全な `bun run check` を通してください。
 
@@ -87,7 +88,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 カバレッジとは別に、同じく静かに古くなる実測値が 2 組あります。
 
-- **中国語の文字列リテラル数**（現在およそ 619 ソース行 / 70 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、文字列または template literal を含むソース行を数えます。
+- **中国語の文字列リテラル数**（現在およそ 629 ソース行 / 64 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
 - **動作値**（確率、容量、時間）：README 内のこれらの数値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース

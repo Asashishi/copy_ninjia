@@ -49,9 +49,13 @@
   空の許可リストへ退化させるのは厳禁で、そうすると許可リストに無い永続ファイルをすべて孤児として削除してしまいます。
 - `config/whitelist.json` と `config/blocklist.json` は前項の optional file ではありません。前者は同期 authorization と insider protection、後者は静的 enforcement boundary です。どちらも network 接続や Worker 作成より前に厳密ロードし、欠落、未知 field、不正 ID は起動を拒否します。
 
-  `/white` と `/permission` は実際に変化した場合だけ allowlist 全体を atomic rewrite し、永続化成功後に新しい main-thread cache を公開します。read path は常にその memory copy だけを参照します。起動時には allowlist の元 byte の SHA-256 も記録し、各 command rewrite の直前に再検証します。外部編集または読み取り不能を検出した場合は、古い cache で黙って上書きせず mutation と update を失敗させます。静的 blocklist は read-only のまま動的な `memory/blocklist/blocklist.json` layer と memory 上で union し、`/unblock` は静的 entry を削除できません。
+  `/white` と `/permission` は実際に変化した場合だけ allowlist 全体を atomic rewrite し、永続化成功後に新しい main-thread cache を公開します。read path は常にその memory copy だけを参照します。起動時には allowlist の元 byte の SHA-256 も記録し、各 command rewrite の直前に再検証します。外部編集または読み取り不能を検出した場合は、古い cache で黙って上書きせず mutation を拒否します。**この拒否も書き込み失敗も、コマンド自身が受け止めて update handler の外へ出してはいけません**。`bot.catch` は設計どおりそのまま再 throw し、acknowledged runner は offset を確定させないまま非ゼロ終了します。Telegram は同じコマンドを再配信し、同じ場所で再び throw します——`config/` が書き込み不可（EACCES/ENOSPC）なら、`/permission` 一発でボットは全チャットごと永久再起動ループに焼き付きます。この時点で設定は一切変わっていない（`commitWhitelistMutation` は書き込み成功後にしか runtime snapshot を公開しない）ため、この update を確定させるのは安全です。応答は「ディスクに書けなかった」と正直に伝えます。降格の意味は `claimBlockedJoiner` と同じです。静的 blocklist は read-only のまま動的な `memory/blocklist/blocklist.json` layer と memory 上で union し、`/unblock` は静的 entry を削除できません。
 
-  `/permission query` と `/permission help` は read-only entry point です。allowlist の user／channel は command sender identity で同じ memory snapshot を読み、`query` は default 適用後の自身の完全な permission だけを返し、target を受け取らず write もしません。`help` はスーパー管理者の従来の access も維持します。permission の変更は引き続きスーパー管理者だけが実行できます。グループ内では `help` だけを長期保持し、`query`、拒否、usage hint は共通の 30 秒 cleanup に従います。
+  **スーパー管理者の permission は identity 自体から来ており、このファイルからではありません。** 唯一の source は `packages/config/whitelist.ts` の `getEffectiveWhitelistPermissions` です。`SUPER_ADMIN_USER_ID` は `SUPER_ADMIN_WHITELIST_PERMISSIONS`（全 key が true）を直接返し、それ以外の identity だけが memory snapshot を引きます。`isWhitelisted` と `hasWhitelistPermission` はどちらもこれを経由するため、呼び出し側は「この permission を持つか」だけを尋ね、コマンドごとにスーパー管理者かどうかを判定しません。この override は **read 側だけで起き、決して永続化されません**。write path の `prepareWhitelistMutation` は生の設定表を取るので、`/white` と `/permission` の全体書き換えは運用者が設定した entry しか出力しません。したがって `SUPER_ADMIN_USER_ID` を差し替えても全開の古い identity がファイルに残ることはなく、同じ id の古い entry が残っていても実効 permission は変わりません。両コマンドともスーパー管理者を対象にする操作を入口で拒否します（そうした残骸を消せるよう `/white disable` だけは例外）。許しても、二度と読まれない entry を書き込むだけだからです。**その例外は応答の言い方も変えなければいけません**。消えるのはファイル上の残骸だけで、スーパー管理者の allowlist 身分も全開の permission も一切影響を受けません。`disabled` の「allowlist から蹴り出した」をそのまま使うのは、直後の `/permission query` で反証できる嘘です。
+
+  **両コマンドは現在のチャット自身の identity も対象として拒否しなければいけません**（`sender_chat.id === chat.id`。理由は `/block`・`/unblock` と同源）。匿名管理者がこのグループを皮として使うとき Telegram はそのグループの identity しか渡さず、共有の解決層は設計どおりそれをそのまま返します。それを allowlist に書くと、そのグループの匿名 identity で送られた全メッセージが広告検知と恒久 blocklist を回避し（`isProtectedSender`）、続く `/permission <グループ id> all` で `/block`・`/mute` と各機能 toggle がそのグループの任意の匿名管理者の手に渡ります。皮の下が誰かを Telegram は決して教えません。
+
+  `/permission query` と `/permission help` は read-only entry point です。command sender identity で上記の実効 permission を読み、`query` は default 適用後の自身の完全な permission だけを返し（スーパー管理者には全開の view が返ります）、target を受け取らず write もしません。permission の変更は引き続きスーパー管理者だけが実行できます。グループ内では `help` だけを長期保持し、`query`、拒否、usage hint は共通の 30 秒 cleanup に従います。
 - **モジュール評価時に `requireEnv` してよいのは、プロセス全体が欠かせない資格情報だけです**（`TELEGRAM_BOT_TOKEN`、`SUPER_ADMIN_USER_ID`）。チャットごとの opt-in でデフォルト無効な機能だけが使う鍵は `optionalEnv` を通します。
 
   `packages/infra/config.ts` はほぼすべての入口パスから import されるため、そこで throw するとプロセスは更新の取得を始める前に終了し、systemd が再起動ループに入ります——誰も有効化していない機能の鍵が 1 つ無いだけで、copy、抽選、入室認証、ブロックリストがまとめて停止します。2 つの AI 鍵はどちらも後者であり、**変数名には担当する機能を必ず先頭に付けます**（`AI_CHAT_GEMINI_API_KEY`、`AD_DETECT_DEEPSEEK_API_KEY`）。
@@ -87,6 +91,9 @@
 
   新しい送信経路がこの制約を迂回するために `parse_mode` を使ってはいけません。
 - グループ内の非機能的な command text は `sendCommandMessage` を通し、送信成功から 30 秒後に削除します。private chat は対象外です。ユーザーが明示的に許可した `/permission help` と成功した CJK action result だけが `preserveInGroup: true` で長期保持できます。action command の対象 validation failure と `/x` の使い方提示は引き続き自動削除します。新しい例外は呼び出し箇所とテストの両方で明示しなければなりません。
+- **起きていない状態変化を応答が報告してはいけません。** `/init`、`/ai_chat`、`/ad_detect`、`/flood_control`、`/ja_copy` の 5 つの switch command は書き込み前に必ず元の値を読み、同じ状態で繰り返し実行した場合は「元からそうです」と言い切らなければなりません。変更直後の文をそのまま流用すると、管理者は最初の実行が効いたのかどうか判断できません。4 つの結末の文言は `ToggleCommandTexts`（`packages/types/commands.ts`）という **4 項目すべて必須**の構造に収め、選択は `toggleReplyText` が行います。「on」「off」の 2 文しか用意しない新しい switch command は compile できません。`/quiet`、`/unquiet`、`/white`、`/permission` は同じ方針の既存実装です。
+
+  判定は「目標の状態」と「元の状態」だけを見ます。**永続化や runtime cleanup が実行されたかは見ません。** これらの cleanup はベストエフォートで、失敗しても log を残すだけです（`clearAdDetection`、`clearFloodControl`、`invalidateAiChat`、および `/init disable` の `teardownChatRuntime`——失敗しても総 switch はすでに durable に off なので、応答は「片付け切れなかったものがある」と名指しする文面に切り替え、決して throw しません。throw すれば offset を確定できず、再配信時には `wasEnabled` がすでに false なので、管理者はかえって「もともと off だった」と告げられます）。したがって「disable したあともう一度 disable する」は Worker 復帰後にもっとも自然な手動リトライであり、同じ状態での繰り返し実行でも永続化と cleanup は通常どおり行い、応答だけが「何も変わっていない」と正直に伝えます。`/init` は、すでに有効なチャットで `enable` を繰り返しても管理者身分の記録を無効化しません。無効化すると `recordBotAdminStatus` が新しい `undefined -> true` の edge を見て blocklist 全体を再走査してしまうためです。
 
 <p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
 
@@ -119,6 +126,7 @@
   **形態は 2 種類あり、判定対象に永続化すべき離散状態があるかで選びます**。`verification` と `lockdown` にはあり（PENDING/ACTIVE のような状態を Map に保存し、後続イベントが参照します）、`transition(state, event) → {next, effects}` の状態機械形態を取ります。
 
   `replyAdmission` と `adDetectAdmission` にはなく（規則は呼び出し側が算出済みのスカラーだけを受け取り、コンテナとタイマーは実行時モジュールに残ります）、純粋関数の集合という形態を取ります。後者を無理に状態機械へ押し込むと、「この 1 件」と「スレッド全体で何件」が同じ状態オブジェクトに同居し、両者のライフタイムはまったく異なるため、かえって読みにくくなります。
+- **ロックダウンがチャットの既定 permission を読み書きするときは、毎回 `use_independent_chat_permissions: true` を渡します**（封鎖の適用、期限切れの復元、遅れて届いた復元回答の後の再適用、そしてメインスレッドの onGiveUp 緊急復元。境界は `packages/infra/telegram/lockdownPermissions.ts` と `lockdownRuntime.ts` の 2 か所）。この経路は `getChat().permissions` をそのまま読み戻し、`can_invite_users` だけを変えて書き戻すので、true の項目が必ず含まれます。このフラグが無いと Bot API は `can_send_other_messages` を `can_send_messages`・`can_send_audios`・`can_send_documents`・`can_send_photos`・`can_send_videos`・`can_send_video_notes`・`can_send_voice_notes` へ展開します（`can_send_polls` は `can_send_messages` を含意）。その結果、「スタンプ / GIF は許可、画像・動画・ファイルは禁止」に設定したグループは、ロックダウンを 1 回出入りするたびにメディア権限を黙って全開にされ、管理者には何も表示されません——両境界の契約はまさに「その他の既定 permission は Telegram の現在値に従う」ことなのに、です。
 - **ロックダウンの解除告知は、封鎖を実際に告知していた場合にだけ送ります**（`LockdownState.announced`）。`RESTORING` への入口は 2 つあります。通常の期限切れ・手動解除（`ACTIVE` 由来、告知済み）と、`setChatPermissions` が throw した後の補償照合（`applyResult(!ok)`、未告知）です。このフラグが無いと、後者の経路が成功した際に「制限を解除しました」をグループへ送ってしまい、封鎖告知を一度も受け取っていないチャットには前後の脈絡がない一文になります。
 
   `announced` は `ACTIVE` から `RESTORING` へ引き継がれ、`RESTORING ──再度しきい値超過──> ACTIVE` の戻り経路でも保持されます（その遷移は封鎖告知を再送しないため、そこで true にリセットしてはいけません）。メモリ上だけに存在し `state.json` には入れません。
@@ -205,10 +213,10 @@
   `message_thread_id` はフォーラム（topics）グループのすべてのメッセージにも付くため、`is_topic_message !== true` でフォーラムトピックを除外しなければなりません。トピックは常に通常の認証待ち semantics に従い、barrier の追加投函も連携チャンネル lookup も発生させません。cold cache の `message_thread_id` は非同期確認候補にすぎません。
 
   lookup 完了までは通常の認証待ちメッセージとして扱い、`linked_chat_id` が確認され、状態オブジェクトと generation が一致する場合だけ取り消します。lookup 失敗は fail-closed とし、後続の再試行を許可します。
-- 人間メンバーの参加認証は本人のクリックだけを受け付けます。Worker は caller の自己申告ではなく、信頼できる `callback_query.from.id === callback_data` の対象 ID から本人関係を導出しなければなりません。クリックしたユーザーが `config/whitelist.json` に含まれていても、別の人間を認証できません。代行保証の唯一の例外は、現在の認証待ち snapshot が `isBot === true` で、クリックしたユーザーが同じ allowlist に含まれる場合です。
+- 人間メンバーの参加認証は本人のクリックだけを受け付けます。Worker は caller の自己申告ではなく、信頼できる `callback_query.from.id === callback_data` の対象 ID から本人関係を導出しなければなりません。クリックしたユーザーが allowlist 境界の内側にいても（`config/whitelist.json` の entry、または常に内側にいる `SUPER_ADMIN_USER_ID`）、別の人間を認証できません。代行保証の唯一の例外は、現在の認証待ち snapshot が `isBot === true` で、クリックしたユーザーが同じ境界の内側にいる場合です。
 
   対象が存在しない、終端状態、または不一致の場合は失敗応答だけを返し、認証状態を変更してはいけません。
-- 終端処置（timeout / 連投の kick）が `kickChatMember` を呼ぶ前には `probeChatMembership` で現状を確認します。在室を確認できた場合だけ kick し、退出済みを確認した場合は誤った戦果報告を出さずに完了し、lookup が不確定なら破壊的なメンバー操作を行わず終端レコードを既存の backoff 再試行へ残します。lockdown 中に到着直後の join update から同期的に出る `kickMember` は、その update 自体が在室の証拠なので重複 lookup を払いません。
+- 終端処置（timeout / 連投の kick）が `kickChatMember` を呼ぶ前には `probeChatMembership` で現状を確認します。在室を確認できた場合だけ kick し、退出済みを確認した場合は誤った戦果報告を出さずに完了し、lookup が不確定なら破壊的なメンバー操作を行わず終端レコードを既存の backoff 再試行へ残します。lockdown 中に到着直後の join update から同期的に出る `kickMember` は、その update 自体が在室の証拠なので **初回だけ** 重複 lookup を払いません（荒らし時は入ってくる全員がこの経路を通るため、1 回払うだけでその経路の呼び出し量が倍になります）。**ただし backoff 再試行では必ず確認します**。join update が証明するのはその時点だけであり、supergroup の「BAN せず kick」は `only_if_banned` を付けない `unbanChatMember` に対応します。backoff の間にスーパー管理者が `/block` で落とした BAN は、この一発で解除されたうえ outcome は `kicked` を返し、メインスレッド側の除去はとうに完了として記録済み——当人は任意の招待リンクで戻れます。`kickPending` は永続化されないため、その再試行カウンタは状態と生死を共にし、「これは再試行か」の判断根拠として信頼できます。
 
   終端処置が失敗したときは指数 backoff で上限まで再試行し、再試行が長引いたという理由でレコードを削除しません。削除は「処置していないメンバーを完了扱いにする」ことだからです。固定間隔では足りません。bot が管理者でも BAN 権限がない場合や、相手自身がそのチャットの管理者である場合、この再試行は決して成功しません。1 度の荒らしが残した未認証メンバーがそれぞれ永久の短周期ループを 1 つずつ占有し、メッセージ削除 + kick を打ち続けて `logs/` に同じエラー行を書き、Worker 再生成やプロセス再起動のたびに再武装されます。
 
@@ -247,11 +255,11 @@
 
 #### カウントと実行の境界
 
-- **連投のカウントも実行も Anti-Raid Worker 側に置き、メインスレッドは同期的な関門と 1 回のベストエフォートな `post` だけを行う**：この機能は chat ごとに default off で、`ChatState.isFloodControlEnabled === true` の場合だけカウントします。スーパー管理者または `isCanControllFloodControlPermission` を持つ allowlist identity が `/flood_control enable|disable` で永続化された switch を変更でき、disable 時にはその chat の live window も消去します。同一メンバーが同一の**スーパーグループ**で 1 分以内に `FLOOD_MESSAGE_LIMIT`（現在 15 件）に達したら `FLOOD_MUTE_DURATION_MS`（現在 3 分）ミュートします。
+- **連投のカウントも実行も Anti-Raid Worker 側に置き、メインスレッドは同期的な関門と 1 回のベストエフォートな `post` だけを行う**：この機能は chat ごとに default off で、`ChatState.isFloodControlEnabled === true` の場合だけカウントします。`isCanControllFloodControlPermission` を持つ identity（スーパー管理者は常に持ちます）が `/flood_control enable|disable` で永続化された switch を変更でき、disable 時にはその chat の live window も消去します。同一メンバーが同一の**スーパーグループ**で 1 分以内に `FLOOD_MESSAGE_LIMIT`（現在 15 件）に達したら `FLOOD_MUTE_DURATION_MS`（現在 3 分）ミュートします。
 
   スーパーグループ限定なのは `restrictChatMember` が Bot API の定義上そこでしか効かないためで、通常グループでは数えること自体がメモリの無駄です——ウィンドウを埋め切っても、確実に失敗するリクエスト 1 回と誤解を招くエラー 1 行しか得られません。
 
-  メインスレッド側（`packages/antiRaid/floodControl.ts`）は candidate object を作る前に chat switch、スーパーグループ種別、発言者が実ユーザーか、送信者が flood-control bypass を持つかを順に判定します。チャンネル名義と匿名管理者にはミュートできるメンバー身分がなく、`restrictChatMember` は実ユーザーしか受け付けず、着ぐるみの下が誰かを Telegram は明かしません。`SUPER_ADMIN_USER_ID` は常に bypass し、allowlist identity は個別の `isCanBypassFloodControl` に従います。この permission は default `true` で、明示的に `false` にした場合だけカウント対象になります。
+  メインスレッド側（`packages/antiRaid/floodControl.ts`）は candidate object を作る前に chat switch、スーパーグループ種別、発言者が実ユーザーか、送信者が flood-control bypass を持つかを順に判定します。チャンネル名義と匿名管理者にはミュートできるメンバー身分がなく、`restrictChatMember` は実ユーザーしか受け付けず、着ぐるみの下が誰かを Telegram は明かしません。bypass は `isCanBypassFloodControl` という 1 つの permission だけで決まります。allowlist entry では default `true` で、明示的に `false` にした場合だけカウント対象になります。`SUPER_ADMIN_USER_ID` は常にこの permission を持つため常に bypass し、判定箇所で identity を個別に比較することはもうありません。
 
   そのうえで `floodCandidate` を送出します。送出は広告検出と同様に `postAntiRaidDurably` ではなく通常の `post` です：ウィンドウは isolate と生死を共にし、グループメッセージ 1 件ごとにスレッド跨ぎのバリアを挟んでも復旧能力は何も増えません。入退室のサービスメッセージは誰かの「発言」ではないため、送出の入口はその 2 分岐より後ろに置きます。
 
@@ -397,7 +405,7 @@
 
   `sessionBlockedAt` と `sessionUnblockedIds` は互いに排他でなければなりません（ブロック時は後者から、解除時は前者から削る）。さもないと同じ id が両方の表に載り、再投入の順序でリストに載っているかどうかが決まってしまいます。
 
-  **`/unblock` は既定で完全解除します。** 対象が動的リストにあれば削除し、その後 `ChatState.botIsAdmin` が true の全チャットで Telegram の BAN を解除します。対象が動的リストにいなくてもチャット横断解除は実行します。必要な permission は `isCanUnBlock` だけで、`SUPER_ADMIN_USER_ID` は引き続き明示的に通します。旧 `all` 引数は解析せず、互換 alias としても残しません。静的 `config/blocklist.json` の identity は、リストや Telegram API に触れる前に fail closed します。コマンドはデプロイ設定を書き換えられず、チャット BAN だけ解除すると矛盾した状態になるためです。
+  **`/unblock` は既定で完全解除します。** 対象が動的リストにあれば削除し、その後 `ChatState.botIsAdmin` が true の全チャットで Telegram の BAN を解除します。対象が動的リストにいなくてもチャット横断解除は実行します。必要な permission は `isCanUnBlock` だけです（`SUPER_ADMIN_USER_ID` は常にこれを持つため、個別に通す必要はありません）。旧 `all` 引数は解析せず、互換 alias としても残しません。静的 `config/blocklist.json` の identity は、リストや Telegram API に触れる前に fail closed します。コマンドはデプロイ設定を書き換えられず、チャット BAN だけ解除すると矛盾した状態になるためです。
 
   **チャット横断の BAN 解除は必ず `unbanChatMemberIfBanned`（`only_if_banned: true` 付き）を通します。** Bot API の `unbanChatMember` は「現在メンバーである」相手に対してはチャットから退出させる意味になり、`kickChatMember` の「kick のみ」はまさにこれを利用しています。このフラグなしで一括解除すると、普通に在室していた人たちを次々と追い出してしまいます。
 
@@ -405,7 +413,7 @@
 
   さもないと Worker 再生成時の再送が古い batch を持ち出し、解除したばかりの相手を再び BAN します。すでに投げて Worker 内で走っている batch は取り消せず（判定はメインスレッドの状態で Worker に複製がない）、その短い窓は既知のトレードオフです。
 
-  **身内はブロックできません。** `SUPER_ADMIN_USER_ID` と `config/whitelist.json` は `/block` の入口で弾きます。起動時にも、それら protected identity と静的設定・復元した動的ブロックリストの交差を拒否します。`/white enable` もまだブロック中の identity を拒否し、先に `/unblock` するよう案内します。これらは独立した事前 check だけではありません。`runProtectedIdentityMutation` はメインスレッドの `protectedIdentityMutationQueue` を使い、`/white` の「membership 確認 + allowlist の atomic write と publish」を `/block` および広告命中による動的 blocklist 追加と直列化します。この境界がないと、非同期の allowlist 書き込み中に block が割り込み、同じ identity が両方に残って次回起動が必ず失敗します。critical section に含めるのは identity check と正式状態の変更だけで、Telegram の副作用と後続の永続化確認は外に置きます。
+  **身内はブロックできません。** `SUPER_ADMIN_USER_ID` と `config/whitelist.json` は `/block` の入口で弾きます。スーパー管理者は常に allowlist 境界の内側にいるため、両者は 1 回の `isWhitelisted` で覆われ、`/mute` と `/batch_kick` の身内保護も同じ仕組みです。起動時にも、それら protected identity と静的設定・復元した動的ブロックリストの交差を拒否します。`/white enable` もまだブロック中の identity を拒否し、先に `/unblock` するよう案内します。これらは独立した事前 check だけではありません。`runProtectedIdentityMutation` はメインスレッドの `protectedIdentityMutationQueue` を使い、`/white` の「membership 確認 + allowlist の atomic write と publish」を `/block` および広告命中による動的 blocklist 追加と直列化します。この境界がないと、非同期の allowlist 書き込み中に block が割り込み、同じ identity が両方に残って次回起動が必ず失敗します。critical section に含めるのは identity check と正式状態の変更だけで、Telegram の副作用と後続の永続化確認は外に置きます。
 
   起動時の復元では 1 件でも形が不正なら起動を拒否します。1 件取りこぼすことは、その相手の再入室を許すことと同じだからです。
 
@@ -531,7 +539,9 @@
 
 - `/ad_detect` の広告検出は**ベストエフォートのヒューリスティック**であり security boundary ではありませんが、処分の重さは `/block` と完全に同じなので境界は厳密に引きます。送出の門は 3 条件の連言です。当該グループが `ChatState.isAdDetectEnabled === true` であること、Bot がそのグループの管理者であること（参加ガードと同じ `isBotAdminIn` 判定を共有します。
 
-  管理者でなければ広告も消せず BAN もできず、判定は quota を焼くだけです）、送信者に広告検出 bypass がないことです。`SUPER_ADMIN_USER_ID` は常に bypass し、allowlist identity は個別の `isCanBypassAdDetection` permission に従います。false に設定した identity は判定へ送られ、Worker が命中した message bundle を削除することがあります。
+  管理者でなければ広告も消せず BAN もできず、判定は quota を焼くだけです）、送信者に広告検出 bypass がないことです。bypass は個別の `isCanBypassAdDetection` permission だけで決まります。false に設定した identity は判定へ送られ、Worker が命中した message bundle を削除することがあります。`SUPER_ADMIN_USER_ID` は常にこの permission を持つため常に bypass し、判定箇所で identity を個別に比較することはもうありません。
+
+  **toggle 自体も同じ critical section 内で読み直します。** 判定は Worker 側で行われ、メインスレッドへ戻ってからも blocklist 書き込みの前に identity の直列化キューを通ります。その隙間に `/ad_detect disable` が入り込むことは十分あり得ますが、それが消せるのは Worker 内でまだ判定していない列だけで、すでに公開された判定には届きません。読み直さなければ、switch を切った後でも人が恒久 blocklist に書かれ、全管理チャットで BAN され、公開告知で名指しされます。確認は `blockUser` の直前に置きます。そこを越えると不可逆で、後から撤回しても実行の伴わない既成事実の entry だけが残るからです。これは想定内の競合結果なので通常 log に記録し、protected sender の警告枠は消費しません。
 
   **allowlist membership は恒久 blocklist を無条件で保護します。** 判定結果がメインスレッドへ戻ると、処分側は `/white` と `/block` と同じ `runProtectedIdentityMutation` critical section 内で `isProtectedSender` を再確認します。判定中に allowlist へ追加された場合も、もともと allowlist で bypass を無効にしていた場合も、`blockUser`・チャット横断 BAN・BAN 告知を拒否し、Worker がすでに行った当該 bundle の削除だけを残します。現在のグループを皮として使う匿名管理者（`sender_chat.id === chat.id`）は `/block` と同じ理由でスキップします。
 
@@ -759,6 +769,9 @@
 - **終端 record の「告知済み」フラグはすべて snapshot に入れます**。`expelling` record は互いに代替できない 3 つを持ちます——`successNoticeSent`（成功戦報。30 秒後に自動削除）、`failureNoticeSent`（kick できない、`can_restrict_members` 不足）、`unconfirmedNoticeSent`（在室かどうか確認できなかった）。
 
   後ろ 2 つは自動削除されないため、永続化しないと Worker 再生成やプロセス再起動のたびに同じ相手について 1 通ずつ増え、グループに積み上がります。3 つを 1 枠にまとめることもできません。探索の一時失敗が先に送られると、BAN 権限不足を名指しする唯一の診断が永久に抑え込まれ、メンバーはグループに残ったまま管理者はネットワークの問題へ誘導されます。フラグを立てたら新しい revision を publish して書き込ませ、終端リトライはその revision の受領を待ちます。
+
+  **kick は成功したのに成功戦報を送れなかった場合、そこで完了扱いにしてはいけません。** 完了は record の削除を意味し、グループからはメンバーが理由もなく消えたように見え、それを説明する唯一の一文は二度と出ません。この経路では backoff の前に `removalConfirmed` を snapshot へ書きます。これも永続化が必須です。無ければ次の回のメンバー確認は「もうグループにいない」としか答えず、終端は「他人が処分した」として黙って完了し、戦報は永久に飲み込まれます。書くのは戦報の送信に失敗したときだけで、通常の 1 周では kick と戦報が同じ周で完了するため追加の書き込みは発生しません。
+- **「BAN 権限が無いと確証できたら以後リクエストを出さない」短絡は、片付けが済んでいることを前提とします**（`cleanupSettled`）。`failureNoticeSent` だけを見ると、ネットワークの揺れで 1 度削除に失敗した入室確認の告知はそこで固定されます。以後は毎回この短絡で return し、片付けの処理は二度と実行されず、押せる確認ボタン付きのメッセージが、実際には kick されていないメンバーのためにグループへ永久に残ります。片付けが残っているうちは通常どおり処分全体を通します——kick は `canRestrict` が、戦報は `failureNoticeSent` が、`can_delete_messages` 不足が確証されている場合は削除も mirror が短絡するので、「リクエストを 1 本も出さない」性質は保たれます。このフラグは `executionStarted` と同じく **Worker ローカルの冪等ゲートで、snapshot には入れません**。削除の再実行は冪等ですが、戦報の再送はそうではないからです。
 
 <p align="right"><a href="#クイックナビゲーション">↑ クイックナビゲーションへ戻る</a></p>
 

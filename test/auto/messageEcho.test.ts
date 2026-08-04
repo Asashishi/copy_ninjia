@@ -1,0 +1,92 @@
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { Message } from "@grammyjs/types";
+
+/**
+ * 复读边界（packages/auto/message/echo.ts）的「不回显命令」这道闸。
+ *
+ * 它守的是一件很具体的事：机器人自己发出去的那一份副本会被 Telegram 渲染成
+ * 可点击的命令链接。只看 message.text 的话，媒体消息的 caption 会整条绕过这
+ * 道闸——`/copy` 锁定的人发一张 caption 写着 `/batch_kick 1d` 的图，机器人就
+ * 亲手替一条破坏性管理命令造了个一键入口。
+ */
+
+const copyMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 77);
+const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 78);
+
+mock.module("../../packages/infra/telegram", () => ({ copyMessage, sendMessage }));
+mock.module("../../packages/infra/storage/stateStore", () => ({
+  getActiveCopyIn: (): null => null,
+}));
+mock.module("../../packages/copy/availability", () => ({
+  isJaTranslationActiveIn: (): boolean => false,
+}));
+
+const { echoMessage } = await import("../../packages/auto/message/echo");
+
+const CHAT_ID: number = -1001;
+
+/** 只带本用例关心的字段；echoMessage 读的就是 text / caption / message_id。 */
+function mediaMessage(caption: string | undefined): Message {
+  return {
+    message_id: 5,
+    date: 1,
+    chat: { id: CHAT_ID, type: "supergroup", title: "Test Group" },
+    photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }],
+    ...(caption === undefined ? {} : { caption }),
+  } as unknown as Message;
+}
+
+beforeEach(() => {
+  copyMessage.mockClear();
+  sendMessage.mockClear();
+});
+
+describe("复读的命令守卫", () => {
+  test("caption 是命令的媒体消息不复读", async () => {
+    const echoed: string | undefined = await echoMessage({
+      chatId: CHAT_ID,
+      message: mediaMessage("/batch_kick 1d"),
+      mode: undefined,
+    });
+
+    expect(echoed).toBeUndefined();
+    expect(copyMessage).not.toHaveBeenCalled();
+  });
+
+  test("caption 不是命令的媒体消息照常复读", async () => {
+    await echoMessage({
+      chatId: CHAT_ID,
+      message: mediaMessage("今天天气不错"),
+      mode: undefined,
+    });
+
+    expect(copyMessage).toHaveBeenCalledWith(CHAT_ID, CHAT_ID, 5);
+  });
+
+  test("没有 caption 的媒体消息照常复读", async () => {
+    await echoMessage({
+      chatId: CHAT_ID,
+      message: mediaMessage(undefined),
+      mode: undefined,
+    });
+
+    expect(copyMessage).toHaveBeenCalledWith(CHAT_ID, CHAT_ID, 5);
+  });
+
+  test("纯文本命令仍然不复读", async () => {
+    const echoed: string | undefined = await echoMessage({
+      chatId: CHAT_ID,
+      message: {
+        message_id: 6,
+        date: 1,
+        chat: { id: CHAT_ID, type: "supergroup", title: "Test Group" },
+        text: "/block 123",
+      } as unknown as Message,
+      mode: undefined,
+    });
+
+    expect(echoed).toBeUndefined();
+    expect(copyMessage).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+});

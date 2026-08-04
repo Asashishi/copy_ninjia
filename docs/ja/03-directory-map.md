@@ -90,11 +90,11 @@
   - **代表的なディレクトリ**：`main/`、`workers/aiChat/`、`workers/antiRaid/`、
     `workers/diskIO/`、`perThread/`。
 - **`packages/consts/`**
-  - **責務**：リテラル定数と調整値をドメイン別に配置。
+  - **責務**：リテラル定数、調整値、ユーザーに見える文言テーブルをドメイン別に配置。
   - **代表的なファイル**：`commands.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
 - **`packages/types/`**
   - **責務**：モジュール間 protocol、ドメイン型、`types/states/` の状態機械 contract。
-  - **代表的なファイル**：`chatState.ts`、`lifecycle.ts`、`diskIO.ts`。
+  - **代表的なファイル**：`chatState.ts`、`commands.ts`、`lifecycle.ts`、`diskIO.ts`。
 - **`test/`**
   - **責務**：`packages/` と対応する Bun 単体テスト。
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
@@ -106,7 +106,7 @@
 
 次の順に判断します。
 
-1. **リテラルなパラメータか？** → `packages/consts/<domain>.ts`。ドメインが大きければ `packages/consts/<domain>/` に分割します。用途と不変条件を説明する中国語 JSDoc を付けます。環境変数由来の設定だけは例外で、`packages/infra/config.ts` に置きます。
+1. **リテラルなパラメータ、またはユーザーに見える文言か？** → `packages/consts/<domain>.ts`。ドメインが大きければ `packages/consts/<domain>/` に分割します。用途と不変条件を説明する中国語 JSDoc を付けます。コマンドの応答や提示は handler 内で組み立てず、コマンドごとの文言テーブルに収めます。環境変数由来の設定だけは例外で、`packages/infra/config.ts` に置きます。
 2. **モジュール間で共有する型または protocol か？** → `packages/types/<domain>.ts`。状態機械の `State/Event/Effect/Transition/Decision` contract は `packages/types/states/` に置きます。
 3. **Map、Set、キュー、timer、singleton など長寿命の可変状態か？** → `packages/cache/`。**まず所有スレッドのディレクトリを選び**（下記参照）、その中でドメイン別にファイルを分けます。`export let` ではなく holder オブジェクトを使い、いつ格納し、いつ削除し、Worker 再起動後にどう再構築するかを JSDoc に記載します。容量と削除方針は [04 実行時の正式な不変条件](04-invariants.md) を満たす必要があります。
 4. **I/O のない、単体テスト可能な純粋状態遷移か？** → `packages/states/`。副作用は Worker 側の interpreter が実行します。

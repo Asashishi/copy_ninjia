@@ -23,11 +23,17 @@ describe("Anti-Raid lockdown permission restore boundary", () => {
     });
 
     expect(api.getChat).toHaveBeenCalledWith(-1001);
-    expect(api.setChatPermissions).toHaveBeenCalledWith(-1001, {
-      can_invite_users: true,
-      can_send_messages: false,
-      can_send_polls: true,
-    });
+    // 第三个参数不能省：不带 use_independent_chat_permissions 时 Bot API 会按
+    // 蕴含规则把读回来的权限展开，一次锁定进出就把媒体权限全放开了。
+    expect(api.setChatPermissions).toHaveBeenCalledWith(
+      -1001,
+      {
+        can_invite_users: true,
+        can_send_messages: false,
+        can_send_polls: true,
+      },
+      { use_independent_chat_permissions: true }
+    );
   });
 
   test("管理员已经主动开放邀请时不按旧权限重新关闭", async () => {
@@ -39,10 +45,14 @@ describe("Anti-Raid lockdown permission restore boundary", () => {
       api: api as never,
     });
 
-    expect(api.setChatPermissions).toHaveBeenCalledWith(-1002, {
-      can_invite_users: true,
-      can_send_messages: false,
-    });
+    expect(api.setChatPermissions).toHaveBeenCalledWith(
+      -1002,
+      {
+        can_invite_users: true,
+        can_send_messages: false,
+      },
+      { use_independent_chat_permissions: true }
+    );
   });
 
   test("getChat 缺少默认权限时拒绝写入，不能拿空对象覆盖群权限", async () => {

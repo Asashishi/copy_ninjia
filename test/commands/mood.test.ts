@@ -11,8 +11,10 @@ mock.module("../../packages/infra/config", () => ({
   SUPER_ADMIN_USER_ID: 100,
   AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
 }));
+// 超级管理员由身份直接持有全部白名单权限（见 packages/config/whitelist.ts 的
+// getEffectiveWhitelistPermissions），命令层不再单独判身份。
 mock.module("../../packages/config/whitelist", () => ({
-  hasWhitelistPermission: (): boolean => false,
+  hasWhitelistPermission: (id: number): boolean => id === 100,
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,

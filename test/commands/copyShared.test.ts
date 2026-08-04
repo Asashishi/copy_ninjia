@@ -37,7 +37,8 @@ const {
   quiesceAvatarUpdates,
 } = await import("../../packages/copy/avatarQueue");
 const { avatarUpdateState } = await import("../../packages/cache/main/copy/avatar");
-const { COPY_COOLDOWN_MS } = await import("../../packages/consts/commands");
+const { COPY_COOLDOWN_MS, STEAL_ICON_TARGET_TEXTS } =
+  await import("../../packages/consts/commands");
 const originalDateNow: () => number = Date.now;
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -145,9 +146,11 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("目标解析器收到 copy 专用错误文案", async () => {
+  test("目标解析器原样转交调用方给的文案表，不再每次现造", async () => {
     const ctx = { chat: { id: -1001 }, msg: { message_id: 9 }, me: { id: 999 }, match: "@alice" } as never;
-    await expect(shared.resolveCopyCommandTarget(ctx, "/steal_icon")).resolves.toEqual({ id: 7, first_name: "Alice" });
+    await expect(
+      shared.resolveCopyCommandTarget(ctx, STEAL_ICON_TARGET_TEXTS)
+    ).resolves.toEqual({ id: 7, first_name: "Alice" });
     const params = resolveCommandTarget.mock.calls[0]![0] as {
       rawArgument: string;
       messages: { missingTarget: string; selfTarget: string };
@@ -155,6 +158,8 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(params.rawArgument).toBe("@alice");
     expect(params.messages.missingTarget).toContain("/steal_icon");
     expect(params.messages.selfTarget).toContain("自己");
+    // 转交的必须就是那张模块级单例，不是每次调用现造的副本。
+    expect(params.messages).toBe(STEAL_ICON_TARGET_TEXTS);
   });
 
   test("头像全局并发度为 1，运行中只保留最新待执行目标与最新战报", async () => {

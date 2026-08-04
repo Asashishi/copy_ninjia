@@ -102,13 +102,26 @@ describe("handleSendCommand", () => {
 
   test("可达的私人用户或频道也拒绝作为中转目标，避免私聊泄露", async () => {
     for (const type of ["private", "channel"]) {
-      getChatMock.mockImplementationOnce(async (): Promise<any> => ({ id: 123, type, first_name: "Not a group" }));
-      await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "123"));
+      getChatMock.mockImplementationOnce(async (): Promise<any> => ({ id: -1001, type, first_name: "Not a group" }));
+      await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-1001"));
     }
     expect(saveStateInBackgroundMock).not.toHaveBeenCalled();
     expect(chatStates.size).toBe(0);
     expect(logApiErrorMock).not.toHaveBeenCalled();
     expect(sendMessageMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("非规范写法的 id 按用法错误挡在可达性探测之前，绝不开会话", async () => {
+    // 裸 Number() 会把这些悄悄收下：小数尾巴、十六进制、前导零各自 coerce 成
+    // 一个超管从没输入过的 chat id，而这条命令的结果是一个持久代发会话。
+    // 正数同样拒绝：群和频道的 id 恒为负。
+    for (const arg of ["-100123.0", "0x2d", "123", "-0100123", "-1e5", "--100123"]) {
+      await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, arg));
+    }
+    expect(getChatMock).not.toHaveBeenCalled();
+    expect(saveStateInBackgroundMock).not.toHaveBeenCalled();
+    expect(chatStates.size).toBe(0);
+    expect(sendMessageMock).toHaveBeenCalledTimes(6);
   });
 
   test("合法且可达的群组 id 开启会话并落盘（状态挂在目标群自己的 chatId 下）；重复调用被拒绝、不换目标", async () => {

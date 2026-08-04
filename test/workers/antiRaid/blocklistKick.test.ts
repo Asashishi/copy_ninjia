@@ -80,6 +80,7 @@ mock.module("../../../packages/infra/diskIO", () => ({
 const { handleChatMemberUpdate, handleAntiRaidMessageIngress } = await import("../../../packages/antiRaid");
 const { blockedUserIds, pendingBlockedRemovals } = await import("../../../packages/cache/main/blocklist");
 const { recentBlockedJoinCounts } = await import("../../../packages/cache/main/antiRaid/blocklistGuard");
+const { chatIsSupergroupById } = await import("../../../packages/cache/main/antiRaid/chatKind");
 const { unblockUser } = await import("../../../packages/infra/blocklist/membership");
 
 /** 一条「从不在群里变成群成员」的 chat_member 更新。 */
@@ -120,6 +121,9 @@ beforeEach(() => {
   blockedUserIds.clear();
   pendingBlockedRemovals.clear();
   recentBlockedJoinCounts.clear();
+  // 群类型镜像按值去重、每个群一生只投一次：不清就变成「哪个用例先跑哪个能
+  // 看到那条投递」，随机顺序下必然翻车。
+  chatIsSupergroupById.clear();
 });
 
 describe("黑名单成员入群秒踢", () => {
@@ -156,6 +160,9 @@ describe("黑名单成员入群秒踢", () => {
       })]],
     });
     expect(deliveryOrder).toEqual([
+      // 群类型镜像排在最前：它是踢人方法分派的依据，必须先于任何可能触发踢人
+      // 的投递到达 Worker（见 antiRaid/chatKind.ts）。按值去重，每个群只投一次。
+      "worker-chatKind",
       "disk-joinLog",
       "disk-flush",
       "disk-blocklistRemovals",
@@ -323,7 +330,13 @@ describe("黑名单成员入群秒踢", () => {
 
     await handleChatMemberUpdate(joinUpdate(42, "administrator"));
 
-    expect(workerPosts.map((message) => message.type)).toEqual(["adminsChanged", "removeBlockedMembers"]);
+    // 群类型镜像是每个群一次的旁路，与这条 FIFO 约束无关（它的位置由上面那条
+    // deliveryOrder 用例单独钉住）；这里只看这两条的先后。
+    expect(
+      workerPosts
+        .map((message) => message.type)
+        .filter((type) => type !== "chatKind")
+    ).toEqual(["adminsChanged", "removeBlockedMembers"]);
   });
 });
 
@@ -344,7 +357,9 @@ describe("黑名单频道消息入口", () => {
 
     expect(claimed).toBeTrue();
     expect(deletedMessages).toEqual([{ chatId: -1001, messageId: 16 }]);
-    expect(workerPosts).toBeEmpty();
+    // 群类型镜像与本条消息的处置无关，是每个群一次的旁路；这里断言的是「没有
+    // 任何入群守卫工作被投出去」。
+    expect(workerPosts.filter((message) => message.type !== "chatKind")).toBeEmpty();
   });
 });
 

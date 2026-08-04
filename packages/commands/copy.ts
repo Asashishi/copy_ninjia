@@ -1,4 +1,5 @@
 import type { CommandContext, Context } from "grammy";
+import { COPY_TARGET_TEXTS } from "../consts/commands";
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
 import { getChatState, getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
@@ -40,9 +41,11 @@ export async function handleCopyCommand(
   const messageId: number | undefined = ctx.msgId;
   const globalCopy: GlobalCopyState = getGlobalCopyState();
 
-  // 日语翻译与其它功能开关一致：缺省关闭，只有超级管理员显式 enable 后
-  // 才允许启动 /ja_copy。两道前提分开报——「本群没开」要找超级管理员，
-  // 「密钥坏了」要改文件加重启，混成一句只会让人去敲一条不解决问题的命令。
+  // 日语翻译与其它功能开关一致：缺省关闭，要先由持有
+  // isCanControllJATranslatePermission 的身份（超级管理员恒持有）显式
+  // /ja_copy enable 才允许启动。两道前提分开报——「本群没开」要找拿得到这项
+  // 权限的人，「密钥坏了」要改文件加重启，混成一句只会让人去敲一条不解决问题
+  // 的命令。
   if (mode === "ja") {
     // 密钥不可用时不能放行：翻译失败的降级是静默的（原样发出未翻译的原文），
     // 群里看不出与「翻译服务抖了一下」的区别，见 copy/availability.ts。
@@ -96,7 +99,7 @@ export async function handleCopyCommand(
     cooldownClaim = await claimCopyCooldownOrReject(resolveCommandActor(ctx), chatId, messageId);
     if (cooldownClaim.rejected) return;
 
-    targetUser = await resolveCopyCommandTarget(ctx, "/copy");
+    targetUser = await resolveCopyCommandTarget(ctx, COPY_TARGET_TEXTS);
     if (!targetUser) return;
 
     slotCommitted = commitCopySlot(slotDecision.claim, globalCopy, {

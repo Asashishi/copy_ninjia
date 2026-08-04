@@ -31,6 +31,10 @@ mock.module("../../../packages/consts/antiRaid/blocklist", () => ({
 }));
 
 const { handleRemoveBlockedMembers } = await import("../../../packages/workers/antiRaid/blocklistEffects");
+const {
+  applyBotPermissionsChange,
+  resetWorkerBotPermissions,
+} = await import("../../../packages/workers/antiRaid/botPermissions");
 const { bumpBlocklistRemovalEpoch, blocklistRemovalEpochs } = await import("../../../packages/cache/workers/antiRaid/blocklist");
 
 const events: BlockedMembersRemovedEvent[] = [];
@@ -52,6 +56,7 @@ beforeEach(() => {
   deleteMessage.mockImplementation(async (): Promise<boolean> => true);
   events.length = 0;
   blocklistRemovalEpochs.clear();
+  resetWorkerBotPermissions();
 });
 
 describe("黑名单处置副作用（守卫线程侧）", () => {
@@ -192,6 +197,51 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     const [recordedChatId, recordedAt] = recordJoin.mock.calls[0] as [number, number];
     expect(recordedChatId).toBe(-1001);
     expect(recordedAt).toBeGreaterThanOrEqual(before);
+    expect(deleteMessage).toHaveBeenCalledWith(-1001, 88, guardApi);
+  });
+
+  test("确证没有删消息权限时不发那次注定 400 的公告删除", async () => {
+    // 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。
+    // 那种群里每个黑名单入群都换来一次必败的 deleteMessage，而这些请求排在与
+    // 验证超时踢人共用的 joinVerificationApi FIFO 队列上——一波协同入群时，
+    // 它们会把真正的踢人顶到验证窗口之后，公告本身照样删不掉。
+    applyBotPermissionsChange(-1001, { canRestrictMembers: true, canDeleteMessages: false });
+
+    handleRemoveBlockedMembers({
+      msg: {
+        type: "removeBlockedMembers",
+        chatId: -1001,
+        userIds: [7],
+        probeMembership: false,
+        removalId: 61,
+        announcementMessageId: 88,
+      },
+      publish,
+    });
+    await settle();
+
+    expect(deleteMessage).not.toHaveBeenCalled();
+    // 封禁本身照常执行：这道闸只挡删消息。
+    expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
+  });
+
+  test("权限未观测到时照常尝试删除，由 Telegram 当裁判", async () => {
+    // 三态里只拦确证的 false：撤管理员、离群、/init 切换和现查失败发的都是同
+    // 一条「权限未知」，把它折算成「没有权限」等于在一个权限齐全的群里白白留着
+    // 那条公告（口径见 workers/antiRaid/botPermissions.ts）。
+    handleRemoveBlockedMembers({
+      msg: {
+        type: "removeBlockedMembers",
+        chatId: -1001,
+        userIds: [7],
+        probeMembership: false,
+        removalId: 62,
+        announcementMessageId: 88,
+      },
+      publish,
+    });
+    await settle();
+
     expect(deleteMessage).toHaveBeenCalledWith(-1001, 88, guardApi);
   });
 

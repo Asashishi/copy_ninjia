@@ -14,7 +14,7 @@
 
 ## スラッシュコマンドの追加
 
-1. **Handler**：`packages/commands/` に 1 ファイル作成し、`function` 宣言で `handleXxxCommand` を明示的な戻り値型付きで export します。権限 gate は既存パターンを参照します。許可ユーザーは `block.ts`、スーパー管理者は `superAdminToggle.ts` / `mood.ts`、プライベートチャット限定は `send.ts` です。後者は本人以外またはプライベートチャット以外ならエラーを返さず静かに return します。
+1. **Handler**：`packages/commands/` に 1 ファイル作成し、`function` 宣言で `handleXxxCommand` を明示的な戻り値型付きで export します。権限 gate は既存パターンを参照します。permission key による認可は `block.ts` / `mood.ts`（常に `hasCommandPermission(ctx, key)`。スーパー管理者はすべての permission key を持つため、identity を個別に判定しないでください）、付与できない操作は `isSuperAdminActor`（`white.ts`、`batchKick.ts`）、プライベートチャット限定は `send.ts` です。最後のものは本人以外またはプライベートチャット以外ならエラーを返さず静かに return します。ユーザーに見える文言は handler に置きません。所属ドメインの `packages/consts/<domain>.ts` に文言テーブルとして置き、型は `packages/types/` に置きます（`PERMISSION_COMMAND_TEXTS`、`BLOCK_TARGET_TEXTS` を参照）。文言変更の集約先になり、呼び出しごとに object 1 つと closure 3 つを作り直さずに済みます。例外は無界のユーザー入力を埋め込む必要がある文言だけで、`cjkAction.ts` が唯一の該当箇所です。
 2. **Export**：`packages/commands/index.ts` に追加します。
 3. **登録**：[`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) に `bot.command("xxx", ...)` を追加します。登録位置は init gate、グループ単位の直列化、プライベートチャット gate、参加認証 middleware より後なので、新しいコマンドは自動的にそれらの semantics を得ます。handler で gate 判定を重複させないでください。
 4. **プライベートチャット gate**：新しいコマンドをプライベートチャットで使う場合は、[`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) も変更し、gate テストを追加します。現在、プライベートチャットのスラッシュコマンドは `/send` だけを明示的に許可しているため、handler 登録だけでは到達しません。グループ専用コマンドは変更不要です。
@@ -48,7 +48,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 70 ファイルに約 619 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 64 ファイルに約 629 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 

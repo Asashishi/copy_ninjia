@@ -19,6 +19,7 @@ import { verificationKey } from "../libs/verificationKey";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { isWhitelisted } from "../config/whitelist";
 import { buildAdCandidate } from "./adCandidate";
+import { observeChatKind } from "./chatKind";
 import {
   claimBlockedJoiner,
   deleteBlockedSenderChatMessage,
@@ -48,6 +49,9 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   if (!update) return;
 
   const chatId: number = update.chat.id;
+  // 群类型镜像：只有主线程看得见 chat.type，而踢人在 Worker 里按它分派方法
+  // （见 ./chatKind.ts）。按值去重，正常情况下每个群一生只投一两条。
+  observeChatKind(update.chat);
   const user: User = update.new_chat_member.user;
   // 自身的成员变动本来走 my_chat_member；这条排除必须放在最前面——万一
   // Telegram 真的也为机器人自己送来一条 chat_member（比如这次恰好就是自己
@@ -150,6 +154,10 @@ export async function handleAntiRaidMessageIngress(
 ): Promise<boolean> {
   // 验证只发生在群聊里，私聊消息不必跨线程投递去查一次注定落空的 Map。
   if (message.chat?.type === "private") return false;
+
+  // 群类型镜像（见 ./chatKind.ts）。排在管理员门禁之前：机器人此刻不是管理员
+  // 不代表以后不是，而这张表按值去重、每个群一生只投一两条，提前记没有代价。
+  observeChatKind(message.chat);
 
   // 机器人不是本群管理员时整个入群守卫不启动：踢人/删消息都做不了，投递
   // 过去只会让 Worker 开一堆注定失败的验证窗口、刷一堆权限报错。已有身份

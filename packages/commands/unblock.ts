@@ -1,5 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
+import { UNBLOCK_TARGET_TEXTS } from "../consts/commands";
 import { sendCommandMessage, unbanChatMemberIfBanned, unbanChatSenderChat } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { resolveCommandTarget } from "./targetResolution";
@@ -43,7 +44,7 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
 
-  if (!actor || !hasCommandPermission(ctx, "isCanUnBlock", true)) {
+  if (!actor || !hasCommandPermission(ctx, "isCanUnBlock")) {
     const replyText: string = `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /unblock 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
@@ -60,13 +61,7 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     acceptUserId: true,
     // 只有这条命令认负数 id，理由见函数顶部说明与 targetResolution.ts。
     acceptChatId: true,
-    messages: {
-      missingTarget: `笨蛋，要么 /unblock @username 或 /unblock 用户id（频道就给那串负数 id），要么回复 TA 的一条消息再 /unblock，本天才可不会读心术♡`,
-      invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是 id（用户是正整数，频道是那串负数），别拿半截参数糊弄本天才♡`,
-      unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /unblock 吧♡`,
-      conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想解封谁就只留一个，要么删掉参数、要么别回复♡`,
-      selfTarget: `笨蛋，本天才本来就没把自己拉黑呀♡`,
-    },
+    messages: UNBLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;
 

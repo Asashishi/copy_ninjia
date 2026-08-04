@@ -1,19 +1,20 @@
 import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { jaTranslateConfigReadiness } from "../config/readiness";
+import { JA_COPY_TOGGLE_TEXTS } from "../consts/commands";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { refuseIfConfigBroken } from "./configGate";
 import { handleCopyCommand } from "./copy";
-import { resolveSuperAdminToggleArg } from "./superAdminToggle";
+import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle";
 
 /**
  * 处理 /ja_copy 指令：不带参数就是普通的 /copy（复读并翻译成日语，见
  * handleCopyCommand 的 "ja" mode）；带 enable/disable 参数则按群开关
  * 这个翻译功能本身（见 ChatState.isJATranslationEnabled，
  * 缺省禁用）。两种用法共用同一个命令名，靠有没有参数区分。enable/disable
- * 超级管理员恒可用，白名单身份可通过
- * isCanControllJATranslatePermission 单独获权。
+ * 仅持有 isCanControllJATranslatePermission 的身份可用；
+ * 超级管理员恒持有该权限（见 config/whitelist.ts），白名单身份可由 /permission 单独获权。
  */
 export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise<void> {
   // 只有字面量 enable/disable 才是开关指令；空参数、@username、回复目标等
@@ -26,8 +27,7 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
   }
 
   const toggleArg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
-    rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想管本天才要不要翻译日语？哪来的资格呀，笨蛋♡`,
-    usage: `笨蛋，/ja_copy 不带参数是复读翻译，要开关这个功能就 /ja_copy enable 或 /ja_copy disable，说清楚呀♡`,
+    texts: JA_COPY_TOGGLE_TEXTS,
     permission: "isCanControllJATranslatePermission",
   });
   if (!toggleArg) return;
@@ -48,11 +48,15 @@ export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise
     if (refused) return;
   }
   const state: ChatState = getOrCreateChatState(chatId);
-  state.isJATranslationEnabled = toggleArg === "enable";
+  const wasEnabled: boolean = state.isJATranslationEnabled === true;
+  const isEnabled: boolean = toggleArg === "enable";
+  state.isJATranslationEnabled = isEnabled;
   await persistAuthoritativeState("ja_copy toggled");
 
-  const replyText: string = toggleArg === "enable"
-    ? `哼，那本天才就赏脸继续在这个群用 /ja_copy 翻译日语吧，杂鱼们好好珍惜♡`
-    : `本天才不想再给你们这群杂鱼翻译日语了，/ja_copy 到此为止♡`;
+  const replyText: string = toggleReplyText({
+    isEnabled,
+    wasEnabled,
+    texts: JA_COPY_TOGGLE_TEXTS,
+  });
   await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

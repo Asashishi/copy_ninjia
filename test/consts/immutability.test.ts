@@ -1,11 +1,29 @@
 import { expect, test } from "bun:test";
-import { BOT_COMMANDS } from "../../packages/consts/commands";
+import {
+  AD_DETECT_TOGGLE_TEXTS,
+  AI_CHAT_TOGGLE_TEXTS,
+  BLOCK_TARGET_TEXTS,
+  BOT_COMMANDS,
+  COPY_TARGET_TEXTS,
+  FLOOD_CONTROL_TOGGLE_TEXTS,
+  INIT_TOGGLE_TEXTS,
+  JA_COPY_TOGGLE_TEXTS,
+  MUTE_TARGET_TEXTS,
+  STEAL_ICON_TARGET_TEXTS,
+  UNBLOCK_TARGET_TEXTS,
+  UNMUTE_TARGET_TEXTS,
+} from "../../packages/consts/commands";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
 import { GEMINI_SAFETY_SETTINGS } from "../../packages/consts/aiChat/tools";
 import { RANDOM_ECHO_MODES } from "../../packages/consts/auto";
 import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import { DEFAULT_CHAT_STATE } from "../../packages/consts/storage";
-import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
+import {
+  DEFAULT_WHITELIST_PERMISSIONS,
+  PERMISSION_COMMAND_TEXTS,
+  SUPER_ADMIN_WHITELIST_PERMISSIONS,
+  WHITE_COMMAND_TEXTS,
+} from "../../packages/consts/whitelist";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../packages/consts/weather";
 import { getChatState } from "../../packages/infra/storage/stateStore";
 
@@ -53,6 +71,123 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   // @ts-expect-error Readonly<WhitelistPermissions> 的字段只读；这份默认值被
   // parsePermissions 逐条展开复用，写坏它等于改掉此后所有条目的缺省权限。
   expect(() => { DEFAULT_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
+  // @ts-expect-error Readonly<WhitelistPermissions> 的字段只读；这一份是
+  // getEffectiveWhitelistPermissions 直接交给调用方的超级管理员视图，写坏它
+  // 就是当场把超级管理员降权。
+  expect(() => { SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock = false; }).toBeDefined();
+});
+
+/**
+ * 五张开关命令文案表都是跨调用方共享的单例：resolveSuperAdminToggleArg 与
+ * toggleReplyText 各读一次，写坏其中一句就是全群一起换口径。ToggleCommandTexts
+ * 的字段本身声明为 readonly，这里逐张确认那层只读没有在常量声明处被放宽。
+ */
+test("白名单命令文案表不可写入，嵌套的目标提示同样只读", () => {
+  // @ts-expect-error PermissionCommandTexts.usage 只读
+  expect(() => { PERMISSION_COMMAND_TEXTS.usage = "篡改"; }).toBeDefined();
+  // @ts-expect-error PermissionCommandTexts.superAdminTarget 只读
+  expect(() => { PERMISSION_COMMAND_TEXTS.superAdminTarget = "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.selfTarget 只读；嵌套一层同样锁死
+  expect(() => { PERMISSION_COMMAND_TEXTS.target.selfTarget = "篡改"; }).toBeDefined();
+  // @ts-expect-error WhiteCommandTexts.usage 只读
+  expect(() => { WHITE_COMMAND_TEXTS.usage = "篡改"; }).toBeDefined();
+  // @ts-expect-error WhiteCommandTexts.alreadyEnabled 只读
+  expect(() => { WHITE_COMMAND_TEXTS.alreadyEnabled = (): string => "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.missingTarget 只读
+  expect(() => { WHITE_COMMAND_TEXTS.target.missingTarget = "篡改"; }).toBeDefined();
+});
+
+/**
+ * help / query 两条回执要在正文里嵌 JSON 代码块，pre 实体的 offset 就是前缀的
+ * UTF-16 长度。前缀少了结尾换行，代码块会从开场白最后一个字符开始，Telegram
+ * 渲染出来整块错位——这是文案改动最容易踩、又最不容易在单测里看出来的一处。
+ */
+test("/permission 的代码块前缀以换行结尾", () => {
+  expect(PERMISSION_COMMAND_TEXTS.helpPrefix.endsWith("\n")).toBeTrue();
+  expect(PERMISSION_COMMAND_TEXTS.queryPrefix.endsWith("\n")).toBeTrue();
+});
+
+test("/white 成员关系的四种结局互不相同", () => {
+  const outcomes: readonly string[] = [
+    WHITE_COMMAND_TEXTS.enabled("目标"),
+    WHITE_COMMAND_TEXTS.alreadyEnabled("目标"),
+    WHITE_COMMAND_TEXTS.disabled("目标"),
+    WHITE_COMMAND_TEXTS.alreadyDisabled("目标"),
+  ];
+  expect(new Set(outcomes).size).toBe(4);
+  for (const outcome of outcomes) expect(outcome).toContain("目标");
+});
+
+test("各命令的目标解析文案表不可写入", () => {
+  // @ts-expect-error CommandTargetMessages.missingTarget 只读
+  expect(() => { BLOCK_TARGET_TEXTS.missingTarget = "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.selfTarget 只读
+  expect(() => { UNBLOCK_TARGET_TEXTS.selfTarget = "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.invalidUsername 只读
+  expect(() => { MUTE_TARGET_TEXTS.invalidUsername = (): string => "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.unknownUsername 只读
+  expect(() => { UNMUTE_TARGET_TEXTS.unknownUsername = (): string => "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.conflictingTarget 只读
+  expect(() => { COPY_TARGET_TEXTS.conflictingTarget = (): string => "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.missingTarget 只读
+  expect(() => { STEAL_ICON_TARGET_TEXTS.missingTarget = "篡改"; }).toBeDefined();
+});
+
+/**
+ * 这几张表是从「每次调用现造」抽出来的，最容易在复制粘贴时留下上一条命令的
+ * 命令名。逐张确认提示里念的是自己那条命令。
+ */
+test("目标解析文案念的是各自的命令名", () => {
+  for (const [command, texts] of [
+    ["/block", BLOCK_TARGET_TEXTS],
+    ["/unblock", UNBLOCK_TARGET_TEXTS],
+    ["/mute", MUTE_TARGET_TEXTS],
+    ["/unmute", UNMUTE_TARGET_TEXTS],
+    ["/copy", COPY_TARGET_TEXTS],
+    ["/steal_icon", STEAL_ICON_TARGET_TEXTS],
+  ] as const) {
+    expect(texts.missingTarget).toContain(command);
+  }
+  // /unblock 与 /unmute 的提示不能退化成 /block、/mute 的那份。
+  expect(UNBLOCK_TARGET_TEXTS.missingTarget).not.toBe(BLOCK_TARGET_TEXTS.missingTarget);
+  expect(UNMUTE_TARGET_TEXTS.missingTarget).not.toBe(MUTE_TARGET_TEXTS.missingTarget);
+  expect(STEAL_ICON_TARGET_TEXTS.missingTarget).not.toBe(COPY_TARGET_TEXTS.missingTarget);
+});
+
+test("开关命令文案表不可写入", () => {
+  // @ts-expect-error ToggleCommandTexts.enabled 只读
+  expect(() => { AI_CHAT_TOGGLE_TEXTS.enabled = "篡改"; }).toBeDefined();
+  // @ts-expect-error ToggleCommandTexts.alreadyEnabled 只读
+  expect(() => { AD_DETECT_TOGGLE_TEXTS.alreadyEnabled = "篡改"; }).toBeDefined();
+  // @ts-expect-error ToggleCommandTexts.alreadyDisabled 只读
+  expect(() => { FLOOD_CONTROL_TOGGLE_TEXTS.alreadyDisabled = "篡改"; }).toBeDefined();
+  // @ts-expect-error ToggleCommandTexts.usage 只读
+  expect(() => { JA_COPY_TOGGLE_TEXTS.usage = "篡改"; }).toBeDefined();
+  // @ts-expect-error ToggleCommandTexts.rejection 只读
+  expect(() => { INIT_TOGGLE_TEXTS.rejection = (): string => "篡改"; }).toBeDefined();
+});
+
+test("开关命令文案表四种结局齐备且互不相同", () => {
+  for (const texts of [
+    AI_CHAT_TOGGLE_TEXTS,
+    AD_DETECT_TOGGLE_TEXTS,
+    FLOOD_CONTROL_TOGGLE_TEXTS,
+    JA_COPY_TOGGLE_TEXTS,
+    INIT_TOGGLE_TEXTS,
+  ]) {
+    const outcomes: readonly string[] = [
+      texts.enabled,
+      texts.disabled,
+      texts.alreadyEnabled,
+      texts.alreadyDisabled,
+    ];
+    for (const outcome of outcomes) expect(outcome.length).toBeGreaterThan(0);
+    // 四句必须两两不同：同状态重复执行若沿用刚改完那句，群里看到的就是一次
+    // 并不存在的状态变化（见 types/commands.ts 的 ToggleCommandTexts）。
+    expect(new Set(outcomes).size).toBe(4);
+    expect(texts.usage.length).toBeGreaterThan(0);
+    expect(texts.rejection("杂鱼").length).toBeGreaterThan(0);
+  }
 });
 
 /**
@@ -78,4 +213,6 @@ test("常量表内容本身仍可正常读取", () => {
   expect(RANDOM_ECHO_MODES).toContain("nya");
   expect(DEFAULT_WHITELIST_PERMISSIONS.isCanBypassFloodControl).toBe(true);
   expect(DEFAULT_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(false);
+  expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock).toBe(true);
+  expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(true);
 });

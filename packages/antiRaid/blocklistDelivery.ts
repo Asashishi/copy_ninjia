@@ -92,7 +92,7 @@ function durableAntiRaidMessagesMatch(
  * 完全一致；最终对账与同步 post 之间没有 await，不留旧任务重新进入 Worker
  * 的事件循环窗口。
  *
- * 轮次有上限（同 antiRaid/index.ts 的 persistCurrentLockdown）：每轮都是整份
+ * 轮次有上限（同 antiRaid/workerBridge.ts 的 persistCurrentLockdown）：每轮都是整份
  * outbox 深拷贝加一次带 fsync 的整文件重写，而本函数跑在 update 处理里面。
  *
  * 用尽时既不投也不抛，只把处置消息整批摘掉：

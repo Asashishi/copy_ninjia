@@ -10,8 +10,8 @@ import {
   deleteMessageWithOutcome,
 } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
 import { isWhitelisted } from "../config/whitelist";
+import { BLOCK_TARGET_TEXTS } from "../consts/commands";
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import {
@@ -119,15 +119,15 @@ function senderChatCleanupNote(
  * 释放后由别人重新注册，而 id 不会改指另一个人；这条命令又是不可逆的，因此
  * 拿不准用户名新鲜度时应当用 id 或回复消息。id 只认正整数——群/频道的负数 id
  * 会让处置改去封整个会话身份，那是另一回事。目标若是频道马甲（sender_chat），
- * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限白名单中
- * isCanBlock=true 的用户或频道身份使用。
+ * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限持有 isCanBlock 的
+ * 用户或频道身份使用（超级管理员恒持有，见 config/whitelist.ts）。
  */
 export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = resolveCommandActor(ctx);
 
-  if (!actor || !hasCommandPermission(ctx, "isCanBlock", false)) {
+  if (!actor || !hasCommandPermission(ctx, "isCanBlock")) {
     const replyText: string = `就 ${actor ? formatUserLabel(actor) : "哪个杂鱼"} 也想 /block 人？哪来的资格呀，笨蛋，洗洗睡吧♡`;
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
@@ -146,13 +146,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     // 处置的对象本来就是一个 id，用 id 指定比 @username 更准（用户名会被释放
     // 后重新注册，而这条命令不可逆），见 targetResolution.ts 的 acceptUserId。
     acceptUserId: true,
-    messages: {
-      missingTarget: `笨蛋，要么 /block @username 或 /block 用户id，要么回复 TA 的一条消息再 /block，本天才可不会读心术♡`,
-      invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数，群和频道那种负数 id 不算），别拿半截参数糊弄本天才♡`,
-      unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息来 /block 吧♡`,
-      conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；封人这事本天才可不猜——想封谁就只留一个，要么删掉参数、要么别回复♡`,
-      selfTarget: `笨蛋，本天才才不会把自己拉黑呢♡`,
-    },
+    messages: BLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;
 
@@ -175,7 +169,8 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 事后要一个群一个群手动解封——值得在入口就挡住。
   const admission: BlockAdmission = await runProtectedIdentityMutation(
     (): BlockAdmission => {
-      if (targetUser.id === SUPER_ADMIN_USER_ID || isWhitelisted(targetUser.id)) {
+      // isWhitelisted 已经把超级管理员算进白名单边界（config/whitelist.ts）。
+      if (isWhitelisted(targetUser.id)) {
         return { protected: true, newlyBlocked: false };
       }
       return { protected: false, newlyBlocked: blockUser(targetUser.id) };

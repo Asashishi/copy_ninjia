@@ -60,7 +60,12 @@ export const AI_CHAT_GEMINI_API_KEY: string | undefined = optionalEnv("AI_CHAT_G
  */
 export const AD_DETECT_DEEPSEEK_API_KEY: string | undefined = optionalEnv("AD_DETECT_DEEPSEEK_API_KEY");
 
-/** 超级管理员用户 ID；白名单与逐项权限改由 config/whitelist.json 管理。 */
+/**
+ * 超级管理员用户 ID。这个身份本身即持有 config/whitelist.json 能授予的全部
+ * 逐项权限，**不必也不应**在那份文件里另配条目——覆盖只发生在读取侧、永不
+ * 落盘（见 packages/config/whitelist.ts 的 getEffectiveWhitelistPermissions）。
+ * 其余身份的白名单成员关系与逐项权限才由 config/whitelist.json 管理。
+ */
 export const SUPER_ADMIN_USER_ID: number = ((): number => {
   const raw: string = requireEnv("SUPER_ADMIN_USER_ID");
   return parseTelegramUserId(raw, "SUPER_ADMIN_USER_ID");

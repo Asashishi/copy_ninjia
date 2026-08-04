@@ -2,20 +2,21 @@ import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { clearAdDetection } from "../antiRaid";
 import { adDetectConfigReadiness } from "../config/readiness";
+import { AD_DETECT_TOGGLE_TEXTS } from "../consts/commands";
 import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
 import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { refuseIfConfigBroken } from "./configGate";
-import { resolveSuperAdminToggleArg } from "./superAdminToggle";
+import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle";
 
 /**
  * 处理 /ad_detect enable|disable 指令：按群开关广告检测（见
  * ChatState.isAdDetectEnabled，缺省禁用）。开启后本群每条带文字的消息都会经
  * 入群守卫线程送 DeepSeek 判定，命中即按 /block 同样的处置办——写进永久黑名单、
  * 在所有在管群封禁并删掉这个人发过的消息（见 antiRaid/adDetect.ts）。
- * 超级管理员恒可用，白名单身份可通过
- * isCanControllAdDetectPermission 单独获权。
+ * 仅持有 isCanControllAdDetectPermission 的身份可用；
+ * 超级管理员恒持有该权限（见 config/whitelist.ts），白名单身份可由 /permission 单独获权。
  *
  * 机器人不是本群管理员时判定根本不会触发（删不掉广告也封不了人），开关照样
  * 可以先开着：补上管理员身份之后立刻生效。缺 AD_DETECT_DEEPSEEK_API_KEY 或
@@ -26,8 +27,7 @@ import { resolveSuperAdminToggleArg } from "./superAdminToggle";
  */
 export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
-    rejection: (mockerLabel: string): string => `就 ${mockerLabel} 也想管本天才抓不抓广告？哪来的资格呀，笨蛋♡`,
-    usage: `笨蛋，要 /ad_detect enable 还是 /ad_detect disable，说清楚呀♡`,
+    texts: AD_DETECT_TOGGLE_TEXTS,
     permission: "isCanControllAdDetectPermission",
   });
   if (!arg) return;
@@ -53,7 +53,9 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
     if (refused) return;
   }
   const state: ChatState = getOrCreateChatState(chatId);
-  state.isAdDetectEnabled = arg === "enable";
+  const wasEnabled: boolean = state.isAdDetectEnabled === true;
+  const isEnabled: boolean = arg === "enable";
+  state.isAdDetectEnabled = isEnabled;
   await persistAuthoritativeState("ad_detect toggled");
   // 关掉之后 Worker 里可能还排着这个群的待检消息串。主线程这道门禁只拦得住
   // 之后的消息，不清队列的话，关掉开关之后还会有人被判成广告拉黑。
@@ -71,8 +73,10 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
     }
   }
 
-  const replyText: string = arg === "enable"
-    ? `哼，本天才这就盯着这个群的广告，敢发的杂鱼一个都别想留下♡`
-    : `不抓广告了，随便你们刷吧，本天才可懒得管♡`;
+  const replyText: string = toggleReplyText({
+    isEnabled,
+    wasEnabled,
+    texts: AD_DETECT_TOGGLE_TEXTS,
+  });
   await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
 }

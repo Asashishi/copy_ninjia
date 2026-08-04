@@ -35,14 +35,15 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**1608 tests / 170 files / 30142 次 `expect()`**；全源码**函数覆盖率 95.17% / 行覆盖率 96.56%**。根 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**1643 tests / 170 files / 30375 次 `expect()`**；全源码**函数覆盖率 95.53% / 行覆盖率 96.61%**。根 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
-测试必须通过 `bun run test`（即 `bun test --isolate`）执行，两层保护：
+测试必须通过 `bun run test`（即 `bun test --isolate`）执行，三层保护：
 
 1. **文件隔离**：Bun 为每个测试文件创建新的 global object；`mock.module` 与模块级状态不会污染其它测试文件。这里没有启用 `--parallel`，因此不宣称每个文件各占一个进程。
 2. **临时数据根**：`test/preload.ts` 在任何生产模块加载前为每个隔离体注入独立临时数据根，因此未 mock 的真实文件 I/O 也只会读写临时目录，绝不触碰生产 `state.json`、`bot.lock`、`logs/`、`memory/`；结束后临时目录被清理。
+3. **只读配置根**：同一份 preload 还把 `COPY_NINJIA_CONFIG_ROOT` 指向仓库内的 `config_example/`（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读或改写开发机上真实的 `whitelist.json`、`blocklist.json`。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
 
 直接 `bun test` 单文件调试可以，但合并前必须过完整 `bun run check`。
 
@@ -87,7 +88,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
 
-- **中文字符串统计**（当前约 619 处 / 70 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算，只统计字符串与模板字面量所在源码行、不含注释。
+- **中文字符串统计**（当前约 629 处 / 64 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
 - **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布

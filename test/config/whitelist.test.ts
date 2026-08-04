@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   enableAllWhitelistPermissions,
+  getEffectiveWhitelistPermissions,
   getWhitelistConfig,
   hasWhitelistPermission,
   isWhitelisted,
@@ -13,6 +14,7 @@ import {
   setWhitelistMembership,
   setWhitelistPermission,
 } from "../../packages/config/whitelist";
+import { SUPER_ADMIN_USER_ID } from "../../packages/infra/config";
 import {
   whitelistConfigCache,
   whitelistFileRevisionCache,
@@ -22,7 +24,11 @@ import type {
   WhitelistConfig,
   WhitelistPermissions,
 } from "../../packages/types/whitelist";
-import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
+import {
+  DEFAULT_WHITELIST_PERMISSIONS,
+  SUPER_ADMIN_WHITELIST_PERMISSIONS,
+  WHITELIST_PERMISSION_KEYS,
+} from "../../packages/consts/whitelist";
 
 function oneEntry(
   id: number,
@@ -89,6 +95,63 @@ describe("whitelist config", () => {
     expect(hasWhitelistPermission(100, "isCanMute")).toBe(false);
     expect(hasWhitelistPermission(100, "isCanBypassAdDetection")).toBe(true);
     expect(isWhitelisted(101)).toBe(false);
+  });
+
+  test("超级管理员由身份直接持有全部权限，无需出现在配置文件里", () => {
+    whitelistConfigCache.current = oneEntry(100);
+
+    expect(getWhitelistConfig().has(SUPER_ADMIN_USER_ID)).toBe(false);
+    expect(isWhitelisted(SUPER_ADMIN_USER_ID)).toBe(true);
+    expect(getEffectiveWhitelistPermissions(SUPER_ADMIN_USER_ID))
+      .toEqual(SUPER_ADMIN_WHITELIST_PERMISSIONS);
+    for (const key of WHITELIST_PERMISSION_KEYS) {
+      expect(hasWhitelistPermission(SUPER_ADMIN_USER_ID, key)).toBe(true);
+      expect(SUPER_ADMIN_WHITELIST_PERMISSIONS[key]).toBe(true);
+    }
+  });
+
+  test("配置文件里同 id 的旧条目改不动超级管理员的有效权限", () => {
+    // 换 SUPER_ADMIN_USER_ID 之前留下的残留条目，或部署方手工写了一份全 false，
+    // 都不得把超级管理员降权：覆盖只发生在读取侧，且以身份为准。
+    whitelistConfigCache.current = oneEntry(SUPER_ADMIN_USER_ID, {
+      isCanBlock: false,
+      isCanMute: false,
+      isCanBypassAdDetection: false,
+      isCanBypassFloodControl: false,
+    });
+
+    expect(hasWhitelistPermission(SUPER_ADMIN_USER_ID, "isCanBlock")).toBe(true);
+    expect(hasWhitelistPermission(SUPER_ADMIN_USER_ID, "isCanMute")).toBe(true);
+    expect(hasWhitelistPermission(SUPER_ADMIN_USER_ID, "isCanBypassAdDetection"))
+      .toBe(true);
+    expect(hasWhitelistPermission(SUPER_ADMIN_USER_ID, "isCanBypassFloodControl"))
+      .toBe(true);
+  });
+
+  test("超级管理员的全开视图只在读取侧存在，任何一次写盘都不会把它带进文件", async () => {
+    whitelistConfigCache.current = oneEntry(100);
+    const writes: string[] = [];
+    const writeText = mock(async (_path: string, content: string): Promise<void> => {
+      writes.push(content);
+    });
+
+    await setWhitelistPermission(
+      { id: 100, key: "isCanMute", value: true },
+      { path: "/tmp/whitelist-test.json", writeText }
+    );
+    await setWhitelistMembership(
+      { id: 200, enabled: true },
+      { path: "/tmp/whitelist-test.json", writeText }
+    );
+
+    expect(writes).toHaveLength(2);
+    for (const content of writes) {
+      expect(Object.keys(JSON.parse(content) as Record<string, unknown>))
+        .not.toContain(String(SUPER_ADMIN_USER_ID));
+    }
+    // 写盘不带上它，读取侧照样恒为全开。
+    expect(isWhitelisted(SUPER_ADMIN_USER_ID)).toBe(true);
+    expect(hasWhitelistPermission(SUPER_ADMIN_USER_ID, "isCanBlock")).toBe(true);
   });
 
   test("权限写入成功后才发布新快照，落盘失败保持旧值", async () => {

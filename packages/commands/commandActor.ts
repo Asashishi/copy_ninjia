@@ -37,16 +37,16 @@ export function isSuperAdminActor(ctx: CommandContext<Context>): boolean {
 }
 
 /**
- * 命令发起身份是否有某项授权。allowSuperAdmin 用于保持既有超管权限：
- * 开关类命令与 /unblock 放行，/block、/mute 等原本只认白名单的命令不自动扩大。
+ * 命令发起身份是否有某项授权。超级管理员由 config/whitelist.ts 的读取边界
+ * 统一持有全部可授予的白名单权限，这里不再逐命令区分要不要放行超管；
+ * 仅超级管理员可用的命令（/white、/permission 修改、/batch_kick、/init、
+ * /send）走 isSuperAdminActor，不属于白名单权限键。
  */
 export function hasCommandPermission(
   ctx: CommandContext<Context>,
-  key: WhitelistPermissionKey,
-  allowSuperAdmin: boolean
+  key: WhitelistPermissionKey
 ): boolean {
   const actorId: number | undefined = resolveCommandActor(ctx)?.id;
   if (actorId === undefined) return false;
-  return (allowSuperAdmin && actorId === SUPER_ADMIN_USER_ID) ||
-    hasWhitelistPermission(actorId, key);
+  return hasWhitelistPermission(actorId, key);
 }

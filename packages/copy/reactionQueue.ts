@@ -28,24 +28,25 @@ import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
  * 队列状态（pendingTasks / chatQueues / consumingChats）见 cache/main/reactionQueue.ts。
  */
 
-/**
- * 把「将某条消息上的机器人反应设置为 reactions」这一任务入队（空数组表示
- * 清除反应）。同一条消息已有未消费任务时只覆盖其内容，不重复排队。
- * @param chatId 目标聊天 ID。
- * @param messageId 要回应的消息。
- * @param reactions 要应用的反应（数组最多 1 个，见 handleReaction 中的选择逻辑）。
- * @param updateId 产生本次调用的更新的 update_id（单调递增），用于新旧判断。
- * @param reactedAtUnix 目标点下反应的时刻（见 ReactionTask.reactedAtUnix），用于延迟统计。
- * @returns 此版本已经应用、被更新版本覆盖或按硬顶策略显式丢弃时结算。
- */
+/** enqueueReaction 的入参。 */
 export interface EnqueueReactionParams {
+  /** 目标聊天 ID。 */
   chatId: number;
+  /** 要回应的消息。 */
   messageId: number;
+  /** 要应用的反应（数组最多 1 个，见 handleReaction 中的选择逻辑）。 */
   reactions: CopyableReaction[];
+  /** 产生本次调用的更新的 update_id（单调递增），用于新旧判断。 */
   updateId: number;
+  /** 目标点下反应的时刻（见 ReactionTask.reactedAtUnix），用于延迟统计。 */
   reactedAtUnix: number;
 }
 
+/**
+ * 把「将某条消息上的机器人反应设置为 reactions」这一任务入队（空数组表示
+ * 清除反应）。同一条消息已有未消费任务时只覆盖其内容，不重复排队。
+ * @returns 此版本已经应用、被更新版本覆盖或按硬顶策略显式丢弃时结算。
+ */
 export function enqueueReaction({
   chatId,
   messageId,

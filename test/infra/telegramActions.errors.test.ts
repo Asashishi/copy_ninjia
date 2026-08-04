@@ -73,7 +73,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBe(13);
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(true);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
-    expect(await actions.kickChatMember(-1001, 7, api)).toBe(true);
+    expect(await actions.kickChatMember({ chatId: -1001, userId: 7, api })).toBe(true);
     expect(await actions.banChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.isChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(true);
@@ -96,7 +96,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBeUndefined();
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(false);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(false);
-    expect(await actions.kickChatMember(-1001, 7, api)).toBe(false);
+    expect(await actions.kickChatMember({ chatId: -1001, userId: 7, api })).toBe(false);
     expect(await actions.banChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.isChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(false);
@@ -227,7 +227,7 @@ describe("解除封禁必须带 only_if_banned", () => {
     await actions.unbanChatMemberIfBanned(-1001, 7, api);
     expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, { only_if_banned: true });
 
-    await actions.kickChatMember(-1001, 7, api);
+    await actions.kickChatMember({ chatId: -1001, userId: 7, api });
     // 空 options 与不传等价，关键是**没有** only_if_banned。
     expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, {});
   });

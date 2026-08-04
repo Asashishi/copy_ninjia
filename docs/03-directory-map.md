@@ -81,11 +81,11 @@
   - **典型目录**：`main/`、`workers/aiChat/`、`workers/antiRaid/`、
     `workers/diskIO/`、`perThread/`。
 - **`packages/consts/`**
-  - **职责**：字面量常量与调参值，按领域分文件/子目录。
-  - **典型文件**：`commands.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
+  - **职责**：字面量常量、调参值与用户可见文案表，按领域分文件/子目录。
+  - **典型文件**：`commands.ts`、`whitelist.ts`、`aiChat/rateLimit.ts`、`antiRaid/`。
 - **`packages/types/`**
   - **职责**：跨模块协议、领域类型、状态机契约（`types/states/`）。
-  - **典型文件**：`chatState.ts`、`lifecycle.ts`、`diskIO.ts`。
+  - **典型文件**：`chatState.ts`、`commands.ts`、`lifecycle.ts`、`diskIO.ts`。
 - **`test/`**
   - **职责**：与 `packages/` 镜像的 Bun 单元测试。
   - **典型文件**：`test/commands/copyShared.test.ts`。
@@ -97,7 +97,7 @@
 
 按这个顺序问自己：
 
-1. **是字面量参数？** → `packages/consts/<domain>.ts`（或领域大了拆 `packages/consts/<domain>/`）。带中文 JSDoc 说明用途与不变量。env 派生的配置是唯一例外，进 `packages/infra/config.ts`。
+1. **是字面量参数、或用户可见文案？** → `packages/consts/<domain>.ts`（或领域大了拆 `packages/consts/<domain>/`）。带中文 JSDoc 说明用途与不变量。命令回执与提示按命令收成文案表，不留在 handler 里现造。env 派生的配置是唯一例外，进 `packages/infra/config.ts`。
 2. **是跨模块共享的类型/协议？** → `packages/types/<domain>.ts`。状态机的 `State/Event/Effect/Transition/Decision` 契约放 `packages/types/states/`。
 3. **是长期存活的可变状态**（Map/Set/队列/timer/单例）？ → `packages/cache/`，**先按 owner 线程选一层目录**（见下），再在里面按领域分文件；holder 对象而非 `export let`，JSDoc 写清何时填充、何时清理、Worker 重启后如何重建。容量与清理策略必须满足 [04 运行时权威约束](04-invariants.md)。
 4. **是纯状态转移逻辑**（无 I/O、可单测）？ → `packages/states/`；副作用由 worker 侧解释器执行。

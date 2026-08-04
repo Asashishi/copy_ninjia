@@ -11,13 +11,15 @@ const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => t
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 const flushDiskIO = mock(async (): Promise<string> => "flushed");
 
-// 100/200 是白名单成员，1 是超级管理员；三者都只凭 isCanUnBlock 完整解封。
-// 故意让超级管理员不在白名单里；两者不重叠的部署必须照样能用。
+// 100/200 是 config/whitelist.json 里的成员，1 是超级管理员；三者都只凭
+// isCanUnBlock 完整解封。故意让超级管理员不出现在配置文件里：他的全部权限与
+// 白名单成员身份由 packages/config/whitelist.ts 的读取边界直接给出，这里的
+// mock 照实模拟那层结论。
 mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/config/whitelist", () => ({
-  isWhitelisted: (id: number): boolean => id === 100 || id === 200,
+  isWhitelisted: (id: number): boolean => id === 1 || id === 100 || id === 200,
   hasWhitelistPermission: (id: number, key: string): boolean =>
-    (id === 100 || id === 200) && key === "isCanUnBlock",
+    id === 1 || ((id === 100 || id === 200) && key === "isCanUnBlock"),
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage, unbanChatMemberIfBanned, unbanChatSenderChat,
@@ -368,8 +370,8 @@ describe("/unblock 默认跨群解封", () => {
   });
 });
 
-describe("超级管理员不在白名单里的部署", () => {
-  test("仍能用 /unblock：SUPER_ADMIN_USER_ID 是独立的一批权限", async () => {
+describe("超级管理员不在 config/whitelist.json 里的部署", () => {
+  test("仍能用 /unblock：权限由 SUPER_ADMIN_USER_ID 这个身份直接给出", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
 
     await handleUnblockCommand(context(1));

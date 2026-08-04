@@ -171,4 +171,26 @@ describe("黑名单入群秒踢的投递侧", () => {
     // 位置留给补扫：outbox 腾出空间后由下一次管理员身份观测接上。
     expect(requestBlocklistResweep).toHaveBeenCalledWith(-1001);
   });
+
+  test("登记失败时不消耗入群计数认领：另一路投递还能替这次入群补记", () => {
+    // 认领写在实参位置时，trackBlockedRemoval 抛错走降级返回，去重项却已经被
+    // 消耗掉——同一次物理入群的另一路投递随后只能带 joinedAt: undefined，这次
+    // 入群从反刷群滑动窗口里整个消失。一波以黑名单账号为主的突袭因此凑不满
+    // ANTI_RAID_PER_MINUTE_LIMIT，私密模式不触发，紧随其后的非黑名单号各自
+    // 拿满一个三分钟验证窗口而不是被秒踢。
+    blockedIds.add(42);
+    trackFails = true;
+    const messages: AntiRaidWorkerMessage[] = [];
+    const replacedJoins = new Map<number, AntiRaidWorkerMessage>();
+    const replacedJoin = joinMessage(-1001, 42);
+
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins, now: 1_000 })).toBeTrue();
+    expect(messages).toHaveLength(0);
+    expect(recentBlockedJoinCounts.size).toBe(0);
+
+    // outbox 腾出位置后，同一次入群的第二路投递照常把计数补上。
+    trackFails = false;
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins, now: 1_050 })).toBeTrue();
+    expect(messages.map((message) => (message as RemoveBlockedMembersParams).joinedAt)).toEqual([1_050]);
+  });
 });

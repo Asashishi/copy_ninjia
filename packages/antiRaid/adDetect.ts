@@ -18,7 +18,7 @@ import {
   trackBlockedRemoval,
 } from "../infra/blocklist/outbox";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
-import { getAllChatStates } from "../infra/storage/stateStore";
+import { getAllChatStates, getChatState } from "../infra/storage/stateStore";
 import { postDiskIODiagnostic } from "../infra/diskIO";
 import { deleteMessageAfter, sendMessage } from "../infra/telegram/actions";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
@@ -92,6 +92,15 @@ function recordAdSample(event: AdDetectedEvent): void {
 async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
   const newlyBlocked: boolean | null = await runProtectedIdentityMutation(
     (): boolean | null => {
+      // 判定发生在 Worker 侧，事件回投主线程后还要排过 identity 串行队列才轮到
+      // 这里；这中间完全可能夹进一条 /ad_detect disable —— 它翻标志、落盘、调
+      // clearAdDetection，而 clearAdDetection 只清得掉 Worker 里还没判的队列，
+      // 够不到一条已经发布出来的判定。不在写名单之前复查一次的话，开关关掉之后
+      // 仍然会有人被写进永久黑名单、在所有托管群封禁并被群内公告点名，正是
+      // clearAdDetection 存在的意义（见 antiRaid/workerBridge.ts）。复查放在临界
+      // 区内、紧挨着 blockUser：再往后就过了不可逆点，那时候撤只会留下一条既成
+      // 事实的名单条目却没有任何执行。
+      if (getChatState(event.chatId).isAdDetectEnabled !== true) return null;
       // 候选入队后管理员可能刚把该身份加入白名单；而关闭广告绕过权限的白名单
       // 成员仍可能被模型判定并清掉这批消息。两种情况都不能写进永久黑名单，
       // 否则与启动时的 protected-identity 交集门禁自相矛盾。
@@ -101,6 +110,13 @@ async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
     }
   );
   if (newlyBlocked === null) {
+    if (getChatState(event.chatId).isAdDetectEnabled !== true) {
+      logger.log(
+        `Ad detection was turned off in chat ${event.chatId} before the verdict for sender ` +
+        `${event.senderId} could be disposed; dropping it.`
+      );
+      return;
+    }
     logger.error(
       `Ad detection flagged protected sender ${event.senderId} in chat ${event.chatId}; ` +
       "refusing to add the identity to the permanent blocklist."

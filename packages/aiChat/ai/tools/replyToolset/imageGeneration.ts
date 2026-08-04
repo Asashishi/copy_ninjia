@@ -18,6 +18,10 @@ import {
   SELF_ACTION_TAG_MARKERS,
   SELF_ACTION_TAG_PATTERNS,
 } from "../../../../consts/aiChat/prompts/transcript";
+import {
+  HARD_MAX_ACTIONS_PER_REPLY,
+  IMAGE_SEPARATE_CAPTION_MIN_REMAINING_ACTIONS,
+} from "../../../../consts/aiChat/tools";
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../../../consts/telegram";
 import { GENERATE_IMAGE_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
@@ -136,7 +140,8 @@ function parseArguments(
 
 export function createGenerateImageExecutor(
   ctx: ReplyToolContext,
-  state: RoundMessageState
+  state: RoundMessageState,
+  getActionsUsed: () => number
 ): (argumentsJson: string) => Promise<string> {
   let consecutiveFailures: number = 0;
   let generatedImages: number = 0;
@@ -252,7 +257,14 @@ export function createGenerateImageExecutor(
       }
       if (!image) {
         consecutiveFailures++;
-        return toolError("Image generation failed or returned no usable image");
+        // 冷却已经被这次真实的模型请求占掉了（下面的 finally 只在
+        // modelRequestStarted 为假时释放），本轮再调一次必然撞上自家的冷却闸，
+        // 而那条分支的 required_action 会逼机器人向群里播报「暂时不能使用生图，
+        // 请约 N 秒后再试」——群里根本没收到过任何图，那句话是假的，整个
+        // IMAGE_GENERATION_COOLDOWN_MS 窗口也白烧。占了冷却的失败一律不可重试。
+        return toolError("Image generation failed or returned no usable image", {
+          retryable: false,
+        });
       }
 
       // Bot API 对超过 caption 上限的图注是整条拒绝而不是截断，因此这里不赌：
@@ -269,7 +281,9 @@ export function createGenerateImageExecutor(
       });
       if (sent === undefined) {
         consecutiveFailures++;
-        return toolError("Failed to send generated image");
+        // 理由同上：图已经生成、冷却已经占用，重试只能换来一句与事实不符的
+        // 冷却播报。
+        return toolError("Failed to send generated image", { retryable: false });
       }
 
       consecutiveFailures = 0;
@@ -293,9 +307,17 @@ export function createGenerateImageExecutor(
       // 占一个可见动作，用 actions_used 交给编排器结算（与 send_message 的手滑
       // 纠正同一条协议，见 replyToolset/orchestrator.ts）。
       let actionsUsedByTool: number = 1;
-      let captionDelivery: "inline" | "separate_message" | "failed" | null =
+      let captionDelivery: "inline" | "separate_message" | "failed" | "no_action_budget" | null =
         inlineCaption !== null ? "inline" : null;
-      if (caption !== null && inlineCaption === null) {
+      // 预算不够再发一条时就不发：编排器的门禁只判断「能不能开始这次调用」，
+      // 这条补发若照发就会把整轮顶过 HARD_MAX_ACTIONS_PER_REPLY，而那个数正是
+      // 工具错误文案对模型承诺的硬顶（口径同 send_message 的手滑补字）。图已经
+      // 落地，丢的只是图注，并如实回报给模型。
+      const captionBudgetLeft: boolean =
+        HARD_MAX_ACTIONS_PER_REPLY - getActionsUsed() >= IMAGE_SEPARATE_CAPTION_MIN_REMAINING_ACTIONS;
+      if (caption !== null && inlineCaption === null && !captionBudgetLeft) {
+        captionDelivery = "no_action_budget";
+      } else if (caption !== null && inlineCaption === null) {
         ctx.chatAction.set("typing");
         const invalidated: string | null = await pauseForToolAction({
           delayMs: typingDelayMs(caption),

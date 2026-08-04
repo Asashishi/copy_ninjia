@@ -91,12 +91,12 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative directories**: `main/`, `workers/aiChat/`, `workers/antiRaid/`,
     `workers/diskIO/`, `perThread/`.
 - **`packages/consts/`**
-  - **Responsibility**: literal constants and tunable parameters, split by domain.
-  - **Representative files**: `commands.ts`, `aiChat/rateLimit.ts`, `antiRaid/`.
+  - **Responsibility**: literal constants, tunable parameters, and user-facing text tables, split by domain.
+  - **Representative files**: `commands.ts`, `whitelist.ts`, `aiChat/rateLimit.ts`, `antiRaid/`.
 - **`packages/types/`**
   - **Responsibility**: cross-module protocols, domain types, and state-machine contracts under
     `types/states/`.
-  - **Representative files**: `chatState.ts`, `lifecycle.ts`, `diskIO.ts`.
+  - **Representative files**: `chatState.ts`, `commands.ts`, `lifecycle.ts`, `diskIO.ts`.
 - **`test/`**
   - **Responsibility**: Bun unit tests mirroring `packages/`.
   - **Representative file**: `test/commands/copyShared.test.ts`.
@@ -108,7 +108,7 @@ This page answers “where does this code live, and where should new code go?”
 
 Ask these questions in order:
 
-1. **Is it a literal parameter?** → `packages/consts/<domain>.ts`, or split a larger domain into `packages/consts/<domain>/`. Add Chinese JSDoc explaining its purpose and invariants. Environment-derived configuration is the sole exception and belongs in `packages/infra/config.ts`.
+1. **Is it a literal parameter, or user-facing copy?** → `packages/consts/<domain>.ts`, or split a larger domain into `packages/consts/<domain>/`. Add Chinese JSDoc explaining its purpose and invariants. Command replies and prompts belong in a per-command text table, not rebuilt inside the handler. Environment-derived configuration is the sole exception and belongs in `packages/infra/config.ts`.
 2. **Is it a shared type or protocol?** → `packages/types/<domain>.ts`. State-machine `State/Event/Effect/Transition/Decision` contracts belong in `packages/types/states/`.
 3. **Is it long-lived mutable state** such as a Map, Set, queue, timer, or singleton? → `packages/cache/`. **Pick the owning-thread directory first** (see below), then split by domain inside it. Use a holder object instead of `export let`, and document when it is populated, when it is cleared, and how it is rebuilt after a Worker restart. Capacity and cleanup must satisfy [04 Authoritative Runtime Invariants](04-invariants.md).
 4. **Is it pure state-transition logic** with no I/O and straightforward unit testing? → `packages/states/`; Worker-side interpreters execute the side effects.

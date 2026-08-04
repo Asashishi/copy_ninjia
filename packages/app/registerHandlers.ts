@@ -83,9 +83,6 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 不占用聊天车道。
   bot.use(sequentialize((ctx: Context): string[] => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
 
-  bot.command("permission", (ctx: CommandContext<Context>): Promise<void> => handlePermissionCommand(ctx));
-  bot.command("white", (ctx: CommandContext<Context>): Promise<void> => handleWhiteCommand(ctx));
-
   // 私聊命令已在前置网关统一收口；活动中的 /send 中转会话只把非命令消息
   // 直接短路到消息流水线。
   bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
@@ -99,6 +96,14 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
+  // 授权维护命令与其余命令一样排在上面那道 ingress 之后，没有例外：这两条
+  // handler 都不调 next()，注册在 ingress 之前的话，/permission 与 /white 会
+  // 整条绕开 handleAntiRaidMessageIngress —— 发的人不计入刷屏窗口却每条都能
+  // 拿到一条机器人回复（非白名单是拒绝文案，白名单是整份权限 JSON），等于一个
+  // 不受防刷屏约束的回复放大器；黑名单频道身份发的这两条命令也不会被就地删除，
+  // 待验证成员发的更不会产生 trackedMessage。
+  bot.command("permission", (ctx: CommandContext<Context>): Promise<void> => handlePermissionCommand(ctx));
+  bot.command("white", (ctx: CommandContext<Context>): Promise<void> => handleWhiteCommand(ctx));
   bot.command("copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx));
   bot.command("r_copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx, "reverse"));
   bot.command("nya_copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx, "nya"));

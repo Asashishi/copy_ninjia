@@ -202,6 +202,9 @@ function verificationSnapshot({
     // 都会为同一个卡住的成员再发一条（见 ExpellingState.failureNoticeSent）。
     failureNoticeSent: state.failureNoticeSent,
     unconfirmedNoticeSent: state.unconfirmedNoticeSent,
+    // 「踢成功了、播报还欠着」同样必须跟着快照走：丢了它，下一轮探测只会看到
+    // 「人已经不在群里」并静默结算（见 ExpellingState.removalConfirmed）。
+    removalConfirmed: state.removalConfirmed,
   };
 }
 
@@ -279,6 +282,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
           successNoticeSent: record.successNoticeSent,
           failureNoticeSent: record.failureNoticeSent,
           unconfirmedNoticeSent: record.unconfirmedNoticeSent,
+          removalConfirmed: record.removalConfirmed,
         }
         : {
           kind: "pending",

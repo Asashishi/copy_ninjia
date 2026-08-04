@@ -10,9 +10,11 @@ import {
 import type { WhitelistFileRevision } from "../cache/main/whitelist";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
+  SUPER_ADMIN_WHITELIST_PERMISSIONS,
   WHITELIST_PERMISSION_KEYS,
 } from "../consts/whitelist";
 import { WHITELIST_CONFIG_PATH } from "../consts/paths";
+import { SUPER_ADMIN_USER_ID } from "../infra/config";
 import { atomicWriteText } from "../libs/atomicFile";
 import { isPlainRecord } from "../libs/runtimeConfig";
 import type {
@@ -226,17 +228,36 @@ export function getWhitelistConfig(
   return whitelistConfigCache.current;
 }
 
-/** 身份是否存在于白名单；成员身份本身仍承载 copy 冷却与验证代点等既有语义。 */
-export function isWhitelisted(id: number): boolean {
-  return getWhitelistConfig().has(id);
+/**
+ * 取得某个身份此刻的完整有效权限；不在白名单内则为 undefined。
+ *
+ * 这里是超级管理员权限的**唯一**来源：`SUPER_ADMIN_USER_ID` 由身份直接持有
+ * 全部可授予的白名单权限，不参与 config/whitelist.json 的逐项授权，也不受
+ * 文件里可能残留的同 id 条目影响（见 consts/whitelist.ts 的
+ * SUPER_ADMIN_WHITELIST_PERMISSIONS：覆盖只发生在读取侧，永不落盘）。
+ * 因此调用方一律只问「有没有这项权限」，不再单独判断是不是超级管理员。
+ */
+export function getEffectiveWhitelistPermissions(
+  id: number
+): Readonly<WhitelistPermissions> | undefined {
+  if (id === SUPER_ADMIN_USER_ID) return SUPER_ADMIN_WHITELIST_PERMISSIONS;
+  return getWhitelistConfig().get(id);
 }
 
-/** 白名单身份是否拥有某一项显式命令/广告权限；非白名单恒为 false。 */
+/**
+ * 身份是否属于白名单边界；成员身份本身仍承载 copy 冷却与验证代点等既有语义。
+ * 超级管理员恒在边界内，无需在 config/whitelist.json 里另配一条。
+ */
+export function isWhitelisted(id: number): boolean {
+  return id === SUPER_ADMIN_USER_ID || getWhitelistConfig().has(id);
+}
+
+/** 身份是否拥有某一项显式命令/广告权限；白名单外的身份恒为 false。 */
 export function hasWhitelistPermission(
   id: number,
   key: WhitelistPermissionKey
 ): boolean {
-  return getWhitelistConfig().get(id)?.[key] === true;
+  return getEffectiveWhitelistPermissions(id)?.[key] === true;
 }
 
 /**

@@ -27,8 +27,8 @@ import type {
  * revision、待确认删除 tombstone、删除回执 waiter，以及 Disk I/O Worker 重建
  * 后的镜像重放。
  *
- * 这套状态与 aiChat/index.ts 里的 Worker 监督相互独立：aiChatWorker 崩溃靠
- * latestAiMemories 重放 hydrate（在 aiChat/index.ts 的 onRespawn 里），diskIOWorker
+ * 这套状态与 aiChat/workerBridge.ts 里的 Worker 监督相互独立：aiChatWorker 崩溃靠
+ * latestAiMemories 重放 hydrate（在 aiChat/workerBridge.ts 的 onRespawn 里），diskIOWorker
  * 崩溃靠本文件的 onDiskIORespawn 重放 tombstone 与最新快照。只有 durable 删除
  * 回执能释放 tombstone。
  * @see ../../docs/04-invariants.md

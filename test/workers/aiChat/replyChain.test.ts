@@ -20,6 +20,7 @@ const {
   indexBufferedMessage,
   lookupBufferedMessage,
   replyReferenceForBufferedMessage,
+  unindexBufferedMessage,
 } = await import("../../../packages/workers/aiChat/replyChain");
 const {
   chatReplyChainIndexes,
@@ -85,6 +86,24 @@ describe("回复链索引维护", () => {
     pushBufferedMessage(CHAT_ID, message(1, "第一条"));
     clearChatMemoryCache(CHAT_ID);
     expect(chatReplyChainIndexes.has(CHAT_ID)).toBe(false);
+  });
+
+  test("同 message_id 的旧副本滑出热区时，不抹掉仍在热区的新副本", () => {
+    // 重复条目是真实可达的：进程被 SIGKILL 之后快照 hydrate 出一份，Telegram
+    // 又重投同一条 update 再记一份，全链路没有 message_id 去重。按 id 无条件
+    // delete 的话，旧副本滑出时会把新副本的索引一并抹掉，回复链就在那一跳
+    // 截断成 snapshotOnly——正文明明还在缓存里。
+    const older: BufferedMessage = message(500, "旧副本");
+    const newer: BufferedMessage = message(500, "新副本");
+    indexBufferedMessage(CHAT_ID, older);
+    indexBufferedMessage(CHAT_ID, newer);
+
+    unindexBufferedMessage(CHAT_ID, older);
+    expect(lookupBufferedMessage(CHAT_ID, 500)).toBe(newer);
+
+    unindexBufferedMessage(CHAT_ID, newer);
+    expect(lookupBufferedMessage(CHAT_ID, 500)).toBeUndefined();
+    expect(chatReplyChainIndexes.has(CHAT_ID)).toBeFalse();
   });
 
   test("hydrate 从恢复出的 buffer 同源重建索引", () => {
