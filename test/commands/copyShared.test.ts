@@ -3,6 +3,7 @@ import type { CachedUser } from "../../packages/types/chatState";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const copyUserProfilePhoto = mock(async (..._args: unknown[]): Promise<boolean> => true);
+const restoreDefaultProfilePhoto = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => ({ id: 7, first_name: "Alice" }));
 const loggerError = mock((..._args: unknown[]): void => {});
@@ -14,7 +15,7 @@ mock.module("../../packages/config/whitelist", () => ({
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
-mock.module("../../packages/infra/telegram/avatar", () => ({ copyUserProfilePhoto }));
+mock.module("../../packages/infra/telegram/avatar", () => ({ copyUserProfilePhoto, restoreDefaultProfilePhoto }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getGlobalCopyState: () => globalCopyState,
   persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
@@ -55,11 +56,13 @@ beforeEach(() => {
   for (const mocked of [
     sendMessage,
     copyUserProfilePhoto,
+    restoreDefaultProfilePhoto,
     saveStateInBackground,
     resolveCommandTarget,
     loggerError,
   ]) mocked.mockClear();
   copyUserProfilePhoto.mockImplementation(async (): Promise<boolean> => true);
+  restoreDefaultProfilePhoto.mockImplementation(async (): Promise<boolean> => true);
   resolveCommandTarget.mockImplementation(async (): Promise<CachedUser | undefined> => ({ id: 7, first_name: "Alice" }));
   avatarUpdateState.pending = null;
   avatarUpdateState.running = false;
@@ -219,7 +222,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
       failureText: "fail",
     });
     await waitFor(() => loggerError.mock.calls.length === 1);
-    expect(loggerError).toHaveBeenCalledWith("Error in background avatar steal task:", expect.any(Error));
+    expect(loggerError).toHaveBeenCalledWith("Error in background avatar update task:", expect.any(Error));
   });
 
   test("停机预算耗尽会 abort 悬挂头像任务且不发送迟到战报", async () => {
@@ -241,5 +244,32 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(avatarUpdateState.pending).toBeNull();
+  });
+
+  test("复原任务与偷脸任务共用同一个执行槽，走 restoreDefaultProfilePhoto", async () => {
+    shared.restoreAvatarInBackground({
+      chatId: -1001,
+      successText: "restored",
+      failureText: "restore-failed",
+    });
+    await waitFor(() => restoreDefaultProfilePhoto.mock.calls.length === 1);
+    await waitFor(() => !avatarUpdateState.running);
+
+    // 复原不该走偷脸那条路径：两者的失败含义完全不同。
+    expect(copyUserProfilePhoto).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "restored" }));
+  });
+
+  test("复原失败时发失败战报", async () => {
+    restoreDefaultProfilePhoto.mockImplementationOnce(async (): Promise<boolean> => false);
+    shared.restoreAvatarInBackground({
+      chatId: -1001,
+      successText: "restored",
+      failureText: "restore-failed",
+    });
+    await waitFor(() => restoreDefaultProfilePhoto.mock.calls.length === 1);
+    await waitFor(() => !avatarUpdateState.running);
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "restore-failed" }));
   });
 });

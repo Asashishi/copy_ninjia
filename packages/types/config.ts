@@ -31,6 +31,62 @@ export interface MoodConfig {
  */
 export type AdSampleConfig = readonly string[];
 
+/**
+ * ad_detect 一侧的 OpenAI 兼容端点配置，已按 consts 默认值兜底。
+ *
+ * 与 AiAgentOpenAiConfig 同住 config/openai.json，但**没有一个合并类型把两者装在
+ * 一起**：两段的消费方完全不重叠（这条走广告检测的 DeepSeek 线，那条走 AI 闲聊的
+ * agent 流水线），各用各的凭据与端点。曾经有过一个 OpenAiDeploymentConfig 把两段
+ * 并成一个值，代价是运行时取任一段都要先解析整份文件——于是 ai_agent 的一个笔误
+ * 能让广告检测在通过就绪探测之后才静默失效（见 config/openai.ts 的分段加载）。
+ *
+ * Gemini 不受这份文件控制——它不是 OpenAI 兼容接口，端点由官方 SDK 自己管，
+ * 模型另见 config/gemini.json。
+ */
+export interface AdDetectOpenAiConfig {
+  readonly baseUrl: string;
+  readonly model: string;
+}
+
+/** ai_agent 一侧四条流水线各自的模型名；四项全部必填，代码不再持有默认值。 */
+export interface AiAgentOpenAiModels {
+  readonly reply: string;
+  readonly summary: string;
+  readonly media: string;
+  readonly image: string;
+}
+
+/** ai_agent 一侧的 OpenAI 端点配置；models 必填，base_url 留空表示走官方端点。 */
+export interface AiAgentOpenAiConfig {
+  /** 留空表示走 SDK 默认的官方端点。 */
+  readonly baseUrl: string | undefined;
+  readonly models: AiAgentOpenAiModels;
+}
+
+/**
+ * config/gemini.json 的模型名；四项全部必填。
+ *
+ * 与 AiAgentOpenAiModels 逐字段同名同义，但**各留一份**：两家的模型命名空间毫无
+ * 交集，合并成一个类型只会让「换一家就要顺手改另一家」这种错误在类型上看不出来。
+ */
+export interface GeminiModels {
+  readonly reply: string;
+  readonly summary: string;
+  readonly media: string;
+  readonly image: string;
+}
+
+/**
+ * config/gemini.json 的解析结果。
+ *
+ * 只有 models 一项：Gemini 走官方 SDK，端点不可配（这正是它与 openai.json 的
+ * 结构差别，不是遗漏）。密钥仍是 env 的 `AI_CHAT_GEMINI_API_KEY`，理由同
+ * config/openai.ts 的模块头注——端点模型是运维配置，密钥是凭据。
+ */
+export interface GeminiDeploymentConfig {
+  readonly models: GeminiModels;
+}
+
 /** 一份坏掉的部署文件：文件名给人看，诊断给日志看。 */
 export interface ConfigFailure {
   /** 相对项目根的路径，如 `config/stickers.json`；直接出现在命令的拒绝文案里。 */

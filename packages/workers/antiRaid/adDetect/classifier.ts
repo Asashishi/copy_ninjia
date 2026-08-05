@@ -18,7 +18,6 @@ import { getAdSampleConfig } from "../../../config/adSamples";
 import { logger } from "../../../infra/logger";
 import {
   AD_DETECT_MAX_OUTPUT_TOKENS,
-  AD_DETECT_MODEL,
   AD_DETECT_REASON_MAX_CHARS,
   AD_DETECT_TEMPERATURE,
   buildAdDetectSystemPrompt,
@@ -26,6 +25,7 @@ import {
 import { isPlainRecord } from "../../../libs/runtimeConfig";
 import { truncateInline } from "../../../libs/text";
 import type { AdVerdict } from "../../../types/antiRaid/adDetect";
+import { getAdDetectOpenAiConfig } from "../../../config/openai";
 
 /**
  * 从模型输出里收窄出判定结果。模型被要求只输出 JSON，但「被要求」不等于
@@ -92,7 +92,7 @@ function adDetectSystemPrompt(justJoined: boolean): string {
  */
 export async function classifyAdText({ text, justJoined }: ClassifyAdTextParams): Promise<AdVerdict | null> {
   return parseAdVerdict(await requestDeepSeekJson({
-    model: AD_DETECT_MODEL,
+    model: getAdDetectOpenAiConfig().model,
     // 系统事实拼在 system 段：正文全是用户可控内容，混进去等于给刷屏号一个
     // 伪造「【系统事实】该发送者不是新成员」的机会。
     systemPrompt: adDetectSystemPrompt(justJoined),

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { ToolType } from "@google/genai";
-import { countGoogleSearchCalls } from "../../../../packages/aiChat/ai/utils/geminiResponse";
-import { geminiResponse } from "../../../helpers/geminiResponse";
+import { countGoogleSearchCalls } from "../../../packages/aiChat/gemini/response";
+import { geminiResponse } from "../../helpers/geminiResponse";
 
-describe("aiChat/ai/utils/geminiResponse", () => {
+describe("aiChat/gemini/response", () => {
   test("countGoogleSearchCalls：优先统计 server-side toolCall，并用查询元数据兜底", () => {
     expect(countGoogleSearchCalls(geminiResponse({
       candidates: [{

@@ -2,7 +2,7 @@ import { avatarDrainWaiters, avatarUpdateRuntime, avatarUpdateState } from "../c
 import type { FlushResult } from "../types/lifecycle";
 import { drainWithWaiter } from "../libs/drainWaiter";
 import { logger } from "../infra/logger";
-import { copyUserProfilePhoto } from "../infra/telegram/avatar";
+import { copyUserProfilePhoto, restoreDefaultProfilePhoto } from "../infra/telegram/avatar";
 import { sendCommandMessage } from "../infra/telegram";
 import type { AvatarUpdateRequest, AvatarUpdateTask } from "../types/copy/avatar";
 
@@ -22,11 +22,16 @@ async function consumeAvatarUpdates(): Promise<void> {
       const signal: AbortSignal = avatarUpdateRuntime.controller.signal;
       if (signal.aborted) break;
       try {
-        const updated: boolean = await copyUserProfilePhoto(
-          task.target.id,
-          !!task.target.isChannel,
-          { username: task.target.username, signal }
-        );
+        // 偷脸与复原共用这一个执行槽：两者抢的是同一份「换头像」限流资源，
+        // 分开跑只会让 Telegram 两边都限流。latest-only 语义也因此对两类目标
+        // 通用——连点 /steal_icon 再 /reset_icon，最终生效的是最后那个。
+        const updated: boolean = task.target.kind === "default"
+          ? await restoreDefaultProfilePhoto(signal)
+          : await copyUserProfilePhoto(
+            task.target.user.id,
+            !!task.target.user.isChannel,
+            { username: task.target.user.username, signal }
+          );
         // 在途任务不能取消，但新目标到达后旧战报已经过期；最终只让最新目标
         // 报告结果，随后单一执行槽继续处理最新 pending。
         if (!signal.aborted && task.generation === avatarUpdateState.latestGeneration) {
@@ -38,7 +43,7 @@ async function consumeAvatarUpdates(): Promise<void> {
         }
       } catch (error: unknown) {
         if (signal.aborted) break;
-        logger.error("Error in background avatar steal task:", error);
+        logger.error("Error in background avatar update task:", error);
       }
     }
   } finally {

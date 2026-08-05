@@ -48,7 +48,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code has roughly 641 source lines containing Chinese string or template literals across 64 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 665 source lines containing Chinese string or template literals across 66 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -61,7 +61,9 @@ All parameters are centralized under `packages/consts/`, so changing a value doe
 | Media-description length, execution slots, LRU capacity | `packages/consts/aiChat/media.ts` |
 | Image-generation cooldown and byte limit | `packages/consts/aiChat/imageGeneration.ts` |
 | Mood duration and command timeout | `packages/consts/aiChat/mood.ts` |
-| Tool action/lookup limits, model names, request timeouts | `packages/consts/aiChat/tools.ts` |
+| Tool action/lookup limits, typing and typo pacing | `packages/consts/aiChat/tools.ts` |
+| Request timeouts, retry counts, sampling and safety tiers | `packages/consts/aiChat/gemini.ts`, `packages/consts/aiChat/openai.ts` |
+| **Model names** (both providers, every pipeline) | Not a constant: `config/gemini.json` and `config/openai.json`, see [01-getting-started](01-getting-started.md) |
 | Verification window, spam threshold, append/compaction policy | `packages/consts/antiRaid/` |
 | Copy cooldown, `/quiet` range, username rules, action-command rate limit | `packages/consts/commands.ts` |
 | Random-trigger cooldown per sender | `packages/consts/auto.ts` |
@@ -74,7 +76,7 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 ## Adding an AI Tool
 
 1. **Name constant**: define the tool name in [`packages/consts/tools.ts`](../../packages/consts/tools.ts). If it has visible side effects, determine whether it belongs in `ACTION_TOOL_NAMES`.
-2. **Definition**: put stateless static-query `ToolDefinition` values in [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts). For action tools that need chat context, dynamic schemas, or per-round state, provide a definition builder under `packages/aiChat/ai/tools/replyToolset/`. The reply-toolset orchestrator converts these domain definitions into SDK `FunctionDeclaration` values.
+2. **Definition**: put stateless static-query `ToolDefinition` values in [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts). For action tools that need chat context, dynamic schemas, or per-round state, provide a definition builder under `packages/aiChat/ai/tools/replyToolset/`. The reply-toolset orchestrator collects these domain definitions into neutral `AiToolDefinition` values (JSON Schema parameters); each provider package's `replySession.ts` then maps them to its own shape, so adding a tool never touches any vendor SDK type.
 3. **Implementation**: implement execution under `packages/aiChat/ai/tools/`. Telegram-facing side effects run through main-thread proxies; the Worker must not hold a Bot instance directly.
 4. **Registration**: connect static query tools to dispatch in `packages/aiChat/ai/tools/index.ts`; connect action tools to definitions, dispatch, and per-round state under `packages/aiChat/ai/tools/replyToolset/`.
 5. **Budgets**: visible side-effect tools belong in the unified action budget; do not add a per-tool call limit by default. Create an independent limit only for a domain-specific reason—the current cases are sticker-pack viewing, Google Search, and one successful sticker, reaction, or generated image per round. The whole-round custom-function loop guard still applies; see [04](04-invariants.md#worker-and-state-ownership).

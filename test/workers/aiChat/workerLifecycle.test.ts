@@ -182,6 +182,17 @@ describe("AI Chat Worker lifecycle", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", chatId: -1001, requestId: 4, moodName: "开心" });
   });
 
+  test("imageProvider 是全量单值覆盖：undefined 回到默认选取，不是保持原值", async () => {
+    const { imageProviderOverrideMirror } =
+      await import("../../../packages/cache/workers/aiChat/imageProvider");
+
+    worker.handleAiChatWorkerMessage({ type: "imageProvider", provider: "openai" });
+    expect(imageProviderOverrideMirror.current).toBe("openai");
+
+    worker.handleAiChatWorkerMessage({ type: "imageProvider", provider: undefined });
+    expect(imageProviderOverrideMirror.current).toBeNull();
+  });
+
   test("过期的 switchMood 请求不再迟到改写心情", () => {
     worker.handleAiChatWorkerMessage({
       type: "switchMood",

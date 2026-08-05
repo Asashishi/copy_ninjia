@@ -1,35 +1,11 @@
-import { HarmBlockThreshold, HarmCategory } from "@google/genai";
-import type { SafetySetting } from "@google/genai";
-
-/** 闲聊回复模型与所有 Gemini 请求的 per-attempt 超时。 */
-export const GEMINI_REPLY_MODEL: string = "gemini-3.5-flash-lite";
-/** 单次 Gemini 回复/摘要请求的超时上限。 */
-export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
 /**
- * Gemini SDK 对 408/429/5xx 的总尝试次数（包含首次请求）；显式传入才能启用
- * SDK 2.12.0 的 retryOptions，所有调用方不得再重试这类请求失败。
+ * AI 闲聊回复流水线里与供应商无关的预算：工具轮数、动作上限、检索额度、
+ * 模拟输入停顿与手滑概率。换供应商时这些数不该跟着动。
+ *
+ * 采样温度与输出 token 上限**不在**这里：那两样由模型能力决定，两家取值并不
+ * 通用，各自放在 consts/aiChat/{gemini,openai}.ts；模型名、超时、重试与内容
+ * 过滤档位同理。留在本文件的都是「换谁都成立」的领域策略。
  */
-export const GEMINI_REQUEST_RETRY_ATTEMPTS: number = 5;
-/** 回复 token 上限包含思考 token。 */
-export const REPLY_MAX_TOKENS: number = 65_536;
-/** 闲聊回复生成温度：略高于中性，保留人设发挥。 */
-export const REPLY_TEMPERATURE: number = 1.0;
-/** 本轮已观测到服务端搜索后，后续工具轮改用的温度：高温对事实忠实度的伤害
- *  比提示词措辞更大，查证过的轮次压低采样随机性，让模型照搜索结果讲。
- *  注意搜索与首次成文发生在同一次请求里，那一轮仍按 REPLY_TEMPERATURE 生成。 */
-export const GROUNDED_REPLY_TEMPERATURE: number = 0.7;
-
-/**
- * 所有 Gemini 请求统一携带的内容过滤设置；应用不按可调概率等级主动拒绝，
- * 仍受 API 不可关闭的核心安全策略约束。数组与条目字段都由只读类型锁住，避免
- * 调用方漂移（不可变性只在编译期表达，见 AGENTS.md 的「常量」一节）。
- */
-export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-];
 
 /** 告知模型的单轮动作上限；低于执行硬顶，为模型偏离提示留出安全余量。 */
 export const AI_MAX_ACTIONS_PER_REPLY: number = 8;
@@ -48,8 +24,10 @@ export const TYPING_DELAY_MAX_MS: number = 7_500;
 
 /** 工具对话往返硬顶，防止模型工具调用死循环。 */
 export const MAX_TOOL_ROUNDS: number = 35;
-/** 单轮回复累计允许的 Google Search 服务端调用数；达到后续轮次移除搜索工具。 */
-export const MAX_GOOGLE_SEARCH_CALLS_PER_REPLY: number = 5;
+/** 单轮回复累计允许的服务端联网检索调用数；达到后续轮次移除检索工具。
+ *  两家供应商的检索工具真名不同，预算口径与提示词称呼都保持中立，见
+ *  consts/aiChat/prompts/search.ts 的 WEB_SEARCH_TOOL_LABEL。 */
+export const MAX_WEB_SEARCH_CALLS_PER_REPLY: number = 5;
 /** 所有自定义函数调用（含查询、查看、失败/拒绝调用）的整轮硬顶。 */
 export const MAX_CUSTOM_TOOL_CALLS_PER_REPLY: number = 25;
 /** Telegram chat action 的心跳间隔与连续失败止损阈值。 */

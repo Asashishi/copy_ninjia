@@ -1,6 +1,6 @@
 /**
  * AI 闲聊 Worker 的静态提示词缓存（owner 是
- * packages/workers/aiChat/geminiReply.ts）。
+ * packages/workers/aiChat/replyModel.ts）。
  */
 
 /**

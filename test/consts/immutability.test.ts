@@ -8,13 +8,18 @@ import {
   FLOOD_CONTROL_TOGGLE_TEXTS,
   INIT_TOGGLE_TEXTS,
   JA_COPY_TOGGLE_TEXTS,
+  CHAT_MODEL_TEXTS,
+  IMAGE_MODEL_TEXTS,
   MUTE_TARGET_TEXTS,
+  PROVIDER_MODEL_ALIASES,
+  PROVIDER_MODEL_LABELS,
   STEAL_ICON_TARGET_TEXTS,
   UNBLOCK_TARGET_TEXTS,
   UNMUTE_TARGET_TEXTS,
 } from "../../packages/consts/commands";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
-import { GEMINI_SAFETY_SETTINGS } from "../../packages/consts/aiChat/tools";
+import { GEMINI_SAFETY_SETTINGS } from "../../packages/consts/aiChat/gemini";
+import { OPENAI_IMAGE_SIZES } from "../../packages/consts/aiChat/openai";
 import { RANDOM_ECHO_MODES } from "../../packages/consts/auto";
 import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import { DEFAULT_CHAT_STATE } from "../../packages/consts/storage";
@@ -61,6 +66,8 @@ test("对象元素的字段同样不可写", () => {
   expect(() => { LUCK_TIERS[0]!.fortunePercentRange[0] = 0; }).toBeDefined();
   // @ts-expect-error SafetySetting 元素经 Readonly<> 包裹，字段只读
   expect(() => { GEMINI_SAFETY_SETTINGS[0]!.threshold = undefined; }).toBeDefined();
+  // @ts-expect-error OPENAI_IMAGE_SIZES 元素经 Readonly<> 包裹，字段只读
+  expect(() => { OPENAI_IMAGE_SIZES[0]!.size = "1:1"; }).toBeDefined();
 });
 
 test("Readonly<Record<…>> 形态的常量不可写入", () => {
@@ -215,4 +222,37 @@ test("常量表内容本身仍可正常读取", () => {
   expect(DEFAULT_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(false);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock).toBe(true);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(true);
+});
+
+/**
+ * 两条模型切换命令（`/image_model`、`/chat_model`）共享的别名/回显表与各自的
+ * 文案表。别名表是把用户写法归一成落盘供应商名的唯一入口，写坏它等于让一条
+ * `gpt` 静默解析成另一家；两张文案表则是跨群共享的单例，改一句就是全群一起
+ * 换口径，口径同上面那五张开关文案表。
+ */
+test("模型切换命令的别名表与文案表都不可写入", () => {
+  // @ts-expect-error Readonly<Record<string, AiProviderName>> 不允许新增/覆盖键
+  expect(() => { PROVIDER_MODEL_ALIASES.gpt = "gemini"; }).toBeDefined();
+  // @ts-expect-error 同上：反向回显表也不许被改
+  expect(() => { PROVIDER_MODEL_LABELS.openai = "gemini"; }).toBeDefined();
+  // @ts-expect-error ProviderModelCommandTexts.usage 只读
+  expect(() => { IMAGE_MODEL_TEXTS.usage = "篡改"; }).toBeDefined();
+  // @ts-expect-error ProviderModelCommandTexts.missingGeminiKey 只读
+  expect(() => { CHAT_MODEL_TEXTS.missingGeminiKey = "篡改"; }).toBeDefined();
+});
+
+test("两条模型命令的文案各自成立，不共用同一句", () => {
+  // 共用一份 ProviderModelCommandTexts 接口，但话必须不同：回执要说破自己切的
+  // 是哪一半能力，否则超管会以为一条命令把四项全换了。
+  expect(IMAGE_MODEL_TEXTS.usage).not.toBe(CHAT_MODEL_TEXTS.usage);
+  expect(IMAGE_MODEL_TEXTS.switched("gpt")).not.toBe(CHAT_MODEL_TEXTS.switched("gpt"));
+  expect(IMAGE_MODEL_TEXTS.unchanged("gpt")).not.toBe(CHAT_MODEL_TEXTS.unchanged("gpt"));
+  expect(IMAGE_MODEL_TEXTS.rejection("@a")).not.toBe(CHAT_MODEL_TEXTS.rejection("@a"));
+});
+
+test("别名表与回显表互为反向，且覆盖两家供应商", () => {
+  for (const provider of ["gemini", "openai"] as const) {
+    const label: string = PROVIDER_MODEL_LABELS[provider];
+    expect(PROVIDER_MODEL_ALIASES[label]).toBe(provider);
+  }
 });

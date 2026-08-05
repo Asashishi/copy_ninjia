@@ -1,4 +1,5 @@
 import type { ChatPermissions } from "@grammyjs/types";
+import type { AiProviderName } from "./aiChat/provider";
 
 /** 反刷群锁定的持久化恢复记录。 */
 export interface LockdownRecord {
@@ -118,13 +119,49 @@ export interface GlobalCopyState {
 }
 
 /**
+ * 所有群共用的模型选取，两项各自独立。
+ *
+ * **缺字段 = 从没设过**，该项跟随 `aiChat/provider.ts` 的 activeAiProvider()
+ * ——它默认 Gemini，只有 Gemini 凭据缺席时才降级 OpenAI。所以「默认 gemini」
+ * 是缺省语义，不需要也不应该往文件里写一个默认值：写进去就成了「显式选过」，
+ * 而显式选过的那一家一旦缺 key 会被启动闸拒绝（见 app/featurePreflight.ts），
+ * 那会让只配了 OpenAI 一把 key 的部署起不来。
+ *
+ * 字段存在 = 超管用 `/image_model`、`/chat_model` 明确选过 = 必须兑现：它那把
+ * key 缺席时启动闸直接拒绝启动，不做静默换家（理由见 aiChat/provider.ts）。
+ */
+export interface GlobalModelState {
+  /** `/image_model` 选定的生图供应商。 */
+  image?: AiProviderName;
+  /**
+   * `/chat_model` 选定的闲聊侧供应商，作用于生图**以外**的三项能力：回复会话、
+   * 纯文本（记忆压缩的中期摘要与贴纸包摘要）与视觉描述。与 image 合起来正好
+   * 铺满 AiChatProvider 契约的四项，两条命令互不重叠。
+   */
+  chat?: AiProviderName;
+}
+
+/**
+ * 所有群共用的全局状态，按用途分块：`copy` 是复读状态与冷却时钟，`model` 是
+ * 生图与闲聊两项的模型选取。分块而不是平铺在顶层，是为了让「全局」与按群的
+ * `chats` 在文件里一眼分得开，也给后续的全局项留一个不必再改顶层形状的位置。
+ */
+export interface GlobalState {
+  copy: GlobalCopyState;
+  model: GlobalModelState;
+}
+
+/**
  * state.json 的整体结构：chats 以 chatId（字符串）为键分别保存各群聊各自的
- * 状态（静默期、私密模式镜像）；globalCopy 是所有群共用的那一份复读状态与
- * 冷却时钟。整个文件由内存中唯一一份状态全量序列化而来（见
- * infra/storage/stateStore.ts），
+ * 状态（静默期、私密模式镜像）；global 是所有群共用的那一份。整个文件由内存中
+ * 唯一一份状态全量序列化而来（见 infra/storage/stateStore.ts），
  * 不拆分文件、不做局部 patch——这点状态量全量写一份 JSON 毫无性能压力。
+ *
+ * 结构变更只做手工迁移，解码器里不留旧形状的兼容分支：顶层出现 `globalCopy`
+ * 这类旧键会被 knownKeys 当场拒绝，让运维照着报错迁移，而不是静默把复读状态
+ * 读成空。
  */
 export interface StateFileSchema {
   chats: Record<string, ChatState>;
-  globalCopy: GlobalCopyState;
+  global: GlobalState;
 }

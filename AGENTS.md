@@ -36,6 +36,15 @@
 - 库或平台 API 已完整覆盖所需职责、行为和生命周期时，必须直接调用该 API，不得复制、重写或包装等价功能，并清理失去用途的实现、常量、缓存、类型、测试和说明。
 - 仅在 API 缺少项目特有的组合语义、错误归一化、权限边界或生命周期约束时增加最薄适配层，并用实现和测试覆盖差异。
 
+### 安装冻结期 *重要*
+
+- 2026-08-05 至 2026-08-19 为依赖安装冻结期，起因是 2026-08-04 的 keyv/cacheable 投毒事件需要冷却观察。
+- 冻结期内不得安装、新增、升级或移除任何依赖，包括 `bun add`、`bun update`、`bun remove`、放宽 semver 范围，以及任何会重新解析或改写 `bun.lock`、`package.json` 的操作。
+- 实现功能一律只用已安装依赖；确需新包时必须停止并向用户说明用途和替代方案，由用户决定，不得自行安装。
+- `bun install --frozen-lockfile` 只校验不改锁文件，冻结期内仍必须先取得用户确认再执行。
+- `bun run release:check` 内含该校验步骤；冻结期内发布必须先与用户确认是否改跑 `bun run check` 加 `bun run test:fault-injection`。
+- 冻结期满不自动解除，必须由用户明确说明后才恢复。
+
 ### 供应链版本锁定 *重要*
 
 - 2026-08-04 keyv/cacheable 投毒事件的受害版本一律禁止安装：`keyv@6.0.0`、`flat-cache@6.1.24`、`file-entry-cache@11.1.6`、`file-entry-cache@11.1.7`、`cacheable-request@13.0.20`、`cache-manager@7.2.10`、`cacheable@2.5.1`、`@cacheable/memory@2.2.1`、`@cacheable/net@2.1.1`、`@cacheable/node-cache@3.1.2`、`@cacheable/utils@2.5.1`、`@keyv/redis@6.0.0`、`@keyv/sqlite@6.0.0`、`@keyv/mongo@6.0.0`、`@thiennq/docs-viewer@1.6.2`、`@thiennq/docs-viewer@1.6.3`、`@thiennq/docs-viewer@1.6.4`。
@@ -45,6 +54,15 @@
 - 解除上述锁定必须同时满足：目标版本不在任一来源的受害清单中，且目标版本的 `integrity` 与 npm registry 的发布记录一致。
 - 依赖变更后必须以 `bun install --frozen-lockfile` 复核；锁文件出现上述包的版本漂移时必须回退并说明原因。
 - 排查投毒不得只比对版本号，必须同时确认无 `setup.mjs`、`math_init.js`、`Math_Symbol.js`、`gh-token-monitor.sh`、`~/.config/gh-token-monitor/` 等载荷与持久化残留，并确认 `.claude/`、`.vscode/` 下未被植入 autostart hook。
+
+### 依赖冷却期与紧急豁免 *重要*
+
+- `bunfig.toml` 的 `install.minimumReleaseAge` 为 7 天（604_800 秒）：只解析发布满该时长的版本，使投毒版本在被 npm 下架前无法进入依赖树。
+- 该闸门会同时挡住刚发布的安全修复版。需要紧急安装尚未满冷却期的修复时，只把**那一个包名**加进 `install.minimumReleaseAgeExcludes`，安装完成后立即移除。
+- 不得改用 `bun install --minimum-release-age=<更小值>` 绕过：该 CLI 覆盖是本次安装的全局阈值，会把同一次解析里所有新发布的传递依赖一并放行。
+- 豁免不替代核对：被豁免的版本仍须通过上述双来源受害清单核对与 `integrity` 校验，并按投毒排查要求确认无载荷与持久化残留。
+- 每次豁免必须记录包名、原因（CVE 编号或事件）与移除时间；豁免条目不得长期留在 `bunfig.toml` 中。
+- 冷却期阈值与豁免清单的改动本身不属于依赖安装，但仍受安装冻结期约束：冻结期内不得借豁免执行任何实际安装。
 
 ## Telegram 提示留存
 

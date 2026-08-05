@@ -38,6 +38,7 @@ const flushLogBuffer = mock((): boolean => true);
 const flushAiMemorySnapshots = mock((): boolean => true);
 const flushStickerCatalogs = mock((): boolean => true);
 const flushLuckAppends = mock((): boolean => true);
+const configureLuckAppendStalledReply = mock((_notify: (reply: unknown) => void): void => {});
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
 const flushJoinLogDomain = mock((): boolean => true);
@@ -55,6 +56,7 @@ mock.module("../../packages/workers/diskIO/logFiles", () => ({
   initLogFiles: (): void => {},
 }));
 mock.module("../../packages/workers/diskIO/luckFiles", () => ({
+  configureLuckAppendStalledReply,
   flushLuckAppends,
   handleLuckDrawMessage,
   hydrateLuckDay,

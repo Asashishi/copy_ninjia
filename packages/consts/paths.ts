@@ -48,6 +48,14 @@ export const REACTIONS_CONFIG_PATH: string = join(CONFIG_ROOT, "reactions.json")
 export const MOOD_CONFIG_PATH: string = join(CONFIG_ROOT, "mood.json");
 /** 广告检测的部署者示例清单（纯字符串数组），见 packages/config/adSamples.ts。 */
 export const AD_SAMPLES_CONFIG_PATH: string = join(CONFIG_ROOT, "ad_samples.json");
+
+/**
+ * OpenAI 兼容端点与模型的部署配置，分 ad_detect 与 ai_agent 两段；必填，代码不再
+ * 持有任何模型默认值。可省的只有两段各自的 base_url，见 packages/config/openai.ts。
+ */
+export const OPENAI_CONFIG_PATH: string = join(CONFIG_ROOT, "openai.json");
+/** Gemini 四条流水线的模型名；必填，代码不再持有任何模型默认值。 */
+export const GEMINI_CONFIG_PATH: string = join(CONFIG_ROOT, "gemini.json");
 /** 用户/频道白名单及逐项权限配置，见 packages/config/whitelist.ts。 */
 export const WHITELIST_CONFIG_PATH: string = join(CONFIG_ROOT, "whitelist.json");
 /** 人工维护的静态黑名单 ID 配置，启动时与 memory/blocklist/blocklist.json 合并。 */

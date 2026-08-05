@@ -12,7 +12,7 @@
 
 ## デプロイ形態
 
-webhook と外部 database を使わない、単一インスタンスのロングポーリングプロセスです。永続化はすべてローカルファイルを使います。1 インスタンスはおよそ 15 個以下の active group を推奨します。主な bottleneck は 1 つの Bot API、Gemini quota、メディア throughput です。ハードウェアの目安はルート README の「クイックスタート」を参照してください。
+webhook と外部 database を使わない、単一インスタンスのロングポーリングプロセスです。永続化はすべてローカルファイルを使います。1 インスタンスはおよそ 15 個以下の active group を推奨します。主な bottleneck は 1 つの Bot API、AI provider の quota、メディア throughput です。ハードウェアの目安はルート README の「クイックスタート」を参照してください。
 
 ### systemd の例
 

@@ -5,6 +5,7 @@ import {
 import { AI_MAX_ACTIONS_PER_REPLY, MAX_REACTIONS_PER_REPLY } from "../tools";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 import { IMAGE_SENT_TAG_HINT, STICKER_SENT_TAG_HINT } from "./transcript";
+import { WEB_SEARCH_TOOL_LABEL } from "./search";
 
 /** 模型从已查看贴纸清单按意图选择的约束。 */
 export const STICKER_INTENT_SELECTION_INSTRUCTION: string =
@@ -84,7 +85,7 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
 export const REPLY_ACTION_INSTRUCTION: string =
   "你的所有动作（说话 send_message、配应景贴纸 view_sticker_pack + send_sticker、扣表情反应 " +
   "add_reaction、按群友要求创作图片 generate_image）都只能通过工具完成，用法见各工具说明。先做哪个、做几样由你自己决定，" +
-  "但本轮命中系统提示「联网查证」里必须先搜索的情形时，要先调用 googleSearch 拿到结果再开始下面这些动作——" +
+  `但本轮命中系统提示「联网查证」里必须先搜索的情形时，要先调用${WEB_SEARCH_TOOL_LABEL}拿到结果再开始下面这些动作——` +
   "查证不是群友看得见的动作，不计入本轮动作预算，别为了省动作跳过它。" +
   "所有需要让群友看到的文本发言都必须经工具落地，绝不能用最终响应正文代替工具：独立说话用 send_message，" +
   "给这次生成的图配一句话则直接写进 generate_image 的 caption（连图带话是同一条消息）。" +

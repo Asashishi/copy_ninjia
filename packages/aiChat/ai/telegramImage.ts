@@ -24,7 +24,7 @@ function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortS
 }
 
 /**
- * 通过 Telegram file_id 现取一张图片并规范成 Gemini 可接收的 jpeg/png。
+ * 通过 Telegram file_id 现取一张图片并规范成两家视觉接口都能接收的 jpeg/png。
  * 完整下载 URL 含 Bot Token，只在 fetch 调用的局部变量中存在，绝不返回、
  * 缓存或写日志。下载、转码前后都沿用媒体描述管线的 8 MiB 硬上限。
  */

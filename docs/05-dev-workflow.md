@@ -35,7 +35,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**1679 tests / 172 files / 30519 次 `expect()`**；全源码**函数覆盖率 95.56% / 行覆盖率 96.63%**。根 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**1889 tests / 189 files / 31105 次 `expect()`**；全源码**函数覆盖率 95.90% / 行覆盖率 96.84%**。根 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 

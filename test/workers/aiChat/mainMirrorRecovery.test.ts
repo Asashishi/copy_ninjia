@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import type { AiChatWorkerEvent, AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
+import type { AiProviderName } from "../../../packages/types/aiChat/provider";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryDeleteDiskMessage,
@@ -60,8 +61,13 @@ mock.module("../../../packages/infra/diskIO", () => ({
 // 只在状态表里、开关不是 true 的群才回收磁盘残留。开着的群必然在表里，
 // 因此这里取两个集合的并集。
 const knownChats = new Set<number>();
+let imageProviderOverride: AiProviderName | undefined = undefined;
+let chatProviderOverride: AiProviderName | undefined = undefined;
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
+  // 两项供应商覆盖的重放来源；缺省不设覆盖，重放块因此不发这两条消息。
+  getImageProviderOverride: (): AiProviderName | undefined => imageProviderOverride,
+  getChatProviderOverride: (): AiProviderName | undefined => chatProviderOverride,
   getAllChatStates: (): Map<number, unknown> =>
     new Map([...aiEnabledChats, ...knownChats].map((chatId: number): [number, unknown] => [chatId, {}])),
 }));
@@ -110,6 +116,8 @@ beforeEach(() => {
   aiChatWorkerState.available = false;
   aiEnabledChats.clear();
   knownChats.clear();
+  imageProviderOverride = undefined;
+  chatProviderOverride = undefined;
   workerPostAccepted = true;
 });
 
@@ -181,6 +189,81 @@ describe("AI main-thread persistence mirror", () => {
       requestId: invalidateRequest.requestId,
     });
     await invalidated;
+  });
+
+  test("生图供应商覆盖随 init 推一次，Worker 重建后由重放块补发", () => {
+    imageProviderOverride = "openai";
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+
+    // 首个 Worker 拿不到 onRespawn 的那次重放，恢复出来的覆盖值在 init 之后补推。
+    expect(workerPosts).toEqual([
+      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
+      { type: "imageProvider", provider: "openai" },
+    ]);
+
+    const respawnPosts: AiChatWorkerMessage[] = [];
+    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
+      respawnPosts.push(message);
+      return true;
+    });
+    // 新 Worker 的镜像是空的，而空的含义是「跟随默认供应商」——不补发就等于
+    // 超管切过的那一下被静默回滚，而群里看不出区别。
+    expect(respawnPosts).toEqual([
+      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
+      { type: "imageProvider", provider: "openai" },
+    ]);
+  });
+
+  test("没设过覆盖时一条都不发：空镜像本身就是正确结论", () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const respawnPosts: AiChatWorkerMessage[] = [];
+    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
+      respawnPosts.push(message);
+      return true;
+    });
+
+    for (const posts of [workerPosts, respawnPosts]) {
+      expect(posts.some((message: AiChatWorkerMessage): boolean => message.type === "imageProvider")).toBeFalse();
+      expect(posts.some((message: AiChatWorkerMessage): boolean => message.type === "chatProvider")).toBeFalse();
+    }
+  });
+
+  test("闲聊侧覆盖同样随 init 推一次并由重放块补发，两项互不牵连", () => {
+    // 两条命令各切各的：切了闲聊那一半，不能顺手把生图也推一条。
+    chatProviderOverride = "openai";
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+
+    expect(workerPosts).toEqual([
+      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
+      { type: "chatProvider", provider: "openai" },
+    ]);
+
+    const respawnPosts: AiChatWorkerMessage[] = [];
+    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
+      respawnPosts.push(message);
+      return true;
+    });
+    expect(respawnPosts).toEqual([
+      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
+      { type: "chatProvider", provider: "openai" },
+    ]);
+  });
+
+  test("两项都设过时各推各的，重建后一条不少", () => {
+    imageProviderOverride = "gemini";
+    chatProviderOverride = "openai";
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+
+    const respawnPosts: AiChatWorkerMessage[] = [];
+    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
+      respawnPosts.push(message);
+      return true;
+    });
+    expect(respawnPosts).toEqual([
+      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
+      { type: "imageProvider", provider: "gemini" },
+      { type: "chatProvider", provider: "openai" },
+    ]);
   });
 
   test("启动恢复不会 hydrate 已关闭群，并为磁盘残留安排 durable 删除", () => {

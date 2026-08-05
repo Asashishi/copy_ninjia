@@ -43,8 +43,9 @@ export const STICKER_CATALOG_RETRY_INTERVAL_MS: number = 5 * 60_000;
 
 /** 整包简介与工具意图的领域约束。 */
 export const STICKER_PACK_SUMMARY_MAX_CHARS: number = 200;
-/** 整包简介生成请求允许的最大输出 token。 */
-export const STICKER_PACK_SUMMARY_MAX_TOKENS: number = 4096;
+
+/** 贴纸整包简介请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
+export const STICKER_PACK_SUMMARY_ERROR_LABEL: string = "AI sticker pack summary API";
 /** 整包简介尚未生成时提供给模型的固定占位。 */
 export const STICKER_PACK_SUMMARY_PENDING: string = "（整包简介还在生成中，可进包内查看具体贴纸）";
 /** 模型选择贴纸意图文本的最大字符数。 */

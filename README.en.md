@@ -28,14 +28,15 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
+  <a href="https://platform.openai.com/docs/"><img src="https://img.shields.io/badge/AI-OpenAI-412991?style=flat-square&logo=openai&logoColor=white" alt="OpenAI"></a>
   <a href="https://api-docs.deepseek.com/"><img src="https://img.shields.io/badge/AI-DeepSeek-4d6bfe?style=flat-square&logo=deepseek&logoColor=white" alt="DeepSeek"></a>
 </p>
 
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1679_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.63%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1889_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/en/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.84%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -70,7 +71,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1679 tests passed, 172 test files, 30,519 expect() calls, 95.56% function coverage, 96.63% line coverage" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1889 tests passed, 189 test files, 31,105 expect() calls, 95.90% function coverage, 96.84% line coverage" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -90,7 +91,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI group chat</b></p>
-  <p>Gemini persona-driven autonomy: speaking, stickers, reactions, and image generation are all tools, and the model decides how many to use per round and in what order.</p>
+  <p>Persona-driven autonomy: speaking, stickers, reactions, and image generation are all tools, and the model decides how many to use per round and in what order. The model layer is a swappable provider — Gemini by default, falling back to OpenAI when its key is absent.</p>
 </td>
 </tr>
 <tr>
@@ -150,7 +151,8 @@ The copy target is global: one instance can “become” only one target at a ti
 | `/nya_copy` | Append “nya~” to plain text |
 | `/ja_copy` | Translate into Japanese with Google Cloud Translate before copying |
 | `/steal_icon` | Copy only the avatar |
-| `/stop_copy` | Stop the global copy state |
+| `/reset_icon` | Restore the bot's own default avatar |
+| `/stop_copy` | Stop the global copy state and restore the avatar |
 
 Choose a target by replying to their message or providing `@username`:
 
@@ -165,8 +167,9 @@ Choose a target by replying to their message or providing `@username`:
 <table width="100%">
 <tr><th width="26%" align="left">Command</th><th width="19%" align="center">Permission</th><th width="55%" align="left">Description</th></tr>
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">Group member</td><td>Start respective copy mode</td></tr>
-<tr><td><code>/stop_copy</code></td><td align="center">Group member</td><td>Stop current global copy state</td></tr>
+<tr><td><code>/stop_copy</code></td><td align="center">Group member</td><td>Stop current global copy state and restore the avatar</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">Group member</td><td>Copy avatar only</td></tr>
+<tr><td><code>/reset_icon</code></td><td align="center">Group member</td><td>Restore the default avatar</td></tr>
 <tr><td><code>/&lt;1–2 CJK chars&gt;</code></td><td align="center">Group member</td><td>Action command: <code>/咬</code> or <code>/揪住</code> replies "actor 咬了 target！"; successful results are retained</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">Group member</td><td>Pause proactive behavior for N minutes (default 3)</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">Group member</td><td>Resume proactive behavior early</td></tr>
@@ -182,6 +185,8 @@ Choose a target by replying to their message or providing `@username`:
 <tr><td><code>/batch_kick &lt;Nm|Nh|Nd&gt;</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>In a supergroup, kick members who joined within the selected rolling window of up to 24 hours and are still present; never blocklist them</td></tr>
 <tr><td><code>/permission help</code><br><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>List permission descriptions as JSON or change one permission on an existing allowlisted user/channel; <code>all</code> enables every permission</td></tr>
 <tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Add or remove an allowlisted user/channel by reply, <code>@username</code>, user id, or channel id</td></tr>
+<tr><td><code>/image_model gpt|gemini</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Choose the image-generation provider; affects image generation only, and requires both AI keys to be present</td></tr>
+<tr><td><code>/chat_model gpt|gemini</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>Choose the provider for replies, summaries, and vision; never touches image generation, and requires both AI keys to be present</td></tr>
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code> (PM only)</td><td>Start or finish a relay session from the bot's private chat to the target group</td></tr>
 </table>
 
@@ -215,7 +220,7 @@ Choose a target by replying to their message or providing `@username`:
 - Linux (with readable `/proc`; instance lock fails closed on other platforms)
 - Bun 1.3+
 - Telegram Bot Token
-- Gemini API Key (required only for `/ai_chat`)
+- An AI-chat provider key (required only for `/ai_chat`; either Gemini or OpenAI)
 - DeepSeek API Key (required only for `/ad_detect`)
 - Google Cloud Service Account JSON (required only for `/ja_copy`)
 
@@ -252,7 +257,8 @@ Fill in `.env` according to [`.env.example`](.env.example):
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | Bot token issued by BotFather |
 | `SUPER_ADMIN_USER_ID` | ✅ | A single decimal user ID for the super administrator |
-| `AI_CHAT_GEMINI_API_KEY` | — | AI chat agent only; when empty the AI Worker never starts and `/ai_chat enable`, `/query_mood`, and `/switch_mood` are rejected |
+| `AI_CHAT_GEMINI_API_KEY` | — | Default AI-chat provider |
+| `AI_CHAT_OPENAI_API_KEY` | — | Fallback AI-chat provider, used only when the Gemini key is empty; the AI Worker stays down and `/ai_chat enable`, `/query_mood`, and `/switch_mood` are rejected only when **both** are empty |
 | `AD_DETECT_DEEPSEEK_API_KEY` | — | Ad detection only; when empty `/ad_detect enable` is rejected |
 | `COPY_NINJIA_DATA_ROOT` | — | Runtime-data root; when omitted the project root is used |
 
@@ -286,7 +292,7 @@ After the bot first joins a group, `SUPER_ADMIN_USER_ID` executes:
 /ai_chat enable
 ```
 
-> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 641 source lines containing Chinese string or template literals across 64 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
+> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 665 source lines containing Chinese string or template literals across 66 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](docs/en/06-modification-guide.md).
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 

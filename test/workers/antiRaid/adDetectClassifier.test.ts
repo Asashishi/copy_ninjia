@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { getAdDetectOpenAiConfig } from "../../../packages/config/openai";
 
 const errorLogs: string[] = [];
 const requestDeepSeekJson = mock(async (..._args: unknown[]): Promise<string | null> =>
@@ -20,7 +21,6 @@ mock.module("../../../packages/config/adSamples", () => ({
 const { classifyAdText, parseAdVerdict } = await import("../../../packages/workers/antiRaid/adDetect/classifier");
 const {
   AD_DETECT_MAX_OUTPUT_TOKENS,
-  AD_DETECT_MODEL,
   AD_DETECT_REASON_MAX_CHARS,
   AD_DETECT_TEMPERATURE,
 } = await import("../../../packages/consts/antiRaid/adDetect");
@@ -71,7 +71,7 @@ describe("广告判定请求", () => {
       maxOutputTokens: number;
       errorLabel: string;
     };
-    expect(params.model).toBe(AD_DETECT_MODEL);
+    expect(params.model).toBe(getAdDetectOpenAiConfig().model);
     expect(params.temperature).toBe(AD_DETECT_TEMPERATURE);
     expect(params.maxOutputTokens).toBe(AD_DETECT_MAX_OUTPUT_TOKENS);
     expect(params.errorLabel).toBe("Ad detection request");

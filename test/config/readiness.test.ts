@@ -15,6 +15,13 @@ let stickerFailure: string | null = null;
 let reactionFailure: string | null = null;
 let moodFailure: string | null = null;
 let adSampleFailure: string | null = null;
+// config/openai.json 分两段探测：一段写坏不该拖垮读另一段的那条线。
+let adDetectSectionFailure: string | null = null;
+let aiChatSectionFailure: string | null = null;
+// config/gemini.json 是与 openai.json 平级的第二份模型配置，各自条件探测。
+let geminiConfigFailure: string | null = null;
+let openAiCredentials: boolean = true;
+let geminiCredentials: boolean = true;
 
 function loaderOf(failure: () => string | null): () => object {
   return (): object => {
@@ -24,11 +31,26 @@ function loaderOf(failure: () => string | null): () => object {
   };
 }
 
-mock.module("../../packages/consts/paths", () => ({ GOOGLE_AUTH_FILE_PATH: authFilePath }));
+mock.module("../../packages/consts/paths", () => ({
+  GOOGLE_AUTH_FILE_PATH: authFilePath,
+  GEMINI_CONFIG_PATH: join(tmpdir(), "unused-gemini.json"),
+  OPENAI_CONFIG_PATH: join(tmpdir(), "unused-openai.json"),
+}));
 mock.module("../../packages/config/stickers", () => ({ getStickerConfig: loaderOf((): string | null => stickerFailure) }));
 mock.module("../../packages/config/reactions", () => ({ getReactionConfig: loaderOf((): string | null => reactionFailure) }));
 mock.module("../../packages/config/mood", () => ({ getMoodConfig: loaderOf((): string | null => moodFailure) }));
 mock.module("../../packages/config/adSamples", () => ({ getAdSampleConfig: loaderOf((): string | null => adSampleFailure) }));
+mock.module("../../packages/config/openai", () => ({
+  loadAdDetectOpenAiConfig: loaderOf((): string | null => adDetectSectionFailure),
+  loadAiAgentOpenAiConfig: loaderOf((): string | null => aiChatSectionFailure),
+}));
+mock.module("../../packages/config/gemini", () => ({
+  loadGeminiDeploymentConfig: loaderOf((): string | null => geminiConfigFailure),
+}));
+mock.module("../../packages/aiChat/credentials", () => ({
+  hasOpenAiChatCredentials: (): boolean => openAiCredentials,
+  hasGeminiChatCredentials: (): boolean => geminiCredentials,
+}));
 
 const { adDetectConfigReadiness, aiChatConfigReadiness, jaTranslateConfigReadiness } =
   await import("../../packages/config/readiness");
@@ -47,6 +69,11 @@ beforeEach(() => {
   reactionFailure = null;
   moodFailure = null;
   adSampleFailure = null;
+  geminiConfigFailure = null;
+  geminiCredentials = true;
+  adDetectSectionFailure = null;
+  aiChatSectionFailure = null;
+  openAiCredentials = true;
   aiChatConfigReadinessCache.current = null;
   adDetectConfigReadinessCache.current = null;
   jaTranslateConfigReadinessCache.current = null;
@@ -106,5 +133,62 @@ describe("deployment config readiness", () => {
     const blankKey: ConfigReadiness = jaTranslateConfigReadiness();
     if (blankKey.ok) throw new Error("expected a failure verdict");
     expect(blankKey.failure.reason).toContain("private_key");
+  });
+});
+
+describe("config/openai.json 分段探测：一段写坏只关掉读那一段的功能", () => {
+  test("广告检测把 ad_detect 段当必检项：写坏就点名这份文件", () => {
+    adDetectSectionFailure = "bad endpoint";
+    const verdict: ConfigReadiness = adDetectConfigReadiness();
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok === false && verdict.failure.file).toBe("config/openai.json");
+  });
+
+  test("ai_agent 段写坏不拦广告检测：那半边它一个字段都不读", () => {
+    // 拦住了就意味着 Gemini 部署为了准备 OpenAI 兜底而写错一个键，
+    // 代价是启动 preflight 中止、bot 起不来。
+    aiChatSectionFailure = "ai_agent must be an object with only { base_url?, models? }";
+    expect(adDetectConfigReadiness().ok).toBe(true);
+  });
+
+  test("握有 OpenAI 凭据时 AI 闲聊探 ai_agent 段：坏文件必须在闸门上点名", () => {
+    aiChatSectionFailure = "ai_agent must be an object with only { base_url?, models? }";
+    const verdict: ConfigReadiness = aiChatConfigReadiness();
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok === false && verdict.failure.file).toBe("config/openai.json");
+  });
+
+  test("ad_detect 段写坏不拦 AI 闲聊：那半边只服务广告检测", () => {
+    adDetectSectionFailure = "bad endpoint";
+    expect(aiChatConfigReadiness().ok).toBe(true);
+  });
+
+  test("没有 OpenAI 凭据时 AI 闲聊不探它：那份文件在 Gemini 单跑的部署里没有消费方", () => {
+    openAiCredentials = false;
+    aiChatSectionFailure = "ai_agent must be an object with only { base_url?, models? }";
+    expect(aiChatConfigReadiness().ok).toBe(true);
+  });
+});
+
+describe("Gemini 模型配置：与 openai.json 平级的条件探测", () => {
+  test("握着 Gemini 凭据时 config/gemini.json 写坏即判不可用并点名文件", () => {
+    // 代码里不再有任何 Gemini 模型默认值，缺文件/缺字段只能拒绝。
+    geminiConfigFailure = "Invalid Gemini config: models.reply must be a non-empty string";
+    const verdict: ConfigReadiness = aiChatConfigReadiness();
+    expect(verdict.ok).toBeFalse();
+    if (verdict.ok) throw new Error("expected a failure verdict");
+    expect(verdict.failure.file).toBe("config/gemini.json");
+  });
+
+  test("没有 Gemini 凭据时根本不探它：只配 OpenAI 一把 key 的部署不被它拦住", () => {
+    geminiCredentials = false;
+    geminiConfigFailure = "Invalid Gemini config: boom";
+    expect(aiChatConfigReadiness().ok).toBeTrue();
+  });
+
+  test("反过来也成立：没有 OpenAI 凭据时 openai.json 的 ai_agent 段坏了也不拦 Gemini 部署", () => {
+    openAiCredentials = false;
+    aiChatSectionFailure = "Invalid OpenAI config: boom";
+    expect(aiChatConfigReadiness().ok).toBeTrue();
   });
 });

@@ -1,5 +1,6 @@
 import type { BotCommand } from "@grammyjs/types";
-import type { CommandTargetMessages, ToggleCommandTexts } from "../types/commands";
+import type { AiProviderName } from "../types/aiChat/provider";
+import type { CommandTargetMessages, ProviderModelCommandTexts, ToggleCommandTexts } from "../types/commands";
 
 /** 群聊命令文本发送后自动清理的最长保留时间。 */
 export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
@@ -20,6 +21,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "ja_copy", description: "复读并翻成日语；enable/disable 开关本群功能，只有获授权者配碰，杂鱼别乱按♡" },
   { command: "stop_copy", description: "停掉当前复读，终于发现自己很吵了吗，杂鱼♡" },
   { command: "steal_icon", description: "偷取目标头像给本天才换上，连自己的头像都拿不出手吗，杂鱼♡" },
+  { command: "reset_icon", description: "把本天才的头像换回原装那张脸，戴腻别人的脸了吗，杂鱼♡" },
   // 占位说明项：命令名 x 就是那个「变量」，提示用户把它换成任意 1~2 个中文字。
   // 它存在的唯一目的是让中文动作命令在菜单里可见——那类命令名进不了菜单，
   // 见上方说明。收到时由 commands/cjkAction.ts 的 handleCjkActionUsageCommand
@@ -41,6 +43,8 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
   { command: "permission", description: "query 偷看自己有几斤几两，help 看本天才的说明；改权限只有超级管理员配碰，杂鱼别乱按♡" },
   { command: "white", description: "新增或删除白名单用户/频道，首次加入用默认权限；仅超级管理员配用，普通杂鱼别想偷偷混进来♡" },
+  { command: "image_model", description: "用 gpt/gemini 切换本天才画图用哪家模型；只换画图，聊天照旧，仅超级管理员配碰，杂鱼♡" },
+  { command: "chat_model", description: "用 gpt/gemini 切换本天才聊天、总结和看图用哪家脑子；画图不算，仅超级管理员配碰，杂鱼♡" },
 ];
 
 /** copy 类命令的公共冷却时长（白名单边界内的身份豁免，含恒在边界内的超级管理员；见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
@@ -293,6 +297,73 @@ export const INIT_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
 export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
   `本天才不想再理这个群了，爱干嘛干嘛去吧——不过有几样运行态没能拆干净，` +
   `日志里写着呢，杂鱼管理员去看一眼♡`;
+
+/**
+ * `/image_model`、`/chat_model` 的参数别名表：面向用户的写法 -> 内部供应商名。
+ *
+ * `gpt` 只活在命令这一层，状态、协议与选取一律用 `openai`（见
+ * types/aiChat/provider.ts 的 AiProviderName）——两套词汇一旦渗进持久化就再也
+ * 分不开了。`gemini` 两侧同名，仍走同一张表，免得日后加别名时漏掉一处。
+ * 两条命令共用这一张：它们认的写法必须一致，否则同一个 `gpt` 在一条命令上
+ * 生效、另一条上报用法错误。所属模块：commands/providerModel.ts。
+ */
+export const PROVIDER_MODEL_ALIASES: Readonly<Record<string, AiProviderName>> = {
+  gpt: "openai",
+  openai: "openai",
+  gemini: "gemini",
+};
+
+/**
+ * 内部供应商名回到面向用户的写法，只用于回执文案；与上表互为反向。
+ * 所属模块：commands/providerModel.ts。
+ */
+export const PROVIDER_MODEL_LABELS: Readonly<Record<AiProviderName, string>> = {
+  openai: "gpt",
+  gemini: "gemini",
+};
+
+/**
+ * `/image_model gpt|gemini` 的全部文案；字段口径见 packages/types/commands.ts 的
+ * ProviderModelCommandTexts。切换只作用于生图，回执因此要说破这一点——否则超管会
+ * 以为连闲聊回复也一起换了家。两家的画幅能力并不等价（Gemini 走一档 1K，
+ * OpenAI 收敛到三档），同一句提示词的出图比例可能变，回执里提一句、不做补偿。
+ * 所属模块：packages/commands/imageModel.ts。
+ */
+export const IMAGE_MODEL_TEXTS: Readonly<ProviderModelCommandTexts> = {
+  rejection: (mockerLabel: string): string =>
+    `就 ${mockerLabel} 也想管本天才用哪支笔画画？哪来的资格呀，笨蛋♡`,
+  usage: `笨蛋，要 /image_model gpt 还是 /image_model gemini，说清楚呀♡`,
+  missingGeminiKey: `本天才手上压根没有 Gemini 那把 key，拿什么给你换？.env 里补上 AI_CHAT_GEMINI_API_KEY 再重启，笨蛋♡`,
+  missingOpenAiKey: `本天才手上压根没有 OpenAI 那把 key，拿什么给你换？.env 里补上 AI_CHAT_OPENAI_API_KEY 再重启，笨蛋♡`,
+  switched: (providerLabel: string): string =>
+    `哼，那以后就用 ${providerLabel} 画。只换画笔哦，说话还是本天才自己来——` +
+    `画出来的比例跟从前不一样，可别回头怪本天才♡`,
+  unchanged: (providerLabel: string): string =>
+    `笨蛋，本天才手里拿的就是 ${providerLabel} 呀，看清楚了再来♡`,
+};
+
+/**
+ * `/chat_model gpt|gemini` 的全部文案；字段口径见 packages/types/commands.ts 的
+ * ProviderModelCommandTexts。
+ *
+ * 覆盖的是生图**以外**的三项能力：闲聊回复、总结（冷消息中期摘要与贴纸包简介）
+ * 与看图描述。回执要说破这一点——它与 `/image_model` 正好互补，超管必须能一眼
+ * 看出这条没动画图。切换只在下一轮回复生效（在途那轮会话已经绑定了实现，见
+ * aiChat/provider.ts 的 chatAiProvider），回执里提一句，免得超管以为立刻改口。
+ * 所属模块：packages/commands/chatModel.ts。
+ */
+export const CHAT_MODEL_TEXTS: Readonly<ProviderModelCommandTexts> = {
+  rejection: (mockerLabel: string): string =>
+    `就 ${mockerLabel} 也想挑本天才用哪个脑子说话？哪来的资格呀，笨蛋♡`,
+  usage: `笨蛋，要 /chat_model gpt 还是 /chat_model gemini，说清楚呀♡`,
+  missingGeminiKey: `Gemini 那把 key 本天才根本没拿到，换个什么劲？.env 里补上 AI_CHAT_GEMINI_API_KEY 再重启吧，笨蛋♡`,
+  missingOpenAiKey: `OpenAI 那把 key 本天才根本没拿到，换个什么劲？.env 里补上 AI_CHAT_OPENAI_API_KEY 再重启吧，笨蛋♡`,
+  switched: (providerLabel: string): string =>
+    `哼，那本天才以后换 ${providerLabel} 来想事情——说话、记事、看图都归它，画画不算哦。` +
+    `这句还是老样子，下一句才换过来，急什么呀杂鱼♡`,
+  unchanged: (providerLabel: string): string =>
+    `笨蛋，本天才现在想事情用的就是 ${providerLabel} 呀，还要再点一次头吗？♡`,
+};
 
 /**
  * 各命令的目标解析提示文案表。

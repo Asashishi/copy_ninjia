@@ -379,6 +379,29 @@ export interface AiMemoryPersistedReply {
   revision: number;
 }
 
+/**
+ * diskIOWorker -> 主线程：当日运势追加已连续失败到阈值，条目仍滞留在 Worker 内存。
+ *
+ * 这是 Worker 侧写盘失败里**唯一**会被转成 `logger.error` 的一条，因此不是对
+ * 「Worker 内部错误只 console.error」的推翻，而是一条窄口径的例外：它报的不是
+ * 某一次 write(2) 的错，而是「一个领域已经持续丢数据」这件事实——而运势的丢失
+ * 在别处完全无迹可寻（主线程 dailyLuckCache 照常命中，用户看不出异常）。
+ * 递归风险为零：主线程据此记的日志走 log 领域，log 领域自己写失败只 console.error，
+ * 不会再产生第二条 logger 调用。
+ * @see ../../docs/04-invariants.md
+ */
+export interface LuckAppendStalledReply {
+  type: "luckAppendStalled";
+  /** 写不进去的那一天（YYYY-MM-DD），即 memory/luck/<day>.json。 */
+  day: string;
+  /** 告警时刻仍未落盘的条目数；故障持续时实际丢失量只会比它更大。 */
+  pendingEntries: number;
+  /** 连续失败次数，等于触发阈值。 */
+  consecutiveFailures: number;
+  /** 最近一次追加失败的错误文本，供运维直接判读是权限、只读卷还是磁盘满。 */
+  error: string;
+}
+
 export type DiskIOReply =
   | LoadedReply
   | LuckSecretReply
@@ -387,4 +410,5 @@ export type DiskIOReply =
   | DiskFlushFailedReply
   | VerificationPersistedReply
   | AiMemoryPersistedReply
-  | AiMemoryDeletedPersistedReply;
+  | AiMemoryDeletedPersistedReply
+  | LuckAppendStalledReply;

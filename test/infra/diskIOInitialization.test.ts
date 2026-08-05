@@ -4,6 +4,7 @@ import type {
   DiskIOMessage,
   DiskIORecoveryTransport,
   DiskIOReply,
+  LuckAppendStalledReply,
   LuckDrawDiskMessage,
   VerificationPersistedReply,
 } from "../../packages/types";
@@ -556,6 +557,46 @@ describe("explicit Worker initialization", () => {
       expect(worker.terminated).toBeTrue();
     } finally {
       await diskIO.terminateDiskIO();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("运势追加停摆诊断转交监听器，已被换掉的旧 Worker 报上来的不算数", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    const originalListeners = [...diskIORuntime.luckAppendStalledListeners];
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loadedPromise;
+
+      const seen: LuckAppendStalledReply[] = [];
+      diskIO.onLuckAppendStalled((reply: LuckAppendStalledReply): void => { seen.push(reply); });
+      const stalled: LuckAppendStalledReply = {
+        type: "luckAppendStalled",
+        day: "2026-07-19",
+        pendingEntries: 4,
+        consecutiveFailures: 3,
+        error: "ENOSPC: no space left on device",
+      };
+      worker.onmessage!({ data: stalled } as MessageEvent<DiskIOReply>);
+      expect(seen).toEqual([stalled]);
+
+      // 换掉当前 Worker 之后，旧实例的迟到诊断不得再进日志：那条已经不代表
+      // 现役落盘线程的状态，会把运维引到一个其实已经不存在的故障上。
+      await diskIO.terminateDiskIO();
+      worker.onmessage!({ data: stalled } as MessageEvent<DiskIOReply>);
+      expect(seen).toEqual([stalled]);
+    } finally {
+      await diskIO.terminateDiskIO();
+      diskIORuntime.luckAppendStalledListeners.splice(
+        0,
+        diskIORuntime.luckAppendStalledListeners.length,
+        ...originalListeners
+      );
       globalThis.Worker = originalWorker;
     }
   });

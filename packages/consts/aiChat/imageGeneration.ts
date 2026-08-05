@@ -1,14 +1,13 @@
 import type { ImageGenerationAspectRatio } from "../../types/aiChat/imageGeneration";
 
-/** AI 生图模型与每群独立冷却。模型只支持 1K，分辨率不做成可变参数。 */
-export const GEMINI_IMAGE_GENERATION_MODEL: string = "gemini-3.1-flash-lite-image";
-/** 普通用户按群共享的生图冷却时长。 */
+/** 普通用户按群共享的生图冷却时长。模型名按供应商放在
+ *  consts/aiChat/{gemini,openai}.ts。 */
 export const IMAGE_GENERATION_COOLDOWN_MS: number = 180_000;
 /** 当前生图请求正文允许传给模型的最大字符数。 */
 export const IMAGE_GENERATION_PROMPT_MAX_CHARS: number = 2_048;
 /** 从滚动记忆拼入生图提示的最大字符数。 */
 export const IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS: number = 275;
-/** Gemini 生图结果解码后的最大字节数。 */
+/** 生图结果解码后的最大字节数，两家供应商共用。 */
 export const IMAGE_GENERATION_MAX_BYTES: number = 10 * 1024 * 1024;
 /** 标准 base64 对二进制上限的理论编码长度，用于在解码分配内存前拒绝超大响应。 */
 export const IMAGE_GENERATION_MAX_ENCODED_CHARS: number = Math.ceil(IMAGE_GENERATION_MAX_BYTES / 3) * 4;

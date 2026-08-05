@@ -3,12 +3,15 @@ import {
   AVATAR_FETCH_MAX_ATTEMPTS,
   AVATAR_FETCH_TIMEOUT_MS,
   AVATAR_MAX_DOWNLOAD_BYTES,
+  BOT_DEFAULT_AVATAR_URL,
+  BOT_PROFILE_PHOTO_FILE_NAME,
   PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES,
   TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES,
   USER_PROFILE_PHOTOS_LIMIT,
 } from "../../consts/telegram";
 import { readBoundedResponseBytes, readBoundedResponseText, type BoundedResponseResult } from "../../libs/boundedResponse";
 import { parseAllowedHttpsUrl } from "../../libs/httpUrlPolicy";
+import { sniffImageFormat, type SniffedImageFormat } from "../../libs/image";
 import { logger } from "../logger";
 import { bot, logApiError } from "./client";
 import type { HydratedTelegramFile } from "./client";
@@ -338,7 +341,7 @@ async function attemptCopyUserProfilePhoto(
     }
 
     await bot.api.setMyProfilePhoto(
-      { type: "static", photo: new InputFile(download.bytes, "avatar.jpg") },
+      { type: "static", photo: new InputFile(download.bytes, BOT_PROFILE_PHOTO_FILE_NAME) },
       telegramSignal(signal)
     );
     return "ok";
@@ -390,7 +393,7 @@ export async function copyUserProfilePhoto(
     if (imgBuffer) {
       try {
         await bot.api.setMyProfilePhoto(
-          { type: "static", photo: new InputFile(imgBuffer, "avatar.jpg") },
+          { type: "static", photo: new InputFile(imgBuffer, BOT_PROFILE_PHOTO_FILE_NAME) },
           telegramSignal(signal)
         );
         return true;
@@ -412,4 +415,80 @@ export async function copyUserProfilePhoto(
     );
   }
   return false;
+}
+
+/**
+ * 把机器人头像复原成 BOT_DEFAULT_AVATAR_URL 指向的那张默认脸。
+ *
+ * 来源是 **Google Drive 直链**（`uc?export=download&id=…`，见
+ * consts/telegram.ts 的 BOT_DEFAULT_AVATAR_URL）。这条 fetch 与抓取 t.me 主页
+ * 那条的关键差别是 **允许重定向**：Drive 的直链必然先 302 到
+ * googleusercontent 的实际存储域名，写 `redirect: "error"` 会让复原永远失败。
+ * 放开重定向的安全代价由两道既有门禁兜住——目标 URL 是代码里的常量而非用户
+ * 输入，且响应仍走 AVATAR_MAX_DOWNLOAD_BYTES 的有界读取，第三方响应撑不爆内存。
+ *
+ * 与 copyUserProfilePhoto 一样按 AVATAR_FETCH_MAX_ATTEMPTS 重试，也与它一样
+ * **区分永久与瞬时失败**：Drive 偶发 5xx 与限流值得重试，而「拿回来的根本不是
+ * 图片」「Telegram 判定这张图不合规」重试多少次都是同一个结果，只会白烧头像
+ * 接口的调用额度——那正是本函数的重试本想规避的 flood 限制。
+ * @returns 复原成功为 true；下载失败、响应超限、载荷不是图片或
+ *   setMyProfilePhoto 失败为 false（均已记日志）。
+ */
+export async function restoreDefaultProfilePhoto(signal?: AbortSignal): Promise<boolean> {
+  for (let attempt: number = 1; attempt <= AVATAR_FETCH_MAX_ATTEMPTS; attempt++) {
+    if (signal?.aborted) return false;
+    const result: AvatarCopyAttemptResult = await attemptRestoreDefaultProfilePhoto(attempt, signal);
+    if (result === "ok") return true;
+    if (result === "permanent-failure") break;
+  }
+  return false;
+}
+
+/** 单次「下载默认头像并换上」的尝试；失败按可否重试分类，日志已在各分支记过。 */
+async function attemptRestoreDefaultProfilePhoto(
+  attempt: number,
+  signal?: AbortSignal
+): Promise<AvatarCopyAttemptResult> {
+  try {
+    const response: Response = await fetch(BOT_DEFAULT_AVATAR_URL, {
+      redirect: "follow",
+      signal: avatarFetchSignal(signal),
+    });
+    if (!response.ok) {
+      logger.error(`Failed to download the default avatar (${response.status}) from the configured Google Drive link (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`);
+      return "transient-failure";
+    }
+    const download: BoundedResponseResult = await readBoundedResponseBytes(response, AVATAR_MAX_DOWNLOAD_BYTES);
+    if (!download.ok) {
+      // 超限是确定性失败：同一个链接重试多少次都是这么大，点名字节数便于换图。
+      logger.error(`The default avatar exceeded the download limit (${download.observedBytes} bytes)`);
+      return "permanent-failure";
+    }
+    // 上传前必须认一遍字节。Drive 的 uc?export=download 在配额超限/病毒扫描
+    // 警告时会以 **HTTP 200** 返回一张 HTML 插页——response.ok 为真、有界读取
+    // 成功，于是那段 HTML 被当作静态图片交给 Telegram，换来一次确定性拒绝。
+    // 响应体为 null 时 readBoundedResponseBytes 会以零长 buffer 报 ok，同样在
+    // 这里被挡下（长度不足以匹配任何签名）。
+    const format: SniffedImageFormat = sniffImageFormat(
+      Buffer.from(download.bytes.buffer, download.bytes.byteOffset, download.bytes.byteLength)
+    );
+    if (format !== "jpeg" && format !== "png") {
+      logger.error(
+        `The default avatar link did not return a JPEG or PNG image ` +
+        `(sniffed=${format}, bytes=${download.bytes.byteLength}); check the Google Drive link for a quota or virus-scan interstitial`
+      );
+      return "permanent-failure";
+    }
+    await bot.api.setMyProfilePhoto(
+      { type: "static", photo: new InputFile(download.bytes, BOT_PROFILE_PHOTO_FILE_NAME) },
+      telegramSignal(signal)
+    );
+    return "ok";
+  } catch (error: unknown) {
+    if (signal?.aborted) return "permanent-failure";
+    logApiError(`restore default profile photo (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`, error);
+    // Telegram 的 400 是对这张图本身的判定（PHOTO_CROP_SIZE_SMALL 之类），换几次
+    // 都一样；其余（429/5xx/网络抖动）才值得再试。
+    return error instanceof GrammyError && error.error_code === 400 ? "permanent-failure" : "transient-failure";
+  }
 }

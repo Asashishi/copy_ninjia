@@ -13,8 +13,8 @@ import OpenAI from "openai";
 import { deepSeekClientHolder } from "../../cache/workers/antiRaid/deepseek";
 import { AD_DETECT_DEEPSEEK_API_KEY } from "../../infra/config";
 import { logger } from "../../infra/logger";
+import { getAdDetectOpenAiConfig } from "../../config/openai";
 import {
-  DEEPSEEK_API_BASE_URL,
   DEEPSEEK_EMPTY_BODY_MAX_ATTEMPTS,
   DEEPSEEK_REQUEST_MAX_RETRIES,
   DEEPSEEK_REQUEST_TIMEOUT_MS,
@@ -34,7 +34,7 @@ function getDeepSeekClient(): OpenAI {
   }
   deepSeekClientHolder.current ??= new OpenAI({
     apiKey: AD_DETECT_DEEPSEEK_API_KEY,
-    baseURL: DEEPSEEK_API_BASE_URL,
+    baseURL: getAdDetectOpenAiConfig().baseUrl,
     timeout: DEEPSEEK_REQUEST_TIMEOUT_MS,
     maxRetries: DEEPSEEK_REQUEST_MAX_RETRIES,
   });

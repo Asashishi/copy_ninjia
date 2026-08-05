@@ -1,10 +1,9 @@
 import { logger } from "../../../infra/logger";
 import type { Sticker, StickerSet } from "@grammyjs/types";
-import type { GenerateContentResponse } from "@google/genai";
 import { getStickerSet } from "./sets";
 import { pickStickerVisionSource } from "./describe";
 import { describeMediaForStickerCatalog } from "../imageDescription";
-import { requestGeminiTextResult } from "../gemini";
+import { chatAiProvider } from "../../provider";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../../libs/text";
 import { sleep } from "../../../libs/sleep";
 import {
@@ -18,20 +17,18 @@ import {
 import { transientDescriptionCache } from "../../../cache/workers/aiChat/imageDescription";
 import { invalidateStickerMenu } from "../../../cache/workers/aiChat/stickers/menu";
 import {
-  GEMINI_SUMMARY_MODEL,
-  SUMMARY_TEMPERATURE,
 } from "../../../consts/aiChat/memory";
 import {
   STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS,
   STICKER_CATALOG_RETRY_DELAYS_MS,
   STICKER_CATALOG_RETRY_INTERVAL_MS,
+  STICKER_PACK_SUMMARY_ERROR_LABEL,
   STICKER_PACK_SUMMARY_MAX_CHARS,
-  STICKER_PACK_SUMMARY_MAX_TOKENS,
 } from "../../../consts/aiChat/stickers";
 import { STICKER_PACK_SUMMARY_PROMPT } from "../../../consts/aiChat/prompts/media";
 import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../../types/stickers/catalog";
 import type { AiStickerCatalogEvent } from "../../../types/stickers/protocol";
-import type { GeminiTextGenerationResult } from "../../../types/aiChat/gemini";
+import type { AiTextResult } from "../../../types/aiChat/provider";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -56,7 +53,7 @@ function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapsh
  * 生成 + 每次启动的对账：Worker 收到 init 消息后台启动（见
  * ensureStickerCatalogs），对每个包现查一次线上贴纸集合，与持久化目录
  * 双向对比——线上有、目录没有的补（串行逐枚调视觉模型生成，不并发轰
- * Gemini，单次失败退避重试，见 callWithRetry）；目录有、线上已经没有的剪掉（贴纸被移出包/包被整理过，留着只会
+ * 视觉模型，单次失败退避重试，见 callWithRetry）；目录有、线上已经没有的剪掉（贴纸被移出包/包被整理过，留着只会
  * 让 getCatalogEntry 对一枚发不出去的贴纸给出「有效」描述）。查线上失败
  * 时整包跳过、不补也不剪，保留现状等下次启动重试——不能把「拉取失败」
  * 误判成「包被清空了」进而把好端端的目录铲掉。
@@ -77,10 +74,10 @@ function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapsh
  * 重新采样；SDK 已耗尽 HTTP 重试的请求立即停止，避免乘法重试。 */
 async function callWithRetry(
   label: string,
-  call: () => Promise<GeminiTextGenerationResult>
+  call: () => Promise<AiTextResult>
 ): Promise<string | null> {
   for (let attempt: number = 0; ; attempt++) {
-    const result: GeminiTextGenerationResult = await call();
+    const result: AiTextResult = await call();
     if (result.ok) return result.text;
     if (!result.retryable || attempt >= STICKER_CATALOG_RETRY_DELAYS_MS.length) return null;
     const delayMs: number = STICKER_CATALOG_RETRY_DELAYS_MS[attempt]!;
@@ -188,7 +185,7 @@ export function flushDirtyStickerCatalogs(post: (event: AiStickerCatalogEvent) =
 
 /**
  * 后台生成/对账白名单各包的贴纸目录：现查一次线上贴纸集合，双向比对
- * persisted 目录——缺的补（串行逐枚调视觉模型生成，避免并发轰炸 Gemini）、
+ * persisted 目录——缺的补（串行逐枚调视觉模型生成，避免并发轰炸供应商）、
  * 多余的剪（见 generatePackCatalog）。fire-and-forget，调用方（Worker 收到
  * init 消息时）不等待；同一个包已在对账/生成中则跳过，重复调用（如 Worker
  * 崩溃重启后重放 init）天然幂等。
@@ -290,7 +287,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
       // 读到旧描述。
       const description: string | null = await callWithRetry(
         `Sticker catalog description (pack "${pack}", sticker ${sticker.file_unique_id})`,
-        (): Promise<GeminiTextGenerationResult> => describeMediaForStickerCatalog(source.fileId)
+        (): Promise<AiTextResult> => describeMediaForStickerCatalog(source.fileId)
       );
       if (!description) {
         markEntryFailed(pack, sticker.file_unique_id);
@@ -309,7 +306,7 @@ export async function generatePackCatalog(pack: string): Promise<void> {
     if (map.size > 0 && (entriesChanged || !packSummaries.has(pack))) {
       const summary: string | null = await callWithRetry(
         `Sticker pack summary (pack "${pack}")`,
-        (): Promise<GeminiTextGenerationResult> => summarizePack(set.title, [...map.values()].map(formatEntryForSummary))
+        (): Promise<AiTextResult> => summarizePack(set.title, [...map.values()].map(formatEntryForSummary))
       );
       if (summary) {
         packSummaries.set(pack, summary);
@@ -331,26 +328,20 @@ function formatEntryForSummary(entry: StickerCatalogEntry): string {
 }
 
 /**
- * 调 Gemini 把一个包内全部贴纸的画面描述（带情绪 emoji 元数据）压缩成一条
+ * 调当前供应商把一个包内全部贴纸的画面描述（带情绪 emoji 元数据）压缩成一条
  * 整包简介（≤200 字，供两层贴纸工具的第一层挑包用，措辞要求见
  * STICKER_PACK_SUMMARY_PROMPT）。走与冷消息压缩相同的中性总结模型；
  * 产出压成单行并按子句边界截断；结果同时声明业务层是否允许重新采样。
  */
-async function summarizePack(title: string, descriptions: string[]): Promise<GeminiTextGenerationResult> {
-  return requestGeminiTextResult(
-    {
-      model: GEMINI_SUMMARY_MODEL,
-      contents: [{ role: "user", parts: [{ text: `贴纸包「${title}」内每枚贴纸的画面描述：\n${descriptions.join("\n")}` }] }],
-      config: {
-        systemInstruction: STICKER_PACK_SUMMARY_PROMPT,
-        temperature: SUMMARY_TEMPERATURE,
-        maxOutputTokens: STICKER_PACK_SUMMARY_MAX_TOKENS,
-      },
-    },
-    "Gemini sticker pack summary API",
-    (data: GenerateContentResponse): string => {
-      const sanitized: string = sanitizeInline(data.text ?? "");
+async function summarizePack(title: string, descriptions: string[]): Promise<AiTextResult> {
+  return chatAiProvider().generateText({
+    purpose: "stickerPackSummary",
+    systemPrompt: STICKER_PACK_SUMMARY_PROMPT,
+    userContent: `贴纸包「${title}」内每枚贴纸的画面描述：\n${descriptions.join("\n")}`,
+    errorLabel: STICKER_PACK_SUMMARY_ERROR_LABEL,
+    normalize: (text: string): string => {
+      const sanitized: string = sanitizeInline(text);
       return sanitized ? truncateAtClauseBoundary(sanitized, STICKER_PACK_SUMMARY_MAX_CHARS) : "";
-    }
-  );
+    },
+  });
 }

@@ -34,6 +34,7 @@ mock.module("../../packages/config/readiness", () => ({
 mock.module("../../packages/infra/config", () => ({
   SUPER_ADMIN_USER_ID: 100,
   AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
+  AI_CHAT_OPENAI_API_KEY: undefined,
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
 }));
 mock.module("../../packages/infra/telegram", () => ({

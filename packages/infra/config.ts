@@ -33,7 +33,7 @@ export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
 
 /**
  * Google Gemini API 密钥，AI 闲聊 agent 独占：回复生成、图片理解、记忆压缩
- * （packages/workers/aiChatWorker.ts、packages/aiChat/ai/gemini.ts）。与广告检测的
+ * （packages/workers/aiChatWorker.ts、packages/aiChat/gemini/）。与广告检测的
  * AD_DETECT_DEEPSEEK_API_KEY 职责不重叠，两条线各用各的凭据，互不回退。
  *
  * 变量名以所服务的功能（`/ai_chat`）打头而不是以供应商打头：读 `.env` 的人
@@ -47,6 +47,25 @@ export const BOT_TOKEN: string = requireEnv("TELEGRAM_BOT_TOKEN");
  * （packages/aiChat/availability.ts 是唯一判定入口）。
  */
 export const AI_CHAT_GEMINI_API_KEY: string | undefined = optionalEnv("AI_CHAT_GEMINI_API_KEY");
+
+/**
+ * OpenAI API 密钥，AI 闲聊 agent 的降级供应商：两家实现包提供同一份能力
+ * （回复生成、图片理解、记忆压缩、生图），选取见 packages/aiChat/provider.ts。
+ *
+ * 默认仍走 Gemini：只有 AI_CHAT_GEMINI_API_KEY 缺席时才轮到这一把。两把都配
+ * 齐时 OpenAI 那份原样闲置，不做运行时故障切换（理由见 aiChat/provider.ts）。
+ *
+ * 可选，且与 Gemini 那把是「或」的关系——两把都没有才算 AI 闲聊未配置
+ * （packages/aiChat/availability.ts 是唯一判定入口）。
+ *
+ * 与广告检测的 AD_DETECT_DEEPSEEK_API_KEY 职责不重叠：那把也是 OpenAI 兼容
+ * 接口，但服务的是入群守卫线程里的广告判定，两条线各用各的凭据，互不回退。
+ *
+ * env 里只留凭据：端点与模型是「这次部署连哪儿、用哪个」的运维配置，放在
+ * config/openai.json（见 packages/config/openai.ts），两者的备份、权限与轮换
+ * 节奏都不一样。
+ */
+export const AI_CHAT_OPENAI_API_KEY: string | undefined = optionalEnv("AI_CHAT_OPENAI_API_KEY");
 
 /**
  * DeepSeek API 密钥（OpenAI 兼容接口），广告检测独占：入群守卫线程里的判定

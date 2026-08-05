@@ -30,9 +30,10 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `message/`, `triggerPolicy.ts`.
 - **`packages/aiChat/`**
   - **Responsibility**: AI-chat main-thread proxy and model capabilities, including Worker
-    supervision, memory mirror, availability, Gemini, stickers, tools, and media.
+    supervision, memory mirror, availability, the provider implementation packages (`gemini/`, `openai/`) and their selection, stickers, tools, and media.
   - **Representative files**: `workerBridge.ts`, `messageIngress.ts`, `memoryMirror.ts`,
-    `availability.ts`, and `ai/`; `index.ts` is only a thin public entry point.
+    `availability.ts`, `credentials.ts`, `provider.ts`, `gemini/`, `openai/`, and `ai/`;
+    `index.ts` is only a thin public entry point.
 - **`packages/antiRaid/`**
   - **Responsibility**: Anti-Raid main-thread proxy and ad model capability, including Worker
     supervision, durable handoff, update ingress, and blocklist/verification/ad/flood
@@ -69,7 +70,9 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **Responsibility**: model transports and capabilities live under their owning feature so
     thread and lifecycle ownership stays explicit.
-  - **Representative files**: `gemini.ts`, `tools/replyToolset/`, `deepseek.ts`.
+  - **Representative files**: `tools/replyToolset/`, `utils/`, `deepseek.ts`. AI-chat model
+    transport does not live here; it lives in the per-vendor packages
+    `packages/aiChat/{gemini,openai}/`.
 - **`packages/workers/antiRaid/adDetect/`**
   - **Responsibility**: DeepSeek ad-detection pipeline, including the batched queue, per-sender
     bundle shaping, verdicts, and disposal on a hit.
@@ -127,7 +130,7 @@ The first directory level under `packages/cache/` declares which thread owns tha
     (`main/aiChat.ts`, `main/antiRaid/`).
 - **`workers/aiChat/`**
   - **Owner**: AI chat Worker.
-  - **Contents**: rolling memory, reply admission, mood, sticker catalog and sets, Gemini client.
+  - **Contents**: rolling memory, reply admission, mood, sticker catalog and sets, both providers' client singletons.
 - **`workers/antiRaid/`**
   - **Owner**: Anti-Raid Worker.
   - **Contents**: verification/lockdown state machines, flood windows, ad-detection queue,

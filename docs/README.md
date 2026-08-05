@@ -35,7 +35,7 @@
 ## 📑 页面清单与核心内容
 
 1. **[01 环境搭建与首次运行](01-getting-started.md)**
-   - 基础依赖 (Bun 1.3+ / Linux / Bot Token / Gemini API Key)
+   - 基础依赖 (Bun 1.3+ / Linux / Bot Token / AI 供应商 API Key)
    - `.env` 配置文件说明与必填字段
    - Telegram BotFather 配置（Privacy Mode / Admin 权限 / Inline Mode）
    - 首次启动与机器人入群后的 `/init enable` 握手流程
@@ -64,7 +64,7 @@
 6. **[06 常见修改配方](06-modification-guide.md)**
    - 配方 1：新增 Telegram 斜杠命令
    - 配方 2：调整系统硬顶参数或超时时间
-   - 配方 3：扩展 Gemini AI 自定义工具函数
+   - 配方 3：扩展 AI 自定义工具函数
    - 配方 4：修改配置 schema 或持久化数据结构（手动迁移策略）
    - 非目标：不做 i18n，换语言请 fork
 

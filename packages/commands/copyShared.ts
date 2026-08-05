@@ -137,5 +137,29 @@ export function stealAvatarInBackground({
   successText,
   failureText,
 }: StealAvatarInBackgroundParams): void {
-  queueAvatarUpdate({ chatId, target, successText, failureText });
+  queueAvatarUpdate({ chatId, target: { kind: "user", user: target }, successText, failureText });
+}
+
+/** restoreAvatarInBackground 的入参。 */
+export interface RestoreAvatarInBackgroundParams {
+  chatId: number;
+  /** 头像复原成功时发送的文本。 */
+  successText: string;
+  /** 头像复原失败时发送的文本。 */
+  failureText: string;
+}
+
+/**
+ * 在后台把头像复原成机器人自己的默认脸，完成后按结果发送战报。
+ *
+ * 与 stealAvatarInBackground 共用同一个 latest-only 执行槽（见
+ * copy/avatarQueue.ts）：两者抢的是同一份换头像限流资源，且「最后一次指令
+ * 说了算」对两类目标是同一条语义。
+ */
+export function restoreAvatarInBackground({
+  chatId,
+  successText,
+  failureText,
+}: RestoreAvatarInBackgroundParams): void {
+  queueAvatarUpdate({ chatId, target: { kind: "default" }, successText, failureText });
 }

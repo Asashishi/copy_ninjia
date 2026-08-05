@@ -20,7 +20,7 @@ import type {
   ReplyToolset,
 } from "../../types/aiChat/replies";
 import type { StickerSendLockControl } from "../../types/stickers/tools";
-import { callGemini } from "./geminiReply";
+import { generateReply } from "./replyModel";
 import { buildReplyPromptSections } from "./promptContext";
 import type { MediaCommentContext } from "../../types/aiChat/replies";
 import { replyReferenceForBufferedMessage } from "./replyChain";
@@ -190,7 +190,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           },
         };
         const toolset: ReplyToolset = await createReplyToolset(ctx);
-        const finalText: string | null = await callGemini(chatId, promptSections, toolset);
+        const finalText: string | null = await generateReply(chatId, promptSections, toolset);
 
         // 模型没有成功执行任何可见动作、却把正文留在最终响应时，仍走
         // send_message 兜底。若贴纸、图片、反应或文字已经成功落地，尾随正文
@@ -210,7 +210,7 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         }
 
         // 零动作轮点名记录：直接触发的「已读不回」只能靠这条日志观测——
-        // 模型违背「必须回应」指令、callGemini 的各条失败路径、兜底发送
+        // 模型违背「必须回应」指令、generateReply 的各条失败路径、兜底发送
         // 失败都会落进来。被 invalidate 的轮除外（/ai_chat disable 的预期
         // 沉默，不算失踪）。
         if (isActive() && toolset.actionsUsed() === 0) {

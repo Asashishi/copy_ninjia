@@ -1,4 +1,4 @@
-import type { FunctionDeclaration, Tool } from "@google/genai";
+import type { AiToolDefinition } from "../../../../types/aiChat/provider";
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../../consts/aiChat/tools";
 import {
   ACTION_TOOL_NAMES,
@@ -39,22 +39,22 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   const messageState: RoundMessageState = createRoundMessageState();
   let actionsUsed: number = 0;
 
-  const viewDefinition: FunctionDeclaration | null = buildViewStickerPackToolDefinition(menu);
-  const sendStickerDefinition: FunctionDeclaration | null = buildSendStickerToolDefinition(menu);
-  const addReactionDefinition: FunctionDeclaration | null = buildAddReactionToolDefinition();
-  const declarations: FunctionDeclaration[] = [
+  const viewDefinition: AiToolDefinition | null = buildViewStickerPackToolDefinition(menu);
+  const sendStickerDefinition: AiToolDefinition | null = buildSendStickerToolDefinition(menu);
+  const addReactionDefinition: AiToolDefinition | null = buildAddReactionToolDefinition();
+  const declarations: AiToolDefinition[] = [
     buildSendMessageToolDefinition(ctx.roundHasTypo),
     buildGenerateImageToolDefinition(ctx),
     ...(addReactionDefinition ? [addReactionDefinition] : []),
     ...(viewDefinition ? [viewDefinition] : []),
     ...(sendStickerDefinition ? [sendStickerDefinition] : []),
   ];
+  // 只登记本轮现组装的行动工具：静态查询工具由 callTool 兜底分发，不进
+  // 这份名单（见 workers/aiChat/replyModel.ts 的 toolset.has 分支）。
   const names: Set<string> = new Set(
-    declarations.flatMap((declaration: FunctionDeclaration): string[] =>
-      declaration.name === undefined ? [] : [declaration.name]
-    )
+    declarations.map((declaration: AiToolDefinition): string => declaration.name)
   );
-  const tools: Tool[] = [{ googleSearch: {} }, { functionDeclarations: [...TOOL_DECLARATIONS, ...declarations] }];
+  const functions: readonly AiToolDefinition[] = [...TOOL_DECLARATIONS, ...declarations];
 
   const executeSendMessage: (argumentsJson: string) => Promise<string> = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
   const executeAddReaction: (argumentsJson: string) => Promise<string> = createAddReactionExecutor(ctx);
@@ -94,7 +94,10 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   }
 
   return {
-    tools,
+    functions,
+    // 服务端联网检索恒开：额度核销与耗尽后的摘挂由回复循环负责，
+    // 见 workers/aiChat/replyModel.ts 的 MAX_WEB_SEARCH_CALLS_PER_REPLY 分支。
+    webSearch: true,
     has: (name: string): boolean => names.has(name),
     execute: async (name: string, argumentsJson: string): Promise<string> => {
       if (!ctx.isActive()) {

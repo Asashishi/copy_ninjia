@@ -5,8 +5,12 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
  * 全部用动态 import 拿到被 mock 过的版本）。diskIO 模块导入已无副作用，
  * 这里仍替换其进程级单例桥，才能精确断言落盘消息并模拟 Worker 重建。
  */
-const postDiskIOMock = mock((..._args: unknown[]): void => {});
+// 返回值语义与真实 postDiskIO 一致：Worker 收下为 true。promotePendingDraw
+// 判这个返回值，false 时点名记一行（见 commands/luckChallenge/cache.ts）。
+let postDiskIOAccepted: boolean = true;
+const postDiskIOMock = mock((..._args: unknown[]): boolean => postDiskIOAccepted);
 const onDiskIORespawnMock = mock((..._args: unknown[]): void => {});
+const onLuckAppendStalledMock = mock((..._args: unknown[]): void => {});
 const relayLogMessageMock = mock((..._args: unknown[]): void => {});
 const logApiErrorMock = mock((..._args: unknown[]): void => {});
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
@@ -37,6 +41,7 @@ mock.module("../../packages/infra/logger", () => ({
 mock.module("../../packages/infra/diskIO", () => ({
   postDiskIO: postDiskIOMock,
   onDiskIORespawn: onDiskIORespawnMock,
+  onLuckAppendStalled: onLuckAppendStalledMock,
   relayLogMessage: relayLogMessageMock,
   ensureLuckReceiptSecret: ensureLuckReceiptSecretMock,
 }));
@@ -107,6 +112,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     cache.luckRuntimeState.daySwitchedInProcess = false;
     luckChallenge.restoreLuckState(TEST_SECRET, null);
     postDiskIOMock.mockClear();
+    postDiskIOAccepted = true;
     logApiErrorMock.mockClear();
     loggerErrorMock.mockClear();
     ensureLuckReceiptSecretMock.mockClear();
@@ -247,6 +253,54 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(postDiskIOMock).toHaveBeenCalledTimes(1);
     expect(postDiskIOMock.mock.calls[0]![0]).toMatchObject({ type: "luckDraw", key: "222" });
     expect(cache.dailyLuckCache.has("222")).toBe(true);
+    expect(loggerErrorMock).not.toHaveBeenCalled();
+  });
+
+  test("Worker 收不下落盘消息时点名记一行：这条抽签只在内存里", async () => {
+    // postDiskIO 在 Worker 已终止、或恢复握手期积压撑到硬顶时返回 false，
+    // 而它自己不打印任何东西。不判返回值就等于：内存里有、磁盘上没有、
+    // 日志里也没有——本仓其余调用点都判了这一支，只有运势这条漏了。
+    postDiskIOAccepted = false;
+    const ctx = makeInlineCtx(444, "");
+    await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
+    await confirmResult(ctx.results[0]);
+
+    expect(postDiskIOMock).toHaveBeenCalledTimes(1);
+    // 条目照样留在内存里：Worker 真的重生时 onDiskIORespawn 的全量重放能补上。
+    expect(cache.dailyLuckCache.has("444")).toBe(true);
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("Daily luck draw for key 444")
+    );
+  });
+
+  test("落盘线程连续追加失败的诊断被转成一行 logger.error（Worker 侧只有 console.error）", () => {
+    // Worker 的 console 在把 stdout/stderr 接到 /dev/null 的部署上等于没有，
+    // 这条监听是「条目进了 dailyLuckCache 却写不进 memory/luck/」唯一的可观测出口。
+    expect(onLuckAppendStalledMock).toHaveBeenCalledTimes(1);
+    const notify = onLuckAppendStalledMock.mock.calls[0]![0] as (reply: {
+      type: "luckAppendStalled";
+      day: string;
+      pendingEntries: number;
+      consecutiveFailures: number;
+      error: string;
+    }) => void;
+
+    loggerErrorMock.mockClear();
+    notify({
+      type: "luckAppendStalled",
+      day: "2030-01-01",
+      pendingEntries: 7,
+      consecutiveFailures: 3,
+      error: "EROFS: read-only file system",
+    });
+
+    expect(loggerErrorMock).toHaveBeenCalledTimes(1);
+    const line: string = loggerErrorMock.mock.calls[0]![0] as string;
+    // 运维要能从这一行直接判读：哪天、丢了几条、为什么写不进去。
+    expect(line).toContain("2030-01-01");
+    expect(line).toContain("3 times in a row");
+    expect(line).toContain("7 confirmed draw(s)");
+    expect(line).toContain("EROFS: read-only file system");
   });
 
   test("带文本（所求事项）：选中结果 -> 用带冒号的 key 落盘", async () => {

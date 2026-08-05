@@ -37,6 +37,10 @@ mock.module("../../../packages/infra/logger", () => ({
 mock.module("../../../packages/infra/config", () => ({
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
   SUPER_ADMIN_USER_ID: 1,
+  // 广告候选要问一次 adDetectConfigReadiness()，而那份判定现在按段探
+  // config/openai.json，需要经 aiChat/credentials.ts 判断有没有 OpenAI 凭据。
+  AI_CHAT_GEMINI_API_KEY: undefined,
+  AI_CHAT_OPENAI_API_KEY: undefined,
 }));
 // 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。

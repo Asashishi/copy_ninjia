@@ -33,7 +33,12 @@ import {
   hydrateBlocklistRemovalOutbox,
 } from "./diskIO/blocklistRemovalOutbox";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
-import { flushLuckAppends, handleLuckDrawMessage, hydrateLuckDay } from "./diskIO/luckFiles";
+import {
+  configureLuckAppendStalledReply,
+  flushLuckAppends,
+  handleLuckDrawMessage,
+  hydrateLuckDay,
+} from "./diskIO/luckFiles";
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import {
   flushJoinLogDomain,
@@ -73,6 +78,7 @@ import type {
   DiskIOMessage,
   JoinLogReadReply,
   LoadedReply,
+  LuckAppendStalledReply,
   LuckSecretReply,
   VerificationPersistedReply,
 } from "../types/diskIO";
@@ -325,6 +331,9 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
 export function startDiskIOWorker(): void {
   configureAiMemoryDeletePersistedReply((reply: AiMemoryDeletedPersistedReply): void => self.postMessage(reply));
   configureAiMemoryPersistedReply((reply: AiMemoryPersistedReply): void => self.postMessage(reply));
+  // 运势追加持续失败时的兜底诊断出口：本线程的 console 可能被部署接到
+  // /dev/null，这条会由主线程的运势 owner 记进统一 logs/（见 luckFiles.ts）。
+  configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => self.postMessage(reply));
   initLogFiles();
   self.onmessage = (event: MessageEvent<DiskIOMessage>): void => {
     handleDiskIOWorkerMessage(event.data);

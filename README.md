@@ -28,14 +28,15 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
+  <a href="https://platform.openai.com/docs/"><img src="https://img.shields.io/badge/AI-OpenAI-412991?style=flat-square&logo=openai&logoColor=white" alt="OpenAI"></a>
   <a href="https://api-docs.deepseek.com/"><img src="https://img.shields.io/badge/AI-DeepSeek-4d6bfe?style=flat-square&logo=deepseek&logoColor=white" alt="DeepSeek"></a>
 </p>
 
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1679_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.63%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1889_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.84%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -70,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage：1679 项测试全部通过 / 172 个测试文件 / 30,519 次 expect() 调用 / 函数覆盖率 95.56% / 行覆盖率 96.63%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：1889 项测试全部通过 / 189 个测试文件 / 31,105 次 expect() 调用 / 函数覆盖率 95.90% / 行覆盖率 96.84%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -90,7 +91,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI 群聊</b></p>
-  <p>基于 Gemini 人设自主决策：发言、贴纸、表情反应、生图都是工具，由模型自行决定这一轮做几件事、按什么顺序做。</p>
+  <p>基于人设自主决策：发言、贴纸、表情反应、生图都是工具，由模型自行决定这一轮做几件事、按什么顺序做。模型层是可替换的 provider，默认 Gemini，缺 key 时降级 OpenAI。</p>
 </td>
 </tr>
 <tr>
@@ -150,7 +151,8 @@
 | `/nya_copy` | 在纯文本末尾追加「喵~」 |
 | `/ja_copy` | 使用 Google Cloud Translate 翻译为日语后复读 |
 | `/steal_icon` | 只复制头像 |
-| `/stop_copy` | 停止全局复读状态 |
+| `/reset_icon` | 把头像换回机器人自己的默认那张 |
+| `/stop_copy` | 停止全局复读状态，并顺带复原头像 |
 
 目标可通过「回复 TA 的消息」或 `@username` 指定：
 
@@ -165,8 +167,9 @@
 <table width="100%">
 <tr><th width="26%" align="left">命令</th><th width="19%" align="center">权限</th><th width="55%" align="left">说明</th></tr>
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">群成员</td><td>启动相应复读模式</td></tr>
-<tr><td><code>/stop_copy</code></td><td align="center">群成员</td><td>停止当前全局复读</td></tr>
+<tr><td><code>/stop_copy</code></td><td align="center">群成员</td><td>停止当前全局复读，并顺带复原头像</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">群成员</td><td>只偷头像</td></tr>
+<tr><td><code>/reset_icon</code></td><td align="center">群成员</td><td>把头像换回默认那张</td></tr>
 <tr><td><code>/&lt;1~2 个中文字&gt;</code></td><td align="center">群成员</td><td>动作命令，如 <code>/咬</code>、<code>/揪住</code> 回复「发起人 咬了 目标！」；成功结果长期保留</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">群成员</td><td>暂停随机插话、随机复读等主动行为，默认 3 分钟</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
@@ -184,6 +187,8 @@
 <tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">白名单身份</td><td>查询发起用户/频道自己的完整权限，或以 JSON 列出权限说明；<code>help</code> 长期保留，<code>query</code> 30 秒后删除</td></tr>
 <tr><td><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>修改已有白名单用户/频道的一项权限；<code>all</code> 可全部打开</td></tr>
 <tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>新增或删除白名单用户/频道；支持回复、<code>@username</code>、用户 id 与频道 id</td></tr>
+<tr><td><code>/image_model gpt|gemini</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>切换生图用哪家供应商；只作用于生图，两把 AI key 都在时才允许切换</td></tr>
+<tr><td><code>/chat_model gpt|gemini</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>切换回复、总结与看图用哪家供应商；不影响生图，两把 AI key 都在时才允许切换</td></tr>
 <tr><td><code>/send &lt;群组 ID&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>在机器人私聊中开始或结束向目标群的中转</td></tr>
 </table>
 
@@ -217,7 +222,7 @@
 - Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）
 - Bun 1.3+
 - Telegram Bot Token
-- Gemini API Key（仅 `/ai_chat` AI 闲聊需要）
+- AI 闲聊供应商密钥（仅 `/ai_chat` 需要，Gemini 或 OpenAI 任选其一）
 - DeepSeek API Key（仅 `/ad_detect` 广告检测需要）
 - Google Cloud 服务账号 JSON（仅 `/ja_copy` 需要）
 
@@ -232,7 +237,7 @@
 <tr><td>全部群开启 AI 且图片、贴纸较多</td><td>4 vCPU / 8 GB RAM</td><td>给媒体下载、Base64 编码和图片转码预留峰值空间</td></tr>
 </table>
 
-单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自单个 Telegram Bot API、Gemini 与 DeepSeek 配额和实际消息/媒体速率，而不是群成员总数。
+单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自单个 Telegram Bot API、AI 供应商与 DeepSeek 配额和实际消息/媒体速率，而不是群成员总数。
 
 </details>
 
@@ -254,7 +259,8 @@ cp -r config_example config
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather 发放的 Bot Token |
 | `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员的单个十进制用户 ID |
-| `AI_CHAT_GEMINI_API_KEY` | — | AI 闲聊 agent 专用；留空则 AI Worker 不启动，`/ai_chat enable`、`/query_mood` 与 `/switch_mood` 被拒 |
+| `AI_CHAT_GEMINI_API_KEY` | — | AI 闲聊 agent 的默认供应商 |
+| `AI_CHAT_OPENAI_API_KEY` | — | AI 闲聊 agent 的降级供应商，仅在 Gemini 那把留空时生效；**两把都留空**才会让 AI Worker 不启动，`/ai_chat enable`、`/query_mood` 与 `/switch_mood` 被拒 |
 | `AD_DETECT_DEEPSEEK_API_KEY` | — | 广告检测专用；留空则 `/ad_detect enable` 被拒 |
 | `COPY_NINJIA_DATA_ROOT` | — | 运行时数据根目录；留空时使用项目根目录 |
 
@@ -288,7 +294,7 @@ bun run start     # 启动长轮询
 /ai_chat enable
 ```
 
-> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 641 个源码行含中文字符串或模板字面量，分布在 64 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/06-modification-guide.md)。
+> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 665 个源码行含中文字符串或模板字面量，分布在 66 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/06-modification-guide.md)。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 

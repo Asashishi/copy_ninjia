@@ -31,14 +31,15 @@ let capturedContext: ReplyToolContext | null = null;
 const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyToolset> => {
   capturedContext = ctx;
   return {
-    tools: [],
+    functions: [],
+    webSearch: true,
     has: (): boolean => true,
     execute,
     actionsUsed: (): number => actionsUsed,
     isActive: ctx.isActive,
   };
 });
-const callGemini = mock(async (..._args: unknown[]): Promise<string | null> => "最终正文");
+const generateReply = mock(async (..._args: unknown[]): Promise<string | null> => "最终正文");
 const defaultPromptSections = (): ReplyPromptSections => ({
   referenceMemory: "参考记忆",
   currentConversation: "当前会话",
@@ -52,7 +53,7 @@ const logError = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/aiChat/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat }));
 mock.module("../../../packages/aiChat/ai/stickers/sendLock", () => ({ createStickerSendLock }));
 mock.module("../../../packages/aiChat/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
-mock.module("../../../packages/workers/aiChat/geminiReply", () => ({ callGemini }));
+mock.module("../../../packages/workers/aiChat/replyModel", () => ({ generateReply }));
 mock.module("../../../packages/workers/aiChat/promptContext", () => ({ buildReplyPromptSections }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
 mock.module("../../../packages/infra/logger", () => ({
@@ -108,8 +109,8 @@ beforeEach(() => {
   createReplyToolset.mockClear();
   execute.mockClear();
   execute.mockImplementation(async (): Promise<string> => JSON.stringify({ success: true }));
-  callGemini.mockClear();
-  callGemini.mockImplementation(async (): Promise<string | null> => "最终正文");
+  generateReply.mockClear();
+  generateReply.mockImplementation(async (): Promise<string | null> => "最终正文");
   buildReplyPromptSections.mockClear();
   recordChatMessage.mockClear();
   logError.mockClear();
@@ -154,7 +155,7 @@ describe("AI 单轮回复生命周期", () => {
 
   test("工具发送回调回传消息 ID，并只在代际仍有效时登记滚动记忆", async () => {
     actionsUsed = 2;
-    callGemini.mockImplementationOnce(async (): Promise<null> => {
+    generateReply.mockImplementationOnce(async (): Promise<null> => {
       capturedContext!.onMessageSent("文字消息", 101);
       capturedContext!.onStickerSent("[贴纸：挥手]", 102);
       capturedContext!.onImageSent("[生成图片：夜空]", 103);
@@ -171,7 +172,7 @@ describe("AI 单轮回复生命周期", () => {
 
   test("实际回复目标已滑出热区时，用轮次捕获的触发快照保留自录回复边", async () => {
     actionsUsed = 1;
-    callGemini.mockImplementationOnce(async (): Promise<null> => {
+    generateReply.mockImplementationOnce(async (): Promise<null> => {
       capturedContext!.onMessageSent("排队后才发出的回复", 104, 555);
       return null;
     });
@@ -211,7 +212,7 @@ describe("AI 单轮回复生命周期", () => {
 
   test("Telegram 未实际挂回复时，即使有触发快照也不建立自录回复边", async () => {
     actionsUsed = 1;
-    callGemini.mockImplementationOnce(async (): Promise<null> => {
+    generateReply.mockImplementationOnce(async (): Promise<null> => {
       capturedContext!.onMessageSent("退化成普通消息", 105, undefined);
       return null;
     });
@@ -336,7 +337,7 @@ describe("AI 单轮回复生命周期", () => {
   });
 
   test("生成异常也会停止心跳、释放锁并完成轮次", async () => {
-    callGemini.mockRejectedValueOnce(new Error("generation failed"));
+    generateReply.mockRejectedValueOnce(new Error("generation failed"));
 
     await runRound();
     await Promise.resolve();

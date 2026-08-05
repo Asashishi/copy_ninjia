@@ -11,6 +11,8 @@ import {
   handleCjkActionUsageCommand,
   handleCopyCommand,
   handleFloodControlCommand,
+  handleImageModelCommand,
+  handleChatModelCommand,
   handleInitCommand,
   handleJaCopyCommand,
   handleLuckChallengeInlineQuery,
@@ -20,6 +22,7 @@ import {
   handleQueryMoodCommand,
   handleQuietCommand,
   handleSendCommand,
+  handleResetIconCommand,
   handleStealIconCommand,
   handleStopCommand,
   handleSwitchMoodCommand,
@@ -109,6 +112,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("nya_copy", (ctx: CommandContext<Context>): Promise<void> => handleCopyCommand(ctx, "nya"));
   bot.command("ja_copy", (ctx: CommandContext<Context>): Promise<void> => handleJaCopyCommand(ctx));
   bot.command("steal_icon", (ctx: CommandContext<Context>): Promise<void> => handleStealIconCommand(ctx));
+  bot.command("reset_icon", (ctx: CommandContext<Context>): Promise<void> => handleResetIconCommand(ctx));
   bot.command("stop_copy", (ctx: CommandContext<Context>): Promise<void> => handleStopCommand(ctx));
   bot.command("block", (ctx: CommandContext<Context>): Promise<void> => handleBlockCommand(ctx));
   bot.command("batch_kick", (ctx: CommandContext<Context>): Promise<void> => handleBatchKickCommand(ctx));
@@ -119,6 +123,8 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("query_mood", (ctx: CommandContext<Context>): Promise<void> => handleQueryMoodCommand(ctx));
   bot.command("switch_mood", (ctx: CommandContext<Context>): Promise<void> => handleSwitchMoodCommand(ctx));
   bot.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
+  bot.command("image_model", (ctx: CommandContext<Context>): Promise<void> => handleImageModelCommand(ctx));
+  bot.command("chat_model", (ctx: CommandContext<Context>): Promise<void> => handleChatModelCommand(ctx));
   bot.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx: CommandContext<Context>): Promise<void> => handleUnquietCommand(ctx));
   bot.command("mute", (ctx: CommandContext<Context>): Promise<void> => handleMuteCommand(ctx));

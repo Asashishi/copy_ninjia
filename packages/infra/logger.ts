@@ -35,6 +35,7 @@ const isMainThread: boolean = Bun.isMainThread;
 const SECRET_ENV_NAMES: readonly string[] = [
   "TELEGRAM_BOT_TOKEN",
   "AI_CHAT_GEMINI_API_KEY",
+  "AI_CHAT_OPENAI_API_KEY",
   "AD_DETECT_DEEPSEEK_API_KEY",
 ];
 

@@ -50,6 +50,7 @@ import type {
   LoadedReply,
   LogEnvelope,
   LogMessage,
+  LuckAppendStalledReply,
   VerificationPersistedReply,
 } from "../types/diskIO";
 import type {
@@ -156,6 +157,17 @@ export function onAiMemoryDeletedPersisted(callback: (reply: AiMemoryDeletedPers
 /** 注册 purge 后首份新 AI 记忆真正 durable 的确认回调。 */
 export function onAiMemoryPersisted(callback: (reply: AiMemoryPersistedReply) => void): void {
   diskIORuntime.aiMemoryPersistedListeners.push(callback);
+}
+
+/**
+ * 注册「当日运势追加已连续失败到阈值」的诊断回调（运势 owner 唯一订阅方）。
+ *
+ * 与本模块自身错误只走 console.error 不冲突：报的不是本宿主的传输故障，而是
+ * Worker 报上来的领域持续丢数据，理由与递归边界见 types/diskIO.ts 的
+ * LuckAppendStalledReply。
+ */
+export function onLuckAppendStalled(callback: (reply: LuckAppendStalledReply) => void): void {
+  diskIORuntime.luckAppendStalledListeners.push(callback);
 }
 
 /** 把其它 Worker 线程转发来的 error 日志转投落盘线程（logger.ts 的转发模式，仅主线程调用）。 */

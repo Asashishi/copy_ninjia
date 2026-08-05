@@ -26,7 +26,8 @@ import {
 } from "../consts/lifecycle";
 import { MOOD_REQUEST_TIMEOUT_MS } from "../consts/aiChat/mood";
 import type { FlushResult } from "../types/lifecycle";
-import { getAllChatStates, getChatState } from "../infra/storage/stateStore";
+import { getAllChatStates, getChatProviderOverride, getChatState, getImageProviderOverride } from "../infra/storage/stateStore";
+import type { AiProviderName } from "../types/aiChat/provider";
 import type {
   AiBotInfo,
   AiChatWorkerEvent,
@@ -60,8 +61,8 @@ function rejectAllAiChatInvalidateWaiters(reason: string): void {
 
 /**
  * AI 闲聊入口（主线程侧代理）。真正的回复流水线——滚动对话缓存、图片/
- * 贴纸/GIF 占位与异步描述、限频、拼装上下文、调 Gemini（含 function
- * calling 往返与内置 googleSearch）、工具化的发言/消息反应/两层应景贴纸
+ * 贴纸/GIF 占位与异步描述、限频、拼装上下文、调模型（含 function
+ * calling 往返与供应商内置的服务端联网检索）、工具化的发言/消息反应/两层应景贴纸
  * （见 packages/aiChat/ai/tools/replyToolset/）、白名单贴纸目录与整包简介生成——全部在独立
  * 的 Bun Worker（packages/workers/aiChatWorker.ts）里
  * 执行；主线程只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
@@ -163,6 +164,15 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     // 重启发生在 initAiChat 调用之前的话 lastInitState.current 仍是 null，
     // 没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
     if (lastInitState.current && !postToNext(lastInitState.current)) return;
+    // 生图供应商覆盖同样要重放：新 Worker 的镜像是空的，而空的含义是「跟随默认
+    // 供应商」——不补发就等于超管切过的那一下被静默回滚，而群里看不出区别
+    // （见 cache/workers/aiChat/imageProvider.ts）。没设过覆盖时无须推送，空镜像
+    // 本身就是正确结论。
+    const imageProvider: AiProviderName | undefined = getImageProviderOverride();
+    if (imageProvider !== undefined && !postToNext({ type: "imageProvider", provider: imageProvider })) return;
+    // 闲聊侧覆盖同理，两份镜像各推各的（见 cache/workers/aiChat/chatProvider.ts）。
+    const chatProvider: AiProviderName | undefined = getChatProviderOverride();
+    if (chatProvider !== undefined && !postToNext({ type: "chatProvider", provider: chatProvider })) return;
     // 记忆镜像同样要重放：新 Worker 内存全空，凭上一实例上报过的最新快照
     // 补齐（见模块头注）。
     if (latestAiMemories.size > 0) {
@@ -216,7 +226,7 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
  * 顺带记一份 lastInitState：Worker 崩溃重启后要重放这条消息，新 Worker 才能
  * 重新认出自己。
  *
- * 缺 Gemini 凭据时整条线不启动：连线程都不建，lastInitState 保持 null，停机
+ * 两把供应商凭据都缺时整条线不启动：连线程都不建，lastInitState 保持 null，停机
  * 路径上的 flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker
  * 也是 no-op（见 libs/supervisedWorker.ts），生命周期那边不必分岔。判定放在
  * 这里而不是 app/lifecycle.ts：那边只认注入进来的 dependencies，把「这个功能
@@ -224,7 +234,7 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
  */
 export function initAiChat(botInfo: AiBotInfo): void {
   if (!isAiChatConfigured()) {
-    logger.log("AI_CHAT_GEMINI_API_KEY is not configured; the AI chat worker stays down and /ai_chat enable is refused.");
+    logger.log("No AI chat provider credential is configured; the AI chat worker stays down and /ai_chat enable is refused.");
     return;
   }
   initAiChatWorker();
@@ -235,6 +245,34 @@ export function initAiChat(botInfo: AiBotInfo): void {
   postAiChatOrThrow(message);
   lastInitState.current = message;
   aiChatWorkerState.available = true;
+  // 首个 Worker 拿不到 onRespawn 的那次重放，恢复出来的覆盖值在这里补推一次。
+  // 必须在 loadState 之后调用（见 app/lifecycle.ts 的顺序）。
+  const imageProvider: AiProviderName | undefined = getImageProviderOverride();
+  if (imageProvider !== undefined) postAiChatOrThrow({ type: "imageProvider", provider: imageProvider });
+  const chatProvider: AiProviderName | undefined = getChatProviderOverride();
+  if (chatProvider !== undefined) postAiChatOrThrow({ type: "chatProvider", provider: chatProvider });
+}
+
+/**
+ * 把 `/image_model` 刚写下的覆盖值推给 AI Worker。
+ *
+ * 落盘已经在调用方完成，因此这里的失败**不上抛**：放它逃出去会让这条 update
+ * 判失败、最终 offset 被扣住，Telegram 重投同一条命令——而 Worker 仍然不可用，
+ * 重投同样失败（口径同 commands/adDetect.ts 的运行时清理）。Worker 只是重生中
+ * 的话，onRespawn 的重放会把当前值补上；已放弃重启的话整条 AI 闲聊本来就停了。
+ */
+export function publishImageProvider(provider: AiProviderName): void {
+  if (post({ type: "imageProvider", provider })) return;
+  logger.error(`Failed to publish the image provider override "${provider}" to the AI Worker; it is unavailable.`);
+}
+
+/**
+ * 把 `/chat_model` 刚写下的覆盖值推给 AI Worker。失败不上抛的理由与
+ * publishImageProvider 完全一致，见上。
+ */
+export function publishChatProvider(provider: AiProviderName): void {
+  if (post({ type: "chatProvider", provider })) return;
+  logger.error(`Failed to publish the chat provider override "${provider}" to the AI Worker; it is unavailable.`);
 }
 
 /**

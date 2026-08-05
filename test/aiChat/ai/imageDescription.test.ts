@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { GeminiTextGenerationResult } from "../../../packages/types/aiChat/gemini";
+import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 
 const getUrl = mock((): string => "https://download.invalid/photos/file.jpg");
 const getFile = mock(async (..._args: unknown[]) => ({ file_path: "photos/file.jpg", getUrl }));
-const requestGeminiTextResult = mock(async (..._args: unknown[]): Promise<GeminiTextGenerationResult> => ({
+const describeVision = mock(async (..._args: unknown[]): Promise<AiTextResult> => ({
   ok: true,
   text: "一只挥手的猫",
 }));
@@ -14,7 +14,9 @@ const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/infra/telegram", () => ({
   bot: { api: { getFile } },
 }));
-mock.module("../../../packages/aiChat/ai/gemini", () => ({ requestGeminiTextResult }));
+mock.module("../../../packages/aiChat/provider", () => ({
+  chatAiProvider: () => ({ name: "test", describeVision }),
+}));
 mock.module("../../../packages/libs/image", () => ({ prepareVisionImage }));
 mock.module("../../../packages/libs/boundedResponse", () => ({ readBoundedResponseBytes }));
 mock.module("../../../packages/infra/logger", () => ({
@@ -37,7 +39,7 @@ beforeEach(() => {
   for (const mocked of [
     getFile,
     getUrl,
-    requestGeminiTextResult,
+    describeVision,
     prepareVisionImage,
     readBoundedResponseBytes,
     loggerError,
@@ -45,7 +47,7 @@ beforeEach(() => {
   ]) mocked.mockClear();
   getFile.mockImplementation(async () => ({ file_path: "photos/file.jpg", getUrl }));
   getUrl.mockImplementation((): string => "https://download.invalid/photos/file.jpg");
-  requestGeminiTextResult.mockImplementation(async (): Promise<GeminiTextGenerationResult> => ({
+  describeVision.mockImplementation(async (): Promise<AiTextResult> => ({
     ok: true,
     text: "一只挥手的猫",
   }));
@@ -60,7 +62,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-describe("Telegram 媒体下载与 Gemini 描述适配层", () => {
+describe("Telegram 媒体下载与视觉描述适配层", () => {
   test("成功描述写入按 file_unique_id 合并的 Promise 缓存", async () => {
     const first: Promise<string | null> = describeMedia("sticker", "file-a", "unique-a");
     const second: Promise<string | null> = describeMedia("sticker", "file-b", "unique-a");
@@ -72,15 +74,15 @@ describe("Telegram 媒体下载与 Gemini 描述适配层", () => {
       redirect: "error",
       signal: expect.any(AbortSignal),
     });
-    expect(requestGeminiTextResult).toHaveBeenCalledTimes(1);
-    const request = requestGeminiTextResult.mock.calls[0]![0] as { contents: { parts: Record<string, unknown>[] }[] };
-    expect(request.contents[0]?.parts[0]).toHaveProperty("inlineData");
-    expect(String(request.contents[0]?.parts[1]?.text)).toContain("贴纸");
+    expect(describeVision).toHaveBeenCalledTimes(1);
+    const request = describeVision.mock.calls[0]![0] as { prompt: string; image: { mime: string } };
+    expect(request.image.mime).toBe("image/png");
+    expect(request.prompt).toContain("贴纸");
     expect(transientDescriptionCache.has("unique-a")).toBe(true);
   });
 
   test("失败结果不负缓存，同一媒体下次重发会重新尝试", async () => {
-    requestGeminiTextResult.mockResolvedValueOnce({ ok: false, retryable: false });
+    describeVision.mockResolvedValueOnce({ ok: false, retryable: false });
     await expect(describeMedia("photo", "file", "retryable")).resolves.toBeNull();
     expect(transientDescriptionCache.has("retryable")).toBe(false);
 
@@ -103,18 +105,18 @@ describe("Telegram 媒体下载与 Gemini 描述适配层", () => {
     await expect(describeMedia("photo", "large", "u3")).resolves.toBeNull();
 
     expect(prepareVisionImage).not.toHaveBeenCalled();
-    expect(requestGeminiTextResult).not.toHaveBeenCalled();
+    expect(describeVision).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledTimes(3);
   });
 
-  test("Telegram 下载重定向失败时不读取响应、不转码也不请求 Gemini", async () => {
+  test("Telegram 下载重定向失败时不读取响应、不转码也不请求视觉模型", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("fetch() encountered a redirect"));
 
     await expect(describeMedia("photo", "redirect", "redirect-u")).resolves.toBeNull();
 
     expect(readBoundedResponseBytes).not.toHaveBeenCalled();
     expect(prepareVisionImage).not.toHaveBeenCalled();
-    expect(requestGeminiTextResult).not.toHaveBeenCalled();
+    expect(describeVision).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith("Error loading chat media (kind=photo):", expect.any(TypeError));
   });
 
@@ -128,7 +130,7 @@ describe("Telegram 媒体下载与 Gemini 描述适配层", () => {
     });
     await expect(describeMedia("photo", "expanded", "u5")).resolves.toBeNull();
 
-    requestGeminiTextResult.mockResolvedValueOnce({ ok: false, retryable: true });
+    describeVision.mockResolvedValueOnce({ ok: false, retryable: true });
     await expect(describeMedia("photo", "blank", "u6")).resolves.toBeNull();
     expect(loggerError).toHaveBeenCalledTimes(2);
   });

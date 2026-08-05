@@ -4,6 +4,7 @@
  */
 export { handleCjkActionCommand, handleCjkActionUsageCommand } from "./cjkAction";
 export { handleCopyCommand, handleStopCommand } from "./copy";
+export { handleResetIconCommand } from "./resetIcon";
 export { handleStealIconCommand } from "./stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./quiet";
 export { handleMuteCommand, handleUnmuteCommand } from "./mute";
@@ -16,6 +17,8 @@ export { handleFloodControlCommand } from "./floodControl";
 export { handleQueryMoodCommand, handleSwitchMoodCommand } from "./mood";
 export { handleJaCopyCommand } from "./jaCopy";
 export { handleInitCommand } from "./init";
+export { handleImageModelCommand } from "./imageModel";
+export { handleChatModelCommand } from "./chatModel";
 export { handleSendCommand } from "./send";
 export { handlePermissionCommand } from "./permission";
 export { handleWhiteCommand } from "./white";

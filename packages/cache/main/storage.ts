@@ -1,5 +1,5 @@
 import type { StateStore } from "../../infra/storage/stateStore";
-import type { ChatState, GlobalCopyState } from "../../types/chatState";
+import type { ChatState, GlobalCopyState, GlobalModelState } from "../../types/chatState";
 
 /** state 权威存储（packages/infra/storage/stateStore.ts）的内存状态。 */
 
@@ -20,3 +20,19 @@ export const chatStates: Map<number, ChatState> = new Map();
  * state 主/LKG 副本恢复，容量固定为一个对象。
  */
 export const globalCopyState: GlobalCopyState = { copiedUser: null };
+
+/**
+ * `state.global.model` 的主线程权威值：生图与闲聊两项各自选定的供应商。
+ *
+ * 启动恢复时从 state 主/LKG 副本填充，只由 commands/imageModel.ts 与
+ * commands/chatModel.ts 写入；容量固定为两个可选标量，进程重建后由 loadState
+ * 重新填充。与 globalCopyState 一样是一个直接可变的块，不用 holder 包一层——
+ * 它整体不会被替换，只逐字段改。两个字段在创建时就一次写齐（哪怕都是
+ * undefined），此后只赋值不增删键：它是每次 currentStateSnapshot 都要读的长期
+ * 单例，shape 不该在 loadState 之后再变一次。
+ *
+ * 字段缺省 = 从没设过，该项跟随 aiChat/provider.ts 的默认选取；它不是「上次是
+ * 什么」的缓存。AI 闲聊 Worker 侧的两份只读镜像见
+ * cache/workers/aiChat/imageProvider.ts 与 chatProvider.ts。
+ */
+export const globalModelState: GlobalModelState = { image: undefined, chat: undefined };

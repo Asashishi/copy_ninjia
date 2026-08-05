@@ -1,4 +1,17 @@
-import { MAX_GOOGLE_SEARCH_CALLS_PER_REPLY } from "../tools";
+import { MAX_WEB_SEARCH_CALLS_PER_REPLY } from "../tools";
+
+/**
+ * 提示词里对服务端联网检索工具的统一称呼。
+ *
+ * 两家供应商挂的真名不同（Gemini 的 `googleSearch` / OpenAI 的 hosted
+ * `web_search`），提示词写死任一家的名字，另一家跑起来就是在告诉模型「去调用
+ * 一个它工具清单里根本不存在的工具」——模型可能据此认定自己没有检索能力而
+ * 放弃查证。这里只给中立称呼，模型按本轮实际挂载的那个工具执行。
+ *
+ * 所属模块：consts/aiChat/prompts/（search.ts 三段文案与 tools.ts 的动作工具
+ * 说明共用同一份称呼，避免两处各写各的）。
+ */
+export const WEB_SEARCH_TOOL_LABEL: string = "联网检索工具";
 
 /** 拿到搜索结果之后怎么用：三段联网查证文案共用同一套纪律，避免各写各的
  *  漂移。只讲「结果与既有认知冲突时谁说了算」，不讲「查不到怎么办」——后者
@@ -25,11 +38,11 @@ const SEARCH_CONCEALMENT_RULE: string =
  */
 export function buildWebSearchInstruction(remainingCalls: number): string {
   return (
-    "googleSearch 已作为本轮可调用工具真实注册，搜索由 Google 服务端执行。" +
+    `${WEB_SEARCH_TOOL_LABEL}已作为本轮可调用工具真实注册，检索由供应商服务端执行。` +
     "【动手前的强制自查】在本轮第一个动作工具（send_message / send_sticker / add_reaction / generate_image）之前，先过一遍：" +
     "我接下来要说的话里，有没有任何具体的数字、日期、价格、比分、名次、版本号、人物现任职位、事件进展或发布状态，" +
-    "或任何我不能百分之百确定的客观陈述？只要命中一条，就必须先调用 googleSearch 并拿到结果，再开始任何回复、反应、贴纸或其它行动。" +
-    "【搜索不占动作预算】googleSearch 不是群友看得见的动作，不计入本轮动作数、不占用动作上限、也不会让你显得话多，" +
+    `或任何我不能百分之百确定的客观陈述？只要命中一条，就必须先调用${WEB_SEARCH_TOOL_LABEL}并拿到结果，再开始任何回复、反应、贴纸或其它行动。` +
+    `【搜索不占动作预算】${WEB_SEARCH_TOOL_LABEL}不是群友看得见的动作，不计入本轮动作数、不占用动作上限、也不会让你显得话多，` +
     "整个过程对群友完全不可见；绝不要为了省动作、图快或怕超出动作上限而跳过查证。" +
     "是否搜索按内容类别判定，不做逐轮权衡。【必须先搜索再行动】的类别：新闻与事件进展、价格/榜单、比分战况、人物现任职位、版本号与发布状态、规则或公告的变更、其他时效性或你没把握的客观事实，以及用户明确要求查证的内容。" +
     "【不需要搜索】的类别：主观评价与纯情绪反应、群内老梗和称呼、纯闲聊，以及只依赖给定聊天记录即可回答的内容。" +
@@ -39,7 +52,7 @@ export function buildWebSearchInstruction(remainingCalls: number): string {
     SEARCH_RESULT_DISCIPLINE +
     `结果没答上、互相矛盾或明显不可信时，在剩余额度内换一个更精确的查询再搜一次；仍然查不到就${UNCERTAIN_FALLBACK_RULE}` +
     SEARCH_CONCEALMENT_RULE +
-    `本轮回复累计最多调用 ${MAX_GOOGLE_SEARCH_CALLS_PER_REPLY} 次，当前还可调用 ${remainingCalls} 次；这是上限不是目标，该查就查，达到上限后必须使用已有结果继续，绝不能再搜索。`
+    `本轮回复累计最多调用 ${MAX_WEB_SEARCH_CALLS_PER_REPLY} 次，当前还可调用 ${remainingCalls} 次；这是上限不是目标，该查就查，达到上限后必须使用已有结果继续，绝不能再搜索。`
   );
 }
 
@@ -52,20 +65,20 @@ export function buildWebSearchInstruction(remainingCalls: number): string {
  */
 export function buildGroundedWebSearchInstruction(remainingCalls: number): string {
   return (
-    "本轮你已经调用过 googleSearch，上面的搜索结果就是本轮回复的事实依据。" +
+    `本轮你已经调用过${WEB_SEARCH_TOOL_LABEL}，上面的搜索结果就是本轮回复的事实依据。` +
     SEARCH_RESULT_DISCIPLINE +
     `结果没答上、互相矛盾或明显不可信时，在剩余额度内换一个更精确的查询再搜一次；仍然查不到就${UNCERTAIN_FALLBACK_RULE}` +
-    "【还能补搜】googleSearch 仍然可用，同样不计入动作预算：接下来要说的话里若还有别的事实点没查过、或已有结果不足以支撑，" +
+    `【还能补搜】${WEB_SEARCH_TOOL_LABEL}仍然可用，同样不计入动作预算：接下来要说的话里若还有别的事实点没查过、或已有结果不足以支撑，` +
     "就在开口前再搜一次，不要用印象把缺口凑上。" +
     SEARCH_CONCEALMENT_RULE +
-    `本轮回复累计最多调用 ${MAX_GOOGLE_SEARCH_CALLS_PER_REPLY} 次，当前还可调用 ${remainingCalls} 次；达到上限后必须使用已有结果继续，绝不能再搜索。`
+    `本轮回复累计最多调用 ${MAX_WEB_SEARCH_CALLS_PER_REPLY} 次，当前还可调用 ${remainingCalls} 次；达到上限后必须使用已有结果继续，绝不能再搜索。`
   );
 }
 
 /** 本轮搜索额度耗尽后替换进系统提示的固定说明。结果使用纪律在这里同样必须
  *  保留：额度没了不等于可以改口按印象讲。 */
 export const WEB_SEARCH_EXHAUSTED_INSTRUCTION: string =
-  `本轮回复已经达到 ${MAX_GOOGLE_SEARCH_CALLS_PER_REPLY} 次 Google Search 上限，搜索工具现已移除，不要再请求搜索。` +
+  `本轮回复已经达到 ${MAX_WEB_SEARCH_CALLS_PER_REPLY} 次联网检索上限，${WEB_SEARCH_TOOL_LABEL}已从本轮工具清单移除，不要再请求搜索。` +
   "必须直接使用已有搜索结果和聊天上下文完成行动；不要因为不能继续搜索而保持沉默。" +
   SEARCH_RESULT_DISCIPLINE +
   `已有结果没覆盖到的部分，${UNCERTAIN_FALLBACK_RULE}` +

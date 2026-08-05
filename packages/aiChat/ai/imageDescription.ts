@@ -1,7 +1,7 @@
 /**
  * 群聊媒体（图片/贴纸/GIF）的异步描述：下载 Telegram 文件，按需转码成
- * 视觉接口通吃的 jpg/png（见 libs/image.ts），喂给 Gemini 的视觉输入
- * （inlineData），产出一行简短中文描述，供 workers/aiChat/mediaIngest.ts 的 recordChatMedia 把
+ * 视觉接口通吃的 jpg/png（见 libs/image.ts），喂给当前供应商的视觉
+ * 接口，产出一行简短中文描述，供 workers/aiChat/mediaIngest.ts 的 recordChatMedia 把
  * 对话缓存里的占位文本替换掉，也供 aiChat/ai/stickers/catalog.ts 生成机器人自己
  * 贴纸目录的描述条目。跑在 AI Worker 线程里（调用方就是它）。
  *
@@ -11,22 +11,20 @@
  */
 
 import { logger } from "../../infra/logger";
-import { requestGeminiTextResult } from "./gemini";
+import { chatAiProvider } from "../provider";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
 import { transientDescriptionCache } from "../../cache/workers/aiChat/imageDescription";
 import {
-  GEMINI_MEDIA_MODEL,
   IMAGE_DESCRIPTION_MAX_CHARS,
-  MEDIA_DESCRIPTION_MAX_TOKENS,
+  MEDIA_DESCRIPTION_ERROR_LABEL,
   SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
 } from "../../consts/aiChat/media";
 import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../../consts/aiChat/prompts/media";
 import type { MediaKind } from "../../types/media";
-import type { GenerateContentResponse } from "@google/genai";
 import { downloadTelegramVisionImage } from "./telegramImage";
 import { runMediaTask } from "./mediaTaskRunner";
 import type { VisionImage } from "../../types/media";
-import type { GeminiTextGenerationResult } from "../../types/aiChat/gemini";
+import type { AiTextResult } from "../../types/aiChat/provider";
 
 /** 按媒体类型选喂给视觉模型的描述指令，三者风格/侧重点不同。 */
 function promptFor(kind: MediaKind): string {
@@ -66,8 +64,8 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
   if (cached) return cached;
 
   const pending: Promise<string | null> = runMediaTask(
-    (): Promise<GeminiTextGenerationResult> => describeMediaUncached(kind, fileId)
-  ).then((attempt: GeminiTextGenerationResult | undefined): string | null => {
+    (): Promise<AiTextResult> => describeMediaUncached(kind, fileId)
+  ).then((attempt: AiTextResult | undefined): string | null => {
     // 执行槽位和等待队列都满时返回 undefined；按普通解析失败降级，不再
     // 启动下载、转码或视觉 API 请求。
     const result: string | null = attempt?.ok === true ? attempt.text : null;
@@ -92,44 +90,33 @@ export function describeMedia(kind: MediaKind, fileId: string, fileUniqueId: str
  * 为白名单贴纸目录生成一条常驻描述。目录自身负责按 file_unique_id 去重、
  * 持久化和线上变更对账，因此这里刻意绕过 transientDescriptionCache 临时
  * 缓存；成功后调用方会立即写入 stickerCatalog，消息记录随后可直接命中
- * 常驻目录。失败结果额外声明目录层能否重新采样：SDK 已耗尽 HTTP 重试时
+ * 常驻目录。失败结果额外声明目录层能否重新采样：供应商 SDK 已耗尽 HTTP 重试时
  * 禁止再次套完整请求，下载/排队或成功响应正文不可用时则允许。
  */
-export function describeMediaForStickerCatalog(fileId: string): Promise<GeminiTextGenerationResult> {
+export function describeMediaForStickerCatalog(fileId: string): Promise<AiTextResult> {
   return runMediaTask(
-    (): Promise<GeminiTextGenerationResult> => describeMediaUncached("sticker", fileId)
-  ).then((result: GeminiTextGenerationResult | undefined): GeminiTextGenerationResult =>
+    (): Promise<AiTextResult> => describeMediaUncached("sticker", fileId)
+  ).then((result: AiTextResult | undefined): AiTextResult =>
     result ?? { ok: false, retryable: true }
   );
 }
 
-async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<GeminiTextGenerationResult> {
+async function describeMediaUncached(kind: MediaKind, fileId: string): Promise<AiTextResult> {
   try {
     const image: VisionImage | null = await downloadTelegramVisionImage({ fileId, logLabel: `chat media (kind=${kind})` });
     if (!image) return { ok: false, retryable: true };
-    return await requestGeminiTextResult(
-      {
-        model: GEMINI_MEDIA_MODEL,
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { inlineData: { mimeType: image.mime, data: image.bytes.toString("base64") } },
-              { text: promptFor(kind) },
-            ],
-          },
-        ],
-        config: { maxOutputTokens: MEDIA_DESCRIPTION_MAX_TOKENS },
-      },
-      "Gemini image understanding API",
-      (data: GenerateContentResponse): string => {
-        const description: string = sanitizeInline(data.text ?? "");
+    return await chatAiProvider().describeVision({
+      prompt: promptFor(kind),
+      image,
+      errorLabel: MEDIA_DESCRIPTION_ERROR_LABEL,
+      normalize: (text: string): string => {
+        const description: string = sanitizeInline(text);
         if (!description) return "";
         // 模型超限时收在子句边界而不是硬切——memory/stickers/ 里曾大批量出现
         // 「……以戏谑的口」式断在半句的目录条目，就是硬切造成的。
         return truncateAtClauseBoundary(description, maxCharsFor(kind));
-      }
-    );
+      },
+    });
   } catch (error: unknown) {
     logger.error(`Error describing chat media (kind=${kind}):`, error);
     return { ok: false, retryable: false };

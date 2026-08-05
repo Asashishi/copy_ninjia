@@ -90,7 +90,7 @@ export interface UserContentOptions {
 
 /**
  * 把某群的对话上下文拼装成三个职责固定的模型输入区块：只读参考记忆、只读
- * 当前会话和本轮回复任务。geminiReply.ts 会保持这个顺序，把它们映射成同一个
+ * 当前会话和本轮回复任务。replyModel.ts 会保持这个顺序，交由实现包映射成同一个
  * user Content 下的三个 text Part，而不是伪造成 user/model 历史轮次。
  * @param chatId 群聊 ID。
  * @param selfInfo 机器人自己的账号身份（见 cache/workers/aiChat/identity.ts 的 botInfoState），用于转录里的自我认知。

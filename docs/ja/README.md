@@ -35,7 +35,7 @@
 ## 📑 ページ一覧と概要
 
 1. **[01 環境構築と初回実行](01-getting-started.md)**
-   - 依存関係（Bun 1.3+ / Linux / Bot Token / Gemini API Key）
+   - 依存関係（Bun 1.3+ / Linux / Bot Token / AI provider API Key）
    - `.env` 設定ファイルの必須項目
    - Telegram BotFather 設定（Privacy Mode / 管理者権限 / Inline Mode）
    - 初回起動と `/init enable` のハンドシェイク
@@ -64,7 +64,7 @@
 6. **[06 よくある変更レシピ](06-modification-guide.md)**
    - レシピ 1：Telegram スラッシュコマンドの追加
    - レシピ 2：システム定数やタイムアウトの調整
-   - レシピ 3：Gemini AI カスタムツールの拡張
+   - レシピ 3：AI カスタムツールの拡張
    - レシピ 4：設定 schema または永続化データ構造の変更（手動移行戦略）
    - 非目標：i18n はやらない。言語を変えるなら fork
 

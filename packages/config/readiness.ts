@@ -15,6 +15,15 @@
  *
  * 缓存是每 isolate 一份（见 cache/perThread/config.ts）：Worker 各自判各自的，与四份
  * 底层 loader 的单例缓存同一口径。
+ *
+ * config/openai.json 是唯一被**分段**探测的一份：两条线各读各的半边，因此
+ * config/openai.ts 为它另开了 loadAdDetectOpenAiConfig / loadAiAgentOpenAiConfig。
+ * 这两个入口不走 getAdDetectOpenAiConfig / getAiAgentOpenAiConfig 的单例缓存，
+ * 于是探测各自多读一次盘——每进程每闸门一次，换来的是「一段写坏只关掉那一个功能」。
+ *
+ * 分段必须一路贯穿到运行时：运行时侧同样是两个分段访问器、两对缓存 holder。
+ * 只要有任何一个消费点回退成整份加载，这里的分段判定就等于没做——那一段的笔误
+ * 会先通过闸门与启动 preflight，再在真实调用时抛错并被上游 catch 吞掉。
  */
 
 import { readFileSync } from "node:fs";
@@ -22,6 +31,9 @@ import { getAdSampleConfig } from "./adSamples";
 import { getMoodConfig } from "./mood";
 import { getReactionConfig } from "./reactions";
 import { getStickerConfig } from "./stickers";
+import { loadAdDetectOpenAiConfig, loadAiAgentOpenAiConfig } from "./openai";
+import { loadGeminiDeploymentConfig } from "./gemini";
+import { hasGeminiChatCredentials, hasOpenAiChatCredentials } from "../aiChat/credentials";
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
@@ -56,22 +68,54 @@ function cachedReadiness(cache: ConfigReadinessCache, probes: readonly Deploymen
 }
 
 /**
- * AI 闲聊要读的三份部署配置：贴纸白名单、反应词表、心情表。三份缺一不可
- * ——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、aiChat/ai/reactions.ts、
- * aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场抛出而不是降级。
+ * AI 闲聊要读的部署配置：贴纸白名单、反应词表、心情表三份必检，
+ * config/openai.json 的 **ai_agent 段**在握有 OpenAI 凭据时一并检。
+ *
+ * 前三份缺一不可——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、
+ * aiChat/ai/reactions.ts、aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场
+ * 抛出而不是降级。
+ *
+ * 后两份是条件项，各自的判定依据是「握没握着那一家的凭据」，而不是
+ * 「activeAiProvider() 选了谁」：Gemini 部署也能把生图单独切到 OpenAI
+ * （`/image_model gpt`），那时 ai_agent.models.image 照样会被读到；反过来
+ * OpenAI 部署补上 Gemini key 之后同理。凭据一在，那份文件就是 AI 闲聊的前提；
+ * 一不在，它根本没有消费方，不该拦住只配一把 key 的部署。
+ *
+ * 两份模型配置都**必填且无默认值**：代码里一个模型名都不留，缺文件、缺字段一律
+ * 在这里被判为不可用，进而由 app/featurePreflight.ts 拒绝启动（见 config/gemini.ts
+ * 与 config/openai.ts 的模块头注）。
+ *
+ * 探的是 ai_agent 段而不是整份文件：ad_detect 段的笔误与 AI 闲聊无关，反过来
+ * 也一样（见下方广告检测那份清单）。两段共用顶层形状校验，整份文件不是对象时
+ * 两边都会失败——那时谁也读不出自己那一段。
  */
 export function aiChatConfigReadiness(): ConfigReadiness {
-  return cachedReadiness(aiChatConfigReadinessCache, [
+  const probes: DeploymentFileProbe[] = [
     { file: "config/stickers.json", load: getStickerConfig },
     { file: "config/reactions.json", load: getReactionConfig },
     { file: "config/mood.json", load: getMoodConfig },
-  ]);
+  ];
+  if (hasGeminiChatCredentials()) probes.push({ file: "config/gemini.json", load: loadGeminiDeploymentConfig });
+  if (hasOpenAiChatCredentials()) probes.push({ file: "config/openai.json", load: loadAiAgentOpenAiConfig });
+  return cachedReadiness(aiChatConfigReadinessCache, probes);
 }
 
-/** 广告检测要读的那一份：判定口径的示例清单。 */
+/**
+ * 广告检测要读的两份：判定口径的示例清单，以及 config/openai.json 的
+ * **ad_detect 段**。
+ *
+ * 后者**必填**：`ad_detect.model` 没有代码默认值可退，缺文件、缺段、缺模型名
+ * 都在这里被判为不可用。写坏同样拦住——判定走的就是那个端点，配错了每条待检
+ * 消息都会换来一次请求失败。可省的只有 `ad_detect.base_url`（缺省走官方地址）。
+ *
+ * 只探 ad_detect 段：广告检测一个字段都不读 ai_agent，整份解析等于让那半边的
+ * 任意笔误把广告检测判为不可用——而这份结论会被 app/featurePreflight.ts 在启动
+ * 时读到，于是 Gemini 部署为了准备 OpenAI 兜底而写坏 ai_agent，代价是 bot 起不来。
+ */
 export function adDetectConfigReadiness(): ConfigReadiness {
   return cachedReadiness(adDetectConfigReadinessCache, [
     { file: "config/ad_samples.json", load: getAdSampleConfig },
+    { file: "config/openai.json", load: loadAdDetectOpenAiConfig },
   ]);
 }
 

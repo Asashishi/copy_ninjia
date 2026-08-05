@@ -5,6 +5,8 @@ export {
   hydrateStickerCatalog,
   initAiChat,
   invalidateAiChat,
+  publishChatProvider,
+  publishImageProvider,
   queryAiMood,
   switchAiMood,
   terminateAiChat,

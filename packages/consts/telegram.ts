@@ -29,6 +29,24 @@ export const AVATAR_FETCH_TIMEOUT_MS: number = 15_000;
 export const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
 /** 头像和公开主页分别采用独立硬上限，防止第三方响应导致无界内存占用。 */
 export const AVATAR_MAX_DOWNLOAD_BYTES: number = 10 * 1024 * 1024;
+/**
+ * 机器人默认头像的来源链接（Google Drive 直链）。/reset_icon 与 /stop_copy
+ * 复原头像时从这里取图，见 infra/telegram/avatar.ts 的 restoreDefaultProfilePhoto。
+ *
+ * 放常量而不放部署配置：这张脸是机器人的身份本身，不是「这次部署连哪儿」的
+ * 运维参数；换脸要改代码、走一次评审，比改一份 JSON 更符合它的变更频率。
+ *
+ * Google Drive 的分享链接（`/file/d/<id>/view`）返回的是 HTML 预览页，不是图片
+ * 字节，必须用 `uc?export=download&id=<id>` 这种直链形式。该直链会跳转到
+ * googleusercontent 的实际存储域名，因此这条 fetch 必须允许重定向——与抓取
+ * t.me 主页那条 `redirect: "error"` 的口径不同，理由见 restoreDefaultProfilePhoto。
+ */
+export const BOT_DEFAULT_AVATAR_URL: string = "https://drive.google.com/uc?export=download&id=1o9Vh5t8mVeJPfi7fRzT1uWjPJ3BY7SSF";
+
+/** 上传机器人头像时附带的文件名。Bot API 只按字节内容判格式，这个名字仅出现在
+ *  multipart 的 filename 字段里；三条设置头像的路径共用同一个值，避免各写各的。 */
+export const BOT_PROFILE_PHOTO_FILE_NAME: string = "avatar.jpg";
+
 /** t.me 公开主页响应允许读入内存的最大字节数。 */
 export const PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES: number = 1024 * 1024;
 /**

@@ -69,7 +69,7 @@ export function trackReplyGenerationTask(
  * 先删除旧 epoch，后续 trigger 会分配全新的唯一 epoch。
  *
  * 等待有上限，因为登记进来的任务并非都收得住 abort：记忆压缩与媒体描述两条链
- * 当前没有接收并向 Gemini 请求传递本代 AbortSignal，重采样间隔加 SDK 请求超时
+ * 当前没有接收并向模型请求传递本代 AbortSignal，重采样间隔加 SDK 请求超时
  * 最坏能跑几分钟，而调用方的预算只有 10 秒。无上限地等，一次「/ai_chat disable 撞上
  * 镜像块轮转」就会让主线程超时 reject，异常逃进 grammY 中间件、offset 被扣住、
  * 重启后重投同一条指令。降级不影响正确性：这些任务全部按 generation 自检，

@@ -18,6 +18,7 @@ mock.module("../../packages/infra/config", () => ({
   SUPER_ADMIN_USER_ID: 100,
   // AI 闲聊的凭据；缺这一项 /ai_chat enable 会被拒（见 aiChat/availability.ts）。
   AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
+  AI_CHAT_OPENAI_API_KEY: undefined,
   // 广告检测的凭据；缺这一项 /ad_detect enable 会被拒（见 commands/adDetect.ts）。
   AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
 }));

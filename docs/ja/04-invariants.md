@@ -42,6 +42,8 @@
 
   **メインプロセスが起動時にまとめて事前読み込みしてはなりません**。4 つのファイルはいずれもチャットごとの opt-in でデフォルト無効な機能に属し、そこで throw すると壊れたスタンプ許可リスト 1 つで copy、抽選、入室認証、ブロックリストが同時に停止し、さらに systemd が再起動ループに入ります。検証は各機能の enable 分岐で行います（`packages/config/readiness.ts` が機能単位で判定を集約し、`packages/commands/configGate.ts` が拒否文面を統一します）。
 
+  **`config/openai.json` は 2 つの機能が section 単位で共有するため、判定と runtime の読み取りは同じ section に揃えなければなりません**。広告検出は `ad_detect` だけを probe し `ad_detect` だけを読み、AI 雑談は `ai_agent` だけを probe し `ai_agent` だけを読みます。section ごとに loader と成功/失敗 holder を別々に持ちます（`packages/config/openai.ts` と `packages/cache/perThread/config.ts`）。どこか 1 つの消費点でもファイル全体の読み込みに戻ると、この分割は無意味になります——もう一方の section の typo が readiness と起動 preflight を通過し、実際の呼び出しで throw して上位に「判定なし」として飲み込まれ、失敗状態は process 終了まで cache されたまま、機能は enabled と表示され続けます。
+
   壊れていてもそのトグルだけを拒否し、返信では該当ファイルを名指しし、ログには英語の診断を残し、ほかの機能はそのまま動きます。すでに有効だったチャットは実行時ゲート（`aiChat/availability.ts`、`antiRaid/adDetect.ts` の `buildAdCandidate`）が止めるため、読めない設定を掴んだ Worker がクラッシュループすることもありません。判定は**失敗も含めて**プロセス単位でキャッシュします。
 
   このゲートはメッセージごとに通るため、失敗をキャッシュしなければ 1 メッセージにつき 1 回の `readFileSync` になります。代償として、ファイルを直しても反映は再起動後であり、4 つの loader の単一インスタンス方針と一致します。設定を無条件に読む唯一の箇所は Disk I/O Worker の起動復元（`memory/stickers/` の突き合わせにスタンプ許可リストが要る）であり、読めない場合は**突き合わせ自体をスキップ**しなければなりません。
@@ -58,11 +60,11 @@
   `/permission query` と `/permission help` は read-only entry point です。command sender identity で上記の実効 permission を読み、`query` は default 適用後の自身の完全な permission だけを返し（スーパー管理者には全開の view が返ります）、target を受け取らず write もしません。permission の変更は引き続きスーパー管理者だけが実行できます。グループ内では `help` だけを長期保持し、`query`、拒否、usage hint は共通の 30 秒 cleanup に従います。
 - **モジュール評価時に `requireEnv` してよいのは、プロセス全体が欠かせない資格情報だけです**（`TELEGRAM_BOT_TOKEN`、`SUPER_ADMIN_USER_ID`）。チャットごとの opt-in でデフォルト無効な機能だけが使う鍵は `optionalEnv` を通します。
 
-  `packages/infra/config.ts` はほぼすべての入口パスから import されるため、そこで throw するとプロセスは更新の取得を始める前に終了し、systemd が再起動ループに入ります——誰も有効化していない機能の鍵が 1 つ無いだけで、copy、抽選、入室認証、ブロックリストがまとめて停止します。2 つの AI 鍵はどちらも後者であり、**変数名には担当する機能を必ず先頭に付けます**（`AI_CHAT_GEMINI_API_KEY`、`AD_DETECT_DEEPSEEK_API_KEY`）。
+  `packages/infra/config.ts` はほぼすべての入口パスから import されるため、そこで throw するとプロセスは更新の取得を始める前に終了し、systemd が再起動ループに入ります——誰も有効化していない機能の鍵が 1 つ無いだけで、copy、抽選、入室認証、ブロックリストがまとめて停止します。3 つの AI 鍵はいずれも後者であり、**変数名には担当する機能を必ず先頭に付けます**（`AI_CHAT_GEMINI_API_KEY`、`AI_CHAT_OPENAI_API_KEY`、`AD_DETECT_DEEPSEEK_API_KEY`）。
 
   `.env` を読む人は「この鍵が欠けるとどの機能が止まるか」を一目で判断できる必要があり、将来同じベンダーが 2 つの機能を担当することも十分あり得るため、ベンダー名を基準にすると区別できなくなります。`AD_DETECT_DEEPSEEK_API_KEY` が未設定なら `/ad_detect enable` を拒否し、すでに有効なチャットも判定対象の投入を止めます。
 
-  `AI_CHAT_GEMINI_API_KEY` が未設定なら AI Worker 自体を起動せず、`/ai_chat enable`、`/query_mood`、`/switch_mood` を拒否し、すでに有効なチャットへのメッセージ投入とトリガーも止めます。2 つの鍵は役割が重ならず、互いにフォールバックしません。Gemini は AI 雑談エージェント専用、DeepSeek は広告検出専用です。
+  AI 雑談の 2 つの鍵は「または」の関係です。既定は Gemini で、`AI_CHAT_GEMINI_API_KEY` が無いときだけ `AI_CHAT_OPENAI_API_KEY` に降格します。この既定の上に**能力ごとに分かれた**明示選択があります——`/chat_model` は返信・plain text・vision を、`/image_model` は画像生成だけを担当し、それぞれ別の override を読みます。したがって雑談と画像生成が別 provider になることは普通にあり得て、その場合は同じ Worker thread 上に両方の client が同時に存在します（`packages/aiChat/provider.ts` と `packages/cache/workers/aiChat/{gemini,openai}.ts` を参照。「今どちらを使っているか」は単一の値ではありません）。既定・明示選択のいずれでも runtime failover はしません（1 ラウンドの途中で provider を替えると tool 往復の会話記録が 2 つの形式にまたがり、安全しきい値と画面比も等価ではないためです）。**両方とも未設定**のときにのみ AI Worker 自体を起動せず、`/ai_chat enable`、`/query_mood`、`/switch_mood` を拒否し、すでに有効なチャットへのメッセージ投入とトリガーも止めます。この判定の出口は `packages/aiChat/credentials.ts` だけです。AI 雑談と広告検出は役割が重ならず、互いにフォールバックしません。DeepSeek の鍵は広告検出専用です。
 
   **日本語翻訳も同様で、唯一の判定入口は `packages/copy/availability.ts`** です（`g-auth.json` が使えること + チャットごとの opt-in）。`/ja_copy` と自動 copy の ja 変換は必ずここを通します。この経路の劣化は**サイレント**だからです——`translateToJapanese` は失敗時に null を返すだけで、呼び出し側は未翻訳の原文をそのまま送出し、グループからは「翻訳サービスが一時的に不調」と区別が付きません。設定事故が何日も隠れ続けることになります。
 
@@ -144,12 +146,12 @@
 
   **この待機には上限が必要です**（`AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS`。メインスレッド側の `AI_CHAT_INVALIDATE_TIMEOUT_MS` より明確に短くすること）。
 
-  登録された task がすべて abort を受け取れるわけではありません——memory compaction と media description の 2 本は、現在この generation の `AbortSignal` を受け取って Gemini request へ伝播しておらず、resampling interval と SDK request timeout を合わせると最悪で数分走ります。`Promise.race` 用の unref expiry timer は、task と timeout のどちらが先に完了しても `finally` で clear し、完了済み invalidate の closure と Promise を deadline まで保持してはいけません。
+  登録された task がすべて abort を受け取れるわけではありません——memory compaction と media description の 2 本は、現在この generation の `AbortSignal` を受け取って model request へ伝播しておらず、resampling interval と SDK request timeout を合わせると最悪で数分走ります。`Promise.race` 用の unref expiry timer は、task と timeout のどちらが先に完了しても `finally` で clear し、完了済み invalidate の closure と Promise を deadline まで保持してはいけません。
 
   上限なしで待つと、`/ai_chat disable` がミラーブロックの rotation と重なった一度だけでメインスレッドが先に reject し、その例外が grammY のミドルウェアへ抜けます——その update は失敗扱いになり、最終 offset は保留され、再起動後に Telegram が同じコマンドを再配信します。時間切れでは降格して先へ進み、エラーログを 1 行残します。正しさは待機に依存していません——登録された task はすべて generation を自己照合し、無効化後は何も書き込めません。
 
   遅延 task は副作用のない epoch 照合だけを行い、entry 回収後やチャット再有効化後に古い token が復活することはありません。したがって epoch Map は過去のチャット総数ではなく現在の active work と同程度に保たれます。メインスレッドが invalidate 完了を報告できるのは、メモリ削除の永続化と Worker の確認応答が両方成功した後だけです。
-- Gemini の transport、network、429、5xx retry は公式 `@google/genai` SDK の `retryOptions` だけが所有します（現在は最大 5 attempts）。1 回の request が `failureKind: "request"` で失敗した後、caller が full request retry をもう一層重ねてはいけません。domain-level resampling は SDK request が成功しても model response が使用不能または異常終了した場合（`failureKind: "response"`）、あるいは normalize 後の text が空の場合だけに許可し、request 数、latency、一時 allocation の乗算を防ぎます。
+- model request の transport、network、429、5xx retry は選択された provider の公式 SDK だけが所有します（Gemini は `@google/genai` の `retryOptions`、OpenAI は SDK の `maxRetries`。いずれも合計 5 attempts で揃えています）。1 回の request が `failureKind: "request"` で失敗した後、caller が full request retry をもう一層重ねてはいけません。domain-level resampling は SDK request が成功しても model response が使用不能または異常終了した場合（`failureKind: "response"`）、あるいは normalize 後の text が空の場合だけに許可し、request 数、latency、一時 allocation の乗算を防ぎます。
 - AI 返信は、成功したテキスト、スタンプ、リアクション、画像だけを 1 つの統一 action budget に計上します。モデル向け prompt 上限は 8、実行側 hard cap は 11 です。スタンプ、リアクション、生成画像はそれぞれ最大 1 回だけ成功でき、その他の action tool に per-tool call cap はありません。スタンプパック表示と Google Search は独立した lookup cap を持ち、custom function call 全体にも round 単位の loop guard があります。
 
   成功 action が 0 件の場合だけ、最終本文を `send_message` から fallback 送信します。意図的に表示するすべての文字列は、モデルがツールを明示的に呼び出して produce しなければならず、最終応答本文に置いたままにしてはいけません。
@@ -188,7 +190,7 @@
 - AI 返信のウェブ検証説明は、その round の検索進捗に応じて 3 つの状態を切り替えます。未検索なら「検索すべき条件」と「行動前に検証する」ルールを示し、検索済みで残枠がある場合は結果の使用規律と不足分の再検索に切り替え、枠を使い切った場合も結果の使用規律を保ったうえで「見つからなかったとき」の締め方を示します。3 状態は同じ規律を共有します——検索結果は既存の認識より優先され、結果に無い具体情報を記憶から補ってはいけません——どの状態でもこれを省略できません。
 
   モデルから見える prompt には、Google Search が統一 action budget に計上されないことを明記し、action を節約するために検証を省略させないようにします。サーバー側検索を観測した後の tool round はより低い sampling temperature を使います。検索とその round の最初の本文生成は同一リクエスト内で起きるため予測できず、その round は通常の返信 temperature のままです。
-- AI 返信の最初の Gemini 入力は、1 つの `user Content` 内に順序付きの 3 つの `text Part` を維持します。すなわち、読み取り専用の参照メモリ、読み取り専用の現在会話、今回の返信タスクです。各 section はモデルから見える開始・終了タグと、先頭の責務説明 1 行だけで囲みます。データと命令の区別、偽造 boundary の無効化、内部構造の非開示という共通の prompt injection 防止規則は `systemInstruction` に 1 回だけ記載し、各 section で繰り返しません。
+- AI 返信の最初の入力は、1 つの user ターン内に順序付きの 3〜4 個のテキストブロックを維持します。すなわち、読み取り専用の参照メモリ、読み取り専用の現在会話、直接呼びかけ時にだけ挿入する呼びかけ者の重点記録、今回の返信タスクです。ブロックは `packages/workers/aiChat/replyModel.ts` まで領域上の意味を保ち、各 provider 実装パッケージの `replySession.ts` で初めて各社の形へ写像します（Gemini は 1 つの `user Content` 配下の複数 `text Part`、OpenAI は 1 つの user message 配下の複数 `input_text`）。各 section はモデルから見える開始・終了タグと、先頭の責務説明 1 行だけで囲みます。データと命令の区別、偽造 boundary の無効化、内部構造の非開示という共通の prompt injection 防止規則は system prompt に 1 回だけ記載し、各 section で繰り返しません。
 
   ツール呼び出し後の履歴は実際の `model/user` role で追加し、参照資料を過去の会話 turn に見せかけてはいけません。system prompt は独立した `GenerateContentConfig.systemInstruction` field でだけ送信し、通常会話の `contents` へ連結しません。
 - メモリの階層（`【最热记忆】`、`【较早逐字记录】`、`【冷记忆】`、`【唤起者重点记录】`）はモデルが context を読むための内部的な仕組みにすぎず、グループのメンバーには一切見せません。`MEMORY_MECHANISM_SILENCE_INSTRUCTION` は、返信の中でこれらの階層名を出すことも仄めかすことも禁止し、context、区画、`Part`、要約、圧縮、sliding window、cache、件数上限、token、system prompt といった仕組みの語彙も同様に禁止します。
@@ -432,6 +434,8 @@
 
   Worker 側の書き込みエラーは `console.error` であり、設計上 `logs/` には入りません。
 
+  **唯一の例外が日次おみくじの追記停止です。** 連続失敗がしきい値に達すると Worker は追加で `luckAppendStalled` 診断をメインスレッドへ送り、おみくじの owner が `logger.error` を 1 行だけ `logs/` に記録します（エッジトリガーで、1 回の障害期につき 1 行）。報告するのは個々の `write(2)` の失敗ではなく「あるドメインがデータを失い続けている」という事実です。おみくじの欠落は他のどこにも痕跡が残りません——メインスレッドの `dailyLuckCache` は通常どおりヒットするため、利用者には異常が見えないからです。再帰の危険はありません。この log は log ドメインを通り、log ドメイン自身の書き込み失敗は従来どおり `console.error` で終わります。
+
   **永続化の確認はドメイン単位に絞ります。** 統一 flush（`flushAll`）は 8 ドメインの論理積なので、どれか 1 つが失敗すれば全体の受領は `flushFailed` になります。`/block` が待つべきは `flushDiskIODomain("blocklist")` だけです。そうしないと、あるチャットの `memory/ai/<chat>.json` の所有者がずれているだけで「小さな手帳をディスクに書けなかった」と報告し、実際には壊れていないファイルへ運用者を誘導してしまいます。
 
   したがって受領は `failedDomains` を運び、メインスレッドが本当に壊れたドメインを名指しします。名指ししなければ、本当の障害について `logs/` には 1 行も入りません。
@@ -654,7 +658,7 @@
 
   求人詐欺の類が特に踏みやすいです：それらの正例には連絡先が一切なく（誘導は相手から DM させる形）、「三点セット」を全部同時に揃う必要があると書くと一覧の正例が十数件まとめて false になります。プロンプトには**必ず「JSON」という語を含めます**。リクエストは `response_format: json_object` を使い、DeepSeek はプロンプトが json に言及しているかをサーバー側で検証し、なければ 400 で判定全体が失敗します。
 
-  **出力枠は推論モデルを前提に余裕を持たせます**。`AD_DETECT_MODEL` は推論モデルで、reasoning token が `max_tokens` を本文と共有します。枠が足りないと JSON が途中で切れるのではなく、推論が枠を使い切って本文が 1 文字も出ず（`finish_reason=length` かつ content が空）、呼び出し側には「今回は判定なし」としか見えないまま広告が素通りします。
+  **出力枠は推論モデルを前提に余裕を持たせます**。広告検出の line が使うのは推論モデル（model 名は `config/openai.json` の `ad_detect.model` が与え、code 側に default は残っていません）で、reasoning token が `max_tokens` を本文と共有します。枠が足りないと JSON が途中で切れるのではなく、推論が枠を使い切って本文が 1 文字も出ず（`finish_reason=length` かつ content が空）、呼び出し側には「今回は判定なし」としか見えないまま広告が素通りします。
 
   したがって転送層は `length` 終了を個別に検出して log に名指しし、途中の本文を解析器へ渡さず null を返さなければなりません。さもないとこの種の見逃しは痕跡を一切残しません。モデルが見るグループ本文は常にデータであり、`reason` は log と告知文だけに使い、制御フローには一切関与しません。
 
@@ -714,7 +718,7 @@
 
 ### 運勢と AI メモリの復元
 
-- 運勢永続化の東京日付 owner を切り替える前に、前日の追加 buffer を正常に flush しなければなりません。失敗時は旧 owner を維持して日付切り替えを拒否します。対象日に確認済み結果がある場合、key の欠落または別日 key は不整合 backup であり、新しい key を黙って生成せず起動・日付切り替えを拒否します。
+- 運勢永続化の東京日付 owner を切り替える前に、前日の追加 buffer を正常に flush しなければなりません。失敗時は旧 owner を維持して日付切り替えを拒否します。**ただし、その切り替えを誘発した新しい日の抽選は保留 buffer へ移して後で補記しなければならず、切り替え失敗と一緒に捨ててはいけません**。メインスレッドの `dailyLuckCache` は既にそれを「今日引いた」として記録し receipt も発行済みで、捨てると disk 復旧後もその日の file に永久に欠落が残り、user もその日はもう引けません。`onDiskIORespawn` の全件 replay がカバーするのは Worker 再生成だけで、「Worker は生きているが書き込めない」状態はカバーしません。保留 buffer には明確な上限があり、溢れたときは最古の 1 件を捨てて 1 行記録します（黙って捨てません）。flush の再試行が成功したら、次の抽選 message を待たずに即座に補記します。対象日に確認済み結果がある場合、key の欠落または別日 key は不整合 backup であり、新しい key を黙って生成せず起動・日付切り替えを拒否します。
 
   **ただし起動時に「メインスレッドが計算した今日」と資格情報の日付がずれるのはこの類ではなく、起動を拒否してはいけません。** Disk I/O Worker は `handleLoad()` で東京日付を 1 回計算し、メインスレッドは `restoreLuckState` でもう 1 回計算するため、00:00 前後に起動したプロセスでは両者が自然に 1 日ずれ得ます。ここで throw すると例外が `ApplicationLifecycle.init()` を抜け（呼び出し側に try/catch はありません）、`run()` が 1 行記録して終了コード 1 で終わります——1 度の日付切り替えで bot が起動できなくなり、プロセスマネージャの再起動を待つことになります。正しい扱いは、この期限切れの資格情報とその日の確認済みレコードを捨てることです。adopt せず cache を空のままにし、運勢を最初に使うときに `ensureLuckCacheFreshForToday` が Worker から当日の key を取り直します（各入口はもともとこれを await します）。同時に「本プロセス内で日付をまたいだ」と記録し、当日の証明を持たない遅れた確認はすべて fail closed にします。
 - AI メモリ復元は現在の `AI_MEMORY_HYDRATE_BUFFER_MAX` と `MAX_SUMMARY_ROUNDS` に従い、snapshot の末尾から最新データを残します。現在は逐語メッセージ 149 件と cold summary 7 round です。容量定数を変更してデプロイする前に、旧プロセスを停止し、同じ復元 logic で既存の `memory/ai/` をアトミックに書き換えます。旧プロセスの停止時 flush が migration 結果を上書きしないようにしてください。

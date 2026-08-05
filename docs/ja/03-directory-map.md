@@ -30,9 +30,10 @@
   - **代表的なファイル**：`message/`、`triggerPolicy.ts`。
 - **`packages/aiChat/`**
   - **責務**：AI chat のメインスレッド代理と model capability。Worker 監督、
-    memory mirror、availability、Gemini、sticker、tool、media を含む。
+    memory mirror、availability、provider 実装パッケージ（`gemini/`、`openai/`）と選択、sticker、tool、media を含む。
   - **代表的なファイル**：`workerBridge.ts`、`messageIngress.ts`、`memoryMirror.ts`、
-    `availability.ts`、`ai/`。`index.ts` は薄い公開入口だけを提供。
+    `availability.ts`、`credentials.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`。
+    `index.ts` は薄い公開入口だけを提供。
 - **`packages/antiRaid/`**
   - **責務**：Anti-Raid のメインスレッド代理と広告 model capability。Worker 監督、
     durable handoff、update ingress、blocklist／verification／ad／flood orchestration。
@@ -67,7 +68,8 @@
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
-  - **代表的なファイル**：`gemini.ts`、`tools/replyToolset/`、`deepseek.ts`。
+  - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`deepseek.ts`。AI chat の
+    model 送受信はここではなく、vendor ごとの `packages/aiChat/{gemini,openai}/` にあります。
 - **`packages/workers/antiRaid/adDetect/`**
   - **責務**：DeepSeek 広告検出パイプライン。バッチキュー、送信者ごとの
     メッセージ束の整形、判定、命中時の処分を含む。
@@ -126,7 +128,7 @@
 - **`workers/aiChat/`**
   - **所有者**：AI 雑談 Worker。
   - **内容**：ローリングメモリ、返信の受理判定、機嫌、ステッカーカタログとセット、
-    Gemini クライアント。
+    両 provider のクライアント singleton。
 - **`workers/antiRaid/`**
   - **所有者**：Anti-Raid Worker。
   - **内容**：認証/ロックダウンの状態機械、連投ウィンドウ、広告検出キュー、

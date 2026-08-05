@@ -344,6 +344,13 @@ export function createDiskIOWorker(): Worker {
       for (const listener of diskIORuntime.aiMemoryPersistedListeners) listener(data);
       return;
     }
+    if (data.type === "luckAppendStalled") {
+      // 本文件自身的错误照旧只走 console；这一条是 Worker 报上来的**领域数据
+      // 丢失**事实，转交运势 owner 记进统一 logs/，理由见 types/diskIO.ts 的
+      // LuckAppendStalledReply。
+      for (const listener of diskIORuntime.luckAppendStalledListeners) listener(data);
+      return;
+    }
     if (data.type === "flushed" || data.type === "flushFailed") {
       // 失败领域名要落进控制台——Worker 侧的写盘错误按设计只有 console.error，
       // 不带领域名的话运维根本看不出是哪个文件坏了。按领域的**判定**只走下面

@@ -3,7 +3,7 @@ import type { Sharp } from "sharp";
 import type { VisionImage } from "../types/media";
 
 /**
- * 把任意支持的图片字节转成 Gemini 视觉接口稳妥能收的格式：只认 jpg/jpeg 或 png
+ * 把任意支持的图片字节转成两家视觉接口都稳妥能收的格式：只认 jpg/jpeg 或 png
  * （官方文档明示，20MiB 上限另有护栏在调用方做）。本项目喂视觉模型的素材
  * 来源不只是 Telegram photo（本身就是 jpeg）——贴纸本体是 webp，GIF 若非
  * 走缩略图兜底、真 image/gif 本体也要转码，因此需要这一层按魔数嗅探格式、
@@ -23,7 +23,7 @@ export function sniffImageFormat(bytes: Buffer): SniffedImageFormat {
 }
 
 /**
- * 把任意支持格式的图片字节转成可直接喂 Gemini 视觉接口的 jpeg/png。jpeg/png
+ * 把任意支持格式的图片字节转成可直接喂视觉接口的 jpeg/png。jpeg/png
  * 原样直通（无转码开销）；webp/gif 经 sharp 转 png（gif 只取第一帧——本项目
  * 没有抽帧能力，GIF 只能按封面帧分析）。不支持的格式或转码失败均返回
  * null，调用方按「这条不解析」处理。

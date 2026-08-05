@@ -10,11 +10,11 @@ import { DAILY_LUCK_CACHE_MAX, LUCK_TIERS, PENDING_LUCK_CACHE_MAX } from "../../
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import { logger } from "../../infra/logger";
 import { getTokyoDateKey } from "../../libs/time";
-import type { DiskIORecoveryTransport } from "../../types/diskIO";
+import type { DiskIORecoveryTransport, LuckAppendStalledReply } from "../../types/diskIO";
 import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw, LuckTier } from "../../types/luckChallenge";
 import { deriveLuckDraw } from "./draw";
-import { ensureLuckReceiptSecret, onDiskIORespawn, postDiskIO } from "../../infra/diskIO";
+import { ensureLuckReceiptSecret, onDiskIORespawn, onLuckAppendStalled, postDiskIO } from "../../infra/diskIO";
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /** 进程内是否发生过跨东京零点的日切换（即 adoptLuckSecret 清空过前一天的
@@ -176,13 +176,23 @@ export function promotePendingDraw(cacheKey: string, confirmedForToday: boolean 
   // 撑满时连落盘消息都不投：那正是 Worker 侧当日镜像与 memory/luck/<day>.json
   // 一起无界增长的入口。
   if (!admitDailyLuckEntry(cacheKey, draw)) return;
-  postDiskIO({
+  // 返回值必须判：条目此刻已经进了 dailyLuckCache，而 postDiskIO 在 Worker 已
+  // 终止、或恢复握手期积压撑到硬顶时返回 false 且自己不打印任何东西——不判就
+  // 意味着这条抽签只存在于主线程内存里，磁盘上没有、日志里也没有。
+  // onDiskIORespawn 的全量重放能补上窗口期的空洞，但那要 Worker 真的重生；
+  // fatal 之后不再拉起、或重放自己也 post 失败时，空洞就永久留着。
+  if (!postDiskIO({
     type: "luckDraw",
     day: luckCacheState.dayKey,
     key: cacheKey,
     label: draw.tier.label,
     fortunePercent: draw.fortunePercent,
-  });
+  })) {
+    logger.error(
+      `Daily luck draw for key ${cacheKey} on ${luckCacheState.dayKey} was not handed to the persistence Worker; ` +
+      `it is only in memory until the Worker respawns and the cache is replayed.`
+    );
+  }
 }
 
 function initializeRespawnRecovery(): void {
@@ -207,6 +217,17 @@ function initializeRespawnRecovery(): void {
       }
     }
     return true;
+  });
+  // 落盘线程连续追加失败时唯一能进 logs/ 的告警：Worker 侧只有 console.error，
+  // 而把 stdout/stderr 接到 /dev/null 的部署上那等于没有——那种部署上「抽签
+  // 在 dailyLuckCache 里命中、memory/luck/<day>.json 却永远不涨」是完全不可
+  // 观测的。触发口径与边沿语义见 workers/diskIO/luckFiles.ts。
+  onLuckAppendStalled((reply: LuckAppendStalledReply): void => {
+    logger.error(
+      `Daily luck appends for ${reply.day} have failed ${reply.consecutiveFailures} times in a row; ` +
+      `${reply.pendingEntries} confirmed draw(s) are stuck in the persistence Worker and are not on disk. ` +
+      `Last error: ${reply.error}`
+    );
   });
 }
 

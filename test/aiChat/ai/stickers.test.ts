@@ -171,7 +171,7 @@ describe("aiChat/ai/stickers viewStickerPackTool", () => {
   });
 
   test("停顿期间轮次被作废：返回工具错误，不让 reject 逃出 execute", async () => {
-    // orchestrator 的 dispatch/execute 与 callGemini 的 await toolset.execute(...)
+    // orchestrator 的 dispatch/execute 与 generateReply 的 await toolset.execute(...)
     // 都没有 try/catch：逃出去展开的是整个 functionCalls 循环——同一轮里模型发出
     // 的其余调用一个都不执行，contents 里还留下一个带未应答 functionCall 的
     // model 轮。同轮的 send_message / send_sticker 走的是同一个共用停顿。

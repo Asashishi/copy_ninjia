@@ -20,7 +20,7 @@ flowchart TD
     classDef worker stroke:#3b82f6,stroke-width:2px;
 
     MAIN["🧵 Main thread<br/>grammY runner + per-chat sequentialize<br/>Commands and automatic-message pipeline<br/>StateStore (state.json)"]:::main
-    AI["🤖 AI Worker<br/>Multi-turn Gemini tool calls<br/>Rolling memory · summarization · moods"]:::worker
+    AI["🤖 AI Worker<br/>Multi-turn tool calls (swappable provider)<br/>Rolling memory · summarization · moods"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>Verification and lockdown state machines / blocklist removal / ad detection"]:::worker
     DISK["💾 Disk I/O Worker<br/>Logs / memory snapshots / fortunes / verification files / blocklist / join log"]:::worker
 
@@ -56,7 +56,7 @@ Worker crashes are rate-limited and self-healing, but the hosts have two impleme
 8. **CJK action commands**—commands such as `/咬` and `/贴贴` (the action word is one or two Chinese characters) never receive a Telegram `bot_command` entity, so `bot.command` cannot match them; they are matched against the raw message text with `bot.hears` (see [`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts)). This **must be registered before the message fallback below**—placed after it, every action command is swallowed as an ordinary message into the AI/copy pipeline and the whole feature silently stops working. Because it precedes the automatic pipeline, that pipeline's self-sent guard does not cover it and the handler must skip the bot's own messages itself; and because a claimed message no longer travels further, the handler must also record the sender identity itself. Forms it does not claim (`/咬@OtherBot`, caption-only, malformed updates) call `next()`.
 9. **Automatic-message pipeline**—[`packages/auto/`](../../packages/auto) handles copying, AI transcription and trigger decisions, reaction synchronization, and other non-command behavior.
 
-After an AI trigger, the main thread evaluates the activity-based probability or direct trigger, dispatches to the AI Worker, and the Worker assembles the three-part Gemini input: reference memory, current conversation, and the reply task. Gemini then performs multi-turn tool calls—messages, stickers, reactions, and image generation, all executed through main-thread proxies—before the result is written back to rolling memory and periodically snapshotted.
+After an AI trigger, the main thread evaluates the activity-based probability or direct trigger, dispatches to the AI Worker, and the Worker assembles the three-part model input: reference memory, current conversation, and the reply task. The model then performs multi-turn tool calls—messages, stickers, reactions, and image generation, all executed through main-thread proxies—before the result is written back to rolling memory and periodically snapshotted.
 
 `bot.catch` logs unhandled errors and then **rethrows them**. Swallowing an exception would acknowledge the failed update, preventing Telegram from redelivering it after restart—including when persistence failed.
 
@@ -73,7 +73,7 @@ flowchart TD
     U --> MED["Image / sticker / GIF"]:::process
     MED -- asynchronous vision description --> MEM["AI Worker rolling memory"]:::ai
     TXT --> MEM
-    MEM --> G["Gemini + googleSearch + custom tools"]:::ai
+    MEM --> G["Model provider + server-side web search + custom tools"]:::ai
 
     G --> A1["💬 Send text"]:::action
     G --> A2["👍 Add reaction"]:::action
@@ -87,7 +87,7 @@ A message first splits by type, then converges into the AI Worker's rolling memo
 - **Text** is enqueued immediately as-is, preserving its position in the conversation timeline.
 - **Images / stickers / GIFs** are enqueued with a placeholder first, then downloaded and described by a vision model asynchronously; once parsing finishes, the same entry's text field is backfilled in place. A hit against the sticker allowlist catalog skips the asynchronous parse and writes the catalog's existing description directly.
 
-When a reply is triggered, rolling memory is assembled into the three-part Gemini input described in the previous section, and sent to Gemini together with `googleSearch` and the custom tools. `googleSearch` runs on Google's servers; its instruction switches between three states based on this round's search progress and does not count against the action budget (see [04 Runtime Invariants](04-invariants.md)). The model may issue multiple tool calls within one round, each executed through main-thread proxies rather than talking to Telegram directly:
+When a reply is triggered, rolling memory is assembled into the three-part model input described in the previous section, and sent to the selected provider together with the server-side web search tool and the custom tools (Gemini by default, falling back to OpenAI when its key is absent; with both keys present the super administrator can point replies/summaries/vision at the other provider with `/chat_model`, while image generation is chosen independently by `/image_model`; see [03 Directory Map](03-directory-map.md)). Search runs on the provider's servers (Gemini's `googleSearch` or OpenAI's hosted `web_search`); its instruction switches between three states based on this round's search progress and does not count against the action budget (see [04 Runtime Invariants](04-invariants.md)). The model may issue multiple tool calls within one round, each executed through main-thread proxies rather than talking to Telegram directly:
 
 - 💬 **Send text**—the model must call the send tool explicitly for any body text; the system only falls back to sending on its own when the whole round produced zero successful actions.
 - 👍 **Add reaction**—chosen from an allowlist of emoji, at most one success per round.

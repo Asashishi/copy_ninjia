@@ -47,7 +47,7 @@ beforeEach(() => {
   sleepMock.mockClear();
 });
 
-test("工具集真实注册 googleSearch，并同时提供函数行动工具", async () => {
+test("工具集真实挂载服务端联网检索，并同时提供函数行动工具", async () => {
   const toolset = await createReplyToolset({
     chatId: -100800,
     replyToMessageId: 10,
@@ -66,9 +66,8 @@ test("工具集真实注册 googleSearch，并同时提供函数行动工具", a
     onImageSent: mock((..._args: unknown[]): void => {}),
   });
 
-  expect(toolset.tools).toHaveLength(2);
-  expect(toolset.tools[0]?.googleSearch).toEqual({});
-  expect(toolset.tools[1]?.functionDeclarations?.length).toBeGreaterThan(0);
+  expect(toolset.webSearch).toBe(true);
+  expect(toolset.functions.length).toBeGreaterThan(0);
   expect(toolset.has("delete_own_message")).toBe(false);
 });
 

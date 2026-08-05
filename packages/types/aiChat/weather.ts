@@ -1,4 +1,4 @@
-/** 交给 Gemini 天气工具的东京天气快照。 */
+/** 交给天气工具的东京天气快照。 */
 export interface TokyoWeatherResult {
   currentTemperatureC: number;
   currentCondition: string;

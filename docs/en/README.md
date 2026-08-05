@@ -35,7 +35,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 ## 📑 Page Index & Summary
 
 1. **[01 Environment Setup and First Run](01-getting-started.md)**
-   - Dependencies (Bun 1.3+ / Linux / Bot Token / Gemini API Key)
+   - Dependencies (Bun 1.3+ / Linux / Bot Token / AI provider API Key)
    - `.env` configuration file requirements
    - Telegram BotFather setup (Privacy Mode / Admin permissions / Inline Mode)
    - First launch and the `/init enable` handshake after the bot joins a group
@@ -64,7 +64,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 6. **[06 Common Modification Recipes](06-modification-guide.md)**
    - Recipe 1: Adding a Telegram slash command
    - Recipe 2: Adjusting system constants or timeouts
-   - Recipe 3: Extending Gemini AI custom function tools
+   - Recipe 3: Extending AI custom function tools
    - Recipe 4: Modifying config schemas or persistence structures (manual migration)
    - Non-goal: no i18n — fork it to change languages
 

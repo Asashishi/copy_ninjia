@@ -28,7 +28,7 @@ const loggerError = mock((..._args: unknown[]): void => {});
 const aiEnabledChats = new Set<number>();
 
 // 凭据缺席：mock 里不给 AI_CHAT_GEMINI_API_KEY 任何值，等价于 .env 留空。
-mock.module("../../../packages/infra/config", () => ({ AI_CHAT_GEMINI_API_KEY: undefined }));
+mock.module("../../../packages/infra/config", () => ({ AI_CHAT_GEMINI_API_KEY: undefined, AI_CHAT_OPENAI_API_KEY: undefined }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log: loggerLog, error: loggerError, info: loggerLog, warn: loggerLog },
 }));
@@ -54,6 +54,9 @@ mock.module("../../../packages/infra/diskIO", () => ({
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
+  // 两项供应商覆盖的重放来源；本组用例都不设覆盖，重放块因此不发这两条消息。
+  getImageProviderOverride: (): undefined => undefined,
+  getChatProviderOverride: (): undefined => undefined,
   getAllChatStates: (): Map<number, unknown> =>
     new Map([...aiEnabledChats].map((chatId: number): [number, unknown] => [chatId, {}])),
 }));
@@ -82,7 +85,7 @@ beforeEach(() => {
   aiEnabledChats.clear();
 });
 
-describe("AI main-thread proxy without Gemini credentials", () => {
+describe("AI main-thread proxy without any provider credentials", () => {
   test("initAiChat 不创建线程也不投递身份，只记一行诊断", () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 

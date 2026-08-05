@@ -1,5 +1,6 @@
 import type { MediaKind, TelegramVisionSource } from "../media";
 import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "../stickers/protocol";
+import type { AiProviderName } from "./provider";
 import type { AiSpeakerSnapshot } from "./speaker";
 
 /** Worker 侧自我认知所需的机器人账号身份。 */
@@ -131,8 +132,38 @@ export interface AiQueryMoodMessage {
   deadlineAt: number;
 }
 
+/**
+ * 主线程 -> Worker：当前生效的生图供应商覆盖值（`/image_model`）。
+ *
+ * 全量单值覆盖，没有增量语义；`undefined` 表示「没有覆盖」，Worker 侧据此回到
+ * activeAiProvider() 的默认口径，不得理解为「保持原值」。推送时机与重放方见
+ * cache/workers/aiChat/imageProvider.ts。
+ */
+export interface AiImageProviderMessage {
+  type: "imageProvider";
+  provider: AiProviderName | undefined;
+}
+
+/**
+ * 主线程 -> Worker：当前生效的闲聊侧供应商覆盖值（`/chat_model`），作用于回复
+ * 会话、纯文本与视觉描述这三项。
+ *
+ * 语义与 AiImageProviderMessage 完全对称：全量单值覆盖，`undefined` 表示「没有
+ * 覆盖」，Worker 侧据此回到 activeAiProvider() 的默认口径，不得理解为「保持
+ * 原值」。推送时机与重放方见 cache/workers/aiChat/chatProvider.ts。
+ *
+ * 注意与 types/aiChat/provider.ts 的 `AiChatProvider` 区分：那个是供应商实现要
+ * 满足的契约，这个只是一条传值消息。
+ */
+export interface AiChatProviderMessage {
+  type: "chatProvider";
+  provider: AiProviderName | undefined;
+}
+
 export type AiChatWorkerMessage =
   | AiInitMessage
+  | AiImageProviderMessage
+  | AiChatProviderMessage
   | AiRecordMessage
   | AiRecordMediaMessage
   | AiTriggerMessage

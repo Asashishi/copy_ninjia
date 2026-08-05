@@ -23,7 +23,7 @@ interface WeightedMood {
  * 随 Worker 重启清空、下次用到时重抽。
  *
  * 天气数据经 aiChat/ai/weather.ts 的 currentTokyoWeather 读取——这里只读现有
- * 缓存，不在这条路径里发请求（重抽发生在 geminiReply.ts 拼系统提示词的
+ * 缓存，不在这条路径里发请求（重抽发生在 replyModel.ts 拼系统提示词的
  * 同步路径上，必须保持同步）；缓存保鲜由该模块内部的后台
  * 定时循环负责（每小时刷新一次，见 startWeatherRefreshLoop），与
  * get_tokyo_weather 工具共用同一份数据、同一种「只读不发请求」的取用

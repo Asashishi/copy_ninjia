@@ -29,7 +29,10 @@ memory
 .env.local
 
 # deployment configuration (copy and customize config_example/)
-config
+# 必须锚定根目录：裸 `config` 会匹配任意层级的同名目录，把 packages/config/ 与
+# test/config/ 下的新增源码一并静默忽略（既有文件因已被跟踪而不受影响，问题只
+# 在新增时暴露）。
+/config
 
 # caches
 .eslintcache

@@ -28,14 +28,15 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
+  <a href="https://platform.openai.com/docs/"><img src="https://img.shields.io/badge/AI-OpenAI-412991?style=flat-square&logo=openai&logoColor=white" alt="OpenAI"></a>
   <a href="https://api-docs.deepseek.com/"><img src="https://img.shields.io/badge/AI-DeepSeek-4d6bfe?style=flat-square&logo=deepseek&logoColor=white" alt="DeepSeek"></a>
 </p>
 
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1679_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.63%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1889_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/ja/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.84%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -72,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage — 1679 件のテストが全て成功 / テストファイル 172 件 / expect() 呼び出し 30,519 回 / 関数カバレッジ 95.56% / 行カバレッジ 96.63%" src="docs/assets/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 1889 件のテストが全て成功 / テストファイル 189 件 / expect() 呼び出し 31,105 回 / 関数カバレッジ 95.90% / 行カバレッジ 96.84%" src="docs/assets/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -94,7 +95,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI チャット</b></p>
-  <p>Gemini ペルソナに基づく自律行動。発言、スタンプ、リアクション、画像生成はすべてツールで、そのラウンドで何をいくつどの順に行うかはモデル自身が決めます。</p>
+  <p>ペルソナに基づく自律行動。発言、スタンプ、リアクション、画像生成はすべてツールで、そのラウンドで何をいくつどの順に行うかはモデル自身が決めます。モデル層は差し替え可能な provider で、既定は Gemini、鍵が無い場合は OpenAI に fallback します。</p>
 </td>
 </tr>
 <tr>
@@ -156,7 +157,8 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 | `/nya_copy` | テキストの末尾に「nya~」を追加 |
 | `/ja_copy` | Google Cloud Translate で日本語翻訳してから復唱 |
 | `/steal_icon` | アバターのみコピー |
-| `/stop_copy` | グローバル copy 状態を停止 |
+| `/reset_icon` | bot 本来のアバターに戻す |
+| `/stop_copy` | グローバル copy 状態を停止し、アバターも元に戻す |
 
 対象は「メッセージへの返信」または `@username` で指定します。
 
@@ -173,8 +175,9 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <table width="100%">
 <tr><th width="26%" align="left">コマンド</th><th width="19%" align="center">権限</th><th width="55%" align="left">説明</th></tr>
 <tr><td><code>/copy</code> <code>/r_copy</code> <code>/nya_copy</code> <code>/ja_copy</code></td><td align="center">メンバー</td><td>各 copy モードを開始</td></tr>
-<tr><td><code>/stop_copy</code></td><td align="center">メンバー</td><td>現在のグローバル copy を停止</td></tr>
+<tr><td><code>/stop_copy</code></td><td align="center">メンバー</td><td>現在のグローバル copy を停止し、アバターも復元</td></tr>
 <tr><td><code>/steal_icon</code></td><td align="center">メンバー</td><td>アバターのみ取得</td></tr>
+<tr><td><code>/reset_icon</code></td><td align="center">メンバー</td><td>既定アバターに戻す</td></tr>
 <tr><td><code>/&lt;漢字 1~2 文字&gt;</code></td><td align="center">メンバー</td><td>アクションコマンド。<code>/咬</code> や <code>/揪住</code> で「実行者 咬了 対象！」と応答し、成功結果は長期保持</td></tr>
 <tr><td><code>/quiet [1-15]</code></td><td align="center">メンバー</td><td>自発的発言を N 分間停止（既定 3 分）</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">メンバー</td><td>静寂モードを早期解除</td></tr>
@@ -190,6 +193,8 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/batch_kick &lt;Nm|Nh|Nd&gt;</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>スーパーグループで、rolling 24 時間以内の指定 window に入室し、まだ在室しているメンバーを kick。blocklist には追加しません</td></tr>
 <tr><td><code>/permission help</code><br><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>permission 説明を JSON で一覧表示、または既存 allowlist user/channel の個別 permission を変更。<code>all</code> ですべて有効化</td></tr>
 <tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>返信、<code>@username</code>、user id、channel id で allowlist identity を追加・削除</td></tr>
+<tr><td><code>/image_model gpt|gemini</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>画像生成の provider を切り替え。画像生成のみに作用し、AI key 2 本が揃っている場合だけ切り替え可能</td></tr>
+<tr><td><code>/chat_model gpt|gemini</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>返信・要約・画像理解の provider を切り替え。画像生成には影響せず、AI key 2 本が揃っている場合だけ切り替え可能</td></tr>
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（PM 限定）</td><td>Bot との個人チャットから指定グループへの転送セッションを開始/終了</td></tr>
 </table>
 
@@ -225,7 +230,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 - Linux（読み取り可能な `/proc` が必要。ほかのプラットフォームではインスタンスロックが fail closed）
 - Bun 1.3+
 - Telegram Bot Token
-- Gemini API Key（`/ai_chat` の AI 雑談を使う場合のみ）
+- AI 雑談 provider の API Key（`/ai_chat` を使う場合のみ。Gemini か OpenAI のいずれか）
 - DeepSeek API Key（`/ad_detect` の広告検出を使う場合のみ）
 - Google Cloud サービスアカウント JSON（`/ja_copy` 使用時のみ）
 
@@ -240,7 +245,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td>全群 AI 有効かつ画像・スタンプ多数</td><td>4 vCPU / 8 GB RAM</td><td>メディア処理と Base64 符号化に十分な余裕を確保</td></tr>
 </table>
 
-単一インスタンスでは、上記規模のアクティブグループを約 15 個以内に抑えることを推奨します。主な制約は総メンバー数ではなく、単一の Telegram Bot API、Gemini と DeepSeek の quota、実際のメッセージ/メディア流量です。
+単一インスタンスでは、上記規模のアクティブグループを約 15 個以内に抑えることを推奨します。主な制約は総メンバー数ではなく、単一の Telegram Bot API、AI provider と DeepSeek の quota、実際のメッセージ/メディア流量です。
 
 </details>
 
@@ -262,7 +267,8 @@ cp -r config_example config
 | :--- | :---: | :--- |
 | `TELEGRAM_BOT_TOKEN` | ✅ | BotFather が発行する Bot Token |
 | `SUPER_ADMIN_USER_ID` | ✅ | スーパー管理者の 10 進数ユーザー ID を 1 つ |
-| `AI_CHAT_GEMINI_API_KEY` | — | AI 雑談エージェント専用。空の場合 AI Worker は起動せず、`/ai_chat enable`、`/query_mood`、`/switch_mood` が拒否されます |
+| `AI_CHAT_GEMINI_API_KEY` | — | AI 雑談エージェントの既定 provider |
+| `AI_CHAT_OPENAI_API_KEY` | — | AI 雑談エージェントの fallback provider。Gemini の鍵が空のときだけ使われます。**両方とも空**の場合にのみ AI Worker は起動せず、`/ai_chat enable`、`/query_mood`、`/switch_mood` が拒否されます |
 | `AD_DETECT_DEEPSEEK_API_KEY` | — | 広告検出専用。空の場合 `/ad_detect enable` が拒否されます |
 | `COPY_NINJIA_DATA_ROOT` | — | 実行時データのルート。未指定ならプロジェクトルート |
 
@@ -296,7 +302,7 @@ Bot を初めてグループに追加した後、`SUPER_ADMIN_USER_ID` がグル
 /ai_chat enable
 ```
 
-> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードでは中国語の文字列または template literal を含むソース行が 64 ファイルへ約 641 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](docs/ja/06-modification-guide.md) にあります。
+> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードでは中国語の文字列または template literal を含むソース行が 66 ファイルへ約 665 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](docs/ja/06-modification-guide.md) にあります。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 

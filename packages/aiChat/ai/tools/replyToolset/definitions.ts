@@ -1,4 +1,4 @@
-import type { FunctionDeclaration } from "@google/genai";
+import type { AiToolDefinition } from "../../../../types/aiChat/provider";
 import {
   ADD_REACTION_TOOL_INSTRUCTION,
   SEND_MESSAGE_TOOL_INSTRUCTION,
@@ -10,7 +10,7 @@ import {
 } from "../../../../consts/tools";
 import { getReactionEmojis } from "../../reactions";
 
-export function buildSendMessageToolDefinition(roundHasTypo: boolean): FunctionDeclaration {
+export function buildSendMessageToolDefinition(roundHasTypo: boolean): AiToolDefinition {
   const properties: Record<string, unknown> = {
     text: { type: "string", description: "要发到群里的消息文本。" },
     reply_to_trigger: {
@@ -41,7 +41,7 @@ export function buildSendMessageToolDefinition(roundHasTypo: boolean): FunctionD
 }
 
 /** 反应白名单为空时不向模型提供反应工具。 */
-export function buildAddReactionToolDefinition(): FunctionDeclaration | null {
+export function buildAddReactionToolDefinition(): AiToolDefinition | null {
   const reactionEmojis: readonly string[] = getReactionEmojis();
   if (reactionEmojis.length === 0) return null;
   return {

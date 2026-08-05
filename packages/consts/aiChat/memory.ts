@@ -1,9 +1,8 @@
-/** 冷消息压缩使用的模型与生成参数。 */
-export const GEMINI_SUMMARY_MODEL: string = "gemini-3.5-flash-lite";
-/** 冷消息摘要请求允许的最大输出 token。 */
-export const SUMMARY_MAX_TOKENS: number = 49_152;
-/** 冷消息摘要生成温度。 */
-export const SUMMARY_TEMPERATURE: number = 0.5;
+/** 冷消息压缩请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
+export const CHAT_SUMMARY_ERROR_LABEL: string = "AI summarize API";
+
+/** 冷消息压缩的领域参数。模型名、采样温度与输出 token 上限因供应商而异，
+ *  分别放在 consts/aiChat/{gemini,openai}.ts。 */
 /** HTTP 成功但摘要正文不可用时，两次业务重采样之间的退避。 */
 export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 

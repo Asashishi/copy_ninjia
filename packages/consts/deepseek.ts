@@ -4,7 +4,8 @@
  * consts 里（如 consts/antiRaid/adDetect.ts），不集中到这里。
  */
 
-/** DeepSeek 的 OpenAI 兼容端点。 */
+/** DeepSeek 的 OpenAI 兼容端点，作为默认值；部署可用 config/openai.json 的
+ *  ad_detect.base_url 覆盖（见 packages/config/openai.ts）。 */
 export const DEEPSEEK_API_BASE_URL: string = "https://api.deepseek.com";
 
 /** 单次请求的整体超时（也是 SDK 内部每次重试各自的预算）。 */

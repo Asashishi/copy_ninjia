@@ -11,6 +11,17 @@ export function hasExactKeys(value: Record<string, unknown>, keys: readonly stri
   return actualKeys.length === keys.length && keys.every((key: string): boolean => Object.hasOwn(value, key));
 }
 
+/**
+ * 要求对象的键都落在 schema 内，但不要求全部出现。
+ *
+ * 与 hasExactKeys 的分工：字段全必填的配置用那个，字段全可选、缺省有兜底的
+ * 配置用这个。两者都拒绝未知键——拼错的键被无声忽略，运维会以为改动已生效。
+ */
+export function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed: ReadonlySet<string> = new Set(keys);
+  return Object.keys(value).every((key: string): boolean => allowed.has(key));
+}
+
 /** 判断未知值是否为只包含非空字符串的数组，并为后续使用保留元素类型。 */
 export function isNonEmptyStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item: unknown): boolean => typeof item === "string" && item.trim().length > 0);

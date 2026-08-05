@@ -13,7 +13,7 @@ import type { LockdownRecord, StateFileSchema } from "../../../packages/types/ch
 function schema(chatId: number): StateFileSchema {
   return {
     chats: { [String(chatId)]: { isAIChatEnabled: true } },
-    globalCopy: { copiedUser: null },
+    global: { copy: { copiedUser: null }, model: {} },
   };
 }
 
@@ -194,7 +194,7 @@ describe("StateStore", () => {
           },
         },
       },
-      globalCopy: { copiedUser: null },
+      global: { copy: { copiedUser: null }, model: {} },
     };
     const backup: string = JSON.stringify(expected, null, 2);
     const moves: { source: string; destination: string }[] = [];
@@ -296,7 +296,7 @@ describe("StateStore", () => {
     });
     const invalid = {
       chats: {},
-      globalCopy: { copiedUser: null },
+      global: { copy: { copiedUser: null }, model: {} },
       unknownField: true,
     } as unknown as StateFileSchema;
 

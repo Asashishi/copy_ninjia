@@ -48,7 +48,7 @@
 - `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 641 处、分布在 64 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 665 处、分布在 66 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
 
 ## 调整行为参数
 
@@ -61,7 +61,9 @@
 | 媒体描述长度、执行槽、LRU 容量 | `packages/consts/aiChat/media.ts` |
 | 生图冷却与字节上限 | `packages/consts/aiChat/imageGeneration.ts` |
 | 心情时长与开关超时 | `packages/consts/aiChat/mood.ts` |
-| 工具动作/查询上限、模型名、请求超时 | `packages/consts/aiChat/tools.ts` |
+| 工具动作/查询上限、打字与错字节奏 | `packages/consts/aiChat/tools.ts` |
+| 请求超时、重试次数、采样与安全档位 | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
+| **模型名**（两家、各条流水线） | 不是常量：`config/gemini.json` 与 `config/openai.json`，见 [01-getting-started](01-getting-started.md) |
 | 验证窗口、刷屏阈值、追加/收敛策略 | `packages/consts/antiRaid/` |
 | copy 冷却、/quiet 范围、用户名规则、动作命令限流 | `packages/consts/commands.ts` |
 | 随机触发的发言人冷却 | `packages/consts/auto.ts` |
@@ -74,7 +76,7 @@
 ## 新增一个 AI 工具
 
 1. **名称常量**：在 [`packages/consts/tools.ts`](../packages/consts/tools.ts) 定义工具名；若工具产生可见副作用，确认是否应加入 `ACTION_TOOL_NAMES`。
-2. **定义**：无状态的静态查询工具把 `ToolDefinition` 放进 [`packages/aiChat/ai/tools/index.ts`](../packages/aiChat/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一转换成 SDK `FunctionDeclaration`。
+2. **定义**：无状态的静态查询工具把 `ToolDefinition` 放进 [`packages/aiChat/ai/tools/index.ts`](../packages/aiChat/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一收敛成中立的 `AiToolDefinition`（JSON Schema 参数），再由各供应商实现包的 `replySession.ts` 转成自家形状——新增工具不需要碰任何一家 SDK 的类型。
 3. **实现**：在 `packages/aiChat/ai/tools/` 实现执行逻辑；面向 Telegram 的副作用经主线程代理执行，Worker 内不直接持有 Bot 实例。
 4. **注册**：静态查询工具接入 `packages/aiChat/ai/tools/index.ts` 的分发；行动工具接入 `packages/aiChat/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
 5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、Google Search，以及贴纸/反应/生成图片各一次成功）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。

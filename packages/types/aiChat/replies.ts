@@ -1,4 +1,4 @@
-import type { Tool } from "@google/genai";
+import type { AiToolDefinition } from "./provider";
 import type { StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../stickers/tools";
 import type { ChatActionControl } from "./chatAction";
 import type { AiDirectTriggerReason, ImageGenerationReference } from "./protocol";
@@ -22,10 +22,10 @@ export interface QueuedReplyTrigger {
   text: string;
 }
 
-/** 一轮回复交给 Gemini 的有序初始上下文区块。直接 @/回复触发时，
- * invokerFocus 作为独立 text Part 插在完整转录与回复任务之间；随机触发和
- * 随机媒体评价不携带。区块保持领域语义，直到 geminiReply.ts 的 SDK 边界
- * 才映射成同一个 user Content 下的 text Parts。 */
+/** 一轮回复交给模型的有序初始上下文区块。直接 @/回复触发时，invokerFocus
+ * 作为独立区块插在完整转录与回复任务之间；随机触发和随机媒体评价不携带。
+ * 区块保持领域语义，直到各供应商实现包的 replySession.ts 边界，才映射成同一个
+ * user 轮次下的多段文本。 */
 export interface ReplyPromptSections {
   readonly referenceMemory: string;
   readonly currentConversation: string;
@@ -58,7 +58,12 @@ export interface ReplyToolContext {
 
 /** 一轮 AI 回复的函数工具集与执行状态。 */
 export interface ReplyToolset {
-  tools: Tool[];
+  /** 本轮全部自定义函数声明（静态查询工具 + 现组装的行动工具）。中立
+   *  JSON Schema 表达，两家供应商实现包各自转成自家形状。 */
+  functions: readonly AiToolDefinition[];
+  /** 本轮是否挂载供应商的服务端联网检索工具（Gemini 的 googleSearch /
+   *  OpenAI 的 hosted web_search）。 */
+  webSearch: boolean;
   has(name: string): boolean;
   execute(name: string, argumentsJson: string): Promise<string>;
   actionsUsed(): number;

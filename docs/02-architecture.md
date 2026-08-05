@@ -20,7 +20,7 @@ flowchart TD
     classDef worker stroke:#3b82f6,stroke-width:2px;
 
     MAIN["🧵 主线程<br/>grammY runner + 按群 sequentialize<br/>命令与自动消息流水线<br/>StateStore（state.json）"]:::main
-    AI["🤖 AI Worker<br/>Gemini 多轮工具调用<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
+    AI["🤖 AI Worker<br/>多轮工具调用（可替换 provider）<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置 / 广告检测"]:::worker
     DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 运势 / 验证文件 / 黑名单 / 入群日志"]:::worker
 
@@ -56,7 +56,7 @@ Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共
 8. **中文动作命令**——`/咬`、`/贴贴` 这类命令（动作词收 1~2 个中文字）拿不到 Telegram 的 `bot_command` 实体，`bot.command` 匹配不到，只能用 `bot.hears` 按消息原文匹配（见 [`packages/commands/cjkAction.ts`](../packages/commands/cjkAction.ts)）。**必须排在下一步的消息兜底之前**——排在后面就会被当成普通消息进入 AI/复读流水线，整个特性静默失效。因为它排在自动流水线之前，那条流水线的自发消息门禁对它无效，handler 自己要跳过机器人自己的消息；也因为被它认领的消息不再往下走，handler 要自己补上发送者身份缓存。不认领的形态（`/咬@OtherBot`、caption 形态、消息形态异常）一律 `next()` 放行。
 9. **自动消息流水线**——[`packages/auto/`](../packages/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
 
-AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投递 AI Worker → Worker 组装三段式 Gemini 输入（参考记忆 / 当前会话 / 本轮任务）→ 多轮工具调用（发消息、贴纸、反应、生图，全部经主线程代理执行）→ 结果写回滚动记忆 → 周期快照落盘。
+AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投递 AI Worker → Worker 组装三段式模型输入（参考记忆 / 当前会话 / 本轮任务）→ 多轮工具调用（发消息、贴纸、反应、生图，全部经主线程代理执行）→ 结果写回滚动记忆 → 周期快照落盘。
 
 `bot.catch` 记录未处理错误后**继续抛出**——吞掉异常会让失败的 update 被确认，进程重启后 Telegram 不再重投（含持久化失败的场景）。
 
@@ -73,7 +73,7 @@ flowchart TD
     U --> MED["图片 / 贴纸 / GIF"]:::process
     MED -- 异步视觉描述 --> MEM["AI Worker 滚动记忆"]:::ai
     TXT --> MEM
-    MEM --> G["Gemini + googleSearch + 自定义工具"]:::ai
+    MEM --> G["模型 provider + 服务端联网检索 + 自定义工具"]:::ai
     
     G --> A1["💬 发文字消息"]:::action
     G --> A2["👍 添加反应"]:::action
@@ -87,7 +87,7 @@ flowchart TD
 - **文本**以占位文本形式即时入队，保住其在对话时序中的位置。
 - **图片 / 贴纸 / GIF** 同样先占位入队，再异步下载并调用视觉模型生成描述，解析完成后原地回填同一条目的文本字段；命中贴纸白名单目录时跳过异步解析，直接写入目录里的现成描述。
 
-触发回复时，滚动记忆被组装成上一节所述的三段式 Gemini 输入，随 `googleSearch` 与自定义工具一并发给 Gemini。`googleSearch` 在 Google 服务端执行，其提示词按本轮搜索进度三态切换、且不计入动作预算（见 [04 运行时权威约束](04-invariants.md)）。模型在一轮内可发起多次工具调用，均经主线程代理执行而非直接操作 Telegram：
+触发回复时，滚动记忆被组装成上一节所述的三段式模型输入，随服务端联网检索工具与自定义工具一并发给当前选中的 provider（默认 Gemini，缺 key 时降级 OpenAI；两把 key 都在时，超管可用 `/chat_model` 把回复/总结/看图这半边单独指向另一家，生图那半边由 `/image_model` 独立决定，见 [03 目录地图](03-directory-map.md)）。检索在 provider 服务端执行（Gemini 的 `googleSearch` / OpenAI 的 hosted `web_search`），其提示词按本轮搜索进度三态切换、且不计入动作预算（见 [04 运行时权威约束](04-invariants.md)）。模型在一轮内可发起多次工具调用，均经主线程代理执行而非直接操作 Telegram：
 
 - 💬 **发文字消息**——正文必须由模型显式调用发送工具；仅当整轮零成功动作时，系统才会兜底发送。
 - 👍 **添加反应**——从白名单 emoji 中选择，一轮最多成功一次。

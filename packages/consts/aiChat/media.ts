@@ -1,5 +1,5 @@
-/** 图片、贴纸与 GIF 描述使用的视觉模型。 */
-export const GEMINI_MEDIA_MODEL: string = "gemini-3.5-flash-lite";
+/** 媒体视觉描述请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
+export const MEDIA_DESCRIPTION_ERROR_LABEL: string = "AI image understanding API";
 
 /** 图片视觉描述尚未落定时进入转录的占位。 */
 export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
@@ -18,8 +18,6 @@ export const ANIMATION_FALLBACK_PLACEHOLDER: string = "[GIF：解析失败，请
 export const IMAGE_DESCRIPTION_MAX_CHARS: number = 125;
 /** 贴纸和 GIF 短描述的最大字符数。 */
 export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 100;
-/** 单次媒体描述请求允许的最大输出 token。 */
-export const MEDIA_DESCRIPTION_MAX_TOKENS: number = 8192;
 /** Telegram 下载超时与单文件字节上限。只覆盖取回文件字节那一次 fetch。 */
 export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
 /**

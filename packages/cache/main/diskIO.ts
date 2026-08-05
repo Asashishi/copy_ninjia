@@ -11,6 +11,7 @@ import type {
   DiskIODomain,
   DiskIORespawnRegistration,
   LoadedReply,
+  LuckAppendStalledReply,
   VerificationPersistedReply,
 } from "../../types/diskIO";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
@@ -72,6 +73,7 @@ interface DiskIORuntime {
   verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[];
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
+  luckAppendStalledListeners: ((reply: LuckAppendStalledReply) => void)[];
   nextLuckSecretRequestId: number;
   nextJoinLogReadRequestId: number;
 }
@@ -96,6 +98,7 @@ export const diskIORuntime: DiskIORuntime = {
   verificationPersistedListeners: [],
   aiMemoryDeletedPersistedListeners: [],
   aiMemoryPersistedListeners: [],
+  luckAppendStalledListeners: [],
   nextLuckSecretRequestId: 1,
   nextJoinLogReadRequestId: 1,
 };

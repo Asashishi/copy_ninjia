@@ -28,9 +28,10 @@
   - **典型文件**：`message/`、`triggerPolicy.ts`。
 - **`packages/aiChat/`**
   - **职责**：AI 闲聊主线程代理与模型能力，包括 Worker 监督、记忆镜像、可用性判定，
-    以及 Gemini、贴纸、工具和媒体实现。
+    以及供应商实现包（`gemini/`、`openai/`）、provider 选取、贴纸、工具和媒体实现。
   - **典型文件**：`workerBridge.ts`、`messageIngress.ts`、`memoryMirror.ts`、
-    `availability.ts`、`ai/`；`index.ts` 只提供薄公开入口。
+    `availability.ts`、`credentials.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`；
+    `index.ts` 只提供薄公开入口。
 - **`packages/antiRaid/`**
   - **职责**：Anti-Raid 主线程代理与广告模型能力，包括 Worker 监督、持久化交接、
     update 入口，以及黑名单/验证/广告/刷屏编排。
@@ -63,7 +64,8 @@
     `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **职责**：模型与能力按所属功能放置，避免共享目录模糊线程和生命周期边界。
-  - **典型文件**：`gemini.ts`、`tools/replyToolset/`、`deepseek.ts`。
+  - **典型文件**：`tools/replyToolset/`、`utils/`、`deepseek.ts`；AI 闲聊的模型收发不在
+    这里，而在与供应商同名的 `packages/aiChat/{gemini,openai}/` 实现包。
 - **`packages/workers/antiRaid/adDetect/`**
   - **职责**：广告检测流水线（DeepSeek），包括排队批处理、消息串整形、判定与命中处置。
   - **典型文件**：`queue.ts`、`bundle.ts`、`classifier.ts`、`disposal.ts`。
@@ -115,7 +117,7 @@
     **主线程侧的 Worker 代理与镜像**（`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **owner**：AI 闲聊 Worker。
-  - **内容**：滚动记忆、回复准入、心情、贴纸目录与集合、Gemini 客户端。
+  - **内容**：滚动记忆、回复准入、心情、贴纸目录与集合、两家供应商的客户端单例。
 - **`workers/antiRaid/`**
   - **owner**：Anti-Raid Worker。
   - **内容**：验证/锁定状态机、刷屏窗口、广告检测队列、DeepSeek 客户端。

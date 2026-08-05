@@ -27,3 +27,35 @@ export const DAY_FILE_JSON_INDENT: number = 2;
  * 到重开的开销可以忽略。
  */
 export const LOG_REOPEN_RETRY_MS: number = FLUSH_INTERVAL_MS * 10;
+
+/**
+ * 运势追加连续失败多少次之后，Worker 向主线程发一条 luckAppendStalled 诊断，
+ * 由主线程的运势 owner 记进统一 `logs/`（见 workers/diskIO/luckFiles.ts 的
+ * flushLuckAppends 与 commands/luckChallenge/cache.ts 的监听）。
+ *
+ * 为什么需要这条旁路：本 Worker 自身的写盘错误按设计只有 `console.error`
+ * （见 workers/diskIOWorker.ts 模块头），而部署可以把 Worker 的 stdout/stderr
+ * 接到 /dev/null——那种部署上「条目进了主线程 dailyLuckCache、却永远写不进
+ * memory/luck/<day>.json」是**完全不可观测**的。这条诊断不取代 console.error，
+ * 只是额外给出一条一定能进 `logs/` 的告警。
+ *
+ * 取 3：追加失败会按 FLUSH_INTERVAL_MS 重排重试（见 scheduleLuckFlush），因此
+ * 3 次连续失败≈持续 1 分钟写不进去，足以滤掉单次瞬时抖动，又不会让运维等太久。
+ */
+export const LUCK_APPEND_STALL_ALERT_FAILURES: number = 3;
+
+/**
+ * 跨日刷盘失败期间，最多滞留多少条「新一天」的抽签等待补录（见
+ * workers/diskIO/luckFiles.ts 的 handleLuckDrawMessage）。
+ *
+ * 为什么需要滞留：换日前必须先把旧日已确认结果刷盘，刷不动就不能换 owner
+ * （startLuckDay 会把待刷批次整个清零）。但触发这次换日的那条新日抽签，主线程
+ * 早已把它写进 dailyLuckCache 并给用户发了回执——直接丢掉的话，磁盘恢复后当天
+ * 文件永远缺这一条，用户当天也再抽不了第二次，而没有任何一条路径会补回来：
+ * onDiskIORespawn 的全量重放只覆盖 Worker 重建，不覆盖「Worker 活着但写不进盘」。
+ *
+ * 取 FLUSH_MAX_ENTRIES：与一个批量窗口同量级，够装下一次典型故障期内的新日抽签
+ * （运势是每人每天一次的低频写入），又给出明确的内存上界。超出后丢最旧的一条并
+ * 记一行——那时故障已经持续到远超告警阈值，丢失必须是**有记录**的，不能静默。
+ */
+export const LUCK_DEFERRED_DRAW_MAX: number = FLUSH_MAX_ENTRIES;

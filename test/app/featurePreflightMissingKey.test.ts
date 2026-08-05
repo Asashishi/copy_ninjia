@@ -15,6 +15,7 @@ const states = new Map<number, Record<string, unknown>>();
 // 两把可选 key 都缺席，部署配置本身完好：只考凭据那一半。
 mock.module("../../packages/infra/config", () => ({
   AI_CHAT_GEMINI_API_KEY: undefined,
+  AI_CHAT_OPENAI_API_KEY: undefined,
   AD_DETECT_DEEPSEEK_API_KEY: undefined,
 }));
 mock.module("../../packages/config/readiness", () => ({
@@ -24,6 +25,9 @@ mock.module("../../packages/config/readiness", () => ({
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getAllChatStates: (): Map<number, Record<string, unknown>> => states,
+  // 本组只验凭据缺席那一侧，两项模型选取一律「从没设过」。
+  getImageProviderOverride: (): undefined => undefined,
+  getChatProviderOverride: (): undefined => undefined,
 }));
 
 const { preflightEnabledFeatures } = await import("../../packages/app/featurePreflight");
@@ -43,7 +47,7 @@ describe("已启用功能遇上被抽掉的 key", () => {
     states.set(-1001, { isAIChatEnabled: true });
 
     expect(() => preflightEnabledFeatures()).toThrow(/AI chat is enabled in 1 chat\(s\) \(-1001\)/);
-    expect(() => preflightEnabledFeatures()).toThrow(/AI_CHAT_GEMINI_API_KEY is not set/);
+    expect(() => preflightEnabledFeatures()).toThrow(/neither AI_CHAT_GEMINI_API_KEY nor AI_CHAT_OPENAI_API_KEY is set/);
     expect(() => preflightEnabledFeatures()).toThrow(/\/ai_chat disable/);
   });
 

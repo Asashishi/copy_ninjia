@@ -163,7 +163,9 @@ describe("generate_image 工具执行器", () => {
 
     const result = JSON.parse(await execute(JSON.stringify({ prompt: "  日落下的纸飞机  ", aspect_ratio: "7:5" })));
 
-    expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", resolution: "1K", actions_used: 1 });
+    // 不再上报 resolution：那个 "1K" 是 Gemini 生图模型的专属档位，OpenAI 侧出的是
+    // 1024x1024 / 1536x1024，长边并不都是 1K。
+    expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", actions_used: 1 });
     expect(generateChatImage).toHaveBeenCalledWith({
       prompt: "日落下的纸飞机",
       aspectRatio: "4:3",

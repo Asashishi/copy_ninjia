@@ -4,7 +4,7 @@
  * 停顿本身是可中止的：`/ai_chat disable`、群拆除、记忆容量驱逐都会
  * `invalidateChatReplies`，abort 掉本轮的 AbortController，而 libs/sleep.ts 会以
  * abort 原因 reject。**这个 reject 绝不能逃出 `toolset.execute()`**：
- * `replyToolset/orchestrator.ts` 的 dispatch/execute 与 `callGemini` 里那句
+ * `replyToolset/orchestrator.ts` 的 dispatch/execute 与 `generateReply` 里那句
  * `await toolset.execute(...)` 都没有 try/catch，一次逃逸展开的不是这一次调用，
  * 而是整个 `for (const call of functionCalls)` 循环——同一轮里模型发出的其余调用
  * 一个都不执行，`contents.push({ role: "user", parts: responseParts })` 也不会跑，

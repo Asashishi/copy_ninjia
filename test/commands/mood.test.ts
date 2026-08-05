@@ -10,6 +10,7 @@ const states = new Map<number, Record<string, unknown>>();
 mock.module("../../packages/infra/config", () => ({
   SUPER_ADMIN_USER_ID: 100,
   AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
+  AI_CHAT_OPENAI_API_KEY: undefined,
 }));
 // 超级管理员由身份直接持有全部白名单权限（见 packages/config/whitelist.ts 的
 // getEffectiveWhitelistPermissions），命令层不再单独判身份。

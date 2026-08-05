@@ -1,16 +1,18 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
-import type { GeminiTextGenerationResult } from "../../../packages/types/aiChat/gemini";
+import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 
-const responses: GeminiTextGenerationResult[] = [];
-const requestGeminiTextResult = mock(async (..._args: unknown[]): Promise<GeminiTextGenerationResult> =>
+const responses: AiTextResult[] = [];
+const generateText = mock(async (..._args: unknown[]): Promise<AiTextResult> =>
   responses.shift() ?? { ok: false, retryable: false }
 );
 const sleep = mock(async (..._args: unknown[]): Promise<void> => {});
 const logError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../../packages/aiChat/ai/gemini", () => ({ requestGeminiTextResult }));
+mock.module("../../../packages/aiChat/provider", () => ({
+  chatAiProvider: () => ({ name: "test", generateText }),
+}));
 mock.module("../../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: {
@@ -44,7 +46,7 @@ const batch: BufferedMessage[] = [bufferedMessageFixture({
   at: "2026/07/19 12:00:00",
 })];
 
-function response(text: string): GeminiTextGenerationResult {
+function response(text: string): AiTextResult {
   return { ok: true, text };
 }
 
@@ -57,7 +59,7 @@ async function waitForRotation(chatId: number): Promise<void> {
 
 beforeEach(() => {
   responses.length = 0;
-  requestGeminiTextResult.mockClear();
+  generateText.mockClear();
   sleep.mockClear();
   logError.mockClear();
   resetAiChatCompactionCache();
@@ -97,7 +99,7 @@ describe("AI 中期记忆压缩", () => {
     scheduleRotation(-1002, batch, false);
     await waitForRotation(-1002);
 
-    expect(requestGeminiTextResult).toHaveBeenCalledTimes(2);
+    expect(generateText).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(15_000);
     expect(pendingSummaries.get(-1002)).toBe("重试得到的摘要");
@@ -109,14 +111,14 @@ describe("AI 中期记忆压缩", () => {
     scheduleRotation(-1005, batch, false);
     await waitForRotation(-1005);
 
-    expect(requestGeminiTextResult).toHaveBeenCalledTimes(1);
+    expect(generateText).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
     expect(pendingSummaries.has(-1005)).toBe(false);
   });
 
   test("请求在途时群代际失效会等待压缩 settle，迟到摘要不会污染新状态", async () => {
-    let resolveRequest!: (value: GeminiTextGenerationResult) => void;
-    requestGeminiTextResult.mockImplementationOnce(() => new Promise((resolve) => {
+    let resolveRequest!: (value: AiTextResult) => void;
+    generateText.mockImplementationOnce(() => new Promise((resolve) => {
       resolveRequest = resolve;
     }));
 
@@ -145,7 +147,7 @@ describe("AI 中期记忆压缩", () => {
 
     scheduleRotation(-1004, batch, false);
 
-    expect(requestGeminiTextResult).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
     expect(compactionPendingCounts.get(-1004)).toBe(COMPACTION_MAX_PENDING_PER_CHAT);
     expect(logError).toHaveBeenCalledTimes(1);
   });

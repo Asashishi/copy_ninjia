@@ -1,5 +1,5 @@
 import type { StickerSet } from "@grammyjs/types";
-import type { FunctionDeclaration } from "@google/genai";
+import type { AiToolDefinition } from "../../../types/aiChat/provider";
 import { getStickerConfig } from "../../../config/stickers";
 import { sendSticker } from "../../../infra/telegram";
 import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
@@ -123,7 +123,7 @@ function formatPackStickerList(candidate: StickerPackCandidate): string {
  * 整包简介），pack_index 按菜单长度约束取值范围。菜单为空（白名单为空、
  * 或目录还没生成出任何描述）时返回 null——两层工具一起不提供。
  */
-export function buildViewStickerPackToolDefinition(menu: readonly StickerPackCandidate[]): FunctionDeclaration | null {
+export function buildViewStickerPackToolDefinition(menu: readonly StickerPackCandidate[]): AiToolDefinition | null {
   if (menu.length === 0) return null;
 
   const listText: string = menu.map((p: StickerPackCandidate, i: number): string => `${i + 1}. 「${p.title}」（${p.stickers.length} 枚）：${p.summary}`).join("\n");
@@ -146,7 +146,7 @@ export function buildViewStickerPackToolDefinition(menu: readonly StickerPackCan
 }
 
 /** 构造 send_sticker 的工具定义（两层选择的第二层），菜单为空时返回 null。 */
-export function buildSendStickerToolDefinition(menu: readonly StickerPackCandidate[]): FunctionDeclaration | null {
+export function buildSendStickerToolDefinition(menu: readonly StickerPackCandidate[]): AiToolDefinition | null {
   if (menu.length === 0) return null;
 
   return {

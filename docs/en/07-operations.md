@@ -12,7 +12,7 @@
 
 ## Deployment Model
 
-Copy Ninjia runs as one long-polling process with no webhook and no external database; all persistence uses local files. Keep a single instance to roughly 15 active groups or fewer. The practical bottlenecks are one Bot API, Gemini quotas, and media throughput; see “Quick Start” in the root README for hardware guidance.
+Copy Ninjia runs as one long-polling process with no webhook and no external database; all persistence uses local files. Keep a single instance to roughly 15 active groups or fewer. The practical bottlenecks are one Bot API, AI provider quotas, and media throughput; see “Quick Start” in the root README for hardware guidance.
 
 ### systemd Example
 

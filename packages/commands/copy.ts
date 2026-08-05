@@ -9,7 +9,7 @@ import { describeCopyModeEffect } from "../copy/copyModes";
 import { jaTranslateConfigReadiness } from "../config/readiness";
 import { refuseIfConfigBroken } from "./configGate";
 import { formatUserLabel } from "../users/userLabel";
-import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, stealAvatarInBackground } from "./copyShared";
+import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, restoreAvatarInBackground, stealAvatarInBackground } from "./copyShared";
 import { peekCommandTarget } from "./targetResolution";
 import {
   cancelPendingCopySlot,
@@ -160,7 +160,9 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  if (globalCopy.copiedUser) {
+  // 这一轮到底有没有真的开始复读，决定了下面要不要动头像；清空之前先记下来。
+  const wasCopying: boolean = globalCopy.copiedUser !== null;
+  if (wasCopying) {
     globalCopy.copiedUser = null;
     globalCopy.copyMode = undefined;
     globalCopy.copyChatId = undefined;
@@ -168,6 +170,26 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
   }
 
   await sendCommandMessage({ chatId, text: `哼，不玩了，本天才先歇一下~杂鱼♡`, replyToMessageId: messageId });
+
+  // 只取消掉排队中的那一轮 /copy（wasCopying 为 false）时到此为止：偷脸任务是在
+  // commitCopySlot 之后才入队的，这条路径上一次都没执行过，没有「别人的脸」要换。
+  // 无条件复原会把此刻这张脸当成自己偷来的抹掉——它可能是 /steal_icon 单独换上
+  // 的（那条命令只换脸、不开复读），于是「取消一轮还没开始的 /copy」变成了
+  // 「顺手清掉一张与 /copy 无关的头像」，回执还谎称「顺手把脸也换回来了」。
+  if (!wasCopying) return;
+
+  // 停止复读顺带把脸换回来：/copy 会偷目标头像，只停复读不复原会留下一张
+  // 「已经不复读了、却还顶着别人脸」的机器人。
+  //
+  // 这一步刻意**不占**全局冷却：/stop_copy 必须任何时候都能停下来，被冷却挡住
+  // 就成了「停不掉」。绕开限流的风险也有限——真正会触发换头像的是 /copy 与
+  // /steal_icon，它们各自都被同一个冷却闸门住；而上面那道 wasCopying 门禁保证
+  // 每次复原背后都对应着一次已经过闸的 /copy，复原节奏因此仍受其约束。
+  restoreAvatarInBackground({
+    chatId,
+    successText: `顺手把脸也换回来了，本天才的原装脸可比杂鱼们的耐看多了♡`,
+    failureText: `复读是停了，但脸没换回来呢（图取不下来或者被限流了），等下可以 /reset_icon 再试，杂鱼♡`,
+  });
 }
 
 /** teardown 专用：只停止由指定源群持有的全局 copy，不在这里单独落盘。 */

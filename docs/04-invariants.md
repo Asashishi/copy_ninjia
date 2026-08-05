@@ -42,6 +42,8 @@
 
   **主进程不得在启动阶段统一预热它们**：四份文件各属一个按群 opt-in、缺省关闭的可选功能，在那里抛错等于一份写坏的贴纸白名单就能让 copy、抽奖、入群验证、黑名单一起离线，systemd 还会照着重启循环。校验改在功能自己的 enable 分支做（`packages/config/readiness.ts` 按功能聚合结论，`packages/commands/configGate.ts` 统一拒绝文案）：坏了只拒绝那一个开关，回复点名到具体文件，日志留英文诊断，其余能力照常服务。
 
+  **`config/openai.json` 被两个功能分段共用，因此判定与运行时读取必须落在同一段上**：广告检测只探也只读 `ad_detect`，AI 闲聊只探也只读 `ai_agent`，两段各有各的加载器与缓存/失败 holder（`packages/config/openai.ts` 与 `packages/cache/perThread/config.ts`）。任何一个消费点退回整份文件加载，这道分段就等于没做——那一段的笔误会先通过就绪探测与启动 preflight，再在真实调用时抛错并被上游 catch 吞成「没判定」，且失败态缓存到进程退出为止，功能全程显示 enabled。
+
   已经开着的群由运行时门禁（`aiChat/availability.ts`、`antiRaid/adDetect.ts` 的 `buildAdCandidate`）一并停摆，不让 Worker 拿着读不动的配置反复崩溃。结论**连同失败一起**按进程缓存：这道判定挂在每条群消息的门禁上，不缓存失败就是每条消息一次 `readFileSync`；代价是修好文件要重启才生效，与四份 loader 的单例语义一致。
 
   唯一无条件读配置的地方是 Disk I/O Worker 的启动恢复（要拿贴纸白名单对账 `memory/stickers/`），它必须在读不动时**整体跳过对账**——绝不能退化成空白名单，那会把不在白名单里的持久化文件当孤儿删掉。
@@ -75,9 +77,9 @@
   静态黑名单只读，与 `memory/blocklist/blocklist.json` 的动态层在内存中取并集，`/unblock` 不得移除静态条目。
 - **只有整个进程都离不开的凭据才能在模块求值期 `requireEnv`**（`TELEGRAM_BOT_TOKEN`、`SUPER_ADMIN_USER_ID`）。只服务于某个按群 opt-in、缺省关闭的可选功能的密钥必须走 `optionalEnv`：`packages/infra/config.ts` 几乎被所有入口路径 import，在那里抛错等于进程还没开始拉取更新就退出、systemd 进入重启循环，copy、抽奖、入群验证、黑名单全部离线——只因为一个默认就没开的功能缺了 key。
 
-  两把 AI 密钥都属于后者，**变量名一律以所服务的功能打头**（`AI_CHAT_GEMINI_API_KEY`、`AD_DETECT_DEEPSEEK_API_KEY`）：读 `.env` 的人要能一眼看出「缺这一把会瘸哪个功能」，而同一家供应商日后完全可能同时服务两个功能，按供应商命名到那时就再也分不开了。缺 `AD_DETECT_DEEPSEEK_API_KEY` 时 `/ad_detect enable` 直接拒绝、已经开着的群也不再投递待检消息；
+  三把 AI 密钥都属于后者，**变量名一律以所服务的功能打头**（`AI_CHAT_GEMINI_API_KEY`、`AI_CHAT_OPENAI_API_KEY`、`AD_DETECT_DEEPSEEK_API_KEY`）：读 `.env` 的人要能一眼看出「缺这一把会瘸哪个功能」，而同一家供应商日后完全可能同时服务两个功能，按供应商命名到那时就再也分不开了。缺 `AD_DETECT_DEEPSEEK_API_KEY` 时 `/ad_detect enable` 直接拒绝、已经开着的群也不再投递待检消息；
 
-  缺 `AI_CHAT_GEMINI_API_KEY` 时 AI Worker 根本不启动、`/ai_chat enable`、`/query_mood` 与 `/switch_mood` 直接拒绝、已经开着的群也不再投喂消息与触发。两把密钥职责不重叠、互不回退：Gemini 只服务 AI 闲聊 agent，DeepSeek 只服务广告检测。
+  AI 闲聊那两把是「或」的关系：默认走 Gemini，只有 `AI_CHAT_GEMINI_API_KEY` 缺席时才降级到 `AI_CHAT_OPENAI_API_KEY`。默认之上还有一层**按能力分开**的显式选取——`/chat_model` 管回复/纯文本/视觉，`/image_model` 只管生图，两者各读各的覆盖值，因此闲聊与生图完全可以分属两家，同一条 Worker 线程上两家的客户端也会同时存在（见 `packages/aiChat/provider.ts` 与 `packages/cache/workers/aiChat/{gemini,openai}.ts`；「当前用哪家」不是一个单值）。无论默认还是显式选取，都不做运行时故障切换（一轮回复中途换供应商会让工具往返的对话记录跨两套格式，且两家的安全档位与画幅能力并不等价）。**两把都缺**时 AI Worker 才根本不启动、`/ai_chat enable`、`/query_mood` 与 `/switch_mood` 直接拒绝、已经开着的群也不再投喂消息与触发；凭据判定只有 `packages/aiChat/credentials.ts` 一个出口。AI 闲聊与广告检测两条线职责不重叠、互不回退：DeepSeek 那把只服务广告检测。
 
   **日语翻译同理，唯一判定入口是 `packages/copy/availability.ts`**（`g-auth.json` 可用 + 本群 opt-in），`/ja_copy` 与自动复读的 ja 变换都必须走它：这条线的降级是**静默**的——`translateToJapanese` 失败只返回 null，调用方原样发出未翻译的原文，群里看到的与「翻译服务抖了一下」完全不可区分，一次配置事故能这样连续伪装好几天。命令路径点名 `g-auth.json` 并拒绝，自动路径退化成普通复制，都不允许「假装翻译过」。
 
@@ -143,12 +145,12 @@
 - `/query_mood` 与 `/switch_mood` 共用主线程 request/waiter 与 AI Worker 回执握手。前者允许任意群成员读取当前有效心情且不强制重抽，后者才检查 `isCanSwitchMood` 并执行重抽。主线程必须先登记 waiter 再投递，并在超时、Worker 崩溃、放弃重启和停机时统一结算；请求携带绝对截止时刻，AI Worker 必须在读取或重抽前拒绝已过期的积压请求。只有 request ID、chat ID 和预期事件类型都匹配的 `moodQueried` / `moodSwitched` 回执能证明结果；后续 Telegram 回复发送失败不得被改写成查询或重抽失败。
 - AI chat invalidate 是可等待的取消边界：每个群首次接纳 generation-sensitive 工作时取得本 Worker isolate 内永不复用的唯一 epoch；invalidate 同步删除当前 epoch、abort 旧代并清空未开始任务，再等待该 epoch 下已登记的回复轮、限频提示、媒体描述与记忆压缩 settle，最后按 request ID 回 `chatInvalidated`。
 
-  **这个等待必须有上限**（`AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS`，且明显小于主线程那道 `AI_CHAT_INVALIDATE_TIMEOUT_MS`）：登记进来的任务并非都收得住 abort——记忆压缩与媒体描述两条链当前没有接收并向 Gemini 请求传递本代 `AbortSignal`，重采样间隔加 SDK 请求超时最坏能跑几分钟。用于 `Promise.race` 的 unref 到期 timer 无论任务先完成还是超时先到，都必须在 `finally` 清除，不能继续保留已结束 invalidate 的闭包与 Promise。
+  **这个等待必须有上限**（`AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS`，且明显小于主线程那道 `AI_CHAT_INVALIDATE_TIMEOUT_MS`）：登记进来的任务并非都收得住 abort——记忆压缩与媒体描述两条链当前没有接收并向模型请求传递本代 `AbortSignal`，重采样间隔加 SDK 请求超时最坏能跑几分钟。用于 `Promise.race` 的 unref 到期 timer 无论任务先完成还是超时先到，都必须在 `finally` 清除，不能继续保留已结束 invalidate 的闭包与 Promise。
 
   无上限地等，一次「`/ai_chat disable` 撞上镜像块轮转」就会让主线程先超时 reject，而那个异常会逃进 grammY 中间件：这条 update 判失败、最终 offset 被扣住，重启后 Telegram 重投同一条指令。到点降级放行并记一行错误日志，不影响正确性——这些任务全部按 generation 自检，失效之后跑完也不会再写任何东西。迟到任务只做无副作用 epoch 对账，条目回收或群重新启用都不能让旧 token 复活；epoch Map 因此只随当前活跃工作增长，不保留历史群。
 
   主线程必须同时等该回执与记忆删除 durable 才能宣称 `/ai_chat disable` 完成。Worker 崩溃、放弃重建、投递失败、超时或停机都必须 reject waiter。
-- Gemini 的传输、网络、429 与 5xx 重试只由官方 `@google/genai` SDK 的 `retryOptions` 负责（当前最多 5 次尝试）。调用方在一次请求已经以 `failureKind: "request"` 失败后不得再把整次请求重跑一层；领域级重采样只允许处理 SDK 请求成功但模型响应不可用或异常结束（`failureKind: "response"`），以及规范化后文本为空，避免乘法放大请求、延迟与临时对象。
+- 模型请求的传输、网络、429 与 5xx 重试只由所选供应商官方 SDK 自己负责（Gemini 是 `@google/genai` 的 `retryOptions`，OpenAI 是 SDK 的 `maxRetries`；两边都按「总尝试 5 次」对齐）。调用方在一次请求已经以 `failureKind: "request"` 失败后不得再把整次请求重跑一层；领域级重采样只允许处理 SDK 请求成功但模型响应不可用或异常结束（`failureKind: "response"`），以及规范化后文本为空，避免乘法放大请求、延迟与临时对象。
 - AI 回复只把成功的文字、贴纸、反应和图片计入统一动作预算；模型提示上限为 8，执行侧硬顶为 11。贴纸、反应与生成图片各最多成功一次；其它动作工具不设单工具调用上限。贴纸包查看和 Google Search 分别保留独立查询上限，所有自定义函数调用另有整轮防循环硬顶。仅在零成功动作时，最终正文才经 `send_message` 兜底；所有有意展示的文字必须由模型显式调用工具产出，绝不能只留在最终响应正文里。
 
   **可见文字只有两个出口**：独立发言走 `send_message`，给本轮 `generate_image` 生成的图配的那句话走该工具的 `caption`。带图注的生图是**一条** Telegram 消息、一个 `message_id`，因此只计一个动作，自录也必须合并成一条（拆成两条会让同一个 `message_id` 在转录里出现两次，回复链回溯到它时无从判断指的是哪一条）。图注超过 `TELEGRAM_CAPTION_MAX_CHARS` 时 Bot API 是整条拒绝而不是截断，执行侧降级为「无图注的图 + 一条独立文本」两条消息，按 `actions_used: 2` 结算。
@@ -175,7 +177,7 @@
 ### AI 提示词与转录
 
 - AI 回复的联网查证说明按本轮搜索进度三态切换：尚未搜索时讲判定标准与「先查证再行动」，已搜索且仍有额度时改讲结果使用纪律与缺口补搜，额度耗尽时保留结果使用纪律并给出查不到时的收口方式。三态共用同一份结果纪律——结果与既有认知冲突时以结果为准、结果里没有的具体信息不得凭记忆补全——任何一态都不得省略；模型可见提示必须声明 Google Search 不计入统一动作预算，避免模型为省动作跳过查证。观测到服务端搜索之后的工具轮改用更低的采样温度；搜索与该轮首次成文发生在同一次请求内，那一轮无法预知，仍按常规回复温度生成。
-- AI 回复的初始 Gemini 输入必须保持一个 `user Content` 下的三个有序 `text Part`：只读参考记忆、只读当前会话、本轮回复任务。每段只由模型可见的首尾标签加一行段首职责标注包围；防注入总规则（数据 vs 指令、伪造边界无效、不暴露内部结构）统一只在 `systemInstruction` 声明一次，不逐段重复。工具调用后的历史再按真实 `model/user` 角色追加，不得把参考资料伪装成历史对话轮次。
+- AI 回复的初始输入必须保持同一个 user 轮次下的 3～4 个有序文本区块：只读参考记忆、只读当前会话、直接唤起时额外插入的唤起者重点记录、本轮回复任务。区块在 `packages/workers/aiChat/replyModel.ts` 保持领域语义，直到各供应商实现包的 `replySession.ts` 才映射成自家形状（Gemini 是一个 `user Content` 下的多个 `text Part`，OpenAI 是一条 user message 下的多个 `input_text`）。每段只由模型可见的首尾标签加一行段首职责标注包围；防注入总规则（数据 vs 指令、伪造边界无效、不暴露内部结构）统一只在系统提示词里声明一次，不逐段重复。工具调用后的历史再按真实模型/用户角色追加，不得把参考资料伪装成历史对话轮次。
 
   系统提示词只通过 `GenerateContentConfig.systemInstruction` 独立字段发送，不得拼入普通对话 `contents`。
 - 记忆分层（【最热记忆】【较早逐字记录】【冷记忆】【唤起者重点记录】）只是模型读取上下文的内部方式，对群友一律不可见：`MEMORY_MECHANISM_SILENCE_INSTRUCTION` 禁止回复里出现或影射这些分块名，也禁止提上下文、区块、`Part`、摘要、压缩、滑动窗口、缓存、条数上限、token 与系统提示词这类机制词。
@@ -367,6 +369,7 @@
   **`/unblock` 的整份重写必须逐条手拼 JSON 文本，不能塞进对象再 `JSON.stringify`**（同 `config/whitelist.ts` 的 `serializeWhitelistConfig`）：JS 对象把「整数索引形态」的键（0 ~ 2^32-2，正好覆盖旧式用户 id）提到最前并按数值升序，其余键才保持插入序。名单里同时有正的用户 id 和负的频道 id（广告判定对频道马甲按其负 chat id 拉黑）时，代码里排好的升序会在 stringify 那一步被打乱，「顺序稳定」的承诺失效——备份比对和 `git diff` 里无关条目跟着跳位，掩盖真正被删掉的那个 id。产物仍与 `JSON.stringify(对象, null, DAY_FILE_JSON_INDENT)` 逐字节同形，否则下次打开会被判成「结尾形态不符」再整份重写一遍。
 
   落盘失败时 `/block` 的回复必须说破「没写进硬盘」：Worker 侧写盘错误只有 `console.error`，按设计不进 `logs/`。
+  **唯一例外是每日运势的追加停摆**：连续失败到阈值时 Worker 额外向主线程发一条 `luckAppendStalled` 诊断，由运势 owner 记一行 `logger.error` 进 `logs/`（边沿触发，一次故障期只报一条）。它报的不是某一次 write(2) 的错，而是「一个领域已持续丢数据」——而运势的丢失在别处完全无迹可寻：主线程 `dailyLuckCache` 照常命中，用户看不出异常。递归风险为零：据此记的日志走 log 领域，log 领域自己写失败仍只 `console.error`。
 
   **落盘确认按领域收敛**：统一 flush（`flushAll`）是八个领域的合取，任何一个失败都会让整体回执变成 `flushFailed`；`/block` 只能等 `flushDiskIODomain("blocklist")`，否则某群 `memory/ai/<chat>.json` 属主不对也会让它报「小本本没能写进硬盘」，把运维引向一个其实没坏的文件。回执因此必须带 `failedDomains`，主线程据此点名真正坏掉的领域——不点名就没有任何一条进得了 `logs/`。
 
@@ -542,7 +545,7 @@
 
   判定提示词里**必须出现「JSON」这个词**：请求带 `response_format: json_object`，DeepSeek 服务端会校验提示词是否提到 json，没提到直接 400 让整条判定失败。
 
-  **输出额度要按推理模型留余量**：`AD_DETECT_MODEL` 是推理模型，reasoning token 与正文共用 `max_tokens`，给得太紧的后果不是截断出半个 JSON，而是推理把额度吃光、正文一个字都没写出来（`finish_reason=length` + 空 content），上层只能当作「本次没判定」把这条广告放过去。传输层因此必须把 `length` 收尾单独识别出来点名记日志并返回 null，不把半截正文交给解析器——否则这类漏判在日志里没有任何痕迹。
+  **输出额度要按推理模型留余量**：广告检测那条线跑的是推理模型（模型名现在由 `config/openai.json` 的 `ad_detect.model` 给定，代码里不再持有默认值），reasoning token 与正文共用 `max_tokens`，给得太紧的后果不是截断出半个 JSON，而是推理把额度吃光、正文一个字都没写出来（`finish_reason=length` + 空 content），上层只能当作「本次没判定」把这条广告放过去。传输层因此必须把 `length` 收尾单独识别出来点名记日志并返回 null，不把半截正文交给解析器——否则这类漏判在日志里没有任何痕迹。
 
   模型看到的群聊原文一律是数据，`reason` 只进日志与播报文案，不参与任何控制流。
 
@@ -592,7 +595,7 @@
 
 ### 运势与 AI 记忆恢复
 
-- 运势切换东京日 owner 前必须先 flush 旧日追加缓冲，失败则保持旧 owner 并拒绝轮换。目标日已有确认结果时，缺失密钥或密钥日期不一致属于不一致备份，必须拒绝启动/轮换，不能静默生成新密钥。
+- 运势切换东京日 owner 前必须先 flush 旧日追加缓冲，失败则保持旧 owner 并拒绝轮换；**但触发这次轮换的那条新日抽签必须转入滞留区等待补录，不得随轮换失败一起丢弃**——主线程 `dailyLuckCache` 已经把它记成「今天抽过了」并发了回执，丢掉就等于磁盘恢复后当天文件永远缺这一条、用户当天也再抽不了第二次，而 `onDiskIORespawn` 的全量重放只覆盖 Worker 重建、覆盖不到「Worker 活着但写不进盘」。滞留区有明确上界，溢出时丢最旧的一条并记一行（不得静默）；刷盘重试成功后立刻补录，不等下一条抽签消息来推动。目标日已有确认结果时，缺失密钥或密钥日期不一致属于不一致备份，必须拒绝启动/轮换，不能静默生成新密钥。
 
   **但启动时「主线程算出的今天」与凭据日期对不上不属于这一类，不得拒绝启动**：Disk I/O Worker 在 `handleLoad()` 里算一次东京日、主线程在 `restoreLuckState` 里再算一次，进程恰好卡在 00:00 前后启动时两者天然可能差一天。这里抛错的话异常会逸出 `ApplicationLifecycle.init()`（调用点没有 try/catch），`run()` 记一行日志并以退出码 1 结束——一次日切让 bot 起不来，靠进程管理器重启才恢复。正确处置是丢弃这份过期凭据与它那天的已确认记录：不 adopt、缓存留空，首次用到运势时由 `ensureLuckCacheFreshForToday` 向 Worker 重新取当天密钥（每个入口本来就会先 await 它）；同时标记「本进程内已跨日」，让没有当日证明的迟到确认一律 fail closed。
 - AI 记忆恢复必须按当前 `AI_MEMORY_HYDRATE_BUFFER_MAX` 与 `MAX_SUMMARY_ROUNDS`（当前为 149 条逐字消息与 7 轮冷摘要）从快照尾部截取最新数据；调整容量常量部署前，应在旧进程停止后以同一恢复逻辑原子重写现有 `memory/ai/`，避免旧进程的停机 flush 覆盖迁移结果。

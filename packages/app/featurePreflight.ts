@@ -16,8 +16,10 @@
  */
 
 import { adDetectConfigReadiness, aiChatConfigReadiness, jaTranslateConfigReadiness } from "../config/readiness";
-import { AD_DETECT_DEEPSEEK_API_KEY, AI_CHAT_GEMINI_API_KEY } from "../infra/config";
-import { getAllChatStates } from "../infra/storage/stateStore";
+import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
+import { hasAiChatCredentials, hasGeminiChatCredentials, hasOpenAiChatCredentials } from "../aiChat/credentials";
+import { getAllChatStates, getChatProviderOverride, getImageProviderOverride } from "../infra/storage/stateStore";
+import type { AiProviderName } from "../types/aiChat/provider";
 import type { ConfigReadiness } from "../types/config";
 
 /** 单个可选功能的启动前提；requirement 返回缺失说明（英文），齐备时返回 null。 */
@@ -41,8 +43,8 @@ const FEATURE_PREREQUISITES: readonly FeaturePrerequisite[] = [
     feature: "AI chat",
     toggle: "isAIChatEnabled",
     disableCommand: "/ai_chat disable",
-    requirement: (): string | null => AI_CHAT_GEMINI_API_KEY === undefined
-      ? "AI_CHAT_GEMINI_API_KEY is not set"
+    requirement: (): string | null => !hasAiChatCredentials()
+      ? "neither AI_CHAT_GEMINI_API_KEY nor AI_CHAT_OPENAI_API_KEY is set"
       : describeReadiness(aiChatConfigReadiness()),
   },
   {
@@ -61,6 +63,58 @@ const FEATURE_PREREQUISITES: readonly FeaturePrerequisite[] = [
   },
 ];
 
+/** 一项全局模型选取的启动前提。 */
+interface ModelPrerequisite {
+  /** state.json 里的字段路径，直接写进报错让运维知道改哪一行。 */
+  readonly path: string;
+  /** 写下它的命令名。 */
+  readonly command: string;
+  /** 当前显式选定的供应商；undefined 表示从没设过，本项不设防。 */
+  readonly selected: () => AiProviderName | undefined;
+}
+
+/** 一家供应商的 env 名与「有没有」，报错里要点名是哪一把。 */
+interface ProviderCredential {
+  readonly env: string;
+  readonly has: () => boolean;
+}
+
+const PROVIDER_CREDENTIALS: Readonly<Record<AiProviderName, ProviderCredential>> = {
+  gemini: { env: "AI_CHAT_GEMINI_API_KEY", has: hasGeminiChatCredentials },
+  openai: { env: "AI_CHAT_OPENAI_API_KEY", has: hasOpenAiChatCredentials },
+};
+
+const MODEL_PREREQUISITES: readonly ModelPrerequisite[] = [
+  { path: "state.global.model.image", command: "/image_model", selected: getImageProviderOverride },
+  { path: "state.global.model.chat", command: "/chat_model", selected: getChatProviderOverride },
+];
+
+/**
+ * 全局模型选取的启动闸：**显式选过**的那一家，它的 key 必须在，否则拒绝启动。
+ *
+ * 与上面那三条同一个道理——`state.global.model` 里的供应商名是超管当初用
+ * `/image_model`、`/chat_model` 明确按下的，命令当时还要求两把 key 都在。
+ * 之后 key 被从 `.env` 里撤掉，只有两种解释：撤错了，或者忘了先切回去。
+ * 两种都该当场说破，而不是静默换一家继续跑——那会让同一个群的回复口径无预警
+ * 漂移，正是 aiChat/provider.ts 头注拒绝的事。
+ *
+ * 从没设过的那一项不设防：缺省本就跟随 activeAiProvider()（默认 Gemini，缺席时
+ * 降级 OpenAI），给它设防等于让只配了 OpenAI 一把 key 的部署起不来。
+ */
+function preflightGlobalModelSelection(): void {
+  for (const prerequisite of MODEL_PREREQUISITES) {
+    const selected: AiProviderName | undefined = prerequisite.selected();
+    if (selected === undefined) continue;
+    const credential: ProviderCredential = PROVIDER_CREDENTIALS[selected];
+    if (credential.has()) continue;
+    throw new Error(
+      `${prerequisite.path} is "${selected}" but ${credential.env} is not set. ` +
+      `Restore the key, or remove ${prerequisite.path} from state.json to fall back to the default provider ` +
+      `(the bot cannot start to accept ${prerequisite.command} while the key is missing).`
+    );
+  }
+}
+
 /** 收集当前状态里开着某个功能的群 id。 */
 function chatsWithToggle(toggle: FeaturePrerequisite["toggle"]): number[] {
   const chatIds: number[] = [];
@@ -78,6 +132,8 @@ function chatsWithToggle(toggle: FeaturePrerequisite["toggle"]): number[] {
  * 而把三条堆进一个异常只会让真正要修的那一条更难认。
  */
 export function preflightEnabledFeatures(): void {
+  // 先查全局模型选取：它与「哪个群开着什么」无关，是一条更靠前的硬前提。
+  preflightGlobalModelSelection();
   for (const prerequisite of FEATURE_PREREQUISITES) {
     const chatIds: number[] = chatsWithToggle(prerequisite.toggle);
     if (chatIds.length === 0) continue;
@@ -85,7 +141,7 @@ export function preflightEnabledFeatures(): void {
     if (missing === null) continue;
     throw new Error(
       `${prerequisite.feature} is enabled in ${chatIds.length} chat(s) (${chatIds.join(", ")}) but ${missing}. ` +
-      `Restore it, or turn the feature off with ${prerequisite.disableCommand} before removing it.`
+      `Restore the prerequisite, or turn the feature off with ${prerequisite.disableCommand} before removing it.`
     );
   }
 }

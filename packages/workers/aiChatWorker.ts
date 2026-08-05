@@ -8,6 +8,8 @@ import { getStickerConfig } from "../config/stickers";
 import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState } from "../cache/workers/aiChat/identity";
+import { chatProviderOverrideMirror } from "../cache/workers/aiChat/chatProvider";
+import { imageProviderOverrideMirror } from "../cache/workers/aiChat/imageProvider";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
 import { aiChatMaintenanceTimer } from "../cache/workers/aiChat/worker";
@@ -37,8 +39,8 @@ import { initTelegramClients } from "../infra/telegram";
  * 只做事件投递，重活分散在 aiChat/ 目录下的内聚模块里：滚动对话缓存与快照
  * 落盘/恢复（aiChat/rollingMemory.ts）、中期记忆轮换压缩（aiChat/compaction.ts）、
  * 图片/贴纸/GIF 占位与异步描述回填（aiChat/mediaIngest.ts）、对话上下文拼装
- * （aiChat/promptContext.ts）、调 Gemini（含 function calling 往返与内置
- * googleSearch，aiChat/geminiReply.ts）、以及回复准入控制（并发闸 + 5 分钟
+ * （aiChat/promptContext.ts）、调模型（含 function calling 往返与内置
+ * 服务端联网检索，workers/aiChat/replyModel.ts）、以及回复准入控制（并发闸 + 5 分钟
  * 滑动窗口限频 + 溢出排队补跑，aiChat/replyPipeline.ts）。发言/消息反应/
  * 应景贴纸与生图全部工具化（send_message / add_reaction / view_sticker_pack +
  * send_sticker / generate_image，见 aiChat/ai/tools/replyToolset/）：模型在同一次对话里自主决定
@@ -97,6 +99,16 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
       // 的条目再继续 diff（见该函数注释）。
       ensureStickerCatalogs(getStickerConfig().packs);
+      break;
+    case "imageProvider":
+      // 全量单值覆盖：undefined 表示「没有覆盖」，回到默认选取，不是「保持原值」
+      // （见 cache/workers/aiChat/imageProvider.ts 的 fail-safe 说明）。
+      imageProviderOverrideMirror.current = msg.provider ?? null;
+      break;
+    case "chatProvider":
+      // 与 imageProvider 同构的独立镜像，语义同上（见
+      // cache/workers/aiChat/chatProvider.ts）。
+      chatProviderOverrideMirror.current = msg.provider ?? null;
       break;
     case "record":
       recordChatMessage(msg);

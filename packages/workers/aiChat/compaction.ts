@@ -1,18 +1,15 @@
 import { logger } from "../../infra/logger";
 import { sleep } from "../../libs/sleep";
 import { LinkedQueue } from "../../libs/linkedQueue";
-import type { GenerateContentResponse } from "@google/genai";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
 import { formatBufferedMessageLine } from "../../aiChat/ai/utils/chatTranscript";
-import { requestGeminiTextResult } from "../../aiChat/ai/gemini";
+import { chatAiProvider } from "../../aiChat/provider";
 import {
   COMPACTION_MAX_PENDING_PER_CHAT,
-  GEMINI_SUMMARY_MODEL,
   MAX_SUMMARY_ROUNDS,
+  CHAT_SUMMARY_ERROR_LABEL,
   SUMMARY_MAX_CHARS,
-  SUMMARY_MAX_TOKENS,
   SUMMARY_RETRY_DELAYS_MS,
-  SUMMARY_TEMPERATURE,
 } from "../../consts/aiChat/memory";
 import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
 import { botInfoState } from "../../cache/workers/aiChat/identity";
@@ -23,7 +20,7 @@ import {
   isCachedReplyGenerationCurrent,
 } from "../../cache/workers/aiChat/replies";
 import type { BufferedMessage } from "../../types/aiChat/memory";
-import type { GeminiTextGenerationResult } from "../../types/aiChat/gemini";
+import type { AiTextResult } from "../../types/aiChat/provider";
 import { currentTimeSentence } from "./timeSentence";
 import { trackReplyGenerationTask } from "./replyGeneration";
 
@@ -111,13 +108,13 @@ async function rotateCompaction({
 
 /**
  * 带退避重采样的镜像压缩：只有 HTTP 成功但 candidate 异常或清洗后正文为空
- * 才按 SUMMARY_RETRY_DELAYS_MS 再发请求。网络/HTTP 失败已由 Gemini SDK 重试，
+ * 才按 SUMMARY_RETRY_DELAYS_MS 再发请求。网络/HTTP 失败已由供应商 SDK 重试，
  * 此处立即停止，避免两层次数相乘。等待期间镜像原文仍在逐字区；本函数在该群
  * 的轮换串行链上执行，只顺延本群后续轮换，不阻塞消息分发。
  */
 async function summarizeBatchWithRetry(chatId: number, batch: BufferedMessage[]): Promise<string | null> {
   for (let attempt: number = 0; ; attempt++) {
-    const result: GeminiTextGenerationResult = await summarizeBatch(batch);
+    const result: AiTextResult = await summarizeBatch(batch);
     if (result.ok) return result.text;
     if (!result.retryable || attempt >= SUMMARY_RETRY_DELAYS_MS.length) return null;
     const delayMs: number = SUMMARY_RETRY_DELAYS_MS[attempt]!;
@@ -144,33 +141,28 @@ function promotePendingSummary(chatId: number): void {
 }
 
 /**
- * 调 Gemini 把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
+ * 调当前供应商把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
  * 人设、不带工具），产出压成单行并截断——摘要虽是模型生成的，但源头是
  * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
  *
- * 截断用子句边界而不是硬切：SUMMARY_MAX_TOKENS 远大于 SUMMARY_MAX_CHARS，
+ * 截断用子句边界而不是硬切：各实现包的摘要 token 上限（GEMINI_/OPENAI_CHAT_SUMMARY_MAX_TOKENS）
+ * 远大于 SUMMARY_MAX_CHARS，
  * 上游不会把长度约束到这个量级附近，硬切留下的半句会被 buildMemorySnapshot
  * 落进 memory/ai/<chat>.json，再作为中期记忆回喂模型最多 MAX_SUMMARY_ROUNDS 轮
  * （truncateAtClauseBoundary 的 JSDoc 记的正是这类残留）。
  */
-async function summarizeBatch(batch: BufferedMessage[]): Promise<GeminiTextGenerationResult> {
+async function summarizeBatch(batch: BufferedMessage[]): Promise<AiTextResult> {
   const selfNote: string = botInfoState.current
     ? `注意：[id:${botInfoState.current.id}] 是群里的聊天机器人「${botInfoState.current.first_name}」本人的发言，摘要里请以「${botInfoState.current.first_name}」称呼它。\n\n`
     : "";
-  return requestGeminiTextResult(
-    {
-      model: GEMINI_SUMMARY_MODEL,
-      contents: [{ role: "user", parts: [{ text: selfNote + batch.map(formatBufferedMessageLine).join("\n") }] }],
-      config: {
-        systemInstruction: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
-        temperature: SUMMARY_TEMPERATURE,
-        maxOutputTokens: SUMMARY_MAX_TOKENS,
-      },
-    },
-    "Gemini summarize API",
-    (data: GenerateContentResponse): string => {
-      const sanitized: string = sanitizeInline(data.text ?? "");
+  return chatAiProvider().generateText({
+    purpose: "chatSummary",
+    systemPrompt: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
+    userContent: selfNote + batch.map(formatBufferedMessageLine).join("\n"),
+    errorLabel: CHAT_SUMMARY_ERROR_LABEL,
+    normalize: (text: string): string => {
+      const sanitized: string = sanitizeInline(text);
       return sanitized ? truncateAtClauseBoundary(sanitized, SUMMARY_MAX_CHARS) : "";
-    }
-  );
+    },
+  });
 }

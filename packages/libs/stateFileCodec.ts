@@ -1,6 +1,16 @@
 import type { ChatPermissions } from "@grammyjs/types";
 import { CHAT_PERMISSION_KEYS } from "../consts/storage";
-import type { CachedUser, ChatState, CopyMode, GlobalCopyState, LockdownRecord, StateFileSchema } from "../types/chatState";
+import type { AiProviderName } from "../types/aiChat/provider";
+import type {
+  CachedUser,
+  ChatState,
+  CopyMode,
+  GlobalCopyState,
+  GlobalModelState,
+  GlobalState,
+  LockdownRecord,
+  StateFileSchema,
+} from "../types/chatState";
 
 /**
  * state.json 当前 schema 的纯解码器。本模块不执行 I/O；所有持久化字段都从
@@ -49,6 +59,16 @@ function copyMode(value: unknown, path: string): CopyMode | undefined {
   if (value === undefined) return undefined;
   if (value === "reverse" || value === "nya" || value === "ja") return value;
   throw new Error(`${path} must be one of reverse, nya or ja`);
+}
+
+/**
+ * 模型选取值（生图与闲聊两项共用）。口径与其余字段一致：缺省即从没设过，存在
+ * 但非法拒绝整份文件——静默丢掉它等于让超管以为切过了、实际还在用默认供应商。
+ */
+function providerName(value: unknown, path: string): AiProviderName | undefined {
+  if (value === undefined) return undefined;
+  if (value === "gemini" || value === "openai") return value;
+  throw new Error(`${path} must be one of gemini or openai`);
 }
 
 function cachedUser(value: unknown, path: string): CachedUser {
@@ -123,7 +143,7 @@ function chatState(value: unknown, path: string): ChatState {
 }
 
 function globalCopy(value: unknown): GlobalCopyState {
-  const path: string = "state.globalCopy";
+  const path: string = "state.global.copy";
   const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, ["lastCopyTime", "copiedUser", "copyMode", "copyChatId"], path);
   if (!("copiedUser" in raw)) throw new Error(`${path}.copiedUser is required`);
@@ -145,10 +165,43 @@ function globalCopy(value: unknown): GlobalCopyState {
   };
 }
 
+/**
+ * 全局模型选取。整块缺省按「两项都没设过」处理——手工迁移过来的文件只写了
+ * copy 一块也能读回，而不是逼运维补一个空对象；块内字段存在但非法照旧拒绝
+ * 整份文件。
+ */
+function globalModel(value: unknown): GlobalModelState {
+  const path: string = "state.global.model";
+  // 两条分支返回同一组字段：decodeStateFile 每次 save 都要跑一遍自校验
+  // （见 infra/storage/stateStore.ts 的 save），返回值 shape 不该在两条分支间摇摆。
+  if (value === undefined) return { image: undefined, chat: undefined };
+  const raw: Record<string, unknown> = record(value, path);
+  knownKeys(raw, ["image", "chat"], path);
+  return {
+    image: providerName(raw.image, `${path}.image`),
+    chat: providerName(raw.chat, `${path}.chat`),
+  };
+}
+
+/** 所有群共用的那一块；copy 必填，model 可缺省。 */
+function globalState(value: unknown): GlobalState {
+  const path: string = "state.global";
+  const raw: Record<string, unknown> = record(value, path);
+  knownKeys(raw, ["copy", "model"], path);
+  if (!("copy" in raw)) throw new Error(`${path}.copy is required`);
+  return {
+    copy: globalCopy(raw.copy),
+    model: globalModel(raw.model),
+  };
+}
+
 /** 解码完整 state.json；任何存在但非法的字段都会拒绝整个文件。 */
 export function decodeStateFile(value: unknown): StateFileSchema {
   const raw: Record<string, unknown> = record(value, "state");
-  knownKeys(raw, ["chats", "globalCopy"], "state");
+  // 旧顶层键（globalCopy/imageProvider/chatProvider）会在这里被当场拒绝：结构
+  // 变更只做手工迁移，解码器不留兼容分支（见 types/chatState.ts 的 StateFileSchema）。
+  knownKeys(raw, ["chats", "global"], "state");
+  if (!("global" in raw)) throw new Error("state.global is required");
   const rawChats: Record<string, unknown> = record(raw.chats, "state.chats");
   const chats: Record<string, ChatState> = {};
   const activeProxyChatIds: number[] = [];
@@ -164,5 +217,5 @@ export function decodeStateFile(value: unknown): StateFileSchema {
   if (activeProxyChatIds.length > 1) {
     throw new Error(`state.chats has multiple active proxy send targets: ${activeProxyChatIds.join(", ")}`);
   }
-  return { chats, globalCopy: globalCopy(raw.globalCopy) };
+  return { chats, global: globalState(raw.global) };
 }

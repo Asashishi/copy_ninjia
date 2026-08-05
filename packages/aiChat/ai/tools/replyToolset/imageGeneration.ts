@@ -1,4 +1,4 @@
-import type { FunctionDeclaration } from "@google/genai";
+import type { AiToolDefinition } from "../../../../types/aiChat/provider";
 import {
   claimImageGeneration,
   getImageGenerationAvailability,
@@ -37,7 +37,8 @@ import type {
   ImageGenerationClaim,
 } from "../../../../types/aiChat/imageGeneration";
 import type { TelegramSendResult } from "../../../../types/telegram";
-import { generateChatImage, normalizeImageAspectRatio } from "../../imageGeneration";
+import { generateChatImage } from "../../imageGeneration";
+import { normalizeImageAspectRatio } from "../../utils/aspectRatio";
 import { downloadTelegramVisionImage } from "../../telegramImage";
 import { runMediaTask } from "../../mediaTaskRunner";
 import type { VisionImage } from "../../../../types/media";
@@ -52,7 +53,7 @@ function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationRefer
 
 export function buildGenerateImageToolDefinition(
   ctx: Pick<ReplyToolContext, "chatId" | "imageGenerationRequested" | "imageGenerationReference" | "bypassImageGenerationCooldown">
-): FunctionDeclaration {
+): AiToolDefinition {
   const availability: ImageGenerationAvailability = getImageGenerationAvailability({
     chatId: ctx.chatId,
     bypassCooldown: ctx.bypassImageGenerationCooldown,
@@ -348,7 +349,10 @@ export function createGenerateImageExecutor(
         success: true,
         message_id: sent.messageId,
         aspect_ratio: parsed.aspectRatio,
-        resolution: "1K",
+        // 不再上报分辨率：那个 "1K" 是 Gemini 生图模型的专属档位，OpenAI 侧出的是
+        // 1024x1024 / 1536x1024，长边并不都是 1K。模型不拿这个字段做任何决策，
+        // 报一个不一定成立的值比不报更糟。真实画幅由各实现包自己决定，见
+        // consts/aiChat/{gemini,openai}.ts。
         actions_used: actionsUsedByTool,
         ...(captionDelivery !== null ? { caption_delivery: captionDelivery } : {}),
         ...(ctx.imageGenerationReference ? { reference_image_used: true } : {}),

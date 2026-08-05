@@ -1,13 +1,14 @@
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import type { BunFile } from "bun";
 import type { FlushResult } from "../../types/lifecycle";
-import { chatStates, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
+import { chatStates, globalCopyState, globalModelState, stateStoreHolder } from "../../cache/main/storage";
 import { CORRUPT_FILE_SUFFIX, STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
 import { DEFAULT_CHAT_STATE, STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
 import { atomicWriteText, durableRename } from "../../libs/atomicFile";
 import { normalizeChatState, normalizeChatStateEntry } from "../../libs/chatState";
 import { createLatestValueRunner, type LatestValueRunner } from "../../libs/latestValueRunner";
 import { decodeStateFile } from "../../libs/stateFileCodec";
+import type { AiProviderName } from "../../types/aiChat/provider";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../../types/chatState";
 import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
@@ -349,6 +350,39 @@ export function getActiveCopyIn(chatId: number): { copiedUser: CachedUser; copyM
   return { copiedUser: globalCopyState.copiedUser, copyMode: globalCopyState.copyMode };
 }
 
+/**
+ * 当前生效的生图供应商覆盖；undefined 表示从没设过，生图跟随默认选取
+ * （见 aiChat/provider.ts 的 imageAiProvider）。
+ */
+export function getImageProviderOverride(): AiProviderName | undefined {
+  return globalModelState.image;
+}
+
+/**
+ * 写入生图供应商覆盖。只改内存；落盘由调用方在同一同步栈之后走
+ * persistAuthoritativeState——这是超管的权威决策，必须过 durability barrier
+ * 再回执（口径同 `/ai_chat`）。
+ */
+export function setImageProviderOverride(provider: AiProviderName): void {
+  globalModelState.image = provider;
+}
+
+/**
+ * 当前生效的闲聊侧供应商覆盖（回复会话、纯文本、视觉描述）；undefined 表示从
+ * 没设过，这三项跟随默认选取（见 aiChat/provider.ts 的 chatAiProvider）。
+ */
+export function getChatProviderOverride(): AiProviderName | undefined {
+  return globalModelState.chat;
+}
+
+/**
+ * 写入闲聊侧供应商覆盖。只改内存；落盘由调用方在同一同步栈之后走
+ * persistAuthoritativeState，口径同 setImageProviderOverride。
+ */
+export function setChatProviderOverride(provider: AiProviderName): void {
+  globalModelState.chat = provider;
+}
+
 export function getAllChatStates(): ReadonlyMap<number, ChatState> {
   return chatStates;
 }
@@ -370,12 +404,15 @@ export async function loadState(): Promise<void> {
   try {
     const decoded: StateFileSchema | null = await sharedStateStore().load();
     if (decoded === null) return;
-    if (decoded.globalCopy.lastCopyTime !== undefined) {
-      globalCopyState.lastCopyTime = decoded.globalCopy.lastCopyTime;
+    if (decoded.global.copy.lastCopyTime !== undefined) {
+      globalCopyState.lastCopyTime = decoded.global.copy.lastCopyTime;
     }
-    if (decoded.globalCopy.copiedUser !== null) {
-      adoptCopyTarget(decoded.globalCopy.copiedUser, decoded.globalCopy.copyMode, decoded.globalCopy.copyChatId!);
+    if (decoded.global.copy.copiedUser !== null) {
+      adoptCopyTarget(decoded.global.copy.copiedUser, decoded.global.copy.copyMode, decoded.global.copy.copyChatId!);
     }
+    // 直接整块赋值：缺字段就是 undefined，那是「从没设过」，不是「沿用上次」。
+    globalModelState.image = decoded.global.model.image;
+    globalModelState.chat = decoded.global.model.chat;
     for (const [chatIdStr, chatState] of Object.entries(decoded.chats)) {
       normalizeChatState(chatState);
       if (Object.keys(chatState).length > 0) chatStates.set(Number(chatIdStr), chatState);
@@ -396,7 +433,7 @@ function currentStateSnapshot(): StateFileSchema {
     }
     chats[String(chatId)] = chatState;
   }
-  return { chats, globalCopy: globalCopyState };
+  return { chats, global: { copy: globalCopyState, model: globalModelState } };
 }
 
 export function saveState(): Promise<void> {

@@ -48,7 +48,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 64 ファイルに約 641 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 66 ファイルに約 665 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 
@@ -61,7 +61,9 @@
 | メディア説明長、実行 slot、LRU 容量 | `packages/consts/aiChat/media.ts` |
 | 画像生成 cooldown と byte 上限 | `packages/consts/aiChat/imageGeneration.ts` |
 | ムード時間とコマンド timeout | `packages/consts/aiChat/mood.ts` |
-| ツール action・lookup 上限、モデル名、request timeout | `packages/consts/aiChat/tools.ts` |
+| ツール action・lookup 上限、typing と typo のテンポ | `packages/consts/aiChat/tools.ts` |
+| request timeout、retry 回数、sampling と safety 段位 | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
+| **モデル名**（両 provider・各 pipeline） | 定数ではありません：`config/gemini.json` と `config/openai.json`、[01-getting-started](01-getting-started.md) 参照 |
 | 認証 window、spam threshold、追記・compaction 方針 | `packages/consts/antiRaid/` |
 | copy cooldown、`/quiet` 範囲、username 規則、アクションコマンドの rate limit | `packages/consts/commands.ts` |
 | 送信者ごとのランダムトリガー cooldown | `packages/consts/auto.ts` |
@@ -74,7 +76,7 @@
 ## AI ツールの追加
 
 1. **名前定数**：[`packages/consts/tools.ts`](../../packages/consts/tools.ts) にツール名を定義します。目に見える副作用がある場合は `ACTION_TOOL_NAMES` に含めるべきか確認します。
-2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator がドメイン定義を SDK の `FunctionDeclaration` に変換します。
+2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator はドメイン定義を中立な `AiToolDefinition`（JSON Schema の parameters）へまとめ、各 provider パッケージの `replySession.ts` が各社の形へ写像します。ツールを追加しても vendor SDK の型に触れる必要はありません。
 3. **実装**：`packages/aiChat/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
 4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
 5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、Google Search、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。

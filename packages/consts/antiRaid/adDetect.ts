@@ -110,14 +110,9 @@ export const AD_DETECT_MAX_LINK_URLS: number = 5;
 export const AD_DETECT_LINK_URL_MAX_CHARS: number = 256;
 
 /**
- * 判定使用的 DeepSeek 模型（deepseek-chat 已弃用）。端点、超时与重试属于传输层，
- * 在 consts/deepseek.ts，见 packages/antiRaid/ai/deepseek.ts。
- */
-export const AD_DETECT_MODEL: string = "deepseek-v4-flash";
-
-/**
  * 判定输出的 token 上限。结果本身只有一小段 JSON，但这个额度是**推理与正文
- * 共用**的——AD_DETECT_MODEL 是推理模型，实测一次判定的 reasoning_tokens 在
+ * 共用**的——广告检测模型（config/openai.json 的 ad_detect.model）是推理模型，
+ * 实测一次判定的 reasoning_tokens 在
  * 50~100 之间，遇到长而杂乱的消息串（上限 AD_DETECT_BUNDLE_MAX_CHARS）还会
  * 高出一个量级。给得太紧的后果不是截断出半个 JSON，而是推理把额度吃光、正文
  * 一个字都没写出来（finish_reason=length、content 为空），上层只能当作「本次
