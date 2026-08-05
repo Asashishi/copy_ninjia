@@ -40,9 +40,31 @@ const { bumpBlocklistRemovalEpoch, blocklistRemovalEpochs } = await import("../.
 const events: BlockedMembersRemovedEvent[] = [];
 const publish = (event: BlockedMembersRemovedEvent): void => { events.push(event); };
 
-/** 副作用是事后执行的，断言前把微任务与压缩后的退避都跑完。 */
+/**
+ * 轮询同步点的兜底上限。健康机器上实际只花一两毫秒；留足余量应对全量+覆盖率
+ * 插桩下的调度抖动，又明显低于 bun 的用例超时——真出回归时，先失败的应该是
+ * 紧随其后那条带具体数值的断言，而不是一句「test timed out」。
+ */
+const SETTLE_TIMEOUT_MS: number = 2_000;
+
+/** 轮询等到条件成立；到点仍不成立就返回，让后面的断言给出真正的失败信息。 */
+async function until(ready: () => boolean): Promise<void> {
+  const deadline: number = Date.now() + SETTLE_TIMEOUT_MS;
+  while (!ready() && Date.now() < deadline) await Bun.sleep(1);
+}
+
+/**
+ * 副作用是事后执行的：等这批处置发出落定回执，而不是赌一个固定时长。
+ *
+ * handleRemoveBlockedMembers 恒在 removeBlockedMembers 完成之后（成功或异常）发且
+ * 只发一条回执，所以回执到达就等于这批的探测、封禁、删公告、补记入群全部结束
+ * ——它是这个单元真正的完成边界。原先是固定 `Bun.sleep(20)`，赌的是「20 ms 内
+ * 一定跑得完」：而压缩后的退避链（3 次尝试 + 2 次退避）在全量跑加覆盖率插桩的
+ * 负载下会偶尔越过这个数，表现为随机一次 `toHaveBeenCalledTimes(3)` 只拿到 2。
+ * 赌时长的同步点迟早会在更慢的机器或更重的负载上再赌输一次。
+ */
 function settle(): Promise<void> {
-  return Bun.sleep(20);
+  return until((): boolean => events.length > 0);
 }
 
 beforeEach(() => {
@@ -272,7 +294,9 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8, 9], probeMembership: false, removalId: 7 },
       publish,
     });
-    await Bun.sleep(0);
+    // 等第一次封禁真的发出去——releaseFirst 是在那个 mock 实现里才被赋值的。
+    // 同样不赌固定时长：赌少了这里会变成 releaseFirst is not a function。
+    await until((): boolean => banChatMemberWithOutcome.mock.calls.length > 0);
     // 第一条还悬着的时候 /init disable：补扫可能还要跑几分钟，必须立刻收手。
     bumpBlocklistRemovalEpoch(-1001);
     releaseFirst("banned");
