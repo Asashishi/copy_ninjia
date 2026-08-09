@@ -37,7 +37,7 @@ export const GAG_INLINE_PAGE_SIZE: number = 50;
 /** gag 开始提示里的发言入口文案。 */
 export const GAG_INLINE_SPEAK_BUTTON_TEXT: string = "发言";
 
-/** 频道按钮预填查询的保留前缀；后面必须接规范频道 id。 */
+/** gag 按钮预填查询的保留前缀；只有频道身份在后面追加目标 id。 */
 export const GAG_INLINE_QUERY_PREFIX: string = "gag:";
 
 /** 频道 inline 结果用 text_link 携带目标频道 id 的固定地址前缀。 */

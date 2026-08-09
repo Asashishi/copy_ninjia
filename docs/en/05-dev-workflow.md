@@ -35,7 +35,7 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2180 tests / 216 files / 72393 `expect()` calls**; full-source **function coverage 94.74% / line coverage 95.94%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2181 tests / 216 files / 72414 `expect()` calls**; full-source **function coverage 94.74% / line coverage 95.94%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -89,7 +89,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~787 source lines across 76 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
+- **The Chinese string-literal count** (currently ~786 source lines across 76 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

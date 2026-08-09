@@ -199,27 +199,35 @@ function buildGagInlineResult(
 }
 
 /**
- * 用户空入口按查询者 id 返回个人选项，频道入口按预填频道 id 返回选项；
- * 非 gag 普通查询返回 false 继续走运势，保留前缀的非法/过期频道入口则静默
- * 回空结果，不能把内部标记泄漏给其它 inline 领域。
+ * gag / 运势 inline 协议（不得合并入口）：
+ * 1. 无 `gag:` 前缀时必须返回 false，即使查询者正被 gag，也只允许下游运势应答；
+ * 2. `gag: <正文>` 只来自普通用户的目标专属按钮，按 `from.id` 匹配用户会话；
+ * 3. `gag:<负数频道 id> <正文>` 只定位频道会话，发送落群后再核对 sender_chat；
+ * 4. 任何带 `gag:` 的查询都由本函数终止分发；非法、过期或身份不匹配时回空，
+ *    绝不能回退运势或同时生成两类结果。
+ *
+ * Telegram 不提供“是否由 inline 按钮唤起”的来源字段，因此普通按钮必须预填
+ * 最小 `gag:` 标记；只靠空查询会与用户手动输入 `@机器人` 无法区分。
  */
 export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
   const inlineQuery: InlineQuery | undefined = ctx.inlineQuery;
   if (inlineQuery === undefined) return false;
   const hasScopedPrefix: boolean =
     inlineQuery.query.startsWith(GAG_INLINE_QUERY_PREFIX);
+  if (!hasScopedPrefix) return false;
   const scopedQuery: ParsedGagInlineQuery | undefined =
     parseGagInlineQuery(inlineQuery.query);
-  if (gagSessionsByChat.size === 0 && !hasScopedPrefix) return false;
   const offset: number = parseInlineOffset(inlineQuery.offset);
   const results: InlineQueryResultArticle[] = [];
   const now: number = Date.now();
   let matchingIndex: number = 0;
   for (const sessions of gagSessionsByChat.values()) {
     for (const session of sessions) {
-      const matchesQuery: boolean = hasScopedPrefix
+      const matchesQuery: boolean = session.targetId < 0
         ? session.targetId === scopedQuery?.targetChannelId
-        : session.targetId === inlineQuery.from.id;
+        : scopedQuery !== undefined &&
+          scopedQuery.targetChannelId === undefined &&
+          session.targetId === inlineQuery.from.id;
       if (session.phase !== "active" || !matchesQuery) continue;
       if (session.expiresAt <= now) {
         expireGag(session);
@@ -231,13 +239,12 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
       ) {
         results.push(buildGagInlineResult(
           session,
-          scopedQuery?.text ?? inlineQuery.query
+          scopedQuery?.text ?? ""
         ));
       }
       matchingIndex++;
     }
   }
-  if (matchingIndex === 0 && !hasScopedPrefix) return false;
   const nextOffset: string = offset + results.length < matchingIndex
     ? String(offset + results.length)
     : "";

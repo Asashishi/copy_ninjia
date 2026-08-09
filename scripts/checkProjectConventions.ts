@@ -606,10 +606,10 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
 }
 
 /**
- * 群聊命令文本必须经统一的 30 秒清理边界发送。唯一例外是 gag 开始提示：
- * 普通用户走目标专属临时消息，频道走公开消息；两者都是带按钮的会话状态，只能
- * 由超时、`/ungag` 或 teardown 删除。头像更新结果虽在 copy owner 内异步落地，
- * 但只由 /copy 与 /steal_icon 触发，因此同样纳入检查。
+ * 群聊命令文本必须经统一的 30 秒清理边界发送。唯一例外是 gag 开始状态：
+ * 所有目标有一条公开状态，普通用户另有目标专属临时入口；它们由同一会话持有，
+ * 只能由超时、`/ungag` 或 teardown 删除。头像更新结果虽在 copy owner 内异步
+ * 落地，但只由 /copy 与 /steal_icon 触发，因此同样纳入检查。
  */
 const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = [
   ...sourceFilesUnder(COMMANDS_ROOT),
@@ -649,7 +649,7 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
   visit(source);
 }
 
-/** gag 只允许开始状态的 noticeMessageId 初始化调用绕开 30 秒清理。 */
+/** gag 只允许两条有稳定变量名的开始状态消息绕开 30 秒清理。 */
 {
   const source: ts.SourceFile = ts.createSourceFile(
     GAG_COMMAND_PATH,
@@ -675,7 +675,10 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
       const isNoticeAssignment: boolean = owner !== undefined &&
         ts.isVariableDeclaration(owner) &&
         ts.isIdentifier(owner.name) &&
-        owner.name.text === "noticeMessageId";
+        [
+          "publicNoticeMessageId",
+          "ephemeralNoticeMessageId",
+        ].includes(owner.name.text);
       if (!isNoticeAssignment) {
         failures.push(
           `${relative(PROJECT_ROOT, GAG_COMMAND_PATH)}:` +

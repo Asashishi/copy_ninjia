@@ -32,14 +32,15 @@ export function gagSpeechPrefix(tool: string): string {
 }
 
 /**
- * 构造开始提示的发言入口。频道必须直接携带频道 id 进入 inline，最终再核对
- * sender_chat；普通用户的提示本身已由 receiver_user_id 限定，使用无前缀入口。
+ * 构造开始提示的发言入口。普通用户按钮只携带 gag 保留前缀并在查询时核对
+ * 查询者 id；只有频道身份额外携带频道 id，再在消息落群后核对 sender_chat。
+ * 无前缀查询始终进入运势，两个 inline 领域不能同时应答。
  */
 export function buildGagSpeakKeyboard(targetId: number): InlineKeyboard {
   if (targetId > 0) {
     return new InlineKeyboard().switchInlineCurrent(
       GAG_INLINE_SPEAK_BUTTON_TEXT,
-      ""
+      `${GAG_INLINE_QUERY_PREFIX} `
     );
   }
   return new InlineKeyboard().switchInlineCurrent(
@@ -49,8 +50,8 @@ export function buildGagSpeakKeyboard(targetId: number): InlineKeyboard {
 }
 
 /**
- * 解析频道按钮预填的查询。频道 id 必须是规范负数；缺失或伪造的保留前缀
- * 由 gag inline 入口静默认领为空结果，不能退回其它 inline 领域。
+ * 解析 gag 按钮预填的查询。普通用户在前缀后直接跟正文；频道入口额外携带
+ * 规范负数 id。伪造的保留前缀由 gag 静默认领为空结果，不能退回运势。
  */
 export function parseGagInlineQuery(
   query: string
@@ -60,6 +61,11 @@ export function parseGagInlineQuery(
   const separatorIndex: number = query.indexOf(" ", idStart);
   const idEnd: number = separatorIndex === -1 ? query.length : separatorIndex;
   const rawId: string = query.slice(idStart, idEnd);
+  if (rawId.length === 0) {
+    return {
+      text: separatorIndex === -1 ? "" : query.slice(separatorIndex + 1),
+    };
+  }
   const numericId: number = Number(rawId);
   if (!CHAT_ID_ARG_PATTERN.test(rawId) || !Number.isSafeInteger(numericId)) {
     return undefined;

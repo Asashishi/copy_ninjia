@@ -8,9 +8,9 @@ export interface ParsedGagCommand {
   readonly tool: string;
 }
 
-/** gag 频道按钮预填的查询；普通用户入口使用无前缀的空查询。 */
+/** gag 按钮预填的保留查询；只有频道身份携带目标频道 id。 */
 export interface ParsedGagInlineQuery {
-  readonly targetChannelId: number;
+  readonly targetChannelId?: number;
   readonly text: string;
 }
 
@@ -32,9 +32,11 @@ export interface GagSession {
   phase: "starting" | "active" | "ending";
   /** active 后的绝对到期时间；starting 时为 0。 */
   expiresAt: number;
-  /** 普通用户提示的 ephemeral_message_id，或频道公开提示的 message_id；发送成功前为 0。 */
-  noticeMessageId: number;
-  /** 开始提示的发送 promise 是否尚未结算；ending 必须等它交出 message id。 */
+  /** 群内公开状态提示的 message_id；发送成功前为 0。 */
+  publicNoticeMessageId: number;
+  /** 普通用户专属入口的 ephemeral_message_id；频道目标及发送成功前为 0。 */
+  ephemeralNoticeMessageId: number;
+  /** 全部开始提示的发送流程是否尚未结算；ending 必须等它交出所有 message id。 */
   noticePending: boolean;
   /** 到期 timer；starting/ending 时为 null，且 active timer 不阻止进程退出。 */
   timer: ReturnType<typeof setTimeout> | null;

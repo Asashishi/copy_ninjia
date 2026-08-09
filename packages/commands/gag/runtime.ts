@@ -93,20 +93,27 @@ function deletionFinished(outcome: DeleteMessageOutcome): boolean {
   return outcome === "deleted" || outcome === "gone";
 }
 
-async function deleteGagNotice(session: GagSession): Promise<boolean> {
+async function deleteGagNotices(session: GagSession): Promise<boolean> {
   if (session.noticePending) return false;
-  if (session.noticeMessageId === 0) return true;
-  const outcome: DeleteMessageOutcome = session.targetId > 0
-    ? await deleteEphemeralMessageWithOutcome({
-      chatId: session.chatId,
-      receiverUserId: session.targetId,
-      ephemeralMessageId: session.noticeMessageId,
-    })
-    : await deleteMessageWithOutcome(
+  let publicFinished: boolean = true;
+  if (session.publicNoticeMessageId !== 0) {
+    const publicOutcome: DeleteMessageOutcome = await deleteMessageWithOutcome(
       session.chatId,
-      session.noticeMessageId
+      session.publicNoticeMessageId
     );
-  return deletionFinished(outcome);
+    publicFinished = deletionFinished(publicOutcome);
+  }
+  let ephemeralFinished: boolean = true;
+  if (session.ephemeralNoticeMessageId !== 0 && session.targetId > 0) {
+    const ephemeralOutcome: DeleteMessageOutcome =
+      await deleteEphemeralMessageWithOutcome({
+        chatId: session.chatId,
+        receiverUserId: session.targetId,
+        ephemeralMessageId: session.ephemeralNoticeMessageId,
+      });
+    ephemeralFinished = deletionFinished(ephemeralOutcome);
+  }
+  return publicFinished && ephemeralFinished;
 }
 
 /** 同一会话的命令、timer、teardown 与停机只能共享一条实际删除请求。 */
@@ -115,7 +122,7 @@ async function runExclusiveEndingTask(
 ): Promise<boolean> {
   const existing: Promise<boolean> | null = session.endingTask;
   if (existing !== null) return existing;
-  const task: Promise<boolean> = deleteGagNotice(session);
+  const task: Promise<boolean> = deleteGagNotices(session);
   session.endingTask = task;
   try {
     return await task;
@@ -197,7 +204,7 @@ export async function finishGag(
   if (session.noticePending) {
     // teardown（chat 停管与停机排空）必须能强制结算：它是有预算的最后一遍，
     // 留着这条会话只会让 drainGagRuntime 恒判 failed、进程带非零码退出并扣住
-    // 实例锁。释放槽位是安全的——发送方结算时 commitGagNotice 会发现自己已不是
+    // 实例锁。释放槽位是安全的——发送方结算时 commitGagNotices 会发现自己已不是
     // 当前会话，转而删掉那条迟到的提示（见该函数的 findGagSession 分支）。
     if (reason === "teardown") removeGagSession(session);
     // 其余路径（/ungag、到期）不释放 owner：发送方结算后会补上 message id 并
@@ -207,7 +214,7 @@ export async function finishGag(
   // endingTask 覆盖完整 Telegram 收尾，而不只覆盖删除请求；否则提示已删除、
   // 解除回执仍在途的窗口会被另一条 `/ungag` 或停机 drain 提前释放槽位。
   const task: Promise<boolean> = (async (): Promise<boolean> => {
-    const cleaned: boolean = await deleteGagNotice(session);
+    const cleaned: boolean = await deleteGagNotices(session);
     try {
       if (reason !== "teardown") {
         const reasonText: string = reason === "timeout"
@@ -252,10 +259,24 @@ export function activateGag(session: GagSession): void {
   session.timer.unref();
 }
 
-/** 开始提示发送失败；无提示需要删除，直接释放 starting/ending 预约。 */
-export function failGagNotice(session: GagSession): void {
+/** 开始提示发送失败；已发出的公开/临时提示仍必须沿同一收尾边界删除。 */
+export async function failGagNotice(session: GagSession): Promise<void> {
   session.noticePending = false;
-  removeGagSession(session);
+  const isCurrent: boolean =
+    findGagSession(session.chatId, session.targetId) === session;
+  if (
+    session.publicNoticeMessageId === 0 &&
+    session.ephemeralNoticeMessageId === 0
+  ) {
+    if (isCurrent) removeGagSession(session);
+    return;
+  }
+  if (!isCurrent) {
+    await deleteGagNotices(session);
+    return;
+  }
+  if (session.phase !== "ending") claimGagEnd(session);
+  await retryGagCleanup(session);
 }
 
 /**
@@ -267,35 +288,31 @@ export function failGagNotice(session: GagSession): void {
  * 解开，message id 随返回值一起蒸发——提示已经挂在群里，状态机却再也删不掉它，
  * 于是 gag owner 每次排空都判 failed，进程带着非零码退出。
  *
- * 幂等：正常路径上 commitGagNotice 会再调一次。
+ * 幂等：正常路径上拿到发送返回值后会再调一次。
  */
-export function recordGagNotice(
+export function recordGagPublicNotice(
   session: GagSession,
   noticeMessageId: number
 ): void {
-  session.noticePending = false;
-  session.noticeMessageId = noticeMessageId;
+  session.publicNoticeMessageId = noticeMessageId;
+}
+
+/** 普通用户专属开始入口的同步登记点；语义同 recordGagPublicNotice。 */
+export function recordGagEphemeralNotice(
+  session: GagSession,
+  ephemeralMessageId: number
+): void {
+  session.ephemeralNoticeMessageId = ephemeralMessageId;
 }
 
 /**
  * 开始提示发送成功后的唯一提交点。teardown 若已把 starting 认领为 ending，
  * 就先写入迟到的 message id，再沿同一清理状态机删除，不能丢失 owner。
  */
-export async function commitGagNotice(
-  session: GagSession,
-  noticeMessageId: number
-): Promise<void> {
-  recordGagNotice(session, noticeMessageId);
+export async function commitGagNotices(session: GagSession): Promise<void> {
+  session.noticePending = false;
   if (findGagSession(session.chatId, session.targetId) !== session) {
-    if (session.targetId > 0) {
-      await deleteEphemeralMessageWithOutcome({
-        chatId: session.chatId,
-        receiverUserId: session.targetId,
-        ephemeralMessageId: noticeMessageId,
-      });
-    } else {
-      await deleteMessageWithOutcome(session.chatId, noticeMessageId);
-    }
+    await deleteGagNotices(session);
     return;
   }
   if (session.phase === "starting") {

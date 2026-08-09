@@ -128,7 +128,8 @@ interface SessionOverrides {
   readonly tool?: string;
   readonly phase?: GagSession["phase"];
   readonly expiresAt?: number;
-  readonly noticeMessageId?: number;
+  readonly publicNoticeMessageId?: number;
+  readonly ephemeralNoticeMessageId?: number;
 }
 
 function createSession({
@@ -137,7 +138,8 @@ function createSession({
   tool = "口塞",
   phase = "active",
   expiresAt = 1_300_000,
-  noticeMessageId = 55,
+  publicNoticeMessageId = 54,
+  ephemeralNoticeMessageId,
 }: SessionOverrides = {}): GagSession {
   return {
     chatId,
@@ -148,7 +150,9 @@ function createSession({
     durationMinutes: 5,
     phase,
     expiresAt,
-    noticeMessageId,
+    publicNoticeMessageId,
+    ephemeralNoticeMessageId:
+      ephemeralNoticeMessageId ?? (targetId > 0 ? 55 : 0),
     noticePending: false,
     timer: null,
     cleanupRetryIndex: 0,
@@ -238,8 +242,10 @@ afterEach(() => {
 });
 
 describe("gag 参数与文本渲染", () => {
-  test("普通用户不使用保留前缀，频道按钮只解析规范负数 id", () => {
-    expect(rendering.parseGagInlineQuery("gag: 你好")).toBeUndefined();
+  test("普通按钮只带 gag 前缀，频道按钮额外解析规范负数 id", () => {
+    expect(rendering.parseGagInlineQuery("gag: 你好"))
+      .toEqual({ text: "你好" });
+    expect(rendering.parseGagInlineQuery("gag:7 你好")).toBeUndefined();
     expect(rendering.parseGagInlineQuery("gag:-1002233445566 你好"))
       .toEqual({
         targetChannelId: -1002233445566,
@@ -336,17 +342,25 @@ describe("/gag 与 /ungag 状态机", () => {
     expect(sendCommandMessage).toHaveBeenCalledTimes(3);
   });
 
-  test("普通用户只收到目标专属临时提示，成功后才激活会话", async () => {
+  test("普通用户先收到群内无按钮状态，再收到目标专属入口，全部成功后才激活", async () => {
     await gag.handleGagCommand(commandContext({ match: "@alice 5" }));
 
     const session: GagSession | undefined = sessionFor(-1001);
     expect(session?.phase).toBe("active");
     expect(session?.expiresAt).toBe(1_300_000);
-    expect(session?.noticeMessageId).toBe(57);
+    expect(session?.publicNoticeMessageId).toBe(56);
+    expect(session?.ephemeralNoticeMessageId).toBe(57);
     expect(session?.timer).not.toBeNull();
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(1);
     expect(sendCommandMessage).not.toHaveBeenCalled();
+    expect(sendMessage.mock.calls[0]?.[0]).toMatchObject({
+      chatId: -1001,
+      replyToMessageId: 10,
+    });
+    expect(sendMessage.mock.calls[0]?.[0]).not.toHaveProperty("keyboard");
+    expect(lastStateText()).toContain("已经戴上");
+    expect(lastStateText()).not.toContain("发言入口");
     expect(sendEphemeralMessage.mock.calls[0]?.[0]).toMatchObject({
       chatId: -1001,
       receiverUserId: 7,
@@ -357,7 +371,7 @@ describe("/gag 与 /ungag 状态机", () => {
       ?.inline_keyboard[0]?.[0];
     expect(sessionButton).toMatchObject({
       text: "发言",
-      switch_inline_query_current_chat: "",
+      switch_inline_query_current_chat: "gag: ",
     });
     expect(sessionButton).not.toHaveProperty("callback_data");
     expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({
@@ -379,10 +393,18 @@ describe("/gag 与 /ungag 状态机", () => {
     expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({ rawArgument: "" });
   });
 
-  test("开始提示发送失败释放预约，不留下会话或 timer", async () => {
+  test("群内状态发送失败释放预约，且不再发送目标入口", async () => {
+    sendMessage.mockImplementationOnce(async (_params: TextMessageParams): Promise<undefined> => undefined);
+    await gag.handleGagCommand(commandContext());
+    expect(gagSessionsByChat.has(-1001)).toBeFalse();
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+  });
+
+  test("目标入口发送失败时删除已发出的群内状态并释放预约", async () => {
     sendEphemeralMessage.mockImplementationOnce(async (_params: EphemeralMessageParams): Promise<undefined> => undefined);
     await gag.handleGagCommand(commandContext());
     expect(gagSessionsByChat.has(-1001)).toBeFalse();
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 56);
   });
 
   test("同群可管教多个目标，但同目标不重复，全局最多 5 个", async () => {
@@ -462,6 +484,7 @@ describe("/gag 与 /ungag 状态机", () => {
       receiverUserId: 7,
       ephemeralMessageId: 55,
     });
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 54);
     expect(resolveCommandTarget).toHaveBeenCalledWith(expect.objectContaining({
       acceptChatId: true,
       acceptUserId: true,
@@ -497,7 +520,7 @@ describe("/gag 与 /ungag 状态机", () => {
     const session: GagSession = createSession();
     const second: GagSession = createSession({
       targetId: -1002233445566,
-      noticeMessageId: 66,
+      publicNoticeMessageId: 66,
     });
     addSession(session);
     addSession(second);
@@ -507,6 +530,7 @@ describe("/gag 与 /ungag 状态机", () => {
       receiverUserId: 7,
       ephemeralMessageId: 55,
     });
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 54);
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 66);
     expect(sendCommandMessage).not.toHaveBeenCalled();
     expect(gagSessionsByChat.has(session.chatId)).toBeFalse();
@@ -540,6 +564,7 @@ describe("/gag 与 /ungag 状态机", () => {
       receiverUserId: 7,
       ephemeralMessageId: 55,
     });
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 54);
     expect(gagSessionsByChat.size).toBe(0);
 
     sendEphemeralMessage.mockClear();
@@ -610,15 +635,17 @@ describe("/gag 与 /ungag 状态机", () => {
       })
     );
     const starting: Promise<void> = gag.handleGagCommand(commandContext());
-    for (let step: number = 0; step < 6 && !gagSessionsByChat.has(-1001); step++) {
+    for (let step: number = 0; step < 6 && finishSend === undefined; step++) {
       await Promise.resolve();
     }
+    expect(finishSend).toBeDefined();
     expect(sessionFor(-1001)?.phase).toBe("starting");
 
     await gag.teardownGagInChat(-1001);
     finishSend!(77);
     await starting;
     expect(gagSessionsByChat.has(-1001)).toBeFalse();
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 56);
     expect(deleteEphemeralMessageWithOutcome).toHaveBeenCalledWith({
       chatId: -1001,
       receiverUserId: 7,
@@ -638,9 +665,13 @@ describe("/gag 与 /ungag 状态机", () => {
     );
 
     await expect(gag.handleGagCommand(commandContext())).rejects.toThrow();
-    const session: GagSession | undefined = sessionFor(-1001);
-    expect(session?.noticeMessageId).toBe(91);
-    expect(session?.noticePending).toBeFalse();
+    expect(gagSessionsByChat.size).toBe(0);
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 56);
+    expect(deleteEphemeralMessageWithOutcome).toHaveBeenCalledWith({
+      chatId: -1001,
+      receiverUserId: 7,
+      ephemeralMessageId: 91,
+    });
 
     await expect(gag.drainGagRuntime(1_000)).resolves.toBe("flushed");
     expect(deleteEphemeralMessageWithOutcome).toHaveBeenCalledWith({
@@ -652,13 +683,14 @@ describe("/gag 与 /ungag 状态机", () => {
     gag.initGagRuntime();
   });
 
-  test("回归：提示确实没发出去就 abort 时撤销预约，不留下无提示的空会话", async () => {
+  test("回归：目标入口没发出去就 abort 时删除公开状态并撤销预约", async () => {
     sendEphemeralMessage.mockImplementationOnce(async (): Promise<number> => {
       throw new DOMException("Telegram update aborted during shutdown.", "AbortError");
     });
 
     await expect(gag.handleGagCommand(commandContext())).rejects.toThrow();
     expect(gagSessionsByChat.size).toBe(0);
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 56);
 
     await expect(gag.drainGagRuntime(1_000)).resolves.toBe("flushed");
     expect(deleteEphemeralMessageWithOutcome).not.toHaveBeenCalled();
@@ -785,18 +817,19 @@ describe("gag 消息与 inline 入口", () => {
       receiverUserId: 7,
       ephemeralMessageId: 55,
     });
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 54);
     expect(lastCommandText()).toContain("时间到");
     expect(gagSessionsByChat.has(-1001)).toBeFalse();
   });
 
-  test("被 gag 用户得到个人化选项、最新缩略图和零缓存，其他用户继续走运势", async () => {
+  test("普通 @ 查询只进入运势，按钮 gag 前缀仅向当前 gag 用户返回 gag", async () => {
     const session: GagSession = createSession();
     addSession(session);
     const handled: boolean = await gag.handleGagInlineQuery({
       inlineQuery: {
         id: "inline-1",
         from: { id: 7, is_bot: false, first_name: "Alice" },
-        query: "功能没了喵",
+        query: "gag: 功能没了喵",
         offset: "",
       },
       answerInlineQuery,
@@ -816,17 +849,41 @@ describe("gag 消息与 inline 入口", () => {
     expect(options).toEqual({ cache_time: 0, is_personal: true, next_offset: "" });
 
     answerInlineQuery.mockClear();
-    const passed: boolean = await gag.handleGagInlineQuery({
+    const gagUserOrdinaryQueryPassed: boolean = await gag.handleGagInlineQuery({
       inlineQuery: {
         id: "inline-2",
+        from: { id: 7, is_bot: false, first_name: "Alice" },
+        query: "",
+        offset: "",
+      },
+      answerInlineQuery,
+    } as never);
+    expect(gagUserOrdinaryQueryPassed).toBeFalse();
+    expect(answerInlineQuery).not.toHaveBeenCalled();
+
+    const otherUserOrdinaryQueryPassed: boolean = await gag.handleGagInlineQuery({
+      inlineQuery: {
+        id: "inline-3",
         from: { id: 8, is_bot: false, first_name: "Bob" },
         query: "",
         offset: "",
       },
       answerInlineQuery,
     } as never);
-    expect(passed).toBeFalse();
+    expect(otherUserOrdinaryQueryPassed).toBeFalse();
     expect(answerInlineQuery).not.toHaveBeenCalled();
+
+    const copiedGagPrefixHandled: boolean = await gag.handleGagInlineQuery({
+      inlineQuery: {
+        id: "inline-4",
+        from: { id: 8, is_bot: false, first_name: "Bob" },
+        query: "gag: 偷来的入口",
+        offset: "",
+      },
+      answerInlineQuery,
+    } as never);
+    expect(copiedGagPrefixHandled).toBeTrue();
+    expect(answerInlineQuery.mock.calls[0]?.[0]).toHaveLength(0);
   });
 
   test("开始提示的频道 id 只定位目标，并从最终发言正文中剥掉", async () => {
@@ -868,7 +925,7 @@ describe("gag 消息与 inline 入口", () => {
     });
   });
 
-  test("非法或过期频道前缀静默返回空结果，不生成可发送拒绝文本", async () => {
+  test("非法或过期 gag 前缀静默返回空结果，不生成可发送拒绝文本", async () => {
     addSession(createSession());
     const handled: boolean = await gag.handleGagInlineQuery({
       inlineQuery: {
@@ -908,7 +965,7 @@ describe("gag 消息与 inline 入口", () => {
       inlineQuery: {
         id: "inline-page",
         from: { id: 7, is_bot: false, first_name: "Alice" },
-        query: "测试",
+        query: "gag: 测试",
         offset: "",
       },
       answerInlineQuery,

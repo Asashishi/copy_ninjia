@@ -30,11 +30,12 @@ import {
   parseGagCommand,
 } from "./gag/rendering";
 import {
-  commitGagNotice,
+  commitGagNotices,
   failGagNotice,
   findGagSession,
   finishGag,
-  recordGagNotice,
+  recordGagEphemeralNotice,
+  recordGagPublicNotice,
   requestGagCleanupRetry,
   reserveGagSession,
 } from "./gag/runtime";
@@ -111,7 +112,8 @@ function createGagReservation(
     durationMinutes: parsed.durationMinutes,
     phase: "starting",
     expiresAt: 0,
-    noticeMessageId: 0,
+    publicNoticeMessageId: 0,
+    ephemeralNoticeMessageId: 0,
     noticePending: true,
     timer: null,
     cleanupRetryIndex: 0,
@@ -209,48 +211,73 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     });
     return;
   }
-  const noticeText: string =
+  const publicNoticeText: string =
     `哼哼，${session.targetLabel} 这只爱乱说话的杂鱼已经戴上 ${session.tool} 啦♡ ` +
     `${session.durationMinutes} 分钟内普通消息都会被本天才删掉。` +
     (target.isChannel === true
       ? "频道马甲想说话就必须先乖乖点下面的「发言」按钮，直接 @ 本天才可不会给你选项哦，连入口都找不到的杂鱼就安静待着吧♡"
-      : "只有你看得到这个发言入口，想说话就乖乖点下面的「发言」按钮啦♡");
-  // 普通用户直接收到 receiver_user_id 限定的唯一临时提示；频道没有接收用户，
-  // 才在群里发公开提示，并把频道 id 预填进 inline 查询供落群后再次核验。
+      : "");
+  const ephemeralNoticeText: string =
+    `${session.targetLabel}，只有你看得到这个发言入口；` +
+    "想说话就乖乖点下面的「发言」按钮啦♡";
+  // 所有目标先在群里留一条公开状态；普通用户的公开消息不带按钮，再单独发送
+  // receiver_user_id 限定的入口。频道没有接收用户，按钮只能留在公开提示上。
   //
   // onSent 是这条路径的**结算保险**：停机 abort 可能落在「远端已收下提示、这里
-  // 还没走到 commitGagNotice」的窗口里，await 会以 AbortError 解开并带走
+  // 还没走到 commitGagNotices」的窗口里，await 会以 AbortError 解开并带走
   // message id。先同步登记，abort 之后这条会话仍是「已发出、可删除」的完整状态，
   // 由停机排空按正常 ending 路径删掉。
-  const recordNotice = (sentMessageId: number): void => {
-    recordGagNotice(session, sentMessageId);
+  const recordPublicNotice = (sentMessageId: number): void => {
+    recordGagPublicNotice(session, sentMessageId);
+  };
+  const recordEphemeralNotice = (sentMessageId: number): void => {
+    recordGagEphemeralNotice(session, sentMessageId);
   };
   try {
-    const noticeMessageId: number | undefined = target.isChannel === true
-      ? await sendMessage({
-        chatId: session.chatId,
-        text: noticeText,
-        replyToMessageId: ctx.msgId,
-        keyboard: buildGagSpeakKeyboard(target.id),
-        onSent: recordNotice,
-      })
-      : await sendEphemeralMessage({
-        chatId: session.chatId,
-        receiverUserId: target.id,
-        text: noticeText,
-        keyboard: buildGagSpeakKeyboard(target.id),
-        onSent: recordNotice,
-      });
-    if (noticeMessageId === undefined) {
-      failGagNotice(session);
+    const publicNoticeMessageId: number | undefined = await sendMessage({
+      chatId: session.chatId,
+      text: publicNoticeText,
+      replyToMessageId: ctx.msgId,
+      ...(target.isChannel === true
+        ? { keyboard: buildGagSpeakKeyboard(target.id) }
+        : {}),
+      onSent: recordPublicNotice,
+    });
+    if (publicNoticeMessageId === undefined) {
+      await failGagNotice(session);
       return;
     }
-    await commitGagNotice(session, noticeMessageId);
+    recordGagPublicNotice(session, publicNoticeMessageId);
+    if (target.isChannel === true) {
+      await commitGagNotices(session);
+      return;
+    }
+    if (
+      findGagSession(session.chatId, session.targetId) !== session ||
+      session.phase !== "starting"
+    ) {
+      await commitGagNotices(session);
+      return;
+    }
+    const ephemeralNoticeMessageId: number | undefined =
+      await sendEphemeralMessage({
+        chatId: session.chatId,
+        receiverUserId: target.id,
+        text: ephemeralNoticeText,
+        keyboard: buildGagSpeakKeyboard(target.id),
+        onSent: recordEphemeralNotice,
+      });
+    if (ephemeralNoticeMessageId === undefined) {
+      await failGagNotice(session);
+      return;
+    }
+    recordGagEphemeralNotice(session, ephemeralNoticeMessageId);
+    await commitGagNotices(session);
   } catch (error: unknown) {
-    // 判据是会话自己的 noticePending，不是「onSent 有没有被调用」：登记过就说明
-    // 提示确实发出去了，留着会话让排空按 ending 路径删除；没登记过才撤销预约，
-    // 绝不能把一条已发出的提示连同它的 message id 一起丢掉。
-    if (session.noticePending) failGagNotice(session);
+    // 判据是整段发送流程是否仍未提交，不是「最后一次 onSent 有没有被调用」。
+    // failGagNotice 会删除所有已同步登记的提示；删除失败才保留 ending owner 重试，
+    // 绝不能把已发出的公开或临时消息连同 id 一起丢掉。
+    if (session.noticePending) await failGagNotice(session);
     throw error;
   }
 }
