@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { TelegramConfig } from "../../packages/types/config";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const queryAiMood = mock(async (_chatId: number): Promise<string> => "平静");
@@ -6,11 +7,9 @@ const switchAiMood = mock(async (_chatId: number): Promise<string> => "开心");
 const loggerError = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 
-// AI 闲聊的凭据；缺这一项 /switch_mood 会在读群状态之前就被拒（见 aiChat/availability.ts）。
-mock.module("../../packages/infra/config", () => ({
+mock.module("../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 100,
-  AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
-  AI_CHAT_OPENAI_API_KEY: undefined,
+  getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 100 }),
 }));
 // 超级管理员由身份直接持有全部白名单权限（见 packages/config/whitelist.ts 的
 // getEffectiveWhitelistPermissions），命令层不再单独判身份。

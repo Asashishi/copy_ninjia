@@ -39,7 +39,14 @@ import type {
  * @param input.kind 本次触发的种类。
  */
 export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
-  if (input.queueSize === 0 && input.activeRounds < REPLY_ROUND_MAX_CONCURRENT) {
+  if (
+    input.telegramBackpressured &&
+    (input.kind === "random" || input.kind === "mediaRandom")
+  ) return { action: "dropSilently" };
+  const maxConcurrent: number = input.telegramBackpressured
+    ? 1
+    : REPLY_ROUND_MAX_CONCURRENT;
+  if (input.queueSize === 0 && input.activeRounds < maxConcurrent) {
     return { action: "startRound" };
   }
   if (input.kind === "random" || input.kind === "mediaRandom") return { action: "dropSilently" };

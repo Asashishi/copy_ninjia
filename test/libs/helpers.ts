@@ -21,3 +21,27 @@ export function chunkedResponse(chunks: readonly Uint8Array[], init?: ResponseIn
     init
   );
 }
+
+/**
+ * 测试里的固定小批并发统一等待全部结算；失败项按输入下标聚合，避免 allSettled
+ * 被误用成吞错。调用方只传已经启动的 Promise，本函数不扩大生产并发面。
+ */
+export async function settleTestBatch<T>(tasks: readonly Promise<T>[]): Promise<T[]> {
+  const settlements: PromiseSettledResult<T>[] = await Promise.allSettled(tasks);
+  const failures: Error[] = [];
+  const values: T[] = [];
+  for (let index: number = 0; index < settlements.length; index++) {
+    const settlement: PromiseSettledResult<T> = settlements[index]!;
+    if (settlement.status === "fulfilled") {
+      values.push(settlement.value);
+    } else {
+      failures.push(new Error(`Test batch task ${index} rejected.`, {
+        cause: settlement.reason,
+      }));
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, "Test batch tasks rejected.");
+  }
+  return values;
+}

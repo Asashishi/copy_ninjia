@@ -36,6 +36,16 @@ export function handleTimeoutInviterVerdict(
 export function handleTerminalPersisted(
   state: VerificationState | undefined
 ): VerificationTransition {
+  if (state?.kind === "kickPending") {
+    if (state.effectStarted === true) return { next: state, effects: [] };
+    state.effectStarted = true;
+    const effects: VerificationEffect[] = [];
+    if (state.announcementMessageId !== undefined) {
+      effects.push({ kind: "deleteMessage", messageId: state.announcementMessageId });
+    }
+    effects.push({ kind: "kickMember" });
+    return { next: state, effects };
+  }
   if (state?.kind === "checkingInviter") {
     if (state.executionStarted === true) return { next: state, effects: [] };
     state.executionStarted = true;
@@ -74,9 +84,14 @@ export function handleExpelSettled(
 export function handleKickRetry(
   state: VerificationState | undefined
 ): VerificationTransition {
-  if (state?.kind !== "kickPending" || state.executionStarted === true) {
+  if (
+    state?.kind !== "kickPending" ||
+    state.executionStarted === true ||
+    state.effectStarted === true
+  ) {
     return { next: state, effects: [] };
   }
+  state.effectStarted = true;
   return { next: state, effects: [{ kind: "kickMember" }] };
 }
 

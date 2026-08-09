@@ -1,18 +1,24 @@
 import {
+  drainStickerCatalogTasks,
   ensureStickerCatalogs,
   flushDirtyStickerCatalogs,
   hydrateStickerCatalogs,
   retryIncompleteStickerCatalogs,
 } from "../aiChat/ai/stickers/catalog";
 import { getStickerConfig } from "../config/stickers";
+import { adoptAgentDeploymentConfig } from "../config/agent";
+import { reportUnimplementedAgentCapabilities } from "../aiChat/provider";
 import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
-import { botInfoState } from "../cache/workers/aiChat/identity";
-import { chatProviderOverrideMirror } from "../cache/workers/aiChat/chatProvider";
-import { imageProviderOverrideMirror } from "../cache/workers/aiChat/imageProvider";
+import { botInfoState, superAdminUserIdState } from "../cache/workers/aiChat/identity";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
+import { sweepSongGenerationCache } from "../cache/workers/aiChat/songGeneration";
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
-import { aiChatMaintenanceTimer } from "../cache/workers/aiChat/worker";
+import {
+  aiChatMaintenanceTimer,
+  aiChatWorkerDrain,
+  aiChatWorkerQuiescing,
+} from "../cache/workers/aiChat/worker";
 import {
   flushDirtyMemories,
   flushMemorySnapshot,
@@ -21,7 +27,12 @@ import {
   recordChatMessage,
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
-import { drainPendingReplyQueues, generateAndSendReply, invalidateChatReplies } from "./aiChat/replyPipeline";
+import {
+  drainPendingReplyQueues,
+  generateAndSendReply,
+  invalidateChatReplies,
+  quiesceAiChatReplies,
+} from "./aiChat/replyPipeline";
 import { currentMood, switchMood } from "../aiChat/ai/mood";
 import type {
   AiChatInvalidatedEvent,
@@ -32,7 +43,17 @@ import type {
   AiMoodSwitchedEvent,
 } from "../types/aiChat/protocol";
 import type { AiStickerCatalogEvent } from "../types/stickers/protocol";
-import { initTelegramClients } from "../infra/telegram";
+import {
+  handleWorkerDuplexResponse,
+  initializeWorkerDuplex,
+  isWorkerDuplexResponse,
+  resetWorkerDuplex,
+} from "../libs/workerDuplex";
+import type { WorkerDuplexOutbound } from "../types/workerDuplex";
+import type { TelegramWorkerRequest } from "../types/telegramWorker";
+import { installTelegramApi } from "../infra/telegram/client";
+import { workerTelegramApi } from "../infra/telegram/workerClient";
+import { acceptForwardedLogBatch, logger } from "../infra/logger";
 
 /**
  * AI 闲聊流水线线程（Bun Worker）。主线程（packages/auto/message/ → aiChat/index.ts 代理）
@@ -44,9 +65,8 @@ import { initTelegramClients } from "../infra/telegram";
  * 滑动窗口限频 + 溢出排队补跑，aiChat/replyPipeline.ts）。发言/消息反应/
  * 应景贴纸与生图全部工具化（send_message / add_reaction / view_sticker_pack +
  * send_sticker / generate_image，见 aiChat/ai/tools/replyToolset/）：模型在同一次对话里自主决定
- * 做哪几样、什么顺序。发往 Telegram 的调用不回主线程绕路——本线程 import
- * infra/telegram/ 时会得到自己独立的 grammY Api 客户端（那个 Bot 实例只用其
- * bot.api 发请求，从不 init/轮询；机器人自己的账号身份改由主线程在
+ * 做哪几样、什么顺序。发往 Telegram 的调用统一经双工能力请求回到主线程，
+ * Worker 不持有独立 Telegram 网络客户端；机器人自己的账号身份改由主线程在
  * bot.init() 后经 init 消息注入，见 cache/workers/aiChat/identity.ts 的 botInfoState）。
  * error 日志经 logger.ts 的转发模式回传主线程统一落盘。本文件只剩消息路由、
  * 定时 sweep 与启动编排。
@@ -89,36 +109,74 @@ function handleInvalidateChat(msg: AiInvalidateChatMessage): void {
   });
 }
 
+/** 首条 flush 同步封住新任务入口，并停止会派生目录/回复工作的后台推力。 */
+function beginAiChatWorkerQuiesce(): Promise<void> {
+  aiChatWorkerQuiescing.current = true;
+  if (aiChatMaintenanceTimer.current !== null) {
+    clearInterval(aiChatMaintenanceTimer.current);
+    aiChatMaintenanceTimer.current = null;
+  }
+  stopWeatherRefreshLoop();
+  aiChatWorkerDrain.current ??= Promise.allSettled([
+    quiesceAiChatReplies(),
+    drainStickerCatalogTasks(),
+  ]).then((settlements: PromiseSettledResult<void>[]): void => {
+    const labels: readonly string[] = ["reply generation", "sticker catalog"];
+    const failures: Error[] = [];
+    for (let index: number = 0; index < settlements.length; index++) {
+      const settlement: PromiseSettledResult<void> = settlements[index]!;
+      if (settlement.status === "rejected") {
+        failures.push(new Error(`AI Worker ${labels[index]} drain rejected.`, {
+          cause: settlement.reason,
+        }));
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "AI Worker drain phases rejected.");
+    }
+  });
+  return aiChatWorkerDrain.current;
+}
+
+/** 排空所有会改写记忆/目录的任务后才上报最终快照并确认 flush。 */
+async function flushAiChatWorker(flushId: number): Promise<void> {
+  await beginAiChatWorkerQuiesce();
+  flushDirtyMemories();
+  flushDirtyStickerCatalogs((event: AiStickerCatalogEvent): void => self.postMessage(event));
+  self.postMessage({ type: "memoryFlushed", flushId } satisfies AiMemoryFlushedEvent);
+}
+
 /** 路由一条主线程消息；独立导出便于验证协议而不启动真实 Worker。 */
 export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
   switch (msg.type) {
     case "init":
+      // 配置必须先于任何会调模型的动作落定：紧随其后的 ensureStickerCatalogs
+      // 就会去取 media 能力的模型名与凭据。本线程此后不再读 agent.json，
+      // 崩溃重建也只等主线程重放同一条 init（见 config/agent.ts 的边界说明）。
+      adoptAgentDeploymentConfig(msg.agent);
+      // 配置一落定就把「配了但这一家没实现」的可选能力记一次；能力配置在进程
+      // 生命周期内不变，逐轮回复重复记录只会淹掉真正的故障。
+      reportUnimplementedAgentCapabilities();
       botInfoState.current = msg.botInfo;
+      superAdminUserIdState.current = msg.superAdminUserId;
       // 白名单贴纸包的目录生成后台启动，不阻塞后续 record/trigger 的处理，
       // 见 aiChat/ai/stickers/catalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
       // 的条目再继续 diff（见该函数注释）。
       ensureStickerCatalogs(getStickerConfig().packs);
       break;
-    case "imageProvider":
-      // 全量单值覆盖：undefined 表示「没有覆盖」，回到默认选取，不是「保持原值」
-      // （见 cache/workers/aiChat/imageProvider.ts 的 fail-safe 说明）。
-      imageProviderOverrideMirror.current = msg.provider ?? null;
-      break;
-    case "chatProvider":
-      // 与 imageProvider 同构的独立镜像，语义同上（见
-      // cache/workers/aiChat/chatProvider.ts）。
-      chatProviderOverrideMirror.current = msg.provider ?? null;
-      break;
     case "record":
+      if (aiChatWorkerQuiescing.current) break;
       recordChatMessage(msg);
       if (msg.persistImmediately === true) flushMemorySnapshot(msg.chatId, true);
       break;
     case "recordMedia":
+      if (aiChatWorkerQuiescing.current) break;
       recordChatMedia(msg);
       if (msg.persistImmediately === true) flushMemorySnapshot(msg.chatId, true);
       break;
     case "trigger":
+      if (aiChatWorkerQuiescing.current) break;
       generateAndSendReply(msg);
       break;
     case "hydrate":
@@ -128,9 +186,9 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       hydrateStickerCatalogs(msg.catalogs);
       break;
     case "flushMemory":
-      flushDirtyMemories();
-      flushDirtyStickerCatalogs((event: AiStickerCatalogEvent): void => self.postMessage(event));
-      self.postMessage({ type: "memoryFlushed", flushId: msg.flushId } satisfies AiMemoryFlushedEvent);
+      void flushAiChatWorker(msg.flushId).catch((error: unknown): void => {
+        logger.error(`AI Worker flush ${msg.flushId} rejected before acknowledgement:`, error);
+      });
       break;
     case "invalidateChat":
       handleInvalidateChat(msg);
@@ -166,11 +224,13 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
 // consts/aiChat.ts 的 AI_SNAPSHOT_INTERVAL_MS 注释。Worker 线程活到进程
 // 退出为止，不需要引用计数/按需启停，无条目时两个 flush 都直接空转返回。
 export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
+  if (aiChatWorkerQuiescing.current) return;
   sweepAiChatReplyCache(now);
   // 限频窗口一空出来就把积压的直接触发补跑掉：那条路上的轮次从没开始过，
   // 没有 onFinished 会来推队列（见 aiChat/replyPipeline.ts）。
   drainPendingReplyQueues(now);
   sweepImageGenerationCache(now);
+  sweepSongGenerationCache(now);
   // 启动那次对账整包失败的（拉贴纸集合时网络抖了一下）在这里补回来：
   // 没有它，一次瞬时失败就等于两个贴纸工具在整个进程生命周期里失效。
   retryIncompleteStickerCatalogs(getStickerConfig().packs, now);
@@ -181,9 +241,23 @@ export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
 /** Worker 线程启动入口；主线程导入本模块时不得注册 handler、计时器或网络刷新。 */
 export function startAiChatWorker(): void {
   if (aiChatMaintenanceTimer.current !== null) return;
-  initTelegramClients();
-  self.onmessage = (event: MessageEvent<AiChatWorkerMessage>): void => {
-    handleAiChatWorkerMessage(event.data);
+  aiChatWorkerQuiescing.current = false;
+  aiChatWorkerDrain.current = null;
+  installTelegramApi(workerTelegramApi);
+  initializeWorkerDuplex<TelegramWorkerRequest>((
+    message: WorkerDuplexOutbound<TelegramWorkerRequest>,
+    transfer?: Bun.Transferable[]
+  ): void => {
+    if (transfer === undefined) self.postMessage(message);
+    else self.postMessage(message, transfer);
+  });
+  self.onmessage = (event: MessageEvent<unknown>): void => {
+    if (acceptForwardedLogBatch(event.data)) return;
+    if (isWorkerDuplexResponse(event.data)) {
+      handleWorkerDuplexResponse(event.data);
+      return;
+    }
+    handleAiChatWorkerMessage(event.data as AiChatWorkerMessage);
   };
   aiChatMaintenanceTimer.current = setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);
   aiChatMaintenanceTimer.current.unref();
@@ -201,6 +275,7 @@ export function stopAiChatWorker(): void {
     aiChatMaintenanceTimer.current = null;
   }
   stopWeatherRefreshLoop();
+  resetWorkerDuplex("AI Worker stopped before the main-thread request completed.");
   self.onmessage = null;
   process.off("exit", stopAiChatWorker);
 }

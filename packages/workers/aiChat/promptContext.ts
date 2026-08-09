@@ -40,6 +40,8 @@ function mediaNounFor(kind: MediaKind): string {
       return "一枚贴纸";
     case "animation":
       return "一个 GIF（动图）";
+    case "voice":
+      return "一条语音";
     default:
       return "一张图片";
   }

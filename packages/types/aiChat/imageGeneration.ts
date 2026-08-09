@@ -1,5 +1,6 @@
-/** 生图的官方宽高比集合。OpenAI 侧只有三种画幅，由实现包按最近邻收敛，
- *  见 packages/aiChat/openai/image.ts 的 pickImageSize。 */
+/** 生图的官方宽高比集合。OAI 兼容侧按显式线协议映射：OpenAI 任意尺寸档逐档
+ *  发送 size、标准档收敛到三种通用尺寸，xAI 改传最近 aspect_ratio，见
+ *  aiChat/openai/image.ts。 */
 export type ImageGenerationAspectRatio =
   | "1:1" | "3:2" | "2:3" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
 

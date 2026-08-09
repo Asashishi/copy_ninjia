@@ -41,7 +41,15 @@ export function handleJoin(
   // 替换它；解释器捕获的旧终态会因对象同一性不再匹配而停止踢人，避免误伤
   // 同一 userId 的新一代成员记录。
   if (state?.kind === "checkingInviter" || state?.kind === "expelling") {
-    return handleJoin(undefined, event);
+    // 被替换掉的那条记录还挂着自己的验证提醒，而它的 expel 收尾（本该顺手删掉
+    // 这些消息）会因为对象同一性复核不过而整段跳过。提醒带按钮，按 AGENTS.md
+    // 不能挂固定 30 秒删除，没有任何兜底路径——不在这里发这条 effect，群里就
+    // 永久留着一个指向已不存在记录的「验证」按钮。
+    const replaced: VerificationTransition = handleJoin(undefined, event);
+    return {
+      ...replaced,
+      effects: [remindersOf(state.snapshot), ...replaced.effects],
+    };
   }
   const { exempt, viaChannelComment }: { exempt: boolean; viaChannelComment: boolean } =
     resolveJoinExemption(event);
@@ -124,8 +132,11 @@ export function handleJoin(
           label: state.label,
           isBot: state.isBot,
           requestedAt: event.now,
+          announcementMessageId: event.announcementMessageId,
+          effectStarted: false,
+          executionStarted: false,
         },
-        effects: [...effects, { kind: "kickMember" }],
+        effects,
       };
     }
     if (state.kind === "pending" && invitedByOther && !event.adminCacheFresh) {
@@ -140,11 +151,6 @@ export function handleJoin(
   }
 
   if (event.lockdownActive) {
-    const effects: VerificationEffect[] = [];
-    if (event.announcementMessageId !== undefined) {
-      effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
-    }
-    effects.push({ kind: "kickMember" });
     return {
       next: {
         kind: "kickPending",
@@ -152,8 +158,11 @@ export function handleJoin(
         isBot: event.isBot,
         requestedAt: event.now,
         countedJoinAt: event.now,
+        announcementMessageId: event.announcementMessageId,
+        effectStarted: false,
+        executionStarted: false,
       },
-      effects,
+      effects: [],
     };
   }
 

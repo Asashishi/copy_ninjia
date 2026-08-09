@@ -28,6 +28,12 @@ export interface RecordJoinLogParams {
  *
  * 缓冲不是静默丢弃：握手结束后 activateDiskIOWorker 原序重放这条消息，重放
  * 失败或缓冲触顶都会走 stopWorkerAfterLoadFailure 的统一 fatal 停机路径。
+ *
+ * 这条承诺靠的是重放区间标记（见 types/diskIO.ts 的 RecoveryReplayRequest）：
+ * 缓冲这一刻本函数就已经放行了该 update，此后没有任何 flush 会再问它写没写进去，
+ * 因此 Worker 必须知道自己正在重放，才能把区间内的写失败从「记个拒收标记等下一次
+ * flush 回报」升级成停机。没有这道标记的话，拒收标记会挂到某个**无关**的后续入群
+ * 事实那次 flush 上——那一条被连坐重投，真正丢掉的这一条却没有任何痕迹。
  */
 export async function recordJoinLog({
   chatId,

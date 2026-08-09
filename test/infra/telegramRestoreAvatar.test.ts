@@ -1,14 +1,17 @@
 /**
  * restoreDefaultProfilePhoto：把机器人头像换回 BOT_DEFAULT_AVATAR_URL 那张。
  *
- * 重点守四条：
- * 1. 必须允许重定向——来源是 Google Drive 直链，它必然先 302 到
- *    googleusercontent，写死 `redirect: "error"` 会让复原永远失败。
+ * 重点守五条：
+ * 1. **跟随重定向**：地址是部署配置的一部分，而图床与对象存储的直链先跳一次到存储
+ *    域名是常态（内置缺省那条 Drive 链接即是）。/copy、/steal_icon 那三条的
+ *    `redirect: "error"`（见 telegramAvatar / telegram.copyAvatar 两份用例）归
+ *    Telegram 自有资产域 allowlist 那条约束管，与这一条不是一回事。
  * 2. 响应仍走有界读取，第三方响应撑不爆内存。
  * 3. 上传前认一遍字节签名：Drive 在配额超限/病毒扫描警告时会以 HTTP 200 返回
  *    一张 HTML 插页，不挡住它就等于把 HTML 当图片交给 Telegram。
  * 4. 瞬时失败按 AVATAR_FETCH_MAX_ATTEMPTS 重试，确定性失败立刻放弃——确定性
  *    拒绝白烧三次头像接口调用，正好可能撞上重试本想规避的 flood 限制。
+ * 5. 失败日志点名地址但不带查询串：这一项是部署方配的，可能是预签名地址。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -16,8 +19,8 @@ import { GrammyError } from "grammy";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
   AVATAR_MAX_DOWNLOAD_BYTES,
-  BOT_DEFAULT_AVATAR_URL,
 } from "../../packages/consts/telegram";
+import { BOT_DEFAULT_AVATAR_URL } from "../../packages/consts/ui/assets";
 
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
@@ -30,7 +33,8 @@ mock.module("../../packages/infra/logger", () => ({
 }));
 
 const realFetch = globalThis.fetch;
-const { bot, restoreDefaultProfilePhoto } = await import("../../packages/infra/telegram");
+const { bot } = await import("../../packages/infra/telegram/mainClient");
+const { restoreDefaultProfilePhoto } = await import("../../packages/infra/telegram/avatar");
 
 const setMyProfilePhotoMock = mock(async (..._args: unknown[]): Promise<boolean> => true);
 type FetchInput = Parameters<typeof fetch>[0];
@@ -81,13 +85,25 @@ beforeEach(() => {
 });
 
 describe("默认头像的取图口径", () => {
-  test("从常量里那个 Google Drive 直链取图，并允许重定向", async () => {
+  test("传入的直链原样使用——部署方可用 state.global.assets 换脸", async () => {
+    // 目标 URL 由主线程从 state 取好后传进来（见 copy/avatarQueue.ts），本模块
+    // 被两条 Worker 一并 import，不能自己去读只属于主线程的 state 内存。
+    const configured: string = "https://cdn.example/custom-face.jpg";
     stubFetch([(): Response => imageResponse()]);
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(true);
+    await expect(restoreDefaultProfilePhoto(configured)).resolves.toBe(true);
+    expect(fetchCalls[0]!.url).toBe(configured);
+  });
+
+  test("请求跟随重定向：内置缺省那条 Drive 链接就会先跳一次", async () => {
+    stubFetch([(): Response => imageResponse()]);
+
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(true);
     expect(fetchCalls).toHaveLength(1);
     expect(fetchCalls[0]!.url).toBe(BOT_DEFAULT_AVATAR_URL);
-    // Drive 直链必然 302 到 googleusercontent；禁止重定向等于永远复原不了。
+    // 逼配置者自己解析出跳转终点，只会把一个必然踩到的坑变成必须写进文档的注意
+    // 事项。下面两道检查（有界读取 + 字节签名）防的是「拿回来的不是图片」，与跳
+    // 不跳转无关。
     expect(fetchCalls[0]!.init?.redirect).toBe("follow");
     expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(1);
   });
@@ -95,7 +111,7 @@ describe("默认头像的取图口径", () => {
   test("取到的字节原样交给 setMyProfilePhoto", async () => {
     stubFetch([(): Response => imageResponse(JPEG_BYTES)]);
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(true);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(true);
     const [payload] = setMyProfilePhotoMock.mock.calls[0] as [{ type: string; photo: unknown }];
     expect(payload.type).toBe("static");
   });
@@ -105,7 +121,7 @@ describe("上传前的字节校验", () => {
   test("Drive 的 HTML 插页（HTTP 200）不当图片上传，且不重试", async () => {
     stubFetch([(): Response => interstitialResponse()]);
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(false);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(false);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
     // 配额/病毒扫描插页重试多少次都是同一张，白烧头像接口的额度。
     expect(fetchCalls).toHaveLength(1);
@@ -117,7 +133,7 @@ describe("上传前的字节校验", () => {
   test("零长响应体同样视为失败：有界读取会把它报成 ok", async () => {
     stubFetch([(): Response => new Response(null, { status: 200 })]);
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(false);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(false);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
     expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("bytes=0"));
   });
@@ -130,7 +146,7 @@ describe("上传前的字节校验", () => {
     ]);
     stubFetch([(): Response => imageResponse(webp)]);
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(false);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(false);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
     expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("sniffed=webp"));
   });
@@ -140,7 +156,7 @@ describe("失败分类", () => {
   test("非 2xx 属瞬时失败，按上限重试后放弃", async () => {
     stubFetch([(): Response => new Response("nope", { status: 503 })]);
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(false);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(false);
     expect(fetchCalls).toHaveLength(AVATAR_FETCH_MAX_ATTEMPTS);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
     expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("Failed to download the default avatar (503)"));
@@ -152,14 +168,14 @@ describe("失败分类", () => {
       (): Response => imageResponse(),
     ]);
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(true);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(true);
     expect(fetchCalls).toHaveLength(2);
   });
 
   test("超限是确定性失败：立刻放弃，不浪费剩余重试次数", async () => {
     stubFetch([(): Response => imageResponse(new Uint8Array(AVATAR_MAX_DOWNLOAD_BYTES + 1))]);
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(false);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(false);
     expect(fetchCalls).toHaveLength(1);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
     expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("exceeded the download limit"));
@@ -171,7 +187,7 @@ describe("失败分类", () => {
       throw new Error("flood wait");
     });
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(false);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(false);
     expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(AVATAR_FETCH_MAX_ATTEMPTS);
   });
 
@@ -186,7 +202,7 @@ describe("失败分类", () => {
       );
     });
 
-    await expect(restoreDefaultProfilePhoto()).resolves.toBe(false);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL)).resolves.toBe(false);
     // 换几次都一样，重试只会白烧换头像的限流额度。
     expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(1);
   });
@@ -196,7 +212,49 @@ describe("失败分类", () => {
     const controller: AbortController = new AbortController();
     controller.abort();
 
-    await expect(restoreDefaultProfilePhoto(controller.signal)).resolves.toBe(false);
+    await expect(restoreDefaultProfilePhoto(BOT_DEFAULT_AVATAR_URL, controller.signal)).resolves.toBe(false);
     expect(fetchCalls).toHaveLength(0);
+  });
+});
+
+describe("失败日志的地址脱敏", () => {
+  /** 本次运行里所有 logger.error 参数拼成一段，用于整体断言。 */
+  function loggedText(): string {
+    return loggerErrorMock.mock.calls.flat().map((arg: unknown): string => String(arg)).join(" ");
+  }
+
+  const PRESIGNED: string = "https://bucket.example/faces/bot.png?X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600";
+
+  test("取图用完整地址，日志只留 origin + pathname", async () => {
+    // 部署方可以把这一项配成 S3/OSS 预签名地址，而 logs/<day>.json 的 mode 是
+    // 0644 且属于备份对象；libs/redaction.ts 的 redactSecretsInText 只脱敏已登记
+    // 的 env 密钥、不看 query，所以签名要在拼日志时就去掉。
+    stubFetch([(): Response => interstitialResponse()]);
+
+    await expect(restoreDefaultProfilePhoto(PRESIGNED)).resolves.toBe(false);
+    // 签名不能被顺手削掉：削掉了这张图根本取不回来。
+    expect(fetchCalls[0]!.url).toBe(PRESIGNED);
+    expect(loggedText()).toContain("https://bucket.example/faces/bot.png");
+    expect(loggedText()).not.toContain("X-Amz-Signature");
+  });
+
+  test("四条失败分支一条都不漏（非 2xx、超限、非图片、上传抛错）", async () => {
+    const cases: readonly (() => Response)[] = [
+      (): Response => new Response("nope", { status: 503 }),
+      (): Response => interstitialResponse(),
+      (): Response => imageResponse(new Uint8Array(AVATAR_MAX_DOWNLOAD_BYTES + 1)),
+      (): Response => imageResponse(),
+    ];
+    setMyProfilePhotoMock.mockImplementation(async (): Promise<boolean> => {
+      throw new Error("flood wait");
+    });
+
+    for (const make of cases) {
+      loggerErrorMock.mockClear();
+      stubFetch([make]);
+      await expect(restoreDefaultProfilePhoto(PRESIGNED)).resolves.toBe(false);
+      expect(loggerErrorMock).toHaveBeenCalled();
+      expect(loggedText()).not.toContain("X-Amz-Signature");
+    }
   });
 });

@@ -10,7 +10,7 @@ const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUse
 
 // 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
-mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/config/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100,
   hasWhitelistPermission: (id: number, key: string): boolean =>

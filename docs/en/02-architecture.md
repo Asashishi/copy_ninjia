@@ -1,11 +1,11 @@
 # 02 Architecture Overview
 
 <p align="center">
-  <a href="../02-architecture.md">简体中文</a> · <b>English</b> · <a href="../ja/02-architecture.md">日本語</a>
+  <a href="../cn/02-architecture.md">简体中文</a> · <b>English</b> · <a href="../ja/02-architecture.md">日本語</a>
 </p>
 
 <p align="center">
-  <a href="README.md">📚 Developer Docs Home</a> · <a href="01-getting-started.md">← Prev: 01 Setup</a> · <a href="03-directory-map.md">Next: 03 Directory Map →</a>
+  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="01-getting-started.md">← Prev: 01 Setup</a> · <a href="03-directory-map.md">Next: 03 Directory Map →</a>
 </p>
 
 ---
@@ -19,22 +19,22 @@ flowchart TD
     classDef main stroke:#8e75ff,stroke-width:2.5px;
     classDef worker stroke:#3b82f6,stroke-width:2px;
 
-    MAIN["🧵 Main thread<br/>grammY runner + per-chat sequentialize<br/>Commands and automatic-message pipeline<br/>StateStore (state.json)"]:::main
+    MAIN["🧵 Main thread<br/>grammY runner + per-chat sequentialize<br/>Sole Telegram client + outbound gate<br/>state facade + StateStore (state.json)"]:::main
     AI["🤖 AI Worker<br/>Multi-turn tool calls (swappable provider)<br/>Rolling memory · summarization · moods"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>Verification and lockdown state machines / blocklist removal / ad detection"]:::worker
     DISK["💾 Disk I/O Worker<br/>Logs / memory snapshots / fortunes / verification files / blocklist / join log"]:::worker
 
-    MAIN --> AI
-    MAIN --> RAID
+    MAIN <-->|duplex messages| AI
+    MAIN <-->|duplex messages| RAID
     MAIN --> DISK
 ```
 
 The organizing principle is **exclusive state ownership**: every piece of runtime state has exactly one owner, and threads exchange messages rather than sharing memory.
 
-- The **main thread** owns the Telegram runner, supervision handles for all three Workers, and the in-memory `state.json` mirror managed by `StateStore`—including group switches, copy state, and lockdown mirrors.
+- The **main thread** owns the Telegram runner, the sole real grammY Bot, the Telegram outbound gate, supervision handles for all three Workers, and the authoritative in-memory `state.json` mirror under `cache/main/storage.ts`—including group switches, copy state, and lockdown mirrors. AI and Anti-Raid request Telegram capabilities only through supervised duplex messages; all Bot API calls and Telegram file downloads ultimately originate here. `stateStore.ts` owns business access and snapshots; `StateStore` in `statePersistence.ts` owns strict recovery and persistence lifecycle.
 - The **AI Worker** exclusively owns group-chat memory, reply admission, the media-description pipeline, per-group moods, and runtime sticker-catalog state.
-- The **Anti-Raid Worker** exclusively owns the verification/lockdown state machines and their timers. The main thread keeps only recoverable mirrors. The entire `/ad_detect` pipeline also runs on this thread (bundling 90 seconds of messages per sender, sending one batch per second to DeepSeek, then deleting the messages and announcing the ban reason in the chat on a hit); the verdict is posted back to the main thread, which turns it into the same blocklist entry plus per-chat bans that `/block` produces. Blocklist removals also execute on this thread (they carry no state machine — the main thread decides and posts the work), sharing the request queue with verification-timeout kicks. Precisely because there is no state machine, batches without a landing receipt stay in a main-thread mirror, are snapshotted to the durable Disk I/O outbox before dispatch, and are reposted after either process startup or Worker respawn.
-- The **Disk I/O Worker** exclusively serializes reads and writes to `logs/` and to the seven domains under `memory/`: `ai/`, `stickers/`, `luck/`, `anti-raid/`, `blocklist/`, `ad-detected/`, and `joinlog/`. `state.json` is the sole exception and is written atomically by the main-thread `StateStore`. See [07 Data Root](07-operations.md#data-root) for every file shape and its recovery and retention role.
+- The **Anti-Raid Worker** exclusively owns the verification/lockdown state machines and their timers. The main thread keeps only recoverable mirrors. The entire `/ad_detect` pipeline also runs on this thread, sending per-sender bundles to the configured ad-detection provider; the verdict is posted back to the main thread, which turns it into the same blocklist entry plus per-chat bans that `/block` produces. The Worker interprets kicks, queries, restrictions, and deletions, while duplex requests return their network execution to separate main-thread 429 categories. Unsettled blocklist batches remain mirrored in `memory/blocklist/removals.json`; verification kicks reuse daily verification snapshots through `kickPending`.
+- The **Disk I/O Worker** exclusively serializes reads and writes to `logs/` and to the seven domains under `memory/`: `ai/`, `stickers/`, `luck/`, `anti-raid/`, `blocklist/`, `ad-detected/`, and `joinlog/`. `state.json` is the sole exception and is written atomically by the main thread through the business facade and `StateStore`. See [07 Data Root](07-operations.md#data-root) for every file shape and its recovery and retention role.
 
 [`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) and [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) are now thin explicit exports that provide stable public surfaces; neither owns implementation or state. AI supervision and the cross-thread proxy live in [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts), while per-message intake lives in [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts). Anti-Raid supervision lives in [`workerBridge.ts`](../../packages/antiRaid/workerBridge.ts), durable delivery in [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts), and update routing in [`updateIngress.ts`](../../packages/antiRaid/updateIngress.ts). Ad detection remains split between main-thread admission and final-field projection, Worker verdict/effects, and the main-thread durable blocklist/ban path: see [`adCandidate.ts`](../../packages/antiRaid/adCandidate.ts), [`adDetect.ts`](../../packages/antiRaid/adDetect.ts), and [`packages/workers/antiRaid/adDetect/`](../../packages/workers/antiRaid/adDetect/).
 
@@ -51,12 +51,12 @@ Worker crashes are rate-limited and self-healing, but the hosts have two impleme
 3. **Init gateway**—ordinary business updates from groups without `/init enable` stop here. Explicit exceptions such as `my_chat_member`, the bot's own `via_bot` messages, and the super administrator's `/init` are allowed by [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts).
 4. **Per-chat serialization**—`sequentialize` preserves message order within a chat. Reaction synchronization uses a separate coalescing queue and does not occupy the chat lane.
 5. **Private-chat gateway**—private chats allow only the `/send` entry point and active relay sessions. Relay messages short-circuit into the message pipeline so their text is not interpreted as commands.
-6. **Join verification**—must run before command handlers, or commands sent by pending users would not be tracked for cleanup.
+6. **Join verification**—must run before command handlers, or commands sent by pending users would not be tracked for cleanup. The whole chain (verification plus the anti-raid private mode) is off by default per chat and opened with `/antiraid enable`; a disabled chat delivers no join events at all from this step.
 7. **Command registration**—all `bot.command(...)` handlers are registered explicitly here; see [06 Common Modification Recipes](06-modification-guide.md#adding-a-slash-command). `/x` among them is a menu placeholder: it exists only to advertise the CJK action commands, and answers with a usage hint before terminating the chain.
 8. **CJK action commands**—commands such as `/咬` and `/贴贴` (the action word is one or two Chinese characters) never receive a Telegram `bot_command` entity, so `bot.command` cannot match them; they are matched against the raw message text with `bot.hears` (see [`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts)). This **must be registered before the message fallback below**—placed after it, every action command is swallowed as an ordinary message into the AI/copy pipeline and the whole feature silently stops working. Because it precedes the automatic pipeline, that pipeline's self-sent guard does not cover it and the handler must skip the bot's own messages itself; and because a claimed message no longer travels further, the handler must also record the sender identity itself. Forms it does not claim (`/咬@OtherBot`, caption-only, malformed updates) call `next()`.
 9. **Automatic-message pipeline**—[`packages/auto/`](../../packages/auto) handles copying, AI transcription and trigger decisions, reaction synchronization, and other non-command behavior.
 
-After an AI trigger, the main thread evaluates the activity-based probability or direct trigger, dispatches to the AI Worker, and the Worker assembles the three-part model input: reference memory, current conversation, and the reply task. The model then performs multi-turn tool calls—messages, stickers, reactions, and image generation, all executed through main-thread proxies—before the result is written back to rolling memory and periodically snapshotted.
+After an AI trigger, the main thread evaluates the activity-based probability or direct trigger, dispatches to the AI Worker, and the Worker assembles the three-part model input: reference memory, current conversation, and the reply task. The model then performs multi-turn tool calls—messages, stickers, reactions, and image generation, all executed through main-thread proxies—before the result is written back to rolling memory and periodically snapshotted. The activity probability is only a **random proactive-reply gate**: it observes recent messages per chat, keeps cold chats unlikely to trigger, raises the chance as that chat becomes active, and stops at a hard ceiling. Direct triggers such as an @-mention or a reply to the bot do not depend on this probability gate.
 
 `bot.catch` logs unhandled errors and then **rethrows them**. Swallowing an exception would acknowledge the failed update, preventing Telegram from redelivering it after restart—including when persistence failed.
 
@@ -71,7 +71,9 @@ flowchart TD
 
     U(["📨 Telegram update"]):::input --> TXT["Text"]:::process
     U --> MED["Image / sticker / GIF"]:::process
+    U --> VOC["Voice note"]:::process
     MED -- asynchronous vision description --> MEM["AI Worker rolling memory"]:::ai
+    VOC -- asynchronous transcription --> MEM
     TXT --> MEM
     MEM --> G["Model provider + server-side web search + custom tools"]:::ai
 
@@ -80,21 +82,24 @@ flowchart TD
     G --> A3["🔍 View sticker pack"]:::action
     G --> A4["🎟️ Send sticker"]:::action
     G --> A5["🎨 Generate image"]:::action
+    G --> A6["🎵 Generate song (Gemini only)"]:::action
 ```
 
 A message first splits by type, then converges into the AI Worker's rolling memory:
 
 - **Text** is enqueued immediately as-is, preserving its position in the conversation timeline.
 - **Images / stickers / GIFs** are enqueued with a placeholder first, then downloaded and described by a vision model asynchronously; once parsing finishes, the same entry's text field is backfilled in place. A hit against the sticker allowlist catalog skips the asynchronous parse and writes the catalog's existing description directly.
+- **Voice notes** use the same placeholder-then-backfill pipeline, with `agent.media` performing transcription. Oversized notes are rejected before download. Vision and voice support are probed independently on the first real request. A modality stops being downloaded once it is explicitly unsupported, or once the endpoint answers 404/405 for a missing model or wrong path (which logs one diagnostic pointing at `$.agent.media`). Endpoint failures — timeouts, 429, 5xx — only drive a bounded exponential backoff: inside the window the media degrades to its placeholder without a download or an executor slot, and one success clears the counter. Problems with a single piece of media never change the modality verdict.
 
-When a reply is triggered, rolling memory is assembled into the three-part model input described in the previous section, and sent to the selected provider together with the server-side web search tool and the custom tools (Gemini by default, falling back to OpenAI when its key is absent; with both keys present the super administrator can point replies/summaries/vision at the other provider with `/chat_model`, while image generation is chosen independently by `/image_model`; see [03 Directory Map](03-directory-map.md)). Search runs on the provider's servers (Gemini's `googleSearch` or OpenAI's hosted `web_search`); its instruction switches between three states based on this round's search progress and does not count against the action budget (see [04 Runtime Invariants](04-invariants.md)). The model may issue multiple tool calls within one round, each executed through main-thread proxies rather than talking to Telegram directly:
+When a reply is triggered, rolling memory is assembled into the three-part model input and sent to the provider configured by `agent.text`. Summary, media, image, and song each use their own capability configuration, with no runtime failover. Search runs on the provider's servers (Gemini's `googleSearch` or OpenAI's hosted `web_search`); custom tool calls execute through main-thread proxies rather than talking to Telegram directly:
 
 - 💬 **Send text**—the model must call the send tool explicitly for any body text; the system only falls back to sending on its own when the whole round produced zero successful actions.
 - 👍 **Add reaction**—chosen from an allowlist of emoji, at most one success per round.
 - 🔍 **View sticker pack**—looks up the sticker catalog on demand, counted independently from other tool calls.
 - 🎟️ **Send sticker** and 🎨 **Generate image**—likewise capped at one success per round.
+- 🎵 **Generate song**—also capped at one success per round, and **not present every round**: it is mounted only when the current chat provider implements the song capability. A 15-minute cooldown is shared across the group; superAdmin is exempt. What lands is a music message carrying title, performer, and duration, with cover art drawn separately by the image-side provider (that is message chrome — it neither burns the image cooldown nor counts against the action budget).
 
-Text, sticker, reaction, and image results produced this round are written back to rolling memory and periodically snapshotted to disk. See [04 Authoritative Runtime Invariants](04-invariants.md) for the per-round action cap and anti-loop rules.
+Text, sticker, reaction, image, and song results produced this round are written back to rolling memory and periodically snapshotted to disk. See [04 Authoritative Runtime Invariants](04-invariants.md) for the per-round action cap and anti-loop rules.
 
 ## Startup Order
 
@@ -102,11 +107,11 @@ The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycl
 
 1. Recursively create and **preflight the data root**: write, file fsync, same-directory hard link, atomic rename, and directory fsync. Any failure aborts startup with the actual path.
 2. Acquire the **`bot.lock`** single-instance lock. See [07 Operations and Troubleshooting](07-operations.md#botlock-refuses-startup) for its format and cleanup rules.
-3. **Restore StateStore and global security configuration**: remove orphaned top-level temporary files, strictly validate and restore both `state.json` copies, and load `config/whitelist.json` plus `config/blocklist.json`. Any invalid global input aborts before network access or Worker creation. The other four optional feature JSON files under `config/` are **not warmed here** — each belongs to a per-chat opt-in feature, so validation moved into the matching toggle command (see [`packages/config/readiness.ts`](../../packages/config/readiness.ts)). Once `state.json` is restored, one more check runs: any optional feature still enabled in some chat must have its credential and configuration present, or startup aborts naming the chat ids (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)).
+3. **Restore the state persistence boundary and global security configuration**: remove orphaned top-level temporary files, strictly validate and restore both `state.json` copies, hydrate authoritative memory through the business facade, and load `config/whitelist.json` plus `config/blocklist.json`. Any invalid global input aborts before network access or Worker creation. The other four optional feature JSON files under `config/` are **not warmed here** — each belongs to a per-chat opt-in feature, so validation moved into the matching toggle command (see [`packages/config/readiness.ts`](../../packages/config/readiness.ts)). Once `state.json` is restored, one more check runs: any optional feature still enabled in some chat must have its credential and configuration present, or startup aborts naming the chat ids (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)).
 4. Initialize the Telegram client and **Disk I/O Worker**, then restore AI, sticker, fortune, and pending-verification data under `memory/`, plus the authoritative `/block` list at `memory/blocklist/blocklist.json` and unfinished-removal outbox at `memory/blocklist/removals.json`. A failure in any domain prevents startup with partial state.
 5. Register handlers, set the command menu, and run `bot.init()`.
 6. Initialize the **AI Worker**, hydrating only groups explicitly enabled in `state.json`; then restore fortune and pending-verification mirrors, initialize the **Anti-Raid Worker**, and finally start the acknowledgement-safe runner.
-7. Only after everything is ready, start the **low-priority group-title backfill**, bounded so it cannot monopolize the shared rate limiter.
+7. Only after everything is ready, start the **low-priority group-title backfill**, bounded so it cannot occupy an unbounded number of query-category requests or connections.
 
 `ApplicationLifecycle` owns both failures and normal exits, releasing or flushing only resources that were actually acquired.
 
@@ -114,9 +119,9 @@ The entry point [`index.ts`](../../index.ts) only assembles `ApplicationLifecycl
 
 Normal and abnormal shutdown converge on the same lifecycle, in a fixed order:
 
-1. **Quiesce**: close the title, reaction, avatar, and translation entry points and stop the runner. The four quiesce entry points are failure-isolated — a throw from one does not prevent the others from closing. **Quiescence must never be cached as done**: `init()` re-arms all four owners, so a stop signal that lands during startup would otherwise latch success and short-circuit every later quiesce, leaving the owners accepting work for the whole shutdown while the result still reports clean. All four calls are idempotent assignments, so repeating them costs nothing.
+1. **Quiesce**: close the title, reaction, avatar, translation, and new-gag entry points and stop the runner. The five quiesce entry points are failure-isolated — a throw from one does not prevent the others from closing. **Quiescence must never be cached as done**: `init()` re-arms all five owners, so a stop signal that lands during startup would otherwise latch success and short-circuit every later quiesce, leaving owners accepting work for the whole shutdown while the result still reports clean. All five calls are idempotent assignments, so repeating them costs nothing.
 2. **Bounded drain**: drain all queues and mailboxes. The runner holds a per-update cancellation signal; if active handlers exceed the drain deadline, it aborts those signals and grants one final bounded settlement window. A handler that still does not settle prevents final-offset acknowledgement and forces a nonzero exit after best-effort disposal.
-3. **Flush and dispose**: the normal path flushes AI, Disk I/O, and StateStore in order before acknowledging the final Telegram offset. Final disposal is fixed as: flush AI → terminate AI → flush Disk I/O → terminate Anti-Raid and Disk I/O → flush StateStore → release the instance lock.
+3. **Flush and dispose**: the normal path first drains Anti-Raid, gag notices, and unified delayed deletions, then flushes AI, drains Telegram outbound work, and flushes Disk I/O plus StateStore. Final disposal uses the same maintenance order before: flush AI → terminate AI → drain Telegram outbound → flush Disk I/O → terminate Anti-Raid and Disk I/O → flush StateStore → release the instance lock.
 
 In-process elapsed-time budgets for lifecycle and Anti-Raid draining are computed through [`packages/libs/monotonicDeadline.ts`](../../packages/libs/monotonicDeadline.ts) and `performance.now()`, so wall-clock rollback cannot extend shutdown or drain deadlines. Business state and persisted absolute timestamps continue to use `Date.now()`.
 
@@ -133,6 +138,6 @@ See [04 Authoritative Runtime Invariants](04-invariants.md) for the complete rul
 
 <div align="center">
 
-[← Prev: 01 Setup](01-getting-started.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#02-architecture-overview) · [Next: 03 Directory Map →](03-directory-map.md)
+[← Prev: 01 Setup](01-getting-started.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#02-architecture-overview) · [Next: 03 Directory Map →](03-directory-map.md)
 
 </div>

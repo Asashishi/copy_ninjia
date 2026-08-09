@@ -25,6 +25,11 @@ import {
   sendCommandMessage,
 } from "../infra/telegram";
 import type { JoinLogRecord } from "../types/diskIO/storage";
+import { runBoundedSettledBatch } from "../libs/boundedSettledBatch";
+import type {
+  BoundedBatchExecution,
+  BoundedBatchResult,
+} from "../libs/boundedSettledBatch";
 import { isSuperAdminActor } from "./commandActor";
 
 const BATCH_KICK_USAGE_TEXT: string =
@@ -153,6 +158,8 @@ async function processJoinRecord({
   }
   if (outcome === "kicked") {
     stats.kicked++;
+  } else if (outcome === "absent") {
+    stats.absent++;
   } else if (outcome === "forbidden") {
     stats.forbidden++;
   } else {
@@ -165,7 +172,10 @@ interface RunBatchKickParams {
   records: readonly JoinLogRecord[];
 }
 
-/** 用固定小并发消费日志，避免大批量请求同时冲击 Telegram Bot API。 */
+/**
+ * 用固定小并发消费日志；每条结果保留输入下标，意外异常不会截断其余记录。
+ * Telegram 总闸已经负责 429 的有限退避，这里不再套一层重复踢人重试。
+ */
 async function runBatchKick({
   chatId,
   records,
@@ -179,25 +189,25 @@ async function runBatchKick({
     failed: 0,
     blockedHandoffs: 0,
   };
-  let nextIndex: number = 0;
-  const workerCount: number = Math.min(
-    BATCH_KICK_CONCURRENCY,
-    records.length
-  );
-  const workers: Promise<void>[] = [];
-  for (let i: number = 0; i < workerCount; i++) {
-    workers.push((async (): Promise<void> => {
-      while (nextIndex < records.length) {
-        const index: number = nextIndex++;
-        await processJoinRecord({
-          chatId,
-          record: records[index]!,
-          stats,
-        });
-      }
-    })());
+  const results: BoundedBatchResult<JoinLogRecord, void>[] =
+    await runBoundedSettledBatch<JoinLogRecord, void>({
+      items: records,
+      maxConcurrent: BATCH_KICK_CONCURRENCY,
+      execute: async ({
+        item: record,
+      }: BoundedBatchExecution<JoinLogRecord>): Promise<void> => {
+        await processJoinRecord({ chatId, record, stats });
+      },
+    });
+  for (const result of results) {
+    if (result.status === "fulfilled") continue;
+    stats.failed++;
+    logger.error(
+      `Unexpected /batch_kick failure for chat ${chatId}, user ${result.item.userId}, ` +
+      `record ${result.index}, attempt ${result.attempt}:`,
+      result.reason
+    );
   }
-  await Promise.all(workers);
   return stats;
 }
 
@@ -245,7 +255,15 @@ export async function handleBatchKickCommand(
     return;
   }
 
-  const now: number = Date.now();
+  // 窗口的「现在」取本条命令自带的 Telegram 时间戳，不是宿主的 Date.now()：
+  // 库里那些 joinedAt 全都来自 `update.date`（见 antiRaid/updateIngress.ts），
+  // 两个时钟直接相减的话，窗口边界会整体漂移出它们之间的偏差——`readJoinLog`
+  // 既拿 since/now 逐条比 joinedAt，也拿它们算该读哪一两个日文件（那些文件名
+  // 同样是按 joinedAt 的东京日期起的）。同源之后这两步与写入侧用的是同一把尺。
+  //
+  // 文件保留期那侧仍按宿主时钟判（见 readJoinLog 里的 today）：那问的是「盘上
+  // 还剩哪几天」，由 Worker 自己的跨日清理决定，与事件时间无关。
+  const now: number = ctx.msg.date * 1000;
   let records: readonly JoinLogRecord[];
   try {
     records = await readRecentJoinLog({

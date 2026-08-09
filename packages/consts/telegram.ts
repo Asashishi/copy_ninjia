@@ -29,20 +29,6 @@ export const AVATAR_FETCH_TIMEOUT_MS: number = 15_000;
 export const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
 /** 头像和公开主页分别采用独立硬上限，防止第三方响应导致无界内存占用。 */
 export const AVATAR_MAX_DOWNLOAD_BYTES: number = 10 * 1024 * 1024;
-/**
- * 机器人默认头像的来源链接（Google Drive 直链）。/reset_icon 与 /stop_copy
- * 复原头像时从这里取图，见 infra/telegram/avatar.ts 的 restoreDefaultProfilePhoto。
- *
- * 放常量而不放部署配置：这张脸是机器人的身份本身，不是「这次部署连哪儿」的
- * 运维参数；换脸要改代码、走一次评审，比改一份 JSON 更符合它的变更频率。
- *
- * Google Drive 的分享链接（`/file/d/<id>/view`）返回的是 HTML 预览页，不是图片
- * 字节，必须用 `uc?export=download&id=<id>` 这种直链形式。该直链会跳转到
- * googleusercontent 的实际存储域名，因此这条 fetch 必须允许重定向——与抓取
- * t.me 主页那条 `redirect: "error"` 的口径不同，理由见 restoreDefaultProfilePhoto。
- */
-export const BOT_DEFAULT_AVATAR_URL: string = "https://drive.google.com/uc?export=download&id=1o9Vh5t8mVeJPfi7fRzT1uWjPJ3BY7SSF";
-
 /** 上传机器人头像时附带的文件名。Bot API 只按字节内容判格式，这个名字仅出现在
  *  multipart 的 filename 字段里；三条设置头像的路径共用同一个值，避免各写各的。 */
 export const BOT_PROFILE_PHOTO_FILE_NAME: string = "avatar.jpg";
@@ -163,13 +149,22 @@ export const TELEGRAM_CAPTION_MAX_CHARS: number = 1024;
  */
 export const TELEGRAM_DELETE_MESSAGES_BATCH_MAX: number = 100;
 
-/** 遇到 429 时的自动重试参数（配合 apiThrottler 排队使用），bot.api 与
- *  joinVerificationApi 两个客户端共用同一套。 */
-export const API_RETRY_MAX_ATTEMPTS: number = 3;
-/** Telegram 429 自动重试接受的 retry_after 秒数上限。 */
-export const API_RETRY_MAX_DELAY_SECONDS: number = 5;
+/** 全部 Telegram 429 退避域合计允许保留的任务数，正常在途请求不计入。 */
+export const TELEGRAM_429_RETRY_QUEUE_MAX: number = 81_920;
+/** grammY 全局发送桶允许等待的消息上限；与 429 的 81,920 总容量分开计数。 */
+export const TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX: number = 8_192;
+/** grammY 单群发送桶允许等待的消息上限；超过约 6 分钟积压后拒绝新消息。 */
+export const TELEGRAM_MESSAGE_GROUP_PENDING_MAX: number = 128;
+/** grammY 单私聊发送桶允许等待的消息上限；防止单一目标无限占用内存。 */
+export const TELEGRAM_MESSAGE_PRIVATE_PENDING_MAX: number = 256;
+/** 429 缺失合法 retry_after 时采用的保守短退避；后续响应仍以服务端值为准。 */
+export const TELEGRAM_429_FALLBACK_RETRY_MS: number = 1_000;
+/** 429 冷却后的单类别恢复并发上限；窗口从 1 起，仅在真实成功后逐步增长。 */
+export const TELEGRAM_429_RECOVERY_MAX_CONCURRENT: number = 32;
+/** 单个 JavaScript timer 可安全表达的最大毫秒延迟，超长 retry_after 分段等待。 */
+export const TELEGRAM_TIMER_MAX_DELAY_MS: number = 2_147_483_647;
 
-/** 标题回填的最大并发 getChat 数，限制低优先级维护在共享 throttler 中造成的队头阻塞。 */
+/** 标题回填的最大并发 getChat 数，限制低优先级维护占用 Telegram 总闸。 */
 export const CHAT_TITLE_REFRESH_CONCURRENCY: number = 15;
 
 /**
@@ -187,3 +182,9 @@ export const CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE: number = 50;
  * 未被命中的登记项到期自动清理，不值得长期占内存。
  */
 export const SELF_SENT_MESSAGE_TTL_MS: number = 15_000;
+
+/**
+ * Worker 发信回执与频道 update 反向到达时，主线程等待自发标记的最长时间。
+ * 只作用于频道帖子和关联讨论组自动转发，不进入普通群消息热路径。
+ */
+export const SELF_SENT_RENDEZVOUS_TIMEOUT_MS: number = 1_000;

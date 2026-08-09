@@ -10,7 +10,7 @@ import {
   GEMINI_IMAGE_ERROR_LABEL,
   GEMINI_IMAGE_SIZE,
 } from "../../consts/aiChat/gemini";
-import { getGeminiDeploymentConfig } from "../../config/gemini";
+import { getAgentDeploymentConfig } from "../../config/agent";
 import { decodeGeneratedImage } from "../ai/utils/imagePayload";
 import { requestGeminiResponse } from "./client";
 import type { AiImageRequest } from "../../types/aiChat/provider";
@@ -49,15 +49,20 @@ export async function generateGeminiImage({
     }]
     : prompt;
   const response: GenerateContentResponse | null = await requestGeminiResponse(
-    (): GenerateContentParameters => ({
-      model: getGeminiDeploymentConfig().models.image,
-      contents,
-      config: {
-        abortSignal: signal,
-        responseModalities: ["TEXT", "IMAGE"],
-        imageConfig: { aspectRatio, imageSize: GEMINI_IMAGE_SIZE },
-      },
-    }),
+    "image",
+    (): GenerateContentParameters => {
+      const model: string | undefined = getAgentDeploymentConfig().image?.model;
+      if (model === undefined) throw new Error('Agent capability "image" is not configured.');
+      return {
+        model,
+        contents,
+        config: {
+          abortSignal: signal,
+          responseModalities: ["TEXT", "IMAGE"],
+          imageConfig: { aspectRatio, imageSize: GEMINI_IMAGE_SIZE },
+        },
+      };
+    },
     GEMINI_IMAGE_ERROR_LABEL
   );
   return response ? extractGeneratedImage(response) : null;

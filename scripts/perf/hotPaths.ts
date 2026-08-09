@@ -4,7 +4,7 @@ import {
   aiReplyActivitySweepState,
 } from "../../packages/cache/main/auto";
 import { clearAiReplyActivity } from "../../packages/auto/message/aiReplyActivity";
-import { bot, joinVerificationApi } from "../../packages/infra/telegram";
+import { bot } from "../../packages/infra/telegram/mainClient";
 import type { Transformer } from "grammy";
 import { collectJitTiers, diffJitTiers } from "./hotPaths/jitTiers";
 import { createScenario } from "./hotPaths/scenarios";
@@ -13,7 +13,7 @@ import type { JitTierCounts, JitTierStats, Scenario, ScenarioName } from "./hotP
 /**
  * 出站硬闸：本脚本会 import 生产模块，而部署机上 bot 通常正在运行、用的是同一个
  * token。任何一次真实出站都以线上机器人的身份发出，且无法撤回。所有场景按设计
- * 都只碰进程内存，这里把两条出站通道都堵死，让越界变成一次响亮的失败。
+ * 都只碰进程内存，这里把统一出站通道堵死，让越界变成一次响亮的失败。
  *
  * **必须装 grammY transformer，光换 globalThis.fetch 拦不住它。** grammY 在模块
  * 加载时就把 fetch 绑到内部 shim 上（`node_modules/grammy/out/core/client.js` 里
@@ -30,7 +30,6 @@ function installOutboundGuards(): void {
     throw new Error(`perf benchmark attempted Telegram API call '${method}'; scenarios must stay in-process`);
   };
   bot.api.config.use(deny);
-  joinVerificationApi.config.use(deny);
   globalThis.fetch = ((...args: unknown[]): never => {
     throw new Error(
       `perf benchmark attempted a network call (${JSON.stringify(args[0])}); scenarios must stay in-process`
@@ -106,8 +105,11 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "linked-timestamp-window":
     case "linked-rolling-buffer":
     case "bounded-rolling-buffer":
+    case "chat-state-read":
     case "self-sent-empty":
     case "incoming-message-spine":
+    case "flood-window-hit":
+    case "flood-window-churn":
     case "buffered-message-build":
     case "transcript-render":
     case "reply-reference":
@@ -124,7 +126,8 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "ad-wire-clone|array-timestamp-window|float64-timestamp-window|" +
         "array-timestamp-cold|float64-timestamp-cold|" +
         "linked-timestamp-window|linked-rolling-buffer|" +
-        "bounded-rolling-buffer|self-sent-empty|incoming-message-spine|" +
+        "bounded-rolling-buffer|chat-state-read|self-sent-empty|incoming-message-spine|" +
+        "flood-window-hit|flood-window-churn|" +
         "buffered-message-build|transcript-render|reply-reference|" +
         "mention-facts|mention-facts-plain|redact-clean-log|luck-tier-table>"
       );

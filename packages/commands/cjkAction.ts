@@ -9,7 +9,11 @@ import {
 import { recentActionCallTimestamps } from "../cache/main/cjkAction";
 import { sendCommandMessage } from "../infra/telegram";
 import { tryConsumeSlidingWindow } from "../libs/slidingWindowRateLimit";
-import { isBotOwnMessage } from "../infra/selfSentTracker";
+import {
+  isBotOwnMessage,
+  needsBotOwnMessageWait,
+  waitForBotOwnMessage,
+} from "../infra/selfSentTracker";
 import { resolveSenderIdentity, seedSenderCache } from "../users/senderIdentity";
 import { formatFullName, formatProfileUrl } from "../users/userLabel";
 import { resolveCommandTarget } from "./targetResolution";
@@ -138,6 +142,7 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
   // 而回复正文里的昵称/频道名可以由对方设成 `/咬` 开头，从而再次匹配本命令，
   // 形成自问自答的刷屏循环。
   if (isBotOwnMessage(message)) return next();
+  if (needsBotOwnMessageWait(message) && await waitForBotOwnMessage(message)) return next();
 
   // 群里可能同时有多个本机器人的实例，`/咬@SomeoneElse` 明确指名了别人。
   if (

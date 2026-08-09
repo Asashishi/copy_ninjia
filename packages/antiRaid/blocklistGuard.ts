@@ -23,7 +23,7 @@ import type { DeleteMessageOutcome } from "../infra/telegram/actions";
 /**
  * /block 黑名单在入群守卫主线程侧的那一半：判定与投递。真正的探测/封禁在
  * workers/antiRaid/blocklistEffects.ts 执行。两者为什么按线程分家，见
- * docs/04-invariants.md。
+ * docs/cn/04-invariants.md。
  */
 
 /** 把一批处置投给 Worker 的方式；由 index.ts 在注册时把 postAntiRaidDurably 传进来。 */
@@ -82,14 +82,26 @@ export interface ClaimBlockedJoinerParams {
    * 整批取消（`forgetUserBlocklistRemovals`），那时这个人既没有移除、也没有验证
    * 窗口——没有窗口就没有提醒、没有超时踢人，他就这么留在群里，而系统里再没有
    * 任何一处会为他重新开一个。因此把被取代的那条 join 一并登记下来兜底。
+   *
+   * 入群守卫关着时（`joinGuardEnabled === false`）没有这条 join：本来就不会为
+   * 任何人开验证窗口，也就没有需要回退的东西。
    */
-  replacedJoin: AntiRaidWorkerMessage;
+  replacedJoin?: AntiRaidWorkerMessage;
   /** removalId -> 被取代的 join，交给 prepareDurableAntiRaidMessages 兜底。 */
   replacedJoins: Map<number, AntiRaidWorkerMessage>;
   /** 入群服务消息 id（群没隐藏入群消息时才有）；处置落地后由 Worker 删掉。 */
   announcementMessageId?: number;
   /** 入群时刻，交给 Worker 补记反刷群的入群计数。 */
   now?: number;
+  /**
+   * 本群的入群守卫（`/antiraid`）是否开着。
+   *
+   * 黑名单秒踢**不受这个开关管**——名单是独立能力，关掉守门不等于放黑名单进来。
+   * 它只决定这次入群要不要计进反刷群滑动窗口：私密模式跟着守卫一起关，关着的
+   * 群不该由黑名单成员的入群把它凑出来（见 workers/antiRaid/blocklistEffects.ts
+   * 替这条处置补记的 recordJoin）。
+   */
+  joinGuardEnabled: boolean;
 }
 
 /**
@@ -168,6 +180,7 @@ export function claimBlockedJoiner({
   replacedJoins,
   announcementMessageId,
   now = Date.now(),
+  joinGuardEnabled,
 }: ClaimBlockedJoinerParams): boolean {
   if (!isUserBlocked(userId)) return false;
   // 判定与记账分两步，中间隔着可能抛错的 trackBlockedRemoval：写在实参位置时，
@@ -176,7 +189,7 @@ export function claimBlockedJoiner({
   // ANTI_RAID_PER_MINUTE_LIMIT 就不会进私密模式，紧随其后的非黑名单突袭号各自
   // 拿满一个验证窗口而不是被秒踢。键只算一次，两步共用。
   const dedupKey: string = verificationKey(chatId, userId);
-  const owesJoinCount: boolean = owesBlockedJoinCount(dedupKey, now);
+  const owesJoinCount: boolean = joinGuardEnabled && owesBlockedJoinCount(dedupKey, now);
   let params: RemoveBlockedMembersParams;
   try {
     params = trackBlockedRemoval({
@@ -197,7 +210,7 @@ export function claimBlockedJoiner({
   // 会替它 recordJoin；此刻才轮到消耗去重项。
   if (owesJoinCount) commitBlockedJoinCount(dedupKey, now);
   messages.push({ type: "removeBlockedMembers", ...params });
-  replacedJoins.set(params.removalId, replacedJoin);
+  if (replacedJoin !== undefined) replacedJoins.set(params.removalId, replacedJoin);
   logger.log(`Blocklisted user ${userId} rejoined chat ${chatId}; queued removal.`);
   return true;
 }

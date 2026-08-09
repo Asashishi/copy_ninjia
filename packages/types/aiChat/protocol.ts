@@ -1,7 +1,7 @@
 import type { MediaKind, TelegramVisionSource } from "../media";
 import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "../stickers/protocol";
-import type { AiProviderName } from "./provider";
 import type { AiSpeakerSnapshot } from "./speaker";
+import type { AgentDeploymentConfig } from "../config";
 
 /** Worker 侧自我认知所需的机器人账号身份。 */
 export interface AiBotInfo {
@@ -14,9 +14,23 @@ export interface AiBotInfo {
 export type ImageGenerationReference = TelegramVisionSource;
 export type AiDirectTriggerReason = "reply" | "mention";
 
+/**
+ * AI Worker 的唯一初始化消息：机器人身份 + 主线程解析出来的 AI 对话能力快照。
+ *
+ * 配置随身份一起投递而不是让 Worker 自己读盘，是「同一进程内只有一代配置」的
+ * 落点：这条消息在 initAiChat 里构造一次，崩溃重建时由 lastInitState 原样重放
+ * （见 aiChat/workerBridge.ts），因此新 isolate 拿到的永远是进程启动那一刻的
+ * 那份，改 config/agent.json 必须整进程重启才会生效。
+ *
+ * `agent` 里带着各能力的 api_key，只在这条消息上跨线程流动一次：不落盘、不进
+ * state、不进任何事件回执，日志侧由 logger 的值级脱敏兜底（见 infra/logger.ts）。
+ */
 export interface AiInitMessage {
   type: "init";
   botInfo: AiBotInfo;
+  /** 主线程从部署配置读取后注入；Worker 不直接加载 Telegram 配置。 */
+  superAdminUserId: number;
+  agent: AgentDeploymentConfig;
 }
 
 /** 主线程从 Telegram update 提取的原始回复引用；Worker 会清洗成持久化形态。 */
@@ -66,7 +80,7 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   caption: string;
   fileId: string;
   fileUniqueId: string;
-  /** 实际传给视觉管线的本体/缩略图尺寸。 */
+  /** 实际传给视觉管线的本体/缩略图尺寸；语音恒为 0。 */
   width: number;
   height: number;
   commentOnResolve: boolean;
@@ -74,6 +88,19 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   imageGenerationRequested: boolean;
   /** 贴纸取不到视觉源时的兜底文案；其余媒体为 undefined。 */
   stickerFallbackText: string | undefined;
+  /**
+   * 语音专用的两项事实；其余媒体分别为 undefined 与 0。
+   *
+   * 摊平成两个字段而不是包一个 `voice: {...} | undefined` 对象：这条协议每条媒体
+   * 消息走一次，多一个按类型才出现的嵌套对象既多一次分配，也让消费侧的读取点在
+   * 「有对象」与「没对象」之间多态（形状约束见 AiRecordContext 的说明）。
+   *
+   * mime 是 Telegram 声明的容器，交给转写侧按白名单归一（见
+   * aiChat/ai/telegramAudio.ts 的 normalizeVoiceMime）——声明值是外部输入，不原样
+   * 转发进模型请求体。
+   */
+  voiceMime: string | undefined;
+  voiceDurationSeconds: number;
   /** 直接触发的成因；随机/无触发为 undefined。 */
   directTrigger: {
     reason: AiDirectTriggerReason;
@@ -86,6 +113,8 @@ export interface AiTriggerMessage {
   triggerSenderId: number;
   replyToMessageId: number;
   isRandomTrigger: boolean;
+  /** 主线程发送面高压快照；随机触发据此丢弃，直接触发据此串行生成。 */
+  telegramBackpressured: boolean;
   /** 当前触发是否具备图片工具资格；具体生成/编辑意图由模型判断。 */
   imageGenerationRequested: boolean;
   /** 当前图片/贴纸，或本条文字回复的图片/贴纸；仅在直接触发的本轮短期附带。 */
@@ -132,38 +161,8 @@ export interface AiQueryMoodMessage {
   deadlineAt: number;
 }
 
-/**
- * 主线程 -> Worker：当前生效的生图供应商覆盖值（`/image_model`）。
- *
- * 全量单值覆盖，没有增量语义；`undefined` 表示「没有覆盖」，Worker 侧据此回到
- * activeAiProvider() 的默认口径，不得理解为「保持原值」。推送时机与重放方见
- * cache/workers/aiChat/imageProvider.ts。
- */
-export interface AiImageProviderMessage {
-  type: "imageProvider";
-  provider: AiProviderName | undefined;
-}
-
-/**
- * 主线程 -> Worker：当前生效的闲聊侧供应商覆盖值（`/chat_model`），作用于回复
- * 会话、纯文本与视觉描述这三项。
- *
- * 语义与 AiImageProviderMessage 完全对称：全量单值覆盖，`undefined` 表示「没有
- * 覆盖」，Worker 侧据此回到 activeAiProvider() 的默认口径，不得理解为「保持
- * 原值」。推送时机与重放方见 cache/workers/aiChat/chatProvider.ts。
- *
- * 注意与 types/aiChat/provider.ts 的 `AiChatProvider` 区分：那个是供应商实现要
- * 满足的契约，这个只是一条传值消息。
- */
-export interface AiChatProviderMessage {
-  type: "chatProvider";
-  provider: AiProviderName | undefined;
-}
-
 export type AiChatWorkerMessage =
   | AiInitMessage
-  | AiImageProviderMessage
-  | AiChatProviderMessage
   | AiRecordMessage
   | AiRecordMediaMessage
   | AiTriggerMessage

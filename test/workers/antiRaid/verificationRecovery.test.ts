@@ -32,7 +32,9 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {},
+  joinVerificationApi: {
+    getChat: async (): Promise<{ type: "supergroup" }> => ({ type: "supergroup" }),
+  },
   sendMessage: async (): Promise<number | undefined> => {
     reminderAttempts++;
     // 队列为空按「发出去了」算。终态播报发不出去时不再算结算（见
@@ -109,6 +111,54 @@ afterEach(async () => {
 });
 
 describe("Anti-Raid Worker verification recovery", () => {
+  test("disableJoinGuardChat：不再触发任何动作，也不去删群里已有的提醒", async () => {
+    // 关掉开关＝从此不触发：超时踢出、终态处置、提醒补发全部随记录作废；
+    // 已经发出去的提醒留在群里不动（见 states/verification/disable.ts）。
+    const pending: VerificationSnapshot = record(42, Date.now() + 60_000);
+    // 43 已经推进到终态（落盘完、就等踢人）：这一条最能说明「关掉之后不踢人」。
+    const expiring: VerificationSnapshot = record(43, Date.now() - 1);
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [pending, expiring],
+    });
+    expect(verificationEntries.get("-1001:43")?.state.kind).toBe("expelling");
+    deletedMessageIds.length = 0;
+    workerEvents.length = 0;
+
+    runtime.disableJoinGuardChat(-1001);
+    await Bun.sleep(0);
+
+    expect(verificationEntries.size).toBe(0);
+    // reminderMessageId 是 record() 里那条带按钮的提醒：不删。
+    expect(deletedMessageIds).toEqual([]);
+    expect(workerEvents.filter((event): boolean => event.type === "verificationDelete")).toHaveLength(2);
+    expect(kicks).toBe(0);
+    // 结算事件迟到时状态已经不在，不会再有后续动作。
+    runtime.handleVerificationPersisted({
+      type: "verificationPersisted",
+      key: "-1001:43",
+      generation: 1,
+      revision: 2,
+    });
+    await Bun.sleep(0);
+    expect(kicks).toBe(0);
+  });
+
+  test("别的群不受这次关闭影响", async () => {
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [record(42, Date.now() + 60_000), { ...record(44, Date.now() + 60_000), chatId: -1002 }],
+    });
+
+    runtime.disableJoinGuardChat(-1001);
+    await Bun.sleep(0);
+
+    expect(verificationEntries.has("-1001:42")).toBeFalse();
+    expect(verificationEntries.has("-1002:44")).toBeTrue();
+  });
+
   test("adopt uses remaining expiry, replaces old timers, and handles expired records immediately", async () => {
     const active: VerificationSnapshot = record(42, Date.now() + 100);
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 1, verifications: [active] });
@@ -282,6 +332,11 @@ describe("Anti-Raid Worker verification recovery", () => {
 
   test("私密模式删公告期间到达的管理员豁免会失效旧踢人动作", async () => {
     const baselineKicks: number = kicks;
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 10,
+      verifications: [],
+    });
     blockNextDelete = true;
     runtime.dispatchVerification(-2001, 80, {
       type: "join",
@@ -295,6 +350,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       lockdownActive: true,
       now: 80_000,
     });
+    settleLatestTerminal(80);
     await Bun.sleep(0);
     expect(verificationEntries.get("-2001:80")?.state.kind).toBe("kickPending");
 
@@ -317,8 +373,48 @@ describe("Anti-Raid Worker verification recovery", () => {
     runtime.deactivateVerificationChat(-2001);
   });
 
+  test("进程恢复会重放已落盘但尚未结算的私密模式踢人", async () => {
+    const baselineKicks: number = kicks;
+    const snapshot: VerificationSnapshot = {
+      chatId: -2010,
+      userId: 90,
+      generation: 13,
+      revision: 2,
+      phase: "kickPending",
+      label: "重启前待踢成员",
+      isBot: false,
+      trackedMessageTimes: [],
+      replyReminderRequested: false,
+      reminderSuperseded: true,
+      joinedAt: 90_000,
+      expiresAt: 90_000,
+      requestedAt: 90_000,
+      countedJoinAt: 90_000,
+    };
+
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 13,
+      verifications: [snapshot],
+      resumePersistedTerminals: true,
+    });
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(kicks).toBe(baselineKicks + 1);
+    expect(verificationEntries.get("-2010:90")?.state.kind).toBe("kicked");
+    expect(workerEvents.some((event: AntiRaidWorkerEvent): boolean =>
+      event.type === "verificationDelete" && event.chatId === -2010 && event.userId === 90
+    )).toBeTrue();
+  });
+
   test("停管会失效仍在删除公告的私密模式踢人动作", async () => {
     const baselineKicks: number = kicks;
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 11,
+      verifications: [],
+    });
     blockNextDelete = true;
     runtime.dispatchVerification(-2002, 81, {
       type: "join",
@@ -332,6 +428,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       lockdownActive: true,
       now: 81_000,
     });
+    settleLatestTerminal(81);
     await Bun.sleep(0);
 
     runtime.deactivateVerificationChat(-2002);
@@ -343,6 +440,11 @@ describe("Anti-Raid Worker verification recovery", () => {
 
   test("同 userId 新一代记录会失效旧踢人动作，正常路径仍只踢一次", async () => {
     const baselineKicks: number = kicks;
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 12,
+      verifications: [],
+    });
     blockNextDelete = true;
     runtime.dispatchVerification(-2003, 82, {
       type: "join",
@@ -356,6 +458,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       lockdownActive: true,
       now: 82_000,
     });
+    settleLatestTerminal(82);
     await Bun.sleep(0);
 
     runtime.dispatchVerification(-2003, 82, { type: "left" });
@@ -391,6 +494,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       lockdownActive: true,
       now: 83_000,
     });
+    settleLatestTerminal(83);
     await Bun.sleep(0);
     expect(kicks).toBe(baselineKicks + 1);
     expect(verificationEntries.get("-2004:83")?.state.kind).toBe("kicked");

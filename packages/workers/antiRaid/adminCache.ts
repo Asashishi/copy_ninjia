@@ -1,4 +1,5 @@
 import { joinVerificationApi } from "../../infra/telegram";
+import { logger } from "../../infra/logger";
 import { ADMIN_CACHE_TTL_MS } from "../../consts/antiRaid/cache";
 import {
   adminCacheGeneration,
@@ -70,6 +71,38 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
       })
   );
   return trackAntiRaidTask({ task });
+}
+
+/**
+ * 处置前的身份闸：某人此刻是不是本群管理员。优先用入群守卫本来就热的缓存，
+ * 冷了才现拉一次全量。
+ *
+ * **确证不了一律返回 undefined，调用方按不处置办**——这是一条权限边界契约，
+ * 因此和 freshAdminIds / fetchAdminIds 住在一起，而不是让每个处置点各抄一份：
+ * 抄两份就意味着哪天改了兜底语义（比如把 403 当成「不是管理员」）只改到一处，
+ * 刷屏禁言与广告处置从此对「谁豁免」各执一词。
+ *
+ * 为什么不能把失败当成「不是管理员」：`restrictChatMember` 对管理员本来就会被
+ * 拒，而 Telegram 回的那句 400 `not enough rights` 与「机器人自己缺权限」完全
+ * 一样，照打只会往 `logs/` 塞一条把运维引向权限配置的假线索；把群主按住三分钟
+ * 的代价也远大于放过一次刷屏（下一条消息会重新计数）。
+ *
+ * @param context 只用于失败日志的英文处置名（见 AGENTS.md 的日志约定）。
+ * @returns true=确认是管理员；false=确认不是；undefined=没查出来。
+ */
+export async function isChatAdmin(
+  chatId: number,
+  userId: number,
+  context: string
+): Promise<boolean | undefined> {
+  const cached: Set<number> | undefined = freshAdminIds(chatId);
+  if (cached !== undefined) return cached.has(userId);
+  try {
+    return (await fetchAdminIds(chatId)).has(userId);
+  } catch (error: unknown) {
+    logger.error(`Failed to check admin exemption for ${context} ${userId} in chat ${chatId}:`, error);
+    return undefined;
+  }
 }
 
 /**

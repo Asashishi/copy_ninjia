@@ -1,11 +1,11 @@
 # 07 Operations and Troubleshooting
 
 <p align="center">
-  <a href="../07-operations.md">简体中文</a> · <b>English</b> · <a href="../ja/07-operations.md">日本語</a>
+  <a href="../cn/07-operations.md">简体中文</a> · <b>English</b> · <a href="../ja/07-operations.md">日本語</a>
 </p>
 
 <p align="center">
-  <a href="README.md">📚 Developer Docs Home</a> · <a href="06-modification-guide.md">← Prev: 06 Recipes</a> · <b>Next: None →</b>
+  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="06-modification-guide.md">← Prev: 06 Recipes</a> · <b>Next: None →</b>
 </p>
 
 ---
@@ -49,8 +49,23 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
 `COPY_NINJIA_DATA_ROOT` determines every runtime-data path. When empty, it defaults to the project root:
 
 - **`state.json` + `state.json.bak`**
-  - **Contents**: authoritative group switches, copy state, lockdown mirrors, and related state.
+  - **Contents**: authoritative group switches (including `isAntiRaidEnabled`, the single switch
+    for join verification plus the anti-raid private mode, off by default), copy state, lockdown
+    mirrors, and related state, plus the three asset URLs under `global.assets` (two fortune
+    thumbnails and the bot's default avatar). Model selection is no longer runtime state.
   - **Backup**: back up the primary and backup together.
+  - **Asset URLs can only be edited while stopped**: the process holds the authoritative state in
+    memory and rewrites the whole file, so an edit made while running is erased by the next save.
+    Stop the service → edit `global.assets` → start it. Missing entries are seeded with their
+    currently effective values once startup has fully succeeded; a malformed value (missing or
+    wrong scheme) rejects the whole file at decode time and names the field path. Any image host
+    works as long as it serves raw image bytes; the two thumbnails must be `https`, only
+    `botDefaultAvatarUrl` may be plain `http`, and that download **does follow redirects** — a
+    direct link that 302s to the actual storage domain (the built-in Drive default among them)
+    works as-is, with no need to resolve the final hop yourself.
+  - **Check the three entries before upgrading**: the two thumbnails now accept `https` only, so
+    one left as `http://` by an older version refuses to start at decode time and names the field
+    path.
 - **`memory/ai/<chatId>.json`**
   - **Contents**: per-chat version=1 atomic AI-memory snapshot with recent verbatim messages,
     historical summaries, pending summary, and save time.
@@ -72,7 +87,9 @@ Let `Restart=on-failure` restart crashes and nonzero exits. Pending verification
   - **Backup**: never delete, regenerate, or restore it separately from existing results.
 - **`memory/anti-raid/<YYYY-MM-DD>.json`**
   - **Contents**: current-day append log for pending Challenge verification, including active
-    snapshots, repeated revisions, and terminal tombstones.
+    snapshots, repeated revisions, terminal tombstones, and write-ahead `kickPending` records whose
+    removals are not yet confirmed. Recovery resumes their membership probe and kick; no second kick
+    persistence file is created.
   - **Backup**: startup across midnight merges the latest prior day with today (today's active
     values/tombstones win) and removes old days only after atomic publication. Steady state
     retains only today, with compaction at 10,000 historical entries or 4 MiB.
@@ -119,7 +136,7 @@ A `joinlog/` query reads at most the two chat/day files covering `[since, now]` 
 
 - Atomic replacement briefly creates `.<target-name>.<pid>.<uuid>.tmp`, which disappears after `fsync + rename`; only a hard kill between those steps should leave one behind. `ai/`, `stickers/`, and `luck/` sweep `*.tmp` at startup. The two `blocklist/` owners sweep only their own `.blocklist.json.*.tmp` and `.removals.json.*.tmp` prefixes. `ad-detected/` sweeps `.sample.json.*.tmp` before its first write, and `joinlog/` sweeps `*.tmp` when it first takes ownership of the current day. Current `anti-raid/` recovery ignores but does not remove these files; they do not participate in recovery and should be treated as orphans only after the bot is stopped and the name exactly matches the atomic-write pattern.
 - `memory/ai/<chatId>.json.<timestamp>.<uuid>.corrupt` and `memory/stickers/<pack>.json.<timestamp>.<uuid>.corrupt` are uniquely named quarantine files whose JSON could not be parsed. They are excluded from normal recovery and never auto-deleted; repeated corruption at one source path creates new evidence instead of overwriting an older copy. A parseable file that fails the current version=1 schema is not quarantined; it fails startup and must be migrated manually under [06](06-modification-guide.md#changing-a-persistence-schema).
-- `/block`'s `confirmedKickedUserIdsByChat`, Challenge timers, the ad-detection admission queue/deduplication set, and short-lived Telegram member/admin caches are process-only and have no files. In particular, the per-Tokyo-day confirmed-kick cache clears on day rollover or process restart and is never inferred from `blocklist.json` or `removals.json`.
+- Challenge timers, the ad-detection admission queue/deduplication set, and short-lived Telegram member/admin caches are process-only and have no files.
 
 Back up the complete data root while the bot is stopped or at a storage-snapshot consistency boundary. Treat `memory/` as sensitive. Files use permissive mode `0644` under the single-tenant deployment baseline described in [04](04-invariants.md#persistence); access control relies on the data-root owner and permissions plus host-account isolation.
 
@@ -180,7 +197,7 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
 - **`bot.lock` refuses startup**
   - **Cause and action**: see the next section.
 - **Configuration schema validation fails**
-  - **Cause**: invalid `config/*.json` or `.env`.
+  - **Cause**: invalid `config/*.json`.
   - **Action**: fix the named field. Mood weights must total exactly 100, weather/time
     multipliers must not exceed 100, and at most 5 sticker packs are allowed.
 - **Both state copies are invalid**
@@ -197,8 +214,10 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
   - **Cause**: either one damaged state copy was quarantined, or an unparseable AI/sticker JSON
     file was removed from its recovery set.
   - **Action**: identify the owner from the original name and investigate the damage first.
-    State can self-recover when its other copy is valid; AI/sticker quarantine files are neither
-    restored nor deleted automatically.
+    State self-recovers only when the **backup** copy is the broken one (the bad backup is
+    quarantined and rebuilt from the primary, with a log line); an unreadable **primary** always
+    refuses startup and leaves both files untouched — fix the field named in the error and start
+    again. AI/sticker quarantine files are neither restored nor deleted automatically.
 
 ### `bot.lock` Refuses Startup
 
@@ -245,6 +264,6 @@ The token fingerprint identifies the lock owner; it is not a data-isolation boun
 
 <div align="center">
 
-[← Prev: 06 Recipes](06-modification-guide.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#07-operations-and-troubleshooting) · **Next: None →**
+[← Prev: 06 Recipes](06-modification-guide.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#07-operations-and-troubleshooting) · **Next: None →**
 
 </div>

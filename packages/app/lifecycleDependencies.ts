@@ -3,6 +3,11 @@ import { drainAntiRaid, hydratePendingVerifications, initAntiRaid, terminateAnti
 import { hydrateBlocklist } from "../infra/blocklist/outbox";
 import { sweepManagedBlocklistChats } from "../infra/blocklist/sweep";
 import { restoreLuckState } from "../commands";
+import {
+  drainGagRuntime,
+  initGagRuntime,
+  quiesceGagRuntime,
+} from "../commands/gag/runtime";
 import { drainAvatarUpdates, initAvatarUpdates, quiesceAvatarUpdates } from "../copy/avatarQueue";
 import { drainReactionQueue, initReactionQueue, quiesceReactionQueue } from "../copy/reactionQueue";
 import { closeTranslate, drainTranslate, initTranslate, quiesceTranslate } from "../copy/translate";
@@ -12,7 +17,7 @@ import {
   quiesceChatTitleRefresh,
   refreshAllChatTitles,
 } from "../infra/chatTitle";
-import { BOT_TOKEN, SUPER_ADMIN_USER_ID } from "../infra/config";
+import { BOT_TOKEN, SUPER_ADMIN_USER_ID } from "../config/telegram";
 import { flushDiskIO, initDiskIO, loadPersistedData, terminateDiskIO } from "../infra/diskIO";
 import { logger } from "../infra/logger";
 import { setBusinessWorkerFatalHandler } from "../infra/workerSupervisor";
@@ -23,9 +28,14 @@ import {
   getAllChatStates,
   getGlobalCopyState,
   loadState,
+  seedMissingAssetState,
   setStatePersistenceFatalHandler,
 } from "../infra/storage/stateStore";
-import { bot, initTelegramClients } from "../infra/telegram";
+import {
+  drainPendingMessageDeletions,
+} from "../infra/telegram";
+import { drainTelegramOutbound } from "../infra/telegram/outboundGate";
+import { bot, initTelegramClients } from "../infra/telegram/mainClient";
 import { sleep } from "../libs/sleep";
 import { monotonicNow } from "../libs/monotonicDeadline";
 import { seedSenderCache } from "../users/senderIdentity";
@@ -42,8 +52,7 @@ import { runAcknowledgedUpdateBatches } from "./updateRunner";
  * 普通对象刻意不使用直接 re-export：Bun 的模块 mock 会追溯重绑定 re-export，
  * 从而把测试替身泄漏到 diskIO 等原始模块。对象快照让替换严格停留在本边界。
  */
-// 类型侧的 ApplicationLifecycleDependencies 是 `typeof lifecycleDependencies`
-// 反推出来的（见 types/lifecycle.ts），这里再写标注会成环。
+// 类型侧的 ApplicationLifecycleDependencies 由本装配对象反推；这里再写标注会成环。
 // eslint-disable-next-line @typescript-eslint/typedef -- 标注会与 typeof 推导成环
 export const lifecycleDependencies = {
   BOT_TOKEN,
@@ -55,7 +64,10 @@ export const lifecycleDependencies = {
   closeTranslate,
   drainAntiRaid,
   drainAvatarUpdates,
+  drainGagRuntime,
   drainReactionQueue,
+  drainPendingMessageDeletions,
+  drainTelegramOutbound,
   drainTranslate,
   flushAiMemory,
   flushDiskIO,
@@ -68,6 +80,7 @@ export const lifecycleDependencies = {
   hydratePendingVerifications,
   hydrateStickerCatalog,
   initAvatarUpdates,
+  initGagRuntime,
   initAiChat,
   initAntiRaid,
   initChatTitleRefresh,
@@ -87,9 +100,11 @@ export const lifecycleDependencies = {
   releaseSingleInstanceLock,
   restoreLuckState,
   runAcknowledgedUpdateBatches,
+  seedMissingAssetState,
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
   quiesceReactionQueue,
+  quiesceGagRuntime,
   quiesceTranslate,
   seedSenderCache,
   setBusinessWorkerFatalHandler,
@@ -100,3 +115,6 @@ export const lifecycleDependencies = {
   terminateAntiRaid,
   terminateDiskIO,
 };
+
+/** 应用生命周期的完整副作用依赖；测试通过构造器注入替身。 */
+export type ApplicationLifecycleDependencies = typeof lifecycleDependencies;

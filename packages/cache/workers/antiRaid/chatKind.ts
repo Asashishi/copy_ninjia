@@ -9,11 +9,20 @@
  * 文档只认超级群/频道，普通群要用 `banChatMember`（那里它不产生持久封禁）。
  *
  * **「没有条目」表示「此刻不知道」，不表示「是普通群」。** 口径与
- * workerBotChatPermissions 完全一致：未知一律按现状走 `unbanChatMember`，只有
- * 确证是普通群（值为 false）才改道。压成一个布尔的代价是把绝大多数超级群在
- * 镜像到达之前误判成普通群，那会在超级群里打出真正的持久封禁。
+ * workerBotChatPermissions 完全一致：未知不会授权任何踢人 API，执行侧先用
+ * getChat 补齐；只有确证是普通群（值为 false）才改道。压成一个布尔的代价是
+ * 把绝大多数超级群误判成普通群，在那里打出真正的持久封禁。
  *
- * Worker 重建与进程启动时由主线程整表重放，因此这里不需要自己的恢复逻辑；
+ * Worker 重建时由主线程整表重放；完整进程冷启动镜像为空时由执行侧反查。
  * `deactivateChat` 与 Worker stop 时清除。
  */
 export const workerChatIsSupergroup: Map<number, boolean> = new Map();
+
+/**
+ * 冷启动镜像缺失时按群复用的 getChat 请求；请求结算、镜像到达、停管或 Worker
+ * stop 时删除。容量由 VERIFICATION_CHAT_KIND_FETCH_MAX 限制，Worker 重建后为空。
+ */
+export const workerChatKindFetches: Map<
+  number,
+  Promise<boolean | undefined>
+> = new Map();

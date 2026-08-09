@@ -104,6 +104,8 @@ export function aiRecordMediaMessageFixture(
     commentOnResolve: false,
     imageGenerationRequested: false,
     stickerFallbackText: undefined,
+    voiceMime: undefined,
+    voiceDurationSeconds: 0,
     directTrigger: undefined,
     ...overrides,
   };

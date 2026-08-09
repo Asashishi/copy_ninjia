@@ -11,7 +11,7 @@ const sleep = mock(async (..._args: unknown[]): Promise<void> => {});
 const logError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/aiChat/provider", () => ({
-  chatAiProvider: () => ({ name: "test", generateText }),
+  summaryAiProvider: () => ({ name: "google", generateText }),
 }));
 mock.module("../../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../../packages/infra/logger", () => ({

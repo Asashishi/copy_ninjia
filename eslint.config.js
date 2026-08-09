@@ -152,6 +152,13 @@ export default defineConfig(
       "max-params": ["error", 3],
       "no-else-return": ["error", { allowElseIf: true }],
       "no-lonely-if": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.object.name='Promise'][callee.property.name='all']",
+          message: "Use Promise.allSettled with bounded concurrency and traceable per-item outcomes.",
+        },
+      ],
       "no-useless-return": "error",
       "object-shorthand": [
         "error",

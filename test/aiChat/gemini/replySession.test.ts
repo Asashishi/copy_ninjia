@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Content, GenerateContentParameters } from "@google/genai";
 import type { GeminiRequestResult } from "../../../packages/types/aiChat/gemini";
 import type { AiReplySession, AiToolDefinition } from "../../../packages/types/aiChat/provider";
-import { getGeminiDeploymentConfig } from "../../../packages/config/gemini";
+import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 
 const requestGeminiResult = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => ({
   ok: false,
@@ -71,8 +71,9 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![0] as () => GenerateContentParameters)();
-    expect(body.model).toBe(getGeminiDeploymentConfig().models.reply);
+    const body: GenerateContentParameters = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
+    expect(requestGeminiResult.mock.calls[0]![0]).toBe("text");
+    expect(body.model).toBe(getAgentDeploymentConfig().text.model);
     expect(body.contents).toEqual([{
       role: "user",
       parts: [{ text: "区块一" }, { text: "区块二" }, { text: "区块三" }],
@@ -89,7 +90,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![0] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
     expect(body.config?.temperature).toBe(GEMINI_REPLY_TEMPERATURE);
     expect(body.config?.maxOutputTokens).toBe(GEMINI_REPLY_MAX_TOKENS);
   });
@@ -103,7 +104,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: true,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![0] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
     expect(body.config?.temperature).toBe(GEMINI_GROUNDED_REPLY_TEMPERATURE);
   });
 
@@ -116,7 +117,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![0] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
     expect(body.config?.tools).toEqual([
       { googleSearch: {} },
       {
@@ -139,7 +140,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![0] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
     expect(body.config?.tools).toEqual([{
       functionDeclarations: [{
         name: SEND_MESSAGE.name,
@@ -163,7 +164,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![0] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
     expect(body.config?.tools).toEqual([]);
   });
 });
@@ -194,7 +195,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
       webSearchEnabled: false,
       grounded: false,
     });
-    const body = (requestGeminiResult.mock.calls[1]![0] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[1]![1] as () => GenerateContentParameters)();
     const contents = body.contents as Content[];
     expect(contents).toHaveLength(3);
     // 模型轮次原样接回：thought signature 必须还在。

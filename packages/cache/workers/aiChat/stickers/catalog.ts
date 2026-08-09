@@ -31,8 +31,12 @@ export const dirtyPacks: Set<string> = new Set();
  *  Worker 重启。 */
 export const failedEntries: Map<string, Map<string, number>> = new Map();
 
-/** 正在后台生成中的包，防止 init 消息重放（Worker 崩溃重启）时重复发起。 */
-export const generatingPacks: Set<string> = new Set();
+/**
+ * 正在后台生成中的包及其任务句柄。既用于防止 init/维护节拍重复发起，也供
+ * Worker 停机 flush 等到目录不再改写后再上报最终 dirty 快照。任务 settle 后
+ * 立即删除；容量至多为配置中的白名单包数，Worker 重建后清空。
+ */
+export const generatingPacks: Map<string, Promise<void>> = new Map();
 
 /** 上一次「目录仍不完整」的周期重试时刻（见 aiChat/ai/stickers/catalog.ts 的
  *  retryIncompleteStickerCatalogs）。0 表示本进程还没试过，第一次维护节拍

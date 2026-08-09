@@ -1,6 +1,13 @@
 import type { Message, MessageOrigin } from "@grammyjs/types";
-import { SELF_SENT_MESSAGE_TTL_MS } from "../consts/telegram";
-import { sentMessages } from "../cache/perThread/selfSentTracker";
+import {
+  SELF_SENT_MESSAGE_TTL_MS,
+  SELF_SENT_RENDEZVOUS_TIMEOUT_MS,
+} from "../consts/telegram";
+import {
+  pendingSelfSentWaiters,
+  sentMessages,
+} from "../cache/perThread/selfSentTracker";
+import type { SelfSentWaiter } from "../types/telegram";
 
 /**
  * 登记「机器人自己刚发出的消息」，供自动流水线（packages/auto/message/）识别
@@ -20,6 +27,38 @@ function key(chatId: number, messageId: number): string {
   return `${chatId}:${messageId}`;
 }
 
+/** 只有 Telegram 会回投的两种形态需要等待跨线程标记。 */
+function rendezvousKey(message: Message): string | undefined {
+  if (message.chat.type === "channel") return key(message.chat.id, message.message_id);
+  const origin: MessageOrigin | undefined = message.forward_origin;
+  if (message.is_automatic_forward === true && origin?.type === "channel") {
+    return key(origin.chat.id, origin.message_id);
+  }
+  return undefined;
+}
+
+/**
+ * 当前消息是否属于可能跨线程晚到标记的 Telegram 回投形态。
+ *
+ * 普通群聊和私聊不会回投机器人自己发送的消息，调用方可据此保留同步快速路径；
+ * 频道帖及频道自动转发仍必须进入有界 rendezvous，不能只做一次即时查询。
+ */
+export function needsBotOwnMessageWait(message: Message): boolean {
+  if (message.chat.type === "channel") return true;
+  return message.is_automatic_forward === true && message.forward_origin?.type === "channel";
+}
+
+/** 标记到达时一次唤醒同一原帖的频道帖与关联讨论组副本。 */
+function settleSelfSentWaiters(k: string): void {
+  const waiters: Set<SelfSentWaiter> | undefined = pendingSelfSentWaiters.get(k);
+  if (waiters === undefined) return;
+  pendingSelfSentWaiters.delete(k);
+  for (const waiter of waiters) {
+    clearTimeout(waiter.timer);
+    waiter.resolve(true);
+  }
+}
+
 /** 登记一条刚发出的消息；TTL 到期自动清理。 */
 export function markSelfSent(chatId: number, messageId: number): void {
   const k: string = key(chatId, messageId);
@@ -29,6 +68,7 @@ export function markSelfSent(chatId: number, messageId: number): void {
     k,
     setTimeout((): boolean => sentMessages.delete(k), SELF_SENT_MESSAGE_TTL_MS).unref()
   );
+  settleSelfSentWaiters(k);
 }
 
 /** 某条消息是否是机器人自己刚发出的。 */
@@ -49,4 +89,37 @@ export function isBotOwnMessage(message: Message): boolean {
   return message.is_automatic_forward === true &&
     origin?.type === "channel" &&
     isSelfSent(origin.chat.id, origin.message_id);
+}
+
+/**
+ * 跨线程发送专用门禁：标记已到则立即返回；可能回投的频道消息最多等待一个
+ * 有界窗口，期间 `markSelfSent` 会立即唤醒。普通群/私聊不创建 timer。
+ */
+export function waitForBotOwnMessage(
+  message: Message,
+  timeoutMs: number = SELF_SENT_RENDEZVOUS_TIMEOUT_MS
+): Promise<boolean> {
+  if (isBotOwnMessage(message)) return Promise.resolve(true);
+  const k: string | undefined = rendezvousKey(message);
+  if (k === undefined) return Promise.resolve(false);
+  return new Promise((resolve: (matched: boolean) => void): void => {
+    let waiters: Set<SelfSentWaiter> | undefined = pendingSelfSentWaiters.get(k);
+    if (waiters === undefined) {
+      waiters = new Set<SelfSentWaiter>();
+      pendingSelfSentWaiters.set(k, waiters);
+    }
+    const waiter: SelfSentWaiter = {
+      resolve,
+      timer: setTimeout((): void => {
+        const current: Set<SelfSentWaiter> | undefined = pendingSelfSentWaiters.get(k);
+        current?.delete(waiter);
+        if (current?.size === 0) pendingSelfSentWaiters.delete(k);
+        resolve(false);
+      }, timeoutMs),
+    };
+    waiter.timer.unref();
+    waiters.add(waiter);
+    // 防御未来调用点在登记期间同步触发标记；即使时序改变也不丢唤醒。
+    if (sentMessages.has(k)) settleSelfSentWaiters(k);
+  });
 }

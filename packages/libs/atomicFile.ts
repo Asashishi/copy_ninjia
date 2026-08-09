@@ -4,6 +4,7 @@ import {
   fsyncSync,
   openSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -59,20 +60,27 @@ type AtomicSyncWriter = (fd: number) => number;
 /**
  * 同步原子写的公共生命周期。writer 返回已经写入的字节数，异常统一走
  * close + unlink，避免文本与分块写各自维护一套容易漂移的失败路径。
+ *
+ * 权限接管与 atomicWriteText 同口径：`mode` 不传时沿用目标文件当前的权限。
+ * 不沿用的话，新建的临时文件按 `0666 & ~umask`（常见 0644）被 rename 顶上去，
+ * 部署方 `chmod 0600` 过的文件会在一次普通写入后被静默放宽——而追加型日志
+ * （workers/diskIO/appendOnlyDayFile.ts 的 atomicRewrite）正是刻意不传 mode
+ * 来「保持原有部署权限策略」的，缺了这一步那句注释就成了反话。
  */
 function atomicWriteSync(
   path: string,
   writer: AtomicSyncWriter,
   mode?: number
 ): number {
+  const targetMode: number | undefined = mode ?? currentFileModeSync(path);
   const tmpPath: string = temporaryPath(path);
-  const fd: number = openSync(tmpPath, "wx", mode);
+  const fd: number = openSync(tmpPath, "wx", targetMode);
   let writtenBytes: number;
   try {
     writtenBytes = writer(fd);
     // open(2) 的 mode 会被进程 umask 收紧。在临时文件尚未 rename 可见前
-    // 显式设回调用方要求的最终权限，避免目标曾短暂以 0600 出现。
-    if (mode !== undefined) fchmodSync(fd, mode);
+    // 显式设回要求的最终权限，避免目标曾短暂以 0600 出现。
+    if (targetMode !== undefined) fchmodSync(fd, targetMode);
     fsyncSync(fd);
   } catch (error: unknown) {
     try {
@@ -115,6 +123,16 @@ function atomicWriteSync(
   return writtenBytes;
 }
 
+/** currentFileMode 的同步版本，语义完全一致；供唯一的磁盘 I/O Worker 使用。 */
+function currentFileModeSync(path: string): number | undefined {
+  try {
+    return statSync(path).mode & 0o777;
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 /**
  * 读出目标文件当前的权限位；文件还不存在时返回 undefined（首次创建没有可
  * 沿用的权限，交给 open 的默认值）。ENOENT 之外的失败不吞：那时紧接着的
@@ -135,8 +153,8 @@ async function currentFileMode(path: string): Promise<number | undefined> {
  * 权限必须显式接管：临时文件是新建的，`0666 & ~umask`（常见 0644）与目标
  * 原有的权限没有任何关系，而 rename 直接把它替换上去——部署方 `chmod 0600`
  * 过的 config/whitelist.json、state.json、bot.lock 会在一次普通写入后被静默
- * 放宽，且不留日志。`mode` 显式传入时以它为准（同 atomicWriteSync）；不传
- * 时沿用目标文件当前的权限，目标不存在才落到默认值上。
+ * 放宽，且不留日志。`mode` 显式传入时以它为准；不传时沿用目标文件当前的
+ * 权限，目标不存在才落到默认值上。同步版 atomicWriteSync 口径完全一致。
  */
 export async function atomicWriteText(path: string, content: string, mode?: number): Promise<void> {
   const targetMode: number | undefined = mode ?? await currentFileMode(path);

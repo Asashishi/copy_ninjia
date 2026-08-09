@@ -1,19 +1,9 @@
 import type { ChatPermissions } from "@grammyjs/types";
-import type { ChatState } from "../types/chatState";
 
-/** 状态持久化（packages/infra/storage/stateStore.ts）的常量。文件路径见 paths.ts。 */
+/** 状态持久化实现（packages/infra/storage/statePersistence.ts）的常量。文件路径见 paths.ts。 */
 
-/**
- * 默认（空）的群聊状态，用于本群从未写过任何状态时的只读查询。
- *
- * 这个对象在所有没有状态的群之间共享，误写一次就会静默污染全部这些群的查询
- * 结果（写进 `isInitEnabled` 等于给机器人待过的每个群开门，写进 `botIsAdmin`
- * 等于全仓跳过管理员探测）。按 AGENTS.md，不可变性只在编译期表达：这里的
- * `Readonly<ChatState>` 加上 `getChatState` 同样的只读返回类型就是那道门，
- * 类型被放宽时由 `test/consts/immutability.test.ts` 的 `@ts-expect-error` 断言
- * 在 typecheck 阶段报错。要改某个群的状态一律走 `getOrCreateChatState`。
- */
-export const DEFAULT_CHAT_STATE: Readonly<ChatState> = {};
+// DEFAULT_CHAT_STATE 搬去了 libs/chatState.ts：它现在必须与 createChatState() 同
+// 形状，而形状的唯一事实源在那边；两处各写一份字段清单迟早会漂移。
 
 /** Linux boot_id 的内核格式；持久化时统一使用小写。 */
 export const LINUX_BOOT_ID_PATTERN: RegExp = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

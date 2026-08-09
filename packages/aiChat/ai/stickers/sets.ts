@@ -1,6 +1,6 @@
 import type { StickerSet } from "@grammyjs/types";
 import { logger } from "../../../infra/logger";
-import { bot } from "../../../infra/telegram";
+import { telegramApi } from "../../../infra/telegram";
 import { failedPacks, inflightStickerSets, stickerSetCache } from "../../../cache/workers/aiChat/stickers/sets";
 import { STICKER_SET_FAILURE_RETRY_MS } from "../../../consts/aiChat/stickers";
 import { invalidateStickerMenu } from "../../../cache/workers/aiChat/stickers/menu";
@@ -22,7 +22,7 @@ interface StickerSetApi {
 /** 拉取（或复用缓存）单个包的贴纸集合；失败返回 null（而非空集合），供
  *  调用方区分「拉取失败」与「包确实没有贴纸」——见 aiChat/ai/stickers/catalog.ts
  *  的 generatePackCatalog，剪枝逻辑必须能分辨这两种情况。 */
-export async function getStickerSet(packName: string, api: StickerSetApi = bot.api): Promise<StickerSet | null> {
+export async function getStickerSet(packName: string, api: StickerSetApi = telegramApi): Promise<StickerSet | null> {
   const cached: StickerSet | undefined = stickerSetCache.get(packName);
   if (cached) return cached;
   const retryAt: number | undefined = failedPacks.get(packName);

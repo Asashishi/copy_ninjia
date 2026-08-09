@@ -76,10 +76,17 @@ export function imageSentTagTemplate(prompt: string, reference: boolean): string
   return `（${reference ? "参考素材" : ""}${SELF_IMAGE_TAG_MARKER}：${prompt}）`;
 }
 
+/** 同上，生歌动作的记号。 */
+export function songSentTagTemplate(prompt: string): string {
+  return `（${SELF_SONG_TAG_MARKER}：${prompt}）`;
+}
+
 /** 贴纸自录记号的固定词。 */
 export const SELF_STICKER_TAG_MARKER: string = "发了一枚贴纸";
 /** 生图自录记号的固定词。 */
 export const SELF_IMAGE_TAG_MARKER: string = "生成并发送了一张图片";
+/** 生歌自录记号的固定词。 */
+export const SELF_SONG_TAG_MARKER: string = "生成并发送了一首歌";
 
 /**
  * 拦截侧用的记号清单：只用来把命中的那个词写进报错文案，判定看的是下面的
@@ -88,6 +95,7 @@ export const SELF_IMAGE_TAG_MARKER: string = "生成并发送了一张图片";
 export const SELF_ACTION_TAG_MARKERS: readonly string[] = [
   SELF_STICKER_TAG_MARKER,
   SELF_IMAGE_TAG_MARKER,
+  SELF_SONG_TAG_MARKER,
 ];
 
 /**
@@ -106,9 +114,12 @@ export const SELF_ACTION_TAG_MARKERS: readonly string[] = [
 export const SELF_ACTION_TAG_PATTERNS: readonly RegExp[] = [
   new RegExp(`（[^）]{0,20}${SELF_STICKER_TAG_MARKER}(?:：|）)`),
   new RegExp(`（[^）]{0,20}${SELF_IMAGE_TAG_MARKER}(?:：|）)`),
+  new RegExp(`（[^）]{0,20}${SELF_SONG_TAG_MARKER}(?:：|）)`),
 ];
 
 /** 说明文案里引用的贴纸自录占位形态。 */
 export const STICKER_SENT_TAG_HINT: string = stickerSentTagTemplate("…");
 /** 说明文案里引用的生图自录占位形态。 */
 export const IMAGE_SENT_TAG_HINT: string = imageSentTagTemplate("…", false);
+/** 说明文案里引用的生歌自录占位形态。 */
+export const SONG_SENT_TAG_HINT: string = songSentTagTemplate("…");

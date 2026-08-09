@@ -42,6 +42,7 @@ describe("daily luck receipt secret file", () => {
     const invalidContents = [
       "{broken",
       JSON.stringify({ version: 2, day: "2026-07-19", key: Buffer.alloc(32).toString("base64url") }),
+      JSON.stringify({ version: 1, day: "2026-02-30", key: Buffer.alloc(32).toString("base64url") }),
       JSON.stringify({ version: 1, day: "2026-07-19", key: "short" }),
       JSON.stringify({ version: 1, day: "2026-07-20", key: Buffer.alloc(32).toString("base64url") }),
     ];
@@ -72,7 +73,7 @@ describe("daily luck receipt secret file", () => {
       day: "2026-07-19",
       confirmedResultCount: 2,
       path,
-    })).toThrow("restore");
+    })).toThrow("must be present for the same day as the confirmed luck state");
     expect(existsSync(path)).toBe(false);
   });
 
@@ -84,7 +85,7 @@ describe("daily luck receipt secret file", () => {
       day: "2026-07-20",
       confirmedResultCount: 1,
       path,
-    })).toThrow("same consistent backup");
+    })).toThrow("must be present for the same day as the confirmed luck state");
     expect(readFileSync(path, "utf8")).toBe(original);
     expect(JSON.parse(original)).toEqual(previous);
   });

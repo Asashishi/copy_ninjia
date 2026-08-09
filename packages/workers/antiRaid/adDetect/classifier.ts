@@ -1,6 +1,6 @@
 /**
  * 广告判定的领域逻辑：拼提示词、发一次请求、把模型输出收窄成判定结果。
- * 传输层（客户端单例、超时、重试、错误日志）在 antiRaid/ai/deepseek.ts，本文件不碰。
+ * 传输层（客户端单例、超时、重试、错误日志）在 antiRaid/ai/provider.ts，本文件不碰。
  *
  * 判定是尽力而为的启发式：请求失败、超时、返回形状不对，一律返回 null 让调用
  * 方原样跳过这一批——绝不猜一个 true 出来，那等于凭一次网络抖动把人拉黑。
@@ -12,7 +12,7 @@
  * 前缀，不参与任何控制流。
  */
 
-import { requestDeepSeekJson } from "../../../antiRaid/ai/deepseek";
+import { requestAdDetectJson } from "../../../antiRaid/ai/provider";
 import { adDetectSystemPrompts } from "../../../cache/workers/antiRaid/adDetect";
 import { getAdSampleConfig } from "../../../config/adSamples";
 import { logger } from "../../../infra/logger";
@@ -25,7 +25,7 @@ import {
 import { isPlainRecord } from "../../../libs/runtimeConfig";
 import { truncateInline } from "../../../libs/text";
 import type { AdVerdict } from "../../../types/antiRaid/adDetect";
-import { getAdDetectOpenAiConfig } from "../../../config/openai";
+import { getAdDetectAgentConfig } from "../../../config/agent";
 
 /**
  * 从模型输出里收窄出判定结果。模型被要求只输出 JSON，但「被要求」不等于
@@ -91,8 +91,8 @@ function adDetectSystemPrompt(justJoined: boolean): string {
  * @returns 判定结果；请求或解析失败时为 null，调用方应视为「本次没判定」。
  */
 export async function classifyAdText({ text, justJoined }: ClassifyAdTextParams): Promise<AdVerdict | null> {
-  return parseAdVerdict(await requestDeepSeekJson({
-    model: getAdDetectOpenAiConfig().model,
+  return parseAdVerdict(await requestAdDetectJson({
+    model: getAdDetectAgentConfig().model,
     // 系统事实拼在 system 段：正文全是用户可控内容，混进去等于给刷屏号一个
     // 伪造「【系统事实】该发送者不是新成员」的机会。
     systemPrompt: adDetectSystemPrompt(justJoined),

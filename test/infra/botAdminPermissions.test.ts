@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ChatMember } from "@grammyjs/types";
 import type { BotChatPermissions } from "../../packages/types/telegram";
+import { settleTestBatch } from "../libs/helpers";
 
 const states = new Map<number, Record<string, unknown>>();
 let member: ChatMember = { status: "administrator", can_restrict_members: true } as ChatMember;
@@ -11,7 +12,7 @@ let onGetChatMember: (() => void) | undefined;
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../packages/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: {
     botInfo: { id: 99 },
     api: {
@@ -24,7 +25,10 @@ mock.module("../../packages/infra/telegram", () => ({
     },
   },
 }));
-mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
+mock.module("../../packages/infra/telegram/client", () => ({
+  installTelegramApi: (): void => {},
+  joinVerificationApi: { kind: "guard-api" },
+}));
 // botAdmin -> blocklist 的新晋管理员补扫会取这三个；本文件名单为空，不触发。
 mock.module("../../packages/infra/telegram/actions", () => ({
   isChatMember: async (): Promise<boolean> => false,
@@ -155,7 +159,7 @@ describe("机器人自身权限位缓存", () => {
   });
 
   test("从未记录过的群按需现查一次并回填，同群并发判定共享同一次请求", async () => {
-    const [first, second]: (BotChatPermissions | undefined)[] = await Promise.all([
+    const [first, second]: (BotChatPermissions | undefined)[] = await settleTestBatch([
       botChatPermissionsIn(CHAT_ID),
       botChatPermissionsIn(CHAT_ID),
     ]);

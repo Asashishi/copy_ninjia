@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { getAdDetectOpenAiConfig } from "../../../packages/config/openai";
+import { getAdDetectAgentConfig } from "../../../packages/config/agent";
 
 const errorLogs: string[] = [];
-const requestDeepSeekJson = mock(async (..._args: unknown[]): Promise<string | null> =>
+const requestAdDetectJson = mock(async (..._args: unknown[]): Promise<string | null> =>
   "{\"ad\": false, \"reason\": \"闲聊\"}");
 
 mock.module("../../../packages/infra/logger", () => ({
@@ -13,7 +13,7 @@ mock.module("../../../packages/infra/logger", () => ({
     error(message: unknown): void { errorLogs.push(String(message)); },
   },
 }));
-mock.module("../../../packages/antiRaid/ai/deepseek", () => ({ requestDeepSeekJson }));
+mock.module("../../../packages/antiRaid/ai/provider", () => ({ requestAdDetectJson }));
 mock.module("../../../packages/config/adSamples", () => ({
   getAdSampleConfig: (): readonly string[] => ["加溦拉群"],
 }));
@@ -27,8 +27,8 @@ const {
 
 beforeEach(() => {
   errorLogs.length = 0;
-  requestDeepSeekJson.mockClear();
-  requestDeepSeekJson.mockImplementation(async (): Promise<string | null> =>
+  requestAdDetectJson.mockClear();
+  requestAdDetectJson.mockImplementation(async (): Promise<string | null> =>
     "{\"ad\": false, \"reason\": \"闲聊\"}");
 });
 
@@ -63,7 +63,7 @@ describe("广告判定请求", () => {
   test("按本领域的模型与采样参数发一次判定，部署示例进系统提示词", async () => {
     await expect(classifyAdText({ text: "1. 在吗", justJoined: false })).resolves.toEqual({ isAd: false, reason: "闲聊" });
 
-    const params = requestDeepSeekJson.mock.calls[0]?.[0] as {
+    const params = requestAdDetectJson.mock.calls[0]?.[0] as {
       model: string;
       systemPrompt: string;
       userContent: string;
@@ -71,7 +71,7 @@ describe("广告判定请求", () => {
       maxOutputTokens: number;
       errorLabel: string;
     };
-    expect(params.model).toBe(getAdDetectOpenAiConfig().model);
+    expect(params.model).toBe(getAdDetectAgentConfig().model);
     expect(params.temperature).toBe(AD_DETECT_TEMPERATURE);
     expect(params.maxOutputTokens).toBe(AD_DETECT_MAX_OUTPUT_TOKENS);
     expect(params.errorLabel).toBe("Ad detection request");
@@ -86,30 +86,30 @@ describe("广告判定请求", () => {
     // 模型自己看不到入群时间；只在成立时追加一句的话，它会把「这次没提」当成
     // 信息缺失去猜，而这条信号只有确证时才该加分。
     await classifyAdText({ text: "1. 加我", justJoined: true });
-    const joined = requestDeepSeekJson.mock.calls[0]?.[0] as { systemPrompt: string; userContent: string };
+    const joined = requestAdDetectJson.mock.calls[0]?.[0] as { systemPrompt: string; userContent: string };
     expect(joined.systemPrompt).toContain("刚加入本群、尚未通过入群验证");
     // 正文全是用户可控内容：把系统事实混进去等于给刷屏号一个伪造它的机会。
     expect(joined.userContent).toBe("1. 加我");
 
     await classifyAdText({ text: "1. 加我", justJoined: false });
-    const established = requestDeepSeekJson.mock.calls[1]?.[0] as { systemPrompt: string };
+    const established = requestAdDetectJson.mock.calls[1]?.[0] as { systemPrompt: string };
     expect(established.systemPrompt).toContain("不在入群验证窗口内");
   });
 
   test("传输层已经返回 null 时不再解析，也不额外记一条日志", async () => {
-    requestDeepSeekJson.mockImplementation(async (): Promise<string | null> => null);
+    requestAdDetectJson.mockImplementation(async (): Promise<string | null> => null);
     await expect(classifyAdText({ text: "x", justJoined: false })).resolves.toBeNull();
     expect(errorLogs).toHaveLength(0);
   });
 
   test("看着像 JSON 却解析不出来时点名记录并当作没判定", async () => {
-    requestDeepSeekJson.mockImplementation(async (): Promise<string | null> => "{\"ad\" true}");
+    requestAdDetectJson.mockImplementation(async (): Promise<string | null> => "{\"ad\" true}");
     await expect(classifyAdText({ text: "x", justJoined: false })).resolves.toBeNull();
     expect(errorLogs[0]).toContain("Ad detection response was not valid JSON");
 
     // 压根没有大括号的输出在解析前就被挡掉，不值得记一条日志。
     errorLogs.length = 0;
-    requestDeepSeekJson.mockImplementation(async (): Promise<string | null> => "我觉得不是广告");
+    requestAdDetectJson.mockImplementation(async (): Promise<string | null> => "我觉得不是广告");
     await expect(classifyAdText({ text: "x", justJoined: false })).resolves.toBeNull();
     expect(errorLogs).toHaveLength(0);
   });

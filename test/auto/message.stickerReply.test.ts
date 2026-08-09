@@ -40,7 +40,12 @@ mock.module("../../packages/aiChat", () => ({
   recordChatMedia: recordChatMediaMock,
   generateAndSendReply: generateAndSendReplyMock,
 }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false, isBotOwnMessage: () => false }));
+mock.module("../../packages/infra/selfSentTracker", () => ({
+  isSelfSent: () => false,
+  isBotOwnMessage: () => false,
+  needsBotOwnMessageWait: () => false,
+  waitForBotOwnMessage: async (): Promise<boolean> => false,
+}));
 
 // tryClaimUserReplyTrigger 的 15s 每人触发冷却按真实 Date.now() 计时（见
 // packages/auto/message/）：本文件多个用例共用同一个 chatId + alice.id 夹具，
@@ -70,6 +75,8 @@ mock.module("../../packages/aiChat/ai/stickers/describe", () => ({
 
 const { handleIncomingMessage } = await import("../../packages/auto/message");
 const { clearAiReplyActivity } = await import("../../packages/auto/message/aiReplyActivity");
+const { AI_REPLY_PROBABILITY_BASE_INITIAL } =
+  await import("../../packages/consts/aiChat/rateLimit");
 
 const botInfo = { id: 999999, username: "test_bot", first_name: "TestBot" };
 const chat = { id: -100800, type: "supergroup", title: "Test Group" };
@@ -557,11 +564,12 @@ describe("媒体直接叫机器人", () => {
     });
   });
 
-  test("冷群首条使用 1/174 动态概率，不再沿用旧固定概率", async () => {
+  test("冷群首条使用活跃度概率闸门，不沿用固定概率", async () => {
     quietUntil = 0;
     const originalRandom = Math.random;
-    // 0.01 低于旧固定 1/10，但高于冷群首条 1/174；也恰好不小于 1/100 随机复读。
-    Math.random = () => 0.01;
+    const coldGroupProbability: number = 1 / (AI_REPLY_PROBABILITY_BASE_INITIAL - 1);
+    // 取一个明确高于冷群闸门的样本，证明当前消息不会误走随机 AI 回复。
+    Math.random = (): number => (coldGroupProbability + 1) / 2;
     try {
       await handleIncomingMessage({
         me: botInfo,

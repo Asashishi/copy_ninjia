@@ -3,10 +3,10 @@
  * /block 处置」回投主线程。
  *
  * 拉黑名单与跨群封禁**不在这里做**：名单是主线程的同步安全边界、要落盘，
- * 封禁批次要进 durable outbox 才能跨进程重放（见 docs/04-invariants.md）。
- * 主线程收到事件后走的正是 /block 那条路径，而封禁本身又会被投回本线程执行，
- * 因此真正的网络请求仍然全部发生在这条线程上。群内播报同理跟着结果走，由
- * 主线程发（见 antiRaid/adDetect.ts 的 announceAdDisposal）。
+ * 封禁批次要进 durable outbox 才能跨进程重放（见 docs/cn/04-invariants.md）。
+ * 主线程收到事件后走的正是 /block 那条路径，而封禁的业务顺序又会被投回本线程
+ * 执行；每个 Telegram 能力请求最终仍经双工边界由主线程唯一客户端发起。群内
+ * 播报同理跟着结果走，由主线程发（见 antiRaid/adDetect.ts 的 announceAdDisposal）。
  */
 
 import { deleteMessage, deleteMessages, joinVerificationApi } from "../../../infra/telegram";
@@ -58,7 +58,7 @@ function disposalMessageIds(
  * 删掉一条抢在处置落地之前发出来的广告（只用于频道马甲）。
  *
  * 频道身份的封禁走 banChatSenderChat，那个接口没有 revoke_messages（见
- * docs/04-invariants.md），逐条删除是这些消息唯一的清理路径；而判定命中到封禁
+ * docs/cn/04-invariants.md），逐条删除是这些消息唯一的清理路径；而判定命中到封禁
  * 真正落地之间还隔着回投主线程、黑名单 fsync、outbox 写前日志与 mailbox 屏障，
  * 这段空档里频道新发的广告不会再被判定第二次。fire-and-forget：与本流水线其余
  * 部分一样是尽力而为，不登记进停机 drain 的在途集合。

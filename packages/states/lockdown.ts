@@ -30,7 +30,7 @@ import type {
  *
  * announced 标志沿 ACTIVE ──> RESTORING 传递，也带过 RESTORING ──再次超阈值──>
  * ACTIVE 这条回头路（那一步不重发封锁公告，因此不能在那里重置）。它决定解锁
- * 公告发不发，完整理由与落盘取舍见 docs/04-invariants.md 的「状态机契约」。
+ * 公告发不发，完整理由与落盘取舍见 docs/cn/04-invariants.md 的「状态机契约」。
  *
  * 恢复调用在途期间若新峰值把状态从 RESTORING 推回 ACTIVE（倒计时给满）：
  * 稍后到达的 restoreResult 按其真实结果处理——

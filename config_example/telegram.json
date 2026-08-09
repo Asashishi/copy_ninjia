@@ -1,0 +1,4 @@
+{
+  "bot_token": "replace-with-telegram-bot-token",
+  "super_admin_user_id": 123456789
+}

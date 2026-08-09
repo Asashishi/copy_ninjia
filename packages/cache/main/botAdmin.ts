@@ -43,10 +43,10 @@ export const botPermissionInvalidations: Map<number, boolean> = new Map();
 export const botPermissionProbeBackoff: Map<number, number> = new Map();
 
 /**
- * 权限位变更的下游观察者单槽位，由 `packages/antiRaid/index.ts` 反向注册
+ * 权限位变更的下游观察者单槽位，由 `packages/antiRaid/workerBridge.ts` 反向注册
  * （同 `packages/cache/main/blocklist.ts` 的处置 owner 槽位）。
  *
- * infra 不得静态依赖 Anti-Raid 业务模块（见 docs/04-invariants.md），而权限位
+ * infra 不得静态依赖 Anti-Raid 业务模块（见 docs/cn/04-invariants.md），而权限位
  * 只有主线程观测得到、执行踢人/禁言/删消息的却是 Anti-Raid Worker，所以变更
  * 经这个槽位广播出去。
  *
@@ -59,7 +59,7 @@ export const botPermissionProbeBackoff: Map<number, number> = new Map();
  * 两处不得各写一份。
  *
  * 与主线程自己那个读口（`botChatPermissionsIn` 的返回值：undefined 一律按「这个
- * 动作现在做不了」办）口径不同，是有意的分工，见 docs/04-invariants.md：那边是
+ * 动作现在做不了」办）口径不同，是有意的分工，见 docs/cn/04-invariants.md：那边是
  * 就地要动手的调用方，保守到底；这条广播只负责如实转述观测到了什么。
  */
 export const botPermissionObserver: {

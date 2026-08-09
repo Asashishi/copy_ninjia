@@ -2,6 +2,8 @@
   "123456789": {
     "isCanMute": false,
     "isCanUnMute": false,
+    "isCanGag": false,
+    "isCanViewBotStatus": true,
     "isCanBlock": false,
     "isCanUnBlock": false,
     "isCanSwitchMood": false,
@@ -15,6 +17,8 @@
   "-1001234567890": {
     "isCanMute": false,
     "isCanUnMute": false,
+    "isCanGag": false,
+    "isCanViewBotStatus": true,
     "isCanBlock": false,
     "isCanUnBlock": false,
     "isCanSwitchMood": false,

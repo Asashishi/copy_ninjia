@@ -1,8 +1,10 @@
-import type { Api } from "grammy";
 import type { ChatMember } from "@grammyjs/types";
 import { isAdminStatus } from "../../../libs/chatMember";
-import { bot } from "../client";
+import { telegramApi } from "../client";
 import { runTelegramAction } from "./core";
+import type { TelegramApi } from "../../../types/telegramWorker";
+
+type ChatMemberApi = Pick<TelegramApi, "getChatMember">;
 
 function isPresentMember(member: ChatMember): boolean {
   if (member.status === "restricted") return member.is_member;
@@ -17,7 +19,7 @@ function isPresentMember(member: ChatMember): boolean {
 export async function isChatMember(
   chatId: number,
   userId: number,
-  api: Api = bot.api
+  api: ChatMemberApi = telegramApi
 ): Promise<boolean> {
   return runTelegramAction({
     action: `check chat membership (chat ${chatId}, user ${userId})`,
@@ -27,7 +29,7 @@ export async function isChatMember(
         : api.getChatMember(
           chatId,
           userId,
-          signal as unknown as Parameters<Api["getChatMember"]>[2]
+          signal as unknown as Parameters<TelegramApi["getChatMember"]>[2]
         ),
     map: isPresentMember,
     fallback: false,
@@ -41,7 +43,7 @@ export async function isChatMember(
 export async function probeChatMembership(
   chatId: number,
   userId: number,
-  api: Api = bot.api
+  api: ChatMemberApi = telegramApi
 ): Promise<boolean | undefined> {
   return runTelegramAction<ChatMember, boolean | undefined>({
     action: `probe chat membership (chat ${chatId}, user ${userId})`,
@@ -51,7 +53,7 @@ export async function probeChatMembership(
         : api.getChatMember(
           chatId,
           userId,
-          signal as unknown as Parameters<Api["getChatMember"]>[2]
+          signal as unknown as Parameters<TelegramApi["getChatMember"]>[2]
         ),
     map: isPresentMember,
     fallback: undefined,
@@ -65,7 +67,7 @@ export async function probeChatMembership(
 export async function probeChatAdmin(
   chatId: number,
   userId: number,
-  api: Api = bot.api
+  api: ChatMemberApi = telegramApi
 ): Promise<boolean | undefined> {
   return runTelegramAction<ChatMember, boolean | undefined>({
     action: `probe chat admin (chat ${chatId}, user ${userId})`,
@@ -75,7 +77,7 @@ export async function probeChatAdmin(
         : api.getChatMember(
           chatId,
           userId,
-          signal as unknown as Parameters<Api["getChatMember"]>[2]
+          signal as unknown as Parameters<TelegramApi["getChatMember"]>[2]
         ),
     map: (member: ChatMember): boolean =>
       isAdminStatus(member.status),

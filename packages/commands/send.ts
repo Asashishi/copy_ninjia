@@ -1,6 +1,7 @@
 import type { CommandContext, Context } from "grammy";
 import { clearChatStateField, getActiveProxySendTarget, getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
-import { bot, logApiError, sendCommandMessage } from "../infra/telegram";
+import { logApiError, sendCommandMessage } from "../infra/telegram";
+import { bot } from "../infra/telegram/mainClient";
 import {
   currentUpdateAbortSignal,
   throwIfUpdateAborted,

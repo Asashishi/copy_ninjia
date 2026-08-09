@@ -22,9 +22,9 @@ export function formatUserLabel(user: CachedUser): string {
  * 而不是泛指的「这个杂鱼」。按裸 id 下的命令正是这一档——那个人可能从没在
  * 本天才见过的群里说过话，缓存里自然什么都没有。回执必须把 id 原样念出来，
  * 否则打错一位数字，管理员从「已经把这个杂鱼踢出去了」里根本看不出来。
- * 频道身份念成「频道 <id>」：`/unblock`、`/permission` 与 `/white` 都接受负数
- * id，管理员该从回执里看出本天才把它当成了哪一类目标；`/unblock` 还据此决定
- * 走哪个解封接口。
+ * 频道身份念成「频道 <id>」：`/gag`、`/ungag`、`/unblock`、`/permission` 与
+ * `/white` 都接受负数 id，管理员该从回执里看出本天才把它当成了哪一类目标；
+ * `/unblock` 还据此决定走哪个解封接口。
  * @param user 目标用户/频道；只带 id 的最小身份也接受。
  */
 export function formatTargetLabel(user: CachedUser): string {

@@ -164,7 +164,7 @@ describe("Anti-Raid cache owners", () => {
   test("整表清空后陈旧拉取既不删新槽位，也不把旧快照写回去", async () => {
     // resetAdminCache()（Worker 停机路径/测试隔离）会在拉取在途时清空整张表。
     // finally 无条件 delete 的话删掉的是**新** fetch 的槽位，去重失效，下一个
-    // 调用者会在入群验证的共享限流队列上再发起一次全量拉取。
+    // 调用者会在入群验证使用的 query 类别 429 FIFO 上再发起一次全量拉取。
     let resolveStale!: (admins: { user: { id: number }; is_anonymous: boolean }[]) => void;
     getChatAdministrators.mockImplementationOnce(
       () => new Promise((resolve) => { resolveStale = resolve; })
@@ -183,7 +183,7 @@ describe("Anti-Raid cache owners", () => {
     const freshSlot: Promise<Set<number>> | undefined = adminFetches.get(-1010);
     expect(freshSlot).toBeDefined();
 
-    // 陈旧拉取此刻才 settle：既不能删掉新槽位（去重失效 = 共享限流队列上多一次
+    // 陈旧拉取此刻才 settle：既不能删掉新槽位（去重失效 = 共享 Telegram 队列上多一次
     // 全量拉取），也不能把 reset 前的快照灌回刚清空的表——那样被降权者会在整个
     // ADMIN_CACHE_TTL_MS 内继续留在邀请人豁免集合里，他拉进来的人全部免入群验证。
     resolveStale([{ user: { id: 42 }, is_anonymous: false }]);

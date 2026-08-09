@@ -74,8 +74,8 @@ describe("广告处置副作用", () => {
         { messageId: 12, text: "微信 xxx" },
       ],
     }]);
-    // 整串走一次批量删除：逐条删会把一次处置放大成几十个往返，顶在共用
-    // joinVerificationApi 队列上的验证超时踢人前面。
+    // 整串走一次批量删除：逐条删会把一次处置放大成几十个往返，在 delete
+    // 类别发生 429 时也会无谓扩大这条独立 FIFO 的积压。
     expect(deleteMessages).toHaveBeenCalledTimes(1);
     expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12]);
     // 播报的文案要断言「在所有盯着的群里一起封掉了」，而此刻一个群都还没登记：

@@ -48,7 +48,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
     }
   }
   // 落盘失败照旧原样上抛：那是 fatal durability failure，这条 update 不能被确认
-  // （见 docs/04-invariants.md）。
+  // （见 docs/cn/04-invariants.md）。
   await persistAuthoritativeState("init toggled");
   if (teardownFailed) {
     logger.error(
@@ -66,7 +66,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // 条件挂在「记录此刻是不是空的」上，而不是 !wasEnabled。两者在正常一轮里
   // 完全等价（上面刚把记录作废），区别只在重投那一轮：这次调用**可能上抛**
   // ——getChatMember 之后的状态落盘失败是有意向外传播的（见 infra/botAdmin.ts
-  // 与 docs/04-invariants.md，上面那句「自己吞掉所有错误」以前写反了）。进程
+  // 与 docs/cn/04-invariants.md，上面那句「自己吞掉所有错误」以前写反了）。进程
   // 因此带非零码退出、Telegram 重投这条 /init enable 时 wasEnabled 已经是
   // true，挂 !wasEnabled 的话管理员身份重判与它要触发的黑名单清扫就永远不会
   // 再发生了；而作废过的记录此刻仍是空的，挂 botIsAdmin 就能自然接上。

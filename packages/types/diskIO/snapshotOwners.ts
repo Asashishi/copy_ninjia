@@ -7,7 +7,7 @@ export interface AiMemorySnapshotFileDependencies {
 
 /** 贴纸目录快照对应的文件系统函数边界。 */
 export interface StickerCatalogFileDependencies {
-  /** activePacks 为 null 表示白名单读不出来：只读不删、也不因 schema 不匹配拒绝启动。 */
-  recover(activePacks: readonly string[] | null): Map<string, string>;
+  /** 仅恢复当前严格校验过的白名单贴纸包；坏配置在 Worker 启动前已被拒绝。 */
+  recover(activePacks: readonly string[]): Map<string, string>;
   write(pack: string, snapshot: string): void;
 }

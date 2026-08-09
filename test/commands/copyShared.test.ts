@@ -8,6 +8,7 @@ const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => ({ id: 7, first_name: "Alice" }));
 const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
+const DEFAULT_AVATAR_URL: string = "https://cdn.example/default-face.jpg";
 
 mock.module("../../packages/config/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 100,
@@ -18,6 +19,9 @@ mock.module("../../packages/infra/telegram", () => ({
 mock.module("../../packages/infra/telegram/avatar", () => ({ copyUserProfilePhoto, restoreDefaultProfilePhoto }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getGlobalCopyState: () => globalCopyState,
+  // copy/avatarQueue.ts 在主线程取默认头像直链后传给 restoreDefaultProfilePhoto；
+  // 这里的替身必须一并提供，否则整个模块的具名导入会在加载期就失败。
+  getBotDefaultAvatarUrl: (): string => DEFAULT_AVATAR_URL,
   persistAuthoritativeState: async (...args: unknown[]): Promise<void> => { saveStateInBackground(...args); },
   saveStateInBackground,
 }));
@@ -103,7 +107,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
     await expect(drainAvatarUpdates(0)).resolves.toBe("timedOut");
     await waitFor(() => !avatarUpdateState.running);
 
-    // abort 后不得再发送迟到战报，与 docs/04-invariants.md 的停机不变量一致。
+    // abort 后不得再发送迟到战报，与 docs/cn/04-invariants.md 的停机不变量一致。
     expect(sendMessage).not.toHaveBeenCalled();
     expect(avatarUpdateState.pending).toBeNull();
   });
@@ -257,6 +261,8 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
     // 复原不该走偷脸那条路径：两者的失败含义完全不同。
     expect(copyUserProfilePhoto).not.toHaveBeenCalled();
+    // 直链在主线程取好后传进去，avatar/restore.ts 自己不碰 state（见 avatarQueue.ts）。
+    expect(restoreDefaultProfilePhoto.mock.calls[0]?.[0]).toBe(DEFAULT_AVATAR_URL);
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "restored" }));
   });
 

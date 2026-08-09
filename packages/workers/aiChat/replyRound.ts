@@ -2,12 +2,11 @@ import { startChatActionHeartbeat } from "../../aiChat/ai/chatActionHeartbeat";
 import { createStickerSendLock } from "../../aiChat/ai/stickers/sendLock";
 import { createReplyToolset } from "../../aiChat/ai/tools/replyToolset/orchestrator";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
-import { botInfoState } from "../../cache/workers/aiChat/identity";
+import { botInfoState, superAdminUserIdState } from "../../cache/workers/aiChat/identity";
 import { activeReplyCounts, longTriggerTimes } from "../../cache/workers/aiChat/replies";
 import { AI_TEXT_TYPO_PROBABILITY } from "../../consts/aiChat/tools";
 import { RATE_LIMIT_LONG_WINDOW_MS } from "../../consts/aiChat/rateLimit";
 import { SEND_MESSAGE_TOOL } from "../../consts/tools";
-import { SUPER_ADMIN_USER_ID } from "../../infra/config";
 import { logger } from "../../infra/logger";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { admitRound } from "../../states/replyAdmission";
@@ -73,10 +72,11 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
   const generation: number = request.generation ?? currentReplyGeneration(chatId);
   if (!isReplyGenerationCurrent(chatId, generation)) return false;
 
-  // 自动插话与随机媒体评价永远不得生图。这里在工具上下文
+  // 自动插话与随机媒体评价永远不得动用重媒体工具（生图、生歌）。这里在工具上下文
   // 边界再做一次强制收紧，不依赖各入口永远正确传 false；用户直接
   // 回复/@ 的文字轮，以及带 directTriggerReason 的媒体轮才可开放资格。
-  const imageGenerationAllowed: boolean = imageGenerationRequested &&
+  // 两个工具共用这一个判据，理由见 types/aiChat/replies.ts 的 mediaToolsRequested。
+  const mediaToolsAllowed: boolean = imageGenerationRequested &&
     !isRandomTrigger &&
     (mediaComment === undefined || mediaComment.directTriggerReason !== undefined);
   // 随机媒体评价也以 isRandomTrigger=false 进入，因此直接唤起不能只看这一位。
@@ -139,9 +139,9 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
         const ctx: ReplyToolContext = {
           chatId,
           replyToMessageId,
-          imageGenerationRequested: imageGenerationAllowed,
-          ...(imageGenerationAllowed && imageGenerationReference ? { imageGenerationReference } : {}),
-          bypassImageGenerationCooldown: triggerSenderId === SUPER_ADMIN_USER_ID,
+          mediaToolsRequested: mediaToolsAllowed,
+          ...(mediaToolsAllowed && imageGenerationReference ? { imageGenerationReference } : {}),
+          bypassMediaToolCooldown: triggerSenderId === superAdminUserIdState.current,
           chatAction: heartbeat,
           stickerLock,
           roundHasTypo,
@@ -184,6 +184,21 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
                 self: selfInfo,
                 messageId,
                 text: imageDescription,
+                replyTo: selfReplyTo,
+              }));
+            }
+          },
+          onSongSent: (songDescription: string, messageId: number, repliedToMessageId?: number): void => {
+            self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+            if (isActive()) {
+              // 同 onImageSent：生歌请求固定指向触发消息，自录只采信服务端
+              // 实际返回的回复关系。
+              const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
+              recordChatMessage(buildSelfRecordMessage({
+                chatId,
+                self: selfInfo,
+                messageId,
+                text: songDescription,
                 replyTo: selfReplyTo,
               }));
             }

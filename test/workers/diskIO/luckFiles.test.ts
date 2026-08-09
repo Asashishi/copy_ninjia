@@ -124,22 +124,20 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(recovered?.entries.get("111")).toEqual({ label: "小凶", fortunePercent: 39.99 });
   });
 
-  test("启动恢复先修复追加中断留下的尾部截断，保留此前完整运势", () => {
+  test("启动恢复遇到尾部截断时 fail closed，并保持原始字节不变", () => {
     mkdirSync(luckDir, { recursive: true });
-    writeFileSync(join(luckDir, `${DAY}.json`), `{
+    const path: string = join(luckDir, `${DAY}.json`);
+    const original: string = `{
   "111": {
     "label": "大吉",
     "fortunePercent": 90.12
   },
   "222": {
-    "label": "写到一半`);
+    "label": "写到一半`;
+    writeFileSync(path, original);
 
-    const recovered = recoverLuckDay(DAY);
-
-    expect(recovered?.entries.get("111")).toEqual({ label: "大吉", fortunePercent: 90.12 });
-    expect(recovered?.entries.has("222")).toBe(false);
-    expect(readDayFile()).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
-    expect(existsSync(join(luckDir, `${DAY}.json.corrupt`))).toBe(false);
+    expect(() => recoverLuckDay(DAY)).toThrow("must be a readable valid JSON document");
+    expect(readFileSync(path, "utf8")).toBe(original);
   });
 
   test("启动恢复遇到不兼容结构时阻止启动，不改写当天文件或清理旧日", () => {
@@ -150,7 +148,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     writeFileSync(todayPath, original);
     writeFileSync(stalePath, "{}");
 
-    expect(() => recoverLuckDay(DAY)).toThrow("must contain a top-level JSON object");
+    expect(() => recoverLuckDay(DAY)).toThrow("must be a JSON object keyed by canonical luck cache keys");
     expect(readFileSync(todayPath, "utf8")).toBe(original);
     expect(existsSync(`${todayPath}.corrupt`)).toBe(false);
     expect(existsSync(stalePath)).toBe(true);
@@ -164,8 +162,37 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     }, null, 2);
     writeFileSync(path, original);
 
-    expect(() => recoverLuckDay(DAY)).toThrow("contains an invalid luck record for key 111");
+    expect(() => recoverLuckDay(DAY)).toThrow("$.<record> must be exactly");
     expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  test("启动清理拒绝非法或未来日期文件，不把时钟回拨产生的状态当过期项删除", () => {
+    mkdirSync(luckDir, { recursive: true });
+    const invalidPath: string = join(luckDir, "2026-02-30.json");
+    writeFileSync(invalidPath, "{}");
+    expect(() => recoverLuckDay(DAY)).toThrow("$filename must be a canonical calendar date");
+    expect(readFileSync(invalidPath, "utf8")).toBe("{}");
+
+    rmSync(invalidPath);
+    const futurePath: string = join(luckDir, "2026-07-17.json");
+    writeFileSync(futurePath, "{}");
+    expect(() => recoverLuckDay(DAY)).toThrow("a date no later than the current Tokyo day");
+    expect(readFileSync(futurePath, "utf8")).toBe("{}");
+  });
+
+  test("启动扫描放行由独立 owner 校验的回执密钥，但仍拒绝其他非日期 JSON", () => {
+    mkdirSync(luckDir, { recursive: true });
+    const secretPath: string = join(luckDir, "receipt-secret.json");
+    const secretContent: string = JSON.stringify({ version: 1, day: DAY, key: "owned-elsewhere" });
+    writeFileSync(secretPath, secretContent);
+
+    expect(recoverLuckDay(DAY)).toBeNull();
+    expect(readFileSync(secretPath, "utf8")).toBe(secretContent);
+
+    const unknownPath: string = join(luckDir, "manual.json");
+    writeFileSync(unknownPath, "{}");
+    expect(() => recoverLuckDay(DAY)).toThrow("$filename must be the canonical <YYYY-MM-DD>.json form");
+    expect(readFileSync(unknownPath, "utf8")).toBe("{}");
   });
 
   test("追加失败：缓冲保留、定时器重排、文件探测状态重置；故障排除后重试成功且不丢条目", () => {

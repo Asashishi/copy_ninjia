@@ -32,6 +32,7 @@ const {
   flushJoinLogDomain,
   handleJoinLogMessage,
   readJoinLog,
+  recoverJoinLogFiles,
 } = await import("../../../packages/workers/diskIO/joinLogFiles");
 const {
   isRecentJoinLogDay,
@@ -104,8 +105,44 @@ afterAll(() => {
 });
 
 describe("diskIO/joinLogFiles", () => {
-  test("模块加载与启动恢复不创建、不读取入群目录", () => {
+  test("模块加载本身不创建、不读取入群目录", () => {
     expect(existsSync(joinLogDir)).toBeFalse();
+  });
+
+  test("启动恢复会扫描保留窗口，坏状态阻止过期清理并保持原字节", () => {
+    const currentPath: string = currentFile(-1001);
+    const stalePath: string = datedFile(-1001, "2000-01-01");
+    const original: string = "{\"bad\":{\"userId\":42,\"joinedAt\":\"now\"}}";
+    mkdirSync(joinLogDir, { recursive: true });
+    writeFileSync(currentPath, original);
+    writeFileSync(stalePath, "{}");
+
+    expect(() => recoverJoinLogFiles()).toThrow("$.<record> must be exactly");
+    expect(readFileSync(currentPath, "utf8")).toBe(original);
+    expect(existsSync(stalePath)).toBeTrue();
+    expect(joinLogFileCaches.size).toBe(0);
+  });
+
+  test("启动恢复拒绝非法或未来文件名，不把它们当成可忽略资产", () => {
+    const invalidPath: string = join(joinLogDir, "bad.json");
+    mkdirSync(joinLogDir, { recursive: true });
+    writeFileSync(invalidPath, "{}");
+
+    expect(() => recoverJoinLogFiles()).toThrow("canonical <chatId>.<YYYY-MM-DD>.json form");
+    expect(readFileSync(invalidPath, "utf8")).toBe("{}");
+
+    rmSync(invalidPath);
+    const invalidDayPath: string = datedFile(-1001, "2026-02-30");
+    writeFileSync(invalidDayPath, "{}");
+    expect(() => recoverJoinLogFiles()).toThrow("a canonical calendar date");
+    expect(readFileSync(invalidDayPath, "utf8")).toBe("{}");
+
+    rmSync(invalidDayPath);
+    const futureDay: string = getTokyoDateKey(new Date(todayAt() + 2 * 24 * 60 * 60_000));
+    const futurePath: string = datedFile(-1001, futureDay);
+    writeFileSync(futurePath, "{}");
+    expect(() => recoverJoinLogFiles()).toThrow("a date no later than the current Tokyo day");
+    expect(readFileSync(futurePath, "utf8")).toBe("{}");
   });
 
   test("入群先进入内存批次，flush 后按群追写当天 JSON 文件", () => {
@@ -221,7 +258,7 @@ describe("diskIO/joinLogFiles", () => {
       chatId: -1001,
       since: todayAt() - 60_000,
       now: todayAt(),
-    })).toThrow("contains an invalid join record");
+    })).toThrow("$.<record> must be exactly");
     expect(readFileSync(path, "utf8")).toBe(original);
   });
 
@@ -229,6 +266,19 @@ describe("diskIO/joinLogFiles", () => {
     const staleAt: number = todayAt() - 3 * 24 * 60 * 60_000;
     handleJoinLogMessage(joinMessage(-1001, 42, staleAt));
 
+    expect(joinLogBuffer.entries).toHaveLength(0);
+    expect(existsSync(joinLogDir)).toBeFalse();
+  });
+
+  test("领先本机今天的事件抛错交给统一拒收出口，不静默丢弃", () => {
+    // 与上一条「过旧」用例正好相反的一侧：过旧是有意静默丢弃（滚动 24 小时窗口
+    // 本来就用不上，报失败只会让 update 永远得不到确认）；领先则说明事件时间与
+    // 宿主时钟对不上，静默 return 会让 recordJoinLog 把它当成已经落盘，这条入群
+    // 从此在 /batch_kick 里查无此人、全链路零日志。
+    const aheadAt: number = todayAt() + 2 * 24 * 60 * 60_000;
+
+    expect(() => handleJoinLogMessage(joinMessage(-1001, 42, aheadAt)))
+      .toThrow("is ahead of the worker's current Tokyo day");
     expect(joinLogBuffer.entries).toHaveLength(0);
     expect(existsSync(joinLogDir)).toBeFalse();
   });
@@ -416,6 +466,39 @@ describe("diskIO/joinLogFiles", () => {
     expect(joinLogFileCaches.size).toBe(JOIN_LOG_MAX_CACHED_FILES);
     expect(joinLogFileCaches.has(`-10000:${day}`)).toBeTrue();
     expect(joinLogFileCaches.has(`-10001:${day}`)).toBeFalse();
+  });
+
+  test("回归：一个群写不动时，其它群的按需读取照常成功", () => {
+    const now: number = todayAt();
+    // 群 A 的当天文件被目录占位，写入必然失败并留在缓冲里退避。
+    const brokenPath: string = currentFile(-1001);
+    mkdirSync(brokenPath, { recursive: true });
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      handleJoinLogMessage(joinMessage(-1001, 42, now - 10_000));
+      handleJoinLogMessage(joinMessage(-2002, 77, now - 10_000));
+
+      // 群 B 的日志本身完好：读取不得被群 A 的写失败连坐。
+      expect(readJoinLog({
+        type: "readJoinLog",
+        requestId: 9,
+        chatId: -2002,
+        since: now - 20_000,
+        now,
+      })).toEqual([{ userId: 77, joinedAt: now - 10_000 }]);
+
+      // 群 A 自己的读取仍要如实报错，且点名是哪个群哪一天。
+      expect(() => readJoinLog({
+        type: "readJoinLog",
+        requestId: 10,
+        chatId: -1001,
+        since: now - 20_000,
+        now,
+      })).toThrow(`Failed to flush pending join logs for chat -1001 on ${getTokyoDateKey()} before reading.`);
+    } finally {
+      error.mockRestore();
+      rmSync(brokenPath, { recursive: true, force: true });
+    }
   });
 
   test("失败退避表受独立硬顶约束，淘汰不丢待刷事实", () => {

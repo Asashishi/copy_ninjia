@@ -7,7 +7,7 @@
  * AI 记忆快照是整份覆盖写：先写 <file>.tmp、fsync、再 rename，rename 在
  * 同一文件系统内是原子操作，进程如果在这中间被杀（OOM/断电/容器被回收），
  * 目标文件要么是写入前的旧内容，要么是写入后的新内容，不会停在半截的撕裂
- * JSON（同 infra/storage/stateStore.ts 的原子性理由，fsync 的必要性
+ * JSON（同 infra/storage/statePersistence.ts 的原子性理由，fsync 的必要性
  * 见 atomicWriteText 注释）——快照本身有固定上限
  * （AI_MEMORY_HYDRATE_BUFFER_MAX/MAX_SUMMARY_ROUNDS），整份重写的开销
  * 不随时间增长，没有必要为它换成追加写。
@@ -15,23 +15,36 @@
  * 每日运势是按位置追加写（见 appendLuckEntries）：entries 只增不改，
  * 一天下来可能攒到不少条，整份重写的开销会随条数线性增长，值得换成只写
  * 增量的追加机制，见 appendOnlyDayFile.ts 的模块头注释；换来的代价是单次
- * 追加不再是"要么全新要么全旧"的原子操作，靠追加机制自带的截断修复兜底
- * 断电风险（与日志文件同一套机制，那边已经这样跑了很久）。
+ * 追加不再是"要么全新要么全旧"的原子操作；若断电留下撕裂尾部，下次恢复
+ * 保留原始字节并拒绝启动，不能猜测哪条已确认结果可以丢弃。
  */
 
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { AiMemorySnapshot, BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { DayFileState, LuckDayCache, LuckDrawRecord, LuckPendingEntry } from "../../types/diskIO/storage";
 import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../types/stickers/catalog";
-import { AI_MEMORY_DIR, CORRUPT_FILE_SUFFIX, LUCK_MEMORY_DIR, STICKER_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
+import type { LuckTier } from "../../types/luckChallenge";
+import {
+  AI_MEMORY_DIR,
+  LUCK_MEMORY_DIR,
+  LUCK_RECEIPT_SECRET_PATH,
+  STICKER_MEMORY_DIR,
+  TMP_FILE_SUFFIX,
+} from "../../consts/paths";
 import { DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
-import { AI_MEMORY_FILE_PATTERN, STICKER_CATALOG_FILE_PATTERN } from "../../consts/diskIO/snapshots";
+import { AI_MEMORY_FILE_PATTERN } from "../../consts/diskIO/snapshots";
 import { AI_MEMORY_HYDRATE_BUFFER_MAX, MAX_SUMMARY_ROUNDS } from "../../consts/aiChat/memory";
-import { AppendOnlyFileFormatError, appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
-import { atomicWriteTextSync, durableUnlinkSync, syncDirectorySync } from "../../libs/atomicFile";
+import { STICKER_PACK_NAME_PATTERN } from "../../consts/aiChat/stickers";
+import { DAILY_LUCK_CACHE_MAX, LUCK_TIERS } from "../../consts/luckChallenge";
+import { LUCK_CACHE_KEY_PATTERN } from "../../consts/luckReceipt";
+import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
+import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
+import { invalidInput, readJsonInput } from "../../libs/inputValidation";
+import { hasExactKeys, hasOnlyKeys } from "../../libs/runtimeConfig";
+import { isCanonicalDateKey } from "../../libs/time";
 
 /**
  * tmp + fsync + rename 的原子覆盖写。rename 前的 fsync 不能省：rename 只
@@ -52,33 +65,13 @@ function ensurePersistedFileMode(path: string): void {
   if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) chmodSync(path, PERSISTED_FILE_MODE);
 }
 
-/** 解析失败的文件用唯一名称持久隔离，不覆盖同一路径此前留下的排查证据。 */
-function quarantine(path: string): string | null {
-  const corruptPath: string =
-    `${path}.${Date.now()}.${crypto.randomUUID()}${CORRUPT_FILE_SUFFIX}`;
-  try {
-    renameSync(path, corruptPath);
-  } catch (error: unknown) {
-    console.error(`[diskIOWorker] failed to quarantine ${path}:`, error);
-    return null;
-  }
-  try {
-    syncDirectorySync(corruptPath);
-  } catch (error: unknown) {
-    // rename 已发生，日志必须指向真实隔离路径；目录 fsync 失败只表示掉电持久性
-    // 未获确认，不能谎称原文件仍在原位。
-    console.error(`[diskIOWorker] failed to sync quarantine ${corruptPath}:`, error);
-  }
-  return corruptPath;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isAiSpeakerSnapshot(value: unknown): value is Record<string, unknown> & AiSpeakerSnapshot {
   return isRecord(value) &&
-    typeof value.id === "number" && Number.isFinite(value.id) &&
+    typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id !== 0 &&
     typeof value.firstName === "string" &&
     typeof value.lastName === "string" &&
     (value.username === undefined || typeof value.username === "string");
@@ -86,7 +79,8 @@ function isAiSpeakerSnapshot(value: unknown): value is Record<string, unknown> &
 
 function isBufferedReplyReference(value: unknown): value is BufferedReplyReference {
   return isAiSpeakerSnapshot(value) &&
-    typeof value.messageId === "number" && Number.isFinite(value.messageId) &&
+    hasOnlyKeys(value, ["id", "firstName", "lastName", "username", "messageId", "text", "quote", "forwardedFrom"]) &&
+    typeof value.messageId === "number" && Number.isSafeInteger(value.messageId) && value.messageId > 0 &&
     typeof value.text === "string" &&
     (value.quote === undefined || typeof value.quote === "string") &&
     (value.forwardedFrom === undefined || typeof value.forwardedFrom === "string");
@@ -94,6 +88,7 @@ function isBufferedReplyReference(value: unknown): value is BufferedReplyReferen
 
 function isBufferedMessage(value: unknown): value is BufferedMessage {
   return isAiSpeakerSnapshot(value) &&
+    hasOnlyKeys(value, ["id", "firstName", "lastName", "username", "messageId", "text", "replyTo", "forwardedFrom", "at"]) &&
     typeof value.messageId === "number" && Number.isSafeInteger(value.messageId) && value.messageId > 0 &&
     typeof value.text === "string" &&
     (value.replyTo === undefined || isBufferedReplyReference(value.replyTo)) &&
@@ -106,12 +101,14 @@ function isBufferedMessage(value: unknown): value is BufferedMessage {
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;
+  if (!hasExactKeys(raw, ["version", "buffer", "summaries", "pendingSummary", "savedAt"])) return null;
   if (raw.version !== 1 || !Array.isArray(raw.buffer) || !raw.buffer.every(isBufferedMessage)) return null;
   if (!Array.isArray(raw.summaries) || !raw.summaries.every((s: unknown): s is string => typeof s === "string")) return null;
+  if (raw.buffer.length > AI_MEMORY_HYDRATE_BUFFER_MAX || raw.summaries.length > MAX_SUMMARY_ROUNDS) return null;
   if (raw.pendingSummary !== null && typeof raw.pendingSummary !== "string") return null;
-  if (typeof raw.savedAt !== "number" || !Number.isFinite(raw.savedAt)) return null;
-  const buffer: BufferedMessage[] = raw.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX);
-  const summaries: string[] = raw.summaries.slice(-MAX_SUMMARY_ROUNDS);
+  if (typeof raw.savedAt !== "number" || !Number.isSafeInteger(raw.savedAt) || raw.savedAt < 0) return null;
+  const buffer: BufferedMessage[] = raw.buffer;
+  const summaries: string[] = raw.summaries;
   const pendingSummary: string | null = raw.pendingSummary;
   const savedAt: number = raw.savedAt;
   return { version: 1, buffer, summaries, pendingSummary, savedAt };
@@ -119,11 +116,9 @@ function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
 
 /**
  * 启动恢复：建目录、清 memory/ai/ 下的 *.tmp 残留（上次写一半的残留；
- * rename 原子性保证正式文件永远完好），校验/重建每个群的快照。文件名
- * 不是整数（chatId）的跳过；JSON.parse 失败的隔离为 .corrupt 并记日志。
- * 返回值与消息协议同形态——重建通过的快照重新 stringify 成 JSON 文本
- * （逐字段重建会甩掉未知字段/裁掉超限条目，不能把磁盘原文原样透传），
- * 直接可灌缓存/回 LoadedReply。每包一次的重新序列化只发生在启动时。
+ * rename 原子性保证正式文件永远完好），严格校验每个群的文件名、schema 和
+ * 容量。任一非法文件都保留原字节并拒绝恢复；成功快照重新 stringify 成与
+ * 消息协议同形的 JSON 文本，直接可灌缓存/回 LoadedReply。
  */
 export function recoverAiMemories(): Map<number, string> {
   mkdirSync(AI_MEMORY_DIR, { recursive: true });
@@ -135,7 +130,12 @@ export function recoverAiMemories(): Map<number, string> {
       continue;
     }
     const match: RegExpExecArray | null = AI_MEMORY_FILE_PATTERN.exec(name);
-    if (!match) continue; // 非 <chatId>.json 形态（含 .corrupt 隔离文件），跳过不动
+    if (!match) {
+      if (name.endsWith(".json")) {
+        return invalidInput(path, "$filename", "the canonical <chatId>.json form");
+      }
+      continue;
+    }
     const chatIdText: string = match[1]!;
     const chatId: number = Number(chatIdText);
     // 必须原样还原（同 blocklistFile.ts 的 decodeBlocklist）：正则只保证「一串
@@ -144,30 +144,14 @@ export function recoverAiMemories(): Map<number, string> {
     // 枚举顺序——该群的 AI 记忆静默回退到旧副本，而回写只用 `${chatId}.json`，
     // 补零那份永不被改写或删除，每次重启继续顶替。位数超出安全整数的文件名
     // （1e20 那种）同样在这里挡掉，否则水合出的 key 与任何真实 chatId 都对不上。
-    if (!Number.isSafeInteger(chatId) || String(chatId) !== chatIdText) {
-      console.error(
-        `[diskIOWorker] AI memory file ${name} does not round-trip to its chat id; skipping it. ` +
-        "Rename it to the canonical <chatId>.json form or remove it."
-      );
-      continue;
+    if (!Number.isSafeInteger(chatId) || chatId === 0 || String(chatId) !== chatIdText) {
+      return invalidInput(path, "$filename", "the canonical <chatId>.json form with a non-zero safe integer chat ID");
     }
     ensurePersistedFileMode(path);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(path, "utf8"));
-    } catch (error: unknown) {
-      const corruptPath: string | null = quarantine(path);
-      console.error(
-        corruptPath === null
-          ? `[diskIOWorker] AI memory file ${name} failed to parse and remains at ${path}:`
-          : `[diskIOWorker] AI memory file ${name} failed to parse, quarantined as ${corruptPath}:`,
-        error
-      );
-      continue;
-    }
+    const parsed: unknown = readJsonInput(path);
     const snapshot: AiMemorySnapshot | null = rebuildAiMemorySnapshot(parsed);
     if (!snapshot) {
-      throw new Error(`AI memory file ${name} does not match the current version=1 schema; migrate it manually before starting the bot`);
+      return invalidInput(path, "$", "the current version=1 AI memory schema within configured capacities");
     }
     result.set(chatId, JSON.stringify(snapshot, null, 2));
   }
@@ -192,21 +176,24 @@ export function deleteAiMemoryFile(chatId: number): void {
 }
 
 function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
-  return isRecord(value) && typeof value.emoji === "string" && typeof value.description === "string";
+  return isRecord(value) &&
+    hasExactKeys(value, ["emoji", "description"]) &&
+    typeof value.emoji === "string" &&
+    typeof value.description === "string";
 }
 
 /** 只接受当前 version=1 的完整结构；版本变更由部署前手工迁移。 */
 function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot | null {
   if (!isRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;
+  if (!hasExactKeys(raw, ["version", "entries", "summary", "savedAt"])) return null;
   if (raw.version !== 1 || !isRecord(raw.entries)) return null;
   if (raw.summary !== null && typeof raw.summary !== "string") return null;
-  if (typeof raw.savedAt !== "number" || !Number.isFinite(raw.savedAt)) return null;
+  if (typeof raw.savedAt !== "number" || !Number.isSafeInteger(raw.savedAt) || raw.savedAt < 0) return null;
   // 无原型对象：JSON.parse 会把 `__proto__` 建成普通自有属性，而写进 `{}` 时
   // `entries["__proto__"] = value` 触发的是 Object.prototype 的 setter——改的是这个
   // 对象的原型，条目根本没进去。那张贴纸于是通过校验、被报告为已恢复，却在重新
-  // 序列化后的快照里消失：描述永久丢失、catalog.ts 不再匹配得上，且既没有错误
-  // 日志也不会被隔离成 .corrupt。
+  // 序列化后的快照里消失：描述永久丢失、catalog.ts 不再匹配得上且没有诊断。
   const entries: Record<string, StickerCatalogEntry> =
     Object.create(null) as Record<string, StickerCatalogEntry>;
   for (const [fileUniqueId, value] of Object.entries(raw.entries)) {
@@ -220,73 +207,41 @@ function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot 
 
 /**
  * 启动恢复：建目录、清 memory/stickers/ 下的 *.tmp 残留，校验/重建每个
- * 白名单贴纸包的目录快照。机制与 recoverAiMemories 基本一致（tmp+rename
- * 原子写、解析失败隔离为 .corrupt），只是文件名形态不同（pack short name
- * 而非 chatId）；多一步 activePacks 对账——config/stickers.json 的白名单
+ * 白名单贴纸包的目录快照。机制与 recoverAiMemories 基本一致，只是文件名
+ * 使用 pack short name；多一步 activePacks 对账——config/stickers.json 的白名单
  * 已经不包含的包，其持久化文件视为孤儿，直接删除、不载入内存，既不再占
  * 磁盘空间，也不会让 aiChat/ai/stickers/catalog.ts 的 getCatalogEntry 继续拿一个
  * 已下架包的旧描述去匹配群友发的贴纸。
  * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
  *   config/stickers.ts），用于判定哪些持久化文件已经是孤儿。
  */
-export function recoverStickerCatalogs(activePacks: readonly string[] | null): Map<string, string> {
+export function recoverStickerCatalogs(activePacks: readonly string[]): Map<string, string> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
-  // null = 降级模式：白名单本身读不出来（config/stickers.json 写坏），本次恢复
-  // 对「哪些包还该留着」没有发言权。此时只读不删、也不因为形状不认识而拒绝
-  // 启动——两种处置都需要一份可信的白名单来背书，而它恰恰是缺的那一个。
-  const activePackSet: Set<string> | null = activePacks === null ? null : new Set(activePacks);
+  const activePackSet: Set<string> = new Set(activePacks);
   const result: Map<string, string> = new Map();
-  let skippedWhileDegraded: number = 0;
   for (const name of readdirSync(STICKER_MEMORY_DIR)) {
     const path: string = join(STICKER_MEMORY_DIR, name);
     if (name.endsWith(TMP_FILE_SUFFIX)) {
       tryUnlink(path);
       continue;
     }
-    const match: RegExpExecArray | null = STICKER_CATALOG_FILE_PATTERN.exec(name);
-    if (!match) continue; // 非 <pack>.json 形态（含 .corrupt 隔离文件），跳过不动
+    if (!name.endsWith(".json")) continue;
+    const pack: string = name.slice(0, -".json".length);
+    if (!STICKER_PACK_NAME_PATTERN.test(pack)) {
+      return invalidInput(path, "$filename", "the canonical <stickerPackShortName>.json form");
+    }
     ensurePersistedFileMode(path);
-    const pack: string = match[1]!;
-    if (activePackSet !== null && !activePackSet.has(pack)) {
+    if (!activePackSet.has(pack)) {
       // 白名单已经不包含这个包：孤儿文件，清掉，不进 result（不载入内存）。
       tryUnlink(path);
       continue;
     }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(path, "utf8"));
-    } catch (error: unknown) {
-      if (activePackSet === null) {
-        // 降级模式下连隔离都不做：改名同样是破坏性的，而这一轮本就不该动盘。
-        skippedWhileDegraded++;
-        continue;
-      }
-      const corruptPath: string | null = quarantine(path);
-      console.error(
-        corruptPath === null
-          ? `[diskIOWorker] sticker catalog file ${name} failed to parse and remains at ${path}:`
-          : `[diskIOWorker] sticker catalog file ${name} failed to parse, quarantined as ${corruptPath}:`,
-        error
-      );
-      continue;
-    }
+    const parsed: unknown = readJsonInput(path);
     const snapshot: StickerCatalogSnapshot | null = rebuildStickerCatalogSnapshot(parsed);
     if (!snapshot) {
-      if (activePackSet === null) {
-        // 正常模式下这是「手动迁移后再启动」的硬停机信号；降级模式下不行——
-        // 那等于让一份写坏的白名单顺带把 schema 不匹配升级成拒绝启动，而这个
-        // 包此刻可能根本已经不在白名单里、正常路径下会被直接删掉。
-        skippedWhileDegraded++;
-        continue;
-      }
-      throw new Error(`Sticker catalog file ${name} does not match the current version=1 schema; migrate it manually before starting the bot`);
+      return invalidInput(path, "$", "the current version=1 sticker catalog schema");
     }
     result.set(pack, JSON.stringify(snapshot, null, 2));
-  }
-  if (skippedWhileDegraded > 0) {
-    console.error(
-      `[diskIOWorker] left ${skippedWhileDegraded} unreadable sticker catalog file(s) untouched because the whitelist is unusable.`
-    );
   }
   return result;
 }
@@ -300,24 +255,41 @@ export function writeStickerCatalogFile(pack: string, snapshotJson: string): voi
 }
 
 /**
- * 删除 memory/luck/ 下所有非 todayKey 的 YYYY-MM-DD.json（只存一天，过期
- * 即删）。.corrupt 隔离文件不匹配这个模式，不受影响，永久保留供排查。
+ * 删除 memory/luck/ 下早于 todayKey 的 YYYY-MM-DD.json；非规范或未来文件拒绝清理。
  */
 export function cleanupStaleLuckFiles(todayKey: string): void {
   for (const name of readdirSync(LUCK_MEMORY_DIR)) {
+    // 密钥与按日结果同属 luck owner，但由 recoverLuckReceiptSecret 单独严格
+    // 校验；这里仅负责按日文件，不能把已登记的固定元数据文件误判成坏日期。
+    if (name === basename(LUCK_RECEIPT_SECRET_PATH)) continue;
     const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
-    if (match && match[1] !== todayKey) {
-      tryUnlink(join(LUCK_MEMORY_DIR, name));
+    if (match === null) {
+      if (name.endsWith(".json")) {
+        return invalidInput(
+          join(LUCK_MEMORY_DIR, name),
+          "$filename",
+          "the canonical <YYYY-MM-DD>.json form"
+        );
+      }
+      continue;
     }
+    const day: string = match[1]!;
+    const path: string = join(LUCK_MEMORY_DIR, name);
+    if (!isCanonicalDateKey(day)) {
+      return invalidInput(path, "$filename", "a canonical calendar date");
+    }
+    if (day > todayKey) {
+      return invalidInput(path, "$filename", "a date no later than the current Tokyo day");
+    }
+    if (day < todayKey) tryUnlink(path);
   }
 }
 
 /**
  * 启动恢复：建目录、清 *.tmp 残留（防御性——追加写不产生 .tmp，清一次
  * 挡住外部干预留下的残留）、删除所有非今天的日期文件，只关心今天那份
- * （不存在则返回 null）。读取前必须先经 openDayFile 校验/修复：启动恢复
- * 本身就是本次运行第一次碰这份文件，不能假设追加路径已经先打开过它。
- * 修复不了或结构不符合当前格式时阻止启动并保留原文件，等待人工处理。
+ * （不存在则返回 null）。先严格校验 JSON、领域 schema 与容量，再接管追加
+ * 游标；任何不规范内容都阻止启动并保留原文件，等待人工处理。
  */
 export function recoverLuckDay(todayKey: string): LuckDayCache | null {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
@@ -329,32 +301,41 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
     cleanupStaleLuckFiles(todayKey);
     return null;
   }
-  let content: string = readFileSync(todayPath, "utf8");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    openDayFile(LUCK_MEMORY_DIR, todayKey, PERSISTED_FILE_MODE);
-    content = readFileSync(todayPath, "utf8");
-    parsed = JSON.parse(content);
-  }
+  const parsed: unknown = readJsonInput(todayPath);
   if (!isRecord(parsed)) {
-    throw new AppendOnlyFileFormatError(todayPath, "must contain a top-level JSON object.");
+    return invalidInput(todayPath, "$", "a JSON object keyed by canonical luck cache keys");
   }
   const raw: Record<string, unknown> = parsed;
+  if (Object.keys(raw).length > DAILY_LUCK_CACHE_MAX) {
+    return invalidInput(todayPath, "$", `at most ${DAILY_LUCK_CACHE_MAX} confirmed luck records`);
+  }
   const entries: Map<string, LuckDrawRecord> = new Map();
   for (const [key, value] of Object.entries(raw)) {
+    if (!LUCK_CACHE_KEY_PATTERN.test(key)) {
+      return invalidInput(todayPath, "$.<key>", "a canonical luck cache key");
+    }
     if (
       !isRecord(value) ||
+      !hasExactKeys(value, ["label", "fortunePercent"]) ||
       typeof value.label !== "string" ||
       typeof value.fortunePercent !== "number" ||
       !Number.isFinite(value.fortunePercent)
     ) {
-      throw new Error(`${todayPath} contains an invalid luck record for key ${key}.`);
+      return invalidInput(todayPath, "$.<record>", "exactly { label: string, fortunePercent: finiteNumber }");
+    }
+    const tier: LuckTier | undefined = LUCK_TIERS.find(
+      (candidate: LuckTier): boolean => candidate.label === value.label
+    );
+    if (tier === undefined) {
+      return invalidInput(todayPath, "$.<record>.label", "a current luck tier label");
+    }
+    const [minimum, maximum]: readonly [number, number] = tier.fortunePercentRange;
+    if (value.fortunePercent < minimum || value.fortunePercent > maximum) {
+      return invalidInput(todayPath, "$.<record>.fortunePercent", "within the selected tier range");
     }
     entries.set(key, { label: value.label, fortunePercent: value.fortunePercent });
   }
-  // 领域 schema 全部通过后才允许通用 helper 做格式规范化，也才清理旧日。
+  // 领域 schema 全部通过后才接管追加游标；非规范排版同样 fail-closed。
   openDayFile(LUCK_MEMORY_DIR, todayKey, PERSISTED_FILE_MODE);
   cleanupStaleLuckFiles(todayKey);
   return { day: todayKey, entries };

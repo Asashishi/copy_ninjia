@@ -1,5 +1,5 @@
 /**
- * 广告检测（DeepSeek，OpenAI 兼容接口）的调参常量与模型可见提示词。
+ * 广告检测（Google / OpenAI 协议）的调参常量与模型可见提示词。
  * 判定流水线在入群守卫线程里执行，见 workers/antiRaid/adDetect/。
  */
 
@@ -24,14 +24,15 @@ export const AD_DETECT_BATCH_SIZE: number = 35;
 /**
  * 同时在途的判定请求上限——整条入群守卫线程的总量闸，不按群分配。
  *
- * 没有这道闸时，DeepSeek 一变慢在途请求就按「派发速率 × 单次耗时」堆积：
- * 35 × `DEEPSEEK_REQUEST_TIMEOUT_MS`(30 秒) ≈ 1050 个，算上重试还要翻几倍，
- * 每个都钉住自己那一串消息。socket 池与堆一起涨，而同一条线程的验证超时踢人、
- * 黑名单封禁会被出站积压饿死——广告判定只是尽力而为的启发式，不该拖它下水。
+ * 没有这道闸时，provider 一变慢在途请求就按「派发速率 × 单次耗时」堆积：
+ * 35 × `AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS`(30 秒) ≈ 1050 个，算上重试还要翻几倍，
+ * 每个都钉住自己那一串消息。provider socket 池、Worker 在途集合与堆一起涨，
+ * 验证状态机和封禁业务调度也会受累——广告判定只是尽力而为的启发式，不该拖它下水。
  *
  * 健康时吞吐约为本闸 / 单次耗时（95 / 3 秒 ≈ 31 个/秒）。长期撑满时队列会
  * 变长，但已经接纳的 key 不设等待 TTL，必须保留到至少发生一次判定尝试；本闸
- * 的意义只是保护同线程的验证与封禁网络请求不被启发式判定拖垮。
+ * 的意义是保护同线程的验证状态与封禁业务调度不被启发式判定拖垮；Telegram HTTP
+ * 仍只由主线程唯一客户端发起。
  * 所属模块：workers/antiRaid/adDetect/queue.ts。
  */
 export const AD_DETECT_MAX_IN_FLIGHT: number = 95;
@@ -111,7 +112,7 @@ export const AD_DETECT_LINK_URL_MAX_CHARS: number = 256;
 
 /**
  * 判定输出的 token 上限。结果本身只有一小段 JSON，但这个额度是**推理与正文
- * 共用**的——广告检测模型（config/openai.json 的 ad_detect.model）是推理模型，
+ * 共用**的——广告检测模型（config/agent.json 的 agent.ad_detect.model）可能是推理模型，
  * 实测一次判定的 reasoning_tokens 在
  * 50~100 之间，遇到长而杂乱的消息串（上限 AD_DETECT_BUNDLE_MAX_CHARS）还会
  * 高出一个量级。给得太紧的后果不是截断出半个 JSON，而是推理把额度吃光、正文
@@ -123,10 +124,25 @@ export const AD_DETECT_MAX_OUTPUT_TOKENS: number = 16_384;
 
 /**
  * 采样温度。判定要的是稳定，但**不能取 0**：贪心解码在推理模型上更容易走进
- * 空转（只产出推理、正文为空），而 antiRaid/ai/deepseek.ts 那次空正文重试正是靠重新
+ * 空转（只产出推理、正文为空），而传输层的空正文重试正是靠重新
  * 采样翻盘的——温度为 0 时重试只会逐字复现同一条空结果，那道兜底等于不存在。
  */
 export const AD_DETECT_TEMPERATURE: number = 0.5;
+
+/** OpenAI 兼容广告检测每次 SDK 尝试的超时。 */
+export const AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS: number = 30_000;
+
+/** OpenAI SDK 的重试次数（不含首次）；请求异常不再由业务层重试。 */
+export const AD_DETECT_OPENAI_REQUEST_MAX_RETRIES: number = 2;
+
+/** Google 广告检测请求每次 SDK 尝试的超时；所属模块：antiRaid/ai/google.ts。 */
+export const AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS: number = 30_000;
+
+/** Google SDK 的总尝试次数（含首次）；所属模块：antiRaid/ai/google.ts。 */
+export const AD_DETECT_GOOGLE_REQUEST_ATTEMPTS: number = 3;
+
+/** 模型成功响应但正文不可用时的总尝试次数（含首次），两种 provider 共用。 */
+export const AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS: number = 2;
 
 /** config/ad_samples.json 允许的最大条数。 */
 export const MAX_CONFIGURED_AD_SAMPLES: number = 500;
@@ -143,7 +159,7 @@ export const AD_DETECT_REASON_MAX_CHARS: number = 80;
  * 这两样**与正文一起送检**，并且各自独占这份配额、不占正文的
  * AD_DETECT_MESSAGE_MAX_CHARS——理由同 AD_DETECT_MAX_LINK_URLS：共用额度的话，
  * 一段填充文本就能把引文顶出去，而「先发正常消息、隔一段时间编辑成广告、再用
- * 回复/引用顶上来」正是当前最主流的广告发法（见 docs/04-invariants.md 与
+ * 回复/引用顶上来」正是当前最主流的广告发法（见 docs/cn/04-invariants.md 与
  * workers/antiRaid/adDetect/bundle.ts 的 claimSampleContextParts）。
  * 同一份内容还会原样留进命中样本：人回头看「这条为什么被判成广告」时，需要分得清
  * 哪一段是他自己写的、哪一段是引来的。
@@ -171,7 +187,7 @@ export const AD_SAMPLE_CONTEXT_MAX_CHARS: number = 200;
  * 不会被当成指令执行。
  *
  * **提示词里必须出现「JSON」这个词**：请求带 `response_format: json_object`，
- * DeepSeek 会在服务端校验提示词是否提到 json，没提到直接 400 整条判定失败
+ * OpenAI 兼容 JSON 模式常会校验提示词是否提到 json，没提到会直接拒绝
  * （错误文案：Prompt must contain the word 'json' in some form）。改写这段文案
  * 时不要把最后那句要求删掉。
  */

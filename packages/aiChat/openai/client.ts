@@ -12,15 +12,20 @@
  */
 
 import OpenAI from "openai";
-import { openAiClientHolder } from "../../cache/workers/aiChat/openai";
-import { AI_CHAT_OPENAI_API_KEY } from "../../infra/config";
-import { getAiAgentOpenAiConfig } from "../../config/openai";
+import { openAiClientCache } from "../../cache/workers/aiChat/openai";
+import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
 import {
   OPENAI_REQUEST_MAX_RETRIES,
   OPENAI_REQUEST_TIMEOUT_MS,
 } from "../../consts/aiChat/openai";
-import { finalizeAiTextResult } from "../ai/utils/textResult";
+import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
+import {
+  isEndpointFailureStatus,
+  isEndpointMisconfiguredError,
+  isExplicitUnsupportedMediaError,
+  numericErrorStatus,
+} from "../ai/utils/mediaSupportError";
 import {
   abnormalResponseDiagnostic,
   isTruncatedByTokenLimit,
@@ -29,29 +34,37 @@ import {
 } from "./response";
 import type { OpenAiRequestResult } from "../../types/aiChat/openai";
 import type { AiTextResult } from "../../types/aiChat/provider";
+import type { AgentCapability, AgentCapabilityConfig } from "../../types/config";
 
 /**
- * 取得线程内唯一 OpenAI 客户端。timeout/maxRetries 是每次请求各自的预算。
- *
- * baseURL 来自可选的部署配置 config/openai.json 的 ai_agent.base_url：留空时走
- * SDK 默认的官方端点，配了就打自建或代理网关（见 config/openai.ts）。
- *
- * 密钥是可选 env：没配时供应商选择根本不会挑中 OpenAI（见 aiChat/provider.ts），
- * 走到这里说明进程启动后 env 被抽掉。这里直接抛，由下方 requestOpenAiResult
- * 的 catch 记一行错并归一成一次普通的请求失败——上层各自的降级路径都已就位，
- * 不该让一次凭据缺失把整个 Worker 掀掉。
+ * 按能力取得 OpenAI 客户端。每项能力的 api_key/base_url 独立，避免同端点但不同
+ * 凭据时复用错误的认证状态；timeout/maxRetries 是每次请求各自的预算。
  */
-export function getOpenAiClient(): OpenAI {
-  if (AI_CHAT_OPENAI_API_KEY === undefined) {
-    throw new Error("AI_CHAT_OPENAI_API_KEY is not configured; the OpenAI provider cannot run.");
+export function getOpenAiClient(capability: AgentCapability): OpenAI {
+  const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
+  if (config?.provider !== "openai") {
+    throw new Error(`Agent capability "${capability}" is not configured for the OpenAI provider.`);
   }
-  openAiClientHolder.current ??= new OpenAI({
-    apiKey: AI_CHAT_OPENAI_API_KEY,
-    baseURL: getAiAgentOpenAiConfig().baseUrl,
+  const clients: Map<AgentCapability, OpenAI> = openAiClientCache.current ??=
+    new Map<AgentCapability, OpenAI>();
+  const cached: OpenAI | undefined = clients.get(capability);
+  if (cached !== undefined) return cached;
+  const client: OpenAI = new OpenAI({
+    apiKey: config.apiKey,
+    baseURL: config.baseUrl,
     timeout: OPENAI_REQUEST_TIMEOUT_MS,
     maxRetries: OPENAI_REQUEST_MAX_RETRIES,
   });
-  return openAiClientHolder.current;
+  clients.set(capability, client);
+  return client;
+}
+
+/** OpenAI Responses 调用的完整参数；能力决定客户端端点。 */
+export interface OpenAiRequestOptions {
+  readonly capability: AgentCapability;
+  readonly buildBody: () => OpenAI.Responses.ResponseCreateParamsNonStreaming;
+  readonly errorLabel: string;
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -60,29 +73,45 @@ export function getOpenAiClient(): OpenAI {
  * 否则上层只能看到「没产出」，查不到原因。
  * @param buildBody 就地构造完整请求体，直接使用官方 SDK 的参数类型，SDK 升级
  *   造成的字段漂移会在编译期暴露。收的是构造器而不是构造好的对象，因为模型名
- *   与端点来自 config/openai.json（见 config/openai.ts），而那份文件写坏时解析
+ *   与端点来自 config/agent.json 的对应能力（见 config/agent.ts），配置写坏时解析
  *   会抛：构造放在调用方就意味着异常绕过本函数的 try、直接掀掉整轮回复，上层
  *   为 `ok:false` 准备的诊断与降级路径一条都走不到，运维只看得见 bot 不说话。
  * @param errorLabel 出现在错误日志里的调用名，用于区分是哪条流水线出的错。
  * @param signal 调用方的取消信号；SDK 的请求级 signal 与 timeout 各自独立。
  */
-export async function requestOpenAiResult(
-  buildBody: () => OpenAI.Responses.ResponseCreateParamsNonStreaming,
-  errorLabel: string,
-  signal?: AbortSignal
-): Promise<OpenAiRequestResult> {
+export async function requestOpenAiResult({
+  capability,
+  buildBody,
+  errorLabel,
+  signal,
+}: OpenAiRequestOptions): Promise<OpenAiRequestResult> {
   let body: OpenAI.Responses.ResponseCreateParamsNonStreaming;
   let response: OpenAI.Responses.Response;
   try {
     body = buildBody();
-    response = await getOpenAiClient().responses.create(body, { signal });
+    response = await getOpenAiClient(capability).responses.create(body, { signal });
   } catch (error: unknown) {
     if (signal?.aborted === true) {
       return { ok: false, failureKind: "request", diagnostic: "request aborted" };
     }
     if (error instanceof OpenAI.APIError) {
+      const status: number | undefined = numericErrorStatus(error);
       // APIError 自带状态码与服务端错误信息，拼一行足够定位。
-      logger.error(`${errorLabel} error: ${error.status ?? "?"} ${error.message}`);
+      logger.error(`${errorLabel} error: ${status ?? "?"} ${error.message}`);
+      // 路径级 404/405 先判：口径同 aiChat/gemini/client.ts，写错 model 或
+      // base_url 不该被记成模型缺少某项模态能力。
+      if (isEndpointMisconfiguredError(status)) {
+        return { ok: false, failureKind: "misconfigured", diagnostic: "endpoint or model is unavailable" };
+      }
+      if (
+        capability === "media" &&
+        isExplicitUnsupportedMediaError(status, error.message)
+      ) {
+        return { ok: false, failureKind: "unsupported", diagnostic: "media input is unsupported" };
+      }
+      if (!isEndpointFailureStatus(status)) {
+        return { ok: false, failureKind: "rejected", diagnostic: "request was rejected" };
+      }
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }
@@ -121,15 +150,22 @@ export async function requestOpenAiResult(
  * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
  * HTTP 成功但产出异常或清洗后正文为空时，才允许按领域策略重新采样。
  */
-export async function requestOpenAiTextResult(
-  buildBody: () => OpenAI.Responses.ResponseCreateParamsNonStreaming,
-  errorLabel: string,
-  normalize: (text: string) => string
-): Promise<AiTextResult> {
-  const result: OpenAiRequestResult = await requestOpenAiResult(buildBody, errorLabel);
-  if (!result.ok) {
-    return { ok: false, retryable: result.failureKind === "response" };
-  }
+/** OpenAI 无状态文本调用参数。 */
+export interface OpenAiTextRequestOptions {
+  readonly capability: "summary" | "media";
+  readonly buildBody: () => OpenAI.Responses.ResponseCreateParamsNonStreaming;
+  readonly errorLabel: string;
+  readonly normalize: (text: string) => string;
+}
+
+export async function requestOpenAiTextResult({
+  capability,
+  buildBody,
+  errorLabel,
+  normalize,
+}: OpenAiTextRequestOptions): Promise<AiTextResult> {
+  const result: OpenAiRequestResult = await requestOpenAiResult({ capability, buildBody, errorLabel });
+  if (!result.ok) return classifyAiTextFailure(result.failureKind, capability);
   const text: string = normalize(responseOutputText(result.response));
   return finalizeAiTextResult(text);
 }

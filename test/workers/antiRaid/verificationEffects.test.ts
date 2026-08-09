@@ -11,7 +11,7 @@ import type {
  * 副作用解释器里两条「踢人前先确认拉人者身份」的异步分支：管理员拉人豁免的
  * 异步核查（startAdminCheck）与超时踢人前的最终复核（recheckInviter）。两者都
  * 只在状态对象仍是同一引用时回投事件，核查失败按「非管理员」兜底而不是跳过
- * 处置——约束见 docs/04-invariants.md。
+ * 处置——约束见 docs/cn/04-invariants.md。
  */
 
 const dispatched: { userId: number; event: VerificationEvent }[] = [];
@@ -25,6 +25,7 @@ const warnings: string[] = [];
 const loggedErrors: string[] = [];
 let nextSentMessageId: number | undefined = 900;
 let kickSucceeds: boolean = true;
+let kickTargetAbsent: boolean = false;
 /** 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。 */
 let deleteSucceeds: boolean = true;
 /**
@@ -34,10 +35,15 @@ let deleteSucceeds: boolean = true;
  */
 const traceDeleteOutcomes: string[] = [];
 let membershipPresent: boolean | undefined = true;
+let fetchedChatType: "group" | "supergroup" | undefined = "supergroup";
 let publishedChanges: number = 0;
 const getChatAdministrators = mock(async (): Promise<{ user: { id: number }; is_anonymous: boolean }[]> => []);
 const probeChatMembership = mock(async (): Promise<boolean | undefined> => membershipPresent);
-const joinVerificationApi = { getChatAdministrators };
+const getChat = mock(async (): Promise<{ type: "group" | "supergroup" }> => {
+  if (fetchedChatType === undefined) throw new Error("getChat unavailable");
+  return { type: fetchedChatType };
+});
+const joinVerificationApi = { getChat, getChatAdministrators };
 
 Object.defineProperty(globalThis, "self", {
   configurable: true,
@@ -76,9 +82,10 @@ mock.module("../../../packages/infra/telegram", () => ({
   },
   kickChatMemberWithOutcome: async (
     params: { userId: number; isSupergroup?: boolean }
-  ): Promise<"kicked" | "failed"> => {
+  ): Promise<"kicked" | "absent" | "failed"> => {
     kickedUserIds.push(params.userId);
     kickChatKinds.push(params.isSupergroup);
+    if (kickTargetAbsent) return "absent";
     return kickSucceeds ? "kicked" : "failed";
   },
   probeChatMembership,
@@ -143,6 +150,8 @@ function kickPendingState(): VerificationState & { kind: "kickPending" } {
     label: "待验证成员",
     isBot: false,
     requestedAt: 1_000,
+    effectStarted: false,
+    executionStarted: false,
   };
 }
 
@@ -187,11 +196,14 @@ beforeEach(() => {
   loggedErrors.length = 0;
   nextSentMessageId = 900;
   kickSucceeds = true;
+  kickTargetAbsent = false;
   deleteSucceeds = true;
   traceDeleteOutcomes.length = 0;
   membershipPresent = true;
+  fetchedChatType = "supergroup";
   publishedChanges = 0;
   probeChatMembership.mockClear();
+  getChat.mockClear();
   getChatAdministrators.mockClear();
   getChatAdministrators.mockResolvedValue([]);
 });
@@ -462,9 +474,23 @@ describe("同步副作用的逐条执行", () => {
     });
   });
 
+  test("私密模式纯踢出在 429 重放前发现目标已离群时直接结算", async () => {
+    kickTargetAbsent = true;
+    setState(kickPendingState());
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(probeChatMembership).toHaveBeenCalledTimes(1);
+    expect(kickedUserIds).toEqual([USER_ID]);
+    expect(dispatched).toContainEqual({
+      userId: USER_ID,
+      event: { type: "kickSettled", now: expect.any(Number) },
+    });
+  });
+
   test("私密模式首发也先探测：join update 证明的是在场，不是没被封", async () => {
     // 曾经豁免过首发这次查询，理由是「紧跟刚到达的 join update」。但锁群下的
-    // 调用要排每群限流队列，raid 期间那条队列很深；等待期间人工管理员完全可能
+    // 调用若命中 429 会排进 kick 类独立退避车道；等待期间人工管理员完全可能
     // 在客户端直接封禁这个人，而超级群的「只踢不封」映射到不带 only_if_banned
     // 的 unbanChatMember——排到的那一发会把管理员的封禁解开。
     setState(kickPendingState());
@@ -519,7 +545,7 @@ describe("同步副作用的逐条执行", () => {
     await run([{ kind: "kickMember" }]);
 
     expect(kickedUserIds).toEqual([]);
-    expect(state.executionStarted).toBeUndefined();
+    expect(state.executionStarted).toBeFalse();
     expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeFalse();
     expect(verificationEntries.get(KEY)?.terminalRetries).toBe(2);
     const timer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get(KEY)?.timer;
@@ -554,21 +580,22 @@ describe("踢人失败时的权限告警", () => {
     };
   }
 
-  test("确证是普通群时改用 banChatMember 踢人；未观测到和超级群都走 unbanChatMember", async () => {
+  test("已有镜像直接使用；冷启动未知时 getChat 确证普通群或超级群", async () => {
     // 「只踢不封」在两类群里是两个方法：unbanChatMember 按官方文档只认超级群/
     // 频道，普通群要用 banChatMember（那里它不产生持久封禁）。三态里只有确证的
-    // false 会改道——把未知折算成普通群，代价是在超级群里打出一次真正的封禁。
-    // 镜像取值原样传给封装（同一个调用点只产出一种对象 shape），由封装按
-    // `=== false` 分派；因此这里期望的就是镜像本身的三态。
-    for (const [kind, expected] of [
-      [undefined, undefined],
-      [true, true],
-      [false, false],
+    // false 会改道。镜像未知时不再猜测，而是先用 getChat 补齐。
+    for (const [kind, fetched, expected] of [
+      [undefined, "supergroup", true],
+      [undefined, "group", false],
+      [true, "group", true],
+      [false, "supergroup", false],
     ] as const) {
       resetWorkerChatKind();
       if (kind !== undefined) applyChatKindChange(CHAT_ID, kind);
+      fetchedChatType = fetched;
       kickedUserIds.length = 0;
       kickChatKinds.length = 0;
+      getChat.mockClear();
       const state = expellingState();
       setState(state);
 
@@ -576,7 +603,26 @@ describe("踢人失败时的权限告警", () => {
 
       expect(kickedUserIds).toEqual([USER_ID]);
       expect(kickChatKinds).toEqual([expected]);
+      expect(getChat).toHaveBeenCalledTimes(kind === undefined ? 1 : 0);
     }
+  });
+
+  test("冷启动群类型查询失败时不猜踢人 API，终态保留并退避", async () => {
+    fetchedChatType = undefined;
+    const state = expellingState();
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(kickedUserIds).toBeEmpty();
+    expect(probeChatMembership).not.toHaveBeenCalled();
+    expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
+    expect(loggedErrors.some(
+      (line: string): boolean => line.includes("Failed to resolve chat kind")
+    )).toBeTrue();
+    const timer: ReturnType<typeof setTimeout> | undefined =
+      verificationEntries.get(KEY)?.timer;
+    if (timer !== undefined) clearTimeout(timer);
   });
 
   test("终态踢人前现查成员；确认已离群就直接收尾且不发错误战报", async () => {
@@ -588,6 +634,19 @@ describe("踢人失败时的权限告警", () => {
 
     expect(probeChatMembership).toHaveBeenCalledWith(CHAT_ID, USER_ID, joinVerificationApi);
     expect(kickedUserIds).toEqual([]);
+    expect(sentTexts).toEqual([]);
+    expect(dispatched).toContainEqual({ userId: USER_ID, event: { type: "expelSettled" } });
+  });
+
+  test("终态纯踢出在 429 重放前发现目标已离群时静默收尾", async () => {
+    kickTargetAbsent = true;
+    const state = expellingState();
+    setState(state);
+
+    await run([{ kind: "expel", snapshot: state.snapshot }]);
+
+    expect(probeChatMembership).toHaveBeenCalledTimes(1);
+    expect(kickedUserIds).toEqual([USER_ID]);
     expect(sentTexts).toEqual([]);
     expect(dispatched).toContainEqual({ userId: USER_ID, event: { type: "expelSettled" } });
   });
@@ -716,7 +775,7 @@ describe("踢人失败时的权限告警", () => {
   });
 
   test("回归用例：确证没有 can_delete_messages 时一条删除请求都不发——" +
-    "它们与踢人共用同一条限流队列，几十个注定 400 的往返会把真正的踢人顶到验证窗口之后", async () => {
+    "删除与踢人虽已分开退避，几十个注定 400 的往返仍只会制造无效负载与错误日志", async () => {
     // 主线程镜像过来的是「是管理员、能限制成员、不能删消息」这一档配置。
     applyBotPermissionsChange(CHAT_ID, { canRestrictMembers: true, canDeleteMessages: false });
     const state = expellingState({
@@ -805,7 +864,7 @@ describe("踢人失败时的权限告警", () => {
 
   test("告警自己也没发出去时不置位：否则这条诊断永远不再尝试", async () => {
     // sendMessage 失败返回 undefined（错误被 infra/telegram/actions.ts 吞掉）。
-    // 机器人同时被禁言、或 429 熬过了 autoRetry 时就是这个组合。照样置位的话，
+    // 机器人同时被禁言、或 429 退避后仍失败时就是这个组合。照样置位的话，
     // 终态重试再跑 expelMember 时 shouldSendNotice 已是 false，「本天才没有封禁
     // 权限」这条唯一的诊断就永远不再尝试——未验证成员留在群里，管理员什么都
     // 不知道。
@@ -822,7 +881,7 @@ describe("踢人失败时的权限告警", () => {
   });
 
   test("踢成功但战报没发出去时不结算，下一轮凭 removalConfirmed 补发", async () => {
-    // 战报发不出去（429 熬过了 autoRetry / 网络抖动）时照样结算的话，记录当场
+    // 战报发不出去（429 退避后仍失败 / 网络抖动）时照样结算的话，记录当场
     // 被删，群里看着一个成员凭空消失，而唯一的说明再也没有第二次机会。
     nextSentMessageId = undefined;
     const state = expellingState();

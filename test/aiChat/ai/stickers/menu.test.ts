@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { settleTestBatch } from "../../../libs/helpers";
 
 /**
  * 贴纸包菜单的记忆化（packages/aiChat/ai/tools/stickers.ts 的 buildStickerPackMenu）。
@@ -7,6 +8,11 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
  * 下根本不变，而 createReplyToolset 每轮回复都要一份（每群最多 5 轮并发）。
  */
 const getStickerSetMock = mock(async (_pack: string): Promise<any> => null);
+const loggerError = mock((..._args: unknown[]): void => {});
+
+mock.module("../../../../packages/infra/logger", () => ({
+  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+}));
 
 // aiChat/ai/tools/stickers.ts 从领域入口 `../stickers` 取 getStickerSet，而那个入口是
 // `export *`：只替换 sets.ts 会让入口少掉其余导出，因此连同入口一起透传。
@@ -39,6 +45,7 @@ function sticker(fileUniqueId: string): any {
 
 beforeEach(() => {
   getStickerSetMock.mockClear();
+  loggerError.mockClear();
   getStickerSetMock.mockImplementation(async () => ({ title: "猫猫包", stickers: [sticker("a1")] }));
   catalogs.clear();
   catalogs.set("pack_a", new Map([["a1", { emoji: "😂", description: "一只猫大笑" }]]));
@@ -77,7 +84,7 @@ describe("贴纸包菜单的记忆化", () => {
   test("冷启动时并发的几轮回复共用同一次构建", async () => {
     // createReplyToolset 每轮调用一次，一个群最多 5 轮并发；不合并的话冷启动
     // 那一刻会对每个包各打 5 次 getStickerSet。
-    const [first, second, third] = await Promise.all([
+    const [first, second, third] = await settleTestBatch([
       buildStickerPackMenu(),
       buildStickerPackMenu(),
       buildStickerPackMenu(),
@@ -86,6 +93,17 @@ describe("贴纸包菜单的记忆化", () => {
     expect(second).toBe(first);
     expect(third).toBe(first);
     expect(getStickerSetMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("防御性 rejection 按包名留痕，不把 allSettled 变成静默吞错", async () => {
+    const failure: Error = new Error("unexpected sticker fetch rejection");
+    getStickerSetMock.mockRejectedValueOnce(failure);
+
+    expect(await buildStickerPackMenu()).toEqual([]);
+    expect(loggerError).toHaveBeenCalledWith(
+      "Unexpected sticker menu fetch rejection for pack \"pack_a\":",
+      failure
+    );
   });
 
   test("构建期间又失效时不落缓存，下一次取会重建", async () => {

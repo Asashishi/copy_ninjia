@@ -1,16 +1,23 @@
 # 06 よくある変更手順
 
 <p align="center">
-  <a href="../06-modification-guide.md">简体中文</a> · <a href="../en/06-modification-guide.md">English</a> · <b>日本語</b>
+  <a href="../cn/06-modification-guide.md">简体中文</a> · <a href="../en/06-modification-guide.md">English</a> · <b>日本語</b>
 </p>
 
 <p align="center">
-  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="05-dev-workflow.md">← 前のページ：05 開発フロー</a> · <a href="07-operations.md">次のページ：07 運用マニュアル →</a>
+  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <a href="05-dev-workflow.md">← 前のページ：05 開発フロー</a> · <a href="07-operations.md">次のページ：07 運用マニュアル →</a>
 </p>
 
 ---
 
 各項目では変更するファイルと順序を示します。共通の前提は、編集前に [`AGENTS.md`](../../AGENTS.md) を読むこと、`state.json`、`memory/`、`bot.lock` などの実行時データを変更する場合や間接的に書き込むコード経路を実行する場合は先にバックアップすること、最後に `bun run check` をすべて通すこと、必要に応じてルート README を同期することです。
+
+## 並行 batch の追加
+
+- 固定された独立 Promise は `Promise.allSettled` ですべての結果を待ち、各 rejection を処理します。settlement をエラーの捨て場所にしてはいけません。
+- input が増えうる場合は [`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts) を再利用し、明示的な並行上限を設定し、返された `item/index/attempt` で失敗を追跡します。input 全体を先に `map` して Promise 化してはいけません。
+- 有限 backoff は、domain が一時的 failure を分類できる場合にだけ設定します。`shouldRetry` で対象 error を制限し、`onRetry` で各 delay を記録します。下位 owner が既に retry する場合は重ねず、特に非 idempotent な副作用を再実行してはいけません。
+- 登録済み task だけを待つ drain snapshot は、新しい worker pool に変える必要はありません。snapshot 自体が新しい作業を開始せず、各 task が既に error 処理の owner を持つことが前提です。
 
 ## スラッシュコマンドの追加
 
@@ -48,7 +55,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 66 ファイルに約 665 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 76 ファイルに約 787 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 
@@ -62,8 +69,11 @@
 | 画像生成 cooldown と byte 上限 | `packages/consts/aiChat/imageGeneration.ts` |
 | ムード時間とコマンド timeout | `packages/consts/aiChat/mood.ts` |
 | ツール action・lookup 上限、typing と typo のテンポ | `packages/consts/aiChat/tools.ts` |
+| 音声文字起こしの長さ・サイズ上限と placeholder | `packages/consts/aiChat/voice.ts` |
+| 楽曲生成の cooldown・round 上限・カバー画像と曲情報 | `packages/consts/aiChat/songGeneration.ts` |
 | request timeout、retry 回数、sampling と safety 段位 | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
-| **モデル名**（両 provider・各 pipeline） | 定数ではありません：`config/gemini.json` と `config/openai.json`、[01-getting-started](01-getting-started.md) 参照 |
+| **model、provider、key、endpoint** | 定数ではなく `config/agent.json` で能力ごとに設定。[01-getting-started](01-getting-started.md) 参照 |
+| OAI 互換画像 wire protocol / size profile | `config/agent.json` の必須 `agent.image.image_protocol`。profile 追加時は型、固定 canvas table、exhaustive dispatch、test も同期 |
 | 認証 window、spam threshold、追記・compaction 方針 | `packages/consts/antiRaid/` |
 | copy cooldown、`/quiet` 範囲、username 規則、アクションコマンドの rate limit | `packages/consts/commands.ts` |
 | 送信者ごとのランダムトリガー cooldown | `packages/consts/auto.ts` |
@@ -73,13 +83,23 @@
 > [!WARNING]
 > **容量定数はディスクデータと結び付いている場合があります。** `AI_MEMORY_HYDRATE_BUFFER_MAX` や `MAX_SUMMARY_ROUNDS` を小さくする前に、[04 実行時の正式な不変条件](04-invariants.md#永続化) の規則に従い、旧プロセスを停止して既存の `memory/ai/` snapshot をアトミックに書き換えてください。容量を変更する前にこの section を確認します。
 
+## provider の任意能力を追加する
+
+契約は能力ごとの 5 つの最小 interface（`AiTextProvider`・`AiSummaryProvider`・`AiMediaProvider`・`AiImageProvider`・`AiSongProvider`）に分割され、`AiChatProvider` はその合成です。実装パッケージが export するのは今も 1 つの完全な object ですが、`aiChat/provider.ts` の各能力 resolver は対応する 1 枚だけを渡すため、能力をまたいだ呼び出しは**コンパイル時**に成立しません（`test/aiChat/provider.test.ts` の `@ts-expect-error` を参照）。各 interface の中はさらに必須と任意に分かれます：必須（返信 session・plain text・vision 記述・画像生成）はどの provider も実装し、任意のもの（現在は `transcribeVoice` と `generateSong`）は実装した provider だけが持ちます。
+
+1. **契約**：[`packages/types/aiChat/provider.ts`](../../packages/types/aiChat/provider.ts) に**任意 member** として宣言し、`this: void` を明示します——任意 member は一度変数に取り出して null check してから呼ぶ必要があり、暗黙 this を持つ method signature は取り出した時点で receiver を失います。
+2. **実装**：対応する実装パッケージにだけ追加し、そのパッケージの `index.ts` で組み立てます。対応しない側は**キーごと書かないでください**：`undefined` と書いても型としては等価ですが、読む人は「未完成の穴」だと受け取ります。
+3. **判定**：呼び出し側は必ず `provider.someCapability === undefined` と書き、`provider.name !== "gemini"` とは**書きません**。名前で判定すると呼び出し点ごとに「誰が何をサポートするか」の一覧を抱えることになり、3 社目が現れた日や、どちらかが能力を獲得した日に、直し漏れた 1 か所は runtime にしか現れません。
+4. **欠落時の扱いを決める**：静かに degrade できるもの（音声文字起こし）は fallback placeholder と log 1 行にとどめ、**そのために provider を替えません**。できないもの（楽曲生成）は tool 自体を載せません——モデルに見えない tool は呼ばれません。「runtime に非対応 error を投げる」だけを唯一の防衛線にしないでください。
+5. **能力が省略される**：toolset は round 単位で組み立てます。`image`/`song` 設定または実装 member が無い場合、declaration と executor を同時に外します。
+
 ## AI ツールの追加
 
 1. **名前定数**：[`packages/consts/tools.ts`](../../packages/consts/tools.ts) にツール名を定義します。目に見える副作用がある場合は `ACTION_TOOL_NAMES` に含めるべきか確認します。
 2. **定義**：stateless な静的 query tool の `ToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator はドメイン定義を中立な `AiToolDefinition`（JSON Schema の parameters）へまとめ、各 provider パッケージの `replySession.ts` が各社の形へ写像します。ツールを追加しても vendor SDK の型に触れる必要はありません。
 3. **実装**：`packages/aiChat/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
 4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
-5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、Google Search、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
+5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、Google Search、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像・生成楽曲です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
 6. **Prompt**：必要なら `packages/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
 7. **テスト + 文書**：`test/aiChat/ai/` または対応する feature／Worker パスにテストを追加し、必要ならルート README のツール行を更新します。
 
@@ -94,11 +114,11 @@
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
 - deployment 固有の変更は Git ignore 対象の `config/` だけに行います。`config_example/` は clean deployment 用 template で、schema または default example が変わるときだけ同期します。`whitelist.json` と `blocklist.json` は network 接続前に厳密ロードし、前者は `/white` と `/permission` が atomic rewrite します。`stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json` は feature ごとに遅延検証します。スタンプパックは最大 5 個、mood の重みは正の整数で合計 100、広告例文は空文字・重複不可、1 件あたり最大 1,024 文字、合計最大 500 件です。構造変更では先に `packages/config/` の schema と `packages/types/` の型を更新してから JSON を変更します。
 
-## 環境変数の追加
+## deployment JSON 設定の追加
 
-1. `packages/infra/config.ts` で宣言・解析し、必須か空でもよいか、形式検証もここで定義します。解析失敗は起動を拒否します。
-2. [`.env.example`](../../.env.example) にコメント付きの例を追加します。
-3. 3 言語のルート README にある「設定」section と [01 環境構築](01-getting-started.md#env-の設定) の変数 table を同期します。
+1. `packages/config/<domain>.ts` で厳密に宣言・解析し、必須／任意 field、形式検証、未知 key の拒否を定義します。解析失敗は起動を拒否します。
+2. 実 credential を含まない構造例を `config_example/<domain>.json` に追加し、[`config_example/README/ja.md`](../../config_example/README/ja.md) の field 説明も同期します。
+3. 3 言語のルート README にある「設定」section と関連する環境構築 entry point を同期します。
 
 ## 実行時 cache の追加
 
@@ -118,6 +138,8 @@
 5. 新版をデプロイして起動します。state の 2 コピーが両方無効と出た場合は migration が不完全です。プログラムは元ファイルを変更しないため、修正してから再起動します。
 6. `.corrupt` 隔離ファイルと `logs/` を確認し、復元異常がないと確認した後で一時バックアップを削除します。
 
+**任意ブロックの追加は手順 3–4 を省略できます**。条件は「未設定」を明確に定義することです。decoder はブロック自体の欠落とフィールドの欠落の両方を許容し（`globalModel`・`globalAssets` に倣い、両分岐が同じフィールド集合を返すことで `save` の自己検証が 2 種類の shape を見ないようにします）、取得側で既定値を 1 つに収束させます。実例は `state.global.assets` で、既存ファイルは無変更のまま読み込め、ブロックが無かった頃と同じ挙動になります。そのブロックが人手で編集する調整項目なら、起動時の補完（`seedMissingAssetState`）を足して未設定項目に現在有効な値を書き、キーがファイルに現れるようにします。補完は**起動を中断しうるすべての `await` の後**に実行し、欠けている項目だけを埋め、background で永続化します（[04](04-invariants.md#永続化と-snapshot-の-contract) を参照）。逆に、**既存ファイルの decode を失敗させる変更は従来どおり手順 3–4 を完全に実施します**。
+
 ## Worker 間 protocol の変更
 
 スレッド間メッセージ protocol は `packages/types/` が所有します。変更時は、型定義、対応する `packages/infra/` または `packages/cache/main/` のメインスレッド側プロキシ、`packages/workers/<domain>/` の Worker 側処理という 3 か所を同期します。request/acknowledgement 型のやり取りは [04](04-invariants.md#worker-と状態の所有権) にある「waiter を先に登録してから送信し、timeout/crash を統一精算する」形式に従います。`/query_mood` と `/switch_mood` が共有する mood handshake が実装例です。
@@ -126,6 +148,6 @@
 
 <div align="center">
 
-[← 前のページ：05 開発フロー](05-dev-workflow.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#06-よくある変更手順) · [次のページ：07 運用マニュアル →](07-operations.md)
+[← 前のページ：05 開発フロー](05-dev-workflow.md) · [📚 開発者ドキュメント TOP](conntent-table.md) · [⬆️ トップへ戻る](#06-よくある変更手順) · [次のページ：07 運用マニュアル →](07-operations.md)
 
 </div>

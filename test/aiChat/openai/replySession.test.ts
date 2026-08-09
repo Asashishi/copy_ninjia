@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type OpenAI from "openai";
 import type { OpenAiRequestResult } from "../../../packages/types/aiChat/openai";
 import type { AiReplySession, AiToolDefinition } from "../../../packages/types/aiChat/provider";
-import { getAiAgentOpenAiConfig } from "../../../packages/config/openai";
+import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 
 const requestOpenAiResult = mock(async (..._args: unknown[]): Promise<OpenAiRequestResult> => ({
   ok: false,
@@ -36,9 +36,9 @@ const SEND_MESSAGE: AiToolDefinition = {
 type ResponseBody = OpenAI.Responses.ResponseCreateParamsNonStreaming;
 
 /** 取第 index 次调用交给底层的请求体构造器并就地求值：请求体改在 client.ts 的
- *  try 内构造，好让 config/openai.json 的解析错误降级成一次普通失败而不是抛出。 */
+ *  try 内构造，好让 config/agent.json 的解析错误降级成一次普通失败而不是抛出。 */
 function capturedBody(index: number): ResponseBody {
-  return (requestOpenAiResult.mock.calls[index]![0] as () => ResponseBody)();
+  return (requestOpenAiResult.mock.calls[index]![0] as { buildBody: () => ResponseBody }).buildBody();
 }
 
 /** 一份带 reasoning、web_search_call 与 function_call 的模型输出。 */
@@ -83,7 +83,7 @@ describe("OpenAI 回复会话的请求映射", () => {
     await session.request(baseRequest());
 
     const body: ResponseBody = capturedBody(0);
-    expect(body.model).toBe(getAiAgentOpenAiConfig().models.reply);
+    expect(body.model).toBe(getAgentDeploymentConfig().text.model);
     expect(body.instructions).toBe("系统提示词");
     expect(body.input).toEqual([{
       role: "user",

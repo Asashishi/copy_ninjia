@@ -5,7 +5,7 @@
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { GenerateContentParameters } from "@google/genai";
-import { getGeminiDeploymentConfig } from "../../../packages/config/gemini";
+import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 
 const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<unknown> => null);
 
@@ -23,7 +23,7 @@ beforeEach(() => {
 
 /** 取第一次调用传进去的请求体闭包并求值。 */
 function requestBody(): GenerateContentParameters {
-  return (requestGeminiResponse.mock.calls[0]![0] as () => GenerateContentParameters)();
+  return (requestGeminiResponse.mock.calls[0]![1] as () => GenerateContentParameters)();
 }
 
 describe("Gemini 图片生成适配器", () => {
@@ -45,16 +45,17 @@ describe("Gemini 图片生成适配器", () => {
     const image = await generateGeminiImage({ prompt: "一只纸飞机", aspectRatio: "16:9" });
 
     // 请求体是个闭包而不是拼好的对象：模型名要在 client.ts 的 try 内才被读到，
-    // 否则 config/gemini.json 写坏时异常会绕开那层失败归一化（见 client.ts 头注）。
+    // 否则 config/agent.json 写坏时异常会绕开那层失败归一化（见 client.ts 头注）。
     expect(requestBody()).toEqual({
-      model: getGeminiDeploymentConfig().models.image,
+      model: getAgentDeploymentConfig().image?.model ?? "",
       contents: "一只纸飞机",
       config: {
         responseModalities: ["TEXT", "IMAGE"],
         imageConfig: { aspectRatio: "16:9", imageSize: "1K" },
       },
     });
-    expect(requestGeminiResponse.mock.calls[0]![1]).toBe("Gemini image generation API");
+    expect(requestGeminiResponse.mock.calls[0]![0]).toBe("image");
+    expect(requestGeminiResponse.mock.calls[0]![2]).toBe("Gemini image generation API");
     expect(image?.mimeType).toBe("image/png");
     expect(Buffer.from(image?.bytes ?? []).equals(expectedBytes)).toBe(true);
   });
@@ -76,7 +77,7 @@ describe("Gemini 图片生成适配器", () => {
     });
 
     expect(requestBody()).toEqual({
-      model: getGeminiDeploymentConfig().models.image,
+      model: getAgentDeploymentConfig().image?.model ?? "",
       contents: [{
         role: "user",
         parts: [

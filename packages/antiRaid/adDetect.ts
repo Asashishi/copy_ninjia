@@ -24,7 +24,10 @@ import { deleteMessageAfter, sendMessage } from "../infra/telegram/actions";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { inFlightAdDisposals } from "../cache/main/antiRaid/adDisposal";
 import { formatTokyoTime } from "../libs/time";
-import { runProtectedIdentityMutation } from "../infra/identityPolicy";
+import {
+  runBlocklistIdentityMutation,
+  runProtectedIdentityMutation,
+} from "../infra/identityPolicy";
 import type { AdDetectedEvent } from "../types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
 import type { AdSampleDiskMessage } from "../types/diskIO";
@@ -83,13 +86,13 @@ function recordAdSample(event: AdDetectedEvent): void {
  * 个刷屏号在封禁落地之前完全可能被再判一次（Worker 侧另有一层窗口内抑制，但
  * 跨窗口拦不住），而整套处置的代价是「一次带 fsync 的黑名单落盘 + 每个在管群
  * 各一批封禁，每批都要整份 outbox 深拷贝并落盘」——按群数放大的 O(n²) 写盘，
- * 正是 docs/04-invariants.md 点名要避开的形态。名单条目在第一次命中时就已写进
+ * 正是 docs/cn/04-invariants.md 点名要避开的形态。名单条目在第一次命中时就已写进
  * 内存 Map 并投过落盘（那一次若没写成，日志里已经点名，且 Disk I/O Worker 重建
  * 会重放本进程新增的条目），其余群的封禁批次也还在 outbox 里等重试；重来一遍
  * 换不到任何新东西。这与 `/block` 的重试语义不冲突：那条路的重复调用是管理员
  * 修好磁盘后的人为重试，这条路是刷屏号自己触发的，两者不该共用一套代价。
  */
-async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
+async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
   const newlyBlocked: boolean | null = await runProtectedIdentityMutation(
     (): boolean | null => {
       // 判定发生在 Worker 侧，事件回投主线程后还要排过 identity 串行队列才轮到
@@ -180,6 +183,17 @@ async function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
     `and queued removals in ${removals.length} chat(s).`
   );
   await announceAdDisposal(event, removals.length, failedChats);
+}
+
+/**
+ * 同一身份的广告封禁与 `/unblock` 必须覆盖完整副作用后串行结算。只锁名单写入
+ * 会让这里等待落盘时被 `/unblock` 越过，随后又登记一批已经过期的封禁。
+ */
+function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
+  return runBlocklistIdentityMutation(
+    event.senderId,
+    (): Promise<void> => disposeDetectedAdLocked(event)
+  );
 }
 
 export interface FormatAdNoticeParams {
@@ -288,7 +302,7 @@ function waitForDisposals(tasks: readonly Promise<void>[], timeoutMs: number): P
  * 预算不能省。处置内部要走 confirmBlocklistPersisted（一次带 fsync 的领域 flush）
  * 与 dispatchBlockedRemovals（outbox 写前落盘 + mailbox 屏障），裸等的话，异常
  * 退出那条把全部预算设成 0 的路径（FATAL_FLUSH_TIMEOUTS，见
- * docs/04-invariants.md）本该立刻结算成 timedOut，实际会一路拖到 15 秒强制退出
+ * docs/cn/04-invariants.md）本该立刻结算成 timedOut，实际会一路拖到 15 秒强制退出
  * ——进程带非零码死在停机中途，实例锁不释放、offset 不确认。
  * @returns 全部结算为 flushed；预算用尽仍有在途为 timedOut。
  */

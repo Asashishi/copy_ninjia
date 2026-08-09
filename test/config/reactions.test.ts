@@ -17,8 +17,8 @@ describe("reaction config", () => {
   });
 
   test("拒绝非 Telegram 标准反应、无效关键词和额外字段", () => {
-    expect(() => parseReactionConfig({ emotionKeywords: { "😂": ["笑"] } })).toThrow("Unsupported Telegram reaction emoji");
-    expect(() => parseReactionConfig({ emotionKeywords: { "👍": [1] } })).toThrow("entry");
-    expect(() => parseReactionConfig({ emotionKeywords: {}, extra: true })).toThrow("expected exactly");
+    expect(() => parseReactionConfig({ emotionKeywords: { "😂": ["笑"] } })).toThrow("a supported Telegram reaction emoji");
+    expect(() => parseReactionConfig({ emotionKeywords: { "👍": [1] } })).toThrow("an array of non-empty strings");
+    expect(() => parseReactionConfig({ emotionKeywords: {}, extra: true })).toThrow("exactly");
   });
 });

@@ -1,12 +1,11 @@
 import type { ChatPermissions } from "@grammyjs/types";
 import { CHAT_PERMISSION_KEYS } from "../consts/storage";
-import type { AiProviderName } from "../types/aiChat/provider";
 import type {
   CachedUser,
   ChatState,
   CopyMode,
+  GlobalAssetState,
   GlobalCopyState,
-  GlobalModelState,
   GlobalState,
   LockdownRecord,
   StateFileSchema,
@@ -65,10 +64,37 @@ function copyMode(value: unknown, path: string): CopyMode | undefined {
  * 模型选取值（生图与闲聊两项共用）。口径与其余字段一致：缺省即从没设过，存在
  * 但非法拒绝整份文件——静默丢掉它等于让超管以为切过了、实际还在用默认供应商。
  */
-function providerName(value: unknown, path: string): AiProviderName | undefined {
+/**
+ * 外部素材直链。口径与其余字段一致：缺省即从没设过、由代码常量兜底；存在但不是
+ * 可解析的绝对地址（协议见下）就拒绝整份文件——少写 scheme（`cdn.example.com/face.jpg`）
+ * 是最常见的手误，而 Telegram 收到它只会静默不显示这张图，运维看到的现象与
+ * 「图挂了」没有区别。
+ *
+ * `allowHttp` 只对机器人默认头像开：那张图由本进程自己抓取，配成明文 http 的
+ * 内网或自建地址是部署方的决定，走不走 TLS 由配置者负责。三张内联缩略图不同——
+ * 直链是交给 Telegram 去取的，这里只认 https。
+ */
+function assetUrl(value: unknown, path: string, allowHttp: boolean = false): string | undefined {
   if (value === undefined) return undefined;
-  if (value === "gemini" || value === "openai") return value;
-  throw new Error(`${path} must be one of gemini or openai`);
+  if (typeof value !== "string") throw new Error(`${path} must be a non-empty string`);
+  // 收下的是去空白后的值：URL 构造器会自行忽略首尾空白，直接留着原样等于把
+  // `" https://…"` 存进内存再原样发给 Telegram，那边可不惯着。
+  const raw: string = value.trim();
+  if (raw.length === 0) throw new Error(`${path} must be a non-empty string`);
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`${path} must be an absolute ${allowHttp ? "http(s)" : "https"} URL`);
+  }
+  if (parsed.protocol !== "https:" && !(allowHttp && parsed.protocol === "http:")) {
+    throw new Error(`${path} must use ${allowHttp ? "http or https" : "https"}`);
+  }
+  // 归一化后的 href 而不是 raw：trim 只管首尾，而 URL 构造器还会吃掉字符串**内部**
+  // 的 tab/LF/CR、对空格做百分号编码。留着 raw 等于让一个「构造器认、Telegram 不认」
+  // 的地址通过校验，再由它把整个 answerInlineQuery 载荷带崩——而这些字符在 JSON
+  // 里肉眼不可见，运维粘贴一个折行的直链就中招。
+  return parsed.href;
 }
 
 function cachedUser(value: unknown, path: string): CachedUser {
@@ -125,8 +151,8 @@ function chatState(value: unknown, path: string): ChatState {
   const raw: Record<string, unknown> = record(value, path);
   knownKeys(raw, [
     "quietUntil", "lockdown", "isAIChatEnabled", "isJATranslationEnabled",
-    "isAdDetectEnabled", "isFloodControlEnabled", "isInitEnabled", "botIsAdmin",
-    "title", "isProxySendEnabled",
+    "isAdDetectEnabled", "isFloodControlEnabled", "isAntiRaidEnabled", "isInitEnabled",
+    "botIsAdmin", "title", "isProxySendEnabled",
   ], path);
   return {
     quietUntil: optionalTimestamp(raw, "quietUntil", path),
@@ -135,6 +161,7 @@ function chatState(value: unknown, path: string): ChatState {
     isJATranslationEnabled: optionalBoolean(raw, "isJATranslationEnabled", path),
     isAdDetectEnabled: optionalBoolean(raw, "isAdDetectEnabled", path),
     isFloodControlEnabled: optionalBoolean(raw, "isFloodControlEnabled", path),
+    isAntiRaidEnabled: optionalBoolean(raw, "isAntiRaidEnabled", path),
     isInitEnabled: optionalBoolean(raw, "isInitEnabled", path),
     botIsAdmin: optionalBoolean(raw, "botIsAdmin", path),
     title: optionalString(raw, "title", path),
@@ -166,32 +193,46 @@ function globalCopy(value: unknown): GlobalCopyState {
 }
 
 /**
- * 全局模型选取。整块缺省按「两项都没设过」处理——手工迁移过来的文件只写了
- * copy 一块也能读回，而不是逼运维补一个空对象；块内字段存在但非法照旧拒绝
- * 整份文件。
+ * 全局素材直链。整块缺省按「四项都没设过」处理：这一块是
+ * 后加的，既有的 state.json 里没有它，不该逼运维补一个空对象；块内字段存在但
+ * 非法照旧拒绝整份文件。
  */
-function globalModel(value: unknown): GlobalModelState {
-  const path: string = "state.global.model";
-  // 两条分支返回同一组字段：decodeStateFile 每次 save 都要跑一遍自校验
-  // （见 infra/storage/stateStore.ts 的 save），返回值 shape 不该在两条分支间摇摆。
-  if (value === undefined) return { image: undefined, chat: undefined };
+function globalAssets(value: unknown): GlobalAssetState {
+  const path: string = "state.global.assets";
+  // 两条分支返回同一组字段，save 时的自校验才不会看到两种 shape。
+  if (value === undefined) {
+    return {
+      fortuneThumbnailUrl: undefined,
+      probabilityThumbnailUrl: undefined,
+      gagThumbnailUrl: undefined,
+      botDefaultAvatarUrl: undefined,
+    };
+  }
   const raw: Record<string, unknown> = record(value, path);
-  knownKeys(raw, ["image", "chat"], path);
+  knownKeys(raw, [
+    "fortuneThumbnailUrl",
+    "probabilityThumbnailUrl",
+    "gagThumbnailUrl",
+    "botDefaultAvatarUrl",
+  ], path);
   return {
-    image: providerName(raw.image, `${path}.image`),
-    chat: providerName(raw.chat, `${path}.chat`),
+    fortuneThumbnailUrl: assetUrl(raw.fortuneThumbnailUrl, `${path}.fortuneThumbnailUrl`),
+    probabilityThumbnailUrl: assetUrl(raw.probabilityThumbnailUrl, `${path}.probabilityThumbnailUrl`),
+    gagThumbnailUrl: assetUrl(raw.gagThumbnailUrl, `${path}.gagThumbnailUrl`),
+    // 只有这一项允许明文 http，理由见 assetUrl。
+    botDefaultAvatarUrl: assetUrl(raw.botDefaultAvatarUrl, `${path}.botDefaultAvatarUrl`, true),
   };
 }
 
-/** 所有群共用的那一块；copy 必填，model 可缺省。 */
+/** 所有群共用的那一块；copy 必填，assets 可缺省。 */
 function globalState(value: unknown): GlobalState {
   const path: string = "state.global";
   const raw: Record<string, unknown> = record(value, path);
-  knownKeys(raw, ["copy", "model"], path);
+  knownKeys(raw, ["copy", "assets"], path);
   if (!("copy" in raw)) throw new Error(`${path}.copy is required`);
   return {
     copy: globalCopy(raw.copy),
-    model: globalModel(raw.model),
+    assets: globalAssets(raw.assets),
   };
 }
 

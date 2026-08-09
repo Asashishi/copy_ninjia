@@ -66,7 +66,7 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 
 const { startReplyRound } = await import("../../../packages/workers/aiChat/replyRound");
-const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
+const { botInfoState, superAdminUserIdState } = await import("../../../packages/cache/workers/aiChat/identity");
 const {
   activeReplyCounts,
   cachedReplyGeneration,
@@ -79,7 +79,6 @@ const {
 const { invalidateChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
 const { LinkedQueue } = await import("../../../packages/libs/linkedQueue");
 const { RATE_LIMIT_LONG_MAX_TRIGGERS } = await import("../../../packages/consts/aiChat/rateLimit");
-const { SUPER_ADMIN_USER_ID } = await import("../../../packages/infra/config");
 const { SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
 
 function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}): Promise<number> {
@@ -98,6 +97,7 @@ function runRound(overrides: Partial<Parameters<typeof startReplyRound>[0]> = {}
 beforeEach(() => {
   resetAiChatReplyCache();
   botInfoState.current = { id: 99, first_name: "Ninja", username: "ninja_bot" };
+  superAdminUserIdState.current = 42;
   builtPromptSections = defaultPromptSections();
   actionsUsed = 1;
   capturedContext = null;
@@ -119,6 +119,7 @@ beforeEach(() => {
 afterEach(() => {
   resetAiChatReplyCache();
   botInfoState.current = null;
+  superAdminUserIdState.current = null;
 });
 
 afterAll(() => {
@@ -239,12 +240,12 @@ describe("AI 单轮回复生命周期", () => {
     }));
   });
 
-  test("仅 superAdmin 触发的轮次绕过图片生成冷却", async () => {
-    await runRound({ triggerSenderId: SUPER_ADMIN_USER_ID });
-    expect(capturedContext?.bypassImageGenerationCooldown).toBe(true);
+  test("仅 superAdmin 触发的轮次绕过重媒体工具冷却", async () => {
+    await runRound({ triggerSenderId: 42 });
+    expect(capturedContext?.bypassMediaToolCooldown).toBe(true);
 
     await runRound({ triggerSenderId: 7 });
-    expect(capturedContext?.bypassImageGenerationCooldown).toBe(false);
+    expect(capturedContext?.bypassMediaToolCooldown).toBe(false);
   });
 
   test("参考图短期引用原样进入本轮工具上下文", async () => {
@@ -269,7 +270,7 @@ describe("AI 单轮回复生命周期", () => {
       imageGenerationRequested: true,
       imageGenerationReference: reference,
     });
-    expect(capturedContext?.imageGenerationRequested).toBe(false);
+    expect(capturedContext?.mediaToolsRequested).toBe(false);
     expect(capturedContext?.imageGenerationReference).toBeUndefined();
 
     await runRound({
@@ -277,7 +278,7 @@ describe("AI 单轮回复生命周期", () => {
       imageGenerationReference: reference,
       mediaComment: { kind: "photo", senderId: 7, senderName: "Alice", description: "一张夜景" },
     });
-    expect(capturedContext?.imageGenerationRequested).toBe(false);
+    expect(capturedContext?.mediaToolsRequested).toBe(false);
     expect(capturedContext?.imageGenerationReference).toBeUndefined();
   });
 
@@ -293,7 +294,7 @@ describe("AI 单轮回复生命周期", () => {
       },
     });
 
-    expect(capturedContext?.imageGenerationRequested).toBe(true);
+    expect(capturedContext?.mediaToolsRequested).toBe(true);
   });
 
   test("仅回复或 @ 直接触发把发送者 id 交给唤起者重点区块", async () => {

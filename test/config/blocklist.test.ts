@@ -62,19 +62,19 @@ describe("static blocklist config", () => {
       whitelistIds: [7, -8],
       superAdminId: 1,
       source: "static blocklist config",
-    })).toThrow("protected identity 7");
+    })).toThrow("disjoint from protected identities");
     expect(() => assertBlocklistProtectedIdentitiesDisjoint({
       blockedIds: [-8],
       whitelistIds: [7, -8],
       superAdminId: 1,
       source: "static blocklist config",
-    })).toThrow("protected identity -8");
+    })).toThrow("disjoint from protected identities");
     expect(() => assertBlocklistProtectedIdentitiesDisjoint({
       blockedIds: [1],
       whitelistIds: [],
       superAdminId: 1,
       source: "persisted dynamic blocklist",
-    })).toThrow("protected identity 1");
+    })).toThrow("disjoint from protected identities");
     expect(() => assertBlocklistProtectedIdentitiesDisjoint({
       blockedIds: [9, -10],
       whitelistIds: [7, 8],

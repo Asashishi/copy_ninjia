@@ -4,7 +4,7 @@ import type { SetWhitelistMembershipResult } from "../types/whitelist";
 import { setWhitelistMembership } from "../config/whitelist";
 import { WHITE_COMMAND_TEXTS } from "../consts/whitelist";
 import { isUserBlocked } from "../infra/blocklist/membership";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";

@@ -3,7 +3,7 @@ import type { Sticker, StickerSet } from "@grammyjs/types";
 import { getStickerSet } from "./sets";
 import { pickStickerVisionSource } from "./describe";
 import { describeMediaForStickerCatalog } from "../imageDescription";
-import { chatAiProvider } from "../../provider";
+import { summaryAiProvider } from "../../provider";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../../libs/text";
 import { sleep } from "../../../libs/sleep";
 import {
@@ -193,8 +193,20 @@ export function flushDirtyStickerCatalogs(post: (event: AiStickerCatalogEvent) =
 export function ensureStickerCatalogs(packs: readonly string[]): void {
   for (const pack of packs) {
     if (generatingPacks.has(pack)) continue;
-    generatingPacks.add(pack);
-    void generatePackCatalog(pack).finally((): boolean => generatingPacks.delete(pack));
+    const task: Promise<void> = generatePackCatalog(pack).finally((): void => {
+      if (generatingPacks.get(pack) === task) generatingPacks.delete(pack);
+    });
+    generatingPacks.set(pack, task);
+  }
+}
+
+/**
+ * 等待所有已经启动的目录生成任务结算。调用前 Worker 必须停止 init 与维护推力；
+ * 循环取快照是为了覆盖当前任务结算回调前已经登记的后续任务。
+ */
+export async function drainStickerCatalogTasks(): Promise<void> {
+  while (generatingPacks.size > 0) {
+    await Promise.allSettled([...generatingPacks.values()]);
   }
 }
 
@@ -334,7 +346,7 @@ function formatEntryForSummary(entry: StickerCatalogEntry): string {
  * 产出压成单行并按子句边界截断；结果同时声明业务层是否允许重新采样。
  */
 async function summarizePack(title: string, descriptions: string[]): Promise<AiTextResult> {
-  return chatAiProvider().generateText({
+  return summaryAiProvider().generateText({
     purpose: "stickerPackSummary",
     systemPrompt: STICKER_PACK_SUMMARY_PROMPT,
     userContent: `贴纸包「${title}」内每枚贴纸的画面描述：\n${descriptions.join("\n")}`,

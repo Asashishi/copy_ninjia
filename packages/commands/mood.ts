@@ -1,7 +1,6 @@
 import type { CommandContext, Context } from "grammy";
 import { queryAiMood, switchAiMood } from "../aiChat";
 import { aiChatConfigReadiness } from "../config/readiness";
-import { hasAiChatCredentials } from "../aiChat/credentials";
 import { getChatState } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
@@ -14,7 +13,6 @@ interface MoodAvailabilityOptions {
   chatId: number;
   messageId?: number;
   feature: "AI mood query" | "AI mood switch";
-  missingKeyText: string;
   brokenConfigText: (file: string) => string;
   disabledText: string;
 }
@@ -24,21 +22,11 @@ async function isMoodAvailable({
   chatId,
   messageId,
   feature,
-  missingKeyText,
   brokenConfigText,
   disabledText,
 }: MoodAvailabilityOptions): Promise<boolean> {
   // 前提不齐时 AI Worker 根本没启动，post 只会同步失败并把 Worker 标成不可用；
-  // 先点名到底缺什么，别让运维在「Worker 没回话」的兜底文案里猜原因。两道前提
-  // 分开报，理由同 /ai_chat：一个要改 .env，一个要改配置文件。
-  if (!hasAiChatCredentials()) {
-    await sendCommandMessage({
-      chatId,
-      text: missingKeyText,
-      replyToMessageId: messageId,
-    });
-    return false;
-  }
+  // 先点名配置文件，别让运维在「Worker 没回话」的兜底文案里猜原因。
   const refused: boolean = await refuseIfConfigBroken({
     readiness: aiChatConfigReadiness(),
     chatId,
@@ -71,7 +59,6 @@ export async function handleQueryMoodCommand(ctx: CommandContext<Context>): Prom
     chatId,
     messageId,
     feature: "AI mood query",
-    missingKeyText: `本天才一把 AI 的 key 都没有，哪来的心情给你查呀？去 .env 里补上 AI_CHAT_GEMINI_API_KEY 或 AI_CHAT_OPENAI_API_KEY 再重启，笨蛋♡`,
     brokenConfigText: (file: string): string => `本天才的 ${file} 写坏了，连心情表都读不出来还查什么？修好再重启，笨蛋♡`,
     disabledText: `本群连 AI 闲聊都没开，本天才在这儿根本没有心情可查呀，笨蛋♡`,
   });
@@ -122,7 +109,6 @@ export async function handleSwitchMoodCommand(ctx: CommandContext<Context>): Pro
     chatId,
     messageId,
     feature: "AI mood switch",
-    missingKeyText: `本天才一把 AI 的 key 都没有，哪来的心情给你换呀？去 .env 里补上 AI_CHAT_GEMINI_API_KEY 或 AI_CHAT_OPENAI_API_KEY 再重启，笨蛋♡`,
     brokenConfigText: (file: string): string => `本天才的 ${file} 写坏了，连心情表都读不出来还换什么？修好再重启，笨蛋♡`,
     disabledText: `本群连 AI 闲聊都没开，本天才在这儿根本没有心情可换呀，笨蛋♡`,
   });

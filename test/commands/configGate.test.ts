@@ -29,13 +29,8 @@ mock.module("../../packages/config/readiness", () => ({
   adDetectConfigReadiness: (): ConfigReadiness => adDetectVerdict,
   jaTranslateConfigReadiness: (): ConfigReadiness => jaTranslateVerdict,
 }));
-// 两把可选 key 都配着：这个文件只考配置那一半，凭据那一半在
-// optionalApiKeys.test.ts。
-mock.module("../../packages/infra/config", () => ({
+mock.module("../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 100,
-  AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
-  AI_CHAT_OPENAI_API_KEY: undefined,
-  AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,

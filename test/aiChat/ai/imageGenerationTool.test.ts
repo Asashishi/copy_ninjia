@@ -69,8 +69,8 @@ function buildContext(
   return {
     chatId,
     replyToMessageId: 42,
-    imageGenerationRequested: requested,
-    bypassImageGenerationCooldown: bypass,
+    mediaToolsRequested: requested,
+    bypassMediaToolCooldown: bypass,
     chatAction: {
       current: () => "idle",
       set: mock((..._args: unknown[]): void => {}),
@@ -82,6 +82,7 @@ function buildContext(
     onMessageSent: mock((..._args: unknown[]): void => {}),
     onStickerSent: mock((..._args: unknown[]): void => {}),
     onImageSent: mock((..._args: unknown[]): void => {}),
+    onSongSent: mock((..._args: unknown[]): void => {}),
   };
 }
 
@@ -163,8 +164,8 @@ describe("generate_image 工具执行器", () => {
 
     const result = JSON.parse(await execute(JSON.stringify({ prompt: "  日落下的纸飞机  ", aspect_ratio: "7:5" })));
 
-    // 不再上报 resolution：那个 "1K" 是 Gemini 生图模型的专属档位，OpenAI 侧出的是
-    // 1024x1024 / 1536x1024，长边并不都是 1K。
+    // 不再上报 resolution：那个 "1K" 是 Gemini 生图模型的专属档位；oai 兼容侧
+    // 可能走 OpenAI size，也可能走 xAI aspect_ratio / resolution。
     expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", actions_used: 1 });
     expect(generateChatImage).toHaveBeenCalledWith({
       prompt: "日落下的纸飞机",

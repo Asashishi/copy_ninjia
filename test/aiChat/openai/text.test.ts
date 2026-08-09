@@ -9,13 +9,24 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type OpenAI from "openai";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
-import { getAiAgentOpenAiConfig } from "../../../packages/config/openai";
+import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 
 const requestOpenAiTextResult = mock(async (..._args: unknown[]): Promise<AiTextResult> => ({ ok: true, text: "ok" }));
+const createTranscription = mock(async (..._args: unknown[]): Promise<{ text: string }> => ({ text: "  你好\n世界  " }));
+const getOpenAiClient = mock((): unknown => ({
+  audio: { transcriptions: { create: createTranscription } },
+}));
 
-mock.module("../../../packages/aiChat/openai/client", () => ({ requestOpenAiTextResult }));
+mock.module("../../../packages/aiChat/openai/client", () => ({
+  getOpenAiClient,
+  requestOpenAiTextResult,
+}));
 
-const { describeOpenAiVision, generateOpenAiText } = await import("../../../packages/aiChat/openai/text");
+const {
+  describeOpenAiVision,
+  generateOpenAiText,
+  transcribeOpenAiVoice,
+} = await import("../../../packages/aiChat/openai/text");
 const {
   OPENAI_CHAT_SUMMARY_MAX_TOKENS,
   OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS,
@@ -25,13 +36,16 @@ const {
 type ResponseBody = OpenAI.Responses.ResponseCreateParamsNonStreaming;
 
 /** 取本次调用交给底层的请求体构造器并就地求值：请求体改在 client.ts 的 try 内
- *  构造，好让 config/openai.json 的解析错误降级成一次普通失败而不是抛出。 */
+ *  构造，好让 config/agent.json 的解析错误降级成一次普通失败而不是抛出。 */
 function capturedBody(): ResponseBody {
-  return (requestOpenAiTextResult.mock.calls[0]![0] as () => ResponseBody)();
+  return (requestOpenAiTextResult.mock.calls[0]![0] as { buildBody: () => ResponseBody }).buildBody();
 }
 
 beforeEach(() => {
   requestOpenAiTextResult.mockClear();
+  createTranscription.mockClear();
+  getOpenAiClient.mockClear();
+  createTranscription.mockImplementation(async (): Promise<{ text: string }> => ({ text: "  你好\n世界  " }));
 });
 
 describe("纯文本生成", () => {
@@ -45,12 +59,12 @@ describe("纯文本生成", () => {
     });
 
     const body: ResponseBody = capturedBody();
-    expect(body.model).toBe(getAiAgentOpenAiConfig().models.summary);
+    expect(body.model).toBe(getAgentDeploymentConfig().summary.model);
     expect(body.instructions).toBe("把下面的对话压成一句话");
     expect(body.input).toBe("甲：你好\n乙：在");
     expect(body.max_output_tokens).toBe(OPENAI_CHAT_SUMMARY_MAX_TOKENS);
     expect(body.store).toBe(false);
-    expect(requestOpenAiTextResult.mock.calls[0]![1]).toBe("AI summarize API");
+    expect((requestOpenAiTextResult.mock.calls[0]![0] as { errorLabel: string }).errorLabel).toBe("AI summarize API");
   });
 
   test("从不发送采样温度：摘要低温策略在 GPT-5 系推理模型上不可用", async () => {
@@ -86,7 +100,7 @@ describe("纯文本生成", () => {
       errorLabel: "label",
       normalize,
     });
-    expect(requestOpenAiTextResult.mock.calls[0]![2]).toBe(normalize);
+    expect((requestOpenAiTextResult.mock.calls[0]![0] as { normalize: unknown }).normalize).toBe(normalize);
   });
 });
 
@@ -101,7 +115,7 @@ describe("视觉描述", () => {
     });
 
     const body: ResponseBody = capturedBody();
-    expect(body.model).toBe(getAiAgentOpenAiConfig().models.media);
+    expect(body.model).toBe(getAgentDeploymentConfig().media.model);
     expect(body.instructions).toBe("用一句中文描述这张贴纸");
     expect(body.input).toEqual([{
       role: "user",
@@ -127,5 +141,30 @@ describe("视觉描述", () => {
     const body: ResponseBody = capturedBody();
     const content = (body.input as { content: { image_url: string }[] }[])[0]!.content[0]!;
     expect(content.image_url.startsWith("data:image/jpeg;base64,")).toBe(true);
+  });
+});
+
+describe("语音转写", () => {
+  test("首次真实请求把 OGG 文件交给 media 模型并清洗结果", async () => {
+    const bytes: Buffer = Buffer.from([0x4f, 0x67, 0x67, 0x53]);
+    await expect(transcribeOpenAiVoice({
+      prompt: "逐字转写",
+      clip: { bytes, mime: "audio/ogg", durationSeconds: 3 },
+      errorLabel: "AI voice transcription API",
+      normalize: (text: string): string => text.trim().replaceAll("\n", " "),
+    })).resolves.toEqual({ ok: true, text: "你好 世界" });
+
+    expect(getOpenAiClient).toHaveBeenCalledWith("media");
+    const body = createTranscription.mock.calls[0]?.[0] as {
+      file: { name?: string; type?: string };
+      model: string;
+      prompt: string;
+      response_format: string;
+    };
+    expect(body.model).toBe(getAgentDeploymentConfig().media.model);
+    expect(body.prompt).toBe("逐字转写");
+    expect(body.response_format).toBe("json");
+    expect(body.file.name).toBe("voice.ogg");
+    expect(body.file.type).toBe("audio/ogg");
   });
 });

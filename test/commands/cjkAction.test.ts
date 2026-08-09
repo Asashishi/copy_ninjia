@@ -19,9 +19,13 @@ const {
 } = await import("../../packages/consts/commands");
 const { recentActionCallTimestamps } = await import("../../packages/cache/main/cjkAction");
 const { markSelfSent } = await import("../../packages/infra/selfSentTracker");
-const { sentMessages } = await import("../../packages/cache/perThread/selfSentTracker");
+const {
+  pendingSelfSentWaiters,
+  sentMessages,
+} = await import("../../packages/cache/perThread/selfSentTracker");
 const { resolveUsernameTarget } = await import("../../packages/users/senderIdentity");
 const { handleCjkActionUsageCommand } = await import("../../packages/commands/cjkAction");
+const { containsRenderableCommand } = await import("../../packages/libs/renderableCommand");
 
 const actor = { id: 100, first_name: "ネオン", last_name: "アサ", username: "neon_asa" };
 
@@ -48,6 +52,10 @@ beforeEach(() => {
   // 自发消息登记是模块级状态且 TTL 很长，不清会渗到后续用例里。
   for (const timer of sentMessages.values()) clearTimeout(timer);
   sentMessages.clear();
+  for (const waiters of pendingSelfSentWaiters.values()) {
+    for (const waiter of waiters) clearTimeout(waiter.timer);
+  }
+  pendingSelfSentWaiters.clear();
   sendMessage.mockClear();
   resolveCommandTarget.mockClear();
 });
@@ -203,6 +211,17 @@ describe("/<1~2 个中文字> 动作命令", () => {
     }));
   });
 
+  test("回归：昵称里的可点击命令被中和，成功回执长期留在群里也不成一键入口", async () => {
+    // 这条回执是 preserveInGroup 的长期留存例外，昵称又完全由用户自己设。
+    // 不中和的话任何成员都能让机器人自己印出 /batch_kick，等超级管理员误触。
+    target = { id: 7, first_name: "喵，/batch_kick 1d", username: "victim" };
+    await handleCjkActionCommand(context("/咬", { id: 100, first_name: "/gag 5" }), next);
+
+    const [params] = sendMessage.mock.lastCall as [{ text: string }];
+    expect(params.text).toBe("／gag 5 咬了 喵，／batch_kick 1d！");
+    expect(containsRenderableCommand(params.text)).toBe(false);
+  });
+
   test("指名其它机器人、缺少发送者身份时放行给普通消息流水线", async () => {
     await handleCjkActionCommand(context("/咬@OtherBot"), next);
     expect(sendMessage).not.toHaveBeenCalled();
@@ -281,6 +300,21 @@ describe("动作命令的认领边界", () => {
     markSelfSent(-1001, 10);
 
     await handleCjkActionCommand(ctx, next);
+
+    expect(nextCalls).toBe(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("频道动作 update 先到时等待 sent 标记，不会抢在普通消息门禁前自问自答", async () => {
+    const ctx: any = context("/咬");
+    ctx.msg.chat = { id: -1001, type: "channel", title: "Channel" };
+
+    const handling: Promise<void> = handleCjkActionCommand(ctx, next);
+    await Promise.resolve();
+    expect(resolveCommandTarget).not.toHaveBeenCalled();
+
+    markSelfSent(-1001, 10);
+    await handling;
 
     expect(nextCalls).toBe(1);
     expect(sendMessage).not.toHaveBeenCalled();

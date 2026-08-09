@@ -15,7 +15,7 @@ const flushDiskIO = mock(async (): Promise<string> => "flushed");
 // isCanUnBlock 完整解封。故意让超级管理员不出现在配置文件里：他的全部权限与
 // 白名单成员身份由 packages/config/whitelist.ts 的读取边界直接给出，这里的
 // mock 照实模拟那层结论。
-mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/config/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100 || id === 200,
   hasWhitelistPermission: (id: number, key: string): boolean =>
@@ -24,7 +24,10 @@ mock.module("../../packages/config/whitelist", () => ({
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage, unbanChatMemberIfBanned, unbanChatSenderChat,
 }));
-mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
+mock.module("../../packages/infra/telegram/client", () => ({
+  installTelegramApi: (): void => {},
+  joinVerificationApi: { kind: "guard-api" },
+}));
 mock.module("../../packages/infra/botAdmin", () => ({ resolveBotAdminStatus }));
 mock.module("../../packages/infra/storage/stateStore", () => ({ getAllChatStates: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
@@ -40,17 +43,12 @@ mock.module("../../packages/infra/diskIO", () => ({
 const { handleUnblockCommand } = await import("../../packages/commands/unblock");
 const {
   blockedUserIds,
-  confirmedKickedUserIdsByChat,
-  confirmedKickedUsersDay,
+  blocklistIdentityMutationQueues,
   configuredBlockedIds,
+  sessionBlocklistRequiresRewrite,
   sessionBlockedAt,
-  sessionUnblockedIds,
 } = await import("../../packages/cache/main/blocklist");
-const {
-  recordUserConfirmedKickedInChat,
-  wasUserConfirmedKickedInChat,
-} = await import("../../packages/infra/blocklist/membership");
-const { getTokyoDateKey } = await import("../../packages/libs/time");
+const { runBlocklistIdentityMutation } = await import("../../packages/infra/identityPolicy");
 
 function context(userId: number | undefined = 100, match: string = "@alice"): never {
   return {
@@ -79,9 +77,8 @@ beforeEach(() => {
   blockedUserIds.clear();
   configuredBlockedIds.clear();
   sessionBlockedAt.clear();
-  sessionUnblockedIds.clear();
-  confirmedKickedUserIdsByChat.clear();
-  confirmedKickedUsersDay.current = null;
+  sessionBlocklistRequiresRewrite.current = false;
+  blocklistIdentityMutationQueues.clear();
 });
 
 describe("/unblock", () => {
@@ -138,18 +135,50 @@ describe("/unblock", () => {
     });
   });
 
-  test("解除时失效该用户所有群的当日确证踢出缓存", async () => {
-    const todayKey: string = getTokyoDateKey();
+  test("同身份较早的自动封禁未结算时，较晚 /unblock 等待后取得最终状态", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
-    recordUserConfirmedKickedInChat(-1001, 7, todayKey);
-    recordUserConfirmedKickedInChat(-2002, 7, todayKey);
-    recordUserConfirmedKickedInChat(-2002, 8, todayKey);
+    chatStates.set(-2002, { botIsAdmin: true });
+    let releaseEarlier: (() => void) | undefined;
+    const earlier: Promise<void> = runBlocklistIdentityMutation(7, (): Promise<void> =>
+      new Promise<void>((resolve: () => void): void => {
+        releaseEarlier = resolve;
+      }));
+    await Bun.sleep(0);
 
-    await handleUnblockCommand(context());
+    const command: Promise<void> = handleUnblockCommand(context());
+    await Bun.sleep(0);
 
-    expect(wasUserConfirmedKickedInChat(-1001, 7, todayKey)).toBeFalse();
-    expect(wasUserConfirmedKickedInChat(-2002, 7, todayKey)).toBeFalse();
-    expect(wasUserConfirmedKickedInChat(-2002, 8, todayKey)).toBeTrue();
+    expect(blockedUserIds.has(7)).toBeTrue();
+    expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
+
+    releaseEarlier!();
+    await earlier;
+    await command;
+
+    expect(blockedUserIds.has(7)).toBeFalse();
+    expect(unbanChatMemberIfBanned).toHaveBeenCalledWith(-2002, 7);
+    expect(blocklistIdentityMutationQueues.size).toBe(0);
+  });
+
+  test("名单重写确认完成后才开始跨群解封", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
+    chatStates.set(-2002, { botIsAdmin: true });
+    let releasePersist: ((result: string) => void) | undefined;
+    flushDiskIO.mockImplementationOnce((): Promise<string> =>
+      new Promise<string>((resolve: (result: string) => void): void => {
+        releasePersist = resolve;
+      }));
+
+    const command: Promise<void> = handleUnblockCommand(context());
+    await Bun.sleep(0);
+
+    expect(postDiskIO).toHaveBeenCalledTimes(1);
+    expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
+
+    releasePersist!("flushed");
+    await command;
+
+    expect(unbanChatMemberIfBanned).toHaveBeenCalledWith(-2002, 7);
   });
 
   test("本来就不在名单里时不重写，但仍默认解除各群封禁", async () => {
@@ -196,7 +225,7 @@ describe("/unblock", () => {
     await handleUnblockCommand(context());
 
     expect(blockedUserIds.has(-4004)).toBeFalse();
-    expect(sessionUnblockedIds.has(-4004)).toBeTrue();
+    expect(sessionBlocklistRequiresRewrite.current).toBeTrue();
     expect(unbanChatSenderChat).toHaveBeenCalledWith(-2002, -4004);
   });
 
@@ -260,19 +289,33 @@ describe("/unblock 默认跨群解封", () => {
     });
   });
 
-  test("跨群解封完成时再次失效等待期间迟到的确证踢出缓存", async () => {
-    const todayKey: string = getTokyoDateKey();
+  test("跨群解封全部结算后才发送成功回执", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" });
     chatStates.set(-2002, { botIsAdmin: true });
-    unbanChatMemberIfBanned.mockImplementationOnce(async (): Promise<boolean> => {
-      // 模拟另一个 chat lane 的 `/block` 在本命令 await Telegram 期间完成。
-      recordUserConfirmedKickedInChat(-2002, 7, todayKey);
-      return true;
+    chatStates.set(-3003, { botIsAdmin: true });
+    let releaseSecondUnban: ((result: boolean) => void) | undefined;
+    unbanChatMemberIfBanned
+      .mockResolvedValueOnce(true)
+      .mockImplementationOnce((): Promise<boolean> =>
+        new Promise<boolean>((resolve: (result: boolean) => void): void => {
+          releaseSecondUnban = resolve;
+        }));
+
+    const command: Promise<void> = handleUnblockCommand(context(1, "@alice"));
+    await Bun.sleep(0);
+
+    expect(unbanChatMemberIfBanned.mock.calls.map((call) => call[0]))
+      .toEqual([-2002, -3003]);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    releaseSecondUnban!(true);
+    await command;
+
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringMatching(/在 2 个群把封禁一并解开/),
+      replyToMessageId: 10,
     });
-
-    await handleUnblockCommand(context(1, "@alice"));
-
-    expect(wasUserConfirmedKickedInChat(-2002, 7, todayKey)).toBeFalse();
   });
 
   test("裸 id 原样传给目标解析并默认完整解封", async () => {

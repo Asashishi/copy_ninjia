@@ -1,11 +1,11 @@
 # 03 Directory Map and Code Placement
 
 <p align="center">
-  <a href="../03-directory-map.md">简体中文</a> · <b>English</b> · <a href="../ja/03-directory-map.md">日本語</a>
+  <a href="../cn/03-directory-map.md">简体中文</a> · <b>English</b> · <a href="../ja/03-directory-map.md">日本語</a>
 </p>
 
 <p align="center">
-  <a href="README.md">📚 Developer Docs Home</a> · <a href="02-architecture.md">← Prev: 02 Architecture</a> · <a href="04-invariants.md">Next: 04 Invariants →</a>
+  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="02-architecture.md">← Prev: 02 Architecture</a> · <a href="04-invariants.md">Next: 04 Invariants →</a>
 </p>
 
 ---
@@ -16,14 +16,17 @@ This page answers “where does this code live, and where should new code go?”
 
 - **`packages/app/`**
   - **Responsibility**: startup/shutdown lifecycle, startup prerequisite checks for enabled
-    features, handler registration, command menu, and update runner.
-  - **Representative files**: `lifecycle.ts`, `featurePreflight.ts`, `registerHandlers.ts`,
-    `updateRunner.ts`.
+    features, handler registration, command menu, update runner, and lifecycle side-effect composition.
+  - **Representative files**: `lifecycle.ts`, `lifecycleDependencies.ts`, `featurePreflight.ts`,
+    `registerHandlers.ts`, and `updateRunner.ts`. `ApplicationLifecycleDependencies` is inferred
+    from and colocated with the composition object, avoiding a reverse dependency from shared types into `app/`.
 - **`packages/commands/`**
   - **Responsibility**: explicit command handling, one command per file; shared permission and
     configuration gates for toggle commands live in separate files.
   - **Representative files**: `copy.ts`, `block.ts`, `mute.ts`, `batchKick.ts`,
-    `targetResolution.ts`, `configGate.ts`.
+    `targetResolution.ts`, and `configGate.ts`. The larger gag domain keeps command admission in
+    `gag.ts`, with lifecycle, inline handling, and pure rendering split into `gag/runtime.ts`,
+    `gag/inline.ts`, and `gag/rendering.ts`.
 - **`packages/auto/`**
   - **Responsibility**: automatic non-command behavior, including copying, AI transcription
     and triggers, and reaction synchronization.
@@ -52,7 +55,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/states/`**
   - **Responsibility**: **I/O-free** state transitions and admission rules for verification,
     lockdown, AI replies, and ad detection.
-  - **Representative files**: `verification.ts` plus `verification/`, `lockdown.ts`, `replyAdmission.ts`,
+  - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments), `lockdown.ts`, `replyAdmission.ts`,
     `adDetectAdmission.ts`.
 - **`packages/config/`**
   - **Responsibility**: strict schemas for `config/*.json`, with startup-loaded allow/blocklists,
@@ -62,7 +65,8 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/libs/`**
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
-  - **Representative files**: `flushBarrier.ts`, `linkedQueue.ts`, `monotonicDeadline.ts`, `text.ts`.
+  - **Representative files**: `flushBarrier.ts`, `linkedQueue.ts`, `acknowledgedBatchQueue.ts`,
+    `boundedSettledBatch.ts`, `monotonicDeadline.ts`, `text.ts`.
 - **`packages/workers/`**
   - **Responsibility**: in-thread implementations for all three Workers.
   - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`,
@@ -70,24 +74,25 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **Responsibility**: model transports and capabilities live under their owning feature so
     thread and lifecycle ownership stays explicit.
-  - **Representative files**: `tools/replyToolset/`, `utils/`, `deepseek.ts`. AI-chat model
+  - **Representative files**: `tools/replyToolset/`, `utils/`, `provider.ts`. AI-chat model
     transport does not live here; it lives in the per-vendor packages
     `packages/aiChat/{gemini,openai}/`.
 - **`packages/workers/antiRaid/adDetect/`**
-  - **Responsibility**: DeepSeek ad-detection pipeline, including the batched queue, per-sender
+  - **Responsibility**: provider-routed ad-detection pipeline, including the batched queue, per-sender
     bundle shaping, verdicts, and disposal on a hit.
   - **Representative files**: `queue.ts`, `bundle.ts`, `classifier.ts`, `disposal.ts`.
 - **`packages/infra/`**
-  - **Responsibility**: Telegram client, Worker hosts, logger, environment configuration, and
-    main-thread I/O proxies.
-  - **Representative files**: `telegram/`, `config.ts`, `joinLog.ts`, `workerSupervisor.ts`.
+  - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
+    logger, and main-thread I/O proxies.
+  - **Representative files**: `telegram/`, `diskIO.ts`, `joinLog.ts`, `workerSupervisor.ts`.
 - **`packages/infra/blocklist/`**
   - **Responsibility**: main-thread blocklist infrastructure split into synchronous membership,
     identity checks, durable outbox, and per-chat sweep logic.
   - **Representative files**: `identities.ts`, `membership.ts`, `outbox.ts`, `sweep.ts`.
 - **`packages/infra/storage/`**
-  - **Responsibility**: data-root preflight, instance lock, StateStore, and startup cleanup.
-  - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`.
+  - **Responsibility**: data-root preflight, instance lock, the business-state facade, the injectable `state.json` persistence boundary, and startup cleanup.
+  - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`, and `statePersistence.ts`.
+    The facade owns business memory and snapshots; the persistence boundary owns strict decoding, latest-only writes, retries, and flush.
 - **`packages/cache/`**
   - **Responsibility**: containers for mutable in-process state; **the first directory level
     names the owning thread**.
@@ -111,7 +116,7 @@ This page answers “where does this code live, and where should new code go?”
 
 Ask these questions in order:
 
-1. **Is it a literal parameter, or user-facing copy?** → `packages/consts/<domain>.ts`, or split a larger domain into `packages/consts/<domain>/`. Add Chinese JSDoc explaining its purpose and invariants. Command replies and prompts belong in a per-command text table, not rebuilt inside the handler. Environment-derived configuration is the sole exception and belongs in `packages/infra/config.ts`.
+1. **Is it a literal parameter, or user-facing copy?** → `packages/consts/<domain>.ts`, or split a larger domain into `packages/consts/<domain>/`. Add Chinese JSDoc explaining its purpose and invariants. Command replies and prompts belong in a per-command text table, not rebuilt inside the handler. Deployment JSON parsing and validation belong in `packages/config/<domain>.ts`; only runtime path overrides read the process environment through `packages/consts/paths.ts`.
 2. **Is it a shared type or protocol?** → `packages/types/<domain>.ts`. State-machine `State/Event/Effect/Transition/Decision` contracts belong in `packages/types/states/`.
 3. **Is it long-lived mutable state** such as a Map, Set, queue, timer, or singleton? → `packages/cache/`. **Pick the owning-thread directory first** (see below), then split by domain inside it. Use a holder object instead of `export let`, and document when it is populated, when it is cleared, and how it is rebuilt after a Worker restart. Capacity and cleanup must satisfy [04 Authoritative Runtime Invariants](04-invariants.md).
 4. **Is it pure state-transition logic** with no I/O and straightforward unit testing? → `packages/states/`; Worker-side interpreters execute the side effects.
@@ -125,7 +130,7 @@ The first directory level under `packages/cache/` declares which thread owns tha
 
 - **`main/`**
   - **Owner**: main thread.
-  - **Contents**: command and automatic-pipeline state, the `StateStore` in-memory mirror, the
+  - **Contents**: command and automatic-pipeline state, the in-memory `state.json` mirror managed through the `stateStore.ts` facade, the
     Disk I/O host, and the **main-thread proxies and mirrors of the Workers**
     (`main/aiChat.ts`, `main/antiRaid/`).
 - **`workers/aiChat/`**
@@ -134,14 +139,15 @@ The first directory level under `packages/cache/` declares which thread owns tha
 - **`workers/antiRaid/`**
   - **Owner**: Anti-Raid Worker.
   - **Contents**: verification/lockdown state machines, flood windows, ad-detection queue,
-    DeepSeek client.
+    Google/OpenAI ad-detection clients.
 - **`workers/diskIO/`**
   - **Owner**: Disk I/O Worker.
   - **Contents**: per-domain write buffers, indexes, and dirty markers.
 - **`perThread/`**
   - **Owner**: one copy per thread.
-  - **Contents**: Telegram client, deployment-config singletons, and self-sent message tracking;
-    the same module is instantiated independently in each thread and is never meant to be shared.
+  - **Contents**: the Telegram-capability holder (real main-thread adapter or Worker duplex proxy),
+    Worker duplex waiters, deployment-config singletons, and self-sent message tracking; the same
+    module is instantiated independently in each thread and is never meant to be shared.
 
 Note that `main/antiRaid/` and `workers/antiRaid/` are **two sets of state that share nothing**: the authoritative state machines live inside the Worker, while the main-thread copy is pure data kept for crash replay. Choosing the wrong directory is not a style issue — whatever you write there can never be read on the other side. `bun run check:conventions` verifies this ownership against the real module graph (see [04 Authoritative Runtime Invariants](04-invariants.md#thread-and-state-ownership)) and prints the full import chain on a violation.
 
@@ -149,7 +155,7 @@ Watch out for shared domain code such as `packages/aiChat/ai/`: if a pure functi
 
 ## Compatibility Entry-Point (Barrel) Convention
 
-When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/consts/aiChat.ts` for `packages/consts/aiChat/`, or `verificationFiles.ts` for the split verification-file domain. The rules are:
+When a large file is split into submodules, the original file may become a thin stateless compatibility-export entry point—for example, `packages/consts/aiChat.ts` for `packages/consts/aiChat/`, `packages/infra/telegram/avatar.ts` for `packages/infra/telegram/avatar/`, or `verificationFiles.ts` for the split verification-file domain. The rules are:
 
 - Compatibility entry points exist only for gradual migration of old imports. **All new code imports directly from the domain submodule.**
 - A compatibility entry point must not own state, parse configuration, or introduce import-time side effects.
@@ -164,6 +170,6 @@ Paths under `test/` generally mirror `packages/`; one split domain may share a d
 
 <div align="center">
 
-[← Prev: 02 Architecture](02-architecture.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#03-directory-map-and-code-placement) · [Next: 04 Invariants →](04-invariants.md)
+[← Prev: 02 Architecture](02-architecture.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#03-directory-map-and-code-placement) · [Next: 04 Invariants →](04-invariants.md)
 
 </div>

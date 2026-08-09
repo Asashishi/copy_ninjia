@@ -38,6 +38,8 @@ function photoMessage(): AiRecordMediaMessage {
     commentOnResolve: false,
     imageGenerationRequested: true,
     stickerFallbackText: undefined,
+    voiceMime: undefined,
+    voiceDurationSeconds: 0,
     directTrigger: { reason: "mention" },
     username: undefined,
     replyTo: undefined,

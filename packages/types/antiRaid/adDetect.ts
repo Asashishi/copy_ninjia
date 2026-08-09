@@ -1,5 +1,22 @@
 /** 广告检测流水线的跨线程协议与 Worker 内部纯数据形状。 */
 
+/**
+ * 广告检测向任一 provider 发送的中立结构化请求。模型与采样预算属于判定领域，
+ * 传输实现只把这些语义映射到各自 SDK。
+ */
+export interface AdDetectJsonRequestParams {
+  /** 模型名来自 config/agent.json 的 agent.ad_detect。 */
+  readonly model: string;
+  /** 系统提示词；OpenAI JSON 模式要求其中出现 json。 */
+  readonly systemPrompt: string;
+  /** 本次待处理的用户内容；一律当数据，不承担指令语义。 */
+  readonly userContent: string;
+  readonly temperature: number;
+  readonly maxOutputTokens: number;
+  /** 出现在错误日志里的调用名（英文）。 */
+  readonly errorLabel: string;
+}
+
 /** 参与判定、同时写进命中样本的上下文。两项都可能缺席。 */
 export interface AdSampleContext {
   /** 这条消息里被引用的那一段（message.quote）。 */
@@ -107,14 +124,14 @@ export interface AdMessageBundle {
   /**
    * 已送检过的最大序号；只有序号比它大的消息才值得重新入队。
    *
-   * 用序号而不是「已检条数」记账：一次判定要等一趟 DeepSeek 往返，这期间
+   * 用序号而不是「已检条数」记账：一次判定要等一趟 provider 往返，这期间
    * 发送者可能又说了几句，已消费上下文也可能被裁掉。按数组下标记账会把裁剪
    * 腾出来的位置算成「已经检过」，让新消息永远送不出去。
    */
   checkedSeq: number;
 }
 
-/** 一次 DeepSeek 判定的结果；请求失败时调用方拿到 null，不做任何处置。 */
+/** 一次广告判定的结果；请求失败时调用方拿到 null，不做任何处置。 */
 export interface AdVerdict {
   isAd: boolean;
   reason: string;

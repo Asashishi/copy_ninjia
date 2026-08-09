@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
+import { BLOCK_COMMAND_CONCURRENCY } from "../../packages/consts/commands";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const banChatMember = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const banChatSenderChat = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const isChatMember = mock(async (..._args: unknown[]): Promise<boolean> => false);
-const deleteMessageWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "deleted");
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
-const ensureBotChatPermissions = mock((_chatId: number): void => {});
-let canDeleteMessages: boolean | undefined = true;
+const loggerError = mock((..._args: unknown[]): void => {});
 let target: CachedUser | undefined;
 const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => target);
 const chatStates = new Map<number, { botIsAdmin?: boolean }>();
@@ -16,7 +15,7 @@ const postDiskIO = mock((..._args: unknown[]): boolean => true);
 
 // 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
-mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/config/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100 || id === -500,
   hasWhitelistPermission: (id: number, key: string): boolean =>
@@ -27,16 +26,16 @@ mock.module("../../packages/infra/telegram", () => ({
   banChatMember,
   banChatSenderChat,
   isChatMember,
-  deleteMessageWithOutcome,
 }));
-mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
+mock.module("../../packages/infra/telegram/client", () => ({
+  installTelegramApi: (): void => {},
+  joinVerificationApi: { kind: "guard-api" },
+}));
 mock.module("../../packages/infra/botAdmin", () => ({
-  botCanDeleteMessagesIn: (): boolean | undefined => canDeleteMessages,
-  ensureBotChatPermissions,
   resolveBotAdminStatus,
 }));
 mock.module("../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
+  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({ getAllChatStates: () => chatStates }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
@@ -58,14 +57,8 @@ const { handleBlockCommand } = await import("../../packages/commands/block");
 const {
   blockedUserIds,
   blocklistSweepState,
-  confirmedKickedUserIdsByChat,
-  confirmedKickedUsersDay,
   sessionBlockedAt,
 } = await import("../../packages/cache/main/blocklist");
-const {
-  recordUserConfirmedKickedInChat,
-  wasUserConfirmedKickedInChat,
-} = await import("../../packages/infra/blocklist/membership");
 
 function context(userId: number | undefined = 100): never {
   return {
@@ -86,9 +79,8 @@ beforeEach(() => {
     banChatMember,
     banChatSenderChat,
     isChatMember,
-    deleteMessageWithOutcome,
     resolveBotAdminStatus,
-    ensureBotChatPermissions,
+    loggerError,
     resolveCommandTarget,
     postDiskIO,
     flushDiskIO,
@@ -97,15 +89,11 @@ beforeEach(() => {
   blockedUserIds.clear();
   sessionBlockedAt.clear();
   blocklistSweepState.clear();
-  confirmedKickedUserIdsByChat.clear();
-  confirmedKickedUsersDay.current = null;
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 55);
   banChatMember.mockImplementation(async (): Promise<boolean> => true);
   banChatSenderChat.mockImplementation(async (): Promise<boolean> => true);
   isChatMember.mockImplementation(async (): Promise<boolean> => false);
   resolveBotAdminStatus.mockImplementation(async (): Promise<boolean> => false);
-  deleteMessageWithOutcome.mockImplementation(async (): Promise<string> => "deleted");
-  canDeleteMessages = true;
   postDiskIO.mockImplementation((): boolean => true);
 });
 
@@ -170,7 +158,7 @@ describe("/block 跨群封禁与黑名单", () => {
     expect(banChatMember).not.toHaveBeenCalled();
   });
 
-  test("本群无权限时仍串行处理其它管理员群，并区分踢出、预封禁和失败", async () => {
+  test("本群无权限时仍处理其它管理员群，并区分踢出、确认封禁和失败", async () => {
     chatStates.set(-2002, { botIsAdmin: true });
     chatStates.set(-3003, { botIsAdmin: true });
     isChatMember.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
@@ -187,136 +175,118 @@ describe("/block 跨群封禁与黑名单", () => {
     });
   });
 
-  test("只复用当天确证踢出的群用户，不从权威名单或预封禁结局推断", async () => {
+  test("单群意外 rejection 不吞掉其它群结果，并把失败群交回补扫", async () => {
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
+    chatStates.set(-2002, { botIsAdmin: true });
+    blocklistSweepState.set(-1001, { removalId: null, sweptAt: 1_000, nextRetryAt: 0, resweepRequested: false, failedSweeps: 0, permissionBlocked: false });
+    banChatMember
+      .mockRejectedValueOnce(new Error("unexpected adapter rejection"))
+      .mockResolvedValueOnce(true);
+
+    await handleBlockCommand(context());
+
+    expect(banChatMember).toHaveBeenCalledTimes(2);
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringMatching(/在 1 个群确认封禁.*还有 1 个群没踢动/),
+      replyToMessageId: 10,
+    });
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringContaining("Unexpected error while banning blocked identity 7 in chat -1001"),
+      expect.any(Error)
+    );
+  });
+
+  test("跨群封禁只启动固定小并发，完成项释放槽位后才取下一群", async () => {
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
+    for (let index: number = 0; index < BLOCK_COMMAND_CONCURRENCY + 3; index++) {
+      chatStates.set(-2000 - index, { botIsAdmin: true });
+    }
+    let active: number = 0;
+    let peak: number = 0;
+    let release: (() => void) | undefined;
+    const gate: Promise<void> = new Promise<void>((resolve: () => void): void => {
+      release = resolve;
+    });
+    banChatMember.mockImplementation(async (): Promise<boolean> => {
+      active++;
+      peak = Math.max(peak, active);
+      await gate;
+      active--;
+      return true;
+    });
+
+    const command: Promise<void> = handleBlockCommand(context());
+    for (
+      let step: number = 0;
+      step < 10 && banChatMember.mock.calls.length < BLOCK_COMMAND_CONCURRENCY;
+      step++
+    ) {
+      await Promise.resolve();
+    }
+    expect(banChatMember).toHaveBeenCalledTimes(BLOCK_COMMAND_CONCURRENCY);
+    expect(peak).toBe(BLOCK_COMMAND_CONCURRENCY);
+
+    release!();
+    await command;
+    expect(banChatMember).toHaveBeenCalledTimes(BLOCK_COMMAND_CONCURRENCY + 4);
+    expect(peak).toBe(BLOCK_COMMAND_CONCURRENCY);
+  });
+
+  test("重复 /block 仍实时查询成员并重新封禁", async () => {
     resolveBotAdminStatus.mockResolvedValue(true);
-    isChatMember.mockResolvedValue(true);
+    isChatMember.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
     await handleBlockCommand(context());
     expect(isChatMember).toHaveBeenCalledTimes(1);
     expect(banChatMember).toHaveBeenCalledTimes(1);
 
-    isChatMember.mockClear();
-    banChatMember.mockClear();
     await handleBlockCommand(context());
 
-    // 第二次 /block 仍会重试名单落盘，但已确证的群级踢出无需再查、再封。
-    expect(isChatMember).not.toHaveBeenCalled();
-    expect(banChatMember).not.toHaveBeenCalled();
+    // 第二次不复用第一次的“在群”历史：实时结果已经是不在群，所以只报告
+    // 确认封禁；banChatMember 仍重发，让外部解封或重新入群得到重新结算。
+    expect(isChatMember).toHaveBeenCalledTimes(2);
+    expect(banChatMember).toHaveBeenCalledTimes(2);
+    expect(banChatMember).toHaveBeenLastCalledWith(-1001, 7);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringMatching(/从 1 个群一脚踢出去.*早就在小本本上了/),
+      text: expect.stringMatching(/在 1 个群确认封禁.*早就在小本本上了/),
       replyToMessageId: 10,
     });
-
-    // 到下一个东京自然日整表清空；缓存不从任何落盘文件恢复。
-    recordUserConfirmedKickedInChat(-2002, 8, "2026-07-28");
-    expect(wasUserConfirmedKickedInChat(-2002, 8, "2026-07-28")).toBeTrue();
-    expect(wasUserConfirmedKickedInChat(-2002, 8, "2026-07-29")).toBeFalse();
-    expect(confirmedKickedUserIdsByChat.size).toBe(0);
   });
 
-  test("确认不在群的预封禁不进缓存，重复命令仍重新确认", async () => {
+  test("确认不在群只报告确认封禁，不推断目标从未加入过", async () => {
     resolveBotAdminStatus.mockResolvedValue(true);
     isChatMember.mockResolvedValue(false);
 
     await handleBlockCommand(context());
-    await handleBlockCommand(context());
 
-    expect(isChatMember).toHaveBeenCalledTimes(2);
-    expect(banChatMember).toHaveBeenCalledTimes(2);
-    expect(confirmedKickedUserIdsByChat.size).toBe(0);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: expect.stringMatching(/在 1 个群确认封禁/),
+      replyToMessageId: 10,
+    });
+    expect((sendMessage.mock.calls.at(-1)?.[0] as { text: string }).text)
+      .not.toContain("根本没让 TA 进去过");
   });
 
-  test("频道马甲只调用 banChatSenderChat，不查询成员状态", async () => {
+  test("回复频道消息只封禁频道身份，不执行独立消息清理", async () => {
     target = { id: -4004, first_name: "Channel", isChannel: true };
     resolveBotAdminStatus.mockResolvedValueOnce(true);
+    const ctx = context() as unknown as {
+      msg: { message_id: number; reply_to_message: { message_id: number } };
+    };
+    ctx.msg.reply_to_message = { message_id: 77 };
 
-    await handleBlockCommand(context());
+    await handleBlockCommand(ctx as never);
 
     expect(banChatSenderChat).toHaveBeenCalledWith(-1001, -4004);
     expect(isChatMember).not.toHaveBeenCalled();
     expect(banChatMember).not.toHaveBeenCalled();
-    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("提前拉黑"),
-      replyToMessageId: 10,
-    });
-  });
-
-  test("回复频道消息执行 /block：封禁与已知消息删除分别成功并写进战报", async () => {
-    target = { id: -4004, title: "Channel", isChannel: true };
-    resolveBotAdminStatus.mockResolvedValueOnce(true);
-    const ctx = context() as unknown as {
-      msg: { message_id: number; reply_to_message: { message_id: number } };
-    };
-    ctx.msg.reply_to_message = { message_id: 77 };
-
-    await handleBlockCommand(ctx as never);
-
-    expect(banChatSenderChat).toHaveBeenCalledWith(-1001, -4004);
-    expect(ensureBotChatPermissions).toHaveBeenCalledWith(-1001);
-    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 77);
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      chatId: -1001,
-      text: expect.stringContaining("回复的那条频道消息也被本天才顺手清掉啦，想留垃圾也没门呀♡"),
-      replyToMessageId: 10,
-    });
-  });
-
-  test("频道封禁成功但回复消息缺删除权限：不发送注定失败的删除并独立告警", async () => {
-    target = { id: -4004, title: "Channel", isChannel: true };
-    resolveBotAdminStatus.mockResolvedValueOnce(true);
-    canDeleteMessages = false;
-    const ctx = context() as unknown as {
-      msg: { message_id: number; reply_to_message: { message_id: number } };
-    };
-    ctx.msg.reply_to_message = { message_id: 77 };
-
-    await handleBlockCommand(ctx as never);
-
-    expect(banChatSenderChat).toHaveBeenCalledTimes(1);
-    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      chatId: -1001,
-      text: expect.stringContaining("杂鱼管理员是不是又忘了给本天才删消息权限呀♡"),
-      replyToMessageId: 10,
-    });
-  });
-
-  test("回复消息删除瞬时失败时按雌小鬼语气引导管理员查日志", async () => {
-    target = { id: -4004, title: "Channel", isChannel: true };
-    resolveBotAdminStatus.mockResolvedValueOnce(true);
-    deleteMessageWithOutcome.mockResolvedValueOnce("failed");
-    const ctx = context() as unknown as {
-      msg: { message_id: number; reply_to_message: { message_id: number } };
-    };
-    ctx.msg.reply_to_message = { message_id: 77 };
-
-    await handleBlockCommand(ctx as never);
-
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      chatId: -1001,
-      text: expect.stringContaining("杂鱼管理员自己去日志里找原因吧♡"),
-      replyToMessageId: 10,
-    });
-  });
-
-  test("频道封禁失败但回复消息删除成功：两项结果互不覆盖", async () => {
-    target = { id: -4004, title: "Channel", isChannel: true };
-    resolveBotAdminStatus.mockResolvedValueOnce(true);
-    banChatSenderChat.mockResolvedValueOnce(false);
-    const ctx = context() as unknown as {
-      msg: { message_id: number; reply_to_message: { message_id: number } };
-    };
-    ctx.msg.reply_to_message = { message_id: 77 };
-
-    await handleBlockCommand(ctx as never);
-
-    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 77);
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      chatId: -1001,
-      text: expect.stringMatching(/一个群都踢不动.*回复的那条频道消息也被本天才顺手清掉啦/),
+      text: expect.stringContaining("确认封禁"),
       replyToMessageId: 10,
     });
   });
@@ -338,13 +308,12 @@ describe("/block 跨群封禁与黑名单", () => {
     });
   });
 
-  test("所有群都封禁失败时给出权限诊断且不安排删除", async () => {
+  test("所有群都封禁失败时给出权限诊断", async () => {
     resolveBotAdminStatus.mockResolvedValueOnce(true);
     banChatMember.mockResolvedValueOnce(false);
 
     await handleBlockCommand(context());
 
-    expect(confirmedKickedUserIdsByChat.size).toBe(0);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringMatching(/一个群都踢不动.*已经记进小本本了/),
@@ -375,7 +344,7 @@ describe("/block 的黑名单落盘", () => {
     expect(message.blockedAt).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
   });
 
-  test("重复拉黑同一个人会补投落盘，未确证踢出的群仍重新封禁", async () => {
+  test("重复拉黑同一个人会补投落盘，并重新查询、封禁各群", async () => {
     resolveBotAdminStatus.mockResolvedValue(true);
     await handleBlockCommand(context());
     expect(postDiskIO).toHaveBeenCalledTimes(1);
@@ -385,8 +354,8 @@ describe("/block 的黑名单落盘", () => {
 
     // 这个 id 是本进程新增的（在 sessionBlockedAt 里），上一次落盘可能压根没
     // 成功——管理员修好磁盘再跑一次 /block 正是最自然的重试动作，不能因为
-    // 「Map 里已经有了」就静默跳过。默认替身把成员判成不在群，因此不会进入
-    // “确证踢出”缓存，封禁也会重来一次：新加的群、上次失败/预封禁的群靠它补上。
+    // 「Map 里已经有了」就静默跳过。成员状态每次实时查询，封禁也必须重发，
+    // 让新加的群、上次失败的群和消息撤回都得到重新结算。
     expect(postDiskIO).toHaveBeenCalledTimes(2);
     expect(banChatMember).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
@@ -451,7 +420,7 @@ describe("/block 的黑名单落盘", () => {
   });
 
   test("自己人不可拉黑：超级管理员与白名单成员在入口就被挡住", async () => {
-    // 名单只增不删，解除要停进程手工改文件（docs/04-invariants.md）。回错一条
+    // 名单只增不删，解除要停进程手工改文件（docs/cn/04-invariants.md）。回错一条
     // 消息或用了过期的 @username 别名，就能把自己人永久锁在所有监听群之外，
     // 而机器人里没有任何撤销路径——只能在入口挡。
     for (const insiderId of [1, 100]) {

@@ -34,7 +34,14 @@ mock.module("@google/genai", () => ({
     readonly models = { generateContent };
   },
 }));
-mock.module("../../../packages/infra/config", () => ({ AI_CHAT_GEMINI_API_KEY: "test-key" }));
+mock.module("../../../packages/config/agent", () => ({
+  getAgentDeploymentConfig: () => ({
+    text: { provider: "google", apiKey: "text-key", baseUrl: "https://text.example", model: "text" },
+    summary: { provider: "google", apiKey: "summary-key", baseUrl: "https://google.example", model: "summary" },
+    media: { provider: "google", apiKey: "media-key", baseUrl: "https://google.example", model: "media" },
+    image: { provider: "google", apiKey: "image-key", baseUrl: "https://image.example", model: "image", imageProtocol: undefined },
+  }),
+}));
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
 }));
@@ -44,9 +51,12 @@ const {
   requestGeminiResult,
   requestGeminiTextResult,
 } = await import("../../../packages/aiChat/gemini/client");
+const { geminiClientCache } = await import("../../../packages/cache/workers/aiChat/gemini");
 
 describe("Gemini request safety settings", () => {
   beforeEach(() => {
+    geminiClientCache.current = null;
+    createdClientOptions.length = 0;
     generateContent.mockClear();
     loggerError.mockClear();
     generateContent.mockImplementation(async (): Promise<GenerateContentResponse> => geminiResponse({
@@ -55,7 +65,8 @@ describe("Gemini request safety settings", () => {
   });
 
   test("所有调用统一关闭四类可调概率拦截，并保留调用方其它 config", async () => {
-    const result = await requestGeminiResponse((): GenerateContentParameters => ({
+    expect(GEMINI_REQUEST_RETRY_ATTEMPTS).toBe(6);
+    const result = await requestGeminiResponse("summary", (): GenerateContentParameters => ({
       model: "gemini-test",
       contents: "hello",
       config: { temperature: 0.7 },
@@ -63,7 +74,9 @@ describe("Gemini request safety settings", () => {
 
     expect(result?.candidates?.[0]?.content?.parts?.[0]?.text).toBe("ok");
     expect(createdClientOptions).toHaveLength(1);
+    expect(createdClientOptions[0]?.apiKey).toBe("summary-key");
     expect(createdClientOptions[0]?.httpOptions).toEqual({
+      baseUrl: "https://google.example",
       timeout: GEMINI_REQUEST_TIMEOUT_MS,
       retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
     });
@@ -78,7 +91,7 @@ describe("Gemini request safety settings", () => {
   });
 
   test("systemInstruction 保持在 config 独立字段，不拼入普通对话 contents", async () => {
-    await requestGeminiResponse((): GenerateContentParameters => ({
+    await requestGeminiResponse("summary", (): GenerateContentParameters => ({
       model: "gemini-test",
       contents: "hello",
       config: { systemInstruction: "系统提示词" },
@@ -91,12 +104,12 @@ describe("Gemini request safety settings", () => {
 
   test("SDK API 错误和普通异常都返回 null，并保留可诊断日志", async () => {
     generateContent.mockRejectedValueOnce(new FakeApiError(429, "quota"));
-    expect(await requestGeminiResponse((): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test")).toBeNull();
+    expect(await requestGeminiResponse("summary", (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test")).toBeNull();
     expect(loggerError).toHaveBeenCalledWith("Gemini test error: 429 quota");
 
     loggerError.mockClear();
     generateContent.mockRejectedValueOnce(new Error("network"));
-    expect(await requestGeminiResponse((): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test")).toBeNull();
+    expect(await requestGeminiResponse("summary", (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test")).toBeNull();
     expect(loggerError).toHaveBeenCalledWith("Error calling Gemini test:", expect.any(Error));
   });
 
@@ -105,7 +118,7 @@ describe("Gemini request safety settings", () => {
       candidates: [{ finishReason: FinishReason.MAX_TOKENS, content: { role: "model", parts: [{ text: "partial" }] } }],
       usageMetadata: { thoughtsTokenCount: 12 },
     }));
-    const truncated = await requestGeminiResponse((): GenerateContentParameters => ({
+    const truncated = await requestGeminiResponse("summary", (): GenerateContentParameters => ({
       model: "gemini-test",
       contents: "hello",
       config: { maxOutputTokens: 100 },
@@ -115,12 +128,12 @@ describe("Gemini request safety settings", () => {
 
     loggerError.mockClear();
     generateContent.mockResolvedValueOnce(geminiResponse({ candidates: [{ finishReason: FinishReason.SAFETY }] }));
-    expect(await requestGeminiResponse((): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test")).toBeNull();
+    expect(await requestGeminiResponse("summary", (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test")).toBeNull();
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("finishReason=SAFETY"));
   });
 
   test("请求体自己抛错也归一成 ok:false，不越过这层边界", async () => {
-    // 请求体里要读 config/gemini.json 的模型名。这份部署配置写坏时，若请求体是在
+    // 请求体里要读 config/agent.json 的模型名。这份部署配置写坏时，若请求体是在
     // 调用方的对象字面量里求值，异常就抛在本函数之外：调用方拿不到 ok:false，
     // 异常一路穿过 session.request() 与 generateReply，最终被回复循环最外层的
     // .catch 吞掉——群里看到的是回复连同排队中的其余工具调用一起静默消失。
@@ -128,15 +141,17 @@ describe("Gemini request safety settings", () => {
       throw new Error("Invalid Gemini config: models.reply must be a non-empty string");
     };
 
-    const result = await requestGeminiResult(broken, "Gemini test");
+    const result = await requestGeminiResult("summary", broken, "Gemini test");
     expect(result).toMatchObject({ ok: false, failureKind: "request", diagnostic: "request failed" });
     // 请求根本没发出去，配额不该被记账。
     expect(generateContent).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith("Error calling Gemini test:", expect.any(Error));
 
     // 两个便捷边界同样吃到归一化后的失败，而不是异常。
-    expect(await requestGeminiResponse(broken, "Gemini test")).toBeNull();
-    await expect(requestGeminiTextResult(broken, "Gemini test", (text: string): string => text))
+    expect(await requestGeminiResponse("summary", broken, "Gemini test")).toBeNull();
+    await expect(requestGeminiTextResult({
+      capability: "summary", buildBody: broken, errorLabel: "Gemini test", normalize: (text: string): string => text,
+    }))
       .resolves.toEqual({ ok: false, retryable: false });
   });
 
@@ -148,7 +163,7 @@ describe("Gemini request safety settings", () => {
         content: { parts: [{ text: "不得消费" }, { functionCall: { name: "send_message" } }] },
       }],
     }));
-    const result = await requestGeminiResult((): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test");
+    const result = await requestGeminiResult("summary", (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test");
     expect(result).toMatchObject({
       ok: false,
       failureKind: "response",
@@ -159,28 +174,91 @@ describe("Gemini request safety settings", () => {
 
   test("文本业务重采样只接受成功请求中的不可用响应", async () => {
     generateContent.mockRejectedValueOnce(new Error("network"));
-    await expect(requestGeminiTextResult(
-      (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }),
-      "Gemini test",
-      (text: string): string => text
-    )).resolves.toEqual({ ok: false, retryable: false });
+    await expect(requestGeminiTextResult({
+      capability: "summary",
+      buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }),
+      errorLabel: "Gemini test",
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: false });
 
     generateContent.mockResolvedValueOnce(geminiResponse({
       candidates: [{ finishReason: FinishReason.SAFETY }],
     }));
-    await expect(requestGeminiTextResult(
-      (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }),
-      "Gemini test",
-      (text: string): string => text
-    )).resolves.toEqual({ ok: false, retryable: true });
+    await expect(requestGeminiTextResult({
+      capability: "summary",
+      buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }),
+      errorLabel: "Gemini test",
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: true });
 
     generateContent.mockResolvedValueOnce(geminiResponse({
       candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "  " }] } }],
     }));
-    await expect(requestGeminiTextResult(
-      (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }),
-      "Gemini test",
-      (text: string): string => text.trim()
-    )).resolves.toEqual({ ok: false, retryable: true });
+    await expect(requestGeminiTextResult({
+      capability: "summary",
+      buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }),
+      errorLabel: "Gemini test",
+      normalize: (text: string): string => text.trim(),
+    })).resolves.toEqual({ ok: false, retryable: true });
+  });
+
+  test("media 被确定性 4xx 拒绝时标记输入模态不受支持", async () => {
+    generateContent.mockRejectedValueOnce(new FakeApiError(400, "modality unsupported"));
+    await expect(requestGeminiTextResult({
+      capability: "media",
+      buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "media" }),
+      errorLabel: "Gemini media",
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "unsupported" });
+  });
+
+  test("普通媒体参数 400 不会被永久误判为能力不支持，也不推动探测退避", async () => {
+    generateContent.mockRejectedValueOnce(new FakeApiError(400, "invalid image payload"));
+    await expect(requestGeminiTextResult({
+      capability: "media",
+      buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "media" }),
+      errorLabel: "Gemini media",
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: false });
+  });
+
+  test("404/405 记成端点配置错误，与「模型不支持这种输入」分开", async () => {
+    for (const status of [404, 405]) {
+      generateContent.mockRejectedValueOnce(new FakeApiError(status, "model not found"));
+      await expect(requestGeminiTextResult({
+        capability: "media",
+        buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "media" }),
+        errorLabel: "Gemini media",
+        normalize: (text: string): string => text,
+      })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "misconfigured" });
+    }
+  });
+
+  test("端点故障（429/5xx/网络）对 media 归为瞬时，摘要那条不带模态结论", async () => {
+    for (const status of [429, 503]) {
+      generateContent.mockRejectedValueOnce(new FakeApiError(status, "upstream busy"));
+      await expect(requestGeminiTextResult({
+        capability: "media",
+        buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "media" }),
+        errorLabel: "Gemini media",
+        normalize: (text: string): string => text,
+      })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "transient" });
+    }
+    generateContent.mockRejectedValueOnce(new Error("socket hang up"));
+    await expect(requestGeminiTextResult({
+      capability: "media",
+      buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "media" }),
+      errorLabel: "Gemini media",
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "transient" });
+
+    // 摘要那条流水线与 media 端点能力无关：一次超时不得推动媒体模态进退避。
+    generateContent.mockRejectedValueOnce(new FakeApiError(503, "upstream busy"));
+    await expect(requestGeminiTextResult({
+      capability: "summary",
+      buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }),
+      errorLabel: "Gemini test",
+      normalize: (text: string): string => text,
+    })).resolves.toEqual({ ok: false, retryable: false });
   });
 });

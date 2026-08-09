@@ -4,15 +4,15 @@
  * 与 antiRaid/blocklistGuard.ts）。本模块负责「把这些 id 清出这个群」这一步：
  * 探测、封禁、失败重试，以及秒踢路径顺带的入群计数与公告清理。
  *
- * 放在 Worker 里的理由和验证超时踢人一样：请求走 joinVerificationApi，与普通
- * 消息发送分开排队（见 infra/telegram/client.ts）；而且不占主线程处理 update
- * 的时间——新晋管理员后的补扫是 O(名单长度) 次 getChatMember，压在主线程上
- * 会把那个群的更新车道堵住。
+ * 放在 Worker 里的理由和验证超时踢人一样：重试节奏、群停管代际与整批结算都由
+ * Anti-Raid owner 维护；每个 Telegram 调用只通过双工能力交给主线程总闸执行，
+ * Worker 等待网络时不阻塞 mailbox，主线程 update handler 也不等待整批补扫。
  *
- * 与本线程其它副作用共用同一条节奏：dispatch 里同步的部分立即返回，网络请求
- * 事后串行执行，绝不阻塞 mailbox——否则一波刷屏入群的后续投递会被网络往返卡住。
+ * 与本线程其它副作用共用同一条节奏：dispatch 里同步的部分立即返回，异步能力
+ * 请求事后串行交给主线程执行，绝不阻塞 mailbox——否则一波刷屏入群的后续投递
+ * 会被网络往返卡住。
  *
- * 三条与「一次失败就等于放人进群」直接相关的约束（见 docs/04-invariants.md）：
+ * 三条与「一次失败就等于放人进群」直接相关的约束（见 docs/cn/04-invariants.md）：
  * - 失败必须重试，且最终结果要回执给主线程。黑名单入群不开验证窗口，没有
  *   超时踢人兜底，处置是这个人被清出去的唯一机会。
  * - 探测失败不算「不在群」。只有确认不在群才跳过，其余一律照封。
@@ -44,7 +44,7 @@ import { trackAntiRaidTask } from "./taskTracker";
  * 单个 id 的处置结局。
  *
  * `forbidden` 从 `failed` 里单独分出来：那是「机器人在这个群封不了人」，主线程
- * 据此停掉这个群按时间的重试，只等一次确证的权限变更（见 docs/04-invariants.md）。
+ * 据此停掉这个群按时间的重试，只等一次确证的权限变更（见 docs/cn/04-invariants.md）。
  * `targetIsAdmin` 又从 `forbidden` 里分出来：Telegram 对「目标本身是管理员」返回
  * 的也是 400 `not enough rights`，混在一起就意味着一个封不掉的管理员会把**整个群**
  * 的黑名单清扫永久闩死——此后补扫早退、重扫请求被拒、每次重启跳过重放，而唯一
@@ -152,8 +152,8 @@ async function removeBlockedMembers({
   for (let index: number = 0; index < userIds.length; index++) {
     // 群已被停管：整批放弃，且不算完成——重新接管后会有新的边沿再扫一次。
     if (currentBlocklistRemovalEpoch(chatId) !== epoch) return { complete: false, permissionDenied, targetIsAdmin };
-    // 补扫可能有几千个 id，且与验证超时踢人共用同一条限流队列；每批之间让一步，
-    // 给排在后面的踢人请求留出插空的机会。
+    // 补扫可能有几千个 id，且与验证超时踢人共用 kick 类别的 429 FIFO；每批
+    // 之间让一步，给同 owner 的其它安全动作与 Worker mailbox 留出调度机会。
     if (index > 0 && index % BLOCKLIST_SWEEP_BATCH_SIZE === 0) {
       await Bun.sleep(BLOCKLIST_SWEEP_BATCH_PAUSE_MS);
     }
@@ -165,7 +165,7 @@ async function removeBlockedMembers({
       permissionDenied = true;
       // 机器人在这个群根本封不了人，剩下的 id 只会一个个撞上同一句 400。补扫
       // 可能有几千个 id，每个两次注定失败的请求外加分批暂停，全压在与验证超时
-      // 踢人共用的队列上——发现这件事的这一次补扫本身就是要避免的那场风暴。
+      // 踢人共用的 kick 类别上——发现这件事的这一次补扫本身就是要避免的风暴。
       break;
     } else if (outcome === "targetIsAdmin") {
       // 就地结算：这个 id 在这个群封不掉，但那是他自己的管理员身份决定的，
@@ -185,9 +185,9 @@ async function removeBlockedMembers({
   // 确证没有删消息权限时一条请求都不发（三态里只拦确证的 false，理由见
   // ./botPermissions.ts）：机器人完全可能是「有 can_restrict_members、没有
   // can_delete_messages」的管理员，那种群里每个黑名单入群都换来一次注定 400 的
-  // 删除，而这些请求排在与验证超时踢人共用的 joinVerificationApi FIFO 队列上——
-  // 一波协同入群时，它们会把真正的踢人顶到验证窗口之后，公告本身照样删不掉。
-  // 与 adDetect/disposal.ts 和验证处置路径共用同一道闸。
+  // 删除。它们虽与踢人分属独立 429 类别，注定失败的请求仍会白占网络、日志和
+  // 停机预算，公告本身照样删不掉。权限闸与 adDetect/disposal.ts 和验证处置
+  // 路径共用同一口径。
   if (
     announcementMessageId !== undefined &&
     currentBlocklistRemovalEpoch(chatId) === epoch &&

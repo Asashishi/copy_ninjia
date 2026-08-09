@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { BotChatPermissions } from "../../../packages/types/telegram";
 import type { FloodCandidateMessage } from "../../../packages/types/antiRaid";
+import type { FloodWindowEntry } from "../../../packages/types/antiRaid/internal";
 
 const errorLogs: string[] = [];
 const sentTexts: string[] = [];
-const deleteAfterCalls: { chatId: number; messageId: number; delayMs: number }[] = [];
-const deletedMessages: { chatId: number; messageId: number }[] = [];
-const deletedBatches: { chatId: number; messageIds: number[] }[] = [];
-/** 每条公告请求带的取消信号；公告与验证踢人共用同一条按群限流队列。 */
+const deleteAfterCalls: {
+  chatId: number;
+  messageId: number;
+  delayMs: number;
+  api?: unknown;
+  batchOnFlush?: boolean;
+}[] = [];
+/** 每条公告请求带的取消信号；公告可能等待 grammY 消息桶。 */
 const noticeSignals: (AbortSignal | undefined)[] = [];
 const muteCalls: { chatId: number; userId: number; mutedUntil: number }[] = [];
 
@@ -18,7 +23,7 @@ let muteOutcome: "muted" | "forbidden" | "failed" = "muted";
 /** 模拟三态之外的意外异常，验证处置的兜底 catch。 */
 let muteThrows: boolean = false;
 let noticeMessageId: number | undefined = 500;
-/** 把下一次禁言/身份确证卡在途中，模拟「请求还排在按群限流桶里」的那段窗口。 */
+/** 把下一次禁言/身份确证卡在途中，模拟网络或分类 429 退避尚未结算的窗口。 */
 let holdMute: boolean = false;
 let releaseMute: (() => void) | undefined;
 let holdAdminFetch: boolean = false;
@@ -54,32 +59,42 @@ mock.module("../../../packages/infra/telegram", () => ({
     sentTexts.push(params.text);
     return noticeMessageId;
   },
-  deleteMessageAfter: (params: { chatId: number; messageId: number; delayMs: number }): void => {
-    deleteAfterCalls.push({ chatId: params.chatId, messageId: params.messageId, delayMs: params.delayMs });
-  },
-  // 公告自撤走的是登记版 scheduleNoticeDeletion（见 antiRaid/noticeCleanup.ts）；
-  // 到点自己触发的那条走单发 deleteMessage。
-  deleteMessage: async (chatId: number, messageId: number): Promise<boolean> => {
-    deletedMessages.push({ chatId, messageId });
-    return true;
-  },
-  // 停机 flush 按「客户端 + 群」合批：同一个群的删除全排在同一条限流桶里
-  // （1 请求/秒），逐条发的话几条公告就足以把 drain 拖过预算。
-  deleteMessages: async (chatId: number, messageIds: readonly number[]): Promise<boolean> => {
-    deletedBatches.push({ chatId, messageIds: [...messageIds] });
-    return true;
+  deleteMessageAfter: (params: {
+    chatId: number;
+    messageId: number;
+    delayMs: number;
+    api?: unknown;
+    batchOnFlush?: boolean;
+  }): void => {
+    deleteAfterCalls.push(params);
   },
 }));
+const fetchAdminIds = async (chatId: number): Promise<Set<number>> => {
+  if (holdAdminFetch) {
+    holdAdminFetch = false;
+    await new Promise<void>((resolve) => { releaseAdminFetch = resolve; });
+  }
+  const admins: Set<number> | undefined = fetchedAdmins.get(chatId);
+  if (!admins) throw new Error("admin fetch failed");
+  return admins;
+};
+
 mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
   freshAdminIds: (chatId: number): Set<number> | undefined => cachedAdmins.get(chatId),
-  fetchAdminIds: async (chatId: number): Promise<Set<number>> => {
-    if (holdAdminFetch) {
-      holdAdminFetch = false;
-      await new Promise<void>((resolve) => { releaseAdminFetch = resolve; });
+  fetchAdminIds,
+  // 三态契约的替身：先看缓存、冷了才现拉，拉不到一律 undefined（=没查出来，
+  // 别处置）。真实现见 packages/workers/antiRaid/adminCache.ts 的 isChatAdmin，
+  // 那边由 test/workers/antiRaid/adminCache.test.ts 单独钉住。
+  isChatAdmin: async (chatId: number, userId: number): Promise<boolean | undefined> => {
+    const cached: Set<number> | undefined = cachedAdmins.get(chatId);
+    if (cached !== undefined) return cached.has(userId);
+    try {
+      return (await fetchAdminIds(chatId)).has(userId);
+    } catch {
+      // 文案与真实现保持一致：下面有用例断言这一行确实进了 logs/。
+      errorLogs.push(`Failed to check admin exemption for flooding user ${userId} in chat ${chatId}:`);
+      return undefined;
     }
-    const admins: Set<number> | undefined = fetchedAdmins.get(chatId);
-    if (!admins) throw new Error("admin fetch failed");
-    return admins;
   },
 }));
 
@@ -98,12 +113,10 @@ const {
   forgetWorkerBotPermissions,
   resetWorkerBotPermissions,
 } = await import("../../../packages/workers/antiRaid/botPermissions");
-const { floodWindowsByMember } = await import("../../../packages/cache/workers/antiRaid/flood");
 const {
-  flushPendingNoticeDeletions,
-  resetPendingNoticeDeletions,
-} = await import("../../../packages/workers/antiRaid/noticeCleanup");
-const { pendingNoticeDeletions } = await import("../../../packages/cache/workers/antiRaid/notices");
+  floodWindowCacheStateHolder,
+  floodWindowsByChat,
+} = await import("../../../packages/cache/workers/antiRaid/flood");
 const { antiRaidInFlightTasks } = await import("../../../packages/cache/workers/antiRaid/tasks");
 const {
   quiesceAntiRaidDispatch,
@@ -122,6 +135,11 @@ function candidate(chatId: number = -1001, userId: number = 7): FloodCandidateMe
   return { type: "floodCandidate", chatId, userId, label: "刷屏怪" };
 }
 
+/** 测试读取分层数值索引，不在断言里重新引入生产已移除的复合字符串键。 */
+function floodEntry(chatId: number, userId: number): FloodWindowEntry | undefined {
+  return floodWindowsByChat.get(chatId)?.get(userId);
+}
+
 /** 连投 count 条并等待派生的后台任务结算。 */
 async function flood(count: number, message: FloodCandidateMessage = candidate()): Promise<void> {
   for (let i: number = 0; i < count; i++) handleFloodCandidate(message);
@@ -136,10 +154,7 @@ beforeEach(() => {
   errorLogs.length = 0;
   sentTexts.length = 0;
   deleteAfterCalls.length = 0;
-  deletedMessages.length = 0;
-  deletedBatches.length = 0;
   noticeSignals.length = 0;
-  resetPendingNoticeDeletions();
   muteCalls.length = 0;
   muteOutcome = "muted";
   muteThrows = false;
@@ -159,83 +174,114 @@ beforeEach(() => {
 afterEach(() => {
   resetFloodWindows();
   resetWorkerBotPermissions();
-  resetPendingNoticeDeletions();
 });
 
 describe("刷屏发言窗口", () => {
   test("差一条不算刷屏，压垮窗口的那一条才交回条目供调用方置抑制位", () => {
     for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT - 1; i++) {
-      expect(observeMemberMessage("-1001:7", 1_000 + i)).toBeUndefined();
+      expect(observeMemberMessage(-1001, 7, 1_000 + i)).toBeUndefined();
     }
-    expect(observeMemberMessage("-1001:7", 1_000 + FLOOD_MESSAGE_LIMIT))
-      .toBe(floodWindowsByMember.get("-1001:7")!);
+    expect(observeMemberMessage(-1001, 7, 1_000 + FLOOD_MESSAGE_LIMIT))
+      .toBe(floodEntry(-1001, 7)!);
   });
 
   test("命中后窗口整体清空：禁言没打成时也要再刷满一整个窗口才会重来", () => {
-    for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT; i++) observeMemberMessage("-1001:7", 1_000 + i);
-    expect(floodWindowsByMember.get("-1001:7")?.timestamps.size).toBe(0);
+    for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT; i++) {
+      observeMemberMessage(-1001, 7, 1_000 + i);
+    }
+    expect(floodEntry(-1001, 7)?.timestamps.size).toBe(0);
 
-    expect(observeMemberMessage("-1001:7", 2_000)).toBeUndefined();
-    expect(floodWindowsByMember.get("-1001:7")?.timestamps.size).toBe(1);
+    expect(observeMemberMessage(-1001, 7, 2_000)).toBeUndefined();
+    expect(floodEntry(-1001, 7)?.timestamps.size).toBe(1);
   });
 
   test("滑出一分钟窗口的发言不再累计", () => {
-    for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT - 1; i++) observeMemberMessage("-1001:7", 1_000);
-    expect(observeMemberMessage("-1001:7", 1_000 + FLOOD_WINDOW_MS)).toBeUndefined();
-    expect(floodWindowsByMember.get("-1001:7")?.timestamps.size).toBe(1);
+    for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT - 1; i++) {
+      observeMemberMessage(-1001, 7, 1_000);
+    }
+    expect(observeMemberMessage(-1001, 7, 1_000 + FLOOD_WINDOW_MS)).toBeUndefined();
+    expect(floodEntry(-1001, 7)?.timestamps.size).toBe(1);
   });
 
   test("抑制期内到达的消息既不计数也不重复触发", () => {
-    observeMemberMessage("-1001:7", 1_000);
-    const entry = floodWindowsByMember.get("-1001:7");
+    observeMemberMessage(-1001, 7, 1_000);
+    const entry: FloodWindowEntry | undefined = floodEntry(-1001, 7);
     expect(entry).toBeDefined();
     entry!.suppressedUntil = 1_000 + FLOOD_MUTE_DURATION_MS;
 
     for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT * 2; i++) {
-      expect(observeMemberMessage("-1001:7", 2_000 + i)).toBeUndefined();
+      expect(observeMemberMessage(-1001, 7, 2_000 + i)).toBeUndefined();
     }
     expect(entry!.timestamps.size).toBe(1);
   });
 
   test("群与成员各自计数，互不连累", () => {
-    for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT - 1; i++) observeMemberMessage("-1001:7", 1_000 + i);
-    expect(observeMemberMessage("-2002:7", 1_100)).toBeUndefined();
-    expect(observeMemberMessage("-1001:8", 1_100)).toBeUndefined();
-    expect(observeMemberMessage("-1001:7", 1_100)).toBeDefined();
+    for (let i: number = 0; i < FLOOD_MESSAGE_LIMIT - 1; i++) {
+      observeMemberMessage(-1001, 7, 1_000 + i);
+    }
+    expect(observeMemberMessage(-2002, 7, 1_100)).toBeUndefined();
+    expect(observeMemberMessage(-1001, 8, 1_100)).toBeUndefined();
+    expect(observeMemberMessage(-1001, 7, 1_100)).toBeDefined();
   });
 
-  test("条目数达到硬顶后按 LRU 淘汰", () => {
+  test("条目数达到全局硬顶后跨群按精确 LRU 淘汰", () => {
     for (let member: number = 1; member <= FLOOD_WINDOW_MAX_MEMBERS; member++) {
-      observeMemberMessage(`-1001:${member}`, 1_000);
+      observeMemberMessage(-1001, member, 1_000);
     }
-    observeMemberMessage("-1001:1", 2_000);
-    observeMemberMessage(`-1001:${FLOOD_WINDOW_MAX_MEMBERS + 1}`, 2_000);
+    observeMemberMessage(-1001, 1, 2_000);
+    observeMemberMessage(-2002, 1, 2_000);
 
-    expect(floodWindowsByMember.size).toBe(FLOOD_WINDOW_MAX_MEMBERS);
-    expect(floodWindowsByMember.has("-1001:1")).toBeTrue();
-    expect(floodWindowsByMember.has("-1001:2")).toBeFalse();
+    expect(floodWindowCacheStateHolder.current.entryCount).toBe(FLOOD_WINDOW_MAX_MEMBERS);
+    expect(floodEntry(-1001, 1)).toBeDefined();
+    expect(floodEntry(-1001, 2)).toBeUndefined();
+    expect(floodEntry(-2002, 1)).toBeDefined();
   });
 
   test("统一 sweep 删掉空闲满一个窗口的条目，仍在抑制期的留到抑制结束", () => {
-    observeMemberMessage("-1001:7", 1_000);
-    observeMemberMessage("-1001:8", 1_000);
-    floodWindowsByMember.get("-1001:8")!.suppressedUntil = 1_000 + FLOOD_MUTE_DURATION_MS;
+    observeMemberMessage(-1001, 7, 1_000);
+    observeMemberMessage(-1001, 8, 1_000);
+    floodEntry(-1001, 8)!.suppressedUntil = 1_000 + FLOOD_MUTE_DURATION_MS;
 
     expect(sweepFloodWindows(1_000 + FLOOD_WINDOW_MS)).toBe(0);
     expect(sweepFloodWindows(1_001 + FLOOD_WINDOW_MS)).toBe(1);
-    expect(floodWindowsByMember.has("-1001:7")).toBeFalse();
+    expect(floodEntry(-1001, 7)).toBeUndefined();
     // 抑制还没到点：条目要留着，删掉就等于让抑制提前失效。
-    expect(floodWindowsByMember.has("-1001:8")).toBeTrue();
+    expect(floodEntry(-1001, 8)).toBeDefined();
     expect(sweepFloodWindows(2_000 + FLOOD_MUTE_DURATION_MS)).toBe(1);
+    expect(floodWindowCacheStateHolder.current.entryCount).toBe(0);
   });
 
   test("停管/`/init disable` 丢掉该群全部窗口，别的群不受影响", () => {
-    observeMemberMessage("-1001:7", 1_000);
-    observeMemberMessage("-1001:8", 1_000);
-    observeMemberMessage("-2002:7", 1_000);
+    observeMemberMessage(-1001, 7, 1_000);
+    observeMemberMessage(-1001, 8, 1_000);
+    observeMemberMessage(-2002, 7, 1_000);
 
     clearChatFloodWindows(-1001);
-    expect([...floodWindowsByMember.keys()]).toEqual(["-2002:7"]);
+    expect([...floodWindowsByChat.keys()]).toEqual([-2002]);
+    expect(floodWindowCacheStateHolder.current.entryCount).toBe(1);
+    const remaining: FloodWindowEntry | undefined = floodEntry(-2002, 7);
+    expect(floodWindowCacheStateHolder.current.newest).toBe(remaining!);
+    expect(floodWindowCacheStateHolder.current.oldest).toBe(remaining!);
+    expect(remaining?.lruNewer).toBeNull();
+    expect(remaining?.lruOlder).toBeNull();
+  });
+
+  test("reset 摘掉外部仍持有条目的 LRU 引用，避免一条在途任务留住整张表", () => {
+    observeMemberMessage(-1001, 7, 1_000);
+    observeMemberMessage(-1001, 8, 1_001);
+    const retained: FloodWindowEntry | undefined = floodEntry(-1001, 7);
+    expect(retained?.lruNewer).toBeDefined();
+
+    resetFloodWindows();
+
+    expect(retained?.lruNewer).toBeNull();
+    expect(retained?.lruOlder).toBeNull();
+    expect(floodWindowsByChat.size).toBe(0);
+    expect(floodWindowCacheStateHolder.current).toEqual({
+      entryCount: 0,
+      newest: null,
+      oldest: null,
+    });
   });
 });
 
@@ -268,39 +314,36 @@ describe("刷屏禁言的处置", () => {
     expect(muteCalls[0]).toMatchObject({ chatId: -1001, userId: 7 });
     expect(muteCalls[0]!.mutedUntil).toBeGreaterThan(Date.now());
     expect(sentTexts).toEqual([formatFloodMuteNotice("刷屏怪")]);
-    // 公告不再走裸 deleteMessageAfter：那种定时器活在 Worker 的 isolate 里，
-    // 崩溃重建或进程重启就把它丢了，公告永久留在群里点着人名。
-    expect(deleteAfterCalls).toHaveLength(0);
-    expect([...pendingNoticeDeletions].map((entry) => ({
-      chatId: entry.chatId,
-      messageId: entry.messageId,
-    }))).toEqual([{ chatId: -1001, messageId: 500 }]);
-
-    // 停机 drain 前的 flush 把没到点的公告就地兑现，册子随即清空。
-    expect(flushPendingNoticeDeletions()).toBe(1);
-    expect(deletedBatches).toEqual([{ chatId: -1001, messageIds: [500] }]);
-    expect(pendingNoticeDeletions.size).toBe(0);
+    expect(deleteAfterCalls).toEqual([{
+      chatId: -1001,
+      messageId: 500,
+      delayMs: FLOOD_MUTE_DURATION_MS,
+      api: { kind: "guard-api" },
+      batchOnFlush: true,
+    }]);
   });
 
   test("回归用例：停机 flush 按群合批，几条公告只花一个请求——逐条发会把 drain 拖过预算", async () => {
     // 同一个群里几名成员在三分钟内接连刷屏，册子上就攒下好几条待删公告。它们
-    // 共用同一条按群限流桶（1 请求/秒），逐条发至少要 N 秒结算，而 drain 的预算
-    // 是秒级：超时即脏退出 + 整批 update 重投。
+    // 逐条删除会产生 N 个 delete 类请求；该类别若正处于 429 恢复期，秒级 drain
+    // 很容易耗尽并换来脏退出 + 整批 update 重投。
     for (const [index, userId] of [11, 12, 13, 14].entries()) {
       noticeMessageId = 600 + index;
       await flood(FLOOD_MESSAGE_LIMIT, candidate(-1001, userId));
     }
-    // 另一个群单独一条：限流按群分桶，跨群本来就并行，因此各自一个请求。
+    // 另一个群单独一条：deleteMessages 不能跨 chat 合批，因此各自一个请求。
     applyBotPermissionsChange(-1002, FULL_RIGHTS);
     cachedAdmins.set(-1002, new Set([42]));
     noticeMessageId = 700;
     await flood(FLOOD_MESSAGE_LIMIT, candidate(-1002, 21));
 
-    expect(flushPendingNoticeDeletions()).toBe(5);
-    expect(deletedBatches).toEqual([
-      { chatId: -1001, messageIds: [600, 601, 602, 603] },
-      { chatId: -1002, messageIds: [700] },
-    ]);
+    expect(deleteAfterCalls.map((entry) => [entry.chatId, entry.messageId]))
+      .toEqual([
+        [-1001, 600], [-1001, 601], [-1001, 602], [-1001, 603],
+        [-1002, 700],
+      ]);
+    expect(deleteAfterCalls.every((entry): boolean => entry.batchOnFlush === true))
+      .toBeTrue();
   });
 
   test("禁言期间还在路上的消息不会换来第二次禁言", async () => {
@@ -345,7 +388,7 @@ describe("刷屏禁言的处置", () => {
     await flood(FLOOD_MESSAGE_LIMIT);
     expect(muteCalls).toHaveLength(1);
     expect(sentTexts).toBeEmpty();
-    expect(pendingNoticeDeletions.size).toBe(0);
+    expect(deleteAfterCalls).toBeEmpty();
 
     // 限流/抖动是瞬时失败：抑制位回滚，再刷满一整个窗口会重试。
     muteOutcome = "muted";
@@ -375,7 +418,7 @@ describe("刷屏禁言的处置", () => {
     noticeMessageId = undefined;
     await flood(FLOOD_MESSAGE_LIMIT);
     expect(muteCalls).toHaveLength(1);
-    expect(pendingNoticeDeletions.size).toBe(0);
+    expect(deleteAfterCalls).toBeEmpty();
   });
 
   test("处置意外抛错时回滚抑制位并留下诊断，下一个满窗口照常重试", async () => {
@@ -397,10 +440,9 @@ describe("刷屏禁言的处置", () => {
     expect(antiRaidInFlightTasks.size).toBe(0);
   });
 
-  test("回归用例：公告也带派发截止时间——它和验证踢人挤同一条按群 FIFO 队列", async () => {
-    // 协同突袭里几十条公告排在前面，验证的 kickChatMember 就得等它们发完，未验证
-    // 的突袭号因此活过 VERIFICATION_TIMEOUT_MS。带上截止时间，排太久的公告被丢掉
-    // 时也就把那个位置腾给了安全动作（见 FLOOD_NOTICE_DISPATCH_TIMEOUT_MS）。
+  test("回归用例：公告也带派发截止时间，不能在消息桶里排成迟到噪音", async () => {
+    // 公告与验证提醒等功能性消息共享 grammY message 桶，但踢人使用独立 kick
+    // 类别。带上截止时间可让过时公告腾出消息位且不拖住 drain。
     await flood(FLOOD_MESSAGE_LIMIT);
 
     expect(sentTexts).toHaveLength(1);
@@ -418,7 +460,7 @@ describe("刷屏禁言的处置", () => {
   });
 
   test("回归用例：禁言已经排上队时 drain 就地撤掉它，不发那条公告", async () => {
-    // 请求按设计最长排 FLOOD_MUTE_DISPATCH_TIMEOUT_MS（4 分钟），而 drain 的预算是
+    // 请求按设计最长排 FLOOD_MUTE_DISPATCH_TIMEOUT_MS（2 分钟），而 drain 的预算是
     // ANTI_RAID_BARRIER_TIMEOUT_MS 那一档的秒级数值：不撤掉就是每次撞上都换来一次
     // 脏退出（offset 不确认、非零状态）加一批 update 重投。
     holdMute = true;
@@ -431,7 +473,7 @@ describe("刷屏禁言的处置", () => {
     await Promise.allSettled([...antiRaidInFlightTasks]);
 
     expect(sentTexts).toBeEmpty();
-    expect(pendingNoticeDeletions.size).toBe(0);
+    expect(deleteAfterCalls).toBeEmpty();
   });
 
   test("回归用例：身份确证期间群被停管，就不再禁言、也不往那个群里说话", async () => {

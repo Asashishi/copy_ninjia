@@ -7,8 +7,10 @@ const loggerLog = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../packages/infra/telegram", () => ({
-  bot: { api: { setMessageReaction } },
   logApiError,
+}));
+mock.module("../../packages/infra/telegram/mainClient", () => ({
+  bot: { api: { setMessageReaction } },
 }));
 mock.module("../../packages/infra/logger", () => ({
   logger: { log: loggerLog, info: mock(() => {}), warn: mock(() => {}), error: loggerError },
@@ -79,7 +81,7 @@ describe("Telegram reaction 同步队列", () => {
     await expect(drainReactionQueue(0)).resolves.toBe("timedOut");
     await waitForIdle();
 
-    // abort 后不再重试，未开始的任务全部结算，见 docs/04-invariants.md 停机不变量。
+    // abort 后不再重试，未开始的任务全部结算，见 docs/cn/04-invariants.md 停机不变量。
     expect(setMessageReaction).toHaveBeenCalledTimes(1);
     expect(pendingTasks.size).toBe(0);
     expect(pendingReactionWaiters.size).toBe(0);

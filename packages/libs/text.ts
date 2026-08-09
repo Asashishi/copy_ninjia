@@ -4,6 +4,7 @@
  */
 
 import { graphemeSegmenterHolder } from "../cache/perThread/text";
+import { neutralizeRenderableCommands } from "./renderableCommand";
 
 /**
  * 折叠为一个空格的「空白」集合：JS 的 `\s`，外加 U+0085 (NEL)。
@@ -54,15 +55,23 @@ export function sanitizeInline(raw: string): string {
 const BIDI_CONTROL_PATTERN: RegExp = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 
 /**
- * 显示名清洗：剥掉双向控制符后再压成单行。
+ * 显示名清洗：剥掉双向控制符、中和可点击命令，再压成单行。
  *
  * 昵称由用户自己设置，却会被拼进机器人撰写的句子、并作为 text_link 的锚文本
- * （见 commands/cjkAction.ts）。一个 RLO 就能让整句的其余部分反向渲染，使
- * 「发起人 X了 目标」在视觉上主宾颠倒、两个人名各自的主页链接看起来挂错人。
+ * （见 commands/cjkAction.ts）。两类注入都出在这里：
+ *
+ * 1. 一个 RLO 就能让整句的其余部分反向渲染，使「发起人 X了 目标」在视觉上主宾
+ *    颠倒、两个人名各自的主页链接看起来挂错人。
+ * 2. 一个叫 `/batch_kick 1d` 的昵称会让机器人自己印出一条可点击命令——`/咬` 的
+ *    成功回执是用户明确授权长期保留的（见 infra/telegram/commandMessages.ts），
+ *    那条一键入口就会一直挂在群里等超级管理员误触。中和放在这一层而不是各调用
+ *    点：所有拼进机器人文案的昵称、频道名、群标题都已经过这里，只有守住这个
+ *    唯一入口才不会像之前那样一边守两道、另一边一道没有。
+ *
  * 空白折叠的规则与 sanitizeInline 共用，不另写一份。
  */
 export function sanitizeDisplayName(raw: string): string {
-  return sanitizeInline(raw.replace(BIDI_CONTROL_PATTERN, ""));
+  return sanitizeInline(neutralizeRenderableCommands(raw.replace(BIDI_CONTROL_PATTERN, "")));
 }
 
 /**

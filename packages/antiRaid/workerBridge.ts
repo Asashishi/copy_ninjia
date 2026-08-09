@@ -2,6 +2,7 @@ import { logger } from "../infra/logger";
 import {
   clearChatStateField,
   getAllChatStates,
+  getChatState,
   getOrCreateChatState,
   saveState,
   saveStateInBackground,
@@ -17,7 +18,7 @@ import {
   LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS,
 } from "../consts/antiRaid/protocol";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../consts/diskIO/common";
-import { superviseWorker } from "../libs/supervisedWorker";
+import { superviseDuplexWorker } from "../libs/supervisedDuplexWorker";
 import { WorkerUndeliveredError } from "../libs/workerDelivery";
 import {
   onDiskIORespawn,
@@ -37,6 +38,7 @@ import {
   acceptVerificationUpsert,
 } from "./verificationMirror";
 import { handleAdDetected } from "./adDetect";
+import { adDetectAgentConfigSnapshot } from "../config/agent";
 import {
   replayPendingBlockedRemovals,
   settleBlockedRemoval,
@@ -46,6 +48,7 @@ import {
   emergencyLockdownRecoveryRuntime,
   pendingLockdownPersistence,
   persistedLockdownFingerprints,
+  queuedLockdownPersistence,
 } from "../cache/main/antiRaid/lockdownMirror";
 import {
   activeVerificationSnapshots,
@@ -63,6 +66,12 @@ import type {
 import type { PersistedLockdownFingerprint } from "../types/antiRaid/internal";
 import type { LockdownRecord } from "../types/chatState";
 import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
+import type { WorkerDuplexInbound } from "../types/workerDuplex";
+import type { TelegramWorkerRequest } from "../types/telegramWorker";
+import {
+  handleAntiRaidWorkerTelegramRequest,
+  telegramWorkerResponseTransfer,
+} from "../infra/telegram/workerRequests";
 import type {
   DiskIORecoveryTransport,
   VerificationPersistedReply,
@@ -72,10 +81,10 @@ import type {
  * 入群守卫 Worker 桥接（主线程侧代理）：入群验证 + 反刷群私密模式。真正的逻辑
  * ——验证窗口、超时踢人、按钮应答、入群计数、私密模式的触发/恢复、
  * 私密模式期间的删公告 + 踢人——全部在独立的 Bun Worker
- * （packages/workers/antiRaidWorker.ts）里执行；正常路径下主线程只从 grammY
- * 更新里提取出无状态的事件投递过去，不发起 Telegram API 调用，让更新
- * 调度不被入群守卫的突发 API 流量抢占。唯一例外是 Worker 耗尽重建预算
- * 后的紧急解锁：主线程只接管已经持久化在镜像里的邀请权限恢复。
+ * （packages/workers/antiRaidWorker.ts）里解释；主线程从 grammY 更新提取无状态
+ * 事件投递过去，并通过反向能力请求执行 Worker 发起的全部 Telegram API 调用。
+ * 原始 update handler 不等待这些网络往返；Worker 耗尽重建预算后的紧急解锁
+ * 仍由主线程接管已经持久化在镜像里的邀请权限恢复。
  * postMessage 按 FIFO 送达，同一次入群「先 join、后 message/callback」的
  * 先后顺序在 Worker 侧保持不变。
  *
@@ -99,20 +108,36 @@ function buildAdoptVerificationsMessage(generation: number, resumePersistedTermi
 }
 
 /**
+ * 把进程内唯一那一代 ad_detect 配置交给（新）Worker，**排在所有投递的最前面**。
+ *
+ * 数据源是主线程启动总闸解析出来的快照，进程生命周期内不变，因此重建时重放的
+ * 与首次投递的是同一份：Worker 侧永远不重新读 config/agent.json，改配置必须整
+ * 进程重启（见 config/agent.ts 的边界说明）。未配置时投递显式 null。
+ */
+function replayAdDetectAgentConfig(postTo: (message: AntiRaidWorkerMessage) => boolean): boolean {
+  return postTo({ type: "agentConfig", adDetect: adDetectAgentConfigSnapshot() });
+}
+
+/**
  * 把这个群当前的锁定意图写进 state.json，落定后回执给 Worker。
  *
  * 循环是「存下去 → 再看一眼还是不是同一份意图」的对账：不是就带着新意图重存
  * 一次。指纹只含 phase + intentId（见 cache/main/antiRaid/lockdownMirror.ts），因此重来一轮意味着
  * 状态机真的推进了一个阶段——事件驱动、次数有界。轮次上限只是兜底：万一将来
  * 有谁把一个高频变动的字段加回指纹，宁可这个群的握手停下并留一行错误日志，
- * 也不能让主线程陷在「每轮两次带 fsync 的整文件重写」里出不来。停下不是终局，
- * 下一条 lockdown 事件会重新进来。
+ * 也不能让主线程陷在「每轮两次带 fsync 的整文件重写」里出不来。期间收到过
+ * 新事件时，finally 会让出当前微任务后续跑最新意图，避免丢失最后一次唤醒。
  */
 function persistCurrentLockdown(chatId: number): void {
-  if (pendingLockdownPersistence.has(chatId)) return;
+  if (pendingLockdownPersistence.has(chatId)) {
+    queuedLockdownPersistence.add(chatId);
+    return;
+  }
   pendingLockdownPersistence.add(chatId);
   void (async (): Promise<void> => {
     for (let round: number = 0; round < LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS; round++) {
+      // 消费本轮快照之前的变更；await saveState 期间若又有事件，会重新置位。
+      queuedLockdownPersistence.delete(chatId);
       const expected: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
       if (expected === undefined) return;
       const expectedFingerprint: PersistedLockdownFingerprint = lockdownFingerprint(expected);
@@ -131,7 +156,7 @@ function persistCurrentLockdown(chatId: number): void {
     }
     logger.error(
       `Anti-raid lockdown intent for chat ${chatId} kept changing across ` +
-      `${LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS} durability rounds; giving up until the next lockdown event.`
+      `${LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS} durability rounds; yielding before retrying the latest intent.`
     );
   })()
     .catch((error: unknown): void => {
@@ -139,13 +164,19 @@ function persistCurrentLockdown(chatId: number): void {
     })
     .finally((): void => {
       pendingLockdownPersistence.delete(chatId);
+      const rerun: boolean = queuedLockdownPersistence.delete(chatId);
+      if (rerun && antiRaidRuntimeState.initialized) {
+        queueMicrotask((): void => persistCurrentLockdown(chatId));
+      }
     });
 }
 
-const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: SupervisedWorkerHandle<AntiRaidWorkerMessage> = superviseWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent>({
+const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: SupervisedWorkerHandle<WorkerDuplexInbound<AntiRaidWorkerMessage>> = superviseDuplexWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent, TelegramWorkerRequest>({
   url: new URL("../workers/antiRaidWorker.ts", import.meta.url).href,
   label: "Anti-raid guard Worker",
   giveUpConsequence: "join verification and anti-raid features will silently stay disabled until the process restarts.",
+  handleRequest: handleAntiRaidWorkerTelegramRequest,
+  responseTransfer: telegramWorkerResponseTransfer,
   onEvent: (event: AntiRaidWorkerEvent): void => {
     switch (event.type) {
       case "lockdown": {
@@ -203,7 +234,11 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
         persistedVerificationRevisions.set(key, { generation, revision: record.revision });
       }
     }
-    // 权限镜像排在第一次投递：新 isolate 的那张表是空的，而空表按契约等于
+    // 配置快照排在一切投递之前：广告判定逐条候选消息取模型名与凭据，晚一条
+    // 消息就意味着重生后紧接着到达的候选无从判定。同样必须排在代际提升与快照
+    // 重打之后（理由见下一段）。
+    if (!replayAdDetectAgentConfig(postToNext)) return;
+    // 权限镜像排在业务投递之前：新 isolate 的那张表是空的，而空表按契约等于
     // 「什么都做不了」。FIFO 保证它先于随后的 adopt 与新到的刷屏计数生效。
     // **必须排在代际提升与快照重打之后**：那两步在原实现里是无条件执行的，
     // 提前 return 会让本次重生既没提升代际、也没重打快照，而 activeVerification-
@@ -213,7 +248,11 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
     if (!replayChatKinds(postToNext)) return;
     if (!postToNext(buildAdoptVerificationsMessage(generation))) return;
     for (const [key, record] of activeVerificationSnapshots) {
-      if (record.phase !== "checkingInviter" && record.phase !== "expelling") continue;
+      if (
+        record.phase !== "kickPending" &&
+        record.phase !== "checkingInviter" &&
+        record.phase !== "expelling"
+      ) continue;
       const persisted: { generation: number; revision: number; } | undefined = persistedVerificationRevisions.get(key);
       if (persisted?.generation === record.generation && persisted.revision === record.revision) {
         if (!postToNext({ type: "verificationPersisted", key, generation, revision: record.revision })) return;
@@ -229,6 +268,8 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
         logger.error("Anti-Raid Worker lockdown replay was rejected.");
       }
     }
+    // 顺序同 initAntiRaid：先让新 isolate 接管，再把开关已关的群收掉。
+    purgeDisabledJoinGuards(postToNext);
     // 黑名单处置没有状态机也没有计时器，崩溃时随 isolate 一起消失；未收到
     // 落地回执的批次必须整批重投，否则那些人就一直坐在群里（重复 ban 幂等）。
     replayPendingBlockedRemovals();
@@ -273,8 +314,8 @@ function replayBotPermissions(postToNext: (message: AntiRaidWorkerMessage) => bo
  * 把当前整份群类型镜像交给（新）Worker；语义同 replayBotPermissions。
  *
  * 新 isolate 的那张表是空的，而空表按契约等于「群类型未知」——未知会让踢人退回
- * `unbanChatMember`，在普通群里就是踢不动。不重放的话，重生之后那些群要等到下
- * 一条 update 才恢复，而恰恰是「没有新消息、只剩超时踢人」的群最需要它。
+ * 退避，不会猜测破坏性 API。不重放的话，重生之后那些群还要多付一次 getChat，
+ * 而恰恰是「没有新消息、只剩超时踢人」的群最需要已有观测。
  */
 function replayChatKinds(postToNext: (message: AntiRaidWorkerMessage) => boolean): boolean {
   for (const [chatId, isSupergroup] of chatIsSupergroupById) {
@@ -312,7 +353,7 @@ onVerificationPersisted((reply: VerificationPersistedReply): void => {
     persistedVerificationRevisions.set(reply.key, { generation: reply.generation, revision: reply.revision });
     // 投递失败不做补偿是有意的：Worker 不可用意味着它即将重建，onRespawn 会对
     // 终态重新投递 verificationPersisted（见上方 onRespawn）。但按
-    // docs/04-invariants.md 的要求，落盘边界的 false 必须显式当作失败记录，
+    // docs/cn/04-invariants.md 的要求，落盘边界的 false 必须显式当作失败记录，
     // 不能静默吞掉——否则看不出这是依赖重放还是漏写。
     if (!post({
       type: "verificationPersisted",
@@ -348,19 +389,31 @@ export function initAntiRaid(): void {
   const generation: number = nextAntiRaidGeneration();
   try {
     initAntiRaidWorker();
+    // 配置快照是 Worker 收到的第一条消息（理由见 replayAdDetectAgentConfig）。
+    // 投递失败即整条初始化失败：后面的 adopt 一旦在没有配置的实例上生效，
+    // 广告判定会在第一条候选消息上抛错，而那时开关看起来是好的。
+    if (!replayAdDetectAgentConfig(post)) {
+      throw new WorkerUndeliveredError("Anti-Raid Worker rejected the agent configuration snapshot.");
+    }
     // 进程刚起来时这张表通常是空的（权限位要等 my_chat_member 或首次按需现查），
     // 重放仍然照做：它让「Worker 每次(重)启动后都持有当前镜像」这条不变量无条件
     // 成立，不必依赖调用顺序去论证某一次为空。
     replayBotPermissions(post);
+    // 进程启动期间已由其它入口观测到的群类型同样先于终态 adopt；完整冷启动
+    // 仍为空的群由 Worker 在执行破坏性动作前用 getChat 补齐。
+    replayChatKinds(post);
     postAntiRaidOrThrow(buildAdoptVerificationsMessage(generation, true));
     // 启动恢复的 outbox 已在 hydrateBlocklist 中按当前黑名单与管理状态过滤。
     // 后台重放不阻塞 runner 启动；任务本身已经 durable，完整进程退出后仍可恢复。
     replayPendingBlockedRemovals(false);
     const adopt: AdoptLockdownsMessage = buildAdoptLockdownsMessage();
-    if (adopt.lockdowns.length === 0) return;
-
-    postAntiRaidOrThrow(adopt);
-    logger.log(`Adopted lockdowns still active from previous process exit: ${adopt.lockdowns.map((l: AdoptableLockdown): number => l.chatId).join(", ")}`);
+    if (adopt.lockdowns.length > 0) {
+      postAntiRaidOrThrow(adopt);
+      logger.log(`Adopted lockdowns still active from previous process exit: ${adopt.lockdowns.map((l: AdoptableLockdown): number => l.chatId).join(", ")}`);
+    }
+    // 必须排在两类 adopt **之后**：拆的是 Worker 里已经接管起来的东西，先拆后
+    // adopt 等于对着空状态发拆除，私密模式的权限就再也没人恢复了。
+    purgeDisabledJoinGuards(post);
   } catch (error: unknown) {
     antiRaidRuntimeState.initialized = false;
     stopEmergencyLockdownRecoveries();
@@ -371,6 +424,68 @@ export function initAntiRaid(): void {
 /** 统一群 teardown 入口：Worker 内取消验证并对 lockdown 发起可恢复解锁。 */
 export function deactivateAntiRaidChat(chatId: number): void {
   postAntiRaidOrThrow({ type: "deactivateChat", chatId });
+}
+
+/**
+ * `/antiraid disable` 的运行态收尾：只收掉入群验证与私密模式这一条链路。
+ *
+ * 与 deactivateAntiRaidChat 的区别是范围（见 types/antiRaid.ts 的
+ * DeactivateJoinGuardMessage）：广告检测与防刷屏各有各的开关，不能被这条命令
+ * 一起关掉。
+ *
+ * 投递失败**必须由调用方兜住**（同 clearAdDetection）：开关本身已经落盘，让
+ * 异常逃出 handler 只会扣住 offset 并让 Telegram 重投同一条命令。但与广告检测
+ * 那条不同的是，这里的失败不是「没什么可清的」——验证窗口在主线程镜像里活着，
+ * Worker 重建后会被 adopt 重放回去。因此调用方必须把失败如实回给管理员
+ * （ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT），而 adopt 那一侧另有一道
+ * purgeDisabledJoinGuards 兜底。
+ */
+export function deactivateJoinGuardChat(chatId: number): void {
+  postAntiRaidOrThrow({ type: "deactivateJoinGuard", chatId });
+}
+
+/**
+ * 把「开关已关、运行态却还在」的群在 adopt 之后立刻收掉。
+ *
+ * 每次 adopt（进程启动、Worker 重生）都跑一遍，因为 adopt 的数据源是主线程镜像
+ * 与 state.json，两者都可能带着**上一次 disable 没拆干净**的残留：`/antiraid
+ * disable` 那一刻 Worker 正好不可用时，命令只落盘了开关，验证窗口仍留在镜像里。
+ * 不收的话，重建后的 Worker 会照着旧窗口继续踢人——开关显示关着，人却还在被踢。
+ *
+ * 用「adopt 完再拆」而不是「adopt 前过滤」：拆走的是 Worker，它会按既有的
+ * revision 协议发出 tombstone，镜像与当天文件一起干净；过滤只是不投，那些记录
+ * 会原样躺在当天文件里，等下一次 enable 之后的重启被当成新鲜窗口重新接管，
+ * 而它们的 expiresAt 早就过了——一开机就踢一批几小时前入群的人。
+ *
+ * 投递失败只记日志、不中断调用方：`post` 返回 false 只发生在 Worker 已放弃或正在
+ * 重建时，而那两种状态下它手里根本没有窗口可踢；下一次重生的 onRespawn 会重跑
+ * 这一轮。为它中止启动或跳过黑名单重投，换来的都是更差的结果。
+ */
+function purgeDisabledJoinGuards(postTo: (message: AntiRaidWorkerMessage) => boolean): void {
+  const purged: Set<number> = new Set();
+  for (const record of activeVerificationSnapshots.values()) {
+    if (purged.has(record.chatId)) continue;
+    if (getChatState(record.chatId).isAntiRaidEnabled === true) continue;
+    purged.add(record.chatId);
+  }
+  for (const [chatId, chatState] of getAllChatStates()) {
+    if (purged.has(chatId) || chatState.lockdown === undefined) continue;
+    if (chatState.isAntiRaidEnabled === true) continue;
+    purged.add(chatId);
+  }
+  if (purged.size === 0) return;
+  for (const chatId of purged) {
+    if (postTo({ type: "deactivateJoinGuard", chatId })) continue;
+    logger.error(
+      `Anti-Raid Worker rejected the join guard cleanup for chat ${chatId}; ` +
+      "relying on the next respawn to retry it."
+    );
+    return;
+  }
+  logger.log(
+    `Cleared join guard runtime left over in ${purged.size} chat(s) whose /antiraid switch is off: ` +
+    `${[...purged].join(", ")}.`
+  );
 }
 
 /**

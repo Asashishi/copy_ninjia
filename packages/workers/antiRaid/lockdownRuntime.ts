@@ -1,6 +1,6 @@
 import { logger } from "../../infra/logger";
 import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
-import { sendMessage, joinVerificationApi } from "../../infra/telegram";
+import { joinVerificationApi, sendMessage } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import { ANTI_RAID_PER_MINUTE_LIMIT, JOIN_WINDOW_MS, LOCKDOWN_MS } from "../../consts/antiRaid/lockdown";
 import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
@@ -33,7 +33,7 @@ function nextLockdownIntentId(): number {
  * thresholdExceeded 的占位同步生效——recordJoin 调用 dispatchLockdown 后，
  * 同一批投递里紧随其后的入群立刻就能在 verificationRuntime.ts 的 handleJoin
  * 里看到 lockdownEntries 有记录。lockdown/unlock 事件回报主线程用于持久化 +
- * Worker 崩溃后的 adopt 重放，机制见 antiRaid/index.ts；总体架构见
+ * Worker 崩溃后的 adopt 重放，机制见 antiRaid/workerBridge.ts；总体架构见
  * ../antiRaidWorker.ts 模块头。
  */
 
@@ -62,7 +62,7 @@ function lockdownAnnouncementText(joinCount?: number): string {
   return `哼，${influx}，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${LOCKDOWN_MS / 60_000} 分钟压压惊♡`;
 }
 
-/** 执行一次私密模式转移返回的副作用（网络请求 fire-and-forget，结果以事件回投）。 */
+/** 执行一次私密模式转移返回的副作用（主线程网络能力请求不阻塞 mailbox，结果以事件回投）。 */
 function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
   for (const effect of effects) {
     switch (effect.kind) {
@@ -366,7 +366,7 @@ export function stopLockdownRuntime(): void {
   lastLockdownIntentId.current = 0;
 }
 
-/** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid/index.ts）。 */
+/** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid/workerBridge.ts）。 */
 export function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
   for (const { chatId, phase, intentId, originalPermissions, remainingMs, persisted } of lockdowns) {
     dispatchLockdown(chatId, { type: "adopt", phase, intentId, originalPermissions, remainingMs, persisted });

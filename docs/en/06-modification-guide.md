@@ -1,16 +1,23 @@
 # 06 Common Modification Recipes
 
 <p align="center">
-  <a href="../06-modification-guide.md">简体中文</a> · <b>English</b> · <a href="../ja/06-modification-guide.md">日本語</a>
+  <a href="../cn/06-modification-guide.md">简体中文</a> · <b>English</b> · <a href="../ja/06-modification-guide.md">日本語</a>
 </p>
 
 <p align="center">
-  <a href="README.md">📚 Developer Docs Home</a> · <a href="05-dev-workflow.md">← Prev: 05 Workflow</a> · <a href="07-operations.md">Next: 07 Operations →</a>
+  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="05-dev-workflow.md">← Prev: 05 Workflow</a> · <a href="07-operations.md">Next: 07 Operations →</a>
 </p>
 
 ---
 
 Each recipe names the files to touch and the order to follow. The universal prerequisites are: read [`AGENTS.md`](../../AGENTS.md) before editing; back up runtime data such as `state.json`, `memory/`, and `bot.lock` before changing it or exercising a code path that may write it indirectly; finish with a green `bun run check`; and update the root README when needed.
+
+## Adding a Concurrent Batch
+
+- Fixed independent Promises use `Promise.allSettled`, wait for every result, and handle every rejection; settlement is not an error sink.
+- When the input can grow, reuse [`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts), set an explicit concurrency ceiling, and trace failures with the returned `item/index/attempt`. Do not `map` the whole input into Promises before waiting.
+- Configure finite backoff only when the domain can classify transient failures. Use `shouldRetry` to constrain the error class and `onRetry` to record every delay. Do not layer retries over a lower owner that already retries, especially for non-idempotent side effects.
+- A drain snapshot of already registered tasks does not need a new worker pool, provided taking the snapshot starts no work and every task already owns its error handling.
 
 ## Adding a Slash Command
 
@@ -48,7 +55,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code has roughly 665 source lines containing Chinese string or template literals across 66 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 787 source lines containing Chinese string or template literals across 76 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -62,8 +69,11 @@ All parameters are centralized under `packages/consts/`, so changing a value doe
 | Image-generation cooldown and byte limit | `packages/consts/aiChat/imageGeneration.ts` |
 | Mood duration and command timeout | `packages/consts/aiChat/mood.ts` |
 | Tool action/lookup limits, typing and typo pacing | `packages/consts/aiChat/tools.ts` |
+| Voice transcription duration/size limits and placeholders | `packages/consts/aiChat/voice.ts` |
+| Song cooldown, per-round cap, cover art and track info | `packages/consts/aiChat/songGeneration.ts` |
 | Request timeouts, retry counts, sampling and safety tiers | `packages/consts/aiChat/gemini.ts`, `packages/consts/aiChat/openai.ts` |
-| **Model names** (both providers, every pipeline) | Not a constant: `config/gemini.json` and `config/openai.json`, see [01-getting-started](01-getting-started.md) |
+| **Models, providers, keys, endpoints** | Not constants: configured per capability in `config/agent.json`; see [01-getting-started](01-getting-started.md) |
+| OAI-compatible image wire protocol / size profile | Required `agent.image.image_protocol` in `config/agent.json`; a new profile also requires synchronized types, fixed canvas tables, exhaustive dispatch, and tests |
 | Verification window, spam threshold, append/compaction policy | `packages/consts/antiRaid/` |
 | Copy cooldown, `/quiet` range, username rules, action-command rate limit | `packages/consts/commands.ts` |
 | Random-trigger cooldown per sender | `packages/consts/auto.ts` |
@@ -73,13 +83,23 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 > [!WARNING]
 > **Capacity constants may be coupled to disk data.** Before reducing values such as `AI_MEMORY_HYDRATE_BUFFER_MAX` or `MAX_SUMMARY_ROUNDS`, atomically rewrite existing `memory/ai/` snapshots after stopping the old process, as required by [04 Authoritative Runtime Invariants](04-invariants.md#persistence). Check that section before changing any capacity value.
 
+## Adding an Optional Provider Capability
+
+The contract is split into five minimal per-capability interfaces (`AiTextProvider`, `AiSummaryProvider`, `AiMediaProvider`, `AiImageProvider`, `AiSongProvider`); `AiChatProvider` is their composition. An implementation package still exports that one complete object, but every capability resolver in `aiChat/provider.ts` hands out only the matching slice, so a cross-capability call fails to **compile** (see the `@ts-expect-error` assertions in `test/aiChat/provider.test.ts`). Within each interface, members are still required or optional: the required ones (reply session, plain text, vision description, image generation) exist on every provider, while the optional ones (currently `transcribeVoice` and `generateSong`) exist only on the providers that implement them.
+
+1. **Contract**: declare it as an **optional member** in [`packages/types/aiChat/provider.ts`](../../packages/types/aiChat/provider.ts), with an explicit `this: void` — an optional member has to be pulled into a variable and null-checked before use, and a method signature with an implicit `this` loses its receiver the moment you do that.
+2. **Implementation**: add it only in the implementation package that supports it, and wire it up in that package's `index.ts`. In the package that does not support it, **omit the key entirely**: writing `undefined` is type-equivalent, but a reader will take it for an unfinished slot.
+3. **Detection**: call sites always write `provider.someCapability === undefined`, **never** `provider.name !== "gemini"`. Testing the name makes every call site carry its own "who supports what" table, and the day a third provider appears — or one of them gains the capability — whichever site was missed shows up only at runtime, as a tool that should not be there.
+4. **Decide what absence means**: if it can degrade quietly (voice transcription), leave a fallback placeholder plus one log line and **never switch providers for it**; if it cannot (song generation), simply do not mount the tool — a tool the model cannot see is never called. Do not leave "throw an unsupported error at runtime" as the only line of defence.
+5. **Capability omitted**: toolsets are assembled per round; when `image`/`song` configuration or an implementation member is absent, both the declaration and executor must be omitted.
+
 ## Adding an AI Tool
 
 1. **Name constant**: define the tool name in [`packages/consts/tools.ts`](../../packages/consts/tools.ts). If it has visible side effects, determine whether it belongs in `ACTION_TOOL_NAMES`.
 2. **Definition**: put stateless static-query `ToolDefinition` values in [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts). For action tools that need chat context, dynamic schemas, or per-round state, provide a definition builder under `packages/aiChat/ai/tools/replyToolset/`. The reply-toolset orchestrator collects these domain definitions into neutral `AiToolDefinition` values (JSON Schema parameters); each provider package's `replySession.ts` then maps them to its own shape, so adding a tool never touches any vendor SDK type.
 3. **Implementation**: implement execution under `packages/aiChat/ai/tools/`. Telegram-facing side effects run through main-thread proxies; the Worker must not hold a Bot instance directly.
 4. **Registration**: connect static query tools to dispatch in `packages/aiChat/ai/tools/index.ts`; connect action tools to definitions, dispatch, and per-round state under `packages/aiChat/ai/tools/replyToolset/`.
-5. **Budgets**: visible side-effect tools belong in the unified action budget; do not add a per-tool call limit by default. Create an independent limit only for a domain-specific reason—the current cases are sticker-pack viewing, Google Search, and one successful sticker, reaction, or generated image per round. The whole-round custom-function loop guard still applies; see [04](04-invariants.md#worker-and-state-ownership).
+5. **Budgets**: visible side-effect tools belong in the unified action budget; do not add a per-tool call limit by default. Create an independent limit only for a domain-specific reason—the current cases are sticker-pack viewing, Google Search, and one successful sticker, reaction, generated image, or generated song per round. The whole-round custom-function loop guard still applies; see [04](04-invariants.md#worker-and-state-ownership).
 6. **Prompt**: add usage rules under `packages/consts/aiChat/prompts/` if needed. Anything coupled to transcript format must reuse shared templates from `transcript.ts`; never hand-write the same format on both sides.
 7. **Tests + docs**: add tests under `test/aiChat/ai/` or the corresponding feature/Worker path, and update the root README's Tools row when relevant.
 
@@ -94,11 +114,11 @@ Procedure: change the constant → update its Chinese JSDoc, including changed i
 - Persona: edit [`prompt/persona.md`](../../prompt/persona.md); changes take effect after restart. Runtime interaction rules coupled to transcript formatting and identity/recipient markers are injected by code and do not belong in the persona file.
 - Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `whitelist.json` and `blocklist.json` load strictly before network access, and `/white` plus `/permission` atomically rewrite the former. `stickers.json`, `reactions.json`, `mood.json`, and `ad_samples.json` are validated lazily by feature. At most 5 sticker packs are allowed; mood weights must be positive integers totaling exactly 100; ad samples are a bare string array whose entries must be non-blank, unique, no longer than 1,024 characters each, and at most 500 in number. When changing structure, update the schema under `packages/config/` and the types under `packages/types/` before updating JSON.
 
-## Adding an Environment Variable
+## Adding Deployment JSON Configuration
 
-1. Declare and parse it in `packages/infra/config.ts`, including whether it is required or may be empty and all format validation. Parsing failure must block startup.
-2. Add a commented example to [`.env.example`](../../.env.example).
-3. Synchronize the variable tables in the root README's “Configuration” section and [01 Environment Setup](01-getting-started.md#configuring-env).
+1. Declare and strictly parse it in `packages/config/<domain>.ts`, including required/optional fields, format validation, and rejection of unknown keys. Parsing failure must block startup.
+2. Add a structure-only example without real credentials under `config_example/<domain>.json`, and document its fields in [`config_example/README/en.md`](../../config_example/README/en.md).
+3. Synchronize the root README's “Configuration” section and the relevant environment-setup entry points.
 
 ## Adding a Runtime Cache
 
@@ -118,6 +138,8 @@ The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#pers
 5. Deploy and start the new version. If both state copies are reported invalid, the migration is incomplete. The program does not modify the originals; fix them before restarting.
 6. Inspect quarantined `.corrupt` files and `logs/`. Delete temporary backups only after recovery is confirmed clean.
 
+**Adding an optional block can skip steps 3–4**, provided "missing" is defined precisely: the decoder accepts both the absent block and absent fields (follow `globalModel` and `globalAssets` — both branches return the same field set so the self-check inside `save` never sees two shapes), and the accessors collapse the default into a single fallback value. `state.global.assets` is the worked example: existing files decode unchanged and behave exactly as they did without the block. If the block is a knob meant to be hand-edited, add a startup seed (`seedMissingAssetState`) that writes the missing entries with their currently effective values so the keys show up in the file; the seed must run after **every `await` that can abort startup**, fill gaps only, and persist in the background — see [04](04-invariants.md#durability-and-snapshot-contracts). Conversely, **any change that makes an existing file fail to decode still goes through the full steps 3–4**.
+
 ## Changing an Inter-Worker Protocol
 
 `packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the shared `/query_mood` and `/switch_mood` mood handshake is the reference implementation.
@@ -126,6 +148,6 @@ The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#pers
 
 <div align="center">
 
-[← Prev: 05 Workflow](05-dev-workflow.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#06-common-modification-recipes) · [Next: 07 Operations →](07-operations.md)
+[← Prev: 05 Workflow](05-dev-workflow.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#06-common-modification-recipes) · [Next: 07 Operations →](07-operations.md)
 
 </div>

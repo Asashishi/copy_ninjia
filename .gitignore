@@ -21,7 +21,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # AI memory snapshots + daily luck cache (diskIOWorker, same privacy tier as logs)
 memory
 
-# dotenv environment variable files
+# unexpected local dotenv files (not runtime config; keep accidental secrets out of Git)
 .env
 .env.development.local
 .env.test.local

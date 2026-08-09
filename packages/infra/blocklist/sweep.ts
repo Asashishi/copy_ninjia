@@ -3,7 +3,7 @@
  *
  * durable 任务的编号、裁剪和 write-ahead 由 outbox.ts 持有；本模块只修改
  * blocklistSweepState 与任务诊断字段，并通过 outbox owner 合并完整快照。
- * @see ../../../docs/04-invariants.md
+ * @see ../../../docs/cn/04-invariants.md
  */
 
 import {
@@ -142,8 +142,8 @@ function noteSweepAttemptFailed(chatId: number, failedSweeps: number, now: numbe
     // 的收尾。deliverPreparedSweeps 的 await 期间可能刚到过一条 permissionDenied
     // 回执：它的 removalId 属于更早的批次，notePermissionBlocked 置真后就因
     // removalId 不匹配提前返回，闩锁是它留下的唯一痕迹。清掉之后每次
-    // markBotAdminObserved 都会重新武装一整轮注定 400 的全名单补扫，与超时踢人
-    // 抢同一条 joinVerificationApi 队列，Worker 重建还会重投这些必败批次。
+    // markBotAdminObserved 都会重新武装一整轮注定 400 的全名单补扫，持续浪费
+    // Worker 调度、网络与日志；Worker 重建还会重投这些必败批次。
     permissionBlocked: blocklistSweepState.get(chatId)?.permissionBlocked === true,
   });
 }
@@ -423,8 +423,30 @@ function replayPendingBlockedRemovalsForChat(chatId: number): void {
         `Failed to replay ${removals.length} permission-blocked removal batch(es) for chat ${chatId}:`,
         error
       );
+      rearmSweepAfterFailedReplay([chatId]);
     }
   );
+}
+
+/**
+ * 重投的 durable 交接失败后，让这些群重新欠一次补扫。
+ *
+ * 重投是 fire-and-forget 的：它的 rejection 到达时 onRespawn 早已返回，够不着
+ * supervisedWorker 的 replayFailure，因此不会像别的镜像那样把新实例拉下来——
+ * 拉下来也不对，这里失败的通常是 Disk I/O 那侧的耐久屏障而不是 Worker 本身，
+ * 换一个新 isolate 只会撞进重启节流。
+ *
+ * 但只记一行日志就等于放弃：frozen 批次（`/block` 秒踢、广告处置）没有计时器
+ * 也没有退避，它们的重试钩子只有「下一次 Worker 重建」和「一次确证的权限恢复」；
+ * 两者都不来时，那批人就一直坐在群里，而 `/block` 早已回复管理员成功。补扫是
+ * 按整份黑名单重新materialize 的，覆盖得了丢掉的那批人——口径同
+ * settleBlockedRemoval 对未落定回执的处理，不另起一套机制。
+ */
+function rearmSweepAfterFailedReplay(chatIds: Iterable<number>): void {
+  for (const chatId of chatIds) {
+    const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
+    requestBlocklistResweep(chatId, Date.now() + sweepRetryDelayMs(progress?.failedSweeps ?? 0));
+  }
 }
 
 /**
@@ -435,6 +457,7 @@ export function replayPendingBlockedRemovals(
   countPreviousAttempt: boolean = true
 ): void {
   const removals: RemoveBlockedMembersParams[] = [];
+  const replayedChatIds: Set<number> = new Set<number>();
   for (const [removalId, pending] of [...pendingBlockedRemovals]) {
     if (
       blocklistSweepState.get(pending.params.chatId)?.permissionBlocked === true
@@ -452,9 +475,11 @@ export function replayPendingBlockedRemovals(
       );
     }
     removals.push(params);
+    replayedChatIds.add(pending.params.chatId);
   }
   if (removals.length === 0) return;
   void blockedMemberRemoverHolder.current(removals).catch((error: unknown): void => {
     logger.error(`Failed to replay ${removals.length} blocklist removal batch(es):`, error);
+    rearmSweepAfterFailedReplay(replayedChatIds);
   });
 }

@@ -9,6 +9,8 @@ import type { MediaKind } from "../media";
 export interface QueuedReplyTrigger {
   triggerSenderId: number;
   replyToMessageId: number;
+  /** 入队时 Telegram 发送面处于高压；该项补跑时同群最多只开一轮。 */
+  telegramBackpressured: boolean;
   /** 触发消息自身的单跳快照；排队期间即使它滑出热区，机器人发送后的
    * 自录仍可保留 Telegram 实际建立的回复关系。 */
   triggerReference?: BufferedReplyReference;
@@ -37,10 +39,20 @@ export interface ReplyPromptSections {
 export interface ReplyToolContext {
   chatId: number;
   replyToMessageId: number;
-  /** 执行侧的直接触发资格，不代表图片意图已由程序预判。 */
-  imageGenerationRequested: boolean;
+  /**
+   * 重媒体工具（generate_image / generate_song）的执行侧直接触发资格，**不**代表
+   * 生图或生歌的意图已由程序预判——意图由模型按当前消息自行判断。
+   *
+   * 两个工具共用同一个布尔而不是各带一个：它们的资格判据逐字相同（本轮触发是
+   * 用户直接回复或 @ 了机器人，见 workers/aiChat/replyRound.ts 的
+   * mediaToolsAllowed），拆成两份只会多出一处能各自漂移的状态。协议层那个
+   * `imageGenerationRequested` 是另一回事，它记的是「这条消息带没带图片工具
+   * 资格」这一原始事实，见 types/aiChat/protocol.ts。
+   */
+  mediaToolsRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;
-  bypassImageGenerationCooldown: boolean;
+  /** superAdmin 触发：跳过重媒体工具的群共享冷却（生图与生歌各有各的冷却表）。 */
+  bypassMediaToolCooldown: boolean;
   chatAction: ChatActionControl;
   stickerLock: StickerSendLockControl;
   roundHasTypo: boolean;
@@ -54,6 +66,8 @@ export interface ReplyToolContext {
   onMessageSent: (text: string, messageId: number, repliedToMessageId?: number) => void;
   onStickerSent: (stickerDescription: string, messageId: number) => void;
   onImageSent: (imageDescription: string, messageId: number, repliedToMessageId?: number) => void;
+  /** 与 onImageSent 同构：生歌落地后自录，同样只采信服务端实际返回的回复关系。 */
+  onSongSent: (songDescription: string, messageId: number, repliedToMessageId?: number) => void;
 }
 
 /** 一轮 AI 回复的函数工具集与执行状态。 */

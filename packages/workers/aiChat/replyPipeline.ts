@@ -1,4 +1,5 @@
 import { botInfoState } from "../../cache/workers/aiChat/identity";
+import { aiChatWorkerQuiescing } from "../../cache/workers/aiChat/worker";
 import {
   activeReplyCounts,
   longTriggerTimes,
@@ -28,6 +29,7 @@ export {
   currentReplyGeneration,
   invalidateChatReplies,
   isReplyGenerationCurrent,
+  quiesceAiChatReplies,
   trackReplyGenerationTask,
 } from "./replyState";
 
@@ -43,6 +45,7 @@ export {
  *   队首等下一次 drain（见 replyQueue.ts）。
  */
 function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean {
+  if (aiChatWorkerQuiescing.current) return false;
   return startReplyRound(
     {
       chatId,
@@ -64,7 +67,7 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean 
  * 窗口仍然满的群直接跳过，不做无用的尝试：startReplyRound 每被拒一次就会发一条
  * 限频提示（自带 60 秒冷却），空转就等于每分钟往群里刷一句。撞满窗口的群里轮次
  * 还在一轮接一轮地结束，不设闸的那条推力于是每轮都空转一次——刷屏由此持续整个
- * 饱和期，见 docs/04-invariants.md。
+ * 饱和期，见 docs/cn/04-invariants.md。
  */
 function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
   const times: LinkedQueue<number> | undefined = longTriggerTimes.get(chatId);
@@ -82,6 +85,7 @@ function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
  * 理由见 drainReplyQueueIfWindowAllows。
  */
 function onReplyRoundFinished(chatId: number): void {
+  if (aiChatWorkerQuiescing.current) return;
   flushOverflowNotice(chatId);
   drainReplyQueueIfWindowAllows(chatId, Date.now());
 }
@@ -97,6 +101,7 @@ function onReplyRoundFinished(chatId: number): void {
  * 才被顺带带出来。
  */
 export function drainPendingReplyQueues(now: number = Date.now()): void {
+  if (aiChatWorkerQuiescing.current) return;
   for (const chatId of [...pendingReplyTriggers.keys()]) {
     drainReplyQueueIfWindowAllows(chatId, now);
   }
@@ -113,6 +118,7 @@ export interface GenerateAndSendReplyParams {
   imageGenerationRequested: boolean;
   imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
   isRandomTrigger: boolean;
+  telegramBackpressured?: boolean;
   mediaComment?: MediaCommentContext;
 }
 
@@ -123,8 +129,10 @@ export function generateAndSendReply({
   imageGenerationRequested,
   imageGenerationReference,
   isRandomTrigger,
+  telegramBackpressured = false,
   mediaComment,
 }: GenerateAndSendReplyParams): void {
+  if (aiChatWorkerQuiescing.current) return;
   const generation: number = currentReplyGeneration(chatId);
   if (!botInfoState.current) {
     logger.error("aiChatWorker received trigger before init message; dropping.");
@@ -137,6 +145,7 @@ export function generateAndSendReply({
     activeRounds: activeReplyCounts.get(chatId) ?? 0,
     queueSize: pendingReplyTriggers.get(chatId)?.size ?? 0,
     kind: triggerKindFor(isRandomTrigger, mediaComment),
+    telegramBackpressured,
   });
   switch (decision.action) {
     case "startRound":
@@ -162,6 +171,7 @@ export function generateAndSendReply({
         chatId,
         triggerSenderId,
         replyToMessageId,
+        telegramBackpressured,
         imageGenerationRequested,
         imageGenerationReference,
         triggerReference,

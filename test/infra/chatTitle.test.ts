@@ -10,7 +10,7 @@ const getChat = mock(async (_chatId: number, _signal?: AbortSignal): Promise<{
 const loggerInfo = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 
-mock.module("../../packages/infra/telegram", () => ({ bot: { api: { getChat } } }));
+mock.module("../../packages/infra/telegram/mainClient", () => ({ bot: { api: { getChat } } }));
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, warn(): void {}, info: loggerInfo, error: loggerError },
 }));

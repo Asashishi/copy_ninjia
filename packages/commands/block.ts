@@ -1,101 +1,37 @@
 import type { CommandContext, Context } from "grammy";
-import type { Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
-import type { DeleteMessageOutcome } from "../infra/telegram";
 import {
   sendCommandMessage,
   banChatMember,
   banChatSenderChat,
   isChatMember,
-  deleteMessageWithOutcome,
 } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { isWhitelisted } from "../config/whitelist";
-import { BLOCK_TARGET_TEXTS } from "../consts/commands";
+import { BLOCK_COMMAND_CONCURRENCY, BLOCK_TARGET_TEXTS } from "../consts/commands";
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
-import {
-  botCanDeleteMessagesIn,
-  ensureBotChatPermissions,
-  resolveBotAdminStatus,
-} from "../infra/botAdmin";
+import { resolveBotAdminStatus } from "../infra/botAdmin";
 import { logger } from "../infra/logger";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy";
 import {
   blockUser,
   confirmBlocklistPersisted,
   ensureBlocklistEntryQueued,
-  recordUserConfirmedKickedInChat,
-  wasUserConfirmedKickedInChat,
 } from "../infra/blocklist/membership";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
 import { getAllChatStates } from "../infra/storage/stateStore";
+import { runBoundedSettledBatch } from "../libs/boundedSettledBatch";
+import type {
+  BoundedBatchExecution,
+  BoundedBatchResult,
+} from "../libs/boundedSettledBatch";
 
-type SenderChatReplyCleanupOutcome =
-  | "notApplicable"
-  | "deleted"
-  | "forbidden"
-  | "failed";
-
-interface CleanupSenderChatReplyParams {
-  chatId: number;
-  commandMessage: Message;
-  targetUser: CachedUser;
-  isAdminHere: boolean;
-}
+type PerChatBlockOutcome = "kicked" | "confirmedBanned" | "failed";
 
 interface BlockAdmission {
   readonly protected: boolean;
   readonly newlyBlocked: boolean;
-}
-
-/** 手动回复频道消息执行 /block 时，独立结算这条已知消息的删除。 */
-async function cleanupSenderChatReply({
-  chatId,
-  commandMessage,
-  targetUser,
-  isAdminHere,
-}: CleanupSenderChatReplyParams): Promise<SenderChatReplyCleanupOutcome> {
-  const targetMessageId: number | undefined =
-    commandMessage.reply_to_message?.message_id;
-  if (
-    targetUser.isChannel !== true ||
-    targetMessageId === undefined ||
-    !isAdminHere
-  ) {
-    return "notApplicable";
-  }
-
-  ensureBotChatPermissions(chatId);
-  if (botCanDeleteMessagesIn(chatId) === false) {
-    logger.error(
-      `Blocked sender chat reply ${targetMessageId} in chat ${chatId} could not be deleted: ` +
-      "the bot is known to lack can_delete_messages."
-    );
-    return "forbidden";
-  }
-
-  const outcome: DeleteMessageOutcome = await deleteMessageWithOutcome(
-    chatId,
-    targetMessageId
-  );
-  if (outcome === "deleted" || outcome === "gone") return "deleted";
-  return outcome;
-}
-
-function senderChatCleanupNote(
-  outcome: SenderChatReplyCleanupOutcome
-): string {
-  switch (outcome) {
-    case "deleted":
-      return "；回复的那条频道消息也被本天才顺手清掉啦，想留垃圾也没门呀";
-    case "forbidden":
-      return "；可回复的那条频道消息没清掉——杂鱼管理员是不是又忘了给本天才删消息权限呀";
-    case "failed":
-      return "；可回复的那条频道消息暂时没清掉，杂鱼管理员自己去日志里找原因吧";
-    case "notApplicable":
-      return "";
-  }
 }
 
 /**
@@ -103,7 +39,7 @@ function senderChatCleanupNote(
  * 同时封禁（与入群验证/反刷群的自动踢出不同——那些踢而不 ban 以防误杀，这里
  * 是管理员的手动判断，直接全网封死）。封禁对还没加入的群同样生效，目标之后
  * 也进不去，但那终究不是「踢」——战报文案按目标此刻是否在场分别措辞
- * （isChatMember）：真在场的算踢出去，压根没进过的群只算提前拉黑。群清单来自
+ * （isChatMember）：真在场的算踢出去，不在场的只算确认封禁。群清单来自
  * 各群 ChatState.botIsAdmin（见 infra/botAdmin.ts）。机器人在发起命令的这个群
  * 里不是管理员时，本群自然踢不了，但对其它管理的群的连坐封禁照常执行，只在
  * 回复里说明本群没踢；一个管理的群都没有才整体拒绝。
@@ -223,60 +159,59 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 频道马甲（sender_chat）没有「成员」这个概念，banChatSenderChat 本来就
   // 只是拉黑发言权，不存在「把它踢出去」一说，一律算封禁，不查成员状态。
   let kickedCount: number = 0;
-  let preBannedCount: number = 0;
+  let confirmedBannedCount: number = 0;
   // 封禁失败的群要重新欠一次补扫：这个群若早就扫过，sweptAt 那道闩锁会让它
   // 永不重扫，而入群秒踢只对之后的入群更新生效——被拉黑的人就这么在那个群里
   // 待到进程结束（见 infra/blocklist/ 的 requestBlocklistResweep）。
   const resweepChatIds: number[] = [];
-  // 各群之间并发：群内那两步是真实依赖（先查在不在，再封），群与群之间不是，
-  // 而它们共用同一条装了 throttler 的 bot.api 队列，实际速率仍由它管。逐群串行
+  // 各群之间固定小并发：群内那两步是真实依赖（先查在不在，再封），群与群之间不是，
+  // 而它们共用主线程 Telegram 总闸，实际 429 会把原任务退回自适应队列。逐群串行
   // 的话 40 个群就是 80 次串行往返、约 16 秒里 update 中间件一直不返回，ack 边界
   // 被推后，停机时更容易把 runner drain 拖超时。
-  // 个别群失败（管理员身份记录过时、缺封禁权限）不中断其余群：被调函数内部已
-  // 带群号记了日志，够排查。
-  const perChatOutcomesPromise: Promise<("kicked" | "preBanned" | "failed")[]> = Promise.all(
-    targetChatIds.map(async (targetChatId: number): Promise<"kicked" | "preBanned" | "failed"> => {
-      if (targetUser.isChannel) {
-        return await banChatSenderChat(targetChatId, targetUser.id) ? "preBanned" : "failed";
-      }
-      // 只复用“今天在这个群查到确实在场、并且 ban 成功”的命令侧结局。
-      // 权威名单与 durable outbox 都不能代替它：前者只说明该不该封，后者还
-      // 可能在重试/重踢；拿它们跳过 API 会把尚未落定的成员静默留在群里。
-      if (wasUserConfirmedKickedInChat(targetChatId, targetUser.id)) return "kicked";
-      // 先查目标此刻是否在这个群里，再决定战报里算「踢出去」还是「提前拉黑」——
-      // banChatMember 本身对两种情况效果一样（都会加入封禁名单），只是文案不能
-      // 把「根本没进过的群」也说成踢出去了。
-      const wasMember: boolean = await isChatMember(targetChatId, targetUser.id);
-      const banned: boolean = await banChatMember(targetChatId, targetUser.id);
-      if (!banned) return "failed";
-      if (wasMember) recordUserConfirmedKickedInChat(targetChatId, targetUser.id);
-      return wasMember ? "kicked" : "preBanned";
-    })
-  );
-  const cleanupPromise: Promise<SenderChatReplyCleanupOutcome> =
-    cleanupSenderChatReply({
-      chatId,
-      commandMessage: ctx.msg,
-      targetUser,
-      isAdminHere,
+  // 个别群失败（管理员身份记录过时、缺封禁权限）不中断其余群：常规 API 错误
+  // 由适配层归一化；意外 rejection 也按群独立结算并交给既有补扫。
+  const perChatOutcomes: BoundedBatchResult<number, PerChatBlockOutcome>[] =
+    await runBoundedSettledBatch<number, PerChatBlockOutcome>({
+      items: targetChatIds,
+      maxConcurrent: BLOCK_COMMAND_CONCURRENCY,
+      execute: async ({
+        item: targetChatId,
+      }: BoundedBatchExecution<number>): Promise<PerChatBlockOutcome> => {
+        if (targetUser.isChannel) {
+          return await banChatSenderChat(targetChatId, targetUser.id)
+            ? "confirmedBanned"
+            : "failed";
+        }
+        // `/block` 是低频管理员命令，每次都取 Telegram 当前成员状态并重新封禁；
+        // 不缓存历史“踢出”结局，避免 `/unblock`、外部管理员解封或重新入群后
+        // 读到过期事实。
+        const wasMember: boolean = await isChatMember(targetChatId, targetUser.id);
+        const banned: boolean = await banChatMember(targetChatId, targetUser.id);
+        if (!banned) return "failed";
+        return wasMember ? "kicked" : "confirmedBanned";
+      },
     });
-  const [perChatOutcomes, cleanupOutcome]: [
-    ("kicked" | "preBanned" | "failed")[],
-    SenderChatReplyCleanupOutcome
-  ] = await Promise.all([perChatOutcomesPromise, cleanupPromise]);
-  const cleanupNote: string = senderChatCleanupNote(cleanupOutcome);
-  for (let index: number = 0; index < perChatOutcomes.length; index++) {
-    const outcome: "kicked" | "preBanned" | "failed" | undefined = perChatOutcomes[index];
+  // settlement 携带原 chatId 与输入下标，单群异常不会吞掉其它已经落定的封禁。
+  for (const settlement of perChatOutcomes) {
+    if (settlement.status === "rejected") {
+      logger.error(
+        `Unexpected error while banning blocked identity ${targetUser.id} in chat ${settlement.item} ` +
+        `(batch index ${settlement.index}, attempt ${settlement.attempt}):`,
+        settlement.reason
+      );
+    }
+    const outcome: PerChatBlockOutcome =
+      settlement.status === "fulfilled" ? settlement.value : "failed";
     if (outcome === "kicked") kickedCount++;
-    else if (outcome === "preBanned") preBannedCount++;
-    else resweepChatIds.push(targetChatIds[index]!);
+    else if (outcome === "confirmedBanned") confirmedBannedCount++;
+    else resweepChatIds.push(settlement.item);
   }
   // 权限恢复后由下一次管理员身份观测把这些群重扫一遍，不用管理员再跑一次 /block。
   for (const resweepChatId of resweepChatIds) requestBlocklistResweep(resweepChatId);
 
-  const bannedCount: number = kickedCount + preBannedCount;
+  const bannedCount: number = kickedCount + confirmedBannedCount;
   if (bannedCount === 0) {
-    const replyText: string = `呜……${targetLabel} 居然一个群都踢不动，是本天才没有封禁权限吧？杂鱼管理员快去检查——不过 TA 已经记进小本本了${persistWarning}，再进群就秒踢${cleanupNote}♡`;
+    const replyText: string = `呜……${targetLabel} 居然一个群都踢不动，是本天才没有封禁权限吧？杂鱼管理员快去检查——不过 TA 已经记进小本本了${persistWarning}，再进群就秒踢♡`;
     await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
     return;
   }
@@ -285,20 +220,21 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   const notAdminHereNote: string = isAdminHere ? "" : `本天才在这个群不是管理员、这里踢不动 TA，不过——`;
   const failedCount: number = targetChatIds.length - bannedCount;
   const failedNote: string = failedCount > 0 ? `（还有 ${failedCount} 个群没踢动，杂鱼管理员快去检查权限）` : "";
-  // 踢出去/提前拉黑文案区分见函数顶部说明。
+  // “不在群”只表示本次没有执行移出动作，无法证明目标从未加入过；因此只说
+  // “确认封禁”，不再使用“提前拉黑（根本没进去过）”这类历史推断。
   const kickedNote: string = kickedCount > 0 ? `从 ${kickedCount} 个群一脚踢出去还上了黑名单` : "";
-  const preBannedNote: string = preBannedCount > 0 ? `在 ${preBannedCount} 个群提前拉黑（根本没让 TA 进去过）` : "";
-  const actionNote: string = [kickedNote, preBannedNote].filter(Boolean).join("，");
-  // 本来就在名单里的人再 /block 一次不该被说成「刚记上」。各群仍重新处置，
-  // 但当天已经确证踢出的 `(chatId, userId)` 可命中命令侧缓存；新加的群、上次
-  // 失败或只做过预封禁的群仍会真正查、封。落盘警告两条路都要带：重复 /block
-  // 正是上一次没写进硬盘时的重试动作，还没写成功就不能不说。
+  const confirmedBannedNote: string = confirmedBannedCount > 0 ? `在 ${confirmedBannedCount} 个群确认封禁` : "";
+  const actionNote: string = [kickedNote, confirmedBannedNote].filter(Boolean).join("，");
+  // 本来就在名单里的人再 /block 一次不该被说成「刚记上」。各群仍重新查询
+  // 成员状态并封禁，让外部解封或重新入群后的当前状态得到重新结算。
+  // 落盘警告两条路都要带：重复 /block 正是上一次没写进硬盘时的重试动作，
+  // 还没写成功就不能不说。
   const blocklistNote: string = newlyBlocked
     ? `，杂鱼永远别想回来了${persistWarning}`
     : `（早就在小本本上了${persistWarning}）`;
   await sendCommandMessage({
     chatId,
-    text: `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}${blocklistNote}${cleanupNote}♡`,
+    text: `${notAdminHereNote}哼，${targetLabel} 被本天才${actionNote}${failedNote}${blocklistNote}♡`,
     replyToMessageId: messageId,
   });
 }

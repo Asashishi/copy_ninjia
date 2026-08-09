@@ -7,15 +7,17 @@ import {
   handleAiChatCommand,
   handleBatchKickCommand,
   handleBlockCommand,
+  handleBotStatusCommand,
   handleCjkActionCommand,
   handleCjkActionUsageCommand,
   handleCopyCommand,
+  handleAntiRaidCommand,
   handleFloodControlCommand,
-  handleImageModelCommand,
-  handleChatModelCommand,
+  handleGagCommand,
+  handleGagMessageIngress,
   handleInitCommand,
   handleJaCopyCommand,
-  handleLuckChallengeInlineQuery,
+  handleInlineQuery,
   handleLuckChosenInlineResult,
   handleMuteCommand,
   handlePermissionCommand,
@@ -27,6 +29,7 @@ import {
   handleStopCommand,
   handleSwitchMoodCommand,
   handleUnblockCommand,
+  handleUngagCommand,
   handleUnmuteCommand,
   handleUnquietCommand,
   handleWhiteCommand,
@@ -99,6 +102,14 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
+  // gag 同样要覆盖命令消息，因此必须位于全部 bot.command 之前；Anti-Raid 先看
+  // 原始消息，才能保持广告/刷屏/待验证追踪的既有事实口径。被 gag 的消息即使
+  // Telegram 删除失败也在这里终止，不得继续喂给 AI、copy 或命令处理器。
+  bot.on("message", async (ctx: Filter<Context, "message">, next: NextFunction): Promise<void> => {
+    if (await handleGagMessageIngress(ctx.message, ctx.me.id)) return;
+    return next();
+  });
+
   // 授权维护命令与其余命令一样排在上面那道 ingress 之后，没有例外：这两条
   // handler 都不调 next()，注册在 ingress 之前的话，/permission 与 /white 会
   // 整条绕开 handleAntiRaidMessageIngress —— 发的人不计入刷屏窗口却每条都能
@@ -120,15 +131,17 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.command("ai_chat", (ctx: CommandContext<Context>): Promise<void> => handleAiChatCommand(ctx));
   bot.command("ad_detect", (ctx: CommandContext<Context>): Promise<void> => handleAdDetectCommand(ctx));
   bot.command("flood_control", (ctx: CommandContext<Context>): Promise<void> => handleFloodControlCommand(ctx));
+  bot.command("antiraid", (ctx: CommandContext<Context>): Promise<void> => handleAntiRaidCommand(ctx));
+  bot.command("bot_status", (ctx: CommandContext<Context>): Promise<void> => handleBotStatusCommand(ctx));
   bot.command("query_mood", (ctx: CommandContext<Context>): Promise<void> => handleQueryMoodCommand(ctx));
   bot.command("switch_mood", (ctx: CommandContext<Context>): Promise<void> => handleSwitchMoodCommand(ctx));
   bot.command("init", (ctx: CommandContext<Context>): Promise<void> => handleInitCommand(ctx));
-  bot.command("image_model", (ctx: CommandContext<Context>): Promise<void> => handleImageModelCommand(ctx));
-  bot.command("chat_model", (ctx: CommandContext<Context>): Promise<void> => handleChatModelCommand(ctx));
   bot.command("quiet", (ctx: CommandContext<Context>): Promise<void> => handleQuietCommand(ctx));
   bot.command("unquiet", (ctx: CommandContext<Context>): Promise<void> => handleUnquietCommand(ctx));
   bot.command("mute", (ctx: CommandContext<Context>): Promise<void> => handleMuteCommand(ctx));
   bot.command("unmute", (ctx: CommandContext<Context>): Promise<void> => handleUnmuteCommand(ctx));
+  bot.command("gag", (ctx: CommandContext<Context>): Promise<void> => handleGagCommand(ctx));
+  bot.command("ungag", (ctx: CommandContext<Context>): Promise<void> => handleUngagCommand(ctx));
   bot.command("send", (ctx: CommandContext<Context>): Promise<void> => handleSendCommand(ctx));
   // 菜单占位项：它只为在命令菜单里曝光「/<1~2 个中文字>」这个用法（那类命令名
   // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
@@ -143,8 +156,9 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.on("message_reaction", (ctx: Filter<Context, "message_reaction">): Promise<void> => handleReaction(ctx));
   bot.on("chat_member", (ctx: Filter<Context, "chat_member">): Promise<void> => handleChatMemberUpdate(ctx));
   bot.on("my_chat_member", (ctx: Filter<Context, "my_chat_member">): Promise<void> => handleMyChatMemberUpdate(ctx));
-  bot.on("callback_query:data", (ctx: Filter<Context, "callback_query:data">): Promise<void> => handleVerificationCallback(ctx));
-  bot.on("inline_query", (ctx: Filter<Context, "inline_query">): Promise<void> => handleLuckChallengeInlineQuery(ctx));
+  bot.on("callback_query:data", (ctx: Filter<Context, "callback_query:data">): Promise<void> =>
+    handleVerificationCallback(ctx));
+  bot.on("inline_query", (ctx: Filter<Context, "inline_query">): Promise<void> => handleInlineQuery(ctx));
   bot.on("chosen_inline_result", (ctx: Filter<Context, "chosen_inline_result">): Promise<void> => handleLuckChosenInlineResult(ctx));
 
   bot.catch((err: BotError<Context>): never => {

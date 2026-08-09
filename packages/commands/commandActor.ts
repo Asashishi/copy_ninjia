@@ -3,7 +3,7 @@ import type { Chat, Message } from "@grammyjs/types";
 import type { CachedUser } from "../types/chatState";
 import type { WhitelistPermissionKey } from "../types/whitelist";
 import { hasWhitelistPermission } from "../config/whitelist";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 
 /**
  * 解析命令对外可见的发起身份。sender_chat（频道马甲/频道帖）优先于 from，

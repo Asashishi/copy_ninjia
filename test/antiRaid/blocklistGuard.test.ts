@@ -120,8 +120,10 @@ describe("黑名单入群秒踢的投递侧", () => {
     const replacedJoins = new Map<number, AntiRaidWorkerMessage>();
     const replacedJoin = joinMessage(-1001, 42);
 
-    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins, now: 1_000 })).toBeTrue();
-    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins, now: 1_050 })).toBeTrue();
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins,
+      joinGuardEnabled: true, now: 1_000 })).toBeTrue();
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins,
+      joinGuardEnabled: true, now: 1_050 })).toBeTrue();
 
     expect(messages).toHaveLength(2);
     // 两条投递路径（chat_member 与 new_chat_members）会为同一次入群各来一次；
@@ -142,6 +144,7 @@ describe("黑名单入群秒踢的投递侧", () => {
       messages,
       replacedJoin: joinMessage(-1001, 42),
       replacedJoins,
+      joinGuardEnabled: true,
     })).toBeFalse();
     expect(messages).toHaveLength(0);
     expect(replacedJoins.size).toBe(0);
@@ -162,6 +165,7 @@ describe("黑名单入群秒踢的投递侧", () => {
       messages,
       replacedJoin: joinMessage(-1001, 42),
       replacedJoins,
+      joinGuardEnabled: true,
     })).not.toThrow();
     expect(messages).toHaveLength(0);
     // 登记失败时也不能留下兜底 join：名单判定没变，不该给他开验证窗口。
@@ -184,13 +188,15 @@ describe("黑名单入群秒踢的投递侧", () => {
     const replacedJoins = new Map<number, AntiRaidWorkerMessage>();
     const replacedJoin = joinMessage(-1001, 42);
 
-    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins, now: 1_000 })).toBeTrue();
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins,
+      joinGuardEnabled: true, now: 1_000 })).toBeTrue();
     expect(messages).toHaveLength(0);
     expect(recentBlockedJoinCounts.size).toBe(0);
 
     // outbox 腾出位置后，同一次入群的第二路投递照常把计数补上。
     trackFails = false;
-    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins, now: 1_050 })).toBeTrue();
+    expect(claimBlockedJoiner({ chatId: -1001, userId: 42, messages, replacedJoin, replacedJoins,
+      joinGuardEnabled: true, now: 1_050 })).toBeTrue();
     expect(messages.map((message) => (message as RemoveBlockedMembersParams).joinedAt)).toEqual([1_050]);
   });
 });

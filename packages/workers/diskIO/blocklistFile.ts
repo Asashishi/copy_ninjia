@@ -19,13 +19,15 @@
  * 人的 blockedAt 一起抹平。
  */
 
-import { mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { BlockUserDiskMessage, UnblockUserDiskMessage } from "../../types/diskIO";
 import type { AppendOnlyFileState, BlockedUserRecord } from "../../types/diskIO/storage";
 import { BLOCKLIST_FILE_PATH, BLOCKLIST_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
+import { invalidInput, readJsonInput } from "../../libs/inputValidation";
+import { hasExactKeys } from "../../libs/runtimeConfig";
 import {
   blocklistFileState,
   blocklistKnownIds,
@@ -34,7 +36,6 @@ import {
   resetBlocklistCache,
 } from "../../cache/workers/diskIO/blocklist";
 import {
-  AppendOnlyFileFormatError,
   appendToAppendOnlyFile,
   openAppendOnlyFile,
   serializeDayFileEntry,
@@ -52,7 +53,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function decodeBlocklist(parsed: unknown): Map<number, BlockedUserRecord> {
   if (!isRecord(parsed)) {
-    throw new AppendOnlyFileFormatError(BLOCKLIST_FILE_PATH, "must contain a top-level JSON object.");
+    return invalidInput(BLOCKLIST_FILE_PATH, "$", "a JSON object keyed by canonical blocked identity IDs");
   }
   const blocked: Map<number, BlockedUserRecord> = new Map();
   for (const [key, value] of Object.entries(parsed)) {
@@ -60,11 +61,21 @@ function decodeBlocklist(parsed: unknown): Map<number, BlockedUserRecord> {
     // 必须原样还原：Number 会吞下 "0x1f4"/"1e3"/"7.0"/"" 这些形态，它们都是
     // 安全整数，却和键面上的文本对不上——手工编辑时多敲一个字符就会静默
     // 拉黑另一个 id，而真正想拉黑的那个人根本不在名单里。
-    if (!Number.isSafeInteger(userId) || String(userId) !== key) {
-      throw new AppendOnlyFileFormatError(BLOCKLIST_FILE_PATH, `contains a non-numeric user id key ${key}.`);
+    if (!Number.isSafeInteger(userId) || userId === 0 || String(userId) !== key) {
+      return invalidInput(BLOCKLIST_FILE_PATH, "$.<identity>", "a canonical non-zero safe integer key");
     }
-    if (!isRecord(value) || value.isBlocked !== true || typeof value.blockedAt !== "string") {
-      throw new AppendOnlyFileFormatError(BLOCKLIST_FILE_PATH, `contains an invalid block record for key ${key}.`);
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, ["isBlocked", "blockedAt"]) ||
+      value.isBlocked !== true ||
+      typeof value.blockedAt !== "string" ||
+      !/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/.test(value.blockedAt)
+    ) {
+      return invalidInput(
+        BLOCKLIST_FILE_PATH,
+        "$.<record>",
+        "exactly { isBlocked: true, blockedAt: YYYY/MM/DD HH:mm:ss }"
+      );
     }
     // 整条记录原样带回，不降级成 true：/unblock 要把主线程那份内存 Map 整份
     // 重写回文件，只留「在不在」的话，重写会把其他人的 blockedAt 一起抹平。
@@ -94,9 +105,8 @@ function sweepOrphanedBlocklistTemps(): void {
  * 主线程用于重建 Map<number, true>。文件不存在时返回空表——那只是还没有人
  * 被拉黑过，不是异常。
  *
- * 与日志/运势/待验证不同，这里明确禁用截断自愈（repair=false）：那三者丢掉
- * 末尾几条不影响正确性，黑名单少一条就等于放一个人回群，宁可整体拒绝启动
- * 等人工恢复（见 docs/04-invariants.md）。
+ * 明确禁用截断自愈（repair=false）：黑名单少一条就等于放一个人回群，宁可
+ * 整体拒绝启动等人工恢复（见 docs/cn/04-invariants.md）。
  */
 export function hydrateBlocklist(): Map<number, BlockedUserRecord> {
   resetBlocklistCache();
@@ -105,7 +115,7 @@ export function hydrateBlocklist(): Map<number, BlockedUserRecord> {
   const state: AppendOnlyFileState = openAppendOnlyFile(BLOCKLIST_FILE_PATH, PERSISTED_FILE_MODE, false);
   blocklistFileState.current = state;
   if (state.empty) return new Map();
-  const blocked: Map<number, BlockedUserRecord> = decodeBlocklist(JSON.parse(readFileSync(BLOCKLIST_FILE_PATH, "utf8")));
+  const blocked: Map<number, BlockedUserRecord> = decodeBlocklist(readJsonInput(BLOCKLIST_FILE_PATH));
   for (const userId of blocked.keys()) blocklistKnownIds.add(userId);
   return blocked;
 }

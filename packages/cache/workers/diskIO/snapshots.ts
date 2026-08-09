@@ -11,9 +11,23 @@ export const aiMemoryCache: Map<number, string> = new Map();
 export const dirtyChats: Set<number> = new Set();
 /** 需要 durable unlink 的群；删除回执或 reset 时清除。 */
 export const deletedAiMemoryChats: Set<number> = new Set();
-/** diskIOWorker 运行时按 chat 观察到的最新 revision 与操作种类。 */
+/**
+ * diskIOWorker 运行时按 chat 观察到的最新 revision（迟到消息的水位线）。
+ *
+ * 填充：hydrate 时按已存在的快照置 0，此后每次接受 upsert/delete 时更新。
+ * 清理：`forgetAiMemoryChat`（主线程 teardown 后确认该群再无在途操作时发来的
+ * forgetAiMemory 消息）、`hydrateAiMemoryCache`、`resetAiMemoryCache`。
+ * **删除受理本身不清**——那会让一条早发的旧 revision 复活刚删掉的记忆。
+ * Worker 崩溃重建：由 load 后的 hydrate 按磁盘现存快照整体重建；主线程的
+ * tombstone 与最新快照另由 onDiskIORespawn 重放。
+ * 容量：活跃 chat 数级别，并由 forgetAiMemoryChat 随 teardown 回收；没有这条
+ * 回收路径时它会按「进程历史上出现过的 chat 数」单调增长。
+ */
 export const aiMemoryRevisions: Map<number, number> = new Map();
-/** 每群最新 revision 对应 upsert/delete；hydrate 或 reset 时重建。 */
+/**
+ * 每群最新 revision 对应的操作种类，用来给同 revision 的 upsert/delete 定序。
+ * 填充、清理、重建与容量策略同 aiMemoryRevisions，两张表始终成对增删。
+ */
 export const aiMemoryOperations: Map<number, "upsert" | "delete"> = new Map();
 /** AI 记忆批量刷盘 timer；首次 dirty 创建，flush/reset 时清除。 */
 export const aiMemoryFlushState: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
@@ -86,6 +100,21 @@ export function markAiMemoryDeleted(chatId: number, revision: number): boolean {
   deletedAiMemoryChats.add(chatId);
   aiMemoryImmediateRevisions.delete(chatId);
   return true;
+}
+
+/**
+ * 丢弃某群的 revision 水位线；只由 forgetAiMemory 消息触发。
+ *
+ * 调用前提由主线程负责：该群已 durable 删除，且没有任何在途快照、墓碑与
+ * waiter（见 aiChat/memoryMirror.ts 的 forgetAiMemoryRevisionCounter）。没有
+ * 这个前提就不能删水位线——它正是用来挡迟到 upsert 的。
+ *
+ * 只动这两张水位线表：快照本体与待 unlink 集合各有自己的生命周期，
+ * 「忘掉 revision 序列」不表达「删除文件」。
+ */
+export function forgetAiMemoryChat(chatId: number): void {
+  aiMemoryRevisions.delete(chatId);
+  aiMemoryOperations.delete(chatId);
 }
 
 /** Worker 停止或测试隔离时取消 timer 并清空全部 AI 快照运行态。 */

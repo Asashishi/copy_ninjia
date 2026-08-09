@@ -7,8 +7,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const generateImage = mock(async (..._args: unknown[]): Promise<unknown> => null);
 
-// 生图入口取的是 imageAiProvider()：`/image_model` 允许把生图单独切到另一家，
-// 其余三条能力仍走 activeAiProvider()（见 packages/aiChat/provider.ts）。
+// 生图入口只取 imageAiProvider()，不受 text/summary/media 的路由影响。
 mock.module("../../../packages/aiChat/provider", () => ({
   imageAiProvider: () => ({ name: "test", generateImage }),
 }));

@@ -50,7 +50,7 @@ export interface RemoveBlockedMembersParams {
  * 坏处——
  * 1. **写盘量按群数 × 名单长度放大**：每次变更都要整份 outbox 重写，而 N 个群的
  *    补扫条目装的是同一份内容，加起来就是 O(N² × 名单长度) 的落盘，正是
- *    docs/04-invariants.md 点名要避开的形态；`removals.json` 也因此成为整个持久化
+ *    docs/cn/04-invariants.md 点名要避开的形态；`removals.json` 也因此成为整个持久化
  *    里唯一一个大小随黑名单长度增长的文件，而它在启动恢复的关键路径上。
  * 2. **重放时那份快照可能已经过期**：Worker 重建后重投的应该是「用**此刻**的名单
  *    扫这个群」，而不是当初那一份。

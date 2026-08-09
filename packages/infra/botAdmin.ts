@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import { logger } from "./logger";
-import { bot } from "./telegram";
+import { bot } from "./telegram/mainClient";
 import {
   clearChatStateField,
   getChatState,
@@ -55,11 +55,13 @@ export async function teardownChatRuntime(chatId: number): Promise<void> {
   // 先同步调用全部 owner，让跨群 copy 槽、代理入口和 Worker 闸门在第一个
   // await 之前一起关闭；随后等待需要 durable 回执的异步 owner。
   const copyTeardown: Promise<void> = teardownRegisteredChat("copy", chatId);
+  const gagTeardown: Promise<void> = teardownRegisteredChat("gag", chatId);
   clearChatStateField(chatId, "isProxySendEnabled");
   const aiTeardown: Promise<void> = teardownRegisteredChat("aiChat", chatId);
   const antiRaidTeardown: Promise<void> = teardownRegisteredChat("antiRaid", chatId);
   const results: PromiseSettledResult<void>[] = await Promise.allSettled([
     copyTeardown,
+    gagTeardown,
     aiTeardown,
     antiRaidTeardown,
   ]);
@@ -263,7 +265,7 @@ export async function resolveBotAdminStatus(chatId: number): Promise<boolean> {
       // 被消息跟踪、超时也不踢，一整批刷群就这么走进来了；`/block` 同时回一句
       // 「本天才连一个群的管理员都不是」并跳过本群封禁。而唯一的诊断把锅指向
       // Telegram API，下一次调用又从内存里读到 true，现象根本复现不了。
-      // 落盘失败按不变量是 fatal durability failure（见 docs/04-invariants.md），
+      // 落盘失败按不变量是 fatal durability failure（见 docs/cn/04-invariants.md），
       // 必须原样上抛：这条 update 不能被确认。
       .catch((error: unknown): null => {
         throwIfUpdateAborted(signal);
@@ -323,7 +325,7 @@ export function forgetBotChatPermissions(chatId: number): void {
  * 登记权限位变化的下游观察者（当前是 Anti-Raid Worker 的投递口）。
  *
  * 反向注册而不是直接 import：infra 不得静态依赖 Anti-Raid 业务模块
- * （见 docs/04-invariants.md），与 `registerChatTeardown` 同一形态。单槽位，
+ * （见 docs/cn/04-invariants.md），与 `registerChatTeardown` 同一形态。单槽位，
  * 重复注册以最后一次为准。
  */
 export function registerBotPermissionObserver(

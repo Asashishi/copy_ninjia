@@ -3,6 +3,7 @@ import type { FlushResult } from "../types/lifecycle";
 import { drainWithWaiter } from "../libs/drainWaiter";
 import { logger } from "../infra/logger";
 import { copyUserProfilePhoto, restoreDefaultProfilePhoto } from "../infra/telegram/avatar";
+import { getBotDefaultAvatarUrl } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import type { AvatarUpdateRequest, AvatarUpdateTask } from "../types/copy/avatar";
 
@@ -25,8 +26,10 @@ async function consumeAvatarUpdates(): Promise<void> {
         // 偷脸与复原共用这一个执行槽：两者抢的是同一份「换头像」限流资源，
         // 分开跑只会让 Telegram 两边都限流。latest-only 语义也因此对两类目标
         // 通用——连点 /steal_icon 再 /reset_icon，最终生效的是最后那个。
+        // 默认头像的直链在这里取：state 内存只属于主线程，而 avatar/restore.ts
+        // 被两条 Worker 一并 import（见 stateStore.ts 的 getBotDefaultAvatarUrl）。
         const updated: boolean = task.target.kind === "default"
-          ? await restoreDefaultProfilePhoto(signal)
+          ? await restoreDefaultProfilePhoto(getBotDefaultAvatarUrl(), signal)
           : await copyUserProfilePhoto(
             task.target.user.id,
             !!task.target.user.isChannel,

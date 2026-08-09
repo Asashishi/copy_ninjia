@@ -44,6 +44,8 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
       commentOnResolve: claimedRandomTrigger,
       imageGenerationRequested: directTrigger !== undefined,
       stickerFallbackText: undefined,
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
     },
   }));
   return directTrigger !== undefined || commentOnResolveCandidate;

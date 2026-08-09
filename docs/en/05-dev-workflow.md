@@ -1,11 +1,11 @@
 # 05 Development Workflow and Quality Gates
 
 <p align="center">
-  <a href="../05-dev-workflow.md">简体中文</a> · <b>English</b> · <a href="../ja/05-dev-workflow.md">日本語</a>
+  <a href="../cn/05-dev-workflow.md">简体中文</a> · <b>English</b> · <a href="../ja/05-dev-workflow.md">日本語</a>
 </p>
 
 <p align="center">
-  <a href="README.md">📚 Developer Docs Home</a> · <a href="04-invariants.md">← Prev: 04 Invariants</a> · <a href="06-modification-guide.md">Next: 06 Recipes →</a>
+  <a href="conntent-table.md">📚 Developer Docs Home</a> · <a href="04-invariants.md">← Prev: 04 Invariants</a> · <a href="06-modification-guide.md">Next: 06 Recipes →</a>
 </p>
 
 ---
@@ -35,15 +35,16 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **1889 tests / 189 files / 31105 `expect()` calls**; full-source **function coverage 95.90% / line coverage 96.84%**. The root README's Coverage badge displays line coverage.
+`bun run test:coverage`: **2180 tests / 216 files / 72393 `expect()` calls**; full-source **function coverage 94.74% / line coverage 95.94%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
 Tests must run through `bun run test`, which invokes `bun test --isolate`, with three layers of protection:
 
 1. **File isolation**: Bun creates a fresh global object for every test file, so `mock.module` and module-level state do not contaminate other files. `--parallel` is not enabled, so this project does not claim that every file gets a separate process.
-2. **Temporary data root**: before any production module loads, `test/preload.ts` injects an independent temporary data root for each isolate. Even real, unmocked file I/O can read or write only that temporary directory and never production `state.json`, `bot.lock`, `logs/`, or `memory/`. The directory is removed afterward.
-3. **Read-only configuration root**: the same preload also points `COPY_NINJIA_CONFIG_ROOT` at the in-repo `config_example/` (see `CONFIG_ROOT` in `packages/consts/paths.ts`). The deployed `config/` is not version-controlled, so this layer both keeps a clean checkout runnable and stops tests and test Workers from reading or rewriting a developer's real `whitelist.json` and `blocklist.json`. That variable exists for tests only — it is not a deployment switch, which is why the README environment table omits it.
+2. **Temporary data root**: before any production module loads, `test/preloadEnv.ts` injects an independent temporary data root for each isolate. Even real, unmocked file I/O can read or write only that temporary directory and never production `state.json`, `bot.lock`, `logs/`, or `memory/`. The directory is removed afterward. **The path injection lives in its own file** because ESM evaluates imports before any statement in the importing file: the moment `test/preload.ts` statically imports a production module, an environment assignment written inside that file is already too late and `CONFIG_ROOT` resolves to the developer's real deployment directory.
+3. **Read-only configuration root**: the same injection also points `COPY_NINJIA_CONFIG_ROOT` at the in-repo `config_example/` (see `CONFIG_ROOT` in `packages/consts/paths.ts`). The deployed `config/` is not version-controlled, so this layer both keeps a clean checkout runnable and stops tests and test Workers from reading or rewriting a developer's real `whitelist.json` and `blocklist.json`. That variable exists for tests only — it is not a deployment switch, which is why the README environment table omits it.
+4. **Agent configuration snapshot**: `agent.json` is the one deployment input no runtime path reads from disk (in a real process the main thread parses it and hands it to each Worker in an init message, see [04 Runtime Invariants](04-invariants.md)). Test isolates never receive those messages, so `test/preload.ts` adopts the same `config_example/agent.json` into the isolate's holder once — equivalent to "the snapshot already arrived". Tests that need the unconfigured path clear the holder themselves.
 
 Direct `bun test` runs are acceptable for debugging a single file, but the complete `bun run check` must pass before merge.
 
@@ -72,7 +73,7 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 
 ### Updating README Metrics
 
-The root README badges and the test, assertion, and coverage figures above are measured values. Update them after changes to tests, production modules, or the coverage definition:
+The badges in all three project READMEs and the test, assertion, and coverage figures above are measured values. Update them after changes to tests, production modules, or the coverage definition:
 
 ```bash
 bun run test:coverage 2>&1 | tail -5           # test count, file count, expect() count
@@ -82,13 +83,13 @@ bun run test:coverage 2>&1 | grep 'All files'  # function and line coverage
 These places all carry the same measured figures, so updating one obliges updating every one:
 
 - **The Tests/Coverage badges in all three READMEs.** The Coverage badge always uses the `All files` line-coverage value.
-- **The coverage graphics**: [`docs/assets/coverage_light.svg`](../assets/coverage_light.svg) and [`coverage_dark.svg`](../assets/coverage_dark.svg), referenced from the “Project Quality” block in each README's “Pure AI Development” section. One pair is shared by all three READMEs (like the banner), so both theme files need the new figures.
+- **The coverage graphics**: [`pictures/coverage_light.svg`](../../pictures/coverage_light.svg) and [`pictures/coverage_dark.svg`](../../pictures/coverage_dark.svg), referenced from the “Project Quality” block in each README's “Pure AI Development” section. One pair is shared by all three READMEs (like the banner), so both theme files need the new figures.
 - **The equivalent `<img alt>` text in all three READMEs.** The graphic loads as an image, so the SVG's own `<title>` / `aria-label` never reaches a screen reader and the alt is the only accessible path.
 - **“Measurements for This Documentation Version” in all three workflow documents.**
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~641 source lines across 64 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
+- **The Chinese string-literal count** (currently ~787 source lines across 76 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release
@@ -106,6 +107,6 @@ Every squash merge into `master` must produce one GitHub Release:
 
 <div align="center">
 
-[← Prev: 04 Invariants](04-invariants.md) · [📚 Developer Docs Home](README.md) · [⬆️ Back to Top](#05-development-workflow-and-quality-gates) · [Next: 06 Recipes →](06-modification-guide.md)
+[← Prev: 04 Invariants](04-invariants.md) · [📚 Developer Docs Home](conntent-table.md) · [⬆️ Back to Top](#05-development-workflow-and-quality-gates) · [Next: 06 Recipes →](06-modification-guide.md)
 
 </div>

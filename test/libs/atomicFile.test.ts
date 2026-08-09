@@ -356,3 +356,48 @@ describe("atomicWriteTextChunksSync 的分块与失败清理", () => {
     expect(leftoverTempFiles()).toEqual([]);
   });
 });
+
+describe("同步原子写的权限接管", () => {
+  // 临时文件是新建的，`0666 & ~umask`（常见 0644）与目标原有权限没有任何关系，
+  // 而 rename 直接把它替换上去。异步版 atomicWriteText 早就为此显式读了目标现有
+  // mode，同步版却漏了——追加型日志正是刻意不传 mode 来「保持原有部署权限策略」的
+  // （见 workers/diskIO/appendOnlyDayFile.ts），于是每次重写都把它悄悄放宽。
+  function modeOf(path: string): number {
+    return realFsSnapshot.statSync(path).mode & 0o777;
+  }
+
+  test("不传 mode 时沿用目标文件当前权限，不放宽到 umask 默认值", () => {
+    realFsSnapshot.writeFileSync(targetPath, "original");
+    realFsSnapshot.chmodSync(targetPath, 0o600);
+
+    atomicWriteTextSync(targetPath, "rewritten");
+
+    expect(modeOf(targetPath)).toBe(0o600);
+    expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("rewritten");
+  });
+
+  test("分块写同样沿用目标现有权限", () => {
+    realFsSnapshot.writeFileSync(targetPath, "original");
+    realFsSnapshot.chmodSync(targetPath, 0o640);
+
+    atomicWriteTextChunksSync(targetPath, ["a", "b"]);
+
+    expect(modeOf(targetPath)).toBe(0o640);
+  });
+
+  test("显式传入的 mode 优先于目标现有权限", () => {
+    realFsSnapshot.writeFileSync(targetPath, "original");
+    realFsSnapshot.chmodSync(targetPath, 0o600);
+
+    atomicWriteTextSync(targetPath, "rewritten", 0o644);
+
+    expect(modeOf(targetPath)).toBe(0o644);
+  });
+
+  test("目标不存在时没有可沿用的权限，交给 open 默认值", () => {
+    atomicWriteTextSync(targetPath, "created");
+
+    expect(realFsSnapshot.existsSync(targetPath)).toBeTrue();
+    expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("created");
+  });
+});

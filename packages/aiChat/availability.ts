@@ -1,12 +1,11 @@
 /**
  * AI 闲聊「此刻到底跑不跑」的唯一判定入口。
  *
- * 三个条件缺一不可：进程侧配了任一家 AI 供应商凭据（AI_CHAT_GEMINI_API_KEY 或
- * AI_CHAT_OPENAI_API_KEY，两把都是可选 env，选取见 aiChat/provider.ts）、
- * 三份部署配置解析得动（config/{stickers,reactions,mood}.json，见
- * config/readiness.ts）、本群开了 /ai_chat enable（ChatState.isAIChatEnabled，
- * 缺省关闭）。判定散在各调用点的话，前两个条件迟早会漏掉某一处——漏在投喂路径上
- * 就是每条群消息都去 Worker 里换一次「没有凭据」的错误日志，或让那条线程读配置
+ * 三个条件缺一不可：config/agent.json 的 AI 能力与凭据严格合法、三份辅助部署配置
+ * 解析得动（config/{stickers,reactions,mood}.json，见 config/readiness.ts）、本群开了
+ * /ai_chat enable（ChatState.isAIChatEnabled，缺省关闭）。判定散在各调用点的话，
+ * 前两个条件迟早会漏掉某一处——漏在投喂路径上就是每条群消息都去 Worker 里换一次
+ * 「部署配置不可用」的错误日志，或让那条线程读配置
  * 时当场抛出、进而走完整套崩溃自愈；漏在 hydrate 上更糟：那条路把「本群没开」
  * 当成删除记忆的依据，前提临时缺失会被误读成全部群都关了，一次重启就把 memory/
  * 里的 AI 记忆全部删光。
@@ -16,16 +15,15 @@
  */
 
 import { aiChatConfigReadiness } from "../config/readiness";
-import { hasAiChatCredentials } from "./credentials";
 import { getChatState } from "../infra/storage/stateStore";
 
 /**
- * 进程侧是否具备跑 AI 闲聊的前提（任一家供应商凭据 + 三份部署配置）。为假时整条线停摆：
+ * 进程侧是否具备跑 AI 闲聊的前提（agent 能力配置 + 三份辅助部署配置）。为假时整条线停摆：
  * AI Worker 不启动、记忆不 hydrate（磁盘上那份原样留着，等前提补齐）、
  * /ai_chat enable 与 /switch_mood 直接拒绝。
  */
 export function isAiChatConfigured(): boolean {
-  return hasAiChatCredentials() && aiChatConfigReadiness().ok;
+  return aiChatConfigReadiness().ok;
 }
 
 /**

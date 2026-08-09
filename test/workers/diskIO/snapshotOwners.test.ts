@@ -34,8 +34,11 @@ const {
 const {
   aiMemoryCache,
   aiMemoryFlushState,
+  aiMemoryOperations,
+  aiMemoryRevisions,
   deletedAiMemoryChats,
   dirtyChats,
+  forgetAiMemoryChat,
 } = await import("../../../packages/cache/workers/diskIO/snapshots");
 const {
   dirtyStickerPacks,
@@ -160,6 +163,28 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(deleteReplies).toEqual([{ type: "aiMemoryDeletedPersisted", chatId: 2, revision: 1 }]);
     expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
     expect(writeAiMemoryFile).not.toHaveBeenCalled();
+  });
+
+  test("回归：teardown 后 forgetAiMemoryChat 让重新启用的 revision 1 不再被当成迟到消息", () => {
+    hydrateAiMemorySnapshots(aiFiles);
+    // 旧一代写到 revision 13，teardown 的 purge 用 14 删掉。
+    for (let revision: number = 1; revision <= 13; revision++) {
+      markAiMemorySnapshotDirty({ chatId: 2, revision, snapshot: `memory-${revision}`, files: aiFiles });
+    }
+    deleteAiMemorySnapshot(2, 14, aiFiles);
+    expect(aiMemoryRevisions.get(2)).toBe(14);
+
+    // 主线程 teardown 把自己的计数器归零，Worker 侧必须同一时刻丢掉水位线。
+    forgetAiMemoryChat(2);
+    expect(aiMemoryRevisions.has(2)).toBeFalse();
+    expect(aiMemoryOperations.has(2)).toBeFalse();
+
+    // 重新入群/重新授权后的第一份快照：没有这条回收路径时它会被静默丢弃，
+    // 一直丢到 revision 爬过 14 为止（期间进程重启即全丢，且零日志）。
+    markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "fresh-memory", files: aiFiles });
+    expect(aiMemoryCache.get(2)).toBe("fresh-memory");
+    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
+    expect(writeAiMemoryFile).toHaveBeenLastCalledWith(2, "fresh-memory");
   });
 
   test("reset 取消本领域 timer 并清空恢复态、dirty 与待删除集合", () => {

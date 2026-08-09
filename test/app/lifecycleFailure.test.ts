@@ -1,282 +1,72 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   EMERGENCY_FLUSH_TIMEOUTS,
   EMERGENCY_REUSED_DISPOSE_DEADLINE_MS,
-  FINAL_OFFSET_CONFIRM_TIMEOUT_MS,
 } from "../../packages/consts/lifecycle";
-import type { ApplicationLifecycleDependencies } from "../../packages/types/lifecycle";
-import type { BlocklistConfig } from "../../packages/types/blocklist";
+import {
+  installLifecycleFixtureHooks,
+  lifecycleFixture as sharedFixture,
+} from "../helpers/lifecycleFixture";
+import type { FlushResult } from "../helpers/lifecycleFixture";
 
-const calls: string[] = [];
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
-}
-
-const acquireSingleInstanceLock = mock(async (): Promise<void> => { calls.push("acquireLock"); });
-const releaseSingleInstanceLock = mock(async (): Promise<void> => { calls.push("releaseLock"); });
-const initTelegramClients = mock((): void => { calls.push("initTelegram"); });
-let diskIOFatalHandler: ((error: Error) => void) | undefined;
-let businessWorkerFatalHandler: ((error: Error) => void) | undefined;
-const initDiskIO = mock((options?: { onFatal?: (error: Error) => void }): void => {
-  calls.push("initDiskIO");
-  diskIOFatalHandler = options?.onFatal;
-});
-const cleanupOrphanedTempFiles = mock(async (): Promise<void> => { calls.push("cleanupTemps"); });
-const preflightEnabledFeatures = mock((): void => { calls.push("preflightFeatures"); });
-const loadState = mock(async (): Promise<void> => { calls.push("loadState"); });
-const refreshAllChatTitles = mock(async (): Promise<void> => { calls.push("refreshTitles"); });
-const loadPersistedData = mock(async () => ({
-  aiMemories: new Map<number, string>(),
-  stickerCatalogs: new Map<string, string>(),
-  luckDay: null,
-  luckReceiptSecret: { day: "2026-07-19", secret: "test-secret" },
-  verifications: new Map<string, never>(),
-  blockedUsers: new Map<number, true>(),
-  pendingBlockedRemovals: new Map(),
-}));
-type FlushResult = "flushed" | "timedOut" | "failed";
-const flushDiskIO = mock(async (): Promise<FlushResult> => { calls.push("flushDiskIO"); return "flushed"; });
-const flushStateToDisk = mock(async (): Promise<FlushResult> => { calls.push("flushState"); return "flushed"; });
-const flushAiMemory = mock(async (): Promise<FlushResult> => { calls.push("flushAiMemory"); return "flushed"; });
-const terminateDiskIO = mock(async (): Promise<void> => { calls.push("terminateDiskIO"); });
-const terminateAiChat = mock(async (): Promise<void> => { calls.push("terminateAiChat"); });
-const terminateAntiRaid = mock(async (): Promise<void> => { calls.push("terminateAntiRaid"); });
-const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drainAntiRaid"); return "flushed"; });
-const drainReactionQueue = mock(async (): Promise<FlushResult> => { calls.push("drainReaction"); return "flushed"; });
-const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
-const drainTranslate = mock(async (): Promise<FlushResult> => { calls.push("drainTranslate"); return "flushed"; });
-const closeTranslate = mock(async (): Promise<FlushResult> => { calls.push("closeTranslate"); return "flushed"; });
-const initAvatarUpdates = mock((): void => { calls.push("initAvatar"); });
-const initReactionQueue = mock((): void => { calls.push("initReaction"); });
-const initChatTitleRefresh = mock((): void => { calls.push("initTitles"); });
-const initTranslate = mock((): void => { calls.push("initTranslate"); });
-const quiesceAvatarUpdates = mock((): void => { calls.push("quiesceAvatar"); });
-const quiesceReactionQueue = mock((): void => { calls.push("quiesceReaction"); });
-const quiesceChatTitleRefresh = mock((): void => { calls.push("quiesceTitles"); });
-const quiesceTranslate = mock((): void => { calls.push("quiesceTranslate"); });
-const abortChatTitleRefresh = mock((): void => { calls.push("abortTitles"); });
-const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiMemory"); });
-const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
-const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
-const hydratePendingVerifications = mock((_value: unknown): void => { calls.push("hydrateVerifications"); });
-const hydrateBlocklist = mock((..._args: unknown[]): void => { calls.push("hydrateBlocklist"); });
-const initAntiRaid = mock((): void => { calls.push("initAntiRaid"); });
-const sweepManagedBlocklistChats = mock(async (): Promise<void> => { calls.push("sweepBlocklist"); });
-const restoreLuckState = mock((..._args: unknown[]): void => { calls.push("restoreLuck"); });
-const seedSenderCache = mock((_value: unknown): void => { calls.push("seedSender"); });
-const registerCommandMenu = mock(async (): Promise<void> => { calls.push("registerMenu"); });
-let lastSeenUpdateId: number = 0;
-const registerHandlers = mock(() => ({ getLastSeenUpdateId: (): number => lastSeenUpdateId }));
-const getAllChatStates = mock(() => new Map<number, unknown>());
-let copiedUser: object | null = null;
-const getGlobalCopyState = mock(() => ({ copiedUser }));
-const getWhitelistConfig = mock(() => {
-  calls.push("loadWhitelist");
-  return new Map();
-});
-const loadBlocklistConfig = mock((): BlocklistConfig => {
-  calls.push("loadBlocklist");
-  return { blockedIds: [7, -4004] };
-});
-const sleep = mock(async (): Promise<void> => {});
-let monotonicTime: number = 0;
-const monotonicNow = mock((): number => monotonicTime);
-const setStatePersistenceFatalHandler = mock((_handler: ((error: Error) => void) | undefined): void => {});
-const setBusinessWorkerFatalHandler = mock((handler: ((error: Error) => void) | undefined): void => {
-  businessWorkerFatalHandler = handler;
-});
-const loggerError = mock((..._args: unknown[]): void => {});
-const getUpdates = mock(async (
-  _params?: { offset: number; limit: number; timeout: number },
-  _signal?: AbortSignal
-): Promise<unknown[]> => { calls.push("getUpdates"); return []; });
-const botInit = mock(async (): Promise<void> => { calls.push("botInit"); });
-const bot = {
-  botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot", is_bot: true },
-  init: botInit,
-  api: { getUpdates },
-};
-
-const runnerStop = mock(async (): Promise<void> => { calls.push("runnerStop"); });
-const runnerTask = mock(async (): Promise<void> => {});
-const runnerSize = mock((): number => 0);
-const runnerAbortActive = mock((): number => 0);
-const runnerHasFailedUpdate = mock((): boolean => false);
-const runnerHandle = {
-  stop: runnerStop,
-  task: runnerTask,
-  size: runnerSize,
-  abortActive: runnerAbortActive,
-  hasFailedUpdate: runnerHasFailedUpdate,
-};
-const runAcknowledgedUpdateBatches = mock((_bot: unknown, _updates: unknown) => {
-  calls.push("runUpdates");
-  return runnerHandle;
-});
-
-const testDependencies = {
-  BOT_TOKEN: "test-token",
-  SUPER_ADMIN_USER_ID: 1,
+const {
+  ApplicationLifecycle,
   abortChatTitleRefresh,
   acquireSingleInstanceLock,
-  bot,
+  botInit,
+  calls,
   cleanupOrphanedTempFiles,
   closeTranslate,
+  deferred,
   drainAntiRaid,
   drainAvatarUpdates,
+  drainGagRuntime,
   drainReactionQueue,
+  drainTelegramOutbound,
   drainTranslate,
   flushAiMemory,
   flushDiskIO,
   flushStateToDisk,
-  getAllChatStates,
-  getGlobalCopyState,
   getWhitelistConfig,
   hydrateAiMemory,
-  hydratePendingVerifications,
   hydrateBlocklist,
+  hydratePendingVerifications,
   hydrateStickerCatalog,
-  initAvatarUpdates,
   initAiChat,
   initDiskIO,
   initTelegramClients,
-  initAntiRaid,
-  initChatTitleRefresh,
-  initReactionQueue,
   initTranslate,
   loadBlocklistConfig,
   loadPersistedData,
-  logger: {
-    log: mock((..._args: unknown[]): void => {}),
-    info: mock((..._args: unknown[]): void => {}),
-    warn: mock((..._args: unknown[]): void => {}),
-    error: loggerError,
-  },
-  monotonicNow,
   loadState,
+  loggerLog,
+  loggerError,
   preflightEnabledFeatures,
-  refreshAllChatTitles,
-  registerCommandMenu,
-  registerHandlers,
-  releaseSingleInstanceLock,
-  restoreLuckState,
-  runAcknowledgedUpdateBatches,
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
   quiesceReactionQueue,
+  quiesceGagRuntime,
   quiesceTranslate,
+  realDrainDependencies,
+  refreshAllChatTitles,
+  registerHandlers,
+  releaseSingleInstanceLock,
+  runnerStop,
+  runnerTask,
+  seedMissingAssetState,
   seedSenderCache,
+  setCopiedUser,
   setBusinessWorkerFatalHandler,
   setStatePersistenceFatalHandler,
-  sleep,
-  sweepManagedBlocklistChats,
+  testDependencies,
   terminateAiChat,
   terminateAntiRaid,
   terminateDiskIO,
-} as unknown as ApplicationLifecycleDependencies;
+  triggerBusinessWorkerFatal,
+  triggerDiskIOFatal,
+} = sharedFixture;
 
-const { ApplicationLifecycle } = await import("../../packages/app/lifecycle");
-// 异常退出路径必须用真实 drain：忽略 timeoutMs 的替身会把参数校验整个跳过，
-// 紧急预算（maintenanceMs = 0）下的真实行为就永远测不到。
-const { drainAvatarUpdates: realDrainAvatarUpdates } = await import("../../packages/copy/avatarQueue");
-const { drainReactionQueue: realDrainReactionQueue } = await import("../../packages/copy/reactionQueue");
-const realDrainDependencies = {
-  ...testDependencies,
-  drainAvatarUpdates: realDrainAvatarUpdates,
-  drainReactionQueue: realDrainReactionQueue,
-} as unknown as ApplicationLifecycleDependencies;
-
-beforeEach(() => {
-  calls.length = 0;
-  diskIOFatalHandler = undefined;
-  businessWorkerFatalHandler = undefined;
-  copiedUser = null;
-  lastSeenUpdateId = 0;
-  process.exitCode = 0;
-  monotonicTime = 0;
-  for (const mocked of [
-    acquireSingleInstanceLock,
-    releaseSingleInstanceLock,
-    initTelegramClients,
-    initDiskIO,
-    cleanupOrphanedTempFiles,
-    preflightEnabledFeatures,
-    getWhitelistConfig,
-    loadBlocklistConfig,
-    loadState,
-    refreshAllChatTitles,
-    loadPersistedData,
-    flushDiskIO,
-    flushStateToDisk,
-    flushAiMemory,
-    terminateDiskIO,
-    terminateAiChat,
-    terminateAntiRaid,
-    drainAntiRaid,
-    drainReactionQueue,
-    drainAvatarUpdates,
-    drainTranslate,
-    closeTranslate,
-    initAvatarUpdates,
-    initReactionQueue,
-    initChatTitleRefresh,
-    initTranslate,
-    quiesceAvatarUpdates,
-    quiesceReactionQueue,
-    quiesceChatTitleRefresh,
-    quiesceTranslate,
-    abortChatTitleRefresh,
-    hydrateAiMemory,
-    hydrateStickerCatalog,
-    initAiChat,
-    hydratePendingVerifications,
-    hydrateBlocklist,
-    initAntiRaid,
-    sweepManagedBlocklistChats,
-    restoreLuckState,
-    seedSenderCache,
-    setBusinessWorkerFatalHandler,
-    setStatePersistenceFatalHandler,
-    registerCommandMenu,
-    registerHandlers,
-    sleep,
-    monotonicNow,
-    loggerError,
-    getUpdates,
-    botInit,
-    runnerStop,
-    runnerTask,
-    runnerSize,
-    runnerAbortActive,
-    runnerHasFailedUpdate,
-    runAcknowledgedUpdateBatches,
-  ]) mocked.mockClear();
-  acquireSingleInstanceLock.mockImplementation(async (): Promise<void> => { calls.push("acquireLock"); });
-  refreshAllChatTitles.mockImplementation(async (): Promise<void> => { calls.push("refreshTitles"); });
-  flushDiskIO.mockImplementation(async () => { calls.push("flushDiskIO"); return "flushed" as const; });
-  flushStateToDisk.mockImplementation(async () => { calls.push("flushState"); return "flushed" as const; });
-  flushAiMemory.mockImplementation(async () => { calls.push("flushAiMemory"); return "flushed" as const; });
-  drainAntiRaid.mockImplementation(async () => { calls.push("drainAntiRaid"); return "flushed" as const; });
-  drainReactionQueue.mockImplementation(async () => { calls.push("drainReaction"); return "flushed" as const; });
-  drainAvatarUpdates.mockImplementation(async () => { calls.push("drainAvatar"); return "flushed" as const; });
-  drainTranslate.mockImplementation(async () => { calls.push("drainTranslate"); return "flushed" as const; });
-  closeTranslate.mockImplementation(async () => { calls.push("closeTranslate"); return "flushed" as const; });
-  runnerTask.mockImplementation(async (): Promise<void> => {});
-  runnerSize.mockImplementation((): number => 0);
-  runnerHasFailedUpdate.mockImplementation((): boolean => false);
-  getUpdates.mockImplementation(async (): Promise<unknown[]> => {
-    calls.push("getUpdates");
-    return [];
-  });
-});
-
-afterEach(() => {
-  // Bun 在 test isolate 内把 undefined 视为“保留现有退出码”；显式归零，
-  // 避免本文件刻意覆盖的启动失败路径把整个测试命令误报为失败。
-  process.exitCode = 0;
-});
+installLifecycleFixtureHooks();
 
 describe("应用启动失败与退出清理", () => {
   // 部署配置不再在这里预热（见 config/readiness.ts），因此这条「持锁之后 init
@@ -324,6 +114,24 @@ describe("应用启动失败与退出清理", () => {
     // 否则「已经要求停机」之后照样跑完整轮 getChat 扫描加批量落盘。
     expect(calls.indexOf("quiesceTitles")).toBeGreaterThan(-1);
     expect(calls.indexOf("quiesceTitles")).toBeLessThan(calls.indexOf("refreshTitles"));
+    const signalLogs: unknown[][] = loggerLog.mock.calls.filter(
+      (args: unknown[]): boolean => args[0] === "Received SIGTERM; beginning graceful shutdown."
+    );
+    expect(signalLogs).toHaveLength(1);
+    expect(process.exitCode).toBe(0);
+  });
+
+  test("正常运行收到 SIGINT 时记录原因并保持干净停机", async () => {
+    runnerTask.mockImplementationOnce(async (): Promise<void> => {
+      process.emit("SIGINT");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+
+    expect(loggerLog).toHaveBeenCalledWith("Received SIGINT; beginning graceful shutdown.");
+    expect(runnerStop).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(0);
   });
 
   test("白名单配置损坏时在联网和 Worker 启动前拒绝启动", async () => {
@@ -366,7 +174,9 @@ describe("应用启动失败与退出清理", () => {
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(loggerError).toHaveBeenCalledWith(
       "Unhandled error in bot main runner:",
-      expect.objectContaining({ message: expect.stringContaining("protected identity 7") })
+      expect.objectContaining({
+        message: expect.stringContaining("$.blockedIds must be disjoint from protected identities"),
+      })
     );
   });
 
@@ -402,6 +212,13 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("loadBlocklist")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initDiskIO"));
+    // 补齐素材直链读的是 loadState 恢复出来的内存，且必须排在**所有**会拒绝启动的
+    // await 之后（功能闸、bot.init、黑名单补扫）——被拒绝启动的那次运行不该顺手
+    // 改写运维正要拿去排查的 state.json。
+    expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("seedAssets"));
+    expect(calls.indexOf("preflightFeatures")).toBeLessThan(calls.indexOf("seedAssets"));
+    expect(calls.indexOf("botInit")).toBeLessThan(calls.indexOf("seedAssets"));
+    expect(calls.indexOf("sweepBlocklist")).toBeLessThan(calls.indexOf("seedAssets"));
     expect(hydrateBlocklist).toHaveBeenCalledWith(
       expect.any(Map),
       expect.any(Map),
@@ -431,9 +248,61 @@ describe("应用启动失败与退出清理", () => {
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
+  test("启动闸拒绝时不补齐素材直链，state.json 保持运维看到的原样", async () => {
+    // 补齐是纯可读性写入；被拒绝启动的那次运行改写 state.json 只会干扰排查。
+    preflightEnabledFeatures.mockImplementationOnce((): void => {
+      calls.push("preflightFeatures");
+      throw new Error("AI chat is enabled in 1 chat(s) but config/mood.json is unusable");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+    await lifecycle.dispose();
+
+    expect(process.exitCode).toBe(1);
+    expect(seedMissingAssetState).not.toHaveBeenCalled();
+    expect(initTelegramClients).not.toHaveBeenCalled();
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
+  test("功能闸之后的启动拒绝同样不补齐——bot.init 失败也不改写 state.json", async () => {
+    // 功能闸不是最后一道拒绝点：吊销的 token 要到 bot.init 才炸。补齐排在所有
+    // 会中止启动的 await 之后，这条路径才守得住「被拒绝的启动不动运维的文件」。
+    botInit.mockImplementationOnce(async (): Promise<never> => {
+      calls.push("botInit");
+      throw new Error("401: Unauthorized");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run();
+    await lifecycle.dispose();
+
+    expect(process.exitCode).toBe(1);
+    expect(calls).toContain("botInit");
+    expect(seedMissingAssetState).not.toHaveBeenCalled();
+    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
+  });
+
+  test("启动全程成功后才补齐素材直链，并按补写项数留一行日志", async () => {
+    seedMissingAssetState.mockImplementationOnce((): number => {
+      calls.push("seedAssets");
+      return 2;
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.init();
+    await lifecycle.dispose();
+
+    // 排在最后一个会拒绝启动的 await（黑名单补扫）之后。
+    expect(calls.indexOf("seedAssets")).toBeGreaterThan(calls.indexOf("sweepBlocklist"));
+    expect(testDependencies.logger.log).toHaveBeenCalledWith(
+      expect.stringContaining("Seeded 2 missing state.global.assets URL(s)")
+    );
+  });
+
   test("轮询任务异常后执行完整持久化顺序，报未确认 offset 但照常释放实例锁", async () => {
     runnerTask.mockRejectedValueOnce(new Error("polling failed"));
-    copiedUser = { id: 7 };
+    setCopiedUser({ id: 7 });
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run();
@@ -455,7 +324,7 @@ describe("应用启动失败与退出清理", () => {
     // task() 抛错会让整段确认前闸门被跳过。闸门标记若停在初始值 true，dispose()
     // 组装出的 offsetConfirmed 就是真，这一轮会被判成干净停机：诊断行不输出，
     // 运维 grep 日志看到的是「一切正常」，实际丢了一条更新且扣住了 offset。
-    // 跳过 = 记为失败（见 docs/04-invariants.md）。
+    // 跳过 = 记为失败（见 docs/cn/04-invariants.md）。
     expect(process.exitCode).toBe(1);
     const errorLines: string[] = loggerError.mock.calls.map((call: unknown[]): string => String(call[0]));
     expect(errorLines.some((line: string): boolean =>
@@ -483,12 +352,14 @@ describe("应用启动失败与退出清理", () => {
     expect(flushStateToDisk).toHaveBeenCalledTimes(1);
     expect(initTranslate).toHaveBeenCalledTimes(1);
     expect(quiesceTranslate).toHaveBeenCalledTimes(1);
+    expect(quiesceGagRuntime).toHaveBeenCalledTimes(1);
     expect(drainTranslate).toHaveBeenCalledTimes(1);
     expect(closeTranslate).toHaveBeenCalledTimes(1);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(calls.indexOf("runnerStop")).toBeLessThan(calls.indexOf("flushAiMemory"));
     expect(calls.indexOf("quiesceTranslate")).toBeLessThan(calls.indexOf("drainTranslate"));
     expect(calls.indexOf("drainTranslate")).toBeLessThan(calls.indexOf("closeTranslate"));
+    expect(calls.indexOf("drainGag")).toBeLessThan(calls.indexOf("drainTelegramOutbound"));
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));
     expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("terminateDiskIO"));
   });
@@ -535,6 +406,8 @@ describe("应用启动失败与退出清理", () => {
     await disposing;
 
     expect(calls.indexOf("drainAntiRaid")).toBeLessThan(calls.indexOf("flushAiMemory"));
+    expect(calls.indexOf("drainAntiRaid")).toBeLessThan(calls.indexOf("drainMessageDeletions"));
+    expect(calls.indexOf("drainMessageDeletions")).toBeLessThan(calls.indexOf("flushAiMemory"));
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));
     expect(calls.indexOf("terminateAiChat")).toBeLessThan(calls.indexOf("flushDiskIO"));
     expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("terminateAntiRaid"));
@@ -687,6 +560,37 @@ describe("应用启动失败与退出清理", () => {
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("antiRaid=failed"));
   });
 
+  test("Telegram 总闸排空失败仍继续落盘和终止，但不得释放实例锁", async () => {
+    drainTelegramOutbound.mockResolvedValueOnce("failed");
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.dispose();
+
+    expect(flushDiskIO).toHaveBeenCalledTimes(1);
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(terminateAntiRaid).toHaveBeenCalledTimes(1);
+    expect(terminateDiskIO).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("telegram=failed"));
+  });
+
+  test("gag 提示未清理时仍继续后续 owner，但不得释放实例锁", async () => {
+    drainGagRuntime.mockResolvedValueOnce("failed");
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.dispose();
+
+    expect(drainTelegramOutbound).toHaveBeenCalledTimes(1);
+    expect(flushDiskIO).toHaveBeenCalledTimes(1);
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("gag=failed"));
+  });
+
   test("翻译 drain 超时仍关闭 gRPC 客户端，并保留实例锁", async () => {
     drainTranslate.mockResolvedValueOnce("timedOut");
     const lifecycle = new ApplicationLifecycle(testDependencies);
@@ -704,7 +608,7 @@ describe("应用启动失败与退出清理", () => {
     const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
-    diskIOFatalHandler!(new Error("runtime recovery failed"));
+    triggerDiskIOFatal(new Error("runtime recovery failed"));
     await lifecycle.wait();
     await lifecycle.dispose();
 
@@ -720,7 +624,7 @@ describe("应用启动失败与退出清理", () => {
     const lifecycle = new ApplicationLifecycle(testDependencies);
     await lifecycle.init();
 
-    businessWorkerFatalHandler!(new Error("AI Worker replay failed"));
+    triggerBusinessWorkerFatal(new Error("AI Worker replay failed"));
     await lifecycle.wait();
     await lifecycle.dispose();
 
@@ -784,232 +688,4 @@ describe("应用启动失败与退出清理", () => {
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("disk=failed"));
   });
 
-  test("正常 wait 会等待 runner 排空并确认最后 update offset", async () => {
-    runnerSize.mockReturnValueOnce(1).mockReturnValue(0);
-    lastSeenUpdateId = 321;
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-    await lifecycle.init();
-
-    await lifecycle.wait();
-    await lifecycle.dispose();
-
-    expect(sleep).toHaveBeenCalledTimes(1);
-    expect(getUpdates).toHaveBeenCalledWith(
-      { offset: 322, limit: 1, timeout: 0 },
-      expect.any(AbortSignal)
-    );
-    expect(flushAiMemory).toHaveBeenCalledTimes(2);
-    expect(flushDiskIO).toHaveBeenCalledTimes(2);
-    expect(flushStateToDisk).toHaveBeenCalledTimes(2);
-    expect(drainTranslate).toHaveBeenCalledTimes(2);
-    expect(closeTranslate).toHaveBeenCalledTimes(1);
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
-  test("wait 在 Anti-Raid drain 完成前不得 flush，更不得确认 offset", async () => {
-    const antiRaidGate = deferred<FlushResult>();
-    drainAntiRaid.mockImplementationOnce(() => {
-      calls.push("drainAntiRaid");
-      return antiRaidGate.promise;
-    });
-    lastSeenUpdateId = 654;
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-    await lifecycle.init();
-
-    const waiting = lifecycle.wait();
-    await Bun.sleep(0);
-
-    expect(drainAntiRaid).toHaveBeenCalledTimes(1);
-    expect(flushAiMemory).not.toHaveBeenCalled();
-    expect(flushDiskIO).not.toHaveBeenCalled();
-    expect(flushStateToDisk).not.toHaveBeenCalled();
-    expect(getUpdates).not.toHaveBeenCalled();
-
-    antiRaidGate.resolve("flushed");
-    await waiting;
-
-    expect(calls.indexOf("drainAntiRaid")).toBeLessThan(calls.indexOf("flushAiMemory"));
-    expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("flushDiskIO"));
-    expect(calls.indexOf("flushDiskIO")).toBeLessThan(calls.indexOf("flushState"));
-    expect(calls.indexOf("flushState")).toBeLessThan(calls.indexOf("getUpdates"));
-    expect(getUpdates).toHaveBeenCalledWith(
-      { offset: 655, limit: 1, timeout: 0 },
-      expect.any(AbortSignal)
-    );
-    await lifecycle.dispose();
-  });
-
-  test("最终 offset 确认失败会非零退出并点名 offset，但不扣住实例锁", async () => {
-    lastSeenUpdateId = 432;
-    getUpdates.mockRejectedValueOnce(new Error("confirmation failed"));
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-    await lifecycle.init();
-
-    await lifecycle.wait();
-    await lifecycle.dispose();
-
-    expect(process.exitCode).toBe(1);
-    expect(loggerError).toHaveBeenCalledWith(
-      "Failed to confirm update offset on shutdown:",
-      expect.any(Error)
-    );
-    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset=false"));
-    // offsetWithheld 档：各 owner 都排空落盘、Worker 已终止，没有任何东西还会写
-    // 共享数据目录，扣住锁只会留下一条陈旧 bot.lock 记录并误导排查方向。
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
-  test("永不自行 settle 的最终确认受专用 AbortSignal 截断", async () => {
-    lastSeenUpdateId = 543;
-    const originalTimeout: typeof AbortSignal.timeout = AbortSignal.timeout;
-    let requestedTimeoutMs: number | undefined;
-    AbortSignal.timeout = ((timeoutMs: number): AbortSignal => {
-      requestedTimeoutMs = timeoutMs;
-      return AbortSignal.abort(new DOMException("confirmation timed out", "TimeoutError"));
-    }) as typeof AbortSignal.timeout;
-    getUpdates.mockImplementationOnce(async (
-      _params?: { offset: number; limit: number; timeout: number },
-      signal?: AbortSignal
-    ): Promise<unknown[]> => {
-      calls.push("getUpdates");
-      if (signal?.aborted === true) throw signal.reason;
-      return new Promise<unknown[]>(() => {});
-    });
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    try {
-      await lifecycle.init();
-      await lifecycle.wait();
-      await lifecycle.dispose();
-    } finally {
-      AbortSignal.timeout = originalTimeout;
-    }
-
-    expect(requestedTimeoutMs).toBe(FINAL_OFFSET_CONFIRM_TIMEOUT_MS);
-    expect(process.exitCode).toBe(1);
-    // 同上：确认超时属于 offsetWithheld，不是「还有人在写」，锁照常释放。
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
-  test("wait 首次维护超时后即使 dispose 时落定也不能改写未确认结果", async () => {
-    const maintenance = deferred<void>();
-    refreshAllChatTitles.mockImplementationOnce((): Promise<void> => maintenance.promise);
-    lastSeenUpdateId = 654;
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-    await lifecycle.init();
-
-    const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
-    const originalClearTimeout: typeof clearTimeout = globalThis.clearTimeout;
-    const timeoutToken = {} as ReturnType<typeof setTimeout>;
-    globalThis.setTimeout = ((callback: (...args: unknown[]) => void): ReturnType<typeof setTimeout> => {
-      queueMicrotask(callback);
-      return timeoutToken;
-    }) as typeof setTimeout;
-    globalThis.clearTimeout = ((_timer: ReturnType<typeof setTimeout>): void => {}) as typeof clearTimeout;
-    try {
-      await lifecycle.wait();
-    } finally {
-      globalThis.setTimeout = originalSetTimeout;
-      globalThis.clearTimeout = originalClearTimeout;
-    }
-
-    maintenance.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await lifecycle.dispose();
-
-    expect(getUpdates).not.toHaveBeenCalled();
-    expect(process.exitCode).toBe(1);
-    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset=false"));
-    // 迟到落定改写不了 offset 结论（上一条断言），但它确实证明了那个维护任务
-    // 已经结束：dispose 自己那轮 waitForBackgroundMaintenance 因此是 settled，
-    // 三态落在 offsetWithheld，锁可以释放。维护任务若到 dispose 仍未落定，
-    // dispose 那轮同样会超时，三态变成 unsettled，锁才扣住。
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
-  test("确认前 Anti-Raid drain 超时会阻止 offset，并把失败传播到退出状态", async () => {
-    lastSeenUpdateId = 777;
-    drainAntiRaid.mockResolvedValueOnce("timedOut");
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-    await lifecycle.init();
-
-    await lifecycle.wait();
-
-    expect(process.exitCode).toBe(1);
-    expect(getUpdates).not.toHaveBeenCalled();
-    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("antiRaid=timedOut"));
-    await lifecycle.dispose();
-  });
-
-  test("确认前任一持久化边界失败时不确认 update offset", async () => {
-    lastSeenUpdateId = 321;
-    flushDiskIO.mockResolvedValueOnce("failed");
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-    await lifecycle.init();
-
-    await lifecycle.wait();
-    await lifecycle.dispose();
-
-    expect(getUpdates).not.toHaveBeenCalled();
-    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("final Telegram update offset will not be confirmed"));
-  });
-
-  test("停机时有 update 处理失败：不确认 offset 并以非零状态退出", async () => {
-    // 停机路径放弃在途批次后 task() 会正常 resolve，排空也会归零，光靠这两者
-    // 无法发现那批里失败的 update。漏掉就等于替 Telegram 确认了一条从未成功
-    // 处理的 update，重启后不会再收到它。
-    lastSeenUpdateId = 888;
-    runnerHasFailedUpdate.mockReturnValue(true);
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-    await lifecycle.init();
-
-    await lifecycle.wait();
-
-    expect(getUpdates).not.toHaveBeenCalled();
-    expect(process.exitCode).toBe(1);
-    expect(loggerError).toHaveBeenCalledWith(
-      expect.stringContaining("Withholding the final Telegram offset")
-    );
-    await lifecycle.dispose();
-  });
-
-  test("墙钟回拨时排空仍按单调预算超时，且不确认 offset", async () => {
-    let wallNow: number = 1_000;
-    const originalDateNow = Date.now;
-    Date.now = (): number => wallNow;
-    runnerSize.mockReturnValue(2);
-    sleep.mockImplementation(async (): Promise<void> => {
-      wallNow -= 60_000;
-      monotonicTime += 5_000;
-    });
-    lastSeenUpdateId = 321;
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    try {
-      await lifecycle.init();
-      await lifecycle.wait();
-      await lifecycle.dispose();
-    } finally {
-      Date.now = originalDateNow;
-    }
-
-    expect(getUpdates).not.toHaveBeenCalled();
-    expect(runnerAbortActive).toHaveBeenCalled();
-    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("withholding their Telegram offset"));
-  });
-
-  test("并发 update 乱序完成时不会跨过仍在途的较小 update", async () => {
-    // 较大的 update 已经完成，但较小的 update 仍占据 runner，因此 size 始终非零。
-    runnerSize.mockReturnValue(1);
-    sleep.mockImplementation(async (): Promise<void> => { monotonicTime += 5_000; });
-    lastSeenUpdateId = 900;
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    await lifecycle.init();
-    await lifecycle.wait();
-    await lifecycle.dispose();
-
-    expect(getUpdates).not.toHaveBeenCalled();
-  });
 });

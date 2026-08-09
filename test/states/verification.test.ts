@@ -36,6 +36,8 @@ function kickPendingState(
     label: "杂鱼A",
     isBot: false,
     requestedAt: 0,
+    effectStarted: false,
+    executionStarted: false,
     ...overrides,
   };
 }
@@ -105,15 +107,15 @@ describe("join：ABSENT 起步", () => {
     expect(effects).toEqual([{ kind: "sendWelcome", variant: "channelComment", targetLabel: "杂鱼A", anchorMessageId: 55 }]);
   });
 
-  test("私密模式期间、没有评论区活动的普通入群 → KICK_PENDING，删公告后踢出", () => {
+  test("私密模式普通入群先进入可持久化 KICK_PENDING，不在落盘前执行踢人", () => {
     const event = joinEvent({ lockdownActive: true, announcementMessageId: 7 });
     expect(joinCreatesNewRecord(undefined, event)).toBe(true); // 秒踢的入群也计入刷群统计
     const { next, effects } = transitionVerification(undefined, event);
-    expect(next?.kind).toBe("kickPending");
-    expect(effects).toEqual([
-      { kind: "deleteMessage", messageId: 7 },
-      { kind: "kickMember" },
-    ]);
+    expect(next).toMatchObject({
+      kind: "kickPending",
+      announcementMessageId: 7,
+    });
+    expect(effects).toEqual([]);
   });
 
   test("私密模式期间评论或楼中楼回复触发的入群仍豁免且不计数", () => {
@@ -170,17 +172,17 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
     expect(effects).toEqual([{ kind: "deleteMessage", messageId: 9 }]);
   });
 
-  test("KICKED 占位遇到真的重新入群（超过去重宽限期）→ 补踢一次并换成待执行状态", () => {
+  test("KICKED 占位遇到真的重新入群 → 换成待落盘状态，不提前补踢", () => {
     const state = kickedState({ kickedAt: 0 });
     const { next, effects } = transitionVerification(state, joinEvent({ now: 10_000 }));
     expect(next).not.toBe(state);
-    expect(next).toEqual({
+    expect(next).toMatchObject({
       kind: "kickPending",
       label: "杂鱼A",
       isBot: false,
       requestedAt: 10_000,
     });
-    expect(effects).toEqual([{ kind: "kickMember" }]);
+    expect(effects).toEqual([]);
   });
 
   test("豁免入群撞上已开的验证窗口 → 撤销并删提醒，且按精确时刻撤销此前记的那次刷群计数", () => {
@@ -438,6 +440,19 @@ describe("trackedMessage", () => {
 });
 
 describe("私密模式踢人结算", () => {
+  test("KICK_PENDING 只有收到精确落盘回执后才按删公告、踢人的顺序执行", () => {
+    const state = kickPendingState({ announcementMessageId: 7 });
+    expect(transitionVerification(state, { type: "terminalPersisted" })).toEqual({
+      next: state,
+      effects: [
+        { kind: "deleteMessage", messageId: 7 },
+        { kind: "kickMember" },
+      ],
+    });
+    expect(state.effectStarted).toBeTrue();
+    expect(transitionVerification(state, { type: "terminalPersisted" }).effects).toEqual([]);
+  });
+
   test("只有当前 KICK_PENDING 才转为 KICKED 并从结算时刻开始去重", () => {
     const state = kickPendingState();
     const settled = transitionVerification(state, { type: "kickSettled", now: 5_000 });
@@ -461,7 +476,9 @@ describe("私密模式踢人结算", () => {
       next: state,
       effects: [{ kind: "kickMember" }],
     });
+    expect(state.effectStarted).toBeTrue();
 
+    state.effectStarted = false;
     state.executionStarted = true;
     expect(transitionVerification(state, { type: "kickRetry" })).toEqual({
       next: state,
@@ -689,6 +706,84 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
           ? state.reminderMessageId
           : state.replyReminderMessageId
       ).toBe(9_999);
+    }
+  });
+
+  test("guardDisabled：PENDING 停止触发，且不动群里已有的提醒", () => {
+    // 关掉开关表达的是「以后别管了」：超时踢出与提醒补发跟着记录一起作废，
+    // 但已经发出去的两条提醒不删——那是关掉之前真实发生过的交互，替管理员
+    // 抹现场不是这条命令的职责。
+    const state = pendingState({ reminderMessageId: 11, replyReminderMessageId: 12 });
+
+    const { next, effects } = transitionVerification(state, { type: "guardDisabled" });
+
+    expect(next).toBeUndefined();
+    expect(effects).toEqual([]);
+  });
+
+  test("guardDisabled：两个已落盘终态一并作废，不再踢人", () => {
+    // 终态是「已经决定要踢、正等落盘回执」；开关关掉之后还把人踢出去，是管理员
+    // 最不可能预期的结果。返回 undefined 让解释器发 tombstone，重启也不会复活。
+    const snapshot = {
+      label: "杂鱼A",
+      isBot: false,
+      reminderMessageId: 21,
+      replyReminderMessageId: 22,
+      joinedAt: 0,
+      expiresAt: 120_000,
+    };
+
+    for (const state of [
+      { kind: "checkingInviter", inviterId: 7, snapshot },
+      { kind: "expelling", reason: "timeout", snapshot },
+    ] as const) {
+      const { next, effects } = transitionVerification(state, { type: "guardDisabled" });
+
+      expect(next).toBeUndefined();
+      // 一件事都不做：不踢人、不删提醒、不动成员自己的消息。
+      expect(effects).toEqual([]);
+    }
+  });
+
+  test("回归：新入群取代终态记录时，先删掉旧记录留下的验证提醒", () => {
+    // 旧记录被替换后，它的 expel 收尾会因对象同一性复核不过而整段跳过——那条
+    // 收尾正是负责删提醒的人。提醒带按钮，不能挂固定 30 秒删除，漏发这条 effect
+    // 就等于在群里永久留一个指向已不存在记录的「验证」按钮。
+    const snapshot = {
+      label: "杂鱼A",
+      isBot: false,
+      reminderMessageId: 21,
+      replyReminderMessageId: 22,
+      joinedAt: 0,
+      expiresAt: 120_000,
+    };
+
+    for (const state of [
+      { kind: "checkingInviter", inviterId: 7, snapshot },
+      { kind: "expelling", reason: "timeout", snapshot },
+    ] as const) {
+      const { next, effects } = transitionVerification(state, joinEvent({ now: 500_000 }));
+
+      expect(next?.kind).toBe("pending");
+      expect(effects[0]).toEqual({
+        kind: "deleteReminders",
+        reminderMessageId: 21,
+        replyReminderMessageId: 22,
+      });
+    }
+  });
+
+  test("guardDisabled：内存态与 ABSENT 都直接清空，不产生副作用", () => {
+    for (const state of [
+      undefined,
+      { kind: "exempt", label: "杂鱼A", isBot: false } as const,
+      kickedState(),
+      kickPendingState(),
+    ]) {
+      const { next, effects } = transitionVerification(state, { type: "guardDisabled" });
+
+      expect(next).toBeUndefined();
+      expect(effects).toEqual([]);
     }
   });
 

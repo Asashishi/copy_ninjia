@@ -9,10 +9,10 @@ import { logger } from "../../../infra/logger";
 import {
   deleteMessageAfter,
   deleteMessageWithOutcome,
-  joinVerificationApi,
-  kickChatMember,
+  kickChatMemberWithOutcome,
   probeChatMembership,
   sendMessage,
+  joinVerificationApi,
 } from "../../../infra/telegram";
 import { formatMinSec } from "../../../libs/time";
 import { verificationKey } from "../../../libs/verificationKey";
@@ -26,10 +26,13 @@ import type {
   VerificationState,
   VerificationTerminalState,
 } from "../../../types/states/verification";
-import type { DeleteMessageOutcome } from "../../../infra/telegram";
+import type {
+  DeleteMessageOutcome,
+  KickChatMemberOutcome,
+} from "../../../infra/telegram";
 import { fetchAdminIds, freshAdminIds } from "../adminCache";
 import { botCanDeleteIn, botCanRestrictIn } from "../botPermissions";
-import { chatIsSupergroup } from "../chatKind";
+import { resolveChatIsSupergroup } from "../chatKind";
 
 /** 终态原地标记变化后发布新 revision 的边界。 */
 export type VerificationChangePublisher = (
@@ -243,7 +246,13 @@ interface ExpelMemberParams {
   publishVerificationChange: VerificationChangePublisher;
 }
 
-type ExpelRemovalOutcome = "kicked" | "absent" | "unconfirmed" | "failed" | "stale";
+type ExpelRemovalOutcome =
+  | "kicked"
+  | "absent"
+  | "unconfirmed"
+  | "kindUnknown"
+  | "failed"
+  | "stale";
 
 /**
  * 跨落盘重放的终态在踢人前重新确认成员仍在群里。查询失败不等于不在群，
@@ -254,20 +263,24 @@ async function kickPresentMember(
   userId: number,
   isCurrent: () => boolean
 ): Promise<ExpelRemovalOutcome> {
+  const isSupergroup: boolean | undefined =
+    await resolveChatIsSupergroup(chatId);
+  if (!isCurrent()) return "stale";
+  if (isSupergroup === undefined) return "kindUnknown";
   const present: boolean | undefined =
     await probeChatMembership(chatId, userId, joinVerificationApi);
   if (present === false) return "absent";
   if (present === undefined) return "unconfirmed";
   if (!isCurrent()) return "stale";
-  // 三态原样传下去：只有确证是普通群才换 banChatMember，未知按超级群办（判定
-  // 见该函数 JSDoc）。不用条件展开——那会让同一个调用点产出两种对象 shape，
-  // 还要为「未知」这条最常见的分支白造一个立即丢弃的空对象。
-  return await kickChatMember({
+  const outcome: KickChatMemberOutcome = await kickChatMemberWithOutcome({
     chatId,
     userId,
-    isSupergroup: chatIsSupergroup(chatId),
+    isSupergroup,
     api: joinVerificationApi,
-  }) ? "kicked" : "failed";
+  });
+  if (outcome === "kicked") return "kicked";
+  if (outcome === "absent") return "absent";
+  return "failed";
 }
 
 /** 清理机器人验证痕迹并按现查结果踢出，成功播报先写入新 revision 再收尾。 */
@@ -344,6 +357,8 @@ async function expelMember({
   const noticeText: string = !kicked
     ? removalOutcome === "unconfirmed"
       ? `啧，本天才没能确认 ${snapshot.label} 现在还在不在群里，所以这次没有贸然踢人；会继续重试，杂鱼管理员也检查下网络和本天才的成员查询权限！`
+      : removalOutcome === "kindUnknown"
+        ? `啧，本天才没能确认这个聊天是普通群还是超级群，所以这次没有拿 ${snapshot.label} 乱试踢人接口；会继续重试，杂鱼管理员检查下网络！`
       : reason === "flood"
         ? `啧，${snapshot.label} 没完成验证还在刷屏，本天才想把 TA 踢出去却没踢动……管理员快检查本天才的封禁权限！`
         : `啧，${snapshot.label} 超时没验证，本天才本想把 TA 踢出去，结果居然没踢动……肯定是哪个杂鱼管理员没给本天才封禁权限！快去检查，不然只能你们自己动手请 TA 出去咯♡`
@@ -358,10 +373,10 @@ async function expelMember({
           : `啧，${snapshot.label} 磨磨蹭蹭 ${formatMinSec(VERIFICATION_TIMEOUT_MS)} 都点不出验证按钮，本天才把 TA 踢出去啦，杂鱼动作太慢咯♡`;
   if (!stillCurrent()) return false;
 
-  // 三类诊断分别持久化，网络探测失败不能占掉权限失败的唯一告警名额。
+  // 三类诊断分别持久化，成员/群类型探测失败不能占掉权限失败的唯一告警名额。
   const shouldSendNotice: boolean = kicked
     ? expectedState.successNoticeSent !== true
-    : removalOutcome === "unconfirmed"
+    : removalOutcome === "unconfirmed" || removalOutcome === "kindUnknown"
       ? expectedState.unconfirmedNoticeSent !== true
       : expectedState.failureNoticeSent !== true;
   const noticeMessageId: number | undefined = shouldSendNotice
@@ -372,8 +387,9 @@ async function expelMember({
     })
     : undefined;
   if (!kicked && shouldSendNotice && noticeMessageId !== undefined) {
-    if (removalOutcome === "unconfirmed") expectedState.unconfirmedNoticeSent = true;
-    else expectedState.failureNoticeSent = true;
+    if (removalOutcome === "unconfirmed" || removalOutcome === "kindUnknown") {
+      expectedState.unconfirmedNoticeSent = true;
+    } else expectedState.failureNoticeSent = true;
     publishVerificationChange(chatId, userId, true);
   }
   if (noticeMessageId !== undefined && kicked) {

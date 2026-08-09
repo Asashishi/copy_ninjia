@@ -1,11 +1,11 @@
 <div align="center">
 
-<p><b>简体中文</b> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a></p>
+<p><b>简体中文</b> · <a href="docs/en/README.md">English</a> · <a href="docs/ja/README.md">日本語</a></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner_dark.jpg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner_light.jpg">
-  <img alt="Copy Ninjia Banner" src="docs/assets/banner_light.jpg" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="pictures/banner_dark.jpg">
+  <source media="(prefers-color-scheme: light)" srcset="pictures/banner_light.jpg">
+  <img alt="Copy Ninjia Banner" src="pictures/banner_light.jpg" width="100%">
 </picture>
 
 <h1>
@@ -16,9 +16,9 @@
 <p><sub>点击头像即可跳转至示例 Bot：<a href="https://t.me/copy_ninjia_bot">@copy_ninjia_bot</a></sub></p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tagline_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tagline_light.svg">
-  <img alt="会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人" src="docs/assets/tagline_light.svg" width="780">
+  <source media="(prefers-color-scheme: dark)" srcset="pictures/tagline_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="pictures/tagline_light.svg">
+  <img alt="会偷头像、会复读、会看图、会守群，还会一本正经损人的 Telegram 群聊机器人" src="pictures/tagline_light.svg" width="780">
 </picture>
 
 **生产代码、测试与文档均由 AI 编写的纯 AI 开发项目** — 人类负责架构设计，并与 AI 共同审查每一次提交
@@ -28,15 +28,15 @@
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
   <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
   <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
-  <a href="https://platform.openai.com/docs/"><img src="https://img.shields.io/badge/AI-OpenAI-412991?style=flat-square&logo=data:image/svg%2Bxml;base64,PHN2ZyBmaWxsPSJ3aGl0ZSIgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik0yMi4yODE5IDkuODIxMWE1Ljk4NDcgNS45ODQ3IDAgMCAwLS41MTU3LTQuOTEwOCA2LjA0NjIgNi4wNDYyIDAgMCAwLTYuNTA5OC0yLjlBNi4wNjUxIDYuMDY1MSAwIDAgMCA0Ljk4MDcgNC4xODE4YTUuOTg0NyA1Ljk4NDcgMCAwIDAtMy45OTc3IDIuOSA2LjA0NjIgNi4wNDYyIDAgMCAwIC43NDI3IDcuMDk2NiA1Ljk4IDUuOTggMCAwIDAgLjUxMSA0LjkxMDcgNi4wNTEgNi4wNTEgMCAwIDAgNi41MTQ2IDIuOTAwMUE1Ljk4NDcgNS45ODQ3IDAgMCAwIDEzLjI1OTkgMjRhNi4wNTU3IDYuMDU1NyAwIDAgMCA1Ljc3MTgtNC4yMDU4IDUuOTg5NCA1Ljk4OTQgMCAwIDAgMy45OTc3LTIuOTAwMSA2LjA1NTcgNi4wNTU3IDAgMCAwLS43NDc1LTcuMDcyOXptLTkuMDIyIDEyLjYwODFhNC40NzU1IDQuNDc1NSAwIDAgMS0yLjg3NjQtMS4wNDA4bC4xNDE5LS4wODA0IDQuNzc4My0yLjc1ODJhLjc5NDguNzk0OCAwIDAgMCAuMzkyNy0uNjgxM3YtNi43MzY5bDIuMDIgMS4xNjg2YS4wNzEuMDcxIDAgMCAxIC4wMzguMDUydjUuNTgyNmE0LjUwNCA0LjUwNCAwIDAgMS00LjQ5NDUgNC40OTQ0em0tOS42NjA3LTQuMTI1NGE0LjQ3MDggNC40NzA4IDAgMCAxLS41MzQ2LTMuMDEzN2wuMTQyLjA4NTIgNC43ODMgMi43NTgyYS43NzEyLjc3MTIgMCAwIDAgLjc4MDYgMGw1Ljg0MjgtMy4zNjg1djIuMzMyNGEuMDgwNC4wODA0IDAgMCAxLS4wMzMyLjA2MTVMOS43NCAxOS45NTAyYTQuNDk5MiA0LjQ5OTIgMCAwIDEtNi4xNDA4LTEuNjQ2NHpNMi4zNDA4IDcuODk1NmE0LjQ4NSA0LjQ4NSAwIDAgMSAyLjM2NTUtMS45NzI4VjExLjZhLjc2NjQuNzY2NCAwIDAgMCAuMzg3OS42NzY1bDUuODE0NCAzLjM1NDMtMi4wMjAxIDEuMTY4NWEuMDc1Ny4wNzU3IDAgMCAxLS4wNzEgMGwtNC44MzAzLTIuNzg2NUE0LjUwNCA0LjUwNCAwIDAgMSAyLjM0MDggNy44NzJ6bTE2LjU5NjMgMy44NTU4TDEzLjEwMzggOC4zNjQgMTUuMTE5MiA3LjJhLjA3NTcuMDc1NyAwIDAgMSAuMDcxIDBsNC44MzAzIDIuNzkxM2E0LjQ5NDQgNC40OTQ0IDAgMCAxLS42NzY1IDguMTA0MnYtNS42NzcyYS43OS43OSAwIDAgMC0uNDA3LS42Njd6bTIuMDEwNy0zLjAyMzFsLS4xNDItLjA4NTItNC43NzM1LTIuNzgxOGEuNzc1OS43NzU5IDAgMCAwLS43ODU0IDBMOS40MDkgOS4yMjk3VjYuODk3NGEuMDY2Mi4wNjYyIDAgMCAxIC4wMjg0LS4wNjE1bDQuODMwMy0yLjc4NjZhNC40OTkyIDQuNDk5MiAwIDAgMSA2LjY4MDIgNC42NnpNOC4zMDY1IDEyLjg2M2wtMi4wMi0xLjE2MzhhLjA4MDQuMDgwNCAwIDAgMS0uMDM4LS4wNTY3VjYuMDc0MmE0LjQ5OTIgNC40OTkyIDAgMCAxIDcuMzc1Ny0zLjQ1MzdsLS4xNDIuMDgwNUw4LjcwNCA1LjQ1OWEuNzk0OC43OTQ4IDAgMCAwLS4zOTI3LjY4MTN6bTEuMDk3Ni0yLjM2NTRsMi42MDItMS40OTk4IDIuNjA2OSAxLjQ5OTh2Mi45OTk0bC0yLjU5NzQgMS40OTk3LTIuNjA2Ny0xLjQ5OTdaIi8%2BPC9zdmc%2B" alt="OpenAI"></a>
+  <a href="https://platform.openai.com/docs/"><img src="pictures/openai_badge.svg" alt="OpenAI"></a>
   <a href="https://api-docs.deepseek.com/"><img src="https://img.shields.io/badge/AI-DeepSeek-4d6bfe?style=flat-square&logo=deepseek&logoColor=white" alt="DeepSeek"></a>
 </p>
 
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-1889_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.84%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2180_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.94%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -44,7 +44,7 @@
 
 ---
 
-🧬 [纯 AI 开发](#-纯-ai-开发) • ✨ [它能做什么](#-它能做什么) • 🎭 [复读模式](#-复读模式) • 🎮 [命令与权限](#-命令与权限) • 🚀 [快速开始](#-快速开始) • 📚 [开发者文档](docs/README.md)
+🧬 [纯 AI 开发](#-纯-ai-开发) • ✨ [它能做什么](#-它能做什么) • 🎭 [复读模式](#-复读模式) • 🎮 [命令与权限](#-命令与权限) • 🚀 [快速开始](#-快速开始) • 📚 [开发者文档](docs/cn/conntent-table.md)
 
 </div>
 
@@ -69,9 +69,9 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/coverage_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/coverage_light.svg">
-    <img alt="bun run test:coverage：1889 项测试全部通过 / 189 个测试文件 / 31,105 次 expect() 调用 / 函数覆盖率 95.90% / 行覆盖率 96.84%" src="docs/assets/coverage_light.svg" width="780">
+    <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
+    <img alt="bun run test:coverage：2180 项测试全部通过 / 216 个测试文件 / 72,393 次 expect() 调用 / 函数覆盖率 94.74% / 行覆盖率 95.94%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -91,13 +91,13 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI 群聊</b></p>
-  <p>基于人设自主决策：发言、贴纸、表情反应、生图都是工具，由模型自行决定这一轮做几件事、按什么顺序做。模型层是可替换的 provider，默认 Gemini，缺 key 时降级 OpenAI。</p>
+  <p>基于人设自主决策：发言、贴纸、表情反应、生图、写歌都是工具，由模型自行决定这一轮做几件事、按什么顺序做。模型层是可替换的 provider，默认 Gemini，缺 key 时降级 OpenAI。</p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
-  <p><b>👁️ 多模态与生图</b></p>
-  <p>支持识别图片、动态贴纸和 GIF 帧，能按需生成新图片或对现有素材进行智能编辑。</p>
+  <p><b>👁️ 多模态与创作</b></p>
+  <p>识别图片、动态贴纸、GIF 帧与语音消息（逐字转写进上下文），能按需生成新图片或对现有素材智能编辑；Gemini 侧还能按点歌写一首带人声的完整歌曲，连封面一起发进群。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🔎 实时查证</b></p>
@@ -115,17 +115,17 @@
 </td>
 <td align="left" valign="top">
   <p><b>🛡️ 入群验证</b></p>
-  <p>新成员 90 秒限时按钮验证：真人只能本人点击，机器人账号仅限白名单代点担保；可归属的非匿名管理员邀请与关联频道评论区活动免验。</p>
+  <p>新成员 90 秒限时按钮验证：真人只能本人点击，机器人账号仅限白名单代点担保；可归属的非匿名管理员邀请与关联频道评论区活动免验。每群缺省关闭，<code>/antiraid enable</code> 打开。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🚨 Anti-Raid</b></p>
-  <p>监测入群频率，达到阈值后关闭群组邀请并处置异常入群成员，重启后可恢复状态。</p>
+  <p>监测入群频率，达到阈值后关闭群组邀请并处置异常入群成员，重启后可恢复状态。与入群验证合用 <code>/antiraid</code> 这一个开关。</p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top">
   <p><b>📮 广告检测</b></p>
-  <p>按发送者归并 90 秒消息串交 DeepSeek 判定，非受保护身份命中后按 <code>/block</code> 同权处置，并在触发群播报封禁理由。</p>
+  <p>按发送者归并 90 秒消息串交配置的广告检测模型判定，非受保护身份命中后按 <code>/block</code> 同权处置，并在触发群播报封禁理由。</p>
 </td>
 <td align="left" valign="top">
   <p><b>🎲 今日运势</b></p>
@@ -174,11 +174,14 @@
 <tr><td><code>/quiet [1-15]</code></td><td align="center">群成员</td><td>暂停随机插话、随机复读等主动行为，默认 3 分钟</td></tr>
 <tr><td><code>/unquiet</code></td><td align="center">群成员</td><td>提前解除安静模式</td></tr>
 <tr><td><code>/mute … &lt;时长&gt;</code> <code>/unmute</code></td><td align="center"><code>isCanMute</code> / <code>isCanUnMute</code></td><td>在超级群临时禁言或提前解除；目标支持回复、<code>@username</code>、用户 id，时长支持 <code>m/h/d</code></td></tr>
+<tr><td><code>/gag … [5|10|15] [用具]</code><br><code>/ungag …</code></td><td align="center"><code>isCanGag</code></td><td>让用户或频道身份只能经 Bot 的 inline 入口发言，或定向提前解除；目标支持回复、<code>@username</code>、用户 id 与频道负数 id</td></tr>
 <tr><td><code>/block</code></td><td align="center"><code>isCanBlock</code></td><td>拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、<code>@username</code> 或用户 id 指定</td></tr>
 <tr><td><code>/unblock</code></td><td align="center"><code>isCanUnBlock</code></td><td>完整解除拉黑：把 id 从动态黑名单里划掉，并在所有机器人管理的群中解除封禁；目标指定方式同 <code>/block</code>，另外还接受频道的负数 id。静态黑名单身份拒绝解除</td></tr>
 <tr><td><code>/ai_chat enable|disable</code></td><td align="center"><code>isCanControllAIPermission</code></td><td>开关本群 AI 闲聊</td></tr>
 <tr><td><code>/ad_detect enable|disable</code></td><td align="center"><code>isCanControllAdDetectPermission</code></td><td>开关本群广告检测，非受保护身份命中后按 <code>/block</code> 同权处置</td></tr>
 <tr><td><code>/flood_control enable|disable</code></td><td align="center"><code>isCanControllFloodControlPermission</code></td><td>开关本群防刷屏禁言（默认关闭）</td></tr>
+<tr><td><code>/antiraid enable|disable</code></td><td align="center"><code>isCanControllAntiRaidPermission</code></td><td>开关本群入群验证与防冲群私密模式（默认关闭）</td></tr>
+<tr><td><code>/bot_status</code></td><td align="center">群成员</td><td>查看全局模型能力、Telegram 429 出站队列、正在生效的 gag 数量和本群已开启功能</td></tr>
 <tr><td><code>/query_mood</code></td><td align="center">群成员</td><td>查询本群 AI 当前有效心情，不触发重抽</td></tr>
 <tr><td><code>/switch_mood</code></td><td align="center"><code>isCanSwitchMood</code></td><td>立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名</td></tr>
 <tr><td><code>/ja_copy enable|disable</code></td><td align="center"><code>isCanControllJATranslatePermission</code></td><td>开关本群日语翻译能力（默认关闭）</td></tr>
@@ -187,8 +190,6 @@
 <tr><td><code>/permission query</code><br><code>/permission help</code></td><td align="center">白名单身份</td><td>查询发起用户/频道自己的完整权限，或以 JSON 列出权限说明；<code>help</code> 长期保留，<code>query</code> 30 秒后删除</td></tr>
 <tr><td><code>/permission …</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>修改已有白名单用户/频道的一项权限；<code>all</code> 可全部打开</td></tr>
 <tr><td><code>/white … enable|disable</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>新增或删除白名单用户/频道；支持回复、<code>@username</code>、用户 id 与频道 id</td></tr>
-<tr><td><code>/image_model gpt|gemini</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>切换生图用哪家供应商；只作用于生图，两把 AI key 都在时才允许切换</td></tr>
-<tr><td><code>/chat_model gpt|gemini</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code></td><td>切换回复、总结与看图用哪家供应商；不影响生图，两把 AI key 都在时才允许切换</td></tr>
 <tr><td><code>/send &lt;群组 ID&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>在机器人私聊中开始或结束向目标群的中转</td></tr>
 </table>
 
@@ -198,9 +199,11 @@
 
 - **命令入口**：群命令统一经过 `/init` 网关；未初始化群只接受超级管理员的 `/init`，所以 `/permission`、`/white` 也必须在已初始化群中使用。私聊斜杠命令只放行 `/send`。
 - **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。成功的动作结果与 `/permission help` 一样长期保留；目标缺失、参数错误和 `/x` 用法提示仍在 30 秒后删除。
+- **`/gag` 限制发言**：全局最多同时生效 5 个目标，同群可有多个目标但同一身份不能重复。普通用户只收到一条由 `receiver_user_id` 限定、仅本人可见的开始提示，不再另发公开提示；频道没有接收用户，才在群里发送公开开始提示。两种提示里的「发言」按钮都会打开当前聊天的 Inline Mode：用户入口不携带身份 id，查询阶段按点击用户 id 过滤；频道入口携带频道负数 id，生成的消息也嵌入同一频道 id，落群后必须再与 `sender_chat.id` 同时匹配，否则立即删除。开始提示不走 30 秒清理，只在对应 `/ungag`、超时或群运行时 teardown 时按各自消息 id 定向删除；删除失败会保留有界的收尾状态并有限重试，同一目标须等提示确实消失后才能重新 gag。`/ungag` 必须通过回复、`@username` 或身份 id 定向。发言正文在每个扩展字形后追加随机填充，其中 `...` 为 50%，其余五种各 10%。
 - **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 移除时整份名单原子重写回文件，并默认在所有机器人管理的群解除封禁；即使目标不在动态名单里也仍会跨群解封。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
 - **`/batch_kick` 慢速清理**：只允许超级管理员在已初始化的超级群中使用，参数是 `30m`、`2h`、`1d` 这类不超过 24 小时的单个窗口。命令按入群日志找出窗口内最后一次加入且仍在群中的成员，小并发执行只踢不封；白名单边界内的身份（含恒在边界内的超级管理员）和永久黑名单成员都不会被这条命令当作普通目标处理。
-- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 DeepSeek 判定；非受保护身份命中后执行与 `/block` 相同的处置（永久黑名单 + 各管理群封禁并删除其消息），并在触发群播报封禁理由（30 秒后自撤）。豁免只看 `isCanBypassAdDetection` 一项：关闭后可以送检和删除本批消息，但仍不会进入永久黑名单；`SUPER_ADMIN_USER_ID` 恒持有该权限因而恒不送检。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
+- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 `agent.ad_detect` 配置的模型判定；非受保护身份命中后执行与 `/block` 相同的处置，并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
+- **入群验证与 Anti-Raid**：每群默认关闭，由持有 `isCanControllAntiRaidPermission` 的身份（超级管理员恒持有）执行 `/antiraid enable` 开启，两条链路共用这一个开关——它们吃的是同一批入群事件，分开开关只会造出「验证关着、私密模式还在踢人」这种组合。关闭时这两条链路一个事件都不再触发：不开验证窗口、不发提醒、不做超时踢出，也不再统计入群频率；已经开着的窗口连同待处置的终态一起作废（**不删**群里已经发出去的提醒，也不踢人），仍生效的私密模式会把邀请权限还回去。同在一条 Worker 上的广告检测、防刷屏禁言、永久黑名单秒踢和 `/batch_kick` 依赖的入群日志都不受影响。
 - **刷屏禁言**：每群默认关闭，由持有 `isCanControllFloodControlPermission` 的身份（超级管理员恒持有）执行 `/flood_control enable` 开启。同一个人在同一个超级群内一分钟发言达到 15 条，就地禁言 3 分钟并在群里说明一句（公告在禁言解除时自撤）。到点由 Telegram 自动解除，不写黑名单也不删消息。仅在机器人确有「限制成员」权限时触发；群主/管理员、频道马甲与匿名管理员不计数。豁免只看 `isCanBypassFloodControl` 一项，白名单条目缺省为 `true`，显式设为 `false` 后会参与计数；`SUPER_ADMIN_USER_ID` 恒持有该权限因而恒不计数。
 - **`/send` 中转**：开启前先探测目标是否可达，期间超级管理员发送的每条消息都会原样转发到目标群一次；目标失联时自动终止并通知。中转状态随 `state.json` 持久化，重启后仍可恢复。该命令不进入 Telegram 命令菜单，在群内调用或由其他用户触发时均不响应。
 
@@ -222,8 +225,7 @@
 - Linux（带可读的 `/proc`；实例锁在其他平台 fail closed）
 - Bun 1.3+
 - Telegram Bot Token
-- AI 闲聊供应商密钥（仅 `/ai_chat` 需要，Gemini 或 OpenAI 任选其一）
-- DeepSeek API Key（仅 `/ad_detect` 广告检测需要）
+- `config/agent.json` 中已启用 AI 能力各自所需的 API Key
 - Google Cloud 服务账号 JSON（仅 `/ja_copy` 需要）
 
 <details>
@@ -237,7 +239,7 @@
 <tr><td>全部群开启 AI 且图片、贴纸较多</td><td>4 vCPU / 8 GB RAM</td><td>给媒体下载、Base64 编码和图片转码预留峰值空间</td></tr>
 </table>
 
-单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自单个 Telegram Bot API、AI 供应商与 DeepSeek 配额和实际消息/媒体速率，而不是群成员总数。
+单实例仍建议控制在约 15 个上述规模的活跃群以内；主要限制来自 Telegram Bot API、所配 AI provider 配额和实际消息/媒体速率，而不是群成员总数。
 
 </details>
 
@@ -247,36 +249,38 @@
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
-cp .env.example .env
-cp -r config_example config
+mkdir -p config
+cp -n config_example/*.json config/
 ```
 
 ### 3. 配置
 
-按 [`.env.example`](.env.example) 填写 `.env`：
+逐项含义、必填关系和严格校验规则见
+[`config_example/README/zh.md`](config_example/README/zh.md)。`config/` 是不受 Git 追踪的
+部署配置，已有文件不得被示例覆盖。
 
-| 变量 | 必填 | 说明 |
+| 文件 / 字段 | 必填 | 说明 |
 | :--- | :---: | :--- |
-| `TELEGRAM_BOT_TOKEN` | ✅ | BotFather 发放的 Bot Token |
-| `SUPER_ADMIN_USER_ID` | ✅ | 超级管理员的单个十进制用户 ID |
-| `AI_CHAT_GEMINI_API_KEY` | — | AI 闲聊 agent 的默认供应商 |
-| `AI_CHAT_OPENAI_API_KEY` | — | AI 闲聊 agent 的降级供应商，仅在 Gemini 那把留空时生效；**两把都留空**才会让 AI Worker 不启动，`/ai_chat enable`、`/query_mood` 与 `/switch_mood` 被拒 |
-| `AD_DETECT_DEEPSEEK_API_KEY` | — | 广告检测专用；留空则 `/ad_detect enable` 被拒 |
-| `COPY_NINJIA_DATA_ROOT` | — | 运行时数据根目录；留空时使用项目根目录 |
+| `config/telegram.json` / `bot_token` | ✅ | BotFather 发放的 Bot Token |
+| `config/telegram.json` / `super_admin_user_id` | ✅ | 超级管理员的正安全整数用户 ID |
+| `config/agent.json` / 各能力 | 按功能 | 每项独立配置 provider、API key、端点与模型 |
 
-`config/` 是不受 Git 追踪的部署配置，初次安装必须从 `config_example/` 复制。`whitelist.json` 与 `blocklist.json` 在联网前严格加载；其余四份 JSON 和 `g-auth.json` 按功能惰性校验，坏掉只拒绝对应的开关命令。
+`telegram.json`、`whitelist.json` 与 `blocklist.json` 在联网前严格加载；其他部署输入按功能校验，缺失或非法时拒绝对应功能，已启用功能的前提缺失则拒绝启动。
+
+AI 的 provider、API key、`base_url` 与模型全部按能力配置在
+[`config/agent.json`](config_example/agent.json)；修改后必须重启，不再提供运行时切换模型命令。
 
 > [!IMPORTANT]
 > 只有一种情况例外：某个功能在 `state.json` 里还开着，却把它的 key 或配置撤掉了——那是管理员明确按下过的开关，进程会带着群 id 与缺失项拒绝启动，而不是悄悄变成不干活。先 `disable` 再撤，或者把前提补回去。
 
-设置 `COPY_NINJIA_DATA_ROOT` 后，`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；`config/`、人设与 `g-auth.json` 仍从项目根目录读取。
+如需改变运行时路径，可在进程环境中设置 `COPY_NINJIA_DATA_ROOT`；设置后，`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；`config/`、人设与 `g-auth.json` 仍从项目根目录读取。
 
-如需日语翻译，将 Google Cloud 服务账号密钥保存为项目根目录的 `g-auth.json`。`.env` 与 `g-auth.json` 均已加入 `.gitignore`。
+如需日语翻译，将 Google Cloud 服务账号密钥保存为项目根目录的 `g-auth.json`；该文件已加入 `.gitignore`。
 
 Telegram 侧还需要按功能配置：
 
 1. 关闭 Bot Privacy Mode，机器人才能观察完整群消息并复读普通成员。
-2. 授予删消息、封禁成员、管理群权限，入群验证和 Anti-Raid 才会启用。
+2. 授予删消息、封禁成员、管理群权限，入群验证和 Anti-Raid 才会启用；权限齐了还要在群里 `/antiraid enable`（缺省关闭）。
 3. 启用 Inline Mode 才能使用运势抽签。
 4. 建议把 inline feedback 设为 100%，让 `chosen_inline_result` 作为抽签确认与落盘的主路径。
 
@@ -292,33 +296,34 @@ bun run start     # 启动长轮询
 ```text
 /init enable
 /ai_chat enable
+/antiraid enable
 ```
 
-> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 665 个源码行含中文字符串或模板字面量，分布在 66 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/06-modification-guide.md)。
+> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 787 个源码行含中文字符串或模板字面量，分布在 76 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/cn/06-modification-guide.md)。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
 ## 📚 开发者文档与架构指南
 
-Copy Ninjia 的架构总览、模块导览、运行时权威约束、测试流程与运维手册，集中收录在 **[开发者文档中心](docs/README.md)**：
+Copy Ninjia 的架构总览、模块导览、运行时权威约束、测试流程与运维手册，集中收录在 **[开发者文档中心](docs/cn/conntent-table.md)**：
 
 | 专题领域 | 描述与包含内容 | 快捷入口 |
 | :--- | :--- | :---: |
-| 🏗️ **架构总览** | 主线程与 3 个 Worker 协作拓扑、消息旅程与启动/停机顺序 | [📖 02 架构总览](docs/02-architecture.md) |
-| 🗺️ **源码导览** | `packages/` 各子领域的职责分工与代码放置决策树 | [📖 03 目录导览](docs/03-directory-map.md) |
-| ⚡ **权威约束** | 跨模块状态隔离、并发硬顶、持久化与防竞态契约 | [📖 04 权威约束](docs/04-invariants.md) |
-| 🧪 **开发与测试** | `bun run check` 质量门禁、测试沙盒与故障注入套件 | [📖 05 开发流程](docs/05-dev-workflow.md) |
-| 🛠️ **修改配方** | 新增命令、调参、新增 AI 工具与 Schema 迁移指南 | [📖 06 修改配方](docs/06-modification-guide.md) |
-| 🛡️ **运维手册** | systemd 部署、`COPY_NINJIA_DATA_ROOT`、备份与排障 | [📖 07 运维手册](docs/07-operations.md) |
+| 🏗️ **架构总览** | 主线程与 3 个 Worker 协作拓扑、消息旅程与启动/停机顺序 | [📖 02 架构总览](docs/cn/02-architecture.md) |
+| 🗺️ **源码导览** | `packages/` 各子领域的职责分工与代码放置决策树 | [📖 03 目录导览](docs/cn/03-directory-map.md) |
+| ⚡ **权威约束** | 跨模块状态隔离、并发硬顶、持久化与防竞态契约 | [📖 04 权威约束](docs/cn/04-invariants.md) |
+| 🧪 **开发与测试** | `bun run check` 质量门禁、测试沙盒与故障注入套件 | [📖 05 开发流程](docs/cn/05-dev-workflow.md) |
+| 🛠️ **修改配方** | 新增命令、调参、新增 AI 工具与 Schema 迁移指南 | [📖 06 修改配方](docs/cn/06-modification-guide.md) |
+| 🛡️ **运维手册** | systemd 部署、`COPY_NINJIA_DATA_ROOT`、备份与排障 | [📖 07 运维手册](docs/cn/07-operations.md) |
 
 ---
 
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/footer_dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/footer_light.svg">
-  <img alt="Copy Ninjia — 不是只会复读，是把整套群聊现场偷走再演一遍。" src="docs/assets/footer_light.svg" width="580">
+  <source media="(prefers-color-scheme: dark)" srcset="pictures/footer_dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="pictures/footer_light.svg">
+  <img alt="Copy Ninjia — 不是只会复读，是把整套群聊现场偷走再演一遍。" src="pictures/footer_light.svg" width="580">
 </picture>
 
 *人类没有写下任何一行代码，但也从未退场——画完图纸之后，还和 AI 一起审过每一次提交。*

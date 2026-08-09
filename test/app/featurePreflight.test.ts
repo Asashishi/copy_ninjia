@@ -8,48 +8,38 @@
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AiProviderName } from "../../packages/types/aiChat/provider";
 import type { ConfigReadiness } from "../../packages/types/config";
 
 const states = new Map<number, Record<string, unknown>>();
-// state.global.model 的两项；undefined 表示从没设过。
-let imageProvider: AiProviderName | undefined = undefined;
-let chatProvider: AiProviderName | undefined = undefined;
 let aiChatVerdict: ConfigReadiness = { ok: true };
 let adDetectVerdict: ConfigReadiness = { ok: true };
 let jaTranslateVerdict: ConfigReadiness = { ok: true };
+let deploymentInputFailure: Error | null = null;
 
 function broken(file: string): ConfigReadiness {
-  return { ok: false, failure: { file, reason: `Invalid ${file}: boom` } };
+  return { ok: false, failure: { file, reason: `${file}: $ must match its current schema.` } };
 }
 
-// 两把 key 都配着；缺 key 那一侧在 featurePreflightMissingKey.test.ts——config
-// 的 mock 是整文件生效的，「配了」与「没配」两种进程状态没法在同一文件里切换。
-mock.module("../../packages/infra/config", () => ({
-  AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
-  AI_CHAT_OPENAI_API_KEY: undefined,
-  AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
-}));
 mock.module("../../packages/config/readiness", () => ({
   aiChatConfigReadiness: (): ConfigReadiness => aiChatVerdict,
   adDetectConfigReadiness: (): ConfigReadiness => adDetectVerdict,
   jaTranslateConfigReadiness: (): ConfigReadiness => jaTranslateVerdict,
+  validateExistingDeploymentInputs: (): void => {
+    if (deploymentInputFailure !== null) throw deploymentInputFailure;
+  },
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getAllChatStates: (): Map<number, Record<string, unknown>> => states,
-  getImageProviderOverride: (): AiProviderName | undefined => imageProvider,
-  getChatProviderOverride: (): AiProviderName | undefined => chatProvider,
 }));
 
 const { preflightEnabledFeatures } = await import("../../packages/app/featurePreflight");
 
 beforeEach(() => {
   states.clear();
-  imageProvider = undefined;
-  chatProvider = undefined;
   aiChatVerdict = { ok: true };
   adDetectVerdict = { ok: true };
   jaTranslateVerdict = { ok: true };
+  deploymentInputFailure = null;
 });
 
 describe("已启用功能的启动前提核对", () => {
@@ -64,27 +54,32 @@ describe("已启用功能的启动前提核对", () => {
     expect(() => preflightEnabledFeatures()).not.toThrow();
   });
 
-  test("开着 AI 闲聊却写坏部署配置：拒绝启动，报错点名群、缺失项与出路", () => {
+  test("开着 AI 闲聊却缺少前提：拒绝启动且只输出安全配置定位", () => {
     aiChatVerdict = broken("config/stickers.json");
     states.set(-1001, { isAIChatEnabled: true });
 
-    expect(() => preflightEnabledFeatures()).toThrow(/AI chat is enabled in 1 chat\(s\) \(-1001\)/);
-    expect(() => preflightEnabledFeatures()).toThrow(/config\/stickers\.json is unusable/);
-    // 报错必须给出出路，否则运维只能对着一个起不来的进程猜。
-    expect(() => preflightEnabledFeatures()).toThrow(/\/ai_chat disable/);
+    expect(() => preflightEnabledFeatures()).toThrow("config/stickers.json: $ must match its current schema");
+    expect(() => preflightEnabledFeatures()).not.toThrow(/-1001/);
   });
 
   test("广告检测与日语翻译各自成闸，多个群一起点名", () => {
     adDetectVerdict = broken("config/ad_samples.json");
     states.set(-1001, { isAdDetectEnabled: true });
     states.set(-1002, { isAdDetectEnabled: true });
-    expect(() => preflightEnabledFeatures()).toThrow(/Ad detection is enabled in 2 chat\(s\) \(-1001, -1002\)/);
+    expect(() => preflightEnabledFeatures()).toThrow("config/ad_samples.json: $ must match its current schema");
 
     adDetectVerdict = { ok: true };
     states.clear();
     states.set(-1003, { isJATranslationEnabled: true });
     jaTranslateVerdict = broken("g-auth.json");
-    expect(() => preflightEnabledFeatures()).toThrow(/Japanese translation is enabled in 1 chat\(s\) \(-1003\)/);
+    expect(() => preflightEnabledFeatures()).toThrow("g-auth.json: $ must match its current schema");
+  });
+
+  test("已经存在的坏配置在功能关闭时也拒绝启动", () => {
+    states.set(-1001, { isAIChatEnabled: false });
+    deploymentInputFailure = new Error("config/stickers.json: $.packs must be an array.");
+
+    expect(() => preflightEnabledFeatures()).toThrow("config/stickers.json: $.packs must be an array");
   });
 
   test("前提齐备时静默通过，不因为功能开着就报错", () => {
@@ -95,47 +90,5 @@ describe("已启用功能的启动前提核对", () => {
     });
 
     expect(() => preflightEnabledFeatures()).not.toThrow();
-  });
-});
-
-/**
- * 这组用例跑在「有 Gemini key、没有 OpenAI key」的进程上（见文件顶部的 config
- * mock），因此显式选 openai 就是「改过又没对应 key」那一幕。
- */
-describe("全局模型选取的启动闸", () => {
-  test("从没设过的两项都不设防：缺省跟随默认选取，只配一把 key 的部署照常启动", () => {
-    expect(() => preflightEnabledFeatures()).not.toThrow();
-  });
-
-  test("显式选了 gemini 而 key 在时放行", () => {
-    imageProvider = "gemini";
-    chatProvider = "gemini";
-    expect(() => preflightEnabledFeatures()).not.toThrow();
-  });
-
-  test("显式选了 openai 却没有那把 key 时拒绝启动，并点名字段与 env", () => {
-    chatProvider = "openai";
-    expect(() => preflightEnabledFeatures()).toThrow(
-      /state\.global\.model\.chat is "openai" but AI_CHAT_OPENAI_API_KEY is not set/
-    );
-  });
-
-  test("生图那一项同样设防，报错点的是自己那条路径", () => {
-    imageProvider = "openai";
-    expect(() => preflightEnabledFeatures()).toThrow(
-      /state\.global\.model\.image is "openai" but AI_CHAT_OPENAI_API_KEY is not set/
-    );
-  });
-
-  test("报错给的是可执行的出路：补 key 或从 state.json 删掉那一项", () => {
-    chatProvider = "openai";
-    expect(() => preflightEnabledFeatures()).toThrow(/Restore the key, or remove state\.global\.model\.chat/);
-  });
-
-  test("模型闸先于按群功能闸：没开任何功能也照样拦住", () => {
-    // 它与「哪个群开着什么」无关，是一条更靠前的硬前提。
-    expect(states.size).toBe(0);
-    chatProvider = "openai";
-    expect(() => preflightEnabledFeatures()).toThrow("AI_CHAT_OPENAI_API_KEY is not set");
   });
 });

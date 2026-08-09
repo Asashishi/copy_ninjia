@@ -1,10 +1,9 @@
-import { MEDIA_DOWNLOAD_TIMEOUT_MS, MEDIA_FILE_METADATA_TIMEOUT_MS, MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
+import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
 import { logger } from "../../infra/logger";
-import { bot } from "../../infra/telegram";
-import type { HydratedTelegramFile } from "../../infra/telegram";
-import { readBoundedResponseBytes, type BoundedResponseResult } from "../../libs/boundedResponse";
+import { downloadTelegramFileFromMain } from "../../infra/telegram/workerClient";
 import { prepareVisionImage } from "../../libs/image";
 import type { VisionImage } from "../../types/media";
+import type { TelegramWorkerDownloadFileResult } from "../../types/telegramWorker";
 
 export interface DownloadTelegramVisionImageParams {
   fileId: string;
@@ -14,19 +13,9 @@ export interface DownloadTelegramVisionImageParams {
 }
 
 /**
- * 把调用方的 invalidate signal 与一份**独立**的超时预算合成一个 signal。
- * 每次调用现取一个 `AbortSignal.timeout`，因此同一次下载里的两步不会共享
- * 同一个 deadline。
- */
-function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-  const timeout: AbortSignal = AbortSignal.timeout(timeoutMs);
-  return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
-}
-
-/**
  * 通过 Telegram file_id 现取一张图片并规范成两家视觉接口都能接收的 jpeg/png。
- * 完整下载 URL 含 Bot Token，只在 fetch 调用的局部变量中存在，绝不返回、
- * 缓存或写日志。下载、转码前后都沿用媒体描述管线的 8 MiB 硬上限。
+ * getFile 与下载均由主线程能力边界完成，Worker 只收到受上限约束的字节；下载、
+ * 转码前后都沿用媒体描述管线的 8 MiB 硬上限。
  */
 export async function downloadTelegramVisionImage({
   fileId,
@@ -34,41 +23,35 @@ export async function downloadTelegramVisionImage({
   signal,
 }: DownloadTelegramVisionImageParams): Promise<VisionImage | null> {
   try {
-    // 两步各自计时，绝不共用一个 deadline：getFile 走共享 throttler 与
-    // autoRetry，一次 429 退避就可能耗掉几十秒，共用时下载只剩残额、几乎立刻
-    // abort。invalidate signal 仍要贯穿两步（见 docs/04-invariants.md 的 AI
+    // 主线程内的两步各自计时，绝不共用一个 deadline：getFile 走自适应 429 队列，
+    // 一次退避就可能耗掉几十秒，共用时下载只剩残额、几乎立刻
+    // abort。invalidate signal 仍要贯穿两步（见 docs/cn/04-invariants.md 的 AI
     // chat invalidate 约束）。
-    const file: HydratedTelegramFile = await bot.api.getFile(
-      fileId,
-      withTimeout(signal, MEDIA_FILE_METADATA_TIMEOUT_MS) as unknown as Parameters<typeof bot.api.getFile>[1]
+    const download: TelegramWorkerDownloadFileResult =
+      await downloadTelegramFileFromMain({
+        fileId,
+        purpose: "vision",
+        signal,
+      });
+    if (download.status !== "ok") {
+      logger.error(`${logLabel} download failed: ${download.status}.`);
+      return null;
+    }
+
+    // 下载缓冲已从主线程转移并归本 Worker 独占；建立 Buffer 视图即可，避免
+    // 为单张大图再复制一次并增加峰值堆与 GC 压力。
+    const imageBytes: Buffer = Buffer.from(
+      download.bytes.buffer,
+      download.bytes.byteOffset,
+      download.bytes.byteLength
     );
-    if (!file.file_path) {
-      logger.error(`getFile for ${logLabel} ${fileId} returned no file_path`);
-      return null;
-    }
-
-    const response: Response = await fetch(file.getUrl(), {
-      redirect: "error",
-      signal: withTimeout(signal, MEDIA_DOWNLOAD_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      logger.error(`Failed to download ${logLabel} (${response.status}): ${file.file_path}`);
-      return null;
-    }
-
-    const download: BoundedResponseResult = await readBoundedResponseBytes(response, MEDIA_MAX_DOWNLOAD_BYTES);
-    if (!download.ok) {
-      logger.error(`${logLabel} exceeded the download limit (${download.observedBytes} bytes): ${file.file_path}`);
-      return null;
-    }
-
-    const image: VisionImage | null = await prepareVisionImage(Buffer.from(download.bytes));
+    const image: VisionImage | null = await prepareVisionImage(imageBytes);
     if (!image) {
-      logger.error(`${logLabel} is an unsupported/unrecognized image format: ${file.file_path}`);
+      logger.error(`${logLabel} is an unsupported/unrecognized image format.`);
       return null;
     }
     if (image.bytes.byteLength > MEDIA_MAX_DOWNLOAD_BYTES) {
-      logger.error(`Prepared ${logLabel} exceeded the size limit (${image.bytes.byteLength} bytes): ${file.file_path}`);
+      logger.error(`Prepared ${logLabel} exceeded the size limit (${image.bytes.byteLength} bytes).`);
       return null;
     }
     return image;

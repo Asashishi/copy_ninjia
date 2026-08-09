@@ -1,22 +1,20 @@
 /**
- * /block 黑名单的主线程同步名单与命令侧确证缓存。
+ * /block 黑名单的主线程同步名单。
  *
  * 判定必须是同步的：入群更新到达时要立刻决定踢不踢，不能等跨线程往返。
  * 磁盘与静态配置都只在启动时读一次，此后 identities.ts 提供两层并集；
  * blockedUserIds 只承载可变的 memory 层，写保持「先内存、后 Disk I/O Worker」
  * 的单向同步。durable removal outbox 由同目录 outbox.ts 持有，本模块只在
  * /unblock 时请求它裁剪相关任务。
- * @see ../../../docs/04-invariants.md
+ * @see ../../../docs/cn/04-invariants.md
  */
 
 import {
   blockedUserIds,
-  confirmedKickedUserIdsByChat,
-  confirmedKickedUsersDay,
+  sessionBlocklistRequiresRewrite,
   sessionBlockedAt,
-  sessionUnblockedIds,
 } from "../../cache/main/blocklist";
-import { formatTokyoTime, getTokyoDateKey } from "../../libs/time";
+import { formatTokyoTime } from "../../libs/time";
 import { flushDiskIODomainOutcome, postDiskIO } from "../diskIO";
 import { logger } from "../logger";
 import {
@@ -29,55 +27,6 @@ import type {
   DomainFlushOutcome,
   UnblockUserDiskMessage,
 } from "../../types/diskIO";
-
-/** 跨东京自然日时整表轮换；懒清理避免为这份命令侧缓存单独常驻 timer。 */
-function rotateConfirmedKickedUsers(day: string): void {
-  if (confirmedKickedUsersDay.current === day) return;
-  confirmedKickedUserIdsByChat.clear();
-  confirmedKickedUsersDay.current = day;
-}
-
-/**
- * 这个用户今天是否已经由 `/block` 在该群确证踢出。
- * 可选 day 只供确定性测试；生产调用统一使用当前东京日期。
- */
-export function wasUserConfirmedKickedInChat(
-  chatId: number,
-  userId: number,
-  day: string = getTokyoDateKey()
-): boolean {
-  rotateConfirmedKickedUsers(day);
-  return confirmedKickedUserIdsByChat.get(chatId)?.has(userId) === true;
-}
-
-/** 记录一次“查到在群且封禁成功”的 `/block` 结局。 */
-export function recordUserConfirmedKickedInChat(
-  chatId: number,
-  userId: number,
-  day: string = getTokyoDateKey()
-): void {
-  rotateConfirmedKickedUsers(day);
-  let userIds: Set<number> | undefined = confirmedKickedUserIdsByChat.get(chatId);
-  if (userIds === undefined) {
-    userIds = new Set();
-    confirmedKickedUserIdsByChat.set(chatId, userIds);
-  }
-  userIds.add(userId);
-}
-
-/**
- * `/unblock` 跨群解封前后失效这个用户的所有群缓存，宁可让下一次 `/block`
- * 重新确认，也不能让同日重拉黑误命中解封前或等待期间迟到的旧结局。
- */
-export function forgetUserConfirmedKicked(userId: number): void {
-  // `/unblock` 也是这份 cache 的一次访问；跨日后先整表轮换，不能为了删一个
-  // 当前用户而继续扫描、保留上一东京自然日的群集合。
-  rotateConfirmedKickedUsers(getTokyoDateKey());
-  for (const [chatId, userIds] of confirmedKickedUserIdsByChat) {
-    userIds.delete(userId);
-    if (userIds.size === 0) confirmedKickedUserIdsByChat.delete(chatId);
-  }
-}
 
 /** 该用户/频道身份是否在黑名单里。入群秒踢与 /block 去重都走这一条。 */
 export function isUserBlocked(userId: number): boolean {
@@ -99,9 +48,8 @@ export function blockUser(userId: number): boolean {
   const blockedAt: string = formatTokyoTime(Date.now());
   blockedUserIds.set(userId, { isBlocked: true, blockedAt });
   sessionBlockedAt.set(userId, blockedAt);
-  // 本进程内先解除又重新拉黑：两张 session 表互斥，否则 Worker 重建后的
-  // 重放顺序会决定这个人到底在不在名单里。
-  sessionUnblockedIds.delete(userId);
+  // 解除历史使用进程级粘性重写标志；重新拉黑不能清掉它，否则另一身份此前的
+  // 删除会在 Worker 重建后复活。重写当前 Map 已完整表达这个 id 的最终状态。
   // 投递失败（落盘 Worker 已彻底不可用）不回滚内存：本进程内这个人照样被拦住，
   // 回滚只会让他立刻能进群。但重启后这条记录就没了，必须留下可排查的记录。
   if (!postDiskIO({ type: "blockUser", userId, blockedAt } satisfies BlockUserDiskMessage)) {
@@ -159,7 +107,7 @@ export function unblockUser(userId: number): boolean {
   if (isConfiguredBlockedIdentity(userId)) return false;
   if (!blockedUserIds.delete(userId)) return false;
   sessionBlockedAt.delete(userId);
-  sessionUnblockedIds.add(userId);
+  sessionBlocklistRequiresRewrite.current = true;
   forgetUserBlocklistRemovals(userId);
   if (!postDiskIO({
     type: "unblockUser",

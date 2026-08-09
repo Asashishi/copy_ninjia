@@ -19,7 +19,8 @@ mock.module("../../packages/infra/logger", () => ({
 const realFetch = globalThis.fetch;
 type FetchInput = Parameters<typeof fetch>[0];
 
-const { bot, copyUserProfilePhoto } = await import("../../packages/infra/telegram");
+const { bot } = await import("../../packages/infra/telegram/mainClient");
+const { copyUserProfilePhoto } = await import("../../packages/infra/telegram/avatar");
 
 const getChatMock = mock(async (_chatId: number): Promise<any> => ({
   id: -1003952764805,

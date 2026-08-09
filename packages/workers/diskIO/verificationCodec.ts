@@ -6,6 +6,8 @@ import {
   VERIFICATION_LABEL_MAX_CHARS,
 } from "../../consts/diskIO/verification";
 import { verificationKey } from "../../libs/verificationKey";
+import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
+import { hasOnlyKeys } from "../../libs/runtimeConfig";
 import type {
   VerificationSnapshot,
   VerificationSnapshotBase,
@@ -29,6 +31,37 @@ function isOptionalPositiveId(value: unknown): value is number | undefined {
   return value === undefined || isPositiveId(value);
 }
 
+function isOptionalSafeTimestamp(value: unknown): value is number | undefined {
+  return value === undefined || isSafeTimestamp(value);
+}
+
+/** 按 phase 拒绝未知字段，避免 compact 时静默甩掉状态内容。 */
+function hasCurrentVerificationKeys(value: Record<string, unknown>): boolean {
+  const baseKeys: readonly string[] = [
+    "version", "chatId", "userId", "generation", "revision", "phase", "label",
+    "isBot", "announcementMessageId", "trackedMessageTimes", "invitedBy",
+    "reminderMessageId", "replyReminderMessageId", "replyReminderRequested",
+    "welcomeAnchorMessageId", "reminderSuperseded", "joinedAt", "expiresAt",
+  ];
+  if (value.phase === "kickPending") {
+    return hasOnlyKeys(value, [...baseKeys, "requestedAt", "countedJoinAt"]);
+  }
+  if (value.phase === "checkingInviter") {
+    return hasOnlyKeys(value, [...baseKeys, "terminalInviterId"]);
+  }
+  if (value.phase === "expelling") {
+    return hasOnlyKeys(value, [
+      ...baseKeys,
+      "expelReason",
+      "successNoticeSent",
+      "failureNoticeSent",
+      "unconfirmedNoticeSent",
+      "removalConfirmed",
+    ]);
+  }
+  return hasOnlyKeys(value, baseKeys);
+}
+
 /** 对当天文件中的最新值逐字段校验，不把畸形数据带回业务 Worker。 */
 export function decodeVerificationSnapshot(
   key: string,
@@ -36,6 +69,7 @@ export function decodeVerificationSnapshot(
 ): VerificationSnapshot | null {
   if (!isRecord(value)) return null;
   if (
+    !hasCurrentVerificationKeys(value) ||
     value.version !== VERIFICATION_FILE_VERSION ||
     typeof value.chatId !== "number" ||
     !Number.isSafeInteger(value.chatId) ||
@@ -44,6 +78,7 @@ export function decodeVerificationSnapshot(
     !isPositiveId(value.generation) ||
     !isPositiveId(value.revision) ||
     (value.phase !== "pending" &&
+      value.phase !== "kickPending" &&
       value.phase !== "checkingInviter" &&
       value.phase !== "expelling") ||
     typeof value.label !== "string" ||
@@ -63,7 +98,21 @@ export function decodeVerificationSnapshot(
     !isSafeTimestamp(value.joinedAt) ||
     !isSafeTimestamp(value.expiresAt) ||
     value.expiresAt < value.joinedAt ||
+    (value.phase === "kickPending" && (
+      !isSafeTimestamp(value.requestedAt) ||
+      !isOptionalSafeTimestamp(value.countedJoinAt) ||
+      value.joinedAt !== value.requestedAt ||
+      value.expiresAt !== value.requestedAt ||
+      value.terminalInviterId !== undefined ||
+      value.expelReason !== undefined ||
+      value.successNoticeSent !== undefined ||
+      value.failureNoticeSent !== undefined ||
+      value.unconfirmedNoticeSent !== undefined ||
+      value.removalConfirmed !== undefined
+    )) ||
     (value.phase === "checkingInviter" && (
+      value.requestedAt !== undefined ||
+      value.countedJoinAt !== undefined ||
       !isPositiveId(value.terminalInviterId) ||
       value.expelReason !== undefined ||
       value.successNoticeSent !== undefined ||
@@ -72,6 +121,8 @@ export function decodeVerificationSnapshot(
       value.removalConfirmed !== undefined
     )) ||
     (value.phase === "expelling" && (
+      value.requestedAt !== undefined ||
+      value.countedJoinAt !== undefined ||
       (value.expelReason !== "timeout" && value.expelReason !== "flood") ||
       value.terminalInviterId !== undefined ||
       (value.successNoticeSent !== undefined && typeof value.successNoticeSent !== "boolean") ||
@@ -80,6 +131,8 @@ export function decodeVerificationSnapshot(
       (value.removalConfirmed !== undefined && typeof value.removalConfirmed !== "boolean")
     )) ||
     (value.phase === "pending" && (
+      value.requestedAt !== undefined ||
+      value.countedJoinAt !== undefined ||
       value.terminalInviterId !== undefined ||
       value.expelReason !== undefined ||
       value.successNoticeSent !== undefined ||
@@ -108,6 +161,14 @@ export function decodeVerificationSnapshot(
     joinedAt: value.joinedAt,
     expiresAt: value.expiresAt,
   };
+  if (value.phase === "kickPending") {
+    return {
+      ...base,
+      phase: "kickPending",
+      requestedAt: value.requestedAt as number,
+      countedJoinAt: value.countedJoinAt as number | undefined,
+    };
+  }
   if (value.phase === "checkingInviter") {
     return {
       ...base,
@@ -141,8 +202,8 @@ export function decodeVerificationDay(
   path: string,
   content: string
 ): Map<string, VerificationDayValue> {
-  const parsed: unknown = JSON.parse(content);
-  if (!isRecord(parsed)) throw new Error(`${path} must contain a JSON object.`);
+  const parsed: unknown = parseJsonInput(content, path);
+  if (!isRecord(parsed)) return invalidInput(path, "$", "a JSON object of verification records");
 
   const decoded: Map<string, VerificationDayValue> = new Map();
   for (const [key, value] of Object.entries(parsed)) {
@@ -153,9 +214,7 @@ export function decodeVerificationDay(
     const snapshot: VerificationSnapshot | null =
       decodeVerificationSnapshot(key, value);
     if (snapshot === null) {
-      throw new Error(
-        `${path} contains an invalid active pending verification record for key ${key}.`
-      );
+      return invalidInput(path, "$.<record>", "a current verification record or null tombstone");
     }
     decoded.set(key, snapshot);
   }

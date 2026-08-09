@@ -1,6 +1,12 @@
 import type { CommandContext, Context } from "grammy";
-import { COPY_TARGET_TEXTS } from "../consts/commands";
+import {
+  COPY_TARGET_TEXTS,
+  JA_COPY_TARGET_TEXTS,
+  NYA_COPY_TARGET_TEXTS,
+  REVERSE_COPY_TARGET_TEXTS,
+} from "../consts/commands";
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
+import type { CommandTargetMessages } from "../types/commands";
 import { getChatState, getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { registerChatTeardown } from "../infra/chatTeardown";
@@ -20,6 +26,14 @@ import {
 } from "./copySlot";
 import type { CopySlotDecision } from "../types/copy/slot";
 import { resolveCommandActor } from "./commandActor";
+
+/** 按实际入口选取目标提示，避免各 copy 模式报错时都误念成 `/copy`。 */
+function copyTargetTextsForMode(mode: CopyMode | undefined): Readonly<CommandTargetMessages> {
+  if (mode === "reverse") return REVERSE_COPY_TARGET_TEXTS;
+  if (mode === "nya") return NYA_COPY_TARGET_TEXTS;
+  if (mode === "ja") return JA_COPY_TARGET_TEXTS;
+  return COPY_TARGET_TEXTS;
+}
 
 /**
  * 处理 /copy、/r_copy、/nya_copy 和 /ja_copy 指令。目标既可以通过 @username
@@ -99,7 +113,7 @@ export async function handleCopyCommand(
     cooldownClaim = await claimCopyCooldownOrReject(resolveCommandActor(ctx), chatId, messageId);
     if (cooldownClaim.rejected) return;
 
-    targetUser = await resolveCopyCommandTarget(ctx, COPY_TARGET_TEXTS);
+    targetUser = await resolveCopyCommandTarget(ctx, copyTargetTextsForMode(mode));
     if (!targetUser) return;
 
     slotCommitted = commitCopySlot(slotDecision.claim, globalCopy, {

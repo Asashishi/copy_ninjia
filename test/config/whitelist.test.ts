@@ -14,7 +14,8 @@ import {
   setWhitelistMembership,
   setWhitelistPermission,
 } from "../../packages/config/whitelist";
-import { SUPER_ADMIN_USER_ID } from "../../packages/infra/config";
+import { SUPER_ADMIN_USER_ID } from "../../packages/config/telegram";
+import { settleTestBatch } from "../libs/helpers";
 import {
   whitelistConfigCache,
   whitelistFileRevisionCache,
@@ -53,6 +54,8 @@ describe("whitelist config", () => {
     expect(config.get(100)).toEqual({
       isCanMute: true,
       isCanUnMute: false,
+      isCanGag: false,
+      isCanViewBotStatus: true,
       isCanBlock: false,
       isCanUnBlock: false,
       isCanSwitchMood: false,
@@ -62,6 +65,7 @@ describe("whitelist config", () => {
       isCanControllAdDetectPermission: false,
       isCanControllFloodControlPermission: false,
       isCanControllJATranslatePermission: false,
+      isCanControllAntiRaidPermission: false,
     });
     expect(config.get(-1002233445566)?.isCanBypassAdDetection).toBe(false);
     expect(config.get(-1002233445566)?.isCanBypassFloodControl).toBe(true);
@@ -93,8 +97,10 @@ describe("whitelist config", () => {
     expect(getWhitelistConfig().has(100)).toBe(true);
     expect(isWhitelisted(100)).toBe(true);
     expect(hasWhitelistPermission(100, "isCanMute")).toBe(false);
+    expect(hasWhitelistPermission(100, "isCanViewBotStatus")).toBe(true);
     expect(hasWhitelistPermission(100, "isCanBypassAdDetection")).toBe(true);
     expect(isWhitelisted(101)).toBe(false);
+    expect(hasWhitelistPermission(101, "isCanViewBotStatus")).toBe(false);
   });
 
   test("超级管理员由身份直接持有全部权限，无需出现在配置文件里", () => {
@@ -203,7 +209,7 @@ describe("whitelist config", () => {
     await Bun.sleep(0);
     expect(contents).toHaveLength(1);
     releaseFirst();
-    await Promise.all([first, second]);
+    await settleTestBatch([first, second]);
 
     const persisted: Record<string, WhitelistPermissions> =
       JSON.parse(contents.at(-1)!) as Record<string, WhitelistPermissions>;
@@ -281,7 +287,7 @@ describe("whitelist config", () => {
     await Bun.sleep(0);
     expect(contents).toHaveLength(1);
     releaseFirst();
-    await Promise.all([enableAll, revokeMute]);
+    await settleTestBatch([enableAll, revokeMute]);
 
     expect(contents).toHaveLength(2);
     expect(hasWhitelistPermission(100, "isCanMute")).toBe(false);
@@ -373,7 +379,7 @@ describe("whitelist config", () => {
     await Bun.sleep(0);
     expect(contents).toHaveLength(1);
     releaseFirst();
-    await Promise.all([enable, grant]);
+    await settleTestBatch([enable, grant]);
 
     expect(contents).toHaveLength(2);
     expect(JSON.parse(contents[1]!)["200"].isCanMute).toBe(true);
@@ -424,7 +430,7 @@ describe("whitelist config", () => {
       await expect(setWhitelistPermission(
         { id: 100, key: "isCanMute", value: true },
         { path }
-      )).rejects.toThrow("changed outside this process");
+      )).rejects.toThrow("unchanged since process startup");
       expect(readFileSync(path, "utf8")).toBe(externalBytes);
       expect(getWhitelistConfig().has(200)).toBe(false);
     } finally {
@@ -465,7 +471,7 @@ describe("whitelist config", () => {
       await expect(setWhitelistPermission(
         { id: 100, key: "isCanMute", value: true },
         { path: loadedPath }
-      )).rejects.toThrow("changed outside this process");
+      )).rejects.toThrow("unchanged since process startup");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

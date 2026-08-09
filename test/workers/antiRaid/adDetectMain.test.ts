@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "@grammyjs/types";
 import type { AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
+import type { TelegramConfig } from "../../../packages/types/config";
 
 const chatStates = new Map<number, Record<string, unknown>>();
 const activeVerificationSnapshots = new Map<string, unknown>();
@@ -34,13 +35,9 @@ mock.module("../../../packages/infra/logger", () => ({
     error(message: unknown): void { errorLogs.push(String(message)); },
   },
 }));
-mock.module("../../../packages/infra/config", () => ({
-  AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
+mock.module("../../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 1,
-  // 广告候选要问一次 adDetectConfigReadiness()，而那份判定现在按段探
-  // config/openai.json，需要经 aiChat/credentials.ts 判断有没有 OpenAI 凭据。
-  AI_CHAT_GEMINI_API_KEY: undefined,
-  AI_CHAT_OPENAI_API_KEY: undefined,
+  getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 1 }),
 }));
 // 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
@@ -76,6 +73,8 @@ const { drainAdDisposals, formatAdNotice, handleAdDetected } =
   await import("../../../packages/antiRaid/adDetect");
 const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
+const { blocklistIdentityMutationQueues } = await import("../../../packages/cache/main/blocklist");
+const { runBlocklistIdentityMutation } = await import("../../../packages/infra/identityPolicy");
 const { markSelfSent } = await import("../../../packages/infra/selfSentTracker");
 const { sentMessages } = await import("../../../packages/cache/perThread/selfSentTracker");
 
@@ -124,6 +123,7 @@ beforeEach(() => {
   isUserBlocked.mockClear();
   dispatchBlockedRemovals.mockClear();
   inFlightAdDisposals.clear();
+  blocklistIdentityMutationQueues.clear();
   sendMessage.mockClear();
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 555);
   deleteMessageAfter.mockClear();
@@ -160,7 +160,7 @@ describe("广告检测投递门禁", () => {
   });
 
   test("自己人与拿本群当皮套的匿名管理员一律跳过", () => {
-    // 名单不可逆：自己人连送进判定的机会都不该有（见 docs/04-invariants.md）。
+    // 名单不可逆：自己人连送进判定的机会都不该有（见 docs/cn/04-invariants.md）。
     expect(buildAdCandidate(message({ from: { id: 1, is_bot: false, first_name: "Super" } }), 999)).toBeUndefined();
     expect(buildAdCandidate(message({ from: { id: 100, is_bot: false, first_name: "Priv" } }), 999)).toBeUndefined();
     expect(buildAdCandidate(
@@ -330,6 +330,38 @@ describe("广告判定命中后的处置", () => {
 
     expect(errorLogs.some((line) => line.includes("memory-only"))).toBe(true);
     expect(dispatched).toHaveLength(1);
+  });
+
+  test("较晚的同身份解封等待广告处置完整结算，最终不会被旧封禁覆盖", async () => {
+    let releasePersist: (() => void) | undefined;
+    confirmBlocklistPersisted.mockImplementationOnce((): Promise<boolean> =>
+      new Promise<boolean>((resolve: (value: boolean) => void): void => {
+        releasePersist = (): void => resolve(true);
+      }));
+
+    handleAdDetected(detected());
+    await Bun.sleep(0);
+    expect(releasePersist).toBeFunction();
+
+    let unblockStarted: boolean = false;
+    const laterUnblock: Promise<void> = runBlocklistIdentityMutation(7, (): void => {
+      unblockStarted = true;
+      blockedIds.delete(7);
+    });
+    await Bun.sleep(0);
+
+    // 广告处置持有同身份尾链；管理员的较晚解封不能先跑完，再被旧任务补封。
+    expect(unblockStarted).toBeFalse();
+    expect(trackBlockedRemoval).not.toHaveBeenCalled();
+
+    releasePersist!();
+    await drainAdDisposals(5_000);
+    await laterUnblock;
+
+    expect(dispatched).toHaveLength(1);
+    expect(unblockStarted).toBeTrue();
+    expect(blockedIds.has(7)).toBeFalse();
+    expect(blocklistIdentityMutationQueues.size).toBe(0);
   });
 
   test("重复命中只补触发群一批封禁，不再重走整套落盘与各群登记", async () => {

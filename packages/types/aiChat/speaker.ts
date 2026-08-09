@@ -6,7 +6,7 @@
  * 若「有时在、有时不在」，JSC 会为同一个类型分出多个隐藏类，转录里的属性读取
  * 随之退化成多态查找。必填之后编译器会逼着每个构造点都把字段写出来，形状因此
  * 恒定。落盘不受影响——`JSON.stringify` 本来就会丢掉值为 undefined 的键，
- * memory/ai/*.json 逐字节不变。整族约束见 docs/04-invariants.md。
+ * memory/ai/*.json 逐字节不变。整族约束见 docs/cn/04-invariants.md。
  */
 export interface AiSpeakerSnapshot {
   id: number;

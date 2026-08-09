@@ -9,6 +9,11 @@ import type {
   AiRecordMessage,
   AiTriggerMessage,
 } from "../types/aiChat/protocol";
+import {
+  AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER,
+  AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER,
+} from "../consts/aiChat/provider";
+import { telegramOutboundStats } from "../infra/telegram/outboundGate";
 import { postAiChatOrThrow } from "./workerBridge";
 
 /** 为 purge 后第一份新记忆武装即时持久化标志，并在投递失败时回滚新标志。 */
@@ -58,7 +63,7 @@ export function recordChatMedia(message: AiRecordMediaMessage): void {
 /** 触发一次回复所需的主线程载荷；随机触发默认关闭。 */
 export type GenerateAndSendReplyParams = Omit<
   AiTriggerMessage,
-  "type" | "isRandomTrigger"
+  "type" | "isRandomTrigger" | "telegramBackpressured"
 > & {
   isRandomTrigger?: boolean;
 };
@@ -72,13 +77,19 @@ export function generateAndSendReply({
   imageGenerationReference,
   isRandomTrigger = false,
 }: GenerateAndSendReplyParams): void {
+  const telegramStats: ReturnType<typeof telegramOutboundStats> = telegramOutboundStats();
   postAiChatOrThrow({
     type: "trigger",
     chatId,
     triggerSenderId,
     replyToMessageId,
     isRandomTrigger,
+    telegramBackpressured:
+      telegramStats.messageActive >= AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER ||
+      telegramStats.messageRetryPending >= AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER,
     imageGenerationRequested,
-    ...(imageGenerationReference ? { imageGenerationReference } : {}),
+    // 同 workers/aiChat/rollingMemory.ts：字段一律发出，不用条件展开。这条消息
+    // 走在每次 AI 触发的路径上，两种形状轮着产生会让 Worker 侧的读取变多态。
+    imageGenerationReference,
   });
 }

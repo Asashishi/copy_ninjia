@@ -5,8 +5,8 @@ import {
   answerCallbackQuery,
   deleteMessage,
   deleteMessageAfter,
-  joinVerificationApi,
   sendMessage,
+  joinVerificationApi,
 } from "../../infra/telegram";
 import { verificationKey } from "../../libs/verificationKey";
 import type { VerificationDispatcher } from "../../types/antiRaid/internal";

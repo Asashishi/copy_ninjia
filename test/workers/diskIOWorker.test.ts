@@ -9,6 +9,7 @@ const handleLuckDrawMessage = mock((_message: unknown): void => {});
 const handleVerificationUpsert = mock((_input: unknown): void => {});
 const handleVerificationDelete = mock((_input: unknown): void => {});
 const handleJoinLogMessage = mock((_message: unknown): void => {});
+const recoverJoinLogFiles = mock((_day: string): void => {});
 const readJoinLog = mock((_message: unknown): readonly {
   userId: number;
   joinedAt: number;
@@ -44,9 +45,8 @@ const flushBlocklistRemovalOutbox = mock((): boolean => true);
 const flushJoinLogDomain = mock((): boolean => true);
 const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
-const hydrateStickerCatalogs = mock((_packs: readonly string[] | null): Map<string, string> => new Map());
-// 贴纸白名单是全进程唯一无条件读 config/stickers.json 的地方；写坏时必须整体
-// 跳过对账（见 diskIOWorker.ts 的 activeStickerPacks）。
+const hydrateStickerCatalogs = mock((_packs: readonly string[]): Map<string, string> => new Map());
+// Worker 重建时仍会自行复核贴纸白名单；运行期被改坏时恢复必须拒绝。
 let stickerConfigFailure: string | null = null;
 const consoleError = mock((..._args: unknown[]): void => {});
 
@@ -76,6 +76,7 @@ mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
   flushJoinLogDomain,
   handleJoinLogMessage,
   readJoinLog,
+  recoverJoinLogFiles,
 }));
 mock.module("../../packages/workers/diskIO/aiMemoryFiles", () => ({
   configureAiMemoryDeletePersistedReply: (): void => {},
@@ -108,6 +109,7 @@ workerGlobal.postMessage = postMessage;
 const { handleDiskIOWorkerMessage } = await import("../../packages/workers/diskIOWorker");
 // 拒收标记走真实的 owner 缓存：路由层的兜底就是靠它把失败传给统一 flush。
 const { consumeJoinLogRejection } = await import("../../packages/cache/workers/diskIO/joinLog");
+const { resetDiskIOReplayWindow } = await import("../../packages/cache/workers/diskIO/recovery");
 
 afterAll(() => {
   workerGlobal.postMessage = originalPostMessage;
@@ -123,6 +125,7 @@ beforeEach(() => {
     handleVerificationUpsert,
     handleVerificationDelete,
     handleJoinLogMessage,
+    recoverJoinLogFiles,
     readJoinLog,
     flushLogBuffer,
     flushAiMemorySnapshots,
@@ -137,6 +140,9 @@ beforeEach(() => {
     hydrateStickerCatalogs,
     consoleError,
   ]) fn.mockClear();
+  // 重放窗口是 Worker 独占的模块级状态：某个用例遗留的 true 会让后面每一次
+  // 写失败都误报成停机回执。
+  resetDiskIOReplayWindow();
   stickerConfigFailure = null;
   luckWorkerCache.current = null;
   hydratedLuckEntries = new Map();
@@ -158,7 +164,11 @@ function route(message: DiskIOMessage): void {
 
 describe("Disk I/O Worker protocol router", () => {
   test("把各业务消息准确交给唯一领域 owner", () => {
-    route({ type: "log", timestamp: 1, level: "error", args: ["boom"] });
+    route({
+      type: "diagnosticBatch",
+      batchId: 7,
+      messages: [{ type: "log", timestamp: 1, level: "error", args: ["boom"] }],
+    });
     route({
       type: "aiMemory",
       chatId: -1,
@@ -192,6 +202,29 @@ describe("Disk I/O Worker protocol router", () => {
     expect(handleVerificationDelete).toHaveBeenCalledTimes(1);
     expect(handleBlocklistRemovalsMessage).toHaveBeenCalledTimes(1);
     expect(handleJoinLogMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "diagnosticBatchAccepted",
+      batchId: 7,
+    });
+  });
+
+  test("日志批次刷盘失败时要求主线程保留原批并按退避窗口重发", () => {
+    flushLogBuffer.mockReturnValueOnce(false);
+
+    route({
+      type: "diagnosticBatch",
+      batchId: 9,
+      messages: [{ type: "log", timestamp: 1, level: "error", args: ["retry"] }],
+    });
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "diagnosticBatchRetry",
+      batchId: 9,
+      retryAfterMs: 300_000,
+    });
+    expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: "diagnosticBatchAccepted",
+    }));
   });
 
   test("入群事实的 owner 抛错不逸出 onmessage，改记拒收让统一 flush 回报失败", () => {
@@ -217,6 +250,61 @@ describe("Disk I/O Worker protocol router", () => {
     expect(consoleError).toHaveBeenCalledTimes(1);
     // 代价只落在 joinLog 这一个领域：拒收标记让 recordJoinLog 紧接着那次
     // flush 拿到 flushFailed，该 update 不被确认，Telegram 重投。
+    expect(consumeJoinLogRejection()).toBeTrue();
+    // 在线消息不升级为停机：它后面紧跟着调用方自己的 flush。
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  test("恢复缓冲重放期间的入群写失败升级为停机回执，不只是记拒收", () => {
+    // 重放的这条在崩溃窗口里就已经被 recordJoinLog 放行、update 也确认过了，
+    // 后面没有任何 flush 会再问它写没写进去。只记拒收的话，标记会挂到某个无关的
+    // 后续入群事实那次 flush 上——那一条被连坐重投，真正丢掉的这一条毫无痕迹。
+    handleJoinLogMessage.mockImplementationOnce((): void => {
+      throw new Error("Join log buffer reached its hard limit of 4096 entries.");
+    });
+
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      route({ type: "recoveryReplay", active: true });
+      expect((): void => route({
+        type: "joinLog",
+        chatId: -1,
+        userId: 42,
+        joinedAt: 1_000,
+        day: "1970-01-01",
+      })).not.toThrow();
+      route({ type: "recoveryReplay", active: false });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenLastCalledWith({
+      type: "recoveryReplayFailed",
+      domain: "joinLog",
+      error: "Join log buffer reached its hard limit of 4096 entries.",
+    });
+    // 拒收标记照记不误：停机路径与领域内的回报互不取代。
+    expect(consumeJoinLogRejection()).toBeTrue();
+  });
+
+  test("重放窗口关闭后写失败回到常规语义，不再升级为停机", () => {
+    route({ type: "recoveryReplay", active: true });
+    route({ type: "recoveryReplay", active: false });
+    handleJoinLogMessage.mockImplementationOnce((): void => {
+      throw new Error("Failed to flush join logs before day rollover cleanup.");
+    });
+
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      route({ type: "joinLog", chatId: -1, userId: 42, joinedAt: 1_000, day: "1970-01-01" });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(postMessage).not.toHaveBeenCalled();
     expect(consumeJoinLogRejection()).toBeTrue();
   });
 
@@ -320,8 +408,8 @@ describe("Disk I/O Worker protocol router", () => {
     }));
   });
 
-  test("贴纸白名单写坏时降级成只读不删，其余恢复照常并不报启动失败", () => {
-    stickerConfigFailure = "Invalid stickers config: boom";
+  test("贴纸白名单写坏时拒绝启动恢复，不进入状态对账或后续 owner", () => {
+    stickerConfigFailure = "config/stickers.json: $.packs must be an array.";
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
@@ -330,17 +418,13 @@ describe("Disk I/O Worker protocol router", () => {
       console.error = originalConsoleError;
     }
 
-    // null 而不是 []：后者会让 recoverStickerCatalogs 把不在白名单里的持久化
-    // 文件当孤儿删掉，一个逗号写错就等于清空 memory/stickers/。也不能整步跳过
-    // ——那会让内存里的目录停在空表，而磁盘上明明躺着完好的快照。
-    expect(hydrateStickerCatalogs).toHaveBeenCalledTimes(1);
-    expect(hydrateStickerCatalogs).toHaveBeenCalledWith(null);
+    expect(hydrateStickerCatalogs).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalledTimes(1);
-    // 其余 owner 照常恢复；这一份坏文件不该把整个进程拦在启动阶段。
-    expect(hydrateLuckDay).toHaveBeenCalledTimes(1);
+    expect(hydrateLuckDay).not.toHaveBeenCalled();
+    expect(recoverJoinLogFiles).not.toHaveBeenCalled();
     expect(postMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       type: "loaded",
-      error: undefined,
+      error: "config/stickers.json: $.packs must be an array.",
     }));
   });
 
@@ -348,6 +432,7 @@ describe("Disk I/O Worker protocol router", () => {
     route({ type: "load" });
 
     expect(hydrateStickerCatalogs).toHaveBeenCalledWith(["pack_a"]);
+    expect(recoverJoinLogFiles).toHaveBeenCalledTimes(1);
   });
 
   test("flush 不短路其它 owner，并按领域回报失败", () => {

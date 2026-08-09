@@ -26,12 +26,18 @@ import {
 } from "../../states/verification";
 import type {
   ExpelSnapshot,
+  KickPendingState,
   PendingState,
   VerificationEvent,
   VerificationState,
   VerificationTerminalState, VerificationTransition,
 } from "../../types/states/verification";
-import { verificationKey } from "../../libs/verificationKey";
+import {
+  type ParsedVerificationKey,
+  parseVerificationKey,
+  verificationKey,
+  verificationKeyPrefix,
+} from "../../libs/verificationKey";
 import { runVerificationEffects } from "./verificationEffects";
 import {
   handleJoinEvent,
@@ -86,12 +92,16 @@ function startVerificationTimer(
   );
 }
 
-type PersistedVerificationState = PendingState | VerificationTerminalState;
+type PersistedVerificationState =
+  | PendingState
+  | KickPendingState
+  | VerificationTerminalState;
 
 function isPersistedVerificationState(
   state: VerificationState | undefined
 ): state is PersistedVerificationState {
   return state?.kind === "pending" ||
+    state?.kind === "kickPending" ||
     state?.kind === "checkingInviter" ||
     state?.kind === "expelling";
 }
@@ -161,31 +171,48 @@ function verificationSnapshot({
   state,
   revision,
 }: VerificationSnapshotParams): VerificationSnapshot {
-  const source: PendingState | ExpelSnapshot =
-    state.kind === "pending" ? state : state.snapshot;
+  const source: PendingState | ExpelSnapshot | undefined =
+    state.kind === "pending"
+      ? state
+      : state.kind === "kickPending"
+        ? undefined
+        : state.snapshot;
   const base: VerificationSnapshotBase = {
     chatId,
     userId,
     generation: verificationGeneration.current,
     revision,
-    label: source.label,
-    isBot: source.isBot,
-    announcementMessageId: source.announcementMessageId,
+    label: state.kind === "kickPending" ? state.label : source!.label,
+    isBot: state.kind === "kickPending" ? state.isBot : source!.isBot,
+    announcementMessageId:
+      state.kind === "kickPending"
+        ? state.announcementMessageId
+        : source!.announcementMessageId,
     trackedMessageTimes:
       state.kind === "pending" ? [...state.trackedMessageTimes] : [],
     invitedBy: state.kind === "pending" ? state.invitedBy : undefined,
-    reminderMessageId: source.reminderMessageId,
-    replyReminderMessageId: source.replyReminderMessageId,
+    reminderMessageId: source?.reminderMessageId,
+    replyReminderMessageId: source?.replyReminderMessageId,
     replyReminderRequested:
       state.kind === "pending" ? state.replyReminderRequested : false,
     welcomeAnchorMessageId:
       state.kind === "pending" ? state.welcomeAnchorMessageId : undefined,
     reminderSuperseded:
       state.kind === "pending" ? state.reminderSuperseded : true,
-    joinedAt: source.joinedAt,
-    expiresAt: source.expiresAt,
+    joinedAt:
+      state.kind === "kickPending" ? state.requestedAt : source!.joinedAt,
+    expiresAt:
+      state.kind === "kickPending" ? state.requestedAt : source!.expiresAt,
   };
   if (state.kind === "pending") return { ...base, phase: "pending" };
+  if (state.kind === "kickPending") {
+    return {
+      ...base,
+      phase: "kickPending",
+      requestedAt: state.requestedAt,
+      countedJoinAt: state.countedJoinAt,
+    };
+  }
   if (state.kind === "checkingInviter") {
     return {
       ...base,
@@ -268,7 +295,18 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
       joinedAt: record.joinedAt,
       expiresAt: record.expiresAt,
     };
-    const state: VerificationState = record.phase === "checkingInviter"
+    const state: VerificationState = record.phase === "kickPending"
+      ? {
+        kind: "kickPending",
+        label: record.label,
+        isBot: record.isBot,
+        requestedAt: record.requestedAt,
+        countedJoinAt: record.countedJoinAt,
+        announcementMessageId: record.announcementMessageId,
+        effectStarted: false,
+        executionStarted: false,
+      }
+      : record.phase === "checkingInviter"
       ? {
         kind: "checkingInviter",
         inviterId: record.terminalInviterId,
@@ -328,7 +366,11 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
         dispatchVerification,
       });
     } else if (
-      (state.kind === "checkingInviter" || state.kind === "expelling") &&
+      (
+        state.kind === "kickPending" ||
+        state.kind === "checkingInviter" ||
+        state.kind === "expelling"
+      ) &&
       message.resumePersistedTerminals === true
     ) {
       dispatchVerification(
@@ -350,14 +392,17 @@ export function handleVerificationPersisted(
   const knownRevision: number | undefined =
     verificationRevisions.get(message.key)?.revision;
   if (knownRevision !== message.revision) return;
-  const separator: number = message.key.lastIndexOf(":");
-  if (separator <= 0) return;
-  const chatId: number = Number(message.key.slice(0, separator));
-  const userId: number = Number(message.key.slice(separator + 1));
-  if (!Number.isSafeInteger(chatId) || !Number.isSafeInteger(userId)) return;
+  const parsed: ParsedVerificationKey | null = parseVerificationKey(message.key);
+  if (parsed === null) return;
+  const chatId: number = parsed.chatId;
+  const userId: number = parsed.userId;
   const state: VerificationState | undefined =
     verificationEntries.get(message.key)?.state;
-  if (state?.kind !== "checkingInviter" && state?.kind !== "expelling") return;
+  if (
+    state?.kind !== "kickPending" &&
+    state?.kind !== "checkingInviter" &&
+    state?.kind !== "expelling"
+  ) return;
   dispatchVerification(
     chatId,
     userId,
@@ -367,23 +412,57 @@ export function handleVerificationPersisted(
   );
 }
 
+/**
+ * `/antiraid disable`：把这个群每一条验证记录**经状态机**收摊。
+ *
+ * 与 deactivateVerificationChat 的区别不只是范围，更是**走不走状态机**。那条是
+ * 停管/退群的紧急拆除，直接删内存条目再补 tombstone；这条把每条记录都喂给
+ * dispatchVerification 走一次 guardDisabled 转移，让「关掉之后哪些事不再发生」
+ * 由状态机自己说了算，而不是散落在这里的删表逻辑（见 states/verification/disable.ts：
+ * 一律回 ABSENT、不产生任何副作用——不删提醒、不踢人）。
+ *
+ * 这样写还有一个实际好处：终态（checkingInviter/expelling）的 tombstone 由
+ * dispatchVerification 统一发布，重启后不会被 adopt 重放回来接着踢人。
+ *
+ * 时序上先删 thread comment 确认 owner：它们持有指向状态对象的 token，逐条转移
+ * 之后再删只是让那些 token 先落一次空。
+ */
+export function disableJoinGuardChat(chatId: number): void {
+  const prefix: string = verificationKeyPrefix(chatId);
+  for (const key of threadCommentConfirmations.keys()) {
+    if (key.startsWith(prefix)) threadCommentConfirmations.delete(key);
+  }
+  for (const key of [...verificationEntries.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
+    if (parsed === null) {
+      // 理论上进不来（键由 verificationKey 生成）；真的进来了也不能把条目留下，
+      // 但没有 userId 就没法投递 tombstone，只能就地删掉并留一行诊断。
+      const entry: VerificationEntry | undefined = verificationEntries.get(key);
+      if (entry?.timer !== undefined) clearTimeout(entry.timer);
+      cancelReminderDelivery(key);
+      verificationEntries.delete(key);
+      logger.error(`Dropped a join verification entry with an unparsable key while disabling the guard: ${key}`);
+      continue;
+    }
+    dispatchVerification(chatId, parsed.userId, { type: "guardDisabled" });
+  }
+}
+
 /** 取消某群所有验证 owner，并为每条持久化记录发布 tombstone。 */
 export function deactivateVerificationChat(chatId: number): void {
-  const prefix: string = `${chatId}:`;
+  const prefix: string = verificationKeyPrefix(chatId);
   for (const key of threadCommentConfirmations.keys()) {
     if (key.startsWith(prefix)) threadCommentConfirmations.delete(key);
   }
   for (const [key, entry] of [...verificationEntries]) {
     if (!key.startsWith(prefix)) continue;
     cancelReminderDelivery(key);
-    const userId: number = Number(key.slice(prefix.length));
+    const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
     if (entry.timer !== undefined) clearTimeout(entry.timer);
     verificationEntries.delete(key);
-    if (
-      isPersistedVerificationState(entry.state) &&
-      Number.isSafeInteger(userId)
-    ) {
-      publishVerificationChange(chatId, userId, true);
+    if (isPersistedVerificationState(entry.state) && parsed !== null) {
+      publishVerificationChange(chatId, parsed.userId, true);
     }
   }
 }

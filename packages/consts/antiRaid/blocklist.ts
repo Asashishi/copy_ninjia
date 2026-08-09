@@ -1,8 +1,8 @@
 /** /block 黑名单处置（入群秒踢与新晋管理员补扫）的节奏常量。 */
 
 /**
- * 单个 id 的封禁最多尝试几次。第一次失败通常是 429 或瞬时 5xx，
- * grammY 的 autoRetry 已经吃掉了一部分，这里兜的是它放弃之后那一层。
+ * 单个 id 的封禁最多尝试几次。Telegram 总闸会留住带 retry_after 的 429；
+ * 这里兜网络错误、有限 5xx 重试耗尽及其它可恢复失败。
  * 黑名单没有验证窗口兜底：一次失败不重试就等于把人永久留在群里。
  * 所属模块：workers/antiRaid/blocklistEffects.ts。
  */
@@ -13,8 +13,9 @@ export const BLOCKLIST_REMOVAL_RETRY_DELAY_MS: number = 5_000;
 
 /**
  * 补扫时每批处理多少个 id。Bot API 没有枚举群成员的接口，一次补扫固定是
- * O(名单长度) 次请求，而它们与验证超时踢人共用 joinVerificationApi 队列：
- * 不分批的话，几千条名单会把真正的踢人请求堵在后面几分钟。
+ * O(名单长度) 次请求；它们与验证超时踢人共用主线程 kick 类 429 车道。
+ * 不分批的话，该类别一旦进入恢复期，几千条名单会先占满 FIFO；分批和让步
+ * 允许新到的验证踢人在下一批之前插入。
  */
 export const BLOCKLIST_SWEEP_BATCH_SIZE: number = 25;
 
@@ -143,9 +144,9 @@ export const BLOCKLIST_SWEEP_RETRY_INTERVAL_MS: number = 300_000;
  * 固定 5 分钟一轮兜不住「永远封不掉」的目标：目标自己就是这个群的管理员、或
  * 机器人是管理员但没有封禁权限时，每一轮补扫都注定 `complete: false`，于是每
  * 5 分钟就重扫一次整份名单——O(名单长度) 次 getChatMember + banChatMember，
- * 而它们与验证超时踢人共用 joinVerificationApi 队列，真正的踢人请求会被永久
- * 顶在后面几分钟。退避必须有上限：`sweptAt` 那道闩锁始终要有打开的路径，
- * 权限修好之后不能等到进程重启才重扫（见 docs/04-invariants.md）。
+ * 这些注定失败的请求虽不会进入 429 FIFO，仍会持续浪费 Worker 调度、网络连接
+ * 与错误日志。退避必须有上限：`sweptAt` 那道闩锁始终要有打开的路径，
+ * 权限修好之后不能等到进程重启才重扫（见 docs/cn/04-invariants.md）。
  * 所属模块：infra/blocklist/。
  */
 export const BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS: number = 21_600_000;

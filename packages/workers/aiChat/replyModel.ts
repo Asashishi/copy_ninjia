@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
-import { systemPromptHolder } from "../../cache/workers/aiChat/prompts";
-import { PERSONA_PATH } from "../../consts/paths";
+import { getPersona } from "../../config/persona";
 import {
   HARD_MAX_ACTIONS_PER_REPLY,
   MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
@@ -24,7 +22,7 @@ import {
 } from "../../consts/aiChat/prompts/search";
 import { logger } from "../../infra/logger";
 import { currentMoodInstruction } from "../../aiChat/ai/mood";
-import { chatAiProvider } from "../../aiChat/provider";
+import { textAiProvider } from "../../aiChat/provider";
 import { callTool } from "../../aiChat/ai/tools";
 import type { ReplyPromptSections, ReplyToolset } from "../../types/aiChat/replies";
 import type {
@@ -74,7 +72,8 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
 
 /**
  * 人设文本存放在仓库根目录的 prompt/persona.md，修改人设不需要碰代码。
- * 惰性读一次并缓存——generateReply 是它唯一的消费者。
+ * 默认文件在每个线程只读一次；主线程启动总闸先校验，AI Worker
+ * 在自己的 isolate 中首次回复时填充本地缓存。
  *
  * 不在模块加载时读：那样文件缺失或不可读会在 aiChat Worker 的模块求值期抛出，
  * 监督者只看到一个不透明的 worker error 并按 WORKER_MAX_RESTARTS 反复重启，
@@ -82,8 +81,7 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
  * （「模块 import 本身不访问文件系统」），配置类读盘一律推迟到第一次真正要用时。
  */
 function systemPrompt(): string {
-  systemPromptHolder.current ??= readFileSync(PERSONA_PATH, "utf8").trim();
-  return systemPromptHolder.current;
+  return getPersona();
 }
 
 /**
@@ -124,7 +122,7 @@ export async function generateReply(
     ...(promptSections.invokerFocus ? [promptSections.invokerFocus] : []),
     promptSections.replyTask,
   ];
-  const session: AiReplySession = chatAiProvider().createReplySession({
+  const session: AiReplySession = textAiProvider().createReplySession({
     promptBlocks,
     signal: toolset.signal,
   });

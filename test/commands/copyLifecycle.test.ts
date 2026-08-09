@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CachedUser } from "../../packages/types/chatState";
+import type { CachedUser, CopyMode } from "../../packages/types/chatState";
+import {
+  COPY_TARGET_TEXTS,
+  JA_COPY_TARGET_TEXTS,
+  NYA_COPY_TARGET_TEXTS,
+  REVERSE_COPY_TARGET_TEXTS,
+} from "../../packages/consts/commands";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
@@ -19,7 +25,7 @@ let jaEnabled: boolean = true;
 let jaReadiness: { ok: true } | { ok: false; failure: { file: string; reason: string } } = { ok: true };
 
 const claimCopyCooldownOrReject = mock(async () => cooldownRejected ? { rejected: true as const } : claim);
-const resolveCopyCommandTarget = mock(async (): Promise<CachedUser | undefined> => target);
+const resolveCopyCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => target);
 
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({ logger: { error: loggerError } }));
@@ -122,6 +128,20 @@ describe("copy 类命令生命周期", () => {
     await handleCopyCommand(context(), "nya");
 
     expect(claimCopyCooldownOrReject).toHaveBeenCalledTimes(1);
+  });
+
+  test("各 copy 模式把写有实际命令名的目标提示交给解析器", async () => {
+    target = undefined;
+    for (const [mode, texts] of [
+      [undefined, COPY_TARGET_TEXTS],
+      ["reverse", REVERSE_COPY_TARGET_TEXTS],
+      ["nya", NYA_COPY_TARGET_TEXTS],
+      ["ja", JA_COPY_TARGET_TEXTS],
+    ] as const satisfies readonly (readonly [CopyMode | undefined, typeof COPY_TARGET_TEXTS])[]) {
+      resolveCopyCommandTarget.mockClear();
+      await handleCopyCommand(context(), mode);
+      expect(resolveCopyCommandTarget.mock.calls[0]?.[1]).toBe(texts);
+    }
   });
 
   test("目标解析失败或已有复制目标时回滚本次冷却占位", async () => {

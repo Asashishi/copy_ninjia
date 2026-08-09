@@ -2,6 +2,7 @@ export {
   clearAdDetection,
   clearFloodControl,
   deactivateAntiRaidChat,
+  deactivateJoinGuardChat,
   hydratePendingVerifications,
   initAntiRaid,
   terminateAntiRaid,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { adDetectAgentConfigSnapshot } from "../../../packages/config/agent";
 import type {
   AntiRaidWorkerEvent,
   AntiRaidWorkerMessage,
@@ -20,12 +21,15 @@ let supervisorOptions: {
 } | undefined;
 let diskRespawn: DiskIORespawnListener | undefined;
 let persistedAck: ((reply: VerificationPersistedReply) => void) | undefined;
-const chatStates = new Map<number, { lockdown?: {
-  phase?: "applying" | "active" | "restoring";
-  intentId?: number;
-  originalPermissions: Record<string, boolean | undefined>;
-  expiresAt: number;
-} }>();
+const chatStates = new Map<number, {
+  isAntiRaidEnabled?: boolean;
+  lockdown?: {
+    phase?: "applying" | "active" | "restoring";
+    intentId?: number;
+    originalPermissions: Record<string, boolean | undefined>;
+    expiresAt: number;
+  };
+}>();
 const saveState = mock(async (): Promise<void> => {});
 const saveStateInBackground = mock((_context: string): void => {});
 type FlushResult = "flushed" | "timedOut" | "failed";
@@ -53,7 +57,9 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
     return true;
   },
   getAllChatStates: () => chatStates,
-  getChatState: (chatId: number) => chatStates.get(chatId) ?? {},
+  // 入群守卫默认开着：本文件的用例全部考察守卫开启后的镜像与恢复语义，
+  // 逐个用例再去建 chat state 只会淹没被测的东西。
+  getChatState: (chatId: number) => ({ isAntiRaidEnabled: true, ...chatStates.get(chatId) }),
   getOrCreateChatState: (chatId: number) => {
     const current = chatStates.get(chatId) ?? {};
     chatStates.set(chatId, current);
@@ -75,7 +81,10 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
   sendMessage: async (): Promise<number | undefined> => undefined,
   deleteMessageAfter: (): void => {},
 }));
-mock.module("../../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "main-thread-test-api" } }));
+mock.module("../../../packages/infra/telegram/client", () => ({
+  installTelegramApi: (): void => {},
+  joinVerificationApi: { kind: "main-thread-test-api" },
+}));
 mock.module("../../../packages/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
 // JOIN_WINDOW_MS 原样透出：秒踢路径的入群计数去重用它当窗口宽度
 // （见 antiRaid/blocklistGuard.ts），整份模块被替换掉时缺了会在 import 阶段报错。
@@ -125,8 +134,10 @@ const {
   emergencyLockdownRecoveryRuntime,
   pendingLockdownPersistence,
   persistedLockdownFingerprints,
+  queuedLockdownPersistence,
 } = await import("../../../packages/cache/main/antiRaid/lockdownMirror");
 const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
+const { chatIsSupergroupById } = await import("../../../packages/cache/main/antiRaid/chatKind");
 
 async function resetAntiRaidTestState(): Promise<void> {
   await antiRaid.terminateAntiRaid();
@@ -138,8 +149,10 @@ async function resetAntiRaidTestState(): Promise<void> {
   persistedVerificationRevisions.clear();
   inFlightAdDisposals.clear();
   recentBlockedJoinCounts.clear();
+  chatIsSupergroupById.clear();
   persistedLockdownFingerprints.clear();
   pendingLockdownPersistence.clear();
+  queuedLockdownPersistence.clear();
   emergencyLockdownRecoveries.clear();
   emergencyLockdownRecoveryRuntime.stopped = true;
   antiRaidRuntimeState.generation = 0;
@@ -217,6 +230,26 @@ async function settleAntiRaidDrain(
 }
 
 describe("Anti-Raid main-thread persistence mirror", () => {
+  test("首次 init 在终态 adopt 前重放已观测群类型", async () => {
+    await resetAntiRaidTestState();
+    chatIsSupergroupById.set(-9001, false);
+    antiRaid.initAntiRaid();
+
+    const chatKindIndex: number = workerPosts.findIndex(
+      (message: AntiRaidWorkerMessage): boolean => message.type === "chatKind"
+    );
+    const adoptIndex: number = workerPosts.findIndex(
+      (message: AntiRaidWorkerMessage): boolean => message.type === "adoptVerifications"
+    );
+    expect(workerPosts[chatKindIndex]).toEqual({
+      type: "chatKind",
+      chatId: -9001,
+      isSupergroup: false,
+    });
+    expect(chatKindIndex).toBeGreaterThanOrEqual(0);
+    expect(chatKindIndex).toBeLessThan(adoptIndex);
+  });
+
   test("replays active and unconfirmed deletes while rejecting old generations", async () => {
     await resetAntiRaidTestState();
     antiRaid.hydratePendingVerifications(new Map([["-1001:42", record(9, 1)]]));
@@ -256,7 +289,10 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     });
     supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 5 });
 
-    expect(workerPosts[0]).toMatchObject({ type: "adoptVerifications", generation: 1, verifications: [{ revision: 1 }] });
+    // 配置快照永远排在第一条：广告判定逐条候选取模型名与凭据（见
+    // types/antiRaid.ts 的 AntiRaidAgentConfigMessage）。
+    expect(workerPosts[0]).toEqual({ type: "agentConfig", adDetect: adDetectAgentConfigSnapshot() });
+    expect(workerPosts[1]).toMatchObject({ type: "adoptVerifications", generation: 1, verifications: [{ revision: 1 }] });
     expect(diskPosts.map((message) => ({
       type: message.type,
       revision: message.type === "verificationUpsert" ? message.record.revision : message.revision,
@@ -267,12 +303,61 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       { type: "verificationDelete", revision: 3, critical: undefined },
       { type: "verificationUpsert", revision: 4, critical: true },
     ]);
-    expect(respawnPosts).toEqual([expect.objectContaining({
-      type: "adoptVerifications",
-      generation: 2,
-      verifications: [expect.objectContaining({ revision: 4 })],
-    })]);
+    expect(respawnPosts).toEqual([
+      // 重生同样先投配置快照，且投的是主线程那份唯一快照，不重新读盘。
+      { type: "agentConfig", adDetect: adDetectAgentConfigSnapshot() },
+      expect.objectContaining({
+        type: "adoptVerifications",
+        generation: 2,
+        verifications: [expect.objectContaining({ revision: 4 })],
+      }),
+    ]);
     expect(activeVerificationSnapshots.get("-1001:42")?.revision).toBe(4);
+  });
+
+  test("开关已关的群：adopt 之后立刻收掉残留的验证窗口与私密模式", async () => {
+    // 残留的成因是 `/antiraid disable` 那一刻 Worker 恰好不可用：开关落了盘，
+    // 运行态却留在镜像和 state.json 里。不收的话，重建/重启后的 Worker 会照着
+    // 旧窗口继续踢人——开关显示关着，人却还在被踢。
+    await resetAntiRaidTestState();
+    chatStates.set(-1001, { isAntiRaidEnabled: false });
+    chatStates.set(-1002, {
+      isAntiRaidEnabled: false,
+      lockdown: {
+        phase: "active",
+        intentId: 5,
+        originalPermissions: { can_invite_users: true },
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+    antiRaid.hydratePendingVerifications(new Map([["-1001:42", record(0, 1)]]));
+
+    antiRaid.initAntiRaid();
+
+    const types: string[] = workerPosts.map((message: AntiRaidWorkerMessage): string => message.type);
+    // 顺序是硬要求：先让新 isolate 接管，再拆。反过来就是对着空状态发拆除，
+    // -1002 的邀请权限从此没人恢复。
+    expect(types.indexOf("adoptVerifications")).toBeLessThan(types.indexOf("deactivateJoinGuard"));
+    expect(types.indexOf("adopt")).toBeLessThan(types.indexOf("deactivateJoinGuard"));
+    expect(workerPosts.filter(
+      (message: AntiRaidWorkerMessage): boolean => message.type === "deactivateJoinGuard"
+    )).toEqual([
+      { type: "deactivateJoinGuard", chatId: -1001 },
+      { type: "deactivateJoinGuard", chatId: -1002 },
+    ]);
+    // 只拆入群这条链路：广告检测与防刷屏各有各的开关。
+    expect(types).not.toContain("deactivateChat");
+  });
+
+  test("开关开着的群不会被 adopt 后的清理误伤", async () => {
+    await resetAntiRaidTestState();
+    chatStates.set(-1001, { isAntiRaidEnabled: true });
+    antiRaid.hydratePendingVerifications(new Map([["-1001:42", record(0, 1)]]));
+
+    antiRaid.initAntiRaid();
+
+    expect(workerPosts.map((message: AntiRaidWorkerMessage): string => message.type))
+      .not.toContain("deactivateJoinGuard");
   });
 
   test("真实 drain 期间产生新持久化镜像时会再跑一轮固定点对账", async () => {
@@ -411,6 +496,51 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       phase: "restoring",
       intentId: 89,
     }]);
+  });
+
+  test("第五轮保存期间的新意图会续跑下一任务，不等待第七条事件唤醒", async () => {
+    workerPosts.length = 0;
+    saveState.mockClear();
+    const releases: (() => void)[] = [];
+    saveState.mockImplementation(() => new Promise<void>((resolve: () => void): void => {
+      releases.push(resolve);
+    }));
+    const publish = (intentId: number): void => {
+      supervisorOptions!.onEvent({
+        type: "lockdown",
+        chatId: -2005,
+        phase: "active",
+        intentId,
+        originalPermissions: { can_invite_users: true },
+        expiresAt: 500_000 + intentId,
+      });
+    };
+
+    publish(1);
+    for (let intentId: number = 2; intentId <= 6; intentId++) {
+      expect(releases).toHaveLength(intentId - 1);
+      publish(intentId);
+      releases[intentId - 2]!();
+      await Bun.sleep(0);
+    }
+    // 第五轮看到 intent 6 后触顶；finally 必须消费 lost wake-up 并新开第六次保存。
+    await Bun.sleep(0);
+    expect(saveState).toHaveBeenCalledTimes(6);
+    releases[5]!();
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+
+    expect(workerPosts.filter(
+      (message: AntiRaidWorkerMessage): boolean =>
+        message.type === "lockdownPersisted" && message.chatId === -2005
+    )).toEqual([{
+      type: "lockdownPersisted",
+      chatId: -2005,
+      phase: "active",
+      intentId: 6,
+    }]);
+    expect(pendingLockdownPersistence.has(-2005)).toBeFalse();
+    expect(queuedLockdownPersistence.has(-2005)).toBeFalse();
   });
 
   test("倒计时刷新不再多花一轮整文件重写：指纹只认 phase + intentId", async () => {

@@ -1,9 +1,10 @@
-import { superviseWorker } from "../libs/supervisedWorker";
+import { superviseDuplexWorker } from "../libs/supervisedDuplexWorker";
 import { markSelfSent } from "../infra/selfSentTracker";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { logger } from "../infra/logger";
 import { postDiskIO } from "../infra/diskIO";
 import { isAiChatConfigured } from "./availability";
+import { getAgentDeploymentConfig } from "../config/agent";
 import { forgetAiMemoryRevisionCounter, nextAiMemoryRevision, requestAiMemoryDelete } from "./memoryMirror";
 import {
   aiChatWorkerState,
@@ -26,19 +27,25 @@ import {
 } from "../consts/lifecycle";
 import { MOOD_REQUEST_TIMEOUT_MS } from "../consts/aiChat/mood";
 import type { FlushResult } from "../types/lifecycle";
-import { getAllChatStates, getChatProviderOverride, getChatState, getImageProviderOverride } from "../infra/storage/stateStore";
-import type { AiProviderName } from "../types/aiChat/provider";
+import { getAllChatStates, getChatState } from "../infra/storage/stateStore";
 import type {
   AiBotInfo,
   AiChatWorkerEvent,
   AiChatWorkerMessage,
   AiInitMessage,
 } from "../types/aiChat/protocol";
+import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import type {
   AiChatInvalidateWaiter,
   MoodRequestWaiter,
 } from "../types/aiChat/waiters";
 import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
+import type { WorkerDuplexInbound } from "../types/workerDuplex";
+import type { TelegramWorkerRequest } from "../types/telegramWorker";
+import {
+  handleAiWorkerTelegramRequest,
+  telegramWorkerResponseTransfer,
+} from "../infra/telegram/workerRequests";
 
 /** 在途心情查询/重抽请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
  *  的回执不可能再到达，不结算会让命令处理器干等到超时。 */
@@ -65,8 +72,9 @@ function rejectAllAiChatInvalidateWaiters(reason: string): void {
  * calling 往返与供应商内置的服务端联网检索）、工具化的发言/消息反应/两层应景贴纸
  * （见 packages/aiChat/ai/tools/replyToolset/）、白名单贴纸目录与整包简介生成——全部在独立
  * 的 Bun Worker（packages/workers/aiChatWorker.ts）里
- * 执行；主线程只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
- * 让 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
+ * 执行；主线程正向只把「记录一条群消息/媒体」「触发一次回复」两类事件投递过去，
+ * 反向则只接收并执行 Worker 所需的 Telegram 能力请求，模型与其它外部 API 不经
+ * 此边界。这样 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
  *
  * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
@@ -81,10 +89,12 @@ function rejectAllAiChatInvalidateWaiters(reason: string): void {
  * aiChat/memoryMirror.ts；本文件只保留 Worker 监督与对外 API。
  */
 
-const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: SupervisedWorkerHandle<AiChatWorkerMessage> = superviseWorker<AiChatWorkerMessage, AiChatWorkerEvent>({
+const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: SupervisedWorkerHandle<WorkerDuplexInbound<AiChatWorkerMessage>> = superviseDuplexWorker<AiChatWorkerMessage, AiChatWorkerEvent, TelegramWorkerRequest>({
   url: new URL("../workers/aiChatWorker.ts", import.meta.url).href,
   label: "AI Worker",
   giveUpConsequence: "AI chat feature will silently stay disabled until the process restarts.",
+  handleRequest: handleAiWorkerTelegramRequest,
+  responseTransfer: telegramWorkerResponseTransfer,
   onEvent: (event: AiChatWorkerEvent): void => {
     switch (event.type) {
       case "sent":
@@ -107,12 +117,15 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
           }
           latestAiMemories.set(event.chatId, event.snapshot);
           latestAiMemoryRevisions.set(event.chatId, revision);
+          // 字段一律发出，不用条件展开：这是上一跳（workers/aiChat/rollingMemory.ts
+          // 的 memory 事件）的同一个字段再转投一手，两跳的产生频率完全相同。只修
+          // 前一跳等于把形状发散往后挪了一格。落盘侧判的是 `=== true`，语义不变。
           postDiskIO({
             type: "aiMemory",
             chatId: event.chatId,
             revision,
             snapshot: event.snapshot,
-            ...(persistImmediately ? { persistImmediately: true } : {}),
+            persistImmediately,
           });
         }
         break;
@@ -160,19 +173,12 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     aiMemoryFlushBarrier.settleAll("failed");
     rejectAllMoodRequestWaiters("AI Worker crashed before acknowledging the mood request.");
     rejectAllAiChatInvalidateWaiters("AI Worker crashed before completing chat invalidation.");
-    // 新 Worker 重新走一遍身份注入，FIFO 保证它先于任何 record/trigger 到达。
-    // 重启发生在 initAiChat 调用之前的话 lastInitState.current 仍是 null，
-    // 没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
+    // 新 Worker 重新走一遍身份注入与配置快照投递，FIFO 保证它先于任何
+    // record/trigger 到达。重放的是**进程启动时那条 init 消息本身**，因此新
+    // isolate 拿到的配置与旧实例逐字节相同——重建不会顺手加载磁盘上已经被改过
+    // 的 agent.json。重启发生在 initAiChat 调用之前的话 lastInitState.current
+    // 仍是 null，没有可重放的，新 Worker 等本来就该来的那次 initAiChat 调用即可。
     if (lastInitState.current && !postToNext(lastInitState.current)) return;
-    // 生图供应商覆盖同样要重放：新 Worker 的镜像是空的，而空的含义是「跟随默认
-    // 供应商」——不补发就等于超管切过的那一下被静默回滚，而群里看不出区别
-    // （见 cache/workers/aiChat/imageProvider.ts）。没设过覆盖时无须推送，空镜像
-    // 本身就是正确结论。
-    const imageProvider: AiProviderName | undefined = getImageProviderOverride();
-    if (imageProvider !== undefined && !postToNext({ type: "imageProvider", provider: imageProvider })) return;
-    // 闲聊侧覆盖同理，两份镜像各推各的（见 cache/workers/aiChat/chatProvider.ts）。
-    const chatProvider: AiProviderName | undefined = getChatProviderOverride();
-    if (chatProvider !== undefined && !postToNext({ type: "chatProvider", provider: chatProvider })) return;
     // 记忆镜像同样要重放：新 Worker 内存全空，凭上一实例上报过的最新快照
     // 补齐（见模块头注）。
     if (latestAiMemories.size > 0) {
@@ -234,47 +240,22 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
  */
 export function initAiChat(botInfo: AiBotInfo): void {
   if (!isAiChatConfigured()) {
-    logger.log("No AI chat provider credential is configured; the AI chat worker stays down and /ai_chat enable is refused.");
+    logger.log("AI agent configuration is unavailable; the AI chat worker stays down and /ai_chat enable is refused.");
     return;
   }
   initAiChatWorker();
+  // isAiChatConfigured() 刚刚走完 readiness，agent 段快照已在主线程 holder 里；
+  // 这里取的就是进程内那唯一一代配置，随 init 一起交给 Worker（见 AiInitMessage）。
   const message: AiInitMessage = {
     type: "init",
     botInfo: { id: botInfo.id, username: botInfo.username, first_name: botInfo.first_name },
+    superAdminUserId: SUPER_ADMIN_USER_ID,
+    agent: getAgentDeploymentConfig(),
   };
   postAiChatOrThrow(message);
   lastInitState.current = message;
   aiChatWorkerState.available = true;
-  // 首个 Worker 拿不到 onRespawn 的那次重放，恢复出来的覆盖值在这里补推一次。
-  // 必须在 loadState 之后调用（见 app/lifecycle.ts 的顺序）。
-  const imageProvider: AiProviderName | undefined = getImageProviderOverride();
-  if (imageProvider !== undefined) postAiChatOrThrow({ type: "imageProvider", provider: imageProvider });
-  const chatProvider: AiProviderName | undefined = getChatProviderOverride();
-  if (chatProvider !== undefined) postAiChatOrThrow({ type: "chatProvider", provider: chatProvider });
 }
-
-/**
- * 把 `/image_model` 刚写下的覆盖值推给 AI Worker。
- *
- * 落盘已经在调用方完成，因此这里的失败**不上抛**：放它逃出去会让这条 update
- * 判失败、最终 offset 被扣住，Telegram 重投同一条命令——而 Worker 仍然不可用，
- * 重投同样失败（口径同 commands/adDetect.ts 的运行时清理）。Worker 只是重生中
- * 的话，onRespawn 的重放会把当前值补上；已放弃重启的话整条 AI 闲聊本来就停了。
- */
-export function publishImageProvider(provider: AiProviderName): void {
-  if (post({ type: "imageProvider", provider })) return;
-  logger.error(`Failed to publish the image provider override "${provider}" to the AI Worker; it is unavailable.`);
-}
-
-/**
- * 把 `/chat_model` 刚写下的覆盖值推给 AI Worker。失败不上抛的理由与
- * publishImageProvider 完全一致，见上。
- */
-export function publishChatProvider(provider: AiProviderName): void {
-  if (post({ type: "chatProvider", provider })) return;
-  logger.error(`Failed to publish the chat provider override "${provider}" to the AI Worker; it is unavailable.`);
-}
-
 /**
  * 启动时把 diskIOWorker 落盘恢复出的 AI 记忆快照灌回来：先存一份镜像
  * （供后续崩溃重放，见模块头注），再投递给 Worker 做 hydrate。必须在
@@ -453,10 +434,25 @@ export async function invalidateAiChat(chatId: number, purgeMemory: boolean): Pr
       }
     }
   }
-  await Promise.all([
+  const settlements: PromiseSettledResult<void>[] = await Promise.allSettled([
     persistedDelete ?? Promise.resolve(),
     workerInvalidated ?? Promise.resolve(),
   ]);
+  const labels: readonly string[] = ["durable memory deletion", "Worker runtime invalidation"];
+  const failures: unknown[] = [];
+  for (let index: number = 0; index < settlements.length; index++) {
+    const settlement: PromiseSettledResult<void> = settlements[index]!;
+    if (settlement.status === "fulfilled") continue;
+    logger.error(
+      `AI chat ${labels[index]} rejected for chat ${chatId}:`,
+      settlement.reason
+    );
+    failures.push(settlement.reason);
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, `AI chat invalidation failed for chat ${chatId}.`);
+  }
 }
 
 registerChatTeardown("aiChat", async (chatId: number): Promise<void> => {

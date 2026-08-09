@@ -2,7 +2,6 @@ import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { invalidateAiChat } from "../aiChat";
 import { aiChatConfigReadiness } from "../config/readiness";
-import { hasAiChatCredentials } from "../aiChat/credentials";
 import { AI_CHAT_TOGGLE_TEXTS } from "../consts/commands";
 import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
@@ -15,9 +14,7 @@ import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle"
  * 缺省禁用）。仅持有 isCanControllAIPermission 的身份可用；
  * 超级管理员恒持有该权限（见 config/whitelist.ts），白名单身份可由 /permission 单独获权；其他身份只会被嘲讽。
  *
- * 开启前两道前提各判一次，且分开报（同 /ad_detect）：两把供应商凭据都缺与
- * config/{stickers,reactions,mood}.json 写坏是两种完全不同的运维动作，混成一句
- * 「没配好」只会让人去查错文件。任一不满足都拒绝——AI Worker 压根没启动，
+ * 开启前严格检查 agent（含每项 api_key）及其它部署输入。任一不满足都拒绝——AI Worker 压根没启动，
  * 开着也永远不会有回复，不留一个看着已生效、实际什么都不做的开关。关闭方向
  * 两道都不拦：前提被破坏之后仍要能把残留的开关和记忆清干净。
  */
@@ -31,14 +28,6 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   if (arg === "enable") {
-    if (!hasAiChatCredentials()) {
-      await sendCommandMessage({
-        chatId,
-        text: `本天才一把 AI 的 key 都没有，拿什么跟你们闲聊呀？去 .env 里补上 AI_CHAT_GEMINI_API_KEY 或 AI_CHAT_OPENAI_API_KEY 再重启，笨蛋♡`,
-        replyToMessageId: messageId,
-      });
-      return;
-    }
     const refused: boolean = await refuseIfConfigBroken({
       readiness: aiChatConfigReadiness(),
       chatId,

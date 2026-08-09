@@ -4,7 +4,7 @@
  * 观测发生在主线程（`my_chat_member` 更新与按需 `getChatMember` 现查都只到那边），
  * 执行发生在本线程（踢人、禁言、删消息都走 joinVerificationApi）。两边因此按
  * 变更镜像：主线程每次确证或作废都发一条 `botPermissionsChanged`，Worker 重建与
- * 进程启动时整表重放（见 packages/antiRaid/index.ts）。
+ * 进程启动时整表重放（见 packages/antiRaid/workerBridge.ts）。
  *
  * 读出来的是三态。**「没观测到」不是「观测到没有」**：主线程对撤管理员、离群、
  * `/init` 切换和现查失败发的都是同一条「权限未知」，而这四件事里只有前三件能

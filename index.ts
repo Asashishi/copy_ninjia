@@ -18,4 +18,4 @@ export function runApplication(): Promise<void> {
   return application.run();
 }
 
-if (import.meta.main) void runApplication();
+if (import.meta.main) await runApplication();

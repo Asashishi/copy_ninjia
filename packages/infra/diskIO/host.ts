@@ -10,7 +10,6 @@ import {
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../../consts/workerSupervisor";
 import type {
   DiskBusinessMessage,
-  DiskIOMessage,
   DiskIOReply,
   DiskIORecoveryTransport,
   EnsureLuckSecretRequest,
@@ -18,34 +17,28 @@ import type {
   LoadRequest,
   LoadedReply,
   ReadJoinLogRequest,
+  RecoveryReplayRequest,
 } from "../../types/diskIO";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
+import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
+import {
+  acceptDiskIODiagnosticBatch,
+  pauseDiskIODiagnosticChannel,
+  resumeDiskIODiagnosticChannel,
+  retryDiskIODiagnosticBatch,
+} from "./diagnosticChannel";
+import { safePostDiskIO } from "./transport";
 
 /**
  * Disk I/O Worker 的宿主内核（owner 是 packages/infra/diskIO.ts）：Worker 创建、
  * onmessage 回执路由、onerror 崩溃自愈与运行时恢复握手。主文件保留
  * init/post/flush/terminate 与启动握手这一层对外语义。
  *
- * 本文件的错误一律 console.error：它就是落盘终点，不能指望被自己转发的
- * 日志线程落盘自己的错误，否则是一场递归。这也是 Disk I/O 不复用
+ * 本文件的错误一律走 workers/diskIO/diagnosticSink.ts 的非递归出口，不能
+ * 指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是 Disk I/O 不复用
  * libs/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）的原因。
- * @see ../../../docs/04-invariants.md
+ * @see ../../../docs/cn/04-invariants.md
  */
-
-/**
- * Worker.postMessage 可能在本地 owner 仍判定 Worker 可写之后同步抛出；把这个
- * 竞态统一挡在这里，不让它扩散到每一个业务/日志/请求类调用方。
- * @returns 投递是否被 Worker 接受。
- */
-export function safePostDiskIO(worker: Worker, message: DiskIOMessage, context: string): boolean {
-  try {
-    worker.postMessage(message);
-    return true;
-  } catch (error: unknown) {
-    console.error(`[diskIO] persistence Worker rejected ${context}:`, error);
-    return false;
-  }
-}
 
 /** 清除运行时恢复握手的超时 timer；重复调用安全。 */
 export function clearRuntimeRecoveryTimer(): void {
@@ -60,7 +53,7 @@ function signalDiskIOFatal(error: Error): void {
   if (diskIORuntime.fatalHandler !== undefined) {
     diskIORuntime.fatalHandler(error);
   } else {
-    console.error("[diskIO] fatal persistence failure requires process restart:", error.message);
+    writeDiskIODiagnostic("[diskIO] fatal persistence failure requires process restart:", error.message);
   }
 }
 
@@ -167,12 +160,13 @@ export function requestJoinLogFromWorker({
 export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal: boolean): void {
   if (diskIORuntime.worker !== worker) return;
   clearRuntimeRecoveryTimer();
-  console.error(
+  writeDiskIODiagnostic(
     `[diskIO] persistence recovery failed; keeping storage unavailable and refusing writes: ${reason}`
   );
   diskIORuntime.worker = null;
   diskIORuntime.runtimeRecoveryWorker = null;
   diskIORuntime.writable = false;
+  pauseDiskIODiagnosticChannel();
   diskIORuntime.pendingBusinessMessages.clear();
   diskIOFlushBarrier.settleAll("failed");
   rejectPendingLuckSecrets(new Error(
@@ -183,10 +177,10 @@ export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal
   ));
   try {
     void Promise.resolve(worker.terminate()).catch((error: unknown): void => {
-      console.error("[diskIO] failed to terminate unusable persistence Worker:", error);
+      writeDiskIODiagnostic("[diskIO] failed to terminate unusable persistence Worker:", error);
     });
   } catch (error: unknown) {
-    console.error("[diskIO] failed to terminate unusable persistence Worker:", error);
+    writeDiskIODiagnostic("[diskIO] failed to terminate unusable persistence Worker:", error);
   }
   if (fatal) signalDiskIOFatal(new Error(`[diskIO] runtime persistence recovery failed: ${reason}`));
 }
@@ -259,6 +253,22 @@ function describeRecoveryError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * 开合重放区间标记。投递失败按 fatal 处理而不是降级继续：漏掉开标记会让区间内
+ * 的写失败退回被静默吞掉的旧行为，漏掉关标记则会把之后每一次在线写失败都误升级
+ * 成停机——两个方向都不能默默容忍。
+ */
+function postRecoveryReplayMark(worker: Worker, active: boolean): boolean {
+  const request: RecoveryReplayRequest = { type: "recoveryReplay", active };
+  if (safePostDiskIO(worker, request, `recovery replay mark (${active ? "open" : "close"})`)) return true;
+  stopWorkerAfterLoadFailure(
+    worker,
+    `Worker rejected the ${active ? "opening" : "closing"} recovery replay mark`,
+    true
+  );
+  return false;
+}
+
 async function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): Promise<void> {
   if (diskIORuntime.worker !== worker) return;
   if (replayMirrors) {
@@ -291,21 +301,29 @@ async function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): Pro
       }
     }
   }
-  while (diskIORuntime.pendingBusinessMessages.size > 0) {
-    if (replayMirrors && !isCurrentRecoveryWorker(worker)) return;
-    if (!replayMirrors && diskIORuntime.worker !== worker) return;
-    const message: DiskBusinessMessage = diskIORuntime.pendingBusinessMessages.peek()!;
-    if (!safePostDiskIO(worker, message, `replay ${message.type}`)) {
-      stopWorkerAfterLoadFailure(worker, `Worker rejected ${message.type} during recovery replay`, true);
-      return;
+  // 重放区间要圈起来告诉 Worker：区间内的写失败没有任何后续 flush 会去问，
+  // 只能按 fatal 停机处理（见 types/diskIO.ts 的 RecoveryReplayRequest）。整段
+  // 排空是同步的，中间不会插进在线消息，因此这对标记框住的恰好是重放的那一批。
+  if (diskIORuntime.pendingBusinessMessages.size > 0) {
+    if (!postRecoveryReplayMark(worker, true)) return;
+    while (diskIORuntime.pendingBusinessMessages.size > 0) {
+      if (replayMirrors && !isCurrentRecoveryWorker(worker)) return;
+      if (!replayMirrors && diskIORuntime.worker !== worker) return;
+      const message: DiskBusinessMessage = diskIORuntime.pendingBusinessMessages.peek()!;
+      if (!safePostDiskIO(worker, message, `replay ${message.type}`)) {
+        stopWorkerAfterLoadFailure(worker, `Worker rejected ${message.type} during recovery replay`, true);
+        return;
+      }
+      diskIORuntime.pendingBusinessMessages.shift();
     }
-    diskIORuntime.pendingBusinessMessages.shift();
+    if (!postRecoveryReplayMark(worker, false)) return;
   }
   if (replayMirrors && !isCurrentRecoveryWorker(worker)) return;
   if (!replayMirrors && diskIORuntime.worker !== worker) return;
   clearRuntimeRecoveryTimer();
   diskIORuntime.runtimeRecoveryWorker = null;
   diskIORuntime.writable = true;
+  resumeDiskIODiagnosticChannel(worker);
 }
 
 function beginRuntimeRecovery(worker: Worker): void {
@@ -332,6 +350,14 @@ export function createDiskIOWorker(): Worker {
   w.onmessage = (event: MessageEvent<DiskIOReply>): void => {
     if (diskIORuntime.worker !== w) return;
     const data: DiskIOReply = event.data;
+    if (data.type === "diagnosticBatchAccepted") {
+      acceptDiskIODiagnosticBatch(w, data.batchId);
+      return;
+    }
+    if (data.type === "diagnosticBatchRetry") {
+      retryDiskIODiagnosticBatch(w, data.batchId, data.retryAfterMs);
+      return;
+    }
     if (data.type === "verificationPersisted") {
       for (const listener of diskIORuntime.verificationPersistedListeners) listener(data);
       return;
@@ -344,20 +370,30 @@ export function createDiskIOWorker(): Worker {
       for (const listener of diskIORuntime.aiMemoryPersistedListeners) listener(data);
       return;
     }
+    if (data.type === "recoveryReplayFailed") {
+      // 这条事实对应的 update 已经被确认过了，继续跑就是静默丢数据；按
+      // infra/joinLog.ts 承诺的口径停机，让 Telegram 从上一个确认点整段重投。
+      stopWorkerAfterLoadFailure(
+        w,
+        `${data.domain} replay failed during recovery: ${data.error}`,
+        true
+      );
+      return;
+    }
     if (data.type === "luckAppendStalled") {
-      // 本文件自身的错误照旧只走 console；这一条是 Worker 报上来的**领域数据
+      // 本文件自身的错误照旧只走非递归诊断 sink；这一条是 Worker 报上来的**领域数据
       // 丢失**事实，转交运势 owner 记进统一 logs/，理由见 types/diskIO.ts 的
       // LuckAppendStalledReply。
       for (const listener of diskIORuntime.luckAppendStalledListeners) listener(data);
       return;
     }
     if (data.type === "flushed" || data.type === "flushFailed") {
-      // 失败领域名要落进控制台——Worker 侧的写盘错误按设计只有 console.error，
+      // 失败领域名要落进非递归诊断——Worker 侧的写盘错误按设计只有 console.error，
       // 不带领域名的话运维根本看不出是哪个文件坏了。按领域的**判定**只走下面
       // 那张按 flushId 记账的表：进程级的「最后一次回执」会让某次超时的 flush
       // 报出另一次 flush 的失败领域。
       if (data.type === "flushFailed") {
-        console.error(`[diskIO] flush failed for domain(s): ${data.failedDomains.join(", ")}.`);
+        writeDiskIODiagnostic(`[diskIO] flush failed for domain(s): ${data.failedDomains.join(", ")}.`);
       }
       const settled: boolean = diskIOFlushBarrier.settle(
         data.flushedId,
@@ -424,8 +460,9 @@ export function createDiskIOWorker(): Worker {
     // 自己给自己转发出一场递归。Bun 里 Worker 内部一旦抛出未捕获异常
     // （同步或 async 均如此，已实测验证）就会直接终止该 Worker 线程，这里
     // 不需要（实际上也没法）再手动 terminate，直接换一个新实例顶上即可。
-    console.error("[diskIO] persistence Worker errored:", event.message || event.error || event);
+    writeDiskIODiagnostic("[diskIO] persistence Worker errored:", event.message || event.error || event);
     diskIORuntime.writable = false;
+    pauseDiskIODiagnosticChannel();
     if (diskIORuntime.runtimeRecoveryWorker === w) {
       diskIORuntime.runtimeRecoveryWorker = null;
       clearRuntimeRecoveryTimer();
@@ -437,7 +474,7 @@ export function createDiskIOWorker(): Worker {
       // 回来——不能让 flushDiskIO 的调用方（进程退出前的最后一刷）误以为
       // 超时=已落盘。这里立即结算这些 flush（而不是干等 timeoutMs 到期），
       // 并把"这次 flush 实际落空"打进日志，与上面的崩溃日志对齐时间点。
-      console.error(
+      writeDiskIODiagnostic(
         `[diskIO] ${pendingFlushCount} pending flush(es) lost — persistence Worker crashed mid-flush, their buffered data was not written to disk.`
       );
       diskIOFlushBarrier.settleAll("failed");
@@ -449,13 +486,17 @@ export function createDiskIOWorker(): Worker {
       new Error("Persistence Worker crashed while reading join logs.")
     );
     if (diskIORestartThrottle.shouldGiveUp()) {
-      console.error(
+      writeDiskIODiagnostic(
         `[diskIO] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +
         `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing and forcing a supervised process restart ` +
         `before any more updates are accepted.`
       );
       diskIORuntime.worker = null;
       diskIORuntime.pendingBusinessMessages.clear();
+      // 放弃之后没有替补 Worker，onDiskIORespawn 不会再跑，任何还在等 durable
+      // 回执的 owner 都不会等到它——各自立刻按失败结算，而不是干等自己那份超时
+      // 到期（那段干等恰好和同一个 fatal 信号触发的停机抢排空预算）。
+      for (const listener of diskIORuntime.giveUpListeners) listener();
       signalDiskIOFatal(new Error("Persistence Worker exhausted its runtime restart budget."));
       return;
     }

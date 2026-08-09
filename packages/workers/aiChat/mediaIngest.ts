@@ -29,8 +29,9 @@ function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGeneration
 }
 
 /**
- * 记录一条图片/贴纸/GIF 消息：先以占位文本立即入缓存（保住它在对话时序里
- * 的位置），再异步下载/解析媒体，解析完直接改写同一个条目对象的 text
+ * 记录一条图片/贴纸/GIF/语音消息：先以占位文本立即入缓存（保住它在对话时序里
+ * 的位置），再异步下载/解析媒体（语音走转写，见 aiChat/ai/imageDescription.ts 的
+ * describeMedia），解析完直接改写同一个条目对象的 text
  * 字段回填描述。改写对象而不是回队列里找：条目引用一直攥在手里，即便这
  * 期间缓存滚动、该条目已被 compaction.ts 的 scheduleRotation 快照进镜像批次
  * （快照数组存的也是同一批对象引用），只要压缩调用还没把它序列化出去，
@@ -120,11 +121,13 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
   // describeMedia 内部兜住一切异常只返回 null，这条异步链不会 reject；
   // 同一份媒体按 file_unique_id 去重，不同媒体则经过全局有界执行器，避免
   // 洪峰同时启动无界的下载、转码和视觉请求。
-  const task: Promise<void> = describeMedia(
-    msg.kind,
-    msg.fileId,
-    msg.fileUniqueId
-  ).then((description: string | null): void => {
+  const task: Promise<void> = describeMedia({
+    kind: msg.kind,
+    fileId: msg.fileId,
+    fileUniqueId: msg.fileUniqueId,
+    voiceMime: msg.voiceMime,
+    voiceDurationSeconds: msg.voiceDurationSeconds,
+  }).then((description: string | null): void => {
     if (!isReplyGenerationCurrent(msg.chatId, generation)) return;
     entry.text = composeMediaText(description ? resolvedTagFor(msg.kind, description) : fallbackTextFor(msg.kind, msg), sanitizedCaption);
     // 条目内容变了，重新标 dirty 让下一轮快照把回填后的文本落盘。

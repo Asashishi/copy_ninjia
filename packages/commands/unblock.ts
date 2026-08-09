@@ -11,11 +11,27 @@ import {
 import { resolveBotAdminStatus } from "../infra/botAdmin";
 import {
   confirmBlocklistPersisted,
-  forgetUserConfirmedKicked,
   isUserConfiguredBlocked,
   unblockUser,
 } from "../infra/blocklist/membership";
 import { getAllChatStates } from "../infra/storage/stateStore";
+import { runBlocklistIdentityMutation } from "../infra/identityPolicy";
+
+interface UnblockExecutionOutcome extends UnbanOutcome {
+  removedFromList: boolean;
+  persisted: boolean;
+}
+
+/** 同一身份较早的自动封禁结算后，再以本命令的较晚结果覆盖名单与群级封禁。 */
+async function executeUnblock(targetUser: CachedUser, originChatId: number): Promise<UnblockExecutionOutcome> {
+  // 先删内存 Map、再投递重写——顺序不能反。反过来的话，两步之间到达的入群
+  // 更新会查到一个还没解除的名单，那个人白白被秒踢一次。
+  const removedFromList: boolean = unblockUser(targetUser.id);
+  // 名单里没有目标不代表各群没有封禁；默认完整解封仍要继续逐群执行。
+  const persisted: boolean = removedFromList ? await confirmBlocklistPersisted() : true;
+  const { unbannedCount, failedCount }: UnbanOutcome = await unbanEverywhereFor(targetUser, originChatId);
+  return { removedFromList, persisted, unbannedCount, failedCount };
+}
 
 /**
  * 处理 /unblock 指令：把目标从持久化黑名单里移除，与 /block 互为逆操作。
@@ -65,7 +81,7 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   });
   if (!targetUser) return;
 
-  // 与 /block 同一道闸（见 commands/block.ts 与 docs/04-invariants.md 的
+  // 与 /block 同一道闸（见 commands/block.ts 与 docs/cn/04-invariants.md 的
   // 「破坏性的成员操作必须拒绝把当前群 identity 当作用户目标」）：匿名管理员拿
   // 当前群当皮套时，resolveCommandTarget 按设计返回的是这个群自己的 identity。
   // 放它过去的话，unbanChatSenderChat(chatId, chatId) 自解封必然报错、落进
@@ -95,17 +111,17 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     });
     return;
   }
-  // 这份缓存只证明 `/block` 今天曾在某群确证踢出过，并不代表此刻仍被封。
-  // 默认会跨群解封；先失效，随后同日重新 /block 才会重新查成员并封禁。
-  forgetUserConfirmedKicked(targetUser.id);
-  // 先删内存 Map、再投递重写——顺序不能反。反过来的话，两步之间到达的入群
-  // 更新会查到一个还没解除的名单，那个人白白被秒踢一次。
-  const removedFromList: boolean = unblockUser(targetUser.id);
-  // 名单里没有目标不代表各群没有封禁；默认完整解封仍要继续逐群执行。
-
+  const {
+    removedFromList,
+    persisted,
+    unbannedCount,
+    failedCount,
+  }: UnblockExecutionOutcome = await runBlocklistIdentityMutation(
+    targetUser.id,
+    (): Promise<UnblockExecutionOutcome> => executeUnblock(targetUser, chatId)
+  );
   // 重写没落盘就不能说「划掉了」：文件里那条还在，重启后这个人会重新回到
   // 名单上，而管理员以为已经放过 TA 了。没动过名单就不必等这一次回执。
-  const persisted: boolean = removedFromList ? await confirmBlocklistPersisted() : true;
   const persistWarning: string = persisted
     ? ""
     : `（不过小本本没能写进硬盘，重启后 TA 还会回到名单上，杂鱼管理员快去查磁盘）`;
@@ -114,11 +130,6 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     ? `本天才勉为其难把 ${targetLabel} 从小本本上划掉啦${persistWarning}`
     : `${targetLabel} 本来就不在小本本上`;
 
-  const { unbannedCount, failedCount }: UnbanOutcome = await unbanEverywhereFor(targetUser, chatId);
-  // runner 只按 chat 串行：其它群里的 `/block` 可能在上面逐群 await 解封期间
-  // 回填新的“确证踢出”。解封结局在时序上更晚，完成边界必须再失效一次；
-  // 否则同日下一次 `/block` 会拿解封前的迟到结果跳过成员查询与重新封禁。
-  forgetUserConfirmedKicked(targetUser.id);
   if (unbannedCount === 0 && failedCount === 0) {
     await sendCommandMessage({
       chatId,

@@ -11,16 +11,16 @@ describe("sticker config", () => {
   });
 
   test("拒绝重复、非法 short name 和额外字段", () => {
-    expect(() => parseStickerConfig({ packs: ["same", "same"] })).toThrow("Duplicate");
-    expect(() => parseStickerConfig({ packs: ["https://t.me/addstickers/x"] })).toThrow("pack name");
-    expect(() => parseStickerConfig({ packs: [], extra: true })).toThrow("expected exactly");
+    expect(() => parseStickerConfig({ packs: ["same", "same"] })).toThrow("must be unique");
+    expect(() => parseStickerConfig({ packs: ["https://t.me/addstickers/x"] })).toThrow("a valid Telegram sticker pack short name");
+    expect(() => parseStickerConfig({ packs: [], extra: true })).toThrow("exactly");
   });
 
   test("最多允许五个贴纸包，第六个会让启动配置预检失败", () => {
     const maximum = Array.from({ length: MAX_CONFIGURED_STICKER_PACKS }, (_, index) => `pack_${index}`);
     expect(parseStickerConfig({ packs: maximum }).packs).toEqual(maximum);
     expect(() => parseStickerConfig({ packs: [...maximum, "pack_overflow"] })).toThrow(
-      `at most ${MAX_CONFIGURED_STICKER_PACKS} packs`
+      `at most ${MAX_CONFIGURED_STICKER_PACKS} entries`
     );
   });
 });

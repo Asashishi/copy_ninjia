@@ -4,7 +4,7 @@ import type { FlushResult } from "../types/lifecycle";
  * 停机 drain 的公共骨架：等待某个 owner 的在途与待执行工作归零，超出预算则
  * abort 并结算。头像与反应两个队列除 abort/空闲判定不同外完全同构，语义（尤
  * 其是「预算为 0 时立即 abort 并结算」）只在这里实现一次。
- * @see ../../docs/04-invariants.md
+ * @see ../../docs/cn/04-invariants.md
  */
 export interface DrainWaiterParams {
   /** owner 名，用于参数校验的错误文案（英文，见 AGENTS.md 日志约定）。 */

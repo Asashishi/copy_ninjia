@@ -4,7 +4,7 @@ export const ANTI_RAID_BARRIER_TIMEOUT_MS: number = 3_000;
 /**
  * 停机 drain 在「落盘镜像 → Worker 执行副作用 → 发布新镜像」之间最多对账轮数。
  * 状态机阶段有限，正常一至两轮收敛；上限防止异常状态永久阻塞停机。
- * 所属模块：antiRaid/index.ts。
+ * 所属模块：antiRaid/workerBridge.ts。
  */
 export const ANTI_RAID_DRAIN_MAX_ROUNDS: number = 5;
 
@@ -14,7 +14,7 @@ export const ANTI_RAID_DRAIN_MAX_ROUNDS: number = 5;
  * 正常情况下一轮就够：指纹只含 phase + intentId，重来意味着状态机真的推进了一个
  * 阶段，而那是事件驱动、次数有界的。这道闸是兜底——每一轮都是一次带 fsync 的
  * state.json + .bak 整文件重写，绝不能让主线程陷在里面出不来。用尽只是这个群的
- * 握手暂停并留下一行错误日志，下一条 lockdown 事件会重新进来。
- * 所属模块：antiRaid/index.ts。
+ * 当前任务暂停并留下一行错误日志；期间已到达的新事件会续跑一个新任务。
+ * 所属模块：antiRaid/workerBridge.ts。
  */
 export const LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS: number = 5;

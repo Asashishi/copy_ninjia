@@ -1,21 +1,25 @@
 /**
- * AI 闲聊的供应商中立契约。回复往返、纯文本生成、视觉描述与生图这四项能力
- * 由本文件定义形状，具体收发在 aiChat/<vendor>/ 实现包里落地。
+ * AI 闲聊的供应商中立契约。回复往返、纯文本生成、视觉描述与生图由本文件定义
+ * 实现形状，具体收发在 aiChat/<vendor>/ 实现包里落地。部署层只要求 text、summary、
+ * media；image/song 缺配置时不挂对应工具。语音转写是否可用由实现与首次请求探测。
  *
  * 领域侧（工具编排、记忆压缩、贴纸目录、生图工具）只认这里的类型，不再
  * import 任何供应商 SDK 的类型——换供应商时编译期就能确认哪些调用点没接上。
- * 跨模块约束见 docs/04-invariants.md。
+ * 跨模块约束见 docs/cn/04-invariants.md。
+ *
+ * **可选能力一律用「这个成员在不在」表达，不用供应商名字判断。** 领域侧写
+ * `provider.generateSong === undefined` 而不是 `provider.name !== "google"`：后者
+ * 会让每个调用点都记住一份「谁支持什么」的名单，再有第三家或某家补齐能力时，
+ * 漏改的那处只会在运行期表现成一个不该出现的工具。
  */
 
 import type { GeneratedChatImage, ImageGenerationAspectRatio } from "./imageGeneration";
-import type { VisionImage } from "../media";
+import type { GeneratedChatSong } from "./songGeneration";
+import type { VisionImage, VoiceClip } from "../media";
+import type { AgentProvider } from "../config";
 
-/**
- * 供应商标识。落进 `state.json` 的 `global.model`（生图与闲聊两项）与 AI Worker
- * 协议的口径一律用这两个名字；`/image_model gpt`、`/chat_model gpt` 里的 `gpt`
- * 只是面向用户的别名，在命令层就归一，不让两套词汇渗进状态与协议。
- */
-export type AiProviderName = "gemini" | "openai";
+/** AI 配额闸门的两档任务优先级。 */
+export type AiProviderTaskPriority = "interactive" | "background";
 
 /**
  * 一个自定义函数工具的中立声明。参数一律用 JSON Schema 表达：Gemini 的
@@ -45,12 +49,72 @@ export interface AiToolOutput {
 }
 
 /**
+ * 一次媒体请求失败对**整条模态**的归因。
+ *
+ * 只有能对「这个 media 端点还能不能处理这种输入」下结论的失败才带上它；单份
+ * 媒体自己的问题（下载不到、格式不合、正文被安全策略清空）一律不带，媒体探测
+ * 状态机据此把「这一份不行」与「这一类都不行」分开，见
+ * cache/workers/aiChat/mediaInputSupport.ts。
+ */
+export type MediaInputFailure =
+  /** 供应商明确说明这种输入模态不受支持；本 Worker 生命周期内不再尝试。 */
+  | "unsupported"
+  /** 模型不存在、端点路径错误等确定性配置问题；停止重复请求并记一次诊断。 */
+  | "misconfigured"
+  /** 超时、429、5xx 等瞬时故障；模态保持未知，按退避重新探测。 */
+  | "transient";
+
+/**
  * 单次文本生成的业务结果。供应商 SDK 已耗尽 HTTP 重试时 retryable=false，
  * 防止调用方再套一层完整请求重试；HTTP 成功但正文不可用时才允许业务层重采样。
  */
 export type AiTextResult =
-  | { ok: true; text: string }
-  | { ok: false; retryable: boolean };
+  | { readonly ok: true; readonly text: string }
+  | {
+    readonly ok: false;
+    readonly retryable: boolean;
+    /**
+     * 这次失败对整条媒体模态的结论；缺席表示「只是这一次/这一份不行」，不改变
+     * 模态状态。非媒体流水线（摘要、贴纸整包简介）恒为缺席。
+     */
+    readonly mediaFailure?: MediaInputFailure;
+  };
+
+/** media 模型两种独立探测的输入模态。 */
+export type MediaInputCapability = "vision" | "voice";
+
+/**
+ * 一种媒体输入在本 Worker 生命周期内的探测结论。
+ *
+ * `unsupported` 与 `misconfigured` 都是终局——都不再下载、不再请求——但必须分开
+ * 记：前者是「这个模型就没有这项能力」，后者是「模型名或 base_url 写错了」。
+ * 合并成一个值会让一次部署笔误在日志里长得和模型能力缺失一模一样。
+ */
+export type MediaInputSupport = "unknown" | "supported" | "unsupported" | "misconfigured";
+
+/**
+ * 一种模态的完整探测状态；字段在构造时一次写全，运行期只整体替换，不增删。
+ */
+export interface MediaInputModalityState {
+  readonly support: MediaInputSupport;
+  /**
+   * 连续瞬时失败次数，封顶 MEDIA_PROBE_MAX_TRANSIENT_FAILURES；成功或落定终局
+   * 结论时清零。只有 `transient` 计数——单份坏媒体不得把整条模态推进退避。
+   */
+  readonly transientFailures: number;
+  /**
+   * 下一次允许发起真实探测的绝对时刻（Date.now() 口径）；0 表示不在退避中。
+   * 墙钟回拨会让它落在过远的未来，读取侧按 MEDIA_PROBE_BACKOFF_MAX_MS 识别并
+   * 立即放行（同 auto/message/triggerPolicy.ts 的冷却口径）。
+   */
+  readonly nextProbeAt: number;
+}
+
+/** media 模型的模态支持表；两项固定初始化，避免运行期改变对象 shape。 */
+export interface MediaInputSupportState {
+  readonly vision: MediaInputModalityState;
+  readonly voice: MediaInputModalityState;
+}
 
 /** 一轮回复请求里随轮次变化的工具配置与采样语义。 */
 export interface AiReplyTurnRequest {
@@ -136,11 +200,34 @@ export interface AiVisionRequest {
   readonly normalize: (text: string) => string;
 }
 
+/**
+ * 语音转写请求（群里的 Telegram voice note）。模型与 token 上限同样由实现包自行
+ * 决定；调用方只给音频字节、指令与清洗方式，与 AiVisionRequest 同一口径。
+ */
+export interface AiVoiceRequest {
+  /** 转写指令，同时充当系统提示词。 */
+  readonly prompt: string;
+  readonly clip: VoiceClip;
+  readonly errorLabel: string;
+  readonly normalize: (text: string) => string;
+}
+
 /** 生图请求。 */
 export interface AiImageRequest {
   readonly prompt: string;
   readonly aspectRatio: ImageGenerationAspectRatio;
   readonly referenceImage?: VisionImage;
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * 生歌请求。
+ *
+ * 没有画幅/时长这类参数：Lyria 的曲长由 prompt 自己表达，实现包不再另外造一套
+ * 可调档位去猜（见 aiChat/gemini/song.ts）。
+ */
+export interface AiSongRequest {
+  readonly prompt: string;
   readonly signal?: AbortSignal;
 }
 
@@ -152,21 +239,75 @@ export interface AiReplySessionParams {
 }
 
 /**
- * 一家供应商对 AI 闲聊全部模型能力的实现。
+ * 五项能力各自的最小契约。
  *
- * 选取**按能力分成两路**，见 aiChat/provider.ts：生图走 imageAiProvider()、
- * 回复会话与纯文本/视觉走 chatAiProvider()，各自读各自的覆盖值
- * （`/image_model`、`/chat_model`）。都没设过时才落回 activeAiProvider() 的默认
- * 口径——默认 Gemini，缺 Gemini 凭据时降级到 OpenAI。
+ * 拆开的理由是**编译期边界**：config/agent.json 按能力独立选 provider，一次
+ * summary 路由拿到的实现只应该被用来生成摘要。若各处都拿着完整的
+ * AiChatProvider，「从 summary 那一家去读图」或「拿 media 那一家开回复会话」在
+ * 类型上完全合法，只有运行期才会表现成用错了模型和端点——而那正是本项目刻意
+ * 拒绝的静默漂移（见 aiChat/provider.ts 模块头注）。
  *
- * 因此「当前用哪家」不是一个单值：两路可以分属两家，两家的客户端也会在同一条
- * Worker 线程上同时存在（见 cache/workers/aiChat/{gemini,openai}.ts）。
+ * `name` 每项都有：日志诊断要能说清是哪一家，与能力无关。
  */
-export interface AiChatProvider {
-  /** 供应商标识；用于日志诊断，也是生图覆盖值与实现包的对照键。 */
-  readonly name: AiProviderName;
+
+/** 带工具往返的群聊正文能力。 */
+export interface AiTextProvider {
+  /** 供应商协议标识，用于配置路由与日志诊断。 */
+  readonly name: AgentProvider;
   createReplySession(params: AiReplySessionParams): AiReplySession;
+}
+
+/** 记忆压缩与贴纸整包简介共用的无状态摘要能力。 */
+export interface AiSummaryProvider {
+  readonly name: AgentProvider;
   generateText(request: AiTextRequest): Promise<AiTextResult>;
+}
+
+/** 视觉描述与语音转写能力。 */
+export interface AiMediaProvider {
+  readonly name: AgentProvider;
   describeVision(request: AiVisionRequest): Promise<AiTextResult>;
+  /**
+   * 语音转写。缺席表示这一家没有这项能力，调用方按「这条语音解析不出来」降级
+   * （转录里留兜底占位，见 workers/aiChat/mediaText.ts 的 fallbackTextFor），
+   * **不得为此临时换一家**——那正是 aiChat/provider.ts 模块头注拒绝的静默漂移。
+   *
+   * 显式声明 `this: void`：可选成员必须先取出来判空再调用，而带隐式 this 的方法
+   * 签名一旦被取成变量就丢了接收者。实现包给的本来就是自由函数，这里把这件事
+   * 写进类型，顺带让「取出来再调」成为合法写法（generateSong 同理）。
+   */
+  transcribeVoice?(this: void, request: AiVoiceRequest): Promise<AiTextResult>;
+}
+
+/** 生图能力；能力缺配置时由路由返回 null，不挂 generate_image。 */
+export interface AiImageProvider {
+  readonly name: AgentProvider;
   generateImage(request: AiImageRequest): Promise<GeneratedChatImage | null>;
 }
+
+/** 生歌能力。 */
+export interface AiSongProvider {
+  readonly name: AgentProvider;
+  /**
+   * 生歌。缺席表示这一家没有这项能力，回复工具集直接不挂 generate_song
+   * （见 aiChat/ai/tools/replyToolset/orchestrator.ts）——模型看不到的工具不会
+   * 被调用，因此这里不需要再有一条运行期的「不支持」错误路径。
+   */
+  generateSong?(this: void, request: AiSongRequest): Promise<GeneratedChatSong | null>;
+}
+
+/**
+ * 一家供应商对 AI 闲聊全部模型能力的实现；实现包导出的就是这一个对象。
+ *
+ * 选取按 text、summary、media、image、song 五项能力拆分，见 aiChat/provider.ts：
+ * 路由持有完整实现，交给调用方的却只有上面对应的那一份最小契约。每项只读取
+ * config/agent.json 中自己的 provider；不存在凭据回退或运行时覆盖。因此两家
+ * 客户端可以在同一条 Worker 线程上同时存在，并按能力持有各自实例
+ * （见 cache/workers/aiChat/{gemini,openai}.ts）。
+ */
+export interface AiChatProvider extends
+  AiTextProvider,
+  AiSummaryProvider,
+  AiMediaProvider,
+  AiImageProvider,
+  AiSongProvider {}

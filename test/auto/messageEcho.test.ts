@@ -73,6 +73,49 @@ describe("复读的命令守卫", () => {
     expect(copyMessage).toHaveBeenCalledWith(CHAT_ID, CHAT_ID, 5);
   });
 
+  test("命令不在行首的 caption 同样不复读", async () => {
+    // 这道闸曾经只判 startsWith("/")：命令挪到中段就整条绕过去，而带
+    // bot_command 实体的消息拿不到 plainText，会直接落到 copyMessage 被原样
+    // 重发——变换后那道守卫根本轮不到，等于两条兄弟分支各判各的。
+    const echoed: string | undefined = await echoMessage({
+      chatId: CHAT_ID,
+      message: mediaMessage("看这个 /batch_kick 1d"),
+      mode: undefined,
+    });
+
+    expect(echoed).toBeUndefined();
+    expect(copyMessage).not.toHaveBeenCalled();
+  });
+
+  test("命令不在行首的带 entity 文本同样不复读", async () => {
+    const echoed: string | undefined = await echoMessage({
+      chatId: CHAT_ID,
+      message: {
+        message_id: 7,
+        date: 1,
+        chat: { id: CHAT_ID, type: "supergroup", title: "Test Group" },
+        text: "喵 /batch_kick 1d",
+        entities: [{ type: "bot_command", offset: 2, length: 11 }],
+      } as unknown as Message,
+      mode: undefined,
+    });
+
+    expect(echoed).toBeUndefined();
+    expect(copyMessage).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("正文里的斜杠不构成命令时照常复读", async () => {
+    // 守卫收紧后不能把 `and/or`、`http://x` 这类日常正文一起误伤。
+    await echoMessage({
+      chatId: CHAT_ID,
+      message: mediaMessage("要么 a/b 要么 c"),
+      mode: undefined,
+    });
+
+    expect(copyMessage).toHaveBeenCalledWith(CHAT_ID, CHAT_ID, 5);
+  });
+
   test("纯文本命令仍然不复读", async () => {
     const echoed: string | undefined = await echoMessage({
       chatId: CHAT_ID,

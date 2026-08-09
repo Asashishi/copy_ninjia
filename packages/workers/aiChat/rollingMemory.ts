@@ -146,11 +146,15 @@ export function buildMemorySnapshot(chatId: number): string {
  */
 export function flushMemorySnapshot(chatId: number, persistImmediately: boolean = false): void {
   if (!dirtyMemoryChats.has(chatId)) return;
+  // 字段一律发出，不用条件展开：flushDirtyMemories 每个维护 tick 都会对所有
+  // dirty 群走这里，两种形状轮着产生会让主线程 aiChat/workerBridge.ts 的
+  // onEvent 多态读 `event.persistImmediately`（AGENTS.md：不得事后增删字段）。
+  // 语义不变——接收侧判的是 `=== true`。
   self.postMessage({
     type: "memory",
     chatId,
     snapshot: buildMemorySnapshot(chatId),
-    ...(persistImmediately ? { persistImmediately: true } : {}),
+    persistImmediately,
   } satisfies AiMemoryEvent);
   dirtyMemoryChats.delete(chatId);
 }
@@ -217,9 +221,13 @@ export function hydrateMemories(memories: Map<number, string>): void {
 
   parsedMemories.sort((left: ParsedChatMemory, right: ParsedChatMemory): number => right.snapshot.savedAt - left.snapshot.savedAt);
   let skippedOverCapacity: number = 0;
+  // 容量判定改成随准入递增的计数，不在循环里反复重建 Set：chatMemoryIds() 每次
+  // 都要新建一个 Set 并完整遍历 chatBuffers / chatSummaries / pendingSummaries，
+  // 逐群调用就把启动恢复变成 O(n²)（同 ensureMemoryCapacity 已经写下的取舍）。
+  let memoryChatCount: number = chatMemoryIds().size;
   for (const { chatId, snapshot } of parsedMemories) {
     if (hasChatMemory(chatId)) continue;
-    if (chatMemoryIds().size >= AI_MEMORY_MAX_CHATS) {
+    if (memoryChatCount >= AI_MEMORY_MAX_CHATS) {
       // 超出容量只是「这一轮装不下」，不是「这份记忆该没了」。这里发
       // memoryDeleted 会被主线程路由到 requestAiMemoryDelete，最终 unlink 掉
       // memory/ai/<chatId>.json：105 个群开着 AI 闲聊时，一次 systemctl restart
@@ -255,6 +263,8 @@ export function hydrateMemories(memories: Map<number, string>): void {
       pendingSummaries.set(chatId, snapshot.pendingSummary);
     }
     if (hasChatMemory(chatId)) {
+      // 只有真正留下了内容才算占一个名额——下面那条分支什么都没装进来。
+      memoryChatCount++;
       chatLastActivityTimes.set(chatId, snapshot.savedAt);
     } else {
       // 与上面的超容量分支不同：这份快照解析、校验都过了，装进来却什么都没

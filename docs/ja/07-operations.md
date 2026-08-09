@@ -1,11 +1,11 @@
 # 07 運用とトラブルシューティング
 
 <p align="center">
-  <a href="../07-operations.md">简体中文</a> · <a href="../en/07-operations.md">English</a> · <b>日本語</b>
+  <a href="../cn/07-operations.md">简体中文</a> · <a href="../en/07-operations.md">English</a> · <b>日本語</b>
 </p>
 
 <p align="center">
-  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="06-modification-guide.md">← 前のページ：06 変更レシピ</a> · <b>次のページ：なし →</b>
+  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <a href="06-modification-guide.md">← 前のページ：06 変更レシピ</a> · <b>次のページ：なし →</b>
 </p>
 
 ---
@@ -49,8 +49,23 @@ WantedBy=multi-user.target
 `COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。空の場合はプロジェクトルートです。
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：グループスイッチ、copy、ロックダウンミラーなどの正式な状態。
+  - **内容**：グループスイッチ（参加認証と対レイド private mode をまとめて制御する
+    `isAntiRaidEnabled` を含む。既定で無効）、copy、ロックダウンミラーなどの正式な状態に
+    加え、`global.assets` の素材直リンク 3 本（運勢サムネイル 2 枚と Bot 既定
+    アバター）。model 選択は runtime state ではなくなりました。
   - **バックアップ**：主・副を同時にバックアップ。
+  - **素材直リンクの変更は停止中のみ**：プロセスは正式な状態をメモリに保持しファイル全体を
+    上書きするため、稼働中の編集は次回の保存で消えます。サービス停止 → `global.assets` を編集
+    → 起動の順です。未設定項目は起動が完全に成功した後に現在有効な値で補完され、壊れた値
+    （scheme 欠落や不一致）は decode 時にファイル全体を拒否してフィールドパスを示します。
+    画像バイトを直接返せば画像ホストは問いませんが、サムネイル 2 枚は `https` 必須で、
+    明文 `http` を許すのは `botDefaultAvatarUrl` だけです。またその取得は
+    **リダイレクトを追います**——直リンクがまず実ストレージのドメインへ 302 する形
+    （内蔵既定の Drive リンクもこれです）はそのまま使え、最終ホップを自分で解決する
+    必要はありません。
+  - **アップグレード前にこの 3 項目を確認**：サムネイル 2 枚は現在 `https` のみを受け付ける
+    ため、古いバージョンで `http://` のままの項目があると decode 時に起動を拒否し、
+    フィールドパスを示します。
 - **`memory/ai/<chatId>.json`**
   - **内容**：チャットごとの version=1 AI メモリ原子 snapshot。直近の逐語メッセージ、
     過去の要約、要約待ち内容、保存時刻を保持。
@@ -71,7 +86,9 @@ WantedBy=multi-user.target
   - **バックアップ**：既存結果と別に削除・再生成・復元してはいけない。
 - **`memory/anti-raid/<YYYY-MM-DD>.json`**
   - **内容**：Challenge 認証待ち状態の当日追記ログ。active snapshot、
-    同一 key の revision、終端 tombstone を含む。
+    同一 key の revision、終端 tombstone に加え、write-ahead 済みで kick 完了を
+    未確認の `kickPending` を含みます。再起動後は membership probe と kick を再開し、
+    別の kick 永続化ファイルは作りません。
   - **バックアップ**：日付をまたぐ起動では最新旧日と当日を merge
     （当日の active/tombstone が優先）し、原子的な公開成功後だけ旧日を削除。
     定常時は当日だけ保持し、履歴 10,000 件または 4 MiB で compact。
@@ -118,7 +135,7 @@ WantedBy=multi-user.target
 
 - 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。`ai/`、`stickers/`、`luck/` は起動時に `*.tmp` を清掃します。`blocklist/` の 2 owner は自分の `.blocklist.json.*.tmp` / `.removals.json.*.tmp` prefix だけを清掃し、`ad-detected/` は最初の書き込み前に `.sample.json.*.tmp`、`joinlog/` は当日の directory を最初に接管するとき `*.tmp` を清掃します。現在の `anti-raid/` 復元はこの種のファイルを無視しますが、自動削除はしません。復元には使われないため、Bot を停止し、名前が原子書き込み形式へ厳密に一致すると確認した後だけ孤児として削除できます。
 - `memory/ai/<chatId>.json.<timestamp>.<uuid>.corrupt` と `memory/stickers/<pack>.json.<timestamp>.<uuid>.corrupt` は JSON を parse できず一意名で隔離されたファイルです。通常復元の対象外で、自動削除もしません。同じ元 path が再び壊れた場合は旧証拠を上書きせず新しい隔離件を残します。parse はできても現行 version=1 schema に合わないファイルは隔離せず起動を拒否し、[06](06-modification-guide.md#永続化-schema-の変更) に従う手動 migration が必要です。
-- `/block` の `confirmedKickedUserIdsByChat`、Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。特に東京日付単位の確認済み kick cache は日付変更またはプロセス再起動で空になり、`blocklist.json` や `removals.json` から推測して復元しません。
+- Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。
 
 Bot 停止中または storage snapshot の整合境界で、データルート全体をバックアップします。`memory/` は機密データとして扱ってください。単一 tenant デプロイ基準では file mode が緩い `0644` です。詳細は [04](04-invariants.md#永続化) を参照し、アクセス制御はデータルートの owner・permission と host account の隔離で行います。
 
@@ -181,7 +198,7 @@ jq -e '
 - **`bot.lock` が起動を拒否**
   - **原因と対応**：次の section を参照。
 - **config schema 検証失敗**
-  - **原因**：`config/*.json` または `.env` が不正。
+  - **原因**：`config/*.json` が不正。
   - **対応**：指摘された field を修正。mood の重みは合計 100、天気・時間帯の倍率は
     100 以下、スタンプパックは最大 5 個。
 - **state の 2 コピーが両方無効**
@@ -198,8 +215,11 @@ jq -e '
   - **原因**：state copy 1 件が壊れて隔離されたか、parse 不能な AI/スタンプ JSON
     が復元集合から外された。
   - **対応**：元のファイル名から owner を特定し、先に破損原因を調査。
-    state は別 copy が有効なら自己復旧できますが、AI/スタンプの隔離ファイルは
-    自動復元も自動削除もしません。
+    state が自己復旧するのは壊れたのが**バックアップ側**のときだけです（壊れた
+    バックアップを隔離し主ファイルから再構築し、ログを 1 行残します）。**主ファイル**が
+    decode できない場合は常に起動を拒否し、両ファイルをそのまま保全します——エラーが
+    示すフィールドを直してから起動してください。AI/スタンプの隔離ファイルは自動復元も
+    自動削除もしません。
 
 ### `bot.lock` が起動を拒否する場合
 
@@ -246,6 +266,6 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 
 <div align="center">
 
-[← 前のページ：06 変更レシピ](06-modification-guide.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#07-運用とトラブルシューティング) · **次のページ：なし →**
+[← 前のページ：06 変更レシピ](06-modification-guide.md) · [📚 開発者ドキュメント TOP](conntent-table.md) · [⬆️ トップへ戻る](#07-運用とトラブルシューティング) · **次のページ：なし →**
 
 </div>

@@ -1,5 +1,5 @@
 import type { Message } from "@grammyjs/types";
-import { SUPER_ADMIN_USER_ID } from "../../infra/config";
+import { SUPER_ADMIN_USER_ID } from "../../config/telegram";
 import {
   clearChatStateField,
   getActiveProxySendTarget,

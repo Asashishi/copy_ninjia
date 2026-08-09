@@ -1,5 +1,4 @@
 import type {
-  ApplicationLifecycleDependencies,
   FlushResult,
   FlushTimeouts,
   OwnerInitFlags,
@@ -8,6 +7,7 @@ import type {
   ShutdownOutcome,
   ShutdownResults,
 } from "../../types/lifecycle";
+import type { ApplicationLifecycleDependencies } from "../lifecycleDependencies";
 
 /**
  * 停机时各持久化/后台 owner 的排空顺序与失败隔离（owner 是 packages/app/lifecycle.ts）。
@@ -16,7 +16,7 @@ import type {
  *
  * 失败隔离是本模块存在的理由：异常退出路径上 dispose() 是最后一次落盘机会，
  * 任何单个 owner 抛错都不允许跳过其后的 owner 与 flushStateToDisk。
- * @see ../../../docs/04-invariants.md
+ * @see ../../../docs/cn/04-invariants.md
  */
 
 /** 绑定一份 logger，生成本次停机使用的失败隔离器。 */
@@ -39,6 +39,237 @@ export function createOwnerSettler(logger: ApplicationLifecycleDependencies["log
   };
 }
 
+/**
+ * 排空阶段的结果字段；`terminate` 与 `state` 不在其中，它们由调用方按各自语义
+ * 单独收束（终止只在 dispose() 发生，state flush 的持锁前提也只有 dispose() 有）。
+ */
+type OwnerDrainResults = Omit<OwnerShutdownResults, "terminate" | "state">;
+
+/** 仅 dispose() 执行的、紧跟在某个 owner 排空之后的收尾步骤。 */
+type ShutdownOwnerClose =
+  | {
+    /** 结果并进该 owner 自己的字段（排空成功但关闭失败，这个 owner 就不算干净）。 */
+    readonly kind: "flush";
+    readonly label: string;
+    readonly run: (
+      dependencies: ApplicationLifecycleDependencies,
+      timeoutMs: number
+    ) => Promise<FlushResult>;
+  }
+  | {
+    /** 结果并进 terminate 汇总（失败不影响已落盘的数据，但要反映在退出码上）。 */
+    readonly kind: "terminate";
+    readonly label: string;
+    readonly run: (dependencies: ApplicationLifecycleDependencies) => Promise<void>;
+  };
+
+/** 一个按固定顺序排空的停机 owner。 */
+interface ShutdownDrainOwner {
+  /** 写进哪个结果字段；延迟删除不参与共享数据落盘闸门，为 null。 */
+  readonly result: keyof OwnerDrainResults | null;
+  /** 失败隔离与诊断日志里的 owner 名。 */
+  readonly label: string;
+  /** 取哪一档时间预算。 */
+  readonly timeout: keyof FlushTimeouts;
+  /** 未初始化就整步跳过（记为 flushed）；终止后由 close 把它置回 false。 */
+  readonly initFlag: keyof OwnerInitFlags | null;
+  readonly drain: (
+    dependencies: ApplicationLifecycleDependencies,
+    timeoutMs: number,
+    /** 本次是不是进程真正要退出的那一遍（dispose()）。 */
+    terminal: boolean
+  ) => Promise<FlushResult>;
+  readonly close?: ShutdownOwnerClose;
+}
+
+/**
+ * 停机 owner 的**唯一**有序表：确认最终 offset 之前的落盘（flushAllToDisk）与
+ * 进程退出前的收尾（runShutdownOwners）共用它。
+ *
+ * 两个入口以前各手写一遍同样的九步顺序，加第十个 owner 要同时改两处；漏掉
+ * 前者那一处的后果是**在该 owner 还没刷盘时就确认了最终 Telegram offset**，
+ * update 被 ack 而数据在重启后丢失。顺序、门禁与结果聚合因此只能有一份。
+ *
+ * 顺序本身是约束，不能随手调整（见 docs/cn/04-invariants.md）：
+ * - gag 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发 Telegram
+ *   请求，闸门一关就再也发不出去。
+ * - 延迟删除排在 anti-raid 之后：广告处置会在 anti-raid 排空期间补发 30 秒公告，
+ *   排在后面才能把最后一条也提前兑现。
+ * - AI memory 必须先回传到 diskIOWorker，再 flush 那个 Worker。
+ */
+const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
+  {
+    result: "avatar",
+    label: "avatar drain",
+    timeout: "maintenanceMs",
+    initFlag: null,
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainAvatarUpdates(timeoutMs),
+  },
+  {
+    result: "reaction",
+    label: "reaction drain",
+    timeout: "maintenanceMs",
+    initFlag: null,
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainReactionQueue(timeoutMs),
+  },
+  {
+    result: "translate",
+    label: "translate drain",
+    timeout: "maintenanceMs",
+    initFlag: "translateInitialized",
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainTranslate(timeoutMs),
+    close: {
+      kind: "flush",
+      label: "translate close",
+      run: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+        dependencies.closeTranslate(timeoutMs),
+    },
+  },
+  {
+    result: "antiRaid",
+    label: "anti-raid drain",
+    timeout: "maintenanceMs",
+    initFlag: "antiRaidInitialized",
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainAntiRaid(timeoutMs),
+  },
+  {
+    // gag 开始提示是带按钮的功能状态，必须在 Telegram 总闸关闭前由自己的状态机
+    // 删除；失败不能伪装成总闸已经排空。
+    result: "gag",
+    label: "gag drain",
+    timeout: "maintenanceMs",
+    initFlag: null,
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainGagRuntime(timeoutMs),
+  },
+  {
+    // 删除失败/超时有自己的统一日志，但不属于共享数据落盘闸门。
+    result: null,
+    label: "Telegram delayed deletion drain",
+    timeout: "maintenanceMs",
+    initFlag: null,
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainPendingMessageDeletions(timeoutMs),
+  },
+  {
+    result: "ai",
+    label: "AI memory flush",
+    timeout: "aiMemoryMs",
+    initFlag: "aiChatInitialized",
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.flushAiMemory(timeoutMs),
+    close: {
+      kind: "terminate",
+      label: "AI chat termination",
+      run: (dependencies: ApplicationLifecycleDependencies): Promise<void> => dependencies.terminateAiChat(),
+    },
+  },
+  {
+    result: "telegram",
+    label: "Telegram outbound drain",
+    timeout: "maintenanceMs",
+    initFlag: null,
+    // 关闸只在终局那一遍：offset 确认前那次若把闸门关掉，dispose() 里 gag、延迟
+    // 删除与 anti-raid 的重试就只剩 AbortError（见 outboundGate 的 quiesce 说明）。
+    drain: (
+      dependencies: ApplicationLifecycleDependencies,
+      timeoutMs: number,
+      terminal: boolean
+    ): Promise<FlushResult> => dependencies.drainTelegramOutbound(timeoutMs, { quiesce: terminal }),
+  },
+  {
+    result: "disk",
+    label: "disk I/O flush",
+    timeout: "diskIOMs",
+    initFlag: "diskIOInitialized",
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.flushDiskIO(timeoutMs),
+  },
+];
+
+/** 排空全部结束后才执行的终止型 owner，顺序同样固定；只有 dispose() 走。 */
+const SHUTDOWN_TERMINATION_OWNERS: readonly Readonly<{
+  readonly label: string;
+  readonly initFlag: keyof OwnerInitFlags;
+  readonly run: (dependencies: ApplicationLifecycleDependencies) => Promise<void>;
+}>[] = [
+  {
+    label: "anti-raid termination",
+    initFlag: "antiRaidInitialized",
+    run: (dependencies: ApplicationLifecycleDependencies): Promise<void> => dependencies.terminateAntiRaid(),
+  },
+  {
+    label: "disk I/O termination",
+    initFlag: "diskIOInitialized",
+    run: (dependencies: ApplicationLifecycleDependencies): Promise<void> => dependencies.terminateDiskIO(),
+  },
+];
+
+interface DrainOwnersParams {
+  dependencies: ApplicationLifecycleDependencies;
+  flags: OwnerInitFlags;
+  settler: OwnerSettler;
+  timeouts: FlushTimeouts;
+  /** true 表示进程要退出的那一遍：执行 close 步骤、关闭 Telegram 闸门、重置 flag。 */
+  terminal: boolean;
+}
+
+/** 一次走完 SHUTDOWN_DRAIN_OWNERS，返回各 owner 结果与终止型步骤的汇总。 */
+async function drainOwners({
+  dependencies,
+  flags,
+  settler,
+  timeouts,
+  terminal,
+}: DrainOwnersParams): Promise<{ results: OwnerDrainResults; terminate: FlushResult }> {
+  const results: OwnerDrainResults = {
+    avatar: "flushed",
+    reaction: "flushed",
+    translate: "flushed",
+    gag: "flushed",
+    antiRaid: "flushed",
+    ai: "flushed",
+    telegram: "flushed",
+    disk: "flushed",
+  };
+  let terminate: FlushResult = "flushed";
+
+  for (const owner of SHUTDOWN_DRAIN_OWNERS) {
+    if (owner.initFlag !== null && !flags[owner.initFlag]) continue;
+    const timeoutMs: number = timeouts[owner.timeout];
+    let result: FlushResult = await settler.flush(
+      owner.label,
+      (): Promise<FlushResult> => owner.drain(dependencies, timeoutMs, terminal)
+    );
+    // close 是终局专属：offset 确认前那一遍不关闭任何 owner，后面还要用它们。
+    if (terminal && owner.close !== undefined) {
+      if (owner.close.kind === "flush") {
+        const closeStep: Extract<ShutdownOwnerClose, { kind: "flush" }> = owner.close;
+        const closed: FlushResult = await settler.flush(
+          closeStep.label,
+          (): Promise<FlushResult> => closeStep.run(dependencies, timeoutMs)
+        );
+        if (result === "flushed" && closed !== "flushed") result = closed;
+      } else {
+        const closeStep: Extract<ShutdownOwnerClose, { kind: "terminate" }> = owner.close;
+        const closed: FlushResult = await settler.terminate(
+          closeStep.label,
+          (): Promise<void> => closeStep.run(dependencies)
+        );
+        if (closed !== "flushed") terminate = closed;
+      }
+      if (owner.initFlag !== null) flags[owner.initFlag] = false;
+    }
+    if (owner.result !== null) results[owner.result] = result;
+  }
+
+  return { results, terminate };
+}
+
 export interface RunShutdownOwnersParams {
   dependencies: ApplicationLifecycleDependencies;
   /** 就地更新：终止过的 owner 会被置回 false，防止重复终止。 */
@@ -50,8 +281,9 @@ export interface RunShutdownOwnersParams {
 }
 
 /**
- * 按「排空后台 owner → flush AI → 终止 AI → flush Disk I/O → 终止
- * Anti-Raid/Disk I/O → flush StateStore」的固定顺序收尾。
+ * 按 SHUTDOWN_DRAIN_OWNERS 的固定顺序收尾，再终止 Anti-Raid / Disk I/O，最后
+ * flush StateStore。与 flushAllToDisk 的差别只有三处：执行 close 步骤、关闭
+ * Telegram 出站闸门、写 state 前要求持锁。
  * @returns 每个 owner 的结算结果；不抛错，异常一律折算进结果。
  */
 export async function runShutdownOwners({
@@ -61,62 +293,29 @@ export async function runShutdownOwners({
   timeouts,
   lockAcquired,
 }: RunShutdownOwnersParams): Promise<OwnerShutdownResults> {
-  const avatar: FlushResult = await settler.flush(
-    "avatar drain",
-    (): Promise<FlushResult> => dependencies.drainAvatarUpdates(timeouts.maintenanceMs)
-  );
-  const reaction: FlushResult = await settler.flush(
-    "reaction drain",
-    (): Promise<FlushResult> => dependencies.drainReactionQueue(timeouts.maintenanceMs)
-  );
-
-  let translate: FlushResult = "flushed";
-  if (flags.translateInitialized) {
-    translate = await settler.flush("translate drain", (): Promise<FlushResult> => dependencies.drainTranslate(timeouts.maintenanceMs));
-    const closed: FlushResult = await settler.flush(
-      "translate close",
-      (): Promise<FlushResult> => dependencies.closeTranslate(timeouts.maintenanceMs)
-    );
-    if (translate === "flushed" && closed !== "flushed") translate = closed;
-    flags.translateInitialized = false;
-  }
-
-  const antiRaid: FlushResult = flags.antiRaidInitialized
-    ? await settler.flush("anti-raid drain", (): Promise<FlushResult> => dependencies.drainAntiRaid(timeouts.maintenanceMs))
-    : "flushed";
+  const { results, terminate: closeTerminate }: {
+    results: OwnerDrainResults;
+    terminate: FlushResult;
+  } = await drainOwners({ dependencies, flags, settler, timeouts, terminal: true });
 
   // 终止型 owner 的失败单独汇总：它们排在各自 flush 之后，失败不影响已经
   // 落盘的数据，但仍要如实反映在退出码与实例锁处置上。
-  let terminate: FlushResult = "flushed";
-  const recordTermination = (result: FlushResult): void => {
+  let terminate: FlushResult = closeTerminate;
+  for (const owner of SHUTDOWN_TERMINATION_OWNERS) {
+    if (!flags[owner.initFlag]) continue;
+    const result: FlushResult = await settler.terminate(
+      owner.label,
+      (): Promise<void> => owner.run(dependencies)
+    );
     if (result !== "flushed") terminate = result;
-  };
-
-  let ai: FlushResult = "flushed";
-  if (flags.aiChatInitialized) {
-    ai = await settler.flush("AI memory flush", (): Promise<FlushResult> => dependencies.flushAiMemory(timeouts.aiMemoryMs));
-    recordTermination(await settler.terminate("AI chat termination", (): Promise<void> => dependencies.terminateAiChat()));
-    flags.aiChatInitialized = false;
-  }
-
-  const disk: FlushResult = flags.diskIOInitialized
-    ? await settler.flush("disk I/O flush", (): Promise<FlushResult> => dependencies.flushDiskIO(timeouts.diskIOMs))
-    : "flushed";
-
-  if (flags.antiRaidInitialized) {
-    recordTermination(await settler.terminate("anti-raid termination", (): Promise<void> => dependencies.terminateAntiRaid()));
-    flags.antiRaidInitialized = false;
-  }
-  if (flags.diskIOInitialized) {
-    recordTermination(await settler.terminate("disk I/O termination", (): Promise<void> => dependencies.terminateDiskIO()));
-    flags.diskIOInitialized = false;
+    flags[owner.initFlag] = false;
   }
 
   const state: FlushResult = lockAcquired
     ? await settler.flush("state flush", (): Promise<FlushResult> => dependencies.flushStateToDisk(timeouts.stateMs, true))
     : "flushed";
 
-  return { avatar, reaction, translate, antiRaid, ai, disk, terminate, state };
+  return { ...results, terminate, state };
 }
 
 /**
@@ -132,8 +331,10 @@ function allOwnersSettled(results: ShutdownResults): boolean {
     results.avatar === "flushed" &&
     results.reaction === "flushed" &&
     results.translate === "flushed" &&
+    results.gag === "flushed" &&
     results.antiRaid === "flushed" &&
     results.ai === "flushed" &&
+    results.telegram === "flushed" &&
     results.disk === "flushed" &&
     results.terminate === "flushed" &&
     results.state === "flushed";
@@ -158,8 +359,8 @@ export function classifyShutdown(results: ShutdownResults): ShutdownOutcome {
 export function formatShutdownResults(results: ShutdownResults): string {
   return `runner=${results.runnerDrained}, maintenance=${results.maintenanceSettled}, ` +
     `offset=${results.offsetConfirmed}, ` +
-    `avatar=${results.avatar}, reaction=${results.reaction}, translate=${results.translate}, ` +
-    `antiRaid=${results.antiRaid}, ai=${results.ai}, disk=${results.disk}, ` +
+    `avatar=${results.avatar}, reaction=${results.reaction}, translate=${results.translate}, gag=${results.gag}, ` +
+    `antiRaid=${results.antiRaid}, ai=${results.ai}, telegram=${results.telegram}, disk=${results.disk}, ` +
     `terminate=${results.terminate}, state=${results.state}`;
 }
 
@@ -173,7 +374,9 @@ export interface FlushAllToDiskParams {
 /**
  * 确认最终 Telegram offset 之前的完整落盘：Worker mailbox 与主线程后台队列
  * 必须先归零，随后 flush 才覆盖它们发布的最后一份镜像，不能在 flush 后再让
- * 旧任务补写。与 runShutdownOwners 不同，这里不终止任何 Worker。
+ * 旧任务补写。owner 顺序与 runShutdownOwners 共用 SHUTDOWN_DRAIN_OWNERS，
+ * 差别只在这里**不终止任何 Worker、也不关闭 Telegram 出站闸门**——dispose()
+ * 还要再排空一遍 gag 提示与延迟删除，而那些收尾都要发 Telegram 请求。
  * @returns 是否全部干净落盘；false 时调用方不得确认 offset。
  */
 export async function flushAllToDisk({
@@ -182,45 +385,26 @@ export async function flushAllToDisk({
   settler,
   timeouts,
 }: FlushAllToDiskParams): Promise<boolean> {
-  const avatar: FlushResult = await settler.flush(
-    "avatar drain",
-    (): Promise<FlushResult> => dependencies.drainAvatarUpdates(timeouts.maintenanceMs)
-  );
-  const reaction: FlushResult = await settler.flush(
-    "reaction drain",
-    (): Promise<FlushResult> => dependencies.drainReactionQueue(timeouts.maintenanceMs)
-  );
-  const translate: FlushResult = flags.translateInitialized
-    ? await settler.flush("translate drain", (): Promise<FlushResult> => dependencies.drainTranslate(timeouts.maintenanceMs))
-    : "flushed";
-  const antiRaid: FlushResult = flags.antiRaidInitialized
-    ? await settler.flush("anti-raid drain", (): Promise<FlushResult> => dependencies.drainAntiRaid(timeouts.maintenanceMs))
-    : "flushed";
-  // AI memory 必须先回传到 diskIOWorker，再 flush 该 Worker。
-  const ai: FlushResult = flags.aiChatInitialized
-    ? await settler.flush("AI memory flush", (): Promise<FlushResult> => dependencies.flushAiMemory(timeouts.aiMemoryMs))
-    : "flushed";
-  const disk: FlushResult = flags.diskIOInitialized
-    ? await settler.flush("disk I/O flush", (): Promise<FlushResult> => dependencies.flushDiskIO(timeouts.diskIOMs))
-    : "flushed";
+  const { results }: { results: OwnerDrainResults } = await drainOwners({
+    dependencies,
+    flags,
+    settler,
+    timeouts,
+    terminal: false,
+  });
   const state: FlushResult = await settler.flush(
     "state flush",
     (): Promise<FlushResult> => dependencies.flushStateToDisk(timeouts.stateMs)
   );
 
-  if (
-    avatar !== "flushed" ||
-    reaction !== "flushed" ||
-    translate !== "flushed" ||
-    antiRaid !== "flushed" ||
-    ai !== "flushed" ||
-    disk !== "flushed" ||
-    state !== "flushed"
-  ) {
+  const unsettled: boolean = state !== "flushed" ||
+    Object.values(results).some((result: FlushResult): boolean => result !== "flushed");
+  if (unsettled) {
     process.exitCode = 1;
     dependencies.logger.error(
-      `Pre-confirmation drain/flush results: avatar=${avatar}, reaction=${reaction}, antiRaid=${antiRaid}, ` +
-      `translate=${translate}, ai=${ai}, disk=${disk}, state=${state}; ` +
+      `Pre-confirmation drain/flush results: avatar=${results.avatar}, reaction=${results.reaction}, ` +
+      `antiRaid=${results.antiRaid}, translate=${results.translate}, gag=${results.gag}, ai=${results.ai}, ` +
+      `telegram=${results.telegram}, disk=${results.disk}, state=${state}; ` +
       "the final Telegram update offset will not be confirmed."
     );
     return false;

@@ -4,6 +4,8 @@ import type { CommandTargetMessages } from "./commands";
 export interface WhitelistPermissions {
   isCanMute: boolean;
   isCanUnMute: boolean;
+  isCanGag: boolean;
+  isCanViewBotStatus: boolean;
   isCanBlock: boolean;
   isCanUnBlock: boolean;
   isCanSwitchMood: boolean;
@@ -13,6 +15,7 @@ export interface WhitelistPermissions {
   isCanControllAdDetectPermission: boolean;
   isCanControllFloodControlPermission: boolean;
   isCanControllJATranslatePermission: boolean;
+  isCanControllAntiRaidPermission: boolean;
 }
 
 /** /permission 接受的权限键。 */

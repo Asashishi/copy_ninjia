@@ -31,11 +31,16 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 mock.module("../../packages/infra/chatTitle", () => ({ recordChatTitleFromChat: () => {} }));
 mock.module("../../packages/users/senderIdentity", () => ({ cacheSender: (message: any) => message.from?.id }));
 mock.module("../../packages/aiChat", () => ({ recordChatMessage: () => {}, recordChatMedia: () => {}, generateAndSendReply: () => {} }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false, isBotOwnMessage: () => false }));
+mock.module("../../packages/infra/selfSentTracker", () => ({
+  isSelfSent: () => false,
+  isBotOwnMessage: () => false,
+  needsBotOwnMessageWait: () => false,
+  waitForBotOwnMessage: async (): Promise<boolean> => false,
+}));
 
 const { handleIncomingMessage } = await import("../../packages/auto/message");
 const { resolveEffectiveCopyMode } = await import("../../packages/auto/message/echo");
-const { SUPER_ADMIN_USER_ID } = await import("../../packages/infra/config");
+const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/telegram");
 
 function privateMessageCtx(userId: number): any {
   return {

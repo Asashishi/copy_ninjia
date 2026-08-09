@@ -151,13 +151,13 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
 }
 
 /**
- * 按裸 id 取目标身份，供 `/block`、`/unblock`、`/permission` 与 `/white`
- * 解析 id 形式的参数，见 commands/targetResolution.ts。
+ * 按裸 id 取目标身份，供 `/block`、`/unblock`、`/gag`、`/ungag`、
+ * `/permission` 与 `/white` 解析 id 形式的参数，见 commands/targetResolution.ts。
  *
  * **与 @username 那条路的关键差别：查不到不是失败。** id 本身就是权威目标，
  * 缓存只用来给回执配一个人类可读的标签；而用户名是会被释放、被别人重新注册的
  * ——那正是「破坏性操作优先回复消息、别信历史用户名」这条建议的由来（同
- * `/steal_icon` 的现查要求，见 docs/04-invariants.md）。按 id 下的命令没有这个
+ * `/steal_icon` 的现查要求，见 docs/cn/04-invariants.md）。按 id 下的命令没有这个
  * 问题，因此这里在缓存落空时返回只带 id 的最小身份，让命令照常执行。
  *
  * 负数 id 一律标成频道身份。这不是猜的：负 id 只可能来自 `sender_chat`，处置侧

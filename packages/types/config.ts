@@ -31,60 +31,89 @@ export interface MoodConfig {
  */
 export type AdSampleConfig = readonly string[];
 
+/** Telegram Bot 身份与超级管理员身份的进程级部署配置。 */
+export interface TelegramConfig {
+  /** BotFather 发放的 Bot API token。 */
+  readonly botToken: string;
+  /** 唯一超级管理员的正安全整数 Telegram 用户 ID。 */
+  readonly superAdminUserId: number;
+}
+
 /**
- * ad_detect 一侧的 OpenAI 兼容端点配置，已按 consts 默认值兜底。
+ * ad_detect 能力配置。与其他能力一样显式选择 Google 或 OpenAI 协议；端点缺省
+ * 时跟随对应 SDK 的官方地址，兼容端点必须在该能力自己的 base_url 显式声明。
  *
- * 与 AiAgentOpenAiConfig 同住 config/openai.json，但**没有一个合并类型把两者装在
- * 一起**：两段的消费方完全不重叠（这条走广告检测的 DeepSeek 线，那条走 AI 闲聊的
- * agent 流水线），各用各的凭据与端点。曾经有过一个 OpenAiDeploymentConfig 把两段
- * 并成一个值，代价是运行时取任一段都要先解析整份文件——于是 ai_agent 的一个笔误
- * 能让广告检测在通过就绪探测之后才静默失效（见 config/openai.ts 的分段加载）。
- *
- * Gemini 不受这份文件控制——它不是 OpenAI 兼容接口，端点由官方 SDK 自己管，
- * 模型另见 config/gemini.json。
+ * 与 AI agent 配置同住 config/agent.json，但运行时仍按消费方分段加载：广告检测
+ * Worker 不接触闲聊能力配置，AI Worker 也不读取广告模型。分段边界见
+ * config/agent.ts。
  */
-export interface AdDetectOpenAiConfig {
-  readonly baseUrl: string;
+export type AdDetectAgentConfig = AgentCapabilityConfig;
+
+/**
+ * OpenAI 兼容生图的线协议。
+ *
+ * 这是请求体能力边界，不是模型供应商或模型名枚举：`openai` 表示 gpt-image-2
+ * 任意尺寸协议，`openai-standard` 表示 GPT Image 全系共同支持的三种标准尺寸，
+ * `xai` 表示 xAI JSON/画幅协议。同一个代理端点也必须显式选择；后续新增不兼容
+ * 的 images 请求形状时，在这里和 aiChat/openai/image.ts 的穷举分派同步增加一档。
+ */
+export type OpenAiImageProtocol = "openai" | "openai-standard" | "xai";
+
+/** agent 能力可选的两种 SDK 协议；模型品牌不在这里枚举。 */
+export type AgentProvider = "google" | "openai";
+
+/** agent 配置中的能力名；每项分别选择 provider、模型与端点。 */
+export type AgentCapability = "text" | "summary" | "media" | "image" | "song";
+
+/** Google GenAI SDK 承载的一项能力配置。 */
+export interface GoogleAgentCapabilityConfig {
+  readonly provider: "google";
+  readonly apiKey: string;
+  /** 留空表示走 Google SDK 的官方端点。 */
+  readonly baseUrl: string | undefined;
   readonly model: string;
 }
 
-/** ai_agent 一侧四条流水线各自的模型名；四项全部必填，代码不再持有默认值。 */
-export interface AiAgentOpenAiModels {
-  readonly reply: string;
-  readonly summary: string;
-  readonly media: string;
-  readonly image: string;
-}
-
-/** ai_agent 一侧的 OpenAI 端点配置；models 必填，base_url 留空表示走官方端点。 */
-export interface AiAgentOpenAiConfig {
-  /** 留空表示走 SDK 默认的官方端点。 */
+/** OpenAI SDK（含 OpenAI 兼容端点）承载的一项能力配置。 */
+export interface OpenAiAgentCapabilityConfig {
+  readonly provider: "openai";
+  readonly apiKey: string;
+  /** 留空表示走 OpenAI SDK 的官方端点。 */
   readonly baseUrl: string | undefined;
-  readonly models: AiAgentOpenAiModels;
+  readonly model: string;
 }
 
-/**
- * config/gemini.json 的模型名；四项全部必填。
- *
- * 与 AiAgentOpenAiModels 逐字段同名同义，但**各留一份**：两家的模型命名空间毫无
- * 交集，合并成一个类型只会让「换一家就要顺手改另一家」这种错误在类型上看不出来。
- */
-export interface GeminiModels {
-  readonly reply: string;
-  readonly summary: string;
-  readonly media: string;
-  readonly image: string;
+/** 不涉及生图请求体差异的通用能力配置。 */
+export type AgentCapabilityConfig = GoogleAgentCapabilityConfig | OpenAiAgentCapabilityConfig;
+
+/** Google 生图配置；Google SDK 自己定义请求体，不接受 OpenAI 协议档位。 */
+export interface GoogleAgentImageCapabilityConfig extends GoogleAgentCapabilityConfig {
+  readonly imageProtocol: undefined;
 }
 
+/** OpenAI 兼容生图配置；协议必须显式给出，不能从模型名或端点猜测。 */
+export interface OpenAiAgentImageCapabilityConfig extends OpenAiAgentCapabilityConfig {
+  readonly imageProtocol: OpenAiImageProtocol;
+}
+
+/** 生图能力配置。 */
+export type AgentImageCapabilityConfig =
+  | GoogleAgentImageCapabilityConfig
+  | OpenAiAgentImageCapabilityConfig;
+
 /**
- * config/gemini.json 的解析结果。
- *
- * 只有 models 一项：Gemini 走官方 SDK，端点不可配（这正是它与 openai.json 的
- * 结构差别，不是遗漏）。密钥仍是 env 的 `AI_CHAT_GEMINI_API_KEY`，理由同
- * config/openai.ts 的模块头注——端点模型是运维配置，密钥是凭据。
+ * config/agent.json 的 agent 段；三项对话核心能力必填且各自独立路由。
+ * `text` 是带工具往返的群聊回复，`summary` 是无状态纯文本摘要，`media` 是视觉
+ * 描述与语音转写，`image` 是生图，`song` 是生歌。
  */
-export interface GeminiDeploymentConfig {
-  readonly models: GeminiModels;
+export interface AgentDeploymentConfig {
+  readonly text: AgentCapabilityConfig;
+  readonly summary: AgentCapabilityConfig;
+  readonly media: AgentCapabilityConfig;
+  /** 缺省不影响 AI 对话，只是不注册生图工具。 */
+  readonly image?: AgentImageCapabilityConfig;
+  /** 缺省表示不提供生歌工具；实现不支持时同样不会注册对应工具。 */
+  readonly song?: AgentCapabilityConfig;
 }
 
 /** 一份坏掉的部署文件：文件名给人看，诊断给日志看。 */

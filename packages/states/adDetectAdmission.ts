@@ -31,7 +31,7 @@ import type {
  * 状态对象里会同时出现「我这一串」和「全线程一共多少」，两者的生命周期完全
  * 不同，反而比现在更难读。
  *
- * 抽出来的收益在另一处：`docs/04-invariants.md` 要求「待检所有权由
+ * 抽出来的收益在另一处：`docs/cn/04-invariants.md` 要求「待检所有权由
  * pendingAdMessages、adDetectQueue 与 queuedAdDetectKeys 共同表达，三者必须
  * 同步增删」，而那份一致性此前只靠注释和 25 处散落的 mutation 维持。判定集中
  * 到这里之后，「该不该动这三张表」有了唯一答案，运行时那边只剩「照着做」。

@@ -127,7 +127,7 @@ test("缺少当前必填字段时拒绝整次恢复，防止后续快照覆盖�
     ...currentSnapshot,
     buffer: [{ id: 111, firstName: "太郎", lastName: "", text: "旧记录", at: "2026/07/16 21:35:04" }],
   }));
-  expect(() => recoverAiMemories()).toThrow("migrate it manually before starting");
+  expect(() => recoverAiMemories()).toThrow("current version=1 AI memory schema");
   expect(readFileSync(join(aiDir, "-100124.json"), "utf8")).not.toBe("");
 });
 
@@ -137,7 +137,7 @@ test("username 若存在则必须为字符串", () => {
     buffer: [{ ...currentSnapshot.buffer[0]!, username: 123 }],
   }));
 
-  expect(() => recoverAiMemories()).toThrow("migrate it manually before starting");
+  expect(() => recoverAiMemories()).toThrow("current version=1 AI memory schema");
 });
 
 test("replyTo 若存在则必须是完整合法的回复对象", () => {
@@ -146,21 +146,23 @@ test("replyTo 若存在则必须是完整合法的回复对象", () => {
     buffer: [{ ...currentSnapshot.buffer[0]!, replyTo: { messageId: 7, text: "缺发送者" } }],
   }));
 
-  expect(() => recoverAiMemories()).toThrow("migrate it manually before starting");
+  expect(() => recoverAiMemories()).toThrow("current version=1 AI memory schema");
 });
 
-test("恢复时只保留配置数量的最新冷摘要", () => {
+test("超出冷摘要容量时拒绝恢复且不改写文件", () => {
   const summaries: string[] = Array.from({ length: MAX_SUMMARY_ROUNDS + 2 }, (_, index: number) => `摘要${index + 1}`);
-  writeFileSync(join(aiDir, "-100128.json"), JSON.stringify({
+  const path: string = join(aiDir, "-100128.json");
+  const bytes: string = JSON.stringify({
     ...currentSnapshot,
     summaries,
-  }));
+  });
+  writeFileSync(path, bytes);
 
-  const recovered = recoverAiMemories();
-  expect(JSON.parse(recovered.get(-100128)!).summaries).toEqual(summaries.slice(-MAX_SUMMARY_ROUNDS));
+  expect(() => recoverAiMemories()).toThrow("within configured capacities");
+  expect(readFileSync(path, "utf8")).toBe(bytes);
 });
 
-test("恢复时只保留配置数量的最新逐字消息", () => {
+test("超出逐字消息容量时拒绝恢复且不改写文件", () => {
   const buffer = Array.from({ length: AI_MEMORY_HYDRATE_BUFFER_MAX + 2 }, (_, index: number) => ({
     messageId: index + 1,
     id: index + 1,
@@ -169,13 +171,15 @@ test("恢复时只保留配置数量的最新逐字消息", () => {
     text: `消息${index + 1}`,
     at: "2026/07/22 20:00:00",
   }));
-  writeFileSync(join(aiDir, "-100132.json"), JSON.stringify({
+  const path: string = join(aiDir, "-100132.json");
+  const bytes: string = JSON.stringify({
     ...currentSnapshot,
     buffer,
-  }));
+  });
+  writeFileSync(path, bytes);
 
-  const recovered = recoverAiMemories();
-  expect(JSON.parse(recovered.get(-100132)!).buffer).toEqual(buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX));
+  expect(() => recoverAiMemories()).toThrow("within configured capacities");
+  expect(readFileSync(path, "utf8")).toBe(bytes);
 });
 
 test("删除记忆文件幂等且不会留下快照", () => {
@@ -187,7 +191,7 @@ test("删除记忆文件幂等且不会留下快照", () => {
   expect(() => deleteAiMemoryFile(-100129)).not.toThrow();
 });
 
-test("文件名不能原样还原成 chatId 时跳过，不与规范文件抢同一个 key", () => {
+test("文件名不能原样还原成 chatId 时拒绝恢复，不按目录顺序选一份", () => {
   // 正则只保证「一串数字」：补零变体也匹配，Number 之后是同一个 key，于是两份
   // 快照互相覆盖、胜者取决于 readdirSync 的枚举顺序。而回写只用 `${chatId}.json`，
   // 补零那份永不被改写或删除，每次重启继续顶替（同 blocklistFile.ts 的回环校验）。
@@ -197,16 +201,20 @@ test("文件名不能原样还原成 chatId 时跳过，不与规范文件抢同
     summaries: ["补零文件里的旧摘要"],
   }, null, 2));
 
-  const recovered = recoverAiMemories();
-
-  expect(recovered.size).toBe(1);
-  expect(JSON.parse(recovered.get(-100123)!).summaries).toEqual(currentSnapshot.summaries);
+  expect(() => recoverAiMemories()).toThrow("canonical <chatId>.json form");
+  expect(readFileSync(join(aiDir, "-100123.json"), "utf8")).toBe(currentBytes);
 });
 
-test("位数超出安全整数的文件名同样跳过", () => {
+test("位数超出安全整数的文件名同样拒绝恢复", () => {
   // 1e20 那种水合出来的 key 与任何真实 chatId 都对不上，下次落盘还会生成一个
   // 全新文件，旧文件永远留在盘上。
   writeFileSync(join(aiDir, "99999999999999999999.json"), currentBytes);
 
-  expect(recoverAiMemories().size).toBe(0);
+  expect(() => recoverAiMemories()).toThrow("non-zero safe integer chat ID");
+});
+
+test("chatId 为零的文件名拒绝恢复", () => {
+  writeFileSync(join(aiDir, "0.json"), currentBytes);
+
+  expect(() => recoverAiMemories()).toThrow("non-zero safe integer chat ID");
 });

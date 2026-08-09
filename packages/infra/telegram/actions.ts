@@ -1,7 +1,9 @@
 export {
   answerCallbackQuery,
   copyMessage,
+  sendAudioWithResult,
   sendChatAction,
+  sendEphemeralMessage,
   sendMessage,
   sendMessageWithResult,
   sendPhoto,
@@ -10,7 +12,9 @@ export {
 } from "./actions/messages";
 export type {
   AnswerCallbackQueryParams,
+  SendAudioParams,
   SendChatActionParams,
+  SendEphemeralMessageParams,
   SendMessageParams,
   SendPhotoParams,
   SendStickerParams,
@@ -19,11 +23,16 @@ export type {
 export {
   deleteMessage,
   deleteMessageAfter,
+  deleteEphemeralMessageWithOutcome,
   deleteMessages,
   deleteMessageWithOutcome,
+  drainPendingMessageDeletions,
+  flushPendingMessageDeletions,
+  resetPendingMessageDeletions,
   setMessageReaction,
 } from "./actions/messageLifecycle";
 export type {
+  DeleteEphemeralMessageParams,
   DeleteMessageAfterParams,
   DeleteMessageOutcome,
   SetMessageReactionParams,

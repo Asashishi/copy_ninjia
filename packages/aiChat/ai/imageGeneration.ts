@@ -3,8 +3,8 @@
  * aiChat/provider.ts），本文件只把请求转过去——生图工具的入参校验、每群
  * 冷却、动作预算与失败计数都在 aiChat/ai/tools/replyToolset/imageGeneration.ts。
  *
- * 选取走 imageAiProvider() 而不是 activeAiProvider()：超管可用 `/image_model`
- * 把生图单独切到另一家，回复/记忆压缩/视觉描述不受影响（理由见 provider.ts）。
+ * 选取只读 config/agent.json 的 image 能力；text、summary、media 各自独立路由，
+ * 生图不会跟随其中任何一项（理由见 provider.ts）。
  *
  * 宽高比归一（normalizeImageAspectRatio）在 aiChat/ai/utils/aspectRatio.ts，
  * 载荷校验在 aiChat/ai/utils/imagePayload.ts：两者与供应商无关，且必须只有
@@ -12,7 +12,7 @@
  */
 
 import { imageAiProvider } from "../provider";
-import type { AiImageRequest } from "../../types/aiChat/provider";
+import type { AiImageProvider, AiImageRequest } from "../../types/aiChat/provider";
 import type { GeneratedChatImage } from "../../types/aiChat/imageGeneration";
 
 /**
@@ -21,5 +21,6 @@ import type { GeneratedChatImage } from "../../types/aiChat/imageGeneration";
  *   （失败已由实现包记日志）。
  */
 export function generateChatImage(request: AiImageRequest): Promise<GeneratedChatImage | null> {
-  return imageAiProvider().generateImage(request);
+  const provider: AiImageProvider | null = imageAiProvider();
+  return provider === null ? Promise.resolve(null) : provider.generateImage(request);
 }

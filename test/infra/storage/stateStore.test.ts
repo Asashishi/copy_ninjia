@@ -1,19 +1,33 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   StateStore,
   getActiveProxySendTarget,
+  getBotDefaultAvatarUrl,
+  getFortuneThumbnailUrl,
+  getGagThumbnailUrl,
+  getOrCreateChatState,
+  getProbabilityThumbnailUrl,
+  loadState,
   pruneDepartedChatState,
+  saveState,
+  seedMissingAssetState,
 } from "../../../packages/infra/storage/stateStore";
-import { chatStates } from "../../../packages/cache/main/storage";
+import { chatStates, globalAssetState, stateStoreHolder } from "../../../packages/cache/main/storage";
+import {
+  BOT_DEFAULT_AVATAR_URL,
+  FORTUNE_THUMBNAIL_URL,
+  GAG_THUMBNAIL_URL,
+  PROBABILITY_THUMBNAIL_URL,
+} from "../../../packages/consts/ui/assets";
 import type { LockdownRecord, StateFileSchema } from "../../../packages/types/chatState";
 
 function schema(chatId: number): StateFileSchema {
   return {
     chats: { [String(chatId)]: { isAIChatEnabled: true } },
-    global: { copy: { copiedUser: null }, model: {} },
+    global: { copy: { copiedUser: null }, assets: {} },
   };
 }
 
@@ -149,41 +163,36 @@ describe("StateStore", () => {
     const primary: string = JSON.stringify(schema(51), null, 2);
     const staleBackup: string = JSON.stringify(schema(52), null, 2);
     const writes: { path: string; content: string }[] = [];
-    const moves: string[] = [];
     const store = new StateStore({
       stateFilePath: "/virtual/state.json",
       readText: async (path) => path.endsWith(".bak") ? staleBackup : primary,
       writeText: async (path, content) => { writes.push({ path, content }); },
-      moveFile: async (path) => { moves.push(path); },
     });
 
     await expect(store.load()).resolves.toEqual(schema(51));
     expect(writes).toEqual([{ path: "/virtual/state.json.bak", content: primary }]);
-    expect(moves).toEqual([]);
     store.dispose();
   });
 
-  test("主文件有效、备份损坏时隔离坏备份并重建", async () => {
+  test("主文件有效、备份损坏时仍保留原字节并拒绝启动", async () => {
     const primary: string = JSON.stringify(schema(53), null, 2);
-    const moves: { source: string; destination: string }[] = [];
     const writes: { path: string; content: string }[] = [];
     const store = new StateStore({
       stateFilePath: "/virtual/state.json",
       readText: async (path) => path.endsWith(".bak") ? "{broken" : primary,
       writeText: async (path, content) => { writes.push({ path, content }); },
-      moveFile: async (source, destination) => { moves.push({ source, destination }); },
     });
 
-    await expect(store.load()).resolves.toEqual(schema(53));
-    expect(moves).toHaveLength(1);
-    expect(moves[0]!.source).toBe("/virtual/state.json.bak");
-    expect(moves[0]!.destination).toMatch(/^\/virtual\/state\.json\.bak\.\d+\.[^.]+\.corrupt$/);
-    expect(writes).toEqual([{ path: "/virtual/state.json.bak", content: primary }]);
+    await expect(store.load()).rejects.toThrow("/virtual/state.json.bak: $ must be valid JSON.");
+    expect(writes).toEqual([]);
     store.dispose();
   });
 
-  test("主文件损坏时隔离原件，并从有效 LKG 恢复包含 lockdown 的状态", async () => {
-    const expected: StateFileSchema = {
+  test("主文件写坏时拒绝启动，即使 LKG 完好也不隔离、不覆盖现场", async () => {
+    // 落盘是临时文件 + 原子 rename，主文件不会写出半份，所以「在但解不开」只剩
+    // 手改错和介质损坏两种来源。拿 LKG 顶上去 = 把运维刚编辑的文件改名成
+    // .corrupt、用陈旧内容盖回去，然后一切正常启动（见 AGENTS.md 不为用户行为兜底）。
+    const valid: StateFileSchema = {
       chats: {
         "-100": {
           lockdown: {
@@ -194,76 +203,96 @@ describe("StateStore", () => {
           },
         },
       },
-      global: { copy: { copiedUser: null }, model: {} },
+      global: { copy: { copiedUser: null }, assets: {} },
     };
-    const backup: string = JSON.stringify(expected, null, 2);
-    const moves: { source: string; destination: string }[] = [];
+    const backup: string = JSON.stringify(valid, null, 2);
     const writes: { path: string; content: string }[] = [];
     const store = new StateStore({
       stateFilePath: "/virtual/state.json",
       readText: async (path) => path.endsWith(".bak") ? backup : "{broken",
       writeText: async (path, content) => { writes.push({ path, content }); },
-      moveFile: async (source, destination) => { moves.push({ source, destination }); },
     });
 
-    await expect(store.load()).resolves.toEqual(expected);
-    expect(moves).toHaveLength(1);
-    expect(moves[0]!.source).toBe("/virtual/state.json");
-    expect(moves[0]!.destination).toMatch(/^\/virtual\/state\.json\.\d+\.[^.]+\.corrupt$/);
-    expect(writes).toEqual([{ path: "/virtual/state.json", content: backup }]);
+    await expect(store.load()).rejects.toThrow("/virtual/state.json: $ must be valid JSON.");
+    expect(writes).toEqual([]);
+    store.dispose();
+  });
+
+  test("手改错的字段不被 LKG 静默还原，诊断不回显原值", async () => {
+    const backup: string = JSON.stringify(schema(58), null, 2);
+    const edited: string = JSON.stringify({
+      chats: {},
+      // 漏掉 scheme 是最常见的手误，且它在两份副本逐字节相同时只会出现在主文件里。
+      global: { copy: { copiedUser: null }, assets: { botDefaultAvatarUrl: "cdn.example.com/face.jpg" } },
+    }, null, 2);
+    const store = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      readText: async (path) => path.endsWith(".bak") ? backup : edited,
+      writeText: async () => { throw new Error("must not write"); },
+    });
+
+    const failure: Error | null = await store.load().then(
+      (): null => null,
+      (error: unknown): Error => error instanceof Error ? error : new Error("non-Error failure")
+    );
+    // 诊断必须点名坏在哪个字段、期望什么形态：换成「整份文件不符合 schema」
+    // 等于让运维对着自己唯一能手工编辑的旋钮猜。
+    expect(failure?.message).toBe(
+      "/virtual/state.json: state.global.assets.botDefaultAvatarUrl must be an absolute http(s) URL."
+    );
+    expect(failure?.message).not.toContain("cdn.example.com");
     store.dispose();
   });
 
   test("主文件缺失时从有效 LKG 原子恢复且不创建损坏隔离件", async () => {
     const expected: StateFileSchema = schema(54);
     const backup: string = JSON.stringify(expected, null, 2);
-    const moves: string[] = [];
     const writes: { path: string; content: string }[] = [];
     const store = new StateStore({
       stateFilePath: "/virtual/state.json",
       readText: async (path) => path.endsWith(".bak") ? backup : null,
       writeText: async (path, content) => { writes.push({ path, content }); },
-      moveFile: async (source) => { moves.push(source); },
     });
 
     await expect(store.load()).resolves.toEqual(expected);
-    expect(moves).toEqual([]);
     expect(writes).toEqual([{ path: "/virtual/state.json", content: backup }]);
     store.dispose();
   });
 
-  test("主备均无有效状态时 fail-closed，且不隔离、不覆盖现场", async () => {
-    const moves: string[] = [];
+  test("主文件缺失且 LKG 也解不开时 fail-closed，且不隔离、不覆盖现场", async () => {
     const writes: string[] = [];
     const store = new StateStore({
       stateFilePath: "/virtual/state.json",
-      readText: async (path) => path.endsWith(".bak") ? JSON.stringify({ chats: {} }) : "{broken",
+      readText: async (path) => path.endsWith(".bak") ? JSON.stringify({ chats: {} }) : null,
       writeText: async (path) => { writes.push(path); },
-      moveFile: async (source) => { moves.push(source); },
     });
 
     await expect(store.load()).rejects.toThrow("manual recovery is required");
-    expect(moves).toEqual([]);
     expect(writes).toEqual([]);
     store.dispose();
   });
 
-  test("隔离或恢复 IO 失败都会终止加载，不返回未建立冗余的状态", async () => {
-    const backup: string = JSON.stringify(schema(55));
-    const quarantineFailure = new StateStore({
+  test("两份都解不开时同样只报错，不动任何一份", async () => {
+    const writes: string[] = [];
+    const store = new StateStore({
       stateFilePath: "/virtual/state.json",
-      readText: async (path) => path.endsWith(".bak") ? backup : "{broken",
-      moveFile: async () => { throw new Error("rename unavailable"); },
+      readText: async () => "{broken",
+      writeText: async (path) => { writes.push(path); },
     });
-    await expect(quarantineFailure.load()).rejects.toThrow("rename unavailable");
 
+    await expect(store.load()).rejects.toThrow("/virtual/state.json: $ must be valid JSON.");
+    expect(writes).toEqual([]);
+    store.dispose();
+  });
+
+  test("主文件缺失时的恢复 IO 失败会终止加载", async () => {
+    const backup: string = JSON.stringify(schema(55));
     const restoreFailure = new StateStore({
       stateFilePath: "/virtual/state.json",
       readText: async (path) => path.endsWith(".bak") ? backup : null,
       writeText: async () => { throw new Error("write unavailable"); },
     });
     await expect(restoreFailure.load()).rejects.toThrow("write unavailable");
-    quarantineFailure.dispose();
     restoreFailure.dispose();
   });
 
@@ -296,7 +325,7 @@ describe("StateStore", () => {
     });
     const invalid = {
       chats: {},
-      global: { copy: { copiedUser: null }, model: {} },
+      global: { copy: { copiedUser: null } },
       unknownField: true,
     } as unknown as StateFileSchema;
 
@@ -305,7 +334,7 @@ describe("StateStore", () => {
     store.dispose();
   });
 
-  test("真实文件边界会持久隔离坏主文件并原子恢复 LKG", async () => {
+  test("真实文件边界下坏主文件原样保留，两份副本一个字节都不动", async () => {
     const dir: string = mkdtempSync(join(tmpdir(), "state-lkg-test-"));
     const statePath: string = join(dir, "state.json");
     const backupPath: string = `${statePath}.bak`;
@@ -315,12 +344,28 @@ describe("StateStore", () => {
     const store = new StateStore({ stateFilePath: statePath });
 
     try {
-      await expect(store.load()).resolves.toEqual(schema(57));
+      await expect(store.load()).rejects.toThrow(`${statePath}: $ must be valid JSON.`);
+      // 运维要接着排查的就是这份文件：既不改名也不覆盖。
+      expect(readFileSync(statePath, "utf8")).toBe("{broken");
+      expect(readFileSync(backupPath, "utf8")).toBe(backup);
+      expect(readdirSync(dir).some((entry) => entry.endsWith(".corrupt"))).toBeFalse();
+    } finally {
+      store.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("真实文件边界下主文件缺失时才由 LKG 原子重建", async () => {
+    const dir: string = mkdtempSync(join(tmpdir(), "state-lkg-test-"));
+    const statePath: string = join(dir, "state.json");
+    const backup: string = JSON.stringify(schema(59), null, 2);
+    writeFileSync(`${statePath}.bak`, backup);
+    const store = new StateStore({ stateFilePath: statePath });
+
+    try {
+      await expect(store.load()).resolves.toEqual(schema(59));
       expect(readFileSync(statePath, "utf8")).toBe(backup);
-      const corruptEntry: string | undefined = readdirSync(dir)
-        .find((entry) => /^state\.json\.\d+\.[^.]+\.corrupt$/.test(entry));
-      expect(corruptEntry).toBeDefined();
-      expect(readFileSync(join(dir, corruptEntry!), "utf8")).toBe("{broken");
+      expect(readdirSync(dir).some((entry) => entry.endsWith(".corrupt"))).toBeFalse();
     } finally {
       store.dispose();
       rmSync(dir, { recursive: true, force: true });
@@ -389,11 +434,215 @@ describe("群级状态门面", () => {
     expect(chatStates.has(-1003)).toBeFalse();
   });
 
+  test("规范形状不改磁盘格式：关掉的开关仍然不出现在 state.json 里", async () => {
+    // 形状固定之后，「没设过」由 undefined 表示而不再由「键不存在」表示。落盘
+    // 结果必须逐字节照旧——`JSON.stringify` 跳过取值为 undefined 的键。这条如果
+    // 松了，state.json 会突然多出一堆 `"isAIChatEnabled": false`，而 decodeStateFile
+    // 的 knownKeys 与部署方手改文件的习惯都建立在旧格式上。
+    const writes: string[] = [];
+    stateStoreHolder.current = new StateStore({
+      stateFilePath: "/virtual/state.json",
+      writeText: async (_path: string, content: string): Promise<void> => { writes.push(content); },
+    });
+    try {
+      const chatState = getOrCreateChatState(-1001);
+      chatState.isAIChatEnabled = true;
+      chatState.botIsAdmin = false;
+      chatState.isAIChatEnabled = false;
+
+      await saveState();
+
+      const written = JSON.parse(writes[0]!) as { chats: Record<string, Record<string, unknown>> };
+      // 关掉的开关按缺省语义整键消失；botIsAdmin 的 false 是「已确认不是管理员」，
+      // 与缺省不同，必须留在文件里。
+      expect(Object.keys(written.chats["-1001"]!)).toEqual(["botIsAdmin"]);
+      expect(written.chats["-1001"]!.botIsAdmin).toBe(false);
+    } finally {
+      stateStoreHolder.current?.dispose();
+      stateStoreHolder.current = null;
+    }
+  });
+
   test("中转发送目标全局唯一，扫描全部群只认显式启用的那个", () => {
     chatStates.set(-1001, { isAIChatEnabled: true });
     expect(getActiveProxySendTarget()).toBeUndefined();
 
     chatStates.set(-1002, { isProxySendEnabled: true });
     expect(getActiveProxySendTarget()).toBe(-1002);
+  });
+});
+
+/**
+ * `state.global.assets` 的四个取值函数：缺省即回退到内置常量，设过就以 state 为准。
+ * 缺省这一侧必须守住——它是「没配过的部署行为与从前逐字相同」的唯一保证。
+ */
+describe("素材直链的取值", () => {
+  afterEach(() => {
+    globalAssetState.fortuneThumbnailUrl = undefined;
+    globalAssetState.probabilityThumbnailUrl = undefined;
+    globalAssetState.gagThumbnailUrl = undefined;
+    globalAssetState.botDefaultAvatarUrl = undefined;
+  });
+
+  test("四项都没设过时回退到内置常量", () => {
+    expect(getFortuneThumbnailUrl()).toBe(FORTUNE_THUMBNAIL_URL);
+    expect(getProbabilityThumbnailUrl()).toBe(PROBABILITY_THUMBNAIL_URL);
+    expect(getGagThumbnailUrl()).toBe(GAG_THUMBNAIL_URL);
+    expect(getBotDefaultAvatarUrl()).toBe(BOT_DEFAULT_AVATAR_URL);
+  });
+
+  test("设过的那一项以 state 为准，没设过的仍走常量", () => {
+    globalAssetState.probabilityThumbnailUrl = "https://cdn.example/probability.png";
+    expect(getProbabilityThumbnailUrl()).toBe("https://cdn.example/probability.png");
+    expect(getFortuneThumbnailUrl()).toBe(FORTUNE_THUMBNAIL_URL);
+    expect(getBotDefaultAvatarUrl()).toBe(BOT_DEFAULT_AVATAR_URL);
+  });
+});
+
+/**
+ * `loadState()` 把解码结果接到取值函数上的那三行。纯解码测试与直接改
+ * `globalAssetState` 的测试都走不到它：交换两行或整行删掉都能全绿，而生产表现是
+ * 「我配的图悄悄不生效」，无日志、无门禁。这里从真实文件一路走到取值函数。
+ */
+describe("素材直链的加载接线", () => {
+  let dir: string = "";
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "state-load-test-"));
+  });
+
+  afterEach(() => {
+    globalAssetState.fortuneThumbnailUrl = undefined;
+    globalAssetState.probabilityThumbnailUrl = undefined;
+    globalAssetState.gagThumbnailUrl = undefined;
+    globalAssetState.botDefaultAvatarUrl = undefined;
+    chatStates.clear();
+    stateStoreHolder.current?.dispose();
+    stateStoreHolder.current = null;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("四项各自落到对应的取值函数上，不串位、不漏接", async () => {
+    // 四个值互不相同：两张运势缩略图的内置常量逐字节相同，用常量做断言的话交换两行
+    // 也看不出来。
+    const statePath: string = join(dir, "state.json");
+    const stored: StateFileSchema = {
+      chats: {},
+      global: {
+        copy: { copiedUser: null },
+        assets: {
+          fortuneThumbnailUrl: "https://cdn.example/fortune.png",
+          probabilityThumbnailUrl: "https://cdn.example/probability.png",
+          gagThumbnailUrl: "https://cdn.example/gag.png",
+          botDefaultAvatarUrl: "http://assets.internal/face.jpg",
+        },
+      },
+    };
+    writeFileSync(statePath, JSON.stringify(stored, null, 2));
+    stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
+
+    await loadState();
+
+    expect(getFortuneThumbnailUrl()).toBe("https://cdn.example/fortune.png");
+    expect(getProbabilityThumbnailUrl()).toBe("https://cdn.example/probability.png");
+    expect(getGagThumbnailUrl()).toBe("https://cdn.example/gag.png");
+    expect(getBotDefaultAvatarUrl()).toBe("http://assets.internal/face.jpg");
+  });
+
+  test("文件里没有 assets 块时四项都回退到内置常量", async () => {
+    const statePath: string = join(dir, "state-without-assets.json");
+    writeFileSync(statePath, JSON.stringify({ chats: {}, global: { copy: { copiedUser: null } } }, null, 2));
+    stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
+
+    await loadState();
+
+    expect(globalAssetState.botDefaultAvatarUrl).toBeUndefined();
+    expect(getFortuneThumbnailUrl()).toBe(FORTUNE_THUMBNAIL_URL);
+    expect(getProbabilityThumbnailUrl()).toBe(PROBABILITY_THUMBNAIL_URL);
+    expect(getGagThumbnailUrl()).toBe(GAG_THUMBNAIL_URL);
+    expect(getBotDefaultAvatarUrl()).toBe(BOT_DEFAULT_AVATAR_URL);
+  });
+});
+
+/**
+ * 启动时把没设过的素材直链补进 state（app/lifecycle.ts 在 loadState 之后调用）。
+ * 要守住的是「只补缺的、绝不覆盖部署方写下的地址」，以及「无事可补时不写盘」——
+ * 每次启动都白写一次 state 会让 LKG 副本毫无必要地翻新。
+ */
+describe("启动补齐素材直链", () => {
+  const writes: { path: string; content: string }[] = [];
+
+  afterEach(() => {
+    globalAssetState.fortuneThumbnailUrl = undefined;
+    globalAssetState.probabilityThumbnailUrl = undefined;
+    globalAssetState.gagThumbnailUrl = undefined;
+    globalAssetState.botDefaultAvatarUrl = undefined;
+    stateStoreHolder.current?.dispose();
+    stateStoreHolder.current = null;
+    writes.length = 0;
+  });
+
+  /**
+   * 让 saveStateInBackground 落到可观测的注入 IO 上，不碰真实数据根。
+   * @returns 主、备两份都写完时兑现的 Promise；补写是 fire-and-forget，没有别的
+   *   等待点（用 flush() 等会把同一份 dirty 快照再推一次，看到的写入数会翻倍）。
+   */
+  function installRecordingStore(): Promise<void> {
+    let backupWritten: (() => void) | undefined;
+    const written = new Promise<void>((resolve: () => void): void => {
+      backupWritten = resolve;
+    });
+    stateStoreHolder.current = new StateStore({
+      stateFilePath: "/virtual/seed-state.json",
+      writeText: async (path: string, content: string): Promise<void> => {
+        writes.push({ path, content });
+        if (path.endsWith(".bak")) backupWritten!();
+      },
+    });
+    return written;
+  }
+
+  test("四项都没设过时补齐并落盘一次", async () => {
+    const written: Promise<void> = installRecordingStore();
+
+    expect(seedMissingAssetState()).toBe(4);
+    expect(globalAssetState.fortuneThumbnailUrl).toBe(FORTUNE_THUMBNAIL_URL);
+    expect(globalAssetState.probabilityThumbnailUrl).toBe(PROBABILITY_THUMBNAIL_URL);
+    expect(globalAssetState.gagThumbnailUrl).toBe(GAG_THUMBNAIL_URL);
+    expect(globalAssetState.botDefaultAvatarUrl).toBe(BOT_DEFAULT_AVATAR_URL);
+
+    await written;
+    expect(writes.map((write): string => write.path))
+      .toEqual(["/virtual/seed-state.json", "/virtual/seed-state.json.bak"]);
+    expect(JSON.parse(writes[0]!.content).global.assets).toEqual({
+      fortuneThumbnailUrl: FORTUNE_THUMBNAIL_URL,
+      probabilityThumbnailUrl: PROBABILITY_THUMBNAIL_URL,
+      gagThumbnailUrl: GAG_THUMBNAIL_URL,
+      botDefaultAvatarUrl: BOT_DEFAULT_AVATAR_URL,
+    });
+  });
+
+  test("已配置的项原样保留，只补缺的那一项", () => {
+    void installRecordingStore();
+    globalAssetState.botDefaultAvatarUrl = "https://cdn.example/custom-face.jpg";
+    globalAssetState.fortuneThumbnailUrl = "https://cdn.example/fortune.png";
+
+    expect(seedMissingAssetState()).toBe(2);
+    expect(globalAssetState.botDefaultAvatarUrl).toBe("https://cdn.example/custom-face.jpg");
+    expect(globalAssetState.fortuneThumbnailUrl).toBe("https://cdn.example/fortune.png");
+    expect(globalAssetState.probabilityThumbnailUrl).toBe(PROBABILITY_THUMBNAIL_URL);
+    expect(globalAssetState.gagThumbnailUrl).toBe(GAG_THUMBNAIL_URL);
+  });
+
+  test("四项都配过时不写盘", async () => {
+    void installRecordingStore();
+    globalAssetState.fortuneThumbnailUrl = "https://cdn.example/f.png";
+    globalAssetState.probabilityThumbnailUrl = "https://cdn.example/p.png";
+    globalAssetState.gagThumbnailUrl = "https://cdn.example/g.png";
+    globalAssetState.botDefaultAvatarUrl = "https://cdn.example/a.jpg";
+
+    expect(seedMissingAssetState()).toBe(0);
+    await stateStoreHolder.current!.flush();
+    expect(writes).toHaveLength(0);
   });
 });

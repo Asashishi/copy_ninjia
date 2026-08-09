@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT } from "../../packages/consts/commands";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
@@ -11,16 +12,12 @@ const persistAuthoritativeState = mock(async (...args: unknown[]): Promise<void>
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
 const clearAdDetection = mock((..._args: unknown[]): void => {});
 const clearFloodControl = mock((..._args: unknown[]): void => {});
+const deactivateJoinGuardChat = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 const delegatedPermissions: Map<number, Set<string>> = new Map<number, Set<string>>();
 
-mock.module("../../packages/infra/config", () => ({
+mock.module("../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 100,
-  // AI 闲聊的凭据；缺这一项 /ai_chat enable 会被拒（见 aiChat/availability.ts）。
-  AI_CHAT_GEMINI_API_KEY: "test-gemini-key",
-  AI_CHAT_OPENAI_API_KEY: undefined,
-  // 广告检测的凭据；缺这一项 /ad_detect enable 会被拒（见 commands/adDetect.ts）。
-  AD_DETECT_DEEPSEEK_API_KEY: "test-deepseek-key",
 }));
 // 超级管理员由身份直接持有全部白名单权限（见 packages/config/whitelist.ts 的
 // getEffectiveWhitelistPermissions），其余身份按逐项授权表决定。
@@ -39,7 +36,7 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/aiChat", () => ({ invalidateAiChat }));
-mock.module("../../packages/antiRaid", () => ({ clearAdDetection, clearFloodControl }));
+mock.module("../../packages/antiRaid", () => ({ clearAdDetection, clearFloodControl, deactivateJoinGuardChat }));
 // /init enable 之后会重新判定一次管理员身份，好让「是管理员 && 已初始化」
 // 那道边沿触发黑名单清扫（见 infra/botAdmin.ts）。
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
@@ -68,6 +65,7 @@ const { handleAiChatCommand } = await import("../../packages/commands/aiChat");
 const { handleInitCommand } = await import("../../packages/commands/init");
 const { handleJaCopyCommand } = await import("../../packages/commands/jaCopy");
 const { handleFloodControlCommand } = await import("../../packages/commands/floodControl");
+const { handleAntiRaidCommand } = await import("../../packages/commands/antiRaid");
 const { isSuperAdmin, resolveSuperAdminToggleArg } = await import("../../packages/commands/superAdminToggle");
 
 function context(argument: string, userId: number | undefined = 100): never {
@@ -96,6 +94,8 @@ beforeEach(() => {
   handleCopyCommand.mockClear();
   clearAdDetection.mockClear();
   clearFloodControl.mockClear();
+  deactivateJoinGuardChat.mockClear();
+  deactivateJoinGuardChat.mockImplementation((..._args: unknown[]): void => {});
 });
 
 describe("超级管理员开关命令", () => {
@@ -203,6 +203,51 @@ describe("超级管理员开关命令", () => {
     delegatedPermissions.set(200, new Set(["isCanControllFloodControlPermission"]));
     await handleFloodControlCommand(context("enable", 200));
     expect(states.get(-1001)?.isFloodControlEnabled).toBe(true);
+  });
+
+  test("/antiraid 缺省关闭，enable 持久化开启，disable 收掉这个群的入群守卫运行态", async () => {
+    expect(states.get(-1001)?.isAntiRaidEnabled).toBeUndefined();
+
+    await handleAntiRaidCommand(context("enable"));
+    expect(states.get(-1001)?.isAntiRaidEnabled).toBe(true);
+    expect(saveStateInBackground).toHaveBeenLastCalledWith("antiraid toggled");
+    // enable 没有运行态要拆：窗口是入群时才开的。
+    expect(deactivateJoinGuardChat).not.toHaveBeenCalled();
+
+    await handleAntiRaidCommand(context("disable"));
+    expect(states.get(-1001)?.isAntiRaidEnabled).toBe(false);
+    // 只拆入群这条链路：广告检测与防刷屏各有各的开关，不能被这条命令一起关掉。
+    expect(deactivateJoinGuardChat).toHaveBeenCalledWith(-1001);
+    expect(clearAdDetection).not.toHaveBeenCalled();
+    expect(clearFloodControl).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("Worker 不可用时 /antiraid disable 仍完成关闭，但回执如实说没拆干净", async () => {
+    deactivateJoinGuardChat.mockImplementationOnce((): never => {
+      throw new Error("Anti-Raid Worker is unavailable.");
+    });
+    states.set(-1001, { isAntiRaidEnabled: true });
+
+    await handleAntiRaidCommand(context("disable"));
+
+    // 开关照样 durable 地关掉：异常逃出 handler 只会扣住 offset 让 Telegram 重投，
+    // 而那时 wasEnabled 已经是 false，管理员反而会收到一句「本来就关着」。
+    expect(states.get(-1001)?.isAntiRaidEnabled).toBe(false);
+    expect(saveStateInBackground).toHaveBeenCalledWith("antiraid toggled");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
+    }));
+  });
+
+  test("/antiraid 仅允许超级管理员或获授 isCanControllAntiRaidPermission 的白名单身份", async () => {
+    await handleAntiRaidCommand(context("enable", 201));
+    expect(states.size).toBe(0);
+
+    delegatedPermissions.set(200, new Set(["isCanControllAntiRaidPermission"]));
+    await handleAntiRaidCommand(context("enable", 200));
+    expect(states.get(-1001)?.isAntiRaidEnabled).toBe(true);
   });
 
   test("/ad_detect 拒绝非超级管理员，不改任何状态", async () => {

@@ -1,340 +1,27 @@
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
-import type { BunFile } from "bun";
 import type { FlushResult } from "../../types/lifecycle";
-import { chatStates, globalCopyState, globalModelState, stateStoreHolder } from "../../cache/main/storage";
-import { CORRUPT_FILE_SUFFIX, STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
-import { DEFAULT_CHAT_STATE, STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
-import { atomicWriteText, durableRename } from "../../libs/atomicFile";
-import { normalizeChatState, normalizeChatStateEntry } from "../../libs/chatState";
-import { createLatestValueRunner, type LatestValueRunner } from "../../libs/latestValueRunner";
-import { decodeStateFile } from "../../libs/stateFileCodec";
-import type { AiProviderName } from "../../types/aiChat/provider";
+import { chatStates, globalAssetState, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
+import {
+  BOT_DEFAULT_AVATAR_URL,
+  FORTUNE_THUMBNAIL_URL,
+  GAG_THUMBNAIL_URL,
+  PROBABILITY_THUMBNAIL_URL,
+} from "../../consts/ui/assets";
+import {
+  DEFAULT_CHAT_STATE,
+  adoptChatState,
+  createChatState,
+  isEmptyChatState,
+  normalizeChatState,
+  normalizeChatStateEntry,
+} from "../../libs/chatState";
 import type { CachedUser, ChatState, CopyMode, GlobalCopyState, StateFileSchema } from "../../types/chatState";
 import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
+import { StateStore } from "./statePersistence";
 
-export interface StateStoreOptions {
-  stateFilePath?: string;
-  backupFilePath?: string;
-  readText?: (path: string) => Promise<string | null>;
-  writeText?: (path: string, content: string) => Promise<void>;
-  moveFile?: (sourcePath: string, destinationPath: string) => Promise<void>;
-  retryDelaysMs?: readonly number[];
-  maxAttempts?: number;
-  onRetryError?: (attempt: number, error: unknown) => void;
-  onFlushError?: (error: unknown) => void;
-  onFatal?: (error: Error) => void;
-}
-
-export interface StateSaveOptions {
-  /** false 用于 fire-and-forget 快照：仍会重试，但不为每次后台变化保留等待者。 */
-  waitForPersistence?: boolean;
-}
-
-interface StateWrite {
-  json: string;
-  revision: number;
-}
-
-interface ValidStateCopy {
-  kind: "valid";
-  content: string;
-  schema: StateFileSchema;
-}
-
-interface InvalidStateCopy {
-  kind: "invalid";
-  error: Error;
-}
-
-interface MissingStateCopy {
-  kind: "missing";
-}
-
-type StateCopy = ValidStateCopy | InvalidStateCopy | MissingStateCopy;
-
-interface PersistenceWaiter {
-  revision: number;
-  resolve: () => void;
-  reject: (error: Error) => void;
-}
-
-async function readExistingText(path: string): Promise<string | null> {
-  const file: BunFile = Bun.file(path);
-  return await file.exists() ? file.text() : null;
-}
-
-/**
- * state.json 的可注入持久化边界：负责 schema 解码/序列化、latest-only 串行写、
- * 失败退避和退出 flush；ChatState 的业务内存不进入这个类。
- */
-export class StateStore {
-  private readonly stateFilePath: string;
-  private readonly backupFilePath: string;
-  private readonly readText: (path: string) => Promise<string | null>;
-  private readonly writeText: (path: string, content: string) => Promise<void>;
-  private readonly moveFile: (sourcePath: string, destinationPath: string) => Promise<void>;
-  private readonly retryDelaysMs: readonly number[];
-  private readonly maxAttempts: number;
-  private readonly onRetryError: (attempt: number, error: unknown) => void;
-  private readonly onFlushError: (error: unknown) => void;
-  private fatalHandler: ((error: Error) => void) | undefined;
-  private readonly writer: LatestValueRunner<StateWrite>;
-
-  private dirtyWrite: StateWrite | null = null;
-  private nextRevision: number = 1;
-  private retryAttempt: number = 0;
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private observedWriterPromise: Promise<void> | null = null;
-  private readonly persistenceWaiters: PersistenceWaiter[] = [];
-  private quiescing: boolean = false;
-  private disposed: boolean = false;
-  private fatalSignaled: boolean = false;
-
-  constructor({
-    stateFilePath = STATE_FILE_PATH,
-    backupFilePath,
-    readText = readExistingText,
-    writeText = atomicWriteText,
-    moveFile = durableRename,
-    retryDelaysMs = STATE_SAVE_RETRY_DELAYS_MS,
-    maxAttempts = STATE_SAVE_MAX_ATTEMPTS,
-    onRetryError = (attempt: number, error: unknown): void => {
-      logger.error(`Failed to persist state (attempt ${attempt}):`, error);
-    },
-    onFlushError = (error: unknown): void => {
-      logger.error("Failed to flush state to disk on shutdown:", error);
-    },
-    onFatal,
-  }: StateStoreOptions = {}) {
-    this.stateFilePath = stateFilePath;
-    this.backupFilePath = backupFilePath ??
-      (stateFilePath === STATE_FILE_PATH ? STATE_BACKUP_FILE_PATH : `${stateFilePath}.bak`);
-    this.readText = readText;
-    this.writeText = writeText;
-    this.moveFile = moveFile;
-    this.retryDelaysMs = retryDelaysMs;
-    if (this.retryDelaysMs.length === 0) throw new Error("StateStore requires at least one retry delay");
-    if (this.retryDelaysMs.some((delay: number): boolean => !Number.isFinite(delay) || delay <= 0)) {
-      throw new RangeError("StateStore retry delays must be positive finite numbers");
-    }
-    this.maxAttempts = maxAttempts;
-    if (!Number.isSafeInteger(this.maxAttempts) || this.maxAttempts < 1) {
-      throw new Error("StateStore maxAttempts must be a positive safe integer");
-    }
-    this.onRetryError = onRetryError;
-    this.onFlushError = onFlushError;
-    this.fatalHandler = onFatal;
-    this.writer = createLatestValueRunner<StateWrite>(async (write: StateWrite): Promise<void> => {
-      await this.writeText(this.stateFilePath, write.json);
-      await this.writeText(this.backupFilePath, write.json);
-      if (this.dirtyWrite !== null && this.dirtyWrite.revision <= write.revision) {
-        this.dirtyWrite = null;
-      }
-      this.retryAttempt = 0;
-      this.resolvePersistedWaiters(write.revision);
-    });
-  }
-
-  async load(): Promise<StateFileSchema | null> {
-    // 两份副本必须先全部读完、严格解码，再做任何隔离或修复。这样两份都
-    // 不可用时能原样保留现场，绝不把可能含 lockdown 的状态静默变为空。
-    const copies: [PromiseSettledResult<StateCopy>, PromiseSettledResult<StateCopy>] = await Promise.allSettled([
-      this.readCopy(this.stateFilePath),
-      this.readCopy(this.backupFilePath),
-    ]);
-    const readFailures: unknown[] = copies
-      .filter((result: PromiseSettledResult<StateCopy>): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result: PromiseRejectedResult): unknown => result.reason as unknown);
-    if (readFailures.length > 0) {
-      throw new AggregateError(readFailures, "Failed to read all persisted state copies.");
-    }
-    const primary: StateCopy = (copies[0] as PromiseFulfilledResult<StateCopy>).value;
-    const backup: StateCopy = (copies[1] as PromiseFulfilledResult<StateCopy>).value;
-    if (primary.kind === "missing" && backup.kind === "missing") return null;
-
-    if (primary.kind === "valid") {
-      if (backup.kind === "valid" && backup.content === primary.content) return primary.schema;
-      if (backup.kind === "invalid") await this.quarantine(this.backupFilePath);
-      await this.writeText(this.backupFilePath, primary.content);
-      return primary.schema;
-    }
-
-    if (backup.kind === "valid") {
-      if (primary.kind === "invalid") await this.quarantine(this.stateFilePath);
-      await this.writeText(this.stateFilePath, backup.content);
-      return backup.schema;
-    }
-
-    const errors: Error[] = [primary, backup]
-      .filter((copy: InvalidStateCopy | MissingStateCopy): copy is InvalidStateCopy => copy.kind === "invalid")
-      .map((copy: InvalidStateCopy): Error => copy.error);
-    throw new AggregateError(
-      errors,
-      `Neither ${this.stateFilePath} nor ${this.backupFilePath} contains a valid state; manual recovery is required.`
-    );
-  }
-
-  private async readCopy(path: string): Promise<StateCopy> {
-    const content: string | null = await this.readText(path);
-    if (content === null) return { kind: "missing" };
-    try {
-      return { kind: "valid", content, schema: decodeStateFile(JSON.parse(content)) };
-    } catch (error: unknown) {
-      const reason: Error = error instanceof Error ? error : new Error(String(error));
-      return {
-        kind: "invalid",
-        error: new Error(`Invalid persisted state copy ${path}: ${reason.message}`, { cause: reason }),
-      };
-    }
-  }
-
-  private async quarantine(path: string): Promise<void> {
-    const corruptPath: string = `${path}.${Date.now()}.${crypto.randomUUID()}${CORRUPT_FILE_SUFFIX}`;
-    await this.moveFile(path, corruptPath);
-  }
-
-  save(schema: StateFileSchema, options: StateSaveOptions = {}): Promise<void> {
-    if (this.quiescing || this.disposed) {
-      return Promise.reject(new Error("StateStore is quiescing and no longer accepts writes."));
-    }
-    let json: string;
-    try {
-      json = JSON.stringify(schema, null, 2);
-      // TypeScript 类型不能约束运行时对共享 ChatState 的修改；两份磁盘副本
-      // 只能接收可被启动期同一严格 codec 再次加载的快照。
-      decodeStateFile(JSON.parse(json));
-    } catch (error: unknown) {
-      const reason: Error = error instanceof Error ? error : new Error(String(error));
-      return Promise.reject(reason);
-    }
-    const write: StateWrite = { json, revision: this.nextRevision++ };
-    this.dirtyWrite = write;
-    const persisted: Promise<void> = options.waitForPersistence === false
-      ? Promise.resolve()
-      : new Promise((resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
-        this.persistenceWaiters.push({ revision: write.revision, resolve, reject });
-      });
-    void this.push(write);
-    return persisted;
-  }
-
-  private push(write: StateWrite): Promise<void> {
-    const run: Promise<void> = this.writer.push(write);
-    if (this.observedWriterPromise !== run) {
-      this.observedWriterPromise = run;
-      void run.then(
-        (): void => {
-          if (this.observedWriterPromise === run) this.observedWriterPromise = null;
-        },
-        (error: unknown): void => {
-          if (this.observedWriterPromise === run) this.observedWriterPromise = null;
-          this.handleWriteFailure(error);
-        }
-      );
-    }
-    return run;
-  }
-
-  private handleWriteFailure(error: unknown): void {
-    if (this.quiescing || this.disposed) {
-      this.rejectPersistenceWaiters(error);
-      return;
-    }
-    const failedAttempt: number = ++this.retryAttempt;
-    this.onRetryError(failedAttempt, error);
-    if (failedAttempt >= this.maxAttempts) {
-      const reason: Error = error instanceof Error ? error : new Error(String(error));
-      const fatal: Error = new Error(
-        `State persistence failed after ${failedAttempt} attempt(s); refusing further updates.`,
-        { cause: reason }
-      );
-      this.quiescing = true;
-      this.rejectPersistenceWaiters(fatal);
-      if (!this.fatalSignaled) {
-        this.fatalSignaled = true;
-        this.fatalHandler?.(fatal);
-      }
-      return;
-    }
-    this.scheduleRetry();
-  }
-
-  private resolvePersistedWaiters(revision: number): void {
-    for (let index: number = this.persistenceWaiters.length - 1; index >= 0; index--) {
-      const waiter: PersistenceWaiter = this.persistenceWaiters[index]!;
-      if (waiter.revision > revision) continue;
-      this.persistenceWaiters.splice(index, 1);
-      waiter.resolve();
-    }
-  }
-
-  private rejectPersistenceWaiters(error: unknown): void {
-    const reason: Error = error instanceof Error ? error : new Error(String(error));
-    for (const waiter of this.persistenceWaiters.splice(0)) waiter.reject(reason);
-  }
-
-  private scheduleRetry(): void {
-    if (this.quiescing || this.disposed || this.dirtyWrite === null || this.retryTimer !== null) return;
-    const delay: number = this.retryDelaysMs[Math.min(this.retryAttempt - 1, this.retryDelaysMs.length - 1)]!;
-    this.retryTimer = setTimeout((): void => {
-      this.retryTimer = null;
-      const write: StateWrite | null = this.dirtyWrite;
-      if (write === null || this.quiescing || this.disposed) return;
-      void this.push(write);
-    }, delay);
-    this.retryTimer.unref();
-  }
-
-  flush(timeoutMs: number = STATE_FLUSH_TIMEOUT_MS, quiesce: boolean = false): Promise<FlushResult> {
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      throw new RangeError("StateStore flush timeout must be a positive finite number.");
-    }
-    if (quiesce) this.quiescing = true;
-    if (this.retryTimer !== null) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
-    const write: StateWrite | null = this.dirtyWrite;
-    const run: Promise<void> | null = write === null
-      ? this.observedWriterPromise
-      : this.push(write);
-    if (run === null) return Promise.resolve("flushed");
-    return new Promise((resolve: (value: FlushResult | PromiseLike<FlushResult>) => void): void => {
-      let settled: boolean = false;
-      const settle = (result: FlushResult): void => {
-        if (settled) return;
-        settled = true;
-        resolve(result);
-      };
-      const timer: ReturnType<typeof setTimeout> = setTimeout((): void => settle("timedOut"), timeoutMs);
-      run
-        .then((): void => settle("flushed"))
-        .catch((error: unknown): void => {
-          this.onFlushError(error);
-          settle("failed");
-        })
-        .finally((): void => {
-          clearTimeout(timer);
-        });
-    });
-  }
-
-  /** 测试/显式 dispose 用；不隐式落盘，调用方应先 flush。 */
-  dispose(): void {
-    this.quiescing = true;
-    this.disposed = true;
-    if (this.retryTimer !== null) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
-    this.rejectPersistenceWaiters(new Error("StateStore was disposed before persistence completed."));
-  }
-
-  setFatalHandler(handler: ((error: Error) => void) | undefined): void {
-    this.fatalHandler = handler;
-  }
-}
+export { StateStore } from "./statePersistence";
+export type { StateSaveOptions, StateStoreOptions } from "./statePersistence";
 
 function sharedStateStore(): StateStore {
   stateStoreHolder.current ??= new StateStore();
@@ -351,36 +38,36 @@ export function getActiveCopyIn(chatId: number): { copiedUser: CachedUser; copyM
 }
 
 /**
- * 当前生效的生图供应商覆盖；undefined 表示从没设过，生图跟随默认选取
- * （见 aiChat/provider.ts 的 imageAiProvider）。
+ * 「未卜先知」内联结果此刻该用的缩略图直链。
+ *
+ * 四个取值函数都直接返回**最终可用值**而不是 `string | undefined`：与
+ * agent 能力配置不同，这里的缺省只对应一个内置常量；语义在这里收敛一次，
+ * 调用点就不必各自记得兜底。
  */
-export function getImageProviderOverride(): AiProviderName | undefined {
-  return globalModelState.image;
+export function getFortuneThumbnailUrl(): string {
+  return globalAssetState.fortuneThumbnailUrl ?? FORTUNE_THUMBNAIL_URL;
+}
+
+/** 「概率论」内联结果此刻该用的缩略图直链；缺省语义同上。 */
+export function getProbabilityThumbnailUrl(): string {
+  return globalAssetState.probabilityThumbnailUrl ?? PROBABILITY_THUMBNAIL_URL;
+}
+
+/** gag 发言内联结果此刻该用的缩略图直链；缺省语义同上。 */
+export function getGagThumbnailUrl(): string {
+  return globalAssetState.gagThumbnailUrl ?? GAG_THUMBNAIL_URL;
 }
 
 /**
- * 写入生图供应商覆盖。只改内存；落盘由调用方在同一同步栈之后走
- * persistAuthoritativeState——这是超管的权威决策，必须过 durability barrier
- * 再回执（口径同 `/ai_chat`）。
+ * 复原机器人头像时该抓的那张默认脸；缺省语义同上。
+ *
+ * 取值在主线程完成、URL 作为参数传进 infra/telegram/avatar/restore.ts 的
+ * restoreDefaultProfilePhoto：该实现被 aiChat 与 antiRaid 两条 Worker 一并
+ * import，不能碰只属于主线程的 cache/main/storage.ts（见 docs/cn/04-invariants.md
+ * 的缓存线程归属）。
  */
-export function setImageProviderOverride(provider: AiProviderName): void {
-  globalModelState.image = provider;
-}
-
-/**
- * 当前生效的闲聊侧供应商覆盖（回复会话、纯文本、视觉描述）；undefined 表示从
- * 没设过，这三项跟随默认选取（见 aiChat/provider.ts 的 chatAiProvider）。
- */
-export function getChatProviderOverride(): AiProviderName | undefined {
-  return globalModelState.chat;
-}
-
-/**
- * 写入闲聊侧供应商覆盖。只改内存；落盘由调用方在同一同步栈之后走
- * persistAuthoritativeState，口径同 setImageProviderOverride。
- */
-export function setChatProviderOverride(provider: AiProviderName): void {
-  globalModelState.chat = provider;
+export function getBotDefaultAvatarUrl(): string {
+  return globalAssetState.botDefaultAvatarUrl ?? BOT_DEFAULT_AVATAR_URL;
 }
 
 export function getAllChatStates(): ReadonlyMap<number, ChatState> {
@@ -411,11 +98,16 @@ export async function loadState(): Promise<void> {
       adoptCopyTarget(decoded.global.copy.copiedUser, decoded.global.copy.copyMode, decoded.global.copy.copyChatId!);
     }
     // 直接整块赋值：缺字段就是 undefined，那是「从没设过」，不是「沿用上次」。
-    globalModelState.image = decoded.global.model.image;
-    globalModelState.chat = decoded.global.model.chat;
-    for (const [chatIdStr, chatState] of Object.entries(decoded.chats)) {
+    globalAssetState.fortuneThumbnailUrl = decoded.global.assets.fortuneThumbnailUrl;
+    globalAssetState.probabilityThumbnailUrl = decoded.global.assets.probabilityThumbnailUrl;
+    globalAssetState.gagThumbnailUrl = decoded.global.assets.gagThumbnailUrl;
+    globalAssetState.botDefaultAvatarUrl = decoded.global.assets.botDefaultAvatarUrl;
+    for (const [chatIdStr, decodedState] of Object.entries(decoded.chats)) {
+      // 解码结果是稀疏的（JSON.parse 只带文件里真正出现过的键），必须先搬进规范
+      // 形状再进 chatStates，否则磁盘上的形状差异会一路带进每条群消息的读取路径。
+      const chatState: ChatState = adoptChatState(decodedState);
       normalizeChatState(chatState);
-      if (Object.keys(chatState).length > 0) chatStates.set(Number(chatIdStr), chatState);
+      if (!isEmptyChatState(chatState)) chatStates.set(Number(chatIdStr), chatState);
     }
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
@@ -423,17 +115,54 @@ export async function loadState(): Promise<void> {
   }
 }
 
+/**
+ * 把 `state.global.assets` 里没设过的项补成内置常量，并在确有补写时落一次盘。
+ *
+ * 目的是**让旋钮出现在文件里**：这一块没有任何命令会写，改图的人得直接编辑
+ * state.json；而缺省语义（缺字段=回退常量）意味着一个从没配过的部署里根本看不到
+ * 这些键，于是要么去翻代码找键名，要么照着别处抄一份可能已经过时的示例。启动时
+ * 补齐之后，文件里永远摆着四个当前生效的值，改图就是就地改。
+ *
+ * 只补缺的那一项：已经配过的值原样保留，绝不用常量覆盖部署方写下的地址。
+ *
+ * 落盘走 saveStateInBackground 而不是 persistAuthoritativeState：这是一次为了
+ * 可读性做的补写，不是谁按下的权威决策，写失败不该拦住启动——失败会照常走
+ * StateStore 的重试与 fatal 通道（见 app/lifecycle.ts 的 setStatePersistenceFatalHandler）。
+ * @returns 本次补写了几项；四项都配过时为 0，且不产生任何写盘。
+ */
+export function seedMissingAssetState(): number {
+  let seeded: number = 0;
+  if (globalAssetState.fortuneThumbnailUrl === undefined) {
+    globalAssetState.fortuneThumbnailUrl = FORTUNE_THUMBNAIL_URL;
+    seeded++;
+  }
+  if (globalAssetState.probabilityThumbnailUrl === undefined) {
+    globalAssetState.probabilityThumbnailUrl = PROBABILITY_THUMBNAIL_URL;
+    seeded++;
+  }
+  if (globalAssetState.gagThumbnailUrl === undefined) {
+    globalAssetState.gagThumbnailUrl = GAG_THUMBNAIL_URL;
+    seeded++;
+  }
+  if (globalAssetState.botDefaultAvatarUrl === undefined) {
+    globalAssetState.botDefaultAvatarUrl = BOT_DEFAULT_AVATAR_URL;
+    seeded++;
+  }
+  if (seeded > 0) saveStateInBackground("seed default asset URLs");
+  return seeded;
+}
+
 function currentStateSnapshot(): StateFileSchema {
   const chats: Record<string, ChatState> = {};
   for (const [chatId, chatState] of chatStates) {
     normalizeChatState(chatState);
-    if (Object.keys(chatState).length === 0) {
+    if (isEmptyChatState(chatState)) {
       chatStates.delete(chatId);
       continue;
     }
     chats[String(chatId)] = chatState;
   }
-  return { chats, global: { copy: globalCopyState, model: globalModelState } };
+  return { chats, global: { copy: globalCopyState, assets: globalAssetState } };
 }
 
 export function saveState(): Promise<void> {
@@ -488,7 +217,9 @@ export function getChatState(chatId: number): Readonly<ChatState> {
 export function getOrCreateChatState(chatId: number): ChatState {
   let chatState: ChatState | undefined = chatStates.get(chatId);
   if (!chatState) {
-    chatState = {};
+    // 规范形状一次建好；写入方只赋值，不往裸 `{}` 上一个个加字段（见
+    // libs/chatState.ts 的 createChatState）。
+    chatState = createChatState();
     chatStates.set(chatId, chatState);
   }
   return chatState;
@@ -496,8 +227,9 @@ export function getOrCreateChatState(chatId: number): ChatState {
 
 export function clearChatStateField(chatId: number, field: keyof ChatState): boolean {
   const chatState: ChatState | undefined = chatStates.get(chatId);
-  if (!chatState || !(field in chatState)) return false;
-  delete chatState[field];
+  // 判「有没有设过」看取值而不是 `field in chatState`：规范形状下键一直都在。
+  if (chatState?.[field] === undefined) return false;
+  chatState[field] = undefined;
   normalizeChatStateEntry(chatStates, chatId);
   return true;
 }
@@ -513,5 +245,7 @@ export function pruneDepartedChatState(chatId: number): void {
     chatStates.delete(chatId);
     return;
   }
-  chatStates.set(chatId, { lockdown: current.lockdown });
+  const retained: ChatState = createChatState();
+  retained.lockdown = current.lockdown;
+  chatStates.set(chatId, retained);
 }

@@ -4,7 +4,8 @@ import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { DAY_MS } from "../../consts/diskIO/common";
 import { JOIN_LOG_SNAPSHOT_CHUNK_BYTES } from "../../consts/diskIO/joinLog";
 import type { JoinLogRecord } from "../../types/diskIO/storage";
-import { AppendOnlyFileFormatError } from "./appendOnlyDayFile";
+import { invalidInput } from "../../libs/inputValidation";
+import { hasExactKeys } from "../../libs/runtimeConfig";
 
 /** 与通用追加格式一致的两级缩进，模块初始化一次后供热序列化路径复用。 */
 const ENTRY_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
@@ -16,6 +17,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isJoinLogRecord(value: unknown): value is JoinLogRecord {
   return isRecord(value) &&
+    hasExactKeys(value, ["userId", "joinedAt"]) &&
     Number.isSafeInteger(value.userId) &&
     (value.userId as number) > 0 &&
     Number.isSafeInteger(value.joinedAt) &&
@@ -28,10 +30,7 @@ export function assertJoinLogSchema(
   parsed: unknown
 ): asserts parsed is Record<string, JoinLogRecord> {
   if (!isRecord(parsed)) {
-    throw new AppendOnlyFileFormatError(
-      path,
-      "must contain a top-level JSON object."
-    );
+    return invalidInput(path, "$", "a JSON object of join records");
   }
   for (const key in parsed) {
     if (!Object.hasOwn(parsed, key)) continue;
@@ -40,9 +39,10 @@ export function assertJoinLogSchema(
       !isJoinLogRecord(value) ||
       key !== `${value.joinedAt}:${value.userId}`
     ) {
-      throw new AppendOnlyFileFormatError(
+      return invalidInput(
         path,
-        `contains an invalid join record for key ${key}.`
+        "$.<record>",
+        "exactly { userId: positiveSafeInteger, joinedAt: positiveSafeInteger } under its canonical key"
       );
     }
   }

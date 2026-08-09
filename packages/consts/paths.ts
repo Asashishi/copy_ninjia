@@ -11,13 +11,24 @@ import {
  */
 export const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
 
+/** 可选进程环境路径真正缺省时返回 undefined，存在但空白时拒绝启动。 */
+function optionalRootPath(name: string): string | undefined {
+  const value: string | undefined = process.env[name];
+  if (value === undefined) return undefined;
+  const trimmed: string = value.trim();
+  if (trimmed.length === 0) {
+    throw new Error(`environment: ${name} must be a non-empty path when present.`);
+  }
+  return trimmed;
+}
+
 /**
  * 所有运行时生成数据的根目录。生产默认保持项目根目录；测试 preload 必须在
  * 任何生产模块加载前注入独立临时目录，从源头隔离真实 I/O，而非依赖每个
  * 测试都记得 mock 路径。
  */
-/** 环境变量解析出的可选数据根；空白值按未配置处理。 */
-const CONFIGURED_DATA_ROOT: string | undefined = process.env[RUNTIME_DATA_ROOT_ENV]?.trim() || undefined;
+/** 环境变量解析出的可选数据根；仅真正缺省时使用项目根目录。 */
+const CONFIGURED_DATA_ROOT: string | undefined = optionalRootPath(RUNTIME_DATA_ROOT_ENV);
 /** 是否由部署者显式配置了独立运行时数据根；用于启用生产权限门禁。 */
 export const RUNTIME_DATA_ROOT_IS_CONFIGURED: boolean = CONFIGURED_DATA_ROOT !== undefined;
 /** 当前进程实际使用的运行时数据根目录。 */
@@ -37,7 +48,7 @@ export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
 
 /** 部署配置目录；测试会显式指向受版本控制的 config_example/。 */
 export const CONFIG_ROOT: string = resolve(
-  process.env[CONFIG_ROOT_ENV]?.trim() || join(PROJECT_ROOT, "config")
+  optionalRootPath(CONFIG_ROOT_ENV) ?? join(PROJECT_ROOT, "config")
 );
 
 /** 应景贴纸包白名单配置文件。 */
@@ -49,13 +60,14 @@ export const MOOD_CONFIG_PATH: string = join(CONFIG_ROOT, "mood.json");
 /** 广告检测的部署者示例清单（纯字符串数组），见 packages/config/adSamples.ts。 */
 export const AD_SAMPLES_CONFIG_PATH: string = join(CONFIG_ROOT, "ad_samples.json");
 
+/** Telegram Bot token 与超级管理员 ID 的必填部署配置。 */
+export const TELEGRAM_CONFIG_PATH: string = join(CONFIG_ROOT, "telegram.json");
+
 /**
- * OpenAI 兼容端点与模型的部署配置，分 ad_detect 与 ai_agent 两段；必填，代码不再
- * 持有任何模型默认值。可省的只有两段各自的 base_url，见 packages/config/openai.ts。
+ * AI 部署配置；agent 下的各项能力分别配置 provider、api_key、model 与可选
+ * base_url，见 packages/config/agent.ts。
  */
-export const OPENAI_CONFIG_PATH: string = join(CONFIG_ROOT, "openai.json");
-/** Gemini 四条流水线的模型名；必填，代码不再持有任何模型默认值。 */
-export const GEMINI_CONFIG_PATH: string = join(CONFIG_ROOT, "gemini.json");
+export const AGENT_CONFIG_PATH: string = join(CONFIG_ROOT, "agent.json");
 /** 用户/频道白名单及逐项权限配置，见 packages/config/whitelist.ts。 */
 export const WHITELIST_CONFIG_PATH: string = join(CONFIG_ROOT, "whitelist.json");
 /** 人工维护的静态黑名单 ID 配置，启动时与 memory/blocklist/blocklist.json 合并。 */
@@ -87,7 +99,8 @@ export const STICKER_MEMORY_DIR: string = join(MEMORY_DIR, "stickers");
 export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");
 /**
  * 群成员滚动入群日志目录；按 `<chatId>.<东京日期>.json` 追写，保留最近三个
- * 东京自然日以覆盖跨午夜在途查询，仅在 `/batch_kick` 查询时读取文件内容。
+ * 东京自然日以覆盖跨午夜在途查询；启动时校验保留窗口，
+ * `/batch_kick` 查询和新入群事件再按需建立有界缓存。
  */
 export const JOIN_LOG_MEMORY_DIR: string = join(MEMORY_DIR, "joinlog");
 /**
@@ -130,7 +143,7 @@ export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");
 
 /**
  * 原子重写（写 tmp、rename 覆盖目标路径）与损坏文件隔离共用的后缀，全项目
- * 落盘统一复用，见 infra/storage/stateStore.ts、
+ * 落盘统一复用，见 infra/storage/statePersistence.ts、
  * workers/diskIO/snapshotFiles.ts 的快照恢复、
  * workers/diskIO/appendOnlyDayFile.ts 的 atomicRewrite。
  */

@@ -1,6 +1,6 @@
 import type { Chat, ChatFullInfo } from "@grammyjs/types";
 import { logger } from "./logger";
-import { bot } from "./telegram";
+import { bot } from "./telegram/mainClient";
 import { getAllChatStates, getChatState, getOrCreateChatState, saveStateInBackground } from "./storage/stateStore";
 import { chatTitleRefreshRuntime } from "../cache/main/chatTitle";
 import { CHAT_TITLE_REFRESH_CONCURRENCY, CHAT_TITLE_REFRESH_SAVE_BATCH_SIZE } from "../consts/telegram";
@@ -50,9 +50,9 @@ export function recordChatTitleFromChat(chat: Chat): void {
  * 启动流程：给 state.json 里已知的每个群现查一次当前群名称并回填。不阻塞
  * bot 启动主流程——这纯粹是方便人读 state.json 的锦上添花，慢一点或个别
  * 群查询失败都不影响机器人正常运行。app/lifecycle.ts 会追踪该任务，并在
- * 最终状态快照前等待它完成，避免刷新任务在 flush 后继续改状态。共享的 bot.api 客户端
- * 自带限流+自动重试（见 infra/telegram/client.ts 的 apiThrottler/autoRetry）；本 owner
- * 仍使用固定小并发池，避免历史群一次性占满启动期的共享 Telegram 队列。
+ * 最终状态快照前等待它完成，避免刷新任务在 flush 后继续改状态。共享的 bot.api
+ * 客户端会把 429 请求退回主线程 query 类别队列；本 owner 仍使用固定小并发池，
+ * 避免历史群一次性占满启动期的查询在途与同类别退避 FIFO。
  */
 export async function refreshAllChatTitles(
   signal: AbortSignal = chatTitleRefreshRuntime.controller.signal

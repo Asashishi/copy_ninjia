@@ -1,5 +1,7 @@
 /** Telegram 动作适配层与业务调用方共享的发送结果。 */
 
+import type { TelegramApi } from "./telegramWorker";
+
 /**
  * 本项目会发出的 Telegram 聊天状态取值。
  *
@@ -8,13 +10,35 @@
  * 类型的话，新增一个状态时漏改任何一处都编译通过，运行时才发现发出去的是
  * 另一个状态。
  */
-export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker";
+export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker" | "upload_document";
 
 /** 一条已成功发送的 Telegram 消息；repliedToMessageId 只在服务端实际挂上
  * 回复关系时存在，不能用请求参数推断。 */
 export interface TelegramSendResult {
   messageId: number;
   repliedToMessageId?: number;
+}
+
+/** 等待跨线程自发消息标记的单个主线程 rendezvous。 */
+export interface SelfSentWaiter {
+  readonly resolve: (matched: boolean) => void;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+/** 延迟删除只需要单条与批量删除能力，真实客户端和 Worker 代理均可实现。 */
+export type TelegramMessageDeletionApi = Pick<
+  TelegramApi,
+  "deleteMessage" | "deleteMessages"
+>;
+
+/** 主线程/Worker 各自登记的一条延迟删除任务。 */
+export interface PendingMessageDeletion {
+  readonly chatId: number;
+  readonly messageId: number;
+  readonly api: TelegramMessageDeletionApi;
+  /** 停机提前兑现时是否允许与同客户端、同群条目合成 deleteMessages。 */
+  readonly batchOnFlush: boolean;
+  readonly timer: ReturnType<typeof setTimeout>;
 }
 
 /**

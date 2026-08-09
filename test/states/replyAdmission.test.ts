@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../../packages/consts/aiChat";
-import { admitRound, admitTrigger } from "../../packages/states/replyAdmission";
-import type { TriggerKind } from "../../packages/types/states/replyAdmission";
+import { admitRound, admitTrigger as decideTrigger } from "../../packages/states/replyAdmission";
+import type { AdmitDecision, AdmitTriggerInput, TriggerKind } from "../../packages/types/states/replyAdmission";
 
 const ALL_KINDS: TriggerKind[] = ["direct", "random", "mediaDirect", "mediaRandom"];
+
+function admitTrigger(
+  input: Omit<AdmitTriggerInput, "telegramBackpressured">
+): AdmitDecision {
+  return decideTrigger({ ...input, telegramBackpressured: false });
+}
 
 describe("admitTrigger：并发未满且队列已空", () => {
   for (const kind of ALL_KINDS) {
@@ -81,6 +87,26 @@ describe("admitTrigger：并发超过上限（异常输入防御，与 === 上�
 
   test("kind=direct 且队列未满 → enqueue", () => {
     expect(admitTrigger({ activeRounds: REPLY_ROUND_MAX_CONCURRENT + 3, queueSize: 0, kind: "direct" })).toEqual({ action: "enqueue" });
+  });
+});
+
+describe("admitTrigger：Telegram 发送面软背压", () => {
+  test("随机触发即使没有在途轮次也静默丢弃", () => {
+    expect(decideTrigger({
+      activeRounds: 0,
+      queueSize: 0,
+      kind: "random",
+      telegramBackpressured: true,
+    })).toEqual({ action: "dropSilently" });
+  });
+
+  test("直接触发最多保留一个同群在途轮次", () => {
+    expect(decideTrigger({
+      activeRounds: 1,
+      queueSize: 0,
+      kind: "direct",
+      telegramBackpressured: true,
+    })).toEqual({ action: "enqueue" });
   });
 });
 

@@ -2,7 +2,7 @@ import type { CommandContext, Context } from "grammy";
 import type { User } from "@grammyjs/types";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatUserLabel } from "../users/userLabel";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import type { WhitelistPermissionKey } from "../types/whitelist";
 import type { CachedUser } from "../types/chatState";
 import type { ToggleCommandTexts } from "../types/commands";

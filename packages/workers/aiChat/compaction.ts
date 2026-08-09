@@ -3,7 +3,7 @@ import { sleep } from "../../libs/sleep";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
 import { formatBufferedMessageLine } from "../../aiChat/ai/utils/chatTranscript";
-import { chatAiProvider } from "../../aiChat/provider";
+import { summaryAiProvider } from "../../aiChat/provider";
 import {
   COMPACTION_MAX_PENDING_PER_CHAT,
   MAX_SUMMARY_ROUNDS,
@@ -155,7 +155,7 @@ async function summarizeBatch(batch: BufferedMessage[]): Promise<AiTextResult> {
   const selfNote: string = botInfoState.current
     ? `注意：[id:${botInfoState.current.id}] 是群里的聊天机器人「${botInfoState.current.first_name}」本人的发言，摘要里请以「${botInfoState.current.first_name}」称呼它。\n\n`
     : "";
-  return chatAiProvider().generateText({
+  return summaryAiProvider().generateText({
     purpose: "chatSummary",
     systemPrompt: currentTimeSentence() + SUMMARY_SYSTEM_PROMPT,
     userContent: selfNote + batch.map(formatBufferedMessageLine).join("\n"),

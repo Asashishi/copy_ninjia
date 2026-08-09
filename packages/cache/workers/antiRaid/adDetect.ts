@@ -8,7 +8,7 @@ import type { AdMessageBundle } from "../../../types/antiRaid/adDetect";
  * 全部随 Worker isolate 生死：崩溃重建后队列与消息串一起清空，主线程不做镜像
  * ——判定本身是尽力而为的启发式，丢掉几条待检消息不影响任何安全边界，而真正
  * 不可丢的处置（拉黑 + 各群封禁）在判定命中后由主线程接管，走 /block 那条
- * durable 路径（见 docs/04-invariants.md）。
+ * durable 路径（见 docs/cn/04-invariants.md）。
  */
 
 /**
@@ -35,7 +35,7 @@ export const recentlyEnqueuedAdKeys: Set<string> = new Set<string>();
  * 本轮窗口内已经被判成广告并处置过的键。处置到「主线程把人写进黑名单」之间
  * 有一段跨线程往返，这张表拦住那段时间里已经排在本线程的后续消息，避免同一
  * 个人被反复判定、反复触发一次完整的拉黑 + 各群封禁登记（见 adDetect.ts 的
- * disposeDetectedAd 与 docs/04-invariants.md）。与上表同一时机整表清空；届时
+ * disposeDetectedAd 与 docs/cn/04-invariants.md）。与上表同一时机整表清空；届时
  * 主线程的黑名单门禁早已接管，不需要它继续记着。
  */
 export const recentlyDisposedAdKeys: Set<string> = new Set<string>();
@@ -57,7 +57,7 @@ export const pendingAdMessages: Map<string, AdMessageBundle> = new Map();
 export const adDetectSystemPrompts: Map<boolean, string> = new Map();
 
 /**
- * 正在等待 DeepSeek 判定的键；防止同一个人被并发送检两次，同时它的 size 就是
+ * 正在等待广告检测 provider 判定的键；防止同一个人被并发送检两次，同时它的 size 就是
  * 全局在途计数，由 AD_DETECT_MAX_IN_FLIGHT 兜住上界（见 adDetect/queue.ts 的
  * runAdDetectBatch）。派发时插入，detectOne 的 finally 里删除，因此 Worker
  * 崩溃重建后随 isolate 一起归零，不需要主线程镜像。

@@ -19,7 +19,7 @@
  * checkedSeq 记录已经消费到哪里，只有还有更大序号时才值得重新入队。
  *
  * 判定失败（网络抖动、模型抽风、响应形状不对）一律当作「本次没判定」并把这
- * 一批记成已检：绝不猜一个 true 出来，也绝不无限重试——后者在 DeepSeek 侧
+ * 一批记成已检：绝不猜一个 true 出来，也绝不无限重试——后者在 provider 侧
  * 故障时就是一场每秒 15 发的请求风暴。
  *
  * 状态全在 cache/workers/antiRaid/adCandidate.ts，随 Worker isolate 生死；崩溃重建后队列
@@ -28,7 +28,7 @@
 
 import { classifyAdText } from "./classifier";
 import { deleteStragglerAdMessage, disposeAdSender } from "./disposal";
-import { freshAdminIds, fetchAdminIds } from "../adminCache";
+import { freshAdminIds, isChatAdmin } from "../adminCache";
 import { logger } from "../../../infra/logger";
 import {
   adDetectCapacitySaturated,
@@ -70,7 +70,7 @@ import {
   selectAdBundleEntries,
 } from "./bundle";
 import type { AdBundleSelection } from "../../../types/antiRaid/adDetect";
-import { verificationKey } from "../../../libs/verificationKey";
+import { verificationKey, verificationKeyPrefix } from "../../../libs/verificationKey";
 import type { AdCandidateMessage, AdDetectedEvent, AdSampleContext } from "../../../types/antiRaid";
 import type { AdCandidateEntry, AdMessageBundle, AdVerdict } from "../../../types/antiRaid/adDetect";
 import type {
@@ -98,7 +98,7 @@ function requeueIfUnchecked(key: string, bundle: AdMessageBundle): void {
     return;
   }
   // 三张表一起动，缺一张就会让「谁在待检」出现两个互相矛盾的答案，
-  // 见 docs/04-invariants.md。
+  // 见 docs/cn/04-invariants.md。
   recentlyEnqueuedAdKeys.add(key);
   queuedAdDetectKeys.add(key);
   adDetectQueue.push(key);
@@ -153,7 +153,7 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
   // （详见 bundle.ts 的 claimSampleContextParts，连坐的代价与跨条去重也写在那里）。
   const context: AdSampleContext | undefined =
     boundSampleContext(message.sampleContext);
-  // 按码元硬切会把切点落在代理对中间：留下的孤立高位代理进 DeepSeek 提示词时
+  // 按码元硬切会把切点落在代理对中间：留下的孤立高位代理进模型提示词时
   // 被 UTF-8 编码换成 U+FFFD，还会原样写进 memory/ 的命中样本，运维复核误判时
   // 看到的是乱码而不是对方真正发的那个字。与同管线的 classifier.ts 用同一个
   // 代理对安全截断。
@@ -226,16 +226,10 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
  */
 async function isAdminSender(bundle: AdMessageBundle): Promise<boolean | undefined> {
   // 频道马甲没有「群成员」身份，管理员表里不会有它；拿当前群当皮套的匿名
-  // 管理员在主线程投递入口就已经挡掉了（见 antiRaid/adCandidate.ts）。
+  // 管理员在主线程投递入口就已经挡掉了（见 antiRaid/adCandidate.ts）。这一条
+  // 是广告链路独有的前置，三态查询本身共用 adminCache 的 isChatAdmin。
   if (bundle.isChannel) return false;
-  const cached: Set<number> | undefined = freshAdminIds(bundle.chatId);
-  if (cached !== undefined) return cached.has(bundle.senderId);
-  try {
-    return (await fetchAdminIds(bundle.chatId)).has(bundle.senderId);
-  } catch (error: unknown) {
-    logger.error(`Failed to check admin exemption for sender ${bundle.senderId} in chat ${bundle.chatId}:`, error);
-    return undefined;
-  }
+  return await isChatAdmin(bundle.chatId, bundle.senderId, "sender");
 }
 
 /**
@@ -309,7 +303,7 @@ async function detectOne(key: string, bundle: AdMessageBundle): Promise<void> {
   // 处置前先摘掉这一串，并把这个键记进本窗口的已处置表：处置期间以及封禁真正
   // 落地之前抢跑进来的消息，都属于「已经在被清算的人」，再判一次只会换来第二
   // 次完全相同的拉黑与各群封禁登记（每一次都要整份 outbox 落盘，见
-  // docs/04-invariants.md）。窗口轮换时这条记录会随表清掉，那时主线程的黑名单
+  // docs/cn/04-invariants.md）。窗口轮换时这条记录会随表清掉，那时主线程的黑名单
   // 门禁早已接管。
   pendingAdMessages.delete(key);
   refreshAdDetectCapacitySaturation();
@@ -356,7 +350,7 @@ function refreshAdDetectCapacitySaturation(): void {
  *
  * **刻意不登记进 Worker 的在途任务集合**（trackAntiRaidTask）：那个集合是停机
  * drain 的等待对象，而 drain 的预算是 ANTI_RAID_BARRIER_TIMEOUT_MS 这一档的秒级
- * 数值，一次判定请求却可以耗到 DEEPSEEK_REQUEST_TIMEOUT_MS（30 秒，还要乘上
+ * 数值，一次判定请求却可以耗到广告检测 provider 的 30 秒请求超时（还要乘上
  * 空正文重试）。登记进去的话，凡是停机时恰好有一次判定在途，drain 必然超时
  * ——生命周期据此拒绝确认 Telegram offset 并以非零状态退出，等于每次撞上都
  * 换来一次脏退出加一批 update 重投。判定是尽力而为的启发式，本来就不该扣着
@@ -420,7 +414,7 @@ export function quiesceAdDetectQueue(): void {
  * 属于这个群的键一并摘掉：留着只会让重新开启开关后的头一个窗口白白哑火。
  */
 export function clearChatAdDetect(chatId: number): void {
-  const prefix: string = `${chatId}:`;
+  const prefix: string = verificationKeyPrefix(chatId);
   adDetectQueue.removeWhere((key: string): boolean => key.startsWith(prefix));
   for (const key of queuedAdDetectKeys) {
     if (key.startsWith(prefix)) queuedAdDetectKeys.delete(key);

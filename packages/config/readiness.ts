@@ -1,47 +1,60 @@
 /**
  * 按功能聚合部署配置的可用性判定。
  *
- * 这些文件曾经在 `ApplicationLifecycle.init()` 里统一预热，任何一份写坏都让
- * 进程在联网之前退出。代价与收益不对等：贴纸白名单里多一个逗号，换来的是
- * copy、抽奖、入群验证、黑名单——全部按群 opt-in 之外的核心能力——一起离线，
- * systemd 还会照着重启循环。因此判定改在功能自己的入口做：
- * 相关命令（`/ai_chat enable`、`/ad_detect enable`、`/ja_copy enable`）读一次
- * 结论，坏了就只拒绝这一个功能并点名是哪份文件，进程照常服务其余能力。
+ * 主进程启动总闸先校验全部已存在的部署输入；真正缺省的可选文件再由相关功能
+ * （`/ai_chat enable`、`/ad_detect enable`、`/ja_copy enable`）按需判定。
  *
  * 结论按进程缓存**成功与失败两侧**：底层 loader 只缓存成功，失败会每次重新
  * 读盘解析，而判定要挂在每条群消息的门禁上（见 antiRaid/adDetect.ts）——不缓存
  * 失败就等于每条消息一次 readFileSync。修好文件后要重启才生效，与
  * `config/*.json` 一贯的「读一次、进程内不再重载」语义一致，拒绝文案里也点明了。
  *
- * 缓存是每 isolate 一份（见 cache/perThread/config.ts）：Worker 各自判各自的，与四份
- * 底层 loader 的单例缓存同一口径。
+ * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令、
+ * 投喂门禁与启动前置核对，全在主线程；Worker 不问「这个功能能不能开」。
  *
- * config/openai.json 是唯一被**分段**探测的一份：两条线各读各的半边，因此
- * config/openai.ts 为它另开了 loadAdDetectOpenAiConfig / loadAiAgentOpenAiConfig。
- * 这两个入口不走 getAdDetectOpenAiConfig / getAiAgentOpenAiConfig 的单例缓存，
- * 于是探测各自多读一次盘——每进程每闸门一次，换来的是「一段写坏只关掉那一个功能」。
+ * 功能 readiness 对 config/agent.json 仍按消费方**分段**探测，且与运行时共用同
+ * 一对 holder：启动总闸严格解析整份文件后会同时填充两段快照，探测因此只是
+ * 「holder 空不空」的一次分支，已存在文件在一个进程里只解析一次。运行时那一侧
+ * 只读 holder，Worker 的那份由初始化消息投递（见 config/agent.ts 的边界说明）。
  *
- * 分段必须一路贯穿到运行时：运行时侧同样是两个分段访问器、两对缓存 holder。
- * 只要有任何一个消费点回退成整份加载，这里的分段判定就等于没做——那一段的笔误
- * 会先通过闸门与启动 preflight，再在真实调用时抛错并被上游 catch 吞掉。
+ * 三张探测表都是模块级只读常量：判定命中缓存后只剩一次 holder 读取和一次分支，
+ * 每条群消息都要走的路上不再构造数组与 probe 对象。
  */
 
-import { readFileSync } from "node:fs";
+import { createPrivateKey } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { getAdSampleConfig } from "./adSamples";
 import { getMoodConfig } from "./mood";
 import { getReactionConfig } from "./reactions";
 import { getStickerConfig } from "./stickers";
-import { loadAdDetectOpenAiConfig, loadAiAgentOpenAiConfig } from "./openai";
-import { loadGeminiDeploymentConfig } from "./gemini";
-import { hasGeminiChatCredentials, hasOpenAiChatCredentials } from "../aiChat/credentials";
+import { getTelegramConfig } from "./telegram";
+import {
+  ensureAdDetectAgentConfig,
+  ensureAgentDeploymentConfig,
+  validateAgentDeploymentConfig,
+} from "./agent";
+import { getPersona } from "./persona";
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
   jaTranslateConfigReadinessCache,
 } from "../cache/main/configReadiness";
-import { GOOGLE_AUTH_FILE_PATH } from "../consts/paths";
+import {
+  AD_SAMPLES_CONFIG_PATH,
+  AGENT_CONFIG_PATH,
+  GOOGLE_AUTH_FILE_PATH,
+  MOOD_CONFIG_PATH,
+  PERSONA_PATH,
+  REACTIONS_CONFIG_PATH,
+  STICKERS_CONFIG_PATH,
+} from "../consts/paths";
+import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { isPlainRecord } from "../libs/runtimeConfig";
-import type { ConfigReadiness, ConfigReadinessCache, DeploymentFileProbe } from "../types/config";
+import type {
+  ConfigReadiness,
+  ConfigReadinessCache,
+  DeploymentFileProbe,
+} from "../types/config";
 
 /** 逐份探测，返回第一份坏掉的；全通过返回 ok。 */
 function probeAll(probes: readonly DeploymentFileProbe[]): ConfigReadiness {
@@ -61,62 +74,71 @@ function probeAll(probes: readonly DeploymentFileProbe[]): ConfigReadiness {
   return { ok: true };
 }
 
-/** 按 holder 缓存一次探测结论（成功与失败都缓存，理由见模块头注）。 */
+/**
+ * 按 holder 缓存一次探测结论（成功与失败都缓存，理由见模块头注）。
+ *
+ * 命中缓存的那一路只有一次 holder 读取加一次分支：三条 readiness 全部挂在每条
+ * 群消息的门禁上，`??=` 虽然短路了 probeAll，调用方为它准备的 probe 表却仍然
+ * 每次都要构造。因此探测表一律是模块级只读常量（见下方三张表），本函数不再
+ * 参与任何分配。
+ */
 function cachedReadiness(cache: ConfigReadinessCache, probes: readonly DeploymentFileProbe[]): ConfigReadiness {
-  cache.current ??= probeAll(probes);
-  return cache.current;
+  const cached: ConfigReadiness | null = cache.current;
+  if (cached !== null) return cached;
+  const verdict: ConfigReadiness = probeAll(probes);
+  cache.current = verdict;
+  return verdict;
 }
 
 /**
- * AI 闲聊要读的部署配置：贴纸白名单、反应词表、心情表三份必检，
- * config/openai.json 的 **ai_agent 段**在握有 OpenAI 凭据时一并检。
+ * AI 闲聊要读的部署配置：贴纸白名单、反应词表、心情表、人设与 agent 段必检。
  *
  * 前三份缺一不可——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、
  * aiChat/ai/reactions.ts、aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场
  * 抛出而不是降级。
  *
- * 后两份是条件项，各自的判定依据是「握没握着那一家的凭据」，而不是
- * 「activeAiProvider() 选了谁」：Gemini 部署也能把生图单独切到 OpenAI
- * （`/image_model gpt`），那时 ai_agent.models.image 照样会被读到；反过来
- * OpenAI 部署补上 Gemini key 之后同理。凭据一在，那份文件就是 AI 闲聊的前提；
- * 一不在，它根本没有消费方，不该拦住只配一把 key 的部署。
+ * agent 配置按能力声明 provider、api_key、model 与 base_url。AI 对话只要求
+ * text、summary、media；image/song 缺省不阻塞，由工具装配单独摘挂。探测不读取
+ * ad_detect，因此它的缺省不影响 AI 对话，反过来也一样。
  *
- * 两份模型配置都**必填且无默认值**：代码里一个模型名都不留，缺文件、缺字段一律
- * 在这里被判为不可用，进而由 app/featurePreflight.ts 拒绝启动（见 config/gemini.ts
- * 与 config/openai.ts 的模块头注）。
- *
- * 探的是 ai_agent 段而不是整份文件：ad_detect 段的笔误与 AI 闲聊无关，反过来
- * 也一样（见下方广告检测那份清单）。两段共用顶层形状校验，整份文件不是对象时
- * 两边都会失败——那时谁也读不出自己那一段。
+ * 顺序即拒绝顺序：probeAll 报第一份坏掉的文件，改动这张表等于改动运维看到的
+ * 拒绝文案。
  */
-export function aiChatConfigReadiness(): ConfigReadiness {
-  const probes: DeploymentFileProbe[] = [
-    { file: "config/stickers.json", load: getStickerConfig },
-    { file: "config/reactions.json", load: getReactionConfig },
-    { file: "config/mood.json", load: getMoodConfig },
-  ];
-  if (hasGeminiChatCredentials()) probes.push({ file: "config/gemini.json", load: loadGeminiDeploymentConfig });
-  if (hasOpenAiChatCredentials()) probes.push({ file: "config/openai.json", load: loadAiAgentOpenAiConfig });
-  return cachedReadiness(aiChatConfigReadinessCache, probes);
-}
+const AI_CHAT_PROBES: readonly DeploymentFileProbe[] = [
+  { file: "config/stickers.json", load: getStickerConfig },
+  { file: "config/reactions.json", load: getReactionConfig },
+  { file: "config/mood.json", load: getMoodConfig },
+  { file: "prompt/persona.md", load: getPersona },
+  { file: "config/agent.json", load: ensureAgentDeploymentConfig },
+];
 
 /**
- * 广告检测要读的两份：判定口径的示例清单，以及 config/openai.json 的
+ * 广告检测要读的两份：判定口径的示例清单，以及 config/agent.json 的
  * **ad_detect 段**。
  *
- * 后者**必填**：`ad_detect.model` 没有代码默认值可退，缺文件、缺段、缺模型名
- * 都在这里被判为不可用。写坏同样拦住——判定走的就是那个端点，配错了每条待检
- * 消息都会换来一次请求失败。可省的只有 `ad_detect.base_url`（缺省走官方地址）。
+ * 开启广告检测时后者**必填**：`provider`、`api_key` 与 `model` 缺一不可；缺文件、
+ * 缺能力、缺字段都在这里判为不可用。可省的只有 `base_url`，缺省时由所选 SDK
+ * 使用自己的官方端点；兼容端点必须显式配置。
  *
- * 只探 ad_detect 段：广告检测一个字段都不读 ai_agent，整份解析等于让那半边的
- * 任意笔误把广告检测判为不可用——而这份结论会被 app/featurePreflight.ts 在启动
- * 时读到，于是 Gemini 部署为了准备 OpenAI 兜底而写坏 ai_agent，代价是 bot 起不来。
+ * 这份功能结论只探 ad_detect 段；文件一旦存在，其他段的合法性已由
+ * validateExistingDeploymentInputs 的启动总闸独立保证。
  */
+const AD_DETECT_PROBES: readonly DeploymentFileProbe[] = [
+  { file: "config/ad_samples.json", load: getAdSampleConfig },
+  { file: "config/agent.json", load: ensureAdDetectAgentConfig },
+];
+
+/** 日语翻译只探一份服务账号密钥；就地校验见 validateGoogleServiceAccountKey。 */
+const JA_TRANSLATE_PROBES: readonly DeploymentFileProbe[] = [
+  { file: "g-auth.json", load: validateGoogleServiceAccountKey },
+];
+
+export function aiChatConfigReadiness(): ConfigReadiness {
+  return cachedReadiness(aiChatConfigReadinessCache, AI_CHAT_PROBES);
+}
+
 export function adDetectConfigReadiness(): ConfigReadiness {
-  return cachedReadiness(adDetectConfigReadinessCache, [
-    { file: "config/ad_samples.json", load: getAdSampleConfig },
-    { file: "config/openai.json", load: loadAdDetectOpenAiConfig },
-  ]);
+  return cachedReadiness(adDetectConfigReadinessCache, AD_DETECT_PROBES);
 }
 
 /**
@@ -125,22 +147,58 @@ export function adDetectConfigReadiness(): ConfigReadiness {
  * 字段。只判「文件在不在」是不够的——空文件与占位文本同样能通过，然后每条
  * `/ja_copy` 都会退化成原文照发，而群里看不出与「翻译服务抖了一下」的区别。
  */
+export function validateGoogleServiceAccountKey(
+  path: string = GOOGLE_AUTH_FILE_PATH
+): void {
+  const parsed: unknown = readJsonInput(path);
+  if (!isPlainRecord(parsed)) {
+    return invalidInput(path, "$", "a Google service account JSON object");
+  }
+  if (typeof parsed.client_email !== "string" || parsed.client_email.trim().length === 0) {
+    return invalidInput(path, "$.client_email", "a non-empty string");
+  }
+  if (typeof parsed.private_key !== "string" || parsed.private_key.trim().length === 0) {
+    return invalidInput(path, "$.private_key", "a parseable non-empty PEM private key");
+  }
+  try {
+    createPrivateKey(parsed.private_key);
+  } catch {
+    return invalidInput(path, "$.private_key", "a parseable non-empty PEM private key");
+  }
+}
+
 export function jaTranslateConfigReadiness(): ConfigReadiness {
-  return cachedReadiness(jaTranslateConfigReadinessCache, [
-    {
-      file: "g-auth.json",
-      load: (): void => {
-        const parsed: unknown = JSON.parse(readFileSync(GOOGLE_AUTH_FILE_PATH, "utf8")) as unknown;
-        if (!isPlainRecord(parsed)) {
-          throw new Error("Invalid Google service account key: expected a JSON object");
-        }
-        for (const field of ["client_email", "private_key"] as const) {
-          const value: unknown = parsed[field];
-          if (typeof value !== "string" || value.trim().length === 0) {
-            throw new Error(`Invalid Google service account key: ${field} must be a non-empty string`);
-          }
-        }
-      },
-    },
-  ]);
+  return cachedReadiness(jaTranslateConfigReadinessCache, JA_TRANSLATE_PROBES);
+}
+
+/** 只把路径真正不存在视为缺省；断链软链接和无权访问都是已配置但非法。 */
+function deploymentInputExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error: unknown) {
+    if (isPlainRecord(error) && error.code === "ENOENT") return false;
+    return invalidInput(path, "$", "an accessible deployment input");
+  }
+}
+
+/**
+ * 启动阶段校验所有已经存在的可选部署输入。文件真正缺省时由功能 readiness
+ * 决定能否开启；文件一旦存在，就不能因相应功能当前关闭而掩盖非法内容。
+ */
+export function validateExistingDeploymentInputs(): void {
+  // Telegram 身份是进程级必填配置，不受任何功能开关控制。
+  getTelegramConfig();
+  const probes: readonly Readonly<{ path: string; load: () => unknown }>[] = [
+    { path: STICKERS_CONFIG_PATH, load: (): unknown => getStickerConfig() },
+    { path: REACTIONS_CONFIG_PATH, load: (): unknown => getReactionConfig() },
+    { path: MOOD_CONFIG_PATH, load: (): unknown => getMoodConfig() },
+    { path: AD_SAMPLES_CONFIG_PATH, load: (): unknown => getAdSampleConfig() },
+    { path: AGENT_CONFIG_PATH, load: (): void => validateAgentDeploymentConfig() },
+    { path: GOOGLE_AUTH_FILE_PATH, load: (): void => validateGoogleServiceAccountKey() },
+    { path: PERSONA_PATH, load: (): string => getPersona() },
+  ];
+  for (const probe of probes) {
+    if (deploymentInputExists(probe.path)) probe.load();
+  }
 }

@@ -20,7 +20,9 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {},
+  joinVerificationApi: {
+    getChat: async (): Promise<{ type: "supergroup" }> => ({ type: "supergroup" }),
+  },
   sendMessage: async (): Promise<number> => {
     actions.push("notice");
     return 900;

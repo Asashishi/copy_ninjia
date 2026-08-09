@@ -64,8 +64,8 @@ const {
   blocklistSweepState,
   configuredBlockedIds,
   pendingBlockedRemovals,
+  sessionBlocklistRequiresRewrite,
   sessionBlockedAt,
-  sessionUnblockedIds,
 } = await import("../../packages/cache/main/blocklist");
 
 const recoveryTransport: DiskIORecoveryTransport = {
@@ -94,7 +94,7 @@ beforeEach(() => {
   blockedUserIds.clear();
   configuredBlockedIds.clear();
   sessionBlockedAt.clear();
-  sessionUnblockedIds.clear();
+  sessionBlocklistRequiresRewrite.current = false;
   blocklistSweepState.clear();
   pendingBlockedRemovals.clear();
   remover.mockClear();
@@ -376,7 +376,7 @@ describe("解除拉黑与落盘 Worker 重建", () => {
     expect(diskMessages).toContainEqual(expect.objectContaining({ type: "blockUser", userId: 7 }));
   });
 
-  test("先解除又重新拉黑：两张 session 表互斥，重放后他仍在名单上", async () => {
+  test("先解除又重新拉黑：粘性重写最终权威快照，重放后他仍在名单上", async () => {
     hydrateBlocklist(new Map([[7, { isBlocked: true, blockedAt: "2026/07/25 19:38:09" }]]));
     unblockUser(7);
     blockUser(7);
@@ -386,12 +386,22 @@ describe("解除拉黑与落盘 Worker 重建", () => {
       expect(await listener(recoveryTransport)).toBeTrue();
     }
 
-    // 重新拉黑把他从 sessionUnblockedIds 里摘了，两张表因此重新互斥：不再欠
-    // 一次整份重写，重放退回便宜的增量追加，而他确实还在名单上。两张表若不
-    // 互斥，这里会既补投拉黑又整份重写，谁后到谁说了算。
+    // 解除标志保持粘性，重建只投一份包含最终拉黑记录的权威快照；不能在重新
+    // 拉黑时清零，因为本进程还可能解除过其它身份。
     expect(isUserBlocked(7)).toBeTrue();
-    expect(sessionUnblockedIds.size).toBe(0);
-    expect(diskMessages.filter((message: DiskBusinessMessage): boolean => message.type === "blockUser")).toHaveLength(1);
-    expect(diskMessages).toContainEqual(expect.objectContaining({ type: "blockUser", userId: 7 }));
+    expect(sessionBlocklistRequiresRewrite.current).toBeTrue();
+    expect(diskMessages.filter((message: DiskBusinessMessage): boolean => message.type === "blockUser")).toHaveLength(0);
+    expect(lastRewrite().blocked).toEqual([[7, expect.objectContaining({ isBlocked: true })]]);
+  });
+
+  test("高基数解除历史只保留常量空间的恢复标志", () => {
+    for (let userId: number = 1; userId <= 20_000; userId++) {
+      expect(blockUser(userId)).toBeTrue();
+      expect(unblockUser(userId)).toBeTrue();
+    }
+
+    expect(blockedUserIds.size).toBe(0);
+    expect(sessionBlockedAt.size).toBe(0);
+    expect(sessionBlocklistRequiresRewrite).toEqual({ current: true });
   });
 });

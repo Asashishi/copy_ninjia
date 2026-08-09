@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Bot, Context } from "grammy";
 import { registerHandlers } from "../../packages/app/registerHandlers";
 import { CJK_ACTION_COMMAND_PATTERN } from "../../packages/consts/commands";
+import { settleTestBatch } from "../libs/helpers";
 
 type TestMiddleware = (ctx: Context, next: () => Promise<void>) => unknown;
 
@@ -72,15 +73,17 @@ describe("application handler registration", () => {
       "ai_chat",
       "ad_detect",
       "flood_control",
+      "antiraid",
+      "bot_status",
       "query_mood",
       "switch_mood",
       "init",
-      "image_model",
-      "chat_model",
       "quiet",
       "unquiet",
       "mute",
       "unmute",
+      "gag",
+      "ungag",
       "send",
       "x",
     ]);
@@ -102,9 +105,18 @@ describe("application handler registration", () => {
     const antiRaidIngressIndex: number =
       registrationOrder.indexOf(`on:${JSON.stringify("message")}`);
     expect(antiRaidIngressIndex).toBeGreaterThan(-1);
+    const messageIngressIndices: number[] = [];
+    for (let index: number = 0; index < registrationOrder.length; index++) {
+      if (registrationOrder[index] === `on:${JSON.stringify("message")}`) {
+        messageIngressIndices.push(index);
+      }
+    }
+    expect(messageIngressIndices).toHaveLength(2);
+    const gagIngressIndex: number = messageIngressIndices[1]!;
+    expect(gagIngressIndex).toBeGreaterThan(antiRaidIngressIndex);
     for (const command of commands) {
       expect(registrationOrder.indexOf(`command:${command}`))
-        .toBeGreaterThan(antiRaidIngressIndex);
+        .toBeGreaterThan(gagIngressIndex);
     }
     // 中文动作命令没有 bot_command 实体，只能按原文 hears，且必须排在
     // 消息兜底之前，否则会被当成普通消息进入 AI/复读流水线。
@@ -120,7 +132,7 @@ describe("application handler registration", () => {
     expect(registrationOrder.indexOf("hears")).toBeLessThan(messageFallbackIndex);
     // /x 占位项同理：它也终止链路，必须先于消息兜底注册。
     expect(registrationOrder.indexOf("command:x")).toBeLessThan(messageFallbackIndex);
-    expect(updates).toHaveLength(8);
+    expect(updates).toHaveLength(9);
     expect(catchCount).toBe(1);
 
     const next = async (): Promise<void> => undefined;
@@ -183,7 +195,7 @@ describe("application handler registration", () => {
     await Promise.resolve();
     expect(events).toEqual(["first:start"]);
     releaseFirst!();
-    await Promise.all([firstUpdate, secondUpdate]);
+    await settleTestBatch([firstUpdate, secondUpdate]);
     expect(events).toEqual(["first:start", "first:end", "second:start", "second:end"]);
   });
 });

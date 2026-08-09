@@ -9,7 +9,6 @@ import {
   AD_SAMPLE_CONTEXT_MAX_CHARS,
 } from "../consts/antiRaid/adDetect";
 import { isUserBlocked } from "../infra/blocklist/membership";
-import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { getChatState } from "../infra/storage/stateStore";
 import { sanitizeInline, truncateInline } from "../libs/text";
@@ -85,7 +84,6 @@ export function buildAdCandidate(
 ): AdCandidateMessage | undefined {
   const chatId: number | undefined = message.chat?.id;
   if (chatId === undefined || message.chat.type === "private") return undefined;
-  if (AD_DETECT_DEEPSEEK_API_KEY === undefined) return undefined;
   if (!adDetectConfigReadiness().ok) return undefined;
   if (getChatState(chatId).isAdDetectEnabled !== true) return undefined;
   if (message.is_automatic_forward === true || isBotOwnMessage(message)) return undefined;
@@ -117,7 +115,11 @@ export function buildAdCandidate(
       title: "title" in senderChat ? senderChat.title : undefined,
       isChannel: true,
     });
-  const candidate: AdCandidateMessage = {
+  // 两个可选字段无条件写在初始化处：事后 `if (x !== undefined) candidate.x = …`
+  // 会让每条开启广告检测的群消息产出四种 hidden class，把 adDetect 队列的读点与
+  // structured clone 边界一起多态化。口径同 aiChat/workerBridge.ts 的「字段一律
+  // 发出，不用条件展开」与 auto/message/facts.ts。
+  return {
     type: "adCandidate",
     chatId,
     senderId,
@@ -129,8 +131,7 @@ export function buildAdCandidate(
     // 同 updateIngress.ts：空表上不必先拼复合键，`has()` 本来也只会返回 false。
     justJoined: activeVerificationSnapshots.size > 0 &&
       activeVerificationSnapshots.has(verificationKey(chatId, senderId)),
+    linkUrls,
+    sampleContext,
   };
-  if (linkUrls !== undefined) candidate.linkUrls = linkUrls;
-  if (sampleContext !== undefined) candidate.sampleContext = sampleContext;
-  return candidate;
 }

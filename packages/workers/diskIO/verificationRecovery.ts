@@ -16,7 +16,8 @@ import {
   verificationWorkerCache,
 } from "../../cache/workers/diskIO/verification";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
-import { getTokyoDateKey } from "../../libs/time";
+import { invalidInput } from "../../libs/inputValidation";
+import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type { VerificationSnapshot } from "../../types/antiRaid";
 import { openDayFile } from "./appendOnlyDayFile";
 import {
@@ -41,6 +42,21 @@ function latestPriorVerificationDay(day: string, dir: string): string | undefine
     latest = candidate;
   }
   return latest;
+}
+
+/** 专用目录内的 JSON 必须使用规范日期文件名；非 JSON 诊断资产保持不动。 */
+function assertVerificationDayFileNames(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const path: string = join(dir, entry.name);
+    const candidate: string | undefined = DAY_FILE_PATTERN.exec(entry.name)?.[1];
+    if (candidate === undefined) {
+      return invalidInput(path, "$filename", "the canonical <YYYY-MM-DD>.json form");
+    }
+    if (!isCanonicalDateKey(candidate)) {
+      return invalidInput(path, "$filename", "a canonical calendar date");
+    }
+  }
 }
 
 /**
@@ -106,6 +122,7 @@ export function recoverVerificationDay(
 ): Map<string, VerificationSnapshot> {
   mkdirSync(dir, { recursive: true });
   resetVerificationPersistenceCache();
+  assertVerificationDayFileNames(dir);
 
   const path: string = join(dir, `${day}.json`);
   const priorDay: string | undefined = latestPriorVerificationDay(day, dir);
@@ -120,17 +137,7 @@ export function recoverVerificationDay(
     }
 
     if (existsSync(path)) {
-      let currentContent: string = readFileSync(path, "utf8");
-      try {
-        JSON.parse(currentContent);
-      } catch {
-        verificationFileState.current = openDayFile(
-          dir,
-          day,
-          PERSISTED_FILE_MODE
-        );
-        currentContent = readFileSync(path, "utf8");
-      }
+      const currentContent: string = readFileSync(path, "utf8");
       const currentValues: Map<string, VerificationDayValue> =
         decodeVerificationDay(path, currentContent);
       // 新日是更晚的权威增量；null tombstone 必须压过旧日 active。
@@ -159,15 +166,7 @@ export function recoverVerificationDay(
     return new Map();
   }
 
-  let content: string = readFileSync(path, "utf8");
-  try {
-    JSON.parse(content);
-  } catch {
-    // 仅对字节级尾部截断沿用通用修复；修复不了仍由下次 parse fail closed。
-    verificationFileState.current = openDayFile(dir, day, PERSISTED_FILE_MODE);
-    content = readFileSync(path, "utf8");
-    JSON.parse(content);
-  }
+  const content: string = readFileSync(path, "utf8");
   const recovered: Map<string, VerificationSnapshot> = new Map();
   for (const [key, value] of decodeVerificationDay(path, content)) {
     if (value !== null) recovered.set(key, value);

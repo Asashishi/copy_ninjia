@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendToDayFile, openDayFile, serializeDayFileEntry } from "../../../packages/workers/diskIO/appendOnlyDayFile";
+import {
+  appendToDayFile,
+  openAppendOnlyFile,
+  openDayFile,
+  serializeDayFileEntry,
+} from "../../../packages/workers/diskIO/appendOnlyDayFile";
 import { PERSISTED_FILE_MODE } from "../../../packages/consts/diskIO";
 import type { DayFileState } from "../../../packages/types";
 
@@ -18,6 +23,11 @@ afterEach(() => {
 
 function readDay(day: string): unknown {
   return JSON.parse(readFileSync(join(dir, `${day}.json`), "utf8"));
+}
+
+/** 仅验证明确选择截断修复的通用追加机制；领域状态恢复默认 fail closed。 */
+function openRepairableDay(day: string): DayFileState {
+  return { day, ...openAppendOnlyFile(join(dir, `${day}.json`), undefined, true) };
 }
 
 describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
@@ -57,7 +67,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     const content: string = "not-json";
     writeFileSync(path, content);
 
-    expect(() => openDayFile(dir, "2026-07-16")).toThrow("could not be parsed or repaired");
+    expect(() => openDayFile(dir, "2026-07-16")).toThrow("could not be parsed; refusing to repair this file");
     expect(readFileSync(path, "utf8")).toBe(content);
   });
 
@@ -191,6 +201,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
       dir,
       state,
       chunk: serializeDayFileEntry("B", { payload: "会被截断" }),
+      repair: true,
       write: ({ fd, buffer, offset, length, position }) => {
         call++;
         if (call > 1) throw new Error("injected I/O failure");
@@ -275,7 +286,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     const path = join(dir, "2026-07-16.json");
     writeFileSync(path, truncated);
 
-    const recovered: DayFileState = openDayFile(dir, "2026-07-16");
+    const recovered: DayFileState = openRepairableDay("2026-07-16");
     expect(recovered.empty).toBe(false);
     const parsedAfterRepair: unknown = readDay("2026-07-16");
     // 修复只保证「此前的完整记录」不丢；这里应恢复出 A。
@@ -298,7 +309,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     const tornEntryStart: number = full.lastIndexOf('"N"');
     writeFileSync(path, full.slice(0, tornEntryStart + 20));
 
-    const recovered: DayFileState = openDayFile(dir, "2026-07-16");
+    const recovered: DayFileState = openRepairableDay("2026-07-16");
     expect(readDay("2026-07-16")).toEqual({ K: null, R: { revision: 1 } });
 
     appendToDayFile({ dir, state: recovered, chunk: serializeDayFileEntry("C", true) });
@@ -310,7 +321,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     const path = join(dir, "2026-07-16.json");
     writeFileSync(path, "{");
 
-    const recovered: DayFileState = openDayFile(dir, "2026-07-16");
+    const recovered: DayFileState = openRepairableDay("2026-07-16");
     expect(recovered.empty).toBe(true);
     expect(readDay("2026-07-16")).toEqual({});
 

@@ -1,101 +1,324 @@
 /**
- * AI 闲聊供应商的唯一选取入口。两个实现包（packages/aiChat/gemini/、
- * packages/aiChat/openai/）都实现同一份 AiChatProvider 契约，领域侧只经这里
- * 拿实现，不 import 任何一家的子模块，也不认识任何 SDK 类型。
+ * AI agent 按能力选择 SDK 实现的唯一入口。
  *
- * 选取规则：默认 Gemini；只有在 Gemini 凭据缺席时才降级到 OpenAI。两把都
- * 没有时整条 AI 闲聊线不启动（判定在 aiChat/availability.ts，那里只看 env、
- * 不 import 本文件——主线程侧不该为了问一句「开没开」把两家 SDK 都拉进来）。
+ * config/agent.json 的 text、summary、media、image、song 各自声明 provider；这里
+ * 只把 google/openai 映射到实现包，不做运行时故障切换，也不从模型名或 base_url
+ * 猜供应商。api_key 与端点同样来自该能力配置；启动总闸会在建立外部连接前完成
+ * 严格校验。跨模块与生命周期约束见 docs/cn/04-invariants.md。
  *
- * 不做**自动**的运行时故障切换：一轮回复中途换供应商会让工具往返的对话记录跨
- * 两套格式，且两家的安全档位与画幅能力并不等价，静默切换等于让同一个群的回复
- * 口径无预警地漂移。
- *
- * 超管的显式切换是另一回事，两条命令各管一半、合起来铺满契约的四项能力：
- * - `/image_model` -> imageAiProvider()：生图。单次无状态请求，没有跨轮对话记录，
- *   换家不会让任何一段记录跨两套格式；画幅差异已由各实现包内部收口
- *   （aiChat/openai/image.ts 的 pickImageSize 把十档官方宽高比映射到三档）。
- * - `/chat_model` -> chatAiProvider()：回复会话、纯文本（记忆压缩的中期摘要、
- *   贴纸包摘要）与视觉描述。这条能安全切换的边界是**每轮回复只取一次**：
- *   workers/aiChat/replyModel.ts 在进入工具循环之前就 createReplySession，会话
- *   对象自己持有实现，因此切换只在下一轮回复生效，在途的那轮不会被劈成两半。
- *   纯文本与视觉本来就是单次无状态请求。跨轮之间没有供应商专属状态：落盘的
- *   AI 记忆快照是本仓自有的中立结构，两家共用同一份。
- *
- * 两条命令都不影响上面那道「两把 key 都没有就不启动」的门禁。反过来，**选过的
- * 那一家缺 key 时进程根本起不来**——启动闸在 app/featurePreflight.ts，因此下面
- * 两个入口拿到的选定值必定有对应凭据。
- *
- * 归属 AI 闲聊 Worker：全部调用方都在那条线程上。
+ * 归属 AI 闲聊 Worker：所有调用方都在该线程上。
  */
 
 import { geminiProvider } from "./gemini";
 import { openAiProvider } from "./openai";
-import { chatProviderOverrideMirror } from "../cache/workers/aiChat/chatProvider";
-import { imageProviderOverrideMirror } from "../cache/workers/aiChat/imageProvider";
-import { AI_CHAT_GEMINI_API_KEY, AI_CHAT_OPENAI_API_KEY } from "../infra/config";
-import type { AiChatProvider, AiProviderName } from "../types/aiChat/provider";
+import {
+  aiProviderFacades,
+  aiProviderQuotaLanes,
+} from "../cache/workers/aiChat/providerScheduler";
+import { getAgentDeploymentConfig } from "../config/agent";
+import {
+  AI_PROVIDER_BACKGROUND_MAX_PENDING,
+  AI_PROVIDER_INTERACTIVE_BURST,
+  AI_PROVIDER_MAX_CONCURRENT,
+  AI_PROVIDER_MAX_PENDING,
+} from "../consts/aiChat/provider";
+import { logger } from "../infra/logger";
+import { createPrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
+import type { AgentDeploymentConfig } from "../types/config";
+import type {
+  AiChatProvider,
+  AiImageProvider,
+  AiImageRequest,
+  AiMediaProvider,
+  AiProviderTaskPriority,
+  AiReplySession,
+  AiReplySessionParams,
+  AiReplyTurn,
+  AiReplyTurnRequest,
+  AiSongRequest,
+  AiSongProvider,
+  AiSummaryProvider,
+  AiTextResult,
+  AiTextRequest,
+  AiTextProvider,
+  AiVisionRequest,
+  AiVoiceRequest,
+} from "../types/aiChat/provider";
+import type { AiProviderQuotaLane } from "../types/aiChat/providerScheduler";
+import type { GeneratedChatImage } from "../types/aiChat/imageGeneration";
+import type { GeneratedChatSong } from "../types/aiChat/songGeneration";
+import type { AgentCapability, AgentCapabilityConfig } from "../types/config";
+import type { PrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
+
+/** provider 到实现包的穷举映射；扩展 AgentProvider 时编译器会要求同步补项。 */
+const AI_CHAT_PROVIDERS: Readonly<Record<AgentCapabilityConfig["provider"], AiChatProvider>> = {
+  google: geminiProvider,
+  openai: openAiProvider,
+};
 
 /**
- * 当前进程该用哪家供应商。
+ * 按能力配置解析 provider；不做凭据或故障回退。
  *
- * 每次调用现查 env 而不是在模块求值期定死：config.ts 的两把密钥都是可选
- * env，模块加载顺序在测试与 Worker 重建路径上并不稳定，现查才能保证判定与
- * availability.ts 的门禁看到的是同一份配置。两把都缺时抛错——走到这里说明
- * 门禁已经放行过一次，是配置在进程启动后被抽掉，调用方各自的降级路径会把它
- * 归一成一次普通失败。
+ * 内部保留完整实现，返回类型由下面五个导出各自收窄：映射穷举要的是「这一家把
+ * 五项能力都装配齐了」，调用点要的是「这一次只许用这一项」，两件事分开表达。
  */
-export function activeAiProvider(): AiChatProvider {
-  if (AI_CHAT_GEMINI_API_KEY !== undefined) return geminiProvider;
-  if (AI_CHAT_OPENAI_API_KEY !== undefined) return openAiProvider;
-  throw new Error("No AI chat provider is configured; set AI_CHAT_GEMINI_API_KEY or AI_CHAT_OPENAI_API_KEY.");
-}
-
-/**
- * 按选定值取实现；没选过就跟随默认选取。
- *
- * 选过的那一家缺凭据时**抛错而不是换一家**：静默换家会让同一个群的回复口径
- * 无预警漂移，正是模块头注拒绝的事。这条分支在正常部署上走不到——
- * app/featurePreflight.ts 的启动闸已经拒绝「选过 X 却没有 X 的 key」的进程，
- * 而 `.env` 在进程存活期间不会变、两条切换命令又都要求两把 key 都在。留着它是
- * 兜底：真走到了，说明启动闸被绕过或状态在运行期被外部改写，那时报错必须点名
- * 是哪一项、缺哪把 key，而不是让人从「回复风格怎么变了」倒查。
- */
-function resolveSelected(selected: AiProviderName | null): AiChatProvider {
-  if (selected === null) return activeAiProvider();
-  if (selected === "openai") {
-    if (AI_CHAT_OPENAI_API_KEY === undefined) {
-      throw new Error('The selected AI provider is "openai" but AI_CHAT_OPENAI_API_KEY is not set.');
-    }
-    return openAiProvider;
+function resolveCapability(capability: AgentCapability): AiChatProvider {
+  const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
+  if (config === undefined) {
+    throw new Error(`Agent capability "${capability}" is not configured.`);
   }
-  if (AI_CHAT_GEMINI_API_KEY === undefined) {
-    throw new Error('The selected AI provider is "gemini" but AI_CHAT_GEMINI_API_KEY is not set.');
+  return AI_CHAT_PROVIDERS[config.provider];
+}
+
+function capabilityConfig(capability: AgentCapability): AgentCapabilityConfig {
+  const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
+  if (config === undefined) {
+    throw new Error(`Agent capability "${capability}" is not configured.`);
   }
-  return geminiProvider;
+  return config;
 }
 
 /**
- * 生图该用哪家。只影响生图这一项能力；回复会话、纯文本与视觉描述走
- * chatAiProvider()。
- *
- * 覆盖值由超管的 `/image_model` 写进 state.json，经协议推到本线程的只读镜像
- * （见 cache/workers/aiChat/imageProvider.ts）。
+ * 以供应商协议、端点与凭据识别真实配额归属。模型名刻意不参与：同一账号下的
+ * 多模型通常仍共享项目级额度，拆开会让总并发悄悄倍增。
  */
-export function imageAiProvider(): AiChatProvider {
-  return resolveSelected(imageProviderOverrideMirror.current);
+function quotaRunnerFor(config: AgentCapabilityConfig): PrioritizedBoundedTaskRunner {
+  for (const lane of aiProviderQuotaLanes) {
+    if (
+      lane.provider === config.provider &&
+      lane.baseUrl === config.baseUrl &&
+      lane.apiKey === config.apiKey
+    ) return lane.runner;
+  }
+  const lane: AiProviderQuotaLane = {
+    provider: config.provider,
+    baseUrl: config.baseUrl,
+    apiKey: config.apiKey,
+    runner: createPrioritizedBoundedTaskRunner({
+      maxConcurrent: AI_PROVIDER_MAX_CONCURRENT,
+      maxPending: AI_PROVIDER_MAX_PENDING,
+      maxBackgroundPending: AI_PROVIDER_BACKGROUND_MAX_PENDING,
+      interactiveBurst: AI_PROVIDER_INTERACTIVE_BURST,
+    }),
+  };
+  aiProviderQuotaLanes.push(lane);
+  return lane.runner;
+}
+
+function scheduleProviderTask<T>(
+  runner: PrioritizedBoundedTaskRunner,
+  priority: AiProviderTaskPriority,
+  task: () => Promise<T>
+): Promise<T | undefined> {
+  return runner.run(priority, task);
+}
+
+function queueRejectedReplyTurn(): AiReplyTurn {
+  return {
+    ok: false,
+    text: null,
+    functionCalls: [],
+    webSearchCalls: 0,
+    finishReason: "LOCAL_PROVIDER_QUEUE_FULL",
+    finishMessage: "The local AI provider queue is full.",
+    toolCallLimitHit: false,
+  };
+}
+
+function createTextFacade(
+  provider: AiChatProvider,
+  config: AgentCapabilityConfig
+): AiTextProvider {
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
+  return {
+    name: provider.name,
+    createReplySession(params: AiReplySessionParams): AiReplySession {
+      const session: AiReplySession = provider.createReplySession(params);
+      return {
+        async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
+          const result: AiReplyTurn | undefined = await scheduleProviderTask(
+            runner,
+            "interactive",
+            (): Promise<AiReplyTurn> => session.request(request)
+          );
+          return result ?? queueRejectedReplyTurn();
+        },
+        appendToolOutputs: session.appendToolOutputs.bind(session),
+      };
+    },
+  };
+}
+
+function createSummaryFacade(
+  provider: AiChatProvider,
+  config: AgentCapabilityConfig
+): AiSummaryProvider {
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
+  return {
+    name: provider.name,
+    async generateText(request: AiTextRequest): Promise<AiTextResult> {
+      const result: AiTextResult | undefined = await scheduleProviderTask(
+        runner,
+        "background",
+        (): Promise<AiTextResult> => provider.generateText(request)
+      );
+      return result ?? { ok: false, retryable: false };
+    },
+  };
+}
+
+function createMediaFacade(
+  provider: AiChatProvider,
+  config: AgentCapabilityConfig,
+  priority: AiProviderTaskPriority
+): AiMediaProvider {
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
+  const transcribeVoice: AiMediaProvider["transcribeVoice"] = provider.transcribeVoice;
+  const describeVision: AiMediaProvider["describeVision"] = async (
+    request: AiVisionRequest
+  ): Promise<AiTextResult> => {
+    const result: AiTextResult | undefined = await scheduleProviderTask(
+      runner,
+      priority,
+      (): Promise<AiTextResult> => provider.describeVision(request)
+    );
+    return result ?? { ok: false, retryable: false };
+  };
+  if (transcribeVoice === undefined) return { name: provider.name, describeVision };
+  return {
+    name: provider.name,
+    describeVision,
+    async transcribeVoice(request: AiVoiceRequest): Promise<AiTextResult> {
+      const result: AiTextResult | undefined = await scheduleProviderTask(
+        runner,
+        priority,
+        (): Promise<AiTextResult> => transcribeVoice(request)
+      );
+      return result ?? { ok: false, retryable: false };
+    },
+  };
+}
+
+function createImageFacade(
+  provider: AiChatProvider,
+  config: AgentCapabilityConfig
+): AiImageProvider {
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
+  return {
+    name: provider.name,
+    async generateImage(request: AiImageRequest): Promise<GeneratedChatImage | null> {
+      const result: GeneratedChatImage | null | undefined = await scheduleProviderTask(
+        runner,
+        "interactive",
+        (): Promise<GeneratedChatImage | null> => provider.generateImage(request)
+      );
+      return result ?? null;
+    },
+  };
+}
+
+function createSongFacade(
+  provider: AiChatProvider,
+  config: AgentCapabilityConfig
+): AiSongProvider {
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
+  const generateSong: AiSongProvider["generateSong"] = provider.generateSong;
+  if (generateSong === undefined) return { name: provider.name };
+  return {
+    name: provider.name,
+    async generateSong(request: AiSongRequest): Promise<GeneratedChatSong | null> {
+      const result: GeneratedChatSong | null | undefined = await scheduleProviderTask(
+        runner,
+        "interactive",
+        (): Promise<GeneratedChatSong | null> => generateSong(request)
+      );
+      return result ?? null;
+    },
+  };
+}
+
+/** 带工具往返的群聊正文能力；真实模型请求经过交互优先的配额闸门。 */
+export function textAiProvider(): AiTextProvider {
+  if (aiProviderFacades.text !== undefined) return aiProviderFacades.text;
+  const config: AgentCapabilityConfig = capabilityConfig("text");
+  const facade: AiTextProvider = createTextFacade(resolveCapability("text"), config);
+  aiProviderFacades.text = facade;
+  return facade;
+}
+
+/** 记忆压缩与贴纸包简介的无状态摘要能力；固定使用后台等待额度。 */
+export function summaryAiProvider(): AiSummaryProvider {
+  if (aiProviderFacades.summary !== undefined) return aiProviderFacades.summary;
+  const config: AgentCapabilityConfig = capabilityConfig("summary");
+  const facade: AiSummaryProvider = createSummaryFacade(resolveCapability("summary"), config);
+  aiProviderFacades.summary = facade;
+  return facade;
+}
+
+/** 视觉描述与语音转写能力；贴纸目录可显式选择后台优先级。 */
+export function mediaAiProvider(
+  priority: AiProviderTaskPriority = "interactive"
+): AiMediaProvider {
+  const cached: AiMediaProvider | undefined = priority === "interactive"
+    ? aiProviderFacades.media
+    : aiProviderFacades.mediaBackground;
+  if (cached !== undefined) return cached;
+  const config: AgentCapabilityConfig = capabilityConfig("media");
+  const facade: AiMediaProvider = createMediaFacade(resolveCapability("media"), config, priority);
+  if (priority === "interactive") aiProviderFacades.media = facade;
+  else aiProviderFacades.mediaBackground = facade;
+  return facade;
+}
+
+/** 生图能力；未配置时不注册对应工具。 */
+export function imageAiProvider(): AiImageProvider | null {
+  if (aiProviderFacades.image !== undefined) return aiProviderFacades.image;
+  if (getAgentDeploymentConfig().image === undefined) {
+    aiProviderFacades.image = null;
+    return null;
+  }
+  const config: AgentCapabilityConfig = capabilityConfig("image");
+  const facade: AiImageProvider = createImageFacade(resolveCapability("image"), config);
+  aiProviderFacades.image = facade;
+  return facade;
+}
+
+/** 生歌能力；缺配置时不注册对应工具。 */
+export function songAiProvider(): AiSongProvider | null {
+  if (aiProviderFacades.song !== undefined) return aiProviderFacades.song;
+  if (getAgentDeploymentConfig().song === undefined) {
+    aiProviderFacades.song = null;
+    return null;
+  }
+  const config: AgentCapabilityConfig = capabilityConfig("song");
+  const facade: AiSongProvider = createSongFacade(resolveCapability("song"), config);
+  aiProviderFacades.song = facade;
+  return facade;
 }
 
 /**
- * 回复会话、纯文本与视觉描述该用哪家。不影响生图，那一项由 imageAiProvider()
- * 独立决定。
+ * 启动诊断：能力配置齐全、结构校验也过了，但选中的那一家**根本没有**这项能力。
  *
- * 覆盖值由超管的 `/chat_model` 写进 state.json，经协议推到本线程的只读镜像
- * （见 cache/workers/aiChat/chatProvider.ts）。
+ * 这不是错误配置，因此不拒绝启动——功能行为是正确的（工具不挂、语音不转写）。
+ * 但没有这行诊断，部署者只能从「机器人为什么不会唱歌」反推到「我给 song 选的
+ * provider 没实现它」，中间隔着整条工具装配链路。
  *
- * **每轮回复只在 createReplySession 之前取一次**（workers/aiChat/replyModel.ts），
- * 因此切换只在下一轮生效，在途的那轮不会被劈成两套格式——理由见模块头注。
+ * 在 AI Worker 初始化时调用一次即可：能力配置在进程生命周期内不变，逐轮回复重复
+ * 记录只会把真正的故障淹掉。
  */
-export function chatAiProvider(): AiChatProvider {
-  return resolveSelected(chatProviderOverrideMirror.current);
+export function reportUnimplementedAgentCapabilities(): void {
+  const config: AgentDeploymentConfig = getAgentDeploymentConfig();
+  const song: AgentCapabilityConfig | undefined = config.song;
+  if (song !== undefined && AI_CHAT_PROVIDERS[song.provider].generateSong === undefined) {
+    logger.error(
+      `Song generation stays unavailable: $.agent.song selects the "${song.provider}" provider, ` +
+      "which does not implement it. The generate_song tool will not be registered."
+    );
+  }
+  if (AI_CHAT_PROVIDERS[config.media.provider].transcribeVoice === undefined) {
+    logger.error(
+      `Voice transcription stays unavailable: $.agent.media selects the "${config.media.provider}" provider, ` +
+      "which does not implement it. Voice messages will fall back to a placeholder in the transcript."
+    );
+  }
 }

@@ -1,8 +1,8 @@
 import type { ChatPermissions, ChatFullInfo } from "@grammyjs/types";
-import type { Api } from "grammy";
+import type { TelegramApi } from "../../types/telegramWorker";
 import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
 
-type LockdownPermissionsApi = Pick<Api, "getChat" | "setChatPermissions">;
+type LockdownPermissionsApi = Pick<TelegramApi, "getChat" | "setChatPermissions">;
 
 /**
  * 恢复 Anti-Raid 私密模式拥有的邀请权限。其它默认权限一律以 Telegram 当前

@@ -4,12 +4,15 @@ import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../../consts/work
 import { createFlushBarrier } from "../../libs/flushBarrier";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { createRestartThrottle } from "../../libs/restartThrottle";
+import { AcknowledgedBatchQueue } from "../../libs/acknowledgedBatchQueue";
+import { DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES } from "../../consts/diskIO/diagnostics";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
   DiskBusinessMessage,
   DiskIODomain,
   DiskIORespawnRegistration,
+  DiskDiagnosticMessage,
   LoadedReply,
   LuckAppendStalledReply,
   VerificationPersistedReply,
@@ -69,11 +72,18 @@ interface DiskIORuntime {
   fatalHandler: ((error: Error) => void) | undefined;
   fatalSignaled: boolean;
   pendingBusinessMessages: LinkedQueue<DiskBusinessMessage>;
+  diagnosticQueue: AcknowledgedBatchQueue<DiskDiagnosticMessage>;
+  diagnosticRetryTimer: ReturnType<typeof setTimeout> | null;
+  diagnosticDrainWaiters: Set<{
+    resolve: (result: "flushed" | "timedOut" | "failed") => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>;
   respawnListeners: DiskIORespawnRegistration[];
   verificationPersistedListeners: ((reply: VerificationPersistedReply) => void)[];
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
   luckAppendStalledListeners: ((reply: LuckAppendStalledReply) => void)[];
+  giveUpListeners: (() => void)[];
   nextLuckSecretRequestId: number;
   nextJoinLogReadRequestId: number;
 }
@@ -81,7 +91,13 @@ interface DiskIORuntime {
 /**
  * 主线程 Disk I/O Worker 的完整运行态。initDiskIO 填充 Worker/配置，恢复
  * 窗口暂存有硬顶的业务消息；terminateDiskIO 结算等待、清 timer 并恢复默认值。
- * Worker 崩溃后保留监听器并从主线程镜像重建，队列容量由配置硬顶约束。
+ * Worker 崩溃后保留监听器并从主线程镜像重建，业务队列容量由配置硬顶约束。
+ * diagnosticQueue 由 relayLogMessage/postDiskIODiagnostic 填充、DiskIO ACK 排空；
+ * 单批在途并保留到 ACK，Worker 崩溃后原批重发。待发送 FIFO 刻意不设容量：本项目
+ * 是约 15 个群的单租户部署，日志转发/落盘消费速度显著高于 Telegram 事件生产速度，
+ * 进程内不主动丢弃优先于理论故障下的内存硬顶；terminate 时随进程生命周期清空。
+ * diagnosticDrainWaiters 只由并发的进程级 flush 填充，ACK、超时或 terminate
+ * 结算清理，容量受同时在途的 shutdown flush 数约束；Worker 重建期间原样等待重放。
  */
 export const diskIORuntime: DiskIORuntime = {
   worker: null,
@@ -94,11 +110,17 @@ export const diskIORuntime: DiskIORuntime = {
   fatalHandler: undefined,
   fatalSignaled: false,
   pendingBusinessMessages: new LinkedQueue<DiskBusinessMessage>(),
+  diagnosticQueue: new AcknowledgedBatchQueue<DiskDiagnosticMessage>(
+    DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES
+  ),
+  diagnosticRetryTimer: null,
+  diagnosticDrainWaiters: new Set(),
   respawnListeners: [],
   verificationPersistedListeners: [],
   aiMemoryDeletedPersistedListeners: [],
   aiMemoryPersistedListeners: [],
   luckAppendStalledListeners: [],
+  giveUpListeners: [],
   nextLuckSecretRequestId: 1,
   nextJoinLogReadRequestId: 1,
 };

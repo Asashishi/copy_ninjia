@@ -2,10 +2,9 @@
  * 刷屏禁言的执行侧（入群守卫线程）：一分钟内同一个人发言达到阈值，就地禁言
  * 几分钟并在群里说明一句。
  *
- * 主线程只做同步门禁 + 一次 post（见 packages/antiRaid/floodControl.ts），计数窗口
- * 与全部网络动作都在这里——踢人、删消息、私密模式收权限本来就都跑在这条线程上，
- * 共用 joinVerificationApi 的限流队列；把禁言留在主线程会让一次刷屏占住那个群的
- * 更新车道，还会和入群守卫的处置抢同一批额度的不同队列。
+ * 主线程入口只做同步门禁 + 一次 post（见 packages/antiRaid/floodControl.ts），计数
+ * 窗口与重试 owner 留在这里；Telegram 调用经双工请求回到主线程总闸，因此等待
+ * 不阻塞本 Worker mailbox，也不会让原始 update handler 等待禁言网络往返。
  *
  * 与另外两条自动处置的边界：
  * - 反刷群私密模式数的是「多少人进来」，这里数的是「一个人说了多少」；
@@ -15,11 +14,11 @@
  */
 
 import {
-  joinVerificationApi,
+  deleteMessageAfter,
   muteChatMemberWithOutcome,
   sendMessage,
+  joinVerificationApi,
 } from "../../infra/telegram";
-import { scheduleNoticeDeletion } from "./noticeCleanup";
 import { logger } from "../../infra/logger";
 import {
   FLOOD_MESSAGE_LIMIT,
@@ -29,15 +28,66 @@ import {
   FLOOD_WINDOW_MAX_MEMBERS,
   FLOOD_WINDOW_MS,
 } from "../../consts/antiRaid/flood";
-import { floodWindowsByMember } from "../../cache/workers/antiRaid/flood";
+import {
+  floodWindowCacheStateHolder,
+  floodWindowsByChat,
+} from "../../cache/workers/antiRaid/flood";
 import { TimestampDeque } from "../../libs/timestampDeque";
-import { verificationKey } from "../../libs/verificationKey";
 import { botCanRestrictIn } from "./botPermissions";
-import { fetchAdminIds, freshAdminIds } from "./adminCache";
+import { isChatAdmin } from "./adminCache";
 import { antiRaidDispatchSignal, trackAntiRaidTask } from "./taskTracker";
 import type { FloodCandidateMessage } from "../../types/antiRaid";
-import type { FloodWindowEntry } from "../../types/antiRaid/internal";
+import type {
+  FloodWindowCacheState,
+  FloodWindowEntry,
+} from "../../types/antiRaid/internal";
 import type { MuteChatMemberOutcome } from "../../infra/telegram";
+
+/** 按两层数值索引读取条目；热路径不构造复合字符串。 */
+function getFloodWindowEntry(chatId: number, userId: number): FloodWindowEntry | undefined {
+  return floodWindowsByChat.get(chatId)?.get(userId);
+}
+
+/** 从 LRU 链摘下仍在链中的条目，不触碰分层索引与容量。 */
+function unlinkFloodWindow(entry: FloodWindowEntry): void {
+  const state: FloodWindowCacheState = floodWindowCacheStateHolder.current;
+  const newer: FloodWindowEntry | null = entry.lruNewer;
+  const older: FloodWindowEntry | null = entry.lruOlder;
+  if (newer === null) state.newest = older;
+  else newer.lruOlder = older;
+  if (older === null) state.oldest = newer;
+  else older.lruNewer = newer;
+  entry.lruNewer = null;
+  entry.lruOlder = null;
+}
+
+/** 把已摘链条目放到 LRU 最新端；只改固定 shape 字段，不重排 Map。 */
+function linkFloodWindowAsNewest(entry: FloodWindowEntry): void {
+  const state: FloodWindowCacheState = floodWindowCacheStateHolder.current;
+  const previousNewest: FloodWindowEntry | null = state.newest;
+  entry.lruNewer = null;
+  entry.lruOlder = previousNewest;
+  if (previousNewest === null) state.oldest = entry;
+  else previousNewest.lruNewer = entry;
+  state.newest = entry;
+}
+
+/** 热命中原地刷新 LRU；已经是最新时不做无效指针写入。 */
+function touchFloodWindow(entry: FloodWindowEntry): void {
+  if (floodWindowCacheStateHolder.current.newest === entry) return;
+  unlinkFloodWindow(entry);
+  linkFloodWindowAsNewest(entry);
+}
+
+/** 从索引和 LRU 同时删除同一对象；异步旧引用无法误删后来复建的条目。 */
+function removeFloodWindow(entry: FloodWindowEntry): void {
+  const members: Map<number, FloodWindowEntry> | undefined = floodWindowsByChat.get(entry.chatId);
+  if (members?.get(entry.userId) !== entry) return;
+  members.delete(entry.userId);
+  if (members.size === 0) floodWindowsByChat.delete(entry.chatId);
+  unlinkFloodWindow(entry);
+  floodWindowCacheStateHolder.current.entryCount--;
+}
 
 /**
  * 记一条发言，并判断这条是不是压垮窗口的那一条。
@@ -48,30 +98,40 @@ import type { MuteChatMemberOutcome } from "../../infra/telegram";
  * @param now 当前时刻；默认取墙钟，测试注入固定值。
  * @returns 命中时返回该成员的窗口条目，供调用方就地置抑制位；否则 undefined。
  */
-export function observeMemberMessage(key: string, now: number = Date.now()): FloodWindowEntry | undefined {
-  let entry: FloodWindowEntry | undefined = floodWindowsByMember.get(key);
+export function observeMemberMessage(
+  chatId: number,
+  userId: number,
+  now: number = Date.now()
+): FloodWindowEntry | undefined {
+  let entry: FloodWindowEntry | undefined = getFloodWindowEntry(chatId, userId);
   if (entry === undefined) {
-    // 容量淘汰交给下面的专用写回：这条路径上 key 必定不在表里，
-    // 「新增键越界才淘汰最早项」与在这里先淘汰再插入完全等价。
+    const state: FloodWindowCacheState = floodWindowCacheStateHolder.current;
+    if (state.entryCount >= FLOOD_WINDOW_MAX_MEMBERS && state.oldest !== null) {
+      removeFloodWindow(state.oldest);
+    }
+    let members: Map<number, FloodWindowEntry> | undefined = floodWindowsByChat.get(chatId);
+    if (members === undefined) {
+      members = new Map<number, FloodWindowEntry>();
+      floodWindowsByChat.set(chatId, members);
+    }
     entry = {
+      chatId,
+      userId,
       timestamps: new TimestampDeque(FLOOD_MESSAGE_LIMIT),
       lastObservedAt: now,
       suppressedUntil: 0,
+      lruNewer: null,
+      lruOlder: null,
     };
+    members.set(userId, entry);
+    state.entryCount++;
+    linkFloodWindowAsNewest(entry);
   } else {
     // Date.now() 因系统校时短暂回退时仍保持队列单调，避免过期修剪失序。
     now = Math.max(now, entry.lastObservedAt);
-    floodWindowsByMember.delete(key);
+    touchFloodWindow(entry);
   }
   entry.lastObservedAt = now;
-  // 上面两条分支都保证此刻 key 不在表里（新成员本来就没有，老条目刚 delete 过），
-  // 因此这一次写入既完成 LRU 热度刷新，也承担新增键的容量淘汰。
-  if (floodWindowsByMember.size >= FLOOD_WINDOW_MAX_MEMBERS) {
-    const oldestKey: string | undefined =
-      floodWindowsByMember.keys().next().value;
-    if (oldestKey !== undefined) floodWindowsByMember.delete(oldestKey);
-  }
-  floodWindowsByMember.set(key, entry);
 
   // 抑制期内到达的消息一律不计数：要么人已经被按住了（那几条是禁言落地前
   // 就在路上的），要么上一次判定的结论是确定性的，重判换不来新结果。
@@ -97,31 +157,8 @@ export function formatFloodMuteNotice(label: string): string {
     "冷静完了再回来说话啦杂鱼♡";
 }
 
-/**
- * 处置前的身份闸：这个发言者此刻是不是本群管理员。
- *
- * 与广告检测的 isAdminSender 同源——优先用入群守卫本来就热的管理员缓存，冷了
- * 才现拉一次全量。**确证不了一律按不处置办**：`restrictChatMember` 对管理员本来
- * 就会被拒，而 Telegram 回的那句 400 `not enough rights` 与「机器人自己缺权限」
- * 完全一样，照打只会往 `logs/` 塞一条把运维引向权限配置的假线索；把群主按住
- * 三分钟的代价也远大于放过一次刷屏（下一条消息会重新计数）。
- * @returns true=确认是管理员；false=确认不是；undefined=没查出来。
- */
-async function isAdminMember(chatId: number, userId: number): Promise<boolean | undefined> {
-  const cached: Set<number> | undefined = freshAdminIds(chatId);
-  if (cached !== undefined) return cached.has(userId);
-  try {
-    return (await fetchAdminIds(chatId)).has(userId);
-  } catch (error: unknown) {
-    logger.error(`Failed to check admin exemption for flooding user ${userId} in chat ${chatId}:`, error);
-    return undefined;
-  }
-}
-
 interface MuteFlooderParams {
   message: FloodCandidateMessage;
-  /** 该成员的窗口键；回写抑制位前用它复核条目仍是同一个对象。 */
-  key: string;
   /** 触发这次处置的窗口条目，已由调用方置上乐观抑制位。 */
   entry: FloodWindowEntry;
 }
@@ -133,8 +170,8 @@ interface MuteFlooderParams {
  * LRU 淘汰或随 deactivateChat 清掉，按全线程惯例用「状态对象同一性」识别：
  * 对不上就说明这条窗口已经不属于这次判定了，不该再改它。
  */
-function rollbackSuppression(key: string, entry: FloodWindowEntry): void {
-  if (floodWindowsByMember.get(key) !== entry) return;
+function rollbackSuppression(chatId: number, userId: number, entry: FloodWindowEntry): void {
+  if (getFloodWindowEntry(chatId, userId) !== entry) return;
   entry.suppressedUntil = 0;
 }
 
@@ -156,18 +193,19 @@ function rollbackSuppression(key: string, entry: FloodWindowEntry): void {
  * 刷屏，与那个常量 JSDoc 里写明的取舍完全一致（sweepFloodWindows 不会碰它：
  * 触发那一刻已置上乐观抑制位）。
  */
-async function muteFlooder({ message, key, entry }: MuteFlooderParams): Promise<void> {
-  const stillManaged = (): boolean => floodWindowsByMember.get(key) === entry;
+async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void> {
+  const stillManaged = (): boolean =>
+    getFloodWindowEntry(message.chatId, message.userId) === entry;
   // 停机已经开始：这次处置整个放掉，连身份确证那一次往返都不必付。禁言是尽力
-  // 而为的（到点由 Telegram 自行解除，本进程不排恢复计时器、不落盘），而它排在
-  // 按群限流桶里的时间可以远超 drain 的预算——契约见 taskTracker 的
+  // 而为的（到点由 Telegram 自行解除，本进程不排恢复计时器、不落盘），而它命中
+  // restrict 类 429 后的 retry_after 可以远超 drain 的预算——契约见 taskTracker 的
   // antiRaidDispatchSignal。
   const dispatchAbort: AbortSignal = antiRaidDispatchSignal();
   if (dispatchAbort.aborted) return;
-  const targetIsAdmin: boolean | undefined = await isAdminMember(message.chatId, message.userId);
+  const targetIsAdmin: boolean | undefined = await isChatAdmin(message.chatId, message.userId, "flooding user");
   // 确认是管理员：结论是确定性的，保留抑制位——每填满一个窗口就重查一次身份
   // 既费额度又换不来别的答案。没查出来则是瞬时失败，回滚等下一个窗口。
-  if (targetIsAdmin === undefined) rollbackSuppression(key, entry);
+  if (targetIsAdmin === undefined) rollbackSuppression(message.chatId, message.userId, entry);
   if (targetIsAdmin !== false) return;
   // 身份确证缓存冷时是一整次 getChatAdministrators，够管理员在这期间执行完
   // `/init disable`：这个群的窗口已经全被丢掉，别再往下处置（见函数头注）。
@@ -182,11 +220,11 @@ async function muteFlooder({ message, key, entry }: MuteFlooderParams): Promise<
     mutedUntil,
     api: joinVerificationApi,
     // 两个取消源合起来：
-    // - 超时：until_date 是这一刻算好的绝对时刻，请求却还要过每群的限流桶。排队
+    // - 超时：until_date 是这一刻算好的绝对时刻，请求命中 429 后还可能在 restrict 类退避车道排队。
     //   太久时它会在发出那一刻落进 Bot API 的「不足 30 秒即永久」区间——本模块
     //   不排恢复计时器，那就是一次只能人工解除的永久禁言。宁可放弃这次禁言：
     //   抑制位由下面的 failed 分支回滚，下一个满窗口重来。
-    // - 停机：这个任务登记在 drain 的等待集合里，而上面那个超时是 4 分钟量级、
+    // - 停机：这个任务登记在 drain 的等待集合里，而上面那个超时是 2 分钟量级、
     //   drain 的预算是秒级。不撤掉的话，凡是停机恰好落在排队期间就换来一次脏
     //   退出加一批 update 重投（见 taskTracker 的 antiRaidDispatchSignal）。
     signal: AbortSignal.any([dispatchAbort, AbortSignal.timeout(FLOOD_MUTE_DISPATCH_TIMEOUT_MS)]),
@@ -197,7 +235,7 @@ async function muteFlooder({ message, key, entry }: MuteFlooderParams): Promise<
     // 每填满一个窗口就重打一个注定失败的请求。具体原因已由统一错误边界带着
     // Telegram 自己的说法记进日志，这里不再重复一行。failed 是限流/网络抖动，
     // 回滚等下一个满窗口——这也正是权限镜像还没到时那条兜底路径的收口。
-    if (outcome === "failed") rollbackSuppression(key, entry);
+    if (outcome === "failed") rollbackSuppression(message.chatId, message.userId, entry);
     return;
   }
   // 抑制位对齐到真实的禁言结束时刻：触发那一刻置的是乐观值，中间还隔着一次
@@ -219,30 +257,29 @@ async function muteFlooder({ message, key, entry }: MuteFlooderParams): Promise<
     chatId: message.chatId,
     text: formatFloodMuteNotice(message.label),
     api: joinVerificationApi,
-    // 公告也带派发截止时间：它与入群验证的踢人共用同一条按群限流队列，而那条
-    // 队列是 FIFO。协同突袭里几十条公告排在前面，验证的 kickChatMember 就只能
-    // 等它们一条条发完，未验证的突袭号活过 VERIFICATION_TIMEOUT_MS——机器人自己
-    // 的碎嘴不该把安全动作顶到窗口之后（见 FLOOD_NOTICE_DISPATCH_TIMEOUT_MS）。
+    // 公告仍带派发截止时间：消息发送与踢人虽然已分属独立 429 队列，消息本身
+    // 仍可能等待 grammY 的群聊限流。停管后再补发一条过期公告没有业务价值，也
+    // 不该让它长期占住停机 drain（见 FLOOD_NOTICE_DISPATCH_TIMEOUT_MS）。
     // 停机信号一并接上：这条公告同样在 drain 的等待集合里。
     signal: AbortSignal.any([dispatchAbort, AbortSignal.timeout(FLOOD_NOTICE_DISPATCH_TIMEOUT_MS)]),
   });
   if (noticeMessageId === undefined) return;
   // 公告活到禁言解除那一刻为止：不给群里留永久公告（同踢人战报的约定），
   // 又不至于在人还被按着的时候就先撤掉、让后来的人看不懂他为什么不说话。
-  // 走登记版而不是 deleteMessageAfter：3 分钟的定时器活在本 Worker 的 isolate
-  // 里，崩溃重建或进程重启就把它丢了，公告则永久留在群里点着人名（理由与
-  // 兜底见 ./noticeCleanup.ts）。
-  scheduleNoticeDeletion({
+  // 统一延迟删除 owner 会在有序停机时提前兑现；batchOnFlush 让同群公告只占
+  // 一次 deleteMessages 请求。硬崩溃仍会丢失纯内存 timer，这是明确取舍。
+  deleteMessageAfter({
     chatId: message.chatId,
     messageId: noticeMessageId,
     delayMs: FLOOD_MUTE_DURATION_MS,
     api: joinVerificationApi,
+    batchOnFlush: true,
   });
 }
 
 /**
  * 收下一条参与刷屏计数的群消息。同步记账，不阻塞 mailbox；越过阈值才派生一个
- * 后台任务去打网络请求，并登记进停机 drain 的在途集合。
+ * 后台任务去请求主线程网络能力，并登记进停机 drain 的在途集合。
  *
  * 权限闸排在最前面：**确证**没有「限制成员」权限时连身份确证那一次
  * `getChatAdministrators` 都不必付。权限位由主线程按变更镜像过来（见
@@ -250,11 +287,8 @@ async function muteFlooder({ message, key, entry }: MuteFlooderParams): Promise<
  * 由 Telegram 的回应当裁判，见 muteFlooder 对 `forbidden` / `failed` 的分档。
  */
 export function handleFloodCandidate(message: FloodCandidateMessage, now: number = Date.now()): void {
-  // 复用 verificationKey 只是为了不再手写一遍「chatId:userId」的拼法：两张表
-  // 各自独立，键相同不构成任何耦合。末尾那个 `:` 同时保证前缀匹配不会串群
-  // （见 clearChatFloodWindows）。
-  const key: string = verificationKey(message.chatId, message.userId);
-  const entry: FloodWindowEntry | undefined = observeMemberMessage(key, now);
+  const entry: FloodWindowEntry | undefined =
+    observeMemberMessage(message.chatId, message.userId, now);
   if (entry === undefined) return;
   // 乐观抑制：本函数是同步的 mailbox handler，一次爆发式刷屏能在第一次网络
   // 往返回来之前就把下一个窗口填满。等结果再置位就是同一个人挨两次禁言、
@@ -280,8 +314,8 @@ export function handleFloodCandidate(message: FloodCandidateMessage, now: number
     return;
   }
   void trackAntiRaidTask({
-    task: muteFlooder({ message, key, entry }).catch((error: unknown): void => {
-      rollbackSuppression(key, entry);
+    task: muteFlooder({ message, entry }).catch((error: unknown): void => {
+      rollbackSuppression(message.chatId, message.userId, entry);
       logger.error(`Failed to mute flooding user ${message.userId} in chat ${message.chatId}:`, error);
     }),
   });
@@ -289,10 +323,11 @@ export function handleFloodCandidate(message: FloodCandidateMessage, now: number
 
 /** 停管/`/init disable`/群 teardown：丢掉这个群全部成员的发言窗口。 */
 export function clearChatFloodWindows(chatId: number): void {
-  const prefix: string = `${chatId}:`;
-  for (const key of floodWindowsByMember.keys()) {
-    if (key.startsWith(prefix)) floodWindowsByMember.delete(key);
-  }
+  const members: Map<number, FloodWindowEntry> | undefined = floodWindowsByChat.get(chatId);
+  if (members === undefined) return;
+  for (const entry of members.values()) unlinkFloodWindow(entry);
+  floodWindowCacheStateHolder.current.entryCount -= members.size;
+  floodWindowsByChat.delete(chatId);
 }
 
 /**
@@ -306,16 +341,28 @@ export function clearChatFloodWindows(chatId: number): void {
  */
 export function sweepFloodWindows(now: number = Date.now()): number {
   let deleted: number = 0;
-  for (const [key, entry] of floodWindowsByMember) {
-    if (now < entry.suppressedUntil) continue;
-    if (now - entry.lastObservedAt <= FLOOD_WINDOW_MS) continue;
-    floodWindowsByMember.delete(key);
-    deleted++;
+  for (const members of floodWindowsByChat.values()) {
+    for (const entry of members.values()) {
+      if (now < entry.suppressedUntil) continue;
+      if (now - entry.lastObservedAt <= FLOOD_WINDOW_MS) continue;
+      removeFloodWindow(entry);
+      deleted++;
+    }
   }
   return deleted;
 }
 
 /** Worker stop/测试隔离时清空窗口表；生产停机由 isolate 回收。 */
 export function resetFloodWindows(): void {
-  floodWindowsByMember.clear();
+  for (const members of floodWindowsByChat.values()) {
+    for (const entry of members.values()) {
+      entry.lruNewer = null;
+      entry.lruOlder = null;
+    }
+  }
+  floodWindowsByChat.clear();
+  const state: FloodWindowCacheState = floodWindowCacheStateHolder.current;
+  state.entryCount = 0;
+  state.newest = null;
+  state.oldest = null;
 }

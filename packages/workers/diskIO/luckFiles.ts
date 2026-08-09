@@ -74,7 +74,7 @@ export function retryLuckFlush(): void {
  * 发了回执，磁盘恢复后当天文件却永远缺这一条，用户当天也再抽不了第二次——
  * onDiskIORespawn 的全量重放只覆盖 Worker 重建，覆盖不到「Worker 活着但写不进盘」。
  *
- * 跨模块约束（换日、滞留补录与上界）完整表述见 docs/04-invariants.md 的
+ * 跨模块约束（换日、滞留补录与上界）完整表述见 docs/cn/04-invariants.md 的
  * 「运势与 AI 记忆恢复」。
  */
 function deferLuckDraw(msg: LuckDrawDiskMessage): void {

@@ -1,6 +1,5 @@
 import type { BotCommand } from "@grammyjs/types";
-import type { AiProviderName } from "../types/aiChat/provider";
-import type { CommandTargetMessages, ProviderModelCommandTexts, ToggleCommandTexts } from "../types/commands";
+import type { CommandTargetMessages, ToggleCommandTexts } from "../types/commands";
 
 /** 群聊命令文本发送后自动清理的最长保留时间。 */
 export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
@@ -28,24 +27,29 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   // 回一句用法并终止链路：既不能沉默（点了菜单的人不知道发生了什么），也不能
   // 放行到消息兜底（会被当成普通消息进入 AI/复读流水线）。
   { command: "x", description: "把 x 换成任意 1~2 个中文字直接发，如 /咬、/贴贴；回复 TA 或加 @username 指定目标，笨蛋♡" },
-  { command: "block", description: "把目标写进永久黑名单并在所有托管群封禁，之后再进群也秒踢；支持回复、@username 或用户 id，仅白名单用户配用，杂鱼别乱碰♡" },
-  { command: "unblock", description: "把目标移出永久黑名单并解除所有托管群封禁；支持回复、@username、用户 id 或频道负数 id，仅白名单用户配用，笨蛋♡" },
+  { command: "block", description: "把目标写进永久黑名单并在所有托管群封禁，之后再进群也秒踢；支持回复、@username 或用户 id，仅持有 isCanBlock 的身份配用，杂鱼别乱碰♡" },
+  { command: "unblock", description: "把目标移出永久黑名单并解除所有托管群封禁；支持回复、@username、用户 id 或频道负数 id，仅持有 isCanUnBlock 的身份配用，笨蛋♡" },
   { command: "ai_chat", description: "用 enable/disable 开关本群 AI 闲聊，只有获授权者配使唤本天才，杂鱼别乱按♡" },
   { command: "ad_detect", description: "用 enable/disable 开关本群广告检测；命中就拉黑并全群封禁删消息，只有获授权者配碰，杂鱼♡" },
   { command: "flood_control", description: "用 enable/disable 开关本群防刷屏禁言，只有获授权者配碰，刷屏杂鱼可别手抖哦♡" },
+  { command: "antiraid", description: "用 enable/disable 开关本群入群验证与防冲群私密模式，只有获授权者配碰，关掉就没人替你拦僵尸了哦杂鱼♡" },
+  { command: "bot_status", description: "查看全局模型能力、Telegram 出站和本群已开启功能，连本天才会什么都记不住吗，笨蛋♡" },
   { command: "query_mood", description: "偷看本群 AI 当前心情，群成员都能问，连本天才的脸色都不会看吗，杂鱼♡" },
   { command: "switch_mood", description: "重新抽取本群 AI 心情，只有获授权者配左右本天才，杂鱼别得意♡" },
-  { command: "init", description: "用 enable/disable 开关本群机器人监听/初始化，只有限定用户配决定本天才管不管，杂鱼♡" },
+  { command: "init", description: "用 enable/disable 开关本群机器人监听/初始化，只有超级管理员配决定本天才管不管，杂鱼♡" },
   { command: "quiet", description: "让本天才安静 1~15 分钟，默认 3 分钟；嫌吵就自己说清楚呀，笨蛋♡" },
   { command: "unquiet", description: "提前解除 /quiet，让本天才重新开口；这么快就想我了吗，杂鱼♡" },
-  { command: "mute", description: "禁言目标一段时间，时长必填如 10m/2h/1d（1 分钟~365 天，到点恢复）；支持回复、@username 或用户 id，仅白名单用户配用，杂鱼♡" },
-  { command: "unmute", description: "提前解除目标禁言；支持回复、@username 或用户 id，仅白名单用户配用，连等到期都做不到吗，杂鱼♡" },
+  { command: "mute", description: "禁言目标一段时间，时长必填如 10m/2h/1d（1 分钟~365 天，到点恢复）；支持回复、@username 或用户 id，仅持有 isCanMute 的身份配用，杂鱼♡" },
+  { command: "unmute", description: "提前解除目标禁言；支持回复、@username 或用户 id，仅持有 isCanUnMute 的身份配用，连等到期都做不到吗，杂鱼♡" },
+  { command: "gag", description: "让用户或频道身份 5/10/15 分钟内只能 @ 本天才说话；时长可省略为 5，支持回复、@username 或身份 id，仅持有 isCanGag 的身份配用♡" },
+  { command: "ungag", description: "定向解除目标 gag；必须回复、写 @username 或用户/频道 id，同样需要 isCanGag，笨蛋♡" },
   { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
-  { command: "permission", description: "query 偷看自己有几斤几两，help 看本天才的说明；改权限只有超级管理员配碰，杂鱼别乱按♡" },
+  { command: "permission", description: "query/help 只给白名单边界内的身份看；改权限只有超级管理员配碰，门外杂鱼别乱按♡" },
   { command: "white", description: "新增或删除白名单用户/频道，首次加入用默认权限；仅超级管理员配用，普通杂鱼别想偷偷混进来♡" },
-  { command: "image_model", description: "用 gpt/gemini 切换本天才画图用哪家模型；只换画图，聊天照旧，仅超级管理员配碰，杂鱼♡" },
-  { command: "chat_model", description: "用 gpt/gemini 切换本天才聊天、总结和看图用哪家脑子；画图不算，仅超级管理员配碰，杂鱼♡" },
 ];
+
+/** `/bot_status` 展示单个 provider/model 标签的最大字符数，防止部署值撑破消息上限。 */
+export const BOT_STATUS_CAPABILITY_LABEL_MAX_CHARS: number = 96;
 
 /** copy 类命令的公共冷却时长（白名单边界内的身份豁免，含恒在边界内的超级管理员；见 commands/copyShared.ts 的 claimCopyCooldownOrReject）。 */
 export const COPY_COOLDOWN_MS: number = 5 * 60 * 1000;
@@ -65,7 +69,7 @@ export const USERNAME_ARG_PATTERN: RegExp = new RegExp(
 
 /**
  * 命令参数中裸用户 id 的完整匹配规则：十进制正整数，不接受正负号、前导零、
- * 指数与小数（口径与 libs/runtimeConfig.ts 解析 `.env` 里那批 id 的一致）。
+ * 指数与小数；最终的安全整数边界由调用方统一判定。
  *
  * 与 USERNAME_ARG_PATTERN 天然互斥——Telegram 用户名必须字母开头——所以两者
  * 谁先匹配都不会抢到对方的参数。**只认正数**：负数 id 是会话身份，处置语义完全
@@ -79,12 +83,13 @@ export const USER_ID_ARG_PATTERN: RegExp = /^[1-9]\d*$/;
  * 命令参数中裸会话 id（频道/群）的完整匹配规则：带负号的十进制整数，同样不接受
  * 前导零、指数与小数，位数边界仍由调用方的 `Number.isSafeInteger` 兜底。
  *
- * `/unblock`、`/permission` 与 `/white` 按需打开这条路（`acceptChatId`）。
- * 前者必须保证黑名单里的频道马甲始终能被划掉；后两者管理的白名单本来就允许
- * 负数频道 ID，不能强迫管理员依赖一条仍存在的频道消息或公开 username。
+ * `/gag`、`/ungag`、`/unblock`、`/permission` 与 `/white` 按需打开这条路
+ *（`acceptChatId`）。前两条用它直接指定频道 sender_chat；`/unblock` 必须保证
+ * 黑名单里的频道马甲始终能被划掉；后两者管理的白名单本来就允许负数频道 ID，
+ * 不能强迫管理员依赖一条仍存在的频道消息或公开 username。
  *
  * 反方向的 `/block` 继续拒绝负数：把粘错的会话 id 当目标会改去封整个会话身份，
- * 而那条命令不可逆；其余三条都是可恢复的配置操作。
+ * 而那条命令不可逆；其余调用都是可恢复的运行时或配置操作。
  * 不限定 `-100` 前缀：这条口子存在的意义正是「名单上的东西一定划得掉」，
  * 不该再留下一类划不掉的 id。
  */
@@ -159,7 +164,7 @@ export const MUTE_MIN_DURATION_MS: number = 60_000;
  * 超过 366 天同样按永久禁言处理。
  *
  * 上限取 365 天而不是贴着 366 天的边：Bot API 是按**它收到请求的时刻**算这
- * 个差值的，命令处理、每群限流排队和网络往返都会把 `until_date` 相对「现在」
+ * 个差值的，命令处理、restrict 类 429 退避和网络往返都会把 `until_date` 相对「现在」
  * 往前推；而 muteChatMemberWithOutcome 还要向上取整到秒，又加最多 1 秒。贴顶
  * 时这些余量全部溢出到 366 天之外，禁言被静默升级成永久——本进程不排恢复
  * 计时器、不写任何持久化状态，除人工 /unmute 外永不解除，而战报却照常念
@@ -193,6 +198,12 @@ export const BATCH_KICK_MAX_DURATION_MS: number = 24 * 60 * 60_000;
  * 命令是低频管理操作，固定小并发可避免大群清理时瞬间打满 Bot API。
  */
 export const BATCH_KICK_CONCURRENCY: number = 5;
+
+/**
+ * `/block` 跨群封禁同时运行的群数。单租户通常只有约 15 个群，但配置状态仍可能
+ * 长期增长；固定小并发避免一次命令把全部群同时展开成 Telegram 请求和闭包。
+ */
+export const BLOCK_COMMAND_CONCURRENCY: number = 5;
 
 /** /quiet 未传时长时使用的分钟数。 */
 export const QUIET_DEFAULT_MINUTES: number = 3;
@@ -261,6 +272,34 @@ export const FLOOD_CONTROL_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
 };
 
 /**
+ * `/antiraid enable|disable` 的全部文案。这条开关同时管入群验证与防冲群私密
+ * 模式两条链路，文案必须把两件事一起说清：只提验证的话，管理员会以为私密模式
+ * 还在替他挡刷群。
+ */
+export const ANTI_RAID_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
+  rejection: (mockerLabel: string): string =>
+    `就 ${mockerLabel} 也配决定本天才守不守门？哪来的资格呀，笨蛋♡`,
+  usage: `笨蛋，要 /antiraid enable 还是 /antiraid disable，说清楚呀♡`,
+  enabled: `哼，本天才开始守门了：新来的杂鱼要按按钮验证，冲群的僵尸也别想混进来♡`,
+  disabled: `入群验证和防冲群都关掉了，谁都能大摇大摆走进来，出事可别哭着找本天才♡`,
+  alreadyEnabled: `笨蛋，本天才本来就守着这个群的门呢，急什么呀♡`,
+  alreadyDisabled: `本来就没在守门呀，笨蛋要关几次才甘心♡`,
+};
+
+/**
+ * `/antiraid disable` 落盘成功、但 Worker 侧运行态没拆干净时的回执。
+ *
+ * 与 INIT_DISABLE_TEARDOWN_FAILED_TEXT 同一取舍：开关此刻确实已经 durable 地
+ * 关掉了（重启后主线程照样不再投递入群事件），只是 Worker 不可用，已开的验证
+ * 窗口与仍生效的私密模式没能当场清掉。既不能报成干净的成功，也不能把异常放出去
+ * ——那会让 acknowledged runner 扣住 offset、Telegram 重投同一条命令，而那时
+ * wasEnabled 已经是 false。所属模块：packages/commands/antiRaid.ts。
+ */
+export const ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT: string =
+  `守门是不守了——不过本天才的守门小弟这会儿不在，已经开着的验证窗口和私密模式` +
+  `没能当场收掉，日志里写着呢，杂鱼管理员待会儿再关一次♡`;
+
+/**
  * `/ja_copy enable|disable` 的全部文案。用法提示要额外说清不带参数是复读翻译：
  * 这条命令的两种用法共用同一个命令名，靠有没有参数区分（见 commands/jaCopy.ts）。
  */
@@ -299,73 +338,6 @@ export const INIT_DISABLE_TEARDOWN_FAILED_TEXT: string =
   `日志里写着呢，杂鱼管理员去看一眼♡`;
 
 /**
- * `/image_model`、`/chat_model` 的参数别名表：面向用户的写法 -> 内部供应商名。
- *
- * `gpt` 只活在命令这一层，状态、协议与选取一律用 `openai`（见
- * types/aiChat/provider.ts 的 AiProviderName）——两套词汇一旦渗进持久化就再也
- * 分不开了。`gemini` 两侧同名，仍走同一张表，免得日后加别名时漏掉一处。
- * 两条命令共用这一张：它们认的写法必须一致，否则同一个 `gpt` 在一条命令上
- * 生效、另一条上报用法错误。所属模块：commands/providerModel.ts。
- */
-export const PROVIDER_MODEL_ALIASES: Readonly<Record<string, AiProviderName>> = {
-  gpt: "openai",
-  openai: "openai",
-  gemini: "gemini",
-};
-
-/**
- * 内部供应商名回到面向用户的写法，只用于回执文案；与上表互为反向。
- * 所属模块：commands/providerModel.ts。
- */
-export const PROVIDER_MODEL_LABELS: Readonly<Record<AiProviderName, string>> = {
-  openai: "gpt",
-  gemini: "gemini",
-};
-
-/**
- * `/image_model gpt|gemini` 的全部文案；字段口径见 packages/types/commands.ts 的
- * ProviderModelCommandTexts。切换只作用于生图，回执因此要说破这一点——否则超管会
- * 以为连闲聊回复也一起换了家。两家的画幅能力并不等价（Gemini 走一档 1K，
- * OpenAI 收敛到三档），同一句提示词的出图比例可能变，回执里提一句、不做补偿。
- * 所属模块：packages/commands/imageModel.ts。
- */
-export const IMAGE_MODEL_TEXTS: Readonly<ProviderModelCommandTexts> = {
-  rejection: (mockerLabel: string): string =>
-    `就 ${mockerLabel} 也想管本天才用哪支笔画画？哪来的资格呀，笨蛋♡`,
-  usage: `笨蛋，要 /image_model gpt 还是 /image_model gemini，说清楚呀♡`,
-  missingGeminiKey: `本天才手上压根没有 Gemini 那把 key，拿什么给你换？.env 里补上 AI_CHAT_GEMINI_API_KEY 再重启，笨蛋♡`,
-  missingOpenAiKey: `本天才手上压根没有 OpenAI 那把 key，拿什么给你换？.env 里补上 AI_CHAT_OPENAI_API_KEY 再重启，笨蛋♡`,
-  switched: (providerLabel: string): string =>
-    `哼，那以后就用 ${providerLabel} 画。只换画笔哦，说话还是本天才自己来——` +
-    `画出来的比例跟从前不一样，可别回头怪本天才♡`,
-  unchanged: (providerLabel: string): string =>
-    `笨蛋，本天才手里拿的就是 ${providerLabel} 呀，看清楚了再来♡`,
-};
-
-/**
- * `/chat_model gpt|gemini` 的全部文案；字段口径见 packages/types/commands.ts 的
- * ProviderModelCommandTexts。
- *
- * 覆盖的是生图**以外**的三项能力：闲聊回复、总结（冷消息中期摘要与贴纸包简介）
- * 与看图描述。回执要说破这一点——它与 `/image_model` 正好互补，超管必须能一眼
- * 看出这条没动画图。切换只在下一轮回复生效（在途那轮会话已经绑定了实现，见
- * aiChat/provider.ts 的 chatAiProvider），回执里提一句，免得超管以为立刻改口。
- * 所属模块：packages/commands/chatModel.ts。
- */
-export const CHAT_MODEL_TEXTS: Readonly<ProviderModelCommandTexts> = {
-  rejection: (mockerLabel: string): string =>
-    `就 ${mockerLabel} 也想挑本天才用哪个脑子说话？哪来的资格呀，笨蛋♡`,
-  usage: `笨蛋，要 /chat_model gpt 还是 /chat_model gemini，说清楚呀♡`,
-  missingGeminiKey: `Gemini 那把 key 本天才根本没拿到，换个什么劲？.env 里补上 AI_CHAT_GEMINI_API_KEY 再重启吧，笨蛋♡`,
-  missingOpenAiKey: `OpenAI 那把 key 本天才根本没拿到，换个什么劲？.env 里补上 AI_CHAT_OPENAI_API_KEY 再重启吧，笨蛋♡`,
-  switched: (providerLabel: string): string =>
-    `哼，那本天才以后换 ${providerLabel} 来想事情——说话、记事、看图都归它，画画不算哦。` +
-    `这句还是老样子，下一句才换过来，急什么呀杂鱼♡`,
-  unchanged: (providerLabel: string): string =>
-    `笨蛋，本天才现在想事情用的就是 ${providerLabel} 呀，还要再点一次头吗？♡`,
-};
-
-/**
  * 各命令的目标解析提示文案表。
  *
  * 字段口径见 packages/types/commands.ts 的 CommandTargetMessages。抽成模块级
@@ -398,7 +370,7 @@ export const UNBLOCK_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
 
 /** `/mute` 的目标解析提示；除动词外与 /block 的口径一致。 */
 export const MUTE_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
-  missingTarget: `笨蛋，要么 /mute @username 或 /mute 用户id，要么回复 TA 的一条消息，本天才可不会读心术♡`,
+  missingTarget: `笨蛋，时长写了倒是把人也说清楚呀：回复 TA 的消息发 /mute 10m，或者用 /mute @username 10m、/mute 用户id 10m，本天才可不会读心术♡`,
   invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数），别拿半截参数糊弄本天才♡`,
   unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息再来吧♡`,
   conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想对谁动手就只留一个，要么删掉参数、要么别回复♡`,
@@ -411,20 +383,35 @@ export const UNMUTE_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
   invalidUsername: (rawArgument: string): string => `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户 id（得是正整数），别拿半截参数糊弄本天才♡`,
   unknownUsername: (rawUsername: string): string => `笨蛋，@${rawUsername} 都还没说过话呢，本天才不认识这号杂鱼，回复 TA 的消息再来吧♡`,
   conflictingTarget: (rawArgument: string): string => `笨蛋，你回复了一条消息、又写了 ${rawArgument}，这是两个目标呀；想对谁动手就只留一个，要么删掉参数、要么别回复♡`,
-  selfTarget: `笨蛋，本天才才不会捂自己的嘴呢♡`,
+  selfTarget: `笨蛋，本天才又没被你捂住，拿 /unmute 对着本天才松什么嘴呀♡`,
 };
 
+/** copy 模式目标提示接受的命令名；限定集合避免提示与实际入口再次漂移。 */
+type CopyTargetCommand = "copy" | "r_copy" | "nya_copy" | "ja_copy";
+
+/** 为一条 copy 模式命令创建模块级目标提示；只在模块初始化时调用。 */
+function createCopyTargetTexts(command: CopyTargetCommand): Readonly<CommandTargetMessages> {
+  const commandName: string = `/${command}`;
+  return {
+    missingTarget: `笨蛋，要么 ${commandName} @username，要么直接回复 TA 的一条消息再 ${commandName}，本天才总得知道杂鱼是谁吧♡`,
+    invalidUsername: (rawArgument: string): string =>
+      `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 ${commandName} @username，别在后面夹垃圾♡`,
+    unknownUsername: (rawUsername: string): string =>
+      `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 ${commandName} 呀♡`,
+    conflictingTarget: (rawArgument: string): string =>
+      `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该盯上哪个杂鱼呀？只留一个再来♡`,
+    selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
+  };
+}
+
 /** `/copy` 的目标解析提示。 */
-export const COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = {
-  missingTarget: `笨蛋，要么 /copy @username，要么直接回复 TA 的一条消息再 /copy，本天才总得知道杂鱼是谁吧♡`,
-  invalidUsername: (rawArgument: string): string =>
-    `笨蛋，${rawArgument} 才不是完整合法的 Telegram 用户名呀，要写成 /copy @username，别在后面夹垃圾♡`,
-  unknownUsername: (rawUsername: string): string =>
-    `笨蛋，@${rawUsername} 都还没说过话呢，本天才要怎么记住这种杂鱼呀，先让 TA 冒个泡，或者直接回复 TA 的消息来 /copy 呀♡`,
-  conflictingTarget: (rawArgument: string): string =>
-    `笨蛋，你回复了一条消息、又写了 ${rawArgument}，本天才该盯上哪个杂鱼呀？只留一个再来♡`,
-  selfTarget: `笨蛋，本天才怎么可能盯上自己呀♡`,
-};
+export const COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createCopyTargetTexts("copy");
+/** `/r_copy` 的目标解析提示。 */
+export const REVERSE_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createCopyTargetTexts("r_copy");
+/** `/nya_copy` 的目标解析提示。 */
+export const NYA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createCopyTargetTexts("nya_copy");
+/** `/ja_copy` 复读分支的目标解析提示。 */
+export const JA_COPY_TARGET_TEXTS: Readonly<CommandTargetMessages> = createCopyTargetTexts("ja_copy");
 
 /** `/steal_icon` 的目标解析提示；与 COPY_TARGET_TEXTS 只差命令名。 */
 export const STEAL_ICON_TARGET_TEXTS: Readonly<CommandTargetMessages> = {

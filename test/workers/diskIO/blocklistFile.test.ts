@@ -71,7 +71,7 @@ describe("黑名单文件的追加落盘", () => {
   test("结尾被截断时拒绝自愈：整体抛错并原样保留字节", () => {
     // 日志/运势/待验证可以裁掉末尾残片继续跑，黑名单不行——被裁掉的每一条
     // 都是一个被放回群里的人。掉电撕裂如此，手工编辑改坏了同样如此：宁可
-    // 拒绝启动等人工恢复，也不能静默少几条继续跑（docs/04-invariants.md）。
+    // 拒绝启动等人工恢复，也不能静默少几条继续跑（docs/cn/04-invariants.md）。
     const truncated: string =
       "{\n  \"7\": {\n    \"isBlocked\": true,\n    \"blockedAt\": \"2026/07/25 19:38:09\"\n  },\n  \"8\": {\n    \"isBlo";
     writeFileSync(BLOCKLIST_FILE_PATH, truncated);
@@ -87,7 +87,7 @@ describe("黑名单文件的追加落盘", () => {
     // 是另一个人，而真正的目标不在名单里。
     for (const key of ["0x1f4", "1e3", "7.0", " 7", ""]) {
       writeFileSync(BLOCKLIST_FILE_PATH, JSON.stringify({ [key]: { isBlocked: true, blockedAt: "x" } }, null, 2));
-      expect((): Map<number, BlockedUserRecord> => hydrateBlocklist()).toThrow(/non-numeric user id/);
+      expect((): Map<number, BlockedUserRecord> => hydrateBlocklist()).toThrow(/\.<identity> must be a canonical non-zero safe integer key/);
     }
   });
 
@@ -113,10 +113,10 @@ describe("黑名单文件的追加落盘", () => {
   test("记录形状不合规时整体抛错，不静默丢条目", () => {
     // 黑名单是安全边界：漏掉一条就意味着那个人能重新进群，宁可拒绝启动。
     writeFileSync(BLOCKLIST_FILE_PATH, JSON.stringify({ "7": { isBlocked: false, blockedAt: "x" } }, null, 2));
-    expect((): Map<number, BlockedUserRecord> => hydrateBlocklist()).toThrow(/invalid block record/);
+    expect((): Map<number, BlockedUserRecord> => hydrateBlocklist()).toThrow(/\.<record> must be exactly/);
 
     writeFileSync(BLOCKLIST_FILE_PATH, JSON.stringify({ "not-an-id": { isBlocked: true, blockedAt: "x" } }, null, 2));
-    expect((): Map<number, BlockedUserRecord> => hydrateBlocklist()).toThrow(/non-numeric user id/);
+    expect((): Map<number, BlockedUserRecord> => hydrateBlocklist()).toThrow(/\.<identity> must be a canonical non-zero safe integer key/);
   });
 
   test("写盘失败时条目留在缓冲里，下一次 flush 重试", () => {

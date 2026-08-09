@@ -14,20 +14,20 @@ describe("ad samples config", () => {
 
   test("拒绝非数组、非字符串、空白与重复条目", () => {
     expect(() => parseAdSampleConfig({ samples: [] })).toThrow("string array");
-    expect(() => parseAdSampleConfig([42])).toThrow("entry");
-    expect(() => parseAdSampleConfig(["   "])).toThrow("must not be blank");
+    expect(() => parseAdSampleConfig([42])).toThrow("a non-empty string");
+    expect(() => parseAdSampleConfig(["   "])).toThrow("a non-empty string");
     // 折叠空白之后才判重：同一条广告多写两个空格不该被当成两条不同口径。
-    expect(() => parseAdSampleConfig(["加 微信", "加  微信"])).toThrow("Duplicate");
+    expect(() => parseAdSampleConfig(["加 微信", "加  微信"])).toThrow("unique after whitespace normalization");
   });
 
   test("条数与单条长度都有上界", () => {
     const maximum: string[] = Array.from({ length: MAX_CONFIGURED_AD_SAMPLES }, (_, index) => `sample_${index}`);
     expect(parseAdSampleConfig(maximum)).toHaveLength(MAX_CONFIGURED_AD_SAMPLES);
     expect(() => parseAdSampleConfig([...maximum, "overflow"])).toThrow(
-      `at most ${MAX_CONFIGURED_AD_SAMPLES} samples`
+      `at most ${MAX_CONFIGURED_AD_SAMPLES} entries`
     );
     expect(() => parseAdSampleConfig(["x".repeat(AD_SAMPLE_MAX_CHARS + 1)])).toThrow(
-      `at most ${AD_SAMPLE_MAX_CHARS} characters`
+      `no longer than ${AD_SAMPLE_MAX_CHARS} characters`
     );
   });
 

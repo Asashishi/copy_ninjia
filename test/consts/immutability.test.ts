@@ -8,21 +8,27 @@ import {
   FLOOD_CONTROL_TOGGLE_TEXTS,
   INIT_TOGGLE_TEXTS,
   JA_COPY_TOGGLE_TEXTS,
-  CHAT_MODEL_TEXTS,
-  IMAGE_MODEL_TEXTS,
+  JA_COPY_TARGET_TEXTS,
   MUTE_TARGET_TEXTS,
-  PROVIDER_MODEL_ALIASES,
-  PROVIDER_MODEL_LABELS,
+  NYA_COPY_TARGET_TEXTS,
+  REVERSE_COPY_TARGET_TEXTS,
   STEAL_ICON_TARGET_TEXTS,
   UNBLOCK_TARGET_TEXTS,
   UNMUTE_TARGET_TEXTS,
 } from "../../packages/consts/commands";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
+import {
+  GAG_TARGET_TEXTS,
+  UNGAG_TARGET_TEXTS,
+} from "../../packages/consts/gag";
 import { GEMINI_SAFETY_SETTINGS } from "../../packages/consts/aiChat/gemini";
-import { OPENAI_IMAGE_SIZES } from "../../packages/consts/aiChat/openai";
+import {
+  OPENAI_FLEXIBLE_IMAGE_SIZE_BY_ASPECT_RATIO,
+  OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO,
+} from "../../packages/consts/aiChat/openai";
 import { RANDOM_ECHO_MODES } from "../../packages/consts/auto";
 import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
-import { DEFAULT_CHAT_STATE } from "../../packages/consts/storage";
+import { DEFAULT_CHAT_STATE, createChatState } from "../../packages/libs/chatState";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
   PERMISSION_COMMAND_TEXTS,
@@ -66,11 +72,13 @@ test("对象元素的字段同样不可写", () => {
   expect(() => { LUCK_TIERS[0]!.fortunePercentRange[0] = 0; }).toBeDefined();
   // @ts-expect-error SafetySetting 元素经 Readonly<> 包裹，字段只读
   expect(() => { GEMINI_SAFETY_SETTINGS[0]!.threshold = undefined; }).toBeDefined();
-  // @ts-expect-error OPENAI_IMAGE_SIZES 元素经 Readonly<> 包裹，字段只读
-  expect(() => { OPENAI_IMAGE_SIZES[0]!.size = "1:1"; }).toBeDefined();
 });
 
 test("Readonly<Record<…>> 形态的常量不可写入", () => {
+  // @ts-expect-error OpenAI 任意画幅尺寸表不允许覆盖既有比例
+  expect(() => { OPENAI_FLEXIBLE_IMAGE_SIZE_BY_ASPECT_RATIO["1:1"] = "1536x1536"; }).toBeDefined();
+  // @ts-expect-error OpenAI 标准画幅尺寸表同样只读
+  expect(() => { OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO["1:1"] = "1536x1536"; }).toBeDefined();
   // @ts-expect-error Readonly<ChatPermissions> 的字段只读
   expect(() => { MUTED_CHAT_PERMISSIONS.can_send_messages = true; }).toBeDefined();
   // @ts-expect-error Readonly<Record<number, string>> 不允许新增/覆盖键
@@ -137,7 +145,17 @@ test("各命令的目标解析文案表不可写入", () => {
   // @ts-expect-error CommandTargetMessages.conflictingTarget 只读
   expect(() => { COPY_TARGET_TEXTS.conflictingTarget = (): string => "篡改"; }).toBeDefined();
   // @ts-expect-error CommandTargetMessages.missingTarget 只读
+  expect(() => { REVERSE_COPY_TARGET_TEXTS.missingTarget = "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.selfTarget 只读
+  expect(() => { NYA_COPY_TARGET_TEXTS.selfTarget = "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.unknownUsername 只读
+  expect(() => { JA_COPY_TARGET_TEXTS.unknownUsername = (): string => "篡改"; }).toBeDefined();
+  // @ts-expect-error CommandTargetMessages.missingTarget 只读
   expect(() => { STEAL_ICON_TARGET_TEXTS.missingTarget = "篡改"; }).toBeDefined();
+  // @ts-expect-error gag 的目标文案表同样跨调用共享，不允许改写
+  expect(() => { GAG_TARGET_TEXTS.selfTarget = "篡改"; }).toBeDefined();
+  // @ts-expect-error ungag 的目标文案表同样跨调用共享，不允许改写
+  expect(() => { UNGAG_TARGET_TEXTS.missingTarget = "篡改"; }).toBeDefined();
 });
 
 /**
@@ -151,6 +169,9 @@ test("目标解析文案念的是各自的命令名", () => {
     ["/mute", MUTE_TARGET_TEXTS],
     ["/unmute", UNMUTE_TARGET_TEXTS],
     ["/copy", COPY_TARGET_TEXTS],
+    ["/r_copy", REVERSE_COPY_TARGET_TEXTS],
+    ["/nya_copy", NYA_COPY_TARGET_TEXTS],
+    ["/ja_copy", JA_COPY_TARGET_TEXTS],
     ["/steal_icon", STEAL_ICON_TARGET_TEXTS],
   ] as const) {
     expect(texts.missingTarget).toContain(command);
@@ -159,6 +180,9 @@ test("目标解析文案念的是各自的命令名", () => {
   expect(UNBLOCK_TARGET_TEXTS.missingTarget).not.toBe(BLOCK_TARGET_TEXTS.missingTarget);
   expect(UNMUTE_TARGET_TEXTS.missingTarget).not.toBe(MUTE_TARGET_TEXTS.missingTarget);
   expect(STEAL_ICON_TARGET_TEXTS.missingTarget).not.toBe(COPY_TARGET_TEXTS.missingTarget);
+  expect(MUTE_TARGET_TEXTS.missingTarget).toContain("/mute 10m");
+  expect(UNMUTE_TARGET_TEXTS.selfTarget).toContain("/unmute");
+  expect(PERMISSION_COMMAND_TEXTS.target.missingTarget).toContain("@username");
 });
 
 test("开关命令文案表不可写入", () => {
@@ -214,6 +238,13 @@ test("默认群状态单例与它的只读访问器都不许被写", () => {
   expect(DEFAULT_CHAT_STATE.isFloodControlEnabled).toBeUndefined();
 });
 
+test("默认群状态单例与新建状态同形状：形状不一致会让热路径的读取重新发散", () => {
+  // getChatState 在「有条目」和「没条目」之间来回交出这两个对象；键集合或顺序
+  // 一旦分叉，每条群消息那 4~6 次读取就又变成多态（见 libs/chatState.ts 的
+  // createChatState）。漏加一个字段在别处只会静默降级，只有这里看得出来。
+  expect(Object.keys(DEFAULT_CHAT_STATE)).toEqual(Object.keys(createChatState()));
+});
+
 test("常量表内容本身仍可正常读取", () => {
   expect(BOT_COMMANDS.length).toBeGreaterThan(0);
   expect(LUCK_TIERS.reduce((sum: number, tier): number => sum + tier.weight, 0)).toBe(100);
@@ -222,37 +253,4 @@ test("常量表内容本身仍可正常读取", () => {
   expect(DEFAULT_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(false);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock).toBe(true);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(true);
-});
-
-/**
- * 两条模型切换命令（`/image_model`、`/chat_model`）共享的别名/回显表与各自的
- * 文案表。别名表是把用户写法归一成落盘供应商名的唯一入口，写坏它等于让一条
- * `gpt` 静默解析成另一家；两张文案表则是跨群共享的单例，改一句就是全群一起
- * 换口径，口径同上面那五张开关文案表。
- */
-test("模型切换命令的别名表与文案表都不可写入", () => {
-  // @ts-expect-error Readonly<Record<string, AiProviderName>> 不允许新增/覆盖键
-  expect(() => { PROVIDER_MODEL_ALIASES.gpt = "gemini"; }).toBeDefined();
-  // @ts-expect-error 同上：反向回显表也不许被改
-  expect(() => { PROVIDER_MODEL_LABELS.openai = "gemini"; }).toBeDefined();
-  // @ts-expect-error ProviderModelCommandTexts.usage 只读
-  expect(() => { IMAGE_MODEL_TEXTS.usage = "篡改"; }).toBeDefined();
-  // @ts-expect-error ProviderModelCommandTexts.missingGeminiKey 只读
-  expect(() => { CHAT_MODEL_TEXTS.missingGeminiKey = "篡改"; }).toBeDefined();
-});
-
-test("两条模型命令的文案各自成立，不共用同一句", () => {
-  // 共用一份 ProviderModelCommandTexts 接口，但话必须不同：回执要说破自己切的
-  // 是哪一半能力，否则超管会以为一条命令把四项全换了。
-  expect(IMAGE_MODEL_TEXTS.usage).not.toBe(CHAT_MODEL_TEXTS.usage);
-  expect(IMAGE_MODEL_TEXTS.switched("gpt")).not.toBe(CHAT_MODEL_TEXTS.switched("gpt"));
-  expect(IMAGE_MODEL_TEXTS.unchanged("gpt")).not.toBe(CHAT_MODEL_TEXTS.unchanged("gpt"));
-  expect(IMAGE_MODEL_TEXTS.rejection("@a")).not.toBe(CHAT_MODEL_TEXTS.rejection("@a"));
-});
-
-test("别名表与回显表互为反向，且覆盖两家供应商", () => {
-  for (const provider of ["gemini", "openai"] as const) {
-    const label: string = PROVIDER_MODEL_LABELS[provider];
-    expect(PROVIDER_MODEL_ALIASES[label]).toBe(provider);
-  }
 });

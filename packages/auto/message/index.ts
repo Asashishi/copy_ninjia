@@ -12,7 +12,11 @@ import { cacheSender } from "../../users/senderIdentity";
 import { handleAnimationMessage } from "./animation";
 import { observeGroupMessageForAiReply } from "./aiReplyActivity";
 import { echoMessage, resolveEffectiveCopyMode } from "./echo";
-import { isBotOwnMessage } from "../../infra/selfSentTracker";
+import {
+  isBotOwnMessage,
+  needsBotOwnMessageWait,
+  waitForBotOwnMessage,
+} from "../../infra/selfSentTracker";
 import { recordSelfInlineResult } from "./guards";
 import { handlePhotoMessage } from "./photo";
 import { handleProactiveMessageActions } from "./proactive";
@@ -20,11 +24,15 @@ import { handlePrivateProxySend } from "./proxySend";
 import { handleStickerMessage } from "./sticker";
 import { handleTextMessage } from "./text";
 import { createMessageTriggerContext } from "./triggerContext";
+import { handleVoiceMessage } from "./voice";
 
 /**
  * 消息自动流水线的编排层。各载荷 handler 只负责自己的记录与触发语义；这里
  * 保留跨领域的固定顺序：标题/自回弹门禁 → 活跃度 → 复制目标 → 私聊中转 →
  * AI 文本或媒体 → 群聊主动行为。
+ *
+ * 媒体 handler 的分派顺序按「一条消息只可能是其中一种载荷」写成 else-if 链；
+ * 语音排在最后，与它在群里的出现频率一致（前面几种命中就不再往下判）。
  */
 export async function handleIncomingMessage(ctx: Context): Promise<void> {
   const message: Message | undefined = ctx.msg;
@@ -39,6 +47,7 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
     return;
   }
   if (isBotOwnMessage(message)) return;
+  if (needsBotOwnMessageWait(message) && await waitForBotOwnMessage(message)) return;
 
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message);
@@ -99,6 +108,8 @@ export async function handleIncomingMessage(ctx: Context): Promise<void> {
       shouldStop = handlePhotoMessage(triggerContext);
     } else if (message.animation) {
       shouldStop = handleAnimationMessage(triggerContext);
+    } else if (message.voice) {
+      shouldStop = handleVoiceMessage(triggerContext);
     }
     if (shouldStop) return;
   }

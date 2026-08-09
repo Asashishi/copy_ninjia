@@ -7,7 +7,7 @@
  * appendLuckEntries（每日运势）、diskIO/verificationFiles.ts（待验证）与
  * diskIO/blocklistFile.ts（黑名单）；调用方各自负责 key/value 怎么序列化、
  * 多久 flush 一次、保留策略等领域逻辑，这里只管字节层面的
- * 打开/探测/追加/损坏修复。
+ * 打开、探测与追加；截断修复只供调用方显式选择的诊断材料和日志使用。
  *
  * 两层 API：openAppendOnlyFile/appendToAppendOnlyFile 直接按完整路径操作，
  * 供黑名单这类固定单文件使用；openDayFile/appendToDayFile 是它们在
@@ -85,7 +85,7 @@ export function writeBufferFully(
  * 维护性重写被杀一半留下撕裂 JSON（同 snapshotFiles.ts atomicWriteText 的
  * 理由，fsync 的必要性见其注释）。只用在 openDayFile 的两处维护性重写上——
  * 真正的热路径 appendToDayFile 仍是位置写，其非原子性是刻意的性能取舍，
- * 靠 repairTruncated 兜底，见下方注释。
+ * 是否允许裁掉末尾残片由调用方按数据权威性显式选择，见下方注释。
  */
 function atomicRewrite(path: string, content: string, mode?: number): void {
   atomicWriteTextSync(path, content, mode);
@@ -94,16 +94,14 @@ function atomicRewrite(path: string, content: string, mode?: number): void {
 /**
  * 打开（或接管）一个追加型 JSON 对象文件并校验其可追加性。文件不存在或为
  * 空对象视作空文件；内容合法但结尾形态不符（比如被人手动编辑过）就按标准
- * 格式重写一次；解析失败（断电等原因导致结尾写了一半）先尝试 repairTruncated
- * 裁掉末尾残片修复；顶层不是普通对象或无法修复时抛错并保留原始字节。
+ * 格式重写一次；解析失败时默认保留原始字节并抛错，只有 repair=true 才尝试
+ * repairTruncated 裁掉末尾残片。顶层不是普通对象或无法修复时同样拒绝。
  * size 一律以 fs.statSync 读到的物理文件大小为准，不信任内存里算出来的
  * 字节数。完整扫描只发生在打开/恢复阶段，成功后的追记热路径仍为 O(1)。
- * @param repair 解析失败时是否允许裁掉末尾残片自愈。日志/运势/待验证这类
- *   「丢掉最后几条不影响正确性」的领域用默认的 true；黑名单必须传 false
- *   ——裁掉的每一条都是一个被放回群里的人，宁可拒绝启动等人工恢复，也不能
- *   静默少几条继续跑（见 ../../../docs/04-invariants.md）。
+ * @param repair 是否显式允许裁掉末尾残片或规范化排版；默认 false。只写诊断
+ *   材料和日志可选择 true，运行时权威状态必须保持 false。
  */
-export function openAppendOnlyFile(path: string, mode?: number, repair: boolean = true): AppendOnlyFileState {
+export function openAppendOnlyFile(path: string, mode?: number, repair: boolean = false): AppendOnlyFileState {
   const state: AppendOnlyFileState = { size: 0, empty: true };
   if (!existsSync(path)) return state;
   // 调用方显式要求 mode 时，接管旧文件也修正曾被严格 umask
@@ -139,6 +137,12 @@ export function openAppendOnlyFile(path: string, mode?: number, repair: boolean 
   }
   if (Object.keys(parsed).length === 0) return state;
   if (!content.endsWith("\n}")) {
+    if (!repair) {
+      throw new AppendOnlyFileFormatError(
+        path,
+        "must use the canonical append-only JSON object formatting."
+      );
+    }
     // 只规范排版，不承诺保留原文件的键序：JSON.parse 建出来的普通对象已经把
     // 「整数索引形态」的键提到最前，源文本的顺序在这一步就没了。这条路径只在
     // 文件被手工编辑过（结尾形态不符）时触发，属异常态的一次性归一；黑名单
@@ -165,7 +169,7 @@ export function openDayFile(dir: string, day: string, mode?: number): DayFileSta
  * @returns 修复后的完整 JSON 文本；所有候选都无效时返回 null，表示无法修复
  *   ——调用方（openAppendOnlyFile）据此抛 AppendOnlyFileFormatError 阻止写入并原样
  *   保留字节，等待人工恢复，绝不从空文件重新开始覆盖原数据。
- * @see ../../../docs/04-invariants.md
+ * @see ../../../docs/cn/04-invariants.md
  */
 function repairTruncated(content: string): string | null {
   const withClosingBrace: string = `${content}\n}`;
@@ -238,7 +242,7 @@ export function appendToAppendOnlyFile({
   state,
   chunk,
   mode,
-  repair = true,
+  repair = false,
   write = nodeWriteBuffer,
   sync = fsyncSync,
 }: AppendToAppendOnlyFileParams): void {

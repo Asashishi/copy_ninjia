@@ -31,6 +31,13 @@ export function getTokyoDateKey(date: Date = new Date()): string {
   return TOKYO_DATE_KEY_FORMATTER.format(date);
 }
 
+/** 严格判断 YYYY-MM-DD 是否为可往返的公历日期，拒绝 02-30 等归一化输入。 */
+export function isCanonicalDateKey(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed: Date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 /** formatTokyoTime 的格式器：模块加载时构造一次复用（Intl.DateTimeFormat
  *  的构造远贵于 format 调用本身）。 */
 const TOKYO_TIME_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {

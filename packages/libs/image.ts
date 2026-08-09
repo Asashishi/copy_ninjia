@@ -58,3 +58,53 @@ export async function prepareVisionImage(bytes: Buffer): Promise<VisionImage | n
     return null;
   }
 }
+
+/** prepareThumbnailJpeg 的入参；三项上限都由调用方按目标平台的硬性要求给出。 */
+export interface PrepareThumbnailParams {
+  /** 原图字节。收 Uint8Array 而不是 Buffer：sharp 本来就接受它，收窄成 Buffer
+   *  只会逼调用方为一张几 MB 的生图白复制一份。 */
+  bytes: Uint8Array;
+  /** 长边上限（像素）。 */
+  maxEdge: number;
+  /** 产物体积上限（字节）。 */
+  maxBytes: number;
+  /** 从高到低逐档尝试的 JPEG 质量；第一个落进体积上限的就用。 */
+  qualities: readonly number[];
+}
+
+/**
+ * 把一张图压成 Telegram 可接收的缩略图：JPEG、长边不超过 maxEdge、体积在
+ * maxBytes 以内。
+ *
+ * 与 prepareVisionImage 的关键差别是**没有直通路径**：那边只要格式对就原样交出
+ * 去，而这里必须无条件过一次 sharp——Bot API 对 thumbnail 的三项要求（格式、
+ * 边长、体积）里没有一项能靠嗅探字节确认，原样上传一张 1K 生图必然被拒。
+ *
+ * 先按质量档压一次，超限就逐档降质量重压：单纯把边长砍小会让缩略图糊得看不出
+ * 内容，而质量档在 320×320 这个尺寸上还有很大余量。所有档都压不下去时返回
+ * null，调用方按「这次没有缩略图」处理，绝不上传一张会被整条拒绝的图。
+ */
+export async function prepareThumbnailJpeg({
+  bytes,
+  maxEdge,
+  maxBytes,
+  qualities,
+}: PrepareThumbnailParams): Promise<Buffer | null> {
+  try {
+    // 只声明本函数用到的那一路重载（字节入参），理由同上方 prepareVisionImage。
+    const { default: sharp }: { default: (input: Uint8Array) => Sharp } = await import("sharp");
+    for (const quality of qualities) {
+      const thumbnail: Buffer = await sharp(bytes)
+        // fit: "inside" 保持原始构图比例，不裁切也不拉伸；withoutEnlargement
+        // 避免把一张本来就小的图放大成一堆插值噪点。
+        .resize(maxEdge, maxEdge, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality })
+        .toBuffer();
+      if (thumbnail.byteLength <= maxBytes) return thumbnail;
+    }
+    return null;
+  } catch (error: unknown) {
+    logger.error("Failed to prepare a JPEG thumbnail:", error);
+    return null;
+  }
+}

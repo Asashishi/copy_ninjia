@@ -24,6 +24,8 @@ const stickerMessage: AiRecordMediaMessage = {
   commentOnResolve: false,
   imageGenerationRequested: false,
   stickerFallbackText: "[贴纸：🙂，来自 pack]",
+  voiceMime: undefined,
+  voiceDurationSeconds: 0,
   directTrigger: undefined,
   username: undefined,
   replyTo: undefined,
@@ -46,10 +48,23 @@ describe("AI 媒体转录文本", () => {
     expect(fallbackTextFor("photo", { ...stickerMessage, kind: "photo" })).toContain("图片");
   });
 
+  test("语音有自己的一套措辞，绝不能落到图片那条 default 分支上", () => {
+    expect(pendingPlaceholderFor("voice")).toBe("[语音：识别中]");
+    expect(resolvedTagFor("voice", "今天下班一起吃饭吗")).toBe("[语音：今天下班一起吃饭吗]");
+    // 贴纸的元数据兜底不适用于语音：这里必须是语音自己的失败占位。
+    expect(fallbackTextFor("voice", { ...stickerMessage, kind: "voice", stickerFallbackText: undefined }))
+      .toBe("[语音：没听清，请无视此消息]");
+  });
+
   test("caption 只在非空时拼接，直接触发失败时使用可回应描述", () => {
     expect(composeMediaText("[图片：天空]", "晚霞")).toBe("[图片：天空] 晚霞");
     expect(composeMediaText("[图片：天空]", "")).toBe("[图片：天空]");
     expect(replyFallbackDescriptionFor(stickerMessage)).toBe("[贴纸：🙂，来自 pack]");
     expect(replyFallbackDescriptionFor({ ...stickerMessage, kind: "photo" })).toContain("没看清");
+    // 必回指令里不能出现「请无视此消息」，否则模型可能听话地沉默；语音这条
+    // 说的是「没听清」而不是「没看清」。
+    const voiceFallback: string = replyFallbackDescriptionFor({ ...stickerMessage, kind: "voice" });
+    expect(voiceFallback).toContain("没听清");
+    expect(voiceFallback).not.toContain("请无视");
   });
 });

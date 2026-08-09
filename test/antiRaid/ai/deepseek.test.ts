@@ -18,6 +18,14 @@ mock.module("../../../packages/infra/logger", () => ({
     error(message: unknown): void { errorLogs.push(String(message)); },
   },
 }));
+mock.module("../../../packages/config/agent", () => ({
+  getAdDetectAgentConfig: () => ({
+    provider: "openai",
+    apiKey: "deepseek-key",
+    baseUrl: "https://api.deepseek.com",
+    model: "deepseek-v4-flash",
+  }),
+}));
 mock.module("openai", () => {
   class FakeOpenAI {
     chat: { completions: { create: typeof create } } = { completions: { create } };
@@ -27,14 +35,13 @@ mock.module("openai", () => {
   return { default: FakeOpenAI, APIError: FakeAPIError };
 });
 
-const { requestDeepSeekJson } = await import("../../../packages/antiRaid/ai/deepseek");
-const { deepSeekClientHolder } = await import("../../../packages/cache/workers/antiRaid/deepseek");
+const { requestOpenAiAdDetectJson } = await import("../../../packages/antiRaid/ai/openai");
+const { adDetectOpenAiClientHolder } = await import("../../../packages/cache/workers/antiRaid/openai");
 const {
-  DEEPSEEK_API_BASE_URL,
-  DEEPSEEK_EMPTY_BODY_MAX_ATTEMPTS,
-  DEEPSEEK_REQUEST_MAX_RETRIES,
-  DEEPSEEK_REQUEST_TIMEOUT_MS,
-} = await import("../../../packages/consts/deepseek");
+  AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
+  AD_DETECT_OPENAI_REQUEST_MAX_RETRIES,
+  AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS,
+} = await import("../../../packages/consts/antiRaid/adDetect");
 
 function request(overrides: Record<string, unknown> = {}): never {
   return {
@@ -49,7 +56,7 @@ function request(overrides: Record<string, unknown> = {}): never {
 }
 
 beforeEach(() => {
-  deepSeekClientHolder.current = null;
+  adDetectOpenAiClientHolder.current = null;
   errorLogs.length = 0;
   constructions.length = 0;
   create.mockClear();
@@ -58,16 +65,16 @@ beforeEach(() => {
   }));
 });
 
-describe("DeepSeek 请求入口", () => {
+describe("OpenAI 兼容广告检测请求入口", () => {
   test("按传入参数发一次 JSON 模式请求，客户端只构造一次", async () => {
-    await expect(requestDeepSeekJson(request())).resolves.toBe("{\"ok\": true}");
-    await requestDeepSeekJson(request());
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBe("{\"ok\": true}");
+    await requestOpenAiAdDetectJson(request());
     // 线程内单例：客户端构造远贵于一次请求，Worker 重建后才会重新构造。
     expect(constructions).toHaveLength(1);
     expect(constructions[0]).toMatchObject({
-      baseURL: DEEPSEEK_API_BASE_URL,
-      timeout: DEEPSEEK_REQUEST_TIMEOUT_MS,
-      maxRetries: DEEPSEEK_REQUEST_MAX_RETRIES,
+      baseURL: "https://api.deepseek.com",
+      timeout: AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS,
+      maxRetries: AD_DETECT_OPENAI_REQUEST_MAX_RETRIES,
     });
 
     const body = create.mock.calls[0]?.[0] as {
@@ -94,7 +101,7 @@ describe("DeepSeek 请求入口", () => {
     create.mockImplementationOnce(async (): Promise<unknown> => ({
       choices: [{ finish_reason: "stop", message: { content: "" } }],
     }));
-    await expect(requestDeepSeekJson(request())).resolves.toBe("{\"ok\": true}");
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBe("{\"ok\": true}");
     expect(create).toHaveBeenCalledTimes(2);
     expect(errorLogs).toHaveLength(0);
   });
@@ -103,14 +110,14 @@ describe("DeepSeek 请求入口", () => {
     create.mockImplementation(async (): Promise<unknown> => ({
       choices: [{ finish_reason: "stop", message: { content: "   " } }],
     }));
-    await expect(requestDeepSeekJson(request())).resolves.toBeNull();
-    expect(create).toHaveBeenCalledTimes(DEEPSEEK_EMPTY_BODY_MAX_ATTEMPTS);
-    expect(errorLogs[0]).toContain(`no usable body in ${DEEPSEEK_EMPTY_BODY_MAX_ATTEMPTS} attempt(s)`);
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
+    expect(create).toHaveBeenCalledTimes(AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS);
+    expect(errorLogs[0]).toContain(`no usable body in ${AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS} attempt(s)`);
 
     // 整个 choices 缺失同样算空转，不是「拿到了一个空答案」。
     errorLogs.length = 0;
     create.mockImplementation(async (): Promise<unknown> => ({ choices: [] }));
-    await expect(requestDeepSeekJson(request())).resolves.toBeNull();
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
     expect(errorLogs[0]).toContain("no usable body");
   });
 
@@ -119,7 +126,7 @@ describe("DeepSeek 请求入口", () => {
       choices: [{ finish_reason: "length", message: { content: "{\"ad\": tr" } }],
       usage: { completion_tokens_details: { reasoning_tokens: 64 } },
     }));
-    await expect(requestDeepSeekJson(request())).resolves.toBeNull();
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
     // 截断的正文多半是半个 JSON，交回去只会让调用方多做一次注定失败的解析。
     expect(errorLogs[0]).toContain("truncated=true");
     expect(errorLogs[0]).toContain("hasPartialText=true");
@@ -129,17 +136,17 @@ describe("DeepSeek 请求入口", () => {
 
   test("请求本身失败时不再自旋：SDK 已按 maxRetries 重试过", async () => {
     create.mockImplementation((): never => { throw new FakeAPIError("rate limited"); });
-    await expect(requestDeepSeekJson(request())).resolves.toBeNull();
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
     expect(create).toHaveBeenCalledTimes(1);
   });
 
   test("API 报错与未知异常都按 errorLabel 记日志并返回 null", async () => {
     create.mockImplementationOnce((): never => { throw new FakeAPIError("rate limited"); });
-    await expect(requestDeepSeekJson(request())).resolves.toBeNull();
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
     expect(errorLogs[0]).toBe("Test request failed: 429 rate limited");
 
     create.mockImplementationOnce((): never => { throw new Error("socket hang up"); });
-    await expect(requestDeepSeekJson(request())).resolves.toBeNull();
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
     expect(errorLogs[1]).toBe("Error calling Test request:");
   });
 });

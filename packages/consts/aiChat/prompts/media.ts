@@ -1,5 +1,6 @@
 import { IMAGE_DESCRIPTION_MAX_CHARS, SHORT_MEDIA_DESCRIPTION_MAX_CHARS } from "../media";
 import { STICKER_PACK_SUMMARY_MAX_CHARS } from "../stickers";
+import { VOICE_TRANSCRIPT_MAX_CHARS } from "../voice";
 
 function descriptionOutputRule(maxChars: number): string {
   return `不超过 ${maxChars} 字，只输出描述本身，不要任何前缀或解释，也不要用引号把整段描述包起来。`;
@@ -25,6 +26,23 @@ export const STICKER_DESCRIPTION_PROMPT: string =
 export const ANIMATION_DESCRIPTION_PROMPT: string =
   "这是中文群聊里发的一个动图（GIF）的封面帧画面（不是完整动图，只是第一帧）。请用中文简要描述这一帧看到的内容、" +
   `画面里的文字（如有）、大致想表达的情绪或梗。${descriptionOutputRule(SHORT_MEDIA_DESCRIPTION_MAX_CHARS)}`;
+
+/**
+ * 语音转写模型的固定任务提示。
+ *
+ * 要的是**原话**而不是概括：这条最终会以「[语音：…]」整行进转录，模型接话时把它
+ * 当群友说的话读。因此指令一律往「逐字」上收，并明确禁止把「没听清」写成一段
+ * 解释——那种输出会被当成群友真的说了这句话。真的听不出内容时输出空串，由
+ * finalizeAiTextResult 归一成一次失败，走 VOICE_FALLBACK_PLACEHOLDER 兜底
+ * （见 aiChat/ai/utils/textResult.ts 与 workers/aiChat/mediaText.ts）。
+ */
+export const VOICE_TRANSCRIPTION_PROMPT: string =
+  "这是中文群聊里有人发的一条语音消息。请把说话内容逐字转写成文字：" +
+  "用说话人自己的原话，不要概括、不要改写成书面语、不要补充任何解释或评论。" +
+  "语音里如果有多个说话人，按先后顺序分别写出来。" +
+  "背景音乐、笑声、环境音这类非语言内容，只在它明显是这条语音的主要内容时才用一句话交代（如「一段音乐，没有人说话」）。" +
+  `不超过 ${VOICE_TRANSCRIPT_MAX_CHARS} 字，只输出转写文本本身，不要任何前缀、时间戳、说话人标签之外的标注，也不要用引号把整段包起来。` +
+  "如果完全听不出任何内容，请输出空白，不要写「听不清」之类的话。";
 
 /** 根据逐枚描述生成整包贴纸导览的固定任务提示。 */
 export const STICKER_PACK_SUMMARY_PROMPT: string =

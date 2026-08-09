@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../packages/types";
+import type { AdDetectAgentConfig } from "../../../packages/types/config";
 
 const calls: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
@@ -21,6 +22,7 @@ mock.module("../../../packages/workers/antiRaid/verificationRuntime", () => ({
   adoptVerifications(): void { calls.push("adoptVerifications"); },
   handleVerificationPersisted(): void { calls.push("verificationPersisted"); },
   deactivateVerificationChat(): void { calls.push("deactivateVerification"); },
+  disableJoinGuardChat(): void { calls.push("disableJoinGuard"); },
   stopVerificationRuntime(): void { calls.push("stopVerification"); },
 }));
 mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({
@@ -57,18 +59,23 @@ mock.module("../../../packages/workers/antiRaid/botPermissions", () => ({
   forgetWorkerBotPermissions(): void { calls.push("forgetBotPermissions"); },
   resetWorkerBotPermissions(): void { calls.push("resetBotPermissions"); },
 }));
+mock.module("../../../packages/workers/antiRaid/chatKind", () => ({
+  applyChatKindChange(): void { calls.push("chatKindChanged"); },
+  forgetWorkerChatKind(): void { calls.push("forgetChatKind"); },
+  resetWorkerChatKind(): void { calls.push("resetChatKind"); },
+}));
 const sweepRecentComments = mock((_now: number): number => 0);
 mock.module("../../../packages/workers/antiRaid/recentComments", () => ({ sweepRecentComments }));
-const initTelegramClients = mock((): void => {});
-mock.module("../../../packages/infra/telegram/client", () => ({ initTelegramClients }));
-// 与上面几个叶子模块同样的理由：真实实现会经 infra/telegram 的桶文件把整套
-// Telegram 客户端拉进来，而本文件只关心 Worker 生命周期把它接在了哪一步。
-mock.module("../../../packages/workers/antiRaid/noticeCleanup", () => ({
-  flushPendingNoticeDeletions(): number { calls.push("flushNotices"); return 0; },
-  resetPendingNoticeDeletions(): void { calls.push("resetNotices"); },
+mock.module("../../../packages/infra/telegram/actions/messageLifecycle", () => ({
+  flushPendingMessageDeletions(): readonly Promise<void>[] {
+    calls.push("flushGenericMessageDeletions");
+    return [];
+  },
+  resetPendingMessageDeletions(): void { calls.push("resetGenericMessageDeletions"); },
 }));
-
 const worker = await import("../../../packages/workers/antiRaidWorker");
+const { workerTelegramApi } = await import("../../../packages/infra/telegram/workerClient");
+const { telegramApiState } = await import("../../../packages/cache/perThread/telegramApi");
 const {
   adminFetches,
   chatAdmins,
@@ -83,13 +90,23 @@ const {
   blocklistRemovalTaskCounts,
 } = await import("../../../packages/cache/workers/antiRaid/blocklist");
 const { ADMIN_CACHE_TTL_MS, LINKED_CHANNEL_TTL_MS, VERIFICATION_REVISION_RETENTION_MS } = await import("../../../packages/consts/antiRaid");
+const { adDetectAgentConfigCache } = await import("../../../packages/cache/perThread/config");
+
+/** 主线程投递过来的那一代 ad_detect 快照；断言 Worker 原样收进 holder。 */
+const injectedAdDetectConfig: AdDetectAgentConfig = {
+  provider: "openai",
+  apiKey: "injected-ad-key",
+  baseUrl: undefined,
+  model: "injected-ad-model",
+};
 
 beforeEach(() => {
   worker.stopAntiRaidWorker();
+  // 新 isolate 的 holder 本来就是空的：配置消息之前取 ad_detect 必须 fail-closed。
+  adDetectAgentConfigCache.current = null;
   calls.length = 0;
   workerEvents.length = 0;
   removeBlockedMembersTask = Promise.resolve();
-  initTelegramClients.mockClear();
   sweepRecentComments.mockClear();
   adminFetches.clear();
   chatAdmins.clear();
@@ -102,10 +119,11 @@ describe("Anti-Raid Worker lifecycle", () => {
   test("启动幂等、路由完整，停止后清除 handler 与唯一 sweeper", async () => {
     worker.startAntiRaidWorker();
     worker.startAntiRaidWorker();
-    expect(initTelegramClients).toHaveBeenCalledTimes(1);
+    expect(telegramApiState.current).toBe(workerTelegramApi);
     expect(workerSelf.onmessage).not.toBeNull();
 
     const messages: AntiRaidWorkerMessage[] = [
+      { type: "agentConfig", adDetect: injectedAdDetectConfig },
       {
         type: "join",
         chatId: -1001,
@@ -114,6 +132,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       },
       { type: "left", chatId: -1001, userId: 1 },
       { type: "deactivateChat", chatId: -1001 },
+      { type: "deactivateJoinGuard", chatId: -1001 },
       { type: "message", chatId: -1001, userId: 1, messageId: 10 },
       {
         type: "callback",
@@ -133,6 +152,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "floodCandidate", chatId: -1001, userId: 1, label: "@noisy" },
       { type: "clearFloodControl", chatId: -1001 },
       { type: "botPermissionsChanged", chatId: -1001, permissions: { canRestrictMembers: true, canDeleteMessages: true } },
+      { type: "chatKind", chatId: -1001, isSupergroup: true },
       { type: "barrier", barrierId: 99 },
     ];
     for (const message of messages) workerSelf.onmessage!({ data: message } as MessageEvent<AntiRaidWorkerMessage>);
@@ -143,23 +163,29 @@ describe("Anti-Raid Worker lifecycle", () => {
       // 停管连待检的广告消息串一起丢：不再替这个群判定，也不再在那里删消息。
       "clearAdDetect",
       // 刷屏计数与权限镜像同理：重新接管时主线程会重新镜像，计数从零开始。
-      "clearFloodWindows", "forgetBotPermissions",
+      "clearFloodWindows", "forgetBotPermissions", "forgetChatKind",
+      // `/antiraid disable` 只收入群这一条链路：验证经状态机收摊、私密模式解锁，
+      // 广告队列、刷屏窗口、权限与群类型镜像一个都不动（各有各的开关）。
+      "disableJoinGuard", "deactivateLockdown",
       "message", "callback",
       "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
       "removeBlockedMembers", "adCandidate", "clearAdDetect",
-      "floodCandidate", "clearFloodWindows", "botPermissionsChanged",
+      "floodCandidate", "clearFloodWindows", "botPermissionsChanged", "chatKindChanged",
     ]);
+    // 配置消息不产生业务副作用，只把快照写进 holder：本线程此后不读 agent.json。
+    expect(adDetectAgentConfigCache.current).toBe(injectedAdDetectConfig);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
     await Bun.sleep(0);
 
     worker.stopAntiRaidWorker();
     expect(workerSelf.onmessage).toBeNull();
-    expect(calls.slice(-6)).toEqual([
+    expect(calls.slice(-7)).toEqual([
       "stopVerification", "stopLockdown", "stopAdDetect",
-      "resetFloodWindows", "resetNotices", "resetBotPermissions",
+      "resetFloodWindows", "resetGenericMessageDeletions", "resetBotPermissions",
+      "resetChatKind",
     ]);
     worker.startAntiRaidWorker();
-    expect(initTelegramClients).toHaveBeenCalledTimes(2);
+    expect(telegramApiState.current).toBe(workerTelegramApi);
     worker.stopAntiRaidWorker();
   });
 
@@ -191,10 +217,10 @@ describe("Anti-Raid Worker lifecycle", () => {
 
     await Bun.sleep(0);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 10 }]);
-    // drain 必须先兑现待删的群内公告：定时器活在本 isolate 里，退出即丢，
-    // 留下的是一条永久点着某人名字的公开公告（见 antiRaid/noticeCleanup.ts）。
-    // 排在 drain 之前才能让那次删除登记进在途集合、被下面这次等待覆盖。
-    expect(calls.indexOf("flushNotices")).toBeGreaterThan(calls.indexOf("quiesceAdDetect"));
+    // 统一延迟删除 flush 必须在 quiesce 后、任务 drain 前认领全部 timer；
+    // 返回的删除 Promise 会接入同一个在途集合。
+    expect(calls.indexOf("flushGenericMessageDeletions"))
+      .toBeGreaterThan(calls.indexOf("quiesceAdDetect"));
     expect(blocklistRemovalTaskCounts.get(-1001)).toBe(1);
     expect(blocklistRemovalEpochs.get(-1001)).toBe(1);
 

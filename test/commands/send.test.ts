@@ -15,8 +15,10 @@ const getChatMock = mock(async (chatId: number): Promise<any> => ({ id: chatId, 
 const logApiErrorMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessageMock,
-  bot: { api: { getChat: getChatMock } },
   logApiError: logApiErrorMock,
+}));
+mock.module("../../packages/infra/telegram/mainClient", () => ({
+  bot: { api: { getChat: getChatMock } },
 }));
 
 const chatStates = new Map<number, Record<string, unknown>>();
@@ -48,7 +50,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 
 const { handleSendCommand } = await import("../../packages/commands/send");
-const { SUPER_ADMIN_USER_ID } = await import("../../packages/infra/config");
+const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/telegram");
 
 function makeCtx(chatType: "private" | "group", userId: number | undefined, arg: string): any {
   return {

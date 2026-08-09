@@ -8,10 +8,13 @@ const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../packages/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },
 }));
-mock.module("../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
+mock.module("../../packages/infra/telegram/client", () => ({
+  installTelegramApi: (): void => {},
+  joinVerificationApi: { kind: "guard-api" },
+}));
 // botAdmin -> blocklist 的新晋管理员清扫会取这三个；本文件不触发（名单为空）。
 mock.module("../../packages/infra/telegram/actions", () => ({
   isChatMember: async (): Promise<boolean> => false,
@@ -70,16 +73,18 @@ beforeEach(() => {
   botAdminCache.botAdminGenerations.clear();
   botAdminCache.botAdminGenerationUsers.clear();
   chatTeardown.registerChatTeardown("copy", (chatId: number): void => { calls.push(`copy:${chatId}`); });
+  chatTeardown.registerChatTeardown("gag", (chatId: number): void => { calls.push(`gag:${chatId}`); });
   chatTeardown.registerChatTeardown("aiChat", (chatId: number): void => { calls.push(`ai:${chatId}:true`); });
   chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
 });
 
 describe("chat runtime teardown", () => {
-  test("按 copy、proxy、AI、Anti-Raid 顺序拆除组合运行态", async () => {
+  test("按 copy、gag、proxy、AI、Anti-Raid 顺序拆除组合运行态", async () => {
     states.set(-1001, { isProxySendEnabled: true });
     await botAdmin.teardownChatRuntime(-1001);
     expect(calls).toEqual([
       "copy:-1001",
+      "gag:-1001",
       "clear:isProxySendEnabled",
       "ai:-1001:true",
       "anti:-1001",
@@ -92,6 +97,7 @@ describe("chat runtime teardown", () => {
     const aiError = new Error("AI teardown failed");
     states.set(-1001, { isProxySendEnabled: true });
     chatTeardown.registerChatTeardown("copy", (): never => { throw copyError; });
+    chatTeardown.registerChatTeardown("gag", (chatId: number): void => { calls.push(`gag:${chatId}`); });
     chatTeardown.registerChatTeardown("aiChat", async (): Promise<void> => { throw aiError; });
     chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
 
@@ -100,6 +106,7 @@ describe("chat runtime teardown", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual([copyError, aiError]);
     expect(calls).toEqual([
+      "gag:-1001",
       "clear:isProxySendEnabled",
       "anti:-1001",
     ]);
@@ -116,8 +123,9 @@ describe("chat runtime teardown", () => {
     });
     await botAdmin.handleMyChatMemberUpdate(memberContext("kicked"));
     expect(states.get(-1001)).toEqual({ lockdown });
-    expect(calls.slice(0, 6)).toEqual([
+    expect(calls.slice(0, 7)).toEqual([
       "copy:-1001",
+      "gag:-1001",
       "clear:isProxySendEnabled",
       "ai:-1001:true",
       "anti:-1001",
@@ -144,8 +152,9 @@ describe("chat runtime teardown", () => {
   test("管理员降级调用同一 teardown，并记录 botIsAdmin=false", async () => {
     states.set(-1001, { isInitEnabled: true, botIsAdmin: true, isProxySendEnabled: true });
     await botAdmin.handleMyChatMemberUpdate(memberContext("member"));
-    expect(calls.slice(0, 4)).toEqual([
+    expect(calls.slice(0, 5)).toEqual([
       "copy:-1001",
+      "gag:-1001",
       "clear:isProxySendEnabled",
       "ai:-1001:true",
       "anti:-1001",

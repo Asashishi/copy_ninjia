@@ -1,12 +1,11 @@
 import type { InlineQueryResultArticle } from "@grammyjs/types";
 import { InlineKeyboard, InlineQueryResultBuilder } from "grammy";
 import {
-  FORTUNE_THUMBNAIL_URL,
-  PROBABILITY_THUMBNAIL_URL,
   RATE_LIMIT_MAX_CALLS_PER_WINDOW,
   RATE_LIMIT_WINDOW_MS,
   SAME_QUESTION_LABEL_MAX_LEN,
 } from "../../consts/luckChallenge";
+import { getFortuneThumbnailUrl, getProbabilityThumbnailUrl } from "../../infra/storage/stateStore";
 import type { LuckDraw, SignedLuckResult } from "../../types/luckChallenge";
 import { splitGraphemes } from "../../libs/text";
 import { luckCacheKey } from "./key";
@@ -53,7 +52,7 @@ export function buildFortuneResult({
   return InlineQueryResultBuilder.article(text ? "luck-fortune-text" : "luck-fortune", "未卜先知", {
     description: text ? `所求事项：${text}` : "测测你今天的运势",
     reply_markup: buildRetryKeyboard(text),
-    thumbnail_url: FORTUNE_THUMBNAIL_URL,
+    thumbnail_url: getFortuneThumbnailUrl(),
   }).text(signed.text, {
     entities: [
       { type: "spoiler", offset: signed.receiptOffset, length: signed.receiptLength },
@@ -74,7 +73,7 @@ export function buildProbabilityResult(
   return InlineQueryResultBuilder.article("luck-probability", "概率论！", {
     description: "看看你今天行大运/倒大霉的概率",
     reply_markup: buildRetryKeyboard(undefined),
-    thumbnail_url: PROBABILITY_THUMBNAIL_URL,
+    thumbnail_url: getProbabilityThumbnailUrl(),
   }).text(signed.text, {
     entities: [
       { type: "spoiler", offset: signed.receiptOffset, length: signed.receiptLength },

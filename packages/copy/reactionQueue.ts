@@ -1,5 +1,6 @@
 import { logger } from "../infra/logger";
-import { bot, logApiError } from "../infra/telegram";
+import { logApiError } from "../infra/telegram";
+import { bot } from "../infra/telegram/mainClient";
 import { LinkedQueue } from "../libs/linkedQueue";
 import { MAX_PENDING_TASKS_PER_CHAT } from "../consts/reactionQueue";
 import {
@@ -22,8 +23,8 @@ import type { CopyableReaction, ReactionTask } from "../types/reactionQueue";
  * 1. 同一条消息的多次反应变化（点了又取消、换了个表情）以 chatId:messageId
  *    为键合并，只保留最新状态，消除乱序写回过期反应的竞态。
  * 2. 队列按 chat 拆分：一个群的 API 长尾只暂停该群自己的消费循环，不头部
- *    阻塞其他群的反应同步。429/网络/5xx 重试由 bot.api 的官方 auto-retry
- *    transformer 统一处理，不在队列里再叠一层。
+ *    阻塞其他群的反应同步。429 由主线程 reaction 类别统一按 retry_after
+ *    退避；网络/5xx 直接交还本 owner，不在队列里再叠一层隐藏等待。
  *
  * 队列状态（pendingTasks / chatQueues / consumingChats）见 cache/main/reactionQueue.ts。
  */

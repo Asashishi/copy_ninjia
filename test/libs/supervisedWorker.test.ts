@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { WORKER_MAX_RESTARTS } from "../../packages/consts/workerSupervisor";
 import { setBusinessWorkerFatalHandler } from "../../packages/infra/workerSupervisor";
 import { superviseWorker } from "../../packages/libs/supervisedWorker";
+import type { SupervisedWorkerEventContext } from "../../packages/libs/supervisedWorker";
 import type { SupervisedWorkerFixtureCommand, SupervisedWorkerFixtureReply } from "./supervisedWorker.fixture";
 
 function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -190,6 +191,47 @@ describe("supervised Worker", () => {
       expect(giveUps).toBe(1);
       expect(handle.post({ type: "restore" })).toBeFalse();
       expect(fatalErrors[0]?.message).toContain("state replay was rejected");
+    } finally {
+      await handle.terminate();
+      setBusinessWorkerFatalHandler(undefined);
+      globalThis.Worker = originalWorker;
+      FakeWorker.nextPostError = null;
+      error.mockRestore();
+    }
+  });
+
+  test("当前代际的事件回包被同步拒绝时撤销实例，避免 Worker waiter 永久悬挂", async () => {
+    FakeWorker.instances.length = 0;
+    FakeWorker.nextPostError = null;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const fatalErrors: Error[] = [];
+    setBusinessWorkerFatalHandler((failure: Error): void => {
+      fatalErrors.push(failure);
+    });
+    const handle = superviseWorker<{ type: "reply" }, string>({
+      url: "fake-worker.ts",
+      label: "fake Worker",
+      giveUpConsequence: "test feature unavailable",
+      onEvent: (
+        _event: string,
+        context: SupervisedWorkerEventContext<{ type: "reply" }>
+      ): void => {
+        context.post({ type: "reply" });
+      },
+    });
+
+    try {
+      handle.init();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      worker.postError = new Error("reply rejected");
+      worker.onmessage!({ data: "request" } as MessageEvent<unknown>);
+
+      expect(worker.terminated).toBeTrue();
+      expect(handle.post({ type: "reply" })).toBeFalse();
+      expect(fatalErrors).toHaveLength(1);
+      expect(fatalErrors[0]?.message).toContain("event response delivery was rejected");
     } finally {
       await handle.terminate();
       setBusinessWorkerFatalHandler(undefined);

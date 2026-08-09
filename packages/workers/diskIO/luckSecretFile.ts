@@ -1,10 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { LUCK_DAY_PATTERN, LUCK_RECEIPT_SECRET_PATTERN } from "../../consts/luckReceipt";
 import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
+import { invalidInput, readJsonInput } from "../../libs/inputValidation";
+import { isCanonicalDateKey } from "../../libs/time";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 
 export interface LuckSecretFileIO {
@@ -27,7 +29,11 @@ function decodeLuckReceiptSecret(value: unknown, path: string): LuckReceiptSecre
   const keys: string[] = Object.keys(raw).sort();
   if (keys.join(",") !== "day,key,version") throw new Error(`${path} has unknown or missing fields`);
   if (raw.version !== 1) throw new Error(`${path}.version must be 1`);
-  if (typeof raw.day !== "string" || !LUCK_DAY_PATTERN.test(raw.day)) throw new Error(`${path}.day is invalid`);
+  if (
+    typeof raw.day !== "string" ||
+    !LUCK_DAY_PATTERN.test(raw.day) ||
+    !isCanonicalDateKey(raw.day)
+  ) throw new Error(`${path}.day is invalid`);
   if (typeof raw.key !== "string" || !LUCK_RECEIPT_SECRET_PATTERN.test(raw.key)) {
     throw new Error(`${path}.key is invalid`);
   }
@@ -59,15 +65,11 @@ export interface RecoverLuckReceiptSecretParams {
  * 尚未确认的同日预览静默变化，必须保留现场并要求人工恢复一致备份。
  */
 function assertSecretCanBeCreated(
-  day: string,
   confirmedResultCount: number,
   path: string
 ): void {
   if (confirmedResultCount === 0) return;
-  throw new Error(
-    `Luck receipt secret is missing or outdated for ${day}, but ${confirmedResultCount} confirmed ` +
-    `result(s) already exist; restore ${path} and the ${day} luck results from the same consistent backup.`
-  );
+  return invalidInput(path, "$", "present for the same day as the confirmed luck state");
 }
 
 /**
@@ -83,28 +85,30 @@ export function recoverLuckReceiptSecret(
     io = DEFAULT_IO,
   }: RecoverLuckReceiptSecretParams
 ): LuckReceiptSecret {
-  if (!LUCK_DAY_PATTERN.test(day)) throw new Error(`Invalid Tokyo day for luck receipt secret: ${day}`);
+  if (!LUCK_DAY_PATTERN.test(day) || !isCanonicalDateKey(day)) {
+    throw new Error("Luck receipt target day must be a canonical YYYY-MM-DD date.");
+  }
   if (!Number.isSafeInteger(confirmedResultCount) || confirmedResultCount < 0) {
     throw new Error(`Invalid confirmed luck result count for ${day}: ${confirmedResultCount}`);
   }
   mkdirSync(dirname(path), { recursive: true });
   if (!existsSync(path)) {
-    assertSecretCanBeCreated(day, confirmedResultCount, path);
+    assertSecretCanBeCreated(confirmedResultCount, path);
     return newSecret(day, path, io);
   }
   if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) io.chmod(path, PERSISTED_FILE_MODE);
 
   let secret: LuckReceiptSecret;
   try {
-    secret = decodeLuckReceiptSecret(JSON.parse(readFileSync(path, "utf8")), path);
-  } catch (error: unknown) {
-    throw new Error(`Luck receipt secret file is invalid; repair ${path} manually.`, { cause: error });
+    secret = decodeLuckReceiptSecret(readJsonInput(path), path);
+  } catch {
+    return invalidInput(path, "$", "the current version=1 luck receipt secret schema");
   }
   if (secret.day > day) {
-    throw new Error(`Luck receipt secret file is from future day ${secret.day}; refusing to replace it for ${day}.`);
+    return invalidInput(path, "$.day", "no later than the current Tokyo day");
   }
   if (secret.day < day) {
-    assertSecretCanBeCreated(day, confirmedResultCount, path);
+    assertSecretCanBeCreated(confirmedResultCount, path);
     return newSecret(day, path, io);
   }
   return secret;

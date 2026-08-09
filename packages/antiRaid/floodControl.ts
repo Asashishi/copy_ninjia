@@ -42,7 +42,7 @@ export function buildFloodCandidate(message: Message, botId: number): FloodCandi
     chatId: message.chat.id,
     userId: sender.id,
     // 昵称是用户可控内容，清洗与退化都收在 formatUserLabel 里；Worker 侧只把
-    // 它当纯文本拼进通知，出站消息一律不设 parse_mode（见 docs/04-invariants.md）。
+    // 它当纯文本拼进通知，出站消息一律不设 parse_mode（见 docs/cn/04-invariants.md）。
     label: formatUserLabel({
       id: sender.id,
       username: sender.username,

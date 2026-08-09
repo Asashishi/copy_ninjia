@@ -1,8 +1,5 @@
 import { logger } from "../../infra/logger";
-import {
-  answerCallbackQuery,
-  joinVerificationApi,
-} from "../../infra/telegram";
+import { answerCallbackQuery, joinVerificationApi } from "../../infra/telegram";
 import { lockdownEntries } from "../../cache/workers/antiRaid/lockdown";
 import {
   threadCommentConfirmations,

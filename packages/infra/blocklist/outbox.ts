@@ -4,7 +4,7 @@
  * 本模块持有启动恢复、write-ahead、任务编号/裁剪、业务 Worker 交付，以及
  * Disk I/O Worker 重建后的重放边界；补扫的退避与回执状态机在 sweep.ts。
  * 它不调用 Telegram API，执行 owner 通过单槽 holder 反向注册。
- * @see ../../../docs/04-invariants.md
+ * @see ../../../docs/cn/04-invariants.md
  */
 
 import {
@@ -15,8 +15,8 @@ import {
   clearBlocklistSweepState,
   configuredBlockedIds,
   pendingBlockedRemovals,
+  sessionBlocklistRequiresRewrite,
   sessionBlockedAt,
-  sessionUnblockedIds,
 } from "../../cache/main/blocklist";
 import { BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES } from "../../consts/antiRaid/blocklist";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
@@ -82,7 +82,7 @@ export function hydrateBlocklist(
   blockedUserIds.clear();
   configuredBlockedIds.clear();
   sessionBlockedAt.clear();
-  sessionUnblockedIds.clear();
+  sessionBlocklistRequiresRewrite.current = false;
   pendingBlockedRemovals.clear();
   blocklistSweepState.clear();
   blocklistRemovalCounter.current = 0;
@@ -305,7 +305,7 @@ export function forgetChatBlocklistWork(chatId: number): void {
 onDiskIORespawn("blocklist", DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST, (transport: DiskIORecoveryTransport): boolean => {
   if (!queuePendingBlockedRemovalsSnapshot(transport.post)) return false;
   // 追加文件无法表达删除：本进程只要解除过一次，就必须整份重写当前名单。
-  if (sessionUnblockedIds.size > 0) {
+  if (sessionBlocklistRequiresRewrite.current) {
     return transport.post({
       type: "unblockUser",
       blocked: [...blockedUserIds],

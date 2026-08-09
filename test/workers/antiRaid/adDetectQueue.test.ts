@@ -39,6 +39,16 @@ mock.module("../../../packages/workers/antiRaid/adDetect/disposal", () => ({
 mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
   freshAdminIds: (chatId: number): Set<number> | undefined => cachedAdmins.get(chatId),
   fetchAdminIds,
+  // 三态契约的替身；真实现由 test/workers/antiRaid/adminCache.test.ts 钉住。
+  isChatAdmin: async (chatId: number, userId: number): Promise<boolean | undefined> => {
+    const cached: Set<number> | undefined = cachedAdmins.get(chatId);
+    if (cached !== undefined) return cached.has(userId);
+    try {
+      return (await fetchAdminIds(chatId)).has(userId);
+    } catch {
+      return undefined;
+    }
+  },
 }));
 
 const {

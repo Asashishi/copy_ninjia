@@ -5,6 +5,7 @@ import {
   REPLY_INVALIDATED_TOOL_ERROR,
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
+  GENERATE_SONG_TOOL,
   SEND_MESSAGE_TOOL,
   SEND_STICKER_TOOL,
   unknownToolError,
@@ -22,6 +23,7 @@ import {
   viewStickerPackTool,
 } from "../stickers";
 import { buildGenerateImageToolDefinition, createGenerateImageExecutor } from "./imageGeneration";
+import { buildGenerateSongToolDefinition, createGenerateSongExecutor } from "./songGeneration";
 import {
   buildAddReactionToolDefinition,
   buildSendMessageToolDefinition,
@@ -30,6 +32,7 @@ import { createRoundMessageState } from "./messageState";
 import { createAddReactionExecutor } from "./reaction";
 import { createSendMessageExecutor } from "./sendMessage";
 import { toolError } from "../../utils/toolResult";
+import { imageAiProvider, songAiProvider } from "../../../provider";
 import type { RoundMessageState } from "../../../../types/aiChat/replies";
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
@@ -42,23 +45,32 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
   const viewDefinition: AiToolDefinition | null = buildViewStickerPackToolDefinition(menu);
   const sendStickerDefinition: AiToolDefinition | null = buildSendStickerToolDefinition(menu);
   const addReactionDefinition: AiToolDefinition | null = buildAddReactionToolDefinition();
+  // 生图与生歌都是可选配置能力：缺配置时整个不挂，模型看不到的工具不会被调用。
+  const imageSupported: boolean = imageAiProvider() !== null;
+  const songSupported: boolean = songAiProvider()?.generateSong !== undefined;
   const declarations: AiToolDefinition[] = [
     buildSendMessageToolDefinition(ctx.roundHasTypo),
-    buildGenerateImageToolDefinition(ctx),
-    ...(addReactionDefinition ? [addReactionDefinition] : []),
-    ...(viewDefinition ? [viewDefinition] : []),
-    ...(sendStickerDefinition ? [sendStickerDefinition] : []),
   ];
+  if (imageSupported) declarations.push(buildGenerateImageToolDefinition(ctx));
+  if (songSupported) declarations.push(buildGenerateSongToolDefinition(ctx));
+  if (addReactionDefinition !== null) declarations.push(addReactionDefinition);
+  if (viewDefinition !== null) declarations.push(viewDefinition);
+  if (sendStickerDefinition !== null) declarations.push(sendStickerDefinition);
   // 只登记本轮现组装的行动工具：静态查询工具由 callTool 兜底分发，不进
   // 这份名单（见 workers/aiChat/replyModel.ts 的 toolset.has 分支）。
-  const names: Set<string> = new Set(
-    declarations.map((declaration: AiToolDefinition): string => declaration.name)
-  );
+  const names: Set<string> = new Set<string>();
+  for (const declaration of declarations) names.add(declaration.name);
   const functions: readonly AiToolDefinition[] = [...TOOL_DECLARATIONS, ...declarations];
 
   const executeSendMessage: (argumentsJson: string) => Promise<string> = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
   const executeAddReaction: (argumentsJson: string) => Promise<string> = createAddReactionExecutor(ctx);
-  const executeGenerateImage: (argumentsJson: string) => Promise<string> = createGenerateImageExecutor(ctx, messageState, (): number => actionsUsed);
+  const executeGenerateImage: ((argumentsJson: string) => Promise<string>) | null = imageSupported
+    ? createGenerateImageExecutor(ctx, messageState, (): number => actionsUsed)
+    : null;
+  // 只在真的挂了这个工具时才建执行器：没挂的话 dispatch 根本走不到那条分支
+  // （names 里没有 generate_song，编排器会把它当未知工具），白建一个闭包没有意义。
+  const executeGenerateSong: ((argumentsJson: string) => Promise<string>) | null =
+    songSupported ? createGenerateSongExecutor(ctx, messageState) : null;
 
   async function dispatch(name: string, argumentsJson: string): Promise<string> {
     switch (name) {
@@ -67,7 +79,13 @@ export async function createReplyToolset(ctx: ReplyToolContext): Promise<ReplyTo
       case ADD_REACTION_TOOL:
         return executeAddReaction(argumentsJson);
       case GENERATE_IMAGE_TOOL:
-        return executeGenerateImage(argumentsJson);
+        return executeGenerateImage === null
+          ? toolError(unknownToolError(name))
+          : executeGenerateImage(argumentsJson);
+      case GENERATE_SONG_TOOL:
+        return executeGenerateSong === null
+          ? toolError(unknownToolError(name))
+          : executeGenerateSong(argumentsJson);
       case VIEW_STICKER_PACK_TOOL:
         return viewStickerPackTool({
           chatAction: ctx.chatAction,

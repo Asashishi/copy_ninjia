@@ -65,10 +65,10 @@ export function antiRaidDispatchSignal(): AbortSignal {
 }
 
 /**
- * drain 到达：撤掉所有还在按群限流桶里排队的尽力而为请求。
+ * drain 到达：撤掉所有还在消息桶或分类型 429 车道里等待的尽力而为请求。
  *
- * 必须排在 drainAntiRaidTasks 之前，且**必须**在 flushPendingNoticeDeletions
- * 之前——后者是 drain 期间刻意要发出去的请求，把额度让给它才是这一步的意义。
+ * 必须排在 drainAntiRaidTasks 之前，且**必须**在统一延迟删除 flush 之前——
+ * 后者是 drain 期间刻意新建的请求，不能让它误用已经取消的业务生命周期。
  */
 export function quiesceAntiRaidDispatch(): void {
   antiRaidDispatchAbort.current ??= new AbortController();

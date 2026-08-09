@@ -43,7 +43,7 @@ export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: 
  * 都做了这道比对）：`resetAdminCache()` 会在拉取在途时清空整张表，随后新的
  * `fetchAdminIds` 会为同一个群登记一条全新的 fetch。陈旧 fetch 结算时若无条件
  * delete，删掉的是**新 fetch** 的槽位，去重随之失效——下一个调用者会在入群
- * 验证的共享限流队列上发起第三次全量拉取。
+ * 验证使用的 query 类别 429 FIFO 上发起第三次全量拉取。
  */
 export function getOrCreateAdminFetch(chatId: number, create: () => Promise<Set<number>>): Promise<Set<number>> {
   const existing: Promise<Set<number>> | undefined = adminFetches.get(chatId);

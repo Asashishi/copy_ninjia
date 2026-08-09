@@ -14,6 +14,7 @@ export interface AdmitTriggerInput {
   activeRounds: number;
   queueSize: number;
   kind: TriggerKind;
+  telegramBackpressured: boolean;
 }
 
 export type AdmitDecision =

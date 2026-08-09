@@ -23,6 +23,7 @@ export {
   currentReplyGeneration,
   invalidateChatReplies,
   isReplyGenerationCurrent,
+  quiesceAiChatReplies,
   replyGenerationSignal,
   trackReplyGenerationTask,
 } from "./replyGeneration";

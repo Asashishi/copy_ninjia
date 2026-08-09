@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { GrammyError } from "grammy";
 import type { Api } from "grammy";
+import type { TelegramApi } from "../../packages/types/telegramWorker";
+import { settleTestBatch } from "../libs/helpers";
 
 const logApiError = mock((..._args: unknown[]): void => {});
 const markSelfSent = mock((..._args: unknown[]): void => {});
 const copyMessageApi = mock(async (..._args: unknown[]) => ({ message_id: 91 }));
+const telegramApi = { copyMessage: copyMessageApi };
 
 mock.module("../../packages/infra/telegram/client", () => ({
-  bot: { api: { copyMessage: copyMessageApi } },
+  bot: { api: telegramApi },
+  telegramApi,
   logApiError,
 }));
 mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
@@ -15,7 +19,7 @@ mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
 const actions = await import("../../packages/infra/telegram/actions");
 const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
 
-function apiWithSuccesses(): Api {
+function apiWithSuccesses(): TelegramApi {
   return {
     sendMessage: mock(async (..._args: unknown[]) => ({ message_id: 11 })),
     sendChatAction: mock(async (..._args: unknown[]) => true),
@@ -24,15 +28,16 @@ function apiWithSuccesses(): Api {
     sendPhoto: mock(async (..._args: unknown[]) => ({ message_id: 13 })),
     setMessageReaction: mock(async (..._args: unknown[]) => true),
     deleteMessage: mock(async (..._args: unknown[]) => true),
+    deleteMessages: mock(async (..._args: unknown[]) => true),
     unbanChatMember: mock(async (..._args: unknown[]) => true),
     banChatMember: mock(async (..._args: unknown[]) => true),
     getChatMember: mock(async (..._args: unknown[]) => ({ status: "creator" })),
     banChatSenderChat: mock(async (..._args: unknown[]) => true),
     unbanChatSenderChat: mock(async (..._args: unknown[]) => true),
-  } as unknown as Api;
+  } as unknown as TelegramApi;
 }
 
-function apiWithFailures(): Api {
+function apiWithFailures(): TelegramApi {
   const reject = mock(async (..._args: unknown[]): Promise<never> => {
     throw new Error("telegram unavailable");
   });
@@ -44,15 +49,17 @@ function apiWithFailures(): Api {
     sendPhoto: reject,
     setMessageReaction: reject,
     deleteMessage: reject,
+    deleteMessages: reject,
     unbanChatMember: reject,
     banChatMember: reject,
     getChatMember: reject,
     banChatSenderChat: reject,
     unbanChatSenderChat: reject,
-  } as unknown as Api;
+  } as unknown as TelegramApi;
 }
 
 beforeEach(() => {
+  actions.resetPendingMessageDeletions();
   logApiError.mockClear();
   markSelfSent.mockClear();
   copyMessageApi.mockClear();
@@ -61,7 +68,7 @@ beforeEach(() => {
 
 describe("Telegram 动作适配层失败归一化", () => {
   test("所有成功动作返回稳定值，并登记机器人自发消息", async () => {
-    const api: Api = apiWithSuccesses();
+    const api: TelegramApi = apiWithSuccesses();
     const keyboard = { inline_keyboard: [[{ text: "确认", callback_data: "ok" }]] };
 
     expect(await actions.sendMessage({ chatId: -1001, text: "hello", api, keyboard: keyboard as never })).toBe(11);
@@ -73,7 +80,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBe(13);
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(true);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
-    expect(await actions.kickChatMember({ chatId: -1001, userId: 7, api })).toBe(true);
+    expect(await actions.kickChatMember({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe(true);
     expect(await actions.banChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.isChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(true);
@@ -85,7 +92,7 @@ describe("Telegram 动作适配层失败归一化", () => {
   });
 
   test("Telegram 抛错时不向业务层泄漏异常，按动作返回 false/undefined", async () => {
-    const api: Api = apiWithFailures();
+    const api: TelegramApi = apiWithFailures();
 
     expect(await actions.sendMessage({ chatId: -1001, text: "hello", api })).toBeUndefined();
     expect(await actions.sendChatAction({ chatId: -1001, action: "typing", api })).toBe(false);
@@ -96,7 +103,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendPhoto({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toBeUndefined();
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(false);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(false);
-    expect(await actions.kickChatMember({ chatId: -1001, userId: 7, api })).toBe(false);
+    expect(await actions.kickChatMember({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe(false);
     expect(await actions.banChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.isChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(false);
@@ -110,7 +117,7 @@ describe("Telegram 动作适配层失败归一化", () => {
   });
 
   test("主动取消发送时返回 undefined 且不记录 API 错误", async () => {
-    const api: Api = apiWithFailures();
+    const api: TelegramApi = apiWithFailures();
     const controller: AbortController = new AbortController();
     controller.abort();
 
@@ -184,7 +191,7 @@ describe("Telegram 动作适配层失败归一化", () => {
   });
 
   test("成功响应后的映射失败仍按原动作归一化", async () => {
-    const api: Api = apiWithSuccesses();
+    const api: TelegramApi = apiWithSuccesses();
     const mappingError: Error = new Error("self-sent tracking failed");
     markSelfSent.mockImplementationOnce(() => {
       throw mappingError;
@@ -195,7 +202,7 @@ describe("Telegram 动作适配层失败归一化", () => {
   });
 
   test("延迟删除只注册一个不阻止退出的 timer，并在到期后复用 deleteMessage", async () => {
-    const api: Api = apiWithSuccesses();
+    const api: TelegramApi = apiWithSuccesses();
     const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
     let scheduled: (() => void) | null = null;
     const unref = mock((): void => {});
@@ -214,6 +221,95 @@ describe("Telegram 动作适配层失败归一化", () => {
       globalThis.setTimeout = originalSetTimeout;
     }
   });
+
+  test("正常停机在截止前提前兑现待删消息，并等待删除请求结算", async () => {
+    const api: TelegramApi = apiWithSuccesses();
+    actions.deleteMessageAfter({ chatId: -1001, messageId: 45, delayMs: 30_000, api });
+
+    expect(api.deleteMessage).not.toHaveBeenCalled();
+    await expect(actions.drainPendingMessageDeletions(1_000)).resolves.toBe("flushed");
+    expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 45);
+  });
+
+  test("timer 已认领的删除仍进入在途集合，Worker flush 不会漏等", async () => {
+    let release!: () => void;
+    const deleteMessage = mock(async (): Promise<true> => {
+      await new Promise<void>((resolve: () => void): void => { release = resolve; });
+      return true;
+    });
+    const api: Api = { deleteMessage } as unknown as Api;
+    const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
+    let scheduled: (() => void) | null = null;
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+      scheduled = callback;
+      return { unref(): void {} } as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    try {
+      actions.deleteMessageAfter({ chatId: -1001, messageId: 51, delayMs: 500, api });
+      scheduled!();
+      const inFlight: readonly Promise<void>[] =
+        actions.flushPendingMessageDeletions();
+      expect(inFlight).toHaveLength(1);
+      release();
+      await settleTestBatch(inFlight);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+  });
+
+  test("停机 flush 仅合批显式条目，并按 deleteMessages 的 100 条上限分片", async () => {
+    const api: TelegramApi = apiWithSuccesses();
+    for (let messageId: number = 1; messageId <= 101; messageId++) {
+      actions.deleteMessageAfter({
+        chatId: -1001,
+        messageId,
+        delayMs: 30_000,
+        api,
+        batchOnFlush: true,
+      });
+    }
+    actions.deleteMessageAfter({
+      chatId: -2002,
+      messageId: 201,
+      delayMs: 30_000,
+      api,
+      batchOnFlush: true,
+    });
+    actions.deleteMessageAfter({
+      chatId: -1001,
+      messageId: 301,
+      delayMs: 30_000,
+      api,
+    });
+
+    await settleTestBatch(actions.flushPendingMessageDeletions());
+    expect(api.deleteMessages).toHaveBeenCalledTimes(3);
+    expect(api.deleteMessages).toHaveBeenNthCalledWith(
+      1,
+      -1001,
+      Array.from({ length: 100 }, (_value: unknown, index: number): number => index + 1)
+    );
+    expect(api.deleteMessages).toHaveBeenNthCalledWith(2, -1001, [101]);
+    expect(api.deleteMessages).toHaveBeenNthCalledWith(3, -2002, [201]);
+    expect(api.deleteMessage).toHaveBeenCalledTimes(1);
+    expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 301);
+  });
+
+  test("延迟删除失败走统一 Telegram 错误日志，但不阻止停机", async () => {
+    const api: TelegramApi = apiWithFailures();
+    actions.deleteMessageAfter({ chatId: -1001, messageId: 46, delayMs: 30_000, api });
+
+    await expect(actions.drainPendingMessageDeletions(1_000)).resolves.toBe("flushed");
+    expect(logApiError).toHaveBeenCalledWith("delete message", expect.any(Error));
+  });
+
+  test("零预算不启动新的 Telegram 删除请求", async () => {
+    const api: TelegramApi = apiWithSuccesses();
+    actions.deleteMessageAfter({ chatId: -1001, messageId: 47, delayMs: 30_000, api });
+
+    await expect(actions.drainPendingMessageDeletions(0)).resolves.toBe("timedOut");
+    expect(api.deleteMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe("解除封禁必须带 only_if_banned", () => {
@@ -227,13 +323,13 @@ describe("解除封禁必须带 only_if_banned", () => {
     await actions.unbanChatMemberIfBanned(-1001, 7, api);
     expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, { only_if_banned: true });
 
-    await actions.kickChatMember({ chatId: -1001, userId: 7, api });
+    await actions.kickChatMember({ chatId: -1001, userId: 7, isSupergroup: true, api });
     // 空 options 与不传等价，关键是**没有** only_if_banned。
     expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, {});
   });
 });
 
-describe("黑名单封禁必须连带删除该成员的消息", () => {
+describe("黑名单封禁结果归一化", () => {
   test("权限不足与偶发失败必须分成两档", async () => {
     // 缺封禁权限时重试多少次都一样，只有权限本身变了才有意义；把它跟限流、
     // 网络抖动混成一个 false，主线程就只能按时间盲目重试（见 infra/blocklist.ts）。
@@ -263,9 +359,8 @@ describe("黑名单封禁必须连带删除该成员的消息", () => {
   });
 
   test("banChatMember 传 revoke_messages", async () => {
-    // /block、秒踢、补扫与广告检测命中都走这一条：管理员认定这个人不该留下
-    // 任何痕迹，消息一并清掉才是完整处置。反刷群的自动踢出走 kickChatMember，
-    // 本来就不经过这里。
+    // /block、秒踢、补扫与广告检测命中都走这一条；该参数撤销被移除成员对既有
+    // 群消息的访问，并不删除 TA 发给群内其他成员的历史消息。
     const banChatMember = mock(async (..._args: unknown[]) => true);
     const api: Api = { banChatMember } as unknown as Api;
 

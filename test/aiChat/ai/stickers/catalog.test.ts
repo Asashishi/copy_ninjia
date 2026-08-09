@@ -35,10 +35,12 @@ mock.module("../../../../packages/aiChat/ai/imageDescription", () => ({
 // 睡眠打成即时返回，失败用例才不会真等几分钟。
 mock.module("../../../../packages/libs/sleep", () => ({ sleep: mock(async (_ms: number): Promise<void> => {}) }));
 mock.module("../../../../packages/aiChat/provider", () => ({
-  chatAiProvider: () => ({ name: "test", generateText: generateTextMock }),
+  summaryAiProvider: () => ({ name: "google", generateText: generateTextMock }),
 }));
 
 const {
+  drainStickerCatalogTasks,
+  ensureStickerCatalogs,
   generatePackCatalog,
   getCatalogEntry,
   getPackSummary,
@@ -46,7 +48,11 @@ const {
   retryIncompleteStickerCatalogs,
 } = await import("../../../../packages/aiChat/ai/stickers/catalog");
 const { transientDescriptionCache } = await import("../../../../packages/cache/workers/aiChat/imageDescription");
-const { failedEntries, stickerCatalogRetryState } = await import("../../../../packages/cache/workers/aiChat/stickers/catalog");
+const {
+  failedEntries,
+  generatingPacks,
+  stickerCatalogRetryState,
+} = await import("../../../../packages/cache/workers/aiChat/stickers/catalog");
 const { STICKER_CATALOG_RETRY_INTERVAL_MS } = await import("../../../../packages/consts/aiChat/stickers");
 
 function sticker(fileUniqueId: string, emoji: string): any {
@@ -60,6 +66,26 @@ function persisted(pack: string, entries: Record<string, { emoji: string; descri
 }
 
 describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
+  test("停机排空等待后台目录任务结算，不会在最终快照之后继续改写", async () => {
+    let releaseLookup: (() => void) | undefined;
+    getStickerSetMock.mockImplementationOnce((): Promise<any> =>
+      new Promise<any>((resolve: (value: null) => void): void => {
+        releaseLookup = (): void => resolve(null);
+      }));
+
+    ensureStickerCatalogs(["pack_drain"]);
+    let drained: boolean = false;
+    const drain: Promise<void> = drainStickerCatalogTasks().then((): void => { drained = true; });
+    await Promise.resolve();
+
+    expect(generatingPacks.has("pack_drain")).toBeTrue();
+    expect(drained).toBeFalse();
+    releaseLookup!();
+    await drain;
+
+    expect(drained).toBeTrue();
+    expect(generatingPacks.has("pack_drain")).toBeFalse();
+  });
   test("hydrate 遇到语法合法但形状错误的快照时只丢弃该包", () => {
     hydrateStickerCatalogs(new Map([["pack_bad_shape", JSON.stringify({ version: 1, entries: null })]]));
 

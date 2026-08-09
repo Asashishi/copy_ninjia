@@ -1,10 +1,10 @@
 /**
- * 缺 AI_CHAT_GEMINI_API_KEY 时主线程侧代理的行为。与 mainMirrorRecovery.test.ts
- * 是同一批入口的另一种进程状态，因此必须另开一个文件：config 的 mock 整文件生效。
+ * AI agent 核心配置不可用时主线程侧代理的行为。与 mainMirrorRecovery.test.ts
+ * 是同一批入口的另一种进程状态，因此必须另开一个文件：readiness mock 整文件生效。
  *
  * 这里守的是一条会造成不可逆数据损失的边：hydrate 那条路把「本群没开 AI 闲聊」
- * 当成删除磁盘记忆的依据，而没有凭据时每个群看起来都是关的——一次临时抽掉密钥的
- * 重启就会把 memory/ 里所有群的 AI 记忆一起删光，钥匙补回来也找不回来。
+ * 当成删除磁盘记忆的依据，而配置不可用时每个群看起来都是关的——一次配置失误后的
+ * 重启就会把 memory/ 里所有群的 AI 记忆一起删光，修好配置也找不回来。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -27,8 +27,12 @@ const loggerLog = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 const aiEnabledChats = new Set<number>();
 
-// 凭据缺席：mock 里不给 AI_CHAT_GEMINI_API_KEY 任何值，等价于 .env 留空。
-mock.module("../../../packages/infra/config", () => ({ AI_CHAT_GEMINI_API_KEY: undefined, AI_CHAT_OPENAI_API_KEY: undefined }));
+mock.module("../../../packages/config/readiness", () => ({
+  aiChatConfigReadiness: () => ({
+    ok: false,
+    failure: { file: "config/agent.json", reason: "missing agent.media" },
+  }),
+}));
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log: loggerLog, error: loggerError, info: loggerLog, warn: loggerLog },
 }));
@@ -50,13 +54,11 @@ mock.module("../../../packages/infra/diskIO", () => ({
   onAiMemoryDeletedPersisted: (_callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {},
   onAiMemoryPersisted: (_callback: (reply: AiMemoryPersistedReply) => void): void => {},
   onDiskIORespawn: (_owner: string, _priority: number, _listener: DiskIORespawnListener): void => {},
+  onDiskIOGiveUp: (_callback: () => void): void => {},
   relayLogMessage: (): boolean => true,
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
-  // 两项供应商覆盖的重放来源；本组用例都不设覆盖，重放块因此不发这两条消息。
-  getImageProviderOverride: (): undefined => undefined,
-  getChatProviderOverride: (): undefined => undefined,
   getAllChatStates: (): Map<number, unknown> =>
     new Map([...aiEnabledChats].map((chatId: number): [number, unknown] => [chatId, {}])),
 }));
@@ -85,7 +87,7 @@ beforeEach(() => {
   aiEnabledChats.clear();
 });
 
-describe("AI main-thread proxy without any provider credentials", () => {
+describe("AI main-thread proxy with unavailable agent config", () => {
   test("initAiChat 不创建线程也不投递身份，只记一行诊断", () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
@@ -96,7 +98,7 @@ describe("AI main-thread proxy without any provider credentials", () => {
     expect(loggerLog).toHaveBeenCalledTimes(1);
   });
 
-  test("hydrate 一条都不删：磁盘上的 AI 记忆原样留到凭据补回来", () => {
+  test("hydrate 一条都不删：磁盘上的 AI 记忆原样留到配置修好并重启", () => {
     aiEnabledChats.add(-1002);
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
@@ -107,7 +109,7 @@ describe("AI main-thread proxy without any provider credentials", () => {
     aiChat.hydrateStickerCatalog(new Map([["pack_a", "restored-catalog"]]));
 
     expect(workerPosts).toEqual([]);
-    // 关键断言：没有任何 deleteAiMemory 投出去。配了凭据的那条路会为 -1001
+    // 关键断言：没有任何 deleteAiMemory 投出去。配置可用的那条路会为 -1001
     // 安排 durable 删除（见 mainMirrorRecovery.test.ts），这里一条都不该有。
     expect(diskPosts).toEqual([]);
     expect(pendingAiMemoryDeletes.size).toBe(0);

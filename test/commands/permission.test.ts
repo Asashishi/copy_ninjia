@@ -31,6 +31,8 @@ function permissions(
   return {
     isCanMute: false,
     isCanUnMute: false,
+    isCanGag: false,
+    isCanViewBotStatus: true,
     isCanBlock: false,
     isCanUnBlock: false,
     isCanSwitchMood: false,
@@ -49,6 +51,8 @@ function allEnabledPermissions(): Record<string, boolean> {
   return permissions({
     isCanMute: true,
     isCanUnMute: true,
+    isCanGag: true,
+    isCanViewBotStatus: true,
     isCanBlock: true,
     isCanUnBlock: true,
     isCanSwitchMood: true,
@@ -56,10 +60,11 @@ function allEnabledPermissions(): Record<string, boolean> {
     isCanControllAdDetectPermission: true,
     isCanControllFloodControlPermission: true,
     isCanControllJATranslatePermission: true,
+    isCanControllAntiRaidPermission: true,
   });
 }
 
-mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
@@ -136,6 +141,7 @@ beforeEach(() => {
 describe("/permission", () => {
   test("权限键大小写不敏感，布尔值只接受 true/false", () => {
     expect(parseWhitelistPermissionKey("ISCANMUTE")).toBe("isCanMute");
+    expect(parseWhitelistPermissionKey("ISCANVIEWBOTSTATUS")).toBe("isCanViewBotStatus");
     expect(parseWhitelistPermissionKey("ISCANCONTROLLFLOODCONTROLPERMISSION"))
       .toBe("isCanControllFloodControlPermission");
     expect(parseWhitelistPermissionKey("unknown")).toBeUndefined();

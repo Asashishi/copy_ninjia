@@ -2,6 +2,7 @@ import type { StickerSet } from "@grammyjs/types";
 import type { AiToolDefinition } from "../../../types/aiChat/provider";
 import { getStickerConfig } from "../../../config/stickers";
 import { sendSticker } from "../../../infra/telegram";
+import { logger } from "../../../infra/logger";
 import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
 import { parseIndexField } from "../utils/toolArgs";
 import {
@@ -100,6 +101,11 @@ async function collectStickerPackMenu(): Promise<StickerPackCandidate[]> {
   for (let i: number = 0; i < packs.length; i++) {
     const pack: string = packs[i]!;
     const result: PromiseSettledResult<StickerSet | null> = results[i]!;
+    if (result.status === "rejected") {
+      // packs 已由配置校验限制为最多五项；防御性 rejection 仍要带包名落日志，
+      // 不能把 allSettled 变成吞错。常规 Telegram 失败由 getStickerSet 返回 null。
+      logger.error(`Unexpected sticker menu fetch rejection for pack "${pack}":`, result.reason);
+    }
     const set: StickerSet | null = result.status === "fulfilled" ? result.value : null;
     if (!set) continue;
     const stickers: StickerCandidate[] = [];

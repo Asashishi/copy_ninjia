@@ -51,8 +51,12 @@ export interface KickPendingState {
    * 合法计数成员那一格（见 packages/libs/linkedQueue.ts 的 removeValue）。
    */
   countedJoinAt?: number;
+  /** 入群公告 id；首次动作须在落盘回执后先清理该痕迹再踢人。 */
+  announcementMessageId?: number;
+  /** Worker 本地的 effect 幂等门；不持久化，重建后允许安全重放。 */
+  effectStarted: boolean;
   /** Telegram 请求已同步发出，之后到达的豁免已无法撤销这次调用。 */
-  executionStarted?: boolean;
+  executionStarted: boolean;
 }
 
 /** 私密模式踢人请求已经结算后的短期去重占位。 */
@@ -101,7 +105,7 @@ export interface ExpellingState {
    * 网络问题。随快照持久化，Worker 重生/进程重启后不重发（这条告警不自删）。
    */
   failureNoticeSent?: boolean;
-  /** 「没能确认人还在不在群里」这条告警已发送；理由同 failureNoticeSent。 */
+  /** 「没能确认成员是否仍在群里或群类型」告警已发送；理由同 failureNoticeSent。 */
   unconfirmedNoticeSent?: boolean;
   /**
    * 成功播报已经发出并进入持久化快照。落盘确认后可直接结束终态，Worker
@@ -199,6 +203,15 @@ export interface ReminderLandedEvent {
 export type VerificationEvent =
   | JoinEvent
   | { type: "left" }
+  /**
+   * 本群的入群守卫被 `/antiraid disable` 关掉了（见 commands/antiRaid.ts）。
+   *
+   * 与 `left` 的区别是**谁走了**：`left` 是这个成员离开了群，验证自然作废；
+   * 这条是功能本身被关掉，群里的人一个都没动，因此每一种状态都要就地收摊
+   * ——包括已经落盘、正等着踢人的那两个终态。开关关掉之后还把人踢出去，是
+   * 管理员最不可能预期的结果。
+   */
+  | { type: "guardDisabled" }
   | TrackedMessageEvent
   | ConfirmedThreadCommentEvent
   | VerificationCallbackEvent

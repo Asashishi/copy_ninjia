@@ -37,6 +37,11 @@ export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
  */
 export const VERIFICATION_TERMINAL_RETRY_MAX_MS: number = 30 * 60 * 1000;
 /**
+ * 冷启动恢复终态时，Worker 并发反查群类型的硬顶。请求按群复用，超过时保留终态
+ * 等下一轮退避，避免大量历史群同时恢复时无界创建 getChat Promise。
+ */
+export const VERIFICATION_CHAT_KIND_FETCH_MAX: number = 100;
+/**
  * 私密模式下直接踢人的占位记录存活时长：只是给 chat_member 更新和
  * new_chat_members 服务消息（针对同一次入群各自触发）留出去重窗口，
  * 不是真的验证超时，所以远比 VERIFICATION_TIMEOUT_MS 短。

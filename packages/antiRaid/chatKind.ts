@@ -24,7 +24,7 @@ import type { Chat } from "@grammyjs/types";
  * **只认 `group` 与 `supergroup` 两个确定值，其余一律不记。** 私聊和频道本来就
  * 不走入群守卫；而「取值不认识」绝不能落成 `isSupergroup: false`——那是三态里
  * 唯一会改变行为的一档，写错的代价是在超级群里用 `banChatMember` 打出一次真正的
- * 持久封禁。没记就是未知，未知按超级群办（见 workers/antiRaid/chatKind.ts）。
+ * 持久封禁。没记就是未知，执行侧必须先反查，不能猜测（见 workers/antiRaid/chatKind.ts）。
  *
  * 投递失败不补偿也不记错误日志，理由同权限镜像：`postAntiRaid` 返回 false 只发生
  * 在 Worker 已放弃或正在重建时，而 onRespawn 会整表重放；为一次必然被重放覆盖的

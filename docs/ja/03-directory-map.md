@@ -1,11 +1,11 @@
 # 03 ディレクトリ構成とコード配置
 
 <p align="center">
-  <a href="../03-directory-map.md">简体中文</a> · <a href="../en/03-directory-map.md">English</a> · <b>日本語</b>
+  <a href="../cn/03-directory-map.md">简体中文</a> · <a href="../en/03-directory-map.md">English</a> · <b>日本語</b>
 </p>
 
 <p align="center">
-  <a href="README.md">📚 開発者ドキュメント TOP</a> · <a href="02-architecture.md">← 前のページ：02 アーキテクチャ</a> · <a href="04-invariants.md">次のページ：04 不変条件 →</a>
+  <a href="conntent-table.md">📚 開発者ドキュメント TOP</a> · <a href="02-architecture.md">← 前のページ：02 アーキテクチャ</a> · <a href="04-invariants.md">次のページ：04 不変条件 →</a>
 </p>
 
 ---
@@ -16,14 +16,17 @@
 
 - **`packages/app/`**
   - **責務**：起動・終了ライフサイクル、有効な機能の起動時前提チェック、handler
-    登録、コマンドメニュー、update runner。
-  - **代表的なファイル**：`lifecycle.ts`、`featurePreflight.ts`、`registerHandlers.ts`、
-    `updateRunner.ts`。
+    登録、コマンドメニュー、update runner、ライフサイクル副作用の composition。
+  - **代表的なファイル**：`lifecycle.ts`、`lifecycleDependencies.ts`、`featurePreflight.ts`、
+    `registerHandlers.ts`、`updateRunner.ts`。`ApplicationLifecycleDependencies` は composition object
+    から推論して同じ場所に置き、共有型レイヤーから `app/` への逆依存を避けます。
 - **`packages/commands/`**
   - **責務**：明示的なコマンド処理。1 コマンド 1 ファイル。トグル系コマンドが
     共有する権限・設定ゲートは別ファイル。
   - **代表的なファイル**：`copy.ts`、`block.ts`、`mute.ts`、`batchKick.ts`、
-    `targetResolution.ts`、`configGate.ts`。
+    `targetResolution.ts`、`configGate.ts`。規模の大きい gag domain は command admission を
+    `gag.ts` に残し、lifecycle、inline、純粋 rendering を `gag/runtime.ts`、
+    `gag/inline.ts`、`gag/rendering.ts` に分割します。
 - **`packages/auto/`**
   - **責務**：copy、AI の文字起こしとトリガー、リアクション同期など、
     コマンド以外の自動動作。
@@ -50,7 +53,7 @@
 - **`packages/states/`**
   - **責務**：**I/O を行わない**純粋な状態遷移と、認証・ロックダウン・AI 返信・
     広告検出の受け入れ規則。
-  - **代表的なファイル**：`verification.ts` と `verification/`、`lockdown.ts`、`replyAdmission.ts`、
+  - **代表的なファイル**：`verification.ts` と `verification/`（`join`/`pending`/`terminal`/`disable` の 4 区分）、`lockdown.ts`、`replyAdmission.ts`、
     `adDetectAdmission.ts`。
 - **`packages/config/`**
   - **責務**：`config/*.json` の厳密な schema。allow/blocklist は起動時、
@@ -60,7 +63,8 @@
 - **`packages/libs/`**
   - **責務**：アトミックファイル、上限付き I/O、並行処理ツールなど、
     ドメイン非依存の基盤。
-  - **代表的なファイル**：`flushBarrier.ts`、`linkedQueue.ts`、`monotonicDeadline.ts`、`text.ts`。
+  - **代表的なファイル**：`flushBarrier.ts`、`linkedQueue.ts`、`acknowledgedBatchQueue.ts`、
+    `boundedSettledBatch.ts`、`monotonicDeadline.ts`、`text.ts`。
 - **`packages/workers/`**
   - **責務**：3 つの Worker のスレッド内実装。
   - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
@@ -68,24 +72,25 @@
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
-  - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`deepseek.ts`。AI chat の
+  - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`provider.ts`。AI chat の
     model 送受信はここではなく、vendor ごとの `packages/aiChat/{gemini,openai}/` にあります。
 - **`packages/workers/antiRaid/adDetect/`**
-  - **責務**：DeepSeek 広告検出パイプライン。バッチキュー、送信者ごとの
+  - **責務**：provider routed 広告検出パイプライン。バッチキュー、送信者ごとの
     メッセージ束の整形、判定、命中時の処分を含む。
   - **代表的なファイル**：`queue.ts`、`bundle.ts`、`classifier.ts`、`disposal.ts`。
 - **`packages/infra/`**
-  - **責務**：Telegram クライアント、Worker ホスト、logger、環境変数設定、
-    メインスレッド側 I/O proxy。
-  - **代表的なファイル**：`telegram/`、`config.ts`、`joinLog.ts`、
+  - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
+    logger、メインスレッド側 I/O proxy。
+  - **代表的なファイル**：`telegram/`、`diskIO.ts`、`joinLog.ts`、
     `workerSupervisor.ts`。
 - **`packages/infra/blocklist/`**
   - **責務**：メインスレッド側ブロックリスト基盤。identity 判定、同期 membership、
     durable outbox、チャット掃除に分割。
   - **代表的なファイル**：`identities.ts`、`membership.ts`、`outbox.ts`、`sweep.ts`。
 - **`packages/infra/storage/`**
-  - **責務**：データルート事前検査、インスタンスロック、StateStore、起動時の清掃。
-  - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`。
+  - **責務**：データルート事前検査、インスタンスロック、業務 state facade、注入可能な `state.json` 永続化境界、起動時の清掃。
+  - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`。
+    前者は業務メモリと snapshot、後者は厳密 decode、latest-only write、retry、flush を担当します。
 - **`packages/cache/`**
   - **責務**：プロセス内可変状態コンテナ。**第 1 階層のディレクトリが
     所有スレッドを表す**。
@@ -108,7 +113,7 @@
 
 次の順に判断します。
 
-1. **リテラルなパラメータ、またはユーザーに見える文言か？** → `packages/consts/<domain>.ts`。ドメインが大きければ `packages/consts/<domain>/` に分割します。用途と不変条件を説明する中国語 JSDoc を付けます。コマンドの応答や提示は handler 内で組み立てず、コマンドごとの文言テーブルに収めます。環境変数由来の設定だけは例外で、`packages/infra/config.ts` に置きます。
+1. **リテラルなパラメータ、またはユーザーに見える文言か？** → `packages/consts/<domain>.ts`。ドメインが大きければ `packages/consts/<domain>/` に分割します。用途と不変条件を説明する中国語 JSDoc を付けます。コマンドの応答や提示は handler 内で組み立てず、コマンドごとの文言テーブルに収めます。deployment JSON の解析と検証は `packages/config/<domain>.ts` に置き、process environment は `packages/consts/paths.ts` の runtime path override だけが読みます。
 2. **モジュール間で共有する型または protocol か？** → `packages/types/<domain>.ts`。状態機械の `State/Event/Effect/Transition/Decision` contract は `packages/types/states/` に置きます。
 3. **Map、Set、キュー、timer、singleton など長寿命の可変状態か？** → `packages/cache/`。**まず所有スレッドのディレクトリを選び**（下記参照）、その中でドメイン別にファイルを分けます。`export let` ではなく holder オブジェクトを使い、いつ格納し、いつ削除し、Worker 再起動後にどう再構築するかを JSDoc に記載します。容量と削除方針は [04 実行時の正式な不変条件](04-invariants.md) を満たす必要があります。
 4. **I/O のない、単体テスト可能な純粋状態遷移か？** → `packages/states/`。副作用は Worker 側の interpreter が実行します。
@@ -122,7 +127,7 @@
 
 - **`main/`**
   - **所有者**：メインスレッド。
-  - **内容**：コマンドと自動パイプラインの状態、`StateStore` のメモリミラー、
+  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理する `state.json` のメモリミラー、
     Disk I/O ホスト、および **Worker のメインスレッド側プロキシとミラー**
     （`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
@@ -132,14 +137,15 @@
 - **`workers/antiRaid/`**
   - **所有者**：Anti-Raid Worker。
   - **内容**：認証/ロックダウンの状態機械、連投ウィンドウ、広告検出キュー、
-    DeepSeek クライアント。
+    Google/OpenAI 広告検出クライアント。
 - **`workers/diskIO/`**
   - **所有者**：Disk I/O Worker。
   - **内容**：各ドメインの書き込みバッファ、index、dirty マーカー。
 - **`perThread/`**
   - **所有者**：各スレッドに 1 つずつ。
-  - **内容**：Telegram クライアント、デプロイ設定 singleton、自己送信メッセージ登録。
-    同じモジュールを各スレッドが独立に実体化し、共有を意図しません。
+  - **内容**：Telegram capability holder（main thread の実 adapter または Worker の duplex proxy）、
+    Worker duplex waiter、デプロイ設定 singleton、自己送信メッセージ登録。同じモジュールを
+    各スレッドが独立に実体化し、共有を意図しません。
 
 `main/antiRaid/` と `workers/antiRaid/` は**何一つ共有しない別々の状態**である点に注意してください。正式な状態機械は Worker の中にあり、メインスレッド側はクラッシュ再生のための純粋なデータにすぎません。ディレクトリを間違えるのはスタイルの問題ではありません。書き込んだ内容が相手側から永遠に読めなくなります。`bun run check:conventions` が実際のモジュールグラフでこの所有関係を照合し（[04 実行時の正式な不変条件](04-invariants.md#スレッドと状態の帰属) を参照）、違反時は import 連鎖を全て出力します。
 
@@ -147,7 +153,7 @@
 
 ## 互換エントリ（barrel）の規約
 
-大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/consts/aiChat/` に対する `packages/consts/aiChat.ts`、または分割した認証ファイル domain に対する `verificationFiles.ts`。規則は次のとおりです。
+大きなファイルをサブモジュールへ分割した後、元ファイルは状態を持たない薄い互換 export 入口にできます。例：`packages/consts/aiChat/` に対する `packages/consts/aiChat.ts`、`packages/infra/telegram/avatar/` に対する `packages/infra/telegram/avatar.ts`、または分割した認証ファイル domain に対する `verificationFiles.ts`。規則は次のとおりです。
 
 - 互換エントリは古い import を段階移行するためだけに存在します。**新しいコードは必ずドメインのサブファイルから直接 import します。**
 - 互換エントリは状態を所有せず、設定を解析せず、import 時の副作用を導入しません。
@@ -162,6 +168,6 @@
 
 <div align="center">
 
-[← 前のページ：02 アーキテクチャ](02-architecture.md) · [📚 開発者ドキュメント TOP](README.md) · [⬆️ トップへ戻る](#03-ディレクトリ構成とコード配置) · [次のページ：04 不変条件 →](04-invariants.md)
+[← 前のページ：02 アーキテクチャ](02-architecture.md) · [📚 開発者ドキュメント TOP](conntent-table.md) · [⬆️ トップへ戻る](#03-ディレクトリ構成とコード配置) · [次のページ：04 不変条件 →](04-invariants.md)
 
 </div>

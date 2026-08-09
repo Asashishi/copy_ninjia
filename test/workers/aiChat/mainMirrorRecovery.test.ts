@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
-import type { AiChatWorkerEvent, AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
-import type { AiProviderName } from "../../../packages/types/aiChat/provider";
+import { getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { SUPER_ADMIN_USER_ID } from "../../../packages/config/telegram";
+import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../../../packages/types/aiChat/protocol";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryDeleteDiskMessage,
   AiMemoryDiskMessage,
+  AiMemoryForgetDiskMessage,
   AiMemoryPersistedReply,
   DiskBusinessMessage,
   DiskIORecoveryTransport,
@@ -13,7 +15,11 @@ import type {
   StickerCatalogDiskMessage,
 } from "../../../packages/types/diskIO";
 
-type AiDiskMessage = AiMemoryDiskMessage | AiMemoryDeleteDiskMessage | StickerCatalogDiskMessage;
+type AiDiskMessage =
+  | AiMemoryDiskMessage
+  | AiMemoryDeleteDiskMessage
+  | AiMemoryForgetDiskMessage
+  | StickerCatalogDiskMessage;
 
 const workerPosts: AiChatWorkerMessage[] = [];
 const diskPosts: AiDiskMessage[] = [];
@@ -28,6 +34,7 @@ let supervisorOptions: {
 let diskRespawn: DiskIORespawnListener | undefined;
 let diskDeletePersisted: ((reply: AiMemoryDeletedPersistedReply) => void) | undefined;
 let diskMemoryPersisted: ((reply: AiMemoryPersistedReply) => void) | undefined;
+let diskGaveUp: (() => void) | undefined;
 const aiEnabledChats = new Set<number>();
 
 mock.module("../../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
@@ -55,19 +62,15 @@ mock.module("../../../packages/infra/diskIO", () => ({
   onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {
     diskRespawn = listener;
   },
+  onDiskIOGiveUp: (callback: () => void): void => { diskGaveUp = callback; },
   relayLogMessage: (): boolean => true,
 }));
 // hydrate 的删除判据要求 state.json 确实认识这个群（见 aiChat/index.ts）：
 // 只在状态表里、开关不是 true 的群才回收磁盘残留。开着的群必然在表里，
 // 因此这里取两个集合的并集。
 const knownChats = new Set<number>();
-let imageProviderOverride: AiProviderName | undefined = undefined;
-let chatProviderOverride: AiProviderName | undefined = undefined;
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
-  // 两项供应商覆盖的重放来源；缺省不设覆盖，重放块因此不发这两条消息。
-  getImageProviderOverride: (): AiProviderName | undefined => imageProviderOverride,
-  getChatProviderOverride: (): AiProviderName | undefined => chatProviderOverride,
   getAllChatStates: (): Map<number, unknown> =>
     new Map([...aiEnabledChats, ...knownChats].map((chatId: number): [number, unknown] => [chatId, {}])),
 }));
@@ -116,8 +119,6 @@ beforeEach(() => {
   aiChatWorkerState.available = false;
   aiEnabledChats.clear();
   knownChats.clear();
-  imageProviderOverride = undefined;
-  chatProviderOverride = undefined;
   workerPostAccepted = true;
 });
 
@@ -141,10 +142,18 @@ describe("AI main-thread persistence mirror", () => {
     expect(initWorker).toHaveBeenCalledTimes(1);
     expect(markSelfSent).toHaveBeenCalledWith(-1001, 42);
     expect(aiRespawnPosts).toEqual([
-      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
+      {
+        type: "init",
+        botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" },
+        superAdminUserId: SUPER_ADMIN_USER_ID,
+        // 重放的是进程启动时那条 init 本身，配置快照因此逐字节相同——新
+        // isolate 不会顺手加载磁盘上已经被改过的 agent.json。
+        agent: getAgentDeploymentConfig(),
+      },
       { type: "hydrate", memories: new Map([[-1001, "latest-memory"]]) },
       { type: "hydrateStickerCatalog", catalogs: new Map([["pack_a", "latest-catalog"]]) },
     ]);
+    expect((aiRespawnPosts[0] as AiInitMessage).agent).toBe(getAgentDeploymentConfig());
 
     diskPosts.length = 0;
     const recoveryTransport: DiskIORecoveryTransport = {
@@ -189,81 +198,6 @@ describe("AI main-thread persistence mirror", () => {
       requestId: invalidateRequest.requestId,
     });
     await invalidated;
-  });
-
-  test("生图供应商覆盖随 init 推一次，Worker 重建后由重放块补发", () => {
-    imageProviderOverride = "openai";
-    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-
-    // 首个 Worker 拿不到 onRespawn 的那次重放，恢复出来的覆盖值在 init 之后补推。
-    expect(workerPosts).toEqual([
-      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
-      { type: "imageProvider", provider: "openai" },
-    ]);
-
-    const respawnPosts: AiChatWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
-      respawnPosts.push(message);
-      return true;
-    });
-    // 新 Worker 的镜像是空的，而空的含义是「跟随默认供应商」——不补发就等于
-    // 超管切过的那一下被静默回滚，而群里看不出区别。
-    expect(respawnPosts).toEqual([
-      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
-      { type: "imageProvider", provider: "openai" },
-    ]);
-  });
-
-  test("没设过覆盖时一条都不发：空镜像本身就是正确结论", () => {
-    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-    const respawnPosts: AiChatWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
-      respawnPosts.push(message);
-      return true;
-    });
-
-    for (const posts of [workerPosts, respawnPosts]) {
-      expect(posts.some((message: AiChatWorkerMessage): boolean => message.type === "imageProvider")).toBeFalse();
-      expect(posts.some((message: AiChatWorkerMessage): boolean => message.type === "chatProvider")).toBeFalse();
-    }
-  });
-
-  test("闲聊侧覆盖同样随 init 推一次并由重放块补发，两项互不牵连", () => {
-    // 两条命令各切各的：切了闲聊那一半，不能顺手把生图也推一条。
-    chatProviderOverride = "openai";
-    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-
-    expect(workerPosts).toEqual([
-      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
-      { type: "chatProvider", provider: "openai" },
-    ]);
-
-    const respawnPosts: AiChatWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
-      respawnPosts.push(message);
-      return true;
-    });
-    expect(respawnPosts).toEqual([
-      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
-      { type: "chatProvider", provider: "openai" },
-    ]);
-  });
-
-  test("两项都设过时各推各的，重建后一条不少", () => {
-    imageProviderOverride = "gemini";
-    chatProviderOverride = "openai";
-    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-
-    const respawnPosts: AiChatWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
-      respawnPosts.push(message);
-      return true;
-    });
-    expect(respawnPosts).toEqual([
-      { type: "init", botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" } },
-      { type: "imageProvider", provider: "gemini" },
-      { type: "chatProvider", provider: "openai" },
-    ]);
   });
 
   test("启动恢复不会 hydrate 已关闭群，并为磁盘残留安排 durable 删除", () => {
@@ -473,6 +407,58 @@ describe("AI main-thread persistence mirror", () => {
     // 全部结算之后才允许摘掉——这是 AI 记忆那套状态里唯一没有容量上界的表。
     forgetAiMemoryRevisionCounter(-1001);
     expect(aiMemoryRevisionCounters.has(-1001)).toBeFalse();
+    // 落盘侧的水位线必须同一时刻一起丢：只归零主线程计数器的话，重新启用后的
+    // revision 1 会被 Worker 判成迟到消息静默丢弃，直到爬过删除时的旧水位。
+    expect(diskPosts.filter((message: AiDiskMessage): boolean => message.type === "forgetAiMemory"))
+      .toEqual([{ type: "forgetAiMemory", chatId: -1001 }]);
+  });
+
+  test("回归：Disk I/O 放弃自愈时删除 waiter 立刻失败，不干等满超时", async () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    // 放弃之后没有替补 Worker：onDiskIORespawn 不会跑，deleteAiMemory 不会重放，
+    // durable 回执永远不会来。干等那两秒恰好和同一个 fatal 信号触发的停机抢排空
+    // 预算，失败原因也会被表述成超时而不是「Worker 已经放弃」。
+    const deleted = aiChat.invalidateAiChat(-1001, true);
+    expect(aiMemoryDeleteWaiters.size).toBe(1);
+
+    diskGaveUp!();
+
+    // allSettled 不能在 durable 一侧先失败时提前返回：Worker 侧仍要拿到回执并清
+    // 自己的 waiter，随后才向调用方保留原来的单一失败原因。
+    expect(aiChatInvalidateWaiters.size).toBe(1);
+    const invalidateRequest: AiChatWorkerMessage | undefined =
+      workerPosts.find((message: AiChatWorkerMessage): boolean => message.type === "invalidateChat");
+    if (invalidateRequest?.type !== "invalidateChat") throw new Error("Expected an invalidateChat request");
+    supervisorOptions!.onEvent({
+      type: "chatInvalidated",
+      chatId: -1001,
+      requestId: invalidateRequest.requestId,
+    });
+    await expect(deleted).rejects.toThrow(
+      "Persistence Worker gave up self-healing before the AI memory deletion was durable."
+    );
+    expect(aiMemoryDeleteWaiters.size).toBe(0);
+    expect(aiChatInvalidateWaiters.size).toBe(0);
+  });
+
+  test("还有在途状态时不发 forgetAiMemory：水位线要挡住迟到的 upsert", async () => {
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const { forgetAiMemoryRevisionCounter } = await import("../../../packages/aiChat/memoryMirror");
+
+    const deleted = aiChat.invalidateAiChat(-1001, true);
+    forgetAiMemoryRevisionCounter(-1001);
+    expect(diskPosts.some((message: AiDiskMessage): boolean => message.type === "forgetAiMemory")).toBeFalse();
+
+    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+    const invalidateRequest: AiChatWorkerMessage | undefined =
+      workerPosts.find((message: AiChatWorkerMessage): boolean => message.type === "invalidateChat");
+    if (invalidateRequest?.type !== "invalidateChat") throw new Error("Expected an invalidateChat request");
+    supervisorOptions!.onEvent({
+      type: "chatInvalidated",
+      chatId: -1001,
+      requestId: invalidateRequest.requestId,
+    });
+    await deleted;
   });
 
   test("Worker 放弃自愈只清 Worker purge guard，不丢未确认的 durable tombstone", async () => {
@@ -484,6 +470,8 @@ describe("AI main-thread persistence mirror", () => {
     expect(aiChatWorkerState.available).toBeFalse();
     expect(purgedAiMemoryChats.size).toBe(0);
     expect(pendingAiMemoryDeletes.get(-1001)).toBe(1);
+    // Worker 侧先失败也必须等 durable 删除结算，不能把仍在途的墓碑留给调用方。
+    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
     await expect(firstDelete).rejects.toThrow(
       "AI Worker gave up before completing chat invalidation."
     );
@@ -491,7 +479,6 @@ describe("AI main-thread persistence mirror", () => {
     const secondDelete = aiChat.invalidateAiChat(-1002, true);
     expect(purgedAiMemoryChats.size).toBe(0);
     expect(diskPosts.at(-1)).toEqual({ type: "deleteAiMemory", chatId: -1002, revision: 1 });
-    diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1002, revision: 1 });
     await secondDelete;
   });

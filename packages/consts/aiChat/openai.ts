@@ -2,17 +2,15 @@
  * OpenAI 实现包（packages/aiChat/openai/）独占的常量：token 上限、请求超时、
  * SDK 重试次数、画幅表与几处请求参数档位。
  *
- * **四条流水线的模型名不在这里**：它们全部来自 config/openai.json 的 ai_agent
- * 段且**必填**，代码不再持有任何模型默认值（见 packages/config/openai.ts 的模块
- * 头注）。端点同样在那份文件里，留空表示走 SDK 自带的官方端点。
+ * **模型名不在这里**：provider=openai 的能力从 config/agent.json 各自读取 model
+ * 与可选 base_url，代码不持有任何模型默认值（见 packages/config/agent.ts）。
  *
- * 与 Gemini 侧的两处不对等，换供应商时行为会随之变化，不要当成等价替换：
+ * 与 Gemini 侧的几处不对等，换供应商时行为会随之变化，不要当成等价替换：
  * 1. 没有内容过滤档位可调（Gemini 侧是全 BLOCK_NONE 的 GEMINI_SAFETY_SETTINGS）。
  *    OpenAI 的文本安全策略不对外暴露参数，回复口径只会更紧。
- * 2. 生图只有三种画幅（1:1 / 3:2 / 2:3），Gemini 侧的十档宽高比会被
- *    aiChat/openai/image.ts 按最近邻收敛，见该文件的 pickImageSize。三档之间
- *    跨度很大：只有 1:1 本身落在方形上，4:3、5:4 这类近方形会收敛到 3:2，
- *    出图构图与 Gemini 侧并不一致。
+ * 2. OpenAI 官方 gpt-image-2 协议按十档发送满足 16 像素倍数约束的 `size`；
+ *    GPT Image 通用档收敛到全系共同支持的三种标准尺寸；xAI 协议改用
+ *    `aspect_ratio`。三套能力由 agent.image 的必填 image_protocol 明确分流。
  * 3. 采样温度不可调：GPT-5 系推理模型只接受默认值，本包因此不提供任何温度
  *    常量，请求里也不带该参数。查证过的轮次压低随机性、摘要用低温这两条策略
  *    在 OpenAI 侧不生效。日后真换到接受 `temperature` 的型号，再连同常量一起
@@ -24,6 +22,10 @@
  */
 
 import type OpenAI from "openai";
+import type { ImageGenerationAspectRatio } from "../../types/aiChat/imageGeneration";
+
+/** OpenAI SDK images generate/edit 共用的尺寸参数。 */
+type OpenAiImageSize = NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming["size"]>;
 
 /**
  * 各流水线的输出 token 上限。与 Gemini 侧同为供应商能力：上限要覆盖的是该模型
@@ -76,42 +78,89 @@ export const OPENAI_REQUEST_TIMEOUT_MS: number = 150_000;
 export const OPENAI_IMAGE_REQUEST_TIMEOUT_MS: number = 300_000;
 /**
  * SDK 对 408/429/5xx 的重试次数（不含首次请求，语义同 OpenAI SDK 的
- * maxRetries）。取 4 与 Gemini 侧「总尝试 5 次」对齐；所有调用方不得再重试
+ * maxRetries）。取 5 与 Gemini 侧「首次加最多五次重试」对齐；所有调用方不得再重试
  * 这类请求失败。
  */
-export const OPENAI_REQUEST_MAX_RETRIES: number = 4;
+export const OPENAI_REQUEST_MAX_RETRIES: number = 5;
 
 /**
- * gpt-image 支持的三种画幅。Gemini 侧十档宽高比按纵横比最近邻映射到这里，
- * 映射发生在 aiChat/openai/image.ts，领域侧仍按十档表达意图。
+ * OpenAI 官方 gpt-image-2 任意尺寸协议的十档画幅。
+ *
+ * 每边都是 16 的倍数、比例都在官方允许的 1:3..3:1 内；非方形画幅尽量维持在
+ * 原三档约 1.5MP 的载荷量级，避免为了比例精确无意放大成本和解码峰值。该协议
+ * 不为不支持任意尺寸的模型兜底：部署者必须显式改用 `openai-standard`，不得
+ * 靠请求失败后猜测重试。xAI 不读此表，改由 aiChat/openai/image.ts 发送
+ * `aspect_ratio`。
  */
-export const OPENAI_IMAGE_SIZES: readonly Readonly<{ size: string; ratio: number }>[] = [
-  { size: "1024x1024", ratio: 1 },
-  { size: "1536x1024", ratio: 1536 / 1024 },
-  { size: "1024x1536", ratio: 1024 / 1536 },
-];
+export const OPENAI_FLEXIBLE_IMAGE_SIZE_BY_ASPECT_RATIO: Readonly<
+  Record<ImageGenerationAspectRatio, OpenAiImageSize>
+> = {
+  "1:1": "1024x1024",
+  "3:2": "1536x1024",
+  "2:3": "1024x1536",
+  "4:3": "1408x1056",
+  "3:4": "1056x1408",
+  "5:4": "1360x1088",
+  "4:5": "1088x1360",
+  "16:9": "1536x864",
+  "9:16": "864x1536",
+  "21:9": "1568x672",
+};
+
+/**
+ * GPT Image 模型共同支持的三种标准尺寸。
+ *
+ * `openai-standard` 使用这张固定表兼容 gpt-image-1、gpt-image-1-mini、
+ * gpt-image-1.5、chatgpt-image-latest 与 gpt-image-2；横向、纵向分别收敛到
+ * 3:2、2:3，只有 1:1 保持方形。部署者显式选择能力档，运行时不解析模型名、
+ * 不在 400 后换尺寸重试。固定 Record 还避免旧实现每次请求计算比例和最近邻。
+ */
+export const OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO: Readonly<
+  Record<ImageGenerationAspectRatio, OpenAiImageSize>
+> = {
+  "1:1": "1024x1024",
+  "3:2": "1536x1024",
+  "2:3": "1024x1536",
+  "4:3": "1536x1024",
+  "3:4": "1024x1536",
+  "5:4": "1536x1024",
+  "4:5": "1024x1536",
+  "16:9": "1536x1024",
+  "9:16": "1024x1536",
+  "21:9": "1536x1024",
+};
+
+/**
+ * xAI 生图分辨率固定为 1K。
+ *
+ * 领域请求只表达画幅，没有清晰度档；显式钉住 1K 可防止服务端默认值漂到 2K 后
+ * 让单图成本、响应字节和解码峰值一起增长。xAI generate/edit 共用此协议口径。
+ * 所属模块：packages/aiChat/openai/image.ts。
+ */
+export const XAI_IMAGE_RESOLUTION: string = "1k";
 
 /**
  * 生图请求钉死的输出格式。
  *
- * gpt-image 支持 png/jpeg/webp，不钉就由模型/网关的默认值决定；而载荷校验
- * （aiChat/ai/utils/imagePayload.ts）只认 PNG 与 JPEG 的字节签名，默认值一变
+ * OpenAI 原生 images 接口支持 png/jpeg/webp，不钉就由模型/网关的默认值决定；
+ * 而载荷校验（aiChat/ai/utils/imagePayload.ts）只认 PNG 与 JPEG 的字节签名，默认值一变
  * 成 WebP，每次生图都会在签名判定处落空——图照样计费，群里只收到一句失败。
  * 取 png 是因为它是官方文档给出的默认值，钉上去不改变当前行为，只是把它从
- * 「服务端说了算」变成「本仓说了算」。generate 与 edit 两条分支都要带。
+ * 「服务端说了算」变成「本仓说了算」。OpenAI generate 与 edit 两条分支都带；
+ * xAI 协议不接受这一扩展，改传 `response_format: "b64_json"`。
  */
 export const OPENAI_IMAGE_OUTPUT_FORMAT: NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming["output_format"]> = "png";
 
 /**
  * 生图的内容审核档位，取 SDK 允许的最低档 `low`（另一档是默认的 `auto`）。
  *
- * **只作用于 generate 那条分支**：openai@6.49 的类型里 `moderation` 只声明在
+ * **只作用于 OpenAI 原生 generate 分支**：openai@6.49 的类型里 `moderation` 只声明在
  * `ImageGenerateParamsBase`（node_modules/openai/resources/images.d.ts），
  * `ImageEditParamsBase` 上根本没有这个参数。因此有参考图的那条 edit 分支不带
  * 它——SDK 没声明的字段硬塞会被 TS 拒绝，绕过类型强塞则是对未声明字段的猜测。
  * 两条分支档位不对称是**已知且有意**的，不是漏改。
  *
- * 另注：`ai_agent.base_url` 指向兼容网关时，未知字段可能被严格网关以 400 拒绝；
+ * 另注：`agent.image.base_url` 指向兼容网关时，未知字段可能被严格网关以 400 拒绝；
  * 那与画幅、output_format 同属「网关差异」范畴，实测遇到再按网关能力取舍。
  */
 export const OPENAI_IMAGE_MODERATION: NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming["moderation"]> = "low";

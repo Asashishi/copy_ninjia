@@ -40,6 +40,7 @@ export interface PushReplyTriggerParams {
   chatId: number;
   triggerSenderId: number;
   replyToMessageId: number;
+  telegramBackpressured: boolean;
   imageGenerationRequested: boolean;
   imageGenerationReference?: QueuedReplyTrigger["imageGenerationReference"];
   triggerReference?: BufferedReplyReference;
@@ -50,6 +51,7 @@ export function pushReplyTrigger({
   chatId,
   triggerSenderId,
   replyToMessageId,
+  telegramBackpressured,
   imageGenerationRequested,
   imageGenerationReference,
   triggerReference,
@@ -66,6 +68,7 @@ export function pushReplyTrigger({
     queue.push({
       triggerSenderId,
       replyToMessageId,
+      telegramBackpressured,
       ...(capturedTriggerReference ? { triggerReference: capturedTriggerReference } : {}),
       ...(mediaTrigger.replyTo ? { replyTo: mediaTrigger.replyTo } : {}),
       ...(mediaTrigger.forwardedFrom ? { forwardedFrom: mediaTrigger.forwardedFrom } : {}),
@@ -86,6 +89,7 @@ export function pushReplyTrigger({
   queue.push({
     triggerSenderId,
     replyToMessageId,
+    telegramBackpressured,
     ...(capturedTriggerReference ? { triggerReference: capturedTriggerReference } : {}),
     ...(triggerEntry?.replyTo ? { replyTo: triggerEntry.replyTo } : {}),
     ...(triggerEntry?.forwardedFrom ? { forwardedFrom: triggerEntry.forwardedFrom } : {}),
@@ -124,11 +128,17 @@ export function flushOverflowNotice(chatId: number): void {
 export function drainReplyQueue(chatId: number, startQueuedRound: (trigger: QueuedReplyTrigger) => boolean): void {
   const queue: LinkedQueue<QueuedReplyTrigger> | undefined = pendingReplyTriggers.get(chatId);
   if (!queue) return;
-  while (queue.size > 0 && (activeReplyCounts.get(chatId) ?? 0) < REPLY_ROUND_MAX_CONCURRENT) {
+  while (queue.size > 0) {
+    const trigger: QueuedReplyTrigger | undefined = queue.peek();
+    if (trigger === undefined) break;
+    const maxConcurrent: number = trigger.telegramBackpressured
+      ? 1
+      : REPLY_ROUND_MAX_CONCURRENT;
+    if ((activeReplyCounts.get(chatId) ?? 0) >= maxConcurrent) break;
     // 先 peek、开成了再出队：拒绝的那一条不能被吞掉。回调是同步的（真正的
     // 生成发送 fire-and-forget，onFinished 至少晚一个微任务），因此这里不会
     // 被自己重入。
-    if (!startQueuedRound(queue.peek()!)) break;
+    if (!startQueuedRound(trigger)) break;
     queue.shift();
   }
   if (queue.size === 0) pendingReplyTriggers.delete(chatId);

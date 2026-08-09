@@ -14,8 +14,9 @@ import {
   WHITELIST_PERMISSION_KEYS,
 } from "../consts/whitelist";
 import { WHITELIST_CONFIG_PATH } from "../consts/paths";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import { SUPER_ADMIN_USER_ID } from "./telegram";
 import { atomicWriteText } from "../libs/atomicFile";
+import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { isPlainRecord } from "../libs/runtimeConfig";
 import type {
   SetWhitelistMembershipParams,
@@ -51,16 +52,11 @@ async function assertWhitelistFileUnchanged(
   let content: Uint8Array;
   try {
     content = await readBytes(path);
-  } catch (error: unknown) {
-    throw new Error(
-      `Whitelist config ${path} became unavailable; refusing to overwrite the cached snapshot`,
-      { cause: error }
-    );
+  } catch {
+    return invalidInput(path, "$", "readable and unchanged since process startup");
   }
   if (whitelistContentSha256(content) !== revision.sha256) {
-    throw new Error(
-      `Whitelist config ${path} changed outside this process; refusing to overwrite it`
-    );
+    return invalidInput(path, "$", "unchanged since process startup");
   }
 }
 
@@ -106,14 +102,14 @@ async function prepareWhitelistMutation(
   let content: Uint8Array;
   try {
     content = await readBytes(path);
-  } catch (error: unknown) {
-    throw new Error(
-      `Whitelist config ${path} is not readable; refusing to overwrite it with another file's entries`,
-      { cause: error }
-    );
+  } catch {
+    return invalidInput(path, "$", "a readable valid whitelist document");
   }
   return {
-    current: parseWhitelistConfig(JSON.parse(Buffer.from(content).toString("utf8")) as unknown),
+    current: parseWhitelistConfig(
+      readJsonInputFromBytes(content, path),
+      path
+    ),
     publishToProcess: false,
     trackFileRevision: false,
   };
@@ -153,31 +149,39 @@ function publishWhitelistFileRevision(
 }
 
 /** Telegram 白名单身份允许正用户 ID 或负频道 ID，禁止零、前导零与非安全整数。 */
-function parseWhitelistId(rawId: string): number {
+function readJsonInputFromBytes(content: Uint8Array, sourcePath: string): unknown {
+  try {
+    return JSON.parse(Buffer.from(content).toString("utf8")) as unknown;
+  } catch {
+    return invalidInput(sourcePath, "$", "valid JSON");
+  }
+}
+
+function parseWhitelistId(rawId: string, sourcePath: string): number {
   if (!/^-?[1-9]\d*$/.test(rawId)) {
-    throw new Error(`Invalid whitelist identity ID: "${rawId}"`);
+    return invalidInput(sourcePath, "$.<identity>", "a canonical non-zero safe integer key");
   }
   const id: number = Number(rawId);
   if (!Number.isSafeInteger(id)) {
-    throw new Error(`Invalid whitelist identity ID: "${rawId}" is outside the safe integer range`);
+    return invalidInput(sourcePath, "$.<identity>", "a canonical non-zero safe integer key");
   }
   if (String(id) !== rawId) {
-    throw new Error(`Invalid whitelist identity ID: "${rawId}" is not in canonical decimal form`);
+    return invalidInput(sourcePath, "$.<identity>", "a canonical non-zero safe integer key");
   }
   return id;
 }
 
 /** 严格解码一条可只写部分键的权限覆盖，并补齐完整默认值。 */
-function parsePermissions(id: number, value: unknown): Readonly<WhitelistPermissions> {
+function parsePermissions(value: unknown, sourcePath: string): Readonly<WhitelistPermissions> {
   if (!isPlainRecord(value)) {
-    throw new Error(`Invalid whitelist permissions for ${id}: expected an object`);
+    return invalidInput(sourcePath, "$.<identity>", "an object of boolean permission overrides");
   }
   for (const [key, permissionValue] of Object.entries(value)) {
     if (!WHITELIST_PERMISSION_KEYS.includes(key as WhitelistPermissionKey)) {
-      throw new Error(`Invalid whitelist permission key for ${id}: ${key}`);
+      return invalidInput(sourcePath, "$.<identity>.<permission>", "a supported permission key");
     }
     if (typeof permissionValue !== "boolean") {
-      throw new Error(`Invalid whitelist permission ${key} for ${id}: expected boolean`);
+      return invalidInput(sourcePath, `$.<identity>.${key}`, "a boolean");
     }
   }
 
@@ -195,21 +199,24 @@ function parsePermissions(id: number, value: unknown): Readonly<WhitelistPermiss
  * 严格解码 config/whitelist.json。顶层以十进制 ID 为键，值为权限覆盖对象；
  * 正 ID 表示用户，负 ID 表示频道身份。
  */
-export function parseWhitelistConfig(value: unknown): WhitelistConfig {
+export function parseWhitelistConfig(
+  value: unknown,
+  sourcePath: string = WHITELIST_CONFIG_PATH
+): WhitelistConfig {
   if (!isPlainRecord(value)) {
-    throw new Error("Invalid whitelist config: expected an object keyed by identity ID");
+    return invalidInput(sourcePath, "$", "an object keyed by canonical identity IDs");
   }
   const entries: Map<number, Readonly<WhitelistPermissions>> = new Map();
   for (const [rawId, rawPermissions] of Object.entries(value)) {
-    const id: number = parseWhitelistId(rawId);
-    entries.set(id, parsePermissions(id, rawPermissions));
+    const id: number = parseWhitelistId(rawId, sourcePath);
+    entries.set(id, parsePermissions(rawPermissions, sourcePath));
   }
   return entries;
 }
 
 /** 从指定文件同步加载并严格校验；模块 import 本身不访问文件系统。 */
 export function loadWhitelistConfig(path: string = WHITELIST_CONFIG_PATH): WhitelistConfig {
-  return parseWhitelistConfig(JSON.parse(readFileSync(path, "utf8")) as unknown);
+  return parseWhitelistConfig(readJsonInput(path), path);
 }
 
 /**
@@ -220,9 +227,14 @@ export function getWhitelistConfig(
   path: string = WHITELIST_CONFIG_PATH
 ): WhitelistConfig {
   if (whitelistConfigCache.current === null) {
-    const content: Uint8Array = readFileSync(path);
+    let content: Uint8Array;
+    try {
+      content = readFileSync(path);
+    } catch {
+      return invalidInput(path, "$", "a readable valid whitelist document");
+    }
     whitelistConfigCache.current =
-      parseWhitelistConfig(JSON.parse(Buffer.from(content).toString("utf8")) as unknown);
+      parseWhitelistConfig(readJsonInputFromBytes(content, path), path);
     publishWhitelistFileRevision(path, content);
   }
   return whitelistConfigCache.current;

@@ -17,8 +17,8 @@ export const antiRaidTaskTrackerGeneration: { current: number } = { current: 0 }
  * 而为请求订阅。
  *
  * drain 的预算是 ANTI_RAID_BARRIER_TIMEOUT_MS 那一档的秒级数值，而登记进上面那个
- * 在途集合的请求还要过 Telegram 的按群限流（20 请求/分钟/群、1 请求/秒）；刷屏
- * 禁言更是**按设计**最长排队 FLOOD_MUTE_DISPATCH_TIMEOUT_MS（4 分钟，见
+ * 在途集合的请求可能等待 grammY 消息桶，也可能等待各自类别的 Telegram 429
+ * retry_after；刷屏禁言更是**按设计**最长等待 FLOOD_MUTE_DISPATCH_TIMEOUT_MS（2 分钟，见
  * consts/antiRaid/flood.ts）。停机恰好落在排队期间时，drain 等不到结算就超时，
  * 生命周期据此拒绝确认 Telegram offset 并以非零状态退出——重启后整批 update 被
  * 重投（重复的验证踢人与通知），systemd 报单元失败。drain 到达时就地 abort：
@@ -31,6 +31,7 @@ export const antiRaidTaskTrackerGeneration: { current: number } = { current: 0 }
  * Worker stop 与测试隔离由 resetAntiRaidTaskTracker 换一个新的。
  *
  * **不覆盖 drain 自己要发的那些请求**：停机 flush 的公告删除是 drain 期间**必须
- * 发出去**的（见 workers/antiRaid/noticeCleanup.ts），它们不订阅这个信号。
+ * 发出去**的（见统一 deleteMessageAfter flush），它们不订阅这个信号；先撤业务
+ * 请求再创建这些删除任务，也避免把新任务误归进已经取消的生命周期。
  */
 export const antiRaidDispatchAbort: { current: AbortController | null } = { current: null };

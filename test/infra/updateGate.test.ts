@@ -7,7 +7,7 @@ const {
   shouldPassPrivateCommandGate,
   shouldRoutePrivateProxyMessage,
 } = await import("../../packages/infra/updateGate");
-const { SUPER_ADMIN_USER_ID } = await import("../../packages/infra/config");
+const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/telegram");
 
 const ME = { id: 999, username: "test_bot", first_name: "TestBot" };
 

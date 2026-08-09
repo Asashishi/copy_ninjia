@@ -41,6 +41,8 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
       commentOnResolve: claimedRandomTrigger,
       imageGenerationRequested: directTrigger !== undefined,
       stickerFallbackText: fallbackText,
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
     },
   }));
   return directTrigger !== undefined || commentOnResolveCandidate;

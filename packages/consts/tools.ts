@@ -24,14 +24,28 @@ export const ADD_REACTION_TOOL: string = "add_reaction";
 export const GENERATE_IMAGE_TOOL: string = "generate_image";
 
 /**
+ * generate_song 工具名：调用独立生歌模型写一首歌并发送到当前群。
+ *
+ * 与上面几个的关键差别：这个工具**不是每轮都存在**。它只在当前闲聊供应商实现了
+ * 生歌能力时才进本轮工具集（见 aiChat/ai/tools/replyToolset/orchestrator.ts 与
+ * types/aiChat/provider.ts 的 AiChatProvider.generateSong）。名字仍要单点定义——
+ * 它同时出现在工具声明、dispatch 分支和动作预算清单里。
+ */
+export const GENERATE_SONG_TOOL: string = "generate_song";
+
+/**
  * 会消耗整轮可见动作预算的工具名；查看贴纸包与查询类工具不计入。
  * 使用只读数组，调用方通过 includes 判断，避免共享 Set 被意外修改。
+ *
+ * generate_song 恒在清单里，即使本轮没挂那个工具：这份清单只回答「这个名字算不算
+ * 可见动作」，不回答「本轮有没有这个工具」。后者由 toolset.has 判定。
  */
 export const ACTION_TOOL_NAMES: readonly string[] = [
   SEND_MESSAGE_TOOL,
   ADD_REACTION_TOOL,
   SEND_STICKER_TOOL,
   GENERATE_IMAGE_TOOL,
+  GENERATE_SONG_TOOL,
 ];
 
 /**

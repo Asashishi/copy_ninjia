@@ -121,6 +121,7 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
   const queuedTrigger: QueuedReplyTrigger = {
     triggerSenderId: 1,
     replyToMessageId: 81,
+    telegramBackpressured: false,
     replyTo: bufferedReplyReferenceFixture({
       messageId: 70,
       id: 2,

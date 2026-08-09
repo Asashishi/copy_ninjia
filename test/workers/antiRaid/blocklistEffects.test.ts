@@ -7,7 +7,7 @@ const banChatSenderChatWithOutcome = mock(async (..._args: unknown[]): Promise<s
 const probeChatAdmin = mock(async (..._args: unknown[]): Promise<boolean | undefined> => false);
 const deleteMessage = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const recordJoin = mock((..._args: unknown[]): void => {});
-/** 入群守卫专用客户端的替身：断言处置没有落到默认客户端的队列上。 */
+/** 入群守卫调用面的替身：断言处置始终使用受限 Worker 能力边界。 */
 const guardApi = { kind: "guard-api" };
 
 mock.module("../../../packages/infra/logger", () => ({
@@ -91,7 +91,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(probeChatMembership).not.toHaveBeenCalled();
-    // 与验证超时踢人共用 joinVerificationApi，不占默认客户端的额度。
+    // 与验证超时踢人共用 kick 类别，不进入消息发送的 grammY 桶。
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42, guardApi);
     expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 1, complete: true, permissionDenied: false, targetIsAdmin: false }]);
   });
@@ -225,7 +225,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   test("确证没有删消息权限时不发那次注定 400 的公告删除", async () => {
     // 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。
     // 那种群里每个黑名单入群都换来一次必败的 deleteMessage，而这些请求排在与
-    // 验证超时踢人共用的 joinVerificationApi FIFO 队列上——一波协同入群时，
+    // 验证超时踢人共用的 kick 类别 429 FIFO 上——一波协同入群时，
     // 它们会把真正的踢人顶到验证窗口之后，公告本身照样删不掉。
     applyBotPermissionsChange(-1001, { canRestrictMembers: true, canDeleteMessages: false });
 

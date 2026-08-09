@@ -1,0 +1,138 @@
+import { describe, expect, test } from "bun:test";
+import {
+  buildBotStatusText,
+  formatBotMemory,
+  formatBotUptime,
+} from "../../packages/commands/botStatus";
+import type { BotStatusSnapshot } from "../../packages/commands/botStatus";
+
+function statusSnapshot(): BotStatusSnapshot {
+  return {
+    aiReady: true,
+    aiConfig: {
+      text: {
+        provider: "openai",
+        apiKey: "secret-text-key",
+        baseUrl: "https://secret-text.example/v1",
+        model: "gpt-status",
+      },
+      summary: {
+        provider: "google",
+        apiKey: "secret-summary-key",
+        baseUrl: undefined,
+        model: "gemini-summary",
+      },
+      media: {
+        provider: "google",
+        apiKey: "secret-media-key",
+        baseUrl: undefined,
+        model: "gemini-media",
+      },
+    },
+    adDetectReady: true,
+    adDetectConfig: {
+      provider: "openai",
+      apiKey: "secret-ad-key",
+      baseUrl: "https://secret-ad.example/v1",
+      model: "ad-model",
+    },
+    chatState: {
+      isInitEnabled: true,
+      isAIChatEnabled: true,
+      isAdDetectEnabled: true,
+      isAntiRaidEnabled: true,
+    },
+    telegramActive: 7,
+    telegramPending: 1_024,
+    telegramCapacity: 81_920,
+    activeGagSessions: 3,
+    processStatus: {
+      uptimeSeconds: 183_845,
+      averageCpuPercent: 12.345,
+      availableCpuCount: 6,
+      rssBytes: 512 * 1_024 * 1_024,
+      memoryLimitBytes: 8 * 1_024 * 1_024 * 1_024,
+      memoryPercent: 6.25,
+    },
+  };
+}
+
+describe("/bot_status", () => {
+  test("只展示模型路由、总闸状态和本群开启项，不泄漏密钥或端点", () => {
+    const text: string = buildBotStatusText(statusSnapshot());
+
+    expect(text).toStartWith("本天才的状态，杂鱼可要看仔细啦♡");
+    expect(text).toContain("全局模型能力，本天才会的可多着呢♡：");
+    expect(text).toContain("群聊正文：已配置 · openai / gpt-status");
+    expect(text).toContain("图片生成：未配置");
+    expect(text).toContain("歌曲生成：未配置");
+    expect(text).toContain("广告检测：已配置 · openai / ad-model");
+    expect(text).toContain("Telegram 出站：处理中 7，429 退避排队 1024/81920");
+    expect(text).toContain("正在被本天才调教的杂鱼：3/5");
+    expect(text).toContain("本机进程，本天才当然精神得很♡：");
+    expect(text).toContain("Bot 运行时长：2 天 03:04:05");
+    expect(text).toContain("CPU：12.35%");
+    expect(text).not.toContain("运行期平均");
+    expect(text).toContain("内存 RSS：512.00 MiB / 8.00 GiB（6.25%）");
+    expect(text).toContain("• AI 闲聊");
+    expect(text).toContain("• 入群验证与防冲群");
+    expect(text).not.toContain("secret-");
+    expect(text).not.toContain("example/v1");
+    expect(text).not.toContain("日语翻译");
+  });
+
+  test("部署能力不可用和群功能全关时给出明确状态", () => {
+    const text: string = buildBotStatusText({
+      ...statusSnapshot(),
+      aiReady: false,
+      aiConfig: null,
+      adDetectReady: false,
+      adDetectConfig: null,
+      chatState: {},
+      telegramActive: 0,
+      telegramPending: 0,
+    });
+
+    expect(text).toContain("AI 对话能力：不可用（部署配置未就绪）");
+    expect(text).toContain("广告检测：不可用（部署配置未就绪）");
+    expect(text).toEndWith("本群已开启，连这个都记不住吗，笨蛋♡：\n• 无");
+  });
+
+  test("模型名中的换行被收敛且超长标签受限", () => {
+    const snapshot: BotStatusSnapshot = statusSnapshot();
+    const text: string = buildBotStatusText({
+      ...snapshot,
+      aiConfig: {
+        ...snapshot.aiConfig!,
+        text: {
+          ...snapshot.aiConfig!.text,
+          model: `${"m".repeat(120)}\nforged heading`,
+        },
+      },
+    });
+
+    expect(text).not.toContain("\nforged heading");
+    expect(text).toContain("…");
+  });
+
+  test("运行时长、容量单位和不可用内存上限均稳定格式化", () => {
+    expect(formatBotUptime(59.9)).toBe("00:00:59");
+    expect(formatBotUptime(Number.NaN)).toBe("00:00:00");
+    expect(formatBotMemory(512)).toBe("512 B");
+    expect(formatBotMemory(2_048)).toBe("2.00 KiB");
+
+    const text: string = buildBotStatusText({
+      ...statusSnapshot(),
+      processStatus: {
+        uptimeSeconds: 0,
+        averageCpuPercent: Number.NaN,
+        availableCpuCount: 1,
+        rssBytes: 0,
+        memoryLimitBytes: 0,
+        memoryPercent: Number.NaN,
+      },
+    });
+    expect(text).toContain("CPU：0.00%");
+    expect(text).toContain("内存 RSS：0 B（本机上限不可用）");
+  });
+});

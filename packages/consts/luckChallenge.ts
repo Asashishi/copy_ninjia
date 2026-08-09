@@ -32,23 +32,12 @@ if (LUCK_TIER_WEIGHT_SUM !== 100) {
 /**
  * 全局滑动窗口限流：每 90 秒最多 300 次内联查询应答，不分群、不分用户合并
  * 计数——内联查询会随用户每敲一个字符就触发一次。超额立即拒绝而非排队
- * （不同于 infra/telegram/client.ts 的 apiThrottler，那是排队+重试），因为排队对一个
+ * （不同于 Telegram 总闸的排队与 429 退避），因为排队对一个
  * 几秒内就该有结果的内联查询没有意义。
  */
 export const RATE_LIMIT_MAX_CALLS_PER_WINDOW: number = 300;
 /** 全局内联查询滑动限频窗口时长。 */
 export const RATE_LIMIT_WINDOW_MS: number = 90_000;
-
-/**
- * 「未卜先知」「概率论」两个内联结果当前使用的配图直链。注意 Drive 的普通分享链接
- * （.../file/d/<id>/view）是个网页，Telegram 抓不到图；要用
- * `https://drive.google.com/uc?export=view&id=<FILE_ID>` 这种直出图片字节
- * 的形式，且 Drive 对这种热链接有时大文件会插入确认页/偶尔限流的已知问题，
- * 如果发现缩略图时有时无，再考虑换成稳定的图床或自建静态资源。
- */
-export const FORTUNE_THUMBNAIL_URL: string = "https://drive.google.com/uc?export=view&id=1o4wCIRE3XGSI7-MjXYWfvcPgR3QjClk-";
-/** 概率论结果使用的 Telegram 内联缩略图直链。 */
-export const PROBABILITY_THUMBNAIL_URL: string = "https://drive.google.com/uc?export=view&id=1o4wCIRE3XGSI7-MjXYWfvcPgR3QjClk-";
 
 /** "同款问题"按钮上展示的所求事项摘要，超过这个字符数就截断并加 "..."。 */
 export const SAME_QUESTION_LABEL_MAX_LEN: number = 4;

@@ -12,7 +12,6 @@
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
   unlinkSync,
 } from "node:fs";
@@ -37,6 +36,7 @@ import {
   TMP_FILE_SUFFIX,
 } from "../../consts/paths";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
+import { invalidInput, readJsonInput } from "../../libs/inputValidation";
 import type {
   BlocklistRemovalFailure,
   PendingBlockedRemoval,
@@ -234,9 +234,16 @@ export function hydrateBlocklistRemovalOutbox(): Map<number, PendingBlockedRemov
   mkdirSync(BLOCKLIST_MEMORY_DIR, { recursive: true });
   sweepOrphanedTemps();
   if (!existsSync(BLOCKLIST_REMOVAL_OUTBOX_PATH)) return new Map();
-  const decoded: Map<number, PendingBlockedRemoval> = decodeOutbox(
-    JSON.parse(readFileSync(BLOCKLIST_REMOVAL_OUTBOX_PATH, "utf8"))
-  );
+  let decoded: Map<number, PendingBlockedRemoval>;
+  try {
+    decoded = decodeOutbox(readJsonInput(BLOCKLIST_REMOVAL_OUTBOX_PATH));
+  } catch {
+    return invalidInput(
+      BLOCKLIST_REMOVAL_OUTBOX_PATH,
+      "$",
+      `the current version=${BLOCKLIST_REMOVAL_OUTBOX_VERSION} blocklist removal outbox schema`
+    );
+  }
   for (const [removalId, pending] of decoded) {
     blocklistRemovalOutbox.set(removalId, clonePending(pending));
   }
@@ -256,7 +263,7 @@ export function hydrateBlocklistRemovalOutbox(): Map<number, PendingBlockedRemov
  * 这里标下的脏写出去；不需要 durable 的（批次完成销账、失败计数、启动对账）本来
  * 就不等确认。就地写盘只是让这些高频路径每次变化各付一次
  * tmp + fsync + rename：一批 N 个群的清扫依次完成，就是 N 次整份 outbox 重写，
- * 而每份 outbox 又按已登记的群数增长——O(N²) 的写盘量，正是 docs/04-invariants.md
+ * 而每份 outbox 又按已登记的群数增长——O(N²) 的写盘量，正是 docs/cn/04-invariants.md
  * 点名要避开的形态。改为标脏之后，两次 flush 之间的多次变化合成一次写。
  */
 export function handleBlocklistRemovalsMessage(msg: BlocklistRemovalsDiskMessage): void {

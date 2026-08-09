@@ -81,6 +81,32 @@ afterEach(() => {
 });
 
 describe("pending verification daily append JSON", () => {
+  test("kickPending 以 critical 快照落盘并完整恢复动作代际", () => {
+    const { phase: _phase, ...base } = snapshot(1, {
+      trackedMessageTimes: [],
+      joinedAt: 2_000,
+      expiresAt: 2_000,
+      reminderSuperseded: true,
+    });
+    const record: VerificationSnapshot = {
+      ...base,
+      phase: "kickPending",
+      requestedAt: 2_000,
+      countedJoinAt: 2_000,
+    };
+
+    upsert({ type: "verificationUpsert", record, critical: true });
+
+    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")).toEqual(record);
+    expect(replies).toContainEqual({
+      type: "verificationPersisted",
+      key: "-1001:42",
+      generation: 1,
+      revision: 1,
+      deleted: false,
+    });
+  });
+
   test("新建立即写入，同一 key 高频普通更新只追加窗口内最终快照", () => {
     upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     for (let revision = 2; revision <= 500; revision++) {
@@ -172,19 +198,19 @@ describe("pending verification daily append JSON", () => {
     expect(recoverVerificationDay(DAY_ONE, dir).size).toBe(0);
   });
 
-  test("尾部截断修复保留此前完整 revision，随后仍可追加", () => {
+  test("尾部截断时拒绝恢复，并保持原始字节不变", () => {
     upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
     const path: string = join(dir, `${DAY_ONE}.json`);
     const full: string = readFileSync(path, "utf8");
-    writeFileSync(path, full.slice(0, full.lastIndexOf('"revision": 2') + 18));
+    const truncated: string = full.slice(0, full.lastIndexOf('"revision": 2') + 18);
+    writeFileSync(path, truncated);
 
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.revision).toBe(1);
-    upsert({ type: "verificationUpsert", record: snapshot(3), critical: true });
-    expect(recoverVerificationDay(DAY_ONE, dir).get("-1001:42")?.revision).toBe(3);
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must be valid JSON");
+    expect(readFileSync(path, "utf8")).toBe(truncated);
   });
 
-  test("尾部截断不会丢弃重复 key 的 tombstone、复活已终结验证", () => {
+  test("tombstone 后的尾部截断同样拒绝恢复，不猜测最后完整 revision", () => {
     upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     upsert({
       type: "verificationUpsert",
@@ -207,12 +233,11 @@ describe("pending verification daily append JSON", () => {
     const path: string = join(dir, `${DAY_ONE}.json`);
     const full: string = readFileSync(path, "utf8");
     const tornEntryStart: number = full.lastIndexOf('"-1001:44"');
-    writeFileSync(path, full.slice(0, tornEntryStart + 50));
+    const truncated: string = full.slice(0, tornEntryStart + 50);
+    writeFileSync(path, truncated);
 
-    const recovered: Map<string, VerificationSnapshot> = recoverVerificationDay(DAY_ONE, dir);
-    expect(recovered.has("-1001:42")).toBeFalse();
-    expect(recovered.get("-1001:43")?.label).toBe("仍在验证");
-    expect(recovered.has("-1001:44")).toBeFalse();
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must be valid JSON");
+    expect(readFileSync(path, "utf8")).toBe(truncated);
   });
 
   test("跨日先复制 active 快照到新日文件，再删除旧日文件", () => {
@@ -411,7 +436,7 @@ describe("pending verification daily append JSON", () => {
 
   test("同一文件一条合法、一条损坏时 fail closed，且不改写原文件或清理旧日", () => {
     writeFileSync(join(dir, "2026-07-18.json"), "{}");
-    writeFileSync(join(dir, "notes.json"), "{}");
+    writeFileSync(join(dir, "notes.txt"), "diagnostic");
     const original: string = JSON.stringify({
       "-1001:99": { version: VERIFICATION_FILE_VERSION, ...snapshot(2, { userId: 99 }) },
       "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1), expiresAt: "soon" },
@@ -420,11 +445,11 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(join(dir, `${DAY_ONE}.json`), original);
 
     expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
-      "invalid active pending verification record for key -1001:42"
+      "$.<record> must be a current verification record or null tombstone"
     );
     expect(readFileSync(join(dir, `${DAY_ONE}.json`), "utf8")).toBe(original);
     expect(existsSync(join(dir, "2026-07-18.json"))).toBeTrue();
-    expect(existsSync(join(dir, "notes.json"))).toBeTrue();
+    expect(existsSync(join(dir, "notes.txt"))).toBeTrue();
   });
 
   test("顶层不是对象时 fail closed，并保持文件字节不变", () => {
@@ -432,8 +457,16 @@ describe("pending verification daily append JSON", () => {
     const original: string = "[{\"bad\":\"shape\"}]";
     writeFileSync(path, original);
 
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must contain a JSON object");
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must be a JSON object of verification records");
     expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  test("非法日期文件名不会在启动扫描中被静默忽略", () => {
+    const path: string = join(dir, "2026-02-30.json");
+    writeFileSync(path, "{}");
+
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("$filename must be a canonical calendar date");
+    expect(readFileSync(path, "utf8")).toBe("{}");
   });
 
   test("旧下划线键不再兼容，必须手动改成冒号格式", () => {
@@ -442,7 +475,7 @@ describe("pending verification daily append JSON", () => {
     }, null, 2));
 
     expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
-      "invalid active pending verification record for key -1001_42"
+      "$.<record> must be a current verification record or null tombstone"
     );
   });
 
@@ -454,7 +487,7 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(path, original);
 
     expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
-      "invalid active pending verification record for key -1001:42"
+      "$.<record> must be a current verification record or null tombstone"
     );
     expect(readFileSync(path, "utf8")).toBe(original);
   });
@@ -473,7 +506,7 @@ describe("pending verification daily append JSON", () => {
     const original: string = JSON.stringify({ "-1001:42": incompatible }, null, 2);
     writeFileSync(path, original);
     expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow(
-      "invalid active pending verification record for key -1001:42"
+      "$.<record> must be a current verification record or null tombstone"
     );
     expect(readFileSync(path, "utf8")).toBe(original);
   });
@@ -499,7 +532,7 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(join(dir, `${DAY_ONE}.json`), JSON.stringify({
       "-1001:42": { version: VERIFICATION_FILE_VERSION, ...invalidPending },
     }));
-    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("invalid active pending verification record");
+    expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("$.<record> must be a current verification record");
   });
 
   test("checkingInviter 阶段可完整持久化并恢复", () => {

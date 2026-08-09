@@ -21,7 +21,7 @@ const loggerError = mock((..._args: unknown[]): void => {});
 
 // 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
-mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/config/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100,
   hasWhitelistPermission: (id: number): boolean => id === 1,
@@ -59,6 +59,9 @@ interface ContextOverrides {
   chatType?: string;
 }
 
+/** 命令消息自带的 Telegram 秒级时间戳；窗口的「现在」由它决定，不是宿主时钟。 */
+const COMMAND_DATE_SECONDS: number = 1_767_225_600;
+
 function context({
   userId = 1,
   match = "30m",
@@ -67,7 +70,7 @@ function context({
   return {
     chat: { id: -1001, type: chatType },
     from: { id: userId, first_name: "Admin" },
-    msg: { message_id: 10 },
+    msg: { message_id: 10, date: COMMAND_DATE_SECONDS },
     msgId: 10,
     match,
   } as never;
@@ -159,6 +162,20 @@ describe("/batch_kick", () => {
     expect(lastReplyText()).toContain("一个人都没动");
   });
 
+  test("回溯窗口按命令消息自带的 Telegram 时间戳算，不掺宿主时钟", async () => {
+    // 库里的 joinedAt 全部来自 `update.date`（见 antiRaid/updateIngress.ts）。这里
+    // 若用 Date.now()，两个时钟直接相减，窗口边界就整体漂移出它们之间的偏差——
+    // readJoinLog 既拿 since/now 逐条比 joinedAt，也拿它们算该读哪一两个日文件。
+    await handleBatchKickCommand(context({ match: "2h" }));
+
+    const now: number = COMMAND_DATE_SECONDS * 1_000;
+    expect(readRecentJoinLog).toHaveBeenCalledWith({
+      chatId: -1001,
+      since: now - 2 * 60 * 60 * 1_000,
+      now,
+    });
+  });
+
   test("空窗口明确报告未踢人、未写黑名单", async () => {
     await handleBatchKickCommand(context({ match: "2h" }));
 
@@ -205,6 +222,44 @@ describe("/batch_kick", () => {
     expect(lastReplyText()).toContain("权限不足 1");
     expect(lastReplyText()).toContain("查询或请求失败 2");
     expect(lastReplyText()).toContain("只踢未拉黑");
+  });
+
+  test("单条意外 rejection 带记录身份落日志，并继续结算同批其它成员", async () => {
+    readRecentJoinLog.mockResolvedValueOnce([
+      { userId: 7, joinedAt: 1 },
+      { userId: 8, joinedAt: 2 },
+    ]);
+    probeChatMembership.mockImplementation(
+      async (_chatId: number, userId: number): Promise<boolean> => {
+        if (userId === 7) throw new Error("unexpected membership failure");
+        return true;
+      }
+    );
+
+    await handleBatchKickCommand(context());
+
+    expect(kickChatMemberWithOutcome).toHaveBeenCalledTimes(1);
+    expect(kickChatMemberWithOutcome).toHaveBeenCalledWith({
+      chatId: -1001,
+      userId: 8,
+      isSupergroup: true,
+    });
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringMatching(/chat -1001, user 7, record 0, attempt 1/),
+      expect.any(Error)
+    );
+    expect(lastReplyText()).toContain("踢出 1");
+    expect(lastReplyText()).toContain("查询或请求失败 1");
+  });
+
+  test("429 等待期间目标已离群时按 absent 结算，不误报请求失败", async () => {
+    readRecentJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
+    kickChatMemberWithOutcome.mockResolvedValueOnce("absent");
+
+    await handleBatchKickCommand(context());
+
+    expect(lastReplyText()).toContain("已不在群 1");
+    expect(lastReplyText()).toContain("查询或请求失败 0");
   });
 
   test("已有黑名单成员不执行只踢，并单独计入交回封禁", async () => {

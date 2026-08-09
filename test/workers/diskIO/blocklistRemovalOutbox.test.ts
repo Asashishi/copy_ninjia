@@ -134,7 +134,7 @@ describe("黑名单成员移除 outbox", () => {
     const invalidFiles: unknown[] = [
       { version: 0, entries: [] },
       // v1 是补扫仍然冻结名单的旧格式：必须拒绝启动，而不是把一份过期快照
-      // 当成任务重放（迁移见 docs/07-operations.md）。
+      // 当成任务重放（迁移见 docs/cn/07-operations.md）。
       { version: 1, entries: [] },
       { version: 2, entries: [pending, pending] },
       { version: 2, entries: [{ ...pending, attempts: -1 }] },

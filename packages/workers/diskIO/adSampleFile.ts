@@ -208,7 +208,11 @@ export function handleAdSampleMessage(msg: AdSampleDiskMessage): void {
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     sweepOrphanedTemps();
     sweepExpiredAdSampleArchives({ today: getTokyoDateKey() });
-    adSampleFileState.current ??= openAppendOnlyFile(AD_SAMPLE_FILE_PATH, PERSISTED_FILE_MODE);
+    adSampleFileState.current ??= openAppendOnlyFile(
+      AD_SAMPLE_FILE_PATH,
+      PERSISTED_FILE_MODE,
+      true
+    );
     // 每次追加前都判一次：游标一旦缓存下来就一直用下去，只在打开时判的话，
     // 一个长期不重启的进程永远轮转不了。
     adSampleFileState.current = rotateIfOversized(adSampleFileState.current);
@@ -218,6 +222,7 @@ export function handleAdSampleMessage(msg: AdSampleDiskMessage): void {
       state,
       chunk: serializeDayFileEntry(sampleKey(msg), record),
       mode: PERSISTED_FILE_MODE,
+      repair: true,
     });
   } catch (error: unknown) {
     // 游标作废：可能已经有前缀落盘，旧位置不再可信，下次写入前重新探测。

@@ -9,6 +9,9 @@ import {
   observeGroupMessageForAiReply,
 } from "../../../packages/auto/message/aiReplyActivity";
 import { isSelfSent } from "../../../packages/infra/selfSentTracker";
+import { chatStates } from "../../../packages/cache/main/storage";
+import { getChatState, getOrCreateChatState } from "../../../packages/infra/storage/stateStore";
+import type { ChatState } from "../../../packages/types/chatState";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import { trimSlidingWindow } from "../../../packages/libs/slidingWindowRateLimit";
@@ -19,6 +22,10 @@ import {
   claimSampleContextParts,
 } from "../../../packages/workers/antiRaid/adDetect/bundle";
 import { handleIncomingMessage } from "../../../packages/auto/message";
+import {
+  observeMemberMessage,
+  resetFloodWindows,
+} from "../../../packages/workers/antiRaid/floodControl";
 import { resolveMentionFacts, resolveReplyReference } from "../../../packages/auto/message/facts";
 import { redactSecretsInText } from "../../../packages/libs/redaction";
 import { LUCK_TIERS } from "../../../packages/consts/luckChallenge";
@@ -407,6 +414,66 @@ function incomingMessageSpineScenario(): Scenario {
 }
 
 /**
+ * 防刷屏开启后每条候选群消息都会走的单成员窗口命中路径。
+ *
+ * 只量同步记账叶子，不调用会派生 Telegram 请求的 handleFloodCandidate；每达到
+ * 阈值时 observeMemberMessage 自己清空时间队列，下一轮仍保持同一个既有成员。
+ * now 在所有预热和正式样本间单调递增，既贴近生产 Date.now() 的量级，也避免
+ * 样本边界的人为时钟回拨改变被测分支。
+ */
+function floodWindowHitScenario(): Scenario {
+  let nextNow: number = BENCHMARK_EPOCH_MS;
+  return {
+    iterations: 1_000_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        const userId: number = 42 + (index & 1);
+        if (observeMemberMessage(BENCHMARK_CHAT_ID, userId, nextNow) !== undefined) {
+          checksum += 1;
+        }
+        nextNow += 1;
+      }
+      return checksum;
+    },
+    reset: (): void => {
+      resetFloodWindows();
+      nextNow = BENCHMARK_EPOCH_MS;
+    },
+    probes: { observeMemberMessage },
+  };
+}
+
+/**
+ * 刷屏窗口达到全局硬顶后的持续新成员路径。
+ *
+ * 预热轮数远大于容量，因此正式样本始终在“插入一条、淘汰一条”的稳态；用于
+ * 防止热命中优化把容量防线意外改成逐次全表扫描。每个新成员本来就必须分配一条
+ * 有界时间队列，本场景只要求淘汰保持 O(1) 且 GC 后不随累计输入继续增长。
+ */
+function floodWindowChurnScenario(): Scenario {
+  let nextUserId: number = 1;
+  let nextNow: number = BENCHMARK_EPOCH_MS;
+  return {
+    iterations: 200_000,
+    run: (iterations: number): number => {
+      for (let index: number = 0; index < iterations; index += 1) {
+        observeMemberMessage(BENCHMARK_CHAT_ID, nextUserId, nextNow);
+        nextUserId += 1;
+        nextNow += 1;
+      }
+      return nextUserId;
+    },
+    reset: (): void => {
+      resetFloodWindows();
+      nextUserId = 1;
+      nextNow = BENCHMARK_EPOCH_MS;
+    },
+    probes: { observeMemberMessage },
+  };
+}
+
+/**
  * 一条 AI 记录进入逐字缓存时的构造成本（workers/aiChat/bufferedMessage.ts）。
  *
  * 输入刻意混合四种「可选字段有没有」的组合：生产上正是这种混合让条件展开写法
@@ -635,6 +702,73 @@ function luckTierTableScenario(): Scenario {
   };
 }
 
+/**
+ * 每条群消息都要读 4~6 次的那张群状态表（`getChatState(chatId).isXEnabled`，
+ * 调用点见 antiRaid/updateIngress.ts、antiRaid/floodControl.ts、
+ * antiRaid/adCandidate.ts、auto/message/index.ts、aiChat/availability.ts）。
+ *
+ * **Map 查找刻意提到循环外**：本场景量的是对象 shape 稳定性，而不是
+ * `chatStates.get`。把 `getChatState` 整个放进循环的话，哈希查找的成本会盖住
+ * property access 那几纳秒，两种形状的读数在本机噪声里分不开——先前试过，
+ * 基线与修复版都落在 18~32 ns/op 的同一片区间。这里只轮转已经取到手的状态对象，
+ * 量的正好是 D1 改动的那一步。
+ *
+ * 状态表刻意由不同写入方各设一个字段建出来，复刻生产里各写各的那种分布：只有
+ * 当每份 ChatState 都出自 createChatState() 的同一个隐藏类时，这个读取点才拿得到
+ * 内联缓存。没有条目的群走 DEFAULT_CHAT_STATE，它也必须是同一个形状，因此一并
+ * 排进轮转。
+ *
+ * 本机 Bun 1.3.14 各跑 3 次的中位数：规范形状 5.57 / 5.89 / 5.96，改动前的发散
+ * 形状 5.78 / 6.22 / 7.50 ns/op——修复侧更快且离散度明显更小。**不要拿它去对
+ * 「2 倍」那个数**：那份读数来自只量 property access、且把加字段后再 delete 的
+ * 形状迁移也算进去的微基准，这个 fixture 只复刻了 7 种形状，没有 delete 迁移。
+ */
+function chatStateReadScenario(): Scenario {
+  const writers: readonly ((state: ChatState) => void)[] = [
+    (state: ChatState): void => { state.isInitEnabled = true; },
+    (state: ChatState): void => { state.isAntiRaidEnabled = true; },
+    (state: ChatState): void => { state.title = "fixture"; },
+    (state: ChatState): void => { state.botIsAdmin = true; },
+    (state: ChatState): void => { state.isAdDetectEnabled = true; },
+    (state: ChatState): void => { state.isFloodControlEnabled = true; },
+  ];
+  const chatIds: number[] = [];
+  for (let index: number = 0; index < writers.length; index += 1) {
+    chatIds.push(BENCHMARK_CHAT_ID - index);
+  }
+  const seed = (): Readonly<ChatState>[] => {
+    const states: Readonly<ChatState>[] = [];
+    for (let index: number = 0; index < writers.length; index += 1) {
+      const chatId: number = chatIds[index]!;
+      writers[index]!(getOrCreateChatState(chatId));
+      states.push(getChatState(chatId));
+    }
+    // 没有条目的群：它交出来的 DEFAULT_CHAT_STATE 若与上面几份不同形状，
+    // 这个读取点照样是多态的。
+    states.push(getChatState(BENCHMARK_CHAT_ID - 999));
+    return states;
+  };
+  let states: Readonly<ChatState>[] = seed();
+  return {
+    iterations: 20_000_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      const length: number = states.length;
+      for (let index: number = 0; index < iterations; index += 1) {
+        if (states[index % length]!.isAntiRaidEnabled === true) checksum += 1;
+      }
+      return checksum;
+    },
+    // 重新建表而不是只清空：清空之后每个群都退化成 DEFAULT_CHAT_STATE，后续
+    // 样本量到的就不再是「多个群各自的状态」这条路径了。
+    reset: (): void => {
+      for (const chatId of chatIds) chatStates.delete(chatId);
+      states = seed();
+    },
+    probes: { getChatState },
+  };
+}
+
 export function createScenario(name: ScenarioName): Scenario {
   switch (name) {
     case "sender-no-username":
@@ -681,10 +815,16 @@ export function createScenario(name: ScenarioName): Scenario {
         (): RollingBuffer => new BoundedDeque<number>(150),
         prototypeProbes("BoundedDeque", BoundedDeque.prototype, ["push", "shift", "last"])
       );
+    case "chat-state-read":
+      return chatStateReadScenario();
     case "self-sent-empty":
       return selfSentEmptyScenario();
     case "incoming-message-spine":
       return incomingMessageSpineScenario();
+    case "flood-window-hit":
+      return floodWindowHitScenario();
+    case "flood-window-churn":
+      return floodWindowChurnScenario();
     case "buffered-message-build":
       return bufferedMessageBuildScenario();
     case "transcript-render":

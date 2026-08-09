@@ -45,6 +45,10 @@ export const joinLogCleanupDay: { current: string | null } = { current: null };
  * 一个布尔够用（而不必按条计数），依据是主线程 recordJoinLog 的 post 与紧随
  * 其后的领域 flush 之间没有 await，两条消息必然成对相邻到达：每一条被拒的事实
  * 都由它自己那次 flush 消费掉这个标记。
+ *
+ * 恢复缓冲重放是这个成对前提的**唯一**例外——那条消息的 post 发生在崩溃窗口里，
+ * 后面根本没有 flush 跟着。因此它不走这个标记，由 cache/workers/diskIO/recovery.ts
+ * 的区间标记单独识别并升级为停机（见 diskIOWorker.ts 的 joinLog 分支）。
  */
 export const joinLogBuffer: {
   entries: BufferedJoinLogEntry[];

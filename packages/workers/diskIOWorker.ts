@@ -15,12 +15,12 @@
  * diskIO/blocklistRemovalOutbox.ts（未完成处置 outbox）、
  * diskIO/joinLogFiles.ts（滚动入群追写与命令按需读取）、
  * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
- * 与黑名单共用 appendOnlyDayFile.ts 的按位置追加/截断修复机制。
+ * 与黑名单共用 appendOnlyDayFile.ts 的按位置追加机制；权威状态不启用截断修复。
  *
  * 原则：恢复型状态只在启动恢复（load）时读一次；此后
  * cache/workers/diskIO/ 下各领域 owner 是唯一事实源，写是「缓存 -> 磁盘」
- * 的单向定时同步。入群日志是明确例外：启动不读，仅收到入群事实或
- * `/batch_kick` 请求时按群日接管文件；查询前先刷缓冲并读取滚动窗口。本线程自身的内部错误一律
+ * 的单向定时同步。入群日志在启动时只校验保留窗口，收到入群事实或
+ * `/batch_kick` 请求时才按群日建立 LRU；查询前先刷缓冲并读取滚动窗口。本线程自身的内部错误一律
  * console.error（journal 兜底）——它就是落盘终点，不能再指望被自己转发
  * 的日志落盘自己的错误，那是一场递归。
  */
@@ -44,6 +44,7 @@ import {
   flushJoinLogDomain,
   handleJoinLogMessage,
   readJoinLog,
+  recoverJoinLogFiles,
 } from "./diskIO/joinLogFiles";
 import { recoverVerificationDay } from "./diskIO/verificationRecovery";
 import {
@@ -63,10 +64,12 @@ import {
 import { flushStickerCatalogs, hydrateStickerCatalogs, markStickerCatalogSnapshotDirty } from "./diskIO/stickerCatalogFiles";
 import { getStickerConfig } from "../config/stickers";
 import { getTokyoDateKey } from "../libs/time";
-import { aiMemoryCache } from "../cache/workers/diskIO/snapshots";
+import { LOG_REOPEN_RETRY_MS } from "../consts/diskIO/appendOnly";
+import { aiMemoryCache, forgetAiMemoryChat } from "../cache/workers/diskIO/snapshots";
 import { stickerCatalogCache } from "../cache/workers/diskIO/stickers";
 import { luckWorkerCache } from "../cache/workers/diskIO/luck";
 import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
+import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type { VerificationSnapshot } from "../types/antiRaid";
 import type { PendingBlockedRemoval } from "../types/blocklist";
 import type {
@@ -74,12 +77,16 @@ import type {
   AiMemoryPersistedReply,
   DiskFlushFailedReply,
   DiskFlushReply,
+  DiskDiagnosticBatchAcceptedReply,
+  DiskDiagnosticBatchRetryReply,
+  DiskDiagnosticMessage,
   DiskIODomain,
   DiskIOMessage,
   JoinLogReadReply,
   LoadedReply,
   LuckAppendStalledReply,
   LuckSecretReply,
+  RecoveryReplayFailedReply,
   VerificationPersistedReply,
 } from "../types/diskIO";
 import type {
@@ -113,28 +120,11 @@ function flushAll(): readonly DiskIODomain[] {
 }
 
 /**
- * 取白名单贴纸包；配置写坏时返回 null，恢复随即降级成「只读不删」。
- *
- * 这里是全进程唯一无条件读 config/stickers.json 的地方：AI 闲聊那侧读它的入口
- * 都在「功能已启用」之后（见 aiChat/availability.ts），而启动恢复不问功能开没开。
- * 让它抛出等于一份写坏的白名单又把整个进程按在启动阶段——正是把校验挪出
- * ApplicationLifecycle 要避免的事（见 config/readiness.ts）。
- *
- * **绝不能退化成空白名单**：recoverStickerCatalogs 会把不在白名单里的持久化
- * 文件当孤儿删掉，传空数组就是把 memory/stickers/ 整个清空——一个逗号写错换来
- * 全部贴纸目录重新调视觉模型生成。null 与空数组因此是两件事：前者表示「这一轮
- * 对『哪些包该留着』没有发言权」，后者表示「一个包都不该留」。
+ * 读取已在主线程启动总闸验证过的贴纸白名单。Worker 重建仍自行复核，配置若在
+ * 进程运行期间被破坏则恢复失败，不能把错误配置解释成空白名单后删除全部目录。
  */
-function activeStickerPacks(): readonly string[] | null {
-  try {
-    return getStickerConfig().packs;
-  } catch (error: unknown) {
-    console.error(
-      "[diskIOWorker] sticker whitelist is unusable; recovering catalogs without pruning any file:",
-      error
-    );
-    return null;
-  }
+function activeStickerPacks(): readonly string[] {
+  return getStickerConfig().packs;
 }
 
 /**
@@ -146,7 +136,6 @@ function activeStickerPacks(): readonly string[] | null {
  * 握手据此拒绝以部分/空状态继续运行。
  * memory/stickers/ 额外按当前 config/stickers.json 的白名单对账一次：白名单
  * 已经不包含的包，其持久化文件视为孤儿直接清掉（见 recoverStickerCatalogs）。
- * 白名单本身读不出来时这一步降级成只读不删（见上方 activeStickerPacks）。
  * 包内部「哪些贴纸还在线上」的对账则在 aiChatWorker 那侧的
  * aiChat/ai/stickers/catalog.ts 做（需要现查 Telegram，本线程没有 bot.api）。
  */
@@ -158,10 +147,9 @@ function handleLoad(): void {
   let luckReceiptSecret: LuckReceiptSecret | null = null;
   try {
     hydrateAiMemorySnapshots();
-    // 白名单读不出来时照样恢复，只是不做任何删除/隔离：跳过整步会让内存里的
-    // 目录停在空表，而磁盘上明明躺着完好的快照——白白让崩溃重放少一份来源。
     hydrateStickerCatalogs(activeStickerPacks());
     const todayKey: string = getTokyoDateKey();
+    recoverJoinLogFiles(todayKey);
     hydrateLuckDay(todayKey);
     luckReceiptSecret = recoverLuckReceiptSecret({
       day: todayKey,
@@ -193,9 +181,27 @@ function handleLoad(): void {
 /** 路由一条主线程消息；独立导出便于验证协议而不初始化真实落盘目录。 */
 export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
   switch (msg.type) {
-    case "log":
-      handleLogMessage(msg);
+    case "diagnosticBatch": {
+      let containsLog: boolean = false;
+      for (const diagnostic of msg.messages) {
+        if (handleDiskIODiagnostic(diagnostic)) containsLog = true;
+      }
+      if (containsLog && !flushLogBuffer()) {
+        const retry: DiskDiagnosticBatchRetryReply = {
+          type: "diagnosticBatchRetry",
+          batchId: msg.batchId,
+          retryAfterMs: LOG_REOPEN_RETRY_MS,
+        };
+        self.postMessage(retry);
+        break;
+      }
+      const reply: DiskDiagnosticBatchAcceptedReply = {
+        type: "diagnosticBatchAccepted",
+        batchId: msg.batchId,
+      };
+      self.postMessage(reply);
       break;
+    }
     case "aiMemory":
       markAiMemorySnapshotDirty({
         chatId: msg.chatId,
@@ -210,6 +216,12 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       // dirty 删除状态；若线程在处理前或处理中崩溃，主线程持有的 revision
       // tombstone 会在新 Worker 完成 load 后重放，直到收到 durable 删除回执。
       deleteAiMemorySnapshot(msg.chatId, msg.revision);
+      break;
+    case "forgetAiMemory":
+      // 主线程的 revision 计数器已在 teardown 归零，这里同步丢掉水位线，两侧
+      // 的作用域才对得上；否则重新启用后的 revision 1 会被判成迟到消息丢弃
+      // （见 types/diskIO.ts 的 AiMemoryForgetDiskMessage）。
+      forgetAiMemoryChat(msg.chatId);
       break;
     case "stickerCatalog":
       markStickerCatalogSnapshotDirty(msg.pack, msg.snapshot);
@@ -274,10 +286,8 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
     case "blocklistRemovals":
       handleBlocklistRemovalsMessage(msg);
       break;
-    case "adSample":
-      // 纯旁路素材：收到即写，不进合并窗口、不进统一 flush、失败即弃
-      // （见 diskIO/adSampleFile.ts 的文件头）。
-      handleAdSampleMessage(msg);
+    case "recoveryReplay":
+      diskIOReplayWindow.current = msg.active;
       break;
     case "joinLog":
       try {
@@ -292,6 +302,20 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
         // update 不被确认，Telegram 重投。
         noteJoinLogRejected();
         console.error("[diskIOWorker] failed to buffer a join log event:", error);
+        // 上面那套自愈的前提是「这条消息后面紧跟着调用方自己的 flush」。恢复
+        // 缓冲重放的那条没有：recordJoinLog 在缓冲那一刻就放行了该 update，此后
+        // 再没有人来问它写没写进去。拒收标记会一直挂到某个**无关**的后续入群
+        // 事实那次 flush 上——那一条被连坐重投，真正丢掉的这一条却没有任何痕迹。
+        // 按 infra/joinLog.ts 承诺的口径升级为统一 fatal 停机，让 Telegram 从
+        // 上一个确认点整段重投。
+        if (diskIOReplayWindow.current) {
+          const reply: RecoveryReplayFailedReply = {
+            type: "recoveryReplayFailed",
+            domain: "joinLog",
+            error: error instanceof Error ? error.message : String(error),
+          };
+          self.postMessage(reply);
+        }
       }
       break;
     case "readJoinLog": {
@@ -325,6 +349,18 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       break;
     }
   }
+}
+
+/** 一批中的诊断保持原始顺序同步消费；完成整批后才能向主线程回 ACK。 */
+function handleDiskIODiagnostic(message: DiskDiagnosticMessage): boolean {
+  if (message.type === "log") {
+    handleLogMessage(message);
+    return true;
+  }
+  // 纯旁路素材：收到即写，不进合并窗口、不进统一 flush、失败即弃
+  // （见 diskIO/adSampleFile.ts 的文件头）。
+  handleAdSampleMessage(message);
+  return false;
 }
 
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */

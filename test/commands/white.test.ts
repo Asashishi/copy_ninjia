@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
+import { settleTestBatch } from "../libs/helpers";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const setWhitelistMembership = mock(async (): Promise<{
@@ -8,7 +9,7 @@ const setWhitelistMembership = mock(async (): Promise<{
 }> => ({ changed: true, permissions: undefined }));
 const isUserBlocked = mock((_id: number): boolean => false);
 
-mock.module("../../packages/infra/config", () => ({ SUPER_ADMIN_USER_ID: 1 }));
+mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
@@ -233,7 +234,7 @@ describe("/white", () => {
     expect(blockMutationRan).toBeFalse();
 
     releaseWrite!();
-    await Promise.all([whitelistUpdate, blockMutation]);
+    await settleTestBatch([whitelistUpdate, blockMutation]);
     expect(blockMutationRan).toBeTrue();
   });
 

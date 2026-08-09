@@ -18,6 +18,7 @@ import { isAdminStatus } from "../libs/chatMember";
 import { verificationKey } from "../libs/verificationKey";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { isWhitelisted } from "../config/whitelist";
+import { getChatState } from "../infra/storage/stateStore";
 import { buildAdCandidate } from "./adCandidate";
 import { observeChatKind } from "./chatKind";
 import {
@@ -65,6 +66,11 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   // 不是管理员时这类更新根本不会送达。
   await markBotAdminObserved(chatId);
 
+  // 入群守卫的总开关（`/antiraid`）。关着的群仍然记入群日志、仍然按黑名单秒踢
+  // ——那两件事各自独立（`/batch_kick` 的依据、永久名单），只有验证窗口与私密
+  // 模式这条链路跟着它一起停（见 types/chatState.ts 的 isAntiRaidEnabled）。
+  const joinGuardEnabled: boolean = getChatState(chatId).isAntiRaidEnabled === true;
+
   // 机器人不再豁免——僵尸 bot 也会被批量拉进群刷屏，照常走验证（由白名单
   // 用户代点按钮作保）。
   const wasActive: boolean = isActiveChatMember(update.old_chat_member);
@@ -79,6 +85,11 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const isInviterExempt: boolean =
     isInviterExemptAdmin(update.new_chat_member);
   const messages: AntiRaidWorkerMessage[] = [];
+  // 这一条**不受开关门控**：它是低频的缓存维护消息，applyAdminChange 只改邀请者
+  // 豁免缓存、不碰状态机，守卫关着时投过去没有任何副作用。反过来漏掉它是有代价的
+  // ——缓存条目按 fetchedAt 判过期而 applyAdminChange 不刷新它（见
+  // workers/antiRaid/adminCache.ts），若「关闭 → 某人被降权 → 重新开启」挤在同一个
+  // ADMIN_CACHE_TTL_MS 窗口里，剩余那段时间他拉进来的人仍会免验证。
   if (wasInviterExempt !== isInviterExempt) {
     messages.push({
       type: "adminsChanged",
@@ -107,14 +118,16 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
     // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
     // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker
     // 收到豁免后会将其撤销。
-    const joinMessage: AntiRaidWorkerMessage = {
-      type: "join",
-      chatId,
-      member: pickMember(user),
-      exempt: isAdmin,
-      actorId: update.from.id,
-      actorIsWhitelisted: isWhitelisted(update.from.id),
-    };
+    const joinMessage: AntiRaidWorkerMessage | undefined = joinGuardEnabled
+      ? {
+        type: "join",
+        chatId,
+        member: pickMember(user),
+        exempt: isAdmin,
+        actorId: update.from.id,
+        actorIsWhitelisted: isWhitelisted(update.from.id),
+      }
+      : undefined;
     // 黑名单优先于一切豁免，且取代 join 投递：Worker 不会为一个马上要被踢掉的人开窗口。
     // 这一路没有入群公告（chat_member 更新不带服务消息），刷群计数由处置消息补记。
     // 被取代的 join 一并登记：处置在 durable 对账里被 /unblock 取消掉时改投它，
@@ -125,10 +138,11 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
       messages,
       replacedJoin: joinMessage,
       replacedJoins,
-    })) {
+      joinGuardEnabled,
+    }) && joinMessage !== undefined) {
       messages.push(joinMessage);
     }
-  } else if (wasActive && !isActive) {
+  } else if (wasActive && !isActive && joinGuardEnabled) {
     messages.push({ type: "left", chatId, userId: user.id });
   }
   if (messages.length > 0) {
@@ -190,22 +204,28 @@ export async function handleAntiRaidMessageIngress(
     message.new_chat_members &&
     message.new_chat_members.length > 0
   ) {
+    // 入群守卫关着时这一路只剩黑名单秒踢：不开验证窗口、不记入群计数，但公告
+    // 照样吞掉（服务消息本来就不该进复读/AI 流水线，与守卫开关无关）。
+    const joinGuardEnabled: boolean =
+      getChatState(message.chat.id).isAntiRaidEnabled === true;
     const messages: AntiRaidWorkerMessage[] = [];
     const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
     for (const member of message.new_chat_members) {
       // 机器人不再豁免（走白名单用户代点验证的流程），只跳过本天才自己
       // ——自己既不能验证自己，也不该被自己踢出去。
       if (member.id === botId) continue;
-      const joinMessage: AntiRaidWorkerMessage = {
-        type: "join",
-        chatId: message.chat.id,
-        member: pickMember(member),
-        announcementMessageId: message.message_id,
-        actorId: message.from?.id,
-        actorIsWhitelisted:
-          message.from !== undefined &&
-          isWhitelisted(message.from.id),
-      };
+      const joinMessage: AntiRaidWorkerMessage | undefined = joinGuardEnabled
+        ? {
+          type: "join",
+          chatId: message.chat.id,
+          member: pickMember(member),
+          announcementMessageId: message.message_id,
+          actorId: message.from?.id,
+          actorIsWhitelisted:
+            message.from !== undefined &&
+            isWhitelisted(message.from.id),
+        }
+        : undefined;
       // 与 chat_member 那一路会为同一次入群各投一次处置；重复 ban 幂等，但两条都要拦
       // ——隐藏入群消息的群只有 chat_member 会到，而 chat_member 又要管理员权限才送达。
       if (claimBlockedJoiner({
@@ -216,10 +236,11 @@ export async function handleAntiRaidMessageIngress(
         replacedJoins,
         // 服务消息这一路带得到入群公告；不投 join 就没人再管它，交给处置一并删。
         announcementMessageId: message.message_id,
+        joinGuardEnabled,
       })) {
         continue;
       }
-      messages.push(joinMessage);
+      if (joinMessage !== undefined) messages.push(joinMessage);
     }
     if (messages.length > 0) {
       await postAntiRaidDurably(messages, replacedJoins);
@@ -228,11 +249,14 @@ export async function handleAntiRaidMessageIngress(
   }
 
   if (message.left_chat_member) {
-    await postAntiRaidDurably([{
-      type: "left",
-      chatId: message.chat.id,
-      userId: message.left_chat_member.id,
-    }]);
+    // left 只用来撤销这个人的验证窗口；守卫关着时没有窗口可撤。
+    if (getChatState(message.chat.id).isAntiRaidEnabled === true) {
+      await postAntiRaidDurably([{
+        type: "left",
+        chatId: message.chat.id,
+        userId: message.left_chat_member.id,
+      }]);
+    }
     return false;
   }
 
@@ -278,7 +302,10 @@ export async function handleAntiRaidMessageIngress(
         )
       ) ||
       mayPrecedeJoinInCommentThread
-    )
+    ) &&
+    // 排在最后：守卫开着的群才需要这条投递，而上面两个判定比一次 Map 取值更
+    // 便宜（空表恒 false）。关着的群没有窗口，评论区线索也无处可用。
+    getChatState(message.chat.id).isAntiRaidEnabled === true
   ) {
     // 附带频道评论区的识别线索：评论与楼中楼回复都代表 TA 已实际参与讨论，
     // Worker 据此免除验证且不计入刷群窗口。没有任何评论区消息的普通入群
@@ -306,6 +333,22 @@ export async function handleVerificationCallback(
   const query: CallbackQuery | undefined = ctx.callbackQuery;
   const data: string | undefined = query?.data;
   if (!query || !data?.startsWith(VERIFY_CALLBACK_PREFIX)) return;
+
+  // 守卫已关的群里还可能留着一颗没被删掉的旧按钮（disable 那次 Worker 不可用
+  // 就会这样）。当场应答掉、不投给 Worker：不应答的话点的人只看到按钮一直转，
+  // 而投过去只会为一个已经关掉的功能重新开工。
+  const callbackChatId: number | undefined = query.message?.chat.id;
+  if (
+    callbackChatId !== undefined &&
+    getChatState(callbackChatId).isAntiRaidEnabled !== true
+  ) {
+    await answerCallbackQuery({
+      callbackQueryId: query.id,
+      text: "本天才已经不守这个群的门啦♡",
+      showAlert: true,
+    });
+    return;
+  }
 
   const targetUserId: number =
     Number(data.slice(VERIFY_CALLBACK_PREFIX.length));

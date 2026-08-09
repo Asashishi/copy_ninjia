@@ -1,5 +1,5 @@
-import type { StateStore } from "../../infra/storage/stateStore";
-import type { ChatState, GlobalCopyState, GlobalModelState } from "../../types/chatState";
+import type { StateStore } from "../../infra/storage/statePersistence";
+import type { ChatState, GlobalAssetState, GlobalCopyState } from "../../types/chatState";
 
 /** state 权威存储（packages/infra/storage/stateStore.ts）的内存状态。 */
 
@@ -22,17 +22,23 @@ export const chatStates: Map<number, ChatState> = new Map();
 export const globalCopyState: GlobalCopyState = { copiedUser: null };
 
 /**
- * `state.global.model` 的主线程权威值：生图与闲聊两项各自选定的供应商。
+ * `state.global.assets` 的主线程权威值：三张内联缩略图与机器人默认头像直链。
  *
- * 启动恢复时从 state 主/LKG 副本填充，只由 commands/imageModel.ts 与
- * commands/chatModel.ts 写入；容量固定为两个可选标量，进程重建后由 loadState
- * 重新填充。与 globalCopyState 一样是一个直接可变的块，不用 holder 包一层——
- * 它整体不会被替换，只逐字段改。两个字段在创建时就一次写齐（哪怕都是
- * undefined），此后只赋值不增删键：它是每次 currentStateSnapshot 都要读的长期
- * 单例，shape 不该在 loadState 之后再变一次。
+ * 启动恢复时从 state 主/LKG 副本填充，紧接着由 infra/storage/stateStore.ts 的
+ * seedMissingAssetState 把仍为 undefined 的项补成内置常量并落盘一次；**此后运行期
+ * 没有任何写入方**——没有命令改它，换图靠手工编辑 state.json 后重启。容量固定为
+ * 四个可选标量，四个字段在创建时一次写齐（哪怕都是 undefined），此后只赋值不增删
+ * 键：它是每次 currentStateSnapshot 都要读的长期单例，
+ * shape 不该在 loadState 之后再变一次。
  *
- * 字段缺省 = 从没设过，该项跟随 aiChat/provider.ts 的默认选取；它不是「上次是
- * 什么」的缓存。AI 闲聊 Worker 侧的两份只读镜像见
- * cache/workers/aiChat/imageProvider.ts 与 chatProvider.ts。
+ * 字段缺省 = 从没设过，该项回退到代码里的内置常量（见 infra/storage/stateStore.ts
+ * 的四个取值函数）。取值函数保留这层兜底而不依赖补齐：补齐只发生在主进程的启动
+ * 路径上，单测与任何绕开生命周期的调用都不会经过它。只有主线程读它：内联抽签
+ * 渲染与复原头像都跑在主线程，Worker 侧没有镜像。
  */
-export const globalModelState: GlobalModelState = { image: undefined, chat: undefined };
+export const globalAssetState: GlobalAssetState = {
+  fortuneThumbnailUrl: undefined,
+  probabilityThumbnailUrl: undefined,
+  gagThumbnailUrl: undefined,
+  botDefaultAvatarUrl: undefined,
+};

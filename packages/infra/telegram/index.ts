@@ -3,7 +3,6 @@
  * 模块继续从本文件导入，避免重构内部职责时扩散 import 路径。
  */
 export * from "./client";
-export * from "./avatar";
 export * from "./actions";
 export * from "./commandMessages";
 export * from "./lockdownPermissions";

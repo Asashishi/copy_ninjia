@@ -2,8 +2,8 @@
  * Gemini 实现包（packages/aiChat/gemini/）独占的常量：请求超时、SDK 重试次数、
  * 分辨率档位与内容过滤档位。
  *
- * **四条流水线的模型名不在这里**：它们全部来自 config/gemini.json，代码不再持有
- * 任何模型默认值（见 config/gemini.ts 的模块头注）。
+ * **模型名不在这里**：provider=google 的能力从 config/agent.json 各自读取 model
+ * 与可选 base_url，代码不持有任何模型默认值（见 config/agent.ts）。
  *
  * 与供应商无关的预算（工具轮数、动作上限、采样温度、token 上限）留在
  * consts/aiChat/tools.ts 与各领域 consts 里——换供应商时那些数不该跟着动。
@@ -45,19 +45,48 @@ export const GEMINI_CHAT_SUMMARY_MAX_TOKENS: number = 49_152;
 export const GEMINI_STICKER_PACK_SUMMARY_MAX_TOKENS: number = 4_096;
 /** 单次媒体描述请求的输出 token 上限。 */
 export const GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS: number = 8_192;
+/**
+ * 单次语音转写请求的输出 token 上限。
+ *
+ * 高于媒体描述那一档：转写要逐字还原群友原话，一段几分钟的语音正文本身就能顶到
+ * 几千 token，再叠上思考消耗；卡在描述那一档等于让长语音稳定被 MAX_TOKENS 腰斩。
+ */
+export const GEMINI_VOICE_TRANSCRIPTION_MAX_TOKENS: number = 16_384;
 
 /** 回复往返在错误日志里的调用名，用于区分是哪条流水线出的错。 */
 export const GEMINI_REPLY_ERROR_LABEL: string = "Gemini API";
 /** 生图请求在错误日志里的调用名。 */
 export const GEMINI_IMAGE_ERROR_LABEL: string = "Gemini image generation API";
+/** 生歌请求在错误日志里的调用名。 */
+export const GEMINI_SONG_ERROR_LABEL: string = "Gemini song generation API";
+
+/**
+ * 单次生歌请求的超时上限。
+ *
+ * 独立于 GEMINI_REQUEST_TIMEOUT_MS：生歌走的是 Interactions API 的另一条端点，
+ * 一首整曲要合成几分钟量级的 44.1 kHz 立体声音频，按常规请求那 150 秒的预算发
+ * 会稳定超时——而超时是在**服务端已经开始出账**之后发生的，等于每次都花钱换一次
+ * 失败。SDK 的 next-gen 客户端只继承构造期的 `httpOptions.timeout`，因此这一档
+ * 必须在每次调用时显式传入（见 aiChat/gemini/song.ts）。
+ */
+export const GEMINI_SONG_REQUEST_TIMEOUT_MS: number = 600_000;
+
+/**
+ * 生歌请求的总尝试次数（含首次）。
+ *
+ * 刻意是 1（不重试）：一次生成就是一次计费，而失败多半来自内容过滤或配额，重试
+ * 只是再买一次同样的失败。瞬时网络抖动造成的损失由调用方那一层的冷却核销策略
+ * 承担，见 replyToolset/songGeneration.ts。
+ */
+export const GEMINI_SONG_REQUEST_ATTEMPTS: number = 1;
 
 /** 单次 Gemini 请求的 per-attempt 超时上限。 */
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 150_000;
 /**
- * Gemini SDK 对 408/429/5xx 的总尝试次数（包含首次请求）；显式传入才能启用
- * SDK 2.12.0 的 retryOptions，所有调用方不得再重试这类请求失败。
+ * Gemini SDK 对 408/429/5xx 的总尝试次数（首次加最多五次重试）；显式传入才能
+ * 启用 SDK 2.12.0 的 retryOptions，所有调用方不得再重试这类请求失败。
  */
-export const GEMINI_REQUEST_RETRY_ATTEMPTS: number = 5;
+export const GEMINI_REQUEST_RETRY_ATTEMPTS: number = 6;
 
 /**
  * 所有 Gemini 请求统一携带的内容过滤设置；应用不按可调概率等级主动拒绝，

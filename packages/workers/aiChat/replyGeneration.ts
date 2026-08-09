@@ -1,6 +1,7 @@
 import {
   cachedReplyGeneration,
   isCachedReplyGenerationCurrent,
+  replyGenerations,
   replyAbortControllers,
   replyGenerationTasks,
 } from "../../cache/workers/aiChat/replies";
@@ -61,6 +62,29 @@ export function trackReplyGenerationTask(
   }).catch((): void => {
     // 原 task 的 owner 负责记录错误；这里只维护任务集合。
   });
+}
+
+/**
+ * 停机时同步使全部回复 epoch 失效并取消可取消请求，再等待回复、提示、媒体描述
+ * 与记忆压缩任务全部 settle。调用方已先关闭新任务入口；循环快照仍防御在途任务
+ * 结算过程中登记的子任务。只有本函数完成后，flush 才能覆盖最后一份 dirty 记忆。
+ */
+export async function quiesceAiChatReplies(): Promise<void> {
+  for (const controller of replyAbortControllers.values()) {
+    controller.abort(new DOMException("AI chat Worker is quiescing.", "AbortError"));
+  }
+  for (const chatId of [...replyGenerations.keys()]) {
+    invalidateChatRuntimeCache(chatId);
+  }
+  while (replyGenerationTasks.size > 0) {
+    const tasks: Promise<void>[] = [];
+    for (const generationTasks of replyGenerationTasks.values()) {
+      tasks.push(...generationTasks);
+    }
+    if (tasks.length === 0) break;
+    await Promise.allSettled(tasks);
+  }
+  replyAbortControllers.clear();
 }
 
 /**

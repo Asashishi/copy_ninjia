@@ -26,11 +26,10 @@ function scheduleStickerCatalogFlush(): void {
 
 /**
  * 启动恢复边界：按当前白名单对账后整体替换内存 owner。
- * @param activePacks 白名单；null 表示 config/stickers.json 读不出来，此时只把
- *   现有目录读进内存，一个文件都不动（见 snapshotFiles.ts 的 recoverStickerCatalogs）。
+ * @param activePacks 已严格校验的贴纸白名单。
  */
 export function hydrateStickerCatalogs(
-  activePacks: readonly string[] | null,
+  activePacks: readonly string[],
   files: StickerCatalogFileDependencies = STICKER_CATALOG_FILE_DEPENDENCIES
 ): Map<string, string> {
   hydrateStickerCatalogCache(files.recover(activePacks));

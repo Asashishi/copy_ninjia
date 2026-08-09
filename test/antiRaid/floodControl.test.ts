@@ -3,6 +3,7 @@ import type { Message } from "@grammyjs/types";
 import { buildFloodCandidate } from "../../packages/antiRaid/floodControl";
 import { chatStates } from "../../packages/cache/main/storage";
 import { whitelistConfigCache } from "../../packages/cache/main/whitelist";
+import { SUPER_ADMIN_USER_ID } from "../../packages/config/telegram";
 import { parseWhitelistConfig } from "../../packages/config/whitelist";
 
 const BOT_ID: number = 99;
@@ -83,9 +84,8 @@ describe("刷屏计数的主线程投递门禁", () => {
       BOT_ID
     )).toBeUndefined();
     expect(buildFloodCandidate(groupMessage({ from: undefined }), BOT_ID)).toBeUndefined();
-    // preload 注入的 SUPER_ADMIN_USER_ID 是 1。
     expect(buildFloodCandidate(
-      groupMessage({ from: { id: 1, is_bot: false, first_name: "超管" } } as Partial<Message>),
+      groupMessage({ from: { id: SUPER_ADMIN_USER_ID, is_bot: false, first_name: "超管" } } as Partial<Message>),
       BOT_ID
     )).toBeUndefined();
 

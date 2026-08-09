@@ -3,7 +3,6 @@ import type { ChatState } from "../types/chatState";
 import { clearAdDetection } from "../antiRaid";
 import { adDetectConfigReadiness } from "../config/readiness";
 import { AD_DETECT_TOGGLE_TEXTS } from "../consts/commands";
-import { AD_DETECT_DEEPSEEK_API_KEY } from "../infra/config";
 import { logger } from "../infra/logger";
 import { getOrCreateChatState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
@@ -13,17 +12,16 @@ import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle"
 /**
  * 处理 /ad_detect enable|disable 指令：按群开关广告检测（见
  * ChatState.isAdDetectEnabled，缺省禁用）。开启后本群每条带文字的消息都会经
- * 入群守卫线程送 DeepSeek 判定，命中即按 /block 同样的处置办——写进永久黑名单、
+ * 入群守卫线程送所配 provider 判定，命中即按 /block 同样的处置办——写进永久黑名单、
  * 在所有在管群封禁并删掉这个人发过的消息（见 antiRaid/adDetect.ts）。
  * 仅持有 isCanControllAdDetectPermission 的身份可用；
  * 超级管理员恒持有该权限（见 config/whitelist.ts），白名单身份可由 /permission 单独获权。
  *
  * 机器人不是本群管理员时判定根本不会触发（删不掉广告也封不了人），开关照样
- * 可以先开着：补上管理员身份之后立刻生效。缺 AD_DETECT_DEEPSEEK_API_KEY 或
+ * 可以先开着：补上管理员身份之后立刻生效。config/agent.json 的 agent.ad_detect 能力或
  * config/ad_samples.json 写坏则不同——那是判定本身没有凭据/没有口径，开着也
  * 永远不会有结论，因此这里直接拒绝开启，不留一个看着已生效、实际什么都不做
- * 的开关。两道前提分开报：一个要改 .env，一个要改配置文件，混成一句只会让人
- * 去查错地方。
+ * 的开关。
  */
 export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promise<void> {
   const arg: "enable" | "disable" | undefined = await resolveSuperAdminToggleArg(ctx, {
@@ -35,14 +33,6 @@ export async function handleAdDetectCommand(ctx: CommandContext<Context>): Promi
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   if (arg === "enable") {
-    if (AD_DETECT_DEEPSEEK_API_KEY === undefined) {
-      await sendCommandMessage({
-        chatId,
-        text: `本天才没有 DeepSeek 的 key，拿什么抓广告呀？去 .env 里补上 AD_DETECT_DEEPSEEK_API_KEY 再重启，笨蛋♡`,
-        replyToMessageId: messageId,
-      });
-      return;
-    }
     const refused: boolean = await refuseIfConfigBroken({
       readiness: adDetectConfigReadiness(),
       chatId,

@@ -57,12 +57,17 @@ export interface AiRecordMediaPayload {
   caption: string;
   fileId: string;
   fileUniqueId: string;
+  /** 视觉素材的像素尺寸；语音传 0。 */
   width: number;
   height: number;
   commentOnResolve: boolean;
   imageGenerationRequested: boolean;
   /** 仅贴纸使用；其余媒体传 undefined。 */
   stickerFallbackText: string | undefined;
+  /** 仅语音使用：Telegram 声明的容器；其余媒体传 undefined。 */
+  voiceMime: string | undefined;
+  /** 仅语音使用：时长（秒）；其余媒体传 0。 */
+  voiceDurationSeconds: number;
 }
 
 export interface BuildAiRecordMediaMessageParams {
@@ -97,6 +102,8 @@ export function buildAiRecordMediaMessage({
     commentOnResolve: media.commentOnResolve,
     imageGenerationRequested: media.imageGenerationRequested,
     stickerFallbackText: media.stickerFallbackText,
+    voiceMime: media.voiceMime,
+    voiceDurationSeconds: media.voiceDurationSeconds,
     directTrigger: context.directTrigger,
   };
 }

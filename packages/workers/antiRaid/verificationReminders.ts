@@ -1,9 +1,8 @@
-import { InlineKeyboard } from "grammy";
 import { logger } from "../../infra/logger";
 import {
   deleteMessage,
-  joinVerificationApi,
   sendMessage,
+  joinVerificationApi,
 } from "../../infra/telegram";
 import {
   VERIFICATION_BUTTON_TEXT,
@@ -22,6 +21,7 @@ import type {
 } from "../../types/antiRaid/internal";
 import type { PendingState, VerificationState } from "../../types/states/verification";
 import { trackAntiRaidTask } from "./taskTracker";
+import type { InlineKeyboardMarkup } from "@grammyjs/types";
 
 /**
  * 待验证提醒的唯一投递 owner：发送失败时在验证期限内退避重试，状态换代
@@ -79,8 +79,12 @@ function attemptReminderDelivery(
   }
 
   delivery.inFlight = true;
-  const verifyKeyboard: InlineKeyboard = new InlineKeyboard()
-    .text(VERIFICATION_BUTTON_TEXT, `${VERIFY_CALLBACK_PREFIX}${delivery.userId}`);
+  const verifyKeyboard: InlineKeyboardMarkup = {
+    inline_keyboard: [[{
+      text: VERIFICATION_BUTTON_TEXT,
+      callback_data: `${VERIFY_CALLBACK_PREFIX}${delivery.userId}`,
+    }]],
+  };
   const task: Promise<void> = (async (): Promise<void> => {
     let reminderMessageId: number | undefined;
     try {

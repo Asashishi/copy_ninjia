@@ -20,7 +20,7 @@ import {
   isWhitelisted,
   setWhitelistPermission,
 } from "../config/whitelist";
-import { SUPER_ADMIN_USER_ID } from "../infra/config";
+import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";

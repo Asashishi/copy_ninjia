@@ -4,7 +4,7 @@
  * 最近已经替哪些 `(chatId, userId)` 的入群记过反刷群计数（键 → 记账时刻）。
  *
  * 同一次物理入群会经两条路径各投一次处置：`chat_member` 更新和
- * `new_chat_members` 服务消息（见 antiRaid/index.ts 的 handleChatMemberUpdate
+ * `new_chat_members` 服务消息（见 antiRaid/updateIngress.ts 的 handleChatMemberUpdate
  * 与 handleAntiRaidMessageIngress）。两条都要拦——隐藏入群消息的群只有前者会
  * 到，而前者又要管理员权限才送达。但处置消息里的 joinedAt 只能带一次：普通
  * 入群由 states/verification.ts 的 joinCreatesNewRecord 去重，处置这一路没有

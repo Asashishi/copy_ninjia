@@ -1,5 +1,3 @@
-import type { lifecycleDependencies } from "../app/lifecycleDependencies";
-
 /** 生命周期排空阶段的统一结果。 */
 export type FlushResult = "flushed" | "timedOut" | "failed";
 
@@ -10,9 +8,6 @@ export interface FlushTimeouts {
   stateMs: number;
   maintenanceMs: number;
 }
-
-/** 应用生命周期的完整副作用依赖；测试通过构造器注入替身。 */
-export type ApplicationLifecycleDependencies = typeof lifecycleDependencies;
 
 /** grammY handler 安装后供生命周期读取的最终 update 边界。 */
 export interface HandlerRegistration {
@@ -60,8 +55,10 @@ export interface ShutdownResults {
   avatar: FlushResult;
   reaction: FlushResult;
   translate: FlushResult;
+  gag: FlushResult;
   antiRaid: FlushResult;
   ai: FlushResult;
+  telegram: FlushResult;
   disk: FlushResult;
   terminate: FlushResult;
   state: FlushResult;

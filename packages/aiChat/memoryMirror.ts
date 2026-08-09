@@ -1,6 +1,7 @@
 import {
   onAiMemoryDeletedPersisted,
   onAiMemoryPersisted,
+  onDiskIOGiveUp,
   onDiskIORespawn,
   postDiskIO,
 } from "../infra/diskIO";
@@ -31,7 +32,7 @@ import type {
  * latestAiMemories 重放 hydrate（在 aiChat/workerBridge.ts 的 onRespawn 里），diskIOWorker
  * 崩溃靠本文件的 onDiskIORespawn 重放 tombstone 与最新快照。只有 durable 删除
  * 回执能释放 tombstone。
- * @see ../../docs/04-invariants.md
+ * @see ../../docs/cn/04-invariants.md
  */
 
 /** 取该群下一个记忆 revision；镜像与 tombstone 都以它判定新旧。 */
@@ -42,14 +43,21 @@ export function nextAiMemoryRevision(chatId: number): number {
 }
 
 /**
- * 群彻底不再由本机器人看管之后，丢掉它的 revision 计数器。
+ * 群彻底不再由本机器人看管之后，丢掉它的 revision 计数器，并让 Disk I/O Worker
+ * 同步丢掉自己那份水位线。
  *
  * 只有 teardown 能做，`/ai_chat disable` 不行：计数器要在一个 chat 的整个生命
  * 周期里单调递增，归零后的 revision 1 会与在途墓碑撞号；postMemoryRecord 还用
  * 「计数器还在」表示「刚被 purge、下一条新记录要立刻落盘」，disable 后重新开启
  * 正需要它。teardown 时调用方已 await 过 durable 删除，群再回来等同于新群。
  *
- * 还有任何在途状态就跳过，留给下一次：它们都按 revision 比大小。
+ * **两侧必须同一时刻归零**：Worker 侧的 `aiMemoryRevisions` 停在删除时的高水位，
+ * 而这里从 1 重新开始，重新入群/重新授权后的每一份快照都会被判成迟到消息静默
+ * 丢弃，一直丢到计数器重新爬过旧水位为止（期间进程重启即全丢，且零日志）。
+ * 这条 forgetAiMemory 与前面的删除同走 postDiskIO 的 FIFO，顺序天然在删除之后。
+ *
+ * 还有任何在途状态就跳过，留给下一次：它们都按 revision 比大小，而这四项为空
+ * 正是「此刻没有任何在途操作、丢掉水位线不会放行迟到 upsert」的判据。
  */
 export function forgetAiMemoryRevisionCounter(chatId: number): void {
   if (
@@ -61,6 +69,9 @@ export function forgetAiMemoryRevisionCounter(chatId: number): void {
     return;
   }
   aiMemoryRevisionCounters.delete(chatId);
+  // 投递失败无需补偿：Worker 不可用意味着它即将重建，而重建后的 hydrate 只按
+  // 磁盘现存快照重算水位线——该群的快照已经删了，水位线自然也不会再出现。
+  postDiskIO({ type: "forgetAiMemory", chatId });
 }
 
 function removeDeleteWaiter(chatId: number, waiter: AiMemoryDeleteWaiter): void {
@@ -116,6 +127,22 @@ export function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<vo
   }
   return persisted;
 }
+
+onDiskIOGiveUp((): void => {
+  // Worker 已经放弃自愈，没有替补实例：onDiskIORespawn 不会跑，deleteAiMemory
+  // 不会重放，durable 回执永远不会来。此时不结算的话，命令与 teardown 只能干等
+  // 满 AI_MEMORY_FLUSH_TIMEOUT_MS 再报「超时」——那两秒恰好和同一个 fatal 信号
+  // 触发的停机抢排空预算，失败原因也被表述成超时而不是「Worker 已经放弃」。
+  for (const waiters of aiMemoryDeleteWaiters.values()) {
+    for (const waiter of [...waiters]) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error(
+        "Persistence Worker gave up self-healing before the AI memory deletion was durable."
+      ));
+    }
+  }
+  aiMemoryDeleteWaiters.clear();
+});
 
 onAiMemoryDeletedPersisted((reply: AiMemoryDeletedPersistedReply): void => {
   if (pendingAiMemoryDeletes.get(reply.chatId) === reply.revision) {

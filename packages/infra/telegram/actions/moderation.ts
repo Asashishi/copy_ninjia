@@ -1,22 +1,30 @@
-import type { Api } from "grammy";
 import {
   MUTED_CHAT_PERMISSIONS,
   UNMUTED_CHAT_PERMISSIONS,
 } from "../../../consts/telegram";
-import { bot } from "../client";
+import type { TelegramApi } from "../../../types/telegramWorker";
+import { telegramApi } from "../client";
 import {
   isPermissionDenied,
   runBooleanTelegramAction,
   runTelegramAction,
   signalArgs,
 } from "./core";
+import { isTelegramRetryPreconditionChanged } from "../errors";
+
+type RestrictMemberApi = Pick<TelegramApi, "restrictChatMember">;
+type KickMemberApi = Pick<TelegramApi, "banChatMember" | "unbanChatMember">;
+type BanMemberApi = Pick<TelegramApi, "banChatMember">;
+type UnbanMemberApi = Pick<TelegramApi, "unbanChatMember">;
+type BanSenderChatApi = Pick<TelegramApi, "banChatSenderChat">;
+type UnbanSenderChatApi = Pick<TelegramApi, "unbanChatSenderChat">;
 
 export interface MuteChatMemberParams {
   chatId: number;
   userId: number;
   /** 禁言结束的绝对时刻（ms）；这里换算成 Bot API 的 until_date（秒）。 */
   mutedUntil: number;
-  api?: Api;
+  api?: RestrictMemberApi;
   signal?: AbortSignal;
 }
 
@@ -38,7 +46,7 @@ export async function muteChatMemberWithOutcome({
   chatId,
   userId,
   mutedUntil,
-  api = bot.api,
+  api = telegramApi,
   signal,
 }: MuteChatMemberParams): Promise<MuteChatMemberOutcome> {
   let permissionDenied: boolean = false;
@@ -70,7 +78,7 @@ export async function muteChatMemberWithOutcome({
 export interface UnmuteChatMemberParams {
   chatId: number;
   userId: number;
-  api?: Api;
+  api?: RestrictMemberApi;
   signal?: AbortSignal;
 }
 
@@ -83,7 +91,7 @@ export type UnmuteChatMemberOutcome =
 export async function unmuteChatMemberWithOutcome({
   chatId,
   userId,
-  api = bot.api,
+  api = telegramApi,
   signal,
 }: UnmuteChatMemberParams): Promise<UnmuteChatMemberOutcome> {
   let permissionDenied: boolean = false;
@@ -115,6 +123,7 @@ export async function unmuteChatMemberWithOutcome({
 /** 一次只踢不封请求的结局；权限拒绝与瞬时失败必须由长生命周期调用方区别处理。 */
 export type KickChatMemberOutcome =
   | "kicked"
+  | "absent"
   | "forbidden"
   | "failed";
 
@@ -122,7 +131,7 @@ export interface KickChatMemberParams {
   chatId: number;
   userId: number;
   /**
-   * 这个群是不是超级群；三态，**未知（省略）必须与确证的 false 区分**。
+   * 这个群是不是超级群；调用前必须精确解析，未知不得授权破坏性动作。
    *
    * 「只踢不封」在两类群里是两个不同的方法，Bot API 原文各自划定了作用域：
    * - `unbanChatMember`：「unban a previously banned user **in a supergroup or
@@ -131,13 +140,12 @@ export interface KickChatMemberParams {
    *   而「踢了就回不来」那句紧接着限定「**In the case of supergroups and
    *   channels**」——所以普通群里它就是一次纯移除，不留持久封禁。
    *
-   * 因此只有**确证是普通群**才改走 `banChatMember`。未知时一律按超级群办：
-   * 托管群绝大多数是超级群，把未知折算成普通群，代价是在超级群里打出一次真正
-   * 的持久封禁，而「除 /block 与黑名单秒踢外一律只踢不封」是这套自动处置的硬
-   * 约束（见 docs/04-invariants.md）。镜像来源见 antiRaid/chatKind.ts。
+   * 因此确证普通群走 `banChatMember`，确证超级群走 `unbanChatMember`。类型侧
+   * 强制调用方给出布尔值，避免把冷启动未知默认为任一边（见
+   * docs/cn/04-invariants.md 与 antiRaid/chatKind.ts）。
    */
-  isSupergroup?: boolean;
-  api?: Api;
+  isSupergroup: boolean;
+  api?: KickMemberApi;
 }
 
 /** 原子地将成员移出群聊但不加入封禁名单，并保留失败类别。 */
@@ -145,9 +153,10 @@ export async function kickChatMemberWithOutcome({
   chatId,
   userId,
   isSupergroup,
-  api = bot.api,
+  api = telegramApi,
 }: KickChatMemberParams): Promise<KickChatMemberOutcome> {
   let permissionDenied: boolean = false;
+  let targetAbsent: boolean = false;
   const kicked: boolean = await runTelegramAction({
     action: `kick chat member (chat ${chatId}, user ${userId})`,
     execute: (signal?: AbortSignal): Promise<true> =>
@@ -167,11 +176,14 @@ export async function kickChatMemberWithOutcome({
     map: (): boolean => true,
     fallback: false,
     shouldLogError: (error: unknown): boolean => {
+      targetAbsent = isTelegramRetryPreconditionChanged(error);
+      if (targetAbsent) return false;
       permissionDenied = isPermissionDenied(error);
       return true;
     },
   });
   if (kicked) return "kicked";
+  if (targetAbsent) return "absent";
   return permissionDenied ? "forbidden" : "failed";
 }
 
@@ -191,11 +203,11 @@ export type BanChatMemberOutcome =
   | "forbidden"
   | "failed";
 
-/** 封禁一名成员，并连带删除 TA 在这个群发过的全部消息。 */
+/** 封禁一名成员，并撤销被移除成员对既有群消息的访问。 */
 export async function banChatMemberWithOutcome(
   chatId: number,
   userId: number,
-  api: Api = bot.api
+  api: BanMemberApi = telegramApi
 ): Promise<BanChatMemberOutcome> {
   let permissionDenied: boolean = false;
   const banned: boolean = await runTelegramAction({
@@ -209,7 +221,7 @@ export async function banChatMemberWithOutcome(
           chatId,
           userId,
           { revoke_messages: true },
-          signal as unknown as Parameters<Api["banChatMember"]>[3]
+          signal as unknown as Parameters<TelegramApi["banChatMember"]>[3]
         ),
     map: (): boolean => true,
     fallback: false,
@@ -226,7 +238,7 @@ export async function banChatMemberWithOutcome(
 export async function banChatMember(
   chatId: number,
   userId: number,
-  api: Api = bot.api
+  api: BanMemberApi = telegramApi
 ): Promise<boolean> {
   return (
     await banChatMemberWithOutcome(chatId, userId, api)
@@ -240,7 +252,7 @@ export async function banChatMember(
 export async function unbanChatMemberIfBanned(
   chatId: number,
   userId: number,
-  api: Api = bot.api
+  api: UnbanMemberApi = telegramApi
 ): Promise<boolean> {
   return runBooleanTelegramAction(
     `unban chat member (chat ${chatId}, user ${userId})`,
@@ -253,7 +265,7 @@ export async function unbanChatMemberIfBanned(
           chatId,
           userId,
           { only_if_banned: true },
-          signal as unknown as Parameters<Api["unbanChatMember"]>[3]
+          signal as unknown as Parameters<TelegramApi["unbanChatMember"]>[3]
         )
   );
 }
@@ -262,7 +274,7 @@ export async function unbanChatMemberIfBanned(
 export async function banChatSenderChatWithOutcome(
   chatId: number,
   senderChatId: number,
-  api: Api = bot.api
+  api: BanSenderChatApi = telegramApi
 ): Promise<BanChatMemberOutcome> {
   let permissionDenied: boolean = false;
   const banned: boolean = await runTelegramAction({
@@ -274,7 +286,7 @@ export async function banChatSenderChatWithOutcome(
           chatId,
           senderChatId,
           signal as unknown as Parameters<
-            Api["banChatSenderChat"]
+            TelegramApi["banChatSenderChat"]
           >[2]
         ),
     map: (): boolean => true,
@@ -292,7 +304,7 @@ export async function banChatSenderChatWithOutcome(
 export async function banChatSenderChat(
   chatId: number,
   senderChatId: number,
-  api: Api = bot.api
+  api: BanSenderChatApi = telegramApi
 ): Promise<boolean> {
   return (
     await banChatSenderChatWithOutcome(chatId, senderChatId, api)
@@ -303,7 +315,7 @@ export async function banChatSenderChat(
 export async function unbanChatSenderChat(
   chatId: number,
   senderChatId: number,
-  api: Api = bot.api
+  api: UnbanSenderChatApi = telegramApi
 ): Promise<boolean> {
   return runBooleanTelegramAction(
     `unban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
@@ -314,7 +326,7 @@ export async function unbanChatSenderChat(
           chatId,
           senderChatId,
           signal as unknown as Parameters<
-            Api["unbanChatSenderChat"]
+            TelegramApi["unbanChatSenderChat"]
           >[2]
         )
   );

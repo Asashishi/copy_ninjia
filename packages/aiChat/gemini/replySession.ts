@@ -20,7 +20,7 @@ import {
   GEMINI_REPLY_MAX_TOKENS,
   GEMINI_REPLY_TEMPERATURE,
 } from "../../consts/aiChat/gemini";
-import { getGeminiDeploymentConfig } from "../../config/gemini";
+import { getAgentDeploymentConfig } from "../../config/agent";
 import { isPlainRecord } from "../../libs/runtimeConfig";
 import { requestGeminiResult } from "./client";
 import { countGoogleSearchCalls } from "./response";
@@ -93,8 +93,9 @@ export function createGeminiReplySession({ promptBlocks, signal }: AiReplySessio
     async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
       pendingModelContent = undefined;
       const result: GeminiRequestResult = await requestGeminiResult(
+        "text",
         (): GenerateContentParameters => ({
-          model: getGeminiDeploymentConfig().models.reply,
+          model: getAgentDeploymentConfig().text.model,
           contents,
           config: {
             systemInstruction: request.systemPrompt,

@@ -1,5 +1,5 @@
 /**
- * 广告检测的四道准入闸（纯规则）。抽出来的意义在于：`docs/04-invariants.md`
+ * 广告检测的四道准入闸（纯规则）。抽出来的意义在于：`docs/cn/04-invariants.md`
  * 要求「待检所有权由 pendingAdMessages、adDetectQueue 与 queuedAdDetectKeys
  * 共同表达，三者必须同步增删」，而那份一致性此前只靠注释和散落的 mutation
  * 维持——判定集中之后，「该不该动这三张表」才有了唯一一个可以直接考的答案。

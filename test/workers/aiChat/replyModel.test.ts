@@ -71,8 +71,8 @@ const callToolMock = mock(async (..._args: unknown[]): Promise<string> => JSON.s
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/aiChat/provider", () => ({
-  chatAiProvider: () => ({
-    name: "test",
+  textAiProvider: () => ({
+    name: "google",
     createReplySession: (params: AiReplySessionParams): AiReplySession => {
       sessionParams = params;
       return session;

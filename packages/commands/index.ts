@@ -8,17 +8,26 @@ export { handleResetIconCommand } from "./resetIcon";
 export { handleStealIconCommand } from "./stealIcon";
 export { handleQuietCommand, handleUnquietCommand } from "./quiet";
 export { handleMuteCommand, handleUnmuteCommand } from "./mute";
+export {
+  handleGagCommand,
+  handleGagInlineQuery,
+  handleGagMessageIngress,
+  handleUngagCommand,
+  resetGagSessions,
+  teardownGagInChat,
+} from "./gag";
+export { handleInlineQuery } from "./inline";
 export { handleBlockCommand } from "./block";
 export { handleBatchKickCommand } from "./batchKick";
 export { handleUnblockCommand } from "./unblock";
 export { handleAiChatCommand } from "./aiChat";
 export { handleAdDetectCommand } from "./adDetect";
 export { handleFloodControlCommand } from "./floodControl";
+export { handleAntiRaidCommand } from "./antiRaid";
+export { handleBotStatusCommand } from "./botStatus";
 export { handleQueryMoodCommand, handleSwitchMoodCommand } from "./mood";
 export { handleJaCopyCommand } from "./jaCopy";
 export { handleInitCommand } from "./init";
-export { handleImageModelCommand } from "./imageModel";
-export { handleChatModelCommand } from "./chatModel";
 export { handleSendCommand } from "./send";
 export { handlePermissionCommand } from "./permission";
 export { handleWhiteCommand } from "./white";

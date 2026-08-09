@@ -3,8 +3,8 @@ import type { LinkedQueue } from "./linkedQueue";
 /**
  * 全局滑动窗口限流的共用判定。本模块不持有任何状态：时间戳队列由调用方在
  * 对应的 `packages/cache/<domain>.ts` 里声明并传入，生命周期与容量语义也归
- * 那份缓存说明（见 AGENTS.md 的缓存约定）。超限立即拒绝、不排队——需要排队
- * 重试的场景用 infra/telegram/client.ts 的 apiThrottler，不要用这里。
+ * 那份缓存说明（见 AGENTS.md 的缓存约定）。超限立即拒绝、不排队——Telegram
+ * 请求的排队与 429 退避由 infra/telegram/outboundGate.ts 处理，不要用这里。
  * 队列用 LinkedQueue 而非数组：修剪窗口靠的就是反复从队首出队，数组 shift()
  * 每次都要整体前移剩余元素（O(n)），链表出队是 O(1)，见 libs/linkedQueue.ts。
  */

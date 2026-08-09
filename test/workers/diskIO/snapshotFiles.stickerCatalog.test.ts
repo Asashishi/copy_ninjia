@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -73,7 +73,7 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
   test("缺少当前必填 summary 字段的文件不自动迁移", () => {
     mkdirSync(stickerDir, { recursive: true });
     writeFileSync(join(stickerDir, "pack_a.json"), JSON.stringify({ version: 1, entries: { "file-uid-1": { emoji: "😂", description: "旧条目" } }, savedAt: 0 }));
-    expect(() => recoverStickerCatalogs(["pack_a"])).toThrow("migrate it manually before starting the bot");
+    expect(() => recoverStickerCatalogs(["pack_a"])).toThrow("current version=1 sticker catalog schema");
     expect(existsSync(join(stickerDir, "pack_a.json"))).toBe(true);
   });
 
@@ -98,33 +98,40 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     expect(existsSync(join(stickerDir, "orphan_pack.json"))).toBe(false);
   });
 
-  test("损坏的 JSON 文件即使属于白名单内的包，也用唯一 .corrupt 名隔离而不是当孤儿删除", () => {
+  test("损坏的 JSON 文件属于白名单内包时拒绝恢复并保持原始字节", () => {
     mkdirSync(stickerDir, { recursive: true });
-    writeFileSync(join(stickerDir, "pack_a.json"), "{not valid json");
-    const result = recoverStickerCatalogs(["pack_a"]);
-    expect(result.has("pack_a")).toBe(false);
-    expect(readdirSync(stickerDir).filter((name: string): boolean =>
-      /^pack_a\.json\.\d+\.[^.]+\.corrupt$/.test(name)
-    )).toHaveLength(1);
+    const path: string = join(stickerDir, "pack_a.json");
+    const bytes: string = "{not valid json";
+    writeFileSync(path, bytes);
+
+    expect(() => recoverStickerCatalogs(["pack_a"])).toThrow("readable valid JSON document");
+    expect(readFileSync(path, "utf8")).toBe(bytes);
   });
 
-  test("同一路径连续两次损坏会保留两份原始字节，不覆盖旧隔离证据", () => {
+  test("未知字段不在恢复时被重建丢弃", () => {
     mkdirSync(stickerDir, { recursive: true });
     const sourcePath: string = join(stickerDir, "pack_a.json");
-    writeFileSync(sourcePath, "first broken bytes");
-    recoverStickerCatalogs(["pack_a"]);
-    writeFileSync(sourcePath, "second broken bytes");
-    recoverStickerCatalogs(["pack_a"]);
+    const bytes: string = JSON.stringify({
+      version: 1,
+      entries: {},
+      summary: null,
+      savedAt: 1,
+      futureField: "must not disappear",
+    });
+    writeFileSync(sourcePath, bytes);
 
-    const quarantinedNames: string[] = readdirSync(stickerDir)
-      .filter((name: string): boolean =>
-        /^pack_a\.json\.\d+\.[^.]+\.corrupt$/.test(name)
-      );
-    expect(quarantinedNames).toHaveLength(2);
-    expect(new Set(quarantinedNames.map((name: string): string =>
-      readFileSync(join(stickerDir, name), "utf8")
-    ))).toEqual(new Set(["first broken bytes", "second broken bytes"]));
-    expect(existsSync(sourcePath)).toBe(false);
+    expect(() => recoverStickerCatalogs(["pack_a"])).toThrow("current version=1 sticker catalog schema");
+    expect(readFileSync(sourcePath, "utf8")).toBe(bytes);
+  });
+
+  test("非法贴纸包文件名不会被当作已下架孤儿静默删除", () => {
+    mkdirSync(stickerDir, { recursive: true });
+    const sourcePath: string = join(stickerDir, "bad-pack.json");
+    const bytes: string = snapshot("文件名不合法但内容完整");
+    writeFileSync(sourcePath, bytes);
+
+    expect(() => recoverStickerCatalogs(["pack_a"])).toThrow("canonical <stickerPackShortName>.json form");
+    expect(readFileSync(sourcePath, "utf8")).toBe(bytes);
   });
 
   test("空白名单时所有持久化包都被当孤儿清掉", () => {
@@ -134,42 +141,5 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
     expect(result.size).toBe(0);
     expect(existsSync(join(stickerDir, "pack_a.json"))).toBe(false);
     expect(existsSync(join(stickerDir, "pack_b.json"))).toBe(false);
-  });
-
-  test("白名单不可用（null）：照常读进内存，但一个文件都不动", () => {
-    // 空数组表示「一个包都不该留」，null 表示「这一轮对该留哪些没有发言权」。
-    // 两者绝不能混为一谈——传空数组会把 memory/stickers/ 整个清空。
-    writeStickerCatalogFile("pack_a", snapshot("a"));
-    writeStickerCatalogFile("pack_b", snapshot("b"));
-
-    const result = recoverStickerCatalogs(null);
-    expect(result.size).toBe(2);
-    expect(parseRecovered(result, "pack_a")?.entries["file-uid-1"]?.description).toBe("a");
-    expect(existsSync(join(stickerDir, "pack_a.json"))).toBe(true);
-    expect(existsSync(join(stickerDir, "pack_b.json"))).toBe(true);
-  });
-
-  test("白名单不可用时，读不动的文件既不隔离也不拒绝启动", () => {
-    writeStickerCatalogFile("good_pack", snapshot("好的"));
-    mkdirSync(stickerDir, { recursive: true });
-    writeFileSync(join(stickerDir, "broken_json.json"), "{not valid json");
-    // 形状不认识：正常模式下这是「手动迁移后再启动」的硬停机信号，降级模式下
-    // 不能让一份写坏的白名单顺带把它升级成拒绝启动。
-    writeFileSync(join(stickerDir, "old_schema.json"), JSON.stringify({ version: 0 }));
-
-    const originalConsoleError = console.error;
-    console.error = (): void => {};
-    let result: Map<string, string>;
-    try {
-      result = recoverStickerCatalogs(null);
-    } finally {
-      console.error = originalConsoleError;
-    }
-
-    expect([...result.keys()]).toEqual(["good_pack"]);
-    // 改名同样是破坏性的：降级这一轮本就不该动盘。
-    expect(existsSync(join(stickerDir, "broken_json.json"))).toBe(true);
-    expect(existsSync(join(stickerDir, "broken_json.json.corrupt"))).toBe(false);
-    expect(existsSync(join(stickerDir, "old_schema.json"))).toBe(true);
   });
 });

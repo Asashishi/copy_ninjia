@@ -14,6 +14,15 @@ import {
   pendingLoad,
   pendingLuckSecrets,
 } from "../../packages/cache/main/diskIO";
+import {
+  DEFAULT_MAX_PENDING_BUSINESS_MESSAGES,
+  LOAD_TIMEOUT_MS,
+} from "../../packages/consts/diskIO/common";
+import {
+  acceptDiskIODiagnosticBatch,
+  pauseDiskIODiagnosticChannel,
+  resumeDiskIODiagnosticChannel,
+} from "../../packages/infra/diskIO/diagnosticChannel";
 
 const diskIO = await import("../../packages/infra/diskIO");
 const { superviseWorker } = await import("../../packages/libs/supervisedWorker");
@@ -82,6 +91,15 @@ beforeEach(() => {
 });
 
 describe("explicit Worker initialization", () => {
+  test("全量恢复采用三十秒读取预算和四万五千条待写上限", () => {
+    expect(LOAD_TIMEOUT_MS).toBe(30_000);
+    expect(DEFAULT_MAX_PENDING_BUSINESS_MESSAGES).toBe(45_000);
+    expect(diskIORuntime.runtimeRecoveryTimeoutMs).toBe(LOAD_TIMEOUT_MS);
+    expect(diskIORuntime.maxPendingBusinessMessages).toBe(
+      DEFAULT_MAX_PENDING_BUSINESS_MESSAGES
+    );
+  });
+
   test("恢复监听器按显式优先级稳定排序，并拒绝重复 owner", () => {
     const originalRegistrations = [...diskIORuntime.respawnListeners];
     const listener = (): boolean => true;
@@ -354,7 +372,15 @@ describe("explicit Worker initialization", () => {
 
       gate.resolve();
       await Bun.sleep(0);
-      expect(worker.messages).toEqual([luckDraw, bufferedDraw]);
+      // 镜像先于业务缓冲；缓冲那一批被一对重放标记框住，好让 Worker 知道这段
+      // 区间内的写失败没有任何后续 flush 会去问（见 types/diskIO.ts 的
+      // RecoveryReplayRequest）。镜像走 scoped transport，不在区间内。
+      expect(worker.messages).toEqual([
+        luckDraw,
+        { type: "recoveryReplay", active: true },
+        bufferedDraw,
+        { type: "recoveryReplay", active: false },
+      ]);
       expect(diskIORuntime.pendingBusinessMessages.size).toBe(0);
       expect(diskIORuntime.writable).toBeTrue();
     } finally {
@@ -484,6 +510,43 @@ describe("explicit Worker initialization", () => {
       }
     } finally {
       error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("重放期间的写失败回执按 fatal 停机，不留下已确认却没落盘的事实", async () => {
+    // 缓冲那一刻 recordJoinLog 就已经放行了该 update，此后没有任何 flush 会再问
+    // 它写没写进去；Worker 只能靠这条回执把失败报上来，主线程据此停机，让
+    // Telegram 从上一个确认点整段重投（见 infra/joinLog.ts）。
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    const fatalErrors: Error[] = [];
+    try {
+      diskIO.initDiskIO({ onFatal: (fatal: Error): void => { fatalErrors.push(fatal); } });
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loadedPromise;
+      await Bun.sleep(0);
+
+      worker.onmessage!({
+        data: {
+          type: "recoveryReplayFailed",
+          domain: "joinLog",
+          error: "Join log buffer reached its hard limit of 4096 entries.",
+        },
+      } as MessageEvent<DiskIOReply>);
+
+      expect(worker.terminated).toBeTrue();
+      expect(diskIORuntime.writable).toBeFalse();
+      expect(fatalErrors).toHaveLength(1);
+      expect(fatalErrors[0]?.message).toContain("joinLog replay failed during recovery");
+      expect(fatalErrors[0]?.message).toContain("hard limit");
+    } finally {
+      error.mockRestore();
+      await diskIO.terminateDiskIO();
       globalThis.Worker = originalWorker;
     }
   });
@@ -735,8 +798,9 @@ describe("explicit Worker initialization", () => {
       await expect(diskIO.flushDiskIO(60_000)).resolves.toBe("failed");
       await expect(diskIO.flushDiskIODomain("blocklist", 60_000)).resolves.toBe("failed");
 
-      worker.rejectedTypes.add("log");
-      expect(diskIO.relayLogMessage({ timestamp: 1, level: "error", args: ["boom"] })).toBe(false);
+      worker.rejectedTypes.add("diagnosticBatch");
+      expect(diskIO.relayLogMessage({ timestamp: 1, level: "error", args: ["boom"] })).toBe(true);
+      expect(diskIORuntime.diagnosticQueue.size).toBe(1);
       expect(fatalErrors).toHaveLength(0);
 
       worker.rejectedTypes.add("luckDraw");
@@ -746,6 +810,113 @@ describe("explicit Worker initialization", () => {
     } finally {
       await diskIO.terminateDiskIO();
       error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("诊断同步拒收与 DiskIO 代际崩溃都保留原批，恢复后按 ACK 顺序继续排空", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    const registrations = [...diskIORuntime.respawnListeners];
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      diskIORuntime.respawnListeners.length = 0;
+      diskIO.initDiskIO();
+      const first: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(first);
+      await loadedPromise;
+      first.messages.length = 0;
+
+      first.rejectedTypes.add("diagnosticBatch");
+      expect(diskIO.relayLogMessage({ timestamp: 1, level: "error", args: ["first"] })).toBe(true);
+      expect(diskIORuntime.diagnosticQueue.size).toBe(1);
+      expect(diskIORuntime.diagnosticQueue.awaitingAcknowledgement).toBe(false);
+
+      first.rejectedTypes.delete("diagnosticBatch");
+      expect(diskIO.relayLogMessage({ timestamp: 2, level: "error", args: ["second"] })).toBe(true);
+      const firstBatch = first.messages.find(
+        (message: DiskIOMessage): boolean => message.type === "diagnosticBatch"
+      );
+      expect(firstBatch).toMatchObject({
+        type: "diagnosticBatch",
+        messages: [{ type: "log", args: ["first"] }],
+      });
+      expect(diskIORuntime.diagnosticQueue.size).toBe(2);
+      expect(diskIORuntime.diagnosticQueue.awaitingAcknowledgement).toBe(true);
+
+      pauseDiskIODiagnosticChannel();
+      const second: FakeWorker = new FakeWorker("replacement-disk-worker.ts");
+      diskIORuntime.worker = second as unknown as Worker;
+      diskIORuntime.writable = true;
+      resumeDiskIODiagnosticChannel(second as unknown as Worker);
+      const replayed = second.messages.find(
+        (message: DiskIOMessage): boolean => message.type === "diagnosticBatch"
+      );
+      expect(replayed).toEqual(firstBatch);
+
+      if (replayed?.type !== "diagnosticBatch") throw new Error("missing replayed diagnostics");
+      acceptDiskIODiagnosticBatch(second as unknown as Worker, replayed.batchId);
+      const batches = second.messages.filter(
+        (message: DiskIOMessage): boolean => message.type === "diagnosticBatch"
+      );
+      expect(batches[1]).toMatchObject({
+        type: "diagnosticBatch",
+        messages: [{ type: "log", args: ["second"] }],
+      });
+    } finally {
+      diskIORuntime.respawnListeners.length = 0;
+      diskIORuntime.respawnListeners.push(...registrations);
+      await diskIO.terminateDiskIO();
+      error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("进程级 flush 等无界诊断 FIFO 全部 durable 后才把最终 flush 交给 Worker", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loadedPromise;
+      worker.messages.length = 0;
+
+      for (let index: number = 0; index < 33; index++) {
+        diskIO.relayLogMessage({ timestamp: index, level: "error", args: [String(index)] });
+      }
+      const flushPromise: Promise<string> = diskIO.flushDiskIO(1_000);
+      expect(worker.messages.some(
+        (message: DiskIOMessage): boolean => message.type === "flush"
+      )).toBe(false);
+
+      const firstBatch = worker.messages[0];
+      if (firstBatch?.type !== "diagnosticBatch") throw new Error("missing first diagnostic batch");
+      worker.onmessage!({
+        data: { type: "diagnosticBatchAccepted", batchId: firstBatch.batchId },
+      } as MessageEvent<DiskIOReply>);
+      const secondBatch = worker.messages[1];
+      if (secondBatch?.type !== "diagnosticBatch") throw new Error("missing second diagnostic batch");
+      expect(secondBatch.messages).toHaveLength(32);
+      worker.onmessage!({
+        data: { type: "diagnosticBatchAccepted", batchId: secondBatch.batchId },
+      } as MessageEvent<DiskIOReply>);
+      await Bun.sleep(0);
+
+      const flush = worker.messages.find(
+        (message: DiskIOMessage): boolean => message.type === "flush"
+      );
+      if (flush?.type !== "flush") throw new Error("missing final disk flush");
+      worker.onmessage!({
+        data: { type: "flushed", flushedId: flush.flushId },
+      } as MessageEvent<DiskIOReply>);
+      await expect(flushPromise).resolves.toBe("flushed");
+    } finally {
+      await diskIO.terminateDiskIO();
       globalThis.Worker = originalWorker;
     }
   });

@@ -5,7 +5,9 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
 mock.module("../../../packages/infra/telegram", () => ({
-  joinVerificationApi: {},
+  joinVerificationApi: {
+    getChat: async (): Promise<{ type: "supergroup" }> => ({ type: "supergroup" }),
+  },
   sendMessage: async (): Promise<undefined> => undefined,
   deleteMessage: async (): Promise<boolean> => true,
   deleteMessageWithOutcome: async (): Promise<string> => "deleted",

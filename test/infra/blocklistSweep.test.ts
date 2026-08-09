@@ -16,7 +16,7 @@ const postDiskIO = mock((..._args: unknown[]): boolean => true);
 mock.module("../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
-mock.module("../../packages/infra/telegram", () => ({
+mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },
 }));
 mock.module("../../packages/infra/diskIO", () => ({
@@ -271,6 +271,28 @@ describe("黑名单清扫", () => {
     expect(pendingBlockedRemovals.size).toBe(1);
   });
 
+  test("回归用例：Worker 重建重投的 durable 交接失败时让这些群重新欠一次补扫", async () => {
+    // 这次重投是 fire-and-forget 的，rejection 到达时 onRespawn 早已返回，够不着
+    // supervisedWorker 的 replayFailure。只记一行日志就等于放弃：frozen 批次
+    // （`/block` 秒踢）既没有计时器也没有退避，重试钩子只有「下一次 Worker 重建」
+    // 和「一次确证的权限恢复」，两者都不来时那批人就一直坐在群里。
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001);
+    settleLast(true);
+    // 补扫已经落定：闩锁打开、sweptAt 有值，此刻这个群不欠补扫。
+    expect(blocklistSweepState.get(-1001)?.sweptAt).not.toBeNull();
+    trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
+
+    remover.mockRejectedValueOnce(new Error("Anti-Raid Worker barrier timedOut."));
+    replayPendingBlockedRemovals();
+    await Bun.sleep(0);
+
+    // 丢掉的 frozen 批次由整份黑名单的补扫覆盖（口径同 settleBlockedRemoval 对
+    // 未落定回执的处理），outbox 条目本身照旧留着等下一次重投。
+    expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
+    expect(pendingBlockedRemovals.size).toBe(1);
+  });
+
   test("回归用例：投递失败也要推进退避——执行 owner 持续抛错时不能每轮都按基础间隔重来", async () => {
     // 这批任务不会再有回执来推进计数（claim 已清空），退避只能由降级路径自己推进。
     // 不推进的话，Worker 不可用期间每次重试都按 BLOCKLIST_SWEEP_RETRY_INTERVAL_MS
@@ -468,8 +490,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   test("连续没落定就逐次拉长退避：永远封不掉的目标不会每 5 分钟重扫一次整份名单", async () => {
     // 目标自己就是这个群的管理员、或机器人是管理员却没有封禁权限时，每一轮
     // 补扫都注定 complete:false。固定 5 分钟一轮的话，这个群会在进程存活期间
-    // 永久地每 5 分钟做一次 O(名单长度) 的探测 + 封禁，而它们与验证超时踢人
-    // 共用同一条限流队列，正常踢人会被一直顶在后面。
+    // 永久地每 5 分钟做一次 O(名单长度) 的探测 + 封禁；这些封禁与验证超时踢人
+    // 共用 kick 类别的 429 FIFO，类别正在退避时会持续扩大安全动作积压。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     await sweepBlockedMembers(-1001, 1_000);
     settleLast(false);
@@ -538,7 +560,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     // 回执——notePermissionBlocked 置上闩锁后，因 removalId 对不上而提前返回，
     // 闩锁是它留下的唯一痕迹。随后投递边界抛错，失败记账若原样写
     // permissionBlocked: false，就把它抹掉了：此后每一次管理员身份观测都会
-    // 重新武装一整轮注定 400 的全名单补扫，与验证超时踢人抢同一条限流队列。
+    // 重新武装一整轮注定 400 的全名单补扫，持续浪费 Worker 调度、网络与日志。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     const frozen = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
 

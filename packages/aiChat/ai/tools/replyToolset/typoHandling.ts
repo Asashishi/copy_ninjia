@@ -13,6 +13,7 @@ import type {
   CharacterTypo,
   TypoDecision,
 } from "../../../../types/aiChat/typo";
+import { containsRenderableCommand } from "../../../../libs/renderableCommand";
 import { cleanReply, isEmojiOnly } from "../../utils/replyText";
 import {
   buildCharacterTypo,
@@ -46,10 +47,16 @@ export function decideMessageTypo({
     ? buildCharacterTypo(text, originalChar, replacementChar)
     : null;
   const typoText: string | null = characterTypo?.typoText ?? null;
+  // 错字版本要单独判一次可点击命令：send_message 那道守卫看的是**替换前**的正文，
+  // 而真正发出去的是这一串。替换字由模型给，`/` 既不是空白也不是 emoji，能过
+  // buildCharacterTypo 的全部校验——正文写「喵 xbatch_kick」、替换 x→/ 就凑出了
+  // 一条可点击的 `/batch_kick`。守卫和被守卫的值必须是同一个字符串（同
+  // auto/message/echo.ts 的同类说明）。命中只作废这次手滑、正文照常发出。
   const shouldUseTypo: boolean = roundHasTypo &&
     !typoAlreadyUsed &&
     characterTypo !== null &&
     !isEmojiOnly(typoText!) &&
+    !containsRenderableCommand(typoText!) &&
     remainingActions >= TYPO_MIN_REMAINING_ACTIONS;
   const typoAttempted: boolean = roundHasTypo &&
     !!originalChar &&
@@ -62,6 +69,8 @@ export function decideMessageTypo({
       ? "typo_original_char/typo_replacement_char were rejected: each must be exactly one character, differ from each other, not be emoji, and typo_original_char must actually appear in text"
       : isEmojiOnly(typoText!)
       ? "typo candidate was rejected: the resulting message would be emoji-only"
+      : containsRenderableCommand(typoText!)
+      ? "typo candidate was rejected: the resulting message would contain a slash command Telegram renders as tappable"
       : "typo candidate was rejected: not enough remaining action budget this round"
     : null;
 

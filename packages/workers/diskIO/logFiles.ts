@@ -33,7 +33,7 @@ import { getTokyoDateKey } from "../../libs/time";
 import {
   AppendOnlyFileFormatError,
   appendToDayFile,
-  openDayFile,
+  openAppendOnlyFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
 import type { BufferedLogEntry } from "../../types/diskIO/storage";
@@ -102,7 +102,10 @@ function openLogDay(day: string): DayFileState {
       if (!(error instanceof SyntaxError)) throw error;
     }
   }
-  const state: DayFileState = openDayFile(LOGS_DIR, day);
+  const state: DayFileState = {
+    day,
+    ...openAppendOnlyFile(path, undefined, true),
+  };
   if (!schemaValidated && existsSync(path)) {
     assertLogFileSchema(path, JSON.parse(readFileSync(path, "utf8")));
   }
@@ -179,6 +182,7 @@ function writeDay(day: string, texts: string[]): boolean {
       dir: LOGS_DIR,
       state: loggerFileState.current,
       chunk: texts.join(",\n"),
+      repair: true,
     });
     loggerReopenState.retryAt = 0;
     return true;

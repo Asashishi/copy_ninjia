@@ -304,6 +304,41 @@ function runtimeDependencies(path: string): string[] {
   return targets;
 }
 
+/** 本文件会在运行期加载的 npm 包；类型专用 import 不进入结果。 */
+function runtimeExternalDependencies(path: string): string[] {
+  const source: ts.SourceFile = ts.createSourceFile(
+    path,
+    readFileSync(path, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const targets: string[] = [];
+  function visit(node: ts.Node): void {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      isRuntimeModuleEdge(node) &&
+      !node.moduleSpecifier.text.startsWith(".")
+    ) {
+      targets.push(node.moduleSpecifier.text);
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments[0] !== undefined &&
+      ts.isStringLiteral(node.arguments[0]) &&
+      !node.arguments[0].text.startsWith(".")
+    ) {
+      targets.push(node.arguments[0].text);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return targets;
+}
+
 /** 四条线程各自的入口，以及从入口出发能加载到的模块闭包（含最短引入路径）。 */
 const THREAD_ENTRIES: Readonly<Record<string, string>> = {
   main: join(PROJECT_ROOT, "index.ts"),
@@ -329,7 +364,7 @@ function threadModuleClosure(entry: string): Map<string, string[]> {
 
 /**
  * `packages/cache/` 的目录名就是这份状态的 owner 线程，见
- * docs/04-invariants.md「缓存的线程归属」。这里用真实模块图核对声明与事实是否
+ * docs/cn/04-invariants.md「缓存的线程归属」。这里用真实模块图核对声明与事实是否
  * 一致：一份只属于某条线程的状态被别的线程 import，那条线程拿到的是一份永远
  * 对不上的空副本——静态看不出来，运行起来只是「缓存莫名其妙不命中」。
  */
@@ -408,6 +443,40 @@ const threadClosures: Map<string, Map<string, string[]>> = new Map(
     ([thread, entry]: [string, string]): [string, Map<string, string[]>] => [thread, threadModuleClosure(entry)]
   )
 );
+
+/**
+ * Telegram 凭据、真实客户端、网络分派与出站队列只属主线程。Worker 只能加载
+ * 项目自有协议和双工代理，连 grammY 运行时都不得进入其模块闭包。
+ */
+const WORKER_TELEGRAM_FORBIDDEN_MODULES: readonly string[] = [
+  join(PROJECT_ROOT, "packages", "config", "telegram.ts"),
+  join(PROJECT_ROOT, "packages", "cache", "main", "telegram.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "mainClient.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "messageThrottler.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "outboundGate.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "workerRequests.ts"),
+];
+
+for (const [thread, closure] of threadClosures) {
+  if (thread === "main") continue;
+  for (const forbidden of WORKER_TELEGRAM_FORBIDDEN_MODULES) {
+    const trail: string[] | undefined = closure.get(forbidden);
+    if (trail === undefined) continue;
+    failures.push(
+      `${thread} Worker loads main-thread Telegram module: ` +
+      trail.map((step: string): string => relative(PROJECT_ROOT, step)).join(" -> ")
+    );
+  }
+  for (const [path, trail] of closure) {
+    for (const dependency of runtimeExternalDependencies(path)) {
+      if (dependency !== "grammy" && !dependency.startsWith("@grammyjs/")) continue;
+      failures.push(
+        `${thread} Worker loads Telegram runtime package ${dependency}: ` +
+        trail.map((step: string): string => relative(PROJECT_ROOT, step)).join(" -> ")
+      );
+    }
+  }
+}
 
 for (const path of sourceFilesUnder(CACHE_ROOT)) {
   const relativePath: string = relative(PROJECT_ROOT, path);
@@ -537,13 +606,16 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
 }
 
 /**
- * 群聊命令文本必须经统一的 30 秒清理边界发送。头像更新结果虽在 copy owner
- * 内异步落地，但只由 /copy 与 /steal_icon 触发，因此同样纳入检查。
+ * 群聊命令文本必须经统一的 30 秒清理边界发送。唯一例外是 gag 开始提示：
+ * 普通用户走目标专属临时消息，频道走公开消息；两者都是带按钮的会话状态，只能
+ * 由超时、`/ungag` 或 teardown 删除。头像更新结果虽在 copy owner 内异步落地，
+ * 但只由 /copy 与 /steal_icon 触发，因此同样纳入检查。
  */
 const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = [
   ...sourceFilesUnder(COMMANDS_ROOT),
   join(SOURCE_ROOT, "copy", "avatarQueue.ts"),
 ];
+const GAG_COMMAND_PATH: string = join(COMMANDS_ROOT, "gag.ts");
 for (const path of COMMAND_TEXT_OUTPUT_FILES) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
@@ -555,13 +627,62 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
   function visit(node: ts.Node): void {
     if (
       ts.isImportSpecifier(node) &&
-      (node.propertyName?.text ?? node.name.text) === "sendMessage"
+      ["sendEphemeralMessage", "sendMessage"].includes(
+        node.propertyName?.text ?? node.name.text
+      )
     ) {
+      if (
+        path === GAG_COMMAND_PATH &&
+        ["sendEphemeralMessage", "sendMessage"].includes(node.name.text)
+      ) {
+        ts.forEachChild(node, visit);
+        return;
+      }
       failures.push(
         `${relative(PROJECT_ROOT, path)}:` +
         `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
         "command text must use sendCommandMessage so group prompts are deleted"
       );
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
+/** gag 只允许开始状态的 noticeMessageId 初始化调用绕开 30 秒清理。 */
+{
+  const source: ts.SourceFile = ts.createSourceFile(
+    GAG_COMMAND_PATH,
+    readFileSync(GAG_COMMAND_PATH, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  function visit(node: ts.Node): void {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      ["sendEphemeralMessage", "sendMessage"].includes(node.expression.text)
+    ) {
+      let owner: ts.Node | undefined = node.parent;
+      while (
+        owner !== undefined &&
+        !ts.isVariableDeclaration(owner) &&
+        !ts.isFunctionLike(owner)
+      ) {
+        owner = owner.parent;
+      }
+      const isNoticeAssignment: boolean = owner !== undefined &&
+        ts.isVariableDeclaration(owner) &&
+        ts.isIdentifier(owner.name) &&
+        owner.name.text === "noticeMessageId";
+      if (!isNoticeAssignment) {
+        failures.push(
+          `${relative(PROJECT_ROOT, GAG_COMMAND_PATH)}:` +
+          `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
+          "only the state-owned gag notice may bypass sendCommandMessage"
+        );
+      }
     }
     ts.forEachChild(node, visit);
   }
@@ -624,6 +745,25 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
           `${relative(PROJECT_ROOT, path)}:` +
           `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
           `production code must import from a domain type module instead of types/index`
+        );
+      }
+    }
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "console" &&
+      node.expression.name.text === "error"
+    ) {
+      const relativePath: string = relative(PROJECT_ROOT, path);
+      const isDiskIOBoundary: boolean =
+        relativePath === "packages/workers/diskIOWorker.ts" ||
+        relativePath.startsWith("packages/workers/diskIO/");
+      if (!isDiskIOBoundary) {
+        failures.push(
+          `${relativePath}:` +
+          `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
+          "direct console.error is restricted to the disk I/O Worker boundary"
         );
       }
     }

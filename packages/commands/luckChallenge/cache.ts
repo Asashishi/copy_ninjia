@@ -263,21 +263,15 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
   for (const [key, record] of loaded.entries) {
     const tier: LuckTier | undefined = LUCK_TIERS.find((candidate: LuckTier): boolean => candidate.label === record.label);
     if (!tier) {
-      logger.error(
-        `Restored luck entry "${key}" has label "${record.label}" that no longer matches any LUCK_TIERS entry; ` +
-        "dropping it, the user will redraw today."
-      );
-      continue;
+      throw new Error("Loaded luck state violates the validated tier-label invariant.");
     }
     const [min, max]: readonly [number, number] = tier.fortunePercentRange;
     if (record.fortunePercent < min || record.fortunePercent > max) {
-      logger.error(
-        `Restored luck entry "${key}" has fortunePercent ${record.fortunePercent} outside tier ` +
-        `"${record.label}"'s current range [${min}, ${max}]; dropping it, the user will redraw today.`
-      );
-      continue;
+      throw new Error("Loaded luck state violates the validated tier-range invariant.");
     }
     // 恢复同样过闸：磁盘上那份可能是上一版本留下的、超过当前上限的文件。
-    if (!admitDailyLuckEntry(key, { tier, fortunePercent: record.fortunePercent })) break;
+    if (!admitDailyLuckEntry(key, { tier, fortunePercent: record.fortunePercent })) {
+      throw new Error("Loaded luck state exceeds the validated persistence capacity.");
+    }
   }
 }

@@ -5,9 +5,9 @@ import {
 } from "../../../consts/antiRaid/verification";
 import { logger } from "../../../infra/logger";
 import {
-  joinVerificationApi,
   kickChatMemberWithOutcome,
   probeChatMembership,
+  joinVerificationApi,
 } from "../../../infra/telegram";
 import { verificationKey } from "../../../libs/verificationKey";
 import type {
@@ -17,7 +17,7 @@ import type {
 import type { VerificationState } from "../../../types/states/verification";
 import type { KickChatMemberOutcome } from "../../../infra/telegram";
 import { botCanRestrictIn } from "../botPermissions";
-import { chatIsSupergroup } from "../chatKind";
+import { resolveChatIsSupergroup } from "../chatKind";
 
 interface ScheduleKickRetryParams {
   chatId: number;
@@ -36,6 +36,7 @@ function scheduleKickRetry({
   const key: string = verificationKey(chatId, userId);
   const entry: VerificationEntry | undefined = verificationEntries.get(key);
   if (entry?.state !== state) return;
+  state.effectStarted = false;
   if (entry.timer !== undefined) clearTimeout(entry.timer);
   const retries: number = entry.terminalRetries ?? 0;
   entry.terminalRetries = retries + 1;
@@ -92,6 +93,23 @@ export async function runKickMemberEffect({
     });
     return;
   }
+  const isSupergroup: boolean | undefined =
+    await resolveChatIsSupergroup(chatId);
+  if (verificationEntries.get(key)?.state !== transitionState) return;
+  if (isSupergroup === undefined) {
+    transitionState.executionStarted = false;
+    logger.error(
+      `Lockdown kick for user ${userId} in chat ${chatId} could not resolve whether the chat is a group or supergroup; ` +
+      "retaining the pending action rather than guessing a removal API."
+    );
+    scheduleKickRetry({
+      chatId,
+      userId,
+      state: transitionState,
+      dispatchVerification,
+    });
+    return;
+  }
   // **每一发都先付这次成员探测，首发也不例外。** 超级群的「只踢不封」映射到
   // unbanChatMember，它不带 only_if_banned 时会**解除已有封禁**（见
   // infra/telegram/actions/moderation.ts 的 kickChatMemberWithOutcome）。因此发这
@@ -101,9 +119,8 @@ export async function runKickMemberEffect({
   //
   // 首发曾经豁免过这次探测，理由是「紧跟刚到达的那条 join update，那条 update
   // 自己就证明了人在群里」。它证明的是**在场**，不是**没有在排队期间被封**：
-  // 锁群下的调用要排 joinVerificationApi 的每群限流队列，raid 期间那条队列前面
-  // 积着大量洪水通知和其他移除（见 consts/antiRaid/flood.ts 与 floodControl.ts
-  // 对队列深度的说明）；这段等待里人工管理员完全可能在客户端直接封禁这个人
+  // 锁群下的调用若命中 Telegram 429，会排进 kick 类别的独立退避车道；raid
+  // 期间前面可能积着其他移除。这段等待里人工管理员完全可能在客户端直接封禁这个人
   // （不走 /block，也就不进本 bot 的 FIFO）。排到的那一发于是解除了管理员的
   // 封禁，outcome 还报 "kicked"、kickSettled 上报成功，而那个人凭任意邀请链接
   // 就能回群。刷群路径上多付一次 getChatMember 换掉这个后果是划算的——正确性
@@ -138,11 +155,11 @@ export async function runKickMemberEffect({
   const outcome: KickChatMemberOutcome = await kickChatMemberWithOutcome({
     chatId,
     userId,
-    isSupergroup: chatIsSupergroup(chatId),
+    isSupergroup,
     api: joinVerificationApi,
   });
   if (verificationEntries.get(key)?.state !== transitionState) return;
-  if (outcome === "kicked") {
+  if (outcome === "kicked" || outcome === "absent") {
     dispatchVerification(chatId, userId, {
       type: "kickSettled",
       now: Date.now(),

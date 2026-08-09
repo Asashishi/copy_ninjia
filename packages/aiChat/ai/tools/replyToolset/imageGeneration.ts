@@ -44,6 +44,7 @@ import { runMediaTask } from "../../mediaTaskRunner";
 import type { VisionImage } from "../../../../types/media";
 import { cleanReply } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
+import { containsRenderableCommand } from "../../../../libs/renderableCommand";
 import { isDuplicateOfSentMessage, sendDirectMessage } from "./messageState";
 
 function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
@@ -52,15 +53,15 @@ function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationRefer
 }
 
 export function buildGenerateImageToolDefinition(
-  ctx: Pick<ReplyToolContext, "chatId" | "imageGenerationRequested" | "imageGenerationReference" | "bypassImageGenerationCooldown">
+  ctx: Pick<ReplyToolContext, "chatId" | "mediaToolsRequested" | "imageGenerationReference" | "bypassMediaToolCooldown">
 ): AiToolDefinition {
   const availability: ImageGenerationAvailability = getImageGenerationAvailability({
     chatId: ctx.chatId,
-    bypassCooldown: ctx.bypassImageGenerationCooldown,
+    bypassCooldown: ctx.bypassMediaToolCooldown,
   });
-  const availabilityInstruction: string = !ctx.imageGenerationRequested
+  const availabilityInstruction: string = !ctx.mediaToolsRequested
     ? "当前状态：不可生图；当前消息不是直接回复或 @ 你的触发，本轮禁止调用。"
-    : ctx.bypassImageGenerationCooldown
+    : ctx.bypassMediaToolCooldown
     ? "当前状态：可以生图；由你判断当前消息是否明确要求生成或编辑图片。本轮由 superAdmin 触发，不受群冷却限制。"
     : availability.allowed
     ? "当前状态：可以生图；由你判断当前消息是否明确要求生成或编辑图片，没有明确意图就不要调用。"
@@ -148,7 +149,7 @@ export function createGenerateImageExecutor(
   let generatedImages: number = 0;
   return async (argumentsJson: string): Promise<string> => {
     if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-    if (!ctx.imageGenerationRequested) {
+    if (!ctx.mediaToolsRequested) {
       return toolError(
         "Image generation is not authorized: the triggering message was not a direct reply to or mention of the bot",
         { retryable: false }
@@ -191,6 +192,15 @@ export function createGenerateImageExecutor(
           "An identical message was already sent in this round; write a different caption, or omit it and send the picture alone"
         );
       }
+      // 图注和正文一样是机器人自己发出的文本，Telegram 对 caption 里的 `/xxx`
+      // 照样渲染成可点击命令（复读链路正是被一条 caption 打穿的，见
+      // auto/message/echo.ts）。send_message 守了而这里不守，等于换个工具就能绕过去。
+      if (containsRenderableCommand(caption)) {
+        return toolError(
+          "caption must not contain a slash command such as \"/example\": Telegram renders it as a tappable command in the bot's own message. " +
+          "Write the command name without the leading slash"
+        );
+      }
     }
 
     if (consecutiveFailures >= IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY) {
@@ -202,7 +212,7 @@ export function createGenerateImageExecutor(
 
     const claim: ImageGenerationClaim = claimImageGeneration({
       chatId: ctx.chatId,
-      bypassCooldown: ctx.bypassImageGenerationCooldown,
+      bypassCooldown: ctx.bypassMediaToolCooldown,
     });
     if (!claim.allowed) {
       const retryAfterSeconds: number = Math.ceil(claim.retryAfterMs / 1_000);
@@ -349,10 +359,10 @@ export function createGenerateImageExecutor(
         success: true,
         message_id: sent.messageId,
         aspect_ratio: parsed.aspectRatio,
-        // 不再上报分辨率：那个 "1K" 是 Gemini 生图模型的专属档位，OpenAI 侧出的是
-        // 1024x1024 / 1536x1024，长边并不都是 1K。模型不拿这个字段做任何决策，
-        // 报一个不一定成立的值比不报更糟。真实画幅由各实现包自己决定，见
-        // consts/aiChat/{gemini,openai}.ts。
+        // 不再上报分辨率：那个 "1K" 是 Gemini 生图模型的专属档位，oai 兼容侧
+        // 可能走 OpenAI size，也可能走 xAI aspect_ratio / resolution。模型不拿
+        // 这个字段做任何决策，报一个不一定成立的值比不报更糟。真实画幅由各实现包
+        // 自己决定，见 consts/aiChat/{gemini,openai}.ts。
         actions_used: actionsUsedByTool,
         ...(captionDelivery !== null ? { caption_delivery: captionDelivery } : {}),
         ...(ctx.imageGenerationReference ? { reference_image_used: true } : {}),

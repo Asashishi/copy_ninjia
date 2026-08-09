@@ -1,5 +1,4 @@
 import type { ChatPermissions } from "@grammyjs/types";
-import type { AiProviderName } from "./aiChat/provider";
 
 /** 反刷群锁定的持久化恢复记录。 */
 export interface LockdownRecord {
@@ -59,7 +58,7 @@ export interface ChatState {
    */
   isJATranslationEnabled?: boolean;
   /**
-   * 本群是否启用广告检测（每条消息经 DeepSeek 判定，命中即按 /block 处置）。
+   * 本群是否启用广告检测（消息串经配置的 provider 判定，命中即按 /block 处置）。
    * 缺省视为禁用，需通过 /ad_detect enable 显式开启（仅持有
    * isCanControllAdDetectPermission 的身份可用，超级管理员恒持有，见
    * commands/adDetect.ts）。
@@ -72,6 +71,20 @@ export interface ChatState {
    * 管理员恒持有，见 commands/floodControl.ts）。判断时必须使用 === true。
    */
   isFloodControlEnabled?: boolean;
+  /**
+   * 本群是否启用入群守卫：入群验证（按钮 + 超时踢出）与防冲群私密模式
+   * （短时间大量入群时关闭邀请权限）两条链路合用这一个开关，缺省视为禁用，
+   * 需通过 /antiraid enable 显式开启（仅持有 isCanControllAntiRaidPermission
+   * 的身份可用，超级管理员恒持有，见 commands/antiRaid.ts）。判断时必须使用
+   * === true。
+   *
+   * 它**不覆盖**同在 Anti-Raid Worker 里跑的其余能力：广告检测归
+   * isAdDetectEnabled、防刷屏禁言归 isFloodControlEnabled、永久黑名单不设开关。
+   * 关闭只让主线程停止投递入群链路的事件（见 antiRaid/updateIngress.ts），
+   * 并让 Worker 清掉这个群已开的验证窗口、对仍生效的私密模式发起恢复
+   * （见 antiRaid/workerBridge.ts 的 deactivateJoinGuardChat）。
+   */
+  isAntiRaidEnabled?: boolean;
   /**
    * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化（false），
    * 需由超级管理员通过 /init enable 显式开启（见 commands/init.ts）。未初始化
@@ -119,36 +132,42 @@ export interface GlobalCopyState {
 }
 
 /**
- * 所有群共用的模型选取，两项各自独立。
+ * 所有群共用的外部素材直链，四项各自独立。
  *
- * **缺字段 = 从没设过**，该项跟随 `aiChat/provider.ts` 的 activeAiProvider()
- * ——它默认 Gemini，只有 Gemini 凭据缺席时才降级 OpenAI。所以「默认 gemini」
- * 是缺省语义，不需要也不应该往文件里写一个默认值：写进去就成了「显式选过」，
- * 而显式选过的那一家一旦缺 key 会被启动闸拒绝（见 app/featurePreflight.ts），
- * 那会让只配了 OpenAI 一把 key 的部署起不来。
+ * **缺字段 = 从没设过**，该项回退到 consts/ui/assets.ts 的内置常量，行为与
+ * 没有这一块时逐字相同。这四项**显式写进文件是
+ * 常态**：写一个与常量相同的值没有行为差别，而把四个旋钮摆在 state.json 里，
+ * 换图的人才不必先去代码里翻键名。因此启动时缺项会被自动补成当前生效值（见
+ * infra/storage/stateStore.ts 的 seedMissingAssetState），文件里永远看得到这四个键。
  *
- * 字段存在 = 超管用 `/image_model`、`/chat_model` 明确选过 = 必须兑现：它那把
- * key 缺席时启动闸直接拒绝启动，不做静默换家（理由见 aiChat/provider.ts）。
+ * 没有任何命令会改这一块，运行期也没有写入方，只由部署方手工编辑 state.json（改完要
+ * 重启，运行中的进程持有权威内存并会整份覆写文件）。放 state 而不放 config/：
+ * 它是「这套部署长什么样」的全局取值，因此属于全局块。
+ *
+ * 补齐是**一次性快照**：之后再改代码里的常量，已经落过盘的部署不会跟着变，
+ * 那正是「部署方写下的值不被覆盖」的另一面。要跟随新常量就把那一项从
+ * state.json 里删掉再重启。
  */
-export interface GlobalModelState {
-  /** `/image_model` 选定的生图供应商。 */
-  image?: AiProviderName;
-  /**
-   * `/chat_model` 选定的闲聊侧供应商，作用于生图**以外**的三项能力：回复会话、
-   * 纯文本（记忆压缩的中期摘要与贴纸包摘要）与视觉描述。与 image 合起来正好
-   * 铺满 AiChatProvider 契约的四项，两条命令互不重叠。
-   */
-  chat?: AiProviderName;
+export interface GlobalAssetState {
+  /** 「未卜先知」内联结果的缩略图直链；缺省用 FORTUNE_THUMBNAIL_URL。 */
+  fortuneThumbnailUrl?: string;
+  /** 「概率论」内联结果的缩略图直链；缺省用 PROBABILITY_THUMBNAIL_URL。 */
+  probabilityThumbnailUrl?: string;
+  /** gag 发言内联结果的缩略图直链；缺省用 GAG_THUMBNAIL_URL。 */
+  gagThumbnailUrl?: string;
+  /** `/reset_icon`、`/stop_copy` 复原机器人默认头像时抓的图；缺省用 BOT_DEFAULT_AVATAR_URL。 */
+  botDefaultAvatarUrl?: string;
 }
 
 /**
- * 所有群共用的全局状态，按用途分块：`copy` 是复读状态与冷却时钟，`model` 是
- * 生图与闲聊两项的模型选取。分块而不是平铺在顶层，是为了让「全局」与按群的
- * `chats` 在文件里一眼分得开，也给后续的全局项留一个不必再改顶层形状的位置。
+ * 所有群共用的全局状态，按用途分块：`copy` 是复读状态与冷却时钟，`assets`
+ * 是外部素材直链。AI provider 与模型只由 config/agent.json 管理，不进入状态。
+ * 分块是为了让「全局」与按群的 `chats` 在文件里一眼分得开，也给后续的全局项留一个
+ * 不必再改顶层形状的位置。
  */
 export interface GlobalState {
   copy: GlobalCopyState;
-  model: GlobalModelState;
+  assets: GlobalAssetState;
 }
 
 /**

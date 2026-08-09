@@ -1,4 +1,5 @@
 import type { RemoveBlockedMembersParams } from "./blocklist";
+import type { AdDetectAgentConfig } from "./config";
 import type { BotChatPermissions } from "./telegram";
 import type { ChatPermissions } from "@grammyjs/types";
 import type {
@@ -50,6 +51,20 @@ export interface MemberLeftMessage {
 /** 主线程 -> Worker：统一拆除某群的验证计时器，并恢复/保留 lockdown owner。 */
 export interface DeactivateChatMessage {
   type: "deactivateChat";
+  chatId: number;
+}
+
+/**
+ * 主线程 -> Worker：只拆入群守卫这一条链路（验证窗口 + 私密模式），其余能力
+ * 原样留着。
+ *
+ * 与 deactivateChat 的区别就是**范围**：那条是「这个群整个不管了」（停管、
+ * `/init disable`、退群），会连广告检测队列、刷屏窗口、权限与群类型镜像、
+ * 在途黑名单补扫一起丢掉；这条只服务 `/antiraid disable`，广告检测与防刷屏
+ * 各有各的开关，不能被它一起关掉。
+ */
+export interface DeactivateJoinGuardMessage {
+  type: "deactivateJoinGuard";
   chatId: number;
 }
 
@@ -146,6 +161,24 @@ export interface VerificationSnapshotBase {
 /** 正在等待按钮或超时的可恢复验证快照。 */
 export interface PendingVerificationSnapshot extends VerificationSnapshotBase {
   phase: "pending";
+  requestedAt?: never;
+  countedJoinAt?: never;
+  terminalInviterId?: never;
+  expelReason?: never;
+  successNoticeSent?: never;
+  failureNoticeSent?: never;
+  unconfirmedNoticeSent?: never;
+  removalConfirmed?: never;
+}
+
+/** 私密模式即时踢人尚未结算的可恢复快照。 */
+export interface KickPendingVerificationSnapshot
+  extends VerificationSnapshotBase {
+  phase: "kickPending";
+  /** 该次物理入群的动作代际时间戳。 */
+  requestedAt: number;
+  /** 仅在该次入群实际计入刷群窗口时存在。 */
+  countedJoinAt?: number;
   terminalInviterId?: never;
   expelReason?: never;
   successNoticeSent?: never;
@@ -158,6 +191,8 @@ export interface PendingVerificationSnapshot extends VerificationSnapshotBase {
 export interface CheckingInviterVerificationSnapshot
   extends VerificationSnapshotBase {
   phase: "checkingInviter";
+  requestedAt?: never;
+  countedJoinAt?: never;
   /** checkingInviter 终态的最终核查对象。 */
   terminalInviterId: number;
   expelReason?: never;
@@ -171,6 +206,8 @@ export interface CheckingInviterVerificationSnapshot
 export interface ExpellingVerificationSnapshot
   extends VerificationSnapshotBase {
   phase: "expelling";
+  requestedAt?: never;
+  countedJoinAt?: never;
   terminalInviterId?: never;
   /** expelling 终态的处置原因。 */
   expelReason: "timeout" | "flood";
@@ -178,7 +215,7 @@ export interface ExpellingVerificationSnapshot
   successNoticeSent?: boolean;
   /** 「踢不动」告警已发送；仅 expelling 终态可携带（见 ExpellingState）。 */
   failureNoticeSent?: boolean;
-  /** 「没能确认还在不在群里」告警已发送；仅 expelling 终态可携带。 */
+  /** 「没能确认成员是否仍在群里或群类型」告警已发送；仅 expelling 终态可携带。 */
   unconfirmedNoticeSent?: boolean;
   /** 踢人已确认成功、成功播报还欠着；仅 expelling 终态可携带（见 ExpellingState）。 */
   removalConfirmed?: boolean;
@@ -191,6 +228,7 @@ export interface ExpellingVerificationSnapshot
  */
 export type VerificationSnapshot =
   | PendingVerificationSnapshot
+  | KickPendingVerificationSnapshot
   | CheckingInviterVerificationSnapshot
   | ExpellingVerificationSnapshot;
 
@@ -234,7 +272,7 @@ export interface LockdownPersistedMessage {
 
 /**
  * 主线程 -> Worker：把这些 id 从本群清出去（/block 黑名单）。判定留在主线程、
- * 执行放 Worker 的理由见 docs/04-invariants.md。字段与执行 owner 的入参同形，
+ * 执行放 Worker 的理由见 docs/cn/04-invariants.md。字段与执行 owner 的入参同形，
  * 直接复用 types/blocklist.ts 的定义。
  */
 export interface RemoveBlockedMembersMessage extends RemoveBlockedMembersParams {
@@ -297,6 +335,25 @@ export interface ChatKindChangedMessage {
   isSupergroup: boolean;
 }
 
+/**
+ * 主线程 -> Worker：本进程唯一一代 ad_detect 能力配置。
+ *
+ * 必须是每次（重）初始化投给 Worker 的**第一条**消息：广告判定逐条候选消息读
+ * 模型名与凭据，而 adopt、候选消息与其余业务消息都排在它后面（FIFO）。
+ *
+ * `adDetect` 恒定出现，未配置时显式为 null——不是「省略这个键」也不是「沿用上
+ * 一实例的值」：新 isolate 的 holder 本来就空，显式 null 让「这个部署没配广告
+ * 检测」在协议层面可读，Worker 侧据此 fail-closed（见 config/agent.ts 的
+ * adoptAdDetectAgentConfig）。
+ *
+ * 与 AiInitMessage 同理，`api_key` 只在这条消息上跨线程流动一次，不落盘、不进
+ * 任何回执事件。
+ */
+export interface AntiRaidAgentConfigMessage {
+  type: "agentConfig";
+  adDetect: AdDetectAgentConfig | null;
+}
+
 /** 主线程 -> Worker：FIFO mailbox barrier；此前消息完成同步状态转移后回执。 */
 export interface AntiRaidBarrierMessage {
   type: "barrier";
@@ -310,9 +367,11 @@ export interface AntiRaidDrainMessage {
 }
 
 export type AntiRaidWorkerMessage =
+  | AntiRaidAgentConfigMessage
   | NewMemberMessage
   | MemberLeftMessage
   | DeactivateChatMessage
+  | DeactivateJoinGuardMessage
   | TrackedChatMessage
   | VerifyCallbackMessage
   | AdoptLockdownsMessage
@@ -344,7 +403,7 @@ export interface BlockedMembersRemovedEvent {
   /**
    * 没落定的原因里包含「权限不够」。这一档必须与其它失败分开：网络抖动值得按
    * 时间退避重试，而缺封禁权限时重试多少次都一样，只有权限本身变了才有意义
-   * （见 docs/04-invariants.md）。
+   * （见 docs/cn/04-invariants.md）。
    */
   permissionDenied?: boolean;
   /**

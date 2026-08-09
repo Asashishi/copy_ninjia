@@ -1,10 +1,10 @@
-import { GrammyError } from "grammy";
 import {
   combineWithUpdateAbortSignal,
   currentUpdateAbortSignal,
   throwIfUpdateAborted,
 } from "../../updateContext";
 import { logApiError } from "../client";
+import { telegramErrorDetails } from "../errors";
 
 interface RunTelegramActionParams<T, R> {
   action: string;
@@ -95,13 +95,15 @@ export function signalArgs(
 
 /** Telegram 是否明确拒绝了这次操作的权限，而不是偶发失败。 */
 export function isPermissionDenied(error: unknown): boolean {
-  if (!(error instanceof GrammyError)) return false;
+  const details: Readonly<{ errorCode: number; description: string }> | undefined =
+    telegramErrorDetails(error);
+  if (details === undefined) return false;
   // 403 一律算：不在群、被踢出、没有权限，共同点是「这次调用永远不会成功」。
   // 400 只认点名权限的那一句：同为 400 的「用户不存在」「聊天不存在」不该
   // 被当成权限问题，那会让一个本可重试的批次被永久挂起等一个不会来的授权。
-  if (error.error_code === 403) return true;
+  if (details.errorCode === 403) return true;
   return (
-    error.error_code === 400 &&
-    /not enough rights/i.test(error.description)
+    details.errorCode === 400 &&
+    /not enough rights/i.test(details.description)
   );
 }

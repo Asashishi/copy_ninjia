@@ -51,6 +51,16 @@ export const protectedIdentityMutationQueue: { current: Promise<void> } = {
 };
 
 /**
+ * 动态黑名单处置的逐身份串行尾链。
+ *
+ * owner 是主线程；广告命中的「拉黑、落盘、登记并投递封禁」与 `/unblock` 的
+ * 「删名单、落盘、跨群解封」必须按同一身份的到达顺序完整结算，否则较早广告
+ * 任务可能在较晚 `/unblock` 之后补登记旧封禁。不同身份互不阻塞。每条尾链结算
+ * 后立即删除，因此容量只等于当前仍在处理的身份数；进程重启后自然重建。
+ */
+export const blocklistIdentityMutationQueues: Map<number, Promise<void>> = new Map();
+
+/**
  * 本进程启动之后新拉黑的 id → 其 blockedAt 文本。只为 diskIOWorker 崩溃重建后
  * 的重放：新 Worker 会先从文件重新 hydrate，已在文件里的 id 由它自己去重，
  * 因此只需补投「本进程期间产生、可能还没落盘」的这批。启动时 hydrate 进来的
@@ -59,35 +69,15 @@ export const protectedIdentityMutationQueue: { current: Promise<void> } = {
 export const sessionBlockedAt: Map<number, string> = new Map();
 
 /**
- * 本进程启动之后被 `/unblock` 解除的 id。追加型文件补不回「删除」，所以
- * diskIOWorker 崩溃重建后不能只补投这些增量——只要这个集合非空，就必须整份
- * 重写一次文件（见 infra/blocklist/ 的 onDiskIORespawn）。
- *
- * 与 sessionBlockedAt 互斥：拉黑时从这里删、解除时往这里加，否则同一个 id
- * 同时出现在两张表里，重放顺序就决定了他到底在不在名单上。
- * 容量按本进程的解除次数计，`/unblock` 是极低频的人工操作。
+ * 本进程是否发生过 `/unblock`。追加型文件补不回「删除」，所以一旦置真，
+ * diskIOWorker 每次崩溃重建都必须整份重写当前权威名单（见 infra/blocklist/
+ * 的 onDiskIORespawn）。启动 hydrate 时置回 false；进程内保持粘性，不保存解除
+ * 身份历史，因此容量恒为一个布尔值。再次拉黑也不得清零：全量快照已经包含
+ * 最终状态，重复重写比漏掉另一条历史解除安全。
  */
-export const sessionUnblockedIds: Set<number> = new Set();
-
-/**
- * `/block` 命令本进程内已确证踢出的用户：chatId → user id Set。
- *
- * 这里只在 `isChatMember` 明确返回 true、随后 `banChatMember` 又成功时写入；
- * “本来不在群而提前封禁”与查询失败都不进缓存。重复 `/block` 可据此省掉同群
- * 的成员查询与封禁请求，同时继续把原结局计作“已踢出”。
- *
- * 生命周期：只活在主线程进程内，不从 blocklist.json 或 removals.json 恢复，
- * 也不参与 Anti-Raid Worker 的处置重试；东京自然日变化时由
- * infra/blocklist/ 在下一次访问时整表清空，`/unblock` 还会提前删掉该用户。
- * 按需求不设容量上限，容量至多是当天各管理群中被 `/block` 确证踢出的人数。
- */
-export const confirmedKickedUserIdsByChat: Map<number, Set<number>> = new Map();
-
-/**
- * 上述命令缓存所属的东京自然日；null 表示本进程尚未访问过缓存。
- * 使用 holder，避免导出可变 let。
- */
-export const confirmedKickedUsersDay: { current: string | null } = { current: null };
+export const sessionBlocklistRequiresRewrite: { current: boolean } = {
+  current: false,
+};
 
 /**
  * 已投给入群守卫线程、但还没收到落地回执的处置批次（removalId → 入参 + 投递
@@ -143,7 +133,7 @@ const noBlockedMemberRemover: BlockedMemberRemover = (): Promise<number> => Prom
 /**
  * 黑名单处置的执行 owner（入群守卫代理 packages/antiRaid/blocklistGuard.ts 在启动时
  * 反向注册）。单槽位，不随聊天或事件增长；infra 侧只经它分发，不静态依赖
- * Anti-Raid 业务模块（见 docs/04-invariants.md 的 owner 约束）。
+ * Anti-Raid 业务模块（见 docs/cn/04-invariants.md 的 owner 约束）。
  */
 export const blockedMemberRemoverHolder: { current: BlockedMemberRemover } = {
   current: noBlockedMemberRemover,

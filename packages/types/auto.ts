@@ -8,7 +8,7 @@ import type {
 
 /** 单群随机 AI 触发概率所需的最近活跃窗口。 */
 export interface AiReplyActivityEntry {
-  /** 只保留足以计算 1/10 下限的最新消息时间戳。 */
+  /** 只保留足以把随机搭话概率计算到热群下限的最新消息时间戳。 */
   timestamps: TimestampDeque;
   /** 主线程内严格递增的访问序号；仅在满载插入新群时用于选择 LRU。 */
   lastAccessSequence: number;

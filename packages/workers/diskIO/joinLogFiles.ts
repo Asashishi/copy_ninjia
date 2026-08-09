@@ -1,13 +1,12 @@
 /**
  * 滚动 24 小时入群事实的追加日志。文件按 `<chatId>.<东京日期>.json` 分开，
- * 写入沿用 appendOnlyDayFile.ts 的 JSON 对象末尾追写机制；启动恢复不扫描目录，
- * 只有首条入群事实或 `/batch_kick` 查询才接管相关文件。
+ * 写入沿用 appendOnlyDayFile.ts 的 JSON 对象末尾追写机制；启动恢复先扫描保留
+ * 窗口内的全部文件，运行期再按首条事实或 `/batch_kick` 查询建立有界 LRU。
  */
 
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
   unlinkSync,
 } from "node:fs";
@@ -40,7 +39,8 @@ import {
 } from "../../consts/diskIO/common";
 import { JOIN_LOG_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { atomicWriteTextChunksSync } from "../../libs/atomicFile";
-import { getTokyoDateKey } from "../../libs/time";
+import { invalidInput, readJsonInput } from "../../libs/inputValidation";
+import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type {
   JoinLogDiskMessage,
   ReadJoinLogRequest,
@@ -73,6 +73,11 @@ function joinLogPath(chatId: number, day: string): string {
 
 function fileKey(chatId: number, day: string): string {
   return `${chatId}:${day}`;
+}
+
+/** 取 fileKey 里的日期部分；chat id 可能带负号，日期永远在最后一个冒号之后。 */
+function dayOfFileKey(key: string): string {
+  return key.slice(key.lastIndexOf(":") + 1);
 }
 
 function rewriteJoinLogFile(path: string, cache: JoinLogFileCache): void {
@@ -116,37 +121,28 @@ function maybeCompactJoinLogFile(
 }
 
 /**
- * 首次接管某群某日文件时校验领域 schema；截断文件可由通用追写层裁掉最后
- * 一条残片，但可解析的错误结构必须原样拒绝。成功后恢复 latest-by-user 索引。
+ * 首次接管某群某日文件时严格校验领域 schema、容量与规范追加格式；任何
+ * 损坏都保留原始字节并拒绝接管。成功后恢复 latest-by-user 索引。
  */
 function openJoinLogFile(chatId: number, day: string): JoinLogFileCache {
   const path: string = joinLogPath(chatId, day);
   let parsed: Record<string, JoinLogRecord> = {};
-  let schemaValidated: boolean = false;
   if (existsSync(path)) {
-    const content: string = readFileSync(path, "utf8");
-    try {
-      const candidate: unknown = JSON.parse(content);
-      assertJoinLogSchema(path, candidate);
-      parsed = candidate;
-      schemaValidated = true;
-    } catch (error: unknown) {
-      if (!(error instanceof SyntaxError)) throw error;
-    }
-  }
-  const state: AppendOnlyFileState =
-    openAppendOnlyFile(path, PERSISTED_FILE_MODE);
-  if (!schemaValidated && existsSync(path)) {
-    const candidate: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const candidate: unknown = readJsonInput(path);
     assertJoinLogSchema(path, candidate);
     parsed = candidate;
   }
+  const state: AppendOnlyFileState =
+    openAppendOnlyFile(path, PERSISTED_FILE_MODE);
   const latestByUser: Map<number, JoinLogRecord> =
     latestJoinLogRecords(parsed);
-  const evicted: number = trimJoinLogRecordsToCapacity(
-    latestByUser,
-    JOIN_LOG_MAX_USERS_PER_CHAT_DAY
-  );
+  if (latestByUser.size > JOIN_LOG_MAX_USERS_PER_CHAT_DAY) {
+    return invalidInput(
+      path,
+      "$",
+      `at most ${JOIN_LOG_MAX_USERS_PER_CHAT_DAY} distinct users per chat day`
+    );
+  }
   const cache: JoinLogFileCache = {
     state,
     latestByUser,
@@ -158,15 +154,6 @@ function openJoinLogFile(chatId: number, day: string): JoinLogFileCache {
     redundantEntries: 0,
     capacityWarningEmitted: false,
   };
-  if (evicted > 0) {
-    rewriteJoinLogFile(path, cache);
-    cache.capacityWarningEmitted = true;
-    console.error(
-      `[diskIOWorker] join log for chat ${chatId} on ${day} exceeded ` +
-      `${JOIN_LOG_MAX_USERS_PER_CHAT_DAY} users while opening; retained ` +
-      `the newest records and evicted ${evicted}.`
-    );
-  }
   maybeCompactJoinLogFile(path, cache);
   return cache;
 }
@@ -199,7 +186,7 @@ function cleanupExpiredDays(today: string): void {
       continue;
     }
     const match: RegExpExecArray | null = JOIN_LOG_FILE_PATTERN.exec(name);
-    if (match === null || retainedDays.has(match[2]!)) continue;
+    if (match === null || retainedDays.has(match[2]!) || match[2]! > today) continue;
     try {
       unlinkSync(path);
       const key: string = fileKey(Number(match[1]!), match[2]!);
@@ -212,11 +199,62 @@ function cleanupExpiredDays(today: string): void {
   joinLogCleanupDay.current = today;
 }
 
+/**
+ * 启动时扫描所有仍在保留窗口内的入群状态。验证阶段只读且不填充常驻 LRU；
+ * 全部通过后才清理过期日，避免一份坏的保留状态被惰性入口拖到运行期。
+ */
+export function recoverJoinLogFiles(today: string = getTokyoDateKey()): void {
+  mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
+  const retainedDays: ReadonlySet<string> =
+    recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
+  for (const name of readdirSync(JOIN_LOG_MEMORY_DIR)) {
+    if (name.endsWith(TMP_FILE_SUFFIX)) continue;
+    const path: string = join(JOIN_LOG_MEMORY_DIR, name);
+    const match: RegExpExecArray | null = JOIN_LOG_FILE_PATTERN.exec(name);
+    if (match === null) {
+      if (name.endsWith(".json")) {
+        return invalidInput(path, "$filename", "the canonical <chatId>.<YYYY-MM-DD>.json form");
+      }
+      continue;
+    }
+    const chatIdText: string = match[1]!;
+    const chatId: number = Number(chatIdText);
+    const day: string = match[2]!;
+    if (!Number.isSafeInteger(chatId) || chatId === 0 || String(chatId) !== chatIdText) {
+      return invalidInput(path, "$filename", "a canonical non-zero safe-integer chat ID");
+    }
+    if (!isCanonicalDateKey(day)) {
+      return invalidInput(path, "$filename", "a canonical calendar date");
+    }
+    if (day > today) {
+      return invalidInput(path, "$filename", "a date no later than the current Tokyo day");
+    }
+    if (!retainedDays.has(day)) continue;
+    const candidate: unknown = readJsonInput(path);
+    assertJoinLogSchema(path, candidate);
+    const latest: Map<number, JoinLogRecord> = latestJoinLogRecords(candidate);
+    if (latest.size > JOIN_LOG_MAX_USERS_PER_CHAT_DAY) {
+      return invalidInput(path, "$", `at most ${JOIN_LOG_MAX_USERS_PER_CHAT_DAY} distinct users per chat day`);
+    }
+    openAppendOnlyFile(path, PERSISTED_FILE_MODE);
+  }
+  cleanupExpiredDays(today);
+}
+
 function ensureCurrentDayPrepared(today: string): void {
   if (joinLogCleanupDay.current === today) return;
   // 先提交跨日前仍在缓冲中的记录，再清理保留窗口外文件，不能先删后刷。
-  if (!flushJoinLogBuffer()) {
-    throw new Error("Failed to flush join logs before day rollover cleanup.");
+  const failedKeys: ReadonlySet<string> = flushJoinLogEntries();
+  if (failedKeys.size > 0) {
+    // 但「先删后刷」只在**这次要删掉的那一天**仍有未落盘条目时才成立。任意一个
+    // 群写失败就整体拒绝跨日准备的话，每一条新入群事实都会卡在同一个检查上
+    // （handleJoinLogMessage 会因此走 noteJoinLogRejected，连坐一条无关 update
+    // 被重投），而清理动的是保留窗口**之外**的文件，与它们毫无关系。
+    const retainedDays: ReadonlySet<string> =
+      recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
+    for (const key of failedKeys) {
+      if (!retainedDays.has(dayOfFileKey(key))) return;
+    }
   }
   cleanupExpiredDays(today);
 }
@@ -354,13 +392,21 @@ function scheduleJoinLogFlush(delayMs: number = FLUSH_INTERVAL_MS): void {
   joinLogBuffer.timer.unref();
 }
 
-/** 立即把所有群的待写入群事实按目标文件分组追写；失败分组原样保留并退避。 */
-export function flushJoinLogBuffer(): boolean {
+/**
+ * 立即把所有群的待写入群事实按目标文件分组追写；失败分组原样保留并退避。
+ * @returns 本次写失败的 `chatId:day` 键集合；空集表示全部落盘。
+ *
+ * 返回**哪些**分组失败而不只是「有没有失败」：一个群的文件写不动（ENOSPC、
+ * 部署后 chown 导致 EACCES、尾部截断）不能连坐其它群——按需读取和跨日准备
+ * 都只关心自己那几个 `chatId:day`，用全局布尔判会让健康群的 `/batch_kick`
+ * 一起失败，而它自己的日志文件完好且早已刷盘。
+ */
+function flushJoinLogEntries(): ReadonlySet<string> {
   if (joinLogBuffer.timer !== null) {
     clearTimeout(joinLogBuffer.timer);
     joinLogBuffer.timer = null;
   }
-  if (joinLogBuffer.entries.length === 0) return true;
+  if (joinLogBuffer.entries.length === 0) return new Set<string>();
   const entries: BufferedJoinLogEntry[] = joinLogBuffer.entries;
   joinLogBuffer.entries = [];
   const groups: Map<string, {
@@ -387,17 +433,24 @@ export function flushJoinLogBuffer(): boolean {
   }
 
   const failedEntries: BufferedJoinLogEntry[] = [];
-  for (const group of groups.values()) {
+  const failedKeys: Set<string> = new Set<string>();
+  for (const [key, group] of groups) {
     if (!writeFileEntries(group.chatId, group.day, group.entries)) {
       failedEntries.push(...group.entries);
+      failedKeys.add(key);
     }
   }
-  if (failedEntries.length === 0) return true;
+  if (failedEntries.length === 0) return failedKeys;
   // flush 是同步 owner，新消息不能在循环中插入；仍使用 prepend 语义明确保证
   // 失败的旧事实排在未来新事实之前。
   joinLogBuffer.entries = failedEntries.concat(joinLogBuffer.entries);
   scheduleJoinLogFlush(JOIN_LOG_REOPEN_RETRY_MS);
-  return false;
+  return failedKeys;
+}
+
+/** 缓冲整体落盘成功；调用方只关心「有没有失败」时用它。 */
+export function flushJoinLogBuffer(): boolean {
+  return flushJoinLogEntries().size === 0;
 }
 
 /**
@@ -418,9 +471,24 @@ export function flushJoinLogDomain(): boolean {
  *
  * 本函数不吞异常：调用方（diskIOWorker 的 joinLog 分支）负责兜底并记下拒收，
  * 缺了那层兜底异常会逸出 Worker 的 onmessage、被 Bun 直接终止整条落盘线程。
+ *
+ * 「窗口外」的两侧收场不同，必须分开判：
+ *
+ * - **过旧**（停机后 Telegram 重投的几天前入群）是**有意静默丢弃**。滚动 24 小时
+ *   窗口本来就用不上它，报失败只会让这条 update 永远得不到确认、被反复重投。
+ * - **领先**（事件日期比本 Worker 的今天还晚）不是「窗口用不上」，而是事件时间与
+ *   宿主时钟对不上。照过旧那样静默 return 的话，recordJoinLog 会把它当成已经落盘
+ *   （见 infra/joinLog.ts），这条入群从此在 `/batch_kick` 里查无此人、全链路零日志。
+ *   抛出去交给统一的拒收出口：update 不被确认，Telegram 重投一次即可自愈。
  */
 export function handleJoinLogMessage(msg: JoinLogDiskMessage): void {
   const today: string = getTokyoDateKey();
+  // YYYY-MM-DD 定宽零填充，字典序即日期序。
+  if (msg.day > today) {
+    throw new Error(
+      `Join log event day ${msg.day} is ahead of the worker's current Tokyo day ${today}.`
+    );
+  }
   if (!isRecentJoinLogDay(msg.day, today, JOIN_LOG_ACCEPTED_EVENT_DAYS)) {
     return;
   }
@@ -458,14 +526,21 @@ export function readJoinLog(
   }
   const today: string = getTokyoDateKey();
   ensureCurrentDayPrepared(today);
-  if (!flushJoinLogBuffer()) {
-    throw new Error("Failed to flush pending join logs before reading.");
-  }
+  const failedKeys: ReadonlySet<string> = flushJoinLogEntries();
 
   const firstDay: string = getTokyoDateKey(new Date(request.since));
   const lastDay: string = getTokyoDateKey(new Date(request.now));
   const requestedDays: string[] =
     firstDay === lastDay ? [firstDay] : [firstDay, lastDay];
+  // 只认本群、本窗口这一两个文件的落盘结果：别的群写不动与这次读取无关，
+  // 用全局判据会让日志完好的群也收到「入群日志暂时读不了」。
+  for (const day of requestedDays) {
+    if (failedKeys.has(fileKey(request.chatId, day))) {
+      throw new Error(
+        `Failed to flush pending join logs for chat ${request.chatId} on ${day} before reading.`
+      );
+    }
+  }
   const latestByUser: Map<number, JoinLogRecord> = new Map();
   for (const day of requestedDays) {
     if (!isRecentJoinLogDay(day, today, JOIN_LOG_FILE_RETENTION_DAYS)) {

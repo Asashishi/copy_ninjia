@@ -19,16 +19,24 @@ export type * from "./diskIO/storage";
 
 export type LogLevel = "log" | "info" | "warn" | "error";
 
-/** 一条日志的内容（不含 type 标；也是 ForwardedLog 转发信封内层的形状）。 */
+/** 一条日志的内容（不含 type 标；也是 Worker 日志转发批次的元素形状）。 */
 export interface LogMessage {
   timestamp: number;
   level: LogLevel;
   args: unknown[];
 }
 
-/** Worker 线程转发 error 日志回主线程时的信封（logger.ts 的转发模式，机制不变）。 */
-export interface ForwardedLog {
-  __log: LogMessage;
+/** Worker 线程 -> 主线程：单批在途、无界待发送 FIFO 中的一批 error 日志。 */
+export interface ForwardedLogBatch {
+  readonly __logBatch: {
+    readonly batchId: number;
+    readonly messages: readonly LogMessage[];
+  };
+}
+
+/** 主线程 -> Worker 线程：已消费指定日志批次，允许发送下一批。 */
+export interface ForwardedLogBatchAccepted {
+  readonly __logBatchAccepted: number;
 }
 
 /** 主线程/转发 -> diskIOWorker：落盘一条日志。 */
@@ -54,6 +62,24 @@ export interface AiMemoryDeleteDiskMessage {
   type: "deleteAiMemory";
   chatId: number;
   revision: number;
+}
+
+/**
+ * 主线程 -> diskIOWorker：丢弃某群 AI 记忆的 revision 水位线。
+ *
+ * 只在主线程自己的 revision 计数器归零的同一时刻发出（chat teardown，且已确认
+ * 该群没有任何在途快照、墓碑与 waiter，见 aiChat/memoryMirror.ts 的
+ * forgetAiMemoryRevisionCounter）。少了这条消息，两侧的水位线作用域就不一致：
+ * 主线程从 revision 1 重新开始，Worker 侧还停在删除时的高水位，重新启用后的
+ * 快照会被 `revision < currentRevision` 判成迟到消息**静默丢弃**，一直丢到
+ * 计数器重新爬过旧水位为止。
+ *
+ * 不带 revision：它表达的正是「这个 chat 的 revision 序列到此为止」，
+ * 而不是某一次状态变更。
+ */
+export interface AiMemoryForgetDiskMessage {
+  type: "forgetAiMemory";
+  chatId: number;
 }
 
 /** 主线程 -> diskIOWorker：覆盖式写入某个白名单贴纸包的目录快照。snapshot
@@ -153,6 +179,19 @@ export interface AdSampleDiskMessage {
 }
 
 /**
+ * 不进入权威业务恢复缓冲的 Disk I/O 诊断。传输层在进程存活期间保留到 ACK；
+ * 各落盘领域是否把写失败升级为业务失败，仍由日志与广告样本各自决定。
+ */
+export type DiskDiagnosticMessage = LogEnvelope | AdSampleDiskMessage;
+
+/** 主线程 -> diskIOWorker：单批有界、待发送 FIFO 无界的 ACK 诊断批次。 */
+export interface DiskDiagnosticBatchRequest {
+  readonly type: "diagnosticBatch";
+  readonly batchId: number;
+  readonly messages: readonly DiskDiagnosticMessage[];
+}
+
+/**
  * 主线程 -> diskIOWorker：一条权威 `chat_member` 入群事实。
  * Worker 按群、按东京日期追写；启动恢复不读取这类日志。
  */
@@ -169,6 +208,7 @@ export interface JoinLogDiskMessage {
 export type DiskBusinessMessage =
   | AiMemoryDiskMessage
   | AiMemoryDeleteDiskMessage
+  | AiMemoryForgetDiskMessage
   | StickerCatalogDiskMessage
   | LuckDrawDiskMessage
   | VerificationUpsertDiskMessage
@@ -176,7 +216,6 @@ export type DiskBusinessMessage =
   | BlockUserDiskMessage
   | UnblockUserDiskMessage
   | BlocklistRemovalsDiskMessage
-  | AdSampleDiskMessage
   | JoinLogDiskMessage;
 
 /**
@@ -221,6 +260,22 @@ export interface LoadRequest {
   type: "load";
 }
 
+/**
+ * 主线程 -> diskIOWorker：恢复缓冲重放窗口的开合标记。
+ *
+ * 一条业务消息「写失败了」在两种到达方式下的收场完全不同。正常在线投递的那条
+ * 后面紧跟着调用方自己的领域 flush（见 infra/joinLog.ts），失败由那次 flush 回报，
+ * update 不被确认、Telegram 重投即可自愈；而恢复缓冲重放的那条**没有任何人再来
+ * flush**——recordJoinLog 早在缓冲那一刻就已经放行了这条 update。Worker 自己看不出
+ * 两者的区别，因此由主线程在重放前后各发一条标记把那段区间圈出来：区间内的写失败
+ * 只能按 infra/joinLog.ts 承诺的那样走 stopWorkerAfterLoadFailure 的统一 fatal 停机。
+ */
+export interface RecoveryReplayRequest {
+  type: "recoveryReplay";
+  /** true = 后续消息来自恢复缓冲重放；false = 重放结束，恢复常规语义。 */
+  active: boolean;
+}
+
 /** 主线程跨东京日期后要求唯一 Disk I/O Worker 加载或原子轮换日级密钥。 */
 export interface EnsureLuckSecretRequest {
   type: "ensureLuckSecret";
@@ -244,9 +299,10 @@ export interface ReadJoinLogRequest {
 }
 
 export type DiskIOMessage =
-  | LogEnvelope
+  | DiskDiagnosticBatchRequest
   | AiMemoryDiskMessage
   | AiMemoryDeleteDiskMessage
+  | AiMemoryForgetDiskMessage
   | StickerCatalogDiskMessage
   | LuckDrawDiskMessage
   | VerificationUpsertDiskMessage
@@ -254,11 +310,11 @@ export type DiskIOMessage =
   | BlockUserDiskMessage
   | UnblockUserDiskMessage
   | BlocklistRemovalsDiskMessage
-  | AdSampleDiskMessage
   | JoinLogDiskMessage
   | EnsureLuckSecretRequest
   | ReadJoinLogRequest
   | LoadRequest
+  | RecoveryReplayRequest
   | DiskFlushRequest;
 
 /** diskIOWorker -> 主线程：启动恢复读盘完成。两张快照表的值与增量写入
@@ -355,6 +411,19 @@ export interface DiskFlushFailedReply {
   failedDomains: readonly DiskIODomain[];
 }
 
+/** diskIOWorker -> 主线程：指定诊断批次已同步消费，发送窗口可以继续前进。 */
+export interface DiskDiagnosticBatchAcceptedReply {
+  readonly type: "diagnosticBatchAccepted";
+  readonly batchId: number;
+}
+
+/** diskIOWorker -> 主线程：该批日志尚未 durable，保留原批并在退避后重发。 */
+export interface DiskDiagnosticBatchRetryReply {
+  readonly type: "diagnosticBatchRetry";
+  readonly batchId: number;
+  readonly retryAfterMs: number;
+}
+
 /** diskIOWorker -> 主线程：一条验证变化已经进入当天 JSON 文件。 */
 export interface VerificationPersistedReply {
   type: "verificationPersisted";
@@ -388,7 +457,7 @@ export interface AiMemoryPersistedReply {
  * 在别处完全无迹可寻（主线程 dailyLuckCache 照常命中，用户看不出异常）。
  * 递归风险为零：主线程据此记的日志走 log 领域，log 领域自己写失败只 console.error，
  * 不会再产生第二条 logger 调用。
- * @see ../../docs/04-invariants.md
+ * @see ../../docs/cn/04-invariants.md
  */
 export interface LuckAppendStalledReply {
   type: "luckAppendStalled";
@@ -402,8 +471,28 @@ export interface LuckAppendStalledReply {
   error: string;
 }
 
+/**
+ * diskIOWorker -> 主线程：恢复缓冲重放期间有一条业务事实没能写进去。
+ *
+ * 与 LuckAppendStalledReply 一样是「Worker 内部错误只 console.error」的窄口径例外，
+ * 但走的不是日志而是停机：这条事实对应的 update 已经被确认过了（见
+ * RecoveryReplayRequest），继续跑下去就是一次无迹可寻的静默丢数据。主线程收到后
+ * 按 stopWorkerAfterLoadFailure 的统一 fatal 路径停机，让 Telegram 从上一个确认点
+ * 重投。
+ */
+export interface RecoveryReplayFailedReply {
+  type: "recoveryReplayFailed";
+  /** 出错的业务消息类型，供运维直接判读是哪个领域。 */
+  domain: DiskIODomain;
+  /** 错误文本；不含任何消息内容，避免把用户数据写进诊断。 */
+  error: string;
+}
+
 export type DiskIOReply =
   | LoadedReply
+  | DiskDiagnosticBatchAcceptedReply
+  | DiskDiagnosticBatchRetryReply
+  | RecoveryReplayFailedReply
   | LuckSecretReply
   | JoinLogReadReply
   | DiskFlushReply

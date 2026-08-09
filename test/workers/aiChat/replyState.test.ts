@@ -6,6 +6,8 @@ import {
   pendingOverflowNotices,
   pendingReplyTriggers,
   rateLimitNoticeTimes,
+  replyAbortControllers,
+  replyGenerationTasks,
   replyGenerations,
   sweepAiChatReplyCache,
 } from "../../../packages/cache/workers/aiChat/replies";
@@ -25,6 +27,7 @@ import {
   currentReplyGeneration,
   invalidateChatReplies,
   isReplyGenerationCurrent,
+  quiesceAiChatReplies,
   replyGenerationSignal,
   trackReplyGenerationTask,
 } from "../../../packages/workers/aiChat/replyState";
@@ -36,7 +39,7 @@ afterEach(() => {
 describe("AI 回复代际状态", () => {
   test("失效操作回收旧 epoch，清除排队/限频/心跳，但保留在途计数到 finally", async () => {
     const queue = new LinkedQueue<QueuedReplyTrigger>();
-    queue.push({ triggerSenderId: 7, replyToMessageId: 1, imageGenerationRequested: false, senderName: "Alice", text: "hello" });
+    queue.push({ triggerSenderId: 7, replyToMessageId: 1, telegramBackpressured: false, imageGenerationRequested: false, senderName: "Alice", text: "hello" });
     pendingReplyTriggers.set(-1001, queue);
     pendingOverflowNotices.add(-1001);
     const triggerTimes = new LinkedQueue<number>();
@@ -142,6 +145,40 @@ describe("AI 回复代际状态", () => {
       globalThis.clearTimeout = originalClearTimeout;
       loggerErrorSpy.mockRestore();
     }
+  });
+
+  test("Worker 排空会中止全部代次并等待所有 generation-sensitive 任务", async () => {
+    const firstGeneration: number = currentReplyGeneration(-1008);
+    const secondGeneration: number = currentReplyGeneration(-1009);
+    const firstSignal: AbortSignal = replyGenerationSignal(-1008, firstGeneration);
+    const secondSignal: AbortSignal = replyGenerationSignal(-1009, secondGeneration);
+    let settleFirst: (() => void) | undefined;
+    let settleSecond: (() => void) | undefined;
+    trackReplyGenerationTask(-1008, firstGeneration, new Promise<void>((resolve: () => void): void => {
+      settleFirst = resolve;
+    }));
+    trackReplyGenerationTask(-1009, secondGeneration, new Promise<void>((resolve: () => void): void => {
+      settleSecond = resolve;
+    }));
+
+    let drained: boolean = false;
+    const drain: Promise<void> = quiesceAiChatReplies().then((): void => { drained = true; });
+    await Promise.resolve();
+
+    expect(firstSignal.aborted).toBeTrue();
+    expect(secondSignal.aborted).toBeTrue();
+    expect(replyGenerations.size).toBe(0);
+    expect(drained).toBeFalse();
+
+    settleFirst!();
+    await Promise.resolve();
+    expect(drained).toBeFalse();
+    settleSecond!();
+    await drain;
+
+    expect(drained).toBeTrue();
+    expect(replyGenerationTasks.size).toBe(0);
+    expect(replyAbortControllers.size).toBe(0);
   });
 
   test("Worker 重建清理边界会清空所有领域缓存并停止心跳 timer", () => {

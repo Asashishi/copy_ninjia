@@ -44,20 +44,21 @@ export interface ResolveCommandTargetParams {
   /**
    * 是否接受裸用户 id 作为目标（缺省不接受）。
    *
-   * 逐命令 opt-in，不做成全局行为：`/block`、`/unblock`、`/permission` 与
-   * `/white` 操作的权威目标都是 id，用 id 指定反而比 @username 更准——用户名
-   * 可以被释放后由别人重新注册，而 id 不会改指另一个人。`/copy` 与中文动作命令
-   * 则相反，它们要的是一份有名字、有头像的身份，拿一个没在本天才见过的群里
-   * 说过话的裸 id 只能复读出一具空壳。
+   * 逐命令 opt-in，不做成全局行为：`/block`、`/unblock`、`/gag`、`/ungag`、
+   * `/permission` 与 `/white` 操作的权威目标都是 id，用 id 指定反而比 @username
+   * 更准——用户名可以被释放后由别人重新注册，而 id 不会改指另一个人。`/copy`
+   * 与中文动作命令则相反，它们要的是一份有名字、有头像的身份，拿一个没在
+   * 本天才见过的群里说过话的裸 id 只能复读出一具空壳。
    */
   acceptUserId?: boolean;
   /**
    * 是否接受裸会话 id（频道/群的负数 id）作为目标（缺省不接受）。
    *
-   * `/unblock`、`/permission` 与 `/white` 开这条路：前者需要保证黑名单里的频道
-   * 身份始终能被划掉，后两者需要直接管理频道白名单及权限。`/block` 不开这条：
-   * 粘错一个会话 id 会把处置改成封掉整个会话身份，而那条命令不可逆；其余三条
-   * 都是可恢复的配置操作。详见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN。
+   * `/gag`、`/ungag`、`/unblock`、`/permission` 与 `/white` 开这条路：前两条
+   * 按 sender_chat 建立或解除频道发言限制，`/unblock` 要保证黑名单里的频道身份
+   * 始终能被划掉，后两者需要直接管理频道白名单及权限。`/block` 不开这条：粘错
+   * 一个会话 id 会把处置改成封掉整个会话身份，而那条命令不可逆；其余调用都是
+   * 可恢复的运行时或配置操作。详见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN。
    */
   acceptChatId?: boolean;
 }
@@ -116,7 +117,12 @@ function resolveArgumentTarget({
  * 超过 Telegram 单条上限的消息，发不出去，用户只收到沉默（理由见 consts/commands.ts
  * 的 INVALID_USERNAME_ECHO_MAX_CHARS）。用 sanitizeDisplayName 而不是 sanitizeInline：
  * 这段要被拼进机器人自己写的句子中间，和昵称是同一处境——一个 RLO 就能让整句的
- * 其余部分反向渲染（理由见 libs/text.ts 的 sanitizeDisplayName）。
+ * 其余部分反向渲染，一个 `/batch_kick 1d` 参数则让机器人自己印出可点击命令
+ * （两条理由都见 libs/text.ts 的 sanitizeDisplayName，中和已在那一层做掉）。
+ *
+ * **不要在这里或 sendCommandMessage 上加整条 containsRenderableCommand 守卫**：
+ * 命令回执是机器人自己写的句子，`/unquiet`、`/batch_kick`、`/x` 这些用法提示本来
+ * 就该可点，整条判定会把它们全部换成固定文案。守的是片段，不是整条。
  */
 function echoArgument(trimmedArgument: string): string {
   return truncateInline(sanitizeDisplayName(trimmedArgument), INVALID_USERNAME_ECHO_MAX_CHARS);

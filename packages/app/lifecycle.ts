@@ -8,6 +8,7 @@ import {
   RUNNER_DRAIN_TIMEOUT_MS,
 } from "../consts/lifecycle";
 import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
+import { BLOCKLIST_CONFIG_PATH, BLOCKLIST_FILE_PATH } from "../consts/paths";
 import type { CachedUser } from "../types/chatState";
 import type { BlocklistConfig } from "../types/blocklist";
 import type { LoadedData } from "../types/diskIO";
@@ -15,7 +16,6 @@ import type { WhitelistConfig } from "../types/whitelist";
 import { assertBlocklistProtectedIdentitiesDisjoint } from "../config/blocklist";
 import type {
   AcknowledgedUpdateRunner,
-  ApplicationLifecycleDependencies,
   FlushResult,
   FlushTimeouts,
   HandlerRegistration,
@@ -25,6 +25,7 @@ import type {
   ShutdownResults,
 } from "../types/lifecycle";
 import { lifecycleDependencies } from "./lifecycleDependencies";
+import type { ApplicationLifecycleDependencies } from "./lifecycleDependencies";
 import {
   classifyShutdown,
   createOwnerSettler,
@@ -37,11 +38,13 @@ import {
   isMonotonicDeadlineExpired,
 } from "../libs/monotonicDeadline";
 
+type ShutdownSignal = "SIGINT" | "SIGTERM";
+
 /**
  * 持有应用从取得单实例锁到释放锁的完整生命周期。所有会联网、创建 Worker、
  * 注册进程 handler 或写盘的动作都由显式 init/run/dispose 驱动，模块导入本身
  * 不启动任何组件。
- * @see ../../docs/04-invariants.md
+ * @see ../../docs/cn/04-invariants.md
  */
 export class ApplicationLifecycle {
   constructor(private readonly dependencies: ApplicationLifecycleDependencies = lifecycleDependencies) {}
@@ -72,13 +75,23 @@ export class ApplicationLifecycle {
    */
   private finalOffsetGateSucceeded: boolean = true;
 
-  private readonly stopOnSignal = (): void => {
+  private stopAfterSignal(): void {
     this.stopRequested = true;
     this.quiesceMaintenance();
     this.runner?.stop().catch((error: unknown): void => {
       this.dependencies.logger.error("Error stopping runner:", error);
     });
-  };
+  }
+
+  private stopOnSignal(signal: ShutdownSignal): void {
+    if (!this.stopRequested) {
+      this.dependencies.logger.log(`Received ${signal}; beginning graceful shutdown.`);
+    }
+    this.stopAfterSignal();
+  }
+
+  private readonly stopOnSigint = (): void => { this.stopOnSignal("SIGINT"); };
+  private readonly stopOnSigterm = (): void => { this.stopOnSignal("SIGTERM"); };
 
   private readonly handleUncaughtException = (error: unknown): void => {
     this.dependencies.logger.error("Uncaught exception, attempting a best-effort flush before exit:", error);
@@ -131,7 +144,7 @@ export class ApplicationLifecycle {
       blockedIds: blocklistConfig.blockedIds,
       whitelistIds: whitelistConfig.keys(),
       superAdminId: this.dependencies.SUPER_ADMIN_USER_ID,
-      source: "static blocklist config",
+      source: BLOCKLIST_CONFIG_PATH,
     });
     this.dependencies.setBusinessWorkerFatalHandler(this.handleBusinessWorkerFatal);
     this.dependencies.setStatePersistenceFatalHandler(this.handleDiskIOFatal);
@@ -139,19 +152,16 @@ export class ApplicationLifecycle {
     this.dependencies.initReactionQueue();
     this.dependencies.initChatTitleRefresh();
     this.dependencies.initTranslate();
+    this.dependencies.initGagRuntime();
     this.flags.translateInitialized = true;
 
-    // 配置文件属于不可信部署输入，但**不在这里统一预热**：那样一份写坏的贴纸
-    // 白名单就能让 copy、抽奖、入群验证、黑名单——全部按群 opt-in 之外的核心
-    // 能力——跟着离线，systemd 还会照着重启循环。校验挪到各功能自己的 enable
-    // 分支（见 config/readiness.ts 与 commands/configGate.ts），坏了只拒绝那一个
-    // 功能；各 Worker 在自己的 isolate 中复用同一解析器。
+    // 配置文件和持久化状态都是不可信部署输入。配置总闸会在
+    // preflightEnabledFeatures 中校验所有已存在的输入，不受功能开关影响；
+    // 各 Worker 在自己的 isolate 中复用同一严格解析器。
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
-    // 状态就绪、还没碰网络与 Worker 时核对一次：state.json 里还开着的可选功能，
-    // 前提必须齐备。缺了就按老规矩拒绝启动——把管理员明确开过的功能悄悄降级成
-    // 「静默不干活」，群里只会看到机器人从某次重启起再也不理人（见
-    // app/featurePreflight.ts）。谁都没开的功能缺前提不在这里拦。
+    // 状态就绪、还没碰网络与 Worker 时执行总闸：已存在配置必须全部
+    // 合法，已启用功能的凭据与前提也必须齐备（见 app/featurePreflight.ts）。
     this.dependencies.preflightEnabledFeatures();
 
     // state 主副本已经严格校验并建立 LKG 后，才创建运行时 Worker 和会安装
@@ -165,7 +175,7 @@ export class ApplicationLifecycle {
       blockedIds: loaded.blockedUsers.keys(),
       whitelistIds: whitelistConfig.keys(),
       superAdminId: this.dependencies.SUPER_ADMIN_USER_ID,
-      source: "persisted dynamic blocklist",
+      source: BLOCKLIST_FILE_PATH,
     });
     const restoredCopiedUser: CachedUser | null = this.dependencies.getGlobalCopyState().copiedUser;
     if (restoredCopiedUser) this.dependencies.seedSenderCache(restoredCopiedUser);
@@ -192,6 +202,24 @@ export class ApplicationLifecycle {
     // 所有已初始化且已确证管理员的群补一轮，频道 ID 会由 Worker 走封发言权路径。
     await this.dependencies.sweepManagedBlocklistChats();
 
+    // 素材直链只能手工编辑，缺省时又整块不出现在文件里。把没设过的项按内置常量
+    // 补进 state 并后台落盘，改图的人打开 state.json 就能看到当前生效值（见
+    // infra/storage/stateStore.ts 的 seedMissingAssetState）。补写不阻塞启动。
+    //
+    // 排在**最后一个会拒绝启动的 await 之后**：功能闸、持久化恢复、bot.init 与
+    // 黑名单补扫都可能中止这次启动，而被拒绝的那次运行不该顺手改写运维正要拿去
+    // 排查的 state.json——只排在功能闸之后是守不住这句话的。
+    //
+    // 确有补写就记一行：改的是部署方的文件，logs/ 里不能只字不提（见
+    // AGENTS.md 的数据归属）。
+    const seededAssetUrls: number = this.dependencies.seedMissingAssetState();
+    if (seededAssetUrls > 0) {
+      this.dependencies.logger.log(
+        `Seeded ${seededAssetUrls} missing state.global.assets URL(s) with built-in defaults; ` +
+        "state.json and its backup are being rewritten in the background."
+      );
+    }
+
     this.dependencies.logger.log(
       `Bot started as @${this.dependencies.bot.botInfo.username}. ` +
       `Restored state for ${this.dependencies.getAllChatStates().size} chat(s)` +
@@ -204,13 +232,13 @@ export class ApplicationLifecycle {
     );
     // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
     // init 前段，而上面的 initAvatarUpdates/initReactionQueue/
-    // initChatTitleRefresh/initTranslate 又把四个 owner 重新置为接受工作。
+    // initChatTitleRefresh/initTranslate/initGagRuntime 又把五个 owner 重新置为接受工作。
     // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
     // getChat 扫描加批量落盘。
-    if (this.stopRequested) this.stopOnSignal();
+    if (this.stopRequested) this.stopAfterSignal();
     // 关键 Bot API 握手、Worker hydrate 和 runner 入口全部就绪后，才让低优先级
-    // 标题维护进入共享 throttler；小并发池由 chatTitle owner 自己保证。
+    // 标题维护进入 Telegram query 类别的 429 队列；小并发池由 chatTitle owner 自己保证。
     this.chatTitleRefreshSettled = false;
     this.chatTitleRefreshTask = this.dependencies.refreshAllChatTitles()
       .catch((error: unknown): void => {
@@ -251,7 +279,7 @@ export class ApplicationLifecycle {
     // 停机时取数循环会放弃在途 update、不再 await 它的结算，随后发生的失败
     // 只有 runner 的这个标记能证明（task() 会正常 resolve）。失败的 update 必须
     // 留给 Telegram 重投，绝不能被最终 offset 一起确认，见
-    // docs/04-invariants.md「Telegram update 只有在对应 middleware 完成后才可
+    // docs/cn/04-invariants.md「Telegram update 只有在对应 middleware 完成后才可
     // 推进确认边界」。读在 waitForRunnerDrain 之后：标记与 size() 归零同步。
     const failedUpdateWithheld: boolean = runner.hasFailedUpdate();
     if (failedUpdateWithheld) {
@@ -385,8 +413,8 @@ export class ApplicationLifecycle {
     if (this.processHandlersInstalled) return;
     // 信号 handler 要在第一个 await 之前安装；若信号在 runner 创建前到达，
     // stopRequested 会让 runner 一创建就立即停止。
-    process.once("SIGINT", this.stopOnSignal);
-    process.once("SIGTERM", this.stopOnSignal);
+    process.once("SIGINT", this.stopOnSigint);
+    process.once("SIGTERM", this.stopOnSigterm);
     process.on("uncaughtException", this.handleUncaughtException);
     process.on("unhandledRejection", this.handleUnhandledRejection);
     this.processHandlersInstalled = true;
@@ -394,8 +422,8 @@ export class ApplicationLifecycle {
 
   private removeProcessHandlers(): void {
     if (!this.processHandlersInstalled) return;
-    process.removeListener("SIGINT", this.stopOnSignal);
-    process.removeListener("SIGTERM", this.stopOnSignal);
+    process.removeListener("SIGINT", this.stopOnSigint);
+    process.removeListener("SIGTERM", this.stopOnSigterm);
     process.removeListener("uncaughtException", this.handleUncaughtException);
     process.removeListener("unhandledRejection", this.handleUnhandledRejection);
     this.processHandlersInstalled = false;
@@ -503,12 +531,12 @@ export class ApplicationLifecycle {
   }
 
   /**
-   * 让四个后台维护 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：init()
-   * 里的 initAvatarUpdates/initReactionQueue/initChatTitleRefresh/initTranslate
-   * 会把 accepting 重新置真，启动期到达的停止信号若把成功记成一次性完成，此后
-   * wait()/dispose() 的每一次调用都会被短路——四个 owner 整个停机期间继续收活，
+   * 让五个后台/临时状态 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：
+   * init() 里的各 init 会把 accepting 重新置真，启动期到达的停止信号若把成功
+   * 记成一次性完成，此后 wait()/dispose() 的每一次调用都会被短路——owner
+   * 整个停机期间继续收活，
    * 而 maintenanceQuiesceSucceeded 仍报 true，最终 offset 照常确认，停机诊断里
-   * 一点痕迹都没有。四次调用都是幂等赋值，重复执行不花什么代价。
+   * 一点痕迹都没有。各调用都是幂等赋值，重复执行不花什么代价。
    */
   private quiesceMaintenance(): boolean {
     let succeeded: boolean = true;
@@ -525,6 +553,7 @@ export class ApplicationLifecycle {
     quiesceOwner("reaction", (): void => this.dependencies.quiesceReactionQueue());
     quiesceOwner("chat-title", (): void => this.dependencies.quiesceChatTitleRefresh());
     quiesceOwner("translate", (): void => this.dependencies.quiesceTranslate());
+    quiesceOwner("gag", (): void => this.dependencies.quiesceGagRuntime());
     return succeeded;
   }
 

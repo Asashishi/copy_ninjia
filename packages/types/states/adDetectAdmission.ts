@@ -29,7 +29,7 @@ export interface AdRequeueInput {
   readonly hasUncheckedContent: boolean;
   /** 这个键此刻排在队列里。 */
   readonly queued: boolean;
-  /** 这个键此刻正在等 DeepSeek 回话。 */
+  /** 这个键此刻正在等广告检测 provider 回话。 */
   readonly inFlight: boolean;
   /** 这个键在本轮去重窗口里已经排过一次队。 */
   readonly recentlyEnqueued: boolean;
@@ -57,7 +57,7 @@ export type AdBundleStorageDecision =
   | { readonly action: "rejectAtCapacity" };
 
 export interface AdDispatchInput {
-  /** 此刻正在等 DeepSeek 回话的键数。 */
+  /** 此刻正在等广告检测 provider 回话的键数。 */
   readonly inFlight: number;
 }
 

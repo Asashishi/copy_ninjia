@@ -10,6 +10,10 @@ import type {
 const DEFAULT_IS_CAN_MUTE: boolean = false;
 /** 白名单条目缺省不可使用手动解除禁言。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_UNMUTE: boolean = false;
+/** 白名单条目缺省不可使用 /gag 与 /ungag。所属模块：packages/config/whitelist.ts。 */
+const DEFAULT_IS_CAN_GAG: boolean = false;
+/** 白名单条目缺省可以查看 /bot_status。所属模块：packages/config/whitelist.ts。 */
+const DEFAULT_IS_CAN_VIEW_BOT_STATUS: boolean = true;
 /** 白名单条目缺省不可写入永久黑名单。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_BLOCK: boolean = false;
 /** 白名单条目缺省不可移出永久黑名单。所属模块：packages/config/whitelist.ts。 */
@@ -28,6 +32,8 @@ const DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION: boolean = false;
 const DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION: boolean = false;
 /** 白名单条目缺省不可开关日语翻译。所属模块：packages/config/whitelist.ts。 */
 const DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION: boolean = false;
+/** 白名单条目缺省不可开关入群守卫。所属模块：packages/config/whitelist.ts。 */
+const DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION: boolean = false;
 
 /**
  * 白名单权限的完整默认值。跨调用方共享同一个对象，由 `Readonly<>` 在编译期
@@ -38,6 +44,8 @@ const DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION: boolean = false;
 export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: DEFAULT_IS_CAN_MUTE,
   isCanUnMute: DEFAULT_IS_CAN_UNMUTE,
+  isCanGag: DEFAULT_IS_CAN_GAG,
+  isCanViewBotStatus: DEFAULT_IS_CAN_VIEW_BOT_STATUS,
   isCanBlock: DEFAULT_IS_CAN_BLOCK,
   isCanUnBlock: DEFAULT_IS_CAN_UNBLOCK,
   isCanSwitchMood: DEFAULT_IS_CAN_SWITCH_MOOD,
@@ -47,6 +55,7 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanControllAdDetectPermission: DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION,
   isCanControllFloodControlPermission: DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION,
   isCanControllJATranslatePermission: DEFAULT_IS_CAN_CONTROLL_JA_TRANSLATE_PERMISSION,
+  isCanControllAntiRaidPermission: DEFAULT_IS_CAN_CONTROLL_ANTI_RAID_PERMISSION,
 };
 
 /**
@@ -72,6 +81,8 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
 export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: true,
   isCanUnMute: true,
+  isCanGag: true,
+  isCanViewBotStatus: true,
   isCanBlock: true,
   isCanUnBlock: true,
   isCanSwitchMood: true,
@@ -81,12 +92,15 @@ export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> =
   isCanControllAdDetectPermission: true,
   isCanControllFloodControlPermission: true,
   isCanControllJATranslatePermission: true,
+  isCanControllAntiRaidPermission: true,
 };
 
 /** 白名单配置与 /permission 共同接受的权限键全集。 */
 export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanMute",
   "isCanUnMute",
+  "isCanGag",
+  "isCanViewBotStatus",
   "isCanBlock",
   "isCanUnBlock",
   "isCanSwitchMood",
@@ -96,6 +110,7 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanControllAdDetectPermission",
   "isCanControllFloodControlPermission",
   "isCanControllJATranslatePermission",
+  "isCanControllAntiRaidPermission",
 ];
 
 /** /permission 的权限说明子命令。所属模块：packages/commands/permission.ts。 */
@@ -114,6 +129,8 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
 > = {
   isCanMute: "让这号杂鱼也能用 /mute 临时捂住普通成员的嘴，别乱给哦♡",
   isCanUnMute: "让这号杂鱼也能用 /unmute 提前松开普通成员的嘴，勉强算有点用♡",
+  isCanGag: "让这号杂鱼能用 /gag 与 /ungag 控制群内用户或频道身份只能 @ 本天才说话，别乱戴东西哦♡",
+  isCanViewBotStatus: "让这号杂鱼能用 /bot_status 查看全局模型能力、Telegram 出站和本群功能状态♡",
   isCanBlock: "让这号杂鱼能用 /block 把目标记进永久黑名单，还会在托管群里一起封掉哦♡",
   isCanUnBlock: "让这号杂鱼能用 /unblock 把目标移出永久黑名单，并解除所有托管群里的封禁哦♡",
   isCanSwitchMood: "让这号杂鱼能用 /switch_mood 重新抽取本天才现在的心情，可别把本天才折腾坏了♡",
@@ -123,6 +140,7 @@ export const WHITELIST_PERMISSION_HELP: Readonly<
   isCanControllAdDetectPermission: "让这号杂鱼能用 /ad_detect enable|disable 开关广告检测，抓漏了就怪你哦♡",
   isCanControllFloodControlPermission: "让这号杂鱼能用 /flood_control enable|disable 开关防刷屏禁言，别乱按呀♡",
   isCanControllJATranslatePermission: "让这号杂鱼能用 /ja_copy enable|disable 开关日语翻译，这点小事总看得懂吧♡",
+  isCanControllAntiRaidPermission: "让这号杂鱼能用 /antiraid enable|disable 开关入群验证与防冲群私密模式，关掉可就没人拦僵尸了哦♡",
 };
 
 /** /permission 用法说明的正文；usage 与 usageWithKeys 共用同一份措辞。 */
@@ -186,11 +204,11 @@ export const PERMISSION_COMMAND_TEXTS: Readonly<PermissionCommandTexts> = {
   }: PermissionSetReplyParams): string =>
     `哼，${targetLabel} 的 ${key} ${changed ? "已设为" : "原本就是"} ${String(value)} 啦♡`,
   target: {
-    missingTarget: `笨蛋，要回复一个白名单身份，或者把用户/频道 id 写在 /permission 后面呀♡`,
+    missingTarget: `笨蛋，要回复一个白名单身份，或者把 @username、用户 id、频道 id 写在 /permission 后面呀，本天才可不会替你猜目标♡`,
     invalidUsername: (rawArgument: string): string =>
       `笨蛋，${rawArgument} 既不是完整合法的 Telegram 用户名，也不是用户/频道 id♡`,
     unknownUsername: (rawUsername: string): string =>
-      `笨蛋，@${rawUsername} 还没被本天才记住；回复 TA 的消息或直接给 id 吧♡`,
+      `笨蛋，@${rawUsername} 还没被本天才记住；先让 TA 冒个泡，或者回复 TA 的消息、直接给 id 吧♡`,
     conflictingTarget: (rawArgument: string): string =>
       `笨蛋，你回复了一个身份、又写了 ${rawArgument}，本天才不会猜要改谁的权限♡`,
     selfTarget: `笨蛋，本天才自己的权限不归白名单配置管呀♡`,

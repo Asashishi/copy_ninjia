@@ -5,7 +5,7 @@ import type { CopyCooldownClaim } from "../types/copy/cooldown";
 import { resolveCommandActor } from "./commandActor";
 
 /**
- * 处理 /reset_icon 指令：把机器人头像复原成默认那张脸（来源见 consts/telegram.ts
+ * 处理 /reset_icon 指令：把机器人头像复原成默认那张脸（来源见 consts/ui/assets.ts
  * 的 BOT_DEFAULT_AVATAR_URL）。不需要目标参数——复原只有一个终点。
  *
  * 共用 copy 类命令的全局冷却时钟：它换的是同一张脸、消耗的是同一份 Telegram

@@ -1,63 +1,87 @@
-import { Api, Bot, GrammyError } from "grammy";
-import type { Context } from "grammy";
-import { apiThrottler } from "@grammyjs/transformer-throttler";
-import { autoRetry } from "@grammyjs/auto-retry";
-import { hydrateFiles } from "@grammyjs/files";
-import type { FileApiFlavor } from "@grammyjs/files";
-import { API_RETRY_MAX_ATTEMPTS, API_RETRY_MAX_DELAY_SECONDS } from "../../consts/telegram";
-import { telegramClientInitialization } from "../../cache/perThread/telegram";
-import { BOT_TOKEN } from "../config";
+import { telegramApiState } from "../../cache/perThread/telegramApi";
 import { logger } from "../logger";
+import { telegramErrorDetails } from "./errors";
+import type { TelegramApi } from "../../types/telegramWorker";
 
-type FirstOverloadReturn<T> = T extends {
-  (...args: never[]): infer FirstReturn;
-  (...args: never[]): unknown;
-} ? FirstReturn : never;
-
-/** 官方 files API flavor 中增强后的 getFile 返回值。 */
-export type HydratedTelegramFile = Awaited<FirstOverloadReturn<FileApiFlavor<Api>["getFile"]>>;
-
-/**
- * 全仓默认 Telegram 客户端，统一启用文件结果增强、节流和 429/5xx 有限重试；
- * 网络级 HttpError 交还调用 owner，避免第三方 transformer 无期限退避。
- */
-export const bot: Bot<Context, FileApiFlavor<Api>> = new Bot<Context, FileApiFlavor<Api>>(BOT_TOKEN);
-
-/**
- * 入群守卫使用的独立客户端。它与普通消息发送分开排队，避免一波验证/踢人
- * 请求占满默认客户端，拖慢正常指令与 AI 回复。
- */
-export const joinVerificationApi: Api = new Api(BOT_TOKEN);
-
-/**
- * 集中安装文件结果增强、节流和有限重试 transformer；其中 throttler 会创建
- * Bottleneck 心跳计时器。autoRetry 只接管 Telegram 已返回的 429/5xx，网络级
- * HttpError 必须返回各调用 owner，不能绕开 maxRetryAttempts 在内部无限退避。
- * 主进程须在取得 bot.lock 后调用；业务 Worker 则在各自启动入口调用。模块导入
- * 本身只构造尚未联网的客户端，不创建计时器，重复调用幂等。
- */
-export function initTelegramClients(): void {
-  if (telegramClientInitialization.current) return;
-  bot.api.config.use(hydrateFiles(bot.token));
-  bot.api.config.use(apiThrottler());
-  bot.api.config.use(autoRetry({
-    maxRetryAttempts: API_RETRY_MAX_ATTEMPTS,
-    maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS,
-    rethrowHttpErrors: true,
-  }));
-  joinVerificationApi.config.use(apiThrottler());
-  joinVerificationApi.config.use(autoRetry({
-    maxRetryAttempts: API_RETRY_MAX_ATTEMPTS,
-    maxDelaySeconds: API_RETRY_MAX_DELAY_SECONDS,
-    rethrowHttpErrors: true,
-  }));
-  telegramClientInitialization.current = true;
+/** 读取当前线程已经安装的 Telegram 能力实现；未初始化时拒绝旁路联网。 */
+export function currentTelegramApi(): TelegramApi {
+  const current: TelegramApi | null = telegramApiState.current;
+  if (current === null) {
+    throw new Error("Telegram API capability has not been installed for this thread.");
+  }
+  return current;
 }
+
+/**
+ * 由线程入口安装唯一能力实现。主线程安装真实客户端适配器，业务 Worker 安装
+ * 双工代理；重复安装不同实现属于生命周期错误并立即拒绝。
+ */
+export function installTelegramApi(api: TelegramApi): void {
+  const current: TelegramApi | null = telegramApiState.current;
+  if (current !== null && current !== api) {
+    throw new Error("Telegram API capability is already installed for this thread.");
+  }
+  telegramApiState.current = api;
+}
+
+/**
+ * 稳定的线程内 Telegram 调用面。对象 shape 构造后不变；每次调用只读取当前
+ * holder，主线程与 Worker 的业务动作因此共用同一套错误和结果归一化代码。
+ */
+export const telegramApi: TelegramApi = {
+  answerCallbackQuery: (...args: Parameters<TelegramApi["answerCallbackQuery"]>): ReturnType<TelegramApi["answerCallbackQuery"]> =>
+    currentTelegramApi().answerCallbackQuery(...args),
+  banChatMember: (...args: Parameters<TelegramApi["banChatMember"]>): ReturnType<TelegramApi["banChatMember"]> =>
+    currentTelegramApi().banChatMember(...args),
+  banChatSenderChat: (...args: Parameters<TelegramApi["banChatSenderChat"]>): ReturnType<TelegramApi["banChatSenderChat"]> =>
+    currentTelegramApi().banChatSenderChat(...args),
+  copyMessage: (...args: Parameters<TelegramApi["copyMessage"]>): ReturnType<TelegramApi["copyMessage"]> =>
+    currentTelegramApi().copyMessage(...args),
+  deleteMessage: (...args: Parameters<TelegramApi["deleteMessage"]>): ReturnType<TelegramApi["deleteMessage"]> =>
+    currentTelegramApi().deleteMessage(...args),
+  deleteMessages: (...args: Parameters<TelegramApi["deleteMessages"]>): ReturnType<TelegramApi["deleteMessages"]> =>
+    currentTelegramApi().deleteMessages(...args),
+  deleteEphemeralMessage: (...args: Parameters<TelegramApi["deleteEphemeralMessage"]>): ReturnType<TelegramApi["deleteEphemeralMessage"]> =>
+    currentTelegramApi().deleteEphemeralMessage(...args),
+  getChat: (...args: Parameters<TelegramApi["getChat"]>): ReturnType<TelegramApi["getChat"]> =>
+    currentTelegramApi().getChat(...args),
+  getChatAdministrators: (...args: Parameters<TelegramApi["getChatAdministrators"]>): ReturnType<TelegramApi["getChatAdministrators"]> =>
+    currentTelegramApi().getChatAdministrators(...args),
+  getChatMember: (...args: Parameters<TelegramApi["getChatMember"]>): ReturnType<TelegramApi["getChatMember"]> =>
+    currentTelegramApi().getChatMember(...args),
+  getStickerSet: (...args: Parameters<TelegramApi["getStickerSet"]>): ReturnType<TelegramApi["getStickerSet"]> =>
+    currentTelegramApi().getStickerSet(...args),
+  restrictChatMember: (...args: Parameters<TelegramApi["restrictChatMember"]>): ReturnType<TelegramApi["restrictChatMember"]> =>
+    currentTelegramApi().restrictChatMember(...args),
+  sendAudio: (...args: Parameters<TelegramApi["sendAudio"]>): ReturnType<TelegramApi["sendAudio"]> =>
+    currentTelegramApi().sendAudio(...args),
+  sendChatAction: (...args: Parameters<TelegramApi["sendChatAction"]>): ReturnType<TelegramApi["sendChatAction"]> =>
+    currentTelegramApi().sendChatAction(...args),
+  sendMessage: (...args: Parameters<TelegramApi["sendMessage"]>): ReturnType<TelegramApi["sendMessage"]> =>
+    currentTelegramApi().sendMessage(...args),
+  sendPhoto: (...args: Parameters<TelegramApi["sendPhoto"]>): ReturnType<TelegramApi["sendPhoto"]> =>
+    currentTelegramApi().sendPhoto(...args),
+  sendSticker: (...args: Parameters<TelegramApi["sendSticker"]>): ReturnType<TelegramApi["sendSticker"]> =>
+    currentTelegramApi().sendSticker(...args),
+  setChatPermissions: (...args: Parameters<TelegramApi["setChatPermissions"]>): ReturnType<TelegramApi["setChatPermissions"]> =>
+    currentTelegramApi().setChatPermissions(...args),
+  setMessageReaction: (...args: Parameters<TelegramApi["setMessageReaction"]>): ReturnType<TelegramApi["setMessageReaction"]> =>
+    currentTelegramApi().setMessageReaction(...args),
+  unbanChatMember: (...args: Parameters<TelegramApi["unbanChatMember"]>): ReturnType<TelegramApi["unbanChatMember"]> =>
+    currentTelegramApi().unbanChatMember(...args),
+  unbanChatSenderChat: (...args: Parameters<TelegramApi["unbanChatSenderChat"]>): ReturnType<TelegramApi["unbanChatSenderChat"]> =>
+    currentTelegramApi().unbanChatSenderChat(...args),
+};
+
+/** 入群守卫兼容名称；真实请求仍由当前线程已安装的唯一能力实现处理。 */
+export const joinVerificationApi: TelegramApi = telegramApi;
 
 /** 统一展开 Telegram API 错误，保留 Bot API 的状态码和 description。 */
 export function logApiError(action: string, error: unknown): void {
-  if (error instanceof GrammyError) {
-    logger.error(`Failed to ${action}: ${error.error_code} ${error.description}`);
+  const details: Readonly<{ errorCode: number; description: string }> | undefined =
+    telegramErrorDetails(error);
+  if (details !== undefined) {
+    logger.error(`Failed to ${action}: ${details.errorCode} ${details.description}`);
   } else {
     logger.error(`Error trying to ${action}:`, error);
   }

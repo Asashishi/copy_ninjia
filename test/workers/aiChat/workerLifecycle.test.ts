@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
+import type { AgentDeploymentConfig } from "../../../packages/types/config";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
@@ -11,6 +12,7 @@ Object.defineProperty(globalThis, "self", { configurable: true, value: workerSel
 
 const calls: string[] = [];
 const ensureStickerCatalogs = mock((_packs: readonly string[]): void => { calls.push("ensureCatalogs"); });
+const drainStickerCatalogTasks = mock(async (): Promise<void> => { calls.push("drainCatalogs"); });
 const retryIncompleteStickerCatalogs = mock((_packs: readonly string[], _now?: number): void => {
   calls.push("retryCatalogs");
 });
@@ -37,12 +39,15 @@ const drainPendingReplyQueues = mock((_now: number): void => { calls.push("drain
 const invalidateChatReplies = mock(async (_chatId: number): Promise<void> => {
   calls.push("invalidate");
 });
+const quiesceAiChatReplies = mock(async (): Promise<void> => { calls.push("drainReplies"); });
 const initTelegramClients = mock((): void => { calls.push("telegram"); });
 const currentMood = mock((_chatId: number) => ({ name: "平静", weight: 1, instruction: "" }));
 const switchMood = mock((_chatId: number) => ({ name: "开心", weight: 1, instruction: "" }));
+const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({
   ensureStickerCatalogs,
+  drainStickerCatalogTasks,
   flushDirtyStickerCatalogs,
   hydrateStickerCatalogs,
   retryIncompleteStickerCatalogs,
@@ -62,13 +67,28 @@ mock.module("../../../packages/workers/aiChat/mediaIngest", () => ({ recordChatM
 mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
   generateAndSendReply,
   invalidateChatReplies,
+  quiesceAiChatReplies,
   drainPendingReplyQueues,
 }));
 mock.module("../../../packages/infra/telegram", () => ({ initTelegramClients }));
 mock.module("../../../packages/aiChat/ai/mood", () => ({ currentMood, switchMood }));
+mock.module("../../../packages/infra/logger", () => ({
+  acceptForwardedLogBatch: (): boolean => false,
+  logger: { log(): void {}, info(): void {}, warn(): void {}, error: loggerError },
+}));
 
 const worker = await import("../../../packages/workers/aiChatWorker");
-const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
+const { botInfoState, superAdminUserIdState } = await import("../../../packages/cache/workers/aiChat/identity");
+const { agentDeploymentConfigCache } = await import("../../../packages/cache/perThread/config");
+
+/** 主线程投递过来的那一代快照；断言 Worker 原样收进 holder，不另行读盘。 */
+const injectedAgentConfig: AgentDeploymentConfig = {
+  text: { provider: "google", apiKey: "injected-text-key", baseUrl: undefined, model: "injected-text" },
+  summary: { provider: "openai", apiKey: "injected-summary-key", baseUrl: undefined, model: "injected-summary" },
+  media: { provider: "google", apiKey: "injected-media-key", baseUrl: undefined, model: "injected-media" },
+};
+const { aiChatWorkerDrain, aiChatWorkerQuiescing } =
+  await import("../../../packages/cache/workers/aiChat/worker");
 
 beforeEach(() => {
   worker.stopAiChatWorker();
@@ -76,8 +96,14 @@ beforeEach(() => {
   postMessage.mockClear();
   workerSelf.onmessage = null;
   botInfoState.current = null;
+  superAdminUserIdState.current = null;
+  // 新 isolate 的 holder 本来就是空的：init 之前取配置必须 fail-closed。
+  agentDeploymentConfigCache.current = null;
+  aiChatWorkerQuiescing.current = false;
+  aiChatWorkerDrain.current = null;
   for (const mocked of [
     ensureStickerCatalogs,
+    drainStickerCatalogTasks,
     flushDirtyStickerCatalogs,
     hydrateStickerCatalogs,
     getStickerConfig,
@@ -93,10 +119,14 @@ beforeEach(() => {
     recordChatMedia,
     generateAndSendReply,
     invalidateChatReplies,
+    quiesceAiChatReplies,
     initTelegramClients,
     currentMood,
     switchMood,
+    loggerError,
   ]) mocked.mockClear();
+  quiesceAiChatReplies.mockImplementation(async (): Promise<void> => { calls.push("drainReplies"); });
+  drainStickerCatalogTasks.mockImplementation(async (): Promise<void> => { calls.push("drainCatalogs"); });
 });
 
 afterAll(() => {
@@ -107,7 +137,12 @@ afterAll(() => {
 describe("AI Chat Worker lifecycle", () => {
   test("协议路由覆盖恢复、记录、触发、刷盘与可选记忆清除", async () => {
     const messages: AiChatWorkerMessage[] = [
-      { type: "init", botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" } },
+      {
+        type: "init",
+        botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" },
+        superAdminUserId: 1,
+        agent: injectedAgentConfig,
+      },
       {
         type: "record",
         chatId: -1001,
@@ -138,6 +173,7 @@ describe("AI Chat Worker lifecycle", () => {
         triggerSenderId: 7,
         replyToMessageId: 10,
         isRandomTrigger: false,
+        telegramBackpressured: true,
         imageGenerationRequested: true,
         imageGenerationReference: { fileId: "reference-file", fileUniqueId: "reference-unique", width: 1600, height: 900 },
       },
@@ -151,9 +187,12 @@ describe("AI Chat Worker lifecycle", () => {
     ];
 
     for (const message of messages) worker.handleAiChatWorkerMessage(message);
-    await Promise.resolve();
+    await Bun.sleep(0);
 
     expect(botInfoState.current?.id).toBe(99);
+    expect(superAdminUserIdState.current).toBe(1);
+    // 配置快照进 holder，且是主线程投来的那一个对象本身：本线程此后不读盘。
+    expect(agentDeploymentConfigCache.current).toBe(injectedAgentConfig);
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
     expect(recordChatMessage).toHaveBeenCalledTimes(1);
     expect(recordChatMedia).toHaveBeenCalledTimes(1);
@@ -165,6 +204,7 @@ describe("AI Chat Worker lifecycle", () => {
       triggerSenderId: 7,
       replyToMessageId: 10,
       isRandomTrigger: false,
+      telegramBackpressured: true,
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "reference-file", fileUniqueId: "reference-unique", width: 1600, height: 900 },
     });
@@ -182,15 +222,65 @@ describe("AI Chat Worker lifecycle", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", chatId: -1001, requestId: 4, moodName: "开心" });
   });
 
-  test("imageProvider 是全量单值覆盖：undefined 回到默认选取，不是保持原值", async () => {
-    const { imageProviderOverrideMirror } =
-      await import("../../../packages/cache/workers/aiChat/imageProvider");
+  test("flush 等回复与贴纸目录任务全部结算后才上报最终快照", async () => {
+    let releaseReplies: (() => void) | undefined;
+    let releaseCatalogs: (() => void) | undefined;
+    quiesceAiChatReplies.mockImplementationOnce((): Promise<void> =>
+      new Promise<void>((resolve: () => void): void => { releaseReplies = resolve; }));
+    drainStickerCatalogTasks.mockImplementationOnce((): Promise<void> =>
+      new Promise<void>((resolve: () => void): void => { releaseCatalogs = resolve; }));
 
-    worker.handleAiChatWorkerMessage({ type: "imageProvider", provider: "openai" });
-    expect(imageProviderOverrideMirror.current).toBe("openai");
+    worker.handleAiChatWorkerMessage({ type: "flushMemory", flushId: 9 });
+    worker.handleAiChatWorkerMessage({
+      type: "trigger",
+      chatId: -1001,
+      triggerSenderId: 7,
+      replyToMessageId: 10,
+      isRandomTrigger: false,
+      telegramBackpressured: false,
+      imageGenerationRequested: false,
+    });
+    await Promise.resolve();
 
-    worker.handleAiChatWorkerMessage({ type: "imageProvider", provider: undefined });
-    expect(imageProviderOverrideMirror.current).toBeNull();
+    expect(generateAndSendReply).not.toHaveBeenCalled();
+    expect(flushDirtyMemories).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 9 });
+
+    releaseReplies!();
+    await Promise.resolve();
+    expect(flushDirtyMemories).not.toHaveBeenCalled();
+
+    releaseCatalogs!();
+    await Bun.sleep(0);
+    expect(flushDirtyMemories).toHaveBeenCalledTimes(1);
+    expect(flushDirtyStickerCatalogs).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 9 });
+  });
+
+  test("flush 阶段单项拒绝仍等待另一项结算，并按阶段名留下聚合诊断", async () => {
+    const failure: Error = new Error("reply drain failed");
+    let releaseCatalogs: (() => void) | undefined;
+    quiesceAiChatReplies.mockRejectedValueOnce(failure);
+    drainStickerCatalogTasks.mockImplementationOnce((): Promise<void> =>
+      new Promise<void>((resolve: () => void): void => { releaseCatalogs = resolve; }));
+
+    worker.handleAiChatWorkerMessage({ type: "flushMemory", flushId: 10 });
+    await Promise.resolve();
+
+    expect(drainStickerCatalogTasks).toHaveBeenCalledTimes(1);
+    expect(loggerError).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 10 });
+
+    releaseCatalogs!();
+    await Bun.sleep(0);
+    expect(loggerError).toHaveBeenCalledWith(
+      "AI Worker flush 10 rejected before acknowledgement:",
+      expect.any(AggregateError)
+    );
+    const aggregate: AggregateError = loggerError.mock.calls[0]?.[1] as AggregateError;
+    expect((aggregate.errors[0] as Error).message).toContain("reply generation");
+    expect(flushDirtyMemories).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 10 });
   });
 
   test("过期的 switchMood 请求不再迟到改写心情", () => {
@@ -227,7 +317,7 @@ describe("AI Chat Worker lifecycle", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "stickerCatalogSnapshot", name: "pack" });
   });
 
-  test("显式启动只在 Worker 入口安装 handler、维护 timer 与天气刷新", () => {
+  test("显式启动只安装双工 handler、维护 timer 与天气刷新，不初始化 Telegram 客户端", () => {
     const originalSetInterval: typeof setInterval = globalThis.setInterval;
     let maintenance: (() => void) | null = null;
     globalThis.setInterval = ((handler: (...args: unknown[]) => void): ReturnType<typeof setInterval> => {
@@ -237,7 +327,7 @@ describe("AI Chat Worker lifecycle", () => {
     try {
       worker.startAiChatWorker();
       worker.startAiChatWorker();
-      expect(initTelegramClients).toHaveBeenCalledTimes(1);
+      expect(initTelegramClients).not.toHaveBeenCalled();
       expect(startWeatherRefreshLoop).toHaveBeenCalledTimes(1);
       expect(workerSelf.onmessage).not.toBeNull();
       expect(maintenance).not.toBeNull();

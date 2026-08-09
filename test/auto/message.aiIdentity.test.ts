@@ -4,6 +4,12 @@ import { aiRecordMessageFixture, aiReplyReferenceFixture } from "../helpers/aiMe
 const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 const recordChatMediaMock = mock((..._args: unknown[]): void => {});
 const generateAndSendReplyMock = mock((..._args: unknown[]): void => {});
+const isBotOwnMessageMock = mock((..._args: unknown[]): boolean => false);
+const waitForBotOwnMessageMock = mock(async (..._args: unknown[]): Promise<boolean> => false);
+const needsBotOwnMessageWaitMock = mock((message: any): boolean =>
+  message.chat.type === "channel" ||
+  (message.is_automatic_forward === true && message.forward_origin?.type === "channel")
+);
 
 mock.module("../../packages/infra/telegram", () => ({
   copyMessage: async (): Promise<undefined> => undefined,
@@ -27,7 +33,12 @@ mock.module("../../packages/aiChat", () => ({
   recordChatMedia: recordChatMediaMock,
   generateAndSendReply: generateAndSendReplyMock,
 }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ isSelfSent: () => false, isBotOwnMessage: () => false }));
+mock.module("../../packages/infra/selfSentTracker", () => ({
+  isSelfSent: () => false,
+  isBotOwnMessage: isBotOwnMessageMock,
+  needsBotOwnMessageWait: needsBotOwnMessageWaitMock,
+  waitForBotOwnMessage: waitForBotOwnMessageMock,
+}));
 
 const { handleIncomingMessage } = await import("../../packages/auto/message");
 
@@ -38,6 +49,11 @@ describe("AI 缓存发送者 username 传递", () => {
     recordChatMessageMock.mockClear();
     recordChatMediaMock.mockClear();
     generateAndSendReplyMock.mockClear();
+    isBotOwnMessageMock.mockClear();
+    isBotOwnMessageMock.mockImplementation((): boolean => false);
+    waitForBotOwnMessageMock.mockClear();
+    needsBotOwnMessageWaitMock.mockClear();
+    waitForBotOwnMessageMock.mockImplementation(async (): Promise<boolean> => false);
   });
 
   test("普通用户文字消息把 username 一并交给 AI", async () => {
@@ -53,6 +69,7 @@ describe("AI 缓存发送者 username 传递", () => {
     } as any);
 
     expect(recordChatMessageMock).toHaveBeenCalledTimes(1);
+    expect(waitForBotOwnMessageMock).not.toHaveBeenCalled();
     expect(recordChatMessageMock).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -100800,
       senderId: 123,
@@ -162,6 +179,52 @@ describe("AI 缓存发送者 username 传递", () => {
     }));
   });
 
+  test("频道 update 先到时等待 Worker 标记，命中后不进入自动流水线", async () => {
+    let releaseMarker: ((matched: boolean) => void) | undefined;
+    waitForBotOwnMessageMock.mockImplementationOnce((): Promise<boolean> =>
+      new Promise<boolean>((resolve: (matched: boolean) => void): void => {
+        releaseMarker = resolve;
+      }));
+    const handling: Promise<void> = handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 91,
+        date: 1,
+        chat: { id: -100900, type: "channel", title: "News Channel" },
+        text: "bot post",
+      },
+    } as any);
+    await Promise.resolve();
+
+    expect(recordChatMessageMock).not.toHaveBeenCalled();
+    expect(waitForBotOwnMessageMock).toHaveBeenCalledTimes(1);
+    releaseMarker!(true);
+    await handling;
+
+    expect(recordChatMessageMock).not.toHaveBeenCalled();
+    expect(recordChatMediaMock).not.toHaveBeenCalled();
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
+  test("自发消息已同步登记时直接跳过，不再进入异步等待", async () => {
+    isBotOwnMessageMock.mockImplementationOnce((): boolean => true);
+
+    await handleIncomingMessage({
+      me: botInfo,
+      msg: {
+        message_id: 92,
+        date: 1,
+        chat: { id: -100900, type: "channel", title: "News Channel" },
+        text: "known bot post",
+      },
+    } as any);
+
+    expect(waitForBotOwnMessageMock).not.toHaveBeenCalled();
+    expect(recordChatMessageMock).not.toHaveBeenCalled();
+    expect(recordChatMediaMock).not.toHaveBeenCalled();
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
   test("媒体消息同样把发送者 username 交给 AI", async () => {
     await handleIncomingMessage({
       me: botInfo,
@@ -196,6 +259,8 @@ describe("AI 缓存发送者 username 传递", () => {
       commentOnResolve: false,
       imageGenerationRequested: false,
       stickerFallbackText: undefined,
+      voiceMime: undefined,
+      voiceDurationSeconds: 0,
       directTrigger: undefined,
     });
   });

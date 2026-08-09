@@ -4,7 +4,7 @@
  *
  * 收发走官方 @google/genai SDK（Google 现行的统一 GenAI JS SDK）而不是手写
  * fetch：SDK 自带每次请求的超时（httpOptions.timeout）与瞬时失败（网络错误/
- * 5xx/429）的自动重试（显式限制为最多 5 次尝试），比自己维护一份 AbortController
+ * 5xx/429）的自动重试（显式限制为首次加最多 5 次重试），比自己维护一份 AbortController
  * 省心。视觉输入（inlineData）与多轮函数调用往返均由同一 SDK 处理。
  *
  * 本文件负责发请求、按业务结果分类并记录错误日志；正文与函数调用直接读取
@@ -14,41 +14,54 @@
 
 import { ApiError, FinishReason, GoogleGenAI } from "@google/genai";
 import type { Candidate, GenerateContentParameters, GenerateContentResponse } from "@google/genai";
-import { geminiClientHolder } from "../../cache/workers/aiChat/gemini";
+import { geminiClientCache } from "../../cache/workers/aiChat/gemini";
 import { logger } from "../../infra/logger";
-import { AI_CHAT_GEMINI_API_KEY } from "../../infra/config";
+import { getAgentDeploymentConfig } from "../../config/agent";
 import {
   GEMINI_REQUEST_RETRY_ATTEMPTS,
   GEMINI_REQUEST_TIMEOUT_MS,
   GEMINI_SAFETY_SETTINGS,
 } from "../../consts/aiChat/gemini";
-import { finalizeAiTextResult } from "../ai/utils/textResult";
+import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
+import {
+  isEndpointFailureStatus,
+  isEndpointMisconfiguredError,
+  isExplicitUnsupportedMediaError,
+} from "../ai/utils/mediaSupportError";
 import { abnormalFinishDiagnostic } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { AiTextResult } from "../../types/aiChat/provider";
+import type { AgentCapability, AgentCapabilityConfig } from "../../types/config";
 
 /**
  * 取得线程内唯一 Gemini 客户端。timeout 是每次 SDK 尝试各自的预算，重试总数
  * 由 GEMINI_REQUEST_RETRY_ATTEMPTS 显式约束。Worker 线程各自拥有独立实例，
  * 崩溃重建后由 cache/workers/aiChat/gemini.ts 的空 holder 重建。
  *
- * 密钥是可选 env（见 infra/config.ts）：没配时供应商选择根本不会挑中 Gemini
- * （见 aiChat/provider.ts），走到这里说明进程启动后 env 被抽掉。这里直接抛，
- * 由下方 requestGeminiResult 的 catch 记一行错并归一成一次普通的请求失败——
- * 上层各自的降级路径都已就位，不该让一次凭据缺失把整个 Worker 掀掉。
+ * 导出是为了让 aiChat/gemini/song.ts 复用同一个实例：生歌走 Interactions API 那条
+ * 端点，用不上下面的 generateContent 封装，但**必须**共用这一个客户端——每条流水线
+ * 各 new 一个会让同一条 Worker 线程上散着好几份连接池与鉴权状态。本包之外不得
+ * import 它（领域侧只认 aiChat/provider.ts 的中立契约）。
  */
-function getGeminiClient(): GoogleGenAI {
-  if (AI_CHAT_GEMINI_API_KEY === undefined) {
-    throw new Error("AI_CHAT_GEMINI_API_KEY is not configured; the Gemini provider cannot run.");
+export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
+  const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
+  if (config?.provider !== "google") {
+    throw new Error(`Agent capability "${capability}" is not configured for the Google provider.`);
   }
-  geminiClientHolder.current ??= new GoogleGenAI({
-    apiKey: AI_CHAT_GEMINI_API_KEY,
+  const clients: Map<AgentCapability, GoogleGenAI> = geminiClientCache.current ??=
+    new Map<AgentCapability, GoogleGenAI>();
+  const cached: GoogleGenAI | undefined = clients.get(capability);
+  if (cached !== undefined) return cached;
+  const client: GoogleGenAI = new GoogleGenAI({
+    apiKey: config.apiKey,
     httpOptions: {
+      baseUrl: config.baseUrl,
       timeout: GEMINI_REQUEST_TIMEOUT_MS,
       retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
     },
   });
-  return geminiClientHolder.current;
+  clients.set(capability, client);
+  return client;
 }
 
 /**
@@ -58,14 +71,15 @@ function getGeminiClient(): GoogleGenAI {
  * 记下来，否则上层只能看到「没产出」，查不到原因。
  * @param buildBody 拼出完整请求体的闭包（model/contents/config 等由调用方拼好），
  *   直接使用官方 SDK 的 GenerateContentParameters，SDK 升级造成的字段漂移会在
- *   编译期暴露。收的是闭包而不是拼好的对象，因为请求体里要读 config/gemini.json
- *   的模型名（getGeminiDeploymentConfig()）：在调用方的对象字面量里求值，这份
+ *   编译期暴露。收的是闭包而不是拼好的对象，因为请求体里要读 config/agent.json
+ *   对应能力的模型名：在调用方的对象字面量里求值，这份
  *   部署配置一旦写坏，抛出的位置就在本函数**之外**，绕开这里唯一的失败归一化，
  *   于是上层拿不到 ok:false 而是被更外层的 catch 吞掉——回复轮次会连同排队中的
  *   其余工具调用一起静默消失。口径同 aiChat/openai/client.ts 的 requestOpenAiResult。
  * @param errorLabel 出现在错误日志里的调用名，用于区分是哪条流水线出的错。
  */
 export async function requestGeminiResult(
+  capability: AgentCapability,
   buildBody: () => GenerateContentParameters,
   errorLabel: string
 ): Promise<GeminiRequestResult> {
@@ -74,7 +88,7 @@ export async function requestGeminiResult(
   let data: GenerateContentResponse;
   try {
     body = buildBody();
-    data = await getGeminiClient().models.generateContent({
+    data = await getGeminiClient(capability).models.generateContent({
       ...body,
       config: {
         ...body.config,
@@ -90,6 +104,20 @@ export async function requestGeminiResult(
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
       logger.error(`${errorLabel} error: ${error.status} ${error.message}`);
+      // 路径级 404/405 与模态被拒是两回事，对任何能力都先判前者：它说明这条
+      // 能力的 model 或 base_url 写错了，与「这个模型不支持读图」不该混在一起。
+      if (isEndpointMisconfiguredError(error.status)) {
+        return { ok: false, failureKind: "misconfigured", diagnostic: "endpoint or model is unavailable" };
+      }
+      if (
+        capability === "media" &&
+        isExplicitUnsupportedMediaError(error.status, error.message)
+      ) {
+        return { ok: false, failureKind: "unsupported", diagnostic: "media input is unsupported" };
+      }
+      if (!isEndpointFailureStatus(error.status)) {
+        return { ok: false, failureKind: "rejected", diagnostic: "request was rejected" };
+      }
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }
@@ -133,10 +161,11 @@ export async function requestGeminiResult(
  * 返回响应；任何夹带文本/functionCall 的异常 candidate 都在这里被清空。
  */
 export async function requestGeminiResponse(
+  capability: AgentCapability,
   buildBody: () => GenerateContentParameters,
   errorLabel: string
 ): Promise<GenerateContentResponse | null> {
-  const result: GeminiRequestResult = await requestGeminiResult(buildBody, errorLabel);
+  const result: GeminiRequestResult = await requestGeminiResult(capability, buildBody, errorLabel);
   return result.ok ? result.response : null;
 }
 
@@ -145,15 +174,22 @@ export async function requestGeminiResponse(
  * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
  * HTTP 成功但 candidate 异常或清洗后正文为空时，才允许按领域策略重新采样。
  */
-export async function requestGeminiTextResult(
-  buildBody: () => GenerateContentParameters,
-  errorLabel: string,
-  normalize: (text: string) => string
-): Promise<AiTextResult> {
-  const result: GeminiRequestResult = await requestGeminiResult(buildBody, errorLabel);
-  if (!result.ok) {
-    return { ok: false, retryable: result.failureKind === "response" };
-  }
+/** Google 无状态文本调用参数。 */
+export interface GeminiTextRequestOptions {
+  readonly capability: "summary" | "media";
+  readonly buildBody: () => GenerateContentParameters;
+  readonly errorLabel: string;
+  readonly normalize: (text: string) => string;
+}
+
+export async function requestGeminiTextResult({
+  capability,
+  buildBody,
+  errorLabel,
+  normalize,
+}: GeminiTextRequestOptions): Promise<AiTextResult> {
+  const result: GeminiRequestResult = await requestGeminiResult(capability, buildBody, errorLabel);
+  if (!result.ok) return classifyAiTextFailure(result.failureKind, capability);
   const text: string = normalize(result.response.text ?? "");
   return finalizeAiTextResult(text);
 }

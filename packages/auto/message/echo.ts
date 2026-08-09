@@ -4,6 +4,7 @@ import { isJaTranslationActiveIn } from "../../copy/availability";
 import { getActiveCopyIn } from "../../infra/storage/stateStore";
 import { copyMessage, sendMessage } from "../../infra/telegram";
 import { applyCopyModeTransform } from "../../copy/copyModes";
+import { containsRenderableCommand } from "../../libs/renderableCommand";
 
 /**
  * ja 模式跑不起来时只取消翻译变换，复读本身仍退化为原样复制。
@@ -16,20 +17,6 @@ export function resolveEffectiveCopyMode(chatId: number, mode: CopyMode | undefi
   if (mode === "ja" && !isJaTranslationActiveIn(chatId)) return undefined;
   return mode;
 }
-
-/**
- * 变换后的文本里是否存在会被 Telegram 渲染成可点击命令的 `/xxx`。
- *
- * bot_command 实体不只认行首：`/` 前面是文本开头或空白就会被识别，`/` 后面
- * 还要紧跟命令名的首字符（ASCII 字母/数字/下划线）。只按 `startsWith("/")`
- * 判的话，`reverse` 只要在原文末尾多打一个空格就能把 `/batch_kick` 挪到第二
- * 个位置绕过去。
- *
- * **不能带 `g` 标志**：`RegExp.prototype.test` 对全局正则有状态（`lastIndex`
- * 会推进），同一个串连续判定会交替返回真假（同 libs/text.ts 的同类说明）。
- * 空白集合补上 U+0085：JS 的 `\s` 不含 NEL，而 Telegram 按 Unicode 换行读。
- */
-const RENDERABLE_COMMAND_PATTERN: RegExp = /(?:^|[\s\u0085])\/[A-Za-z0-9_]/;
 
 /**
  * 将消息复读回所在聊天。只有无 entity 的纯文本会执行文本变换，避免变换后
@@ -53,8 +40,13 @@ export async function echoMessage({
   // 一条 caption 写着 `/batch_kick 1d` 的图片会一路走到下面的 copyMessage 被
   // 原样重发，而 Telegram 会把机器人自己发出的那句 caption 渲染成可点击的命令
   // 链接——等于本天才亲手给一条破坏性管理命令造了个一键入口。
+  //
+  // 判定和下面那道守卫共用 containsRenderableCommand，不再自己写 `startsWith("/")`：
+  // 前缀判定只挡得住偏移 0 的命令，`喵 /batch_kick 1d` 这种命令在中段的消息因为
+  // 带 bot_command 实体而拿不到 plainText，会直接落到 copyMessage 被原样复读出去——
+  // 两条兄弟分支各判各的，等于下面守得再严也能从这里绕过去。
   const commandText: string = message.text ?? message.caption ?? "";
-  if (commandText.startsWith("/")) return undefined;
+  if (containsRenderableCommand(commandText)) return undefined;
 
   const plainText: string | undefined =
     typeof message.text === "string" &&
@@ -76,7 +68,7 @@ export async function echoMessage({
     // 被守卫的值必须是同一个字符串，因此这里对最终文本再判一次。
     // 命中即整条丢弃，不退化成 copyMessage：那是把用户原文重发一遍，虽然安全
     // 但复读的内容与本次抽到的模式对不上，不如什么都不说。
-    if (RENDERABLE_COMMAND_PATTERN.test(transformed)) return undefined;
+    if (containsRenderableCommand(transformed)) return undefined;
     const sentMessageId: number | undefined = await sendMessage({ chatId, text: transformed });
     return sentMessageId !== undefined ? transformed : undefined;
   }

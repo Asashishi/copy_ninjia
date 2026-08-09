@@ -19,7 +19,9 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
-  getChatState: () => ({ isFloodControlEnabled: true }),
+  // 入群守卫开着：本文件考察的是守卫开启时黑名单如何取代验证投递（关着时
+  // 的行为由 test/antiRaid/joinGuardSwitch.test.ts 覆盖）。
+  getChatState: () => ({ isFloodControlEnabled: true, isAntiRaidEnabled: true }),
   getAllChatStates: () => new Map(),
   getOrCreateChatState: () => ({}),
   saveState: async (): Promise<void> => {},
@@ -40,7 +42,10 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
     return "deleted";
   },
 }));
-mock.module("../../../packages/infra/telegram/client", () => ({ joinVerificationApi: { kind: "guard-api" } }));
+mock.module("../../../packages/infra/telegram/client", () => ({
+  installTelegramApi: (): void => {},
+  joinVerificationApi: { kind: "guard-api" },
+}));
 mock.module("../../../packages/infra/botAdmin", () => ({
   resolveBotAdminStatus: async (): Promise<boolean> => true,
   markBotAdminObserved: async (): Promise<void> => {},
