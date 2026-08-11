@@ -27,7 +27,13 @@
  */
 
 import { classifyAdText } from "./classifier";
-import { deleteStragglerAdMessage, disposeAdSender } from "./disposal";
+import {
+  deleteReferencedAdMessages,
+  deleteStaleReferencedAdWarning,
+  deleteStragglerAdMessage,
+  disposeAdSender,
+  warnReferencedAdSender,
+} from "./disposal";
 import { freshAdminIds, isChatAdmin } from "../adminCache";
 import { logger } from "../../../infra/logger";
 import {
@@ -39,6 +45,7 @@ import {
   adDetectStopping,
   adDetectTickTimer,
   inFlightAdDetectKeys,
+  inFlightReferencedAdCleanupTasks,
   pendingAdMessages,
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
@@ -51,6 +58,7 @@ import {
   AD_DETECT_MAX_PENDING_SENDERS,
   AD_DETECT_MESSAGE_MAX_CHARS,
   AD_DETECT_QUEUE_TICK_MS,
+  AD_REFERENCE_WARNING_WINDOW_MS,
 } from "../../../consts/antiRaid/adDetect";
 import { sanitizeInline, truncateInline } from "../../../libs/text";
 import {
@@ -63,16 +71,29 @@ import {
   appendLinkUrls,
   boundSampleContext,
   claimSampleContextParts,
+  containsReferencedAdContent,
   enforceBundleCapacity,
   formatAdBundleText,
+  formatDirectAdBundleText,
   latestSeq,
   pruneConsumedContext,
   selectAdBundleEntries,
 } from "./bundle";
+import {
+  beginReferencedAdWarning,
+  cancelReferencedAdWarning,
+  clearChatReferencedAdWarnings,
+  clearReferencedAdWarning,
+  completeReferencedAdWarning,
+  hasActiveReferencedAdWarning,
+  resetReferencedAdWarnings,
+  sweepReferencedAdWarnings,
+} from "./referencePolicy";
 import type { AdBundleSelection } from "../../../types/antiRaid/adDetect";
 import { verificationKey, verificationKeyPrefix } from "../../../libs/verificationKey";
 import type { AdCandidateMessage, AdDetectedEvent, AdSampleContext } from "../../../types/antiRaid";
 import type { AdCandidateEntry, AdMessageBundle, AdVerdict } from "../../../types/antiRaid/adDetect";
+import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";
 import type {
   AdBundleStorageDecision,
   AdCandidateDecision,
@@ -150,7 +171,7 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
   if (existing !== undefined) pruneConsumedContext(existing, now);
   // 被引用段/被回复原文与正文一起送检：广告的主流形态是「先发正常消息 → 隔一段
   // 时间编辑成广告 → 用回复/引用把它顶上来」，广告正文永远不在新消息的 text 里
-  // （详见 bundle.ts 的 claimSampleContextParts，连坐的代价与跨条去重也写在那里）。
+  // （详见 bundle.ts 的 claimSampleContextParts，归因边界与跨条去重也写在那里）。
   const context: AdSampleContext | undefined =
     boundSampleContext(message.sampleContext);
   // 按码元硬切会把切点落在代理对中间：留下的孤立高位代理进模型提示词时
@@ -168,6 +189,7 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
       context,
       existing?.entries ?? []
     );
+  const directText: string = message.isForwarded ? "" : textWithLinks;
   // 三道投递闸（没有可判定正文、已知管理员、本窗口刚处置过）收在
   // states/adDetectAdmission.ts 里；这里只执行结论。
   const decision: AdCandidateDecision = admitAdCandidate({
@@ -187,6 +209,7 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     chatId: message.chatId,
     senderId: message.senderId,
     label: message.label,
+    meta: message.meta,
     isChannel: message.isChannel,
     justJoined: message.justJoined,
     entries: [],
@@ -197,6 +220,7 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
   if (existing !== undefined) {
     // 昵称随时可改；播报要用最新的那个。
     bundle.label = message.label;
+    bundle.meta = message.meta;
     // 取并集而不是覆盖：验证会在窗口内通过，先发广告后点验证的人不该洗白。
     bundle.justJoined ||= message.justJoined;
   }
@@ -204,7 +228,9 @@ export function enqueueAdCandidate(message: AdCandidateMessage, now: number = Da
     messageId: message.messageId,
     seq: bundle.nextSeq++,
     text,
+    directText,
     receivedAt: now,
+    withinReferencedWarning: hasActiveReferencedAdWarning(key, now),
   };
   // 两段上下文已经并进上面的 text 参与判定；这里再留一份独立的，只服务命中
   // 样本——人回头查误判时要分得清哪一段是他自己写的、哪一段是引来的。
@@ -232,42 +258,157 @@ async function isAdminSender(bundle: AdMessageBundle): Promise<boolean | undefin
   return await isChatAdmin(bundle.chatId, bundle.senderId, "sender");
 }
 
+type AdDetectionOutcome =
+  | { readonly kind: "notAd" }
+  | { readonly kind: "unknown" }
+  | { readonly kind: "directAd"; readonly verdict: AdVerdict }
+  | { readonly kind: "referencedOnly"; readonly verdict: AdVerdict };
+
 /**
- * 判定一个键并按结果处置。失败与「不是广告」都只推进 checkedSeq：前者是
- * 为了不在故障期间反复重试，后者是正常的放行。
+ * 把整串命中进一步收敛成显式归因四态。第二次请求返回 null 或抛错都属于
+ * unknown，不能冒充「已确证只有引用内容是广告」并开启升级状态。
  */
-async function detectOne(key: string, bundle: AdMessageBundle): Promise<void> {
-  let verdict: AdVerdict | null;
-  // 管理员豁免：处置是不可逆的（永久黑名单 + 每个托管群封禁 + revoke_messages），
-  // 恢复要人工 /unblock 再逐群解封，因此「拿不准」一律按不处置办——查不出身份
-  // 时放过一条广告，代价远小于误封群主。
-  let isAdmin: boolean | undefined;
-  // 送检那一刻真正入选的条目与它对应的水位，**必须在 await 之前定格**：bundle 是
-  // 活对象，这次往返期间新消息会并进同一个 entries 数组、裁剪也可能从头部去掉几条。
-  // 拿处置时的现场当「判定依据」写进样本，复现出来的就是模型没读过的一串；水位同理
-  // ——按结算时的 latestSeq 推进，就会把这期间新说的话一并记成判过。
-  const selection: AdBundleSelection = selectAdBundleEntries(bundle);
-  const judged: readonly AdCandidateEntry[] = selection.entries;
+async function classifyAdBundle(
+  bundle: AdMessageBundle,
+  judged: readonly AdCandidateEntry[]
+): Promise<AdDetectionOutcome> {
+  let combinedVerdict: AdVerdict | null;
   try {
-    verdict = await classifyAdText({ text: formatAdBundleText(judged), justJoined: bundle.justJoined });
-    // 确证也要待在 in-flight 标记之内：标记一放，同一个键就可能被下一拍取走
-    // 再判一次，两次判定各自跑完一整套处置。
-    if (verdict?.isAd === true) isAdmin = await isAdminSender(bundle);
+    combinedVerdict = await classifyAdText({
+      text: formatAdBundleText(judged),
+      justJoined: bundle.justJoined,
+    });
   } catch (error: unknown) {
-    // 判定的同步准备阶段也会抛：classifyAdText 先调 adDetectSystemPrompt →
-    // getAdSampleConfig()，而后者只缓存成功结果——进程启动之后把
-    // config/ad_samples.json 改坏或改成不可读，每一次调用都会重新抛出同一个错。
-    // 不在这里接住，异常就一路逃到 runAdDetectBatch 的 Promise.allSettled 被整个
-    // 吞掉：checkedSeq 永不推进，这个键每轮去重窗口轮换都重判一次、每次都失败，
-    // 全程一行日志都没有，而 /ad_detect 仍然报告功能已启用。
-    //
-    // 归到与「模型抽风、响应形状不对」同一档（见文件头）：本次当作没判定，
-    // 下面照常推进 checkedSeq，绝不重试成请求风暴。
     logger.error(
       `Ad detection failed to classify sender ${bundle.senderId} in chat ${bundle.chatId}:`,
       error
     );
-    verdict = null;
+    return { kind: "unknown" };
+  }
+  if (combinedVerdict === null) return { kind: "unknown" };
+  if (!combinedVerdict.isAd) return { kind: "notAd" };
+  if (!containsReferencedAdContent(judged)) {
+    return { kind: "directAd", verdict: combinedVerdict };
+  }
+
+  const directText: string = formatDirectAdBundleText(judged);
+  if (directText.length === 0) {
+    return { kind: "referencedOnly", verdict: combinedVerdict };
+  }
+  try {
+    const directVerdict: AdVerdict | null = await classifyAdText({
+      text: directText,
+      justJoined: bundle.justJoined,
+    });
+    if (directVerdict === null) {
+      logger.error(
+        `Ad detection could not attribute referenced content for sender ${bundle.senderId} ` +
+        `in chat ${bundle.chatId}: the direct-content classifier returned no verdict.`
+      );
+      return { kind: "unknown" };
+    }
+    return directVerdict.isAd
+      ? { kind: "directAd", verdict: directVerdict }
+      : { kind: "referencedOnly", verdict: combinedVerdict };
+  } catch (error: unknown) {
+    logger.error(
+      `Ad detection failed to attribute referenced content for sender ${bundle.senderId} ` +
+      `in chat ${bundle.chatId}:`,
+      error
+    );
+    return { kind: "unknown" };
+  }
+}
+
+/** 本次真正推进水位的最后一条消息在入队时冻结的警告窗口事实。 */
+function selectedWithinReferencedWarning(
+  selection: AdBundleSelection,
+  previousCheckedSeq: number
+): boolean {
+  for (let index: number = selection.entries.length - 1; index >= 0; index--) {
+    const entry: AdCandidateEntry | undefined = selection.entries[index];
+    if (entry !== undefined && entry.seq > previousCheckedSeq) {
+      return entry.withinReferencedWarning;
+    }
+  }
+  return false;
+}
+
+/**
+ * 警告成功后只保留同群内 message_id 晚于公开提示的消息。发送回执与 Worker
+ * mailbox 存在短暂交错窗口，本机 receivedAt 可能早于回执时钟；Telegram 的群内
+ * 消息序列才是「用户是否已经看得到警告」的权威顺序。保留下来的内容立即排队，
+ * 同时按实际到达时刻冻结是否仍在五分钟内。
+ */
+function retainPostWarningContent(
+  key: string,
+  bundle: AdMessageBundle,
+  warning: TelegramWorkerTemporaryMessageResult
+): void {
+  const retainedEntries: AdCandidateEntry[] = [];
+  for (const entry of bundle.entries) {
+    if (entry.messageId <= warning.messageId) continue;
+    // 入队时的跨条引文去重可能由一条即将被移除的警告前消息认领。拆串之后必须
+    // 用保留下来的新前缀重新认领，否则连续回复同一条广告时，警告后的 entry
+    // 会只剩「看看」之类正文，模型再也读不到被回复广告。
+    if (entry.quote !== undefined || entry.replyTo !== undefined) {
+      entry.text = claimSampleContextParts(
+        entry.directText,
+        entry,
+        retainedEntries
+      );
+    }
+    entry.withinReferencedWarning =
+      entry.receivedAt - warning.sentAt < AD_REFERENCE_WARNING_WINDOW_MS;
+    retainedEntries.push(entry);
+  }
+  bundle.entries = retainedEntries;
+
+  let pendingIdWriteIndex: number = 0;
+  for (const messageId of bundle.pendingDeleteIds) {
+    if (messageId <= warning.messageId) continue;
+    bundle.pendingDeleteIds[pendingIdWriteIndex] = messageId;
+    pendingIdWriteIndex++;
+  }
+  bundle.pendingDeleteIds.length = pendingIdWriteIndex;
+
+  recentlyEnqueuedAdKeys.delete(key);
+  if (
+    bundle.entries.length === 0 &&
+    bundle.pendingDeleteIds.length === 0
+  ) {
+    pendingAdMessages.delete(key);
+    refreshAdDetectCapacitySaturation();
+  }
+}
+
+/**
+ * 判定一个键并按结果处置。失败与「不是广告」都只推进 checkedSeq：前者是
+ * 为了不在故障期间反复重试，后者是正常的放行。
+ */
+async function detectOne(
+  key: string,
+  bundle: AdMessageBundle
+): Promise<void> {
+  // 送检那一刻真正入选的条目与它对应的水位，**必须在 await 之前定格**：bundle 是
+  // 活对象，这次往返期间新消息会并进同一个 entries 数组、裁剪也可能从头部去掉几条。
+  // 拿处置时的现场当「判定依据」写进样本，复现出来的就是模型没读过的一串；水位同理
+  // ——按结算时的 latestSeq 推进，就会把这期间新说的话一并记成判过。
+  const previousCheckedSeq: number = bundle.checkedSeq;
+  const selection: AdBundleSelection = selectAdBundleEntries(bundle);
+  const judged: readonly AdCandidateEntry[] = selection.entries;
+  const withinReferencedWarning: boolean =
+    selectedWithinReferencedWarning(selection, previousCheckedSeq);
+  let outcome: AdDetectionOutcome;
+  let isAdmin: boolean | undefined;
+  try {
+    outcome = await classifyAdBundle(bundle, judged);
+    // 确证也要待在 in-flight 标记之内：标记一放，同一个键就可能被下一拍取走
+    // 再判一次，两次判定各自跑完一整套处置。
+    if (
+      outcome.kind === "directAd" ||
+      outcome.kind === "referencedOnly"
+    ) isAdmin = await isAdminSender(bundle);
   } finally {
     inFlightAdDetectKeys.delete(key);
   }
@@ -282,7 +423,7 @@ async function detectOne(key: string, bundle: AdMessageBundle): Promise<void> {
   // 只推到本次真正送检的最后一条。预算装不下的那部分仍是未判内容，requeueIfUnchecked
   // 会把这个键留到去重窗口轮换时再判一次（见 rotateAdDetectDedupWindow）。
   bundle.checkedSeq = Math.max(bundle.checkedSeq, selection.checkedToSeq);
-  if (verdict?.isAd !== true) {
+  if (outcome.kind === "notAd" || outcome.kind === "unknown") {
     requeueIfUnchecked(key, bundle);
     return;
   }
@@ -291,12 +432,76 @@ async function detectOne(key: string, bundle: AdMessageBundle): Promise<void> {
   if (isAdmin !== false) {
     logger.error(
       `Ad detection flagged ${isAdmin === true ? "chat admin" : "unverified sender"} ${bundle.senderId} ` +
-      `in chat ${bundle.chatId}; skipping disposal (${verdict.reason || "no reason given"}).`
+      `in chat ${bundle.chatId}; skipping disposal (${outcome.verdict.reason || "no reason given"}).`
     );
     // 确认是管理员就把整串丢掉：留着只会在下一个窗口把同样的内容再判一次。
     if (isAdmin === true) {
       pendingAdMessages.delete(key);
       refreshAdDetectCapacitySaturation();
+    }
+    return;
+  }
+  if (outcome.kind === "referencedOnly" && !withinReferencedWarning) {
+    const warningGeneration: number | undefined =
+      beginReferencedAdWarning(key);
+    if (warningGeneration === undefined) return;
+    // 判定已经离开上面的 finally，但警告尚未取得 message_id；这段网络往返仍是
+    // 同一个键的处置临界区。它只覆盖发送本身；广告消息删除已经拆成独立任务，
+    // 不再拿分类并发槽等待 deleteMessages 的 429 退避。
+    inFlightAdDetectKeys.add(key);
+    try {
+      let warning: TelegramWorkerTemporaryMessageResult | undefined;
+      try {
+        warning = await warnReferencedAdSender(bundle);
+      } catch (error: unknown) {
+        logger.error(
+          `Ad detection failed to send referenced-ad warning for sender ${bundle.senderId} ` +
+          `in chat ${bundle.chatId}:`,
+          error
+        );
+      }
+      if (warning === undefined) {
+        cancelReferencedAdWarning(key, warningGeneration);
+        if (
+          !adDetectStopping.current &&
+          pendingAdMessages.get(key) === bundle
+        ) {
+          deleteReferencedAdMessages({
+            bundle,
+            judged,
+            messageIdThrough: Number.POSITIVE_INFINITY,
+          });
+        }
+        return;
+      }
+      if (
+        adDetectStopping.current ||
+        pendingAdMessages.get(key) !== bundle ||
+        !completeReferencedAdWarning(
+          key,
+          warningGeneration,
+          warning.sentAt
+        )
+      ) {
+        cancelReferencedAdWarning(key, warningGeneration);
+        deleteStaleReferencedAdWarning(bundle.chatId, warning.messageId);
+        return;
+      }
+      deleteReferencedAdMessages({
+        bundle,
+        judged,
+        messageIdThrough: warning.messageId,
+      });
+      retainPostWarningContent(key, bundle, warning);
+    } finally {
+      inFlightAdDetectKeys.delete(key);
+      if (!adDetectStopping.current) {
+        // message_id 晚于警告的新消息已经从旧串里保留下来，但在发送临界区里不会排队；
+        // 警告结算后立刻补排。发送失败时旧 bundle 仍在，只有真有未检内容且去重
+        // 窗口已经轮换才会排，避免把 Telegram 故障放大成警告重试风暴。
+        const current: AdMessageBundle | undefined = pendingAdMessages.get(key);
+        if (current !== undefined) requeueIfUnchecked(key, current);
+      }
     }
     return;
   }
@@ -308,7 +513,8 @@ async function detectOne(key: string, bundle: AdMessageBundle): Promise<void> {
   pendingAdMessages.delete(key);
   refreshAdDetectCapacitySaturation();
   recentlyDisposedAdKeys.add(key);
-  await disposeAdSender({ bundle, verdict, judged });
+  clearReferencedAdWarning(key);
+  await disposeAdSender({ bundle, verdict: outcome.verdict, judged });
 }
 
 /**
@@ -429,6 +635,7 @@ export function clearChatAdDetect(chatId: number): void {
   for (const key of recentlyDisposedAdKeys) {
     if (key.startsWith(prefix)) recentlyDisposedAdKeys.delete(key);
   }
+  clearChatReferencedAdWarnings(chatId);
   refreshAdDetectCapacitySaturation();
 }
 
@@ -447,6 +654,7 @@ export function sweepAdDetect(now: number = Date.now()): void {
       pendingAdMessages.delete(key);
     }
   }
+  sweepReferencedAdWarnings(now);
   refreshAdDetectCapacitySaturation();
 }
 
@@ -471,8 +679,10 @@ export function stopAdDetectQueue(): void {
   queuedAdDetectKeys.clear();
   recentlyEnqueuedAdKeys.clear();
   recentlyDisposedAdKeys.clear();
+  resetReferencedAdWarnings();
   pendingAdMessages.clear();
   inFlightAdDetectKeys.clear();
+  inFlightReferencedAdCleanupTasks.clear();
   adDetectSaturated.current = false;
   adDetectCapacitySaturated.current = false;
   // stop 是「清掉全部状态」：quiesce 那面旗要留着挡迟到的判定，走到 stop 时

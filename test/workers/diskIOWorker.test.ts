@@ -42,8 +42,12 @@ const flushLuckAppends = mock((): boolean => true);
 const configureLuckAppendStalledReply = mock((_notify: (reply: unknown) => void): void => {});
 const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
 const flushBlocklistRemovalOutbox = mock((): boolean => true);
+const pendingIdentityDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
+  "blocklistRemovalOutbox",
+]);
 const flushJoinLogDomain = mock((): boolean => true);
 const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
+const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
 const postMessage = mock((_reply: unknown): void => {});
 const hydrateStickerCatalogs = mock((_packs: readonly string[]): Map<string, string> => new Map());
 // Worker 重建时仍会自行复核贴纸白名单；运行期被改坏时恢复必须拒绝。
@@ -97,10 +101,32 @@ mock.module("../../packages/config/stickers", () => ({
     return { packs: ["pack_a"] };
   },
 }));
-mock.module("../../packages/workers/diskIO/blocklistRemovalOutbox", () => ({
-  flushBlocklistRemovalOutbox,
-  handleBlocklistRemovalsMessage,
-  hydrateBlocklistRemovalOutbox: (): Map<number, never> => new Map<number, never>(),
+mock.module("../../packages/workers/diskIO/identityDatabase", () => ({
+  configureIdentityPersistenceReply: (): void => {},
+  flushIdentityDatabase: flushBlocklistRemovalOutbox,
+  handleIdentityPolicyWrite,
+  handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
+  hydrateIdentityDatabase: (): {
+    blocklistEntryCount: number;
+    whitelistEntryCount: number;
+    pendingBlockedRemovals: Map<number, never>;
+  } => ({
+    blocklistEntryCount: 0,
+    whitelistEntryCount: 0,
+    pendingBlockedRemovals: new Map<number, never>(),
+  }),
+  pendingIdentityDatabaseDomains,
+  readBlocklistIds: (message: { requestId: number }): unknown => ({
+    type: "blocklistIdsRead",
+    requestId: message.requestId,
+    ids: [],
+  }),
+  readIdentityPolicies: (message: { requestId: number }): unknown => ({
+    type: "identityPoliciesRead",
+    requestId: message.requestId,
+    whitelist: [],
+    blocklist: [],
+  }),
 }));
 
 const workerGlobal = globalThis as typeof globalThis & { postMessage: (message: unknown) => void };
@@ -109,6 +135,9 @@ workerGlobal.postMessage = postMessage;
 const { handleDiskIOWorkerMessage } = await import("../../packages/workers/diskIOWorker");
 // 拒收标记走真实的 owner 缓存：路由层的兜底就是靠它把失败传给统一 flush。
 const { consumeJoinLogRejection } = await import("../../packages/cache/workers/diskIO/joinLog");
+const {
+  rejectedIdentityDomains,
+} = await import("../../packages/cache/workers/diskIO/identityDatabase");
 const { resetDiskIOReplayWindow } = await import("../../packages/cache/workers/diskIO/recovery");
 
 afterAll(() => {
@@ -133,8 +162,10 @@ beforeEach(() => {
     flushLuckAppends,
     flushVerificationChanges,
     flushBlocklistRemovalOutbox,
+    pendingIdentityDatabaseDomains,
     flushJoinLogDomain,
     handleBlocklistRemovalsMessage,
+    handleIdentityPolicyWrite,
     postMessage,
     hydrateLuckDay,
     hydrateStickerCatalogs,
@@ -180,7 +211,7 @@ describe("Disk I/O Worker protocol router", () => {
     route({ type: "stickerCatalog", pack: "pack", snapshot: "catalog" });
     route({ type: "luckDraw", day: "2026-07-22", key: "42", label: "大吉", fortunePercent: 99 });
     route({ type: "verificationDelete", chatId: -1, userId: 42, generation: 1, revision: 4 });
-    route({ type: "blocklistRemovals", removals: [] });
+    route({ type: "blocklistRemovals", revision: 1, removals: [] });
     route({
       type: "joinLog",
       chatId: -1,
@@ -225,6 +256,76 @@ describe("Disk I/O Worker protocol router", () => {
     expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
       type: "diagnosticBatchAccepted",
     }));
+  });
+
+  test("身份 SQLite 的两个 owner 抛错同样不逸出 onmessage，按领域记拒收", () => {
+    handleIdentityPolicyWrite.mockImplementationOnce((): void => {
+      throw new Error("Identity 7 cannot exist in both whitelist_entries and blocklist_entries.");
+    });
+    handleBlocklistRemovalsMessage.mockImplementationOnce((): void => {
+      throw new Error("Pending removal row 1 contains an identity absent from the effective blocklist.");
+    });
+
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      // 校验失败此前是裸抛：异常离开 onmessage 后 Bun 直接终止整条落盘线程，
+      // 九个领域的缓冲随线程一起没了，反复触发还会顶到重启节流停掉整个进程。
+      expect((): void => route({
+        type: "identityPolicyWrite",
+        table: "whitelist",
+        id: 7,
+        data: null,
+        revision: 1,
+      })).not.toThrow();
+      expect((): void => route({
+        type: "blocklistRemovals",
+        revision: 1,
+        removals: [],
+      })).not.toThrow();
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    expect(consoleError).toHaveBeenCalledTimes(2);
+    // 主线程只能靠下一次领域 flush 的失败回执才知道这条最终值没落盘——
+    // /block 的 confirmBlocklistPersisted 正是这么问的。
+    expect([...rejectedIdentityDomains].sort()).toEqual([
+      "blocklistRemovalOutbox",
+      "whitelist",
+    ]);
+    // 在线消息不升级为停机：主线程仍持有未 ACK 的 revision，Worker 重建时重放。
+    expect(postMessage).not.toHaveBeenCalled();
+    rejectedIdentityDomains.clear();
+  });
+
+  test("恢复重放期间的身份写失败升级为停机回执，不只是记拒收", () => {
+    handleIdentityPolicyWrite.mockImplementationOnce((): void => {
+      throw new Error("revision must be a positive safe integer.");
+    });
+
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      route({ type: "recoveryReplay", active: true });
+      route({
+        type: "identityPolicyWrite",
+        table: "blocklist",
+        id: 7,
+        data: null,
+        revision: 1,
+      });
+      route({ type: "recoveryReplay", active: false });
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    // 重放的这条对应的 update 早已被确认过，后面不会再有 flush 来问它。
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "recoveryReplayFailed",
+      domain: "blocklist",
+    }));
+    rejectedIdentityDomains.clear();
   });
 
   test("入群事实的 owner 抛错不逸出 onmessage，改记拒收让统一 flush 回报失败", () => {
@@ -437,7 +538,7 @@ describe("Disk I/O Worker protocol router", () => {
 
   test("flush 不短路其它 owner，并按领域回报失败", () => {
     flushAiMemorySnapshots.mockReturnValueOnce(false);
-    route({ type: "flush", flushId: 11 });
+    route({ type: "flush", flushId: 11, scope: "all" });
 
     for (const fn of [
       flushLogBuffer,
@@ -460,7 +561,7 @@ describe("Disk I/O Worker protocol router", () => {
     });
 
     flushBlocklistRemovalOutbox.mockReturnValueOnce(false);
-    route({ type: "flush", flushId: 12 });
+    route({ type: "flush", flushId: 12, scope: "all" });
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "flushFailed",
       flushedId: 12,
@@ -468,9 +569,26 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  test("八个领域全部成功时回执不带失败领域", () => {
-    route({ type: "flush", flushId: 13 });
+  test("诊断重建前的 business flush 跳过故障日志，但完整刷完全部权威业务领域", () => {
+    route({ type: "flush", flushId: 13, scope: "business" });
 
+    expect(flushLogBuffer).not.toHaveBeenCalled();
+    for (const fn of [
+      flushAiMemorySnapshots,
+      flushStickerCatalogs,
+      flushLuckAppends,
+      flushVerificationChanges,
+      flushBlocklistRemovalOutbox,
+      flushJoinLogDomain,
+    ]) {
+      expect(fn).toHaveBeenCalledTimes(1);
+    }
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 13 });
+  });
+
+  test("九个领域全部成功时回执不带失败领域", () => {
+    route({ type: "flush", flushId: 14, scope: "all" });
+
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 14 });
   });
 });

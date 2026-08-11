@@ -166,8 +166,8 @@ function commitBlockedJoinCount(key: string, now: number): void {
  *
  * 登记失败（outbox 满、id 空间耗尽）必须就地降级，**不能让异常逃出去**：本函数
  * 跑在更新中间件里，抛出去会让整批 update 失败、扣住 offset、进程非零退出，
- * systemd 重启后 Telegram 重投同一条 update 再抛一次——那是一个只能靠手改
- * memory/blocklist/removals.json 解开的重启循环，而 outbox 满本身通常正是一批
+ * systemd 重启后 Telegram 重投同一条 update 再抛一次——那会形成只能人工修复
+ * SQLite outbox 才能解开的重启循环，而 outbox 满本身通常正是一批
  * 永远封不掉的处置堆出来的。降级后这个人暂时留在群里，但仍算「已按黑名单
  * 处置」：名单判定没变，不该反过来给他开一个入群验证窗口。
  * @returns 已按黑名单处置、调用方应就此打住为 true。

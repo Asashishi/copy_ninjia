@@ -1,6 +1,9 @@
 import { LinkedQueue } from "../../../libs/linkedQueue";
 import type { AdDetectedEvent } from "../../../types/antiRaid";
-import type { AdMessageBundle } from "../../../types/antiRaid/adDetect";
+import type {
+  AdMessageBundle,
+  ReferencedAdWarningState,
+} from "../../../types/antiRaid/adDetect";
 
 /**
  * 广告检测流水线（入群守卫线程 packages/workers/antiRaid/adDetect/）的内存状态。
@@ -41,6 +44,24 @@ export const recentlyEnqueuedAdKeys: Set<string> = new Set<string>();
 export const recentlyDisposedAdKeys: Set<string> = new Set<string>();
 
 /**
+ * 引用类广告已公开警告的发送者键 -> 警告失效时刻。
+ *
+ * owner 是 Anti-Raid Worker；第一次引用类广告警告成功后填充，五分钟到期、停管、
+ * 关开关或 Worker 停止时清理，Worker 崩溃后从空表重建。容量与待检发送者上限
+ * 相同；满载时淘汰最早警告，宁可让一名发送者重新获得警告，也不在没有可证明
+ * 的有效警告时永久拉黑。
+ */
+export const referencedAdWarningStates: Map<string, ReferencedAdWarningState> =
+  new Map<string, ReferencedAdWarningState>();
+
+/**
+ * 引用广告警告 attempt 的 Worker 内单调序号。清群只删状态、不回退序号，避免
+ * 旧发送回执在同一 isolate 重新启用后误认领新状态；Worker 重建后连同旧回执
+ * 一起消失。只在首次警告低频路径递增，不进入每消息热点。
+ */
+export const referencedAdWarningGeneration: { current: number } = { current: 0 };
+
+/**
  * 键 -> 该发言者累积的判定上下文。容量由 AD_DETECT_MAX_PENDING_SENDERS 兜住：
  * 满载后拒绝新的不同 key，不淘汰已经接纳的旧 key。未消费条目没有等待 TTL；
  * 已消费上下文在去重窗口外由 Worker sweep 回收。
@@ -57,12 +78,22 @@ export const pendingAdMessages: Map<string, AdMessageBundle> = new Map();
 export const adDetectSystemPrompts: Map<boolean, string> = new Map();
 
 /**
- * 正在等待广告检测 provider 判定的键；防止同一个人被并发送检两次，同时它的 size 就是
- * 全局在途计数，由 AD_DETECT_MAX_IN_FLIGHT 兜住上界（见 adDetect/queue.ts 的
- * runAdDetectBatch）。派发时插入，detectOne 的 finally 里删除，因此 Worker
- * 崩溃重建后随 isolate 一起归零，不需要主线程镜像。
+ * 正在等待广告检测 provider 判定或首次公开警告发送结算的键；防止同一个人被并发
+ * 送检两次，同时它的 size 就是全局在途计数，由 AD_DETECT_MAX_IN_FLIGHT 兜住
+ * 上界（见 adDetect/queue.ts 的 runAdDetectBatch）。派发时插入，判定 finally
+ * 释放；引用类首次命中只在警告网络往返期间同步续占，广告消息的后续删除不再
+ * 占分类额度。Worker 崩溃重建后随 isolate 一起归零，不需要主线程镜像。
  */
 export const inFlightAdDetectKeys: Set<string> = new Set<string>();
+
+/**
+ * 第一次警告后的广告消息清理任务。owner 为 Anti-Raid Worker；发送警告结算后
+ * 填充、删除请求结算时移除，Worker 停止或崩溃时整体清空。容量独立受
+ * AD_DETECT_MAX_IN_FLIGHT 约束，满载时放弃新的尽力而为清理，不能反过来占住
+ * 分类 key 或无限累积 Promise。
+ */
+export const inFlightReferencedAdCleanupTasks: Set<Promise<void>> =
+  new Set<Promise<void>>();
 
 /**
  * 上一拍是否撞上了全局在途闸。只用来把日志压到状态边沿：撑满时每拍记一行会

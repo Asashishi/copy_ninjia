@@ -1,6 +1,3 @@
-import type { PendingBlockedRemoval } from "../blocklist";
-import type { BLOCKLIST_REMOVAL_OUTBOX_VERSION } from "../../consts/antiRaid/blocklist";
-
 /** 单条抽签结果的落盘/缓存形状。 */
 export interface LuckDrawRecord {
   label: string;
@@ -75,18 +72,4 @@ export interface JoinLogFileCache {
 /** 当前按日追加目标文件的游标状态；day 同时决定文件名 `<day>.json`。 */
 export interface DayFileState extends AppendOnlyFileState {
   day: string;
-}
-
-/** 黑名单文件里单个用户的记录，见 workers/diskIO/blocklistFile.ts。 */
-export interface BlockedUserRecord {
-  /** 恒为 true：解除拉黑是 /unblock 把条目整条删掉后全量重写，不写 false 记录（见 04-invariants.md）。 */
-  isBlocked: true;
-  /** 拉黑时刻的东京时间「YYYY/MM/DD HH:mm:ss」，与 libs/time.ts 的 formatTokyoTime 同形态。 */
-  blockedAt: string;
-}
-
-/** memory/blocklist/removals.json 的当前 schema。 */
-export interface BlocklistRemovalOutboxFile {
-  version: typeof BLOCKLIST_REMOVAL_OUTBOX_VERSION;
-  entries: PendingBlockedRemoval[];
 }

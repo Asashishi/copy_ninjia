@@ -22,7 +22,7 @@ flowchart TD
     MAIN["🧵 メインスレッド<br/>grammY runner + グループ単位の sequentialize<br/>唯一の Telegram client + outbound gate<br/>state facade + StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>複数ターンのツール呼び出し（差し替え可能な provider）<br/>ローリングメモリ · 要約圧縮 · ムード"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>認証とロックダウンの状態機械 / ブロックリスト処置 / 広告検出"]:::worker
-    DISK["💾 Disk I/O Worker<br/>ログ / メモリスナップショット / 運勢 / 認証ファイル / ブロックリスト / 入室ログ"]:::worker
+    DISK["💾 Disk I/O Worker<br/>ログ / メモリスナップショット / identity database / 運勢 / 認証ファイル / 入室ログ"]:::worker
 
     MAIN <-->|duplex message| AI
     MAIN <-->|duplex message| RAID
@@ -33,14 +33,14 @@ flowchart TD
 
 - **メインスレッド**は Telegram runner、唯一の実 grammY Bot、Telegram outbound gate、3 つの Worker の監視ハンドル、`cache/main/storage.ts` の正式な `state.json` メモリミラーを所有します。AI/Anti-Raid Worker は監視付き duplex message だけで Telegram capability を要求し、Bot API と Telegram file download は最終的にすべてメインスレッドから開始されます。`stateStore.ts` は業務アクセスと snapshot、`statePersistence.ts` の `StateStore` は厳密な復元と永続化 lifecycle を担当します。
 - **AI Worker**はグループチャットのメモリ、返信の受け入れ制御、メディア説明パイプライン、グループごとのムード、スタンプカタログの実行時状態を排他的に所有します。
-- **Anti-Raid Worker**は認証・lockdown 状態機械と timer を所有します。`/ad_detect` も同じ thread で送信者ごとの bundle を設定済み広告検出 provider へ送り、結果を main thread に返して `/block` 相当の処分へ変換します。kick、query、restriction、delete の意味は Worker が解釈しますが、network request は duplex 境界から main thread の独立 429 category へ戻ります。未着地の blocklist batch は `memory/blocklist/removals.json`、認証 kick は日次認証 snapshot の `kickPending` で再投入します。
-- **Disk I/O Worker**は `logs/` と、`memory/` 配下の 7 ドメイン `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/`、`joinlog/` の読み書きを直列化して排他的に扱います。唯一の例外は `state.json` で、メインスレッドが業務 facade 経由で `StateStore` を呼び出してアトミックに書き込みます。全ファイル形態と復元・保持の役割は [07 データルート](07-operations.md#データルート) を参照してください。
+- **Anti-Raid Worker**は認証・lockdown 状態機械と timer を所有します。kick、query、restriction、delete の意味は Worker が解釈しますが、network request は duplex 境界から main thread の独立 429 category へ戻ります。未着地の blocklist batch は SQLite `pending_blocked_removals` table、認証 kick は日次認証 snapshot の `kickPending` で再投入します。
+- **Disk I/O Worker**は `database/storage.sqlite`、`logs/`、`memory/` 配下の 6 domain `ai/`、`stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/` の読み書きを直列化して排他的に扱います。`state.json` は main thread が業務 facade 経由で `StateStore` を呼び出して atomic write します。全 persistence 形態と復元・保持の役割は [07 データルート](07-operations.md#データルート) を参照してください。
 
 [`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) と [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) は、安定した公開面を提供する薄い明示的 export であり、実装や状態を所有しません。AI の監督 lifecycle とスレッド間 proxy は [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts)、メッセージごとの入口は [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts) が所有します。Anti-Raid の監督 lifecycle は [`workerBridge.ts`](../../packages/antiRaid/workerBridge.ts)、durable delivery は [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts)、update routing は [`updateIngress.ts`](../../packages/antiRaid/updateIngress.ts) が所有します。広告検出は引き続き、メインスレッドの admission と最終フィールド投影、Worker の判定と副作用、メインスレッドの durable blocklist/BAN 経路に分かれます。実装は [`adCandidate.ts`](../../packages/antiRaid/adCandidate.ts)、[`adDetect.ts`](../../packages/antiRaid/adDetect.ts)、[`packages/workers/antiRaid/adDetect/`](../../packages/workers/antiRaid/adDetect/) を参照してください。
 
 認証 domain は 1 つの正式な dispatcher と revision 入口を維持しつつ、純粋な transition を join、pending、terminal の lifecycle 別に [`packages/states/verification/`](../../packages/states/verification/) へ分割しています。[`packages/states/verification.ts`](../../packages/states/verification.ts) は全 event の router を保持します。Worker 側の Telegram effect も kick と terminal disposal を [`packages/workers/antiRaid/verificationEffects/`](../../packages/workers/antiRaid/verificationEffects/) へ分離しました。ロックダウン復旧と認証ミラー受信は [`lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) と [`verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts) が担当します。
 
-Worker のクラッシュはレート制限付きで自己修復しますが、ホスト実装は 2 系統です。AI と Anti-Raid は [`packages/libs/supervisedWorker.ts`](../../packages/libs/supervisedWorker.ts) を共有します。Disk I/O 自身はディスクへ書く logger に依存できないため、[`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) に console-only の独自復旧処理があります。再構築後はメインスレッドのミラーまたはディスクスナップショットから再生します。Disk I/O は recovery load、全 domain mirror の replay、復旧窓の FIFO 排出がすべて成功するまで writable にならず、どれか 1 つでも失敗すればその世代を終了して fatal shutdown を要求します。再起動予算を使い切ると、[`packages/infra/workerSupervisor.ts`](../../packages/infra/workerSupervisor.ts) などの fatal 境界がライフサイクルへ停止を通知します。
+Worker のクラッシュはレート制限付きで自己修復しますが、ホスト実装は 2 系統です。AI と Anti-Raid は [`packages/infra/supervisedWorker.ts`](../../packages/infra/supervisedWorker.ts) を共有します。Disk I/O 自身はディスクへ書く logger に依存できないため、[`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) に console-only の独自復旧処理があります。再構築後はメインスレッドのミラーまたはディスクスナップショットから再生します。Disk I/O は recovery load、全 domain mirror の replay、復旧窓の FIFO 排出がすべて成功するまで writable にならず、どれか 1 つでも失敗すればその世代を終了して fatal shutdown を要求します。再起動予算を使い切ると、[`packages/infra/workerSupervisor.ts`](../../packages/infra/workerSupervisor.ts) などの fatal 境界がライフサイクルへ停止を通知します。
 
 ## 1 件のメッセージが通る経路
 
@@ -107,8 +107,8 @@ flowchart TD
 
 1. データルートを再帰的に作成して**事前検査**します。書き込み、ファイル fsync、同一ディレクトリ内 hard link、アトミック rename、ディレクトリ fsync のどれかが失敗すると、実パスを示して起動を拒否します。
 2. **`bot.lock`** の単一インスタンスロックを取得します。形式と後処理は [07 運用とトラブルシューティング](07-operations.md#botlock-が起動を拒否する場合) を参照してください。
-3. **state 永続化境界と global security configuration を復元**します。トップレベルの孤立した一時ファイルを削除し、`state.json` の主・副コピーを厳密に検証して復元し、業務 facade から正式なメモリを hydrate するとともに、`config/whitelist.json` と `config/blocklist.json` をロードします。global input のいずれかが不正なら network 接続や Worker 作成より前に起動を拒否します。`config/` の残り 4 つの optional feature JSON は**ここでは事前読み込みしません**。chat ごとの opt-in feature に属するため、検証は対応する toggle command へ移しました（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) を参照）。`state.json` の復元後にもう一度照合し、有効なままの optional feature に credential または設定が欠けていれば chat id を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。
-4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータに加え、`memory/blocklist/blocklist.json` の `/block` 正式リストと `memory/blocklist/removals.json` の未完了 removal outbox を復元します。どれかのドメインで復元に失敗すると、部分状態での起動を拒否します。
+3. **state 永続化境界と global security configuration を復元**します。トップレベルの孤立した一時ファイルを削除し、`state.json` の主・副コピーを厳密に検証して復元し、業務 facade から正式なメモリを hydrate します。`telegram.json` など global startup input が不正なら network 接続や Worker 作成より前に拒否します。`config/` の残り 4 つの optional feature JSON は**ここでは事前読み込みしません**。chat ごとの opt-in feature に属するため、検証は対応する toggle command へ移しました（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) を参照）。`state.json` の復元後にもう一度照合し、有効なままの optional feature に credential または設定が欠けていれば chat id を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。
+4. Telegram クライアントと **Disk I/O Worker** を初期化し、`memory/` の AI、スタンプ、運勢、認証待ちデータを復元し、`database/storage.sqlite` から allowlist/blocklist count と未完了 removal を厳密 hydrate します。main thread は policy 2 table 全体を複製せず、有界 LRU から開始します。どれかの domain で復元に失敗すると、部分状態での起動を拒否します。
 5. handler を登録し、コマンドメニューを設定して `bot.init()` を実行します。
 6. **AI Worker** を初期化し、`state.json` で AI が明示的に有効なグループだけを hydrate します。その後、運勢と認証待ちのミラーを復元し、**Anti-Raid Worker** を初期化して、最後に acknowledgement-safe runner を開始します。
 7. すべての準備完了後にだけ、query category の request と connection を無制限に占有しないよう上限を設けた**低優先度のグループタイトル補完**を開始します。

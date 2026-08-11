@@ -38,12 +38,12 @@ Bot 身份和超级管理员写入 `config/telegram.json`：
 - **`bot_token`**（必填）
   - BotFather 下发的 token。
 - **`super_admin_user_id`**（必填）
-  - 单个十进制超级管理员用户 ID。这个身份本身即持有 `whitelist.json` 能授予的
-    **全部**逐项权限，**不需要**在 `whitelist.json` 里另配一条；它同时恒在白名单
+  - 单个十进制超级管理员用户 ID。这个身份本身即持有白名单能授予的
+    **全部**逐项权限，**不需要**写入 SQLite 白名单表；它同时恒在白名单
     边界内，因此也享有 copy 冷却豁免、验证代点与自动处置保护，并且不可被 `/block`、
     `/mute` 或 `/batch_kick` 处置。
-  - 另有五项只认身份、无法通过 `whitelist.json` 授予：`/init`、`/batch_kick`、
-    `/permission` 的修改操作、`/white` 与 `/send`。
+  - `/init`、`/batch_kick`、`/permission` 的修改操作、`/white disable` 与 `/send`
+    只认这个身份；`isCanWhiteOther` 只能把其它身份以默认权限加入白名单，不能删除成员。
   - 白名单身份可用 `/permission query` 查询自身权限，并用 `/permission help` 查看说明；
     超级管理员的 `query` 返回那份逐项全开的视图。
 AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`。如需改变运行时
@@ -62,16 +62,6 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
   - **内容**：Bot API token 与唯一超级管理员用户 ID。
   - **校验**：[`packages/config/telegram.ts`](../../packages/config/telegram.ts)；联网前严格
     加载，缺失、未知字段、空 token 或非法 ID 均拒绝启动。
-- **`config/whitelist.json`**（[示例](../../config_example/whitelist.json)）
-  - **内容**：用户/频道白名单及逐项权限；身份存在本身还代表 copy 冷却豁免、
-    验证代点与自动处置保护。超级管理员不必也不应写进这里——它的
-    全部权限由身份直接给出，写进来的条目永远不会被读到。
-  - **校验**：[`packages/config/whitelist.ts`](../../packages/config/whitelist.ts)；
-    联网前严格加载，缺失或损坏会拒绝启动。
-- **`config/blocklist.json`**（[示例](../../config_example/blocklist.json)）
-  - **内容**：部署方手工维护的静态用户/频道黑名单 ID 数组。
-  - **校验**：[`packages/config/blocklist.ts`](../../packages/config/blocklist.ts)；
-    联网前严格加载，并与 `memory/` 动态层合并。
 - **`config/stickers.json`**（[示例](../../config_example/stickers.json)）
   - **内容**：AI 可用的贴纸包，最多 5 个。
   - **校验**：[`packages/config/stickers.ts`](../../packages/config/stickers.ts)。
@@ -103,7 +93,21 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
     以 404/405 表明模型/路径不存在时都停止下载该类媒体（后者另记一行指向
     `$.agent.media` 的诊断），瞬时故障只按次数退避、不会永久关闭能力。
 
-`whitelist.json` 与 `blocklist.json` 是全局安全边界，必须在联网和 Worker 启动前严格加载。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、反应、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取广告样本与 `agent.ad_detect`；`/ja_copy enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关；若该功能已在状态中开启，则启动总闸拒绝进程启动。结论按进程缓存，修好文件后必须重启。
+白名单、黑名单与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB 行结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、反应、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/ja_copy enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关；若该功能已在状态中开启，则启动总闸拒绝进程启动。结论按进程缓存，修好文件后必须重启。
+
+### 初始化身份数据库
+
+运行时不会猜测缺失数据库并自动建空表。全新部署先准备两份只供迁移脚本消费的空旧格式文件，确认目标库不存在，再显式迁移：
+
+```bash
+test ! -e config/whitelist.json
+test ! -e config/blocklist.json
+printf '{}\n' > config/whitelist.json
+printf '{"blockedIds":[]}\n' > config/blocklist.json
+bun run migrate:identity-storage --apply
+```
+
+脚本取得 `bot.lock`、在工作树外留存带 owner/mode/SHA-256 清单的备份、原子发布当前 schema 的 `database/storage.sqlite`，随后删除两份临时旧文件；备份路径会打印出来。已有旧 JSON 部署不要创建空文件覆盖现场，按 [07 运维与排障](07-operations.md#身份存储迁移) 迁移真实数据。
 
 ### 从 2.1.0 升级
 
@@ -112,7 +116,7 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
 变量和 `state.json.global.model` 运行时选择不再读取；模型切换改为停机修改对应能力配置后
 重启。示例值只保证结构正确，不保证账号具有调用权限。
 
-旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须手工改成 `whitelist.json` 的键，然后删除该环境变量。只需要保留 copy 冷却豁免、验证代点和自动处置保护的身份可写成空对象 `{}`；要保持旧版 `/block` 与 `/unblock` 能力则显式写入 `"isCanBlock": true`、`"isCanUnBlock": true`。其它权限按需开启；超级管理员不必迁进来，它的全部权限由 `config/telegram.json` 中的身份直接给出（旧版把它写进白名单的部署可以留着不管，那条条目已经读不到了，也可以用 `/white <超管id> disable` 清掉）。白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询解析默认值后的自身完整权限。`/white` 与 `/permission` 的修改操作会原子改写该文件，因此运行用户必须对 `config/` 目录拥有写权限；其余配置仍可只读。
+旧 `.env` 中每个 `PRIVILEGED_USERS_ID` 必须先迁入旧格式白名单输入，再删除该环境变量并运行身份存储迁移；不要在 SQLite 迁移完成后手改数据库。只需要保留 copy 冷却豁免、验证代点和自动处置保护的身份可写成空对象 `{}`；其它权限按需开启。超级管理员不迁入白名单表，它的全部权限由 `config/telegram.json` 中的身份直接给出。迁移完成后，白名单身份可执行 `/permission help` 查看完整键与说明，并用 `/permission query` 查询自身完整权限；`/white` 与 `/permission` 通过数据库事务持久化，`config/` 可保持只读。
 
 **例外：功能已经开着的时候仍然拒绝启动。**`state.json` 里那个 `true` 是管理员当初明确按下的，把它悄悄降级成「静默不干活」，群里看到的就是机器人从某次重启起再也不闲聊/不抓广告/不翻译。因此启动时会核对一次：凡是还有群开着的可选功能，凭据与配置必须齐备，缺了就带着群 id 和缺失项拒绝启动（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。出路是补回前提，或者先 `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` 再撤掉它。
 

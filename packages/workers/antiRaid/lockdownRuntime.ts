@@ -39,20 +39,61 @@ function nextLockdownIntentId(): number {
 
 function dispatchLockdown(chatId: number, event: LockdownMachineEvent): void {
   const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
+  const previousState: LockdownState | undefined = entry?.state;
   const { next, effects }: LockdownTransition = transitionLockdown(entry?.state, event);
   if (next !== entry?.state) {
     if (next === undefined) {
       if (entry) {
-        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        clearLockdownEntryTimers(entry);
         lockdownEntries.delete(chatId);
       }
     } else if (entry) {
       entry.state = next;
+      reconcileLockdownEntryTimers(entry, previousState, next);
     } else {
-      lockdownEntries.set(chatId, { state: next, timer: undefined });
+      lockdownEntries.set(chatId, {
+        state: next,
+        restoreTimer: undefined,
+        retryTimer: undefined,
+        restoreAt: undefined,
+      });
     }
   }
   runLockdownEffects(chatId, effects);
+}
+
+function clearRestoreTimer(entry: LockdownEntry): void {
+  if (entry.restoreTimer !== undefined) clearTimeout(entry.restoreTimer);
+  entry.restoreTimer = undefined;
+  entry.restoreAt = undefined;
+}
+
+function clearRetryTimer(entry: LockdownEntry): void {
+  if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
+  entry.retryTimer = undefined;
+}
+
+function clearLockdownEntryTimers(entry: LockdownEntry): void {
+  clearRestoreTimer(entry);
+  clearRetryTimer(entry);
+}
+
+/** 状态换代时只保留新阶段仍然拥有的 timer，纠偏与到期 timer 彼此独立。 */
+function reconcileLockdownEntryTimers(
+  entry: LockdownEntry,
+  previous: LockdownState | undefined,
+  next: LockdownState
+): void {
+  if (next.kind === "restoring" || next.kind === "applying") {
+    clearLockdownEntryTimers(entry);
+    return;
+  }
+  if (
+    next.kind === "active" &&
+    (previous?.kind === "restoring" || previous?.kind === "reconciling")
+  ) {
+    clearRetryTimer(entry);
+  }
 }
 
 function lockdownAnnouncementText(joinCount?: number): string {
@@ -76,18 +117,35 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
       case "scheduleRestore": {
         const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
         if (!entry) break;
-        if (entry.timer !== undefined) clearTimeout(entry.timer);
-        entry.timer = setTimeout((): void => dispatchLockdown(chatId, {
-          type: "restoreTimerFired",
-          intentId: nextLockdownIntentId(),
-        }), effect.delayMs);
+        if (entry.restoreTimer !== undefined) clearTimeout(entry.restoreTimer);
+        entry.restoreAt = Date.now() + effect.delayMs;
+        entry.restoreTimer = setTimeout((): void => {
+          entry.restoreTimer = undefined;
+          dispatchLockdown(chatId, {
+            type: "restoreTimerFired",
+            intentId: nextLockdownIntentId(),
+          });
+        }, effect.delayMs);
         break;
       }
       case "scheduleRestoreRetry": {
         const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
         if (!entry) break;
-        if (entry.timer !== undefined) clearTimeout(entry.timer);
-        entry.timer = setTimeout((): void => dispatchLockdown(chatId, { type: "restoreRetryFired" }), effect.delayMs);
+        if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
+        entry.retryTimer = setTimeout((): void => {
+          entry.retryTimer = undefined;
+          dispatchLockdown(chatId, { type: "restoreRetryFired" });
+        }, effect.delayMs);
+        break;
+      }
+      case "scheduleReapplyRetry": {
+        const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
+        if (!entry) break;
+        if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
+        entry.retryTimer = setTimeout((): void => {
+          entry.retryTimer = undefined;
+          dispatchLockdown(chatId, { type: "reapplyRetryFired" });
+        }, effect.delayMs);
         break;
       }
       case "prepareApply":
@@ -102,20 +160,14 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
       case "beginRestore":
         beginRestoreLockdown(chatId, effect.originalPermissions);
         break;
-      case "reapplyRestriction":
-        reapplyLockdownRestriction(chatId, effect.originalPermissions);
+      case "beginReapply":
+        reapplyLockdownRestriction(chatId);
         break;
       case "reportUnlock":
         self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
         break;
-      case "announceLockdown":
-        void trackAntiRaidTask({
-          task: sendMessage({
-            chatId,
-            text: lockdownAnnouncementText(effect.joinCount),
-            api: joinVerificationApi,
-          }),
-        });
+      case "beginLockdownAnnouncement":
+        beginLockdownAnnouncement(chatId, effect.joinCount);
         break;
       case "announceUnlock":
         void trackAntiRaidTask({
@@ -131,17 +183,31 @@ function runLockdownEffects(chatId: number, effects: LockdownEffect[]): void {
 }
 
 function publishLockdownState(chatId: number): void {
-  const state: LockdownState | undefined = lockdownEntries.get(chatId)?.state;
-  if (state === undefined) return;
+  const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
+  if (entry === undefined) return;
+  const state: LockdownState = entry.state;
   let intentId: number;
   let originalPermissions: ChatPermissions;
+  let announced: boolean;
+  let expiresAt: number;
   if (state.kind === "applying") {
     if (state.stage !== "prepared") return;
     intentId = state.intentId;
     originalPermissions = state.originalPermissions;
+    announced = false;
+    expiresAt = Date.now();
   } else {
     intentId = state.intentId;
     originalPermissions = state.originalPermissions;
+    announced = state.announced;
+    if (state.kind === "active" || state.kind === "reconciling") {
+      if (entry.restoreAt === undefined) {
+        throw new Error(`Lockdown ${state.kind} state for chat ${chatId} is missing its restore deadline.`);
+      }
+      expiresAt = entry.restoreAt;
+    } else {
+      expiresAt = Date.now();
+    }
   }
   self.postMessage({
     type: "lockdown",
@@ -149,7 +215,8 @@ function publishLockdownState(chatId: number): void {
     phase: state.kind,
     intentId,
     originalPermissions,
-    expiresAt: state.kind === "active" ? Date.now() + LOCKDOWN_MS : Date.now(),
+    announced,
+    expiresAt,
   } satisfies LockdownEvent);
 }
 
@@ -188,6 +255,26 @@ function restrictedPermissions(permissions: ChatPermissions): ChatPermissions {
  */
 function runLockdownApiCall(chatId: number, task: () => Promise<void>): void {
   void trackAntiRaidTask({ task: lockdownApiRunner.run(chatId, task) });
+}
+
+/**
+ * active(false) 已落盘后再发送封锁公告，并把实际发送结果回投状态机。
+ * 与权限调用共用群级串行链，确保显式解除不会越过仍在途的公告后先行落地。
+ */
+function beginLockdownAnnouncement(chatId: number, joinCount?: number): void {
+  runLockdownApiCall(chatId, async (): Promise<void> => {
+    let ok: boolean = false;
+    try {
+      ok = (await sendMessage({
+        chatId,
+        text: lockdownAnnouncementText(joinCount),
+        api: joinVerificationApi,
+      })) !== undefined;
+    } catch (error: unknown) {
+      logger.error(`Error sending anti-raid lockdown announcement for chat ${chatId}:`, error);
+    }
+    dispatchLockdown(chatId, { type: "announcementResult", ok });
+  });
 }
 
 /**
@@ -281,12 +368,11 @@ function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissio
 /**
  * 迟到的旧 beginRestore 成功回执撞上新峰值重新给满的 ACTIVE 时用来纠偏：
  * 重新读取当前权限，只把 invite 字段补回限制，保留管理员并发修改的其它字段。
- * 结果不回投状态机——不改变当前 ACTIVE 状态，失败只记日志（best-effort：
- * ACTIVE 到期后自然会走一次常规 beginRestore，届时若权限意外仍是开放的，
- * 后续峰值触发的 thresholdExceeded 也会在下次滑窗超限时重新收紧）。挂在同一
- * 条 runLockdownApiCall 串行链上，保证不会比它之后才发起的一次恢复更晚落地。
+ * 结果必须回投状态机：成功后才能从 RECONCILING 回到 ACTIVE；失败由状态机
+ * 安排退避重试。挂在同一条 runLockdownApiCall 串行链上，保证不会比它之后才
+ * 发起的一次恢复更晚落地。
  */
-function reapplyLockdownRestriction(chatId: number, _originalPermissions: ChatPermissions): void {
+function reapplyLockdownRestriction(chatId: number): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
       const chat: ChatFullInfo = await joinVerificationApi.getChat(chatId);
@@ -296,8 +382,10 @@ function reapplyLockdownRestriction(chatId: number, _originalPermissions: ChatPe
         restrictedPermissions(chat.permissions),
         INDEPENDENT_CHAT_PERMISSIONS_OTHER
       );
+      dispatchLockdown(chatId, { type: "reapplyResult", ok: true });
     } catch (error: unknown) {
-      logger.error(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded:`, error);
+      logger.error(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded; retrying shortly:`, error);
+      dispatchLockdown(chatId, { type: "reapplyResult", ok: false });
     }
   });
 }
@@ -358,7 +446,7 @@ export function retractJoin(chatId: number, joinedAt: number): void {
 export function stopLockdownRuntime(): void {
   for (const window of joinWindows.values()) clearTimeout(window.resetTimeout);
   for (const entry of lockdownEntries.values()) {
-    if (entry.timer !== undefined) clearTimeout(entry.timer);
+    clearLockdownEntryTimers(entry);
   }
   joinWindows.clear();
   lockdownEntries.clear();
@@ -368,7 +456,15 @@ export function stopLockdownRuntime(): void {
 
 /** 接管上一个（已崩溃的）Worker / 上一个进程留下的私密模式（背景见 antiRaid/workerBridge.ts）。 */
 export function adoptLockdowns(lockdowns: AdoptableLockdown[]): void {
-  for (const { chatId, phase, intentId, originalPermissions, remainingMs, persisted } of lockdowns) {
-    dispatchLockdown(chatId, { type: "adopt", phase, intentId, originalPermissions, remainingMs, persisted });
+  for (const { chatId, phase, intentId, originalPermissions, announced, remainingMs, persisted } of lockdowns) {
+    dispatchLockdown(chatId, {
+      type: "adopt",
+      phase,
+      intentId,
+      originalPermissions,
+      announced,
+      remainingMs,
+      persisted,
+    });
   }
 }

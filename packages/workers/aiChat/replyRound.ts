@@ -136,6 +136,30 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           ? undefined
           : replyReferenceForBufferedMessage(chatId, repliedToMessageId) ??
             (triggerReference?.messageId === repliedToMessageId ? triggerReference : undefined);
+        /** 四个自发消息回调唯一的差别是文案来源；登记与自录的顺序是语义：
+         * 先回投 sent（主线程据此认自己的消息），再在本轮仍有效时自录转录，
+         * 而贴纸没有回复关系可还原。任何一份拷贝漏掉 isActive() 都会把已经
+         * 作废那一轮的自发消息写回热区。 */
+        const recordSelfSent = (
+          text: string,
+          messageId: number,
+          repliedToMessageId?: number
+        ): void => {
+          self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
+          if (!isActive()) return;
+          // 挂了回复的自发消息把目标还原成回复引用一起自录：自己的发言在转录里
+          // 同样带「回复了谁」，回复链也能穿过机器人的消息。请求侧固定指向触发
+          // 消息，因此只采信服务端实际返回的回复关系。
+          const selfReplyTo: BufferedReplyReference | undefined =
+            selfReplyReferenceFor(repliedToMessageId);
+          recordChatMessage(buildSelfRecordMessage({
+            chatId,
+            self: selfInfo,
+            messageId,
+            text,
+            ...(selfReplyTo === undefined ? {} : { replyTo: selfReplyTo }),
+          }));
+        };
         const ctx: ReplyToolContext = {
           chatId,
           replyToMessageId,
@@ -147,62 +171,12 @@ export function startReplyRound(request: ReplyRoundRequest, onFinished: (chatId:
           roundHasTypo,
           isActive,
           signal,
-          onMessageSent: (text: string, messageId: number, repliedToMessageId?: number): void => {
-            self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-            if (isActive()) {
-              // 挂了回复的自发消息把目标还原成回复引用一起自录：自己的发言
-              // 在转录里同样带「回复了谁」，回复链也能穿过机器人的消息。
-              const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
-              recordChatMessage(buildSelfRecordMessage({
-                chatId,
-                self: selfInfo,
-                messageId,
-                text,
-                replyTo: selfReplyTo,
-              }));
-            }
-          },
-          onStickerSent: (stickerDescription: string, messageId: number): void => {
-            self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-            if (isActive()) {
-              recordChatMessage(buildSelfRecordMessage({
-                chatId,
-                self: selfInfo,
-                messageId,
-                text: stickerDescription,
-              }));
-            }
-          },
-          onImageSent: (imageDescription: string, messageId: number, repliedToMessageId?: number): void => {
-            self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-            if (isActive()) {
-              // 同 onMessageSent：图片请求固定指向触发消息，自录只采信服务端
-              // 实际返回的回复关系。
-              const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
-              recordChatMessage(buildSelfRecordMessage({
-                chatId,
-                self: selfInfo,
-                messageId,
-                text: imageDescription,
-                replyTo: selfReplyTo,
-              }));
-            }
-          },
-          onSongSent: (songDescription: string, messageId: number, repliedToMessageId?: number): void => {
-            self.postMessage({ type: "sent", chatId, messageId } satisfies AiSentMessage);
-            if (isActive()) {
-              // 同 onImageSent：生歌请求固定指向触发消息，自录只采信服务端
-              // 实际返回的回复关系。
-              const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
-              recordChatMessage(buildSelfRecordMessage({
-                chatId,
-                self: selfInfo,
-                messageId,
-                text: songDescription,
-                replyTo: selfReplyTo,
-              }));
-            }
-          },
+          onMessageSent: recordSelfSent,
+          // 贴纸没有可还原的回复关系，只登记描述。
+          onStickerSent: (stickerDescription: string, messageId: number): void =>
+            recordSelfSent(stickerDescription, messageId),
+          onImageSent: recordSelfSent,
+          onSongSent: recordSelfSent,
         };
         const toolset: ReplyToolset = await createReplyToolset(ctx);
         const finalText: string | null = await generateReply(chatId, promptSections, toolset);

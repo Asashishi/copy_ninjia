@@ -4,7 +4,14 @@ import { AD_DETECT_BUNDLE_MAX_CHARS } from "../../../packages/consts/antiRaid/ad
 import type { AdBundleSelection, AdCandidateEntry, AdMessageBundle } from "../../../packages/types/antiRaid/adDetect";
 
 function entry(seq: number, text: string): AdCandidateEntry {
-  return { messageId: seq, seq, text, receivedAt: 1_000 + seq };
+  return {
+    messageId: seq,
+    seq,
+    text,
+    directText: text,
+    receivedAt: 1_000 + seq,
+    withinReferencedWarning: false,
+  };
 }
 
 function bundle(entries: AdCandidateEntry[], checkedSeq: number): AdMessageBundle {
@@ -12,6 +19,7 @@ function bundle(entries: AdCandidateEntry[], checkedSeq: number): AdMessageBundl
     chatId: -1001,
     senderId: 42,
     label: "@someone",
+    meta: { firstName: "Someone", lastName: "", username: "someone" },
     isChannel: false,
     justJoined: false,
     entries,

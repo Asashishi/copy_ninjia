@@ -43,7 +43,7 @@ import { LUCK_CACHE_KEY_PATTERN } from "../../consts/luckReceipt";
 import { appendToDayFile, openDayFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
-import { hasExactKeys, hasOnlyKeys } from "../../libs/runtimeConfig";
+import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../../libs/record";
 import { isCanonicalDateKey } from "../../libs/time";
 
 /**
@@ -65,12 +65,8 @@ function ensurePersistedFileMode(path: string): void {
   if ((statSync(path).mode & 0o777) !== PERSISTED_FILE_MODE) chmodSync(path, PERSISTED_FILE_MODE);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isAiSpeakerSnapshot(value: unknown): value is Record<string, unknown> & AiSpeakerSnapshot {
-  return isRecord(value) &&
+  return isPlainRecord(value) &&
     typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id !== 0 &&
     typeof value.firstName === "string" &&
     typeof value.lastName === "string" &&
@@ -99,7 +95,7 @@ function isBufferedMessage(value: unknown): value is BufferedMessage {
 /** 只接受当前 version=1 的完整结构；username/replyTo/forwardedFrom 按业务
  * 语义可选，messageId 等当前格式必填字段缺失时拒绝启动。 */
 function rebuildAiMemorySnapshot(parsed: unknown): AiMemorySnapshot | null {
-  if (!isRecord(parsed)) return null;
+  if (!isPlainRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;
   if (!hasExactKeys(raw, ["version", "buffer", "summaries", "pendingSummary", "savedAt"])) return null;
   if (raw.version !== 1 || !Array.isArray(raw.buffer) || !raw.buffer.every(isBufferedMessage)) return null;
@@ -138,8 +134,8 @@ export function recoverAiMemories(): Map<number, string> {
     }
     const chatIdText: string = match[1]!;
     const chatId: number = Number(chatIdText);
-    // 必须原样还原（同 blocklistFile.ts 的 decodeBlocklist）：正则只保证「一串
-    // 数字」，`-01001234567890.json`、`-1001234567890.json` 这种补零变体都能匹配，
+    // 必须原样还原：正则只保证「一串数字」，`-01001234567890.json`、
+    // `-1001234567890.json` 这种补零变体都能匹配，
     // Number 后是同一个 key，于是 result.set 互相覆盖，胜者取决于 readdirSync 的
     // 枚举顺序——该群的 AI 记忆静默回退到旧副本，而回写只用 `${chatId}.json`，
     // 补零那份永不被改写或删除，每次重启继续顶替。位数超出安全整数的文件名
@@ -176,7 +172,7 @@ export function deleteAiMemoryFile(chatId: number): void {
 }
 
 function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
-  return isRecord(value) &&
+  return isPlainRecord(value) &&
     hasExactKeys(value, ["emoji", "description"]) &&
     typeof value.emoji === "string" &&
     typeof value.description === "string";
@@ -184,10 +180,10 @@ function isStickerCatalogEntry(value: unknown): value is StickerCatalogEntry {
 
 /** 只接受当前 version=1 的完整结构；版本变更由部署前手工迁移。 */
 function rebuildStickerCatalogSnapshot(parsed: unknown): StickerCatalogSnapshot | null {
-  if (!isRecord(parsed)) return null;
+  if (!isPlainRecord(parsed)) return null;
   const raw: Record<string, unknown> = parsed;
   if (!hasExactKeys(raw, ["version", "entries", "summary", "savedAt"])) return null;
-  if (raw.version !== 1 || !isRecord(raw.entries)) return null;
+  if (raw.version !== 1 || !isPlainRecord(raw.entries)) return null;
   if (raw.summary !== null && typeof raw.summary !== "string") return null;
   if (typeof raw.savedAt !== "number" || !Number.isSafeInteger(raw.savedAt) || raw.savedAt < 0) return null;
   // 无原型对象：JSON.parse 会把 `__proto__` 建成普通自有属性，而写进 `{}` 时
@@ -302,7 +298,7 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
     return null;
   }
   const parsed: unknown = readJsonInput(todayPath);
-  if (!isRecord(parsed)) {
+  if (!isPlainRecord(parsed)) {
     return invalidInput(todayPath, "$", "a JSON object keyed by canonical luck cache keys");
   }
   const raw: Record<string, unknown> = parsed;
@@ -315,7 +311,7 @@ export function recoverLuckDay(todayKey: string): LuckDayCache | null {
       return invalidInput(todayPath, "$.<key>", "a canonical luck cache key");
     }
     if (
-      !isRecord(value) ||
+      !isPlainRecord(value) ||
       !hasExactKeys(value, ["label", "fortunePercent"]) ||
       typeof value.label !== "string" ||
       typeof value.fortunePercent !== "number" ||

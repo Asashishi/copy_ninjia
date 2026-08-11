@@ -1,12 +1,19 @@
 import { antiRaidRuntimeState } from "../cache/main/antiRaid/proxy";
 import {
   activeVerificationSnapshots,
+  deferredVerificationRecords,
+  pendingVerificationDeferrals,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
+  terminalVerificationAttempts,
+  verificationCapacityFatalState,
 } from "../cache/main/antiRaid/verificationMirror";
+import { VERIFICATION_RECORD_CAPACITY } from "../consts/antiRaid/verification";
 import { verificationKey } from "../libs/verificationKey";
 import { postDiskIO } from "../infra/diskIO";
+import { signalBusinessWorkerFatal } from "../infra/workerSupervisor";
 import type {
+  DeferredVerificationRecord,
   VerificationDeleteEvent,
   VerificationSnapshot,
   VerificationUpsertEvent,
@@ -32,6 +39,35 @@ function currentGenerationRevision(
   return entry.revision;
 }
 
+/**
+ * active、deferred 与 pending delete 按协议互斥；pending deferral 始终仍在 active
+ * 内，因此不重复计数。这个 O(1) 计数位于验证事件热边界，不能为每次 upsert
+ * 临时构造 Set。
+ */
+function verificationRecordCount(): number {
+  return activeVerificationSnapshots.size +
+    deferredVerificationRecords.size +
+    pendingVerificationDeletes.size;
+}
+
+function rejectNewVerificationAtCapacity(key: string): boolean {
+  const known: boolean = activeVerificationSnapshots.has(key) ||
+    deferredVerificationRecords.has(key) ||
+    pendingVerificationDeferrals.has(key) ||
+    pendingVerificationDeletes.has(key);
+  if (known || verificationRecordCount() < VERIFICATION_RECORD_CAPACITY) {
+    return false;
+  }
+  if (!verificationCapacityFatalState.current) {
+    verificationCapacityFatalState.current = true;
+    signalBusinessWorkerFatal(new Error(
+      `Anti-Raid verification record capacity (${VERIFICATION_RECORD_CAPACITY}) exceeded; ` +
+      "refusing new verification state and requiring a supervised restart."
+    ));
+  }
+  return true;
+}
+
 /** 接收 Worker 的待验证快照，拒绝旧代际/旧 revision 后更新主线程镜像。 */
 export function acceptVerificationUpsert(
   event: VerificationUpsertEvent
@@ -39,6 +75,11 @@ export function acceptVerificationUpsert(
   const snapshot: VerificationSnapshot = event.record;
   if (snapshot.generation !== antiRaidRuntimeState.generation) return false;
   const key: string = verificationKey(snapshot.chatId, snapshot.userId);
+  if (rejectNewVerificationAtCapacity(key)) return false;
+  if (
+    deferredVerificationRecords.has(key) ||
+    pendingVerificationDeferrals.has(key)
+  ) return false;
   const latestRevision: number = Math.max(
     currentGenerationRevision(activeVerificationSnapshots.get(key)),
     currentGenerationRevision(pendingVerificationDeletes.get(key))
@@ -69,14 +110,23 @@ export function acceptVerificationDelete(
   const key: string = verificationKey(event.chatId, event.userId);
   const current: VerificationSnapshot | undefined =
     activeVerificationSnapshots.get(key);
+  const deferred: DeferredVerificationRecord | undefined =
+    deferredVerificationRecords.get(key) ?? pendingVerificationDeferrals.get(key);
   const pendingRevision: number = currentGenerationRevision(pendingVerificationDeletes.get(key));
   // 水位线同样只认同代际条目，理由见 currentGenerationRevision；`!current` 那半
   // 边判的是「本来就没有活跃记录、也没有待确认墓碑」，与代际无关，保持原样。
   if (
-    (!current && pendingRevision === 0) ||
-    event.revision <= Math.max(currentGenerationRevision(current), pendingRevision)
+    (!current && deferred === undefined && pendingRevision === 0) ||
+    event.revision <= Math.max(
+      currentGenerationRevision(current),
+      currentGenerationRevision(deferred),
+      pendingRevision
+    )
   ) return false;
   activeVerificationSnapshots.delete(key);
+  deferredVerificationRecords.delete(key);
+  pendingVerificationDeferrals.delete(key);
+  terminalVerificationAttempts.delete(key);
   persistedVerificationRevisions.delete(key);
   const deletion: { chatId: number; userId: number; generation: number; revision: number; } = {
     chatId: event.chatId,

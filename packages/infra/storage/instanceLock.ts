@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { BOT_LOCK_LINE_PATTERN, LINUX_BOOT_ID_PATTERN, PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { LOCK_FILE_PATH, RUNTIME_DATA_ROOT_IS_CONFIGURED } from "../../consts/paths";
 import { atomicWriteText, syncDirectory } from "../../libs/atomicFile";
+import { isErrno } from "../../libs/errno";
 import { prepareRuntimeDataRoot } from "./dataRoot";
 import type { FileHandle } from "node:fs/promises";
 import type { ProcessIdentity } from "../../types/storage";
@@ -26,10 +27,6 @@ interface LinuxProcessStat {
 interface ProcessIdentityContext {
   currentIdentity: ProcessIdentity;
   readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null>;
-}
-
-function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && error.code === code;
 }
 
 function validateProcessIdentity(identity: ProcessIdentity, expectedPid?: number): ProcessIdentity {

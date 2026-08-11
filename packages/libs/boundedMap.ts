@@ -21,3 +21,39 @@ export function setBoundedMapValue<K, V>({
   }
   map.set(key, value);
 }
+
+/** sweepExpiredSnapshots 的入参；两个 Anti-Raid 按需缓存共用同一套淘汰口径。 */
+export interface SweepExpiredSnapshotsParams<TSnapshot extends { readonly fetchedAt: number }> {
+  /** 待淘汰的按需快照表，键是 chatId。 */
+  readonly snapshots: Map<number, TSnapshot>;
+  /** 仍在拉取的群；这些群保留旧快照供同步快路径降级使用，不参与淘汰。 */
+  readonly inFlight: ReadonlyMap<number, unknown>;
+  /** 快照存活时长。 */
+  readonly ttlMs: number;
+  /** 判定用的当前时刻。 */
+  readonly now: number;
+}
+
+/**
+ * 按 TTL 淘汰按需快照，跳过仍在拉取的群。
+ *
+ * 「在途的群不淘汰」是语义而不是优化：那份旧快照正是同步快路径在拉取完成前的
+ * 降级答案，扫掉它会让判定在窗口里退化成「不知道」。两个 owner
+ * （cache/workers/antiRaid/admins.ts、linkedChannels.ts）此前各写了一份同构循环。
+ * @returns 本轮淘汰的条数。
+ */
+export function sweepExpiredSnapshots<TSnapshot extends { readonly fetchedAt: number }>({
+  snapshots,
+  inFlight,
+  ttlMs,
+  now,
+}: SweepExpiredSnapshotsParams<TSnapshot>): number {
+  let deleted: number = 0;
+  for (const [chatId, cached] of snapshots) {
+    if (now - cached.fetchedAt > ttlMs && !inFlight.has(chatId)) {
+      snapshots.delete(chatId);
+      deleted++;
+    }
+  }
+  return deleted;
+}

@@ -5,11 +5,11 @@ import {
 import type { TelegramApi } from "../../../types/telegramWorker";
 import { telegramApi } from "../client";
 import {
-  isPermissionDenied,
   runBooleanTelegramAction,
-  runTelegramAction,
+  runPermissionAwareTelegramAction,
   signalArgs,
 } from "./core";
+import type { PermissionAwareOutcome } from "./core";
 import { isTelegramRetryPreconditionChanged } from "../errors";
 
 type RestrictMemberApi = Pick<TelegramApi, "restrictChatMember">;
@@ -49,8 +49,7 @@ export async function muteChatMemberWithOutcome({
   api = telegramApi,
   signal,
 }: MuteChatMemberParams): Promise<MuteChatMemberOutcome> {
-  let permissionDenied: boolean = false;
-  const muted: boolean = await runTelegramAction({
+  const outcome: PermissionAwareOutcome = await runPermissionAwareTelegramAction({
     action: `mute chat member (chat ${chatId}, user ${userId})`,
     execute: (requestSignal?: AbortSignal): Promise<true> =>
       api.restrictChatMember(
@@ -60,19 +59,10 @@ export async function muteChatMemberWithOutcome({
         { until_date: Math.ceil(mutedUntil / 1000) },
         ...signalArgs(requestSignal)
       ),
-    map: (): boolean => true,
-    fallback: false,
     signal,
-    shouldLogError: (
-      error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => {
-      permissionDenied = isPermissionDenied(error);
-      return actionSignal?.aborted !== true;
-    },
   });
-  if (muted) return "muted";
-  return permissionDenied ? "forbidden" : "failed";
+  if (outcome === "succeeded") return "muted";
+  return outcome === "forbidden" ? "forbidden" : "failed";
 }
 
 export interface UnmuteChatMemberParams {
@@ -94,8 +84,7 @@ export async function unmuteChatMemberWithOutcome({
   api = telegramApi,
   signal,
 }: UnmuteChatMemberParams): Promise<UnmuteChatMemberOutcome> {
-  let permissionDenied: boolean = false;
-  const unmuted: boolean = await runTelegramAction({
+  const outcome: PermissionAwareOutcome = await runPermissionAwareTelegramAction({
     action: `unmute chat member (chat ${chatId}, user ${userId})`,
     execute: (requestSignal?: AbortSignal): Promise<true> =>
       api.restrictChatMember(
@@ -105,19 +94,10 @@ export async function unmuteChatMemberWithOutcome({
         {},
         ...signalArgs(requestSignal)
       ),
-    map: (): boolean => true,
-    fallback: false,
     signal,
-    shouldLogError: (
-      error: unknown,
-      actionSignal: AbortSignal | undefined
-    ): boolean => {
-      permissionDenied = isPermissionDenied(error);
-      return actionSignal?.aborted !== true;
-    },
   });
-  if (unmuted) return "unmuted";
-  return permissionDenied ? "forbidden" : "failed";
+  if (outcome === "succeeded") return "unmuted";
+  return outcome === "forbidden" ? "forbidden" : "failed";
 }
 
 /** 一次只踢不封请求的结局；权限拒绝与瞬时失败必须由长生命周期调用方区别处理。 */
@@ -155,9 +135,7 @@ export async function kickChatMemberWithOutcome({
   isSupergroup,
   api = telegramApi,
 }: KickChatMemberParams): Promise<KickChatMemberOutcome> {
-  let permissionDenied: boolean = false;
-  let targetAbsent: boolean = false;
-  const kicked: boolean = await runTelegramAction({
+  const outcome: PermissionAwareOutcome = await runPermissionAwareTelegramAction({
     action: `kick chat member (chat ${chatId}, user ${userId})`,
     execute: (signal?: AbortSignal): Promise<true> =>
       isSupergroup === false
@@ -173,18 +151,13 @@ export async function kickChatMemberWithOutcome({
           {},
           ...signalArgs(signal)
         ),
-    map: (): boolean => true,
-    fallback: false,
-    shouldLogError: (error: unknown): boolean => {
-      targetAbsent = isTelegramRetryPreconditionChanged(error);
-      if (targetAbsent) return false;
-      permissionDenied = isPermissionDenied(error);
-      return true;
-    },
+    // 「目标已经不在群」不是故障，也不该被解释成权限拒绝：认领掉它，既不记
+    // API 错误，也不让调用方按可重试失败退避。
+    claimError: isTelegramRetryPreconditionChanged,
   });
-  if (kicked) return "kicked";
-  if (targetAbsent) return "absent";
-  return permissionDenied ? "forbidden" : "failed";
+  if (outcome === "succeeded") return "kicked";
+  if (outcome === "claimed") return "absent";
+  return outcome === "forbidden" ? "forbidden" : "failed";
 }
 
 /** 只关心是否踢成功的兼容入口。 */
@@ -209,29 +182,18 @@ export async function banChatMemberWithOutcome(
   userId: number,
   api: BanMemberApi = telegramApi
 ): Promise<BanChatMemberOutcome> {
-  let permissionDenied: boolean = false;
-  const banned: boolean = await runTelegramAction({
+  const outcome: PermissionAwareOutcome = await runPermissionAwareTelegramAction({
     action: `ban chat member (chat ${chatId}, user ${userId})`,
     execute: (signal?: AbortSignal): Promise<true> =>
-      signal === undefined
-        ? api.banChatMember(chatId, userId, {
-          revoke_messages: true,
-        })
-        : api.banChatMember(
-          chatId,
-          userId,
-          { revoke_messages: true },
-          signal as unknown as Parameters<TelegramApi["banChatMember"]>[3]
-        ),
-    map: (): boolean => true,
-    fallback: false,
-    shouldLogError: (error: unknown): boolean => {
-      permissionDenied = isPermissionDenied(error);
-      return true;
-    },
+      api.banChatMember(
+        chatId,
+        userId,
+        { revoke_messages: true },
+        ...signalArgs(signal)
+      ),
   });
-  if (banned) return "banned";
-  return permissionDenied ? "forbidden" : "failed";
+  if (outcome === "succeeded") return "banned";
+  return outcome === "forbidden" ? "forbidden" : "failed";
 }
 
 /** 只关心成败的封禁入口；权限与偶发失败的区分见 banChatMemberWithOutcome。 */
@@ -257,16 +219,12 @@ export async function unbanChatMemberIfBanned(
   return runBooleanTelegramAction(
     `unban chat member (chat ${chatId}, user ${userId})`,
     (signal?: AbortSignal): Promise<true> =>
-      signal === undefined
-        ? api.unbanChatMember(chatId, userId, {
-          only_if_banned: true,
-        })
-        : api.unbanChatMember(
-          chatId,
-          userId,
-          { only_if_banned: true },
-          signal as unknown as Parameters<TelegramApi["unbanChatMember"]>[3]
-        )
+      api.unbanChatMember(
+        chatId,
+        userId,
+        { only_if_banned: true },
+        ...signalArgs(signal)
+      )
   );
 }
 
@@ -276,28 +234,13 @@ export async function banChatSenderChatWithOutcome(
   senderChatId: number,
   api: BanSenderChatApi = telegramApi
 ): Promise<BanChatMemberOutcome> {
-  let permissionDenied: boolean = false;
-  const banned: boolean = await runTelegramAction({
+  const outcome: PermissionAwareOutcome = await runPermissionAwareTelegramAction({
     action: `ban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
     execute: (signal?: AbortSignal): Promise<true> =>
-      signal === undefined
-        ? api.banChatSenderChat(chatId, senderChatId)
-        : api.banChatSenderChat(
-          chatId,
-          senderChatId,
-          signal as unknown as Parameters<
-            TelegramApi["banChatSenderChat"]
-          >[2]
-        ),
-    map: (): boolean => true,
-    fallback: false,
-    shouldLogError: (error: unknown): boolean => {
-      permissionDenied = isPermissionDenied(error);
-      return true;
-    },
+      api.banChatSenderChat(chatId, senderChatId, ...signalArgs(signal)),
   });
-  if (banned) return "banned";
-  return permissionDenied ? "forbidden" : "failed";
+  if (outcome === "succeeded") return "banned";
+  return outcome === "forbidden" ? "forbidden" : "failed";
 }
 
 /** 只关心成败的频道马甲封禁入口。 */
@@ -320,14 +263,6 @@ export async function unbanChatSenderChat(
   return runBooleanTelegramAction(
     `unban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
     (signal?: AbortSignal): Promise<true> =>
-      signal === undefined
-        ? api.unbanChatSenderChat(chatId, senderChatId)
-        : api.unbanChatSenderChat(
-          chatId,
-          senderChatId,
-          signal as unknown as Parameters<
-            TelegramApi["unbanChatSenderChat"]
-          >[2]
-        )
+      api.unbanChatSenderChat(chatId, senderChatId, ...signalArgs(signal))
   );
 }

@@ -82,11 +82,11 @@ export function songSentTagTemplate(prompt: string): string {
 }
 
 /** 贴纸自录记号的固定词。 */
-export const SELF_STICKER_TAG_MARKER: string = "发了一枚贴纸";
+const SELF_STICKER_TAG_MARKER: string = "发了一枚贴纸";
 /** 生图自录记号的固定词。 */
-export const SELF_IMAGE_TAG_MARKER: string = "生成并发送了一张图片";
+const SELF_IMAGE_TAG_MARKER: string = "生成并发送了一张图片";
 /** 生歌自录记号的固定词。 */
-export const SELF_SONG_TAG_MARKER: string = "生成并发送了一首歌";
+const SELF_SONG_TAG_MARKER: string = "生成并发送了一首歌";
 
 /**
  * 拦截侧用的记号清单：只用来把命中的那个词写进报错文案，判定看的是下面的

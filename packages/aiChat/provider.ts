@@ -199,21 +199,37 @@ function createMediaFacade(
   };
 }
 
+/**
+ * 把一次「生成一件媒体」的调用裹进交互优先的配额闸门。
+ *
+ * 队列满时 runner 返回 undefined，这里统一归一成 `null`——生图与生歌的调用方都
+ * 按「这次没做出来」处理，不能把队列拒绝泄漏成一个 undefined 让工具层再猜一次。
+ */
+function scheduleMediaGeneration<TRequest, TResult>(
+  runner: PrioritizedBoundedTaskRunner,
+  generate: (request: TRequest) => Promise<TResult | null>
+): (request: TRequest) => Promise<TResult | null> {
+  return async (request: TRequest): Promise<TResult | null> => {
+    const result: TResult | null | undefined = await scheduleProviderTask(
+      runner,
+      "interactive",
+      (): Promise<TResult | null> => generate(request)
+    );
+    return result ?? null;
+  };
+}
+
 function createImageFacade(
   provider: AiChatProvider,
   config: AgentCapabilityConfig
 ): AiImageProvider {
-  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   return {
     name: provider.name,
-    async generateImage(request: AiImageRequest): Promise<GeneratedChatImage | null> {
-      const result: GeneratedChatImage | null | undefined = await scheduleProviderTask(
-        runner,
-        "interactive",
-        (): Promise<GeneratedChatImage | null> => provider.generateImage(request)
-      );
-      return result ?? null;
-    },
+    generateImage: scheduleMediaGeneration<AiImageRequest, GeneratedChatImage>(
+      quotaRunnerFor(config),
+      (request: AiImageRequest): Promise<GeneratedChatImage | null> =>
+        provider.generateImage(request)
+    ),
   };
 }
 
@@ -221,19 +237,16 @@ function createSongFacade(
   provider: AiChatProvider,
   config: AgentCapabilityConfig
 ): AiSongProvider {
-  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   const generateSong: AiSongProvider["generateSong"] = provider.generateSong;
+  // 选中的那一家没有这项能力时只交出名字：工具层据此不注册对应工具。
   if (generateSong === undefined) return { name: provider.name };
   return {
     name: provider.name,
-    async generateSong(request: AiSongRequest): Promise<GeneratedChatSong | null> {
-      const result: GeneratedChatSong | null | undefined = await scheduleProviderTask(
-        runner,
-        "interactive",
-        (): Promise<GeneratedChatSong | null> => generateSong(request)
-      );
-      return result ?? null;
-    },
+    generateSong: scheduleMediaGeneration<AiSongRequest, GeneratedChatSong>(
+      quotaRunnerFor(config),
+      (request: AiSongRequest): Promise<GeneratedChatSong | null> =>
+        generateSong(request)
+    ),
   };
 }
 
@@ -270,30 +283,60 @@ export function mediaAiProvider(
   return facade;
 }
 
-/** 生图能力；未配置时不注册对应工具。 */
-export function imageAiProvider(): AiImageProvider | null {
-  if (aiProviderFacades.image !== undefined) return aiProviderFacades.image;
-  if (getAgentDeploymentConfig().image === undefined) {
-    aiProviderFacades.image = null;
+/**
+ * 可缺席能力的门面记忆化：缺配置时把 `null` 也缓存下来。
+ *
+ * 缓存 null 与缓存门面同样重要——不缓存的话，每次工具注册都要重新读一遍部署
+ * 配置去确认「还是没配」。`undefined` 因此专表「还没问过」，与「问过、没有」
+ * 严格分开。
+ */
+interface OptionalCapabilityFacadeParams<TFacade> {
+  /** 部署配置里的能力键，也是记忆化槽位名。 */
+  readonly capability: "image" | "song";
+  /** 当前缓存值；`undefined` 专表「还没问过」。 */
+  readonly cached: TFacade | null | undefined;
+  /** 配置齐全时构造门面。 */
+  readonly create: (config: AgentCapabilityConfig) => TFacade;
+  /** 写回记忆化槽位；null 同样要写。 */
+  readonly store: (facade: TFacade | null) => void;
+}
+
+function optionalCapabilityFacade<TFacade>({
+  capability,
+  cached,
+  create,
+  store,
+}: OptionalCapabilityFacadeParams<TFacade>): TFacade | null {
+  if (cached !== undefined) return cached;
+  if (getAgentDeploymentConfig()[capability] === undefined) {
+    store(null);
     return null;
   }
-  const config: AgentCapabilityConfig = capabilityConfig("image");
-  const facade: AiImageProvider = createImageFacade(resolveCapability("image"), config);
-  aiProviderFacades.image = facade;
+  const facade: TFacade = create(capabilityConfig(capability));
+  store(facade);
   return facade;
+}
+
+/** 生图能力；未配置时不注册对应工具。 */
+export function imageAiProvider(): AiImageProvider | null {
+  return optionalCapabilityFacade<AiImageProvider>({
+    capability: "image",
+    cached: aiProviderFacades.image,
+    create: (config: AgentCapabilityConfig): AiImageProvider =>
+      createImageFacade(resolveCapability("image"), config),
+    store: (facade: AiImageProvider | null): void => { aiProviderFacades.image = facade; },
+  });
 }
 
 /** 生歌能力；缺配置时不注册对应工具。 */
 export function songAiProvider(): AiSongProvider | null {
-  if (aiProviderFacades.song !== undefined) return aiProviderFacades.song;
-  if (getAgentDeploymentConfig().song === undefined) {
-    aiProviderFacades.song = null;
-    return null;
-  }
-  const config: AgentCapabilityConfig = capabilityConfig("song");
-  const facade: AiSongProvider = createSongFacade(resolveCapability("song"), config);
-  aiProviderFacades.song = facade;
-  return facade;
+  return optionalCapabilityFacade<AiSongProvider>({
+    capability: "song",
+    cached: aiProviderFacades.song,
+    create: (config: AgentCapabilityConfig): AiSongProvider =>
+      createSongFacade(resolveCapability("song"), config),
+    store: (facade: AiSongProvider | null): void => { aiProviderFacades.song = facade; },
+  });
 }
 
 /**

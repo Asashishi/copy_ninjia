@@ -6,7 +6,7 @@ import {
   requestMainThread,
   resetWorkerDuplex,
 } from "../../packages/libs/workerDuplex";
-import { superviseDuplexWorker } from "../../packages/libs/supervisedDuplexWorker";
+import { superviseDuplexWorker } from "../../packages/infra/supervisedDuplexWorker";
 import type { WorkerDuplexOutbound } from "../../packages/types/workerDuplex";
 
 interface TestRequest {

@@ -3,7 +3,7 @@
 import { telegramConfigCache } from "../cache/perThread/config";
 import { TELEGRAM_CONFIG_PATH } from "../consts/paths";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
-import { hasExactKeys, isPlainRecord } from "../libs/runtimeConfig";
+import { hasExactKeys, isPlainRecord } from "../libs/record";
 import type { TelegramConfig } from "../types/config";
 
 /** 解码 config/telegram.json；未知字段、空 token 与非法 ID 一律拒绝。 */
@@ -35,7 +35,7 @@ export function parseTelegramConfig(
 }
 
 /** 从指定路径读取并严格解析 Telegram 部署配置。 */
-export function loadTelegramConfig(
+function loadTelegramConfig(
   path: string = TELEGRAM_CONFIG_PATH
 ): TelegramConfig {
   return parseTelegramConfig(readJsonInput(path), path);

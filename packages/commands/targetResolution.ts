@@ -10,6 +10,7 @@ import {
   USERNAME_ARG_PATTERN,
   USER_ID_ARG_PATTERN,
 } from "../consts/commands";
+import { prefetchIdentityPolicies } from "../infra/identityStorage";
 
 /** 参数那一路的解析结果；三态各自对应一句不同的提示。 */
 type ArgumentTarget =
@@ -217,5 +218,6 @@ export async function resolveCommandTarget({
   // sender_chat 时，/copy 必须保留该身份来复制群头像并复读同一皮套的消息。
   // Telegram 不会提供皮套背后的真实用户；/block 等破坏性命令应在调用处
   // 按自己的语义拒绝，避免误把整个群组身份当作那名管理员。
+  await prefetchIdentityPolicies([targetUser.id]);
   return targetUser;
 }

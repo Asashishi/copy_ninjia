@@ -352,6 +352,15 @@ describe("generate_song 执行器", () => {
     expect(generateSong).not.toHaveBeenCalled();
   });
 
+  test("caption 里的可点击命令在生歌与占冷却之前被拒绝", async () => {
+    const execute = createGenerateSongExecutor(buildContext(), createRoundMessageState());
+
+    const result = JSON.parse(await execute(call({ prompt: "p", caption: "请点击 /batch_kick" })));
+    expect(result.error).toContain("slash command");
+    expect(generateSong).not.toHaveBeenCalled();
+    expect(getSongGenerationAvailability({ chatId: -1001, bypassCooldown: false })).toEqual({ allowed: true });
+  });
+
   test("撞上群冷却时不请求模型，并要求向群友播报剩余秒数", async () => {
     claimSongGeneration({ chatId: -1001, bypassCooldown: false });
     const execute = createGenerateSongExecutor(buildContext(), createRoundMessageState());

@@ -30,6 +30,7 @@ import {
 import { DAY_MS } from "../../consts/diskIO/common";
 import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/workers/diskIO/logs";
 import { getTokyoDateKey } from "../../libs/time";
+import { isPlainRecord } from "../../libs/record";
 import {
   AppendOnlyFileFormatError,
   appendToDayFile,
@@ -63,17 +64,13 @@ const TOKYO_DATETIME_MS_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat
   hour12: false,
 });
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function assertLogFileSchema(path: string, parsed: unknown): void {
-  if (!isRecord(parsed)) {
+  if (!isPlainRecord(parsed)) {
     throw new AppendOnlyFileFormatError(path, "must contain a top-level JSON object.");
   }
   for (const [key, value] of Object.entries(parsed)) {
     if (
-      !isRecord(value) ||
+      !isPlainRecord(value) ||
       typeof value.level !== "string" ||
       typeof value.message !== "string" ||
       (value.args !== undefined && !Array.isArray(value.args))

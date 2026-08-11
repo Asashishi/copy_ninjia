@@ -39,9 +39,9 @@ mock.module("../../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 1,
   getTelegramConfig: (): TelegramConfig => ({ botToken: "telegram-token", superAdminUserId: 1 }),
 }));
-// 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
+// 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
-mock.module("../../../packages/config/whitelist", () => ({
+mock.module("../../../packages/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 1 || ((id === 100 || id === -200) && key === "isCanBypassAdDetection"),
   isWhitelisted: (id: number): boolean =>
@@ -77,6 +77,8 @@ const { blocklistIdentityMutationQueues } = await import("../../../packages/cach
 const { runBlocklistIdentityMutation } = await import("../../../packages/infra/identityPolicy");
 const { markSelfSent } = await import("../../../packages/infra/selfSentTracker");
 const { sentMessages } = await import("../../../packages/cache/perThread/selfSentTracker");
+const { blocklistEntryCache, whitelistEntryCache } =
+  await import("../../../packages/cache/main/identityStorage");
 
 function message(overrides: Partial<Message> = {}): Message {
   return {
@@ -96,6 +98,7 @@ function detected(overrides: Partial<AdDetectedEvent> = {}): AdDetectedEvent {
     senderId: 7,
     isChannel: false,
     label: "@spammer",
+    meta: { firstName: "Spammer", lastName: "", username: "spammer" },
     reason: "引流",
     messages: [{ messageId: 11, text: "加我微信", replyTo: "在吗", quote: "别人说过的话" }],
     ...overrides,
@@ -117,6 +120,12 @@ beforeEach(() => {
     removalId: ++removalCounter,
   }));
   blockedIds.clear();
+  blocklistEntryCache.clear();
+  whitelistEntryCache.clear();
+  for (const id of [7, -300, -1005]) {
+    blocklistEntryCache.set(id, null);
+    whitelistEntryCache.set(id, null);
+  }
   blockUser.mockClear();
   confirmBlocklistPersisted.mockClear();
   confirmBlocklistPersisted.mockImplementation(async (): Promise<boolean> => true);
@@ -143,7 +152,9 @@ describe("广告检测投递门禁", () => {
       messageId: 10,
       text: "加我微信",
       label: "@spammer",
+      meta: { firstName: "Spammer", lastName: "", username: "spammer" },
       isChannel: false,
+      isForwarded: false,
       blocked: false,
       justJoined: false,
     });
@@ -197,7 +208,7 @@ describe("广告检测投递门禁", () => {
   test("被引用的原文与 text 分成两个字段跨线程传，但两样都参与判定", () => {
     // 分开传不是为了让判定读不到，而是因为接的时机不同：Worker 侧必须在正文按
     // AD_DETECT_MESSAGE_MAX_CHARS 截断之后再接（先拼后截等于零成本绕过），
-    // 样本侧则要留一份没并进正文的原样。连坐的理由见 buildSampleContext。
+    // 样本侧则要留一份没并进正文的原样。命中后的归因理由见 buildSampleContext。
     const candidate = buildAdCandidate(message({
       text: "这种广告真烦",
       quote: { text: "日入过千 加V xxx996", position: 0, is_manual: true },
@@ -225,6 +236,123 @@ describe("广告检测投递门禁", () => {
     }), 999);
     expect(candidate?.text).toBe("");
     expect(candidate?.sampleContext).toEqual({ quote: "日入过千 加V xxx996" });
+  });
+
+  test("白名单来源的回复与引用不参与检测，但发送者自己的正文仍照常送检", () => {
+    const repliedByWhitelist: NonNullable<Message["reply_to_message"]> = {
+      message_id: 9,
+      date: 0,
+      chat: { id: -1001, type: "supergroup", title: "群" },
+      // 101 的 isCanBypassAdDetection 被显式关掉，但它仍是白名单成员；来源豁免
+      // 看成员边界，不看这项只约束「当前发言者」的权限。
+      from: { id: 101, is_bot: false, first_name: "Trusted" },
+      text: "日入过千 加V trusted",
+      reply_to_message: undefined,
+    };
+    const candidate = buildAdCandidate(message({
+      text: "这是我自己写的正文",
+      quote: { text: "日入过千", position: 0, is_manual: true },
+      reply_to_message: repliedByWhitelist,
+    }), 999);
+
+    expect(candidate?.text).toBe("这是我自己写的正文");
+    expect(candidate?.sampleContext).toBeUndefined();
+    expect(buildAdCandidate(message({
+      text: undefined,
+      quote: { text: "日入过千", position: 0, is_manual: true },
+      reply_to_message: repliedByWhitelist,
+    }), 999)).toBeUndefined();
+    expect(buildAdCandidate(message({
+      text: undefined,
+      quote: { text: "日入过千", position: 0, is_manual: true },
+      external_reply: {
+        origin: {
+          type: "user",
+          date: 1,
+          sender_user: { id: 101, is_bot: false, first_name: "Trusted" },
+        },
+      },
+    }), 999)).toBeUndefined();
+  });
+
+  test("回复一条转发消息时按原作者判白名单，不按转发者判", () => {
+    const candidate = buildAdCandidate(message({
+      text: "看看这个",
+      quote: { text: "日入过千", position: 0, is_manual: true },
+      reply_to_message: {
+        message_id: 9,
+        date: 0,
+        chat: { id: -1001, type: "supergroup", title: "群" },
+        from: { id: 7, is_bot: false, first_name: "Reposter" },
+        text: "日入过千 加V trusted",
+        reply_to_message: undefined,
+        forward_origin: {
+          type: "user",
+          date: 1,
+          sender_user: { id: 100, is_bot: false, first_name: "Trusted" },
+        },
+      },
+    }), 999);
+
+    expect(candidate?.sampleContext).toBeUndefined();
+  });
+
+  test("白名单来源的手工转发整条跳过，非白名单与隐藏来源保留转发事实", () => {
+    expect(buildAdCandidate(message({
+      forward_origin: {
+        type: "user",
+        date: 1,
+        sender_user: { id: 101, is_bot: false, first_name: "Trusted" },
+      },
+    }), 999)).toBeUndefined();
+
+    expect(buildAdCandidate(message({
+      forward_origin: {
+        type: "channel",
+        date: 1,
+        chat: { id: -300, type: "channel", title: "Untrusted" },
+        message_id: 1,
+      },
+    }), 999)).toMatchObject({ isForwarded: true, text: "加我微信" });
+    expect(buildAdCandidate(message({
+      forward_origin: {
+        type: "hidden_user",
+        date: 1,
+        sender_user_name: "Hidden",
+      },
+    }), 999)).toMatchObject({ isForwarded: true });
+  });
+
+  test("来源身份预取失败时不把冷缺失误判成非白名单", () => {
+    const repliedToColdSource: NonNullable<Message["reply_to_message"]> = {
+      message_id: 9,
+      date: 0,
+      chat: { id: -1001, type: "supergroup", title: "群" },
+      from: { id: 404, is_bot: false, first_name: "Unknown" },
+      text: "日入过千 加V unknown",
+      reply_to_message: undefined,
+    };
+
+    expect(buildAdCandidate(message({
+      text: "发送者自己的正文",
+      quote: { text: "日入过千", position: 0, is_manual: true },
+      reply_to_message: repliedToColdSource,
+    }), 999)).toMatchObject({
+      text: "发送者自己的正文",
+      sampleContext: undefined,
+    });
+    expect(buildAdCandidate(message({
+      text: undefined,
+      quote: { text: "日入过千", position: 0, is_manual: true },
+      reply_to_message: repliedToColdSource,
+    }), 999)).toBeUndefined();
+    expect(buildAdCandidate(message({
+      forward_origin: {
+        type: "user",
+        date: 1,
+        sender_user: { id: 404, is_bot: false, first_name: "Unknown" },
+      },
+    }), 999)).toBeUndefined();
   });
 
   test("超链接背后的落地页与正文分开带，裸链接不重复", () => {
@@ -294,6 +422,22 @@ describe("广告检测投递门禁", () => {
     expect(candidate?.blocked).toBe(true);
   });
 
+  test("已封频道转发白名单内容仍投递给 Worker 清理残留消息", () => {
+    blockedIds.add(-1005);
+    expect(buildAdCandidate(message({
+      sender_chat: { id: -1005, type: "channel", title: "广告频道" },
+      forward_origin: {
+        type: "user",
+        date: 1,
+        sender_user: { id: 101, is_bot: false, first_name: "Trusted" },
+      },
+    }), 999)).toMatchObject({
+      senderId: -1005,
+      blocked: true,
+      isForwarded: true,
+    });
+  });
+
   test("频道马甲发言按频道身份投递", () => {
     const candidate = buildAdCandidate(
       message({ sender_chat: { id: -1005, type: "channel", title: "广告频道" } }),
@@ -314,7 +458,11 @@ describe("广告判定命中后的处置", () => {
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
 
-    expect(blockUser).toHaveBeenCalledWith(7);
+    expect(blockUser).toHaveBeenCalledWith(7, {
+      firstName: "Spammer",
+      lastName: "",
+      username: "spammer",
+    });
     expect(confirmBlocklistPersisted).toHaveBeenCalledTimes(1);
     // 触发判定的群排最前：那里正躺着刚发出来的广告。未初始化或没有管理员
     // 身份的群不进清单——在那里封人本来就会失败。
@@ -544,7 +692,7 @@ describe("广告判定命中后的处置", () => {
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
 
-    expect(blockUser).toHaveBeenCalledWith(7);
+    expect(blockUser).toHaveBeenCalledWith(7, expect.objectContaining({ username: "spammer" }));
     expect(dispatched).toHaveLength(0);
     expect(errorLogs.some((line) => line.includes("no chat to enforce"))).toBe(true);
   });
@@ -574,7 +722,7 @@ describe("广告判定命中后的处置", () => {
     await drainAdDisposals(5_000);
 
     expect(errorLogs.some((line) => line.includes("Failed to queue the ad detection sample"))).toBe(true);
-    expect(blockUser).toHaveBeenCalledWith(7);
+    expect(blockUser).toHaveBeenCalledWith(7, expect.objectContaining({ username: "spammer" }));
     expect(dispatched).toHaveLength(1);
   });
 

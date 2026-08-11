@@ -38,7 +38,7 @@ let diskGaveUp: (() => void) | undefined;
 const aiEnabledChats = new Set<number>();
 
 mock.module("../../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
-mock.module("../../../packages/libs/supervisedWorker", () => ({
+mock.module("../../../packages/infra/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
     supervisorOptions = options;
     return {

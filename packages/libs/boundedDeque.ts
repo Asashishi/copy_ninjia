@@ -1,3 +1,5 @@
+import { assertDequeCapacities } from "./dequeCapacity";
+
 /**
  * 有界引用双端队列。使用可增长的环形数组，避免长期高频队列为每个元素额外
  * 创建链表节点；移出元素时立即清掉 backing slot，不能让已淘汰对象被数组继续
@@ -13,18 +15,7 @@ export class BoundedDeque<T> {
     maxCapacity: number,
     initialCapacity: number = Math.min(4, maxCapacity)
   ) {
-    if (!Number.isSafeInteger(maxCapacity) || maxCapacity <= 0) {
-      throw new RangeError("maxCapacity must be a positive safe integer");
-    }
-    if (
-      !Number.isSafeInteger(initialCapacity) ||
-      initialCapacity <= 0 ||
-      initialCapacity > maxCapacity
-    ) {
-      throw new RangeError(
-        "initialCapacity must be a positive safe integer no greater than maxCapacity"
-      );
-    }
+    assertDequeCapacities(maxCapacity, initialCapacity);
     this.maxCapacity = maxCapacity;
     this.values = new Array<T | undefined>(initialCapacity);
   }

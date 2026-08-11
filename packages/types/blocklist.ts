@@ -2,11 +2,6 @@
 
 import type { BLOCKLIST_REMOVAL_FAILURE_TYPES } from "../consts/antiRaid/blocklist";
 
-/** config/blocklist.json 的严格结构；正数是用户，负数是频道身份。 */
-export interface BlocklistConfig {
-  readonly blockedIds: readonly number[];
-}
-
 /**
  * BlockedMemberRemover 的入参，也是投给 Worker 的 wire 形态。
  *
@@ -131,6 +126,13 @@ export interface BlocklistSweepRecord {
    * 的权限变更观测解除，避免永久重扫和重复错误日志。
    */
   permissionBlocked: boolean;
+}
+
+/** 主线程黑名单补扫最近截止时间调度器的固定容量运行态。 */
+export interface BlocklistSweepSchedulerState {
+  timer: ReturnType<typeof setTimeout> | null;
+  scheduledAt: number | null;
+  accepting: boolean;
 }
 
 /**

@@ -218,6 +218,7 @@ export type VerificationEvent =
   | { type: "adminCheckResolved" }
   | VerifyTimeoutEvent
   | { type: "terminalPersisted" }
+  | { type: "terminalAttemptBudgetExhausted" }
   | TimeoutInviterVerdictEvent
   | { type: "expelSettled" }
   | { type: "kickRetry" }
@@ -249,4 +250,6 @@ export interface VerificationTransition {
   snapshotChanged?: boolean;
   /** expiresAt 原地变化时通知解释器重建验证 timer。 */
   rescheduleTimer?: boolean;
+  /** 删除 Worker 运行态但保留最后一份持久化快照，不发布 tombstone。 */
+  retainPersistedSnapshot?: boolean;
 }

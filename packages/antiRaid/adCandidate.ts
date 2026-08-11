@@ -1,14 +1,21 @@
 /** 广告检测主线程入口：把一条 Telegram 群消息收敛为 Worker 所需的最小候选载荷。 */
 
-import type { Chat, Message, MessageEntity } from "@grammyjs/types";
+import type {
+  Chat,
+  Message,
+  MessageEntity,
+  MessageOrigin,
+} from "@grammyjs/types";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
 import { adDetectConfigReadiness } from "../config/readiness";
+import { isWhitelisted } from "../whitelist";
 import {
   AD_DETECT_LINK_URL_MAX_CHARS,
   AD_DETECT_MAX_LINK_URLS,
   AD_SAMPLE_CONTEXT_MAX_CHARS,
 } from "../consts/antiRaid/adDetect";
 import { isUserBlocked } from "../infra/blocklist/membership";
+import { isIdentityPolicyCached } from "../infra/identityStorage";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { getChatState } from "../infra/storage/stateStore";
 import { sanitizeInline, truncateInline } from "../libs/text";
@@ -18,6 +25,7 @@ import type {
   AdSampleContext,
 } from "../types/antiRaid";
 import { formatUserLabel } from "../users/userLabel";
+import { messageOriginIdentityId } from "../users/messageOrigin";
 import { visibleSenderChat } from "../users/visibleSender";
 import { canBypassAdDetection } from "./memberFacts";
 
@@ -46,12 +54,37 @@ function collectHiddenLinkUrls(
 }
 
 /**
- * 摘出引用段与被回复原文，让“编辑旧消息后再顶上来”的广告仍进入判定；关联频道
- * 自动转发不连坐评论者，因此显式忽略其回复上下文。
+ * 摘出非白名单来源的引用段与被回复原文，让“编辑旧消息后再顶上来”的广告仍进入
+ * 判定；关联频道自动转发与白名单来源不连坐评论者，因此显式忽略其回复上下文。
  */
+function replySourceIdentityId(message: Message): number | undefined {
+  const replied: Message | undefined = message.reply_to_message;
+  const origin: MessageOrigin | undefined =
+    replied?.forward_origin ?? message.external_reply?.origin;
+  if (origin !== undefined) return messageOriginIdentityId(origin);
+  return replied === undefined
+    ? undefined
+    : visibleSenderChat(replied)?.id ?? replied.from?.id;
+}
+
+/**
+ * 引用来源的白名单三态。超级管理员和热白名单直接返回 true；两张策略缓存都热
+ * 才能确证 false。冷缺失表示 update 前置预取失败，不能把未知身份送进永久封禁
+ * 的升级路径。
+ */
+function sourceWhitelistStatus(sourceId: number): boolean | undefined {
+  if (isWhitelisted(sourceId)) return true;
+  return isIdentityPolicyCached(sourceId) ? false : undefined;
+}
+
 function buildSampleContext(message: Message): AdSampleContext | undefined {
   const replied: Message | undefined = message.reply_to_message;
   if (replied?.is_automatic_forward === true) return undefined;
+  const sourceId: number | undefined = replySourceIdentityId(message);
+  if (
+    sourceId !== undefined &&
+    sourceWhitelistStatus(sourceId) !== false
+  ) return undefined;
   const rawQuote: string | undefined = message.quote?.text;
   const rawReplyTo: string | undefined = replied?.text ?? replied?.caption;
   if (
@@ -95,6 +128,16 @@ export function buildAdCandidate(
   const blocked: boolean = isUserBlocked(senderId);
   if (blocked && senderChat === undefined) return undefined;
 
+  const isForwarded: boolean = message.forward_origin !== undefined;
+  const forwardSourceId: number | undefined =
+    messageOriginIdentityId(message.forward_origin);
+  if (
+    !blocked &&
+    isForwarded &&
+    forwardSourceId !== undefined &&
+    sourceWhitelistStatus(forwardSourceId) !== false
+  ) return undefined;
+
   const text: string = sanitizeInline(message.text ?? message.caption ?? "");
   const linkUrls: string[] | undefined = collectHiddenLinkUrls(
     text,
@@ -115,6 +158,21 @@ export function buildAdCandidate(
       title: "title" in senderChat ? senderChat.title : undefined,
       isChannel: true,
     });
+  const meta: Readonly<{
+    firstName: string;
+    lastName: string;
+    username: string;
+  }> = senderChat === undefined
+    ? {
+      firstName: message.from?.first_name ?? "",
+      lastName: message.from?.last_name ?? "",
+      username: message.from?.username ?? "",
+    }
+    : {
+      firstName: "title" in senderChat ? senderChat.title ?? "" : "",
+      lastName: "",
+      username: "username" in senderChat ? senderChat.username ?? "" : "",
+    };
   // 两个可选字段无条件写在初始化处：事后 `if (x !== undefined) candidate.x = …`
   // 会让每条开启广告检测的群消息产出四种 hidden class，把 adDetect 队列的读点与
   // structured clone 边界一起多态化。口径同 aiChat/workerBridge.ts 的「字段一律
@@ -126,7 +184,9 @@ export function buildAdCandidate(
     messageId: message.message_id,
     text,
     label,
+    meta,
     isChannel: senderChat !== undefined,
+    isForwarded,
     blocked,
     // 同 updateIngress.ts：空表上不必先拼复合键，`has()` 本来也只会返回 false。
     justJoined: activeVerificationSnapshots.size > 0 &&

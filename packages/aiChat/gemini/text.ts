@@ -47,12 +47,32 @@ export function generateGeminiText(request: AiTextRequest): Promise<AiTextResult
   });
 }
 
+interface InlineMediaPrompt {
+  readonly mime: string;
+  readonly bytes: Buffer;
+  readonly prompt: string;
+  readonly maxOutputTokens: number;
+  readonly errorLabel: string;
+  readonly normalize: AiVisionRequest["normalize"];
+}
+
 /**
- * 一次视觉描述。图片以 inlineData 直接内联进请求（字节已由
- * aiChat/ai/telegramImage.ts 下载并转码成 jpg/png），描述指令跟在图片之后
- * ——先图后文是 Gemini 视觉输入的惯用顺序。
+ * media 档位的一次「内联媒体 + 文字指令」请求。
+ *
+ * **先媒体后文**是 Gemini 多模态输入的惯用顺序，也是这里唯一承载语义的东西；
+ * 视觉描述与语音转写各写一份的话，改动只会落到其中一个。两者都不传
+ * temperature：转写要的是忠实还原，采样随机性会让模型开始「润色」群友原话，
+ * 而那一行会整行进转录被当成真人说过的话。用模型默认档，不引入一个需要单独
+ * 调参的旋钮。
  */
-export function describeGeminiVision(request: AiVisionRequest): Promise<AiTextResult> {
+function requestInlineMediaText({
+  mime,
+  bytes,
+  prompt,
+  maxOutputTokens,
+  errorLabel,
+  normalize,
+}: InlineMediaPrompt): Promise<AiTextResult> {
   return requestGeminiTextResult({
     capability: "media",
     buildBody: (): GenerateContentParameters => ({
@@ -61,13 +81,28 @@ export function describeGeminiVision(request: AiVisionRequest): Promise<AiTextRe
         {
           role: "user",
           parts: [
-            { inlineData: { mimeType: request.image.mime, data: request.image.bytes.toString("base64") } },
-            { text: request.prompt },
+            { inlineData: { mimeType: mime, data: bytes.toString("base64") } },
+            { text: prompt },
           ],
         },
       ],
-      config: { maxOutputTokens: GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS },
+      config: { maxOutputTokens },
     }),
+    errorLabel,
+    normalize,
+  });
+}
+
+/**
+ * 一次视觉描述。图片以 inlineData 直接内联进请求（字节已由
+ * aiChat/ai/telegramImage.ts 下载并转码成 jpg/png）。
+ */
+export function describeGeminiVision(request: AiVisionRequest): Promise<AiTextResult> {
+  return requestInlineMediaText({
+    mime: request.image.mime,
+    bytes: request.image.bytes,
+    prompt: request.prompt,
+    maxOutputTokens: GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS,
     errorLabel: request.errorLabel,
     normalize: request.normalize,
   });
@@ -75,29 +110,14 @@ export function describeGeminiVision(request: AiVisionRequest): Promise<AiTextRe
 
 /**
  * 一次语音转写。音频以 inlineData 直接内联进请求（字节由
- * aiChat/ai/telegramAudio.ts 按原容器取回，不转码），转写指令跟在音频之后
- * ——先媒体后文，与上面的视觉描述同一惯用顺序。
- *
- * 不传 temperature：转写要的是忠实还原，采样随机性只会让模型开始「润色」群友的
- * 原话，而这条会整行进转录被当成真人说过的话。用模型默认档即可，这里刻意不引入
- * 一个需要单独调参的旋钮。
+ * aiChat/ai/telegramAudio.ts 按原容器取回，不转码）。
  */
 export function transcribeGeminiVoice(request: AiVoiceRequest): Promise<AiTextResult> {
-  return requestGeminiTextResult({
-    capability: "media",
-    buildBody: (): GenerateContentParameters => ({
-      model: getAgentDeploymentConfig().media.model,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { inlineData: { mimeType: request.clip.mime, data: request.clip.bytes.toString("base64") } },
-            { text: request.prompt },
-          ],
-        },
-      ],
-      config: { maxOutputTokens: GEMINI_VOICE_TRANSCRIPTION_MAX_TOKENS },
-    }),
+  return requestInlineMediaText({
+    mime: request.clip.mime,
+    bytes: request.clip.bytes,
+    prompt: request.prompt,
+    maxOutputTokens: GEMINI_VOICE_TRANSCRIPTION_MAX_TOKENS,
     errorLabel: request.errorLabel,
     normalize: request.normalize,
   });

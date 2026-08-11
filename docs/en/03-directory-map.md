@@ -58,10 +58,11 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `verification.ts` plus `verification/` (the `join`/`pending`/`terminal`/`disable` lifecycle segments), `lockdown.ts`, `replyAdmission.ts`,
     `adDetectAdmission.ts`.
 - **`packages/config/`**
-  - **Responsibility**: strict schemas for `config/*.json`, with startup-loaded allow/blocklists,
-    lazy feature files, and per-feature readiness verdicts.
-  - **Representative files**: `whitelist.ts`, `blocklist.ts`, `stickers.ts`, `adSamples.ts`,
-    `readiness.ts`.
+  - **Responsibility**: strict schemas and process snapshots for deployment `config/*.json`, plus per-feature readiness verdicts. Identity policies do not live here.
+  - **Representative files**: `telegram.ts`, `agent.ts`, `stickers.ts`, `adSamples.ts`, and `readiness.ts`.
+- **`packages/database/`**
+  - **Responsibility**: the identity-policy SQLite schema, codecs, and Drizzle interaction boundary. Only the Disk I/O Worker owns a runtime handle.
+  - **Representative paths**: `schema/`, `codec/identity.ts`, and `interact/identity.ts`.
 - **`packages/libs/`**
   - **Responsibility**: domain-independent infrastructure, including atomic files, bounded I/O,
     and concurrency utilities.
@@ -70,7 +71,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/workers/`**
   - **Responsibility**: in-thread implementations for all three Workers.
   - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`,
-    `aiChat/`, `antiRaid/verificationEffects/`, and `diskIO/verification{Codec,Recovery,Writes}.ts`.
+    `aiChat/`, `antiRaid/verificationEffects/`, `diskIO/identityDatabase.ts`, and `diskIO/verification{Codec,Recovery,Writes}.ts`.
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **Responsibility**: model transports and capabilities live under their owning feature so
     thread and lifecycle ownership stays explicit.
@@ -84,11 +85,11 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/infra/`**
   - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
     logger, and main-thread I/O proxies.
-  - **Representative files**: `telegram/`, `diskIO.ts`, `joinLog.ts`, `workerSupervisor.ts`.
+  - **Representative files**: `telegram/`, `diskIO.ts`, `identityStorage.ts`, `supervisedWorker.ts`, and `workerSupervisor.ts`.
 - **`packages/infra/blocklist/`**
   - **Responsibility**: main-thread blocklist infrastructure split into synchronous membership,
     identity checks, durable outbox, and per-chat sweep logic.
-  - **Representative files**: `identities.ts`, `membership.ts`, `outbox.ts`, `sweep.ts`.
+  - **Representative files**: `membership.ts`, `outbox.ts`, `sweep.ts`, and `sweepScheduler.ts`.
 - **`packages/infra/storage/`**
   - **Responsibility**: data-root preflight, instance lock, the business-state facade, the injectable `state.json` persistence boundary, and startup cleanup.
   - **Representative files**: `dataRoot.ts`, `instanceLock.ts`, `stateStore.ts`, and `statePersistence.ts`.
@@ -109,8 +110,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Responsibility**: Bun unit tests mirroring `packages/`.
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
-  - **Responsibility**: repository self-checks and performance benchmarks.
-  - **Representative files**: `checkProjectConventions.ts`, `perf/joinLog.ts`.
+  - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
+  - **Representative files**: `checkProjectConventions.ts`, `migrateIdentityStorageToSqlite.ts`, `migrateWhitelistPermission.ts`, `perf/identityDatabase.ts`, and `perf/joinLog.ts`.
 
 ## Deciding Where New Code Belongs
 

@@ -12,7 +12,7 @@ import {
 import type { ImageGenerationAspectRatio } from "../../../types/aiChat/imageGeneration";
 
 /** `W:H` 形式的官方比例转数值宽高比。 */
-export function aspectRatioValue(ratio: ImageGenerationAspectRatio): number {
+function aspectRatioValue(ratio: ImageGenerationAspectRatio): number {
   const [width, height]: number[] = ratio.split(":").map(Number);
   return width! / height!;
 }
@@ -33,7 +33,7 @@ const ASPECT_RATIO_VALUES: readonly number[] = IMAGE_GENERATION_ASPECT_RATIOS.ma
  * @param candidates 候选比值，至少一项。
  * @returns 最接近项在 candidates 中的下标。
  */
-export function closestRatioIndex(target: number, candidates: readonly number[]): number {
+function closestRatioIndex(target: number, candidates: readonly number[]): number {
   let closest: number = 0;
   let closestDistance: number = Number.POSITIVE_INFINITY;
   for (let i: number = 0; i < candidates.length; i++) {

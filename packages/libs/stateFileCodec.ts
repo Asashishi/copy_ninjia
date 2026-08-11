@@ -1,5 +1,6 @@
 import type { ChatPermissions } from "@grammyjs/types";
 import { CHAT_PERMISSION_KEYS } from "../consts/storage";
+import { isPlainRecord } from "./record";
 import type {
   CachedUser,
   ChatState,
@@ -15,12 +16,8 @@ import type {
  * state.json 当前 schema 的纯解码器。本模块不执行 I/O；所有持久化字段都从
  * unknown 逐项收窄，未知字段、类型错误和跨字段不变量冲突会拒绝整个文件。
  */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function record(value: unknown, path: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`${path} must be an object`);
+  if (!isPlainRecord(value)) throw new Error(`${path} must be an object`);
   return value;
 }
 
@@ -128,21 +125,34 @@ function chatPermissions(value: unknown, path: string): ChatPermissions {
 
 function lockdown(value: unknown, path: string): LockdownRecord {
   const raw: Record<string, unknown> = record(value, path);
-  knownKeys(raw, ["phase", "intentId", "originalPermissions", "expiresAt"], path);
+  knownKeys(raw, ["phase", "intentId", "originalPermissions", "announced", "expiresAt"], path);
   const expiresAt: number | undefined = optionalTimestamp(raw, "expiresAt", path);
   if (expiresAt === undefined) throw new Error(`${path}.expiresAt is required`);
   const phase: unknown = raw.phase;
-  if (phase !== "applying" && phase !== "active" && phase !== "restoring") {
-    throw new Error(`${path}.phase is required and must be applying, active or restoring`);
+  if (
+    phase !== "applying" &&
+    phase !== "active" &&
+    phase !== "reconciling" &&
+    phase !== "restoring"
+  ) {
+    throw new Error(
+      `${path}.phase is required and must be applying, active, reconciling or restoring`
+    );
   }
   const intentId: number | undefined = optionalTimestamp(raw, "intentId", path);
   if (intentId === undefined || intentId === 0) {
     throw new Error(`${path}.intentId must be a positive safe integer`);
   }
+  const announced: boolean | undefined = optionalBoolean(raw, "announced", path);
+  if (announced === undefined) throw new Error(`${path}.announced is required and must be a boolean`);
+  if (phase === "applying" && announced) {
+    throw new Error(`${path}.announced must be false while phase is applying`);
+  }
   return {
     phase,
     intentId,
     originalPermissions: chatPermissions(raw.originalPermissions, `${path}.originalPermissions`),
+    announced,
     expiresAt,
   };
 }

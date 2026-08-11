@@ -5,8 +5,21 @@ import type { LockdownState } from "../../packages/types/states/lockdown";
 
 const PERMS = { can_send_messages: true };
 // announced = 本次锁定真的在群里公告过；只有它为真时恢复成功才发解锁公告。
-const ACTIVE: LockdownState = { kind: "active", originalPermissions: PERMS, intentId: 1, announced: true };
-const RESTORING: LockdownState = { kind: "restoring", originalPermissions: PERMS, intentId: 2, announced: true };
+const ACTIVE: LockdownState = {
+  kind: "active",
+  originalPermissions: PERMS,
+  intentId: 1,
+  announced: true,
+  announcementPending: false,
+  announcementJoinCount: undefined,
+};
+const RESTORING: LockdownState = {
+  kind: "restoring",
+  originalPermissions: PERMS,
+  intentId: 2,
+  announced: true,
+  restoreAfterPersist: false,
+};
 
 describe("触发与占位", () => {
   test("INACTIVE + 超阈值 → APPLYING：预热缓存 + 只读取原权限", () => {
@@ -38,7 +51,14 @@ describe("触发与占位", () => {
 
   test("RESTORING 期间再次超阈值 → 回到 ACTIVE，刷新计时与持久化截止时间", () => {
     const { next, effects } = transitionLockdown(RESTORING, { type: "thresholdExceeded", joinCount: 50 });
-    expect(next).toEqual({ kind: "active", originalPermissions: PERMS, intentId: 2, announced: true });
+    expect(next).toEqual({
+      kind: "active",
+      originalPermissions: PERMS,
+      intentId: 2,
+      announced: true,
+      announcementPending: false,
+      announcementJoinCount: undefined,
+    });
     expect(effects).toEqual([
       { kind: "prefetchAdmins", onlyIfCold: true },
       { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
@@ -66,7 +86,7 @@ describe("加锁落地", () => {
     ]);
   });
 
-  test("set 成功 → ACTIVE：计时从生效时刻重新给满 + 持久化 active + 发通知", () => {
+  test("set 成功 → ACTIVE(false)：先落盘，回执后才发送公告", () => {
     const applying: LockdownState = {
       kind: "applying",
       stage: "prepared",
@@ -75,24 +95,55 @@ describe("加锁落地", () => {
       intentId: 7,
     };
     const { next, effects } = transitionLockdown(applying, { type: "applyResult", ok: true });
-    expect(next).toEqual({ kind: "active", originalPermissions: PERMS, intentId: 7, announced: true });
+    expect(next).toEqual({
+      kind: "active",
+      originalPermissions: PERMS,
+      intentId: 7,
+      announced: false,
+      announcementPending: true,
+      announcementJoinCount: 46,
+    });
     expect(effects).toEqual([
       { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
       { kind: "persistState" },
-      { kind: "announceLockdown", joinCount: 46 },
     ]);
+    if (next?.kind !== "active") throw new Error("missing active lockdown state");
+    const persisted = transitionLockdown(next, {
+      type: "statePersisted",
+      phase: "active",
+      intentId: 7,
+    });
+    expect(persisted.next).toEqual({ ...next, announcementPending: false });
+    expect(persisted.effects).toEqual([{ kind: "beginLockdownAnnouncement", joinCount: 46 }]);
+    if (persisted.next?.kind !== "active") throw new Error("missing persisted active lockdown state");
+    expect(transitionLockdown(persisted.next, {
+      type: "announcementResult",
+      ok: false,
+    })).toEqual({ next: persisted.next, effects: [] });
+    expect(transitionLockdown(persisted.next, {
+      type: "announcementResult",
+      ok: true,
+    })).toEqual({
+      next: { ...persisted.next, announced: true },
+      effects: [{ kind: "persistState" }],
+    });
   });
 
   test("接管 applying 后 set 成功 → 人数未知时公告不伪造为 0", () => {
     const adopted = transitionLockdown(undefined, {
-      type: "adopt", phase: "applying", intentId: 7, originalPermissions: PERMS, remainingMs: 0,
+      type: "adopt", phase: "applying", intentId: 7, originalPermissions: PERMS, announced: false, remainingMs: 0,
     });
     const { effects } = transitionLockdown(adopted.next, { type: "applyResult", ok: true });
     expect(effects).toEqual([
       { kind: "scheduleRestore", delayMs: LOCKDOWN_MS },
       { kind: "persistState" },
-      { kind: "announceLockdown" },
     ]);
+    const active = transitionLockdown(adopted.next, { type: "applyResult", ok: true });
+    expect(transitionLockdown(active.next, {
+      type: "statePersisted",
+      phase: "active",
+      intentId: 7,
+    }).effects).toEqual([{ kind: "beginLockdownAnnouncement" }]);
   });
 
   test("set 结果不确定 → 先持久化 restoring 再恢复，不能删除 owner", () => {
@@ -104,7 +155,13 @@ describe("加锁落地", () => {
     };
     const { next, effects } = transitionLockdown(applying, { type: "applyResult", ok: false, restoreIntentId: 8 });
     // announced=false：这条路从未发过封锁公告，恢复成功时也不该发解锁公告。
-    expect(next).toEqual({ kind: "restoring", originalPermissions: PERMS, intentId: 8, announced: false });
+    expect(next).toEqual({
+      kind: "restoring",
+      originalPermissions: PERMS,
+      intentId: 8,
+      announced: false,
+      restoreAfterPersist: true,
+    });
     expect(effects).toEqual([{ kind: "persistState" }]);
   });
 
@@ -156,11 +213,27 @@ describe("加锁落地", () => {
 describe("到期恢复", () => {
   test("ACTIVE 计时到期 → 先持久化 RESTORING，回执后才发起恢复", () => {
     const { next, effects } = transitionLockdown(ACTIVE, { type: "restoreTimerFired", intentId: 2 });
-    expect(next).toEqual({ kind: "restoring", originalPermissions: PERMS, intentId: 2, announced: true });
+    expect(next).toEqual({
+      kind: "restoring",
+      originalPermissions: PERMS,
+      intentId: 2,
+      announced: true,
+      restoreAfterPersist: true,
+    });
     expect(effects).toEqual([{ kind: "persistState" }]);
-    expect(transitionLockdown(next, { type: "statePersisted", phase: "restoring", intentId: 2 }).effects).toEqual([
+    const persisted = transitionLockdown(next, {
+      type: "statePersisted",
+      phase: "restoring",
+      intentId: 2,
+    });
+    expect(persisted.effects).toEqual([
       { kind: "beginRestore", originalPermissions: PERMS },
     ]);
+    expect(transitionLockdown(persisted.next, {
+      type: "statePersisted",
+      phase: "restoring",
+      intentId: 2,
+    }).effects).toEqual([]);
   });
 
   test("恢复成功 → INACTIVE + 回报解锁 + 发通知", () => {
@@ -197,10 +270,23 @@ describe("到期恢复", () => {
     };
     const restoring = transitionLockdown(applying, { type: "applyResult", ok: false, restoreIntentId: 8 });
     const active = transitionLockdown(restoring.next, { type: "thresholdExceeded", joinCount: 50 });
-    expect(active.next).toEqual({ kind: "active", originalPermissions: PERMS, intentId: 8, announced: false });
+    expect(active.next).toEqual({
+      kind: "active",
+      originalPermissions: PERMS,
+      intentId: 8,
+      announced: false,
+      announcementPending: false,
+      announcementJoinCount: undefined,
+    });
 
     const back = transitionLockdown(active.next, { type: "restoreTimerFired", intentId: 9 });
-    expect(back.next).toEqual({ kind: "restoring", originalPermissions: PERMS, intentId: 9, announced: false });
+    expect(back.next).toEqual({
+      kind: "restoring",
+      originalPermissions: PERMS,
+      intentId: 9,
+      announced: false,
+      restoreAfterPersist: true,
+    });
     expect(transitionLockdown(back.next, { type: "restoreResult", ok: true }).effects).toEqual([
       { kind: "reportUnlock" },
     ]);
@@ -214,7 +300,13 @@ describe("到期恢复", () => {
       intentId: 7,
     };
     const { next } = transitionLockdown(applying, { type: "deactivate", intentId: 8 });
-    expect(next).toEqual({ kind: "restoring", originalPermissions: PERMS, intentId: 8, announced: false });
+    expect(next).toEqual({
+      kind: "restoring",
+      originalPermissions: PERMS,
+      intentId: 8,
+      announced: false,
+      restoreAfterPersist: true,
+    });
   });
 
   test("恢复失败 → 保留记录稍后重试（unlock 不发出，与权限仍被限制的事实一致）", () => {
@@ -224,11 +316,51 @@ describe("到期恢复", () => {
     expect(effects).toEqual([{ kind: "scheduleRestoreRetry", delayMs: RESTORE_RETRY_MS }]);
   });
 
-  test("恢复在途期间被新峰值推回 ACTIVE，迟到的成功回执原地补一次限制而非解锁", () => {
+  test("恢复在途期间被新峰值推回 ACTIVE，迟到的成功回执先持久化 RECONCILING", () => {
     const state: LockdownState = ACTIVE;
     const { next, effects } = transitionLockdown(state, { type: "restoreResult", ok: true });
-    expect(next).toBe(state);
-    expect(effects).toEqual([{ kind: "reapplyRestriction", originalPermissions: PERMS }]);
+    expect(next).toEqual({
+      kind: "reconciling",
+      originalPermissions: PERMS,
+      intentId: 1,
+      announced: true,
+      reapplyAfterPersist: true,
+    });
+    expect(effects).toEqual([{ kind: "persistState" }]);
+    const persisted = transitionLockdown(next, {
+      type: "statePersisted",
+      phase: "reconciling",
+      intentId: 1,
+    });
+    expect(persisted.effects).toEqual([{ kind: "beginReapply" }]);
+    expect(transitionLockdown(persisted.next, {
+      type: "statePersisted",
+      phase: "reconciling",
+      intentId: 1,
+    }).effects).toEqual([]);
+  });
+
+  test("RECONCILING 纠偏失败退避重试，成功后才回到 ACTIVE", () => {
+    const state: LockdownState = {
+      kind: "reconciling",
+      originalPermissions: PERMS,
+      intentId: 1,
+      announced: true,
+      reapplyAfterPersist: false,
+    };
+    const failed = transitionLockdown(state, { type: "reapplyResult", ok: false });
+    expect(failed.next).toBe(state);
+    expect(failed.effects).toEqual([{
+      kind: "scheduleReapplyRetry",
+      delayMs: RESTORE_RETRY_MS,
+    }]);
+    expect(transitionLockdown(state, { type: "reapplyRetryFired" }).effects).toEqual([
+      { kind: "beginReapply" },
+    ]);
+
+    const succeeded = transitionLockdown(state, { type: "reapplyResult", ok: true });
+    expect(succeeded.next).toEqual(ACTIVE);
+    expect(succeeded.effects).toEqual([{ kind: "persistState" }]);
   });
 
   test("恢复在途期间被新峰值推回 ACTIVE，迟到的失败回执被忽略（权限从未恢复过，别打断刚延长的倒计时）", () => {
@@ -243,9 +375,16 @@ describe("adopt 接管", () => {
   test("INACTIVE + adopt → 直接视为已生效的 ACTIVE，无条件预热缓存 + 按调用方算好的真实剩余时长重排计时（回归：曾无条件重开满额，快到期的锁定会被意外延长）", () => {
     const remainingMs = 42_000; // 模拟"锁定只剩 42 秒就该恢复"，而非满额的 LOCKDOWN_MS
     const { next, effects } = transitionLockdown(undefined, {
-      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, remainingMs,
+      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, announced: true, remainingMs,
     });
-    expect(next).toEqual({ kind: "active", originalPermissions: PERMS, intentId: 1, announced: true });
+    expect(next).toEqual({
+      kind: "active",
+      originalPermissions: PERMS,
+      intentId: 1,
+      announced: true,
+      announcementPending: false,
+      announcementJoinCount: undefined,
+    });
     expect(effects).toEqual([
       { kind: "prefetchAdmins", onlyIfCold: false },
       { kind: "scheduleRestore", delayMs: remainingMs },
@@ -254,7 +393,7 @@ describe("adopt 接管", () => {
 
   test("剩余时长恰好算出 0（崩溃期间已经过期）→ 立即安排恢复，不无谓多等", () => {
     const { effects } = transitionLockdown(undefined, {
-      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, remainingMs: 0,
+      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, announced: true, remainingMs: 0,
     });
     expect(effects).toEqual([
       { kind: "prefetchAdmins", onlyIfCold: false },
@@ -265,7 +404,7 @@ describe("adopt 接管", () => {
   test("已有记录时 adopt 幂等跳过", () => {
     const state: LockdownState = ACTIVE;
     const { next, effects } = transitionLockdown(state, {
-      type: "adopt", phase: "active", intentId: 9, originalPermissions: {}, remainingMs: LOCKDOWN_MS,
+      type: "adopt", phase: "active", intentId: 9, originalPermissions: {}, announced: true, remainingMs: LOCKDOWN_MS,
     });
     expect(next).toBe(state);
     expect(effects).toEqual([]);
@@ -273,7 +412,7 @@ describe("adopt 接管", () => {
 
   test("恢复 applying/restoring intent 时立即幂等对账", () => {
     const applying = transitionLockdown(undefined, {
-      type: "adopt", phase: "applying", intentId: 7, originalPermissions: PERMS, remainingMs: 0,
+      type: "adopt", phase: "applying", intentId: 7, originalPermissions: PERMS, announced: false, remainingMs: 0,
     });
     expect(applying.next).toEqual({
       kind: "applying",
@@ -284,15 +423,21 @@ describe("adopt 接管", () => {
     expect(applying.effects.map((effect) => effect.kind)).toEqual(["prefetchAdmins", "commitApply"]);
 
     const restoring = transitionLockdown(undefined, {
-      type: "adopt", phase: "restoring", intentId: 8, originalPermissions: PERMS, remainingMs: 0,
+      type: "adopt", phase: "restoring", intentId: 8, originalPermissions: PERMS, announced: false, remainingMs: 0,
     });
-    expect(restoring.next).toEqual({ kind: "restoring", originalPermissions: PERMS, intentId: 8, announced: true });
+    expect(restoring.next).toEqual({
+      kind: "restoring",
+      originalPermissions: PERMS,
+      intentId: 8,
+      announced: false,
+      restoreAfterPersist: false,
+    });
     expect(restoring.effects.map((effect) => effect.kind)).toEqual(["prefetchAdmins", "beginRestore"]);
   });
 
   test("Worker 重建接到尚未落盘的 intent 时只接管状态，精确回执后才执行权限副作用", () => {
     const applying = transitionLockdown(undefined, {
-      type: "adopt", phase: "applying", intentId: 7, originalPermissions: PERMS, remainingMs: 0, persisted: false,
+      type: "adopt", phase: "applying", intentId: 7, originalPermissions: PERMS, announced: false, remainingMs: 0, persisted: false,
     });
     expect(applying.effects.map((effect) => effect.kind)).toEqual(["prefetchAdmins"]);
     expect(transitionLockdown(applying.next, {
@@ -300,7 +445,7 @@ describe("adopt 接管", () => {
     }).effects.map((effect) => effect.kind)).toEqual(["commitApply"]);
 
     const restoring = transitionLockdown(undefined, {
-      type: "adopt", phase: "restoring", intentId: 8, originalPermissions: PERMS, remainingMs: 0, persisted: false,
+      type: "adopt", phase: "restoring", intentId: 8, originalPermissions: PERMS, announced: false, remainingMs: 0, persisted: false,
     });
     expect(restoring.effects.map((effect) => effect.kind)).toEqual(["prefetchAdmins"]);
     expect(transitionLockdown(restoring.next, {

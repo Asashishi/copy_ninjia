@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Message } from "@grammyjs/types";
 import { buildFloodCandidate } from "../../packages/antiRaid/floodControl";
 import { chatStates } from "../../packages/cache/main/storage";
-import { whitelistConfigCache } from "../../packages/cache/main/whitelist";
+import { whitelistEntryCache } from "../../packages/cache/main/identityStorage";
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/telegram";
-import { parseWhitelistConfig } from "../../packages/config/whitelist";
+import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 
 const BOT_ID: number = 99;
 
@@ -22,12 +22,12 @@ function groupMessage(overrides: Partial<Message> = {}): Message {
 beforeEach(() => {
   chatStates.clear();
   chatStates.set(-1001, { isFloodControlEnabled: true });
-  whitelistConfigCache.current = parseWhitelistConfig({});
+  whitelistEntryCache.clear();
 });
 
 afterEach(() => {
   chatStates.clear();
-  whitelistConfigCache.current = null;
+  whitelistEntryCache.clear();
 });
 
 describe("刷屏计数的主线程投递门禁", () => {
@@ -89,10 +89,17 @@ describe("刷屏计数的主线程投递门禁", () => {
       BOT_ID
     )).toBeUndefined();
 
-    whitelistConfigCache.current = parseWhitelistConfig({ "7": {} });
+    whitelistEntryCache.set(7, {
+      permissions: DEFAULT_WHITELIST_PERMISSIONS,
+      meta: { firstName: "刷屏怪", lastName: "", username: "" },
+    });
     expect(buildFloodCandidate(groupMessage(), BOT_ID)).toBeUndefined();
-    whitelistConfigCache.current = parseWhitelistConfig({
-      "7": { isCanBypassFloodControl: false },
+    whitelistEntryCache.set(7, {
+      permissions: {
+        ...DEFAULT_WHITELIST_PERMISSIONS,
+        isCanBypassFloodControl: false,
+      },
+      meta: { firstName: "刷屏怪", lastName: "", username: "" },
     });
     expect(buildFloodCandidate(groupMessage(), BOT_ID)?.userId).toBe(7);
   });

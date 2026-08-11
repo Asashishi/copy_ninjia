@@ -2,6 +2,8 @@ import type { RemoveBlockedMembersParams } from "./blocklist";
 import type { AdDetectAgentConfig } from "./config";
 import type { BotChatPermissions } from "./telegram";
 import type { ChatPermissions } from "@grammyjs/types";
+import type { LockdownPhase } from "./chatState";
+import type { TelegramWorkerRequest } from "./telegramWorker";
 import type {
   AdCandidateMessage,
   AdDetectedEvent,
@@ -34,7 +36,7 @@ export interface NewMemberMessage {
   /** 触发该入群事件的操作者 ID。 */
   actorId?: number;
   /**
-   * 主线程在投递当刻判定操作者是否在白名单边界内（config/whitelist.json 的
+   * 主线程在投递当刻判定操作者是否在白名单边界内（SQLite 白名单表的
    * 条目，或恒在边界内的 SUPER_ADMIN_USER_ID）。权限配置只归主线程读取，
    * Worker 不维护跨线程副本；false 同时表示无操作者或不在边界内。
    */
@@ -52,6 +54,8 @@ export interface MemberLeftMessage {
 export interface DeactivateChatMessage {
   type: "deactivateChat";
   chatId: number;
+  /** 主动 `/init disable` 时清理验证按钮；失权/离群时不得发无权限请求。 */
+  cleanupVerificationMessages: boolean;
 }
 
 /**
@@ -111,9 +115,10 @@ export interface VerifyCallbackMessage {
 /** adopt 重放里的一条私密模式记录（见 AdoptLockdownsMessage）。 */
 export interface AdoptableLockdown {
   chatId: number;
-  phase: "applying" | "active" | "restoring";
+  phase: LockdownPhase;
   intentId: number;
   originalPermissions: ChatPermissions;
+  announced: boolean;
   /** false 表示仅存在主线程内存镜像，必须继续等待原 saveState 的落盘回执。 */
   persisted?: boolean;
   /**
@@ -232,14 +237,45 @@ export type VerificationSnapshot =
   | CheckingInviterVerificationSnapshot
   | ExpellingVerificationSnapshot;
 
+/** 本进程已耗尽终态执行预算、但仍保留在磁盘中的验证最小索引。 */
+export interface DeferredVerificationRecord {
+  chatId: number;
+  userId: number;
+  /** 当前 Anti-Raid Worker 代际；主线程据此拒绝旧实例的迟到事件。 */
+  generation: number;
+  /** 延后时最后一份已持久化快照的 revision。 */
+  revision: number;
+}
+
 /** 主线程 -> Worker：Worker 重建时接管尚未结束的验证。 */
 export interface AdoptVerificationsMessage {
   type: "adoptVerifications";
   generation: number;
   verifications: VerificationSnapshot[];
+  /** 本进程已耗尽预算的最小索引；同 key 新事件不得重新创建验证运行态。 */
+  deferredVerifications?: DeferredVerificationRecord[];
   /** 进程启动恢复来自磁盘，可直接续跑终态；Worker 内重建则重新等待落盘回执。 */
   resumePersistedTerminals?: boolean;
 }
+
+/** Anti-Raid Worker -> 主线程：为一轮验证终态副作用申请进程级执行许可。 */
+export interface VerificationAttemptPermitRequest {
+  readonly operation: "verificationAttemptPermit";
+  readonly key: string;
+  readonly generation: number;
+  readonly revision: number;
+}
+
+/** 主线程对验证终态执行许可的固定形态回执。 */
+export interface VerificationAttemptPermitResult {
+  readonly status: "granted" | "exhausted" | "stale";
+  readonly attempt: number;
+}
+
+/** Anti-Raid Worker 允许反向调用的主线程能力。 */
+export type AntiRaidWorkerRequest =
+  | TelegramWorkerRequest
+  | VerificationAttemptPermitRequest;
 
 /** 主线程 -> Worker：某条验证 revision 已进入当天文件，可安全执行终态副作用。 */
 export interface VerificationPersistedMessage {
@@ -266,7 +302,7 @@ export interface AdminsChangedMessage {
 export interface LockdownPersistedMessage {
   type: "lockdownPersisted";
   chatId: number;
-  phase: "applying" | "active" | "restoring";
+  phase: LockdownPhase;
   intentId: number;
 }
 
@@ -415,13 +451,14 @@ export interface BlockedMembersRemovedEvent {
   targetIsAdmin?: boolean;
 }
 
-/** Worker -> 主线程：写入 applying/active/restoring 的持久化阶段。 */
+/** Worker -> 主线程：写入 lockdown 非 idle 阶段。 */
 export interface LockdownEvent {
   type: "lockdown";
   chatId: number;
-  phase: "applying" | "active" | "restoring";
+  phase: LockdownPhase;
   intentId: number;
   originalPermissions: ChatPermissions;
+  announced: boolean;
   expiresAt: number;
 }
 
@@ -446,6 +483,12 @@ export interface VerificationDeleteEvent {
   revision: number;
 }
 
+/** Worker -> 主线程：预算耗尽，仅卸载运行态并保留磁盘中的终态记录。 */
+export interface VerificationDeferredEvent {
+  type: "verificationDeferred";
+  record: DeferredVerificationRecord;
+}
+
 /** Worker -> 主线程：barrier 之前的消息均已完成同步路由和镜像发布。 */
 export interface AntiRaidBarrierCompleteEvent {
   type: "barrierComplete";
@@ -463,6 +506,7 @@ export type AntiRaidWorkerEvent =
   | UnlockEvent
   | VerificationUpsertEvent
   | VerificationDeleteEvent
+  | VerificationDeferredEvent
   | BlockedMembersRemovedEvent
   | AdDetectedEvent
   | AntiRaidBarrierCompleteEvent

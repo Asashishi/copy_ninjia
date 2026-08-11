@@ -1,0 +1,55 @@
+import { logger } from "../infra/logger";
+
+/**
+ * 「登记在途后台任务 + 自摘除 + 有界等待排空」的公共骨架。
+ *
+ * 三个 owner（广告处置、延迟删除、gag 提示）此前各写了一份逐字节等价的登记链和
+ * 等待函数。两处细节是语义、不能由调用方各自发挥：`finally` 里的摘除必须挂在
+ * catch 之后（否则一次异常就把条目永久留在集合里，停机 drain 从此恒判超时），
+ * 而等待用的 timer 必须 unref（任务提前结算时，一个还没到点的 timer 会把进程按
+ * 在事件循环里，停机路径上纯属浪费）。
+ */
+
+/**
+ * 把一条后台任务接入 owner 的在途集合，并在结算后自摘除。
+ * @param tasks owner 持有的在途集合；本函数只增删自己登记的那一个条目。
+ * @param task 已经启动的任务；异常只记一行日志，绝不逃出本边界。
+ * @param failureMessage 失败时那一行日志的完整英文前缀（含冒号）；各 owner 自己
+ * 措辞，本函数不替它把可预期的投递失败说成 unexpected。
+ */
+export function trackBackgroundTask(
+  tasks: Set<Promise<void>>,
+  task: Promise<unknown>,
+  failureMessage: string
+): void {
+  const observed: Promise<void> = task
+    .then((): void => undefined)
+    .catch((error: unknown): void => {
+      logger.error(failureMessage, error);
+    })
+    .finally((): void => {
+      tasks.delete(observed);
+    });
+  tasks.add(observed);
+}
+
+/**
+ * 在预算内等待一批已经在途的任务结算。
+ * @returns 全部结算为 true；预算耗尽为 false（任务本身不会被中断）。
+ */
+export function settleWithinBudget(
+  tasks: readonly Promise<unknown>[],
+  timeoutMs: number
+): Promise<boolean> {
+  return new Promise((resolve: (settled: boolean) => void): void => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout(
+      (): void => resolve(false),
+      timeoutMs
+    );
+    timer.unref();
+    void Promise.allSettled(tasks).then((): void => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}

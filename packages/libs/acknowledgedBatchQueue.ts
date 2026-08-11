@@ -6,26 +6,55 @@ export interface AcknowledgedBatch<T> {
   readonly values: readonly T[];
 }
 
+/** ACK 队列的批次、总条数与累计成本硬边界。 */
+export interface AcknowledgedBatchQueueOptions {
+  readonly maxBatchMessages: number;
+  readonly maxMessages: number;
+  readonly maxCost: number;
+}
+
+interface CostedQueueValue<T> {
+  readonly value: T;
+  readonly cost: number;
+}
+
 /**
  * 单向通道的 ACK 批处理队列。
  *
  * 队列只允许一个批次在途，避免对端停止消费时继续向 Worker mailbox 无界复制；
  * 在途值保留到 ACK，投递拒绝或对端代际崩溃后可原批重发，语义为 at-least-once。
- * 待发送队列是否设容量属于领域决策；本实现不擅自丢弃。实例必须放进所属线程的
- * cache 模块。
+ * 总条数与领域成本均有硬顶；enqueue 越界时返回 false，由领域 owner 决定丢弃、
+ * 合并或升级。实例必须放进所属线程的 cache 模块。
  */
 export class AcknowledgedBatchQueue<T> {
-  private readonly queue: LinkedQueue<T> = new LinkedQueue<T>();
+  private readonly queue: LinkedQueue<CostedQueueValue<T>> =
+    new LinkedQueue<CostedQueueValue<T>>();
   private readonly maxBatchMessages: number;
+  private readonly maxMessages: number;
+  private readonly maxCost: number;
   private inFlight: AcknowledgedBatch<T> | null = null;
+  private inFlightCost: number = 0;
+  private queuedCost: number = 0;
   private delivered: boolean = false;
   private nextBatchId: number = 1;
 
-  constructor(maxBatchMessages: number) {
-    if (!Number.isSafeInteger(maxBatchMessages) || maxBatchMessages <= 0) {
-      throw new RangeError("maxBatchMessages must be a positive safe integer");
+  constructor({
+    maxBatchMessages,
+    maxMessages,
+    maxCost,
+  }: AcknowledgedBatchQueueOptions) {
+    for (const [label, value] of [
+      ["maxBatchMessages", maxBatchMessages],
+      ["maxMessages", maxMessages],
+      ["maxCost", maxCost],
+    ] as const) {
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        throw new RangeError(`${label} must be a positive safe integer`);
+      }
     }
     this.maxBatchMessages = maxBatchMessages;
+    this.maxMessages = maxMessages;
+    this.maxCost = maxCost;
   }
 
   /** 当前排队与在途消息总数。 */
@@ -33,14 +62,30 @@ export class AcknowledgedBatchQueue<T> {
     return this.queue.size + (this.inFlight?.values.length ?? 0);
   }
 
+  /** 排队与在途值合计占用的领域成本，只供内部容量判定。 */
+  private get retainedCost(): number {
+    return this.queuedCost + this.inFlightCost;
+  }
+
   /** 是否有一批已经成功提交给对端、正在等待确认。 */
   get awaitingAcknowledgement(): boolean {
     return this.inFlight !== null && this.delivered;
   }
 
-  /** 追加到无损 FIFO；领域 owner 决定容量策略。 */
-  enqueue(value: T): void {
-    this.queue.push(value);
+  /** 在条数与成本均有余量时追加；越界不改变 FIFO。 */
+  enqueue(value: T, cost: number): boolean {
+    if (!Number.isSafeInteger(cost) || cost <= 0) {
+      throw new RangeError("cost must be a positive safe integer");
+    }
+    if (
+      this.size >= this.maxMessages ||
+      cost > this.maxCost - this.retainedCost
+    ) {
+      return false;
+    }
+    this.queue.push({ value, cost });
+    this.queuedCost += cost;
+    return true;
   }
 
   /**
@@ -51,11 +96,15 @@ export class AcknowledgedBatchQueue<T> {
     if (this.inFlight !== null) return this.delivered ? null : this.inFlight;
     if (this.queue.size === 0) return null;
     const values: T[] = [];
+    let inFlightCost: number = 0;
     while (values.length < this.maxBatchMessages) {
-      const value: T | undefined = this.queue.shift();
-      if (value === undefined) break;
-      values.push(value);
+      const entry: CostedQueueValue<T> | undefined = this.queue.shift();
+      if (entry === undefined) break;
+      values.push(entry.value);
+      inFlightCost += entry.cost;
     }
+    this.queuedCost -= inFlightCost;
+    this.inFlightCost = inFlightCost;
     const batchId: number = this.nextBatchId;
     this.nextBatchId = this.nextBatchId === Number.MAX_SAFE_INTEGER ? 1 : this.nextBatchId + 1;
     this.inFlight = { batchId, values };
@@ -86,6 +135,7 @@ export class AcknowledgedBatchQueue<T> {
   acknowledge(batchId: number): boolean {
     if (this.inFlight?.batchId !== batchId || !this.delivered) return false;
     this.inFlight = null;
+    this.inFlightCost = 0;
     this.delivered = false;
     return true;
   }
@@ -94,6 +144,8 @@ export class AcknowledgedBatchQueue<T> {
   reset(): void {
     this.queue.clear();
     this.inFlight = null;
+    this.inFlightCost = 0;
+    this.queuedCost = 0;
     this.delivered = false;
     this.nextBatchId = 1;
   }

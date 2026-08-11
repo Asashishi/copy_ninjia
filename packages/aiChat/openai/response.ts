@@ -5,7 +5,7 @@
  */
 
 import { OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS } from "../../consts/aiChat/openai";
-import { isPlainRecord } from "../../libs/runtimeConfig";
+import { isPlainRecord } from "../../libs/record";
 import type OpenAI from "openai";
 import type { AiFunctionCall } from "../../types/aiChat/provider";
 

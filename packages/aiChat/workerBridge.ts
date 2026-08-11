@@ -1,4 +1,4 @@
-import { superviseDuplexWorker } from "../libs/supervisedDuplexWorker";
+import { superviseDuplexWorker } from "../infra/supervisedDuplexWorker";
 import { markSelfSent } from "../infra/selfSentTracker";
 import { registerChatTeardown } from "../infra/chatTeardown";
 import { logger } from "../infra/logger";
@@ -39,7 +39,7 @@ import type {
   AiChatInvalidateWaiter,
   MoodRequestWaiter,
 } from "../types/aiChat/waiters";
-import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
+import type { SupervisedWorkerHandle } from "../infra/supervisedWorker";
 import type { WorkerDuplexInbound } from "../types/workerDuplex";
 import type { TelegramWorkerRequest } from "../types/telegramWorker";
 import {
@@ -77,7 +77,7 @@ function rejectAllAiChatInvalidateWaiters(reason: string): void {
  * 此边界。这样 /命令 处理与更新调度不被 AI 流水线抢占。postMessage 按 FIFO 送达，
  * 同一群里「先记录、后触发」的先后顺序在 Worker 侧保持不变。
  *
- * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
+ * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 infra/supervisedWorker.ts。
  *
  * AI 记忆持久化：aiChatWorker 定期把各群 dirty 的记忆快照（滚动缓存 + 中期
  * 摘要）、各白名单贴纸包 dirty 的目录快照上报到这里（memory / stickerCatalog
@@ -234,7 +234,7 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
  *
  * 两把供应商凭据都缺时整条线不启动：连线程都不建，lastInitState 保持 null，停机
  * 路径上的 flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker
- * 也是 no-op（见 libs/supervisedWorker.ts），生命周期那边不必分岔。判定放在
+ * 也是 no-op（见 infra/supervisedWorker.ts），生命周期那边不必分岔。判定放在
  * 这里而不是 app/lifecycle.ts：那边只认注入进来的 dependencies，把「这个功能
  * 配没配」的知识摊到编排层等于每加一个可选功能都要改一次生命周期。
  */

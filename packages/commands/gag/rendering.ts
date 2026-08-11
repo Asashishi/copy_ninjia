@@ -4,13 +4,15 @@ import {
   GAG_DEFAULT_TOOL,
   GAG_DURATION_MINUTES,
   GAG_DURATION_TOKEN_PATTERN,
-  GAG_FILLER_SUFFIX,
+  GAG_ELLIPSIS_FILLER,
+  GAG_ELLIPSIS_PROBABILITY,
   GAG_INLINE_QUERY_MAX_CHARS,
   GAG_INLINE_QUERY_PREFIX,
   GAG_INLINE_SPEAK_BUTTON_TEXT,
-  GAG_PRIMARY_FILLER,
-  GAG_PRIMARY_FILLER_PROBABILITY,
-  GAG_SECONDARY_FILLERS,
+  GAG_INLINE_TOKEN_BYTES,
+  GAG_INLINE_TOKEN_PATTERN,
+  GAG_INLINE_TOKEN_SEPARATOR,
+  GAG_REPLACEMENT_CHARACTERS,
 } from "../../consts/gag";
 import {
   CHAT_ID_ARG_PATTERN,
@@ -20,6 +22,7 @@ import {
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../consts/telegram";
 import type {
   GagDurationMinutes,
+  GagSession,
   ParsedGagCommand,
   ParsedGagInlineQuery,
   RenderGagSpeechOptions,
@@ -32,12 +35,26 @@ export function gagSpeechPrefix(tool: string): string {
 }
 
 /**
+ * 生成一条会话的 inline 令牌。频道入口靠它绑定「看得见群内按钮的人」，
+ * 理由见 consts/gag.ts 的 GAG_INLINE_TOKEN_BYTES。
+ */
+export function createGagInlineToken(): string {
+  const bytes: Uint8Array = new Uint8Array(GAG_INLINE_TOKEN_BYTES);
+  crypto.getRandomValues(bytes);
+  let token: string = "";
+  for (const byte of bytes) token += byte.toString(16).padStart(2, "0");
+  return token;
+}
+
+/**
  * 构造开始提示的发言入口。普通用户按钮只携带 gag 保留前缀并在查询时核对
- * 查询者 id；只有频道身份额外携带频道 id，再在消息落群后核对 sender_chat。
+ * 查询者 id；频道身份额外携带频道 id 与会话令牌，再在消息落群后核对 sender_chat。
+ * 令牌只出现在按钮预填里，不进 inline 结果文本、也不进 text_link 标记——那条
+ * 标记随消息公开可见，把令牌写进去等于当众发放。
  * 无前缀查询始终进入运势，两个 inline 领域不能同时应答。
  */
-export function buildGagSpeakKeyboard(targetId: number): InlineKeyboard {
-  if (targetId > 0) {
+export function buildGagSpeakKeyboard(session: GagSession): InlineKeyboard {
+  if (session.targetId > 0) {
     return new InlineKeyboard().switchInlineCurrent(
       GAG_INLINE_SPEAK_BUTTON_TEXT,
       `${GAG_INLINE_QUERY_PREFIX} `
@@ -45,61 +62,55 @@ export function buildGagSpeakKeyboard(targetId: number): InlineKeyboard {
   }
   return new InlineKeyboard().switchInlineCurrent(
     GAG_INLINE_SPEAK_BUTTON_TEXT,
-    `${GAG_INLINE_QUERY_PREFIX}${targetId} `
+    `${GAG_INLINE_QUERY_PREFIX}${session.targetId}` +
+    `${GAG_INLINE_TOKEN_SEPARATOR}${session.inlineToken} `
   );
 }
 
 /**
  * 解析 gag 按钮预填的查询。普通用户在前缀后直接跟正文；频道入口额外携带
- * 规范负数 id。伪造的保留前缀由 gag 静默认领为空结果，不能退回运势。
+ * 规范负数 id 与会话令牌，两者缺一即视为伪造。伪造的保留前缀由 gag 静默认领为
+ * 空结果，不能退回运势。
  */
 export function parseGagInlineQuery(
   query: string
 ): ParsedGagInlineQuery | undefined {
   if (!query.startsWith(GAG_INLINE_QUERY_PREFIX)) return undefined;
-  const idStart: number = GAG_INLINE_QUERY_PREFIX.length;
-  const separatorIndex: number = query.indexOf(" ", idStart);
-  const idEnd: number = separatorIndex === -1 ? query.length : separatorIndex;
-  const rawId: string = query.slice(idStart, idEnd);
-  if (rawId.length === 0) {
-    return {
-      text: separatorIndex === -1 ? "" : query.slice(separatorIndex + 1),
-    };
-  }
+  const scopeStart: number = GAG_INLINE_QUERY_PREFIX.length;
+  const separatorIndex: number = query.indexOf(" ", scopeStart);
+  const scopeEnd: number = separatorIndex === -1 ? query.length : separatorIndex;
+  const scope: string = query.slice(scopeStart, scopeEnd);
+  const text: string = separatorIndex === -1 ? "" : query.slice(separatorIndex + 1);
+  if (scope.length === 0) return { text };
+  const tokenIndex: number = scope.indexOf(GAG_INLINE_TOKEN_SEPARATOR);
+  if (tokenIndex === -1) return undefined;
+  const rawId: string = scope.slice(0, tokenIndex);
+  const token: string = scope.slice(tokenIndex + GAG_INLINE_TOKEN_SEPARATOR.length);
   const numericId: number = Number(rawId);
-  if (!CHAT_ID_ARG_PATTERN.test(rawId) || !Number.isSafeInteger(numericId)) {
+  if (
+    !CHAT_ID_ARG_PATTERN.test(rawId) ||
+    !Number.isSafeInteger(numericId) ||
+    !GAG_INLINE_TOKEN_PATTERN.test(token)
+  ) {
     return undefined;
   }
-  return {
-    targetChannelId: numericId,
-    text: separatorIndex === -1 ? "" : query.slice(separatorIndex + 1),
-  };
+  return { targetChannelId: numericId, token, text };
 }
 
-/**
- * 按约定抽一个填充词：`...` 占 50%，其余五项各占 10%；半角空格不参与
- * 抽样，而是在每次抽样结果后固定追加。
- */
-function randomGagFiller(random: () => number): string {
+/** 在 25% 替换分支内均匀抽取一个候选字符。 */
+function randomGagReplacement(random: () => number): string {
   const roll: number = random();
-  if (roll < GAG_PRIMARY_FILLER_PROBABILITY) return GAG_PRIMARY_FILLER;
-  const secondaryRange: number = 1 - GAG_PRIMARY_FILLER_PROBABILITY;
-  const scaled: number = (roll - GAG_PRIMARY_FILLER_PROBABILITY) /
-    secondaryRange;
   const index: number = Math.min(
-    GAG_SECONDARY_FILLERS.length - 1,
-    // 0.7 等十进制边界用二进制浮点表示时可能略小于整数分界；只把数值
-    // 误差抬回边界，不改变任何非边界区间的概率。
-    Math.max(0, Math.floor(
-      scaled * GAG_SECONDARY_FILLERS.length + Number.EPSILON * 8
-    ))
+    GAG_REPLACEMENT_CHARACTERS.length - 1,
+    Math.max(0, Math.floor(roll * GAG_REPLACEMENT_CHARACTERS.length))
   );
-  return GAG_SECONDARY_FILLERS[index]!;
+  return GAG_REPLACEMENT_CHARACTERS[index]!;
 }
 
 /**
- * 把 inline 查询正文渲染成 gag 发言。按扩展字形簇而不是 UTF-16 码元遍历，
- * emoji/组合字符不会被拆开；每个原文字形后都固定跟「随机填充词 + 半角空格」。
+ * 把 inline 查询正文渲染成 gag 发言。按扩展字形簇而不是 UTF-16 码元遍历：
+ * 75% 在原字形后紧邻追加省略号，剩余 25% 用随机候选字符替换整个原字形。
+ * 两个分支都不追加空格，emoji/组合字符也不会被拆开。
  */
 export function renderGagSpeech({
   text,
@@ -109,13 +120,36 @@ export function renderGagSpeech({
   const normalized: string = sanitizeInline(text);
   let rendered: string = gagSpeechPrefix(tool);
   if (normalized.length === 0) {
-    return `${rendered}${GAG_PRIMARY_FILLER}${GAG_FILLER_SUFFIX}`;
+    return `${rendered}${GAG_ELLIPSIS_FILLER}`;
   }
   const graphemes: string[] = splitGraphemes(normalized);
   for (const grapheme of graphemes) {
-    rendered += grapheme + randomGagFiller(random) + GAG_FILLER_SUFFIX;
+    const roll: number = random();
+    if (roll < GAG_ELLIPSIS_PROBABILITY) {
+      rendered += grapheme + GAG_ELLIPSIS_FILLER;
+    } else {
+      rendered += randomGagReplacement(random);
+    }
   }
   return rendered;
+}
+
+/** 群内公开状态文案；普通用户无按钮，频道入口直接附在这条消息上。 */
+export function renderGagPublicNotice(session: GagSession): string {
+  return `哼哼，${session.targetLabel} 这只爱乱说话的杂鱼已经戴上 ${session.tool} 啦♡ ` +
+    `${session.durationMinutes} 分钟内文本消息和带文字说明的媒体消息都会被本天才删掉，` +
+    "没有文字的媒体不受影响。" +
+    (session.targetId < 0
+      ? "频道马甲想说话就必须先乖乖点下面的「发言」按钮，直接 @ 本天才可不会给你选项哦，连入口都找不到的杂鱼就安静待着吧♡"
+      : "");
+}
+
+/** 发言入口随目标身份选择公开频道文案或仅用户可见的短提示。 */
+export function renderGagSpeakNotice(session: GagSession): string {
+  return session.targetId < 0
+    ? renderGagPublicNotice(session)
+    : `${session.targetLabel}，只有你看得到这个发言入口；` +
+      "想说话就乖乖点下面的「发言」按钮啦♡";
 }
 
 /** 只接受三个离散分钟值，不把其它时长猜成最近一档。 */
@@ -190,8 +224,7 @@ export function parseGagCommand(
  */
 export function canRenderMaximumInlineQuery(tool: string): boolean {
   const prefixLength: number = gagSpeechPrefix(tool).length;
-  const perCharacterMax: number = 1 + GAG_PRIMARY_FILLER.length +
-    GAG_FILLER_SUFFIX.length;
+  const perCharacterMax: number = 1 + GAG_ELLIPSIS_FILLER.length;
   return prefixLength + GAG_INLINE_QUERY_MAX_CHARS * perCharacterMax <=
     TELEGRAM_MESSAGE_MAX_CHARS;
 }

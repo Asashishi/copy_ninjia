@@ -1,14 +1,46 @@
 import { IMAGE_GENERATION_COOLDOWN_MS } from "../../../consts/aiChat/imageGeneration";
+import {
+  claimCooldown,
+  cooldownAvailability,
+  releaseCooldownClaim,
+  sweepCooldownClaims,
+} from "../../../libs/cooldownClaim";
+import type { CooldownClaimStore } from "../../../libs/cooldownClaim";
 import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../../types/aiChat/imageGeneration";
 
 /**
  * AI 生图工具冷却占位（packages/aiChat/ai/tools/replyToolset/imageGeneration.ts）的
  * 内存状态；aiChatWorker.ts 只驱动周期性 sweepImageGenerationCache 维护。
+ * owner: AI 闲聊 Worker 线程（packages/workers/aiChatWorker.ts）。
+ *
+ * 判定本身在 libs/cooldownClaim.ts —— 那是一个不持有任何缓存的叶子模块，两个
+ * 工具共用同一套「先占位、失败按 token 撤销」语义；**表仍然逐份独立**，共用一张
+ * 会造出「刚生过图所以十五分钟内不能生歌」这种谁都解释不清的耦合。
  */
 
-/** 每群最近一次普通用户生图占位时间；独立于 AI 回复触发限频且不落盘。 */
+/**
+ * 每群最近一次普通用户生图占位时间；独立于 AI 回复触发限频且不落盘。
+ *
+ * 填充：生图工具在发起模型请求前同步 claim。
+ * 清理：请求未真正发出时由原占位者 release；到期条目由 Worker 的周期
+ * sweepImageGenerationCache 删除。
+ * 容量：按群数增长，无硬顶——每条只有一个数字，且 sweep 每个维护周期都会把过期
+ * 的删干净（表大小恒等于「最近一个冷却窗口内生过图的群数」）。
+ * Worker 崩溃重建：整表清空，等价于所有群的冷却提前结束。这是刻意的 fail-open：
+ * 崩溃本来就罕见，而把冷却做成持久化状态要为一个纯限流器引入落盘与对账。
+ * 不落盘、不跨线程。
+ */
 export const imageGenerationClaimTimes: Map<number, number> = new Map();
+
+/** 与 imageGenerationClaimTimes 逐键对齐的占位 token；生命周期完全相同。 */
 const imageGenerationClaimTokens: Map<number, symbol> = new Map();
+
+const imageGenerationStore: CooldownClaimStore = {
+  claimedAt: imageGenerationClaimTimes,
+  tokens: imageGenerationClaimTokens,
+  cooldownMs: IMAGE_GENERATION_COOLDOWN_MS,
+  tokenLabel: "image-generation-claim",
+};
 
 /** 只读取某群此刻的生图可用性；工具 schema 用它在调用前告知模型当前状态。 */
 export interface ImageGenerationCooldownParams {
@@ -23,13 +55,7 @@ export function getImageGenerationAvailability({
   bypassCooldown,
   now = Date.now(),
 }: ImageGenerationCooldownParams): ImageGenerationAvailability {
-  if (bypassCooldown) return { allowed: true };
-  const previous: number | undefined = imageGenerationClaimTimes.get(chatId);
-  if (previous === undefined) return { allowed: true };
-  const elapsed: number = now - previous;
-  return elapsed >= 0 && elapsed < IMAGE_GENERATION_COOLDOWN_MS
-    ? { allowed: false, retryAfterMs: IMAGE_GENERATION_COOLDOWN_MS - elapsed }
-    : { allowed: true };
+  return cooldownAvailability({ store: imageGenerationStore, chatId, bypassCooldown, now });
 }
 
 /**
@@ -41,31 +67,17 @@ export function claimImageGeneration({
   bypassCooldown,
   now = Date.now(),
 }: ImageGenerationCooldownParams): ImageGenerationClaim {
-  const availability: ImageGenerationAvailability = getImageGenerationAvailability({ chatId, bypassCooldown, now });
-  if (!availability.allowed) return availability;
-  if (bypassCooldown) return { allowed: true, token: null };
-  const token: symbol = Symbol("image-generation-claim");
-  imageGenerationClaimTimes.set(chatId, now);
-  imageGenerationClaimTokens.set(chatId, token);
-  return { allowed: true, token };
+  return claimCooldown({ store: imageGenerationStore, chatId, bypassCooldown, now });
 }
 
 /** 只允许原占位者撤销；旧异步请求不能误删同群后来建立的新冷却。 */
 export function releaseImageGenerationClaim(chatId: number, token: symbol | null): boolean {
-  if (token === null || imageGenerationClaimTokens.get(chatId) !== token) return false;
-  imageGenerationClaimTokens.delete(chatId);
-  imageGenerationClaimTimes.delete(chatId);
-  return true;
+  return releaseCooldownClaim(imageGenerationStore, chatId, token);
 }
 
 /** 删除已过期或因时钟回拨落到未来的生图冷却；由 Worker 统一周期维护。 */
 export function sweepImageGenerationCache(now: number = Date.now()): void {
-  for (const [chatId, claimedAt] of imageGenerationClaimTimes) {
-    if (claimedAt > now || now - claimedAt >= IMAGE_GENERATION_COOLDOWN_MS) {
-      imageGenerationClaimTimes.delete(chatId);
-      imageGenerationClaimTokens.delete(chatId);
-    }
-  }
+  sweepCooldownClaims(imageGenerationStore, now);
 }
 
 /** Worker dispose 或测试隔离时清空全部生图占位和冷却。 */

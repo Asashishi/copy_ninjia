@@ -35,15 +35,15 @@
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **2181 tests / 216 files / 72414 `expect()` calls**; full-source **function coverage 94.74% / line coverage 95.94%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **2225 tests / 228 files / 32683 `expect()` calls**; full-source **function coverage 94.40% / line coverage 95.60%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
-Tests must run through `bun run test`, which invokes `bun test --isolate`, with three layers of protection:
+Tests must run through `bun run test`, which invokes `bun test --isolate`, with four layers of protection:
 
 1. **File isolation**: Bun creates a fresh global object for every test file, so `mock.module` and module-level state do not contaminate other files. `--parallel` is not enabled, so this project does not claim that every file gets a separate process.
-2. **Temporary data root**: before any production module loads, `test/preloadEnv.ts` injects an independent temporary data root for each isolate. Even real, unmocked file I/O can read or write only that temporary directory and never production `state.json`, `bot.lock`, `logs/`, or `memory/`. The directory is removed afterward. **The path injection lives in its own file** because ESM evaluates imports before any statement in the importing file: the moment `test/preload.ts` statically imports a production module, an environment assignment written inside that file is already too late and `CONFIG_ROOT` resolves to the developer's real deployment directory.
-3. **Read-only configuration root**: the same injection also points `COPY_NINJIA_CONFIG_ROOT` at the in-repo `config_example/` (see `CONFIG_ROOT` in `packages/consts/paths.ts`). The deployed `config/` is not version-controlled, so this layer both keeps a clean checkout runnable and stops tests and test Workers from reading or rewriting a developer's real `whitelist.json` and `blocklist.json`. That variable exists for tests only — it is not a deployment switch, which is why the README environment table omits it.
+2. **Temporary data root**: before any production module loads, `test/preloadEnv.ts` injects an independent temporary data root for each isolate. Even real, unmocked file I/O can read or write only that temporary directory and never production `state.json`, `bot.lock`, `logs/`, `memory/`, or `database/`. The directory is removed afterward. **The path injection lives in its own file** because ESM evaluates imports before any statement in the importing file: the moment `test/preload.ts` statically imports a production module, an environment assignment written inside that file is already too late and `CONFIG_ROOT` resolves to the developer's real deployment directory.
+3. **Read-only configuration root**: the same injection also points `COPY_NINJIA_CONFIG_ROOT` at the in-repo `config_example/` (see `CONFIG_ROOT` in `packages/consts/paths.ts`). The deployed `config/` is not version-controlled, so this layer both keeps a clean checkout runnable and stops tests and test Workers from reading a developer's real Telegram and feature configuration. The preceding temporary-data-root layer isolates the identity database. That variable exists for tests only — it is not a deployment switch, which is why the README environment table omits it.
 4. **Agent configuration snapshot**: `agent.json` is the one deployment input no runtime path reads from disk (in a real process the main thread parses it and hands it to each Worker in an init message, see [04 Runtime Invariants](04-invariants.md)). Test isolates never receive those messages, so `test/preload.ts` adopts the same `config_example/agent.json` into the isolate's holder once — equivalent to "the snapshot already arrived". Tests that need the unconfigured path clear the holder themselves.
 
 Direct `bun test` runs are acceptable for debugging a single file, but the complete `bun run check` must pass before merge.
@@ -61,6 +61,10 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 ## Join-Log Performance Benchmark
 
 `bun run perf:join-log` fixes the input at a 250,000-record capacity, 300-record overflow, and 10,000-record warm-up. Baseline and current variants of both snapshot and capacity paths run in five independent Bun processes each. The report records the complete Bun version/revision, median and range of elapsed time, and JSC heap/object changes before and after forced GC. The baseline freezes the pre-optimization whole-Map copy, full sort, and complete-JSON-string algorithms solely for before/after comparison within the same Bun build; `Bun.gc(true)` exists only in this benchmark and never in production control flow. Run it whenever join indexing, capacity trimming, snapshot serialization, or chunked atomic writes change, and verify that the difference is materially larger than the noise shown by the five-sample ranges.
+
+## Identity-Database Performance Benchmark
+
+`bun run perf:identity-database` uses temporary data roots and SQLite databases to measure four production paths: two-table cold reads in batches of 8 identities, explicit 128-row transaction writes, hot reads through the main-thread 8,196-entry LRU, and write-through that crosses the Worker, JSONB transaction, and exact ACK boundary. Each operation warms up before five independent Bun processes are sampled. The report fixes Bun version/revision and records throughput, batch latency, sample range/coefficient of variation, retained JSC heap/extra memory/object counts, and GC time. `--single-process` repeats each operation three times in one measurement process to investigate retained growth across rounds; it does not replace independent-process performance comparison. `Bun.gc(true)` remains outside timed regions and diagnostic-only. Run this benchmark when identity LRU, cold prefetch, encoding, transaction batching, acknowledgements, or Worker replay changes, and judge the same-Bun-build difference together with sample noise and heap/GC results.
 
 ## Commit Workflow
 
@@ -89,7 +93,7 @@ These places all carry the same measured figures, so updating one obliges updati
 
 Two more sets of measured figures drift just as silently, independently of coverage:
 
-- **The Chinese string-literal count** (currently ~786 source lines across 76 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
+- **The Chinese string-literal count** (currently ~801 source lines across 78 files), which appears in the “On language” note of all three READMEs and in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md). Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
 - **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release

@@ -29,11 +29,14 @@ import {
 import { resolveMentionFacts, resolveReplyReference } from "../../../packages/auto/message/facts";
 import { redactSecretsInText } from "../../../packages/libs/redaction";
 import { LUCK_TIERS } from "../../../packages/consts/luckChallenge";
+import { collectDueGagSpeakNotices } from "../../../packages/commands/gag/counter";
+import { FLOOD_WINDOW_MAX_MEMBERS } from "../../../packages/consts/antiRaid/flood";
 import { buildTieredVerbatimTranscript } from "../../../packages/aiChat/ai/utils/chatTranscript";
 import { buildBufferedMessage } from "../../../packages/workers/aiChat/bufferedMessage";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import type { AiRecordContext } from "../../../packages/types/aiChat/protocol";
 import type { MentionFacts } from "../../../packages/types/auto";
+import type { GagSession } from "../../../packages/types/gag";
 import type { Context } from "grammy";
 import type { AdCandidateMessage, AdSampleContext } from "../../../packages/types/antiRaid";
 import type { AdCandidateEntry } from "../../../packages/types/antiRaid/adDetect";
@@ -324,7 +327,9 @@ function adWireCloneScenario(): Scenario {
     messageId: 1,
     text: "ordinary message",
     label: "@stable_user",
+    meta: { firstName: "Stable", lastName: "", username: "stable_user" },
     isChannel: false,
+    isForwarded: false,
     blocked: false,
     justJoined: false,
   };
@@ -445,17 +450,16 @@ function floodWindowHitScenario(): Scenario {
 }
 
 /**
- * 刷屏窗口达到全局硬顶后的持续新成员路径。
+ * 刷屏窗口从空表增长到全局硬顶的相变路径。
  *
- * 预热轮数远大于容量，因此正式样本始终在“插入一条、淘汰一条”的稳态；用于
- * 防止热命中优化把容量防线意外改成逐次全表扫描。每个新成员本来就必须分配一条
- * 有界时间队列，本场景只要求淘汰保持 O(1) 且 GC 后不随累计输入继续增长。
+ * 每个正式样本计时前都清空，确保读数不混入满载淘汰；与下方 steady 场景分开
+ * 判断建表分配期和稳定 LRU 淘汰期的 JIT/GC 行为。
  */
-function floodWindowChurnScenario(): Scenario {
+function floodWindowGrowthScenario(): Scenario {
   let nextUserId: number = 1;
   let nextNow: number = BENCHMARK_EPOCH_MS;
   return {
-    iterations: 200_000,
+    iterations: FLOOD_WINDOW_MAX_MEMBERS,
     run: (iterations: number): number => {
       for (let index: number = 0; index < iterations; index += 1) {
         observeMemberMessage(BENCHMARK_CHAT_ID, nextUserId, nextNow);
@@ -467,6 +471,41 @@ function floodWindowChurnScenario(): Scenario {
     reset: (): void => {
       resetFloodWindows();
       nextUserId = 1;
+      nextNow = BENCHMARK_EPOCH_MS;
+    },
+    resetBeforeSample: true,
+    probes: { observeMemberMessage },
+  };
+}
+
+/** 满载后只执行稳定 LRU 淘汰；预填充不进入预热或正式样本计时。 */
+function floodWindowSteadyScenario(): Scenario {
+  let nextUserId: number = FLOOD_WINDOW_MAX_MEMBERS + 1;
+  let nextNow: number = BENCHMARK_EPOCH_MS + FLOOD_WINDOW_MAX_MEMBERS;
+  return {
+    iterations: 200_000,
+    prepare: (): void => {
+      for (
+        let userId: number = 1;
+        userId <= FLOOD_WINDOW_MAX_MEMBERS;
+        userId++
+      ) {
+        observeMemberMessage(BENCHMARK_CHAT_ID, userId, nextNow);
+        nextNow += 1;
+      }
+      nextUserId = FLOOD_WINDOW_MAX_MEMBERS + 1;
+    },
+    run: (iterations: number): number => {
+      for (let index: number = 0; index < iterations; index += 1) {
+        observeMemberMessage(BENCHMARK_CHAT_ID, nextUserId, nextNow);
+        nextUserId += 1;
+        nextNow += 1;
+      }
+      return nextUserId;
+    },
+    reset: (): void => {
+      resetFloodWindows();
+      nextUserId = FLOOD_WINDOW_MAX_MEMBERS + 1;
       nextNow = BENCHMARK_EPOCH_MS;
     },
     probes: { observeMemberMessage },
@@ -703,6 +742,59 @@ function luckTierTableScenario(): Scenario {
 }
 
 /**
+ * gag 活动群的每消息入口计数：五条会话复刻全局容量上限，每 15 次才允许分配
+ * due 数组；调用方在真实换新成功后同样把对应计数归零。
+ */
+function gagSpeakCounterScenario(): Scenario {
+  const sessions: GagSession[] = [];
+  for (let index: number = 0; index < 5; index++) {
+    const session: GagSession = {
+      chatId: BENCHMARK_CHAT_ID,
+      targetId: 100 + index,
+      targetLabel: "Benchmark target",
+      chatLabel: "Performance fixture",
+      inlineToken: "00000000000000ff",
+      tool: "口塞",
+      durationMinutes: 5,
+      phase: "active",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+      publicNoticeMessageId: 1_000 + index,
+      speakNoticeMessageId: 2_000 + index,
+      pendingSpeakNoticeMessageId: 0,
+      retiredSpeakNoticeMessageId: 0,
+      messagesSinceSpeakNotice: 0,
+      speakNoticeRefreshTask: null,
+      noticePending: false,
+      timer: null,
+      cleanupRetryIndex: 0,
+      cleanupTimer: null,
+      endingTask: null,
+    };
+    sessions.push(session);
+  }
+  return {
+    iterations: 2_000_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index++) {
+        const due: GagSession[] | null = collectDueGagSpeakNotices(
+          sessions,
+          BENCHMARK_EPOCH_MS
+        );
+        if (due === null) continue;
+        checksum += due.length;
+        for (const session of due) session.messagesSinceSpeakNotice = 0;
+      }
+      return checksum;
+    },
+    reset: (): void => {
+      for (const session of sessions) session.messagesSinceSpeakNotice = 0;
+    },
+    probes: { collectDueGagSpeakNotices },
+  };
+}
+
+/**
  * 每条群消息都要读 4~6 次的那张群状态表（`getChatState(chatId).isXEnabled`，
  * 调用点见 antiRaid/updateIngress.ts、antiRaid/floodControl.ts、
  * antiRaid/adCandidate.ts、auto/message/index.ts、aiChat/availability.ts）。
@@ -765,6 +857,37 @@ function chatStateReadScenario(): Scenario {
       for (const chatId of chatIds) chatStates.delete(chatId);
       states = seed();
     },
+  };
+}
+
+/** 单独量群状态 Map accessor；探针与计时循环实际调用保持一致。 */
+function chatStateMapReadScenario(): Scenario {
+  const chatIds: readonly number[] = [
+    BENCHMARK_CHAT_ID,
+    BENCHMARK_CHAT_ID - 1,
+    BENCHMARK_CHAT_ID - 2,
+    BENCHMARK_CHAT_ID - 3,
+  ];
+  return {
+    iterations: 10_000_000,
+    prepare: (): void => {
+      for (const chatId of chatIds) getOrCreateChatState(chatId);
+    },
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        if (
+          getChatState(chatIds[index % chatIds.length]!).isAntiRaidEnabled ===
+          true
+        ) {
+          checksum += 1;
+        }
+      }
+      return checksum;
+    },
+    reset: (): void => {
+      for (const chatId of chatIds) chatStates.delete(chatId);
+    },
     probes: { getChatState },
   };
 }
@@ -817,14 +940,20 @@ export function createScenario(name: ScenarioName): Scenario {
       );
     case "chat-state-read":
       return chatStateReadScenario();
+    case "chat-state-map-read":
+      return chatStateMapReadScenario();
     case "self-sent-empty":
       return selfSentEmptyScenario();
     case "incoming-message-spine":
       return incomingMessageSpineScenario();
     case "flood-window-hit":
       return floodWindowHitScenario();
-    case "flood-window-churn":
-      return floodWindowChurnScenario();
+    case "flood-window-growth":
+      return floodWindowGrowthScenario();
+    case "flood-window-steady":
+      return floodWindowSteadyScenario();
+    case "gag-speak-counter":
+      return gagSpeakCounterScenario();
     case "buffered-message-build":
       return bufferedMessageBuildScenario();
     case "transcript-render":

@@ -50,7 +50,7 @@ mock.module("../../packages/infra/botAdmin", () => ({
   ensureBotChatPermissions: (): void => {},
   botCanDeleteMessagesIn: (): true => true,
 }));
-mock.module("../../packages/libs/supervisedWorker", () => ({
+mock.module("../../packages/infra/supervisedWorker", () => ({
   superviseWorker: () => ({
     init(): void {},
     post: (message: AntiRaidWorkerMessage): boolean => {
@@ -66,6 +66,7 @@ mock.module("../../packages/infra/diskIO", () => ({
   isDiskIOBuffering: (): boolean => false,
   flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: "flushed" }),
   onDiskIORespawn: (): void => {},
+  onIdentityStoragePersisted: (): void => {},
   onVerificationPersisted: (): void => {},
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     diskPosts.push(message);
@@ -82,7 +83,8 @@ const {
   handleChatMemberUpdate,
   handleVerificationCallback,
 } = await import("../../packages/antiRaid");
-const { blockedUserIds } = await import("../../packages/cache/main/blocklist");
+const { blocklistEntryCache, whitelistEntryCache } =
+  await import("../../packages/cache/main/identityStorage");
 const { chatIsSupergroupById } = await import("../../packages/cache/main/antiRaid/chatKind");
 const { activeVerificationSnapshots } = await import("../../packages/cache/main/antiRaid/verificationMirror");
 
@@ -140,7 +142,8 @@ beforeEach(() => {
   workerPosts.length = 0;
   diskPosts.length = 0;
   answeredCallbacks.length = 0;
-  blockedUserIds.clear();
+  blocklistEntryCache.clear();
+  whitelistEntryCache.clear();
   activeVerificationSnapshots.clear();
   chatIsSupergroupById.clear();
   for (const key of Object.keys(chatState)) delete chatState[key];
@@ -192,7 +195,10 @@ describe("入群守卫开关（主线程投递侧）", () => {
   });
 
   test("关着时黑名单照样秒踢，但这次入群不计进反刷群窗口", async () => {
-    blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/08/06 00:00:00" });
+    blocklistEntryCache.set(42, {
+      blockedAt: "2026/08/06 00:00:00",
+      meta: { firstName: "Zako", lastName: "", username: "" },
+    });
 
     await handleChatMemberUpdate(joinUpdate(42));
 

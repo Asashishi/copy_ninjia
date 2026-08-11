@@ -207,7 +207,7 @@ export async function handleStopCommand(ctx: CommandContext<Context>): Promise<v
 }
 
 /** teardown 专用：只停止由指定源群持有的全局 copy，不在这里单独落盘。 */
-export function stopCopyOwnedByChat(chatId: number): boolean {
+function stopCopyOwnedByChat(chatId: number): boolean {
   const globalCopy: GlobalCopyState = getGlobalCopyState();
   const pendingCancelled: boolean = cancelPendingCopySlotOwnedBy(chatId);
   if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return pendingCancelled;

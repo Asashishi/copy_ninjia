@@ -1,7 +1,7 @@
 /**
  * 磁盘 IO 线程（Bun Worker）：共享业务数据的磁盘 IO 收在这一条线程里串行执行——
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
- * 目录快照、每日运势缓存、待验证当日增量 JSON、/block 黑名单与入群日志都由
+ * 目录快照、每日运势缓存、待验证当日增量 JSON、身份策略 SQLite 与入群日志都由
  * 进程唯一的统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
  * 互相踩坏。state.json 是明确例外，由主线程 StateStore 独立异步维护。
  * 本 Worker 原名 loggerWorker，只负责日志；职责扩展后改名 diskIOWorker。
@@ -11,11 +11,10 @@
  * diskIO/stickerCatalogFiles.ts（贴纸目录）、diskIO/luckFiles.ts（运势的缓冲/
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
  * diskIO/verificationRecovery.ts 与 verificationWrites.ts（待验证按日增量）、
- * diskIO/blocklistFile.ts（/block 黑名单）与
- * diskIO/blocklistRemovalOutbox.ts（未完成处置 outbox）、
+ * diskIO/identityDatabase.ts（黑白名单与未完成处置 outbox）、
  * diskIO/joinLogFiles.ts（滚动入群追写与命令按需读取）、
  * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
- * 与黑名单共用 appendOnlyDayFile.ts 的按位置追加机制；权威状态不启用截断修复。
+ * 共用 appendOnlyDayFile.ts 的按位置追加机制；SQLite 权威状态不启用截断修复。
  *
  * 原则：恢复型状态只在启动恢复（load）时读一次；此后
  * cache/workers/diskIO/ 下各领域 owner 是唯一事实源，写是「缓存 -> 磁盘」
@@ -26,12 +25,16 @@
  */
 
 import { handleAdSampleMessage } from "./diskIO/adSampleFile";
-import { flushBlocklistAppends, handleBlockUserMessage, handleUnblockUserMessage, hydrateBlocklist } from "./diskIO/blocklistFile";
 import {
-  flushBlocklistRemovalOutbox,
-  handleBlocklistRemovalsMessage,
-  hydrateBlocklistRemovalOutbox,
-} from "./diskIO/blocklistRemovalOutbox";
+  configureIdentityPersistenceReply,
+  flushIdentityDatabase,
+  handleIdentityPolicyWrite,
+  handlePendingRemovalSnapshot,
+  hydrateIdentityDatabase,
+  pendingIdentityDatabaseDomains,
+  readBlocklistIds,
+  readIdentityPolicies,
+} from "./diskIO/identityDatabase";
 import { flushLogBuffer, handleLogMessage, initLogFiles } from "./diskIO/logFiles";
 import {
   configureLuckAppendStalledReply,
@@ -69,12 +72,14 @@ import { aiMemoryCache, forgetAiMemoryChat } from "../cache/workers/diskIO/snaps
 import { stickerCatalogCache } from "../cache/workers/diskIO/stickers";
 import { luckWorkerCache } from "../cache/workers/diskIO/luck";
 import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
+import { noteIdentityWriteRejected } from "../cache/workers/diskIO/identityDatabase";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type { VerificationSnapshot } from "../types/antiRaid";
 import type { PendingBlockedRemoval } from "../types/blocklist";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
+  DiskFlushRequest,
   DiskFlushFailedReply,
   DiskFlushReply,
   DiskDiagnosticBatchAcceptedReply,
@@ -83,6 +88,7 @@ import type {
   DiskIODomain,
   DiskIOMessage,
   JoinLogReadReply,
+  IdentityStoragePersistedReply,
   LoadedReply,
   LuckAppendStalledReply,
   LuckSecretReply,
@@ -90,33 +96,36 @@ import type {
   VerificationPersistedReply,
 } from "../types/diskIO";
 import type {
-  BlockedUserRecord,
   JoinLogRecord,
   LuckReceiptSecret,
 } from "../types/diskIO/storage";
 
 declare const self: Worker;
 
-/** 统一 flush：日志缓冲、AI 记忆/贴纸目录快照、运势、待验证与黑名单追加缓冲全部立即落盘（进程退出前
- *  的最后一刷，各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
- *  该刷的都立即刷）。 */
-function flushAll(): readonly DiskIODomain[] {
+/**
+ * 统一 flush：普通范围覆盖日志与全部业务领域；`business` 范围只在已知日志故障的
+ * 受控重建前使用。各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
+ * 该刷的都立即刷。
+ */
+function flushAll(scope: DiskFlushRequest["scope"]): readonly DiskIODomain[] {
   // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
-  const results: readonly (readonly [DiskIODomain, boolean])[] = [
-    ["log", flushLogBuffer()],
-    ["aiMemory", flushAiMemorySnapshots()],
-    ["stickerCatalog", flushStickerCatalogs()],
-    ["luck", flushLuckAppends()],
-    ["verification", flushVerificationChanges((reply: VerificationPersistedReply): void => self.postMessage(reply))],
-    ["blocklist", flushBlocklistAppends()],
-    ["blocklistRemovalOutbox", flushBlocklistRemovalOutbox()],
-    ["joinLog", flushJoinLogDomain()],
-  ];
+  const failedDomains: DiskIODomain[] = [];
+  if (scope === "all" && !flushLogBuffer()) failedDomains.push("log");
+  if (!flushAiMemorySnapshots()) failedDomains.push("aiMemory");
+  if (!flushStickerCatalogs()) failedDomains.push("stickerCatalog");
+  if (!flushLuckAppends()) failedDomains.push("luck");
+  if (!flushVerificationChanges(
+    (reply: VerificationPersistedReply): void => self.postMessage(reply)
+  )) failedDomains.push("verification");
+  if (!flushIdentityDatabase(
+    (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
+  )) {
+    failedDomains.push(...pendingIdentityDatabaseDomains());
+  }
+  if (!flushJoinLogDomain()) failedDomains.push("joinLog");
   // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
   // 的失败误导，而那个领域的真实错误按设计只有 console.error。
-  return results
-    .filter(([, flushed]: readonly [DiskIODomain, boolean]): boolean => !flushed)
-    .map(([domain]: readonly [DiskIODomain, boolean]): DiskIODomain => domain);
+  return failedDomains;
 }
 
 /**
@@ -130,7 +139,7 @@ function activeStickerPacks(): readonly string[] {
 /**
  * 启动恢复（也是本 Worker 崩溃重建后自动重跑的那一步，见 infra/diskIO.ts）：
  * 建目录、扫描解析校验 memory/ai/、memory/stickers/、memory/luck/（含当天
- * 回执密钥）、当天待验证增量文件与 memory/blocklist/blocklist.json，先灌进
+ * 回执密钥）、当天待验证增量文件与 database/storage.sqlite，先灌进
  * 自己的缓存，再把缓存内容作为 loaded 回执发给主线程。任何恢复失败都会在回执
  * 中显式报告；主线程启动
  * 握手据此拒绝以部分/空状态继续运行。
@@ -142,7 +151,8 @@ function activeStickerPacks(): readonly string[] {
 function handleLoad(): void {
   let loadError: string | undefined;
   let verifications: Map<string, VerificationSnapshot> = new Map();
-  let blockedUsers: Map<number, BlockedUserRecord> = new Map();
+  let blocklistEntryCount: number = 0;
+  let whitelistEntryCount: number = 0;
   let pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Map();
   let luckReceiptSecret: LuckReceiptSecret | null = null;
   try {
@@ -157,8 +167,11 @@ function handleLoad(): void {
     });
     verifications = recoverVerificationDay(todayKey);
     scheduleVerificationRollover((reply: VerificationPersistedReply): void => self.postMessage(reply));
-    blockedUsers = hydrateBlocklist();
-    pendingBlockedRemovals = hydrateBlocklistRemovalOutbox();
+    const identityStorage: ReturnType<typeof hydrateIdentityDatabase> =
+      hydrateIdentityDatabase();
+    blocklistEntryCount = identityStorage.blocklistEntryCount;
+    whitelistEntryCount = identityStorage.whitelistEntryCount;
+    pendingBlockedRemovals = identityStorage.pendingBlockedRemovals;
   } catch (error: unknown) {
     loadError = error instanceof Error ? error.message : String(error);
     console.error("[diskIOWorker] startup recovery failed:", error);
@@ -171,8 +184,9 @@ function handleLoad(): void {
     luckDay: luckWorkerCache.current,
     luckReceiptSecret,
     verifications,
-    blockedUsers,
     pendingBlockedRemovals,
+    blocklistEntryCount,
+    whitelistEntryCount,
     error: loadError,
   };
   self.postMessage(reply);
@@ -274,17 +288,30 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
     case "verificationDelete":
       handleVerificationDelete({ msg, reply: (reply: VerificationPersistedReply): void => self.postMessage(reply) });
       break;
-    case "blockUser":
-      // 收到即写，不进合并窗口：拉黑低频且关键，主线程那边内存 Map 已经先
-      // 更新过，磁盘落后一个批量窗口就意味着这段时间内重启会丢掉这条记录。
-      handleBlockUserMessage(msg);
-      break;
-    case "unblockUser":
-      // 追加型文件删不掉已有条目：按主线程送来的完整名单整文件原子重写。
-      handleUnblockUserMessage(msg);
-      break;
+    // 这两条与 joinLog 同理：handlePendingRemovalSnapshot 会在 removalId 重复、
+    // params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
+    // handleIdentityPolicyWrite 由 validatePolicyData / assertOppositePolicyAbsent
+    // 抛。异常一旦离开 onmessage，Bun 会直接终止整条落盘线程：在途 flush 全部按
+    // 失败结算、九个领域的缓冲随线程一起没了，反复触发还会顶到重启节流把整个进程
+    // 停掉——为了一条本来只该由自己那个领域承担的非法消息。就地拒收，并按领域
+    // 留下标记，让主线程的下一次领域 flush 拿到失败回执。
     case "blocklistRemovals":
-      handleBlocklistRemovalsMessage(msg);
+      handleIdentityMessage(
+        "blocklistRemovalOutbox",
+        (): void => handlePendingRemovalSnapshot(
+          msg,
+          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
+        )
+      );
+      break;
+    case "identityPolicyWrite":
+      handleIdentityMessage(
+        msg.table,
+        (): void => handleIdentityPolicyWrite(
+          msg,
+          (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
+        )
+      );
       break;
     case "recoveryReplay":
       diskIOReplayWindow.current = msg.active;
@@ -337,17 +364,49 @@ export function handleDiskIOWorkerMessage(msg: DiskIOMessage): void {
       self.postMessage(reply);
       break;
     }
+    case "readIdentityPolicies":
+      self.postMessage(readIdentityPolicies(msg));
+      break;
+    case "readBlocklistIds":
+      self.postMessage(readBlocklistIds(msg));
+      break;
     case "load":
       handleLoad();
       break;
     case "flush": {
-      const failedDomains: readonly DiskIODomain[] = flushAll();
+      const failedDomains: readonly DiskIODomain[] = flushAll(msg.scope);
       const reply: DiskFlushReply | DiskFlushFailedReply = failedDomains.length === 0
         ? { type: "flushed", flushedId: msg.flushId }
         : { type: "flushFailed", flushedId: msg.flushId, failedDomains };
       self.postMessage(reply);
       break;
     }
+  }
+}
+
+/**
+ * 身份 SQLite 消息的统一拒收边界：异常只拖垮它自己那个领域，不离开 onmessage。
+ *
+ * 恢复重放区间内额外升级为 fatal：那批消息对应的 update 早已被 Telegram 确认，
+ * 后面不会再有任何 flush 来问它写没写进去，继续跑就是静默丢数据（口径同
+ * joinLog 与 types/diskIO.ts 的 RecoveryReplayRequest）。
+ */
+function handleIdentityMessage(
+  domain: "whitelist" | "blocklist" | "blocklistRemovalOutbox",
+  apply: () => void
+): void {
+  try {
+    apply();
+  } catch (error: unknown) {
+    noteIdentityWriteRejected(domain);
+    console.error(`[diskIOWorker] rejected an identity ${domain} message:`, error);
+    if (!diskIOReplayWindow.current) return;
+    const reply: RecoveryReplayFailedReply = {
+      type: "recoveryReplayFailed",
+      domain,
+      error: error instanceof Error ? error.message : String(error),
+    };
+    self.postMessage(reply);
   }
 }
 
@@ -365,6 +424,9 @@ function handleDiskIODiagnostic(message: DiskDiagnosticMessage): boolean {
 
 /** Worker 线程启动入口；主线程导入本模块时不得建目录或注册 handler。 */
 export function startDiskIOWorker(): void {
+  configureIdentityPersistenceReply(
+    (reply: IdentityStoragePersistedReply): void => self.postMessage(reply)
+  );
   configureAiMemoryDeletePersistedReply((reply: AiMemoryDeletedPersistedReply): void => self.postMessage(reply));
   configureAiMemoryPersistedReply((reply: AiMemoryPersistedReply): void => self.postMessage(reply));
   // 运势追加持续失败时的兜底诊断出口：本线程的 console 可能被部署接到

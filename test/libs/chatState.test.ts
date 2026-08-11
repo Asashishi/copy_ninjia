@@ -25,7 +25,7 @@ describe("chat state normalization", () => {
   test("保留所有显式开启状态、未来静默及过期 lockdown 恢复资料", () => {
     const state: ChatState = {
       quietUntil: 1_001,
-      lockdown: { phase: "active", intentId: 1, originalPermissions: {}, expiresAt: 900 },
+      lockdown: { phase: "active", intentId: 1, originalPermissions: {}, announced: true, expiresAt: 900 },
       isAIChatEnabled: true,
       isJATranslationEnabled: true,
       isFloodControlEnabled: true,
@@ -35,7 +35,7 @@ describe("chat state normalization", () => {
 
     expect(normalizeChatState(state, 1_000)).toEqual({
       quietUntil: 1_001,
-      lockdown: { phase: "active", intentId: 1, originalPermissions: {}, expiresAt: 900 },
+      lockdown: { phase: "active", intentId: 1, originalPermissions: {}, announced: true, expiresAt: 900 },
       isAIChatEnabled: true,
       isJATranslationEnabled: true,
       isFloodControlEnabled: true,

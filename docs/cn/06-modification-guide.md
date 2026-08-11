@@ -55,7 +55,7 @@
 - `/咬` 这类中文动作命令依赖中文形态本身（见「新增一个斜杠命令」末尾），换成别的语言就不再是同一个交互。
 - 人设、工具描述与提示词（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）用中文写成，模型的输出语言也由它们决定。
 
-需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 786 处、分布在 76 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
+需要别的语言就 fork 一份自己改。生产代码里含中文字符串或模板字面量的源码行约 801 处、分布在 78 个文件，加上 `prompt/persona.md` 与 `config/*.json`：整份 fork 交给 AI vibe 一遍，比在上游架一层抽象再逐条填词更省事，也不会把偏移计算这类逻辑复杂化。改完照常 `bun run check`。
 
 ## 调整行为参数
 
@@ -112,7 +112,7 @@
 ## 修改人设与 JSON 配置
 
 - 人设：改 [`prompt/persona.md`](../../prompt/persona.md)，重启生效。与转录格式、身份标记耦合的互动规则由代码注入，不写进人设文件。
-- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`whitelist.json` / `blocklist.json` 在联网前严格加载，前者还会被 `/white` 与 `/permission` 原子改写；`stickers.json` / `reactions.json` / `mood.json` / `ad_samples.json` 按功能惰性校验（贴纸包最多 5 个；mood 权重必须为正整数且总和恰好 100；广告示例顶层就是字符串数组，条目非空、不重复、单条最多 1,024 字符、总数最多 500 条）。改结构时先改 `packages/config/` 的 schema 与 `packages/types/`，再改 JSON。
+- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`telegram.json` 在联网前严格加载；`stickers.json`、`reactions.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。白名单、黑名单与待踢 outbox 不属于部署配置，权威数据在 `database/storage.sqlite`；改身份结构时先更新 `packages/database/schema/`、`packages/database/codec/identity.ts`、领域类型与严格校验，再提供停服迁移脚本和故障注入测试，不得重新引入 JSON 兼容读取。
 
 ## 新增部署 JSON 配置
 

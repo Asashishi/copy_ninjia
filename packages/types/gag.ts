@@ -8,9 +8,11 @@ export interface ParsedGagCommand {
   readonly tool: string;
 }
 
-/** gag 按钮预填的保留查询；只有频道身份携带目标频道 id。 */
+/** gag 按钮预填的保留查询；只有频道身份携带目标频道 id 与会话令牌。 */
 export interface ParsedGagInlineQuery {
   readonly targetChannelId?: number;
+  /** 频道分支的会话令牌；与 targetChannelId 同时出现或同时缺席。 */
+  readonly token?: string;
   readonly text: string;
 }
 
@@ -24,6 +26,14 @@ export interface GagSession {
   readonly targetLabel: string;
   /** inline 结果列表使用的安全群标签。 */
   readonly chatLabel: string;
+  /**
+   * 频道发言入口的会话令牌，只随群内那条带按钮的开始提示分发。
+   *
+   * 频道身份的 inline 查询没有可比对的发起者（普通用户按 `from.id` 匹配），
+   * 只有持有本令牌才允许拿到本会话的 inline 结果，否则任何账号都能靠一个频道
+   * id 读出 chatLabel 里的私有群名称。用户会话同样生成，但不进按钮预填。
+   */
+  readonly inlineToken: string;
   /** 命令给出的用具；已压成单行并剥掉双向控制符。 */
   readonly tool: string;
   /** 会话长度，只允许 5、10 或 15 分钟。 */
@@ -32,10 +42,18 @@ export interface GagSession {
   phase: "starting" | "active" | "ending";
   /** active 后的绝对到期时间；starting 时为 0。 */
   expiresAt: number;
-  /** 群内公开状态提示的 message_id；发送成功前为 0。 */
+  /** 普通用户群内公开状态的 message_id；频道入口及发送成功前为 0。 */
   publicNoticeMessageId: number;
-  /** 普通用户专属入口的 ephemeral_message_id；频道目标及发送成功前为 0。 */
-  ephemeralNoticeMessageId: number;
+  /** 当前发言入口：用户为 ephemeral_message_id，频道为公开 message_id。 */
+  speakNoticeMessageId: number;
+  /** 滚动换新已经发出但尚未提交的入口 id；没有在途替换时为 0。 */
+  pendingSpeakNoticeMessageId: number;
+  /** 已被新入口取代但删除失败的入口 id；至多保留一个，避免无界堆积。 */
+  retiredSpeakNoticeMessageId: number;
+  /** 当前入口发出后本群收到的消息数；达到固定阈值才换新。 */
+  messagesSinceSpeakNotice: number;
+  /** 唯一的入口换新任务；结束状态必须等它交出在途 message id。 */
+  speakNoticeRefreshTask: Promise<void> | null;
   /** 全部开始提示的发送流程是否尚未结算；ending 必须等它交出所有 message id。 */
   noticePending: boolean;
   /** 到期 timer；starting/ending 时为 null，且 active timer 不阻止进程退出。 */

@@ -9,13 +9,32 @@
  * 播报同理跟着结果走，由主线程发（见 antiRaid/adDetect.ts 的 announceAdDisposal）。
  */
 
-import { deleteMessage, deleteMessages, joinVerificationApi } from "../../../infra/telegram";
+import {
+  deleteMessage,
+  deleteMessages,
+  joinVerificationApi,
+} from "../../../infra/telegram";
+import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient";
 import { logger } from "../../../infra/logger";
-import { adDetectPublishHolder } from "../../../cache/workers/antiRaid/adDetect";
+import {
+  adDetectPublishHolder,
+  inFlightReferencedAdCleanupTasks,
+} from "../../../cache/workers/antiRaid/adDetect";
 import { botCanDeleteIn } from "../botPermissions";
-import { TELEGRAM_DELETE_MESSAGES_BATCH_MAX } from "../../../consts/telegram";
+import {
+  AD_DETECT_MAX_IN_FLIGHT,
+} from "../../../consts/antiRaid/adDetect";
+import {
+  KICK_NOTICE_AUTO_DELETE_MS,
+  TELEGRAM_DELETE_MESSAGES_BATCH_MAX,
+} from "../../../consts/telegram";
 import type { AdDetectedEvent, AdSampleMessage } from "../../../types/antiRaid";
-import type { AdCandidateEntry, AdMessageBundle, AdVerdict } from "../../../types/antiRaid/adDetect";
+import type {
+  AdCandidateEntry,
+  AdMessageBundle,
+  AdVerdict,
+} from "../../../types/antiRaid/adDetect";
+import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";
 
 export interface DisposeAdSenderParams {
   bundle: AdMessageBundle;
@@ -28,26 +47,113 @@ export interface DisposeAdSenderParams {
   judged: readonly AdCandidateEntry[];
 }
 
+export interface DeleteReferencedAdMessagesParams {
+  readonly bundle: AdMessageBundle;
+  readonly judged: readonly AdCandidateEntry[];
+  /** 只清理不晚于公开警告的消息，之后的新消息必须留给升级判定。 */
+  readonly messageIdThrough: number;
+}
+
+interface DisposalMessageIdsParams {
+  readonly judged: readonly AdCandidateEntry[];
+  readonly current: readonly AdCandidateEntry[];
+  readonly evictedIds: readonly number[];
+  readonly messageIdThrough?: number;
+}
+
+/** 引用类广告第一次命中时的公开警告；刻意不透露内部五分钟升级窗口。 */
+export function formatReferencedAdWarning(label: string): string {
+  return `哼，${label}，不要回复、引用或转发广告相关内容，连这点都记不住吗，杂鱼♡`;
+}
+
+/**
+ * 第一次引用类广告的公开警告。主线程在发出消息的同一成功回调里登记 30 秒删除，
+ * 返回成功即表示清理 owner 已接管；Worker 后续退出也不会遗留非功能性提示。
+ */
+export function warnReferencedAdSender(
+  bundle: AdMessageBundle
+): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
+  return sendTemporaryMessageFromMain({
+    chatId: bundle.chatId,
+    text: formatReferencedAdWarning(bundle.label),
+    deleteAfterMs: KICK_NOTICE_AUTO_DELETE_MS,
+  });
+}
+
+/**
+ * 清理第一次警告覆盖的广告消息。删除是独立的尽力而为副作用，不再占用分类
+ * in-flight；慢删除或 429 不能阻塞同一发送者警告后的再次判定。
+ */
+export function deleteReferencedAdMessages({
+  bundle,
+  judged,
+  messageIdThrough,
+}: DeleteReferencedAdMessagesParams): void {
+  const messageIds: number[] = disposalMessageIds({
+    judged,
+    current: bundle.entries,
+    evictedIds: bundle.pendingDeleteIds,
+    messageIdThrough,
+  });
+  logger.log(
+    `Ad detection warned sender ${bundle.senderId} in chat ${bundle.chatId} for referenced ad content, ` +
+    `deleting ${messageIds.length} message(s).`
+  );
+  if (
+    messageIds.length === 0 ||
+    inFlightReferencedAdCleanupTasks.size >= AD_DETECT_MAX_IN_FLIGHT
+  ) {
+    if (messageIds.length > 0) {
+      logger.error(
+        `Ad detection skipped deleting ${messageIds.length} referenced-ad message(s) ` +
+        `in chat ${bundle.chatId}: the cleanup task ceiling is full.`
+      );
+    }
+    return;
+  }
+  const cleanup: Promise<void> = deleteAdMessages(
+    bundle.chatId,
+    messageIds
+  ).catch((error: unknown): void => {
+    logger.error(
+      `Unexpected error while deleting referenced ad messages for sender ${bundle.senderId} ` +
+      `in chat ${bundle.chatId}:`,
+      error
+    );
+  });
+  inFlightReferencedAdCleanupTasks.add(cleanup);
+  void cleanup.then((): void => {
+    inFlightReferencedAdCleanupTasks.delete(cleanup);
+  });
+}
+
+/** 清群或停机使警告回执过期时，立即撤掉已经发出的迟到提示。 */
+export function deleteStaleReferencedAdWarning(chatId: number, messageId: number): void {
+  void deleteMessage(chatId, messageId, joinVerificationApi);
+}
+
 /**
  * 这次处置要删的消息 id：判定依据 ∪ 此刻串里还剩的 ∪ 挤出去时转存的。三边都
  * 不能少——只删第一份会放过往返期间抢发的后续广告，只删第二份会漏掉被单 key
  * 条数/字符预算挤出当前上下文、但模型确实读过并据此判定的那些消息，而第三份
  * 是压根没赶上判定就被挤出去的那些（见 AdMessageBundle.pendingDeleteIds）。
  */
-function disposalMessageIds(
-  judged: readonly AdCandidateEntry[],
-  current: readonly AdCandidateEntry[],
-  evicted: readonly number[]
-): number[] {
+function disposalMessageIds({
+  judged,
+  current,
+  evictedIds,
+  messageIdThrough = Number.POSITIVE_INFINITY,
+}: DisposalMessageIdsParams): number[] {
   const ids: number[] = [];
   const seen: Set<number> = new Set<number>();
   for (const entry of [...judged, ...current]) {
+    if (entry.messageId > messageIdThrough) continue;
     if (seen.has(entry.messageId)) continue;
     seen.add(entry.messageId);
     ids.push(entry.messageId);
   }
-  for (const messageId of evicted) {
-    if (seen.has(messageId)) continue;
+  for (const messageId of evictedIds) {
+    if (messageId > messageIdThrough || seen.has(messageId)) continue;
     seen.add(messageId);
     ids.push(messageId);
   }
@@ -82,7 +188,11 @@ export function deleteStragglerAdMessage(chatId: number, messageId: number): voi
  * （见 antiRaid/adCandidate.ts）。
  */
 export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSenderParams): Promise<void> {
-  const messageIds: number[] = disposalMessageIds(judged, bundle.entries, bundle.pendingDeleteIds);
+  const messageIds: number[] = disposalMessageIds({
+    judged,
+    current: bundle.entries,
+    evictedIds: bundle.pendingDeleteIds,
+  });
   logger.log(
     `Ad detection flagged sender ${bundle.senderId} in chat ${bundle.chatId} ` +
     `on ${judged.length} judged message(s), deleting ${messageIds.length}: ` +
@@ -107,6 +217,7 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
     senderId: bundle.senderId,
     isChannel: bundle.isChannel,
     label: bundle.label,
+    meta: bundle.meta,
     reason: verdict.reason,
     // 判定依据的整串原样带回主线程写进命中样本（见 diskIO/adSampleFile.ts）：
     // 判定看的是整串而不是某一条，只留触发那一条的话，人回头看到的是一句

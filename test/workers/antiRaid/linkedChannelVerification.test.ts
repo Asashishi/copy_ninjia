@@ -27,6 +27,9 @@ Object.defineProperty(globalThis, "self", {
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
+mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () => ({
+  requestVerificationAttemptPermit: async () => ({ status: "granted", attempt: 1 }),
+}));
 mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {
     getChat(): Promise<Record<string, unknown>> {

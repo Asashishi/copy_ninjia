@@ -19,6 +19,9 @@ function recordDelete(messageId: number): string {
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
+mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () => ({
+  requestVerificationAttemptPermit: async () => ({ status: "granted", attempt: 1 }),
+}));
 mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {
     getChat: async (): Promise<{ type: "supergroup" }> => ({ type: "supergroup" }),

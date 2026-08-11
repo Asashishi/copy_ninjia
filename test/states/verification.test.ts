@@ -709,16 +709,19 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
     }
   });
 
-  test("guardDisabled：PENDING 停止触发，且不动群里已有的提醒", () => {
-    // 关掉开关表达的是「以后别管了」：超时踢出与提醒补发跟着记录一起作废，
-    // 但已经发出去的两条提醒不删——那是关掉之前真实发生过的交互，替管理员
-    // 抹现场不是这条命令的职责。
+  test("guardDisabled：PENDING 停止触发，并清理已经失效的验证按钮", () => {
+    // 主动关闭后按钮不再有有效 owner，必须由这条状态机路径删除；入群公告和
+    // 成员自己的消息不在 effect 里，关闭功能不会扩大成清理群成员内容。
     const state = pendingState({ reminderMessageId: 11, replyReminderMessageId: 12 });
 
     const { next, effects } = transitionVerification(state, { type: "guardDisabled" });
 
     expect(next).toBeUndefined();
-    expect(effects).toEqual([]);
+    expect(effects).toEqual([{
+      kind: "deleteReminders",
+      reminderMessageId: 11,
+      replyReminderMessageId: 12,
+    }]);
   });
 
   test("guardDisabled：两个已落盘终态一并作废，不再踢人", () => {
@@ -740,8 +743,11 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
       const { next, effects } = transitionVerification(state, { type: "guardDisabled" });
 
       expect(next).toBeUndefined();
-      // 一件事都不做：不踢人、不删提醒、不动成员自己的消息。
-      expect(effects).toEqual([]);
+      expect(effects).toEqual([{
+        kind: "deleteReminders",
+        reminderMessageId: 21,
+        replyReminderMessageId: 22,
+      }]);
     }
   });
 

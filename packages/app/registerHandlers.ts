@@ -43,10 +43,15 @@ import { handleMyChatMemberUpdate } from "../infra/botAdmin";
 import { CJK_ACTION_COMMAND_PATTERN } from "../consts/commands";
 import { logger } from "../infra/logger";
 import {
+  isIdentityPolicyCached,
+  prefetchIdentityPolicies,
+} from "../infra/identityStorage";
+import {
   shouldPassInitGate,
   shouldPassPrivateCommandGate,
   shouldRoutePrivateProxyMessage,
 } from "../infra/updateGate";
+import { messageOriginIdentityId } from "../users/messageOrigin";
 import type {
   BotError,
   CommandContext,
@@ -56,6 +61,17 @@ import type {
   NextFunction,
 } from "grammy";
 import type { HandlerRegistration } from "../types/lifecycle";
+
+/** 仅把冷身份加入预热批次；全热 update 不分配临时数组。 */
+function appendColdIdentityId(
+  current: number[] | null,
+  id: number
+): number[] | null {
+  if (isIdentityPolicyCached(id)) return current;
+  if (current === null) return [id];
+  current.push(id);
+  return current;
+}
 
 /**
  * 显式安装完整的 grammY 更新链。模块导入本身不修改 Bot；调用一次本函数才
@@ -88,6 +104,60 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 随后的持久化修改不会同本群另一条更新交错。反应同步有自己的合并队列，
   // 不占用聊天车道。
   bot.use(sequentialize((ctx: Context): string[] => (ctx.messageReaction ? [] : ctx.chat ? [String(ctx.chat.id)] : [])));
+
+  // 黑白名单判断保持同步 LRU 读取；每个 update 在进入 Anti-Raid 和命令前，一次性
+  // 补齐可见身份的冷缺失。热命中不跨线程，冷读同时查询两表并写入正/负缓存。
+  // 预热是 best-effort：Disk I/O 自愈窗口里冷读会失败，prefetchIdentityPolicies
+  // 自己就地降级并返回 false（异常逸出会被 bot.catch 重抛成整进程重启循环，
+  // 见该函数头注）。本中间件不消费这个结论——留冷即按 fail-closed 判定。
+  bot.use(async (ctx: Context, next: NextFunction): Promise<void> => {
+    let ids: number[] | null = null;
+    if (ctx.from !== undefined) ids = appendColdIdentityId(ids, ctx.from.id);
+    if (ctx.msg?.sender_chat !== undefined) {
+      ids = appendColdIdentityId(ids, ctx.msg.sender_chat.id);
+    } else if (ctx.chat?.type === "channel") {
+      // 纯粹的频道帖没有 from、也没有 sender_chat：频道自己就是 ctx.chat，
+      // 而 users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts
+      // 都按这个 id 解析行为主体。漏掉它的话，已在 whitelist_entries 里的频道
+      // 在自己频道发 /query_mood、/bot_status 会撞上冷 LRU 的 fail-closed 判定，
+      // 被当成未授权拒绝，直到别的 update 偶然把这个 id 预热进来。
+      ids = appendColdIdentityId(ids, ctx.chat.id);
+    }
+    if (ctx.msg?.reply_to_message?.from !== undefined) {
+      ids = appendColdIdentityId(ids, ctx.msg.reply_to_message.from.id);
+    }
+    if (ctx.msg?.reply_to_message?.sender_chat !== undefined) {
+      ids = appendColdIdentityId(ids, ctx.msg.reply_to_message.sender_chat.id);
+    }
+    const forwardOriginId: number | undefined =
+      messageOriginIdentityId(ctx.msg?.forward_origin);
+    if (forwardOriginId !== undefined) {
+      ids = appendColdIdentityId(ids, forwardOriginId);
+    }
+    const repliedForwardOriginId: number | undefined =
+      messageOriginIdentityId(ctx.msg?.reply_to_message?.forward_origin);
+    if (repliedForwardOriginId !== undefined) {
+      ids = appendColdIdentityId(ids, repliedForwardOriginId);
+    }
+    const externalReplyOriginId: number | undefined =
+      messageOriginIdentityId(ctx.msg?.external_reply?.origin);
+    if (externalReplyOriginId !== undefined) {
+      ids = appendColdIdentityId(ids, externalReplyOriginId);
+    }
+    if (ctx.msg?.new_chat_members !== undefined) {
+      for (const member of ctx.msg.new_chat_members) {
+        ids = appendColdIdentityId(ids, member.id);
+      }
+    }
+    if (ctx.msg?.left_chat_member !== undefined) {
+      ids = appendColdIdentityId(ids, ctx.msg.left_chat_member.id);
+    }
+    if (ctx.chatMember !== undefined) {
+      ids = appendColdIdentityId(ids, ctx.chatMember.new_chat_member.user.id);
+    }
+    if (ids !== null) await prefetchIdentityPolicies(ids);
+    return next();
+  });
 
   // 私聊命令已在前置网关统一收口；活动中的 /send 中转会话只把非命令消息
   // 直接短路到消息流水线。

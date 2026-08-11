@@ -14,7 +14,10 @@
     "test:coverage": "bun test --isolate --coverage --coverage-reporter=text",
     "test:fault-injection": "bun test --isolate test/app/lifecycleFailure.test.ts test/app/lifecycleOffsetShutdown.test.ts test/app/updateRunner.test.ts test/auto/reactionSync.test.ts test/infra/storage/stateStore.test.ts test/infra/storage/cleanup.test.ts test/infra/storageLockDurability.test.ts test/libs/atomicFile.test.ts test/infra/diskIOInitialization.test.ts test/workers/aiChat/mainMirrorRecovery.test.ts test/workers/aiChat/replyPipeline.test.ts test/workers/aiChat/workerLifecycle.test.ts test/workers/antiRaid/mainMirrorRecovery.test.ts test/workers/antiRaid/workerLifecycle.test.ts test/workers/diskIO/appendOnlyDayFile.test.ts test/workers/diskIO/blocklistRemovalOutbox.test.ts test/workers/diskIO/joinLogFiles.test.ts test/workers/diskIO/logFiles.test.ts test/workers/diskIO/luckFiles.test.ts test/workers/diskIO/snapshotOwners.test.ts test/workers/diskIO/verificationFiles.test.ts test/workers/diskIOWorker.test.ts test/commands/luckChallenge.test.ts test/copy/reactionQueue.test.ts test/commands/copyShared.test.ts test/infra/chatTitle.test.ts test/infra/storage/dataRoot.test.ts test/libs/flushBarrier.test.ts test/libs/supervisedWorker.test.ts test/libs/sleep.test.ts",
     "perf:hot-paths": "bun scripts/perf/hotPaths.ts",
+    "perf:identity-database": "bun scripts/perf/identityDatabase.ts",
     "perf:join-log": "bun scripts/perf/joinLog.ts",
+    "migrate:identity-storage": "bun scripts/migrateIdentityStorageToSqlite.ts",
+    "migrate:whitelist-permission": "bun scripts/migrateWhitelistPermission.ts",
     "typecheck": "tsc --noEmit",
     "check": "bun run check:conventions && bun run lint && bun run typecheck && bun run test:coverage",
     "release:check": "bun install --frozen-lockfile && bun run check && bun run test:fault-injection",
@@ -39,6 +42,7 @@
     "@grammyjs/files": "^1.2.0",
     "@grammyjs/runner": "^2.0.3",
     "@grammyjs/transformer-throttler": "^1.2.1",
+    "drizzle-orm": "0.45.2",
     "grammy": "^1.44.0",
     "openai": "^6.49.0",
     "sharp": "^0.35.3"

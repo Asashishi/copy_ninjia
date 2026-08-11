@@ -89,7 +89,7 @@ export function quiesceAvatarUpdates(): void {
   avatarUpdateRuntime.accepting = false;
 }
 
-export function abortAvatarUpdates(): void {
+function abortAvatarUpdates(): void {
   avatarUpdateRuntime.accepting = false;
   avatarUpdateState.pending = null;
   avatarUpdateState.latestGeneration = avatarUpdateState.nextGeneration++;

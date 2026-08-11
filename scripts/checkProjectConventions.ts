@@ -606,9 +606,9 @@ for (const path of sourceFilesUnder(SOURCE_ROOT)) {
 }
 
 /**
- * 群聊命令文本必须经统一的 30 秒清理边界发送。唯一例外是 gag 开始状态：
- * 所有目标有一条公开状态，普通用户另有目标专属临时入口；它们由同一会话持有，
- * 只能由超时、`/ungag` 或 teardown 删除。头像更新结果虽在 copy owner 内异步
+ * 群聊命令文本必须经统一的 30 秒清理边界发送。唯一例外是 gag 会话状态和
+ * 发言入口；它们由同一会话持有，只能由滚动换新、超时、`/ungag` 或 teardown
+ * 删除。头像更新结果虽在 copy owner 内异步
  * 落地，但只由 /copy 与 /steal_icon 触发，因此同样纳入检查。
  */
 const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = [
@@ -616,6 +616,7 @@ const COMMAND_TEXT_OUTPUT_FILES: readonly string[] = [
   join(SOURCE_ROOT, "copy", "avatarQueue.ts"),
 ];
 const GAG_COMMAND_PATH: string = join(COMMANDS_ROOT, "gag.ts");
+const GAG_NOTICES_PATH: string = join(COMMANDS_ROOT, "gag", "notices.ts");
 for (const path of COMMAND_TEXT_OUTPUT_FILES) {
   const source: ts.SourceFile = ts.createSourceFile(
     path,
@@ -632,7 +633,7 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
       )
     ) {
       if (
-        path === GAG_COMMAND_PATH &&
+        (path === GAG_COMMAND_PATH || path === GAG_NOTICES_PATH) &&
         ["sendEphemeralMessage", "sendMessage"].includes(node.name.text)
       ) {
         ts.forEachChild(node, visit);
@@ -649,11 +650,11 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
   visit(source);
 }
 
-/** gag 只允许两条有稳定变量名的开始状态消息绕开 30 秒清理。 */
-{
+/** gag 只允许状态消息和统一入口动作边界绕开 30 秒清理。 */
+for (const path of [GAG_COMMAND_PATH, GAG_NOTICES_PATH]) {
   const source: ts.SourceFile = ts.createSourceFile(
-    GAG_COMMAND_PATH,
-    readFileSync(GAG_COMMAND_PATH, "utf8"),
+    path,
+    readFileSync(path, "utf8"),
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS
@@ -672,16 +673,16 @@ for (const path of COMMAND_TEXT_OUTPUT_FILES) {
       ) {
         owner = owner.parent;
       }
-      const isNoticeAssignment: boolean = owner !== undefined &&
-        ts.isVariableDeclaration(owner) &&
+      const isPublicNoticeAssignment: boolean = path === GAG_COMMAND_PATH &&
+        owner !== undefined && ts.isVariableDeclaration(owner) &&
         ts.isIdentifier(owner.name) &&
-        [
-          "publicNoticeMessageId",
-          "ephemeralNoticeMessageId",
-        ].includes(owner.name.text);
-      if (!isNoticeAssignment) {
+        owner.name.text === "publicNoticeMessageId";
+      const isSpeakNoticeBoundary: boolean = path === GAG_NOTICES_PATH &&
+        owner !== undefined && ts.isFunctionDeclaration(owner) &&
+        owner.name?.text === "sendGagSpeakNotice";
+      if (!isPublicNoticeAssignment && !isSpeakNoticeBoundary) {
         failures.push(
-          `${relative(PROJECT_ROOT, GAG_COMMAND_PATH)}:` +
+          `${relative(PROJECT_ROOT, path)}:` +
           `${source.getLineAndCharacterOfPosition(node.getStart()).line + 1} ` +
           "only the state-owned gag notice may bypass sendCommandMessage"
         );

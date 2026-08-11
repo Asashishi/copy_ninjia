@@ -7,6 +7,7 @@ import {
   handleVerificationPersisted,
   deactivateVerificationChat,
   disableJoinGuardChat,
+  deleteDeferredVerification,
   stopVerificationRuntime,
 } from "./antiRaid/verificationRuntime";
 import {
@@ -48,7 +49,12 @@ import { resetAdminCache, sweepAdminCache } from "../cache/workers/antiRaid/admi
 import { resetLinkedChannelCache, sweepLinkedChannelCache } from "../cache/workers/antiRaid/linkedChannels";
 import { recentChannelComments } from "../cache/workers/antiRaid/recentComments";
 import { sweepVerificationRevisionCache } from "../cache/workers/antiRaid/verification";
-import type { AdDetectedEvent, AntiRaidWorkerMessage, BlockedMembersRemovedEvent } from "../types/antiRaid";
+import type {
+  AdDetectedEvent,
+  AntiRaidWorkerMessage,
+  AntiRaidWorkerRequest,
+  BlockedMembersRemovedEvent,
+} from "../types/antiRaid";
 import {
   flushPendingMessageDeletions,
   resetPendingMessageDeletions as resetGenericMessageDeletions,
@@ -68,7 +74,6 @@ import {
   resetWorkerDuplex,
 } from "../libs/workerDuplex";
 import type { WorkerDuplexOutbound } from "../types/workerDuplex";
-import type { TelegramWorkerRequest } from "../types/telegramWorker";
 import { installTelegramApi } from "../infra/telegram/client";
 import { workerTelegramApi } from "../infra/telegram/workerClient";
 import { acceptForwardedLogBatch } from "../infra/logger";
@@ -118,10 +123,13 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       handleJoin(msg);
       break;
     case "left":
-      dispatchVerification(msg.chatId, msg.userId, { type: "left" });
+      if (!deleteDeferredVerification(msg.chatId, msg.userId)) {
+        dispatchVerification(msg.chatId, msg.userId, { type: "left" });
+      }
       break;
     case "deactivateChat":
-      deactivateVerificationChat(msg.chatId);
+      if (msg.cleanupVerificationMessages) disableJoinGuardChat(msg.chatId);
+      else deactivateVerificationChat(msg.chatId);
       deactivateLockdownChat(msg.chatId);
       // 在途的黑名单补扫可能还要跑几分钟；停管之后继续在这个群里封人是越权。
       bumpBlocklistRemovalEpoch(msg.chatId);
@@ -135,9 +143,8 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       break;
     case "deactivateJoinGuard":
       // `/antiraid disable` 专用：只收掉入群这条链路。验证记录逐条经状态机的
-      // guardDisabled 转移收摊：从此不再触发提醒、超时踢出与终态处置，但**不删**
-      // 已经发出去的提醒、也不踢人——关掉的是「以后别管了」，不是「把现场抹了」
-      // （见 states/verification/disable.ts）。仍生效的私密模式走可恢复解锁：
+      // guardDisabled 转移收摊：删除仍带按钮的验证提醒，从此不再触发提醒、超时
+      // 踢出与终态处置。仍生效的私密模式走可恢复解锁：
       // 开关都关了，没人再会解开那把邀请权限的锁。
       //
       // 广告检测队列、刷屏窗口、权限与群类型镜像、在途黑名单补扫**都不动**：
@@ -234,8 +241,8 @@ export function sweepAntiRaidWorkerCaches(now: number = Date.now()): void {
 export function startAntiRaidWorker(): void {
   if (antiRaidCacheSweepTimer.current !== null) return;
   installTelegramApi(workerTelegramApi);
-  initializeWorkerDuplex<TelegramWorkerRequest>((
-    message: WorkerDuplexOutbound<TelegramWorkerRequest>,
+  initializeWorkerDuplex<AntiRaidWorkerRequest>((
+    message: WorkerDuplexOutbound<AntiRaidWorkerRequest>,
     transfer?: Bun.Transferable[]
   ): void => {
     if (transfer === undefined) self.postMessage(message);

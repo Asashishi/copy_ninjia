@@ -89,7 +89,7 @@ export async function handleQueryMoodCommand(ctx: CommandContext<Context>): Prom
  * 在 AI Worker 线程内（cache/workers/aiChat/mood.ts），主线程只 post 一条 switchMood
  * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat/index.ts 的 switchAiMood），
  * 回复固定从这里发出，不走 AI 回复流水线。仅持有 isCanSwitchMood 的身份可用；
- * 超级管理员恒持有该权限（见 config/whitelist.ts），白名单身份可由 /permission 单独获权；其他人尝试只会被嘲讽。
+ * 超级管理员恒持有该权限（见 whitelist.ts），白名单身份可由 /permission 单独获权；其他人尝试只会被嘲讽。
  */
 export async function handleSwitchMoodCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;

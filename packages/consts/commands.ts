@@ -45,7 +45,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "ungag", description: "定向解除目标 gag；必须回复、写 @username 或用户/频道 id，同样需要 isCanGag，笨蛋♡" },
   { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
   { command: "permission", description: "query/help 只给白名单边界内的身份看；改权限只有超级管理员配碰，门外杂鱼别乱按♡" },
-  { command: "white", description: "新增或删除白名单用户/频道，首次加入用默认权限；仅超级管理员配用，普通杂鱼别想偷偷混进来♡" },
+  { command: "white", description: "新增或删除白名单用户/频道；isCanWhiteOther 只能代加默认权限，删除仍只有超级管理员配碰，杂鱼别乱伸手♡" },
 ];
 
 /** `/bot_status` 展示单个 provider/model 标签的最大字符数，防止部署值撑破消息上限。 */
@@ -134,18 +134,18 @@ export const CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW: number = 450;
 export const CJK_ACTION_RATE_LIMIT_WINDOW_MS: number = 90_000;
 
 /**
- * `/mute` 时长参数的完整匹配规则：正整数（不接受前导零/小数/正负号）紧跟
- * 一个单位字母，m=分钟、h=小时、d=天，大小写均可。捕获组 1 是数值、组 2 是
- * 单位。数值位数不设限：正则挡不住安全整数边界，换算成毫秒后由
- * MUTE_MAX_DURATION_MS 的收敛兜底（见 commands/mute.ts）。
+ * 时长参数的完整匹配规则：正整数（不接受前导零/小数/正负号）紧跟一个单位
+ * 字母，m=分钟、h=小时、d=天，大小写均可。捕获组 1 是数值、组 2 是单位。
+ * 数值位数不设限：正则挡不住安全整数边界，换算成毫秒后由各命令自己的上限
+ * 收敛或拒绝兜底。所属模块：libs/durationToken.ts（`/mute` 与 `/batch_kick` 共用）。
  */
-export const MUTE_DURATION_ARG_PATTERN: RegExp = /^([1-9]\d*)([mhd])$/i;
+export const DURATION_TOKEN_PATTERN: Readonly<RegExp> = /^([1-9]\d*)([mhd])$/i;
 
 /**
- * `/mute` 时长单位到毫秒的换算表，键集合与 MUTE_DURATION_ARG_PATTERN 的单位
- * 捕获组一一对应，新增单位两处要同步改。所属模块：commands/mute.ts。
+ * 时长单位到毫秒的换算表，键集合与 DURATION_TOKEN_PATTERN 的单位捕获组一一
+ * 对应，新增单位两处要同步改。所属模块：libs/durationToken.ts。
  */
-export const MUTE_DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> = {
+export const DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> = {
   m: 60_000,
   h: 60 * 60_000,
   d: 24 * 60 * 60_000,
@@ -172,20 +172,6 @@ export const MUTE_MIN_DURATION_MS: number = 60_000;
  * 所属模块：commands/mute.ts。
  */
 export const MUTE_MAX_DURATION_MS: number = 365 * 24 * 60 * 60_000;
-
-/**
- * `/batch_kick` 回溯时长的完整匹配规则：正整数加 m/h/d，大小写均可。
- * 入群日志提供滚动 24 小时窗口，因此换算后超过一天的参数由命令拒绝。
- */
-export const BATCH_KICK_DURATION_ARG_PATTERN: RegExp = /^([1-9]\d*)([mhd])$/i;
-
-/** `/batch_kick` 时长单位到毫秒的换算表。 */
-export const BATCH_KICK_DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> =
-  {
-    m: 60_000,
-    h: 60 * 60_000,
-    d: 24 * 60 * 60_000,
-  };
 
 /** `/batch_kick` 最短回溯窗口，避免零长度或秒级误操作。 */
 export const BATCH_KICK_MIN_DURATION_MS: number = 60_000;

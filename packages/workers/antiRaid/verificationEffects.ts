@@ -1,5 +1,12 @@
-import { verificationEntries } from "../../cache/workers/antiRaid/verification";
-import { WELCOME_AUTO_DELETE_MS } from "../../consts/antiRaid/verification";
+import {
+  verificationEntries,
+  verificationGeneration,
+  verificationRevisions,
+} from "../../cache/workers/antiRaid/verification";
+import {
+  VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS,
+  WELCOME_AUTO_DELETE_MS,
+} from "../../consts/antiRaid/verification";
 import { logger } from "../../infra/logger";
 import {
   answerCallbackQuery,
@@ -27,6 +34,14 @@ import {
   sendVerificationReminder,
 } from "./verificationReminders";
 import { trackAntiRaidTask } from "./taskTracker";
+import { requestVerificationAttemptPermit } from "./verificationAttemptPermit";
+import type { VerificationAttemptPermitResult } from "../../types/antiRaid";
+
+export type VerificationAttemptRequester = (
+  key: string,
+  generation: number,
+  revision: number
+) => Promise<VerificationAttemptPermitResult>;
 
 export interface RunVerificationEffectsParams {
   chatId: number;
@@ -34,6 +49,27 @@ export interface RunVerificationEffectsParams {
   effects: VerificationEffect[];
   dispatchVerification: VerificationDispatcher;
   publishVerificationChange: VerificationChangePublisher;
+  requestTerminalAttempt?: VerificationAttemptRequester;
+}
+
+function includesTerminalAttempt(effects: readonly VerificationEffect[]): boolean {
+  for (const effect of effects) {
+    if (
+      effect.kind === "kickMember" ||
+      effect.kind === "recheckInviter" ||
+      effect.kind === "expel" ||
+      effect.kind === "expelFlood"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isTerminalState(state: VerificationState | undefined): boolean {
+  return state?.kind === "kickPending" ||
+    state?.kind === "checkingInviter" ||
+    state?.kind === "expelling";
 }
 
 /** 按序执行一次转移返回的副作用；同一列表内先删后踢再通知的顺序有意义。 */
@@ -43,11 +79,33 @@ export async function runVerificationEffects({
   effects,
   dispatchVerification,
   publishVerificationChange,
+  requestTerminalAttempt = requestVerificationAttemptPermit,
 }: RunVerificationEffectsParams): Promise<void> {
   const key: string = verificationKey(chatId, userId);
   // 整批 effect 共享同一个执行 token；前置 await 后不得捕获替换后的新状态。
   const transitionState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
+  let grantedAttempt: number = 0;
+  if (includesTerminalAttempt(effects)) {
+    const generation: number = verificationGeneration.current;
+    const revision: number | undefined = verificationRevisions.get(key)?.revision;
+    if (generation <= 0 || revision === undefined) return;
+    const permit: VerificationAttemptPermitResult = await requestTerminalAttempt(
+      key,
+      generation,
+      revision
+    );
+    if (verificationEntries.get(key)?.state !== transitionState) return;
+    if (permit.status !== "granted") {
+      if (permit.status === "exhausted") {
+        dispatchVerification(chatId, userId, {
+          type: "terminalAttemptBudgetExhausted",
+        });
+      }
+      return;
+    }
+    grantedAttempt = permit.attempt;
+  }
   for (const effect of effects) {
     switch (effect.kind) {
       case "deleteMessage":
@@ -165,6 +223,14 @@ export async function runVerificationEffects({
         );
         break;
     }
+  }
+  if (
+    grantedAttempt >= VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS &&
+    isTerminalState(verificationEntries.get(key)?.state)
+  ) {
+    dispatchVerification(chatId, userId, {
+      type: "terminalAttemptBudgetExhausted",
+    });
   }
 }
 

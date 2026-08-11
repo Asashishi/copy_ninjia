@@ -18,6 +18,7 @@ import {
 } from "../../packages/consts/commands";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
 import {
+  GAG_REPLACEMENT_CHARACTERS,
   GAG_TARGET_TEXTS,
   UNGAG_TARGET_TEXTS,
 } from "../../packages/consts/gag";
@@ -31,6 +32,7 @@ import { MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
 import { DEFAULT_CHAT_STATE, createChatState } from "../../packages/libs/chatState";
 import {
   DEFAULT_WHITELIST_PERMISSIONS,
+  NON_WHITELIST_PERMISSIONS,
   PERMISSION_COMMAND_TEXTS,
   SUPER_ADMIN_WHITELIST_PERMISSIONS,
   WHITE_COMMAND_TEXTS,
@@ -61,6 +63,8 @@ test("常量表本身不可整体替换或就地增删", () => {
   expect(() => { RANDOM_ECHO_MODES[0] = "nya"; }).toBeDefined();
   // @ts-expect-error 只读数组不允许排序（原地改动）
   expect(() => LUCK_TIERS.sort()).toBeDefined();
+  // @ts-expect-error gag 替换候选跨所有 inline 查询共享，不允许追加
+  expect(() => GAG_REPLACEMENT_CHARACTERS.push("篡改")).toBeDefined();
 });
 
 test("对象元素的字段同样不可写", () => {
@@ -86,10 +90,14 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   // @ts-expect-error Readonly<WhitelistPermissions> 的字段只读；这份默认值被
   // parsePermissions 逐条展开复用，写坏它等于改掉此后所有条目的缺省权限。
   expect(() => { DEFAULT_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
+  // @ts-expect-error 新增白名单授权默认值同样只能在编译期读取。
+  expect(() => { DEFAULT_WHITELIST_PERMISSIONS.isCanWhiteOther = true; }).toBeDefined();
   // @ts-expect-error Readonly<WhitelistPermissions> 的字段只读；这一份是
   // getEffectiveWhitelistPermissions 直接交给调用方的超级管理员视图，写坏它
   // 就是当场把超级管理员降权。
   expect(() => { SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock = false; }).toBeDefined();
+  // @ts-expect-error 非白名单 query 复用这份逐项 false 视图，不允许调用方改写。
+  expect(() => { NON_WHITELIST_PERMISSIONS.isCanBlock = true; }).toBeDefined();
 });
 
 /**
@@ -119,7 +127,7 @@ test("白名单命令文案表不可写入，嵌套的目标提示同样只读",
  */
 test("/permission 的代码块前缀以换行结尾", () => {
   expect(PERMISSION_COMMAND_TEXTS.helpPrefix.endsWith("\n")).toBeTrue();
-  expect(PERMISSION_COMMAND_TEXTS.queryPrefix.endsWith("\n")).toBeTrue();
+  expect(PERMISSION_COMMAND_TEXTS.queryPrefix("目标").endsWith("\n")).toBeTrue();
 });
 
 test("/white 成员关系的四种结局互不相同", () => {
@@ -251,6 +259,10 @@ test("常量表内容本身仍可正常读取", () => {
   expect(RANDOM_ECHO_MODES).toContain("nya");
   expect(DEFAULT_WHITELIST_PERMISSIONS.isCanBypassFloodControl).toBe(true);
   expect(DEFAULT_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(false);
+  expect(Object.keys(NON_WHITELIST_PERMISSIONS))
+    .toEqual(Object.keys(DEFAULT_WHITELIST_PERMISSIONS));
+  expect(NON_WHITELIST_PERMISSIONS.isCanBypassFloodControl).toBe(false);
+  expect(NON_WHITELIST_PERMISSIONS.isCanViewBotStatus).toBe(false);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanBlock).toBe(true);
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(true);
 });

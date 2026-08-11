@@ -35,15 +35,15 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**2181 tests / 216 files / 72414 `expect()` calls**。全ソースコードの**関数カバレッジは 94.74%、行カバレッジは 95.94%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**2225 tests / 228 files / 32683 `expect()` calls**。全ソースコードの**関数カバレッジは 94.40%、行カバレッジは 95.60%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
-テストは必ず `bun run test`、つまり `bun test --isolate` から実行し、3 層で保護します。
+テストは必ず `bun run test`、つまり `bun test --isolate` から実行し、4 層で保護します。
 
 1. **ファイル分離**：Bun はテストファイルごとに新しい global object を作成するため、`mock.module` とモジュールレベル状態がほかのテストファイルを汚染しません。`--parallel` は有効にしていないので、各ファイルが別プロセスを占有するとは説明しません。
-2. **一時データルート**：`test/preloadEnv.ts` は production モジュールがロードされる前に isolate ごとの独立した一時データルートを注入します。mock されていない実ファイル I/O も一時ディレクトリだけを読み書きし、production の `state.json`、`bot.lock`、`logs/`、`memory/` には触れません。終了後に一時ディレクトリを削除します。**path 注入を別 file に分けている**のは、ESM が import を同 file の文より先に評価するためです。`test/preload.ts` が production モジュールを static import した時点で、file 内に書いた環境変数の代入はすでに手遅れになり、`CONFIG_ROOT` は開発機の実デプロイディレクトリを指してしまいます。
-3. **読み取り専用の設定ルート**：同じ注入は `COPY_NINJIA_CONFIG_ROOT` をリポジトリ内の `config_example/` に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実際の `whitelist.json`／`blocklist.json` を誤って読み書きするのを防ぎます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
+2. **一時データルート**：`test/preloadEnv.ts` は production モジュールがロードされる前に isolate ごとの独立した一時データルートを注入します。mock されていない実ファイル I/O も一時ディレクトリだけを読み書きし、production の `state.json`、`bot.lock`、`logs/`、`memory/`、`database/` には触れません。終了後に一時ディレクトリを削除します。**path 注入を別 file に分けている**のは、ESM が import を同 file の文より先に評価するためです。`test/preload.ts` が production モジュールを static import した時点で、file 内に書いた環境変数の代入はすでに手遅れになり、`CONFIG_ROOT` は開発機の実デプロイディレクトリを指してしまいます。
+3. **読み取り専用の設定ルート**：同じ注入は `COPY_NINJIA_CONFIG_ROOT` をリポジトリ内の `config_example/` に向けます（`packages/consts/paths.ts` の `CONFIG_ROOT` を参照）。デプロイ用の `config/` はバージョン管理外なので、この層はクリーンな checkout でもテストが走ることを保証しつつ、テストとテスト Worker が開発機の実 Telegram / feature 設定を読むのを防ぎます。identity database は前項の一時 data root で隔離されます。この環境変数はテスト専用でデプロイ用のスイッチではないため、README の環境変数表には載せません。
 4. **agent 設定 snapshot**：`agent.json` は runtime path が disk から読まない唯一のデプロイ入力です（実 process では main thread が parse し、各 Worker へ init message で渡します。[04 実行時の権威的制約](04-invariants.md) を参照）。テスト isolate はその message を受け取らないため、`test/preload.ts` が同じ `config_example/agent.json` を isolate の holder へ一度 adopt します——「snapshot はすでに届いている」と等価です。未設定の経路を検証する test は自分で holder を空にします。
 
 単一ファイルの debug で `bun test` を直接使うことはできますが、merge 前には必ず完全な `bun run check` を通してください。
@@ -61,6 +61,10 @@
 ## 入室ログ性能 benchmark
 
 `bun run perf:join-log` は入力を容量 250,000 件、overflow 300 件、warm-up 10,000 件に固定し、snapshot と capacity の baseline/current をそれぞれ 5 個の独立 Bun process で実行します。出力には完全な Bun version/revision、所要時間の中央値と範囲、強制 GC 前後の JSC heap/object 変化を記録します。baseline は最適化前の Map 全体 copy、全件 sort、完全な JSON 文字列生成を、同一 Bun build 内の前後比較専用として固定したものです。`Bun.gc(true)` はこの benchmark にしか存在せず、production control flow には入りません。入室 index、容量裁剪、snapshot serialization、分割 atomic write を変更した場合は必ず実行し、差が 5 sample の範囲に表れる noise より十分大きいことを確認します。
+
+## Identity database 性能 benchmark
+
+`bun run perf:identity-database` は一時 data root / SQLite で 4 つの production path を測ります。identity 8 件単位の 2 table cold read、128 row の明示 transaction write、main thread の 8,196-entry LRU hot read、Worker・JSONB transaction・exact ACK を通る write-through です。各 operation を warm-up してから 5 個の独立 Bun process で sample し、Bun version/revision、throughput、batch latency、sample range / coefficient of variation、強制 GC 前後の JSC heap・extra memory・object・GC time を報告します。`--single-process` は同じ measurement process 内で各 operation を 3 回反復し、round 間の retained growth を調べますが、独立 process 比較の代わりではありません。`Bun.gc(true)` は計時外の診断専用です。identity LRU、cold prefetch、encoding、transaction batch、ACK、Worker replay を変えた場合に実行し、同じ Bun build の差を sample noise と heap/GC の両方で判断します。
 
 ## コミット手順
 
@@ -89,7 +93,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 関数・行カバレッジ
 
 カバレッジとは別に、同じく静かに古くなる実測値が 2 組あります。
 
-- **中国語の文字列リテラル数**（現在およそ 786 ソース行 / 76 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
+- **中国語の文字列リテラル数**（現在およそ 801 ソース行 / 78 ファイル）：3 言語 README の「言語について」注記と、3 言語の [06 よくある変更手順](06-modification-guide.md)「i18n を行わない」節に出てきます。ユーザー向け文言を増減したら数え直します。コメントを除き、TypeScript AST の文字列／template literal ノードが跨るソース行を数えます。backtick を grep で数えないでください——正規表現リテラル内の backtick が計数を狂わせます。
 - **動作値**（確率、容量、時間）：README 内のこれらの数値は `packages/consts/` と一致させます。詳細は [06 よくある変更手順](06-modification-guide.md#動作パラメータの調整) を参照してください。
 
 ## リリース

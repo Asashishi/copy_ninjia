@@ -18,7 +18,6 @@ import { getChatState } from "../infra/storage/stateStore";
 import {
   probeChatMembership,
   sendCommandMessage,
-  sendEphemeralMessage,
   sendMessage,
 } from "../infra/telegram";
 import { sanitizeDisplayName } from "../libs/text";
@@ -26,16 +25,18 @@ import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import {
   canRenderMaximumInlineQuery,
-  buildGagSpeakKeyboard,
+  createGagInlineToken,
   parseGagCommand,
+  renderGagPublicNotice,
 } from "./gag/rendering";
+import { sendGagSpeakNotice } from "./gag/notices";
 import {
   commitGagNotices,
   failGagNotice,
   findGagSession,
   finishGag,
-  recordGagEphemeralNotice,
   recordGagPublicNotice,
+  recordGagSpeakNotice,
   requestGagCleanupRetry,
   reserveGagSession,
 } from "./gag/runtime";
@@ -108,12 +109,17 @@ function createGagReservation(
     targetId: target.id,
     targetLabel: formatTargetLabel(target),
     chatLabel: sanitizeDisplayName(ctx.chat.title ?? String(ctx.chat.id)),
+    inlineToken: createGagInlineToken(),
     tool: parsed.tool,
     durationMinutes: parsed.durationMinutes,
     phase: "starting",
     expiresAt: 0,
     publicNoticeMessageId: 0,
-    ephemeralNoticeMessageId: 0,
+    speakNoticeMessageId: 0,
+    pendingSpeakNoticeMessageId: 0,
+    retiredSpeakNoticeMessageId: 0,
+    messagesSinceSpeakNotice: 0,
+    speakNoticeRefreshTask: null,
     noticePending: true,
     timer: null,
     cleanupRetryIndex: 0,
@@ -211,17 +217,9 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     });
     return;
   }
-  const publicNoticeText: string =
-    `哼哼，${session.targetLabel} 这只爱乱说话的杂鱼已经戴上 ${session.tool} 啦♡ ` +
-    `${session.durationMinutes} 分钟内普通消息都会被本天才删掉。` +
-    (target.isChannel === true
-      ? "频道马甲想说话就必须先乖乖点下面的「发言」按钮，直接 @ 本天才可不会给你选项哦，连入口都找不到的杂鱼就安静待着吧♡"
-      : "");
-  const ephemeralNoticeText: string =
-    `${session.targetLabel}，只有你看得到这个发言入口；` +
-    "想说话就乖乖点下面的「发言」按钮啦♡";
-  // 所有目标先在群里留一条公开状态；普通用户的公开消息不带按钮，再单独发送
-  // receiver_user_id 限定的入口。频道没有接收用户，按钮只能留在公开提示上。
+  // 普通用户先在群里留一条无按钮状态，再发 receiver_user_id 限定的入口；
+  // 频道没有接收用户，公开状态本身就是其发言入口。两个身份分开登记，结束某个
+  // 会话时只能删除该会话的精确入口，不能把相同数字的临时 id 当成群消息 id。
   //
   // onSent 是这条路径的**结算保险**：停机 abort 可能落在「远端已收下提示、这里
   // 还没走到 commitGagNotices」的窗口里，await 会以 AbortError 解开并带走
@@ -230,17 +228,29 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
   const recordPublicNotice = (sentMessageId: number): void => {
     recordGagPublicNotice(session, sentMessageId);
   };
-  const recordEphemeralNotice = (sentMessageId: number): void => {
-    recordGagEphemeralNotice(session, sentMessageId);
+  const recordSpeakNotice = (sentMessageId: number): void => {
+    recordGagSpeakNotice(session, sentMessageId);
   };
   try {
+    if (target.isChannel === true) {
+      const speakNoticeMessageId: number | undefined =
+        await sendGagSpeakNotice({
+          session,
+          replyToMessageId: ctx.msgId,
+          onSent: recordSpeakNotice,
+        });
+      if (speakNoticeMessageId === undefined) {
+        await failGagNotice(session);
+        return;
+      }
+      recordGagSpeakNotice(session, speakNoticeMessageId);
+      await commitGagNotices(session);
+      return;
+    }
     const publicNoticeMessageId: number | undefined = await sendMessage({
       chatId: session.chatId,
-      text: publicNoticeText,
+      text: renderGagPublicNotice(session),
       replyToMessageId: ctx.msgId,
-      ...(target.isChannel === true
-        ? { keyboard: buildGagSpeakKeyboard(target.id) }
-        : {}),
       onSent: recordPublicNotice,
     });
     if (publicNoticeMessageId === undefined) {
@@ -248,10 +258,6 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
       return;
     }
     recordGagPublicNotice(session, publicNoticeMessageId);
-    if (target.isChannel === true) {
-      await commitGagNotices(session);
-      return;
-    }
     if (
       findGagSession(session.chatId, session.targetId) !== session ||
       session.phase !== "starting"
@@ -259,19 +265,16 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
       await commitGagNotices(session);
       return;
     }
-    const ephemeralNoticeMessageId: number | undefined =
-      await sendEphemeralMessage({
-        chatId: session.chatId,
-        receiverUserId: target.id,
-        text: ephemeralNoticeText,
-        keyboard: buildGagSpeakKeyboard(target.id),
-        onSent: recordEphemeralNotice,
+    const speakNoticeMessageId: number | undefined =
+      await sendGagSpeakNotice({
+        session,
+        onSent: recordSpeakNotice,
       });
-    if (ephemeralNoticeMessageId === undefined) {
+    if (speakNoticeMessageId === undefined) {
       await failGagNotice(session);
       return;
     }
-    recordGagEphemeralNotice(session, ephemeralNoticeMessageId);
+    recordGagSpeakNotice(session, speakNoticeMessageId);
     await commitGagNotices(session);
   } catch (error: unknown) {
     // 判据是整段发送流程是否仍未提交，不是「最后一次 onSent 有没有被调用」。

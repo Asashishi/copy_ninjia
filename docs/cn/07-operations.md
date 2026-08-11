@@ -12,7 +12,7 @@
 
 ## 部署形态
 
-单实例长轮询进程，无 webhook、无外部数据库；持久化全部是本地文件。单实例建议承载约 15 个活跃群以内（瓶颈是单 Bot API、AI 供应商配额与媒体速率，硬件参考见根 README「快速开始」）。
+单实例长轮询进程，无 webhook、无外部数据库服务；身份策略使用本地 SQLite，其余持久化使用数据根内文件。单实例建议承载约 15 个活跃群以内（瓶颈是单 Bot API、AI 供应商配额与媒体速率，硬件参考见根 README「快速开始」）。
 
 ### systemd 示例
 
@@ -36,13 +36,11 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-数据根目录先由部署工具预建：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。容器部署把同一目录作为持久卷挂载，owner 由宿主或 init container 设置；`memory/` 不要放容器临时层。
+数据根目录先由部署工具预建：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。容器部署把同一目录作为持久卷挂载，owner 由宿主或 init container 设置；`memory/` 与 `database/` 都不要放容器临时层。
 
-升级到带权限门禁的版本前先停掉所有实例，再检查并迁移已有目录：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。程序会以 `0750` 补建数据根及 `logs/`、`memory/`，并校验这些目录属于运行 UID；三者都不支持符号链接。`config/` 是项目内的部署配置，不属于独立运行时数据根，其中 `whitelist.json` 会被 `/white` 与 `/permission` 原子改写，因此运行用户必须能在该目录创建临时文件并 rename，其余配置可保持只读。运行中若外部编辑 `whitelist.json`，下一条授权命令会拒绝覆盖；停服重启后才从新文件建立缓存。已有数据根若比 `0750` 更宽会拒绝启动，不会擅自 chmod。若部署需要不同 owner/group，请替换命令中的账户，但仍须保证运行用户可写且 mode 不宽于 `0750`。
+程序会以 `0750` 补建数据根、`logs/`、`memory/` 与初始 `database/`，四者都拒绝符号链接。数据根、`logs/` 与 `memory/` 必须属于运行 UID 且 mode 不宽于 `0750`。身份迁移会把 `database/` 设为 `02770`，主库及 WAL/SHM 为 `0660`；该目录可由运行 UID 所有，也可由部署账号所有但 group 必须是运行进程的有效组并具备完整 `rwx`。不要对整个数据根递归执行 `chmod 0750`，否则会拿掉 SQLite 创建 sidecar 所需的 group write。`config/` 是项目内的只读部署输入，身份策略不再从中加载或写回。
 
-升级到移除 `/unblock all` 的版本属于严格配置迁移：先停掉所有实例，把 `config/whitelist.json` 备份到工作树外，并记录清单、owner/mode 与 SHA-256；随后手工删除每个条目的 `isCanUnBlockAll`，用当前严格 schema 解析验证，并确认白名单（含 `SUPER_ADMIN_USER_ID`）与静态、动态黑名单没有交集。恢复预期 owner/mode 后才能启动。旧字段会被有意拒绝，不保留兼容读取；此变更按 MAJOR 版本发布。备份及校验输出不得包含白名单正文。
-
-进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
+进程崩溃或非零退出交给 `Restart=on-failure` 拉起即可：待验证状态、锁定计时、身份写透、AI 记忆与未确认的 Telegram update 都会按 [04 运行时权威约束](04-invariants.md#持久化) 的恢复语义续接。
 
 ## 数据根
 
@@ -88,15 +86,17 @@ WantedBy=multi-user.target
   - **备份**：含用户 id 与时间戳，按敏感数据备份；保留最近三个东京自然日以覆盖
     跨午夜在途查询。精确重投不重复追加，历史按用户最新值压缩；单群单日最多保留
     最新 250,000 人。
-- **`memory/blocklist/blocklist.json`**
-  - **内容**：`/block` 永久权威名单（用户 id + 拉黑时刻）。
-  - **备份**：必须备份，丢了等于全员解除拉黑。正常解除使用 `/unblock`；紧急手工
-    编辑必须停机并保留合法 JSON。文件损坏会**拒绝启动**而不截断自愈；键必须是能
-    原样还原的十进制 id。
-- **`memory/blocklist/removals.json`**
-  - **内容**：尚未完成的群级封禁任务 outbox。
-  - **备份**：不是名单副本；必须与 `blocklist.json`、`state.json` 处于同一备份
-    一致点。启动时按权威名单与群管理状态过滤后重放，任务落定后删除。
+- **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
+  - **内容**：schema v3 身份数据库。`whitelist_entries` 与 `blocklist_entries` 是白名单、
+    黑名单权威表，`pending_blocked_removals` 是未完成群级封禁任务 outbox，
+    `storage_metadata` 记录唯一 schema version；Drizzle migration journal 必须匹配受支持谱系。
+  - **备份**：必须备份，丢失黑名单等于解除全部永久封禁，丢失 outbox 则会漏掉未完成处置。
+    停止 Bot 后，把主库及当时存在的 WAL/SHM 作为同一一致性集合复制到工作树外，并记录
+    owner/mode 与 SHA-256；不得用文本编辑器或临时 SQL 手改业务行。schema migration 脚本会
+    通过 SQLite 序列化快照建立并校验独立外部备份。
+  - **恢复**：Disk I/O Worker 是唯一数据库 owner；启动先做 integrity、JSONB、schema、
+    migration lineage、行 codec 与黑白名单互斥校验，再只把计数和 pending outbox 交回主线程。
+    任一校验失败都拒绝启动，不会建空库、丢行或静默降级。
 - **`memory/ad-detected/sample.json`**
   - **内容**：广告判定命中的原始样本，包括时间、消息 id 与正文、判定理由、
     引用/回复上下文。
@@ -115,78 +115,67 @@ WantedBy=multi-user.target
   - **内容**：单实例锁。
   - **备份**：不备份、不手工编辑。
 
-`memory/` 顶层不直接放文件，上述七个领域各占一个子目录。`ai/`、`stickers/`、`luck/`、`anti-raid/` 与 `blocklist/` 会在启动恢复时按需建目录；`ad-detected/` 只在第一次广告命中后建立，`joinlog/` 则只在首条入群事实或首次查询时建立，启动恢复不扫描它。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有当天原子快照落地成功才清理旧日。
+`memory/` 顶层不直接放文件，上述六个领域各占一个子目录；身份策略另由 `database/` 承载。`ai/`、`stickers/`、`luck/` 与 `anti-raid/` 会在启动恢复时按需建目录；`ad-detected/` 只在第一次命中后建立，`joinlog/` 则只在首条入群事实或首次查询时建立，启动恢复不扫描它。`anti-raid/<day>.json` 的物理文件是增量日志而不是单纯 active 列表：新建和状态变化追加完整快照，结算追加同 key 的 `null` tombstone，恢复后才折叠成当前 active challenge。若停机跨过东京午夜，启动会严格读取最新旧日，再以当天记录为较新值合并；旧日损坏会拒绝恢复且不改写文件，只有当天原子快照落地成功才清理旧日。
 
 `joinlog/` 的一次查询最多读取覆盖 `[since, now]` 的两个群日文件，并按用户取窗口内最后一次入群；第三个保留日只服务于 23:59 发起、跨午夜才进入 Worker 的在途查询。文件在 10,000 条冗余历史或新增 4 MiB 后评估压缩，预计至少回收 512 KiB 才原子重写。可解析但 schema 错误的文件会原样拒绝本次读写；仅末尾截断残片可由追加层修复。
 
 ### `memory/` 辅助文件与纯内存状态
 
-- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。`ai/`、`stickers/`、`luck/` 在启动时清理 `*.tmp`，`blocklist/` 的两个 owner 只按各自 `.blocklist.json.*.tmp` / `.removals.json.*.tmp` 前缀清理，`ad-detected/` 在首次写样本前清理 `.sample.json.*.tmp`，`joinlog/` 在首次接管当日目录时清理 `*.tmp`。当前 `anti-raid/` 恢复只忽略这类文件而不主动清理；它们不参与恢复，确认 Bot 已停止且名称精确匹配上述原子写格式后才可作为孤儿删除。
+- 原子覆盖会短暂创建 `.<目标文件名>.<pid>.<uuid>.tmp`，完成 `fsync + rename` 后消失；只有进程在两步之间被硬杀才可能留下。`ai/`、`stickers/`、`luck/` 在启动时清理 `*.tmp`，`ad-detected/` 在首次写样本前清理 `.sample.json.*.tmp`，`joinlog/` 在首次接管当日目录时清理 `*.tmp`。当前 `anti-raid/` 恢复只忽略这类文件而不主动清理；它们不参与恢复，确认 Bot 已停止且名称精确匹配上述原子写格式后才可作为孤儿删除。`storage.sqlite-wal` 与 `storage.sqlite-shm` 是 SQLite 正常 sidecar，不是孤儿临时文件，绝不能按本规则删除。
 - `memory/ai/<chatId>.json.<时间戳>.<uuid>.corrupt` 与 `memory/stickers/<pack>.json.<时间戳>.<uuid>.corrupt` 是 JSON 无法解析时保留的唯一命名隔离件，不参与正常恢复也不自动删除；同一路径再次损坏会新增证据，不覆盖旧件。字段能解析但不符合当前 version=1 schema 时不会隔离，而是直接拒绝启动，要求按 [06](06-modification-guide.md#变更持久化-schema) 手工迁移。
 - Challenge timer、广告检测待判队列/去重 Set、Telegram 成员/管理员短缓存都只存在于进程内，没有对应文件。
 
-备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成。`memory/` 视为敏感数据：文件 mode 是宽松的 `0644`（单租户部署基线，见 [04](04-invariants.md#持久化)），访问控制靠目录 owner/权限与主机账户隔离。
+备份覆盖整个数据根，并在 Bot 停止或存储快照一致性边界内完成；SQLite 主库与存在的 sidecar 必须来自同一时点。`memory/` 与 `database/` 都视为敏感数据：前者文件 mode 为 `0644`，后者主库及 sidecar 为 `0660`（单租户部署基线见 [04](04-invariants.md#持久化)），访问控制靠顶层目录 owner/group/权限与主机账户隔离。
 
-### `removals.json` v1 → v2
+## 身份存储迁移
 
-从 outbox v1 升级到 v2 前必须停 Bot 并手工迁移；新版严格拒绝 v1，不在运行时兼容或自动改写。文件不存在或已经是 v2 时跳过。以下命令以数据根为当前目录：
+运行时不保留旧格式兼容或自动建库。任何迁移都先停 Bot 并确认 inactive；失败时保留外部备份与现场，不得启动新版本，也不得用 `config_example/` 覆盖真实输入。
+
+### 旧 JSON → SQLite
+
+仍使用 `config/whitelist.json`、`config/blocklist.json`，以及可选 `memory/blocklist/` 的部署按下列顺序迁移：
 
 ```bash
-outbox=memory/blocklist/removals.json
-backup=memory/blocklist/removals.json.v1.bak
-candidate=memory/blocklist/removals.json.v2
-cp -a "$outbox" "$backup"
-jq -e '
-  if .version != 1 or (.entries | type) != "array" then
-    error("expected removals.json version=1")
-  else
-    .version = 2
-    | .entries |= map(
-        if .params.probeMembership == true then
-          .params |= del(.userIds, .joinedAt, .announcementMessageId)
-        else
-          .
-        end
-      )
-  end
-' "$outbox" > "$candidate"
-chmod --reference="$outbox" "$candidate"
-chown --reference="$outbox" "$candidate"
-test "$(jq '.entries | length' "$backup")" = "$(jq '.entries | length' "$candidate")"
-diff -u \
-  <(jq -S '[.entries[].params.removalId] | sort' "$backup") \
-  <(jq -S '[.entries[].params.removalId] | sort' "$candidate")
-jq -e '
-  .version == 2
-  and all(.entries[];
-    if .params.probeMembership == true then
-      (.params | has("userIds") or has("joinedAt") or has("announcementMessageId")) | not
-    else
-      (.params.userIds | type == "array" and length > 0)
-    end
-  )
-' "$candidate" > /dev/null
+bun run migrate:identity-storage --check
+bun run migrate:identity-storage --apply
 ```
 
-迁移只改变补扫任务：`probeMembership: true` 表示“用当前黑名单扫这个群”，因此删除其中冻结的 `userIds`、`joinedAt`、`announcementMessageId`；`probeMembership: false` 的秒踢/广告处置必须原样保留非空 `userIds`。上述命令同时核对候选文件版本为 2、entry 数量与全部 `removalId` 和备份一致、补扫不再带上述三字段、非补扫仍带名单；任一步非零退出都不要替换。全部通过后执行 `mv "$candidate" "$outbox"`，再部署新版。启动恢复报错时停止服务并用 `$backup` 回滚；确认恢复和重放正常后才删除备份。Release 的 Compatibility / Migration Notes 必须重复说明这一步。
+`--check` 只严格读取并合并旧白名单、静态/动态黑名单与 v2 待踢 outbox，不改文件。`--apply` 取得 `bot.lock`，通过 Telegram 补齐身份 metadata，在工作树外创建带清单、owner/mode 与 SHA-256 的备份，再建立候选 SQLite、核对 integrity/JSONB/行数/主键/codec 后原子发布 `database/storage.sqlite`，最后删除三处旧结构。脚本会保留并打印外部备份目录；启动、权限命令与待踢重放全部验证正常前不得删除。
 
-从仍使用 `config/blocklist.json` 的旧版本升级时，不保留运行时兼容分支：先停 Bot，备份旧文件与现有 `memory/blocklist/`，再把旧文件手工移动为 `memory/blocklist/blocklist.json`。不要与 `removals.json` 合并：前者回答“谁应永久封禁”，后者只回答“哪些群级处置还没完成”。确认目标 JSON 与备份一致后再启动新版本。
+全新部署也必须显式走同一迁移边界：按 [01 环境搭建](01-getting-started.md#初始化身份数据库) 创建两份临时空旧输入后执行 `--apply`。启动不会凭缺失数据库猜测“空名单”，目标库已存在时迁移脚本也拒绝覆盖。
+
+### SQLite schema v2 → v3
+
+已在使用 JSONB schema v2 的部署，在 Bot 停止后执行：
+
+```bash
+bun run migrate:whitelist-permission -- --apply
+```
+
+脚本只接受精确的受支持 v2 migration lineage，先通过 SQLite serialization 在系统临时目录建立 `0600` 外部备份并核验哈希与完整性，再把白名单权限升级到 schema v3；未知谱系、非法行、黑白名单交叉或事务失败都原样拒绝。对已经是 v3 的库运行只做严格验证并报告无需迁移。Release 的 Compatibility / Migration Notes 必须写明实际执行的迁移、备份位置、恢复步骤和权限要求。
 
 ## 启动失败排查
 
 程序的启动失败都是**有意的快速失败**，报错自带原因；对照处理，不要绕过：
 
 - **数据根预检失败（带路径）**
-  - **原因**：数据根/`memory`/`logs` 是符号链接、目录 mode 宽于 `0750`、不可写，
-    或文件系统不支持 fsync、hard link、原子 rename。
-  - **处理**：停掉所有实例后修正 owner/group，并执行 `chmod 0750 <数据根>`；
-    若仍失败，改用满足能力要求的本地文件系统。
+  - **原因**：数据根/`memory`/`logs`/`database` 是符号链接，前三者 mode 宽于
+    `0750`，`database/` 宽于 `0770` 或协作组不可写，目录不可写，或文件系统不支持
+    fsync、hard link、原子 rename。
+  - **处理**：停掉所有实例后逐目录修正 owner/group 与 mode；数据根、`memory/`、
+    `logs/` 使用 `0750`，`database/` 按部署模型使用 `0750` 或 `02770`。若仍失败，
+    改用满足能力要求的本地文件系统。
 - **`bot.lock` 拒绝启动**
   - **原因与处理**：见下节。
 - **config schema 校验失败**
   - **原因**：`config/*.json` 不合法。
   - **处理**：按报错字段修正；mood 权重和必须恰好 100、天气/时段倍率不得超过 100，
     贴纸最多 5 包。
+- **身份数据库缺失或校验失败**
+  - **原因**：尚未执行身份迁移，`storage.sqlite` 不可写，integrity/JSONB/schema/
+    migration lineage 不合法，行 codec 失败，或同一身份同时存在于黑白名单。
+  - **处理**：保持 Bot 停止，按[身份存储迁移](#身份存储迁移)完成或回滚；从同一一致性
+    备份恢复主库与 sidecar，修正目录协作组权限后再启动。不要创建空库或删除失败行。
 - **两份 state 副本均无效**
   - **原因**：部署了 schema 变更但没迁移数据。
   - **处理**：按

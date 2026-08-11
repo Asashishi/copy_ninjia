@@ -11,13 +11,16 @@
  * 落盘线程，只由主线程启动这一个（若每个线程都自建落盘线程，多个实例按
  * 字节偏移并发追加同一个日志文件会互相踩踏写坏文件）。这里只是门面：主线程
  * 下 error 日志经 relayLogMessage 转投给它；Worker 线程里的 logger 处于「转发模式」：
- * error 日志经单批 ACK、无界待发送 FIFO 的 ForwardedLogBatch 通道回主线程，由拥有该 Worker
+ * error 日志经单批 ACK、有消息数与载荷字节硬顶的 ForwardedLogBatch 通道回主线程，由拥有该 Worker
  * 的主线程模块（见 aiChat/workerBridge.ts 与 antiRaid/workerBridge.ts 的 onEvent）调用 relayLogMessage 转投唯一的
  * 落盘线程。
  */
 
 import { relayLogMessage } from "./diskIO";
-import { forwardedLogQueue } from "../cache/perThread/logger";
+import {
+  forwardedLogDropState,
+  forwardedLogQueue,
+} from "../cache/perThread/logger";
 import type {
   ForwardedLogBatch,
   ForwardedLogBatchAccepted,
@@ -32,6 +35,8 @@ import {
 } from "../cache/perThread/config";
 import { LOGGER_UNSERIALIZABLE_VALUE } from "../consts/logger";
 import type { AcknowledgedBatch } from "../libs/acknowledgedBatchQueue";
+import { jsonSerializedBytes } from "../libs/jsonBytes";
+import { saturatingSafeIntegerAdd } from "../libs/saturatingNumber";
 import type { AgentDeploymentConfig } from "../types/config";
 
 declare const self: Worker;
@@ -419,9 +424,42 @@ function pumpForwardedLogs(): boolean {
   }
 }
 
-/** Worker error 日志进入无损转发队列；主线程不调用这条路径。 */
+/** 主线程重新消费后，把 Worker 侧整段溢出收敛为一条可落盘的普通日志。 */
+function enqueueForwardedLogDropSummary(): void {
+  const dropState: typeof forwardedLogDropState.current =
+    forwardedLogDropState.current;
+  const droppedMessages: number = dropState.droppedMessages;
+  if (droppedMessages === 0) return;
+  const summary: LogMessage = {
+    timestamp: Date.now(),
+    level: "error",
+    args: [
+      `[logger] dropped ${droppedMessages} Worker error log(s) totaling ` +
+      `${dropState.droppedSerializedBytes} serialized byte(s) after ` +
+      "the forwarding queue reached its hard limits.",
+    ],
+  };
+  if (!forwardedLogQueue.enqueue(summary, jsonSerializedBytes(summary))) return;
+  dropState.droppedMessages = 0;
+  dropState.droppedSerializedBytes = 0;
+}
+
+/** Worker error 日志进入有界转发队列；主线程不调用这条路径。 */
 function forwardWorkerLog(message: LogMessage): void {
-  forwardedLogQueue.enqueue(message);
+  enqueueForwardedLogDropSummary();
+  const serializedBytes: number = jsonSerializedBytes(message);
+  if (!forwardedLogQueue.enqueue(message, serializedBytes)) {
+    const dropState: typeof forwardedLogDropState.current =
+      forwardedLogDropState.current;
+    dropState.droppedMessages = saturatingSafeIntegerAdd(
+      dropState.droppedMessages,
+      1
+    );
+    dropState.droppedSerializedBytes = saturatingSafeIntegerAdd(
+      dropState.droppedSerializedBytes,
+      serializedBytes
+    );
+  }
   pumpForwardedLogs();
 }
 
@@ -438,6 +476,7 @@ export function acceptForwardedLogBatch(message: unknown): boolean {
     typeof accepted.__logBatchAccepted === "number" &&
     forwardedLogQueue.acknowledge(accepted.__logBatchAccepted)
   ) {
+    enqueueForwardedLogDropSummary();
     pumpForwardedLogs();
   }
   return true;
@@ -465,7 +504,7 @@ function emit(level: LogLevel, args: unknown[]): void {
   if (isMainThread) {
     relayLogMessage(message);
   } else {
-    // 转发模式：先进入单批 ACK、无界待发送 FIFO，再由主线程转投落盘线程。
+    // 转发模式：先进入单批 ACK、有界待发送 FIFO，再由主线程转投落盘线程。
     forwardWorkerLog(message);
   }
 }

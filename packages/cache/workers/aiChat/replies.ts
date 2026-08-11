@@ -26,7 +26,7 @@ export const replyGenerations: Map<number, number> = new Map();
  * 回复 epoch 的单调分配器；Worker 重建时从零开始。测试隔离的 cache reset 刻意
  * 不回退它，防止 reset 前尚未回调的异步工作与 reset 后的新工作复用同一个 epoch。
  */
-export const replyGenerationCounter: { current: number } = { current: 0 };
+const replyGenerationCounter: { current: number } = { current: 0 };
 /** 每群最近一次限频提示时刻；周期 sweep 删除过期项，Worker 重建后清空。 */
 export const rateLimitNoticeTimes: Map<number, number> = new Map();
 /** 每群长窗口触发时刻队列；周期 sweep 删除过期项，长度受窗口请求上限约束。 */

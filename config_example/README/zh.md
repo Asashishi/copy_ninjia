@@ -15,8 +15,8 @@ cp -n config_example/*.json config/
 
 不要使用会覆盖已有文件的复制命令，也不要把 `config_example/` 当作部署配置的备份。
 `config/` 中包含凭据，建议只允许服务账号读取。配置在进程内不会热重载，手工修改后
-必须重启；`whitelist.json` 由 `/white` 和 `/permission` 命令原子改写，进程运行时不要
-再从外部同时编辑它。
+必须重启。白名单、黑名单和待完成处置不属于部署配置，统一保存在运行时数据根的
+`database/storage.sqlite`，只通过命令和显式迁移脚本修改。
 
 所有 JSON 都按严格 schema 解析：文件只要存在，未知字段、拼错的字段、错误类型、
 非法枚举或越界值都会在连接 Telegram 和启动 Worker 前导致启动失败，不会静默修正、
@@ -27,8 +27,6 @@ cp -n config_example/*.json config/
 | 文件 | 配置内容 | 缺失时的行为 |
 | --- | --- | --- |
 | `telegram.json` | Telegram Bot token 与唯一超级管理员 | 始终拒绝启动 |
-| `whitelist.json` | 白名单身份及逐项权限 | 始终拒绝启动 |
-| `blocklist.json` | 启动时加载的静态黑名单 | 始终拒绝启动 |
 | `agent.json` | 各项 AI 能力自己的 provider、凭据、端点和模型 | 由能力决定，见下文 |
 | `stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；若已有群启用则拒绝启动 |
 | `reactions.json` | AI 文本情绪到 Telegram reaction 的候选词 | AI 对话不能启用；若已有群启用则拒绝启动 |
@@ -49,7 +47,7 @@ AI 对话还依赖 `prompt/persona.md`，日语翻译依赖项目根目录下的
 
 - `bot_token`：BotFather 发放的非空 Bot API token，属于敏感凭据。
 - `super_admin_user_id`：唯一超级管理员的正安全整数 Telegram 用户 ID，不是用户名。
-  该身份天然拥有全部可授予权限，不需要也不应再写入 `whitelist.json`。
+  该身份天然拥有全部可授予权限，不需要也不应再写入 SQLite 白名单表。
 
 ## `agent.json`
 
@@ -92,37 +90,14 @@ OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provid
 后续媒体仍可再探测。普通 Google/OpenAI HTTP 请求最多在首次失败后重试五次，配置
 修改或 Worker/进程重建后会重新探测。
 
-## `whitelist.json`
+## 身份策略不在 `config/`
 
-顶层键是 Telegram 身份 ID 的十进制字符串：正数表示用户，负数表示频道身份；值是
-该身份的权限覆盖对象。权限字段可以省略，省略时使用默认值。空对象 `{}` 仍表示身份
-在白名单内，并默认绕过广告检测和防刷屏，但不获得管理命令权限。
-
-| 权限键 | 为 `true` 时允许 |
-| --- | --- |
-| `isCanMute` | 使用 `/mute` |
-| `isCanUnMute` | 使用 `/unmute` |
-| `isCanBlock` | 使用 `/block` 写入永久黑名单并在托管群封禁 |
-| `isCanUnBlock` | 使用 `/unblock` 移出永久黑名单并解除封禁 |
-| `isCanSwitchMood` | 使用 `/switch_mood` 重抽 AI 心情 |
-| `isCanBypassAdDetection` | 绕过广告检测和自动处置；默认 `true` |
-| `isCanBypassFloodControl` | 绕过防刷屏计数和自动禁言；默认 `true` |
-| `isCanControllAIPermission` | 使用 `/ai_chat enable\|disable` |
-| `isCanControllAdDetectPermission` | 使用 `/ad_detect enable\|disable` |
-| `isCanControllFloodControlPermission` | 使用 `/flood_control enable\|disable` |
-| `isCanControllJATranslatePermission` | 使用 `/ja_copy enable\|disable` |
-| `isCanControllAntiRaidPermission` | 使用 `/antiraid enable\|disable` |
-
-字段名中的 `Controll` 是当前 schema 的固定拼写，不能自行改成 `Control`。除上面两个
-bypass 字段默认 `true` 外，其余权限默认 `false`。超级管理员权限来自
-`telegram.json`，不受这里的条目影响。
-
-## `blocklist.json`
-
-`blockedIds` 是静态封禁身份数组。正安全整数表示用户，负安全整数表示频道身份；零、
-小数、重复值和超出安全整数范围的值均非法。静态黑名单不能包含超级管理员或任何
-白名单身份，否则会因安全边界冲突拒绝启动。`/block` 维护的运行时永久黑名单另存于
-`memory/blocklist/`，不要把两者当成同一份文件。
+白名单、黑名单和待完成处置的权威源是运行时数据根下的
+`database/storage.sqlite`。`/white`、`/permission`、`/block` 与 `/unblock` 通过
+Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限键与默认值以
+`/permission help` 为准，数据库 schema 非法、版本不匹配或两张名单存在交集都会在
+联网前拒绝启动。旧 JSON 部署按 [运维文档](../../docs/cn/07-operations.md) 的一次性
+迁移流程处理，不要把旧文件复制回 `config/`。
 
 ## `stickers.json`
 

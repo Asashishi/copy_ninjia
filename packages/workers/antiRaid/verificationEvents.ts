@@ -2,6 +2,7 @@ import { logger } from "../../infra/logger";
 import { answerCallbackQuery, joinVerificationApi } from "../../infra/telegram";
 import { lockdownEntries } from "../../cache/workers/antiRaid/lockdown";
 import {
+  deferredVerificationRecords,
   threadCommentConfirmations,
   verificationEntries,
 } from "../../cache/workers/antiRaid/verification";
@@ -59,6 +60,9 @@ export function handleJoinEvent({
 }: HandleJoinEventParams): void {
   const { chatId, member }: NewMemberMessage = message;
   const key: string = verificationKey(chatId, member.id);
+  // 本进程预算已耗尽的终态只能由下一次完整进程启动恢复；同 key 再入群不能
+  // 创建新状态、重置主线程预算或重新武装 Telegram 副作用。
+  if (deferredVerificationRecords.has(key)) return;
   const entryState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
   const actorId: number | undefined = message.actorId;

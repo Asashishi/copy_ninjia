@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2181_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.94%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2225_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.60%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 2181 tests passed, 216 test files, 72,414 expect() calls, 94.74% function coverage, 95.94% line coverage" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 2225 tests passed, 228 test files, 32,683 expect() calls, 94.40% function coverage, 95.60% line coverage" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -158,7 +158,7 @@ Choose a target by replying to their message or providing `@username`:
 
 - **Username lookup depends on the bot having observed the account previously**; rename, username removal, or username reassignment immediately invalidates the old alias. For destructive operations such as `/block` and `/unblock`, prefer replying to the target or passing the user id directly (those two commands additionally accept a bare id) rather than relying on historical usernames.
 - **When an anonymous administrator speaks as the current group, that group identity is the copy target**, so copy modes can obtain the group avatar and reproduce that “skin”; `/block` rejects the current group identity as a member target.
-- **Ordinary users have a 5-minute cooldown on copy-family commands**; identities inside the allowlist boundary are exempt — entries in `config/whitelist.json`, plus `SUPER_ADMIN_USER_ID`, which is always inside it.
+- **Ordinary users have a 5-minute cooldown on copy-family commands**; identities inside the allowlist boundary are exempt — entries in the SQLite allowlist table, plus `SUPER_ADMIN_USER_ID`, which is always inside it.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -191,7 +191,7 @@ Choose a target by replying to their message or providing `@username`:
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code> (PM only)</td><td>Start or finish a relay session from the bot's private chat to the target group</td></tr>
 </table>
 
-> **How to read the permission column**: rows naming an `isCanXxx` key are authorized by that key, and the `SUPER_ADMIN_USER_ID` identity itself always holds **every** permission key — so it can use all of them without an entry in `whitelist.json`. Rows naming `SUPER_ADMIN_USER_ID` are the ones that depend on the identity alone and cannot be granted through the allowlist.
+> **How to read the permission column**: rows naming an `isCanXxx` key are authorized by that key, and the `SUPER_ADMIN_USER_ID` identity itself always holds **every** permission key — so it can use all of them without an entry in the SQLite allowlist table. Rows naming `SUPER_ADMIN_USER_ID` are the ones that depend on the identity alone and cannot be granted through the allowlist.
 
 ### Behavior details
 
@@ -262,7 +262,7 @@ must not overwrite existing deployment files.
 | `config/telegram.json` / `super_admin_user_id` | ✅ | Positive safe-integer user ID for the super administrator |
 | capabilities under `config/agent.json` | Per feature | Independent provider, API key, endpoint, and model |
 
-`telegram.json`, `whitelist.json`, and `blocklist.json` load strictly before network access. Other deployment inputs are validated by feature; missing or invalid prerequisites reject that feature, and reject startup when it is already enabled.
+`telegram.json` loads strictly before network access. The Disk I/O Worker strictly restores allowlist, blocklist, and pending-removal state from `database/storage.sqlite`; an invalid schema, version, or row aborts startup. Other deployment inputs are validated by feature; missing or invalid prerequisites reject that feature, and reject startup when it is already enabled.
 
 AI providers, API keys, `base_url` values, and models are configured independently per
 capability in [`config/agent.json`](../../config_example/agent.json). Changes require a restart;
@@ -271,7 +271,19 @@ runtime model-switching commands no longer exist.
 > [!IMPORTANT]
 > There is one exception: if a feature is still switched on in `state.json` while its key or configuration was removed, that switch is something an administrator deliberately turned on, so the process refuses to start naming the chat ids and what is missing instead of quietly doing nothing. Disable it first, or restore the prerequisite.
 
-To relocate runtime files, set `COPY_NINJIA_DATA_ROOT` in the process environment. Then `state.json`, `bot.lock`, `logs/`, and `memory/` are derived from it; `config/`, the persona, and `g-auth.json` remain under the project root.
+To relocate runtime files, set `COPY_NINJIA_DATA_ROOT` in the process environment. Then `state.json`, `bot.lock`, `logs/`, `memory/`, and `database/` are derived from it; `config/`, the persona, and `g-auth.json` remain under the project root.
+
+Before the first startup, explicitly initialize identity storage under the same account and `COPY_NINJIA_DATA_ROOT` environment as the service. The two temporary JSON files are one-time migration inputs and are deleted after success; the script refuses to overwrite an existing target database:
+
+```bash
+test ! -e config/whitelist.json
+test ! -e config/blocklist.json
+printf '{}\n' > config/whitelist.json
+printf '{"blockedIds":[]}\n' > config/blocklist.json
+bun run migrate:identity-storage --apply
+```
+
+For legacy deployments and schema-v2 upgrades, see [07 Operations: Identity Storage Migration](07-operations.md#identity-storage-migration).
 
 For Japanese translation, save the Google Cloud service account key as `g-auth.json` in the project root. That file is ignored by Git.
 
@@ -296,7 +308,7 @@ After the bot first joins a group, `SUPER_ADMIN_USER_ID` executes:
 /ai_chat enable
 ```
 
-> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 786 source lines containing Chinese string or template literals across 76 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](06-modification-guide.md).
+> **On language**: user-facing copy is Simplified Chinese only, and this repository does not maintain i18n. Replies are assembled from fragments while computing Telegram `entities` offsets, and Chinese action commands such as `/咬` depend on the Chinese word form itself — a message catalogue cannot carry that. If you need another language, fork it and rewrite the copy yourself (roughly 801 source lines containing Chinese string or template literals across 78 files, plus `prompt/persona.md` and `config/*.json`); the reasoning and the how-to are in [06 Modification Recipes](06-modification-guide.md).
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 

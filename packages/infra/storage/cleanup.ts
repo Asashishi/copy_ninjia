@@ -2,6 +2,7 @@ import { readFile, readdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
+import { isErrno } from "../../libs/errno";
 import { logger } from "../logger";
 import { readLinuxProcessIdentity } from "./instanceLock";
 import type { ProcessIdentity } from "../../types/storage";
@@ -12,10 +13,6 @@ export interface StorageCleanupOptions {
   readDirectory?: (path: string) => Promise<string[]>;
   removeFile?: (path: string) => Promise<void>;
   isInactiveLockOwner?: (path: string) => Promise<boolean>;
-}
-
-function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && error.code === code;
 }
 
 /**

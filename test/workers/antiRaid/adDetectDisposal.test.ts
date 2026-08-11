@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { AdMessageBundle } from "../../../packages/types/antiRaid/adDetect";
+import type { TelegramWorkerTemporaryMessageResult } from "../../../packages/types/telegramWorker";
 
 const deleteMessage = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const deleteMessages = mock(async (..._args: unknown[]): Promise<boolean> => true);
-const deleteMessageAfter = mock((..._args: unknown[]): void => {});
-const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 555);
+const sendTemporaryMessageFromMain = mock(async (
+  ..._args: unknown[]
+): Promise<TelegramWorkerTemporaryMessageResult | undefined> => ({
+  messageId: 555,
+  sentAt: 1_500,
+}));
 const errorLogs: string[] = [];
 
 mock.module("../../../packages/infra/logger", () => ({
@@ -19,24 +24,49 @@ mock.module("../../../packages/infra/logger", () => ({
 mock.module("../../../packages/infra/telegram", () => ({
   deleteMessage,
   deleteMessages,
-  deleteMessageAfter,
-  sendMessage,
   joinVerificationApi: { kind: "guard-api" },
 }));
+mock.module("../../../packages/infra/telegram/workerClient", () => ({
+  sendTemporaryMessageFromMain,
+}));
 
-const { disposeAdSender } = await import("../../../packages/workers/antiRaid/adDetect/disposal");
-const { adDetectPublishHolder } = await import("../../../packages/cache/workers/antiRaid/adDetect");
+const {
+  deleteReferencedAdMessages,
+  disposeAdSender,
+  formatReferencedAdWarning,
+  deleteStaleReferencedAdWarning,
+  warnReferencedAdSender,
+} = await import("../../../packages/workers/antiRaid/adDetect/disposal");
+const { adDetectPublishHolder, inFlightReferencedAdCleanupTasks } =
+  await import("../../../packages/cache/workers/antiRaid/adDetect");
+const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
 
 function bundle(): AdMessageBundle {
   return {
     chatId: -1001,
     senderId: 7,
     label: "@spammer",
+    meta: { firstName: "Spammer", lastName: "", username: "spammer" },
     isChannel: false,
     justJoined: false,
     entries: [
-      { messageId: 11, seq: 1, text: "加我", receivedAt: 1_000, replyTo: "在吗" },
-      { messageId: 12, seq: 2, text: "微信 xxx", receivedAt: 1_100 },
+      {
+        messageId: 11,
+        seq: 1,
+        text: "加我",
+        directText: "加我",
+        receivedAt: 1_000,
+        withinReferencedWarning: false,
+        replyTo: "在吗",
+      },
+      {
+        messageId: 12,
+        seq: 2,
+        text: "微信 xxx",
+        directText: "微信 xxx",
+        receivedAt: 1_100,
+        withinReferencedWarning: false,
+      },
     ],
     pendingDeleteIds: [],
     nextSeq: 3,
@@ -48,9 +78,13 @@ beforeEach(() => {
   errorLogs.length = 0;
   deleteMessage.mockClear();
   deleteMessages.mockClear();
-  deleteMessageAfter.mockClear();
-  sendMessage.mockClear();
+  sendTemporaryMessageFromMain.mockClear();
+  sendTemporaryMessageFromMain.mockImplementation(async (): Promise<TelegramWorkerTemporaryMessageResult> => ({
+    messageId: 555,
+    sentAt: 1_500,
+  }));
   adDetectPublishHolder.current = null;
+  inFlightReferencedAdCleanupTasks.clear();
 });
 
 describe("广告处置副作用", () => {
@@ -66,6 +100,7 @@ describe("广告处置副作用", () => {
       senderId: 7,
       isChannel: false,
       label: "@spammer",
+      meta: { firstName: "Spammer", lastName: "", username: "spammer" },
       reason: "引流加微信",
       // 判定依据的整串原样回投，供主线程写进命中样本；只给人看的引用/回复
       // 上下文跟着各自那条消息走，判定文本里从来没有它们。
@@ -80,8 +115,7 @@ describe("广告处置副作用", () => {
     expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12]);
     // 播报的文案要断言「在所有盯着的群里一起封掉了」，而此刻一个群都还没登记：
     // 谁知道结果谁播报，因此这一步不在本线程做（见 antiRaid/adDetect.ts）。
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(deleteMessageAfter).not.toHaveBeenCalled();
+    expect(sendTemporaryMessageFromMain).not.toHaveBeenCalled();
   });
 
   test("样本只记模型真正读过的那一份，删除取判定依据与现场的并集", async () => {
@@ -91,8 +125,22 @@ describe("广告处置副作用", () => {
     // 判定往返期间发生的两件事：同一个人又发了一条（并进活对象），而最早那条
     // 被单 key 条数/字符预算挤出了当前上下文。
     live.entries = [
-      { messageId: 12, seq: 2, text: "微信 xxx", receivedAt: 1_100 },
-      { messageId: 13, seq: 3, text: "带你上岸", receivedAt: 1_200 },
+      {
+        messageId: 12,
+        seq: 2,
+        text: "微信 xxx",
+        directText: "微信 xxx",
+        receivedAt: 1_100,
+        withinReferencedWarning: false,
+      },
+      {
+        messageId: 13,
+        seq: 3,
+        text: "带你上岸",
+        directText: "带你上岸",
+        receivedAt: 1_200,
+        withinReferencedWarning: false,
+      },
     ];
 
     const events: AdDetectedEvent[] = [];
@@ -123,7 +171,10 @@ describe("广告处置副作用", () => {
   test("并集超过接口单次上限时分片删除，不让整批被拒", async () => {
     const live: AdMessageBundle = bundle();
     // 爆发式刷屏攒出的待删 id 可以远超 100（见 AD_DETECT_MAX_PENDING_DELETE_IDS）。
-    live.pendingDeleteIds = Array.from({ length: 150 }, (_value, index) => 1_000 + index);
+    live.pendingDeleteIds = Array.from(
+      { length: 150 },
+      (_value, index): number => 1_000 + index
+    );
 
     adDetectPublishHolder.current = (): void => {};
     await disposeAdSender({ bundle: live, judged: live.entries, verdict: { isAd: true, reason: "引流" } });
@@ -141,6 +192,96 @@ describe("广告处置副作用", () => {
     // 那一串确实是广告，删掉没问题。
     expect(deleteMessages).toHaveBeenCalledTimes(1);
     // 拉黑与各群封禁永远不会发生，跟着结果走的播报自然也不会有。
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendTemporaryMessageFromMain).not.toHaveBeenCalled();
+  });
+
+  test("引用类广告第一次只公开警告并清消息，文案不泄露五分钟升级窗口", async () => {
+    const live: AdMessageBundle = bundle();
+    const result: TelegramWorkerTemporaryMessageResult | undefined =
+      await warnReferencedAdSender(live);
+    deleteReferencedAdMessages({
+      bundle: live,
+      judged: live.entries,
+      messageIdThrough: result?.messageId ?? Number.NEGATIVE_INFINITY,
+    });
+
+    const warning: string = formatReferencedAdWarning("@spammer");
+    expect(warning).toContain("不要回复、引用或转发广告相关内容");
+    expect(warning).toContain("连这点都记不住吗，杂鱼♡");
+    expect(warning).not.toContain("五分钟");
+    expect(warning).not.toContain("5 分钟");
+    expect(sendTemporaryMessageFromMain).toHaveBeenCalledWith({
+      chatId: -1001,
+      text: warning,
+      deleteAfterMs: KICK_NOTICE_AUTO_DELETE_MS,
+    });
+    expect(result).toEqual({ messageId: 555, sentAt: 1_500 });
+    expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12]);
+    expect(adDetectPublishHolder.current).toBeNull();
+  });
+
+  test("公开警告发送失败时不上报成功，消息清理由队列按当前状态决定", async () => {
+    sendTemporaryMessageFromMain.mockImplementationOnce(
+      async (): Promise<undefined> => undefined
+    );
+
+    expect(await warnReferencedAdSender(bundle())).toBeUndefined();
+    expect(deleteMessages).not.toHaveBeenCalled();
+  });
+
+  test("第一次清理按群内消息顺序截断，不误删发送回执落定前的警告后回复", () => {
+    const live: AdMessageBundle = bundle();
+    live.entries.push({
+      messageId: 556,
+      seq: 3,
+      text: "警告后回复",
+      directText: "警告后回复",
+      // 本机时间早于发送回执也不影响 Telegram 群内的权威消息顺序。
+      receivedAt: 1_400,
+      withinReferencedWarning: true,
+    });
+    live.pendingDeleteIds = [10, 557];
+
+    deleteReferencedAdMessages({
+      bundle: live,
+      judged: live.entries.slice(0, 2),
+      messageIdThrough: 555,
+    });
+
+    expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12, 10]);
+  });
+
+  test("慢删除在独立有界集合结算，不扣住警告发送或分类 key", async () => {
+    let resolveDelete!: (deleted: boolean) => void;
+    deleteMessages.mockImplementationOnce((): Promise<boolean> =>
+      new Promise<boolean>((resolve: (deleted: boolean) => void): void => {
+        resolveDelete = resolve;
+      }));
+    const live: AdMessageBundle = bundle();
+
+    deleteReferencedAdMessages({
+      bundle: live,
+      judged: live.entries,
+      messageIdThrough: 555,
+    });
+
+    expect(inFlightReferencedAdCleanupTasks.size).toBe(1);
+    expect(await warnReferencedAdSender(live)).toEqual({
+      messageId: 555,
+      sentAt: 1_500,
+    });
+    resolveDelete(true);
+    await Bun.sleep(0);
+    expect(inFlightReferencedAdCleanupTasks.size).toBe(0);
+  });
+
+  test("迟到警告可立即撤回，不改动广告消息", () => {
+    deleteStaleReferencedAdWarning(-1001, 555);
+    expect(deleteMessage).toHaveBeenCalledWith(
+      -1001,
+      555,
+      { kind: "guard-api" }
+    );
+    expect(deleteMessages).not.toHaveBeenCalled();
   });
 });

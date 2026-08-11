@@ -43,7 +43,7 @@ export function isCanonicalBase64(encoded: string): boolean {
 }
 
 /** 字节流的起始签名是否与声明的 MIME 一致；防止拿到挂着图片 MIME 的其它载荷。 */
-export function hasExpectedImageSignature(bytes: Uint8Array, mimeType: GeneratedChatImage["mimeType"]): boolean {
+function hasExpectedImageSignature(bytes: Uint8Array, mimeType: GeneratedChatImage["mimeType"]): boolean {
   if (mimeType === "image/png") {
     return bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((value: number, index: number): boolean => bytes[index] === value);
   }

@@ -4,13 +4,14 @@
  * 而是覆写文件结尾的「\n}」两字节、按位置追加，写入量只与本批条数有关，
  * 与文件大小无关。原是 loggerWorker.ts 专属逻辑，现抽成通用机制，调用方
  * 是 diskIO/logFiles.ts（日志）、diskIO/snapshotFiles.ts 的
- * appendLuckEntries（每日运势）、diskIO/verificationFiles.ts（待验证）与
- * diskIO/blocklistFile.ts（黑名单）；调用方各自负责 key/value 怎么序列化、
+ * appendLuckEntries（每日运势）、diskIO/verificationFiles.ts（待验证）、
+ * diskIO/joinLogFiles.ts（入群日志）与 diskIO/adSampleFile.ts（广告样本）；
+ * 调用方各自负责 key/value 怎么序列化、
  * 多久 flush 一次、保留策略等领域逻辑，这里只管字节层面的
  * 打开、探测与追加；截断修复只供调用方显式选择的诊断材料和日志使用。
  *
  * 两层 API：openAppendOnlyFile/appendToAppendOnlyFile 直接按完整路径操作，
- * 供黑名单这类固定单文件使用；openDayFile/appendToDayFile 是它们在
+ * 供入群日志等固定路径文件使用；openDayFile/appendToDayFile 是它们在
  * `<dir>/<day>.json` 命名约定上的薄封装，供按天滚动的三个领域使用。
  */
 
@@ -19,6 +20,7 @@ import { join } from "node:path";
 import type { AppendOnlyFileState, DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
+import { isPlainRecord } from "../../libs/record";
 
 // serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出是多行形态
 // （indent 为 0 时输出单行，掐头去尾会切进内容本身）；启动即断言，不让
@@ -54,12 +56,8 @@ export class AppendOnlyFileFormatError extends Error {
 const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }: SyncWriteRequest): number =>
   writeSync(fd, buffer, offset, length, position);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 /** write(2) 允许成功但只写一部分；只有整段 Buffer 落下才算 append 成功。 */
-export function writeBufferFully(
+function writeBufferFully(
   fd: number,
   buffer: Buffer,
   { position, write = nodeWriteBuffer }: WriteBufferFullyParams
@@ -124,7 +122,7 @@ export function openAppendOnlyFile(path: string, mode?: number, repair: boolean 
       throw new AppendOnlyFileFormatError(path, "could not be parsed or repaired.");
     }
     const repairedParsed: unknown = JSON.parse(repaired);
-    if (!isRecord(repairedParsed)) {
+    if (!isPlainRecord(repairedParsed)) {
       throw new AppendOnlyFileFormatError(path, "must contain a top-level JSON object.");
     }
     atomicRewrite(path, repaired, mode);
@@ -132,7 +130,7 @@ export function openAppendOnlyFile(path: string, mode?: number, repair: boolean 
     state.empty = Object.keys(repairedParsed).length === 0;
     return state;
   }
-  if (!isRecord(parsed)) {
+  if (!isPlainRecord(parsed)) {
     throw new AppendOnlyFileFormatError(path, "must contain a top-level JSON object.");
   }
   if (Object.keys(parsed).length === 0) return state;
@@ -145,9 +143,8 @@ export function openAppendOnlyFile(path: string, mode?: number, repair: boolean 
     }
     // 只规范排版，不承诺保留原文件的键序：JSON.parse 建出来的普通对象已经把
     // 「整数索引形态」的键提到最前，源文本的顺序在这一步就没了。这条路径只在
-    // 文件被手工编辑过（结尾形态不符）时触发，属异常态的一次性归一；黑名单
-    // 承诺的 id 升序由 blocklistFile.ts 的 rewriteBlocklist 重新建立，那边为此
-    // 刻意手拼 JSON 文本而不走这里的 stringify。
+    // 文件被手工编辑过（结尾形态不符）时触发，属异常态的一次性归一；调用方
+    // 不得把这条修复路径当作键顺序稳定性保证。
     atomicRewrite(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT), mode);
   }
   state.size = statSync(path).size;

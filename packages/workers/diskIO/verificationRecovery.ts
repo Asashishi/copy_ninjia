@@ -19,6 +19,7 @@ import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { invalidInput } from "../../libs/inputValidation";
 import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type { VerificationSnapshot } from "../../types/antiRaid";
+import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification";
 import { openDayFile } from "./appendOnlyDayFile";
 import {
   decodeVerificationDay,
@@ -42,6 +43,18 @@ function latestPriorVerificationDay(day: string, dir: string): string | undefine
     latest = candidate;
   }
   return latest;
+}
+
+function assertRecoveredVerificationCapacity(
+  records: ReadonlyMap<string, VerificationSnapshot>,
+  sourcePath: string
+): void {
+  if (records.size <= VERIFICATION_RECORD_CAPACITY) return;
+  return invalidInput(
+    sourcePath,
+    "$",
+    `a JSON object with at most ${VERIFICATION_RECORD_CAPACITY} active verification records`
+  );
 }
 
 /** 专用目录内的 JSON 必须使用规范日期文件名；非 JSON 诊断资产保持不动。 */
@@ -147,6 +160,11 @@ export function recoverVerificationDay(
       }
     }
 
+    assertRecoveredVerificationCapacity(
+      merged,
+      existsSync(path) ? path : priorPath
+    );
+
     for (const [key, snapshot] of merged) {
       verificationWorkerCache.set(key, snapshot);
     }
@@ -171,6 +189,7 @@ export function recoverVerificationDay(
   for (const [key, value] of decodeVerificationDay(path, content)) {
     if (value !== null) recovered.set(key, value);
   }
+  assertRecoveredVerificationCapacity(recovered, path);
 
   for (const [key, snapshot] of recovered) {
     verificationWorkerCache.set(key, snapshot);

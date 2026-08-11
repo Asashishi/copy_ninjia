@@ -40,12 +40,13 @@ Bot identity とスーパー管理者は `config/telegram.json` に置きます�
   - BotFather が発行した token。
 - **`super_admin_user_id`**（必須）
   - スーパー管理者を表す 1 つの十進ユーザー ID。この identity 自体が
-    `whitelist.json` で付与できる**すべて**の個別 permission を持つため、
-    `whitelist.json` に entry を書く必要は**ありません**。常に allowlist 境界の
+    allowlist で付与できる**すべて**の個別 permission を持つため、
+    SQLite allowlist table に row を書く必要は**ありません**。常に allowlist 境界の
     内側にもいるので、copy cooldown 免除、Bot 認証の代行保証、自動処分からの保護も
     受け、`/block`、`/mute`、`/batch_kick` の対象にもできません。
-  - identity だけで決まり `whitelist.json` では付与できない操作が 5 つあります：
-    `/init`、`/batch_kick`、`/permission` の変更操作、`/white`、`/send`。
+  - `/init`、`/batch_kick`、`/permission` の変更操作、`/white disable`、`/send` は
+    identity だけで決まります。`isCanWhiteOther` は他 identity の default permission での
+    追加だけを委任し、member を削除できません。
   - allowlist identity は `/permission query` で自身の permission を照会し、
     `/permission help` で説明を確認できます。スーパー管理者の `query` は全開の
     view を返します。
@@ -67,19 +68,6 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
   - **内容**：Bot API token と唯一のスーパー管理者 user ID。
   - **検証**：[`packages/config/telegram.ts`](../../packages/config/telegram.ts)。network
     接続前に厳密ロードし、欠落、未知 field、空 token、不正な ID は startup を拒否します。
-- **`config/whitelist.json`**（[example](../../config_example/whitelist.json)）
-  - **内容**：ユーザー／チャンネル allowlist と個別 permission。membership 自体も
-    copy cooldown 免除、Bot 認証の代行保証、自動処分からの保護を与えます。
-    スーパー管理者はここに書く必要も書くべきでもありません。permission は
-    identity 自体から来るため、書いた entry は二度と読まれません。
-  - **検証**：
-    [`packages/config/whitelist.ts`](../../packages/config/whitelist.ts)。network
-    接続前に厳密ロードし、欠落・破損時は起動を拒否します。
-- **`config/blocklist.json`**（[example](../../config_example/blocklist.json)）
-  - **内容**：deployment が手動管理する静的ユーザー／チャンネル blocklist ID。
-  - **検証**：
-    [`packages/config/blocklist.ts`](../../packages/config/blocklist.ts)。network
-    接続前に厳密ロードし、動的な `memory/` layer と結合します。
 - **`config/stickers.json`**（[example](../../config_example/stickers.json)）
   - **内容**：AI が使えるスタンプパック、最大 5 個。
   - **検証**：[`packages/config/stickers.ts`](../../packages/config/stickers.ts)。
@@ -115,10 +103,29 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     （後者は `$.agent.media` を指す診断を 1 行記録）はどちらも以後 download しません。
     一時的な障害は回数に応じた backoff だけで、能力を恒久的に閉じることはありません。
 
-`whitelist.json` と `blocklist.json` は startup security boundary です。その他は feature
-単位で検証し、AI 雑談は補助設定と `agent.json` の会話能力、広告検出は sample と
-`agent.ad_detect`、日本語翻訳は `g-auth.json` を読みます。欠落は対応 toggle だけを
+allowlist、blocklist、未完了 removal は deployment JSON ではなく、runtime data root の
+`database/storage.sqlite` にあります。Disk I/O Worker は startup 時に SQLite integrity、
+migration lineage、schema version、JSONB row shape、policy の非重複を検証します。その他は
+feature 単位で検証し、日本語翻訳は `g-auth.json` を読みます。欠落は対応 toggle だけを
 拒否しますが、state 上ですでに有効なら startup を拒否します。修復後は再起動が必要です。
+
+### identity storage の初期化
+
+runtime は database 欠落を空 table と推測しません。新規 deployment は migration 専用の空 legacy
+input を用意し、target が存在しないことを確認して明示 migration します。
+
+```bash
+test ! -e config/whitelist.json
+test ! -e config/blocklist.json
+printf '{}\n' > config/whitelist.json
+printf '{"blockedIds":[]}\n' > config/blocklist.json
+bun run migrate:identity-storage --apply
+```
+
+script は `bot.lock` を取得し、owner/mode/SHA-256 inventory 付き外部 backup を残し、現行
+`database/storage.sqlite` を atomic publish して 2 つの temporary legacy file を削除します。
+既存 legacy deployment は空 file で上書きせず、[運用文書](07-operations.md#identity-storage-migration)
+に従って実データを migration してください。
 
 ### 2.1.0 からのアップグレード
 
@@ -128,7 +135,7 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
 `state.json.global.model` の runtime 選択はもう読みません。model 変更は停止中に該当能力を
 編集し、再起動して反映します。
 
-旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID を `whitelist.json` の key へ手動移行し、その環境変数を削除します。copy cooldown 免除、Bot 認証の代行保証、自動処分からの保護だけが必要なら値は空 object `{}` で構いません。旧 `/block` と `/unblock` の能力を維持するには `"isCanBlock": true` と `"isCanUnBlock": true` を明示し、その他は必要な permission だけ有効にします。スーパー管理者は移行不要です。permission は `config/telegram.json` の identity 自体から来るためで、旧構成で allowlist に載せていた場合もその entry はもう読まれないので放置して構いませんし、`/white <スーパー管理者 id> disable` で消しても構いません。allowlist identity は `/permission help` で全 key と説明を確認し、`/permission query` で default 適用後の自身の完全な permission を照会できます。`/white` と `/permission` の変更操作はこの file を atomic rewrite するため、runtime user には `config/` directory の write permission が必要です。その他の設定は read-only のままで構いません。
+旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、identity storage migration を実行します。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/telegram.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
 
 **例外として、機能が有効なままの場合は従来どおり起動を拒否します。** `state.json` の `true` は管理者が明確に有効化したものであり、これを黙って「何もしない」状態に格下げすると、グループからは Bot がある再起動を境に雑談・広告検出・翻訳をやめたようにしか見えません。そこで起動時に一度だけ照合します。いずれかのチャットで有効なままの任意機能は、資格情報と設定が揃っていなければならず、欠けていればチャット id と欠落項目を示して起動を拒否します（[`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts) を参照）。対処は前提を復旧するか、取り除く前に `/ai_chat disable`、`/ad_detect disable`、`/ja_copy disable` を実行することです。
 

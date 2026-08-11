@@ -12,25 +12,27 @@
  *
  * 本模块自身的错误一律 console.error（由进程控制台日志兜底）——它就是落盘终点，
  * 不能再指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是
- * 本模块不复用 libs/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）
+ * 本模块不复用 infra/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）
  * 的原因，需要一份独立的、只用 console 的自愈逻辑。
  * @see ../../docs/cn/04-invariants.md
  */
 
 import {
+  DISK_IO_REQUEST_CHANNELS,
   diskIOFlushBarrier,
   diskIORuntime,
   pendingFlushFailedDomains,
-  pendingJoinLogReads,
   pendingLoad,
-  pendingLuckSecrets,
 } from "../cache/main/diskIO";
 import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
 import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import {
   clearRuntimeRecoveryTimer,
   createDiskIOWorker,
+  rejectPendingDiskIORequests,
   requestJoinLogFromWorker,
+  requestIdentityPoliciesFromWorker,
+  requestBlocklistIdsFromWorker,
   requestLuckSecretFromWorker,
   stopWorkerAfterLoadFailure,
 } from "./diskIO/host";
@@ -56,12 +58,14 @@ import type {
   AdSampleDiskMessage,
   LogMessage,
   LuckAppendStalledReply,
+  IdentityStoragePersistedReply,
   VerificationPersistedReply,
 } from "../types/diskIO";
 import type {
   JoinLogRecord,
   LuckReceiptSecret,
 } from "../types/diskIO/storage";
+import type { IdentityPolicyRawReadResult } from "../types/identityStorage";
 
 const isMainThread: boolean = Bun.isMainThread;
 export interface DiskIOInitOptions {
@@ -106,6 +110,9 @@ export function initDiskIO({
   diskIORuntime.runtimeRecoveryTimeoutMs = nextRuntimeRecoveryTimeoutMs;
   diskIORuntime.maxPendingBusinessMessages = maxPendingBusinessMessages;
   diskIORuntime.fatalSignaled = false;
+  diskIORuntime.consecutiveDiagnosticWriteFailures = 0;
+  diskIORuntime.consecutiveDiagnosticRebuilds = 0;
+  diskIORuntime.diagnosticRecycleWorker = null;
   diskIORuntime.writable = false;
   diskIORuntime.worker = createDiskIOWorker();
   diskIORuntime.initialized = true;
@@ -186,9 +193,17 @@ export function onLuckAppendStalled(callback: (reply: LuckAppendStalledReply) =>
   diskIORuntime.luckAppendStalledListeners.push(callback);
 }
 
+/** 注册 SQLite 事务 ACK；身份缓存 owner 与待踢 outbox owner 各自只消费自己的 revision。 */
+export function onIdentityStoragePersisted(
+  callback: (reply: IdentityStoragePersistedReply) => void
+): void {
+  diskIORuntime.identityStoragePersistedListeners.push(callback);
+}
+
 /**
- * 把其它 Worker 线程转发来的 error 日志收入主线程无损 FIFO（logger.ts 的转发模式）。
- * DiskIO Worker 不可写、崩溃或同步拒收只会延后重投，不会让本函数拒收。
+ * 把其它 Worker 线程转发来的 error 日志交给主线程有界 FIFO（logger.ts 的转发模式）。
+ * DiskIO Worker 不可写、崩溃或同步拒收时延后重投；容量越界时释放原消息引用并
+ * 记入后续汇总，因此本函数仍返回已接管，让来源 Worker 可以释放原批。
  */
 export function relayLogMessage(message: LogMessage): boolean {
   // 进程尚未取得单实例锁、也未初始化唯一 DiskIO owner 时保持旧边界：只写
@@ -201,10 +216,11 @@ export function relayLogMessage(message: LogMessage): boolean {
 /**
  * 主线程 -> diskIOWorker：排队一条不进入业务恢复缓冲的旁路诊断（目前只有广告命中样本）。
  *
- * 与 postDiskIO 的差别是它进入独立无界 FIFO，不占 pendingBusinessMessages 的
- * 恢复预算，也绝不触发业务 fatal；Worker 代际失败后原批重发。样本文件自身仍是
+ * 与 postDiskIO 的差别是它进入独立有界 FIFO，不占 pendingBusinessMessages 的
+ * 恢复预算，也绝不触发业务 fatal；Worker 代际失败后原批重发，容量越界则记入
+ * 一条后续汇总。样本文件自身仍是
  * best effort 的人工素材，写盘失败不会拖垮权威状态，见 diskIO/adSampleFile.ts。
- * @returns 已收入进程内诊断 FIFO；调用方无需自行重试。
+ * @returns 已由有界诊断通道接管；调用方无需自行重试。
  */
 export function postDiskIODiagnostic(message: AdSampleDiskMessage): boolean {
   if (!diskIORuntime.initialized) return false;
@@ -287,8 +303,9 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
         luckDay: reply.luckDay,
         luckReceiptSecret: reply.luckReceiptSecret,
         verifications: reply.verifications,
-        blockedUsers: reply.blockedUsers,
         pendingBlockedRemovals: reply.pendingBlockedRemovals,
+        blocklistEntryCount: reply.blocklistEntryCount,
+        whitelistEntryCount: reply.whitelistEntryCount,
       });
     };
     const request: LoadRequest = { type: "load" };
@@ -353,6 +370,31 @@ export function readJoinLog({
   });
 }
 
+/** 黑白名单 LRU 冷缺失的唯一跨线程批量读取边界。 */
+export function readIdentityPolicies(
+  ids: readonly number[],
+  timeoutMs: number = LOAD_TIMEOUT_MS
+): Promise<IdentityPolicyRawReadResult> {
+  requirePositiveFinite(timeoutMs, "Identity policy read timeout");
+  const worker: Worker | null = diskIORuntime.worker;
+  if (!worker || !diskIORuntime.writable) {
+    return Promise.reject(new Error("Persistence Worker is unavailable; cannot read identity policies."));
+  }
+  return requestIdentityPoliciesFromWorker({ worker, ids, timeoutMs });
+}
+
+/** 群级补扫按需读取完整黑名单 ID；普通成员判定不得调用。 */
+export function readBlocklistIds(
+  timeoutMs: number = LOAD_TIMEOUT_MS
+): Promise<readonly number[]> {
+  requirePositiveFinite(timeoutMs, "Blocklist ID read timeout");
+  const worker: Worker | null = diskIORuntime.worker;
+  if (!worker || !diskIORuntime.writable) {
+    return Promise.reject(new Error("Persistence Worker is unavailable; cannot read blocklist IDs."));
+  }
+  return requestBlocklistIdsFromWorker(worker, timeoutMs);
+}
+
 /**
  * 要求 diskIOWorker 立即把所有 dirty 数据（含待验证增量）全部落盘，
  * 并等待完成。用于进程退出前的最后一刷。带超时兜底：
@@ -363,7 +405,10 @@ export function readJoinLog({
 export async function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   requirePositiveFinite(timeoutMs, "Disk I/O flush timeout");
   const deadline: number = performance.now() + timeoutMs;
-  while (diskIORuntime.diagnosticQueue.size > 0) {
+  while (
+    diskIORuntime.diagnosticQueue.size > 0 ||
+    diskIORuntime.diagnosticDroppedMessages > 0
+  ) {
     const remaining: number = deadline - performance.now();
     if (remaining <= 0) return "timedOut";
     const diagnostics: FlushResult = await waitForDiskIODiagnostics(remaining);
@@ -385,7 +430,7 @@ async function requestDiskIOFlush(
   let flushId: number | null = null;
   const result: FlushResult = await diskIOFlushBarrier.begin((id: number): boolean => {
     flushId = id;
-    const request: DiskFlushRequest = { type: "flush", flushId: id };
+    const request: DiskFlushRequest = { type: "flush", flushId: id, scope: "all" };
     return safePostDiskIO(worker, request, "flush request");
   }, timeoutMs);
   if (flushId === null) return { result };
@@ -397,9 +442,9 @@ async function requestDiskIOFlush(
 
 /**
  * 只关心某一个领域有没有落盘的 flush。仍然触发统一 flush（Worker 那边本来
- * 就是八个领域一起刷），但把「无关领域失败」判成成功。
+ * 就是九个领域一起刷），但把「无关领域失败」判成成功。
  *
- * 存在的理由：`flushAll` 是八个领域的合取，任何一个失败（典型是某群
+ * 存在的理由：`flushAll` 是九个领域的合取，任何一个失败（典型是某群
  * `memory/ai/<chat>.json` 部署后属主不对）都会让 /block 报「小本本没能写进
  * 硬盘」，把运维引向一个其实没坏的文件。
  * @returns 该领域已 durable 为 "flushed"；"timedOut"/"failed" 表示没写进去。
@@ -447,16 +492,18 @@ export function terminateDiskIO(): Promise<void> {
   diskIORuntime.worker = null;
   diskIORuntime.initialized = false;
   diskIORuntime.writable = false;
+  diskIORuntime.diagnosticRecycleWorker = null;
   diskIORuntime.runtimeRecoveryWorker = null;
   clearRuntimeRecoveryTimer();
   diskIORuntime.fatalHandler = undefined;
   diskIORuntime.fatalSignaled = false;
   diskIORuntime.runtimeRecoveryTimeoutMs = LOAD_TIMEOUT_MS;
   diskIORuntime.maxPendingBusinessMessages = DEFAULT_MAX_PENDING_BUSINESS_MESSAGES;
+  diskIORuntime.consecutiveDiagnosticWriteFailures = 0;
+  diskIORuntime.consecutiveDiagnosticRebuilds = 0;
   diskIORuntime.pendingBusinessMessages.clear();
   resetDiskIODiagnosticChannel();
-  diskIORuntime.nextLuckSecretRequestId = 1;
-  diskIORuntime.nextJoinLogReadRequestId = 1;
+  for (const channel of DISK_IO_REQUEST_CHANNELS) channel.nextRequestId = 1;
   diskIOFlushBarrier.settleAll("failed");
   pendingFlushFailedDomains.clear();
   const terminationError: Error = new Error("Persistence Worker terminated before the request completed.");
@@ -465,16 +512,9 @@ export function terminateDiskIO(): Promise<void> {
   pendingLoad.resolve = null;
   pendingLoad.reject?.(terminationError);
   pendingLoad.reject = null;
-  for (const pending of pendingLuckSecrets.values()) {
-    clearTimeout(pending.timer);
-    pending.reject(terminationError);
+  for (const channel of DISK_IO_REQUEST_CHANNELS) {
+    rejectPendingDiskIORequests(channel, terminationError);
   }
-  pendingLuckSecrets.clear();
-  for (const pending of pendingJoinLogReads.values()) {
-    clearTimeout(pending.timer);
-    pending.reject(terminationError);
-  }
-  pendingJoinLogReads.clear();
   if (worker === null) return Promise.resolve();
   try {
     worker.terminate();

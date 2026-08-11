@@ -12,6 +12,7 @@ import {
 import { open, rename, stat, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { TMP_FILE_SUFFIX } from "../consts/paths";
+import { isErrno } from "./errno";
 import type { FileHandle } from "node:fs/promises";
 
 /**
@@ -39,7 +40,7 @@ export async function syncDirectory(path: string): Promise<void> {
 }
 
 /** rename 后同步涉及的目录项；用于把损坏文件持久隔离到同目录唯一路径。 */
-export async function durableRename(sourcePath: string, destinationPath: string): Promise<void> {
+async function durableRename(sourcePath: string, destinationPath: string): Promise<void> {
   await rename(sourcePath, destinationPath);
   await syncDirectory(destinationPath);
   if (dirname(sourcePath) !== dirname(destinationPath)) await syncDirectory(sourcePath);
@@ -128,7 +129,7 @@ function currentFileModeSync(path: string): number | undefined {
   try {
     return statSync(path).mode & 0o777;
   } catch (error: unknown) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    if (isErrno(error, "ENOENT")) return undefined;
     throw error;
   }
 }
@@ -142,7 +143,7 @@ async function currentFileMode(path: string): Promise<number | undefined> {
   try {
     return (await stat(path)).mode & 0o777;
   } catch (error: unknown) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    if (isErrno(error, "ENOENT")) return undefined;
     throw error;
   }
 }
@@ -241,7 +242,7 @@ export function durableUnlinkSync(path: string): void {
   try {
     unlinkSync(path);
   } catch (error: unknown) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    if (isErrno(error, "ENOENT")) return;
     throw error;
   }
   syncDirectorySync(path);

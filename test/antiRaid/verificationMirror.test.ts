@@ -14,10 +14,24 @@ mock.module("../../packages/infra/diskIO", () => ({
 const { acceptVerificationDelete, acceptVerificationUpsert } =
   await import("../../packages/antiRaid/verificationMirror");
 const { antiRaidRuntimeState } = await import("../../packages/cache/main/antiRaid/proxy");
-const { activeVerificationSnapshots, pendingVerificationDeletes, persistedVerificationRevisions } =
+const {
+  activeVerificationSnapshots,
+  deferredVerificationRecords,
+  pendingVerificationDeferrals,
+  pendingVerificationDeletes,
+  persistedVerificationRevisions,
+  verificationCapacityFatalState,
+} =
   await import("../../packages/cache/main/antiRaid/verificationMirror");
+const { businessWorkerFatalHandler } = await import(
+  "../../packages/cache/main/workerSupervisor"
+);
+const { VERIFICATION_RECORD_CAPACITY } = await import(
+  "../../packages/consts/antiRaid/verification"
+);
 
 const KEY: string = "-1001:42";
+const fatalErrors: Error[] = [];
 
 function record(generation: number, revision: number): VerificationSnapshot {
   return {
@@ -39,8 +53,15 @@ function record(generation: number, revision: number): VerificationSnapshot {
 beforeEach(() => {
   diskPosts.length = 0;
   activeVerificationSnapshots.clear();
+  deferredVerificationRecords.clear();
+  pendingVerificationDeferrals.clear();
   pendingVerificationDeletes.clear();
   persistedVerificationRevisions.clear();
+  verificationCapacityFatalState.current = false;
+  fatalErrors.length = 0;
+  businessWorkerFatalHandler.current = (error: Error): void => {
+    fatalErrors.push(error);
+  };
   antiRaidRuntimeState.generation = 1;
 });
 
@@ -96,5 +117,38 @@ describe("antiRaid/verificationMirror 的 revision 水位线", () => {
     expect(acceptVerificationUpsert({ type: "verificationUpsert", record: record(2, 1) })).toBeTrue();
     expect(acceptVerificationDelete({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 2, revision: 2 })).toBeTrue();
     expect(pendingVerificationDeletes.get(KEY)).toMatchObject({ generation: 2, revision: 2 });
+  });
+
+  test("记录达到硬顶时允许更新旧 key，但新 key 只触发一次 fail-closed fatal", () => {
+    activeVerificationSnapshots.set(KEY, record(1, 1));
+    for (
+      let index: number = 1;
+      index < VERIFICATION_RECORD_CAPACITY;
+      index++
+    ) {
+      activeVerificationSnapshots.set(`-2000:${index}`, record(1, 1));
+    }
+
+    expect(acceptVerificationUpsert({
+      type: "verificationUpsert",
+      record: record(1, 2),
+    })).toBeTrue();
+    expect(fatalErrors).toHaveLength(0);
+
+    const firstNew: VerificationSnapshot = {
+      ...record(1, 1),
+      userId: 50_001,
+    };
+    const secondNew: VerificationSnapshot = {
+      ...record(1, 1),
+      userId: 50_002,
+    };
+    expect(acceptVerificationUpsert({ type: "verificationUpsert", record: firstNew }))
+      .toBeFalse();
+    expect(acceptVerificationUpsert({ type: "verificationUpsert", record: secondNew }))
+      .toBeFalse();
+    expect(activeVerificationSnapshots.size).toBe(VERIFICATION_RECORD_CAPACITY);
+    expect(fatalErrors).toHaveLength(1);
+    expect(fatalErrors[0]?.message).toContain("record capacity");
   });
 });

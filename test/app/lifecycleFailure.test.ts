@@ -27,7 +27,6 @@ const {
   flushAiMemory,
   flushDiskIO,
   flushStateToDisk,
-  getWhitelistConfig,
   hydrateAiMemory,
   hydrateBlocklist,
   hydratePendingVerifications,
@@ -36,7 +35,6 @@ const {
   initDiskIO,
   initTelegramClients,
   initTranslate,
-  loadBlocklistConfig,
   loadPersistedData,
   loadState,
   loggerLog,
@@ -134,62 +132,62 @@ describe("应用启动失败与退出清理", () => {
     expect(process.exitCode).toBe(0);
   });
 
-  test("白名单配置损坏时在联网和 Worker 启动前拒绝启动", async () => {
-    getWhitelistConfig.mockImplementationOnce((): never => {
-      throw new Error("Invalid whitelist config");
-    });
+  test("SQLite 白名单行损坏时在注册 handler 前拒绝启动", async () => {
+    loadPersistedData.mockRejectedValueOnce(new Error("Invalid whitelist row"));
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run();
     await lifecycle.dispose();
 
-    expect(initTelegramClients).not.toHaveBeenCalled();
-    expect(initDiskIO).not.toHaveBeenCalled();
+    expect(initTelegramClients).toHaveBeenCalledTimes(1);
+    expect(initDiskIO).toHaveBeenCalledTimes(1);
+    expect(registerHandlers).not.toHaveBeenCalled();
+    expect(botInit).not.toHaveBeenCalled();
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("静态黑名单配置损坏时同样在联网和 Worker 启动前拒绝启动", async () => {
-    loadBlocklistConfig.mockImplementationOnce((): never => {
-      throw new Error("Invalid blocklist config");
-    });
+  test("SQLite 黑名单行损坏时同样不注册 handler", async () => {
+    loadPersistedData.mockRejectedValueOnce(new Error("Invalid blocklist row"));
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run();
     await lifecycle.dispose();
 
-    expect(initTelegramClients).not.toHaveBeenCalled();
-    expect(initDiskIO).not.toHaveBeenCalled();
+    expect(initTelegramClients).toHaveBeenCalledTimes(1);
+    expect(initDiskIO).toHaveBeenCalledTimes(1);
+    expect(registerHandlers).not.toHaveBeenCalled();
+    expect(botInit).not.toHaveBeenCalled();
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("静态黑名单与白名单身份冲突时在联网和 Worker 启动前拒绝启动", async () => {
-    getWhitelistConfig.mockImplementationOnce(() => new Map([[7, {} as never]]));
+  test("SQLite 黑白名单身份冲突时拒绝启动", async () => {
+    loadPersistedData.mockRejectedValueOnce(new Error("Identity 7 exists in both policy tables"));
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run();
     await lifecycle.dispose();
 
-    expect(initTelegramClients).not.toHaveBeenCalled();
-    expect(initDiskIO).not.toHaveBeenCalled();
+    expect(initTelegramClients).toHaveBeenCalledTimes(1);
+    expect(initDiskIO).toHaveBeenCalledTimes(1);
+    expect(registerHandlers).not.toHaveBeenCalled();
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
     expect(loggerError).toHaveBeenCalledWith(
       "Unhandled error in bot main runner:",
       expect.objectContaining({
-        message: expect.stringContaining("$.blockedIds must be disjoint from protected identities"),
+        message: expect.stringContaining("exists in both policy tables"),
       })
     );
   });
 
-  test("持久化动态黑名单包含超级管理员时拒绝启动 Telegram handler", async () => {
+  test("SQLite 恢复缺少表计数时拒绝启动 Telegram handler", async () => {
     loadPersistedData.mockResolvedValueOnce({
       aiMemories: new Map<number, string>(),
       stickerCatalogs: new Map<string, string>(),
       luckDay: null,
       luckReceiptSecret: { day: "2026-07-19", secret: "test-secret" },
       verifications: new Map<string, never>(),
-      blockedUsers: new Map<number, true>([[1, true]]),
       pendingBlockedRemovals: new Map(),
-    });
+    } as never);
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run();
@@ -207,11 +205,10 @@ describe("应用启动失败与退出清理", () => {
     await lifecycle.init();
 
     expect(calls.indexOf("cleanupTemps")).toBeLessThan(calls.indexOf("loadState"));
-    expect(calls.indexOf("acquireLock")).toBeLessThan(calls.indexOf("loadWhitelist"));
-    expect(calls.indexOf("loadWhitelist")).toBeLessThan(calls.indexOf("initTelegram"));
-    expect(calls.indexOf("loadBlocklist")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("initDiskIO"));
+    expect(calls.indexOf("initDiskIO")).toBeLessThan(calls.indexOf("hydrateIdentityCounts"));
+    expect(calls.indexOf("hydrateIdentityCounts")).toBeLessThan(calls.indexOf("botInit"));
     // 补齐素材直链读的是 loadState 恢复出来的内存，且必须排在**所有**会拒绝启动的
     // await 之后（功能闸、bot.init、黑名单补扫）——被拒绝启动的那次运行不该顺手
     // 改写运维正要拿去排查的 state.json。
@@ -219,12 +216,11 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("preflightFeatures")).toBeLessThan(calls.indexOf("seedAssets"));
     expect(calls.indexOf("botInit")).toBeLessThan(calls.indexOf("seedAssets"));
     expect(calls.indexOf("sweepBlocklist")).toBeLessThan(calls.indexOf("seedAssets"));
-    expect(hydrateBlocklist).toHaveBeenCalledWith(
-      expect.any(Map),
-      expect.any(Map),
-      [7, -4004]
-    );
+    expect(hydrateBlocklist).toHaveBeenCalledWith(expect.any(Map));
     expect(calls.indexOf("initAntiRaid")).toBeLessThan(
+      calls.indexOf("initBlocklistScheduler")
+    );
+    expect(calls.indexOf("initBlocklistScheduler")).toBeLessThan(
       calls.indexOf("sweepBlocklist")
     );
     expect(calls.indexOf("sweepBlocklist")).toBeLessThan(
@@ -233,6 +229,9 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("botInit")).toBeLessThan(calls.indexOf("runUpdates"));
     expect(calls.indexOf("runUpdates")).toBeLessThan(calls.indexOf("refreshTitles"));
     await lifecycle.dispose();
+    expect(calls.indexOf("quiesceBlocklistScheduler")).toBeLessThan(
+      calls.indexOf("drainAntiRaid")
+    );
   });
 
   test("state 主备均不可恢复时不启动任何运行时 Worker，并释放实例锁", async () => {
@@ -610,6 +609,12 @@ describe("应用启动失败与退出清理", () => {
 
     triggerDiskIOFatal(new Error("runtime recovery failed"));
     await lifecycle.wait();
+
+    // 最终 offset 的确认前排空必须先关掉补扫生产者；等到 dispose() 才关会让
+    // timer 在本轮 anti-raid drain 之后重新登记网络任务与 outbox 写入。
+    expect(calls.indexOf("quiesceBlocklistScheduler")).toBeLessThan(
+      calls.indexOf("drainAntiRaid")
+    );
     await lifecycle.dispose();
 
     expect(process.exitCode).toBe(1);

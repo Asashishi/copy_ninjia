@@ -2,7 +2,6 @@ import { afterEach, beforeEach, mock } from "bun:test";
 import { ApplicationLifecycle } from "../../packages/app/lifecycle";
 import { drainAvatarUpdates as realDrainAvatarUpdates } from "../../packages/copy/avatarQueue";
 import { drainReactionQueue as realDrainReactionQueue } from "../../packages/copy/reactionQueue";
-import type { BlocklistConfig } from "../../packages/types/blocklist";
 import type { ApplicationLifecycleDependencies } from "../../packages/app/lifecycleDependencies";
 
 const calls: string[] = [];
@@ -33,8 +32,9 @@ const loadPersistedData = mock(async () => ({
   luckDay: null,
   luckReceiptSecret: { day: "2026-07-19", secret: "test-secret" },
   verifications: new Map<string, never>(),
-  blockedUsers: new Map<number, true>(),
   pendingBlockedRemovals: new Map(),
+  blocklistEntryCount: 0,
+  whitelistEntryCount: 0,
 }));
 type FlushResult = "flushed" | "timedOut" | "failed";
 const flushDiskIO = mock(async (): Promise<FlushResult> => { calls.push("flushDiskIO"); return "flushed"; });
@@ -72,8 +72,12 @@ const hydrateAiMemory = mock((_value: unknown): void => { calls.push("hydrateAiM
 const hydrateStickerCatalog = mock((_value: unknown): void => { calls.push("hydrateStickerCatalog"); });
 const initAiChat = mock((_value: unknown): void => { calls.push("initAiChat"); });
 const hydratePendingVerifications = mock((_value: unknown): void => { calls.push("hydrateVerifications"); });
+const hydrateIdentityStorageCounts = mock((..._args: unknown[]): void => { calls.push("hydrateIdentityCounts"); });
+const assertSuperAdminNotBlocked = mock(async (..._args: unknown[]): Promise<void> => { calls.push("assertSuperAdminNotBlocked"); });
 const hydrateBlocklist = mock((..._args: unknown[]): void => { calls.push("hydrateBlocklist"); });
 const initAntiRaid = mock((): void => { calls.push("initAntiRaid"); });
+const initBlocklistSweepScheduler = mock((): void => { calls.push("initBlocklistScheduler"); });
+const quiesceBlocklistSweepScheduler = mock((): void => { calls.push("quiesceBlocklistScheduler"); });
 const sweepManagedBlocklistChats = mock(async (): Promise<void> => { calls.push("sweepBlocklist"); });
 const restoreLuckState = mock((..._args: unknown[]): void => { calls.push("restoreLuck"); });
 const seedSenderCache = mock((_value: unknown): void => { calls.push("seedSender"); });
@@ -83,14 +87,6 @@ const registerHandlers = mock(() => ({ getLastSeenUpdateId: (): number => lastSe
 const getAllChatStates = mock(() => new Map<number, unknown>());
 let copiedUser: object | null = null;
 const getGlobalCopyState = mock(() => ({ copiedUser }));
-const getWhitelistConfig = mock(() => {
-  calls.push("loadWhitelist");
-  return new Map();
-});
-const loadBlocklistConfig = mock((): BlocklistConfig => {
-  calls.push("loadBlocklist");
-  return { blockedIds: [7, -4004] };
-});
 const sleep = mock(async (): Promise<void> => {});
 let monotonicTime: number = 0;
 const monotonicNow = mock((): number => monotonicTime);
@@ -148,7 +144,8 @@ const testDependencies = {
   flushStateToDisk,
   getAllChatStates,
   getGlobalCopyState,
-  getWhitelistConfig,
+  assertSuperAdminNotBlocked,
+  hydrateIdentityStorageCounts,
   hydrateAiMemory,
   hydratePendingVerifications,
   hydrateBlocklist,
@@ -159,10 +156,10 @@ const testDependencies = {
   initDiskIO,
   initTelegramClients,
   initAntiRaid,
+  initBlocklistSweepScheduler,
   initChatTitleRefresh,
   initReactionQueue,
   initTranslate,
-  loadBlocklistConfig,
   loadPersistedData,
   logger: {
     log: loggerLog,
@@ -181,6 +178,7 @@ const testDependencies = {
   runAcknowledgedUpdateBatches,
   seedMissingAssetState,
   quiesceAvatarUpdates,
+  quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
   quiesceReactionQueue,
   quiesceGagRuntime,
@@ -242,8 +240,6 @@ export function installLifecycleFixtureHooks(): void {
       initDiskIO,
       cleanupOrphanedTempFiles,
       preflightEnabledFeatures,
-      getWhitelistConfig,
-      loadBlocklistConfig,
       loadState,
       seedMissingAssetState,
       refreshAllChatTitles,
@@ -268,6 +264,7 @@ export function installLifecycleFixtureHooks(): void {
       initChatTitleRefresh,
       initTranslate,
       quiesceAvatarUpdates,
+      quiesceBlocklistSweepScheduler,
       quiesceReactionQueue,
       quiesceChatTitleRefresh,
       quiesceTranslate,
@@ -277,8 +274,11 @@ export function installLifecycleFixtureHooks(): void {
       hydrateStickerCatalog,
       initAiChat,
       hydratePendingVerifications,
+      assertSuperAdminNotBlocked,
+      hydrateIdentityStorageCounts,
       hydrateBlocklist,
       initAntiRaid,
+      initBlocklistSweepScheduler,
       sweepManagedBlocklistChats,
       restoreLuckState,
       seedSenderCache,
@@ -355,13 +355,13 @@ export const lifecycleFixture = {
   flushDiskIO,
   flushStateToDisk,
   getUpdates,
-  getWhitelistConfig,
   hydrateAiMemory,
   hydrateBlocklist,
   hydratePendingVerifications,
   hydrateStickerCatalog,
   initAiChat,
   initAntiRaid,
+  initBlocklistSweepScheduler,
   initAvatarUpdates,
   initGagRuntime,
   initChatTitleRefresh,
@@ -369,13 +369,13 @@ export const lifecycleFixture = {
   initReactionQueue,
   initTelegramClients,
   initTranslate,
-  loadBlocklistConfig,
   loadPersistedData,
   loadState,
   loggerLog,
   loggerError,
   preflightEnabledFeatures,
   quiesceAvatarUpdates,
+  quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
   quiesceReactionQueue,
   quiesceGagRuntime,

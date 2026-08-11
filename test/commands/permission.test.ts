@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { NON_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 
 interface SentMessageEntity {
   type: string;
@@ -14,14 +15,17 @@ interface SentMessage {
 }
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
-const setWhitelistPermission = mock(async (): Promise<{
+const setWhitelistPermission = mock((): {
   changed: boolean;
   permissions: Record<string, boolean>;
-}> => ({ changed: true, permissions: {} }));
-const enableAllWhitelistPermissions = mock(async (): Promise<{
+} => ({ changed: true, permissions: {} }));
+const enableAllWhitelistPermissions = mock((): {
   changed: boolean;
   permissions: Record<string, boolean>;
-}> => ({ changed: true, permissions: {} }));
+} => ({ changed: true, permissions: {} }));
+const confirmWhitelistEntryPersisted = mock(
+  async (_id: number, _retryUnacknowledged: boolean): Promise<void> => {}
+);
 const whitelistPermissionsById: Map<number, Record<string, boolean>> =
   new Map<number, Record<string, boolean>>();
 
@@ -35,6 +39,7 @@ function permissions(
     isCanViewBotStatus: true,
     isCanBlock: false,
     isCanUnBlock: false,
+    isCanWhiteOther: false,
     isCanSwitchMood: false,
     isCanBypassAdDetection: true,
     isCanBypassFloodControl: true,
@@ -42,11 +47,12 @@ function permissions(
     isCanControllAdDetectPermission: false,
     isCanControllFloodControlPermission: false,
     isCanControllJATranslatePermission: false,
+    isCanControllAntiRaidPermission: false,
     ...overrides,
   };
 }
 
-/** 超级管理员的固定有效权限视图：逐项全开，且不来自 config/whitelist.json。 */
+/** 超级管理员的固定有效权限视图：逐项全开，且不来自 SQLite 白名单记录。 */
 function allEnabledPermissions(): Record<string, boolean> {
   return permissions({
     isCanMute: true,
@@ -55,6 +61,7 @@ function allEnabledPermissions(): Record<string, boolean> {
     isCanViewBotStatus: true,
     isCanBlock: true,
     isCanUnBlock: true,
+    isCanWhiteOther: true,
     isCanSwitchMood: true,
     isCanControllAIPermission: true,
     isCanControllAdDetectPermission: true,
@@ -64,20 +71,25 @@ function allEnabledPermissions(): Record<string, boolean> {
   });
 }
 
+const getWhitelistPermissionQueryView = mock(
+  (id: number): Readonly<Record<string, boolean>> =>
+    id === 1
+      ? allEnabledPermissions()
+      : whitelistPermissionsById.get(id) ?? NON_WHITELIST_PERMISSIONS
+);
+
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 // 1 是超级管理员：始终在白名单边界内、逐项权限全开，且永远不出现在
-// whitelistPermissionsById（即 config/whitelist.json）里——照实模拟
-// packages/config/whitelist.ts 那层只读覆盖。
-mock.module("../../packages/config/whitelist", () => ({
+// whitelistPermissionsById（即已预热的 SQLite 白名单视图）里——照实模拟
+// packages/whitelist.ts 那层只读覆盖。
+mock.module("../../packages/whitelist", () => ({
+  confirmWhitelistEntryPersisted,
   hasWhitelistPermission: (id: number): boolean => id === 1,
   enableAllWhitelistPermissions,
-  getEffectiveWhitelistPermissions: (
-    id: number
-  ): Readonly<Record<string, boolean>> | undefined =>
-    id === 1 ? allEnabledPermissions() : whitelistPermissionsById.get(id),
+  getWhitelistPermissionQueryView,
   isWhitelisted: (id: number): boolean =>
     id === 1 || whitelistPermissionsById.has(id),
   setWhitelistPermission,
@@ -120,17 +132,35 @@ function context(
   } as never;
 }
 
+/** 读取最后一条 query 回执里的 JSON 代码块。 */
+function lastQueriedPermissions(): Record<string, boolean> {
+  const message: SentMessage | undefined = sendMessage.mock.calls.at(-1)?.[0] as
+    | SentMessage
+    | undefined;
+  const codeEntity: SentMessageEntity | undefined = message?.entities?.[0];
+  const text: string = message?.text ?? "";
+  return JSON.parse(text.slice(
+    codeEntity?.offset ?? 0,
+    (codeEntity?.offset ?? 0) + (codeEntity?.length ?? 0)
+  )) as Record<string, boolean>;
+}
+
 beforeEach(() => {
   whitelistPermissionsById.clear();
   whitelistPermissionsById.set(100, permissions({ isCanMute: true }));
   sendMessage.mockClear();
   enableAllWhitelistPermissions.mockClear();
+  getWhitelistPermissionQueryView.mockClear();
   setWhitelistPermission.mockClear();
-  enableAllWhitelistPermissions.mockImplementation(async () => ({
+  enableAllWhitelistPermissions.mockImplementation(() => ({
     changed: true,
     permissions: {},
   }));
-  setWhitelistPermission.mockImplementation(async () => ({
+  confirmWhitelistEntryPersisted.mockClear();
+  confirmWhitelistEntryPersisted.mockImplementation(
+    async (): Promise<void> => {}
+  );
+  setWhitelistPermission.mockImplementation(() => ({
     changed: true,
     permissions: {},
   }));
@@ -144,13 +174,15 @@ describe("/permission", () => {
     expect(parseWhitelistPermissionKey("ISCANVIEWBOTSTATUS")).toBe("isCanViewBotStatus");
     expect(parseWhitelistPermissionKey("ISCANCONTROLLFLOODCONTROLPERMISSION"))
       .toBe("isCanControllFloodControlPermission");
+    expect(parseWhitelistPermissionKey("ISCANWHITEOTHER"))
+      .toBe("isCanWhiteOther");
     expect(parseWhitelistPermissionKey("unknown")).toBeUndefined();
     expect(parsePermissionBoolean("TRUE")).toBe(true);
     expect(parsePermissionBoolean("false")).toBe(false);
     expect(parsePermissionBoolean("1")).toBeUndefined();
   });
 
-  test("白名单身份的写操作仍被拒绝，且不修改配置", async () => {
+  test("非超级管理员的单项与 all 写操作仍被拒绝，且不修改配置", async () => {
     await handlePermissionCommand(context(100, "100 isCanMute true"));
     expect(setWhitelistPermission).not.toHaveBeenCalled();
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
@@ -159,10 +191,17 @@ describe("/permission", () => {
       text: expect.stringContaining("哪来的资格"),
       replyToMessageId: 10,
     });
+
+    await handlePermissionCommand(context(100, "100 all"));
+    expect(setWhitelistPermission).not.toHaveBeenCalled();
+    expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringContaining("哪来的资格"),
+    }));
   });
 
-  test("白名单身份可用 help 查看完整说明，且不触发写入", async () => {
-    await handlePermissionCommand(context(100, "HELP"));
+  test("任何身份都可用 help 查看完整说明，且不触发写入", async () => {
+    await handlePermissionCommand(context(2, "HELP"));
 
     expect(setWhitelistPermission).not.toHaveBeenCalled();
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
@@ -189,6 +228,7 @@ describe("/permission", () => {
       );
     }
     expect(text).toContain("/permission query");
+    expect(text).toContain("/permission query <用户id|@username>");
     expect(text).toContain("以下修改操作仅限超级管理员");
     expect(text).toContain("本天才");
     expect(text).toContain("杂鱼♡");
@@ -217,8 +257,8 @@ describe("/permission", () => {
     expect(codeEntity).toMatchObject({ type: "pre", language: "json" });
     expect(JSON.parse(permissionJson)).toEqual(expected);
     expect(text).toContain("本天才勉为其难");
-    expect(text).toContain("true 是赏给你的");
-    expect(text).toContain("false 就是你还不配");
+    expect(text).toContain("true 是有这项权限");
+    expect(text).toContain("false 就是没有");
     expect(text).toContain("杂鱼♡");
     expect(message?.preserveInGroup).toBeUndefined();
   });
@@ -248,21 +288,64 @@ describe("/permission", () => {
     ))).toEqual(whitelistPermissionsById.get(channelId));
   });
 
-  test("非白名单身份不能 query/help", async () => {
+  test("非白名单身份 query 默认返回逐项 false，且不触发任何写入", async () => {
     await handlePermissionCommand(context(2, "query"));
-    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("还不在里面"),
-    }));
-
-    await handlePermissionCommand(context(2, "help"));
-    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("还不在里面"),
-    }));
+    expect(lastQueriedPermissions()).toEqual(NON_WHITELIST_PERMISSIONS);
+    expect(Object.values(lastQueriedPermissions()).every(
+      (value: boolean): boolean => value === false
+    )).toBeTrue();
+    expect(getWhitelistPermissionQueryView).toHaveBeenCalledWith(2);
     expect(setWhitelistPermission).not.toHaveBeenCalled();
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
   });
 
-  test("超级管理员 query 拿到逐项全开的视图，即使不在 config/whitelist.json 里", async () => {
+  test("所有人都可通过回复、@username 或用户 ID 查询指定用户", async () => {
+    const expectedWhitelistPermissions: Record<string, boolean> =
+      whitelistPermissionsById.get(100)!;
+    seedSenderCache({
+      id: 100,
+      username: "Alice",
+      first_name: "Alice",
+    });
+
+    await handlePermissionCommand(context(2, "query @alice"));
+    expect(lastQueriedPermissions()).toEqual(expectedWhitelistPermissions);
+    expect(getWhitelistPermissionQueryView).toHaveBeenLastCalledWith(100);
+
+    await handlePermissionCommand(context(2, "query 200"));
+    expect(lastQueriedPermissions()).toEqual(NON_WHITELIST_PERMISSIONS);
+    expect(getWhitelistPermissionQueryView).toHaveBeenLastCalledWith(200);
+
+    await handlePermissionCommand(context(
+      2,
+      "query",
+      {
+        message_id: 9,
+        chat: { id: -1001, type: "supergroup", title: "Test Group" },
+        date: 1,
+        from: { id: 100, is_bot: false, first_name: "Alice" },
+      }
+    ));
+    expect(lastQueriedPermissions()).toEqual(expectedWhitelistPermissions);
+    expect(getWhitelistPermissionQueryView).toHaveBeenLastCalledWith(100);
+    expect(setWhitelistPermission).not.toHaveBeenCalled();
+    expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
+  });
+
+  test("query 与授权分支同一道解析口径：频道 id 必须能读回来", async () => {
+    // 授权分支开着 acceptChatId，query 分支缺了它的话，resolveArgumentTarget 会
+    // 跳过 parseChatIdArgument，而 USERNAME_ARG_PATTERN 匹配不了前导 `-`，于是
+    // 刚 /permission -100… isCanBlock true 授过权的频道身份反而读不回来。
+    await handlePermissionCommand(context(2, "query -1002233445566"));
+
+    expect(getWhitelistPermissionQueryView).toHaveBeenLastCalledWith(-1002233445566);
+    const reply: SentMessage | undefined = sendMessage.mock.calls.at(-1)?.[0] as
+      | SentMessage
+      | undefined;
+    expect(reply?.text ?? "").not.toContain("既不是合法的 Telegram 用户名");
+  });
+
+  test("超级管理员 query 拿到逐项全开的视图，即使 SQLite 没有其白名单记录", async () => {
     expect(whitelistPermissionsById.has(1)).toBeFalse();
 
     await handlePermissionCommand(context(1, "query"));
@@ -282,7 +365,7 @@ describe("/permission", () => {
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
   });
 
-  test("超级管理员自己不能被写进白名单文件：单项与 all 都在入口挡住", async () => {
+  test("超级管理员自己不能被写进 SQLite 白名单表：单项与 all 都在入口挡住", async () => {
     await handlePermissionCommand(context(1, "1 isCanMute false"));
     expect(setWhitelistPermission).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -354,7 +437,7 @@ describe("/permission", () => {
     }));
 
     sendMessage.mockClear();
-    enableAllWhitelistPermissions.mockImplementationOnce(async () => ({
+    enableAllWhitelistPermissions.mockImplementationOnce(() => ({
       changed: false,
       permissions: {},
     }));
@@ -366,7 +449,7 @@ describe("/permission", () => {
 
   test("all 落盘失败就地降级，如实回执而不是掀翻整个进程", async () => {
     enableAllWhitelistPermissions.mockImplementationOnce(
-      async (): Promise<never> => {
+      (): never => {
         throw new Error("disk full");
       }
     );
@@ -475,12 +558,29 @@ describe("/permission", () => {
   });
 
   test("单项授权落盘失败就地降级，如实回执而不是掀翻整个进程", async () => {
-    setWhitelistPermission.mockImplementationOnce(async (): Promise<never> => {
+    setWhitelistPermission.mockImplementationOnce((): never => {
       throw new Error("disk full");
     });
 
     await handlePermissionCommand(context(1, "100 isCanMute true"));
 
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringContaining("没能把这条权限写进硬盘"),
+    }));
+  });
+
+  test("事务确认失败不回执授权成功，幂等命中补投未确认 revision", async () => {
+    setWhitelistPermission.mockImplementationOnce(() => ({
+      changed: false,
+      permissions: {},
+    }));
+    confirmWhitelistEntryPersisted.mockImplementationOnce(async (): Promise<void> => {
+      throw new Error("missing exact ACK");
+    });
+
+    await handlePermissionCommand(context(1, "100 isCanMute true"));
+
+    expect(confirmWhitelistEntryPersisted).toHaveBeenCalledWith(100, true);
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       text: expect.stringContaining("没能把这条权限写进硬盘"),
     }));

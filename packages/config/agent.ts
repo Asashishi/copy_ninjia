@@ -4,7 +4,7 @@ import {
 } from "../cache/perThread/config";
 import { AGENT_CONFIG_PATH } from "../consts/paths";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
-import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../libs/runtimeConfig";
+import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../libs/record";
 import type {
   AdDetectAgentConfig,
   AgentCapabilityConfig,

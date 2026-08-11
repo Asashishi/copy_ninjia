@@ -1,8 +1,8 @@
 import type { AdSampleMessage, VerificationSnapshot } from "./antiRaid";
 import type { PendingBlockedRemoval } from "./blocklist";
+import type { IdentityPolicyTable } from "./identityPolicy";
 import type { FlushResult } from "./lifecycle";
 import type {
-  BlockedUserRecord,
   JoinLogRecord,
   LuckDayCache,
   LuckReceiptSecret,
@@ -11,7 +11,7 @@ export type * from "./diskIO/storage";
 
 /**
  * 磁盘 IO 线程（packages/workers/diskIOWorker.ts）统一的消息协议与快照类型：
- * 日志、AI/贴纸快照、每日运势、待验证当日增量与 /block 黑名单共用同一个
+ * 日志、AI/贴纸快照、每日运势、待验证当日增量与身份 SQLite 共用同一个
  * Worker。快照的结构
  * 类型（AiMemorySnapshot/StickerCatalogSnapshot）见 types/aiChat.ts——
  * 消息里只带它们序列化后的 JSON 文本。
@@ -26,7 +26,7 @@ export interface LogMessage {
   args: unknown[];
 }
 
-/** Worker 线程 -> 主线程：单批在途、无界待发送 FIFO 中的一批 error 日志。 */
+/** Worker 线程 -> 主线程：单批在途、有界待发送 FIFO 中的一批 error 日志。 */
 export interface ForwardedLogBatch {
   readonly __logBatch: {
     readonly batchId: number;
@@ -123,37 +123,22 @@ export interface VerificationDeleteDiskMessage {
   revision: number;
 }
 
-/**
- * 主线程 -> diskIOWorker：把一个 id 追加进黑名单文件。拉黑是低频且关键的
- * 操作，落盘端收到即写、不进合并窗口，见 workers/diskIO/blocklistFile.ts。
- */
-export interface BlockUserDiskMessage {
-  type: "blockUser";
-  userId: number;
-  /** 拉黑时刻的东京时间「YYYY/MM/DD HH:mm:ss」，由主线程算好带过来。 */
-  blockedAt: string;
-}
-
-/**
- * 主线程 -> diskIOWorker：解除拉黑。带的是**删除之后的完整名单**而不是被删的
- * 那个 id：黑名单文件是追加型的，删不掉已有条目，唯一的办法是整文件重写，
- * 而重写的内容只能来自主线程那份权威内存 Map（见 infra/blocklist/）。
- */
-export interface UnblockUserDiskMessage {
-  type: "unblockUser";
-  /**
-   * 本次被解除的 id，仅供排查。Worker 重建后的整份重写没有「某一个 id」可言
-   * （它补的是整表差异），那种场景下不带。
-   */
-  userId?: number;
-  /** 重写后的完整名单，落盘端按它整文件重写。 */
-  blocked: readonly (readonly [number, BlockedUserRecord])[];
-}
-
 /** 主线程 -> diskIOWorker：覆盖式写入尚未完成的黑名单成员移除 outbox。 */
 export interface BlocklistRemovalsDiskMessage {
   type: "blocklistRemovals";
   removals: readonly (readonly [number, PendingBlockedRemoval])[];
+  /** 主线程 outbox 快照单调修订号；事务提交后按它回 ACK。 */
+  revision: number;
+}
+
+/** 主线程 -> Disk I/O Worker：一项黑/白名单最终值；null 表示删除。 */
+export interface IdentityPolicyWriteDiskMessage {
+  type: "identityPolicyWrite";
+  table: IdentityPolicyTable;
+  id: number;
+  data: string | null;
+  /** 主线程同表同主键的单调修订号。 */
+  revision: number;
 }
 
 /**
@@ -184,7 +169,7 @@ export interface AdSampleDiskMessage {
  */
 export type DiskDiagnosticMessage = LogEnvelope | AdSampleDiskMessage;
 
-/** 主线程 -> diskIOWorker：单批有界、待发送 FIFO 无界的 ACK 诊断批次。 */
+/** 主线程 -> diskIOWorker：单批、总消息数与载荷字节均有硬顶的 ACK 诊断批次。 */
 export interface DiskDiagnosticBatchRequest {
   readonly type: "diagnosticBatch";
   readonly batchId: number;
@@ -213,9 +198,8 @@ export type DiskBusinessMessage =
   | LuckDrawDiskMessage
   | VerificationUpsertDiskMessage
   | VerificationDeleteDiskMessage
-  | BlockUserDiskMessage
-  | UnblockUserDiskMessage
   | BlocklistRemovalsDiskMessage
+  | IdentityPolicyWriteDiskMessage
   | JoinLogDiskMessage;
 
 /**
@@ -283,10 +267,15 @@ export interface EnsureLuckSecretRequest {
   day: string;
 }
 
-/** 主线程 -> diskIOWorker：所有 dirty 持久化领域全部立即落盘，随后回执。 */
+/**
+ * 主线程 -> diskIOWorker：dirty 持久化领域立即落盘，随后回执。
+ * `business` 仅供诊断日志连续失败后的受控重建前使用；它跳过已知故障的日志领域，
+ * 但仍覆盖全部权威业务领域，不能作为普通停机 flush 的降级模式。
+ */
 export interface DiskFlushRequest {
   type: "flush";
   flushId: number;
+  scope: "all" | "business";
 }
 
 /** 主线程 -> diskIOWorker：按命令读取本群指定滚动时间窗内的入群记录。 */
@@ -298,6 +287,30 @@ export interface ReadJoinLogRequest {
   now: number;
 }
 
+/** 主线程 -> Disk I/O Worker：按主键批量读取黑白名单，供两份 LRU 冷缺失预热。 */
+export interface ReadIdentityPoliciesRequest {
+  type: "readIdentityPolicies";
+  requestId: number;
+  ids: readonly number[];
+}
+
+/** 主线程 -> Disk I/O Worker：按需读取完整黑名单 ID，用于群级补扫。 */
+export interface ReadBlocklistIdsRequest {
+  type: "readBlocklistIds";
+  requestId: number;
+}
+
+/**
+ * 需要逐条回执的 main -> diskIO 请求信封。四条通道共用同一套发号、等待表与
+ * 超时结算（见 infra/diskIO/host.ts 的 requestDiskIO），因此 requestId 是它们
+ * 唯一必须共有的字段。
+ */
+export type DiskIORequestMessage =
+  | EnsureLuckSecretRequest
+  | ReadJoinLogRequest
+  | ReadIdentityPoliciesRequest
+  | ReadBlocklistIdsRequest;
+
 export type DiskIOMessage =
   | DiskDiagnosticBatchRequest
   | AiMemoryDiskMessage
@@ -307,12 +320,13 @@ export type DiskIOMessage =
   | LuckDrawDiskMessage
   | VerificationUpsertDiskMessage
   | VerificationDeleteDiskMessage
-  | BlockUserDiskMessage
-  | UnblockUserDiskMessage
   | BlocklistRemovalsDiskMessage
+  | IdentityPolicyWriteDiskMessage
   | JoinLogDiskMessage
   | EnsureLuckSecretRequest
   | ReadJoinLogRequest
+  | ReadIdentityPoliciesRequest
+  | ReadBlocklistIdsRequest
   | LoadRequest
   | RecoveryReplayRequest
   | DiskFlushRequest;
@@ -327,14 +341,12 @@ export interface LoadedReply {
   luckDay: LuckDayCache | null;
   luckReceiptSecret: LuckReceiptSecret | null;
   verifications: Map<string, VerificationSnapshot>;
-  /**
-   * /block 黑名单：key 为用户 id，value 是文件里那条完整记录。带上 blockedAt
-   * 而不只是「在不在」，是因为 /unblock 要把主线程内存 Map 整份重写回文件
-   * ——只读回 true 的话，重写会把所有人的拉黑时刻抹平（见 infra/blocklist/）。
-   */
-  blockedUsers: Map<number, BlockedUserRecord>;
   /** 未完成的黑名单成员移除 outbox；主线程过滤后在 Anti-Raid 初始化时重放。 */
   pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
+  /** 黑名单总条目数；主线程只保留计数与有界 LRU，不恢复整表。 */
+  blocklistEntryCount: number;
+  /** 白名单总条目数；主线程只保留计数与有界 LRU，不恢复整表。 */
+  whitelistEntryCount: number;
   /** 恢复失败时主线程必须拒绝启动，不能把部分结果当成空状态继续。 */
   error?: string;
 }
@@ -349,8 +361,9 @@ export interface LoadedData {
   luckDay: LuckDayCache | null;
   luckReceiptSecret: LuckReceiptSecret;
   verifications: Map<string, VerificationSnapshot>;
-  blockedUsers: Map<number, BlockedUserRecord>;
   pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
+  blocklistEntryCount: number;
+  whitelistEntryCount: number;
 }
 
 /** ensureLuckSecret 的逐请求回执；失败时不返回密钥，主线程不得继续抽签。 */
@@ -369,8 +382,45 @@ export interface JoinLogReadReply {
   error?: string;
 }
 
+/** Disk I/O Worker -> 主线程：一次黑白名单批量读取的原始 JSON 文本。 */
+export interface IdentityPoliciesReadReply {
+  type: "identityPoliciesRead";
+  requestId: number;
+  whitelist?: readonly (readonly [number, string])[];
+  blocklist?: readonly (readonly [number, string])[];
+  error?: string;
+}
+
+/** Disk I/O Worker -> 主线程：群级补扫所需的完整黑名单 ID。 */
+export interface BlocklistIdsReadReply {
+  type: "blocklistIdsRead";
+  requestId: number;
+  ids?: readonly number[];
+  error?: string;
+}
+
+/** 一项黑白名单最终值已由显式 SQLite 事务提交。 */
+export interface IdentityPolicyPersistedRevision {
+  readonly table: IdentityPolicyTable;
+  readonly id: number;
+  readonly revision: number;
+}
+
+/** Disk I/O Worker -> 主线程：清理最终一致性重放缓冲的事务 ACK。 */
+export interface IdentityStoragePersistedReply {
+  type: "identityStoragePersisted";
+  writes: readonly IdentityPolicyPersistedRevision[];
+  /** 本事务覆盖到的最新待踢成员快照修订号。 */
+  removalSnapshotRevision?: number;
+}
+
+/** Disk I/O Worker 在 SQLite 事务 durable 后发送精确 ACK 的线程内回调。 */
+export type IdentityPersistenceReply = (
+  reply: IdentityStoragePersistedReply
+) => void;
+
 /**
- * 统一 flush 覆盖的八个落盘领域。回执按领域拆开，是为了让「等自己这条记录
+ * 统一 flush 覆盖的九个落盘领域。回执按领域拆开，是为了让「等自己这条记录
  * 落盘」的调用方（典型是 /block）不会因为无关领域失败而误报——那会把运维
  * 引向一个其实没坏的文件，而真正坏掉的领域按设计只有 console.error，
  * 永远进不了 logs/（见 workers/diskIOWorker.ts 的 flushAll）。
@@ -381,6 +431,7 @@ export type DiskIODomain =
   | "stickerCatalog"
   | "luck"
   | "verification"
+  | "whitelist"
   | "blocklist"
   | "blocklistRemovalOutbox"
   | "joinLog";
@@ -397,7 +448,7 @@ export interface DomainFlushOutcome {
   failedDomains?: readonly DiskIODomain[];
 }
 
-/** diskIOWorker -> 主线程：flush 已完成，八个领域全部落盘。 */
+/** diskIOWorker -> 主线程：flush 已完成，九个领域全部落盘。 */
 export interface DiskFlushReply {
   type: "flushed";
   flushedId: number;
@@ -495,6 +546,9 @@ export type DiskIOReply =
   | RecoveryReplayFailedReply
   | LuckSecretReply
   | JoinLogReadReply
+  | IdentityPoliciesReadReply
+  | BlocklistIdsReadReply
+  | IdentityStoragePersistedReply
   | DiskFlushReply
   | DiskFlushFailedReply
   | VerificationPersistedReply

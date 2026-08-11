@@ -1,6 +1,7 @@
 import { InputFile } from "grammy";
 import { bot } from "./mainClient";
 import type { HydratedTelegramFile } from "./mainClient";
+import type { SendTemporaryMessageOnMainParams } from "./temporaryMessage";
 import { signalWithTimeout } from "../../libs/abortSignal";
 import { readBoundedResponseBytes } from "../../libs/boundedResponse";
 import {
@@ -15,11 +16,36 @@ import type {
   TelegramWorkerDownloadFileResult,
   TelegramWorkerJsonCall,
   TelegramWorkerRequest,
+  TelegramWorkerTemporaryMessageResult,
 } from "../../types/telegramWorker";
 import {
   runTelegramCategorizedRequest,
   telegramRetryCategoryFor,
 } from "./outboundGate";
+
+async function sendTemporaryMessage(
+  request: Extract<TelegramWorkerRequest, { operation: "sendTemporaryMessage" }>,
+  signal: AbortSignal
+): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
+  if (
+    !Number.isSafeInteger(request.deleteAfterMs) ||
+    request.deleteAfterMs <= 0
+  ) {
+    throw new Error("Telegram temporary message deletion delay must be a positive safe integer.");
+  }
+  // 组合能力会拉入线程内 Telegram 动作层；只在真正执行时加载，避免普通 Worker
+  // 协议导入反向装载全部消息生命周期实现。
+  const temporarySender: (
+    params: SendTemporaryMessageOnMainParams
+  ) => Promise<TelegramWorkerTemporaryMessageResult | undefined> =
+    (await import("./temporaryMessage")).sendTemporaryMessageOnMain;
+  return temporarySender({
+    chatId: request.chatId,
+    text: request.text,
+    deleteAfterMs: request.deleteAfterMs,
+    signal,
+  });
+}
 
 function executeJsonCall(
   call: TelegramWorkerJsonCall,
@@ -153,6 +179,11 @@ async function executeTelegramWorkerRequest(
         throw new Error("Telegram Worker downloadFile must use the download category.");
       }
       return downloadTelegramFile(request, signal);
+    case "sendTemporaryMessage":
+      if (request.category !== "message") {
+        throw new Error("Telegram Worker temporary messages must use the message category.");
+      }
+      return sendTemporaryMessage(request, signal);
   }
 }
 
@@ -175,6 +206,7 @@ function aiAllows(request: TelegramWorkerRequest): boolean {
 }
 
 function antiRaidAllows(request: TelegramWorkerRequest): boolean {
+  if (request.operation === "sendTemporaryMessage") return true;
   if (request.operation !== "call") return false;
   switch (request.call.method) {
     case "answerCallbackQuery":

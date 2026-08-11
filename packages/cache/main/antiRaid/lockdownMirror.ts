@@ -29,7 +29,7 @@ import type {
  * 记录某群当前 lockdown 记录是否已确认落盘，而非 lockdown 本身——真正的
  * 私密模式状态在 ChatState.lockdown（stateStore 持有）。initAntiRaid 启动时
  * 先清空，再用已加载的 state.json 记录播种（能载入即视为上次已持久化）；
- * Worker 报告新 lockdown 意图或 unlock（onEvent）时先删除旧指纹，
+ * Worker 报告新的 lockdown 持久化事实或 unlock（onEvent）时先删除旧指纹，
  * persistCurrentLockdown 待 saveState 成功且记录未被更新覆盖后才重新写入
  * 并通知 Worker；主线程紧急恢复权限成功后同样删除。仅供
  * antiRaid/lockdownMirror.ts 构建 adopt 消息时判断某条记录是否已知持久化。

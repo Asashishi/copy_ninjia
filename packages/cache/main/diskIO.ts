@@ -5,7 +5,11 @@ import { createFlushBarrier } from "../../libs/flushBarrier";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { createRestartThrottle } from "../../libs/restartThrottle";
 import { AcknowledgedBatchQueue } from "../../libs/acknowledgedBatchQueue";
-import { DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES } from "../../consts/diskIO/diagnostics";
+import {
+  DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES,
+  DISK_DIAGNOSTIC_MAX_PENDING_MESSAGES,
+  DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES,
+} from "../../consts/diskIO/diagnostics";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
@@ -15,9 +19,11 @@ import type {
   DiskDiagnosticMessage,
   LoadedReply,
   LuckAppendStalledReply,
+  IdentityStoragePersistedReply,
   VerificationPersistedReply,
 } from "../../types/diskIO";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
+import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
 
 /**
  * 磁盘 IO 宿主（packages/infra/diskIO.ts）的内存状态：主线程侧的 flush/load 回执路由。
@@ -40,19 +46,66 @@ export const pendingLoad: {
   timer: ReturnType<typeof setTimeout> | null;
 } = { resolve: null, reject: null, timer: null };
 
-/** ensureLuckReceiptSecret 的逐请求等待表。 */
-export const pendingLuckSecrets: Map<number, {
-  resolve: (secret: LuckReceiptSecret) => void;
+/** 一条在途 main -> diskIO 请求的等待者。 */
+export interface PendingDiskIORequest<TResult> {
+  resolve: (value: TResult) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
-}> = new Map();
+}
 
-/** `/batch_kick` 按需读取入群日志的逐请求等待表。 */
-export const pendingJoinLogReads: Map<number, {
-  resolve: (records: readonly JoinLogRecord[]) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}> = new Map();
+/**
+ * 一条 main -> diskIO 的 request/reply 通道：等待表、发号器与两句领域文案。
+ *
+ * 四个领域（运势密钥、入群日志、身份策略、黑名单主键）此前各自拷贝了一份等待
+ * 表、一个 request-id 计数、一段请求函数、一段回执路由和一段 facade 守卫。收成
+ * 一个通道对象之后，新增领域只要多声明一个常量，超时/拒收/空回执三句文案与
+ * Worker 代际失效时的统一结算都不会再漏改其中一份。
+ */
+export interface DiskIORequestChannel<TResult> {
+  /** 超时与拒收文案里的领域名，例如 `identity policy read`。 */
+  readonly label: string;
+  /** Worker 回执缺少载荷时的错误文案；各领域点名自己缺的东西。 */
+  readonly missingPayload: string;
+  /** 逐请求等待表；只由 infra/diskIO/host.ts 填充与结算。 */
+  readonly pending: Map<number, PendingDiskIORequest<TResult>>;
+  /** 本代际发号器；terminateDiskIO 归零。 */
+  nextRequestId: number;
+}
+
+function createDiskIORequestChannel<TResult>(
+  label: string,
+  missingPayload: string
+): DiskIORequestChannel<TResult> {
+  return { label, missingPayload, pending: new Map(), nextRequestId: 1 };
+}
+
+/** ensureLuckReceiptSecret 的请求通道。 */
+export const luckSecretRequests: DiskIORequestChannel<LuckReceiptSecret> =
+  createDiskIORequestChannel("luck receipt secret", "Disk I/O Worker returned no luck receipt secret.");
+
+/** `/batch_kick` 按需读取入群日志的请求通道。 */
+export const joinLogReadRequests: DiskIORequestChannel<readonly JoinLogRecord[]> =
+  createDiskIORequestChannel("join log read", "Disk I/O Worker returned no join records.");
+
+/** 黑白名单 LRU 冷缺失的请求通道。 */
+export const identityPolicyReadRequests: DiskIORequestChannel<IdentityPolicyRawReadResult> =
+  createDiskIORequestChannel("identity policy read", "Disk I/O Worker returned no identity policy rows.");
+
+/** 群级补扫完整黑名单 ID 的请求通道。 */
+export const blocklistIdReadRequests: DiskIORequestChannel<readonly number[]> =
+  createDiskIORequestChannel("blocklist ID read", "Disk I/O Worker returned no blocklist IDs.");
+
+/**
+ * 全部请求通道。Worker 代际失效、恢复失败与 terminate 都必须一次结算所有等待者，
+ * 逐个点名正是此前漏掉一整类等待者的成因，这里按表遍历。
+ * 元素的 TResult 各不相同，统一失败路径只需要 reject 与 timer，故按最小结构擦除。
+ */
+export const DISK_IO_REQUEST_CHANNELS: readonly DiskIORequestChannel<never>[] = [
+  luckSecretRequests,
+  joinLogReadRequests,
+  identityPolicyReadRequests,
+  blocklistIdReadRequests,
+] as readonly DiskIORequestChannel<never>[];
 
 /**
  * Worker 明确回复为部分失败、且正在等待调用方消费的 flush 回执。
@@ -65,6 +118,7 @@ interface DiskIORuntime {
   worker: Worker | null;
   initialized: boolean;
   writable: boolean;
+  diagnosticRecycleWorker: Worker | null;
   runtimeRecoveryWorker: Worker | null;
   runtimeRecoveryTimer: ReturnType<typeof setTimeout> | null;
   runtimeRecoveryTimeoutMs: number;
@@ -73,7 +127,11 @@ interface DiskIORuntime {
   fatalSignaled: boolean;
   pendingBusinessMessages: LinkedQueue<DiskBusinessMessage>;
   diagnosticQueue: AcknowledgedBatchQueue<DiskDiagnosticMessage>;
+  diagnosticDroppedMessages: number;
+  diagnosticDroppedSerializedBytes: number;
   diagnosticRetryTimer: ReturnType<typeof setTimeout> | null;
+  consecutiveDiagnosticWriteFailures: number;
+  consecutiveDiagnosticRebuilds: number;
   diagnosticDrainWaiters: Set<{
     resolve: (result: "flushed" | "timedOut" | "failed") => void;
     timer: ReturnType<typeof setTimeout>;
@@ -83,9 +141,8 @@ interface DiskIORuntime {
   aiMemoryDeletedPersistedListeners: ((reply: AiMemoryDeletedPersistedReply) => void)[];
   aiMemoryPersistedListeners: ((reply: AiMemoryPersistedReply) => void)[];
   luckAppendStalledListeners: ((reply: LuckAppendStalledReply) => void)[];
+  identityStoragePersistedListeners: ((reply: IdentityStoragePersistedReply) => void)[];
   giveUpListeners: (() => void)[];
-  nextLuckSecretRequestId: number;
-  nextJoinLogReadRequestId: number;
 }
 
 /**
@@ -93,9 +150,9 @@ interface DiskIORuntime {
  * 窗口暂存有硬顶的业务消息；terminateDiskIO 结算等待、清 timer 并恢复默认值。
  * Worker 崩溃后保留监听器并从主线程镜像重建，业务队列容量由配置硬顶约束。
  * diagnosticQueue 由 relayLogMessage/postDiskIODiagnostic 填充、DiskIO ACK 排空；
- * 单批在途并保留到 ACK，Worker 崩溃后原批重发。待发送 FIFO 刻意不设容量：本项目
- * 是约 15 个群的单租户部署，日志转发/落盘消费速度显著高于 Telegram 事件生产速度，
- * 进程内不主动丢弃优先于理论故障下的内存硬顶；terminate 时随进程生命周期清空。
+ * 单批在途并保留到 ACK，Worker 崩溃后原批重发。总消息数与 JSON 载荷字节均有
+ * 硬顶；越界项只累加两个标量，队列重新有空间后追加一条汇总日志。terminate 时
+ * 队列与丢弃计数一起清空。
  * diagnosticDrainWaiters 只由并发的进程级 flush 填充，ACK、超时或 terminate
  * 结算清理，容量受同时在途的 shutdown flush 数约束；Worker 重建期间原样等待重放。
  */
@@ -103,6 +160,7 @@ export const diskIORuntime: DiskIORuntime = {
   worker: null,
   initialized: false,
   writable: false,
+  diagnosticRecycleWorker: null,
   runtimeRecoveryWorker: null,
   runtimeRecoveryTimer: null,
   runtimeRecoveryTimeoutMs: LOAD_TIMEOUT_MS,
@@ -110,19 +168,24 @@ export const diskIORuntime: DiskIORuntime = {
   fatalHandler: undefined,
   fatalSignaled: false,
   pendingBusinessMessages: new LinkedQueue<DiskBusinessMessage>(),
-  diagnosticQueue: new AcknowledgedBatchQueue<DiskDiagnosticMessage>(
-    DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES
-  ),
+  diagnosticQueue: new AcknowledgedBatchQueue<DiskDiagnosticMessage>({
+    maxBatchMessages: DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES,
+    maxMessages: DISK_DIAGNOSTIC_MAX_PENDING_MESSAGES,
+    maxCost: DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES,
+  }),
+  diagnosticDroppedMessages: 0,
+  diagnosticDroppedSerializedBytes: 0,
   diagnosticRetryTimer: null,
+  consecutiveDiagnosticWriteFailures: 0,
+  consecutiveDiagnosticRebuilds: 0,
   diagnosticDrainWaiters: new Set(),
   respawnListeners: [],
   verificationPersistedListeners: [],
   aiMemoryDeletedPersistedListeners: [],
   aiMemoryPersistedListeners: [],
   luckAppendStalledListeners: [],
+  identityStoragePersistedListeners: [],
   giveUpListeners: [],
-  nextLuckSecretRequestId: 1,
-  nextJoinLogReadRequestId: 1,
 };
 
 /**

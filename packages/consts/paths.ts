@@ -68,9 +68,9 @@ export const TELEGRAM_CONFIG_PATH: string = join(CONFIG_ROOT, "telegram.json");
  * base_url，见 packages/config/agent.ts。
  */
 export const AGENT_CONFIG_PATH: string = join(CONFIG_ROOT, "agent.json");
-/** 用户/频道白名单及逐项权限配置，见 packages/config/whitelist.ts。 */
+/** 一次性 SQLite 迁移读取的旧白名单路径；运行时不得访问。 */
 export const WHITELIST_CONFIG_PATH: string = join(CONFIG_ROOT, "whitelist.json");
-/** 人工维护的静态黑名单 ID 配置，启动时与 memory/blocklist/blocklist.json 合并。 */
+/** 一次性 SQLite 迁移读取的旧静态黑名单路径；运行时不得访问。 */
 export const BLOCKLIST_CONFIG_PATH: string = join(CONFIG_ROOT, "blocklist.json");
 
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
@@ -80,13 +80,19 @@ export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
  * memory/ 落盘目录：AI 记忆快照（ai/ 下按 chatId 一个 <chatId>.json）、每日
  * 运势缓存（luck/ 下按东京日期一个文件，只留当天）、白名单贴纸包的目录快照
  * （stickers/ 下按 pack short name 一个 <pack>.json，见 aiChat/ai/stickers/catalog.ts）、
- * 待验证当日增量（anti-raid/ 下只保留东京当天），以及权威黑名单与未完成移除
- * outbox（blocklist/）、滚动 24 小时入群事实（joinlog/），均由 diskIOWorker 落盘，见
+ * 待验证当日增量（anti-raid/ 下只保留东京当天），以及滚动 24 小时入群事实
+ * （joinlog/），均由 diskIOWorker 落盘，见
  * packages/workers/diskIOWorker.ts。每一类数据各占一个子目录，顶层不放单个
  * 文件。不进 git，与 logs/ 同级对待；AI 记忆快照含群聊逐字明文，部署时应按
  * 敏感数据保护。
  */
 export const MEMORY_DIR: string = join(RUNTIME_DATA_ROOT, "memory");
+/**
+ * SQLite 运行时数据库目录；与 memory/ 平级，只由 Disk I/O Worker 和显式迁移脚本访问。
+ */
+export const DATABASE_DIR: string = join(RUNTIME_DATA_ROOT, "database");
+/** 黑白名单与待踢成员共用的 SQLite 数据库文件。 */
+export const IDENTITY_DATABASE_PATH: string = join(DATABASE_DIR, "storage.sqlite");
 /** 每群 AI 记忆原子快照目录。 */
 export const AI_MEMORY_DIR: string = join(MEMORY_DIR, "ai");
 /** 当日运势追加文件与签名密钥目录。 */
@@ -104,23 +110,15 @@ export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");
  */
 export const JOIN_LOG_MEMORY_DIR: string = join(MEMORY_DIR, "joinlog");
 /**
- * 黑名单相关的运行时数据目录。与 ai/、luck/、stickers/、anti-raid/ 同级：
- * memory/ 下的每一类数据各占一个子目录，顶层不再散落单个文件——孤儿临时文件
- * 的清扫是按目录扫的，同一目录里混着不同 owner 的文件时，谁该清掉谁必须靠
- * 文件名前缀去猜。
+ * 一次性 SQLite 迁移读取并最终删除的旧黑名单目录；运行时不得访问。
  */
 export const BLOCKLIST_MEMORY_DIR: string = join(MEMORY_DIR, "blocklist");
 /**
- * /block 权威黑名单：顶层 JSON 对象，key 为用户 id，value 为
- * BlockedUserRecord。追加写入、只由 `/unblock` 全量重写，见
- * workers/diskIO/blocklistFile.ts。它回答“谁应被永久封禁”，不是处置任务队列。
- * 含 Telegram 用户 id，与 logs/ 同一敏感级别，不进 git。
+ * 一次性迁移读取的旧动态黑名单文件；运行时权威源已经是 SQLite。
  */
 export const BLOCKLIST_FILE_PATH: string = join(BLOCKLIST_MEMORY_DIR, "blocklist.json");
 /**
- * 尚未完成的黑名单成员移除任务。独立于权威黑名单文件，使用当前 version=2
- * 全量快照；主进程退出后由启动恢复重放。
- * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
+ * 一次性迁移读取的旧待踢成员 outbox 文件；运行时权威源已经是 SQLite。
  */
 export const BLOCKLIST_REMOVAL_OUTBOX_PATH: string = join(BLOCKLIST_MEMORY_DIR, "removals.json");
 
@@ -142,11 +140,12 @@ export const AD_SAMPLE_FILE_PATH: string = join(AD_SAMPLE_MEMORY_DIR, "sample.js
 export const GOOGLE_AUTH_FILE_PATH: string = join(PROJECT_ROOT, "g-auth.json");
 
 /**
- * 原子重写（写 tmp、rename 覆盖目标路径）与损坏文件隔离共用的后缀，全项目
- * 落盘统一复用，见 infra/storage/statePersistence.ts、
- * workers/diskIO/snapshotFiles.ts 的快照恢复、
- * workers/diskIO/appendOnlyDayFile.ts 的 atomicRewrite。
+ * 原子重写（写 tmp、rename 覆盖目标路径）统一使用的临时后缀，全项目落盘复用，
+ * 见 infra/storage/statePersistence.ts、workers/diskIO/snapshotFiles.ts 的快照
+ * 恢复、workers/diskIO/appendOnlyDayFile.ts 的 atomicRewrite。
+ *
+ * 没有与之配套的「损坏文件隔离」后缀：本项目的设计是解析失败即致命、原地保留
+ * 原文件等人来看，从不改名隔离（见 test/infra/storage/stateStore.test.ts 与
+ * test/workers/diskIO/luckFiles.test.ts 里「从不产生 .corrupt」的断言）。
  */
 export const TMP_FILE_SUFFIX: string = ".tmp";
-/** 解析失败、隔离保留供排查的损坏文件后缀（不参与正常读取/清理，永久保留）。 */
-export const CORRUPT_FILE_SUFFIX: string = ".corrupt";

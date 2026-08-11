@@ -79,9 +79,21 @@ beforeEach(() => {
 });
 
 describe("chat runtime teardown", () => {
+  test("teardown 原因原样传给 owner，用于区分显式清理与失权停管", async () => {
+    const reasons: string[] = [];
+    chatTeardown.registerChatTeardown("antiRaid", (_chatId: number, reason): void => {
+      reasons.push(reason);
+    });
+
+    await botAdmin.teardownChatRuntime(-1001, "explicitDisable");
+    await botAdmin.teardownChatRuntime(-1001, "lostAuthority");
+
+    expect(reasons).toEqual(["explicitDisable", "lostAuthority"]);
+  });
+
   test("按 copy、gag、proxy、AI、Anti-Raid 顺序拆除组合运行态", async () => {
     states.set(-1001, { isProxySendEnabled: true });
-    await botAdmin.teardownChatRuntime(-1001);
+    await botAdmin.teardownChatRuntime(-1001, "explicitDisable");
     expect(calls).toEqual([
       "copy:-1001",
       "gag:-1001",
@@ -101,7 +113,7 @@ describe("chat runtime teardown", () => {
     chatTeardown.registerChatTeardown("aiChat", async (): Promise<void> => { throw aiError; });
     chatTeardown.registerChatTeardown("antiRaid", (chatId: number): void => { calls.push(`anti:${chatId}`); });
 
-    const error = await botAdmin.teardownChatRuntime(-1001).catch((reason: unknown) => reason);
+    const error = await botAdmin.teardownChatRuntime(-1001, "lostAuthority").catch((reason: unknown) => reason);
 
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual([copyError, aiError]);
@@ -114,7 +126,13 @@ describe("chat runtime teardown", () => {
   });
 
   test("退群保留尚未恢复的 lockdown owner，删除其它群配置", async () => {
-    const lockdown = { phase: "active", intentId: 7, originalPermissions: {}, expiresAt: 9_000 };
+    const lockdown = {
+      phase: "active",
+      intentId: 7,
+      originalPermissions: {},
+      announced: true,
+      expiresAt: 9_000,
+    };
     states.set(-1001, {
       isInitEnabled: true,
       botIsAdmin: true,

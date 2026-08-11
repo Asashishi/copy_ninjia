@@ -5,9 +5,10 @@ import type { GagSession } from "../../types/gag";
 /**
  * 主线程权威 gag 表：chatId 定位小型目标列表，同群可同时管教多个身份，
  * 但同群同 targetId 至多一条。`/gag` 在发开始提示前以 starting 预约，
- * 公开状态与目标临时入口全部成功后切 active 并安装 unref timer；超时、
- * `/ungag` 或群 teardown 同步认领为 ending，只有全部提示确实 deleted/gone
- * 后才按对象身份删除；瞬时失败
+ * 公开状态与目标入口全部成功后切 active 并安装 unref timer；每条入口各自按
+ * 群消息数滚动换新，current/pending/retired 三个固定 id 槽位关闭换新与结束的
+ * 竞态且不会随失败次数增长。超时、`/ungag` 或群 teardown 同步认领为 ending，
+ * 只有全部提示确实 deleted/gone 后才按对象身份删除；瞬时失败
  * 保留有界重试与 owner。全局容量由 gag command 常量约束，不淘汰有效会话。
  * 它不落盘：Worker 重建不影响此主线程权威表；正常进程停机由 gag drain 在
  * Telegram 总闸关闭前清理，非正常进程终止才会直接丢失内存状态。

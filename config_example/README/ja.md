@@ -16,9 +16,9 @@ cp -n config_example/*.json config/
 
 既存 file を上書きする copy command を使わず、`config_example/` を deployment backup として
 扱わないでください。`config/` には credential が含まれるため、service account だけが読める
-権限を推奨します。設定は hot reload されず、手動変更後は再起動が必要です。
-`whitelist.json` は `/white` と `/permission` が atomic rewrite するので、process 稼働中に
-外部 editor から同時編集しないでください。
+権限を推奨します。設定は hot reload されず、手動変更後は再起動が必要です。allowlist、
+blocklist、未完了 removal は deployment 設定ではなく runtime data であり、
+`database/storage.sqlite` にまとめて保存し、command または明示 migration script だけで変更します。
 
 すべての JSON は strict schema で解析します。file が存在する場合、未知／誤記 field、型違い、
 不正 enum、競合、範囲外の値は Telegram 接続や Worker 作成前に startup を失敗させます。
@@ -30,8 +30,6 @@ cp -n config_example/*.json config/
 | ファイル | 設定内容 | 欠落時の動作 |
 | --- | --- | --- |
 | `telegram.json` | Telegram Bot token と唯一のスーパー管理者 | 常に startup を拒否 |
-| `whitelist.json` | allowlist identity と個別 permission | 常に startup を拒否 |
-| `blocklist.json` | startup 時に読む静的 blocklist | 常に startup を拒否 |
 | `agent.json` | capability ごとの AI provider、credential、endpoint、model | capability ごとに異なる。下記参照 |
 | `stickers.json` | AI chat が使える sticker pack | AI chat を有効化できず、すでに有効な chat があれば startup を拒否 |
 | `reactions.json` | Telegram reaction の候補 keyword | AI chat を有効化できず、すでに有効な chat があれば startup を拒否 |
@@ -54,7 +52,7 @@ AI chat は `prompt/persona.md`、日本語翻訳はプロジェクトルート�
 - `bot_token`：BotFather が発行する非空の Bot API token。secret です。
 - `super_admin_user_id`：唯一のスーパー管理者を表す正の safe integer Telegram user ID。
   username ではありません。この identity は付与可能な全 permission を本来持つため、
-  `whitelist.json` に重ねて追加しないでください。
+  SQLite allowlist table に重ねて追加しないでください。
 
 ## `agent.json`
 
@@ -100,37 +98,14 @@ unsupported と判定した後、その Worker は同種 media を download し�
 Google/OpenAI HTTP request は初回 failure 後に最大 5 回 retry します。Worker／process 再構築で
 probe 結果を消し、新設定を適用します。
 
-## `whitelist.json`
+## identity policy は `config/` に置かない
 
-top-level key は Telegram identity ID の十進文字列です。正数は user、負数は channel identity。
-value は permission の部分 override で、省略 field は default を使います。空 object `{}` でも
-allowlist 内に入り、default で広告検出と flood control を bypass しますが、管理 command は得ません。
-
-| permission key | `true` で許可する動作 |
-| --- | --- |
-| `isCanMute` | `/mute` |
-| `isCanUnMute` | `/unmute` |
-| `isCanBlock` | `/block` で永続 blocklist へ追加し managed chat で ban |
-| `isCanUnBlock` | `/unblock` で永続 block を解除し ban を解除 |
-| `isCanSwitchMood` | `/switch_mood` で AI mood を再抽選 |
-| `isCanBypassAdDetection` | 広告検出と自動処分を bypass。default `true` |
-| `isCanBypassFloodControl` | flood count と自動 mute を bypass。default `true` |
-| `isCanControllAIPermission` | `/ai_chat enable\|disable` |
-| `isCanControllAdDetectPermission` | `/ad_detect enable\|disable` |
-| `isCanControllFloodControlPermission` | `/flood_control enable\|disable` |
-| `isCanControllJATranslatePermission` | `/ja_copy enable\|disable` |
-| `isCanControllAntiRaidPermission` | `/antiraid enable\|disable` |
-
-`Controll` は現 schema の正確な spelling で、`Control` へ直すと不正になります。上記 2 個の
-bypass field 以外は default `false`。スーパー管理者は `telegram.json` から来るため、ここでの
-entry の影響を受けません。
-
-## `blocklist.json`
-
-`blockedIds` は静的 blocked identity 配列です。正 safe integer は user、負 safe integer は
-channel identity。0、小数、重複、unsafe integer は不正です。静的 blocklist はスーパー管理者や
-allowlist identity と重複できず、競合は startup を拒否します。`/block` が管理する runtime 永続
-blocklist は `memory/blocklist/` にあり、別 file です。
+allowlist、blocklist、未完了 removal の authoritative source は runtime data root の
+`database/storage.sqlite` です。`/white`、`/permission`、`/block`、`/unblock` は Disk I/O Worker
+経由の transaction で変更を永続化し、通常の deployment は database を直接編集しません。
+permission key と default は `/permission help` が現行 reference です。不正 schema、未対応 version、
+2 つの policy table の重複は network 接続前に startup を拒否します。legacy JSON deployment は
+[運用文書](../../docs/ja/07-operations.md) の一回限りの migration に従い、旧 file を `config/` へ戻さないでください。
 
 ## `stickers.json`
 

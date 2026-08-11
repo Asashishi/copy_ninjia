@@ -37,7 +37,7 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: { log: loggerLog, error: loggerError, info: loggerLog, warn: loggerLog },
 }));
 mock.module("../../../packages/infra/selfSentTracker", () => ({ markSelfSent: (): void => {} }));
-mock.module("../../../packages/libs/supervisedWorker", () => ({
+mock.module("../../../packages/infra/supervisedWorker", () => ({
   superviseWorker: (_options: {
     onEvent: (event: AiChatWorkerEvent) => void;
   }) => ({

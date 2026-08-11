@@ -21,6 +21,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # AI memory snapshots + daily luck cache (diskIOWorker, same privacy tier as logs)
 memory
 
+# SQLite identity policy storage (diskIOWorker, same privacy tier as memory/).
+# 必须锚定根目录，避免吞掉 packages/database/ 下的 Drizzle schema 与 codec 源码。
+/database/
+
 # unexpected local dotenv files (not runtime config; keep accidental secrets out of Git)
 .env
 .env.development.local

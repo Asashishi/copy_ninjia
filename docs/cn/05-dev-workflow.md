@@ -35,15 +35,15 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**2181 tests / 216 files / 72414 次 `expect()`**；全源码**函数覆盖率 94.74% / 行覆盖率 95.94%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**2225 tests / 228 files / 32683 次 `expect()`**；全源码**函数覆盖率 94.40% / 行覆盖率 95.60%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
-测试必须通过 `bun run test`（即 `bun test --isolate`）执行，三层保护：
+测试必须通过 `bun run test`（即 `bun test --isolate`）执行，四层保护：
 
 1. **文件隔离**：Bun 为每个测试文件创建新的 global object；`mock.module` 与模块级状态不会污染其它测试文件。这里没有启用 `--parallel`，因此不宣称每个文件各占一个进程。
-2. **临时数据根**：`test/preloadEnv.ts` 在任何生产模块加载前为每个隔离体注入独立临时数据根，因此未 mock 的真实文件 I/O 也只会读写临时目录，绝不触碰生产 `state.json`、`bot.lock`、`logs/`、`memory/`；结束后临时目录被清理。**路径注入单独成文件**是因为 ESM 的 import 一律先于同文件语句求值：只要 `test/preload.ts` 静态 import 了任何生产模块，写在文件里的环境变量赋值就已经晚了一步，`CONFIG_ROOT` 会指向开发机上的真实部署目录。
-3. **只读配置根**：同一份注入还把 `COPY_NINJIA_CONFIG_ROOT` 指向仓库内的 `config_example/`（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读或改写开发机上真实的 `whitelist.json`、`blocklist.json`。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
+2. **临时数据根**：`test/preloadEnv.ts` 在任何生产模块加载前为每个隔离体注入独立临时数据根，因此未 mock 的真实文件 I/O 也只会读写临时目录，绝不触碰生产 `state.json`、`bot.lock`、`logs/`、`memory/`、`database/`；结束后临时目录被清理。**路径注入单独成文件**是因为 ESM 的 import 一律先于同文件语句求值：只要 `test/preload.ts` 静态 import 了任何生产模块，写在文件里的环境变量赋值就已经晚了一步，`CONFIG_ROOT` 会指向开发机上的真实部署目录。
+3. **只读配置根**：同一份注入还把 `COPY_NINJIA_CONFIG_ROOT` 指向仓库内的 `config_example/`（见 `packages/consts/paths.ts` 的 `CONFIG_ROOT`）。部署 `config/` 不受版本控制，这一层既保证干净检出即可跑测试，也避免测试与测试 Worker 误读开发机上的真实 Telegram 与功能配置；身份策略数据库已由上一层临时数据根隔离。该环境变量只服务于测试，不是部署开关，因此不列入 README 的环境变量表。
 4. **agent 配置快照**：`agent.json` 是唯一不由运行时读盘取得的部署配置（真实进程里由主线程解析后经 Worker 初始化消息投递，见 [04 运行时权威约束](04-invariants.md)）。测试 isolate 收不到那两条消息，因此 `test/preload.ts` 把同一份 `config_example/agent.json` 一次 adopt 进本 isolate 的 holder，等价于「快照已经送到」；要验证「没配」的用例自行把 holder 置空。
 
 直接 `bun test` 单文件调试可以，但合并前必须过完整 `bun run check`。
@@ -61,6 +61,10 @@
 ## 入群日志性能基准
 
 `bun run perf:join-log` 固定使用 250,000 条容量、300 条溢出和 10,000 条预热输入；快照与容量路径的 baseline/current 各运行 5 个独立 Bun 进程。输出记录完整 Bun version/revision、耗时的中位数与范围，以及强制 GC 前后的 JSC heap/object 变化。baseline 固化的是分配优化前的整表复制、全量排序与完整 JSON 字符串算法，只用于同一 Bun build 内的前后对照；`Bun.gc(true)` 只存在于该基准，不进入生产控制流。改动入群索引、容量裁剪、快照序列化或分块原子写时必须运行，并确认差异明显大于 5 轮样本范围所显示的噪声。
+
+## 身份数据库性能基准
+
+`bun run perf:identity-database` 在临时数据根和临时 SQLite 中测四条真实路径：8 个身份一批的双表冷读、128 行显式事务写入、主线程 8,196 项 LRU 热读，以及经过 Worker、JSONB transaction 与精确 ACK 的写透。每项先预热，再跑 5 个独立 Bun 进程；报告固定 Bun version/revision、吞吐、批延迟、样本范围/变异系数，以及强制 GC 前后的 JSC heap、extra memory、object 与 GC 耗时。`--single-process` 让每项在同一测量进程内连续复测 3 次，用于排查跨轮 retained growth，不替代独立进程性能对照。`Bun.gc(true)` 只在计时边界外诊断，生产代码不得调用。改动身份 LRU、冷预取、编码、事务批量、ACK 或 Worker 重放时必须运行，并把同一 Bun build 的差异与样本噪声、heap/GC 一起判断。
 
 ## 提交流程
 
@@ -89,7 +93,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
 
-- **中文字符串统计**（当前约 786 处 / 76 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
+- **中文字符串统计**（当前约 801 处 / 78 个文件）：出现在三语 README 的「关于语言」注与三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
 - **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布

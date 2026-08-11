@@ -7,7 +7,7 @@ import type {
 } from "../types/copy/cooldown";
 import { getGlobalCopyState, persistAuthoritativeState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { isWhitelisted } from "../config/whitelist";
+import { isWhitelisted } from "../whitelist";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
 import { queueAvatarUpdate } from "../copy/avatarQueue";

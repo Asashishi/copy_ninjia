@@ -3,6 +3,10 @@ import {
   persistPendingBlockedRemovals,
 } from "../infra/blocklist/outbox";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
+import {
+  hasAnyBlockedIdentity,
+  listAllBlockedIdentityIds,
+} from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS } from "../consts/antiRaid/blocklist";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid";
@@ -20,7 +24,8 @@ import type { RemoveBlockedMembersParams } from "../types/blocklist";
  */
 function reconcileBlockedRemovalMessages(
   messages: readonly AntiRaidWorkerMessage[],
-  replacedJoins: ReadonlyMap<number, AntiRaidWorkerMessage>
+  replacedJoins: ReadonlyMap<number, AntiRaidWorkerMessage>,
+  blockedIds: readonly number[]
 ): AntiRaidWorkerMessage[] {
   const reconciled: AntiRaidWorkerMessage[] = [];
   for (const message of messages) {
@@ -29,7 +34,7 @@ function reconcileBlockedRemovalMessages(
       continue;
     }
     const params: RemoveBlockedMembersParams | undefined =
-      getPendingBlockedRemovalParams(message.removalId);
+      getPendingBlockedRemovalParams(message.removalId, blockedIds);
     if (params !== undefined) {
       reconciled.push({ type: "removeBlockedMembers", ...params });
       continue;
@@ -111,12 +116,22 @@ export async function prepareDurableAntiRaidMessages(
   messages: readonly AntiRaidWorkerMessage[],
   replacedJoins: ReadonlyMap<number, AntiRaidWorkerMessage> = new Map()
 ): Promise<AntiRaidWorkerMessage[]> {
+  const needsBlocklistSnapshot: boolean = messages.some(
+    (message: AntiRaidWorkerMessage): boolean =>
+      message.type === "removeBlockedMembers" && message.probeMembership
+  );
+  let blockedIds: readonly number[] = needsBlocklistSnapshot && hasAnyBlockedIdentity()
+    ? await listAllBlockedIdentityIds()
+    : [];
   let durableMessages: AntiRaidWorkerMessage[] =
-    reconcileBlockedRemovalMessages(messages, replacedJoins);
+    reconcileBlockedRemovalMessages(messages, replacedJoins, blockedIds);
   for (let round: number = 0; round < BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS; round++) {
     await persistPendingBlockedRemovals();
+    blockedIds = needsBlocklistSnapshot && hasAnyBlockedIdentity()
+      ? await listAllBlockedIdentityIds()
+      : [];
     const currentMessages: AntiRaidWorkerMessage[] =
-      reconcileBlockedRemovalMessages(messages, replacedJoins);
+      reconcileBlockedRemovalMessages(messages, replacedJoins, blockedIds);
     if (durableAntiRaidMessagesMatch(durableMessages, currentMessages)) {
       return currentMessages;
     }

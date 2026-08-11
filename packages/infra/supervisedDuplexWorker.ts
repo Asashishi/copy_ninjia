@@ -49,7 +49,7 @@ export interface SupervisedDuplexWorkerOptions<TMessage, TEvent, TRequest>
   ) => Bun.Transferable[] | undefined;
 }
 
-/** 把 Worker 业务事件与反向能力请求收敛进同一个受监督双工边界。 */
+/** 把 Worker 业务事件与反向能力请求收敛进同一个主线程受监督双工边界。 */
 export function superviseDuplexWorker<TMessage, TEvent, TRequest>(
   options: SupervisedDuplexWorkerOptions<TMessage, TEvent, TRequest>
 ): SupervisedWorkerHandle<WorkerDuplexInbound<TMessage>> {

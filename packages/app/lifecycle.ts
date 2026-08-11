@@ -8,12 +8,8 @@ import {
   RUNNER_DRAIN_TIMEOUT_MS,
 } from "../consts/lifecycle";
 import { TELEGRAM_ALLOWED_UPDATES } from "../consts/telegram";
-import { BLOCKLIST_CONFIG_PATH, BLOCKLIST_FILE_PATH } from "../consts/paths";
 import type { CachedUser } from "../types/chatState";
-import type { BlocklistConfig } from "../types/blocklist";
 import type { LoadedData } from "../types/diskIO";
-import type { WhitelistConfig } from "../types/whitelist";
-import { assertBlocklistProtectedIdentitiesDisjoint } from "../config/blocklist";
 import type {
   AcknowledgedUpdateRunner,
   FlushResult,
@@ -132,20 +128,6 @@ export class ApplicationLifecycle {
 
     await this.dependencies.acquireSingleInstanceLock(this.dependencies.BOT_TOKEN);
     this.lockAcquired = true;
-    // 白名单是所有管理命令与自动处置的安全边界，坏配置不能等到第一条更新
-    // 才暴露。持锁后、任何 Worker 或 Telegram 客户端启动前严格加载一次。
-    const whitelistConfig: WhitelistConfig =
-      this.dependencies.getWhitelistConfig();
-    // 静态黑名单同样是核心安全输入：先严格加载并保留本次启动的不可变快照，
-    // 等动态 memory 层恢复后再一次性合并，避免两次读盘之间配置发生漂移。
-    const blocklistConfig: BlocklistConfig =
-      this.dependencies.loadBlocklistConfig();
-    assertBlocklistProtectedIdentitiesDisjoint({
-      blockedIds: blocklistConfig.blockedIds,
-      whitelistIds: whitelistConfig.keys(),
-      superAdminId: this.dependencies.SUPER_ADMIN_USER_ID,
-      source: BLOCKLIST_CONFIG_PATH,
-    });
     this.dependencies.setBusinessWorkerFatalHandler(this.handleBusinessWorkerFatal);
     this.dependencies.setStatePersistenceFatalHandler(this.handleDiskIOFatal);
     this.dependencies.initAvatarUpdates();
@@ -171,12 +153,23 @@ export class ApplicationLifecycle {
     this.flags.diskIOInitialized = true;
 
     const loaded: LoadedData = await this.dependencies.loadPersistedData();
-    assertBlocklistProtectedIdentitiesDisjoint({
-      blockedIds: loaded.blockedUsers.keys(),
-      whitelistIds: whitelistConfig.keys(),
-      superAdminId: this.dependencies.SUPER_ADMIN_USER_ID,
-      source: BLOCKLIST_FILE_PATH,
-    });
+    if (
+      loaded.blocklistEntryCount === undefined ||
+      loaded.whitelistEntryCount === undefined
+    ) {
+      throw new Error("Identity database recovery did not return both policy table counts.");
+    }
+    this.dependencies.hydrateIdentityStorageCounts(
+      loaded.whitelistEntryCount,
+      loaded.blocklistEntryCount
+    );
+    // 超管与黑名单必须互斥。这条断言只能排在 hydrate 之后（它会清空两份 LRU）、
+    // 且必须早于 sweepManagedBlocklistChats——否则一个指向历史 /block 账号的
+    // super_admin_user_id 会让本进程把新超管从所有托管群里清出去，而他连一条
+    // /unblock 都发不出来（理由见 infra/blocklist/membership.ts）。
+    await this.dependencies.assertSuperAdminNotBlocked(
+      this.dependencies.SUPER_ADMIN_USER_ID
+    );
     const restoredCopiedUser: CachedUser | null = this.dependencies.getGlobalCopyState().copiedUser;
     if (restoredCopiedUser) this.dependencies.seedSenderCache(restoredCopiedUser);
 
@@ -191,14 +184,11 @@ export class ApplicationLifecycle {
     this.dependencies.restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
     this.dependencies.hydratePendingVerifications(loaded.verifications);
     // 必须早于 runner 开始投喂更新：启动瞬间进群的黑名单用户要能立刻被认出来。
-    this.dependencies.hydrateBlocklist(
-      loaded.blockedUsers,
-      loaded.pendingBlockedRemovals,
-      blocklistConfig.blockedIds
-    );
+    this.dependencies.hydrateBlocklist(loaded.pendingBlockedRemovals);
     this.dependencies.initAntiRaid();
     this.flags.antiRaidInitialized = true;
-    // 新增到静态配置层的身份没有对应 outbox；在 runner 接收新 update 前，对
+    this.dependencies.initBlocklistSweepScheduler();
+    // SQLite 黑名单身份未必已有对应 outbox；在 runner 接收新 update 前，对
     // 所有已初始化且已确证管理员的群补一轮，频道 ID 会由 Worker 走封发言权路径。
     await this.dependencies.sweepManagedBlocklistChats();
 
@@ -232,7 +222,8 @@ export class ApplicationLifecycle {
     );
     // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
     // init 前段，而上面的 initAvatarUpdates/initReactionQueue/
-    // initChatTitleRefresh/initTranslate/initGagRuntime 又把五个 owner 重新置为接受工作。
+    // initChatTitleRefresh/initTranslate/initGagRuntime/initBlocklistSweepScheduler 又把六个
+    // owner 重新置为接受工作。
     // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
     // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
     // getChat 扫描加批量落盘。
@@ -531,7 +522,7 @@ export class ApplicationLifecycle {
   }
 
   /**
-   * 让五个后台/临时状态 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：
+   * 让六个后台/临时状态 owner 停止接受新工作。**不闩锁「已经 quiesce 过」**：
    * init() 里的各 init 会把 accepting 重新置真，启动期到达的停止信号若把成功
    * 记成一次性完成，此后 wait()/dispose() 的每一次调用都会被短路——owner
    * 整个停机期间继续收活，
@@ -554,6 +545,11 @@ export class ApplicationLifecycle {
     quiesceOwner("chat-title", (): void => this.dependencies.quiesceChatTitleRefresh());
     quiesceOwner("translate", (): void => this.dependencies.quiesceTranslate());
     quiesceOwner("gag", (): void => this.dependencies.quiesceGagRuntime());
+    // 补扫 timer 能启动 Anti-Raid 网络任务与 outbox 写入，必须在确认最终 offset
+    // 前与其它 maintenance owner 一起关闸；只在 dispose() 终局关会在前置 drain
+    // 已完成后重新制造工作，破坏“排空后不再有生产者”的边界。
+    quiesceOwner("blocklist-sweep", (): void =>
+      this.dependencies.quiesceBlocklistSweepScheduler());
     return succeeded;
   }
 

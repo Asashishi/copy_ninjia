@@ -8,7 +8,7 @@
  *
  * 贯穿本文件的那条规矩：**能挤掉的只有已经判过的条目**（seq <= checkedSeq）。
  * 没判过的内容被裁掉就等于一次没有任何日志痕迹的漏判；真到了只剩没判过的
- * 可丢时，正文不再留，但消息 id 必须转进 pendingDeleteIds，否则这条广告既
+ * 可丢时，正文不再留，但消息身份必须转进 pendingDeleteIds，否则这条广告既
  * 进不了判定、也进不了处置的删除集合，命中后会永久留在群里。
  */
 
@@ -52,7 +52,7 @@ export function pruneConsumedContext(bundle: AdMessageBundle, now: number): void
  *
  * 先挤已经判过的旧上下文——同 pruneConsumedContext 的规矩，只不过这里是按条数
  * 而不是按窗口。整串都还没判过时（爆发式刷屏能在第一个节拍到来之前就撑满）
- * 只剩没判过的可丢：正文不再留，但 id 转进 pendingDeleteIds，否则这条广告
+ * 只剩没判过的可丢：正文不再留，但身份转进 pendingDeleteIds，否则这条广告
  * 既不会被判定读到、也不会进处置的删除集合，会永久留在群里。
  */
 export function enforceBundleCapacity(bundle: AdMessageBundle): void {
@@ -112,16 +112,15 @@ export function appendLinkUrls(
 /**
  * 把被引用段与被回复原文接到已截断的正文后面，一并交给模型判定。
  *
- * **这两样是「别人的内容」，但必须连坐。** 现实里大量广告正是这么发的：先发一条
+ * **这两样是「别人的内容」，但必须参与判定。** 现实里大量广告正是这么发的：先发一条
  * 完全正常的消息（那一刻判定放行，且判过之后 checkedSeq 就把它盖住了），隔一段
  * 时间把它**编辑**成广告，再用回复/引用把它顶到群里。广告正文自始至终不在任何
  * 一条「新消息」的 text 里，只活在被引用段和被回复原文中——不读它们，这条路
  * 对广告检测完全免疫，而它恰恰是当前最主流的形态。
  *
- * 代价是明知的、并且是有意接受的：引用广告来吐槽的群友会跟着一起被判。判定
- * 拿不到「这段引文是谁写的」之外的任何信号，无法区分「转述广告来骂它」和
- * 「借引用把广告顶上来」，因此这里选择宁可误伤也不放过（口径由部署方在
- * config/ad_samples.json 里继续收）。
+ * 引用内容仍会让整串命中，但命中不再等于立即 block：主线程已排除白名单来源，
+ * Worker 再用 directText 做归因；只有发送者本人正文是广告时直接 block，广告只
+ * 来自非白名单回复、引用或转发时先公开警告，五分钟内再次命中才升级。
  *
  * 接法与 appendLinkUrls 完全一致，两条理由同样成立：
  * - **接在截断之后、各有各的配额**（AD_SAMPLE_CONTEXT_MAX_CHARS）。先拼后截等于
@@ -263,4 +262,25 @@ export function formatAdBundleText(entries: readonly AdCandidateEntry[]): string
   return entries
     .map((entry: AdCandidateEntry, index: number): string => `${index + 1}. ${entry.text}`)
     .join("\n");
+}
+
+/**
+ * 拼出只含当前发送者本人正文的清单；空行跳过后重新连续编号，避免把转发内容
+ * 误当成转发者自己写下的直接广告。
+ */
+export function formatDirectAdBundleText(entries: readonly AdCandidateEntry[]): string {
+  const lines: string[] = [];
+  for (const entry of entries) {
+    if (entry.directText.length === 0) continue;
+    lines.push(`${lines.length + 1}. ${entry.directText}`);
+  }
+  return lines.join("\n");
+}
+
+/** 是否有引用、回复或转发内容实际进入了本次模型清单。 */
+export function containsReferencedAdContent(entries: readonly AdCandidateEntry[]): boolean {
+  for (const entry of entries) {
+    if (entry.text !== entry.directText) return true;
+  }
+  return false;
 }

@@ -1,12 +1,14 @@
 import type { CommandContext, Context } from "grammy";
 import {
   BATCH_KICK_CONCURRENCY,
-  BATCH_KICK_DURATION_ARG_PATTERN,
-  BATCH_KICK_DURATION_UNIT_MS,
   BATCH_KICK_MAX_DURATION_MS,
   BATCH_KICK_MIN_DURATION_MS,
 } from "../consts/commands";
-import { isWhitelisted } from "../config/whitelist";
+import {
+  formatDurationCn,
+  parseDurationTokenMs,
+} from "../libs/durationToken";
+import { isWhitelisted } from "../whitelist";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import {
   requestBlocklistResweep,
@@ -14,6 +16,8 @@ import {
 } from "../infra/blocklist/sweep";
 import { readRecentJoinLog } from "../infra/joinLog";
 import { logger } from "../infra/logger";
+import { prefetchIdentityPolicies } from "../infra/identityStorage";
+import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../consts/identityStorage";
 import type {
   BanChatMemberOutcome,
   KickChatMemberOutcome,
@@ -50,17 +54,17 @@ interface BatchKickStats {
    * 按住了，不该再白白惊动清扫。
    */
   blockedHandoffs: number;
+  /** 真正进入处置的记录条数；身份预取失败中断时小于总条数。 */
+  scanned: number;
+  /** 是否因为身份冷读失败提前中断；true 时剩余记录一个都没动过。 */
+  aborted: boolean;
 }
 
 /** 把 `/batch_kick` 的单个 m/h/d 参数严格换算为一天以内的毫秒数。 */
 export function parseBatchKickDurationMs(token: string): number | undefined {
-  const match: RegExpExecArray | null = BATCH_KICK_DURATION_ARG_PATTERN.exec(token);
-  if (match === null) return undefined;
-  const value: number = Number(match[1]!);
-  const unit: "m" | "h" | "d" =
-    match[2]!.toLowerCase() as "m" | "h" | "d";
-  const durationMs: number = value * BATCH_KICK_DURATION_UNIT_MS[unit];
+  const durationMs: number | undefined = parseDurationTokenMs(token);
   if (
+    durationMs === undefined ||
     !Number.isFinite(durationMs) ||
     durationMs < BATCH_KICK_MIN_DURATION_MS ||
     durationMs > BATCH_KICK_MAX_DURATION_MS
@@ -72,13 +76,7 @@ export function parseBatchKickDurationMs(token: string): number | undefined {
 
 /** 把已校验的回溯时长转换成战报文案。 */
 export function formatBatchKickDuration(durationMs: number): string {
-  if (durationMs % BATCH_KICK_DURATION_UNIT_MS.d === 0) {
-    return `${durationMs / BATCH_KICK_DURATION_UNIT_MS.d} 天`;
-  }
-  if (durationMs % BATCH_KICK_DURATION_UNIT_MS.h === 0) {
-    return `${durationMs / BATCH_KICK_DURATION_UNIT_MS.h} 小时`;
-  }
-  return `${durationMs / BATCH_KICK_DURATION_UNIT_MS.m} 分钟`;
+  return formatDurationCn(durationMs);
 }
 
 interface ProcessJoinRecordParams {
@@ -96,7 +94,7 @@ async function processJoinRecord({
   record,
   stats,
 }: ProcessJoinRecordParams): Promise<void> {
-  // isWhitelisted 已经把超级管理员算进白名单边界（config/whitelist.ts）。
+  // isWhitelisted 已经把超级管理员算进白名单边界（whitelist.ts）。
   if (isWhitelisted(record.userId)) {
     stats.protected++;
     return;
@@ -175,6 +173,13 @@ interface RunBatchKickParams {
 /**
  * 用固定小并发消费日志；每条结果保留输入下标，意外异常不会截断其余记录。
  * Telegram 总闸已经负责 429 的有限退避，这里不再套一层重复踢人重试。
+ *
+ * 身份预取与消费必须**逐块交错**，且每块严格小于身份 LRU 容量：一次把上万条
+ * 记录全部预取完的话，前面的块早被后面的块整块挤出缓存，轮到它们时
+ * `isWhitelisted` 冷未命中会把白名单管理员/频道身份当普通成员踢出去，黑名单
+ * 成员也会绕过黑名单流程被静默踢掉（见 consts/identityStorage.ts 的
+ * IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES）。冷读失败同样不能按「不在白名单」处置，
+ * 只能就地中断，剩余记录一条都不碰。
  */
 async function runBatchKick({
   chatId,
@@ -188,25 +193,45 @@ async function runBatchKick({
     forbidden: 0,
     failed: 0,
     blockedHandoffs: 0,
+    scanned: 0,
+    aborted: false,
   };
-  const results: BoundedBatchResult<JoinLogRecord, void>[] =
-    await runBoundedSettledBatch<JoinLogRecord, void>({
-      items: records,
-      maxConcurrent: BATCH_KICK_CONCURRENCY,
-      execute: async ({
-        item: record,
-      }: BoundedBatchExecution<JoinLogRecord>): Promise<void> => {
-        await processJoinRecord({ chatId, record, stats });
-      },
-    });
-  for (const result of results) {
-    if (result.status === "fulfilled") continue;
-    stats.failed++;
-    logger.error(
-      `Unexpected /batch_kick failure for chat ${chatId}, user ${result.item.userId}, ` +
-      `record ${result.index}, attempt ${result.attempt}:`,
-      result.reason
+  for (
+    let offset: number = 0;
+    offset < records.length;
+    offset += IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
+  ) {
+    const chunk: readonly JoinLogRecord[] = records.slice(
+      offset,
+      offset + IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
     );
+    const prefetched: boolean = await prefetchIdentityPolicies(
+      chunk.map((record: JoinLogRecord): number => record.userId)
+    );
+    if (!prefetched) {
+      stats.aborted = true;
+      return stats;
+    }
+    const results: BoundedBatchResult<JoinLogRecord, void>[] =
+      await runBoundedSettledBatch<JoinLogRecord, void>({
+        items: chunk,
+        maxConcurrent: BATCH_KICK_CONCURRENCY,
+        execute: async ({
+          item: record,
+        }: BoundedBatchExecution<JoinLogRecord>): Promise<void> => {
+          await processJoinRecord({ chatId, record, stats });
+        },
+      });
+    stats.scanned += chunk.length;
+    for (const result of results) {
+      if (result.status === "fulfilled") continue;
+      stats.failed++;
+      logger.error(
+        `Unexpected /batch_kick failure for chat ${chatId}, user ${result.item.userId}, ` +
+        `record ${offset + result.index}, attempt ${result.attempt}:`,
+        result.reason
+      );
+    }
   }
   return stats;
 }
@@ -294,6 +319,14 @@ export async function handleBatchKickCommand(
   }
 
   const stats: BatchKickStats = await runBatchKick({ chatId, records });
+  if (stats.aborted && stats.scanned === 0) {
+    await sendCommandMessage({
+      chatId,
+      text: "呜……黑白名单暂时读不出来，本次一个人都没动，稍后再试吧♡",
+      replyToMessageId: messageId,
+    });
+    return;
+  }
   // 命中黑名单就直接早退的那几条，processJoinRecord 一步都没做——不探测、不移除，
   // 回执却渲染成「黑名单交回封禁 N」。不在这里真的交回去，那句话就是空的：管理员
   // 据此认为黑名单流程接手了，实际没有任何批次、清扫或重试存在。典型成因正是更早
@@ -316,10 +349,13 @@ export async function handleBatchKickCommand(
   await sendCommandMessage({
     chatId,
     text:
-      `已扫描最近 ${formatBatchKickDuration(durationMs)} 的 ${records.length} 条入群记录：` +
+      `已扫描最近 ${formatBatchKickDuration(durationMs)} 的 ${records.length} 条入群记录中的 ${stats.scanned} 条：` +
       `踢出 ${stats.kicked}，已不在群 ${stats.absent}，自己人跳过 ${stats.protected}，` +
       `黑名单交回封禁 ${stats.blocked}，` +
-      `权限不足 ${stats.forbidden}，查询或请求失败 ${stats.failed}。只踢未拉黑♡`,
+      `权限不足 ${stats.forbidden}，查询或请求失败 ${stats.failed}。只踢未拉黑♡` +
+      (stats.aborted
+        ? "\n中途黑白名单读不出来了，剩下的记录一条都没动，稍后再跑一次吧♡"
+        : ""),
     replyToMessageId: messageId,
   });
 }

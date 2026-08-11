@@ -56,7 +56,7 @@ describe("application handler registration", () => {
     expect(middleware).toHaveLength(0);
     const registration = registerHandlers(fakeBot as unknown as Bot);
 
-    expect(middleware).toHaveLength(5);
+    expect(middleware).toHaveLength(6);
     expect(commands).toEqual([
       "permission",
       "white",

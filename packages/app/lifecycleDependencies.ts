@@ -1,7 +1,12 @@
 import { flushAiMemory, hydrateAiMemory, hydrateStickerCatalog, initAiChat, terminateAiChat } from "../aiChat";
 import { drainAntiRaid, hydratePendingVerifications, initAntiRaid, terminateAntiRaid } from "../antiRaid";
 import { hydrateBlocklist } from "../infra/blocklist/outbox";
-import { sweepManagedBlocklistChats } from "../infra/blocklist/sweep";
+import { assertSuperAdminNotBlocked } from "../infra/blocklist/membership";
+import {
+  initBlocklistSweepScheduler,
+  quiesceBlocklistSweepScheduler,
+  sweepManagedBlocklistChats,
+} from "../infra/blocklist/sweep";
 import { restoreLuckState } from "../commands";
 import {
   drainGagRuntime,
@@ -40,8 +45,7 @@ import { sleep } from "../libs/sleep";
 import { monotonicNow } from "../libs/monotonicDeadline";
 import { seedSenderCache } from "../users/senderIdentity";
 import { preflightEnabledFeatures } from "./featurePreflight";
-import { getWhitelistConfig } from "../config/whitelist";
-import { loadBlocklistConfig } from "../config/blocklist";
+import { hydrateIdentityStorageCounts } from "../infra/identityStorage";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers } from "./registerHandlers";
 import { runAcknowledgedUpdateBatches } from "./updateRunner";
@@ -59,6 +63,7 @@ export const lifecycleDependencies = {
   SUPER_ADMIN_USER_ID,
   abortChatTitleRefresh,
   acquireSingleInstanceLock,
+  assertSuperAdminNotBlocked,
   bot,
   cleanupOrphanedTempFiles,
   closeTranslate,
@@ -74,7 +79,7 @@ export const lifecycleDependencies = {
   flushStateToDisk,
   getAllChatStates,
   getGlobalCopyState,
-  getWhitelistConfig,
+  hydrateIdentityStorageCounts,
   hydrateAiMemory,
   hydrateBlocklist,
   hydratePendingVerifications,
@@ -83,13 +88,13 @@ export const lifecycleDependencies = {
   initGagRuntime,
   initAiChat,
   initAntiRaid,
+  initBlocklistSweepScheduler,
   initChatTitleRefresh,
   initDiskIO,
   initReactionQueue,
   initTranslate,
   initTelegramClients,
   loadPersistedData,
-  loadBlocklistConfig,
   loadState,
   logger,
   monotonicNow,
@@ -105,6 +110,7 @@ export const lifecycleDependencies = {
   quiesceChatTitleRefresh,
   quiesceReactionQueue,
   quiesceGagRuntime,
+  quiesceBlocklistSweepScheduler,
   quiesceTranslate,
   seedSenderCache,
   setBusinessWorkerFatalHandler,

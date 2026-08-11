@@ -13,11 +13,7 @@ import {
   MAX_GENERATED_IMAGES_PER_REPLY,
 } from "../../../../consts/aiChat/imageGeneration";
 import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../../consts/aiChat/prompts/tools";
-import {
-  imageSentTagTemplate,
-  SELF_ACTION_TAG_MARKERS,
-  SELF_ACTION_TAG_PATTERNS,
-} from "../../../../consts/aiChat/prompts/transcript";
+import { imageSentTagTemplate } from "../../../../consts/aiChat/prompts/transcript";
 import {
   HARD_MAX_ACTIONS_PER_REPLY,
   IMAGE_SEPARATE_CAPTION_MIN_REMAINING_ACTIONS,
@@ -27,7 +23,7 @@ import { GENERATE_IMAGE_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../../c
 import { toolError } from "../../utils/toolResult";
 import { pauseForToolAction } from "../../utils/toolPause";
 import { sendPhotoWithResult } from "../../../../infra/telegram";
-import { isPlainRecord } from "../../../../libs/runtimeConfig";
+import { isPlainRecord } from "../../../../libs/record";
 import { sanitizeInline, truncateInline } from "../../../../libs/text";
 import type { ReplyToolContext, RoundMessageState } from "../../../../types/aiChat/replies";
 import type {
@@ -44,8 +40,8 @@ import { runMediaTask } from "../../mediaTaskRunner";
 import type { VisionImage } from "../../../../types/media";
 import { cleanReply } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
-import { containsRenderableCommand } from "../../../../libs/renderableCommand";
-import { isDuplicateOfSentMessage, sendDirectMessage } from "./messageState";
+import { sendDirectMessage } from "./messageState";
+import { modelAuthoredTextPolicyError } from "./modelAuthoredText";
 
 function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
   if (!reference || reference.width <= 0 || reference.height <= 0) return DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
@@ -169,38 +165,9 @@ export function createGenerateImageExecutor(
     }
     const caption: string | null = parsed.caption;
     if (caption !== null) {
-      // 图注要在生图之前就判死，别让模型白烧一次冷却：这两条都是重写 caption
-      // 就能过的错误，此时还没 claim 冷却，模型改完可以立即重试。
-      //
-      // 伪造动作记号在图注里同样拦截。这里图确实发出去了，字面上不算撒谎，但
-      // 记号的全部价值就在于「只有执行侧写得出来」——一旦模型也能合法产出这个
-      // 形状，send_message 那道拦截（见 replyToolset/sendMessage.ts）就等于失效，
-      // 下一轮它照样能在纯文本里照抄一遍。
-      const forgedIndex: number = SELF_ACTION_TAG_PATTERNS.findIndex(
-        (pattern: RegExp): boolean => pattern.test(caption)
-      );
-      if (forgedIndex >= 0) {
-        const forgedMarker: string = SELF_ACTION_TAG_MARKERS[forgedIndex] ?? "";
-        return toolError(
-          `caption must not narrate an action: "${forgedMarker}" is a transcript marker the execution side writes after the action really happened. ` +
-          "Just say what you want to say about the picture in your own words",
-          { retryable: false }
-        );
-      }
-      if (isDuplicateOfSentMessage(state, caption)) {
-        return toolError(
-          "An identical message was already sent in this round; write a different caption, or omit it and send the picture alone"
-        );
-      }
-      // 图注和正文一样是机器人自己发出的文本，Telegram 对 caption 里的 `/xxx`
-      // 照样渲染成可点击命令（复读链路正是被一条 caption 打穿的，见
-      // auto/message/echo.ts）。send_message 守了而这里不守，等于换个工具就能绕过去。
-      if (containsRenderableCommand(caption)) {
-        return toolError(
-          "caption must not contain a slash command such as \"/example\": Telegram renders it as a tappable command in the bot's own message. " +
-          "Write the command name without the leading slash"
-        );
-      }
+      // 在实际生成和 claim 冷却前完成硬校验，拒绝的 caption 不产生账单或冷却。
+      const policyError: string | null = modelAuthoredTextPolicyError(caption, state, "picture");
+      if (policyError !== null) return policyError;
     }
 
     if (consecutiveFailures >= IMAGE_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY) {

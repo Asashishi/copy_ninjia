@@ -1,6 +1,9 @@
 import type { LinkedChannelCache } from "../../../types/antiRaid/internal";
 import { ANTI_RAID_CHAT_CACHE_MAX, LINKED_CHANNEL_TTL_MS } from "../../../consts/antiRaid/cache";
-import { setBoundedMapValue } from "../../../libs/boundedMap";
+import {
+  setBoundedMapValue,
+  sweepExpiredSnapshots,
+} from "../../../libs/boundedMap";
 
 /** 关联频道按需缓存（packages/workers/antiRaid/linkedChannel.ts）的内存状态。 */
 
@@ -30,14 +33,12 @@ export function getOrCreateLinkedChannelFetch(chatId: number, create: () => Prom
 
 /** 淘汰过期快照；仍在拉取的群保留旧值作为同步降级结果。 */
 export function sweepLinkedChannelCache(now: number = Date.now()): number {
-  let deleted: number = 0;
-  for (const [chatId, cached] of linkedChannels) {
-    if (now - cached.fetchedAt > LINKED_CHANNEL_TTL_MS && !linkedChannelFetches.has(chatId)) {
-      linkedChannels.delete(chatId);
-      deleted++;
-    }
-  }
-  return deleted;
+  return sweepExpiredSnapshots({
+    snapshots: linkedChannels,
+    inFlight: linkedChannelFetches,
+    ttlMs: LINKED_CHANNEL_TTL_MS,
+    now,
+  });
 }
 
 /** Worker dispose/测试隔离时清空关联频道缓存及其在途状态。 */

@@ -20,10 +20,13 @@ export type ScenarioName =
   | "linked-rolling-buffer"
   | "bounded-rolling-buffer"
   | "chat-state-read"
+  | "chat-state-map-read"
   | "self-sent-empty"
   | "incoming-message-spine"
   | "flood-window-hit"
-  | "flood-window-churn"
+  | "flood-window-growth"
+  | "flood-window-steady"
+  | "gag-speak-counter"
   | "buffered-message-build"
   | "transcript-render"
   | "reply-reference"
@@ -78,7 +81,11 @@ export interface Scenario {
    * 同步场景仍走同步分支，不会被拖进微任务队列，历史读数因此保持可比。
    */
   run: (iterations: number) => number | Promise<number>;
+  /** reset 后、预热前建立不计时的场景前置状态。 */
+  prepare?: () => void;
   reset?: () => void;
+  /** 每个正式样本前重新 reset + prepare；用于只量从空表增长的相变阶段。 */
+  resetBeforeSample?: boolean;
   /**
    * 本场景想观测分层的热函数；键名原样进入结果 JSON，便于逐个对照。
    * 不必登记基准循环自身，runBenchmark 会以 `scenario.run` 固定补上。

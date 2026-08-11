@@ -19,9 +19,9 @@ const delegatedPermissions: Map<number, Set<string>> = new Map<number, Set<strin
 mock.module("../../packages/config/telegram", () => ({
   SUPER_ADMIN_USER_ID: 100,
 }));
-// 超级管理员由身份直接持有全部白名单权限（见 packages/config/whitelist.ts 的
+// 超级管理员由身份直接持有全部白名单权限（见 packages/whitelist.ts 的
 // getEffectiveWhitelistPermissions），其余身份按逐项授权表决定。
-mock.module("../../packages/config/whitelist", () => ({
+mock.module("../../packages/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 100 || delegatedPermissions.get(id)?.has(key) === true,
 }));
@@ -286,7 +286,7 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isInitEnabled).toBe(false);
     expect(states.get(-1001)?.botIsAdmin).toBeUndefined();
     expect(invalidateBotAdminStatus).toHaveBeenLastCalledWith(-1001);
-    expect(teardownChatRuntime).toHaveBeenCalledWith(-1001);
+    expect(teardownChatRuntime).toHaveBeenCalledWith(-1001, "explicitDisable");
 
     states.get(-1001)!.botIsAdmin = false;
     await handleInitCommand(context("enable"));

@@ -9,25 +9,26 @@
 
 import {
   blockedMemberRemoverHolder,
-  blockedUserIds,
   blocklistRemovalCounter,
   blocklistSweepState,
   clearBlocklistSweepState,
-  configuredBlockedIds,
   pendingBlockedRemovals,
-  sessionBlocklistRequiresRewrite,
-  sessionBlockedAt,
 } from "../../cache/main/blocklist";
+import {
+  removalSnapshotRevision,
+  unacknowledgedRemovalSnapshotRevision,
+} from "../../cache/main/identityStorage";
 import { BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES } from "../../consts/antiRaid/blocklist";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
-import { flushDiskIODomain, onDiskIORespawn, postDiskIO } from "../diskIO";
+import {
+  flushDiskIODomain,
+  onDiskIORespawn,
+  onIdentityStoragePersisted,
+  postDiskIO,
+} from "../diskIO";
 import { logger } from "../logger";
 import { getAllChatStates } from "../storage/stateStore";
-import {
-  hasBlockedIdentities,
-  isBlockedIdentity,
-  listBlockedIdentityIds,
-} from "./identities";
+import { hasAnyBlockedIdentity } from "../identityStorage";
 import type {
   BlockedMemberRemover,
   PendingBlockedRemoval,
@@ -38,10 +39,8 @@ import type {
 import type { ChatState } from "../../types/chatState";
 import type {
   BlocklistRemovalsDiskMessage,
-  BlockUserDiskMessage,
-  BlockedUserRecord,
   DiskIORecoveryTransport,
-  UnblockUserDiskMessage,
+  IdentityStoragePersistedReply,
 } from "../../types/diskIO";
 import type { FlushResult } from "../../types/lifecycle";
 import type { BlocklistSweepRecord } from "../../types/blocklist";
@@ -70,24 +69,15 @@ function restorePermissionBlockedSweep(
 }
 
 /**
- * 启动恢复：把静态配置层、动态 memory 层与当前格式 outbox 一并灌入主线程
- * 镜像。必须在 runner 开始投喂更新之前完成，否则启动瞬间进群的黑名单用户
- * 会漏踢。
+ * 启动恢复：把 SQLite 当前格式 outbox 灌入主线程镜像。必须在 runner 开始
+ * 投喂更新之前完成，否则启动瞬间进群的黑名单用户会漏踢。
  */
 export function hydrateBlocklist(
-  blocked: Map<number, BlockedUserRecord>,
-  recoveredRemovals: Map<number, PendingBlockedRemoval> = new Map(),
-  configuredIds: readonly number[] = []
+  recoveredRemovals: Map<number, PendingBlockedRemoval> = new Map()
 ): void {
-  blockedUserIds.clear();
-  configuredBlockedIds.clear();
-  sessionBlockedAt.clear();
-  sessionBlocklistRequiresRewrite.current = false;
   pendingBlockedRemovals.clear();
   blocklistSweepState.clear();
   blocklistRemovalCounter.current = 0;
-  for (const id of configuredIds) configuredBlockedIds.add(id);
-  for (const [userId, record] of blocked) blockedUserIds.set(userId, { ...record });
   let filtered: boolean = false;
   for (const [removalId, pending] of recoveredRemovals) {
     blocklistRemovalCounter.current = Math.max(blocklistRemovalCounter.current, removalId);
@@ -98,7 +88,7 @@ export function hydrateBlocklist(
     }
     // 补扫不带名单，投递时按当前名单现算；名单为空时任务已没有目标，应销账。
     if (pending.params.probeMembership) {
-      if (!hasBlockedIdentities()) {
+      if (!hasAnyBlockedIdentity()) {
         filtered = true;
         continue;
       }
@@ -119,15 +109,14 @@ export function hydrateBlocklist(
       }
       continue;
     }
-    // 冻结名单批次按当前权威名单裁剪：停机期间可能已经人工解除了一部分。
-    const userIds: number[] = pending.params.userIds.filter(
-      (userId: number): boolean => isBlockedIdentity(userId)
-    );
-    if (userIds.length === 0) {
-      filtered = true;
-      continue;
-    }
-    if (userIds.length !== pending.params.userIds.length) filtered = true;
+    // 冻结批次在这里**不再裁剪**，因为 SQLite owner 根本不会交出需要裁剪的行：
+    // hydrateIdentityDatabase 对「冻结 userId 不在 blocklist_entries」直接抛错，
+    // handlePendingRemovalSnapshot 对同一条件也抛（见 workers/diskIO/
+    // identityDatabase.ts）。也就是说这是一条断言而不是一次修剪——部署方从旧备份
+    // 恢复 database/storage.sqlite、或手删一行 blocklist_entries 撤销误 /block 时，
+    // 进程会在启动阶段以非零码退出并点名那一行，按 AGENTS.md「不为用户行为兜底」
+    // 要求运维显式修好数据，而不是让本函数悄悄丢掉一批待踢成员。
+    const userIds: number[] = [...pending.params.userIds];
     pendingBlockedRemovals.set(removalId, {
       params: { ...pending.params, userIds },
       createdAt: pending.createdAt,
@@ -153,9 +142,16 @@ type BlocklistSnapshotPoster = (message: BlocklistRemovalsDiskMessage) => boolea
 export function queuePendingBlockedRemovalsSnapshot(
   postMessage: BlocklistSnapshotPoster = postDiskIO
 ): boolean {
+  if (!Number.isSafeInteger(removalSnapshotRevision.current + 1)) {
+    throw new Error("Pending removal snapshot revision space is exhausted.");
+  }
+  removalSnapshotRevision.current++;
+  const revision: number = removalSnapshotRevision.current;
+  unacknowledgedRemovalSnapshotRevision.current = revision;
   return postMessage({
     type: "blocklistRemovals",
     removals: [...pendingBlockedRemovals],
+    revision,
   } satisfies BlocklistRemovalsDiskMessage);
 }
 
@@ -176,12 +172,13 @@ export async function persistPendingBlockedRemovals(): Promise<void> {
  * @internal 供同目录 sweep owner 在 Worker 重建时重放。
  */
 export function materializeRemovalParams(
-  params: PendingBlockedRemovalParams
+  params: PendingBlockedRemovalParams,
+  blockedIds: readonly number[] = []
 ): RemoveBlockedMembersParams | undefined {
   if (!params.probeMembership) {
     return { ...params, userIds: [...params.userIds] };
   }
-  const userIds: number[] = listBlockedIdentityIds();
+  const userIds: number[] = [...blockedIds];
   if (userIds.length === 0) return undefined;
   return { chatId: params.chatId, probeMembership: true, removalId: params.removalId, userIds };
 }
@@ -190,11 +187,12 @@ export function materializeRemovalParams(
  * 读取权威镜像仍持有的处置参数并返回副本，供 write-ahead flush 前后对账。
  */
 export function getPendingBlockedRemovalParams(
-  removalId: number
+  removalId: number,
+  blockedIds: readonly number[] = []
 ): RemoveBlockedMembersParams | undefined {
   const pending: PendingBlockedRemoval | undefined = pendingBlockedRemovals.get(removalId);
   if (pending === undefined) return undefined;
-  return materializeRemovalParams(pending.params);
+  return materializeRemovalParams(pending.params, blockedIds);
 }
 
 /**
@@ -214,7 +212,7 @@ function releaseSweepClaim(chatId: number, removalId: number): void {
  */
 export function forgetUserBlocklistRemovals(userId: number): void {
   let changed: boolean = false;
-  const blocklistEmptied: boolean = !hasBlockedIdentities();
+  const blocklistEmptied: boolean = !hasAnyBlockedIdentity();
   for (const [removalId, pending] of pendingBlockedRemovals) {
     if (pending.params.probeMembership) {
       if (!blocklistEmptied) continue;
@@ -249,7 +247,10 @@ export function registerBlockedMemberRemover(remover: BlockedMemberRemover): voi
 /**
  * 给一批处置编号并登记镜像。补扫只存任务，其余批次冻结并去重具体名单。
  */
-export function trackBlockedRemoval(input: TrackBlockedRemovalInput): RemoveBlockedMembersParams {
+export function trackBlockedRemoval(
+  input: TrackBlockedRemovalInput,
+  blockedIds: readonly number[] = []
+): RemoveBlockedMembersParams {
   if (pendingBlockedRemovals.size >= BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES) {
     throw new Error(
       `Blocklist removal outbox reached its ${BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES}-entry capacity.`
@@ -269,7 +270,7 @@ export function trackBlockedRemoval(input: TrackBlockedRemovalInput): RemoveBloc
     attempts: 0,
     lastFailure: null,
   });
-  const tracked: RemoveBlockedMembersParams | undefined = materializeRemovalParams(stored);
+  const tracked: RemoveBlockedMembersParams | undefined = materializeRemovalParams(stored, blockedIds);
   if (tracked === undefined) {
     pendingBlockedRemovals.delete(removalId);
     throw new Error("Blocklist removal has no target to enforce.");
@@ -301,22 +302,26 @@ export function forgetChatBlocklistWork(chatId: number): void {
   clearBlocklistSweepState(chatId);
 }
 
-// Disk I/O Worker 重建后恢复当前进程内尚未落定的增删与完整 outbox 镜像。
-onDiskIORespawn("blocklist", DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST, (transport: DiskIORecoveryTransport): boolean => {
-  if (!queuePendingBlockedRemovalsSnapshot(transport.post)) return false;
-  // 追加文件无法表达删除：本进程只要解除过一次，就必须整份重写当前名单。
-  if (sessionBlocklistRequiresRewrite.current) {
-    return transport.post({
-      type: "unblockUser",
-      blocked: [...blockedUserIds],
-    } satisfies UnblockUserDiskMessage);
+function settleRemovalSnapshot(reply: IdentityStoragePersistedReply): void {
+  if (
+    reply.removalSnapshotRevision !== undefined &&
+    unacknowledgedRemovalSnapshotRevision.current === reply.removalSnapshotRevision
+  ) {
+    unacknowledgedRemovalSnapshotRevision.current = null;
   }
-  for (const [userId, blockedAt] of sessionBlockedAt) {
-    if (!transport.post({
-      type: "blockUser",
-      userId,
-      blockedAt,
-    } satisfies BlockUserDiskMessage)) return false;
-  }
-  return true;
+}
+
+onIdentityStoragePersisted(settleRemovalSnapshot);
+
+// Disk I/O Worker 重建后只重放仍未收到事务 ACK 的最终 outbox 快照。
+onDiskIORespawn("blocklist outbox", DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST + 1, (
+  transport: DiskIORecoveryTransport
+): boolean => {
+  const revision: number | null = unacknowledgedRemovalSnapshotRevision.current;
+  if (revision === null) return true;
+  return transport.post({
+    type: "blocklistRemovals",
+    removals: [...pendingBlockedRemovals],
+    revision,
+  } satisfies BlocklistRemovalsDiskMessage);
 });

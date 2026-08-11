@@ -42,16 +42,12 @@ import {
   SONG_TITLE_MAX_CHARS,
 } from "../../../../consts/aiChat/songGeneration";
 import { GENERATE_SONG_TOOL_INSTRUCTION } from "../../../../consts/aiChat/prompts/tools";
-import {
-  SELF_ACTION_TAG_MARKERS,
-  SELF_ACTION_TAG_PATTERNS,
-  songSentTagTemplate,
-} from "../../../../consts/aiChat/prompts/transcript";
+import { songSentTagTemplate } from "../../../../consts/aiChat/prompts/transcript";
 import { TELEGRAM_CAPTION_MAX_CHARS } from "../../../../consts/telegram";
 import { GENERATE_SONG_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
 import { sendAudioWithResult } from "../../../../infra/telegram";
-import { isPlainRecord } from "../../../../libs/runtimeConfig";
+import { isPlainRecord } from "../../../../libs/record";
 import { sanitizeInline, truncateInline } from "../../../../libs/text";
 import { songAiProvider } from "../../../provider";
 import { botInfoState } from "../../../../cache/workers/aiChat/identity";
@@ -64,8 +60,7 @@ import type { AiSongProvider, AiSongRequest } from "../../../../types/aiChat/pro
 import type { GeneratedChatSong, SongGenerationAvailability, SongGenerationClaim } from "../../../../types/aiChat/songGeneration";
 import type { TelegramSendResult } from "../../../../types/telegram";
 import { cleanReply } from "../../utils/replyText";
-import { containsRenderableCommand } from "../../../../libs/renderableCommand";
-import { isDuplicateOfSentMessage } from "./messageState";
+import { modelAuthoredTextPolicyError } from "./modelAuthoredText";
 
 /** 本轮生歌工具需要的上下文子集；与 buildGenerateImageToolDefinition 同一写法。 */
 export type SongToolContext = Pick<
@@ -237,32 +232,9 @@ export function createGenerateSongExecutor(
     // 曲目信息，两者在自录与去重上必须分清（见下方 onSongSent 与 sentCanonicalTexts）。
     const modelCaption: string | null = parsed.caption;
     if (modelCaption !== null) {
-      // 说明文字要在生歌之前就判死，别让模型白烧一次冷却（更别提一次账单）：
-      // 这两条都是重写 caption 就能过的错误，此时还没 claim 冷却。
-      // 伪造动作记号同样拦截，理由见 replyToolset/imageGeneration.ts 的同名分支。
-      const forgedIndex: number = SELF_ACTION_TAG_PATTERNS.findIndex(
-        (pattern: RegExp): boolean => pattern.test(modelCaption)
-      );
-      if (forgedIndex >= 0) {
-        const forgedMarker: string = SELF_ACTION_TAG_MARKERS[forgedIndex] ?? "";
-        return toolError(
-          `caption must not narrate an action: "${forgedMarker}" is a transcript marker the execution side writes after the action really happened. ` +
-          "Just say what you want to say about the song in your own words",
-          { retryable: false }
-        );
-      }
-      if (isDuplicateOfSentMessage(state, modelCaption)) {
-        return toolError(
-          "An identical message was already sent in this round; write a different caption, or omit it and send the song alone"
-        );
-      }
-      // 可点击命令同样拦截，理由见 replyToolset/imageGeneration.ts 的同名分支。
-      if (containsRenderableCommand(modelCaption)) {
-        return toolError(
-          "caption must not contain a slash command such as \"/example\": Telegram renders it as a tappable command in the bot's own message. " +
-          "Write the command name without the leading slash"
-        );
-      }
+      // 在实际生成和 claim 冷却前完成硬校验，拒绝的 caption 不产生账单或冷却。
+      const policyError: string | null = modelAuthoredTextPolicyError(modelCaption, state, "song");
+      if (policyError !== null) return policyError;
     }
 
     if (consecutiveFailures >= SONG_GENERATION_MAX_CONSECUTIVE_FAILURES_PER_REPLY) {

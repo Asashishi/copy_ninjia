@@ -27,6 +27,7 @@ import {
 } from "./blocklist/sweep";
 import { teardownRegisteredChat } from "./chatTeardown";
 import type { ChatState } from "../types/chatState";
+import type { ChatTeardownReason } from "../types/chatTeardown";
 import type { BotChatPermissions } from "../types/telegram";
 import type { ChatMember, ChatMemberUpdated } from "@grammyjs/types";
 import {
@@ -51,14 +52,17 @@ async function completeAfterTeardown(
 }
 
 /** 配置去留由调用入口决定；这里只停止 owner、取消计时器并发起权限恢复。 */
-export async function teardownChatRuntime(chatId: number): Promise<void> {
+export async function teardownChatRuntime(
+  chatId: number,
+  reason: ChatTeardownReason
+): Promise<void> {
   // 先同步调用全部 owner，让跨群 copy 槽、代理入口和 Worker 闸门在第一个
   // await 之前一起关闭；随后等待需要 durable 回执的异步 owner。
-  const copyTeardown: Promise<void> = teardownRegisteredChat("copy", chatId);
-  const gagTeardown: Promise<void> = teardownRegisteredChat("gag", chatId);
+  const copyTeardown: Promise<void> = teardownRegisteredChat("copy", chatId, reason);
+  const gagTeardown: Promise<void> = teardownRegisteredChat("gag", chatId, reason);
   clearChatStateField(chatId, "isProxySendEnabled");
-  const aiTeardown: Promise<void> = teardownRegisteredChat("aiChat", chatId);
-  const antiRaidTeardown: Promise<void> = teardownRegisteredChat("antiRaid", chatId);
+  const aiTeardown: Promise<void> = teardownRegisteredChat("aiChat", chatId, reason);
+  const antiRaidTeardown: Promise<void> = teardownRegisteredChat("antiRaid", chatId, reason);
   const results: PromiseSettledResult<void>[] = await Promise.allSettled([
     copyTeardown,
     gagTeardown,
@@ -175,7 +179,7 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
     // 人都不在这个群了，权限位当场作废；重新入群走按需现查重建。
     forgetBotChatPermissions(update.chat.id);
     await completeAfterTeardown(
-      teardownChatRuntime(update.chat.id),
+      teardownChatRuntime(update.chat.id, "lostAuthority"),
       async (): Promise<void> => {
         // 普通配置删除；若 lockdown 尚未恢复则保留 write-ahead owner，避免群权限
         // 因退群而永久卡住。重新入群后 initAntiRaid/Worker 重建会继续接管。
@@ -191,7 +195,7 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
   const isAdmin: boolean = isAdminStatus(update.new_chat_member.status);
   if (wasAdmin && !isAdmin) {
     await completeAfterTeardown(
-      teardownChatRuntime(update.chat.id),
+      teardownChatRuntime(update.chat.id, "lostAuthority"),
       (): Promise<void> => recordBotAdminStatus(update.chat.id, false),
       `Failed to complete admin downgrade transition for chat ${update.chat.id}.`
     );

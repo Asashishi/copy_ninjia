@@ -46,8 +46,9 @@ function emitSuccessfulLoad(worker: FakeWorker): void {
       key: Buffer.alloc(32, 7).toString("base64url"),
     },
     verifications: new Map(),
-    blockedUsers: new Map(),
     pendingBlockedRemovals: new Map(),
+    blocklistEntryCount: 0,
+    whitelistEntryCount: 0,
   } } as MessageEvent<DiskIOReply>);
 }
 
@@ -71,7 +72,7 @@ describe("Disk I/O Worker 放弃自愈", () => {
       let notified: number = 0;
       diskIO.onDiskIOGiveUp((): void => { notified++; });
 
-      // 耗尽重启预算：最后一次崩溃走放弃分支。
+      // 普通崩溃继续沿用共享 Worker 的五次滑动窗口预算。
       for (let attempt: number = 0; attempt <= WORKER_MAX_RESTARTS; attempt++) {
         FakeWorker.instances.at(-1)?.onerror!({ message: "runtime crash" } as ErrorEvent);
         if (diskIORuntime.worker === null) break;

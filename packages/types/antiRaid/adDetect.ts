@@ -1,4 +1,5 @@
 /** 广告检测流水线的跨线程协议与 Worker 内部纯数据形状。 */
+import type { TelegramIdentityMetadata } from "../identityPolicy";
 
 /**
  * 广告检测向任一 provider 发送的中立结构化请求。模型与采样预算属于判定领域，
@@ -44,8 +45,12 @@ export interface AdCandidateMessage {
   linkUrls?: string[];
   /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
   label: string;
+  /** 拉黑落库需要的 Telegram 展示元数据。 */
+  meta: Readonly<TelegramIdentityMetadata>;
   /** 发送者是频道马甲（sender_chat）而非真人。 */
   isChannel: boolean;
+  /** 当前消息是手工转发；其 text/caption 归属于 forward_origin，而非转发者本人。 */
+  isForwarded: boolean;
   /** 发送者此刻是否已经在永久黑名单里。 */
   blocked: boolean;
   /** 发送者此刻是否仍在入群验证窗口内。 */
@@ -72,6 +77,7 @@ export interface AdDetectedEvent {
   senderId: number;
   isChannel: boolean;
   label: string;
+  meta: Readonly<TelegramIdentityMetadata>;
   /** 模型给出的简短理由，只进日志、播报与命中样本；不参与控制流。 */
   reason: string;
   /** 本次判定依据的完整消息串。 */
@@ -85,9 +91,30 @@ export interface AdCandidateEntry extends AdSampleContext {
   seq: number;
   /** 已按 AD_DETECT_MESSAGE_MAX_CHARS 截断的正文（文本或图片说明）。 */
   text: string;
+  /** 只含当前发送者本人写下的内容；用于命中后区分直接广告与引用类广告。 */
+  directText: string;
   /** Worker 观测时刻；只用于回收去重窗口外已经消费过的上下文。 */
   receivedAt: number;
+  /**
+   * 本条到达时是否处于已经公开的引用广告警告窗口。判定可能排队超过五分钟，
+   * 因此升级事实必须在入队时冻结，不能用之后的处理墙钟重新推断。
+   */
+  withinReferencedWarning: boolean;
 }
+
+/** 每个群内发送者的引用广告警告阶段。 */
+export type ReferencedAdWarningState =
+  | {
+    readonly phase: "sending";
+    /** 同 key 的单调 attempt，清群后迟到的旧回执不能命中新状态。 */
+    readonly generation: number;
+  }
+  | {
+    readonly phase: "warned";
+    readonly generation: number;
+    readonly warnedAt: number;
+    readonly expiresAt: number;
+  };
 
 /** 某个发言者在一个群里累积的待检消息串（队列里只排它的键）。 */
 export interface AdMessageBundle {
@@ -96,6 +123,8 @@ export interface AdMessageBundle {
   senderId: number;
   /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
   label: string;
+  /** 随候选冻结并在昵称变化时更新，用于主线程最终写入黑名单。 */
+  meta: Readonly<TelegramIdentityMetadata>;
   /** 发送者是频道马甲（sender_chat）而非真人。 */
   isChannel: boolean;
   /**

@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
 import { BLOCK_COMMAND_CONCURRENCY } from "../../packages/consts/commands";
+import {
+  blockedIdentityTestView as blockedUserIds,
+  seedMissingIdentity,
+} from "../helpers/identityStorage";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const banChatMember = mock(async (..._args: unknown[]): Promise<boolean> => true);
@@ -9,14 +13,17 @@ const isChatMember = mock(async (..._args: unknown[]): Promise<boolean> => false
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
 const loggerError = mock((..._args: unknown[]): void => {});
 let target: CachedUser | undefined;
-const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => target);
+const resolveCommandTarget = mock(async (): Promise<CachedUser | undefined> => {
+  if (target !== undefined) seedMissingIdentity(target.id);
+  return target;
+});
 const chatStates = new Map<number, { botIsAdmin?: boolean }>();
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 
-// 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
+// 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
-mock.module("../../packages/config/whitelist", () => ({
+mock.module("../../packages/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100 || id === -500,
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 1 || ((id === 100 || id === -500) && key === "isCanBlock"),
@@ -43,9 +50,10 @@ const flushDiskIO = mock(async (): Promise<string> => "flushed");
 mock.module("../../packages/infra/diskIO", () => ({
   postDiskIO,
   onDiskIORespawn: (): void => {},
+  onIdentityStoragePersisted: (): void => {},
   // infra/logger.ts 从同一模块取它；整份模块被替换掉时缺了会在 import 阶段报错。
   relayLogMessage: (): boolean => true,
-  // /block 只等黑名单这一个领域的落盘回执：统一 flush 是八个领域的合取，
+  // /block 只等黑名单这一个领域的落盘回执：统一 flush 是九个领域的合取，
   // 无关领域失败不该让它报「小本本没能写进硬盘」（见 confirmBlocklistPersisted）。
   flushDiskIODomain: flushDiskIO,
   // confirmBlocklistPersisted 改用带回执的出口：失败领域名必须来自本次 flush。
@@ -54,11 +62,7 @@ mock.module("../../packages/infra/diskIO", () => ({
 }));
 
 const { handleBlockCommand } = await import("../../packages/commands/block");
-const {
-  blockedUserIds,
-  blocklistSweepState,
-  sessionBlockedAt,
-} = await import("../../packages/cache/main/blocklist");
+const { blocklistSweepState } = await import("../../packages/cache/main/blocklist");
 
 function context(userId: number | undefined = 100): never {
   return {
@@ -87,7 +91,6 @@ beforeEach(() => {
   ]) mocked.mockClear();
   flushDiskIO.mockImplementation(async (): Promise<string> => "flushed");
   blockedUserIds.clear();
-  sessionBlockedAt.clear();
   blocklistSweepState.clear();
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 55);
   banChatMember.mockImplementation(async (): Promise<boolean> => true);
@@ -105,7 +108,7 @@ describe("/block 跨群封禁与黑名单", () => {
     expect(resolveCommandTarget).not.toHaveBeenCalled();
   });
 
-  test("超级管理员不必在 config/whitelist.json 里配 isCanBlock 也能 /block", async () => {
+  test("超级管理员不必在 SQLite 白名单记录里配置 isCanBlock 也能 /block", async () => {
     resolveBotAdminStatus.mockResolvedValueOnce(true);
 
     await handleBlockCommand(context(1));
@@ -337,11 +340,21 @@ describe("/block 的黑名单落盘", () => {
 
     expect(blockedUserIds.get(7)?.isBlocked).toBeTrue();
     expect(postDiskIO).toHaveBeenCalledTimes(1);
-    const message = postDiskIO.mock.calls[0]![0] as { type: string; userId: number; blockedAt: string };
-    expect(message.type).toBe("blockUser");
-    expect(message.userId).toBe(7);
-    // 东京时区的「YYYY/MM/DD HH:mm:ss」，与 libs/time.ts 的 formatTokyoTime 同形态。
-    expect(message.blockedAt).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/);
+    const message = postDiskIO.mock.calls[0]![0] as {
+      type: string;
+      table: string;
+      id: number;
+      data: string;
+    };
+    expect(message).toEqual(expect.objectContaining({
+      type: "identityPolicyWrite",
+      table: "blocklist",
+      id: 7,
+    }));
+    expect(JSON.parse(message.data)).toEqual(expect.objectContaining({
+      blockedAt: expect.stringMatching(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/),
+      meta: expect.objectContaining({ username: "alice" }),
+    }));
   });
 
   test("重复拉黑同一个人会补投落盘，并重新查询、封禁各群", async () => {
@@ -379,13 +392,15 @@ describe("/block 的黑名单落盘", () => {
     });
   });
 
-  test("启动时从文件读回来的 id 不再补投：它本来就在磁盘上", async () => {
+  test("SQLite 冷读命中的 id 没有未 ACK revision，不补投身份写入", async () => {
     resolveBotAdminStatus.mockResolvedValue(true);
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     await handleBlockCommand(context());
 
-    expect(postDiskIO).not.toHaveBeenCalled();
+    expect(postDiskIO).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: "identityPolicyWrite",
+    }));
     expect(flushDiskIO).not.toHaveBeenCalled();
   });
 

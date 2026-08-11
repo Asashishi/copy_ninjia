@@ -11,7 +11,7 @@ import type {
 import type { WorkerDuplexWaiter } from "../cache/perThread/workerDuplex";
 
 /** 主线程能力请求失败后在 Worker 侧重建的安全错误。 */
-export class WorkerDuplexRemoteError extends Error {
+class WorkerDuplexRemoteError extends Error {
   readonly telegramErrorCode: number | undefined;
   readonly telegramDescription: string | undefined;
 

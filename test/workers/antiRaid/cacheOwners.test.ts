@@ -24,6 +24,7 @@ const lockdownEvents: AntiRaidWorkerEvent[] = [];
 const permissionWrites: Record<string, boolean | undefined>[] = [];
 const sentMessages: { chatId: number; text: string }[] = [];
 let currentPermissions: Record<string, boolean | undefined> = {};
+let sendMessageResult: number | undefined = 700;
 const getChat = mock(async (): Promise<{ permissions?: Record<string, boolean | undefined> }> => ({
   permissions: { ...currentPermissions },
 }));
@@ -31,6 +32,13 @@ const getChatAdministrators = mock(async (): Promise<{
   user: { id: number };
   is_anonymous: boolean;
 }[]> => []);
+const setChatPermissions = mock(async (
+  _chatId: number,
+  permissions: Record<string, boolean | undefined>
+): Promise<void> => {
+  permissionWrites.push({ ...permissions });
+  currentPermissions = { ...permissions };
+});
 Object.defineProperty(globalThis, "self", {
   configurable: true,
   value: { postMessage(event: AntiRaidWorkerEvent): void { lockdownEvents.push(event); } },
@@ -42,14 +50,11 @@ mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {
     getChatAdministrators,
     getChat,
-    setChatPermissions: async (_chatId: number, permissions: Record<string, boolean | undefined>): Promise<void> => {
-      permissionWrites.push({ ...permissions });
-      currentPermissions = { ...permissions };
-    },
+    setChatPermissions,
   },
-  sendMessage: async (message: { chatId: number; text: string }): Promise<undefined> => {
+  sendMessage: async (message: { chatId: number; text: string }): Promise<number | undefined> => {
     sentMessages.push(message);
-    return undefined;
+    return sendMessageResult;
   },
 }));
 
@@ -63,13 +68,23 @@ beforeEach(() => {
   permissionWrites.length = 0;
   sentMessages.length = 0;
   currentPermissions = {};
+  sendMessageResult = 700;
   getChat.mockClear();
   getChat.mockImplementation(async () => ({ permissions: { ...currentPermissions } }));
   getChatAdministrators.mockClear();
   getChatAdministrators.mockResolvedValue([]);
+  setChatPermissions.mockClear();
+  setChatPermissions.mockImplementation(async (
+    _chatId: number,
+    permissions: Record<string, boolean | undefined>
+  ): Promise<void> => {
+    permissionWrites.push({ ...permissions });
+    currentPermissions = { ...permissions };
+  });
   for (const window of joinWindows.values()) clearTimeout(window.resetTimeout);
   for (const entry of lockdownEntries.values()) {
-    if (entry.timer !== undefined) clearTimeout(entry.timer);
+    if (entry.restoreTimer !== undefined) clearTimeout(entry.restoreTimer);
+    if (entry.retryTimer !== undefined) clearTimeout(entry.retryTimer);
   }
   joinWindows.clear();
   lockdownEntries.clear();
@@ -266,8 +281,25 @@ describe("Lockdown write-ahead runtime", () => {
       can_send_polls: true,
     });
     expect(getChat).toHaveBeenCalledTimes(2);
-    expect(lockdownEvents.some((event) => event.type === "lockdown" && event.phase === "active")).toBeTrue();
+    const active = lockdownEvents.findLast((event) =>
+      event.type === "lockdown" && event.phase === "active"
+    );
+    expect(active).toMatchObject({ type: "lockdown", phase: "active", announced: false });
+    expect(sentMessages).toEqual([]);
+    if (active?.type !== "lockdown") throw new Error("missing active intent");
+
+    lockdownRuntime.handleLockdownPersisted({
+      type: "lockdownPersisted",
+      chatId,
+      phase: "active",
+      intentId: active.intentId,
+    });
+    await Bun.sleep(0);
+
     expect(sentMessages[0]?.text).toContain("60 秒内冲进来了 46 个");
+    expect(lockdownEvents.some((event) =>
+      event.type === "lockdown" && event.phase === "active" && event.announced
+    )).toBeTrue();
   });
 
   test("重建 applying 也合并当前权限，并使用未知人数文案", async () => {
@@ -277,6 +309,7 @@ describe("Lockdown write-ahead runtime", () => {
       phase: "applying",
       intentId: 10,
       originalPermissions: { can_invite_users: true, can_send_messages: true },
+      announced: false,
       remainingMs: 0,
     }]);
     await Bun.sleep(0);
@@ -287,6 +320,18 @@ describe("Lockdown write-ahead runtime", () => {
       can_send_polls: true,
     });
     expect(getChat).toHaveBeenCalledTimes(1);
+    const active = lockdownEvents.findLast((event) =>
+      event.type === "lockdown" && event.chatId === -1004 && event.phase === "active"
+    );
+    if (active?.type !== "lockdown") throw new Error("missing adopted active intent");
+    lockdownRuntime.handleLockdownPersisted({
+      type: "lockdownPersisted",
+      chatId: -1004,
+      phase: "active",
+      intentId: active.intentId,
+    });
+    await Bun.sleep(0);
+
     expect(sentMessages[0]?.text).toContain("检测到短时间内大量成员入群");
     expect(sentMessages[0]?.text).not.toContain("0 个");
   });
@@ -322,6 +367,7 @@ describe("Lockdown write-ahead runtime", () => {
       phase: "restoring",
       intentId: 8,
       originalPermissions: { can_invite_users: true, can_send_messages: true },
+      announced: true,
       remainingMs: 0,
     }]);
     await Bun.sleep(0);
@@ -339,10 +385,34 @@ describe("Lockdown write-ahead runtime", () => {
       phase: "restoring",
       intentId: 9,
       originalPermissions: { can_invite_users: false, can_send_messages: true },
+      announced: false,
       remainingMs: 0,
     }]);
     await Bun.sleep(0);
     // 管理员在锁定期内已主动重新开启邀请时，以当前显式修改为准。
     expect(permissionWrites[0]?.can_invite_users).toBeTrue();
+  });
+
+  test("重建 RECONCILING 时纠偏失败保留状态并安排重试", async () => {
+    const chatId = -1006;
+    currentPermissions = { can_invite_users: true, can_send_messages: true };
+    setChatPermissions.mockRejectedValueOnce(new Error("temporary failure"));
+
+    lockdownRuntime.adoptLockdowns([{
+      chatId,
+      phase: "reconciling",
+      intentId: 11,
+      originalPermissions: { can_invite_users: true, can_send_messages: true },
+      announced: true,
+      remainingMs: 60_000,
+    }]);
+    await Bun.sleep(0);
+
+    expect(lockdownEntries.get(chatId)?.state.kind).toBe("reconciling");
+    expect(lockdownEntries.get(chatId)?.restoreTimer).toBeDefined();
+    expect(lockdownEntries.get(chatId)?.retryTimer).toBeDefined();
+    expect(lockdownEvents.some((event) =>
+      event.type === "lockdown" && event.phase === "active"
+    )).toBeFalse();
   });
 });

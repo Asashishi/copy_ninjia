@@ -22,7 +22,7 @@ flowchart TD
     MAIN["🧵 主线程<br/>grammY runner + 按群 sequentialize<br/>唯一 Telegram 客户端 + 出站总闸<br/>state 门面 + StateStore（state.json）"]:::main
     AI["🤖 AI Worker<br/>多轮工具调用（可替换 provider）<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置 / 广告检测"]:::worker
-    DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 运势 / 验证文件 / 黑名单 / 入群日志"]:::worker
+    DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 身份数据库 / 运势 / 验证文件 / 入群日志"]:::worker
 
     MAIN <-->|双工消息| AI
     MAIN <-->|双工消息| RAID
@@ -33,14 +33,14 @@ flowchart TD
 
 - **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及 `cache/main/storage.ts` 中的 `state.json` 权威内存镜像（群开关、copy 状态、锁定镜像等）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
 - **AI Worker** 独占群聊记忆、回复准入、媒体描述流水线、群心情与贴纸目录的运行时状态。
-- **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。`/ad_detect` 广告检测的整条流水线（按发送者归并 90 秒消息串、每秒一批送配置的广告检测 provider 判定、命中后删消息并在群里播报封禁理由）同样跑在这条线程上，判定结果回投主线程换成一次与 /block 等价的拉黑 + 各群封禁。Worker 解释踢人、查询、禁言和删除等动作，但网络请求经双工边界回到主线程，并分别进入独立的 429 退避类别。未收到落地回执的黑名单处置批次同时保存在主线程镜像与 `memory/blocklist/removals.json` outbox；验证踢人则以 `kickPending` 复用每日验证快照：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
-- **Disk I/O Worker** 独占共享目录的串行读写：`logs/`，以及 `memory/` 下的 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/`、`ad-detected/`、`joinlog/` 七个领域目录；`state.json` 是唯一例外，由主线程通过业务门面调用 `StateStore` 原子写。各文件形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
+- **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。Worker 解释踢人、查询、禁言和删除等动作，但网络请求经双工边界回到主线程，并分别进入独立的 429 退避类别。未收到落地回执的黑名单处置批次同时保存在主线程镜像与 SQLite `pending_blocked_removals` 表；验证踢人则以 `kickPending` 复用每日验证快照：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
+- **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `ai/`、`stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/` 六个领域目录的串行读写；`state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
 
 [`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) 与 [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) 都只是稳定公开面的薄显式导出，不再持有实现或状态。AI 的监督生命周期与跨线程代理归 [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts)，每消息入口归 [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts)；Anti-Raid 的监督生命周期归 [`workerBridge.ts`](../../packages/antiRaid/workerBridge.ts)，durable 投递归 [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts)，update 路由归 [`updateIngress.ts`](../../packages/antiRaid/updateIngress.ts)。广告检测继续按「主线程投递门禁与候选字段投影、Worker 判定与副作用、不可丢的拉黑与封禁回主线程」分工，候选构造见 [`adCandidate.ts`](../../packages/antiRaid/adCandidate.ts)，投递与排空见 [`adDetect.ts`](../../packages/antiRaid/adDetect.ts)，Worker 流水线见 [`packages/workers/antiRaid/adDetect/`](../../packages/workers/antiRaid/adDetect/)。
 
 验证领域仍由同一个 dispatcher 与 revision 入口保证单一权威，但纯状态转移已按 join、pending 与 terminal 生命周期拆到 [`packages/states/verification/`](../../packages/states/verification/)，[`packages/states/verification.ts`](../../packages/states/verification.ts) 只保留完整事件路由；Worker 的 Telegram 副作用进一步把踢人与终态处置拆到 [`packages/workers/antiRaid/verificationEffects/`](../../packages/workers/antiRaid/verificationEffects/)。lockdown 恢复与验证镜像接收分别由 [`lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) 和 [`verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts) 承担。
 
-Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`packages/libs/supervisedWorker.ts`](../../packages/libs/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；Disk I/O 在恢复 load、各领域镜像重放与恢复窗口 FIFO 排空全部成功前保持不可写，任一步失败都会终止该代际并触发 fatal 停机。重启预算耗尽再由 [`packages/infra/workerSupervisor.ts`](../../packages/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
+Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`packages/infra/supervisedWorker.ts`](../../packages/infra/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；Disk I/O 在恢复 load、各领域镜像重放与恢复窗口 FIFO 排空全部成功前保持不可写，任一步失败都会终止该代际并触发 fatal 停机。重启预算耗尽再由 [`packages/infra/workerSupervisor.ts`](../../packages/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
 
 ## 一条消息的旅程
 
@@ -107,8 +107,8 @@ flowchart TD
 
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
-3. **恢复 state 持久化边界与全局安全配置**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存，同时加载 `config/whitelist.json` 与 `config/blocklist.json`；任一全局输入损坏都在联网和 Worker 创建前拒绝启动。`config/` 下其余四份可选业务 JSON **不在这里预热**——它们各属一个按群 opt-in 的功能，校验挪到了对应的开关命令上（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts)）。恢复完 `state.json` 后再核对一次：还有群开着的可选功能，其凭据与配置必须齐备，否则带着群 id 拒绝启动（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。
-4. 初始化 Telegram 客户端与 **Disk I/O Worker**，再恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，以及 `memory/blocklist/` 下的 `/block` 权威名单 `blocklist.json` 与未完成移除 outbox `removals.json`；任何领域恢复失败都拒绝以部分状态启动。
+3. **恢复 state 持久化边界与全局安全配置**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`telegram.json` 等全局启动输入非法时会在联网和 Worker 创建前拒绝启动。`config/` 下其余四份可选业务 JSON **不在这里预热**——它们各属一个按群 opt-in 的功能，校验挪到了对应的开关命令上（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts)）。恢复完 `state.json` 后再核对一次：还有群开着的可选功能，其凭据与配置必须齐备，否则带着群 id 拒绝启动（见 [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)）。
+4. 初始化 Telegram 客户端与 **Disk I/O Worker**，再恢复 `memory/` 下的 AI、贴纸、运势、待验证数据，并严格 hydrate `database/storage.sqlite` 的白名单、黑名单计数和未完成处置；主线程不复制两张名单整表，只建立有界 LRU。任何领域恢复失败都拒绝以部分状态启动。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
 6. 初始化 **AI Worker**，只 hydrate `state.json` 中明确启用 AI 的群；随后恢复运势与待验证镜像、初始化 **Anti-Raid Worker**，最后启动 acknowledgement-safe runner。
 7. 一切就绪后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。

@@ -1,235 +1,143 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+/** Anti-Raid 主线程镜像的启动恢复、adopt 与 Worker 重建重放。 */
+
+import { describe, expect, test } from "bun:test";
+
 import { adDetectAgentConfigSnapshot } from "../../../packages/config/agent";
+
 import type {
-  AntiRaidWorkerEvent,
   AntiRaidWorkerMessage,
   DiskBusinessMessage,
   DiskIORecoveryTransport,
-  DiskIORespawnListener,
   VerificationDeleteDiskMessage,
-  VerificationPersistedReply,
-  VerificationSnapshot,
   VerificationUpsertDiskMessage,
 } from "../../../packages/types";
 
-const workerPosts: AntiRaidWorkerMessage[] = [];
-const diskPosts: (VerificationUpsertDiskMessage | VerificationDeleteDiskMessage)[] = [];
-let supervisorOptions: {
-  onEvent: (event: AntiRaidWorkerEvent) => void;
-  onRespawn: (post: (message: AntiRaidWorkerMessage) => boolean) => void;
-  onGiveUp: () => void;
-} | undefined;
-let diskRespawn: DiskIORespawnListener | undefined;
-let persistedAck: ((reply: VerificationPersistedReply) => void) | undefined;
-const chatStates = new Map<number, {
-  isAntiRaidEnabled?: boolean;
-  lockdown?: {
-    phase?: "applying" | "active" | "restoring";
-    intentId?: number;
-    originalPermissions: Record<string, boolean | undefined>;
-    expiresAt: number;
-  };
-}>();
-const saveState = mock(async (): Promise<void> => {});
-const saveStateInBackground = mock((_context: string): void => {});
-type FlushResult = "flushed" | "timedOut" | "failed";
-const flushStateToDisk = mock(async (): Promise<FlushResult> => "flushed");
-const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
-const restoreLockdownInvitePermission = mock(async (..._args: unknown[]): Promise<void> => {});
-
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
-}
-
-mock.module("../../../packages/infra/logger", () => ({
-  logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
-}));
-mock.module("../../../packages/infra/joinLog", () => ({
-  recordJoinLog: async (): Promise<boolean> => true,
-}));
-mock.module("../../../packages/infra/storage/stateStore", () => ({
-  clearChatStateField: (chatId: number, field: "lockdown"): boolean => {
-    const state = chatStates.get(chatId);
-    if (!state || !(field in state)) return false;
-    delete state[field];
-    return true;
-  },
-  getAllChatStates: () => chatStates,
-  // 入群守卫默认开着：本文件的用例全部考察守卫开启后的镜像与恢复语义，
-  // 逐个用例再去建 chat state 只会淹没被测的东西。
-  getChatState: (chatId: number) => ({ isAntiRaidEnabled: true, ...chatStates.get(chatId) }),
-  getOrCreateChatState: (chatId: number) => {
-    const current = chatStates.get(chatId) ?? {};
-    chatStates.set(chatId, current);
-    return current;
-  },
-  saveState,
-  flushStateToDisk,
-  saveStateInBackground,
-}));
-mock.module("../../../packages/infra/telegram/actions", () => ({
-  answerCallbackQuery: async (): Promise<boolean> => true,
-  // 黑名单秒踢与新晋管理员清扫用的，本文件不触发（名单为空），但整份模块
-  // 被替换掉时缺了它们会在 import 阶段就报 Export not found。
-  banChatMember: async (): Promise<boolean> => true,
-  banChatSenderChat: async (): Promise<boolean> => true,
-  deleteMessageWithOutcome: async (): Promise<"deleted"> => "deleted",
-  isChatMember: async (): Promise<boolean> => true,
-  // 广告处置的群内播报用的，同理。
-  sendMessage: async (): Promise<number | undefined> => undefined,
-  deleteMessageAfter: (): void => {},
-}));
-mock.module("../../../packages/infra/telegram/client", () => ({
-  installTelegramApi: (): void => {},
-  joinVerificationApi: { kind: "main-thread-test-api" },
-}));
-mock.module("../../../packages/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
-// JOIN_WINDOW_MS 原样透出：秒踢路径的入群计数去重用它当窗口宽度
-// （见 antiRaid/blocklistGuard.ts），整份模块被替换掉时缺了会在 import 阶段报错。
-mock.module("../../../packages/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5, JOIN_WINDOW_MS: 60_000 }));
-mock.module("../../../packages/infra/botAdmin", () => ({
-  resolveBotAdminStatus: async (): Promise<boolean> => true,
-  markBotAdminObserved: async (): Promise<void> => {},
-  botChatPermissionsIn: async (): Promise<undefined> => undefined,
-  // 权限位镜像的注册与按需补齐；本文件不触发，但整份模块被替换掉时缺了
-  // 会在 import 阶段就报 Export not found。
-  registerBotPermissionObserver: (): void => {},
-  ensureBotChatPermissions: (): void => {},
-  botCanDeleteMessagesIn: (): undefined => undefined,
-}));
-mock.module("../../../packages/libs/supervisedWorker", () => ({
-  superviseWorker: (options: typeof supervisorOptions) => {
-    supervisorOptions = options;
-    return {
-      init(): void {},
-      post: (message: AntiRaidWorkerMessage): boolean => { workerPosts.push(message); return true; },
-      terminate: async (): Promise<void> => {},
-    };
-  },
-}));
-mock.module("../../../packages/infra/diskIO", () => ({
-  flushDiskIO,
-  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
-  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
-  postDiskIO: (message: VerificationUpsertDiskMessage | VerificationDeleteDiskMessage): void => { diskPosts.push(message); },
-  postDiskIODiagnostic: (): boolean => true,
-  onDiskIORespawn: (_owner: string, _priority: number, listener: DiskIORespawnListener): void => {
-    diskRespawn = listener;
-  },
-  onVerificationPersisted: (callback: (reply: VerificationPersistedReply) => void): void => { persistedAck = callback; },
-}));
-
-const antiRaid = await import("../../../packages/antiRaid");
 const {
   activeVerificationSnapshots,
+  chatIsSupergroupById,
+  chatStates,
+  deferred,
+  deferredVerificationRecords,
+  diskPosts,
+  inFlightAdDisposals,
+  pendingLockdownPersistence,
+  pendingVerificationDeferrals,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
-} = await import("../../../packages/cache/main/antiRaid/verificationMirror");
-const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
-const { recentBlockedJoinCounts } = await import("../../../packages/cache/main/antiRaid/blocklistGuard");
-const {
-  emergencyLockdownRecoveries,
-  emergencyLockdownRecoveryRuntime,
-  pendingLockdownPersistence,
-  persistedLockdownFingerprints,
   queuedLockdownPersistence,
-} = await import("../../../packages/cache/main/antiRaid/lockdownMirror");
-const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
-const { chatIsSupergroupById } = await import("../../../packages/cache/main/antiRaid/chatKind");
+  record,
+  resetAntiRaidTestState,
+  saveState,
+  settleAntiRaidDrain,
+  terminalRecord,
+  workerHooks,
+  workerPosts,
+  installAntiRaidMirrorHooks,
+} = await import("../../helpers/antiRaidMirrorHarness");
 
-async function resetAntiRaidTestState(): Promise<void> {
-  await antiRaid.terminateAntiRaid();
-  workerPosts.length = 0;
-  diskPosts.length = 0;
-  chatStates.clear();
-  activeVerificationSnapshots.clear();
-  pendingVerificationDeletes.clear();
-  persistedVerificationRevisions.clear();
-  inFlightAdDisposals.clear();
-  recentBlockedJoinCounts.clear();
-  chatIsSupergroupById.clear();
-  persistedLockdownFingerprints.clear();
-  pendingLockdownPersistence.clear();
-  queuedLockdownPersistence.clear();
-  emergencyLockdownRecoveries.clear();
-  emergencyLockdownRecoveryRuntime.stopped = true;
-  antiRaidRuntimeState.generation = 0;
-  antiRaidRuntimeState.initialized = false;
-  antiRaidRuntimeState.persistenceVersion = 0;
+type FlushResult = "flushed" | "timedOut" | "failed";
 
-  saveState.mockReset();
-  saveState.mockImplementation(async (): Promise<void> => {});
-  saveStateInBackground.mockReset();
-  saveStateInBackground.mockImplementation((_context: string): void => {});
-  flushStateToDisk.mockReset();
-  flushStateToDisk.mockImplementation(async (): Promise<FlushResult> => "flushed");
-  flushDiskIO.mockReset();
-  flushDiskIO.mockImplementation(async (): Promise<FlushResult> => "flushed");
-  restoreLockdownInvitePermission.mockReset();
-  restoreLockdownInvitePermission.mockImplementation(async (..._args: unknown[]): Promise<void> => {});
-}
+const antiRaid = await import("../../../packages/antiRaid");
 
-beforeEach(async () => {
-  await resetAntiRaidTestState();
-  antiRaid.initAntiRaid();
-  workerPosts.length = 0;
-  diskPosts.length = 0;
+const { grantVerificationAttempt } = await import("../../../packages/antiRaid/verificationAttempts");
+
+installAntiRaidMirrorHooks({
+  initAntiRaid: antiRaid.initAntiRaid,
+  terminateAntiRaid: antiRaid.terminateAntiRaid,
 });
-
-afterEach(async () => {
-  await antiRaid.terminateAntiRaid();
-});
-
-function record(generation: number, revision: number): VerificationSnapshot {
-  return {
-    chatId: -1001,
-    userId: 42,
-    generation,
-    revision,
-    phase: "pending",
-    label: "待验证成员",
-    isBot: false,
-    trackedMessageTimes: [],
-    replyReminderRequested: false,
-    reminderSuperseded: false,
-    joinedAt: 1_000,
-    expiresAt: 121_000,
-  };
-}
-
-async function settleAntiRaidDrain(
-  result: Promise<FlushResult>,
-  firstBoundaryIndex: number,
-  onDrain?: () => void
-): Promise<FlushResult> {
-  let cursor: number = firstBoundaryIndex;
-  let settled: boolean = false;
-  void result.finally((): void => { settled = true; });
-  for (let turn: number = 0; turn < 20; turn++) {
-    await Bun.sleep(0);
-    while (cursor < workerPosts.length) {
-      const message: AntiRaidWorkerMessage = workerPosts[cursor++]!;
-      if (message.type === "barrier") {
-        supervisorOptions!.onEvent({
-          type: "barrierComplete",
-          barrierId: message.barrierId,
-        });
-      } else if (message.type === "drain") {
-        onDrain?.();
-        supervisorOptions!.onEvent({
-          type: "drainComplete",
-          drainId: message.drainId,
-        });
-      }
-    }
-    if (settled) return result;
-  }
-  throw new Error("Anti-Raid drain test helper did not observe completion.");
-}
 
 describe("Anti-Raid main-thread persistence mirror", () => {
+  test("完整进程冷启动把磁盘终态提升到新代际，恢复后的第一轮许可不会被判 stale", async () => {
+    await resetAntiRaidTestState();
+    antiRaid.hydratePendingVerifications(new Map([
+      ["-1001:42", terminalRecord(9, 3)],
+    ]));
+    antiRaid.initAntiRaid();
+
+    expect(workerPosts.find(
+      (message: AntiRaidWorkerMessage): boolean =>
+        message.type === "adoptVerifications"
+    )).toMatchObject({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [{ generation: 1, revision: 3 }],
+      resumePersistedTerminals: true,
+    });
+    expect(grantVerificationAttempt({
+      operation: "verificationAttemptPermit",
+      key: "-1001:42",
+      generation: 1,
+      revision: 3,
+    })).toEqual({ status: "granted", attempt: 1 });
+  });
+
+  test("延后前最后 revision 未落盘时只向 Anti-Raid 重放闩锁，仍向 DiskIO 重放完整快照", async () => {
+    workerHooks.supervisorOptions!.onEvent({
+      type: "verificationUpsert",
+      record: terminalRecord(1, 3),
+    });
+    workerHooks.supervisorOptions!.onEvent({
+      type: "verificationDeferred",
+      record: { chatId: -1001, userId: 42, generation: 1, revision: 3 },
+    });
+
+    expect(activeVerificationSnapshots.get("-1001:42")?.revision).toBe(3);
+    expect(pendingVerificationDeferrals.get("-1001:42")?.revision).toBe(3);
+    expect(deferredVerificationRecords.has("-1001:42")).toBeFalse();
+
+    const recoveryPosts: DiskBusinessMessage[] = [];
+    expect(await workerHooks.diskRespawn!({
+      post(message: DiskBusinessMessage): boolean {
+        recoveryPosts.push(message);
+        return true;
+      },
+      ensureLuckReceiptSecret: async (): Promise<never> => {
+        throw new Error("Unexpected luck secret request.");
+      },
+    })).toBeTrue();
+    expect(recoveryPosts).toEqual([{
+      type: "verificationUpsert",
+      record: terminalRecord(1, 3),
+      critical: true,
+    }]);
+
+    const respawnPosts: AntiRaidWorkerMessage[] = [];
+    workerHooks.supervisorOptions!.onRespawn((message: AntiRaidWorkerMessage): boolean => {
+      respawnPosts.push(message);
+      return true;
+    });
+    const adopt: AntiRaidWorkerMessage | undefined = respawnPosts.find(
+      (message: AntiRaidWorkerMessage): boolean =>
+        message.type === "adoptVerifications"
+    );
+    expect(adopt).toMatchObject({
+      type: "adoptVerifications",
+      generation: 2,
+      verifications: [],
+      deferredVerifications: [{
+        chatId: -1001,
+        userId: 42,
+        generation: 2,
+        revision: 3,
+      }],
+    });
+    expect(activeVerificationSnapshots.get("-1001:42")?.generation).toBe(2);
+
+    workerHooks.persistedAck!({
+      type: "verificationPersisted",
+      key: "-1001:42",
+      generation: 2,
+      revision: 3,
+      deleted: false,
+    });
+    expect(activeVerificationSnapshots.has("-1001:42")).toBeFalse();
+    expect(pendingVerificationDeferrals.has("-1001:42")).toBeFalse();
+    expect(deferredVerificationRecords.get("-1001:42")).toMatchObject({
+      generation: 2,
+      revision: 3,
+    });
+  });
+
   test("首次 init 在终态 adopt 前重放已观测群类型", async () => {
     await resetAntiRaidTestState();
     chatIsSupergroupById.set(-9001, false);
@@ -254,15 +162,20 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     await resetAntiRaidTestState();
     antiRaid.hydratePendingVerifications(new Map([["-1001:42", record(9, 1)]]));
     antiRaid.initAntiRaid();
+    expect(activeVerificationSnapshots.get("-1001:42")?.generation).toBe(1);
+    expect(persistedVerificationRevisions.get("-1001:42")).toEqual({
+      generation: 1,
+      revision: 1,
+    });
     const firstBoundaryIndex: number = workerPosts.length;
     const drain = antiRaid.drainAntiRaid(1_000);
     await expect(settleAntiRaidDrain(drain, firstBoundaryIndex)).resolves.toBe("flushed");
     expect(workerPosts.slice(firstBoundaryIndex).map(
       (message: AntiRaidWorkerMessage): string => message.type
     )).toEqual(["drain", "barrier", "barrier", "drain"]);
-    supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(1, 2) });
-    supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(0, 99) });
-    supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 3 });
+    workerHooks.supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(1, 2) });
+    workerHooks.supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(0, 99) });
+    workerHooks.supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 3 });
     const recoveryTransport: DiskIORecoveryTransport = {
       post: (message: DiskBusinessMessage): boolean => {
         diskPosts.push(message as VerificationUpsertDiskMessage | VerificationDeleteDiskMessage);
@@ -272,27 +185,32 @@ describe("Anti-Raid main-thread persistence mirror", () => {
         throw new Error("Unexpected luck secret request.");
       },
     };
-    expect(await diskRespawn!(recoveryTransport)).toBeTrue();
-    expect(await diskRespawn!({
+    expect(await workerHooks.diskRespawn!(recoveryTransport)).toBeTrue();
+    expect(await workerHooks.diskRespawn!({
       ...recoveryTransport,
       post: (): boolean => false,
     })).toBeFalse();
     expect(pendingVerificationDeletes.size).toBe(1);
-    persistedAck!({ type: "verificationPersisted", key: "-1001:42", generation: 1, revision: 3, deleted: true });
+    workerHooks.persistedAck!({ type: "verificationPersisted", key: "-1001:42", generation: 1, revision: 3, deleted: true });
     expect(pendingVerificationDeletes.size).toBe(0);
 
-    supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(1, 4) });
+    workerHooks.supervisorOptions!.onEvent({ type: "verificationUpsert", record: record(1, 4) });
     const respawnPosts: AntiRaidWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message) => {
+    workerHooks.supervisorOptions!.onRespawn((message) => {
       respawnPosts.push(message);
       return true;
     });
-    supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 5 });
+    workerHooks.supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 5 });
 
     // 配置快照永远排在第一条：广告判定逐条候选取模型名与凭据（见
     // types/antiRaid.ts 的 AntiRaidAgentConfigMessage）。
     expect(workerPosts[0]).toEqual({ type: "agentConfig", adDetect: adDetectAgentConfigSnapshot() });
-    expect(workerPosts[1]).toMatchObject({ type: "adoptVerifications", generation: 1, verifications: [{ revision: 1 }] });
+    expect(workerPosts[1]).toMatchObject({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [{ generation: 1, revision: 1 }],
+      resumePersistedTerminals: true,
+    });
     expect(diskPosts.map((message) => ({
       type: message.type,
       revision: message.type === "verificationUpsert" ? message.record.revision : message.revision,
@@ -327,6 +245,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
         phase: "active",
         intentId: 5,
         originalPermissions: { can_invite_users: true },
+        announced: true,
         expiresAt: Date.now() + 60_000,
       },
     });
@@ -369,12 +288,13 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       drainCount++;
       // 第一次是广告流水线 quiesce；第二次才是本轮持久化回执放行后的任务 drain。
       if (drainCount !== 2) return;
-      supervisorOptions!.onEvent({
+      workerHooks.supervisorOptions!.onEvent({
         type: "lockdown",
         chatId: -9090,
         phase: "applying",
         intentId: 9090,
         originalPermissions: { can_invite_users: true },
+        announced: false,
         expiresAt: 123_456,
       });
     })).resolves.toBe("flushed");
@@ -408,7 +328,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     expect(initialDrain?.type).toBe("drain");
     inFlightAdDisposals.add(disposalTask);
     if (initialDrain?.type === "drain") {
-      supervisorOptions!.onEvent({
+      workerHooks.supervisorOptions!.onEvent({
         type: "drainComplete",
         drainId: initialDrain.drainId,
       });
@@ -429,17 +349,18 @@ describe("Anti-Raid main-thread persistence mirror", () => {
   test("Worker 重建不会把尚未完成 saveState 的 lockdown 镜像当成已持久化", async () => {
     let releaseSave: (() => void) | undefined;
     saveState.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSave = resolve; }));
-    supervisorOptions!.onEvent({
+    workerHooks.supervisorOptions!.onEvent({
       type: "lockdown",
       chatId: -2002,
       phase: "applying",
       intentId: 77,
       originalPermissions: { can_invite_users: true },
+      announced: false,
       expiresAt: 123_456,
     });
 
     const respawnPosts: AntiRaidWorkerMessage[] = [];
-    supervisorOptions!.onRespawn((message) => {
+    workerHooks.supervisorOptions!.onRespawn((message) => {
       respawnPosts.push(message);
       return true;
     });
@@ -466,21 +387,23 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     let releaseSave: (() => void) | undefined;
     saveState.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSave = resolve; }));
 
-    supervisorOptions!.onEvent({
+    workerHooks.supervisorOptions!.onEvent({
       type: "lockdown",
       chatId: -2003,
       phase: "active",
       intentId: 88,
       originalPermissions: { can_invite_users: true },
+      announced: true,
       expiresAt: 200_000,
     });
     // 真正推进了一个阶段：这才是「完成后要补写」的那种变化。
-    supervisorOptions!.onEvent({
+    workerHooks.supervisorOptions!.onEvent({
       type: "lockdown",
       chatId: -2003,
       phase: "restoring",
       intentId: 89,
       originalPermissions: { can_invite_users: true },
+      announced: true,
       expiresAt: 300_000,
     });
     expect(saveState).toHaveBeenCalledTimes(1);
@@ -498,6 +421,46 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     }]);
   });
 
+  test("同阶段 announced 翻转必须补写后才回落盘回执", async () => {
+    workerPosts.length = 0;
+    saveState.mockClear();
+    const releases: (() => void)[] = [];
+    saveState.mockImplementation(() => new Promise<void>((resolve) => {
+      releases.push(resolve);
+    }));
+
+    const publish = (announced: boolean): void => workerHooks.supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId: -2004,
+      phase: "active",
+      intentId: 90,
+      originalPermissions: { can_invite_users: true },
+      announced,
+      expiresAt: 400_000,
+    });
+    publish(false);
+    publish(true);
+    expect(saveState).toHaveBeenCalledTimes(1);
+
+    releases[0]?.();
+    await Bun.sleep(0);
+    expect(saveState).toHaveBeenCalledTimes(2);
+    expect(workerPosts.some((message) =>
+      message.type === "lockdownPersisted" && message.chatId === -2004
+    )).toBeFalse();
+
+    releases[1]?.();
+    await Bun.sleep(0);
+    expect(workerPosts.filter((message) =>
+      message.type === "lockdownPersisted" && message.chatId === -2004
+    )).toEqual([{
+      type: "lockdownPersisted",
+      chatId: -2004,
+      phase: "active",
+      intentId: 90,
+    }]);
+  });
+
   test("第五轮保存期间的新意图会续跑下一任务，不等待第七条事件唤醒", async () => {
     workerPosts.length = 0;
     saveState.mockClear();
@@ -506,12 +469,13 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       releases.push(resolve);
     }));
     const publish = (intentId: number): void => {
-      supervisorOptions!.onEvent({
+      workerHooks.supervisorOptions!.onEvent({
         type: "lockdown",
         chatId: -2005,
         phase: "active",
         intentId,
         originalPermissions: { can_invite_users: true },
+        announced: true,
         expiresAt: 500_000 + intentId,
       });
     };
@@ -541,449 +505,5 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     }]);
     expect(pendingLockdownPersistence.has(-2005)).toBeFalse();
     expect(queuedLockdownPersistence.has(-2005)).toBeFalse();
-  });
-
-  test("倒计时刷新不再多花一轮整文件重写：指纹只认 phase + intentId", async () => {
-    // 私密模式生效期间，每条越过阈值的入群都会让 Worker 重发一次 lockdown 事件，
-    // 而事件里的 expiresAt 是当场 Date.now() + LOCKDOWN_MS 算出来的，每次都不一样。
-    // 把它算进指纹的话，对账循环永远等不到「存下去的还是当前这份」，每轮一次带
-    // fsync 的 state.json + .bak 整文件重写；入群比这两次写更快时循环不终止，
-    // 既写不下指纹也发不出 lockdownPersisted，紧急封锁的握手就此卡死。
-    workerPosts.length = 0;
-    saveState.mockClear();
-
-    for (const expiresAt of [400_000, 500_000, 600_000]) {
-      supervisorOptions!.onEvent({
-        type: "lockdown",
-        chatId: -2004,
-        phase: "active",
-        intentId: 90,
-        originalPermissions: { can_invite_users: true },
-        expiresAt,
-      });
-      await Bun.sleep(0);
-      await Bun.sleep(0);
-    }
-
-    // 每条事件各自一次落盘，但没有任何一条因为倒计时变了而重来一轮。
-    expect(saveState).toHaveBeenCalledTimes(3);
-    expect(workerPosts.filter((message) => message.type === "lockdownPersisted" && message.chatId === -2004)).toEqual([
-      { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
-      { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
-      { type: "lockdownPersisted", chatId: -2004, phase: "active", intentId: 90 },
-    ]);
-  });
-
-  test("chat_member update 必须依次跨过 Worker barrier 与两类落盘后才结算", async () => {
-    workerPosts.length = 0;
-    flushDiskIO.mockClear();
-    flushStateToDisk.mockClear();
-    const diskGate = deferred<FlushResult>();
-    const stateGate = deferred<FlushResult>();
-    flushDiskIO.mockImplementationOnce(() => diskGate.promise);
-    flushStateToDisk.mockImplementationOnce(() => stateGate.promise);
-    const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
-    let settled: boolean = false;
-    const handled = antiRaid.handleChatMemberUpdate({
-      me: { id: 99 },
-      chatMember: {
-        chat: { id: -3001 },
-        from: { id: 7 },
-        old_chat_member: { status: "left", user: { id: 77 } },
-        new_chat_member: { status: "member", user: { id: 77, first_name: "New" } },
-      },
-    } as never).finally(() => { settled = true; });
-
-    await Bun.sleep(0);
-    const barrier = workerPosts.at(-1);
-    expect(barrier?.type).toBe("barrier");
-    supervisorOptions!.onEvent({
-      type: "verificationUpsert",
-      record: { ...record(antiRaidRuntimeState.generation, 1), chatId: -3001, userId: 77 },
-    });
-    await Bun.sleep(0);
-    expect(settled).toBe(false);
-    expect(flushDiskIO).not.toHaveBeenCalled();
-    expect(flushStateToDisk).not.toHaveBeenCalled();
-
-    if (barrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
-    }
-    await Bun.sleep(0);
-    expect(flushDiskIO).toHaveBeenCalledTimes(1);
-    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
-    expect(settled).toBe(false);
-
-    diskGate.resolve("flushed");
-    await Bun.sleep(0);
-    expect(settled).toBe(false);
-    stateGate.resolve("flushed");
-    await handled;
-    expect(settled).toBe(true);
-  });
-
-  test("匿名模式切换会更新邀请者豁免，但匿名管理员本人仍按管理员身份免验证", async () => {
-    workerPosts.length = 0;
-    const anonymityChanged = antiRaid.handleChatMemberUpdate({
-      me: { id: 99 },
-      chatMember: {
-        chat: { id: -3010 },
-        from: { id: 7 },
-        old_chat_member: {
-          status: "administrator",
-          is_anonymous: false,
-          user: { id: 80, first_name: "Admin" },
-        },
-        new_chat_member: {
-          status: "administrator",
-          is_anonymous: true,
-          user: { id: 80, first_name: "Admin" },
-        },
-      },
-    } as never);
-    await Bun.sleep(0);
-    expect(workerPosts[0]).toEqual({
-      type: "adminsChanged",
-      chatId: -3010,
-      userId: 80,
-      isInviterExempt: false,
-    });
-    let barrier = workerPosts.at(-1);
-    if (barrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
-    }
-    await anonymityChanged;
-
-    workerPosts.length = 0;
-    const anonymousAdminJoined = antiRaid.handleChatMemberUpdate({
-      me: { id: 99 },
-      chatMember: {
-        chat: { id: -3011 },
-        from: { id: 8 },
-        old_chat_member: { status: "left", user: { id: 81, first_name: "Owner" } },
-        new_chat_member: {
-          status: "administrator",
-          is_anonymous: true,
-          user: { id: 81, first_name: "Owner" },
-        },
-      },
-    } as never);
-    await Bun.sleep(0);
-    expect(workerPosts[0]).toMatchObject({
-      type: "join",
-      chatId: -3011,
-      member: { id: 81, first_name: "Owner" },
-      exempt: true,
-      actorId: 8,
-    });
-    barrier = workerPosts.at(-1);
-    if (barrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
-    }
-    await anonymousAdminJoined;
-  });
-
-  test("barrier 后任一持久化 owner 失败，安全 update 必须 reject", async () => {
-    workerPosts.length = 0;
-    flushDiskIO.mockResolvedValueOnce("failed");
-    const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
-    const handled = antiRaid.handleChatMemberUpdate({
-      me: { id: 99 },
-      chatMember: {
-        chat: { id: -3002 },
-        from: { id: 8 },
-        old_chat_member: { status: "left", user: { id: 78 } },
-        new_chat_member: { status: "member", user: { id: 78, first_name: "Newer" } },
-      },
-    } as never);
-    await Bun.sleep(0);
-    const barrier = workerPosts.at(-1);
-    supervisorOptions!.onEvent({
-      type: "verificationUpsert",
-      record: { ...record(antiRaidRuntimeState.generation, 1), chatId: -3002, userId: 78 },
-    });
-    if (barrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
-    }
-
-    await expect(handled).rejects.toThrow("Anti-Raid persistence failed: disk=failed, state=flushed");
-  });
-
-  test("Worker 在 barrier 等待期间重建会立即失败，不把旧实例回执当成功", async () => {
-    workerPosts.length = 0;
-    flushDiskIO.mockClear();
-    flushStateToDisk.mockClear();
-    const handled = antiRaid.handleChatMemberUpdate({
-      me: { id: 99 },
-      chatMember: {
-        chat: { id: -3003 },
-        from: { id: 9 },
-        old_chat_member: { status: "left", user: { id: 79 } },
-        new_chat_member: { status: "member", user: { id: 79, first_name: "Newest" } },
-      },
-    } as never);
-    await Bun.sleep(0);
-    expect(workerPosts.at(-1)?.type).toBe("barrier");
-
-    supervisorOptions!.onRespawn((): boolean => true);
-
-    await expect(handled).rejects.toThrow("Anti-Raid Worker barrier failed");
-    expect(flushDiskIO).not.toHaveBeenCalled();
-    expect(flushStateToDisk).not.toHaveBeenCalled();
-  });
-
-  test("drain 超时会清理 waiter，迟到回执不能改变失败结果", async () => {
-    workerPosts.length = 0;
-    const result = antiRaid.drainAntiRaid(1);
-    const firstBarrier = workerPosts.at(-1);
-
-    await expect(result).resolves.toBe("timedOut");
-    const nextBoundaryIndex: number = workerPosts.length;
-    const nextResult = antiRaid.drainAntiRaid(1_000);
-    let nextSettled: boolean = false;
-    void nextResult.finally(() => { nextSettled = true; });
-    if (firstBarrier?.type === "barrier") {
-      supervisorOptions!.onEvent({
-        type: "barrierComplete",
-        barrierId: firstBarrier.barrierId,
-      });
-    }
-    await Bun.sleep(0);
-    expect(nextSettled).toBeFalse();
-    await expect(
-      settleAntiRaidDrain(nextResult, nextBoundaryIndex)
-    ).resolves.toBe("flushed");
-  });
-
-  test("服务消息与验证按钮入口都把各自 barrier 纳入返回 Promise", async () => {
-    async function expectOwnBarrier(
-      start: () => Promise<unknown>,
-      expectedMessageType: AntiRaidWorkerMessage["type"]
-    ): Promise<void> {
-      workerPosts.length = 0;
-      let settled: boolean = false;
-      const handled = start().finally(() => { settled = true; });
-      await Bun.sleep(0);
-      expect(workerPosts[0]?.type).toBe(expectedMessageType);
-      const barrier = workerPosts.at(-1);
-      expect(barrier?.type).toBe("barrier");
-      await Bun.sleep(0);
-      expect(settled).toBe(false);
-      if (barrier?.type === "barrier") {
-        supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
-      }
-      await handled;
-      expect(settled).toBe(true);
-    }
-
-    await expectOwnBarrier(
-      () => antiRaid.handleAntiRaidMessageIngress({
-        chat: { id: -5001 },
-        from: { id: 20 },
-        message_id: 60,
-        new_chat_members: [{ id: 201, first_name: "Join" }],
-      } as never, 99),
-      "join"
-    );
-    await expectOwnBarrier(
-      () => antiRaid.handleAntiRaidMessageIngress({
-        chat: { id: -5002 },
-        from: { id: 21 },
-        message_id: 61,
-        left_chat_member: { id: 202, first_name: "Left" },
-      } as never, 99),
-      "left"
-    );
-    await expectOwnBarrier(
-      () => antiRaid.handleVerificationCallback({
-        callbackQuery: {
-          id: "callback-1",
-          data: "verify:203",
-          message: { chat: { id: -5003 } },
-          from: { id: 203, first_name: "Verify" },
-        },
-      } as never),
-      "callback"
-    );
-  });
-
-  test("入群事件晚到时仍转交直属评论与楼中楼线索，普通非待验证消息不进入 Worker", async () => {
-    workerPosts.length = 0;
-    const comment = antiRaid.handleAntiRaidMessageIngress({
-      chat: { id: -4001 },
-      from: { id: 88 },
-      message_id: 55,
-      reply_to_message: { is_automatic_forward: true },
-    } as never, 99);
-    await Bun.sleep(0);
-    const barrier = workerPosts.at(-1);
-    expect(workerPosts[0]).toMatchObject({
-      type: "message",
-      chatId: -4001,
-      userId: 88,
-      repliesToChannelPost: true,
-    });
-    if (barrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
-    }
-    await comment;
-
-    workerPosts.length = 0;
-    const threadReply = antiRaid.handleAntiRaidMessageIngress({
-      chat: { id: -4001 },
-      from: { id: 89 },
-      message_id: 56,
-      message_thread_id: 55,
-    } as never, 99);
-    await Bun.sleep(0);
-    const threadBarrier = workerPosts.at(-1);
-    expect(workerPosts[0]).toMatchObject({
-      type: "message",
-      chatId: -4001,
-      userId: 89,
-      isThreadReply: true,
-    });
-    if (threadBarrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: threadBarrier.barrierId });
-    }
-    await threadReply;
-
-    workerPosts.length = 0;
-    await antiRaid.handleAntiRaidMessageIngress({
-      chat: { id: -4001 },
-      from: { id: 90 },
-      message_id: 57,
-    } as never, 99);
-    expect(workerPosts).toHaveLength(0);
-  });
-
-  test("论坛话题消息不是评论区候选：不投递、不加投 barrier", async () => {
-    workerPosts.length = 0;
-    // 开了 topics 的超级群里每条普通消息都带 message_thread_id；只有关联频道
-    // 讨论组的评论线程才算候选，论坛话题必须走普通非待验证语义。
-    await antiRaid.handleAntiRaidMessageIngress({
-      chat: { id: -4001 },
-      from: { id: 91 },
-      message_id: 58,
-      message_thread_id: 77,
-      is_topic_message: true,
-    } as never, 99);
-
-    expect(workerPosts).toHaveLength(0);
-  });
-
-  test("待验证用户在论坛话题里发言仍被追踪，但不标记为评论线索", async () => {
-    activeVerificationSnapshots.set("-4001:92", { ...record(1, 1), chatId: -4001, userId: 92 });
-    workerPosts.length = 0;
-
-    const topicMessage = antiRaid.handleAntiRaidMessageIngress({
-      chat: { id: -4001 },
-      from: { id: 92 },
-      message_id: 59,
-      message_thread_id: 77,
-      is_topic_message: true,
-    } as never, 99);
-    await Bun.sleep(0);
-    const topicBarrier = workerPosts.at(-1);
-
-    expect(workerPosts[0]).toMatchObject({
-      type: "message",
-      chatId: -4001,
-      userId: 92,
-      isThreadReply: false,
-      repliesToChannelPost: false,
-    });
-    if (topicBarrier?.type === "barrier") {
-      supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: topicBarrier.barrierId });
-    }
-    await topicMessage;
-    activeVerificationSnapshots.delete("-4001:92");
-  });
-
-  test("Worker 放弃自愈后主线程恢复权限、重试失败群且不清除更新后的 intent", async () => {
-    chatStates.clear();
-    restoreLockdownInvitePermission.mockClear();
-    saveStateInBackground.mockClear();
-    antiRaid.initAntiRaid();
-
-    const successfulChatId = -6001;
-    const retryChatId = -6002;
-    const changedChatId = -6003;
-    const stoppedChatId = -6004;
-    for (const [chatId, intentId, phase] of [
-      [successfulChatId, 101, "applying"],
-      [retryChatId, 102, "active"],
-      [changedChatId, 103, "active"],
-    ] as const) {
-      chatStates.set(chatId, {
-        lockdown: {
-          phase,
-          intentId,
-          originalPermissions: { can_invite_users: true, can_send_messages: true },
-          expiresAt: 10_000 + intentId,
-        },
-      });
-    }
-
-    let retryAttempts: number = 0;
-    const changedRestore = deferred<void>();
-    const stoppedRestore = deferred<void>();
-    restoreLockdownInvitePermission.mockImplementation(async (input: unknown): Promise<void> => {
-      const chatId: number = (input as { chatId: number }).chatId;
-      if (chatId === retryChatId && retryAttempts++ === 0) throw new Error("temporary Telegram failure");
-      if (chatId === changedChatId) await changedRestore.promise;
-      if (chatId === stoppedChatId) await stoppedRestore.promise;
-    });
-
-    supervisorOptions!.onGiveUp();
-    chatStates.get(changedChatId)!.lockdown = {
-      phase: "active",
-      intentId: 999,
-      originalPermissions: { can_invite_users: false },
-      expiresAt: 99_999,
-    };
-    changedRestore.resolve(undefined);
-    await Bun.sleep(20);
-
-    expect(chatStates.get(successfulChatId)?.lockdown).toBeUndefined();
-    expect(chatStates.get(retryChatId)?.lockdown).toBeUndefined();
-    expect(chatStates.get(changedChatId)?.lockdown?.intentId).toBe(999);
-    expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
-      (input as { chatId: number }).chatId === retryChatId
-    )).toHaveLength(2);
-    expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
-      (input as { chatId: number }).chatId === changedChatId
-    )).toHaveLength(1);
-    expect(saveStateInBackground).toHaveBeenCalledTimes(2);
-
-    chatStates.clear();
-    chatStates.set(stoppedChatId, {
-      lockdown: {
-        phase: "restoring",
-        intentId: 104,
-        originalPermissions: { can_invite_users: true },
-        expiresAt: 10_104,
-      },
-    });
-    supervisorOptions!.onGiveUp();
-    await Bun.sleep(0);
-    const terminationResult = await Promise.race([
-      antiRaid.terminateAntiRaid().then(() => "terminated" as const),
-      Bun.sleep(50).then(() => "timedOut" as const),
-    ]);
-
-    expect(terminationResult).toBe("terminated");
-    expect(restoreLockdownInvitePermission.mock.calls.filter(([input]) =>
-      (input as { chatId: number }).chatId === stoppedChatId
-    )).toHaveLength(1);
-    const { emergencyLockdownRecoveries, emergencyLockdownRecoveryRuntime } = await import("../../../packages/cache/main/antiRaid/lockdownMirror");
-    expect(emergencyLockdownRecoveries.size).toBe(0);
-    expect(emergencyLockdownRecoveryRuntime.stopped).toBeTrue();
-    expect(chatStates.get(stoppedChatId)?.lockdown?.intentId).toBe(104);
-
-    stoppedRestore.resolve(undefined);
-    await Bun.sleep(0);
-    expect(chatStates.get(stoppedChatId)?.lockdown?.intentId).toBe(104);
-    expect(saveStateInBackground).toHaveBeenCalledTimes(2);
   });
 });

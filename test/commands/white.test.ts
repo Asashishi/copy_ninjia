@@ -3,18 +3,25 @@ import type { CachedUser } from "../../packages/types/chatState";
 import { settleTestBatch } from "../libs/helpers";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
-const setWhitelistMembership = mock(async (): Promise<{
+const setWhitelistMembership = mock((): {
   changed: boolean;
   permissions: undefined;
-}> => ({ changed: true, permissions: undefined }));
+} => ({ changed: true, permissions: undefined }));
+const confirmWhitelistEntryPersisted = mock(
+  async (_id: number, _retryUnacknowledged: boolean): Promise<void> => {}
+);
 const isUserBlocked = mock((_id: number): boolean => false);
+const hasWhitelistPermission = mock(
+  (_id: number, _key: string): boolean => false
+);
 
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
-mock.module("../../packages/config/whitelist", () => ({
-  hasWhitelistPermission: (): boolean => false,
+mock.module("../../packages/whitelist", () => ({
+  confirmWhitelistEntryPersisted,
+  hasWhitelistPermission,
   setWhitelistMembership,
 }));
 mock.module("../../packages/infra/blocklist/membership", () => ({ isUserBlocked }));
@@ -81,12 +88,18 @@ function repliedChannel(id: number): object {
 beforeEach(() => {
   sendMessage.mockClear();
   setWhitelistMembership.mockClear();
-  setWhitelistMembership.mockImplementation(async () => ({
+  setWhitelistMembership.mockImplementation(() => ({
     changed: true,
     permissions: undefined,
   }));
+  confirmWhitelistEntryPersisted.mockClear();
+  confirmWhitelistEntryPersisted.mockImplementation(
+    async (): Promise<void> => {}
+  );
   isUserBlocked.mockClear();
   isUserBlocked.mockImplementation((): boolean => false);
+  hasWhitelistPermission.mockClear();
+  hasWhitelistPermission.mockImplementation((): boolean => false);
   protectedIdentityMutationQueue.current = Promise.resolve();
   userCache.clear();
   senderUsernameCache.clear();
@@ -110,6 +123,27 @@ describe("/white", () => {
     });
   });
 
+  test("持有 isCanWhiteOther 的普通白名单成员只能新增默认权限成员", async () => {
+    hasWhitelistPermission.mockImplementation(
+      (id: number, key: string): boolean =>
+        id === 2 && key === "isCanWhiteOther"
+    );
+
+    await handleWhiteCommand(context(2, "100 enable"));
+    expect(setWhitelistMembership).toHaveBeenLastCalledWith({
+      id: 100,
+      enabled: true,
+      meta: { firstName: "", lastName: "", username: "" },
+    });
+
+    setWhitelistMembership.mockClear();
+    await handleWhiteCommand(context(2, "100 disable"));
+    expect(setWhitelistMembership).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringContaining("只准给其它身份添加默认权限白名单"),
+    }));
+  });
+
   test("支持 @username、用户 ID 与频道 ID", async () => {
     const alice: CachedUser = {
       id: 100,
@@ -122,6 +156,7 @@ describe("/white", () => {
     expect(setWhitelistMembership).toHaveBeenLastCalledWith({
       id: 100,
       enabled: true,
+      meta: { firstName: "Alice", lastName: "", username: "Alice" },
     });
 
     await handleWhiteCommand(context(1, "200 disable"));
@@ -134,6 +169,7 @@ describe("/white", () => {
     expect(setWhitelistMembership).toHaveBeenLastCalledWith({
       id: -1002233445566,
       enabled: true,
+      meta: { firstName: "", lastName: "", username: "" },
     });
   });
 
@@ -142,6 +178,7 @@ describe("/white", () => {
     expect(setWhitelistMembership).toHaveBeenLastCalledWith({
       id: 100,
       enabled: true,
+      meta: { firstName: "Alice", lastName: "", username: "" },
     });
 
     await handleWhiteCommand(context(
@@ -171,7 +208,7 @@ describe("/white", () => {
   });
 
   test("幂等结果给出准确回执，不宣称重复新增或删除成功", async () => {
-    setWhitelistMembership.mockImplementation(async () => ({
+    setWhitelistMembership.mockImplementation(() => ({
       changed: false,
       permissions: undefined,
     }));
@@ -209,46 +246,61 @@ describe("/white", () => {
     });
   });
 
-  test("成员关系落盘期间阻止异步黑名单新增穿过同一策略串行边界", async () => {
-    let releaseWrite: (() => void) | undefined;
-    let markWriteStarted: (() => void) | undefined;
-    const writeStarted: Promise<void> = new Promise<void>((resolve: () => void): void => {
-      markWriteStarted = resolve;
-    });
-    const writeBarrier: Promise<void> = new Promise<void>((resolve: () => void): void => {
-      releaseWrite = resolve;
-    });
-    setWhitelistMembership.mockImplementationOnce(async () => {
-      markWriteStarted!();
-      await writeBarrier;
-      return { changed: true, permissions: undefined };
-    });
-
+  test("成员关系变更等待既有黑名单策略临界区结束", async () => {
+    let releaseEarlierMutation: (() => void) | undefined;
+    const earlierMutation: Promise<void> = runProtectedIdentityMutation(
+      (): Promise<void> => new Promise<void>((resolve: () => void): void => {
+        releaseEarlierMutation = resolve;
+      })
+    );
     const whitelistUpdate: Promise<void> = handleWhiteCommand(context(1, "100 enable"));
-    await writeStarted;
-    let blockMutationRan: boolean = false;
-    const blockMutation: Promise<void> = runProtectedIdentityMutation((): void => {
-      blockMutationRan = true;
-    });
     await Promise.resolve();
-    expect(blockMutationRan).toBeFalse();
+    await Promise.resolve();
+    expect(setWhitelistMembership).not.toHaveBeenCalled();
 
-    releaseWrite!();
-    await settleTestBatch([whitelistUpdate, blockMutation]);
-    expect(blockMutationRan).toBeTrue();
+    releaseEarlierMutation!();
+    await settleTestBatch([earlierMutation, whitelistUpdate]);
+    expect(setWhitelistMembership).toHaveBeenCalledTimes(1);
   });
 
-  test("超级管理员自己 enable 被挡住，disable 仍可清掉文件里的历史残留", async () => {
+  test("等待策略临界区期间权限被撤销时不沿用入口授权", async () => {
+    let canWhiteOther: boolean = true;
+    hasWhitelistPermission.mockImplementation(
+      (_id: number, key: string): boolean =>
+        key === "isCanWhiteOther" && canWhiteOther
+    );
+    let releaseEarlierMutation: (() => void) | undefined;
+    const earlierMutation: Promise<void> = runProtectedIdentityMutation(
+      (): Promise<void> => new Promise<void>((resolve: () => void): void => {
+        releaseEarlierMutation = resolve;
+      })
+    );
+    const whitelistUpdate: Promise<void> = handleWhiteCommand(
+      context(2, "100 enable")
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    canWhiteOther = false;
+    releaseEarlierMutation!();
+
+    await settleTestBatch([earlierMutation, whitelistUpdate]);
+    expect(setWhitelistMembership).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringContaining("哪来的资格"),
+    }));
+  });
+
+  test("超级管理员自己 enable 被挡住，disable 仍可清掉表里的历史残留", async () => {
     await handleWhiteCommand(context(1, "1 enable"));
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("才不用塞进白名单文件里"),
+      text: expect.stringContaining("才不用塞进白名单表里"),
       replyToMessageId: 10,
     });
 
-    // disable 只清文件里的残留条目，清完超级管理员本人的权限一点不受影响
-    // （权限来自身份，见 packages/config/whitelist.ts）。
+    // disable 只清表里的残留条目，清完超级管理员本人的权限一点不受影响
+    // （权限来自身份，见 packages/whitelist.ts）。
     await handleWhiteCommand(context(1, "1 disable"));
     expect(setWhitelistMembership).toHaveBeenCalledWith({ id: 1, enabled: false });
     // 回执因此不能说成「已经从白名单里踢出去啦」：紧接着 /permission query
@@ -258,7 +310,7 @@ describe("/white", () => {
     }));
 
     sendMessage.mockClear();
-    setWhitelistMembership.mockImplementationOnce(async () => ({
+    setWhitelistMembership.mockImplementationOnce(() => ({
       changed: false,
       permissions: undefined,
     }));
@@ -287,16 +339,32 @@ describe("/white", () => {
   });
 
   test("落盘失败就地降级，如实回执而不是掀翻整个进程", async () => {
-    setWhitelistMembership.mockImplementationOnce(async (): Promise<never> => {
+    setWhitelistMembership.mockImplementationOnce((): never => {
       throw new Error("disk full");
     });
 
     // 不上抛：bot.catch 按设计原样重抛、acknowledged runner 随即带非零码退出
-    // 且不确认 offset，Telegram 重投同一条命令——config/ 不可写时那就是一个
-    // 永久重启循环。名单此刻一点没动（commitWhitelistMutation 只在写盘成功后
-    // 才发布），所以确认这条 update 是安全的。
+    // 且不确认 offset，Telegram 重投同一条命令——持久化边界持续异常时会形成
+    // 永久重启循环，因此命令层必须就地收口并留下错误日志。
     await handleWhiteCommand(context(1, "100 enable"));
 
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringContaining("没能把白名单写进硬盘"),
+    }));
+  });
+
+  test("事务 flush 失败不回执成员关系成功，幂等命中要求补投未确认值", async () => {
+    setWhitelistMembership.mockImplementationOnce(() => ({
+      changed: false,
+      permissions: undefined,
+    }));
+    confirmWhitelistEntryPersisted.mockImplementationOnce(async (): Promise<void> => {
+      throw new Error("transaction failed");
+    });
+
+    await handleWhiteCommand(context(1, "100 enable"));
+
+    expect(confirmWhitelistEntryPersisted).toHaveBeenCalledWith(100, true);
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       text: expect.stringContaining("没能把白名单写进硬盘"),
     }));

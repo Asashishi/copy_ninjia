@@ -39,13 +39,13 @@ capability reference. Put bot identity and the super administrator in `config/te
   - Token issued by BotFather.
 - **`super_admin_user_id`** (required)
   - One decimal super-administrator user ID. That identity by itself holds **every** granular
-    permission `whitelist.json` can grant, so it does **not** need an entry of its own there.
+    permission the allowlist can grant, so it does **not** need a row in the SQLite table.
     It is also always inside the allowlist boundary, and therefore enjoys copy-cooldown
     exemption, bot-verification vouching, and protection from automatic enforcement, and
     cannot be targeted by `/block`, `/mute`, or `/batch_kick`.
-  - Five capabilities depend on the identity alone and cannot be granted through
-    `whitelist.json`: `/init`, `/batch_kick`, the mutation forms of `/permission`, `/white`,
-    and `/send`.
+  - `/init`, `/batch_kick`, permission mutations, `/white disable`, and `/send` depend on this
+    identity alone. `isCanWhiteOther` delegates only adding another identity with defaults; it
+    cannot remove a member.
   - Allowlisted identities may use `/permission query` to inspect their own permissions and
     `/permission help` to read the permission catalog; the super administrator's `query`
     returns the all-true view.
@@ -67,19 +67,6 @@ that file is covered by `.gitignore`.
   - **Validation**: [`packages/config/telegram.ts`](../../packages/config/telegram.ts), loaded
     strictly before network access; missing files, unknown fields, blank tokens, and invalid IDs
     abort startup.
-- **`config/whitelist.json`** ([example](../../config_example/whitelist.json))
-  - **Contents**: user/channel allowlist and granular permissions. Membership itself also
-    grants copy-cooldown exemption, bot-verification vouching, and protection from automatic
-    enforcement. The super administrator neither needs nor should have an entry here — its
-    permissions come from the identity itself, and any entry written for it is never read.
-  - **Validation**:
-    [`packages/config/whitelist.ts`](../../packages/config/whitelist.ts), loaded strictly
-    before network access; a missing or malformed file aborts startup.
-- **`config/blocklist.json`** ([example](../../config_example/blocklist.json))
-  - **Contents**: deployment-managed static user/channel blocklist IDs.
-  - **Validation**:
-    [`packages/config/blocklist.ts`](../../packages/config/blocklist.ts), loaded strictly
-    before network access and merged with the dynamic `memory/` layer.
 - **`config/stickers.json`** ([example](../../config_example/stickers.json))
   - **Contents**: sticker packs available to the AI, up to 5.
   - **Validation**: [`packages/config/stickers.ts`](../../packages/config/stickers.ts).
@@ -115,11 +102,33 @@ that file is covered by `.gitignore`.
     wrong path, which also logs one diagnostic pointing at `$.agent.media`) both stop further
     downloads, while transient failures only back off and never close the capability for good.
 
-`whitelist.json` and `blocklist.json` remain startup security boundaries. Other inputs are
-validated per feature: AI chat reads stickers, reactions, moods, persona, and the chat section
-of `agent.json`; ad detection reads its samples and `agent.ad_detect`; Japanese translation
-reads `g-auth.json`. A missing input refuses only that toggle unless the feature is already
-enabled in state, in which case startup fails. Results are cached until restart.
+Allowlist, blocklist, and pending-removal state are no longer deployment JSON. They live together
+in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates
+SQLite integrity, migration lineage, schema version, JSONB row shapes, and policy disjointness.
+Other inputs are validated per feature: AI chat reads stickers, reactions, moods, persona, and the
+chat section of `agent.json`; Japanese translation reads `g-auth.json`. A missing input refuses
+only that toggle unless the feature is already enabled in state, in which case startup fails.
+Results are cached until restart.
+
+### Initializing Identity Storage
+
+The runtime never guesses that a missing database should mean empty tables. On a fresh deployment,
+create two empty legacy inputs solely for the explicit migration, verify that no target exists,
+and migrate:
+
+```bash
+test ! -e config/whitelist.json
+test ! -e config/blocklist.json
+printf '{}\n' > config/whitelist.json
+printf '{"blockedIds":[]}\n' > config/blocklist.json
+bun run migrate:identity-storage --apply
+```
+
+The script acquires `bot.lock`, keeps an external backup with owner/mode/SHA-256 inventory,
+atomically publishes the current `database/storage.sqlite`, and deletes the two temporary legacy
+files. It prints the retained backup path. Existing legacy deployments must preserve their real
+inputs and follow [Operations](07-operations.md#identity-storage-migration) instead of creating
+empty replacements.
 
 ### Upgrading from 2.1.0
 
@@ -129,7 +138,7 @@ environment variables into the unified `agent.json`; never overwrite deployment 
 with `config_example/`. Runtime selections in `state.json.global.model` are no longer read.
 Model changes now require editing the relevant capability while stopped and restarting.
 
-Manually turn every ID in the old `.env` variable `PRIVILEGED_USERS_ID` into a key in `whitelist.json`, then remove that variable. Use an empty object `{}` when the identity only needs copy-cooldown exemption, bot-verification vouching, and protection from automatic enforcement. To retain the old `/block` and `/unblock` capabilities, explicitly set `"isCanBlock": true` and `"isCanUnBlock": true`; enable other permissions only as needed. The super administrator does not need to be migrated — its permissions come from the identity in `config/telegram.json`. A deployment that used to list it in the allowlist can leave that entry alone, since it is no longer read, or clear it with `/white <super-admin-id> disable`. Any allowlisted identity can run `/permission help` for the complete key catalog and `/permission query` for its own complete permissions after defaults are applied. The mutation forms of `/white` and `/permission` atomically rewrite this file, so the runtime user needs write access to the `config/` directory; every other configuration file may remain read-only.
+Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration; never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/telegram.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
 
 **One exception: startup still fails while the feature is switched on.** That `true` in `state.json` is something an administrator deliberately turned on, and silently downgrading it to "quietly does nothing" means the group just sees the bot stop chatting, stop catching ads, or stop translating from one restart onward. So startup checks once: every optional feature that is still enabled in some chat must have its credential and configuration present, and a missing prerequisite aborts startup naming the chat ids and what is missing (see [`packages/app/featurePreflight.ts`](../../packages/app/featurePreflight.ts)). The way out is to restore the prerequisite, or run `/ai_chat disable`, `/ad_detect disable`, or `/ja_copy disable` before removing it.
 

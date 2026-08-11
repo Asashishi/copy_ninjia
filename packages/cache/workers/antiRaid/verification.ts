@@ -4,6 +4,7 @@ import type {
   ThreadCommentConfirmation,
   VerificationEntry,
 } from "../../../types/antiRaid/internal";
+import type { DeferredVerificationRecord } from "../../../types/antiRaid";
 
 /** 入群验证状态机（packages/workers/antiRaid/verificationRuntime.ts）的内存状态。 */
 
@@ -13,6 +14,15 @@ export const verificationEntries: Map<string, VerificationEntry> = new Map();
 export const verificationGeneration: { current: number } = { current: 0 };
 /** 每个 key 在当前代际内最后使用的 revision；终结项只短期保留。 */
 export const verificationRevisions: Map<string, { revision: number; retiredAt?: number }> = new Map();
+
+/**
+ * owner：Anti-Raid Worker。主线程在 adopt 时全量推送的本进程延后索引；预算耗尽
+ * 或 adopt 时填充，明确离群、功能关闭、群停管或 Worker 停止时清理。主线程是
+ * 权威，Worker 崩溃后由主线程全量重放；容量不超过主线程延后索引，缺少条目表示
+ * 本 isolate 未接管该延后闩锁，不得沿用旧代际结论。
+ */
+export const deferredVerificationRecords: Map<string, DeferredVerificationRecord> =
+  new Map();
 
 /**
  * 冷缓存楼中楼消息的在途关联频道确认。每个成员键只有一个可更新 owner，请求

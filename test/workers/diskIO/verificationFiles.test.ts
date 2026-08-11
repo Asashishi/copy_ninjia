@@ -26,6 +26,7 @@ import {
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_VERSION,
 } from "../../../packages/consts/diskIO";
+import { VERIFICATION_RECORD_CAPACITY } from "../../../packages/consts/antiRaid/verification";
 
 const DAY_ONE = "2026-07-19";
 const DAY_TWO = "2026-07-20";
@@ -458,6 +459,27 @@ describe("pending verification daily append JSON", () => {
     writeFileSync(path, original);
 
     expect(() => recoverVerificationDay(DAY_ONE, dir)).toThrow("must be a JSON object of verification records");
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  test("恢复 active 记录超过硬顶时 fail closed，且不截断或改写文件", () => {
+    const path: string = join(dir, `${DAY_ONE}.json`);
+    const records: Record<string, unknown> = {};
+    for (
+      let index: number = 1;
+      index <= VERIFICATION_RECORD_CAPACITY + 1;
+      index++
+    ) {
+      records[`-1001:${index}`] = {
+        version: VERIFICATION_FILE_VERSION,
+        ...snapshot(1, { userId: index }),
+      };
+    }
+    const original: string = JSON.stringify(records);
+    writeFileSync(path, original);
+
+    expect((): Map<string, VerificationSnapshot> => recoverVerificationDay(DAY_ONE, dir))
+      .toThrow(`$ must be a JSON object with at most ${VERIFICATION_RECORD_CAPACITY} active verification records`);
     expect(readFileSync(path, "utf8")).toBe(original);
   });
 

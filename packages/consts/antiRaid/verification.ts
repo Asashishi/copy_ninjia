@@ -37,6 +37,25 @@ export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
  */
 export const VERIFICATION_TERMINAL_RETRY_MAX_MS: number = 30 * 60 * 1000;
 /**
+ * 同一完整进程内，每条可恢复验证终态最多获准执行的次数。
+ *
+ * 计数权威在主线程，Anti-Raid Worker 重建不会清零；耗尽后只卸载本进程运行态，
+ * 不删除磁盘记录，下一次完整进程启动再从持久化快照恢复。所属模块：
+ * antiRaid/verificationAttempts.ts 与 workers/antiRaid/verificationEffects.ts。
+ */
+export const VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS: number = 15;
+/**
+ * 单进程允许同时保留的验证记录 key 总数，覆盖 active、延后终态与尚待落盘确认的
+ * tombstone。达到上限时主线程拒绝新 key 并触发受监督停机；启动恢复超过上限也
+ * 直接拒绝，不淘汰、不截断安全状态。
+ *
+ * Bun 1.3.14 下用最大合法 label、45 个消息时间戳和完整终态字段实测，三份独立
+ * Map 各保留 10_000 条时 full GC 后约占 58 MB JSC heap；本上限据此给主线程、
+ * Anti-Raid Worker 与 Disk I/O Worker 的镜像留下明确余量。所属模块：
+ * antiRaid/verificationMirror.ts 与 workers/diskIO/verificationRecovery.ts。
+ */
+export const VERIFICATION_RECORD_CAPACITY: number = 10_000;
+/**
  * 冷启动恢复终态时，Worker 并发反查群类型的硬顶。请求按群复用，超过时保留终态
  * 等下一轮退避，避免大量历史群同时恢复时无界创建 getChat Promise。
  */

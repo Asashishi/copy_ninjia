@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AntiRaidWorkerMessage } from "../../../packages/types";
 import type { DiskBusinessMessage } from "../../../packages/types/diskIO";
+import {
+  blockedIdentityTestView as blockedUserIds,
+  readBlockedIdentityTestIds,
+} from "../../helpers/identityStorage";
 
 const workerPosts: AntiRaidWorkerMessage[] = [];
 /** 被要求补齐权限位的群，验证刷屏投递顺手触发了那次按需现查。 */
@@ -54,7 +58,7 @@ mock.module("../../../packages/infra/botAdmin", () => ({
   ensureBotChatPermissions: (chatId: number): void => { ensuredPermissionChats.push(chatId); },
   botCanDeleteMessagesIn: (): true => true,
 }));
-mock.module("../../../packages/libs/supervisedWorker", () => ({
+mock.module("../../../packages/infra/supervisedWorker", () => ({
   superviseWorker: () => ({
     init(): void {},
     post: (message: AntiRaidWorkerMessage): boolean => {
@@ -72,6 +76,8 @@ mock.module("../../../packages/infra/diskIO", () => ({
   isDiskIOBuffering: (): boolean => false,
   flushDiskIODomainOutcome: async (): Promise<{ result: string }> => ({ result: await flushDiskIODomain() }),
   onDiskIORespawn: (): void => {},
+  onIdentityStoragePersisted: (): void => {},
+  readBlocklistIds: async (): Promise<readonly number[]> => readBlockedIdentityTestIds(),
   onVerificationPersisted: (): void => {},
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     diskPosts.push(message);
@@ -85,7 +91,7 @@ mock.module("../../../packages/infra/diskIO", () => ({
   },
 }));
 const { handleChatMemberUpdate, handleAntiRaidMessageIngress } = await import("../../../packages/antiRaid");
-const { blockedUserIds, pendingBlockedRemovals } = await import("../../../packages/cache/main/blocklist");
+const { pendingBlockedRemovals } = await import("../../../packages/cache/main/blocklist");
 const { recentBlockedJoinCounts } = await import("../../../packages/cache/main/antiRaid/blocklistGuard");
 const { chatIsSupergroupById } = await import("../../../packages/cache/main/antiRaid/chatKind");
 const { unblockUser } = await import("../../../packages/infra/blocklist/membership");

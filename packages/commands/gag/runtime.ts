@@ -8,15 +8,16 @@ import {
   GAG_SESSION_MAX,
 } from "../../consts/gag";
 import { registerChatTeardown } from "../../infra/chatTeardown";
+import { trackBackgroundTask } from "../../libs/backgroundTasks";
 import { logger } from "../../infra/logger";
 import {
-  deleteEphemeralMessageWithOutcome,
   deleteMessageWithOutcome,
   sendCommandMessage,
 } from "../../infra/telegram";
 import type { DeleteMessageOutcome } from "../../infra/telegram";
 import type { FlushResult } from "../../types/lifecycle";
 import type { GagSession } from "../../types/gag";
+import { deleteGagSpeakNotice } from "./notices";
 
 export type GagEndReason = "timeout" | "ungag" | "teardown";
 export type GagReservationOutcome =
@@ -37,7 +38,7 @@ export function findGagSession(
 }
 
 /** 删除精确的会话对象；同目标的新会话不会被旧收尾误删。 */
-export function removeGagSession(session: GagSession): boolean {
+function removeGagSession(session: GagSession): boolean {
   const sessions: GagSession[] | undefined =
     gagSessionsByChat.get(session.chatId);
   if (sessions === undefined) return false;
@@ -95,25 +96,85 @@ function deletionFinished(outcome: DeleteMessageOutcome): boolean {
 
 async function deleteGagNotices(session: GagSession): Promise<boolean> {
   if (session.noticePending) return false;
+  const refreshTask: Promise<void> | null = session.speakNoticeRefreshTask;
+  if (refreshTask !== null) {
+    // refresh 属于当前 update；停机 abort 时它会拒绝，但 onSent 已经把远端可能
+    // 成功建立的 id 同步登记到 pending 字段。结束方只需等它停止改状态，再按
+    // current/pending/retired 三个固定槽位逐一清理，不能让 abort 跳过清理。
+    try {
+      await refreshTask;
+    } catch {
+      // 原 update 保留拒绝语义；这里的职责只是回收它已经登记的 Telegram 消息。
+    }
+  }
   let publicFinished: boolean = true;
   if (session.publicNoticeMessageId !== 0) {
+    const noticeMessageId: number = session.publicNoticeMessageId;
     const publicOutcome: DeleteMessageOutcome = await deleteMessageWithOutcome(
       session.chatId,
-      session.publicNoticeMessageId
+      noticeMessageId
     );
     publicFinished = deletionFinished(publicOutcome);
+    if (
+      publicFinished &&
+      session.publicNoticeMessageId === noticeMessageId
+    ) session.publicNoticeMessageId = 0;
   }
-  let ephemeralFinished: boolean = true;
-  if (session.ephemeralNoticeMessageId !== 0 && session.targetId > 0) {
-    const ephemeralOutcome: DeleteMessageOutcome =
-      await deleteEphemeralMessageWithOutcome({
-        chatId: session.chatId,
-        receiverUserId: session.targetId,
-        ephemeralMessageId: session.ephemeralNoticeMessageId,
-      });
-    ephemeralFinished = deletionFinished(ephemeralOutcome);
+  let speakFinished: boolean = true;
+  const currentSpeakNoticeId: number = session.speakNoticeMessageId;
+  if (currentSpeakNoticeId !== 0) {
+    const currentOutcome: DeleteMessageOutcome = await deleteGagSpeakNotice(
+      session,
+      currentSpeakNoticeId
+    );
+    const currentFinished: boolean = deletionFinished(currentOutcome);
+    speakFinished = speakFinished && currentFinished;
+    if (
+      currentFinished &&
+      session.speakNoticeMessageId === currentSpeakNoticeId
+    ) session.speakNoticeMessageId = 0;
   }
-  return publicFinished && ephemeralFinished;
+  const pendingSpeakNoticeId: number = session.pendingSpeakNoticeMessageId;
+  if (
+    pendingSpeakNoticeId !== 0 &&
+    pendingSpeakNoticeId !== currentSpeakNoticeId
+  ) {
+    const pendingOutcome: DeleteMessageOutcome = await deleteGagSpeakNotice(
+      session,
+      pendingSpeakNoticeId
+    );
+    const pendingFinished: boolean = deletionFinished(pendingOutcome);
+    speakFinished = speakFinished && pendingFinished;
+    if (
+      pendingFinished &&
+      session.pendingSpeakNoticeMessageId === pendingSpeakNoticeId
+    ) session.pendingSpeakNoticeMessageId = 0;
+  } else if (pendingSpeakNoticeId === currentSpeakNoticeId) {
+    session.pendingSpeakNoticeMessageId = session.speakNoticeMessageId;
+  }
+  const retiredSpeakNoticeId: number = session.retiredSpeakNoticeMessageId;
+  if (
+    retiredSpeakNoticeId !== 0 &&
+    retiredSpeakNoticeId !== currentSpeakNoticeId &&
+    retiredSpeakNoticeId !== pendingSpeakNoticeId
+  ) {
+    const retiredOutcome: DeleteMessageOutcome = await deleteGagSpeakNotice(
+      session,
+      retiredSpeakNoticeId
+    );
+    const retiredFinished: boolean = deletionFinished(retiredOutcome);
+    speakFinished = speakFinished && retiredFinished;
+    if (
+      retiredFinished &&
+      session.retiredSpeakNoticeMessageId === retiredSpeakNoticeId
+    ) session.retiredSpeakNoticeMessageId = 0;
+  } else if (
+    retiredSpeakNoticeId === currentSpeakNoticeId ||
+    retiredSpeakNoticeId === pendingSpeakNoticeId
+  ) {
+    session.retiredSpeakNoticeMessageId = 0;
+  }
+  return publicFinished && speakFinished;
 }
 
 /** 同一会话的命令、timer、teardown 与停机只能共享一条实际删除请求。 */
@@ -131,16 +192,23 @@ async function runExclusiveEndingTask(
   }
 }
 
+/**
+ * 把一条 gag 后台任务纳入停机可观测集合并自摘除。
+ *
+ * 唯一的 fire-and-forget 边界：调用方绝不 await 它。update 循环一次只取一条
+ * update 并完整等待（见 app/updateRunner.ts），在 handler 里 await 一次维护性
+ * Telegram 往返，阻塞的是整个进程的所有群。停机由 drainGagRuntime 排空本集合。
+ * @param failureMessage 失败时那行日志的完整英文前缀（含冒号）。
+ */
+export function trackGagBackgroundTask(
+  task: Promise<unknown>,
+  failureMessage: string
+): void {
+  trackBackgroundTask(gagBackgroundTasks, task, failureMessage);
+}
+
 function observeGagTask(task: Promise<boolean>): void {
-  const observed: Promise<void> = task
-    .then((): void => undefined)
-    .catch((error: unknown): void => {
-      logger.error("Unexpected error while finishing a gag session:", error);
-    })
-    .finally((): void => {
-      gagBackgroundTasks.delete(observed);
-    });
-  gagBackgroundTasks.add(observed);
+  trackGagBackgroundTask(task, "Unexpected error while finishing a gag session:");
 }
 
 function scheduleCleanupRetry(session: GagSession): void {
@@ -171,7 +239,7 @@ function retryGagCleanupFromTimer(session: GagSession): void {
 }
 
 /** ending 会话的显式重试入口；成功或消息已不存在时才释放 owner。 */
-export async function retryGagCleanup(
+async function retryGagCleanup(
   session: GagSession
 ): Promise<boolean> {
   if (
@@ -248,7 +316,7 @@ export function expireGag(session: GagSession): void {
 }
 
 /** 激活预约并安装不会阻止进程退出的到期 timer。 */
-export function activateGag(session: GagSession): void {
+function activateGag(session: GagSession): void {
   session.expiresAt = Date.now() + session.durationMinutes * 60_000;
   session.phase = "active";
   session.timer = setTimeout(
@@ -266,7 +334,9 @@ export async function failGagNotice(session: GagSession): Promise<void> {
     findGagSession(session.chatId, session.targetId) === session;
   if (
     session.publicNoticeMessageId === 0 &&
-    session.ephemeralNoticeMessageId === 0
+    session.speakNoticeMessageId === 0 &&
+    session.pendingSpeakNoticeMessageId === 0 &&
+    session.retiredSpeakNoticeMessageId === 0
   ) {
     if (isCurrent) removeGagSession(session);
     return;
@@ -297,12 +367,12 @@ export function recordGagPublicNotice(
   session.publicNoticeMessageId = noticeMessageId;
 }
 
-/** 普通用户专属开始入口的同步登记点；语义同 recordGagPublicNotice。 */
-export function recordGagEphemeralNotice(
+/** 用户专属或频道公开开始入口的同步登记点；语义同 recordGagPublicNotice。 */
+export function recordGagSpeakNotice(
   session: GagSession,
-  ephemeralMessageId: number
+  speakNoticeMessageId: number
 ): void {
-  session.ephemeralNoticeMessageId = ephemeralMessageId;
+  session.speakNoticeMessageId = speakNoticeMessageId;
 }
 
 /**

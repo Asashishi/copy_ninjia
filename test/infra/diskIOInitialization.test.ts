@@ -10,14 +10,15 @@ import type {
 } from "../../packages/types";
 import {
   diskIORuntime,
-  pendingJoinLogReads,
+  joinLogReadRequests,
   pendingLoad,
-  pendingLuckSecrets,
+  luckSecretRequests,
 } from "../../packages/cache/main/diskIO";
 import {
   DEFAULT_MAX_PENDING_BUSINESS_MESSAGES,
   LOAD_TIMEOUT_MS,
 } from "../../packages/consts/diskIO/common";
+import { DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES } from "../../packages/consts/diskIO/diagnostics";
 import {
   acceptDiskIODiagnosticBatch,
   pauseDiskIODiagnosticChannel,
@@ -25,7 +26,7 @@ import {
 } from "../../packages/infra/diskIO/diagnosticChannel";
 
 const diskIO = await import("../../packages/infra/diskIO");
-const { superviseWorker } = await import("../../packages/libs/supervisedWorker");
+const { superviseWorker } = await import("../../packages/infra/supervisedWorker");
 
 class FakeWorker {
   static instances: FakeWorker[] = [];
@@ -73,8 +74,9 @@ function emitSuccessfulLoad(worker: FakeWorker): void {
     luckDay: null,
     luckReceiptSecret,
     verifications: new Map(),
-    blockedUsers: new Map(),
     pendingBlockedRemovals: new Map(),
+    blocklistEntryCount: 0,
+    whitelistEntryCount: 0,
   } } as MessageEvent<DiskIOReply>);
 }
 
@@ -168,8 +170,9 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
-        blockedUsers: new Map(),
         pendingBlockedRemovals: new Map(),
+        blocklistEntryCount: 0,
+        whitelistEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       expect(await loadedPromise).toMatchObject({
         aiMemories: new Map([[1, "memory"]]),
@@ -286,8 +289,9 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
-        blockedUsers: new Map(),
         pendingBlockedRemovals: new Map(),
+        blocklistEntryCount: 0,
+        whitelistEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       expect(respawns).toBe(1);
       expect(second.messages).toEqual([{ type: "load" }, luckDraw]);
@@ -307,8 +311,9 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret: null,
         verifications: new Map(),
-        blockedUsers: new Map(),
         pendingBlockedRemovals: new Map(),
+        blocklistEntryCount: 0,
+        whitelistEntryCount: 0,
         error: "verification file is corrupt",
       } } as MessageEvent<DiskIOReply>);
       await Promise.resolve();
@@ -607,8 +612,9 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
-        blockedUsers: new Map(),
         pendingBlockedRemovals: new Map(),
+        blocklistEntryCount: 0,
+        whitelistEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
@@ -694,7 +700,7 @@ describe("explicit Worker initialization", () => {
         records: [{ userId: 42, joinedAt: 456 }],
       } } as unknown as MessageEvent<DiskIOReply>);
       await expect(readPromise).resolves.toEqual([{ userId: 42, joinedAt: 456 }]);
-      expect(pendingJoinLogReads.size).toBe(0);
+      expect(joinLogReadRequests.pending.size).toBe(0);
 
       const pendingRead = diskIO.readJoinLog({
         chatId: -1001,
@@ -702,10 +708,10 @@ describe("explicit Worker initialization", () => {
         now: 789,
         timeoutMs: 60_000,
       }).then(() => null, (error: unknown) => error);
-      expect(pendingJoinLogReads.size).toBe(1);
+      expect(joinLogReadRequests.pending.size).toBe(1);
       await diskIO.terminateDiskIO();
       expect(await pendingRead).toBeInstanceOf(Error);
-      expect(pendingJoinLogReads.size).toBe(0);
+      expect(joinLogReadRequests.pending.size).toBe(0);
     } finally {
       await diskIO.terminateDiskIO();
       globalThis.Worker = originalWorker;
@@ -734,8 +740,9 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
-        blockedUsers: new Map(),
         pendingBlockedRemovals: new Map(),
+        blocklistEntryCount: 0,
+        whitelistEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
@@ -784,15 +791,16 @@ describe("explicit Worker initialization", () => {
         luckDay: null,
         luckReceiptSecret,
         verifications: new Map(),
-        blockedUsers: new Map(),
         pendingBlockedRemovals: new Map(),
+        blocklistEntryCount: 0,
+        whitelistEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       await loadedPromise;
 
       worker.rejectedTypes.add("ensureLuckSecret");
       await expect(diskIO.ensureLuckReceiptSecret("2026-07-21", 60_000))
         .rejects.toThrow("rejected the luck receipt secret request");
-      expect(pendingLuckSecrets.size).toBe(0);
+      expect(luckSecretRequests.pending.size).toBe(0);
 
       worker.rejectedTypes.add("flush");
       await expect(diskIO.flushDiskIO(60_000)).resolves.toBe("failed");
@@ -874,7 +882,7 @@ describe("explicit Worker initialization", () => {
     }
   });
 
-  test("进程级 flush 等无界诊断 FIFO 全部 durable 后才把最终 flush 交给 Worker", async () => {
+  test("进程级 flush 等有界诊断 FIFO 全部 durable 后才把最终 flush 交给 Worker", async () => {
     FakeWorker.instances.length = 0;
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
@@ -917,6 +925,56 @@ describe("explicit Worker initialization", () => {
       await expect(flushPromise).resolves.toBe("flushed");
     } finally {
       await diskIO.terminateDiskIO();
+      globalThis.Worker = originalWorker;
+    }
+  });
+
+  test("诊断载荷越过字节硬顶时释放原消息，flush 仍会落盘汇总哨兵", async () => {
+    FakeWorker.instances.length = 0;
+    const originalWorker: typeof Worker = globalThis.Worker;
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      diskIO.initDiskIO();
+      const worker: FakeWorker = FakeWorker.instances[0]!;
+      const loadedPromise: Promise<unknown> = diskIO.loadPersistedData(1_000);
+      emitSuccessfulLoad(worker);
+      await loadedPromise;
+      worker.messages.length = 0;
+
+      expect(diskIO.relayLogMessage({
+        timestamp: 1,
+        level: "error",
+        args: ["x".repeat(DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES)],
+      })).toBeTrue();
+      expect(worker.messages).toHaveLength(0);
+      expect(diskIORuntime.diagnosticQueue.size).toBe(0);
+      expect(diskIORuntime.diagnosticDroppedMessages).toBe(1);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("queue capacity reached"));
+
+      const flushPromise: Promise<string> = diskIO.flushDiskIO(1_000);
+      const batch: DiskIOMessage | undefined = worker.messages[0];
+      if (batch?.type !== "diagnosticBatch") throw new Error("missing diagnostic summary batch");
+      expect(batch.messages).toHaveLength(1);
+      expect(batch.messages[0]).toMatchObject({
+        type: "log",
+        args: [expect.stringContaining("dropped 1 diagnostic message")],
+      });
+      expect(diskIORuntime.diagnosticDroppedMessages).toBe(0);
+      expect(diskIORuntime.diagnosticDroppedSerializedBytes).toBe(0);
+      worker.onmessage!({
+        data: { type: "diagnosticBatchAccepted", batchId: batch.batchId },
+      } as MessageEvent<DiskIOReply>);
+      await Bun.sleep(0);
+      const flush: DiskIOMessage | undefined = worker.messages[1];
+      if (flush?.type !== "flush") throw new Error("missing final disk flush");
+      worker.onmessage!({
+        data: { type: "flushed", flushedId: flush.flushId },
+      } as MessageEvent<DiskIOReply>);
+      await expect(flushPromise).resolves.toBe("flushed");
+    } finally {
+      await diskIO.terminateDiskIO();
+      error.mockRestore();
       globalThis.Worker = originalWorker;
     }
   });

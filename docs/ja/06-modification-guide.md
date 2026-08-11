@@ -55,7 +55,7 @@
 - `/咬` のような中国語アクションコマンドは中国語の字形そのものに依存しています（「スラッシュコマンドの追加」末尾を参照）。翻訳した時点で同じ操作ではなくなります。
 - ペルソナ・ツール説明・プロンプト（[`prompt/persona.md`](../../prompt/persona.md)、`packages/consts/aiChat/prompts/`）は中国語で書かれており、モデルの出力言語もそれらが決めています。
 
-別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 76 ファイルに約 786 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
+別の言語が必要なら fork して自分で書き換えてください。production コードには中国語を含む文字列または template literal のソース行が 78 ファイルに約 801 箇所、さらに `prompt/persona.md` と `config/*.json` があります。上流に抽象レイヤーを立てて 1 項目ずつ埋めるより、fork 全体を AI に vibe させる方が手間も少なく、オフセット計算のようなロジックを複雑にせずに済みます。作業後は通常どおり `bun run check` を実行してください。
 
 ## 動作パラメータの調整
 
@@ -112,7 +112,7 @@
 ## ペルソナまたは JSON 設定の変更
 
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
-- deployment 固有の変更は Git ignore 対象の `config/` だけに行います。`config_example/` は clean deployment 用 template で、schema または default example が変わるときだけ同期します。`whitelist.json` と `blocklist.json` は network 接続前に厳密ロードし、前者は `/white` と `/permission` が atomic rewrite します。`stickers.json`、`reactions.json`、`mood.json`、`ad_samples.json` は feature ごとに遅延検証します。スタンプパックは最大 5 個、mood の重みは正の整数で合計 100、広告例文は空文字・重複不可、1 件あたり最大 1,024 文字、合計最大 500 件です。構造変更では先に `packages/config/` の schema と `packages/types/` の型を更新してから JSON を変更します。
+- deployment 固有の変更は Git ignore 対象の `config/` だけに行い、`config_example/` は schema または default example が変わるときだけ同期します。`telegram.json` は network 接続前に strict load し、`stickers.json`、`reactions.json`、`mood.json` などの feature input は各 enablement 境界で検証します。allowlist、blocklist、removal outbox は deployment config ではなく、authority は `database/storage.sqlite` です。identity structure を変える場合、先に `packages/database/schema/`、`packages/database/codec/identity.ts`、domain type、strict validation を更新し、停止中 migration script と fault-injection test を用意します。JSON 互換 read を戻してはいけません。
 
 ## deployment JSON 設定の追加
 

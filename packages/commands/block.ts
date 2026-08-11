@@ -7,13 +7,14 @@ import {
   isChatMember,
 } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { isWhitelisted } from "../config/whitelist";
+import { isWhitelisted } from "../whitelist";
 import { BLOCK_COMMAND_CONCURRENCY, BLOCK_TARGET_TEXTS } from "../consts/commands";
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import { resolveBotAdminStatus } from "../infra/botAdmin";
 import { logger } from "../infra/logger";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy";
+import { identityMetadataFromCachedUser } from "../infra/identityStorage";
 import {
   blockUser,
   confirmBlocklistPersisted,
@@ -47,8 +48,8 @@ interface BlockAdmission {
  * 黑名单先于封禁写入，且即使一个群都没封成也照样保留：这两件事解决的不是
  * 同一个问题——封禁只覆盖此刻已知且有管理权的群，黑名单覆盖的是「以后」，
  * 包括机器人当时还没进、或还不是管理员的群。之后这个 id 出现在任何监听群的
- * 入群更新里都会被秒踢（见 antiRaid/blocklistGuard.ts），名单本身落盘在
- * memory/blocklist/blocklist.json（见 infra/blocklist/）。
+ * 入群更新里都会被秒踢（见 antiRaid/blocklistGuard.ts），名单由 DiskIO Worker
+ * 持久化到 database/storage.sqlite（见 infra/identityStorage.ts）。
  *
  * 目标有三种指定方式：回复目标的一条消息（优先）、`/block @username`（要求本
  * 机器人此前缓存过该用户）、`/block <用户 id>`。**id 那条最可靠**：用户名可以被
@@ -56,7 +57,7 @@ interface BlockAdmission {
  * 拿不准用户名新鲜度时应当用 id 或回复消息。id 只认正整数——群/频道的负数 id
  * 会让处置改去封整个会话身份，那是另一回事。目标若是频道马甲（sender_chat），
  * 则改走 banChatSenderChat 封掉该频道身份的发言权。仅限持有 isCanBlock 的
- * 用户或频道身份使用（超级管理员恒持有，见 config/whitelist.ts）。
+ * 用户或频道身份使用（超级管理员恒持有，见 whitelist.ts）。
  */
 export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -105,11 +106,17 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   // 事后要一个群一个群手动解封——值得在入口就挡住。
   const admission: BlockAdmission = await runProtectedIdentityMutation(
     (): BlockAdmission => {
-      // isWhitelisted 已经把超级管理员算进白名单边界（config/whitelist.ts）。
+      // isWhitelisted 已经把超级管理员算进白名单边界（whitelist.ts）。
       if (isWhitelisted(targetUser.id)) {
         return { protected: true, newlyBlocked: false };
       }
-      return { protected: false, newlyBlocked: blockUser(targetUser.id) };
+      return {
+        protected: false,
+        newlyBlocked: blockUser(
+          targetUser.id,
+          identityMetadataFromCachedUser(targetUser)
+        ),
+      };
     }
   );
   if (admission.protected) {
@@ -122,13 +129,13 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   }
 
   // 黑名单先写、且与封禁结果无关：封禁只能覆盖此刻已知且有管理权的群，名单
-  // 覆盖的是以后——包括机器人当时还没进的群。先写内存 Map 再落盘，见
-  // infra/blocklist/；重复 /block 同一个人时返回 false，不再重复落盘。
+  // 覆盖的是以后——包括机器人当时还没进的群。先发布 LRU 最终值，再把 revision
+  // 投给 DiskIO Worker；重复 /block 同一个人时返回 false，不创建新 revision。
   const newlyBlocked: boolean = admission.newlyBlocked;
   // 只有真的新增了记录才值得等这一次落盘回执：没落盘就不能把「永久」说出口。
   // 重复 /block 时也要等：这个 id 若是本进程新增、上一次落盘又失败了，管理员
-  // 修好磁盘再跑一次正是最自然的重试动作，不能因为「Map 里已经有了」就静默
-  // 跳过——那会连着两次都告诉他成功了，而文件里根本没有这条记录。
+  // 修好磁盘再跑一次正是最自然的重试动作，不能因为「LRU 里已经有了」就静默
+  // 跳过——那会连着两次都告诉他成功了，而数据库里根本没有这条记录。
   const requeued: boolean = newlyBlocked ? false : ensureBlocklistEntryQueued(targetUser.id);
   const persisted: boolean = newlyBlocked || requeued ? await confirmBlocklistPersisted() : true;
 

@@ -1,7 +1,8 @@
 import { TELEGRAM_REACTION_EMOJI_SET } from "../consts/reactions";
 import { defaultReactionConfigCache } from "../cache/perThread/config";
 import { REACTIONS_CONFIG_PATH } from "../consts/paths";
-import { hasExactKeys, isNonEmptyStringArray, isPlainRecord } from "../libs/runtimeConfig";
+import { hasExactKeys, isPlainRecord } from "../libs/record";
+import { isNonEmptyStringArray } from "../libs/runtimeConfig";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import type { ReactionConfig, ReactionEmoji } from "../types/config";
 

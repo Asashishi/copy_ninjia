@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Stats } from "node:fs";
 import { prepareRuntimeDataRoot } from "../../../packages/infra/storage/dataRoot";
+import { IDENTITY_DATABASE_DIRECTORY_MODE } from "../../../packages/consts/identityStorage";
 
 let testDir: string;
 
@@ -22,7 +25,7 @@ describe("runtime data root preflight", () => {
 
     expect(existsSync(nested)).toBeTrue();
     expect((statSync(nested).mode & 0o777) & ~0o750).toBe(0);
-    expect(readdirSync(nested).sort()).toEqual(["logs", "memory"]);
+    expect(readdirSync(nested).sort()).toEqual(["database", "logs", "memory"]);
     expect(existsSync(join(nested, "config"))).toBeFalse();
   });
 
@@ -80,6 +83,48 @@ describe("runtime data root preflight", () => {
     await expect(prepareRuntimeDataRoot(privateRoot)).resolves.toBeUndefined();
   });
 
+  test("database 允许迁移脚本建立的协作组写入权限，其他敏感目录仍拒绝", async () => {
+    const privateRoot: string = join(testDir, "collaborative-database-root");
+    await prepareRuntimeDataRoot(privateRoot);
+    const databaseDir: string = join(privateRoot, "database");
+    chmodSync(databaseDir, IDENTITY_DATABASE_DIRECTORY_MODE);
+
+    await expect(prepareRuntimeDataRoot(privateRoot)).resolves.toBeUndefined();
+
+    const memoryDir: string = join(privateRoot, "memory");
+    chmodSync(memoryDir, 0o770);
+    await expect(prepareRuntimeDataRoot(privateRoot)).rejects.toThrow(
+      `${memoryDir} mode 0770 is broader than 0750`
+    );
+  });
+
+  test("database 可由同一有效协作组的部署账号持有", async () => {
+    const privateRoot: string = join(testDir, "group-owned-database-root");
+    await prepareRuntimeDataRoot(privateRoot);
+    const databaseDir: string = join(privateRoot, "database");
+    chmodSync(databaseDir, IDENTITY_DATABASE_DIRECTORY_MODE);
+    const currentUid: number = typeof process.getuid === "function" ? process.getuid() : 0;
+    const databaseGid: number = statSync(databaseDir).gid;
+    const spoofDatabaseOwner = (async (path: string): Promise<Stats> => {
+      const stats: Stats = await lstat(path);
+      if (path === databaseDir) {
+        Object.defineProperty(stats, "uid", { value: currentUid + 1 });
+      }
+      return stats;
+    }) as never;
+
+    await expect(prepareRuntimeDataRoot(privateRoot, {
+      dependencies: { lstat: spoofDatabaseOwner },
+      expectedGroupGids: [databaseGid],
+      expectedOwnerUid: currentUid,
+    })).resolves.toBeUndefined();
+    await expect(prepareRuntimeDataRoot(privateRoot, {
+      dependencies: { lstat: spoofDatabaseOwner },
+      expectedGroupGids: [],
+      expectedOwnerUid: currentUid,
+    })).rejects.toThrow("correct the owner or writable deployment group");
+  });
+
   test("目录 owner 与运行 uid 不一致时在写探针前拒绝", async () => {
     const wrongOwnerRoot: string = join(testDir, "wrong-owner-root");
     const currentUid: number = typeof process.getuid === "function" ? process.getuid() : 0;
@@ -113,7 +158,7 @@ describe("runtime data root preflight", () => {
     expect(readdirSync(target)).toEqual([]);
   });
 
-  test("memory 或 logs 敏感子目录不能用 symlink 逃出数据根", async () => {
+  test("database、memory 或 logs 敏感子目录不能用 symlink 逃出数据根", async () => {
     const root: string = join(testDir, "real-root");
     await prepareRuntimeDataRoot(root);
     const externalTarget: string = join(testDir, "external-memory");

@@ -18,6 +18,7 @@ import {
   handleExpelSettled,
   handleKickRetry,
   handleKickSettled,
+  handleTerminalAttemptBudgetExhausted,
   handleTerminalPersisted,
   handleTimeoutInviterVerdict,
 } from "./verification/terminal";
@@ -44,7 +45,7 @@ export { joinCreatesNewRecord };
  *   CHECKING_INVITER/EXPELLING ──新一次物理入群──> 按 ABSENT 重新判定
  *   KICK_PENDING/KICKED ──超出双路投递误差的重进──> KICK_PENDING（新 token）
  *   EXEMPT/KICKED ──去重窗口到期 / 离群────────────────────> ABSENT
- *   任意状态 ──`/antiraid disable`（guardDisabled）──────> ABSENT（无副作用，只停止触发）
+ *   任意状态 ──主动关闭守卫（guardDisabled）────────────> ABSENT（清理机器人验证按钮）
  *
  * 同 kind 字段更新原地修改并原样返回；kind 变化才返回新对象。对象同一性既
  * 驱动计时器管理，也是异步结果的失效 token，领域 handler 不得随意复制状态。
@@ -86,6 +87,8 @@ export function transitionVerification(
       return handleVerifyTimeout(state, event);
     case "terminalPersisted":
       return handleTerminalPersisted(state);
+    case "terminalAttemptBudgetExhausted":
+      return handleTerminalAttemptBudgetExhausted(state);
     case "timeoutInviterVerdict":
       return handleTimeoutInviterVerdict(state, event);
     case "expelSettled":

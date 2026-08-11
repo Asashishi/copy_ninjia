@@ -18,7 +18,14 @@ import {
 } from "../../consts/antiRaid/blocklist";
 import { logger } from "../logger";
 import { getAllChatStates } from "../storage/stateStore";
-import { hasBlockedIdentities } from "./identities";
+import {
+  hasAnyBlockedIdentity,
+  listAllBlockedIdentityIds,
+} from "../identityStorage";
+import {
+  armBlocklistSweepScheduler as armSweepScheduler,
+  initBlocklistSweepScheduler as initSweepScheduler,
+} from "./sweepScheduler";
 import {
   materializeRemovalParams,
   queuePendingBlockedRemovalsSnapshot,
@@ -33,6 +40,20 @@ import type {
 } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
 
+export { quiesceBlocklistSweepScheduler } from "./sweepScheduler";
+
+const runScheduledBlocklistSweep: () => Promise<void> = (): Promise<void> =>
+  sweepManagedBlocklistChats(Date.now());
+
+function armBlocklistSweepScheduler(): void {
+  armSweepScheduler(runScheduledBlocklistSweep);
+}
+
+/** 启动恢复完成后武装补扫时钟；重复初始化只重算最近截止时间。 */
+export function initBlocklistSweepScheduler(): void {
+  initSweepScheduler(runScheduledBlocklistSweep);
+}
+
 /**
  * 让这个群重新欠一次补扫，打开 sweptAt 闩锁。有批次在途时只记
  * resweepRequested，避免迟到的 complete 回执把请求覆盖；权限闩锁只能由一次
@@ -43,15 +64,16 @@ export function requestBlocklistResweep(
   nextRetryAt: number = Date.now()
 ): void {
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
-  if (progress === undefined || progress.permissionBlocked) return;
+  if (progress?.permissionBlocked === true) return;
   blocklistSweepState.set(chatId, {
-    removalId: progress.removalId,
+    removalId: progress?.removalId ?? null,
     sweptAt: null,
     nextRetryAt,
-    resweepRequested: progress.removalId !== null,
-    failedSweeps: progress.failedSweeps,
+    resweepRequested: progress?.removalId !== null && progress?.removalId !== undefined,
+    failedSweeps: progress?.failedSweeps ?? 0,
     permissionBlocked: false,
   });
+  armBlocklistSweepScheduler();
 }
 
 /**
@@ -71,6 +93,7 @@ function notePermissionBlocked(chatId: number, removalId: number): void {
       permissionBlocked: true,
     }
     : { ...progress, permissionBlocked: true });
+  armBlocklistSweepScheduler();
 }
 
 /**
@@ -96,6 +119,7 @@ export function noteBanPermissionObserved(chatId: number, canRestrict: boolean):
     failedSweeps: 0,
     permissionBlocked: false,
   });
+  armBlocklistSweepScheduler();
   // frozen 秒踢/广告批次各自还带着独立 removalId，新的全名单补扫不会替它们
   // 回执销账。权限边沿到达时先整批重新交给 Worker，让各批按自己的 complete
   // 回执收敛；随后 recordBotAdminStatus 仍会调用 sweepBlockedMembers，覆盖
@@ -146,6 +170,7 @@ function noteSweepAttemptFailed(chatId: number, failedSweeps: number, now: numbe
     // Worker 调度、网络与日志；Worker 重建还会重投这些必败批次。
     permissionBlocked: blocklistSweepState.get(chatId)?.permissionBlocked === true,
   });
+  armBlocklistSweepScheduler();
 }
 
 /** 新一轮补扫完整取代同群旧批次，避免 outbox 与重放量随失败轮次增长。 */
@@ -176,7 +201,8 @@ interface PreparedBlocklistSweep {
 /** 建立一条补扫 claim；无需补扫或登记失败时返回 null。 */
 function prepareBlocklistSweep(
   chatId: number,
-  now: number = Date.now()
+  now: number,
+  blockedIds: readonly number[]
 ): PreparedBlocklistSweep | null {
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
   if (progress !== undefined && (
@@ -187,11 +213,11 @@ function prepareBlocklistSweep(
   )) {
     return null;
   }
-  if (!hasBlockedIdentities()) return null;
+  if (!hasAnyBlockedIdentity()) return null;
   const failedSweeps: number = progress?.failedSweeps ?? 0;
   let params: RemoveBlockedMembersParams;
   try {
-    params = trackBlockedRemoval({ chatId, probeMembership: true });
+    params = trackBlockedRemoval({ chatId, probeMembership: true }, blockedIds);
   } catch (error: unknown) {
     // 满仓或 id 耗尽必须在 update 内就地降级；抛出去会形成重投/重启循环。
     logger.error(`Failed to queue the blocklist sweep of chat ${chatId}:`, error);
@@ -208,6 +234,7 @@ function prepareBlocklistSweep(
     failedSweeps,
     permissionBlocked: false,
   });
+  armBlocklistSweepScheduler();
   return { chatId, params, failedSweeps, now };
 }
 
@@ -279,10 +306,47 @@ export async function sweepBlockedMembers(
   chatId: number,
   now: number = Date.now()
 ): Promise<void> {
-  const sweep: PreparedBlocklistSweep | null =
-    prepareBlocklistSweep(chatId, now);
-  if (sweep === null) return;
-  await deliverPreparedSweeps([sweep]);
+  // 名单读取必须留在 try 里：它已经不是同步本地读，而是跨线程 request/reply，
+  // 超时或 Worker 拒收都会 reject（infra/diskIO/host.ts）。落在 try 之外时那次
+  // reject 直接跳过 finally，`armBlocklistSweepScheduler()` 本次不执行——典型
+  // 路径是 recordBotAdminStatus 在权限恢复时调用本函数而 Disk I/O 正在 recycle，
+  // 于是周期性补扫在本进程生命周期内不再被武装。
+  try {
+    const blockedIds: readonly number[] = hasAnyBlockedIdentity()
+      ? await listAllBlockedIdentityIds()
+      : [];
+    const sweep: PreparedBlocklistSweep | null = blockedIds.length === 0
+      ? null
+      : prepareBlocklistSweep(chatId, now, blockedIds);
+    if (sweep === null) return;
+    await deliverPreparedSweeps([sweep]);
+  } finally {
+    armBlocklistSweepScheduler();
+  }
+}
+
+/**
+ * 名单读不出来时，把这一轮本来该扫的群按「这一轮没成」记账并推进退避。
+ *
+ * 不能让读失败原样抛给调度器：`armBlocklistSweepScheduler` 在 finally 里按早已
+ * 过期的 nextRetryAt 立刻重排，Disk I/O 自愈窗口里就是一串 0ms 的忙等重试，每轮
+ * 还多一行错误日志。资格判定与 prepareBlocklistSweep 保持同一口径。
+ */
+function deferManagedBlocklistSweeps(now: number): void {
+  for (const [chatId, state] of getAllChatStates()) {
+    const chatState: ChatState = state;
+    if (chatState.isInitEnabled !== true || chatState.botIsAdmin !== true) continue;
+    const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
+    if (progress !== undefined && (
+      progress.sweptAt !== null ||
+      progress.removalId !== null ||
+      progress.permissionBlocked ||
+      now < progress.nextRetryAt
+    )) {
+      continue;
+    }
+    noteSweepAttemptFailed(chatId, progress?.failedSweeps ?? 0, now);
+  }
 }
 
 /**
@@ -292,21 +356,34 @@ export async function sweepBlockedMembers(
 export async function sweepManagedBlocklistChats(
   now: number = Date.now()
 ): Promise<void> {
-  if (!hasBlockedIdentities()) return;
-  const sweeps: PreparedBlocklistSweep[] = [];
-  for (const [chatId, state] of getAllChatStates()) {
-    const chatState: ChatState = state;
-    if (
-      chatState.isInitEnabled !== true ||
-      chatState.botIsAdmin !== true
-    ) {
-      continue;
+  try {
+    if (!hasAnyBlockedIdentity()) return;
+    let blockedIds: readonly number[];
+    try {
+      blockedIds = await listAllBlockedIdentityIds();
+    } catch (error: unknown) {
+      logger.error("Failed to read blocklist IDs for the managed chat sweep:", error);
+      deferManagedBlocklistSweeps(now);
+      return;
     }
-    const sweep: PreparedBlocklistSweep | null =
-      prepareBlocklistSweep(chatId, now);
-    if (sweep !== null) sweeps.push(sweep);
+    if (blockedIds.length === 0) return;
+    const sweeps: PreparedBlocklistSweep[] = [];
+    for (const [chatId, state] of getAllChatStates()) {
+      const chatState: ChatState = state;
+      if (
+        chatState.isInitEnabled !== true ||
+        chatState.botIsAdmin !== true
+      ) {
+        continue;
+      }
+      const sweep: PreparedBlocklistSweep | null =
+        prepareBlocklistSweep(chatId, now, blockedIds);
+      if (sweep !== null) sweeps.push(sweep);
+    }
+    await deliverPreparedSweeps(sweeps);
+  } finally {
+    armBlocklistSweepScheduler();
   }
-  await deliverPreparedSweeps(sweeps);
 }
 
 /**
@@ -344,6 +421,7 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
         Date.now() + sweepRetryDelayMs(progress?.failedSweeps ?? 0)
       );
     }
+    armBlocklistSweepScheduler();
     return;
   }
 
@@ -361,6 +439,7 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
     // notePermissionBlocked 可能刚置真，不能在同一回执收尾时覆盖。
     permissionBlocked: blocklistSweepState.get(event.chatId)?.permissionBlocked === true,
   });
+  armBlocklistSweepScheduler();
 }
 
 /** 更新一次任务诊断；达到阈值只告警，不删除安全任务。 */
@@ -456,8 +535,29 @@ function rearmSweepAfterFailedReplay(chatIds: Iterable<number>): void {
 export function replayPendingBlockedRemovals(
   countPreviousAttempt: boolean = true
 ): void {
+  void replayPendingBlockedRemovalsAsync(countPreviousAttempt);
+}
+
+async function replayPendingBlockedRemovalsAsync(
+  countPreviousAttempt: boolean
+): Promise<void> {
   const removals: RemoveBlockedMembersParams[] = [];
   const replayedChatIds: Set<number> = new Set<number>();
+  const deferredSweepChatIds: Set<number> = new Set<number>();
+  let blockedIds: readonly number[] = [];
+  let blockedIdsUnavailable: boolean = false;
+  try {
+    if (hasAnyBlockedIdentity()) blockedIds = await listAllBlockedIdentityIds();
+  } catch (error: unknown) {
+    // 这次读只服务于 probeMembership 补扫批次；冻结批次（`/block` 秒踢、广告
+    // 处置）的名单在登记时就冻好了，materializeRemovalParams 对它们根本不看
+    // blockedIds。整体 return 会把这些批次一并丢掉，而它们没有 timer 也没有
+    // 退避，重试钩子只有「下一次 Worker 重建」和「一次确证的权限恢复」——两者
+    // 都不来时那批人就一直坐在群里，`/block` 却早已回执成功。因此只把补扫降级
+    // 成「本轮跳过」，并在下面为它们重新排一次补扫。
+    blockedIdsUnavailable = true;
+    logger.error("Failed to read blocklist IDs for pending removal replay:", error);
+  }
   for (const [removalId, pending] of [...pendingBlockedRemovals]) {
     if (
       blocklistSweepState.get(pending.params.chatId)?.permissionBlocked === true
@@ -465,8 +565,13 @@ export function replayPendingBlockedRemovals(
       continue;
     }
     const params: RemoveBlockedMembersParams | undefined =
-      materializeRemovalParams(pending.params);
-    if (params === undefined) continue;
+      materializeRemovalParams(pending.params, blockedIds);
+    if (params === undefined) {
+      if (blockedIdsUnavailable && pending.params.probeMembership) {
+        deferredSweepChatIds.add(pending.params.chatId);
+      }
+      continue;
+    }
     if (countPreviousAttempt) {
       updatePendingRemovalFailure(
         removalId,
@@ -477,8 +582,10 @@ export function replayPendingBlockedRemovals(
     removals.push(params);
     replayedChatIds.add(pending.params.chatId);
   }
+  // 名单读失败而被跳过的补扫没有任何回执可等；沿用重投失败的同一条 re-arm 口径。
+  if (deferredSweepChatIds.size > 0) rearmSweepAfterFailedReplay(deferredSweepChatIds);
   if (removals.length === 0) return;
-  void blockedMemberRemoverHolder.current(removals).catch((error: unknown): void => {
+  await blockedMemberRemoverHolder.current(removals).catch((error: unknown): void => {
     logger.error(`Failed to replay ${removals.length} blocklist removal batch(es):`, error);
     rearmSweepAfterFailedReplay(replayedChatIds);
   });

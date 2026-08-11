@@ -1,7 +1,7 @@
 import {
   hasWhitelistPermission,
   isWhitelisted,
-} from "../config/whitelist";
+} from "../whitelist";
 import { isAdminStatus } from "../libs/chatMember";
 import type { ChatMember } from "@grammyjs/types";
 import type { AntiRaidMember } from "../types/antiRaid";
@@ -14,9 +14,9 @@ import type { AntiRaidMember } from "../types/antiRaid";
 /**
  * 自己人：不得进入自动处置产生的永久黑名单。
  *
- * `SUPER_ADMIN_USER_ID` 与 config/whitelist.json 是部署方亲手配置的身份，
- * 两者都由 isWhitelisted 一并覆盖（超级管理员恒在白名单边界内，见
- * config/whitelist.ts）。广告检测送检另受 isCanBypassAdDetection 控制：
+ * `SUPER_ADMIN_USER_ID` 与 SQLite 白名单是部署方明确登记的身份，两者都由
+ * isWhitelisted 一并覆盖（超级管理员恒在白名单边界内，见
+ * whitelist.ts）。广告检测送检另受 isCanBypassAdDetection 控制：
  * 关闭该权限的白名单成员仍可被判定并删除本批消息；防刷屏另受
  * isCanBypassFloodControl 控制。两条自动处置的最终拉黑边界仍会用本函数
  * 拒绝白名单身份。

@@ -8,10 +8,10 @@ const unmuteChatMemberWithOutcome = mock(async (..._args: unknown[]): Promise<st
 let target: CachedUser | undefined;
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => target);
 
-// 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
+// 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
-mock.module("../../packages/config/whitelist", () => ({
+mock.module("../../packages/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100,
   hasWhitelistPermission: (id: number, key: string): boolean =>
     id === 1 || (id === 100 && (key === "isCanMute" || key === "isCanUnMute")),
@@ -162,7 +162,7 @@ describe("/mute 手动禁言", () => {
     expect(lastReplyText()).toContain("自己人");
   });
 
-  test("超级管理员不必在 config/whitelist.json 里配 isCanMute 也能 /mute", async () => {
+  test("超级管理员不必在 SQLite 白名单记录里配置 isCanMute 也能 /mute", async () => {
     await handleMuteCommand(context({ userId: 1, match: "10m" }));
 
     expect(muteChatMemberWithOutcome).toHaveBeenCalledWith({

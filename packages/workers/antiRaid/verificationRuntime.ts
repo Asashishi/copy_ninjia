@@ -5,6 +5,7 @@ import {
   LOCKDOWN_KICK_DEDUPE_MS,
 } from "../../consts/antiRaid/verification";
 import {
+  deferredVerificationRecords,
   threadCommentConfirmations,
   verificationEntries,
   verificationGeneration,
@@ -12,9 +13,11 @@ import {
 } from "../../cache/workers/antiRaid/verification";
 import type {
   AdoptVerificationsMessage,
+  DeferredVerificationRecord,
   NewMemberMessage,
   TrackedChatMessage,
   VerificationDeleteEvent,
+  VerificationDeferredEvent,
   VerificationPersistedMessage,
   VerificationSnapshot,
   VerificationSnapshotBase,
@@ -124,6 +127,7 @@ export function dispatchVerification(
     effects,
     snapshotChanged = false,
     rescheduleTimer = false,
+    retainPersistedSnapshot = false,
   }: VerificationTransition = transitionVerification(entry?.state, event);
   if (next !== entry?.state) {
     cancelReminderDelivery(key);
@@ -141,7 +145,11 @@ export function dispatchVerification(
     entry.timer = startVerificationTimer(chatId, userId, next);
   }
   if (snapshotChanged || next !== entry?.state) {
-    publishVerificationChange(chatId, userId, previousWasPersisted);
+    if (retainPersistedSnapshot) {
+      publishVerificationDeferred(chatId, userId);
+    } else {
+      publishVerificationChange(chatId, userId, previousWasPersisted);
+    }
   }
   if (effects.length > 0) {
     void trackAntiRaidTask({
@@ -156,6 +164,48 @@ export function dispatchVerification(
       }),
     });
   }
+}
+
+/** 预算耗尽只发布最小延后索引；不得递增 revision 或写删除墓碑。 */
+function publishVerificationDeferred(chatId: number, userId: number): void {
+  if (verificationGeneration.current <= 0) return;
+  const key: string = verificationKey(chatId, userId);
+  const revision: number | undefined = verificationRevisions.get(key)?.revision;
+  if (revision === undefined) return;
+  const record: DeferredVerificationRecord = {
+    chatId,
+    userId,
+    generation: verificationGeneration.current,
+    revision,
+  };
+  deferredVerificationRecords.set(key, record);
+  verificationRevisions.set(key, { revision, retiredAt: Date.now() });
+  self.postMessage({
+    type: "verificationDeferred",
+    record,
+  } satisfies VerificationDeferredEvent);
+}
+
+/** 离群或显式关闭时把本进程延后的磁盘终态转成正常 tombstone。 */
+export function deleteDeferredVerification(
+  chatId: number,
+  userId: number
+): boolean {
+  const key: string = verificationKey(chatId, userId);
+  const deferred: DeferredVerificationRecord | undefined =
+    deferredVerificationRecords.get(key);
+  if (deferred === undefined) return false;
+  deferredVerificationRecords.delete(key);
+  const revision: number = deferred.revision + 1;
+  verificationRevisions.set(key, { revision, retiredAt: Date.now() });
+  self.postMessage({
+    type: "verificationDelete",
+    chatId,
+    userId,
+    generation: verificationGeneration.current,
+    revision,
+  } satisfies VerificationDeleteEvent);
+  return true;
 }
 
 interface VerificationSnapshotParams {
@@ -274,12 +324,23 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
     }
     verificationEntries.clear();
     verificationRevisions.clear();
+    deferredVerificationRecords.clear();
     threadCommentConfirmations.clear();
     clearReminderDeliveries();
     verificationGeneration.current = message.generation;
   }
 
   const now: number = Date.now();
+  for (const record of message.deferredVerifications ?? []) {
+    if (record.generation !== message.generation) continue;
+    const key: string = verificationKey(record.chatId, record.userId);
+    deferredVerificationRecords.set(key, { ...record });
+    verificationRevisions.set(key, {
+      revision: record.revision,
+      retiredAt: now,
+    });
+  }
+
   for (const record of message.verifications) {
     const key: string = verificationKey(record.chatId, record.userId);
     if ((verificationRevisions.get(key)?.revision ?? 0) >= record.revision) {
@@ -419,7 +480,7 @@ export function handleVerificationPersisted(
  * 停管/退群的紧急拆除，直接删内存条目再补 tombstone；这条把每条记录都喂给
  * dispatchVerification 走一次 guardDisabled 转移，让「关掉之后哪些事不再发生」
  * 由状态机自己说了算，而不是散落在这里的删表逻辑（见 states/verification/disable.ts：
- * 一律回 ABSENT、不产生任何副作用——不删提醒、不踢人）。
+ * 一律回 ABSENT；仍在群里的带按钮提醒会删除，但不再提醒、不踢人）。
  *
  * 这样写还有一个实际好处：终态（checkingInviter/expelling）的 tombstone 由
  * dispatchVerification 统一发布，重启后不会被 adopt 重放回来接着踢人。
@@ -447,6 +508,16 @@ export function disableJoinGuardChat(chatId: number): void {
     }
     dispatchVerification(chatId, parsed.userId, { type: "guardDisabled" });
   }
+  for (const key of [...deferredVerificationRecords.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
+    if (parsed === null) {
+      deferredVerificationRecords.delete(key);
+      logger.error(`Dropped a deferred join verification with an unparsable key while disabling the guard: ${key}`);
+      continue;
+    }
+    deleteDeferredVerification(chatId, parsed.userId);
+  }
 }
 
 /** 取消某群所有验证 owner，并为每条持久化记录发布 tombstone。 */
@@ -465,6 +536,16 @@ export function deactivateVerificationChat(chatId: number): void {
       publishVerificationChange(chatId, parsed.userId, true);
     }
   }
+  for (const key of [...deferredVerificationRecords.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
+    if (parsed === null) {
+      deferredVerificationRecords.delete(key);
+      logger.error(`Dropped a deferred join verification with an unparsable key during chat teardown: ${key}`);
+      continue;
+    }
+    deleteDeferredVerification(chatId, parsed.userId);
+  }
 }
 
 /** Worker 停止时清理所有本地 timer/owner；主线程镜像仍保留恢复数据。 */
@@ -476,6 +557,7 @@ export function stopVerificationRuntime(): void {
   }
   verificationEntries.clear();
   verificationRevisions.clear();
+  deferredVerificationRecords.clear();
   verificationGeneration.current = 0;
 }
 

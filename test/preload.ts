@@ -1,5 +1,5 @@
 import { afterAll } from "bun:test";
-import { rmSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync } from "node:fs";
 // 必须排在下面那条生产 import 之前：它负责在 consts/paths 求值之前注入两个
 // 根目录（见 test/preloadEnv.ts 的说明）。
 import { PREVIOUS_CONFIG_ROOT, PREVIOUS_DATA_ROOT, TEST_DATA_ROOT } from "./preloadEnv";
@@ -13,6 +13,45 @@ import {
   loadAdDetectAgentConfig,
   loadAgentDeploymentConfig,
 } from "../packages/config/agent";
+import {
+  IDENTITY_DATABASE_DIRECTORY_MODE,
+  IDENTITY_DATABASE_FILE_MODE,
+  IDENTITY_DATABASE_SCHEMA_DATA,
+  IDENTITY_DATABASE_SCHEMA_KEY,
+} from "../packages/consts/identityStorage";
+import {
+  DATABASE_DIR,
+  IDENTITY_DATABASE_PATH,
+} from "../packages/consts/paths";
+import {
+  closeIdentityDatabase,
+  createIdentityDatabase,
+  openIdentityDatabase,
+  seedIdentityDatabase,
+} from "../packages/database/interact/identity";
+import type { IdentityDatabase } from "../packages/types/identityDatabase";
+
+// 每个测试进程用独立数据根创建空库；生产运行期仍只接受迁移脚本建好的数据库。
+mkdirSync(DATABASE_DIR, {
+  recursive: true,
+  mode: IDENTITY_DATABASE_DIRECTORY_MODE,
+});
+chmodSync(DATABASE_DIR, IDENTITY_DATABASE_DIRECTORY_MODE);
+createIdentityDatabase(IDENTITY_DATABASE_PATH);
+const identityDatabase: IdentityDatabase = openIdentityDatabase({
+  path: IDENTITY_DATABASE_PATH,
+});
+seedIdentityDatabase(identityDatabase, {
+  metadata: [{
+    key: IDENTITY_DATABASE_SCHEMA_KEY,
+    data: IDENTITY_DATABASE_SCHEMA_DATA,
+  }],
+  whitelist: [],
+  blocklist: [],
+  removals: [],
+});
+closeIdentityDatabase(identityDatabase);
+chmodSync(IDENTITY_DATABASE_PATH, IDENTITY_DATABASE_FILE_MODE);
 
 // agent.json 是唯一不由运行时读盘取得的部署配置：真实进程里主线程解析一次，
 // 再经 AI Worker 的 init 与 Anti-Raid Worker 的 agentConfig 消息投递给两条业务

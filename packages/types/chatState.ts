@@ -1,12 +1,17 @@
 import type { ChatPermissions } from "@grammyjs/types";
 
+/** 反刷群锁定跨 Worker 与持久化共用的离散阶段。 */
+export type LockdownPhase = "applying" | "active" | "reconciling" | "restoring";
+
 /** 反刷群锁定的持久化恢复记录。 */
 export interface LockdownRecord {
   /** 当前持久化阶段；恢复时必须按该阶段继续幂等对账。 */
-  phase: "applying" | "active" | "restoring";
+  phase: LockdownPhase;
   /** write-ahead 阶段的正整数标识。 */
   intentId: number;
   originalPermissions: ChatPermissions;
+  /** 本轮封锁公告是否确实发送过；决定恢复后能否发送解锁公告。 */
+  announced: boolean;
   /** 应恢复原始权限的绝对时间戳（ms）；续期必须同步刷新。 */
   expiresAt: number;
 }

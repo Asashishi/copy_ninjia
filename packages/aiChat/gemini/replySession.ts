@@ -21,7 +21,7 @@ import {
   GEMINI_REPLY_TEMPERATURE,
 } from "../../consts/aiChat/gemini";
 import { getAgentDeploymentConfig } from "../../config/agent";
-import { isPlainRecord } from "../../libs/runtimeConfig";
+import { isPlainRecord } from "../../libs/record";
 import { requestGeminiResult } from "./client";
 import { countGoogleSearchCalls } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";

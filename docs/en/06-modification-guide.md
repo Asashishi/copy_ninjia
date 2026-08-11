@@ -55,7 +55,7 @@ User-facing copy exists in Simplified Chinese only. This repository neither ship
 - Chinese action commands such as `/咬` depend on the Chinese word form itself (see the end of "Adding a Slash Command"). Translated, they are no longer the same interaction.
 - The persona, tool descriptions, and prompts ([`prompt/persona.md`](../../prompt/persona.md), `packages/consts/aiChat/prompts/`) are written in Chinese, and they are what decides the model's output language.
 
-If you need another language, fork it and change it yourself. Production code has roughly 786 source lines containing Chinese string or template literals across 76 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
+If you need another language, fork it and change it yourself. Production code has roughly 801 source lines containing Chinese string or template literals across 78 files, plus `prompt/persona.md` and `config/*.json`: letting an AI vibe its way through your whole fork is less work than erecting an abstraction layer upstream and filling in entries one by one — and it keeps logic like offset computation from getting more complicated. Run `bun run check` afterwards as usual.
 
 ## Adjusting Behavioral Parameters
 
@@ -112,7 +112,7 @@ The contract is split into five minimal per-capability interfaces (`AiTextProvid
 ## Changing the Persona or JSON Configuration
 
 - Persona: edit [`prompt/persona.md`](../../prompt/persona.md); changes take effect after restart. Runtime interaction rules coupled to transcript formatting and identity/recipient markers are injected by code and do not belong in the persona file.
-- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `whitelist.json` and `blocklist.json` load strictly before network access, and `/white` plus `/permission` atomically rewrite the former. `stickers.json`, `reactions.json`, `mood.json`, and `ad_samples.json` are validated lazily by feature. At most 5 sticker packs are allowed; mood weights must be positive integers totaling exactly 100; ad samples are a bare string array whose entries must be non-blank, unique, no longer than 1,024 characters each, and at most 500 in number. When changing structure, update the schema under `packages/config/` and the types under `packages/types/` before updating JSON.
+- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `telegram.json` loads strictly before network access; `stickers.json`, `reactions.json`, `mood.json`, and other feature inputs validate at their enablement boundaries. The allowlist, blocklist, and removal outbox are not deployment configuration: their authority is `database/storage.sqlite`. For identity-structure changes, update `packages/database/schema/`, `packages/database/codec/identity.ts`, domain types, and strict validation first, then provide a stopped-service migration script and fault-injection coverage. Never reintroduce JSON compatibility reads.
 
 ## Adding Deployment JSON Configuration
 

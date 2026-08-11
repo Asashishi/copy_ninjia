@@ -8,7 +8,7 @@ import {
 } from "../consts/aiChat/mood";
 import { MOOD_CONFIG_PATH } from "../consts/paths";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
-import { hasExactKeys, isPlainRecord } from "../libs/runtimeConfig";
+import { hasExactKeys, isPlainRecord } from "../libs/record";
 import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood";
 import type { MoodConfig } from "../types/config";
 

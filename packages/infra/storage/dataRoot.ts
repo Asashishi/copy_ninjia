@@ -3,13 +3,11 @@ import {
   RUNTIME_DATA_ROOT_MAX_MODE,
   RUNTIME_SENSITIVE_DIRECTORY_NAMES,
 } from "../../consts/storage";
+import { IDENTITY_DATABASE_DIRECTORY_MODE } from "../../consts/identityStorage";
+import { isErrno } from "../../libs/errno";
 import type { FileHandle } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Stats } from "node:fs";
-
-function isErrno(error: unknown, code: string): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && error.code === code;
-}
 
 export interface DataRootProbeDependencies {
   mkdir: typeof mkdir;
@@ -25,7 +23,15 @@ const DEFAULT_DEPENDENCIES: DataRootProbeDependencies = { mkdir, lstat, open, li
 export interface PrepareRuntimeDataRootOptions {
   dependencies?: Partial<DataRootProbeDependencies>;
   enforcePrivatePermissions?: boolean;
+  expectedGroupGids?: readonly number[];
   expectedOwnerUid?: number;
+}
+
+interface AssertPrivateDirectoryOptions {
+  readonly allowCollaborativeGroup: boolean;
+  readonly expectedGroupGids: readonly number[];
+  readonly expectedOwnerUid: number | undefined;
+  readonly maximumMode: number;
 }
 
 function formatUnixMode(mode: number): string {
@@ -35,25 +41,44 @@ function formatUnixMode(mode: number): string {
 function assertPrivateDirectory(
   path: string,
   stats: Stats,
-  expectedOwnerUid: number | undefined
+  {
+    allowCollaborativeGroup,
+    expectedGroupGids,
+    expectedOwnerUid,
+    maximumMode,
+  }: AssertPrivateDirectoryOptions
 ): void {
   if (stats.isSymbolicLink()) {
     throw new Error(`${path} is a symbolic link; runtime data directories must be real directories`);
   }
   if (!stats.isDirectory()) throw new Error(`${path} exists but is not a directory`);
-  if (expectedOwnerUid !== undefined && stats.uid !== expectedOwnerUid) {
+  const mode: number = stats.mode & 0o777;
+  const hasWritableCollaborativeGroup: boolean =
+    allowCollaborativeGroup &&
+    expectedGroupGids.includes(stats.gid) &&
+    (mode & 0o070) === 0o070;
+  if (
+    expectedOwnerUid !== undefined &&
+    stats.uid !== expectedOwnerUid &&
+    !hasWritableCollaborativeGroup
+  ) {
     throw new Error(
       `${path} is owned by uid ${stats.uid}, expected runtime uid ${expectedOwnerUid}; ` +
-      "stop all instances and correct the owner"
+      (allowCollaborativeGroup
+        ? "stop all instances and correct the owner or writable deployment group"
+        : "stop all instances and correct the owner")
     );
   }
-  const mode: number = stats.mode & 0o777;
-  if ((mode & ~RUNTIME_DATA_ROOT_MAX_MODE) !== 0) {
+  if ((mode & ~maximumMode) !== 0) {
     throw new Error(
-      `${path} mode ${formatUnixMode(mode)} is broader than 0750; ` +
-      `stop all instances and run chmod 0750 -- ${JSON.stringify(path)}`
+      `${path} mode ${formatUnixMode(mode)} is broader than ${formatUnixMode(maximumMode)}; ` +
+      `stop all instances and run chmod ${formatUnixMode(maximumMode)} -- ${JSON.stringify(path)}`
     );
   }
+}
+
+function currentProcessGroupIds(): readonly number[] {
+  return typeof process.getgroups === "function" ? process.getgroups() : [];
 }
 
 /**
@@ -69,6 +94,7 @@ export async function prepareRuntimeDataRoot(
   const {
     dependencies = {},
     enforcePrivatePermissions = true,
+    expectedGroupGids = currentProcessGroupIds(),
     expectedOwnerUid = typeof process.getuid === "function" ? process.getuid() : undefined,
   }: PrepareRuntimeDataRootOptions = options;
   const root: string = resolve(dataRoot);
@@ -87,9 +113,17 @@ export async function prepareRuntimeDataRoot(
       throw new Error("path is a symbolic link; runtime data roots must be real directories");
     }
     if (!rootStat.isDirectory()) throw new Error("path exists but is not a directory");
-    if (enforcePrivatePermissions) assertPrivateDirectory(root, rootStat, expectedOwnerUid);
+    if (enforcePrivatePermissions) {
+      assertPrivateDirectory(root, rootStat, {
+        allowCollaborativeGroup: false,
+        expectedGroupGids,
+        expectedOwnerUid,
+        maximumMode: RUNTIME_DATA_ROOT_MAX_MODE,
+      });
+    }
     for (const directoryName of RUNTIME_SENSITIVE_DIRECTORY_NAMES) {
       const directoryPath: string = join(root, directoryName);
+      const isIdentityDatabaseDirectory: boolean = directoryName === "database";
       let directoryStat: Stats;
       try {
         directoryStat = await fs.lstat(directoryPath);
@@ -103,7 +137,14 @@ export async function prepareRuntimeDataRoot(
         directoryStat = await fs.lstat(directoryPath);
       }
       if (enforcePrivatePermissions) {
-        assertPrivateDirectory(directoryPath, directoryStat, expectedOwnerUid);
+        assertPrivateDirectory(directoryPath, directoryStat, {
+          allowCollaborativeGroup: isIdentityDatabaseDirectory,
+          expectedGroupGids,
+          expectedOwnerUid,
+          maximumMode: isIdentityDatabaseDirectory
+            ? IDENTITY_DATABASE_DIRECTORY_MODE & 0o777
+            : RUNTIME_DATA_ROOT_MAX_MODE,
+        });
       } else if (directoryStat.isSymbolicLink()) {
         throw new Error(`${directoryPath} is a symbolic link; runtime data directories must be real directories`);
       } else if (!directoryStat.isDirectory()) {

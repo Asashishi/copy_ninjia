@@ -7,17 +7,13 @@ import {
 } from "../../consts/diskIO/verification";
 import { verificationKey } from "../../libs/verificationKey";
 import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
-import { hasOnlyKeys } from "../../libs/runtimeConfig";
+import { hasOnlyKeys, isPlainRecord } from "../../libs/record";
 import type {
   VerificationSnapshot,
   VerificationSnapshotBase,
 } from "../../types/antiRaid";
 
 export type VerificationDayValue = VerificationSnapshot | null;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
 
 function isSafeTimestamp(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -67,7 +63,7 @@ export function decodeVerificationSnapshot(
   key: string,
   value: unknown
 ): VerificationSnapshot | null {
-  if (!isRecord(value)) return null;
+  if (!isPlainRecord(value)) return null;
   if (
     !hasCurrentVerificationKeys(value) ||
     value.version !== VERIFICATION_FILE_VERSION ||
@@ -203,7 +199,7 @@ export function decodeVerificationDay(
   content: string
 ): Map<string, VerificationDayValue> {
   const parsed: unknown = parseJsonInput(content, path);
-  if (!isRecord(parsed)) return invalidInput(path, "$", "a JSON object of verification records");
+  if (!isPlainRecord(parsed)) return invalidInput(path, "$", "a JSON object of verification records");
 
   const decoded: Map<string, VerificationDayValue> = new Map();
   for (const [key, value] of Object.entries(parsed)) {

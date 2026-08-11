@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2181_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.94%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2225_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.60%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../pictures/coverage_light.svg">
-    <img alt="bun run test:coverage — 2181 件のテストが全て成功 / テストファイル 216 件 / expect() 呼び出し 72,414 回 / 関数カバレッジ 94.74% / 行カバレッジ 95.94%" src="../../pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 2225 件のテストが全て成功 / テストファイル 228 件 / expect() 呼び出し 32,683 回 / 関数カバレッジ 94.40% / 行カバレッジ 95.60%" src="../../pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -164,7 +164,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 
 - **ユーザー名での検索には、Bot がそのアカウントを以前に観測している必要があります。** 改名、ユーザー名の削除、ユーザー名の再割り当てが行われると、古い別名は直ちに無効になります。`/block` や `/unblock` のような破壊的操作では、過去のユーザー名に頼らず、対象メッセージへの返信か、ユーザー id の直接指定（この 2 つのコマンドは裸の id も受け付けます）を優先してください。
 - **匿名管理者が現在のグループとして発言した場合、そのグループ自体が copy 対象**となるため、グループのアバターを取得してその「外見」を再現できます。`/block` は現在のグループをメンバー対象として扱うことを拒否します。
-- **一般ユーザーの copy 系コマンドには 5 分間のグローバル cooldown があり**、allowlist 境界の内側にいる identity は対象外です（`config/whitelist.json` の entry と、常に内側にいる `SUPER_ADMIN_USER_ID`）。
+- **一般ユーザーの copy 系コマンドには 5 分間のグローバル cooldown があり**、allowlist 境界の内側にいる identity は対象外です（SQLite allowlist table の entry と、常に内側にいる `SUPER_ADMIN_USER_ID`）。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 
@@ -199,7 +199,7 @@ copy 対象はグローバルで唯一です。1 つのインスタンスは同�
 <tr><td><code>/send &lt;group_id&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（PM 限定）</td><td>Bot との個人チャットから指定グループへの転送セッションを開始/終了</td></tr>
 </table>
 
-> **permission 列の読み方**：`isCanXxx` を挙げた行はその permission key で認可されます。`SUPER_ADMIN_USER_ID` という identity 自体が**すべて**の permission key を持つため、`whitelist.json` に entry がなくてもこれらの行はすべて使えます。`SUPER_ADMIN_USER_ID` を挙げた行だけが identity のみで決まり、allowlist では付与できません。
+> **permission 列の読み方**：`isCanXxx` を挙げた行はその permission key で認可されます。`SUPER_ADMIN_USER_ID` という identity 自体が**すべて**の permission key を持つため、SQLite allowlist table に entry がなくてもこれらの行はすべて使えます。`SUPER_ADMIN_USER_ID` を挙げた行だけが identity のみで決まり、allowlist では付与できません。
 
 ### 挙動の詳細
 
@@ -272,7 +272,7 @@ cp -n config_example/*.json config/
 | `config/telegram.json` / `super_admin_user_id` | ✅ | スーパー管理者の正の安全整数 user ID |
 | `config/agent.json` / 各能力 | feature ごと | provider、API key、endpoint、model を個別設定 |
 
-`telegram.json`、`whitelist.json`、`blocklist.json` は network 接続前に厳密ロードします。その他の deployment input は feature ごとに検証し、前提の欠落や不正は該当 feature を拒否し、その feature がすでに有効なら startup を拒否します。
+`telegram.json` は network 接続前に厳密ロードします。Disk I/O Worker は allowlist、blocklist、未完了 removal を `database/storage.sqlite` から厳密復旧し、不正 schema、version、row は startup を拒否します。その他の deployment input は feature ごとに検証し、前提の欠落や不正は該当 feature を拒否し、その feature がすでに有効なら startup を拒否します。
 
 AI の provider、API key、`base_url`、model は
 [`config/agent.json`](../../config_example/agent.json) で能力ごとに個別設定します。
@@ -281,7 +281,19 @@ AI の provider、API key、`base_url`、model は
 > [!IMPORTANT]
 > 例外は 1 つだけです。`state.json` で機能が有効なままなのに鍵や設定を取り除いた場合、そのスイッチは管理者が明確に入れたものなので、プロセスはチャット id と欠落項目を示して起動を拒否し、黙って何もしない状態にはなりません。先に `disable` するか、前提を復旧してください。
 
-runtime file の場所を変える場合は process environment に `COPY_NINJIA_DATA_ROOT` を指定します。`state.json`、`bot.lock`、`logs/`、`memory/` はそのディレクトリから派生し、`config/`、ペルソナ、`g-auth.json` は引き続きプロジェクトルートから読み込みます。
+runtime file の場所を変える場合は process environment に `COPY_NINJIA_DATA_ROOT` を指定します。`state.json`、`bot.lock`、`logs/`、`memory/`、`database/` はそのディレクトリから派生し、`config/`、ペルソナ、`g-auth.json` は引き続きプロジェクトルートから読み込みます。
+
+初回 startup 前に、service と同じ account / `COPY_NINJIA_DATA_ROOT` environment で identity storage を明示初期化します。2 つの一時 JSON は 1 回限りの migration input で、成功後に script が削除します。target database が存在する場合は上書きを拒否します。
+
+```bash
+test ! -e config/whitelist.json
+test ! -e config/blocklist.json
+printf '{}\n' > config/whitelist.json
+printf '{"blockedIds":[]}\n' > config/blocklist.json
+bun run migrate:identity-storage --apply
+```
+
+旧 deployment と schema v2 upgrade は [07 運用：Identity Storage Migration](07-operations.md#identity-storage-migration) を参照してください。
 
 日本語翻訳を使用する場合は、サービスアカウントキーを `g-auth.json` としてプロジェクトルートに保存します。この file は `.gitignore` の対象です。
 
@@ -306,7 +318,7 @@ Bot を初めてグループに追加した後、`SUPER_ADMIN_USER_ID` がグル
 /ai_chat enable
 ```
 
-> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードでは中国語の文字列または template literal を含むソース行が 76 ファイルへ約 786 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](06-modification-guide.md) にあります。
+> **言語について**：ユーザー向けの文言は簡体中国語のみで、本リポジトリは i18n を維持しません。応答は断片の連結で組み立てつつ Telegram `entities` のオフセットを算出しており、`/咬` のような中国語アクションコマンドは中国語の字形自体に依存しているため、語彙表では受け止められません。別の言語が必要な場合は fork して自分で書き換えてください（production コードでは中国語の文字列または template literal を含むソース行が 78 ファイルへ約 801 箇所、ほかに `prompt/persona.md` と `config/*.json`）。理由と手順は [06 変更レシピ](06-modification-guide.md) にあります。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ ページ上部へ</a></sub></p>
 

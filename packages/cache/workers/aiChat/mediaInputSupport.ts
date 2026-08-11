@@ -115,7 +115,7 @@ function replaceModalityState(
 }
 
 /** 读取一种模态的完整状态；从未尝试时返回初始状态。 */
-export function getMediaInputState(capability: MediaInputCapability): MediaInputModalityState {
+function getMediaInputState(capability: MediaInputCapability): MediaInputModalityState {
   return supportState()[capability];
 }
 

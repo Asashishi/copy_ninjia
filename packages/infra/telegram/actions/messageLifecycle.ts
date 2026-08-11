@@ -10,6 +10,10 @@ import {
   remainingMonotonicTime,
 } from "../../../libs/monotonicDeadline";
 import {
+  settleWithinBudget,
+  trackBackgroundTask,
+} from "../../../libs/backgroundTasks";
+import {
   isPermissionDenied,
   runBooleanTelegramAction,
   runTelegramAction,
@@ -198,16 +202,12 @@ function startMessageDeletion(entry: PendingMessageDeletion): void {
 
 /** 把一条已启动的删除接入统一在途集合；请求异常不会逃出清理边界。 */
 function trackMessageDeletion(request: Promise<boolean>): void {
-  const task: Promise<void> = request
-    .then((): void => undefined)
-    .catch((error: unknown): void => {
-      // 常规 API 错误已由 runTelegramAction 记录；这里只兜住边界自身的意外异常。
-      logger.error("Unexpected error in delayed Telegram message deletion:", error);
-    })
-    .finally((): void => {
-      inFlightMessageDeletions.delete(task);
-    });
-  inFlightMessageDeletions.add(task);
+  // 常规 API 错误已由 runTelegramAction 记录；这层只兜住边界自身的意外异常。
+  trackBackgroundTask(
+    inFlightMessageDeletions,
+    request,
+    "Unexpected error in delayed Telegram message deletion:"
+  );
 }
 
 /** 停机路径认领同客户端、同群的一批条目，并按 Bot API 硬上限发一次删除。 */
@@ -286,18 +286,6 @@ export function flushPendingMessageDeletions(): readonly Promise<void>[] {
   return [...inFlightMessageDeletions];
 }
 
-/** 在预算内等待一批删除请求；timer unref，删除先结算时立即返回。 */
-function waitForMessageDeletions(tasks: readonly Promise<void>[], timeoutMs: number): Promise<boolean> {
-  return new Promise((resolve: (settled: boolean) => void): void => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => resolve(false), timeoutMs);
-    timer.unref();
-    void Promise.allSettled(tasks).then((): void => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-  });
-}
-
 /**
  * 正常停机前提前兑现本线程全部延迟删除，并等待已开始的删除请求。预算为零时不
  * 新建网络请求；超时只记诊断并返回，不让非功能性清理无限阻止退出。
@@ -313,7 +301,7 @@ export async function drainPendingMessageDeletions(timeoutMs: number): Promise<F
     const remaining: number = remainingMonotonicTime(deadline);
     if (
       remaining === 0 ||
-      !await waitForMessageDeletions([...inFlightMessageDeletions], remaining)
+      !await settleWithinBudget([...inFlightMessageDeletions], remaining)
     ) {
       logger.error(
         `Delayed Telegram message deletion drain timed out with ` +

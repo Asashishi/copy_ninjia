@@ -47,13 +47,13 @@ export const DISK_IO_FLUSH_TIMEOUT_MS: number = 3_000;
 /** 正常停机等待 state 主/LKG 写入的预算。 */
 export const STATE_FLUSH_TIMEOUT_MS: number = 3_000;
 /** 正常停机等待头像、反应与翻译 owner 的预算。 */
-export const BACKGROUND_MAINTENANCE_TIMEOUT_MS: number = 3_000;
+const BACKGROUND_MAINTENANCE_TIMEOUT_MS: number = 3_000;
 
 /** 单次 Google Translation RPC 的上限，避免在途翻译无限阻塞停机。 */
 export const TRANSLATE_REQUEST_TIMEOUT_MS: number = 2_500;
 
 /** 未捕获异常路径的尽力落盘预算；避免故障进程在清理阶段久留。 */
-export const EMERGENCY_FLUSH_TIMEOUT_MS: number = 1_000;
+const EMERGENCY_FLUSH_TIMEOUT_MS: number = 1_000;
 /**
  * 普通关停已在途时发生致命异常，复用该关停 Promise 所允许的绝对最长时间。
  * 该截止独立于各 owner 的 flush 预算，属于生命周期模块的最终强制退出边界。

@@ -1,3 +1,5 @@
+import { assertDequeCapacities } from "./dequeCapacity";
+
 /**
  * 有界数字时间戳双端队列。仅保存 number，使用可增长的连续数组和环形下标，
  * 避免消息级滑动窗口为每个时间戳创建链表节点。
@@ -16,18 +18,7 @@ export class TimestampDeque {
     maxCapacity: number,
     initialCapacity: number = Math.min(4, maxCapacity)
   ) {
-    if (!Number.isSafeInteger(maxCapacity) || maxCapacity <= 0) {
-      throw new RangeError("maxCapacity must be a positive safe integer");
-    }
-    if (
-      !Number.isSafeInteger(initialCapacity) ||
-      initialCapacity <= 0 ||
-      initialCapacity > maxCapacity
-    ) {
-      throw new RangeError(
-        "initialCapacity must be a positive safe integer no greater than maxCapacity"
-      );
-    }
+    assertDequeCapacities(maxCapacity, initialCapacity);
     this.maxCapacity = maxCapacity;
     this.values = new Array<number>(initialCapacity);
   }

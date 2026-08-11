@@ -56,22 +56,10 @@ export const BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES: number = 10_000;
  */
 export const BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS: number = 5;
 
-type BlocklistRemovalOutboxVersion = 2;
-/**
- * 黑名单移除 outbox 当前唯一支持的文件版本。
- *
- * v2 起补扫条目（`probeMembership: true`）不再持久化 `userIds`，改为投递与重放的
- * 那一刻按当时的黑名单现算（理由见 types/blocklist.ts 的 PendingBlockedRemovalParams）。
- * 版本号必须跟着变：codec 只认当前版本，读到 v1 会拒绝启动——这正是要的行为，
- * 漏做迁移必须停在启动这一步，而不是让一份旧格式的安全任务被静默误读。
- * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
- */
-export const BLOCKLIST_REMOVAL_OUTBOX_VERSION: BlocklistRemovalOutboxVersion = 2;
-
 /**
  * durable outbox 允许记录的失败边界。类型层从本常量派生，codec 也复用同一
  * 列表，避免新增分类时协议与校验分叉。
- * 所属模块：infra/blocklist/、workers/diskIO/blocklistRemovalOutbox.ts。
+ * 所属模块：infra/blocklist/、database/codec/identity.ts。
  */
 export const BLOCKLIST_REMOVAL_FAILURE_TYPES: readonly [
   "delivery-boundary",
@@ -91,7 +79,7 @@ export const BLOCKLIST_REMOVAL_FAILURE_TYPES: readonly [
 
 /**
  * outbox 单条处置参数允许出现的字段；codec 据此拒绝未知格式。
- * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
+ * 所属模块：database/codec/identity.ts。
  */
 export const BLOCKLIST_REMOVAL_PARAM_KEYS: readonly string[] = [
   "chatId",
@@ -104,22 +92,13 @@ export const BLOCKLIST_REMOVAL_PARAM_KEYS: readonly string[] = [
 
 /**
  * outbox 单条任务允许出现的字段；codec 据此拒绝未知格式。
- * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
+ * 所属模块：database/codec/identity.ts。
  */
 export const BLOCKLIST_REMOVAL_ENTRY_KEYS: readonly string[] = [
   "params",
   "createdAt",
   "attempts",
   "lastFailure",
-];
-
-/**
- * outbox 顶层文件允许出现的字段；codec 据此拒绝未知格式。
- * 所属模块：workers/diskIO/blocklistRemovalOutbox.ts。
- */
-export const BLOCKLIST_REMOVAL_FILE_KEYS: readonly string[] = [
-  "version",
-  "entries",
 ];
 
 /**

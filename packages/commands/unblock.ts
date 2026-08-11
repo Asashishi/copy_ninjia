@@ -11,7 +11,6 @@ import {
 import { resolveBotAdminStatus } from "../infra/botAdmin";
 import {
   confirmBlocklistPersisted,
-  isUserConfiguredBlocked,
   unblockUser,
 } from "../infra/blocklist/membership";
 import { getAllChatStates } from "../infra/storage/stateStore";
@@ -24,7 +23,7 @@ interface UnblockExecutionOutcome extends UnbanOutcome {
 
 /** 同一身份较早的自动封禁结算后，再以本命令的较晚结果覆盖名单与群级封禁。 */
 async function executeUnblock(targetUser: CachedUser, originChatId: number): Promise<UnblockExecutionOutcome> {
-  // 先删内存 Map、再投递重写——顺序不能反。反过来的话，两步之间到达的入群
+  // 先发布 LRU 负结论、再投递 tombstone——顺序不能反。反过来的话，两步之间到达的入群
   // 更新会查到一个还没解除的名单，那个人白白被秒踢一次。
   const removedFromList: boolean = unblockUser(targetUser.id);
   // 名单里没有目标不代表各群没有封禁；默认完整解封仍要继续逐群执行。
@@ -36,11 +35,10 @@ async function executeUnblock(targetUser: CachedUser, originChatId: number): Pro
 /**
  * 处理 /unblock 指令：把目标从持久化黑名单里移除，与 /block 互为逆操作。
  *
- * 落盘方式和 /block 不一样：黑名单文件是追加型的，删不掉已有条目，所以这里
- * 是「先从主线程内存 Map 删掉这个 id，再把删除之后的整份 Map 投给落盘 Worker
- * 整文件原子重写」（见 infra/blocklist/ 与 workers/diskIO/blocklistFile.ts）。
+ * 删除与新增走同一 revision/ACK 协议：先把主线程 LRU 发布为负结论，再向
+ * DiskIO Worker 投递 SQLite tombstone；事务 ACK 前由主线程保留并可重放。
  *
- * 命令默认完整解除：先把目标移出动态黑名单并确认重写落盘，再在所有已知管理群
+ * 命令默认完整解除：先把目标移出黑名单并确认事务落盘，再在所有已知管理群
  * 解除 Telegram 群级封禁。整条操作只认 isCanUnBlock；不再接受 `all` 参数，避免
  * 「名单已移除、群级封禁仍保留」这档容易误解的半完成状态。
  *
@@ -100,17 +98,6 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
   }
 
   const targetLabel: string = formatTargetLabel(targetUser);
-  // 静态层只能由部署者改 config/blocklist.json 后重启。允许 /unblock 继续往下
-  // 只会制造“内存里划掉了、下一次查询却仍然命中”的假成功；更不能一边保留
-  // 静态黑名单、一边把各群 Telegram 封禁解开。
-  if (isUserConfiguredBlocked(targetUser.id)) {
-    await sendCommandMessage({
-      chatId,
-      text: `笨蛋，${targetLabel} 是写在 config/blocklist.json 里的固定黑名单，/unblock 可划不掉；先改配置再重启呀♡`,
-      replyToMessageId: messageId,
-    });
-    return;
-  }
   const {
     removedFromList,
     persisted,
@@ -120,7 +107,7 @@ export async function handleUnblockCommand(ctx: CommandContext<Context>): Promis
     targetUser.id,
     (): Promise<UnblockExecutionOutcome> => executeUnblock(targetUser, chatId)
   );
-  // 重写没落盘就不能说「划掉了」：文件里那条还在，重启后这个人会重新回到
+  // tombstone 没落盘就不能说「划掉了」：数据库里那条还在，重启后这个人会重新回到
   // 名单上，而管理员以为已经放过 TA 了。没动过名单就不必等这一次回执。
   const persistWarning: string = persisted
     ? ""

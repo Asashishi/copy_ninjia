@@ -15,6 +15,7 @@ import {
 } from "../cache/main/antiRaid/lockdownMirror";
 import type {
   EmergencyLockdownRecovery,
+  LockdownIntentFingerprint,
   PersistedLockdownFingerprint,
 } from "../types/antiRaid/internal";
 import type { AdoptableLockdown, AdoptLockdownsMessage } from "../types/antiRaid";
@@ -31,13 +32,14 @@ export function lockdownFingerprint(record: LockdownRecord): PersistedLockdownFi
   return {
     phase: record.phase,
     intentId: record.intentId,
+    announced: record.announced,
   };
 }
 
 /**
- * 这条记录是否还是指纹记下的那次锁定意图。只比 phase 与 intentId：倒计时
+ * 这条记录是否已按当前恢复语义落盘。比较 phase、intentId 与 announced；倒计时
  * （expiresAt）在私密模式生效期间每来一条越阈值的入群就会刷新一次，把它算进
- * 来只会让「意图没变」永远不成立，理由见
+ * 来只会让「快照没变」永远不成立，理由见
  * types/antiRaid/internal.ts 的 PersistedLockdownFingerprint 说明。
  */
 export function lockdownFingerprintMatches(
@@ -46,7 +48,19 @@ export function lockdownFingerprintMatches(
 ): boolean {
   const current: PersistedLockdownFingerprint = lockdownFingerprint(record);
   return fingerprint?.phase === current.phase &&
-    fingerprint.intentId === current.intentId;
+    fingerprint.intentId === current.intentId &&
+    fingerprint.announced === current.announced;
+}
+
+function lockdownIntentFingerprint(record: LockdownRecord): LockdownIntentFingerprint {
+  return { phase: record.phase, intentId: record.intentId };
+}
+
+function lockdownIntentMatches(
+  record: LockdownRecord,
+  fingerprint: LockdownIntentFingerprint
+): boolean {
+  return record.phase === fingerprint.phase && record.intentId === fingerprint.intentId;
 }
 
 function toAdoptableLockdown(
@@ -59,6 +73,7 @@ function toAdoptableLockdown(
     phase: record.phase,
     intentId: record.intentId,
     originalPermissions: record.originalPermissions,
+    announced: record.announced,
     remainingMs: Math.max(0, record.expiresAt - now),
     persisted: lockdownFingerprintMatches(record, persistedLockdownFingerprints.get(chatId)),
   };
@@ -113,7 +128,7 @@ function runEmergencyLockdownRecovery(
     const before: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
     if (
       before === undefined ||
-      !lockdownFingerprintMatches(before, recovery.fingerprint)
+      !lockdownIntentMatches(before, recovery.fingerprint)
     ) {
       finishEmergencyLockdownRecovery(chatId, recovery);
       return;
@@ -134,7 +149,7 @@ function runEmergencyLockdownRecovery(
       const current: LockdownRecord | undefined = getAllChatStates().get(chatId)?.lockdown;
       if (
         current === undefined ||
-        !lockdownFingerprintMatches(current, recovery.fingerprint)
+        !lockdownIntentMatches(current, recovery.fingerprint)
       ) {
         logger.warn(
           `Emergency anti-raid restore for chat ${chatId} completed after its lockdown intent changed; ` +
@@ -155,7 +170,7 @@ function runEmergencyLockdownRecovery(
       if (
         emergencyLockdownRecoveryRuntime.stopped ||
         current === undefined ||
-        !lockdownFingerprintMatches(current, recovery.fingerprint) ||
+        !lockdownIntentMatches(current, recovery.fingerprint) ||
         emergencyLockdownRecoveries.get(chatId) !== recovery
       ) {
         finishEmergencyLockdownRecovery(chatId, recovery);
@@ -180,7 +195,7 @@ function runEmergencyLockdownRecovery(
 }
 
 function startEmergencyLockdownRecovery(chatId: number, record: LockdownRecord): void {
-  const fingerprint: PersistedLockdownFingerprint = lockdownFingerprint(record);
+  const fingerprint: LockdownIntentFingerprint = lockdownIntentFingerprint(record);
   const existing: EmergencyLockdownRecovery | undefined =
     emergencyLockdownRecoveries.get(chatId);
   if (existing !== undefined) {

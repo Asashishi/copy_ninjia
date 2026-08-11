@@ -199,6 +199,7 @@ describe("StateStore", () => {
             phase: "active",
             intentId: 9,
             originalPermissions: { can_invite_users: true, can_send_messages: false },
+            announced: true,
             expiresAt: 1_900_000_000_000,
           },
         },
@@ -419,6 +420,7 @@ describe("群级状态门面", () => {
       phase: "active",
       intentId: 3,
       originalPermissions: { can_invite_users: true },
+      announced: true,
       expiresAt: 1_700_000_000_000,
     };
     chatStates.set(-1001, { isAIChatEnabled: true, botIsAdmin: true });

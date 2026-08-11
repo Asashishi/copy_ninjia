@@ -5,6 +5,7 @@ import type { AdDetectAgentConfig } from "../../../packages/types/config";
 const calls: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
 let removeBlockedMembersTask: Promise<void> = Promise.resolve();
+let deleteDeferredVerificationResult: boolean = false;
 const workerSelf: {
   onmessage: ((event: MessageEvent<AntiRaidWorkerMessage>) => void) | null;
   postMessage: (event: AntiRaidWorkerEvent) => void;
@@ -23,6 +24,11 @@ mock.module("../../../packages/workers/antiRaid/verificationRuntime", () => ({
   handleVerificationPersisted(): void { calls.push("verificationPersisted"); },
   deactivateVerificationChat(): void { calls.push("deactivateVerification"); },
   disableJoinGuardChat(): void { calls.push("disableJoinGuard"); },
+  deleteDeferredVerification(): boolean {
+    if (!deleteDeferredVerificationResult) return false;
+    calls.push("deleteDeferredVerification");
+    return true;
+  },
   stopVerificationRuntime(): void { calls.push("stopVerification"); },
 }));
 mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({
@@ -107,6 +113,7 @@ beforeEach(() => {
   calls.length = 0;
   workerEvents.length = 0;
   removeBlockedMembersTask = Promise.resolve();
+  deleteDeferredVerificationResult = false;
   sweepRecentComments.mockClear();
   adminFetches.clear();
   chatAdmins.clear();
@@ -116,6 +123,34 @@ beforeEach(() => {
 });
 
 describe("Anti-Raid Worker lifecycle", () => {
+  test("离群先删除本进程延后的持久化终态；没有延后记录才投给活动状态机", () => {
+    deleteDeferredVerificationResult = true;
+    worker.handleAntiRaidWorkerMessage({ type: "left", chatId: -1001, userId: 1 });
+    expect(calls).toEqual(["deleteDeferredVerification"]);
+
+    calls.length = 0;
+    deleteDeferredVerificationResult = false;
+    worker.handleAntiRaidWorkerMessage({ type: "left", chatId: -1001, userId: 1 });
+    expect(calls).toEqual(["left"]);
+  });
+
+  test("显式停管会走提醒清理状态机，失权停管只清本地验证 owner", () => {
+    worker.handleAntiRaidWorkerMessage({
+      type: "deactivateChat",
+      chatId: -1001,
+      cleanupVerificationMessages: true,
+    });
+    expect(calls[0]).toBe("disableJoinGuard");
+
+    calls.length = 0;
+    worker.handleAntiRaidWorkerMessage({
+      type: "deactivateChat",
+      chatId: -1001,
+      cleanupVerificationMessages: false,
+    });
+    expect(calls[0]).toBe("deactivateVerification");
+  });
+
   test("启动幂等、路由完整，停止后清除 handler 与唯一 sweeper", async () => {
     worker.startAntiRaidWorker();
     worker.startAntiRaidWorker();
@@ -131,7 +166,7 @@ describe("Anti-Raid Worker lifecycle", () => {
         actorIsWhitelisted: false,
       },
       { type: "left", chatId: -1001, userId: 1 },
-      { type: "deactivateChat", chatId: -1001 },
+      { type: "deactivateChat", chatId: -1001, cleanupVerificationMessages: false },
       { type: "deactivateJoinGuard", chatId: -1001 },
       { type: "message", chatId: -1001, userId: 1, messageId: 10 },
       {
@@ -147,7 +182,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isInviterExempt: true },
       { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
-      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, text: "买号加我", linkUrls: [], label: "@spam", isChannel: false, blocked: false, justJoined: true },
+      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, text: "买号加我", linkUrls: [], label: "@spam", meta: { firstName: "Spam", lastName: "", username: "spam" }, isChannel: false, isForwarded: false, blocked: false, justJoined: true },
       { type: "clearAdDetect", chatId: -1001 },
       { type: "floodCandidate", chatId: -1001, userId: 1, label: "@noisy" },
       { type: "clearFloodControl", chatId: -1001 },
@@ -206,7 +241,11 @@ describe("Anti-Raid Worker lifecycle", () => {
       },
     } as MessageEvent<AntiRaidWorkerMessage>);
     workerSelf.onmessage!({
-      data: { type: "deactivateChat", chatId: -1001 },
+      data: {
+        type: "deactivateChat",
+        chatId: -1001,
+        cleanupVerificationMessages: false,
+      },
     } as MessageEvent<AntiRaidWorkerMessage>);
     workerSelf.onmessage!({
       data: { type: "barrier", barrierId: 10 },
@@ -254,7 +293,11 @@ describe("Anti-Raid Worker lifecycle", () => {
 
   test("没有在途处置时，高基数停管不会留下历史群世代", () => {
     for (let chatId: number = -1; chatId >= -1_000; chatId--) {
-      worker.handleAntiRaidWorkerMessage({ type: "deactivateChat", chatId });
+      worker.handleAntiRaidWorkerMessage({
+        type: "deactivateChat",
+        chatId,
+        cleanupVerificationMessages: false,
+      });
     }
     expect(blocklistRemovalTaskCounts.size).toBe(0);
     expect(blocklistRemovalEpochs.size).toBe(0);

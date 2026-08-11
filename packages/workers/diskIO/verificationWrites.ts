@@ -2,6 +2,7 @@
 
 import { mkdirSync } from "node:fs";
 import { DAY_MS, PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
+import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification";
 import {
   TOKYO_OFFSET_MS,
   VERIFICATION_FILE_COMPACT_BYTES,
@@ -150,6 +151,14 @@ export function handleVerificationUpsert({
     current?.generation === msg.record.generation &&
     current.revision >= msg.record.revision
   ) return;
+  if (
+    current === undefined &&
+    verificationWorkerCache.size >= VERIFICATION_RECORD_CAPACITY
+  ) {
+    throw new RangeError(
+      `Verification persistence capacity (${VERIFICATION_RECORD_CAPACITY}) exceeded.`
+    );
+  }
 
   const snapshot: VerificationSnapshot = {
     ...msg.record,

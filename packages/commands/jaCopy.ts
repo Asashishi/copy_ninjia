@@ -14,7 +14,7 @@ import { resolveSuperAdminToggleArg, toggleReplyText } from "./superAdminToggle"
  * 这个翻译功能本身（见 ChatState.isJATranslationEnabled，
  * 缺省禁用）。两种用法共用同一个命令名，靠有没有参数区分。enable/disable
  * 仅持有 isCanControllJATranslatePermission 的身份可用；
- * 超级管理员恒持有该权限（见 config/whitelist.ts），白名单身份可由 /permission 单独获权。
+ * 超级管理员恒持有该权限（见 whitelist.ts），白名单身份可由 /permission 单独获权。
  */
 export async function handleJaCopyCommand(ctx: CommandContext<Context>): Promise<void> {
   // 只有字面量 enable/disable 才是开关指令；空参数、@username、回复目标等

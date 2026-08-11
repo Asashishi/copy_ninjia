@@ -1,6 +1,9 @@
 import type { ChatAdminCache } from "../../../types/antiRaid/internal";
 import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CHAT_CACHE_MAX } from "../../../consts/antiRaid/cache";
-import { setBoundedMapValue } from "../../../libs/boundedMap";
+import {
+  setBoundedMapValue,
+  sweepExpiredSnapshots,
+} from "../../../libs/boundedMap";
 
 /** 非匿名管理员邀请豁免表（packages/workers/antiRaid/adminCache.ts）的内存状态。 */
 
@@ -84,14 +87,12 @@ export function discardPendingAdminChanges(chatId: number): void {
 
 /** 淘汰过期快照；仍在拉取的群保留旧快照供同步快路径使用。 */
 export function sweepAdminCache(now: number = Date.now()): number {
-  let deleted: number = 0;
-  for (const [chatId, cached] of chatAdmins) {
-    if (now - cached.fetchedAt > ADMIN_CACHE_TTL_MS && !adminFetches.has(chatId)) {
-      chatAdmins.delete(chatId);
-      deleted++;
-    }
-  }
-  return deleted;
+  return sweepExpiredSnapshots({
+    snapshots: chatAdmins,
+    inFlight: adminFetches,
+    ttlMs: ADMIN_CACHE_TTL_MS,
+    now,
+  });
 }
 
 /** Worker dispose/测试隔离时清空管理员缓存及其在途状态，并作废在途拉取的写回。 */

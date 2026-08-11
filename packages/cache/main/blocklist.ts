@@ -1,40 +1,10 @@
 import type {
   BlockedMemberRemover,
   BlocklistSweepRecord,
+  BlocklistSweepSchedulerState,
   PendingBlockedRemoval,
 } from "../../types/blocklist";
-import type { BlockedUserRecord } from "../../types/diskIO/storage";
-
-/** 黑名单查询（packages/infra/blocklist/）的主线程侧内存状态。 */
-
-/**
- * 已被 /block 拉黑的用户 id → 文件里那条完整记录。
- *
- * value 存整条记录而不是 true，是 `/unblock` 的前提：黑名单文件是追加型的，
- * 删不掉已有条目，解除拉黑只能把删除之后的这份 Map 整份重写回文件。若这里
- * 只留「在不在」，重写就会把名单里其他人的 blockedAt 一起抹平——因此读回来
- * 的结构必须是完整的（见 workers/diskIO/blocklistFile.ts 的 decodeBlocklist）。
- * 判定路径只用 has()，多存的那点文本不进热路径。
- *
- * 生命周期：启动时由 app/lifecycle.ts 用 diskIOWorker 读回的动态黑名单文件
- * 一次性灌入（hydrateBlocklist），此后由 /block 增量写入、`/unblock` 删除——
- * 都是先更新本 Map，再投递落盘消息，因此内存永远不落后于磁盘。本 Map 只对
- * memory 层权威；完整黑名单还要与 configuredBlockedIds 取并集。进程重启后
- * 从文件重建；diskIOWorker 崩溃重启不影响本 Map（它是主线程状态，丢失的
- * 增量由 infra/blocklist/ 的 respawn 重放补齐）。容量随运行时拉黑次数增长，
- * 只有 `/unblock` 会让它变小。
- */
-export const blockedUserIds: Map<number, BlockedUserRecord> = new Map();
-
-/**
- * config/blocklist.json 的静态黑名单 ID。
- *
- * 生命周期：应用取得单实例锁后同步加载配置，随后由 hydrateBlocklist 一次性填充；
- * 进程内只读，修改配置后必须重启。正数是用户，负数是频道身份。它不进入
- * memory/blocklist/blocklist.json，也不能被 /unblock 覆盖；查询与补扫通过
- * infra/blocklist/identities.ts 读取它和 blockedUserIds 的并集。
- */
-export const configuredBlockedIds: Set<number> = new Set();
+/** 黑名单群级处置状态；身份热查询与未 ACK 写入由 cache/main/identityStorage.ts 持有。 */
 
 /**
  * 白名单成员关系与动态黑名单新增共用的主线程串行链。
@@ -59,25 +29,6 @@ export const protectedIdentityMutationQueue: { current: Promise<void> } = {
  * 后立即删除，因此容量只等于当前仍在处理的身份数；进程重启后自然重建。
  */
 export const blocklistIdentityMutationQueues: Map<number, Promise<void>> = new Map();
-
-/**
- * 本进程启动之后新拉黑的 id → 其 blockedAt 文本。只为 diskIOWorker 崩溃重建后
- * 的重放：新 Worker 会先从文件重新 hydrate，已在文件里的 id 由它自己去重，
- * 因此只需补投「本进程期间产生、可能还没落盘」的这批。启动时 hydrate 进来的
- * 那些本来就来自文件，不进这里，重放量因此与黑名单总量无关。
- */
-export const sessionBlockedAt: Map<number, string> = new Map();
-
-/**
- * 本进程是否发生过 `/unblock`。追加型文件补不回「删除」，所以一旦置真，
- * diskIOWorker 每次崩溃重建都必须整份重写当前权威名单（见 infra/blocklist/
- * 的 onDiskIORespawn）。启动 hydrate 时置回 false；进程内保持粘性，不保存解除
- * 身份历史，因此容量恒为一个布尔值。再次拉黑也不得清零：全量快照已经包含
- * 最终状态，重复重写比漏掉另一条历史解除安全。
- */
-export const sessionBlocklistRequiresRewrite: { current: boolean } = {
-  current: false,
-};
 
 /**
  * 已投给入群守卫线程、但还没收到落地回执的处置批次（removalId → 入参 + 投递
@@ -117,6 +68,19 @@ export const blocklistRemovalCounter: { current: number } = { current: 0 };
  * 容量按「本进程见过的管理员群」计，随停管即时释放。
  */
 export const blocklistSweepState: Map<number, BlocklistSweepRecord> = new Map();
+
+/**
+ * 主线程唯一黑名单补扫 timer owner。
+ *
+ * init 后由 infra/blocklist/sweep.ts 按所有群最近的 nextRetryAt 填充；每次状态推进
+ * 都重算最近截止时间，停机 quiesce 时清除。进程重启后由启动全量补扫重建；容量
+ * 恒为一个 timer，不随群数增长。
+ */
+export const blocklistSweepSchedulerState: BlocklistSweepSchedulerState = {
+  timer: null,
+  scheduledAt: null,
+  accepting: false,
+};
 
 /**
  * 群不再由本机器人看管：丢掉补扫进度，重新接管后重新欠一次。

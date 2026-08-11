@@ -1,4 +1,5 @@
 import type { ChatPermissions } from "@grammyjs/types";
+import type { LockdownPhase } from "../chatState";
 import type { LinkedQueue } from "../../libs/linkedQueue";
 import type { TimestampDeque } from "../../libs/timestampDeque";
 import type { LockdownState } from "../states/lockdown";
@@ -15,29 +16,38 @@ export type VerificationDispatcher = (
   event: VerificationEvent
 ) => void;
 
-/**
- * 主线程判断 lockdown 落盘回执是否仍对应当前意图的指纹。
- *
- * 只由 phase + intentId 组成；expiresAt 会被持续入群刷新，不属于意图身份。
- * 把它纳入会让高频入群期间的落盘对账永远追不上当前记录。
- */
-export interface PersistedLockdownFingerprint {
-  phase: "applying" | "active" | "restoring";
+/** 一次 lockdown 权限意图的稳定身份；供紧急恢复判断迟到结果是否仍属当前轮次。 */
+export interface LockdownIntentFingerprint {
+  phase: LockdownPhase;
   intentId: number;
+}
+
+/**
+ * 主线程判断 lockdown 落盘回执是否覆盖当前恢复语义的指纹。
+ *
+ * announced 一轮最多从 false 变为 true 一次，且决定能否发送解锁公告，必须被
+ * 落盘确认覆盖；expiresAt 会被持续入群刷新，把它纳入会让高频入群期间的落盘
+ * 对账永远追不上当前记录。
+ */
+export interface PersistedLockdownFingerprint extends LockdownIntentFingerprint {
+  announced: boolean;
 }
 
 /** Worker 永久不可用后，单群主线程权限恢复链的运行态。 */
 export interface EmergencyLockdownRecovery {
-  fingerprint: PersistedLockdownFingerprint;
+  fingerprint: LockdownIntentFingerprint;
   originalPermissions: ChatPermissions;
   retryTimer: ReturnType<typeof setTimeout> | null;
   inFlight: Promise<void> | null;
 }
 
-/** 一条私密模式状态机条目：纯状态 + 解释器持有的恢复计时器。 */
+/** 一条私密模式状态机条目：纯状态 + 独立的到期与失败重试计时器。 */
 export interface LockdownEntry {
   state: LockdownState;
-  timer: ReturnType<typeof setTimeout> | undefined;
+  restoreTimer: ReturnType<typeof setTimeout> | undefined;
+  retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** ACTIVE/RECONCILING 共用的绝对恢复截止时间；与 restoreTimer 同步更新。 */
+  restoreAt: number | undefined;
 }
 
 /** 一条验证状态机条目：纯状态 + 解释器持有的活动计时器。 */

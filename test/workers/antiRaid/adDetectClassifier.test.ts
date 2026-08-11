@@ -33,9 +33,16 @@ beforeEach(() => {
 });
 
 describe("广告判定响应解析", () => {
-  test("接受裸 JSON、代码块和前后夹带解释的输出", () => {
+  test("接受裸 JSON、```json 围栏和前后夹带解释的输出", () => {
     expect(parseAdVerdict("{\"ad\": true, \"reason\": \"引流\"}")).toEqual({ isAd: true, reason: "引流" });
     expect(parseAdVerdict("```json\n{\"ad\": false, \"reason\": \"闲聊\"}\n```")).toEqual({ isAd: false, reason: "闲聊" });
+    expect(parseAdVerdict("{\"ad\": false, \"reason\": \"提到 ```json 示例 ```\"}"))
+      .toEqual({ isAd: false, reason: "提到 ```json 示例 ```" });
+    expect(parseAdVerdict("判定如下：{\"ad\": false, \"reason\": \"提到 ```json 示例 ```\"}"))
+      .toEqual({ isAd: false, reason: "提到 ```json 示例 ```" });
+    // 围栏优先于解释里的花括号，否则 first/last 会把两段拼成无效 JSON。
+    expect(parseAdVerdict("说明 {仅作展示}\n```JSON\r\n{\"ad\": false, \"reason\": \"纯链接\"}\r\n```\n完毕"))
+      .toEqual({ isAd: false, reason: "纯链接" });
     expect(parseAdVerdict("判定如下：{\"ad\": true, \"reason\": \"卖号\"} 完毕")).toEqual({ isAd: true, reason: "卖号" });
     // 多包一层数组同样只取里面那个对象——剥壳，而不是另一套判定语义。
     expect(parseAdVerdict("[{\"ad\": true, \"reason\": \"引流\"}]")).toEqual({ isAd: true, reason: "引流" });
@@ -79,6 +86,12 @@ describe("广告判定请求", () => {
     expect(params.systemPrompt).toContain("加溦拉群");
     // json_object 模式要求提示词提到 json，否则 DeepSeek 直接 400。
     expect(params.systemPrompt).toContain("JSON");
+    // 纯代理节点/订阅链接是硬性反例，不能因 URL 很长或参数复杂而误封。
+    expect(params.systemPrompt).toContain("如果全部消息仅由");
+    expect(params.systemPrompt).toContain("vless://");
+    expect(params.systemPrompt).toContain("一律判 false");
+    // 兼容端点即使无视 JSON mode，也被提示词明确禁止返回 Markdown 围栏。
+    expect(params.systemPrompt).toContain("禁止 Markdown 代码块");
     expect(params.userContent).toBe("1. 在吗");
   });
 

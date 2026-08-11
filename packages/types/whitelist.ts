@@ -1,56 +1,5 @@
 import type { CommandTargetMessages } from "./commands";
-
-/** 白名单身份可被逐项授予的权限。字段名与 /permission 命令参数保持一致。 */
-export interface WhitelistPermissions {
-  isCanMute: boolean;
-  isCanUnMute: boolean;
-  isCanGag: boolean;
-  isCanViewBotStatus: boolean;
-  isCanBlock: boolean;
-  isCanUnBlock: boolean;
-  isCanSwitchMood: boolean;
-  isCanBypassAdDetection: boolean;
-  isCanBypassFloodControl: boolean;
-  isCanControllAIPermission: boolean;
-  isCanControllAdDetectPermission: boolean;
-  isCanControllFloodControlPermission: boolean;
-  isCanControllJATranslatePermission: boolean;
-  isCanControllAntiRaidPermission: boolean;
-}
-
-/** /permission 接受的权限键。 */
-export type WhitelistPermissionKey = keyof WhitelistPermissions;
-
-/** 进程内已严格校验并补齐默认值的白名单配置。 */
-export type WhitelistConfig = ReadonlyMap<number, Readonly<WhitelistPermissions>>;
-
-/** /permission 持久化一项授权时的入参。 */
-export interface SetWhitelistPermissionParams {
-  id: number;
-  key: WhitelistPermissionKey;
-  value: boolean;
-}
-
-/** /permission 持久化的结果；changed=false 表示配置原本就是该值。 */
-export interface SetWhitelistPermissionResult {
-  changed: boolean;
-  permissions: Readonly<WhitelistPermissions>;
-}
-
-/** /white 新增或删除白名单身份时的入参。 */
-export interface SetWhitelistMembershipParams {
-  id: number;
-  enabled: boolean;
-}
-
-/**
- * /white 持久化白名单成员关系的结果。删除后 permissions 为 undefined；
- * 重复 enable 返回原有权限，绝不把已经单独授权的字段重置成默认值。
- */
-export interface SetWhitelistMembershipResult {
-  changed: boolean;
-  permissions: Readonly<WhitelistPermissions> | undefined;
-}
+import type { WhitelistPermissionKey } from "./identityPolicy";
 
 /** /permission 单项授权回执的入参；changed 决定说「已设为」还是「原本就是」。 */
 export interface PermissionSetReplyParams {
@@ -81,19 +30,17 @@ export interface PermissionCommandTexts {
   readonly helpPrefix: string;
   /** help 回执里 JSON 代码块之后的用法清单。 */
   readonly helpSuffix: string;
-  /** query 回执里 JSON 代码块之前的开场白；必须以换行结尾。 */
-  readonly queryPrefix: string;
-  /** 发起身份不在白名单边界内，query 与 help 都不给看。 */
-  readonly outsiderRejection: (actorLabel: string) => string;
+  /** query 回执里 JSON 代码块之前的开场白；返回值必须以换行结尾。 */
+  readonly queryPrefix: (targetLabel: string) => string;
   /** 非超级管理员想改权限配置。 */
   readonly mutationRejection: (actorLabel: string) => string;
-  /** 目标是超级管理员自己：权限来自身份，不归配置文件管。 */
+  /** 目标是超级管理员自己：权限来自身份，不归白名单表管。 */
   readonly superAdminTarget: string;
   /** 目标解析成了当前群自己的身份（匿名管理员皮套或手滑粘了本群 id）。 */
   readonly currentChatTarget: string;
   /** 目标还不在白名单里，得先 /white。 */
   readonly targetNotWhitelisted: (targetLabel: string) => string;
-  /** 写盘失败：配置没有被改动，必须如实说出来而不是让异常掀翻进程。 */
+  /** 写盘失败：白名单记录没有被改动，必须如实说出来而不是让异常掀翻进程。 */
   readonly mutationFailed: string;
   /** all：本次真的把全部权限打开了。 */
   readonly allEnabled: (targetLabel: string) => string;
@@ -109,15 +56,17 @@ export interface PermissionCommandTexts {
 export interface WhiteCommandTexts {
   /** 参数形态不对时的固定用法说明。 */
   readonly usage: string;
-  /** 非超级管理员想改白名单。 */
+  /** 既不是超级管理员、也没有代加权限的身份想改白名单。 */
   readonly rejection: (actorLabel: string) => string;
+  /** 有代加权限的普通白名单身份试图删除成员。 */
+  readonly delegatedDisableRejection: string;
   /** 目标是超级管理员自己，且动作是 enable。 */
   readonly superAdminEnable: string;
   /**
    * 目标是超级管理员自己、动作是 disable，且文件里确实有一条残留被清掉。
    *
    * 与 disabled 分开：超级管理员的白名单身份与权限来自 SUPER_ADMIN_USER_ID
-   * 本身（见 config/whitelist.ts 的 isWhitelisted 与
+   * 本身（见 whitelist.ts 的 isWhitelisted 与
    * getEffectiveWhitelistPermissions），删掉文件里那条残留改变不了其中任何
    * 一样。沿用 disabled 那句「已经被本天才从白名单里踢出去啦」是一份与事实
    * 相反的回执：紧接着 /permission query 仍会打印全开。

@@ -4,6 +4,7 @@
  */
 
 import { logger } from "../infra/logger";
+import { prefetchIdentityPolicies } from "../infra/identityStorage";
 import {
   createMonotonicDeadline,
   remainingMonotonicTime,
@@ -23,6 +24,10 @@ import { postDiskIODiagnostic } from "../infra/diskIO";
 import { deleteMessageAfter, sendMessage } from "../infra/telegram/actions";
 import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
 import { inFlightAdDisposals } from "../cache/main/antiRaid/adDisposal";
+import {
+  settleWithinBudget,
+  trackBackgroundTask,
+} from "../libs/backgroundTasks";
 import { formatTokyoTime } from "../libs/time";
 import {
   runBlocklistIdentityMutation,
@@ -87,12 +92,15 @@ function recordAdSample(event: AdDetectedEvent): void {
  * 跨窗口拦不住），而整套处置的代价是「一次带 fsync 的黑名单落盘 + 每个在管群
  * 各一批封禁，每批都要整份 outbox 深拷贝并落盘」——按群数放大的 O(n²) 写盘，
  * 正是 docs/cn/04-invariants.md 点名要避开的形态。名单条目在第一次命中时就已写进
- * 内存 Map 并投过落盘（那一次若没写成，日志里已经点名，且 Disk I/O Worker 重建
+ * 主线程 LRU 并投过落盘（那一次若没写成，日志里已经点名，且 Disk I/O Worker 重建
  * 会重放本进程新增的条目），其余群的封禁批次也还在 outbox 里等重试；重来一遍
  * 换不到任何新东西。这与 `/block` 的重试语义不冲突：那条路的重复调用是管理员
  * 修好磁盘后的人为重试，这条路是刷屏号自己触发的，两者不该共用一套代价。
  */
 async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
+  // 候选入队时虽已预热，但模型往返期间该身份可能被 8196 项 LRU 淘汰；写前重读
+  // 一次，确保互斥检查与表计数建立在当前数据库最终值上。
+  await prefetchIdentityPolicies([event.senderId]);
   const newlyBlocked: boolean | null = await runProtectedIdentityMutation(
     (): boolean | null => {
       // 判定发生在 Worker 侧，事件回投主线程后还要排过 identity 串行队列才轮到
@@ -109,7 +117,7 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
       // 否则与启动时的 protected-identity 交集门禁自相矛盾。
       if (isProtectedSender(event.senderId)) return null;
       recordAdSample(event);
-      return blockUser(event.senderId);
+      return blockUser(event.senderId, event.meta);
     }
   );
   if (newlyBlocked === null) {
@@ -269,31 +277,13 @@ async function announceAdDisposal(
  * 统一等待，不让它在半路被丢掉。
  */
 export function handleAdDetected(event: AdDetectedEvent): void {
-  const task: Promise<void> = disposeDetectedAd(event)
-    .catch((error: unknown): void => {
-      // 名单与 outbox 都已经 durable，失败的只是这一次投递；重启恢复与下一次
-      // 管理员身份观测触发的补扫都会把它接上。
-      logger.error(`Failed to dispose the ad verdict for sender ${event.senderId}:`, error);
-    })
-    .finally((): void => {
-      inFlightAdDisposals.delete(task);
-    });
-  inFlightAdDisposals.add(task);
-}
-
-/**
- * 等这一批在途处置结算，超时返回 false。计时器 unref：处置提前结算时不该让
- * 一个还没到点的 timer 把进程按在事件循环里——停机路径上那段等待是纯浪费。
- */
-function waitForDisposals(tasks: readonly Promise<void>[], timeoutMs: number): Promise<boolean> {
-  return new Promise((resolve: (settled: boolean) => void): void => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => resolve(false), timeoutMs);
-    timer.unref();
-    void Promise.allSettled(tasks).then((): void => {
-      clearTimeout(timer);
-      resolve(true);
-    });
-  });
+  // 名单与 outbox 都已经 durable，失败的只是这一次投递；重启恢复与下一次
+  // 管理员身份观测触发的补扫都会把它接上。
+  trackBackgroundTask(
+    inFlightAdDisposals,
+    disposeDetectedAd(event),
+    `Failed to dispose the ad verdict for sender ${event.senderId}:`
+  );
 }
 
 /**
@@ -310,7 +300,7 @@ export async function drainAdDisposals(timeoutMs: number): Promise<FlushResult> 
   const deadline: number = createMonotonicDeadline(timeoutMs);
   while (inFlightAdDisposals.size > 0) {
     const remaining: number = remainingMonotonicTime(deadline);
-    if (remaining === 0 || !await waitForDisposals([...inFlightAdDisposals], remaining)) {
+    if (remaining === 0 || !await settleWithinBudget([...inFlightAdDisposals], remaining)) {
       logger.error(
         `Ad disposal drain timed out with ${inFlightAdDisposals.size} task(s) still in flight; ` +
         "the blocklist entries and removal batches stay in their durable outbox."

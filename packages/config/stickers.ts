@@ -1,7 +1,7 @@
 import { defaultStickerConfigCache } from "../cache/perThread/config";
 import { MAX_CONFIGURED_STICKER_PACKS, STICKER_PACK_NAME_PATTERN } from "../consts/aiChat/stickers";
 import { STICKERS_CONFIG_PATH } from "../consts/paths";
-import { hasExactKeys, isPlainRecord } from "../libs/runtimeConfig";
+import { hasExactKeys, isPlainRecord } from "../libs/record";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import type { StickerConfig } from "../types/config";
 

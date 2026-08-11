@@ -17,8 +17,9 @@ import { registerChatTeardown } from "../infra/chatTeardown";
 import {
   LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS,
 } from "../consts/antiRaid/protocol";
+import { VERIFICATION_RECORD_CAPACITY } from "../consts/antiRaid/verification";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../consts/diskIO/common";
-import { superviseDuplexWorker } from "../libs/supervisedDuplexWorker";
+import { superviseDuplexWorker } from "../infra/supervisedDuplexWorker";
 import { WorkerUndeliveredError } from "../libs/workerDelivery";
 import {
   onDiskIORespawn,
@@ -37,6 +38,14 @@ import {
   acceptVerificationDelete,
   acceptVerificationUpsert,
 } from "./verificationMirror";
+import {
+  acceptVerificationDeferred,
+  advanceDeferredVerificationGeneration,
+  deleteDeferredVerificationsForChat,
+  grantVerificationAttempt,
+  resetVerificationAttemptRuntime,
+  settlePersistedVerificationDeferral,
+} from "./verificationAttempts";
 import { handleAdDetected } from "./adDetect";
 import { adDetectAgentConfigSnapshot } from "../config/agent";
 import {
@@ -52,6 +61,8 @@ import {
 } from "../cache/main/antiRaid/lockdownMirror";
 import {
   activeVerificationSnapshots,
+  deferredVerificationRecords,
+  pendingVerificationDeferrals,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
 } from "../cache/main/antiRaid/verificationMirror";
@@ -59,15 +70,17 @@ import type {
   AdoptableLockdown,
   AdoptLockdownsMessage,
   AdoptVerificationsMessage,
+  AntiRaidWorkerRequest,
   AntiRaidWorkerEvent,
   AntiRaidWorkerMessage,
+  DeferredVerificationRecord,
   VerificationSnapshot,
 } from "../types/antiRaid";
 import type { PersistedLockdownFingerprint } from "../types/antiRaid/internal";
 import type { LockdownRecord } from "../types/chatState";
-import type { SupervisedWorkerHandle } from "../libs/supervisedWorker";
+import type { ChatTeardownReason } from "../types/chatTeardown";
+import type { SupervisedWorkerHandle } from "../infra/supervisedWorker";
 import type { WorkerDuplexInbound } from "../types/workerDuplex";
-import type { TelegramWorkerRequest } from "../types/telegramWorker";
 import {
   handleAntiRaidWorkerTelegramRequest,
   telegramWorkerResponseTransfer,
@@ -93,7 +106,7 @@ import type {
  * 不读它，只用于 Worker/进程重建时的 adopt 重放，以及 supervisor 放弃
  * 自愈后的主线程紧急恢复——权限限制已实际落在群上，恢复 owner 不能丢。
  *
- * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 libs/supervisedWorker.ts。
+ * Worker 的启动、崩溃自愈（含节流放弃）、日志转投见 infra/supervisedWorker.ts。
  * 待验证纯数据由主线程镜像并转投唯一 Disk I/O Worker 的当日增量 JSON：
  * Worker 或整个进程重建后都按 expiresAt 接管。私密模式仍由 state.json 恢复。
  */
@@ -103,8 +116,59 @@ function nextAntiRaidGeneration(): number {
   return antiRaidRuntimeState.generation;
 }
 
+/** 把主线程活动镜像与精确落盘水位线一起提升到将要接管它们的 Worker 代际。 */
+function advanceActiveVerificationGeneration(generation: number): void {
+  for (const [key, record] of activeVerificationSnapshots) {
+    const persisted: { generation: number; revision: number; } | undefined =
+      persistedVerificationRevisions.get(key);
+    activeVerificationSnapshots.set(key, { ...record, generation });
+    if (
+      persisted?.generation === record.generation &&
+      persisted.revision === record.revision
+    ) {
+      persistedVerificationRevisions.set(key, {
+        generation,
+        revision: record.revision,
+      });
+    }
+  }
+}
+
 function buildAdoptVerificationsMessage(generation: number, resumePersistedTerminals: boolean = false): AdoptVerificationsMessage {
-  return { type: "adoptVerifications", generation, verifications: [...activeVerificationSnapshots.values()], resumePersistedTerminals };
+  const verifications: VerificationSnapshot[] = [];
+  for (const [key, record] of activeVerificationSnapshots) {
+    if (!pendingVerificationDeferrals.has(key)) verifications.push(record);
+  }
+  const deferredVerifications: DeferredVerificationRecord[] = [
+    ...deferredVerificationRecords.values(),
+    ...pendingVerificationDeferrals.values(),
+  ];
+  return {
+    type: "adoptVerifications",
+    generation,
+    verifications,
+    deferredVerifications,
+    resumePersistedTerminals,
+  };
+}
+
+/** Anti-Raid 专属进程级许可与 Telegram 能力共用既有双工边界。 */
+function handleAntiRaidWorkerRequest(
+  request: AntiRaidWorkerRequest,
+  signal: AbortSignal
+): Promise<unknown> {
+  if (request.operation === "verificationAttemptPermit") {
+    return Promise.resolve(grantVerificationAttempt(request));
+  }
+  return handleAntiRaidWorkerTelegramRequest(request, signal);
+}
+
+function antiRaidWorkerResponseTransfer(
+  request: AntiRaidWorkerRequest,
+  value: unknown
+): Bun.Transferable[] | undefined {
+  if (request.operation === "verificationAttemptPermit") return undefined;
+  return telegramWorkerResponseTransfer(request, value);
 }
 
 /**
@@ -122,11 +186,12 @@ function replayAdDetectAgentConfig(postTo: (message: AntiRaidWorkerMessage) => b
  * 把这个群当前的锁定意图写进 state.json，落定后回执给 Worker。
  *
  * 循环是「存下去 → 再看一眼还是不是同一份意图」的对账：不是就带着新意图重存
- * 一次。指纹只含 phase + intentId（见 cache/main/antiRaid/lockdownMirror.ts），因此重来一轮意味着
- * 状态机真的推进了一个阶段——事件驱动、次数有界。轮次上限只是兜底：万一将来
- * 有谁把一个高频变动的字段加回指纹，宁可这个群的握手停下并留一行错误日志，
- * 也不能让主线程陷在「每轮两次带 fsync 的整文件重写」里出不来。期间收到过
- * 新事件时，finally 会让出当前微任务后续跑最新意图，避免丢失最后一次唤醒。
+ * 一次。指纹只含 phase、intentId 与低频单向变化的 announced（见
+ * cache/main/antiRaid/lockdownMirror.ts），因此重来一轮意味着恢复语义真的推进；
+ * 高频刷新的 expiresAt 不在其中。轮次上限只是兜底：万一将来有谁把高频字段
+ * 加回指纹，宁可这个群的握手停下并留一行错误日志，也不能让主线程陷在「每轮
+ * 两次带 fsync 的整文件重写」里出不来。期间收到过新事件时，finally 会让出
+ * 当前微任务后续跑最新意图，避免丢失最后一次唤醒。
  */
 function persistCurrentLockdown(chatId: number): void {
   if (pendingLockdownPersistence.has(chatId)) {
@@ -171,12 +236,12 @@ function persistCurrentLockdown(chatId: number): void {
     });
 }
 
-const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: SupervisedWorkerHandle<WorkerDuplexInbound<AntiRaidWorkerMessage>> = superviseDuplexWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent, TelegramWorkerRequest>({
+const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: SupervisedWorkerHandle<WorkerDuplexInbound<AntiRaidWorkerMessage>> = superviseDuplexWorker<AntiRaidWorkerMessage, AntiRaidWorkerEvent, AntiRaidWorkerRequest>({
   url: new URL("../workers/antiRaidWorker.ts", import.meta.url).href,
   label: "Anti-raid guard Worker",
   giveUpConsequence: "join verification and anti-raid features will silently stay disabled until the process restarts.",
-  handleRequest: handleAntiRaidWorkerTelegramRequest,
-  responseTransfer: telegramWorkerResponseTransfer,
+  handleRequest: handleAntiRaidWorkerRequest,
+  responseTransfer: antiRaidWorkerResponseTransfer,
   onEvent: (event: AntiRaidWorkerEvent): void => {
     switch (event.type) {
       case "lockdown": {
@@ -184,6 +249,7 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
           phase: event.phase,
           intentId: event.intentId,
           originalPermissions: event.originalPermissions,
+          announced: event.announced,
           expiresAt: event.expiresAt,
         };
         getOrCreateChatState(event.chatId).lockdown = expected;
@@ -206,6 +272,9 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
       case "verificationDelete":
         if (acceptVerificationDelete(event)) antiRaidRuntimeState.persistenceVersion++;
         break;
+      case "verificationDeferred":
+        if (acceptVerificationDeferred(event)) antiRaidRuntimeState.persistenceVersion++;
+        break;
       case "blockedMembersRemoved":
         settleBlockedRemoval(event);
         break;
@@ -227,13 +296,8 @@ const { init: initAntiRaidWorker, post, terminate: terminateAntiRaidWorker }: Su
   onRespawn: (postToNext: (message: AntiRaidWorkerMessage) => boolean): void => {
     antiRaidBarrier.settleAll("failed");
     const generation: number = nextAntiRaidGeneration();
-    for (const [key, record] of activeVerificationSnapshots) {
-      const persisted: { generation: number; revision: number; } | undefined = persistedVerificationRevisions.get(key);
-      activeVerificationSnapshots.set(key, { ...record, generation });
-      if (persisted?.generation === record.generation && persisted.revision === record.revision) {
-        persistedVerificationRevisions.set(key, { generation, revision: record.revision });
-      }
-    }
+    advanceDeferredVerificationGeneration(generation);
+    advanceActiveVerificationGeneration(generation);
     // 配置快照排在一切投递之前：广告判定逐条候选消息取模型名与凭据，晚一条
     // 消息就意味着重生后紧接着到达的候选无从判定。同样必须排在代际提升与快照
     // 重打之后（理由见下一段）。
@@ -324,8 +388,11 @@ function replayChatKinds(postToNext: (message: AntiRaidWorkerMessage) => boolean
   return true;
 }
 
-registerChatTeardown("antiRaid", (chatId: number): void => {
-  deactivateAntiRaidChat(chatId);
+registerChatTeardown("antiRaid", (
+  chatId: number,
+  reason: ChatTeardownReason
+): void => {
+  deactivateAntiRaidChat(chatId, reason === "explicitDisable");
   // 与 Worker 侧的 forgetWorkerChatKind 对齐：重新接管时由第一条 update 重新观测。
   chatIsSupergroupById.delete(chatId);
 });
@@ -351,6 +418,11 @@ onVerificationPersisted((reply: VerificationPersistedReply): void => {
     const current: VerificationSnapshot | undefined = activeVerificationSnapshots.get(reply.key);
     if (current?.generation !== reply.generation || current.revision !== reply.revision) return;
     persistedVerificationRevisions.set(reply.key, { generation: reply.generation, revision: reply.revision });
+    if (settlePersistedVerificationDeferral(
+      reply.key,
+      reply.generation,
+      reply.revision
+    )) return;
     // 投递失败不做补偿是有意的：Worker 不可用意味着它即将重建，onRespawn 会对
     // 终态重新投递 verificationPersisted（见上方 onRespawn）。但按
     // docs/cn/04-invariants.md 的要求，落盘边界的 false 必须显式当作失败记录，
@@ -387,6 +459,9 @@ export function initAntiRaid(): void {
   emergencyLockdownRecoveryRuntime.stopped = false;
   seedPersistedLockdownFingerprints();
   const generation: number = nextAntiRaidGeneration();
+  // 磁盘快照带的是上次完整进程的代际；首次 adopt 前必须重打，否则恢复终态申请
+  // 执行许可时会被主线程当作旧 Worker 迟到请求拒绝，永远无法在新进程续跑。
+  advanceActiveVerificationGeneration(generation);
   try {
     initAntiRaidWorker();
     // 配置快照是 Worker 收到的第一条消息（理由见 replayAdDetectAgentConfig）。
@@ -422,8 +497,16 @@ export function initAntiRaid(): void {
 }
 
 /** 统一群 teardown 入口：Worker 内取消验证并对 lockdown 发起可恢复解锁。 */
-export function deactivateAntiRaidChat(chatId: number): void {
-  postAntiRaidOrThrow({ type: "deactivateChat", chatId });
+export function deactivateAntiRaidChat(
+  chatId: number,
+  cleanupVerificationMessages: boolean
+): void {
+  deleteDeferredVerificationsForChat(chatId);
+  postAntiRaidOrThrow({
+    type: "deactivateChat",
+    chatId,
+    cleanupVerificationMessages,
+  });
 }
 
 /**
@@ -441,6 +524,7 @@ export function deactivateAntiRaidChat(chatId: number): void {
  * purgeDisabledJoinGuards 兜底。
  */
 export function deactivateJoinGuardChat(chatId: number): void {
+  deleteDeferredVerificationsForChat(chatId);
   postAntiRaidOrThrow({ type: "deactivateJoinGuard", chatId });
 }
 
@@ -468,6 +552,11 @@ function purgeDisabledJoinGuards(postTo: (message: AntiRaidWorkerMessage) => boo
     if (getChatState(record.chatId).isAntiRaidEnabled === true) continue;
     purged.add(record.chatId);
   }
+  for (const record of deferredVerificationRecords.values()) {
+    if (purged.has(record.chatId)) continue;
+    if (getChatState(record.chatId).isAntiRaidEnabled === true) continue;
+    purged.add(record.chatId);
+  }
   for (const [chatId, chatState] of getAllChatStates()) {
     if (purged.has(chatId) || chatState.lockdown === undefined) continue;
     if (chatState.isAntiRaidEnabled === true) continue;
@@ -475,6 +564,7 @@ function purgeDisabledJoinGuards(postTo: (message: AntiRaidWorkerMessage) => boo
   }
   if (purged.size === 0) return;
   for (const chatId of purged) {
+    deleteDeferredVerificationsForChat(chatId);
     if (postTo({ type: "deactivateJoinGuard", chatId })) continue;
     logger.error(
       `Anti-Raid Worker rejected the join guard cleanup for chat ${chatId}; ` +
@@ -516,6 +606,7 @@ export async function terminateAntiRaid(): Promise<void> {
   antiRaidRuntimeState.initialized = false;
   stopEmergencyLockdownRecoveries();
   await terminateAntiRaidWorker();
+  resetVerificationAttemptRuntime();
 }
 
 /** Disk I/O 启动恢复完成后、Anti-Raid Worker 初始化前灌入主线程镜像。 */
@@ -523,9 +614,15 @@ export function hydratePendingVerifications(records: Map<string, VerificationSna
   if (antiRaidRuntimeState.initialized) {
     throw new Error("Pending verifications must be hydrated before Anti-Raid initialization.");
   }
+  if (records.size > VERIFICATION_RECORD_CAPACITY) {
+    throw new Error(
+      `Pending verification recovery exceeded the ${VERIFICATION_RECORD_CAPACITY}-record capacity.`
+    );
+  }
   activeVerificationSnapshots.clear();
   pendingVerificationDeletes.clear();
   persistedVerificationRevisions.clear();
+  resetVerificationAttemptRuntime();
   for (const [key, record] of records) {
     activeVerificationSnapshots.set(key, {
       ...record,

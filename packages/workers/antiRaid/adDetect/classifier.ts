@@ -5,7 +5,7 @@
  * 判定是尽力而为的启发式：请求失败、超时、返回形状不对，一律返回 null 让调用
  * 方原样跳过这一批——绝不猜一个 true 出来，那等于凭一次网络抖动把人拉黑。
  * 判定口径由部署配置 config/ad_samples.json 提供（见 config/adSamples.ts），
- * 提示词模板在 consts/antiRaid/adCandidate.ts。
+ * 提示词模板在 consts/antiRaid/adDetect.ts。
  *
  * 模型看到的群聊原文一律是数据：提示词里已声明其中的任何指令都不得执行，
  * 且输出被限制成一个只含 ad/reason 两个字段的 JSON，reason 只进日志与播报
@@ -22,26 +22,33 @@ import {
   AD_DETECT_TEMPERATURE,
   buildAdDetectSystemPrompt,
 } from "../../../consts/antiRaid/adDetect";
-import { isPlainRecord } from "../../../libs/runtimeConfig";
+import { isPlainRecord } from "../../../libs/record";
 import { truncateInline } from "../../../libs/text";
 import type { AdVerdict } from "../../../types/antiRaid/adDetect";
 import { getAdDetectAgentConfig } from "../../../config/agent";
 
 /**
  * 从模型输出里收窄出判定结果。模型被要求只输出 JSON，但「被要求」不等于
- * 「一定做到」：多包一层代码块、前后带一句解释都见过，因此先剥 ```，再退化到
- * 取第一个 {...} 片段。任何一步不成立都返回 null（当作本次判定没发生）。
+ * 「一定做到」：多包一层 ```json 代码块、前后带一句解释都见过，因此优先用
+ * 正则认出并剥掉 JSON 围栏，再退化到截取首个 `{` 至末个 `}` 的候选片段。
+ * 任何一步不成立都返回 null（当作本次判定没发生）。
  * 导出仅为可测试性；判定路径只经 classifyAdText 调用。
  */
 export function parseAdVerdict(raw: string | null | undefined): AdVerdict | null {
   if (typeof raw !== "string") return null;
-  const unfenced: string = raw.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
-  const start: number = unfenced.indexOf("{");
-  const end: number = unfenced.lastIndexOf("}");
+  const trimmed: string = raw.trim();
+  // 裸对象优先：reason 里即使提到 ```json，也不能把一个原本合法的 JSON 从字符串
+  // 中间截断。只有整个响应不是裸对象时，才把 Markdown 围栏当作兼容端点的外壳。
+  const fenced: RegExpExecArray | null = trimmed.startsWith("{") && trimmed.endsWith("}")
+    ? null
+    : /(?:^|[\r\n])[ \t]*```json[ \t]*(?:\r?\n)?([\s\S]*?)(?:\r?\n)?[ \t]*```(?=[ \t]*(?:[\r\n]|$))/i.exec(trimmed);
+  const normalized: string = fenced?.[1]?.trim() ?? trimmed;
+  const start: number = normalized.indexOf("{");
+  const end: number = normalized.lastIndexOf("}");
   if (start === -1 || end <= start) return null;
   let parsed: unknown;
   try {
-    parsed = JSON.parse(unfenced.slice(start, end + 1)) as unknown;
+    parsed = JSON.parse(normalized.slice(start, end + 1)) as unknown;
   } catch (error: unknown) {
     logger.error("Ad detection response was not valid JSON:", error);
     return null;

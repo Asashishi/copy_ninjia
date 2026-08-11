@@ -79,6 +79,64 @@ export async function runBooleanTelegramAction(
   });
 }
 
+/** 一次权限敏感动作的归一化结局；调用方再翻译成自己的领域词。 */
+export type PermissionAwareOutcome =
+  | "succeeded"
+  /** 由 claimError 认领的领域结局（如「目标已不在群」），既非权限也非故障。 */
+  | "claimed"
+  | "forbidden"
+  | "failed";
+
+export interface RunPermissionAwareTelegramActionParams {
+  action: string;
+  execute: (signal?: AbortSignal) => Promise<unknown>;
+  signal?: AbortSignal;
+  /**
+   * 领域先认领这次错误：返回 true 表示已经归类完毕，本函数不再按权限解释、
+   * 也不记 API 错误日志。`/batch_kick` 的「目标本来就不在群」就是这种结局。
+   */
+  claimError?: (error: unknown) => boolean;
+}
+
+/**
+ * 执行一次需要区分「权限拒绝」与「偶发失败」的 Telegram 动作。
+ *
+ * 五个管理动作（mute / unmute / kick / ban / ban sender chat）此前各自抄了一份
+ * 「闭包里的 permissionDenied 闩锁 + runTelegramAction + 三元结果映射」。三者
+ * 必须成套出现：漏掉闩锁会把一次永久的 403 当成值得退避重试的抖动，长生命周期
+ * 的黑名单批次会因此一直重投一个注定失败的请求。
+ *
+ * 停机 abort 造成的失败不记 API 错误——它不是远端故障，口径与
+ * runBooleanTelegramAction 一致。
+ */
+export async function runPermissionAwareTelegramAction({
+  action,
+  execute,
+  signal,
+  claimError,
+}: RunPermissionAwareTelegramActionParams): Promise<PermissionAwareOutcome> {
+  let outcome: PermissionAwareOutcome = "failed";
+  const succeeded: boolean = await runTelegramAction({
+    action,
+    execute,
+    map: (): boolean => true,
+    fallback: false,
+    signal,
+    shouldLogError: (
+      error: unknown,
+      actionSignal: AbortSignal | undefined
+    ): boolean => {
+      if (claimError?.(error) === true) {
+        outcome = "claimed";
+        return false;
+      }
+      outcome = isPermissionDenied(error) ? "forbidden" : "failed";
+      return actionSignal?.aborted !== true;
+    },
+  });
+  return succeeded ? "succeeded" : outcome;
+}
+
 /**
  * 把 AbortSignal 接到 grammY raw API 调用的最后一个位置参数上。
  *

@@ -41,7 +41,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   let teardownError: unknown;
   if (arg === "disable") {
     try {
-      await teardownChatRuntime(chatId);
+      await teardownChatRuntime(chatId, "explicitDisable");
     } catch (error: unknown) {
       teardownFailed = true;
       teardownError = error;

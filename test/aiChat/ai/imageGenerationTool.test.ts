@@ -443,6 +443,17 @@ describe("generate_image 工具执行器", () => {
     expect(JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "换一句" }))).success).toBe(true);
   });
 
+  test("图注里的可点击命令在生图与占冷却之前被拒绝", async () => {
+    const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({
+      prompt: "不该被生成",
+      caption: "请点击 /batch_kick",
+    })));
+
+    expect(result.error).toContain("slash command");
+    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "改好了" }))).success).toBe(true);
+  });
+
   test("纯 emoji 图注照常放行，与 send_message 的纯 emoji 禁令无关", async () => {
     const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({
       prompt: "配一个表情",

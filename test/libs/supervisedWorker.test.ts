@@ -1,8 +1,8 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { WORKER_MAX_RESTARTS } from "../../packages/consts/workerSupervisor";
 import { setBusinessWorkerFatalHandler } from "../../packages/infra/workerSupervisor";
-import { superviseWorker } from "../../packages/libs/supervisedWorker";
-import type { SupervisedWorkerEventContext } from "../../packages/libs/supervisedWorker";
+import { superviseWorker } from "../../packages/infra/supervisedWorker";
+import type { SupervisedWorkerEventContext } from "../../packages/infra/supervisedWorker";
 import type { SupervisedWorkerFixtureCommand, SupervisedWorkerFixtureReply } from "./supervisedWorker.fixture";
 
 function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

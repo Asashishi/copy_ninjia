@@ -35,6 +35,7 @@ export const RUNTIME_DATA_ROOT_MAX_MODE: number = 0o750;
 export const RUNTIME_SENSITIVE_DIRECTORY_NAMES: readonly string[] = [
   "logs",
   "memory",
+  "database",
 ];
 
 /** state.json 中允许持久化的 Telegram 群权限字段全集。 */

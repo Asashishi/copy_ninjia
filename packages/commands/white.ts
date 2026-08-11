@@ -1,21 +1,27 @@
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
-import type { SetWhitelistMembershipResult } from "../types/whitelist";
-import { setWhitelistMembership } from "../config/whitelist";
+import type { SetWhitelistMembershipResult } from "../whitelist";
+import {
+  confirmWhitelistEntryPersisted,
+  hasWhitelistPermission,
+  setWhitelistMembership,
+} from "../whitelist";
 import { WHITE_COMMAND_TEXTS } from "../consts/whitelist";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import { SUPER_ADMIN_USER_ID } from "../config/telegram";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy";
+import { identityMetadataFromCachedUser } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { isSuperAdminActor, resolveCommandActor } from "./commandActor";
+import { resolveCommandActor } from "./commandActor";
 import { resolveCommandTarget } from "./targetResolution";
 
 type WhiteAction = "enable" | "disable";
 
 type WhiteMutationOutcome =
   | { readonly kind: "blocked" }
+  | { readonly kind: "unauthorized" }
   | { readonly kind: "updated"; readonly result: SetWhitelistMembershipResult };
 
 /** 大小写不敏感地解析成员关系动作，拒绝其它近似写法。 */
@@ -26,7 +32,8 @@ export function parseWhiteAction(raw: string): WhiteAction | undefined {
 }
 
 /**
- * 处理 /white：仅超级管理员可新增或删除白名单身份。
+ * 处理 /white：超级管理员可新增或删除；持有 isCanWhiteOther 的普通白名单身份
+ * 只能新增，且新增路径固定写入完整默认权限，不能选择或继承发起人的权限。
  *
  * enable 只在身份不存在时写入完整默认权限，重复执行不会覆盖 /permission
  * 已经授予的字段；disable 删除整条身份及其全部逐项权限。两个方向都会如实
@@ -34,7 +41,7 @@ export function parseWhiteAction(raw: string): WhiteAction | undefined {
  *
  * 以超级管理员为目标时两个方向不对称：enable 被拒（他恒在白名单边界内，写进去
  * 的条目永远读不到），disable 照常放行——那正是清掉旧部署遗留条目的路径，但它
- * 的回执只能说「清掉了文件里的残留」，不能说成「已经踢出白名单」。
+ * 的回执只能说「清掉了表里的残留」，不能说成「已经踢出白名单」。
  *
  * 当前群自己的 identity 一律拒绝（匿名管理员皮套），理由见函数体那道闸。
  */
@@ -43,8 +50,13 @@ export async function handleWhiteCommand(
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  if (!isSuperAdminActor(ctx)) {
-    const actor: CachedUser | undefined = resolveCommandActor(ctx);
+  const actor: CachedUser | undefined = resolveCommandActor(ctx);
+  const actorIsSuperAdmin: boolean = actor?.id === SUPER_ADMIN_USER_ID;
+  const actorCanWhiteOther: boolean = actorIsSuperAdmin || (
+    actor !== undefined &&
+    hasWhitelistPermission(actor.id, "isCanWhiteOther")
+  );
+  if (!actorCanWhiteOther) {
     await sendCommandMessage({
       chatId,
       text: WHITE_COMMAND_TEXTS.rejection(
@@ -66,6 +78,14 @@ export async function handleWhiteCommand(
     await sendCommandMessage({
       chatId,
       text: WHITE_COMMAND_TEXTS.usage,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+  if (!actorIsSuperAdmin && action === "disable") {
+    await sendCommandMessage({
+      chatId,
+      text: WHITE_COMMAND_TEXTS.delegatedDisableRejection,
       replyToMessageId: messageId,
     });
     return;
@@ -101,9 +121,9 @@ export async function handleWhiteCommand(
   }
 
   const enabled: boolean = action === "enable";
-  // 超级管理员恒在白名单边界内、且恒持有全部权限（见 config/whitelist.ts），
-  // enable 只会往部署配置里写一条永远读不到的条目，换过 SUPER_ADMIN_USER_ID
-  // 之后还会留成全开的旧身份。disable 反过来仍然放行：它只是清掉文件里的
+  // 超级管理员恒在白名单边界内、且恒持有全部权限（见 whitelist.ts），
+  // enable 只会往 SQLite 写一条永远读不到的条目，换过 SUPER_ADMIN_USER_ID
+  // 之后还会留成全开的旧身份。disable 反过来仍然放行：它只是清掉表里的
   // 历史残留，清完超级管理员本人的权限一点不受影响——正因如此，那条路的回执
   // 也不能沿用 disabled 那句「已经踢出白名单」，见下面的 superAdminDisable*。
   const isSuperAdminTarget: boolean = target.id === SUPER_ADMIN_USER_ID;
@@ -115,23 +135,41 @@ export async function handleWhiteCommand(
     });
     return;
   }
-  // 写盘失败就地降级。这条命令的写入方是部署配置文件，config/ 不可写时
-  // atomicWriteText 会抛 EACCES/ENOSPC；让它逸出 handler 的话 bot.catch 按设计
-  // 原样重抛，acknowledged runner 随即让整个进程带非零码退出且不确认 offset，
-  // Telegram 重投同一条命令 —— 一条 /white 就能把机器人锁进永久重启循环。
-  // 名单此刻一点没改（commitWhitelistMutation 只在写盘成功后发布），因此确认
-  // 这条 update 是安全的，回执如实说「没写进硬盘」即可。
+  // 编码、互斥、DiskIO 投递或事务确认异常时就地回执，避免让一条管理员命令经
+  // acknowledged runner 进入无休止重投。已发布的 LRU 最终值与未 ACK revision
+  // 会留在主线程，并在幂等重试或 DiskIO Worker 重建后重放；成功文案则必须等
+  // 本命令自己的单领域 flush 与精确 ACK。
   let outcome: WhiteMutationOutcome;
   try {
     outcome = await runProtectedIdentityMutation(
-      async (): Promise<WhiteMutationOutcome> => {
+      (): WhiteMutationOutcome => {
+        // 授权与成员关系写入在同一个同步临界区线性化：目标解析或前序策略修改
+        // 等待期间，超级管理员可能已经撤掉发起人的 isCanWhiteOther，不能沿用
+        // handler 入口那份陈旧快照继续扩张白名单。
+        if (
+          !actorIsSuperAdmin &&
+          (actor === undefined ||
+            !hasWhitelistPermission(actor.id, "isCanWhiteOther"))
+        ) {
+          return { kind: "unauthorized" };
+        }
         if (enabled && isUserBlocked(target.id)) return { kind: "blocked" };
         return {
           kind: "updated",
-          result: await setWhitelistMembership({ id: target.id, enabled }),
+          result: setWhitelistMembership({
+            id: target.id,
+            enabled,
+            meta: enabled ? identityMetadataFromCachedUser(target) : undefined,
+          }),
         };
       }
     );
+    if (outcome.kind === "updated") {
+      await confirmWhitelistEntryPersisted(
+        target.id,
+        !outcome.result.changed
+      );
+    }
   } catch (error: unknown) {
     logger.error(
       `Failed to persist the whitelist membership change for identity ${target.id}:`,
@@ -140,6 +178,16 @@ export async function handleWhiteCommand(
     await sendCommandMessage({
       chatId,
       text: WHITE_COMMAND_TEXTS.mutationFailed,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+  if (outcome.kind === "unauthorized") {
+    await sendCommandMessage({
+      chatId,
+      text: WHITE_COMMAND_TEXTS.rejection(
+        actor ? formatUserLabel(actor) : "哪个杂鱼"
+      ),
       replyToMessageId: messageId,
     });
     return;
@@ -155,8 +203,8 @@ export async function handleWhiteCommand(
   const result: SetWhitelistMembershipResult = outcome.result;
   const targetLabel: string = formatTargetLabel(target);
   // 超级管理员只可能走到 disable 这一支（enable 上面已经拒了）。它删掉的只是
-  // 文件里的历史残留：isWhitelisted 与 getEffectiveWhitelistPermissions 对
-  // SUPER_ADMIN_USER_ID 是无条件的（见 config/whitelist.ts），删完再
+  // 表里的历史残留：isWhitelisted 与 getEffectiveWhitelistPermissions 对
+  // SUPER_ADMIN_USER_ID 是无条件的（见 whitelist.ts），删完再
   // /permission query 仍会打印全开。因此这一支必须有自己的回执，不能说成
   // 「已经从白名单里踢出去啦」。
   const replyText: string = isSuperAdminTarget

@@ -12,7 +12,7 @@
 
 ## デプロイ形態
 
-webhook と外部 database を使わない、単一インスタンスのロングポーリングプロセスです。永続化はすべてローカルファイルを使います。1 インスタンスはおよそ 15 個以下の active group を推奨します。主な bottleneck は 1 つの Bot API、AI provider の quota、メディア throughput です。ハードウェアの目安はルート README の「クイックスタート」を参照してください。
+webhook と外部 database service を使わない、単一インスタンスのロングポーリングプロセスです。identity policy はローカル SQLite、その他の永続化は data root 内の file を使います。1 インスタンスはおよそ 15 個以下の active group を推奨します。主な bottleneck は 1 つの Bot API、AI provider の quota、メディア throughput です。ハードウェアの目安はルート README の「クイックスタート」を参照してください。
 
 ### systemd の例
 
@@ -36,13 +36,11 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` を container の一時 layer に置かないでください。
+データルートはデプロイツールで事前作成します：`sudo install -d -o copy-ninjia -g copy-ninjia -m 0750 /var/lib/copy-ninjia`。container では同じディレクトリを persistent volume として mount し、host または init container で owner を設定します。`memory/` と `database/` を container の一時 layer に置かないでください。
 
-この permission gate を含む版へ既存 deployment を更新する前に、すべての instance を停止して手動 migration します：`sudo chown -R copy-ninjia:copy-ninjia /var/lib/copy-ninjia && sudo find /var/lib/copy-ninjia -type d -exec chmod 0750 {} +`。program は data root と `logs/`、`memory/` を `0750` で作成し、runtime UID の所有であることを検証し、3 path のシンボリックリンクを拒否します。`config/` は project tree 内の deployment input で、独立した runtime data root の一部ではありません。ただし `/white` と `/permission` は `whitelist.json` を atomic rewrite するため、runtime user はこの directory で一時 file を作成して rename できる必要があります。その他の設定 file は read-only のままで構いません。実行中に `whitelist.json` を外部編集すると、次の authorization command は上書きを拒否します。停止中に再起動して新しい file から cache を作り直してください。既存 data-root directory が `0750` より広い場合は起動を拒否し、暗黙の chmod は行いません。必要なら実際の owner/group に置き換え、runtime user の書き込み権限を維持してください。
+program は root・`logs/`・`memory/`・初期 `database/` を `0750` で作り、4 path の symlink を拒否します。root・`logs/`・`memory/` は runtime UID 所有かつ `0750` 以下でなければなりません。identity migration は `database/` を `02770`、主 DB と WAL/SHM を `0660` にします。この directory は runtime UID 所有、または deployment account 所有でも group が runtime の有効 group で完全な `rwx` を持つ場合だけ許可されます。data root 全体へ再帰的に `chmod 0750` してはいけません。SQLite が sidecar を作るための group write を失います。`config/` は project tree 内の read-only deployment input であり、identity policy はもうここから load も write back もしません。
 
-`/unblock all` を削除する release への upgrade は strict configuration migration です。すべての instance を停止し、`config/whitelist.json` を worktree 外へ backup して、inventory・owner/mode・SHA-256 を記録します。各 entry から `isCanUnBlockAll` を手作業で削除し、現行の strict schema で parse できること、allowlist（`SUPER_ADMIN_USER_ID` を含む）と静的・動的 blocklist に交差がないことを確認します。期待する owner/mode を復元してから起動してください。旧 field は互換読込せず意図的に拒否するため、この変更は MAJOR release として扱います。backup と検証の出力に allowlist の内容を含めてはいけません。
-
-プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
+プロセス crash や非ゼロ終了は `Restart=on-failure` に再起動させます。認証待ち状態、ロックダウン timer、identity write-through、AI メモリ、未確認の Telegram update は [04 実行時の正式な不変条件](04-invariants.md#永続化) の復元 semantics に従って継続します。
 
 ## データルート
 
@@ -97,17 +95,20 @@ WantedBy=multi-user.target
   - **バックアップ**：user ID と timestamp を含むため機密データとして扱う。
     深夜をまたぐ処理中 query のため東京暦日 3 日分を保持。完全な再配信は再追記せず、
     履歴は user ごとの最新値へ compact し、1 chat/day は最新 250,000 人まで保持。
-- **`memory/blocklist/blocklist.json`**
-  - **内容**：`/block` の正式な恒久リスト（ユーザー ID とブロック時刻）。
-  - **バックアップ**：必須。失うと全員のブロックが解除されたのと同じです。
-    通常の解除は `/unblock` を使い、緊急の手編集は停止中に正しい JSON を保って
-    行います。破損時は末尾を切り詰めず**起動を拒否**し、キーはそのまま復元できる
-    10 進 ID でなければなりません。
-- **`memory/blocklist/removals.json`**
-  - **内容**：未完了のチャット別 BAN task を持つ durable outbox。
-  - **バックアップ**：リストの複製ではありません。`blocklist.json` と
-    `state.json` と同じ整合点でバックアップします。起動時に正式リストと
-    チャット状態で filter して再投入し、task の着地後に削除。
+- **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
+  - **内容**：schema v3 identity database。`whitelist_entries` と `blocklist_entries` は
+    allowlist / blocklist の正式表、`pending_blocked_removals` は未完了の chat 別 BAN
+    outbox、`storage_metadata` は唯一の schema version を保持します。Drizzle migration
+    journal は対応する lineage と厳密に一致しなければなりません。
+  - **バックアップ**：必須です。blocklist を失えば恒久 BAN がすべて解除され、outbox を
+    失えば未完了処置が抜けます。Bot 停止後、主 DB とその時点で存在する WAL/SHM を同じ
+    consistency set として worktree 外へ copy し、owner/mode と SHA-256 を記録します。
+    text editor や場当たり的な SQL で業務 row を手編集してはいけません。schema migration
+    script は SQLite serialization で別の外部 backup を作成し検証します。
+  - **復元**：Disk I/O Worker が唯一の database owner です。起動時は integrity、JSONB、
+    schema、migration lineage、row codec、allowlist/blocklist の非交差を検証してから、
+    count と pending outbox だけを main thread へ返します。失敗時は起動を拒否し、空 DB の
+    作成、row の破棄、silent degradation は行いません。
 - **`memory/ad-detected/sample.json`**
   - **内容**：広告判定ヒットの生サンプル。時刻、メッセージ ID と本文、判定理由、
     引用/返信コンテキストを含む。
@@ -127,80 +128,70 @@ WantedBy=multi-user.target
   - **内容**：単一インスタンスロック。
   - **バックアップ**：バックアップも手動編集もしない。
 
-`memory/` 直下にはファイルを置かず、7 ドメインがそれぞれ 1 つのサブディレクトリを所有します。起動復元は `ai/`、`stickers/`、`luck/`、`anti-raid/`、`blocklist/` を必要に応じて作成し、`ad-detected/` は最初の広告検出ヒット後、`joinlog/` は最初の入室事実または query 時にだけ現れます。起動復元は `joinlog/` を scan しません。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、当日の原子 snapshot が成功した後だけ旧日を清掃します。
+`memory/` 直下にはファイルを置かず、6 domain がそれぞれ 1 つの subdirectory を所有し、identity policy は別の `database/` に置きます。起動復元は `ai/`、`stickers/`、`luck/`、`anti-raid/` を必要に応じて作成し、`ad-detected/` は最初の hit 後、`joinlog/` は最初の入室事実または query 時にだけ現れます。起動復元は `joinlog/` を scan しません。物理上の `anti-raid/<day>.json` は単純な active 一覧ではなく追記ログです。作成・変更時に完全 snapshot を追加し、決着時に同じ key の `null` tombstone を追加し、復元時に履歴を現在 active な Challenge へ畳み込みます。停止が東京日付をまたいだ場合、起動時に最新旧日を厳格に読み、当日の記録を新しい値として重ねます。旧日破損時はどちらも書き換えず復元を拒否し、当日の原子 snapshot が成功した後だけ旧日を清掃します。
 
 `joinlog/` の query は `[since, now]` を覆う最大 2 個の chat/day file を読み、window 内で user ごとの最後の入室だけを返します。3 日目の保持は 23:59 に採取され、深夜を越えて Worker が処理する in-flight query 専用です。冗長履歴 10,000 件または新規追記 4 MiB で compact を評価し、512 KiB 以上回収できる場合だけ atomic rewrite します。parse 可能でも schema が不正な file は byte を変えずその read/write を拒否し、末尾の truncate 断片だけ append layer が修復できます。
 
 ### `memory/` の補助ファイルとプロセス内限定状態
 
-- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。`ai/`、`stickers/`、`luck/` は起動時に `*.tmp` を清掃します。`blocklist/` の 2 owner は自分の `.blocklist.json.*.tmp` / `.removals.json.*.tmp` prefix だけを清掃し、`ad-detected/` は最初の書き込み前に `.sample.json.*.tmp`、`joinlog/` は当日の directory を最初に接管するとき `*.tmp` を清掃します。現在の `anti-raid/` 復元はこの種のファイルを無視しますが、自動削除はしません。復元には使われないため、Bot を停止し、名前が原子書き込み形式へ厳密に一致すると確認した後だけ孤児として削除できます。
+- 原子的な置換では一時的に `.<対象ファイル名>.<pid>.<uuid>.tmp` を作り、`fsync + rename` 後に消します。両者の間で hard kill された場合だけ残る可能性があります。`ai/`、`stickers/`、`luck/` は起動時に `*.tmp` を清掃し、`ad-detected/` は最初の書き込み前に `.sample.json.*.tmp`、`joinlog/` は当日の directory を最初に接管するとき `*.tmp` を清掃します。現在の `anti-raid/` 復元はこの種のファイルを無視しますが、自動削除はしません。復元には使われないため、Bot を停止し、名前が原子書き込み形式へ厳密に一致すると確認した後だけ孤児として削除できます。`storage.sqlite-wal` と `storage.sqlite-shm` は通常の SQLite sidecar であり、孤児一時 file として削除してはいけません。
 - `memory/ai/<chatId>.json.<timestamp>.<uuid>.corrupt` と `memory/stickers/<pack>.json.<timestamp>.<uuid>.corrupt` は JSON を parse できず一意名で隔離されたファイルです。通常復元の対象外で、自動削除もしません。同じ元 path が再び壊れた場合は旧証拠を上書きせず新しい隔離件を残します。parse はできても現行 version=1 schema に合わないファイルは隔離せず起動を拒否し、[06](06-modification-guide.md#永続化-schema-の変更) に従う手動 migration が必要です。
 - Challenge timer、広告検出の admission queue / deduplication Set、Telegram member/admin の短期 cache はプロセス内だけに存在し、対応ファイルはありません。
 
-Bot 停止中または storage snapshot の整合境界で、データルート全体をバックアップします。`memory/` は機密データとして扱ってください。単一 tenant デプロイ基準では file mode が緩い `0644` です。詳細は [04](04-invariants.md#永続化) を参照し、アクセス制御はデータルートの owner・permission と host account の隔離で行います。
+Bot 停止中または storage snapshot の整合境界でデータルート全体をバックアップし、SQLite 主 DB と存在する sidecar は同一時点から取得します。`memory/` と `database/` は機密データとして扱ってください。単一 tenant 基準では memory file が `0644`、DB と sidecar が `0660` です。詳細は [04](04-invariants.md#永続化) を参照し、アクセス制御は top-level directory の owner/group/mode と host account の隔離で行います。
 
-### `removals.json` v1 → v2
+## Identity Storage Migration
 
-outbox v1 から v2 へ更新する前に Bot を停止し、手動で migration します。新版は v1 を厳密に拒否し、runtime 互換や自動書き換えを行いません。ファイルが存在しない場合、または既に v2 の場合は不要です。データルートを current directory として次を実行します。
+runtime は旧形式の互換 path を持たず、database を自動作成しません。migration 前に Bot を停止して inactive を確認します。失敗時は外部 backup と現場を保全し、新版を起動せず、`config_example/` で実 input を上書きしてはいけません。
+
+### 旧 JSON → SQLite
+
+`config/whitelist.json`、`config/blocklist.json`、および任意の `memory/blocklist/` を使う deployment は次の順で migration します。
 
 ```bash
-outbox=memory/blocklist/removals.json
-backup=memory/blocklist/removals.json.v1.bak
-candidate=memory/blocklist/removals.json.v2
-cp -a "$outbox" "$backup"
-jq -e '
-  if .version != 1 or (.entries | type) != "array" then
-    error("expected removals.json version=1")
-  else
-    .version = 2
-    | .entries |= map(
-        if .params.probeMembership == true then
-          .params |= del(.userIds, .joinedAt, .announcementMessageId)
-        else
-          .
-        end
-      )
-  end
-' "$outbox" > "$candidate"
-chmod --reference="$outbox" "$candidate"
-chown --reference="$outbox" "$candidate"
-test "$(jq '.entries | length' "$backup")" = "$(jq '.entries | length' "$candidate")"
-diff -u \
-  <(jq -S '[.entries[].params.removalId] | sort' "$backup") \
-  <(jq -S '[.entries[].params.removalId] | sort' "$candidate")
-jq -e '
-  .version == 2
-  and all(.entries[];
-    if .params.probeMembership == true then
-      (.params | has("userIds") or has("joinedAt") or has("announcementMessageId")) | not
-    else
-      (.params.userIds | type == "array" and length > 0)
-    end
-  )
-' "$candidate" > /dev/null
+bun run migrate:identity-storage --check
+bun run migrate:identity-storage --apply
 ```
 
-変更するのは sweep task だけです。`probeMembership: true` は「現在の blocklist でこの chat を走査する」という task なので、固定された `userIds`、`joinedAt`、`announcementMessageId` を削除します。`probeMembership: false` の即時 kick / 広告処置は、空でない `userIds` をそのまま保持しなければなりません。上記コマンドは version 2、entry 数と全 `removalId` の一致、sweep に上記 3 field がないこと、非 sweep に list が残ることも検証します。いずれかが非ゼロ終了した場合は置換しません。すべて通過した後だけ `mv "$candidate" "$outbox"` を実行して新版を deploy します。起動復元に失敗した場合は service を停止して `$backup` を戻し、復元と replay が正常だと確認してからだけ backup を削除します。Release の Compatibility / Migration Notes にもこの手順を必ず記載してください。
+`--check` は旧 allowlist、静的/動的 blocklist、v2 removal outbox を厳密に読み、統合するだけで file を変更しません。`--apply` は `bot.lock` を取得し、Telegram から identity metadata を補完し、inventory・owner/mode・SHA-256 付きの外部 backup を作ります。その後 candidate SQLite の integrity、JSONB、row count、主キー、codec を検証し、`database/storage.sqlite` を atomic publish してからだけ 3 つの旧構造を削除します。script が表示する外部 backup directory は、起動・permission command・removal replay の検証がすべて終わるまで保持します。
 
-まだ `config/blocklist.json` を使う旧版から更新する場合、runtime 互換分岐は残しません。Bot を停止し、旧ファイルと既存の `memory/blocklist/` をバックアップしてから、旧ファイルを `memory/blocklist/blocklist.json` へ手動移動します。`removals.json` と結合してはいけません。前者は「誰を恒久的にブロックすべきか」、後者は「どのチャット別処置が未完了か」だけを表します。バックアップと移動先 JSON の一致を確認してから再起動してください。
+新規 deployment も同じ明示境界を通ります。[01 セットアップ](01-getting-started.md#identity-database-の初期化) に従って一時的な空の旧 input 2 件を作り、`--apply` を実行します。起動は database 欠落を「空 policy」と推測せず、migration も既存 target を上書きしません。
+
+### SQLite schema v2 → v3
+
+すでに JSONB schema v2 を使う deployment は、Bot 停止中に次を実行します。
+
+```bash
+bun run migrate:whitelist-permission -- --apply
+```
+
+script は対応する v2 migration lineage だけを受け入れます。最初に SQLite serialization で system temporary directory へ `0600` の外部 backup を作り、hash と integrity を検証してから allowlist permission を schema v3 へ上げます。未知 lineage、不正 row、allowlist/blocklist の交差、transaction failure は元のまま拒否します。v3 に対して実行した場合は strict validation だけを行い、migration 不要と報告します。Release の Compatibility / Migration Notes には実行した migration、backup location、restore 手順、permission 要件を記載します。
 
 ## 起動失敗の調査
 
 起動失敗は**意図的な fail-fast**で、原因を含みます。検査を迂回せず、原因に合わせて対応してください。
 
 - **パス付きでデータルート事前検査が失敗**
-  - **原因**：data root・`memory`・`logs` がシンボリックリンク、mode が `0750`
-    より広い、ディレクトリへ書き込めない、または filesystem が fsync、hard link、
-    アトミック rename をサポートしない。
-  - **対応**：全 instance を停止し、owner/group を修正して
-    `chmod 0750 <data-root>` を実行。それでも失敗する場合は、必要な semantics を
-    持つ local filesystem を使用。
+  - **原因**：data root・`memory`・`logs`・`database` が symlink、最初の 3 path が
+    `0750` より広い、`database/` が `0770` より広いか collaboration group で書けない、
+    directory が書込不能、または filesystem が fsync、hard link、atomic rename を
+    support しない。
+  - **対応**：全 instance を停止し、directory ごとに owner/group/mode を修正します。
+    root・`memory/`・`logs/` は `0750`、`database/` は deployment model に応じて
+    `0750` または `02770` を使います。解決しなければ必要な semantics を持つ local
+    filesystem を使用します。
 - **`bot.lock` が起動を拒否**
   - **原因と対応**：次の section を参照。
 - **config schema 検証失敗**
   - **原因**：`config/*.json` が不正。
   - **対応**：指摘された field を修正。mood の重みは合計 100、天気・時間帯の倍率は
     100 以下、スタンプパックは最大 5 個。
+- **identity database が欠落、または validation failure**
+  - **原因**：migration 未実行、`storage.sqlite` が書込不能、integrity/JSONB/schema/
+    migration lineage 不正、row codec failure、または同じ identity が両 list に存在。
+  - **対応**：Bot を停止したまま [Identity Storage Migration](#identity-storage-migration) を完了または
+    rollback します。同一 consistency point の DB と sidecar を復元し、collaboration group
+    permission を直してから起動します。空 DB を作ったり失敗 row を削除してはいけません。
 - **state の 2 コピーが両方無効**
   - **原因**：schema 変更版をデータ migration なしでデプロイした。
   - **対応**：

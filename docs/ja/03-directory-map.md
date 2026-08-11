@@ -56,10 +56,11 @@
   - **代表的なファイル**：`verification.ts` と `verification/`（`join`/`pending`/`terminal`/`disable` の 4 区分）、`lockdown.ts`、`replyAdmission.ts`、
     `adDetectAdmission.ts`。
 - **`packages/config/`**
-  - **責務**：`config/*.json` の厳密な schema。allow/blocklist は起動時、
-    その他は遅延ロードし、機能単位の可用性も判定。
-  - **代表的なファイル**：`whitelist.ts`、`blocklist.ts`、`stickers.ts`、
-    `adSamples.ts`、`readiness.ts`。
+  - **責務**：deployment `config/*.json` の厳密 schema と process snapshot、feature 単位の readiness 判定。identity policy はここに置きません。
+  - **代表的なファイル**：`telegram.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
+- **`packages/database/`**
+  - **責務**：identity policy SQLite schema、codec、Drizzle interaction boundary。runtime handle は Disk I/O Worker だけが owner です。
+  - **代表的な path**：`schema/`、`codec/identity.ts`、`interact/identity.ts`。
 - **`packages/libs/`**
   - **責務**：アトミックファイル、上限付き I/O、並行処理ツールなど、
     ドメイン非依存の基盤。
@@ -68,7 +69,7 @@
 - **`packages/workers/`**
   - **責務**：3 つの Worker のスレッド内実装。
   - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
-    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
+    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/identityDatabase.ts`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
@@ -81,12 +82,12 @@
 - **`packages/infra/`**
   - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
     logger、メインスレッド側 I/O proxy。
-  - **代表的なファイル**：`telegram/`、`diskIO.ts`、`joinLog.ts`、
-    `workerSupervisor.ts`。
+  - **代表的なファイル**：`telegram/`、`diskIO.ts`、`identityStorage.ts`、
+    `supervisedWorker.ts`、`workerSupervisor.ts`。
 - **`packages/infra/blocklist/`**
   - **責務**：メインスレッド側ブロックリスト基盤。identity 判定、同期 membership、
     durable outbox、チャット掃除に分割。
-  - **代表的なファイル**：`identities.ts`、`membership.ts`、`outbox.ts`、`sweep.ts`。
+  - **代表的なファイル**：`membership.ts`、`outbox.ts`、`sweep.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
   - **責務**：データルート事前検査、インスタンスロック、業務 state facade、注入可能な `state.json` 永続化境界、起動時の清掃。
   - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`。
@@ -106,8 +107,8 @@
   - **責務**：`packages/` と対応する Bun 単体テスト。
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
-  - **責務**：リポジトリ自己検査と性能 benchmark。
-  - **代表的なファイル**：`checkProjectConventions.ts`、`perf/joinLog.ts`。
+  - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
+  - **代表的なファイル**：`checkProjectConventions.ts`、`migrateIdentityStorageToSqlite.ts`、`migrateWhitelistPermission.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`。
 
 ## 新しいコードの配置判断
 

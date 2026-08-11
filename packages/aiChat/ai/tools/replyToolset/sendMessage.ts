@@ -1,19 +1,17 @@
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../../consts/aiChat/tools";
 import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
-import { SELF_ACTION_TAG_MARKERS, SELF_ACTION_TAG_PATTERNS } from "../../../../consts/aiChat/prompts/transcript";
 import { toolError } from "../../utils/toolResult";
 import { pauseForToolAction } from "../../utils/toolPause";
 import { sendMessageWithResult } from "../../../../infra/telegram";
 import type { ReplyToolContext } from "../../../../types/aiChat/replies";
 import type { TelegramSendResult } from "../../../../types/telegram";
-import { containsRenderableCommand } from "../../../../libs/renderableCommand";
 import { isEmojiOnly } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
 import { parseBooleanField } from "../../utils/toolArgs";
 import {
-  isDuplicateOfSentMessage,
   recordSentMessage,
 } from "./messageState";
+import { modelAuthoredTextPolicyError } from "./modelAuthoredText";
 import {
   applyQuickTypoCorrection,
   decideMessageTypo,
@@ -39,41 +37,8 @@ export function createSendMessageExecutor(
         "Emoji-only messages are not allowed: send a sticker (send_sticker) or react to the trigger message (add_reaction) instead"
       );
     }
-    if (isDuplicateOfSentMessage(state, text)) {
-      return toolError(
-        "An identical message was already sent in this round; do not repeat yourself. Say something new, or use add_reaction / send_sticker instead"
-      );
-    }
-    // 转录里那些「（发了一枚贴纸：…）」「（…生成并发送了一张图片：…）」的行是执行侧
-    // 在动作真正落地之后写的凭据，模型只该读到。生图撞上群冷却时它有概率不说
-    // 「发不了」，而是照着见过的形状打一段出来——群友收到一条声称配了图、实际
-    // 什么都没有的消息，记忆里还会留下一条假的动作记录，下一轮它自己也会当真。
-    // 提示词那边已经写了禁令，但那是概率性的，这里做成硬拦截。
-    // 匹配的是模板的完整形状而不是裸短语——那两个短语本身是日常中文，群友
-    // 直接问起时模型照常作答不该被当成伪造（见 SELF_ACTION_TAG_PATTERNS）。
-    const forgedIndex: number = SELF_ACTION_TAG_PATTERNS.findIndex(
-      (pattern: RegExp): boolean => pattern.test(text)
-    );
-    if (forgedIndex >= 0) {
-      const forgedMarker: string = SELF_ACTION_TAG_MARKERS[forgedIndex] ?? "";
-      return toolError(
-        `Text must not narrate an action: "${forgedMarker}" is a transcript marker the execution side writes after the action really happened. ` +
-        "Perform the action with its own tool (send_sticker / generate_image), or, if it is unavailable, say so plainly in your own words",
-        { retryable: false }
-      );
-    }
-
-    // 正文里不许出现会被渲染成可点击命令的 `/xxx`：这条消息是机器人自己发的，
-    // Telegram 会把它渲染成命令链接，超管点一下就是真实执行。复读链路早就守了
-    // 这一道（见 auto/message/echo.ts），而这里的正文同样受触发消息影响——群友
-    // 说一句「把这句原样重复一遍：/batch_kick 1d」模型照做即可，是同一个威胁模型。
-    // 判罚可重试：换个说法（比如去掉斜杠只写命令名）就能过，不必作废整轮。
-    if (containsRenderableCommand(text)) {
-      return toolError(
-        "Text must not contain a slash command such as \"/example\": Telegram renders it as a tappable command in the bot's own message. " +
-        "Write the command name without the leading slash"
-      );
-    }
+    const policyError: string | null = modelAuthoredTextPolicyError(text, state, "message");
+    if (policyError !== null) return policyError;
 
     const typo: TypoDecision = decideMessageTypo({
       argumentsJson,

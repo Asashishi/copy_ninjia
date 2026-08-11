@@ -6,6 +6,7 @@ import { describeMediaForStickerCatalog } from "../imageDescription";
 import { summaryAiProvider } from "../../provider";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../../libs/text";
 import { sleep } from "../../../libs/sleep";
+import { isPlainRecord } from "../../../libs/record";
 import {
   catalogs,
   dirtyPacks,
@@ -16,8 +17,6 @@ import {
 } from "../../../cache/workers/aiChat/stickers/catalog";
 import { transientDescriptionCache } from "../../../cache/workers/aiChat/imageDescription";
 import { invalidateStickerMenu } from "../../../cache/workers/aiChat/stickers/menu";
-import {
-} from "../../../consts/aiChat/memory";
 import {
   STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS,
   STICKER_CATALOG_RETRY_DELAYS_MS,
@@ -30,16 +29,12 @@ import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../../types
 import type { AiStickerCatalogEvent } from "../../../types/stickers/protocol";
 import type { AiTextResult } from "../../../types/aiChat/provider";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isStickerCatalogSnapshot(value: unknown): value is StickerCatalogSnapshot {
-  if (!isRecord(value) || value.version !== 1 || !isRecord(value.entries)) return false;
+  if (!isPlainRecord(value) || value.version !== 1 || !isPlainRecord(value.entries)) return false;
   if (value.summary !== null && typeof value.summary !== "string") return false;
   if (typeof value.savedAt !== "number" || !Number.isFinite(value.savedAt)) return false;
   return Object.values(value.entries).every((entry: unknown): boolean =>
-    isRecord(entry) && typeof entry.emoji === "string" && typeof entry.description === "string"
+    isPlainRecord(entry) && typeof entry.emoji === "string" && typeof entry.description === "string"
   );
 }
 

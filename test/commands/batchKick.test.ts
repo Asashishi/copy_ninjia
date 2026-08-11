@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../packages/consts/identityStorage";
 import type { JoinLogRecord } from "../../packages/types/diskIO/storage";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
@@ -18,15 +19,19 @@ const readRecentJoinLog = mock(
   async (..._args: unknown[]): Promise<readonly JoinLogRecord[]> => []
 );
 const loggerError = mock((..._args: unknown[]): void => {});
+const prefetchIdentityPolicies = mock(
+  async (_ids: readonly number[]): Promise<boolean> => true
+);
 
-// 1 是超级管理员：不在 config/whitelist.json 里，但由 packages/config/whitelist.ts
+// 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
 mock.module("../../packages/config/telegram", () => ({ SUPER_ADMIN_USER_ID: 1 }));
-mock.module("../../packages/config/whitelist", () => ({
+mock.module("../../packages/whitelist", () => ({
   isWhitelisted: (id: number): boolean => id === 1 || id === 100,
   hasWhitelistPermission: (id: number): boolean => id === 1,
 }));
 mock.module("../../packages/infra/blocklist/membership", () => ({ isUserBlocked }));
+mock.module("../../packages/infra/identityStorage", () => ({ prefetchIdentityPolicies }));
 mock.module("../../packages/infra/blocklist/sweep", () => ({
   requestBlocklistResweep,
   sweepBlockedMembers,
@@ -91,9 +96,11 @@ beforeEach(() => {
     sweepBlockedMembers,
     readRecentJoinLog,
     loggerError,
+    prefetchIdentityPolicies,
   ]) {
     mocked.mockClear();
   }
+  prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => true);
   readRecentJoinLog.mockImplementation(async (): Promise<readonly JoinLogRecord[]> => []);
   probeChatMembership.mockImplementation(
     async (): Promise<boolean | undefined> => true
@@ -341,5 +348,68 @@ describe("/batch_kick", () => {
     expect(sweepBlockedMembers).toHaveBeenCalledWith(-1001);
     expect(lastReplyText()).toContain("踢出 0");
     expect(lastReplyText()).toContain("查询或请求失败 1");
+  });
+});
+
+describe("身份预取与批次消费必须交错", () => {
+  test("每块预取严格小于身份 LRU 容量，且逐块与消费交错", async () => {
+    const records: { userId: number; joinedAt: number }[] = [];
+    for (let index: number = 0; index < IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 3; index++) {
+      records.push({ userId: 1_000 + index, joinedAt: 1 });
+    }
+    readRecentJoinLog.mockResolvedValueOnce(records);
+    const prefetchedAtCall: number[] = [];
+    prefetchIdentityPolicies.mockImplementation(
+      async (ids: readonly number[]): Promise<boolean> => {
+        prefetchedAtCall.push(kickChatMemberWithOutcome.mock.calls.length);
+        expect(ids.length).toBeLessThanOrEqual(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
+        return true;
+      }
+    );
+
+    await handleBatchKickCommand(context());
+
+    // 一次全量预取的话第二块的 id 会把第一块整块挤出 LRU，轮到它们时白名单
+    // 管理员会按冷未命中被踢出（见 consts/identityStorage.ts）。
+    expect(prefetchIdentityPolicies).toHaveBeenCalledTimes(2);
+    expect(prefetchedAtCall[0]).toBe(0);
+    // 第二次预取发生在第一块**已经消费完**之后，而不是一开始就全部取完。
+    expect(prefetchedAtCall[1]).toBe(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
+    expect(lastReplyText()).toContain(`的 ${records.length} 条入群记录中的 ${records.length} 条`);
+  });
+
+  test("冷读失败时一个人都不动，并如实回执", async () => {
+    readRecentJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
+    prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => false);
+
+    await handleBatchKickCommand(context());
+
+    // 缺正/负结论时不能按「不在白名单」处置：那正是白名单管理员被误踢的路径。
+    expect(probeChatMembership).not.toHaveBeenCalled();
+    expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
+    expect(lastReplyText()).toContain("一个人都没动");
+  });
+
+  test("中途冷读失败时只报已扫描的部分，并说明剩余没动", async () => {
+    const records: { userId: number; joinedAt: number }[] = [];
+    for (let index: number = 0; index < IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 3; index++) {
+      records.push({ userId: 1_000 + index, joinedAt: 1 });
+    }
+    readRecentJoinLog.mockResolvedValueOnce(records);
+    let call: number = 0;
+    prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => {
+      call++;
+      return call === 1;
+    });
+
+    await handleBatchKickCommand(context());
+
+    expect(kickChatMemberWithOutcome).toHaveBeenCalledTimes(
+      IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
+    );
+    expect(lastReplyText()).toContain(
+      `的 ${records.length} 条入群记录中的 ${IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES} 条`
+    );
+    expect(lastReplyText()).toContain("剩下的记录一条都没动");
   });
 });

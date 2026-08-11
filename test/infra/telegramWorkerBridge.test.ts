@@ -23,6 +23,13 @@ const requestMainThread = mock(async (
 const rawSendMessage = mock(async (..._args: unknown[]): Promise<unknown> => ({ message_id: 18 }));
 const rawGetChat = mock(async (..._args: unknown[]): Promise<unknown> => ({ id: -1001, type: "supergroup" }));
 const mainSendPhoto = mock(async (..._args: unknown[]): Promise<unknown> => ({ message_id: 19 }));
+const actionSendMessage = mock(async (
+  params: { onSent?: (messageId: number) => void }
+): Promise<number> => {
+  params.onSent?.(88);
+  return 88;
+});
+const deleteMessageAfter = mock((..._args: unknown[]): void => {});
 
 mock.module("../../packages/libs/workerDuplex", () => ({ requestMainThread }));
 mock.module("../../packages/infra/telegram/mainClient", () => ({
@@ -36,8 +43,15 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
     },
   },
 }));
+mock.module("../../packages/infra/telegram/actions/messages", () => ({
+  sendMessage: actionSendMessage,
+}));
+mock.module("../../packages/infra/telegram/actions/messageLifecycle", () => ({
+  deleteMessageAfter,
+}));
 
-const { workerTelegramApi } = await import("../../packages/infra/telegram/workerClient");
+const { sendTemporaryMessageFromMain, workerTelegramApi } =
+  await import("../../packages/infra/telegram/workerClient");
 const {
   handleAiWorkerTelegramRequest,
   handleAntiRaidWorkerTelegramRequest,
@@ -49,6 +63,8 @@ beforeEach((): void => {
   rawSendMessage.mockClear();
   rawGetChat.mockClear();
   mainSendPhoto.mockClear();
+  actionSendMessage.mockClear();
+  deleteMessageAfter.mockClear();
 });
 
 describe("Telegram Worker 双工代理", () => {
@@ -76,6 +92,29 @@ describe("Telegram Worker 双工代理", () => {
         },
       },
       signal: controller.signal,
+      transfer: undefined,
+    }]);
+  });
+
+  test("临时提示以组合请求交给主线程认领删除生命周期", async (): Promise<void> => {
+    const signal: AbortSignal = new AbortController().signal;
+
+    await sendTemporaryMessageFromMain({
+      chatId: -1001,
+      text: "temporary",
+      deleteAfterMs: 30_000,
+      signal,
+    });
+
+    expect(duplexRequests).toEqual([{
+      request: {
+        operation: "sendTemporaryMessage",
+        category: "message",
+        chatId: -1001,
+        text: "temporary",
+        deleteAfterMs: 30_000,
+      },
+      signal,
       transfer: undefined,
     }]);
   });
@@ -193,6 +232,34 @@ describe("主线程 Telegram Worker 能力边界", () => {
       category: "query",
       call: { method: "getStickerSet", payload: { name: "pack" } },
     }, signal)).rejects.toThrow("unsupported Telegram capability");
+  });
+
+  test("Anti-Raid 临时提示成功时主线程同步登记固定删除", async (): Promise<void> => {
+    const signal: AbortSignal = new AbortController().signal;
+
+    await expect(handleAntiRaidWorkerTelegramRequest({
+      operation: "sendTemporaryMessage",
+      category: "message",
+      chatId: -1001,
+      text: "warning",
+      deleteAfterMs: 30_000,
+    }, signal)).resolves.toEqual({
+      messageId: 88,
+      sentAt: expect.any(Number),
+    });
+
+    expect(actionSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: -1001,
+      text: "warning",
+      signal,
+      onSent: expect.any(Function),
+    }));
+    expect(deleteMessageAfter).toHaveBeenCalledWith({
+      chatId: -1001,
+      messageId: 88,
+      delayMs: 30_000,
+      batchOnFlush: true,
+    });
   });
 
   test("主线程重新构造 InputFile 后才进入统一 bot.api", async (): Promise<void> => {

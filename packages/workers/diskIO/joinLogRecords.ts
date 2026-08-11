@@ -5,18 +5,14 @@ import { DAY_MS } from "../../consts/diskIO/common";
 import { JOIN_LOG_SNAPSHOT_CHUNK_BYTES } from "../../consts/diskIO/joinLog";
 import type { JoinLogRecord } from "../../types/diskIO/storage";
 import { invalidInput } from "../../libs/inputValidation";
-import { hasExactKeys } from "../../libs/runtimeConfig";
+import { hasExactKeys, isPlainRecord } from "../../libs/record";
 
 /** 与通用追加格式一致的两级缩进，模块初始化一次后供热序列化路径复用。 */
 const ENTRY_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
 const FIELD_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT * 2);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function isJoinLogRecord(value: unknown): value is JoinLogRecord {
-  return isRecord(value) &&
+  return isPlainRecord(value) &&
     hasExactKeys(value, ["userId", "joinedAt"]) &&
     Number.isSafeInteger(value.userId) &&
     (value.userId as number) > 0 &&
@@ -29,7 +25,7 @@ export function assertJoinLogSchema(
   path: string,
   parsed: unknown
 ): asserts parsed is Record<string, JoinLogRecord> {
-  if (!isRecord(parsed)) {
+  if (!isPlainRecord(parsed)) {
     return invalidInput(path, "$", "a JSON object of join records");
   }
   for (const key in parsed) {

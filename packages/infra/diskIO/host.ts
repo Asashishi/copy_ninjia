@@ -1,25 +1,45 @@
 import {
+  DISK_IO_REQUEST_CHANNELS,
+  blocklistIdReadRequests,
   diskIOFlushBarrier,
   diskIORestartThrottle,
   diskIORuntime,
+  identityPolicyReadRequests,
+  joinLogReadRequests,
+  luckSecretRequests,
   pendingFlushFailedDomains,
-  pendingJoinLogReads,
   pendingLoad,
-  pendingLuckSecrets,
+} from "../../cache/main/diskIO";
+import type {
+  DiskIORequestChannel,
+  PendingDiskIORequest,
 } from "../../cache/main/diskIO";
 import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../../consts/workerSupervisor";
+import { DISK_IO_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
+import {
+  DISK_DIAGNOSTIC_FATAL_REBUILD_THRESHOLD,
+  DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES,
+} from "../../consts/diskIO/diagnostics";
 import type {
   DiskBusinessMessage,
+  DiskFlushRequest,
   DiskIOReply,
   DiskIORecoveryTransport,
+  DiskIORequestMessage,
   EnsureLuckSecretRequest,
   JoinLogReadReply,
+  IdentityPoliciesReadReply,
+  BlocklistIdsReadReply,
   LoadRequest,
   LoadedReply,
   ReadJoinLogRequest,
+  ReadIdentityPoliciesRequest,
+  ReadBlocklistIdsRequest,
   RecoveryReplayRequest,
 } from "../../types/diskIO";
+import type { FlushResult } from "../../types/lifecycle";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
+import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
 import {
   acceptDiskIODiagnosticBatch,
@@ -36,7 +56,7 @@ import { safePostDiskIO } from "./transport";
  *
  * 本文件的错误一律走 workers/diskIO/diagnosticSink.ts 的非递归出口，不能
  * 指望被自己转发的日志线程落盘自己的错误，否则是一场递归。这也是 Disk I/O 不复用
- * libs/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）的原因。
+ * infra/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）的原因。
  * @see ../../../docs/cn/04-invariants.md
  */
 
@@ -57,20 +77,93 @@ function signalDiskIOFatal(error: Error): void {
   }
 }
 
-function rejectPendingLuckSecrets(error: Error): void {
-  for (const pending of pendingLuckSecrets.values()) {
+/** 结算一条通道上的全部等待者；Worker 代际失效与 terminate 共用。 */
+export function rejectPendingDiskIORequests<TResult>(
+  channel: DiskIORequestChannel<TResult>,
+  error: Error
+): void {
+  for (const pending of channel.pending.values()) {
     clearTimeout(pending.timer);
     pending.reject(error);
   }
-  pendingLuckSecrets.clear();
+  channel.pending.clear();
 }
 
-function rejectPendingJoinLogReads(error: Error): void {
-  for (const pending of pendingJoinLogReads.values()) {
-    clearTimeout(pending.timer);
-    pending.reject(error);
+/** 一次结算全部通道；漏掉任何一类等待者都会让调用方干等到自己的超时。 */
+function rejectAllPendingDiskIORequests(describe: (label: string) => string): void {
+  for (const channel of DISK_IO_REQUEST_CHANNELS) {
+    rejectPendingDiskIORequests(channel, new Error(describe(channel.label)));
   }
-  pendingJoinLogReads.clear();
+}
+
+interface RequestDiskIOParams<TResult, TRequest extends DiskIORequestMessage> {
+  worker: Worker;
+  channel: DiskIORequestChannel<TResult>;
+  timeoutMs: number;
+  /** 用通道发出的 requestId 组装信封；调用方不自行编号。 */
+  buildRequest: (requestId: number) => TRequest;
+  /** 覆盖文案里的领域名；恢复握手用它区分「恢复期的那一次请求」。 */
+  context?: string;
+}
+
+/**
+ * main -> diskIO 的统一 request/reply 发起点：发号、登记等待者、装超时、投递，
+ * 同步拒收时立刻结算。四个领域此前各自抄了一份这二十来行，超时与拒收文案、
+ * 以及「拒收后要把等待者摘掉」这一步都得逐份维护。
+ */
+function requestDiskIO<TResult, TRequest extends DiskIORequestMessage>({
+  worker,
+  channel,
+  timeoutMs,
+  buildRequest,
+  context,
+}: RequestDiskIOParams<TResult, TRequest>): Promise<TResult> {
+  const label: string = context ?? channel.label;
+  const requestId: number = channel.nextRequestId++;
+  return new Promise((
+    resolve: (value: TResult | PromiseLike<TResult>) => void,
+    reject: (reason?: unknown) => void
+  ): void => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
+      channel.pending.delete(requestId);
+      reject(new Error(`[diskIO] ${label} request timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    channel.pending.set(requestId, { resolve, reject, timer });
+    if (safePostDiskIO(worker, buildRequest(requestId), `${label} request`)) return;
+    channel.pending.delete(requestId);
+    clearTimeout(timer);
+    reject(new Error(`[diskIO] persistence Worker rejected the ${label} request.`));
+  });
+}
+
+interface SettleDiskIOReplyParams<TResult> {
+  channel: DiskIORequestChannel<TResult>;
+  requestId: number;
+  /** Worker 明确报出的领域错误；缺席才看载荷。 */
+  error: string | undefined;
+  /** 已经收窄成本通道结果类型的载荷；缺席按失败结算。 */
+  payload: TResult | undefined;
+}
+
+/**
+ * 用一条回执结算对应等待者。迟到、重复或已超时的 requestId 一律忽略；
+ * Worker 明确报错或没带载荷时按失败结算，绝不把「没读到」解释成空结果。
+ */
+function settleDiskIOReply<TResult>({
+  channel,
+  requestId,
+  error,
+  payload,
+}: SettleDiskIOReplyParams<TResult>): void {
+  const pending: PendingDiskIORequest<TResult> | undefined = channel.pending.get(requestId);
+  if (pending === undefined) return;
+  channel.pending.delete(requestId);
+  clearTimeout(pending.timer);
+  if (error !== undefined || payload === undefined) {
+    pending.reject(new Error(error ?? channel.missingPayload));
+    return;
+  }
+  pending.resolve(payload);
 }
 
 /**
@@ -90,26 +183,16 @@ export function requestLuckSecretFromWorker({
   timeoutMs,
   context,
 }: RequestLuckSecretParams): Promise<LuckReceiptSecret> {
-  const requestId: number = diskIORuntime.nextLuckSecretRequestId++;
-  return new Promise((
-    resolve: (value: LuckReceiptSecret | PromiseLike<LuckReceiptSecret>) => void,
-    reject: (reason?: unknown) => void
-  ): void => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
-      pendingLuckSecrets.delete(requestId);
-      reject(new Error(`[diskIO] luck receipt secret request timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-    pendingLuckSecrets.set(requestId, { resolve, reject, timer });
-    if (safePostDiskIO(
-      worker,
-      { type: "ensureLuckSecret", requestId, day } satisfies EnsureLuckSecretRequest,
-      context
-    )) {
-      return;
-    }
-    pendingLuckSecrets.delete(requestId);
-    clearTimeout(timer);
-    reject(new Error(`[diskIO] persistence Worker rejected the ${context}.`));
+  return requestDiskIO<LuckReceiptSecret, EnsureLuckSecretRequest>({
+    worker,
+    channel: luckSecretRequests,
+    timeoutMs,
+    context,
+    buildRequest: (requestId: number): EnsureLuckSecretRequest => ({
+      type: "ensureLuckSecret",
+      requestId,
+      day,
+    }),
   });
 }
 
@@ -129,27 +212,57 @@ export function requestJoinLogFromWorker({
   now,
   timeoutMs,
 }: RequestJoinLogParams): Promise<readonly JoinLogRecord[]> {
-  const requestId: number = diskIORuntime.nextJoinLogReadRequestId++;
-  return new Promise((
-    resolve: (value: readonly JoinLogRecord[] | PromiseLike<readonly JoinLogRecord[]>) => void,
-    reject: (reason?: unknown) => void
-  ): void => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
-      pendingJoinLogReads.delete(requestId);
-      reject(new Error(`[diskIO] join log request timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-    pendingJoinLogReads.set(requestId, { resolve, reject, timer });
-    const request: ReadJoinLogRequest = {
+  return requestDiskIO<readonly JoinLogRecord[], ReadJoinLogRequest>({
+    worker,
+    channel: joinLogReadRequests,
+    timeoutMs,
+    buildRequest: (requestId: number): ReadJoinLogRequest => ({
       type: "readJoinLog",
       requestId,
       chatId,
       since,
       now,
-    };
-    if (safePostDiskIO(worker, request, "join log read request")) return;
-    pendingJoinLogReads.delete(requestId);
-    clearTimeout(timer);
-    reject(new Error("[diskIO] persistence Worker rejected the join log read request."));
+    }),
+  });
+}
+
+/** 向当前 Disk I/O 代际批量读取两个身份策略表。 */
+export interface RequestIdentityPoliciesParams {
+  worker: Worker;
+  ids: readonly number[];
+  timeoutMs: number;
+}
+
+export function requestIdentityPoliciesFromWorker({
+  worker,
+  ids,
+  timeoutMs,
+}: RequestIdentityPoliciesParams): Promise<IdentityPolicyRawReadResult> {
+  return requestDiskIO<IdentityPolicyRawReadResult, ReadIdentityPoliciesRequest>({
+    worker,
+    channel: identityPolicyReadRequests,
+    timeoutMs,
+    buildRequest: (requestId: number): ReadIdentityPoliciesRequest => ({
+      type: "readIdentityPolicies",
+      requestId,
+      ids,
+    }),
+  });
+}
+
+/** 向当前 Disk I/O 代际读取完整黑名单主键集合。 */
+export function requestBlocklistIdsFromWorker(
+  worker: Worker,
+  timeoutMs: number
+): Promise<readonly number[]> {
+  return requestDiskIO<readonly number[], ReadBlocklistIdsRequest>({
+    worker,
+    channel: blocklistIdReadRequests,
+    timeoutMs,
+    buildRequest: (requestId: number): ReadBlocklistIdsRequest => ({
+      type: "readBlocklistIds",
+      requestId,
+    }),
   });
 }
 
@@ -169,12 +282,8 @@ export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal
   pauseDiskIODiagnosticChannel();
   diskIORuntime.pendingBusinessMessages.clear();
   diskIOFlushBarrier.settleAll("failed");
-  rejectPendingLuckSecrets(new Error(
-    `Persistence Worker became unavailable during recovery: ${reason}`
-  ));
-  rejectPendingJoinLogReads(new Error(
-    `Persistence Worker became unavailable during recovery: ${reason}`
-  ));
+  rejectAllPendingDiskIORequests((): string =>
+    `Persistence Worker became unavailable during recovery: ${reason}`);
   try {
     void Promise.resolve(worker.terminate()).catch((error: unknown): void => {
       writeDiskIODiagnostic("[diskIO] failed to terminate unusable persistence Worker:", error);
@@ -343,6 +452,170 @@ function beginRuntimeRecovery(worker: Worker): void {
   }
 }
 
+interface RecoverDiskIOWorkerOptions {
+  worker: Worker;
+  reason: string;
+  terminateWorker: boolean;
+  cause: "crash" | "diagnostic";
+}
+
+/**
+ * 当前 DiskIO 代际失效后的唯一恢复入口。未捕获异常与诊断连续写盘失败共用同一套
+ * 等待者结算、重启节流、load 握手和镜像重放，避免两条恢复链并行改写宿主状态。
+ */
+function recoverDiskIOWorker({
+  worker,
+  reason,
+  terminateWorker,
+  cause,
+}: RecoverDiskIOWorkerOptions): void {
+  if (diskIORuntime.worker !== worker) return;
+  if (terminateWorker) {
+    writeDiskIODiagnostic(`[diskIO] recycling persistence Worker after ${reason}.`);
+  } else {
+    writeDiskIODiagnostic("[diskIO] persistence Worker errored:", reason);
+  }
+  diskIORuntime.worker = null;
+  diskIORuntime.writable = false;
+  if (diskIORuntime.diagnosticRecycleWorker === worker) {
+    diskIORuntime.diagnosticRecycleWorker = null;
+  }
+  pauseDiskIODiagnosticChannel();
+  if (diskIORuntime.runtimeRecoveryWorker === worker) {
+    diskIORuntime.runtimeRecoveryWorker = null;
+    clearRuntimeRecoveryTimer();
+  }
+  const pendingFlushCount: number = diskIOFlushBarrier.pendingCount();
+  if (pendingFlushCount > 0) {
+    writeDiskIODiagnostic(
+      `[diskIO] ${pendingFlushCount} pending flush(es) lost — persistence Worker became unavailable mid-flush, ` +
+      "their buffered data was not written to disk."
+    );
+    diskIOFlushBarrier.settleAll("failed");
+  }
+  rejectAllPendingDiskIORequests((label: string): string =>
+    `Persistence Worker became unavailable while awaiting the ${label} reply.`);
+  if (terminateWorker) {
+    try {
+      void Promise.resolve(worker.terminate()).catch((error: unknown): void => {
+        writeDiskIODiagnostic("[diskIO] failed to terminate recycled persistence Worker:", error);
+      });
+    } catch (error: unknown) {
+      writeDiskIODiagnostic("[diskIO] failed to terminate recycled persistence Worker:", error);
+    }
+  }
+  const diagnosticRebuilds: number = cause === "diagnostic"
+    ? diskIORuntime.consecutiveDiagnosticRebuilds + 1
+    : diskIORuntime.consecutiveDiagnosticRebuilds;
+  const diagnosticGiveUp: boolean = cause === "diagnostic" &&
+    diagnosticRebuilds >= DISK_DIAGNOSTIC_FATAL_REBUILD_THRESHOLD;
+  const crashGiveUp: boolean = cause === "crash" &&
+    diskIORestartThrottle.shouldGiveUp();
+  if (diagnosticGiveUp || crashGiveUp) {
+    writeDiskIODiagnostic(
+      diagnosticGiveUp
+        ? `[diskIO] diagnostic log persistence required ${diagnosticRebuilds} consecutive Worker rebuilds, ` +
+          "giving up self-healing and forcing a supervised process restart before any more updates are accepted."
+        : `[diskIO] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +
+          `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing and forcing a supervised process restart ` +
+          "before any more updates are accepted."
+    );
+    diskIORuntime.pendingBusinessMessages.clear();
+    for (const listener of diskIORuntime.giveUpListeners) listener();
+    signalDiskIOFatal(new Error("Persistence Worker exhausted its runtime restart budget."));
+    return;
+  }
+  if (cause === "diagnostic") {
+    diskIORuntime.consecutiveDiagnosticRebuilds = diagnosticRebuilds;
+  }
+  diskIORuntime.consecutiveDiagnosticWriteFailures = 0;
+  const next: Worker = createDiskIOWorker();
+  diskIORuntime.worker = next;
+  beginRuntimeRecovery(next);
+}
+
+/**
+ * 诊断故障触发受控重建前只刷业务领域；失败的日志批次仍由主线程 ACK 队列持有，
+ * 不能让通用 flush 先等待它而永远走不到业务刷盘。
+ */
+async function flushBusinessBeforeDiagnosticRecycle(
+  worker: Worker
+): Promise<FlushResult> {
+  let flushId: number | null = null;
+  const result: FlushResult = await diskIOFlushBarrier.begin(
+    (id: number): boolean => {
+      flushId = id;
+      const request: DiskFlushRequest = {
+        type: "flush",
+        flushId: id,
+        scope: "business",
+      };
+      return safePostDiskIO(worker, request, "diagnostic recycle business flush");
+    },
+    DISK_IO_FLUSH_TIMEOUT_MS
+  );
+  if (flushId !== null) pendingFlushFailedDomains.delete(flushId);
+  return result;
+}
+
+/** 日志连续失败达到阈值后先封住业务入口并确保非日志事实 durable，再替换 Worker。 */
+function beginDiagnosticWorkerRecycle(worker: Worker, failureCount: number): void {
+  if (
+    diskIORuntime.worker !== worker ||
+    !diskIORuntime.writable ||
+    diskIORuntime.diagnosticRecycleWorker !== null
+  ) return;
+  diskIORuntime.writable = false;
+  diskIORuntime.diagnosticRecycleWorker = worker;
+  pauseDiskIODiagnosticChannel();
+  void flushBusinessBeforeDiagnosticRecycle(worker).then(
+    (result: FlushResult): void => {
+      if (
+        diskIORuntime.worker !== worker ||
+        diskIORuntime.diagnosticRecycleWorker !== worker
+      ) return;
+      diskIORuntime.diagnosticRecycleWorker = null;
+      if (result !== "flushed") {
+        writeDiskIODiagnostic(
+          `[diskIO] refusing diagnostic-triggered Worker recycle because the business flush ${result}; ` +
+          "forcing a supervised process restart without guessing whether non-log facts are durable."
+        );
+        for (const listener of diskIORuntime.giveUpListeners) listener();
+        stopWorkerAfterLoadFailure(
+          worker,
+          `business flush ${result} before diagnostic-triggered recycle`,
+          true
+        );
+        return;
+      }
+      recoverDiskIOWorker({
+        worker,
+        reason:
+          `diagnostic log persistence failed ${failureCount} consecutive times`,
+        terminateWorker: true,
+        cause: "diagnostic",
+      });
+    },
+    (error: unknown): void => {
+      if (
+        diskIORuntime.worker !== worker ||
+        diskIORuntime.diagnosticRecycleWorker !== worker
+      ) return;
+      diskIORuntime.diagnosticRecycleWorker = null;
+      writeDiskIODiagnostic(
+        "[diskIO] diagnostic-triggered business flush rejected; forcing a supervised process restart:",
+        error
+      );
+      for (const listener of diskIORuntime.giveUpListeners) listener();
+      stopWorkerAfterLoadFailure(
+        worker,
+        "business flush rejected before diagnostic-triggered recycle",
+        true
+      );
+    }
+  );
+}
+
 /** 创建一个落盘 Worker 实例并挂上回执路由与崩溃自愈；不改变 diskIORuntime.worker。 */
 export function createDiskIOWorker(): Worker {
   const w: Worker = new Worker(new URL("../../workers/diskIOWorker.ts", import.meta.url).href);
@@ -351,11 +624,27 @@ export function createDiskIOWorker(): Worker {
     if (diskIORuntime.worker !== w) return;
     const data: DiskIOReply = event.data;
     if (data.type === "diagnosticBatchAccepted") {
-      acceptDiskIODiagnosticBatch(w, data.batchId);
+      if (acceptDiskIODiagnosticBatch(w, data.batchId)) {
+        diskIORuntime.consecutiveDiagnosticWriteFailures = 0;
+        diskIORuntime.consecutiveDiagnosticRebuilds = 0;
+      }
       return;
     }
     if (data.type === "diagnosticBatchRetry") {
-      retryDiskIODiagnosticBatch(w, data.batchId, data.retryAfterMs);
+      const nextFailureCount: number =
+        diskIORuntime.consecutiveDiagnosticWriteFailures + 1;
+      const restart: boolean =
+        nextFailureCount >= DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES;
+      if (!retryDiskIODiagnosticBatch({
+        worker: w,
+        batchId: data.batchId,
+        retryAfterMs: data.retryAfterMs,
+        schedule: !restart,
+      })) return;
+      diskIORuntime.consecutiveDiagnosticWriteFailures = nextFailureCount;
+      if (restart) {
+        beginDiagnosticWorkerRecycle(w, nextFailureCount);
+      }
       return;
     }
     if (data.type === "verificationPersisted") {
@@ -387,6 +676,10 @@ export function createDiskIOWorker(): Worker {
       for (const listener of diskIORuntime.luckAppendStalledListeners) listener(data);
       return;
     }
+    if (data.type === "identityStoragePersisted") {
+      for (const listener of diskIORuntime.identityStoragePersistedListeners) listener(data);
+      return;
+    }
     if (data.type === "flushed" || data.type === "flushFailed") {
       // 失败领域名要落进非递归诊断——Worker 侧的写盘错误按设计只有 console.error，
       // 不带领域名的话运维根本看不出是哪个文件坏了。按领域的**判定**只走下面
@@ -405,32 +698,47 @@ export function createDiskIOWorker(): Worker {
       return;
     }
     if (data.type === "luckSecret") {
-      const pending: { resolve: (secret: LuckReceiptSecret) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; } | undefined = pendingLuckSecrets.get(data.requestId);
-      if (!pending) return;
-      pendingLuckSecrets.delete(data.requestId);
-      clearTimeout(pending.timer);
-      if (data.error !== undefined || data.secret === undefined) {
-        pending.reject(new Error(data.error ?? "Disk I/O Worker returned no luck receipt secret."));
-      } else {
-        pending.resolve(data.secret);
-      }
+      settleDiskIOReply({
+        channel: luckSecretRequests,
+        requestId: data.requestId,
+        error: data.error,
+        payload: data.secret,
+      });
       return;
     }
     if (data.type === "joinLogRead") {
-      const pending: {
-        resolve: (records: readonly JoinLogRecord[]) => void;
-        reject: (error: Error) => void;
-        timer: ReturnType<typeof setTimeout>;
-      } | undefined = pendingJoinLogReads.get(data.requestId);
-      if (!pending) return;
-      pendingJoinLogReads.delete(data.requestId);
-      clearTimeout(pending.timer);
       const reply: JoinLogReadReply = data;
-      if (reply.error !== undefined || reply.records === undefined) {
-        pending.reject(new Error(reply.error ?? "Disk I/O Worker returned no join records."));
-      } else {
-        pending.resolve(reply.records);
-      }
+      settleDiskIOReply({
+        channel: joinLogReadRequests,
+        requestId: reply.requestId,
+        error: reply.error,
+        payload: reply.records,
+      });
+      return;
+    }
+    if (data.type === "identityPoliciesRead") {
+      const reply: IdentityPoliciesReadReply = data;
+      // 两张表缺任意一张都不算有效载荷；合成对象只在都在时构造。
+      const rows: IdentityPolicyRawReadResult | undefined =
+        reply.whitelist === undefined || reply.blocklist === undefined
+          ? undefined
+          : { whitelist: reply.whitelist, blocklist: reply.blocklist };
+      settleDiskIOReply({
+        channel: identityPolicyReadRequests,
+        requestId: reply.requestId,
+        error: reply.error,
+        payload: rows,
+      });
+      return;
+    }
+    if (data.type === "blocklistIdsRead") {
+      const reply: BlocklistIdsReadReply = data;
+      settleDiskIOReply({
+        channel: blocklistIdReadRequests,
+        requestId: reply.requestId,
+        error: reply.error,
+        payload: reply.ids,
+      });
       return;
     }
     // data.type === "loaded"：启动和运行时重建都必须先验证完整恢复结果，
@@ -454,57 +762,17 @@ export function createDiskIOWorker(): Worker {
     void activateDiskIOWorker(w, true);
   };
   w.onerror = (event: ErrorEvent): void => {
-    // 已替换旧实例的迟到/重复错误不能再启动第二条并行重建链。
-    if (diskIORuntime.worker !== w) return;
-    // 落盘线程自己出错时不能再指望它把这条日志落盘，直接走控制台，避免
-    // 自己给自己转发出一场递归。Bun 里 Worker 内部一旦抛出未捕获异常
-    // （同步或 async 均如此，已实测验证）就会直接终止该 Worker 线程，这里
-    // 不需要（实际上也没法）再手动 terminate，直接换一个新实例顶上即可。
-    writeDiskIODiagnostic("[diskIO] persistence Worker errored:", event.message || event.error || event);
-    diskIORuntime.writable = false;
-    pauseDiskIODiagnosticChannel();
-    if (diskIORuntime.runtimeRecoveryWorker === w) {
-      diskIORuntime.runtimeRecoveryWorker = null;
-      clearRuntimeRecoveryTimer();
-    }
-    const pendingFlushCount: number = diskIOFlushBarrier.pendingCount();
-    if (pendingFlushCount > 0) {
-      // 崩溃这一刻若正好卡着 flushDiskIO 的等待：旧实例内存里的 dirty 数据
-      // （上次成功落盘之后攒下的增量）随线程一起没了，新实例读不到、也补不
-      // 回来——不能让 flushDiskIO 的调用方（进程退出前的最后一刷）误以为
-      // 超时=已落盘。这里立即结算这些 flush（而不是干等 timeoutMs 到期），
-      // 并把"这次 flush 实际落空"打进日志，与上面的崩溃日志对齐时间点。
-      writeDiskIODiagnostic(
-        `[diskIO] ${pendingFlushCount} pending flush(es) lost — persistence Worker crashed mid-flush, their buffered data was not written to disk.`
-      );
-      diskIOFlushBarrier.settleAll("failed");
-    }
-    rejectPendingLuckSecrets(
-      new Error("Persistence Worker crashed while loading the daily luck receipt secret.")
-    );
-    rejectPendingJoinLogReads(
-      new Error("Persistence Worker crashed while reading join logs.")
-    );
-    if (diskIORestartThrottle.shouldGiveUp()) {
-      writeDiskIODiagnostic(
-        `[diskIO] persistence Worker restarted ${WORKER_MAX_RESTARTS} times within ` +
-        `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing and forcing a supervised process restart ` +
-        `before any more updates are accepted.`
-      );
-      diskIORuntime.worker = null;
-      diskIORuntime.pendingBusinessMessages.clear();
-      // 放弃之后没有替补 Worker，onDiskIORespawn 不会再跑，任何还在等 durable
-      // 回执的 owner 都不会等到它——各自立刻按失败结算，而不是干等自己那份超时
-      // 到期（那段干等恰好和同一个 fatal 信号触发的停机抢排空预算）。
-      for (const listener of diskIORuntime.giveUpListeners) listener();
-      signalDiskIOFatal(new Error("Persistence Worker exhausted its runtime restart budget."));
-      return;
-    }
-    const next: Worker = createDiskIOWorker();
-    diskIORuntime.worker = next;
-    // 崩溃重建后的第一层恢复：新实例缓存全空，先自己读一次盘拿到最后一次
-    // 成功落盘的状态。
-    beginRuntimeRecovery(next);
+    // Bun 在未捕获异常后已经终止 Worker；这里只复用代际失效与恢复协议，不能再次
+    // terminate。旧实例的迟到/重复错误由 recoverDiskIOWorker 的代际 guard 拒绝。
+    recoverDiskIOWorker({
+      worker: w,
+      reason: event.message || String(event.error || event),
+      terminateWorker: false,
+      cause:
+        diskIORuntime.diagnosticRecycleWorker === w
+          ? "diagnostic"
+          : "crash",
+    });
   };
   return w;
 }

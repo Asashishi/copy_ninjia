@@ -53,10 +53,11 @@
   - **典型文件**：`verification.ts` 与 `verification/`（`join`/`pending`/`terminal`/`disable`
     四段生命周期）、`lockdown.ts`、`replyAdmission.ts`、`adDetectAdmission.ts`。
 - **`packages/config/`**
-  - **职责**：`config/*.json` 的严格 schema；白/黑名单启动加载，其余配置惰性加载，
-    并按功能聚合可用性判定。
-  - **典型文件**：`whitelist.ts`、`blocklist.ts`、`stickers.ts`、`adSamples.ts`、
-    `readiness.ts`。
+  - **职责**：部署 `config/*.json` 的严格 schema、进程快照与按功能聚合的可用性判定；身份策略不在这里。
+  - **典型文件**：`telegram.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`。
+- **`packages/database/`**
+  - **职责**：身份策略 SQLite 的 schema、codec 与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
+  - **典型目录**：`schema/`、`codec/identity.ts`、`interact/identity.ts`。
 - **`packages/libs/`**
   - **职责**：领域无关的基础设施，包括原子文件、有界 I/O 与并发工具。
   - **典型文件**：`flushBarrier.ts`、`linkedQueue.ts`、`acknowledgedBatchQueue.ts`、
@@ -64,7 +65,7 @@
 - **`packages/workers/`**
   - **职责**：三个 Worker 的线程内实现。
   - **典型文件**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`，以及
-    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
+    `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/identityDatabase.ts`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **职责**：模型与能力按所属功能放置，避免共享目录模糊线程和生命周期边界。
   - **典型文件**：`tools/replyToolset/`、`utils/`、`provider.ts`；AI 闲聊的模型收发不在
@@ -74,10 +75,10 @@
   - **典型文件**：`queue.ts`、`bundle.ts`、`classifier.ts`、`disposal.ts`。
 - **`packages/infra/`**
   - **职责**：主线程唯一 Telegram 客户端与出站闸门、Worker 双工宿主、logger 与主线程 I/O 代理。
-  - **典型文件**：`telegram/`、`diskIO.ts`、`joinLog.ts`、`workerSupervisor.ts`。
+  - **典型文件**：`telegram/`、`diskIO.ts`、`identityStorage.ts`、`supervisedWorker.ts`、`workerSupervisor.ts`。
 - **`packages/infra/blocklist/`**
   - **职责**：黑名单主线程基础设施，按身份判定、同步名单、durable outbox 与群清扫拆分。
-  - **典型文件**：`identities.ts`、`membership.ts`、`outbox.ts`、`sweep.ts`。
+  - **典型文件**：`membership.ts`、`outbox.ts`、`sweep.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
   - **职责**：数据根预检、实例锁、业务状态门面、可注入的 `state.json` 持久化边界与启动清理。
   - **典型文件**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`。
@@ -96,8 +97,8 @@
   - **职责**：与 `packages/` 镜像的 Bun 单元测试。
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
-  - **职责**：仓库自检与性能基准脚本。
-  - **典型文件**：`checkProjectConventions.ts`、`perf/joinLog.ts`。
+  - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
+  - **典型文件**：`checkProjectConventions.ts`、`migrateIdentityStorageToSqlite.ts`、`migrateWhitelistPermission.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`。
 
 ## 新代码放置决策
 

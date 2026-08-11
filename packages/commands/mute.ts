@@ -3,15 +3,17 @@ import type { CachedUser } from "../types/chatState";
 import type { MuteChatMemberOutcome, UnmuteChatMemberOutcome } from "../infra/telegram";
 import { muteChatMemberWithOutcome, sendCommandMessage, unmuteChatMemberWithOutcome } from "../infra/telegram";
 import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
-import { isWhitelisted } from "../config/whitelist";
+import { isWhitelisted } from "../whitelist";
 import {
-  MUTE_DURATION_ARG_PATTERN,
-  MUTE_DURATION_UNIT_MS,
   MUTE_MAX_DURATION_MS,
   MUTE_MIN_DURATION_MS,
   MUTE_TARGET_TEXTS,
   UNMUTE_TARGET_TEXTS,
 } from "../consts/commands";
+import {
+  formatDurationCn,
+  parseDurationTokenMs,
+} from "../libs/durationToken";
 import { resolveCommandTarget } from "./targetResolution";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 
@@ -27,11 +29,8 @@ import { hasCommandPermission, resolveCommandActor } from "./commandActor";
  * 导出仅为可测试性。
  */
 export function parseMuteDurationMs(token: string): number | undefined {
-  const match: RegExpExecArray | null = MUTE_DURATION_ARG_PATTERN.exec(token);
-  if (match === null) return undefined;
-  const value: number = Number(match[1]!);
-  const unit: "m" | "h" | "d" = match[2]!.toLowerCase() as "m" | "h" | "d";
-  const durationMs: number = value * MUTE_DURATION_UNIT_MS[unit];
+  const durationMs: number | undefined = parseDurationTokenMs(token);
+  if (durationMs === undefined) return undefined;
   return Math.min(MUTE_MAX_DURATION_MS, Math.max(MUTE_MIN_DURATION_MS, durationMs));
 }
 
@@ -42,9 +41,7 @@ export function parseMuteDurationMs(token: string): number | undefined {
  * 导出仅为可测试性。
  */
 export function formatMuteDuration(durationMs: number): string {
-  if (durationMs % MUTE_DURATION_UNIT_MS.d === 0) return `${durationMs / MUTE_DURATION_UNIT_MS.d} 天`;
-  if (durationMs % MUTE_DURATION_UNIT_MS.h === 0) return `${durationMs / MUTE_DURATION_UNIT_MS.h} 小时`;
-  return `${Math.round(durationMs / MUTE_DURATION_UNIT_MS.m)} 分钟`;
+  return formatDurationCn(durationMs);
 }
 
 /** `/mute` 的用法提示，参数缺失/不合法时统一回这一句。 */
@@ -114,7 +111,7 @@ async function rejectUnrestrictableTarget(
  * 参数形态：时长必填且必须是最后一个 token（`数字+m/h/d`，见
  * parseMuteDurationMs），目标用回复消息、@username 或用户 id 指定（时长带
  * 单位字母、id 是纯数字，两者形态互斥，不会互相抢参数）。仅持有 isCanMute 的
- * 身份可用（超级管理员恒持有，见 config/whitelist.ts）；目标是自己人（白名单
+ * 身份可用（超级管理员恒持有，见 whitelist.ts）；目标是自己人（白名单
  * 边界内的身份，含超级管理员）时拒绝——他们本来就不参与任何自动处置（见
  * antiRaid/memberFacts.ts 的 isProtectedSender），手动命令也不该例外。
  *

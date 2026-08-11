@@ -152,7 +152,7 @@ export function quiesceReactionQueue(): void {
 }
 
 /** drain 超时后的取消阶段：打断 API，结算所有尚未开始的任务。 */
-export function abortReactionQueue(): void {
+function abortReactionQueue(): void {
   reactionQueueRuntime.accepting = false;
   if (!reactionQueueRuntime.controller.signal.aborted) reactionQueueRuntime.controller.abort();
   for (const key of [...pendingTasks.keys()]) settleReactionKey(key);

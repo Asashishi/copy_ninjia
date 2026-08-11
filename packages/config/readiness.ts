@@ -48,8 +48,9 @@ import {
   REACTIONS_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../consts/paths";
+import { isErrno } from "../libs/errno";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
-import { isPlainRecord } from "../libs/runtimeConfig";
+import { isPlainRecord } from "../libs/record";
 import type {
   ConfigReadiness,
   ConfigReadinessCache,
@@ -147,7 +148,7 @@ export function adDetectConfigReadiness(): ConfigReadiness {
  * 字段。只判「文件在不在」是不够的——空文件与占位文本同样能通过，然后每条
  * `/ja_copy` 都会退化成原文照发，而群里看不出与「翻译服务抖了一下」的区别。
  */
-export function validateGoogleServiceAccountKey(
+function validateGoogleServiceAccountKey(
   path: string = GOOGLE_AUTH_FILE_PATH
 ): void {
   const parsed: unknown = readJsonInput(path);
@@ -177,7 +178,7 @@ function deploymentInputExists(path: string): boolean {
     lstatSync(path);
     return true;
   } catch (error: unknown) {
-    if (isPlainRecord(error) && error.code === "ENOENT") return false;
+    if (isErrno(error, "ENOENT")) return false;
     return invalidInput(path, "$", "an accessible deployment input");
   }
 }

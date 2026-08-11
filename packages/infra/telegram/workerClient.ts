@@ -8,6 +8,7 @@ import type {
   TelegramWorkerDownloadFileResult,
   TelegramWorkerJsonCall,
   TelegramWorkerRequest,
+  TelegramWorkerTemporaryMessageResult,
 } from "../../types/telegramWorker";
 import type { TelegramRetryCategory } from "../../types/telegramOutbound";
 
@@ -15,6 +16,32 @@ export interface DownloadTelegramFileFromMainParams {
   readonly fileId: string;
   readonly purpose: "vision" | "voice";
   readonly signal?: AbortSignal;
+}
+
+export interface SendTemporaryMessageFromMainParams {
+  readonly chatId: number;
+  readonly text: string;
+  readonly deleteAfterMs: number;
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * 把「发群提示 + 登记固定延迟删除」作为一次主线程能力调用。返回成功时，提示
+ * 已经进入主线程统一删除 owner，Worker 随后崩溃也不会丢失清理责任。
+ */
+export function sendTemporaryMessageFromMain({
+  chatId,
+  text,
+  deleteAfterMs,
+  signal,
+}: SendTemporaryMessageFromMainParams): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
+  return requestMainThread<TelegramWorkerRequest, TelegramWorkerTemporaryMessageResult | undefined>({
+    operation: "sendTemporaryMessage",
+    category: "message",
+    chatId,
+    text,
+    deleteAfterMs,
+  }, signal);
 }
 
 /** Worker 的 Telegram 文件下载也经主线程执行，资源 URL 与网络响应不进入 isolate。 */

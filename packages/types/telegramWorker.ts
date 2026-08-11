@@ -65,6 +65,25 @@ export interface TelegramWorkerDownloadFileRequest {
   readonly purpose: "vision" | "voice";
 }
 
+/**
+ * Worker 请求主线程发送一条固定期限的群提示。发送成功与登记延迟删除由主线程
+ * 同步完成，避免远端已经建消息、Worker 却在拿到 message_id 前退出而遗留提示。
+ */
+export interface TelegramWorkerTemporaryMessageRequest {
+  readonly operation: "sendTemporaryMessage";
+  readonly category: "message";
+  readonly chatId: number;
+  readonly text: string;
+  readonly deleteAfterMs: number;
+}
+
+/** 临时群提示已经发送且被主线程删除 owner 认领后的回执。 */
+export interface TelegramWorkerTemporaryMessageResult {
+  readonly messageId: number;
+  /** 主线程收到 Telegram 成功响应的墙钟时刻。 */
+  readonly sentAt: number;
+}
+
 export type TelegramWorkerDownloadFileResult =
   | { readonly status: "ok"; readonly bytes: Uint8Array }
   | { readonly status: "missingPath" }
@@ -106,7 +125,8 @@ export type TelegramWorkerRequest =
   }
   | TelegramWorkerSendPhotoRequest
   | TelegramWorkerSendAudioRequest
-  | TelegramWorkerDownloadFileRequest;
+  | TelegramWorkerDownloadFileRequest
+  | TelegramWorkerTemporaryMessageRequest;
 
 /**
  * Telegram 动作层实际需要的 Api 子集。主线程由 bot.api 实现，业务 Worker 由

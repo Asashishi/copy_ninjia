@@ -1,9 +1,17 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AdCandidateMessage, AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { AdVerdict } from "../../../packages/types/antiRaid/adDetect";
+import type { TelegramWorkerTemporaryMessageResult } from "../../../packages/types/telegramWorker";
 
 const classifyAdText = mock(async (_text: string): Promise<AdVerdict | null> => ({ isAd: false, reason: "" }));
 const disposeAdSender = mock(async (..._args: unknown[]): Promise<void> => {});
+let warningNow: number = 1_000;
+const warnReferencedAdSender = mock(async (): Promise<TelegramWorkerTemporaryMessageResult | undefined> => ({
+  messageId: 555,
+  sentAt: warningNow,
+}));
+const deleteReferencedAdMessages = mock((..._args: unknown[]): void => {});
+const deleteStaleReferencedAdWarning = mock((..._args: unknown[]): void => {});
 const deleteStragglerAdMessage = mock((_chatId: number, _messageId: number): void => {});
 const classifiedTexts: string[] = [];
 const classifiedFacts: boolean[] = [];
@@ -34,6 +42,9 @@ mock.module("../../../packages/workers/antiRaid/adDetect/classifier", () => ({
 }));
 mock.module("../../../packages/workers/antiRaid/adDetect/disposal", () => ({
   disposeAdSender,
+  warnReferencedAdSender,
+  deleteReferencedAdMessages,
+  deleteStaleReferencedAdWarning,
   deleteStragglerAdMessage,
 }));
 mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
@@ -70,8 +81,10 @@ const {
   adDetectPublishHolder,
   adDetectTickTimer,
   inFlightAdDetectKeys,
+  inFlightReferencedAdCleanupTasks,
   pendingAdMessages,
   queuedAdDetectKeys,
+  referencedAdWarningStates,
   recentlyDisposedAdKeys,
   recentlyEnqueuedAdKeys,
 } = await import("../../../packages/cache/workers/antiRaid/adDetect");
@@ -86,6 +99,7 @@ const {
   AD_DETECT_MAX_PENDING_SENDERS,
   AD_DETECT_MESSAGE_MAX_CHARS,
   AD_SAMPLE_CONTEXT_MAX_CHARS,
+  AD_REFERENCE_WARNING_WINDOW_MS,
 } = await import("../../../packages/consts/antiRaid/adDetect");
 
 function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandidateMessage {
@@ -97,7 +111,9 @@ function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandidateMess
     text: "随便聊聊",
     linkUrls: [],
     label: "@spammer",
+    meta: { firstName: "Spammer", lastName: "", username: "spammer" },
     isChannel: false,
+    isForwarded: false,
     blocked: false,
     justJoined: false,
     ...overrides,
@@ -112,6 +128,14 @@ beforeEach(() => {
   classifyAdText.mockClear();
   classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => ({ isAd: false, reason: "" }));
   disposeAdSender.mockClear();
+  warnReferencedAdSender.mockClear();
+  warningNow = 1_000;
+  warnReferencedAdSender.mockImplementation(async (): Promise<TelegramWorkerTemporaryMessageResult> => ({
+    messageId: 555,
+    sentAt: warningNow,
+  }));
+  deleteReferencedAdMessages.mockClear();
+  deleteStaleReferencedAdWarning.mockClear();
   deleteStragglerAdMessage.mockClear();
   fetchAdminIds.mockClear();
   cachedAdmins.clear();
@@ -341,6 +365,271 @@ describe("广告判定队列", () => {
     expect(adDetectQueue.size).toBe(0);
   });
 
+  test("直接正文命中时即使带回复上下文也沿用现有 block 路径", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("加V direct"),
+      reason: "直接引流",
+    }));
+    enqueueAdCandidate(candidate({
+      text: "日入过千 加V direct",
+      sampleContext: { quote: "转发来的广告" },
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    // 先按现有整串口径命中，再只看本人正文确认归因；直接广告仍立刻 block。
+    expect(classifiedTexts).toEqual([
+      "1. 日入过千 加V direct 转发来的广告",
+      "1. 日入过千 加V direct",
+    ]);
+    expect(disposeAdSender).toHaveBeenCalledTimes(1);
+    expect(warnReferencedAdSender).not.toHaveBeenCalled();
+  });
+
+  test("直接正文归因返回未知时不伪装成引用类命中", async () => {
+    let classifyCount: number = 0;
+    classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => {
+      classifyCount++;
+      return classifyCount === 1
+        ? { isAd: true, reason: "整串命中" }
+        : null;
+    });
+    enqueueAdCandidate(candidate({
+      text: "加V direct",
+      sampleContext: { quote: "转发来的广告" },
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(disposeAdSender).not.toHaveBeenCalled();
+    expect(warnReferencedAdSender).not.toHaveBeenCalled();
+    expect(errorLogs.some((line: string): boolean =>
+      line.includes("direct-content classifier returned no verdict")
+    )).toBeTrue();
+  });
+
+  test("引用类广告第一次只公开警告并清串，警告后下一条可立即重新判定", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    enqueueAdCandidate(candidate({
+      text: "这种广告真烦",
+      sampleContext: { quote: "日入过千 加V xxx996" },
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(classifiedTexts).toEqual([
+      "1. 这种广告真烦 日入过千 加V xxx996",
+      "1. 这种广告真烦",
+    ]);
+    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
+    expect(disposeAdSender).not.toHaveBeenCalled();
+    expect(referencedAdWarningStates.get("-1001:7")).toMatchObject({
+      phase: "warned",
+      warnedAt: 1_000,
+      expiresAt: 1_000 + AD_REFERENCE_WARNING_WINDOW_MS,
+    });
+    expect(pendingAdMessages.has("-1001:7")).toBe(false);
+    expect(recentlyEnqueuedAdKeys.has("-1001:7")).toBe(false);
+
+    enqueueAdCandidate(candidate({
+      messageId: 2,
+      text: "又来一条",
+      sampleContext: { replyTo: "日入过千 加V second" },
+    }), 2_000);
+    expect(adDetectQueue.size).toBe(1);
+  });
+
+  test("公开警告在途时跨去重窗口不重复送检，警告后的新消息在结算后立即补排", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    let releaseWarning!: () => void;
+    warnReferencedAdSender.mockImplementationOnce((): Promise<TelegramWorkerTemporaryMessageResult> =>
+      new Promise<TelegramWorkerTemporaryMessageResult>(
+        (resolve: (result: TelegramWorkerTemporaryMessageResult) => void): void => {
+          releaseWarning = (): void => {
+            // Telegram 已建立 555 号公开警告，但 HTTP 回执还没回来；用户此时发出的
+            // 556/557 在群内顺序上明确晚于警告，本机接收时钟却早于回执 sentAt。
+            enqueueAdCandidate(candidate({
+              messageId: 556,
+              text: "又来一条",
+              sampleContext: { quote: "日入过千 加V same" },
+            }), 2_000);
+            enqueueAdCandidate(candidate({
+              messageId: 557,
+              text: "连续第三条",
+              sampleContext: { quote: "日入过千 加V same" },
+            }), 2_100);
+            resolve({ messageId: 555, sentAt: 3_000 });
+          };
+        }
+      ));
+    enqueueAdCandidate(candidate({
+      text: "第一次",
+      sampleContext: { quote: "日入过千 加V same" },
+    }), 1_000);
+
+    const running: Promise<void> = runAdDetectBatch(1_000);
+    await Bun.sleep(0);
+
+    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
+    expect(inFlightAdDetectKeys.has("-1001:7")).toBe(true);
+    rotateAdDetectDedupWindow();
+    expect(adDetectQueue.size).toBe(0);
+    expect(classifyAdText).toHaveBeenCalledTimes(2);
+
+    releaseWarning();
+    await running;
+
+    expect(inFlightAdDetectKeys.has("-1001:7")).toBe(false);
+    expect(pendingAdMessages.get("-1001:7")?.entries.map((entry) => entry.messageId)).toEqual([556, 557]);
+    expect(pendingAdMessages.get("-1001:7")?.entries[0]?.text)
+      .toContain("日入过千 加V same");
+    expect(adDetectQueue.size).toBe(1);
+
+    await runAdDetectBatch(2_000);
+    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
+    expect(disposeAdSender).toHaveBeenCalledTimes(1);
+  });
+
+  test("五分钟内再次命中引用类广告时走现有 block 路径", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    enqueueAdCandidate(candidate({
+      text: "第一次",
+      sampleContext: { quote: "日入过千 加V first" },
+    }), 1_000);
+    await runAdDetectBatch(1_000);
+
+    enqueueAdCandidate(candidate({
+      messageId: 2,
+      text: "第二次",
+      sampleContext: { quote: "日入过千 加V second" },
+    }), 2_000);
+    await runAdDetectBatch(2_000);
+
+    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
+    expect(disposeAdSender).toHaveBeenCalledTimes(1);
+    expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
+  });
+
+  test("五分钟内到达的多次回复即使延迟到窗口外处理也会 block", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    enqueueAdCandidate(candidate({
+      text: "第一次",
+      sampleContext: { quote: "日入过千 加V first" },
+    }), 1_000);
+    await runAdDetectBatch(1_000);
+
+    const receivedWithinWindow: number =
+      1_000 + AD_REFERENCE_WARNING_WINDOW_MS - 1;
+    enqueueAdCandidate(candidate({
+      messageId: 2,
+      text: "连续回复",
+      sampleContext: { quote: "日入过千 加V again" },
+    }), receivedWithinWindow);
+    await runAdDetectBatch(
+      1_000 + AD_REFERENCE_WARNING_WINDOW_MS + 60_000
+    );
+
+    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
+    expect(disposeAdSender).toHaveBeenCalledTimes(1);
+  });
+
+  test("五分钟窗口到期后再次命中会重新警告，不直接 block", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    enqueueAdCandidate(candidate({
+      text: "第一次",
+      sampleContext: { quote: "日入过千 加V first" },
+    }), 1_000);
+    await runAdDetectBatch(1_000);
+
+    const afterWindow: number = 1_000 + AD_REFERENCE_WARNING_WINDOW_MS;
+    warningNow = afterWindow;
+    enqueueAdCandidate(candidate({
+      messageId: 2,
+      text: "窗口后",
+      sampleContext: { quote: "日入过千 加V later" },
+    }), afterWindow);
+    await runAdDetectBatch(afterWindow);
+
+    expect(warnReferencedAdSender).toHaveBeenCalledTimes(2);
+    expect(disposeAdSender).not.toHaveBeenCalled();
+  });
+
+  test("公开警告发送失败时不开启升级窗口", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    warnReferencedAdSender.mockImplementationOnce(async (): Promise<undefined> => undefined);
+    enqueueAdCandidate(candidate({
+      text: "看看",
+      sampleContext: { quote: "日入过千 加V xxx996" },
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
+    expect(disposeAdSender).not.toHaveBeenCalled();
+    expect(deleteReferencedAdMessages).toHaveBeenCalledTimes(1);
+  });
+
+  test("关开关时迟到的警告只撤提示，不留下窗口或继续删用户消息", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    let resolveWarning!: (result: TelegramWorkerTemporaryMessageResult) => void;
+    warnReferencedAdSender.mockImplementationOnce((): Promise<TelegramWorkerTemporaryMessageResult> =>
+      new Promise<TelegramWorkerTemporaryMessageResult>((resolve) => {
+        resolveWarning = resolve;
+      }));
+    enqueueAdCandidate(candidate({
+      text: "第一次",
+      sampleContext: { quote: "日入过千 加V first" },
+    }), 1_000);
+    const running: Promise<void> = runAdDetectBatch(1_000);
+    await Bun.sleep(0);
+
+    clearChatAdDetect(-1001);
+    resolveWarning({ messageId: 555, sentAt: 1_100 });
+    await running;
+
+    expect(referencedAdWarningStates.has("-1001:7")).toBeFalse();
+    expect(deleteStaleReferencedAdWarning).toHaveBeenCalledWith(-1001, 555);
+    expect(deleteReferencedAdMessages).not.toHaveBeenCalled();
+  });
+
+  test("手工转发的正文归属于来源，第一次命中只警告转发者", async () => {
+    classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({
+      isAd: true,
+      reason: "转发广告",
+    }));
+    enqueueAdCandidate(candidate({
+      text: "日入过千 加V origin",
+      isForwarded: true,
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(classifiedTexts).toEqual(["1. 日入过千 加V origin"]);
+    expect(warnReferencedAdSender).toHaveBeenCalledTimes(1);
+    expect(disposeAdSender).not.toHaveBeenCalled();
+  });
+
   test("判定失败当作本次没判定，但不无限重试同一批", async () => {
     classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => null);
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
@@ -409,8 +698,22 @@ describe("广告判定队列", () => {
 
   test("拼串只负责编号，取舍由 selectAdBundleEntries 定完再交过来", () => {
     expect(formatAdBundleText([
-      { messageId: 1, seq: 1, text: "第一条", receivedAt: 1 },
-      { messageId: 2, seq: 2, text: "第二条", receivedAt: 2 },
+      {
+        messageId: 1,
+        seq: 1,
+        text: "第一条",
+        directText: "第一条",
+        receivedAt: 1,
+        withinReferencedWarning: false,
+      },
+      {
+        messageId: 2,
+        seq: 2,
+        text: "第二条",
+        directText: "第二条",
+        receivedAt: 2,
+        withinReferencedWarning: false,
+      },
     ])).toBe("1. 第一条\n2. 第二条");
     expect(formatAdBundleText([])).toBe("");
   });
@@ -451,6 +754,7 @@ describe("广告判定队列", () => {
 
     const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;
     expect(entry.text).toBe("这种广告真烦 日入过千 加V xxx996");
+    expect(entry.directText).toBe("这种广告真烦");
     // 样本侧仍留一份没并进正文的原样：人回头查误判时要分得清哪段是他自己写的。
     expect(entry.quote).toBe("日入过千 加V xxx996");
     expect(entry.replyTo).toBe("日入过千 加V xxx996");
@@ -654,9 +958,21 @@ describe("广告判定队列", () => {
     expect(disposeAdSender).toHaveBeenCalledTimes(1);
   });
 
-  test("清群同时摘掉该群在 Map、队列与两张窗口表里的键", () => {
+  test("清群同时摘掉该群在 Map、队列、判定窗口与警告窗口里的键", () => {
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
     enqueueAdCandidate(candidate({ chatId: -1002, senderId: 9, messageId: 2 }), 1_000);
+    referencedAdWarningStates.set("-1001:7", {
+      phase: "warned",
+      generation: 1,
+      warnedAt: 1_000,
+      expiresAt: 10_000,
+    });
+    referencedAdWarningStates.set("-1002:9", {
+      phase: "warned",
+      generation: 2,
+      warnedAt: 1_000,
+      expiresAt: 10_000,
+    });
     expect(recentlyEnqueuedAdKeys.has("-1001:7")).toBe(true);
 
     clearChatAdDetect(-1001);
@@ -665,6 +981,8 @@ describe("广告判定队列", () => {
     expect(recentlyEnqueuedAdKeys.has("-1002:9")).toBe(true);
     expect(pendingAdMessages.has("-1001:7")).toBe(false);
     expect(pendingAdMessages.has("-1002:9")).toBe(true);
+    expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
+    expect(referencedAdWarningStates.has("-1002:9")).toBe(true);
     expect([...queuedAdDetectKeys]).toEqual(["-1002:9"]);
     expect(adDetectQueue.size).toBe(1);
     expect(adDetectQueue.peek()).toBe("-1002:9");
@@ -720,12 +1038,21 @@ describe("广告判定队列", () => {
     expect(adDetectPublishHolder.current).not.toBeNull();
 
     enqueueAdCandidate(candidate());
+    inFlightReferencedAdCleanupTasks.add(Promise.resolve());
+    referencedAdWarningStates.set("-1001:7", {
+      phase: "warned",
+      generation: 3,
+      warnedAt: 1_000,
+      expiresAt: 10_000,
+    });
     stopAdDetectQueue();
     expect(adDetectPublishHolder.current).toBeNull();
     expect(pendingAdMessages.size).toBe(0);
     expect(queuedAdDetectKeys.size).toBe(0);
     expect(recentlyEnqueuedAdKeys.size).toBe(0);
     expect(recentlyDisposedAdKeys.size).toBe(0);
+    expect(referencedAdWarningStates.size).toBe(0);
+    expect(inFlightReferencedAdCleanupTasks.size).toBe(0);
     expect(adDetectQueue.size).toBe(0);
   });
 });

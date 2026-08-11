@@ -17,8 +17,9 @@ cp -n config_example/*.json config/
 Never use a copy command that overwrites existing files, and never treat `config_example/` as a
 deployment backup. Files under `config/` contain credentials and should be readable only by the
 service account. Configuration is not hot-reloaded, so manual changes require a restart.
-`whitelist.json` is atomically rewritten by `/white` and `/permission`; do not edit it externally
-while the process is running.
+Allowlist, blocklist, and pending-removal state are runtime data rather than deployment
+configuration; they live together in `database/storage.sqlite` and change only through commands
+or an explicit migration script.
 
 Every JSON file uses a strict schema. If a file exists, unknown or misspelled fields, wrong types,
 invalid enum values, conflicts, and out-of-range values abort startup before Telegram connections
@@ -30,8 +31,6 @@ configuration. Truly absent optional capabilities follow the feature boundaries 
 | File | What it configures | Behavior when absent |
 | --- | --- | --- |
 | `telegram.json` | Telegram Bot token and sole super administrator | Startup always fails |
-| `whitelist.json` | Allowlisted identities and granular permissions | Startup always fails |
-| `blocklist.json` | Static blocklist loaded at startup | Startup always fails |
 | `agent.json` | Per-capability AI provider, credential, endpoint, and model | Depends on the capability; see below |
 | `stickers.json` | Sticker packs available to AI chat | AI chat cannot be enabled; startup fails if any chat already has it enabled |
 | `reactions.json` | Candidate words for Telegram reactions | AI chat cannot be enabled; startup fails if any chat already has it enabled |
@@ -54,7 +53,7 @@ even when its feature is currently disabled.
 - `bot_token`: the non-empty Bot API token issued by BotFather. It is a secret.
 - `super_admin_user_id`: the sole super administrator's positive safe-integer Telegram user ID,
   not a username. This identity inherently has every grantable permission and should not also be
-  added to `whitelist.json`.
+  added to the SQLite allowlist table.
 
 ## `agent.json`
 
@@ -101,39 +100,15 @@ marks it supported; transient network errors leave support unknown so later medi
 Ordinary Google/OpenAI HTTP requests retry at most five times after the initial failure. A Worker
 or process rebuild clears the probe result and applies the new configuration.
 
-## `whitelist.json`
+## Identity Policies Are Not Configuration Files
 
-Top-level keys are decimal Telegram identity IDs: positive values are users and negative values
-are channel identities. Each value is a partial permission override. Omitted fields use defaults.
-An empty object `{}` still places the identity inside the allowlist and, by default, bypasses ad
-detection and flood control without granting management commands.
-
-| Permission key | What `true` allows |
-| --- | --- |
-| `isCanMute` | Use `/mute` |
-| `isCanUnMute` | Use `/unmute` |
-| `isCanBlock` | Use `/block` to persistently block and ban across managed chats |
-| `isCanUnBlock` | Use `/unblock` to remove the persistent block and lift bans |
-| `isCanSwitchMood` | Use `/switch_mood` to reroll the AI mood |
-| `isCanBypassAdDetection` | Bypass ad detection and automatic enforcement; defaults to `true` |
-| `isCanBypassFloodControl` | Bypass flood counting and automatic muting; defaults to `true` |
-| `isCanControllAIPermission` | Use `/ai_chat enable\|disable` |
-| `isCanControllAdDetectPermission` | Use `/ad_detect enable\|disable` |
-| `isCanControllFloodControlPermission` | Use `/flood_control enable\|disable` |
-| `isCanControllJATranslatePermission` | Use `/ja_copy enable\|disable` |
-| `isCanControllAntiRaidPermission` | Use `/antiraid enable\|disable` |
-
-`Controll` is the schema's exact current spelling; changing it to `Control` is invalid. Every
-permission defaults to `false` except the two bypass fields above. The super administrator comes
-from `telegram.json` and is unaffected by entries here.
-
-## `blocklist.json`
-
-`blockedIds` is the static blocked-identity array. Positive safe integers are users and negative
-safe integers are channel identities. Zero, fractions, duplicates, and unsafe integers are
-invalid. The static blocklist must not overlap the super administrator or any allowlisted identity;
-such a conflict aborts startup. The runtime permanent blocklist maintained by `/block` lives under
-`memory/blocklist/` and is a separate file.
+The authoritative allowlist, blocklist, and pending-removal state lives in
+`database/storage.sqlite` under the runtime data root. `/white`, `/permission`, `/block`, and
+`/unblock` persist changes transactionally through the Disk I/O Worker; ordinary deployments
+should not edit the database directly. `/permission help` is the current permission-key and
+default reference. An invalid schema, unsupported version, or overlap between the two policy
+tables aborts before network access. Migrate legacy JSON deployments once by following
+[Operations](../../docs/en/07-operations.md); do not copy those files back into `config/`.
 
 ## `stickers.json`
 

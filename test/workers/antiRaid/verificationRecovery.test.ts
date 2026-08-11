@@ -31,6 +31,9 @@ async function recordDelete(messageId: number): Promise<string> {
 mock.module("../../../packages/infra/logger", () => ({
   logger: { log(): void {}, info(): void {}, warn(): void {}, error(): void {} },
 }));
+mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () => ({
+  requestVerificationAttemptPermit: async () => ({ status: "granted", attempt: 1 }),
+}));
 mock.module("../../../packages/infra/telegram", () => ({
   joinVerificationApi: {
     getChat: async (): Promise<{ type: "supergroup" }> => ({ type: "supergroup" }),
@@ -111,12 +114,17 @@ afterEach(async () => {
 });
 
 describe("Anti-Raid Worker verification recovery", () => {
-  test("disableJoinGuardChat：不再触发任何动作，也不去删群里已有的提醒", async () => {
-    // 关掉开关＝从此不触发：超时踢出、终态处置、提醒补发全部随记录作废；
-    // 已经发出去的提醒留在群里不动（见 states/verification/disable.ts）。
-    const pending: VerificationSnapshot = record(42, Date.now() + 60_000);
+  test("disableJoinGuardChat：删除已有提醒并终止其余处置", async () => {
+    // 显式关闭时先删除仍带按钮的提醒，再作废超时踢出、终态处置和提醒补发。
+    const pending: VerificationSnapshot = {
+      ...record(42, Date.now() + 60_000),
+      reminderMessageId: 11,
+    };
     // 43 已经推进到终态（落盘完、就等踢人）：这一条最能说明「关掉之后不踢人」。
-    const expiring: VerificationSnapshot = record(43, Date.now() - 1);
+    const expiring: VerificationSnapshot = {
+      ...record(43, Date.now() - 1),
+      reminderMessageId: 12,
+    };
     runtime.adoptVerifications({
       type: "adoptVerifications",
       generation: 1,
@@ -130,8 +138,7 @@ describe("Anti-Raid Worker verification recovery", () => {
     await Bun.sleep(0);
 
     expect(verificationEntries.size).toBe(0);
-    // reminderMessageId 是 record() 里那条带按钮的提醒：不删。
-    expect(deletedMessageIds).toEqual([]);
+    expect(deletedMessageIds).toEqual([11, 12]);
     expect(workerEvents.filter((event): boolean => event.type === "verificationDelete")).toHaveLength(2);
     expect(kicks).toBe(0);
     // 结算事件迟到时状态已经不在，不会再有后续动作。
@@ -143,6 +150,27 @@ describe("Anti-Raid Worker verification recovery", () => {
     });
     await Bun.sleep(0);
     expect(kicks).toBe(0);
+  });
+
+  test("deactivateVerificationChat：失去权限时只清状态，不调用 Telegram 删除 API", async () => {
+    const pending: VerificationSnapshot = {
+      ...record(46, Date.now() + 60_000),
+      reminderMessageId: 13,
+    };
+    runtime.adoptVerifications({
+      type: "adoptVerifications",
+      generation: 1,
+      verifications: [pending],
+    });
+    deletedMessageIds.length = 0;
+    workerEvents.length = 0;
+
+    runtime.deactivateVerificationChat(-1001);
+    await Bun.sleep(0);
+
+    expect(verificationEntries.size).toBe(0);
+    expect(deletedMessageIds).toEqual([]);
+    expect(workerEvents.filter((event): boolean => event.type === "verificationDelete")).toHaveLength(1);
   });
 
   test("别的群不受这次关闭影响", async () => {

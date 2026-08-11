@@ -1,4 +1,11 @@
 import { SONG_GENERATION_COOLDOWN_MS } from "../../../consts/aiChat/songGeneration";
+import {
+  claimCooldown,
+  cooldownAvailability,
+  releaseCooldownClaim,
+  sweepCooldownClaims,
+} from "../../../libs/cooldownClaim";
+import type { CooldownClaimStore } from "../../../libs/cooldownClaim";
 import type { SongGenerationAvailability, SongGenerationClaim } from "../../../types/aiChat/songGeneration";
 
 /**
@@ -6,10 +13,9 @@ import type { SongGenerationAvailability, SongGenerationClaim } from "../../../t
  * 内存状态；aiChatWorker.ts 只驱动周期性 sweepSongGenerationCache 维护。
  * owner: AI 闲聊 Worker 线程（packages/workers/aiChatWorker.ts）。
  *
- * 与 imageGeneration.ts 的那份**结构相同、状态独立**：两个工具各有各的冷却窗口，
- * 共用一张表会让「刚生过图所以十五分钟内不能生歌」这种谁都解释不清的耦合出现。
- * 两份实现看着像可以合并成一个泛型冷却，但那要把 owner、容量与清理策略也一起
- * 泛化，而这两项恰恰是缓存约定要求逐份写清的（见 AGENTS.md 的「缓存与线程归属」）。
+ * 判定本身在 libs/cooldownClaim.ts —— 那是一个不持有任何缓存的叶子模块，两个
+ * 工具共用同一套「先占位、失败按 token 撤销」语义；**表仍然逐份独立**，共用一张
+ * 会造出「刚生过图所以十五分钟内不能生歌」这种谁都解释不清的耦合。
  */
 
 /**
@@ -25,7 +31,16 @@ import type { SongGenerationAvailability, SongGenerationClaim } from "../../../t
  * 不落盘、不跨线程。
  */
 export const songGenerationClaimTimes: Map<number, number> = new Map();
+
+/** 与 songGenerationClaimTimes 逐键对齐的占位 token；生命周期完全相同。 */
 const songGenerationClaimTokens: Map<number, symbol> = new Map();
+
+const songGenerationStore: CooldownClaimStore = {
+  claimedAt: songGenerationClaimTimes,
+  tokens: songGenerationClaimTokens,
+  cooldownMs: SONG_GENERATION_COOLDOWN_MS,
+  tokenLabel: "song-generation-claim",
+};
 
 /** 只读取某群此刻的生歌可用性；工具 schema 用它在调用前告知模型当前状态。 */
 export interface SongGenerationCooldownParams {
@@ -40,13 +55,7 @@ export function getSongGenerationAvailability({
   bypassCooldown,
   now = Date.now(),
 }: SongGenerationCooldownParams): SongGenerationAvailability {
-  if (bypassCooldown) return { allowed: true };
-  const previous: number | undefined = songGenerationClaimTimes.get(chatId);
-  if (previous === undefined) return { allowed: true };
-  const elapsed: number = now - previous;
-  return elapsed >= 0 && elapsed < SONG_GENERATION_COOLDOWN_MS
-    ? { allowed: false, retryAfterMs: SONG_GENERATION_COOLDOWN_MS - elapsed }
-    : { allowed: true };
+  return cooldownAvailability({ store: songGenerationStore, chatId, bypassCooldown, now });
 }
 
 /**
@@ -58,31 +67,17 @@ export function claimSongGeneration({
   bypassCooldown,
   now = Date.now(),
 }: SongGenerationCooldownParams): SongGenerationClaim {
-  const availability: SongGenerationAvailability = getSongGenerationAvailability({ chatId, bypassCooldown, now });
-  if (!availability.allowed) return availability;
-  if (bypassCooldown) return { allowed: true, token: null };
-  const token: symbol = Symbol("song-generation-claim");
-  songGenerationClaimTimes.set(chatId, now);
-  songGenerationClaimTokens.set(chatId, token);
-  return { allowed: true, token };
+  return claimCooldown({ store: songGenerationStore, chatId, bypassCooldown, now });
 }
 
 /** 只允许原占位者撤销；旧异步请求不能误删同群后来建立的新冷却。 */
 export function releaseSongGenerationClaim(chatId: number, token: symbol | null): boolean {
-  if (token === null || songGenerationClaimTokens.get(chatId) !== token) return false;
-  songGenerationClaimTokens.delete(chatId);
-  songGenerationClaimTimes.delete(chatId);
-  return true;
+  return releaseCooldownClaim(songGenerationStore, chatId, token);
 }
 
 /** 删除已过期或因时钟回拨落到未来的生歌冷却；由 Worker 统一周期维护。 */
 export function sweepSongGenerationCache(now: number = Date.now()): void {
-  for (const [chatId, claimedAt] of songGenerationClaimTimes) {
-    if (claimedAt > now || now - claimedAt >= SONG_GENERATION_COOLDOWN_MS) {
-      songGenerationClaimTimes.delete(chatId);
-      songGenerationClaimTokens.delete(chatId);
-    }
-  }
+  sweepCooldownClaims(songGenerationStore, now);
 }
 
 /** Worker dispose 或测试隔离时清空全部生歌占位和冷却。 */

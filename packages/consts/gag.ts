@@ -31,29 +31,58 @@ export const GAG_DEFAULT_TOOL: string = "口塞";
 /** inline 查询正文的 Telegram 官方 UTF-16 长度上限。 */
 export const GAG_INLINE_QUERY_MAX_CHARS: number = 256;
 
-/** 单次 answerInlineQuery 最多允许返回的结果数。 */
-export const GAG_INLINE_PAGE_SIZE: number = 50;
-
 /** gag 开始提示里的发言入口文案。 */
 export const GAG_INLINE_SPEAK_BUTTON_TEXT: string = "发言";
 
-/** gag 按钮预填查询的保留前缀；只有频道身份在后面追加目标 id。 */
+/** 每个发言入口在本群经过多少条新消息后滚动换新；各会话独立计数。 */
+export const GAG_SPEAK_NOTICE_MESSAGE_INTERVAL: number = 15;
+
+/** gag 按钮预填查询的保留前缀；只有频道身份在后面追加目标 id 与会话令牌。 */
 export const GAG_INLINE_QUERY_PREFIX: string = "gag:";
+
+/** 频道预填查询里分隔目标 id 与会话令牌的字符；两侧形态互不重叠。 */
+export const GAG_INLINE_TOKEN_SEPARATOR: string = ":";
+
+/**
+ * 频道发言入口的一次性会话令牌字节数。
+ *
+ * 频道身份没有「查询者 id」可比对（Telegram 从不告诉本进程皮套背后是谁），
+ * 令牌就是那个绑定：它只随群内那条带按钮的开始提示分发，因此只有看得见按钮的
+ * 群成员拿得到。少了它，任何人 `@bot gag:<频道 id> x` 就能读到 inline 结果里
+ * 用 chatLabel 拼出的「在 <群名称> 发言」——一次针对私有群标题的信息泄露。
+ * 8 字节（64 位）对一个最长 15 分钟、全局至多 5 条的会话足够，且预填串足够短，
+ * 不会明显挤占 GAG_INLINE_QUERY_MAX_CHARS 留给正文的额度。
+ */
+export const GAG_INLINE_TOKEN_BYTES: number = 8;
+
+/** 会话令牌的唯一合法形态：固定长度小写十六进制。 */
+export const GAG_INLINE_TOKEN_PATTERN: Readonly<RegExp> = new RegExp(
+  `^[0-9a-f]{${GAG_INLINE_TOKEN_BYTES * 2}}$`
+);
 
 /** 频道 inline 结果用 text_link 携带目标频道 id 的固定地址前缀。 */
 export const GAG_INLINE_CHANNEL_LINK_PREFIX: string = "https://t.me/#gag-channel=";
 
-/** 50% 概率选中的主要填充词。 */
-export const GAG_PRIMARY_FILLER: string = "...";
+/** 允许继续追加在原文字形后的唯一填充内容。 */
+export const GAG_ELLIPSIS_FILLER: string = "...";
 
-/** 剩余 50% 均分的五个填充词，因此每项概率为 10%。 */
-export const GAG_SECONDARY_FILLERS: readonly string[] = ["唔", "啊", "嗯", "哦", "齁"];
+/** 25% 替换分支均匀抽取的字符；只替换原字形，不再追加到它后面。 */
+export const GAG_REPLACEMENT_CHARACTERS: readonly string[] = [
+  "唔",
+  "啊",
+  "嗯",
+  "哦",
+  "齁",
+  "咕",
+];
 
-/** 每个随机填充词后固定追加的半角空格；它不参与概率抽取。 */
-export const GAG_FILLER_SUFFIX: string = " ";
-
-/** 主填充词的概率边界；随机值小于它时选 `...`。 */
-export const GAG_PRIMARY_FILLER_PROBABILITY: number = 0.5;
+/**
+ * 原字形后追加省略号的概率；剩余概率走 GAG_REPLACEMENT_CHARACTERS 替换分支。
+ * 两个分支由 gag/rendering.ts 的 `roll < GAG_ELLIPSIS_PROBABILITY` 单条判定切分，
+ * 不再单列替换分支常量——那份常量没有生产消费者，改这一个时它不会跟着动，
+ * 却会让测试继续按 0.75 + 0.25 推导出一条早已偏离实现的阈值。
+ */
+export const GAG_ELLIPSIS_PROBABILITY: number = 0.75;
 
 /** inline 列表里的群名和用具摘要上限，防止用户字段撑坏客户端预览。 */
 export const GAG_INLINE_LABEL_MAX_CHARS: number = 96;

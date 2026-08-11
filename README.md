@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2181_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.94%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2225_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.60%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：2181 项测试全部通过 / 216 个测试文件 / 72,414 次 expect() 调用 / 函数覆盖率 94.74% / 行覆盖率 95.94%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：2225 项测试全部通过 / 228 个测试文件 / 32,683 次 expect() 调用 / 函数覆盖率 94.40% / 行覆盖率 95.60%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -158,7 +158,7 @@
 
 - **按用户名查找依赖机器人此前观察到该账号**；改名、移除用户名或用户名换绑会立即使旧别名失效。对 `/block`、`/unblock` 这类破坏性操作，优先回复目标消息或直接给用户 id（那两条命令额外接受裸 id），不要依赖历史用户名。
 - **匿名管理员以当前群身份发言时，复读目标就是当前群**，因而可取得群头像并复读这层「皮套」；`/block` 会拒绝把当前群身份当作成员目标。
-- **普通用户执行 copy 类命令时受 5 分钟全局冷却限制**，白名单边界内的身份不受限——`config/whitelist.json` 中的条目，以及恒在边界内的 `SUPER_ADMIN_USER_ID`。
+- **普通用户执行 copy 类命令时受 5 分钟全局冷却限制**，白名单边界内的身份不受限——SQLite 白名单表中的条目，以及恒在边界内的 `SUPER_ADMIN_USER_ID`。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
@@ -193,7 +193,7 @@
 <tr><td><code>/send &lt;群组 ID&gt;</code> <code>/send finish</code></td><td align="center"><code>SUPER_ADMIN_USER_ID</code>（仅私聊）</td><td>在机器人私聊中开始或结束向目标群的中转</td></tr>
 </table>
 
-> **权限列的读法**：写 `isCanXxx` 的行按权限键授权，而 `SUPER_ADMIN_USER_ID` 这个身份本身恒持有**全部**权限键，因此那些行他一律可用，无需在 `whitelist.json` 里配条目；写 `SUPER_ADMIN_USER_ID` 的行才是只认身份、无法通过白名单授权出去的。
+> **权限列的读法**：写 `isCanXxx` 的行按权限键授权，而 `SUPER_ADMIN_USER_ID` 这个身份本身恒持有**全部**权限键，因此那些行他一律可用，无需写入 SQLite 白名单表；写 `SUPER_ADMIN_USER_ID` 的行才是只认身份、无法通过白名单授权出去的。
 
 ### 行为细节
 
@@ -202,7 +202,7 @@
 - **`/gag` 限制发言**：全局最多同时生效 5 个目标，同群可有多个目标但同一身份不能重复。普通用户先在群里留下不带按钮的公开状态，再收到一条由 `receiver_user_id` 限定、仅本人可见且带「发言」按钮的临时入口；频道没有接收用户，只发送一条带按钮的公开状态。普通 `@机器人` 查询始终只进入运势；普通用户按钮预填最小 `gag:` 前缀但不携带身份 id，查询阶段再按 `from.id` 过滤；频道按钮预填 `gag:<频道负数 id>`，生成的消息也嵌入同一频道 id，落群后必须再与 `sender_chat.id` 同时匹配，否则立即删除。任何 `gag:` 查询均由 gag 领域独占，非法、过期或身份不匹配时只返回空结果，不回退运势。开始状态不走 30 秒清理，只在对应 `/ungag`、超时或群运行时 teardown 时按各自消息 id 删除；任一删除失败都会保留有界的收尾状态并有限重试，同一目标须等全部状态确实消失后才能重新 gag。`/ungag` 必须通过回复、`@username` 或身份 id 定向。发言正文在每个扩展字形后追加随机填充，其中 `...` 为 50%，其余五种各 10%。
 - **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 移除时整份名单原子重写回文件，并默认在所有机器人管理的群解除封禁；即使目标不在动态名单里也仍会跨群解封。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
 - **`/batch_kick` 慢速清理**：只允许超级管理员在已初始化的超级群中使用，参数是 `30m`、`2h`、`1d` 这类不超过 24 小时的单个窗口。命令按入群日志找出窗口内最后一次加入且仍在群中的成员，小并发执行只踢不封；白名单边界内的身份（含恒在边界内的超级管理员）和永久黑名单成员都不会被这条命令当作普通目标处理。
-- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 `agent.ad_detect` 配置的模型判定；非受保护身份命中后执行与 `/block` 相同的处置，并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发，判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
+- **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 `agent.ad_detect` 配置的模型判定；非受保护身份命中后执行与 `/block` 相同的处置，并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发；剔除消息序号后，整串若只有链接（包括 `vless://`、`vmess://`、`trojan://`、`ss://` 代理节点或订阅链接）且没有链接之外的推广、招募或交易文案，一律不判广告。其余判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
 - **入群验证与 Anti-Raid**：每群默认关闭，由持有 `isCanControllAntiRaidPermission` 的身份（超级管理员恒持有）执行 `/antiraid enable` 开启，两条链路共用这一个开关——它们吃的是同一批入群事件，分开开关只会造出「验证关着、私密模式还在踢人」这种组合。关闭时这两条链路一个事件都不再触发：不开验证窗口、不发提醒、不做超时踢出，也不再统计入群频率；已经开着的窗口连同待处置的终态一起作废（**不删**群里已经发出去的提醒，也不踢人），仍生效的私密模式会把邀请权限还回去。同在一条 Worker 上的广告检测、防刷屏禁言、永久黑名单秒踢和 `/batch_kick` 依赖的入群日志都不受影响。
 - **刷屏禁言**：每群默认关闭，由持有 `isCanControllFloodControlPermission` 的身份（超级管理员恒持有）执行 `/flood_control enable` 开启。同一个人在同一个超级群内一分钟发言达到 15 条，就地禁言 3 分钟并在群里说明一句（公告在禁言解除时自撤）。到点由 Telegram 自动解除，不写黑名单也不删消息。仅在机器人确有「限制成员」权限时触发；群主/管理员、频道马甲与匿名管理员不计数。豁免只看 `isCanBypassFloodControl` 一项，白名单条目缺省为 `true`，显式设为 `false` 后会参与计数；`SUPER_ADMIN_USER_ID` 恒持有该权限因而恒不计数。
 - **`/send` 中转**：开启前先探测目标是否可达，期间超级管理员发送的每条消息都会原样转发到目标群一次；目标失联时自动终止并通知。中转状态随 `state.json` 持久化，重启后仍可恢复。该命令不进入 Telegram 命令菜单，在群内调用或由其他用户触发时均不响应。
@@ -265,7 +265,7 @@ cp -n config_example/*.json config/
 | `config/telegram.json` / `super_admin_user_id` | ✅ | 超级管理员的正安全整数用户 ID |
 | `config/agent.json` / 各能力 | 按功能 | 每项独立配置 provider、API key、端点与模型 |
 
-`telegram.json`、`whitelist.json` 与 `blocklist.json` 在联网前严格加载；其他部署输入按功能校验，缺失或非法时拒绝对应功能，已启用功能的前提缺失则拒绝启动。
+`telegram.json` 在联网前严格加载；白名单、黑名单和待完成处置由 Disk I/O Worker 从 `database/storage.sqlite` 严格恢复，schema、版本或数据不合法都会拒绝启动。其他部署输入按功能校验，缺失或非法时拒绝对应功能，已启用功能的前提缺失则拒绝启动。
 
 AI 的 provider、API key、`base_url` 与模型全部按能力配置在
 [`config/agent.json`](config_example/agent.json)；修改后必须重启，不再提供运行时切换模型命令。
@@ -273,7 +273,19 @@ AI 的 provider、API key、`base_url` 与模型全部按能力配置在
 > [!IMPORTANT]
 > 只有一种情况例外：某个功能在 `state.json` 里还开着，却把它的 key 或配置撤掉了——那是管理员明确按下过的开关，进程会带着群 id 与缺失项拒绝启动，而不是悄悄变成不干活。先 `disable` 再撤，或者把前提补回去。
 
-如需改变运行时路径，可在进程环境中设置 `COPY_NINJIA_DATA_ROOT`；设置后，`state.json`、`bot.lock`、`logs/` 和 `memory/` 都从该目录派生；`config/`、人设与 `g-auth.json` 仍从项目根目录读取。
+如需改变运行时路径，可在进程环境中设置 `COPY_NINJIA_DATA_ROOT`；设置后，`state.json`、`bot.lock`、`logs/`、`memory/` 和 `database/` 都从该目录派生；`config/`、人设与 `g-auth.json` 仍从项目根目录读取。
+
+首次启动前，在与服务相同的账号和 `COPY_NINJIA_DATA_ROOT` 环境下显式初始化身份数据库。两份临时 JSON 只是一次性迁移输入，成功后脚本会删除；目标数据库已存在时脚本拒绝覆盖：
+
+```bash
+test ! -e config/whitelist.json
+test ! -e config/blocklist.json
+printf '{}\n' > config/whitelist.json
+printf '{"blockedIds":[]}\n' > config/blocklist.json
+bun run migrate:identity-storage --apply
+```
+
+旧部署与 schema v2 的升级步骤见 [07 运维与排障：身份存储迁移](docs/cn/07-operations.md#身份存储迁移)。
 
 如需日语翻译，将 Google Cloud 服务账号密钥保存为项目根目录的 `g-auth.json`；该文件已加入 `.gitignore`。
 
@@ -299,7 +311,7 @@ bun run start     # 启动长轮询
 /antiraid enable
 ```
 
-> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 786 个源码行含中文字符串或模板字面量，分布在 76 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/cn/06-modification-guide.md)。
+> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 801 个源码行含中文字符串或模板字面量，分布在 78 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/cn/06-modification-guide.md)。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 
