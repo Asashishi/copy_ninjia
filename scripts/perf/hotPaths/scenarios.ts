@@ -30,6 +30,7 @@ import { resolveMentionFacts, resolveReplyReference } from "../../../packages/au
 import { redactSecretsInText } from "../../../packages/libs/redaction";
 import { LUCK_TIERS } from "../../../packages/consts/luckChallenge";
 import { collectDueGagSpeakNotices } from "../../../packages/commands/gag/counter";
+import { createGagTargetProfileUrl } from "../../../packages/commands/gag/identity";
 import { FLOOD_WINDOW_MAX_MEMBERS } from "../../../packages/consts/antiRaid/flood";
 import { buildTieredVerbatimTranscript } from "../../../packages/aiChat/ai/utils/chatTranscript";
 import { buildBufferedMessage } from "../../../packages/workers/aiChat/bufferedMessage";
@@ -748,12 +749,13 @@ function luckTierTableScenario(): Scenario {
 function gagSpeakCounterScenario(): Scenario {
   const sessions: GagSession[] = [];
   for (let index: number = 0; index < 5; index++) {
+    const targetId: number = 100 + index;
     const session: GagSession = {
       chatId: BENCHMARK_CHAT_ID,
-      targetId: 100 + index,
+      targetId,
+      targetProfileUrl: createGagTargetProfileUrl({ id: targetId }),
       targetLabel: "Benchmark target",
       chatLabel: "Performance fixture",
-      inlineToken: "00000000000000ff",
       tool: "口塞",
       durationMinutes: 5,
       phase: "active",

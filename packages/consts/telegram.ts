@@ -153,7 +153,7 @@ export const TELEGRAM_DELETE_MESSAGES_BATCH_MAX: number = 100;
 export const TELEGRAM_429_RETRY_QUEUE_MAX: number = 81_920;
 /** grammY 全局发送桶允许等待的消息上限；与 429 的 81,920 总容量分开计数。 */
 export const TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX: number = 8_192;
-/** grammY 单群发送桶允许等待的消息上限；超过约 6 分钟积压后拒绝新消息。 */
+/** grammY 单群发送桶允许等待的消息上限；超过约 2 分钟积压后拒绝新消息。 */
 export const TELEGRAM_MESSAGE_GROUP_PENDING_MAX: number = 128;
 /** grammY 单私聊发送桶允许等待的消息上限；防止单一目标无限占用内存。 */
 export const TELEGRAM_MESSAGE_PRIVATE_PENDING_MAX: number = 256;

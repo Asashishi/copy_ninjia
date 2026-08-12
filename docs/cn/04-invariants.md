@@ -85,7 +85,7 @@
 ### 出站请求与消息安全
 
 - **Telegram 网络能力只有主线程一份**：真实 grammY Bot、Bot API HTTP 与 Telegram 文件 CDN 下载都由主线程发起；AI/Anti-Raid Worker 只能经 `supervisedDuplexWorker` 的结构化白名单请求能力，不能 import grammY 运行时、`mainClient.ts` 或 Bot token。Worker 代际失效会 abort 本代请求并结算 waiter；主线程回包同步失败同样撤销该代际，不能留下永久悬挂的 Promise。`check:conventions` 按 Worker 真实模块闭包执行这道隔离，类型专用 import 不算运行时依赖。
-- **grammY throttler 只接收真实产生聊天消息的发送方法**：`sendMessage`、发送图片/音频/文件/媒体组/贴纸，以及 copy/forward 等进入官方插件；`answerInlineQuery`、chat action、查询、踢人、禁言、删除、反应、回调、编辑和管理请求都不进入。插件使用当前版本默认速率（全局约 30 条/秒、单群 1 条/秒且 20 条/分钟、私聊 1 条/秒），不在项目里再叠一套猜测速率。只额外设置 Bottleneck `OVERFLOW` 内存高水位：全局 8,192、单群 128、单私聊 256；超出拒绝新消息，绝不能让持续高于 Telegram 消化速度的闭包队列无限增长。这三项不计入、也不借用 81,920 的 429 总容量。Inline Mode 没有公开发送限额，归 `inline` 的 429 自适应类别。
+- **grammY throttler 只接收真实产生聊天消息的发送方法**：`sendMessage`、发送图片/音频/文件/媒体组/贴纸，以及 copy/forward 等进入官方插件；`answerInlineQuery`、chat action、查询、踢人、禁言、删除、反应、回调、编辑和管理请求都不进入。全局保持约 30 条/秒，单私聊保持 1 条/秒；单群只用 `maxConcurrent: 1` 与 `minTime: 1_000` 限制每秒至多发起一次发送，不配置 reservoir，因此不主动施加插件默认的 20 条/分钟窗口。Bottleneck `OVERFLOW` 内存高水位分别为：全局 8,192、单群 128、单私聊 256；超出拒绝新消息，绝不能让持续高于 Telegram 消化速度的闭包队列无限增长。这三项不计入、也不借用 81,920 的 429 总容量；服务端返回的 429 由主线程统一出站闸按 `retry_after` 处理。Inline Mode 没有公开发送限额，归 `inline` 的 429 自适应类别。
 - **所有 Telegram 出站仍统一捕获 429，但只冻结同类别**：`message`、`inline`、`download`、`kick`、`query`、`restrict`、`delete`、`chatAction`、`reaction`、`callback`、`edit`、`profile`、`management`、`other` 各自持有 FIFO 与 `retry_after`；某一类退避不得阻塞其它类。正常请求直接执行且不计队列，只有命中 429 或进入已冷却类别的任务计入全局 81,920 上限，超出即拒绝并交还领域 owner；安全动作必须由验证快照或 blocklist outbox 保留并重投，不能把退避内存当持久化。冷却结束从单请求探测起逐步恢复并发，再次 429 立即收回；链表摘除、总数和分类计数必须同步，abort 为 O(1)。
 
   总闸另有可重新初始化的生命周期代际：每条已接纳任务把调用方 signal 与 owner 的 `AbortController` 合并，并把结果传到实际 grammY/fetch 边界。drain 先原子关闭新入口；预算耗尽时必须 abort active 请求、取消全部 429 timer、拒绝 pending 节点并结算 waiter，统计归零后迟到回调不得再次计数或调度。只有旧代际的 active、pending、timer 与 waiter 全空时才能初始化下一代。已接纳的纯踢重试可在 quiesce 后执行它自己的内部成员复核，但这一例外不得暴露给普通调用方。
@@ -330,9 +330,11 @@
   **负数 id 一律带 `isChannel`**（`resolveIdTarget` 在最小身份上就标好，与 `workers/antiRaid/blocklistEffects.ts` 按符号分派同源）：`/unblock` 靠它选 `unbanChatSenderChat` 而非 `unbanChatMemberIfBanned`，漏标会让解封报错记进 `failedCount`，回执变成一份关于「根本没被碰过的目标」的假战报。
 - gag 的主线程权威表按群保存目标小列表，全局硬上限 5；同群同 identity 从 `starting`、`active` 到 `ending` 始终只占一个槽。所有目标先发送一条群内公开状态；普通用户的公开状态不带按钮，随后再发送一条由 `receiver_user_id` 限定、仅目标可见且带按钮的临时入口，频道没有接收用户则只保留带按钮的公开状态。只有全部必需消息都成功并同步登记公开 `message_id`、以及普通用户入口响应中经核验的 `ephemeral_message_id` 后，才能切 `active`、安装 `unref` timer；第二条发送失败也必须先删除已经落地的公开状态再释放预约。超时、定向 `/ungag` 与 chat teardown 必须先同步认领 `ending` 并清 timer，再依次调用对应删除 API。只有全部删除结局均为 `deleted/gone`，且需要发送的解除回执也已结算后，才能按对象身份释放槽位；`failed/forbidden` 保留 ending owner，使用有限、`unref` 的退避重试，耗尽后等待 `/ungag`、chat teardown 或停机再次触发。这样旧收尾不能误删或穿插同目标的新会话，清理债务总量仍受全局 5 槽硬顶约束。全部开始状态均由 gag 会话持有，不进入命令文本的固定 30 秒清理；解除回执仍走统一命令清理边界。gag owner 必须在 Telegram 总闸前 quiesce/drain，未清理完会阻止最终 offset 与实例锁释放。
 
-  gag 与运势的 inline 分发协议严格互斥：无 `gag:` 前缀的普通 `@机器人` 查询即使来自当前 gag 用户，也必须跳过 gag 并只交给运势；普通用户的目标专属按钮预填 `gag: `，不携带用户 id，gag 入口按 `inline_query.from.id` 匹配会话；频道按钮预填 `gag:<负数频道 id> `，结果落群后还要核对 `sender_chat.id`。任何带 `gag:` 的查询都由 gag 入口终止分发，非法、过期或身份不匹配只回答空结果，不得回退运势。Telegram 不提供“是否由 inline 按钮唤起”的来源字段，因此普通按钮不能使用与手动 `@机器人` 完全相同的空查询。
+  gag 与运势的 inline 分发协议严格互斥：无 `gag:` 前缀的普通 `@机器人` 查询即使来自当前 gag 用户，也必须跳过 gag 并只交给运势；用户与频道按钮统一只预填 `gag:<目标 Telegram id> `（用户正 id、频道负 id）。首个空格前只允许这个规范安全整数，严禁追加 MD5/其它摘要、随机 token、群 id 或其它元数据；`ParsedGagInlineQuery` 不得扩展这些 scope 字段，`GagSession.chatId` 只能保存命令入口确定的权威会话群，不得派生摘要/token 等旁路鉴权状态。任何带 `gag:` 的查询都由 gag 入口终止分发，非法、过期或用户身份不匹配只回答空结果，不得回退运势。
 
-  Telegram 的 `InlineQuery.from` 恒为点击按钮的用户，不能在查询阶段证明其最终会以哪个频道身份发送。因此用户入口不携带目标 id，查询时与落群时分别核对 `from.id`；频道入口必须预填负数频道 id，生成消息时再把同一 id 写进精确的 `text_link` 标记，落群后同时核对当前 bot、正文工具前缀、标记 id 与 `sender_chat.id`。任一项不匹配，或带频道标记的结果已过期/跨群，都删除并终止下游。
+  Telegram 的 `InlineQuery` 会提供点击用户与 query，但关于查询所在聊天只提供 chat type，没有当前具体 `chat.id`；选择结果到真正发送之间也没有 Bot 可取消的前置钩子。因此追加 token、摘要或声称的群 id 都不能证明输入框实际位于哪个群，绝不能以“加强校验”为由重新引入。正常按钮只用 `switch_inline_query_current_chat` 留在会话群；用户查询另与 `inline_query.from.id` 匹配，频道查询阶段只能按负数目标 id 生成候选，并使用不含群标题的通用标题。
+
+  生成结果的精确 `text_link` marker 固定为 `<目标主页>#<会话群 id>`：主页绑定用户/频道身份，fragment 绑定会话群。结果 URL 对最终用户公开，fragment 只是校验载荷，不是秘密或鉴权 token。消息落群后必须同时核对当前 bot、正文工具前缀、完整 marker、活动会话、实际 `from.id`/`sender_chat.id` 与 `message.chat.id`；任一项不匹配，或结果已过期/跨群，都删除并终止下游。
 - `/steal_icon` 的 t.me 主页抓取兜底**只认 `getChat(targetId)` 现查回来的 username**，不得用调用方上下文里带的那个短路掉这次查询。命令上下文的 username 来自 `reply_to_message`（可能是几个月前的消息）或身份缓存，而 Telegram 用户名释放之后可以被任何人重新注册；抓取时的页面身份校验只能证明「这个页面属于 @name」，证明不了「@name 此刻仍指向 targetId」。短路的后果是把**现任 handle 持有者**的头像顶成机器人头像，而成功提示里写的还是原目标。
 
   provided 值只作诊断线索进日志。

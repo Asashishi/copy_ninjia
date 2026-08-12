@@ -6,7 +6,6 @@ import type {
   MessageEntity,
 } from "@grammyjs/types";
 import {
-  GAG_INLINE_CHANNEL_LINK_PREFIX,
   GAG_SESSION_MAX,
   GAG_SPEAK_NOTICE_MESSAGE_INTERVAL,
 } from "../../packages/consts/gag";
@@ -290,6 +289,7 @@ describe("gag 消息与 inline 入口", () => {
     expect(await gag.handleGagMessageIngress(normalMessage({
       via_bot: { id: 999, is_bot: true, first_name: "Bot" },
       text: "（透过口塞）按钮发言",
+      entities: gagInlineEntities(session),
     }), 999)).toBeFalse();
     await settleGagBackgroundTasks();
     expect(session.speakNoticeMessageId).toBe(75);
@@ -345,7 +345,7 @@ describe("gag 消息与 inline 入口", () => {
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 89);
   });
 
-  test("用户目标不携带 id，只放行当前 bot、用具和发送用户 id 同时匹配的结果", async () => {
+  test("用户目标必须隐藏主页与群标记、当前 bot、用具和发送用户 id 同时匹配", async () => {
     const session: GagSession = createSession();
     addSession(session);
 
@@ -366,6 +366,11 @@ describe("gag 消息与 inline 入口", () => {
     }), 999)).toBeTrue();
 
     expect(await gag.handleGagMessageIngress(normalMessage({
+      via_bot: { id: 999, is_bot: true, first_name: "Bot" },
+      text: "（透过口塞）功... ",
+    }), 999)).toBeTrue();
+
+    expect(await gag.handleGagMessageIngress(normalMessage({
       via_bot: { id: 998, is_bot: true, first_name: "Other" },
       text: "（透过口塞）功... ",
       entities: gagInlineEntities(session),
@@ -381,7 +386,7 @@ describe("gag 消息与 inline 入口", () => {
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 88);
   });
 
-  test("频道目标必须结果标记 id 与 sender_chat.id 同时匹配，匿名服务用户不能覆盖", async () => {
+  test("频道目标必须主页与群标记、sender_chat.id 同时匹配，匿名服务用户不能覆盖", async () => {
     const session: GagSession = createSession({ targetId: -1002233445566 });
     addSession(session);
     const channelMessage: Message = normalMessage({
@@ -409,15 +414,27 @@ describe("gag 消息与 inline 入口", () => {
     }, 999)).toBeFalse();
     expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
 
-    const wrongMarker: MessageEntity[] = gagInlineEntities({
-      ...session,
+    const wrongMarker: MessageEntity[] = gagInlineEntities(createSession({
       targetId: -1009988776655,
-    });
+    }));
     expect(await gag.handleGagMessageIngress({
       ...channelMessage,
       via_bot: { id: 999, is_bot: true, first_name: "Bot" },
       text: "（透过口塞）功... ",
       entities: wrongMarker,
+    }, 999)).toBeTrue();
+    expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 88);
+
+    deleteMessageWithOutcome.mockClear();
+    const wrongGroupMarker: MessageEntity[] = gagInlineEntities(createSession({
+      chatId: -1002,
+      targetId: -1002233445566,
+    }));
+    expect(await gag.handleGagMessageIngress({
+      ...channelMessage,
+      via_bot: { id: 999, is_bot: true, first_name: "Bot" },
+      text: "（透过口塞）功... ",
+      entities: wrongGroupMarker,
     }, 999)).toBeTrue();
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 88);
 
@@ -475,7 +492,7 @@ describe("gag 消息与 inline 入口", () => {
       inlineQuery: {
         id: "inline-1",
         from: { id: 7, is_bot: false, first_name: "Alice" },
-        query: "gag: 功能没了喵",
+        query: `gag:${session.targetId} 功能没了喵`,
         offset: "",
       },
       answerInlineQuery,
@@ -494,7 +511,12 @@ describe("gag 消息与 inline 入口", () => {
     expect(content.message_text.length).toBeGreaterThan(
       rendering.gagSpeechPrefix("口塞").length
     );
-    expect(content.entities).toBeUndefined();
+    expect(content.entities?.[0]).toEqual({
+      type: "text_link",
+      offset: 0,
+      length: rendering.gagSpeechPrefix("口塞").length,
+      url: "tg://user?id=7#-1001",
+    });
     expect(options).toEqual({ cache_time: 0, is_personal: true });
 
     answerInlineQuery.mockClear();
@@ -526,7 +548,7 @@ describe("gag 消息与 inline 入口", () => {
       inlineQuery: {
         id: "inline-4",
         from: { id: 8, is_bot: false, first_name: "Bob" },
-        query: "gag: 偷来的入口",
+        query: `gag:${session.targetId} 偷来的入口`,
         offset: "",
       },
       answerInlineQuery,
@@ -535,37 +557,17 @@ describe("gag 消息与 inline 入口", () => {
     expect(answerInlineQuery.mock.calls[0]?.[0]).toHaveLength(0);
   });
 
-  test("开始提示的频道 id 与会话令牌同时匹配才定位目标，并从最终发言正文中剥掉", async () => {
+  test("频道查询只携带目标 ID，结果用主页和超级群 ID 双重绑定落点", async () => {
     const channelSession: GagSession = createSession({
       targetId: -1002233445566,
-      inlineToken: "aaaaaaaabbbbbbbb",
     });
     addSession(channelSession);
-    addSession(createSession({
-      chatId: -1002,
-      targetId: -1009988776655,
-      inlineToken: "ccccccccdddddddd",
-    }));
-
-    // 只知道频道 id、拿不到群内按钮的账号必须一无所获：inline 结果里的
-    // chatLabel 就是私有群标题。
-    expect(await gag.handleGagInlineQuery({
-      inlineQuery: {
-        id: "inline-channel-guess",
-        from: { id: 4_242, is_bot: false, first_name: "Stranger" },
-        query: "gag:-1002233445566:0000000000000000 偷来的入口",
-        offset: "",
-      },
-      answerInlineQuery,
-    } as never)).toBeTrue();
-    expect(answerInlineQuery.mock.calls[0]?.[0]).toHaveLength(0);
-    answerInlineQuery.mockClear();
 
     const handled: boolean = await gag.handleGagInlineQuery({
       inlineQuery: {
         id: "inline-channel",
-        from: { id: 100, is_bot: false, first_name: "Admin" },
-        query: `gag:-1002233445566:${channelSession.inlineToken} 功能没了喵`,
+        from: { id: 4_242, is_bot: false, first_name: "Admin" },
+        query: `gag:${channelSession.targetId} 功能没了喵`,
         offset: "",
       },
       answerInlineQuery,
@@ -575,6 +577,7 @@ describe("gag 消息与 inline 入口", () => {
     const results: readonly InlineResult[] = answerInlineQuery.mock.calls[0]?.[0] ?? [];
     expect(results).toHaveLength(1);
     expect(results[0]?.id).toBe("gag--1001--1002233445566");
+    expect(results[0]?.title).toBe("以频道身份发言");
     const content: { message_text: string; entities?: MessageEntity[] } =
       results[0]?.input_message_content as {
         message_text: string;
@@ -590,17 +593,18 @@ describe("gag 消息与 inline 入口", () => {
       type: "text_link",
       offset: 0,
       length: rendering.gagSpeechPrefix("口塞").length,
-      url: `${GAG_INLINE_CHANNEL_LINK_PREFIX}-1002233445566`,
+      url: "https://t.me/c/2233445566/1#-1001",
     });
   });
 
   test("非法或过期 gag 前缀静默返回空结果，不生成可发送拒绝文本", async () => {
-    addSession(createSession());
+    const userSession: GagSession = createSession();
+    addSession(userSession);
     const handled: boolean = await gag.handleGagInlineQuery({
       inlineQuery: {
         id: "inline-stolen-user",
         from: { id: 8, is_bot: false, first_name: "Bob" },
-        query: "gag: ",
+        query: `gag:${userSession.targetId} `,
         offset: "",
       },
       answerInlineQuery,
@@ -616,7 +620,7 @@ describe("gag 消息与 inline 入口", () => {
       inlineQuery: {
         id: "inline-stale",
         from: { id: 100, is_bot: false, first_name: "Admin" },
-        query: "gag:-1002233445566:0123456789abcdef",
+        query: "gag:-1002233445566",
         offset: "",
       },
       answerInlineQuery,
@@ -634,7 +638,7 @@ describe("gag 消息与 inline 入口", () => {
       inlineQuery: {
         id: "inline-page",
         from: { id: 7, is_bot: false, first_name: "Alice" },
-        query: "gag: 测试",
+        query: "gag:7 测试",
         offset: "",
       },
       answerInlineQuery,

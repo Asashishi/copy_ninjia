@@ -8,6 +8,8 @@ import {
   isChatMember,
   kickChatMemberWithOutcome,
   muteChatMemberWithOutcome,
+  probeChatAdmin,
+  probeChatMembership,
   sendEphemeralMessage,
   sendMessageWithResult,
   sendPhotoWithResult,
@@ -261,6 +263,25 @@ describe("Telegram 常规动作封装", () => {
     expect(await isChatMember(-1001, 3, apiFor({ status: "restricted", is_member: true }))).toBe(true);
     expect(await isChatMember(-1001, 4, apiFor({ status: "restricted", is_member: false }))).toBe(false);
     expect(await isChatMember(-1001, 5, apiFor({ status: "left" }))).toBe(false);
+  });
+
+  test("成员与管理员探测保留查询失败的 unknown，不把它压成否定结论", async () => {
+    const apiFor = (member: unknown): TelegramApi =>
+      ({ getChatMember: mock(async (..._args: unknown[]) => member) }) as unknown as TelegramApi;
+    const failedApi = {
+      getChatMember: mock(async (..._args: unknown[]): Promise<never> => {
+        throw new Error("membership unavailable");
+      }),
+    } as unknown as TelegramApi;
+
+    expect(await probeChatMembership(-1001, 1, apiFor({ status: "member" }))).toBe(true);
+    expect(await probeChatMembership(-1001, 2, apiFor({ status: "left" }))).toBe(false);
+    expect(await probeChatAdmin(-1001, 3, apiFor({ status: "creator" }))).toBe(true);
+    expect(await probeChatAdmin(-1001, 4, apiFor({ status: "administrator" }))).toBe(true);
+    expect(await probeChatAdmin(-1001, 5, apiFor({ status: "member" }))).toBe(false);
+    expect(await probeChatMembership(-1001, 6, failedApi)).toBeUndefined();
+    expect(await probeChatAdmin(-1001, 6, failedApi)).toBeUndefined();
+    expect(await isChatMember(-1001, 6, failedApi)).toBe(false);
   });
 
   test("禁言收走全部发言权限，截止时刻向上取整到秒", async () => {

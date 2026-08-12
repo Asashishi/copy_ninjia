@@ -22,8 +22,11 @@ describe("application command menu", () => {
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("query_mood");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("flood_control");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("bot_status");
-    expect(BOT_COMMANDS.find(({ command }) => command === "permission")?.description)
-      .toContain("白名单边界内");
+    const permissionDescription: string | undefined =
+      BOT_COMMANDS.find(({ command }) => command === "permission")?.description;
+    expect(permissionDescription).toContain("所有杂鱼都能用");
+    expect(permissionDescription).toContain("超级管理员");
+    expect(permissionDescription).not.toContain("白名单边界内");
     expect(BOT_COMMANDS.find(({ command }) => command === "block")?.description)
       .toContain("isCanBlock");
     expect(BOT_COMMANDS.find(({ command }) => command === "unblock")?.description)

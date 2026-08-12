@@ -56,8 +56,7 @@ export function isTelegramMessageRequest(method: keyof RawApi): boolean {
 /** 创建发送类选择器；插件根据 payload.chat_id 自行选择群聊或私聊桶。 */
 export function telegramMessageThrottler(): Transformer<RawApi> {
   const throttler: Transformer<RawApi> = apiThrottler({
-    // 速率逐字保持插件 1.2.1 的默认值，只补 OVERFLOW 高水位。否则持续超过
-    // 20/min 的单群突袭会让 Bottleneck 的闭包队列永久快于排空速度地增长。
+    // 全局速率保持插件 1.2.1 的默认值，只补 OVERFLOW 高水位。
     global: {
       reservoir: 30,
       reservoirRefreshAmount: 30,
@@ -66,11 +65,10 @@ export function telegramMessageThrottler(): Transformer<RawApi> {
       strategy: BottleneckStrategy.OVERFLOW,
     },
     group: {
+      // 单群只主动保证每秒至多发起一次发送；不配置 reservoir，
+      // 故不叠加插件默认的 20/min 窗口。服务端 429 由后续统一出站闸处理。
       maxConcurrent: 1,
       minTime: 1_000,
-      reservoir: 20,
-      reservoirRefreshAmount: 20,
-      reservoirRefreshInterval: 60_000,
       highWater: TELEGRAM_MESSAGE_GROUP_PENDING_MAX,
       strategy: BottleneckStrategy.OVERFLOW,
     },

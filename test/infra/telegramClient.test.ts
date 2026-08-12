@@ -97,15 +97,12 @@ describe("Telegram 客户端初始化", () => {
         highWater: 8_192,
         strategy: OVERFLOW_STRATEGY,
       }),
-      group: expect.objectContaining({
+      group: {
         maxConcurrent: 1,
         minTime: 1_000,
-        reservoir: 20,
-        reservoirRefreshAmount: 20,
-        reservoirRefreshInterval: 60_000,
         highWater: 128,
         strategy: OVERFLOW_STRATEGY,
-      }),
+      },
       out: expect.objectContaining({
         maxConcurrent: 1,
         minTime: 1_000,

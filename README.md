@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Fable_5_/_GPT--5.6_/_Opus_5-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2225_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-95.60%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-2245_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-96.62%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -71,7 +71,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="pictures/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="pictures/coverage_light.svg">
-    <img alt="bun run test:coverage：2225 项测试全部通过 / 228 个测试文件 / 32,683 次 expect() 调用 / 函数覆盖率 94.40% / 行覆盖率 95.60%" src="pictures/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：2245 项测试全部通过 / 234 个测试文件 / 32,766 次 expect() 调用 / 函数覆盖率 95.66% / 行覆盖率 96.62%" src="pictures/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -199,7 +199,7 @@
 
 - **命令入口**：群命令统一经过 `/init` 网关；未初始化群只接受超级管理员的 `/init`，所以 `/permission`、`/white` 也必须在已初始化群中使用。私聊斜杠命令只放行 `/send`。
 - **动作命令**：姓名用 `first_name last_name` 形式，有公开用户名的一方挂上主页链接；目标同样通过「回复 TA 的消息」或 `@username` 指定。成功的动作结果与 `/permission help` 一样长期保留；目标缺失、参数错误和 `/x` 用法提示仍在 30 秒后删除。
-- **`/gag` 限制发言**：全局最多同时生效 5 个目标，同群可有多个目标但同一身份不能重复。普通用户先在群里留下不带按钮的公开状态，再收到一条由 `receiver_user_id` 限定、仅本人可见且带「发言」按钮的临时入口；频道没有接收用户，只发送一条带按钮的公开状态。普通 `@机器人` 查询始终只进入运势；普通用户按钮预填最小 `gag:` 前缀但不携带身份 id，查询阶段再按 `from.id` 过滤；频道按钮预填 `gag:<频道负数 id>`，生成的消息也嵌入同一频道 id，落群后必须再与 `sender_chat.id` 同时匹配，否则立即删除。任何 `gag:` 查询均由 gag 领域独占，非法、过期或身份不匹配时只返回空结果，不回退运势。开始状态不走 30 秒清理，只在对应 `/ungag`、超时或群运行时 teardown 时按各自消息 id 删除；任一删除失败都会保留有界的收尾状态并有限重试，同一目标须等全部状态确实消失后才能重新 gag。`/ungag` 必须通过回复、`@username` 或身份 id 定向。发言正文在每个扩展字形后追加随机填充，其中 `...` 为 50%，其余五种各 10%。
+- **`/gag` 限制发言**：全局最多同时生效 5 个目标，同群可有多个目标但同一身份不能重复；入口只在已初始化且 Bot 有删除权限的群中建立。普通用户先在群里留下不带按钮的公开状态，再收到一条由 `receiver_user_id` 限定、仅本人可见且带「发言」按钮的临时入口；频道没有接收用户，只发送一条带按钮的公开状态。普通 `@机器人` 查询始终只进入运势。用户和频道按钮统一只预填 `gag:<目标 Telegram id>`（用户为正数、频道为负数）；首个空格前只允许这个目标 id，禁止加入 MD5、摘要、随机 token、群 id 或任何其他元数据。Telegram 的 inline query 不提供当前具体群 id，也没有 Bot 可拦截的发送前回调，因此这些额外字段不能证明实际输入群；正常入口固定使用当前聊天按钮。生成结果以隐藏文本链接携带 `<目标主页>#<会话群 id>`，该 URL 是公开校验材料，不是秘密或认证 token；消息落群后必须同时核对链接中的目标与会话群、实际 `from.id`/`sender_chat.id` 和实际 `message.chat.id`，身份或群不匹配就立即删除。频道候选标题不显示群名。任何 `gag:` 查询均由 gag 领域独占，非法、过期或身份不匹配时只返回空结果，不回退运势。开始状态不走 30 秒清理，只在对应 `/ungag`、超时或群运行时 teardown 时按各自消息 id 删除；任一删除失败都会保留有界的收尾状态并有限重试，同一目标须等全部状态确实消失后才能重新 gag。`/ungag` 必须通过回复、`@username` 或身份 id 定向。发言渲染对每个扩展字形以 75% 概率在其后追加 `...`，其余 25% 则把整个字形等概率替换为六种填充之一。
 - **`/block` 黑名单**：目标可通过回复 TA 的消息、`@username` 或直接给用户 id（正整数，群/频道的负数 id 不算）指定——id 那条最可靠，用户名被释放后可以被别人重新注册，而这条命令不可逆。id 落进持久化黑名单后，TA 出现在任何监听群的入群更新里都会被秒踢。机器人在某个群里「拿到管理权限」和「已 `/init enable`」两件事凑齐的那一刻（先后顺序不限），还会把名单里已经在群里的人补清一遍。`/unblock` 移除时整份名单原子重写回文件，并默认在所有机器人管理的群解除封禁；即使目标不在动态名单里也仍会跨群解封。`/unblock` 比 `/block` 多认一种目标：**频道的负数 id**。频道马甲会以 `sender_chat` 的身份进名单（回复频道消息的 `/block`、广告检测命中），而广告检测会删掉原消息、没有公开 username 的频道也查不到缓存，不认负数 id 的话这类条目就再也划不掉了；反方向不开是因为 `/block` 粘错一个会话 id 就会封掉整个会话身份且不可逆。
 - **`/batch_kick` 慢速清理**：只允许超级管理员在已初始化的超级群中使用，参数是 `30m`、`2h`、`1d` 这类不超过 24 小时的单个窗口。命令按入群日志找出窗口内最后一次加入且仍在群中的成员，小并发执行只踢不封；白名单边界内的身份（含恒在边界内的超级管理员）和永久黑名单成员都不会被这条命令当作普通目标处理。
 - **`/ad_detect` 广告检测**：每条消息按发送者归并成 90 秒消息串交 `agent.ad_detect` 配置的模型判定；非受保护身份命中后执行与 `/block` 相同的处置，并在触发群播报封禁理由（30 秒后自撤）。仅在机器人是本群管理员时触发；剔除消息序号后，整串若只有链接（包括 `vless://`、`vmess://`、`trojan://`、`ss://` 代理节点或订阅链接）且没有链接之外的推广、招募或交易文案，一律不判广告。其余判定口径见 [`config/ad_samples.json`](config_example/ad_samples.json)。
@@ -311,7 +311,7 @@ bun run start     # 启动长轮询
 /antiraid enable
 ```
 
-> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 801 个源码行含中文字符串或模板字面量，分布在 78 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/cn/06-modification-guide.md)。
+> **关于语言**：机器人面向用户的文案只有简体中文，仓库不维护 i18n。回复文本由片段拼接而成、还要同步计算 Telegram `entities` 的偏移，`/咬` 这类中文动作命令又依赖中文形态本身，词条表接不住这类文案。需要别的语言请 fork 后自行改写（生产代码里约 805 个源码行含中文字符串或模板字面量，分布在 78 个文件，外加 `prompt/persona.md` 与 `config/*.json`），理由与改法见 [06 修改配方](docs/cn/06-modification-guide.md)。
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ 回到顶部</a></sub></p>
 

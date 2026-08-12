@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { InputFile } from "grammy";
 import type {
   TelegramMemoryFile,
+  TelegramWorkerJsonCall,
   TelegramWorkerRequest,
 } from "../../packages/types/telegramWorker";
+import { telegramRetryCategoryFor } from "../../packages/infra/telegram/outboundGate";
 
 interface CapturedDuplexRequest {
   readonly request: TelegramWorkerRequest;
@@ -22,7 +24,27 @@ const requestMainThread = mock(async (
 });
 const rawSendMessage = mock(async (..._args: unknown[]): Promise<unknown> => ({ message_id: 18 }));
 const rawGetChat = mock(async (..._args: unknown[]): Promise<unknown> => ({ id: -1001, type: "supergroup" }));
+const rawDispatches: { method: string; payload: unknown; signal: AbortSignal }[] = [];
+const rawApi: Record<PropertyKey, unknown> = new Proxy<Record<PropertyKey, unknown>>({
+  sendMessage: rawSendMessage,
+  getChat: rawGetChat,
+}, {
+  get(target: Record<PropertyKey, unknown>, property: PropertyKey): unknown {
+    const existing: unknown = target[property];
+    if (existing !== undefined) return existing;
+    return async (payload: unknown, signal: AbortSignal): Promise<unknown> => {
+      rawDispatches.push({ method: String(property), payload, signal });
+      return { method: property };
+    };
+  },
+});
 const mainSendPhoto = mock(async (..._args: unknown[]): Promise<unknown> => ({ message_id: 19 }));
+const mainSendAudio = mock(async (..._args: unknown[]): Promise<unknown> => ({ message_id: 20 }));
+let hydratedFilePath: string | undefined = "files/media.bin";
+const mainGetFile = mock(async (..._args: unknown[]): Promise<unknown> => ({
+  file_path: hydratedFilePath,
+  getUrl: (): string => "https://api.telegram.test/files/media.bin",
+}));
 const actionSendMessage = mock(async (
   params: { onSent?: (messageId: number) => void }
 ): Promise<number> => {
@@ -35,11 +57,10 @@ mock.module("../../packages/libs/workerDuplex", () => ({ requestMainThread }));
 mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: {
     api: {
-      raw: {
-        sendMessage: rawSendMessage,
-        getChat: rawGetChat,
-      },
+      raw: rawApi,
+      getFile: mainGetFile,
       sendPhoto: mainSendPhoto,
+      sendAudio: mainSendAudio,
     },
   },
 }));
@@ -55,6 +76,7 @@ const { sendTemporaryMessageFromMain, workerTelegramApi } =
 const {
   handleAiWorkerTelegramRequest,
   handleAntiRaidWorkerTelegramRequest,
+  telegramWorkerResponseTransfer,
 } = await import("../../packages/infra/telegram/workerRequests");
 
 beforeEach((): void => {
@@ -62,7 +84,11 @@ beforeEach((): void => {
   requestMainThread.mockClear();
   rawSendMessage.mockClear();
   rawGetChat.mockClear();
+  rawDispatches.length = 0;
   mainSendPhoto.mockClear();
+  mainSendAudio.mockClear();
+  mainGetFile.mockClear();
+  hydratedFilePath = "files/media.bin";
   actionSendMessage.mockClear();
   deleteMessageAfter.mockClear();
 });
@@ -262,6 +288,25 @@ describe("主线程 Telegram Worker 能力边界", () => {
     });
   });
 
+  test("临时提示拒绝非法删除期限，发送动作不会先落地", async (): Promise<void> => {
+    const signal: AbortSignal = new AbortController().signal;
+    await expect(handleAntiRaidWorkerTelegramRequest({
+      operation: "sendTemporaryMessage",
+      category: "message",
+      chatId: -1001,
+      text: "warning",
+      deleteAfterMs: 0,
+    }, signal)).rejects.toThrow("positive safe integer");
+    await expect(handleAntiRaidWorkerTelegramRequest({
+      operation: "sendTemporaryMessage",
+      category: "message",
+      chatId: -1001,
+      text: "warning",
+      deleteAfterMs: 1.5,
+    }, signal)).rejects.toThrow("positive safe integer");
+    expect(actionSendMessage).not.toHaveBeenCalled();
+  });
+
   test("主线程重新构造 InputFile 后才进入统一 bot.api", async (): Promise<void> => {
     const signal: AbortSignal = new AbortController().signal;
     await handleAiWorkerTelegramRequest({
@@ -279,6 +324,120 @@ describe("主线程 Telegram Worker 能力边界", () => {
     expect(await (args?.[1] as InputFile).toRaw()).toEqual(new Uint8Array([4, 5, 6]));
     expect(args?.[2]).toEqual({ caption: "generated" });
     expect(args?.[3]).toBe(signal);
+  });
+
+  test("音频与可选缩略图都在主线程重建 InputFile", async (): Promise<void> => {
+    const signal: AbortSignal = new AbortController().signal;
+    await handleAiWorkerTelegramRequest({
+      operation: "sendAudio",
+      category: "message",
+      chatId: -1001,
+      bytes: new Uint8Array([1, 2, 3]),
+      fileName: "song.mp3",
+      thumbnailBytes: new Uint8Array([4, 5, 6]),
+      other: { caption: "song" },
+    }, signal);
+
+    const args: unknown[] | undefined = mainSendAudio.mock.calls[0];
+    expect(args?.[0]).toBe(-1001);
+    expect(args?.[1]).toBeInstanceOf(InputFile);
+    expect(await (args?.[1] as InputFile).toRaw()).toEqual(new Uint8Array([1, 2, 3]));
+    const other = args?.[2] as { caption?: string; thumbnail?: InputFile } | undefined;
+    expect(other?.caption).toBe("song");
+    expect(other?.thumbnail).toBeInstanceOf(InputFile);
+    expect(await other?.thumbnail?.toRaw()).toEqual(new Uint8Array([4, 5, 6]));
+    expect(args?.[3]).toBe(signal);
+  });
+
+  test("下载能力区分缺路径、HTTP、体积、空响应与成功字节，并只转移成功 buffer", async (): Promise<void> => {
+    const originalFetch: typeof fetch = globalThis.fetch;
+    const responses: Response[] = [
+      new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
+      new Response("unavailable", { status: 503 }),
+      new Response(new Uint8Array([9]), {
+        status: 200,
+        headers: { "content-length": "999999999" },
+      }),
+      new Response(new Uint8Array(), { status: 200 }),
+    ];
+    const fetchMock = mock(async (..._args: unknown[]): Promise<Response> => responses.shift()!);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const signal: AbortSignal = new AbortController().signal;
+    const request: TelegramWorkerRequest = {
+      operation: "downloadFile",
+      category: "download",
+      fileId: "file-id",
+      purpose: "vision",
+    };
+
+    try {
+      const succeeded: unknown = await handleAiWorkerTelegramRequest(request, signal);
+      expect(succeeded).toEqual({ status: "ok", bytes: new Uint8Array([1, 2, 3]) });
+      const successBytes: Uint8Array = (succeeded as { bytes: Uint8Array }).bytes;
+      const successBuffer: ArrayBufferLike = successBytes.buffer;
+      expect(successBuffer).toBeInstanceOf(ArrayBuffer);
+      if (!(successBuffer instanceof ArrayBuffer)) throw new Error("download buffer is not transferable");
+      expect(telegramWorkerResponseTransfer(request, succeeded)).toEqual([successBuffer]);
+
+      await expect(handleAiWorkerTelegramRequest(request, signal)).resolves.toEqual({
+        status: "httpError",
+        httpStatus: 503,
+      });
+      await expect(handleAiWorkerTelegramRequest(request, signal)).resolves.toEqual({
+        status: "tooLarge",
+        observedBytes: 999_999_999,
+      });
+      await expect(handleAiWorkerTelegramRequest(request, signal)).resolves.toEqual({ status: "empty" });
+
+      hydratedFilePath = undefined;
+      await expect(handleAiWorkerTelegramRequest(request, signal)).resolves.toEqual({ status: "missingPath" });
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(telegramWorkerResponseTransfer(request, { status: "empty" })).toBeUndefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("两类 Worker 的全部 JSON 白名单方法逐项路由到同名 raw API", async (): Promise<void> => {
+    const signal: AbortSignal = new AbortController().signal;
+    const cases: readonly {
+      readonly owner: "ai" | "antiRaid";
+      readonly method: TelegramWorkerJsonCall["method"];
+    }[] = [
+      { owner: "ai", method: "getStickerSet" },
+      { owner: "ai", method: "sendChatAction" },
+      { owner: "ai", method: "sendSticker" },
+      { owner: "ai", method: "setMessageReaction" },
+      { owner: "antiRaid", method: "answerCallbackQuery" },
+      { owner: "antiRaid", method: "banChatMember" },
+      { owner: "antiRaid", method: "banChatSenderChat" },
+      { owner: "antiRaid", method: "deleteMessage" },
+      { owner: "antiRaid", method: "deleteMessages" },
+      { owner: "antiRaid", method: "getChatAdministrators" },
+      { owner: "antiRaid", method: "getChatMember" },
+      { owner: "antiRaid", method: "restrictChatMember" },
+      { owner: "antiRaid", method: "setChatPermissions" },
+      { owner: "antiRaid", method: "unbanChatMember" },
+    ];
+
+    for (const entry of cases) {
+      const payload: Record<string, string> = { marker: entry.method };
+      const request = {
+        operation: "call",
+        category: telegramRetryCategoryFor(entry.method),
+        call: { method: entry.method, payload },
+      } as unknown as TelegramWorkerRequest;
+      const handler: typeof handleAiWorkerTelegramRequest = entry.owner === "ai"
+        ? handleAiWorkerTelegramRequest
+        : handleAntiRaidWorkerTelegramRequest;
+      await handler(request, signal);
+    }
+
+    expect(rawDispatches.map((call): string => call.method))
+      .toEqual(cases.map((entry): string => entry.method));
+    expect(rawDispatches.every((call): boolean => call.signal === signal)).toBeTrue();
+    expect(rawDispatches.map((call): unknown => call.payload))
+      .toEqual(cases.map((entry): Record<string, string> => ({ marker: entry.method })));
   });
 
   test("调用方类别与真实 Bot API 方法不一致时主线程拒绝", async (): Promise<void> => {

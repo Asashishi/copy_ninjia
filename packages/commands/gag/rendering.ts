@@ -4,14 +4,17 @@ import {
   GAG_DEFAULT_TOOL,
   GAG_DURATION_MINUTES,
   GAG_DURATION_TOKEN_PATTERN,
-  GAG_ELLIPSIS_FILLER,
-  GAG_ELLIPSIS_PROBABILITY,
+  GAG_FILLER_DOT,
+  GAG_FILLER_GAP_SPACE_PROBABILITY,
+  GAG_FILLER_MAX_CHARS,
+  GAG_FILLER_MAX_DOTS,
+  GAG_FILLER_MIN_DOTS,
+  GAG_FILL_OPERATION_PROBABILITY,
   GAG_INLINE_QUERY_MAX_CHARS,
   GAG_INLINE_QUERY_PREFIX,
   GAG_INLINE_SPEAK_BUTTON_TEXT,
-  GAG_INLINE_TOKEN_BYTES,
-  GAG_INLINE_TOKEN_PATTERN,
-  GAG_INLINE_TOKEN_SEPARATOR,
+  GAG_MAX_CONSECUTIVE_SAME_OPERATIONS,
+  GAG_MIN_OPERATION_TIERS,
   GAG_REPLACEMENT_CHARACTERS,
 } from "../../consts/gag";
 import {
@@ -35,42 +38,22 @@ export function gagSpeechPrefix(tool: string): string {
 }
 
 /**
- * 生成一条会话的 inline 令牌。频道入口靠它绑定「看得见群内按钮的人」，
- * 理由见 consts/gag.ts 的 GAG_INLINE_TOKEN_BYTES。
- */
-export function createGagInlineToken(): string {
-  const bytes: Uint8Array = new Uint8Array(GAG_INLINE_TOKEN_BYTES);
-  crypto.getRandomValues(bytes);
-  let token: string = "";
-  for (const byte of bytes) token += byte.toString(16).padStart(2, "0");
-  return token;
-}
-
-/**
- * 构造开始提示的发言入口。普通用户按钮只携带 gag 保留前缀并在查询时核对
- * 查询者 id；频道身份额外携带频道 id 与会话令牌，再在消息落群后核对 sender_chat。
- * 令牌只出现在按钮预填里，不进 inline 结果文本、也不进 text_link 标记——那条
- * 标记随消息公开可见，把令牌写进去等于当众发放。
- * 无前缀查询始终进入运势，两个 inline 领域不能同时应答。
+ * 构造开始提示的发言入口。查询 scope 的唯一语法是 `gag:<目标 ID>`；用户与
+ * 频道都不得追加摘要、随机 token、群 ID 或其它载荷。Telegram 不把当前具体群 ID
+ * 放进 InlineQuery，任何追加值也无法证明实际输入群；群绑定必须留给隐藏 marker
+ * 和落群后的 from.id/sender_chat.id、message.chat.id 校验。无前缀查询进入运势。
  */
 export function buildGagSpeakKeyboard(session: GagSession): InlineKeyboard {
-  if (session.targetId > 0) {
-    return new InlineKeyboard().switchInlineCurrent(
-      GAG_INLINE_SPEAK_BUTTON_TEXT,
-      `${GAG_INLINE_QUERY_PREFIX} `
-    );
-  }
   return new InlineKeyboard().switchInlineCurrent(
     GAG_INLINE_SPEAK_BUTTON_TEXT,
-    `${GAG_INLINE_QUERY_PREFIX}${session.targetId}` +
-    `${GAG_INLINE_TOKEN_SEPARATOR}${session.inlineToken} `
+    `${GAG_INLINE_QUERY_PREFIX}${session.targetId} `
   );
 }
 
 /**
- * 解析 gag 按钮预填的查询。普通用户在前缀后直接跟正文；频道入口额外携带
- * 规范负数 id 与会话令牌，两者缺一即视为伪造。伪造的保留前缀由 gag 静默认领为
- * 空结果，不能退回运势。
+ * 解析 gag 按钮预填查询。首个空格前只接受规范的安全整数 ID；ID 后的摘要、
+ * token、群 ID 或任意其它 scope 后缀必须拒绝。形态错误的保留前缀由 gag
+ * 静默认领为空结果，不能退回运势。
  */
 export function parseGagInlineQuery(
   query: string
@@ -81,23 +64,15 @@ export function parseGagInlineQuery(
   const scopeEnd: number = separatorIndex === -1 ? query.length : separatorIndex;
   const scope: string = query.slice(scopeStart, scopeEnd);
   const text: string = separatorIndex === -1 ? "" : query.slice(separatorIndex + 1);
-  if (scope.length === 0) return { text };
-  const tokenIndex: number = scope.indexOf(GAG_INLINE_TOKEN_SEPARATOR);
-  if (tokenIndex === -1) return undefined;
-  const rawId: string = scope.slice(0, tokenIndex);
-  const token: string = scope.slice(tokenIndex + GAG_INLINE_TOKEN_SEPARATOR.length);
-  const numericId: number = Number(rawId);
+  const targetId: number = Number(scope);
   if (
-    !CHAT_ID_ARG_PATTERN.test(rawId) ||
-    !Number.isSafeInteger(numericId) ||
-    !GAG_INLINE_TOKEN_PATTERN.test(token)
-  ) {
-    return undefined;
-  }
-  return { targetChannelId: numericId, token, text };
+    (!USER_ID_ARG_PATTERN.test(scope) && !CHAT_ID_ARG_PATTERN.test(scope)) ||
+    !Number.isSafeInteger(targetId)
+  ) return undefined;
+  return { targetId, text };
 }
 
-/** 在 25% 替换分支内均匀抽取一个候选字符。 */
+/** 在 25% 替换候选内均匀抽取一个字符。 */
 function randomGagReplacement(random: () => number): string {
   const roll: number = random();
   const index: number = Math.min(
@@ -107,10 +82,39 @@ function randomGagReplacement(random: () => number): string {
   return GAG_REPLACEMENT_CHARACTERS[index]!;
 }
 
+/** 随机生成 3~6 个点，并对每个点间空隙独立抽取 1/3 的插空格概率。 */
+function randomGagFiller(random: () => number): string {
+  const range: number = GAG_FILLER_MAX_DOTS - GAG_FILLER_MIN_DOTS + 1;
+  const offset: number = Math.min(
+    range - 1,
+    Math.max(0, Math.floor(random() * range))
+  );
+  const dotCount: number = GAG_FILLER_MIN_DOTS + offset;
+  let filler: string = GAG_FILLER_DOT;
+  for (let index: number = 1; index < dotCount; index += 1) {
+    if (random() < GAG_FILLER_GAP_SPACE_PROBABILITY) filler += " ";
+    filler += GAG_FILLER_DOT;
+  }
+  return filler;
+}
+
+/** 按扩展字形数返回短文本操作保底；单字操作一次，超过 64 个字形不设保底。 */
+export function gagMinimumOperationCount(graphemeCount: number): number {
+  if (graphemeCount <= 0) return 0;
+  if (graphemeCount === 1) return 1;
+  for (const [upperExclusive, minimumOperations] of GAG_MIN_OPERATION_TIERS) {
+    if (graphemeCount < upperExclusive) return minimumOperations;
+  }
+  return 0;
+}
+
+type GagSpeechOperation = "fill" | "replace";
+
 /**
- * 把 inline 查询正文渲染成 gag 发言。按扩展字形簇而不是 UTF-16 码元遍历：
- * 75% 在原字形后紧邻追加省略号，剩余 25% 用随机候选字符替换整个原字形。
- * 两个分支都不追加空格，emoji/组合字符也不会被拆开。
+ * 把 inline 查询正文渲染成 gag 发言。按扩展字形簇而不是 UTF-16 码元遍历。
+ * 每个字形先按 75%/25% 抽取填充或替换；同类操作连续两次后，第三次候选会
+ * 保留原字形并重置连续计数。只有跳过后无法达到短文本保底时才强制改走另一类。
+ * 填充生成 3~6 个点，每个点间独立有 1/3 概率插入空格；组合字符不会被拆开。
  */
 export function renderGagSpeech({
   text,
@@ -120,13 +124,45 @@ export function renderGagSpeech({
   const normalized: string = sanitizeInline(text);
   let rendered: string = gagSpeechPrefix(tool);
   if (normalized.length === 0) {
-    return `${rendered}${GAG_ELLIPSIS_FILLER}`;
+    return `${rendered}${randomGagFiller(random)}`;
   }
   const graphemes: string[] = splitGraphemes(normalized);
-  for (const grapheme of graphemes) {
+  const minimumOperations: number = gagMinimumOperationCount(graphemes.length);
+  let previousOperation: GagSpeechOperation | undefined;
+  let consecutiveOperations: number = 0;
+  let operationCount: number = 0;
+  for (let index: number = 0; index < graphemes.length; index += 1) {
+    const grapheme: string = graphemes[index]!;
     const roll: number = random();
-    if (roll < GAG_ELLIPSIS_PROBABILITY) {
-      rendered += grapheme + GAG_ELLIPSIS_FILLER;
+    const candidate: GagSpeechOperation =
+      roll < GAG_FILL_OPERATION_PROBABILITY ? "fill" : "replace";
+    let operation: GagSpeechOperation | undefined = candidate;
+    if (
+      candidate === previousOperation &&
+      consecutiveOperations >= GAG_MAX_CONSECUTIVE_SAME_OPERATIONS
+    ) {
+      const remainingGraphemes: number = graphemes.length - index - 1;
+      if (operationCount + remainingGraphemes >= minimumOperations) {
+        operation = undefined;
+      } else {
+        operation = candidate === "fill" ? "replace" : "fill";
+      }
+    }
+    if (operation === undefined) {
+      rendered += grapheme;
+      previousOperation = undefined;
+      consecutiveOperations = 0;
+      continue;
+    }
+    if (operation === previousOperation) {
+      consecutiveOperations += 1;
+    } else {
+      previousOperation = operation;
+      consecutiveOperations = 1;
+    }
+    operationCount += 1;
+    if (operation === "fill") {
+      rendered += grapheme + randomGagFiller(random);
     } else {
       rendered += randomGagReplacement(random);
     }
@@ -224,7 +260,7 @@ export function parseGagCommand(
  */
 export function canRenderMaximumInlineQuery(tool: string): boolean {
   const prefixLength: number = gagSpeechPrefix(tool).length;
-  const perCharacterMax: number = 1 + GAG_ELLIPSIS_FILLER.length;
+  const perCharacterMax: number = 1 + GAG_FILLER_MAX_CHARS;
   return prefixLength + GAG_INLINE_QUERY_MAX_CHARS * perCharacterMax <=
     TELEGRAM_MESSAGE_MAX_CHARS;
 }

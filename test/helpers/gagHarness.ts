@@ -12,14 +12,14 @@ import type {
   Message,
   MessageEntity,
 } from "@grammyjs/types";
-import { GAG_INLINE_CHANNEL_LINK_PREFIX } from "../../packages/consts/gag";
 import { GAG_THUMBNAIL_URL } from "../../packages/consts/ui/assets";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { GagSession } from "../../packages/types/gag";
 import { settleTestBatch } from "../libs/helpers";
-// 这两个模块不在被替身覆盖的范围内（只依赖 consts/types/libs），因此可以静态
+// 这三个模块不在被替身覆盖的范围内（只依赖 consts/types/libs），因此可以静态
 // 导入；被测的 packages/commands/gag 必须由各用例文件在本模块的 mock.module
 // 生效之后自行 await import，静态导入会抢在替身安装之前把真实依赖钉死。
+import * as identity from "../../packages/commands/gag/identity";
 import * as rendering from "../../packages/commands/gag/rendering";
 import {
   activeGagSessionCount,
@@ -34,6 +34,7 @@ export {
   gagBackgroundTasks,
   gagSessionCount,
   gagSessionsByChat,
+  identity,
   rendering,
 };
 
@@ -165,7 +166,7 @@ export interface SessionOverrides {
   readonly pendingSpeakNoticeMessageId?: number;
   readonly retiredSpeakNoticeMessageId?: number;
   readonly messagesSinceSpeakNotice?: number;
-  readonly inlineToken?: string;
+  readonly targetProfileUrl?: string;
 }
 
 export function createSession({
@@ -179,14 +180,15 @@ export function createSession({
   pendingSpeakNoticeMessageId = 0,
   retiredSpeakNoticeMessageId = 0,
   messagesSinceSpeakNotice = 0,
-  inlineToken = "0123456789abcdef",
+  targetProfileUrl,
 }: SessionOverrides = {}): GagSession {
   return {
     chatId,
     targetId,
+    targetProfileUrl: targetProfileUrl ??
+      identity.createGagTargetProfileUrl({ id: targetId }),
     targetLabel: "Alice (@alice)",
     chatLabel: `群 ${chatId}`,
-    inlineToken,
     tool,
     durationMinutes: 5,
     phase,
@@ -221,12 +223,11 @@ export function sessionFor(chatId: number, targetId: number = 7): GagSession | u
 
 export function gagInlineEntities(session: GagSession): MessageEntity[] {
   const prefix: string = rendering.gagSpeechPrefix(session.tool);
-  if (session.targetId > 0) return [];
   return [{
     type: "text_link",
     offset: 0,
     length: prefix.length,
-    url: `${GAG_INLINE_CHANNEL_LINK_PREFIX}${session.targetId}`,
+    url: identity.createGagInlineMarkerUrl(session),
   }];
 }
 

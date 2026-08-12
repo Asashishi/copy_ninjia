@@ -8,32 +8,27 @@ export interface ParsedGagCommand {
   readonly tool: string;
 }
 
-/** gag 按钮预填的保留查询；只有频道身份携带目标频道 id 与会话令牌。 */
+/**
+ * gag 按钮预填查询；用户与频道均只携带目标 ID，不得扩展摘要、token 或群 ID
+ * 字段。具体群属于落群后的 marker/message 校验边界。
+ */
 export interface ParsedGagInlineQuery {
-  readonly targetChannelId?: number;
-  /** 频道分支的会话令牌；与 targetChannelId 同时出现或同时缺席。 */
-  readonly token?: string;
+  readonly targetId: number;
   readonly text: string;
 }
 
 /** 主线程 command 域维护的一条临时 gag 会话。 */
 export interface GagSession {
-  /** 会话所在群；主缓存以它定位同群的目标列表。 */
+  /** 命令入口确定的权威会话群；不得从 inline query 声称值或 token 派生。 */
   readonly chatId: number;
   /** 被 gag 的 Telegram 用户或频道身份。 */
   readonly targetId: number;
+  /** 隐藏 marker 使用的目标主页；群 ID 另以公开 fragment 挂载，不承担保密。 */
+  readonly targetProfileUrl: string;
   /** 群内提示使用的安全目标标签。 */
   readonly targetLabel: string;
   /** inline 结果列表使用的安全群标签。 */
   readonly chatLabel: string;
-  /**
-   * 频道发言入口的会话令牌，只随群内那条带按钮的开始提示分发。
-   *
-   * 频道身份的 inline 查询没有可比对的发起者（普通用户按 `from.id` 匹配），
-   * 只有持有本令牌才允许拿到本会话的 inline 结果，否则任何账号都能靠一个频道
-   * id 读出 chatLabel 里的私有群名称。用户会话同样生成，但不进按钮预填。
-   */
-  readonly inlineToken: string;
   /** 命令给出的用具；已压成单行并剥掉双向控制符。 */
   readonly tool: string;
   /** 会话长度，只允许 5、10 或 15 分钟。 */

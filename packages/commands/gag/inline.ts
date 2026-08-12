@@ -10,7 +10,6 @@ import {
 } from "grammy";
 import { gagSessionsByChat } from "../../cache/main/gag";
 import {
-  GAG_INLINE_CHANNEL_LINK_PREFIX,
   GAG_INLINE_LABEL_MAX_CHARS,
   GAG_INLINE_QUERY_PREFIX,
 } from "../../consts/gag";
@@ -44,6 +43,10 @@ import {
   finishGag,
   trackGagBackgroundTask,
 } from "./runtime";
+import {
+  createGagInlineMarkerUrl,
+  isGagInlineMarkerUrl,
+} from "./identity";
 
 /** deleted/gone 都表示该入口不再可见，可以安全释放其唯一 id 槽位。 */
 function gagNoticeDeletionFinished(
@@ -151,16 +154,17 @@ async function refreshDueGagSpeakNotices(
   }
 }
 
-/** 当前 bot 消息是否带有频道 gag 身份标记。 */
+/** 当前 bot 消息是否带有用户或频道 gag 隐藏主页标记。 */
 function hasGagInlineMarker(message: Message, botId: number): boolean {
   if (message.via_bot?.id !== botId) return false;
   return message.entities?.some((entity: MessageEntity): boolean =>
     entity.type === "text_link" &&
-    entity.url.startsWith(GAG_INLINE_CHANNEL_LINK_PREFIX)
+    entity.offset === 0 &&
+    isGagInlineMarkerUrl(entity.url)
   ) === true;
 }
 
-/** 当前 bot inline 文本是否匹配用具，且频道目标同时匹配标记 id。 */
+/** 当前 bot inline 文本是否匹配用具，且隐藏主页链接匹配当前目标与所在群。 */
 function isCurrentGagInlineMessage(
   message: Message,
   botId: number,
@@ -172,9 +176,7 @@ function isCurrentGagInlineMessage(
   ) return false;
   const prefix: string = gagSpeechPrefix(session.tool);
   if (!message.text.startsWith(prefix)) return false;
-  if (session.targetId > 0) return true;
-  const markerUrl: string =
-    `${GAG_INLINE_CHANNEL_LINK_PREFIX}${session.targetId}`;
+  const markerUrl: string = createGagInlineMarkerUrl(session);
   return message.entities?.some((entity: MessageEntity): boolean =>
     entity.type === "text_link" &&
     entity.offset === 0 &&
@@ -216,8 +218,9 @@ function findActiveGagSenderSession(
 }
 
 /**
- * 命令前的消息入口：活动目标的任何消息都被认领；频道 gag inline 结果只有标记
- * 频道 ID 与最终 sender_chat.id 同时匹配才放行，用户则核对 from.id。
+ * 命令前的消息入口：活动目标的任何消息都被认领。频道 inline 结果必须由主页
+ * 标记与 sender_chat.id 同时绑定发言频道，并由 fragment 与 message.chat.id
+ * 同时绑定超级群；用户分支对应核对主页标记、群 ID 与 from.id。
  */
 export async function handleGagMessageIngress(
   message: Message,
@@ -303,10 +306,12 @@ function buildGagInlineResult(
   session: GagSession,
   query: string
 ): InlineQueryResultArticle {
-  const chatLabel: string = truncateInline(
-    session.chatLabel,
-    GAG_INLINE_LABEL_MAX_CHARS
-  );
+  const resultTitle: string = session.targetId < 0
+    ? "以频道身份发言"
+    : `在 ${truncateInline(
+      session.chatLabel,
+      GAG_INLINE_LABEL_MAX_CHARS
+    )} 发言`;
   const toolLabel: string = truncateInline(
     session.tool,
     GAG_INLINE_LABEL_MAX_CHARS
@@ -316,23 +321,21 @@ function buildGagInlineResult(
     tool: session.tool,
   });
   const prefixLength: number = gagSpeechPrefix(session.tool).length;
-  const entities: MessageEntity[] = session.targetId < 0
-    ? [{
-      type: "text_link",
-      offset: 0,
-      length: prefixLength,
-      url: `${GAG_INLINE_CHANNEL_LINK_PREFIX}${session.targetId}`,
-    }]
-    : [];
+  const entities: MessageEntity[] = [{
+    type: "text_link",
+    offset: 0,
+    length: prefixLength,
+    url: createGagInlineMarkerUrl(session),
+  }];
   return InlineQueryResultBuilder.article(
     `gag-${session.chatId}-${session.targetId}`,
-    `在 ${chatLabel} 发言`,
+    resultTitle,
     {
       description: `透过${toolLabel}`,
       thumbnail_url: getGagThumbnailUrl(),
     }
   ).text(messageText, {
-    ...(entities.length === 0 ? {} : { entities }),
+    entities,
     link_preview_options: { is_disabled: true },
   });
 }
@@ -340,24 +343,23 @@ function buildGagInlineResult(
 /**
  * gag / 运势 inline 协议（不得合并入口）：
  * 1. 无 `gag:` 前缀时必须返回 false，即使查询者正被 gag，也只允许下游运势应答；
- * 2. `gag: <正文>` 只来自普通用户的目标专属按钮，按 `from.id` 匹配用户会话；
- * 3. `gag:<负数频道 id>:<会话令牌> <正文>` 只定位频道会话，令牌必须与该会话一致，
- *    发送落群后再核对 sender_chat；
- * 4. 任何带 `gag:` 的查询都由本函数终止分发；非法、过期或身份不匹配时回空，
+ * 2. 用户与频道 scope 的唯一语法均为 `gag:<目标 ID> <正文>`；首个空格前不得
+ *    加摘要、随机 token、群 ID 或其它元数据；
+ * 3. 用户查询还要按目标 ID 与 `from.id` 匹配；频道查询只按负数目标 ID 定位；
+ * 4. 频道结果发送落群后同时核对
+ *    sender_chat.id、message.chat.id 与隐藏标记；
+ * 5. 任何带 `gag:` 的查询都由本函数终止分发；非法、过期或用户身份不匹配时回空，
  *    绝不能回退运势或同时生成两类结果。
  *
- * 频道分支为什么必须校验令牌：普通用户按 `from.id` 绑定，而频道皮套背后是谁
- * Telegram 从不告知，只比对频道 id 等于不作校验——任意账号发一条
- * `@bot gag:<频道 id> x` 就能拿到用 `session.chatLabel` 拼出的「在 <群名称>
- * 发言」，把私有群标题读走。令牌只随群内那条带按钮的开始提示分发，因此持有它
- * 就等价于「看得见这个入口」（见 consts/gag.ts 的 GAG_INLINE_TOKEN_BYTES）。
+ * InlineQuery 关于所在聊天只提供 chat_type，没有当前具体 chat.id 或发送前拦截钩子；
+ * 追加 token/摘要/群 ID 只能声称来源，不能证明输入框在哪个群，因此禁止重新引入。
+ * 正常按钮用 switch_inline_query_current_chat 留在会话群；真正放行发生在消息入口：
+ * 主页 marker 绑定目标、fragment 绑定会话群，再与 Telegram 实际给出的
+ * from.id/sender_chat.id、message.chat.id 核验。频道候选使用不含群标题的通用标题。
  *
  * 不做分页：GAG_SESSION_MAX 是**跨全部群**的全局上限（见 gag/runtime.ts 的
  * reserveGagSession），远小于单次 answerInlineQuery 的 50 条上限，而每条查询最多
- * 只匹配一条会话（用户按 from.id、频道按 id+令牌，都是唯一键）。
- *
- * Telegram 不提供“是否由 inline 按钮唤起”的来源字段，因此普通按钮必须预填
- * 最小 `gag:` 标记；只靠空查询会与用户手动输入 `@机器人` 无法区分。
+ * 匹配五条会话；频道可在多个群有同一目标，具体群由结果的隐藏标记绑定。
  */
 export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
   const inlineQuery: InlineQuery | undefined = ctx.inlineQuery;
@@ -374,9 +376,8 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
     for (const sessions of gagSessionsByChat.values()) {
       for (const session of sessions) {
         const matchesQuery: boolean = session.targetId < 0
-          ? session.targetId === scopedQuery.targetChannelId &&
-            session.inlineToken === scopedQuery.token
-          : scopedQuery.targetChannelId === undefined &&
+          ? session.targetId === scopedQuery.targetId
+          : session.targetId === scopedQuery.targetId &&
             session.targetId === inlineQuery.from.id;
         if (session.phase !== "active" || !matchesQuery) continue;
         if (session.expiresAt <= now) {

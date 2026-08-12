@@ -204,7 +204,7 @@ export const PERMISSION_COMMAND_TEXTS: Readonly<PermissionCommandTexts> = {
     "查询指定用户：/permission query <用户id|@username>",
     "也可以回复目标消息发送：/permission query",
     "",
-    "以下修改操作仅限超级管理员，白名单杂鱼看懂就好，别伸手乱碰哦♡",
+    "help 和 query 所有杂鱼都能用；以下修改操作仅限超级管理员，杂鱼看懂就好，别伸手乱碰哦♡",
     "给已有白名单身份设置权限：",
     "/permission <用户id|频道id|@username> <权限键> <true|false>",
     "回复目标时可省略身份：/permission <权限键> <true|false>",
@@ -216,7 +216,7 @@ export const PERMISSION_COMMAND_TEXTS: Readonly<PermissionCommandTexts> = {
   queryPrefix: (targetLabel: string): string =>
     `哼，本天才勉为其难把 ${targetLabel} 的白名单权限列出来：true 是有这项权限，false 就是没有，睁大眼睛看好啦，杂鱼♡\n`,
   mutationRejection: (actorLabel: string): string =>
-    `就 ${actorLabel} 也想改本天才的权限配置？哪来的资格呀，笨蛋♡`,
+    `help 和 query 所有杂鱼都能用；不过就 ${actorLabel} 也想改本天才的权限配置？只有超级管理员才有资格呀，笨蛋♡`,
   superAdminTarget:
     `哈？超级管理员的权限可是本天才亲自认的身份带来的，本来就全开着，才不归白名单那点逐项授权管呢，笨蛋♡`,
   currentChatTarget:

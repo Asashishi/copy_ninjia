@@ -37,36 +37,46 @@ export const GAG_INLINE_SPEAK_BUTTON_TEXT: string = "发言";
 /** 每个发言入口在本群经过多少条新消息后滚动换新；各会话独立计数。 */
 export const GAG_SPEAK_NOTICE_MESSAGE_INTERVAL: number = 15;
 
-/** gag 按钮预填查询的保留前缀；只有频道身份在后面追加目标 id 与会话令牌。 */
+/**
+ * gag 查询的唯一协议前缀；其后 scope 只能是目标 Telegram ID。
+ * 禁止追加摘要、随机 token、群 ID 或其它元数据；群绑定只走隐藏 marker 与落群校验。
+ */
 export const GAG_INLINE_QUERY_PREFIX: string = "gag:";
 
-/** 频道预填查询里分隔目标 id 与会话令牌的字符；两侧形态互不重叠。 */
-export const GAG_INLINE_TOKEN_SEPARATOR: string = ":";
+/** gag 隐藏主页链接挂载目标所在超级群 ID 时使用的 URL fragment 分隔符。 */
+export const GAG_PROFILE_CHAT_SEPARATOR: string = "#";
 
-/**
- * 频道发言入口的一次性会话令牌字节数。
- *
- * 频道身份没有「查询者 id」可比对（Telegram 从不告诉本进程皮套背后是谁），
- * 令牌就是那个绑定：它只随群内那条带按钮的开始提示分发，因此只有看得见按钮的
- * 群成员拿得到。少了它，任何人 `@bot gag:<频道 id> x` 就能读到 inline 结果里
- * 用 chatLabel 拼出的「在 <群名称> 发言」——一次针对私有群标题的信息泄露。
- * 8 字节（64 位）对一个最长 15 分钟、全局至多 5 条的会话足够，且预填串足够短，
- * 不会明显挤占 GAG_INLINE_QUERY_MAX_CHARS 留给正文的额度。
- */
-export const GAG_INLINE_TOKEN_BYTES: number = 8;
+/** 有公开 username 的用户或频道主页前缀。 */
+export const GAG_PUBLIC_PROFILE_LINK_PREFIX: string = "https://t.me/";
 
-/** 会话令牌的唯一合法形态：固定长度小写十六进制。 */
-export const GAG_INLINE_TOKEN_PATTERN: Readonly<RegExp> = new RegExp(
-  `^[0-9a-f]{${GAG_INLINE_TOKEN_BYTES * 2}}$`
-);
+/** 公开 username 链接明确打开身份主页而不是对话时使用的查询参数。 */
+export const GAG_PUBLIC_PROFILE_QUERY: string = "?profile";
 
-/** 频道 inline 结果用 text_link 携带目标频道 id 的固定地址前缀。 */
-export const GAG_INLINE_CHANNEL_LINK_PREFIX: string = "https://t.me/#gag-channel=";
+/** 无公开 username 的频道按 Bot API 对话 ID 定位主页时使用的前缀。 */
+export const GAG_PRIVATE_CHANNEL_PROFILE_LINK_PREFIX: string = "https://t.me/c/";
 
-/** 允许继续追加在原文字形后的唯一填充内容。 */
-export const GAG_ELLIPSIS_FILLER: string = "...";
+/** 私有频道链接使用首条消息作为稳定入口；裸 `t.me/c/<id>` 不是官方消息链接。 */
+export const GAG_PRIVATE_CHANNEL_ENTRY_MESSAGE_ID: number = 1;
 
-/** 25% 替换分支均匀抽取的字符；只替换原字形，不再追加到它后面。 */
+/** 无公开 username 的用户通过 Bot API ID 打开个人主页时使用的前缀。 */
+export const GAG_USER_PROFILE_LINK_PREFIX: string = "tg://user?id=";
+
+/** gag 填充使用的单个点字符；点之间可按概率插入一个 ASCII 空格。 */
+export const GAG_FILLER_DOT: string = ".";
+
+/** 一次 gag 填充最少生成的点数。 */
+export const GAG_FILLER_MIN_DOTS: number = 3;
+
+/** 一次 gag 填充最多生成的点数。 */
+export const GAG_FILLER_MAX_DOTS: number = 6;
+
+/** 相邻两个填充点之间插入一个 ASCII 空格的独立概率。 */
+export const GAG_FILLER_GAP_SPACE_PROBABILITY: number = 1 / 3;
+
+/** 六个点且每个点间都有空格时的最坏 UTF-16 长度，用于发送上限预检。 */
+export const GAG_FILLER_MAX_CHARS: number = GAG_FILLER_MAX_DOTS * 2 - 1;
+
+/** 25% 替换候选均匀抽取的字符；只替换原字形，不再追加到它后面。 */
 export const GAG_REPLACEMENT_CHARACTERS: readonly string[] = [
   "唔",
   "啊",
@@ -77,12 +87,29 @@ export const GAG_REPLACEMENT_CHARACTERS: readonly string[] = [
 ];
 
 /**
- * 原字形后追加省略号的概率；剩余概率走 GAG_REPLACEMENT_CHARACTERS 替换分支。
- * 两个分支由 gag/rendering.ts 的 `roll < GAG_ELLIPSIS_PROBABILITY` 单条判定切分，
+ * 候选操作选择填充的概率；剩余概率走 GAG_REPLACEMENT_CHARACTERS 替换分支。
+ * 两个分支由 gag/rendering.ts 的 `roll < GAG_FILL_OPERATION_PROBABILITY` 单条判定切分，
  * 不再单列替换分支常量——那份常量没有生产消费者，改这一个时它不会跟着动，
- * 却会让测试继续按 0.75 + 0.25 推导出一条早已偏离实现的阈值。
+ * 却会让测试继续按 0.75 + 0.25 推导出一条早已偏离实现的阈值。连续操作闸门
+ * 可以挡住候选，因此该值描述抽样概率，不承诺最终文本中的填充占比。
  */
-export const GAG_ELLIPSIS_PROBABILITY: number = 0.75;
+export const GAG_FILL_OPERATION_PROBABILITY: number = 0.75;
+
+/** 同类填充或替换最多连续作用于两个相邻字形，第三次候选必须被闸门处理。 */
+export const GAG_MAX_CONSECUTIVE_SAME_OPERATIONS: number = 2;
+
+/**
+ * 短文本操作保底档位；元素依次为「字形数上界（不含）」与「最少操作数」。
+ * 2~3、4~7、8~31、32~64 个字形分别至少操作 2、3、7、15 次；超过 64 不保底。
+ */
+export const GAG_MIN_OPERATION_TIERS: readonly (
+  readonly [upperExclusive: number, minimumOperations: number]
+)[] = [
+  [4, 2],
+  [8, 3],
+  [32, 7],
+  [65, 15],
+];
 
 /** inline 列表里的群名和用具摘要上限，防止用户字段撑坏客户端预览。 */
 export const GAG_INLINE_LABEL_MAX_CHARS: number = 96;

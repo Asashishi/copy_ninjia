@@ -18,6 +18,7 @@ import {
 } from "../../packages/consts/commands";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
 import {
+  GAG_MIN_OPERATION_TIERS,
   GAG_REPLACEMENT_CHARACTERS,
   GAG_TARGET_TEXTS,
   UNGAG_TARGET_TEXTS,
@@ -65,6 +66,8 @@ test("常量表本身不可整体替换或就地增删", () => {
   expect(() => LUCK_TIERS.sort()).toBeDefined();
   // @ts-expect-error gag 替换候选跨所有 inline 查询共享，不允许追加
   expect(() => GAG_REPLACEMENT_CHARACTERS.push("篡改")).toBeDefined();
+  // @ts-expect-error gag 操作保底档位不允许追加
+  expect(() => GAG_MIN_OPERATION_TIERS.push([99, 99])).toBeDefined();
 });
 
 test("对象元素的字段同样不可写", () => {
@@ -74,6 +77,8 @@ test("对象元素的字段同样不可写", () => {
   expect(() => { LUCK_TIERS[0]!.weight = 999; }).toBeDefined();
   // @ts-expect-error LuckTier.fortunePercentRange 是只读元组
   expect(() => { LUCK_TIERS[0]!.fortunePercentRange[0] = 0; }).toBeDefined();
+  // @ts-expect-error gag 档位里的上界与保底数同样是只读元组
+  expect(() => { GAG_MIN_OPERATION_TIERS[0]![0] = 99; }).toBeDefined();
   // @ts-expect-error SafetySetting 元素经 Readonly<> 包裹，字段只读
   expect(() => { GEMINI_SAFETY_SETTINGS[0]!.threshold = undefined; }).toBeDefined();
 });

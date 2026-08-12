@@ -25,10 +25,10 @@ import { formatTargetLabel, formatUserLabel } from "../users/userLabel";
 import { hasCommandPermission, resolveCommandActor } from "./commandActor";
 import {
   canRenderMaximumInlineQuery,
-  createGagInlineToken,
   parseGagCommand,
   renderGagPublicNotice,
 } from "./gag/rendering";
+import { createGagTargetProfileUrl } from "./gag/identity";
 import { sendGagSpeakNotice } from "./gag/notices";
 import {
   commitGagNotices,
@@ -107,9 +107,9 @@ function createGagReservation(
   return {
     chatId: ctx.chat.id,
     targetId: target.id,
+    targetProfileUrl: createGagTargetProfileUrl(target),
     targetLabel: formatTargetLabel(target),
     chatLabel: sanitizeDisplayName(ctx.chat.title ?? String(ctx.chat.id)),
-    inlineToken: createGagInlineToken(),
     tool: parsed.tool,
     durationMinutes: parsed.durationMinutes,
     phase: "starting",

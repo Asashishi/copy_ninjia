@@ -188,7 +188,7 @@ describe("/permission", () => {
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("哪来的资格"),
+      text: expect.stringMatching(/help 和 query 所有杂鱼都能用.*只有超级管理员才有资格/),
       replyToMessageId: 10,
     });
 
@@ -196,7 +196,7 @@ describe("/permission", () => {
     expect(setWhitelistPermission).not.toHaveBeenCalled();
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("哪来的资格"),
+      text: expect.stringMatching(/help 和 query 所有杂鱼都能用.*只有超级管理员才有资格/),
     }));
   });
 
@@ -229,6 +229,7 @@ describe("/permission", () => {
     }
     expect(text).toContain("/permission query");
     expect(text).toContain("/permission query <用户id|@username>");
+    expect(text).toContain("help 和 query 所有杂鱼都能用");
     expect(text).toContain("以下修改操作仅限超级管理员");
     expect(text).toContain("本天才");
     expect(text).toContain("杂鱼♡");

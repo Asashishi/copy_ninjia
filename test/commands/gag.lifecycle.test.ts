@@ -61,6 +61,8 @@ describe("/gag 与 /ungag 状态机", () => {
     await gag.handleGagCommand(commandContext({ match: "@alice 5" }));
 
     const session: GagSession | undefined = sessionFor(-1001);
+    expect(session?.targetId).toBe(7);
+    expect(session?.targetProfileUrl).toBe("https://t.me/alice?profile");
     expect(session?.phase).toBe("active");
     expect(session?.expiresAt).toBe(1_300_000);
     expect(session?.publicNoticeMessageId).toBe(56);
@@ -86,7 +88,7 @@ describe("/gag 与 /ungag 状态机", () => {
       ?.inline_keyboard[0]?.[0];
     expect(sessionButton).toMatchObject({
       text: "发言",
-      switch_inline_query_current_chat: "gag: ",
+      switch_inline_query_current_chat: "gag:7 ",
     });
     expect(sessionButton).not.toHaveProperty("callback_data");
     expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({
@@ -176,13 +178,15 @@ describe("/gag 与 /ungag 状态机", () => {
     await gag.handleGagCommand(commandContext({ match: "-1002233445566" }));
 
     expect(probeChatMembership).not.toHaveBeenCalled();
-    expect(sessionFor(-1001, -1002233445566)?.targetId).toBe(-1002233445566);
+    const channelSession: GagSession | undefined =
+      sessionFor(-1001, -1002233445566);
+    expect(channelSession?.targetId).toBe(-1002233445566);
+    expect(channelSession?.targetProfileUrl).toBe("https://t.me/c/2233445566/1");
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]?.keyboard?.inline_keyboard[0]?.[0])
       .toMatchObject({
         text: "发言",
-        switch_inline_query_current_chat:
-          expect.stringMatching(/^gag:-1002233445566:[0-9a-f]{16} $/) as unknown as string,
+        switch_inline_query_current_chat: "gag:-1002233445566 ",
       });
     expect(lastStateText()).toContain("频道马甲想说话就必须先乖乖点");
     expect(lastStateText()).toContain("直接 @ 本天才可不会给你选项");

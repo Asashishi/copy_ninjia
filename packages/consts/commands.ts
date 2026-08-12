@@ -44,7 +44,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "gag", description: "让用户或频道身份 5/10/15 分钟内只能 @ 本天才说话；时长可省略为 5，支持回复、@username 或身份 id，仅持有 isCanGag 的身份配用♡" },
   { command: "ungag", description: "定向解除目标 gag；必须回复、写 @username 或用户/频道 id，同样需要 isCanGag，笨蛋♡" },
   { command: "batch_kick", description: "踢出本群滚动时间窗内加入的人，如 30m/2h/1d；只踢不拉黑，仅超级管理员配用，杂鱼围观就好♡" },
-  { command: "permission", description: "query/help 只给白名单边界内的身份看；改权限只有超级管理员配碰，门外杂鱼别乱按♡" },
+  { command: "permission", description: "用 help 看说明、query 查权限，所有杂鱼都能用；修改权限仅限超级管理员，杂鱼别乱碰♡" },
   { command: "white", description: "新增或删除白名单用户/频道；isCanWhiteOther 只能代加默认权限，删除仍只有超级管理员配碰，杂鱼别乱伸手♡" },
 ];
 
